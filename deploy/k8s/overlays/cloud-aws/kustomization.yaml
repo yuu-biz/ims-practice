@@ -1,0 +1,24 @@
+# The IMS on the Amazon EKS cluster of deploy/cloud/aws: DNS option (b),
+# the P-CSCF and the media relay on the edge nodes (components/edge),
+# and the values of environments/aws. Start the capture first:
+#
+#   kubectl apply -k deploy/k8s/overlays/cloud-aws/capture
+#   kubectl apply -k deploy/k8s/overlays/cloud-aws
+#
+# With load_balancer = "sip" or "sip-and-rtp", deploy/cloud/aws makes the
+# NLB itself and sends to the edge nodes' ports, so nothing changes here
+# but edge_public_address (environments/aws).
+#
+# The nodes pull the images from a registry: push them there, and set
+# image_prefix in environments/aws (components/image-registry).
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: ims
+resources:
+  - ../../base
+  - ../../dns
+  - ../../environments/aws
+components:
+  - ../../components/external-dns
+  - ../../components/edge
+  - ../../components/image-registry

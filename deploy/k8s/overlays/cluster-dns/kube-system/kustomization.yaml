@@ -1,0 +1,17 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: kube-system
+resources:
+  - ../../../dns
+  - dns-service.yaml
+  - ../../../environments/kind
+# The address of the name server, in the zone and in dns-service.yaml.
+components:
+  - ../../../components/name-server
+# Replaces the Corefile that kind writes. kubectl apply warns once that
+# the object has no last-applied annotation, and then takes it over.
+configMapGenerator:
+  - name: coredns
+    files: [Corefile]
+    options:
+      disableNameSuffixHash: true

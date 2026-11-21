@@ -1,0 +1,14 @@
+# DNS option (b) of deploy/k8s/README.md on kind: the IMS's own DNS server
+# (components/external-dns), with the addresses of kind-cluster.yaml
+# (environments/kind).
+#
+#   kubectl apply -k deploy/k8s/overlays/external-dns
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: ims
+resources:
+  - ../../base
+  - ../../dns
+  - ../../environments/kind
+components:
+  - ../../components/external-dns

@@ -1,0 +1,46 @@
+# The fault agent: the fault API of internal/fault in a container of its
+# own, so that the dashboard can break a node from its page. Use it on
+# top of the root compose.yaml, from the root of the repository, and
+# only when you want that:
+#
+#   docker compose -f compose.yaml -f deploy/chaos/chaos.yaml build fault-tools
+#   docker compose -f compose.yaml -f deploy/chaos/agent.yaml up -d
+#
+# The agent talks to the Docker Engine through the Docker socket. Whoever
+# can use that socket can start a container with the host's disk and
+# network, which is as much as root on the host. That is why the agent
+# starts only when this file is named, why compose.yaml never names it,
+# and why none of the IMS nodes gets the socket. See
+# deploy/chaos/README.md, "The fault agent".
+services:
+  fault-agent:
+    image: ims-practice/ims:dev
+    build: .
+    restart: unless-stopped
+    volumes:
+      - ./deploy/chaos/fault-agent.yaml:/etc/ims/node.yaml:ro
+      - /var/run/docker.sock:/var/run/docker.sock
+    # Only on the network chaos, which it shares with the dashboard: the
+    # IMS nodes cannot reach it, and its HTTP stays out of the capture
+    # of ims0.
+    networks:
+      chaos:
+        ipv4_address: 172.28.9.10
+    # For curl on the host. Bound to the loopback address, so that
+    # nothing outside the host reaches the API.
+    ports:
+      - "127.0.0.1:8070:8080"
+
+  # The dashboard joins the network chaos as well, and reaches the agent
+  # at http://172.28.9.10:8080.
+  dashboard:
+    networks:
+      chaos:
+        ipv4_address: 172.28.9.60
+
+networks:
+  chaos:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.28.9.0/24

@@ -1,0 +1,18 @@
+; ENUM (RFC 6116) in network B. Its own numbers, +1 202 555 0151 and
+; 0152, lead to the SIP URIs of its subscribers; network A's numbers
+; lead to global numbers in SIP URIs of network A's domain with
+; user=phone (TS 29.165 8.1), which the S-CSCF of network B sends to
+; IBCF-B. All are fictional numbers of the North American Numbering
+; Plan.
+$ORIGIN e164.arpa.
+$TTL 60
+@  IN SOA dns.ims.mnc002.mcc001.3gppnetwork.org. hostmaster.ims.mnc002.mcc001.3gppnetwork.org. 1 3600 600 86400 60
+@  IN NS  dns.ims.mnc002.mcc001.3gppnetwork.org.
+
+; +1 202 555 0151 and 0152, the UEs of network B.
+1.5.1.0.5.5.5.2.0.2.1 IN NAPTR 10 100 "u" "E2U+sip" "!^.*$!sip:001020000000001@ims.mnc002.mcc001.3gppnetwork.org!" .
+2.5.1.0.5.5.5.2.0.2.1 IN NAPTR 10 100 "u" "E2U+sip" "!^.*$!sip:001020000000002@ims.mnc002.mcc001.3gppnetwork.org!" .
+
+; +1 202 555 0101 and 0102, the UEs of network A.
+1.0.1.0.5.5.5.2.0.2.1 IN NAPTR 10 100 "u" "E2U+sip" "!^.*$!sip:+12025550101@ims.mnc001.mcc001.3gppnetwork.org;user=phone!" .
+2.0.1.0.5.5.5.2.0.2.1 IN NAPTR 10 100 "u" "E2U+sip" "!^.*$!sip:+12025550102@ims.mnc001.mcc001.3gppnetwork.org;user=phone!" .

@@ -1,0 +1,26 @@
+# Fault injection on the Compose network: nodes that stop, freeze,
+# lose packets or can no longer reach each other. Use it on top of the
+# root compose.yaml, from the root of the repository:
+#
+#   docker compose -f compose.yaml -f deploy/chaos/chaos.yaml build fault-tools
+#   deploy/chaos/fault.sh loss scscf 10
+#
+# The IMS nodes stay as compose.yaml has them: no extra capability, no
+# tools, no Docker socket. See deploy/chaos/README.md.
+services:
+  # The image of the throw-away container that puts a fault into the
+  # network namespace of a node. fault.sh and the fault API start it
+  # with the node's namespace and NET_ADMIN, like this:
+  #
+  #   docker run --rm --network container:ims-practice-pcscf-1 \
+  #     --cap-add NET_ADMIN ims-practice/fault-tools:dev nft list ruleset netdev
+  #
+  # The rules stay in the namespace after the container has gone, until
+  # they are deleted or the node restarts. The service is here for the
+  # build; it has no network of its own, so that starting it by mistake
+  # changes nothing.
+  fault-tools:
+    image: ims-practice/fault-tools:dev
+    build: deploy/chaos/tools
+    profiles: [chaos]
+    network_mode: none

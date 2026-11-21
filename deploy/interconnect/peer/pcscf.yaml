@@ -1,0 +1,11 @@
+# P-CSCF of network B. Network B is kept small: its P-CSCF has no media
+# relay and no PCRF, so the RTP of its UEs goes to TrGW-B directly, and
+# there is no policy control; network A shows the PCRF and Rx.
+node: peer-pcscf
+roles: [pcscf]
+home_domain: ims.mnc002.mcc001.3gppnetwork.org
+pcscf:
+  sip:
+    listen: 0.0.0.0:5060
+    host: pcscf.ims.mnc002.mcc001.3gppnetwork.org
+  visited_network_id: ims.mnc002.mcc001.3gppnetwork.org

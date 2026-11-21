@@ -1,0 +1,12 @@
+# The store without persistence, to measure what the roles lose when a
+# store that keeps everything in memory restarts. It goes on top of the
+# redundant deployment, which runs the store with an append-only file
+# synced every second on a volume:
+#
+#   COMPOSE_FILE=compose.yaml:deploy/redundancy/redundancy.yaml:deploy/chaos/chaos.yaml:deploy/chaos/measure/store-volatile.yaml
+#
+# Alone or on compose.yaml only, it does not make a valid project: the
+# service valkey comes from deploy/redundancy.
+services:
+  valkey:
+    command: ["valkey-server", "--save", "", "--appendonly", "no"]

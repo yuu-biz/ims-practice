@@ -1,0 +1,311 @@
+# HSS stub. It accepts Diameter connections from the I-CSCF and
+# the S-CSCF on the standard port 3868 (RFC 6733 2.1).
+node: hss
+roles: [hss]
+home_domain: ims.mnc001.mcc001.3gppnetwork.org
+hss:
+  # The project's own subscriber API, used by the dashboard.
+  provisioning_listen: 0.0.0.0:8081
+  # The I-CSCF picks an S-CSCF that has these capabilities (TS 29.228
+  # 6.7). The numbers mean whatever the operator decides.
+  server_capabilities:
+    mandatory: [1]
+  # Test subscribers only. The private identity follows the
+  # <IMSI>@<home domain> form of TS 23.003 with a test IMSI. The Ut
+  # password is that of SIP Digest, so that a UE simulator needs only one
+  # (TS 24.623 5.2.3.2.1 leaves the Ut credential to the operator).
+  subscriptions:
+    - private_identity: 001010000000001@ims.mnc001.mcc001.3gppnetwork.org
+      # The SIP URI and the tel URI form one implicit registration set:
+      # registering one registers both.
+      public_identities:
+        - sip:001010000000001@ims.mnc001.mcc001.3gppnetwork.org
+        - tel:+12025550101
+      password: test-password-1
+      ut_password: test-password-1
+    - private_identity: 001010000000002@ims.mnc001.mcc001.3gppnetwork.org
+      public_identities:
+        - sip:001010000000002@ims.mnc001.mcc001.3gppnetwork.org
+        - tel:+12025550102
+      password: test-password-2
+      ut_password: test-password-2
+      # CAT (TS 24.182) is provisioned but off, with the tone cat1 of the
+      # MRFP. The operator turns it on with the provisioning API:
+      # PUT /subscriptions/{impi}/customized-alerting-tone.
+      customized_alerting_tone: {tone: cat1, active: false}
+    # Not registered in the call and SMS scenarios, so that a call to it
+    # shows the unregistered callee case. In the supplementary
+    # service scenario it is ue3, to which subscriber 2 diverts its calls.
+    - private_identity: 001010000000003@ims.mnc001.mcc001.3gppnetwork.org
+      public_identities:
+        - sip:001010000000003@ims.mnc001.mcc001.3gppnetwork.org
+        - tel:+12025550103
+      password: test-password-3
+      ut_password: test-password-3
+    # Used by pjsua, a softphone written by others, as an independent
+    # test peer.
+    - private_identity: 001010000000004@ims.mnc001.mcc001.3gppnetwork.org
+      public_identities:
+        - sip:001010000000004@ims.mnc001.mcc001.3gppnetwork.org
+        - tel:+12025550104
+      password: test-password-4
+      ut_password: test-password-4
+    # The VoLTE UEs have a USIM and no ISIM. Each derives its private
+    # identity and a temporary public identity from the IMSI (TS 23.003
+    # 13.3, 13.4B) and registers the temporary one, which is barred: it
+    # serves REGISTER only, and only the CSCFs and the HSS see it (TS
+    # 23.228 E.3.1). The SIP URI and the tel URI of the number are the
+    # identities the user calls and is called with; the first that is not
+    # barred is the default public identity (TS 29.228 6.5.1.1).
+    #
+    # IMS-AKA instead of SIP Digest. K and OPc are those of
+    # MILENAGE test set 1 (TS 35.208 4.3.1), whose OP is
+    # cdc202d5123e20f62b6d676ac72cb318 for a client such as SIPp that
+    # takes OP. The AMF bits are all 0: the separation bit is for EPS
+    # vectors only, and bits 1 to 7 are reserved (TS 33.102 Annex H).
+    # SQN_HE starts at 0 (TS 33.102 C.3.2).
+    - private_identity: 001010000000010@ims.mnc001.mcc001.3gppnetwork.org
+      public_identities:
+        - sip:001010000000010@ims.mnc001.mcc001.3gppnetwork.org
+        - sip:+12025550110@ims.mnc001.mcc001.3gppnetwork.org
+        - tel:+12025550110
+      barred_identities:
+        - sip:001010000000010@ims.mnc001.mcc001.3gppnetwork.org
+      aka:
+        k: 465b5ce8b199b49faa5f0a2ee238a6bc
+        opc: cd63cb71954a9f4e48a5994e37a02baf
+        amf: "0000"
+        sqn: "000000000000"
+      # No SIP Digest password to reuse for Ut.
+      ut_password: test-password-10
+    # The second VoLTE UE, with the K and OPc of MILENAGE test set 3 (TS
+    # 35.208 4.3.3), so that the two UEs of a VoLTE call have keys of
+    # their own.
+    - private_identity: 001010000000012@ims.mnc001.mcc001.3gppnetwork.org
+      public_identities:
+        - sip:001010000000012@ims.mnc001.mcc001.3gppnetwork.org
+        - sip:+12025550112@ims.mnc001.mcc001.3gppnetwork.org
+        - tel:+12025550112
+      barred_identities:
+        - sip:001010000000012@ims.mnc001.mcc001.3gppnetwork.org
+      aka:
+        k: fec86ba6eb707ed08905757b1bb44b8f
+        opc: 1006020f0a478bf6b699f15c062e42b3
+        amf: "0000"
+        sqn: "000000000000"
+      ut_password: test-password-12
+    # SIPp, the independent test peer of IMS AKA. SIPp 3.7
+    # takes its K, OP and AMF as the bytes of their text, so its USIM
+    # holds K "ims-practice-K01", OP "ims-practice-OP1" and AMF "00"
+    # (images/peer/sipp/register-aka.xml). Here they are in hexadecimal,
+    # with the OPc that MILENAGE derives from that OP (TS 35.206 4.1).
+    # The AMF has the separation bit 0; its other bits are reserved (TS
+    # 33.102 Annex H), and only these test keys set them.
+    - private_identity: 001010000000011@ims.mnc001.mcc001.3gppnetwork.org
+      public_identities:
+        - sip:001010000000011@ims.mnc001.mcc001.3gppnetwork.org
+        - sip:+12025550111@ims.mnc001.mcc001.3gppnetwork.org
+        - tel:+12025550111
+      barred_identities:
+        - sip:001010000000011@ims.mnc001.mcc001.3gppnetwork.org
+      aka:
+        k: 696d732d70726163746963652d4b3031
+        opc: 57e2bf83bce5bc5ac5515553669fa86f
+        amf: "3030"
+        sqn: "000000000000"
+      ut_password: test-password-11
+  # The first MMTelServices document of every subscription (TS 29.364
+  # 7.2), kept as Sh repository data that the MMTel AS reads and the
+  # user changes over Ut. Each service is in the state it starts
+  # in at provisioning:
+  # - OIP, OIR, TIP and TIR are activated at provisioning (TS 24.607
+  #   4.5.1, TS 24.608 4.5.1). OIR and TIR are in the temporary mode and
+  #   restrict nothing unless the UE asks for it in a call.
+  # - CDIV and CB are activated at provisioning or later by the user
+  #   (TS 24.604 4.5.1, TS 24.611 4.5.1), so the operator chooses. Here
+  #   each rule is there but deactivated, with no target, as GSMA IR.92
+  #   2.3.2 has the operator put every provisioned rule in the first
+  #   document (Note 3).
+  # - CW is active: GSMA IR.92 2.3.4 has the UE turn it on and off
+  #   itself, without Ut (TS 24.615 4.5.2 leaves the start to the
+  #   operator).
+  # The operator values of CDIV (5 diversions, a no reply timer of 20 s)
+  # are the operator's own choice (TS 24.604 4.8.1). The user's own
+  # NoReplyTimer starts at the same 20 s. It is in the document so that
+  # the UE can change it: an XCAP PUT replaces an element in place, but
+  # puts a new one after the rule set, where the schema does not allow
+  # it.
+  mmtel_services: |
+    <MMTelServices xmlns="http://uri.etsi.org/ngn/params/xml/simservs/xcap" xmlns:cp="urn:ietf:params:xml:ns:common-policy">
+      <complete-originating-identity-presentation>
+        <originating-identity-presentation/>
+        <operator-originating-identity-presentation authorized="true"/>
+      </complete-originating-identity-presentation>
+      <complete-originating-identity-restriction>
+        <originating-identity-presentation-restriction>
+          <default-behaviour>presentation-not-restricted</default-behaviour>
+        </originating-identity-presentation-restriction>
+        <operator-originating-identity-presentation-restriction authorized="true">
+          <mode>temporary</mode>
+          <restriction>only-identity</restriction>
+        </operator-originating-identity-presentation-restriction>
+      </complete-originating-identity-restriction>
+      <complete-terminating-identity-presentation>
+        <terminating-identity-presentation/>
+        <operator-terminating-identity-presentation authorized="true"/>
+      </complete-terminating-identity-presentation>
+      <complete-terminating-identity-restriction>
+        <terminating-identity-presentation-restriction>
+          <default-behaviour>presentation-not-restricted</default-behaviour>
+        </terminating-identity-presentation-restriction>
+        <operator-terminating-identity-presentation-restriction authorized="true">
+          <mode>temporary</mode>
+        </operator-terminating-identity-presentation-restriction>
+      </complete-terminating-identity-restriction>
+      <complete-communication-diversion>
+        <communication-diversion>
+          <NoReplyTimer>20</NoReplyTimer>
+          <cp:ruleset>
+            <cp:rule id="cfu">
+              <cp:conditions><rule-deactivated/></cp:conditions>
+              <cp:actions><forward-to><target/></forward-to></cp:actions>
+            </cp:rule>
+            <cp:rule id="cfb">
+              <cp:conditions><busy/><rule-deactivated/></cp:conditions>
+              <cp:actions><forward-to><target/></forward-to></cp:actions>
+            </cp:rule>
+            <cp:rule id="cfnr">
+              <cp:conditions><no-answer/><rule-deactivated/></cp:conditions>
+              <cp:actions><forward-to><target/></forward-to></cp:actions>
+            </cp:rule>
+            <cp:rule id="cfnrc">
+              <cp:conditions><not-reachable/><rule-deactivated/></cp:conditions>
+              <cp:actions><forward-to><target/></forward-to></cp:actions>
+            </cp:rule>
+            <cp:rule id="cfnl">
+              <cp:conditions><not-registered/><rule-deactivated/></cp:conditions>
+              <cp:actions><forward-to><target/></forward-to></cp:actions>
+            </cp:rule>
+          </cp:ruleset>
+        </communication-diversion>
+        <operator-communication-diversion authorized="true">
+          <communication-retention-on-invocation>clear-communication-on-invocation-of-diversion</communication-retention-on-invocation>
+          <retention-when-diverting-rejected-at-diverted-to-user>no-action-at-diverting-user</retention-when-diverting-rejected-at-diverted-to-user>
+          <total-number-of-diversions-for-each-communication>5</total-number-of-diversions-for-each-communication>
+          <cdiv-indication-timer>0</cdiv-indication-timer>
+          <communication-forwarding-on-no-reply-timer>20</communication-forwarding-on-no-reply-timer>
+        </operator-communication-diversion>
+      </complete-communication-diversion>
+      <complete-communication-waiting>
+        <communication-waiting/>
+        <operator-communication-waiting authorized="true">
+          <calling-user-receives-notification-his-call-is-waiting>false</calling-user-receives-notification-his-call-is-waiting>
+        </operator-communication-waiting>
+      </complete-communication-waiting>
+      <complete-communication-hold>
+        <operator-communication-hold authorized="true"/>
+      </complete-communication-hold>
+      <complete-communication-barring>
+        <incoming-communication-barring>
+          <cp:ruleset>
+            <cp:rule id="baic">
+              <cp:conditions><rule-deactivated/></cp:conditions>
+              <cp:actions><allow>false</allow></cp:actions>
+            </cp:rule>
+            <cp:rule id="bic-roam">
+              <cp:conditions><roaming/><rule-deactivated/></cp:conditions>
+              <cp:actions><allow>false</allow></cp:actions>
+            </cp:rule>
+            <cp:rule id="acr">
+              <cp:conditions><anonymous/><rule-deactivated/></cp:conditions>
+              <cp:actions><allow>false</allow></cp:actions>
+            </cp:rule>
+          </cp:ruleset>
+        </incoming-communication-barring>
+        <outgoing-communication-barring>
+          <cp:ruleset>
+            <cp:rule id="baoc">
+              <cp:conditions><rule-deactivated/></cp:conditions>
+              <cp:actions><allow>false</allow></cp:actions>
+            </cp:rule>
+            <cp:rule id="boic">
+              <cp:conditions><international/><rule-deactivated/></cp:conditions>
+              <cp:actions><allow>false</allow></cp:actions>
+            </cp:rule>
+            <cp:rule id="boic-exhc">
+              <cp:conditions><international-exHC/><rule-deactivated/></cp:conditions>
+              <cp:actions><allow>false</allow></cp:actions>
+            </cp:rule>
+          </cp:ruleset>
+        </outgoing-communication-barring>
+        <operator-incoming-communication-barring authorized="true"/>
+        <operator-outgoing-communication-barring authorized="true"/>
+      </complete-communication-barring>
+    </MMTelServices>
+  # The services of SMS over IP, for every subscription. The
+  # S-CSCF sends the IP-SM-GW a third-party REGISTER for each
+  # registration, with the MSISDN in the body (TS 24.229 5.4.1.7A), and
+  # every short message that a user sends (TS 24.341 5.3.3.4.1). A
+  # short message to a user goes to the IP-SM-GW only when it comes from
+  # another network (priority 2); the IP-SM-GW's own MESSAGE to a user
+  # would otherwise come back to it (TS 23.218 5.2.3 NOTE 5).
+  initial_filter_criteria:
+    - priority: 0
+      trigger_point: {condition_type_cnf: true, spt: [{group: [0], method: REGISTER}]}
+      application_server: {server_name: sip:ipsmgw.ims.mnc001.mcc001.3gppnetwork.org:5060, default_handling: SESSION_CONTINUED, service_info: "{msisdn}"}
+    - priority: 1
+      trigger_point:
+        condition_type_cnf: true
+        spt:
+          - {group: [0], method: MESSAGE}
+          # The media type in any case (RFC 2045 5.1), with or without
+          # parameters. Annex F of TS 29.228 matches the content with
+          # case, and its regular expressions have no flag to fold it.
+          - {group: [1], sip_header: {header: ^Content-Type$, content: '^[Aa][Pp][Pp][Ll][Ii][Cc][Aa][Tt][Ii][Oo][Nn]/[Vv][Nn][Dd]\.3[Gg][Pp][Pp]\.[Ss][Mm][Ss]([[:space:]]*;.*)?$'}}
+          - {group: [2], session_case: ORIGINATING_REGISTERED}
+      application_server: {server_name: sip:ipsmgw.ims.mnc001.mcc001.3gppnetwork.org:5060}
+    # A short message for a user from another network reaches the
+    # IP-SM-GW that serves the user (TS 23.204 6.4a step 2), as in
+    # the peer network (deploy/interconnect/peer/hss.yaml). The
+    # IP-SM-GW asserts its own URI in the MESSAGEs it sends to users:
+    # the negated header leaves them out.
+    - priority: 2
+      trigger_point:
+        condition_type_cnf: true
+        spt:
+          - {group: [0], method: MESSAGE}
+          - {group: [1], sip_header: {header: ^Content-Type$, content: '^[Aa][Pp][Pp][Ll][Ii][Cc][Aa][Tt][Ii][Oo][Nn]/[Vv][Nn][Dd]\.3[Gg][Pp][Pp]\.[Ss][Mm][Ss]([[:space:]]*;.*)?$'}}
+          - {group: [2], session_case: TERMINATING_REGISTERED}
+          - {group: [3], condition_negated: true, sip_header: {header: ^P-Asserted-Identity$, content: 'sip:ipsmgw\.ims\.mnc001\.mcc001\.3gppnetwork\.org'}}
+      application_server: {server_name: sip:ipsmgw.ims.mnc001.mcc001.3gppnetwork.org:5060}
+    # The MMTel AS gets every INVITE of a user: those the
+    # user makes, those to the user, registered or not, and those that
+    # it diverted away from the user (ORIGINATING_CDIV, TS 24.229 5.4.3.3
+    # step 3). Barring must hold, so the originating cases end the call
+    # when the AS fails; a call to the user goes on without the AS.
+    - priority: 10
+      trigger_point: {condition_type_cnf: true, spt: [{group: [0], method: INVITE}, {group: [1], session_case: ORIGINATING_REGISTERED}]}
+      application_server: {server_name: sip:mmtel.ims.mnc001.mcc001.3gppnetwork.org:5060, default_handling: SESSION_TERMINATED}
+    - priority: 11
+      trigger_point: {condition_type_cnf: true, spt: [{group: [0], method: INVITE}, {group: [1], session_case: TERMINATING_REGISTERED}]}
+      application_server: {server_name: sip:mmtel.ims.mnc001.mcc001.3gppnetwork.org:5060, default_handling: SESSION_CONTINUED}
+    - priority: 12
+      trigger_point: {condition_type_cnf: true, spt: [{group: [0], method: INVITE}, {group: [1], session_case: TERMINATING_UNREGISTERED}]}
+      application_server: {server_name: sip:mmtel.ims.mnc001.mcc001.3gppnetwork.org:5060, default_handling: SESSION_CONTINUED}
+    - priority: 13
+      trigger_point: {condition_type_cnf: true, spt: [{group: [0], method: INVITE}, {group: [1], session_case: ORIGINATING_CDIV}]}
+      application_server: {server_name: sip:mmtel.ims.mnc001.mcc001.3gppnetwork.org:5060, default_handling: SESSION_TERMINATED}
+diameter:
+  origin_host: hss.ims.mnc001.mcc001.3gppnetwork.org
+  origin_realm: ims.mnc001.mcc001.3gppnetwork.org
+  listen: 0.0.0.0:3868
+  # Shorter than the RFC defaults (Tw 30s, Tc 30s) so that watchdogs
+  # show up in a capture quickly.
+  timers:
+    tw: 10s
+    tc: 5s
+# Copies of every SIP and Diameter message for the dashboard.
+# The address is fixed so that the node starts even when the dashboard
+# is down; the dashboard is not on the call path.
+hep:
+  collector: 172.28.0.60:9060

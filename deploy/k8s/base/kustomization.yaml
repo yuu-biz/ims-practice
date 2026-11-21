@@ -1,0 +1,51 @@
+# The IMS of compose.yaml on Kubernetes, one workload per role.
+# It does not run by itself: the names of the home network domain need
+# one of the DNS overlays in ../overlays.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: ims
+labels:
+  - pairs:
+      app.kubernetes.io/part-of: ims-practice
+    includeTemplates: true
+resources:
+  - namespace.yaml
+  - hss.yaml
+  - icscf.yaml
+  - scscf.yaml
+  - pcscf.yaml
+  - agw.yaml
+  - ipsmgw.yaml
+  - mmtel.yaml
+  - mrfc.yaml
+  - mrfp.yaml
+  - epc.yaml
+  - dashboard.yaml
+  - ue.yaml
+# The role configuration files, copied from deploy/compose by
+# "go generate ./deploy/k8s/..." and changed only where Kubernetes needs
+# it (changes.go in deploy/k8s). sync_test.go fails when a copy is out
+# of date. The hash in each name rolls the Pods when a file changes.
+configMapGenerator:
+  - name: hss-config
+    files: [node.yaml=config/hss.yaml]
+  - name: icscf-config
+    files: [node.yaml=config/icscf.yaml]
+  - name: scscf-config
+    files: [node.yaml=config/scscf.yaml]
+  - name: pcscf-config
+    files: [node.yaml=config/pcscf.yaml]
+  - name: agw-config
+    files: [node.yaml=config/agw.yaml]
+  - name: ipsmgw-config
+    files: [node.yaml=config/ipsmgw.yaml]
+  - name: mmtel-config
+    files: [node.yaml=config/mmtel.yaml]
+  - name: mrfc-config
+    files: [node.yaml=config/mrfc.yaml]
+  - name: mrfp-config
+    files: [node.yaml=config/mrfp.yaml]
+  - name: epc-config
+    files: [node.yaml=config/epc.yaml]
+  - name: dashboard-config
+    files: [node.yaml=config/dashboard.yaml]

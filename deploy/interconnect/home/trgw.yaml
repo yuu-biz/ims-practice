@@ -1,0 +1,17 @@
+# TrGW-A, the media relay at the border of network A (TS 29.165
+# 5.2.2). It is the agw role on two networks, the same relay that the
+# P-CSCF uses, and IBCF-A drives it over its control API. The relay takes RTP on every
+# interface; rtp_address is its address in network A, and IBCF-A
+# writes its address on nni0 into the SDP for network B.
+node: trgw-a
+roles: [agw]
+home_domain: ims.mnc001.mcc001.3gppnetwork.org
+agw:
+  control: 0.0.0.0:8080
+  rtp_address: 172.28.0.91
+  # A range of its own, apart from the agw of compose.yaml (40000 to
+  # 40039), which compose.yaml publishes on the host. Nothing outside
+  # the networks needs to reach this one.
+  rtp_ports:
+    min: 41000
+    max: 41039

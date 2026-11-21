@@ -1,0 +1,79 @@
+// Package ibcf is the IBCF role: the border of the home network towards
+// the IMS networks it interconnects with (TS 24.229 5.10, TS 29.165
+// 5.2.1). The IBCF is a B2BUA (5.10.5): a call that crosses the border
+// has one dialog between the home network and the IBCF, and another
+// between the IBCF and the peer, each with its own Call-ID, tags, CSeq,
+// Via and Contact. On the way from one dialog to the other the IBCF
+// applies the agreement with the peer, an interconnect.Profile, through
+// interconnect.Border: the screening of methods, option tags and header
+// fields, the trust domain boundary, privacy, the format of telephone
+// numbers and the codecs. It puts the media of each call through a
+// TrGW, whose addresses it writes into the SDP. Nothing that routes a
+// message inside one network crosses into the other, so the topology
+// of the home network stays hidden without the encryption of 5.10.4.
+// The one exception is a Contact that 5.10.5 has cross as it came, a
+// GRUU or a conference URI, with the IBCF in Record-Route: what that
+// URI names, the other network sees.
+//
+// The IBCF has two UAs. The internal one faces the home network on the
+// Mx reference point (TS 29.165 3.2), and a request that comes to it
+// leaves for a peer: the IBCF is its exit point (TS 24.229 5.10.2). The
+// external one faces the peers on Ici, and a request that comes to it
+// enters the home network: the IBCF is its entry point (5.10.3). The
+// IBCF finds the peer of a request that leaves by the host of its next
+// hop, and the peer of one that enters by the address it comes from
+// (Peers). A request from an address of no peer gets no response at
+// all: the external UA drops it before it is handled (IBCF.Screen).
+//
+// Several IBCF instances can share the work. Each instance names itself
+// in the Contact of its dialogs, so that the requests within a call
+// come back to the instance that holds its two dialogs, and the initial
+// requests go to any instance of the pool. What an instance keeps of
+// its calls beyond its process is a record per call in the Store, under
+// its name: the TrGW context, and the two dialogs once the call is
+// answered, as they are after each request within the call (TS 24.229
+// 5.10.2.2 step 2, 5.10.2.3, 5.10.3.2 step 2, 5.10.3.3). An instance
+// that starts again under the same name ends the calls of its earlier
+// process from those records (ReleaseLeftovers).
+//
+// The IBCF counts what it lets across and what it turns away, per
+// peer, in the Registry of Config.Metrics (metrics.go).
+//
+// SIMPLIFIED: TS 24.229 5.10.2.4 and 5.10.3.4. The IBCF ends a call by
+// itself only when a leg fails, and when it takes the place of its
+// earlier process (ReleaseLeftovers). It does not hear of a failure of
+// the TrGW, so a call whose TrGW context is lost goes on without media
+// until a party ends it.
+//
+// SIMPLIFIED: TS 24.229 5.10.2.4 and 5.10.3.4. The one Store is
+// MemoryStore, in the memory of one process; no Store that keeps the
+// records outside the process is built. An IBCF node that is recreated
+// starts with an empty one, so it finds no record and ends none of the
+// calls of the process that stopped: their requests get 481 from it,
+// and their TrGW contexts stay reserved.
+//
+// SIMPLIFIED: TS 24.229 5.10.2.1, 5.10.3.1 and TS 29.165 5.3.1. Only the
+// non-roaming II-NNI is handled. A REGISTER does not cross (the border
+// answers it 405, TS 29.165 Table 6.1), and neither the Path of
+// 5.10.3.1 nor the restoration procedures of 5.10.3.2 (P-CSCF, step 6A
+// and the end of the clause) and 5.10.3.5 (S-CSCF) are there.
+//
+// SIMPLIFIED: TS 24.229 5.10.2.2 steps 5A, 6 and 7, 5.10.3.2 steps 1A,
+// 1B, 2C, 2D, 5 to 9 and the steps for its responses. This project has
+// no charging, no private network traffic, no emergency calls and no
+// calling number verification, so the IBCF neither stores
+// P-Charging-Function-Addresses nor handles fe-identifier,
+// P-Private-Network-Indication, Resource-Priority or received-realm,
+// and it adds orig only where step 4 passes it on; the border removes
+// what may not cross.
+//
+// SIMPLIFIED: RFC 3891 and RFC 3515. A Replaces header field, or a
+// Refer-To that holds one, names a dialog of one leg; the IBCF does not
+// map it to the other leg's dialog. Its UA does not support replaces,
+// so an INVITE that requires it gets 420, and a REFER that an agreement
+// lets cross goes on as it came.
+//
+// SIMPLIFIED: TS 24.229 6.7.1.4.1. IPv4 only: the TrGW
+// translates addresses and ports (NA(P)T) but not between IPv4 and IPv6
+// (NA(P)T-PT), and the IBCF inserts no altc attributes.
+package ibcf

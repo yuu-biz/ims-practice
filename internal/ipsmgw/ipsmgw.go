@@ -1,0 +1,257 @@
+// Package ipsmgw is the IP-SM-GW, the application server that carries
+// short messages between UEs in the IMS and the SC (TS 23.204, TS
+// 24.341 5.3.3). It does transport layer interworking: the RP message
+// that a UE sends in the body of a SIP MESSAGE goes to the SC, and a
+// TPDU from the SC goes to the UE in RP-DATA.
+//
+// The S-CSCF brings it two kinds of request by initial filter criteria:
+// a third-party REGISTER for each registration of a user (5.3.3.2), and
+// each MESSAGE with a short message body that a user sends (5.3.3.4.1).
+// After a third-party REGISTER the IP-SM-GW subscribes to the user's
+// registration state, and tells the HSS whether the user can take short
+// messages (5.3.3.2). It sends MESSAGEs of its own to the users
+// (5.3.3.4.2 to 5.3.3.4.4), into the home network through the I-CSCF.
+//
+// Every state that outlives one SIP transaction is in the Store, so that
+// several IP-SM-GWs can serve one network behind one DNS name.
+package ipsmgw
+
+import (
+	"context"
+	"errors"
+	"log/slog"
+	"strconv"
+	"strings"
+	"time"
+
+	"github.com/yuu-biz/ims-practice/internal/ims"
+	"github.com/yuu-biz/ims-practice/internal/sh"
+	"github.com/yuu-biz/ims-practice/internal/sip"
+	"github.com/yuu-biz/ims-practice/internal/sms"
+)
+
+// ContentType is the media type of a short message in the body of a
+// MESSAGE (TS 24.341 5.3.1.2 item d).
+const ContentType = "application/vnd.3gpp.sms"
+
+// acceptContact asks the S-CSCF to deliver a MESSAGE only to a contact
+// that registered the "+g.3gpp.smsip" feature tag (TS 24.341 5.3.2.2),
+// as TS 24.341 5.3.3.4.2 to 5.3.3.4.4 item b want: the tag, with the
+// "require" and "explicit" parameters of RFC 3841.
+const acceptContact = "*;+g.3gpp.smsip;require;explicit"
+
+// Config is how the IP-SM-GW names itself and the SC.
+type Config struct {
+	// URI is the SIP URI of the IP-SM-GW, such as
+	// sip:ipsmgw.ims.mnc001.mcc001.3gppnetwork.org:5060. It is the
+	// ServerName of the filter criteria that send requests here, and the
+	// P-Asserted-Identity of every MESSAGE the IP-SM-GW sends (TS 24.341
+	// 5.3.3.4.2 item d), where the UE takes the address of its delivery
+	// report from (5.3.2.4 NOTE 1).
+	URI string
+	// HomeDomain leads, through DNS, to the I-CSCF: the entry point of
+	// the home network, where the MESSAGEs of the IP-SM-GW go.
+	HomeDomain string
+	// Number is the E.164 number of the IP-SM-GW, digits only, which it
+	// registers in the HSS for each user it serves (TS 29.328 7.6.16).
+	Number string
+	// ServiceCentre is the address of the SC: the RP-Destination Address
+	// that a short message from a UE must carry, and the
+	// RP-Originator Address of the RP-DATA to a UE (TS 24.011 8.2.5.1,
+	// 8.2.5.2).
+	ServiceCentre sms.Address
+	// ReportTimeout is how long the IP-SM-GW waits for the delivery
+	// report of an RP-DATA. Zero means defaultReportTimeout.
+	ReportTimeout time.Duration
+	// IBCF is the IBCF of the home network, through which a short
+	// message for a user of another IMS network leaves (deliver.go). The
+	// zero value has no host: every recipient is in the home network.
+	IBCF sip.URI
+}
+
+// HSS is the part of Sh that the IP-SM-GW uses. *sh.Client is one.
+type HSS interface {
+	UpdateSMSRegistrationInfo(ctx context.Context, id sh.UserIdentity, ipsmgwNumber string) error
+}
+
+// IPSMGW is the IP-SM-GW role.
+type IPSMGW struct {
+	cfg     Config
+	sc      ServiceCentre
+	store   Store
+	hss     HSS
+	locator ims.Locator
+	stack   ims.StackRef
+	// users serializes what happens to the reg event subscription of
+	// one user, by its public identity. The Store does not lock across
+	// nodes.
+	users ims.UserLocks
+	log   *slog.Logger
+}
+
+// New returns the IP-SM-GW. sc is where short messages from the UEs go;
+// when it is the SC stub, the stub also needs the IP-SM-GW, to deliver
+// through it.
+func New(cfg Config, sc ServiceCentre, store Store, hss HSS, locator ims.Locator, log *slog.Logger) *IPSMGW {
+	if cfg.ReportTimeout == 0 {
+		cfg.ReportTimeout = defaultReportTimeout
+	}
+	return &IPSMGW{cfg: cfg, sc: sc, store: store, hss: hss, locator: locator, log: log}
+}
+
+// SetStack hands the IP-SM-GW the stack that calls OnRequest.
+func (g *IPSMGW) SetStack(stack *sip.Stack) { g.stack.Set(stack) }
+
+// OnRequest is the IP-SM-GW as a SIP UAS: it answers every request
+// itself and forwards none (TS 24.229 5.7.2).
+func (g *IPSMGW) OnRequest(st *sip.ServerTransaction) {
+	switch st.Request.Method {
+	case sip.REGISTER:
+		g.register(st)
+	case sip.MESSAGE:
+		g.message(st)
+	case sip.NOTIFY:
+		g.receiveRegEvent(st)
+	default:
+		g.respond(st, 405, func(resp *sip.Message) { resp.Add("Allow", "REGISTER, MESSAGE, NOTIFY") })
+	}
+}
+
+// respond answers st with code as TS 24.229 5.7.2 has an AS that acts
+// as a terminating UA answer: the P-Charging-Vector of the response
+// repeats the icid-value and the orig-ioi of the request and adds a
+// type 3 term-ioi that names this network. fill, when not nil, adds
+// what else the response needs.
+func (g *IPSMGW) respond(st *sip.ServerTransaction, code int, fill func(*sip.Message)) {
+	resp := sip.NewResponse(st.Request, code, sip.NewTag())
+	if fill != nil {
+		fill(resp)
+	}
+	if pcv := st.Request.Get("P-Charging-Vector"); pcv != "" {
+		resp.Add("P-Charging-Vector", pcv+";term-ioi="+g.cfg.HomeDomain)
+	}
+	st.Respond(resp)
+}
+
+// register is a third-party REGISTER from the S-CSCF (TS 24.341
+// 5.3.3.2, TS 23.204 6.1 and 6.2): the IP-SM-GW answers 200, and for a
+// registration or a reregistration keeps the MSISDN that the filter
+// criterion's ServiceInfo carries and subscribes to the user's
+// registration state (regevent.go). The NOTIFYs of that subscription,
+// not the REGISTER, tell the HSS whether the user takes short messages:
+// only they say whether a contact has "+g.3gpp.smsip". A deregistration
+// needs nothing more, since the S-CSCF ends the subscription with a
+// NOTIFY too (TS 24.229 5.4.2.1.2).
+func (g *IPSMGW) register(st *sip.ServerTransaction) {
+	req := st.Request
+	log := g.log.With("method", "REGISTER", "call_id", req.Get("Call-ID"))
+	publicID, err := ims.PublicIdentity(req.Get("To"))
+	if err != nil {
+		g.respond(st, 400, nil)
+		return
+	}
+	n, _, err := sip.RequestedExpires(req)
+	if err != nil || n < 0 {
+		g.respond(st, 400, nil)
+		return
+	}
+	g.respond(st, 200, func(resp *sip.Message) {
+		if contact := req.Get("Contact"); contact != "" && n > 0 {
+			// RFC 3261 10.3 step 8: the 200 lists the binding, as table
+			// B.3-2 of TS 24.341 shows.
+			resp.Add("Contact", contact+";expires="+strconv.Itoa(n))
+		}
+	})
+	log = log.With("public_identity", publicID, "expires", n)
+	if n == 0 {
+		log.Info("third-party REGISTER of a deregistration")
+		return
+	}
+	msisdn, err := ims.ParseServiceInfo(req.Body)
+	if err != nil || !sh.ValidMSISDN(msisdn) {
+		log.Warn("third-party REGISTER without an MSISDN in service-info")
+		msisdn = ""
+	}
+	g.watchRegistration(publicID, msisdn, time.Duration(n)*time.Second, log.With("msisdn", msisdn))
+}
+
+// isShortMessage reports whether a MESSAGE carries a short message.
+// Media types compare without case and may have parameters (RFC 2045
+// 5.1).
+func isShortMessage(req *sip.Message) bool {
+	mediaType, _, _ := strings.Cut(req.Get("Content-Type"), ";")
+	return strings.EqualFold(strings.TrimSpace(mediaType), ContentType)
+}
+
+// newMessage starts a MESSAGE of the IP-SM-GW's own to a user, with the
+// header fields that TS 24.341 5.3.3.4.2 to 5.3.3.4.4 have in common:
+// the user in the Request-URI (item a), the Accept-Contact (item b),
+// the Request-Disposition (item c), the IP-SM-GW in P-Asserted-Identity
+// (item d of 5.3.3.4.2, item e of 5.3.3.4.3), and the body. The
+// IP-SM-GW acts as an originating UA (TS 24.229 5.7.3).
+//
+// 5.3.3.4.4 does not list P-Asserted-Identity for the status report,
+// but the UE answers a status report with a delivery report like any
+// other RP-DATA (5.3.1.3), to the address it finds there (5.3.2.4
+// NOTE 1).
+func (g *IPSMGW) newMessage(to, disposition string, rp sms.RPMessage) (*sip.Message, error) {
+	body, err := rp.Marshal()
+	if err != nil {
+		return nil, err
+	}
+	m := &sip.Message{Method: sip.MESSAGE, RequestURI: to}
+	m.Add("Max-Forwards", "70")
+	m.Add("From", sip.NameAddr{URI: g.cfg.URI}.String()+";tag="+sip.NewTag())
+	m.Add("To", sip.NameAddr{URI: to}.String())
+	m.Add("Call-ID", sip.NewCallID())
+	m.Add("CSeq", "1 MESSAGE")
+	m.Add("P-Asserted-Identity", sip.NameAddr{URI: g.cfg.URI}.String())
+	m.Add("P-Charging-Vector", "icid-value="+sip.NewCallID()+";orig-ioi="+g.cfg.HomeDomain)
+	m.Add("Accept-Contact", acceptContact)
+	m.Add("Request-Disposition", disposition)
+	m.Add("Content-Type", ContentType)
+	m.Body = body
+	return m, nil
+}
+
+// entryPoint leads, through DNS, to the I-CSCF of the home network,
+// where every request of the IP-SM-GW outside a dialog goes.
+//
+// SIMPLIFIED: TS 24.229 5.7.3. An AS that sends a request on its own
+// puts a Route to the S-CSCF of the user or to the entry point of the
+// network on it, as TS 24.341 table B.5-7 shows. The requests of the
+// IP-SM-GW carry none: the entry point is the name of the home domain,
+// and the I-CSCF of this project removes only a Route that names its
+// own host (5.3.2.1 step 2), so a Route with the domain would stay in
+// the request after the I-CSCF and lead the S-CSCF back to it.
+func (g *IPSMGW) entryPoint() sip.URI { return sip.URI{Scheme: "sip", Host: g.cfg.HomeDomain} }
+
+// send sends a request of the IP-SM-GW to next and returns the final
+// response. With no final response, the error says why.
+func (g *IPSMGW) send(m *sip.Message, next sip.URI) (*sip.Message, error) {
+	stack, err := g.stack.Get()
+	if err != nil {
+		return nil, err
+	}
+	dst, err := ims.Destination(context.Background(), g.locator, next)
+	if err != nil {
+		return nil, err
+	}
+	ct, err := stack.SendRequest(m, dst)
+	if err != nil {
+		return nil, err
+	}
+	var final *sip.Message
+	for r := range ct.Responses() {
+		if r.StatusCode >= 200 {
+			final = r
+		}
+	}
+	if final == nil {
+		if err := ct.Err(); err != nil {
+			return nil, err
+		}
+		return nil, errors.New("ipsmgw: no final response")
+	}
+	return final, nil
+}

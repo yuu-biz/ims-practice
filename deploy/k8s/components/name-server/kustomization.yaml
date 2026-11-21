@@ -1,0 +1,42 @@
+# The address of the IMS DNS server, the name server of the home network
+# domain. It comes from ims_dns_cluster_ip of the environment
+# (environments/), which the kustomization that uses this component
+# lists among its resources, and goes to:
+#
+# - the fixed ClusterIP of the DNS server's Service: dns in
+#   components/external-dns, ims-dns in overlays/cluster-dns. A Pod's
+#   resolv.conf takes an address, so the address must not change.
+# - the A record of the name server in the zone (dns/). A name server
+#   must not be a CNAME (RFC 2181 10.3), so this is the one address the
+#   zone keeps.
+apiVersion: kustomize.config.k8s.io/v1alpha1
+kind: Component
+replacements:
+  - source:
+      kind: ConfigMap
+      name: ims-environment
+      fieldPath: data.ims_dns_cluster_ip
+    targets:
+      - select:
+          kind: Service
+          name: dns
+        fieldPaths: [spec.clusterIP]
+        options:
+          create: true
+      - select:
+          kind: Service
+          name: ims-dns
+        fieldPaths: [spec.clusterIP]
+        options:
+          create: true
+      # kustomize cannot edit a line inside a file, but it can split a
+      # string at a delimiter and replace one part. The zone has " IN A "
+      # once, in the name server's record, which "go generate" writes as
+      # the last line (changes.go): so the part after it is the address.
+      - select:
+          kind: ConfigMap
+          name: ims-zones
+        fieldPaths: ["data.[ims.mnc001.mcc001.3gppnetwork.org.zone]"]
+        options:
+          delimiter: " IN A "
+          index: 1

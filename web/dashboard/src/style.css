@@ -1,0 +1,499 @@
+:root {
+  color-scheme: light dark;
+  --bg: #f6f7f8;
+  --panel: #ffffff;
+  --text: #1b1f24;
+  --muted: #5b6470;
+  --line: #d5dae0;
+  --accent: #0b6bcb;
+  --sip: #1b1f24;
+  --diameter: #b54708;
+  --selected: #fff4c2;
+  --danger: #b42318;
+  --mono: ui-monospace, "Cascadia Mono", "SF Mono", Menlo, Consolas, monospace;
+  --sans: system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #14171b;
+    --panel: #1c2025;
+    --text: #e3e7ec;
+    --muted: #98a2ae;
+    --line: #353b43;
+    --accent: #5aa9f5;
+    --sip: #e3e7ec;
+    --diameter: #f5a25a;
+    --selected: #3d3618;
+    --danger: #f97066;
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font: 14px/1.45 var(--sans);
+}
+
+.top {
+  display: flex;
+  align-items: baseline;
+  gap: 1rem;
+  padding: 0.75rem 1rem;
+  border-bottom: 1px solid var(--line);
+  background: var(--panel);
+}
+
+h1 {
+  margin: 0;
+  font-size: 1.1rem;
+}
+
+h2 {
+  margin: 0 0 0.5rem;
+  font-size: 1rem;
+}
+
+main {
+  display: grid;
+  gap: 1rem;
+  padding: 1rem;
+}
+
+section {
+  min-width: 0;
+  padding: 0.75rem 1rem 1rem;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--panel);
+}
+
+.live {
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+.live::before {
+  content: "\25CF  ";
+}
+
+.live[data-state="live"] {
+  color: #1a7f37;
+}
+
+.live[data-state="down"] {
+  color: var(--danger);
+}
+
+.note {
+  margin: 0 0 0.5rem;
+  color: var(--muted);
+}
+
+.note.error {
+  color: var(--danger);
+}
+
+.scroll {
+  overflow-x: auto;
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+th,
+td {
+  padding: 0.3rem 0.6rem;
+  border-bottom: 1px solid var(--line);
+  text-align: left;
+  vertical-align: top;
+}
+
+th {
+  color: var(--muted);
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+td {
+  font-family: var(--mono);
+  font-size: 0.85rem;
+  white-space: pre-line;
+}
+
+td.empty {
+  font-family: var(--sans);
+  color: var(--muted);
+}
+
+tr:has([aria-current="true"]) td {
+  background: var(--selected);
+}
+
+.mono {
+  font-family: var(--mono);
+  font-weight: normal;
+}
+
+button {
+  font: inherit;
+  cursor: pointer;
+}
+
+button.link {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--accent);
+  font-family: var(--mono);
+  font-size: 0.85rem;
+  text-align: left;
+  text-decoration: underline;
+}
+
+button.danger {
+  color: var(--danger);
+}
+
+.add-form fieldset {
+  display: grid;
+  gap: 0.5rem;
+  max-width: 40rem;
+  margin: 0.75rem 0 0;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+}
+
+.add-form label {
+  display: grid;
+  gap: 0.2rem;
+  color: var(--muted);
+}
+
+.add-form input,
+.add-form textarea {
+  font: 0.85rem var(--mono);
+  padding: 0.3rem;
+}
+
+.add-form button {
+  justify-self: start;
+}
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+/* UE simulators */
+
+.ue-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 26rem), 1fr));
+  gap: 0.75rem;
+}
+
+.ue-card {
+  display: grid;
+  align-content: start;
+  gap: 0.5rem;
+  min-width: 0;
+  padding: 0.6rem 0.75rem;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+}
+
+.ue-card[data-reachable="false"] {
+  color: var(--muted);
+}
+
+.ue-card h3 {
+  margin: 0;
+  font-size: 0.95rem;
+  overflow-wrap: anywhere;
+}
+
+.ue-card dl {
+  display: grid;
+  gap: 0.2rem;
+  margin: 0;
+}
+
+.ue-card dl div {
+  display: grid;
+  grid-template-columns: 7rem 1fr;
+  gap: 0.5rem;
+}
+
+.ue-card dt {
+  color: var(--muted);
+}
+
+.ue-card dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.ue-card .muted {
+  color: var(--muted);
+}
+
+.ue-card .note {
+  margin: 0;
+}
+
+.ue-buttons,
+.ue-call,
+.ue-dtmf,
+.ue-sms {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.ue-call input,
+.ue-dtmf input,
+.ue-sms input:not([type="checkbox"]) {
+  flex: 1 1 12rem;
+  min-width: 0;
+  padding: 0.25rem;
+  font: 0.85rem var(--mono);
+}
+
+.ue-sms label:has(input:not([type="checkbox"])) {
+  display: flex;
+  flex: 1 1 9rem;
+  min-width: 0;
+}
+
+.ue-sms-list {
+  display: grid;
+  gap: 0.2rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  max-height: 8rem;
+  overflow-y: auto;
+}
+
+.ue-services summary {
+  cursor: pointer;
+}
+
+.ue-divert {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.4rem;
+  margin-top: 0.4rem;
+}
+
+.ue-divert label:has(input) {
+  display: flex;
+  flex: 1 1 10rem;
+  min-width: 0;
+}
+
+.ue-divert input {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 0.25rem;
+  font: 0.85rem var(--mono);
+}
+
+.ue-service-list {
+  display: grid;
+  gap: 0.1rem;
+  margin: 0.4rem 0 0;
+  padding: 0;
+  list-style: none;
+  font-size: 0.85rem;
+}
+
+/* Ladder diagram */
+
+.ladder-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 1rem;
+}
+
+@media (min-width: 1400px) {
+  .ladder-layout:has(.detail:not([hidden])) {
+    grid-template-columns: minmax(0, 1fr) minmax(24rem, 34rem);
+  }
+}
+
+.ladder svg {
+  display: block;
+  font: 12px var(--sans);
+}
+
+.ladder .lifeline {
+  stroke: var(--line);
+  stroke-width: 1;
+}
+
+.ladder .column-name {
+  fill: var(--text);
+  font-weight: 600;
+}
+
+.ladder .column-host,
+.ladder .time {
+  fill: var(--muted);
+  font-family: var(--mono);
+  font-size: 11px;
+}
+
+.ladder .arrow {
+  cursor: pointer;
+  outline: none;
+}
+
+.ladder .arrow line.wire,
+.ladder .arrow path.wire {
+  fill: none;
+  stroke-width: 1.5;
+}
+
+.ladder .arrow.sip .wire {
+  stroke: var(--sip);
+}
+
+.ladder .arrow.diameter .wire {
+  stroke: var(--diameter);
+  stroke-dasharray: 6 3;
+}
+
+/* A halo in the panel colour keeps a label readable where it crosses a
+   lifeline. */
+.ladder .arrow text.label {
+  paint-order: stroke;
+  stroke: var(--panel);
+  stroke-width: 4px;
+  stroke-linejoin: round;
+}
+
+.ladder .arrow.sip text.label {
+  fill: var(--sip);
+}
+
+.ladder .arrow.diameter text.label {
+  fill: var(--diameter);
+  font-style: italic;
+}
+
+.ladder .arrow .hit {
+  stroke: transparent;
+  stroke-width: 14;
+  fill: none;
+}
+
+.ladder .arrow .band {
+  fill: transparent;
+}
+
+.ladder .arrow:hover .band,
+.ladder .arrow:focus-visible .band {
+  fill: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+
+.ladder .arrow[aria-pressed="true"] .band {
+  fill: var(--selected);
+}
+
+.ladder marker.sip path {
+  fill: var(--sip);
+}
+
+.ladder marker.diameter path {
+  fill: var(--diameter);
+}
+
+.legend {
+  display: flex;
+  gap: 1.25rem;
+  margin: 0 0 0.5rem;
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+.legend .sip::before,
+.legend .diameter::before {
+  display: inline-block;
+  width: 2rem;
+  margin-right: 0.4rem;
+  vertical-align: middle;
+  border-top: 2px solid var(--sip);
+  content: "";
+}
+
+.legend .diameter::before {
+  border-top: 2px dashed var(--diameter);
+}
+
+.detail {
+  position: sticky;
+  top: 1rem;
+  align-self: start;
+  min-width: 0;
+}
+
+.detail h3 {
+  margin: 0 0 0.5rem;
+  font: 600 0.95rem var(--mono);
+}
+
+.detail h4 {
+  margin: 0 0 0.3rem;
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+.detail dl {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 0.15rem 0.75rem;
+  margin: 0 0 0.75rem;
+}
+
+.detail dt {
+  color: var(--muted);
+}
+
+.detail dd {
+  margin: 0;
+  font-family: var(--mono);
+  font-size: 0.85rem;
+  overflow-wrap: anywhere;
+}
+
+.detail ul {
+  margin: 0 0 0.75rem;
+  padding-left: 1.2rem;
+}
+
+.detail pre {
+  max-height: 32rem;
+  margin: 0;
+  padding: 0.6rem;
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: var(--bg);
+  font: 12px/1.4 var(--mono);
+  white-space: pre;
+}

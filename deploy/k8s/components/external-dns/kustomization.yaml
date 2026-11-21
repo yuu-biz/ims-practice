@@ -1,0 +1,51 @@
+# DNS option (b) of deploy/k8s/README.md: a DNS server of the IMS's own, outside the
+# cluster DNS, as the dns container of compose.yaml. It serves the zones
+# of the home network domain and of ENUM and forwards every other name,
+# cluster.local among them, to the cluster DNS. The IMS Pods ask it
+# first, so its queries and answers show up in the capture.
+#
+# A component, so that kind (overlays/external-dns) and the clouds
+# (overlays/cloud-*) use the same DNS server. The kustomization that
+# uses it lists ../../base, ../../dns and one environment (environments/)
+# among its resources.
+apiVersion: kustomize.config.k8s.io/v1alpha1
+kind: Component
+resources:
+  - dns.yaml
+components:
+  - ../name-server
+configMapGenerator:
+  - name: dns-corefile
+    files: [Corefile]
+# Every IMS Pod but the DNS server sends its queries to the DNS server's
+# fixed ClusterIP instead of the cluster DNS. ndots stays at 1 as in the
+# base.
+patches:
+  - target:
+      kind: (StatefulSet|Deployment)
+      labelSelector: app.kubernetes.io/part-of=ims-practice,app.kubernetes.io/name!=dns
+    patch: |-
+      - op: add
+        path: /spec/template/spec/dnsPolicy
+        value: None
+      - op: add
+        path: /spec/template/spec/dnsConfig
+        value:
+          searches: [ims.svc.cluster.local, svc.cluster.local, cluster.local]
+          options:
+            - name: ndots
+              value: "1"
+# The address in resolv.conf is that of the DNS server's Service, from
+# the environment, as in components/name-server.
+replacements:
+  - source:
+      kind: ConfigMap
+      name: ims-environment
+      fieldPath: data.ims_dns_cluster_ip
+    targets:
+      - select:
+          kind: (StatefulSet|Deployment)
+          labelSelector: app.kubernetes.io/part-of=ims-practice,app.kubernetes.io/name!=dns
+        fieldPaths: [spec.template.spec.dnsConfig.nameservers.0]
+        options:
+          create: true

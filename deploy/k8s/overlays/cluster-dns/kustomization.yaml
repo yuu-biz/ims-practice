@@ -1,0 +1,15 @@
+# DNS option (a) of deploy/k8s/README.md: the cluster's own CoreDNS serves the zones
+# of the home network domain and of ENUM, next to cluster.local. The
+# Pods keep the cluster DNS of dnsPolicy ClusterFirst.
+#
+#   kubectl apply -k deploy/k8s/overlays/cluster-dns
+#   kubectl -n kube-system patch deployment coredns \
+#     --patch-file deploy/k8s/overlays/cluster-dns/coredns-patch.yaml
+#
+# The second step mounts the zones into the CoreDNS Pods; kustomize can
+# only change objects it creates, and kubeadm created that Deployment.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - ../../base
+  - kube-system

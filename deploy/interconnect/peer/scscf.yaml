@@ -1,0 +1,21 @@
+# S-CSCF of network B. A call to a number of network A leaves through
+# IBCF-B (TS 24.229 5.4.3.2 steps 11 and 12).
+node: peer-scscf
+roles: [scscf]
+home_domain: ims.mnc002.mcc001.3gppnetwork.org
+scscf:
+  sip:
+    listen: 0.0.0.0:5060
+    host: scscf.ims.mnc002.mcc001.3gppnetwork.org
+  min_expires: 60
+  max_expires: 3600
+  ibcf: sip:ibcf.ims.mnc002.mcc001.3gppnetwork.org:5060
+diameter:
+  origin_host: scscf.ims.mnc002.mcc001.3gppnetwork.org
+  origin_realm: ims.mnc002.mcc001.3gppnetwork.org
+  peers:
+    - address: hss.ims.mnc002.mcc001.3gppnetwork.org:3868
+      origin_host: hss.ims.mnc002.mcc001.3gppnetwork.org
+  timers:
+    tw: 10s
+    tc: 5s

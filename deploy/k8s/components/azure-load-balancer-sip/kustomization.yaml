@@ -1,0 +1,46 @@
+# The comparison variant of SIP through a load balancer (option 2 of
+# load_balancer in deploy/cloud), for load_balancer = "sip" in
+# deploy/cloud/azure. Option 1, the edge node's own address, stays the
+# default: with a load balancer, the P-CSCF's requests to the UE leave
+# from the load balancer's address only while the flow that the UE
+# opened lasts on it (chapter 3), and the address is billed by the hour.
+#
+# On AKS, the cluster's cloud provider makes the load balancer rules from
+# this Service, on the Standard Load Balancer that AKS already has. The
+# UE sends SIP to the address of the Service; RTP still goes to
+# edge_public_address unless azure-load-balancer-rtp is used as well.
+# Delete the Service before "tofu destroy" (deploy/cloud/README.md).
+apiVersion: kustomize.config.k8s.io/v1alpha1
+kind: Component
+resources:
+  - service.yaml
+replacements:
+  - source:
+      kind: ConfigMap
+      name: ims-environment
+      fieldPath: data.load_balancer_sip_public_ip
+    targets:
+      - select:
+          kind: Service
+          name: pcscf-public
+        fieldPaths: ["metadata.annotations.[service.beta.kubernetes.io/azure-pip-name]"]
+  - source:
+      kind: ConfigMap
+      name: ims-environment
+      fieldPath: data.load_balancer_resource_group
+    targets:
+      - select:
+          kind: Service
+          name: pcscf-public
+        fieldPaths: ["metadata.annotations.[service.beta.kubernetes.io/azure-load-balancer-resource-group]"]
+  - source:
+      kind: ConfigMap
+      name: ims-environment
+      fieldPath: data.load_balancer_source_range
+    targets:
+      - select:
+          kind: Service
+          name: pcscf-public
+        fieldPaths: [spec.loadBalancerSourceRanges.0]
+        options:
+          create: true

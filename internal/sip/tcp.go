@@ -1,0 +1,297 @@
+package sip
+
+import (
+	"bufio"
+	"bytes"
+	"errors"
+	"fmt"
+	"io"
+	"net"
+	"net/netip"
+	"os"
+	"strconv"
+	"time"
+)
+
+// This file holds the TCP half of the transport layer (RFC 3261 18).
+// The layer keeps one table of open connections, keyed by the address
+// and port at the far end, and shares it between requests and
+// responses in both directions: a connection it opened to send a
+// request also brings back the responses, and one it accepted carries
+// the responses to the requests that came over it. Since every entry
+// is a TCP connection, the transport is left out of the key that RFC
+// 3261 18 describes.
+
+// tcpIdleTimeout is how long a connection stays open after the last
+// message sent or received on it. RFC 3261 18 asks for at least the
+// time a transaction may take, so that its request, responses and ACK
+// share one connection. The longest here is an INVITE through a proxy:
+// Timer C, 3.5 minutes by default, and then Timer L, 64*T1 = 32 s.
+// Five minutes covers both.
+const tcpIdleTimeout = 5 * time.Minute
+
+// tcpConnectTimeout bounds opening a connection and writing one message
+// to it. A peer that has gone away then shows up as a transport error
+// (RFC 3261 18.4) within a few seconds, well before Timer B or F.
+const tcpConnectTimeout = 2 * time.Second
+
+// maxStreamMessageSize bounds one message on a stream. RFC 3261 18.1.1
+// has every element handle messages up to 65,535 bytes, the UDP
+// maximum; a peer that sends a longer one has its connection closed.
+const maxStreamMessageSize = 65535
+
+// errNoContentLength is a stream message without Content-Length, which
+// leaves no way to tell where its body ends (RFC 3261 18.3).
+var errNoContentLength = errors.New("sip: message on a stream without Content-Length")
+
+// readStreamMessage reads the next message from a stream (RFC 3261
+// 18.3): the header up to the empty line, and then as many body bytes
+// as Content-Length says. Empty lines before the start line are
+// skipped (RFC 3261 7.5). It returns the bytes of the message as well.
+// Any error leaves the stream at an unknown place, so the caller closes
+// the connection.
+func readStreamMessage(r *bufio.Reader) (*Message, []byte, error) {
+	var head []byte
+	for {
+		// r holds maxStreamMessageSize bytes, so a longer line fails
+		// with bufio.ErrBufferFull.
+		line, err := r.ReadSlice('\n')
+		if err != nil {
+			if errors.Is(err, io.EOF) && len(head) > 0 {
+				return nil, nil, io.ErrUnexpectedEOF
+			}
+			return nil, nil, err
+		}
+		if len(head) == 0 && bytes.Equal(line, []byte("\r\n")) {
+			continue
+		}
+		head = append(head, line...)
+		if len(head) > maxStreamMessageSize {
+			return nil, nil, fmt.Errorf("sip: header longer than %d bytes", maxStreamMessageSize)
+		}
+		if bytes.Equal(line, []byte("\r\n")) {
+			break
+		}
+	}
+	m, err := parseHeader(bytes.TrimSuffix(head, []byte("\r\n\r\n")))
+	if err != nil {
+		return nil, nil, err
+	}
+	n, ok, err := m.contentLength()
+	switch {
+	case err != nil:
+		return nil, nil, err
+	case !ok:
+		return nil, nil, errNoContentLength
+	// n can be as large as an int goes, so len(head)+n could overflow.
+	case n > maxStreamMessageSize-len(head):
+		return nil, nil, fmt.Errorf("sip: message longer than %d bytes", maxStreamMessageSize)
+	}
+	m.Body = make([]byte, n)
+	if _, err := io.ReadFull(r, m.Body); err != nil {
+		if errors.Is(err, io.EOF) {
+			return nil, nil, io.ErrUnexpectedEOF
+		}
+		return nil, nil, err
+	}
+	return m, append(head, m.Body...), nil
+}
+
+func (t *TransportLayer) acceptTCP() {
+	defer t.wg.Done()
+	for {
+		c, err := t.listener.AcceptTCP()
+		if err != nil {
+			select {
+			case <-t.closed:
+			default:
+				t.log.Error("sip transport failed", "transport", string(TCP), "error", err.Error())
+			}
+			return
+		}
+		t.addConnection(c, unmapped(c.RemoteAddr()), "accepted")
+	}
+}
+
+// addConnection puts c in the table and starts reading it. When a
+// connection to remote is in the table already, because two senders
+// opened one at the same time, c is closed and the other one kept.
+func (t *TransportLayer) addConnection(c *net.TCPConn, remote netip.AddrPort, event string) (*net.TCPConn, error) {
+	t.mu.Lock()
+	if t.conns == nil {
+		t.mu.Unlock()
+		c.Close()
+		return nil, net.ErrClosed
+	}
+	if existing, ok := t.conns[remote]; ok {
+		t.mu.Unlock()
+		c.Close()
+		return existing, nil
+	}
+	t.conns[remote] = c
+	t.wg.Add(1)
+	t.mu.Unlock()
+	t.logConnection(event, c, remote, "")
+	go t.readTCP(c, remote)
+	return c, nil
+}
+
+func (t *TransportLayer) dropConnection(c *net.TCPConn, remote netip.AddrPort, reason string) {
+	c.Close()
+	t.mu.Lock()
+	if t.conns[remote] == c {
+		delete(t.conns, remote)
+	}
+	t.mu.Unlock()
+	t.logConnection("closed", c, remote, reason)
+}
+
+// readTCP reads the messages of one connection until it closes. A
+// connection on which nothing was sent or received for tcpIdleTimeout
+// is closed here too, by the read deadline that every message moves.
+func (t *TransportLayer) readTCP(c *net.TCPConn, remote netip.AddrPort) {
+	defer t.wg.Done()
+	r := bufio.NewReaderSize(c, maxStreamMessageSize)
+	for {
+		c.SetReadDeadline(time.Now().Add(t.idleTimeout))
+		m, wire, err := readStreamMessage(r)
+		if err != nil {
+			t.dropConnection(c, remote, closeReason(err))
+			return
+		}
+		if m.IsRequest() {
+			if err := stampVia(m, remote); err != nil {
+				t.log.Warn("discarded request without a usable Via", "src", remote.String(), "error", err.Error())
+				continue
+			}
+		}
+		record(t.log, t.observe, Capture{Transport: TCP, Source: remote, Destination: unmapped(c.LocalAddr()), Message: m, Wire: wire})
+		if !t.deliver(incoming{msg: m, source: Destination{Transport: TCP, Addr: remote}}) {
+			return
+		}
+	}
+}
+
+func closeReason(err error) string {
+	switch {
+	case errors.Is(err, io.EOF):
+		return "closed by the peer"
+	case errors.Is(err, os.ErrDeadlineExceeded):
+		return "idle"
+	case errors.Is(err, net.ErrClosed):
+		return "closed locally"
+	}
+	return err.Error()
+}
+
+// connectTCP returns the open connection to remote, or opens one.
+func (t *TransportLayer) connectTCP(remote netip.AddrPort) (*net.TCPConn, error) {
+	t.mu.Lock()
+	c, ok := t.conns[remote]
+	t.mu.Unlock()
+	if ok {
+		return c, nil
+	}
+	dialer := net.Dialer{Timeout: tcpConnectTimeout}
+	if local := unmapped(t.listener.Addr()).Addr(); !local.IsUnspecified() && local.Is4() == remote.Addr().Is4() {
+		// RFC 3261 18.1.1: should this connection close, the peer may
+		// open one to the address the request came from, at the port of
+		// the sent-by, so the connection comes from the address the
+		// transport listens on. The port stays one of the moment (18).
+		dialer.LocalAddr = &net.TCPAddr{IP: local.AsSlice()}
+	}
+	nc, err := dialer.Dial("tcp", remote.String())
+	if err != nil {
+		return nil, err
+	}
+	return t.addConnection(nc.(*net.TCPConn), remote, "opened")
+}
+
+func (t *TransportLayer) hasConnection(remote netip.AddrPort) bool {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	_, ok := t.conns[remote]
+	return ok
+}
+
+// sendTCP writes m to the connection to remote, which it opens if
+// there is none. net.Conn serializes concurrent writes, so two messages
+// never interleave on the stream.
+func (t *TransportLayer) sendTCP(m *Message, remote netip.AddrPort) error {
+	c, err := t.connectTCP(remote)
+	if err != nil {
+		return err
+	}
+	wire := m.Bytes()
+	record(t.log, t.observe, Capture{Transport: TCP, Sent: true, Source: unmapped(c.LocalAddr()), Destination: remote, Message: m, Wire: wire})
+	c.SetWriteDeadline(time.Now().Add(tcpConnectTimeout))
+	if _, err := c.Write(wire); err != nil {
+		// The reader sees the closed connection and drops it.
+		c.Close()
+		return err
+	}
+	c.SetReadDeadline(time.Now().Add(t.idleTimeout))
+	return nil
+}
+
+// tcpResponseAddress is where RFC 3261 18.2.2 opens a new connection
+// for a response whose request came over a connection that has closed
+// since: the address in received, or else the sent-by host, and the
+// sent-by port.
+//
+// SIMPLIFIED: RFC 3261 18.2.2. When that connection cannot be opened
+// either, the server SHOULD look the sent-by up with RFC 3263 5 and try
+// the servers it gives. Here the response is lost, as it would be over
+// UDP: every sent-by in this project is an IP address, or has a
+// received parameter next to it, so DNS would give the same address.
+func tcpResponseAddress(v Via) (netip.AddrPort, error) {
+	host := v.Host
+	if received, ok := v.Params.Get("received"); ok {
+		host = received
+	}
+	ip, err := netip.ParseAddr(host)
+	if err != nil {
+		return netip.AddrPort{}, errors.New("sip: response Via names no IP address to connect to")
+	}
+	port := v.Port
+	if port == 0 {
+		port = defaultPort
+	}
+	return netip.AddrPortFrom(ip, uint16(port)), nil
+}
+
+// unmapped is the address of one end of a connection. A dual-stack
+// socket reports an IPv4 peer as ::ffff:a.b.c.d.
+func unmapped(a net.Addr) netip.AddrPort {
+	ap := a.(*net.TCPAddr).AddrPort()
+	return netip.AddrPortFrom(ap.Addr().Unmap(), ap.Port())
+}
+
+func (t *TransportLayer) logConnection(event string, c *net.TCPConn, remote netip.AddrPort, reason string) {
+	attrs := []any{"transport", string(TCP), "event", event, "local", unmapped(c.LocalAddr()).String(), "remote", remote.String()}
+	if reason != "" {
+		attrs = append(attrs, "reason", reason)
+	}
+	t.log.Info("sip connection", attrs...)
+}
+
+// listenTCP listens on the host of address and on port, the port that
+// UDP listens on (RFC 3261 18.2.1).
+func listenTCP(address string, port uint16) (*net.TCPListener, error) {
+	addr, err := net.ResolveTCPAddr("tcp", address)
+	if err != nil {
+		return nil, err
+	}
+	addr.Port = int(port)
+	return net.ListenTCP("tcp", addr)
+}
+
+// portOf is the port in address, 0 when the system is to choose it.
+func portOf(address string) int {
+	_, port, err := net.SplitHostPort(address)
+	if err != nil {
+		return 0
+	}
+	n, _ := strconv.Atoi(port)
+	return n
+}

@@ -1,0 +1,38 @@
+# The DNS of network A when it is joined to network B. It serves the
+# zones of deploy/compose/dns, which compose.yaml mounts at
+# /etc/coredns, and adds what the interconnect needs from
+# /etc/coredns-interconnect:
+# the names of IBCF-A and TrGW-A in the home domain, the ENUM records
+# of network B's numbers, and the names of the two IBCFs on the link
+# between the networks.
+
+# The hosts plugin answers for the two new nodes and passes every other
+# name of the domain on to the zone of compose.yaml.
+ims.mnc001.mcc001.3gppnetwork.org {
+    hosts /etc/coredns-interconnect/ims.mnc001.mcc001.3gppnetwork.org.hosts {
+        fallthrough
+    }
+    file /etc/coredns/ims.mnc001.mcc001.3gppnetwork.org.zone
+    log
+}
+
+e164.arpa {
+    file /etc/coredns/e164.arpa.zone
+    log
+}
+
+# Network B's numbers, +1 202 555 015x. CoreDNS answers a name from the
+# most specific zone that holds it, so these come from here and every
+# other number from e164.arpa.
+5.1.0.5.5.5.2.0.2.1.e164.arpa {
+    file /etc/coredns-interconnect/5.1.0.5.5.5.2.0.2.1.e164.arpa.zone
+    log
+}
+
+# The entry points of the two networks on the link between them (the
+# II-NNI). Each network publishes the name of its IBCF there; TTC
+# JJ-90.32 is the Japanese standard for such a DNS between operators.
+example.net {
+    hosts /etc/coredns-interconnect/example.net.hosts
+    log
+}

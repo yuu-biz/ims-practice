@@ -1,0 +1,22 @@
+# CoreDNS serves the home network's zone, as in deploy/compose/dns. The
+# names in it are CNAMEs to Services in cluster.local; CoreDNS follows
+# them through the last block to the cluster DNS and returns the CNAME
+# and the address together.
+ims.mnc001.mcc001.3gppnetwork.org {
+    file /etc/coredns/zones/ims.mnc001.mcc001.3gppnetwork.org.zone
+    log
+}
+
+# The ENUM tree for the test numbers (RFC 6116).
+e164.arpa {
+    file /etc/coredns/zones/e164.arpa.zone
+    log
+}
+
+# Everything else, cluster.local among it, goes to the cluster DNS in
+# /etc/resolv.conf.
+. {
+    forward . /etc/resolv.conf
+    cache 30
+    log
+}

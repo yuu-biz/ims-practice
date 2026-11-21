@@ -1,0 +1,84 @@
+# The images of the IMS from a registry that the nodes of a cloud can
+# reach. kind loads ims-practice/ims:dev and ims-practice/capture:dev by
+# hand; a cloud node pulls them, so their names must start with the
+# registry. image_prefix of the environment takes the place of
+# "ims-practice", the part before the first "/": with
+# image_prefix=registry.example.invalid/ims-practice the P-CSCF runs
+# registry.example.invalid/ims-practice/ims:dev.
+#
+# The value comes from the environment and not from "kustomize edit set
+# image", because the registry's name holds the account (an ECR registry
+# starts with the account ID) and kustomize edit would write it into a
+# file of the repository.
+#
+# List this component after components/edge, which adds the P-CSCF's
+# init container.
+apiVersion: kustomize.config.k8s.io/v1alpha1
+kind: Component
+replacements:
+  - source:
+      kind: ConfigMap
+      name: ims-environment
+      fieldPath: data.image_prefix
+    targets:
+      - select:
+          kind: StatefulSet
+        fieldPaths:
+          - spec.template.spec.containers.*.image
+        options:
+          delimiter: /
+          index: 0
+      # dns runs coredns/coredns from Docker Hub, not an image of the IMS.
+      - select:
+          kind: Deployment
+        reject:
+          - name: dns
+        fieldPaths:
+          - spec.template.spec.containers.*.image
+        options:
+          delimiter: /
+          index: 0
+      - select:
+          kind: DaemonSet
+        fieldPaths:
+          - spec.template.spec.containers.*.image
+        options:
+          delimiter: /
+          index: 0
+      # kustomize stops on a field path that a target does not have, so
+      # the init containers are named one workload at a time: those of
+      # base/ and the P-CSCF's of components/edge.
+      # TestImageRegistryReachesEveryIMSImage (cloud_test.go) fails when
+      # one is missed.
+      - select:
+          kind: StatefulSet
+          name: agw
+        fieldPaths:
+          - spec.template.spec.initContainers.*.image
+        options:
+          delimiter: /
+          index: 0
+      - select:
+          kind: StatefulSet
+          name: mrfp
+        fieldPaths:
+          - spec.template.spec.initContainers.*.image
+        options:
+          delimiter: /
+          index: 0
+      - select:
+          kind: StatefulSet
+          name: epc
+        fieldPaths:
+          - spec.template.spec.initContainers.*.image
+        options:
+          delimiter: /
+          index: 0
+      - select:
+          kind: StatefulSet
+          name: pcscf
+        fieldPaths:
+          - spec.template.spec.initContainers.*.image
+        options:
+          delimiter: /
+          index: 0

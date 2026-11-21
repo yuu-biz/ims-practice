@@ -1,0 +1,6 @@
+# Configuration for the project's own buildx builder.
+# The default garbage collection only starts at about 10% of the disk,
+# which can be tens of GB. This keeps the project's build cache small.
+[worker.oci]
+  gc = true
+  maxUsedSpace = "8GB"

@@ -1,0 +1,17 @@
+# What OpenTofu (or Terraform) writes next to the definitions. The state
+# lists every resource and can hold secrets, so it never goes into Git.
+.terraform/
+*.tfstate
+*.tfstate.*
+.terraform.tfstate.lock.info
+*.tfplan
+crash.log
+crash.*.log
+
+# Your own settings: they hold your address. Copy
+# terraform.tfvars.example to terraform.tfvars and edit that.
+terraform.tfvars
+*.auto.tfvars
+
+# The lock files (.terraform.lock.hcl) are kept: OpenTofu recommends
+# committing them so that every run picks the same provider builds.

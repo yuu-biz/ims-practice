@@ -1,0 +1,26 @@
+# The values of the kind cluster (kind-cluster.yaml) that the manifests
+# depend on, written once. Every kustomization that runs on kind lists
+# this directory, and the components put each value where it belongs:
+#
+#   ims_dns_cluster_ip  components/name-server and components/external-dns
+#   pod_cidr            components/capture
+#
+# Another cluster has a directory like this one of its own
+# (environments/aws, environments/azure). kustomize drops the ConfigMap
+# from what it builds (local-config), so it never reaches the cluster.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+configMapGenerator:
+  - name: ims-environment
+    literals:
+      # The fixed ClusterIP of the IMS DNS server. It is in the lower
+      # part of serviceSubnet (10.96.0.0/16), which Kubernetes keeps for
+      # addresses chosen by hand. "go generate ./deploy/k8s/..." also
+      # writes it into dns/ as the address of the name server.
+      - ims_dns_cluster_ip=10.96.0.53
+      # podSubnet, for the capture filter.
+      - pod_cidr=10.244.0.0/16
+    options:
+      disableNameSuffixHash: true
+      annotations:
+        config.kubernetes.io/local-config: "true"

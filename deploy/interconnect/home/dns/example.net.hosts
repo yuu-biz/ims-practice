@@ -1,0 +1,4 @@
+# The external sides of the two IBCFs, on nni0 (172.28.2.0/24).
+# example.net is a name for documentation (RFC 2606).
+172.28.2.10 ibcf.nni.mnc001.example.net
+172.28.2.20 ibcf.nni.mnc002.example.net

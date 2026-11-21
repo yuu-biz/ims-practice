@@ -1,0 +1,25 @@
+# The IMS on the AKS cluster of deploy/cloud/azure: DNS option (b), the
+# P-CSCF and the media relay on the edge nodes (components/edge), and
+# the values of environments/azure. Start the capture first:
+#
+#   kubectl apply -k deploy/k8s/overlays/cloud-azure/capture
+#   kubectl apply -k deploy/k8s/overlays/cloud-azure
+#
+# The nodes pull the images from a registry: push them there, and set
+# image_prefix in environments/azure (components/image-registry).
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: ims
+resources:
+  - ../../base
+  - ../../dns
+  - ../../environments/azure
+components:
+  - ../../components/external-dns
+  - ../../components/edge
+  - ../../components/image-registry
+  # The load balancer variant, for comparison only (options 2 and 3 of
+  # load_balancer in deploy/cloud). With load_balancer = "sip" in
+  # deploy/cloud/azure, take the first line in; with "sip-and-rtp", both.
+  # - ../../components/azure-load-balancer-sip
+  # - ../../components/azure-load-balancer-rtp

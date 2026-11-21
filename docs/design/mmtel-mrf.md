@@ -1,0 +1,44 @@
+# 補足サービスとメディア資源
+
+この記録は補足サービスを提供する MMTel AS と、音声ガイダンス、会議、CAT を提供する MRF（MRFC と MRFP）の設計です。調査の記録は [mmtel-mrf.md](../background/mmtel-mrf.md) にあります。
+
+## 選んだこと
+
+- MMTel AS と MRF を自作し、`ims` コマンドの役割にします。MMTel AS は `mmtel`、MRFC は `mrfc`、MRFP は `mrfp` です。
+- MMTel AS は最初から全体を routeing B2BUA（TS 24.229 5.7.5）として作ります。
+- 補足サービスの設定データは HSS にだけ置き、AS は利用者ごとの状態を持ちません。
+- AS は RFC 4240 の netann で MRFC を動かし、MRFC は独自の API で MRFP を制御します。
+
+## 補足サービスを作る理由
+
+UE と網の音声の振る舞いは、GSMA IR.92 の必須の要件を満たすことにしています（[requirements.md](../requirements.md)）。IR.92 2.3 は MMTel の補足サービスを必須にしています。商用のサービスの多くも、補足サービスを基本のサービスとして提供しています。学習者がその信号を見られることは大切です。
+
+AS を自作することは、要件定義の「作るものと作らないもの」で決めてあります。
+
+## MMTel AS
+
+| 主題 | 作り |
+| --- | --- |
+| 置き場所 | `ims` コマンドの役割 `mmtel` にします。S-CSCF が iFC で呼び出します。作りは簡単にします。 |
+| AS を加える方法 | HSS の iFC に AS の URI を書けば、誰でも別の AS を加えられます。iFC が標準の拡張点なので、プラグインの仕組みは作りません。 |
+| 動作のモード | 全体を routeing B2BUA（TS 24.229 5.7.5）として作ります。CFNR、To を変える CDIV、From を匿名にする OIR、音声ガイダンス、CAT、会議が、どれも B2BUA を必要とするためです。サービスごとにプロキシと使い分けると、メディア資源を使うサービスを加えるときに作り直すことになります。 |
+| 発信と着信の見分け | S-CSCF が P-Served-User（RFC 5502）を入れ、AS はそれで session case を知ります（TS 24.229 5.4.3.3 step 4 c、5.7.1.3A）。場合ごとに AS の URI を分ける方法は使いません。P-Served-User なら、学習者がキャプチャで場合を見られるためです。 |
+| 対応するサービス | IR.92 2.3 の表 2.1 のうち、網に求められているもの。割込通話（CW）は端末で行う方式だけです（2.3.4）。 |
+| MWI と ECT | 網の側は作りません。IR.92 は、網の対応を任意としているためです（2.3.5、2.3.11）。拡張の候補に残します。 |
+| 設定データ | TS 29.364 の `MMTelServices`（Service-Indication は `MMTEL-Services`）を、HSS の Sh の Repository Data（Data-Reference 0）にだけ置きます。AS は初期の要求ごとに UDR で読み、キャッシュしないので、利用者ごとの状態を持ちません。SNR と PNR による変更の通知は作らず、`SIMPLIFIED:` に書きます。 |
+| 利用者からの設定 | Ut の XCAP（TS 24.623）に対応します。範囲は IR.92 2.3.2 が求める最小限にします。 |
+| Ut の認証 | AS が HTTP Digest（RFC 7616）で利用者を認証します（TS 24.623 5.2.3.2.1）。資格情報は HSS に置き、AS が Sh で読みます。GBA（TS 33.222）は作らず、`SIMPLIFIED:` に書きます。GBA には BSF の役割と Zh を新しく作る必要があり、学習の対象としては大きすぎるためです。IR.92 2.2.2 も、GBA を推奨するだけで必須にはしていません。 |
+| 未登録の利用者への着信 | HSS の LIA、I-CSCF の S-CSCF の選択、S-CSCF の SAR（UNREGISTERED_USER）と TERMINATING_UNREGISTERED の iFC を作ります。CFNL と、未登録の利用者への CFU に要るためです。 |
+| 呼の状態 | 呼ごとの状態は `Store` の後ろに置きます。ダイアログの中の要求は、最初に INVITE を受けた台に戻します。その台を同じ名前で作り直したときは、新しい台が `Store` の呼の記録から呼を組み立て直して続けます（[state-redundancy.md](state-redundancy.md)）。 |
+
+## MRF
+
+| 主題 | 作り |
+| --- | --- |
+| MRFC | `ims` コマンドの SIP の役割にします。 |
+| MRFP | メディア中継ノードの実装（`internal/agw`）を、N 個のターミネーションを持てるように広げ、音声ファイルの再生、音声の合成、通知を加えます。MRFC は独自の API で MRFP を制御します（[media-control.md](media-control.md)）。制御の API は H.248 の Add、Modify、Subtract、Notify に写せる形にし、同じ境界の後ろに H.248 を置けるようにします。 |
+| AS から MRFC の制御 | RFC 4240 の netann（`annc` と `conf`）を使います（TS 24.229 10.2.2.2、10.2.3.2）。Request-URI でサービスを選ぶだけで、新しいプロトコルが要らないためです。 |
+| 用途 | 音声ガイダンス（TS 24.628）、会議（TS 24.147）、CAT（TS 24.182）です。FRBT（flexible RBT）と呼ばれるものは CAT と同じです。利用者が呼び出し音を選び、MRF が early media として流します。 |
+| 呼び出し音の比較 | 180 を受けた UE が自分で呼び出し音を鳴らす場合と、網が early media で音を流す場合を、キャプチャで比べられるようにします。 |
+| CAT のモデル | B2BUA の AS に合うゲートウェイのモデル（TS 24.182 4.5.5.3.7）で作っています（[MRF の手順書](../guide/ja/mrf.md)）。もう 1 つの候補は、調査が勧めたフォークのモデル（4.5.5.3.2）でした。 |
+| MRFP のコーデック | MRFP が流したり混ぜたりするのは PCMU だけです。製品は AMR を復号しないので、MRFP は AMR の音声を混ぜられません（[codecs.md](codecs.md)）。UE シミュレータの offer には PCMU が残るので、この形でも UE シミュレータとはつながります。 |

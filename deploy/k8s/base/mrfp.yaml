@@ -1,0 +1,75 @@
+# MRFP, the media side of the MRF: the same relay as the agw, with the
+# announcements that the image carries. Like the agw (agw.yaml), the
+# MRFC reaches its control API by name, and RTP goes straight to the
+# Pod's address, which an init container writes into the configuration.
+apiVersion: v1
+kind: Service
+metadata:
+  name: mrfp
+spec:
+  clusterIP: None
+  selector:
+    app.kubernetes.io/name: mrfp
+  ports:
+    - name: control
+      port: 8080
+      protocol: TCP
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: mrfp
+spec:
+  serviceName: mrfp
+  replicas: 1
+  podManagementPolicy: Parallel
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: mrfp
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: mrfp
+    spec:
+      terminationGracePeriodSeconds: 10
+      dnsConfig:
+        options:
+          - name: ndots
+            value: "1"
+      initContainers:
+        - name: config
+          image: ims-practice/ims:dev
+          imagePullPolicy: IfNotPresent
+          command:
+            - sh
+            - -c
+            - sed "s/[$]{POD_IP}/$POD_IP/g" /etc/ims-template/node.yaml > /etc/ims/node.yaml
+          env:
+            - name: POD_IP
+              valueFrom:
+                fieldRef:
+                  fieldPath: status.podIP
+          volumeMounts:
+            - name: template
+              mountPath: /etc/ims-template
+              readOnly: true
+            - name: config
+              mountPath: /etc/ims
+      containers:
+        - name: ims
+          image: ims-practice/ims:dev
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: control
+              containerPort: 8080
+              protocol: TCP
+          volumeMounts:
+            - name: config
+              mountPath: /etc/ims
+              readOnly: true
+      volumes:
+        - name: template
+          configMap:
+            name: mrfp-config
+        - name: config
+          emptyDir: {}

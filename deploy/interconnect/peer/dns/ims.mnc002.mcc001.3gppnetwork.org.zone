@@ -1,0 +1,20 @@
+; The domain of network B, in the ims.mnc<MNC>.mcc<MCC>.3gppnetwork.org
+; format of TS 23.003. MCC 001 and MNC 02 are test values.
+$ORIGIN ims.mnc002.mcc001.3gppnetwork.org.
+$TTL 60
+@         IN SOA dns hostmaster 1 3600 600 86400 60
+@         IN NS  dns
+
+; RFC 3263 4.1 and 4.2: the entry point of network B for its own UEs
+; and for its IP-SM-GW is the I-CSCF, over UDP.
+@         IN NAPTR 10 50 "s" "SIP+D2U" "" _sip._udp
+_sip._udp IN SRV   10 50 5060 icscf
+
+dns       IN A     172.28.1.2
+hss       IN A     172.28.1.10
+icscf     IN A     172.28.1.20
+scscf     IN A     172.28.1.30
+pcscf     IN A     172.28.1.40
+ipsmgw    IN A     172.28.1.70
+ibcf      IN A     172.28.1.90
+trgw      IN A     172.28.1.91

@@ -1,0 +1,29 @@
+# S-CSCF. It authenticates users with SIP Digest, using the H(A1) that
+# the HSS returns over Cx, and is the registrar of the home network.
+node: scscf
+roles: [scscf]
+home_domain: ims.mnc001.mcc001.3gppnetwork.org
+scscf:
+  sip:
+    listen: 0.0.0.0:5060
+    host: scscf.ims.mnc001.mcc001.3gppnetwork.org
+  # The UE asks for 600000 s (TS 24.229 5.1.1.2.1). A short maximum lets
+  # learners watch re-registration and expiry.
+  min_expires: 60
+  max_expires: 3600
+diameter:
+  origin_host: scscf.ims.mnc001.mcc001.3gppnetwork.org
+  origin_realm: ims.mnc001.mcc001.3gppnetwork.org
+  peers:
+    - address: hss.ims.mnc001.mcc001.3gppnetwork.org:3868
+      origin_host: hss.ims.mnc001.mcc001.3gppnetwork.org
+  # Shorter than the RFC defaults (Tw 30s, Tc 30s) so that watchdogs
+  # show up in a capture quickly.
+  timers:
+    tw: 10s
+    tc: 5s
+# Copies of every SIP and Diameter message for the dashboard.
+# The address is fixed so that the node starts even when the dashboard
+# is down; the dashboard is not on the call path.
+hep:
+  collector: 172.28.0.60:9060

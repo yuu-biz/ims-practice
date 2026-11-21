@@ -1,0 +1,246 @@
+# MRF による音声ガイダンス、呼び出し音、会議
+
+[English](../en/mrf.md)
+
+この手順書では、網が自分で流したり混ぜたりするメディアを追います。規制した通話を断る前の音声ガイダンス、着信側の利用者が発信者のために選ぶ呼び出し音（CAT、customized alerting tone）、通話中の利用者への 2 つ目の着信（割込通話、CW）、3 人の会議の 4 つです。何を流すかは MMTel AS が決め、制御の部分（MRFC）とメディアの処理の部分（MRFP）からなる MRF が流します。どの手順もキャプチャで確かめられます。
+
+この手順書は次の版に従います。TS 23.228 V20.1.0、TS 24.229 V20.1.0、TS 24.182 V19.0.0（CAT）、TS 24.628 V19.0.0（音声ガイダンスと early media）、TS 24.615 V19.0.0（CW）、TS 24.147 V19.0.0（会議）、TS 23.333 V19.0.0（MRFP）、RFC 4240（netann）、RFC 4575（会議イベントパッケージ）、GSMA IR.92 v24.0 です。以下の条項番号はこれらの版のものです。
+
+## 始める前に
+
+- [MMTel AS の補足サービス](mmtel.md) を読んでおいてください。この手順書は、そこで説明した内容を前提にします。1 つの通話に 3 つのダイアログを持つ B2BUA としての AS、利用者が Ut で設定するサービス、P-Served-User です。
+- ここでの通話が使う高信頼の暫定応答（PRACK）とプリコンディションは、[音声通話の流れを追う](call.md) にあります。
+- 略語の意味は [用語集](../../glossary.md) にあります。
+
+## MRF とは
+
+MRF は、IMS の中で自分からメディアを作るノードです（TS 23.228 4.7）。音声ガイダンス、トーン、会議の混ぜ合わせた音声を作ります。MRF は 2 つに分かれます。
+
+- **MRFC** は SIP を話します。AS が INVITE でサービスを頼むと、MRFC はそれに要るメディアの資源を決めます。
+- **MRFP** は RTP を扱います。ターミネーションに音声ガイダンスを流したり、複数のターミネーションの音声を足し合わせて、それぞれに混ぜ合わせた音声を返したりします（TS 23.333 6.2.9）。
+
+この 2 つと AS は、3 つの参照点でつながります（TS 23.218）。
+
+| 参照点 | どこの間か | このプロジェクトでは |
+| --- | --- | --- |
+| Mr' | AS と MRFC | SIP。MMTel AS から MRFC に直接送ります。S-CSCF からの Mr は使いません。 |
+| Mp | MRFC と MRFP | 標準では H.248 です（TS 29.333）。ここでは 8080 番ポートの小さな HTTP API で、H.248 のコマンドごとに操作が 1 つあります。ターミネーションの追加、変更（モード、相手のアドレス、再生）、削除と、再生が終わったことを知らせる Notify です。 |
+| Cr | AS と MRFC | 流す音声の取得と、メディア制御の命令。作っていません。MRFP は WAV ファイルとして持っている音声だけを流します。 |
+
+MRFP は、P-CSCF のメディアゲートウェイ（agw ノード）と同じ中継の実装に、音声ガイダンスと混ぜ合わせの機能を加えたものです。
+
+## AS が MRF に頼む方法。RFC 4240
+
+AS は、MRFC への INVITE の Request-URI の user part でサービスを指定します。形は RFC 4240 が決めています。
+
+| Request-URI | サービス |
+| --- | --- |
+| `sip:annc@mrfc.ims.mnc001.mcc001.3gppnetwork.org:5060;play=/provisioned/notice` | 音声ガイダンス `notice` を 1 回流します（RFC 4240 3）。 |
+| `sip:annc@...;play=/provisioned/cat1;repeat=forever` | AS がダイアログを終えるまで `cat1` を流し続けます。 |
+| `sip:conf=conf-pcn6hpat5alr@mrfc...` | 会議 `conf-pcn6hpat5alr` に加わります。最初の INVITE がこの会議を作ります（RFC 4240 5）。 |
+
+音声ガイダンスを頼む INVITE には SDP を付けません。そのため MRFC は、MRFP のターミネーションの offer を 200 に入れて返し、AS は answer を ACK に入れます。MRFP は ACK を受けてから流し始め（TS 24.229 5.8.2.2.1）、終わりのある再生が済むと MRFC が BYE でダイアログを終えます（5.8.3.2.1）。こうして AS は、発信者が受け取れるようになってから再生を始められます。
+
+通話に応答する前に発信者へ音声を届けるため、AS は TS 24.628 Annex G のゲートウェイのモデルを使います。AS は発信者の offer に MRFP の SDP で自分から答え、`P-Early-Media: sendonly` で early media を認めます（RFC 5009）。発信者の UE は、自分の呼び出し音の代わりに届いた音声を流します（TS 24.628 4.7.2.1）。
+
+## 登場するノード
+
+| ノード | アドレス | ここでの役割 |
+| --- | --- | --- |
+| UE 1 | 172.28.0.100 | 音声ガイダンスと CAT の発信者。`tel:+12025550101`。 |
+| UE 2 | 172.28.0.101 | CAT を持つ着信者。`tel:+12025550102`。 |
+| ue-a、ue-b、ue-c | 172.28.0.110、.111、.112 | `sim` プロファイルの UE シミュレータ。加入者 1、2、3 で、ダッシュボードから操作します。2 つ目の着信と会議に使います。 |
+| P-CSCF と agw | 172.28.0.40、172.28.0.50 | ほかの通話と同じです。UE と MRFP の間の RTP は agw を通ります。 |
+| MMTel AS | 172.28.0.75 | 何を流すかを決めます。会議ではフォーカスになります。 |
+| MRFC | 172.28.0.85 | 役割 `mrfc`。`mrfc.ims.mnc001.mcc001.3gppnetwork.org`。 |
+| MRFP | 172.28.0.86 | 役割 `mrfp`。制御の API は 8080 番ポート、RTP は 40100 番から 40199 番のポートです。 |
+
+`deploy/compose/mmtel.yaml` には、MRFC（`mrfc:`）と、通話を断る前に流す音声ガイダンス（`announcement: notice`）を書いてあります。`deploy/compose/mrfp.yaml` は、`notice`、`cat1`、`cat2` の名前を `deploy/announcements` の WAV ファイルに対応させます。これらのファイルは `go generate ./deploy/announcements` で作ります。`notice` は上がっていく 3 つの音、CAT 用の 2 つは短い旋律で、どれも 8 kHz、16 ビット、モノラルです。
+
+## 動かしてみる
+
+`scripts/e2e-mrf.sh` は、以下のすべてを実行し、キャプチャで確かめます。キャプチャは `captures/` に、通話と MRF のフレームは `e2e-out/mrf-ladder.txt` に、CAT のあいだに UE 1 が受け取った音声は `captures/mrf-cat-received.raw` に、UE のログは `e2e-out/` に残ります。ビルドのあと 1 分ほどかかります。
+
+手で動かすときは、ダッシュボードを使います（[ダッシュボードの手順書](dashboard.md) の「UE シミュレータを操作する」を参照）。
+
+```sh
+docker compose up -d --build
+docker compose --profile sim up -d ue-a ue-b ue-c
+```
+
+http://localhost:8080 を開きます。Subscribers の欄で加入者 2 の呼び出し音に `cat1` を選び、`ue-a` から `ue-b` に発信します。2 つ目の着信と会議は、ダッシュボードの手順書にある、2 つ目の着信を受けて会議を作る手順のとおりに進めます。通話のラダー図には、通話のダイアログと並んで、AS と MRFC のダイアログも描かれます。どちらも P-Charging-Vector の icid-value が同じだからです。
+
+## キャプチャを開く
+
+`captures/` の最新のファイルを Wireshark で開き、次の表示フィルタを使います。
+
+```text
+(sip && !(sip.CSeq.method in {"REGISTER", "SUBSCRIBE", "NOTIFY", "MESSAGE"})) || (sip.Event contains "conference") || (http && ip.addr == 172.28.0.86)
+```
+
+**Telephony > RTP > RTP Streams** に、MRFP（172.28.0.86）のストリームが並びます。**Play Streams** で再生できます。RTP の中には、それを説明する SDP を Wireshark が読む前に流れ始めるものがあります。すべてを復号するには、**Analyze > Enabled Protocols > RTP > rtp_udp** を有効にします（tshark では `-o rtp.heuristic_rtp:TRUE`）。
+
+## 通話を断る前の音声ガイダンス
+
+UE 1 は `ue xcap set baoc on` で発信を規制し、UE 2 に発信します。UE 1 の AS は通話を規制します（TS 24.611 4.5.2.4.1）が、その前に `notice` を流します（TS 24.628 4.2.4）。
+
+```text
+#361  UE 1   -> P-CSCF C1 INVITE tel:+12025550102
+#525  MMTel  -> MRFC   M  INVITE   sip:annc@mrfc...;play=/provisioned/notice, no SDP
+#546  MRFC   -> MMTel  M  200 OK   SDP offer: the MRFP 172.28.0.86, PCMU, sendonly
+#559  P-CSCF -> UE 1   C1 183      Require: 100rel, P-Early-Media: sendonly, SDP answer from the MRFP
+#564  UE 1   -> P-CSCF C1 PRACK
+#582  MMTel  -> MRFC   M  ACK      SDP answer: UE 1's media, recvonly
+#598  MRFP   -> agw       RTP      PCMU, notice, on to UE 1 (#601)
+#728  MRFC   -> MMTel  M  BYE      notice has played, 1.08 s after the ACK
+#746  P-CSCF -> UE 1   C1 603      Reason: SIP;cause=603;text="Decline"
+```
+
+- **AS は PRACK を待ってから ACK を送ります。** UE 1 が SDP を受け取る前に、音声ガイダンスのフレームが失われないようにするためです。
+- **603 には Reason が付きます。** 発信者にはすでに early dialog があるので、断る理由をそこで伝えます（TS 24.628 4.2.4）。
+- INVITE が高信頼の暫定応答を受け付けない発信者や、プリコンディションを必須にした発信者には、すぐに 603 を返します。MRFC はプリコンディションの属性を書かないためです。
+
+## CAT。着信側の利用者が選ぶ呼び出し音
+
+利用者の CAT は、事業者が HSS に設定します（TS 24.182 4.5.2）。ここではダッシュボードが、`PUT /api/subscribers/{impi}/customized-alerting-tone` に `{"tone": "cat1", "active": true}` を送って設定します。UE 2 の着信側の AS は、着信のたびにこの設定を Sh で読みます（Service-Indication が `Customized-Alerting-Tone` の UDR）。そして、UE 2 に INVITE を送る前に MRFC に呼び出し音を頼み、UE 2 が呼び出し中のあいだ UE 1 に流します（TS 24.182 4.5.5.3.7）。
+
+```text
+#1288 12.471 UE 1   -> P-CSCF C1 INVITE tel:+12025550102
+#1489 12.530 MMTel  -> MRFC   M  INVITE   sip:annc@mrfc...;play=/provisioned/cat1;repeat=forever
+#1497 12.532 MRFC   -> MMTel  M  200 OK   SDP offer of the MRFP
+#1517 12.539 P-CSCF -> UE 2   C3 INVITE
+#1560 12.543 P-CSCF -> UE 1   C1 183      UE 2's answer with the precondition table, as it came
+#1627 12.558 UE 2   -> P-CSCF C3 180      UE 2 alerts its user
+#1670 12.572 P-CSCF -> UE 1   C1 UPDATE   P-Early-Media: sendonly, SDP of the MRFP: sendonly, a=content:g.3gpp.cat
+#1695 12.577 MMTel  -> MRFC   M  ACK      the tone starts
+#1795 12.600 MRFP   -> agw       RTP      cat1, on to UE 1 (#1796)
+#2105 15.540 UE 2   -> P-CSCF C3 200 OK   UE 2 answers
+#2137 15.551 MMTel  -> MRFC   M  BYE      the tone stops
+#2175 15.573 P-CSCF -> UE 1   C1 UPDATE   SDP of UE 2: UE 1's media moves to UE 2
+#2221 15.580 P-CSCF -> UE 1   C1 200 OK   (INVITE)
+```
+
+- **UE 1 はプリコンディションを使います。** そのため UE 2 の 183 はそのまま UE 1 に届き、呼び出し音は UE 2 が呼び出しを始めたあとの UPDATE で届きます（TS 24.182 4.5.5.3.7 b 1）。プリコンディションを使わない発信者には、18x そのものに呼び出し音の SDP が入ります。
+- **`a=content:g.3gpp.cat`**（RFC 4796）は、その SDP が呼び出し音のものだと示します。`P-Early-Media: sendonly` はその音声を認めます（TS 24.182 4.5.5.3.7 b 2）。
+- **応答のとき**、AS は MRFC とのダイアログを終え、200 の前に UPDATE で UE 1 のメディアを UE 2 に移します。TS 24.628 Annex G のゲートウェイのモデルです。
+- **UE 1 のログ**には `"msg":"ringback before the answer","ringback":"network"` が出ます。スクリプトは、UE 1 が受け取った最初の 1 秒を、`deploy/announcements/cat1.wav` を G.711 μ-law で符号化したものと比べます。1 バイトも違いません。
+
+続いてスクリプトは呼び出し音を止め（`"active": false`）、もう一度発信します。UE 2 の 180 は P-Early-Media なしで UE 1 に届き、MRFC への INVITE も MRFP からの RTP もありません。UE 1 のログには `"ringback":"local"` が出て、UE 1 は自分の呼び出し音を流します（TS 24.628 4.7.2.1）。
+
+## 割込通話と保留
+
+ue-a が ue-b に発信し、そのあと ue-c が ue-a に発信します。IR.92 は、待たせる着信の扱いを網ではなく UE に求めています（2.3.4）。
+
+```text
+#4772 29.049 ue-a   -> P-CSCF A1 INVITE tel:+12025550102
+#5171 30.097 P-CSCF -> ue-a   A1 200 OK   ue-b answered
+#5869 34.181 ue-c   -> P-CSCF    INVITE tel:+12025550101
+#5986 34.212 P-CSCF -> ue-a   A2 INVITE
+#6093 34.228 ue-a   -> P-CSCF A2 180      Alert-Info: <urn:alert:service:call-waiting>
+#6134 34.232 P-CSCF -> ue-c      180      without that Alert-Info
+#6278 38.256 ue-a   -> P-CSCF A1 INVITE   re-INVITE, a=sendonly: ue-b on hold
+#6389 38.277 ue-a   -> P-CSCF A2 200 OK   ue-a answers ue-c
+#7172 42.361 ue-a   -> P-CSCF A2 INVITE   Swap: ue-c on hold
+#7283 42.394 ue-a   -> P-CSCF A1 INVITE   Swap: ue-b back, a=sendrecv
+```
+
+- **ue-a は、call-waiting の Alert-Info を付けて呼び出しを返します**（TS 24.615 4.5.5.3.2、RFC 7462）。自動では応答しません。
+- **ue-a の AS は、ue-c への 180 から Alert-Info を取り除きます。** `deploy/compose/hss.yaml` の CW の事業者の設定が、発信者に待たされていることを知らせないとしているためです（TS 24.615 4.5.5.2.3）。知らせる設定なら、AS は Alert-Info をそのまま渡し、音声ガイダンスを設定してあれば、待たせているあいだ発信者にそれを流します。
+- **待たせた着信に応答すると、先の通話は保留になります。** offer を `sendonly` にした re-INVITE を送ります（TS 24.615 4.5.5.3.3、TS 24.610）。**Swap** は一方の通話を保留にし、もう一方を戻します。
+
+## 3 人の会議
+
+ue-a は応答済みの通話を 2 つ持っていて、**Merge** を押します。ue-a は会議ファクトリの URI に会議を作り、フォーカスである MMTel AS に、相手ごとに REFER を送ります。REFER の Refer-To には、ue-a とその相手の通話を置き換える Replaces が入っています（TS 24.147 5.3.1.3.3 の option 2b。IR.92 2.3.3 が求める方法です）。
+
+```text
+#7480 40.121 ue-a   -> P-CSCF F  INVITE sip:mmtel@conf-factory.ims.mnc001.mcc001.3gppnetwork.org
+#7511 40.131 MMTel  -> MRFC   M1 INVITE sip:conf=conf-o47ha7ifxyni@mrfc..., with ue-a's offer
+#7534 40.136 P-CSCF -> ue-a   F  200 OK  Contact: <sip:conf-o47ha7ifxyni@conf.ims.mnc001.mcc001.3gppnetwork.org>;isfocus
+#7549 40.138 ue-a   -> P-CSCF F  SUBSCRIBE sip:conf-o47ha7ifxyni@conf...  Event: conference
+#7565 40.142 S-CSCF -> DNS       NAPTR? conf.ims.mnc001.mcc001.3gppnetwork.org
+#7568 40.143 DNS    -> S-CSCF    SRV _sip._udp.conf...: 5060 mmtel.ims.mnc001.mcc001.3gppnetwork.org
+#7571 40.144 S-CSCF -> MMTel  F  SUBSCRIBE sip:conf-o47ha7ifxyni@conf...
+#7602 40.150 ue-a   -> P-CSCF F  REFER   Refer-To: <sip:+12025550102@...;user=phone?Replaces=...>
+#7635 40.156 P-CSCF -> ue-a   F  200 OK  (REFER), not 202
+#7662 40.164 MMTel  -> MRFC   M2 INVITE sip:conf=conf-o47ha7ifxyni@mrfc..., no SDP
+#7667 40.165 MRFC   -> MMTel  M2 200 OK  SDP offer of a new termination of the MRFP
+#7712 40.179 P-CSCF -> ue-b      INVITE  Replaces: ue-b's call with ue-a, the MRFP's offer
+#7716 40.180 ue-b   -> P-CSCF    183     ue-b's answer
+#7825 40.196 ue-b   -> P-CSCF    200 OK  without SDP
+#7867 40.201 ue-b   -> P-CSCF    BYE     the call that was replaced
+#7887 40.204 MMTel  -> MRFC   M2 ACK     ue-b's answer from its 183
+#7943 40.213 P-CSCF -> ue-a   F  NOTIFY  Event: conference, ue-a and ue-b
+#8040 40.225 ue-a   -> P-CSCF F  REFER   the same for ue-c
+#8398 40.306 P-CSCF -> ue-a   F  NOTIFY  Event: conference, three users
+```
+
+- **会議の URI はホーム網の公開サービス識別子（PSI）です**（TS 23.228 4.3.6）。形は `sip:conf-<id>@conf.ims.mnc001.mcc001.3gppnetwork.org` です。ドメインは事業者が決め、ポート番号は付けません。網の外に出る可能性がある PSI には、ポート番号を付けないほうがよいためです（TS 23.003 13.5）。この URI はノードの名前を含みません。サブドメインの `conf` は、AS が受け持つ会議の全体を表します。このサブドメインの NAPTR と SRV のレコードが、会議を受け持つ AS を指します（`deploy/compose/dns`）。S-CSCF は、ue-a の SUBSCRIBE も、フォーカスとのダイアログの中の要求も、ほかのホストと同じく RFC 3263 でフォーカスへ届けます。これは TS 23.228 5.4.12.3 のサブドメインを使う方法です。ほかの網からの要求は I-CSCF から入ります。I-CSCF はこのサブドメインを知っていて（`deploy/compose/icscf.yaml` の `psi_subdomains`）、HSS に問い合わせずに、やはり DNS で要求を送ります（TS 24.229 5.3.2.1 step 3）。1 つの会議はそのダイアログとともに AS の 1 台にあります。AS を複数台にするときは台ごとにサブドメインを分け、DNS が会議ごとの要求を、その会議を持つ台へ送るようにします。
+- **ファクトリの URI も PSI です。** こちらは発信側の PSI です（TS 23.228 5.4.12.1）。ファクトリの URI への INVITE は、作る人のほかの INVITE と同じく、作る人の発信側のフィルタ条件で AS に届きます。このような PSI を使えるのは、ホーム網の利用者だけです。
+- **AS は会議のフォーカスであり、通知サービスでもあります**（TS 24.147 4）。参加者それぞれとダイアログを持ち、参加者ごとにメディアのための MRFC とのダイアログも持ちます。
+- **MRFC は、最初の `conf=` の INVITE で混ぜ合わせを作り**、そのあとの INVITE ごとにターミネーションを加えます。MRFP は、それぞれの参加者にほかの参加者の音声の和を送ります（TS 23.333 6.2.9）。キャプチャでは、MRFP から agw への 3 つのストリームと、その逆の 3 つが見えます。スクリプトは、ある参加者が受け取る混ぜ合わせた音声が、どの参加者 1 人のトーンよりも大きいことを確かめます。
+- **招かれた相手もプリコンディションを使います。** そのため、それぞれが MRFP の offer に高信頼の 183 で答え、200 には SDP を付けません。AS はその answer を M2 の ACK に入れて MRFC に渡します（RFC 3262 5）。
+- **フォーカスは REFER を 200（OK）で受け付けます。** RFC 3515 では 202（Accepted）で応答していました。RFC 7647 5 がこれを改め、REFER を受け付ける側は 200 を送り、202 を送ってはいけないことになりました。古い UA から 202 を受けた側は、200 と同じに扱います。RFC 6665 8.3.1 が SUBSCRIBE について決めたのと同じです。改めた理由は、202 が 200 と違うことを何も伝えず、途中のプロキシに吸収されることもあるからです。TS 24.147 は RFC 3515 を、RFC 6665 と RFC 7647 による改訂を含めて参照していて、その流れの例でも 200 を返しています（A.4.4.1）。
+- **REFER はそれぞれ refer イベントの購読を作ります**（RFC 3515 2.4.4）。フォーカスはすぐに、試していること（sipfrag の本文の `SIP/2.0 100 Trying`）を知らせます。相手への INVITE に最終応答が来たら、その応答を最後の NOTIFY で知らせ、Subscription-State を `terminated;reason=noresource` にします（2.4.7）。購読の長さは INVITE にかかりうる時間より長い 4 分です（3.4）。先に 4 分が過ぎたら、フォーカスは `terminated;reason=timeout` で購読を終えます（RFC 6665 4.2.1.4）。ue-a の側も、最後の `expires` が示した時刻に購読を終え、`active;expires=0` を受けたときはすぐに終えます（4.1.3）。
+- **NOTIFY** には conference-info の XML（RFC 4575）が入っていて、参加者ごとに `<user>` と、状態が `connected` の `<endpoint>` があります。ダッシュボードの各カードは、これを **Conference** の行に並べます。ue-a は購読が切れる前に更新します。更新されなかった購読は期限の時刻に終わり、フォーカスはそのとき `terminated;reason=timeout` の NOTIFY を送ります。そのあと、この購読には何も送りません（RFC 6665 4.2.1.4）。
+- **会議は作った人が抜けると終わります**（TS 24.147 5.3.2.7）。ue-a が切ると、AS は ue-b と ue-c に BYE を送り、参加者ごとの MRFC とのダイアログにも BYE を送ります。
+
+## Wireshark の表示フィルタ
+
+| フィルタ | 見つかるもの |
+| --- | --- |
+| `sip.r-uri contains "annc@"` | 音声ガイダンスや呼び出し音を頼む要求。`contains "play=/provisioned/cat"` で CAT だけを選べます。 |
+| `sip.r-uri contains "conf="` | MRFC の会議に加わる参加者。 |
+| `sip.P-Early-Media` | early media を認める応答と UPDATE。 |
+| `sdp.media_attr == "content:g.3gpp.cat"` | CAT の SDP。 |
+| `sip.Alert-Info contains "call-waiting"` | 待たせる着信の 180。 |
+| `sip.Refer-To contains "Replaces"` | 相手を会議に招く REFER。 |
+| `sip.Replaces` | 通話を引き継ぐフォーカスの INVITE。 |
+| `sip.Event contains "conference"` | 会議イベントパッケージの SUBSCRIBE と NOTIFY。 |
+| `sip.Contact contains "isfocus"` | フォーカスの応答。 |
+| `dns.qry.name contains "conf."` | 会議のフォーカスへの経路を引く DNS の問い合わせ。 |
+| `rtp && ip.addr == 172.28.0.86` | MRFP の RTP。RTP のヒューリスティックを有効にして使います。 |
+| `http && ip.addr == 172.28.0.86` | MRFP の制御の API。ターミネーションの POST、PUT、DELETE と、再生が終わったことを知らせる Notify です。 |
+
+これらのフィルタは、`scripts/e2e-mrf.sh` のキャプチャに対して tshark 4.2 で確かめました。
+
+## コードの場所
+
+| ファイル | 内容 |
+| --- | --- |
+| `internal/mmtel/mrf.go`、`internal/mmtel/announcement.go` | AS と MRFC のダイアログと、通話を断る前の音声ガイダンス。 |
+| `internal/mmtel/cat.go`、`internal/mmtel/catdata.go` | 着信側の AS の CAT と、HSS にあるそのデータ。 |
+| `internal/mmtel/waiting.go` | AS の CW。 |
+| `internal/mmtel/conference.go`、`internal/mmtel/conferenceevent.go` | フォーカスと会議イベントパッケージ。 |
+| `internal/mrfc`、`internal/netann` | MRFC と、RFC 4240 の Request-URI。 |
+| `internal/agw` | MRFP。ターミネーション、音声ガイダンス、混ぜ合わせと、その制御の API。 |
+| `internal/ue/phone_conference.go`、`internal/ue/conference.go` | Swap、Merge と、会議の UE の側。 |
+| `internal/mmtel/mrf_network_test.go`、`internal/mmtel/conference_network_test.go` | 同じ流れを、1 つのプロセスの中の IMS 全体で通す試験。 |
+
+## このプロジェクトで簡略化していること
+
+どの項目にも、コードに `SIMPLIFIED:` のコメントがあります。`grep -rn "SIMPLIFIED:" internal cmd` ですべてを一覧できます。
+
+| 場所 | 省いたこと | 理由 |
+| --- | --- | --- |
+| MRFC、TS 23.333 5.12 | MRFP が流したり混ぜたりできるのは G.711 PCMU だけで、トランスコードはしません。PCMU の無い offer には、Warning 305 を付けた 488 を返します。 | このプロジェクトには AMR の復号器がありません。UE シミュレータは今も PCMU を offer に入れます。 |
+| MRFC、RFC 4240 3、TS 24.229 10.3.2.2 | 用意してある音声だけを流し、Cr で URL から取ってくることはしません。 | WAV ファイルは MRFP の設定にあります。 |
+| MRFC、TS 24.229 5.8.1 | Contact は GRUU ではなく、その台の SIP URI です。 | MRFC とのダイアログの外から MRFC に要求を送るものはありません。 |
+| MRFC、TS 24.229 5.8.2.1.1.1、RFC 4240 2 と 8 | 課金のデータを持たず、sips: を強制せず、AS を認証しません。 | このプロジェクトに課金のデータを集めるノードは無く、キャプチャで中身が見えるように何も暗号化しないためです。 |
+| MRFC、RFC 4240 3 | RFC が勧める理由の文言は Warning に入れます。 | ステータス行には UA が標準の文言を書きます。 |
+| netann、RFC 4240 3 | locale、content-type、param1 から param9 は読み飛ばします。 | どの音声ガイダンスも 1 種類しかありません。 |
+| MRFP、TS 23.333 5.10、RFC 3550 6 と 7.1 | 混ぜ合わせは PCMU だけを扱い、ジッタのために 3 フレームだけをためます。CSRC の一覧は書かず、RTCP も送りません。 | 1 つのブリッジにつないだ数台の UE の会議には、これで足ります。 |
+| MRFP、RFC 3550 6 | 自分で作ったメディアの RTCP の送信者レポートを送りません。 | UE シミュレータには要りません。 |
+| AS、TS 24.182 4.5.5.3.7 | 着信者が 180 のあとに送る offer の付いた UPDATE を、そのまま発信者に渡します。発信者のメディアは呼び出し音から離れます。 | UE シミュレータはそのときに UPDATE を送りません。 |
+| AS、TS 24.182 4.5.5.3.7 b 2 と b 3 | プリコンディションの付いた着信者の 183 を、そのまま発信者に渡します。発信者のプリコンディションを確かめずに呼び出し音を始めます。 | 着信者が呼び出しを始めた時点で、両方の資源はそろっています。 |
+| AS、TS 24.147 5.3.2.3.1 step 2、TS 24.229 5.7.1.4 と 5.7.1.5 | AS が受け持つ利用者は誰でも会議を作れます。会議のポリシーも課金のアドレスもありません。 | 会議のポリシーのサーバーがありません。 |
+| AS、TS 24.229 5.7.3 NOTE 8 | 招く利用者の S-CSCF は、AS 自身の S-CSCF と同じとみなします。 | この網の S-CSCF は 1 台です。 |
+| AS、TS 24.147 5.3.2.6.2.2 | 参加者を外すようフォーカスに頼む REFER（method が BYE）は 403 で断ります。 | IR.92 2.3.3 は求めていません。 |
+| AS、RFC 4575 3.9 | 変化があるたびにすぐ通知し、5 秒に 1 回までにまとめません。 | IR.92 2.3.3 は 5 秒以内の通知を求めていて、小さな会議はあまり変わりません。 |
+| AS、TS 24.147 5.3.3.2 step 2、RFC 4575 3.5 | 網が識別子を保証した購読者なら誰でも購読できます。 | 会議のポリシーがありません。 |
+| UE、RFC 3891 3、RFC 3892 | Referred-By に Authenticated Identity Body を付けません。 | 識別子は、REFER を送った人の網がフォーカスに保証しています。 |
+
+## 後片付け
+
+```sh
+docker compose --profile sim down --rmi all -v --remove-orphans
+```

@@ -1,0 +1,245 @@
+// Package kvlock is a lock per user kept in a kvstore.Store, so that the
+// instances of a role that share the store serialise what happens to
+// one user, as ims.UserLocks does inside one process. The S-CSCF, the
+// HSS and the
+// IP-SM-GW take such a lock around the handling of one user.
+//
+// A lock is one item, <prefix><role>:lock:<user>, written only if it is
+// absent and with a time to live: the lease. Its version is the proof
+// of holding it, and the release deletes the item only at that version,
+// so a holder whose lease ran out cannot free the lock that another
+// instance took after it. An instance that waits tries again after a
+// short pause, with jitter, until it gets the lock or its context ends.
+// The lock is per user, so it never holds up the other users of the
+// role.
+//
+// The lease bounds how long a stopped holder keeps the others waiting.
+// It is not renewed: a live holder has to finish within it. The longest
+// work under the lock is a registration with two Cx round trips, each
+// waiting at most 5 s for its answer, inside the 15 s lease. When
+// the lease runs out first, the release finds the item gone or someone
+// else's, and logs it.
+//
+// Waiters of the same instance queue in the process, so that only one
+// of them at a time tries the store; the others wait on a channel and do
+// not add to the load of the store. This queue is per user too, and
+// removed when no one holds it or waits for it.
+package kvlock
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"log/slog"
+	"math/rand/v2"
+	"os"
+	"strings"
+	"sync"
+	"time"
+
+	"github.com/yuu-biz/ims-practice/internal/ims"
+	"github.com/yuu-biz/ims-practice/internal/kvstore"
+	"github.com/yuu-biz/ims-practice/internal/kvstore/kvjson"
+)
+
+// The pause between two tries of a waiter starts at firstRetry and
+// doubles up to maxRetry. Each pause is drawn at random from its upper
+// half, so that waiters of several instances that found the lock taken
+// at the same moment do not all try again at the same moment. maxRetry
+// is what a waiter may lose after the release, small next to the
+// T1 of SIP (500 ms, RFC 3261 17.1.1.1).
+const (
+	firstRetry = 5 * time.Millisecond
+	maxRetry   = 100 * time.Millisecond
+)
+
+// Config is what a Locker takes.
+type Config struct {
+	// Prefix comes before every key, as store.prefix does for the Store
+	// of the role, so that the lock items sit next to the role's state.
+	Prefix string
+	// Role is the name of the role whose users are locked, such as
+	// scscf, hss or ipsmgw. The instances of one role share the locks;
+	// the roles do not.
+	Role string
+	// Holder is written as the value of a lock, so that a learner who
+	// reads the store sees which instance holds it. Empty means the host
+	// name.
+	Holder string
+	// Lease is how long a lock lasts if its holder does not release it.
+	// Zero means ims.UserLockLease.
+	Lease time.Duration
+	// Timeout bounds each operation on the store; zero means a second,
+	// as store.timeout does.
+	Timeout time.Duration
+	// Log gets a release that failed or came after the lease; nil
+	// discards it.
+	Log *slog.Logger
+}
+
+// Locker hands out the locks of the users of one role. Several Lockers
+// with the same Prefix and Role on one store, in one process or many,
+// exclude each other.
+type Locker struct {
+	kv      kvstore.Store
+	prefix  string
+	holder  []byte
+	lease   time.Duration
+	timeout time.Duration
+	log     *slog.Logger
+
+	mu    sync.Mutex
+	queue map[string]*queue
+}
+
+// queue is the turn of the goroutines of this process that want the
+// lock of one user. turn holds a token while one of them has the lock
+// or tries the store for it.
+type queue struct {
+	turn  chan struct{}
+	users int // the one with the turn and the ones that wait for it
+}
+
+// New returns a Locker on kv.
+func New(kv kvstore.Store, cfg Config) *Locker {
+	l := &Locker{kv: kv, prefix: cfg.Prefix + cfg.Role + ":lock:", holder: []byte(cfg.Holder),
+		lease: cfg.Lease, timeout: cfg.Timeout, log: cfg.Log, queue: map[string]*queue{}}
+	if cfg.Holder == "" {
+		host, _ := os.Hostname()
+		l.holder = []byte(host)
+	}
+	if l.lease == 0 {
+		l.lease = ims.UserLockLease
+	}
+	if l.timeout == 0 {
+		l.timeout = time.Second
+	}
+	if l.log == nil {
+		l.log = slog.New(slog.DiscardHandler)
+	}
+	return l
+}
+
+var _ ims.UserLocker = (*Locker)(nil)
+
+// Lock waits until it holds the lock of user, or ctx ends. A user is a
+// private identity (a NAI) or a public one, which compare without case
+// here, as in ims.UserLocks. The error is the end of ctx, or a failure
+// of the store: the caller has no lock then, and answers that it could
+// not handle the user (500 in SIP, DIAMETER_UNABLE_TO_COMPLY in
+// Diameter).
+//
+// unlock gives the lock back. Call it once; later calls do nothing.
+//
+// SIMPLIFIED: the writes under the lock carry no fencing token:
+// a holder that stops for longer than the lease and then goes on may
+// overwrite what the next holder wrote. Fencing would make the version
+// of the lock a condition of every write of the role's Store, which the
+// Store of no role takes; the lease is longer than the longest work under the lock.
+func (l *Locker) Lock(ctx context.Context, user string) (unlock func(), err error) {
+	user = strings.ToLower(user)
+	// A select with a free turn and an ended ctx picks either, and a
+	// MemoryStore does not look at ctx.
+	if err := ctx.Err(); err != nil {
+		return nil, fmt.Errorf("kvlock: lock of %s: %w", user, err)
+	}
+	q, err := l.waitTurn(ctx, user)
+	if err != nil {
+		return nil, err
+	}
+	key := l.prefix + kvjson.Member(user)
+	version, err := l.acquire(ctx, key)
+	if err != nil {
+		l.endTurn(user, q)
+		return nil, err
+	}
+	var once sync.Once
+	return func() {
+		once.Do(func() {
+			l.release(key, version)
+			l.endTurn(user, q)
+		})
+	}, nil
+}
+
+// waitTurn waits until this goroutine is the one of the process that
+// may hold the lock of user.
+func (l *Locker) waitTurn(ctx context.Context, user string) (*queue, error) {
+	l.mu.Lock()
+	q, ok := l.queue[user]
+	if !ok {
+		q = &queue{turn: make(chan struct{}, 1)}
+		l.queue[user] = q
+	}
+	q.users++
+	l.mu.Unlock()
+
+	select {
+	case q.turn <- struct{}{}:
+		return q, nil
+	case <-ctx.Done():
+		l.leaveQueue(user, q)
+		return nil, fmt.Errorf("kvlock: waiting for the lock of %s: %w", user, ctx.Err())
+	}
+}
+
+// endTurn passes the turn of user to the next goroutine of the process.
+func (l *Locker) endTurn(user string, q *queue) {
+	<-q.turn
+	l.leaveQueue(user, q)
+}
+
+func (l *Locker) leaveQueue(user string, q *queue) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	q.users--
+	if q.users == 0 {
+		delete(l.queue, user)
+	}
+}
+
+// acquire writes the lock under key if there is none, until it can or
+// ctx ends, and returns the version that it wrote.
+func (l *Locker) acquire(ctx context.Context, key string) (string, error) {
+	pause := firstRetry
+	for {
+		try, cancel := context.WithTimeout(ctx, l.timeout)
+		version, err := l.kv.CompareAndSwap(try, key, "", l.holder, l.lease)
+		cancel()
+		if err == nil {
+			return version, nil
+		}
+		if ctx.Err() != nil {
+			return "", fmt.Errorf("kvlock: waiting for %s: %w", key, ctx.Err())
+		}
+		if !errors.Is(err, kvstore.ErrConflict) {
+			return "", fmt.Errorf("kvlock: taking %s: %w", key, err)
+		}
+		// Someone holds the lock.
+		t := time.NewTimer(pause/2 + rand.N(pause/2))
+		select {
+		case <-t.C:
+		case <-ctx.Done():
+			t.Stop()
+			return "", fmt.Errorf("kvlock: waiting for %s: %w", key, ctx.Err())
+		}
+		pause = min(2*pause, maxRetry)
+	}
+}
+
+// release deletes the lock under key if it is still the one at version.
+// Neither outcome that it logs can be undone here: the lock is gone
+// either way, or ends with its lease.
+func (l *Locker) release(key, version string) {
+	ctx, cancel := context.WithTimeout(context.Background(), l.timeout)
+	defer cancel()
+	switch err := l.kv.CompareAndDelete(ctx, key, version); {
+	case err == nil:
+	case errors.Is(err, kvstore.ErrConflict):
+		l.log.Warn("user lock released after its lease ran out; another instance may have handled the user meanwhile",
+			"key", key, "lease", l.lease.String())
+	default:
+		l.log.Warn("user lock not released; it ends with its lease", "key", key, "lease", l.lease.String(),
+			"error", err.Error())
+	}
+}

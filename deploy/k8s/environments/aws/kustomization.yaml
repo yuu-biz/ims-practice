@@ -1,0 +1,21 @@
+# The values of an Amazon EKS cluster made by deploy/cloud/aws, for
+# overlays/cloud-aws and overlays/cloud-aws/capture. They are your
+# cluster's and your line's, so they are in values.local.env, which Git
+# ignores (.gitignore). Make it from the example and fill it in after
+# "tofu apply":
+#
+#   cp values.local.env.example values.local.env
+#
+# Each line of the example names the output it comes from
+# (deploy/k8s/README.md, "In the cloud"). kustomize drops the ConfigMap
+# from what it builds (local-config), so it never reaches the cluster.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+configMapGenerator:
+  - name: ims-environment
+    envs:
+      - values.local.env
+    options:
+      disableNameSuffixHash: true
+      annotations:
+        config.kubernetes.io/local-config: "true"

@@ -1,0 +1,18 @@
+.git
+.github
+.claude
+.audit
+captures
+recordings
+bin
+dist
+deploy
+# The announcements that the MRFP plays go into the image.
+!deploy/announcements/*.wav
+docs
+scripts
+*.md
+*.pcap
+*.pcapng
+web/dashboard/node_modules
+web/dashboard/dist

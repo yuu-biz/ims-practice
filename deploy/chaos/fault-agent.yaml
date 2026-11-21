@@ -1,0 +1,18 @@
+# The fault agent (agent.yaml). It serves the fault API of
+# internal/fault on port 8080 and applies the faults to the containers
+# of the Compose project through the Docker socket. It is not an IMS
+# node and sends no signalling.
+node: fault-agent
+roles: [fault]
+home_domain: ims.mnc001.mcc001.3gppnetwork.org
+fault:
+  http_listen: 0.0.0.0:8080
+  # Where agent.yaml mounts the Engine's socket.
+  docker_socket: /var/run/docker.sock
+  # The faults reach the containers of this project only: the name of
+  # compose.yaml. Change it when you start the stack with another
+  # project name (docker compose -p).
+  compose_project: ims-practice
+  # The throw-away container that puts a network fault into a node's
+  # namespace (chaos.yaml).
+  tools_image: ims-practice/fault-tools:dev

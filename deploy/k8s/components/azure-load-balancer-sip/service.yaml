@@ -1,0 +1,36 @@
+# SIP of the P-CSCF on the load balancer's address (kustomization.yaml).
+apiVersion: v1
+kind: Service
+metadata:
+  name: pcscf-public
+  annotations:
+    # The static public IP that deploy/cloud/azure made, by its name and
+    # resource group ("Use a static public IP address and DNS label with
+    # the AKS load balancer"). kustomization.yaml writes both from the
+    # environment.
+    service.beta.kubernetes.io/azure-pip-name: ""
+    service.beta.kubernetes.io/azure-load-balancer-resource-group: ""
+spec:
+  type: LoadBalancer
+  # Local keeps the UE's address as the source, so that the P-CSCF sees
+  # where the UE is and host_access matches (components/edge). AKS's load
+  # balancer has floating IP on, so it sends to the node with the
+  # Service's address as the destination, and needs no NodePort then.
+  externalTrafficPolicy: Local
+  allocateLoadBalancerNodePorts: false
+  # spec.loadBalancerSourceRanges: load_balancer_source_range of the
+  # environment, which kustomization.yaml writes. It narrows the rule that
+  # AKS adds for the Service, next to the NSG of the edge subnet, the only
+  # wall between the edge nodes and the internet.
+  selector:
+    app.kubernetes.io/name: pcscf
+  ports:
+    # The standard port, which Wireshark decodes without settings, over
+    # UDP and TCP in one Service (mixed
+    # protocols, stable since Kubernetes v1.26).
+    - name: sip
+      port: 5060
+      protocol: UDP
+    - name: sip-tcp
+      port: 5060
+      protocol: TCP

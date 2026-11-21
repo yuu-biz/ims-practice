@@ -1,0 +1,121 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<diameter>
+    <!--
+        The Sh application between an application server and the HSS:
+        commands from TS 29.329 V19.1.0 Table 6.1.1 and AVPs from Table
+        6.3.1. Its Application-Id 16777217 is in the IANA AAA parameters
+        registry (TS 29.329 6.4.4). go-diameter ships without it.
+
+        Only what the HSS stub and its application servers use is
+        defined: the commands that read (UDR/UDA) and update (PUR/PUA)
+        user data.
+        Subscribe-Notifications (308) and Push-Notification (309) are
+        left out, as nothing in this project sends them.
+
+        Public-Identity and Server-Name are Cx AVPs that Sh reuses (TS
+        29.329 6.3.9 and 6.3.15). go-diameter looks AVPs up per
+        application, so they are defined here again.
+    -->
+    <application id="16777217" type="auth" name="TGPP Sh">
+        <vendor id="10415" name="TGPP"/>
+
+        <command code="306" short="UD" name="User-Data">
+            <request>
+                <rule avp="Session-Id" required="true" max="1"/>
+                <rule avp="Vendor-Specific-Application-Id" required="true" max="1"/>
+                <rule avp="Auth-Session-State" required="true" max="1"/>
+                <rule avp="Origin-Host" required="true" max="1"/>
+                <rule avp="Origin-Realm" required="true" max="1"/>
+                <rule avp="Destination-Host" required="false" max="1"/>
+                <rule avp="Destination-Realm" required="true" max="1"/>
+                <rule avp="User-Identity" required="true" max="1"/>
+                <rule avp="Server-Name" required="false" max="1"/>
+                <rule avp="Service-Indication" required="false"/>
+                <rule avp="Data-Reference" required="true"/>
+                <rule avp="Identity-Set" required="false"/>
+            </request>
+            <answer>
+                <rule avp="Session-Id" required="true" max="1"/>
+                <rule avp="Vendor-Specific-Application-Id" required="true" max="1"/>
+                <rule avp="Result-Code" required="false" max="1"/>
+                <rule avp="Experimental-Result" required="false" max="1"/>
+                <rule avp="Auth-Session-State" required="true" max="1"/>
+                <rule avp="Origin-Host" required="true" max="1"/>
+                <rule avp="Origin-Realm" required="true" max="1"/>
+                <rule avp="User-Data" required="false" max="1"/>
+            </answer>
+        </command>
+
+        <command code="307" short="PU" name="Profile-Update">
+            <request>
+                <rule avp="Session-Id" required="true" max="1"/>
+                <rule avp="Vendor-Specific-Application-Id" required="true" max="1"/>
+                <rule avp="Auth-Session-State" required="true" max="1"/>
+                <rule avp="Origin-Host" required="true" max="1"/>
+                <rule avp="Origin-Realm" required="true" max="1"/>
+                <rule avp="Destination-Host" required="false" max="1"/>
+                <rule avp="Destination-Realm" required="true" max="1"/>
+                <rule avp="User-Identity" required="true" max="1"/>
+                <rule avp="Data-Reference" required="true"/>
+                <rule avp="User-Data" required="true" max="1"/>
+            </request>
+            <answer>
+                <rule avp="Session-Id" required="true" max="1"/>
+                <rule avp="Vendor-Specific-Application-Id" required="true" max="1"/>
+                <rule avp="Result-Code" required="false" max="1"/>
+                <rule avp="Experimental-Result" required="false" max="1"/>
+                <rule avp="Auth-Session-State" required="true" max="1"/>
+                <rule avp="Origin-Host" required="true" max="1"/>
+                <rule avp="Origin-Realm" required="true" max="1"/>
+            </answer>
+        </command>
+
+        <!-- TS 29.329 6.3.1: a Public-Identity or an MSISDN, or an
+             External-Identifier, which this project does not use. -->
+        <avp name="User-Identity" code="700" must="M,V" may-encrypt="N" vendor-id="10415">
+            <data type="Grouped">
+                <rule avp="Public-Identity" required="false" max="1"/>
+                <rule avp="MSISDN" required="false" max="1"/>
+            </data>
+        </avp>
+        <!-- TS 29.329 6.3.2: the E.164 number as a TBCD string. -->
+        <avp name="MSISDN" code="701" must="M,V" may-encrypt="N" vendor-id="10415">
+            <data type="OctetString"/>
+        </avp>
+        <!-- TS 29.329 6.3.3: the Sh-Data XML document of TS 29.328
+             Annex D. -->
+        <avp name="User-Data" code="702" must="M,V" may-encrypt="N" vendor-id="10415">
+            <data type="OctetString"/>
+        </avp>
+        <!-- TS 29.329 6.3.4 lists every value; only the ones the HSS
+             stub serves are named here. -->
+        <avp name="Data-Reference" code="703" must="M,V" may-encrypt="N" vendor-id="10415">
+            <data type="Enumerated">
+                <item code="0" name="RepositoryData"/>
+                <item code="10" name="IMSPublicIdentity"/>
+                <item code="12" name="S-CSCFName"/>
+                <item code="17" name="MSISDN"/>
+                <item code="24" name="SMSRegistrationInfo"/>
+            </data>
+        </avp>
+        <!-- TS 29.329 6.3.5: which repository data, such as the
+             MMTEL-Services of TS 29.364 7.2.0. -->
+        <avp name="Service-Indication" code="704" must="M,V" may-encrypt="N" vendor-id="10415">
+            <data type="OctetString"/>
+        </avp>
+        <avp name="Identity-Set" code="708" must="V" must-not="M" may-encrypt="N" vendor-id="10415">
+            <data type="Enumerated">
+                <item code="0" name="ALL_IDENTITIES"/>
+                <item code="1" name="REGISTERED_IDENTITIES"/>
+                <item code="2" name="IMPLICIT_IDENTITIES"/>
+                <item code="3" name="ALIAS_IDENTITIES"/>
+            </data>
+        </avp>
+        <avp name="Public-Identity" code="601" must="M,V" may-encrypt="N" vendor-id="10415">
+            <data type="UTF8String"/>
+        </avp>
+        <avp name="Server-Name" code="602" must="M,V" may-encrypt="N" vendor-id="10415">
+            <data type="UTF8String"/>
+        </avp>
+    </application>
+</diameter>

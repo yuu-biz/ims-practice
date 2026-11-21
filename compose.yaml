@@ -1,0 +1,383 @@
+name: ims-practice
+
+x-ims-node: &ims-node
+  image: ims-practice/ims:dev
+  build: .
+  restart: unless-stopped
+  stop_grace_period: 5s
+  # Names in the home network domain are in the zone of the dns service.
+  # Docker's embedded DNS forwards them there, so the queries cross the
+  # ims0 bridge and show up in the capture.
+  dns: [172.28.0.2]
+  depends_on:
+    dns:
+      condition: service_started
+
+networks:
+  ims:
+    driver: bridge
+    driver_opts:
+      com.docker.network.bridge.name: ims0
+    ipam:
+      config:
+        - subnet: 172.28.0.0/24
+
+services:
+  dns:
+    image: coredns/coredns:1.12.1
+    command: ["-conf", "/etc/coredns/Corefile"]
+    restart: unless-stopped
+    depends_on:
+      capture:
+        condition: service_healthy
+    volumes:
+      - ./deploy/compose/dns:/etc/coredns:ro
+    networks:
+      ims:
+        ipv4_address: 172.28.0.2
+
+  hss:
+    <<: *ims-node
+    hostname: hss
+    volumes:
+      - ./deploy/compose/hss.yaml:/etc/ims/node.yaml:ro
+    networks:
+      ims:
+        ipv4_address: 172.28.0.10
+
+  icscf:
+    <<: *ims-node
+    hostname: icscf
+    depends_on: [dns, hss]
+    volumes:
+      - ./deploy/compose/icscf.yaml:/etc/ims/node.yaml:ro
+    networks:
+      ims:
+        ipv4_address: 172.28.0.20
+
+  scscf:
+    <<: *ims-node
+    hostname: scscf
+    depends_on: [dns, hss]
+    volumes:
+      - ./deploy/compose/scscf.yaml:/etc/ims/node.yaml:ro
+    networks:
+      ims:
+        ipv4_address: 172.28.0.30
+
+  pcscf:
+    <<: *ims-node
+    hostname: pcscf
+    depends_on: [dns, icscf, agw, epc]
+    volumes:
+      - ./deploy/compose/pcscf.yaml:/etc/ims/node.yaml:ro
+    # A UE or a softphone on the host reaches the P-CSCF here, through
+    # Docker's NAT.
+    ports:
+      - "5060:5060/udp"
+    networks:
+      ims:
+        ipv4_address: 172.28.0.40
+
+  agw:
+    <<: *ims-node
+    hostname: agw
+    volumes:
+      - ./deploy/compose/agw.yaml:/etc/ims/node.yaml:ro
+    ports:
+      - "40000-40039:40000-40039/udp"
+    networks:
+      ims:
+        ipv4_address: 172.28.0.50
+
+  # The IP-SM-GW, with the stub of the SC. The S-CSCF finds it
+  # by the server_name of the filter criteria in hss.yaml, through DNS.
+  ipsmgw:
+    <<: *ims-node
+    hostname: ipsmgw
+    depends_on: [dns, hss]
+    volumes:
+      - ./deploy/compose/ipsmgw.yaml:/etc/ims/node.yaml:ro
+    networks:
+      ims:
+        ipv4_address: 172.28.0.70
+
+  # The MMTel AS. The S-CSCF sends it every INVITE by the
+  # filter criteria in hss.yaml.
+  mmtel:
+    <<: *ims-node
+    hostname: mmtel
+    depends_on: [dns, hss, mrfc]
+    volumes:
+      - ./deploy/compose/mmtel.yaml:/etc/ims/node.yaml:ro
+    networks:
+      ims:
+        ipv4_address: 172.28.0.75
+
+  # The EPC stub with the PCRF stub. The UEs
+  # attach to it, and the P-CSCF reaches its PCRF over Rx.
+  epc:
+    <<: *ims-node
+    hostname: epc
+    volumes:
+      - ./deploy/compose/epc.yaml:/etc/ims/node.yaml:ro
+    networks:
+      ims:
+        ipv4_address: 172.28.0.80
+
+  # The MRF: the MRFC, which the MMTel AS asks for announcements, the
+  # customized alerting tone and conferences, and the MRFP, which plays
+  # and mixes the media.
+  mrfc:
+    <<: *ims-node
+    hostname: mrfc
+    depends_on: [dns, mrfp]
+    volumes:
+      - ./deploy/compose/mrfc.yaml:/etc/ims/node.yaml:ro
+    networks:
+      ims:
+        ipv4_address: 172.28.0.85
+
+  mrfp:
+    <<: *ims-node
+    hostname: mrfp
+    volumes:
+      - ./deploy/compose/mrfp.yaml:/etc/ims/node.yaml:ro
+      # The WAV files that the MRFP plays.
+      - ./deploy/announcements:/usr/share/ims/announcements:ro
+    networks:
+      ims:
+        ipv4_address: 172.28.0.86
+
+  dashboard:
+    <<: *ims-node
+    hostname: dashboard
+    volumes:
+      - ./deploy/compose/dashboard.yaml:/etc/ims/node.yaml:ro
+    # Open http://localhost:8080 on the host.
+    ports:
+      - "8080:8080"
+    networks:
+      ims:
+        ipv4_address: 172.28.0.60
+
+  # The UE simulators. They do not start with "docker compose up"; run
+  # them with "docker compose run --rm ue register" and the like. ue2 is
+  # the second subscriber, to call, and ue3 the third, to divert calls
+  # to with the MMTel AS.
+  ue:
+    image: ims-practice/ims:dev
+    build: .
+    profiles: [ue]
+    entrypoint: ["ue"]
+    dns: [172.28.0.2]
+    environment:
+      UE_HEP: 172.28.0.60:9060
+    volumes:
+      - ./captures:/captures
+    networks:
+      ims:
+        ipv4_address: 172.28.0.100
+
+  ue2:
+    image: ims-practice/ims:dev
+    build: .
+    profiles: [ue]
+    entrypoint: ["ue"]
+    dns: [172.28.0.2]
+    environment:
+      UE_HEP: 172.28.0.60:9060
+    volumes:
+      - ./captures:/captures
+    networks:
+      ims:
+        ipv4_address: 172.28.0.101
+
+  ue3:
+    image: ims-practice/ims:dev
+    build: .
+    profiles: [ue]
+    entrypoint: ["ue"]
+    dns: [172.28.0.2]
+    environment:
+      UE_HEP: 172.28.0.60:9060
+    volumes:
+      - ./captures:/captures
+    networks:
+      ims:
+        ipv4_address: 172.28.0.103
+
+  # Two UE simulators that stay up and do what the dashboard asks
+  # ("ue serve"). Start them with "docker compose --profile sim up -d".
+  # They use subscribers 1 and 2 like ue and ue2, and ue-c below uses
+  # subscriber 3 like ue3, so run one profile at a time. The control API
+  # is reached through the dashboard only.
+  ue-a:
+    image: ims-practice/ims:dev
+    build: .
+    profiles: [sim]
+    entrypoint: ["ue"]
+    command: [serve, -control, "0.0.0.0:8090"]
+    restart: unless-stopped
+    stop_grace_period: 5s
+    depends_on: [pcscf, dashboard]
+    dns: [172.28.0.2]
+    environment:
+      UE_HEP: 172.28.0.60:9060
+    networks:
+      ims:
+        ipv4_address: 172.28.0.110
+
+  ue-b:
+    image: ims-practice/ims:dev
+    build: .
+    profiles: [sim]
+    entrypoint: ["ue"]
+    command:
+      - serve
+      - -control
+      - "0.0.0.0:8090"
+      - -impi
+      - 001010000000002@ims.mnc001.mcc001.3gppnetwork.org
+      - -impu
+      - sip:001010000000002@ims.mnc001.mcc001.3gppnetwork.org
+      - -password
+      - test-password-2
+    restart: unless-stopped
+    stop_grace_period: 5s
+    depends_on: [pcscf, dashboard]
+    dns: [172.28.0.2]
+    environment:
+      UE_HEP: 172.28.0.60:9060
+    networks:
+      ims:
+        ipv4_address: 172.28.0.111
+
+  # ue-c, subscriber 3, is the third party of a conference. It starts
+  # with the sim profile too.
+  ue-c:
+    image: ims-practice/ims:dev
+    build: .
+    profiles: [sim]
+    entrypoint: ["ue"]
+    command:
+      - serve
+      - -control
+      - "0.0.0.0:8090"
+      - -impi
+      - 001010000000003@ims.mnc001.mcc001.3gppnetwork.org
+      - -impu
+      - sip:001010000000003@ims.mnc001.mcc001.3gppnetwork.org
+      - -password
+      - test-password-3
+    restart: unless-stopped
+    stop_grace_period: 5s
+    depends_on: [pcscf, dashboard]
+    dns: [172.28.0.2]
+    environment:
+      UE_HEP: 172.28.0.60:9060
+    networks:
+      ims:
+        ipv4_address: 172.28.0.112
+
+  # Two VoLTE UEs. Each attaches to the EPC stub, which
+  # hands it this address and the P-CSCF in the PCO, registers with IMS
+  # AKA, and calls with AMR-WB and preconditions over the voice bearer
+  # that the network sets up for each call. Like ue-a and ue-b, they stay
+  # up and do what the dashboard asks: start them with "docker compose
+  # --profile volte up -d". Subscriber 10 has the keys of MILENAGE test
+  # set 1 and subscriber 12 those of test set 3 (TS 35.208), as in
+  # hss.yaml. Their cards have a USIM and no ISIM: -impi and -impu are
+  # the private identity and the temporary public identity derived from
+  # the IMSI (TS 23.003 13.3, 13.4B). The HSS bars the temporary one, and
+  # the UE calls with the default public identity of P-Associated-URI.
+  volte-a:
+    image: ims-practice/ims:dev
+    build: .
+    profiles: [volte]
+    entrypoint: ["ue"]
+    command:
+      - serve
+      - -control
+      - "0.0.0.0:8090"
+      - -epc
+      - http://172.28.0.80:8080
+      - -impi
+      - 001010000000010@ims.mnc001.mcc001.3gppnetwork.org
+      - -impu
+      - sip:001010000000010@ims.mnc001.mcc001.3gppnetwork.org
+      - -k
+      - 465b5ce8b199b49faa5f0a2ee238a6bc
+      - -opc
+      - cd63cb71954a9f4e48a5994e37a02baf
+      - -ut-password
+      - test-password-10
+    restart: unless-stopped
+    stop_grace_period: 5s
+    depends_on: [pcscf, epc, dashboard]
+    dns: [172.28.0.2]
+    environment:
+      UE_HEP: 172.28.0.60:9060
+    volumes:
+      - ./captures:/captures
+    networks:
+      ims:
+        ipv4_address: 172.28.0.120
+
+  volte-b:
+    image: ims-practice/ims:dev
+    build: .
+    profiles: [volte]
+    entrypoint: ["ue"]
+    command:
+      - serve
+      - -control
+      - "0.0.0.0:8090"
+      - -epc
+      - http://172.28.0.80:8080
+      - -impi
+      - 001010000000012@ims.mnc001.mcc001.3gppnetwork.org
+      - -impu
+      - sip:001010000000012@ims.mnc001.mcc001.3gppnetwork.org
+      - -k
+      - fec86ba6eb707ed08905757b1bb44b8f
+      - -opc
+      - 1006020f0a478bf6b699f15c062e42b3
+      - -ut-password
+      - test-password-12
+    restart: unless-stopped
+    stop_grace_period: 5s
+    depends_on: [pcscf, epc, dashboard]
+    dns: [172.28.0.2]
+    environment:
+      UE_HEP: 172.28.0.60:9060
+    volumes:
+      - ./captures:/captures
+    networks:
+      ims:
+        ipv4_address: 172.28.0.121
+
+  # pjsua and SIPp, user agents written by others. Started on
+  # demand, like the UE simulators.
+  peer:
+    image: ims-practice/peer:dev
+    build: images/peer
+    profiles: [ue]
+    dns: [172.28.0.2]
+    volumes:
+      - ./captures:/captures
+    networks:
+      ims:
+        ipv4_address: 172.28.0.102
+
+  capture:
+    image: ims-practice/capture:dev
+    build: images/capture
+    network_mode: host
+    restart: unless-stopped
+    volumes:
+      - ./captures:/captures
+    healthcheck:
+      test: ["CMD", "pgrep", "tcpdump"]
+      interval: 1s
+      retries: 30

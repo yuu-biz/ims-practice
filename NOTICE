@@ -1,0 +1,49 @@
+ims-practice
+Copyright 2026 yuu-biz
+
+The source code, configuration and scripts are licensed under the Apache
+License, Version 2.0 (see LICENSE).
+
+The guides (docs/guide/), the glossary (docs/glossary.md) and the slide
+decks (slides/decks/) are licensed under the Creative Commons Attribution
+4.0 International License (see LICENSE-docs).
+
+Neither licence grants any right under patents of third parties, such as
+patents essential to 3GPP specifications or to speech codecs.
+
+Third-party components
+----------------------
+
+The programs built from this repository (cmd/ims, cmd/ue) link these Go
+modules. Each keeps its own licence, which Go keeps with the module source:
+
+  github.com/fiorix/go-diameter/v4   BSD 3-Clause
+  github.com/ishidawataru/sctp       Apache License 2.0
+  github.com/miekg/dns               BSD 3-Clause
+  go.yaml.in/yaml/v3                 MIT and Apache License 2.0
+  golang.org/x/net, golang.org/x/sys BSD 3-Clause
+
+The NOTICE files of two of these modules say:
+
+  go.yaml.in/yaml/v3: Copyright 2011-2016 Canonical Ltd. Licensed under
+  the Apache License, Version 2.0.
+
+  github.com/ishidawataru/sctp: This source code includes following
+  third party code - ipsock_linux.go : licensed by the Go authors, see
+  GO_LICENSE file for the license which applies to the code.
+
+The tests also use github.com/emiago/sipgo (BSD 2-Clause) and the modules
+it depends on (MIT and BSD 3-Clause).
+
+The container images install third-party programs from public images and
+package repositories, among them pjsua (PJSIP) and tshark (Wireshark),
+which are licensed under the GNU GPL. They run as separate programs; the
+images do not link them with the code of this repository.
+
+Data files
+----------
+
+  deploy/announcements/*.wav  Synthesised by a program in this repository.
+  **/*.amr                    A sine tone encoded with opencore-amr and
+                              vo-amrwbenc (tools/amrgen).
+  Milenage test values        The test sets of 3GPP TS 35.208.

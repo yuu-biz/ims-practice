@@ -1,0 +1,39 @@
+# IP-SM-GW, the application server for SMS over IP (TS 24.341 5.3.3),
+# with the stub of the SC inside it. The S-CSCF sends it a
+# third-party REGISTER for each registration and every short message a
+# user sends, by the initial filter criteria in hss.yaml. After each
+# third-party REGISTER it subscribes to the user's registration state.
+# It reads and updates the HSS over Sh.
+node: ipsmgw
+roles: [ipsmgw]
+home_domain: ims.mnc001.mcc001.3gppnetwork.org
+ipsmgw:
+  # The SIP URI, sip:ipsmgw.ims.mnc001.mcc001.3gppnetwork.org:5060, is
+  # the server_name of the filter criteria in hss.yaml, and the
+  # P-Asserted-Identity of the MESSAGEs the IP-SM-GW sends.
+  sip:
+    listen: 0.0.0.0:5060
+    host: ipsmgw.ims.mnc001.mcc001.3gppnetwork.org
+  # Test numbers in the 555-0100 to 555-0199 range of the North American
+  # Numbering Plan, which no real line has. The IP-SM-GW registers its
+  # number in the HSS for each user it serves (TS 29.328 7.6.16).
+  number: "+12025550199"
+  # The address of the SC. A UE puts it in the RP-DA of a short message,
+  # and the IP-SM-GW in the RP-OA of a short message to a UE.
+  service_centre: "+12025550100"
+diameter:
+  origin_host: ipsmgw.ims.mnc001.mcc001.3gppnetwork.org
+  origin_realm: ims.mnc001.mcc001.3gppnetwork.org
+  peers:
+    - address: hss.ims.mnc001.mcc001.3gppnetwork.org:3868
+      origin_host: hss.ims.mnc001.mcc001.3gppnetwork.org
+  # Shorter than the RFC defaults (Tw 30s, Tc 30s) so that watchdogs
+  # show up in a capture quickly.
+  timers:
+    tw: 10s
+    tc: 5s
+# Copies of every SIP and Diameter message for the dashboard.
+# The address is fixed so that the node starts even when the dashboard
+# is down; the dashboard is not on the call path.
+hep:
+  collector: 172.28.0.60:9060

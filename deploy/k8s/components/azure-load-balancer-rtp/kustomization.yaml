@@ -1,0 +1,42 @@
+# The comparison variant of RTP through a load balancer as well (option 3
+# of load_balancer in deploy/cloud), for load_balancer = "sip-and-rtp"
+# in deploy/cloud/azure, next to azure-load-balancer-sip. Each RTP port
+# is one rule of the load balancer, and one network interface takes at
+# most 300; deploy/cloud/azure counts them. The relay must stay one Pod,
+# since the load balancer chooses a node per flow, not per call (chapter
+# 4). Set edge_public_address to this Service's address, so that the
+# P-CSCF shows the UE the relay there.
+apiVersion: kustomize.config.k8s.io/v1alpha1
+kind: Component
+resources:
+  - service.yaml
+replacements:
+  - source:
+      kind: ConfigMap
+      name: ims-environment
+      fieldPath: data.load_balancer_rtp_public_ip
+    targets:
+      - select:
+          kind: Service
+          name: agw-public
+        fieldPaths: ["metadata.annotations.[service.beta.kubernetes.io/azure-pip-name]"]
+  - source:
+      kind: ConfigMap
+      name: ims-environment
+      fieldPath: data.load_balancer_resource_group
+    targets:
+      - select:
+          kind: Service
+          name: agw-public
+        fieldPaths: ["metadata.annotations.[service.beta.kubernetes.io/azure-load-balancer-resource-group]"]
+  - source:
+      kind: ConfigMap
+      name: ims-environment
+      fieldPath: data.load_balancer_source_range
+    targets:
+      - select:
+          kind: Service
+          name: agw-public
+        fieldPaths: [spec.loadBalancerSourceRanges.0]
+        options:
+          create: true

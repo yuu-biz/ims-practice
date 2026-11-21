@@ -1,0 +1,67 @@
+# I-CSCF. A StatefulSet with a headless Service, like every SIP node:
+# the node writes its name into Via, Path, Service-Route and
+# Record-Route, and a request sent to that name later must reach this
+# same node. The headless Service resolves the name to the Pod's own
+# address, so the peer sees the address the Pod sends from, as in Docker
+# Compose. A ClusterIP would put the NAT of kube-proxy in between
+# and the peer would see another address. With one replica the Service name is enough;
+# more replicas need a name per Pod, which a StatefulSet gives.
+apiVersion: v1
+kind: Service
+metadata:
+  name: icscf
+spec:
+  clusterIP: None
+  selector:
+    app.kubernetes.io/name: icscf
+  ports:
+    # RFC 3261 19.1.2. The UDP port is named "sip", so the cluster DNS
+    # also answers the SRV name _sip._udp.icscf.ims.svc.cluster.local
+    # (RFC 2782), in the form RFC 3263 uses.
+    - name: sip
+      port: 5060
+      protocol: UDP
+    - name: sip-tcp
+      port: 5060
+      protocol: TCP
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: icscf
+spec:
+  serviceName: icscf
+  replicas: 1
+  podManagementPolicy: Parallel
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: icscf
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: icscf
+    spec:
+      terminationGracePeriodSeconds: 10
+      dnsConfig:
+        options:
+          - name: ndots
+            value: "1"
+      containers:
+        - name: ims
+          image: ims-practice/ims:dev
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: sip
+              containerPort: 5060
+              protocol: UDP
+            - name: sip-tcp
+              containerPort: 5060
+              protocol: TCP
+          volumeMounts:
+            - name: config
+              mountPath: /etc/ims
+              readOnly: true
+      volumes:
+        - name: config
+          configMap:
+            name: icscf-config

@@ -1,0 +1,27 @@
+# A mismatched agreement for the scenario of a number mismatch: network
+# A lets a
+# local number cross the border as it is, which TS 29.165 8.1 allows
+# only by agreement. Network B has no such agreement in its profile
+# for network A, so IBCF-B answers the INVITE with 404 (Not Found), a
+# rejection by local policy (TS 24.229 5.10.1). Without IBCF-B's check
+# the I-CSCF of network B would not find the user either: it turns
+# only a global number into a tel URI (5.3.2.1 item 1 b).
+#
+# Start IBCF-A with it:
+#   IBCF_A_PROFILE=network-b-local-numbers.yaml docker compose ... up -d ibcf-a
+# and call sip:2025550151;phone-context=+1@ims.mnc002.mcc001.3gppnetwork.org;user=phone.
+# network-b-global-numbers.yaml is the adjusted agreement.
+name: network-b
+domain: ims.mnc002.mcc001.3gppnetwork.org
+trusted: true
+transports: [udp, tcp]
+methods: [MESSAGE]
+option_tags:
+  100rel: pass
+  precondition: pass
+number_format: sip
+allow_local_numbers: true
+codecs: [AMR-WB, AMR, PCMU, telephone-event]
+headers:
+  - {header: User-Agent, action: remove, direction: exit}
+  - {header: Server, action: remove, direction: exit}

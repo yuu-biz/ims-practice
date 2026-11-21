@@ -1,0 +1,70 @@
+# The DNS server of the IMS, as the dns service of compose.yaml, with the
+# same CoreDNS image. A Deployment: Pods find it by its Service address,
+# not by a name of its own. The Service has a fixed ClusterIP, since a
+# Pod's resolv.conf takes an address, and it is the address of the name
+# server in the zone. The address is ims_dns_cluster_ip of the
+# environment (environments/), which components/name-server writes into
+# spec.clusterIP.
+apiVersion: v1
+kind: Service
+metadata:
+  name: dns
+  labels:
+    app.kubernetes.io/part-of: ims-practice
+spec:
+  selector:
+    app.kubernetes.io/name: dns
+  ports:
+    - name: dns
+      port: 53
+      protocol: UDP
+    - name: dns-tcp
+      port: 53
+      protocol: TCP
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: dns
+  labels:
+    app.kubernetes.io/name: dns
+    app.kubernetes.io/part-of: ims-practice
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: dns
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: dns
+        app.kubernetes.io/part-of: ims-practice
+    spec:
+      # The default dnsPolicy ClusterFirst puts the cluster DNS into its
+      # resolv.conf, which the Corefile forwards to.
+      containers:
+        - name: coredns
+          image: coredns/coredns:1.12.1
+          imagePullPolicy: IfNotPresent
+          args: ["-conf", "/etc/coredns/Corefile"]
+          ports:
+            - name: dns
+              containerPort: 53
+              protocol: UDP
+            - name: dns-tcp
+              containerPort: 53
+              protocol: TCP
+          volumeMounts:
+            - name: corefile
+              mountPath: /etc/coredns
+              readOnly: true
+            - name: zones
+              mountPath: /etc/coredns/zones
+              readOnly: true
+      volumes:
+        - name: corefile
+          configMap:
+            name: dns-corefile
+        - name: zones
+          configMap:
+            name: ims-zones

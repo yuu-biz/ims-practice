@@ -1,0 +1,347 @@
+// Package hssstore is an hss.Store on a kvstore.Store, so that several
+// HSS instances share the subscribers, and SQN_HE and the repository
+// data change by one atomic step whichever instance changes them.
+//
+// The items and their keys, after the prefix of the Config and "hss:":
+//
+//	subscriber:<private identity>    the Subscriber and its repository data
+//	public:<public identity>         index: the private identity of the subscription
+//	directory:<shard>                the private identities of one shard, for List
+//
+// The identities are in the form in which hss.MemoryStore compares them:
+// a private identity in lower case, a public identity as hss's
+// publicKey writes it (see publicKey). Every lookup of a Cx or Sh
+// request reads one or two keys.
+package hssstore
+
+import (
+	"errors"
+	"fmt"
+	"hash/fnv"
+	"slices"
+	"strconv"
+	"strings"
+	"time"
+
+	"github.com/yuu-biz/ims-practice/internal/aka"
+	"github.com/yuu-biz/ims-practice/internal/hss"
+	"github.com/yuu-biz/ims-practice/internal/ims"
+	"github.com/yuu-biz/ims-practice/internal/kvstore"
+	"github.com/yuu-biz/ims-practice/internal/kvstore/kvjson"
+	"github.com/yuu-biz/ims-practice/internal/sh"
+)
+
+// Store is an hss.Store on a kvstore.Store.
+type Store struct {
+	c *kvjson.Client
+}
+
+var _ hss.Store = (*Store)(nil)
+
+// New returns a Store on kv. Instances with the same kv and Prefix share
+// their state.
+//
+// hss.NewMemoryStore takes the subscriptions of the configuration. A
+// Store on kvstore keeps them across restarts, so an HSS that starts
+// with it adds the configured ones with Add, and takes ErrIdentityTaken
+// for one that is there already.
+func New(kv kvstore.Store, cfg kvjson.Config) *Store {
+	return &Store{c: kvjson.New(kv, cfg, "hss")}
+}
+
+// record is the item of one subscriber.
+type record struct {
+	hss.Subscriber
+	// Repository is the repository data by Service-Indication (TS 29.328
+	// 7.4). It is part of the subscriber's item, so that Delete removes
+	// it in the same step.
+	Repository map[string]sh.TransparentData
+	// Provisional is true while Add is under way: from the first write,
+	// which claims the private identity, until the last, once every
+	// public identity is claimed. A reader takes a provisional record as
+	// a miss; a writer as taken.
+	Provisional bool
+}
+
+// provisionalTime is the time to live of a provisional record: Add
+// takes a few round trips to the store, and an Add that stops does not
+// keep the identity for longer than this.
+const provisionalTime = time.Minute
+
+// directoryShards is the number of directory items. Add and Delete
+// change the item of one shard, so that two of them on different
+// subscribers seldom meet on one item.
+const directoryShards = 16
+
+// privateKey is that of hss.MemoryStore (store.go), which does not
+// export it: a NAI compares without case. A public identity is keyed by
+// ims.PublicIdentityKey, as in hss.MemoryStore.
+func privateKey(id string) string { return strings.ToLower(id) }
+
+func publicKey(id string) string { return ims.PublicIdentityKey(id) }
+
+func (s *Store) subscriberKey(privateID string) string {
+	return s.c.Key("subscriber", privateKey(privateID))
+}
+
+func (s *Store) publicIndexKey(publicID string) string { return s.c.Key("public", publicKey(publicID)) }
+
+func (s *Store) directoryKey(privateID string) string {
+	h := fnv.New32a()
+	h.Write([]byte(privateKey(privateID)))
+	return s.c.Key("directory", strconv.Itoa(int(h.Sum32()%directoryShards)))
+}
+
+func noTTL[T any](T) time.Duration { return 0 }
+
+// record reads a record that Add has finished.
+func (s *Store) record(privateID string) (record, string, bool) {
+	var r record
+	version, ok := kvjson.Get(s.c, s.subscriberKey(privateID), &r)
+	if !ok || r.Provisional {
+		return record{}, "", false
+	}
+	return r, version, true
+}
+
+// holds reports whether r holds the public identity of key pk.
+func holds(r record, pk string) bool {
+	return slices.ContainsFunc(r.PublicIdentities, func(id string) bool { return publicKey(id) == pk })
+}
+
+func (s *Store) Subscriber(privateID string) (hss.Subscriber, bool) {
+	r, _, ok := s.record(privateID)
+	return r.Subscriber, ok
+}
+
+// SubscriberOf reads the index item of the public identity, then the
+// subscriber it names, which must hold the identity (kvjson.PutIndex).
+func (s *Store) SubscriberOf(publicID string) (hss.Subscriber, bool) {
+	target, _, ok := s.c.IndexTarget(s.publicIndexKey(publicID))
+	if !ok {
+		return hss.Subscriber{}, false
+	}
+	r, _, ok := s.record(target)
+	if !ok || !holds(r, publicKey(publicID)) {
+		return hss.Subscriber{}, false
+	}
+	return r.Subscriber, true
+}
+
+// Add claims the private identity with a provisional record, then each
+// public identity with an index item that only one subscription can
+// hold, then enters the subscriber in the directory, and at last makes
+// the record final. Every claim is a compare and swap, so of two Adds
+// that share an identity, one fails with ErrIdentityTaken, on whichever
+// instances they run.
+//
+// An index item that names a subscriber that does not hold the identity
+// (one that is gone, or whose Add stopped) is taken over. One that
+// names a provisional record that holds the identity is taken: that Add
+// may still finish. If this Add fails, it removes what it wrote; if its
+// instance stops, the provisional record goes with its time to live,
+// and its index items are taken over by the next Add.
+func (s *Store) Add(sub hss.Subscription) error {
+	k := privateKey(sub.PrivateIdentity)
+	r := record{Repository: map[string]sh.TransparentData{}, Provisional: true}
+	for _, d := range sub.RepositoryData {
+		d.SequenceNumber = 0 // new data (TS 29.328 6.1.2.1)
+		r.Repository[d.ServiceIndication] = d
+	}
+	sub.RepositoryData = nil
+	r.Subscription = sub
+	mainKey := s.subscriberKey(k)
+	version, err := kvjson.Swap(s.c, mainKey, "", r, provisionalTime)
+	if errors.Is(err, kvstore.ErrConflict) {
+		return fmt.Errorf("%w: %s", hss.ErrIdentityTaken, sub.PrivateIdentity)
+	}
+	if err != nil {
+		return err
+	}
+	var claimed []claim
+	undo := func() {
+		for _, c := range claimed {
+			s.c.DeleteIf(c.key, c.version)
+		}
+		s.c.DeleteIf(mainKey, version)
+	}
+	for _, id := range sub.PublicIdentities {
+		c, err := s.claimPublic(id, k)
+		if err != nil {
+			undo()
+			return err
+		}
+		claimed = append(claimed, c)
+	}
+	if _, err := kvjson.Upsert(s.c, s.directoryKey(k), noTTL, func(ids *[]string) {
+		if i, found := slices.BinarySearch(*ids, k); !found {
+			*ids = slices.Insert(*ids, i, k)
+		}
+	}); err != nil {
+		undo()
+		return err
+	}
+	r.Provisional = false
+	if _, err := kvjson.Swap(s.c, mainKey, version, r, 0); err != nil {
+		// The provisional record ran out, and another Add may hold the
+		// identity now: this one has failed. Its directory entry stays,
+		// for List to skip.
+		undo()
+		return fmt.Errorf("hssstore: add %s: %w", sub.PrivateIdentity, err)
+	}
+	return nil
+}
+
+// claim is an index item that Add wrote, and its version.
+type claim struct{ key, version string }
+
+// claimPublic makes the index item of publicID name the private key k,
+// unless another subscription holds the identity.
+func (s *Store) claimPublic(publicID, k string) (claim, error) {
+	key := s.publicIndexKey(publicID)
+	version := ""
+	for range 10 {
+		v, err := s.c.SwapIndex(key, version, k, 0)
+		if err == nil {
+			return claim{key, v}, nil
+		}
+		if !errors.Is(err, kvstore.ErrConflict) {
+			return claim{}, err
+		}
+		target, current, ok := s.c.IndexTarget(key)
+		if !ok {
+			version = ""
+			continue
+		}
+		version = current
+		if target == k {
+			// Left by an earlier subscription of the same private
+			// identity: the provisional record of this Add is the one at
+			// that key now.
+			continue
+		}
+		var other record
+		if _, ok := kvjson.Get(s.c, s.subscriberKey(target), &other); ok && holds(other, publicKey(publicID)) {
+			return claim{}, fmt.Errorf("%w: %s", hss.ErrIdentityTaken, publicID)
+		}
+		// The subscriber it names does not hold the identity: take it.
+	}
+	return claim{}, fmt.Errorf("hssstore: claim %s: %w", publicID, kvjson.ErrGaveUp)
+}
+
+// errUnchanged makes Update write nothing.
+var errUnchanged = errors.New("hssstore: unchanged")
+
+// Put writes back the registration state by compare and swap, keeping
+// the stored AKA credentials and SQN_HE, as hss.MemoryStore does.
+func (s *Store) Put(sub hss.Subscriber) {
+	kvjson.Update(s.c, s.subscriberKey(sub.PrivateIdentity), noTTL, func(r *record) error {
+		if r.Provisional {
+			return errUnchanged
+		}
+		sub.AKA = r.AKA
+		r.Subscriber = sub
+		return nil
+	})
+}
+
+func (s *Store) CompareAndSwapSQN(privateID string, old, new aka.SQN) bool {
+	_, err := kvjson.Update(s.c, s.subscriberKey(privateID), noTTL, func(r *record) error {
+		if r.Provisional || r.AKA == nil || r.AKA.SQN != old {
+			return errUnchanged
+		}
+		r.AKA.SQN = new
+		return nil
+	})
+	return err == nil
+}
+
+func (s *Store) RepositoryData(privateID, serviceIndication string) (sh.TransparentData, bool) {
+	r, _, ok := s.record(privateID)
+	d, found := r.Repository[serviceIndication]
+	return d, ok && found
+}
+
+// CompareAndSwapRepositoryData checks old against what is stored and
+// writes data in one compare and swap of the subscriber's item, so that
+// two instances that both read one Sequence Number cannot both write.
+func (s *Store) CompareAndSwapRepositoryData(privateID string, old *sh.TransparentData, data sh.TransparentData) bool {
+	_, err := kvjson.Update(s.c, s.subscriberKey(privateID), noTTL, func(r *record) error {
+		if r.Provisional {
+			return errUnchanged
+		}
+		stored, ok := r.Repository[data.ServiceIndication]
+		if ok != (old != nil) || ok && stored.SequenceNumber != old.SequenceNumber {
+			return errUnchanged
+		}
+		if data.ServiceData == nil {
+			delete(r.Repository, data.ServiceIndication)
+			return nil
+		}
+		if r.Repository == nil {
+			r.Repository = map[string]sh.TransparentData{}
+		}
+		r.Repository[data.ServiceIndication] = data
+		return nil
+	})
+	return err == nil
+}
+
+// Delete removes the subscriber with a compare and delete, then its
+// index items and its directory entry. A reader in between finds an
+// index item without its subscriber, which is a miss; an Add takes it
+// over.
+func (s *Store) Delete(privateID string) (hss.Subscriber, bool) {
+	k := privateKey(privateID)
+	for range 10 {
+		r, version, ok := s.record(k)
+		if !ok {
+			return hss.Subscriber{}, false
+		}
+		if !s.c.DeleteIf(s.subscriberKey(k), version) {
+			continue
+		}
+		for _, id := range r.PublicIdentities {
+			s.c.DeleteIndexIf(s.publicIndexKey(id), k)
+		}
+		kvjson.Update(s.c, s.directoryKey(k), noTTL, func(ids *[]string) error {
+			*ids = slices.DeleteFunc(*ids, func(id string) bool { return id == k })
+			return nil
+		})
+		return r.Subscriber, true
+	}
+	return hss.Subscriber{}, false
+}
+
+// List reads every directory item, and then the subscribers in the order
+// of their private identities until it has limit of them.
+//
+// SIMPLIFIED: a list of every subscriber does not scale to a large
+// network; it would have to come in pages, from a range lookup of the
+// external store. kvstore.Store has no range lookup, and
+// hss.Store.List takes no position to go on from, so List reads all
+// directory items, and with them every private identity, as
+// hss.MemoryStore walks all subscribers. It is for the operator only,
+// never for a Cx request. A List that goes on from a cursor, one shard
+// at a time, would remove the walk.
+func (s *Store) List(limit int) []hss.Subscriber {
+	var ids []string
+	for shard := range directoryShards {
+		var shardIDs []string
+		kvjson.Get(s.c, s.c.Key("directory", strconv.Itoa(shard)), &shardIDs)
+		ids = append(ids, shardIDs...)
+	}
+	slices.Sort(ids)
+	var subs []hss.Subscriber
+	for _, id := range ids {
+		if len(subs) >= limit {
+			break
+		}
+		// An entry whose subscriber is gone, or still provisional, is
+		// one that an Add or a Delete has not finished with.
+		if sub, ok := s.Subscriber(id); ok {
+			subs = append(subs, sub)
+		}
+	}
+	return subs
+}

@@ -1,0 +1,110 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>IMS dashboard</title>
+  </head>
+  <body>
+    <header class="top">
+      <h1>IMS dashboard</h1>
+      <span id="live" class="live">connecting</span>
+    </header>
+    <main>
+      <section aria-labelledby="ues-heading">
+        <h2 id="ues-heading">UE simulators</h2>
+        <p id="ues-note" class="note" hidden></p>
+        <div id="ues" class="ue-cards"></div>
+      </section>
+
+      <section aria-labelledby="calls-heading">
+        <h2 id="calls-heading">Calls</h2>
+        <p id="calls-note" class="note" hidden></p>
+        <div class="scroll">
+          <table id="calls">
+            <thead>
+              <tr>
+                <th>Call-ID</th>
+                <th>Dialogs</th>
+                <th>From</th>
+                <th>To</th>
+                <th>State</th>
+                <th>Status</th>
+                <th>Started (UTC)</th>
+                <th>Ended (UTC)</th>
+                <th>Messages</th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </section>
+
+      <section aria-labelledby="ladder-heading">
+        <h2 id="ladder-heading">Ladder diagram <span id="ladder-call" class="mono"></span></h2>
+        <p id="ladder-note" class="note">Select a call, or the identity of a registration, to draw its ladder diagram.</p>
+        <div class="ladder-layout">
+          <div id="ladder" class="ladder scroll"></div>
+          <aside id="detail" class="detail" hidden></aside>
+        </div>
+      </section>
+
+      <section aria-labelledby="registrations-heading">
+        <h2 id="registrations-heading">Registrations</h2>
+        <p id="registrations-note" class="note" hidden></p>
+        <div class="scroll">
+          <table id="registrations">
+            <thead>
+              <tr>
+                <th>Public identity (IMPU)</th>
+                <th>Private identity (IMPI)</th>
+                <th>Contact</th>
+                <th>Expires (UTC)</th>
+                <th>State</th>
+                <th>S-CSCF</th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </section>
+
+      <section aria-labelledby="subscribers-heading">
+        <h2 id="subscribers-heading">Subscribers (HSS)</h2>
+        <p id="subscribers-note" class="note" hidden></p>
+        <div class="scroll">
+          <table id="subscribers">
+            <thead>
+              <tr>
+                <th>Private identity</th>
+                <th>Public identities</th>
+                <th>Alerting tone (CAT)</th>
+                <th><span class="visually-hidden">Actions</span></th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+        <form id="subscriber-form" class="add-form">
+          <fieldset>
+            <legend>Add a test subscriber</legend>
+            <label>
+              Private identity
+              <input name="private_identity" required placeholder="001010000000005@ims.mnc001.mcc001.3gppnetwork.org" />
+            </label>
+            <label>
+              Public identities, one per line
+              <textarea name="public_identities" required rows="2" placeholder="sip:001010000000005@ims.mnc001.mcc001.3gppnetwork.org&#10;tel:+12025550105"></textarea>
+            </label>
+            <label>
+              Password
+              <input name="password" type="password" required autocomplete="new-password" />
+            </label>
+            <button type="submit">Add subscriber</button>
+          </fieldset>
+        </form>
+      </section>
+    </main>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

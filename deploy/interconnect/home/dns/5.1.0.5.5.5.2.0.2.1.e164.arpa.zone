@@ -1,0 +1,15 @@
+; ENUM (RFC 6116) in network A for the numbers of network B, +1 202
+; 555 0150 to 0159, fictional numbers of the North American Numbering
+; Plan. Each NAPTR gives the global number in a SIP URI of network B's
+; domain with user=phone, the form of TS 29.165 8.1. The S-CSCF of
+; network A sees a domain that is not its own and sends the call to
+; IBCF-A (TS 24.229 5.4.3.2 steps 10 to 12). The private identities
+; of network B stay out of network A's DNS.
+$ORIGIN 5.1.0.5.5.5.2.0.2.1.e164.arpa.
+$TTL 60
+@  IN SOA dns.ims.mnc001.mcc001.3gppnetwork.org. hostmaster.ims.mnc001.mcc001.3gppnetwork.org. 1 3600 600 86400 60
+@  IN NS  dns.ims.mnc001.mcc001.3gppnetwork.org.
+
+; +1 202 555 0151 and 0152, the UEs of network B.
+1 IN NAPTR 10 100 "u" "E2U+sip" "!^.*$!sip:+12025550151@ims.mnc002.mcc001.3gppnetwork.org;user=phone!" .
+2 IN NAPTR 10 100 "u" "E2U+sip" "!^.*$!sip:+12025550152@ims.mnc002.mcc001.3gppnetwork.org;user=phone!" .

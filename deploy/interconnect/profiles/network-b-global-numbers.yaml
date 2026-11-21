@@ -1,0 +1,24 @@
+# The adjusted agreement of network A for the scenario of a number
+# mismatch,
+# against network-b-local-numbers.yaml. IBCF-A makes a local number
+# with the phone-context +1 global before it leaves: the agreement says
+# which prefix makes it global (TS 29.165 8.1 NOTE 2, RFC 3966 5.1.5).
+# Network B gets +12025550151, whose tel URI its HSS knows.
+#
+# Start IBCF-A with it:
+#   IBCF_A_PROFILE=network-b-global-numbers.yaml docker compose ... up -d ibcf-a
+name: network-b
+domain: ims.mnc002.mcc001.3gppnetwork.org
+trusted: true
+transports: [udp, tcp]
+methods: [MESSAGE]
+option_tags:
+  100rel: pass
+  precondition: pass
+number_format: sip
+local_numbers:
+  - {phone_context: "+1", global_prefix: "+1"}
+codecs: [AMR-WB, AMR, PCMU, telephone-event]
+headers:
+  - {header: User-Agent, action: remove, direction: exit}
+  - {header: Server, action: remove, direction: exit}

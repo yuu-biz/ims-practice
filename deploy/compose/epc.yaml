@@ -1,0 +1,56 @@
+# EPC stub with the PCRF stub inside it. A UE
+# attaches over the API at 8080 with JSON messages named after the NAS
+# messages of TS 24.301, and receives the network's messages on its
+# event stream. The P-CSCF reaches the PCRF over Rx on the standard
+# Diameter port 3868 (RFC 6733 2.1).
+node: epc
+roles: [epc]
+home_domain: ims.mnc001.mcc001.3gppnetwork.org
+epc:
+  # The UE API, and the paths with which a learner makes the network
+  # deactivate a UE's voice bearer or detach the UE (TS 24.301 6.4.4.2
+  # and 5.5.2.3, procedures that the network initiates):
+  #   DELETE /network-initiated/ues/<IMSI>/bearers/<EBI>
+  #   POST   /network-initiated/ues/<IMSI>/detach
+  api: 0.0.0.0:8080
+  # The APN of the IMS PDN (IR.92 4.3).
+  apn: ims
+  # Handed to the UE in the PCO, the first one preferred (TS 24.229
+  # L.2.2.1).
+  pcscf_addresses: [172.28.0.40]
+  # Test IMSIs, as in the private identities of hss.yaml. Each UE has a
+  # static address, and its container must have the same one in
+  # compose.yaml: the stub does not route packets. Subscribers 1
+  # and 2 are ue and ue2, which attach when they run with -epc; 10 and
+  # 12 are volte-a and volte-b of the volte profile, which always do.
+  subscribers:
+    - imsi: "001010000000001"
+      address: 172.28.0.100
+    - imsi: "001010000000002"
+      address: 172.28.0.101
+    - imsi: "001010000000010"
+      address: 172.28.0.120
+    - imsi: "001010000000012"
+      address: 172.28.0.121
+  # MCC 001 and MNC 01 are test values, as in the home domain. The UE
+  # writes the tracking area code and the cell identity into
+  # P-Access-Network-Info (TS 24.229 7.2A.4.3).
+  cell:
+    mcc: "001"
+    mnc: "01"
+    tac: 1
+    eci: 257
+diameter:
+  origin_host: pcrf.ims.mnc001.mcc001.3gppnetwork.org
+  origin_realm: ims.mnc001.mcc001.3gppnetwork.org
+  listen: 0.0.0.0:3868
+  # Shorter than the RFC defaults (Tw 30s, Tc 30s) so that watchdogs
+  # show up in a capture quickly.
+  timers:
+    tw: 10s
+    tc: 5s
+# Copies of every SIP and Diameter message for the dashboard.
+# The address is fixed so that the node starts even when the dashboard
+# is down; the dashboard is not on the call path.
+hep:
+  collector: 172.28.0.60:9060

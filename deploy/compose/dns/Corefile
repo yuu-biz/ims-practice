@@ -1,0 +1,13 @@
+# CoreDNS serves the home network's zone. The IMS nodes ask Docker's
+# embedded DNS, which forwards names it does not know to this server,
+# so every query shows up in the capture of the ims0 bridge.
+ims.mnc001.mcc001.3gppnetwork.org {
+    file /etc/coredns/ims.mnc001.mcc001.3gppnetwork.org.zone
+    log
+}
+
+# The ENUM tree for the test numbers (RFC 6116).
+e164.arpa {
+    file /etc/coredns/e164.arpa.zone
+    log
+}

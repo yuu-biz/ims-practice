@@ -1,0 +1,12 @@
+# The capture on Kubernetes, as in Docker Compose: one tcpdump on each node writes
+# every packet of the Pods to a pcap (components/capture), here with the
+# Pod range of kind (environments/kind). Apply it before a DNS overlay,
+# so that it records from the start:
+#   kubectl apply -k deploy/k8s/capture
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: ims
+resources:
+  - ../environments/kind
+components:
+  - ../components/capture

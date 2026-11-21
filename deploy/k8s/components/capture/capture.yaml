@@ -1,0 +1,73 @@
+# A DaemonSet, so that each node has one capture Pod. It runs in the
+# node's network namespace (hostNetwork), where it sees the host end of
+# every Pod's veth. kind's CNI connects each Pod with its own veth and
+# routes between them, with no bridge such as the ims0 of compose.yaml,
+# so the capture listens on "any".
+#
+# A packet from one Pod to another crosses two veths, into the node and
+# out of it. "-Q in" keeps the first only, so each packet is in the pcap
+# once, as the sending Pod sent it: a request to a ClusterIP still has
+# the ClusterIP as its destination, before kube-proxy's NAT. The filter
+# keeps the packets of the Pod network (POD_CIDR, pod_cidr of the
+# environment) and leaves out those of the node itself, such as the API
+# server's. On the edge nodes of a cloud, EXTRA_FILTER adds what comes
+# from the internet (components/edge-capture).
+#
+# Only this Pod uses hostNetwork and extra capabilities; the IMS nodes
+# use neither, so that they depend on no network setting of the host.
+apiVersion: v1
+kind: Namespace
+metadata:
+  # The namespace of the base, here too, so that the capture can start
+  # before the IMS.
+  name: ims
+---
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: capture
+  labels:
+    app.kubernetes.io/name: capture
+    app.kubernetes.io/part-of: ims-practice
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: capture
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: capture
+        app.kubernetes.io/part-of: ims-practice
+    spec:
+      hostNetwork: true
+      terminationGracePeriodSeconds: 5
+      containers:
+        - name: capture
+          # The image of compose.yaml, with tcpdump and tshark. Its own
+          # script waits for one named interface, so the command is given
+          # here instead.
+          image: ims-practice/capture:dev
+          imagePullPolicy: IfNotPresent
+          command:
+            - sh
+            - -c
+            - |
+              file="/captures/ims-$(date -u +%Y%m%dT%H%M%SZ).pcap"
+              echo "capture: writing $file"
+              exec tcpdump -i any -Q in -U -n -w "$file" net "$POD_CIDR" $EXTRA_FILTER
+          env:
+            # components/capture writes pod_cidr of the environment here.
+            - name: POD_CIDR
+          securityContext:
+            capabilities:
+              add: [NET_ADMIN, NET_RAW]
+          volumeMounts:
+            - name: captures
+              mountPath: /captures
+      volumes:
+        # On the node, so that the pcaps outlive the Pod. Copy one out
+        # with kubectl cp (README.md).
+        - name: captures
+          hostPath:
+            path: /var/log/ims-captures
+            type: DirectoryOrCreate

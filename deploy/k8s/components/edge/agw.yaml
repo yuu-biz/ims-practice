@@ -1,0 +1,71 @@
+# The media relay node on an edge node of the cloud (kustomization.yaml),
+# next to the P-CSCF.
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: agw
+spec:
+  template:
+    spec:
+      nodeSelector:
+        ims-practice/pool: edge
+      tolerations:
+        - key: ims-practice/pool
+          operator: Equal
+          value: edge
+          effect: NoSchedule
+      # On the P-CSCF's node: the P-CSCF shows the UE the relay at
+      # edge_public_address, which is that node's address.
+      affinity:
+        podAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - labelSelector:
+                matchLabels:
+                  app.kubernetes.io/name: pcscf
+              topologyKey: kubernetes.io/hostname
+      containers:
+        - name: ims
+          # Each port of rtp_ports in base/config/agw.yaml on the same port
+          # of the node. A hostPort is one port; Kubernetes has no range,
+          # so each has an entry.
+          ports:
+            - {name: rtp-40000, containerPort: 40000, hostPort: 40000, protocol: UDP}
+            - {name: rtp-40001, containerPort: 40001, hostPort: 40001, protocol: UDP}
+            - {name: rtp-40002, containerPort: 40002, hostPort: 40002, protocol: UDP}
+            - {name: rtp-40003, containerPort: 40003, hostPort: 40003, protocol: UDP}
+            - {name: rtp-40004, containerPort: 40004, hostPort: 40004, protocol: UDP}
+            - {name: rtp-40005, containerPort: 40005, hostPort: 40005, protocol: UDP}
+            - {name: rtp-40006, containerPort: 40006, hostPort: 40006, protocol: UDP}
+            - {name: rtp-40007, containerPort: 40007, hostPort: 40007, protocol: UDP}
+            - {name: rtp-40008, containerPort: 40008, hostPort: 40008, protocol: UDP}
+            - {name: rtp-40009, containerPort: 40009, hostPort: 40009, protocol: UDP}
+            - {name: rtp-40010, containerPort: 40010, hostPort: 40010, protocol: UDP}
+            - {name: rtp-40011, containerPort: 40011, hostPort: 40011, protocol: UDP}
+            - {name: rtp-40012, containerPort: 40012, hostPort: 40012, protocol: UDP}
+            - {name: rtp-40013, containerPort: 40013, hostPort: 40013, protocol: UDP}
+            - {name: rtp-40014, containerPort: 40014, hostPort: 40014, protocol: UDP}
+            - {name: rtp-40015, containerPort: 40015, hostPort: 40015, protocol: UDP}
+            - {name: rtp-40016, containerPort: 40016, hostPort: 40016, protocol: UDP}
+            - {name: rtp-40017, containerPort: 40017, hostPort: 40017, protocol: UDP}
+            - {name: rtp-40018, containerPort: 40018, hostPort: 40018, protocol: UDP}
+            - {name: rtp-40019, containerPort: 40019, hostPort: 40019, protocol: UDP}
+            - {name: rtp-40020, containerPort: 40020, hostPort: 40020, protocol: UDP}
+            - {name: rtp-40021, containerPort: 40021, hostPort: 40021, protocol: UDP}
+            - {name: rtp-40022, containerPort: 40022, hostPort: 40022, protocol: UDP}
+            - {name: rtp-40023, containerPort: 40023, hostPort: 40023, protocol: UDP}
+            - {name: rtp-40024, containerPort: 40024, hostPort: 40024, protocol: UDP}
+            - {name: rtp-40025, containerPort: 40025, hostPort: 40025, protocol: UDP}
+            - {name: rtp-40026, containerPort: 40026, hostPort: 40026, protocol: UDP}
+            - {name: rtp-40027, containerPort: 40027, hostPort: 40027, protocol: UDP}
+            - {name: rtp-40028, containerPort: 40028, hostPort: 40028, protocol: UDP}
+            - {name: rtp-40029, containerPort: 40029, hostPort: 40029, protocol: UDP}
+            - {name: rtp-40030, containerPort: 40030, hostPort: 40030, protocol: UDP}
+            - {name: rtp-40031, containerPort: 40031, hostPort: 40031, protocol: UDP}
+            - {name: rtp-40032, containerPort: 40032, hostPort: 40032, protocol: UDP}
+            - {name: rtp-40033, containerPort: 40033, hostPort: 40033, protocol: UDP}
+            - {name: rtp-40034, containerPort: 40034, hostPort: 40034, protocol: UDP}
+            - {name: rtp-40035, containerPort: 40035, hostPort: 40035, protocol: UDP}
+            - {name: rtp-40036, containerPort: 40036, hostPort: 40036, protocol: UDP}
+            - {name: rtp-40037, containerPort: 40037, hostPort: 40037, protocol: UDP}
+            - {name: rtp-40038, containerPort: 40038, hostPort: 40038, protocol: UDP}
+            - {name: rtp-40039, containerPort: 40039, hostPort: 40039, protocol: UDP}

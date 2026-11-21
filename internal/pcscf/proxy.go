@@ -1,0 +1,119 @@
+package pcscf
+
+import (
+	"time"
+
+	"github.com/yuu-biz/ims-practice/internal/sip"
+)
+
+// proxyInvite forwards out, the initial INVITE of call, to dst, the way
+// a stateful proxy does (RFC 3261 16.6, 16.7): it is
+// sip.ServerTransaction.ProxyWith with one more way for the INVITE to
+// end. When the network has no resources for the session, or takes
+// them away while the INVITE is on its way (call.abort), the P-CSCF
+// gives the INVITE up itself: it answers the caller 500 and cancels the
+// INVITE towards the callee with a Reason that gives 503 (TS 24.229
+// 5.2.7.2, 5.2.8.1.1).
+//
+// Like ProxyWith it returns the final response that is still to be
+// sent, or nil after a 2xx. It also returns nil once the P-CSCF has
+// given the INVITE up, and sets call.givenUp.
+//
+// The loop repeats ProxyWith because package sip has no proxy that its
+// user can end; the two must stay alike. Timer C is the default one,
+// since the stack's own setting cannot be read from here.
+//
+// SIMPLIFIED: RFC 3261 9.1. A 2xx that crosses the CANCEL is dropped,
+// where a UAC would answer it with an ACK and a BYE. The callee then
+// retransmits its 2xx, gets no ACK and ends the call itself (RFC 3261
+// 13.3.1.4).
+func (p *PCSCF) proxyInvite(st *sip.ServerTransaction, out *sip.Message, dst sip.Destination, call *setup) (*sip.Message, error) {
+	stack, err := p.stackToward(dst).Get()
+	if err != nil {
+		return nil, err
+	}
+	ct, err := stack.SendRequest(out, dst)
+	if err != nil {
+		return nil, err
+	}
+	timerC := time.NewTimer(sip.DefaultTimerC)
+	defer timerC.Stop()
+	timerCFired := timerC.C
+	cancelled, abort := st.Cancelled(), call.abort
+	var final *sip.Message
+	answered, provisional := false, false
+	giveUp := func() {
+		call.givenUp = true
+		st.Respond(call.unavailable())
+		ct.Cancel(sip.HeaderField{Name: "Reason", Value: reasonServiceUnavailable})
+	}
+	for {
+		select {
+		case resp, ok := <-ct.Responses():
+			if !ok {
+				switch {
+				case answered || call.givenUp:
+					return nil, nil
+				case final != nil:
+					return final, nil
+				}
+				return nil, ct.Err()
+			}
+			resp = resp.Clone()
+			resp.RemoveFirst("Via")
+			switch code := resp.StatusCode; {
+			case code == 100:
+				// 16.7 step 5: a 100 (Trying) is hop by hop.
+				provisional = true
+			case call.givenUp:
+				// The caller has its 500; what the callee still sends, in
+				// the end the 487 to the CANCEL, goes no further.
+				if code/100 == 2 {
+					call.log.Warn("dropped a 2xx that crossed the CANCEL")
+				}
+			case code < 200:
+				provisional = true
+				// 16.7 step 2.
+				timerC.Reset(sip.DefaultTimerC)
+				if call.response(resp) != nil {
+					giveUp()
+					continue
+				}
+				st.Respond(resp)
+			case code < 300:
+				refused := call.response(resp)
+				if !call.settle() {
+					// The session was aborted just before its 2xx came.
+					giveUp()
+					continue
+				}
+				answered = true
+				timerC.Stop()
+				timerCFired = nil
+				st.Respond(resp)
+				if refused != nil {
+					// The callee has answered, so the caller gets the 2xx,
+					// and the dialog is then released (5.2.8.1.2).
+					go p.release(call.key, call.log)
+				}
+			default:
+				final = resp
+			}
+		case <-cancelled:
+			cancelled = nil
+			// RFC 3326 2, as ProxyWith does.
+			ct.Cancel(sip.ReasonFields(st.CancelRequest())...)
+		case <-abort:
+			abort = nil
+			if !call.givenUp {
+				giveUp()
+			}
+		case <-timerCFired:
+			timerCFired = nil
+			if !provisional {
+				return sip.NewResponse(st.Request, 408, sip.NewTag()), nil
+			}
+			ct.Cancel()
+		}
+	}
+}

@@ -1,0 +1,32 @@
+# The capture on the nodes of a cloud with edge nodes (components/edge).
+# The capture tolerates the edge taint, so that a capture Pod runs on
+# the edge nodes too, where the P-CSCF and the relay are.
+#
+# A packet from the internet enters an edge node at its network
+# interface, addressed to the node, and the node's NAT for the hostPort
+# then sends it on to the Pod. "-Q in" (components/capture/capture.yaml)
+# records it only where it enters, where neither of its addresses need
+# be in the Pod range, so "net $POD_CIDR" alone can miss it. EXTRA_FILTER
+# adds the ports that the edge nodes take from the internet: SIP (5060)
+# and rtp_ports of base/config/agw.yaml.
+apiVersion: kustomize.config.k8s.io/v1alpha1
+kind: Component
+patches:
+  - patch: |-
+      apiVersion: apps/v1
+      kind: DaemonSet
+      metadata:
+        name: capture
+      spec:
+        template:
+          spec:
+            tolerations:
+              - key: ims-practice/pool
+                operator: Equal
+                value: edge
+                effect: NoSchedule
+            containers:
+              - name: capture
+                env:
+                  - name: EXTRA_FILTER
+                    value: or port 5060 or udp portrange 40000-40039

@@ -1,0 +1,10 @@
+# TrGW-B, the media relay at the border of network B, on ims1 and nni0.
+node: trgw-b
+roles: [agw]
+home_domain: ims.mnc002.mcc001.3gppnetwork.org
+agw:
+  control: 0.0.0.0:8080
+  rtp_address: 172.28.1.91
+  rtp_ports:
+    min: 42000
+    max: 42039

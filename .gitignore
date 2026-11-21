@@ -1,0 +1,29 @@
+# キャプチャと音声の出力
+captures/
+*.pcap
+*.pcapng
+recordings/
+e2e-out/
+
+# ビルド成果物
+bin/
+dist/
+node_modules/
+
+# ローカル設定
+.env
+.env.local
+*.local.yaml
+
+# エディタと OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# 作業記録（ローカルのみ）
+.audit/
+
+# エージェントの作業ツリーとローカル設定
+.claude/worktrees/
+.claude/settings.local.json

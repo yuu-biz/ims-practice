@@ -1,0 +1,241 @@
+package oam
+
+import (
+	"bufio"
+	"bytes"
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"net/http"
+	"net/url"
+	"strconv"
+	"strings"
+)
+
+// The HSS provisioning API (internal/hss, Provisioning) as the OAM
+// speaks it. The HSS of internal/hss has:
+//
+//	GET    /subscriptions/{impi}   one subscription
+//	POST   /subscriptions          add one
+//	DELETE /subscriptions/{impi}   remove one
+//
+// and the OAM uses these as well, which internal/hss does not have; an
+// HSS without them answers 404 or 405, and the OAM reports that the
+// operation is missing:
+//
+//	PUT    /subscriptions/{impi}[?dry_run=true]
+//	       create or replace one, answering hssPutAnswer
+//	PATCH  /subscriptions/{impi}
+//	       change test_user and service_profile only (hssPatch)
+//	GET    /subscriptions/export?after={impi}&limit={n}
+//	       the subscriptions after impi, credentials included, one JSON
+//	       object per line, in the order of the private identities
+//
+// The types here mirror the JSON of the HSS; the OAM does not import
+// internal/hss.
+
+// Subscription is a subscription as the HSS provisioning API shows it
+// (subscriptionResponse of internal/hss): never with a credential.
+type Subscription struct {
+	PrivateIdentity       string   `json:"private_identity"`
+	PublicIdentities      []string `json:"public_identities"`
+	AuthenticationSchemes []string `json:"authentication_schemes"`
+	RegistrationState     string   `json:"registration_state"`
+	ServerName            string   `json:"server_name,omitempty"`
+	// TestUser and ServiceProfile are not in the API of internal/hss.
+	TestUser       bool   `json:"test_user,omitempty"`
+	ServiceProfile string `json:"service_profile,omitempty"`
+}
+
+// hssSubscriptionRequest is the body of PUT /subscriptions/{impi}: the
+// subscriptionRequest of internal/hss with the fields the OAM adds.
+type hssSubscriptionRequest struct {
+	PrivateIdentity  string                 `json:"private_identity"`
+	PublicIdentities []string               `json:"public_identities"`
+	Password         SecretString           `json:"password,omitempty"`
+	AKA              *AKARecord             `json:"aka,omitempty"`
+	Tel              string                 `json:"tel,omitempty"`
+	UtPassword       SecretString           `json:"ut_password,omitempty"`
+	MMTelServices    string                 `json:"mmtel_services,omitempty"`
+	RepositoryData   []RepositoryDataRecord `json:"repository_data,omitempty"`
+	TestUser         bool                   `json:"test_user,omitempty"`
+	ServiceProfile   string                 `json:"service_profile,omitempty"`
+}
+
+func (r SubscriptionRecord) hssRequest() hssSubscriptionRequest {
+	return hssSubscriptionRequest{
+		PrivateIdentity:  r.PrivateIdentity,
+		PublicIdentities: r.PublicIdentities,
+		Password:         r.Password,
+		AKA:              r.AKA,
+		Tel:              r.Tel,
+		UtPassword:       r.UtPassword,
+		MMTelServices:    r.MMTelServices,
+		RepositoryData:   r.RepositoryData,
+		TestUser:         r.TestUser,
+		ServiceProfile:   r.ServiceProfile,
+	}
+}
+
+// hssPutAnswer is the answer to PUT /subscriptions/{impi}: what the
+// HSS did, or would do on a dry run, and the subscription after it.
+// unchanged means that the stored subscription is the request already,
+// credentials included, which only the HSS can tell.
+type hssPutAnswer struct {
+	Result       Result       `json:"result"`
+	Subscription Subscription `json:"subscription"`
+}
+
+// hssPatch is the body of PATCH /subscriptions/{impi}: the attributes
+// that change without the credentials. An absent field stays.
+type hssPatch struct {
+	TestUser       *bool   `json:"test_user,omitempty"`
+	ServiceProfile *string `json:"service_profile,omitempty"`
+}
+
+// hssError is an answer of the HSS that is not a success. The HSS
+// answers errors as text (http.Error).
+type hssError struct {
+	StatusCode int
+	Message    string
+}
+
+func (e *hssError) Error() string {
+	if e.StatusCode == http.StatusMethodNotAllowed || e.StatusCode == http.StatusNotFound {
+		// The HSS of internal/hss has neither PUT and PATCH on a
+		// subscription nor the export.
+		return fmt.Sprintf("HSS: %d: the HSS provisioning API lacks this operation: %s", e.StatusCode, e.Message)
+	}
+	return fmt.Sprintf("HSS: %d: %s", e.StatusCode, e.Message)
+}
+
+// errNoSubscription is the HSS's 404 for a subscription.
+var errNoSubscription = errors.New("no such subscription")
+
+type hssClient struct {
+	base string
+	http *http.Client
+}
+
+func subscriptionPath(impi string) string { return "/subscriptions/" + url.PathEscape(impi) }
+
+func (c *hssClient) get(ctx context.Context, impi string) (Subscription, error) {
+	var s Subscription
+	err := c.do(ctx, http.MethodGet, subscriptionPath(impi), nil, &s)
+	return s, err
+}
+
+func (c *hssClient) put(ctx context.Context, req hssSubscriptionRequest, dryRun bool) (hssPutAnswer, error) {
+	path := subscriptionPath(req.PrivateIdentity)
+	if dryRun {
+		path += "?dry_run=true"
+	}
+	var a hssPutAnswer
+	err := c.do(ctx, http.MethodPut, path, req, &a)
+	return a, err
+}
+
+func (c *hssClient) patch(ctx context.Context, impi string, p hssPatch) (Subscription, error) {
+	var s Subscription
+	err := c.do(ctx, http.MethodPatch, subscriptionPath(impi), p, &s)
+	return s, err
+}
+
+func (c *hssClient) delete(ctx context.Context, impi string) error {
+	return c.do(ctx, http.MethodDelete, subscriptionPath(impi), nil, nil)
+}
+
+// export reads one page of GET /subscriptions/export and calls emit
+// with each record as the HSS wrote it. It returns how many records the
+// page had and the private identity of the last one, where the next
+// page starts.
+func (c *hssClient) export(ctx context.Context, after string, limit int, emit func(json.RawMessage) error) (int, string, error) {
+	q := url.Values{"limit": {strconv.Itoa(limit)}}
+	if after != "" {
+		q.Set("after", after)
+	}
+	resp, err := c.send(ctx, http.MethodGet, "/subscriptions/export?"+q.Encode(), nil)
+	if err != nil {
+		return 0, "", err
+	}
+	defer resp.Body.Close()
+	n, last := 0, after
+	r := bufio.NewReaderSize(resp.Body, maxRecordLine)
+	for {
+		line, err := readLine(r)
+		if errors.Is(err, io.EOF) {
+			return n, last, nil
+		}
+		if err != nil {
+			return n, last, fmt.Errorf("%w: export: %v", ErrUpstream, err)
+		}
+		if len(bytes.TrimSpace(line)) == 0 {
+			continue
+		}
+		var id struct {
+			PrivateIdentity string `json:"private_identity"`
+		}
+		if err := json.Unmarshal(line, &id); err != nil || id.PrivateIdentity == "" {
+			return n, last, fmt.Errorf("%w: export: record %d after %q is not a subscription", ErrUpstream, n+1, last)
+		}
+		if last != "" && strings.ToLower(id.PrivateIdentity) <= strings.ToLower(last) {
+			return n, last, fmt.Errorf("%w: export: %q does not come after %q", ErrUpstream, id.PrivateIdentity, last)
+		}
+		if err := emit(json.RawMessage(bytes.Clone(line))); err != nil {
+			return n, last, err
+		}
+		n++
+		last = id.PrivateIdentity
+	}
+}
+
+func (c *hssClient) do(ctx context.Context, method, path string, body, answer any) error {
+	resp, err := c.send(ctx, method, path, body)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if answer == nil {
+		return nil
+	}
+	if err := json.NewDecoder(resp.Body).Decode(answer); err != nil {
+		return fmt.Errorf("%w: %s %s: %v", ErrUpstream, method, path, err)
+	}
+	return nil
+}
+
+// send makes the request and returns a response with a success status,
+// or the error: errNoSubscription for a 404, hssError for another
+// failure status.
+func (c *hssClient) send(ctx context.Context, method, path string, body any) (*http.Response, error) {
+	var reader io.Reader
+	if body != nil {
+		b, err := json.Marshal(body)
+		if err != nil {
+			return nil, err
+		}
+		reader = bytes.NewReader(b)
+	}
+	req, err := http.NewRequestWithContext(ctx, method, c.base+path, reader)
+	if err != nil {
+		return nil, err
+	}
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %v", ErrUpstream, err)
+	}
+	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+		return resp, nil
+	}
+	defer resp.Body.Close()
+	b, _ := io.ReadAll(io.LimitReader(resp.Body, maxRequestBody))
+	if resp.StatusCode == http.StatusNotFound && !strings.HasPrefix(path, "/subscriptions/export") {
+		return nil, errNoSubscription
+	}
+	return nil, &hssError{StatusCode: resp.StatusCode, Message: strings.TrimSpace(string(b))}
+}

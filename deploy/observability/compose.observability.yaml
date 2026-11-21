@@ -1,0 +1,60 @@
+# Prometheus and Grafana next to the IMS. Use this file
+# together with the root compose.yaml, from the root of the repository:
+#
+#   docker compose -f compose.yaml -f deploy/observability/compose.observability.yaml up -d
+#
+# Compose reads every relative path below from the directory of the
+# first file, so the paths start at the root of the repository.
+#
+# The two services join the ims network, so the scrapes cross the ims0
+# bridge and appear in the capture as HTTP on the assumed metrics port
+# (MetricsPort in deploy/observability/prometheus.go, now 8085).
+
+services:
+  prometheus:
+    # Prometheus 3.15.1, Apache-2.0 (LICENSE in the prometheus
+    # repository at the tag v3.15.1).
+    image: prom/prometheus:v3.15.1
+    restart: unless-stopped
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+    volumes:
+      - ./deploy/observability/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    # Open http://localhost:9090 on the host. Only the host itself can
+    # reach it: neither tool asks for a password here.
+    ports:
+      - "127.0.0.1:9090:9090"
+    networks:
+      ims:
+        ipv4_address: 172.28.0.90
+
+  grafana:
+    # Grafana OSS 13.3.0, AGPL-3.0-only for most of the code (LICENSE
+    # and LICENSING.md in the grafana repository at the tag v13.3.0).
+    # grafana/grafana is the open source edition; the Enterprise edition
+    # is grafana/grafana-enterprise, and grafana/grafana-oss is no longer
+    # updated from 12.4.0 on (Grafana docs, "Run Grafana Docker image").
+    image: grafana/grafana:13.3.0
+    restart: unless-stopped
+    depends_on: [prometheus]
+    environment:
+      # Anyone who opens the page can look but not change; the admin
+      # account (admin/admin until changed) can still sign in.
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
+      GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH: /var/lib/grafana/dashboards/ims-overview.json
+      # No calls to grafana.com from a learning setup.
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+      GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
+      GF_ANALYTICS_CHECK_FOR_PLUGIN_UPDATES: "false"
+      GF_NEWS_NEWS_FEED_ENABLED: "false"
+    volumes:
+      - ./deploy/observability/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./deploy/observability/grafana/dashboards:/var/lib/grafana/dashboards:ro
+    # Open http://localhost:3000 on the host.
+    ports:
+      - "127.0.0.1:3000:3000"
+    networks:
+      ims:
+        ipv4_address: 172.28.0.91

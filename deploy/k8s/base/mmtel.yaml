@@ -1,0 +1,82 @@
+# MMTel AS. The S-CSCF finds it by the server_name of the
+# filter criteria in config/hss.yaml, through DNS.
+# A StatefulSet with a headless Service for the same reasons as the
+# I-CSCF (icscf.yaml).
+apiVersion: v1
+kind: Service
+metadata:
+  name: mmtel
+spec:
+  clusterIP: None
+  selector:
+    app.kubernetes.io/name: mmtel
+  ports:
+    # RFC 3261 19.1.2. The UDP port is named "sip", so the cluster DNS
+    # also answers the SRV name _sip._udp.mmtel.ims.svc.cluster.local
+    # (RFC 2782), in the form RFC 3263 uses.
+    - name: sip
+      port: 5060
+      protocol: UDP
+    - name: sip-tcp
+      port: 5060
+      protocol: TCP
+---
+# The XCAP server of Ut runs in the same Pods. Its own Service gives the
+# name that the XCAP Root URI of a UE has (http://xcap.<home domain>,
+# TS 23.003 13.9.1.2), to which the zone points.
+apiVersion: v1
+kind: Service
+metadata:
+  name: xcap
+spec:
+  clusterIP: None
+  selector:
+    app.kubernetes.io/name: mmtel
+  ports:
+    - name: http
+      port: 80
+      protocol: TCP
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: mmtel
+spec:
+  serviceName: mmtel
+  replicas: 1
+  podManagementPolicy: Parallel
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: mmtel
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: mmtel
+    spec:
+      terminationGracePeriodSeconds: 10
+      dnsConfig:
+        options:
+          - name: ndots
+            value: "1"
+      containers:
+        - name: ims
+          image: ims-practice/ims:dev
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: sip
+              containerPort: 5060
+              protocol: UDP
+            - name: sip-tcp
+              containerPort: 5060
+              protocol: TCP
+            - name: http
+              containerPort: 80
+              protocol: TCP
+          volumeMounts:
+            - name: config
+              mountPath: /etc/ims
+              readOnly: true
+      volumes:
+        - name: config
+          configMap:
+            name: mmtel-config

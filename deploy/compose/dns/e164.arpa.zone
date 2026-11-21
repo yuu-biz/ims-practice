@@ -1,0 +1,24 @@
+; ENUM (RFC 6116) for the test numbers. They are in the 555-0100 to
+; 555-0199 range that the North American Numbering Plan keeps for
+; fiction, so no real line is named. Each NAPTR turns the number into
+; the SIP URI of the subscriber that holds it.
+$ORIGIN e164.arpa.
+$TTL 60
+@  IN SOA dns.ims.mnc001.mcc001.3gppnetwork.org. hostmaster.ims.mnc001.mcc001.3gppnetwork.org. 3 3600 600 86400 60
+@  IN NS  dns.ims.mnc001.mcc001.3gppnetwork.org.
+
+; +1 202 555 0101, reversed digit by digit (RFC 6116 3.2).
+1.0.1.0.5.5.5.2.0.2.1 IN NAPTR 10 100 "u" "E2U+sip" "!^.*$!sip:001010000000001@ims.mnc001.mcc001.3gppnetwork.org!" .
+; +1 202 555 0102
+2.0.1.0.5.5.5.2.0.2.1 IN NAPTR 10 100 "u" "E2U+sip" "!^.*$!sip:001010000000002@ims.mnc001.mcc001.3gppnetwork.org!" .
+; +1 202 555 0103, a subscriber the e2e test leaves unregistered.
+3.0.1.0.5.5.5.2.0.2.1 IN NAPTR 10 100 "u" "E2U+sip" "!^.*$!sip:001010000000003@ims.mnc001.mcc001.3gppnetwork.org!" .
+; +1 202 555 0104, the subscriber that pjsua uses.
+4.0.1.0.5.5.5.2.0.2.1 IN NAPTR 10 100 "u" "E2U+sip" "!^.*$!sip:001010000000004@ims.mnc001.mcc001.3gppnetwork.org!" .
+; +1 202 555 0110 and 0112, the VoLTE UEs that register with IMS AKA.
+; Their numbers turn into the SIP URI of the number: the SIP URI of the
+; IMSI is their temporary public identity, which is barred.
+0.1.1.0.5.5.5.2.0.2.1 IN NAPTR 10 100 "u" "E2U+sip" "!^.*$!sip:+12025550110@ims.mnc001.mcc001.3gppnetwork.org!" .
+2.1.1.0.5.5.5.2.0.2.1 IN NAPTR 10 100 "u" "E2U+sip" "!^.*$!sip:+12025550112@ims.mnc001.mcc001.3gppnetwork.org!" .
+; +1 202 555 0111, the subscriber that SIPp uses for IMS AKA.
+1.1.1.0.5.5.5.2.0.2.1 IN NAPTR 10 100 "u" "E2U+sip" "!^.*$!sip:+12025550111@ims.mnc001.mcc001.3gppnetwork.org!" .

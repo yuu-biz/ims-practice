@@ -1,0 +1,24 @@
+# A mismatched agreement for the scenario of a codec mismatch: network
+# B takes
+# AMR-WB alone from network A. The UE simulators of network A offer
+# PCMU (G.711 mu-law) when they run without -epc, so IBCF-B takes
+# every speech codec out of their offer and answers the INVITE with
+# 488 (Not Acceptable Here). TS 29.165 7.1 leaves the codecs to the
+# agreement and warns against narrowing them too far.
+#
+# Start IBCF-B with it:
+#   IBCF_B_PROFILE=network-a-amr-wb-only.yaml docker compose ... up -d ibcf-b
+# and with network-a.yaml again, which lists PCMU, to adjust it.
+name: network-a
+domain: ims.mnc001.mcc001.3gppnetwork.org
+trusted: true
+transports: [udp, tcp]
+methods: [MESSAGE]
+option_tags:
+  100rel: pass
+  precondition: pass
+number_format: sip
+codecs: [AMR-WB, telephone-event]
+headers:
+  - {header: User-Agent, action: remove, direction: exit}
+  - {header: Server, action: remove, direction: exit}

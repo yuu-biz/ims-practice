@@ -1,0 +1,13 @@
+# Media relay in the IMS-AGW role (TS 23.334). The P-CSCF controls
+# it over a small HTTP API, and RTP flows through it.
+node: agw
+roles: [agw]
+home_domain: ims.mnc001.mcc001.3gppnetwork.org
+agw:
+  control: 0.0.0.0:8080
+  rtp_address: 172.28.0.50
+  # compose.yaml publishes this range on the host, port for port, so
+  # that a softphone on the host can reach it.
+  rtp_ports:
+    min: 40000
+    max: 40039

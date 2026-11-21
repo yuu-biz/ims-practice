@@ -1,0 +1,141 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE scenario SYSTEM "sipp.dtd">
+
+<!--
+  IMS AKA registration with the security agreement, as SIPp, a SIP
+  traffic generator written by others, sees it: an
+  unprotected REGISTER with Security-Client, a 401 with AKAv1-MD5 and
+  Security-Server, the answer to the P-CSCF's protected server port with
+  Security-Verify, and a deregistration over the same port.
+
+  TS 33.203 6.1.1 and 7.2, TS 24.229 5.1.1.2.2, 5.1.1.5.1 and 5.1.1.6.2,
+  RFC 3310, RFC 3329.
+
+  SIPp sends everything from its one local port, so that port is the
+  protected server port of its Security-Client (port-s), and the first
+  REGISTER comes from it too. The protected client port (port-c) is
+  never used: no ESP is set up. SIPp computes OPc from OP, and
+  does not check the SQN of the challenge.
+
+  The scenario is for one test subscriber, which the HSS has to know:
+  001010000000011@ims.mnc001.mcc001.3gppnetwork.org. SIPp 3.7 takes
+  aka_K, aka_OP and aka_AMF as the bytes of their text, not as
+  hexadecimal digits, so its K, OP and AMF are printable: K
+  "ims-practice-K01", OP "ims-practice-OP1" and AMF "00". For the HSS
+  that is K 696d732d70726163746963652d4b3031, OPc
+  57e2bf83bce5bc5ac5515553669fa86f (from that OP, TS 35.206 4.1) and
+  AMF 3030, whose separation bit is 0 as for any vector outside EPS
+  (TS 33.102 Annex H); its other bits are reserved, and only these test
+  keys set them. A MILENAGE test set of TS 35.208 does not fit: its K and
+  AMF have bytes that no text gives. The identity and the keys are
+  written out where they are used, because SIPp takes no keyword inside
+  [authentication]. Run:
+
+    sipp -sf register-aka.xml -m 1 -t u1 -p 5060 PCSCF_ADDRESS:5060
+-->
+
+<scenario name="IMS AKA registration">
+
+  <!-- TS 24.229 5.1.1.2.2: empty nonce and response, and the
+       parameters of the security associations. -->
+  <send retrans="500">
+    <![CDATA[
+
+      REGISTER sip:ims.mnc001.mcc001.3gppnetwork.org SIP/2.0
+      Via: SIP/2.0/[transport] [local_ip]:[local_port];branch=[branch]
+      Max-Forwards: 70
+      From: <sip:001010000000011@ims.mnc001.mcc001.3gppnetwork.org>;tag=[pid]SIPpTag00[call_number]
+      To: <sip:001010000000011@ims.mnc001.mcc001.3gppnetwork.org>
+      Call-ID: [call_id]
+      CSeq: 1 REGISTER
+      Contact: <sip:sipp@[local_ip]:[local_port]>;expires=600
+      Supported: path
+      Require: sec-agree
+      Proxy-Require: sec-agree
+      Security-Client: ipsec-3gpp;alg=hmac-sha2-256-128;ealg=null;spi-c=11111111;spi-s=22222222;port-c=[local_port+1];port-s=[local_port]
+      Authorization: Digest username="001010000000011@ims.mnc001.mcc001.3gppnetwork.org", realm="ims.mnc001.mcc001.3gppnetwork.org", nonce="", uri="sip:ims.mnc001.mcc001.3gppnetwork.org", response="", algorithm=AKAv1-MD5
+      Content-Length: 0
+
+    ]]>
+  </send>
+
+  <recv response="100" optional="true">
+  </recv>
+
+  <!-- The 401 of the P-CSCF: no ik and ck any more, and its
+       Security-Server, whose port-s is where the answer goes. -->
+  <recv response="401" auth="true">
+    <action>
+      <ereg regexp=".*" search_in="hdr" header="Security-Server:" check_it="true" assign_to="server" />
+      <ereg regexp="port-s=([0-9]+)" search_in="hdr" header="Security-Server:" check_it="true" assign_to="port_s_param,port_s" />
+      <log message="Security-Server [$server], so the answer goes to [$port_s_param]" />
+    </action>
+  </recv>
+
+  <nop>
+    <action>
+      <setdest host="[remote_ip]" port="[$port_s]" protocol="[transport]" />
+    </action>
+  </nop>
+
+  <!-- TS 24.229 5.1.1.5.1 item 4: RES as the password, the same
+       Security-Client, and Security-Server mirrored in Security-Verify. -->
+  <send retrans="500">
+    <![CDATA[
+
+      REGISTER sip:ims.mnc001.mcc001.3gppnetwork.org SIP/2.0
+      Via: SIP/2.0/[transport] [local_ip]:[local_port];branch=[branch]
+      Max-Forwards: 70
+      From: <sip:001010000000011@ims.mnc001.mcc001.3gppnetwork.org>;tag=[pid]SIPpTag00[call_number]
+      To: <sip:001010000000011@ims.mnc001.mcc001.3gppnetwork.org>
+      Call-ID: [call_id]
+      CSeq: 2 REGISTER
+      Contact: <sip:sipp@[local_ip]:[local_port]>;expires=600
+      Supported: path
+      Require: sec-agree
+      Proxy-Require: sec-agree
+      Security-Client: ipsec-3gpp;alg=hmac-sha2-256-128;ealg=null;spi-c=11111111;spi-s=22222222;port-c=[local_port+1];port-s=[local_port]
+      Security-Verify: [$server]
+      [authentication username=001010000000011@ims.mnc001.mcc001.3gppnetwork.org aka_K=ims-practice-K01 aka_OP=ims-practice-OP1 aka_AMF=00]
+      Content-Length: 0
+
+    ]]>
+  </send>
+
+  <recv response="100" optional="true">
+  </recv>
+
+  <recv response="200">
+  </recv>
+
+  <!-- TS 24.229 5.1.1.6.2: the deregistration goes over the security
+       associations, with new Security-Client values. -->
+  <send retrans="500">
+    <![CDATA[
+
+      REGISTER sip:ims.mnc001.mcc001.3gppnetwork.org SIP/2.0
+      Via: SIP/2.0/[transport] [local_ip]:[local_port];branch=[branch]
+      Max-Forwards: 70
+      From: <sip:001010000000011@ims.mnc001.mcc001.3gppnetwork.org>;tag=[pid]SIPpTag00[call_number]
+      To: <sip:001010000000011@ims.mnc001.mcc001.3gppnetwork.org>
+      Call-ID: [call_id]
+      CSeq: 3 REGISTER
+      Contact: <sip:sipp@[local_ip]:[local_port]>;expires=0
+      Supported: path
+      Require: sec-agree
+      Proxy-Require: sec-agree
+      Security-Client: ipsec-3gpp;alg=hmac-sha2-256-128;ealg=null;spi-c=33333333;spi-s=44444444;port-c=[local_port+2];port-s=[local_port]
+      Security-Verify: [$server]
+      [authentication username=001010000000011@ims.mnc001.mcc001.3gppnetwork.org aka_K=ims-practice-K01 aka_OP=ims-practice-OP1 aka_AMF=00]
+      Content-Length: 0
+
+    ]]>
+  </send>
+
+  <recv response="100" optional="true">
+  </recv>
+
+  <recv response="200">
+  </recv>
+
+</scenario>

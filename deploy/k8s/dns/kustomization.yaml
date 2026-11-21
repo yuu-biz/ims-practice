@@ -1,0 +1,16 @@
+# The zones of the home network domain and of ENUM, for whichever DNS
+# server an overlay chooses. The overlay sets the namespace.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+configMapGenerator:
+  - name: ims-zones
+    files:
+      # Both zones are copies of deploy/compose/dns, made by
+      # "go generate ./deploy/k8s/...".
+      - ims.mnc001.mcc001.3gppnetwork.org.zone
+      - e164.arpa.zone
+    options:
+      # The cluster-dns overlay mounts this ConfigMap into the cluster's
+      # CoreDNS with kubectl patch, which needs a fixed name. CoreDNS
+      # reads a changed zone when its SOA serial grows.
+      disableNameSuffixHash: true

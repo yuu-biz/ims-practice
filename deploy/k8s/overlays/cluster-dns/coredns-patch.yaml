@@ -1,0 +1,18 @@
+# A strategic merge patch for the CoreDNS Deployment of kube-system: it
+# mounts the ConfigMap ims-zones where the Corefile of this overlay
+# looks for the zone files. Apply it after kubectl apply -k, since the
+# ConfigMap has to exist first:
+#   kubectl -n kube-system patch deployment coredns --patch-file coredns-patch.yaml
+spec:
+  template:
+    spec:
+      volumes:
+        - name: ims-zones
+          configMap:
+            name: ims-zones
+      containers:
+        - name: coredns
+          volumeMounts:
+            - name: ims-zones
+              mountPath: /etc/coredns/ims
+              readOnly: true

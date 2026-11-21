@@ -1,0 +1,45 @@
+# The Corefile of kind v0.33.0 (Kubernetes v1.37), with two server
+# blocks added at the end for the zones of the IMS. Compare it with
+# kubectl -n kube-system get configmap coredns -o yaml before you apply
+# it to another version of kind.
+.:53 {
+    errors
+    health {
+       lameduck 5s
+    }
+    ready
+    kubernetes cluster.local in-addr.arpa ip6.arpa {
+       pods insecure
+       fallthrough in-addr.arpa ip6.arpa
+       ttl 30
+    }
+    prometheus :9153
+    forward . /etc/resolv.conf {
+       max_concurrent 1000
+    }
+    cache 30 {
+       disable success cluster.local
+       disable denial cluster.local
+    }
+    loop
+    reload
+    loadbalance
+}
+
+# The home network domain (TS 23.003). Its names are CNAMEs to the
+# headless Services in cluster.local, which this same server follows
+# and answers in one response. "log" prints each query, so
+# kubectl -n kube-system logs deployment/coredns shows the RFC 3263
+# lookups of the P-CSCF and the I-CSCF.
+ims.mnc001.mcc001.3gppnetwork.org:53 {
+    errors
+    log
+    file /etc/coredns/ims/ims.mnc001.mcc001.3gppnetwork.org.zone
+}
+
+# The ENUM tree for the test numbers (RFC 6116).
+e164.arpa:53 {
+    errors
+    log
+    file /etc/coredns/ims/e164.arpa.zone
+}

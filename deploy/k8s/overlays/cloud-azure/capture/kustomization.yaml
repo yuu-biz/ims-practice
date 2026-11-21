@@ -1,0 +1,13 @@
+# The capture on the AKS cluster of deploy/cloud/azure: one pcap on each
+# node, edge nodes included, with the Pod range of environments/azure.
+# Apply it before ../, so that it records from the start:
+#   kubectl apply -k deploy/k8s/overlays/cloud-azure/capture
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: ims
+resources:
+  - ../../../environments/azure
+components:
+  - ../../../components/capture
+  - ../../../components/edge-capture
+  - ../../../components/image-registry

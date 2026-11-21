@@ -1,0 +1,463 @@
+package smsc
+
+import (
+	"context"
+	"log/slog"
+	"strings"
+	"sync"
+	"time"
+
+	"github.com/yuu-biz/ims-practice/internal/sgd"
+	"github.com/yuu-biz/ims-practice/internal/sms"
+)
+
+// This file is the mobile terminated side: the SC, as the SMS-GMSC, asks
+// the HSS which node serves the recipient and forwards the short message
+// there (TS 23.040 8.1.1 and 10.1, TS 29.338 5.2.1.2 and 6.2.2.3). A
+// message that does not arrive stays in the Store and is tried again
+// later, until its validity period ends (TS 23.040 6.1).
+
+// TP-ST values of TS 23.040 9.2.3.15 that package sms has no name for.
+const statusValidityPeriodExpired sms.Status = 0b100_0110 // permanent error
+
+// ProcessDue delivers to every destination that is due: a retry whose
+// time has come, a message whose validity period has ended, or a
+// destination whose lease ran out because the instance that held it
+// stopped. Each destination goes in a goroutine of its own, so that one
+// slow serving node holds up only its own users. It returns when all
+// are done.
+func (c *SMSC) ProcessDue(ctx context.Context) {
+	var running sync.WaitGroup
+	for {
+		l, ok, err := c.store.ClaimDue(ctx, c.clock.Now(), c.cfg.Lease)
+		if err != nil {
+			c.log.Warn("cannot claim a destination", "error", err.Error())
+			break
+		}
+		if !ok {
+			break
+		}
+		running.Go(func() { c.serve(ctx, l) })
+	}
+	running.Wait()
+}
+
+// deliverSoon tries the queue of destination in the background, if it
+// is due: a short message that has just come goes out at once rather
+// than at the next ProcessDue.
+func (c *SMSC) deliverSoon(destination string) {
+	c.started.Go(func() {
+		ctx := context.Background()
+		l, ok, err := c.store.Claim(ctx, destination, c.clock.Now(), c.cfg.Lease)
+		if err != nil {
+			c.log.Warn("cannot claim a destination", "destination", destination, "error", err.Error())
+		}
+		if ok {
+			c.serve(ctx, l)
+		}
+	})
+}
+
+// serve delivers the queue of the leased destination, one message at a
+// time, as TS 23.040 6.2 allows only one outstanding SMS-DELIVER to an
+// MS. After each message it releases the lease and claims the
+// destination anew, so that a long queue does not outlast one lease.
+func (c *SMSC) serve(ctx context.Context, l Lease) {
+	for c.attemptHead(ctx, l) {
+		var ok bool
+		var err error
+		if l, ok, err = c.store.Claim(ctx, l.Destination, c.clock.Now(), c.cfg.Lease); err != nil || !ok {
+			return
+		}
+	}
+}
+
+// attemptHead discards the messages of the leased destination whose
+// validity period has ended, tries to deliver the first of the others,
+// and releases the lease with the time of the next attempt. It reports
+// whether the queue can go on at once.
+func (c *SMSC) attemptHead(ctx context.Context, l Lease) bool {
+	log := c.log.With("destination", l.Destination)
+	queue, err := c.store.Queue(ctx, l)
+	if err != nil {
+		// The lease runs out, and whichever instance claims the
+		// destination next tries again.
+		log.Warn("cannot read the queue", "error", err.Error())
+		return false
+	}
+	now := c.clock.Now()
+	var live []Message
+	for _, m := range queue {
+		if now.Before(m.Expires) {
+			live = append(live, m)
+			continue
+		}
+		if err := c.store.Remove(ctx, l, m.ID); err != nil {
+			log.Warn("cannot discard a message", "message_id", m.ID, "error", err.Error())
+			return false
+		}
+		// TS 23.040 6.1: the SC is responsible for the message only
+		// until its validity period ends.
+		log.Info("short message discarded: its validity period ended", "message_id", m.ID, "expires", m.Expires)
+		c.reportStatus(ctx, m, statusValidityPeriodExpired, now)
+	}
+	if len(live) == 0 {
+		c.release(ctx, l, now, 0, log)
+		return false
+	}
+
+	head := live[0]
+	log = log.With("message_id", head.ID)
+	// TP-MMS tells the MS that more messages wait for it (TS 23.040
+	// 3.2.4).
+	o := c.attempt(ctx, head, len(live) > 1, log)
+	after := c.clock.Now()
+	next, attempts := after, 0
+	switch o.kind {
+	case delivered, permanentFailure:
+		if err := c.store.Remove(ctx, l, head.ID); err != nil {
+			log.Warn("cannot remove the message", "error", err.Error())
+			return false
+		}
+		live = live[1:]
+		if o.kind == delivered {
+			log.Info("short message delivered")
+			c.reportStatus(ctx, head, sms.StatusReceivedBySME, after)
+		} else {
+			log.Info("short message discarded: it cannot be delivered", "reason", o.reason)
+			c.reportStatus(ctx, head, sms.StatusNotObtainable, after)
+		}
+	case temporaryFailure:
+		attempts = l.Attempts + 1
+		next = after.Add(c.retryDelay(attempts))
+		log.Info("short message not delivered, trying again later", "reason", o.reason, "attempts", attempts, "next_attempt", next)
+	}
+	// The SC wakes up for the first message whose validity period
+	// ends before the next attempt.
+	for _, m := range live {
+		if m.Expires.Before(next) {
+			next = m.Expires
+		}
+	}
+	c.release(ctx, l, next, attempts, log)
+	return o.kind != temporaryFailure
+}
+
+func (c *SMSC) release(ctx context.Context, l Lease, next time.Time, attempts int, log *slog.Logger) {
+	if err := c.store.Release(ctx, l, next, attempts); err != nil {
+		log.Warn("cannot release the destination", "error", err.Error())
+	}
+}
+
+// retryDelay is the wait after the attempts-th failure in a row.
+func (c *SMSC) retryDelay(attempts int) time.Duration {
+	return c.cfg.RetrySchedule[min(attempts, len(c.cfg.RetrySchedule))-1]
+}
+
+// reportStatus sends the sender of m the SMS-STATUS-REPORT of TS 23.040
+// 9.2.2.3, if it asked for one (3.2.9). The report goes into the queue of
+// the sender like any short message, and is delivered the same way.
+func (c *SMSC) reportStatus(ctx context.Context, m Message, status sms.Status, at time.Time) {
+	r := m.StatusReportRequest
+	if r == nil || m.Deliver == nil {
+		return
+	}
+	report := Message{
+		ID:          newMessageID(),
+		Destination: r.Originator,
+		StatusReport: &sms.StatusReport{
+			MessageReference: r.MessageReference,
+			RecipientAddress: r.Recipient,
+			// TS 23.040 9.2.2.3: when the SC received the SMS-SUBMIT,
+			// and when its fate was settled (9.2.3.13).
+			ServiceCentreTimeStamp: m.Deliver.ServiceCentreTimeStamp,
+			DischargeTime:          at.Truncate(time.Second),
+			Status:                 status,
+		},
+		Expires: at.Add(c.cfg.DefaultValidityPeriod),
+	}
+	log := c.log.With("destination", r.Originator, "message_id", report.ID, "reports_on", m.ID, "tp_st", int(status))
+	if err := c.store.Enqueue(ctx, report, at); err != nil {
+		log.Warn("status report dropped: the store failed", "error", err.Error())
+		return
+	}
+	log.Info("status report queued")
+	c.deliverSoon(r.Originator)
+}
+
+type outcomeKind int
+
+const (
+	delivered outcomeKind = iota
+	// temporaryFailure is a failure that may pass: the SC keeps the
+	// message and tries again (TS 23.040 3.3.2, Table 1, "T").
+	temporaryFailure
+	// permanentFailure is a failure that will not pass: the SC drops the
+	// message (Table 1, "P").
+	permanentFailure
+)
+
+// outcome is how one attempt at a message ended.
+type outcome struct {
+	kind   outcomeKind
+	reason string
+}
+
+// attempt delivers m once: it asks the HSS for the nodes that serve the
+// recipient and forwards the message to them in turn.
+func (c *SMSC) attempt(ctx context.Context, m Message, more bool, log *slog.Logger) outcome {
+	// The SC has to release the lease before it runs out.
+	ctx, cancel := context.WithTimeout(ctx, c.cfg.Lease*9/10)
+	defer cancel()
+	tpdu, err := marshalTPDU(m, more)
+	if err != nil {
+		return outcome{kind: permanentFailure, reason: "cannot write the TPDU: " + err.Error()}
+	}
+
+	sra, err := c.s6c.SendRoutingInfoForSM(ctx, sgd.SendRoutingInfoForSMRequest{
+		Header:            c.s6cHeader(),
+		MSISDN:            m.Destination,
+		SupportedFeatures: sgd.SMSFSupport,
+		SCAddress:         c.cfg.Address,
+	})
+	if err != nil {
+		return outcome{kind: temporaryFailure, reason: "system failure: the HSS did not answer: " + err.Error()}
+	}
+	if !sra.Result.Success() {
+		return routingFailure(sra.Result)
+	}
+	nodes := servingNodes(sra)
+	if len(nodes) == 0 {
+		return outcome{kind: temporaryFailure, reason: "system failure: the HSS named no node that SGd reaches"}
+	}
+
+	var failures []failure
+	for _, node := range nodes {
+		f := c.forward(ctx, node, sra.UserName, tpdu, log)
+		if f == nil {
+			return outcome{kind: delivered}
+		}
+		failures = append(failures, *f)
+		if !f.tryNextNode {
+			break
+		}
+	}
+	c.reportDeliveryStatus(ctx, m.Destination, failures, log)
+	// TS 23.040 8.1.1: the report to the SC carries the errors of every
+	// path. The message is kept if any of them may pass.
+	o := outcome{kind: permanentFailure}
+	var reasons []string
+	for _, f := range failures {
+		if !f.permanent {
+			o.kind = temporaryFailure
+		}
+		reasons = append(reasons, f.node.kind.String()+": "+f.reason)
+	}
+	o.reason = strings.Join(reasons, "; ")
+	return o
+}
+
+// marshalTPDU writes the TPDU of m, with TP-MMS as more says.
+func marshalTPDU(m Message, more bool) ([]byte, error) {
+	if m.StatusReport != nil {
+		r := *m.StatusReport
+		r.MoreMessagesToSend = more
+		return r.Marshal()
+	}
+	d := *m.Deliver
+	d.MoreMessagesToSend = more
+	return d.Marshal()
+}
+
+// routingFailure is the outcome of an SRA that names no serving node
+// (TS 29.338 5.2.1.3), read with TS 23.040 Table 1.
+func routingFailure(r sgd.Result) outcome {
+	switch r {
+	case sgd.Experimental(sgd.DiameterErrorUserUnknown):
+		return outcome{kind: permanentFailure, reason: "unknown subscriber"}
+	case sgd.Experimental(sgd.DiameterErrorServiceNotSubscribed):
+		return outcome{kind: permanentFailure, reason: "teleservice not provisioned"}
+	case sgd.Experimental(sgd.DiameterErrorServiceBarred):
+		return outcome{kind: temporaryFailure, reason: "call barred"}
+	case sgd.Experimental(sgd.DiameterErrorAbsentUser):
+		// The HSS has put the SC address into the MWD itself (TS 29.338
+		// 5.2.1.3), and alerts the SC when the user is back.
+		return outcome{kind: temporaryFailure, reason: "absent subscriber: no node is registered for MT SMS"}
+	}
+	return outcome{kind: temporaryFailure, reason: "system failure: the HSS answered " + r.String()}
+}
+
+type nodeKind int
+
+const (
+	nodeMME nodeKind = iota
+	nodeIPSMGW
+	nodeSMSF
+)
+
+func (k nodeKind) String() string {
+	return [...]string{"MME", "IP-SM-GW", "SMSF"}[k]
+}
+
+// servingNode is one node that the SC can forward a short message to
+// over SGd.
+type servingNode struct {
+	kind      nodeKind
+	host      string
+	realm     string
+	mmeNumber string
+}
+
+// servingNodes are the nodes of an SRA that SGd reaches, in the order the
+// SC tries them: the Serving-Node first, then the SMSF. TS 23.040 8.1.1
+// NOTE 3 leaves the order to the operator.
+func servingNodes(sra sgd.SendRoutingInfoForSMAnswer) []servingNode {
+	var nodes []servingNode
+	if n := sra.ServingNode; n != nil {
+		switch {
+		case n.MMEName != "":
+			nodes = append(nodes, servingNode{kind: nodeMME, host: n.MMEName, realm: realmOf(n.MMEName, n.MMERealm), mmeNumber: n.MMENumberForMTSMS})
+		case n.IPSMGWName != "":
+			nodes = append(nodes, servingNode{kind: nodeIPSMGW, host: n.IPSMGWName, realm: realmOf(n.IPSMGWName, n.IPSMGWRealm)})
+		}
+	}
+	if a := sra.SMSF3GPPAddress; a != nil && a.SMSF3GPPName != "" {
+		nodes = append(nodes, servingNode{kind: nodeSMSF, host: a.SMSF3GPPName, realm: realmOf(a.SMSF3GPPName, a.SMSF3GPPRealm)})
+	}
+	return nodes
+}
+
+// realmOf is the realm the SRA gave for host, or, for the combination g
+// of TS 29.338 5.3.3.6 that gives none, the rest of the host name after
+// its first label. The hosts of this project are named inside their
+// realm.
+func realmOf(host, realm string) string {
+	if realm != "" {
+		return realm
+	}
+	_, rest, _ := strings.Cut(host, ".")
+	return rest
+}
+
+// failure is a delivery through one node that did not succeed.
+type failure struct {
+	node      servingNode
+	permanent bool
+	// tryNextNode is set for the errors after which TS 23.040 8.1.1
+	// has the SMS-GMSC try the second path.
+	tryNextNode bool
+	// waiting is the cause with which the SC address goes into the MWD
+	// of the HSS, for the errors after which 8.1.1 asks for it, or nil.
+	waiting *sgd.SMDeliveryCause
+	reason  string
+}
+
+func waitingFor(c sgd.SMDeliveryCause) *sgd.SMDeliveryCause { return &c }
+
+// forward sends the TPDU to one node in a TFR (TS 29.338 6.2.2.3), and
+// returns nil when the node delivered it.
+func (c *SMSC) forward(ctx context.Context, node servingNode, userName string, tpdu []byte, log *slog.Logger) *failure {
+	log = log.With("node", node.host)
+	log.Info("forwarding the short message", "node_kind", node.kind.String())
+	tfa, err := c.sgd.MTForwardShortMessage(ctx, sgd.MTForwardShortMessageRequest{
+		Header: sgd.Header{DestinationHost: node.host, DestinationRealm: node.realm},
+		// The IMSI, or the MT Correlation ID of an IP-SM-GW that
+		// answered the SRR in place of the HSS (TS 23.204 6.4 step 3c).
+		UserName:          userName,
+		SCAddress:         c.cfg.Address,
+		SMRPUI:            tpdu,
+		MMENumberForMTSMS: node.mmeNumber,
+	})
+	if err != nil {
+		return &failure{node: node, tryNextNode: true, reason: "system failure: no answer: " + err.Error()}
+	}
+	if tfa.Result.Success() {
+		return nil
+	}
+	f := deliveryFailure(tfa)
+	f.node = node
+	return &f
+}
+
+// deliveryFailure reads a TFA that is not a success: the errors of TS
+// 29.338 6.2.2.2, as TS 23.040 Table 1 classifies them, and whether
+// 8.1.1 tries the next node after them.
+func deliveryFailure(tfa sgd.MTForwardShortMessageAnswer) failure {
+	switch tfa.Result {
+	case sgd.Experimental(sgd.DiameterErrorAbsentUser):
+		return failure{tryNextNode: true, waiting: waitingFor(sgd.SMDeliveryCauseAbsentUser), reason: "absent subscriber"}
+	case sgd.Experimental(sgd.DiameterErrorUserUnknown):
+		// The node does not know the IMSI: "unidentified subscriber",
+		// one of the reasons of an absent subscriber in Table 1, after
+		// which TS 29.338 5.2.3.2 also reports to the HSS.
+		return failure{tryNextNode: true, waiting: waitingFor(sgd.SMDeliveryCauseAbsentUser), reason: "unidentified subscriber"}
+	case sgd.Experimental(sgd.DiameterErrorUserBusyForMTSMS):
+		return failure{reason: "MS busy for MT SMS"}
+	case sgd.Experimental(sgd.DiameterErrorIllegalUser):
+		return failure{permanent: true, reason: "illegal subscriber"}
+	case sgd.Experimental(sgd.DiameterErrorIllegalEquipment):
+		return failure{permanent: true, reason: "illegal equipment"}
+	case sgd.Experimental(sgd.DiameterErrorFacilityNotSupported):
+		return failure{tryNextNode: true, reason: "facility not supported"}
+	case sgd.Experimental(sgd.DiameterErrorSMDeliveryFailure):
+		if tfa.SMDeliveryFailureCause == nil {
+			return failure{reason: "error in MS"}
+		}
+		switch tfa.SMDeliveryFailureCause.SMEnumeratedDeliveryFailureCause {
+		case sgd.MemoryCapacityExceeded:
+			return failure{waiting: waitingFor(sgd.SMDeliveryCauseUEMemoryCapacityExceeded), reason: "memory capacity exceeded"}
+		case sgd.EquipmentNotSMEquipped:
+			return failure{tryNextNode: true, reason: "SMS lower layers capabilities not provisioned"}
+		}
+		return failure{reason: "error in MS"}
+	}
+	return failure{tryNextNode: true, reason: "system failure: the node answered " + tfa.Result.String()}
+}
+
+// reportDeliveryStatus asks the HSS to keep the SC address in the MWD of
+// the recipient, with the cause each node gave, after a delivery that
+// failed because the recipient was absent or its memory was full (TS
+// 23.040 3.2.8 case 1 and 8.1.1, TS 29.338 5.2.3.2). The HSS then alerts
+// the SC when the recipient can take short messages again.
+//
+// SIMPLIFIED: TS 29.338 5.2.3.2 and TS 23.040 10.1 operation 3. The SC
+// does not read the MWD-Status of the SRA, so it reports after each such
+// failure, whether or not its address is in the MWD already, and does
+// not report a successful delivery after which the HSS would clear MNRF.
+// The HSS of this project clears it when the user is reachable again.
+func (c *SMSC) reportDeliveryStatus(ctx context.Context, msisdn string, failures []failure, log *slog.Logger) {
+	var outcome sgd.SMDeliveryOutcome
+	for _, f := range failures {
+		if f.waiting == nil {
+			continue
+		}
+		o := &sgd.NodeSMDeliveryOutcome{SMDeliveryCause: *f.waiting}
+		switch f.node.kind {
+		case nodeMME:
+			outcome.MMESMDeliveryOutcome = o
+		case nodeIPSMGW:
+			outcome.IPSMGWSMDeliveryOutcome = o
+		case nodeSMSF:
+			outcome.SMSF3GPPSMDeliveryOutcome = o
+		}
+	}
+	if outcome == (sgd.SMDeliveryOutcome{}) {
+		return
+	}
+	rda, err := c.s6c.ReportSMDeliveryStatus(ctx, sgd.ReportSMDeliveryStatusRequest{
+		Header:            c.s6cHeader(),
+		UserIdentifier:    sgd.UserIdentifier{MSISDN: msisdn},
+		SCAddress:         c.cfg.Address,
+		SMDeliveryOutcome: outcome,
+	})
+	switch {
+	case err != nil:
+		log.Warn("the HSS did not answer the delivery status report; only the retries are left", "error", err.Error())
+	case !rda.Result.Success():
+		// TS 23.040 3.2.8: when the HSS cannot keep the SC address, the
+		// SC relies on its own retries.
+		log.Info("the HSS did not keep the SC address in the MWD; only the retries are left", "result", rda.Result.String())
+	default:
+		log.Info("the HSS keeps the SC address in the MWD")
+	}
+}

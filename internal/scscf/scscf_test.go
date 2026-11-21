@@ -1,0 +1,412 @@
+package scscf
+
+import (
+	"bytes"
+	"context"
+	"io"
+	"log/slog"
+	"slices"
+	"strconv"
+	"strings"
+	"sync"
+	"testing"
+	"time"
+
+	"github.com/fiorix/go-diameter/v4/diam"
+	"github.com/fiorix/go-diameter/v4/diam/dict"
+
+	"github.com/yuu-biz/ims-practice/internal/cx"
+	"github.com/yuu-biz/ims-practice/internal/diameter"
+	"github.com/yuu-biz/ims-practice/internal/hss"
+	"github.com/yuu-biz/ims-practice/internal/sip"
+)
+
+const (
+	domain   = "ims.mnc001.mcc001.3gppnetwork.org"
+	impi     = "001010000000001@" + domain
+	impu     = "sip:001010000000001@" + domain
+	password = "test-password-1"
+)
+
+func init() {
+	if err := diameter.LoadDictionary(); err != nil {
+		panic(err)
+	}
+}
+
+func quiet() *slog.Logger { return slog.New(slog.NewTextHandler(io.Discard, nil)) }
+
+// fakeHSS hands each request to the HSS stub through the wire format,
+// and records the Server-Assignment-Type of every SAR.
+type fakeHSS struct {
+	hss *hss.HSS
+	mu  sync.Mutex
+	sar []cx.ServerAssignmentType
+	// stalled, when set, holds the MARs of stalledUser until it closes.
+	// The S-CSCF reads it from its own goroutines, after a message over
+	// a socket, which the race detector does not see as a hand-over;
+	// hence mu.
+	stalled     <-chan struct{}
+	stalledUser string
+}
+
+func (f *fakeHSS) stall(user string, until <-chan struct{}) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.stalled, f.stalledUser = until, user
+}
+
+func (f *fakeHSS) Request(_ context.Context, m *diam.Message) (*diam.Message, error) {
+	b, err := m.Serialize()
+	if err != nil {
+		return nil, err
+	}
+	req, err := diam.ReadMessage(bytes.NewReader(b), dict.Default)
+	if err != nil {
+		return nil, err
+	}
+	if r, err := cx.ParseMultimediaAuthRequest(req); err == nil && req.Header.CommandCode == cx.CommandMultimediaAuth {
+		f.mu.Lock()
+		stalled := f.stalled
+		if r.UserName != f.stalledUser {
+			stalled = nil
+		}
+		f.mu.Unlock()
+		if stalled != nil {
+			<-stalled
+		}
+	}
+	if r, err := cx.ParseServerAssignmentRequest(req); err == nil && req.Header.CommandCode == cx.CommandServerAssignment {
+		f.mu.Lock()
+		f.sar = append(f.sar, r.ServerAssignmentType)
+		f.mu.Unlock()
+	}
+	return f.hss.Handle(req), nil
+}
+
+func (f *fakeHSS) assignments() []cx.ServerAssignmentType {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]cx.ServerAssignmentType(nil), f.sar...)
+}
+
+type harness struct {
+	t     *testing.T
+	hss   *fakeHSS
+	scscf *sip.Stack
+	role  *SCSCF
+	store *MemoryStore
+	ue    *sip.Stack
+	// contact is the Contact of the REGISTERs; empty means ueContact.
+	contact string
+	// contactParams follow the contact, such as ";+g.3gpp.smsip".
+	contactParams string
+	// extra are header fields that every REGISTER carries besides.
+	extra []sip.HeaderField
+}
+
+func newHarness(t *testing.T, cfg Config) *harness {
+	t.Helper()
+	return newHarnessWith(t, cfg, nil)
+}
+
+func newHarnessWith(t *testing.T, cfg Config, resolver Resolver) *harness {
+	t.Helper()
+	return newHarnessWithHSS(t, cfg, resolver, hss.Config{}, hss.Subscription{PrivateIdentity: impi, PublicIdentities: []string{impu}, Password: password})
+}
+
+// newHarnessWithHSS is newHarnessWith with the HSS stub configured as
+// hssCfg says, and holding subs. The harness registers the first one.
+func newHarnessWithHSS(t *testing.T, cfg Config, resolver Resolver, hssCfg hss.Config, subs ...hss.Subscription) *harness {
+	t.Helper()
+	identity := diameter.Identity{OriginHost: "hss." + domain, OriginRealm: domain}
+	subscribers, err := hss.NewMemoryStore(subs...)
+	if err != nil {
+		t.Fatal(err)
+	}
+	hssCfg.Realm, hssCfg.VisitedNetworks = domain, []string{domain}
+	f := &fakeHSS{hss: hss.New(hssCfg, subscribers,
+		diameter.NewNode(identity, []uint32{diameter.ApplicationIDCx}, diameter.Timers{}, quiet()), quiet())}
+	node := diameter.NewNode(diameter.Identity{OriginHost: "scscf." + domain, OriginRealm: domain}, []uint32{diameter.ApplicationIDCx}, diameter.Timers{}, quiet())
+
+	cfg.HomeDomain = domain
+	cfg.Host = "scscf." + domain
+	cfg.Port = 5060
+	cfg.ServerName = "sip:scscf." + domain + ":5060"
+	if cfg.MinExpires == 0 {
+		cfg.MinExpires = time.Second
+	}
+	if cfg.MaxExpires == 0 {
+		cfg.MaxExpires = time.Hour
+	}
+	store := NewMemoryStore()
+	s := New(cfg, f, node, store, resolver, quiet())
+	stack := newStack(t, s.OnRequest)
+	s.SetStack(stack)
+	return &harness{t: t, hss: f, scscf: stack, role: s, store: store, ue: newStack(t, func(*sip.ServerTransaction) {})}
+}
+
+func newStack(t *testing.T, onRequest func(*sip.ServerTransaction)) *sip.Stack {
+	t.Helper()
+	tr, err := sip.Listen("127.0.0.1:0", quiet())
+	if err != nil {
+		t.Fatal(err)
+	}
+	s, err := sip.NewStack(tr, sip.Config{SentBy: tr.LocalAddr().String(), OnRequest: onRequest}, quiet())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(s.Close)
+	return s
+}
+
+// register sends one REGISTER and returns the final response.
+func (h *harness) register(callID string, cseq int, expires int, authorization string) *sip.Message {
+	h.t.Helper()
+	m := &sip.Message{Method: sip.REGISTER, RequestURI: "sip:" + domain}
+	m.Add("Max-Forwards", "70")
+	m.Add("From", "<"+impu+">;tag="+sip.NewTag())
+	m.Add("To", "<"+impu+">")
+	m.Add("Call-ID", callID)
+	m.Add("CSeq", strconv.Itoa(cseq)+" REGISTER")
+	contact := h.contact
+	if contact == "" {
+		contact = ueContact
+	}
+	m.Add("Contact", "<"+contact+">"+h.contactParams+";expires="+strconv.Itoa(expires))
+	m.Add("Path", "<sip:term@pcscf."+domain+":5060;lr>")
+	for _, f := range h.extra {
+		m.Add(f.Name, f.Value)
+	}
+	if authorization != "" {
+		m.Add("Authorization", authorization)
+	}
+	ct, err := h.ue.SendRequest(m, sip.Destination{Transport: sip.UDP, Addr: h.scscf.LocalAddr()})
+	if err != nil {
+		h.t.Fatal(err)
+	}
+	var final *sip.Message
+	for r := range ct.Responses() {
+		final = r
+	}
+	if final == nil {
+		h.t.Fatalf("no final response: %v", ct.Err())
+	}
+	return final
+}
+
+// answer builds the Authorization of the second REGISTER from a 401.
+func answer(t *testing.T, resp *sip.Message, pass, integrity string) (string, sip.Credentials) {
+	t.Helper()
+	ch, err := sip.ParseChallenge(resp.Get("WWW-Authenticate"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := sip.Credentials{Username: impi, Realm: ch.Realm, Nonce: ch.Nonce, URI: "sip:" + domain,
+		Algorithm: "MD5", CNonce: "0a4f113b", QOP: "auth", NC: "00000001"}
+	c.Response, err = sip.DigestResponse(sip.HA1(impi, ch.Realm, pass), sip.REGISTER, c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.AuthParams.Set("integrity-protected", `"`+integrity+`"`)
+	return c.String(), c
+}
+
+// initial is the first REGISTER of TS 24.229 5.1.1.2.3: empty nonce and
+// response, and no integrity-protected because the P-CSCF has no IP
+// association yet.
+var initial = `Digest username="` + impi + `", realm="` + domain + `", nonce="", uri="sip:` + domain + `", response=""`
+
+func TestRegistrationWithSIPDigest(t *testing.T) {
+	h := newHarness(t, Config{})
+	callID := sip.NewCallID()
+
+	r := h.register(callID, 1, 600000, initial)
+	if r.StatusCode != 401 {
+		t.Fatalf("first REGISTER got %d, want 401", r.StatusCode)
+	}
+	ch, err := sip.ParseChallenge(r.Get("WWW-Authenticate"))
+	if err != nil || ch.Realm != domain || ch.Nonce == "" || len(ch.QOP) != 1 || ch.QOP[0] != "auth" {
+		t.Fatalf("WWW-Authenticate = %q (%v)", r.Get("WWW-Authenticate"), err)
+	}
+
+	auth, creds := answer(t, r, password, "ip-assoc-pending")
+	r = h.register(callID, 2, 600000, auth)
+	if r.StatusCode != 200 {
+		t.Fatalf("second REGISTER got %d, want 200", r.StatusCode)
+	}
+	if got := r.Get("Service-Route"); got != "<sip:orig@scscf."+domain+":5060;lr>" {
+		t.Errorf("Service-Route = %q", got)
+	}
+	if got := r.Get("P-Associated-URI"); got != "<"+impu+">" {
+		t.Errorf("P-Associated-URI = %q", got)
+	}
+	if got := r.Get("Path"); got != "<sip:term@pcscf."+domain+":5060;lr>" {
+		t.Errorf("Path = %q", got)
+	}
+	// 600000 s is shortened to MaxExpires.
+	if got := r.Get("Contact"); !strings.HasSuffix(got, ";expires=3600") {
+		t.Errorf("Contact = %q, want expires=3600", got)
+	}
+	rspauth, _ := sip.DigestResponse(sip.HA1(impi, domain, password), "", creds)
+	if got := r.Get("Authentication-Info"); !strings.Contains(got, `rspauth="`+rspauth+`"`) {
+		t.Errorf("Authentication-Info = %q, want rspauth %s", got, rspauth)
+	}
+
+	// Deregistration over the existing IP association (TS 24.229
+	// 5.4.1.4.1).
+	dereg := `Digest username="` + impi + `", realm="` + domain + `", nonce="", uri="sip:` + domain + `", response="", integrity-protected="ip-assoc-yes"`
+	r = h.register(callID, 3, 0, dereg)
+	if r.StatusCode != 200 || !strings.HasSuffix(r.Get("Contact"), ";expires=0") {
+		t.Fatalf("deregistration got %d %q", r.StatusCode, r.Get("Contact"))
+	}
+	want := []cx.ServerAssignmentType{cx.AssignRegistration, cx.UserDeregistration}
+	if got := h.hss.assignments(); !slices.Equal(got, want) {
+		t.Errorf("SARs = %v, want %v", got, want)
+	}
+}
+
+func TestWrongPasswordIsForbidden(t *testing.T) {
+	h := newHarness(t, Config{})
+	callID := sip.NewCallID()
+	r := h.register(callID, 1, 600000, initial)
+	auth, _ := answer(t, r, "wrong-password", "ip-assoc-pending")
+	if r := h.register(callID, 2, 600000, auth); r.StatusCode != 403 {
+		t.Fatalf("wrong password got %d, want 403", r.StatusCode)
+	}
+	if got := h.hss.assignments(); !slices.Equal(got, []cx.ServerAssignmentType{cx.AuthenticationFailure}) {
+		t.Errorf("SARs = %v, want AUTHENTICATION_FAILURE", got)
+	}
+}
+
+func TestAnswerOnAnotherCallIDIsForbidden(t *testing.T) {
+	h := newHarness(t, Config{})
+	r := h.register(sip.NewCallID(), 1, 600000, initial)
+	auth, _ := answer(t, r, password, "ip-assoc-pending")
+	if r := h.register(sip.NewCallID(), 2, 600000, auth); r.StatusCode != 403 {
+		t.Fatalf("answer with a new Call-ID got %d, want 403", r.StatusCode)
+	}
+}
+
+func TestRegisterWithoutAuthorizationIsChallenged(t *testing.T) {
+	// A softphone sends no Authorization at first; the private identity
+	// then comes from To (TS 24.229 5.4.1.1 item 3).
+	h := newHarness(t, Config{})
+	if r := h.register(sip.NewCallID(), 1, 3600, ""); r.StatusCode != 401 {
+		t.Fatalf("REGISTER without Authorization got %d, want 401", r.StatusCode)
+	}
+}
+
+func TestTooBriefIntervalGets423(t *testing.T) {
+	h := newHarness(t, Config{MinExpires: time.Minute})
+	r := h.register(sip.NewCallID(), 1, 10, initial)
+	if r.StatusCode != 423 || r.Get("Min-Expires") != "60" {
+		t.Fatalf("got %d Min-Expires %q, want 423 and 60", r.StatusCode, r.Get("Min-Expires"))
+	}
+}
+
+func TestRegistrationExpires(t *testing.T) {
+	h := newHarness(t, Config{MinExpires: time.Second, MaxExpires: time.Second})
+	callID := sip.NewCallID()
+	r := h.register(callID, 1, 600000, initial)
+	auth, _ := answer(t, r, password, "ip-assoc-pending")
+	if r := h.register(callID, 2, 600000, auth); r.StatusCode != 200 {
+		t.Fatalf("got %d", r.StatusCode)
+	}
+	deadline := time.Now().Add(3 * time.Second)
+	want := []cx.ServerAssignmentType{cx.AssignRegistration, cx.TimeoutDeregistration}
+	for !slices.Equal(h.hss.assignments(), want) {
+		if time.Now().After(deadline) {
+			t.Fatalf("SARs = %v, want %v", h.hss.assignments(), want)
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+}
+
+func TestRegAwaitAuthExpiry(t *testing.T) {
+	h := newHarness(t, Config{RegAwaitAuth: 100 * time.Millisecond})
+	h.register(sip.NewCallID(), 1, 600000, initial)
+	deadline := time.Now().Add(3 * time.Second)
+	for !slices.Equal(h.hss.assignments(), []cx.ServerAssignmentType{cx.AuthenticationTimeout}) {
+		if time.Now().After(deadline) {
+			t.Fatalf("SARs = %v, want AUTHENTICATION_TIMEOUT", h.hss.assignments())
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+}
+
+func TestFailedReauthenticationKeepsTheRegistrationExpiry(t *testing.T) {
+	h := newHarness(t, Config{MinExpires: time.Second, MaxExpires: time.Second})
+	callID := sip.NewCallID()
+	r := h.register(callID, 1, 600000, initial)
+	auth, _ := answer(t, r, password, "ip-assoc-pending")
+	if r := h.register(callID, 2, 600000, auth); r.StatusCode != 200 {
+		t.Fatalf("registration got %d", r.StatusCode)
+	}
+	// A refresh that fails authentication: the user stays registered
+	// until the registration expires (TS 24.229 5.4.1.2.3B).
+	r = h.register(callID, 3, 600000, initial)
+	auth, _ = answer(t, r, "wrong-password", "ip-assoc-yes")
+	if r := h.register(callID, 4, 600000, auth); r.StatusCode != 403 {
+		t.Fatalf("wrong refresh got %d, want 403", r.StatusCode)
+	}
+	want := []cx.ServerAssignmentType{cx.AssignRegistration, cx.AuthenticationFailure, cx.TimeoutDeregistration}
+	deadline := time.Now().Add(3 * time.Second)
+	for !slices.Equal(h.hss.assignments(), want) {
+		if time.Now().After(deadline) {
+			t.Fatalf("SARs = %v, want %v", h.hss.assignments(), want)
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+}
+
+func TestOldNonceWithTheRightPasswordIsStale(t *testing.T) {
+	h := newHarness(t, Config{})
+	callID := sip.NewCallID()
+	r := h.register(callID, 1, 600000, initial)
+	ch, _ := sip.ParseChallenge(r.Get("WWW-Authenticate"))
+	ch.Nonce = "an-old-nonce"
+	old := sip.NewResponse(r, 401, "")
+	old.Set("WWW-Authenticate", ch.String())
+	auth, _ := answer(t, old, password, "ip-assoc-pending")
+	r = h.register(callID, 2, 600000, auth)
+	again, err := sip.ParseChallenge(r.Get("WWW-Authenticate"))
+	if r.StatusCode != 401 || err != nil || !again.Stale {
+		t.Fatalf("got %d %q, want 401 with stale=true", r.StatusCode, r.Get("WWW-Authenticate"))
+	}
+}
+
+func TestDeregisteringAnUnregisteredUserGets481(t *testing.T) {
+	h := newHarness(t, Config{})
+	if r := h.register(sip.NewCallID(), 1, 0, initial); r.StatusCode != 481 {
+		t.Fatalf("got %d, want 481", r.StatusCode)
+	}
+}
+
+// TestUsersDoNotWaitForEachOther: while the Cx round trip of
+// one user's registration hangs, another user's REGISTER is answered.
+func TestUsersDoNotWaitForEachOther(t *testing.T) {
+	h := newHarness(t, Config{})
+	stalled := make(chan struct{})
+	h.hss.stall(impi, stalled)
+	first := make(chan int, 1)
+	go func() { first <- h.register(sip.NewCallID(), 1, 600000, initial).StatusCode }()
+	time.Sleep(100 * time.Millisecond)
+
+	// The HSS knows no such user, and answers its MAR at once.
+	other := strings.ReplaceAll(initial, impi, "001010000000009@"+domain)
+	second := make(chan int, 1)
+	go func() { second <- h.register(sip.NewCallID(), 1, 600000, other).StatusCode }()
+	select {
+	case code := <-second:
+		if code != 403 {
+			t.Errorf("the other user got %d, want 403", code)
+		}
+	case <-time.After(2 * time.Second):
+		t.Error("the other user's REGISTER waited for the first user's MAR")
+	}
+	close(stalled)
+	if code := <-first; code != 401 {
+		t.Errorf("the first user got %d, want 401", code)
+	}
+}

@@ -1,0 +1,15 @@
+# A kind cluster for the IMS:
+#   kind create cluster --config deploy/k8s/kind-cluster.yaml
+# One node, so that one capture Pod sees every packet (capture/).
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+name: ims-practice
+networking:
+  # kind's defaults, written out because the manifests depend on them:
+  # the capture filters on the Pod range, and the DNS Service of the
+  # overlays takes its fixed address from the Service range. Both values
+  # are also in environments/kind, where the manifests read them.
+  podSubnet: 10.244.0.0/16
+  serviceSubnet: 10.96.0.0/16
+nodes:
+  - role: control-plane

@@ -1,0 +1,727 @@
+package mmtel
+
+import (
+	"crypto/rand"
+	"errors"
+	"log/slog"
+	"slices"
+	"strings"
+	"sync"
+	"time"
+
+	"github.com/yuu-biz/ims-practice/internal/confinfo"
+	"github.com/yuu-biz/ims-practice/internal/ims"
+	"github.com/yuu-biz/ims-practice/internal/sdp"
+	"github.com/yuu-biz/ims-practice/internal/sip"
+)
+
+// This file holds the conference focus of the AS (TS 24.147 5.3.2):
+// the ad hoc conference that GSMA IR.92 2.3.3 asks the network for. A
+// UE that has two calls creates a conference by an INVITE to the
+// conference factory URI, and then asks the focus with a REFER for each
+// of its peers to bring the peer in, with a Replaces of its call with
+// that peer (TS 24.147 5.3.1.3.3, option 2b). The focus has a dialog
+// with each participant and, for each, a dialog with the MRFC that
+// joins the participant to the mix of the conference on the MRFP (RFC
+// 4240 5, TS 24.147 4). The AS is also the notification service of the
+// conference event package (conferenceevent.go).
+//
+// The record of a conference is in the Store: its URI, its
+// creator, the conference of the MRFC, the participants with their
+// dialogs and the subscriptions. The dialogs themselves live in the
+// instance that created the conference, as those of a call do (AS.uri),
+// and the conference ends with it: no other instance takes it over.
+//
+// The factory URI and the conference URIs are public service
+// identities that the AS hosts (TS 23.228 4.3.6), reached in two of the
+// ways of TS 23.228 5.4.12. The factory URI is one of the originating
+// side (5.4.12.1): the INVITE to it reaches the AS by the originating
+// filter criteria of its creator, and the AS takes it as the focus
+// instead of sending it on. A user whose originating services are on
+// another AS creates no conference here. A conference URI is one of a
+// subdomain (5.4.12.3): sip:conf-<id>@<ConferenceDomain>, in the home
+// domain with no port, as a PSI that leaves the network has (TS 23.003
+// 13.5). DNS resolves the subdomain to this instance, which the S-CSCF
+// asks for every request to the conference URI, and an I-CSCF asks for
+// one from another network (TS 24.229 5.3.2.1 step 3). So each request
+// for a conference reaches the instance that has its dialogs, and the
+// URI names no node.
+
+// isFactoryURI reports whether uri is the conference factory URI of the
+// home network (TS 24.147 5.3.2.3.1 step 1), the default one of TS
+// 23.003 13.10 (ims.ConferenceFactoryURI).
+func (as *AS) isFactoryURI(uri string) bool {
+	u, err := sip.ParseURI(uri)
+	factory, _ := sip.ParseURI(ims.ConferenceFactoryURI(as.cfg.HomeDomain))
+	return err == nil && u.User == factory.User && strings.EqualFold(u.Host, factory.Host)
+}
+
+// maximumUsers is how many users a conference of this AS takes, which
+// the conference event package tells as maximum-user-count (GSMA IR.92
+// 2.3.3). It is a policy of this AS; neither TS 24.147 nor IR.92 names
+// a number.
+const maximumUsers = 6
+
+// referExpires is how long the subscription of a REFER lasts: longer
+// than the INVITE it asks for may take (RFC 3515 3.4), which a proxy
+// gives up on after 3 minutes (RFC 3261 16.6 step 11).
+const referExpires = 4 * time.Minute
+
+// ConferenceRecord is what the AS keeps of a conference while it lasts.
+type ConferenceRecord struct {
+	// ID names the conference: the user part of its URI, and the
+	// conference of the MRFC (conf=<ID>).
+	ID string
+	// URI is the conference URI (TS 24.147 5.3.2.3.1 step 3).
+	URI string
+	// Creator is the served user who created the conference with the
+	// factory URI; the conference ends when the creator leaves
+	// (5.3.2.7).
+	Creator string
+	// MRFC is the Request-URI of the conference at the MRFC (RFC 4240 5).
+	MRFC          string
+	Participants  []ConferenceParticipant
+	Subscriptions []ConferenceSubscription
+}
+
+// ConferenceParticipant is one participant: what the conference event
+// package tells of it, its dialog with the focus, and the focus's
+// dialog with the MRFC for its media.
+type ConferenceParticipant struct {
+	confinfo.Participant
+	Dialog sip.Dialog
+	Media  sip.Dialog
+}
+
+// ConferenceSubscription is a subscription to the conference event
+// package outside the dialog of a conference session (conferenceevent.go).
+type ConferenceSubscription struct {
+	sip.NotifierSubscription
+	// Subscriber is the P-Asserted-Identity of the SUBSCRIBE.
+	Subscriber string
+	// Version is that of the last document sent (RFC 4575 4.3).
+	Version uint32
+}
+
+func (r ConferenceRecord) clone() ConferenceRecord {
+	r.Participants = slices.Clone(r.Participants)
+	r.Subscriptions = slices.Clone(r.Subscriptions)
+	return r
+}
+
+// info is what the conference event package tells of the conference.
+func (r ConferenceRecord) info() confinfo.Conference {
+	c := confinfo.Conference{URI: r.URI, MaximumUserCount: maximumUsers}
+	for _, p := range r.Participants {
+		c.Participants = append(c.Participants, p.Participant)
+	}
+	return c
+}
+
+// conference is a conference that this instance hosts: its record, and
+// the dialogs of its participants.
+type conference struct {
+	as *AS
+	// contact is the Contact of every dialog of the focus with a
+	// participant: the conference URI with isfocus.
+	contact sip.NameAddr
+	// route is the Route of the INVITEs that the focus sends: the
+	// S-CSCF that the creator's INVITE came through.
+	route []string
+	log   *slog.Logger
+
+	mu      sync.Mutex
+	record  ConferenceRecord
+	parties []*party
+	ended   bool
+	// expiry stops the expiry timer of each subscription, by its dialog
+	// (conferenceevent.go).
+	expiry map[sip.DialogID]func() bool
+	// sending lets one round of NOTIFYs out at a time, so that each
+	// round tells a state no older than the one before.
+	sending sync.Mutex
+}
+
+// party is a participant of a conference in this instance. Its fields
+// are guarded by the mu of the conference.
+type party struct {
+	leg     partyLeg
+	media   *sip.OutgoingCall
+	creator bool
+	// dialog is the ID of the participant's dialog with the focus, by
+	// which the record of the participant is found.
+	dialog sip.DialogID
+	// inDialog is a subscription within that dialog (conferenceevent.go).
+	inDialog *inDialogSubscription
+}
+
+// partyLeg is the dialog of a participant with the focus: the creator's
+// IncomingCall or an invited user's OutgoingCall.
+type partyLeg interface {
+	leg
+	Dialog() (sip.Dialog, bool)
+	Bye(headers ...sip.HeaderField) error
+	Done() <-chan struct{}
+}
+
+// newConferenceID is an ID that no other conference has: random, lower
+// case, since the conference IDs of the MRFC do not depend on case.
+func newConferenceID() string {
+	return "conf-" + strings.ToLower(rand.Text()[:12])
+}
+
+// conferenceURI is the URI of the conference id: a public service
+// identity in the subdomain of the conferences of this instance.
+func (as *AS) conferenceURI(id string) string {
+	return "sip:" + id + "@" + as.cfg.ConferenceDomain
+}
+
+// conferenceAt is the conference that this instance hosts at the
+// conference URI uri, nil when there is none.
+func (as *AS) conferenceAt(uri string) *conference {
+	u, err := sip.ParseURI(uri)
+	if err != nil || !strings.EqualFold(strings.TrimSuffix(u.Host, "."), as.cfg.ConferenceDomain) {
+		return nil
+	}
+	f, ok := as.conferences.Load(u.User)
+	if !ok {
+		return nil
+	}
+	return f.(*conference)
+}
+
+// createConference is TS 24.147 5.3.2.3.1: the served user's INVITE to
+// the conference factory URI. The focus allocates a conference URI,
+// joins the creator to the mix at the MRFC with the creator's offer,
+// and answers with the MRFC's answer and the conference URI with
+// isfocus as Contact. The creator is the first participant until it
+// leaves, which ends the conference (5.3.2.7).
+//
+// SIMPLIFIED: TS 24.147 5.3.2.3.1 step 2 and TS 24.229 5.7.1.4 and
+// 5.7.1.5. The AS takes the identity that the S-CSCF asserts and lets
+// every user it serves create a conference; it has no conference
+// policy to authorize by (TS 24.147 4). It charges nothing, so the
+// P-Charging-Function-Addresses of 5.3.2.2.2 are not written.
+func (c *call) createConference() {
+	as := c.as
+	req := c.in.Request
+	if as.cfg.MRFC == "" || as.cfg.ConferenceDomain == "" {
+		c.log.Warn("conference refused: the AS has no MRFC or no subdomain for conference URIs")
+		c.in.Reject(503, as.warning("No media resources for conferences"))
+		return
+	}
+	id := newConferenceID()
+	f := &conference{as: as, route: sCSCFRoute(c.route), log: c.log.With("conference", id),
+		contact: sip.NameAddr{URI: as.conferenceURI(id), Params: sip.Params{{Name: isfocus}}}}
+	f.record = ConferenceRecord{ID: id, URI: as.conferenceURI(id), Creator: c.served.URI, MRFC: as.mrfcConference(id)}
+	f.log.Info("conference created", "uri", f.record.URI, "creator", c.served.URI)
+
+	// 5.3.2.3.1: the focus asks the mixer for the resources, and answers
+	// once they are through-connected.
+	media, final, err := f.inviteMRFC(sip.BodyOf(req))
+	if err != nil || final.StatusCode >= 300 {
+		f.log.Warn("the MRFC did not join the creator", "status", statusCode(final), "error", errText(err))
+		code := 503
+		if final != nil {
+			code = final.StatusCode
+		}
+		c.in.Reject(code, as.warning("No conference at the MRFC"))
+		return
+	}
+	as.conferences.Store(id, f)
+	p := &party{leg: c.in, media: media, creator: true}
+	c.in.Handle(f.handle(p))
+	c.in.SetContact(f.contact, false)
+	headers := []sip.HeaderField{{Name: "P-Asserted-Identity", Value: "<" + f.record.URI + ">"}}
+	if pcv := responseChargingVector(req, as.cfg.HomeDomain); pcv != "" {
+		headers = append(headers, sip.HeaderField{Name: "P-Charging-Vector", Value: pcv})
+	}
+	// The 200 gives the creator the conference URI, to which it
+	// subscribes (IR.92 2.3.3) as soon as it has it, maybe before the
+	// focus has the ACK. The creator is in the conference by then.
+	f.join(p, confinfo.Participant{User: assertedUser(req, c.served.URI), Endpoint: contactURIOf(req),
+		Status: confinfo.Connected, JoiningMethod: confinfo.DialedIn})
+	ack, err := c.in.Accept(sip.BodyOf(final), headers...)
+	if err != nil {
+		f.log.Info("the creator did not acknowledge the answer", "error", err.Error())
+		f.left(p)
+		return
+	}
+	f.dialogConfirmed(p)
+	if len(req.Body) == 0 {
+		// The INVITE had no offer, so the MRFC's 200 had one, and the
+		// creator's ACK has the answer (RFC 3261 13.2.2.4).
+		media.Ack(sip.BodyOf(ack))
+	}
+	<-c.in.Done()
+	f.left(p)
+}
+
+// sCSCFRoute is the Route of the INVITEs that a focus sends to invite
+// users: the S-CSCF of the creator's INVITE, without the original
+// dialog identifier, which belongs to that INVITE. The S-CSCF then
+// serves the invited user in the terminating case (TS 24.229 5.7.3).
+//
+// SIMPLIFIED: TS 24.229 5.7.3 NOTE 8. An AS learns the S-CSCF of the
+// invited user over Sh or from a third-party registration. This network
+// has one S-CSCF, which serves every user.
+func sCSCFRoute(route []string) []string {
+	if len(route) == 0 {
+		return nil
+	}
+	na, err := sip.ParseNameAddr(route[0])
+	if err != nil {
+		return nil
+	}
+	u, err := sip.ParseURI(na.URI)
+	if err != nil {
+		return nil
+	}
+	u.Params = slices.DeleteFunc(u.Params, func(p sip.Param) bool { return p.Name == "odi" })
+	return []string{sip.NameAddr{URI: u.String()}.String()}
+}
+
+// mrfcConference is the Request-URI of the conference id at the MRFC:
+// sip:conf=<id>@<MRFC> (RFC 4240 5).
+func (as *AS) mrfcConference(id string) string {
+	u, err := sip.ParseURI(as.cfg.MRFC)
+	if err != nil {
+		return ""
+	}
+	u.User = "conf=" + id
+	return u.String()
+}
+
+// inviteMRFC adds a party to the mix of the conference at the MRFC,
+// straight over Mr' (TS 24.229 10.2.3.2), with offer, which may be
+// empty: the MRFC then offers in its 200 (RFC 4240 5). It returns once
+// the INVITE has its final response.
+func (f *conference) inviteMRFC(offer sip.Body) (*sip.OutgoingCall, *sip.Message, error) {
+	ua := f.as.ua.Load()
+	if ua == nil {
+		return nil, nil, errNotListening
+	}
+	out, err := ua.Invite(sip.Invitation{RequestURI: f.record.MRFC, From: f.record.URI, To: f.record.MRFC, Body: offer})
+	if err != nil {
+		return nil, nil, err
+	}
+	var final *sip.Message
+	for resp := range out.Responses() {
+		if resp.StatusCode >= 200 {
+			final = resp
+		}
+	}
+	if final == nil {
+		return out, nil, out.Err()
+	}
+	return out, final, nil
+}
+
+// join adds the participant p to the record, and tells the subscribers
+// (RFC 4575 3.6). The dialog of p has been set up, except for the
+// creator's, which dialogConfirmed records later.
+func (f *conference) join(p *party, info confinfo.Participant) {
+	d, _ := p.leg.Dialog()
+	m, _ := p.media.Dialog()
+	if info.DisplayText == "" {
+		// GSMA IR.92 2.3.3: without a display text, the user's entity
+		// stands in for it, so that every participant can be told apart.
+		info.DisplayText = info.User
+	}
+	f.mu.Lock()
+	p.dialog = d.ID
+	f.parties = append(f.parties, p)
+	f.record.Participants = append(f.record.Participants, ConferenceParticipant{Participant: info, Dialog: d, Media: m})
+	f.as.conferenceStore.PutConference(f.record)
+	f.mu.Unlock()
+	f.log.Info("participant joined", "user", info.User, "joining_method", string(info.JoiningMethod))
+	f.notify(nil)
+}
+
+// dialogConfirmed puts the dialog of p into its record once the 200
+// has created it. The creator joins before the focus answers its
+// INVITE, when there is no dialog yet to record.
+func (f *conference) dialogConfirmed(p *party) {
+	d, _ := p.leg.Dialog()
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for i := range f.record.Participants {
+		if f.record.Participants[i].Dialog.ID == p.dialog {
+			f.record.Participants[i].Dialog = d
+			break
+		}
+	}
+	p.dialog = d.ID
+	f.as.conferenceStore.PutConference(f.record)
+}
+
+// left is TS 24.147 5.3.2.6.1 once the dialog of p has ended: the focus
+// releases the participant's resources at the MRFC and tells the
+// subscribers that it is disconnected. When the creator has left, or
+// the last participant, the conference ends (5.3.2.7 item 3).
+func (f *conference) left(p *party) {
+	if err := p.media.Bye(); err != nil && !errors.Is(err, sip.ErrCallEnded) {
+		f.log.Warn("BYE to the MRFC failed", "error", err.Error())
+	}
+	f.mu.Lock()
+	f.setStatus(p, confinfo.Disconnected)
+	if f.ended {
+		f.mu.Unlock()
+		return
+	}
+	connected := 0
+	for _, o := range f.record.Participants {
+		if o.Status != confinfo.Disconnected {
+			connected++
+		}
+	}
+	ends := p.creator || connected == 0
+	var others []*party
+	if ends {
+		f.ended = true
+		others = slices.Clone(f.parties)
+	}
+	f.as.conferenceStore.PutConference(f.record)
+	f.mu.Unlock()
+	f.log.Info("participant left", "creator", p.creator, "connected", connected)
+	if !ends {
+		f.notify(nil)
+		f.mu.Lock()
+		f.remove(p)
+		f.mu.Unlock()
+		return
+	}
+	f.end(others)
+}
+
+// end is TS 24.147 5.3.2.7: the focus removes every participant that is
+// still there with a BYE (5.3.2.6.2.3), ends every subscription to the
+// conference event package (5.3.3.4, RFC 4575 3.3), and gives the
+// conference URI up.
+func (f *conference) end(parties []*party) {
+	f.mu.Lock()
+	for _, p := range parties {
+		f.setStatus(p, confinfo.Disconnected)
+	}
+	f.mu.Unlock()
+	f.notify(nil)
+	for _, p := range parties {
+		// The BYE ends the dialog, after which left releases the
+		// participant's resources at the MRFC.
+		if err := p.leg.Bye(); err != nil && !errors.Is(err, sip.ErrCallEnded) {
+			f.log.Warn("BYE to a participant failed", "error", err.Error())
+		}
+	}
+	f.deallocate()
+	f.log.Info("conference ended")
+}
+
+// deallocate gives the conference URI up (TS 24.147 5.3.2.7).
+func (f *conference) deallocate() {
+	f.as.conferences.Delete(f.record.ID)
+	f.as.conferenceStore.DeleteConference(f.record.ID)
+}
+
+// setStatus is the status of p in the record. f.mu is held.
+func (f *conference) setStatus(p *party, status confinfo.EndpointStatus) bool {
+	for i := range f.record.Participants {
+		if f.record.Participants[i].Dialog.ID == p.dialog {
+			changed := f.record.Participants[i].Status != status
+			f.record.Participants[i].Status = status
+			return changed
+		}
+	}
+	return false
+}
+
+// remove takes p out of the conference. f.mu is held.
+func (f *conference) remove(p *party) {
+	f.parties = slices.DeleteFunc(f.parties, func(o *party) bool { return o == p })
+	f.record.Participants = slices.DeleteFunc(f.record.Participants, func(o ConferenceParticipant) bool { return o.Dialog.ID == p.dialog })
+	f.as.conferenceStore.PutConference(f.record)
+}
+
+// handle answers the requests of a participant within its dialog with
+// the focus.
+func (f *conference) handle(p *party) func(*sip.InDialogRequest) {
+	return func(r *sip.InDialogRequest) {
+		switch r.Request.Method {
+		case sip.REFER:
+			f.refer(r)
+		case sip.SUBSCRIBE:
+			f.subscribeInDialog(r, p)
+		case sip.INVITE, sip.UPDATE:
+			f.changeMedia(r, p)
+		default:
+			r.Reject(405)
+		}
+	}
+}
+
+// changeMedia passes an offer of the participant on to its dialog with
+// the MRFC, which changes how the MRFP sends to it, and the answer back
+// (TS 24.229 5.8.4.1.1.1). A participant that holds the conference, by
+// an offer of sendonly or inactive (TS 24.610 4.5.2.1), is on-hold in
+// the conference event package (GSMA IR.92 2.3.3), and connected again
+// once it takes the conference back.
+func (f *conference) changeMedia(r *sip.InDialogRequest, p *party) {
+	body := sip.BodyOf(r.Request)
+	var resp *sip.Message
+	var err error
+	switch {
+	case r.Request.Method == sip.UPDATE && !r.Offer:
+		// A session refresh of the participant's own dialog (RFC 4028 9).
+		r.Accept(sip.Body{})
+		return
+	case r.Request.Method == sip.UPDATE:
+		resp, err = p.media.Update(body)
+	default:
+		resp, err = p.media.ReInvite(body)
+	}
+	switch {
+	case errors.Is(err, sip.ErrInviteInProgress), errors.Is(err, sip.ErrOfferPending):
+		r.Reject(491)
+		return
+	case err != nil:
+		f.log.Info("change of media not passed on to the MRFC", "error", err.Error())
+		r.Reject(500)
+		return
+	case resp.StatusCode >= 300:
+		r.Reject(resp.StatusCode)
+		return
+	}
+	ack, err := r.Accept(sip.BodyOf(resp))
+	if err == nil && r.Request.Method == sip.INVITE && !r.Offer {
+		p.media.Ack(sip.BodyOf(ack))
+	}
+	if !r.Offer {
+		return
+	}
+	status := confinfo.Connected
+	if held(body) {
+		status = confinfo.OnHold
+	}
+	f.mu.Lock()
+	changed := f.setStatus(p, status)
+	f.as.conferenceStore.PutConference(f.record)
+	f.mu.Unlock()
+	if changed {
+		f.notify(nil)
+	}
+}
+
+// held reports whether an offer puts the media on hold: its audio does
+// not send (RFC 3264 8.4).
+func held(offer sip.Body) bool {
+	s, err := sdp.Parse(offer.Content)
+	if err != nil {
+		return false
+	}
+	m := s.AudioMedia()
+	if m == nil {
+		return false
+	}
+	d := s.Direction(*m)
+	return d == "sendonly" || d == "inactive"
+}
+
+// refer is TS 24.147 5.3.2.5.2: a participant asks the focus to invite
+// the user of the Refer-To, which, in the three-way session of GSMA
+// IR.92 2.3.3, carries a Replaces of the participant's call with that
+// user. The focus accepts the REFER, invites the user (inviteUser), and
+// reports the final response in the last NOTIFY of the REFER.
+//
+// SIMPLIFIED: TS 24.147 5.3.2.6.2.2. A REFER whose Refer-To has the
+// method BYE, which asks the focus to remove a participant, is refused
+// with 403: IR.92 2.3.3 does not ask for it.
+func (f *conference) refer(r *sip.InDialogRequest) {
+	rt, err := sip.ParseReferTo(r.Request.Get("Refer-To"))
+	if err != nil {
+		r.Reject(400)
+		return
+	}
+	if method := referredMethod(rt.URI); method != "" && method != string(sip.INVITE) {
+		r.Reject(403, f.as.warning("Only invitations are taken"))
+		return
+	}
+	if _, isTel := ims.TelNumber(rt.URI); !isTel {
+		if _, err := sip.ParseURI(rt.URI); err != nil {
+			// RFC 3515 2.4.2: a UA that cannot reach a URI of another
+			// scheme does not accept a REFER to it.
+			r.Reject(403, f.as.warning("Refer-To is neither a SIP nor a tel URI"))
+			return
+		}
+	}
+	f.mu.Lock()
+	full := len(f.record.Participants) >= maximumUsers
+	f.mu.Unlock()
+	if full {
+		r.Reject(403, f.as.warning("The conference is full"))
+		return
+	}
+	sub, err := r.AcceptRefer(referExpires)
+	if err != nil {
+		f.log.Info("REFER not accepted", "error", err.Error())
+		return
+	}
+	status := f.inviteUser(rt, r.Request.Get("Referred-By"))
+	if err := sub.Notify(status); err != nil {
+		f.log.Info("final NOTIFY of the REFER failed", "error", err.Error())
+	}
+}
+
+// referredMethod is the method URI parameter of a Refer-To URI, "" when
+// it has none, which means INVITE (TS 24.147 5.3.2.5.2 NOTE).
+func referredMethod(uri string) string {
+	u, err := sip.ParseURI(uri)
+	if err != nil {
+		return ""
+	}
+	m, _ := u.Params.Get("method")
+	return strings.ToUpper(m)
+}
+
+// inviteUser is TS 24.147 5.3.2.5.4: the focus INVITEs the user of rt
+// to the conference, with the conference URI in P-Asserted-Identity and,
+// with isfocus, in Contact, and with the Referred-By and the Replaces of
+// the REFER (steps 4 and 4a). The focus first gets an offer from the
+// MRFC, which offers PCMU only, so that the user's answer settles the
+// leg on the codec of the mixer. It returns the final status of
+// the INVITE, for the last NOTIFY of the REFER.
+func (f *conference) inviteUser(rt sip.ReferTo, referredBy string) int {
+	ua := f.as.ua.Load()
+	if ua == nil {
+		return 500
+	}
+	media, final, err := f.inviteMRFC(sip.Body{})
+	if err != nil || final.StatusCode >= 300 {
+		f.log.Warn("the MRFC gave no termination for the invited user", "status", statusCode(final), "error", errText(err))
+		return 503
+	}
+	headers := []sip.HeaderField{
+		{Name: "P-Asserted-Identity", Value: "<" + f.record.URI + ">"},
+		// TS 24.229 5.7.3: an AS that originates a request starts its
+		// charging vector.
+		{Name: "P-Charging-Vector", Value: "icid-value=" + sip.NewCallID() + ";orig-ioi=" + f.as.cfg.HomeDomain},
+	}
+	if referredBy != "" {
+		headers = append(headers, sip.HeaderField{Name: "Referred-By", Value: referredBy})
+	}
+	if rt.Replaces != nil {
+		replaces := *rt.Replaces
+		if other, ok := otherSide(f.as.store, replaces); ok {
+			// The participant named its own call with the user, which this
+			// AS relays: the user knows that call by the other leg (TS
+			// 24.229 5.7.5.1).
+			replaces = other
+		}
+		headers = append(headers, replaces.Header())
+	}
+	p := &party{media: media}
+	out, err := ua.Invite(sip.Invitation{
+		RequestURI: requestURIOf(rt.URI), From: f.record.URI, To: rt.URI, Route: f.route,
+		Contact: f.contact, Headers: headers, Body: sip.BodyOf(final), OnRequest: f.handle(p),
+	})
+	if err != nil {
+		f.log.Warn("INVITE to the invited user not sent", "error", err.Error())
+		media.Bye()
+		return 500
+	}
+	f.mu.Lock()
+	p.leg = out
+	f.mu.Unlock()
+	// The user's answer comes in the first reliable provisional response
+	// when the user takes preconditions, and its 2xx then carries no SDP
+	// (RFC 3262 5); otherwise it comes in the 2xx.
+	var answered *sip.Message
+	var answer sip.Body
+	for resp := range out.Responses() {
+		if b := sip.BodyOf(resp); len(b.Content) > 0 && resp.StatusCode < 300 {
+			answer = b
+		}
+		if resp.StatusCode >= 200 {
+			answered = resp
+		}
+	}
+	switch {
+	case answered == nil:
+		f.log.Info("the invited user did not answer", "error", errText(out.Err()))
+		media.Bye()
+		return 408
+	case answered.StatusCode >= 300:
+		f.log.Info("the invited user declined", "status", answered.StatusCode)
+		media.Bye()
+		return answered.StatusCode
+	}
+	// The user's answer goes to the MRFC in the ACK of its 200, and the
+	// MRFP then mixes the user in (RFC 3725 4.1 has the same order).
+	if err := media.Ack(answer); err != nil {
+		f.log.Warn("answer of the invited user not passed on to the MRFC", "error", err.Error())
+	}
+	f.join(p, confinfo.Participant{User: assertedUser(answered, rt.URI), Endpoint: contactURIOf(answered),
+		Status: confinfo.Connected, JoiningMethod: confinfo.DialedOut})
+	go func() {
+		<-out.Done()
+		f.left(p)
+	}()
+	return answered.StatusCode
+}
+
+// requestURIOf is the Request-URI of the INVITE to the user of a
+// Refer-To URI. A SIP URI of a global number with user=phone, as a UE
+// writes a tel URI with a Replaces (TS 24.147 5.3.1.5.3), is its tel
+// URI again, which the S-CSCF finds the user by (RFC 3261 19.1.6).
+func requestURIOf(uri string) string {
+	u, err := sip.ParseURI(uri)
+	if err != nil {
+		return uri
+	}
+	if user, ok := u.Params.Get("user"); !ok || !strings.EqualFold(user, "phone") || !strings.HasPrefix(u.User, "+") {
+		return uri
+	}
+	number, _, _ := strings.Cut(u.User, ";")
+	return "tel:" + number
+}
+
+// otherSide is the Replaces that names, for the next hop, the other leg
+// of the call of this AS that r names (TS 24.229 5.7.5.1), and false
+// when r names no leg of a call here.
+func otherSide(store Store, r sip.Replaces) (sip.Replaces, bool) {
+	record, ok := store.CallOf(r.DialogID())
+	if !ok {
+		return sip.Replaces{}, false
+	}
+	other := record.Outgoing
+	if record.Outgoing.ID == r.DialogID() {
+		other = record.Incoming
+	}
+	// The UA at the other end of that leg compares to-tag with its own
+	// tag, which is the remote tag here (RFC 3891 3).
+	return sip.Replaces{CallID: other.ID.CallID, ToTag: other.ID.RemoteTag, FromTag: other.ID.LocalTag, EarlyOnly: r.EarlyOnly}, true
+}
+
+// assertedUser is the identity of a participant: the first
+// P-Asserted-Identity of its INVITE or 2xx, and fallback without one.
+func assertedUser(m *sip.Message, fallback string) string {
+	if na, err := sip.ParseNameAddr(m.Get("P-Asserted-Identity")); err == nil {
+		return na.URI
+	}
+	return fallback
+}
+
+// contactURIOf is the URI of the Contact of m, the endpoint of a
+// participant (RFC 4575 5.7).
+func contactURIOf(m *sip.Message) string {
+	na, err := sip.ParseNameAddr(m.Get("Contact"))
+	if err != nil {
+		return ""
+	}
+	return na.URI
+}
+
+func statusCode(m *sip.Message) int {
+	if m == nil {
+		return 0
+	}
+	return m.StatusCode
+}

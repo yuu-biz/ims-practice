@@ -1,0 +1,48 @@
+# The P-CSCF and the media relay node on the edge nodes of a cloud
+# (option 1 of load_balancer in deploy/cloud). The
+# edge nodes have public addresses, and the label and taint
+# ims-practice/pool=edge that deploy/cloud gives them; nothing else
+# tolerates the taint, so the other roles stay on the core nodes, which
+# the internet cannot reach. No Service of type LoadBalancer: the UE
+# reaches the two Pods on the node's own ports (hostPort), as on kind.
+#
+# hostPort, not hostNetwork: the IMS nodes keep the Pod network,
+# and only the ports listed here are on the node, not the relay's control
+# API. A hostPort takes one port, so pcscf.yaml and agw.yaml list each.
+# A node has each port once, so an edge node runs at most one P-CSCF and
+# one relay; the StatefulSets keep one replica each (base/), and a
+# replacement Pod starts only after the old one is gone.
+#
+# The kustomization that uses this component lists one environment with
+# ue_public_address and edge_public_address (environments/aws,
+# environments/azure).
+apiVersion: kustomize.config.k8s.io/v1alpha1
+kind: Component
+patches:
+  - path: pcscf.yaml
+  - path: agw.yaml
+replacements:
+  - source:
+      kind: ConfigMap
+      name: ims-environment
+      fieldPath: data.ue_public_address
+    targets:
+      - select:
+          kind: StatefulSet
+          name: pcscf
+        fieldPaths:
+          - spec.template.spec.initContainers.[name=config].env.[name=UE_PUBLIC_ADDRESS].value
+        options:
+          create: true
+  - source:
+      kind: ConfigMap
+      name: ims-environment
+      fieldPath: data.edge_public_address
+    targets:
+      - select:
+          kind: StatefulSet
+          name: pcscf
+        fieldPaths:
+          - spec.template.spec.initContainers.[name=config].env.[name=EDGE_PUBLIC_ADDRESS].value
+        options:
+          create: true

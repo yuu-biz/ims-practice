@@ -1,0 +1,473 @@
+package pcscf
+
+import (
+	"context"
+	"fmt"
+	"log/slog"
+	"net/netip"
+	"strings"
+	"time"
+
+	"github.com/yuu-biz/ims-practice/internal/agw"
+	"github.com/yuu-biz/ims-practice/internal/ims"
+	"github.com/yuu-biz/ims-practice/internal/policy"
+	"github.com/yuu-biz/ims-practice/internal/sdp"
+	"github.com/yuu-biz/ims-practice/internal/sip"
+)
+
+// Relay is the media relay the P-CSCF controls. *agw.Client is
+// one; it is the only place that talks to the relay, so that H.248
+// over Iq can replace it. The P-CSCF adds a context with the two
+// terminations agw.Access and agw.Core, tells each where to
+// send, and subtracts the context.
+type Relay interface {
+	Add(ctx context.Context, terminations ...agw.TerminationRequest) (agw.Context, error)
+	Modify(ctx context.Context, id string, termination agw.TerminationID, change agw.TerminationRequest) (agw.Termination, error)
+	Subtract(ctx context.Context, id string) (agw.Context, error)
+}
+
+// HostAccess is for UEs that reach the P-CSCF through the NAT of the
+// container host, such as a softphone on the same machine. Their
+// requests come from Gateway, and they can reach the relay's published
+// ports only at Address, not at the relay's own address.
+type HostAccess struct {
+	Gateway netip.Addr
+	Address netip.Addr
+}
+
+// leg is which way a request passes the P-CSCF (TS 24.229 5.2.6.2).
+type leg string
+
+const (
+	originating leg = "originating" // from the UE
+	terminating leg = "terminating" // to the UE
+)
+
+func (p *PCSCF) ownURI() sip.URI {
+	u, _ := ims.LooseRoute(fmt.Sprintf("sip:%s:%d", p.cfg.Host, p.cfg.Port))
+	return u
+}
+
+// session handles every request but REGISTER. A NOTIFY of the
+// P-CSCF's own reg event subscription is for the P-CSCF; any other
+// request it routes.
+func (p *PCSCF) session(st *sip.ServerTransaction) {
+	if p.subscriber.ReceiveRequest(st) {
+		return
+	}
+	req := st.Request
+	out := req.Clone()
+	if err := sip.DecrementMaxForwards(out); err != nil {
+		st.Respond(sip.NewResponse(req, 483, sip.NewTag()))
+		return
+	}
+	top, popped := sip.PopOwnRoute(out, p.ownURIs()...)
+	log := p.log.With("method", string(req.Method), "call_id", req.Get("Call-ID"))
+	switch {
+	case ims.IsInDialog(req):
+		p.subsequent(st, out, log)
+	case popped && top.User == "term":
+		// The Path URI that the P-CSCF put in the REGISTER marks requests
+		// to the UE (5.2.6.2).
+		p.initial(st, out, terminating, log)
+	default:
+		p.initial(st, out, originating, log)
+	}
+}
+
+// initial is TS 24.229 5.2.6.3.3 for an initial request from the UE,
+// and 5.2.6.4.3 for one to the UE. A request for a standalone
+// transaction, such as a MESSAGE, takes the same steps but the
+// Record-Route (5.2.6.3.7, 5.2.6.4.7).
+func (p *PCSCF) initial(st *sip.ServerTransaction, out *sip.Message, l leg, log *slog.Logger) {
+	req := st.Request
+	var dst sip.Destination
+	var ue Association
+	if l == originating {
+		a, ok := p.association(st, "")
+		if !ok {
+			// Screen let the request in, so the association was there when
+			// the request arrived. It has ended since, or Screen is not the
+			// one of the stack; either way the P-CSCF cannot serve it.
+			log.Warn("the IP association of the request is gone", "source", st.Source.String())
+			st.Respond(sip.NewResponse(req, 500, sip.NewTag()))
+			return
+		}
+		ue = a
+		crossBoundary(out, requestFromUE)
+		// Step 1 has already removed the P-CSCF's own Route. Step 2 ii:
+		// the rest must be the Service-Route of the registration; option
+		// b puts it there when the UE did not preload it right.
+		if !equalRoutes(out.GetAll("Route"), a.ServiceRoute) {
+			log.Info("replaced the preloaded Route with the Service-Route", "route", out.GetAll("Route"))
+			out.Remove("Route")
+			for _, r := range a.ServiceRoute {
+				out.Add("Route", r)
+			}
+		}
+		// Step 6: the P-CSCF asserts who the caller is, as
+		// 5.2.6.3.1 identifies the caller.
+		out.Remove("P-Asserted-Identity")
+		for _, id := range assertedIdentities(req, a) {
+			out.Add("P-Asserted-Identity", "<"+id+">")
+		}
+		// Step 7.
+		out.Set("P-Charging-Vector", "icid-value="+sip.NewCallID()+";orig-ioi="+p.cfg.VisitedNetworkID)
+		u, err := sip.NextHop(out)
+		if err == nil {
+			dst, err = ims.Destination(context.Background(), p.locator, u)
+		}
+		if err != nil {
+			log.Warn("cannot route the request", "error", err.Error())
+			st.Respond(sip.NewResponse(req, 504, sip.NewTag()))
+			return
+		}
+	} else {
+		a, ok := p.associationOfContact(out.RequestURI)
+		if !ok {
+			log.Info("no registration for the contact", "contact", out.RequestURI)
+			st.Respond(sip.NewResponse(req, 480, sip.NewTag()))
+			return
+		}
+		if a.SignallingLost {
+			// 5.2.6.4.3 item 1, 5.2.6.4.7 item 1.
+			log.Info("the signalling bearer of the UE is lost", "contact", out.RequestURI)
+			st.Respond(sip.NewResponse(req, 500, sip.NewTag()))
+			return
+		}
+		ue = a
+		// The UE is behind NAT, so the request goes to where its REGISTER
+		// came from, not to its Contact.
+		dst = a.Source
+		// The P-CSCF has read P-Asserted-Service for the PCRF from the
+		// request it received (communicationService).
+		crossBoundary(out, requestToUE)
+	}
+	// Step 5 of 5.2.6.3.3, and 5.2.6.4.3: later requests of the dialog
+	// come through the P-CSCF. A request for a standalone transaction
+	// has no dialog to stay on (5.2.6.3.7, 5.2.6.4.7).
+	if ims.CreatesDialog(out.Method) {
+		sip.AddRecordRoute(out, p.ownURIToward(ue.Source))
+	}
+
+	if out.Method != sip.INVITE {
+		log.Info("forwarding", "leg", string(l), "to", dst.String())
+		identity := func(resp *sip.Message) { ueResponse(l, req, resp) }
+		final, err := st.ProxyWith(out, dst, identity)
+		if final != nil {
+			identity(final)
+		}
+		ims.Finish(st, final, err)
+		return
+	}
+	call := p.newSetup(st, l, ue, log)
+	if err := call.offer(out); err != nil {
+		log.Warn("media relay refused the call", "error", err.Error())
+		st.Respond(sip.NewResponse(req, 500, sip.NewTag()))
+		// The 500 ends the call, so a context already added goes too.
+		call.end()
+		return
+	}
+	log.Info("forwarding", "leg", string(l), "to", dst.String())
+	call.forward(st, out, dst)
+}
+
+// subsequent forwards a request within a dialog along its route set
+// (RFC 3261 16.12), and keeps the Dialog up to date with it. A BYE that
+// ends the dialog ends what the dialog holds (TS 24.229 5.2.8.2).
+func (p *PCSCF) subsequent(st *sip.ServerTransaction, out *sip.Message, log *slog.Logger) {
+	dst, toUE, err := p.nextHop(out)
+	if err != nil {
+		log.Warn("cannot route the request", "error", err.Error())
+		st.Respond(sip.NewResponse(st.Request, 404, sip.NewTag()))
+		return
+	}
+	request, response := requestFromUE, responseToUE
+	if toUE {
+		request, response = requestToUE, responseFromUE
+	}
+	crossBoundary(out, request)
+	if toUE && isTargetRefresh(out.Method) {
+		// 5.2.6.4.5 item 4. For a NOTIFY this is what keeps the P-CSCF
+		// on the route of the subscription: the subscriber takes the
+		// route set from the first NOTIFY (RFC 6665 4.3, 4.4.1).
+		sip.AddRecordRoute(out, p.ownURIToward(dst))
+	}
+	// Only the dialogs of INVITEs are kept, so a request of another
+	// dialog, such as a NOTIFY, finds none.
+	key := subsequentKey(st.Request, toUE)
+	d, known := p.store.UpdateDialog(key, func(d *Dialog) { d.noteRequest(st.Request, toUE) })
+	answer := func(*sip.Message) {}
+	if known && hasSDP(out) {
+		ue := st.Source.Addr.Addr()
+		if toUE {
+			ue = dst.Addr.Addr()
+		}
+		answer = p.renegotiate(out, d, toUE, ue, log)
+	}
+	if known && isTargetRefresh(out.Method) {
+		renegotiated := answer
+		answer = func(resp *sip.Message) {
+			if resp.StatusCode < 300 {
+				p.store.UpdateDialog(key, func(d *Dialog) { d.noteTargetRefresh(st.Request, resp, toUE) })
+			}
+			renegotiated(resp)
+		}
+	}
+	relay := func(resp *sip.Message) {
+		crossBoundary(resp, response)
+		answer(resp)
+	}
+	final, err := st.ProxyWith(out, dst, relay)
+	if final != nil {
+		// Proxy passes on a 2xx to an INVITE itself, and leaves every
+		// other final response to its user.
+		relay(final)
+	}
+	ims.Finish(st, final, err)
+	if out.Method == sip.BYE && byeEndsDialog(final, err) {
+		p.endDialog(key, log)
+	}
+}
+
+// renegotiate handles a new SDP offer in out, a request within the
+// dialog d on its way to the next hop, such as an UPDATE that tells of
+// reserved resources (RFC 3311, RFC 3312) or a re-INVITE that puts the
+// call on hold (RFC 3261 14). The offer goes through the relay context
+// of the dialog like the first one. The function it returns takes each
+// response on its way back: with the answer the PCRF gets the changed
+// service information in the policy session of the dialog (TS 29.214
+// A.1, 4.4.2). ue is the address of the served UE.
+//
+// SIMPLIFIED: TS 29.214 4.4.2. When the PCRF refuses the changed
+// service information, the P-CSCF only logs it, and the session stays
+// authorised as it was: the far end has given its answer by then. TS
+// 24.229 V20.1.0 has a procedure for refused resources only for the
+// initial INVITE (5.2.7.2).
+func (p *PCSCF) renegotiate(out *sip.Message, d Dialog, toUE bool, ue netip.Addr, log *slog.Logger) func(*sip.Message) {
+	received := out.Body
+	if err := p.relaySDP(out, d.Relay, toUE); err != nil {
+		log.Warn("media relay refused the offer", "error", err.Error())
+	}
+	offer := ueSide(received, out.Body, toUE)
+	authorized := false
+	return func(resp *sip.Message) {
+		if resp.StatusCode >= 300 || !hasSDP(resp) {
+			return
+		}
+		received := resp.Body
+		if err := p.relaySDP(resp, d.Relay, !toUE); err != nil {
+			log.Warn("media relay refused the answer", "error", err.Error())
+		}
+		// A 2xx to a re-INVITE comes again until its ACK arrives.
+		if authorized || d.PolicySession == "" || p.policy == nil {
+			return
+		}
+		authorized = true
+		_, err := p.policy.AuthorizeMedia(context.Background(), policy.MediaRequest{
+			Session:   d.PolicySession,
+			UE:        ue,
+			SDP:       policy.OfferAnswer{Offer: offer, Answer: ueSide(received, resp.Body, !toUE), UEOffered: !toUE},
+			Subscribe: mediaEvents,
+		})
+		if err != nil {
+			log.Warn("the PCRF refused the changed media", "policy_session", string(d.PolicySession), "error", err.Error())
+			return
+		}
+		log.Info("changed media authorised", "policy_session", string(d.PolicySession))
+	}
+}
+
+// hasSDP reports whether the body of m is a session description (RFC
+// 3261 13.2.1): only then is it an offer or an answer.
+func hasSDP(m *sip.Message) bool {
+	mediaType, _, _ := strings.Cut(m.Get("Content-Type"), ";")
+	return len(m.Body) > 0 && strings.EqualFold(strings.TrimSpace(mediaType), "application/sdp")
+}
+
+// byeEndsDialog is RFC 3261 15.1.1 as a proxy sees it: the dialog ends
+// when the BYE is answered with a 2xx, a 481 or a 408, or not at all.
+// Any other answer, such as the 500 to a BYE out of order (12.2.2),
+// leaves the dialog up, so the relay context stays for the BYE that
+// will end it.
+func byeEndsDialog(final *sip.Message, err error) bool {
+	if err != nil || final == nil {
+		return true
+	}
+	code := final.StatusCode
+	return code < 300 || code == 481 || code == 408
+}
+
+// nextHop is the top Route or the Request-URI, except that a UE's
+// contact is reached at the address its REGISTER came from; toUE
+// reports that case.
+func (p *PCSCF) nextHop(m *sip.Message) (dst sip.Destination, toUE bool, err error) {
+	u, err := sip.NextHop(m)
+	if err != nil {
+		return sip.Destination{}, false, err
+	}
+	if a, ok := p.associationOfContact(u.String()); ok {
+		return a.Source, true, nil
+	}
+	dst, err = ims.Destination(context.Background(), p.locator, u)
+	return dst, false, err
+}
+
+// isTargetRefresh reports the target refresh requests of this project:
+// re-INVITE (RFC 3261 12.2), UPDATE (RFC 3311 5.1), SUBSCRIBE and NOTIFY
+// (RFC 6665 3.1, 3.2).
+func isTargetRefresh(m sip.Method) bool {
+	return m == sip.INVITE || m == sip.UPDATE || m == sip.SUBSCRIBE || m == sip.NOTIFY
+}
+
+// OnACK forwards the ACK for a 2xx the same way.
+func (p *PCSCF) OnACK(ack *sip.Message) { p.forwardACK(&p.stack, ack) }
+
+// forwardACK forwards ack from the stack it came to. It notes in the
+// Dialog that the 2xx has its ACK, and sends the BYEs of a release that
+// waited for that ACK (release).
+func (p *PCSCF) forwardACK(ref *ims.StackRef, ack *sip.Message) {
+	stack, err := ref.Get()
+	if err != nil {
+		return
+	}
+	out := ack.Clone()
+	if err := sip.DecrementMaxForwards(out); err != nil {
+		// RFC 3261 16.3 step 3 answers such a request 483, but no
+		// response to an ACK is allowed (17), so it is only dropped.
+		p.log.Info("dropped ACK", "call_id", ack.Get("Call-ID"), "error", err.Error())
+		return
+	}
+	sip.PopOwnRoute(out, p.ownURIs()...)
+	dst, toUE, err := p.nextHop(out)
+	if err != nil {
+		p.log.Warn("cannot forward ACK", "call_id", ack.Get("Call-ID"), "error", err.Error())
+		return
+	}
+	if toUE {
+		crossBoundary(out, requestToUE)
+	} else {
+		crossBoundary(out, requestFromUE)
+	}
+	key := subsequentKey(ack, toUE)
+	d, known := p.store.UpdateDialog(key, func(d *Dialog) { d.Acknowledged = true })
+	if err := stack.SendACK(out, dst); err != nil {
+		p.log.Warn("cannot forward ACK", "call_id", ack.Get("Call-ID"), "error", err.Error())
+	}
+	// The ACK goes on first, so that the callee has it before the BYE.
+	if known && d.ReleasePending {
+		go p.releaseNow(key, p.log.With("method", string(sip.ACK), "call_id", key.CallID))
+	}
+}
+
+// relaySDP puts the media of the SDP in m through the relay context rc.
+// m passes the P-CSCF towards the UE, or away from it: the termination
+// that faces where m came from learns from the SDP where to send, and
+// the SDP goes on with the address of the termination that faces where
+// m goes. The same holds for an offer and for an answer. Without a
+// context, a body, or an audio stream with a port, m is left as it is.
+func (p *PCSCF) relaySDP(m *sip.Message, rc *RelayContext, toUE bool) error {
+	if rc == nil || len(m.Body) == 0 {
+		return nil
+	}
+	description, err := sdp.Parse(m.Body)
+	if err != nil {
+		return err
+	}
+	sender, _, err := description.Audio()
+	if err != nil {
+		return nil
+	}
+	cameFrom, shown := agw.Access, rc.Core
+	if toUE {
+		cameFrom, shown = agw.Core, rc.Access
+	}
+	ctx, cancel := relayContext()
+	defer cancel()
+	if _, err := p.relay.Modify(ctx, rc.ID, cameFrom, agw.TerminationRequest{Remote: sender}); err != nil {
+		return err
+	}
+	if err := description.SetAudio(shown); err != nil {
+		return err
+	}
+	m.Body = description.Bytes()
+	return nil
+}
+
+// advertise is the address of a termination as the SDP shows it. A UE
+// behind the host's NAT sees the access termination at the published
+// address instead.
+func (p *PCSCF) advertise(c agw.Context, side agw.TerminationID, ue Association) netip.AddrPort {
+	addr := c.Terminations[side].Local
+	if side == agw.Access && p.cfg.HostAccess != nil && ue.Source.Addr.Addr() == p.cfg.HostAccess.Gateway {
+		return netip.AddrPortFrom(p.cfg.HostAccess.Address, addr.Port())
+	}
+	return addr
+}
+
+// A relay that cannot be reached for a moment, such as one that is
+// restarting, still gets its contexts subtracted: subtract tries each
+// Subtract this many times, this far apart, before it leaves the
+// context in the relay.
+const (
+	subtractAttempts   = 3
+	subtractRetryAfter = time.Second
+)
+
+// endDialog ends what the dialog of key holds. A dialog that is gone
+// has been ended already, by a request or an event that came first.
+func (p *PCSCF) endDialog(key DialogKey, log *slog.Logger) {
+	if d, ok := p.store.TakeDialog(key); ok {
+		p.free(d, log)
+	}
+}
+
+// free gives back what a dialog that has ended held outside the
+// P-CSCF: its policy session, with which the network frees the bearer
+// (TS 29.214 4.4.4), and its relay context.
+func (p *PCSCF) free(d Dialog, log *slog.Logger) {
+	if d.PolicySession != "" && p.policy != nil {
+		p.releasePolicySession(d.PolicySession, log)
+	}
+	if d.Relay != nil && p.relay != nil {
+		p.subtract(d.Relay.ID, log)
+	}
+}
+
+func (p *PCSCF) subtract(id string, log *slog.Logger) {
+	for attempt := 1; ; attempt++ {
+		ctx, cancel := relayContext()
+		_, err := p.relay.Subtract(ctx, id)
+		cancel()
+		if err == nil {
+			return
+		}
+		if attempt == subtractAttempts {
+			log.Warn("gave up subtracting the relay context", "context", id, "attempts", attempt, "error", err.Error())
+			return
+		}
+		log.Warn("could not subtract the relay context, trying again", "context", id, "error", err.Error())
+		time.Sleep(subtractRetryAfter)
+	}
+}
+
+// relayContext bounds a request to the relay, so that a relay that
+// stalls fails the request instead of holding up the call for good.
+// The answer comes long after the offer, so each request gets its own.
+func relayContext() (context.Context, context.CancelFunc) {
+	return context.WithTimeout(context.Background(), agw.RequestTimeout)
+}
+
+func equalRoutes(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		ua, errA := sip.ParseNameAddr(a[i])
+		ub, errB := sip.ParseNameAddr(b[i])
+		if errA != nil || errB != nil || !strings.EqualFold(ua.URI, ub.URI) {
+			return false
+		}
+	}
+	return true
+}

@@ -1,0 +1,20 @@
+# The DNS of network B, on ims1. The IMS nodes of network B ask Docker's
+# embedded DNS, which forwards the names it does not know here, so the
+# queries show up in the capture of ims1.
+ims.mnc002.mcc001.3gppnetwork.org {
+    file /etc/coredns/ims.mnc002.mcc001.3gppnetwork.org.zone
+    log
+}
+
+# ENUM for the numbers of both networks (RFC 6116).
+e164.arpa {
+    file /etc/coredns/e164.arpa.zone
+    log
+}
+
+# The entry points of the two networks on the link between them, as in
+# the DNS of network A.
+example.net {
+    hosts /etc/coredns/example.net.hosts
+    log
+}

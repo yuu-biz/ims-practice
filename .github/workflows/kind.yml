@@ -1,0 +1,58 @@
+name: kind
+
+# Runs only when a file it depends on changes.
+on:
+  push:
+    branches: [main]
+    paths:
+      - deploy/k8s/**
+      - scripts/e2e-lib.sh
+      - deploy/compose/**
+      - Dockerfile
+      - images/**
+      - go.mod
+      - .github/workflows/kind.yml
+  pull_request:
+    paths:
+      - deploy/k8s/**
+      - scripts/e2e-lib.sh
+      - deploy/compose/**
+      - Dockerfile
+      - images/**
+      - go.mod
+      - .github/workflows/kind.yml
+
+jobs:
+  e2e-kind:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        overlay: [external-dns, cluster-dns]
+    env:
+      KIND_VERSION: v0.33.0
+      KUBECTL_VERSION: v1.37.2
+    steps:
+      - uses: actions/checkout@v4
+      - name: install kind and kubectl
+        run: |
+          mkdir -p "$RUNNER_TEMP/bin"
+          cd "$RUNNER_TEMP/bin"
+          curl -fsSLo kind "https://github.com/kubernetes-sigs/kind/releases/download/$KIND_VERSION/kind-linux-amd64"
+          curl -fsSL "https://github.com/kubernetes-sigs/kind/releases/download/$KIND_VERSION/kind-linux-amd64.sha256sum" |
+            sed 's/kind-linux-amd64/kind/' | sha256sum -c
+          curl -fsSLo kubectl "https://dl.k8s.io/release/$KUBECTL_VERSION/bin/linux/amd64/kubectl"
+          echo "$(curl -fsSL "https://dl.k8s.io/release/$KUBECTL_VERSION/bin/linux/amd64/kubectl.sha256")  kubectl" | sha256sum -c
+          chmod +x kind kubectl
+          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+      - run: deploy/k8s/e2e-kind.sh ${{ matrix.overlay }}
+      - name: upload the capture and the logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: kind-${{ matrix.overlay }}
+          path: |
+            e2e-out/kind-${{ matrix.overlay }}/*.pcap
+            e2e-out/kind-${{ matrix.overlay }}/*.txt
+            e2e-out/kind-${{ matrix.overlay }}/logs/
+          if-no-files-found: warn

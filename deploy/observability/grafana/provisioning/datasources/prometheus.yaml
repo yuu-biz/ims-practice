@@ -1,0 +1,12 @@
+# The Prometheus of compose.observability.yaml as Grafana's only data
+# source. The fixed uid is what the dashboards refer to.
+apiVersion: 1
+
+datasources:
+  - name: Prometheus
+    type: prometheus
+    uid: prometheus
+    access: proxy
+    url: http://prometheus:9090
+    isDefault: true
+    editable: false

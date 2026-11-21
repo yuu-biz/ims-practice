@@ -1,0 +1,77 @@
+# The P-CSCF on an edge node of the cloud (kustomization.yaml).
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: pcscf
+spec:
+  template:
+    spec:
+      nodeSelector:
+        ims-practice/pool: edge
+      tolerations:
+        - key: ims-practice/pool
+          operator: Equal
+          value: edge
+          effect: NoSchedule
+      # host_access is the one setting the P-CSCF has for a UE that
+      # cannot reach the relay's own address: for requests from the UE's
+      # address it shows the access side of the relay at another one. The
+      # values come from the environment, so the init container writes
+      # them into the file the P-CSCF reads, as the relay's does for
+      # rtp_address (base/agw.yaml).
+      initContainers:
+        - name: config
+          image: ims-practice/ims:dev
+          imagePullPolicy: IfNotPresent
+          command:
+            - sh
+            - -c
+            - |
+              if [ -z "$UE_PUBLIC_ADDRESS" ] || [ -z "$EDGE_PUBLIC_ADDRESS" ]; then
+                echo "set ue_public_address and edge_public_address in deploy/k8s/environments/<cloud>/values.local.env" >&2
+                exit 1
+              fi
+              # The example file's addresses are documentation ranges
+              # (RFC 5737), which reach nobody.
+              for address in "$UE_PUBLIC_ADDRESS" "$EDGE_PUBLIC_ADDRESS"; do
+                case "$address" in
+                  192.0.2.* | 198.51.100.* | 203.0.113.*)
+                    echo "$address is an example address: replace the values of values.local.env.example with your own in deploy/k8s/environments/<cloud>/values.local.env" >&2
+                    exit 1
+                    ;;
+                esac
+              done
+              awk -v gateway="$UE_PUBLIC_ADDRESS" -v address="$EDGE_PUBLIC_ADDRESS" '
+                { print }
+                $0 == "pcscf:" { print "  host_access:"; print "    gateway: " gateway; print "    address: " address }
+              ' /etc/ims-template/node.yaml > /etc/ims/node.yaml
+          env:
+            # kustomization.yaml writes the values of the environment.
+            - name: UE_PUBLIC_ADDRESS
+            - name: EDGE_PUBLIC_ADDRESS
+          volumeMounts:
+            - name: template
+              mountPath: /etc/ims-template
+              readOnly: true
+            - name: config
+              mountPath: /etc/ims
+      containers:
+        - name: ims
+          # SIP on the node's own port 5060, the standard one, over UDP and
+          # TCP.
+          ports:
+            - name: sip
+              containerPort: 5060
+              protocol: UDP
+              hostPort: 5060
+            - name: sip-tcp
+              containerPort: 5060
+              protocol: TCP
+              hostPort: 5060
+      volumes:
+        - name: template
+          configMap:
+            name: pcscf-config
+        - name: config
+          configMap: null
+          emptyDir: {}

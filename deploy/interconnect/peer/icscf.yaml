@@ -1,0 +1,23 @@
+# I-CSCF of network B. IBCF-B sends it every initial request from
+# network A (TS 24.229 5.10.3.2 step 4). A callee's number in a SIP URI
+# with user=phone becomes a tel URI before the HSS is asked (5.3.2.1
+# item 1 b).
+node: peer-icscf
+roles: [icscf]
+home_domain: ims.mnc002.mcc001.3gppnetwork.org
+icscf:
+  sip:
+    listen: 0.0.0.0:5060
+    host: icscf.ims.mnc002.mcc001.3gppnetwork.org
+  scscfs:
+    - name: sip:scscf.ims.mnc002.mcc001.3gppnetwork.org:5060
+      capabilities: [1]
+diameter:
+  origin_host: icscf.ims.mnc002.mcc001.3gppnetwork.org
+  origin_realm: ims.mnc002.mcc001.3gppnetwork.org
+  peers:
+    - address: hss.ims.mnc002.mcc001.3gppnetwork.org:3868
+      origin_host: hss.ims.mnc002.mcc001.3gppnetwork.org
+  timers:
+    tw: 10s
+    tc: 5s

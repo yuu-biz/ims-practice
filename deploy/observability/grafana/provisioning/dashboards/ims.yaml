@@ -1,0 +1,16 @@
+# Loads the dashboards in deploy/observability/grafana/dashboards,
+# mounted at /var/lib/grafana/dashboards. They cannot be saved from the
+# web UI; change the JSON files instead.
+apiVersion: 1
+
+providers:
+  - name: ims
+    type: file
+    folder: IMS
+    disableDeletion: true
+    allowUiUpdates: false
+    # More than 10 seconds makes Grafana poll the files instead of
+    # waiting for file system events, which a bind mount may not pass on.
+    updateIntervalSeconds: 30
+    options:
+      path: /var/lib/grafana/dashboards

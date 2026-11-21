@@ -1,0 +1,45 @@
+# IBCF-A, the border of network A (the home network) towards network B
+# (TS 24.229 5.10). It is on two networks: ims0, the home
+# network, and nni0, the link between the two networks. A request that
+# reaches its internal side leaves for network B, and the IBCF is its
+# exit point (5.10.2); one that reaches its external side enters
+# network A, and the IBCF is its entry point (5.10.3). It is a B2BUA
+# (5.10.5): each call has one dialog on each side, so nothing that
+# routes a message inside network A reaches network B.
+node: ibcf-a
+roles: [ibcf]
+home_domain: ims.mnc001.mcc001.3gppnetwork.org
+ibcf:
+  # Mx, towards the S-CSCF and the I-CSCF (TS 29.165 3.2). The S-CSCF
+  # puts sip:ibcf.ims.mnc001.mcc001.3gppnetwork.org:5060 in Route to
+  # send a request out (TS 24.229 5.4.3.2 step 12). Each side listens
+  # on its own address, so both can take the standard port, which
+  # Wireshark decodes without settings.
+  sip:
+    listen: 172.28.0.90:5060
+    host: ibcf.ims.mnc001.mcc001.3gppnetwork.org
+  # Ici, towards IBCF-B. This name is the one of network A that network
+  # B sees: in the Via and the Contact of the dialogs with network B.
+  external_sip:
+    listen: 172.28.2.10:5060
+    host: ibcf.nni.mnc001.example.net
+  # Where the initial requests from network B go (TS 24.229 5.10.3.2
+  # step 4: a preconfigured I-CSCF).
+  icscf: sip:icscf.ims.mnc001.mcc001.3gppnetwork.org:5060
+  # TrGW-A, a media relay of the agw role on both networks. Its
+  # core termination faces network A, its access termination network B.
+  trgw:
+    control: http://trgw.ims.mnc001.mcc001.3gppnetwork.org:8080
+    core_address: 172.28.0.91
+    peer_address: 172.28.2.11
+  peers:
+    # The agreement with network B. Compose mounts the profile that
+    # IBCF_A_PROFILE names, profiles/network-b.yaml by default, here.
+    - profile_file: peer-profile.yaml
+      # IBCF-B, where a request for network B goes (5.10.2.2 NOTE 3).
+      entry_point: sip:ibcf.nni.mnc002.example.net:5060
+      # IBCF-B sends from here, which tells its requests apart.
+      sources: [172.28.2.20]
+# Copies of every SIP message for the dashboard.
+hep:
+  collector: 172.28.0.60:9060

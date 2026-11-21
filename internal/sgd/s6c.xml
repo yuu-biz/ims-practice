@@ -1,0 +1,230 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<diameter>
+    <!--
+        The S6c application between the SMS central functions and the
+        HSS: commands from TS 29.338 V19.3.0 Table 5.3.2.2/1 and AVPs
+        from Table 5.3.3.1/1 and Table 5.3.3.1/2. Its Application-Id
+        16777312 is in TS 29.338 4.8. go-diameter ships without it.
+
+        Only what this project sends is defined: the command that asks
+        for routing information (SRR/SRA), the report with which the SC
+        has the HSS keep its address in the message waiting data
+        (RDR/RDA), and the alert of the HSS to the SC (ALR/ALA). The
+        commands carry no
+        Vendor-Specific-Application-Id: TS 29.338 5.3.2.2 forbids a
+        sender to include it.
+
+        Most AVPs come from other applications: MSISDN from TS 29.329
+        (Sh), SC-Address from SGd, Supported-Features from TS 29.229
+        (Cx), Serving-Node, MME-Name and MME-Realm from TS 29.173 (SLh),
+        MME-Number-for-MT-SMS from TS 29.272 (S6a) and the IP-SM-GW ones
+        from TS 29.336 (S6m). go-diameter looks AVPs up per application,
+        so they are defined here again.
+    -->
+    <application id="16777312" type="auth" name="TGPP S6c">
+        <vendor id="10415" name="TGPP"/>
+
+        <command code="8388647" short="SR" name="Send-Routing-Info-for-SM">
+            <request>
+                <rule avp="Session-Id" required="true" max="1"/>
+                <rule avp="Auth-Session-State" required="true" max="1"/>
+                <rule avp="Origin-Host" required="true" max="1"/>
+                <rule avp="Origin-Realm" required="true" max="1"/>
+                <rule avp="Destination-Host" required="false" max="1"/>
+                <rule avp="Destination-Realm" required="true" max="1"/>
+                <rule avp="MSISDN" required="false" max="1"/>
+                <rule avp="Supported-Features" required="false"/>
+                <rule avp="SC-Address" required="false" max="1"/>
+            </request>
+            <answer>
+                <rule avp="Session-Id" required="true" max="1"/>
+                <rule avp="Result-Code" required="false" max="1"/>
+                <rule avp="Experimental-Result" required="false" max="1"/>
+                <rule avp="Auth-Session-State" required="true" max="1"/>
+                <rule avp="Origin-Host" required="true" max="1"/>
+                <rule avp="Origin-Realm" required="true" max="1"/>
+                <rule avp="User-Name" required="false" max="1"/>
+                <rule avp="Supported-Features" required="false"/>
+                <rule avp="Serving-Node" required="false" max="1"/>
+                <rule avp="SMSF-3GPP-Address" required="false" max="1"/>
+            </answer>
+        </command>
+
+        <!-- TS 29.338 5.3.2.5 and 5.3.2.6: the HSS tells the SC that a
+             user it holds short messages for is reachable again. -->
+        <command code="8388648" short="AL" name="Alert-Service-Centre">
+            <request>
+                <rule avp="Session-Id" required="true" max="1"/>
+                <rule avp="Auth-Session-State" required="true" max="1"/>
+                <rule avp="Origin-Host" required="true" max="1"/>
+                <rule avp="Origin-Realm" required="true" max="1"/>
+                <rule avp="Destination-Host" required="false" max="1"/>
+                <rule avp="Destination-Realm" required="true" max="1"/>
+                <rule avp="SC-Address" required="true" max="1"/>
+                <rule avp="User-Identifier" required="true" max="1"/>
+            </request>
+            <answer>
+                <rule avp="Session-Id" required="true" max="1"/>
+                <rule avp="Result-Code" required="false" max="1"/>
+                <rule avp="Experimental-Result" required="false" max="1"/>
+                <rule avp="Auth-Session-State" required="true" max="1"/>
+                <rule avp="Origin-Host" required="true" max="1"/>
+                <rule avp="Origin-Realm" required="true" max="1"/>
+            </answer>
+        </command>
+
+        <!-- TS 29.338 5.3.2.7 and 5.3.2.8: the SC asks the HSS to keep
+             its address in the message waiting data. -->
+        <command code="8388649" short="RD" name="Report-SM-Delivery-Status">
+            <request>
+                <rule avp="Session-Id" required="true" max="1"/>
+                <rule avp="Auth-Session-State" required="true" max="1"/>
+                <rule avp="Origin-Host" required="true" max="1"/>
+                <rule avp="Origin-Realm" required="true" max="1"/>
+                <rule avp="Destination-Host" required="false" max="1"/>
+                <rule avp="Destination-Realm" required="true" max="1"/>
+                <rule avp="User-Identifier" required="true" max="1"/>
+                <rule avp="SC-Address" required="true" max="1"/>
+                <rule avp="SM-Delivery-Outcome" required="true" max="1"/>
+            </request>
+            <answer>
+                <rule avp="Session-Id" required="true" max="1"/>
+                <rule avp="Result-Code" required="false" max="1"/>
+                <rule avp="Experimental-Result" required="false" max="1"/>
+                <rule avp="Auth-Session-State" required="true" max="1"/>
+                <rule avp="Origin-Host" required="true" max="1"/>
+                <rule avp="Origin-Realm" required="true" max="1"/>
+                <rule avp="User-Identifier" required="false" max="1"/>
+            </answer>
+        </command>
+
+        <!-- TS 29.338 5.3.3.14 to 5.3.3.20 and 5.3.3.27. The outcomes
+             through an MSC, an SGSN and an SMSF for non-3GPP access are
+             not used. -->
+        <avp name="SM-Delivery-Outcome" code="3316" must="M,V" may-encrypt="N" vendor-id="10415">
+            <data type="Grouped">
+                <rule avp="MME-SM-Delivery-Outcome" required="false" max="1"/>
+                <rule avp="IP-SM-GW-SM-Delivery-Outcome" required="false" max="1"/>
+                <rule avp="SMSF-3GPP-SM-Delivery-Outcome" required="false" max="1"/>
+            </data>
+        </avp>
+        <avp name="MME-SM-Delivery-Outcome" code="3317" must="M,V" may-encrypt="N" vendor-id="10415">
+            <data type="Grouped">
+                <rule avp="SM-Delivery-Cause" required="false" max="1"/>
+                <rule avp="Absent-User-Diagnostic-SM" required="false" max="1"/>
+            </data>
+        </avp>
+        <avp name="IP-SM-GW-SM-Delivery-Outcome" code="3320" must="M,V" may-encrypt="N" vendor-id="10415">
+            <data type="Grouped">
+                <rule avp="SM-Delivery-Cause" required="false" max="1"/>
+                <rule avp="Absent-User-Diagnostic-SM" required="false" max="1"/>
+            </data>
+        </avp>
+        <avp name="SMSF-3GPP-SM-Delivery-Outcome" code="3336" must="V" must-not="M" may-encrypt="N" vendor-id="10415">
+            <data type="Grouped">
+                <rule avp="SM-Delivery-Cause" required="false" max="1"/>
+                <rule avp="Absent-User-Diagnostic-SM" required="false" max="1"/>
+            </data>
+        </avp>
+        <avp name="SM-Delivery-Cause" code="3321" must="M,V" may-encrypt="N" vendor-id="10415">
+            <data type="Enumerated">
+                <item code="0" name="UE_MEMORY_CAPACITY_EXCEEDED"/>
+                <item code="1" name="ABSENT_USER"/>
+                <item code="2" name="SUCCESSFUL_TRANSFER"/>
+            </data>
+        </avp>
+        <!-- The values are those of TS 23.040 Table 1a. -->
+        <avp name="Absent-User-Diagnostic-SM" code="3322" must="M,V" may-encrypt="N" vendor-id="10415">
+            <data type="Unsigned32"/>
+        </avp>
+
+        <!-- TS 29.336 6.4.2, which S6c re-uses (TS 29.338 Table
+             5.3.3.1/2): the IMSI in User-Name, the MSISDN, or both. -->
+        <avp name="User-Identifier" code="3102" must="M,V" may-encrypt="N" vendor-id="10415">
+            <data type="Grouped">
+                <rule avp="User-Name" required="false" max="1"/>
+                <rule avp="MSISDN" required="false" max="1"/>
+            </data>
+        </avp>
+        <!-- TS 29.329 6.3.2: the E.164 number as a TBCD-string. -->
+        <avp name="MSISDN" code="701" must="M,V" may-encrypt="N" vendor-id="10415">
+            <data type="OctetString"/>
+        </avp>
+        <!-- TS 29.338 6.3.3.2: the E.164 number of the SC as a
+             TBCD-string, digits only. -->
+        <avp name="SC-Address" code="3300" must="M,V" may-encrypt="N" vendor-id="10415">
+            <data type="OctetString"/>
+        </avp>
+
+        <!-- TS 29.229 6.3.29 to 6.3.31. Table 6.3.0.1 lets
+             Supported-Features set M; 7.2.1 says when. -->
+        <avp name="Supported-Features" code="628" must="V" may="M" may-encrypt="N" vendor-id="10415">
+            <data type="Grouped">
+                <rule avp="Vendor-Id" required="true" max="1"/>
+                <rule avp="Feature-List-ID" required="true" max="1"/>
+                <rule avp="Feature-List" required="true" max="1"/>
+            </data>
+        </avp>
+        <avp name="Feature-List-ID" code="629" must="V" must-not="M" may-encrypt="N" vendor-id="10415">
+            <data type="Unsigned32"/>
+        </avp>
+        <avp name="Feature-List" code="630" must="V" must-not="M" may-encrypt="N" vendor-id="10415">
+            <data type="Unsigned32"/>
+        </avp>
+
+        <!-- TS 29.338 5.3.3.6: an MME (combination c) or an IP-SM-GW
+             (combinations f and g). The SGSN, the MSC and the SBI
+             indicator are not used. -->
+        <avp name="Serving-Node" code="2401" must="M,V" may-encrypt="N" vendor-id="10415">
+            <data type="Grouped">
+                <rule avp="MME-Name" required="false" max="1"/>
+                <rule avp="MME-Realm" required="false" max="1"/>
+                <rule avp="MME-Number-for-MT-SMS" required="false" max="1"/>
+                <rule avp="IP-SM-GW-Number" required="false" max="1"/>
+                <rule avp="IP-SM-GW-Name" required="false" max="1"/>
+                <rule avp="IP-SM-GW-Realm" required="false" max="1"/>
+            </data>
+        </avp>
+        <avp name="MME-Name" code="2402" must="M,V" may-encrypt="N" vendor-id="10415">
+            <data type="DiameterIdentity"/>
+        </avp>
+        <!-- TS 29.338 Table 5.3.3.1/2 has S6c set M on MME-Realm and on
+             MME-Number-for-MT-SMS, which TS 29.173 and TS 29.272 leave
+             off. -->
+        <avp name="MME-Realm" code="2408" must="M,V" may-encrypt="N" vendor-id="10415">
+            <data type="DiameterIdentity"/>
+        </avp>
+        <avp name="MME-Number-for-MT-SMS" code="1645" must="M,V" may-encrypt="N" vendor-id="10415">
+            <data type="OctetString"/>
+        </avp>
+        <!-- TS 29.336 6.4.14, 6.4.15 and 6.4.18. -->
+        <avp name="IP-SM-GW-Number" code="3100" must="M,V" may-encrypt="N" vendor-id="10415">
+            <data type="OctetString"/>
+        </avp>
+        <avp name="IP-SM-GW-Name" code="3101" must="M,V" may-encrypt="N" vendor-id="10415">
+            <data type="DiameterIdentity"/>
+        </avp>
+        <avp name="IP-SM-GW-Realm" code="3112" must="M,V" may-encrypt="N" vendor-id="10415">
+            <data type="DiameterIdentity"/>
+        </avp>
+
+        <!-- TS 29.338 5.3.3.35: the SMSF for 3GPP access. The SBI
+             indicator and the SMSF for non-3GPP access are not used. -->
+        <avp name="SMSF-3GPP-Address" code="3344" must="V" must-not="M" may-encrypt="N" vendor-id="10415">
+            <data type="Grouped">
+                <rule avp="SMSF-3GPP-Number" required="false" max="1"/>
+                <rule avp="SMSF-3GPP-Name" required="false" max="1"/>
+                <rule avp="SMSF-3GPP-Realm" required="false" max="1"/>
+            </data>
+        </avp>
+        <avp name="SMSF-3GPP-Number" code="3338" must="V" must-not="M" may-encrypt="N" vendor-id="10415">
+            <data type="OctetString"/>
+        </avp>
+        <avp name="SMSF-3GPP-Name" code="3340" must="V" must-not="M" may-encrypt="N" vendor-id="10415">
+            <data type="DiameterIdentity"/>
+        </avp>
+        <avp name="SMSF-3GPP-Realm" code="3342" must="V" must-not="M" may-encrypt="N" vendor-id="10415">
+            <data type="DiameterIdentity"/>
+        </avp>
+    </application>
+</diameter>

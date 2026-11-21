@@ -1,0 +1,67 @@
+name: slides
+
+# Runs only when a file it depends on changes.
+on:
+  push:
+    branches: [main]
+    paths:
+      - slides/**
+      - docs/guide/**
+      - go.mod
+      - compose.yaml
+      - cmd/ue/**
+      - internal/dashboard/**
+      - scripts/**
+      - .github/workflows/slides.yml
+  pull_request:
+    paths:
+      - slides/**
+      - docs/guide/**
+      - go.mod
+      - compose.yaml
+      - cmd/ue/**
+      - internal/dashboard/**
+      - scripts/**
+      - .github/workflows/slides.yml
+
+jobs:
+  slides:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: slides
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      # The links to the guides are relative in the source; in an
+      # artifact that is opened elsewhere they have to be absolute.
+      # The build checks every deck first and writes nothing if one
+      # fails. It needs no fonts, no browser and no Node: the text is
+      # measured with fixed widths, and the files name their fonts.
+      - name: build
+        run: >-
+          go run ./cmd/slides
+          -repo-url "${{ github.server_url }}/${{ github.repository }}/blob/${{ github.sha }}"
+          build
+      # The build measures text with fixed widths. This step draws every
+      # deck in a browser with the fonts the decks name, and fails if a
+      # slide overflows or if another font had to stand in.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: fonts of the decks
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends fonts-crosextra-carlito fonts-noto-cjk fonts-dejavu-core
+      - name: Playwright and its Chromium
+        run: |
+          npm install --prefix "$RUNNER_TEMP/playwright" playwright@1.63.0
+          "$RUNNER_TEMP/playwright/node_modules/.bin/playwright" install --with-deps chromium
+      - name: overflow with the real fonts
+        run: NODE_PATH="$RUNNER_TEMP/playwright/node_modules" node check-html.js
+      - name: upload the slides
+        uses: actions/upload-artifact@v4
+        with:
+          name: slides
+          path: slides/dist/
+          if-no-files-found: error

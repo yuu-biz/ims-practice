@@ -1,0 +1,128 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<diameter>
+    <!--
+        The SGd application between the SMS central functions and a
+        serving node (MME, SMSF or IP-SM-GW): commands from TS 29.338
+        V19.3.0 Table 6.3.2.2/1 and AVPs from Table 6.3.3.1/1 and Table
+        6.3.3.1/2. Its Application-Id 16777313 is in TS 29.338 4.8, and
+        10415 is the IANA enterprise number of 3GPP. go-diameter ships
+        without it.
+
+        Only what this project sends is defined. The command rules list
+        those AVPs; go-diameter does not enforce them on received
+        messages. The commands carry no Vendor-Specific-Application-Id:
+        TS 29.338 6.3.2.2 forbids a sender to include it.
+
+        The Alert-Service-Centre command (8388648), which SGd borrows
+        from S6c, is left out, as nothing in this project sends it.
+
+        User-Identifier comes from TS 29.336 (S6m), MSISDN from TS 29.329
+        (Sh) and MME-Number-for-MT-SMS from TS 29.272 (S6a). go-diameter
+        looks AVPs up per application, so they are defined here again.
+    -->
+    <application id="16777313" type="auth" name="TGPP SGd">
+        <vendor id="10415" name="TGPP"/>
+
+        <command code="8388645" short="OF" name="MO-Forward-Short-Message">
+            <request>
+                <rule avp="Session-Id" required="true" max="1"/>
+                <rule avp="Auth-Session-State" required="true" max="1"/>
+                <rule avp="Origin-Host" required="true" max="1"/>
+                <rule avp="Origin-Realm" required="true" max="1"/>
+                <rule avp="Destination-Host" required="false" max="1"/>
+                <rule avp="Destination-Realm" required="true" max="1"/>
+                <rule avp="SC-Address" required="true" max="1"/>
+                <rule avp="User-Identifier" required="true" max="1"/>
+                <rule avp="SM-RP-UI" required="true" max="1"/>
+            </request>
+            <answer>
+                <rule avp="Session-Id" required="true" max="1"/>
+                <rule avp="Result-Code" required="false" max="1"/>
+                <rule avp="Experimental-Result" required="false" max="1"/>
+                <rule avp="Auth-Session-State" required="true" max="1"/>
+                <rule avp="Origin-Host" required="true" max="1"/>
+                <rule avp="Origin-Realm" required="true" max="1"/>
+                <rule avp="SM-Delivery-Failure-Cause" required="false" max="1"/>
+                <rule avp="SM-RP-UI" required="false" max="1"/>
+            </answer>
+        </command>
+
+        <!--
+            TS 29.338 6.3.1.2: a request from the SMS-GMSC always carries
+            Destination-Host, the serving node that the SRA named.
+        -->
+        <command code="8388646" short="TF" name="MT-Forward-Short-Message">
+            <request>
+                <rule avp="Session-Id" required="true" max="1"/>
+                <rule avp="Auth-Session-State" required="true" max="1"/>
+                <rule avp="Origin-Host" required="true" max="1"/>
+                <rule avp="Origin-Realm" required="true" max="1"/>
+                <rule avp="Destination-Host" required="true" max="1"/>
+                <rule avp="Destination-Realm" required="true" max="1"/>
+                <rule avp="User-Name" required="true" max="1"/>
+                <rule avp="SC-Address" required="true" max="1"/>
+                <rule avp="SM-RP-UI" required="true" max="1"/>
+                <rule avp="MME-Number-for-MT-SMS" required="false" max="1"/>
+            </request>
+            <answer>
+                <rule avp="Session-Id" required="true" max="1"/>
+                <rule avp="Result-Code" required="false" max="1"/>
+                <rule avp="Experimental-Result" required="false" max="1"/>
+                <rule avp="Auth-Session-State" required="true" max="1"/>
+                <rule avp="Origin-Host" required="true" max="1"/>
+                <rule avp="Origin-Realm" required="true" max="1"/>
+                <rule avp="SM-Delivery-Failure-Cause" required="false" max="1"/>
+                <rule avp="SM-RP-UI" required="false" max="1"/>
+            </answer>
+        </command>
+
+        <!-- TS 29.338 6.3.3.2: the E.164 number of the SC as a
+             TBCD-string, digits only. -->
+        <avp name="SC-Address" code="3300" must="M,V" may-encrypt="N" vendor-id="10415">
+            <data type="OctetString"/>
+        </avp>
+        <!-- TS 29.338 6.3.3.3: a TPDU of TS 23.040, at most 200
+             octets. -->
+        <avp name="SM-RP-UI" code="3301" must="M,V" may-encrypt="N" vendor-id="10415">
+            <data type="OctetString"/>
+        </avp>
+        <avp name="SM-Delivery-Failure-Cause" code="3303" must="M,V" may-encrypt="N" vendor-id="10415">
+            <data type="Grouped">
+                <rule avp="SM-Enumerated-Delivery-Failure-Cause" required="true" max="1"/>
+                <rule avp="SM-Diagnostic-Info" required="false" max="1"/>
+            </data>
+        </avp>
+        <avp name="SM-Enumerated-Delivery-Failure-Cause" code="3304" must="M,V" may-encrypt="N" vendor-id="10415">
+            <data type="Enumerated">
+                <item code="0" name="MEMORY_CAPACITY_EXCEEDED"/>
+                <item code="1" name="EQUIPMENT_PROTOCOL_ERROR"/>
+                <item code="2" name="EQUIPMENT_NOT_SM-EQUIPPED"/>
+                <item code="3" name="UNKNOWN_SERVICE_CENTRE"/>
+                <item code="4" name="SC-CONGESTION"/>
+                <item code="5" name="INVALID_SME-ADDRESS"/>
+                <item code="6" name="USER_NOT_SC-USER"/>
+            </data>
+        </avp>
+        <avp name="SM-Diagnostic-Info" code="3305" must="M,V" may-encrypt="N" vendor-id="10415">
+            <data type="OctetString"/>
+        </avp>
+
+        <!-- TS 29.336 6.4.2: the IMSI in User-Name, the MSISDN, or
+             both. The External-Identifier and the LMSI are not used. -->
+        <avp name="User-Identifier" code="3102" must="M,V" may-encrypt="N" vendor-id="10415">
+            <data type="Grouped">
+                <rule avp="User-Name" required="false" max="1"/>
+                <rule avp="MSISDN" required="false" max="1"/>
+            </data>
+        </avp>
+        <!-- TS 29.329 6.3.2: the E.164 number as a TBCD-string. -->
+        <avp name="MSISDN" code="701" must="M,V" may-encrypt="N" vendor-id="10415">
+            <data type="OctetString"/>
+        </avp>
+        <!-- TS 29.272 7.3.159: the E.164 number of the MME as a
+             TBCD-string. -->
+        <avp name="MME-Number-for-MT-SMS" code="1645" must="V" must-not="M" may-encrypt="N" vendor-id="10415">
+            <data type="OctetString"/>
+        </avp>
+    </application>
+</diameter>

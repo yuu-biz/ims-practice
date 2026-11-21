@@ -1,0 +1,18 @@
+# The interconnect agreement of network B (ims.mnc002.mcc001.
+# 3gppnetwork.org) with network A, the home network
+# (ims.mnc001.mcc001.3gppnetwork.org): what IBCF-B applies to every
+# message it exchanges with network A. It mirrors network-b.yaml, which
+# is network A's side of the same agreement (TS 29.165 Annex C).
+name: network-a
+domain: ims.mnc001.mcc001.3gppnetwork.org
+trusted: true
+transports: [udp, tcp]
+methods: [MESSAGE]
+option_tags:
+  100rel: pass
+  precondition: pass
+number_format: sip
+codecs: [AMR-WB, AMR, PCMU, telephone-event]
+headers:
+  - {header: User-Agent, action: remove, direction: exit}
+  - {header: Server, action: remove, direction: exit}

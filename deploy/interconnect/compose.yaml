@@ -1,0 +1,249 @@
+# Two IMS networks joined by their IBCFs and TrGWs, for calls and short
+# messages between operators. This file goes on top of compose.yaml,
+# which is network A, the home network:
+#
+#   docker compose -f compose.yaml -f deploy/interconnect/compose.yaml up -d
+#
+# It adds network B, the peer network, on a bridge of its own,
+# ims1, and the link between the two networks, nni0, on which only the
+# IBCFs and the TrGWs are (the II-NNI, TS 29.165 5.1). Each bridge has a
+# capture of its own: captures/ims-*.pcap for network A,
+# captures/peer/ims-*.pcap for network B and captures/nni/ims-*.pcap for
+# the link.
+#
+# Network B is kept as small as the scenarios allow: an HSS, the three
+# CSCFs, an IP-SM-GW, a DNS and two UEs. It has no MMTel AS, no EPC
+# with its PCRF, no media relay at the P-CSCF and no dashboard.
+#
+# The agreements of the two IBCFs are files in profiles/. IBCF_A_PROFILE
+# and IBCF_B_PROFILE pick another one, such as for the scenarios of
+# mismatched agreements in docs/guide/en/interconnect.md.
+
+x-peer-node: &peer-node
+  image: ims-practice/ims:dev
+  build: .
+  restart: unless-stopped
+  stop_grace_period: 5s
+  # Names in network B's domain are in the zone of peer-dns, as dns is
+  # for network A in compose.yaml.
+  dns: [172.28.1.2]
+  depends_on:
+    peer-dns:
+      condition: service_started
+
+x-peer-ue: &peer-ue
+  image: ims-practice/ims:dev
+  build: .
+  profiles: [ue]
+  entrypoint: ["ue"]
+  dns: [172.28.1.2]
+
+networks:
+  peer:
+    driver: bridge
+    driver_opts:
+      com.docker.network.bridge.name: ims1
+    ipam:
+      config:
+        - subnet: 172.28.1.0/24
+  nni:
+    driver: bridge
+    driver_opts:
+      com.docker.network.bridge.name: nni0
+    ipam:
+      config:
+        - subnet: 172.28.2.0/24
+
+services:
+  # Network A gets the names of its IBCF and TrGW, the ENUM records of
+  # network B's numbers and the names on the link (home/dns/Corefile).
+  dns:
+    command: ["-conf", "/etc/coredns-interconnect/Corefile"]
+    volumes:
+      - ./deploy/interconnect/home/dns:/etc/coredns-interconnect:ro
+  # The S-CSCF and the IP-SM-GW of network A know their IBCF.
+  scscf:
+    volumes:
+      - ./deploy/interconnect/home/scscf.yaml:/etc/ims/node.yaml:ro
+  ipsmgw:
+    volumes:
+      - ./deploy/interconnect/home/ipsmgw.yaml:/etc/ims/node.yaml:ro
+
+  ibcf-a:
+    image: ims-practice/ims:dev
+    build: .
+    hostname: ibcf-a
+    restart: unless-stopped
+    stop_grace_period: 5s
+    dns: [172.28.0.2]
+    depends_on:
+      dns:
+        condition: service_started
+      trgw-a:
+        condition: service_started
+      capture-nni:
+        condition: service_healthy
+    volumes:
+      - ./deploy/interconnect/home/ibcf.yaml:/etc/ims/node.yaml:ro
+      - ./deploy/interconnect/profiles/${IBCF_A_PROFILE:-network-b.yaml}:/etc/ims/peer-profile.yaml:ro
+    networks:
+      ims:
+        ipv4_address: 172.28.0.90
+      nni:
+        ipv4_address: 172.28.2.10
+
+  trgw-a:
+    image: ims-practice/ims:dev
+    build: .
+    hostname: trgw-a
+    restart: unless-stopped
+    stop_grace_period: 5s
+    volumes:
+      - ./deploy/interconnect/home/trgw.yaml:/etc/ims/node.yaml:ro
+    networks:
+      ims:
+        ipv4_address: 172.28.0.91
+      nni:
+        ipv4_address: 172.28.2.11
+
+  ibcf-b:
+    <<: *peer-node
+    hostname: ibcf-b
+    depends_on:
+      peer-dns:
+        condition: service_started
+      trgw-b:
+        condition: service_started
+      capture-nni:
+        condition: service_healthy
+    volumes:
+      - ./deploy/interconnect/peer/ibcf.yaml:/etc/ims/node.yaml:ro
+      - ./deploy/interconnect/profiles/${IBCF_B_PROFILE:-network-a.yaml}:/etc/ims/peer-profile.yaml:ro
+    networks:
+      peer:
+        ipv4_address: 172.28.1.90
+      nni:
+        ipv4_address: 172.28.2.20
+
+  trgw-b:
+    <<: *peer-node
+    hostname: trgw-b
+    volumes:
+      - ./deploy/interconnect/peer/trgw.yaml:/etc/ims/node.yaml:ro
+    networks:
+      peer:
+        ipv4_address: 172.28.1.91
+      nni:
+        ipv4_address: 172.28.2.21
+
+  peer-dns:
+    image: coredns/coredns:1.12.1
+    command: ["-conf", "/etc/coredns/Corefile"]
+    restart: unless-stopped
+    depends_on:
+      capture-peer:
+        condition: service_healthy
+    volumes:
+      - ./deploy/interconnect/peer/dns:/etc/coredns:ro
+    networks:
+      peer:
+        ipv4_address: 172.28.1.2
+
+  peer-hss:
+    <<: *peer-node
+    hostname: peer-hss
+    volumes:
+      - ./deploy/interconnect/peer/hss.yaml:/etc/ims/node.yaml:ro
+    networks:
+      peer:
+        ipv4_address: 172.28.1.10
+
+  peer-icscf:
+    <<: *peer-node
+    hostname: peer-icscf
+    depends_on: [peer-dns, peer-hss]
+    volumes:
+      - ./deploy/interconnect/peer/icscf.yaml:/etc/ims/node.yaml:ro
+    networks:
+      peer:
+        ipv4_address: 172.28.1.20
+
+  peer-scscf:
+    <<: *peer-node
+    hostname: peer-scscf
+    depends_on: [peer-dns, peer-hss]
+    volumes:
+      - ./deploy/interconnect/peer/scscf.yaml:/etc/ims/node.yaml:ro
+    networks:
+      peer:
+        ipv4_address: 172.28.1.30
+
+  peer-pcscf:
+    <<: *peer-node
+    hostname: peer-pcscf
+    depends_on: [peer-dns, peer-icscf]
+    volumes:
+      - ./deploy/interconnect/peer/pcscf.yaml:/etc/ims/node.yaml:ro
+    networks:
+      peer:
+        ipv4_address: 172.28.1.40
+
+  peer-ipsmgw:
+    <<: *peer-node
+    hostname: peer-ipsmgw
+    depends_on: [peer-dns, peer-hss]
+    volumes:
+      - ./deploy/interconnect/peer/ipsmgw.yaml:/etc/ims/node.yaml:ro
+    networks:
+      peer:
+        ipv4_address: 172.28.1.70
+
+  # The UE simulators of network B, subscribers 1 and 2 of hss.yaml. Run
+  # them like ue and ue2, with the flags of network B: --domain, --impi,
+  # --impu, --password, --pcscf, --pcscf-uri and --sc (see "Run it" in
+  # docs/guide/en/interconnect.md).
+  peer-ue:
+    <<: *peer-ue
+    volumes:
+      - ./captures:/captures
+    networks:
+      peer:
+        ipv4_address: 172.28.1.100
+
+  peer-ue2:
+    <<: *peer-ue
+    volumes:
+      - ./captures:/captures
+    networks:
+      peer:
+        ipv4_address: 172.28.1.101
+
+  # The captures of network B and of the link, as the capture of
+  # compose.yaml takes network A's.
+  capture-peer:
+    image: ims-practice/capture:dev
+    build: images/capture
+    network_mode: host
+    restart: unless-stopped
+    environment:
+      CAPTURE_INTERFACE: ims1
+    volumes:
+      - ./captures/peer:/captures
+    healthcheck:
+      test: ["CMD", "pgrep", "tcpdump"]
+      interval: 1s
+      retries: 30
+
+  capture-nni:
+    image: ims-practice/capture:dev
+    build: images/capture
+    network_mode: host
+    restart: unless-stopped
+    environment:
+      CAPTURE_INTERFACE: nni0
+    volumes:
+      - ./captures/nni:/captures
+    healthcheck:
+      test: ["CMD", "pgrep", "tcpdump"]
+      interval: 1s
+      retries: 30

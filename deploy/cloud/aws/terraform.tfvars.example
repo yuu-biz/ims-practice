@@ -1,0 +1,13 @@
+# Copy this file to terraform.tfvars (Git ignores that name) and replace
+# the values. The addresses here are documentation ranges (RFC 5737) and
+# reach nobody.
+
+region = "us-east-2"
+
+# Your own line's public address, as a /32. Every other address is
+# refused on SIP, RTP and the Kubernetes API.
+allowed_source_cidrs = ["192.0.2.10/32"]
+
+# "none" (recommended), "sip" or "sip-and-rtp". A load balancer and its
+# address are billed by the hour on top of the rest.
+load_balancer = "none"

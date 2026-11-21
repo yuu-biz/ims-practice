@@ -1,0 +1,22 @@
+# The capture on Kubernetes (capture.yaml), with the Pod range
+# of the environment in its filter. A component, so that kind
+# (deploy/k8s/capture) and the clouds (overlays/cloud-*/capture) share
+# it; the kustomization that uses it lists one environment
+# (environments/) among its resources.
+apiVersion: kustomize.config.k8s.io/v1alpha1
+kind: Component
+resources:
+  - capture.yaml
+replacements:
+  - source:
+      kind: ConfigMap
+      name: ims-environment
+      fieldPath: data.pod_cidr
+    targets:
+      - select:
+          kind: DaemonSet
+          name: capture
+        fieldPaths:
+          - spec.template.spec.containers.[name=capture].env.[name=POD_CIDR].value
+        options:
+          create: true

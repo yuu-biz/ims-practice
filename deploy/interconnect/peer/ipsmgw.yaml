@@ -1,0 +1,27 @@
+# IP-SM-GW of network B, with its SC stub. It delivers the short
+# messages of its users, and those that network A hands over for them
+# (TS 23.204 6.4a). A short message for a user of network A leaves
+# through IBCF-B, as network A's IP-SM-GW sends those for network B
+# through IBCF-A (deploy/interconnect/home/ipsmgw.yaml).
+node: peer-ipsmgw
+roles: [ipsmgw]
+home_domain: ims.mnc002.mcc001.3gppnetwork.org
+ipsmgw:
+  sip:
+    listen: 0.0.0.0:5060
+    host: ipsmgw.ims.mnc002.mcc001.3gppnetwork.org
+  number: "+12025550159"
+  service_centre: "+12025550150"
+  # With it, the SC finds the users of network A by ENUM, in the zone of
+  # dns/e164.arpa.zone, and the IP-SM-GW sends their short messages out
+  # here.
+  ibcf: sip:ibcf.ims.mnc002.mcc001.3gppnetwork.org:5060
+diameter:
+  origin_host: ipsmgw.ims.mnc002.mcc001.3gppnetwork.org
+  origin_realm: ims.mnc002.mcc001.3gppnetwork.org
+  peers:
+    - address: hss.ims.mnc002.mcc001.3gppnetwork.org:3868
+      origin_host: hss.ims.mnc002.mcc001.3gppnetwork.org
+  timers:
+    tw: 10s
+    tc: 5s

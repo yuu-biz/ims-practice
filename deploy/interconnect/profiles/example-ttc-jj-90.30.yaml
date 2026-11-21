@@ -1,0 +1,34 @@
+# An example agreement in the style of a national interconnect, with
+# the kind of choices that a national standard such as TTC JJ-90.30
+# (IMS inter-operator network interconnection common interface) makes
+# on top of the common part of TS 29.165. No scenario uses it; it is
+# here to compare with network-b.yaml, which follows the common part
+# only, and to show where national differences go. It shows the format,
+# not the standard: read the standard itself for its values.
+#
+# What a profile of this project cannot say: a session timer on every
+# session, which an IBCF of this project does not ask for
+# (internal/ibcf, SIMPLIFIED), and a limit on the tel URIs in
+# P-Asserted-Identity, which the trust domain rules do not count.
+name: example-ttc
+# The peer's domain; an example name.
+domain: ims.mnc002.mcc001.3gppnetwork.org
+trusted: true
+# SIP over UDP on port 5060 only. Longer messages still go over TCP
+# (TS 24.229 4.2A).
+transports: [udp]
+# No optional method crosses, so no MESSAGE.
+methods: []
+# 100rel is mandatory; the precondition mechanism is for the operators
+# to agree on (TS 29.165 Table C.3.1.2). Here it is left out of the
+# agreement: a request that requires it gets 420 at the border, and one
+# that only supports it crosses, and the far end answers without it.
+option_tags:
+  100rel: pass
+  precondition: reject
+# The calling number goes in P-Asserted-Identity, and numbers cross as
+# tel URIs.
+number_format: tel
+# The offer between networks includes G.711 mu-law, and AMR between
+# mobile networks. Other codecs are for the operators to agree on.
+codecs: [PCMU, AMR, AMR-WB, telephone-event]

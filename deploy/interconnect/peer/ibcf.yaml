@@ -1,0 +1,23 @@
+# IBCF-B, the border of network B towards network A, on ims1 and nni0.
+# It mirrors IBCF-A (deploy/interconnect/home/ibcf.yaml).
+node: ibcf-b
+roles: [ibcf]
+home_domain: ims.mnc002.mcc001.3gppnetwork.org
+ibcf:
+  sip:
+    listen: 172.28.1.90:5060
+    host: ibcf.ims.mnc002.mcc001.3gppnetwork.org
+  external_sip:
+    listen: 172.28.2.20:5060
+    host: ibcf.nni.mnc002.example.net
+  icscf: sip:icscf.ims.mnc002.mcc001.3gppnetwork.org:5060
+  trgw:
+    control: http://trgw.ims.mnc002.mcc001.3gppnetwork.org:8080
+    core_address: 172.28.1.91
+    peer_address: 172.28.2.21
+  peers:
+    # Compose mounts the profile that IBCF_B_PROFILE names,
+    # profiles/network-a.yaml by default, here.
+    - profile_file: peer-profile.yaml
+      entry_point: sip:ibcf.nni.mnc001.example.net:5060
+      sources: [172.28.2.10]

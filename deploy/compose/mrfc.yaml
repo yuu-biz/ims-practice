@@ -1,0 +1,28 @@
+# MRFC, the control side of the MRF (TS 23.228 4.7). The
+# MMTel AS sends it an INVITE whose Request-URI names the service, as
+# RFC 4240 defines: sip:annc@... to play an announcement and
+# sip:conf=<id>@... to join a conference. The MRFC picks an MRFP and has
+# it play or mix the media.
+node: mrfc
+roles: [mrfc]
+home_domain: ims.mnc001.mcc001.3gppnetwork.org
+mrfc:
+  # The SIP URI, sip:mrfc.ims.mnc001.mcc001.3gppnetwork.org:5060, is the
+  # mrfc of mmtel.yaml. The host also goes into the Contact of each
+  # dialog, so the requests within a dialog come back to this instance.
+  sip:
+    listen: 0.0.0.0:5060
+    host: mrfc.ims.mnc001.mcc001.3gppnetwork.org
+  # The MRFPs report here that an announcement has ended. Port 8080, on
+  # which Wireshark decodes HTTP without settings, as it does for the
+  # control API of the MRFP.
+  notify: 0.0.0.0:8080
+  # The control APIs of the MRFPs. Every MRFC instance lists the same
+  # ones, in the same order.
+  mrfp:
+    - http://mrfp.ims.mnc001.mcc001.3gppnetwork.org:8080
+# Copies of every SIP message for the dashboard.
+# The address is fixed so that the node starts even when the dashboard
+# is down; the dashboard is not on the call path.
+hep:
+  collector: 172.28.0.60:9060

@@ -1,0 +1,320 @@
+name: ci
+
+# A newer push to the same branch cancels the run of an older one.
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  docs:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - run: python scripts/check_links.py
+      - name: what learners read does not point into the development records
+        run: python scripts/check_learner_text.py
+      - name: every simplification in the code is in a table that learners read
+        run: python scripts/check_simplified.py
+
+  go:
+    runs-on: ubuntu-latest
+    # The stores of the nodes run their tests against a Valkey server
+    # too when KVSTORE_VALKEY_ADDR names one. With it set, a test that
+    # cannot reach the server fails instead of being skipped.
+    services:
+      valkey:
+        image: valkey/valkey:9.0.8-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "valkey-cli ping"
+          --health-interval 2s
+          --health-timeout 2s
+          --health-retries 15
+    env:
+      KVSTORE_VALKEY_ADDR: 127.0.0.1:6379
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: gofmt
+        run: test -z "$(gofmt -l .)" || { gofmt -l .; exit 1; }
+      # go vet and go test compile the test files too, so only a plain
+      # build notices code that leans on a helper from a _test.go file.
+      - run: go build ./...
+      - run: go vet ./...
+      - run: go test -race ./...
+
+  web:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web/dashboard
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 26.13.1
+      - run: npm ci --no-fund --no-audit
+      - run: npm test
+      - run: npm run build
+
+  e2e:
+    runs-on: ubuntu-latest
+    needs: go
+    steps:
+      - uses: actions/checkout@v4
+      - run: scripts/e2e-diameter.sh
+      - name: upload the capture
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: diameter-capture
+          path: captures/*.pcap
+          if-no-files-found: warn
+      - name: clean up
+        if: always()
+        run: docker compose down --rmi all -v --remove-orphans
+
+  e2e-registration:
+    runs-on: ubuntu-latest
+    needs: go
+    steps:
+      - uses: actions/checkout@v4
+      - run: scripts/e2e-registration.sh
+      - name: upload the capture
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: registration-capture
+          path: captures/*.pcap
+          if-no-files-found: warn
+      - name: clean up
+        if: always()
+        run: docker compose --profile ue down --rmi all -v --remove-orphans
+
+  e2e-call:
+    runs-on: ubuntu-latest
+    needs: go
+    steps:
+      - uses: actions/checkout@v4
+      - run: scripts/e2e-call.sh
+      - name: upload the capture and the recordings
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: call-capture
+          path: |
+            captures/*.pcap
+            captures/*.wav
+          if-no-files-found: warn
+      - name: clean up
+        if: always()
+        run: docker compose --profile ue down --rmi all -v --remove-orphans
+
+  e2e-dashboard:
+    runs-on: ubuntu-latest
+    needs: [go, web]
+    steps:
+      - uses: actions/checkout@v4
+      - run: scripts/e2e-dashboard.sh
+      - name: upload the capture and the dashboard's view
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: dashboard-capture
+          path: |
+            captures/*.pcap
+            e2e-out/dashboard-messages.json
+          if-no-files-found: warn
+      - name: clean up
+        if: always()
+        run: docker compose --profile ue --profile sim down --rmi all -v --remove-orphans
+
+  e2e-sms:
+    runs-on: ubuntu-latest
+    needs: go
+    steps:
+      - uses: actions/checkout@v4
+      - run: scripts/e2e-sms.sh
+      - name: upload the capture and the ladder of the short messages
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sms-capture
+          path: |
+            captures/*.pcap
+            e2e-out/sms-ladder.txt
+          if-no-files-found: warn
+      - name: clean up
+        if: always()
+        run: docker compose --profile ue down --rmi all -v --remove-orphans
+
+  e2e-volte:
+    runs-on: ubuntu-latest
+    needs: go
+    steps:
+      - uses: actions/checkout@v4
+      - run: scripts/e2e-volte.sh
+      - name: upload the capture, the recordings, the ladder and the logs of the UEs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: volte-capture
+          path: |
+            captures/*.pcap
+            captures/volte-*.amr
+            e2e-out/volte-ladder.txt
+            e2e-out/*.log
+          if-no-files-found: warn
+      - name: clean up
+        if: always()
+        run: docker compose --profile ue --profile volte down --rmi all -v --remove-orphans
+
+  e2e-mmtel:
+    runs-on: ubuntu-latest
+    needs: go
+    steps:
+      - uses: actions/checkout@v4
+      - run: scripts/e2e-mmtel.sh
+      - name: upload the capture, the ladder and the logs of the UEs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mmtel-capture
+          path: |
+            captures/*.pcap
+            e2e-out/mmtel-ladder.txt
+            e2e-out/ims-practice-*.log
+          if-no-files-found: warn
+      - name: clean up
+        if: always()
+        run: docker compose --profile ue down --rmi all -v --remove-orphans
+
+  e2e-mrf:
+    runs-on: ubuntu-latest
+    needs: go
+    steps:
+      - uses: actions/checkout@v4
+      - run: scripts/e2e-mrf.sh
+      - name: upload the capture, the ladder and the logs of the UEs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mrf-capture
+          path: |
+            captures/*.pcap
+            captures/mrf-cat-received.raw
+            e2e-out/mrf-ladder.txt
+            e2e-out/mrf-*.log
+            e2e-out/ims-practice-*.log
+          if-no-files-found: warn
+      - name: clean up
+        if: always()
+        run: docker compose --profile ue --profile sim down --rmi all -v --remove-orphans
+
+  e2e-interconnect:
+    runs-on: ubuntu-latest
+    needs: go
+    steps:
+      - uses: actions/checkout@v4
+      - run: scripts/e2e-interconnect.sh
+      - name: upload the captures of network A, network B and the link between them
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: interconnect-capture
+          path: |
+            captures/*.pcap
+            captures/peer/*.pcap
+            captures/nni/*.pcap
+          if-no-files-found: warn
+      - name: clean up
+        if: always()
+        run: >-
+          docker compose -p ims-practice-interconnect -f compose.yaml -f deploy/interconnect/compose.yaml
+          --profile ue down --rmi all -v --remove-orphans
+
+  cloud:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        dir: [deploy/cloud/modules/ims-network, deploy/cloud/aws, deploy/cloud/azure]
+    env:
+      TOFU_VERSION: 1.13.0
+      TOFU_SHA256: ad494034a03aaa66d93fc1c2c164d01bedf21b44cfb8b616182cb69424a67672
+      TF_IN_AUTOMATION: "1"
+      TF_PLUGIN_CACHE_DIR: ${{ github.workspace }}/.tofu-plugin-cache
+    steps:
+      - uses: actions/checkout@v4
+      - name: install OpenTofu
+        run: |
+          mkdir -p "$RUNNER_TEMP/tofu"
+          cd "$RUNNER_TEMP/tofu"
+          zip="tofu_${TOFU_VERSION}_linux_amd64.zip"
+          curl -fsSLo "$zip" "https://github.com/opentofu/opentofu/releases/download/v${TOFU_VERSION}/$zip"
+          echo "$TOFU_SHA256  $zip" | sha256sum -c
+          unzip -q "$zip" tofu
+          echo "$RUNNER_TEMP/tofu" >> "$GITHUB_PATH"
+      - name: cache the providers
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.TF_PLUGIN_CACHE_DIR }}
+          key: tofu-providers-${{ hashFiles(format('{0}/.terraform.lock.hcl', matrix.dir)) }}
+      - run: mkdir -p "$TF_PLUGIN_CACHE_DIR"
+      - run: tofu -chdir="${{ matrix.dir }}" fmt -check -recursive -diff
+      - run: tofu -chdir="${{ matrix.dir }}" init -backend=false -input=false -lockfile=readonly
+      - run: tofu -chdir="${{ matrix.dir }}" validate
+      - run: tofu -chdir="${{ matrix.dir }}" test
+
+  kustomize:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      KUBECTL_VERSION: v1.37.2
+      KUBECONFORM_VERSION: v0.8.0
+      KUBECONFORM_SHA256: 9bc2bffbf71f261128533edaf912153948b7ff238f9a531ae6d34466ec287883
+      KUBERNETES_VERSION: 1.37.2
+    steps:
+      - uses: actions/checkout@v4
+      - name: install kubectl and kubeconform
+        run: |
+          mkdir -p "$RUNNER_TEMP/bin"
+          cd "$RUNNER_TEMP/bin"
+          curl -fsSLo kubectl "https://dl.k8s.io/release/$KUBECTL_VERSION/bin/linux/amd64/kubectl"
+          echo "$(curl -fsSL "https://dl.k8s.io/release/$KUBECTL_VERSION/bin/linux/amd64/kubectl.sha256")  kubectl" | sha256sum -c
+          chmod +x kubectl
+          tgz=kubeconform-linux-amd64.tar.gz
+          curl -fsSLo "$tgz" "https://github.com/yannh/kubeconform/releases/download/$KUBECONFORM_VERSION/$tgz"
+          echo "$KUBECONFORM_SHA256  $tgz" | sha256sum -c
+          tar -xzf "$tgz" kubeconform
+          rm "$tgz"
+          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+      - run: deploy/k8s/check-overlays.sh --require-kubeconform
+
+  web-oam:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web/oam
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 26.13.1
+      - run: npm ci --no-fund --no-audit
+      - run: npm test
+      - run: npm run build

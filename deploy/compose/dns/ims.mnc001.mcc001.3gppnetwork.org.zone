@@ -1,0 +1,39 @@
+; The home network domain, in the ims.mnc<MNC>.mcc<MCC>.3gppnetwork.org
+; format of TS 23.003. MCC 001 and MNC 01 are test values.
+$ORIGIN ims.mnc001.mcc001.3gppnetwork.org.
+$TTL 60
+@         IN SOA dns hostmaster 7 3600 600 86400 60
+@         IN NS  dns
+
+; RFC 3263 4.1: the P-CSCF asks for NAPTR records of the domain in the
+; Request-URI of a REGISTER. The record points to the SRV name of the
+; I-CSCF, the entry point of the home network, over UDP.
+@         IN NAPTR 10 50 "s" "SIP+D2U" "" _sip._udp
+; RFC 3263 4.2 and RFC 2782: the SRV record gives the port and the host.
+_sip._udp IN SRV   10 50 5060 icscf
+
+dns       IN A     172.28.0.2
+hss       IN A     172.28.0.10
+icscf     IN A     172.28.0.20
+scscf     IN A     172.28.0.30
+pcscf     IN A     172.28.0.40
+agw       IN A     172.28.0.50
+ipsmgw    IN A     172.28.0.70
+mmtel     IN A     172.28.0.75
+; The XCAP Root URI that a UE builds (TS 23.003 13.9.1.2) leads to the
+; XCAP server of the MMTel AS.
+xcap      IN A     172.28.0.75
+; The EPC stub: its UE API under one name, the PCRF inside it under
+; another, so that the P-CSCF's Diameter peer reads as the PCRF.
+epc       IN A     172.28.0.80
+pcrf      IN A     172.28.0.80
+; The MRF: the MRFC, which the MMTel AS reaches over SIP, and the MRFP,
+; which the MRFC controls.
+mrfc      IN A     172.28.0.85
+mrfp      IN A     172.28.0.86
+
+; The subdomain of the conference URIs, public service identities that
+; the MMTel AS hosts (TS 23.228 5.4.12.3). As for the home domain, NAPTR
+; and SRV (RFC 3263) lead to the instance that hosts the conferences.
+conf      IN NAPTR 10 50 "s" "SIP+D2U" "" _sip._udp.conf
+_sip._udp.conf IN SRV 10 50 5060 mmtel

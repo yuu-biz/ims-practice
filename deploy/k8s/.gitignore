@@ -1,0 +1,4 @@
+# The values of your own cluster: your line's and your nodes' public
+# addresses, your registry. Copy values.local.env.example next to it to
+# values.local.env and edit that (README.md, "In the cloud").
+values.local.env

@@ -1,0 +1,28 @@
+# HELP ims_hep_dropped_total HEP copies dropped because the send queue was full.
+# TYPE ims_hep_dropped_total counter
+ims_hep_dropped_total 0
+# HELP ims_hss_subscriptions IMS subscriptions stored in the HSS (TS 32.409 DBU.NbrImsSubscription).
+# TYPE ims_hss_subscriptions gauge
+ims_hss_subscriptions 3
+# HELP ims_registration_attempts_total REGISTER requests received.
+# TYPE ims_registration_attempts_total counter
+ims_registration_attempts_total{role="pcscf",type="initial"} 1
+ims_registration_attempts_total{role="scscf",type="initial"} 2
+ims_registration_attempts_total{role="scscf",type="other"} 1
+# HELP ims_registration_setup_seconds Time from a REGISTER to its 200 (OK).
+# TYPE ims_registration_setup_seconds histogram
+ims_registration_setup_seconds_bucket{role="pcscf",le="0.1"} 0
+ims_registration_setup_seconds_bucket{role="pcscf",le="0.5"} 2
+ims_registration_setup_seconds_bucket{role="pcscf",le="1"} 2
+ims_registration_setup_seconds_bucket{role="pcscf",le="+Inf"} 3
+ims_registration_setup_seconds_sum{role="pcscf"} 2.75
+ims_registration_setup_seconds_count{role="pcscf"} 3
+# HELP ims_sessions Sessions in progress.
+# TYPE ims_sessions gauge
+ims_sessions{role="pcscf"} 1.234567e+06
+ims_sessions{role="scscf"} 0
+# HELP test_escaping_total First line\nsecond line with a \\ backslash
+# TYPE test_escaping_total counter
+test_escaping_total{reason="say \"hi\""} 1
+test_escaping_total{reason="a\\b"} 1
+test_escaping_total{reason="two\nlines"} 1.5

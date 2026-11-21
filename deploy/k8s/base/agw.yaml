@@ -1,0 +1,203 @@
+# Media relay in the IMS-AGW role, the agw role of the ims image. A StatefulSet with a headless
+# Service like the SIP nodes: the P-CSCF reaches its control API by name,
+# and RTP goes straight to the Pod's address, which the relay writes into
+# its terminations and the P-CSCF into SDP.
+apiVersion: v1
+kind: Service
+metadata:
+  name: agw
+spec:
+  clusterIP: None
+  selector:
+    app.kubernetes.io/name: agw
+  ports:
+    # The control API with which the P-CSCF drives the relay.
+    - name: control
+      port: 8080
+      protocol: TCP
+    # The RTP ports of config/agw.yaml. A Service cannot name a range, so
+    # each port has an entry. Inside the cluster they only document the
+    # ports, since RTP goes to the Pod's address; they matter once a
+    # NodePort or a LoadBalancer exposes them.
+    - name: rtp-40000
+      port: 40000
+      protocol: UDP
+    - name: rtp-40001
+      port: 40001
+      protocol: UDP
+    - name: rtp-40002
+      port: 40002
+      protocol: UDP
+    - name: rtp-40003
+      port: 40003
+      protocol: UDP
+    - name: rtp-40004
+      port: 40004
+      protocol: UDP
+    - name: rtp-40005
+      port: 40005
+      protocol: UDP
+    - name: rtp-40006
+      port: 40006
+      protocol: UDP
+    - name: rtp-40007
+      port: 40007
+      protocol: UDP
+    - name: rtp-40008
+      port: 40008
+      protocol: UDP
+    - name: rtp-40009
+      port: 40009
+      protocol: UDP
+    - name: rtp-40010
+      port: 40010
+      protocol: UDP
+    - name: rtp-40011
+      port: 40011
+      protocol: UDP
+    - name: rtp-40012
+      port: 40012
+      protocol: UDP
+    - name: rtp-40013
+      port: 40013
+      protocol: UDP
+    - name: rtp-40014
+      port: 40014
+      protocol: UDP
+    - name: rtp-40015
+      port: 40015
+      protocol: UDP
+    - name: rtp-40016
+      port: 40016
+      protocol: UDP
+    - name: rtp-40017
+      port: 40017
+      protocol: UDP
+    - name: rtp-40018
+      port: 40018
+      protocol: UDP
+    - name: rtp-40019
+      port: 40019
+      protocol: UDP
+    - name: rtp-40020
+      port: 40020
+      protocol: UDP
+    - name: rtp-40021
+      port: 40021
+      protocol: UDP
+    - name: rtp-40022
+      port: 40022
+      protocol: UDP
+    - name: rtp-40023
+      port: 40023
+      protocol: UDP
+    - name: rtp-40024
+      port: 40024
+      protocol: UDP
+    - name: rtp-40025
+      port: 40025
+      protocol: UDP
+    - name: rtp-40026
+      port: 40026
+      protocol: UDP
+    - name: rtp-40027
+      port: 40027
+      protocol: UDP
+    - name: rtp-40028
+      port: 40028
+      protocol: UDP
+    - name: rtp-40029
+      port: 40029
+      protocol: UDP
+    - name: rtp-40030
+      port: 40030
+      protocol: UDP
+    - name: rtp-40031
+      port: 40031
+      protocol: UDP
+    - name: rtp-40032
+      port: 40032
+      protocol: UDP
+    - name: rtp-40033
+      port: 40033
+      protocol: UDP
+    - name: rtp-40034
+      port: 40034
+      protocol: UDP
+    - name: rtp-40035
+      port: 40035
+      protocol: UDP
+    - name: rtp-40036
+      port: 40036
+      protocol: UDP
+    - name: rtp-40037
+      port: 40037
+      protocol: UDP
+    - name: rtp-40038
+      port: 40038
+      protocol: UDP
+    - name: rtp-40039
+      port: 40039
+      protocol: UDP
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: agw
+spec:
+  serviceName: agw
+  replicas: 1
+  podManagementPolicy: Parallel
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: agw
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: agw
+    spec:
+      terminationGracePeriodSeconds: 10
+      dnsConfig:
+        options:
+          - name: ndots
+            value: "1"
+      # rtp_address must be an address, and a Pod learns its own only when
+      # it starts. The init container writes it into the file the relay
+      # reads.
+      initContainers:
+        - name: config
+          image: ims-practice/ims:dev
+          imagePullPolicy: IfNotPresent
+          command:
+            - sh
+            - -c
+            - sed "s/[$]{POD_IP}/$POD_IP/g" /etc/ims-template/node.yaml > /etc/ims/node.yaml
+          env:
+            - name: POD_IP
+              valueFrom:
+                fieldRef:
+                  fieldPath: status.podIP
+          volumeMounts:
+            - name: template
+              mountPath: /etc/ims-template
+              readOnly: true
+            - name: config
+              mountPath: /etc/ims
+      containers:
+        - name: ims
+          image: ims-practice/ims:dev
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: control
+              containerPort: 8080
+              protocol: TCP
+          volumeMounts:
+            - name: config
+              mountPath: /etc/ims
+              readOnly: true
+      volumes:
+        - name: template
+          configMap:
+            name: agw-config
+        - name: config
+          emptyDir: {}

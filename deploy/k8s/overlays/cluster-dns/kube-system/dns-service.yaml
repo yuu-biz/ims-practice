@@ -1,0 +1,19 @@
+# A second address for the cluster's CoreDNS: the address that the zone
+# gives the name server dns.ims.mnc001.mcc001.3gppnetwork.org. It is
+# ims_dns_cluster_ip of environments/kind, which components/name-server
+# writes into spec.clusterIP. The Pods still ask kube-dns at its own
+# address.
+apiVersion: v1
+kind: Service
+metadata:
+  name: ims-dns
+spec:
+  selector:
+    k8s-app: kube-dns
+  ports:
+    - name: dns
+      port: 53
+      protocol: UDP
+    - name: dns-tcp
+      port: 53
+      protocol: TCP
