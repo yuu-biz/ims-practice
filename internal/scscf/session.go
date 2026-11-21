@@ -47,11 +47,14 @@ func (s *SCSCF) session(st *sip.ServerTransaction) {
 	top, popped := sip.PopOwnRoute(out, s.ownURI())
 	log := s.log.With("method", string(out.Method), "call_id", out.Get("Call-ID"))
 	odi, returned := top.Params.Get(odiParam)
+	if !ims.IsInDialog(st.Request) {
+		s.chargeRequest(out)
+	}
 	switch {
 	case ims.IsInDialog(st.Request):
 		// A request within a dialog follows the route set the dialog
 		// already has (RFC 3261 16.12).
-		s.forward(st, out, log)
+		s.forward(st, out, nil, log)
 	case popped && returned:
 		s.fromApplicationServer(st, out, odi, log)
 	case popped && top.User == "orig":
@@ -151,7 +154,7 @@ func (s *SCSCF) routeOriginating(st *sip.ServerTransaction, out *sip.Message, lo
 	// request to an application server only from invoke.
 	out.Remove("P-Served-User")
 	log.Info("routing the originating request", "request_uri", out.RequestURI)
-	s.forward(st, out, log)
+	s.forward(st, out, s.chargeResponses(st.Request, true), log)
 }
 
 // assertAlias is TS 24.229 5.4.3.2 step 9: when P-Asserted-Identity
@@ -258,7 +261,7 @@ func canonicalIdentities(ids []string) []string {
 func (s *SCSCF) routeTerminating(st *sip.ServerTransaction, out *sip.Message, d OriginalDialog, log *slog.Logger) {
 	if out.Get("Route") != "" {
 		log.Info("routing the terminating request along its Route", "route", out.Get("Route"))
-		s.forward(st, out, log)
+		s.forward(st, out, s.chargeResponses(st.Request, false), log)
 		return
 	}
 	reg, ok := s.store.RegistrationOf(d.ServedUser)
@@ -291,19 +294,23 @@ func (s *SCSCF) routeTerminating(st *sip.ServerTransaction, out *sip.Message, d 
 		out.Prepend("Route", reg.Path[i])
 	}
 	log.Info("routing to the contact", "callee", d.ServedUser, "contact", reg.Contact)
-	s.forward(st, out, log)
+	s.forward(st, out, s.chargeResponses(st.Request, false), log)
 }
 
 // forward sends out to its next hop: the top Route, or else the
-// Request-URI (RFC 3261 16.6 steps 6 and 7).
-func (s *SCSCF) forward(st *sip.ServerTransaction, out *sip.Message, log *slog.Logger) {
+// Request-URI (RFC 3261 16.6 steps 6 and 7). answer, when not nil, sees
+// each response before it goes back.
+func (s *SCSCF) forward(st *sip.ServerTransaction, out *sip.Message, answer func(*sip.Message), log *slog.Logger) {
 	dst, err := s.nextHop(out)
 	if err != nil {
 		log.Warn("cannot route the request", "error", err.Error())
 		s.respond(st, 404, nil)
 		return
 	}
-	final, err := st.Proxy(out, dst)
+	final, err := st.ProxyWith(out, dst, answer)
+	if final != nil && answer != nil {
+		answer(final)
+	}
 	ims.Finish(st, final, err)
 }
 

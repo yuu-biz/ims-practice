@@ -225,6 +225,8 @@ UE 1 sends **BYE** within the dialog (RFC 3261 15.1.1), along the route set. The
 
 Inside the network, the INVITE and every response to it carry a **P-Charging-Vector** (RFC 7315 4.6). Its **icid-value** names the call for charging. The P-CSCF of UE 1 writes a new one into the INVITE (TS 24.229 5.2.6.3.3 step 7), and the nodes after it pass it on; the MMTel AS puts it into the INVITE of each of its dialogs (5.7.5.1). Its **orig-ioi** names the network that sent the request, and its **term-ioi** the network that sent the response.
 
+Each node writes its own network into the IOIs. The S-CSCF writes its home domain as the orig-ioi of the INVITE that it sends to the MMTel AS and on (TS 24.229 5.4.3.2 steps 5 d and 7, 5.4.3.3 steps 4 d, 7 and 7A). Into the responses that it passes back, it writes the orig-ioi that the INVITE brought and its home domain as the term-ioi. In this one network every IOI is the same domain; in [Connect two IMS networks](interconnect.md) the two networks write different ones.
+
 A UE never sees the header field: the P-CSCF removes it from what goes to the UE and from what comes from it (5.2.1). Before it removes it from the INVITE to UE 2, the P-CSCF of UE 2 stores the icid-value and the orig-ioi (5.2.6.4.3 item 9). It writes them, with its own term-ioi, into UE 2's 183, 180 and 200 (5.2.6.4.4 item 6), and gives each later request of UE 2 in the dialog the icid-value of the INVITE (5.2.6.3.9 step 3). The P-CSCF of UE 1 gives the same icid-value to UE 1's PRACK, ACK and BYE.
 
 To follow the call, copy the icid-value of the INVITE that the P-CSCF sends to the S-CSCF (step 2), and filter with `sip.P-Charging-Vector contains "icid-value=..."`. The INVITE and its responses show up at every node and in all three dialogs.
@@ -285,7 +287,8 @@ Each item has a `SIMPLIFIED:` comment in the code; `grep -rn "SIMPLIFIED:" inter
 
 | Where | What is left out | Why |
 | --- | --- | --- |
-| S-CSCF, TS 24.229 5.4.3.2 and 5.4.3.3 | When the S-CSCF decides whether a failed application server gets the default handling, a 100 (Trying) from the server does not count as a 1xx. The orig-ioi and term-ioi are not handled. | Proxy keeps a 100 to the hop it came over (RFC 3261 16.7 step 5). The S-CSCF does no charging. |
+| S-CSCF, TS 24.229 5.4.3.2 and 5.4.3.3 | When the S-CSCF decides whether a failed application server gets the default handling, a 100 (Trying) from the server does not count as a 1xx. | Proxy keeps a 100 to the hop it came over (RFC 3261 16.7 step 5). |
+| S-CSCF, TS 24.229 5.4.3.2 | The term-ioi that a response to a request outside a dialog brings is not stored. | It names the network that answered in the charging records of the S-CSCF, which no node of this project writes, and no later message carries it. |
 | S-CSCF, TS 24.229 5.4.3.1 and 5.4.3.2 | Only a registered user is served. A request that an application server sends on behalf of a user, who is named in P-Served-User, gets 403 when that user is not registered, and the iFCs of ORIGINATING_UNREGISTERED are not evaluated. | No application server of this network starts a request on behalf of a user, so no request would meet those iFCs. |
 | S-CSCF, TS 24.229 5.4.3.2 steps 4C and 4D, 5.4.3.3 steps 3C and 3D | The user profile lists no subscribed services, so every user subscribes to MMTel. A request that matches no subscribed service is never answered 403. | The HSS keeps only iFCs for a user, and MMTel is the only service of this project with an ICSI. |
 | S-CSCF, TS 24.229 5.4.3.2 step 10 | A number without ENUM record is answered 404, not sent to a BGCF. | The telephone network is out of scope. |

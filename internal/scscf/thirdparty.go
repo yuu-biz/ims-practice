@@ -99,7 +99,8 @@ func (s *SCSCF) thirdPartyRegister(req *sip.Message, reg Registration, as ifc.Ap
 // the criterion when the server fails (TS 24.229 5.4.1.7).
 //
 // SIMPLIFIED: TS 24.229 5.4.1.7. The term-ioi of the response is not
-// stored; the S-CSCF does no charging.
+// stored: it is for the charging records of the S-CSCF, which no node
+// of this project writes.
 func (s *SCSCF) sendThirdPartyRegister(m *sip.Message, reg Registration, as ifc.ApplicationServer, expires time.Duration, log *slog.Logger) {
 	log = log.With("application_server", as.ServerName, "expires", int(expires/time.Second))
 	final, err := s.sendRequest(m)
