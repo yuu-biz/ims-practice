@@ -79,10 +79,13 @@ call() { docker compose run --rm --no-deps ue call --tone 1s "$@" 2>&1 || true; 
 xcap() { docker compose run --rm --no-deps ue xcap "$@" 2>&1 || true; }
 # alerting_tone TONE true|false provisions the CAT of UE 2 in the HSS,
 # through the dashboard, as the learner does with the Subscribers panel.
+# The status code is read from the end of the output, since curl on
+# Windows cannot write to /dev/null when MSYS_NO_PATHCONV is set.
 alerting_tone() {
-	curl -s -o /dev/null -w '%{http_code}' -X PUT -H 'Content-Type: application/json' \
+	curl -s -w '
+%{http_code}' -X PUT -H 'Content-Type: application/json' \
 		-d "{\"tone\":\"$1\",\"active\":$2}" \
-		"http://localhost:8080/api/subscribers/001010000000002%40$domain/customized-alerting-tone"
+		"http://localhost:8080/api/subscribers/001010000000002%40$domain/customized-alerting-tone" | tail -n 1
 }
 
 echo "an announcement before a barred call is rejected"
