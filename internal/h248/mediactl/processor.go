@@ -10,8 +10,7 @@ import (
 // Processor is what a Gateway of Mp carries out the commands of its
 // controller with: the media node in the role of the MRFP. Its
 // operations and types are those with which the MRFC controls an MRFP,
-// except that SubtractTermination returns the Statistics of the
-// Subtract reply.
+// so that *agw.Client is one.
 //
 // A context holds any number of terminations (TS 29.333 5.4, Table
 // 5.4.1): one for an announcement, three or more for a conference. Add
@@ -27,17 +26,7 @@ type Processor interface {
 	Add(ctx context.Context, terminations ...agw.TerminationRequest) (agw.Context, error)
 	AddTermination(ctx context.Context, id string, t agw.TerminationRequest) (agw.Termination, error)
 	Modify(ctx context.Context, id string, termination agw.TerminationID, change agw.TerminationRequest) error
-	SubtractTermination(ctx context.Context, id string, termination agw.TerminationID) (Statistics, error)
-}
-
-// Statistics is what a termination carried while it was in its
-// context, as the Subtract reply of Mp reports it: the statistics of
-// the rtp package (H.248.1 (05/2002) E.12.4), which count RTP only.
-type Statistics struct {
-	// PacketsSent and PacketsReceived count the RTP packets (rtp/ps,
-	// rtp/pr).
-	PacketsSent     uint64
-	PacketsReceived uint64
+	SubtractTermination(ctx context.Context, id string, termination agw.TerminationID) (agw.Termination, bool, error)
 }
 
 // TerminationMethod tells how a signal ended: the parameter Meth of

@@ -41,9 +41,9 @@ func (p *exampleProcessor) Modify(ctx context.Context, id string, termination ag
 	return nil
 }
 
-func (*exampleProcessor) SubtractTermination(ctx context.Context, id string, termination agw.TerminationID) (mediactl.Statistics, error) {
+func (*exampleProcessor) SubtractTermination(ctx context.Context, id string, termination agw.TerminationID) (agw.Termination, bool, error) {
 	fmt.Printf("MRFP: subtract %s of %s\n", termination, id)
-	return mediactl.Statistics{PacketsSent: 150}, nil
+	return agw.Termination{ID: termination, PacketsSent: 150}, true, nil
 }
 
 // The media node, as an MRFP, runs a Gateway with a Processor, which
@@ -123,11 +123,11 @@ func Example_announcement() {
 	n := <-completed
 	fmt.Printf("MRFC: %s of %s ended (%s, %s), request %d\n", n.Signal, n.Termination, n.Event, n.Method, n.RequestID)
 
-	stats, err := mrfp.SubtractTermination(ctx, cx.ID, t.ID)
+	gone, _, err := mrfp.SubtractTermination(ctx, cx.ID, t.ID)
 	if err != nil {
 		log.Fatal(err)
 	}
-	fmt.Printf("MRFC: the termination sent %d RTP packets\n", stats.PacketsSent)
+	fmt.Printf("MRFC: the termination sent %d RTP packets\n", gone.PacketsSent)
 	// Output:
 	// MRFP: new context, sendonly to 192.0.2.30:49170
 	// MRFC: context 7@mrfp1.ims.example.net, termination ip/7/1 receives on 192.0.2.21:42000

@@ -45,13 +45,32 @@ import (
 	"github.com/yuu-biz/ims-practice/internal/sip"
 )
 
-// MRFP is how the MRFC drives an MRFP over Mp: the operations of the
-// control API of the media node, which H.248 can carry.
-// *agw.Client is one.
+// MRFP is how the MRFC drives an MRFP over Mp (TS 29.333). The
+// operations carry the names of the H.248 commands, on the types of
+// internal/agw, and each is a call related procedure of Mp. Two values
+// implement it: *agw.Client, over the HTTP API of the media node, and
+// the H.248 Controller of internal/h248/mediactl, set up with
+// mediactl.MpProfile.
 type MRFP interface {
+	// Add is Reserve IMS Resources (TS 29.333 5.17.2.2) for the
+	// terminations of a new context: one for an announcement, or the
+	// first party of a conference. A termination with a remote address
+	// makes it Reserve and Configure IMS Resources (5.17.2.4).
 	Add(ctx context.Context, terminations ...agw.TerminationRequest) (agw.Context, error)
+	// AddTermination is Reserve IMS Resources for a context that exists,
+	// as when a party joins a conference (TS 29.333 5.17.2.30).
 	AddTermination(ctx context.Context, id string, t agw.TerminationRequest) (agw.Termination, error)
+	// Modify is Configure IMS Resources (TS 29.333 5.17.2.3), and with a
+	// signal Start Announcement (5.17.2.9) or, with an empty one, Stop
+	// Announcement (5.17.2.10). The end of an announcement comes back
+	// in a Notify: Announcement Completed (5.17.2.11).
 	Modify(ctx context.Context, id string, tid agw.TerminationID, change agw.TerminationRequest) error
+	// SubtractTermination is Release IMS Termination (TS 29.333
+	// 5.17.2.5). It returns the counts of the RTP packets that the
+	// termination carried, and tells whether the context went with it.
+	// The reply of an MRFP over H.248 does not say, and then the MRFC
+	// learns of it when a later AddTermination for the conference
+	// fails with agw.ErrNoContext (attach).
 	SubtractTermination(ctx context.Context, id string, tid agw.TerminationID) (agw.Termination, bool, error)
 }
 

@@ -146,31 +146,43 @@ func (c *Controller) mpModify(ctx context.Context, id string, termination agw.Te
 
 // SubtractTermination carries out Release IMS Termination (TS 29.333
 // 5.17.2.5): a Subtract of the termination, without an Audit
-// descriptor, so that the MRFP reports the packets it carried. The
-// last termination takes the context with it (H.248.1 (05/2002) 6.1.2);
-// the reply does not say whether that happened. It is a procedure of
-// Mp only.
-func (c *Controller) SubtractTermination(ctx context.Context, id string, termination agw.TerminationID) (Statistics, error) {
+// descriptor, so that the MRFP reports the RTP packets it carried
+// (rtp/ps and rtp/pr, H.248.1 (05/2002) E.12.4), which the Termination
+// returns as PacketsSent and Packets. It is a procedure of Mp only.
+//
+// The last termination takes the context with it (H.248.1 (05/2002)
+// 6.1.2), and the reply does not say whether that happened, so deleted
+// is always false. A caller learns that the context is gone when a
+// later call for it fails with agw.ErrNoContext.
+func (c *Controller) SubtractTermination(ctx context.Context, id string, termination agw.TerminationID) (_ agw.Termination, deleted bool, _ error) {
 	if !c.profile.mp() {
-		return Statistics{}, errNotMp
+		return agw.Termination{}, false, errNotMp
 	}
 	reply, err := c.contextRequest(ctx, id, h248.CommandRequest{Command: h248.Subtract, TerminationID: h248.TerminationID(termination)})
 	if err != nil {
-		return Statistics{}, err
+		return agw.Termination{}, false, err
 	}
 	if len(reply.Actions) != 1 || len(reply.Actions[0].Commands) != 1 {
-		return Statistics{}, errMalformedReply
+		return agw.Termination{}, false, errMalformedReply
 	}
-	stats := readStatistics(reply.Actions[0].Commands[0].Statistics)
+	out := agw.Termination{ID: termination}
+	out.PacketsSent, out.Packets = readStatistics(reply.Actions[0].Commands[0].Statistics)
 	c.log.Info("mediactl: termination subtracted", "context", id, "termination", string(termination),
-		"packets_received", stats.PacketsReceived, "packets_sent", stats.PacketsSent)
-	return stats, nil
+		"packets_received", out.Packets, "packets_sent", out.PacketsSent)
+	// SIMPLIFIED: H.248.1 (05/2002) 6.1.2. The last termination that is
+	// subtracted takes the context with it, and deleted is to tell the
+	// caller so. The Controller does not track how many terminations a
+	// context has left, so deleted is always false, and the MRFC learns
+	// that the context is gone only when its next AddTermination for it
+	// fails with agw.ErrNoContext. The Subtract reply does not say, and
+	// the Controller keeps no record of the contexts, so that several
+	// Controllers can run side by side and share nothing.
+	return out, false, nil
 }
 
-// readStatistics reads the statistics that mpSubtract writes. Others
-// are left out.
-func readStatistics(d h248.StatisticsDescriptor) Statistics {
-	var s Statistics
+// readStatistics reads the RTP packets sent and received that mpSubtract
+// writes. Other statistics are left out.
+func readStatistics(d h248.StatisticsDescriptor) (sent, received uint64) {
 	for _, p := range d {
 		n, err := strconv.ParseFloat(p.StatValue.Text, 64)
 		if err != nil || n < 0 {
@@ -181,12 +193,12 @@ func readStatistics(d h248.StatisticsDescriptor) Statistics {
 		v := uint64(n)
 		switch h248.PkgdName(strings.ToLower(string(p.StatName))) {
 		case statPacketsSent:
-			s.PacketsSent = v
+			sent = v
 		case statPacketsReceived:
-			s.PacketsReceived = v
+			received = v
 		}
 	}
-	return s
+	return sent, received
 }
 
 // contextRequest sends one command on the context that a Context ID of

@@ -170,7 +170,7 @@ func (g *Gateway) mpCreate(t *transaction, a h248.ActionRequest) (h248.ActionRep
 			if term.heartbeat != nil {
 				term.heartbeat.timer.Stop()
 			}
-			if _, err := g.processor.SubtractTermination(context.WithoutCancel(ctx), gc.processorID, term.processorID); err != nil {
+			if _, _, err := g.processor.SubtractTermination(context.WithoutCancel(ctx), gc.processorID, term.processorID); err != nil {
 				g.log.Warn("mediactl: the processor could not subtract a termination", "context", gc.id.String(), "error", err)
 			}
 		}
@@ -325,7 +325,7 @@ func (g *Gateway) mpSubtract(ctx context.Context, gc *mpContext, c h248.CommandR
 	if e != nil {
 		return h248.CommandReply{Command: c.Command, TerminationID: c.TerminationID, Error: e}
 	}
-	stats, err := g.processor.SubtractTermination(ctx, gc.processorID, t.processorID)
+	pt, _, err := g.processor.SubtractTermination(ctx, gc.processorID, t.processorID)
 	if err != nil && !errors.Is(err, agw.ErrNoTermination) {
 		g.log.Warn("mediactl: the processor could not subtract a termination", "context", gc.id.String(), "termination", string(t.id), "error", err)
 		return failed(c, processorErrorCode(err), "")
@@ -340,13 +340,13 @@ func (g *Gateway) mpSubtract(ctx context.Context, gc *mpContext, c h248.CommandR
 		g.byProcessorContext.Delete(gc.processorID)
 	}
 	g.log.Info("mediactl: termination subtracted", "context", gc.id.String(), "termination", string(t.id),
-		"context_deleted", gc.released, "packets_received", stats.PacketsReceived, "packets_sent", stats.PacketsSent)
+		"context_deleted", gc.released, "packets_received", pt.Packets, "packets_sent", pt.PacketsSent)
 	reply := h248.CommandReply{Command: c.Command, TerminationID: t.id}
 	if c.Audit == nil {
 		value := func(n uint64) h248.Value { return h248.Value{Text: strconv.FormatUint(n, 10)} }
 		reply.Statistics = h248.StatisticsDescriptor{
-			{StatName: statPacketsSent, StatValue: value(stats.PacketsSent)},
-			{StatName: statPacketsReceived, StatValue: value(stats.PacketsReceived)},
+			{StatName: statPacketsSent, StatValue: value(pt.PacketsSent)},
+			{StatName: statPacketsReceived, StatValue: value(pt.Packets)},
 		}
 	}
 	return reply
