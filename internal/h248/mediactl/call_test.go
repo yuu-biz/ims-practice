@@ -149,6 +149,43 @@ func TestFullCall(t *testing.T) {
 	}
 }
 
+// Reserve and Configure AGW Connection Point (TS 29.334 5.17.2.4): the
+// Add of a termination whose request has a remote address carries the
+// Remote descriptor too, and the relay learns where that termination
+// sends.
+func TestAddWithARemoteAddress(t *testing.T) {
+	b := newTestbed(t, ControllerConfig{})
+	b.waitRegistered(t)
+	before := len(b.net.datagrams())
+	ctx := context.Background()
+
+	ue := mustAddrPort("192.0.2.30:49170")
+	pcmuOnly := agw.Media{Codecs: []sdp.Codec{pcmu}}
+	r, err := b.controller.Add(ctx,
+		agw.TerminationRequest{ID: agw.Access, LocalMedia: pcmuOnly, Remote: ue, RemoteMedia: pcmuOnly},
+		agw.TerminationRequest{ID: agw.Core, LocalMedia: pcmuOnly})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if access, core := r.Terminations[agw.Access], r.Terminations[agw.Core]; access == nil || core == nil || access.Remote != ue || core.Remote.IsValid() {
+		t.Errorf("terminations %v", r.Terminations)
+	}
+	add := firstRequest(t, b.net.datagrams()[before:], h248.Add)
+	for _, cmd := range add.Actions[0].Commands {
+		hasRemote := cmd.Media != nil && cmd.Media.OneStream != nil && cmd.Media.OneStream.Remote != nil
+		if want := strings.Contains(string(cmd.TerminationID), "/access/"); hasRemote != want {
+			t.Errorf("the Add of %s has a Remote descriptor: %v, want %v", cmd.TerminationID, hasRemote, want)
+		}
+	}
+	relayContext, _ := b.relay.context("c1")
+	if got, ok := relayContext.remote[agw.Access]; !ok || got.Remote != ue || len(got.RemoteMedia.Codecs) != 1 || got.RemoteMedia.Codecs[0] != pcmu {
+		t.Errorf("the relay sends from the access termination to %+v", got)
+	}
+	if got, ok := relayContext.remote[agw.Core]; ok {
+		t.Errorf("the relay sends from the core termination to %+v", got)
+	}
+}
+
 // Iq reports no statistics on Subtract (TS 29.334 5.7.7, Table 5.7.7.2),
 // and the reply to a Subtract has no descriptors (Table 5.8.3.2): the
 // Subtract that the Controller sends has no Audit descriptor, and its
