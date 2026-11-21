@@ -419,7 +419,7 @@ The nodes of one operator trust each other with some header fields: the identity
 | Relayed-Charge, Service-Interact-Info | removed | removed | TS 24.229 4.4.17, 4.4.18 |
 | Cellular-Network-Info | stays | removed from requests | TS 24.229 4.4.19 |
 
-The P-CSCF adds a P-Charging-Vector of its own to what it forwards from the UE (5.2.2.1 item 3, 5.2.6.3.3 step 7). In Wireshark, `sip.P-Charging-Vector && ip.src == 172.28.0.40 && ip.dst == 172.28.0.100` finds nothing: the 401 and the 200 to the REGISTER reach the UE without it.
+The P-CSCF adds a P-Charging-Vector of its own to what it forwards from the UE (5.2.2.1 item 3, 5.2.6.3.3 step 7). A request to the UE goes the other way round: the P-CSCF stores its icid-value and orig-ioi before it removes the header field, and writes them, with its own term-ioi, into the UE's response (5.2.6.4.3 item 9, 5.2.6.4.4 item 6). [Follow a voice call through the IMS](call.md) follows one call by its icid-value. In Wireshark, `sip.P-Charging-Vector && ip.src == 172.28.0.40 && ip.dst == 172.28.0.100` finds nothing: the 401 and the 200 to the REGISTER reach the UE without it.
 
 A Reason in a response to the UE stays. When an application server rejects a call after an announcement, it sends the cause in a Reason towards the caller (TS 24.628 Annex G), and TS 24.229 4.4.1 lets the trust domain of each header field have its own edge.
 
@@ -444,6 +444,7 @@ These parts of the specifications are left out or shortened. Each has a `SIMPLIF
 | Where | What is left out | Why |
 | --- | --- | --- |
 | P-CSCF, TS 24.229 5.2.2.1 item 1 | The Path URI has no flow token and no `ob` parameter. | They belong to SIP outbound (RFC 5626), which this project does not implement. |
+| P-CSCF, TS 24.229 5.2.2.1 item 6 | The term-ioi of the P-Charging-Vector of the 200 to the REGISTER is not stored. | It names the home network in the charging records of the P-CSCF, which no node of this project writes, and no later message carries it. |
 | S-CSCF, TS 24.229 5.4.1.5 | The S-CSCF ends a registration on its own only when an application server fails the third-party REGISTER and its iFC says SESSION_TERMINATED. Otherwise only an RTR from the HSS ends one. It releases no sessions before the NOTIFY. | The S-CSCF has no operator interface, and it keeps no state of the dialogs it routes. |
 | S-CSCF, TS 29.228 6.1.3.1 | An RTR with NEW_SERVER_ASSIGNED or REMOVE_S-CSCF gets DIAMETER_UNABLE_TO_COMPLY. | The HSS stub sends only PERMANENT_TERMINATION. The S-CSCF lets the profile of a user who is not registered go by itself after a few minutes. |
 | Subscriber, RFC 6665 4.1.4 and 5.4.9 | A NOTIFY from a second dialog gets 481. | The reg event package forbids a subscription to fork (RFC 3680 4.9). |

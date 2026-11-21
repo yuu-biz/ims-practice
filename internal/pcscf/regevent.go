@@ -66,7 +66,7 @@ func (p *PCSCF) subscribeRegEvent(a Association, registered time.Duration, log *
 		},
 		RefreshAfter: ims.RefreshAfter,
 		OnNotify: func(n sip.Notification, resp *sip.Message) {
-			p.receiveRegEvent(a.PrivateIdentity, icid, n, resp, log)
+			p.receiveRegEvent(a.PrivateIdentity, n, resp, log)
 		},
 	})
 	if err != nil {
@@ -93,11 +93,11 @@ func (p *PCSCF) subscribeRegEvent(a Association, registered time.Duration, log *
 // SIMPLIFIED: RFC 3680 5.2. The version of the document is not checked.
 // The S-CSCF sends the full state every time, and a NOTIFY that arrives
 // after a later one is already refused for its CSeq (RFC 3261 12.2.2).
-func (p *PCSCF) receiveRegEvent(privateID, icid string, n sip.Notification, resp *sip.Message, log *slog.Logger) {
-	// 5.2.3: the response carries the orig-ioi of the NOTIFY, this
-	// network's term-ioi and the icid-value of the SUBSCRIBE.
+func (p *PCSCF) receiveRegEvent(privateID string, n sip.Notification, resp *sip.Message, log *slog.Logger) {
+	// 5.2.3: the response carries the icid-value and the orig-ioi of the
+	// NOTIFY, and this network's term-ioi.
 	notify, _ := sip.ChargingVectorOf(n.Request)
-	resp.Add("P-Charging-Vector", sip.ChargingVector{ICID: icid, OrigIOI: notify.OrigIOI, TermIOI: p.cfg.VisitedNetworkID}.String())
+	p.chargeResponse(resp, notify)
 
 	if len(n.Body.Content) == 0 {
 		log.Info("reg event", "subscription_state", string(n.State.State))

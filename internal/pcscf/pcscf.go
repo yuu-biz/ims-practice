@@ -293,6 +293,11 @@ func (p *PCSCF) SetStack(stack *sip.Stack) { p.stack.Set(stack) }
 // REGISTER came to the protected server port. After the 200 to the first
 // initial REGISTER of a private identity, the P-CSCF subscribes to the
 // reg event package (5.2.3).
+//
+// SIMPLIFIED: TS 24.229 5.2.2.1 item 6. The P-CSCF does not store the
+// term-ioi of the P-Charging-Vector of the 200: that IOI names the home
+// network in the charging records of the P-CSCF, which no node of this
+// project writes, and no later message carries it.
 func (p *PCSCF) register(st *sip.ServerTransaction, protected bool) {
 	req := st.Request
 	publicID, err := ims.PublicIdentity(req.Get("To"))
@@ -330,7 +335,7 @@ func (p *PCSCF) register(st *sip.ServerTransaction, protected bool) {
 	// Item 2: Require, not Supported.
 	addOptionTag(out, "Require", "path")
 	// Item 3: a new charging identifier for this request (TS 32.260).
-	out.Set("P-Charging-Vector", sip.ChargingVector{ICID: rand.Text(), OrigIOI: p.cfg.VisitedNetworkID}.String())
+	p.chargeRequest(out, rand.Text())
 	// Item 4.
 	out.Set("P-Visited-Network-ID", p.cfg.VisitedNetworkID)
 

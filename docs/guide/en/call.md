@@ -221,6 +221,14 @@ The e2e test checks that UE 2 received exactly the bytes UE 1 encoded. G.711 is 
 
 UE 1 sends **BYE** within the dialog (RFC 3261 15.1.1), along the route set. The BYE carries `Reason: RELEASE_CAUSE;cause=1;text="User ends call"`, which tells why the call ended (TS 24.229 5.1.5, IR.92 2.2.4). UE 2 answers 200 (RFC 3261 15.1.2). When the 200 passes the P-CSCF, the P-CSCF removes the relay contexts of the call. It waits for the answer because a BYE can be turned down, such as with 500 for a BYE out of order (RFC 3261 12.2.2), and then the dialog stays up. A 481, a 408 or no answer at all ends the dialog as well (RFC 3261 15.1.1), so they also remove the contexts.
 
+## One charging identifier for the call
+
+Inside the network, the INVITE and every response to it carry a **P-Charging-Vector** (RFC 7315 4.6). Its **icid-value** names the call for charging. The P-CSCF of UE 1 writes a new one into the INVITE (TS 24.229 5.2.6.3.3 step 7), and the nodes after it pass it on; the MMTel AS puts it into the INVITE of each of its dialogs (5.7.5.1). Its **orig-ioi** names the network that sent the request, and its **term-ioi** the network that sent the response.
+
+A UE never sees the header field: the P-CSCF removes it from what goes to the UE and from what comes from it (5.2.1). Before it removes it from the INVITE to UE 2, the P-CSCF of UE 2 stores the icid-value and the orig-ioi (5.2.6.4.3 item 9). It writes them, with its own term-ioi, into UE 2's 183, 180 and 200 (5.2.6.4.4 item 6), and gives each later request of UE 2 in the dialog the icid-value of the INVITE (5.2.6.3.9 step 3). The P-CSCF of UE 1 gives the same icid-value to UE 1's PRACK, ACK and BYE.
+
+To follow the call, copy the icid-value of the INVITE that the P-CSCF sends to the S-CSCF (step 2), and filter with `sip.P-Charging-Vector contains "icid-value=..."`. The INVITE and its responses show up at every node and in all three dialogs.
+
 ## Talk from your own machine
 
 The P-CSCF port 5060/udp and the relay's ports 40000 to 40039/udp are published on the host's loopback address, 127.0.0.1. A softphone on the host, such as Linphone, can register with the SIP Digest credentials of a test subscriber, with the P-CSCF at `127.0.0.1:5060` and the domain `ims.mnc001.mcc001.3gppnetwork.org`.
@@ -284,6 +292,7 @@ Each item has a `SIMPLIFIED:` comment in the code; `grep -rn "SIMPLIFIED:" inter
 | ENUM, RFC 6116 5.2.1 | Non-terminal NAPTR records are skipped. | The project's zone holds terminal records only. |
 | ENUM, RFC 3402 3.2 | A delimiter escaped with a backslash inside the NAPTR regexp is not supported; such a record is refused as malformed, or split in the wrong place. | The project's records use `!` and never escape it. |
 | I-CSCF, TS 24.229 5.3.2.1, 5.3.2.1A and 5.3.2.2 | No "orig" routing for an application server that sends on behalf of a user, and no reselection of another S-CSCF. | No service of this project sends on behalf of a user, and this network has no redundant S-CSCF to choose. |
+| P-CSCF, TS 24.229 5.2.6.3.5 step 7 and 5.2.6.3.9 step 3 | A request that the UE sends in a dialog other than that of an INVITE, such as the refresh of its subscription, carries no P-Charging-Vector. A response of the UE in such a dialog takes the icid-value of the request that it answers. | The P-CSCF keeps only the dialogs of INVITEs, and with them the icid-value of the INVITE. |
 | P-CSCF, RFC 3264 and RFC 3262 | An INVITE without an offer gets no relay context: the offer that then comes in a reliable 1xx or in the 2xx, and the answer in the PRACK or the ACK, are left as they are. An offer in an UPDATE or a re-INVITE goes through the relay like the one in the INVITE. | The UE simulator always puts its offer in the INVITE. |
 | P-CSCF, RFC 3264 6 | Only the first audio stream with a port goes through the relay. Another stream gets no termination; without an address of its own it points at the relay, where nothing listens on its port. | The UE simulator offers a single stream. |
 | UE, TS 24.229 5.1.3.1 b) and 5.1.4A.1 | The UE lists precondition in the Supported of every request within the dialog, also when the peer does not use preconditions. | The UA has one Supported for all its calls; a peer that does not use the mechanism ignores the option tag in Supported. |

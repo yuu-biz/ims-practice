@@ -455,7 +455,7 @@ P-CSCF が扱うのは、自分を通って登録した UE だけです。IP の
 | Relayed-Charge、Service-Interact-Info | 消す | 消す | TS 24.229 4.4.17、4.4.18 |
 | Cellular-Network-Info | 残す | 要求から消す | TS 24.229 4.4.19 |
 
-UE から受けて転送する要求には、P-CSCF が自分の P-Charging-Vector を付けます（5.2.2.1 の 3 番目の項目、5.2.6.3.3 の手順 7）。Wireshark で `sip.P-Charging-Vector && ip.src == 172.28.0.40 && ip.dst == 172.28.0.100` と入力しても、何も見つかりません。REGISTER への 401 と 200 も、P-Charging-Vector を付けずに UE に届きます。
+UE から受けて転送する要求には、P-CSCF が自分の P-Charging-Vector を付けます（5.2.2.1 の 3 番目の項目、5.2.6.3.3 の手順 7）。UE にあてた要求では、向きが逆になります。P-CSCF はヘッダを消す前に icid-value と orig-ioi を保存しておき、UE の応答に自分の term-ioi と一緒に書き込みます（5.2.6.4.3 の 9 番目の項目、5.2.6.4.4 の 6 番目の項目）。1 つの通話を icid-value でたどる方法は、[音声通話の流れを追う](call.md) にあります。Wireshark で `sip.P-Charging-Vector && ip.src == 172.28.0.40 && ip.dst == 172.28.0.100` と入力しても、何も見つかりません。REGISTER への 401 と 200 も、P-Charging-Vector を付けずに UE に届きます。
 
 UE への応答の Reason は残します。アプリケーションサーバーがアナウンスを流してから通話を断るときは、理由を Reason に入れて発信者へ送るからです（TS 24.628 Annex G）。TS 24.229 4.4.1 は、ヘッダごとに信頼のドメインの境界が違ってよいとしています。
 
@@ -480,6 +480,7 @@ rm ue.exe
 | 箇所 | 省略していること | 理由 |
 | --- | --- | --- |
 | P-CSCF。TS 24.229 5.2.2.1 の 1 番目の項目 | Path の URI に、フロートークンと `ob` パラメータを付けない。 | SIP outbound（RFC 5626）の機能で、このプロジェクトでは実装しないため。 |
+| P-CSCF。TS 24.229 5.2.2.1 の 6 番目の項目 | REGISTER への 200 の P-Charging-Vector にある term-ioi を保存しない。 | この IOI は P-CSCF の課金の記録でホーム網を示すためのもの。このプロジェクトのノードは課金の記録を作らず、後のメッセージもこの IOI を運ばないため。 |
 | S-CSCF。TS 24.229 5.4.1.5 | S-CSCF が自分で登録を解除するのは、アプリケーションサーバーが第三者 REGISTER に失敗し、その iFC が SESSION_TERMINATED のときだけ。ほかは HSS からの RTR でだけ解除する。解除の前にセッションを解放することもしない。 | S-CSCF には保守用の API が無い。また、S-CSCF は中継するダイアログの状態を持たないため。 |
 | S-CSCF。TS 29.228 6.1.3.1 | NEW_SERVER_ASSIGNED と REMOVE_S-CSCF の RTR には DIAMETER_UNABLE_TO_COMPLY で答える。 | HSS のスタブは PERMANENT_TERMINATION しか送らない。また、登録していない利用者のプロファイルは、S-CSCF が数分たつと自分で手放すため。 |
 | 購読者。RFC 6665 4.1.4、5.4.9 | 2 つ目のダイアログから届いた NOTIFY には 481 を返す。 | reg イベントでは、購読が分岐することを禁じているため（RFC 3680 4.9）。 |
