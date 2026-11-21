@@ -311,7 +311,8 @@ func run(configPath string, log *slog.Logger) error {
 		}
 		var processors []mrfc.Processor
 		for _, url := range c.MRFPs {
-			processors = append(processors, mrfc.Processor{Name: url, Control: agw.NewClient(url)})
+			client := agw.NewClient(url)
+			processors = append(processors, mrfc.Processor{Name: url, Control: client, Announcements: client})
 		}
 		m, err := mrfc.New(mrfc.Config{Host: c.SIP.Host, Port: int(c.SIP.Listen.Port()), NotifyURL: c.NotifyURL()},
 			processors, mrfc.NewMemoryStore(), resolver, roleLog)
