@@ -71,11 +71,13 @@ H.248 の範囲は、3GPP のプロファイルが使うものに限ります。
 
 ### ゲートウェイの側
 
-`mediactl.Gateway` は、受けたコマンドを、`mediactl.Relay`（Iq）か `mediactl.Processor`（Mp）を呼んで実行します。これはゲートウェイが自分で宣言するインタフェースで、操作と型は `pcscf.Relay` と `mrfc.MRFP` と同じです。そのため、`*agw.Client` を Gateway の後ろに置くこともできます。Mp の Gateway は、Processor に頼むターミネーションに `t<n>` の ID を付けます。`n` は H.248 のターミネーションの ID（`ip/<context>/<n>`）の番号です。Add が返すコンテキストは ID の map なので、こうして各ターミネーションを見つけます。
+`mediactl.Gateway` は、受けたコマンドを、`mediactl.Relay`（Iq）か `mediactl.Processor`（Mp）を呼んで実行します。これはゲートウェイが自分で宣言するインタフェースで、操作と型は `pcscf.Relay` と `mrfc.MRFP` と同じです。そのため、`*agw.Client` を Gateway の後ろに置くこともできます。写しを置くのは意図してのことです。ゲートウェイの側が、メディアを制御するノードのパッケージ（`pcscf`、`mrfc`）に依存しないようにするためです。Mp の Gateway は、Processor に頼むターミネーションに `t<n>` の ID を付けます。`n` は H.248 のターミネーションの ID（`ip/<context>/<n>`）の番号です。Add が返すコンテキストは ID の map なので、こうして各ターミネーションを見つけます。
 
 ### 確かめ方
 
 実装の組み合わせは、各インタフェースの隣の試験のファイル（`internal/pcscf/relay_test.go`、`internal/mrfc/mrfp_test.go`、`internal/ibcf/trgw_test.go`）で、コンパイルのときに確かめます。確かめを試験のファイルに置くので、P-CSCF、MRFC、IBCF の本体は `mediactl` を参照しません。
+
+ゲートウェイの側の写しは、`internal/h248/mediactl/interfaces_test.go` で確かめます。`mediactl.Relay` と `pcscf.Relay`、`mediactl.Processor` と `mrfc.MRFP` を、互いに代入できることを確かめるので、どちらかにだけメソッドが増えるとコンパイルが通りません。こうして写しとノードのインタフェースを同じに保ちます。`*agw.Client` が `mediactl.Relay` と `mediactl.Processor` を実装することも、同じファイルで確かめます。このファイルは外部の試験のパッケージ（`mediactl_test`）なので、`mediactl` の本体は `pcscf` と `mrfc` を参照しません。
 
 ## P-CSCF の通過ごとのコンテキスト
 
