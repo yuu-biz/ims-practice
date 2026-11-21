@@ -185,6 +185,8 @@ Without ESP, two things differ from a real network:
 - Each side sends from its protected server port, so the protected client ports (`port-c`) are agreed and never bound.
 - A request over TCP comes from a port of the moment. The VoLTE INVITE is larger than 1300 bytes and goes over TCP (RFC 3261 18.1.1), so the P-CSCF knows the UE of a TCP request by the sent-by of its Via. The REGISTERs stay below 1300 bytes, so that the agreement is made over UDP.
 
+Only a message that comes to the protected server port counts as protected. A request other than REGISTER that comes to port 5060 from the address and port of a UE with established associations is therefore unprotected. The P-CSCF discards it: it sends nothing back, not even a 100 (Trying), and forwards it nowhere. It logs `discarded an unprotected request from a UE with security associations` (TS 24.229 5.2.1 NOTE 8, TS 33.203 7.1).
+
 ### SIPp
 
 SIPp registers with IMS AKA from `images/peer/sipp/register-aka.xml`. It sends everything from one port, 5060, which is therefore its protected server port too. SIPp 3.7 takes its K and OP as the bytes of their text, so subscriber 11 has printable keys, `ims-practice-K01` and `ims-practice-OP1`; hss.yaml has them in hexadecimal, with the OPc that MILENAGE derives from that OP. SIPp computes the RES and the Digest itself, which checks the S-CSCF's computation against code written by others.

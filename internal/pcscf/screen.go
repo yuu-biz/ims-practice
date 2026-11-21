@@ -9,13 +9,21 @@ import (
 	"github.com/yuu-biz/ims-practice/internal/sip"
 )
 
-// Screen is the sip.Config.Screen of both stacks of the P-CSCF. It is
-// TS 24.229 5.2.6.3.2A, and 5.2.1 for SIP Digest without TLS: a request
-// other than REGISTER from a UE that has no IP association with the
-// P-CSCF is discarded. The P-CSCF sends nothing back, not even a 100
-// (Trying), and forwards nothing to the S-CSCF. Such a request may come
-// from a UE whose registration the P-CSCF has lost; that UE notices
-// that no response comes and registers again (5.1.2A.1.6).
+// Screen is the sip.Config.Screen of the stack on the P-CSCF's
+// unprotected port. It is TS 24.229 5.2.6.3.2A, and 5.2.1 for SIP Digest
+// without TLS: a request other than REGISTER from a UE that has no IP
+// association with the P-CSCF is discarded. The P-CSCF sends nothing
+// back, not even a 100 (Trying), and forwards nothing to the S-CSCF.
+// Such a request may come from a UE whose registration the P-CSCF has
+// lost; that UE notices that no response comes and registers again
+// (5.1.2A.1.6).
+//
+// A request other than REGISTER from a UE with established security
+// associations is discarded the same way. It came to the unprotected
+// port, so it is not protected, and the P-CSCF discards an unprotected
+// message outside the registration and authentication procedures (TS
+// 24.229 5.2.1 NOTE 8). TS 33.203 7.1 lets it either discard or reject
+// what does not arrive on a protected port.
 //
 // The 5.2.6.3.2A exceptions do not arise here: this P-CSCF gives no
 // emergency call support, which 5.2.1 makes optional, and has no UE
@@ -36,6 +44,27 @@ func (p *PCSCF) Screen(req *sip.Message, source sip.Destination) bool {
 	if req.Method == sip.REGISTER {
 		return true
 	}
+	if ue, _ := ueSourceOf(req, source); p.admissions.hasSecurityAssociations(ue.Addr, time.Now()) {
+		p.log.Info("discarded an unprotected request from a UE with security associations",
+			"method", string(req.Method), "source", source.String(), "call_id", req.Get("Call-ID"))
+		return false
+	}
+	return p.screenAssociation(req, source)
+}
+
+// ScreenProtected is the sip.Config.Screen of the stack on the
+// protected server port: Screen without the rule for unprotected
+// requests, since what comes to that port counts as protected.
+func (p *PCSCF) ScreenProtected(req *sip.Message, source sip.Destination) bool {
+	if req.Method == sip.REGISTER {
+		return true
+	}
+	return p.screenAssociation(req, source)
+}
+
+// screenAssociation is the rule of TS 24.229 5.2.6.3.2A in Screen, for a
+// request other than REGISTER.
+func (p *PCSCF) screenAssociation(req *sip.Message, source sip.Destination) bool {
 	ue, sentBy := ueSourceOf(req, source)
 	if p.admissions.admitsFrom(ue, sentBy, time.Now()) || p.fromNetwork(req) {
 		return true
@@ -79,7 +108,7 @@ func (p *PCSCF) lookUpAssociation(source sip.Destination, target string) {
 		go func() {
 			defer p.admissions.endLookUp("source " + source.String())
 			if a, ok := p.store.Association(source); ok {
-				p.admissions.put(a)
+				p.admit(a)
 			}
 		}()
 	}
@@ -87,15 +116,26 @@ func (p *PCSCF) lookUpAssociation(source sip.Destination, target string) {
 		go func() {
 			defer p.admissions.endLookUp("contact " + target)
 			if a, ok := p.store.AssociationOfContact(target); ok {
-				p.admissions.put(a)
+				p.admit(a)
 			}
 		}()
 	}
 }
 
+// admit keeps a, read from the Store, in admissions, with the security
+// associations of its UE. These go in first, so that no unprotected
+// request of that UE gets through in between.
+func (p *PCSCF) admit(a Association) {
+	if sas, ok := p.store.SecurityAssociations(a.Source.Addr); ok {
+		p.admissions.putSecurityAssociations(sas)
+	}
+	p.admissions.put(a)
+}
+
 // admissions is what Screen knows of the IP associations without asking
 // the Store: the source, Via sent-by and expiry of each, and its
-// contact. It is a copy, in memory, of the associations in the Store,
+// contact; and the UEs with established security associations. It is a
+// copy, in memory, of the associations and the SA table in the Store,
 // and holds no state of its own: indexedStore keeps it in step with
 // every write of the P-CSCF, and Screen fills it from the Store for an
 // association written before the process started. Only the P-CSCF that
@@ -105,7 +145,10 @@ type admissions struct {
 	mu        sync.Mutex
 	bySource  map[sip.Destination]admission
 	byContact map[contactKey]sip.Destination
-	lookingUp map[string]bool
+	// securityAssociations are the Expires of the established security
+	// associations, by the key of their entry in the SA table.
+	securityAssociations map[netip.AddrPort]time.Time
+	lookingUp            map[string]bool
 }
 
 type admission struct {
@@ -126,7 +169,8 @@ func contactKeyOf(u sip.URI) contactKey {
 }
 
 func newAdmissions() *admissions {
-	return &admissions{bySource: map[sip.Destination]admission{}, byContact: map[contactKey]sip.Destination{}, lookingUp: map[string]bool{}}
+	return &admissions{bySource: map[sip.Destination]admission{}, byContact: map[contactKey]sip.Destination{},
+		securityAssociations: map[netip.AddrPort]time.Time{}, lookingUp: map[string]bool{}}
 }
 
 func (s *admissions) put(a Association) {
@@ -174,6 +218,39 @@ func (s *admissions) servesContact(target sip.URI) bool {
 	return ok
 }
 
+// putSecurityAssociations keeps sas when they are established. Temporary
+// ones take the place of established ones in the SA table, as a new
+// challenge does (secagree.go), so they remove the entry.
+func (s *admissions) putSecurityAssociations(sas SecurityAssociations) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if sas.Temporary {
+		delete(s.securityAssociations, sas.UE)
+		return
+	}
+	s.securityAssociations[sas.UE] = sas.Expires
+}
+
+func (s *admissions) removeSecurityAssociations(ue netip.AddrPort) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.securityAssociations, ue)
+}
+
+// hasSecurityAssociations reports whether the UE at ue, its address and
+// protected server port, has established security associations that
+// have not expired.
+func (s *admissions) hasSecurityAssociations(ue netip.AddrPort, now time.Time) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	expires, ok := s.securityAssociations[ue]
+	if ok && !now.Before(expires) {
+		delete(s.securityAssociations, ue)
+		return false
+	}
+	return ok
+}
+
 func (s *admissions) startLookUp(key string) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -205,6 +282,16 @@ func (s indexedStore) PutAssociation(a Association) {
 func (s indexedStore) DeleteAssociation(source sip.Destination) {
 	s.Store.DeleteAssociation(source)
 	s.admissions.remove(source)
+}
+
+func (s indexedStore) PutSecurityAssociations(sas SecurityAssociations) {
+	s.Store.PutSecurityAssociations(sas)
+	s.admissions.putSecurityAssociations(sas)
+}
+
+func (s indexedStore) DeleteSecurityAssociations(ue netip.AddrPort) {
+	s.Store.DeleteSecurityAssociations(ue)
+	s.admissions.removeSecurityAssociations(ue)
 }
 
 // ueSourceOf is where a request of a UE comes from, as the P-CSCF knows

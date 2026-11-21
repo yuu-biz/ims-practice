@@ -190,21 +190,6 @@ func (p *PCSCF) pathURIOf(a Association) string {
 	return p.pathURI()
 }
 
-// refusesUnprotected answers 403 to a request other than REGISTER that
-// came to the unprotected port from a UE with established security
-// associations, which TS 33.203 7.1 item 3 has the P-CSCF discard or
-// reject.
-func (p *PCSCF) refusesUnprotected(st *sip.ServerTransaction) bool {
-	sas, ok := p.store.SecurityAssociations(ueSource(st).Addr)
-	if !ok || sas.Temporary {
-		return false
-	}
-	p.log.Info("unprotected request from a UE with security associations", "method", string(st.Request.Method),
-		"source", st.Source.String())
-	st.Respond(sip.NewResponse(st.Request, 403, sip.NewTag()))
-	return true
-}
-
 // asksSecAgree reports whether a REGISTER chooses IMS AKA: it carries
 // Security-Client and lists sec-agree in Require and Proxy-Require (TS
 // 24.229 5.2.2.1 item 1).
