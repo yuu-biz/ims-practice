@@ -386,6 +386,54 @@ func TestMpConference(t *testing.T) {
 	}
 }
 
+// An Add without a mode makes the termination SendReceive, as the HTTP
+// API of the media node does: H.248 would leave it Inactive (H.248.1
+// (05/2002) 7.1.7), so the Controller writes the mode.
+func TestMpAddWithoutAModeSendsAndReceives(t *testing.T) {
+	b := newMpTestbed(t, ControllerConfig{})
+	b.waitRegistered(t)
+	cx, err := b.controller.Add(context.Background(), agw.TerminationRequest{Remote: mustAddrPort("192.0.2.30:49170")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := onlyTermination(t, cx).Mode; got != agw.SendReceive {
+		t.Errorf("Add returned mode %q", got)
+	}
+	if _, terms := b.processor.only(t); terms["t1"].mode != agw.SendReceive {
+		t.Errorf("the processor holds mode %q", terms["t1"].mode)
+	}
+}
+
+// A Modify without a mode keeps the mode of the termination, as the
+// HTTP API of the media node does: it carries no LocalControl
+// descriptor (H.248.1 (05/2002) 7.1.7). The MRFC starts an announcement
+// so once the ACK has come.
+func TestMpModifyWithoutAModeKeepsIt(t *testing.T) {
+	b := newMpTestbed(t, ControllerConfig{})
+	b.waitRegistered(t)
+	before := len(b.net.datagrams())
+	ctx := context.Background()
+	cx, err := b.controller.Add(ctx, agw.TerminationRequest{Mode: agw.SendOnly, Remote: mustAddrPort("192.0.2.30:49170")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = b.controller.Modify(ctx, cx.ID, onlyTermination(t, cx).ID, agw.TerminationRequest{
+		Signals: &agw.Signals{Play: &agw.Play{Announcement: "notice"}},
+		Events:  &agw.Events{RequestID: 7, Detect: []agw.EventName{agw.SignalCompleted}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	processorContext, _ := b.processor.only(t)
+	if got, _ := b.processor.termination(processorContext, "t1"); got.mode != agw.SendOnly || got.signals == nil {
+		t.Errorf("the processor holds %+v", got)
+	}
+	modify := payloadOf(t, b.net.datagrams()[before:], controllerAddr, "Modify = ip/200/1")
+	if strings.Contains(modify, "Media") || strings.Contains(modify, "Mode") {
+		t.Errorf("the Modify sets the mode:\n%s", modify)
+	}
+}
+
 func TestMpStopAnnouncement(t *testing.T) {
 	b := newMpTestbed(t, ControllerConfig{})
 	b.waitRegistered(t)
@@ -538,9 +586,6 @@ func TestMpErrors(t *testing.T) {
 
 	// What the controller refuses before it sends anything.
 	before := len(b.net.datagrams())
-	if err := b.controller.Modify(ctx, cx.ID, onlyTermination(t, cx).ID, agw.TerminationRequest{Remote: mustAddrPort("192.0.2.30:49170")}); err == nil {
-		t.Error("a Modify without a mode")
-	}
 	if _, err := b.controller.Add(ctx, agw.TerminationRequest{ID: "t1", Mode: agw.SendOnly}); err == nil {
 		t.Error("an Add that names its termination")
 	}
