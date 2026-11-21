@@ -22,8 +22,8 @@ import (
 // send, and subtracts the context.
 type Relay interface {
 	Add(ctx context.Context, terminations ...agw.TerminationRequest) (agw.Context, error)
-	Modify(ctx context.Context, id string, termination agw.TerminationID, change agw.TerminationRequest) (agw.Termination, error)
-	Subtract(ctx context.Context, id string) (agw.Context, error)
+	Modify(ctx context.Context, id string, termination agw.TerminationID, change agw.TerminationRequest) error
+	Subtract(ctx context.Context, id string) error
 }
 
 // HostAccess is for UEs that reach the P-CSCF through the NAT of the
@@ -413,7 +413,7 @@ func (p *PCSCF) relaySDP(m *sip.Message, rc *RelayContext, toUE bool) error {
 	}
 	ctx, cancel := relayContext()
 	defer cancel()
-	if _, err := p.relay.Modify(ctx, rc.ID, cameFrom, agw.TerminationRequest{Remote: sender}); err != nil {
+	if err := p.relay.Modify(ctx, rc.ID, cameFrom, agw.TerminationRequest{Remote: sender}); err != nil {
 		return err
 	}
 	if err := description.SetAudio(shown); err != nil {
@@ -466,7 +466,7 @@ func (p *PCSCF) free(d Dialog, log *slog.Logger) {
 func (p *PCSCF) subtract(id string, log *slog.Logger) {
 	for attempt := 1; ; attempt++ {
 		ctx, cancel := relayContext()
-		_, err := p.relay.Subtract(ctx, id)
+		err := p.relay.Subtract(ctx, id)
 		cancel()
 		if err == nil {
 			return

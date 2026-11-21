@@ -51,7 +51,7 @@ import (
 type MRFP interface {
 	Add(ctx context.Context, terminations ...agw.TerminationRequest) (agw.Context, error)
 	AddTermination(ctx context.Context, id string, t agw.TerminationRequest) (agw.Termination, error)
-	Modify(ctx context.Context, id string, tid agw.TerminationID, change agw.TerminationRequest) (agw.Termination, error)
+	Modify(ctx context.Context, id string, tid agw.TerminationID, change agw.TerminationRequest) error
 	SubtractTermination(ctx context.Context, id string, tid agw.TerminationID) (agw.Termination, bool, error)
 	Announcement(ctx context.Context, name string) (agw.Announcement, bool, error)
 }

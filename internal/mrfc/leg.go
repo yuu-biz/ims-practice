@@ -122,8 +122,7 @@ func mp() (context.Context, context.CancelFunc) {
 func (l *leg) modify(change agw.TerminationRequest) error {
 	ctx, cancel := mp()
 	defer cancel()
-	_, err := l.mrfp.Control.Modify(ctx, l.context, l.id, change)
-	return err
+	return l.mrfp.Control.Modify(ctx, l.context, l.id, change)
 }
 
 // takeAnswer points the termination at the SDP answer in body, which
