@@ -53,17 +53,20 @@ A UE simulator registers with SIP Digest and calls another UE by its telephone n
 - Free address ranges. The containers use 172.28.0.0/24, and the two networks of the interconnect guide use 172.28.1.0/24 and 172.28.2.0/24. These ranges must not overlap with your LAN, a VPN or another Docker network.
 - Internet access for the first build. The build pulls the base images of Alpine, Go and Node.js from Docker Hub, the dashboard's packages from the npm registry, the Go modules through the Go module proxy (`proxy.golang.org`), and SIPp, pjsua, tcpdump and tshark from the Alpine package mirrors.
 
+## Get started
+
+Run these at the root of the repository, wait about 10 seconds, and register a UE:
+
+```sh
+docker compose up -d --build
+docker compose run --rm ue register --deregister-after 5s
+```
+
+[The guides](docs/guide/en/README.md) go on from there. Their first page gives the order to read them in, how to clean up, and what the Compose project starts.
+
 ## Documentation
 
-- [Capture signaling and open it in Wireshark](docs/guide/en/capture.md).
-- [Follow a UE registering with the IMS](docs/guide/en/registration.md).
-- [Follow a voice call through the IMS](docs/guide/en/call.md).
-- [Follow a short message through the IMS](docs/guide/en/sms.md).
-- [Supplementary services with the MMTel AS](docs/guide/en/mmtel.md).
-- [Announcements, alerting tones and conferences with the MRF](docs/guide/en/mrf.md): an announcement before a barred call, the customized alerting tone, call waiting and a conference of three.
-- [The VoLTE call flow](docs/guide/en/volte.md): the EPC stub, IMS AKA, policy control over Rx, and a call in AMR-WB with preconditions.
-- [Connect two IMS networks](docs/guide/en/interconnect.md): the IBCF and the TrGW at the border, topology hiding, the interconnect profiles and what happens when they do not match, and a short message across.
-- [Watch the IMS in the dashboard](docs/guide/en/dashboard.md), and drive two UE simulators from it.
+- [Guides](docs/guide/en/README.md): the order to read them in, the first commands, cleanup, the profiles, and the subscribers of each UE.
 - [Glossary](docs/glossary.md). Abbreviations used in IMS, in English and Japanese.
 - [Contribution rules](CONTRIBUTING.md), in Japanese, with the list of the development records.
 
