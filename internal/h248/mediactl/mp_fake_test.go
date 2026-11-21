@@ -149,24 +149,25 @@ func (p *fakeProcessor) Modify(ctx context.Context, contextID string, id agw.Ter
 }
 
 // SubtractTermination reports made up counts: 250 packets each way.
-func (p *fakeProcessor) SubtractTermination(ctx context.Context, contextID string, id agw.TerminationID) (Statistics, error) {
+func (p *fakeProcessor) SubtractTermination(ctx context.Context, contextID string, id agw.TerminationID) (agw.Termination, bool, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if p.fail != nil {
-		return Statistics{}, p.fail
+		return agw.Termination{}, false, p.fail
 	}
 	c, ok := p.contexts[contextID]
 	if !ok {
-		return Statistics{}, agw.ErrNoContext
+		return agw.Termination{}, false, agw.ErrNoContext
 	}
 	if _, ok := c.terms[id]; !ok {
-		return Statistics{}, agw.ErrNoTermination
+		return agw.Termination{}, false, agw.ErrNoTermination
 	}
 	delete(c.terms, id)
-	if len(c.terms) == 0 {
+	deleted := len(c.terms) == 0
+	if deleted {
 		delete(p.contexts, contextID)
 	}
-	return Statistics{PacketsSent: 250, PacketsReceived: 250}, nil
+	return agw.Termination{ID: id, Packets: 250, PacketsSent: 250}, deleted, nil
 }
 
 // termination returns what the processor holds for a termination.

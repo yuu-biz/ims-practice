@@ -194,12 +194,12 @@ func TestMpAnnouncement(t *testing.T) {
 	}
 
 	// The MRFC ends the dialog with BYE and releases the termination.
-	stats, err := b.controller.SubtractTermination(ctx, cx.ID, tid)
+	gone, deleted, err := b.controller.SubtractTermination(ctx, cx.ID, tid)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if stats != (Statistics{PacketsSent: 250, PacketsReceived: 250}) {
-		t.Errorf("statistics %+v: Mp reports the packets only", stats)
+	if gone != (agw.Termination{ID: tid, Packets: 250, PacketsSent: 250}) || deleted {
+		t.Errorf("subtracted %+v, deleted %v: Mp reports the packets only, and not whether the context went", gone, deleted)
 	}
 	if b.processor.contextCount() != 0 {
 		t.Error("the processor still holds the context")
@@ -288,7 +288,7 @@ func TestMpAnnouncementWithDelayAndDuration(t *testing.T) {
 		t.Errorf("notification %+v", n)
 	}
 	waitMessages(t, b, before, "mg MEGACO/2 Notify=ip/200/1", "mgc MEGACO/2 Reply")
-	if _, err := b.controller.SubtractTermination(ctx, cx.ID, "ip/200/1"); err != nil {
+	if _, _, err := b.controller.SubtractTermination(ctx, cx.ID, "ip/200/1"); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -329,7 +329,7 @@ func TestMpConference(t *testing.T) {
 	}
 
 	// Bob leaves.
-	if _, err := b.controller.SubtractTermination(ctx, cx.ID, second.ID); err != nil {
+	if _, _, err := b.controller.SubtractTermination(ctx, cx.ID, second.ID); err != nil {
 		t.Fatal(err)
 	}
 	if _, terms := b.processor.only(t); len(terms) != 2 {
@@ -343,7 +343,7 @@ func TestMpConference(t *testing.T) {
 
 	// The last two leave: the context goes with the last.
 	for _, id := range []agw.TerminationID{first.ID, third.ID} {
-		if _, err := b.controller.SubtractTermination(ctx, cx.ID, id); err != nil {
+		if _, _, err := b.controller.SubtractTermination(ctx, cx.ID, id); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -476,7 +476,7 @@ func TestMpStopAnnouncement(t *testing.T) {
 		t.Fatal(err)
 	}
 	b.gateway.signalCompleted(processorContext, "t1", b.clock.Now())
-	if _, err := b.controller.SubtractTermination(ctx, cx.ID, tid); err != nil {
+	if _, _, err := b.controller.SubtractTermination(ctx, cx.ID, tid); err != nil {
 		t.Fatal(err)
 	}
 	b.net.settle(t)
@@ -622,7 +622,7 @@ func TestIqControllerSpeaksNoMp(t *testing.T) {
 	if _, err := b.controller.AddTermination(ctx, "100@agw1.ims.example.net", agw.TerminationRequest{Mode: agw.SendOnly}); err != errNotMp {
 		t.Errorf("AddTermination on a controller of Iq: %v", err)
 	}
-	if _, err := b.controller.SubtractTermination(ctx, "100@agw1.ims.example.net", "ip/1/access/100"); err != errNotMp {
+	if _, _, err := b.controller.SubtractTermination(ctx, "100@agw1.ims.example.net", "ip/1/access/100"); err != errNotMp {
 		t.Errorf("SubtractTermination on a controller of Iq: %v", err)
 	}
 	if _, err := b.controller.Add(ctx, agw.TerminationRequest{Mode: agw.SendOnly}); err == nil {

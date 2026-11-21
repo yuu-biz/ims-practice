@@ -18,9 +18,6 @@
 //     Resources (TS 29.333 5.17.2.2), Modify is Configure IMS Resources
 //     (5.17.2.3) with Start and Stop Announcement (5.17.2.9, 5.17.2.10),
 //     and SubtractTermination is Release IMS Termination (5.17.2.5).
-//     The SubtractTermination of a Controller returns the Statistics of
-//     the Subtract reply, so that it cannot yet stand in for the HTTP
-//     client of the MRFC.
 //   - ibcf.TrGW, for Ix (TS 29.238): Add, Modify and Subtract, as for
 //     Iq. The Controller carries them with the profile of Iq; this
 //     package has no profile of Ix.
@@ -35,8 +32,9 @@
 //   - Gateway, the media gateway side, the IMS-AGW or the MRFP,
 //     registers with a controller, carries out the commands it receives
 //     by calling the Relay or the Processor it is given, and reports
-//     events with Notify. Relay has the operations of pcscf.Relay, so
-//     that *agw.Client can stand behind a Gateway of Iq too.
+//     events with Notify. Relay and Processor have the operations of
+//     pcscf.Relay and mrfc.MRFP, so that *agw.Client can stand behind a
+//     Gateway too.
 //
 // On Mp, the end of an announcement, Announcement Completed (TS 29.333
 // 5.17.2.11), goes the other way: the processor tells its Gateway with
