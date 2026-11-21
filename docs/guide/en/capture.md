@@ -106,7 +106,11 @@ The HEP encoding leaves out two parts of the specification:
 
 ## Stop the system
 
-- To stop the nodes and keep the images, run `docker compose down`.
-- To also delete the images that the build created, run `docker compose down --rmi all -v --remove-orphans`.
+- To stop the nodes and the UEs of every profile and keep the images, run `docker compose --profile ue --profile sim --profile volte down -v --remove-orphans`. The other guides end with the same command, so the next guide starts without a new build.
+- When you have finished with the guides, delete the images that the build created as well:
+
+  ```sh
+  docker compose --profile ue --profile sim --profile volte down --rmi all -v --remove-orphans
+  ```
 
 The capture files stay in `captures/` until you delete them.

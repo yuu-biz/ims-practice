@@ -106,7 +106,11 @@ HEP の符号化では仕様の次の部分を省いています。
 
 ## システムを止める
 
-- ノードを止め、イメージは残すときは `docker compose down` を実行します。
-- ビルドで作ったイメージも削除するときは `docker compose down --rmi all -v --remove-orphans` を実行します。
+- すべてのプロファイルのノードと UE を止め、イメージは残すときは `docker compose --profile ue --profile sim --profile volte down -v --remove-orphans` を実行します。ほかの手順書も最後に同じコマンドを打つので、次の手順書をビルドし直さずに始められます。
+- 手順書をすべて終えたら、ビルドで作ったイメージも削除します。
+
+  ```sh
+  docker compose --profile ue --profile sim --profile volte down --rmi all -v --remove-orphans
+  ```
 
 キャプチャのファイルは削除するまで `captures/` に残ります。

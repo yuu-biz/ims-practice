@@ -409,7 +409,7 @@ Open http://localhost:8080. The UE cards of volte-a and volte-b say that they ar
 
 ### From the command line
 
-The VoLTE UEs of the profile and the one-shot commands share the addresses of volte-a and volte-b, so stop the profile first (`docker compose --profile volte rm -sf volte-a volte-b`). Then:
+The VoLTE UEs of the profile and the one-shot commands share the addresses of volte-a and volte-b, so stop the profile first (`docker compose --profile volte rm -sf volte-a volte-b`). Then let volte-b wait for a call. The command stays in the foreground until the call ends:
 
 ```sh
 docker compose run --rm --no-deps volte-b answer -epc http://172.28.0.80:8080 \
@@ -417,6 +417,11 @@ docker compose run --rm --no-deps volte-b answer -epc http://172.28.0.80:8080 \
   -impu sip:001010000000012@ims.mnc001.mcc001.3gppnetwork.org \
   -k fec86ba6eb707ed08905757b1bb44b8f -opc 1006020f0a478bf6b699f15c062e42b3 \
   -received-out /captures/volte-b-received.amr
+```
+
+In another terminal, call volte-b from volte-a:
+
+```sh
 docker compose run --rm --no-deps volte-a call -epc http://172.28.0.80:8080 \
   -impi 001010000000010@ims.mnc001.mcc001.3gppnetwork.org \
   -impu sip:001010000000010@ims.mnc001.mcc001.3gppnetwork.org \
@@ -544,5 +549,7 @@ Each item has a `SIMPLIFIED:` comment in the code; `grep -rn "SIMPLIFIED:" inter
 ## Clean up
 
 ```sh
-docker compose --profile ue --profile volte down --rmi all -v --remove-orphans
+docker compose --profile ue --profile sim --profile volte down -v --remove-orphans
 ```
+
+This stops the nodes and the UEs of every profile and keeps the images, so the next guide starts without a new build. To delete the images as well, see [Stop the system](capture.md#stop-the-system).

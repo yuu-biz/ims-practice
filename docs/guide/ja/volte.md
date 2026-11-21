@@ -409,7 +409,7 @@ http://localhost:8080 を開きます。volte-a と volte-b のカードには�
 
 ### コマンドラインで
 
-プロファイルの VoLTE の UE と単発のコマンドは、volte-a と volte-b のアドレスを共有します。先にプロファイルを止めてください（`docker compose --profile volte rm -sf volte-a volte-b`）。そのあとで次のように動かします。
+プロファイルの VoLTE の UE と単発のコマンドは、volte-a と volte-b のアドレスを共有します。先にプロファイルを止めてください（`docker compose --profile volte rm -sf volte-a volte-b`）。そのあとで、volte-b に着信を待たせます。このコマンドは通話が終わるまで戻りません。
 
 ```sh
 docker compose run --rm --no-deps volte-b answer -epc http://172.28.0.80:8080 \
@@ -417,6 +417,11 @@ docker compose run --rm --no-deps volte-b answer -epc http://172.28.0.80:8080 \
   -impu sip:001010000000012@ims.mnc001.mcc001.3gppnetwork.org \
   -k fec86ba6eb707ed08905757b1bb44b8f -opc 1006020f0a478bf6b699f15c062e42b3 \
   -received-out /captures/volte-b-received.amr
+```
+
+別の端末で、volte-a から volte-b に発信します。
+
+```sh
 docker compose run --rm --no-deps volte-a call -epc http://172.28.0.80:8080 \
   -impi 001010000000010@ims.mnc001.mcc001.3gppnetwork.org \
   -impu sip:001010000000010@ims.mnc001.mcc001.3gppnetwork.org \
@@ -544,5 +549,7 @@ docker compose run --rm --entrypoint sipp peer -sf /etc/sipp/register-aka.xml -m
 ## 後片付け
 
 ```sh
-docker compose --profile ue --profile volte down --rmi all -v --remove-orphans
+docker compose --profile ue --profile sim --profile volte down -v --remove-orphans
 ```
+
+すべてのプロファイルのノードと UE を止め、イメージは残します。次の手順書をビルドし直さずに始められます。イメージも削除するときは、[システムを止める](capture.md#システムを止める)を見てください。
