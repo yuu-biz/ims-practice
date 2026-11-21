@@ -41,7 +41,17 @@ UE シミュレータは SIP Digest で登録し、電話番号で別の UE に�
 ## 必要な環境
 
 - Docker と Docker Compose。基準にする環境は Windows の Docker Desktop です。
+- Windows では Git Bash。手順書のコマンドと `scripts/` のスクリプトは POSIX のシェルで動くように書いてあります。Git Bash は `/captures/ue2-heard.wav` のように `/` で始まる引数を、自分のインストール先の下のパス（`C:/Program Files/Git/captures/ue2-heard.wav`）に書き換えます。書き換えたパスはコンテナの中に無いので、コンテナはそのファイルを開けません。手順書に沿って試す前に、端末ごとに一度、この書き換えを止めてください。
+
+  ```sh
+  export MSYS_NO_PATHCONV=1
+  ```
+
+  `scripts/` の e2e のスクリプトは自分でこの設定をします。
 - Wireshark。キャプチャを読むのに使います。
+- ホストの空いているポート。`docker compose up` は、P-CSCF の 5060/udp、ダッシュボードの 8080/tcp、メディア中継の 40000-40039/udp をホストに公開します。
+- 空いているアドレスの範囲。コンテナは 172.28.0.0/24 を使い、網間接続の手順書の 2 つの網は 172.28.1.0/24 と 172.28.2.0/24 を使います。これらの範囲が LAN、VPN、ほかの Docker のネットワークと重ならないようにしてください。
+- 最初のビルドでのインターネットへの接続。ビルドは Alpine、Go、Node.js のベースイメージを Docker Hub から、ダッシュボードのパッケージを npm のレジストリから、Go のモジュールを Go のモジュールプロキシ（`proxy.golang.org`）から、SIPp、pjsua、tcpdump、tshark を Alpine のパッケージのミラーから取ってきます。
 
 ## ドキュメント
 
