@@ -19,6 +19,17 @@ docker compose up -d --build
 
 Open <http://localhost:8080> in the browser. The dot next to the title says `live` while the page receives updates from the dashboard.
 
+The dashboard is published on the host's loopback address only. It asks for no password, and anyone who reaches it can delete subscribers and drive the UEs. To open it from another machine on your network, create `compose.override.yaml` at the root of the repository. Compose reads this file after `compose.yaml` by itself:
+
+```yaml
+services:
+  dashboard:
+    ports: !override
+      - "8080:8080"
+```
+
+Run `docker compose up -d` again, and open `http://<address of the host>:8080` on the other machine. Delete the file when you no longer need it.
+
 ## What each panel shows
 
 | Panel | What it shows |

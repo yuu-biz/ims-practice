@@ -49,7 +49,7 @@ A UE simulator registers with SIP Digest and calls another UE by its telephone n
 
   The e2e scripts in `scripts/` set it themselves.
 - Wireshark, to read the captures.
-- Free ports on the host. `docker compose up` publishes 5060/udp for the P-CSCF, 8080/tcp for the dashboard, and 40000 to 40039/udp for the media relay.
+- Free ports on the host. `docker compose up` publishes 5060/udp for the P-CSCF, 8080/tcp for the dashboard, and 40000 to 40039/udp for the media relay on the loopback address 127.0.0.1.
 - Free address ranges. The containers use 172.28.0.0/24, and the two networks of the interconnect guide use 172.28.1.0/24 and 172.28.2.0/24. These ranges must not overlap with your LAN, a VPN or another Docker network.
 - Internet access for the first build. The build pulls the base images of Alpine, Go and Node.js from Docker Hub, the dashboard's packages from the npm registry, the Go modules through the Go module proxy (`proxy.golang.org`), and SIPp, pjsua, tcpdump and tshark from the Alpine package mirrors.
 
