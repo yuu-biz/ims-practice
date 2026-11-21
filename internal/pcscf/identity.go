@@ -11,13 +11,16 @@ import (
 // initial request that passed the P-CSCF in the direction l, before resp
 // goes on. A response to a request from the UE goes to the UE; a
 // response to a request to the UE comes from it. Either way it crosses
-// the edge of the trust domain (crossBoundary).
-func ueResponse(l leg, req, resp *sip.Message) {
+// the edge of the trust domain (crossBoundary). A response from the UE
+// goes on with the charging vector of req (chargeResponse).
+func (p *PCSCF) ueResponse(l leg, req, resp *sip.Message) {
 	if l == originating {
 		crossBoundary(resp, responseToUE)
 		return
 	}
 	crossBoundary(resp, responseFromUE)
+	charging, _ := sip.ChargingVectorOf(req)
+	p.chargeResponse(resp, charging)
 	// 5.2.6.4.4 asserts the identity in the 1xx and 2xx to an initial
 	// request for a dialog, 5.2.6.4.8 in any response to a request for a
 	// standalone transaction.

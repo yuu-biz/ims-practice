@@ -21,8 +21,12 @@ type setup struct {
 	p   *PCSCF
 	leg leg
 	ue  Association
-	// invite is the INVITE as the P-CSCF received it.
+	// invite is the INVITE as the P-CSCF received it, and icid the
+	// icid-value that it goes on with: the one that the P-CSCF wrote
+	// for the calling UE, or the one that came with it for the called
+	// UE.
 	invite *sip.Message
+	icid   string
 	log    *slog.Logger
 
 	// relay is the context of the call in the media relay, or nil.
@@ -49,8 +53,8 @@ type setup struct {
 	callerSeq uint32
 }
 
-func (p *PCSCF) newSetup(st *sip.ServerTransaction, l leg, ue Association, log *slog.Logger) *setup {
-	return &setup{p: p, leg: l, ue: ue, invite: st.Request, log: log, abort: make(chan struct{})}
+func (p *PCSCF) newSetup(st *sip.ServerTransaction, l leg, ue Association, icid string, log *slog.Logger) *setup {
+	return &setup{p: p, leg: l, ue: ue, invite: st.Request, icid: icid, log: log, abort: make(chan struct{})}
 }
 
 // toUE tells which way the INVITE passes the P-CSCF. Its responses pass
@@ -131,7 +135,7 @@ func (s *setup) forward(st *sip.ServerTransaction, out *sip.Message, dst sip.Des
 	final, err := s.p.proxyInvite(st, out, dst, s)
 	s.settle()
 	if final != nil {
-		ueResponse(s.leg, s.invite, final)
+		s.p.ueResponse(s.leg, s.invite, final)
 	}
 	ims.Finish(st, final, err)
 	// Freeing may wait for the relay and the PCRF, so the response goes
@@ -147,7 +151,7 @@ func (s *setup) forward(st *sip.ServerTransaction, out *sip.Message, dst sip.Des
 // authorise the media, and keeps the dialog. An error means that the
 // network has no resources for the session.
 func (s *setup) response(resp *sip.Message) error {
-	ueResponse(s.leg, s.invite, resp)
+	s.p.ueResponse(s.leg, s.invite, resp)
 	received := resp.Body
 	if err := s.p.relaySDP(resp, s.relay, !s.toUE()); err != nil {
 		s.log.Warn("media relay refused the answer", "error", err.Error())
@@ -271,7 +275,7 @@ func (s *setup) remember(resp *sip.Message) {
 		s.p.store.UpdateDialog(s.key, update)
 		return
 	}
-	d := Dialog{Originating: s.leg == originating, Relay: s.relay}
+	d := Dialog{Originating: s.leg == originating, Relay: s.relay, ICID: s.icid}
 	d.Key = DialogKey{CallID: s.invite.Get("Call-ID"), UETag: calleeTag}
 	if d.Originating {
 		d.Key.UETag = tagOf(s.invite.Get("From"))

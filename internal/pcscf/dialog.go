@@ -52,6 +52,12 @@ type Dialog struct {
 	// PolicySession is the policy session in which the PCRF authorised
 	// the media of the dialog (TS 29.214 4.4.1), or empty.
 	PolicySession policy.SessionID
+	// ICID is the icid-value of the INVITE: the one that the P-CSCF
+	// wrote in it for the calling UE (TS 24.229 5.2.6.3.3 step 7), or
+	// the one that it stored from it for the called UE (5.2.6.4.3 item
+	// 9). The later requests of the dialog and their responses carry it
+	// (chargeRequest, chargeResponse). Empty when the INVITE had none.
+	ICID string
 }
 
 // DialogKey names a dialog at the P-CSCF: the Call-ID and the tag of
