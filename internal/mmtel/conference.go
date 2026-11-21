@@ -602,7 +602,7 @@ func (f *conference) inviteUser(rt sip.ReferTo, referredBy string) int {
 		{Name: "P-Asserted-Identity", Value: "<" + f.record.URI + ">"},
 		// TS 24.229 5.7.3: an AS that originates a request starts its
 		// charging vector.
-		{Name: "P-Charging-Vector", Value: "icid-value=" + sip.NewCallID() + ";orig-ioi=" + f.as.cfg.HomeDomain},
+		{Name: "P-Charging-Vector", Value: sip.ChargingVector{ICID: sip.NewCallID(), OrigIOI: f.as.cfg.HomeDomain}.String()},
 	}
 	if referredBy != "" {
 		headers = append(headers, sip.HeaderField{Name: "Referred-By", Value: referredBy})

@@ -127,8 +127,8 @@ func (g *IPSMGW) respond(st *sip.ServerTransaction, code int, fill func(*sip.Mes
 	if fill != nil {
 		fill(resp)
 	}
-	if pcv := st.Request.Get("P-Charging-Vector"); pcv != "" {
-		resp.Add("P-Charging-Vector", pcv+";term-ioi="+g.cfg.HomeDomain)
+	if c, ok := sip.ChargingVectorOf(st.Request); ok {
+		resp.Add("P-Charging-Vector", c.Response(g.cfg.HomeDomain).String())
 	}
 	st.Respond(resp)
 }
@@ -206,7 +206,7 @@ func (g *IPSMGW) newMessage(to, disposition string, rp sms.RPMessage) (*sip.Mess
 	m.Add("Call-ID", sip.NewCallID())
 	m.Add("CSeq", "1 MESSAGE")
 	m.Add("P-Asserted-Identity", sip.NameAddr{URI: g.cfg.URI}.String())
-	m.Add("P-Charging-Vector", "icid-value="+sip.NewCallID()+";orig-ioi="+g.cfg.HomeDomain)
+	m.Add("P-Charging-Vector", sip.ChargingVector{ICID: sip.NewCallID(), OrigIOI: g.cfg.HomeDomain}.String())
 	m.Add("Accept-Contact", acceptContact)
 	m.Add("Request-Disposition", disposition)
 	m.Add("Content-Type", ContentType)

@@ -330,7 +330,7 @@ func (p *PCSCF) register(st *sip.ServerTransaction, protected bool) {
 	// Item 2: Require, not Supported.
 	addOptionTag(out, "Require", "path")
 	// Item 3: a new charging identifier for this request (TS 32.260).
-	out.Set("P-Charging-Vector", fmt.Sprintf("icid-value=%s;orig-ioi=%s", rand.Text(), p.cfg.VisitedNetworkID))
+	out.Set("P-Charging-Vector", sip.ChargingVector{ICID: rand.Text(), OrigIOI: p.cfg.VisitedNetworkID}.String())
 	// Item 4.
 	out.Set("P-Visited-Network-ID", p.cfg.VisitedNetworkID)
 
