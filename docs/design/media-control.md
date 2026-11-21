@@ -4,8 +4,9 @@
 
 ## 選んだこと
 
-- P-CSCF はこのプロジェクト独自の簡単な HTTP の API でメディア中継ノードを制御します。制御の呼び出しは 1 か所にまとめ、境界の後ろの実装を差し替えられるようにします。MRFC が MRFP を制御するときと、IBCF が TrGW を制御するときも同じです。
-- H.248 で制御する実装を、同じ境界の後ろに 2 つ目の実装として並べます。既定は独自の API のままです。
+- P-CSCF はこのプロジェクト独自の簡単な HTTP の API でメディア中継ノードを制御します。MRFC が MRFP を制御するときと、IBCF が TrGW を制御するときも同じです。
+- 制御する側のノードは、参照点ごとに操作のインタフェースを 1 つ宣言します。操作の名前は H.248 のコマンドに合わせ、型は `internal/agw` のものを使います。境界の後ろの実装は、このインタフェースで差し替えます。
+- H.248 で制御する実装（`mediactl.Controller`）を、同じインタフェースの後ろに 2 つ目の実装として並べます。既定は独自の API のままです。
 - P-CSCF を 1 回通るごとに、メディア中継ノードの中に 1 つのコンテキストを作ります。
 - IBCF は B2BUA にします。
 - IBCF は相手として登録されていない送信元の要求に応答せず、捨てます。
@@ -27,7 +28,54 @@ H.248 も並べるのは、標準のメディア制御のプロトコルを学�
 
 H.248 の範囲は、3GPP のプロファイルが使うものに限ります。Iq（TS 29.334）、Ix（TS 29.238）、Mp（TS 29.333）です。ITU-T の勧告は H.248.1 です。IETF での名前は Megaco（RFC 3525）で、今は Historic です。
 
-独自の API もH.248 の Add、Modify、Subtract、Notify に写せる形にしてあります（[mmtel-mrf.md](mmtel-mrf.md)）。
+独自の API も H.248 の Add、Modify、Subtract、Notify に写せる形にしてあります（[mmtel-mrf.md](mmtel-mrf.md)）。
+
+## 参照点ごとのインタフェース
+
+制御する側のノードが、自分の参照点の操作をインタフェースとして宣言します。P-CSCF の `pcscf.Relay`（Iq）、MRFC の `mrfc.MRFP`（Mp）、IBCF の `ibcf.TrGW`（Ix）です。HTTP のクライアント `*agw.Client` と、H.248 の `*mediactl.Controller` の両方が、3 つとも実装します。どちらをノードに渡しても動きます。
+
+操作の名前は H.248 のコマンドの名前です。コンテキストを丸ごと消す操作は `Subtract`、1 つのターミネーションを足す操作と消す操作は `AddTermination` と `SubtractTermination` です。型は `internal/agw` のもの（`agw.TerminationRequest`、`agw.Context`、`agw.Termination` など）を使い、`mediactl` には同じ意味の型を置きません。`mediactl` は `agw` を参照しますが、`agw` は `mediactl` も `h248` も参照しません。
+
+各操作が当たる手順は次のとおりです。
+
+| 参照点 | インタフェース | 操作 | 手順 |
+| --- | --- | --- | --- |
+| Iq（TS 29.334） | `pcscf.Relay` | `Add` | Reserve AGW Connection Point（5.17.2.2）を、アクセス側とコア側に 1 回ずつ。宛先があれば Reserve and Configure AGW Connection Point（5.17.2.4） |
+| | | `Modify` | Configure AGW Connection Point（5.17.2.3） |
+| | | `Subtract` | Release AGW Termination（5.17.2.5）を、両方のターミネーションに `*` で |
+| Mp（TS 29.333） | `mrfc.MRFP` | `Add` | Reserve IMS Resources（5.17.2.2）。宛先があれば Reserve and Configure IMS Resources（5.17.2.4）、信号があれば Start Announcement（5.17.2.9） |
+| | | `AddTermination` | 今あるコンテキストへの Reserve IMS Resources（5.17.2.2、5.17.2.30） |
+| | | `Modify` | Configure IMS Resources（5.17.2.3）。信号があれば Start Announcement（5.17.2.9）、空の信号なら Stop Announcement（5.17.2.10） |
+| | | `SubtractTermination` | Release IMS Termination（5.17.2.5） |
+| Ix（TS 29.238） | `ibcf.TrGW` | `Add` | Reserve TrGW Connection Point（Table 5.17.2.1.1） |
+| | | `Modify` | Configure TrGW Connection Point（同） |
+| | | `Subtract` | Release TrGW Termination（同） |
+
+再生の終わり（Announcement Completed、TS 29.333 5.17.2.11）は、逆向きの Notify で届きます。HTTP では `agw.Events.Notify` の URL への POST で、H.248 では `ControllerConfig.Notify` に渡る `mediactl.Notification` です。`Notification` は `agw.Notify` を含みます。
+
+### 両方の実装が守ること
+
+- `Modify` と `Subtract` は error だけを返します。H.248 の Modify の応答は、求めた記述子のほかに何も持たず、Iq の Subtract の応答には統計がないためです（TS 29.334 5.7.7、Table 5.7.7.2）。HTTP の API はどちらにもターミネーションやコンテキストを返しますが、クライアントは読みません。
+- `SubtractTermination` は、ターミネーションが運んだ RTP のパケットの数を、`agw.Termination` の `Packets`（rtp/pr）と `PacketsSent`（rtp/ps）で返します。コンテキストが一緒に消えたかどうかも返しますが、Mp の Subtract の応答はこれを伝えません。そのため Controller はいつも false を返します。MRFC は、次の `AddTermination` が `agw.ErrNoContext` で失敗したときに、会議のコンテキストが消えたことを知ります（`attach`）。それまで、会議の記録は Store に残ります。
+- 空の `Mode` は、Add では sendrecv、Modify では今のモードのままです。H.248 では、モードの無い Add は Inactive になるので、Controller は Add に必ず StreamMode を書きます。Mp の Modify にモードが無ければ、LocalControl の記述子を書きません。MRFC が ACK のあとで音声ガイダンスを始める Modify がこれに当たります。Iq の IMS-AGW はメディアを両方向に通すので、Iq の Controller は Modify にも sendrecv を書きます。
+- コーデックと帯域（m= 行の形式と b=AS）は、`agw.TerminationRequest` の `LocalMedia` と `RemoteMedia` に入れます。中継ノードはトランスコードしないので、HTTP の API はこれを運びません。Controller は Local と Remote の記述子に書きます。
+- Mp の Add では、ターミネーションの ID を MRFP が選びます（CHOOSE）。Controller は、ID を指定した要求を断ります。
+- 拒否されたコマンドは、`errors.Is` で `agw` のエラーと見分けられます。411 は `agw.ErrNoContext`、430 と 435 は `agw.ErrNoTermination` にも当たります。
+
+### インタフェースに入れないもの
+
+- 音声ガイダンスがあるかの問い合わせ（`Announcement`）は、`mrfc.MRFP` に入れず、別のインタフェース `mrfc.Announcements` にしました。コンテキストを変えない問い合わせで、Mp にはこれに当たる手順がないためです（AuditCapabilities は TS 29.333 5.8.6 で今後の検討とされています）。`*agw.Client` は両方を実装します。
+  - `mrfc.New` は、MRFP ごとに `mrfc.Processor` の `Control` と `Announcements` の両方を求めます。そのため、H.248 の Mp の Controller を `Control` に渡す MRFC にも、`Announcements` を別に用意する必要があります。Mp には、MRFP がどの音声ガイダンスを持つかを問うコマンドがないためです。MRFC は、MRFP が持つ音声ガイダンスの一覧を、プロビジョニングで知っておくことになります。この一覧を `mrfc.Announcements` として渡す設定は、まだありません。
+- IBCF が SDP に書く TrGW のアドレスの置き換えは、IBCF の側に置きます（`ibcf.Config` の `TrGWCoreAddress` と `TrGWPeerAddress`）。TrGW は網ごとにアドレスを持ちますが、TrGW を務めるメディア中継ノードは、両方のターミネーションに 1 つのアドレスを書くためです。
+- Ix の H.248 のプロファイルはありません。Controller は Iq のプロファイルで `ibcf.TrGW` を実装します。IBCF はターミネーションに Iq の名前を使い、`core` を自網の側、`access` を相手網の側にあてます。
+
+### ゲートウェイの側
+
+`mediactl.Gateway` は、受けたコマンドを、`mediactl.Relay`（Iq）か `mediactl.Processor`（Mp）を呼んで実行します。これはゲートウェイが自分で宣言するインタフェースで、操作と型は `pcscf.Relay` と `mrfc.MRFP` と同じです。そのため、`*agw.Client` を Gateway の後ろに置くこともできます。Mp の Gateway は、Processor に頼むターミネーションに `t<n>` の ID を付けます。`n` は H.248 のターミネーションの ID（`ip/<context>/<n>`）の番号です。Add が返すコンテキストは ID の map なので、こうして各ターミネーションを見つけます。
+
+### 確かめ方
+
+実装の組み合わせは、各インタフェースの隣の試験のファイル（`internal/pcscf/relay_test.go`、`internal/mrfc/mrfp_test.go`、`internal/ibcf/trgw_test.go`）で、コンパイルのときに確かめます。確かめを試験のファイルに置くので、P-CSCF、MRFC、IBCF の本体は `mediactl` を参照しません。
 
 ## P-CSCF の通過ごとのコンテキスト
 
