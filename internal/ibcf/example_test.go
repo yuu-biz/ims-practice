@@ -4,6 +4,7 @@ import (
 	"log/slog"
 	"net/netip"
 
+	"github.com/yuu-biz/ims-practice/internal/agw"
 	"github.com/yuu-biz/ims-practice/internal/ibcf"
 	"github.com/yuu-biz/ims-practice/internal/ims"
 	"github.com/yuu-biz/ims-practice/internal/interconnect"
@@ -41,9 +42,6 @@ func Example() {
 	if err != nil {
 		panic(err)
 	}
-	// The TrGW shows 192.0.2.60 to network A and 198.51.100.60 to
-	// network B.
-	trgw := ibcf.NewAGWClient("http://trgw:8080", netip.MustParseAddr("192.0.2.60"), netip.MustParseAddr("198.51.100.60"))
 	// A node serves this registry with metrics.NewHandler.
 	registry := metrics.NewRegistry()
 	role, err := ibcf.New(ibcf.Config{
@@ -52,7 +50,11 @@ func Example() {
 		HomeDomain: home,
 		ICSCF:      sip.URI{Scheme: "sip", Host: "icscf." + home},
 		Metrics:    registry,
-	}, peers, trgw, ibcf.NewMemoryStore(), locator, log)
+		// The TrGW shows 192.0.2.60 to network A and 198.51.100.60 to
+		// network B.
+		TrGWCoreAddress: netip.MustParseAddr("192.0.2.60"),
+		TrGWPeerAddress: netip.MustParseAddr("198.51.100.60"),
+	}, peers, agw.NewClient("http://trgw:8080"), ibcf.NewMemoryStore(), locator, log)
 	if err != nil {
 		panic(err)
 	}
