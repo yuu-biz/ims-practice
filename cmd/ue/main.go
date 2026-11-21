@@ -492,9 +492,16 @@ func run(log *slog.Logger, o options, do func(context.Context, *session) error) 
 		return doErr
 	}
 	if lost() {
-		// SIMPLIFIED: IR.92 2.4.2.1. A UE that lost its PDN connection
-		// should set it up again and register anew. The simulator stops,
-		// without the deregistration that no longer reaches the IMS.
+		// SIMPLIFIED: TS 24.301 5.5.2.3.4 and IR.92 2.4.2.1. The stub
+		// detaches the UE with "re-attach not required" and no EMM cause,
+		// item b of 5.5.2.3.4: the UE should start T3402, attach again
+		// when it expires (5.2.2.3.3), and then register anew. When the
+		// event stream of the stub ends, the UE should set its PDN
+		// connection up again. The simulator stops instead, without the
+		// deregistration that no longer reaches the IMS. One run of it
+		// holds one attach: openUE sets up its SIP transport, its contact
+		// and the media resources of its calls once, for the PDN address
+		// of that attach.
 		return errors.Join(doErr, errDetached)
 	}
 	if !s.registered {

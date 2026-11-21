@@ -83,8 +83,9 @@ func serve(log *slog.Logger, o options) error {
 	sctx, scancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer scancel()
 	if lost() {
-		// SIMPLIFIED: IR.92 2.4.2.1. The UE stops instead of setting up its
-		// PDN connection again, as the other commands do (run).
+		// SIMPLIFIED: TS 24.301 5.5.2.3.4 and IR.92 2.4.2.1. The UE stops
+		// instead of attaching again after T3402 and registering anew,
+		// as the other commands do (run).
 		serveErr = errors.Join(serveErr, errDetached)
 	}
 	return errors.Join(serveErr, server.Shutdown(sctx))
