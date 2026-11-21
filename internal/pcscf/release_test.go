@@ -239,7 +239,8 @@ func TestEventForAnUnknownPolicySessionIsIgnored(t *testing.T) {
 // answers 200 before the CANCEL reaches it. The caller keeps its 500,
 // and the P-CSCF acknowledges the 200 and each retransmission in the
 // caller's name, then releases the dialog with one BYE to the callee
-// (5.2.8.1.2 item 1).
+// (5.2.8.1.2 item 1). The caller has sent an UPDATE in the early
+// dialog, so the BYE takes the number after it.
 func TestA2xxThatCrossesTheCancelIsAcknowledgedAndReleased(t *testing.T) {
 	pcrf, relay, store := &fakePolicy{}, newFakeRelay(), NewMemoryStore()
 	requests, acks := make(chan *sip.Message, 4), make(chan *sip.Message, 4)
@@ -303,6 +304,24 @@ func TestA2xxThatCrossesTheCancelIsAcknowledgedAndReleased(t *testing.T) {
 		}
 	}
 
+	upd := &sip.Message{Method: sip.UPDATE, RequestURI: farContact}
+	upd.Add("Route", "<sip:pcscf."+domain+":5060;lr>")
+	upd.Add("Max-Forwards", "70")
+	upd.Add("From", inv.Get("From"))
+	upd.Add("To", inv.Get("To")+";tag=callee")
+	upd.Add("Call-ID", inv.Get("Call-ID"))
+	upd.Add("CSeq", "2 UPDATE")
+	updated, err := ue.SendRequest(upd, sip.Destination{Transport: sip.UDP, Addr: pcscf.LocalAddr()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp := final(t, updated.Responses(), 3*time.Second); resp.StatusCode != 200 {
+		t.Fatalf("the UPDATE got %d, want 200", resp.StatusCode)
+	}
+	if m := nextRequest(t, "the callee", requests); m.Method != sip.UPDATE {
+		t.Fatalf("the callee got %s, want the UPDATE", m.Method)
+	}
+
 	p.PolicyEvent(policy.Event{Session: "session-1", Kind: policy.LossOfBearer})
 	if resp := final(t, ct.Responses(), 3*time.Second); resp.StatusCode != 500 {
 		t.Fatalf("the caller got %d, want 500", resp.StatusCode)
@@ -328,7 +347,7 @@ func TestA2xxThatCrossesTheCancelIsAcknowledgedAndReleased(t *testing.T) {
 		}
 	}
 	bye := nextRequest(t, "the callee", requests)
-	want := map[string]string{"From": inv.Get("From"), "To": callee, "Call-ID": inv.Get("Call-ID"), "CSeq": "2 BYE",
+	want := map[string]string{"From": inv.Get("From"), "To": callee, "Call-ID": inv.Get("Call-ID"), "CSeq": "3 BYE",
 		"Reason": `SIP;cause=503;text="Service Unavailable"`}
 	if bye.Method != sip.BYE || bye.RequestURI != farContact {
 		t.Errorf("the callee got %s %s, want a BYE to its Contact %s", bye.Method, bye.RequestURI, farContact)

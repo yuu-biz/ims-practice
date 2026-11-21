@@ -106,7 +106,7 @@ func (p *PCSCF) releaseNow(key DialogKey, log *slog.Logger) {
 	}
 	log = log.With("call_id", key.CallID)
 	switch {
-	case p.abortSetup(key):
+	case p.abortSetup(d):
 		log.Info("cancelling the session that is being set up")
 	case d.Confirmed:
 		p.sendBYEs(d, log)
@@ -160,21 +160,25 @@ func (p *PCSCF) sendBYE(bye *sip.Message, what string, log *slog.Logger) {
 // caller's name, the first 2xx and each retransmission of it (RFC 3261
 // 13.2.2.4). The 2xx has confirmed a dialog whose session has no
 // resources, and the P-CSCF releases it with the BYE of TS 24.229
-// 5.2.8.1.2 to the callee, once: first is true for the first 2xx of
-// the dialog. The BYE follows the ACK, as RFC 3261 15 asks of a caller.
-func (s *setup) crossedCancel(resp *sip.Message, first bool) {
+// 5.2.8.1.2 to the callee, once: first is true until a call for the
+// dialog has reported true, which it does once it has sent the ACK and
+// the BYE. The BYE follows the ACK, as RFC 3261 15 asks of a caller.
+// At the P-CSCF of the callee, the callee is the served UE, which gets
+// the BYE that sendBYEs also sends a served UE.
+func (s *setup) crossedCancel(resp *sip.Message, first bool) bool {
 	toCallee := []string(nil)
 	if _, route, ok := routeSets(resp.GetAll("Record-Route"), len(s.invite.GetAll("Record-Route"))); ok {
 		toCallee = route
 	}
 	d := Dialog{Key: DialogKey{CallID: s.invite.Get("Call-ID")}}
 	d.Caller = Party{NameAddr: s.invite.Get("From")}
+	inviteSeq := uint32(0)
 	if cseq, err := sip.ParseCSeq(s.invite.Get("CSeq")); err == nil {
-		d.Caller.CSeq = cseq.Number
+		inviteSeq = cseq.Number
 	}
 	d.Callee = Party{NameAddr: resp.Get("To"), Target: contactOf(resp), Route: toCallee}
 
-	ack := inDialogRequest(sip.ACK, d.Caller.CSeq, d, &d.Callee, &d.Caller)
+	ack := inDialogRequest(sip.ACK, inviteSeq, d, &d.Callee, &d.Caller)
 	dst, _, err := s.p.nextHop(ack)
 	var stack *sip.Stack
 	if err == nil {
@@ -185,12 +189,29 @@ func (s *setup) crossedCancel(resp *sip.Message, first bool) {
 	}
 	if err != nil {
 		s.log.Warn("could not acknowledge the 2xx that crossed the CANCEL", "error", err.Error())
-		return
+		return false
 	}
 	if first {
 		s.log.Info("acknowledged the 2xx that crossed the CANCEL")
+		// The BYE takes a number above every request of the caller,
+		// such as a PRACK or an UPDATE in the early dialog (RFC 3261
+		// 12.2.1.1).
+		d.Caller.CSeq = max(inviteSeq, s.lastCallerSeq())
 		s.p.sendBYE(releaseBYE(d, &d.Callee, &d.Caller), "the callee", s.log)
 	}
+	return true
+}
+
+// lastCallerSeq is the CSeq of the last request that the caller sent in
+// the early dialog: from the Dialog when it is still in the Store, or
+// else as the abort left it (abortSetup).
+func (s *setup) lastCallerSeq() uint32 {
+	if s.stored {
+		if d, ok := s.p.store.UpdateDialog(s.key, func(*Dialog) {}); ok {
+			return max(d.Caller.CSeq, s.callerSeq)
+		}
+	}
+	return s.callerSeq
 }
 
 func logAnswer(ct *sip.ClientTransaction, what string, log *slog.Logger) {

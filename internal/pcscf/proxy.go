@@ -38,7 +38,7 @@ func (p *PCSCF) proxyInvite(st *sip.ServerTransaction, out *sip.Message, dst sip
 	var final *sip.Message
 	answered, provisional := false, false
 	// The callee tags of the 2xx that crossed the CANCEL, whose dialogs
-	// the P-CSCF has released.
+	// the P-CSCF has sent its BYE in.
 	crossed := map[string]bool{}
 	giveUp := func() {
 		call.givenUp = true
@@ -68,8 +68,9 @@ func (p *PCSCF) proxyInvite(st *sip.ServerTransaction, out *sip.Message, dst sip
 				// the end the 487 to the CANCEL, goes no further.
 				if code/100 == 2 {
 					tag := tagOf(resp.Get("To"))
-					call.crossedCancel(resp, !crossed[tag])
-					crossed[tag] = true
+					if call.crossedCancel(resp, !crossed[tag]) {
+						crossed[tag] = true
+					}
 				}
 			case code < 200:
 				provisional = true
