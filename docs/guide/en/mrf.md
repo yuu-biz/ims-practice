@@ -225,14 +225,14 @@ Each item has a `SIMPLIFIED:` comment in the code; `grep -rn "SIMPLIFIED:" inter
 | MRFC, TS 23.333 5.12 | The MRFP plays and mixes G.711 PCMU only and transcodes nothing; an offer without PCMU gets 488 with Warning 305. | The project has no AMR decoder. The UE simulators still offer PCMU. |
 | MRFC, RFC 4240 3 and TS 24.229 10.3.2.2 | Only provisioned announcements; no prompt is fetched from a URL over Cr. | The WAV files are in the MRFP's configuration. |
 | MRFC, TS 24.229 5.8.1 | The Contact is the SIP URI of the instance, not a GRUU. | Nothing sends a request to the MRFC outside a dialog it has with it. |
-| MRFC, TS 24.229 5.8.2.1.1.1 and RFC 4240 2 and 8 | No charging data, sips: is not enforced, no AS is authenticated. | No node of the project collects charging data, and nothing is encrypted so that the capture shows the content. |
+| MRFC, TS 24.229 5.8.2.1.1.1 and RFC 4240 2 and 8 | No charging data, sips: is not enforced, no AS is authenticated. | No node of the project writes charging records, and nothing is encrypted so that the capture shows the content. |
 | MRFC, RFC 4240 3 | The suggested reason phrases go into a Warning. | The UA writes the standard phrase in the status line. |
 | netann, RFC 4240 3 | locale, content-type and param1 to param9 are ignored. | Each announcement has one variant. |
 | MRFP, TS 23.333 5.10 and RFC 3550 6 and 7.1 | The mixer takes PCMU only, keeps three frames for jitter, writes no CSRC list and sends no RTCP. | Enough for a conference of a few UEs on one bridge. |
 | MRFP, RFC 3550 6 | No RTCP sender reports for the media it makes. | The UE simulator needs none. |
 | AS, TS 24.182 4.5.5.3.7 | A callee's UPDATE with an offer after its 180 goes on to the caller, which moves the caller away from the tone. | The UE simulator sends none then. |
 | AS, TS 24.182 4.5.5.3.7 b 2 and b 3 | The callee's 183 with preconditions goes to the caller as it came; the tone starts without a look at the caller's preconditions. | The callee has alerted, so both sides have their resources. |
-| AS, TS 24.147 5.3.2.3.1 step 2 and TS 24.229 5.7.1.4 and 5.7.1.5 | Every served user may create a conference; no conference policy, no charging addresses. | There is no conference policy server. |
+| AS, TS 24.147 5.3.2.3.1 step 2 and TS 24.229 5.7.1.4 and 5.7.1.5 | Every served user may create a conference; no conference policy, no charging addresses. | There is no conference policy server, and no node of this project writes charging records. |
 | AS, TS 24.229 5.7.3 NOTE 8 | The S-CSCF of an invited user is taken to be the AS's own. | This network has one S-CSCF. |
 | AS, TS 24.147 5.3.2.6.2.2 | A REFER that asks the focus to remove a participant (method BYE) is refused with 403. | IR.92 2.3.3 does not ask for it. |
 | AS, RFC 4575 3.9 | Each change is notified at once, not at most once in 5 seconds. | IR.92 2.3.3 asks for notifications within 5 seconds, and a small conference changes seldom. |

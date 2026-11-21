@@ -518,6 +518,7 @@ Each item has a `SIMPLIFIED:` comment in the code; `grep -rn "SIMPLIFIED:" inter
 | Where | What is left out | Why |
 | --- | --- | --- |
 | IP-SM-GW, TS 24.229 5.7.3 | The requests of the IP-SM-GW, such as its SUBSCRIBE and its MESSAGEs, carry no Route to the entry point. | The entry point is the name of the home domain. The I-CSCF removes only a Route that names its own host (5.3.2.1), so a Route with the domain would stay in the request. |
+| IP-SM-GW, TS 24.229 5.7.1.1 and 5.7.3 | The icid-value and the orig-ioi of a third-party REGISTER, and the term-ioi of the responses to the IP-SM-GW's own requests, are not stored. | They are for the charging records of the IP-SM-GW, which no node of this project writes. |
 | IP-SM-GW, RFC 6665 4.1.2.4 | No Timer N. A SUBSCRIBE that no NOTIFY follows is replaced by a new one at the next third-party REGISTER. | The S-CSCF answers every SUBSCRIBE that it accepts with a NOTIFY at once. |
 | IP-SM-GW, TS 24.341 5.3.3.2 | Without an MSISDN in service-info, the PUR names the user by the public identity, not by the IMSI of the UE's REGISTER. | The IMSI would come from the UE's REGISTER in a message/sip body, which the S-CSCF does not send. Sh accepts a public identity (TS 29.328 Table 7.6.1). |
 | IP-SM-GW, TS 24.341 5.3.3.4.1 | A delivery report without In-Reply-To is dropped. | TS 24.341 5.3.2.4 has the UE send it. Finding the delivery by RP-MR alone would need a second key in the Store. |
