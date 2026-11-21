@@ -24,7 +24,7 @@
 
 - **Pod には決まったアドレスがありません。** SIP と Diameter のノードは、すべて StatefulSet と headless の Service（`clusterIP: None`）にしました。名前を引くと Pod 自身のアドレスが返るので、パケットは NAT を通らずに Pod から Pod へ届きます。各ノードには、相手が Via と Contact に書いたアドレスから相手が来たように見えます。Compose と同じです。普通の ClusterIP の Service にすると、kube-proxy の NAT が間に入ります。
 - **設定にはアドレスではなく名前を書きます。** `base/config/` のファイルは `deploy/compose/` の写しで、アドレスを Service の名前に替えてあります。アドレスでなければならない値が 2 つあり、Pod が起動するときに書き込みます。メディア中継ノードの `rtp_address`（自分の Pod のアドレス）と、EPC の `pcscf_addresses` です。
-- **ゾーンは Service を指します。** `dns/ims.mnc001.mcc001.3gppnetwork.org.zone` では、各ノードを `cluster.local` の Service への CNAME にしました。たとえば `icscf IN CNAME icscf.ims.svc.cluster.local.` です。NAPTR と SRV は Compose と同じです。
+- **ゾーンは Service を指します。** `dns/ims.mnc001.mcc001.3gppnetwork.org.zone` では、各ノードを `cluster.local` の Service への CNAME にしました。たとえば `icscf IN CNAME icscf.ims.svc.cluster.local.` です。NAPTR は Compose と同じです。SRV の宛先には別名を使えないので（RFC 2782）、SRV は Compose と同じノードを `_sip._udp IN SRV 10 50 5060 icscf.ims.svc.cluster.local.` のように Service の名前で指します。
 - **ims0 のブリッジはありません。** kind は Pod ごとに veth でつなぐので、キャプチャはノードのすべてのインタフェースを聞きます。
 
 ## クラスタごとに違う値

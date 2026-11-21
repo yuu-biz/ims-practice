@@ -24,7 +24,7 @@ This directory runs the same IMS as `compose.yaml` on a local Kubernetes cluster
 
 - **Pods have no fixed addresses.** Every SIP and Diameter node is a StatefulSet with a *headless* Service (`clusterIP: None`). Its name resolves to the Pod's own address, so packets go from Pod to Pod with no NAT, and each node sees its peer at the address the peer wrote in Via and Contact, as in Compose. A normal ClusterIP Service would put kube-proxy's NAT in between.
 - **Names, not addresses, in the configuration.** The files in `base/config/` are copies of `deploy/compose/` with the addresses replaced by Service names. Two values must be addresses and are filled in when the Pod starts: the relay's `rtp_address` (its own Pod address) and the EPC's `pcscf_addresses`.
-- **The zone points to Services.** In `dns/ims.mnc001.mcc001.3gppnetwork.org.zone`, each node is a CNAME to its Service in `cluster.local`, for example `icscf IN CNAME icscf.ims.svc.cluster.local.`. The NAPTR and SRV records are the same as in Compose.
+- **The zone points to Services.** In `dns/ims.mnc001.mcc001.3gppnetwork.org.zone`, each node is a CNAME to its Service in `cluster.local`, for example `icscf IN CNAME icscf.ims.svc.cluster.local.`. The NAPTR records are the same as in Compose. The SRV records name the same nodes, but by their Service, as in `_sip._udp IN SRV 10 50 5060 icscf.ims.svc.cluster.local.`, because the target of an SRV record must not be an alias (RFC 2782).
 - **No ims0 bridge.** kind connects each Pod with its own veth, so the capture listens on all interfaces of the node.
 
 ## Values that depend on the cluster
