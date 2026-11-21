@@ -179,7 +179,7 @@ func TestRelayErrors(t *testing.T) {
 	b.relay.setFail(agw.ErrNoPort)
 	_, err := reserve(ctx, b.controller, agw.Media{})
 	var rejected *CommandRejected
-	if !errors.Is(err, ErrInsufficientResources) || !errors.As(err, &rejected) || rejected.ErrorDescriptor.ErrorCode != 510 {
+	if !errors.Is(err, agw.ErrNoPort) || !errors.As(err, &rejected) || rejected.ErrorDescriptor.ErrorCode != 510 {
 		t.Errorf("Add: %v", err)
 	}
 	b.relay.setFail(errors.New("the relay broke"))
