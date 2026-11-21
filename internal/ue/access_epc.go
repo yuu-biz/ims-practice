@@ -137,8 +137,10 @@ func (a *EPCAccess) follow(stream <-chan epc.NetworkMessage) {
 		case *epc.DeactivateEPSBearerContextRequest:
 			a.deactivated(ctx, msg)
 		case *epc.DetachRequest:
-			// TS 24.301 5.5.2.3.2: the UE answers with DETACH ACCEPT; with
-			// "re-attach not required" it stays detached.
+			// TS 24.301 5.5.2.3.2: the UE answers with DETACH ACCEPT. The
+			// stub sends "re-attach not required" without an EMM cause,
+			// after which 5.5.2.3.4 item b has the UE attach again only
+			// when T3402 expires, 12 minutes by default (Table 10.2.1).
 			if err := a.client.AcceptDetach(ctx); err != nil {
 				a.log.Warn("DETACH ACCEPT not sent", "error", err.Error())
 			}

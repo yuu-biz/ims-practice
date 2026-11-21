@@ -528,7 +528,7 @@ Each item has a `SIMPLIFIED:` comment in the code; `grep -rn "SIMPLIFIED:" inter
 | UE, TS 24.301, TS 36.331 | The UE's packets go straight onto the Docker network. | No radio and no tunnel. |
 | UE, TS 24.229 7.2A.4.3 | The access type is always 3GPP-E-UTRAN-FDD. | The stub says nothing of the duplex mode of its cell. |
 | UE, TS 24.229 L.2.2.5.1B | The voice bearer counts as the resources of every call, without matching its TFT. | IR.92 4.4.2 has one voice bearer for all calls. |
-| UE, IR.92 2.4.2.1 | A UE that lost its PDN connection stops instead of attaching and registering again. | The failure shows at once. |
+| UE, TS 24.301 5.5.2.3.4, IR.92 2.4.2.1 | After the network detaches it with "re-attach not required" and no EMM cause, the UE should attach again once T3402 expires, 12 minutes by default (TS 24.301 5.2.2.3.3), and register anew. After the event stream of the access network ends, it should set its PDN connection up again. The UE simulator stops with an error instead, and sends no deregistration, which could no longer reach the IMS. | One run of the simulator holds one attach: its SIP transport, its contact and the media resources of its calls are set up once, for the PDN address of that attach. |
 | UE, TS 24.229 6.1.1 | A bearer lost before the answer only changes the precondition table; the network ends the call. | The P-CSCF releases it (5.2.8.1.1). |
 | UE, TS 24.229 5.1.3.1, 5.1.4A.1 | precondition is in the Supported of every request within a dialog. | One Supported for all calls; a peer that does not use preconditions ignores it. |
 | UE, IR.92 3.2.1, RFC 4867 8.3.1 | The frames go in the modes they were encoded in; CMR and mode-set are not followed. | The UE cannot encode. |
