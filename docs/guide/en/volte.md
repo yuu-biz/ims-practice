@@ -282,6 +282,8 @@ curl -X DELETE http://localhost:8080/api/epc/network-initiated/ues/0010100000000
 
 The voice bearer carried all the media of the session, so the PCRF ends the whole Rx session with an ASR rather than reporting the lost flows in an RAR (TS 29.214 4.4.6.1, 4.4.6.2). The P-CSCF answers it, ends the session with an STR, and releases the call itself: a BYE to the other side in the served user's name and, here, one to the served UE as well (TS 24.229 5.2.8.1.2, IR.92 2.4.2.3). It builds the BYEs from the dialog information it keeps behind its Store: the Contacts, the tags, the CSeq and the route set. volte-a sends no BYE of its own. When volte-b's call ends, its P-CSCF ends volte-b's Rx session and the stub releases volte-b's bearer too.
 
+A bearer can also go before the call is answered. The P-CSCF then gives the INVITE up: it answers the caller 500 and cancels the INVITE towards the callee, with a Reason that gives 503 (TS 24.229 5.2.8.1.1). When the callee has answered 200 just before the CANCEL reaches it, the 200 crosses the CANCEL (RFC 3261 9.1). The caller has its 500 and never sees that 200, so the P-CSCF sends the ACK in the caller's name, for the 200 and for each retransmission of it. Then it releases the dialog that the 200 confirmed with a BYE to the callee, built as above (5.2.8.1.2).
+
 ## Preconditions
 
 A VoLTE caller does not want the callee's phone to ring while the voice cannot flow yet. With the precondition mechanism (RFC 3312), each side says in its SDP whether its resources are reserved, and the callee rings only once every mandatory precondition is met. IR.92 2.4.1 asks for it, with UPDATE to report the status. The INVITE has `Supported: 100rel, timer, 199, precondition`, not Require (TS 24.229 5.1.3.1).
