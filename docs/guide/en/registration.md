@@ -393,6 +393,18 @@ On `event="rejected"` the UE does not register again (TS 24.229 5.1.1.7), and `u
 
 With a wrong password, steps 1 to 8 are the same. In step 9 the response does not match. The S-CSCF answers **403 Forbidden** (TS 24.229 5.4.1.2.3B) and sends a SAR with **AUTHENTICATION_FAILURE** (9). The HSS clears the S-CSCF it had stored (TS 29.228 6.1.2.1), so the next attempt starts again with FIRST_REGISTRATION.
 
+## A registration that fails
+
+A registered UE refreshes its registration before it expires (TS 24.229 5.1.1.4.1). When the refresh gets 408, 500, 504 or 403, the UE no longer counts on the registration it had and makes an initial registration: a REGISTER like the first one, which the S-CSCF challenges again (5.1.1.4.1). The UE simulator does so after any failed refresh.
+
+When an initial registration fails as well, the UE does not try again at once. Before each new attempt it waits the retry delay of RFC 5626 4.5 (TS 24.229 5.1.1.2.1):
+
+- The upper bound W is 30 seconds times 2 to the power of the number of failures in a row, and at most 1800 seconds.
+- The UE waits a random time from half of W to all of W. The first retry comes 30 to 60 seconds after the first failure, the second 60 to 120 seconds after the second, and from the sixth failure on the UE tries every 15 to 30 minutes.
+- A response with Retry-After asks for its own wait instead. After it, the count of failures starts again.
+
+The random part spreads the attempts of UEs that lost their registration at the same moment, so that they do not all come back at once. `ue serve` and `ue register` keep trying until they are registered again. Each failure is logged as `"msg":"registration failed"`, with `retry_after_ms`, the wait before the next attempt. `ue serve` also waits and tries again when its first registration fails. The other commands end with an error then, as `ue register` does above for a removed subscription.
+
 ## A request without an IP association
 
 The P-CSCF serves only the UEs that have registered through it. It discards a request other than REGISTER that does not map to an IP association, such as a request from a UE whose registration the P-CSCF has lost: it sends nothing back, not even a 100 Trying, and forwards nothing to the S-CSCF (TS 24.229 5.2.6.3.2A). A response would tell an unknown sender that a P-CSCF listens at this address. The UE only sees that no response comes. When Timer B or Timer F fires for a request of `ue serve`, the UE takes its contact as bound to no identity and registers again from the start (TS 24.229 5.1.2A.1.6). `ue call` and `ue sms` report the timeout and exit.
@@ -451,7 +463,8 @@ These parts of the specifications are left out or shortened. Each has a `SIMPLIF
 | I-CSCF, TS 24.229 5.3.1.3 | No reselection of another S-CSCF when the S-CSCF does not answer. | This network has one S-CSCF. |
 | UE, TS 24.229 9.2.1 | A UE without an access network, such as the UEs of this guide or a softphone on the host, has its P-CSCF address configured. A UE on the EPC stub (`ue -epc`) takes it from the PCO when it attaches; see [The VoLTE call flow](volte.md). | The softphone path stays, for softphones and for UEs that do not attach. |
 | UE, TS 24.229 5.1.2A.1.6 | After a request that got no response, the UE registers again through the same P-CSCF at once. It does not mark the P-CSCF as unavailable or look for another one. | The UE knows one P-CSCF address, and finding the P-CSCFs again would give the same one. |
-| UE, TS 24.229 5.1.1.2.1 | A failed refresh is not retried with back-off: it ends `ue register`, and leaves `ue serve` unregistered. | A failure should show at once in a learning setup. |
+| UE, TS 24.229 5.1.1.2.1 and 5.1.1.4.1 | When Timer F fires for a REGISTER, or a 503 comes with a Retry-After longer than Timer F, the UE waits and registers through the same P-CSCF. It does not mark the P-CSCF as unavailable or look for another one. After a failed refresh it always makes an initial registration, also where a short Retry-After of a 503 would let it refresh. | The UE knows one P-CSCF address, and finding the P-CSCFs again would give the same one. No node of this network answers a REGISTER with Retry-After. |
+| UE, TS 24.229 5.1.1.2.1 | max-time and base-time of the retry delay are always the defaults of RFC 5626 4.5. | The network can provide them only through a management object of TS 24.167, which the UE does not have. |
 | HSS, TS 29.228 6.1.1.1 and 6.1.2.1 | One registration state per subscription, not per public identity. Some Server-Assignment-Type values are not handled. | Each test subscription is one implicit registration set, and the S-CSCF never sends the other values. |
 | HSS, TS 29.228 6.1.1.1 step 5 | No check that the user may register at all. | Every test user may register. |
 | User profile, TS 29.228 Annex E | One service profile, with no optional elements but the iFCs. | The test subscriptions need nothing more. |
