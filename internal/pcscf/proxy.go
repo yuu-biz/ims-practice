@@ -22,11 +22,6 @@ import (
 // The loop repeats ProxyWith because package sip has no proxy that its
 // user can end; the two must stay alike. Timer C is the default one,
 // since the stack's own setting cannot be read from here.
-//
-// SIMPLIFIED: RFC 3261 9.1. A 2xx that crosses the CANCEL is dropped,
-// where a UAC would answer it with an ACK and a BYE. The callee then
-// retransmits its 2xx, gets no ACK and ends the call itself (RFC 3261
-// 13.3.1.4).
 func (p *PCSCF) proxyInvite(st *sip.ServerTransaction, out *sip.Message, dst sip.Destination, call *setup) (*sip.Message, error) {
 	stack, err := p.stackToward(dst).Get()
 	if err != nil {
@@ -42,6 +37,9 @@ func (p *PCSCF) proxyInvite(st *sip.ServerTransaction, out *sip.Message, dst sip
 	cancelled, abort := st.Cancelled(), call.abort
 	var final *sip.Message
 	answered, provisional := false, false
+	// The callee tags of the 2xx that crossed the CANCEL, whose dialogs
+	// the P-CSCF has released.
+	crossed := map[string]bool{}
 	giveUp := func() {
 		call.givenUp = true
 		st.Respond(call.unavailable())
@@ -69,7 +67,9 @@ func (p *PCSCF) proxyInvite(st *sip.ServerTransaction, out *sip.Message, dst sip
 				// The caller has its 500; what the callee still sends, in
 				// the end the 487 to the CANCEL, goes no further.
 				if code/100 == 2 {
-					call.log.Warn("dropped a 2xx that crossed the CANCEL")
+					tag := tagOf(resp.Get("To"))
+					call.crossedCancel(resp, !crossed[tag])
+					crossed[tag] = true
 				}
 			case code < 200:
 				provisional = true

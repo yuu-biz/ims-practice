@@ -291,7 +291,6 @@ Each item has a `SIMPLIFIED:` comment in the code; `grep -rn "SIMPLIFIED:" inter
 | Media relay, RFC 3605 and RFC 5761 | RTCP is taken to arrive on the port above RTP; a=rtcp and rtcp-mux are not read. | No UE of this project sends either. |
 | UA, RFC 3261 8.2 and 13.3.1 | No Request-URI or merged-request checks, no 415, and Expires in an INVITE is ignored. | The UEs here never send what those checks catch. |
 | UE, IR.92 3.2.1 | AMR and AMR-WB are sent from frames encoded beforehand, in the modes they were encoded with, whatever CMR or mode-set the peer sends. Without `--epc` the UE offers PCMU only. | The UE never encodes AMR. |
-| P-CSCF, RFC 3261 9.1 | A 2xx that crosses the CANCEL is dropped. The P-CSCF does not answer it with an ACK and a BYE, as a UAC would. | The callee retransmits its 2xx, gets no ACK and ends the call itself (RFC 3261 13.3.1.4). |
 | SIP stack, RFC 3261 12.1.1 and 12.1.2 | A dialog keeps no "secure" flag. | The flag is true only for a dialog set up over TLS with a SIPS URI, and SIP here is plain text. |
 | SIP stack, RFC 3261 12.2.1.1, 16.4 and 16.6 step 6 | No strict routing. A route set or a top Route whose URI lacks lr is refused, and a proxy neither restores a Request-URI that a strict router rewrote nor strips a maddr that names it. | No node in this project is a strict router or writes maddr. |
 | SIP stack, RFC 3261 17.2.3 | A request whose branch lacks the magic cookie, as an RFC 2543 client sends it, is dropped. | Every client here follows RFC 3261. |
