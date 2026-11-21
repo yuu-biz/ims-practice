@@ -19,8 +19,9 @@ type XCAP struct {
 	//
 	// SIMPLIFIED: TS 24.623 5.2.3.1 and RFC 4825 8. Both ask an XCAP
 	// server for HTTP over TLS, with the TLS profile of TS 33.310 Annex
-	// E. TLS is left out so that a learner can read Ut in a capture, as
-	// for SIP and Diameter.
+	// E. TLS is left out because this project does not encrypt signalling
+	// by default, so that captures can be read, for SIP and Diameter as
+	// well.
 	Listen netip.AddrPort
 	// RootPath is the path of the XCAP Root URI: empty for
 	// http://xcap.<home domain>, the form of TS 23.003 13.9.1.2 that a UE
