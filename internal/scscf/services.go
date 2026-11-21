@@ -72,8 +72,7 @@ func (s *SCSCF) invokeApplicationServers(st *sip.ServerTransaction, out *sip.Mes
 //
 // SIMPLIFIED: TS 24.229 5.4.3.2 and 5.4.3.3. A 100 (Trying) does not
 // count as the 1xx that turns the default handling off: Proxy keeps it
-// to the hop it came over (RFC 3261 16.7 step 5). The S-CSCF does no
-// charging, so the orig-ioi and term-ioi steps are left out.
+// to the hop it came over (RFC 3261 16.7 step 5).
 func (s *SCSCF) invoke(st *sip.ServerTransaction, out *sip.Message, d OriginalDialog, i int, log *slog.Logger) bool {
 	as := d.Criteria[i].ApplicationServer
 	d.ID, d.Invoked, d.Returned, d.Expires = rand.Text(), i, false, time.Now().Add(originalDialogLifetime)
@@ -107,10 +106,14 @@ func (s *SCSCF) invoke(st *sip.ServerTransaction, out *sip.Message, d OriginalDi
 	log.Info("invoking the application server", "priority", d.Criteria[i].Priority, "session_case", d.SessionCase.String(), "served_user", d.ServedUser)
 
 	provisional := false
+	charge := s.chargeResponses(st.Request, !d.terminating())
 	dst, err := s.nextHop(toAS)
 	var final *sip.Message
 	if err == nil {
-		final, err = st.ProxyWith(toAS, dst, func(r *sip.Message) { provisional = provisional || r.StatusCode < 200 })
+		final, err = st.ProxyWith(toAS, dst, func(r *sip.Message) {
+			provisional = provisional || r.StatusCode < 200
+			charge(r)
+		})
 	}
 	if unreachable(final, err) && !provisional && !s.returned(d.ID) {
 		log.Info("application server failed", "status", statusOf(final), "error", errorText(err), "default_handling", as.DefaultHandling.String())
@@ -120,8 +123,17 @@ func (s *SCSCF) invoke(st *sip.ServerTransaction, out *sip.Message, d OriginalDi
 	}
 	// Any final response from the server goes to the user, without the
 	// criteria of lower priority (5.4.3.2, 5.4.3.3).
+	if final != nil {
+		charge(final)
+	}
 	ims.Finish(st, final, err)
 	return true
+}
+
+// terminating tells the terminating case of d from the originating one,
+// that of a call diversion included.
+func (d OriginalDialog) terminating() bool {
+	return d.SessionCase == ifc.TerminatingRegistered || d.SessionCase == ifc.TerminatingUnregistered
 }
 
 // servedUserSessionCases is how P-Served-User writes the session case
@@ -164,8 +176,7 @@ func (s *SCSCF) fromApplicationServer(st *sip.ServerTransaction, out *sip.Messag
 	d.Returned = true
 	s.store.PutOriginalDialog(d)
 	log.Info("request back from the application server", "session_case", d.SessionCase.String(), "served_user", d.ServedUser, "icid", d.ICID)
-	terminating := d.SessionCase == ifc.TerminatingRegistered || d.SessionCase == ifc.TerminatingUnregistered
-	if terminating && !sameTarget(out.RequestURI, d) {
+	if d.terminating() && !sameTarget(out.RequestURI, d) {
 		s.retargeted(st, out, d, log)
 		return
 	}
