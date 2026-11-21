@@ -14,8 +14,8 @@ scscf:
   # The UE asks for 600000 s (TS 24.229 5.1.1.2.1). The operator decides
   # how long a registration may last, and the S-CSCF shortens a longer
   # request to max_expires. A longer maximum means fewer refreshes, and
-  # leaves the binding of a UE that has gone away for longer. A request
-  # below min_expires gets 423.
+  # leaves the binding of a UE that has gone away for longer. A nonzero
+  # expiry below min_expires gets 423 (RFC 3261 10.3); 0 deregisters.
   min_expires: 60
   max_expires: 3600
 diameter:
