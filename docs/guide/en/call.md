@@ -148,7 +148,7 @@ The INVITE has grown with every hop. From the S-CSCF on it is larger than 1300 b
 
 The I-CSCF sends a **Location-Info-Request** (LIR, Cx command 302) with the callee's public identity (TS 24.229 5.3.2.1, TS 29.228 6.1.4). The HSS answers DIAMETER_SUCCESS with the **Server-Name** of the S-CSCF where UE 2 is registered.
 
-The I-CSCF puts that S-CSCF on top of Route and forwards the INVITE. It does not add Record-Route.
+The I-CSCF puts that S-CSCF on top of Route and forwards the INVITE. It does not add Record-Route. The P-Charging-Vector goes on as it came; a request that comes without one, such as from a peer network outside the trust domain, gets an icid-value of the I-CSCF (TS 24.229 5.3.2.1).
 
 If UE 2 were not registered, the HSS would answer DIAMETER_ERROR_IDENTITY_NOT_REGISTERED and the I-CSCF 480. An unknown user gives DIAMETER_ERROR_USER_UNKNOWN and 404.
 
@@ -295,6 +295,7 @@ Each item has a `SIMPLIFIED:` comment in the code; `grep -rn "SIMPLIFIED:" inter
 | ENUM, RFC 6116 5.2.1 | Non-terminal NAPTR records are skipped. | The project's zone holds terminal records only. |
 | ENUM, RFC 3402 3.2 | A delimiter escaped with a backslash inside the NAPTR regexp is not supported; such a record is refused as malformed, or split in the wrong place. | The project's records use `!` and never escape it. |
 | I-CSCF, TS 24.229 5.3.2.1, 5.3.2.1A and 5.3.2.2 | No "orig" routing for an application server that sends on behalf of a user, and no reselection of another S-CSCF. | No service of this project sends on behalf of a user, and this network has no redundant S-CSCF to choose. |
+| I-CSCF, TS 24.229 5.3.2.1 | The I-CSCF does not check whether a request comes from a trusted domain, so it never removes P-Charging-Vector and P-Charging-Function-Addresses for that reason. It stores neither the icid-value of a request nor the term-ioi of a response. | In the networks that this project sets up, every node that sends to the I-CSCF belongs to its own network: another network reaches it only through the IBCF, which removes both header fields from the requests of an untrusted peer as they enter (5.10.3.2), and a UE only through its P-CSCF. The values are for the charging records of the I-CSCF, which no node of this project writes. |
 | P-CSCF, TS 24.229 5.2.6.3.5 step 7 and 5.2.6.3.9 step 3 | A request that the UE sends in a dialog other than that of an INVITE, such as the refresh of its subscription, carries no P-Charging-Vector. A response of the UE in such a dialog takes the icid-value of the request that it answers. | The P-CSCF keeps only the dialogs of INVITEs, and with them the icid-value of the INVITE. |
 | P-CSCF, RFC 3264 and RFC 3262 | An INVITE without an offer gets no relay context: the offer that then comes in a reliable 1xx or in the 2xx, and the answer in the PRACK or the ACK, are left as they are. An offer in an UPDATE or a re-INVITE goes through the relay like the one in the INVITE. | The UE simulator always puts its offer in the INVITE. |
 | P-CSCF, RFC 3264 6 | Only the first audio stream with a port goes through the relay. Another stream gets no termination; without an address of its own it points at the relay, where nothing listens on its port. | The UE simulator offers a single stream. |

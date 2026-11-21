@@ -322,7 +322,7 @@ Each IBCF instance counts what it lets across and what it turns away, per peer n
 
 The two operators have an agreement, so each network is in the other's trust domain (`trusted: true` in the profiles, TS 24.229 4.4.1). P-Asserted-Identity crosses the border: UE B1 learns who calls (4.4.2). P-Access-Network-Info and P-Charging-Vector cross too. P-Charging-Function-Addresses never crosses (5.10.2.2 step 9).
 
-With `trusted: false`, the IBCF removes the header fields of TS 24.229 4.4 at the border: UE B1 would get the call without the caller's number. No scenario of the script uses it; try it by editing a profile.
+With `trusted: false`, the IBCF removes the header fields of TS 24.229 4.4 at the border: UE B1 would get the call without the caller's number. P-Charging-Vector goes as well (5.10.3.2), and the I-CSCF of the network that the call enters gives it a new icid-value (5.3.2.1). No scenario of the script uses it; try it by editing a profile.
 
 ## The profiles
 
