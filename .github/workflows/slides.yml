@@ -31,8 +31,8 @@ jobs:
       run:
         working-directory: slides
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
       # The links to the guides are relative in the source; in an
@@ -48,7 +48,7 @@ jobs:
       # The build measures text with fixed widths. This step draws every
       # deck in a browser with the fonts the decks name, and fails if a
       # slide overflows or if another font had to stand in.
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
       - name: fonts of the decks
@@ -60,7 +60,7 @@ jobs:
       - name: overflow with the real fonts
         run: NODE_PATH="$RUNNER_TEMP/playwright/node_modules" node check-html.js
       - name: upload the slides
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: slides
           path: slides/dist/

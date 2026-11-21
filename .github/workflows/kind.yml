@@ -33,7 +33,7 @@ jobs:
       KIND_VERSION: v0.33.0
       KUBECTL_VERSION: v1.37.2
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: install kind and kubectl
         run: |
           mkdir -p "$RUNNER_TEMP/bin"
@@ -48,7 +48,7 @@ jobs:
       - run: deploy/k8s/e2e-kind.sh ${{ matrix.overlay }}
       - name: upload the capture and the logs
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: kind-${{ matrix.overlay }}
           path: |
