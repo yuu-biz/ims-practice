@@ -85,6 +85,11 @@ func startMRFP(t *testing.T) testMRFP {
 	return testMRFP{relay: relay, client: agw.NewClient(api.URL)}
 }
 
+// processor is the MRFP as the MRFC knows it by name.
+func (m testMRFP) processor(name string) mrfc.Processor {
+	return mrfc.Processor{Name: name, Control: m.client, Announcements: m.client}
+}
+
 // testMRFC is an MRFC instance on loopback, and the URI to reach it.
 type testMRFC struct {
 	*mrfc.MRFC
@@ -225,7 +230,7 @@ func waitNoContexts(t *testing.T, r *agw.Relay) {
 // MRFC sends BYE when it has played (TS 24.229 5.8.2.2.1, 5.8.3.2.1).
 func TestAnnouncementAfterAnswer(t *testing.T) {
 	media := startMRFP(t)
-	m := startMRFC(t, mrfc.NewMemoryStore(), mrfc.Processor{Name: "mrfp1", Control: media.client})
+	m := startMRFC(t, mrfc.NewMemoryStore(), media.processor("mrfp1"))
 	as := newUA(t, "mmtel", nil)
 	caller := party(t)
 
@@ -267,7 +272,7 @@ func TestAnnouncementAfterAnswer(t *testing.T) {
 // with it the start of the announcement, until the caller has the 183.
 func TestAnnouncementAsEarlyMedia(t *testing.T) {
 	media := startMRFP(t)
-	m := startMRFC(t, mrfc.NewMemoryStore(), mrfc.Processor{Name: "mrfp1", Control: media.client})
+	m := startMRFC(t, mrfc.NewMemoryStore(), media.processor("mrfp1"))
 	callerMedia := party(t)
 	// The AS takes the caller's INVITE on one UA and sends its own to
 	// the MRFC from another, so that the call handler needs no UA that
@@ -350,7 +355,7 @@ func TestAnnouncementAsEarlyMedia(t *testing.T) {
 // 24.182 4.5.5.3.7), and the MRFP lets go of its termination.
 func TestLoopStoppedByBYE(t *testing.T) {
 	media := startMRFP(t)
-	m := startMRFC(t, mrfc.NewMemoryStore(), mrfc.Processor{Name: "mrfp1", Control: media.client})
+	m := startMRFC(t, mrfc.NewMemoryStore(), media.processor("mrfp1"))
 	as := newUA(t, "mmtel", nil)
 	caller := party(t)
 	out := invite(t, as, "sip:annc@"+m.host+";play=/provisioned/cat1;repeat=forever;delay=100", offerFrom(t, addrOf(caller), "sendrecv"))
@@ -425,7 +430,7 @@ func mrfpAddress(t *testing.T, resp *sip.Message) netip.AddrPort {
 func TestConferenceMixesTheOthers(t *testing.T) {
 	media := startMRFP(t)
 	store := mrfc.NewMemoryStore()
-	m := startMRFC(t, store, mrfc.Processor{Name: "mrfp1", Control: media.client})
+	m := startMRFC(t, store, media.processor("mrfp1"))
 	as := newUA(t, "mmtel", nil)
 	hz := []float64{400, 1000, 1700}
 	var calls []*sip.OutgoingCall
@@ -484,8 +489,8 @@ func TestConferenceMixesTheOthers(t *testing.T) {
 // MRFP.
 func TestConferenceAcrossInstances(t *testing.T) {
 	first, second := startMRFP(t), startMRFP(t)
-	p1 := mrfc.Processor{Name: "mrfp1", Control: first.client}
-	p2 := mrfc.Processor{Name: "mrfp2", Control: second.client}
+	p1 := first.processor("mrfp1")
+	p2 := second.processor("mrfp2")
 	store := mrfc.NewMemoryStore()
 	m1 := startMRFC(t, store, p1, p2)
 	m2 := startMRFC(t, store, p2, p1)
@@ -537,7 +542,7 @@ func TestConferenceAcrossInstances(t *testing.T) {
 
 func TestRefusals(t *testing.T) {
 	media := startMRFP(t)
-	m := startMRFC(t, mrfc.NewMemoryStore(), mrfc.Processor{Name: "mrfp1", Control: media.client})
+	m := startMRFC(t, mrfc.NewMemoryStore(), media.processor("mrfp1"))
 	as := newUA(t, "mmtel", nil)
 	pcmuOffer := offerFrom(t, netip.MustParseAddrPort("127.0.0.1:4000"), "sendrecv")
 	amrOnly, _ := sdp.AudioOffer("1", netip.MustParseAddrPort("127.0.0.1:4000"), sdp.VoLTECodecs()[:4])
@@ -573,7 +578,7 @@ func TestRefusals(t *testing.T) {
 // MRFC answers recvonly.
 func TestHoldInAConference(t *testing.T) {
 	media := startMRFP(t)
-	m := startMRFC(t, mrfc.NewMemoryStore(), mrfc.Processor{Name: "mrfp1", Control: media.client})
+	m := startMRFC(t, mrfc.NewMemoryStore(), media.processor("mrfp1"))
 	as := newUA(t, "mmtel", nil)
 	p := party(t)
 	out := invite(t, as, "sip:conf=hold@"+m.host, offerFrom(t, addrOf(p), "sendrecv"))

@@ -53,6 +53,13 @@ type MRFP interface {
 	AddTermination(ctx context.Context, id string, t agw.TerminationRequest) (agw.Termination, error)
 	Modify(ctx context.Context, id string, tid agw.TerminationID, change agw.TerminationRequest) error
 	SubtractTermination(ctx context.Context, id string, tid agw.TerminationID) (agw.Termination, bool, error)
+}
+
+// Announcements tells whether an MRFP holds a provisioned announcement,
+// and how long one play of it lasts, which the MRFC asks before it
+// accepts a request to play it (RFC 4240 3). It stands apart from MRFP,
+// whose operations change the media of a context. *agw.Client is one.
+type Announcements interface {
 	Announcement(ctx context.Context, name string) (agw.Announcement, bool, error)
 }
 
@@ -60,8 +67,9 @@ type MRFP interface {
 // remembers it, the same in every MRFC instance, such as the URL of its
 // control API.
 type Processor struct {
-	Name    string
-	Control MRFP
+	Name          string
+	Control       MRFP
+	Announcements Announcements
 }
 
 // Config is how the MRFC names itself.
@@ -105,6 +113,9 @@ func New(cfg Config, processors []Processor, store Store, locator ims.Locator, l
 	for _, p := range processors {
 		if _, dup := byName[p.Name]; dup {
 			return nil, fmt.Errorf("mrfc: MRFP %q is listed twice", p.Name)
+		}
+		if p.Control == nil || p.Announcements == nil {
+			return nil, fmt.Errorf("mrfc: MRFP %q needs its media operations and its announcements", p.Name)
 		}
 		byName[p.Name] = p.Control
 	}
