@@ -223,9 +223,9 @@ UE 1 sends **BYE** within the dialog (RFC 3261 15.1.1), along the route set. The
 
 ## Talk from your own machine
 
-The P-CSCF port 5060/udp and the relay's ports 40000 to 40039/udp are published on the host. A softphone on the host, such as Linphone, can register with the SIP Digest credentials of a test subscriber, with the P-CSCF at `127.0.0.1:5060` and the domain `ims.mnc001.mcc001.3gppnetwork.org`.
+The P-CSCF port 5060/udp and the relay's ports 40000 to 40039/udp are published on the host's loopback address, 127.0.0.1. A softphone on the host, such as Linphone, can register with the SIP Digest credentials of a test subscriber, with the P-CSCF at `127.0.0.1:5060` and the domain `ims.mnc001.mcc001.3gppnetwork.org`.
 
-The P-CSCF recognizes a UE that comes from the bridge gateway 172.28.0.1 and gives it the relay's address as `127.0.0.1`, where the ports are published (`host_access` in `deploy/compose/pcscf.yaml`). Latching takes care of the address that Docker's NAT gives the softphone.
+The P-CSCF recognizes a UE that comes from the bridge gateway 172.28.0.1 and gives it the relay's address as `127.0.0.1`, where the ports are published (`host_access` in `deploy/compose/pcscf.yaml`). Latching takes care of the address that Docker's NAT gives the softphone. A softphone on another machine would be told the same `127.0.0.1`, which is its own address, so the softphone runs on the host.
 
 A registration and a call over this path were checked with the project's own UE simulator built for Windows, not with a softphone: UE 2 in its container received every packet the host sent, through the published relay port.
 
@@ -236,14 +236,14 @@ A registration and a call over this path were checked with the project's own UE 
 1. Start UE 2 and UE 1 in two terminals. Each one publishes its API port on the host:
 
    ```sh
-   docker compose run --rm -p 8091:8090 ue2 serve \
+   docker compose run --rm -p 127.0.0.1:8091:8090 ue2 serve \
      --impi 001010000000002@ims.mnc001.mcc001.3gppnetwork.org \
      --impu sip:001010000000002@ims.mnc001.mcc001.3gppnetwork.org \
      --password test-password-2
    ```
 
    ```sh
-   docker compose run --rm -p 8090:8090 ue serve
+   docker compose run --rm -p 127.0.0.1:8090:8090 ue serve
    ```
 
 2. Have UE 2 ring until you answer, call it from UE 1, and look at UE 2:
