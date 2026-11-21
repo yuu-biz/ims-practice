@@ -409,8 +409,9 @@ func (raw *rawICSCF) validate(homeDomain string) (ICSCF, error) {
 	return c, nil
 }
 
-// TS 24.229 5.1.1.2.1 has the UE ask for 600 000 s. These defaults keep
-// expiry and re-registration short enough to watch.
+// TS 24.229 5.1.1.2.1 has the UE ask for 600 000 s. The operator decides
+// how long a registration may last (5.4.1.1); these are the values it
+// gets when it sets none.
 const (
 	defaultMinExpires = 60 * time.Second
 	defaultMaxExpires = 3600 * time.Second

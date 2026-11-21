@@ -178,7 +178,7 @@ go test ./internal/milenage -run TestConformanceTestSets -v   # all 20 sets of T
 
 The standard protects everything after the 401 with IPsec ESP: two pairs of security associations between the UE's and the P-CSCF's protected ports, with the keys derived from IK and CK (TS 33.203 7.1). This project agrees on the associations, keeps them in the P-CSCF's SA table with IK and CK, and uses the protected ports, but sets up no ESP. A message counts as protected when it comes to the protected server port from the address and port of a set of associations. The Security-Client says `ealg=null`, and nothing is encrypted or integrity protected on the wire.
 
-Captures are readable by default, so that a learner sees the SIP of a registered VoLTE UE in Wireshark as plainly as that of a softphone. ESP would also need NET_ADMIN in the UE and P-CSCF containers. The standard has no IMS AKA without protection: without IPsec it has only AKAv2-SHA-256 over TLS (TS 24.229 4.2B.1), so this is a simplification of its own. This implementation turns on neither ESP nor TLS.
+This project does not encrypt signalling by default, so that captures can be read: the SIP of a registered VoLTE UE shows in Wireshark as plainly as that of a softphone. ESP would also need NET_ADMIN in the UE and P-CSCF containers. The standard has no IMS AKA without protection: without IPsec it has only AKAv2-SHA-256 over TLS (TS 24.229 4.2B.1), so this is a simplification of its own. This implementation turns on neither ESP nor TLS.
 
 Without ESP, two things differ from a real network:
 

@@ -402,7 +402,7 @@ Each item has a `SIMPLIFIED:` comment in the code; `grep -rn "SIMPLIFIED:" inter
 | XCAP, TS 24.623 5.2.2 and 5.2.3.1, GSMA IR.92 2.2.2 | No GBA (TS 33.222, TS 24.109) and no authentication proxy. | GBA needs a BSF and Zh, too much to learn from here, and IR.92 only recommends it. |
 | XCAP, TS 24.623 5.2.1.2 and 5.2.3.3 | No subscription to document changes (xcap-diff, RFC 5875). | The UE reads the document again before each change instead. |
 | XCAP, TS 24.623 5.3.1.3 and 5.3.2.5 | No password check or change with POST, and no password control of a service; a service under password control cannot be changed. | IR.92 2.3.9 lets the network leave 5.3.2.5 out, and Digest already authenticates the user. |
-| XCAP, TS 24.623 5.2.3.1 and RFC 4825 8 | Ut is plain HTTP, without TLS. | So that a learner can read Ut in a capture, as SIP and Diameter. |
+| XCAP, TS 24.623 5.2.3.1 and RFC 4825 8 | Ut is plain HTTP, without TLS. | The project does not encrypt signalling by default, so that captures can be read, as for SIP and Diameter. |
 | simservs, TS 24.604 4.9.1.3, TS 24.611 4.9.1.4 | The conditions cp:sphere, cp:validity, ss:presence-status, ocp:external-list and ocp:other-identity are refused. | IR.92 2.3.8 and 2.3.9 do not ask for them, and there is no presence or list server. |
 | simservs, TS 24.623 5.2.3.4 and 6.2 e | No service capability fragments (the *-serv-cap elements). | A change is checked against the services and conditions that the server takes. |
 | simservs, TS 24.611 4.9.1.4 | The country of a number is its country code, so the NANP countries under 1 count as one; a number without a country code is in the user's country. | Number plans per country are out of scope. |
