@@ -4,14 +4,16 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/yuu-biz/ims-practice/internal/agw"
 	"github.com/yuu-biz/ims-practice/internal/h248"
 )
 
 // CommandRejected is the error for a reply that carries an Error
 // descriptor: the procedure Command Rejected of TS 29.334 5.17.3.11.
-// errors.Is matches it with ErrNoContext, ErrNoTermination,
+// errors.Is matches it with agw.ErrNoContext, agw.ErrNoTermination,
 // ErrInsufficientResources and ErrUnavailable where its code means one
-// of them.
+// of them, so that a caller of the Controller tells the errors apart as
+// it does for the HTTP client of the media node.
 type CommandRejected struct {
 	ErrorDescriptor h248.ErrorDescriptor
 }
@@ -29,9 +31,9 @@ func (e *CommandRejected) Is(target error) bool {
 	case 411:
 		// H.248.36 (03/2013) 5.6.1: the codes that tell that one side
 		// has no record of a context or termination.
-		return target == ErrNoContext
+		return target == agw.ErrNoContext
 	case 430, 435:
-		return target == ErrNoContext || target == ErrNoTermination
+		return target == agw.ErrNoContext || target == agw.ErrNoTermination
 	case 510:
 		return target == ErrInsufficientResources
 	case 505:

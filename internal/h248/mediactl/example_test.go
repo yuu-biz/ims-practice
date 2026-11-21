@@ -9,6 +9,7 @@ import (
 	"net/netip"
 	"time"
 
+	"github.com/yuu-biz/ims-practice/internal/agw"
 	"github.com/yuu-biz/ims-practice/internal/h248"
 	"github.com/yuu-biz/ims-practice/internal/h248/mediactl"
 	"github.com/yuu-biz/ims-practice/internal/sdp"
@@ -18,21 +19,21 @@ import (
 // asks of it.
 type exampleRelay struct{}
 
-func (exampleRelay) Reserve(ctx context.Context, media mediactl.Media) (mediactl.Reservation, error) {
-	fmt.Printf("relay: reserve a context for %s\n", media.Codecs[0].Rtpmap())
-	return mediactl.Reservation{ID: "c1", Local: map[mediactl.Side]netip.AddrPort{
-		mediactl.Access: netip.MustParseAddrPort("192.0.2.20:40000"),
-		mediactl.Core:   netip.MustParseAddrPort("192.0.2.20:40002"),
+func (exampleRelay) Add(ctx context.Context, terminations ...agw.TerminationRequest) (agw.Context, error) {
+	fmt.Printf("relay: add a context for %s\n", terminations[0].LocalMedia.Codecs[0].Rtpmap())
+	return agw.Context{ID: "c1", Terminations: map[agw.TerminationID]*agw.Termination{
+		agw.Access: {ID: agw.Access, Local: netip.MustParseAddrPort("192.0.2.20:40000")},
+		agw.Core:   {ID: agw.Core, Local: netip.MustParseAddrPort("192.0.2.20:40002")},
 	}}, nil
 }
 
-func (exampleRelay) Configure(ctx context.Context, id string, side mediactl.Side, remote mediactl.Media) error {
-	fmt.Printf("relay: %s of %s sends to %s\n", side, id, remote.Address)
+func (exampleRelay) Modify(ctx context.Context, id string, termination agw.TerminationID, change agw.TerminationRequest) error {
+	fmt.Printf("relay: %s of %s sends to %s\n", termination, id, change.Remote)
 	return nil
 }
 
-func (exampleRelay) Release(ctx context.Context, id string) error {
-	fmt.Printf("relay: release %s\n", id)
+func (exampleRelay) Subtract(ctx context.Context, id string) error {
+	fmt.Printf("relay: subtract %s\n", id)
 	return nil
 }
 
@@ -75,14 +76,15 @@ func Example() {
 	go gateway.Serve()
 	defer gateway.Close()
 
-	// The P-CSCF uses the Controller as a mediactl.Relay. Until the
-	// gateway has registered, there is no gateway to reserve on.
+	// The P-CSCF uses the Controller as its media relay, with the same
+	// operations as the HTTP client of the media node. Until the gateway
+	// has registered, there is no gateway to add a context on.
 	var relay mediactl.Relay = controller
 	ctx := context.Background()
-	pcmu := sdp.Codec{PayloadType: 0, Name: sdp.NamePCMU, ClockRate: 8000}
-	var r mediactl.Reservation
+	pcmu := agw.Media{Codecs: []sdp.Codec{{PayloadType: 0, Name: sdp.NamePCMU, ClockRate: 8000}}, Bandwidth: 80}
+	var c agw.Context
 	for {
-		r, err = relay.Reserve(ctx, mediactl.Media{Codecs: []sdp.Codec{pcmu}, Bandwidth: 80})
+		c, err = relay.Add(ctx, agw.TerminationRequest{ID: agw.Access, LocalMedia: pcmu}, agw.TerminationRequest{ID: agw.Core, LocalMedia: pcmu})
 		if !errors.Is(err, mediactl.ErrUnavailable) {
 			break
 		}
@@ -91,25 +93,25 @@ func Example() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	fmt.Printf("P-CSCF: context %s, access %s, core %s\n", r.ID, r.Local[mediactl.Access], r.Local[mediactl.Core])
+	fmt.Printf("P-CSCF: context %s, access %s, core %s\n", c.ID, c.Terminations[agw.Access].Local, c.Terminations[agw.Core].Local)
 
-	ue := mediactl.Media{Address: netip.MustParseAddrPort("192.0.2.30:49170"), Codecs: []sdp.Codec{pcmu}, Bandwidth: 80}
-	if err := relay.Configure(ctx, r.ID, mediactl.Access, ue); err != nil {
+	ue := agw.TerminationRequest{Remote: netip.MustParseAddrPort("192.0.2.30:49170"), RemoteMedia: pcmu}
+	if err := relay.Modify(ctx, c.ID, agw.Access, ue); err != nil {
 		log.Fatal(err)
 	}
-	network := mediactl.Media{Address: netip.MustParseAddrPort("203.0.113.40:50000"), Codecs: []sdp.Codec{pcmu}, Bandwidth: 80}
-	if err := relay.Configure(ctx, r.ID, mediactl.Core, network); err != nil {
+	network := agw.TerminationRequest{Remote: netip.MustParseAddrPort("203.0.113.40:50000"), RemoteMedia: pcmu}
+	if err := relay.Modify(ctx, c.ID, agw.Core, network); err != nil {
 		log.Fatal(err)
 	}
-	if err := relay.Release(ctx, r.ID); err != nil {
+	if err := relay.Subtract(ctx, c.ID); err != nil {
 		log.Fatal(err)
 	}
-	fmt.Println("P-CSCF: context released")
+	fmt.Println("P-CSCF: context subtracted")
 	// Output:
-	// relay: reserve a context for 0 PCMU/8000
+	// relay: add a context for 0 PCMU/8000
 	// P-CSCF: context 7@agw1.ims.example.net, access 192.0.2.20:40000, core 192.0.2.20:40002
 	// relay: access of c1 sends to 192.0.2.30:49170
 	// relay: core of c1 sends to 203.0.113.40:50000
-	// relay: release c1
-	// P-CSCF: context released
+	// relay: subtract c1
+	// P-CSCF: context subtracted
 }

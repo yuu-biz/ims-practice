@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/yuu-biz/ims-practice/internal/agw"
 	"github.com/yuu-biz/ims-practice/internal/h248"
 )
 
@@ -102,14 +103,14 @@ const terminationGroup = 1
 // A Gateway gives both terminations of a context the context ID as
 // their <id>: the field must be unique for each interface only, and a
 // learner can then tell from a termination ID which context it is in.
-func terminationID(group uint16, side Side, id h248.ContextID) h248.TerminationID {
+func terminationID(group uint16, side agw.TerminationID, id h248.ContextID) h248.TerminationID {
 	return h248.TerminationID(fmt.Sprintf("ip/%d/%s/%d", group, side, id))
 }
 
 // chooseTerminationID asks the gateway for a termination on side. TS
 // 29.334 5.6.1.1.1 (NOTE 4) has the controller always use CHOOSE in an
 // Add.
-func chooseTerminationID(side Side) h248.TerminationID {
+func chooseTerminationID(side agw.TerminationID) h248.TerminationID {
 	return h248.TerminationID(fmt.Sprintf("ip/%d/%s/$", terminationGroup, side))
 }
 
@@ -118,7 +119,7 @@ func chooseTerminationID(side Side) h248.TerminationID {
 type ipTermination struct {
 	group     uint16
 	groupText string
-	side      Side
+	side      agw.TerminationID
 	id        uint32
 	idText    string
 }
@@ -130,7 +131,7 @@ func parseTerminationID(t h248.TerminationID) (ipTermination, bool) {
 	if len(fields) != 4 || fields[0] != "ip" {
 		return ipTermination{}, false
 	}
-	p := ipTermination{groupText: fields[1], side: Side(fields[2]), idText: fields[3]}
+	p := ipTermination{groupText: fields[1], side: agw.TerminationID(fields[2]), idText: fields[3]}
 	if !isWildcard(p.groupText) {
 		g, err := strconv.ParseUint(p.groupText, 10, 16)
 		if err != nil {

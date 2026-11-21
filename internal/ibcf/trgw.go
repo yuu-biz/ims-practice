@@ -40,25 +40,24 @@ func (c MediaContext) local(s Side) netip.AddrPort {
 
 // TrGW is the transition gateway that the IBCF controls over Ix (TS
 // 29.165 3.2, TS 29.238 1). The operations carry the names of the H.248
-// commands that Ix uses, and each is one of the call related procedures
-// of TS 29.238 Table 5.17.2.1.1:
+// commands, on the types of internal/agw, and each is one of the call
+// related procedures of TS 29.238 Table 5.17.2.1.1 that the IBCF uses.
+// *agw.Client implements it, over the HTTP API of the media relay,
+// which then serves as the TrGW.
 //
-//   - Add is Reserve TrGW Connection Point, for a termination on each
-//     side of one new context;
-//   - Modify is Configure TrGW Connection Point: it tells the
-//     termination of one side where that side takes the media;
-//   - Subtract is Release TrGW Termination, for both terminations of
-//     the context.
-//
-// *agw.Client is one, over the control API of the media relay, which
-// then serves as the TrGW.
-//
-// SIMPLIFIED: TS 29.238. No implementation over H.248 (Ix) stands
-// behind this interface; the H.248 profiles in internal/h248/mediactl
-// (Iq, Mp) already show the protocol.
+// SIMPLIFIED: TS 29.238. This project has no H.248 profile of Ix. The
+// Controller of internal/h248/mediactl implements TrGW with the profile
+// of Iq, whose termination names the IBCF uses; the profiles of Iq and
+// Mp already show the protocol.
 type TrGW interface {
+	// Add is Reserve TrGW Connection Point, for a termination on each
+	// side of one new context.
 	Add(ctx context.Context, terminations ...agw.TerminationRequest) (agw.Context, error)
+	// Modify is Configure TrGW Connection Point: it tells the
+	// termination of one side where that side takes the media.
 	Modify(ctx context.Context, id string, termination agw.TerminationID, change agw.TerminationRequest) error
+	// Subtract is Release TrGW Termination, for both terminations of
+	// the context.
 	Subtract(ctx context.Context, id string) error
 }
 

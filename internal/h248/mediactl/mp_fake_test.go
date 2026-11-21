@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/yuu-biz/ims-practice/internal/agw"
 	"github.com/yuu-biz/ims-practice/internal/h248"
 )
 
@@ -32,84 +33,90 @@ type fakeProcessor struct {
 
 type fakeProcessorContext struct {
 	chosen int
-	terms  map[TerminationID]*fakeProcessorTermination
+	terms  map[agw.TerminationID]*fakeProcessorTermination
 }
 
 // fakeProcessorTermination is what the processor was asked to do with
 // a termination.
 type fakeProcessorTermination struct {
-	local   netip.AddrPort
-	mode    Mode
-	media   Media
-	remote  Media
-	signals *Signals
-	events  *Events
+	local       netip.AddrPort
+	mode        agw.Mode
+	media       agw.Media
+	remote      netip.AddrPort
+	remoteMedia agw.Media
+	signals     *agw.Signals
+	events      *agw.Events
 }
 
 func newFakeProcessor() *fakeProcessor {
 	return &fakeProcessor{contexts: map[string]*fakeProcessorContext{}}
 }
 
-func (p *fakeProcessor) check(t TerminationRequest, add bool) error {
+func (p *fakeProcessor) check(t agw.TerminationRequest, add bool) error {
 	if add && t.Mode == "" {
 		// The media node would take it as sendrecv.
 		return errors.New("fake processor: an Add without a mode")
 	}
 	if t.Signals != nil && t.Signals.Play != nil && t.Signals.Play.Announcement != "notice" && t.Signals.Play.Announcement != "welcome" {
-		return ErrUnknownAnnouncement
+		return agw.ErrUnknownAnnouncement
 	}
 	return nil
 }
 
-// open is a new termination of c. p.mu is held.
-func (p *fakeProcessor) open(c *fakeProcessorContext, t TerminationRequest) Termination {
-	c.chosen++
-	id := TerminationID(fmt.Sprintf("t%d", c.chosen))
+// open is a new termination of c, with the ID that t asks for or else
+// one that it chooses. p.mu is held.
+func (p *fakeProcessor) open(c *fakeProcessorContext, t agw.TerminationRequest) agw.Termination {
+	id := t.ID
+	if id == "" {
+		c.chosen++
+		id = agw.TerminationID(fmt.Sprintf("t%d", c.chosen))
+	}
 	p.opened++
 	local := netip.AddrPortFrom(netip.MustParseAddr("198.51.100.20"), uint16(42000+2*(p.opened-1)))
-	c.terms[id] = &fakeProcessorTermination{local: local, mode: t.Mode, media: t.Local, remote: t.Remote, signals: t.Signals, events: t.Events}
-	return Termination{ID: id, Local: local}
+	c.terms[id] = &fakeProcessorTermination{local: local, mode: t.Mode, media: t.LocalMedia, remote: t.Remote, remoteMedia: t.RemoteMedia, signals: t.Signals, events: t.Events}
+	return agw.Termination{ID: id, Mode: t.Mode, Local: local, Remote: t.Remote}
 }
 
-func (p *fakeProcessor) Add(ctx context.Context, terminations ...TerminationRequest) (Context, error) {
+func (p *fakeProcessor) Add(ctx context.Context, terminations ...agw.TerminationRequest) (agw.Context, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if p.fail != nil {
-		return Context{}, p.fail
+		return agw.Context{}, p.fail
 	}
 	for _, t := range terminations {
 		if err := p.check(t, true); err != nil {
-			return Context{}, err
+			return agw.Context{}, err
 		}
 	}
 	p.made++
 	id := fmt.Sprintf("c%d", p.made)
-	c := &fakeProcessorContext{terms: map[TerminationID]*fakeProcessorTermination{}}
-	out := Context{ID: id}
+	c := &fakeProcessorContext{terms: map[agw.TerminationID]*fakeProcessorTermination{}}
+	out := agw.Context{ID: id, Terminations: map[agw.TerminationID]*agw.Termination{}}
 	for _, t := range terminations {
-		out.Terminations = append(out.Terminations, p.open(c, t))
+		opened := p.open(c, t)
+		out.Terminations[opened.ID] = &opened
 	}
 	p.contexts[id] = c
 	return out, nil
 }
 
-func (p *fakeProcessor) AddTermination(ctx context.Context, contextID string, t TerminationRequest) (Termination, error) {
+func (p *fakeProcessor) AddTermination(ctx context.Context, contextID string, t agw.TerminationRequest) (agw.Termination, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if p.fail != nil {
-		return Termination{}, p.fail
+		return agw.Termination{}, p.fail
 	}
 	c, ok := p.contexts[contextID]
 	if !ok {
-		return Termination{}, ErrNoContext
+		return agw.Termination{}, agw.ErrNoContext
 	}
 	if err := p.check(t, true); err != nil {
-		return Termination{}, err
+		return agw.Termination{}, err
 	}
 	return p.open(c, t), nil
 }
 
-func (p *fakeProcessor) Modify(ctx context.Context, contextID string, id TerminationID, change TerminationRequest) error {
+func (p *fakeProcessor) Modify(ctx context.Context, contextID string, id agw.TerminationID, change agw.TerminationRequest) error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if p.fail != nil {
@@ -117,11 +124,11 @@ func (p *fakeProcessor) Modify(ctx context.Context, contextID string, id Termina
 	}
 	c, ok := p.contexts[contextID]
 	if !ok {
-		return ErrNoContext
+		return agw.ErrNoContext
 	}
 	t, ok := c.terms[id]
 	if !ok {
-		return ErrNoTermination
+		return agw.ErrNoTermination
 	}
 	if err := p.check(change, false); err != nil {
 		return err
@@ -129,8 +136,8 @@ func (p *fakeProcessor) Modify(ctx context.Context, contextID string, id Termina
 	if change.Mode != "" {
 		t.mode = change.Mode
 	}
-	if change.Remote.Address.IsValid() {
-		t.remote = change.Remote
+	if change.Remote.IsValid() {
+		t.remote, t.remoteMedia = change.Remote, change.RemoteMedia
 	}
 	if change.Signals != nil {
 		t.signals = change.Signals
@@ -141,8 +148,8 @@ func (p *fakeProcessor) Modify(ctx context.Context, contextID string, id Termina
 	return nil
 }
 
-// SubtractTermination reports made up statistics: 250 packets each way.
-func (p *fakeProcessor) SubtractTermination(ctx context.Context, contextID string, id TerminationID) (Statistics, error) {
+// SubtractTermination reports made up counts: 250 packets each way.
+func (p *fakeProcessor) SubtractTermination(ctx context.Context, contextID string, id agw.TerminationID) (Statistics, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if p.fail != nil {
@@ -150,10 +157,10 @@ func (p *fakeProcessor) SubtractTermination(ctx context.Context, contextID strin
 	}
 	c, ok := p.contexts[contextID]
 	if !ok {
-		return Statistics{}, ErrNoContext
+		return Statistics{}, agw.ErrNoContext
 	}
 	if _, ok := c.terms[id]; !ok {
-		return Statistics{}, ErrNoTermination
+		return Statistics{}, agw.ErrNoTermination
 	}
 	delete(c.terms, id)
 	if len(c.terms) == 0 {
@@ -163,7 +170,7 @@ func (p *fakeProcessor) SubtractTermination(ctx context.Context, contextID strin
 }
 
 // termination returns what the processor holds for a termination.
-func (p *fakeProcessor) termination(contextID string, id TerminationID) (fakeProcessorTermination, bool) {
+func (p *fakeProcessor) termination(contextID string, id agw.TerminationID) (fakeProcessorTermination, bool) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	c, ok := p.contexts[contextID]
@@ -178,7 +185,7 @@ func (p *fakeProcessor) termination(contextID string, id TerminationID) (fakePro
 }
 
 // only returns the one context of the processor, and its terminations.
-func (p *fakeProcessor) only(t *testing.T) (string, map[TerminationID]fakeProcessorTermination) {
+func (p *fakeProcessor) only(t *testing.T) (string, map[agw.TerminationID]fakeProcessorTermination) {
 	t.Helper()
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -186,7 +193,7 @@ func (p *fakeProcessor) only(t *testing.T) (string, map[TerminationID]fakeProces
 		t.Fatalf("the processor has %d contexts, want 1", len(p.contexts))
 	}
 	for id, c := range p.contexts {
-		terms := map[TerminationID]fakeProcessorTermination{}
+		terms := map[agw.TerminationID]fakeProcessorTermination{}
 		for tid, term := range c.terms {
 			terms[tid] = *term
 		}

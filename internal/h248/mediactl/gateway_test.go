@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/yuu-biz/ims-practice/internal/agw"
 	"github.com/yuu-biz/ims-practice/internal/h248"
 )
 
@@ -29,10 +30,17 @@ func errorCode(reply h248.TransactionReply) int {
 	return 0
 }
 
-// reserveAction is the action of Controller.Reserve, changed by modify.
+// reserveAction is the action of the Controller's Add for an access
+// and a core termination, changed by modify.
 func reserveAction(c *Controller, modify func(adds []h248.CommandRequest) []h248.CommandRequest) h248.ActionRequest {
-	local := controllerSDP(Media{Codecs: nil})
-	adds := []h248.CommandRequest{c.reserveAdd(Access, local), c.reserveAdd(Core, local)}
+	var adds []h248.CommandRequest
+	for _, side := range []agw.TerminationID{agw.Access, agw.Core} {
+		add, err := c.iqCommand(h248.Add, chooseTerminationID(side), agw.TerminationRequest{ID: side})
+		if err != nil {
+			panic(err)
+		}
+		adds = append(adds, add)
+	}
 	return h248.ActionRequest{ContextID: h248.ContextChoose, Commands: modify(adds)}
 }
 
@@ -109,18 +117,18 @@ func TestGatewayRefusesWhatItDoesNotSupport(t *testing.T) {
 			return adds
 		}), 515},
 		{"an unknown context", modifyAction(999, "ip/1/access/999", remoteSDP), 411},
-		{"a termination of another context", modifyAction(reserved, terminationID(1, Access, other), remoteSDP), 435},
+		{"a termination of another context", modifyAction(reserved, terminationID(1, agw.Access, other), remoteSDP), 435},
 		{"an unknown termination", modifyAction(reserved, "ip/1/wlan/1", remoteSDP), 430},
-		{"a Remote without an address", modifyAction(reserved, terminationID(1, Core, reserved), "v=0\nc=IN IP4 $\nm=audio $ RTP/AVP 0\n"), 441},
-		{"a Remote that is not RTP/AVP", modifyAction(reserved, terminationID(1, Core, reserved), "v=0\nc=IN IP4 192.0.2.30\nm=audio 49170 RTP/SAVP 0\n"), 449},
+		{"a Remote without an address", modifyAction(reserved, terminationID(1, agw.Core, reserved), "v=0\nc=IN IP4 $\nm=audio $ RTP/AVP 0\n"), 441},
+		{"a Remote that is not RTP/AVP", modifyAction(reserved, terminationID(1, agw.Core, reserved), "v=0\nc=IN IP4 192.0.2.30\nm=audio 49170 RTP/SAVP 0\n"), 449},
 		{"a third termination", h248.ActionRequest{ContextID: reserved, Commands: []h248.CommandRequest{{
-			Command: h248.Add, TerminationID: chooseTerminationID(Access),
+			Command: h248.Add, TerminationID: chooseTerminationID(agw.Access),
 		}}}, 434},
 		{"Subtract of one termination", h248.ActionRequest{ContextID: reserved, Commands: []h248.CommandRequest{{
-			Command: h248.Subtract, TerminationID: terminationID(1, Access, reserved),
+			Command: h248.Subtract, TerminationID: terminationID(1, agw.Access, reserved),
 		}}}, 501},
 		{"an ephemeral termination in the NULL context", h248.ActionRequest{ContextID: h248.ContextNull, Commands: []h248.CommandRequest{{
-			Command: h248.AuditValue, TerminationID: terminationID(1, Access, reserved), Audit: &h248.AuditDescriptor{},
+			Command: h248.AuditValue, TerminationID: terminationID(1, agw.Access, reserved), Audit: &h248.AuditDescriptor{},
 		}}}, 430},
 	}
 	for _, tt := range tests {
@@ -168,25 +176,25 @@ func TestRelayErrors(t *testing.T) {
 	b := newTestbed(t, ControllerConfig{})
 	b.waitRegistered(t)
 	ctx := context.Background()
-	b.relay.setFail(ErrInsufficientResources)
-	_, err := b.controller.Reserve(ctx, Media{})
+	b.relay.setFail(agw.ErrNoPort)
+	_, err := reserve(ctx, b.controller, agw.Media{})
 	var rejected *CommandRejected
 	if !errors.Is(err, ErrInsufficientResources) || !errors.As(err, &rejected) || rejected.ErrorDescriptor.ErrorCode != 510 {
-		t.Errorf("Reserve: %v", err)
+		t.Errorf("Add: %v", err)
 	}
 	b.relay.setFail(errors.New("the relay broke"))
-	if _, err := b.controller.Reserve(ctx, Media{}); !errors.As(err, &rejected) || rejected.ErrorDescriptor.ErrorCode != 500 {
-		t.Errorf("Reserve: %v", err)
+	if _, err := reserve(ctx, b.controller, agw.Media{}); !errors.As(err, &rejected) || rejected.ErrorDescriptor.ErrorCode != 500 {
+		t.Errorf("Add: %v", err)
 	}
 	b.relay.setFail(nil)
-	if err := b.controller.Configure(ctx, "4711@agw1.ims.example.net", Access, Media{Address: mustAddrPort("192.0.2.30:49170")}); !errors.Is(err, ErrNoContext) {
-		t.Errorf("Configure of an unknown context: %v", err)
+	if err := b.controller.Modify(ctx, "4711@agw1.ims.example.net", agw.Access, agw.TerminationRequest{Remote: mustAddrPort("192.0.2.30:49170")}); !errors.Is(err, agw.ErrNoContext) {
+		t.Errorf("Modify of an unknown context: %v", err)
 	}
-	if err := b.controller.Configure(ctx, "4711@agw9.ims.example.net", Access, Media{Address: mustAddrPort("192.0.2.30:49170")}); !errors.Is(err, ErrUnavailable) {
-		t.Errorf("Configure on an unknown gateway: %v", err)
+	if err := b.controller.Modify(ctx, "4711@agw9.ims.example.net", agw.Access, agw.TerminationRequest{Remote: mustAddrPort("192.0.2.30:49170")}); !errors.Is(err, ErrUnavailable) {
+		t.Errorf("Modify on an unknown gateway: %v", err)
 	}
-	if err := b.controller.Configure(ctx, "not a context", Access, Media{Address: mustAddrPort("192.0.2.30:49170")}); err == nil {
-		t.Error("Configure of an ID that is not one")
+	if err := b.controller.Modify(ctx, "not a context", agw.Access, agw.TerminationRequest{Remote: mustAddrPort("192.0.2.30:49170")}); err == nil {
+		t.Error("Modify of an ID that is not one")
 	}
 }
 
@@ -225,7 +233,7 @@ func TestGatewayLeavesUndoneWhatComesAfterAReplyThatDoesNotFit(t *testing.T) {
 // termination.
 type slowRelay struct{ *fakeRelay }
 
-func (r slowRelay) Configure(ctx context.Context, id string, side Side, remote Media) error {
+func (r slowRelay) Modify(ctx context.Context, id string, termination agw.TerminationID, change agw.TerminationRequest) error {
 	<-ctx.Done()
 	return ctx.Err()
 }
@@ -241,8 +249,8 @@ func TestGatewayAnswers506ForTheCommandThatTookTooLong(t *testing.T) {
 	done := make(chan h248.TransactionReply, 1)
 	go func() {
 		done <- b.send(t, h248.ActionRequest{ContextID: reserved, Commands: []h248.CommandRequest{
-			modifyAction(reserved, terminationID(1, Access, reserved), remoteSDP).Commands[0],
-			modifyAction(reserved, terminationID(1, Core, reserved), remoteSDP).Commands[0],
+			modifyAction(reserved, terminationID(1, agw.Access, reserved), remoteSDP).Commands[0],
+			modifyAction(reserved, terminationID(1, agw.Core, reserved), remoteSDP).Commands[0],
 		}})
 	}()
 	var reply h248.TransactionReply
@@ -259,7 +267,7 @@ func TestGatewayAnswers506ForTheCommandThatTookTooLong(t *testing.T) {
 	// Modify that took too long, and the Modify after it is not
 	// carried out.
 	commands := reply.Actions[0].Commands
-	if len(reply.Actions) != 1 || len(commands) != 1 || commands[0].TerminationID != terminationID(1, Access, reserved) ||
+	if len(reply.Actions) != 1 || len(commands) != 1 || commands[0].TerminationID != terminationID(1, agw.Access, reserved) ||
 		commands[0].Error == nil || commands[0].Error.ErrorCode != 506 {
 		t.Errorf("reply %+v, want error 506 for the first Modify only", reply)
 	}

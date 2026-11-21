@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/yuu-biz/ims-practice/internal/agw"
 	"github.com/yuu-biz/ims-practice/internal/h248"
 )
 
@@ -73,7 +74,7 @@ func readStream(m *h248.MediaDescriptor, add bool, localControl func(lc *h248.Lo
 		if e != nil {
 			return s, e
 		}
-		if remote.chooseAddress || remote.choosePort || !remote.media.Address.Addr().IsValid() {
+		if remote.chooseAddress || remote.choosePort || !remote.address.Addr().IsValid() {
 			// H.248.8 (03/2013) 4.2.19: the Remote descriptor lacks
 			// what the gateway needs to send.
 			return s, errorDescriptor(441, "the Remote descriptor needs an address and a port")
@@ -249,7 +250,7 @@ func checkSignals(s *h248.SignalsDescriptor) *h248.ErrorDescriptor {
 // setHeartbeat sets the event hangterm/thb of a termination as the
 // latest Events descriptor asks, replacing what was set before
 // (H.248.1 (05/2002) 7.1.9).
-func (g *Gateway) setHeartbeat(gc *gatewayContext, side Side, events terminationEvents) {
+func (g *Gateway) setHeartbeat(gc *gatewayContext, side agw.TerminationID, events terminationEvents) {
 	gc.mu.Lock()
 	defer gc.mu.Unlock()
 	if old := gc.heartbeat[side]; old != nil {
@@ -268,7 +269,7 @@ func (g *Gateway) setHeartbeat(gc *gatewayContext, side Side, events termination
 
 // restartHeartbeat starts timer X again: any message about the
 // termination resets it (H.248.36 (03/2013) 5.2.1.1.1).
-func (g *Gateway) restartHeartbeat(gc *gatewayContext, side Side) {
+func (g *Gateway) restartHeartbeat(gc *gatewayContext, side agw.TerminationID) {
 	gc.mu.Lock()
 	defer gc.mu.Unlock()
 	hb := gc.heartbeat[side]
@@ -282,7 +283,7 @@ func (g *Gateway) restartHeartbeat(gc *gatewayContext, side Side) {
 // sendHeartbeat is Termination Heartbeat Indication (TS 29.334
 // 5.17.2.6). The controller is to correct a mismatch it finds (H.248.36
 // (03/2013) 5.6.2), so the gateway only reports the answer.
-func (g *Gateway) sendHeartbeat(gc *gatewayContext, side Side) {
+func (g *Gateway) sendHeartbeat(gc *gatewayContext, side agw.TerminationID) {
 	gc.mu.Lock()
 	hb := gc.heartbeat[side]
 	gc.mu.Unlock()
@@ -307,7 +308,7 @@ func (g *Gateway) release(ctx context.Context, gc *gatewayContext) error {
 	gc.mu.Lock()
 	if gc.released {
 		gc.mu.Unlock()
-		return ErrNoContext
+		return agw.ErrNoContext
 	}
 	gc.released = true
 	for side, hb := range gc.heartbeat {
@@ -316,7 +317,7 @@ func (g *Gateway) release(ctx context.Context, gc *gatewayContext) error {
 	}
 	gc.mu.Unlock()
 	g.contexts.Delete(gc.id)
-	if err := g.relay.Release(ctx, gc.relayID); err != nil {
+	if err := g.relay.Subtract(ctx, gc.relayID); err != nil {
 		g.log.Warn("mediactl: the relay could not release a context", "context", gc.id.String(), "error", err)
 		return err
 	}

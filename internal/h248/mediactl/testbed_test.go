@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/yuu-biz/ims-practice/internal/agw"
 	"github.com/yuu-biz/ims-practice/internal/h248"
 )
 
@@ -37,19 +38,22 @@ type fakeRelay struct {
 	fail error
 }
 
+// fakeRelayContext is what the relay was asked of a context: media is
+// what each termination is to receive, local where it receives, and
+// remote the last request that told it where to send.
 type fakeRelayContext struct {
-	media  Media
-	local  map[Side]netip.AddrPort
-	remote map[Side]Media
+	media  map[agw.TerminationID]agw.Media
+	local  map[agw.TerminationID]netip.AddrPort
+	remote map[agw.TerminationID]agw.TerminationRequest
 }
 
 func newFakeRelay() *fakeRelay { return &fakeRelay{contexts: map[string]*fakeRelayContext{}} }
 
-func (r *fakeRelay) Reserve(ctx context.Context, media Media) (Reservation, error) {
+func (r *fakeRelay) Add(ctx context.Context, terminations ...agw.TerminationRequest) (agw.Context, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if r.fail != nil {
-		return Reservation{}, r.fail
+		return agw.Context{}, r.fail
 	}
 	r.next++
 	r.reserved++
@@ -57,15 +61,23 @@ func (r *fakeRelay) Reserve(ctx context.Context, media Media) (Reservation, erro
 	addr := netip.MustParseAddr("198.51.100.10")
 	port := uint16(40000 + 4*(r.next-1))
 	c := &fakeRelayContext{
-		media:  media,
-		local:  map[Side]netip.AddrPort{Access: netip.AddrPortFrom(addr, port), Core: netip.AddrPortFrom(addr, port+2)},
-		remote: map[Side]Media{},
+		media:  map[agw.TerminationID]agw.Media{},
+		local:  map[agw.TerminationID]netip.AddrPort{agw.Access: netip.AddrPortFrom(addr, port), agw.Core: netip.AddrPortFrom(addr, port+2)},
+		remote: map[agw.TerminationID]agw.TerminationRequest{},
+	}
+	out := agw.Context{ID: id, Terminations: map[agw.TerminationID]*agw.Termination{}}
+	for _, t := range terminations {
+		c.media[t.ID] = t.LocalMedia
+		if t.Remote.IsValid() {
+			c.remote[t.ID] = t
+		}
+		out.Terminations[t.ID] = &agw.Termination{ID: t.ID, Mode: t.Mode, Local: c.local[t.ID], Remote: t.Remote}
 	}
 	r.contexts[id] = c
-	return Reservation{ID: id, Local: c.local}, nil
+	return out, nil
 }
 
-func (r *fakeRelay) Configure(ctx context.Context, id string, side Side, remote Media) error {
+func (r *fakeRelay) Modify(ctx context.Context, id string, termination agw.TerminationID, change agw.TerminationRequest) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if r.fail != nil {
@@ -73,24 +85,30 @@ func (r *fakeRelay) Configure(ctx context.Context, id string, side Side, remote 
 	}
 	c, ok := r.contexts[id]
 	if !ok {
-		return ErrNoContext
+		return agw.ErrNoContext
 	}
-	c.remote[side] = remote
+	c.remote[termination] = change
 	return nil
 }
 
-func (r *fakeRelay) Release(ctx context.Context, id string) error {
+func (r *fakeRelay) Subtract(ctx context.Context, id string) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if r.fail != nil {
 		return r.fail
 	}
 	if _, ok := r.contexts[id]; !ok {
-		return ErrNoContext
+		return agw.ErrNoContext
 	}
 	delete(r.contexts, id)
 	r.released++
 	return nil
+}
+
+// reserve asks relay for a context as the P-CSCF does: an access and a
+// core termination, each to receive media.
+func reserve(ctx context.Context, relay Relay, media agw.Media) (agw.Context, error) {
+	return relay.Add(ctx, agw.TerminationRequest{ID: agw.Access, LocalMedia: media}, agw.TerminationRequest{ID: agw.Core, LocalMedia: media})
 }
 
 func (r *fakeRelay) context(id string) (fakeRelayContext, bool) {

@@ -4,12 +4,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"net/netip"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/yuu-biz/ims-practice/internal/agw"
 	"github.com/yuu-biz/ims-practice/internal/h248"
 )
 
@@ -32,7 +32,7 @@ type mpContext struct {
 // mpTermination is a termination of an mpContext.
 type mpTermination struct {
 	id          h248.TerminationID
-	processorID TerminationID
+	processorID agw.TerminationID
 	events      mpEvents
 	heartbeat   *heartbeat
 	// playing is the signal that plays, or empty. notifyOnTimeOut and
@@ -58,7 +58,7 @@ type mpEvents struct {
 // announcement to play, or, with a nil play, to stop what plays.
 type mpSignal struct {
 	name              h248.PkgdName
-	play              *Play
+	play              *agw.Play
 	notifyOnTimeOut   bool
 	notifyOnInterrupt bool
 }
@@ -66,7 +66,7 @@ type mpSignal struct {
 // mpCommand is an Add or a Modify of Mp, read and checked.
 type mpCommand struct {
 	request h248.CommandRequest
-	change  TerminationRequest
+	change  agw.TerminationRequest
 	stream  stream
 	// events and signal are nil when the command has no Events or
 	// Signals descriptor.
@@ -125,8 +125,8 @@ func (g *Gateway) mpCreate(t *transaction, a h248.ActionRequest) (h248.ActionRep
 		return refuse(a.Commands[0], errorDescriptor(506, ""))
 	}
 	var adds []mpCommand
-	var requests []TerminationRequest
-	for _, c := range a.Commands {
+	var requests []agw.TerminationRequest
+	for i, c := range a.Commands {
 		if c.Command != h248.Add {
 			return refuse(c, errorDescriptor(501, fmt.Sprintf("%s in a context to be created", c.Command)))
 		}
@@ -134,12 +134,15 @@ func (g *Gateway) mpCreate(t *transaction, a h248.ActionRequest) (h248.ActionRep
 		if e != nil {
 			return refuse(c, e)
 		}
+		add.change.ID = processorTerminationID(i + 1)
 		adds = append(adds, add)
 		requests = append(requests, add.change)
 	}
 	pc, err := g.processor.Add(ctx, requests...)
-	if err == nil && len(pc.Terminations) != len(adds) {
-		err = fmt.Errorf("the processor made %d terminations for %d Adds", len(pc.Terminations), len(adds))
+	for _, r := range requests {
+		if err == nil && pc.Terminations[r.ID] == nil {
+			err = fmt.Errorf("the processor made no termination %s", r.ID)
+		}
 	}
 	if err != nil {
 		g.log.Warn("mediactl: the processor could not make a context", "error", err)
@@ -156,8 +159,8 @@ func (g *Gateway) mpCreate(t *transaction, a h248.ActionRequest) (h248.ActionRep
 	g.byProcessorContext.Store(gc.processorID, gc)
 	g.log.Info("mediactl: context created", "context", gc.id.String(), "processor_context", gc.processorID)
 	reply := h248.ActionReply{ContextID: gc.id}
-	for i, add := range adds {
-		reply.Commands = append(reply.Commands, g.addedTermination(gc, add, pc.Terminations[i]))
+	for _, add := range adds {
+		reply.Commands = append(reply.Commands, g.addedTermination(gc, add, *pc.Terminations[add.change.ID]))
 	}
 	if i := t.overflow(reply); i >= 0 {
 		// H.248.8 (03/2013) 4.2.66 and H.248.1 (05/2002) clause 8, as
@@ -209,6 +212,7 @@ func (g *Gateway) mpAddTermination(ctx context.Context, gc *mpContext, c h248.Co
 	if e != nil {
 		return h248.CommandReply{Command: c.Command, TerminationID: c.TerminationID, Error: e}
 	}
+	add.change.ID = processorTerminationID(gc.numbered + 1)
 	t, err := g.processor.AddTermination(ctx, gc.processorID, add.change)
 	if err != nil {
 		g.log.Warn("mediactl: the processor could not add a termination", "context", gc.id.String(), "error", err)
@@ -217,10 +221,17 @@ func (g *Gateway) mpAddTermination(ctx context.Context, gc *mpContext, c h248.Co
 	return g.addedTermination(gc, add, t)
 }
 
+// processorTerminationID is the ID that the Gateway asks its Processor
+// to give the termination ip/<context>/<n>, so that it finds each
+// termination in what Add returns.
+func processorTerminationID(n int) agw.TerminationID {
+	return agw.TerminationID("t" + strconv.Itoa(n))
+}
+
 // addedTermination records a termination that the Processor has added,
 // and is the reply to its Add: the termination ID, and the Local
 // descriptor with the address the Processor chose. gc.mu is held.
-func (g *Gateway) addedTermination(gc *mpContext, add mpCommand, pt Termination) h248.CommandReply {
+func (g *Gateway) addedTermination(gc *mpContext, add mpCommand, pt agw.Termination) h248.CommandReply {
 	gc.numbered++
 	t := &mpTermination{id: mpTerminationID(gc.id, gc.numbered), processorID: pt.ID}
 	gc.terms[t.id] = t
@@ -315,7 +326,7 @@ func (g *Gateway) mpSubtract(ctx context.Context, gc *mpContext, c h248.CommandR
 		return h248.CommandReply{Command: c.Command, TerminationID: c.TerminationID, Error: e}
 	}
 	stats, err := g.processor.SubtractTermination(ctx, gc.processorID, t.processorID)
-	if err != nil && !errors.Is(err, ErrNoTermination) {
+	if err != nil && !errors.Is(err, agw.ErrNoTermination) {
 		g.log.Warn("mediactl: the processor could not subtract a termination", "context", gc.id.String(), "termination", string(t.id), "error", err)
 		return failed(c, processorErrorCode(err), "")
 	}
@@ -345,13 +356,13 @@ func (g *Gateway) mpSubtract(ctx context.Context, gc *mpContext, c h248.CommandR
 // Processor.
 func processorErrorCode(err error) int {
 	switch {
-	case errors.Is(err, ErrNoContext):
+	case errors.Is(err, agw.ErrNoContext):
 		return 411
-	case errors.Is(err, ErrNoTermination):
+	case errors.Is(err, agw.ErrNoTermination):
 		return 430
-	case errors.Is(err, ErrInsufficientResources):
+	case errors.Is(err, agw.ErrNoPort):
 		return 510
-	case errors.Is(err, ErrUnknownAnnouncement):
+	case errors.Is(err, agw.ErrUnknownAnnouncement):
 		return 449
 	}
 	return 500
@@ -383,10 +394,9 @@ func (g *Gateway) checkMpCommand(c h248.CommandRequest, add bool) (mpCommand, *h
 		s.mode = h248.Inactive
 	}
 	m.change.Mode, _ = modeOf(s.mode)
-	m.change.Local = s.local.media
-	m.change.Local.Address = netip.AddrPort{}
+	m.change.LocalMedia = s.local.media
 	if s.remote != nil {
-		m.change.Remote = s.remote.media
+		m.change.Remote, m.change.RemoteMedia = s.remote.address, s.remote.media
 	}
 	if c.Events != nil {
 		events, e := g.checkMpEvents(c.Events)
@@ -394,9 +404,9 @@ func (g *Gateway) checkMpCommand(c h248.CommandRequest, add bool) (mpCommand, *h
 			return m, e
 		}
 		m.events = &events
-		m.change.Events = &Events{RequestID: events.requestID}
+		m.change.Events = &agw.Events{RequestID: events.requestID}
 		if events.signalCompleted {
-			m.change.Events.Detect = []EventName{SignalCompleted}
+			m.change.Events.Detect = []agw.EventName{agw.SignalCompleted}
 		}
 	}
 	if c.Signals != nil {
@@ -405,7 +415,7 @@ func (g *Gateway) checkMpCommand(c h248.CommandRequest, add bool) (mpCommand, *h
 			return m, e
 		}
 		m.signal = &signal
-		m.change.Signals = &Signals{Play: signal.play}
+		m.change.Signals = &agw.Signals{Play: signal.play}
 	}
 	return m, nil
 }
@@ -526,8 +536,8 @@ func containsReason(reasons []h248.NotificationReason, r h248.NotificationReason
 // plays once, with no limit. The variant av is refused, since no
 // variants are provisioned, and the direction must be external: the
 // media node plays to the remote party of the termination only.
-func readPlay(name h248.PkgdName, sig h248.Signal) (Play, *h248.ErrorDescriptor) {
-	var p Play
+func readPlay(name h248.PkgdName, sig h248.Signal) (agw.Play, *h248.ErrorDescriptor) {
+	var p agw.Play
 	repeatParam := paramNumberOfCycles
 	if name == signalAASPlay {
 		repeatParam = paramIterations
@@ -553,14 +563,14 @@ func readPlay(name h248.PkgdName, sig h248.Signal) (Play, *h248.ErrorDescriptor)
 			}
 			p.Repeat = int(plays)
 			if plays == 0 {
-				p.Repeat = RepeatForever
+				p.Repeat = agw.RepeatForever
 			}
 		case n == paramInterval && name == signalAASPlay:
 			steps, err := strconv.ParseUint(v, 10, 31)
 			if err != nil {
 				return p, errorDescriptor(449, parm.Name+" "+v)
 			}
-			p.Delay = time.Duration(steps) * 10 * time.Millisecond
+			p.DelayMS = int(steps) * 10
 		case n == paramDirection:
 			if !strings.EqualFold(v, directionExternal) {
 				return p, errorDescriptor(449, parm.Name+" "+v)
@@ -579,11 +589,11 @@ func readPlay(name h248.PkgdName, sig h248.Signal) (Play, *h248.ErrorDescriptor)
 	case sig.SigType == h248.OnOff:
 		// The signal lasts until it is turned off (H.248.1 (05/2002)
 		// 7.1.11), whatever its cycles and duration.
-		p.Repeat, p.Duration = RepeatForever, 0
+		p.Repeat, p.DurationMS = agw.RepeatForever, 0
 	case sig.Duration != nil && (name == signalAnnouncementPlay || sig.SigType == h248.TimeOut):
 		// aasb/play is Brief, which takes no duration, unless its type
 		// is set to TimeOut (H.248.9 (12/2009) 8.5).
-		p.Duration = time.Duration(*sig.Duration) * 10 * time.Millisecond
+		p.DurationMS = int(*sig.Duration) * 10
 	}
 	return p, nil
 }
@@ -607,12 +617,12 @@ func readPlay(name h248.PkgdName, sig h248.Signal) (Play, *h248.ErrorDescriptor)
 // this project stops an announcement only by subtracting its
 // termination, so the gateway reports TO, and EV for a signal that
 // the heartbeat stopped (see sendMpHeartbeat).
-func (g *Gateway) SignalCompleted(contextID string, id TerminationID) {
+func (g *Gateway) SignalCompleted(contextID string, id agw.TerminationID) {
 	detected := g.clock.Now()
 	go g.signalCompleted(contextID, id, detected)
 }
 
-func (g *Gateway) signalCompleted(contextID string, id TerminationID, detected time.Time) {
+func (g *Gateway) signalCompleted(contextID string, id agw.TerminationID, detected time.Time) {
 	v, ok := g.byProcessorContext.Load(contextID)
 	if !ok {
 		return
@@ -710,7 +720,7 @@ func (g *Gateway) sendMpHeartbeat(gc *mpContext, t *mpTermination) {
 	var interrupted h248.PkgdName
 	report := false
 	if hb != nil && live && t.playing != "" && !t.events.heartbeatKeepActive {
-		if err := g.processor.Modify(g.ctx, gc.processorID, t.processorID, TerminationRequest{Signals: &Signals{}}); err != nil {
+		if err := g.processor.Modify(g.ctx, gc.processorID, t.processorID, agw.TerminationRequest{Signals: &agw.Signals{}}); err != nil {
 			g.log.Warn("mediactl: the processor could not stop a signal", "context", gc.id.String(), "termination", string(t.id), "error", err)
 		} else {
 			interrupted, report = t.playing, t.notifyOnInterrupt && t.events.signalCompleted

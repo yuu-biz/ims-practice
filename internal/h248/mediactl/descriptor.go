@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/yuu-biz/ims-practice/internal/agw"
 	"github.com/yuu-biz/ims-practice/internal/h248"
 	"github.com/yuu-biz/ims-practice/internal/sdp"
 )
@@ -31,7 +32,10 @@ const (
 // sessionDescription is one session description of a Local or Remote
 // descriptor, as far as this package reads and writes it.
 type sessionDescription struct {
-	media Media
+	// address is the RTP address and port of the stream (c= and the
+	// port of m=), and media the formats and the bandwidth.
+	address netip.AddrPort
+	media   agw.Media
 	// chooseAddress and choosePort tell that the address or the port
 	// was CHOOSE.
 	chooseAddress bool
@@ -46,12 +50,14 @@ type sessionDescription struct {
 
 // controllerSDP is the session description that a controller sends:
 // the lines that TS 29.334 5.15 requires, without o=, s= and t=, and
-// CHOOSE for the address and port that media leaves to the gateway.
-func controllerSDP(media Media) string {
+// CHOOSE for the address and port when address is the zero value, for
+// the gateway to choose them.
+func controllerSDP(address netip.AddrPort, media agw.Media) string {
 	return writeSDP(sessionDescription{
+		address:       address,
 		media:         media,
-		chooseAddress: !media.Address.IsValid(),
-		choosePort:    !media.Address.IsValid(),
+		chooseAddress: !address.IsValid(),
+		choosePort:    !address.IsValid(),
 		mediaType:     mediaAudio,
 		proto:         protoRTPAVP,
 	})
@@ -72,8 +78,8 @@ func writeSDP(d sessionDescription) string {
 	}
 	addrType, addr := "IP4", choose
 	if !d.chooseAddress {
-		addr = d.media.Address.Addr().String()
-		if d.media.Address.Addr().Is6() {
+		addr = d.address.Addr().String()
+		if d.address.Addr().Is6() {
 			addrType = "IP6"
 		}
 	}
@@ -83,7 +89,7 @@ func writeSDP(d sessionDescription) string {
 	}
 	port := choose
 	if !d.choosePort {
-		port = strconv.Itoa(int(d.media.Address.Port()))
+		port = strconv.Itoa(int(d.address.Port()))
 	}
 	formats := noFormat
 	if len(d.media.Codecs) > 0 {
@@ -113,7 +119,7 @@ func writeSDP(d sessionDescription) string {
 // 29.334 5.15 (Table 5.15.1) has the gateway return the o=, s= and t=
 // lines it was sent, and fill in those it was not.
 func gatewayLocal(local sessionDescription, address netip.AddrPort, id h248.ContextID) string {
-	local.media.Address = address
+	local.address = address
 	local.chooseAddress, local.choosePort = false, false
 	if local.origin == "" {
 		addrType := "IP4"
@@ -214,7 +220,7 @@ func (d *sessionDescription) parseConnection(value string) error {
 	if err != nil {
 		return fmt.Errorf("c=%s: %w", value, err)
 	}
-	d.media.Address = netip.AddrPortFrom(addr, d.media.Address.Port())
+	d.address = netip.AddrPortFrom(addr, d.address.Port())
 	return nil
 }
 
@@ -231,7 +237,7 @@ func (d *sessionDescription) parseMedia(value string, media *sdp.Media) error {
 		if err != nil {
 			return fmt.Errorf("m= port %q", f[1])
 		}
-		d.media.Address = netip.AddrPortFrom(d.media.Address.Addr(), uint16(port))
+		d.address = netip.AddrPortFrom(d.address.Addr(), uint16(port))
 	}
 	if len(f) == 4 && f[3] == noFormat {
 		return nil
