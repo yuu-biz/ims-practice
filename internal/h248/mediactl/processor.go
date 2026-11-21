@@ -46,6 +46,16 @@ type Processor interface {
 	SubtractTermination(ctx context.Context, contextID string, id TerminationID) (Statistics, error)
 }
 
+// Statistics is what a termination carried while it was in its
+// context, as the Subtract reply of Mp reports it: the statistics of
+// the rtp package (H.248.1 (05/2002) E.12.4), which count RTP only.
+type Statistics struct {
+	// PacketsSent and PacketsReceived count the RTP packets (rtp/ps,
+	// rtp/pr).
+	PacketsSent     uint64
+	PacketsReceived uint64
+}
+
 // TerminationID names a termination within its context. Controller
 // returns the H.248 termination ID; a processor behind a Gateway uses
 // IDs of its own, which the Gateway maps.

@@ -79,21 +79,18 @@ func (r *fakeRelay) Configure(ctx context.Context, id string, side Side, remote 
 	return nil
 }
 
-// Release reports made up statistics: 50 packets of 172 octets each
-// way.
-func (r *fakeRelay) Release(ctx context.Context, id string) (map[Side]Statistics, error) {
+func (r *fakeRelay) Release(ctx context.Context, id string) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if r.fail != nil {
-		return nil, r.fail
+		return r.fail
 	}
 	if _, ok := r.contexts[id]; !ok {
-		return nil, ErrNoContext
+		return ErrNoContext
 	}
 	delete(r.contexts, id)
 	r.released++
-	s := Statistics{PacketsSent: 50, PacketsReceived: 50, OctetsSent: 50 * 172, OctetsReceived: 50 * 172}
-	return map[Side]Statistics{Access: s, Core: s}, nil
+	return nil
 }
 
 func (r *fakeRelay) context(id string) (fakeRelayContext, bool) {

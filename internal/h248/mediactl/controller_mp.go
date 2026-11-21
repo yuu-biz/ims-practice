@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/netip"
+	"strconv"
 	"strings"
 	"time"
 
@@ -131,6 +132,28 @@ func (c *Controller) SubtractTermination(ctx context.Context, contextID string, 
 	c.log.Info("mediactl: termination subtracted", "context", contextID, "termination", string(id),
 		"packets_received", stats.PacketsReceived, "packets_sent", stats.PacketsSent)
 	return stats, nil
+}
+
+// readStatistics reads the statistics that mpSubtract writes. Others
+// are left out.
+func readStatistics(d h248.StatisticsDescriptor) Statistics {
+	var s Statistics
+	for _, p := range d {
+		n, err := strconv.ParseFloat(p.StatValue.Text, 64)
+		if err != nil || n < 0 {
+			continue
+		}
+		// The statistics are of type double (H.248.1 (05/2002) E.12.4);
+		// these hold whole numbers.
+		v := uint64(n)
+		switch h248.PkgdName(strings.ToLower(string(p.StatName))) {
+		case statPacketsSent:
+			s.PacketsSent = v
+		case statPacketsReceived:
+			s.PacketsReceived = v
+		}
+	}
+	return s
 }
 
 // contextRequest sends one command on the context that a Context ID of

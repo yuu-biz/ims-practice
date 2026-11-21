@@ -119,14 +119,8 @@ func TestFullCall(t *testing.T) {
 		t.Errorf("core remote %+v", got)
 	}
 
-	b.clock.Advance(3 * time.Second)
-	stats, err := b.controller.Release(ctx, r.ID)
-	if err != nil {
+	if err := b.controller.Release(ctx, r.ID); err != nil {
 		t.Fatal(err)
-	}
-	want := Statistics{Duration: 3 * time.Second, PacketsSent: 50, PacketsReceived: 50, OctetsSent: 8600, OctetsReceived: 8600}
-	if stats[Access] != want || stats[Core] != want {
-		t.Errorf("statistics %+v, want %+v for each side", stats, want)
 	}
 	if _, released, open := b.relay.counts(); released != 1 || open != 0 {
 		t.Errorf("the relay released %d and has %d open", released, open)
@@ -146,7 +140,54 @@ func TestFullCall(t *testing.T) {
 	if !slices.Equal(got, wantMessages) {
 		t.Fatalf("messages:\n%s\nwant:\n%s", strings.Join(got, "\n"), strings.Join(wantMessages, "\n"))
 	}
-	if _, err := b.controller.Release(ctx, r.ID); !errorIs(err, ErrNoContext) {
+	if err := b.controller.Release(ctx, r.ID); !errorIs(err, ErrNoContext) {
 		t.Errorf("a second Release: %v", err)
+	}
+}
+
+// Iq reports no statistics on Subtract (TS 29.334 5.7.7, Table 5.7.7.2),
+// and the reply to a Subtract has no descriptors (Table 5.8.3.2): the
+// Subtract that Release sends has no Audit descriptor, and its reply
+// still names the two terminations and nothing else.
+func TestSubtractReplyCarriesNoStatistics(t *testing.T) {
+	b := newTestbed(t, ControllerConfig{})
+	b.waitRegistered(t)
+	before := len(b.net.datagrams())
+	ctx := context.Background()
+
+	r, err := b.controller.Reserve(ctx, Media{Codecs: []sdp.Codec{pcmu}, Bandwidth: 80})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := b.controller.Release(ctx, r.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	datagrams := b.net.datagrams()[before:]
+	subtract := firstRequest(t, datagrams, h248.Subtract)
+	if subtract.Actions[0].Commands[0].Audit != nil {
+		t.Fatalf("the Subtract asks for an audit: %+v", subtract.Actions[0].Commands[0].Audit)
+	}
+	reply := firstReply(t, datagrams, subtract.TransactionID)
+	var terminations []h248.TerminationID
+	for _, action := range reply.Actions {
+		for _, cmd := range action.Commands {
+			if cmd.Command != h248.Subtract {
+				t.Errorf("a %s in the reply to the Subtract", cmd.Command)
+			}
+			if cmd.Statistics != nil || cmd.Media != nil || cmd.Events != nil || cmd.ObservedEvents != nil || cmd.Error != nil {
+				t.Errorf("the reply for %s carries descriptors: %+v", cmd.TerminationID, cmd)
+			}
+			terminations = append(terminations, cmd.TerminationID)
+		}
+	}
+	if want := []h248.TerminationID{"ip/1/access/100", "ip/1/core/100"}; !slices.Equal(terminations, want) {
+		t.Errorf("the reply names %v, want %v", terminations, want)
+	}
+	// Whatever the parsed form says, no Statistics descriptor is on the wire.
+	for _, d := range datagrams {
+		if strings.Contains(string(d.payload), "Statistics") {
+			t.Errorf("a Statistics descriptor on the wire:\n%s", d.payload)
+		}
 	}
 }

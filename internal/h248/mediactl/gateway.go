@@ -86,9 +86,6 @@ type gatewayContext struct {
 	id      h248.ContextID
 	relayID string
 	group   uint16
-	// reserved is when the terminations went into the context; nt/dur
-	// counts from here.
-	reserved time.Time
 
 	mu        sync.Mutex
 	released  bool

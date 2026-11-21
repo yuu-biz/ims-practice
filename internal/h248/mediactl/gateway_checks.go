@@ -302,13 +302,12 @@ func (g *Gateway) sendHeartbeat(gc *gatewayContext, side Side) {
 	g.restartHeartbeat(gc, side)
 }
 
-// release releases the context in the relay and forgets it. nt/dur is
-// measured here, from the Add to the Subtract.
-func (g *Gateway) release(ctx context.Context, gc *gatewayContext) (map[Side]Statistics, error) {
+// release releases the context in the relay and forgets it.
+func (g *Gateway) release(ctx context.Context, gc *gatewayContext) error {
 	gc.mu.Lock()
 	if gc.released {
 		gc.mu.Unlock()
-		return nil, ErrNoContext
+		return ErrNoContext
 	}
 	gc.released = true
 	for side, hb := range gc.heartbeat {
@@ -317,34 +316,12 @@ func (g *Gateway) release(ctx context.Context, gc *gatewayContext) (map[Side]Sta
 	}
 	gc.mu.Unlock()
 	g.contexts.Delete(gc.id)
-	stats, err := g.relay.Release(ctx, gc.relayID)
-	if err != nil {
+	if err := g.relay.Release(ctx, gc.relayID); err != nil {
 		g.log.Warn("mediactl: the relay could not release a context", "context", gc.id.String(), "error", err)
-		return nil, err
+		return err
 	}
-	duration := g.clock.Now().Sub(gc.reserved)
-	out := map[Side]Statistics{}
-	for _, side := range []Side{Access, Core} {
-		s := stats[side]
-		s.Duration = duration
-		out[side] = s
-	}
-	g.log.Info("mediactl: context released", "context", gc.id.String(), "relay_context", gc.relayID,
-		"access_packets_received", out[Access].PacketsReceived, "core_packets_received", out[Core].PacketsReceived)
-	return out, nil
-}
-
-// statisticsDescriptor writes the statistics of a termination. nt/dur
-// is in milliseconds (H.248.1 (05/2002) E.11.4).
-func statisticsDescriptor(s Statistics) h248.StatisticsDescriptor {
-	value := func(n uint64) h248.Value { return h248.Value{Text: strconv.FormatUint(n, 10)} }
-	return h248.StatisticsDescriptor{
-		{StatName: statDuration, StatValue: value(uint64(s.Duration.Milliseconds()))},
-		{StatName: statOctetsSent, StatValue: value(s.OctetsSent)},
-		{StatName: statOctetsReceived, StatValue: value(s.OctetsReceived)},
-		{StatName: statPacketsSent, StatValue: value(s.PacketsSent)},
-		{StatName: statPacketsReceived, StatValue: value(s.PacketsReceived)},
-	}
+	g.log.Info("mediactl: context released", "context", gc.id.String(), "relay_context", gc.relayID)
+	return nil
 }
 
 // rootAction carries out the commands on ROOT, in the NULL context.

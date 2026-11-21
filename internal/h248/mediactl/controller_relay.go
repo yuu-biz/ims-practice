@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"net/netip"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/yuu-biz/ims-practice/internal/h248"
@@ -157,66 +156,27 @@ func (c *Controller) Configure(ctx context.Context, id string, side Side, remote
 }
 
 // Release carries out Release AGW Termination (TS 29.334 5.17.2.5) for
-// both terminations at once, with the wildcard "*". The Subtract has no
-// Audit descriptor, so the gateway reports the statistics of each
-// termination (H.248.1 (05/2002) 7.1.15, 7.2.3).
-func (c *Controller) Release(ctx context.Context, id string) (map[Side]Statistics, error) {
+// both terminations at once, with the wildcard "*". The reply carries
+// no statistics: Iq reports none on Subtract (TS 29.334 5.7.7, Table
+// 5.7.7.2).
+func (c *Controller) Release(ctx context.Context, id string) error {
 	if c.profile.mp() {
-		return nil, errNotIq
+		return errNotIq
 	}
 	a, contextID, err := c.lookup(id)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	reply, err := c.request(ctx, a, []h248.ActionRequest{{
 		ContextID: contextID,
 		Commands:  []h248.CommandRequest{{Command: h248.Subtract, TerminationID: h248.TerminationAll}},
 	}})
 	if err != nil {
-		return nil, err
+		return err
 	}
 	if err := rejection(reply); err != nil {
-		return nil, err
+		return err
 	}
-	stats := map[Side]Statistics{}
-	for _, action := range reply.Actions {
-		for _, cmd := range action.Commands {
-			t, ok := parseTerminationID(cmd.TerminationID)
-			if !ok {
-				return nil, fmt.Errorf("%w: termination %s", errMalformedReply, cmd.TerminationID)
-			}
-			stats[t.side] = readStatistics(cmd.Statistics)
-		}
-	}
-	c.log.Info("mediactl: context released", "context", id,
-		"access_packets_received", stats[Access].PacketsReceived, "core_packets_received", stats[Core].PacketsReceived)
-	return stats, nil
-}
-
-// readStatistics reads the statistics that statisticsDescriptor writes.
-// Others are left out.
-func readStatistics(d h248.StatisticsDescriptor) Statistics {
-	var s Statistics
-	for _, p := range d {
-		n, err := strconv.ParseFloat(p.StatValue.Text, 64)
-		if err != nil || n < 0 {
-			continue
-		}
-		// The statistics are of type double (H.248.1 (05/2002) E.11.4,
-		// E.12.4); these hold whole numbers.
-		v := uint64(n)
-		switch h248.PkgdName(strings.ToLower(string(p.StatName))) {
-		case statDuration:
-			s.Duration = time.Duration(v) * time.Millisecond
-		case statOctetsSent:
-			s.OctetsSent = v
-		case statOctetsReceived:
-			s.OctetsReceived = v
-		case statPacketsSent:
-			s.PacketsSent = v
-		case statPacketsReceived:
-			s.PacketsReceived = v
-		}
-	}
-	return s
+	c.log.Info("mediactl: context released", "context", id)
+	return nil
 }

@@ -57,7 +57,7 @@ func TestKeepAliveWaitsForIdleness(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if _, err := b.controller.Release(ctx, r.ID); err != nil {
+		if err := b.controller.Release(ctx, r.ID); err != nil {
 			t.Fatal(err)
 		}
 		b.clock.Advance(4 * time.Second)
@@ -122,7 +122,7 @@ func TestPendingRequestsFailWhenTheGatewayIsLost(t *testing.T) {
 	b.net.setLose(func(d datagram) bool { return true })
 	done := make(chan error, 1)
 	go func() {
-		_, err := b.controller.Release(ctx, r.ID)
+		err := b.controller.Release(ctx, r.ID)
 		done <- err
 	}()
 	b.until(t, "the Release to fail", 250*time.Millisecond, func() bool { return len(done) == 1 })
@@ -412,7 +412,7 @@ func TestTerminationHeartbeat(t *testing.T) {
 	if _, ok := b.relay.context("c1"); !ok {
 		t.Error("the context in use was released")
 	}
-	if _, err := b.controller.Release(ctx, lost.ID); !errors.Is(err, ErrNoContext) {
+	if err := b.controller.Release(ctx, lost.ID); !errors.Is(err, ErrNoContext) {
 		t.Errorf("Release of the released context: %v", err)
 	}
 }
@@ -440,7 +440,7 @@ func TestConcurrentContexts(t *testing.T) {
 					return
 				}
 			}
-			if _, err := b.controller.Release(ctx, r.ID); err != nil {
+			if err := b.controller.Release(ctx, r.ID); err != nil {
 				errs <- err
 			}
 		}()

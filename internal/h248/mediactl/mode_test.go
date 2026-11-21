@@ -69,7 +69,7 @@ func TestIqWritesTheModeOnEveryAddAndModify(t *testing.T) {
 	if err := b.controller.Configure(ctx, r.ID, Core, Media{Address: mustAddrPort("203.0.113.40:50000")}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := b.controller.Release(ctx, r.ID); err != nil {
+	if err := b.controller.Release(ctx, r.ID); err != nil {
 		t.Fatal(err)
 	}
 	modes := modeOnTheWire(t, b.net.datagrams()[before:])
