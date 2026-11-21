@@ -11,6 +11,7 @@ import (
 	"log/slog"
 	"net/netip"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -97,6 +98,49 @@ func (r Registration) DefaultIdentity() string { return r.PublicIdentities[0] }
 // (TS 24.229 5.1.1.5.5).
 var ErrForbidden = errors.New("registration refused with 403")
 
+// RegisterFailure is a final response to a REGISTER that ends the
+// registration attempt: neither a 2xx, nor the 401 and the 423 that the
+// UE answers with another REGISTER. A 403 is ErrForbidden as well.
+type RegisterFailure struct {
+	StatusCode int
+	Reason     string
+	// RetryAfter is the Retry-After of the response, zero without one.
+	// For that long the UE does not try again through the same P-CSCF
+	// (TS 24.229 5.1.1.2.1).
+	RetryAfter time.Duration
+}
+
+func (e *RegisterFailure) Error() string {
+	text := fmt.Sprintf("REGISTER answered %d %s", e.StatusCode, e.Reason)
+	if e.StatusCode == 403 {
+		text = ErrForbidden.Error()
+	}
+	if e.RetryAfter > 0 {
+		text += fmt.Sprintf(", Retry-After %d", int(e.RetryAfter/time.Second))
+	}
+	return text
+}
+
+func (e *RegisterFailure) Is(target error) bool {
+	return target == ErrForbidden && e.StatusCode == 403
+}
+
+// registerFailure is the RegisterFailure of resp. A Retry-After that
+// does not parse counts as none.
+func registerFailure(resp *sip.Message) *RegisterFailure {
+	f := &RegisterFailure{StatusCode: resp.StatusCode, Reason: resp.Reason}
+	// RFC 3261 20.33: delta-seconds, then an optional comment and
+	// parameters.
+	value, _, _ := strings.Cut(resp.Get("Retry-After"), ";")
+	value, _, _ = strings.Cut(value, "(")
+	if value = strings.TrimSpace(value); value != "" {
+		if n, err := sip.ParseDeltaSeconds(value); err == nil {
+			f.RetryAfter = time.Duration(n) * time.Second
+		}
+	}
+	return f
+}
+
 // UE is one simulated UE.
 type UE struct {
 	cfg         Config
@@ -163,13 +207,20 @@ func New(cfg Config, stack *sip.Stack, contact netip.AddrPort, log *slog.Logger)
 // that the S-CSCF finds too brief is raised to its Min-Expires once
 // (TS 24.229 5.1.1.2.1). After the first registration, the UE
 // subscribes to its registration state with SubscribeRegEvent (5.1.1.3).
+//
+// Register tries once. After a failure the UE holds no registration,
+// and the next Register is an initial registration (5.1.1.4.1);
+// RegistrationBackoff tells how long to wait before it.
 func (u *UE) Register(ctx context.Context) (Registration, error) {
 	reg, err := u.send(ctx, u.cfg.Expires)
 	var brief *intervalTooBrief
 	if errors.As(err, &brief) {
 		u.log.Info("interval too brief", "min_expires", int(brief.min/time.Second))
 		u.cfg.Expires = brief.min
-		return u.send(ctx, u.cfg.Expires)
+		reg, err = u.send(ctx, u.cfg.Expires)
+	}
+	if err != nil {
+		u.unbind()
 	}
 	return reg, err
 }
@@ -211,8 +262,6 @@ func (u *UE) send(ctx context.Context, expires time.Duration) (Registration, err
 		return Registration{}, err
 	}
 	switch {
-	case resp.StatusCode == 403:
-		return Registration{}, ErrForbidden
 	case resp.StatusCode == 423:
 		n, err := sip.ParseDeltaSeconds(resp.Get("Min-Expires"))
 		if err != nil {
@@ -220,7 +269,7 @@ func (u *UE) send(ctx context.Context, expires time.Duration) (Registration, err
 		}
 		return Registration{}, &intervalTooBrief{min: time.Duration(n) * time.Second}
 	case resp.StatusCode != 200:
-		return Registration{}, fmt.Errorf("REGISTER answered %d %s", resp.StatusCode, resp.Reason)
+		return Registration{}, registerFailure(resp)
 	}
 	if err := u.checkRspauth(resp); err != nil {
 		return Registration{}, err
