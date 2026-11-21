@@ -14,11 +14,8 @@ import (
 // threegIq/7: that name would claim every package that Iq makes
 // mandatory (TS 29.334 5.14.1), such as gm, tman, ds and rtcph, which
 // this gateway does not realize. The procedures are those of Iq for the
-// packages in Packages, with one difference: Subtract reports the
-// statistics of RTP, as H.248.1 (05/2002) 7.2.3 does by default, so
-// that a learner sees in the capture what the relay carried. Iq
-// reports no statistics on Subtract (TS 29.334 5.7.7, Table 5.7.7.2),
-// and Mp those of MSRP only (TS 29.333 5.7.6, Table 5.7.6.2).
+// packages in Packages. In particular, Subtract reports no statistics
+// (TS 29.334 5.7.7, Table 5.7.7.2).
 //
 // H.248.1 (05/2002) 14.4 sets out how a profile name is registered with
 // IANA. This one is not: it is for this learning network only.
@@ -40,16 +37,12 @@ const ProtocolVersion = 2
 //   - hangterm (H.248.36 (03/2013) 5): the event hangterm/thb,
 //     termination heartbeat.
 //   - ipnapt (H.248.37 (06/2008) 6): the signal ipnapt/latch.
-//   - nt and rtp (H.248.1 (05/2002) E.11 and E.12): the statistics of
-//     an RTP termination.
 var Packages = h248.PackagesDescriptor{
 	{PackageName: "g", PackageVersion: 1},
 	{PackageName: "root", PackageVersion: 2},
 	{PackageName: "it", PackageVersion: 1},
 	{PackageName: "hangterm", PackageVersion: 1},
 	{PackageName: "ipnapt", PackageVersion: 1},
-	{PackageName: "nt", PackageVersion: 1},
-	{PackageName: "rtp", PackageVersion: 1},
 }
 
 // profile is what tells apart the profiles that this package speaks:
@@ -73,9 +66,6 @@ const (
 	eventHeartbeat         h248.PkgdName = "hangterm/thb"
 	signalLatch            h248.PkgdName = "ipnapt/latch"
 
-	statDuration        h248.PkgdName = "nt/dur"
-	statOctetsSent      h248.PkgdName = "nt/os"
-	statOctetsReceived  h248.PkgdName = "nt/or"
 	statPacketsSent     h248.PkgdName = "rtp/ps"
 	statPacketsReceived h248.PkgdName = "rtp/pr"
 )

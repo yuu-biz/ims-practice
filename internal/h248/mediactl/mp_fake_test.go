@@ -159,7 +159,7 @@ func (p *fakeProcessor) SubtractTermination(ctx context.Context, contextID strin
 	if len(c.terms) == 0 {
 		delete(p.contexts, contextID)
 	}
-	return Statistics{PacketsSent: 250, PacketsReceived: 250, OctetsSent: 250 * 172, OctetsReceived: 250 * 172}, nil
+	return Statistics{PacketsSent: 250, PacketsReceived: 250}, nil
 }
 
 // termination returns what the processor holds for a termination.

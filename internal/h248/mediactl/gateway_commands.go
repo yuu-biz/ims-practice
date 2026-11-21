@@ -219,7 +219,6 @@ func (g *Gateway) reserve(t *transaction, a h248.ActionRequest) (h248.ActionRepl
 	gc := &gatewayContext{
 		relayID:   reservation.ID,
 		group:     adds[0].group,
-		reserved:  g.clock.Now(),
 		heartbeat: map[Side]*heartbeat{},
 	}
 	g.storeContext(gc)
@@ -408,8 +407,11 @@ func (g *Gateway) modify(ctx context.Context, gc *gatewayContext, c h248.Command
 	return h248.CommandReply{Command: c.Command, TerminationID: c.TerminationID}
 }
 
-// subtract carries out Release AGW Termination (TS 29.334 5.17.2.5),
-// with the statistics that H.248.1 (05/2002) 7.2.3 returns by default.
+// subtract carries out Release AGW Termination (TS 29.334 5.17.2.5).
+// The reply carries no statistics: Iq reports none on Subtract (TS
+// 29.334 5.7.7, Table 5.7.7.2), and the descriptors of the reply are
+// none or Error (Table 5.8.3.2). The Audit descriptor of the request,
+// which Table 5.8.3.1 allows only empty, asks for nothing more.
 //
 // SIMPLIFIED: TS 29.334 5.17.2.5 lets the controller subtract one
 // termination at a time. The relay releases a context as a whole, so
@@ -421,21 +423,14 @@ func (g *Gateway) subtract(ctx context.Context, gc *gatewayContext, c h248.Comma
 	if c.Audit != nil && (len(c.Audit.AuditToken) > 0 || len(c.Audit.AuditPropertyToken) > 0) {
 		return []h248.CommandReply{failed(c, 501, "an Audit descriptor that is not empty")}
 	}
-	stats, err := g.release(ctx, gc)
-	if err != nil {
+	if err := g.release(ctx, gc); err != nil {
 		return []h248.CommandReply{failed(c, relayErrorCode(err), "")}
 	}
 	// The order of the replies to a wildcard is not specified (H.248.1
 	// (05/2002) 7.2.3); access comes first.
 	var replies []h248.CommandReply
 	for _, side := range []Side{Access, Core} {
-		reply := h248.CommandReply{Command: h248.Subtract, TerminationID: terminationID(gc.group, side, gc.id)}
-		// An empty Audit descriptor asks for no statistics (TS 29.334
-		// 5.8.3, Table 5.8.3.1).
-		if c.Audit == nil {
-			reply.Statistics = statisticsDescriptor(stats[side])
-		}
-		replies = append(replies, reply)
+		replies = append(replies, h248.CommandReply{Command: h248.Subtract, TerminationID: terminationID(gc.group, side, gc.id)})
 	}
 	return replies
 }

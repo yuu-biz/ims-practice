@@ -31,10 +31,9 @@ func (exampleRelay) Configure(ctx context.Context, id string, side mediactl.Side
 	return nil
 }
 
-func (exampleRelay) Release(ctx context.Context, id string) (map[mediactl.Side]mediactl.Statistics, error) {
+func (exampleRelay) Release(ctx context.Context, id string) error {
 	fmt.Printf("relay: release %s\n", id)
-	s := mediactl.Statistics{PacketsSent: 50, PacketsReceived: 50, OctetsSent: 8600, OctetsReceived: 8600}
-	return map[mediactl.Side]mediactl.Statistics{mediactl.Access: s, mediactl.Core: s}, nil
+	return nil
 }
 
 // The media relay runs a Gateway, which registers with the Controller
@@ -102,16 +101,15 @@ func Example() {
 	if err := relay.Configure(ctx, r.ID, mediactl.Core, network); err != nil {
 		log.Fatal(err)
 	}
-	stats, err := relay.Release(ctx, r.ID)
-	if err != nil {
+	if err := relay.Release(ctx, r.ID); err != nil {
 		log.Fatal(err)
 	}
-	fmt.Printf("P-CSCF: the access termination received %d RTP packets\n", stats[mediactl.Access].PacketsReceived)
+	fmt.Println("P-CSCF: context released")
 	// Output:
 	// relay: reserve a context for 0 PCMU/8000
 	// P-CSCF: context 7@agw1.ims.example.net, access 192.0.2.20:40000, core 192.0.2.20:40002
 	// relay: access of c1 sends to 192.0.2.30:49170
 	// relay: core of c1 sends to 203.0.113.40:50000
 	// relay: release c1
-	// P-CSCF: the access termination received 50 RTP packets
+	// P-CSCF: context released
 }

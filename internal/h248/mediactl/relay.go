@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"net/netip"
-	"time"
 
 	"github.com/yuu-biz/ims-practice/internal/sdp"
 )
@@ -18,7 +17,8 @@ import (
 //     INVITE through the P-CSCF has its own context.
 //   - Configure is Configure AGW Connection Point (5.17.2.3).
 //   - Release is Release AGW Termination (5.17.2.5) for both
-//     terminations of the context.
+//     terminations of the context. Iq reports no statistics on
+//     Subtract (TS 29.334 5.7.7, Table 5.7.7.2), so it returns none.
 //
 // Two kinds of value implement it. Controller does, by sending the
 // H.248 commands to a media gateway. The relay given to a Gateway
@@ -42,9 +42,8 @@ type Relay interface {
 	// on the first packet it receives (H.248.37 6.6.2) keeps the
 	// latched address.
 	Configure(ctx context.Context, id string, side Side, remote Media) error
-	// Release removes the context and both terminations, and returns
-	// what each termination carried while it was in the context.
-	Release(ctx context.Context, id string) (map[Side]Statistics, error)
+	// Release removes the context and both terminations.
+	Release(ctx context.Context, id string) error
 }
 
 // Side names a termination of a context by the network it faces. It is
@@ -86,25 +85,6 @@ type Reservation struct {
 	// receives RTP: what the SDP that the party it faces receives is
 	// to show.
 	Local map[Side]netip.AddrPort
-}
-
-// Statistics is what a termination carried while it was in its
-// context. Each field is a statistic of the packages that an RTP
-// termination realizes (H.248.1 (05/2002) E.11.4 and E.12.4). They
-// count RTP only.
-type Statistics struct {
-	// Duration is how long the termination was in the context
-	// (nt/dur). Gateway measures it itself, so a Relay behind a
-	// Gateway may leave it zero.
-	Duration time.Duration
-	// OctetsSent and OctetsReceived count the RTP octets (nt/os,
-	// nt/or).
-	OctetsSent     uint64
-	OctetsReceived uint64
-	// PacketsSent and PacketsReceived count the RTP packets (rtp/ps,
-	// rtp/pr).
-	PacketsSent     uint64
-	PacketsReceived uint64
 }
 
 var (
