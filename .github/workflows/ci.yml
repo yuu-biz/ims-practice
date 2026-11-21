@@ -11,6 +11,31 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # A change that touches only documents needs the checks of the docs job
+  # and nothing else: no test reads the Markdown files or the licences.
+  # The other jobs are skipped then, and a skipped job counts as passed.
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      code: ${{ steps.diff.outputs.code }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - id: diff
+        env:
+          BASE: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
+        run: |
+          # A new branch, or a base the clone does not have, gets every job.
+          if ! git cat-file -e "$BASE^{commit}" 2>/dev/null; then
+            echo "code=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          code=$(git diff --name-only "$BASE" HEAD |
+            grep -Ev '\.md$|^docs/|^LICENSE|^NOTICE$' | head -n 1 || true)
+          echo "first file that is not a document: ${code:-none}"
+          echo "code=$([ -n "$code" ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
+
   docs:
     runs-on: ubuntu-latest
     steps:
@@ -26,6 +51,8 @@ jobs:
 
   go:
     runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     # The stores of the nodes run their tests against a Valkey server
     # too when KVSTORE_VALKEY_ADDR names one. With it set, a test that
     # cannot reach the server fails instead of being skipped.
@@ -56,6 +83,8 @@ jobs:
 
   web:
     runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     defaults:
       run:
         working-directory: web/dashboard
@@ -70,7 +99,8 @@ jobs:
 
   e2e:
     runs-on: ubuntu-latest
-    needs: go
+    needs: [changes, go]
+    if: needs.changes.outputs.code == 'true'
     steps:
       - uses: actions/checkout@v4
       - run: scripts/e2e-diameter.sh
@@ -87,7 +117,8 @@ jobs:
 
   e2e-registration:
     runs-on: ubuntu-latest
-    needs: go
+    needs: [changes, go]
+    if: needs.changes.outputs.code == 'true'
     steps:
       - uses: actions/checkout@v4
       - run: scripts/e2e-registration.sh
@@ -104,7 +135,8 @@ jobs:
 
   e2e-call:
     runs-on: ubuntu-latest
-    needs: go
+    needs: [changes, go]
+    if: needs.changes.outputs.code == 'true'
     steps:
       - uses: actions/checkout@v4
       - run: scripts/e2e-call.sh
@@ -123,7 +155,8 @@ jobs:
 
   e2e-dashboard:
     runs-on: ubuntu-latest
-    needs: [go, web]
+    needs: [changes, go, web]
+    if: needs.changes.outputs.code == 'true'
     steps:
       - uses: actions/checkout@v4
       - run: scripts/e2e-dashboard.sh
@@ -142,7 +175,8 @@ jobs:
 
   e2e-sms:
     runs-on: ubuntu-latest
-    needs: go
+    needs: [changes, go]
+    if: needs.changes.outputs.code == 'true'
     steps:
       - uses: actions/checkout@v4
       - run: scripts/e2e-sms.sh
@@ -161,7 +195,8 @@ jobs:
 
   e2e-volte:
     runs-on: ubuntu-latest
-    needs: go
+    needs: [changes, go]
+    if: needs.changes.outputs.code == 'true'
     steps:
       - uses: actions/checkout@v4
       - run: scripts/e2e-volte.sh
@@ -182,7 +217,8 @@ jobs:
 
   e2e-mmtel:
     runs-on: ubuntu-latest
-    needs: go
+    needs: [changes, go]
+    if: needs.changes.outputs.code == 'true'
     steps:
       - uses: actions/checkout@v4
       - run: scripts/e2e-mmtel.sh
@@ -202,7 +238,8 @@ jobs:
 
   e2e-mrf:
     runs-on: ubuntu-latest
-    needs: go
+    needs: [changes, go]
+    if: needs.changes.outputs.code == 'true'
     steps:
       - uses: actions/checkout@v4
       - run: scripts/e2e-mrf.sh
@@ -224,7 +261,8 @@ jobs:
 
   e2e-interconnect:
     runs-on: ubuntu-latest
-    needs: go
+    needs: [changes, go]
+    if: needs.changes.outputs.code == 'true'
     steps:
       - uses: actions/checkout@v4
       - run: scripts/e2e-interconnect.sh
@@ -246,6 +284,8 @@ jobs:
 
   cloud:
     runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     permissions:
       contents: read
     strategy:
@@ -281,6 +321,8 @@ jobs:
 
   kustomize:
     runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     permissions:
       contents: read
     env:
@@ -307,6 +349,8 @@ jobs:
 
   web-oam:
     runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     defaults:
       run:
         working-directory: web/oam
@@ -318,3 +362,20 @@ jobs:
       - run: npm ci --no-fund --no-audit
       - run: npm test
       - run: npm run build
+
+  # The one check that the protection of main requires. It passes when no
+  # job failed or was cancelled; the jobs that a change to documents
+  # skips count as passed.
+  all-passed:
+    runs-on: ubuntu-latest
+    needs: [changes, docs, go, web, web-oam, e2e, e2e-registration, e2e-call, e2e-dashboard, e2e-sms, e2e-volte, e2e-mmtel, e2e-mrf, e2e-interconnect, cloud, kustomize]
+    if: always()
+    steps:
+      - name: no job failed or was cancelled
+        env:
+          RESULTS: ${{ join(needs.*.result, ' ') }}
+        run: |
+          echo "results: $RESULTS"
+          case " $RESULTS " in
+            *" failure "* | *" cancelled "*) exit 1 ;;
+          esac
