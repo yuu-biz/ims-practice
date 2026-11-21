@@ -75,6 +75,14 @@ type UAConfig struct {
 	// outside a call with 405, or 481 within a dialog it does not know,
 	// and leaves SUBSCRIBE out of Allow.
 	OnSubscribe func(st *ServerTransaction)
+	// OnUnknownDialog, when set, is called in a goroutine of its own for
+	// each request with a To tag that names no dialog of the UA, nor a
+	// subscription that OnSubscribe or a Subscriber keeps. It lets a role
+	// whose dialogs outlive the process, in a store, decide on the
+	// request before the UA answers it with 481 (RFC 3261 12.2.2): it
+	// answers st with st.Respond and returns true, or returns false
+	// without answering, and the UA sends the 481.
+	OnUnknownDialog func(st *ServerTransaction) (answered bool)
 	// OnOptions, when set, tells how the UA answers an OPTIONS: with the
 	// status code that an INVITE would get now, such as 200, or 486
 	// (Busy Here) while the user is in a call, and with a body that
@@ -321,8 +329,15 @@ func (ua *UA) receiveRequest(st *ServerTransaction) {
 			go ua.cfg.OnSubscribe(st)
 			return
 		}
-		// RFC 3261 12.2.2: no dialog to recreate.
-		ua.respondOwn(st, NewResponse(req, 481, ""))
+		if ua.cfg.OnUnknownDialog != nil {
+			go func() {
+				if !ua.cfg.OnUnknownDialog(st) {
+					ua.respondNoDialog(st)
+				}
+			}()
+			return
+		}
+		ua.respondNoDialog(st)
 		return
 	}
 	switch req.Method {
@@ -386,6 +401,12 @@ func (ua *UA) answerOptions(st *ServerTransaction) {
 	resp.Add("Contact", ua.contact())
 	body.addTo(resp)
 	ua.respondOwn(st, resp)
+}
+
+// respondNoDialog is RFC 3261 12.2.2 for a request within a dialog that
+// the UA does not know and cannot recreate.
+func (ua *UA) respondNoDialog(st *ServerTransaction) {
+	ua.respondOwn(st, NewResponse(st.Request, 481, ""))
 }
 
 // respondNotAllowed is RFC 3261 8.2.1 for a method this UA does not

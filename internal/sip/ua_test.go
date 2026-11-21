@@ -528,6 +528,50 @@ func TestRequestForAnUnknownDialogGets481(t *testing.T) {
 	}
 }
 
+// TestOnUnknownDialogDecidesBefore481: a request within a dialog that
+// the UA does not know goes to OnUnknownDialog, whose answer the peer
+// gets; when it leaves the request unanswered, the UA sends the 481 of
+// RFC 3261 12.2.2.
+func TestOnUnknownDialogDecidesBefore481(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		answer   int
+		wantCode int
+	}{
+		{"role answers", 200, 200},
+		{"role leaves it", 0, 481},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			asked := make(chan *Message, 1)
+			roleUA := newUAWith(t, UAConfig{Timers: testTimers, OnCall: noCalls, OnUnknownDialog: func(st *ServerTransaction) bool {
+				asked <- st.Request
+				if tc.answer == 0 {
+					return false
+				}
+				st.Respond(NewResponse(st.Request, tc.answer, ""))
+				return true
+			}}, callee)
+			peerUA := newUA(t, testTimers, "001010000000001", noCalls)
+			d := Dialog{ID: DialogID{CallID: NewCallID(), LocalTag: NewTag(), RemoteTag: NewTag()},
+				LocalSeq: 4, LocalURI: caller, RemoteURI: calleeURI, RemoteTarget: roleUA.cfg.Contact}
+			bye := d.NewRequest(BYE)
+
+			resp := sendInDialog(t, established{callerUA: peerUA, calleeUA: roleUA}, bye)
+			if resp.StatusCode != tc.wantCode {
+				t.Errorf("BYE for a dialog the UA does not know got %s, want %d", startLine(resp), tc.wantCode)
+			}
+			select {
+			case req := <-asked:
+				if req.Method != BYE || req.Get("Call-ID") != d.ID.CallID {
+					t.Errorf("OnUnknownDialog got %s with Call-ID %q, want the BYE", req.Method, req.Get("Call-ID"))
+				}
+			default:
+				t.Error("OnUnknownDialog was not called")
+			}
+		})
+	}
+}
+
 func TestCloseEndsTheCalls(t *testing.T) {
 	t.Run("incoming call not yet answered", func(t *testing.T) {
 		ringing := make(chan *IncomingCall, 1)
