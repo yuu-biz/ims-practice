@@ -3,7 +3,8 @@ package ibcf
 import (
 	"context"
 	"net/netip"
-	"time"
+
+	"github.com/yuu-biz/ims-practice/internal/agw"
 )
 
 // Side names a termination of a TrGW context: the TrGW sits on the
@@ -38,29 +39,38 @@ func (c MediaContext) local(s Side) netip.AddrPort {
 }
 
 // TrGW is the transition gateway that the IBCF controls over Ix (TS
-// 29.165 3.2, TS 29.238 1). The operations are the call related procedures of
-// TS 29.238 Table 5.17.2.1.1 that the IBCF uses: Reserve TrGW
-// Connection Point, Configure TrGW Connection Point and Release TrGW
-// Termination. AGWClient is one over the control API of internal/agw.
+// 29.165 3.2, TS 29.238 1). The operations carry the names of the H.248
+// commands that Ix uses, and each is one of the call related procedures
+// of TS 29.238 Table 5.17.2.1.1:
+//
+//   - Add is Reserve TrGW Connection Point, for a termination on each
+//     side of one new context;
+//   - Modify is Configure TrGW Connection Point: it tells the
+//     termination of one side where that side takes the media;
+//   - Subtract is Release TrGW Termination, for both terminations of
+//     the context.
+//
+// *agw.Client is one, over the control API of the media relay, which
+// then serves as the TrGW.
 //
 // SIMPLIFIED: TS 29.238. No implementation over H.248 (Ix) stands
 // behind this interface; the H.248 profiles in internal/h248/mediactl
 // (Iq, Mp) already show the protocol.
 type TrGW interface {
-	// Reserve makes a context with a termination on each side.
-	Reserve(ctx context.Context) (MediaContext, error)
-	// Configure tells the termination on side s where to send: the
-	// address that the SDP of that side gave.
-	Configure(ctx context.Context, id string, s Side, remote netip.AddrPort) error
-	// Release removes the context.
-	Release(ctx context.Context, id string) error
+	Add(ctx context.Context, terminations ...agw.TerminationRequest) (agw.Context, error)
+	Modify(ctx context.Context, id string, termination agw.TerminationID, change agw.TerminationRequest) error
+	Subtract(ctx context.Context, id string) error
 }
 
-// trgwTimeout bounds each request to the TrGW, so that a TrGW that
-// stalls fails the call instead of holding it up for good. It is the
-// bound that the P-CSCF puts on the media relay (agw.RequestTimeout).
-const trgwTimeout = 2 * time.Second
+// terminations names the termination of a TrGW context that faces each
+// side. The names are those of the IMS-AGW, access and core, which the
+// media relay knows: the core termination faces the home network, and
+// the access termination faces the peer.
+var terminations = map[Side]agw.TerminationID{CoreSide: agw.Core, PeerSide: agw.Access}
 
+// trgwContext bounds each request to the TrGW, so that a TrGW that
+// stalls fails the call instead of holding it up for good. It is the
+// bound that the P-CSCF puts on the media relay.
 func trgwContext() (context.Context, context.CancelFunc) {
-	return context.WithTimeout(context.Background(), trgwTimeout)
+	return context.WithTimeout(context.Background(), agw.RequestTimeout)
 }

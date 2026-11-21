@@ -15,6 +15,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/yuu-biz/ims-practice/internal/agw"
 	"github.com/yuu-biz/ims-practice/internal/ibcf"
 	"github.com/yuu-biz/ims-practice/internal/ims"
 	"github.com/yuu-biz/ims-practice/internal/interconnect"
@@ -160,20 +161,32 @@ func (r *recorder) requests(node string, method sip.Method) []*sip.Message {
 }
 
 // fakeTrGW is a TrGW that hands out addresses without relaying
-// anything, and remembers what the IBCF told it.
+// anything, and remembers what the IBCF told it. Its address in the
+// home network is core, and towards the peers peer. With oneAddress it
+// writes relayAddress for both terminations instead, as the media relay
+// does, and the IBCF of its network is set up to show core and peer in
+// its place.
 type fakeTrGW struct {
 	core, peer netip.Addr
+	oneAddress bool
 
 	mu       sync.Mutex
 	next     int
 	contexts map[string]*fakeContext
 	reserved int
-	// held are the remote addresses for which Configure waits until the
+	// held are the remote addresses for which Modify waits until the
 	// channel is closed: a test holds back what the IBCF does after it.
 	held map[netip.AddrPort]chan struct{}
 }
 
-// hold has Configure for remote wait until the returned function is
+// relayAddress is the address that a fakeTrGW with one address writes.
+var relayAddress = netip.MustParseAddr("127.0.0.1")
+
+// fakeSides are the sides that the terminations of a TrGW context face,
+// by the names that the IBCF gives them.
+var fakeSides = map[agw.TerminationID]ibcf.Side{agw.Core: ibcf.CoreSide, agw.Access: ibcf.PeerSide}
+
+// hold has Modify for remote wait until the returned function is
 // called.
 func (f *fakeTrGW) hold(remote netip.AddrPort) (release func()) {
 	f.mu.Lock()
@@ -187,29 +200,49 @@ func (f *fakeTrGW) hold(remote netip.AddrPort) (release func()) {
 	return func() { once.Do(func() { close(ch) }) }
 }
 
+// fakeContext is a context of a fakeTrGW: local is what the SDP of each
+// side is to show, and remote where each termination was told to send.
 type fakeContext struct {
 	local  ibcf.MediaContext
 	remote map[ibcf.Side]netip.AddrPort
 }
 
-func newFakeTrGW(core, peer string) *fakeTrGW {
-	return &fakeTrGW{core: netip.MustParseAddr(core), peer: netip.MustParseAddr(peer), contexts: map[string]*fakeContext{}}
+func newFakeTrGW(core, peer string, oneAddress bool) *fakeTrGW {
+	return &fakeTrGW{core: netip.MustParseAddr(core), peer: netip.MustParseAddr(peer), oneAddress: oneAddress, contexts: map[string]*fakeContext{}}
 }
 
-func (f *fakeTrGW) Reserve(context.Context) (ibcf.MediaContext, error) {
+func (f *fakeTrGW) Add(_ context.Context, terminations ...agw.TerminationRequest) (agw.Context, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.next++
 	f.reserved++
-	port := uint16(30000 + 2*f.next)
-	c := ibcf.MediaContext{ID: fmt.Sprintf("c%d", f.next), Core: netip.AddrPortFrom(f.core, port), Peer: netip.AddrPortFrom(f.peer, port)}
-	f.contexts[c.ID] = &fakeContext{local: c, remote: map[ibcf.Side]netip.AddrPort{}}
-	return c, nil
+	port := uint16(30000 + 4*f.next)
+	c := &fakeContext{
+		local:  ibcf.MediaContext{ID: fmt.Sprintf("c%d", f.next), Core: netip.AddrPortFrom(f.core, port), Peer: netip.AddrPortFrom(f.peer, port+2)},
+		remote: map[ibcf.Side]netip.AddrPort{},
+	}
+	out := agw.Context{ID: c.local.ID, Terminations: map[agw.TerminationID]*agw.Termination{}}
+	for _, t := range terminations {
+		side, ok := fakeSides[t.ID]
+		if !ok {
+			return agw.Context{}, fmt.Errorf("%w: termination %q", agw.ErrBadRequest, t.ID)
+		}
+		local := c.local.Core
+		if side == ibcf.PeerSide {
+			local = c.local.Peer
+		}
+		if f.oneAddress {
+			local = netip.AddrPortFrom(relayAddress, local.Port())
+		}
+		out.Terminations[t.ID] = &agw.Termination{ID: t.ID, Local: local}
+	}
+	f.contexts[c.local.ID] = c
+	return out, nil
 }
 
-func (f *fakeTrGW) Configure(_ context.Context, id string, s ibcf.Side, remote netip.AddrPort) error {
+func (f *fakeTrGW) Modify(_ context.Context, id string, termination agw.TerminationID, change agw.TerminationRequest) error {
 	f.mu.Lock()
-	held := f.held[remote]
+	held := f.held[change.Remote]
 	f.mu.Unlock()
 	if held != nil {
 		<-held
@@ -218,17 +251,21 @@ func (f *fakeTrGW) Configure(_ context.Context, id string, s ibcf.Side, remote n
 	defer f.mu.Unlock()
 	c, ok := f.contexts[id]
 	if !ok {
-		return ibcf.ErrNoContext
+		return agw.ErrNoContext
 	}
-	c.remote[s] = remote
+	side, ok := fakeSides[termination]
+	if !ok {
+		return agw.ErrNoTermination
+	}
+	c.remote[side] = change.Remote
 	return nil
 }
 
-func (f *fakeTrGW) Release(_ context.Context, id string) error {
+func (f *fakeTrGW) Subtract(_ context.Context, id string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if _, ok := f.contexts[id]; !ok {
-		return ibcf.ErrNoContext
+		return agw.ErrNoContext
 	}
 	delete(f.contexts, id)
 	return nil
@@ -366,11 +403,15 @@ type plan struct {
 	nniName                    string   // the IBCF's pool name at the II-NNI
 	nni                        []string // the NNI address of each IBCF instance
 	trgwPeer                   string
+	// oneAddressTrGW has the TrGW write one address for both
+	// terminations, as the media relay does.
+	oneAddressTrGW bool
 }
 
 var (
 	planA = plan{name: "a", domain: domainA, number: numberA, imsi: "001010000000001", internal: "127.0.1",
-		nniName: "ibcf.nni.mnc001.example.net", nni: []string{"127.0.3.1", "127.0.3.2"}, trgwPeer: "127.0.3.50"}
+		nniName: "ibcf.nni.mnc001.example.net", nni: []string{"127.0.3.1", "127.0.3.2"}, trgwPeer: "127.0.3.50",
+		oneAddressTrGW: true}
 	planB = plan{name: "b", domain: domainB, number: numberB, imsi: "001020000000001", internal: "127.0.2",
 		nniName: "ibcf.nni.mnc002.example.net", nni: []string{"127.0.3.11"}, trgwPeer: "127.0.3.60"}
 )
@@ -466,7 +507,7 @@ func newNetwork(t *testing.T, p plan, dns *names) *network {
 	t.Helper()
 	n := &network{name: p.name, plan: p, domain: p.domain, number: p.number, rec: &recorder{}, names: dns,
 		internal: netip.MustParsePrefix(p.internal + ".0/24"),
-		trgw:     newFakeTrGW(p.internal+".50", p.trgwPeer), store: ibcf.NewMemoryStore(),
+		trgw:     newFakeTrGW(p.internal+".50", p.trgwPeer, p.oneAddressTrGW), store: ibcf.NewMemoryStore(),
 		calls: make(chan *sip.IncomingCall, 4), messages: make(chan *sip.Message, 4)}
 
 	n.instances = n.openIBCFs(t, p)
@@ -662,12 +703,18 @@ func (n *network) startIBCF(t *testing.T, i int) {
 	in := n.instances[i]
 	registry := metrics.NewRegistry()
 	n.registries[i] = registry
-	b, err := ibcf.New(ibcf.Config{
+	cfg := ibcf.Config{
 		Internal:     sip.URI{Scheme: "sip", Host: in.internalHost, Port: int(in.internal.Port())},
 		External:     sip.URI{Scheme: "sip", Host: in.externalHost, Port: int(in.external.Port())},
 		InternalPool: n.ibcfInternal.Host, ExternalPool: n.ibcfExternal.Host,
 		HomeDomain: n.domain, ICSCF: icscf, Timers: testTimers, Metrics: registry,
-	}, peers, n.trgw, n.store, n.names, discard)
+	}
+	if n.trgw.oneAddress {
+		// The SDP of each side shows the TrGW's address in that
+		// network, not the one address that the TrGW wrote.
+		cfg.TrGWCoreAddress, cfg.TrGWPeerAddress = n.trgw.core, n.trgw.peer
+	}
+	b, err := ibcf.New(cfg, peers, n.trgw, n.store, n.names, discard)
 	if err != nil {
 		t.Fatal(err)
 	}

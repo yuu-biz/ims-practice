@@ -436,7 +436,6 @@ func startIBCF(homeDomain string, c config.IBCF, locator ims.Locator,
 	if err != nil {
 		return nil, err
 	}
-	trgw := ibcf.NewAGWClient(c.TrGW.Control, c.TrGW.CoreAddress, c.TrGW.PeerAddress)
 	b, err := ibcf.New(ibcf.Config{
 		Internal:         internal,
 		External:         external,
@@ -445,7 +444,9 @@ func startIBCF(homeDomain string, c config.IBCF, locator ims.Locator,
 		HomeDomain:       homeDomain,
 		HomeNumberFormat: c.HomeNumberFormat,
 		ICSCF:            c.ICSCF,
-	}, peers, trgw, ibcf.NewMemoryStore(), locator, log)
+		TrGWCoreAddress:  c.TrGW.CoreAddress,
+		TrGWPeerAddress:  c.TrGW.PeerAddress,
+	}, peers, agw.NewClient(c.TrGW.Control), ibcf.NewMemoryStore(), locator, log)
 	if err != nil {
 		return nil, err
 	}

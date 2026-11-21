@@ -45,6 +45,15 @@ type Config struct {
 	// ICSCF is the I-CSCF that an initial request from a peer goes to
 	// (TS 24.229 5.10.3.2 step 4: a preconfigured I-CSCF).
 	ICSCF sip.URI
+	// TrGWCoreAddress and TrGWPeerAddress are the TrGW's addresses in
+	// the home network and towards the peers' TrGWs (Izi, TS 29.165
+	// 3.2). The SDP of each side shows the termination that faces it at
+	// that address, with the port that the TrGW chose. A TrGW has an
+	// address in each network; the media relay that serves as the TrGW
+	// writes one address for both terminations, and takes the media on
+	// every interface. The zero address keeps the one that the TrGW
+	// wrote.
+	TrGWCoreAddress, TrGWPeerAddress netip.Addr
 	// Timers are those of the two UAs; the zero value means
 	// sip.DefaultTimers.
 	Timers sip.Timers
