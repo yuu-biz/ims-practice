@@ -606,12 +606,12 @@ func TestMpErrors(t *testing.T) {
 	b.processor.setFail(agw.ErrNoPort)
 	_, err = b.controller.Add(ctx, agw.TerminationRequest{Mode: agw.SendOnly})
 	var rejected *CommandRejected
-	if !errors.Is(err, ErrInsufficientResources) || !errors.As(err, &rejected) || rejected.ErrorDescriptor.ErrorCode != 510 {
+	if !errors.Is(err, agw.ErrNoPort) || !errors.As(err, &rejected) || rejected.ErrorDescriptor.ErrorCode != 510 {
 		t.Errorf("Add: %v", err)
 	}
 	b.processor.setFail(nil)
 	err = b.controller.Modify(ctx, cx.ID, onlyTermination(t, cx).ID, agw.TerminationRequest{Mode: agw.SendOnly, Signals: &agw.Signals{Play: &agw.Play{Announcement: "goodbye"}}})
-	if !errors.As(err, &rejected) || rejected.ErrorDescriptor.ErrorCode != 449 {
+	if !errors.Is(err, agw.ErrUnknownAnnouncement) || !errors.As(err, &rejected) || rejected.ErrorDescriptor.ErrorCode != 449 {
 		t.Errorf("an unknown announcement: %v", err)
 	}
 }

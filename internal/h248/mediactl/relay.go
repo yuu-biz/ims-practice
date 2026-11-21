@@ -20,14 +20,7 @@ type Relay interface {
 	Subtract(ctx context.Context, id string) error
 }
 
-var (
-	// ErrInsufficientResources means that the media gateway has no room
-	// for another context: Controller returns it for error 510
-	// (H.248.8 (03/2013) 4.2.49), which a Gateway answers when its relay
-	// or processor fails with agw.ErrNoPort.
-	ErrInsufficientResources = errors.New("mediactl: insufficient resources")
-	// ErrUnavailable means that Controller has no media gateway to
-	// send the command to: none has registered, or the one that holds
-	// the context has stopped answering or is out of service.
-	ErrUnavailable = errors.New("mediactl: no media gateway available")
-)
+// ErrUnavailable means that Controller has no media gateway to send the
+// command to: none has registered, or the one that holds the context
+// has stopped answering or is out of service.
+var ErrUnavailable = errors.New("mediactl: no media gateway available")

@@ -60,7 +60,7 @@ H.248 の範囲は、3GPP のプロファイルが使うものに限ります。
 - 空の `Mode` は、Add では sendrecv、Modify では今のモードのままです。H.248 では、モードの無い Add は Inactive になるので、Controller は Add に必ず StreamMode を書きます。Mp の Modify にモードが無ければ、LocalControl の記述子を書きません。MRFC が ACK のあとで音声ガイダンスを始める Modify がこれに当たります。Iq の IMS-AGW はメディアを両方向に通すので、Iq の Controller は Modify にも sendrecv を書きます。
 - コーデックと帯域（m= 行の形式と b=AS）は、`agw.TerminationRequest` の `LocalMedia` と `RemoteMedia` に入れます。中継ノードはトランスコードしないので、HTTP の API はこれを運びません。Controller は Local と Remote の記述子に書きます。
 - Mp の Add では、ターミネーションの ID を MRFP が選びます（CHOOSE）。Controller は、ID を指定した要求を断ります。
-- 拒否されたコマンドは、`errors.Is` で `agw` のエラーと見分けられます。411 は `agw.ErrNoContext`、430 と 435 は `agw.ErrNoTermination` にも当たります。
+- 拒否されたコマンドは、`errors.Is` で `agw` のエラーと見分けられます。411 は `agw.ErrNoContext`、430 と 435 は `agw.ErrNoContext` と `agw.ErrNoTermination`、510 は `agw.ErrNoPort`、449 は `agw.ErrUnknownAnnouncement` に当たります。どれも、Gateway が中継ノードのそのエラーに返すコードです。449 は知らないパラメータの値を表すコードです。Controller は、送る信号のほかのパラメータを送る前に確かめるので、Controller の呼び出し元にとって 449 は、MRFP が持たない音声ガイダンスを意味します。Controller が使えるゲートウェイを持たないときと、505 のときは `mediactl.ErrUnavailable` です。
 
 ### インタフェースに入れないもの
 
