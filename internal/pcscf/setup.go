@@ -43,6 +43,10 @@ type setup struct {
 	// on its way (TS 24.229 5.2.8.1.1).
 	abort   chan struct{}
 	aborted bool
+	// callerSeq is the CSeq of the last request that the caller sent in
+	// the early dialog, as the Dialog had it when an abort took it out
+	// of the Store (abortSetup).
+	callerSeq uint32
 }
 
 func (p *PCSCF) newSetup(st *sip.ServerTransaction, l leg, ue Association, log *slog.Logger) *setup {
@@ -297,18 +301,19 @@ func (s *setup) settle() bool {
 	return !s.aborted
 }
 
-// abortSetup ends the INVITE that created the dialog of key, if this
-// P-CSCF instance still forwards it: its loop then answers the caller
-// and cancels the INVITE towards the callee.
-func (p *PCSCF) abortSetup(key DialogKey) bool {
+// abortSetup ends the INVITE that created d, the early dialog taken out
+// of the Store, if this P-CSCF instance still forwards it: its loop then
+// answers the caller and cancels the INVITE towards the callee.
+func (p *PCSCF) abortSetup(d Dialog) bool {
 	p.setupsMu.Lock()
 	defer p.setupsMu.Unlock()
-	s, ok := p.setups[key]
+	s, ok := p.setups[d.Key]
 	if !ok {
 		return false
 	}
-	delete(p.setups, key)
+	delete(p.setups, d.Key)
 	s.aborted = true
+	s.callerSeq = d.Caller.CSeq
 	close(s.abort)
 	return true
 }
