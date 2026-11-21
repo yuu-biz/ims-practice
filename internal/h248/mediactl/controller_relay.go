@@ -160,15 +160,12 @@ func replyLocal(cmd h248.CommandReply) (netip.AddrPort, error) {
 }
 
 // iqModify carries out Configure AGW Connection Point (TS 29.334
-// 5.17.2.3): a Modify of the termination with the Remote descriptor. A
-// relay that latches on the first packet it receives (H.248.37 6.6.2)
-// keeps the latched address.
+// 5.17.2.3): a Modify of the termination, with the Remote descriptor
+// when change has a remote address. A relay that latches on the first
+// packet it receives (H.248.37 6.6.2) keeps the latched address.
 func (c *Controller) iqModify(ctx context.Context, id string, side agw.TerminationID, change agw.TerminationRequest) error {
 	if side != agw.Access && side != agw.Core {
 		return fmt.Errorf("mediactl: no termination %q on Iq", side)
-	}
-	if !change.Remote.IsValid() {
-		return errors.New("mediactl: Modify of Iq needs the remote address")
 	}
 	a, contextID, err := c.lookup(id)
 	if err != nil {

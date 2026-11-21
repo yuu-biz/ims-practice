@@ -186,6 +186,35 @@ func TestAddWithARemoteAddress(t *testing.T) {
 	}
 }
 
+// A Modify without a remote address keeps where the termination sends:
+// Configure AGW Connection Point (TS 29.334 5.17.2.3) then carries no
+// Remote descriptor, and the relay is not asked to change anything.
+func TestModifyWithoutARemoteAddress(t *testing.T) {
+	b := newTestbed(t, ControllerConfig{})
+	b.waitRegistered(t)
+	ctx := context.Background()
+
+	r, err := reserve(ctx, b.controller, agw.Media{Codecs: []sdp.Codec{pcmu}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ue := mustAddrPort("192.0.2.30:49170")
+	if err := b.controller.Modify(ctx, r.ID, agw.Access, agw.TerminationRequest{Remote: ue}); err != nil {
+		t.Fatal(err)
+	}
+	before := len(b.net.datagrams())
+	if err := b.controller.Modify(ctx, r.ID, agw.Access, agw.TerminationRequest{}); err != nil {
+		t.Fatal(err)
+	}
+	modify := firstRequest(t, b.net.datagrams()[before:], h248.Modify).Actions[0].Commands[0]
+	if modify.Media == nil || modify.Media.OneStream == nil || modify.Media.OneStream.Remote != nil {
+		t.Errorf("the Modify carries %+v, want no Remote descriptor", modify.Media)
+	}
+	if relayContext, _ := b.relay.context("c1"); relayContext.remote[agw.Access].Remote != ue {
+		t.Errorf("the relay sends from the access termination to %+v", relayContext.remote[agw.Access])
+	}
+}
+
 // Iq reports no statistics on Subtract (TS 29.334 5.7.7, Table 5.7.7.2),
 // and the reply to a Subtract has no descriptors (Table 5.8.3.2): the
 // Subtract that the Controller sends has no Audit descriptor, and its
