@@ -14,17 +14,16 @@ import (
 
 // iqAdd carries out Reserve AGW Connection Point (TS 29.334 5.17.2.2)
 // for the access and the core termination, as two Adds in the action
-// that creates the context. The Local descriptors leave the address and
-// the port to the gateway, which returns what it chose.
+// that creates the context, and makes it Reserve and Configure AGW
+// Connection Point (5.17.2.4) for a termination whose request has a
+// remote address. The Local descriptors leave the address and the port
+// to the gateway, which returns what it chose.
 func (c *Controller) iqAdd(ctx context.Context, terminations []agw.TerminationRequest) (agw.Context, error) {
 	asked := map[agw.TerminationID]agw.TerminationRequest{}
 	var adds []h248.CommandRequest
 	for _, t := range terminations {
 		if t.ID != agw.Access && t.ID != agw.Core {
 			return agw.Context{}, fmt.Errorf("mediactl: no termination %q on Iq", t.ID)
-		}
-		if t.Remote.IsValid() {
-			return agw.Context{}, errors.New("mediactl: an Add of Iq takes no remote address; Modify sets it")
 		}
 		asked[t.ID] = t
 		add, err := c.iqCommand(h248.Add, chooseTerminationID(t.ID), t)
