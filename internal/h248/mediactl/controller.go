@@ -14,26 +14,31 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/yuu-biz/ims-practice/internal/agw"
 	"github.com/yuu-biz/ims-practice/internal/h248"
 )
 
 // Controller is the controller side of Iq, the IMS-ALG in the P-CSCF.
-// It implements Relay by sending the H.248 commands of TS 29.334
-// 5.17.2 to the media gateways that have registered with it.
+// It carries out Add, Modify and Subtract by sending the H.248 commands
+// of TS 29.334 5.17.2 to the media gateways that have registered with
+// it, so that the P-CSCF and the IBCF can use it in place of the HTTP
+// client of the media node.
 //
 // Set up with MpProfile, it is the controller side of Mp instead, the
-// MRFC: it implements Processor by sending the commands of TS 29.333
-// 5.17.2 to the MRFPs that have registered with it, and hands the end
-// of each announcement to ControllerConfig.Notify. One Controller
-// speaks one profile, and accepts the gateways that name it.
+// MRFC: it carries out Add, AddTermination, Modify and
+// SubtractTermination by sending the commands of TS 29.333 5.17.2 to
+// the MRFPs that have registered with it, and hands the end of each
+// announcement to ControllerConfig.Notify. One Controller speaks one
+// profile, and accepts the gateways that name it.
 //
 // A Controller holds only its associations, one for each media gateway
 // that registered with it; it keeps no record of the contexts. The ID
-// of a Reservation names the context and the media gateway that holds
-// it, as "<ContextID>@<MId>", so that every call for the context goes
-// to that gateway. Several Controllers, one in each P-CSCF, can share
-// nothing and run side by side; each sees the media gateways that
-// registered with it, so that the P-CSCF can run as several instances.
+// of a context that Add returns names the context and the media gateway
+// that holds it, as "<ContextID>@<MId>", so that every call for the
+// context goes to that gateway. Several Controllers, one in each
+// P-CSCF, can share nothing and run side by side; each sees the media
+// gateways that registered with it, so that the P-CSCF can run as
+// several instances.
 type Controller struct {
 	endpoint  *h248.Endpoint
 	profile   profile
@@ -53,7 +58,7 @@ type Controller struct {
 	associations sync.Map
 	// available lists the associations that take new contexts. It is
 	// replaced as a whole when a gateway comes or goes, which is rare;
-	// Reserve only reads it.
+	// Add only reads it.
 	available atomic.Pointer[[]*association]
 	changing  sync.Mutex
 	next      atomic.Uint64
@@ -219,13 +224,13 @@ func midKey(id h248.MId) string {
 	return text
 }
 
-// contextHandle is the ID of a Reservation.
+// contextHandle is the ID of a context as Add returns it.
 func contextHandle(id h248.ContextID, a *association) string {
 	return fmt.Sprintf("%d@%s", id, a.key)
 }
 
-// lookup finds the association and the context that a Reservation ID
-// names.
+// lookup finds the association and the context that the ID of a
+// context names.
 func (c *Controller) lookup(handle string) (*association, h248.ContextID, error) {
 	number, key, ok := strings.Cut(handle, "@")
 	id, err := strconv.ParseUint(number, 10, 32)
@@ -432,7 +437,7 @@ func (c *Controller) handle(ctx context.Context, r *h248.IncomingRequest) h248.T
 // responsible for clearing the context of a termination that was taken
 // out of service by force, and asks for the termination to be
 // subtracted at least. Once the report is acknowledged, the controller
-// subtracts the context of Iq as a whole, as Release does, and the
+// subtracts the context of Iq as a whole, as Subtract does, and the
 // termination of Mp.
 //
 // SIMPLIFIED: TS 29.334 5.17.3.19 also allows ContextID ALL, and a
@@ -451,9 +456,9 @@ func (c *Controller) terminationOutOfService(r *h248.IncomingRequest, contextID 
 	id := contextHandle(contextID, v.(*association))
 	switch {
 	case !c.profile.mp():
-		go c.Release(c.ctx, id)
+		go c.Subtract(c.ctx, id)
 	case !strings.ContainsAny(string(cmd.TerminationID), "*$"):
-		go c.SubtractTermination(c.ctx, id, TerminationID(cmd.TerminationID))
+		go c.SubtractTermination(c.ctx, id, agw.TerminationID(cmd.TerminationID))
 	}
 }
 
@@ -552,18 +557,19 @@ func (c *Controller) notify(ctx context.Context, r *h248.IncomingRequest, contex
 			if c.heartbeat != nil && !c.heartbeat(ctx, id) {
 				c.log.Warn("mediactl: releasing a context that is not in use", "context", id, "termination", string(cmd.TerminationID))
 				if c.profile.mp() {
-					go c.SubtractTermination(c.ctx, id, TerminationID(cmd.TerminationID))
+					go c.SubtractTermination(c.ctx, id, agw.TerminationID(cmd.TerminationID))
 				} else {
-					go c.Release(c.ctx, id)
+					go c.Subtract(c.ctx, id)
 				}
 				return failed(cmd, 411, "")
 			}
 		case name == eventCause && termination:
 			// SIMPLIFIED: TS 29.334 5.17.2.7. The controller answers
 			// IP Bearer Released as the clause asks (5.17.2.7.2), and
-			// only logs it: Relay has no way to hand the event to its
-			// caller, which owns the session. What the IMS-ALG then
-			// does with the session is not part of the clause.
+			// only logs it: Add, Modify and Subtract have no way to
+			// hand the event to their caller, which owns the session.
+			// What the IMS-ALG then does with the session is not part
+			// of the clause.
 			c.log.Warn("mediactl: the media gateway released a bearer", "context", contextHandle(contextID, a),
 				"termination", string(cmd.TerminationID))
 		case name == eventInactivityTimeout || name == eventHeartbeat || name == eventCause:

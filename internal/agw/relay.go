@@ -40,6 +40,7 @@ import (
 	"sync/atomic"
 
 	"github.com/yuu-biz/ims-practice/internal/mixer"
+	"github.com/yuu-biz/ims-practice/internal/sdp"
 )
 
 // TerminationID names a termination within its context.
@@ -88,15 +89,38 @@ type TerminationRequest struct {
 	// Mode is the StreamMode. An Add without one gives SendReceive,
 	// where H.248 would default to Inactive.
 	Mode Mode `json:"mode,omitempty"`
+	// LocalMedia, on Add, describes the stream that the termination is
+	// to receive, as the Local descriptor does besides the address,
+	// which the node chooses.
+	LocalMedia Media `json:"-"`
 	// Remote is where the termination sends RTP, as the SDP of the party
 	// it faces gives it: the Remote descriptor. RTCP goes to the port
 	// above.
 	Remote netip.AddrPort `json:"remote,omitzero"`
+	// RemoteMedia describes the stream that the termination sends to
+	// Remote, as the Remote descriptor does besides the address.
+	RemoteMedia Media `json:"-"`
 	// Signals, when not nil, replaces what the termination plays.
 	Signals *Signals `json:"signals,omitempty"`
 	// Events, when not nil, replaces the events that the termination
 	// reports.
 	Events *Events `json:"events,omitempty"`
+}
+
+// Media is what the SDP of a Local or a Remote descriptor says of an
+// audio stream besides its address: the payload formats of the m= line
+// and the bandwidth of the b= line (TS 29.334 5.15). The relay does not
+// transcode and passes every payload type as it is, so the HTTP API
+// does not carry it; the H.248 Controller of internal/h248/mediactl
+// writes it into its descriptors.
+type Media struct {
+	// Codecs are the payload formats of the m= line, with their
+	// a=rtpmap and a=fmtp lines, most preferred first. With none, the
+	// m= line carries "-": no resources for a particular format are
+	// reserved (TS 29.334 5.15, Table 5.15.1).
+	Codecs []sdp.Codec
+	// Bandwidth is the b=AS value in kbit/s, or 0 for none.
+	Bandwidth int
 }
 
 // Termination is one end of a context as the API shows it: a pair of

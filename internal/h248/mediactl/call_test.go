@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/yuu-biz/ims-practice/internal/agw"
 	"github.com/yuu-biz/ims-practice/internal/h248"
 	"github.com/yuu-biz/ims-practice/internal/sdp"
 )
@@ -89,38 +90,40 @@ func TestFullCall(t *testing.T) {
 	ctx := context.Background()
 
 	amrwb := sdp.Codec{PayloadType: 96, Name: sdp.NameAMRWB, ClockRate: 16000, Fmtp: "mode-change-capability=2; max-red=0"}
-	r, err := b.controller.Reserve(ctx, Media{Codecs: []sdp.Codec{amrwb, pcmu}, Bandwidth: 41})
+	r, err := reserve(ctx, b.controller, agw.Media{Codecs: []sdp.Codec{amrwb, pcmu}, Bandwidth: 41})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if r.ID != "100@agw1.ims.example.net" {
 		t.Errorf("ID = %q", r.ID)
 	}
-	if r.Local[Access] != netip.MustParseAddrPort("198.51.100.10:40000") || r.Local[Core] != netip.MustParseAddrPort("198.51.100.10:40002") {
-		t.Errorf("local addresses %v", r.Local)
+	if r.Terminations[agw.Access].Local != netip.MustParseAddrPort("198.51.100.10:40000") || r.Terminations[agw.Core].Local != netip.MustParseAddrPort("198.51.100.10:40002") {
+		t.Errorf("terminations %v", r.Terminations)
 	}
 	relayContext, ok := b.relay.context("c1")
-	if !ok || len(relayContext.media.Codecs) != 2 || relayContext.media.Codecs[0] != amrwb || relayContext.media.Bandwidth != 41 {
-		t.Errorf("the relay was asked for %+v", relayContext.media)
+	for _, side := range []agw.TerminationID{agw.Access, agw.Core} {
+		if media := relayContext.media[side]; !ok || len(media.Codecs) != 2 || media.Codecs[0] != amrwb || media.Bandwidth != 41 {
+			t.Errorf("the relay was asked for %+v on %s", media, side)
+		}
 	}
 
-	ue := Media{Address: netip.MustParseAddrPort("192.0.2.30:49170"), Codecs: []sdp.Codec{amrwb}, Bandwidth: 41}
-	network := Media{Address: netip.MustParseAddrPort("203.0.113.40:50000"), Codecs: []sdp.Codec{amrwb}, Bandwidth: 41}
-	if err := b.controller.Configure(ctx, r.ID, Access, ue); err != nil {
+	ue := agw.TerminationRequest{Remote: netip.MustParseAddrPort("192.0.2.30:49170"), RemoteMedia: agw.Media{Codecs: []sdp.Codec{amrwb}, Bandwidth: 41}}
+	network := agw.TerminationRequest{Remote: netip.MustParseAddrPort("203.0.113.40:50000"), RemoteMedia: agw.Media{Codecs: []sdp.Codec{amrwb}, Bandwidth: 41}}
+	if err := b.controller.Modify(ctx, r.ID, agw.Access, ue); err != nil {
 		t.Fatal(err)
 	}
-	if err := b.controller.Configure(ctx, r.ID, Core, network); err != nil {
+	if err := b.controller.Modify(ctx, r.ID, agw.Core, network); err != nil {
 		t.Fatal(err)
 	}
 	relayContext, _ = b.relay.context("c1")
-	if got := relayContext.remote[Access]; got.Address != ue.Address || len(got.Codecs) != 1 || got.Codecs[0] != amrwb || got.Bandwidth != 41 {
+	if got := relayContext.remote[agw.Access]; got.Remote != ue.Remote || len(got.RemoteMedia.Codecs) != 1 || got.RemoteMedia.Codecs[0] != amrwb || got.RemoteMedia.Bandwidth != 41 {
 		t.Errorf("access remote %+v", got)
 	}
-	if got := relayContext.remote[Core]; got.Address != network.Address {
+	if got := relayContext.remote[agw.Core]; got.Remote != network.Remote {
 		t.Errorf("core remote %+v", got)
 	}
 
-	if err := b.controller.Release(ctx, r.ID); err != nil {
+	if err := b.controller.Subtract(ctx, r.ID); err != nil {
 		t.Fatal(err)
 	}
 	if _, released, open := b.relay.counts(); released != 1 || open != 0 {
@@ -141,26 +144,26 @@ func TestFullCall(t *testing.T) {
 	if !slices.Equal(got, wantMessages) {
 		t.Fatalf("messages:\n%s\nwant:\n%s", strings.Join(got, "\n"), strings.Join(wantMessages, "\n"))
 	}
-	if err := b.controller.Release(ctx, r.ID); !errorIs(err, ErrNoContext) {
-		t.Errorf("a second Release: %v", err)
+	if err := b.controller.Subtract(ctx, r.ID); !errorIs(err, agw.ErrNoContext) {
+		t.Errorf("a second Subtract: %v", err)
 	}
 }
 
 // Iq reports no statistics on Subtract (TS 29.334 5.7.7, Table 5.7.7.2),
 // and the reply to a Subtract has no descriptors (Table 5.8.3.2): the
-// Subtract that Release sends has no Audit descriptor, and its reply
-// still names the two terminations and nothing else.
+// Subtract that the Controller sends has no Audit descriptor, and its
+// reply still names the two terminations and nothing else.
 func TestSubtractReplyCarriesNoStatistics(t *testing.T) {
 	b := newTestbed(t, ControllerConfig{})
 	b.waitRegistered(t)
 	before := len(b.net.datagrams())
 	ctx := context.Background()
 
-	r, err := b.controller.Reserve(ctx, Media{Codecs: []sdp.Codec{pcmu}, Bandwidth: 80})
+	r, err := reserve(ctx, b.controller, agw.Media{Codecs: []sdp.Codec{pcmu}, Bandwidth: 80})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := b.controller.Release(ctx, r.ID); err != nil {
+	if err := b.controller.Subtract(ctx, r.ID); err != nil {
 		t.Fatal(err)
 	}
 

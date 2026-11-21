@@ -15,14 +15,26 @@ import (
 	"github.com/yuu-biz/ims-practice/internal/sip"
 )
 
-// Relay is the media relay the P-CSCF controls. *agw.Client is
-// one; it is the only place that talks to the relay, so that H.248
-// over Iq can replace it. The P-CSCF adds a context with the two
-// terminations agw.Access and agw.Core, tells each where to
-// send, and subtracts the context.
+// Relay is the media relay that the P-CSCF, as the IMS-ALG, controls
+// over Iq (TS 23.334, TS 29.334). The operations carry the names of the
+// H.248 commands, on the types of internal/agw, and each is a call
+// related procedure of Iq. The P-CSCF adds a context with the two
+// terminations agw.Access, which faces the UE, and agw.Core, which faces
+// the rest of the network, tells each where to send, and subtracts the
+// context. Two values implement it: *agw.Client, over the HTTP API of
+// the media node, and the H.248 Controller of internal/h248/mediactl.
 type Relay interface {
+	// Add is Reserve AGW Connection Point (TS 29.334 5.17.2.2) for the
+	// terminations of one new context. The context it returns has, for
+	// each termination, the address on which it receives RTP, which the
+	// SDP that its party receives is to show.
 	Add(ctx context.Context, terminations ...agw.TerminationRequest) (agw.Context, error)
+	// Modify is Configure AGW Connection Point (TS 29.334 5.17.2.3): it
+	// tells a termination where its party takes the media, as the SDP
+	// of that party gives it.
 	Modify(ctx context.Context, id string, termination agw.TerminationID, change agw.TerminationRequest) error
+	// Subtract is Release AGW Termination (TS 29.334 5.17.2.5) for both
+	// terminations of the context.
 	Subtract(ctx context.Context, id string) error
 }
 

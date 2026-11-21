@@ -9,6 +9,7 @@ import (
 	"net/netip"
 	"time"
 
+	"github.com/yuu-biz/ims-practice/internal/agw"
 	"github.com/yuu-biz/ims-practice/internal/h248"
 	"github.com/yuu-biz/ims-practice/internal/h248/mediactl"
 )
@@ -20,28 +21,28 @@ type exampleProcessor struct {
 	gateway *mediactl.Gateway
 }
 
-func (*exampleProcessor) Add(ctx context.Context, terminations ...mediactl.TerminationRequest) (mediactl.Context, error) {
+func (*exampleProcessor) Add(ctx context.Context, terminations ...agw.TerminationRequest) (agw.Context, error) {
 	t := terminations[0]
-	fmt.Printf("MRFP: new context, %s to %s\n", t.Mode, t.Remote.Address)
-	return mediactl.Context{ID: "c1", Terminations: []mediactl.Termination{
-		{ID: "t1", Local: netip.MustParseAddrPort("192.0.2.21:42000")},
+	fmt.Printf("MRFP: new context, %s to %s\n", t.Mode, t.Remote)
+	return agw.Context{ID: "c1", Terminations: map[agw.TerminationID]*agw.Termination{
+		t.ID: {ID: t.ID, Mode: t.Mode, Local: netip.MustParseAddrPort("192.0.2.21:42000"), Remote: t.Remote},
 	}}, nil
 }
 
-func (*exampleProcessor) AddTermination(ctx context.Context, contextID string, t mediactl.TerminationRequest) (mediactl.Termination, error) {
-	return mediactl.Termination{}, mediactl.ErrInsufficientResources
+func (*exampleProcessor) AddTermination(ctx context.Context, id string, t agw.TerminationRequest) (agw.Termination, error) {
+	return agw.Termination{}, agw.ErrNoPort
 }
 
-func (p *exampleProcessor) Modify(ctx context.Context, contextID string, id mediactl.TerminationID, change mediactl.TerminationRequest) error {
+func (p *exampleProcessor) Modify(ctx context.Context, id string, termination agw.TerminationID, change agw.TerminationRequest) error {
 	if change.Signals != nil && change.Signals.Play != nil {
-		fmt.Printf("MRFP: %s of %s plays %s %d times, %s\n", id, contextID, change.Signals.Play.Announcement, change.Signals.Play.Repeat, change.Mode)
-		p.gateway.SignalCompleted(contextID, id)
+		fmt.Printf("MRFP: %s of %s plays %s %d times, %s\n", termination, id, change.Signals.Play.Announcement, change.Signals.Play.Repeat, change.Mode)
+		p.gateway.SignalCompleted(id, termination)
 	}
 	return nil
 }
 
-func (*exampleProcessor) SubtractTermination(ctx context.Context, contextID string, id mediactl.TerminationID) (mediactl.Statistics, error) {
-	fmt.Printf("MRFP: subtract %s of %s\n", id, contextID)
+func (*exampleProcessor) SubtractTermination(ctx context.Context, id string, termination agw.TerminationID) (mediactl.Statistics, error) {
+	fmt.Printf("MRFP: subtract %s of %s\n", termination, id)
 	return mediactl.Statistics{PacketsSent: 150}, nil
 }
 
@@ -88,14 +89,15 @@ func Example_announcement() {
 	go gateway.Serve()
 	defer gateway.Close()
 
-	// The MRFC uses the Controller as a mediactl.Processor. Until the
-	// MRFP has registered, there is none to reserve on.
+	// The MRFC uses the Controller as its MRFP, with the same operations
+	// as the HTTP client of the media node. Until the MRFP has
+	// registered, there is none to add a context on.
 	var mrfp mediactl.Processor = controller
 	ctx := context.Background()
-	ue := mediactl.Media{Address: netip.MustParseAddrPort("192.0.2.30:49170")}
-	var cx mediactl.Context
+	ue := netip.MustParseAddrPort("192.0.2.30:49170")
+	var cx agw.Context
 	for {
-		cx, err = mrfp.Add(ctx, mediactl.TerminationRequest{Mode: mediactl.SendOnly, Remote: ue})
+		cx, err = mrfp.Add(ctx, agw.TerminationRequest{Mode: agw.SendOnly, Remote: ue})
 		if !errors.Is(err, mediactl.ErrUnavailable) {
 			break
 		}
@@ -104,13 +106,16 @@ func Example_announcement() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	t := cx.Terminations[0]
+	var t *agw.Termination
+	for _, only := range cx.Terminations {
+		t = only
+	}
 	fmt.Printf("MRFC: context %s, termination %s receives on %s\n", cx.ID, t.ID, t.Local)
 
-	err = mrfp.Modify(ctx, cx.ID, t.ID, mediactl.TerminationRequest{
-		Mode:    mediactl.SendOnly,
-		Signals: &mediactl.Signals{Play: &mediactl.Play{Announcement: "notice", Repeat: 2}},
-		Events:  &mediactl.Events{RequestID: 42, Detect: []mediactl.EventName{mediactl.SignalCompleted}},
+	err = mrfp.Modify(ctx, cx.ID, t.ID, agw.TerminationRequest{
+		Mode:    agw.SendOnly,
+		Signals: &agw.Signals{Play: &agw.Play{Announcement: "notice", Repeat: 2}},
+		Events:  &agw.Events{RequestID: 42, Detect: []agw.EventName{agw.SignalCompleted}},
 	})
 	if err != nil {
 		log.Fatal(err)
@@ -127,7 +132,7 @@ func Example_announcement() {
 	// MRFP: new context, sendonly to 192.0.2.30:49170
 	// MRFC: context 7@mrfp1.ims.example.net, termination ip/7/1 receives on 192.0.2.21:42000
 	// MRFP: t1 of c1 plays notice 2 times, sendonly
-	// MRFC: an/apf of ip/7/1 ended (g/sc, TO), request 42
+	// MRFC: an/apf of ip/7/1 ended (signal_completed, TO), request 42
 	// MRFP: subtract t1 of c1
 	// MRFC: the termination sent 150 RTP packets
 }

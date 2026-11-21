@@ -14,6 +14,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/yuu-biz/ims-practice/internal/agw"
 	"github.com/yuu-biz/ims-practice/internal/h248"
 )
 
@@ -89,7 +90,7 @@ type gatewayContext struct {
 
 	mu        sync.Mutex
 	released  bool
-	heartbeat map[Side]*heartbeat
+	heartbeat map[agw.TerminationID]*heartbeat
 }
 
 // heartbeat is the event hangterm/thb on one termination (H.248.36

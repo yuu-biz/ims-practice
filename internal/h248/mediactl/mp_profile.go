@@ -2,10 +2,12 @@ package mediactl
 
 import (
 	"fmt"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/yuu-biz/ims-practice/internal/agw"
 	"github.com/yuu-biz/ims-practice/internal/h248"
 )
 
@@ -87,32 +89,35 @@ func mpTerminationID(contextID h248.ContextID, n int) h248.TerminationID {
 	return h248.TerminationID(fmt.Sprintf("ip/%d/%d", contextID, n))
 }
 
-// streamModeOf is the StreamMode of the LocalControl descriptor for m.
-func streamModeOf(m Mode) (h248.StreamMode, bool) {
+// streamModeOf is the StreamMode of the LocalControl descriptor for m
+// (TS 29.333 5.7.1.1, Table 5.7.1.1.2; H.248.1 (05/2002) 7.1.7). The
+// modes of agw.Mode are seen from outside the context, as those of
+// H.248 are.
+func streamModeOf(m agw.Mode) (h248.StreamMode, bool) {
 	switch m {
-	case SendReceive:
+	case agw.SendReceive:
 		return h248.SendRecv, true
-	case SendOnly:
+	case agw.SendOnly:
 		return h248.SendOnly, true
-	case ReceiveOnly:
+	case agw.ReceiveOnly:
 		return h248.RecvOnly, true
-	case Inactive:
+	case agw.Inactive:
 		return h248.Inactive, true
 	}
 	return "", false
 }
 
-// modeOf is the Mode for a StreamMode of a LocalControl descriptor.
-func modeOf(m h248.StreamMode) (Mode, bool) {
+// modeOf is the agw.Mode for a StreamMode of a LocalControl descriptor.
+func modeOf(m h248.StreamMode) (agw.Mode, bool) {
 	switch m {
 	case h248.SendRecv:
-		return SendReceive, true
+		return agw.SendReceive, true
 	case h248.SendOnly:
-		return SendOnly, true
+		return agw.SendOnly, true
 	case h248.RecvOnly:
-		return ReceiveOnly, true
+		return agw.ReceiveOnly, true
 	case h248.Inactive:
-		return Inactive, true
+		return agw.Inactive, true
 	}
 	return "", false
 }
@@ -133,7 +138,7 @@ func tenMilliseconds(d time.Duration) uint64 {
 // stopped (H.248.7 (03/2004) 4.3.1, H.248.9 (12/2009) 8.3.1.1.2).
 func cycles(repeat int) string {
 	switch {
-	case repeat == RepeatForever:
+	case repeat == agw.RepeatForever:
 		return "0"
 	case repeat <= 1:
 		return "1"
@@ -159,19 +164,20 @@ func cycles(repeat int) string {
 // is of type Brief and ignores a duration unless its type is set to
 // TimeOut (H.248.9 (12/2009) 8.5), so the type is written only with a
 // limit.
-func playSignal(p Play) (h248.Signal, error) {
+func playSignal(p agw.Play) (h248.Signal, error) {
+	delay, length := time.Duration(p.DelayMS)*time.Millisecond, time.Duration(p.DurationMS)*time.Millisecond
 	if p.Announcement == "" {
 		return h248.Signal{}, fmt.Errorf("mediactl: a Play needs the name of an announcement")
 	}
-	if p.Repeat < RepeatForever || p.Delay < 0 || p.Duration < 0 {
-		return h248.Signal{}, fmt.Errorf("mediactl: repeat %d, delay %v, duration %v", p.Repeat, p.Delay, p.Duration)
+	if p.Repeat < agw.RepeatForever || delay < 0 || length < 0 {
+		return h248.Signal{}, fmt.Errorf("mediactl: repeat %d, delay %v, duration %v", p.Repeat, delay, length)
 	}
-	if p.Duration > maxSignalDuration {
-		return h248.Signal{}, fmt.Errorf("mediactl: a signal lasts %v at most, not %v", maxSignalDuration, p.Duration)
+	if length > maxSignalDuration {
+		return h248.Signal{}, fmt.Errorf("mediactl: a signal lasts %v at most, not %v", maxSignalDuration, length)
 	}
-	duration := uint16(tenMilliseconds(p.Duration))
+	duration := uint16(tenMilliseconds(length))
 	completion := []h248.NotificationReason{h248.OnTimeOut}
-	if p.Delay == 0 {
+	if delay == 0 {
 		return h248.Signal{
 			SignalName:       signalAnnouncementPlay,
 			Duration:         &duration,
@@ -188,10 +194,10 @@ func playSignal(p Play) (h248.Signal, error) {
 		SigParList: []h248.SigParameter{
 			{Name: paramAnnouncementName, Value: h248.Value{Text: segmentSpecification(p.Announcement), Quoted: true}},
 			{Name: paramIterations, Value: h248.Value{Text: cycles(p.Repeat)}},
-			{Name: paramInterval, Value: h248.Value{Text: strconv.FormatUint(tenMilliseconds(p.Delay), 10)}},
+			{Name: paramInterval, Value: h248.Value{Text: strconv.FormatUint(tenMilliseconds(delay), 10)}},
 		},
 	}
-	if p.Duration > 0 {
+	if length > 0 {
 		s.SigType, s.Duration = h248.TimeOut, &duration
 	}
 	return s, nil
@@ -234,7 +240,7 @@ func readSegmentSpecification(spec string) (string, bool) {
 // and the events of e. The heartbeat is KeepActive (TS 29.333 5.7.2,
 // Table 5.7.2.3): without it, its detection would stop the announcement
 // that plays (H.248.1 (05/2002) 7.1.9).
-func (c *Controller) mpEventsDescriptor(e *Events) *h248.EventsDescriptor {
+func (c *Controller) mpEventsDescriptor(e *agw.Events) *h248.EventsDescriptor {
 	d := &h248.EventsDescriptor{RequestID: requestIDTermination, EventList: []h248.RequestedEvent{{
 		PkgdName:   eventHeartbeat,
 		KeepActive: true,
@@ -249,7 +255,7 @@ func (c *Controller) mpEventsDescriptor(e *Events) *h248.EventsDescriptor {
 	if e.RequestID != 0 {
 		d.RequestID = e.RequestID
 	}
-	if e.detects(SignalCompleted) {
+	if slices.Contains(e.Detect, agw.SignalCompleted) {
 		d.EventList = append(d.EventList, h248.RequestedEvent{PkgdName: eventSignalCompletion})
 	}
 	return d

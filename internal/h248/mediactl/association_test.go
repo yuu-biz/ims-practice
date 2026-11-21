@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/yuu-biz/ims-practice/internal/agw"
 	"github.com/yuu-biz/ims-practice/internal/h248"
 )
 
@@ -53,11 +54,11 @@ func TestKeepAliveWaitsForIdleness(t *testing.T) {
 	// A call every 4 s keeps the association busy, so no keep-alive
 	// is needed.
 	for range 6 {
-		r, err := b.controller.Reserve(ctx, Media{})
+		r, err := reserve(ctx, b.controller, agw.Media{})
 		if err != nil {
 			t.Fatal(err)
 		}
-		if err := b.controller.Release(ctx, r.ID); err != nil {
+		if err := b.controller.Subtract(ctx, r.ID); err != nil {
 			t.Fatal(err)
 		}
 		b.clock.Advance(4 * time.Second)
@@ -72,7 +73,7 @@ func TestLossOfTheGatewayAndItsRestart(t *testing.T) {
 	b := newTestbed(t, ControllerConfig{})
 	b.waitRegistered(t)
 	ctx := context.Background()
-	old, err := b.controller.Reserve(ctx, Media{})
+	old, err := reserve(ctx, b.controller, agw.Media{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -83,11 +84,11 @@ func TestLossOfTheGatewayAndItsRestart(t *testing.T) {
 	b.until(t, "the controller to give up on the gateway", 250*time.Millisecond, func() bool {
 		return len(*b.controller.available.Load()) == 0
 	})
-	if _, err := b.controller.Reserve(ctx, Media{}); !errors.Is(err, ErrUnavailable) {
-		t.Errorf("Reserve without a gateway: %v", err)
+	if _, err := reserve(ctx, b.controller, agw.Media{}); !errors.Is(err, ErrUnavailable) {
+		t.Errorf("Add without a gateway: %v", err)
 	}
-	if err := b.controller.Configure(ctx, old.ID, Access, Media{Address: mustAddrPort("192.0.2.30:49170")}); !errors.Is(err, ErrUnavailable) {
-		t.Errorf("Configure on a failed gateway: %v", err)
+	if err := b.controller.Modify(ctx, old.ID, agw.Access, agw.TerminationRequest{Remote: mustAddrPort("192.0.2.30:49170")}); !errors.Is(err, ErrUnavailable) {
+		t.Errorf("Modify on a failed gateway: %v", err)
 	}
 
 	// The gateway comes back with no contexts and registers with
@@ -99,15 +100,15 @@ func TestLossOfTheGatewayAndItsRestart(t *testing.T) {
 	if n := count(t, b, before, "mg MEGACO/1 ServiceChange=ROOT"); n != 1 {
 		t.Errorf("%d registrations", n)
 	}
-	r, err := b.controller.Reserve(ctx, Media{})
+	r, err := reserve(ctx, b.controller, agw.Media{})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if r.ID != "200@agw1.ims.example.net" {
 		t.Errorf("ID = %q", r.ID)
 	}
-	if err := b.controller.Configure(ctx, old.ID, Access, Media{Address: mustAddrPort("192.0.2.30:49170")}); !errors.Is(err, ErrNoContext) {
-		t.Errorf("Configure of a context from before the restart: %v", err)
+	if err := b.controller.Modify(ctx, old.ID, agw.Access, agw.TerminationRequest{Remote: mustAddrPort("192.0.2.30:49170")}); !errors.Is(err, agw.ErrNoContext) {
+		t.Errorf("Modify of a context from before the restart: %v", err)
 	}
 }
 
@@ -115,19 +116,19 @@ func TestPendingRequestsFailWhenTheGatewayIsLost(t *testing.T) {
 	b := newTestbed(t, ControllerConfig{})
 	b.waitRegistered(t)
 	ctx := context.Background()
-	r, err := b.controller.Reserve(ctx, Media{})
+	r, err := reserve(ctx, b.controller, agw.Media{})
 	if err != nil {
 		t.Fatal(err)
 	}
 	b.net.setLose(func(d datagram) bool { return true })
 	done := make(chan error, 1)
 	go func() {
-		err := b.controller.Release(ctx, r.ID)
+		err := b.controller.Subtract(ctx, r.ID)
 		done <- err
 	}()
-	b.until(t, "the Release to fail", 250*time.Millisecond, func() bool { return len(done) == 1 })
+	b.until(t, "the Subtract to fail", 250*time.Millisecond, func() bool { return len(done) == 1 })
 	if err := <-done; !errors.Is(err, ErrUnavailable) {
-		t.Errorf("Release: %v", err)
+		t.Errorf("Subtract: %v", err)
 	}
 }
 
@@ -135,7 +136,7 @@ func TestReRegistrationAfterTheNetworkFails(t *testing.T) {
 	b := newTestbed(t, ControllerConfig{})
 	b.waitRegistered(t)
 	ctx := context.Background()
-	r, err := b.controller.Reserve(ctx, Media{})
+	r, err := reserve(ctx, b.controller, agw.Media{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -171,8 +172,8 @@ func TestReRegistrationAfterTheNetworkFails(t *testing.T) {
 		t.Error("the gateway registered with Restart, as if it had lost its contexts")
 	}
 	// The context from before is still there.
-	if err := b.controller.Configure(ctx, r.ID, Access, Media{Address: mustAddrPort("192.0.2.30:49170")}); err != nil {
-		t.Errorf("Configure after the re-registration: %v", err)
+	if err := b.controller.Modify(ctx, r.ID, agw.Access, agw.TerminationRequest{Remote: mustAddrPort("192.0.2.30:49170")}); err != nil {
+		t.Errorf("Modify after the re-registration: %v", err)
 	}
 }
 
@@ -278,7 +279,7 @@ func TestOutOfServiceGateway(t *testing.T) {
 	b := newTestbed(t, ControllerConfig{})
 	b.waitRegistered(t)
 	ctx := context.Background()
-	r, err := b.controller.Reserve(ctx, Media{})
+	r, err := reserve(ctx, b.controller, agw.Media{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -296,23 +297,23 @@ func TestOutOfServiceGateway(t *testing.T) {
 	}
 	// Graceful: no new contexts, the old ones go on.
 	outOfService(h248.Graceful, "905 Termination Taken Out Of Service")
-	if _, err := b.controller.Reserve(ctx, Media{}); !errors.Is(err, ErrUnavailable) {
-		t.Errorf("Reserve after Graceful: %v", err)
+	if _, err := reserve(ctx, b.controller, agw.Media{}); !errors.Is(err, ErrUnavailable) {
+		t.Errorf("Add after Graceful: %v", err)
 	}
-	if err := b.controller.Configure(ctx, r.ID, Core, Media{Address: mustAddrPort("203.0.113.40:50000")}); err != nil {
-		t.Errorf("Configure after Graceful: %v", err)
+	if err := b.controller.Modify(ctx, r.ID, agw.Core, agw.TerminationRequest{Remote: mustAddrPort("203.0.113.40:50000")}); err != nil {
+		t.Errorf("Modify after Graceful: %v", err)
 	}
 	// Forced: the contexts are lost.
 	outOfService(h248.Forced, "908 MG Impending Failure")
-	if err := b.controller.Configure(ctx, r.ID, Core, Media{Address: mustAddrPort("203.0.113.40:50000")}); !errors.Is(err, ErrUnavailable) {
-		t.Errorf("Configure after Forced: %v", err)
+	if err := b.controller.Modify(ctx, r.ID, agw.Core, agw.TerminationRequest{Remote: mustAddrPort("203.0.113.40:50000")}); !errors.Is(err, ErrUnavailable) {
+		t.Errorf("Modify after Forced: %v", err)
 	}
 }
 
 func TestTerminationOutOfServiceClearsItsContext(t *testing.T) {
 	b := newTestbed(t, ControllerConfig{})
 	b.waitRegistered(t)
-	r, err := b.controller.Reserve(context.Background(), Media{})
+	r, err := reserve(context.Background(), b.controller, agw.Media{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -325,7 +326,7 @@ func TestTerminationOutOfServiceClearsItsContext(t *testing.T) {
 	reply, err := b.gateway.request([]h248.ActionRequest{{
 		ContextID: id,
 		Commands: []h248.CommandRequest{{
-			Command: h248.ServiceChange, TerminationID: terminationID(1, Access, id),
+			Command: h248.ServiceChange, TerminationID: terminationID(1, agw.Access, id),
 			ServiceChange: &h248.ServiceChangeParm{Method: h248.Forced, Reason: "905 Termination Taken Out Of Service"},
 		}},
 	}})
@@ -355,11 +356,11 @@ func TestTerminationHeartbeat(t *testing.T) {
 	})
 	b.waitRegistered(t)
 	ctx := context.Background()
-	kept, err := b.controller.Reserve(ctx, Media{})
+	kept, err := reserve(ctx, b.controller, agw.Media{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	lost, err := b.controller.Reserve(ctx, Media{})
+	lost, err := reserve(ctx, b.controller, agw.Media{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -382,14 +383,14 @@ func TestTerminationHeartbeat(t *testing.T) {
 	// way when the relay has released the second. The wait is for
 	// all that must be sent.
 	always := []string{
-		fmt.Sprintf("mg MEGACO/2 Notify=%s", terminationID(1, Access, 100)),
-		fmt.Sprintf("mg MEGACO/2 Notify=%s", terminationID(1, Core, 100)),
+		fmt.Sprintf("mg MEGACO/2 Notify=%s", terminationID(1, agw.Access, 100)),
+		fmt.Sprintf("mg MEGACO/2 Notify=%s", terminationID(1, agw.Core, 100)),
 		"mgc MEGACO/2 Reply error 411",
 		"mgc MEGACO/2 Subtract=*",
 	}
 	oneOf := []string{
-		fmt.Sprintf("mg MEGACO/2 Notify=%s", terminationID(1, Access, 101)),
-		fmt.Sprintf("mg MEGACO/2 Notify=%s", terminationID(1, Core, 101)),
+		fmt.Sprintf("mg MEGACO/2 Notify=%s", terminationID(1, agw.Access, 101)),
+		fmt.Sprintf("mg MEGACO/2 Notify=%s", terminationID(1, agw.Core, 101)),
 	}
 	reported := func() bool {
 		got := summaries(t, b.net.datagrams()[before:])
@@ -412,8 +413,8 @@ func TestTerminationHeartbeat(t *testing.T) {
 	if _, ok := b.relay.context("c1"); !ok {
 		t.Error("the context in use was released")
 	}
-	if err := b.controller.Release(ctx, lost.ID); !errors.Is(err, ErrNoContext) {
-		t.Errorf("Release of the released context: %v", err)
+	if err := b.controller.Subtract(ctx, lost.ID); !errors.Is(err, agw.ErrNoContext) {
+		t.Errorf("Subtract of the subtracted context: %v", err)
 	}
 }
 
@@ -428,19 +429,19 @@ func TestConcurrentContexts(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			r, err := b.controller.Reserve(ctx, Media{Codecs: nil})
+			r, err := reserve(ctx, b.controller, agw.Media{Codecs: nil})
 			if err != nil {
 				errs <- err
 				return
 			}
-			remote := Media{Address: mustAddrPort(fmt.Sprintf("192.0.2.30:%d", 50000+2*i))}
-			for _, side := range []Side{Access, Core} {
-				if err := b.controller.Configure(ctx, r.ID, side, remote); err != nil {
+			remote := agw.TerminationRequest{Remote: mustAddrPort(fmt.Sprintf("192.0.2.30:%d", 50000+2*i))}
+			for _, side := range []agw.TerminationID{agw.Access, agw.Core} {
+				if err := b.controller.Modify(ctx, r.ID, side, remote); err != nil {
 					errs <- err
 					return
 				}
 			}
-			if err := b.controller.Release(ctx, r.ID); err != nil {
+			if err := b.controller.Subtract(ctx, r.ID); err != nil {
 				errs <- err
 			}
 		}()
