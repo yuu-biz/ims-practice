@@ -13,7 +13,10 @@ if docker buildx inspect ims-practice >/dev/null 2>&1; then
 	export BUILDX_BUILDER=ims-practice
 fi
 
-wait_seconds="${WAIT_SECONDS:-25}"
+# A connection opens at once, or after Tc (30 s) when the node started
+# before the HSS accepted connections. The first DWR follows Tw (30 s,
+# up to 2 s early or late) after that, so 75 s leaves room for both.
+wait_seconds="${WAIT_SECONDS:-75}"
 
 fail=0
 docker compose up -d --build

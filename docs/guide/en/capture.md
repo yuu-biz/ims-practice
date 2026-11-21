@@ -58,7 +58,7 @@ The I-CSCF, the S-CSCF and the IP-SM-GW each open a Diameter connection to the H
 | --- | --- | --- |
 | Capabilities-Exchange Request (CER) | I-CSCF, S-CSCF, IP-SM-GW | The client says who it is and which application it supports: Cx for the CSCFs, Sh for the IP-SM-GW. |
 | Capabilities-Exchange Answer (CEA) | HSS | The HSS answers with Result-Code 2001 (DIAMETER_SUCCESS) and lists the applications it supports: Cx, and Sh, which application servers use. |
-| Device-Watchdog Request and Answer (DWR, DWA) | either side | A side that has heard nothing for about 10 seconds checks that its peer is alive. |
+| Device-Watchdog Request and Answer (DWR, DWA) | either side | A side that has heard nothing for about 30 seconds checks that its peer is alive. 30 seconds is the default of the watchdog timer (RFC 3539 3.4.1 [1]), and each timer is set up to 2 seconds early or late. |
 | Disconnect-Peer Request and Answer (DPR, DPA) | the node that stops | The node says goodbye before it closes the connection. |
 
 To see a DPR and a DPA, stop one node:

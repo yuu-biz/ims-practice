@@ -39,7 +39,7 @@ IMS で電話をかけたり SMS を送ったりする前に、端末は登録�
    docker compose up -d --build
    ```
 
-2. 10 秒ほど待ちます。I-CSCF と S-CSCF が HSS との Diameter の接続を開くまでの時間です。`docker compose logs scscf | grep I-Open` を実行して 1 行表示されれば、接続が開いています。
+2. I-CSCF と S-CSCF が HSS との Diameter の接続を開くまで待ちます。HSS が接続を受け付ける前に起動したノードは、30 秒後（Tc、RFC 6733 2.1）にもう一度つなぎに行くので、長くて 1 分ほどかかります。`docker compose logs scscf | grep I-Open` を実行して 1 行表示されれば、接続が開いています。
 3. UE を登録し、5 秒後に登録を解除します。
 
    ```sh
