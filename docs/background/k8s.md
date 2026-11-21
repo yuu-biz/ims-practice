@@ -83,7 +83,7 @@ Kustomize には、自分のディレクトリの外のファイルを読まな�
 | 外付けの DNS サーバー（overlay b） | Deployment | 固定の ClusterIP（kind では 10.96.0.53） | Pod の resolv.conf にはアドレスを書くので、変わらないアドレスが要ります |
 | キャプチャ | DaemonSet | なし | ノードごとに 1 つ、ノードのネットワークで動きます（8 章） |
 
-StatefulSet は `podManagementPolicy: Parallel` にしました。Compose の `depends_on` のような起動の順番は付けていません。各ノードは Diameter の再接続（Tc）と、要求のたびの DNS の問い合わせで、相手が後から起きても追いつきます。kind で試すと、I-CSCF は最初の接続で HSS の名前を引けずに失敗し、5 秒後の再接続で開きました。
+StatefulSet は `podManagementPolicy: Parallel` にしました。Compose の `depends_on` のような起動の順番は付けていません。各ノードは Diameter の再接続（Tc）と、要求のたびの DNS の問い合わせで、相手が後から起きても追いつきます。kind で試すと、I-CSCF は最初の接続で HSS の名前を引けずに失敗し、Tc 後の再接続で開きました。
 
 Docker Compose の `ue` と `ue2` は、コマンドごとにコンテナを作ります。Kubernetes では待っている Pod を置き、`kubectl exec deploy/ue -- ue register ...` で中で実行します。`ue-a` と `ue-b` は Compose の `sim` プロファイルに当たるので、replicas を 0 にしておき、`kubectl scale` で起こします。
 

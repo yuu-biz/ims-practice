@@ -35,7 +35,7 @@ The UE of this guide is a softphone without a SIM card. Its identities and its p
    docker compose up -d --build
    ```
 
-2. Wait about 10 seconds, until the I-CSCF and the S-CSCF have opened their Diameter connections to the HSS. `docker compose logs scscf | grep I-Open` prints a line once that has happened.
+2. Wait until the I-CSCF and the S-CSCF have opened their Diameter connections to the HSS. A node that starts before the HSS accepts connections tries again after 30 seconds (Tc, RFC 6733 2.1), so allow up to a minute. `docker compose logs scscf | grep I-Open` prints a line once that has happened.
 3. Register the UE, and deregister it 5 seconds later:
 
    ```sh

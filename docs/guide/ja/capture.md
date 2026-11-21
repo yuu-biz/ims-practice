@@ -58,7 +58,7 @@ I-CSCF、S-CSCF、IP-SM-GW はそれぞれ HSS の TCP 3868 番ポートに Diam
 | --- | --- | --- |
 | Capabilities-Exchange Request（CER） | I-CSCF、S-CSCF、IP-SM-GW | 接続した側が、自分が誰であるかと、対応するアプリケーションを伝える。CSCF は Cx、IP-SM-GW は Sh。 |
 | Capabilities-Exchange Answer（CEA） | HSS | HSS が Result-Code 2001（DIAMETER_SUCCESS）で応え、対応するアプリケーションとして Cx と、AS が使う Sh を示す。 |
-| Device-Watchdog Request と Answer（DWR、DWA） | どちらの側も | 約 10 秒間なにも受け取らなかった側が、相手が動いているかを確かめる。 |
+| Device-Watchdog Request と Answer（DWR、DWA） | どちらの側も | 約 30 秒間なにも受け取らなかった側が、相手が動いているかを確かめる。30 秒は監視タイマーの既定値で（RFC 3539 3.4.1 [1]）、タイマーごとに最大 2 秒早まったり遅れたりする。 |
 | Disconnect-Peer Request と Answer（DPR、DPA） | 止まるノード | 接続を閉じる前に、切断することを相手に伝える。 |
 
 DPR と DPA を見るには、ノードを 1 つ止めます。

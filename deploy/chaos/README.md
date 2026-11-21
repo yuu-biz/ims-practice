@@ -125,7 +125,7 @@ deploy/chaos/fault.sh partition scscf hss
 docker compose run --rm ue register --deregister-after 2s
 ```
 
-The REGISTER gets 500 after 5 seconds: the S-CSCF sent a Multimedia-Auth Request (MAR) that the dashboard shows and the capture does not. Leave the partition for half a minute and read `docker compose logs hss` for `peer state`: the watchdog of RFC 3539 (3.4) moves the connection from `OKAY` to `Pending`. After `fault.sh clear scscf`, the S-CSCF opens a new connection (SYN, CER, CEA), and the next registration works.
+The REGISTER gets 500 after 5 seconds: the S-CSCF sent a Multimedia-Auth Request (MAR) that the dashboard shows and the capture does not. Leave the partition for a minute and read `docker compose logs hss` for `peer state`: the watchdog of RFC 3539 (3.4) moves the connection from `OKAY` to `Pending`. After `fault.sh clear scscf`, the S-CSCF opens a new connection (SYN, CER, CEA), and the next registration works.
 
 ### Freeze the MMTel AS during a call
 
