@@ -121,5 +121,7 @@ docker compose --profile sim up -d --build
 ## 後片付け
 
 ```sh
-docker compose --profile sim down --rmi all -v --remove-orphans
+docker compose --profile ue --profile sim --profile volte down -v --remove-orphans
 ```
+
+すべてのプロファイルのノードと UE を止め、イメージは残します。次の手順書をビルドし直さずに始められます。イメージも削除するときは、[システムを止める](capture.md#システムを止める)を見てください。

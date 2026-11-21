@@ -474,7 +474,9 @@ Each item has a `SIMPLIFIED:` comment in the code; `grep -rn "SIMPLIFIED:" inter
 ## Clean up
 
 ```sh
-docker compose -f compose.yaml -f deploy/interconnect/compose.yaml --profile ue down --rmi all -v --remove-orphans
+docker compose -f compose.yaml -f deploy/interconnect/compose.yaml --profile ue --profile sim --profile volte down -v --remove-orphans
 ```
+
+This stops the nodes and the UEs of every profile and keeps the images, so the next guide starts without a new build. To delete the images as well, see [Stop the system](capture.md#stop-the-system).
 
 `scripts/e2e-interconnect.sh` runs under the project name `ims-practice-interconnect` and takes its containers down by itself, unless `E2E_KEEP=1` is set.
