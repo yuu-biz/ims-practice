@@ -85,7 +85,7 @@ func (s *SCSCF) thirdPartyRegister(req *sip.Message, reg Registration, as ifc.Ap
 	// Item h: the icid-value of the UE's REGISTER, and a type 3 orig-ioi
 	// naming this network.
 	if icid := icidOf(req); icid != "" {
-		m.Add("P-Charging-Vector", "icid-value="+icid+";orig-ioi="+s.cfg.HomeDomain)
+		m.Add("P-Charging-Vector", sip.ChargingVector{ICID: icid, OrigIOI: s.cfg.HomeDomain}.String())
 	}
 	// Item g and 5.4.1.7A.
 	if as.ServiceInfo != "" {

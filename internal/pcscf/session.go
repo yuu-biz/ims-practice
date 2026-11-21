@@ -112,7 +112,7 @@ func (p *PCSCF) initial(st *sip.ServerTransaction, out *sip.Message, l leg, log 
 			out.Add("P-Asserted-Identity", "<"+id+">")
 		}
 		// Step 7.
-		out.Set("P-Charging-Vector", "icid-value="+sip.NewCallID()+";orig-ioi="+p.cfg.VisitedNetworkID)
+		out.Set("P-Charging-Vector", sip.ChargingVector{ICID: sip.NewCallID(), OrigIOI: p.cfg.VisitedNetworkID}.String())
 		u, err := sip.NextHop(out)
 		if err == nil {
 			dst, err = ims.Destination(context.Background(), p.locator, u)

@@ -74,14 +74,12 @@ func isOneOf(name string, names []string) bool {
 // the request it received and take it out of the request it sends. The
 // icid-value stays, so that both legs are charged as one call.
 func chargingVector(req *sip.Message) string {
-	var kept []string
-	for _, p := range strings.Split(req.Get("P-Charging-Vector"), ";") {
-		name, _, _ := strings.Cut(strings.TrimSpace(p), "=")
-		if name != "" && !strings.EqualFold(name, "orig-ioi") && !strings.EqualFold(name, "term-ioi") {
-			kept = append(kept, strings.TrimSpace(p))
-		}
+	c, ok := sip.ChargingVectorOf(req)
+	if !ok {
+		return ""
 	}
-	return strings.Join(kept, ";")
+	c.OrigIOI, c.TermIOI = "", ""
+	return c.String()
 }
 
 // responseChargingVector is the P-Charging-Vector of a response that
@@ -89,24 +87,11 @@ func chargingVector(req *sip.Message) string {
 // orig-ioi that req carried, and a type 3 term-ioi that names the home
 // network.
 func responseChargingVector(req *sip.Message, homeDomain string) string {
-	var icid, origIOI string
-	for _, p := range strings.Split(req.Get("P-Charging-Vector"), ";") {
-		name, value, _ := strings.Cut(strings.TrimSpace(p), "=")
-		switch strings.ToLower(name) {
-		case "icid-value":
-			icid = value
-		case "orig-ioi":
-			origIOI = value
-		}
-	}
-	if icid == "" {
+	c, ok := sip.ChargingVectorOf(req)
+	if !ok {
 		return ""
 	}
-	pcv := "icid-value=" + icid
-	if origIOI != "" {
-		pcv += ";orig-ioi=" + origIOI
-	}
-	return pcv + ";term-ioi=" + homeDomain
+	return c.Response(homeDomain).String()
 }
 
 // reasons are the Reason header fields of the request that ended a leg,
