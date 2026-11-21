@@ -204,28 +204,41 @@ func (c *Controller) contextRequest(ctx context.Context, contextID string, cmd h
 }
 
 // mpCommand is the Add or the Modify of Mp for t. The LocalControl
-// descriptor always carries the mode. An Add always carries a Local
-// descriptor and an Events descriptor with the termination heartbeat; a
-// Modify carries an Events descriptor only when t sets one, since a new
-// Events descriptor replaces the one before (H.248.1 (05/2002) 7.1.9).
+// descriptor carries the mode: on Add always, with SendReceive when t
+// has none, since H.248 would make the termination Inactive (H.248.1
+// (05/2002) 7.1.7); on Modify only when t sets one, as a Modify without
+// it keeps the mode. An Add always carries a Local descriptor and an
+// Events descriptor with the termination heartbeat; a Modify carries an
+// Events descriptor only when t sets one, since a new Events descriptor
+// replaces the one before (H.248.1 (05/2002) 7.1.9).
 func (c *Controller) mpCommand(command h248.Command, id h248.TerminationID, t agw.TerminationRequest) (h248.CommandRequest, error) {
 	add := command == h248.Add
 	if add && t.ID != "" {
 		// TS 29.333 5.17.2.2, 5.17.2.9: a new termination is CHOOSE.
 		return h248.CommandRequest{}, fmt.Errorf("mediactl: the MRFP chooses the termination ID, not %q", t.ID)
 	}
-	m, ok := streamModeOf(t.Mode)
-	if !ok {
-		return h248.CommandRequest{}, fmt.Errorf("mediactl: %s needs one of the modes sendrecv, sendonly, recvonly and inactive, not %q", command, t.Mode)
+	parms := &h248.StreamParms{}
+	mode := t.Mode
+	if mode == "" && add {
+		mode = agw.SendReceive
 	}
-	parms := &h248.StreamParms{LocalControl: &h248.LocalControlDescriptor{StreamMode: m}}
+	if mode != "" {
+		m, ok := streamModeOf(mode)
+		if !ok {
+			return h248.CommandRequest{}, fmt.Errorf("mediactl: no mode %q", t.Mode)
+		}
+		parms.LocalControl = &h248.LocalControlDescriptor{StreamMode: m}
+	}
 	if add {
 		parms.Local = &h248.LocalRemoteDescriptor{SDP: controllerSDP(netip.AddrPort{}, t.LocalMedia)}
 	}
 	if t.Remote.IsValid() {
 		parms.Remote = &h248.LocalRemoteDescriptor{SDP: controllerSDP(t.Remote, t.RemoteMedia)}
 	}
-	cmd := h248.CommandRequest{Command: command, TerminationID: id, Media: &h248.MediaDescriptor{OneStream: parms}}
+	cmd := h248.CommandRequest{Command: command, TerminationID: id}
+	if parms.LocalControl != nil || parms.Remote != nil || add {
+		cmd.Media = &h248.MediaDescriptor{OneStream: parms}
+	}
 	if t.Events != nil {
 		for _, e := range t.Events.Detect {
 			if e != agw.SignalCompleted {
