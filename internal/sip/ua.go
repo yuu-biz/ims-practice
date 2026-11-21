@@ -72,8 +72,9 @@ type UAConfig struct {
 	// within the dialog of a call, both an initial one and one within a
 	// subscription's dialog, which the user keeps (NotifierSubscription)
 	// and answers with st.Respond. Without it the UA answers a SUBSCRIBE
-	// outside a call with 405, or 481 within a dialog it does not know,
-	// and leaves SUBSCRIBE out of Allow.
+	// outside a call with 405, or within a dialog it does not know as it
+	// answers any such request (OnUnknownDialog), and leaves SUBSCRIBE
+	// out of Allow.
 	OnSubscribe func(st *ServerTransaction)
 	// OnUnknownDialog, when set, is called in a goroutine of its own for
 	// each request with a To tag that names no dialog of the UA, nor a
