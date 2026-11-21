@@ -3,6 +3,7 @@ package mediactl
 import (
 	"context"
 	"net/netip"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -172,11 +173,8 @@ func TestSubtractReplyCarriesNoStatistics(t *testing.T) {
 	var terminations []h248.TerminationID
 	for _, action := range reply.Actions {
 		for _, cmd := range action.Commands {
-			if cmd.Command != h248.Subtract {
-				t.Errorf("a %s in the reply to the Subtract", cmd.Command)
-			}
-			if cmd.Statistics != nil || cmd.Media != nil || cmd.Events != nil || cmd.ObservedEvents != nil || cmd.Error != nil {
-				t.Errorf("the reply for %s carries descriptors: %+v", cmd.TerminationID, cmd)
+			if want := (h248.CommandReply{Command: h248.Subtract, TerminationID: cmd.TerminationID}); !reflect.DeepEqual(cmd, want) {
+				t.Errorf("the reply for %s is %+v, want a Subtract with no descriptors", cmd.TerminationID, cmd)
 			}
 			terminations = append(terminations, cmd.TerminationID)
 		}
