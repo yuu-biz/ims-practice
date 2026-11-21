@@ -147,9 +147,11 @@ func reply(w http.ResponseWriter, v any, err error) {
 }
 
 // Client drives a media node over the control API. The P-CSCF uses it
-// as its IMS-AGW and the MRFC as its MRFP: it is the one place that
-// talks to the media node, so that H.248 over Iq and Mp can stand in for
-// it later.
+// as its IMS-AGW, the MRFC as its MRFP and the IBCF as its TrGW. Each
+// of them declares the operations of its reference point (pcscf.Relay,
+// mrfc.MRFP, ibcf.TrGW), which the H.248 Controller of
+// internal/h248/mediactl implements too, so that the node can take
+// either.
 type Client struct {
 	base string // such as http://agw:8080
 	http *http.Client
