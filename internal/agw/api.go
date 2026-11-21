@@ -177,10 +177,11 @@ func (c *Client) AddTermination(ctx context.Context, id string, t TerminationReq
 	return out, c.do(ctx, http.MethodPost, "/contexts/"+id+"/terminations", t, &out)
 }
 
-// Modify changes a termination.
-func (c *Client) Modify(ctx context.Context, id string, tid TerminationID, change TerminationRequest) (Termination, error) {
-	var out Termination
-	return out, c.do(ctx, http.MethodPut, "/contexts/"+id+"/terminations/"+string(tid), change, &out)
+// Modify changes a termination. The relay answers with the
+// termination as it is now; no controller needs it, so the client does
+// not read it.
+func (c *Client) Modify(ctx context.Context, id string, tid TerminationID, change TerminationRequest) error {
+	return c.do(ctx, http.MethodPut, "/contexts/"+id+"/terminations/"+string(tid), change, nil)
 }
 
 // SubtractTermination removes a termination, and tells whether that
@@ -191,10 +192,12 @@ func (c *Client) SubtractTermination(ctx context.Context, id string, tid Termina
 	return out.Termination, out.ContextDeleted, err
 }
 
-// Subtract removes a context.
-func (c *Client) Subtract(ctx context.Context, id string) (Context, error) {
-	var out Context
-	return out, c.do(ctx, http.MethodDelete, "/contexts/"+id, nil, &out)
+// Subtract removes a context. The relay answers with the counts of
+// what each termination carried; the client does not read them, as the
+// Subtract reply of Iq carries no statistics (TS 29.334 5.7.7, Table
+// 5.7.7.2).
+func (c *Client) Subtract(ctx context.Context, id string) error {
+	return c.do(ctx, http.MethodDelete, "/contexts/"+id, nil, nil)
 }
 
 // Announcement tells whether the node has the announcement name.
