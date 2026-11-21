@@ -228,6 +228,13 @@ func (g *IPSMGW) entryPoint() sip.URI { return sip.URI{Scheme: "sip", Host: g.cf
 
 // send sends a request of the IP-SM-GW to next and returns the final
 // response. With no final response, the error says why.
+//
+// SIMPLIFIED: TS 24.229 5.7.1.1 and 5.7.3. The IP-SM-GW stores neither
+// the icid-value and the orig-ioi of a third-party REGISTER nor the
+// term-ioi of the responses to its own requests: they are for the
+// charging records of the IP-SM-GW, which no node of this project
+// writes. The vector of each response that it sends comes from the
+// request that the response answers (respond).
 func (g *IPSMGW) send(m *sip.Message, next sip.URI) (*sip.Message, error) {
 	stack, err := g.stack.Get()
 	if err != nil {

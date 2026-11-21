@@ -193,7 +193,7 @@ func (m *MRFC) choose(key string) Processor {
 // SIMPLIFIED: TS 24.229 5.8.2.1.1.1 and RFC 4240 2 and 8. The MRFC keeps
 // no charging data: it neither stores the P-Charging-Vector and
 // P-Charging-Function-Addresses of the INVITE nor adds its fe-addr, as
-// no node of this project collects charging data. It takes sip: and
+// no node of this project writes charging records. It takes sip: and
 // sips: Request-URIs alike over the plain transports of the network
 // (nothing is encrypted, so that the capture shows the content), where RFC 4240 asks a media server to support sips: for
 // conferences, and it authenticates no AS, which RFC 4240 8 recommends.

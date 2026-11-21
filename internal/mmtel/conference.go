@@ -200,8 +200,9 @@ func (as *AS) conferenceAt(uri string) *conference {
 // SIMPLIFIED: TS 24.147 5.3.2.3.1 step 2 and TS 24.229 5.7.1.4 and
 // 5.7.1.5. The AS takes the identity that the S-CSCF asserts and lets
 // every user it serves create a conference; it has no conference
-// policy to authorize by (TS 24.147 4). It charges nothing, so the
-// P-Charging-Function-Addresses of 5.3.2.2.2 are not written.
+// policy to authorize by (TS 24.147 4). No node of this project writes
+// charging records, so the P-Charging-Function-Addresses of 5.3.2.2.2
+// are not written.
 func (c *call) createConference() {
 	as := c.as
 	req := c.in.Request

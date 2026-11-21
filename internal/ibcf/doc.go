@@ -59,9 +59,10 @@
 // and the end of the clause) and 5.10.3.5 (S-CSCF) are there.
 //
 // SIMPLIFIED: TS 24.229 5.10.2.2 steps 5A, 6 and 7, 5.10.3.2 steps 1A,
-// 1B, 2C, 2D, 5 to 9 and the steps for its responses. This project has
-// no charging, no private network traffic, no emergency calls and no
-// calling number verification, so the IBCF neither stores
+// 1B, 2C, 2D, 5 to 9 and the steps for its responses. No node of this
+// project writes charging records, and the project has no private
+// network traffic, no emergency calls and no calling number
+// verification, so the IBCF neither stores
 // P-Charging-Function-Addresses nor handles fe-identifier,
 // P-Private-Network-Indication, Resource-Priority or received-realm,
 // and it adds orig only where step 4 passes it on; the border removes
