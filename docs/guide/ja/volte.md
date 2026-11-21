@@ -185,6 +185,8 @@ ESP が無いので、本物の網と 2 つの点が違います。
 - どちらの側も保護サーバーポートから送るので、保護クライアントポート（`port-c`）は取り決めるだけで、使いません。
 - TCP の要求はそのときどきのポートから届きます。VoLTE の INVITE は 1300 バイトより大きいので TCP で送られ（RFC 3261 18.1.1）、P-CSCF は TCP の要求の UE を Via の sent-by で見分けます。challenge に答える REGISTER は 1300 バイト前後の大きさなので、TCP で送られるかどうかは SPI の桁数で変わります。TCP と UDP は同じアソシエーションを使うので（TS 33.203 7.1）、P-CSCF はこの REGISTER のアソシエーションも Via の sent-by で探します。この sent-by を認証するものは無いので、UE と同じ IP アドレスを持つホストなら、UE の保護サーバーポートを sent-by に書けます。ESP をかければ、送り手はアソシエーションで認証されます。
 
+保護されたとみなすのは、保護サーバーポートに届いたメッセージだけです。そのため、確立したアソシエーションを持つ UE のアドレスとポートから REGISTER 以外の要求がポート 5060 に届いたら、その要求は保護されていません。P-CSCF はこの要求を捨て、100 (Trying) も含めて何も返さず、どこにも転送しません。ログには `discarded an unprotected request from a UE with security associations` と書きます（TS 24.229 5.2.1 NOTE 8、TS 33.203 7.1）。
+
 ### SIPp
 
 SIPp は `images/peer/sipp/register-aka.xml` のシナリオで、IMS-AKA で登録します。SIPp はすべてを 1 つのポート 5060 から送るので、そのポートが保護サーバーポートにもなります。SIPp 3.7 は K と OP を文字列のバイトとして受け取るので、加入者 11 の鍵は印字できる文字列の `ims-practice-K01` と `ims-practice-OP1` にしました。hss.yaml にはその 16 進と、その OP から MILENAGE で作った OPc を書いています。SIPp は RES と Digest を自分で計算するので、S-CSCF の計算をほかの人が書いたコードと照らし合わせられます。

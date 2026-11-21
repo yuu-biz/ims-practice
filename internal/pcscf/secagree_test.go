@@ -3,6 +3,7 @@ package pcscf
 import (
 	"encoding/hex"
 	"fmt"
+	"log/slog"
 	"net/netip"
 	"slices"
 	"strconv"
@@ -46,6 +47,12 @@ type akaHarness struct {
 }
 
 func newAKAHarness(t *testing.T, protectedPort bool) *akaHarness {
+	t.Helper()
+	return newAKAHarnessWith(t, protectedPort, quiet())
+}
+
+// newAKAHarnessWith is newAKAHarness with the P-CSCF logging to log.
+func newAKAHarnessWith(t *testing.T, protectedPort bool, log *slog.Logger) *akaHarness {
 	t.Helper()
 	h := &akaHarness{t: t, received: make(chan *sip.Message, 10), toUE: make(chan *sip.Message, 10)}
 	h.home = newStack(t, func(st *sip.ServerTransaction) {
@@ -92,10 +99,10 @@ func newAKAHarness(t *testing.T, protectedPort bool) *akaHarness {
 		cfg.ProtectedServerPort = int(tr.LocalAddr().Port())
 	}
 	h.store = NewMemoryStore()
-	h.p = New(cfg, locate, h.store, nil, quiet())
+	h.p = New(cfg, locate, h.store, nil, log)
 	h.unprotected = newPCSCFStack(t, h.p)
 	h.p.SetStack(h.unprotected)
-	h.protected, err = sip.NewStack(tr, sip.Config{SentBy: tr.LocalAddr().String(), Screen: h.p.Screen, OnRequest: h.p.OnProtectedRequest}, quiet())
+	h.protected, err = sip.NewStack(tr, sip.Config{SentBy: tr.LocalAddr().String(), Screen: h.p.ScreenProtected, OnRequest: h.p.OnProtectedRequest}, quiet())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -238,6 +245,9 @@ func TestIMSAKASecurityAgreement(t *testing.T) {
 		sas.PCSCFMechanism.Algorithm != "hmac-sha2-256-128" || sas.UEMechanism.SPIS != 2222 || sas.PrivateIdentity != impi {
 		t.Fatalf("SA table entry = %+v, %v", sas, ok)
 	}
+	if h.p.admissions.hasSecurityAssociations(h.ueKey(), time.Now()) {
+		t.Error("Screen takes temporary security associations for established ones")
+	}
 
 	var verify []sip.HeaderField
 	for _, v := range r.GetAll("Security-Server") {
@@ -262,6 +272,11 @@ func TestIMSAKASecurityAgreement(t *testing.T) {
 	}
 	if _, ok := h.store.Association(sip.Destination{Transport: sip.UDP, Addr: h.ueKey()}); !ok {
 		t.Error("no association for the protected address of the UE")
+	}
+	// Screen knows of the established associations without the Store,
+	// so it discards the UE's unprotected requests (TS 24.229 5.2.1).
+	if !h.p.admissions.hasSecurityAssociations(h.ueKey(), time.Now()) {
+		t.Error("Screen does not know that the UE has established security associations")
 	}
 
 	// TS 24.229 5.2.6.3.3 and 5.2.6.3.4 item 4: an initial request over
@@ -312,19 +327,15 @@ func TestIMSAKASecurityAgreement(t *testing.T) {
 		t.Errorf("Record-Route at the UE = %q, want %q", got, want)
 	}
 
-	// TS 33.203 7.1 item 3: the same request on the unprotected port is
-	// refused.
-	invite.Set("Call-ID", sip.NewCallID())
-	if r := h.send(h.ueProtected, h.unprotected, invite); r.StatusCode != 403 {
-		t.Errorf("unprotected INVITE got %d, want 403", r.StatusCode)
-	}
-
 	// TS 33.203 7.4.2a: deregistration removes the entry.
 	if r, _ := h.register(true, "6629fae49393a05397450978507c4ef1", "0", verify...); r.StatusCode != 200 {
 		t.Fatalf("deregistration got %d", r.StatusCode)
 	}
 	if _, ok := h.store.SecurityAssociations(h.ueKey()); ok {
 		t.Error("the SA table still has the UE after its deregistration")
+	}
+	if h.p.admissions.hasSecurityAssociations(h.ueKey(), time.Now()) {
+		t.Error("Screen still takes the UE to have security associations after its deregistration")
 	}
 }
 

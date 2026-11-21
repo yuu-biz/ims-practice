@@ -262,8 +262,9 @@ type PCSCF struct {
 }
 
 // New makes a P-CSCF. relay may be nil, and then RTP goes between the
-// UEs directly. Both stacks of the P-CSCF need its Screen in their
-// sip.Config.
+// UEs directly. The stack on the unprotected port needs its Screen in
+// its sip.Config, and the one on the protected server port its
+// ScreenProtected.
 func New(cfg Config, locator Locator, store Store, relay Relay, log *slog.Logger) *PCSCF {
 	admitted := newAdmissions()
 	p := &PCSCF{cfg: cfg, locator: locator, store: indexedStore{Store: store, admissions: admitted}, admissions: admitted,
@@ -276,9 +277,7 @@ func New(cfg Config, locator Locator, store Store, relay Relay, log *slog.Logger
 // unprotected port.
 func (p *PCSCF) OnRequest(st *sip.ServerTransaction) {
 	if st.Request.Method != sip.REGISTER {
-		if !p.refusesUnprotected(st) {
-			p.session(st)
-		}
+		p.session(st)
 		return
 	}
 	p.register(st, false)

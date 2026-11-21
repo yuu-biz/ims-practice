@@ -367,7 +367,7 @@ func startNetwork(t *testing.T, cfg networkConfig) testNetwork {
 	p.SetStack(pcscfStack)
 	dns.add("pcscf."+domain, pcscfStack.LocalAddr())
 	protectedStack, err := sip.NewStack(protectedTransport, sip.Config{SentBy: protectedTransport.LocalAddr().String(),
-		Screen: p.Screen, OnRequest: p.OnProtectedRequest, OnACK: p.OnProtectedACK}, quiet())
+		Screen: p.ScreenProtected, OnRequest: p.OnProtectedRequest, OnACK: p.OnProtectedACK}, quiet())
 	if err != nil {
 		t.Fatal(err)
 	}

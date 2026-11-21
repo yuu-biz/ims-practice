@@ -2,13 +2,16 @@ package pcscf
 
 import (
 	"bufio"
+	"context"
 	"errors"
 	"io"
+	"log/slog"
 	"net"
 	"net/netip"
 	"os"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -238,5 +241,159 @@ func TestRegisteredUEGetsThroughAfterARestart(t *testing.T) {
 		if time.Now().After(deadline) {
 			t.Fatal("no retransmission got through")
 		}
+	}
+}
+
+// logRecords is a slog.Handler that keeps the message of each record.
+type logRecords struct {
+	mu       sync.Mutex
+	messages []string
+}
+
+func (l *logRecords) Enabled(context.Context, slog.Level) bool { return true }
+
+func (l *logRecords) Handle(_ context.Context, r slog.Record) error {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.messages = append(l.messages, r.Message)
+	return nil
+}
+
+func (l *logRecords) WithAttrs([]slog.Attr) slog.Handler { return l }
+func (l *logRecords) WithGroup(string) slog.Handler      { return l }
+
+func (l *logRecords) count(message string) int {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	n := 0
+	for _, m := range l.messages {
+		if m == message {
+			n++
+		}
+	}
+	return n
+}
+
+const discardedUnprotected = "discarded an unprotected request from a UE with security associations"
+
+// protectedUE is the IP association and the established security
+// associations of a UE whose protected server port is at ue, as the
+// P-CSCF keeps them after an IMS AKA registration.
+func protectedUE(ue netip.AddrPort) (Association, SecurityAssociations) {
+	a := Association{
+		Source:           sip.Destination{Transport: sip.UDP, Addr: ue},
+		SentBy:           ue.String(),
+		Contact:          "sip:001010000000001@" + ue.String(),
+		PrivateIdentity:  impi,
+		PublicIdentities: []string{impu},
+		ServiceRoute:     []string{"<sip:orig@scscf." + domain + ":5060;lr>"},
+		Expires:          time.Now().Add(time.Hour),
+	}
+	return a, SecurityAssociations{UE: ue, PrivateIdentity: impi, Expires: time.Now().Add(time.Hour)}
+}
+
+// TestUnprotectedRequestFromAUEWithSecurityAssociationsGetsNoAnswer is
+// TS 24.229 5.2.1 NOTE 8: a request other than REGISTER that reaches the
+// unprotected port from a UE with established security associations is
+// not protected, and the P-CSCF discards it. It sends nothing back, not
+// even a 100 (Trying), forwards nothing, and logs each copy. No
+// transaction is left of the request: once the associations are gone,
+// the same copy, with the same branch, gets through.
+func TestUnprotectedRequestFromAUEWithSecurityAssociationsGetsNoAnswer(t *testing.T) {
+	for _, transport := range []sip.Transport{sip.UDP, sip.TCP} {
+		t.Run(string(transport), func(t *testing.T) {
+			logs := &logRecords{}
+			h := newAKAHarnessWith(t, true, slog.New(logs))
+			ue := dialRawUE(t, transport, h.unprotected.LocalAddr())
+			a, sas := protectedUE(ue.addr())
+			h.p.store.PutAssociation(a)
+			h.p.store.PutSecurityAssociations(sas)
+
+			requests := strangerRequests()
+			for i, m := range requests {
+				requests[i] = ue.request(m)
+				ue.send(requests[i])
+				ue.send(requests[i])
+			}
+			if got := ue.barrier(); len(got) != 0 {
+				t.Errorf("the P-CSCF sent %d messages for the requests, want none; first: %d %s", len(got), got[0].StatusCode, got[0].Method)
+			}
+			if got, want := logs.count(discardedUnprotected), 2*len(requests); got != want {
+				t.Errorf("%d discards logged, want one for each of the %d copies", got, want)
+			}
+			select {
+			case m := <-h.received:
+				t.Errorf("the home network got %s, want nothing", m.Method)
+			default:
+			}
+
+			h.p.store.DeleteSecurityAssociations(ue.addr())
+			message := requests[2]
+			if message.Method != sip.MESSAGE {
+				t.Fatalf("request 2 is %s, want the MESSAGE", message.Method)
+			}
+			ue.send(message)
+			select {
+			case got := <-h.received:
+				if got.Method != sip.MESSAGE || got.Get("Call-ID") != message.Get("Call-ID") {
+					t.Errorf("the home network got %s %s, want the MESSAGE", got.Method, got.Get("Call-ID"))
+				}
+			case <-time.After(5 * time.Second):
+				t.Fatal("the MESSAGE did not reach the home network once the security associations were gone")
+			}
+		})
+	}
+}
+
+// TestUnprotectedRequestFromAUEWithSecurityAssociationsAfterARestart:
+// the association and the security associations were written to the
+// Store before this P-CSCF started. Screen reads both from the Store
+// after the first request, which it discards for want of an IP
+// association, and goes on discarding the UE's unprotected requests.
+func TestUnprotectedRequestFromAUEWithSecurityAssociationsAfterARestart(t *testing.T) {
+	h := newAKAHarness(t, true)
+	ue := dialRawUE(t, sip.UDP, h.unprotected.LocalAddr())
+	a, sas := protectedUE(ue.addr())
+	h.store.PutAssociation(a)
+	h.store.PutSecurityAssociations(sas)
+
+	m := ue.request(strangerRequests()[2])
+	ue.send(m)
+	deadline := time.Now().Add(5 * time.Second)
+	for !h.p.admissions.admitsFrom(a.Source, a.SentBy, time.Now()) {
+		if time.Now().After(deadline) {
+			t.Fatal("the P-CSCF did not read the association from the Store")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	ue.send(m)
+	if got := ue.barrier(); len(got) != 0 {
+		t.Errorf("the P-CSCF sent %d %s, want nothing", got[0].StatusCode, got[0].Method)
+	}
+	select {
+	case got := <-h.received:
+		t.Errorf("the home network got %s, want nothing", got.Method)
+	default:
+	}
+}
+
+// TestProtectedRequestOfAUEWithSecurityAssociationsGetsThrough: the
+// same request on the protected server port goes on to the home
+// network.
+func TestProtectedRequestOfAUEWithSecurityAssociationsGetsThrough(t *testing.T) {
+	h := newAKAHarness(t, true)
+	ue := dialRawUE(t, sip.UDP, h.protected.LocalAddr())
+	a, sas := protectedUE(ue.addr())
+	h.p.store.PutAssociation(a)
+	h.p.store.PutSecurityAssociations(sas)
+	m := ue.request(strangerRequests()[2])
+	ue.send(m)
+	select {
+	case got := <-h.received:
+		if got.Get("Call-ID") != m.Get("Call-ID") {
+			t.Errorf("the home network got %s %s, want the MESSAGE", got.Method, got.Get("Call-ID"))
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("the protected MESSAGE did not reach the home network")
 	}
 }

@@ -228,7 +228,7 @@ func run(configPath string, log *slog.Logger) error {
 		if port := c.ProtectedServerPort; port != 0 {
 			// TS 33.203 7.1: the protected server port, on the same address.
 			protected := config.SIP{Listen: netip.AddrPortFrom(c.SIP.Listen.Addr(), port), Host: c.SIP.Host}
-			stack, err := startScreenedSIP(config.RolePCSCF, protected, p.Screen, p.OnProtectedRequest, p.OnProtectedACK)
+			stack, err := startScreenedSIP(config.RolePCSCF, protected, p.ScreenProtected, p.OnProtectedRequest, p.OnProtectedACK)
 			if err != nil {
 				return err
 			}
