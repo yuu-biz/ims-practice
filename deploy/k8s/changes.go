@@ -130,10 +130,12 @@ NAT of kube-proxy in front of a ClusterIP does no harm to it.`,
 	},
 }
 
-// The home network zone changes in one way: each A record of a node
+// The home network zone changes in two ways: each A record of a node
 // becomes a CNAME to the node's headless Service in the namespace ims,
-// which the cluster DNS answers with the Pod's current address. The
-// other zones are copied as they are.
+// which the cluster DNS answers with the Pod's current address, and an
+// SRV record that points to a node points to that Service instead,
+// since the target of an SRV record must not be an alias (RFC 2782).
+// The other zones are copied as they are.
 const (
 	homeZone = "ims.mnc001.mcc001.3gppnetwork.org.zone"
 	// serviceDomain follows the label of each node: icscf becomes
@@ -155,10 +157,12 @@ const (
 )
 
 // homeZoneHeader replaces the comment at the top of the home zone.
-const homeZoneHeader = `The home network domain on Kubernetes. The NAPTR and SRV records are
-those of deploy/compose/dns. The nodes have no fixed addresses here,
-so each name is a CNAME to the node's headless Service, which the
-cluster DNS answers with the Pod's current address.`
+const homeZoneHeader = `The home network domain on Kubernetes, with the NAPTR and SRV records
+of deploy/compose/dns. The nodes have no fixed addresses here, so each
+name is a CNAME to the node's headless Service, which the cluster DNS
+answers with the Pod's current address. The target of an SRV record
+must not be such an alias (RFC 2782), so the SRV records name the
+Service itself.`
 
 // nameServerComment goes above the A record of the name server.
 const nameServerComment = `The name server of the domain has an address of its own: the fixed

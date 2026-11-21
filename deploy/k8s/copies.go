@@ -316,6 +316,10 @@ func valueLines(keyText string, indent int, value any) ([]string, error) {
 // columns lined up: "hss       IN A     172.28.0.10".
 var aRecord = regexp.MustCompile(`^(\S+)(\s+IN\s+)A(\s+)(\S+)\s*$`)
 
+// srvRecord is an SRV record as deploy/compose/dns writes them, with
+// the target last: "_sip._udp IN SRV   10 50 5060 icscf".
+var srvRecord = regexp.MustCompile(`^(\S+\s+IN\s+SRV\s+\d+\s+\d+\s+\d+\s+)(\S+)\s*$`)
+
 // toServices makes the home network zone of Kubernetes from that of
 // Docker Compose (changes.go).
 func toServices(src []byte, nameServerAddress string) ([]byte, error) {
@@ -324,12 +328,25 @@ func toServices(src []byte, nameServerAddress string) ([]byte, error) {
 	for first < len(lines) && strings.HasPrefix(lines[first], ";") {
 		first++
 	}
+	// The names that become CNAMEs, which may come after the SRV records
+	// that point to them.
+	aliases := map[string]bool{}
+	for _, line := range lines[first:] {
+		if m := aRecord.FindStringSubmatch(strings.TrimRight(line, "\n")); m != nil && m[1] != nameServer {
+			aliases[m[1]] = true
+		}
+	}
 	out := commentLines("", ";", homeZoneHeader)
 	var last []string
 	for _, line := range lines[first:] {
 		m := aRecord.FindStringSubmatch(strings.TrimRight(line, "\n"))
 		switch {
 		case m == nil:
+			// The target of an SRV record must not be an alias (RFC 2782),
+			// so it names the node's Service, which has the address.
+			if srv := srvRecord.FindStringSubmatch(strings.TrimRight(line, "\n")); srv != nil && aliases[srv[2]] {
+				line = srv[1] + srv[2] + serviceDomain + "\n"
+			}
 			out = append(out, line)
 		case m[1] == nameServer:
 			if last != nil {
