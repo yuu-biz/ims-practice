@@ -38,7 +38,7 @@ type call struct {
 	log   *slog.Logger
 
 	// recordMu orders the writes of the record of the call into the
-	// Store (keepRecord). recorded tells that the record is there: from
+	// Store (KeepDialogs). recorded tells that the record is there: from
 	// the answer until the call ends, after which no write may put it
 	// back.
 	recordMu sync.Mutex
@@ -178,11 +178,8 @@ func (c *call) newInvitation(requestURI string) (sip.Invitation, *sip.Message, e
 		To:              to.URI,
 		Route:           c.route,
 		Body:            sip.BodyOf(req),
-		// The PRACK of each reliable provisional response is the caller's,
-		// which the AS passes on (fromCaller).
-		ManualPRACK: true,
-		Contact:     contact,
-		RecordRoute: fromFocus,
+		Contact:         contact,
+		RecordRoute:     fromFocus,
 	}, fields, nil
 }
 
