@@ -25,6 +25,10 @@ type MemoryStore struct {
 	// active expiry finds them, without a walk over all items.
 	expiries expiryHeap
 	indexes  map[string]*timeIndex
+	// sorted holds each sorted index as a sorted slice of its members,
+	// so that a page is a binary search and a slice of it, as a range
+	// lookup in a server is.
+	sorted map[string][]string
 }
 
 type memoryItem struct {
@@ -39,7 +43,7 @@ func NewMemoryStore(now func() time.Time) *MemoryStore {
 	if now == nil {
 		now = time.Now
 	}
-	return &MemoryStore{now: now, items: map[string]memoryItem{}, indexes: map[string]*timeIndex{}}
+	return &MemoryStore{now: now, items: map[string]memoryItem{}, indexes: map[string]*timeIndex{}, sorted: map[string][]string{}}
 }
 
 var _ Store = (*MemoryStore)(nil)
@@ -166,6 +170,48 @@ func (s *MemoryStore) Done(_ context.Context, c Claim) error {
 	}
 	ix.remove(c.Member)
 	return nil
+}
+
+func (s *MemoryStore) AddToIndex(_ context.Context, index, member string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	members := s.sorted[index]
+	if i, found := slices.BinarySearch(members, member); !found {
+		s.sorted[index] = slices.Insert(members, i, member)
+	}
+	return nil
+}
+
+func (s *MemoryStore) RemoveFromIndex(_ context.Context, index, member string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	members := s.sorted[index]
+	if i, found := slices.BinarySearch(members, member); found {
+		s.sorted[index] = slices.Delete(members, i, i+1)
+	}
+	return nil
+}
+
+func (s *MemoryStore) MembersAfter(_ context.Context, index, after string, limit int) ([]string, error) {
+	if limit < 1 {
+		return nil, nil
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	members := s.sorted[index]
+	start := 0
+	if after != "" {
+		// after itself is not in the page, whether or not it is still a
+		// member: a page goes on from where the one before it ended, and
+		// that member may have been removed since.
+		i, found := slices.BinarySearch(members, after)
+		start = i
+		if found {
+			start++
+		}
+	}
+	end := min(start+limit, len(members))
+	return slices.Clone(members[start:end]), nil
 }
 
 // index returns the time index of name, made on first use. The lock is

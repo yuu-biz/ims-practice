@@ -16,10 +16,15 @@
 //     needs an action (the end of a registration, a timer such as TR1N),
 //     exactly one instance acts on it, and another takes over if that
 //     one stops.
+//   - A sorted index, read one page at a time, for the listings an
+//     operator asks for: the subscribers of the HSS in the order of
+//     their private identities, for example. A page starts after the
+//     member the page before it ended at, so that reading it costs the
+//     same whether the index holds ten members or a million.
 //
-// Every operation touches one key, or the front of one time index.
-// None walks all keys, which could be millions: a lookup by another
-// identity is an item
+// Every operation touches one key, the front of one time index, or one
+// page of one sorted index. None walks all keys, which could be
+// millions: a lookup by another identity is an item
 // of its own whose value is the key of the main item.
 //
 // MemoryStore keeps the items in the process; Valkey keeps them in a
@@ -92,6 +97,19 @@ type Store interface {
 	// Done removes the member of a claim from its index, if the claim is
 	// still in force, or returns ErrClaimLost.
 	Done(ctx context.Context, c Claim) error
+
+	// AddToIndex puts member into the sorted index named index, which
+	// orders its members by their bytes. A member that is there already
+	// stays there once.
+	AddToIndex(ctx context.Context, index, member string) error
+	// RemoveFromIndex takes member out of the sorted index, if it is
+	// there.
+	RemoveFromIndex(ctx context.Context, index, member string) error
+	// MembersAfter returns at most limit members of the sorted index
+	// that come after after, in order. An empty after starts at the
+	// first member, and a limit below one returns nothing. Fewer than
+	// limit members mean that the index ends there.
+	MembersAfter(ctx context.Context, index, after string, limit int) ([]string, error)
 }
 
 // Claim is the right of one caller to act on one member of a time index

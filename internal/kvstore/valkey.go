@@ -216,6 +216,48 @@ func (v *Valkey) Done(ctx context.Context, c Claim) error {
 	return nil
 }
 
+// A sorted index is a sorted set whose members all have score 0, so
+// that the set is ordered by its members and a page of it is one
+// ZRANGE BYLEX (Redis 6.2 and later).
+func (v *Valkey) AddToIndex(ctx context.Context, index, member string) error {
+	_, err := v.c.do(ctx, "ZADD", index, "0", member)
+	return err
+}
+
+func (v *Valkey) RemoveFromIndex(ctx context.Context, index, member string) error {
+	_, err := v.c.do(ctx, "ZREM", index, member)
+	return err
+}
+
+func (v *Valkey) MembersAfter(ctx context.Context, index, after string, limit int) ([]string, error) {
+	if limit < 1 {
+		return nil, nil
+	}
+	// "-" is before every member and "+" after every one; "(" makes the
+	// start exclusive, so after itself is not in the page.
+	start := "-"
+	if after != "" {
+		start = "(" + after
+	}
+	reply, err := v.c.do(ctx, "ZRANGE", index, start, "+", "BYLEX", "LIMIT", "0", strconv.Itoa(limit))
+	if err != nil {
+		return nil, err
+	}
+	values, ok := reply.([]any)
+	if !ok {
+		return nil, unexpected("ZRANGE", reply)
+	}
+	members := make([]string, 0, len(values))
+	for _, value := range values {
+		b, ok := value.([]byte)
+		if !ok {
+			return nil, unexpected("ZRANGE", reply)
+		}
+		members = append(members, string(b))
+	}
+	return members, nil
+}
+
 // eval runs a script on one key and returns its integer reply.
 //
 // The script goes with every call (EVAL). EVALSHA would send only its
