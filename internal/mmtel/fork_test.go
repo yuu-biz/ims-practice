@@ -1,6 +1,7 @@
 package mmtel_test
 
 import (
+	"bytes"
 	"fmt"
 	"net/netip"
 	"slices"
@@ -149,7 +150,8 @@ var callerMedia = netip.MustParseAddrPort("192.0.2.1:4000")
 // description is that of the first branch, and gets the 183 of the
 // second branch without its SDP, since a UAC takes the first answer and
 // ignores the rest (13.2.1). The 200 of the second branch does not
-// bring it either.
+// bring it either. When no reliable 183 had the answer, the 200 has
+// to carry it, and carries the same as the first 183 (13.2.1).
 func TestForkBeyondTheAS(t *testing.T) {
 	for _, reliable := range []bool{true, false} {
 		for _, answering := range []int{1, 2} {
@@ -172,8 +174,12 @@ func TestForkBeyondTheAS(t *testing.T) {
 				if len(got[1].Body) != 0 || got[1].Get("Content-Type") != "" {
 					t.Errorf("the caller got a second session description in its early dialog:\n%s", got[1].Body)
 				}
-				if len(got[2].Body) != 0 && mediaOf(got[2].Body) != branchMedia(1) {
-					t.Errorf("the 200 brought the caller the SDP\n%s\nwhich is not the first branch's", got[2].Body)
+				var want []byte
+				if !reliable {
+					want = got[0].Body
+				}
+				if !bytes.Equal(got[2].Body, want) {
+					t.Errorf("the 200 brought the caller the SDP\n%s\nwant\n%s", got[2].Body, want)
 				}
 			})
 		}
