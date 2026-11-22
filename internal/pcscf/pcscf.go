@@ -613,14 +613,19 @@ var associationGrace = 64 * sip.DefaultTimers().T1
 func (p *PCSCF) endAssociation(a Association, log *slog.Logger) error {
 	ctx := context.Background()
 	p.unwatchSignallingPath(&a, log)
-	// TS 33.203 7.4.2a: the security associations of the UE go with its
-	// last registered identity.
-	if err := p.store.DeleteSecurityAssociations(ctx, a.Source.Addr); err != nil {
-		return err
-	}
 	a.Expires = time.Now()
 	a.KeepUntil = a.Expires.Add(associationGrace)
-	return p.store.PutAssociation(ctx, a)
+	// The association ends before the security associations go, so that
+	// a write that fails in between leaves security associations without
+	// an association, whose requests are dropped, rather than an
+	// association still in force without them, whose unprotected
+	// requests would be taken.
+	if err := p.store.PutAssociation(ctx, a); err != nil {
+		return err
+	}
+	// TS 33.203 7.4.2a: the security associations of the UE go with its
+	// last registered identity.
+	return p.store.DeleteSecurityAssociations(ctx, a.Source.Addr)
 }
 
 // associationOfContact is the association of a contact, for a request
