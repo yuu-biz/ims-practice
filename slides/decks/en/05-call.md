@@ -1,12 +1,12 @@
 ---
 title: A voice call through the IMS
-footer: ims-practice study session 4. Call
+footer: ims-practice study session 5. Call
 lang: en
 ---
 
 # A voice call through the IMS
 
-ims-practice study session 4 (a call through the media relay, with preconditions and the MMTel AS on its way)
+ims-practice study session 5 (a call through the media relay, with preconditions and the MMTel AS on its way)
 
 ---
 

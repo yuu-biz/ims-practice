@@ -1,12 +1,12 @@
 ---
 title: MMTel AS の補足サービス
-footer: ims-practice 勉強会 6. 補足サービス
+footer: ims-practice 勉強会 7. 補足サービス
 lang: ja
 ---
 
 # MMTel AS の補足サービス
 
-ims-practice 勉強会 第 6 回（MMTel AS、Ut/XCAP での設定、キャプチャで見るサービス）
+ims-practice 勉強会 第 7 回（MMTel AS、Ut/XCAP での設定、キャプチャで見るサービス）
 
 ---
 

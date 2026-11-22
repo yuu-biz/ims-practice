@@ -1,12 +1,12 @@
 ---
 title: UE が IMS に登録する流れ
-footer: ims-practice 勉強会 3. 登録
+footer: ims-practice 勉強会 4. 登録
 lang: ja
 ---
 
 # UE が IMS に登録する流れ
 
-ims-practice 勉強会 第 3 回（SIP Digest での登録と、アプリケーションサーバーへの第三者 REGISTER）
+ims-practice 勉強会 第 4 回（SIP Digest での登録と、アプリケーションサーバーへの第三者 REGISTER）
 
 ---
 

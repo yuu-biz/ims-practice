@@ -1,12 +1,12 @@
 ---
 title: The VoLTE call flow
-footer: ims-practice study session 7. VoLTE
+footer: ims-practice study session 8. VoLTE
 lang: en
 ---
 
 # The VoLTE call flow
 
-ims-practice study session 7 (the access network, IMS AKA, policy control over Rx, and the VoLTE call)
+ims-practice study session 8 (the access network, IMS AKA, policy control over Rx, and the VoLTE call)
 
 ---
 
