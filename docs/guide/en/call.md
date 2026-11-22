@@ -136,7 +136,7 @@ The top Route carries `orig`, so the S-CSCF serves the caller (TS 24.229 5.4.3.1
 2. The NAPTR record there has the service `E2U+sip` and a regular expression that produces `sip:001010000000002@ims.mnc001.mcc001.3gppnetwork.org`.
 3. That becomes the new Request-URI.
 
-The records are in `deploy/compose/dns/e164.arpa.zone`. A number with no record cannot be reached inside the IMS. A real network would send the call to a BGCF towards the telephone network; this project has none, so the S-CSCF answers 404.
+The records are in `deploy/compose/dns/e164.arpa.zone`. A number with no record cannot be reached inside the IMS. A real network may send the call to a BGCF towards the telephone network; this project has none, so the S-CSCF answers 404. TS 24.229 5.4.3.2 step 10 lets the S-CSCF answer the caller in place of sending the call to a BGCF.
 
 ### 4. The S-CSCF finds the callee's home network
 
@@ -291,7 +291,6 @@ Each item has a `SIMPLIFIED:` comment in the code; `grep -rn "SIMPLIFIED:" inter
 | S-CSCF, TS 24.229 5.4.3.2 | The term-ioi that a response to a request outside a dialog brings is not stored. | It names the network that answered in the charging records of the S-CSCF, which no node of this project writes, and no later message carries it. |
 | S-CSCF, TS 24.229 5.4.3.1 and 5.4.3.2 | Only a registered user is served. A request that an application server sends on behalf of a user, who is named in P-Served-User, gets 403 when that user is not registered, and the iFCs of ORIGINATING_UNREGISTERED are not evaluated. | No application server of this network starts a request on behalf of a user, so no request would meet those iFCs. |
 | S-CSCF, TS 24.229 5.4.3.2 steps 4C and 4D, 5.4.3.3 steps 3C and 3D | The user profile lists no subscribed services, so every user subscribes to MMTel. A request that matches no subscribed service is never answered 403. | The HSS keeps only iFCs for a user, and MMTel is the only service of this project with an ICSI. |
-| S-CSCF, TS 24.229 5.4.3.2 step 10 | A number without ENUM record is answered 404, not sent to a BGCF. | The telephone network is out of scope. |
 | ENUM, RFC 6116 5.2.1 | Non-terminal NAPTR records are skipped. | The project's zone holds terminal records only. |
 | ENUM, RFC 3402 3.2 | A delimiter escaped with a backslash inside the NAPTR regexp is not supported; such a record is refused as malformed, or split in the wrong place. | The project's records use `!` and never escape it. |
 | I-CSCF, TS 24.229 5.3.2.1, 5.3.2.1A and 5.3.2.2 | No "orig" routing for an application server that sends on behalf of a user, and no reselection of another S-CSCF. | No service of this project sends on behalf of a user, and this network has no redundant S-CSCF to choose. |
