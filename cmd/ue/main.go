@@ -48,6 +48,12 @@
 // ended the registration, register and serve register again if the
 // event is deactivated, as 5.1.1.7 asks; otherwise register exits with
 // an error and serve stays unregistered. Call and answer only log it.
+//
+// When a refresh of the registration fails, register and serve make an
+// initial registration again, and after each failure in a row wait
+// longer before the next attempt (TS 24.229 5.1.1.2.1, 5.1.1.4.1, RFC
+// 5626 4.5). Serve does the same when its first registration fails;
+// the other commands end with an error then.
 package main
 
 import (
@@ -242,7 +248,10 @@ type session struct {
 	ua    *sip.UA
 	media *ue.Media
 	reg   ue.Registration
-	line  *ue.Line
+	// registered is false while the UE waits to register again after a
+	// failure; it then has no registration to end.
+	registered bool
+	line       *ue.Line
 	// regEvent is the subscription to the registration state, and
 	// deregistered its Lost: the state of a NOTIFY that took the
 	// registration away (TS 24.229 5.1.1.7). Both are nil without a
@@ -472,6 +481,7 @@ func run(log *slog.Logger, o options, do func(context.Context, *session) error) 
 	if s.reg, err = s.ue.Register(ctx); err != nil {
 		return err
 	}
+	s.registered = true
 	log.Info("registered", "expires", int(s.reg.Expires/time.Second),
 		"public_identities", s.reg.PublicIdentities, "service_route", s.reg.ServiceRoute)
 	s.subscribe()
@@ -482,10 +492,20 @@ func run(log *slog.Logger, o options, do func(context.Context, *session) error) 
 		return doErr
 	}
 	if lost() {
-		// SIMPLIFIED: IR.92 2.4.2.1. A UE that lost its PDN connection
-		// should set it up again and register anew. The simulator stops,
-		// without the deregistration that no longer reaches the IMS.
+		// SIMPLIFIED: TS 24.301 5.5.2.3.4 and IR.92 2.4.2.1. The stub
+		// detaches the UE with "re-attach not required" and no EMM cause,
+		// item b of 5.5.2.3.4: the UE should start T3402, attach again
+		// when it expires (5.2.2.3.3), and then register anew. When the
+		// event stream of the stub ends, the UE should set its PDN
+		// connection up again. The simulator stops instead, without the
+		// deregistration that no longer reaches the IMS. One run of it
+		// holds one attach: openUE sets up its SIP transport, its contact
+		// and the media resources of its calls once, for the PDN address
+		// of that attach.
 		return errors.Join(doErr, errDetached)
+	}
+	if !s.registered {
+		return doErr
 	}
 	// Deregister even after a signal, with a fresh deadline. TS 24.229
 	// 5.1.1.6.1 keeps the reg event subscription: the S-CSCF ends it.
@@ -577,10 +597,10 @@ func registerOnly(ctx context.Context, s *session) error {
 		}
 		return nil
 	}
-	reg := s.reg
 	for {
+		initial := false
 		select {
-		case <-time.After(ims.RefreshAfter(reg.Expires)):
+		case <-time.After(ims.RefreshAfter(s.reg.Expires)):
 		case state := <-s.deregistered:
 			if state.Event != reginfo.Deactivated {
 				return &errDeregistered{state}
@@ -588,24 +608,55 @@ func registerOnly(ctx context.Context, s *session) error {
 			// TS 24.229 5.1.1.7: deactivated asks for a new initial
 			// registration, after which the UE subscribes again.
 			s.log.Info("registering again after a network-initiated deregistration")
-			var err error
-			if reg, err = s.ue.Register(ctx); err != nil {
-				return err
-			}
-			s.reg = reg
-			s.subscribe()
-			continue
+			initial = true
 		case <-ctx.Done():
 			return nil
 		}
-		// SIMPLIFIED: TS 24.229 5.1.1.2.1 and RFC 5626 4.5. A failed
-		// refresh should be retried with back-off. The simulator stops
-		// instead, so that a failure shows up at once.
-		var err error
-		if reg, err = s.ue.Register(ctx); err != nil {
-			return err
+		if err := s.registerAgain(ctx, initial); err != nil {
+			return nil
 		}
-		s.log.Info("re-registered", "expires", int(reg.Expires/time.Second))
+	}
+}
+
+// registerAgain refreshes the registration, or makes an initial one.
+// A refresh that fails is followed at once by an initial registration
+// (TS 24.229 5.1.1.4.1), unless its response asked for a wait with
+// Retry-After. After an initial registration that fails the
+// UE waits before the next one, longer after each failure in a row
+// (5.1.1.2.1), until one succeeds; only the end of ctx stops it.
+func (s *session) registerAgain(ctx context.Context, initial bool) error {
+	var backoff ue.RegistrationBackoff
+	for {
+		reg, err := s.ue.Register(ctx)
+		if err == nil {
+			s.reg, s.registered = reg, true
+			if initial {
+				s.log.Info("registered", "expires", int(reg.Expires/time.Second),
+					"public_identities", reg.PublicIdentities, "service_route", reg.ServiceRoute)
+				s.subscribe()
+			} else {
+				s.log.Info("re-registered", "expires", int(reg.Expires/time.Second))
+			}
+			return nil
+		}
+		if ctx.Err() != nil {
+			// A refresh that a signal cut short leaves the registration
+			// in place, and run still deregisters it.
+			return ctx.Err()
+		}
+		s.registered = false
+		if !initial && !ue.AsksToWait(err) {
+			s.log.Warn("re-registration failed; registering again from the start", "error", err.Error())
+			initial = true
+			continue
+		}
+		wait := backoff.Failed(err)
+		s.log.Warn("registration failed", "error", err.Error(), "retry_after_ms", wait.Milliseconds())
+		select {
+		case <-time.After(wait):
+		case <-ctx.Done():
+			return ctx.Err()
+		}
 	}
 }
 

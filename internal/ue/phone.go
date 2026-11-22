@@ -136,8 +136,11 @@ func NewPhone(u *UE, ua *sip.UA, line *Line, cfg PhoneConfig, log *slog.Logger) 
 }
 
 // Serve registers the UE and keeps it registered until ctx ends; then it
-// hangs up the call, deregisters and returns. A registration that fails
-// leaves the UE unregistered until the controller asks again.
+// hangs up the call, deregisters and returns. After a registration or a
+// refresh that fails, the UE waits and makes an initial registration
+// again, waiting longer after each failure in a row (TS 24.229
+// 5.1.1.2.1, 5.1.1.4.1), until it registers or the controller
+// deregisters it.
 func (p *Phone) Serve(ctx context.Context) error {
 	defer close(p.done)
 	taking := make(chan struct{})
@@ -147,18 +150,13 @@ func (p *Phone) Serve(ctx context.Context) error {
 	}()
 	go p.followSMS(ctx)
 	r := &registrar{p: p}
-	if err := r.register(ctx); err != nil {
-		p.log.Warn("registration failed", "error", err.Error())
-	}
+	r.register(ctx)
 	for {
 		select {
 		case <-r.refreshed():
-			// SIMPLIFIED: TS 24.229 5.1.1.2.1 and RFC 5626 4.5. A failed
-			// refresh should be retried with back-off. The UE stays
-			// unregistered instead, until the controller registers it.
-			if err := r.register(ctx); err != nil {
-				p.log.Warn("re-registration failed", "error", err.Error())
-			}
+			r.register(ctx)
+		case <-r.retried():
+			r.register(ctx)
 		case state := <-r.lost:
 			r.unregistered()
 			// SIMPLIFIED: TS 24.229 5.1.1.7. With the event rejected, the
@@ -174,9 +172,7 @@ func (p *Phone) Serve(ctx context.Context) error {
 			// TS 24.229 5.1.1.7: deactivated asks for a new initial
 			// registration, after which the UE subscribes again.
 			p.log.Info("registering again after a network-initiated deregistration")
-			if err := r.register(ctx); err != nil {
-				p.log.Warn("registration failed", "error", err.Error())
-			}
+			r.register(ctx)
 		case <-p.unanswered:
 			if r.refresh == nil {
 				continue
@@ -192,9 +188,7 @@ func (p *Phone) Serve(ctx context.Context) error {
 			p.log.Info("a request got no response; registering again")
 			r.unregistered()
 			p.ue.unbind()
-			if err := r.register(ctx); err != nil {
-				p.log.Warn("registration failed", "error", err.Error())
-			}
+			r.register(ctx)
 		case req := <-p.requests:
 			if req.register {
 				req.done <- r.register(ctx)
@@ -225,6 +219,10 @@ type registrar struct {
 	refresh  *time.Timer // nil while not registered
 	regEvent *RegEvent
 	lost     <-chan RegState // regEvent.Lost, nil without a subscription
+	// retry is the wait before the next initial registration after one
+	// failed; nil when none is due.
+	retry   *time.Timer
+	backoff RegistrationBackoff
 }
 
 func (r *registrar) refreshed() <-chan time.Time {
@@ -234,16 +232,45 @@ func (r *registrar) refreshed() <-chan time.Time {
 	return r.refresh.C
 }
 
+func (r *registrar) retried() <-chan time.Time {
+	if r.retry == nil {
+		return nil
+	}
+	return r.retry.C
+}
+
+// retryTimer starts the wait before the next registration; a test
+// replaces it to see the waits without spending them.
+var retryTimer = time.NewTimer
+
 // register registers the UE, or refreshes its registration (TS 24.229
-// 5.1.1.2, 5.1.1.4.1). After an initial registration it subscribes to
-// the reg event (5.1.1.3).
+// 5.1.1.2, 5.1.1.4.1). A refresh that fails is followed at once by an
+// initial registration (5.1.1.4.1), unless its response asked for a
+// wait with Retry-After (5.1.1.2.1). After an initial registration it
+// subscribes to the reg event (5.1.1.3). After an initial registration
+// that fails, unless the phone is stopping, it starts the wait before
+// the next one (5.1.1.2.1).
 func (r *registrar) register(ctx context.Context) error {
+	r.stopRetry()
 	initial := r.refresh == nil
 	reg, err := r.p.ue.Register(ctx)
+	if err != nil && !initial && ctx.Err() == nil && !AsksToWait(err) {
+		r.p.log.Warn("re-registration failed; registering again from the start", "error", err.Error())
+		r.unregistered()
+		initial = true
+		reg, err = r.p.ue.Register(ctx)
+	}
 	if err != nil {
 		r.unregistered()
+		if ctx.Err() != nil {
+			return err
+		}
+		wait := r.backoff.Failed(err)
+		r.retry = retryTimer(wait)
+		r.p.log.Warn("registration failed", "error", err.Error(), "retry_after_ms", wait.Milliseconds())
 		return err
 	}
+	r.backoff.Reset()
 	if r.refresh != nil {
 		r.refresh.Stop()
 	}
@@ -272,6 +299,8 @@ func (r *registrar) subscribe(reg Registration) {
 // nothing to do. The S-CSCF ends the reg event subscription; a NOTIFY
 // that ends it no longer matters.
 func (r *registrar) deregister(ctx context.Context) error {
+	r.stopRetry()
+	r.backoff.Reset()
 	if r.refresh == nil {
 		return nil
 	}
@@ -281,6 +310,14 @@ func (r *registrar) deregister(ctx context.Context) error {
 	r.p.log.Info("deregistered")
 	r.unregistered()
 	return nil
+}
+
+// stopRetry drops the wait for the next registration, if one is due.
+func (r *registrar) stopRetry() {
+	if r.retry != nil {
+		r.retry.Stop()
+		r.retry = nil
+	}
 }
 
 func (r *registrar) unregistered() {

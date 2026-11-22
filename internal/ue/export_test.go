@@ -30,3 +30,15 @@ func SetBearerLossGrace(t testing.TB, d time.Duration) {
 	bearerLossGrace = d
 	t.Cleanup(func() { bearerLossGrace = old })
 }
+
+// RetryDelay is the retry delay of RFC 5626 4.5, with the random part
+// given.
+var RetryDelay = retryDelay
+
+// SetRetryTimer has a Phone start each wait before registering again
+// with start, for one test.
+func SetRetryTimer(t testing.TB, start func(time.Duration) *time.Timer) {
+	old := retryTimer
+	retryTimer = start
+	t.Cleanup(func() { retryTimer = old })
+}
