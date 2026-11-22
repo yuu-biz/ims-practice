@@ -288,10 +288,10 @@ go test ./internal/aka -run TestAuthenticationVectorFromTestSet1 -v
 | 本物の網と違う点 | 理由 |
 | --- | --- |
 | 保護クライアントポート（`port-c`）を使わない | どちらも保護サーバーポートから送る |
-| TCP の要求は Via の sent-by で UE を見分ける | INVITE は 1300 バイトを超え TCP になる（RFC 3261 18.1.1） |
+| TCP の要求は Via の sent-by で UE を見分ける | INVITE と、1300 バイトを超える REGISTER は TCP になる（RFC 3261 18.1.1） |
 
 - ESP が無いので、VoLTE の UE の SIP もソフトフォンと同じように Wireshark で読めます。鍵を読み込む必要もなく、コンテナに NET_ADMIN も要りません。アソシエーションは IK と CK と一緒に P-CSCF の SA の表に入ります。
-- AKAv1-MD5 だけなのは、S-CSCF を確かめる独立した相手の SIPp がそれしか話さないからです。SIPp は RES と Digest を別の人が書いたコードで計算します。REGISTER は 1300 バイトに収まるので、取り決めは UDP で行います。
+- AKAv1-MD5 だけなのは、S-CSCF を確かめる独立した相手の SIPp がそれしか話さないからです。SIPp は RES と Digest を別の人が書いたコードで計算します。
 
 > 手順書 [「ESP を使わない sec-agree」](../../../docs/guide/ja/volte.md#esp-を使わない-sec-agree)
 

@@ -141,7 +141,7 @@ K と OPc は MILENAGE の試験データ 1 の値です。OPc は事業者の O
 6. **P-CSCF が一時的なアソシエーションを作る（#737）。** P-CSCF は 401 から `ik` と `ck` を外します。鍵が UE まで運ばれることはありません。そのうえで自分のアソシエーションを `Security-Server: ipsec-3gpp;q=0.1;alg=hmac-sha2-256-128;ealg=null;spi-c=...;spi-s=...;port-c=50711;port-s=5064` で提示します（5.2.2.2、TS 33.203 7.2）。
 7. **UE が網を確かめる（#740）。** USIM は AUTN の MAC を計算し、AUTN の中の MAC と比べます。一致すれば、網が K を知っていると分かります。SQN が新しいことも確かめ（TS 33.102 6.3.3、C.2）、RES、CK、IK を計算します。
 8. **アソシエーションを通る REGISTER（#740）。** UE は保護サーバーポート 5062 から、P-CSCF の保護サーバーポート 5064 に答えを送ります（TS 33.203 7.1）。Security-Client をもう一度入れ、Security-Server を `Security-Verify` に写します。途中で誰かがもっと強い提案を消していないかを、P-CSCF が確かめられるようにするためです（RFC 3329）。Digest の response は RES をパスワードにして計算します（RFC 3310 3.3）。
-9. **P-CSCF が取り決めを確かめる（#749）。** REGISTER は UE のアドレスとポートから保護ポートに届き、Security-Verify は P-CSCF が送ったものと一致します。P-CSCF は Authorization に `integrity-protected="yes"` を入れます。
+9. **P-CSCF が取り決めを確かめる（#749）。** REGISTER は UE のアドレスとポートから保護ポートに届き、Security-Verify は P-CSCF が送ったものと一致します。1300 バイトを超える REGISTER は TCP で別のポートから届きます。そのときは、P-CSCF は UE のポートを Via から取ります。P-CSCF は Authorization に `integrity-protected="yes"` を入れます。
 10. **S-CSCF が RES を確かめる（#760、#764）。** S-CSCF は XRES で Digest を計算して比べます（TS 24.229 5.4.1.2.2）。一致したので、SAR を送って UE を登録します。
 11. **200 OK（#783）。** 200 はアソシエーションを通って戻り、アソシエーションはこれで確立します。寿命は登録に合わせて決まります（5.2.2.2）。これ以降、UE はすべての要求をポート 5064 に送り、Route の P-CSCF の URI にもそのポートを書きます。P-CSCF は UE の 5062 番に送ります。P-CSCF が足した Path も保護ポートを指します。
 12. **信号の経路（#786）。** UE が登録されると、P-CSCF は、UE が信号用の bearer を失ったら知らせるように PCRF に頼みます（TS 29.214 A.4）。TS 29.213 B.1 の流れのとおり、頼むのは最初の登録が成功したあとなので、認証に失敗した UE のために Rx のセッションを開くことはありません。200 OK とこの AAR は、どちらが先に P-CSCF を出るかが決まっていません。
@@ -183,7 +183,7 @@ go test ./internal/milenage -run TestConformanceTestSets -v   # all 20 sets of T
 ESP が無いので、本物の網と 2 つの点が違います。
 
 - どちらの側も保護サーバーポートから送るので、保護クライアントポート（`port-c`）は取り決めるだけで、使いません。
-- TCP の要求はそのときどきのポートから届きます。VoLTE の INVITE は 1300 バイトより大きいので TCP で送られ（RFC 3261 18.1.1）、P-CSCF は TCP の要求の UE を Via の sent-by で見分けます。REGISTER は 1300 バイトより小さく保ち、取り決めは UDP で行います。
+- TCP の要求はそのときどきのポートから届きます。VoLTE の INVITE は 1300 バイトより大きいので TCP で送られ（RFC 3261 18.1.1）、P-CSCF は TCP の要求の UE を Via の sent-by で見分けます。challenge に答える REGISTER は 1300 バイト前後の大きさなので、TCP で送られるかどうかは SPI の桁数で変わります。TCP と UDP は同じアソシエーションを使うので（TS 33.203 7.1）、P-CSCF はこの REGISTER のアソシエーションも Via の sent-by で探します。
 
 ### SIPp
 

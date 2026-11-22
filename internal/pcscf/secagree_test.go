@@ -327,6 +327,28 @@ func TestIMSAKAChangedSecurityHeaders(t *testing.T) {
 	}
 }
 
+// TestProtectedRegisterOverTCP is RFC 3261 18.1.1 for the answer to the
+// challenge: over 1300 bytes, it goes over TCP, from a port of the
+// moment. TCP and UDP share the security associations (TS 33.203 7.1),
+// and the P-CSCF finds them from the sent-by of the Via, the UE's
+// protected server port, as it finds the UE of any request over TCP. The
+// IP association it then keeps is the one that the UE's later requests
+// over UDP match.
+func TestProtectedRegisterOverTCP(t *testing.T) {
+	h := newAKAHarness(t, true)
+	headers := h.challenge()
+	headers = append(headers[:len(headers)-1], sip.HeaderField{Name: "User-Agent", Value: strings.Repeat("x", 1300)})
+	if r, got := h.register(true, "6629fae49393a05397450978507c4ef1", "600000", headers...); r.StatusCode != 200 || got == nil {
+		t.Fatalf("protected REGISTER over TCP got %d, want the 200 of the home network", r.StatusCode)
+	}
+	if sas, ok := h.store.SecurityAssociations(h.ueKey()); !ok || sas.Temporary {
+		t.Errorf("after the 200 the entry is %+v, %v; want it established", sas, ok)
+	}
+	if _, ok := h.store.Association(sip.Destination{Transport: sip.UDP, Addr: h.ueKey()}); !ok {
+		t.Error("no association for the protected address of the UE")
+	}
+}
+
 // TS 33.203 7.1 item 3: a REGISTER to the protected port from an
 // address without security associations is refused.
 func TestIMSAKAWithoutSecurityAssociations(t *testing.T) {

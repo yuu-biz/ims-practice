@@ -32,11 +32,9 @@ import (
 //     their protected server ports. internal/sip sends a message from
 //     the socket it listens on, so the protected client ports are
 //     agreed and kept, but never bound. A message over TCP comes from a
-//     port of the moment: the P-CSCF knows the UE of a request over TCP
-//     by the sent-by of its Via (ueSource), but the agreement takes the
-//     address of a REGISTER, so the REGISTERs of the agreement stay below
-//     the 1300 bytes above which RFC 3261 18.1.1 moves a request to TCP
-//     (ims.SupportedTransforms).
+//     port of the moment: the P-CSCF knows the UE of a request over TCP,
+//     a REGISTER of the agreement as well, by the sent-by of its Via
+//     (ueSource).
 //   - A request that the P-CSCF proxies with its server transaction
 //     leaves from the transport it came in on, so the P-CSCF also talks
 //     to the core about a UE with security associations over the
@@ -270,7 +268,10 @@ func (p *PCSCF) receiveSecAgree(st *sip.ServerTransaction, out *sip.Message, pri
 		return refuse(494, "no algorithms in common")
 	}
 	if protected {
-		sas, ok := p.store.SecurityAssociations(st.Source.Addr)
+		// Item 3 a: the associations that protected the request. TCP and
+		// UDP share them (TS 33.203 7.1), so a REGISTER over 1300 bytes,
+		// which comes over TCP, has them at the UE that ueSource names.
+		sas, ok := p.store.SecurityAssociations(ueSource(st).Addr)
 		switch {
 		case !ok:
 			// TS 33.203 7.1 item 3: ESP would have dropped it.
