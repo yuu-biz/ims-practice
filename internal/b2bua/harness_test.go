@@ -30,13 +30,24 @@ var (
 // it listens on.
 func newUA(t *testing.T, user string, onCall func(*sip.IncomingCall)) *sip.UA {
 	t.Helper()
-	tl, err := sip.Listen("127.0.0.1:0", discard)
+	return startUA(t, user, timers, nil, onCall)
+}
+
+// startUA is newUA with timers of its own, and with w, when it is not
+// nil, keeping the requests that the UA receives.
+func startUA(t *testing.T, user string, tm sip.Timers, w *wire, onCall func(*sip.IncomingCall)) *sip.UA {
+	t.Helper()
+	var observe sip.Observer
+	if w != nil {
+		observe = w.observe
+	}
+	tl, err := sip.ListenObserved("127.0.0.1:0", discard, observe)
 	if err != nil {
 		t.Fatal(err)
 	}
 	ua, err := sip.NewUA(tl, sip.UAConfig{
 		SentBy:  tl.LocalAddr().String(),
-		Timers:  timers,
+		Timers:  tm,
 		Contact: "sip:" + user + "@" + tl.LocalAddr().String(),
 		Allow:   []sip.Method{"INFO"},
 		OnCall:  onCall,
@@ -52,6 +63,85 @@ func newUA(t *testing.T, user string, onCall func(*sip.IncomingCall)) *sip.UA {
 func contactOf(t *testing.T, ua *sip.UA) string {
 	t.Helper()
 	return "sip:callee@" + ua.Stack().LocalAddr().String()
+}
+
+// wire keeps the requests that one node received, one for each
+// transaction, in the order in which the first copy of each came: a
+// client sends a request again over UDP while it waits for the response
+// (RFC 3261 17.1.2.2).
+type wire struct {
+	mu   sync.Mutex
+	seen map[string]bool
+	got  []*sip.Message
+}
+
+func newWire() *wire { return &wire{seen: map[string]bool{}} }
+
+func (w *wire) observe(c sip.Capture) {
+	if c.Sent || !c.Message.IsRequest() {
+		return
+	}
+	v, _ := sip.ParseVia(c.Message.Get("Via"))
+	key := v.Branch() + " " + string(c.Message.Method)
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if !w.seen[key] {
+		w.seen[key] = true
+		w.got = append(w.got, c.Message)
+	}
+}
+
+// requests are the requests received, as "CSeq method", such as
+// "2 PRACK", in the order they came; an ACK shows the number of its
+// INVITE (RFC 3261 13.2.2.4).
+func (w *wire) requests() []string {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	var out []string
+	for _, m := range w.got {
+		out = append(out, m.Get("CSeq"))
+	}
+	return out
+}
+
+// bodies are the bodies of the requests of method, in the order they
+// came.
+func (w *wire) bodies(method sip.Method) []string {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	var out []string
+	for _, m := range w.got {
+		if m.Method == method {
+			out = append(out, string(m.Body))
+		}
+	}
+	return out
+}
+
+// has reports whether a request of method came.
+func (w *wire) has(method sip.Method) bool {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	for _, m := range w.got {
+		if m.Method == method {
+			return true
+		}
+	}
+	return false
+}
+
+// until waits for cond for at most d, and reports whether it held: a
+// test that holds a request in the B2BUA lets it go once the next one
+// has overtaken it, or after d if that does not happen.
+func until(d time.Duration, cond func() bool) bool {
+	deadline := time.Now().Add(d)
+	for !cond() {
+		if time.Now().After(deadline) {
+			return false
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	return true
 }
 
 // way is the Subject that the hooks put in what crosses in d.
@@ -126,9 +216,15 @@ func (h *hooks) keptCount() int {
 // through a Call with h.
 func newB2BUA(t *testing.T, h *hooks, callee string) *sip.UA {
 	t.Helper()
+	return startB2BUA(t, h, callee, timers)
+}
+
+// startB2BUA is newB2BUA with timers of its own.
+func startB2BUA(t *testing.T, h *hooks, callee string, tm sip.Timers) *sip.UA {
+	t.Helper()
 	var ua *sip.UA
 	started := make(chan struct{})
-	ua = newUA(t, "b2bua", func(in *sip.IncomingCall) {
+	ua = startUA(t, "b2bua", tm, nil, func(in *sip.IncomingCall) {
 		<-started
 		c := b2bua.New(in, h, discard)
 		from, _ := sip.ParseNameAddr(in.Request.Get("From"))
