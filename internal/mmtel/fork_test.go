@@ -179,3 +179,79 @@ func TestForkBeyondTheAS(t *testing.T) {
 		}
 	}
 }
+
+// With CAT, the caller has the tone of the MRF until the callee
+// answers, and the UPDATE that ends the tone moves the caller's media
+// to the branch that answered, whichever 183 came last (TS 24.182
+// 4.5.5.3.7).
+func TestToneOfAForkedCall(t *testing.T) {
+	for _, answering := range []int{1, 2} {
+		t.Run(fmt.Sprintf("branch %d answers", answering), func(t *testing.T) {
+			var log events
+			mrfc := fakeMRFC(t, &log, make(chan string, 1), make(chan struct{}))
+			as := startAS(t, toneHSS{}, mmtel.Config{MRFC: "sip:" + contactOf(t, mrfc)})
+			f := startForkedCallee(t, answering, true)
+			caller := newUA(t, "alice", func(c *sip.IncomingCall) { c.Reject(480) })
+			inv := viaAS(t, as, f, "term", pcmuOffer(t, callerMedia, pcmuOnly))
+			moved := make(chan netip.AddrPort, 1)
+			inv.OnRequest = func(r *sip.InDialogRequest) {
+				if r.Request.Method == sip.UPDATE {
+					moved <- mediaOf(r.Request.Body)
+				}
+				offer, _ := sdp.Parse(r.Request.Body)
+				a, _ := sdp.AudioAnswer(offer, "1", callerMedia, pcmuOnly)
+				r.Accept(sip.Body{Type: "application/sdp", Content: a.Bytes()})
+			}
+			out, err := caller.Invite(inv)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer out.Bye()
+			got := f.relayed(t, out)
+			if !slices.Equal(statuses(got), []int{183, 183, 200}) {
+				t.Fatalf("the caller got %v, want both 183s and the 200", statuses(got))
+			}
+			if m := mediaOf(got[0].Body); m != netip.MustParseAddrPort("192.0.2.9:40000") {
+				t.Errorf("the caller's first 183 points its media at %v, want the MRFP", m)
+			}
+			if len(got[1].Body) != 0 || len(got[2].Body) != 0 {
+				t.Errorf("the caller got SDP in the second 183 or the 200 while it had the tone:\n%s\n%s", got[1].Body, got[2].Body)
+			}
+			if m := receive(t, moved, "UPDATE at the caller"); m != branchMedia(answering) {
+				t.Errorf("the UPDATE that ends the tone moves the caller's media to %v, want %v of the branch that answered", m, branchMedia(answering))
+			}
+		})
+	}
+}
+
+// A caller that does not take 199 (RFC 6228) gets the answer of a
+// callee whose call may still be diverted only in the 200. When the
+// INVITE forks beyond the AS, that is the answer of the branch that
+// answered, whichever 183 came last.
+func TestWithheldAnswerOfAForkedCall(t *testing.T) {
+	doc := cdiv("5", forwardRule("cfb", "<busy/>", carolTel, ""))
+	for _, answering := range []int{1, 2} {
+		t.Run(fmt.Sprintf("branch %d answers", answering), func(t *testing.T) {
+			as := startAS(t, &documents{docs: map[string]string{aliceURI: mmtelServices(doc)}}, mmtel.Config{})
+			f := startForkedCallee(t, answering, true)
+			caller := newUA(t, "bob", func(c *sip.IncomingCall) { c.Reject(480) })
+			inv := toServedUser(t, as, f, "reg", sip.HeaderField{Name: "Supported", Value: "100rel"})
+			inv.Body = pcmuOffer(t, callerMedia, pcmuOnly)
+			out, err := caller.Invite(inv)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer out.Bye()
+			got := f.relayed(t, out)
+			if !slices.Equal(statuses(got), []int{183, 183, 200}) {
+				t.Fatalf("the caller got %v, want both 183s and the 200", statuses(got))
+			}
+			if len(got[0].Body) != 0 || len(got[1].Body) != 0 {
+				t.Errorf("the caller got the callee's SDP before the 200:\n%s\n%s", got[0].Body, got[1].Body)
+			}
+			if m := mediaOf(got[2].Body); m != branchMedia(answering) {
+				t.Errorf("the 200 points the caller's media at %v, want %v of the branch that answered", m, branchMedia(answering))
+			}
+		})
+	}
+}

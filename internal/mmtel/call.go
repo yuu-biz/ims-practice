@@ -57,9 +57,11 @@ type call struct {
 	// that in has an early dialog.
 	toCaller bool
 	// withhold has the AS keep the callee's answer until the 2xx, which
-	// then carries heldAnswer (withholdSession).
+	// then carries the held answer of the dialog that answered
+	// (withholdSession). heldAnswer holds the answer of each dialog of
+	// out, by the callee's tag (sessionFrom).
 	withhold   bool
-	heldAnswer sip.Body
+	heldAnswer map[string]sip.Body
 	// acted are the services that acted on the call, for its record.
 	acted []string
 	// cat is the media of the MRF that the caller has until the callee
@@ -67,10 +69,12 @@ type call struct {
 	// announcement of a waiting call (announceWaiting). nil when there
 	// is none. Only the goroutine of the call's legs reads and sets it.
 	cat *alertingTone
-	// calleeSDP is the last SDP of the callee, which the caller gets
-	// when the callee answers after early media of the MRF (TS 24.182
-	// 4.5.5.3.7).
-	calleeSDP []byte
+	// calleeSDP holds the last SDP of the callee in each dialog of out,
+	// by the callee's tag (sessionFrom): of its provisional responses,
+	// of its requests, and of its responses to the caller's requests.
+	// The caller gets that of the dialog that answers when it had early
+	// media of the MRF (TS 24.182 4.5.5.3.7).
+	calleeSDP map[string][]byte
 }
 
 // serve is UAConfig.OnCall: an INVITE from the S-CSCF.
@@ -111,6 +115,7 @@ func (as *AS) serve(in *sip.IncomingCall) {
 		return
 	}
 	c := &call{as: as, in: in, served: served, services: services, route: route[1:], outReady: make(chan struct{}),
+		heldAnswer: map[string]sip.Body{}, calleeSDP: map[string][]byte{},
 		log: log.With("served_user", served.URI, "session_case", string(served.SessionCase))}
 	in.Handle(c.fromCaller)
 	c.log.Info("call", "request_uri", req.RequestURI, "regstate", served.RegState)
@@ -370,7 +375,7 @@ func (c *call) relayProvisional(out *sip.OutgoingCall, resp *sip.Message) {
 	c.mu.Lock()
 	if c.withhold {
 		if reliable && len(body.Content) > 0 {
-			c.heldAnswer = body
+			c.heldAnswer[tag] = body
 		}
 		body = sip.Body{}
 		// Without a session description there is no early media.
@@ -418,6 +423,7 @@ func (c *call) relayProvisional(out *sip.OutgoingCall, resp *sip.Message) {
 // then gets the BYE, with the Reason of the first (RFC 3326 2).
 func (c *call) answer(out *sip.OutgoingCall, resp *sip.Message) {
 	body := sip.BodyOf(resp)
+	tag := toTag(resp)
 	played := c.answerAfterTone(resp)
 	if played {
 		// TS 24.182 4.5.5.3.7: the caller had its answer in a reliable
@@ -426,11 +432,11 @@ func (c *call) answer(out *sip.OutgoingCall, resp *sip.Message) {
 	}
 	c.mu.Lock()
 	if c.withhold && len(body.Content) == 0 {
-		body = c.heldAnswer
+		body = c.heldAnswer[tag]
 	}
 	from := c.sessionFrom
 	c.mu.Unlock()
-	if tag := toTag(resp); !played && from != "" && from != tag {
+	if !played && from != "" && from != tag {
 		// The caller has the session description of another early
 		// dialog, and ignores a second one (RFC 3261 13.2.1).
 		//
@@ -557,7 +563,9 @@ func (c *call) fromCaller(r *sip.InDialogRequest) {
 // fromCallee is the handler of the requests of the callee within a
 // dialog of an outgoing leg, which go on to the caller.
 func (c *call) fromCallee(r *sip.InDialogRequest) {
-	c.keepCalleeSDP(sip.BodyOf(r.Request))
+	if d, ok := r.Dialog().Dialog(); ok {
+		c.keepCalleeSDP(d.ID.RemoteTag, sip.BodyOf(r.Request))
+	}
 	c.forward(r, c.in)
 }
 
@@ -613,7 +621,7 @@ func (c *call) answerRequest(r *sip.InDialogRequest, resp *sip.Message, err erro
 		r.Reject(500)
 	case resp.StatusCode < 300:
 		if toCaller {
-			c.keepCalleeSDP(sip.BodyOf(resp))
+			c.keepCalleeSDP(toTag(resp), sip.BodyOf(resp))
 		}
 		ack, err := r.Accept(sip.BodyOf(resp), c.responseFields(resp, r.Request, toCaller).Headers...)
 		if err == nil && r.Request.Method == sip.INVITE && !r.Offer {
