@@ -550,7 +550,6 @@ Each item has a `SIMPLIFIED:` comment in the code; `grep -rn "SIMPLIFIED:" inter
 | S-CSCF, RFC 3261 10.2 | Each third-party REGISTER has a new Call-ID. | One Call-ID per user and AS would be more state in the Store; a registrar accepts a new one (RFC 3261 10.3 step 7). |
 | S-CSCF, TS 24.229 5.4.1.7 | The term-ioi of the answer to a third-party REGISTER is not stored. | It is for the charging records of the S-CSCF, which no node of this project writes. |
 | S-CSCF, TS 24.229 5.4.3.2 and 5.4.3.3 | A 100 (Trying) from the AS does not count as the 1xx that turns the default handling off. | Proxy keeps a 100 to the hop it came over (RFC 3261 16.7 step 5). |
-| S-CSCF, TS 24.229 5.4.3.1 and 5.4.3.2 | Only a registered user is served. A request that an AS sends on behalf of a user, who is named in P-Served-User, gets 403 when that user is not registered, and the criteria of ORIGINATING_UNREGISTERED are not evaluated. | No AS of this network starts a request on behalf of a user, so no request would meet those criteria. |
 | S-CSCF, RFC 3841 7.2.4 and 9.1, TS 24.229 5.4.3.3 step 10 a | The target set is the one contact kept for a private identity, so matching only decides whether it stays. Qa and q-values are not computed, and Request-Disposition is not acted on. | With one contact, every directive reaches the same contact. |
 | S-CSCF, RFC 3841 8 | A negated value (`!x`) and a numeric one (`#>=4`) in a feature tag are compared as plain tokens. | SMS over IP and the tags of TS 24.229 7.9 use neither. |
 

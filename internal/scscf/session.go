@@ -32,9 +32,12 @@ func (s *SCSCF) ownURI() sip.URI {
 // event package is for the S-CSCF itself (5.4.2.1.1); any other request
 // it routes. It decides by the Route that brought the request whether it
 // serves the caller or the callee (TS 24.229 5.4.3.1): the Service-Route
-// it handed out at registration carries the user part "orig". A request
-// that comes back from an application server carries an original dialog
-// identifier instead, and the S-CSCF has kept which case it was.
+// it handed out at registration carries the user part "orig", and an
+// application server that originates a request on behalf of a user or
+// a PSI appends the "orig" parameter to the S-CSCF's URI (5.7.3). A
+// request that comes back from an application server carries an
+// original dialog identifier instead, and the S-CSCF has kept which case
+// it was.
 func (s *SCSCF) session(st *sip.ServerTransaction) {
 	if s.receiveRegEvent(st) {
 		return
@@ -58,23 +61,38 @@ func (s *SCSCF) session(st *sip.ServerTransaction) {
 	case popped && returned:
 		s.fromApplicationServer(st, out, odi, log)
 	case popped && top.User == "orig":
-		s.originating(st, out, log)
+		s.originating(st, out, false, log)
+	case popped && onBehalf(top):
+		s.originating(st, out, true, log)
 	default:
 		s.terminating(st, out, log)
 	}
 }
 
-// originating is TS 24.229 5.4.3.2 for an initial request from a
-// registered user that visits the S-CSCF for the first time: there is
-// no original dialog identifier in its Route.
-//
-// SIMPLIFIED: TS 24.229 5.4.3.1 and 5.4.3.2. Only a registered user is
-// served. A request that an application server sends on behalf of a
-// user who is not registered gets 403, and the criteria of that state
-// (ORIGINATING_UNREGISTERED) are not evaluated: no application server
-// of this network originates a request on behalf of a user, so the
-// state would serve no request here.
-func (s *SCSCF) originating(st *sip.ServerTransaction, out *sip.Message, log *slog.Logger) {
+// onBehalf reports whether top, the S-CSCF's own entry on top of Route,
+// has the "orig" parameter of the second case of TS 24.229 5.4.3.1: an
+// application server sends the request on behalf of the served user
+// (5.7.3). Popping the
+// entry removes the parameter with it. The other originating case, the
+// user part "orig" of the Service-Route, is a UE's: only a UE that has
+// registered has that route (5.4.1.2.2F).
+func onBehalf(top sip.URI) bool {
+	_, orig := top.Params.Get("orig")
+	return orig
+}
+
+// originating is TS 24.229 5.4.3.2 for an initial request from the
+// served user, or on behalf of it when behalf is set, that visits the
+// S-CSCF for the first time: there is no original dialog identifier in
+// its Route. On behalf of a served user who has no registration here,
+// an application server may send a request: for a user who is not
+// registered, or for a PSI that the AS hosts, such as a conference URI.
+// The S-CSCF serves that user with the criteria of the unregistered
+// state (ORIGINATING_UNREGISTERED), from the profile that it takes from
+// the HSS (the paragraph on an AS acting on behalf of an unregistered
+// user, NOTE 24; TS 23.228 5.4.12.5 c for a PSI). A UE that has no
+// registration here may originate nothing.
+func (s *SCSCF) originating(st *sip.ServerTransaction, out *sip.Message, behalf bool, log *slog.Logger) {
 	// Step 0 does not apply: the P-CSCF handles P-Served-User at the
 	// edge of the trust domain, and removes one that came from the UE.
 	// Step 1: P-Served-User names the served user when a node of the
@@ -88,17 +106,35 @@ func (s *SCSCF) originating(st *sip.ServerTransaction, out *sip.Message, log *sl
 		s.respond(st, 403, nil)
 		return
 	}
+	// Steps 3 and 6: the ordered list of criteria, and the icid-value.
+	d := OriginalDialog{ServedUser: served, Invoked: -1, ICID: icidOf(out)}
+	var identities, barredIDs []string
 	reg, ok, err := s.store.RegistrationOf(context.Background(), served)
 	if err != nil {
 		s.storeFailed(st, err, log)
 		return
 	}
-	if !ok {
-		log.Info("originating user is not registered here", "served_user", served)
-		s.respond(st, 403, nil)
-		return
+	if ok {
+		d.SessionCase, d.RegState = ifc.OriginatingRegistered, sip.RegStateRegistered
+		d.Criteria = ifc.Ordered(reg.InitialFilterCriteria)
+		identities, barredIDs = reg.PublicIdentities, reg.BarredIdentities
+	} else {
+		if !behalf {
+			log.Info("originating user is not registered here", "served_user", served)
+			s.respond(st, 403, nil)
+			return
+		}
+		// A served user that the HSS does not know may not originate
+		// anything, as a barred one may not (step 1).
+		p, ok := s.unregisteredProfile(st, served, 403, log)
+		if !ok {
+			return
+		}
+		d.SessionCase, d.RegState = ifc.OriginatingUnregistered, sip.RegStateUnregistered
+		d.Criteria = ifc.Ordered(p.InitialFilterCriteria)
+		identities, barredIDs = p.PublicIdentities, p.BarredIdentities
 	}
-	if reg.Barred(served) {
+	if barred(barredIDs, served) {
 		log.Info("originating user is a barred public identity", "served_user", served)
 		s.respond(st, 403, nil)
 		return
@@ -106,19 +142,11 @@ func (s *SCSCF) originating(st *sip.ServerTransaction, out *sip.Message, log *sl
 	// Step 9 applies to a request without an original dialog identifier
 	// only, so it is taken here, before any application server sees the
 	// request.
-	assertAlias(out, reg, s.cfg.HomeDomain)
+	assertAlias(out, identities, s.cfg.HomeDomain)
 	// Steps 4C and 4D.
 	assertService(out)
-	log.Info("originating", "served_user", served, "request_uri", out.RequestURI)
-	// Steps 3 and 6: the ordered list of criteria, and the icid-value.
-	s.invokeApplicationServers(st, out, OriginalDialog{
-		ServedUser:  served,
-		SessionCase: ifc.OriginatingRegistered,
-		RegState:    sip.RegStateRegistered,
-		Criteria:    ifc.Ordered(reg.InitialFilterCriteria),
-		Invoked:     -1,
-		ICID:        icidOf(out),
-	}, log)
+	log.Info("originating", "served_user", served, "session_case", d.SessionCase.String(), "request_uri", out.RequestURI)
+	s.invokeApplicationServers(st, out, d, log)
 }
 
 // routeOriginating is steps 10 to 15 of TS 24.229 5.4.3.2, once no
@@ -165,12 +193,13 @@ func (s *SCSCF) routeOriginating(st *sip.ServerTransaction, out *sip.Message, lo
 // holds only a SIP URI, the tel URI that is its alias goes in as a
 // second value (a); when it holds only a tel URI, the SIP URI form of
 // the number does (b). The HSS stub has no AliasInd feature, so every
-// identity of a registration is an alias of the others: they are one
-// implicit registration set with one service profile (TS 29.228 B.2.1).
-// The S-CSCF knows the aliases of the served user's identities only, so
-// a P-Asserted-Identity of someone else, as a request on behalf of the
-// served user may have (RFC 5502 4.4), stays as it is.
-func assertAlias(out *sip.Message, reg Registration, homeDomain string) {
+// identity of the served user's profile is an alias of the others: they
+// are one implicit registration set with one service profile (TS 29.228
+// B.2.1). identities are those of the profile. The S-CSCF knows the
+// aliases of the served user's identities only, so a P-Asserted-Identity
+// of someone else, as a request on behalf of the served user may have
+// (RFC 5502 4.4), stays as it is.
+func assertAlias(out *sip.Message, identities []string, homeDomain string) {
 	asserted := out.GetAll("P-Asserted-Identity")
 	if len(asserted) != 1 {
 		return
@@ -179,7 +208,7 @@ func assertAlias(out *sip.Message, reg Registration, homeDomain string) {
 	if err != nil {
 		return
 	}
-	if !slices.ContainsFunc(reg.PublicIdentities, func(id string) bool { return ims.SamePublicIdentity(id, na.URI) }) {
+	if !slices.ContainsFunc(identities, func(id string) bool { return ims.SamePublicIdentity(id, na.URI) }) {
 		return
 	}
 	if _, ok := ims.TelNumber(na.URI); ok {
@@ -189,7 +218,7 @@ func assertAlias(out *sip.Message, reg Registration, homeDomain string) {
 		}
 		return
 	}
-	for _, id := range reg.PublicIdentities {
+	for _, id := range identities {
 		if _, ok := ims.TelNumber(id); ok {
 			out.Add("P-Asserted-Identity", sip.NameAddr{URI: id}.String())
 			return
@@ -228,7 +257,9 @@ func (s *SCSCF) terminating(st *sip.ServerTransaction, out *sip.Message, log *sl
 		d.Criteria, d.Aliases = ifc.Ordered(reg.InitialFilterCriteria), canonicalIdentities(reg.NonBarredIdentities())
 		barredIDs = reg.BarredIdentities
 	} else {
-		p, ok := s.unregisteredProfile(st, callee, log)
+		// An identity that the HSS does not know gets the 404 of a barred
+		// one (step 1).
+		p, ok := s.unregisteredProfile(st, callee, 404, log)
 		if !ok {
 			return
 		}
