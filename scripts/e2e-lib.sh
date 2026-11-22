@@ -96,6 +96,38 @@ same_nodes() {
 	fi
 }
 
+# The guides also run a UE outside the containers, on the machine that
+# runs Docker. It reaches the P-CSCF and the media relay at the ports
+# that compose.yaml publishes on 127.0.0.1, its requests arrive at the
+# P-CSCF from the gateway of the compose bridge, and the P-CSCF gives
+# such a UE the published address of the relay in place of the relay's
+# own (host_access in deploy/compose/pcscf.yaml).
+#
+# host_ue copies the UE simulator out of a node that runs into
+# host_ue_bin, so that the UE on the host is the same build as the UEs
+# in the containers. It fails, and says why, when this machine cannot
+# run that build: the image is built for the machine the engine runs on,
+# which is a virtual machine on Windows and on macOS. The guides show
+# such a learner how to build the UE for the machine itself. A caller
+# that gets nothing leaves its checks of the UE on the host out.
+host_ue_bin=
+host_ue() {
+	mkdir -p e2e-out
+	if ! docker compose cp pcscf:/usr/local/bin/ue e2e-out/ue >/dev/null; then
+		echo "FAIL the UE simulator could not be copied out of the running P-CSCF"
+		fail=1
+		return 1
+	fi
+	chmod +x e2e-out/ue
+	# "ue -h" prints the usage and ends with 0, so it fails only where
+	# the binary itself cannot run.
+	if ! ./e2e-out/ue -h >/dev/null 2>&1; then
+		echo "skip the UE on the host: this machine cannot run the UE simulator of the image; the guides show how to build one for the machine itself"
+		return 1
+	fi
+	host_ue_bin=./e2e-out/ue
+}
+
 # first_line prints the first line of its input. It reads the input to
 # the end: "head -n 1" stops reading after one line, the program that
 # writes then dies of SIGPIPE, and pipefail turns that into a failure

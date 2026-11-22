@@ -125,6 +125,19 @@ else
 fi
 docker rm -f ims-practice-ue3-rtr >/dev/null
 
+# A UE on the host, which reaches the P-CSCF through Docker's NAT, as
+# "Register from your own machine through NAT" in the guide shows.
+host_registered=
+if host_ue; then
+	if "$host_ue_bin" register -pcscf 127.0.0.1:5060 -listen 127.0.0.1:0 -deregister-after 2s; then
+		echo "ok   a UE on the host registered and deregistered through the NAT"
+		host_registered=yes
+	else
+		echo "FAIL the UE on the host"
+		fail=1
+	fi
+fi
+
 same_nodes
 sleep 1
 
@@ -137,6 +150,8 @@ last=0
 
 ue=172.28.0.100
 ue3ip=172.28.0.103
+# The gateway of the compose bridge, from which a UE on the host arrives.
+gateway=172.28.0.1
 pcscf=172.28.0.40
 icscf=172.28.0.20
 scscf=172.28.0.30
@@ -258,6 +273,23 @@ expect "RTA DIAMETER_SUCCESS" "$rtr && $ans && ip.src == $scscf && diameter.Resu
 # S-CSCF tells it nothing more.
 none "SAR of the S-CSCF for the removed subscription" "frame.number > $removed && $sar && $req && diameter.User-Name == \"001010000000003@$domain\""
 
+# The UE on the host registered last of all, so these frames are the
+# last of the capture too.
+if [ -n "$host_registered" ]; then
+	echo "registration from the host through the NAT"
+	expect "REGISTER from the bridge gateway, its Via naming the host's own address" "$register && ip.src == $gateway && ip.dst == $pcscf && sip.Via.sent-by.address == \"127.0.0.1\""
+	# RFC 3581 4: the UE asked for rport, so the P-CSCF writes the
+	# address and port the request really came from into the UE's Via.
+	expect "REGISTER P-CSCF -> I-CSCF, received and rport in the UE's Via" "$register && ip.src == $pcscf && ip.dst == $icscf && sip.Via.sent-by.address == \"127.0.0.1\" && sip.Via.received == \"$gateway\""
+	expect "401 to the UE on the host" "sip.Status-Code == 401 && ip.src == $pcscf && ip.dst == $gateway && sip.WWW-Authenticate"
+	expect "200 OK to the UE on the host, with P-Associated-URI" "sip.Status-Code == 200 && sip.CSeq.method == \"REGISTER\" && ip.src == $pcscf && ip.dst == $gateway && sip.P-Associated-URI"
+	# The requests of the network find their way back through the NAT as
+	# well: the P-CSCF sends the NOTIFY of the UE's own subscription to
+	# the address the REGISTER came from, not to the Contact.
+	expect "NOTIFY P-CSCF -> the UE on the host" "$notify && ip.src == $pcscf && ip.dst == $gateway && sip.Content-Type == \"application/reginfo+xml\""
+	expect "200 OK to that NOTIFY from the host" "sip.Status-Code == 200 && sip.CSeq.method == \"NOTIFY\" && ip.src == $gateway && ip.dst == $pcscf"
+fi
+
 echo "request without an IP association"
 some_from_ue="$(tshark_fields "sip.Call-ID == \"$unregistered_call_id\" && ip.src == $ue && ip.dst == $pcscf" | grep -c . || true)"
 if [ "$some_from_ue" -ge 2 ]; then
@@ -268,9 +300,10 @@ else
 fi
 none "messages of the P-CSCF for the discarded MESSAGE" "sip.Call-ID == \"$unregistered_call_id\" && ip.src == $pcscf"
 # The charging information stays in the network (TS 24.229 5.2.1):
-# the P-CSCF sends none of it to a UE. Every UE of this setup has an
-# address from 172.28.0.100 up.
-none "P-Charging-Vector or P-Charging-Function-Addresses from the P-CSCF to a UE" 'ip.src == 172.28.0.40 && ip.dst >= 172.28.0.100 && (sip.P-Charging-Vector || sip.P-Charging-Function-Addresses)'
+# the P-CSCF sends none of it to a UE. Every UE in a container of this
+# setup has an address from 172.28.0.100 up, and a UE on the host comes
+# from the gateway of the bridge.
+none "P-Charging-Vector or P-Charging-Function-Addresses from the P-CSCF to a UE" "ip.src == $pcscf && (ip.dst >= 172.28.0.100 || ip.dst == $gateway) && (sip.P-Charging-Vector || sip.P-Charging-Function-Addresses)"
 none "malformed SIP, DNS or Diameter packets" '(sip || dns || diameter) && (_ws.malformed || _ws.expert.severity >= warning)'
 
 if [ "$fail" -ne 0 ]; then
