@@ -232,11 +232,24 @@ func (b *testbed) until(t *testing.T, what string, step time.Duration, cond func
 		if time.Now().After(deadline) {
 			t.Fatalf("gave up waiting for %s at %v", what, b.clock.Now())
 		}
-		eventually(t, "the replies to the ServiceChanges", func() bool { return serviceChangesAnswered(t, b.net.datagrams()) })
-		b.clock.Advance(step)
-		b.net.settle(t)
-		time.Sleep(time.Millisecond)
+		b.step(t, step)
 	}
+}
+
+// pass moves the clock on by d, step by step as until does.
+func (b *testbed) pass(t *testing.T, d, step time.Duration) {
+	t.Helper()
+	for end := b.clock.Now().Add(d); b.clock.Now().Before(end); {
+		b.step(t, step)
+	}
+}
+
+func (b *testbed) step(t *testing.T, step time.Duration) {
+	t.Helper()
+	eventually(t, "the replies to the ServiceChanges", func() bool { return serviceChangesAnswered(t, b.net.datagrams()) })
+	b.clock.Advance(step)
+	b.net.settle(t)
+	time.Sleep(time.Millisecond)
 }
 
 // serviceChangesAnswered tells whether a controller has answered every

@@ -46,26 +46,36 @@ func TestKeepAliveAuditsRootWhenIdle(t *testing.T) {
 	}
 }
 
+// TestKeepAliveWaitsForIdleness: a call every 4 s keeps the association
+// busy, so no keep-alive is needed. Without the calls, the same 24 s
+// bring keep-alives.
 func TestKeepAliveWaitsForIdleness(t *testing.T) {
-	b := newTestbed(t, ControllerConfig{})
-	b.waitRegistered(t)
-	before := len(b.net.datagrams())
-	ctx := context.Background()
-	// A call every 4 s keeps the association busy, so no keep-alive
-	// is needed.
-	for range 6 {
-		r, err := reserve(ctx, b.controller, agw.Media{})
-		if err != nil {
-			t.Fatal(err)
-		}
-		if err := b.controller.Subtract(ctx, r.ID); err != nil {
-			t.Fatal(err)
-		}
-		b.clock.Advance(4 * time.Second)
-		time.Sleep(time.Millisecond)
-	}
-	if n := count(t, b, before, "mgc MEGACO/2 AuditValue=ROOT"); n != 0 {
-		t.Errorf("%d keep-alives while calls went on", n)
+	for _, busy := range []bool{true, false} {
+		t.Run(fmt.Sprintf("busy %v", busy), func(t *testing.T) {
+			b := newTestbed(t, ControllerConfig{})
+			b.waitRegistered(t)
+			before := len(b.net.datagrams())
+			ctx := context.Background()
+			for range 6 {
+				if busy {
+					r, err := reserve(ctx, b.controller, agw.Media{})
+					if err != nil {
+						t.Fatal(err)
+					}
+					if err := b.controller.Subtract(ctx, r.ID); err != nil {
+						t.Fatal(err)
+					}
+				}
+				b.pass(t, 4*time.Second, 250*time.Millisecond)
+			}
+			n := count(t, b, before, "mgc MEGACO/2 AuditValue=ROOT")
+			if busy && n != 0 {
+				t.Errorf("%d keep-alives while calls went on", n)
+			}
+			if !busy && n == 0 {
+				t.Error("no keep-alive in 24 s without a call")
+			}
+		})
 	}
 }
 

@@ -83,10 +83,14 @@ func Example() {
 	ctx := context.Background()
 	pcmu := agw.Media{Codecs: []sdp.Codec{{PayloadType: 0, Name: sdp.NamePCMU, ClockRate: 8000}}, Bandwidth: 80}
 	var c agw.Context
+	deadline := time.Now().Add(10 * time.Second)
 	for {
 		c, err = relay.Add(ctx, agw.TerminationRequest{ID: agw.Access, LocalMedia: pcmu}, agw.TerminationRequest{ID: agw.Core, LocalMedia: pcmu})
 		if !errors.Is(err, mediactl.ErrUnavailable) {
 			break
+		}
+		if time.Now().After(deadline) {
+			log.Fatal("the media gateway did not register with the controller within 10 s")
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
