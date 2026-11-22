@@ -9,6 +9,7 @@ e2e-out/
 bin/
 dist/
 node_modules/
+__pycache__/
 
 # ローカル設定
 .env
