@@ -39,6 +39,7 @@ import (
 	"github.com/yuu-biz/ims-practice/internal/kvstore/ibcfstore"
 	"github.com/yuu-biz/ims-practice/internal/kvstore/ipsmgwstore"
 	"github.com/yuu-biz/ims-practice/internal/kvstore/kvjson"
+	"github.com/yuu-biz/ims-practice/internal/kvstore/mmtelstore"
 	"github.com/yuu-biz/ims-practice/internal/kvstore/pcscfstore"
 	"github.com/yuu-biz/ims-practice/internal/kvstore/scscfstore"
 	"github.com/yuu-biz/ims-practice/internal/kvstore/scstore"
@@ -291,7 +292,7 @@ func run(configPath string, log *slog.Logger) error {
 			return err
 		}
 		users := sh.NewClient(node, hssPeer(peers), cfg.HomeDomain)
-		store := mmtel.NewMemoryStore()
+		store := mmtelStore(stores, roleLog)
 		mmtelRole = mmtel.New(mmtel.Config{
 			Host:             c.SIP.Host,
 			Port:             int(c.SIP.Listen.Port()),
@@ -505,6 +506,26 @@ func hssStore(ctx context.Context, c hss.Config, stores roleStores, log *slog.Lo
 		}
 	}
 	return store, nil
+}
+
+// mmtelStores is what the MMTel AS keeps outside the dialogs of its
+// own process: the record of each two-party call, and of each
+// conference whose focus it is. mmtel.MemoryStore and mmtelstore.Store
+// are each both.
+type mmtelStores interface {
+	mmtel.Store
+	mmtel.ConferenceStore
+}
+
+// mmtelStore is where the MMTel AS keeps those records. The AS is a
+// UA on both legs of a call (TS 24.229 5.7.5), so an instance recreated
+// under the same name needs the record to build the two dialogs again
+// and go on with the call.
+func mmtelStore(stores roleStores, log *slog.Logger) mmtelStores {
+	if kv, cfg, ok := stores.adapter(log); ok {
+		return mmtelstore.New(kv, cfg)
+	}
+	return mmtel.NewMemoryStore()
 }
 
 // ipsmgwStore is where the IP-SM-GW keeps the deliveries it is waiting
