@@ -153,21 +153,21 @@ jobs:
         if: always()
         run: docker compose --profile ue down --rmi all -v --remove-orphans
 
-  e2e-dashboard:
+  e2e-lab:
     runs-on: ubuntu-latest
     needs: [changes, go, web-lab]
     if: needs.changes.outputs.code == 'true'
     steps:
       - uses: actions/checkout@v7
-      - run: scripts/e2e-dashboard.sh
-      - name: upload the capture and the dashboard's view
+      - run: scripts/e2e-lab.sh
+      - name: upload the capture and the Lab's view
         if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: dashboard-capture
+          name: lab-capture
           path: |
             captures/*.pcap
-            e2e-out/dashboard-messages.json
+            e2e-out/lab-messages.json
           if-no-files-found: warn
       - name: clean up
         if: always()
@@ -478,7 +478,7 @@ jobs:
   # skips count as passed.
   all-passed:
     runs-on: ubuntu-latest
-    needs: [changes, docs, go, web-lab, web-oam, e2e, e2e-registration, e2e-call, e2e-dashboard, e2e-sms, e2e-volte, e2e-mmtel, e2e-mrf, e2e-interconnect, e2e-h248, e2e-redundancy, e2e-fault, cloud, kustomize]
+    needs: [changes, docs, go, web-lab, web-oam, e2e, e2e-registration, e2e-call, e2e-lab, e2e-sms, e2e-volte, e2e-mmtel, e2e-mrf, e2e-interconnect, e2e-h248, e2e-redundancy, e2e-fault, cloud, kustomize]
     if: always()
     steps:
       - name: no job failed or was cancelled

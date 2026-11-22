@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
-# End-to-end check: UE 1 calls UE 2, and the dashboard, which
+# End-to-end check: UE 1 calls UE 2, and the Lab, which
 # sees only the HEP copies the nodes send, shows that call. Every SIP
-# message of the call in the pcap must appear in the dashboard's message
-# list, hop by hop, and nothing else. The dashboard also shows what a
+# message of the call in the pcap must appear in the Lab's message
+# list, hop by hop, and nothing else. The Lab also shows what a
 # node sends to itself, which the capture on the bridge cannot see.
 # Last, the two UE simulators of the sim profile make a call that the
-# script drives through the dashboard alone.
+# script drives through the Lab alone.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 . scripts/e2e-lib.sh
@@ -64,7 +64,7 @@ calls="$(curl -fsS http://localhost:8080/api/calls)"
 # The MMTel AS of each user is a routeing B2BUA, so the call has a
 # dialog between UE 1 and its AS, one between the two ASs and one
 # between the second AS and UE 2, each with a Call-ID of its own. The
-# dashboard lists them as one call, the caller's, by the icid-value they
+# Lab lists them as one call, the caller's, by the icid-value they
 # share (TS 24.229 5.7.5.1).
 legs="$("$python" -c '
 import json, sys
@@ -72,9 +72,9 @@ calls = [c for c in json.load(sys.stdin) if c["state"] == "terminated"]
 print(" ".join(calls[-1]["legs"]) if calls else "")
 ' <<<"$calls")"
 if [ -n "$legs" ] && [ "$(wc -w <<<"$legs")" -eq 3 ]; then
-	echo "ok   the dashboard lists the call as terminated, with its three dialogs"
+	echo "ok   the Lab lists the call as terminated, with its three dialogs"
 else
-	echo "FAIL the dashboard has no terminated call of three dialogs: $calls"
+	echo "FAIL the Lab has no terminated call of three dialogs: $calls"
 	exit 1
 fi
 
@@ -83,7 +83,7 @@ fi
 mkdir -p e2e-out
 # $legs is unquoted on purpose: one argument per Call-ID.
 query="$("$python" -c 'import sys, urllib.parse; print("&".join("call_id=" + urllib.parse.quote(c, safe="") for c in sys.argv[1:]))' $legs)"
-curl -fsS "http://localhost:8080/api/messages?$query" >e2e-out/dashboard-messages.json
+curl -fsS "http://localhost:8080/api/messages?$query" >e2e-out/lab-messages.json
 
 pcap="$(docker compose exec -T capture sh -c 'ls -t /captures/ims-*.pcap | head -n 1' | tr -d '\r')"
 of_the_call="$(sed 's/\([^ ]*\)/sip.Call-ID == "\1"/g; s/" sip/" || sip/g' <<<"$legs")"
@@ -92,26 +92,26 @@ docker compose exec -T capture tshark -r "$pcap" -Y "$of_the_call" -T fields -E 
 	-e sip.Request-Line -e sip.Status-Line >e2e-out/pcap-messages.txt
 
 # A hop is "source>destination first-line". The pcap holds each hop once;
-# the dashboard holds a copy from the sender and one from the receiver,
+# the Lab holds a copy from the sender and one from the receiver,
 # which count as one hop.
-if "$python" - e2e-out/dashboard-messages.json e2e-out/pcap-messages.txt <<'EOF'; then
+if "$python" - e2e-out/lab-messages.json e2e-out/pcap-messages.txt <<'EOF'; then
 import collections, json, sys
 
 with open(sys.argv[1], encoding="utf-8") as f:
     messages = json.load(f)
-dashboard = set()
+lab = set()
 # The Cx messages that the call caused share its call_id; they are
 # checked below.
 for m in messages:
     if m["protocol"] != "sip":
         continue
     first = m["payload"].split("\r\n", 1)[0]
-    dashboard.add((m["src"], m["dst"], first, m["payload"]))
+    lab.add((m["src"], m["dst"], first, m["payload"]))
 # A node that sends to itself, as the S-CSCF does when it serves both
 # ends of a call, never puts the message on the bridge, so only the
-# dashboard sees it.
-inside = collections.Counter((s, d, first) for s, d, first, _ in dashboard if s == d)
-dashboard = collections.Counter((s, d, first) for s, d, first, _ in dashboard if s != d)
+# Lab sees it.
+inside = collections.Counter((s, d, first) for s, d, first, _ in lab if s == d)
+lab = collections.Counter((s, d, first) for s, d, first, _ in lab if s != d)
 
 pcap = collections.Counter()
 with open(sys.argv[2], encoding="utf-8") as f:
@@ -123,18 +123,18 @@ with open(sys.argv[2], encoding="utf-8") as f:
         dst = f_[3] + ":" + (f_[4] or f_[5])
         pcap[(src, dst, f_[6] or f_[7])] += 1
 
-missing = pcap - dashboard
-extra = dashboard - pcap
+missing = pcap - lab
+extra = lab - pcap
 for hop in sorted(missing):
-    print("  missing from the dashboard:", hop)
+    print("  missing from the Lab:", hop)
 for hop in sorted(extra):
-    print("  only on the dashboard:", hop)
-print(f"  {sum(pcap.values())} hops in the pcap, {sum(dashboard.values())} on the dashboard, {sum(inside.values())} inside a node")
+    print("  only in the Lab:", hop)
+print(f"  {sum(pcap.values())} hops in the pcap, {sum(lab.values())} in the Lab, {sum(inside.values())} inside a node")
 sys.exit(1 if missing or extra or not pcap else 0)
 EOF
-	echo "ok   every SIP hop of the call in the pcap is on the dashboard, and no other"
+	echo "ok   every SIP hop of the call in the pcap is in the Lab, and no other"
 else
-	echo "FAIL the dashboard and the pcap differ"
+	echo "FAIL the Lab and the pcap differ"
 	fail=1
 fi
 
@@ -145,7 +145,7 @@ fi
 cx="$("$python" -c '
 import json, sys
 print(" ".join(sorted({m["summary"] for m in json.load(sys.stdin) if m["protocol"] == "diameter"})))
-' <e2e-out/dashboard-messages.json)"
+' <e2e-out/lab-messages.json)"
 if [ "$cx" = "LIA 2001 LIR" ]; then
 	echo "ok   the call's Cx messages are its LIR and LIA"
 else
@@ -155,13 +155,13 @@ fi
 
 registrations="$(curl -fsS http://localhost:8080/api/registrations)"
 if grep -q '"impu":"sip:+12025550101@' <<<"$registrations"; then
-	echo "ok   the dashboard lists UE 1's registration"
+	echo "ok   the Lab lists UE 1's registration"
 else
 	echo "FAIL no registration for UE 1: $registrations"
 	fail=1
 fi
 if grep -qi '<html' <<<"$(curl -fsS http://localhost:8080/)"; then
-	echo "ok   the dashboard serves its page"
+	echo "ok   the Lab serves its page"
 else
 	echo "FAIL no page at /"
 	fail=1
@@ -169,7 +169,7 @@ fi
 
 # Status codes are read from the end of the output, since curl on Windows
 # cannot write to /dev/null when MSYS_NO_PATHCONV is set.
-# Add a subscriber through the dashboard, register it, then
+# Add a subscriber through the Lab, register it, then
 # remove it. The HSS tells the S-CSCF with an RTR, the S-CSCF tells the
 # UE with a reg-event NOTIFY, and the UE can no longer register.
 impi5=001010000000005@ims.mnc001.mcc001.3gppnetwork.org
@@ -177,7 +177,7 @@ ue5=(--impi "$impi5" --impu sip:$impi5 --password test-password-5)
 status="$(curl -s -w '
 %{http_code}' -X POST -H 'Content-Type: application/json' 	-d "{\"private_identity\":\"$impi5\",\"public_identities\":[\"sip:$impi5\"],\"password\":\"test-password-5\"}" 	http://localhost:8080/api/subscribers | tail -n 1)"
 if [ "$status" = 201 ]; then
-	echo "ok   a subscriber was added through the dashboard"
+	echo "ok   a subscriber was added through the Lab"
 else
 	echo "FAIL adding a subscriber answered $status"
 	fail=1
@@ -221,7 +221,7 @@ else
 	fail=1
 fi
 
-# The UE simulators of the sim profile, driven through the dashboard.
+# The UE simulators of the sim profile, driven through the Lab.
 # They are subscribers 1 and 2, as ue and ue2 above, whose containers
 # have all ended by now.
 # ues prints "name registered|unregistered|unreachable call-state|idle"
@@ -255,7 +255,7 @@ ue_post() {
 # the third UE of the sim profile for conferences; they stay down here.
 volte="volte-a unreachable idle,volte-b unreachable idle,ue-c unreachable idle"
 if [ "$(ues)" = "ue-a unreachable idle,ue-b unreachable idle,$volte" ]; then
-	echo "ok   the dashboard lists the UE simulators as unreachable before they start"
+	echo "ok   the Lab lists the UE simulators as unreachable before they start"
 else
 	echo "FAIL the UE simulators before they start: $(ues)"
 	fail=1
@@ -265,7 +265,7 @@ fi
 trap 'docker compose --profile sim rm -sf ue-a ue-b >/dev/null 2>&1' EXIT
 docker compose --profile sim up -d --no-deps ue-a ue-b
 if wait_ues "ue-a registered idle,ue-b registered idle,$volte"; then
-	echo "ok   both UE simulators report through the dashboard that they are registered"
+	echo "ok   both UE simulators report through the Lab that they are registered"
 else
 	echo "FAIL the UE simulators did not register: $(ues)"
 	exit 1
@@ -274,14 +274,14 @@ fi
 status="$(ue_post ue-b/answer-policy '{"mode":"manual"}' PUT)"
 call_status="$(ue_post ue-a/call '{"target":"tel:+12025550102"}')"
 if [ "$status" = 200 ] && [ "$call_status" = 200 ] && wait_ues "*ue-b registered ringing,*"; then
-	echo "ok   ue-a called ue-b through the dashboard, and ue-b rings"
+	echo "ok   ue-a called ue-b through the Lab, and ue-b rings"
 else
 	echo "FAIL the call from ue-a (policy $status, call $call_status): $(ues)"
 	exit 1
 fi
 status="$(ue_post ue-b/answer)"
 if [ "$status" = 200 ] && wait_ues "ue-a registered active,ue-b registered active,$volte"; then
-	echo "ok   ue-b answered through the dashboard, and both UEs are in the call"
+	echo "ok   ue-b answered through the Lab, and both UEs are in the call"
 else
 	echo "FAIL answering (status $status): $(ues)"
 	exit 1
@@ -292,7 +292,7 @@ print(json.load(sys.stdin)[0]["status"]["call"]["call_id"])
 ' | tr -d '\r')"
 status="$(ue_post ue-a/hangup)"
 if [ "$status" = 200 ] && wait_ues "ue-a registered idle,ue-b registered idle,$volte"; then
-	echo "ok   ue-a hung up through the dashboard"
+	echo "ok   ue-a hung up through the Lab"
 else
 	echo "FAIL hanging up (status $status): $(ues)"
 	fail=1
@@ -304,9 +304,9 @@ import json, sys
 print(" ".join(c["state"] for c in json.load(sys.stdin) if c["call_id"] == sys.argv[1]))
 ' "$sim_call_id" | tr -d '\r')"
 if [ "$state" = terminated ]; then
-	echo "ok   the dashboard lists the call $sim_call_id as terminated"
+	echo "ok   the Lab lists the call $sim_call_id as terminated"
 else
-	echo "FAIL the call $sim_call_id is \"$state\" on the dashboard"
+	echo "FAIL the call $sim_call_id is \"$state\" in the Lab"
 	fail=1
 fi
 same_nodes

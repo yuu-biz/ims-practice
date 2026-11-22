@@ -67,8 +67,8 @@ export MSYS_NO_PATHCONV=1
 
 # Built by: docker compose -f compose.yaml -f deploy/chaos/chaos.yaml build fault-tools
 tools_image=${FAULT_TOOLS_IMAGE:-ims-practice/fault-tools:dev}
-# The HEP copies for the dashboard (UDP 9060) are not IMS traffic; they
-# pass, so that the dashboard keeps showing what each node believes it
+# The HEP copies for the Lab (UDP 9060) are not IMS traffic; they
+# pass, so that the Lab keeps showing what each node believes it
 # sent and received.
 hep_port=9060
 

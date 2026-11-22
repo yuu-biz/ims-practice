@@ -606,7 +606,7 @@ echo "topology hiding"
 # The nodes of each network, as host names in SIP and SDP. A name counts
 # only after a character that cannot be part of a host name, so that a
 # longer name that ends the same does not count.
-node_names='(pcscf|scscf|icscf|mmtel|xcap|agw|ipsmgw|hss|ibcf|trgw|epc|pcrf|dns|dashboard)'
+node_names='(pcscf|scscf|icscf|mmtel|xcap|agw|ipsmgw|hss|ibcf|trgw|epc|pcrf|dns|lab)'
 pcap="$peer_pcap" none "addresses of network A in network B's capture" 'ip.addr == 172.28.0.0/24 || frame contains "172.28.0."'
 pcap="$nni_pcap" none "addresses of network A on the link" 'ip.addr == 172.28.0.0/24 || frame contains "172.28.0."'
 pcap="$peer_pcap" none "node names of network A in network B's capture" \

@@ -4,11 +4,11 @@
 #
 # UE 1 bars its outgoing calls and calls UE 2: it hears the announcement
 # notice from the MRFP before the 603. Then UE 2 gets the customized
-# alerting tone cat1 through the dashboard, and UE 1 hears it while UE 2
+# alerting tone cat1 through the Lab, and UE 1 hears it while UE 2
 # rings; the audio that UE 1 received is compared with the WAV file. A
 # call after the tone is switched off rings with UE 1's own ringing
 # tone. Last, the three UE simulators of the sim profile, driven
-# through the dashboard: ue-a calls ue-b, ue-c calls ue-a, whose second
+# through the Lab: ue-a calls ue-b, ue-c calls ue-a, whose second
 # call waits; ue-a answers it, which holds the first, swaps between the
 # two and merges them into a conference whose audio the MRFP mixes. The
 # checks read the capture.
@@ -80,7 +80,7 @@ call() { docker compose run --rm --no-deps ue call --tone 1s "$@" 2>&1 || true; 
 # xcap ARGS... is UE 1's "ue xcap".
 xcap() { docker compose run --rm --no-deps ue xcap "$@" 2>&1 || true; }
 # alerting_tone TONE true|false provisions the CAT of UE 2 in the HSS,
-# through the dashboard, as the learner does with the Subscribers panel.
+# through the Lab, as the learner does with the Subscribers panel.
 # The status code is read from the end of the output, since curl on
 # Windows cannot write to /dev/null when MSYS_NO_PATHCONV is set.
 alerting_tone() {
@@ -110,7 +110,7 @@ xcap set baoc off >/dev/null
 echo "CAT: UE 2's callers hear cat1 while it rings"
 status="$(alerting_tone cat1 true)"
 if [ "$status" = 200 ]; then
-	echo "ok   the dashboard provisioned cat1 for UE 2 in the HSS"
+	echo "ok   the Lab provisioned cat1 for UE 2 in the HSS"
 else
 	echo "FAIL provisioning cat1 for UE 2: HTTP $status"
 	fail=1
@@ -170,7 +170,7 @@ else
 	fail=1
 fi
 
-echo "call waiting and a conference, driven through the dashboard"
+echo "call waiting and a conference, driven through the Lab"
 # ues prints "name registered|unregistered|unreachable calls conference"
 # for each UE of the sim profile, the UEs separated by commas: calls is
 # the state of each call on the line, joined by "+", with "/held" and
@@ -355,16 +355,16 @@ expect "200 OK UE 2 -> P-CSCF: UE 2 answers" "$ok200 && ip.src == $ue2ip"
 expect "BYE MMTel AS -> MRFC: the tone stops at the answer" "sip.Method == \"BYE\" && ip.src == $mmtel && ip.dst == $mrfc && sip.Call-ID == \"$mrfc_leg\""
 expect "UPDATE reaches UE 1: its media goes to UE 2, without the content attribute" "sip.Method == \"UPDATE\" && sip.Call-ID == \"$a\" && ip.dst == $ue1 && sdp && !(sdp.media_attr == \"content:g.3gpp.cat\")"
 expect "200 OK (INVITE) reaches UE 1" "$ok200 && sip.Call-ID == \"$a\" && ip.dst == $ue1"
-# The dashboard groups the dialogs of a call by their icid-value, so
+# The Lab groups the dialogs of a call by their icid-value, so
 # the AS's dialog with the MRFC is a leg of the call that UE 1 made.
 legs="$(curl -fsS http://localhost:8080/api/calls | "$python" -c '
 import json, sys
 print(" ".join(next((c["legs"] for c in json.load(sys.stdin) if sys.argv[1] in c["legs"]), [])))
  ' "$a" | tr -d '\r')"
 if [[ " $legs " == *" $mrfc_leg "* ]]; then
-	echo "ok   the dashboard draws the AS's dialog with the MRFC in the ladder of UE 1's call"
+	echo "ok   the Lab draws the AS's dialog with the MRFC in the ladder of UE 1's call"
 else
-	echo "FAIL the dashboard's call of $a has the legs $legs, not $mrfc_leg"
+	echo "FAIL the Lab's call of $a has the legs $legs, not $mrfc_leg"
 	fail=1
 fi
 

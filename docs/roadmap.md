@@ -80,7 +80,7 @@
 - ダッシュボードから加入者を追加、削除できる。
 - ダッシュボードから UE シミュレータを操作できる。
 
-手順書は [dashboard.md](guide/ja/dashboard.md)、スクリプトは `scripts/e2e-dashboard.sh` です。
+手順書は [dashboard.md](guide/ja/dashboard.md)、スクリプトは `scripts/e2e-lab.sh` です。
 
 **完了条件.** 通話を 1 回行うと、ダッシュボードにその呼のラダー図が表示され、pcap の内容と一致する。
 
