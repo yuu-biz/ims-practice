@@ -492,6 +492,7 @@ rm ue.exe
 | HSS。TS 29.228 6.1.1.1 の手順 5 | 登録してよい利用者かを確かめない。 | 試験用の加入は全員が登録してよいため。 |
 | 利用者のプロファイル。TS 29.228 Annex E | サービスプロファイルは 1 つ。任意の要素は iFC のほかに入れない。 | 試験用の加入者にはそれ以上要らないため。 |
 | HSS。TS 29.228 B.2.2 | すべての加入者に設定の iFC を渡す。加入者ごとに違うのは ServiceInfo の MSISDN だけ。 | このプロジェクトには、利用者ごとに違うサービスが無いため。 |
+| HSS と S-CSCF。TS 23.228 4.3.3.4、4.2.7.2 | 公開の識別子は 1 つの秘密の識別子にだけ属し、複数の UE で共有できない。公開の識別子への要求は、その識別子のただ 1 つの登録の、ただ 1 つの Contact に届く。S-CSCF はフォークしない。 | このプロジェクトの加入者は、それぞれ UE を 1 台だけ使うため。 |
 | iFC。TS 29.228 B.2.3、Annex E | SPT の SessionDescription、RegistrationType、ProfilePartIndicator、IncludeRegisterRequest、IncludeRegisterResponse を扱わない。 | SMS と MMTel AS の iFC には、どれも要らないため。RegistrationType は S-CSCF にとって任意の機能。 |
 | S-CSCF。TS 24.229 5.4.1.7 | 第三者 REGISTER の To はいつも既定の公開識別子にする。Call-ID は毎回新しくする。応答の term-ioi は保存しない。 | どの識別子にするかは運用者が選べる。Call-ID を変えないには、利用者とサーバーごとに状態が要る。term-ioi は S-CSCF の課金の記録のためのもので、このプロジェクトのノードは課金の記録を作らないため。 |
 | S-CSCF。TS 24.229 5.4.0 | アプリケーションサーバーのアドレスを要求のたびに DNS で引く。最初の第三者 REGISTER を送ったアドレスは覚えない。 | アプリケーションサーバーの役割は、すべての台で共有する Store に状態を置くため。 |
