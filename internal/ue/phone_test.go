@@ -263,7 +263,8 @@ func waitForUESubscription(t *testing.T, n testNetwork) {
 	t.Helper()
 	deadline := time.Now().Add(5 * time.Second)
 	for {
-		for _, sub := range n.scscfStore.SubscriptionsOf(impi) {
+		subs, _ := n.scscfStore.SubscriptionsOf(context.Background(), impi)
+		for _, sub := range subs {
 			if sub.Dialog.RemoteURI == impu {
 				return
 			}

@@ -438,7 +438,7 @@ func TestTheFeatureTagsReachTheSCSCF(t *testing.T) {
 	if _, err := u.Register(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	reg, ok := n.scscfStore.Registration(impi)
+	reg, ok, _ := n.scscfStore.Registration(context.Background(), impi)
 	if want := (sip.Params{{Name: "+g.3gpp.smsip"}}); !ok || !slices.Equal(reg.ContactParams, want) {
 		t.Errorf("the S-CSCF keeps the contact parameters %v, want %v", reg.ContactParams, want)
 	}

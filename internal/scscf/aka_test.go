@@ -1,6 +1,7 @@
 package scscf
 
 import (
+	"context"
 	"encoding/hex"
 	"errors"
 	"slices"
@@ -163,7 +164,7 @@ func TestIMSAKANetworkAuthenticationFailure(t *testing.T) {
 	if got := h.hss.assignments(); !slices.Equal(got, []cx.ServerAssignmentType{cx.AuthenticationFailure}) {
 		t.Errorf("SARs = %v, want AUTHENTICATION_FAILURE", got)
 	}
-	if _, pending := h.store.Challenge(impi); pending {
+	if _, pending, _ := h.store.Challenge(context.Background(), impi); pending {
 		t.Error("the challenge is still pending")
 	}
 }

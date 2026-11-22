@@ -41,18 +41,31 @@ func (s *SCSCF) receiveRegEvent(st *sip.ServerTransaction) bool {
 		s.subscribe(st)
 		return true
 	}
-	if sub, unlock, ok := s.lockSubscription(sip.ReceivedDialogID(req)); ok {
+	sub, unlock, ok, err := s.lockSubscription(context.Background(), sip.ReceivedDialogID(req))
+	if ok {
 		defer unlock()
 		s.resubscribe(st, sub)
 		return true
 	}
-	if u, err := sip.ParseURI(req.RequestURI); err == nil && strings.EqualFold(u.Host, s.cfg.Host) && (u.Port == s.cfg.Port || u.Port == 0 && s.cfg.Port == 5060) {
-		// The subscription has ended, so its dialog is gone (RFC 3261
-		// 12.2.2). RFC 6665 4.1.2.2 has the subscriber start anew.
-		s.respond(st, 481, nil)
+	if !s.toNotifier(req.RequestURI) {
+		return false
+	}
+	if err != nil {
+		s.storeFailed(st, err, s.log.With("call_id", req.Get("Call-ID")))
 		return true
 	}
-	return false
+	// The subscription has ended, so its dialog is gone (RFC 3261
+	// 12.2.2). RFC 6665 4.1.2.2 has the subscriber start anew.
+	s.respond(st, 481, nil)
+	return true
+}
+
+// toNotifier reports whether a request within a dialog is for the
+// S-CSCF as the notifier: its Request-URI is the contact of the 200 and
+// the NOTIFYs.
+func (s *SCSCF) toNotifier(requestURI string) bool {
+	u, err := sip.ParseURI(requestURI)
+	return err == nil && strings.EqualFold(u.Host, s.cfg.Host) && (u.Port == s.cfg.Port || u.Port == 0 && s.cfg.Port == 5060)
 }
 
 // subscribe is TS 24.229 5.4.2.1.1 for an initial SUBSCRIBE.
@@ -69,13 +82,21 @@ func (s *SCSCF) subscribe(st *sip.ServerTransaction) {
 		s.respond(st, 400, nil)
 		return
 	}
+	ctx := context.Background()
 	// Step 0.
-	reg, ok := s.store.RegistrationOf(resource)
+	reg, ok, err := s.store.RegistrationOf(ctx, resource)
+	if err != nil {
+		s.storeFailed(st, err, log)
+		return
+	}
 	if ok {
-		unlock, _ := s.users.Lock(context.Background(), reg.PrivateIdentity)
+		unlock, _ := s.users.Lock(ctx, reg.PrivateIdentity)
 		defer unlock()
 		// The binding may have changed while this waited for the lock.
-		reg, ok = s.store.RegistrationOf(resource)
+		if reg, ok, err = s.store.RegistrationOf(ctx, resource); err != nil {
+			s.storeFailed(st, err, log)
+			return
+		}
 	}
 	// A barred identity has no binding either (5.4.1.2.2 NOTE 9).
 	if !ok || reg.Barred(resource) {
@@ -101,12 +122,35 @@ func (s *SCSCF) subscribe(st *sip.ServerTransaction) {
 		s.respond(st, 400, nil)
 		return
 	}
-	s.addChargingVector(ok200, req)
-	st.Respond(ok200)
 	// Steps 1B and 4.
 	sub := Subscription{NotifierSubscription: accepted, PrivateIdentity: reg.PrivateIdentity, ICID: icidOf(req)}
+	n, ok := s.acceptSubscribe(ctx, st, ok200, sub, regInfo(reg, reginfo.Active, reg.ContactEvent, time.Now()), log)
+	if !ok {
+		return
+	}
 	log.Info("reg event subscribed", "subscriber", subscriber, "public_identity", resource, "expires", int(expires/time.Second))
-	s.notify(sub, regInfo(reg, reginfo.Active, reg.ContactEvent, time.Now()), log)
+	s.sendNotify(n, log)
+}
+
+// acceptSubscribe answers a SUBSCRIBE with ok200 once the store holds
+// sub as the NOTIFY with doc that follows the 200 leaves it, and returns
+// that NOTIFY. A SUBSCRIBE whose subscription the store cannot keep gets
+// 500 instead (RFC 3261 21.5.1), rather than a 200 whose NOTIFYs no
+// instance could send; acceptSubscribe reports false then.
+func (s *SCSCF) acceptSubscribe(ctx context.Context, st *sip.ServerTransaction, ok200 *sip.Message, sub Subscription, doc reginfo.Document, log *slog.Logger) (notification, bool) {
+	n, err := s.nextNotify(sub, doc)
+	if err != nil {
+		log.Warn("reg event document not built", "error", err.Error())
+		s.respond(st, 500, nil)
+		return notification{}, false
+	}
+	if err := s.keepSubscription(ctx, n.sub); err != nil {
+		s.storeFailed(st, err, log)
+		return notification{}, false
+	}
+	s.addChargingVector(ok200, st.Request)
+	st.Respond(ok200)
+	return n, true
 }
 
 // authorizedSubscriber is step 1 of TS 24.229 5.4.2.1.1. The subscriber
@@ -184,22 +228,32 @@ func (s *SCSCF) resubscribe(st *sip.ServerTransaction, sub Subscription) {
 		s.respond(st, 400, nil)
 		return
 	}
-	s.addChargingVector(ok200, req)
-	st.Respond(ok200)
-	reg, ok := s.store.Registration(sub.PrivateIdentity)
-	if !ok {
-		sub.Terminate(sip.ReasonNoResource)
-		s.notify(sub, reginfo.Document{}, log)
+	ctx := context.Background()
+	reg, ok, err := s.store.Registration(ctx, sub.PrivateIdentity)
+	if err != nil {
+		s.storeFailed(st, err, log)
 		return
 	}
-	log.Info("reg event subscription refreshed", "subscriber", sub.Dialog.RemoteURI, "expires", int(expires/time.Second))
-	s.notify(sub, regInfo(reg, reginfo.Active, reg.ContactEvent, time.Now()), log)
+	doc := reginfo.Document{}
+	if ok {
+		doc = regInfo(reg, reginfo.Active, reg.ContactEvent, time.Now())
+	} else {
+		sub.Terminate(sip.ReasonNoResource)
+	}
+	n, accepted := s.acceptSubscribe(ctx, st, ok200, sub, doc, log)
+	if !accepted {
+		return
+	}
+	if ok {
+		log.Info("reg event subscription refreshed", "subscriber", sub.Dialog.RemoteURI, "expires", int(expires/time.Second))
+	}
+	s.sendNotify(n, log)
 }
 
 // notifyRegistration sends the new state of a registration that a
 // REGISTER created or refreshed to every subscription to it (TS 24.229
 // 5.4.2.1.2). A binding it replaced shows up once more, terminated.
-func (s *SCSCF) notifyRegistration(reg Registration, replaced *Registration, log *slog.Logger) {
+func (s *SCSCF) notifyRegistration(ctx context.Context, reg Registration, replaced *Registration, log *slog.Logger) {
 	now := time.Now()
 	doc := regInfo(reg, reginfo.Active, reg.ContactEvent, now)
 	if replaced != nil {
@@ -208,8 +262,13 @@ func (s *SCSCF) notifyRegistration(reg Registration, replaced *Registration, log
 			doc.Registrations[i].Contacts = append(doc.Registrations[i].Contacts, old)
 		}
 	}
-	for _, sub := range s.store.SubscriptionsOf(reg.PrivateIdentity) {
-		s.notify(sub, doc, log)
+	subs, err := s.store.SubscriptionsOf(ctx, reg.PrivateIdentity)
+	if err != nil {
+		log.Warn("reg event NOTIFYs not sent: the store failed; the subscribers learn the state from the next NOTIFY", "error", err.Error())
+		return
+	}
+	for _, sub := range subs {
+		s.notify(ctx, sub, doc, log)
 	}
 }
 
@@ -219,18 +278,29 @@ func (s *SCSCF) notifyRegistration(reg Registration, replaced *Registration, log
 // registration terminated, and with it the subscription. Its reason is
 // noresource: the UE subscribes anew after its next initial
 // registration (5.1.1.3), not before (RFC 6665 4.1.3).
-func (s *SCSCF) endRegistration(reg Registration, event reginfo.Event, log *slog.Logger) {
+func (s *SCSCF) endRegistration(ctx context.Context, reg Registration, event reginfo.Event, log *slog.Logger) {
 	doc := regInfo(reg, reginfo.Terminated, event, time.Now())
-	for _, sub := range s.store.SubscriptionsOf(reg.PrivateIdentity) {
+	subs, err := s.store.SubscriptionsOf(ctx, reg.PrivateIdentity)
+	if err != nil {
+		log.Warn("reg event NOTIFYs not sent: the store failed; the subscriptions end when they expire", "error", err.Error())
+		return
+	}
+	for _, sub := range subs {
 		sub.Terminate(sip.ReasonNoResource)
-		s.notify(sub, doc, log)
+		s.notify(ctx, sub, doc, log)
 	}
 }
 
 // subscriptionExpired ends a subscription that was not refreshed (RFC
 // 6665 4.2.1.4).
 func (s *SCSCF) subscriptionExpired(id sip.DialogID, expires time.Time) {
-	sub, unlock, ok := s.lockSubscription(id)
+	ctx := context.Background()
+	log := s.log.With("call_id", id.CallID)
+	sub, unlock, ok, err := s.lockSubscription(ctx, id)
+	if err != nil {
+		log.Warn("expiry of a reg event subscription not handled: the store failed; it stays until the registration ends", "error", err.Error())
+		return
+	}
 	if !ok {
 		return
 	}
@@ -238,61 +308,106 @@ func (s *SCSCF) subscriptionExpired(id sip.DialogID, expires time.Time) {
 	if !sub.Expires.Equal(expires) {
 		return
 	}
-	log := s.log.With("call_id", id.CallID)
+	reg, registered, err := s.store.Registration(ctx, sub.PrivateIdentity)
+	if err != nil {
+		log.Warn("expiry of a reg event subscription not handled: the store failed; it stays until the registration ends", "error", err.Error())
+		return
+	}
 	sub.Terminate(sip.ReasonTimeout)
 	doc := reginfo.Document{}
-	if reg, ok := s.store.Registration(sub.PrivateIdentity); ok {
+	if registered {
 		doc = regInfo(reg, reginfo.Active, reg.ContactEvent, time.Now())
 	}
-	s.notify(sub, doc, log)
+	s.notify(ctx, sub, doc, log)
 }
 
-// notify sends sub the next NOTIFY with doc (TS 24.229 5.4.2.1.2 steps 1
-// to 5), and stores what the NOTIFY changed: the CSeq of the dialog and
-// the version of the document. A subscription that the NOTIFY ends is
-// removed. The lock of the user is held.
-func (s *SCSCF) notify(sub Subscription, doc reginfo.Document, log *slog.Logger) {
-	now := time.Now()
-	doc.Version, doc.State = sub.Version, reginfo.Full
-	sub.Version++
-	body, err := doc.Marshal()
+// notify sends sub the next NOTIFY with doc, once the store holds what
+// the NOTIFY changes. The lock of the user is held.
+func (s *SCSCF) notify(ctx context.Context, sub Subscription, doc reginfo.Document, log *slog.Logger) {
+	n, err := s.nextNotify(sub, doc)
 	if err != nil {
 		log.Warn("reg event document not built", "error", err.Error())
 		return
 	}
-	req := sub.NewNotify(sip.Body{Type: reginfo.ContentType, Content: body}, now)
+	if err := s.keepSubscription(ctx, n.sub); err != nil {
+		// Sent, the NOTIFY would leave the next one with its CSeq, which
+		// goes up by one with each request of the dialog (RFC 3261
+		// 12.2.1.1).
+		log.Warn("reg event NOTIFY not sent: the store failed; the subscription stays as it was until the next event or its expiry",
+			"subscriber", sub.Dialog.RemoteURI, "error", err.Error())
+		return
+	}
+	s.sendNotify(n, log)
+}
+
+// notification is a NOTIFY of the reg event package, with the
+// subscription as the NOTIFY leaves it and the document it carries.
+type notification struct {
+	req *sip.Message
+	sub Subscription
+	doc reginfo.Document
+}
+
+// nextNotify is the next NOTIFY of sub with doc (TS 24.229 5.4.2.1.2
+// steps 1 to 5). It moves on the CSeq of the dialog and the version of
+// the document.
+func (s *SCSCF) nextNotify(sub Subscription, doc reginfo.Document) (notification, error) {
+	doc.Version, doc.State = sub.Version, reginfo.Full
+	sub.Version++
+	body, err := doc.Marshal()
+	if err != nil {
+		return notification{}, err
+	}
+	req := sub.NewNotify(sip.Body{Type: reginfo.ContentType, Content: body}, time.Now())
 	// Step 5: the icid-value of the SUBSCRIBE and this network's
 	// orig-ioi.
 	if sub.ICID != "" {
 		req.Add("P-Charging-Vector", sip.ChargingVector{ICID: sub.ICID, OrigIOI: s.cfg.HomeDomain}.String())
 	}
+	return notification{req: req, sub: sub, doc: doc}, nil
+}
+
+// keepSubscription stores sub as a NOTIFY leaves it, and removes it
+// when the NOTIFY ends it. Its expiry timer follows, once the store has
+// changed.
+func (s *SCSCF) keepSubscription(ctx context.Context, sub Subscription) error {
 	id := sub.Dialog.ID
 	if sub.State == sip.SubscriptionTerminated {
-		s.store.DeleteSubscription(id)
+		if err := s.store.DeleteSubscription(ctx, id); err != nil {
+			return err
+		}
 		s.subscriptionTimers.stop(id)
-	} else {
-		s.store.PutSubscription(sub)
-		s.subscriptionTimers.start(id, sub.Expires.Sub(now), func() { s.subscriptionExpired(id, sub.Expires) })
+		return nil
 	}
-	state, contactState, event := registrationStateOf(doc)
-	log.Info("reg event", "subscriber", sub.Dialog.RemoteURI, "public_identity", aorOf(doc), "state", string(state),
-		"contact_state", string(contactState), "contact_event", string(event), "subscription_state", string(sub.State), "version", doc.Version)
+	if err := s.store.PutSubscription(ctx, sub); err != nil {
+		return err
+	}
+	s.subscriptionTimers.start(id, time.Until(sub.Expires), func() { s.subscriptionExpired(id, sub.Expires) })
+	return nil
+}
+
+// sendNotify sends a NOTIFY whose subscription the store holds as the
+// NOTIFY leaves it.
+func (s *SCSCF) sendNotify(n notification, log *slog.Logger) {
+	state, contactState, event := registrationStateOf(n.doc)
+	log.Info("reg event", "subscriber", n.sub.Dialog.RemoteURI, "public_identity", aorOf(n.doc), "state", string(state),
+		"contact_state", string(contactState), "contact_event", string(event), "subscription_state", string(n.sub.State), "version", n.doc.Version)
 
 	stack, err := s.stack.Get()
 	if err != nil {
 		return
 	}
-	dst, err := s.nextHop(req)
+	dst, err := s.nextHop(n.req)
 	if err != nil {
-		log.Warn("cannot route the NOTIFY", "subscriber", sub.Dialog.RemoteURI, "error", err.Error())
+		log.Warn("cannot route the NOTIFY", "subscriber", n.sub.Dialog.RemoteURI, "error", err.Error())
 		return
 	}
-	ct, err := stack.SendRequest(req, dst)
+	ct, err := stack.SendRequest(n.req, dst)
 	if err != nil {
-		log.Warn("NOTIFY not sent", "subscriber", sub.Dialog.RemoteURI, "error", err.Error())
+		log.Warn("NOTIFY not sent", "subscriber", n.sub.Dialog.RemoteURI, "error", err.Error())
 		return
 	}
-	go s.readNotifyAnswer(ct, id, log)
+	go s.readNotifyAnswer(ct, n.sub.Dialog.ID, log)
 }
 
 // readNotifyAnswer removes the subscription when its NOTIFY fails the
@@ -314,31 +429,39 @@ func (s *SCSCF) readNotifyAnswer(ct *sip.ClientTransaction, id sip.DialogID, log
 	if final != nil {
 		status = final.StatusCode
 	}
-	_, unlock, ok := s.lockSubscription(id)
+	ctx := context.Background()
+	_, unlock, ok, err := s.lockSubscription(ctx, id)
+	if err != nil {
+		log.Warn("reg event subscription not removed after a failed NOTIFY: the store failed; it stays until it expires", "status", status, "error", err.Error())
+		return
+	}
 	if !ok {
 		return
 	}
 	defer unlock()
-	log.Info("reg event subscription removed after a failed NOTIFY", "status", status, "error", fmt.Sprint(ct.Err()))
-	s.store.DeleteSubscription(id)
+	if err := s.store.DeleteSubscription(ctx, id); err != nil {
+		log.Warn("reg event subscription not removed after a failed NOTIFY: the store failed; it stays until it expires", "status", status, "error", err.Error())
+		return
+	}
 	s.subscriptionTimers.stop(id)
+	log.Info("reg event subscription removed after a failed NOTIFY", "status", status, "error", fmt.Sprint(ct.Err()))
 }
 
 // lockSubscription takes the lock of the user that a subscription is
 // to, and reads the subscription again under it, since it may have
 // changed or ended in the meantime. ok is false, and nothing is locked,
-// when there is no such subscription.
-func (s *SCSCF) lockSubscription(id sip.DialogID) (sub Subscription, unlock func(), ok bool) {
-	sub, ok = s.store.Subscription(id)
-	if !ok {
-		return Subscription{}, nil, false
+// when there is no such subscription or the store failed.
+func (s *SCSCF) lockSubscription(ctx context.Context, id sip.DialogID) (sub Subscription, unlock func(), ok bool, err error) {
+	sub, ok, err = s.store.Subscription(ctx, id)
+	if err != nil || !ok {
+		return Subscription{}, nil, false, err
 	}
-	unlock, _ = s.users.Lock(context.Background(), sub.PrivateIdentity)
-	if sub, ok = s.store.Subscription(id); !ok {
+	unlock, _ = s.users.Lock(ctx, sub.PrivateIdentity)
+	if sub, ok, err = s.store.Subscription(ctx, id); err != nil || !ok {
 		unlock()
-		return Subscription{}, nil, false
+		return Subscription{}, nil, false, err
 	}
-	return sub, unlock, true
+	return sub, unlock, true, nil
 }
 
 // regInfo is the full state of a registration, which every NOTIFY of

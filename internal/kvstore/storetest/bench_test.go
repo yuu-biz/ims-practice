@@ -148,7 +148,7 @@ func benchmarkMixes(b *testing.B, r roles, kv *counting) {
 	callee := sip.Destination{Transport: sip.UDP, Addr: netip.MustParseAddrPort("192.0.2.20:5060")}
 	_ = p.PutAssociation(ctx, pcscf.Association{Source: callee, Contact: "sip:ue2@192.0.2.20:5060", PrivateIdentity: "001010000000002@" + realm,
 		PublicIdentities: []string{"sip:001010000000002@" + realm}, Expires: time.Now().Add(time.Hour), KeepUntil: time.Now().Add(time.Hour + time.Minute)})
-	s.PutRegistration(scscf.Registration{PrivateIdentity: "001010000000002@" + realm,
+	_ = s.PutRegistration(ctx, scscf.Registration{PrivateIdentity: "001010000000002@" + realm,
 		PublicIdentities: []string{"sip:001010000000002@" + realm, "tel:+12025550102"}, Contact: "sip:ue2@192.0.2.20:5060",
 		Expires: time.Now().Add(time.Hour), InitialFilterCriteria: registrationOfTheSuite().InitialFilterCriteria})
 
@@ -166,22 +166,22 @@ func benchmarkMixes(b *testing.B, r roles, kv *counting) {
 			source := sip.Destination{Transport: sip.UDP, Addr: netip.AddrPortFrom(netip.MustParseAddr("192.0.2.10"), uint16(10000+n%50000))}
 			_, _, _ = p.Association(ctx, source)
 			_, _, _ = p.SecurityAssociations(ctx, source.Addr)
-			s.Challenge(impi)
-			s.PutChallenge(scscf.Challenge{PrivateIdentity: impi, Nonce: user, HA1: strings.Repeat("0", 32),
+			_, _, _ = s.Challenge(ctx, impi)
+			_ = s.PutChallenge(ctx, scscf.Challenge{PrivateIdentity: impi, Nonce: user, HA1: strings.Repeat("0", 32),
 				Expires: time.Now().Add(ims.RegAwaitAuth), KeepUntil: time.Now().Add(2 * ims.RegAwaitAuth)})
-			s.Challenge(impi)
-			s.DeleteChallenge(impi)
-			s.Registration(impi)
+			_, _, _ = s.Challenge(ctx, impi)
+			_ = s.DeleteChallenge(ctx, impi)
+			_, _, _ = s.Registration(ctx, impi)
 			reg := registrationOfTheSuite()
 			reg.PrivateIdentity, reg.PublicIdentities = impi, []string{"sip:" + impi, "tel:+1202555" + strconv.Itoa(100+n%100)}
-			s.PutRegistration(reg)
-			s.SubscriptionsOf(impi)
-			s.RegistrationOf("sip:" + impi)
-			s.RegistrationOf("sip:" + impi)
+			_ = s.PutRegistration(ctx, reg)
+			_, _ = s.SubscriptionsOf(ctx, impi)
+			_, _, _ = s.RegistrationOf(ctx, "sip:"+impi)
+			_, _, _ = s.RegistrationOf(ctx, "sip:"+impi)
 			var sub scscf.Subscription
 			sub.PrivateIdentity, sub.Dialog.ID = impi, sip.DialogID{CallID: "sub-" + user, LocalTag: "l", RemoteTag: "r"}
 			sub.Expires = time.Now().Add(time.Hour)
-			s.PutSubscription(sub)
+			_ = s.PutSubscription(ctx, sub)
 			_, _, _ = p.Association(ctx, source)
 			_, _, _ = p.SecurityAssociations(ctx, source.Addr)
 			_ = p.PutAssociation(ctx, pcscf.Association{Source: source, Contact: "sip:" + user + "@192.0.2.10", PrivateIdentity: impi,
@@ -199,7 +199,7 @@ func benchmarkMixes(b *testing.B, r roles, kv *counting) {
 				_, _, _ = p.SecurityAssociations(ctx, callee.Addr)
 			}
 			for range 3 {
-				s.RegistrationOf("tel:+12025550102")
+				_, _, _ = s.RegistrationOf(ctx, "tel:+12025550102")
 			}
 			keys := []pcscf.DialogKey{{CallID: "call-" + user, UETag: "caller"}, {CallID: "call-" + user, UETag: "callee"}}
 			for _, k := range keys {

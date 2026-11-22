@@ -88,7 +88,11 @@ func (s *SCSCF) originating(st *sip.ServerTransaction, out *sip.Message, log *sl
 		s.respond(st, 403, nil)
 		return
 	}
-	reg, ok := s.store.RegistrationOf(served)
+	reg, ok, err := s.store.RegistrationOf(context.Background(), served)
+	if err != nil {
+		s.storeFailed(st, err, log)
+		return
+	}
 	if !ok {
 		log.Info("originating user is not registered here", "served_user", served)
 		s.respond(st, 403, nil)
@@ -214,7 +218,12 @@ func (s *SCSCF) terminating(st *sip.ServerTransaction, out *sip.Message, log *sl
 	// criteria and the icid-value.
 	d := OriginalDialog{ServedUser: callee, Invoked: -1, RequestURI: out.RequestURI, ICID: icidOf(out)}
 	var barredIDs []string
-	if reg, ok := s.store.RegistrationOf(callee); ok {
+	reg, ok, err := s.store.RegistrationOf(context.Background(), callee)
+	if err != nil {
+		s.storeFailed(st, err, log)
+		return
+	}
+	if ok {
 		d.SessionCase, d.RegState = ifc.TerminatingRegistered, sip.RegStateRegistered
 		d.Criteria, d.Aliases = ifc.Ordered(reg.InitialFilterCriteria), canonicalIdentities(reg.NonBarredIdentities())
 		barredIDs = reg.BarredIdentities
@@ -264,7 +273,11 @@ func (s *SCSCF) routeTerminating(st *sip.ServerTransaction, out *sip.Message, d 
 		s.forward(st, out, s.chargeResponses(st.Request, false), log)
 		return
 	}
-	reg, ok := s.store.RegistrationOf(d.ServedUser)
+	reg, ok, err := s.store.RegistrationOf(context.Background(), d.ServedUser)
+	if err != nil {
+		s.storeFailed(st, err, log)
+		return
+	}
 	if !ok {
 		// Step 10: no contact to route to. The user may have gone while
 		// an application server held the request.

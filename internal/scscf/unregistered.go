@@ -27,7 +27,13 @@ const UnregisteredProfileLifetime = originalDialogLifetime
 // from the HSS with a SAR of UNREGISTERED_USER (5.4.3.3 NOTE 27). With
 // no profile to use, it answers st itself and reports false.
 func (s *SCSCF) unregisteredProfile(st *sip.ServerTransaction, callee string, log *slog.Logger) (UnregisteredProfile, bool) {
-	if p, ok := s.store.UnregisteredProfileOf(callee); ok {
+	ctx := context.Background()
+	p, ok, err := s.store.UnregisteredProfileOf(ctx, callee)
+	if err != nil {
+		s.storeFailed(st, err, log)
+		return UnregisteredProfile{}, false
+	}
+	if ok {
 		return p, true
 	}
 	// TS 29.228 Table 6.1.2.1: no User-Name, which the S-CSCF does not
@@ -72,7 +78,7 @@ func (s *SCSCF) unregisteredProfile(st *sip.ServerTransaction, callee string, lo
 		s.respond(st, 500, nil)
 		return UnregisteredProfile{}, false
 	}
-	p := UnregisteredProfile{
+	p = UnregisteredProfile{
 		PrivateIdentity:       saa.UserName,
 		PublicIdentities:      profile.PublicIdentities,
 		BarredIdentities:      profile.BarredIdentities,
@@ -80,14 +86,24 @@ func (s *SCSCF) unregisteredProfile(st *sip.ServerTransaction, callee string, lo
 		HSSHost:               originHost(answer),
 		Expires:               time.Now().Add(s.cfg.UnregisteredProfileLifetime),
 	}
-	unlock, _ := s.users.Lock(context.Background(), p.PrivateIdentity)
+	unlock, _ := s.users.Lock(ctx, p.PrivateIdentity)
 	defer unlock()
-	if _, registered := s.store.Registration(p.PrivateIdentity); registered {
+	// A failure of the store from here on leaves the HSS with the user
+	// assigned to this S-CSCF, as the next SAR for the user finds it.
+	_, registered, err := s.store.Registration(ctx, p.PrivateIdentity)
+	if err != nil {
+		s.storeFailed(st, err, log)
+		return UnregisteredProfile{}, false
+	}
+	if registered {
 		// The user registered while the SAR was on its way. This request
 		// uses the profile, and the registration keeps the HSS state.
 		return p, true
 	}
-	s.store.PutUnregisteredProfile(p)
+	if err := s.store.PutUnregisteredProfile(ctx, p); err != nil {
+		s.storeFailed(st, err, log)
+		return UnregisteredProfile{}, false
+	}
 	s.unregisteredTimers.start(key(p.PrivateIdentity), s.cfg.UnregisteredProfileLifetime, func() { s.unregisteredProfileExpired(p) })
 	log.Info("took the profile of an unregistered callee", "callee", callee, "private_identity", p.PrivateIdentity,
 		"expires", int(s.cfg.UnregisteredProfileLifetime/time.Second))
@@ -100,16 +116,28 @@ func (s *SCSCF) unregisteredProfile(st *sip.ServerTransaction, callee string, lo
 // end of the unregistered state; TIMEOUT_DEREGISTRATION, the end of a
 // registration whose time is up, is the nearest.
 func (s *SCSCF) unregisteredProfileExpired(p UnregisteredProfile) {
-	unlock, _ := s.users.Lock(context.Background(), p.PrivateIdentity)
+	ctx := context.Background()
+	log := s.log.With("private_identity", p.PrivateIdentity)
+	unlock, _ := s.users.Lock(ctx, p.PrivateIdentity)
 	defer unlock()
-	if !s.store.DeleteUnregisteredProfile(p.PrivateIdentity, p.Expires) {
+	deleted, err := s.store.DeleteUnregisteredProfile(ctx, p.PrivateIdentity, p.Expires)
+	if err != nil {
+		log.Warn("the profile of an unregistered user is not let go: the store failed; the HSS keeps the user assigned to this S-CSCF", "error", err.Error())
 		return
 	}
-	if _, registered := s.store.Registration(p.PrivateIdentity); registered {
+	if !deleted {
+		return
+	}
+	_, registered, err := s.store.Registration(ctx, p.PrivateIdentity)
+	if err != nil {
+		log.Warn("the HSS is not told that the profile of an unregistered user is let go: the store failed; it keeps the user assigned to this S-CSCF", "error", err.Error())
+		return
+	}
+	if registered {
 		// The registration has the HSS state now.
 		return
 	}
-	s.log.Info("let the profile of an unregistered user go", "private_identity", p.PrivateIdentity)
+	log.Info("let the profile of an unregistered user go")
 	s.serverAssignment(p.PrivateIdentity, p.PublicIdentities[0], p.HSSHost, cx.TimeoutDeregistration)
 }
 
