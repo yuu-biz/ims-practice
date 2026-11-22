@@ -242,6 +242,21 @@ func (n *network) status(imsi string) (epc.Status, int) {
 	return s, resp.StatusCode
 }
 
+func (n *network) attached() []epc.Status {
+	n.t.Helper()
+	resp, err := http.Get(n.api + "/ues")
+	if err != nil {
+		n.t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		n.t.Fatalf("GET /ues: %d", resp.StatusCode)
+	}
+	var list []epc.Status
+	decodeJSON(n.t, resp, &list)
+	return list
+}
+
 func (n *network) networkInitiated(method, path string) int {
 	n.t.Helper()
 	req, _ := http.NewRequest(method, n.api+path, nil)
@@ -298,6 +313,32 @@ func TestAttachRefusesWhatTheStubDoesNotServe(t *testing.T) {
 		RequestType: epc.InitialRequest, PDNType: epc.IPv4, AccessPointName: "internet"}})
 	if !errors.As(err, &apiErr) || apiErr.StatusCode != http.StatusBadRequest {
 		t.Errorf("other APN: %v, want 400", err)
+	}
+}
+
+// The list of UEs holds the ones that are attached, in the order of the
+// subscribers, so that a learner picks the UE and the bearer of a
+// procedure that the network initiates without knowing the IMSIs.
+func TestTheListHoldsTheUEsThatAreAttached(t *testing.T) {
+	n := newNetwork(t)
+	if got := n.attached(); len(got) != 0 {
+		t.Errorf("before any attach the list has %+v, want none", got)
+	}
+	n.ue(imsi2).attach()
+	u1 := n.ue(imsi1)
+	u1.attach()
+	got := n.attached()
+	if len(got) != 2 || got[0].IMSI != imsi1 || got[1].IMSI != imsi2 {
+		t.Fatalf("the list has %+v, want %s and then %s", got, imsi1, imsi2)
+	}
+	if len(got[0].Bearers) != 1 || got[0].Bearers[0].EPSQoS.QCI != epc.QCIIMSSignalling || got[0].PDNAddress != ue1Addr {
+		t.Errorf("%s in the list: %+v, want its address and its default bearer", imsi1, got[0])
+	}
+	if code := n.networkInitiated(http.MethodPost, "/network-initiated/ues/"+imsi1+"/detach"); code != http.StatusNoContent {
+		t.Fatalf("detach: %d", code)
+	}
+	if got := n.attached(); len(got) != 1 || got[0].IMSI != imsi2 {
+		t.Errorf("after the detach the list has %+v, want %s alone", got, imsi2)
 	}
 }
 

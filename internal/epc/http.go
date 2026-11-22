@@ -15,6 +15,7 @@ import (
 // of TS 24.301: the EPS bearer context deactivation that the network
 // initiates (6.4.4.2), and the network initiated detach (5.5.2.3).
 const (
+	attachedPath                 = "/ues"
 	statusPath                   = "/ues/{imsi}"
 	networkInitiatedDeactivation = "/network-initiated/ues/{imsi}/bearers/{ebi}"
 	networkInitiatedDetach       = "/network-initiated/ues/{imsi}/detach"
@@ -32,6 +33,7 @@ const (
 //	POST   /ues/{imsi}/activate-dedicated-eps-bearer-context-accept
 //	POST   /ues/{imsi}/activate-dedicated-eps-bearer-context-reject
 //	POST   /ues/{imsi}/deactivate-eps-bearer-context-accept
+//	GET    /ues                                          []Status, the UEs that are attached
 //	GET    /ues/{imsi}                                   Status
 //	DELETE /network-initiated/ues/{imsi}/bearers/{ebi}   the network deactivates the bearer
 //	POST   /network-initiated/ues/{imsi}/detach          the network detaches the UE
@@ -69,6 +71,9 @@ func (e *EPC) Handler() http.Handler {
 		return nil, e.BearerDeactivated(imsi, m)
 	})
 
+	mux.HandleFunc("GET "+attachedPath, func(w http.ResponseWriter, r *http.Request) {
+		accessapi.WriteJSON(w, http.StatusOK, e.Statuses())
+	})
 	mux.HandleFunc("GET "+statusPath, func(w http.ResponseWriter, r *http.Request) {
 		s, err := e.Status(r.PathValue("imsi"))
 		if err != nil {
