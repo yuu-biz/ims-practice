@@ -24,6 +24,7 @@ import {
   recordFromFields,
   refusedSettings,
   roleSummaries,
+  columnNotes,
   scopeNodes,
   settingEdits,
   type RecordFields,
@@ -79,6 +80,29 @@ describe("node state", () => {
     // A role that counts no users has none; one that counts zero has 0.
     expect([byRole["icscf"]?.users, byRole["scscf"]?.users]).toEqual([null, 0]);
     expect(Object.keys(byRole)).toEqual(["pcscf", "icscf", "scscf", "hss"]);
+  });
+
+  it("says what Users counts for each role, and what Generation is", () => {
+    expect(columnNotes(roleSummaries(rows))).toEqual([
+      {
+        column: "Users",
+        meaning:
+          "What a role still serves on a node; a drain locks the role there once this is 0. The Roles table adds up its nodes. " +
+          "pcscf: counted by the role. scscf: the SIP requests it is still serving. icscf, hss: not counted, so a drain locks them at once.",
+      },
+      {
+        column: "Generation",
+        meaning:
+          'The configuration generation of the node, which each configuration change raises. The nodes of a role keep the same one; "(differ)" marks a node that missed a change.',
+      },
+    ]);
+  });
+
+  it("leaves out of the Users note a role that no node reported", () => {
+    const users = columnNotes([
+      { role: "scscf", nodes: ["scscf-1"], failed: ["scscf-1"], administrative: {}, operational: {}, users: null, generations: [] },
+    ])[0];
+    expect(users?.meaning).toBe("What a role still serves on a node; a drain locks the role there once this is 0. The Roles table adds up its nodes.");
   });
 
   it("shows the generations of a role that differ", () => {

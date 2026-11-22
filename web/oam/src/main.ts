@@ -27,6 +27,7 @@ async function start(): Promise<void> {
   const nodes = mountNodesPanel(
     {
       roles: byId("roles"),
+      columns: byId("nodes-columns"),
       nodes: byId("nodes"),
       note: byId("nodes-note"),
       read: byId("nodes-read"),
