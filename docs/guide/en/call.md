@@ -187,7 +187,7 @@ The callee's side also asserts who answered. It removes any P-Asserted-Identity 
 
 ### 9. UE 1 acknowledges the 183: PRACK
 
-UE 1 sends **PRACK** with **RAck** (the RSeq, and the CSeq of the INVITE) inside the early dialog (RFC 3262 4). It is a request within the dialog, so it follows the route set built from Record-Route (RFC 3261 12.2.1.1): the P-CSCF and the S-CSCF, to the caller's MMTel AS at the far end of the dialog. Each AS answers the PRACK once it has sent the PRACK of its next dialog on, so the PRACK reaches UE 2 dialog by dialog, and UE 2 answers it with 200. With preconditions, the UPDATE goes the same way.
+UE 1 sends **PRACK** with **RAck** (the RSeq, and the CSeq of the INVITE) inside the early dialog (RFC 3262 4). It is a request within the dialog, so it follows the route set built from Record-Route (RFC 3261 12.2.1.1): the P-CSCF and the S-CSCF, to the caller's MMTel AS at the far end of the dialog. Each AS answers the PRACK at once, as a UA does, and sends a PRACK of its own on its next dialog, so a PRACK reaches UE 2 dialog by dialog, and UE 2 answers it with 200. With preconditions, the UPDATE goes the same way.
 
 ### 10. UE 2 rings, then answers: 180 and 200 OK
 
