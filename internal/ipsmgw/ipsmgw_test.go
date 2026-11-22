@@ -22,7 +22,7 @@ import (
 const (
 	domain   = "ims.mnc001.mcc001.3gppnetwork.org"
 	ownURI   = "sip:ipsmgw." + domain + ":5060"
-	alice    = "sip:001010000000001@" + domain
+	alice    = "sip:+12025550101@" + domain
 	aliceTel = "tel:+12025550101"
 	bobTel   = "tel:+12025550102"
 	number   = "12025550199"

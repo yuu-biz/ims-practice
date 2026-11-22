@@ -26,10 +26,10 @@ IMS で電話をかけたり SMS を送ったりする前に、端末は登録�
 ホーム網のドメインは `ims.mnc001.mcc001.3gppnetwork.org` です。試験用の利用者の値は次のとおりです。
 
 - 秘密の識別子（private identity）。`001010000000001@ims.mnc001.mcc001.3gppnetwork.org`。
-- 公開の識別子（public identity）。`sip:001010000000001@ims.mnc001.mcc001.3gppnetwork.org`。
+- 公開の識別子（public identity）。`sip:+12025550101@ims.mnc001.mcc001.3gppnetwork.org`。
 - パスワード。`test-password-1`。
 
-この手順書の UE は SIM カードの無いソフトフォンです。識別子とパスワードは、IMC に入っているのと同じように設定で与えられます（TS 24.229 5.1.1.1B.1）。そのため UE は与えられた公開の識別子で登録し、ほかのリクエストでもその識別子を使います。試験用のデータでは IMSI から作った識別子と同じ形にしていますが、これは設定で与えた識別子で、規制されていません。USIM があり ISIM の無い VoLTE の端末は、代わりに IMSI から作った一時的な公開の識別子で登録し、網はその識別子を規制します。詳しくは [ISIM の無い端末の識別子](volte.md#isim-の無い端末の識別子) を参照してください。
+この手順書の UE は SIM カードの無いソフトフォンです。識別子とパスワードは、IMC に入っているのと同じように設定で与えられます（TS 24.229 5.1.1.1B.1）。そのため UE は与えられた公開の識別子で登録し、ほかのリクエストでもその識別子を使います。この識別子は利用者の番号の SIP URI です。ほかの網から利用者が見えるのはこの識別子で、規制されていません。USIM があり ISIM の無い VoLTE の端末は、代わりに IMSI から作った一時的な公開の識別子で登録し、網はその識別子を規制します。詳しくは [ISIM の無い端末の識別子](volte.md#isim-の無い端末の識別子) を参照してください。
 
 ## 登録を実行する
 
@@ -272,7 +272,7 @@ Wireshark では、本文が XML として表示されます。
 
 ```xml
 <reginfo xmlns="urn:ietf:params:xml:ns:reginfo" version="0" state="full">
-  <registration aor="sip:001010000000001@ims.mnc001.mcc001.3gppnetwork.org" id="reg1" state="active">
+  <registration aor="sip:+12025550101@ims.mnc001.mcc001.3gppnetwork.org" id="reg1" state="active">
     <contact id="..." state="active" event="registered" expires="3600" callid="..." cseq="2">
       <uri>sip:4218b61b-4e20-8e1c-872d-5b39fca1e64f@172.28.0.100:5060</uri>
       <unknown-param name="+g.3gpp.smsip"></unknown-param>

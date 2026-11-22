@@ -66,7 +66,7 @@ va=(-epc "$epc_api" -impi "001010000000010@$domain" -impu "sip:001010000000010@$
 	-k 465b5ce8b199b49faa5f0a2ee238a6bc -opc cd63cb71954a9f4e48a5994e37a02baf)
 vb=(-epc "$epc_api" -impi "001010000000012@$domain" -impu "sip:001010000000012@$domain"
 	-k fec86ba6eb707ed08905757b1bb44b8f -opc 1006020f0a478bf6b699f15c062e42b3)
-ue2=(-impi "001010000000002@$domain" -impu "sip:001010000000002@$domain" -password test-password-2)
+ue2=(-impi "001010000000002@$domain" -impu "sip:+12025550102@$domain" -password test-password-2)
 fail=0
 mkdir -p e2e-out
 rm -f captures/volte-a-sent.amr captures/volte-b-received.amr

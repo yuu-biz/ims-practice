@@ -128,7 +128,7 @@ Route: <sip:scscf.ims.mnc001.mcc001.3gppnetwork.org:5060;lr;odi=W46DU74CLAQFEFRO
 S-CSCF は P-Served-User（RFC 5502）も入れます。AS が担当する利用者を、session case と、その利用者が登録しているかどうかとあわせて示すヘッダです（TS 24.229 5.4.3.2 step 5 b）。
 
 ```text
-P-Served-User: <sip:001010000000001@ims.mnc001.mcc001.3gppnetwork.org>;sescase=orig;regstate=reg
+P-Served-User: <sip:+12025550101@ims.mnc001.mcc001.3gppnetwork.org>;sescase=orig;regstate=reg
 ```
 
 MMTel AS（[MMTel AS の補足サービス](mmtel.md)）のように発信者と着信者の両方を担当する AS は、このヘッダで場合を見分けます（5.7.1.3A）。利用者の着信側のサービスへ送る要求では `sescase=term` になります。S-CSCF は要求を宛先や UE へ送る前に P-Served-User を取り除き（5.4.3.2 step 14A、5.4.3.3 step 13A）。UE が入れた P-Served-User は S-CSCF に届きません。P-CSCF が信頼のドメインの境界で取り除くからです（TS 24.229 4.4.9）。
@@ -150,7 +150,7 @@ IP-SM-GW が Timer F（32 秒）のあいだに MESSAGE に応答しないか、
    ```sh
    docker compose run --rm ue2 register \
      --impi 001010000000002@ims.mnc001.mcc001.3gppnetwork.org \
-     --impu sip:001010000000002@ims.mnc001.mcc001.3gppnetwork.org \
+     --impu sip:+12025550102@ims.mnc001.mcc001.3gppnetwork.org \
      --password test-password-2
    ```
 
@@ -236,7 +236,7 @@ IP-SM-GW のほかの要求と同じく、SUBSCRIBE はホーム網の入口の 
 S-CSCF はすぐに、IP-SM-GW へ直接 NOTIFY を送ります。SUBSCRIBE への 200 OK は I-CSCF を通って戻るので、キャプチャでは NOTIFY がその前にも後にも来ることがあります。購読のダイアログを作るのは、200 OK ではなく NOTIFY です（RFC 6665 4.4.1）。reginfo には利用者の連絡先が並び、連絡先の機能タグは `<unknown-param>` の要素で示されます（TS 24.229 5.4.2.1.2）。
 
 ```xml
-<registration aor="sip:001010000000002@ims.mnc001.mcc001.3gppnetwork.org" id="reg1" state="active">
+<registration aor="sip:+12025550102@ims.mnc001.mcc001.3gppnetwork.org" id="reg1" state="active">
   <contact id="LJDTDE6YNM" state="active" event="registered" expires="3600" ...>
     <uri>sip:ab6af11f-a43e-860e-9064-207615ae1f12@172.28.0.101:5060</uri>
     <unknown-param name="+g.3gpp.smsip"></unknown-param>
@@ -333,7 +333,7 @@ IP-SM-GW は **202 Accepted** を返します（TS 24.341 5.3.3.4.1）。要求�
 
 ### 5. SC が受信者を調べる（UDR と UDA）
 
-IP-SM-GW は SMS-SUBMIT と送信者の番号を SC のスタブに渡します。SC は TP-DA の番号 `+12025550102` を持つ利用者を UDR（コマンド 306）で調べます。利用者を MSISDN で指定し、Data-Reference は 10（IMSPublicIdentity、TS 29.328 7.6.2）です。UDA には `sip:001010000000002@...` と `tel:+12025550102` が入っています。実際の網では、SC の側は代わりに経路の情報を問い合わせます（TS 23.204 6.4 step 3）。ここでは Sh の読み出しがそれに代わります。
+IP-SM-GW は SMS-SUBMIT と送信者の番号を SC のスタブに渡します。SC は TP-DA の番号 `+12025550102` を持つ利用者を UDR（コマンド 306）で調べます。利用者を MSISDN で指定し、Data-Reference は 10（IMSPublicIdentity、TS 29.328 7.6.2）です。UDA には `sip:+12025550102@...` と `tel:+12025550102` が入っています。実際の網では、SC の側は代わりに経路の情報を問い合わせます（TS 23.204 6.4 step 3）。ここでは Sh の読み出しがそれに代わります。
 
 ### 6. submit report が UE 1 へ戻る
 

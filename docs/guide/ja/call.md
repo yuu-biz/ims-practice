@@ -47,7 +47,7 @@
    ```sh
    docker compose run --rm ue2 answer \
      --impi 001010000000002@ims.mnc001.mcc001.3gppnetwork.org \
-     --impu sip:001010000000002@ims.mnc001.mcc001.3gppnetwork.org \
+     --impu sip:+12025550102@ims.mnc001.mcc001.3gppnetwork.org \
      --password test-password-2 --wav-out /captures/ue2-heard.wav
    ```
 
@@ -146,7 +146,7 @@ P-CSCF は複数のメディア中継ノードを使えます。一覧は `deplo
 一番上の Route に `orig` があるので、S-CSCF は発信者を担当する側として動きます（TS 24.229 5.4.3.1）。担当する利用者は P-Asserted-Identity の利用者です。網の中のノードが利用者の代わりに要求を送るときは、P-Served-User の利用者です（TS 24.229 5.4.3.2 の手順 1）。S-CSCF は、その利用者が登録済みであることを確かめます。次に、P-Asserted-Identity の SIP URI の別名である UE 1 の tel URI を、2 つ目の P-Asserted-Identity として加えます（TS 24.229 5.4.3.2 の手順 9）。UE 1 の INVITE には MMTel の ICSI を入れた **P-Preferred-Service** があります。S-CSCF は、その INVITE が音声か映像を含む通話であることを確かめます。このプロジェクトの事業者のデータでは、そうした通話を MMTel とみなします。そのうえで ICSI を **P-Asserted-Service** に入れ、P-Preferred-Service を取り除きます（TS 24.229 5.4.3.2 の手順 4C、RFC 6050）。UE 2 の P-CSCF はあとでこのサービスを PCRF に伝えます。そして Record-Route を付けます。どの加入者にも、INVITE をまず MMTel AS に送る iFC（initial filter criteria）があります（TS 24.229 5.4.3.2 の手順 5）。S-CSCF は `sescase=orig` を付けた **P-Served-User** を加えます。Route の先頭に AS の URI を、その次に元のダイアログの識別子（`odi`）を付けた自分の URI を置きます。AS は発信者のサービスの設定を Sh で HSS から読み、その Route に沿って新しい INVITE を送り返します。`deploy/compose/hss.yaml` の既定の設定では、通話のほかの部分は変えません。INVITE が `odi` を持って戻ってくると、S-CSCF はその iFC の次から処理を続けます。Request-URI が tel URI なので、S-CSCF は DNS に問い合わせます（TS 24.229 5.4.3.2 の手順 10、RFC 6116）。
 
 1. 番号 `+12025550102` を、ドメイン `2.0.1.0.5.5.5.2.0.2.1.e164.arpa` に変えます。数字を逆順にし、1 桁ずつラベルにします。
-2. そこにある NAPTR レコードは、サービスが `E2U+sip` です。正規表現で `sip:001010000000002@ims.mnc001.mcc001.3gppnetwork.org` を作ります。
+2. そこにある NAPTR レコードは、サービスが `E2U+sip` です。正規表現で `sip:+12025550102@ims.mnc001.mcc001.3gppnetwork.org` を作ります。
 3. これが新しい Request-URI になります。
 
 レコードは `deploy/compose/dns/e164.arpa.zone` にあります。レコードの無い番号には IMS の中からは届きません。実網では BGCF を通して電話網に送ることもできますが、このプロジェクトには BGCF が無いので、S-CSCF は 404 で答えます。TS 24.229 5.4.3.2 の手順 10 は、BGCF に送る代わりに、S-CSCF が発信者に応答を返すことも認めています。
@@ -269,7 +269,7 @@ P-CSCF はブリッジのゲートウェイ 172.28.0.1 から来た UE を見分
    ```sh
    docker compose run --rm -p 127.0.0.1:8091:8090 ue2 serve \
      --impi 001010000000002@ims.mnc001.mcc001.3gppnetwork.org \
-     --impu sip:001010000000002@ims.mnc001.mcc001.3gppnetwork.org \
+     --impu sip:+12025550102@ims.mnc001.mcc001.3gppnetwork.org \
      --password test-password-2
    ```
 

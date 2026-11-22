@@ -79,7 +79,7 @@ export function createMockOAM(): (req: IncomingMessage, res: ServerResponse, pat
   // answer shows them.
   const subscriptions = new Map<string, Json>([
     [impi1, { ...subscription, password: "test-password-1" }],
-    [impi2, { private_identity: impi2, public_identities: [`sip:001010000000002@${realm}`], aka: { k: "465b5ce8b199b49faa5f0a2ee238a6bc", opc: "cd63cb71954a9f4e48a5994e37a02baf" } }],
+    [impi2, { private_identity: impi2, public_identities: [`sip:+12025550102@${realm}`], aka: { k: "465b5ce8b199b49faa5f0a2ee238a6bc", opc: "cd63cb71954a9f4e48a5994e37a02baf" } }],
   ]);
   const backups: { manifest: Json; records: Json[] }[] = [
     { manifest: structuredClone(failedBackup), records: [] },

@@ -44,8 +44,8 @@ wait_for_open scscf
 wait_for_open mmtel
 
 domain=ims.mnc001.mcc001.3gppnetwork.org
-ue2=(--impi "001010000000002@$domain" --impu "sip:001010000000002@$domain" --password test-password-2)
-ue3=(--impi "001010000000003@$domain" --impu "sip:001010000000003@$domain" --password test-password-3)
+ue2=(--impi "001010000000002@$domain" --impu "sip:+12025550102@$domain" --password test-password-2)
+ue3=(--impi "001010000000003@$domain" --impu "sip:+12025550103@$domain" --password test-password-3)
 remember_nodes
 fail=0
 
@@ -271,8 +271,8 @@ mmtel=172.28.0.75
 mrfc=172.28.0.85
 mrfp=172.28.0.86
 agw=172.28.0.50
-impu1="sip:001010000000001@$domain"
-impu2="sip:001010000000002@$domain"
+impu1="sip:+12025550101@$domain"
+impu2="sip:+12025550102@$domain"
 invite='sip.Method == "INVITE"'
 req='diameter.flags.request == 1'
 udr="diameter.cmd.code == 306 && $req && ip.src == $mmtel"
@@ -317,10 +317,10 @@ expect "PUT of OIR's default behaviour, UE 1 -> XCAP server" "http.request.metho
 expect "200 OK to the PUT" "http.response.code == 200 && ip.dst == $ue1"
 expect "INVITE UE 1 -> P-CSCF" "$from_ue1"
 a="$(field sip.Call-ID)"
-expect "INVITE MMTel AS -> S-CSCF: an anonymous From and Privacy: id, the identity still asserted inside the network" "$invite && ip.src == $mmtel && ip.dst == $scscf && sip.from.addr == \"sip:anonymous@anonymous.invalid\" && sip.Privacy == \"id\" && sip.P-Asserted-Identity contains \"001010000000001\""
+expect "INVITE MMTel AS -> S-CSCF: an anonymous From and Privacy: id, the identity still asserted inside the network" "$invite && ip.src == $mmtel && ip.dst == $scscf && sip.from.addr == \"sip:anonymous@anonymous.invalid\" && sip.Privacy == \"id\" && sip.P-Asserted-Identity contains \"+12025550101\""
 expect "INVITE P-CSCF -> UE 2: anonymous, Privacy: id, no P-Asserted-Identity" "$invite && ip.dst == $ue2ip && sip.from.addr == \"sip:anonymous@anonymous.invalid\" && sip.Privacy == \"id\" && !sip.P-Asserted-Identity"
 oir_at_ue2="$last"
-if [ -z "$(tshark_fields "frame.number == $oir_at_ue2 && sip contains \"001010000000001\"")" ]; then
+if [ -z "$(tshark_fields "frame.number == $oir_at_ue2 && sip contains \"+12025550101\"")" ]; then
 	echo "ok   nothing in that INVITE names UE 1"
 else
 	echo "FAIL the INVITE to UE 2 still names UE 1"
@@ -350,10 +350,10 @@ echo "CFU (TS 24.604 4.5.2.6.2, 4.5.2.6.4)"
 expect "INVITE UE 1 -> P-CSCF" "$from_ue1"
 a="$(field sip.Call-ID)"
 cfu_start="$last"
-expect "INVITE S-CSCF -> MMTel AS for UE 2, terminating" "$invite && ip.dst == $mmtel && sip.P-Served-User contains \"sescase=term\" && sip.P-Served-User contains \"001010000000002\""
+expect "INVITE S-CSCF -> MMTel AS for UE 2, terminating" "$invite && ip.dst == $mmtel && sip.P-Served-User contains \"sescase=term\" && sip.P-Served-User contains \"+12025550102\""
 expect "181 MMTel AS -> S-CSCF with History-Info" "sip.Status-Code == 181 && ip.src == $mmtel && sip.History-Info"
 expect "INVITE MMTel AS -> S-CSCF to UE 3, cause 302, with History-Info" "$invite && ip.src == $mmtel && sip.r-uri contains \"+12025550103\" && sip.r-uri contains \"cause=302\" && sip.History-Info contains \"index=1.1\" && sip.History-Info contains \"cause=302\""
-expect "INVITE S-CSCF -> MMTel AS: the originating services of UE 2 after the diversion" "$invite && ip.dst == $mmtel && sip.P-Served-User contains \"orig-cdiv\" && sip.P-Served-User contains \"001010000000002\""
+expect "INVITE S-CSCF -> MMTel AS: the originating services of UE 2 after the diversion" "$invite && ip.dst == $mmtel && sip.P-Served-User contains \"orig-cdiv\" && sip.P-Served-User contains \"+12025550102\""
 expect "INVITE P-CSCF -> UE 3 with History-Info" "$invite && ip.dst == $ue3ip && sip.History-Info contains \"cause=302\""
 cfu_at_ue3="$last"
 expect "200 OK reaches UE 1" "sip.Status-Code == 200 && sip.CSeq.method == \"INVITE\" && sip.Call-ID == \"$a\" && ip.dst == $ue1"

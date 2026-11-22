@@ -107,9 +107,9 @@ wait_ibcf ibcf-b 1970-01-01T00:00:00Z
 peer=(--domain ims.mnc002.mcc001.3gppnetwork.org
 	--pcscf 172.28.1.40:5060 --pcscf-uri sip:pcscf.ims.mnc002.mcc001.3gppnetwork.org:5060 --sc +12025550150)
 ue_b1=("${peer[@]}" --impi 001020000000001@ims.mnc002.mcc001.3gppnetwork.org
-	--impu sip:001020000000001@ims.mnc002.mcc001.3gppnetwork.org --password test-password-b1)
+	--impu sip:+12025550151@ims.mnc002.mcc001.3gppnetwork.org --password test-password-b1)
 ue_a2=(--impi 001010000000002@ims.mnc001.mcc001.3gppnetwork.org
-	--impu sip:001010000000002@ims.mnc001.mcc001.3gppnetwork.org --password test-password-2)
+	--impu sip:+12025550102@ims.mnc001.mcc001.3gppnetwork.org --password test-password-2)
 gsm_text='Hello UE-B1, this is UE-A1 in another network.'
 gsm_text_back='Hello UE-A1, this is UE-B1 answering.'
 local_number='sip:2025550151;phone-context=+1@ims.mnc002.mcc001.3gppnetwork.org;user=phone'

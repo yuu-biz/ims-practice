@@ -70,7 +70,7 @@ docker compose up -d --build
 # First terminal: UE 2 waits for a call.
 docker compose run --rm ue2 answer \
   --impi 001010000000002@ims.mnc001.mcc001.3gppnetwork.org \
-  --impu sip:001010000000002@ims.mnc001.mcc001.3gppnetwork.org \
+  --impu sip:+12025550102@ims.mnc001.mcc001.3gppnetwork.org \
   --password test-password-2 --wav-out /captures/ue2-heard.wav
 
 # Second terminal: UE 1 calls the number, plays a tone for 3 seconds, hangs up.
@@ -168,7 +168,7 @@ P-CSCF -> UE 2: INVITE (term) // 7
 | The INVITE to the AS | The AS on top of Route, then the S-CSCF with `odi`. `sescase=orig`. |
 | The DNS lookup | NAPTR of `2.0.1.0.5.5.5.2.0.2.1.e164.arpa`, the number reversed. |
 | The NAPTR answer | The service is `E2U+sip`. A regular expression makes the SIP URI. |
-| Request-URI after the S-CSCF | `sip:001010000000002@ims.mnc001.mcc001.3gppnetwork.org`. |
+| Request-URI after the S-CSCF | `sip:+12025550102@ims.mnc001.mcc001.3gppnetwork.org`. |
 
 The filter is `dns.qry.type == 35`. The records are in `deploy/compose/dns/e164.arpa.zone`.
 

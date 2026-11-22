@@ -113,7 +113,7 @@ UE の模擬は Pod `ue` と `ue2` で待っていて、コマンドはその中
 
 ```sh
 P="-pcscf pcscf.ims.mnc001.mcc001.3gppnetwork.org:5060"
-U2="-impi 001010000000002@ims.mnc001.mcc001.3gppnetwork.org -impu sip:001010000000002@ims.mnc001.mcc001.3gppnetwork.org -password test-password-2"
+U2="-impi 001010000000002@ims.mnc001.mcc001.3gppnetwork.org -impu sip:+12025550102@ims.mnc001.mcc001.3gppnetwork.org -password test-password-2"
 
 # 登録
 kubectl -n ims exec deploy/ue -- ue register $P -deregister-after 2s

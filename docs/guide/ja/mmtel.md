@@ -76,10 +76,10 @@ IR.92 が網の対応を任意としている MWI と ECT（2.3.5、2.3.11）は
 1 つの AS が通話の両端を受け持つので、AS はそれぞれの INVITE が誰のための、どの場合のものかを知る必要があります。S-CSCF はそれを P-Served-User で伝えます（RFC 5502、RFC 8498。TS 24.229 5.4.3.2 step 5 b、5.4.3.3 step 4 c）。
 
 ```text
-P-Served-User: <sip:001010000000001@ims.mnc001.mcc001.3gppnetwork.org>;sescase=orig;regstate=reg
-P-Served-User: <sip:001010000000002@ims.mnc001.mcc001.3gppnetwork.org>;sescase=term;regstate=reg
-P-Served-User: <sip:001010000000002@ims.mnc001.mcc001.3gppnetwork.org>;sescase=term;regstate=unreg
-P-Served-User: <sip:001010000000002@ims.mnc001.mcc001.3gppnetwork.org>;orig-cdiv;regstate=reg
+P-Served-User: <sip:+12025550101@ims.mnc001.mcc001.3gppnetwork.org>;sescase=orig;regstate=reg
+P-Served-User: <sip:+12025550102@ims.mnc001.mcc001.3gppnetwork.org>;sescase=term;regstate=reg
+P-Served-User: <sip:+12025550102@ims.mnc001.mcc001.3gppnetwork.org>;sescase=term;regstate=unreg
+P-Served-User: <sip:+12025550102@ims.mnc001.mcc001.3gppnetwork.org>;orig-cdiv;regstate=reg
 ```
 
 AS はこれで served user を決め（TS 24.229 5.7.1.3A）、その場合のサービスを決まった順に動かします（`internal/mmtel/sessioncase.go`）。
@@ -130,7 +130,7 @@ AS が送る INVITE は、その先で分かれる（フォークする）こと
 文書の場所は次のとおりです。
 
 ```text
-http://xcap.ims.mnc001.mcc001.3gppnetwork.org/simservs.ngn.etsi.org/users/sip:001010000000002@ims.mnc001.mcc001.3gppnetwork.org/simservs.xml
+http://xcap.ims.mnc001.mcc001.3gppnetwork.org/simservs.ngn.etsi.org/users/sip:+12025550102@ims.mnc001.mcc001.3gppnetwork.org/simservs.xml
 ```
 
 `http://xcap.<ホームドメイン>` は、設定が無いときに UE が作る XCAP Root URI です（TS 23.003 13.9.1.2）。利用者の部分は利用者の公開ユーザー識別子（XUI）です。`hss.yaml` が用意する文書には、IR.92 が求めるサービスがすべて入っています。CDIV と CB の規則は `<rule-deactivated/>` を付けて止めた状態で、転送先を空にして入れてあります。UE は規則を足すのではなく、規則を変えてサービスを有効にします（GSMA IR.92 2.3.2 Note 3）。
@@ -144,7 +144,7 @@ http://xcap.ims.mnc001.mcc001.3gppnetwork.org/simservs.ngn.etsi.org/users/sip:00
 3. 規則を 1 つだけ **PUT** します。URI の `~~` のあとがノードセレクタで、`If-Match: "0"` を付けます（RFC 4825 6、7.11。GSMA IR.92 2.3.2）。
 
    ```text
-   PUT /simservs.ngn.etsi.org/users/sip:001010000000002@.../simservs.xml/~~/simservs/communication-diversion/cp:ruleset/cp:rule%5B@id=%22cfu%22%5D?xmlns(cp=urn:ietf:params:xml:ns:common-policy)
+   PUT /simservs.ngn.etsi.org/users/sip:+12025550102@.../simservs.xml/~~/simservs/communication-diversion/cp:ruleset/cp:rule%5B@id=%22cfu%22%5D?xmlns(cp=urn:ietf:params:xml:ns:common-policy)
    Content-Type: application/xcap-el+xml
    If-Match: "0"
 
@@ -166,7 +166,7 @@ GET と PUT の間にほかの誰かが文書を変えていれば、HSS は PUR
 docker compose up -d --build
 docker compose run --rm ue2 xcap \
   --impi 001010000000002@ims.mnc001.mcc001.3gppnetwork.org \
-  --impu sip:001010000000002@ims.mnc001.mcc001.3gppnetwork.org \
+  --impu sip:+12025550102@ims.mnc001.mcc001.3gppnetwork.org \
   --password test-password-2 set cfu on tel:+12025550103
 ```
 
@@ -175,7 +175,7 @@ docker compose run --rm ue2 xcap \
 ```sh
 docker compose run --rm ue3 answer \
   --impi 001010000000003@ims.mnc001.mcc001.3gppnetwork.org \
-  --impu sip:001010000000003@ims.mnc001.mcc001.3gppnetwork.org \
+  --impu sip:+12025550103@ims.mnc001.mcc001.3gppnetwork.org \
   --password test-password-3
 ```
 
@@ -209,13 +209,13 @@ UE 1 は `"msg":"call progress","status":181` を、続いて `"msg":"call answe
 #596  MMTel  -> HSS        UDR  Data-Reference 0 (RepositoryData), Service-Indication MMTEL-Services, UE 1
 #612  HSS    -> MMTel      UDA 2001 with UE 1's MMTelServices
 #618  MMTel  -> S-CSCF  C2 INVITE  same icid-value, Route: scscf;odi
-#632  I-CSCF -> HSS        LIR  sip:001010000000002@...
+#632  I-CSCF -> HSS        LIR  sip:+12025550102@...
 #645  S-CSCF -> MMTel   C2 INVITE  P-Served-User: <UE 2>;sescase=term;regstate=reg
 #658  MMTel  -> S-CSCF  C3 INVITE  same icid-value
 #670  P-CSCF -> UE 2    C3 INVITE
       ... 183, PRACK, 180, PRACK dialog by dialog ...
-#886  P-CSCF -> S-CSCF  C3 200 OK  P-Asserted-Identity: <sip:001010000000002@...>
-#941  P-CSCF -> UE 1    C1 200 OK  P-Asserted-Identity: <sip:001010000000002@...>
+#886  P-CSCF -> S-CSCF  C3 200 OK  P-Asserted-Identity: <sip:+12025550102@...>
+#941  P-CSCF -> UE 1    C1 200 OK  P-Asserted-Identity: <sip:+12025550102@...>
 #1164 UE 1   -> P-CSCF  C1 BYE
 #1239 P-CSCF -> UE 2    C3 BYE
 ```
@@ -266,7 +266,7 @@ UE 1  P-CSCF S-CSCF  MMTel AS(UE 1)  I-CSCF  MMTel AS(UE 2)        UE 3
   - History-Info には 2 つの項目があります。index 1 の UE 2 と、index 1.1 で `mp=1` を持つ UE 3 です。`mp=1` は、1.1 が 1 から宛先を変えたものであることを示します（RFC 7044 10.3）。
 
     ```text
-    History-Info: <sip:001010000000002@ims.mnc001.mcc001.3gppnetwork.org>;index=1
+    History-Info: <sip:+12025550102@ims.mnc001.mcc001.3gppnetwork.org>;index=1
     History-Info: <sip:+12025550103@ims.mnc001.mcc001.3gppnetwork.org;user=phone;cause=302>;index=1.1;mp=1
     ```
 
@@ -291,7 +291,7 @@ UE 2 は CFNR を UE 3 に設定し、無応答のタイマーを 5 秒にして
 #7817  34.884 I-CSCF -> HSS       LIR      (UE 2)
 #7830  34.887 S-CSCF -> MMTel  C2 INVITE   P-Served-User: <UE 2>;sescase=term;regstate=reg
 #7834  34.887 MMTel  -> HSS       UDR      (UE 2's MMTEL-Services)
-#7843  34.891 MMTel  -> S-CSCF C3 INVITE   sip:001010000000002@...
+#7843  34.891 MMTel  -> S-CSCF C3 INVITE   sip:+12025550102@...
 #7855  34.894 P-CSCF -> UE 2   C3 INVITE
 #7858  34.896 UE 2   -> P-CSCF C3 183      then PRACK and 200 dialog by dialog
 #7953  34.919 UE 2   -> P-CSCF C3 180      UE 2 rings
@@ -306,7 +306,7 @@ UE 2 は CFNR を UE 3 に設定し、無応答のタイマーを 5 秒にして
 #8256  39.941 MMTel  -> S-CSCF C4 INVITE   sip:+12025550103@...;user=phone;cause=408, History-Info
 #8294  39.946 S-CSCF -> MMTel  C4 INVITE   P-Served-User: <UE 2>;orig-cdiv;regstate=reg
 #8314  39.950 MMTel  -> S-CSCF C5 INVITE
-#8326  39.958 S-CSCF -> I-CSCF C5 INVITE   sip:001010000000003@... (after ENUM)
+#8326  39.958 S-CSCF -> I-CSCF C5 INVITE   sip:+12025550103@... (after ENUM)
 #8343  39.961 S-CSCF -> MMTel  C5 INVITE   P-Served-User: <UE 3>;sescase=term;regstate=reg
 #8356  39.964 MMTel  -> S-CSCF C6 INVITE
 #8369  39.968 P-CSCF -> UE 3   C6 INVITE   History-Info

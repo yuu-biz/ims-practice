@@ -144,7 +144,7 @@ func main() {
 	var o options
 	domain := flags.String("domain", "ims.mnc001.mcc001.3gppnetwork.org", "home network domain")
 	flags.StringVar(&o.cfg.PrivateIdentity, "impi", "001010000000001@ims.mnc001.mcc001.3gppnetwork.org", "private user identity")
-	flags.StringVar(&o.cfg.PublicIdentity, "impu", "sip:001010000000001@ims.mnc001.mcc001.3gppnetwork.org", "public user identity")
+	flags.StringVar(&o.cfg.PublicIdentity, "impu", "sip:+12025550101@ims.mnc001.mcc001.3gppnetwork.org", "public user identity")
 	flags.StringVar(&o.cfg.Password, "password", "test-password-1", "SIP Digest password")
 	k := flags.String("k", "", "IMS AKA instead of SIP Digest: the USIM's K, 32 hexadecimal digits")
 	opc := flags.String("opc", "", "IMS AKA: the USIM's OPc, 32 hexadecimal digits")

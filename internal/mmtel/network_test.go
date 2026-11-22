@@ -69,12 +69,12 @@ func (n *names) Locate(_ context.Context, host string, _ int, _ sip.Transport) (
 	return nil, errors.New("no such host: " + host)
 }
 
-// ENUM turns +1 202 555 010x into the SIP URI of subscriber x, as the
-// e164.arpa zone of deploy/compose does.
+// ENUM turns +1 202 555 010x into the SIP URI of that number in the
+// home domain, as the e164.arpa zone of deploy/compose does.
 func (n *names) ENUM(_ context.Context, number, _ string) (string, error) {
 	number = strings.NewReplacer("-", "", ".", "").Replace(number)
 	if user, ok := strings.CutPrefix(number, "+120255501"); ok && len(user) == 2 {
-		return "sip:0010100000000" + user + "@" + domain, nil
+		return "sip:+120255501" + user + "@" + domain, nil
 	}
 	return "", sipdns.ErrNoENUMRecord
 }
@@ -306,7 +306,7 @@ func startNetworkWith(t *testing.T, o netOptions) *network {
 		for {
 			_, err := peer.Request(context.Background(), cx.UserAuthorizationRequest{
 				Header: cx.NewHeader(icscfNode, "", domain), UserName: "001010000000001@" + domain,
-				PublicIdentity: "sip:001010000000001@" + domain, VisitedNetworkIdentifier: domain}.Message())
+				PublicIdentity: "sip:+12025550101@" + domain, VisitedNetworkIdentifier: domain}.Message())
 			if err == nil {
 				break
 			}
@@ -317,7 +317,7 @@ func startNetworkWith(t *testing.T, o netOptions) *network {
 		}
 	}
 	for {
-		_, _, err := users.RepositoryData(context.Background(), "sip:001010000000001@"+domain, simservs.ServiceIndication)
+		_, _, err := users.RepositoryData(context.Background(), "sip:+12025550101@"+domain, simservs.ServiceIndication)
 		if err == nil {
 			break
 		}
@@ -350,8 +350,10 @@ type subscriber struct {
 func (n *network) subscriber(k int, register bool) *subscriber {
 	n.t.Helper()
 	id := "00101000000000" + string(rune('0'+k))
-	s := &subscriber{n: n, number: k, impu: "sip:" + id + "@" + domain, tel: "tel:+1202555010" + string(rune('0'+k)),
-		calls: make(chan *sip.IncomingCall, 2)}
+	// The private identity holds the IMSI, the public identities the
+	// number, as hss.yaml has them.
+	s := &subscriber{n: n, number: k, impu: "sip:+1202555010" + string(rune('0'+k)) + "@" + domain,
+		tel: "tel:+1202555010" + string(rune('0'+k)), calls: make(chan *sip.IncomingCall, 2)}
 	password := "test-password-" + string(rune('0'+k))
 	s.services = ue.NewSupplementaryServices(&xcap.Client{Root: n.ut.URL, XUI: s.impu, Username: id + "@" + domain, Password: password, UserAgent: "test"})
 	if !register {
@@ -530,7 +532,7 @@ func diverted(t *testing.T, resps []*sip.Message, ic *sip.IncomingCall, cause st
 	if err != nil || len(entries) != 2 {
 		t.Fatalf("diverted-to UE got History-Info %q", ic.Request.GetAll("History-Info"))
 	}
-	if !strings.HasPrefix(entries[0].Target(), "sip:001010000000002@") || !strings.Contains(entries[1].Target(), "+12025550103") ||
+	if !strings.HasPrefix(entries[0].Target(), "sip:+12025550102@") || !strings.Contains(entries[1].Target(), "+12025550103") ||
 		!strings.HasSuffix(entries[1].Target(), ";cause="+cause) {
 		t.Errorf("History-Info is %q, want subscriber 2 diverted to subscriber 3 with cause %s", ic.Request.GetAll("History-Info"), cause)
 	}

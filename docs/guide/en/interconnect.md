@@ -81,7 +81,7 @@ The two dialogs of a call live in the IBCF process that took the INVITE. Each IB
    docker compose -f compose.yaml -f deploy/interconnect/compose.yaml run --rm peer-ue answer \
      --domain ims.mnc002.mcc001.3gppnetwork.org \
      --impi 001020000000001@ims.mnc002.mcc001.3gppnetwork.org \
-     --impu sip:001020000000001@ims.mnc002.mcc001.3gppnetwork.org \
+     --impu sip:+12025550151@ims.mnc002.mcc001.3gppnetwork.org \
      --password test-password-b1 \
      --pcscf 172.28.1.40:5060 --pcscf-uri sip:pcscf.ims.mnc002.mcc001.3gppnetwork.org:5060 \
      --sc +12025550150
@@ -95,7 +95,7 @@ The two dialogs of a call live in the IBCF process that took the INVITE. Each IB
 
    UE A1 logs `183`, `180` and `200`, then `"msg":"call answered"` with the media relay of network A, `172.28.0.50`, as the far end. UE B1 logs `"msg":"media negotiated"` with TrGW-B, `172.28.1.91`, as the far end. Neither UE learns anything of the other network.
 
-4. To call back, let UE A2 wait (`run --rm ue2 answer --impi 001010000000002@... --impu sip:001010000000002@... --password test-password-2`) and call `tel:+12025550102` from UE B1 with the flags of step 2.
+4. To call back, let UE A2 wait (`run --rm ue2 answer --impi 001010000000002@... --impu sip:+12025550102@... --password test-password-2`) and call `tel:+12025550102` from UE B1 with the flags of step 2.
 
 5. To send a short message, keep UE B1 registered (`run --rm peer-ue register` with the flags of step 2) and send one from UE A1:
 
@@ -208,7 +208,7 @@ The call back from UE B1 to UE A2 is the same with the roles of the networks swa
 
 These checks show the topology hiding: the capture of the peer network has no internal address of the home network. The script looks for the addresses in the IP headers and anywhere in the frames, and for the names `pcscf`, `scscf`, `icscf`, `mmtel`, `agw`, `ipsmgw`, `hss`, `ibcf`, `trgw` and the others in front of the other network's domain.
 
-Some names of the home network do show in the peer network, and should: the domain itself, in the identities of the users, such as `sip:001010000000001@ims.mnc001.mcc001.3gppnetwork.org` in From and P-Asserted-Identity. A domain and an identity tell nothing of the nodes inside.
+Some names of the home network do show in the peer network, and should: the domain itself, in the identities of the users, such as `sip:+12025550101@ims.mnc001.mcc001.3gppnetwork.org` in From and P-Asserted-Identity. The identities that cross are those of the users' numbers, which the peer network needs in order to call back. A number and a domain tell nothing of the nodes inside, and nothing of the IMSI.
 
 ## Three dialogs in the captures
 
@@ -219,7 +219,7 @@ INVITE sip:+12025550151@ims.mnc002.mcc001.3gppnetwork.org;user=phone SIP/2.0
 Via: SIP/2.0/TCP ibcf.nni.mnc001.example.net:5060;branch=z9hG4bKW6NI6...;rport
 Max-Forwards: 65
 Route: <sip:ibcf.nni.mnc002.example.net:5060;lr>
-From: <sip:001010000000001@ims.mnc001.mcc001.3gppnetwork.org>;tag=5MWO4Z6R4C
+From: <sip:+12025550101@ims.mnc001.mcc001.3gppnetwork.org>;tag=5MWO4Z6R4C
 To: <tel:+12025550151>
 Call-ID: FMZQJ3BZL2YI4ILP6CEIPAUT5Z
 CSeq: 1 INVITE

@@ -92,7 +92,7 @@ UE はプロファイルに入れてあるので、`docker compose up` では起
 | 1 | `001010000000001@ims.mnc001.mcc001.3gppnetwork.org` | +1-202-555-0101 | `ue`、`ue-a` | UE 1、UE-A、網間接続の手順書では UE A1 |
 | 2 | `001010000000002@ims.mnc001.mcc001.3gppnetwork.org` | +1-202-555-0102 | `ue2`、`ue-b` | UE 2、UE-B |
 | 3 | `001010000000003@ims.mnc001.mcc001.3gppnetwork.org` | +1-202-555-0103 | `ue3`、`ue-c` | UE 3、UE-C |
-| 4 | `001010000000004@ims.mnc001.mcc001.3gppnetwork.org` | +1-202-555-0104 | `peer`（pjsua） | pjsua |
+| 4 | `+12025550104@ims.mnc001.mcc001.3gppnetwork.org` | +1-202-555-0104 | `peer`（pjsua） | pjsua |
 | 10 | `001010000000010@ims.mnc001.mcc001.3gppnetwork.org` | +1-202-555-0110 | `volte-a` | volte-a |
 | 11 | `001010000000011@ims.mnc001.mcc001.3gppnetwork.org` | +1-202-555-0111 | `peer`（SIPp） | SIPp |
 | 12 | `001010000000012@ims.mnc001.mcc001.3gppnetwork.org` | +1-202-555-0112 | `volte-b` | volte-b |

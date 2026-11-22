@@ -54,12 +54,12 @@ fi
 # request and sends nothing back, not even a 100 (TS 24.229
 # 5.2.6.3.2A). The UE sends it twice, as a UE retransmits over UDP.
 unregistered_call_id="unregistered-$(date +%s)@172.28.0.100"
-unregistered_message="MESSAGE sip:001010000000002@ims.mnc001.mcc001.3gppnetwork.org SIP/2.0\r
+unregistered_message="MESSAGE sip:+12025550102@ims.mnc001.mcc001.3gppnetwork.org SIP/2.0\r
 Via: SIP/2.0/UDP 172.28.0.100:5060;branch=z9hG4bK-unregistered-$(date +%s);rport\r
 Max-Forwards: 70\r
 Route: <sip:pcscf.ims.mnc001.mcc001.3gppnetwork.org:5060;lr>\r
-From: <sip:001010000000001@ims.mnc001.mcc001.3gppnetwork.org>;tag=unregistered\r
-To: <sip:001010000000002@ims.mnc001.mcc001.3gppnetwork.org>\r
+From: <sip:+12025550101@ims.mnc001.mcc001.3gppnetwork.org>;tag=unregistered\r
+To: <sip:+12025550102@ims.mnc001.mcc001.3gppnetwork.org>\r
 Call-ID: $unregistered_call_id\r
 CSeq: 1 MESSAGE\r
 Content-Type: text/plain\r

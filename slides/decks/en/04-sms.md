@@ -108,7 +108,7 @@ docker compose up -d --build
 # First terminal: UE 2 registers and stays registered.
 docker compose run --rm ue2 register \
   --impi 001010000000002@ims.mnc001.mcc001.3gppnetwork.org \
-  --impu sip:001010000000002@ims.mnc001.mcc001.3gppnetwork.org \
+  --impu sip:+12025550102@ims.mnc001.mcc001.3gppnetwork.org \
   --password test-password-2
 
 # Second terminal: UE 1 sends, and asks for a status report.

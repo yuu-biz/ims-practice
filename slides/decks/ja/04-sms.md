@@ -108,7 +108,7 @@ docker compose up -d --build
 # 1 つ目の端末。UE 2 が登録したままで待つ。
 docker compose run --rm ue2 register \
   --impi 001010000000002@ims.mnc001.mcc001.3gppnetwork.org \
-  --impu sip:001010000000002@ims.mnc001.mcc001.3gppnetwork.org \
+  --impu sip:+12025550102@ims.mnc001.mcc001.3gppnetwork.org \
   --password test-password-2
 
 # 2 つ目の端末。UE 1 が送り、status report を頼む。

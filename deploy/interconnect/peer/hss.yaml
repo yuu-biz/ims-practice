@@ -8,17 +8,20 @@ hss:
   server_capabilities:
     mandatory: [1]
   # Test subscribers of the test PLMN 001/02 (TS 23.003), with
-  # fictional numbers of their own, +1 202 555 0151 and 0152. Network B
-  # has no MMTel AS, so they have no supplementary services.
+  # fictional numbers of their own, +1 202 555 0151 and 0152. As in
+  # network A (deploy/compose/hss.yaml), the private identity holds the
+  # IMSI and the public identities hold the number, which is what
+  # network A sees of these users. Network B has no MMTel AS, so they
+  # have no supplementary services.
   subscriptions:
     - private_identity: 001020000000001@ims.mnc002.mcc001.3gppnetwork.org
       public_identities:
-        - sip:001020000000001@ims.mnc002.mcc001.3gppnetwork.org
+        - sip:+12025550151@ims.mnc002.mcc001.3gppnetwork.org
         - tel:+12025550151
       password: test-password-b1
     - private_identity: 001020000000002@ims.mnc002.mcc001.3gppnetwork.org
       public_identities:
-        - sip:001020000000002@ims.mnc002.mcc001.3gppnetwork.org
+        - sip:+12025550152@ims.mnc002.mcc001.3gppnetwork.org
         - tel:+12025550152
       password: test-password-b2
   # SMS over IP as in network A (deploy/compose/hss.yaml): the
