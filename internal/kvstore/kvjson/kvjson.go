@@ -3,13 +3,16 @@
 // operation, read-modify-write by compare and swap, and index items that
 // point to a main item.
 //
-// The Store interfaces of the roles return no errors: they were written
-// for a store in the process, which cannot fail. A Client therefore logs
-// a failure of the store and answers as if the item were not there.
-// This is the one place where an adapter differs from the MemoryStore
-// of its role. A Store interface that takes a context and returns an
-// error would let the role answer a failure of the store with an error
-// instead.
+// Read, CompareAndSwap and RemoveIf take the context of the caller and
+// return the failure of the store, so that a role whose Store interface
+// returns errors can answer that failure, with a 500 in SIP, rather
+// than take it for an item that is not there.
+//
+// Most of the other operations serve the Store interfaces that return
+// no errors, which were written for a store in the process that cannot
+// fail. They log a failure of the store, and those that read then
+// answer as if the item were not there. This is the one place where
+// such an adapter differs from the MemoryStore of its role.
 package kvjson
 
 import (
@@ -101,8 +104,13 @@ var (
 // Index is the name of a time index of the Client.
 func (c *Client) Index(name string) string { return c.prefix + name }
 
+// within bounds ctx by the Timeout of the Client.
+func (c *Client) within(ctx context.Context) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(ctx, c.timeout)
+}
+
 func (c *Client) context() (context.Context, context.CancelFunc) {
-	return context.WithTimeout(context.Background(), c.timeout)
+	return c.within(context.Background())
 }
 
 // failed logs err, the failure of op on key.
@@ -121,24 +129,30 @@ func (c *Client) TTLUntil(expires time.Time) time.Duration {
 	return max(expires.Sub(c.now()), time.Millisecond)
 }
 
-// Get reads the item under key into v, and returns its version. It
-// reports false when there is none, or the store failed.
-func Get[T any](c *Client, key string, v *T) (version string, ok bool) {
-	ctx, cancel := c.context()
+// Read reads the item under key into v, and returns its version. It
+// returns kvstore.ErrNotFound when there is none, and otherwise the
+// failure of the store or of decoding the item.
+func Read[T any](ctx context.Context, c *Client, key string, v *T) (version string, err error) {
+	ctx, cancel := c.within(ctx)
 	defer cancel()
 	item, err := c.kv.Get(ctx, key)
-	if errors.Is(err, kvstore.ErrNotFound) {
-		return "", false
-	}
 	if err != nil {
-		c.failed("Get", key, err)
-		return "", false
+		return "", err
 	}
 	if err := json.Unmarshal(item.Value, v); err != nil {
-		c.failed("Get", key, fmt.Errorf("decode: %w", err))
-		return "", false
+		return "", fmt.Errorf("decode: %w", err)
 	}
-	return item.Version, true
+	return item.Version, nil
+}
+
+// Get is Read for a Store interface that returns no errors. It reports
+// false when there is no item, or the store failed.
+func Get[T any](c *Client, key string, v *T) (version string, ok bool) {
+	version, err := Read(context.Background(), c, key, v)
+	if err != nil && !errors.Is(err, kvstore.ErrNotFound) {
+		c.failed("Get", key, err)
+	}
+	return version, err == nil
 }
 
 // Put writes v under key, whatever is there.
@@ -150,13 +164,19 @@ func Put[T any](c *Client, key string, v T, ttl time.Duration) {
 	}
 }
 
-// Swap writes v under key if the item is still at version, "" for none.
-// It returns kvstore.ErrConflict when someone else wrote first, and the
-// failure of the store otherwise.
-func Swap[T any](c *Client, key, version string, v T, ttl time.Duration) (string, error) {
-	ctx, cancel := c.context()
+// CompareAndSwap writes v under key if the item is still at version, ""
+// for none, and returns the new version. It returns kvstore.ErrConflict
+// when someone else wrote first, and the failure of the store otherwise.
+func CompareAndSwap[T any](ctx context.Context, c *Client, key, version string, v T, ttl time.Duration) (string, error) {
+	ctx, cancel := c.within(ctx)
 	defer cancel()
-	newVersion, err := c.kv.CompareAndSwap(ctx, key, version, encode(v), ttl)
+	return c.kv.CompareAndSwap(ctx, key, version, encode(v), ttl)
+}
+
+// Swap is CompareAndSwap for a Store interface that returns no errors:
+// it also logs a failure of the store.
+func Swap[T any](c *Client, key, version string, v T, ttl time.Duration) (string, error) {
+	newVersion, err := CompareAndSwap(context.Background(), c, key, version, v, ttl)
 	if err != nil && !errors.Is(err, kvstore.ErrConflict) {
 		c.failed("CompareAndSwap", key, err)
 	}
@@ -172,12 +192,19 @@ func (c *Client) Delete(key string) {
 	}
 }
 
-// DeleteIf removes the item under key if it is still at version, and
-// reports whether it did.
-func (c *Client) DeleteIf(key, version string) bool {
-	ctx, cancel := c.context()
+// RemoveIf removes the item under key if it is still at version. It
+// returns kvstore.ErrConflict when the item has changed or gone, and the
+// failure of the store otherwise.
+func (c *Client) RemoveIf(ctx context.Context, key, version string) error {
+	ctx, cancel := c.within(ctx)
 	defer cancel()
-	err := c.kv.CompareAndDelete(ctx, key, version)
+	return c.kv.CompareAndDelete(ctx, key, version)
+}
+
+// DeleteIf is RemoveIf for a Store interface that returns no errors. It
+// reports whether it removed the item, and logs a failure of the store.
+func (c *Client) DeleteIf(key, version string) bool {
+	err := c.RemoveIf(context.Background(), key, version)
 	if err != nil && !errors.Is(err, kvstore.ErrConflict) {
 		c.failed("CompareAndDelete", key, err)
 	}
@@ -357,8 +384,8 @@ func (c *Client) Unschedule(index, member string) {
 }
 
 // ClaimDue claims the due members of the time index; see
-// kvstore.Store.ClaimDue. Unlike the other operations it returns the
-// error, since its caller is a loop of the adapter's user, not a method
+// kvstore.Store.ClaimDue. It returns the error, as Read does, and does
+// not log it: its caller is a loop of the adapter's user, not a method
 // of the role's Store interface.
 func (c *Client) ClaimDue(ctx context.Context, index string, now time.Time, lease time.Duration, limit int) ([]kvstore.Claim, error) {
 	return c.kv.ClaimDue(ctx, c.Index(index), now, lease, limit)
