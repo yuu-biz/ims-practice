@@ -200,9 +200,9 @@ func startIMS(t *testing.T, n int) *network {
 // ipsmgwNumber is the IP-SM-GW that the HSS has for the user of a public
 // identity (TS 29.328 7.6.16).
 func (n *network) ipsmgwNumber(publicID string) string {
-	u, ok := n.hssStore.SubscriberOf(publicID)
-	if !ok {
-		n.t.Fatalf("no subscriber %s", publicID)
+	u, ok, err := n.hssStore.SubscriberOf(context.Background(), publicID)
+	if err != nil || !ok {
+		n.t.Fatalf("no subscriber %s: %v", publicID, err)
 	}
 	return u.IPSMGWNumber
 }

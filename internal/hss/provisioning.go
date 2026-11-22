@@ -128,18 +128,23 @@ func response(s Subscriber) subscriptionResponse {
 //	                               {"tone": "cat1", "active": true}
 //
 // Removing a subscription whose user is registered deregisters the user
-// at its S-CSCF, which scscfs reaches.
+// at its S-CSCF, which scscfs reaches. A request whose subscription the
+// HSS cannot read or write gets 500 (Internal Server Error).
 func (h *HSS) Provisioning(scscfs SCSCFs) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /subscriptions", h.listSubscriptions)
 	mux.HandleFunc("GET /subscriptions/{impi}", h.getSubscription)
 	mux.HandleFunc("POST /subscriptions", h.addSubscription)
 	mux.HandleFunc("DELETE /subscriptions/{impi}", func(w http.ResponseWriter, r *http.Request) {
-		if !h.removeSubscription(r.Context(), scscfs, r.PathValue("impi")) {
+		removed, err := h.removeSubscription(r.Context(), scscfs, r.PathValue("impi"))
+		switch {
+		case err != nil:
+			h.writeStoreFailure(w, err)
+		case !removed:
 			http.Error(w, "no such subscription", http.StatusNotFound)
-			return
+		default:
+			w.WriteHeader(http.StatusNoContent)
 		}
-		w.WriteHeader(http.StatusNoContent)
 	})
 	mux.HandleFunc("PUT /subscriptions/{impi}/customized-alerting-tone", h.setCustomizedAlertingTone)
 	return mux
@@ -163,17 +168,33 @@ func (h *HSS) setCustomizedAlertingTone(w http.ResponseWriter, r *http.Request) 
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	if _, ok := h.store.Subscriber(impi); !ok {
+	ctx := r.Context()
+	_, ok, err := h.store.Subscriber(ctx, impi)
+	if err != nil {
+		h.writeStoreFailure(w, err)
+		return
+	}
+	if !ok {
 		http.Error(w, "no such subscription", http.StatusNotFound)
 		return
 	}
 	for {
 		var old *sh.TransparentData
-		if stored, ok := h.store.RepositoryData(impi, mmtel.CATServiceIndication); ok {
+		stored, ok, err := h.store.RepositoryData(ctx, impi, mmtel.CATServiceIndication)
+		if err != nil {
+			h.writeStoreFailure(w, err)
+			return
+		}
+		if ok {
 			old = &stored
 			data.SequenceNumber = sh.NextSequenceNumber(stored.SequenceNumber)
 		}
-		if h.store.CompareAndSwapRepositoryData(impi, old, data) {
+		swapped, err := h.store.CompareAndSwapRepositoryData(ctx, impi, old, data)
+		if err != nil {
+			h.writeStoreFailure(w, err)
+			return
+		}
+		if swapped {
 			break
 		}
 	}
@@ -182,9 +203,19 @@ func (h *HSS) setCustomizedAlertingTone(w http.ResponseWriter, r *http.Request) 
 }
 
 func (h *HSS) listSubscriptions(w http.ResponseWriter, r *http.Request) {
+	subs, err := h.store.List(r.Context(), listLimit)
+	if err != nil {
+		h.writeStoreFailure(w, err)
+		return
+	}
 	list := []subscriptionResponse{}
-	for _, s := range h.store.List(listLimit) {
-		list = append(list, h.responseWithCAT(s))
+	for _, s := range subs {
+		resp, err := h.responseWithCAT(r.Context(), s)
+		if err != nil {
+			h.writeStoreFailure(w, err)
+			return
+		}
+		list = append(list, resp)
 	}
 	writeJSON(w, http.StatusOK, list)
 }
@@ -192,23 +223,36 @@ func (h *HSS) listSubscriptions(w http.ResponseWriter, r *http.Request) {
 // responseWithCAT is the response for s with the CAT of its repository
 // data, so that the dashboard shows which tone the callers of the user
 // hear.
-func (h *HSS) responseWithCAT(s Subscriber) subscriptionResponse {
+func (h *HSS) responseWithCAT(ctx context.Context, s Subscriber) (subscriptionResponse, error) {
 	resp := response(s)
-	if d, ok := h.store.RepositoryData(s.PrivateIdentity, mmtel.CATServiceIndication); ok && d.ServiceData != nil {
+	d, ok, err := h.store.RepositoryData(ctx, s.PrivateIdentity, mmtel.CATServiceIndication)
+	if err != nil {
+		return subscriptionResponse{}, err
+	}
+	if ok && d.ServiceData != nil {
 		if t, err := mmtel.ParseCustomizedAlertingTone(d.ServiceData.XML); err == nil {
 			resp.CustomizedAlertingTone = &t
 		}
 	}
-	return resp
+	return resp, nil
 }
 
 func (h *HSS) getSubscription(w http.ResponseWriter, r *http.Request) {
-	s, ok := h.store.Subscriber(r.PathValue("impi"))
+	s, ok, err := h.store.Subscriber(r.Context(), r.PathValue("impi"))
+	if err != nil {
+		h.writeStoreFailure(w, err)
+		return
+	}
 	if !ok {
 		http.Error(w, "no such subscription", http.StatusNotFound)
 		return
 	}
-	writeJSON(w, http.StatusOK, h.responseWithCAT(s))
+	resp, err := h.responseWithCAT(r.Context(), s)
+	if err != nil {
+		h.writeStoreFailure(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, resp)
 }
 
 func (h *HSS) addSubscription(w http.ResponseWriter, r *http.Request) {
@@ -224,12 +268,12 @@ func (h *HSS) addSubscription(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	if err := h.store.Add(sub); err != nil {
-		status := http.StatusInternalServerError
+	if err := h.store.Add(r.Context(), sub); err != nil {
 		if errors.Is(err, ErrIdentityTaken) {
-			status = http.StatusConflict
+			http.Error(w, err.Error(), http.StatusConflict)
+			return
 		}
-		http.Error(w, err.Error(), status)
+		h.writeStoreFailure(w, err)
 		return
 	}
 	h.log.Info("subscription added", "private_identity", sub.PrivateIdentity, "public_identities", sub.PublicIdentities)
@@ -241,22 +285,23 @@ func (h *HSS) addSubscription(w http.ResponseWriter, r *http.Request) {
 // whether there was one. If its user was registered, the HSS then tells
 // the S-CSCF (TS 29.228 6.1.3). The subscription is gone even when that
 // fails: the HSS answers any later Cx request for the user as for an
-// unknown one.
-func (h *HSS) removeSubscription(ctx context.Context, scscfs SCSCFs, privateID string) bool {
+// unknown one. When the store fails, no RTR goes: the HSS cannot tell
+// whether the subscription is gone.
+func (h *HSS) removeSubscription(ctx context.Context, scscfs SCSCFs, privateID string) (bool, error) {
 	unlock, _ := h.users.Lock(context.Background(), privateID)
-	s, ok := h.store.Delete(privateID)
+	s, ok, err := h.store.Delete(ctx, privateID)
 	// The lock is not held over the RTR: the S-CSCF may be waiting on a
 	// SAA for this user before it can take up the RTR.
 	unlock()
-	if !ok {
-		return false
+	if err != nil || !ok {
+		return false, err
 	}
 	log := h.log.With("private_identity", s.PrivateIdentity)
 	log.Info("subscription removed", "state", s.State.String())
 	if err := h.registrationTermination(ctx, scscfs, s); err != nil {
 		log.Warn("RTR failed", "scscf", s.SCSCF.OriginHost, "error", err.Error())
 	}
-	return true
+	return true, nil
 }
 
 // SCSCFs is how the HSS reaches an S-CSCF, by the Origin-Host the S-CSCF
@@ -294,6 +339,13 @@ func (h *HSS) registrationTermination(ctx context.Context, scscfs SCSCFs, s Subs
 		return fmt.Errorf("RTA with %s", rta.Result)
 	}
 	return nil
+}
+
+// writeStoreFailure answers a request whose subscription the HSS cannot
+// read or write. It is not 404: the subscription may well be there.
+func (h *HSS) writeStoreFailure(w http.ResponseWriter, err error) {
+	h.log.Warn("subscriber store failed", "error", err.Error())
+	http.Error(w, err.Error(), http.StatusInternalServerError)
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {
