@@ -127,6 +127,9 @@ type UA struct {
 
 	mu    sync.Mutex
 	calls map[DialogID]*CallDialog
+	// ended are the dialogs of calls that have ended in the last
+	// 64*T1, so that a Replaces of one of them gets 603 (RFC 3891 3).
+	ended map[DialogID]bool
 	// open is every call that has not ended, with a dialog or not yet,
 	// so that Close can end them. closed is set by Close.
 	open   map[*call]bool
@@ -149,7 +152,7 @@ func NewUA(transport *TransportLayer, cfg UAConfig, log *slog.Logger) (*UA, erro
 		cfg.Locate = locateIPAddress
 	}
 	ua := &UA{cfg: cfg, log: log, subscriber: NewSubscriber(cfg.Contact, cfg.Locate, log),
-		calls: map[DialogID]*CallDialog{}, open: map[*call]bool{}}
+		calls: map[DialogID]*CallDialog{}, ended: map[DialogID]bool{}, open: map[*call]bool{}}
 	stack, err := NewStack(transport, Config{
 		SentBy:    cfg.SentBy,
 		Timers:    cfg.Timers,
@@ -451,6 +454,32 @@ func (ua *UA) dialog(id DialogID) (*CallDialog, bool) {
 	defer ua.mu.Unlock()
 	d, ok := ua.calls[id]
 	return d, ok
+}
+
+// forget takes the dialog of id out of the calls, once it has ended.
+// The UA still knows for 64*T1 that the dialog has ended: a Replaces
+// sent while the dialog ran, such as one for which a REFER asked,
+// arrives within that time, or else its INVITE client transaction has
+// timed out (Timer B, RFC 3261 17.1.1.2). ua.mu is held.
+func (ua *UA) forget(id DialogID) {
+	delete(ua.calls, id)
+	if ua.closed {
+		return
+	}
+	ua.ended[id] = true
+	time.AfterFunc(64*ua.stack.cfg.Timers.T1, func() {
+		ua.mu.Lock()
+		delete(ua.ended, id)
+		ua.mu.Unlock()
+	})
+}
+
+// hasEnded tells whether the dialog of id has ended in the last 64*T1
+// (forget).
+func (ua *UA) hasEnded(id DialogID) bool {
+	ua.mu.Lock()
+	defer ua.mu.Unlock()
+	return ua.ended[id]
 }
 
 func (ua *UA) logDialog(d *Dialog, event, from string) {

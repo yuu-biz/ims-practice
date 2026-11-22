@@ -80,6 +80,33 @@ func TestInviteReplacesAConfirmedDialog(t *testing.T) {
 	waitDone(t, u.out.Done(), "replaced caller")
 }
 
+// TestInviteReplacesAnEndedDialog is RFC 3891 3: a Replaces that names
+// a dialog which has just ended is declined with 603. Once the UA no
+// longer knows of the dialog, 64*T1 later, it finds no dialog.
+func TestInviteReplacesAnEndedDialog(t *testing.T) {
+	u := newReplacingUAs(t)
+	ended := u.replacesTo().String()
+	if err := u.in.Bye(); err != nil {
+		t.Fatal(err)
+	}
+	waitDone(t, u.out.Done(), "caller")
+
+	c := u.inviteWith(t, ended)
+	if d, refusal := c.ReplacedDialog(); d != nil || refusal != 603 {
+		t.Errorf("just ended: ReplacedDialog = %p, %d; want 603", d, refusal)
+	}
+	c.Reject(603)
+
+	// The UA forgets the dialog 64*T1 after it ended, on a timer of its
+	// own; one T1 more leaves that timer room to run.
+	time.Sleep(65 * testTimers.T1)
+	c = u.inviteWith(t, ended)
+	if d, refusal := c.ReplacedDialog(); d != nil || refusal != 481 {
+		t.Errorf("64*T1 later: ReplacedDialog = %p, %d; want 481", d, refusal)
+	}
+	c.Reject(481)
+}
+
 func TestInviteReplacesRefused(t *testing.T) {
 	u := newReplacingUAs(t)
 	known := u.replacesTo()
