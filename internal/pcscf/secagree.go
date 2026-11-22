@@ -205,8 +205,8 @@ func (p *PCSCF) pathURIOf(a Association) string {
 // The SA table is in the Store, which several P-CSCFs may share, and a
 // UE's entry changes with each registration, through whichever of them
 // it goes. So the P-CSCF reads the entry for each request. The stack
-// asks Admit in a goroutine of its own, and the read holds up no other
-// message.
+// asks Admit off its loop, so the read holds up only the later requests
+// from the same source.
 func (p *PCSCF) AdmitUnprotected(req *sip.Message, source sip.Destination) bool {
 	if req.Method == sip.REGISTER {
 		return true

@@ -67,14 +67,22 @@ type Config struct {
 	// Admit, when set, is asked about each request that Screen lets in,
 	// before the stack does anything with it, as Screen is. It is asked
 	// in a goroutine of its own, so it may wait, for instance for a
-	// store on another machine, while the stack goes on with other
-	// messages. When it returns true, the stack takes the request up as
-	// if it had just arrived; when it returns false, the stack drops the
-	// request as one that Screen refuses. Each copy of a request is
-	// asked about until one is let in, and a copy let in after another
-	// has started the transaction counts as its retransmission. With
-	// Ordered, the TU sees the requests in the order Admit lets them in.
-	// Admit must not change req.
+	// store on another machine, while the stack goes on with the
+	// messages from other sources. When it returns true, the stack takes
+	// the request up as if it had just arrived; when it returns false,
+	// the stack drops the request as one that Screen refuses. Each copy
+	// of a request is asked about until one is let in, and a copy let in
+	// after another has started the transaction counts as its
+	// retransmission.
+	//
+	// Admit is asked about the requests from one source, the same
+	// transport and address, one at a time and in the order they
+	// arrived, and the stack takes them up in that order. A CANCEL thus
+	// finds the INVITE it cancels (RFC 3261 9.2), and with Ordered the
+	// TU sees the requests from a source in the order they arrived, the
+	// ACK for a 2xx before a BYE that follows it. While Admit waits over
+	// one request, the later ones from its source wait too, so it should
+	// answer soon. Admit must not change req.
 	Admit func(req *Message, source Destination) bool
 }
 
@@ -124,6 +132,10 @@ type Stack struct {
 	clients  map[clientKey]*clientEntry
 	servers  map[serverKey]*serverEntry
 	timerSeq uint64
+	// admitting holds, for each source with a request in Config.Admit,
+	// that request and then the requests from the source that came
+	// after it.
+	admitting map[Destination][]*Message
 	// forTU are the calls that wait for toTU. The loop never waits for
 	// the TU, so they queue up here.
 	forTU []func()
@@ -190,6 +202,7 @@ func NewStack(transport *TransportLayer, cfg Config, log *slog.Logger) (*Stack, 
 		done:      make(chan struct{}),
 		clients:   map[clientKey]*clientEntry{},
 		servers:   map[serverKey]*serverEntry{},
+		admitting: map[Destination][]*Message{},
 	}
 	s.cfg.SentBy = joinHostPort(host, port)
 	s.wg.Add(2)
@@ -409,8 +422,12 @@ type (
 	receivedMessage struct {
 		msg    *Message
 		source Destination
-		// admitted is set on a request that comes back to the loop once
-		// Config.Admit has let it in.
+	}
+	// admitDecided is the answer of Config.Admit about the first
+	// request in Stack.admitting of source.
+	admitDecided struct {
+		req      *Message
+		source   Destination
 		admitted bool
 	}
 	startClient  struct{ ct *ClientTransaction }
@@ -560,10 +577,12 @@ func (s *Stack) handle(in stackInput) {
 	switch in := in.(type) {
 	case receivedMessage:
 		if in.msg.IsRequest() {
-			s.receiveRequest(in.msg, in.source, in.admitted)
+			s.receiveRequest(in.msg, in.source, false)
 		} else {
 			s.receiveResponse(in.msg)
 		}
+	case admitDecided:
+		s.receiveAdmitDecision(in)
 	case startClient:
 		s.startClient(in.ct)
 	case cancelInvite:
@@ -730,14 +749,37 @@ func (s *Stack) admits(req *Message, source Destination) bool {
 	if s.cfg.Admit == nil {
 		return true
 	}
-	go func() {
-		if !s.cfg.Admit(req, source) {
-			s.logRefused(req, source)
-			return
-		}
-		s.post(receivedMessage{msg: req, source: source, admitted: true})
-	}()
+	waiting := s.admitting[source]
+	s.admitting[source] = append(waiting, req)
+	if len(waiting) == 0 {
+		s.askAdmit(req, source)
+	}
 	return false
+}
+
+// askAdmit asks Config.Admit about req off the loop.
+func (s *Stack) askAdmit(req *Message, source Destination) {
+	go func() {
+		s.post(admitDecided{req: req, source: source, admitted: s.cfg.Admit(req, source)})
+	}()
+}
+
+// receiveAdmitDecision takes up the request that Config.Admit has
+// decided on, and then asks Admit about the next request from the same
+// source.
+func (s *Stack) receiveAdmitDecision(in admitDecided) {
+	if in.admitted {
+		s.receiveRequest(in.req, in.source, true)
+	} else {
+		s.logRefused(in.req, in.source)
+	}
+	waiting := s.admitting[in.source][1:]
+	if len(waiting) == 0 {
+		delete(s.admitting, in.source)
+		return
+	}
+	s.admitting[in.source] = waiting
+	s.askAdmit(waiting[0], in.source)
 }
 
 func (s *Stack) logRefused(req *Message, source Destination) {
