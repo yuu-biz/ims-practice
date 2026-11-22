@@ -160,18 +160,18 @@ To run one service by hand, start the system and set the service of UE 2. The `u
 ```sh
 docker compose up -d --build
 docker compose run --rm ue2 xcap \
-  --impi 001010000000002@ims.mnc001.mcc001.3gppnetwork.org \
-  --impu sip:+12025550102@ims.mnc001.mcc001.3gppnetwork.org \
-  --password test-password-2 set cfu on tel:+12025550103
+  -impi 001010000000002@ims.mnc001.mcc001.3gppnetwork.org \
+  -impu sip:+12025550102@ims.mnc001.mcc001.3gppnetwork.org \
+  -password test-password-2 set cfu on tel:+12025550103
 ```
 
 Then have UE 3 wait for a call. The command stays in the foreground until the call ends:
 
 ```sh
 docker compose run --rm ue3 answer \
-  --impi 001010000000003@ims.mnc001.mcc001.3gppnetwork.org \
-  --impu sip:+12025550103@ims.mnc001.mcc001.3gppnetwork.org \
-  --password test-password-3
+  -impi 001010000000003@ims.mnc001.mcc001.3gppnetwork.org \
+  -impu sip:+12025550103@ims.mnc001.mcc001.3gppnetwork.org \
+  -password test-password-3
 ```
 
 In another terminal, call UE 2 from UE 1:

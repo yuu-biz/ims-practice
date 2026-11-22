@@ -79,11 +79,11 @@ The two dialogs of a call live in the IBCF process that took the INVITE. Each IB
 
    ```sh
    docker compose -f compose.yaml -f deploy/interconnect/compose.yaml run --rm peer-ue answer \
-     --domain ims.mnc002.mcc001.3gppnetwork.org \
-     --impi 001020000000001@ims.mnc002.mcc001.3gppnetwork.org \
-     --impu sip:+12025550151@ims.mnc002.mcc001.3gppnetwork.org \
-     --password test-password-b1 \
-     --pcscf 172.28.1.40:5060 --pcscf-uri sip:pcscf.ims.mnc002.mcc001.3gppnetwork.org:5060
+     -domain ims.mnc002.mcc001.3gppnetwork.org \
+     -impi 001020000000001@ims.mnc002.mcc001.3gppnetwork.org \
+     -impu sip:+12025550151@ims.mnc002.mcc001.3gppnetwork.org \
+     -password test-password-b1 \
+     -pcscf 172.28.1.40:5060 -pcscf-uri sip:pcscf.ims.mnc002.mcc001.3gppnetwork.org:5060
    ```
 
 3. In another terminal, call it from UE A1 by its number:
@@ -94,18 +94,18 @@ The two dialogs of a call live in the IBCF process that took the INVITE. Each IB
 
    UE A1 logs `183`, `180` and `200`, then `"msg":"call answered"` with the media relay of network A, `172.28.0.50`, as the far end. UE B1 logs `"msg":"media negotiated"` with TrGW-B, `172.28.1.91`, as the far end. Neither UE learns anything of the other network.
 
-4. To call back, let UE A2 wait (`run --rm ue2 answer --impi 001010000000002@... --impu sip:+12025550102@... --password test-password-2`) and call `tel:+12025550102` from UE B1 with the flags of step 2.
+4. To call back, let UE A2 wait (`run --rm ue2 answer -impi 001010000000002@... -impu sip:+12025550102@... -password test-password-2`) and call `tel:+12025550102` from UE B1 with the flags of step 2.
 
 5. To send a short message, keep UE B1 registered (`run --rm peer-ue register` with the flags of step 2) and send one from UE A1:
 
    ```sh
-   docker compose -f compose.yaml -f deploy/interconnect/compose.yaml run --rm ue sms --status-report +12025550151 "Hello UE-B1"
+   docker compose -f compose.yaml -f deploy/interconnect/compose.yaml run --rm ue sms -status-report +12025550151 "Hello UE-B1"
    ```
 
-6. To send one back, stop UE B1's registration of step 5, keep UE A1 registered (`run --rm ue register`) and send from UE B1 with the flags of step 2 and `--sc +12025550150`, the number of the SC of network B:
+6. To send one back, stop UE B1's registration of step 5, keep UE A1 registered (`run --rm ue register`) and send from UE B1 with the flags of step 2 and `-sc +12025550150`, the number of the SC of network B:
 
    ```sh
-   docker compose -f compose.yaml -f deploy/interconnect/compose.yaml run --rm peer-ue sms <flags of step 2> --sc +12025550150 --status-report +12025550101 "Hello UE-A1"
+   docker compose -f compose.yaml -f deploy/interconnect/compose.yaml run --rm peer-ue sms <flags of step 2> -sc +12025550150 -status-report +12025550101 "Hello UE-A1"
    ```
 
    UE B1 sends from a registration of its own. With a second one still there, the status report could go to that one instead.

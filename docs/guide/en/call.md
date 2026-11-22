@@ -38,24 +38,24 @@ The numbers are in the 555-0100 to 555-0199 range that the North American Number
 
    ```sh
    docker compose run --rm ue2 answer \
-     --impi 001010000000002@ims.mnc001.mcc001.3gppnetwork.org \
-     --impu sip:+12025550102@ims.mnc001.mcc001.3gppnetwork.org \
-     --password test-password-2 --wav-out /captures/ue2-heard.wav
+     -impi 001010000000002@ims.mnc001.mcc001.3gppnetwork.org \
+     -impu sip:+12025550102@ims.mnc001.mcc001.3gppnetwork.org \
+     -password test-password-2 -wav-out /captures/ue2-heard.wav
    ```
 
 3. In another terminal, call UE 2 from UE 1 by number. UE 1 plays a 3-second tone and hangs up:
 
    ```sh
-   docker compose run --rm ue call --tone 3s tel:+1-202-555-0102
+   docker compose run --rm ue call -tone 3s tel:+1-202-555-0102
    ```
 
-   With `--wav-in <file>` instead of `--tone`, the UE plays a WAV file. It must be 16-bit PCM, mono, 8000 Hz.
+   With `-wav-in <file>` instead of `-tone`, the UE plays a WAV file. It must be 16-bit PCM, mono, 8000 Hz.
 
 4. `captures/ue2-heard.wav` now holds what UE 2 heard. Open it in any audio player.
 
 To try the failures:
 
-- **Busy.** Start UE 2 with `--reject 486`. The call ends with `486 Busy Here`.
+- **Busy.** Start UE 2 with `-reject 486`. The call ends with `486 Busy Here`.
 - **Not registered.** Call `tel:+12025550103`, a subscriber that never registers. The call ends with `480 Temporarily Unavailable`.
 - **Unknown number.** Call `tel:+12025550199`, which has no ENUM record. The call ends with `404 Not Found`.
 
@@ -117,7 +117,7 @@ TS 24.229 5.1.3.1 and 5.1.2A.1.1. Look at:
 - **P-Early-Media: supported**, which says that UE 1 takes the network's authorization of early media (TS 24.229 5.1.3.1, RFC 5009). **P-Preferred-Service** and **Accept-Contact** carry the ICSI of multimedia telephony (TS 24.229 5.1.2A.1.1), and **User-Agent** names the UE (IR.92 2.6). The Contact carries the same ICSI and the `audio` feature tag (IR.92 2.2.4).
 - **The SDP offer** (RFC 3264 5.1). `c=` and `m=audio` name UE 1's own address and RTP port. `a=rtpmap:0 PCMU/8000` offers G.711, and `a=rtpmap:101 telephone-event/8000` offers DTMF (TS 24.229 6.1.1). `b=AS`, `b=RS` and `b=RR` give the bandwidth of RTP and RTCP (IR.92 3.2.2.4, 3.2.4). The `a=curr` and `a=des` lines are the preconditions: UE 1 has no access network that reserves resources, so it says that its own are there already (TS 24.229 6.1.2).
 
-A UE started with `--epc` attaches to the EPC stub first and is a VoLTE UE: it offers AMR-WB and AMR before PCMU, and its offer says that its resources are not reserved until the network sets up its voice bearer. [The VoLTE call flow](volte.md) follows that call.
+A UE started with `-epc` attaches to the EPC stub first and is a VoLTE UE: it offers AMR-WB and AMR before PCMU, and its offer says that its resources are not reserved until the network sets up its voice bearer. [The VoLTE call flow](volte.md) follows that call.
 
 ### 2. The P-CSCF sends it to the caller's S-CSCF
 
@@ -251,9 +251,9 @@ A registration and a call over this path were checked with the project's own UE 
 
    ```sh
    docker compose run --rm -p 127.0.0.1:8091:8090 ue2 serve \
-     --impi 001010000000002@ims.mnc001.mcc001.3gppnetwork.org \
-     --impu sip:+12025550102@ims.mnc001.mcc001.3gppnetwork.org \
-     --password test-password-2
+     -impi 001010000000002@ims.mnc001.mcc001.3gppnetwork.org \
+     -impu sip:+12025550102@ims.mnc001.mcc001.3gppnetwork.org \
+     -password test-password-2
    ```
 
    ```sh
@@ -310,7 +310,7 @@ Each item has a `SIMPLIFIED:` comment in the code; `grep -rn "SIMPLIFIED:" inter
 | Media relay, RFC 3605 and RFC 5761 | RTCP is taken to arrive on the port above RTP; a=rtcp and rtcp-mux are not read. | No UE of this project sends either. |
 | Media relay, TS 29.334 5.17.2.5 | A node with a `store` section removes a context from the store when its controller subtracts it, and tries again for a few seconds when the store does not answer. A removal that never succeeds leaves the context there with no time to live: the relay, and every later process of it, opens the ports of a call that has ended and holds them until the store is cleared. | The relay cannot tell such a context from one whose call is still up. Nothing of the call is left to ask, and the items of the IBCF and the dialogs of the P-CSCF stay in the same way. |
 | UA, RFC 3261 8.2 and 13.3.1 | No Request-URI or merged-request checks, no 415, and Expires in an INVITE is ignored. | The UEs here never send what those checks catch. |
-| UE, IR.92 3.2.1 | AMR and AMR-WB are sent from frames encoded beforehand, in the modes they were encoded with, whatever CMR or mode-set the peer sends. Without `--epc` the UE offers PCMU only. | The UE never encodes AMR. |
+| UE, IR.92 3.2.1 | AMR and AMR-WB are sent from frames encoded beforehand, in the modes they were encoded with, whatever CMR or mode-set the peer sends. Without `-epc` the UE offers PCMU only. | The UE never encodes AMR. |
 | SIP stack, RFC 3261 12.1.1 and 12.1.2 | A dialog keeps no "secure" flag. | The flag is true only for a dialog set up over TLS with a SIPS URI, and SIP here is plain text. |
 | SIP stack, RFC 3261 12.2.1.1, 16.4 and 16.6 step 6 | No strict routing. A route set or a top Route whose URI lacks lr is refused, and a proxy neither restores a Request-URI that a strict router rewrote nor strips a maddr that names it. | No node in this project is a strict router or writes maddr. |
 | SIP stack, RFC 3261 17.2.3 | A request whose branch lacks the magic cookie, as an RFC 2543 client sends it, is dropped. | Every client here follows RFC 3261. |

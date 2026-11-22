@@ -69,12 +69,12 @@ docker compose up -d --build
 
 # First terminal: UE 2 waits for a call.
 docker compose run --rm ue2 answer \
-  --impi 001010000000002@ims.mnc001.mcc001.3gppnetwork.org \
-  --impu sip:+12025550102@ims.mnc001.mcc001.3gppnetwork.org \
-  --password test-password-2 --wav-out /captures/ue2-heard.wav
+  -impi 001010000000002@ims.mnc001.mcc001.3gppnetwork.org \
+  -impu sip:+12025550102@ims.mnc001.mcc001.3gppnetwork.org \
+  -password test-password-2 -wav-out /captures/ue2-heard.wav
 
 # Second terminal: UE 1 calls the number, plays a tone for 3 seconds, hangs up.
-docker compose run --rm ue call --tone 3s tel:+1-202-555-0102
+docker compose run --rm ue call -tone 3s tel:+1-202-555-0102
 ```
 
 - `captures/ue2-heard.wav` holds what UE 2 heard.
@@ -151,7 +151,7 @@ P-CSCF -> UE 2: INVITE (term) // 7
 | The SDP after the P-CSCF | `c=` and `m=` name the media relay. |
 
 - The network trusts P-Asserted-Identity, not From. Whatever the UE writes in From does not matter.
-- UE 1 has no access network that reserves resources, so its offer says that they are there already. A UE started with `--epc` is a VoLTE UE and offers AMR-WB and AMR before PCMU; the VoLTE session follows that call.
+- UE 1 has no access network that reserves resources, so its offer says that they are there already. A UE started with `-epc` is a VoLTE UE and offers AMR-WB and AMR before PCMU; the VoLTE session follows that call.
 
 > Guide: [1](../../../docs/guide/en/call.md#1-ue-1-sends-the-invite) and [2](../../../docs/guide/en/call.md#2-the-p-cscf-sends-it-to-the-callers-s-cscf). TS 24.229 5.1.3.1, 5.1.2A.1.1, 6.1.2, 5.2.6.2, 5.2.6.3.3. RFC 3262 4. RFC 3312. RFC 3264 5.1.
 
@@ -305,7 +305,7 @@ The filter is `rtp || rtcp`. **Play Streams** plays the voice.
 
 | Case | How to try it | How it ends | Who answers |
 | --- | --- | --- | --- |
-| Busy | Start UE 2 with `--reject 486`. | 486 Busy Here | UE 2 |
+| Busy | Start UE 2 with `-reject 486`. | 486 Busy Here | UE 2 |
 | Not registered | Call `tel:+12025550103`. | 480 Temporarily Unavailable | S-CSCF |
 | Unknown number | Call `tel:+12025550199`. | 404 Not Found | S-CSCF |
 

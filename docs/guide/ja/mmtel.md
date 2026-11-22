@@ -165,18 +165,18 @@ GET と PUT の間にほかの誰かが文書を変えていれば、HSS は PUR
 ```sh
 docker compose up -d --build
 docker compose run --rm ue2 xcap \
-  --impi 001010000000002@ims.mnc001.mcc001.3gppnetwork.org \
-  --impu sip:+12025550102@ims.mnc001.mcc001.3gppnetwork.org \
-  --password test-password-2 set cfu on tel:+12025550103
+  -impi 001010000000002@ims.mnc001.mcc001.3gppnetwork.org \
+  -impu sip:+12025550102@ims.mnc001.mcc001.3gppnetwork.org \
+  -password test-password-2 set cfu on tel:+12025550103
 ```
 
 次に UE 3 に着信を待たせます。このコマンドは通話が終わるまで戻りません。
 
 ```sh
 docker compose run --rm ue3 answer \
-  --impi 001010000000003@ims.mnc001.mcc001.3gppnetwork.org \
-  --impu sip:+12025550103@ims.mnc001.mcc001.3gppnetwork.org \
-  --password test-password-3
+  -impi 001010000000003@ims.mnc001.mcc001.3gppnetwork.org \
+  -impu sip:+12025550103@ims.mnc001.mcc001.3gppnetwork.org \
+  -password test-password-3
 ```
 
 別の端末で、UE 1 から UE 2 に発信します。

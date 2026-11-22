@@ -142,27 +142,27 @@ If the IP-SM-GW does not answer the MESSAGE within Timer F (32 seconds), or answ
 
    ```sh
    docker compose run --rm ue2 register \
-     --impi 001010000000002@ims.mnc001.mcc001.3gppnetwork.org \
-     --impu sip:+12025550102@ims.mnc001.mcc001.3gppnetwork.org \
-     --password test-password-2
+     -impi 001010000000002@ims.mnc001.mcc001.3gppnetwork.org \
+     -impu sip:+12025550102@ims.mnc001.mcc001.3gppnetwork.org \
+     -password test-password-2
    ```
 
 3. In another terminal, send a short message from UE 1 and ask for a status report. The flags come before the number and the text:
 
    ```sh
-   docker compose run --rm ue sms --status-report +12025550102 "Hello UE-B, this is UE-A."
+   docker compose run --rm ue sms -status-report +12025550102 "Hello UE-B, this is UE-A."
    ```
 
    UE 1 registers, sends the message, logs `"msg":"submit report"` with `"state":"accepted"`, waits for the status report, logs `"msg":"status report"` with `"status":0`, and deregisters. UE 2 logs `"msg":"sms received"` with `"from":"+12025550101"` and `"text":"Hello UE-B, this is UE-A."`.
 
 4. Stop UE 2 with Ctrl+C. It deregisters.
 
-The text may be up to 160 characters of the GSM 7 bit alphabet, or up to 70 characters when it needs UCS2, as Japanese does. The script sends one in UCS2 the other way, from UE 2 to UE 1: with `docker compose run --rm ue register` in one terminal, `docker compose run --rm ue2 sms --impi ... --impu ... --password test-password-2 +12025550101 "こんにちは、UE-A さん"` in the other. A longer text is refused before anything is sent.
+The text may be up to 160 characters of the GSM 7 bit alphabet, or up to 70 characters when it needs UCS2, as Japanese does. The script sends one in UCS2 the other way, from UE 2 to UE 1: with `docker compose run --rm ue register` in one terminal, `docker compose run --rm ue2 sms -impi ... -impu ... -password test-password-2 +12025550101 "こんにちは、UE-A さん"` in the other. A longer text is refused before anything is sent.
 
 To try the failures, which need no other UE:
 
 - **Unknown number.** `docker compose run --rm ue sms +12025550198 "Nobody has this number."`. No subscriber has the number. The submit report is an RP-ERROR, and `ue sms` exits with `the SC refused the short message: RP-Cause 1, TP-FCS 0xc3`.
-- **Recipient not registered.** `docker compose run --rm ue sms --status-report +12025550103 "Are you there?"`. Subscriber 3 exists but never registers. The SC accepts the message, the delivery fails with 480, and UE 1 logs `"msg":"status report"` with `"status":98`, TP-ST 0x62.
+- **Recipient not registered.** `docker compose run --rm ue sms -status-report +12025550103 "Are you there?"`. Subscriber 3 exists but never registers. The SC accepts the message, the delivery fails with 480, and UE 1 logs `"msg":"status report"` with `"status":98`, TP-ST 0x62.
 
 The same can be done from the dashboard: see "Drive the UE simulators" in [the dashboard guide](dashboard.md). The UE cards send short messages and list what each UE sent and received, and the details of each MESSAGE show the decoded short message.
 

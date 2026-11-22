@@ -77,7 +77,7 @@ Start the system and open the capture in Wireshark, as in [the capture guide](..
 
 ```sh
 deploy/chaos/fault.sh pause pcscf
-docker compose run --rm ue register --deregister-after 2s
+docker compose run --rm ue register -deregister-after 2s
 ```
 
 In a second terminal, run `deploy/chaos/fault.sh unpause pcscf` after a few seconds. With the filter `sip.Method == "REGISTER"`, the UE sends the REGISTER again after 0.5 s, 1 s and 2 s, each wait twice the one before: timer E of RFC 3261 17.1.2.2. Wireshark marks the copies with `sip.resend == 1`. When the P-CSCF thaws, it answers the REGISTER once; the copies it finds in its socket belong to the same transaction.
@@ -86,7 +86,7 @@ In a second terminal, run `deploy/chaos/fault.sh unpause pcscf` after a few seco
 
 ```sh
 deploy/chaos/fault.sh pause hss
-docker compose run --rm ue register --deregister-after 2s
+docker compose run --rm ue register -deregister-after 2s
 deploy/chaos/fault.sh unpause hss
 ```
 
@@ -112,7 +112,7 @@ Register and call a few times, then clear the fault. Look for `sip.resend == 1` 
 
 ```sh
 deploy/chaos/fault.sh partition pcscf icscf
-docker compose run --rm ue register --deregister-after 2s
+docker compose run --rm ue register -deregister-after 2s
 deploy/chaos/fault.sh clear pcscf
 ```
 
@@ -122,7 +122,7 @@ The capture holds the UE's REGISTER and its copies, more and more spaced out up 
 
 ```sh
 deploy/chaos/fault.sh partition scscf hss
-docker compose run --rm ue register --deregister-after 2s
+docker compose run --rm ue register -deregister-after 2s
 ```
 
 The REGISTER gets 500 after 5 seconds: the S-CSCF sent a Multimedia-Auth Request (MAR) that the dashboard shows and the capture does not. Leave the partition for about two minutes and read `docker compose logs hss` for `peer state`: the watchdog of RFC 3539 (3.4) moves the connection from `OKAY` to `Pending` and `Suspect`, one step for each Tw of 30 seconds, and then closes it. After `fault.sh clear scscf`, the S-CSCF opens a new connection (SYN, CER, CEA) within Tc, 30 seconds, and then the next registration works.
@@ -130,9 +130,9 @@ The REGISTER gets 500 after 5 seconds: the S-CSCF sent a Multimedia-Auth Request
 ### Freeze the MMTel AS during a call
 
 ```sh
-docker compose run -d --name ue2-answer ue2 answer --impi 001010000000002@ims.mnc001.mcc001.3gppnetwork.org \
-  --impu sip:+12025550102@ims.mnc001.mcc001.3gppnetwork.org --password test-password-2 --ring 1s --tone 6s
-docker compose run --rm ue call --tone 6s tel:+12025550102
+docker compose run -d --name ue2-answer ue2 answer -impi 001010000000002@ims.mnc001.mcc001.3gppnetwork.org \
+  -impu sip:+12025550102@ims.mnc001.mcc001.3gppnetwork.org -password test-password-2 -ring 1s -tone 6s
+docker compose run --rm ue call -tone 6s tel:+12025550102
 ```
 
 While the call runs, in a second terminal, `deploy/chaos/fault.sh pause mmtel`, and about ten seconds later `deploy/chaos/fault.sh unpause mmtel`. The voice goes on: the RTP goes through the media relay, not through the AS. When UE 1 hangs up, its BYE reaches the AS and gets no answer; with the filter `sip.Method == "BYE"`, the UE, the P-CSCF and the S-CSCF send it again after 0.5 s, 1 s, 2 s and 4 s (timer E). When the AS thaws, it answers every copy that waited in its socket with a 200, and only then sends its own BYE to UE 2 on the other leg of the call (the AS is a B2BUA). Then `docker rm -f ue2-answer`.
@@ -142,12 +142,12 @@ While the call runs, in a second terminal, `deploy/chaos/fault.sh pause mmtel`, 
 Start the two IMS networks ([the interconnect guide](../../docs/guide/en/interconnect.md)) and set `COMPOSE_FILE` as in [Before you start](#before-you-start). UE B1 of network B waits for a call, and UE A1 calls it:
 
 ```sh
-b1=(--domain ims.mnc002.mcc001.3gppnetwork.org --pcscf 172.28.1.40:5060
-  --pcscf-uri sip:pcscf.ims.mnc002.mcc001.3gppnetwork.org:5060
-  --impi 001020000000001@ims.mnc002.mcc001.3gppnetwork.org
-  --impu sip:+12025550151@ims.mnc002.mcc001.3gppnetwork.org --password test-password-b1)
-docker compose run -d --name b1-answer peer-ue answer "${b1[@]}" --ring 1s --tone 12s
-docker compose run --rm ue call --tone 10s tel:+12025550151
+b1=(-domain ims.mnc002.mcc001.3gppnetwork.org -pcscf 172.28.1.40:5060
+  -pcscf-uri sip:pcscf.ims.mnc002.mcc001.3gppnetwork.org:5060
+  -impi 001020000000001@ims.mnc002.mcc001.3gppnetwork.org
+  -impu sip:+12025550151@ims.mnc002.mcc001.3gppnetwork.org -password test-password-b1)
+docker compose run -d --name b1-answer peer-ue answer "${b1[@]}" -ring 1s -tone 12s
+docker compose run --rm ue call -tone 10s tel:+12025550151
 ```
 
 During the call, `deploy/chaos/fault.sh kill ibcf-a`, and three seconds later `deploy/chaos/fault.sh start ibcf-a`. The voice goes on: in the capture of the link (`captures/nni/`), the RTP between the TrGWs has no gap, because only the IBCF died. The BYE at the end crosses the new IBCF A and ends the call in both networks: the IBCF is a proxy, and the Route of the BYE says where it goes. But the new IBCF A has lost what the old one kept of the call, and nobody releases the call's context in TrGW A:
@@ -161,8 +161,8 @@ still lists it after the call. TrGW B, whose IBCF kept running, has none left.
 ### Cut the link between the two networks
 
 ```sh
-docker compose run -d --name b1-answer peer-ue answer "${b1[@]}" --ring 1s --tone 30s
-docker compose run --rm ue call --tone 6s tel:+12025550151
+docker compose run -d --name b1-answer peer-ue answer "${b1[@]}" -ring 1s -tone 30s
+docker compose run --rm ue call -tone 6s tel:+12025550151
 ```
 
 A few seconds into the call, in a second terminal, cut network A's side of the link, for the signalling and for the media:

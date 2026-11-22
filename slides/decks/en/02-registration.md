@@ -61,7 +61,7 @@ To begin: what happens in the network between switching a phone on and its first
 ```sh
 docker compose up -d --build
 docker compose logs scscf | grep I-Open        # are the Diameter connections open?
-docker compose run --rm ue register --deregister-after 5s
+docker compose run --rm ue register -deregister-after 5s
 ```
 
 After the start, wait until the I-CSCF and the S-CSCF have opened their Diameter connections to the HSS. A node that started before the HSS connects again after 30 seconds (Tc), so allow up to a minute.
@@ -266,7 +266,7 @@ The UE sends a REGISTER whose Contact has `expires=0`.
 
 | Case | How to try it | What to see |
 | --- | --- | --- |
-| A wrong password | `ue register --password wrong-password` | The same up to step 8. The S-CSCF answers 403 and sends a SAR with AUTHENTICATION_FAILURE (9). |
+| A wrong password | `ue register -password wrong-password` | The same up to step 8. The S-CSCF answers 403 and sends a SAR with AUTHENTICATION_FAILURE (9). |
 | The HSS removes the subscription | Delete the subscription of a registered user in the Subscribers panel of the dashboard. | The HSS sends an RTR with Reason-Code PERMANENT_TERMINATION (0). The UE gets a NOTIFY with `event="rejected"`. |
 
 - Put `docker compose run --rm` in front of the command.

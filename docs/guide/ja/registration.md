@@ -43,7 +43,7 @@ IMS で電話をかけたり SMS を送ったりする前に、端末は登録�
 3. UE を登録し、5 秒後に登録を解除します。
 
    ```sh
-   docker compose run --rm ue register --deregister-after 5s
+   docker compose run --rm ue register -deregister-after 5s
    ```
 
    ログの最後に `"msg":"registered"` が出ます。この行には Service-Route と、一緒に登録された識別子も出ます。続いて `"state":"active"` の `"msg":"reg event"` が出て、その後に `"msg":"deregistered"` が出ます。
@@ -51,12 +51,12 @@ IMS で電話をかけたり SMS を送ったりする前に、端末は登録�
 4. 登録が拒否される様子を見るには、誤ったパスワードを使います。
 
    ```sh
-   docker compose run --rm ue register --password wrong-password
+   docker compose run --rm ue register -password wrong-password
    ```
 
    UE は `registration refused with 403` で終わります。
 
-`--deregister-after` を付けないと、UE は Ctrl+C で止めるまで登録したままになります。その間、登録の期限が切れる前に再登録します。
+`-deregister-after` を付けないと、UE は Ctrl+C で止めるまで登録したままになります。その間、登録の期限が切れる前に再登録します。
 
 ## キャプチャを開く
 

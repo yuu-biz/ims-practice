@@ -77,7 +77,7 @@ IMS のコンテナは `compose.yaml` のままで、何も変えません。ネ
 
 ```sh
 deploy/chaos/fault.sh pause pcscf
-docker compose run --rm ue register --deregister-after 2s
+docker compose run --rm ue register -deregister-after 2s
 ```
 
 数秒たったら、別の端末で `deploy/chaos/fault.sh unpause pcscf` を実行します。フィルタ `sip.Method == "REGISTER"` で見ると、UE は 0.5 秒、1 秒、2 秒の間をあけて REGISTER を送り直しています。間は毎回 2 倍になります。RFC 3261 17.1.2.2 のタイマー E です。Wireshark は送り直しに `sip.resend == 1` の印を付けます。凍結が解けると、P-CSCF は REGISTER に一度だけ答えます。ソケットに溜まっていた写しは、同じトランザクションのものだからです。
@@ -86,7 +86,7 @@ docker compose run --rm ue register --deregister-after 2s
 
 ```sh
 deploy/chaos/fault.sh pause hss
-docker compose run --rm ue register --deregister-after 2s
+docker compose run --rm ue register -deregister-after 2s
 deploy/chaos/fault.sh unpause hss
 ```
 
@@ -112,7 +112,7 @@ deploy/chaos/fault.sh loss scscf 20
 
 ```sh
 deploy/chaos/fault.sh partition pcscf icscf
-docker compose run --rm ue register --deregister-after 2s
+docker compose run --rm ue register -deregister-after 2s
 deploy/chaos/fault.sh clear pcscf
 ```
 
@@ -122,7 +122,7 @@ deploy/chaos/fault.sh clear pcscf
 
 ```sh
 deploy/chaos/fault.sh partition scscf hss
-docker compose run --rm ue register --deregister-after 2s
+docker compose run --rm ue register -deregister-after 2s
 ```
 
 REGISTER には、5 秒後に 500 が返ります。S-CSCF が送った Multimedia-Auth Request（MAR）は、ダッシュボードにはあり、キャプチャにはありません。分断を 2 分ほどそのままにして、`docker compose logs hss` の `peer state` を読みます。RFC 3539（3.4）の監視（watchdog）が、Tw の 30 秒ごとに、接続を `OKAY` から `Pending`、`Suspect` へと移し、そのあと閉じます。`fault.sh clear scscf` のあと、S-CSCF は Tc の 30 秒以内に新しい接続を開き（SYN、CER、CEA）、そのあとの登録は成功します。
@@ -130,9 +130,9 @@ REGISTER には、5 秒後に 500 が返ります。S-CSCF が送った Multimed
 ### 通話中に MMTel AS を凍らせる
 
 ```sh
-docker compose run -d --name ue2-answer ue2 answer --impi 001010000000002@ims.mnc001.mcc001.3gppnetwork.org \
-  --impu sip:+12025550102@ims.mnc001.mcc001.3gppnetwork.org --password test-password-2 --ring 1s --tone 6s
-docker compose run --rm ue call --tone 6s tel:+12025550102
+docker compose run -d --name ue2-answer ue2 answer -impi 001010000000002@ims.mnc001.mcc001.3gppnetwork.org \
+  -impu sip:+12025550102@ims.mnc001.mcc001.3gppnetwork.org -password test-password-2 -ring 1s -tone 6s
+docker compose run --rm ue call -tone 6s tel:+12025550102
 ```
 
 通話のあいだに、別の端末で `deploy/chaos/fault.sh pause mmtel` を実行し、10 秒ほどたってから `deploy/chaos/fault.sh unpause mmtel` を実行します。音声は続きます。RTP は AS ではなく、メディア中継ノードを通るためです。UE 1 が切ると、BYE は AS に届きますが、答えがありません。フィルタ `sip.Method == "BYE"` で見ると、UE、P-CSCF、S-CSCF が、0.5 秒、1 秒、2 秒、4 秒の間をあけて BYE を送り直しています（タイマー E）。AS は凍結が解けると、ソケットで待っていた写しのそれぞれに 200 を返します。そのあとで初めて、呼のもう片方の脚で UE 2 に自分の BYE を送ります（AS は B2BUA です）。最後に `docker rm -f ue2-answer` を実行します。
@@ -142,12 +142,12 @@ docker compose run --rm ue call --tone 6s tel:+12025550102
 2 つの IMS の網を起動し（[網間接続の手順書](../../docs/guide/ja/interconnect.md)）、[始める前に](#始める前に)のとおりに `COMPOSE_FILE` を設定します。網 B の UE B1 が着信を待ち、UE A1 が発信します。
 
 ```sh
-b1=(--domain ims.mnc002.mcc001.3gppnetwork.org --pcscf 172.28.1.40:5060
-  --pcscf-uri sip:pcscf.ims.mnc002.mcc001.3gppnetwork.org:5060
-  --impi 001020000000001@ims.mnc002.mcc001.3gppnetwork.org
-  --impu sip:+12025550151@ims.mnc002.mcc001.3gppnetwork.org --password test-password-b1)
-docker compose run -d --name b1-answer peer-ue answer "${b1[@]}" --ring 1s --tone 12s
-docker compose run --rm ue call --tone 10s tel:+12025550151
+b1=(-domain ims.mnc002.mcc001.3gppnetwork.org -pcscf 172.28.1.40:5060
+  -pcscf-uri sip:pcscf.ims.mnc002.mcc001.3gppnetwork.org:5060
+  -impi 001020000000001@ims.mnc002.mcc001.3gppnetwork.org
+  -impu sip:+12025550151@ims.mnc002.mcc001.3gppnetwork.org -password test-password-b1)
+docker compose run -d --name b1-answer peer-ue answer "${b1[@]}" -ring 1s -tone 12s
+docker compose run --rm ue call -tone 10s tel:+12025550151
 ```
 
 通話のあいだに `deploy/chaos/fault.sh kill ibcf-a` を実行し、3 秒後に `deploy/chaos/fault.sh start ibcf-a` を実行します。音声は続きます。回線のキャプチャ（`captures/nni/`）を見ると、TrGW のあいだの RTP に途切れがありません。止まったのは IBCF だけだからです。最後の BYE は、起動し直した IBCF A を通り、両方の網で呼を終わらせます。IBCF はプロキシで、BYE の行き先は BYE の Route に書いてあるためです。ただし、新しい IBCF A は、前の IBCF A が持っていた呼の記録を失っています。そのため、TrGW A のこの呼のコンテキストを、誰も解放しません。
@@ -161,8 +161,8 @@ docker compose exec trgw-a wget -qO- http://127.0.0.1:8080/contexts
 ### 2 つの網のあいだの回線を切る
 
 ```sh
-docker compose run -d --name b1-answer peer-ue answer "${b1[@]}" --ring 1s --tone 30s
-docker compose run --rm ue call --tone 6s tel:+12025550151
+docker compose run -d --name b1-answer peer-ue answer "${b1[@]}" -ring 1s -tone 30s
+docker compose run --rm ue call -tone 6s tel:+12025550151
 ```
 
 通話が始まって数秒たったら、別の端末で、網 A の側の回線を、信号とメディアの両方について切ります。
