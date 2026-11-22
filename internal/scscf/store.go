@@ -350,12 +350,20 @@ type Store interface {
 }
 
 // MemoryStore is a Store in memory. Private identities compare without
-// case.
+// case. A lookup by another identifier reads an index, as the stores
+// outside the node do, so that its time does not grow with the number
+// of users.
 type MemoryStore struct {
-	mu              sync.Mutex
-	challenges      map[string]Challenge
-	registrations   map[string]Registration
-	subscriptions   map[sip.DialogID]Subscription
+	mu            sync.Mutex
+	challenges    map[string]Challenge
+	registrations map[string]Registration
+	// registrationOf is the private key of the registration of each
+	// public identity, by ims.PublicIdentityKey.
+	registrationOf map[string]string
+	subscriptions  map[sip.DialogID]Subscription
+	// subscriptionsOf holds the dialogs of the subscriptions to the
+	// registration of each private key.
+	subscriptionsOf map[string]map[sip.DialogID]struct{}
 	originalDialogs map[string]OriginalDialog
 	// unregistered holds the profiles by private identity, and
 	// unregisteredOf the private identity of each of their public ones.
@@ -368,7 +376,8 @@ type MemoryStore struct {
 
 func NewMemoryStore() *MemoryStore {
 	return &MemoryStore{challenges: map[string]Challenge{}, registrations: map[string]Registration{},
-		subscriptions: map[sip.DialogID]Subscription{}, originalDialogs: map[string]OriginalDialog{},
+		registrationOf: map[string]string{}, subscriptions: map[sip.DialogID]Subscription{},
+		subscriptionsOf: map[string]map[sip.DialogID]struct{}{}, originalDialogs: map[string]OriginalDialog{},
 		unregistered: map[string]UnregisteredProfile{}, unregisteredOf: map[string]string{},
 		due: map[ExpiryKind]*dueIndex{}}
 }
@@ -428,14 +437,12 @@ func (s *MemoryStore) Registration(_ context.Context, privateID string) (Registr
 func (s *MemoryStore) RegistrationOf(_ context.Context, publicID string) (Registration, bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	for _, r := range s.registrations {
-		for _, id := range r.PublicIdentities {
-			if ims.SamePublicIdentity(id, publicID) {
-				return r, true, nil
-			}
-		}
+	k, ok := s.registrationOf[ims.PublicIdentityKey(publicID)]
+	if !ok {
+		return Registration{}, false, nil
 	}
-	return Registration{}, false, nil
+	r, ok := s.registrations[k]
+	return r, ok, nil
 }
 
 func (s *MemoryStore) PutRegistration(_ context.Context, r Registration) error {
@@ -448,7 +455,12 @@ func (s *MemoryStore) PutRegistration(_ context.Context, r Registration) error {
 	// The criteria are never changed in place, so a shallow copy keeps
 	// them apart.
 	r.InitialFilterCriteria = slices.Clone(r.InitialFilterCriteria)
-	s.registrations[key(r.PrivateIdentity)] = r
+	k := key(r.PrivateIdentity)
+	s.removeRegistration(k)
+	s.registrations[k] = r
+	for _, id := range r.PublicIdentities {
+		s.registrationOf[ims.PublicIdentityKey(id)] = k
+	}
 	s.schedule(userItem(RegistrationExpiry, r.PrivateIdentity), r.Expires)
 	return nil
 }
@@ -461,8 +473,24 @@ func (s *MemoryStore) PutRegistration(_ context.Context, r Registration) error {
 func (s *MemoryStore) DeleteRegistration(_ context.Context, privateID string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	delete(s.registrations, key(privateID))
+	s.removeRegistration(key(privateID))
 	return nil
+}
+
+// removeRegistration removes the registration of the private key k and
+// the index entries that name it, and leaves its expiry (ClaimDue). The
+// lock is held.
+func (s *MemoryStore) removeRegistration(k string) {
+	r, ok := s.registrations[k]
+	if !ok {
+		return
+	}
+	for _, id := range r.PublicIdentities {
+		if pk := ims.PublicIdentityKey(id); s.registrationOf[pk] == k {
+			delete(s.registrationOf, pk)
+		}
+	}
+	delete(s.registrations, k)
 }
 
 func (s *MemoryStore) Subscription(_ context.Context, id sip.DialogID) (Subscription, bool, error) {
@@ -476,10 +504,8 @@ func (s *MemoryStore) SubscriptionsOf(_ context.Context, privateID string) ([]Su
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	var subs []Subscription
-	for _, sub := range s.subscriptions {
-		if key(sub.PrivateIdentity) == key(privateID) {
-			subs = append(subs, copySubscription(sub))
-		}
+	for id := range s.subscriptionsOf[key(privateID)] {
+		subs = append(subs, copySubscription(s.subscriptions[id]))
 	}
 	return subs, nil
 }
@@ -487,8 +513,15 @@ func (s *MemoryStore) SubscriptionsOf(_ context.Context, privateID string) ([]Su
 func (s *MemoryStore) PutSubscription(_ context.Context, sub Subscription) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.subscriptions[sub.Dialog.ID] = copySubscription(sub)
-	s.schedule(subscriptionItem(sub.Dialog.ID), sub.Expires)
+	id := sub.Dialog.ID
+	s.unindexSubscription(id)
+	s.subscriptions[id] = copySubscription(sub)
+	k := key(sub.PrivateIdentity)
+	if s.subscriptionsOf[k] == nil {
+		s.subscriptionsOf[k] = map[sip.DialogID]struct{}{}
+	}
+	s.subscriptionsOf[k][id] = struct{}{}
+	s.schedule(subscriptionItem(id), sub.Expires)
 	return nil
 }
 
@@ -497,9 +530,24 @@ func (s *MemoryStore) PutSubscription(_ context.Context, sub Subscription) error
 func (s *MemoryStore) DeleteSubscription(_ context.Context, id sip.DialogID) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.unindexSubscription(id)
 	delete(s.subscriptions, id)
 	s.unschedule(subscriptionItem(id))
 	return nil
+}
+
+// unindexSubscription takes the subscription of the dialog id out of
+// the index of its registration. The lock is held.
+func (s *MemoryStore) unindexSubscription(id sip.DialogID) {
+	sub, ok := s.subscriptions[id]
+	if !ok {
+		return
+	}
+	k := key(sub.PrivateIdentity)
+	delete(s.subscriptionsOf[k], id)
+	if len(s.subscriptionsOf[k]) == 0 {
+		delete(s.subscriptionsOf, k)
+	}
 }
 
 // copySubscription keeps the route set of the store apart from the
