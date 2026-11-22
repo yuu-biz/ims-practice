@@ -247,7 +247,7 @@ Each item has a `SIMPLIFIED:` comment in the code; `grep -rn "SIMPLIFIED:" inter
 
 | Where | What is left out | Why |
 | --- | --- | --- |
-| MRFC, TS 23.333 5.12 | The MRFP plays and mixes G.711 PCMU only and transcodes nothing; an offer without PCMU gets 488 with Warning 305. | The project has no AMR decoder. The UE simulators still offer PCMU. |
+| MRFC, TS 23.333 5.12 | The MRFP plays and mixes G.711 PCMU only and transcodes nothing; a real MRFP takes AMR-WB and AMR as well. An offer without PCMU gets 488 with Warning 305. | A conference mixes decoded speech, and the product has no AMR decoder. Adding one would cost much and change little of the signalling these guides follow. The UE simulators still offer PCMU. |
 | MRFC, RFC 4240 3 and TS 24.229 10.3.2.2 | Only provisioned announcements; no prompt is fetched from a URL over Cr. | The WAV files are in the MRFP's configuration. |
 | MRFC, TS 24.229 5.8.1 | The Contact is the SIP URI of the instance, not a GRUU. | Nothing sends a request to the MRFC outside a dialog it has with it. |
 | MRFC, TS 24.229 5.8.2.1.1.1 and RFC 4240 2 and 8 | No charging data, sips: is not enforced, no AS is authenticated. | No node of the project writes charging records, and nothing is encrypted so that the capture shows the content. |
