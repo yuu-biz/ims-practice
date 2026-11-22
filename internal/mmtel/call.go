@@ -442,10 +442,16 @@ func (c *call) answer(out *sip.OutgoingCall, resp *sip.Message) {
 		body = c.heldAnswer[tag]
 	}
 	from := c.sessionFrom
+	// The offer of the INVITE has its answer once a reliable response
+	// has carried it (RFC 3262 5); until then the 2xx carries it.
+	answered := len(c.in.Request.Body) == 0 || c.sessionToCaller
+	held := c.calleeSDP[from]
 	c.mu.Unlock()
 	if !played && from != "" && from != tag {
 		// The caller has the session description of another early
-		// dialog, and ignores a second one (RFC 3261 13.2.1).
+		// dialog, and ignores a second one (RFC 3261 13.2.1). When no
+		// reliable response had it, the 2xx still carries the answer,
+		// the same as in the provisional responses (13.2.1).
 		//
 		// SIMPLIFIED: RFC 3261 13.2.1 and 14.1. The caller keeps the
 		// session description of the dialog that sent one first. The AS
@@ -454,9 +460,12 @@ func (c *call) answer(out *sip.OutgoingCall, resp *sip.Message) {
 		// goes on toward the first dialog. After an INVITE without an
 		// offer, the offer of a dialog that the caller did not answer
 		// gets no answer from the AS, and that UAS ends its dialog.
+		body = sip.Body{}
+		if !answered {
+			body = sip.Body{Type: "application/sdp", Content: held}
+		}
 		c.log.Info("answered in another early dialog than the one whose session description the caller has",
 			"to_tag", tag, "caller_has", from)
-		body = sip.Body{}
 	}
 	c.passFocusContact(resp)
 	ack, err := c.in.Accept(body, c.responseFields(resp, c.in.Request, true).Headers...)
