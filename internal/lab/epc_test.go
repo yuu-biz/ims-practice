@@ -33,6 +33,9 @@ func TestEPCRoutesGoToTheStub(t *testing.T) {
 	defer stub.Close()
 	h := newHarness(t, Config{EPC: stub.URL})
 
+	if status, body := send(t, http.MethodGet, h.server.URL+"/api/epc/ues", ""); status != 200 || !strings.Contains(body, `"bearers"`) {
+		t.Errorf("GET the list: %d %s", status, body)
+	}
 	if status, body := send(t, http.MethodGet, h.server.URL+"/api/epc/ues/001010000000010", ""); status != 200 || !strings.Contains(body, `"bearers"`) {
 		t.Errorf("GET: %d %s", status, body)
 	}
@@ -43,6 +46,7 @@ func TestEPCRoutesGoToTheStub(t *testing.T) {
 		t.Errorf("POST: %d, want the stub's 404", status)
 	}
 	want := []string{
+		"GET /ues",
 		"GET /ues/001010000000010",
 		"DELETE /network-initiated/ues/001010000000010/bearers/6",
 		"POST /network-initiated/ues/001010000000010/detach",

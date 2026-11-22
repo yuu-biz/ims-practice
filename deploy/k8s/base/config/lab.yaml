@@ -18,6 +18,9 @@ lab:
   # deactivate a UE's voice bearer with
   # DELETE /api/epc/network-initiated/ues/<IMSI>/bearers/<EBI> on the host.
   epc: http://epc.ims.svc.cluster.local:8080
+  # No fault agent here: it breaks containers through the Docker socket,
+  # which no Pod has. The page says that it is not configured, and its
+  # fault panel stays off.
   # The UE simulators ue-a and ue-b of ue.yaml. They start with zero
   # replicas, like the sim profile of compose.yaml; until they are
   # scaled up, the web UI shows them as not reachable. volte-a and
