@@ -273,6 +273,10 @@ func TestSameIdentity(t *testing.T) {
 		{"sip:alice@IMS.example.net;transport=tcp", "sip:alice@ims.example.net", true},
 		{"sip:Alice@ims.example.net", "sip:alice@ims.example.net", false},
 		{"sips:alice@ims.example.net", "sip:alice@ims.example.net", false},
+		// The host of an identity compares as a whole, an IPv6 address
+		// in brackets included.
+		{"sip:alice@[2001:db8::1]", "sip:alice@[2001:DB8::1]", true},
+		{"sip:alice@[2001:db8::1]", "sip:alice@[2001:db8::2]", false},
 		{"mailto:alice@example.net", "mailto:alice@example.net", false},
 	} {
 		if got := sameIdentity(tc.a, tc.b); got != tc.want {

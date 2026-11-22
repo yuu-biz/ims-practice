@@ -3,6 +3,8 @@ package simservs
 import (
 	"slices"
 	"strings"
+
+	"github.com/yuu-biz/ims-practice/internal/sip"
 )
 
 // CallInfo is what the MMTel AS knows about a call when it evaluates
@@ -353,9 +355,9 @@ func sameIdentity(a, b string) bool {
 	if okA || okB {
 		return okA && okB && na == nb
 	}
-	sa, ua, ha := splitSIPURI(a)
-	sb, ub, hb := splitSIPURI(b)
-	return sa != "" && sa == sb && ua == ub && strings.EqualFold(ha, hb)
+	ua, errA := sip.ParseURI(a)
+	ub, errB := sip.ParseURI(b)
+	return errA == nil && errB == nil && ua.Scheme == ub.Scheme && ua.User == ub.User && strings.EqualFold(ua.Host, ub.Host)
 }
 
 // telephoneNumber returns the number of a tel URI, or of a SIP URI with
@@ -394,22 +396,6 @@ func hasUserPhone(hostAndParams string) bool {
 	return slices.ContainsFunc(params[1:], func(p string) bool { return strings.EqualFold(p, "user=phone") })
 }
 
-// splitSIPURI returns the scheme, the user and the host of a SIP URI.
-func splitSIPURI(uri string) (scheme, user, host string) {
-	scheme, rest, found := strings.Cut(uri, ":")
-	scheme = strings.ToLower(scheme)
-	if !found || (scheme != "sip" && scheme != "sips") {
-		return "", "", ""
-	}
-	rest, _, _ = strings.Cut(rest, "?")
-	if u, h, ok := strings.Cut(rest, "@"); ok {
-		user, rest = u, h
-	}
-	host, _, _ = strings.Cut(rest, ";")
-	host, _, _ = strings.Cut(host, ":")
-	return scheme, user, host
-}
-
 // domainOf returns the host of a SIP URI, the domain that cp:many
 // compares (RFC 4745 7.1.3). A tel URI has none.
 //
@@ -417,6 +403,9 @@ func splitSIPURI(uri string) (scheme, user, host string) {
 // percent-decoding and without the ToASCII step for internationalized
 // names; IMS domains are ASCII.
 func domainOf(identity string) string {
-	_, _, host := splitSIPURI(identity)
-	return host
+	u, err := sip.ParseURI(identity)
+	if err != nil {
+		return ""
+	}
+	return u.Host
 }
