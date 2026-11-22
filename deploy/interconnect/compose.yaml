@@ -200,8 +200,8 @@ services:
 
   # The UE simulators of network B, subscribers 1 and 2 of hss.yaml. Run
   # them like ue and ue2, with the flags of network B: --domain, --impi,
-  # --impu, --password, --pcscf, --pcscf-uri and --sc (see "Run it" in
-  # docs/guide/en/interconnect.md).
+  # --impu, --password, --pcscf and --pcscf-uri, and --sc for "ue sms"
+  # (see "Run it" in docs/guide/en/interconnect.md).
   peer-ue:
     <<: *peer-ue
     volumes:

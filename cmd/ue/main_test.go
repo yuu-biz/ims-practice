@@ -1,7 +1,12 @@
 package main
 
 import (
+	"bytes"
 	"encoding/hex"
+	"flag"
+	"io"
+	"slices"
+	"strings"
 	"testing"
 
 	"github.com/yuu-biz/ims-practice/internal/aka"
@@ -30,6 +35,99 @@ func TestUSIMConfig(t *testing.T) {
 	} {
 		if _, err := usimConfig(bad[0], bad[1], bad[2], bad[3]); err == nil {
 			t.Errorf("usimConfig%v: no error", bad)
+		}
+	}
+}
+
+// flagNames are the names of the flags that command defines.
+func flagNames(t *testing.T, command string) []string {
+	t.Helper()
+	flags, ok := newFlagSet(command, new(options), flag.ContinueOnError)
+	if !ok {
+		t.Fatalf("no command %q", command)
+	}
+	var names []string
+	flags.VisitAll(func(f *flag.Flag) { names = append(names, f.Name) })
+	return names
+}
+
+// "ue register -h" lists the flags of registration, and none of the
+// flags of a call.
+func TestRegisterHelpListsOnlyItsFlags(t *testing.T) {
+	var o options
+	flags, _ := newFlagSet("register", &o, flag.ContinueOnError)
+	var help bytes.Buffer
+	flags.SetOutput(&help)
+	if err := flags.Parse([]string{"-h"}); err != flag.ErrHelp {
+		t.Fatalf("Parse(-h) = %v; want flag.ErrHelp", err)
+	}
+	listed := map[string]bool{}
+	for _, line := range strings.Split(help.String(), "\n") {
+		if strings.HasPrefix(line, "  -") {
+			listed[strings.Fields(line)[0]] = true
+		}
+	}
+	for _, want := range []string{"-impi", "-impu", "-password", "-pcscf", "-k", "-opc", "-expires", "-deregister-after"} {
+		if !listed[want] {
+			t.Errorf("ue register -h does not list %s:\n%s", want, help.String())
+		}
+	}
+	for _, not := range []string{"-ring", "-wav-in", "-control", "-tone", "-status-report", "-give-up-after", "-xcap-root"} {
+		if listed[not] {
+			t.Errorf("ue register -h lists %s", not)
+		}
+	}
+}
+
+// Each command rejects the flags that belong to the other commands,
+// rather than ignoring them.
+func TestCommandsRejectTheFlagsOfOthers(t *testing.T) {
+	commands := []string{"register", "call", "answer", "serve", "sms", "xcap", "ctl"}
+	all := map[string]bool{}
+	for _, c := range commands {
+		for _, name := range flagNames(t, c) {
+			all[name] = true
+		}
+	}
+	for _, c := range commands {
+		own := flagNames(t, c)
+		for name := range all {
+			if slices.Contains(own, name) {
+				continue
+			}
+			var o options
+			flags, _ := newFlagSet(c, &o, flag.ContinueOnError)
+			flags.SetOutput(io.Discard)
+			err := flags.Parse([]string{"-" + name + "=1"})
+			if err == nil || !strings.Contains(err.Error(), "flag provided but not defined") {
+				t.Errorf("ue %s -%s: err = %v; want flag provided but not defined", c, name, err)
+			}
+		}
+	}
+}
+
+// The flags that each command defines are the ones its code reads: run
+// for register, call, answer and sms, serve, runXCAP, and runCtl.
+func TestFlagsOfEachCommand(t *testing.T) {
+	registration := []string{"domain", "impi", "impu", "password", "k", "opc", "op", "sqn", "port-s", "pcscf", "epc", "pcscf-uri", "listen", "hep", "expires", "features"}
+	media := []string{"media-listen", "codecs", "no-preconditions"}
+	audio := []string{"wav-in", "amr-in", "tone"}
+	recording := []string{"wav-out", "sent-out", "received-out"}
+	answering := []string{"ring", "reject"}
+	for command, want := range map[string][]string{
+		"register": slices.Concat(registration, []string{"deregister-after"}),
+		"call":     slices.Concat(registration, media, audio, recording, []string{"give-up-after"}),
+		"answer":   slices.Concat(registration, media, audio, recording, answering),
+		"serve":    slices.Concat(registration, media, audio, answering, []string{"sc", "control", "xcap-root", "ut-password"}),
+		"sms":      slices.Concat(registration, []string{"sc", "status-report", "report-wait"}),
+		"xcap":     {"domain", "impi", "impu", "password", "xcap-root", "ut-password"},
+		"ctl":      {"control"},
+	} {
+		got := flagNames(t, command)
+		slices.Sort(got)
+		slices.Sort(want)
+		if !slices.Equal(got, want) {
+			t.Errorf("ue %s defines %v; want %v", command, got, want)
 		}
 	}
 }

@@ -34,6 +34,7 @@ func TestStaleCommandsFail(t *testing.T) {
 		"docker compose frobnicate\n"+
 		"docker compose run --rm ue dial tel:+12025550102\n"+
 		"docker compose run --rm ue2 xcap \\\n  --no-such-flag x set cfu on\n"+
+		"docker compose run --rm ue call --ring 1s tel:+12025550102\n"+
 		"curl http://localhost:9999/api/calls\n"+
 		"bash scripts/e2e-nosuch.sh && ls scripts/nosuch-*.sh\n"+
 		"```\n\n"+
@@ -57,7 +58,8 @@ func TestStaleCommandsFail(t *testing.T) {
 		`docker compose logs -f scscf nosuch2: no service "nosuch2" in compose.yaml`,
 		`docker compose frobnicate: docker compose has no command "frobnicate"`,
 		`docker compose run --rm ue dial tel:+12025550102: ue has no subcommand "dial"`,
-		"docker compose run --rm ue2 xcap --no-such-flag x set cfu on: ue has no flag -no-such-flag",
+		"docker compose run --rm ue2 xcap --no-such-flag x set cfu on: ue xcap has no flag -no-such-flag",
+		"docker compose run --rm ue call --ring 1s tel:+12025550102: ue call has no flag -ring",
 		"curl http://localhost:9999/api/calls: curl to localhost:9999, whose routes this check does not know; add the address to httpHosts in slides/internal/facts",
 		"scripts/e2e-nosuch.sh does not exist",
 		"scripts/nosuch-*.sh matches no file",

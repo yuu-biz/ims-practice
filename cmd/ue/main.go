@@ -94,17 +94,27 @@ const usage = `usage: ue register [flags]
        ue xcap [flags] get | set SERVICE on|off [TARGET] | oir restricted|not-restricted | noreply SECONDS
        ue ctl [-control host:port] ACTION (see ue ctl help)
 
+"ue COMMAND -h" lists the flags of COMMAND.
+
 Exit status 0 means that the registration, or the call, succeeded; for
 serve, that it stopped and deregistered; for sms, that the SC took the
 short message.
 `
 
+// defaultMediaListen is where the RTP socket of a command listens when
+// the command has no -media-listen: "ue register" and "ue sms" open one
+// because every command of run does, and they send no media.
+const defaultMediaListen = "0.0.0.0:0"
+
 type options struct {
-	cfg             ue.Config
-	pcscf, listen   string
-	mediaListen     string
-	hepCollector    string
-	deregisterAfter time.Duration
+	cfg ue.Config
+	// The flags that are not copied into cfg as they are, but need to
+	// be turned into something once they are parsed.
+	domain, features, k, opc, op, sqn, codecs string
+	pcscf, listen                             string
+	mediaListen                               string
+	hepCollector                              string
+	deregisterAfter                           time.Duration
 	// Audio and recording.
 	wavIn, amrIn, wavOut, sentOut, receivedOut string
 	toneFor                                    time.Duration
@@ -129,9 +139,145 @@ type options struct {
 	// epc is the UE API of the EPC stub to attach to; empty means no
 	// access network, with the P-CSCF that -pcscf names.
 	epc string
-	// codecs are the names of the speech codecs to offer, empty for the
-	// default.
-	codecs string
+}
+
+// A flagGroup defines the flags of one concern on the flag set of a
+// command. A command defines only the groups whose flags it reads, so
+// that "ue COMMAND -h" lists what the command takes, and the flag package
+// rejects a flag that the command would ignore.
+type flagGroup func(o *options, flags *flag.FlagSet)
+
+// commandGroups are the flag groups of each command. The commands that
+// register (register, call, answer, sms and serve) all take the
+// registration flags; the rest are the command's own.
+var commandGroups = map[string][]flagGroup{
+	"register": {registrationFlags, registerFlags},
+	"call":     {registrationFlags, mediaFlags, audioFlags, recordingFlags, callFlags},
+	"answer":   {registrationFlags, mediaFlags, audioFlags, recordingFlags, answerFlags},
+	"serve":    {registrationFlags, mediaFlags, audioFlags, answerFlags, shortMessageCentreFlag, controlFlag, xcapFlags},
+	"sms":      {registrationFlags, shortMessageCentreFlag, smsFlags},
+	"xcap":     {identityFlags, xcapFlags},
+	"ctl":      {controlFlag},
+}
+
+// newFlagSet is the flag set of command, with the defaults of its flags
+// in o; ok is false for a command that does not exist.
+func newFlagSet(command string, o *options, handling flag.ErrorHandling) (flags *flag.FlagSet, ok bool) {
+	groups, ok := commandGroups[command]
+	if !ok {
+		return nil, false
+	}
+	flags = flag.NewFlagSet(command, handling)
+	o.mediaListen = defaultMediaListen
+	for _, define := range groups {
+		define(o, flags)
+	}
+	commandUsage := usage
+	switch command {
+	case "xcap":
+		commandUsage = xcapUsage
+	case "ctl":
+		commandUsage = ctlUsage
+	}
+	flags.Usage = func() {
+		fmt.Fprint(flags.Output(), commandUsage)
+		fmt.Fprintf(flags.Output(), "\nFlags of ue %s:\n", command)
+		flags.PrintDefaults()
+	}
+	return flags, true
+}
+
+// identityFlags are who the UE is, for the commands that sign in with
+// it: the registration, and the HTTP Digest of Ut.
+func identityFlags(o *options, flags *flag.FlagSet) {
+	flags.StringVar(&o.domain, "domain", "ims.mnc001.mcc001.3gppnetwork.org", "home network domain")
+	flags.StringVar(&o.cfg.PrivateIdentity, "impi", "001010000000001@ims.mnc001.mcc001.3gppnetwork.org", "private user identity")
+	flags.StringVar(&o.cfg.PublicIdentity, "impu", "sip:+12025550101@ims.mnc001.mcc001.3gppnetwork.org", "public user identity")
+	flags.StringVar(&o.cfg.Password, "password", "test-password-1", "SIP Digest password")
+}
+
+// registrationFlags are what every command that registers takes: the
+// identity, IMS AKA, where the UE attaches and registers from, and the
+// registration itself.
+func registrationFlags(o *options, flags *flag.FlagSet) {
+	identityFlags(o, flags)
+	flags.StringVar(&o.k, "k", "", "IMS AKA instead of SIP Digest: the USIM's K, 32 hexadecimal digits")
+	flags.StringVar(&o.opc, "opc", "", "IMS AKA: the USIM's OPc, 32 hexadecimal digits")
+	flags.StringVar(&o.op, "op", "", "IMS AKA: the operator's OP, 32 hexadecimal digits, from which the UE derives OPc (TS 35.206 4.1)")
+	flags.StringVar(&o.sqn, "sqn", "000000000000", "IMS AKA: SQN_MS, the highest sequence number the USIM has accepted, 12 hexadecimal digits")
+	flags.IntVar(&o.portS, "port-s", 5062, "IMS AKA: the protected server port (TS 33.203 7.1), on the address of -listen")
+	flags.StringVar(&o.pcscf, "pcscf", "172.28.0.40:5060", "P-CSCF address, host:port; with -epc only the port counts, and the address comes from the PCO")
+	flags.StringVar(&o.epc, "epc", "", "URL of the UE API of the EPC stub, such as http://172.28.0.80:8080, to attach to before registering; the IMSI is the user part of -impi")
+	flags.StringVar(&o.cfg.PCSCFURI, "pcscf-uri", "sip:pcscf.ims.mnc001.mcc001.3gppnetwork.org:5060", "P-CSCF URI for the Route of requests")
+	flags.StringVar(&o.listen, "listen", "0.0.0.0:5060", "local address for SIP over UDP and TCP")
+	flags.StringVar(&o.hepCollector, "hep", os.Getenv("UE_HEP"), "HEP collector, host:port, to copy every SIP message to; empty copies nothing (default from $UE_HEP)")
+	flags.DurationVar(&o.cfg.Expires, "expires", ue.DefaultExpires, "registration interval to ask for")
+	flags.StringVar(&o.features, "features", ue.DefaultFeatures.String()[1:], "feature parameters of the registered Contact (RFC 3840), separated by ';'; empty registers none")
+}
+
+// registerFlags are those of "ue register".
+func registerFlags(o *options, flags *flag.FlagSet) {
+	flags.DurationVar(&o.deregisterAfter, "deregister-after", 0, "deregister after this long; 0 stays registered until stopped")
+}
+
+// mediaFlags are how a command that makes or takes calls sets up their
+// media and their codecs.
+func mediaFlags(o *options, flags *flag.FlagSet) {
+	flags.StringVar(&o.mediaListen, "media-listen", defaultMediaListen, "local UDP address for RTP")
+	flags.StringVar(&o.codecs, "codecs", "", "speech codecs to offer and accept, most preferred first, of "+strings.Join(ue.VoLTECodecNames, ",")+
+		"; empty means all of them with -epc (IR.92) and PCMU without, as a softphone offers")
+	flags.BoolVar(&o.cfg.Calls.NoPreconditions, "no-preconditions", false, "do not use the precondition mechanism (TS 24.229 5.1.5A)")
+}
+
+// audioFlags are what a call plays.
+func audioFlags(o *options, flags *flag.FlagSet) {
+	flags.StringVar(&o.wavIn, "wav-in", "", "WAV file to play in a PCMU call (8 kHz, 16-bit, mono); empty plays a tone")
+	flags.StringVar(&o.amrIn, "amr-in", "", "AMR or AMR-WB file (RFC 4867 storage format) to play in a call in that codec; empty plays a tone")
+	flags.DurationVar(&o.toneFor, "tone", 3*time.Second, "length of the tone when there is no -wav-in or -amr-in")
+}
+
+// recordingFlags are what the one call of a command saves.
+func recordingFlags(o *options, flags *flag.FlagSet) {
+	flags.StringVar(&o.wavOut, "wav-out", "", "WAV file to write what was heard in a PCMU call to")
+	flags.StringVar(&o.sentOut, "sent-out", "", "file to write what was sent to: the PCMU payloads, or an AMR or AMR-WB file of the frames")
+	flags.StringVar(&o.receivedOut, "received-out", "", "file to write what was received to: the PCMU payloads, or an AMR or AMR-WB file of the frames")
+}
+
+// answerFlags are the answer policy of a command that takes calls ("ue
+// serve" keeps it until the controller sets another).
+func answerFlags(o *options, flags *flag.FlagSet) {
+	flags.DurationVar(&o.ringFor, "ring", ue.DefaultRing, "how long to ring before answering")
+	flags.IntVar(&o.reject, "reject", 0, "reject the call with this status code, such as 486")
+}
+
+// callFlags are those of "ue call".
+func callFlags(o *options, flags *flag.FlagSet) {
+	flags.DurationVar(&o.giveUpAfter, "give-up-after", 0, "hang up with CANCEL when there is no answer by then; 0 waits")
+}
+
+// shortMessageCentreFlag is where the short messages of a command that
+// sends them go.
+func shortMessageCentreFlag(o *options, flags *flag.FlagSet) {
+	flags.StringVar(&o.cfg.SCAddress, "sc", "+12025550100", "number of the SC (service centre) that short messages go to, in international format")
+}
+
+// smsFlags are those of "ue sms".
+func smsFlags(o *options, flags *flag.FlagSet) {
+	flags.BoolVar(&o.statusReport, "status-report", false, "ask for a status report, and wait for it too")
+	flags.DurationVar(&o.reportWait, "report-wait", 30*time.Second, "how long to wait for the submit report, and for the status report")
+}
+
+// controlFlag is the address of the HTTP control API: "ue serve" serves
+// it and "ue ctl" calls it.
+func controlFlag(o *options, flags *flag.FlagSet) {
+	flags.StringVar(&o.control, "control", ":8090", "address of the HTTP control API")
+}
+
+// xcapFlags are the XCAP client of a command that changes the
+// supplementary services over Ut.
+func xcapFlags(o *options, flags *flag.FlagSet) {
+	flags.StringVar(&o.xcapRoot, "xcap-root", "", "XCAP Root URI; empty is http://xcap.<domain> (TS 23.003 13.9.1.2)")
+	flags.StringVar(&o.utPassword, "ut-password", "", "password of HTTP Digest on Ut; empty is -password")
 }
 
 func main() {
@@ -140,50 +286,21 @@ func main() {
 		os.Exit(2)
 	}
 	command := os.Args[1]
-	flags := flag.NewFlagSet(command, flag.ExitOnError)
 	var o options
-	domain := flags.String("domain", "ims.mnc001.mcc001.3gppnetwork.org", "home network domain")
-	flags.StringVar(&o.cfg.PrivateIdentity, "impi", "001010000000001@ims.mnc001.mcc001.3gppnetwork.org", "private user identity")
-	flags.StringVar(&o.cfg.PublicIdentity, "impu", "sip:+12025550101@ims.mnc001.mcc001.3gppnetwork.org", "public user identity")
-	flags.StringVar(&o.cfg.Password, "password", "test-password-1", "SIP Digest password")
-	k := flags.String("k", "", "IMS AKA instead of SIP Digest: the USIM's K, 32 hexadecimal digits")
-	opc := flags.String("opc", "", "IMS AKA: the USIM's OPc, 32 hexadecimal digits")
-	op := flags.String("op", "", "IMS AKA: the operator's OP, 32 hexadecimal digits, from which the UE derives OPc (TS 35.206 4.1)")
-	sqn := flags.String("sqn", "000000000000", "IMS AKA: SQN_MS, the highest sequence number the USIM has accepted, 12 hexadecimal digits")
-	flags.IntVar(&o.portS, "port-s", 5062, "IMS AKA: the protected server port (TS 33.203 7.1), on the address of -listen")
-	flags.StringVar(&o.pcscf, "pcscf", "172.28.0.40:5060", "P-CSCF address, host:port; with -epc only the port counts, and the address comes from the PCO")
-	flags.StringVar(&o.epc, "epc", "", "URL of the UE API of the EPC stub, such as http://172.28.0.80:8080, to attach to before registering; the IMSI is the user part of -impi")
-	flags.StringVar(&o.cfg.PCSCFURI, "pcscf-uri", "sip:pcscf.ims.mnc001.mcc001.3gppnetwork.org:5060", "P-CSCF URI for the Route of requests")
-	flags.StringVar(&o.listen, "listen", "0.0.0.0:5060", "local address for SIP over UDP and TCP")
-	flags.StringVar(&o.mediaListen, "media-listen", "0.0.0.0:0", "local UDP address for RTP")
-	flags.StringVar(&o.hepCollector, "hep", os.Getenv("UE_HEP"), "HEP collector, host:port, to copy every SIP message to; empty copies nothing (default from $UE_HEP)")
-	flags.DurationVar(&o.cfg.Expires, "expires", ue.DefaultExpires, "registration interval to ask for")
-	features := flags.String("features", ue.DefaultFeatures.String()[1:], "feature parameters of the registered Contact (RFC 3840), separated by ';'; empty registers none")
-	flags.DurationVar(&o.deregisterAfter, "deregister-after", 0, "register: deregister after this long; 0 stays registered until stopped")
-	flags.StringVar(&o.wavIn, "wav-in", "", "call, answer, serve: WAV file to play in a PCMU call (8 kHz, 16-bit, mono); empty plays a tone")
-	flags.StringVar(&o.amrIn, "amr-in", "", "call, answer, serve: AMR or AMR-WB file (RFC 4867 storage format) to play in a call in that codec; empty plays a tone")
-	flags.DurationVar(&o.toneFor, "tone", 3*time.Second, "call, answer, serve: length of the tone when there is no -wav-in or -amr-in")
-	flags.StringVar(&o.wavOut, "wav-out", "", "call, answer: WAV file to write what was heard in a PCMU call to")
-	flags.StringVar(&o.sentOut, "sent-out", "", "call, answer: file to write what was sent to: the PCMU payloads, or an AMR or AMR-WB file of the frames")
-	flags.StringVar(&o.receivedOut, "received-out", "", "call, answer: file to write what was received to: the PCMU payloads, or an AMR or AMR-WB file of the frames")
-	flags.DurationVar(&o.ringFor, "ring", ue.DefaultRing, "answer, serve: how long to ring before answering")
-	flags.IntVar(&o.reject, "reject", 0, "answer, serve: reject the call with this status code, such as 486")
-	flags.DurationVar(&o.giveUpAfter, "give-up-after", 0, "call: hang up with CANCEL when there is no answer by then; 0 waits")
-	flags.StringVar(&o.control, "control", ":8090", "serve, ctl: address of the HTTP control API")
-	flags.StringVar(&o.cfg.SCAddress, "sc", "+12025550100", "number of the SC (service centre) that short messages go to, in international format")
-	flags.BoolVar(&o.statusReport, "status-report", false, "sms: ask for a status report, and wait for it too")
-	flags.DurationVar(&o.reportWait, "report-wait", 30*time.Second, "sms: how long to wait for the submit report, and for the status report")
-	flags.StringVar(&o.xcapRoot, "xcap-root", "", "xcap, serve: XCAP Root URI; empty is http://xcap.<domain> (TS 23.003 13.9.1.2)")
-	flags.StringVar(&o.utPassword, "ut-password", "", "xcap, serve: password of HTTP Digest on Ut; empty is -password")
-	flags.StringVar(&o.codecs, "codecs", "", "speech codecs to offer and accept, most preferred first, of "+strings.Join(ue.VoLTECodecNames, ",")+
-		"; empty means all of them with -epc (IR.92) and PCMU without, as a softphone offers")
-	flags.BoolVar(&o.cfg.Calls.NoPreconditions, "no-preconditions", false, "do not use the precondition mechanism (TS 24.229 5.1.5A)")
-	flags.Usage = func() { fmt.Fprint(os.Stderr, usage); flags.PrintDefaults() }
+	flags, ok := newFlagSet(command, &o, flag.ExitOnError)
+	if !ok {
+		if command == "-h" || command == "-help" || command == "--help" {
+			fmt.Print(usage)
+			return
+		}
+		fmt.Fprint(os.Stderr, usage)
+		os.Exit(2)
+	}
 	flags.Parse(os.Args[2:])
-	o.cfg.HomeDomain = *domain
-	o.cfg.Features = sip.ParseParams(*features)
-	if *k != "" {
-		usim, err := usimConfig(*k, *opc, *op, *sqn)
+	o.cfg.HomeDomain = o.domain
+	o.cfg.Features = sip.ParseParams(o.features)
+	if o.k != "" {
+		usim, err := usimConfig(o.k, o.opc, o.op, o.sqn)
 		if err != nil {
 			fmt.Fprintln(os.Stderr, err)
 			os.Exit(2)
@@ -231,9 +348,6 @@ func main() {
 			fmt.Fprint(os.Stderr, ctlUsage)
 			os.Exit(2)
 		}
-	default:
-		fmt.Fprint(os.Stderr, usage)
-		os.Exit(2)
 	}
 	if err != nil {
 		log.Error("ue failed", "error", err.Error())
