@@ -145,3 +145,47 @@ func TestCancelThatMatchesNothingGets481(t *testing.T) {
 		t.Errorf("got %s, want 481", startLine(resp))
 	}
 }
+
+// TestCancelOfANonInviteGets200 is RFC 3261 9.2: a CANCEL that matches a
+// transaction of another method than INVITE gets 200, with the To tag of
+// the response to that request once there is one, and changes nothing
+// of what the request gets.
+func TestCancelOfANonInviteGets200(t *testing.T) {
+	answer := make(chan struct{})
+	server := newStack(t, slowTimers, func(st *ServerTransaction) {
+		<-answer
+		st.Respond(NewResponse(st.Request, 200, "server"))
+	})
+	peer := rawSocket(t)
+	rawOptions := func() *Message {
+		m := rawInvite(peer)
+		m.Method = OPTIONS
+		m.Set("CSeq", "1 OPTIONS")
+		return m
+	}
+	read := func(cseq string) *Message {
+		t.Helper()
+		m := readDatagram(t, peer)
+		if m.StatusCode != 200 || m.Get("CSeq") != cseq {
+			t.Fatalf("got %s %q, want 200 for %s", startLine(m), m.Get("CSeq"), cseq)
+		}
+		return m
+	}
+
+	// Before the final response.
+	pending := rawOptions()
+	send(t, peer, pending, server)
+	send(t, peer, newMatchingRequest(pending, CANCEL, pending.Get("To")), server)
+	read("1 CANCEL")
+	close(answer)
+	read("1 OPTIONS")
+
+	// After it: the OPTIONS transaction waits in Completed for Timer J.
+	answered := rawOptions()
+	send(t, peer, answered, server)
+	resp := read("1 OPTIONS")
+	send(t, peer, newMatchingRequest(answered, CANCEL, answered.Get("To")), server)
+	if got, want := read("1 CANCEL").Get("To"), resp.Get("To"); got != want {
+		t.Errorf("200 To = %q, want the OPTIONS response's %q", got, want)
+	}
+}
