@@ -12,7 +12,9 @@ concurrency:
 
 jobs:
   # A change that touches only documents needs the checks of the docs job
-  # and nothing else: no test reads the Markdown files or the licences.
+  # and nothing else: no test reads the Markdown files or the licences,
+  # except the tables of docs/guide/*/capture.md and docs/guide/*/README.md,
+  # which deploy/compose checks against compose.yaml.
   # The other jobs are skipped then, and a skipped job counts as passed.
   changes:
     runs-on: ubuntu-latest
@@ -33,6 +35,10 @@ jobs:
           fi
           code=$(git diff --name-only "$BASE" HEAD |
             grep -Ev '\.md$|^docs/|^LICENSE|^NOTICE$' | head -n 1 || true)
+          if [ -z "$code" ]; then
+            code=$(git diff --name-only "$BASE" HEAD |
+              grep -E '^docs/guide/(en|ja)/(capture|README)\.md$' | head -n 1 || true)
+          fi
           echo "first file that is not a document: ${code:-none}"
           echo "code=$([ -n "$code" ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
 
