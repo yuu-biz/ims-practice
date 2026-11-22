@@ -421,17 +421,12 @@ pcap="$nni_pcap" await "the MESSAGE from the host of no peer network" \
 	"sip.Method == \"MESSAGE\" && ip.src == $stranger && ip.dst == 172.28.2.10"
 
 # The checks below read the capture that pcap names, with the helpers of
-# scripts/e2e-lib.sh. RTP flows before tshark sees the SDP of some of
+# scripts/e2e-lib.sh. Each capture has an order of its own, so the
+# checks of each start again at its first frame; then they follow the
+# scenarios, which ran one after the other, and within a scenario what
+# each message causes. RTP flows before tshark sees the SDP of some of
 # its ports.
 tshark_options=(-o rtp.heuristic_rtp:TRUE)
-last=0
-# some checks that the capture has a frame that passes the filter,
-# anywhere in it: the checks of this section look at the messages of
-# separate scenarios, in no order between them.
-some() {
-	last=0
-	expect "$@"
-}
 
 icscf=172.28.0.20
 scscf=172.28.0.30
@@ -451,64 +446,92 @@ ue_a1_ip=172.28.0.100
 invite='sip.Method == "INVITE"'
 
 echo "network A (ims0)"
-pcap="$home_pcap" some "ENUM gives network B's domain for +1 202 555 0151" \
+pcap="$home_pcap"
+last=0
+# UE A1 calls UE B1: the S-CSCF finds network B by ENUM and sends the
+# INVITE out of network A through IBCF-A.
+expect "ENUM gives network B's domain for +1 202 555 0151" \
 	'dns.qry.name == "1.5.1.0.5.5.5.2.0.2.1.e164.arpa" && dns.naptr.regex contains "ims.mnc002"'
-pcap="$home_pcap" some "INVITE S-CSCF -> IBCF-A with the IBCF on top of Route" \
+expect "INVITE S-CSCF -> IBCF-A with the IBCF on top of Route" \
 	"$invite && ip.src == $scscf && ip.dst == $ibcf_a && sip.Route contains \"ibcf.ims.mnc001\""
-pcap="$home_pcap" some "MESSAGE IP-SM-GW -> IBCF-A from the SC's number" \
-	"sip.Method == \"MESSAGE\" && ip.dst == $ibcf_a && sip.P-Asserted-Identity contains \"tel:+12025550100\""
-pcap="$home_pcap" some "INVITE IBCF-A -> I-CSCF from network B" \
+# UE B1 calls UE A2.
+expect "INVITE IBCF-A -> I-CSCF from network B" \
 	"$invite && ip.src == $ibcf_a && ip.dst == $icscf && sip.r-uri.user == \"+12025550102\""
-# IBCF-B put the SC's tel URI into a SIP URI of network B's domain,
-# since numbers cross in SIP URIs by the agreement (TS 29.165 8.1).
-pcap="$home_pcap" some "MESSAGE IBCF-A -> I-CSCF from network B's SC" \
+# UE A1 sends UE B1 a short message.
+expect "MESSAGE IP-SM-GW -> IBCF-A from the SC's number" \
+	"sip.Method == \"MESSAGE\" && ip.dst == $ibcf_a && sip.P-Asserted-Identity contains \"tel:+12025550100\""
+# UE B1 answers with one. IBCF-B put the SC's tel URI into a SIP URI of
+# network B's domain, since numbers cross in SIP URIs by the agreement
+# (TS 29.165 8.1).
+expect "MESSAGE IBCF-A -> I-CSCF from network B's SC" \
 	"sip.Method == \"MESSAGE\" && ip.src == $ibcf_a && ip.dst == $icscf && sip.r-uri.user == \"+12025550101\" && sip.P-Asserted-Identity contains \"sip:+12025550150@ims.mnc002\""
-pcap="$home_pcap" some "MESSAGE from network B reaches network A's IP-SM-GW" \
+expect "MESSAGE from network B reaches network A's IP-SM-GW" \
 	"sip.Method == \"MESSAGE\" && ip.src == $scscf && ip.dst == $ipsmgw && sip.P-Served-User contains \"sescase=term\" && gsm_sms.sms_text contains \"UE-A1\""
-pcap="$home_pcap" some "MESSAGE IP-SM-GW of network A -> UE A1 path, network B's SC in the RP-OA" \
+expect "MESSAGE IP-SM-GW of network A -> UE A1 path, network B's SC in the RP-OA" \
 	"sip.Method == \"MESSAGE\" && ip.dst == $ue_a1_ip && gsm_sms.sms_text contains \"UE-A1\" && sip.P-Asserted-Identity contains \"ipsmgw.ims.mnc001\" && gsm_a.dtap.clg_party_bcd_num == \"12025550150\""
-pcap="$home_pcap" some "405 from IBCF-A for MESSAGE without the agreement" \
+# The first mismatch: IBCF-A's agreement leaves MESSAGE out.
+expect "405 from IBCF-A for MESSAGE without the agreement" \
 	"sip.Status-Code == 405 && ip.src == $ibcf_a && sip.CSeq.method == \"MESSAGE\""
 
 echo "the link between the networks (nni0)"
-# Each IBCF is a B2BUA: the INVITE on the link starts a dialog of
-# IBCF-A's own, with its Via and its Contact only, and no Record-Route.
-pcap="$nni_pcap" some "INVITE IBCF-A -> IBCF-B with the Via of IBCF-A alone" \
+pcap="$nni_pcap"
+last=0
+# UE A1 calls UE B1. Each IBCF is a B2BUA: the INVITE on the link starts
+# a dialog of IBCF-A's own, with its Via and its Contact only, and no
+# Record-Route. The three checks of that INVITE start at the same frame.
+mark
+expect "INVITE IBCF-A -> IBCF-B with the Via of IBCF-A alone" \
 	"$invite && ip.src == $ibcf_a_nni && ip.dst == $ibcf_b_nni && sip.Via contains \"ibcf.nni.mnc001.example.net\" && count(sip.Via) == 1"
-pcap="$nni_pcap" none "Record-Route on the link" 'sip.Record-Route'
-pcap="$nni_pcap" some "Contact of the caller is IBCF-A" \
+back
+expect "Contact of the caller is IBCF-A" \
 	"$invite && ip.src == $ibcf_a_nni && sip.Contact contains \"sip:ibcf.nni.mnc001.example.net:5060\""
-pcap="$nni_pcap" some "SDP of the offer points at TrGW-A" \
+back
+expect "SDP of the offer points at TrGW-A" \
 	"$invite && ip.src == $ibcf_a_nni && sdp.connection_info.address == $trgw_a_nni"
-pcap="$nni_pcap" some "SDP of the answer points at TrGW-B" \
+# The answer and the media of each way follow the offer side by side.
+mark
+expect "SDP of the answer points at TrGW-B" \
 	"sip.Status-Code == 183 && ip.src == $ibcf_b_nni && sdp.connection_info.address == $trgw_b_nni"
-pcap="$nni_pcap" some "RTP TrGW-A -> TrGW-B" "rtp && ip.src == $trgw_a_nni && ip.dst == $trgw_b_nni"
-pcap="$nni_pcap" some "RTP TrGW-B -> TrGW-A" "rtp && ip.src == $trgw_b_nni && ip.dst == $trgw_a_nni"
-pcap="$nni_pcap" some "MESSAGE IBCF-A -> IBCF-B with the short message, RP and TP decoded" \
+back
+expect "RTP TrGW-A -> TrGW-B" "rtp && ip.src == $trgw_a_nni && ip.dst == $trgw_b_nni"
+back
+expect "RTP TrGW-B -> TrGW-A" "rtp && ip.src == $trgw_b_nni && ip.dst == $trgw_a_nni"
+# The short messages, from network A and back, come after the call.
+back
+expect "MESSAGE IBCF-A -> IBCF-B with the short message, RP and TP decoded" \
 	"sip.Method == \"MESSAGE\" && ip.src == $ibcf_a_nni && gsm_sms.sms_text contains \"UE-B1\""
-pcap="$nni_pcap" some "MESSAGE IBCF-B -> IBCF-A with the short message" \
+expect "MESSAGE IBCF-B -> IBCF-A with the short message" \
 	"sip.Method == \"MESSAGE\" && ip.src == $ibcf_b_nni && gsm_sms.sms_text contains \"UE-A1\""
-pcap="$nni_pcap" some "404 from IBCF-B for the local number" \
-	"sip.Status-Code == 404 && ip.src == $ibcf_b_nni && sip.CSeq.method == \"INVITE\""
-pcap="$nni_pcap" some "488 from IBCF-B when no codec is left" \
+# The mismatches on the link: no common codec, then the local number.
+expect "488 from IBCF-B when no codec is left" \
 	"sip.Status-Code == 488 && ip.src == $ibcf_b_nni && sip.CSeq.method == \"INVITE\""
-pcap="$nni_pcap" none "P-Charging-Function-Addresses" 'sip.P-Charging-Function-Addresses'
+expect "404 from IBCF-B for the local number" \
+	"sip.Status-Code == 404 && ip.src == $ibcf_b_nni && sip.CSeq.method == \"INVITE\""
+mismatched="$last"
+none "Record-Route on the link" 'sip.Record-Route'
+none "P-Charging-Function-Addresses" 'sip.P-Charging-Function-Addresses'
 
 echo "network B (ims1)"
-pcap="$peer_pcap" some "INVITE IBCF-B -> I-CSCF with the number in a SIP URI" \
+pcap="$peer_pcap"
+last=0
+# UE A1 calls UE B1.
+expect "INVITE IBCF-B -> I-CSCF with the number in a SIP URI" \
 	"$invite && ip.src == $ibcf_b && ip.dst == $peer_icscf && sip.r-uri.user == \"+12025550151\" && sip.r-uri contains \"user=phone\""
-pcap="$peer_pcap" some "INVITE I-CSCF -> S-CSCF with the tel URI" \
+expect "INVITE I-CSCF -> S-CSCF with the tel URI" \
 	"$invite && ip.src == $peer_icscf && ip.dst == $peer_scscf && sip.r-uri == \"tel:+12025550151\""
-pcap="$peer_pcap" some "INVITE to UE B1 with TrGW-B in the SDP" \
+expect "INVITE to UE B1 with TrGW-B in the SDP" \
 	"$invite && ip.dst == $ue_b1_ip && sdp.connection_info.address == $trgw_b"
-pcap="$peer_pcap" some "RTP TrGW-B -> UE B1" "rtp && ip.src == $trgw_b && ip.dst == $ue_b1_ip"
-pcap="$peer_pcap" some "MESSAGE from network A reaches network B's IP-SM-GW" \
+expect "RTP TrGW-B -> UE B1" "rtp && ip.src == $trgw_b && ip.dst == $ue_b1_ip"
+# UE A1 sends UE B1 a short message.
+expect "MESSAGE from network A reaches network B's IP-SM-GW" \
 	"sip.Method == \"MESSAGE\" && ip.dst == $peer_ipsmgw && sip.P-Served-User contains \"sescase=term\""
-pcap="$peer_pcap" some "MESSAGE IP-SM-GW of network B -> UE B1 path" \
+expect "MESSAGE IP-SM-GW of network B -> UE B1 path" \
 	"sip.Method == \"MESSAGE\" && ip.dst == $ue_b1_ip && gsm_sms.sms_text contains \"UE-B1\""
-pcap="$peer_pcap" some "ENUM gives network A's domain for +1 202 555 0101" \
+# UE B1 answers with one: the IP-SM-GW of network B finds network A by
+# ENUM and sends the short message to IBCF-B.
+expect "ENUM gives network A's domain for +1 202 555 0101" \
 	'dns.qry.name == "1.0.1.0.5.5.5.2.0.2.1.e164.arpa" && dns.naptr.regex contains "ims.mnc001"'
-pcap="$peer_pcap" some "MESSAGE IP-SM-GW -> IBCF-B from the SC's number" \
+expect "MESSAGE IP-SM-GW -> IBCF-B from the SC's number" \
 	"sip.Method == \"MESSAGE\" && ip.src == $peer_ipsmgw && ip.dst == $ibcf_b && sip.Route contains \"ibcf.ims.mnc002\" && sip.P-Asserted-Identity contains \"tel:+12025550150\""
 
 echo "one icid-value in both networks, with the IOIs of each (TS 24.229 5.4.3.2 step 7, 5.4.3.3 step 7)"
@@ -520,11 +543,15 @@ peer_pcscf=172.28.1.40
 icid="$(pcap="$home_pcap" tshark_fields "$invite && ip.src == $scscf && ip.dst == $ibcf_a" sip.P-Charging-Vector | first_line |
 	sed -n 's/^icid-value=\([^;]*\);.*/\1/p')"
 [ -n "$icid" ] || icid=none
-pcap="$nni_pcap" some "INVITE IBCF-A -> IBCF-B with network A's icid-value and orig-ioi" \
+pcap="$nni_pcap"
+last=0
+expect "INVITE IBCF-A -> IBCF-B with network A's icid-value and orig-ioi" \
 	"$invite && ip.src == $ibcf_a_nni && ip.dst == $ibcf_b_nni && sip.P-Charging-Vector == \"icid-value=$icid;orig-ioi=$home_domain\""
-pcap="$nni_pcap" some "200 OK IBCF-B -> IBCF-A with network A's orig-ioi and network B's term-ioi" \
+expect "200 OK IBCF-B -> IBCF-A with network A's orig-ioi and network B's term-ioi" \
 	"sip.Status-Code == 200 && sip.CSeq.method == \"INVITE\" && ip.src == $ibcf_b_nni && sip.P-Charging-Vector == \"icid-value=$icid;orig-ioi=$home_domain;term-ioi=$peer_domain\""
-pcap="$peer_pcap" some "INVITE S-CSCF -> P-CSCF of network B with the same icid-value and network B's orig-ioi" \
+pcap="$peer_pcap"
+last=0
+expect "INVITE S-CSCF -> P-CSCF of network B with the same icid-value and network B's orig-ioi" \
 	"$invite && ip.src == $peer_scscf && ip.dst == $peer_pcscf && sip.P-Charging-Vector == \"icid-value=$icid;orig-ioi=$peer_domain\""
 pcap="$peer_pcap" none "P-Charging-Vector to UE B1" "ip.dst == $ue_b1_ip && sip.P-Charging-Vector"
 
@@ -593,9 +620,12 @@ expect "the link: PRACK IBCF-A -> IBCF-B" "sip.Method == \"PRACK\" && ip.src == 
 expect "the link: 200 to the PRACK" "sip.Status-Code == 200 && sip.CSeq.method == \"PRACK\" && ip.src == $ibcf_b_nni && $link_call"
 
 echo "the host of no peer network"
-pcap="$nni_pcap" some "INVITE from the host of no peer network on the link" \
+# The host sent its INVITE and then its MESSAGE after the mismatches.
+pcap="$nni_pcap"
+last="$mismatched"
+expect "INVITE from the host of no peer network on the link" \
 	"$invite && ip.src == $stranger && ip.dst == $ibcf_a_nni"
-pcap="$nni_pcap" some "MESSAGE from the host of no peer network on the link" \
+expect "MESSAGE from the host of no peer network on the link" \
 	"sip.Method == \"MESSAGE\" && ip.src == $stranger && ip.dst == $ibcf_a_nni"
 pcap="$nni_pcap" none "packets to the host of no peer network" "ip.dst == $stranger"
 pcap="$home_pcap" none "requests of the host of no peer network inside network A" \
