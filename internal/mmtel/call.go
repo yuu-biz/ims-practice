@@ -44,6 +44,15 @@ type call struct {
 	// caller in a reliable provisional response, after which the offer
 	// and answer of the INVITE are done on in.
 	sessionToCaller bool
+	// sessionFrom is the To tag of the dialog of out whose session
+	// description the caller got, the first that sent one. The INVITE of
+	// out may fork beyond the AS, and each UAS that answers it has an
+	// early dialog of its own (RFC 3261 13.2.2.4). The caller has one
+	// early dialog with the AS, which is one UAS: all its responses
+	// have one To tag (8.2.6.2). The caller takes the first session
+	// description as the answer and ignores the rest (13.2.1), so the
+	// responses of the other dialogs go to it without theirs.
+	sessionFrom string
 	// toCaller tells that a provisional response went to the caller, so
 	// that in has an early dialog.
 	toCaller bool
@@ -194,6 +203,16 @@ func errText(err error) string {
 		return ""
 	}
 	return err.Error()
+}
+
+// toTag is the To tag of m.
+func toTag(m *sip.Message) string {
+	na, err := sip.ParseNameAddr(m.Get("To"))
+	if err != nil {
+		return ""
+	}
+	tag, _ := na.Params.Get("tag")
+	return tag
 }
 
 // attemptResult is how an outgoing leg ended.
@@ -347,6 +366,7 @@ func (c *call) relayProvisional(out *sip.OutgoingCall, resp *sip.Message) {
 	body := sip.BodyOf(resp)
 	reliable := resp.Requires(sip.Option100rel)
 	fields := c.responseFields(resp, c.in.Request, true)
+	tag := toTag(resp)
 	c.mu.Lock()
 	if c.withhold {
 		if reliable && len(body.Content) > 0 {
@@ -355,6 +375,14 @@ func (c *call) relayProvisional(out *sip.OutgoingCall, resp *sip.Message) {
 		body = sip.Body{}
 		// Without a session description there is no early media.
 		fields.Remove("P-Early-Media")
+	}
+	if len(body.Content) > 0 && c.sessionFrom == "" {
+		c.sessionFrom = tag
+	}
+	from := c.sessionFrom
+	other := len(body.Content) > 0 && from != tag
+	if other {
+		body = sip.Body{}
 	}
 	// RFC 3262 5: after an INVITE without an offer, the first reliable
 	// response with a body has the callee's offer, and the PRACK the
@@ -368,6 +396,10 @@ func (c *call) relayProvisional(out *sip.OutgoingCall, resp *sip.Message) {
 	}
 	c.toCaller = true
 	c.mu.Unlock()
+	if other {
+		c.log.Info("session description of another early dialog of the callee's side not passed on to the caller",
+			"status", resp.StatusCode, "to_tag", tag, "caller_has", from)
+	}
 
 	c.passFocusContact(resp)
 	err := c.in.Progress(resp.StatusCode, body, fields.Headers...)
@@ -386,7 +418,8 @@ func (c *call) relayProvisional(out *sip.OutgoingCall, resp *sip.Message) {
 // then gets the BYE, with the Reason of the first (RFC 3326 2).
 func (c *call) answer(out *sip.OutgoingCall, resp *sip.Message) {
 	body := sip.BodyOf(resp)
-	if c.answerAfterTone(resp) {
+	played := c.answerAfterTone(resp)
+	if played {
 		// TS 24.182 4.5.5.3.7: the caller had its answer in a reliable
 		// provisional response, so the 2xx has no SDP.
 		body = sip.Body{}
@@ -395,7 +428,23 @@ func (c *call) answer(out *sip.OutgoingCall, resp *sip.Message) {
 	if c.withhold && len(body.Content) == 0 {
 		body = c.heldAnswer
 	}
+	from := c.sessionFrom
 	c.mu.Unlock()
+	if tag := toTag(resp); !played && from != "" && from != tag {
+		// The caller has the session description of another early
+		// dialog, and ignores a second one (RFC 3261 13.2.1).
+		//
+		// SIMPLIFIED: RFC 3261 13.2.1 and 14.1. The caller keeps the
+		// session description of the dialog that sent one first. The AS
+		// does not offer the caller the session of the dialog that
+		// answered in an UPDATE or a re-INVITE, so the caller's media
+		// goes on toward the first dialog. After an INVITE without an
+		// offer, the offer of a dialog that the caller did not answer
+		// gets no answer from the AS, and that UAS ends its dialog.
+		c.log.Info("answered in another early dialog than the one whose session description the caller has",
+			"to_tag", tag, "caller_has", from)
+		body = sip.Body{}
+	}
 	c.passFocusContact(resp)
 	ack, err := c.in.Accept(body, c.responseFields(resp, c.in.Request, true).Headers...)
 	if err != nil {
