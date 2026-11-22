@@ -386,6 +386,10 @@ func (b *IBCF) peerOfNextHop(m *sip.Message) (Peer, bool) {
 // longer than 1300 bytes go as RFC 3261 18.1.1 says. The sip stack does
 // that by itself: a request for UDP that is longer goes over TCP, and
 // over UDP after all when the peer refuses the connection.
+//
+// SIMPLIFIED: RFC 3263 4.2 and 4.3. Only the first target that DNS
+// gives for the peer is used, never the next one after a failure.
+// Every name in the DNS of this project leads to one server.
 func (b *IBCF) locateOutside(u sip.URI) (sip.Destination, error) {
 	peer, ok := b.peers.ByHost(u.Host)
 	if !ok {
