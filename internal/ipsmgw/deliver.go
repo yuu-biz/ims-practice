@@ -62,7 +62,7 @@ func (g *IPSMGW) Deliver(ctx context.Context, d Delivery) {
 	ibcf, leaves := g.exitIBCF(d.Recipient)
 	if leaves {
 		next = ibcf
-		g.leaveThroughIBCF(m, ibcf)
+		g.leaveThroughIBCF(m)
 		log = log.With("ibcf", ibcf.String())
 	}
 	log.Info("delivering")
@@ -125,7 +125,7 @@ func (g *IPSMGW) exitIBCF(recipient string) (sip.URI, bool) {
 // multipart body, the XML of the sender and Feature-Caps. The SC, not
 // the IP-SM-GW's SIP URI, is the asserted identity, so that no host name
 // of the home network crosses the border.
-func (g *IPSMGW) leaveThroughIBCF(m *sip.Message, ibcf sip.URI) {
+func (g *IPSMGW) leaveThroughIBCF(m *sip.Message) {
 	sc := sip.NameAddr{URI: "tel:" + g.cfg.ServiceCentre.String()}
 	m.Set("From", sc.String()+";tag="+sip.NewTag())
 	m.Set("P-Asserted-Identity", sc.String())

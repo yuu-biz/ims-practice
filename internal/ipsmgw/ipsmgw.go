@@ -219,10 +219,12 @@ func (g *IPSMGW) newMessage(to, disposition string, rp sms.RPMessage) (*sip.Mess
 func (g *IPSMGW) entryPoint() sip.URI { return sip.URI{Scheme: "sip", Host: g.cfg.HomeDomain} }
 
 // send sends a request of the IP-SM-GW to next and returns the final
-// response. With no final response, the error says why. The request
-// carries a Route to next: an AS that sends a request to a user puts the
-// S-CSCF of the user or the entry point of the user's network in Route,
-// without "orig" (TS 24.229 5.7.3).
+// response. With no final response, the error says why. A request
+// outside a dialog gets a Route to next: an AS that sends a request to a
+// user puts the S-CSCF of the user or the entry point of the user's
+// network in Route, without "orig" (TS 24.229 5.7.3). A request within a
+// dialog has the route set of the dialog in Route already (RFC 3261
+// 12.2.1.1).
 //
 // SIMPLIFIED: TS 24.229 5.7.1.1 and 5.7.3. The IP-SM-GW stores neither
 // the icid-value and the orig-ioi of a third-party REGISTER nor the
@@ -235,11 +237,13 @@ func (g *IPSMGW) send(m *sip.Message, next sip.URI) (*sip.Message, error) {
 	if err != nil {
 		return nil, err
 	}
-	route, err := ims.LooseRoute(next.String())
-	if err != nil {
-		return nil, err
+	if !ims.IsInDialog(m) {
+		route, err := ims.LooseRoute(next.String())
+		if err != nil {
+			return nil, err
+		}
+		m.Prepend("Route", sip.NameAddr{URI: route.String()}.String())
 	}
-	m.Prepend("Route", sip.NameAddr{URI: route.String()}.String())
 	dst, err := ims.Destination(context.Background(), g.locator, next)
 	if err != nil {
 		return nil, err

@@ -39,7 +39,7 @@ func TestDeliveryToAnotherNetworkLeavesThroughTheIBCF(t *testing.T) {
 		"P-Asserted-Identity": "<tel:+12025550100>",
 		"Accept-Contact":      "*;+g.3gpp.smsip;require;explicit",
 	})
-	if routes := mt.GetAll("Route"); len(routes) != 1 {
+	if routes := mt.GetAll("Route"); len(routes) != 1 || routes[0] != "<sip:"+ibcfHost+":5060;lr>" {
 		t.Errorf("Route = %q, want the IBCF alone", routes)
 	}
 	if from, err := sip.ParseNameAddr(mt.Get("From")); err != nil || from.URI != "tel:+12025550100" {
