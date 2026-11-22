@@ -113,7 +113,7 @@ tshark_() {
 
 # sip_events PCAP FROM TO prints the SIP messages between FROM and TO
 # (seconds since 1970), one line each: time, source, destination,
-# method, status, method of the CSeq. The copies to the dashboard (HEP,
+# method, status, method of the CSeq. The copies to the Lab (HEP,
 # UDP 9060) are left out. tshark complains about the last packet of a
 # capture that is still being written; that is harmless.
 sip_events() {

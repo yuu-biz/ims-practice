@@ -9,7 +9,7 @@
 # once the caller's UPDATE says its resources are ready. volte-b must
 # receive exactly the AMR-WB frames that volte-a sent. A VoLTE UE then
 # calls ue2, which offers PCMU only. Last, the two VoLTE UEs of the volte
-# profile, driven through the dashboard, send DTMF, hold and resume a
+# profile, driven through the Lab, send DTMF, hold and resume a
 # call, and in a second call the network takes volte-a's voice bearer
 # and the P-CSCF ends the call. The checks read the capture.
 set -euo pipefail
@@ -51,7 +51,7 @@ for i in $(seq 1 30); do
 	curl -fsS http://localhost:8080/api/calls >/dev/null 2>&1 && break
 	sleep 1
 done
-# The VoLTE UEs depend on the P-CSCF, the EPC and the dashboard in
+# The VoLTE UEs depend on the P-CSCF, the EPC and the Lab in
 # compose.yaml, so "run" and "up" start them with --no-deps (see
 # scripts/e2e-lib.sh). A node recreated here would have lost the
 # Diameter connections waited for above, and a REGISTER that came before
@@ -156,7 +156,7 @@ else
 fi
 printf '%s\n' "$out" >e2e-out/volte-a-sms.log
 
-echo "the VoLTE UEs of the volte profile, driven through the dashboard"
+echo "the VoLTE UEs of the volte profile, driven through the Lab"
 # ues prints "name registered|unregistered|unreachable call-state|idle"
 # for each UE, the UEs separated by commas.
 ues() {
@@ -184,7 +184,7 @@ ue_post() {
 %{http_code}' -X "${3:-POST}" -H 'Content-Type: application/json' -d "${2:-}" "http://localhost:8080/api/ues/$1" | tail -n 1
 }
 # session NAME prints the session of the UE's call as JSON, from the
-# status that the dashboard lists for it.
+# status that the Lab lists for it.
 session() {
 	curl -fsS http://localhost:8080/api/ues | "$python" -c '
 import json, sys
@@ -224,12 +224,12 @@ fi
 both_active="*volte-a registered active,volte-b registered active,ue-c unreachable idle"
 status="$(ue_post volte-a/call '{"target":"tel:+12025550112"}')"
 if [ "$status" = 200 ] && wait_ues "$both_active"; then
-	echo "ok   volte-a called volte-b through the dashboard, and volte-b answered"
+	echo "ok   volte-a called volte-b through the Lab, and volte-b answered"
 else
-	echo "FAIL the call through the dashboard (status $status): $(ues)"
+	echo "FAIL the call through the Lab (status $status): $(ues)"
 	exit 1
 fi
-dashboard_call="$(curl -fsS http://localhost:8080/api/ues | "$python" -c '
+lab_call="$(curl -fsS http://localhost:8080/api/ues | "$python" -c '
 import json, sys
 print(next(u["status"]["call"]["call_id"] for u in json.load(sys.stdin) if u["name"] == "volte-a"))
 ' | tr -d '\r')"
@@ -267,7 +267,7 @@ else
 	echo "FAIL hanging up (status $status): $(ues)"
 	fail=1
 fi
-# The dashboard links the Rx sessions of the call to it: one for the
+# The Lab links the Rx sessions of the call to it: one for the
 # media of each UE, through its P-CSCF.
 sleep 2
 rx="$(curl -fsS http://localhost:8080/api/calls | "$python" -c '
@@ -276,11 +276,11 @@ call = next(c for c in json.load(sys.stdin) if c["call_id"] == sys.argv[1])
 query = "&".join("call_id=" + urllib.parse.quote(l, safe="") for l in call["legs"])
 messages = json.load(urllib.request.urlopen("http://localhost:8080/api/messages?" + query))
 print(" ".join(sorted({m["summary"] for m in messages if m["protocol"] == "diameter"})))
-' "$dashboard_call" | tr -d '\r')"
+' "$lab_call" | tr -d '\r')"
 if [[ " $rx " == *" AAA 2001 AAR "* ]] && [[ " $rx " == *" STA 2001 STR "* ]]; then
-	echo "ok   the dashboard shows the call's Rx messages: $rx"
+	echo "ok   the Lab shows the call's Rx messages: $rx"
 else
-	echo "FAIL the dashboard shows these Diameter messages for the call: $rx"
+	echo "FAIL the Lab shows these Diameter messages for the call: $rx"
 	fail=1
 fi
 
@@ -294,7 +294,7 @@ else
 fi
 sleep 2
 # The network initiated EPS bearer context deactivation of the EPC stub
-# (TS 24.301 6.4.4.2), through the dashboard: the voice bearer is the
+# (TS 24.301 6.4.4.2), through the Lab: the voice bearer is the
 # one of QCI 1 (TS 23.203 6.1.7.2).
 ebi="$(curl -fsS http://localhost:8080/api/epc/ues/001010000000010 | "$python" -c '
 import json, sys
@@ -326,7 +326,7 @@ pcscf=172.28.0.40
 scscf=172.28.0.30
 agw=172.28.0.50
 epc=172.28.0.80
-dashboard=172.28.0.60
+lab=172.28.0.60
 impi_a="001010000000010@$domain"
 # volte-a registers the temporary public identity derived from its IMSI,
 # which is barred, and uses its default public identity, the SIP URI of
@@ -486,7 +486,7 @@ expect "202 Accepted reaches volte-a" "sip.Status-Code == 202 && ip.dst == $va_i
 echo "volte-a reads its supplementary services over Ut (GSMA IR.92 2.3.2)"
 expect "XCAP GET volte-a -> MMTel AS: the XUI is the default public identity" "http.request.method == \"GET\" && ip.src == $va_ip && http.request.uri contains \"/users/$default_a/simservs.xml\""
 
-echo "DTMF, hold and resume in a call that the dashboard drives (RFC 4733, TS 24.610)"
+echo "DTMF, hold and resume in a call that the Lab drives (RFC 4733, TS 24.610)"
 expect "INVITE volte-a -> P-CSCF to volte-b" "$invite && ip.src == $va_ip && sip.r-uri == \"tel:+12025550112\" && !(sip.To contains \"tag=\")"
 a="$(field sip.Call-ID)"
 expect "200 OK reaches volte-a" "sip.Status-Code == 200 && sip.CSeq.method == \"INVITE\" && ip.dst == $va_ip && sip.Call-ID == \"$a\""
@@ -504,7 +504,7 @@ echo "the network takes volte-a's voice bearer (IR.92 2.4.2.3; TS 29.214 4.4.6.2
 expect "INVITE volte-a -> P-CSCF to volte-b" "$invite && ip.src == $va_ip && sip.r-uri == \"tel:+12025550112\" && !(sip.To contains \"tag=\")"
 a="$(field sip.Call-ID)"
 expect "200 OK reaches volte-a" "sip.Status-Code == 200 && sip.CSeq.method == \"INVITE\" && ip.dst == $va_ip && sip.Call-ID == \"$a\""
-expect "DELETE dashboard -> EPC stub: the network deactivates bearer $ebi" "http.request.method == \"DELETE\" && ip.src == $dashboard && ip.dst == $epc && http.request.uri == \"/network-initiated/ues/001010000000010/bearers/$ebi\""
+expect "DELETE Lab -> EPC stub: the network deactivates bearer $ebi" "http.request.method == \"DELETE\" && ip.src == $lab && ip.dst == $epc && http.request.uri == \"/network-initiated/ues/001010000000010/bearers/$ebi\""
 released="$last"
 mark
 expect "DEACTIVATE EPS BEARER CONTEXT REQUEST to volte-a" "$(event_to $va_ip "DEACTIVATE EPS BEARER CONTEXT REQUEST")"
