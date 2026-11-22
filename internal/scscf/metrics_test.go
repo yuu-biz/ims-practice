@@ -2,6 +2,7 @@ package scscf
 
 import (
 	"bytes"
+	"fmt"
 	"strconv"
 	"strings"
 	"testing"
@@ -35,13 +36,35 @@ func scraped(t *testing.T, reg *metrics.Registry, series string) float64 {
 }
 
 // counts checks the series of reg against want, and that no failure was
-// counted beyond those in want.
+// counted beyond those in want. The S-CSCF counts the outcome of a
+// REGISTER once its handler returns, just after the response has left,
+// so counts waits for the series to settle before it reports a
+// difference.
 func counts(t *testing.T, reg *metrics.Registry, want map[string]float64) {
 	t.Helper()
+	var diffs []string
+	deadline := time.Now().Add(3 * time.Second)
+	for {
+		diffs = countDiffs(t, reg, want)
+		if len(diffs) == 0 || time.Now().After(deadline) {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	for _, d := range diffs {
+		t.Error(d)
+	}
+}
+
+// countDiffs lists how the series of reg differ from want, and whether
+// failures were counted beyond those in want.
+func countDiffs(t *testing.T, reg *metrics.Registry, want map[string]float64) []string {
+	t.Helper()
+	var diffs []string
 	failures := 0.0
 	for series, n := range want {
 		if got := scraped(t, reg, series); got != n {
-			t.Errorf("%s = %v, want %v", series, got, n)
+			diffs = append(diffs, fmt.Sprintf("%s = %v, want %v", series, got, n))
 		}
 		if strings.HasPrefix(series, "ims_registration_failures_total") {
 			failures += n
@@ -57,8 +80,9 @@ func counts(t *testing.T, reg *metrics.Registry, want map[string]float64) {
 		}
 	}
 	if got != failures {
-		t.Errorf("%v failures counted, want %v:\n%s", got, failures, text.String())
+		diffs = append(diffs, fmt.Sprintf("%v failures counted, want %v:\n%s", got, failures, text.String()))
 	}
+	return diffs
 }
 
 const (
