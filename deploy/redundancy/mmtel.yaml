@@ -1,0 +1,87 @@
+# The MMTel AS with the shared store. It is the file of the same name in
+# deploy/compose with the store section at the end, which
+# deploy/redundancy/redundancy.yaml mounts in that file's place.
+# MMTel AS, the application server of the MMTel supplementary services
+# (IR.92 2.3). The S-CSCF sends it every INVITE of a user by the
+# initial filter criteria in hss.yaml, and it acts as a routeing B2BUA
+# (TS 24.229 5.7.5). It reads the settings of the services of each
+# served user from the HSS over Sh, for every call.
+node: mmtel
+roles: [mmtel]
+home_domain: ims.mnc001.mcc001.3gppnetwork.org
+mmtel:
+  # The SIP URI, sip:mmtel.ims.mnc001.mcc001.3gppnetwork.org:5060, is
+  # the server_name of the filter criteria in hss.yaml. The host also
+  # goes into the Contact of both legs of each call, so the requests
+  # within a dialog come back to this instance.
+  sip:
+    listen: 0.0.0.0:5060
+    host: mmtel.ims.mnc001.mcc001.3gppnetwork.org
+  # The country of the test numbers (+1 202 555 01xx), for the barring
+  # of international calls (TS 24.611 4.9.1.4).
+  home_country_code: "1"
+  # The XCAP server of Ut (TS 24.623), with which a UE sets up its
+  # services. Plain HTTP on the standard port, so that the capture shows
+  # Ut and Wireshark decodes it without settings; the UE
+  # finds it at http://xcap.ims.mnc001.mcc001.3gppnetwork.org, the XCAP
+  # Root URI it builds when none is configured (TS 23.003 13.9.1.2). The
+  # nonce key is a test value; every instance needs the same one.
+  xcap:
+    listen: 0.0.0.0:80
+    nonce_key: test-nonce-key-mmtel-0001
+  # The MRFC that plays the media of the services: the customized
+  # alerting tone that a called user chooses (TS 24.182), and the
+  # announcements (TS 24.628). The AS reaches it with the Request-URIs of
+  # RFC 4240, and DNS resolves its host.
+  mrfc: sip:mrfc.ims.mnc001.mcc001.3gppnetwork.org:5060
+  # The AS is the focus of the conferences that the MRFC mixes. A
+  # conference URI is a public service identity in this subdomain of the
+  # home domain, sip:conf-<id>@conf.ims.mnc001.mcc001.3gppnetwork.org,
+  # with no port (TS 23.003 13.5). DNS leads from the subdomain to this
+  # instance (TS 23.228 5.4.12.3), so every request for a conference
+  # comes to the instance that has it; a second instance would get a
+  # subdomain of its own.
+  conference_domain: conf.ims.mnc001.mcc001.3gppnetwork.org
+  # Before the AS rejects a call for a service, such as barring, it has
+  # the MRFC play this announcement to the caller as early media.
+  announcement: notice
+diameter:
+  origin_host: mmtel.ims.mnc001.mcc001.3gppnetwork.org
+  origin_realm: ims.mnc001.mcc001.3gppnetwork.org
+  peers:
+    - address: hss.ims.mnc001.mcc001.3gppnetwork.org:3868
+      origin_host: hss.ims.mnc001.mcc001.3gppnetwork.org
+  # The RFC defaults, written out where an operator can change them:
+  # Tw is the watchdog timer (RFC 3539 3.4.1 [1]), and Tc the time
+  # between attempts to connect again (RFC 6733 2.1 and 12).
+  timers:
+    tw: 30s
+    tc: 30s
+# Copies of every SIP and Diameter message for the dashboard.
+# The address is fixed so that the node starts even when the dashboard
+# is down; the dashboard is not on the call path.
+hep:
+  collector: 172.28.0.60:9060
+
+# The MMTel AS keeps its state in the shared store: the record of each
+# two-party call, from which an instance recreated under the same name
+# builds the two dialogs again, and of each conference whose focus it
+# is.
+# Without this section, as in deploy/compose, the node keeps all of it
+# in the memory of its own process.
+store:
+  kind: valkey
+  # The address of the store is fixed, like the HEP collector's above:
+  # the node reads and writes state before it resolves any name, and the
+  # store answers whatever the DNS of the home network is doing.
+  address: 172.28.0.5:6379
+  # Every key of this deployment begins with it, and the adapter of each
+  # role adds the name of the role after it, as in
+  # ims:scscf:registration:<private identity>. Groups of instances that
+  # must not share their state take a prefix each.
+  prefix: "ims:"
+  # How long one operation on the store may take. A role that does not
+  # get its state within it answers 500 in SIP, or
+  # DIAMETER_UNABLE_TO_COMPLY in Diameter, rather than treat the failure
+  # as an item that is not there.
+  timeout: 1s

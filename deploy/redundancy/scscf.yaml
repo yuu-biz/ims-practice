@@ -1,0 +1,61 @@
+# The S-CSCF with the shared store. It is the file of the same name in
+# deploy/compose with the store section at the end, which
+# deploy/redundancy/redundancy.yaml mounts in that file's place.
+# S-CSCF. It authenticates users with SIP Digest, using the H(A1) that
+# the HSS returns over Cx, and is the registrar of the home network.
+node: scscf
+roles: [scscf]
+home_domain: ims.mnc001.mcc001.3gppnetwork.org
+scscf:
+  sip:
+    listen: 0.0.0.0:5060
+    host: scscf.ims.mnc001.mcc001.3gppnetwork.org
+  # The UE asks for 600000 s (TS 24.229 5.1.1.2.1). The operator decides
+  # how long a registration may last, and the S-CSCF shortens a longer
+  # request to max_expires. A longer maximum means fewer refreshes, and
+  # leaves the binding of a UE that has gone away for longer. A nonzero
+  # expiry below min_expires gets 423 (RFC 3261 10.3); 0 deregisters.
+  min_expires: 60
+  max_expires: 3600
+diameter:
+  origin_host: scscf.ims.mnc001.mcc001.3gppnetwork.org
+  origin_realm: ims.mnc001.mcc001.3gppnetwork.org
+  peers:
+    - address: hss.ims.mnc001.mcc001.3gppnetwork.org:3868
+      origin_host: hss.ims.mnc001.mcc001.3gppnetwork.org
+  # The RFC defaults, written out where an operator can change them:
+  # Tw is the watchdog timer (RFC 3539 3.4.1 [1]), and Tc the time
+  # between attempts to connect again (RFC 6733 2.1 and 12).
+  timers:
+    tw: 30s
+    tc: 30s
+# Copies of every SIP and Diameter message for the dashboard.
+# The address is fixed so that the node starts even when the dashboard
+# is down; the dashboard is not on the call path.
+hep:
+  collector: 172.28.0.60:9060
+
+# The S-CSCF keeps its registrar state in the shared store: the
+# challenges it is waiting on, the registrations with their user
+# profiles, the subscriptions to the reg event, and the identifiers of
+# the requests it sent to an application server. It takes the lock of a
+# user there as well, so that one instance at a time handles a given
+# registration.
+# Without this section, as in deploy/compose, the node keeps all of it
+# in the memory of its own process.
+store:
+  kind: valkey
+  # The address of the store is fixed, like the HEP collector's above:
+  # the node reads and writes state before it resolves any name, and the
+  # store answers whatever the DNS of the home network is doing.
+  address: 172.28.0.5:6379
+  # Every key of this deployment begins with it, and the adapter of each
+  # role adds the name of the role after it, as in
+  # ims:scscf:registration:<private identity>. Groups of instances that
+  # must not share their state take a prefix each.
+  prefix: "ims:"
+  # How long one operation on the store may take. A role that does not
+  # get its state within it answers 500 in SIP, or
+  # DIAMETER_UNABLE_TO_COMPLY in Diameter, rather than treat the failure
+  # as an item that is not there.
+  timeout: 1s

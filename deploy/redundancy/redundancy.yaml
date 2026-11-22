@@ -1,0 +1,107 @@
+# The roles keep the state of their users in a store outside their
+# processes, so that a node recreated under the same name finds what its
+# earlier process left. This file goes on top of compose.yaml, from the
+# root of the repository:
+#
+#   docker compose -f compose.yaml -f deploy/redundancy/redundancy.yaml up -d --build
+#
+# or, so that every later "docker compose" of the same shell takes both
+# files:
+#
+#   export COMPOSE_FILE=compose.yaml:deploy/redundancy/redundancy.yaml COMPOSE_PATH_SEPARATOR=:
+#
+# It adds the store, and gives each node whose roles hold the state of
+# users its file from deploy/redundancy in place of the one from
+# deploy/compose: the same configuration with a store section at the
+# end. The I-CSCF holds no such state, the EPC and PCRF stubs and the
+# dashboard are single instances, and a media relay keeps the contexts
+# of its own ports, so those nodes keep the files of deploy/compose and
+# their state in their processes.
+#
+# The nodes, their addresses and the signaling are those of
+# compose.yaml. Only where the state lives changes, which is why the
+# scenarios of scripts/e2e-*.sh pass on this deployment as they do on
+# compose.yaml alone.
+
+services:
+  # The store. Valkey speaks the RESP protocol (valkey.io, "Serialization
+  # protocol specification"), which the nodes write and read directly,
+  # and it holds keys with a time to live, sorted sets and conditional
+  # writes, which is what the roles need of it.
+  valkey:
+    image: valkey/valkey:9.0.8-alpine
+    restart: unless-stopped
+    # Every write goes to the append-only file on the volume, synced
+    # once a second (appendfsync everysec), so that a store which is
+    # started again serves the state the nodes wrote before it stopped.
+    command:
+      - valkey-server
+      - --dir
+      - /data
+      - --appendonly
+      - "yes"
+      - --appendfsync
+      - everysec
+    volumes:
+      - store:/data
+    # The nodes below wait for this check, so that none of them looks
+    # for its state, or writes the subscribers of its configuration,
+    # before the store answers.
+    healthcheck:
+      test: ["CMD", "valkey-cli", "ping"]
+      interval: 1s
+      retries: 30
+    # On the network of the IMS, so that tcpdump writes what the nodes
+    # ask of the store into the same capture as their signaling. The
+    # port is not published: valkey-cli runs inside the container, as
+    # the guides show.
+    networks:
+      ims:
+        ipv4_address: 172.28.0.5
+
+  hss:
+    depends_on:
+      valkey:
+        condition: service_healthy
+    volumes:
+      - ./deploy/redundancy/hss.yaml:/etc/ims/node.yaml:ro
+
+  scscf:
+    depends_on:
+      valkey:
+        condition: service_healthy
+    volumes:
+      - ./deploy/redundancy/scscf.yaml:/etc/ims/node.yaml:ro
+
+  pcscf:
+    depends_on:
+      valkey:
+        condition: service_healthy
+    volumes:
+      - ./deploy/redundancy/pcscf.yaml:/etc/ims/node.yaml:ro
+
+  ipsmgw:
+    depends_on:
+      valkey:
+        condition: service_healthy
+    volumes:
+      - ./deploy/redundancy/ipsmgw.yaml:/etc/ims/node.yaml:ro
+
+  mmtel:
+    depends_on:
+      valkey:
+        condition: service_healthy
+    volumes:
+      - ./deploy/redundancy/mmtel.yaml:/etc/ims/node.yaml:ro
+
+  mrfc:
+    depends_on:
+      valkey:
+        condition: service_healthy
+    volumes:
+      - ./deploy/redundancy/mrfc.yaml:/etc/ims/node.yaml:ro
+
+volumes:
+  # The append-only file of the store. "docker compose down -v" deletes
+  # it, and the deployment starts from an empty store again.
+  store:
