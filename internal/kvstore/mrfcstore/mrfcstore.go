@@ -19,11 +19,15 @@
 //
 // The item has no time to live. A conference lasts as long as its
 // parties stay, however long that is; the instance whose party is the
-// last to leave removes it.
+// last to leave removes it. If that removal fails, the item stays until
+// a party of the conference finds that the MRFP holds its context no
+// more, and the MRFC that the party reached removes it.
 package mrfcstore
 
 import (
+	"context"
 	"errors"
+	"fmt"
 
 	"github.com/yuu-biz/ims-practice/internal/kvstore"
 	"github.com/yuu-biz/ims-practice/internal/kvstore/kvjson"
@@ -46,10 +50,16 @@ func New(kv kvstore.Store, cfg kvjson.Config) *Store {
 func (s *Store) key(id string) string { return s.c.Key("conference", id) }
 
 // Conference reads the item of the conference id.
-func (s *Store) Conference(id string) (mrfc.ConferenceMedia, bool) {
+func (s *Store) Conference(ctx context.Context, id string) (mrfc.ConferenceMedia, bool, error) {
 	var media mrfc.ConferenceMedia
-	_, ok := kvjson.Get(s.c, s.key(id), &media)
-	return media, ok
+	_, err := kvjson.Read(ctx, s.c, s.key(id), &media)
+	if errors.Is(err, kvstore.ErrNotFound) {
+		return mrfc.ConferenceMedia{}, false, nil
+	}
+	if err != nil {
+		return mrfc.ConferenceMedia{}, false, err
+	}
+	return media, true, nil
 }
 
 // createAttempts bounds how often CreateConference starts over when the
@@ -64,28 +74,31 @@ const createAttempts = 10
 // wrote, and join its context.
 //
 // When the store fails, the instance cannot tell whether another one
-// has created the conference. CreateConference then reports that it did
-// not put media there, and returns none: the MRFC gives up the context
-// that it made and tries again, rather than mix the parties of one
-// conference in two contexts that do not hear each other.
-func (s *Store) CreateConference(id string, media mrfc.ConferenceMedia) (mrfc.ConferenceMedia, bool) {
+// has created the conference, and CreateConference returns the failure.
+// The MRFC then gives up the context that it made and refuses the
+// party, rather than mix the parties of one conference in two contexts
+// that do not hear each other.
+func (s *Store) CreateConference(ctx context.Context, id string, media mrfc.ConferenceMedia) (mrfc.ConferenceMedia, bool, error) {
 	key := s.key(id)
 	for range createAttempts {
-		_, err := kvjson.Swap(s.c, key, "", media, 0)
+		_, err := kvjson.CompareAndSwap(ctx, s.c, key, "", media, 0)
 		if err == nil {
-			return media, true
+			return media, true, nil
 		}
 		if !errors.Is(err, kvstore.ErrConflict) {
-			return mrfc.ConferenceMedia{}, false
+			return mrfc.ConferenceMedia{}, false, err
 		}
 		var kept mrfc.ConferenceMedia
-		if _, ok := kvjson.Get(s.c, key, &kept); ok {
-			return kept, false
+		_, err = kvjson.Read(ctx, s.c, key, &kept)
+		if err == nil {
+			return kept, false, nil
 		}
-		// Removed between the two operations, or the read failed: try
-		// again from the start.
+		if !errors.Is(err, kvstore.ErrNotFound) {
+			return mrfc.ConferenceMedia{}, false, err
+		}
+		// Removed between the two operations: try again from the start.
 	}
-	return mrfc.ConferenceMedia{}, false
+	return mrfc.ConferenceMedia{}, false, fmt.Errorf("mrfcstore: conference %q was removed each of the %d times another instance created it first", id, createAttempts)
 }
 
 // RemoveConference reads the item and removes it only if it holds media,
@@ -94,12 +107,21 @@ func (s *Store) CreateConference(id string, media mrfc.ConferenceMedia) (mrfc.Co
 // another instance created after it, even when that one writes between
 // the read and the removal: the version then differs, and the newer
 // conference stays.
-func (s *Store) RemoveConference(id string, media mrfc.ConferenceMedia) {
+func (s *Store) RemoveConference(ctx context.Context, id string, media mrfc.ConferenceMedia) error {
 	key := s.key(id)
 	var kept mrfc.ConferenceMedia
-	version, ok := kvjson.Get(s.c, key, &kept)
-	if !ok || kept != media {
-		return
+	version, err := kvjson.Read(ctx, s.c, key, &kept)
+	if errors.Is(err, kvstore.ErrNotFound) {
+		return nil
 	}
-	s.c.DeleteIf(key, version)
+	if err != nil {
+		return err
+	}
+	if kept != media {
+		return nil
+	}
+	if err := s.c.RemoveIf(ctx, key, version); err != nil && !errors.Is(err, kvstore.ErrConflict) {
+		return err
+	}
+	return nil
 }

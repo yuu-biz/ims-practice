@@ -17,6 +17,10 @@ import (
 
 	"github.com/yuu-biz/ims-practice/internal/agw"
 	"github.com/yuu-biz/ims-practice/internal/g711"
+	"github.com/yuu-biz/ims-practice/internal/kvstore"
+	"github.com/yuu-biz/ims-practice/internal/kvstore/kvjson"
+	"github.com/yuu-biz/ims-practice/internal/kvstore/mrfcstore"
+	"github.com/yuu-biz/ims-practice/internal/kvstore/storetest"
 	"github.com/yuu-biz/ims-practice/internal/mixer"
 	"github.com/yuu-biz/ims-practice/internal/mrfc"
 	"github.com/yuu-biz/ims-practice/internal/rtp"
@@ -433,11 +437,14 @@ func TestConferenceMixesTheOthers(t *testing.T) {
 	m := startMRFC(t, store, media.processor("mrfp1"))
 	as := newUA(t, "mmtel", nil)
 	hz := []float64{400, 1000, 1700}
+	// The conference ID does not depend on case (RFC 4240 2), so the
+	// third party joins the same conference.
+	ids := []string{"X", "X", "x"}
 	var calls []*sip.OutgoingCall
 	var parties []*net.UDPConn
 	for i := range hz {
 		p := party(t)
-		out := invite(t, as, "sip:conf=X@"+m.host, offerFrom(t, addrOf(p), "sendrecv"))
+		out := invite(t, as, "sip:conf="+ids[i]+"@"+m.host, offerFrom(t, addrOf(p), "sendrecv"))
 		ok := final(t, out)
 		if ok.StatusCode != 200 {
 			t.Fatalf("party %d got %d", i, ok.StatusCode)
@@ -447,9 +454,6 @@ func TestConferenceMixesTheOthers(t *testing.T) {
 	}
 	if cs := media.relay.Contexts(); len(cs) != 1 || len(cs[0].Terminations) != 3 {
 		t.Fatalf("the MRFP holds %v, want one context of three terminations", cs)
-	}
-	if _, ok := store.Conference("x"); !ok {
-		t.Error("the Store has no conference x (the ID does not depend on case)")
 	}
 	// Each party's socket keeps what comes while the test reads the
 	// others.
@@ -472,7 +476,11 @@ func TestConferenceMixesTheOthers(t *testing.T) {
 	waitNoContexts(t, media.relay)
 	deadline := time.Now().Add(2 * time.Second)
 	for {
-		if _, ok := store.Conference("x"); !ok {
+		_, ok, err := store.Conference(context.Background(), "x")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !ok {
 			break
 		}
 		if time.Now().After(deadline) {
@@ -505,7 +513,7 @@ func TestConferenceAcrossInstances(t *testing.T) {
 		if ok := final(t, out); ok.StatusCode != 200 {
 			t.Fatalf("got %d", ok.StatusCode)
 		}
-		if media, _ := store.Conference(candidate); media.MRFP == "mrfp1" {
+		if len(first.relay.Contexts()) == 1 {
 			id = candidate
 			defer out.Bye()
 			continue
@@ -537,6 +545,55 @@ func TestConferenceAcrossInstances(t *testing.T) {
 	b.WriteToUDPAddrPort((rtp.Packet{PayloadType: sdp.PCMU, Payload: []byte("hello")}).Marshal(), mrfpAddress(t, ok))
 	if got := rtptest.Next(t, a, 5*time.Second, "the second party's packet"); string(got.Payload) != "hello" {
 		t.Errorf("the first party got %q from %v, want the second party's packet", got.Payload, firstParty)
+	}
+}
+
+// failingStore is a Store on a store outside the process that takes
+// writes writes and then fails every operation, as a store that the
+// MRFC can no longer reach does.
+func failingStore(writes int) mrfc.Store {
+	return mrfcstore.New(storetest.StopAfter(kvstore.NewMemoryStore(nil), writes), kvjson.Config{})
+}
+
+// TestAConferenceThatCannotBeStored: when the Store fails as the first
+// party creates the conference, the MRFC cannot tell whether another
+// instance has created it in another context. It refuses the INVITE
+// with 500 (Server Internal Error), and gives up the context that it
+// made on the MRFP.
+func TestAConferenceThatCannotBeStored(t *testing.T) {
+	media := startMRFP(t)
+	m := startMRFC(t, failingStore(0), media.processor("mrfp1"))
+	as := newUA(t, "mmtel", nil)
+	if resp := final(t, invite(t, as, "sip:conf=room@"+m.host, offerFrom(t, addrOf(party(t)), "sendrecv"))); resp.StatusCode != 500 {
+		t.Errorf("got %d, want 500", resp.StatusCode)
+	}
+	if cs := media.relay.Contexts(); len(cs) != 0 {
+		t.Errorf("the MRFP still holds %v after the refusal", cs)
+	}
+}
+
+// TestAConferenceThatCannotBeRead: the Store fails as the last party of
+// a conference leaves. The BYE is answered all the same, and the MRFP
+// lets go of the context. A party that comes next, while the Store
+// still fails, gets 500 (Server Internal Error): the MRFC does not take
+// a store that it cannot read for one without the conference.
+func TestAConferenceThatCannotBeRead(t *testing.T) {
+	media := startMRFP(t)
+	m := startMRFC(t, failingStore(1), media.processor("mrfp1"))
+	as := newUA(t, "mmtel", nil)
+	out := invite(t, as, "sip:conf=room@"+m.host, offerFrom(t, addrOf(party(t)), "sendrecv"))
+	if ok := final(t, out); ok.StatusCode != 200 {
+		t.Fatalf("the first party got %d, want 200", ok.StatusCode)
+	}
+	if err := out.Bye(); err != nil {
+		t.Fatalf("BYE: %v", err)
+	}
+	waitNoContexts(t, media.relay)
+	if resp := final(t, invite(t, as, "sip:conf=room@"+m.host, offerFrom(t, addrOf(party(t)), "sendrecv"))); resp.StatusCode != 500 {
+		t.Errorf("the next party got %d, want 500", resp.StatusCode)
+	}
+	if cs := media.relay.Contexts(); len(cs) != 0 {
+		t.Errorf("the MRFP holds %v after the refusal", cs)
 	}
 }
 
