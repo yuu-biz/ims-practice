@@ -1,6 +1,7 @@
 package pcscf
 
 import (
+	"context"
 	"net/netip"
 	"strings"
 	"sync"
@@ -73,22 +74,28 @@ func (p *PCSCF) fromNetwork(req *sip.Message) bool {
 // lookUpAssociation reads the Store in the background for the
 // association of a UE at source, or of the contact target, and keeps
 // what it finds in admissions. One lookup at a time runs for a source or
-// a contact, so that retransmissions do not pile them up.
+// a contact, so that retransmissions do not pile them up. A lookup that
+// fails leaves admissions as it was, and the next retransmission starts
+// another one.
 func (p *PCSCF) lookUpAssociation(source sip.Destination, target string) {
+	keep := func(a Association, ok bool, err error) {
+		switch {
+		case err != nil:
+			p.log.Warn("could not look up an IP association: the store failed", "source", source.String(), "error", err.Error())
+		case ok:
+			p.admissions.put(a)
+		}
+	}
 	if p.admissions.startLookUp("source " + source.String()) {
 		go func() {
 			defer p.admissions.endLookUp("source " + source.String())
-			if a, ok := p.store.Association(source); ok {
-				p.admissions.put(a)
-			}
+			keep(p.store.Association(context.Background(), source))
 		}()
 	}
 	if _, err := sip.ParseURI(target); err == nil && p.admissions.startLookUp("contact "+target) {
 		go func() {
 			defer p.admissions.endLookUp("contact " + target)
-			if a, ok := p.store.AssociationOfContact(target); ok {
-				p.admissions.put(a)
-			}
+			keep(p.associationOfContact(target))
 		}()
 	}
 }
@@ -205,20 +212,27 @@ func (s *admissions) endLookUp(key string) {
 }
 
 // indexedStore is the Store of the P-CSCF with admissions kept in step
-// with each write of an association.
+// with each write of an association. A write that fails may or may not
+// have reached the Store, so admissions forgets the association, and
+// Screen reads it from the Store again when the UE sends.
 type indexedStore struct {
 	Store
 	admissions *admissions
 }
 
-func (s indexedStore) PutAssociation(a Association) {
-	s.Store.PutAssociation(a)
+func (s indexedStore) PutAssociation(ctx context.Context, a Association) error {
+	if err := s.Store.PutAssociation(ctx, a); err != nil {
+		s.admissions.remove(a.Source)
+		return err
+	}
 	s.admissions.put(a)
+	return nil
 }
 
-func (s indexedStore) DeleteAssociation(source sip.Destination) {
-	s.Store.DeleteAssociation(source)
+func (s indexedStore) DeleteAssociation(ctx context.Context, source sip.Destination) error {
+	err := s.Store.DeleteAssociation(ctx, source)
 	s.admissions.remove(source)
+	return err
 }
 
 // ueSourceOf is where a request of a UE comes from, as the P-CSCF knows

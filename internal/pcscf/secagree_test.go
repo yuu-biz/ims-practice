@@ -1,6 +1,7 @@
 package pcscf
 
 import (
+	"context"
 	"encoding/hex"
 	"fmt"
 	"log/slog"
@@ -246,7 +247,7 @@ func TestIMSAKASecurityAgreement(t *testing.T) {
 			t.Errorf("Security-Server %d = %+v", i, m)
 		}
 	}
-	sas, ok := h.store.SecurityAssociations(h.ueKey())
+	sas, ok, _ := h.store.SecurityAssociations(context.Background(), h.ueKey())
 	if !ok || !sas.Temporary || hex.EncodeToString(sas.IK[:]) != testIK || hex.EncodeToString(sas.CK[:]) != testCK ||
 		sas.PCSCFMechanism.Algorithm != "hmac-sha2-256-128" || sas.UEMechanism.SPIS != 2222 || sas.PrivateIdentity != impi {
 		t.Fatalf("SA table entry = %+v, %v", sas, ok)
@@ -269,11 +270,11 @@ func TestIMSAKASecurityAgreement(t *testing.T) {
 	if got, want := second.Get("Path"), fmt.Sprintf("<sip:term@pcscf.%s:%d;lr>", domain, ps); got != want {
 		t.Errorf("Path = %q, want %q", got, want)
 	}
-	sas, ok = h.store.SecurityAssociations(h.ueKey())
+	sas, ok, _ = h.store.SecurityAssociations(context.Background(), h.ueKey())
 	if !ok || sas.Temporary || time.Until(sas.Expires) < time.Hour {
 		t.Errorf("after the 200 the entry is %+v, %v; want it established past the registration", sas, ok)
 	}
-	if _, ok := h.store.Association(sip.Destination{Transport: sip.UDP, Addr: h.ueKey()}); !ok {
+	if _, ok, _ := h.store.Association(context.Background(), sip.Destination{Transport: sip.UDP, Addr: h.ueKey()}); !ok {
 		t.Error("no association for the protected address of the UE")
 	}
 
@@ -343,7 +344,7 @@ func TestIMSAKASecurityAgreement(t *testing.T) {
 	if r, _ := h.register(true, "6629fae49393a05397450978507c4ef1", "0", verify...); r.StatusCode != 200 {
 		t.Fatalf("deregistration got %d", r.StatusCode)
 	}
-	if _, ok := h.store.SecurityAssociations(h.ueKey()); ok {
+	if _, ok, _ := h.store.SecurityAssociations(context.Background(), h.ueKey()); ok {
 		t.Error("the SA table still has the UE after its deregistration")
 	}
 }
@@ -394,10 +395,10 @@ func TestProtectedRegisterOverTCP(t *testing.T) {
 	if !overTCP(got) {
 		t.Fatalf("the REGISTER came with Via %v, want the UE's over TCP", got.GetAll("Via"))
 	}
-	if sas, ok := h.store.SecurityAssociations(h.ueKey()); !ok || sas.Temporary {
+	if sas, ok, _ := h.store.SecurityAssociations(context.Background(), h.ueKey()); !ok || sas.Temporary {
 		t.Errorf("after the 200 the entry is %+v, %v; want it established", sas, ok)
 	}
-	if _, ok := h.store.Association(sip.Destination{Transport: sip.UDP, Addr: h.ueKey()}); !ok {
+	if _, ok, _ := h.store.Association(context.Background(), sip.Destination{Transport: sip.UDP, Addr: h.ueKey()}); !ok {
 		t.Error("no association for the protected address of the UE")
 	}
 }
@@ -426,10 +427,10 @@ func TestDeregistrationOverTCP(t *testing.T) {
 	if r.StatusCode != 200 || got == nil || !overTCP(got) {
 		t.Fatalf("deregistration got %d, want the 200 of the home network to a REGISTER over TCP", r.StatusCode)
 	}
-	if a, ok := h.store.Association(sip.Destination{Transport: sip.UDP, Addr: h.ueKey()}); ok && a.Expires.After(time.Now()) {
+	if a, ok, _ := h.store.Association(context.Background(), sip.Destination{Transport: sip.UDP, Addr: h.ueKey()}); ok && a.Expires.After(time.Now()) {
 		t.Errorf("the IP association of the UE lasts until %v after its deregistration", a.Expires)
 	}
-	if _, ok := h.store.SecurityAssociations(h.ueKey()); ok {
+	if _, ok, _ := h.store.SecurityAssociations(context.Background(), h.ueKey()); ok {
 		t.Error("the SA table still has the UE after its deregistration")
 	}
 }
@@ -447,7 +448,7 @@ func TestNetworkFailureToARegisterOverTCP(t *testing.T) {
 			if r.StatusCode != status || got == nil || !overTCP(got) {
 				t.Fatalf("REGISTER got %d, want the %d of the home network to a REGISTER over TCP", r.StatusCode, status)
 			}
-			if a, ok := h.store.Association(sip.Destination{Transport: sip.UDP, Addr: h.ueKey()}); ok {
+			if a, ok, _ := h.store.Association(context.Background(), sip.Destination{Transport: sip.UDP, Addr: h.ueKey()}); ok {
 				t.Errorf("the IP association of the UE is still there after the %d: %+v", status, a)
 			}
 		})
@@ -471,7 +472,7 @@ func TestIMSAKAChallengeWithoutKeys(t *testing.T) {
 	if r, _ := h.register(false, "", "600000"); r.StatusCode != 500 {
 		t.Errorf("got %d, want 500", r.StatusCode)
 	}
-	if _, ok := h.store.SecurityAssociations(h.ueKey()); ok {
+	if _, ok, _ := h.store.SecurityAssociations(context.Background(), h.ueKey()); ok {
 		t.Error("temporary associations without keys")
 	}
 }
@@ -485,7 +486,7 @@ func TestIMSAKAFailureReportEndsTheTemporaryAssociations(t *testing.T) {
 	h.securityClient = strings.Replace(h.securityClient, "spi-c=1111;spi-s=2222", "spi-c=3333;spi-s=4444", 1)
 	h.noKeys.Store(true) // the fake home network has no new challenge to give
 	h.register(false, "", "600000")
-	if sas, ok := h.store.SecurityAssociations(h.ueKey()); ok {
+	if sas, ok, _ := h.store.SecurityAssociations(context.Background(), h.ueKey()); ok {
 		t.Errorf("SA table entry after the failure report: %+v", sas)
 	}
 }

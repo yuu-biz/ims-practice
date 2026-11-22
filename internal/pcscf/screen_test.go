@@ -210,7 +210,7 @@ func TestRegisteredUEGetsThroughAfterARestart(t *testing.T) {
 	h := newSessionHarness(t)
 	close(h.release)
 	ue := dialRawUE(t, sip.UDP, h.pcscf.LocalAddr())
-	h.store.PutAssociation(Association{
+	h.store.PutAssociation(context.Background(), Association{
 		Source:           sip.Destination{Transport: sip.UDP, Addr: ue.addr()},
 		SentBy:           ue.addr().String(),
 		Contact:          "sip:001010000000003@" + ue.addr().String(),
@@ -365,8 +365,8 @@ func TestUnprotectedRequestFromAUEWithSecurityAssociationsGetsNoAnswer(t *testin
 			h := newAKAHarnessWith(t, true, slog.New(logs), nil)
 			ue := dialRawUE(t, transport, h.unprotected.LocalAddr())
 			a, sas := protectedUE(ue.addr())
-			h.p.store.PutAssociation(a)
-			h.p.store.PutSecurityAssociations(sas)
+			h.p.store.PutAssociation(context.Background(), a)
+			h.p.store.PutSecurityAssociations(context.Background(), sas)
 
 			requests := strangerRequests()
 			for i, m := range requests {
@@ -390,7 +390,7 @@ func TestUnprotectedRequestFromAUEWithSecurityAssociationsGetsNoAnswer(t *testin
 			default:
 			}
 
-			h.p.store.DeleteSecurityAssociations(ue.addr())
+			h.p.store.DeleteSecurityAssociations(context.Background(), ue.addr())
 			message := requests[2]
 			if message.Method != sip.MESSAGE {
 				t.Fatalf("request 2 is %s, want the MESSAGE", message.Method)
@@ -409,12 +409,12 @@ type heldStore struct {
 	ended   <-chan struct{}
 }
 
-func (s heldStore) Association(source sip.Destination) (Association, bool) {
+func (s heldStore) Association(ctx context.Context, source sip.Destination) (Association, bool, error) {
 	select {
 	case <-s.release:
 	case <-s.ended:
 	}
-	return s.MemoryStore.Association(source)
+	return s.MemoryStore.Association(ctx, source)
 }
 
 // TestUnprotectedRequestFromAUEWithSecurityAssociationsAfterARestart:
@@ -433,8 +433,8 @@ func TestUnprotectedRequestFromAUEWithSecurityAssociationsAfterARestart(t *testi
 	})
 	ue := dialRawUE(t, sip.UDP, h.unprotected.LocalAddr())
 	a, sas := protectedUE(ue.addr())
-	h.store.PutAssociation(a)
-	h.store.PutSecurityAssociations(sas)
+	h.store.PutAssociation(context.Background(), a)
+	h.store.PutSecurityAssociations(context.Background(), sas)
 
 	m := ue.request(strangerRequests()[2])
 	ue.send(m)
@@ -469,8 +469,8 @@ func TestProtectedRequestOfAUEWithSecurityAssociationsGetsThrough(t *testing.T) 
 	h := newAKAHarness(t, true)
 	ue := dialRawUE(t, sip.UDP, h.protected.LocalAddr())
 	a, sas := protectedUE(ue.addr())
-	h.p.store.PutAssociation(a)
-	h.p.store.PutSecurityAssociations(sas)
+	h.p.store.PutAssociation(context.Background(), a)
+	h.p.store.PutSecurityAssociations(context.Background(), sas)
 	h.forwarded(ue, ue.request(strangerRequests()[2]))
 }
 
@@ -483,8 +483,8 @@ func TestUnprotectedRequestDuringAnAuthenticationGetsThrough(t *testing.T) {
 	ue := dialRawUE(t, sip.UDP, h.unprotected.LocalAddr())
 	a, sas := protectedUE(ue.addr())
 	sas.Temporary = true
-	h.p.store.PutAssociation(a)
-	h.p.store.PutSecurityAssociations(sas)
+	h.p.store.PutAssociation(context.Background(), a)
+	h.p.store.PutSecurityAssociations(context.Background(), sas)
 	h.forwarded(ue, ue.request(strangerRequests()[2]))
 }
 
@@ -501,7 +501,7 @@ func TestUnprotectedRequestFollowsTheSATableOfAllPCSCFs(t *testing.T) {
 	b := New(Config{Host: "pcscf-b." + domain, Port: 5060, VisitedNetworkID: domain}, nil, h.store, nil, quiet())
 	ue := dialRawUE(t, sip.UDP, h.unprotected.LocalAddr())
 	association, sas := protectedUE(ue.addr())
-	a.store.PutAssociation(association)
+	a.store.PutAssociation(context.Background(), association)
 
 	discards := 0
 	discarded := func(m *sip.Message) {
@@ -523,13 +523,13 @@ func TestUnprotectedRequestFollowsTheSATableOfAllPCSCFs(t *testing.T) {
 		}
 	}
 
-	b.store.PutSecurityAssociations(sas)
+	b.store.PutSecurityAssociations(context.Background(), sas)
 	discarded(ue.request(strangerRequests()[2]))
-	b.store.DeleteSecurityAssociations(ue.addr())
+	b.store.DeleteSecurityAssociations(context.Background(), ue.addr())
 	h.forwarded(ue, ue.request(strangerRequests()[2]))
 
-	a.store.PutSecurityAssociations(sas)
+	a.store.PutSecurityAssociations(context.Background(), sas)
 	discarded(ue.request(strangerRequests()[2]))
-	b.store.DeleteSecurityAssociations(ue.addr())
+	b.store.DeleteSecurityAssociations(context.Background(), ue.addr())
 	h.forwarded(ue, ue.request(strangerRequests()[2]))
 }

@@ -140,10 +140,12 @@ var benchPrefix = storetest.Prefix()
 func benchmarkMixes(b *testing.B, r roles, kv *counting) {
 	s, p, g, center := r.scscf, r.pcscf, r.ipsmgw, r.sc
 	realm := "ims.mnc001.mcc001.3gppnetwork.org"
+	// The backends of the benchmarks do not fail.
+	ctx := context.Background()
 
 	// The callee of the calls is registered, with an association.
 	callee := sip.Destination{Transport: sip.UDP, Addr: netip.MustParseAddrPort("192.0.2.20:5060")}
-	p.PutAssociation(pcscf.Association{Source: callee, Contact: "sip:ue2@192.0.2.20:5060", PrivateIdentity: "001010000000002@" + realm,
+	_ = p.PutAssociation(ctx, pcscf.Association{Source: callee, Contact: "sip:ue2@192.0.2.20:5060", PrivateIdentity: "001010000000002@" + realm,
 		PublicIdentities: []string{"sip:001010000000002@" + realm}, Expires: time.Now().Add(time.Hour), KeepUntil: time.Now().Add(time.Hour + time.Minute)})
 	s.PutRegistration(scscf.Registration{PrivateIdentity: "001010000000002@" + realm,
 		PublicIdentities: []string{"sip:001010000000002@" + realm, "tel:+12025550102"}, Contact: "sip:ue2@192.0.2.20:5060",
@@ -161,8 +163,8 @@ func benchmarkMixes(b *testing.B, r roles, kv *counting) {
 		{"Registration", func(user string, n int) {
 			impi := user + "@" + realm
 			source := sip.Destination{Transport: sip.UDP, Addr: netip.AddrPortFrom(netip.MustParseAddr("192.0.2.10"), uint16(10000+n%50000))}
-			p.Association(source)
-			p.SecurityAssociations(source.Addr)
+			_, _, _ = p.Association(ctx, source)
+			_, _, _ = p.SecurityAssociations(ctx, source.Addr)
 			s.Challenge(impi)
 			s.PutChallenge(scscf.Challenge{PrivateIdentity: impi, Nonce: user, HA1: strings.Repeat("0", 32)})
 			s.Challenge(impi)
@@ -178,35 +180,35 @@ func benchmarkMixes(b *testing.B, r roles, kv *counting) {
 			sub.PrivateIdentity, sub.Dialog.ID = impi, sip.DialogID{CallID: "sub-" + user, LocalTag: "l", RemoteTag: "r"}
 			sub.Expires = time.Now().Add(time.Hour)
 			s.PutSubscription(sub)
-			p.Association(source)
-			p.SecurityAssociations(source.Addr)
-			p.PutAssociation(pcscf.Association{Source: source, Contact: "sip:" + user + "@192.0.2.10", PrivateIdentity: impi,
+			_, _, _ = p.Association(ctx, source)
+			_, _, _ = p.SecurityAssociations(ctx, source.Addr)
+			_ = p.PutAssociation(ctx, pcscf.Association{Source: source, Contact: "sip:" + user + "@192.0.2.10", PrivateIdentity: impi,
 				PublicIdentities: reg.PublicIdentities, Expires: time.Now().Add(time.Hour), KeepUntil: time.Now().Add(time.Hour + time.Minute)})
 		}},
 		// 13.1: the P-CSCF calls Association 1, AssociationOfContact 7,
 		// SecurityAssociations 10, PutDialog 2, UpdateDialog 8 and
 		// TakeDialog 2; the S-CSCF RegistrationOf 3.
 		{"Call", func(user string, n int) {
-			p.Association(callee)
+			_, _, _ = p.Association(ctx, callee)
 			for range 7 {
-				p.AssociationOfContact("sip:ue2@192.0.2.20:5060")
+				_, _, _ = p.AssociationOfContact(ctx, "sip:ue2@192.0.2.20:5060")
 			}
 			for range 10 {
-				p.SecurityAssociations(callee.Addr)
+				_, _, _ = p.SecurityAssociations(ctx, callee.Addr)
 			}
 			for range 3 {
 				s.RegistrationOf("tel:+12025550102")
 			}
 			keys := []pcscf.DialogKey{{CallID: "call-" + user, UETag: "caller"}, {CallID: "call-" + user, UETag: "callee"}}
 			for _, k := range keys {
-				p.PutDialog(pcscf.Dialog{Key: k, Caller: pcscf.Party{NameAddr: "<sip:ue1>", Target: "sip:ue1@192.0.2.10"},
+				_ = p.PutDialog(ctx, pcscf.Dialog{Key: k, Caller: pcscf.Party{NameAddr: "<sip:ue1>", Target: "sip:ue1@192.0.2.10"},
 					Callee: pcscf.Party{NameAddr: "<sip:ue2>", Target: "sip:ue2@192.0.2.20"}})
 			}
 			for i := range 8 {
-				p.UpdateDialog(keys[i%2], func(d *pcscf.Dialog) { d.Caller.CSeq++ })
+				_, _, _ = p.UpdateDialog(ctx, keys[i%2], func(d *pcscf.Dialog) { d.Caller.CSeq++ })
 			}
 			for _, k := range keys {
-				p.TakeDialog(k)
+				_, _, _ = p.TakeDialog(ctx, k)
 			}
 		}},
 		// ipsmgw.Deliver and the report (deliver.go, message.go), with a

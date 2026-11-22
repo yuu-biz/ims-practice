@@ -1,9 +1,11 @@
 package pcscf
 
 import (
+	"context"
 	"log/slog"
 	"time"
 
+	"github.com/yuu-biz/ims-practice/internal/ims"
 	"github.com/yuu-biz/ims-practice/internal/policy"
 	"github.com/yuu-biz/ims-practice/internal/sip"
 )
@@ -27,6 +29,10 @@ import (
 // stream open to the EPC stub, may also arrive before the P-CSCF has
 // put the session in the dialog; it finds no dialog and is lost too.
 //
+// The PCRF has its answer before the P-CSCF hears of the event
+// (policy.Notify), so no request waits when the Store fails here. The
+// P-CSCF logs it, and the session stays until a party ends it.
+//
 // SIMPLIFIED: TS 24.229 5.2.8.1.1 and 5.2.8.1.2 item 1. The P-CSCF
 // should wait an operator defined time for a SIP message that removes
 // the media whose resources are gone, and release only then. A call
@@ -36,23 +42,39 @@ func (p *PCSCF) PolicyEvent(e policy.Event) {
 	if e.Kind == policy.SuccessfulResourcesAllocation {
 		return
 	}
-	d, ok := p.store.DialogOfPolicySession(e.Session)
+	ctx := context.Background()
+	lost := func(err error) {
+		log.Warn("the event is lost: the store failed", "error", err.Error())
+	}
+	d, ok, err := p.store.DialogOfPolicySession(ctx, e.Session)
+	if err != nil {
+		lost(err)
+		return
+	}
 	if !ok {
-		if a, ok := p.store.AssociationOfPolicySession(e.Session); ok {
+		a, ok, err := p.store.AssociationOfPolicySession(ctx, e.Session)
+		switch {
+		case err != nil:
+			lost(err)
+		case ok:
 			p.signallingPathLost(a, e.Kind, log)
-			return
+		default:
+			log.Info("event for a policy session that has no dialog")
 		}
-		log.Info("event for a policy session that has no dialog")
 		return
 	}
 	if e.Kind == policy.SessionTerminated {
 		// The PCRF has ended the session, so it needs no release. The
 		// dialog stays; only its session goes, unless it has a new one.
-		p.store.UpdateDialog(d.Key, func(d *Dialog) {
+		_, _, err := p.store.UpdateDialog(ctx, d.Key, func(d *Dialog) {
 			if d.PolicySession == e.Session {
 				d.PolicySession = ""
 			}
 		})
+		if err != nil {
+			lost(err)
+			return
+		}
 	}
 	log.Info("the network took the resources of the session", "call_id", d.Key.CallID)
 	p.release(d.Key, log)
@@ -75,11 +97,15 @@ func (p *PCSCF) PolicyEvent(e policy.Event) {
 // Store, so that the instance which forwards the ACK may be another
 // one; the timer lives in the process, as every timer does.
 func (p *PCSCF) release(key DialogKey, log *slog.Logger) {
-	d, ok := p.store.UpdateDialog(key, func(d *Dialog) {
+	d, ok, err := p.store.UpdateDialog(context.Background(), key, func(d *Dialog) {
 		if d.Confirmed && !d.Acknowledged {
 			d.ReleasePending = true
 		}
 	})
+	if err != nil {
+		log.Warn("the dialog is not released: the store failed", "call_id", key.CallID, "error", err.Error())
+		return
+	}
 	if !ok {
 		return
 	}
@@ -100,7 +126,11 @@ func (p *PCSCF) release(key DialogKey, log *slog.Logger) {
 // should be answered 481. The other party, which has the P-CSCF's BYE
 // or is about to get it, ends the dialog all the same (RFC 3261 15.1.2).
 func (p *PCSCF) releaseNow(key DialogKey, log *slog.Logger) {
-	d, ok := p.store.TakeDialog(key)
+	d, ok, err := p.store.TakeDialog(context.Background(), key)
+	if err != nil {
+		log.Warn("the dialog is not released: the store failed", "call_id", key.CallID, "error", err.Error())
+		return
+	}
 	if !ok {
 		return
 	}
@@ -140,9 +170,13 @@ func (p *PCSCF) sendBYEs(d Dialog, log *slog.Logger) {
 // what names, and logs its answer.
 func (p *PCSCF) sendBYE(bye *sip.Message, what string, log *slog.Logger) {
 	dst, _, err := p.nextHop(bye)
+	var ref *ims.StackRef
+	if err == nil {
+		ref, err = p.stackToward(dst)
+	}
 	var stack *sip.Stack
 	if err == nil {
-		stack, err = p.stackToward(dst).Get()
+		stack, err = ref.Get()
 	}
 	if err == nil {
 		var ct *sip.ClientTransaction
@@ -181,9 +215,13 @@ func (s *setup) crossedCancel(resp *sip.Message, first bool) bool {
 
 	ack := inDialogRequest(sip.ACK, inviteSeq, d, &d.Callee, &d.Caller)
 	dst, _, err := s.p.nextHop(ack)
+	var ref *ims.StackRef
+	if err == nil {
+		ref, err = s.p.stackToward(dst)
+	}
 	var stack *sip.Stack
 	if err == nil {
-		stack, err = s.p.stackToward(dst).Get()
+		stack, err = ref.Get()
 	}
 	if err == nil {
 		err = stack.SendACK(ack, dst)
@@ -207,10 +245,18 @@ func (s *setup) crossedCancel(resp *sip.Message, first bool) bool {
 // the early dialog: from the Dialog when it is still in the Store, or
 // else as the abort left it (abortSetup).
 func (s *setup) lastCallerSeq() uint32 {
-	if s.stored {
-		if d, ok := s.p.store.UpdateDialog(s.key, func(*Dialog) {}); ok {
-			return max(d.Caller.CSeq, s.callerSeq)
-		}
+	if !s.stored {
+		return s.callerSeq
+	}
+	d, ok, err := s.p.store.UpdateDialog(context.Background(), s.key, func(*Dialog) {})
+	if err != nil {
+		// The BYE may then take a number that the callee has seen
+		// already, and the callee answers it 500 (RFC 3261 12.2.2) and
+		// stays in the call until its user ends it.
+		s.log.Warn("could not read the last CSeq of the caller: the store failed", "error", err.Error())
+	}
+	if ok {
+		return max(d.Caller.CSeq, s.callerSeq)
 	}
 	return s.callerSeq
 }
@@ -278,5 +324,7 @@ func (p *PCSCF) signallingPathLost(a Association, kind policy.EventKind, log *sl
 	}
 	p.unwatchSignallingPath(&a, log)
 	a.SignallingLost = true
-	p.store.PutAssociation(a)
+	if err := p.store.PutAssociation(context.Background(), a); err != nil {
+		log.Warn("requests to the UE still go on until it registers again: the store failed", "error", err.Error())
+	}
 }

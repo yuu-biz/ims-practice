@@ -128,11 +128,11 @@ func ueSide(received, forwarded []byte, toUE bool) []byte {
 	return received
 }
 
-// forward sends the INVITE on to dst and sees it through to its final
-// response, which it passes on. It then frees what the call holds,
-// unless the INVITE was answered with a 2xx.
-func (s *setup) forward(st *sip.ServerTransaction, out *sip.Message, dst sip.Destination) {
-	final, err := s.p.proxyInvite(st, out, dst, s)
+// forward sends the INVITE on to dst, from stack, and sees it through
+// to its final response, which it passes on. It then frees what the
+// call holds, unless the INVITE was answered with a 2xx.
+func (s *setup) forward(st *sip.ServerTransaction, out *sip.Message, dst sip.Destination, stack *ims.StackRef) {
+	final, err := s.p.proxyInvite(st, out, dst, stack, s)
 	s.settle()
 	if final != nil {
 		s.p.ueResponse(s.leg, s.invite, final)
@@ -149,19 +149,22 @@ func (s *setup) forward(st *sip.ServerTransaction, out *sip.Message, dst sip.Des
 // the provisional ones and the 2xx, before it leaves: it sets the
 // identities in it, points the answer at the relay, has the PCRF
 // authorise the media, and keeps the dialog. An error means that the
-// network has no resources for the session.
+// network has no resources for the session, or, with errStore, that the
+// P-CSCF cannot keep the dialog.
 func (s *setup) response(resp *sip.Message) error {
 	s.p.ueResponse(s.leg, s.invite, resp)
 	received := resp.Body
 	if err := s.p.relaySDP(resp, s.relay, !s.toUE()); err != nil {
 		s.log.Warn("media relay refused the answer", "error", err.Error())
 	}
-	var err error
+	var refused error
 	if s.offered != nil && len(received) > 0 {
-		err = s.authorize(ueSide(received, resp.Body, !s.toUE()))
+		refused = s.authorize(ueSide(received, resp.Body, !s.toUE()))
 	}
-	s.remember(resp)
-	return err
+	if err := s.remember(resp); err != nil {
+		return storeError(err)
+	}
+	return refused
 }
 
 // mediaEvents are what the P-CSCF asks to hear about the media of a
@@ -195,7 +198,11 @@ func (s *setup) authorize(answer []byte) error {
 	// its INVITE before the policy session is in the association. The
 	// answer comes back through the callee, so the registration is read
 	// as it is now, not as it was when the INVITE came.
-	if a, ok := s.p.store.Association(s.ue.Source); !ok || a.SignallingSession == "" {
+	a, ok, err := s.p.store.Association(context.Background(), s.ue.Source)
+	if err != nil {
+		return storeError(err)
+	}
+	if !ok || a.SignallingSession == "" {
 		return nil
 	}
 	session, err := s.p.policy.AuthorizeMedia(context.Background(), policy.MediaRequest{
@@ -247,12 +254,12 @@ func (s *setup) unavailable() *sip.Message {
 
 // remember stores the dialog with the first response that creates one,
 // and brings it up to date with each later one (TS 24.229 5.2.6.3.4,
-// 5.2.6.4.4).
-func (s *setup) remember(resp *sip.Message) {
+// 5.2.6.4.4). It returns the failure of the Store.
+func (s *setup) remember(resp *sip.Message) error {
 	calleeTag := tagOf(resp.Get("To"))
 	if calleeTag == "" {
 		// RFC 3261 12.1: a response without a To tag creates no dialog.
-		return
+		return nil
 	}
 	// The response has the Record-Route of the whole path. The INVITE
 	// had the part of it that leads to the caller when it arrived.
@@ -271,9 +278,10 @@ func (s *setup) remember(resp *sip.Message) {
 			d.Callee.Target = contact
 		}
 	}
+	ctx := context.Background()
 	if s.stored {
-		s.p.store.UpdateDialog(s.key, update)
-		return
+		_, _, err := s.p.store.UpdateDialog(ctx, s.key, update)
+		return err
 	}
 	d := Dialog{Originating: s.leg == originating, Relay: s.relay, ICID: s.icid}
 	d.Key = DialogKey{CallID: s.invite.Get("Call-ID"), UETag: calleeTag}
@@ -285,11 +293,14 @@ func (s *setup) remember(resp *sip.Message) {
 		d.Caller.CSeq = cseq.Number
 	}
 	update(&d)
-	s.p.store.PutDialog(d)
+	if err := s.p.store.PutDialog(ctx, d); err != nil {
+		return err
+	}
 	s.key, s.stored = d.Key, true
 	s.p.setupsMu.Lock()
 	s.p.setups[s.key] = s
 	s.p.setupsMu.Unlock()
+	return nil
 }
 
 // settle takes the INVITE out of the setups when its 2xx is about to be
@@ -326,9 +337,10 @@ func (p *PCSCF) abortSetup(d Dialog) bool {
 // a response has created one, and otherwise the relay context and the
 // policy session alone.
 func (s *setup) end() {
+	holds := Dialog{Relay: s.relay, PolicySession: s.session}
 	if s.stored {
-		s.p.endDialog(s.key, s.log)
+		s.p.endDialog(s.key, holds, s.log)
 		return
 	}
-	s.p.free(Dialog{Relay: s.relay, PolicySession: s.session}, s.log)
+	s.p.free(holds, s.log)
 }

@@ -47,14 +47,21 @@ func (p *PCSCF) watchSignallingPath(a Association, log *slog.Logger) Association
 	log.Info("subscribed to the status of the signalling path", "policy_session", string(session))
 	// The registration may have changed, or ended, while the PCRF
 	// answered, so the session goes into the association as it is now.
-	current, ok := p.store.Association(a.Source)
-	if !ok || !time.Now().Before(current.Expires) || current.SignallingSession != "" {
-		p.releasePolicySession(session, log)
-		return a
+	// A session that the association cannot keep is released: no event
+	// of it would find the UE.
+	ctx := context.Background()
+	current, ok, err := p.store.Association(ctx, a.Source)
+	if err == nil && ok && time.Now().Before(current.Expires) && current.SignallingSession == "" {
+		current.SignallingSession = session
+		if err = p.store.PutAssociation(ctx, current); err == nil {
+			return current
+		}
 	}
-	current.SignallingSession = session
-	p.store.PutAssociation(current)
-	return current
+	if err != nil {
+		log.Warn("the UE is served without policy control: the store failed", "error", err.Error())
+	}
+	p.releasePolicySession(session, log)
+	return a
 }
 
 // unwatchSignallingPath cancels the subscription of a registration that

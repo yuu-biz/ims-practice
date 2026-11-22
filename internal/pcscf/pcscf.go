@@ -9,6 +9,7 @@ package pcscf
 import (
 	"context"
 	"crypto/rand"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/netip"
@@ -78,43 +79,58 @@ type Association struct {
 // Store keeps the associations and the dialogs. It is an interface so
 // that the state can live outside the node; MemoryStore keeps
 // it in the process.
+//
+// An error is a failure of the store, after which the caller cannot
+// tell what the store holds. The P-CSCF writes every expiry into what
+// it stores, as a time; the Store keeps nothing longer than that.
+//
+// A SIP transaction, an event of the PCRF and a timer carry no context
+// of their own, so the P-CSCF passes context.Background() and relies on
+// the time limit that an adapter on a store outside the process gives
+// each operation.
 type Store interface {
-	Association(source sip.Destination) (Association, bool)
+	// Association returns the association of a source, and whether
+	// there is one.
+	Association(ctx context.Context, source sip.Destination) (Association, bool, error)
 	// AssociationOfContact finds the association whose registered
 	// contact has this host, port and user.
-	AssociationOfContact(contact string) (Association, bool)
+	AssociationOfContact(ctx context.Context, contact string) (Association, bool, error)
 	// PutAssociation keeps a, in place of the association of its
 	// source, until its KeepUntil.
-	PutAssociation(Association)
-	DeleteAssociation(source sip.Destination)
+	PutAssociation(ctx context.Context, a Association) error
+	DeleteAssociation(ctx context.Context, source sip.Destination) error
 	// AssociationOfPolicySession finds the association whose
 	// SignallingSession is session, for an event that the PCRF reports
 	// about that session.
-	AssociationOfPolicySession(session policy.SessionID) (Association, bool)
+	AssociationOfPolicySession(ctx context.Context, session policy.SessionID) (Association, bool, error)
 	// PutDialog stores a new dialog under its key.
-	PutDialog(Dialog)
+	PutDialog(ctx context.Context, d Dialog) error
 	// UpdateDialog changes the dialog of key with change, as one step
 	// that no other change of that dialog comes between, and returns the
 	// dialog as it is afterwards. It reports false, and does not call
 	// change, when there is no such dialog: a dialog that has ended does
-	// not come back. change must not block.
-	UpdateDialog(key DialogKey, change func(*Dialog)) (Dialog, bool)
+	// not come back. change must not block, and may run more than once,
+	// each time on a fresh copy.
+	UpdateDialog(ctx context.Context, key DialogKey, change func(*Dialog)) (Dialog, bool, error)
 	// TakeDialog removes and returns the dialog of key. Only one caller
 	// gets it, and that one ends what the dialog holds; this is what
 	// makes the end of a dialog happen once, however many requests and
 	// events ask for it.
-	TakeDialog(key DialogKey) (Dialog, bool)
+	TakeDialog(ctx context.Context, key DialogKey) (Dialog, bool, error)
 	// DialogOfPolicySession finds the dialog whose PolicySession is
 	// session, for an event that the PCRF reports about that session.
-	DialogOfPolicySession(session policy.SessionID) (Dialog, bool)
+	DialogOfPolicySession(ctx context.Context, session policy.SessionID) (Dialog, bool, error)
 	// SecurityAssociations returns the entry of the SA table for a UE's
 	// address and protected server port, until it expires;
 	// PutSecurityAssociations replaces it.
-	SecurityAssociations(ue netip.AddrPort) (SecurityAssociations, bool)
-	PutSecurityAssociations(SecurityAssociations)
-	DeleteSecurityAssociations(ue netip.AddrPort)
+	SecurityAssociations(ctx context.Context, ue netip.AddrPort) (SecurityAssociations, bool, error)
+	PutSecurityAssociations(ctx context.Context, sas SecurityAssociations) error
+	DeleteSecurityAssociations(ctx context.Context, ue netip.AddrPort) error
 }
 
+// MemoryStore is a Store in the memory of one process. Two P-CSCFs
+// share state only when they share one MemoryStore, as in a test; a
+// network of several nodes needs a store outside them. It never fails.
 type MemoryStore struct {
 	mu           sync.Mutex
 	associations map[sip.Destination]Association
@@ -131,26 +147,27 @@ func NewMemoryStore() *MemoryStore {
 		dialogOfSession: map[policy.SessionID]DialogKey{}, associationOfSession: map[policy.SessionID]sip.Destination{}}
 }
 
-func (s *MemoryStore) AssociationOfContact(contact string) (Association, bool) {
+func (s *MemoryStore) AssociationOfContact(_ context.Context, contact string) (Association, bool, error) {
 	want, err := sip.ParseURI(contact)
 	if err != nil {
-		return Association{}, false
+		return Association{}, false, nil
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	for _, a := range s.associations {
 		got, err := sip.ParseURI(a.Contact)
 		if err == nil && got.User == want.User && strings.EqualFold(got.Host, want.Host) && got.Port == want.Port {
-			return a, true
+			return a, true, nil
 		}
 	}
-	return Association{}, false
+	return Association{}, false, nil
 }
 
-func (s *MemoryStore) PutDialog(d Dialog) {
+func (s *MemoryStore) PutDialog(_ context.Context, d Dialog) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.putDialog(d)
+	return nil
 }
 
 // putDialog stores d and keeps the index by policy session in step.
@@ -164,48 +181,48 @@ func (s *MemoryStore) putDialog(d Dialog) {
 	}
 }
 
-func (s *MemoryStore) UpdateDialog(key DialogKey, change func(*Dialog)) (Dialog, bool) {
+func (s *MemoryStore) UpdateDialog(_ context.Context, key DialogKey, change func(*Dialog)) (Dialog, bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	d, ok := s.dialogs[key]
 	if !ok {
-		return Dialog{}, false
+		return Dialog{}, false, nil
 	}
 	change(&d)
 	s.putDialog(d)
-	return d, true
+	return d, true, nil
 }
 
-func (s *MemoryStore) TakeDialog(key DialogKey) (Dialog, bool) {
+func (s *MemoryStore) TakeDialog(_ context.Context, key DialogKey) (Dialog, bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	d, ok := s.dialogs[key]
 	delete(s.dialogs, key)
 	delete(s.dialogOfSession, d.PolicySession)
-	return d, ok
+	return d, ok, nil
 }
 
-func (s *MemoryStore) DialogOfPolicySession(session policy.SessionID) (Dialog, bool) {
+func (s *MemoryStore) DialogOfPolicySession(_ context.Context, session policy.SessionID) (Dialog, bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	key, ok := s.dialogOfSession[session]
 	if !ok {
-		return Dialog{}, false
+		return Dialog{}, false, nil
 	}
 	d, ok := s.dialogs[key]
-	return d, ok
+	return d, ok, nil
 }
 
-func (s *MemoryStore) Association(source sip.Destination) (Association, bool) {
+func (s *MemoryStore) Association(_ context.Context, source sip.Destination) (Association, bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	a, ok := s.associations[source]
-	return a, ok
+	return a, ok, nil
 }
 
 // PutAssociation keeps a. The store removes it at its KeepUntil, unless
 // another association of the source has taken its place by then.
-func (s *MemoryStore) PutAssociation(a Association) {
+func (s *MemoryStore) PutAssociation(_ context.Context, a Association) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	delete(s.associationOfSession, s.associations[a.Source].SignallingSession)
@@ -214,7 +231,7 @@ func (s *MemoryStore) PutAssociation(a Association) {
 		s.associationOfSession[a.SignallingSession] = a.Source
 	}
 	if a.KeepUntil.IsZero() {
-		return
+		return nil
 	}
 	time.AfterFunc(time.Until(a.KeepUntil), func() {
 		s.mu.Lock()
@@ -223,12 +240,14 @@ func (s *MemoryStore) PutAssociation(a Association) {
 			s.deleteAssociation(a.Source)
 		}
 	})
+	return nil
 }
 
-func (s *MemoryStore) DeleteAssociation(source sip.Destination) {
+func (s *MemoryStore) DeleteAssociation(_ context.Context, source sip.Destination) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.deleteAssociation(source)
+	return nil
 }
 
 func (s *MemoryStore) deleteAssociation(source sip.Destination) {
@@ -236,15 +255,15 @@ func (s *MemoryStore) deleteAssociation(source sip.Destination) {
 	delete(s.associations, source)
 }
 
-func (s *MemoryStore) AssociationOfPolicySession(session policy.SessionID) (Association, bool) {
+func (s *MemoryStore) AssociationOfPolicySession(_ context.Context, session policy.SessionID) (Association, bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	source, ok := s.associationOfSession[session]
 	if !ok {
-		return Association{}, false
+		return Association{}, false, nil
 	}
 	a, ok := s.associations[source]
-	return a, ok
+	return a, ok, nil
 }
 
 type PCSCF struct {
@@ -366,7 +385,11 @@ func (p *PCSCF) register(st *sip.ServerTransaction, protected bool) {
 	// protected server port, is IMS AKA (5.2.2.2). Otherwise 5.2.2.3 tells
 	// the I-CSCF and the S-CSCF whether this UE already has an IP
 	// association with the P-CSCF.
-	assoc, associated := p.association(st, privateID)
+	assoc, associated, err := p.association(st, privateID)
+	if err != nil {
+		st.Respond(storeFailed(req, err, log))
+		return
+	}
 	var integrity sip.IntegrityProtected
 	var agreement *secAgreement
 	switch {
@@ -405,19 +428,31 @@ func (p *PCSCF) register(st *sip.ServerTransaction, protected bool) {
 
 	final := p.forward(st, out, targets, log)
 	if agreement != nil {
-		final = p.answerSecAgree(st, final, agreement, log)
+		if final, err = p.answerSecAgree(st, final, agreement, log); err != nil {
+			st.Respond(storeFailed(req, err, log))
+			return
+		}
 	}
 	var registered *Association
 	var interval time.Duration
 	switch {
 	case final.StatusCode == 200:
-		if a, d, ok := p.registered(st, final, privateID, assoc, log); ok {
+		a, d, ok, err := p.registered(st, final, privateID, assoc, log)
+		if err != nil {
+			// A 200 would stand for a registration that no P-CSCF
+			// instance can find.
+			st.Respond(storeFailed(req, err, log))
+			return
+		}
+		if ok {
 			registered, interval = &a, d
 		}
 	case final.StatusCode == 500 || final.StatusCode == 504:
 		// 5.2.2.3: the network failed, so the association can no longer
 		// be trusted.
-		p.deleteAssociation(ueSource(st), log)
+		if err := p.deleteAssociation(ueSource(st), log); err != nil {
+			log.Warn("the IP association stays until it expires: the store failed", "error", err.Error())
+		}
 	}
 	crossBoundary(final, responseToUE)
 	st.Respond(final)
@@ -436,14 +471,30 @@ func (p *PCSCF) register(st *sip.ServerTransaction, protected bool) {
 
 // deleteAssociation forgets the IP association of source, and with it
 // the watch on its signalling path.
-func (p *PCSCF) deleteAssociation(source sip.Destination, log *slog.Logger) {
-	a, ok := p.store.Association(source)
-	if !ok {
-		return
+func (p *PCSCF) deleteAssociation(source sip.Destination, log *slog.Logger) error {
+	ctx := context.Background()
+	a, ok, err := p.store.Association(ctx, source)
+	if err != nil || !ok {
+		return err
 	}
 	p.unwatchSignallingPath(&a, log)
-	p.store.DeleteAssociation(source)
+	return p.store.DeleteAssociation(ctx, source)
 }
+
+// storeFailed is the 500 (Server Internal Error) to req, a request whose
+// state the P-CSCF cannot read or write (RFC 3261 21.5.1). The UE or the
+// network may send the request again.
+func storeFailed(req *sip.Message, err error, log *slog.Logger) *sip.Message {
+	log.Warn("the store failed", "method", string(req.Method), "error", err.Error())
+	return sip.NewResponse(req, 500, sip.NewTag())
+}
+
+// errStore marks a failure of the Store in an error that may also be
+// one of routing or of the network, so that the request gets 500 rather
+// than the response to those.
+var errStore = errors.New("pcscf: the store failed")
+
+func storeError(err error) error { return fmt.Errorf("%w: %w", errStore, err) }
 
 // pathURI is the P-CSCF's URI in Path, which marks the requests to the
 // UE (5.2.6.2).
@@ -476,21 +527,20 @@ func ueSource(st *sip.ServerTransaction) sip.Destination {
 // association returns the IP association of the request's source
 // (ueSource), if it is still valid and belongs to privateID. An empty
 // privateID accepts any user.
-func (p *PCSCF) association(st *sip.ServerTransaction, privateID string) (Association, bool) {
-	via, err := sip.ParseVia(st.Request.Get("Via"))
+func (p *PCSCF) association(st *sip.ServerTransaction, privateID string) (Association, bool, error) {
+	via, viaErr := sip.ParseVia(st.Request.Get("Via"))
 	source := ueSource(st)
-	a, ok := p.store.Association(source)
-	if !ok {
-		return Association{}, false
+	a, ok, err := p.store.Association(context.Background(), source)
+	if err != nil || !ok {
+		return Association{}, false, err
 	}
 	if time.Now().After(a.Expires) {
-		p.deleteAssociation(source, p.log)
-		return Association{}, false
+		return Association{}, false, p.deleteAssociation(source, p.log)
 	}
-	if err != nil || via.SentBy() != a.SentBy || (privateID != "" && !strings.EqualFold(a.PrivateIdentity, privateID)) {
-		return Association{}, false
+	if viaErr != nil || via.SentBy() != a.SentBy || (privateID != "" && !strings.EqualFold(a.PrivateIdentity, privateID)) {
+		return Association{}, false, nil
 	}
-	return a, true
+	return a, true, nil
 }
 
 // registered handles the 200 OK to a REGISTER (TS 24.229 5.2.2.1 and
@@ -498,14 +548,19 @@ func (p *PCSCF) association(st *sip.ServerTransaction, privateID string) (Associ
 // association and stores Service-Route and P-Associated-URI, and
 // returns the association with the interval; with zero it removes the
 // association.
-func (p *PCSCF) registered(st *sip.ServerTransaction, resp *sip.Message, privateID string, old Association, log *slog.Logger) (Association, time.Duration, bool) {
+func (p *PCSCF) registered(st *sip.ServerTransaction, resp *sip.Message, privateID string, old Association, log *slog.Logger) (Association, time.Duration, bool, error) {
+	ctx := context.Background()
 	interval := grantedInterval(resp)
 	if interval == 0 {
-		if a, ok := p.store.Association(ueSource(st)); ok {
-			p.endAssociation(a, log)
+		a, ok, err := p.store.Association(ctx, ueSource(st))
+		if err == nil && ok {
+			err = p.endAssociation(a, log)
+		}
+		if err != nil {
+			return Association{}, 0, false, err
 		}
 		log.Info("deregistered")
-		return Association{}, 0, false
+		return Association{}, 0, false, nil
 	}
 	via, _ := sip.ParseVia(st.Request.Get("Via"))
 	expires := time.Now().Add(interval)
@@ -525,10 +580,12 @@ func (p *PCSCF) registered(st *sip.ServerTransaction, resp *sip.Message, private
 			a.PublicIdentities = append(a.PublicIdentities, na.URI)
 		}
 	}
-	p.store.PutAssociation(a)
+	if err := p.store.PutAssociation(ctx, a); err != nil {
+		return Association{}, 0, false, err
+	}
 	log.Info("registered", "public_identities", a.PublicIdentities, "service_route", a.ServiceRoute,
 		"expires", int(interval/time.Second), "refresh", old.PrivateIdentity != "")
-	return a, interval, true
+	return a, interval, true, nil
 }
 
 func addOptionTag(m *sip.Message, header, tag string) {
@@ -553,14 +610,17 @@ var associationGrace = 64 * sip.DefaultTimers().T1
 // still passes requests to it for associationGrace, until the Store
 // forgets the association at its KeepUntil. The watch on the signalling
 // path ends at once (TS 29.214 A.4).
-func (p *PCSCF) endAssociation(a Association, log *slog.Logger) {
+func (p *PCSCF) endAssociation(a Association, log *slog.Logger) error {
+	ctx := context.Background()
 	p.unwatchSignallingPath(&a, log)
 	// TS 33.203 7.4.2a: the security associations of the UE go with its
 	// last registered identity.
-	p.store.DeleteSecurityAssociations(a.Source.Addr)
+	if err := p.store.DeleteSecurityAssociations(ctx, a.Source.Addr); err != nil {
+		return err
+	}
 	a.Expires = time.Now()
 	a.KeepUntil = a.Expires.Add(associationGrace)
-	p.store.PutAssociation(a)
+	return p.store.PutAssociation(ctx, a)
 }
 
 // associationOfContact is the association of a contact, for a request
@@ -569,8 +629,8 @@ func (p *PCSCF) endAssociation(a Association, log *slog.Logger) {
 // and tells the P-CSCF with the reg event (5.2.5.2), which ends the
 // association. The expiry that the P-CSCF noted comes a moment after the
 // S-CSCF's, and the NOTIFY that reports the end has to reach the UE.
-func (p *PCSCF) associationOfContact(contact string) (Association, bool) {
-	return p.store.AssociationOfContact(contact)
+func (p *PCSCF) associationOfContact(contact string) (Association, bool, error) {
+	return p.store.AssociationOfContact(context.Background(), contact)
 }
 
 func contactOf(req *sip.Message) string {
