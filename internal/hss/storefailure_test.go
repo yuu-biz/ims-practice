@@ -18,6 +18,7 @@ import (
 	"github.com/yuu-biz/ims-practice/internal/cx"
 	"github.com/yuu-biz/ims-practice/internal/diameter"
 	"github.com/yuu-biz/ims-practice/internal/hss"
+	"github.com/yuu-biz/ims-practice/internal/ims"
 	"github.com/yuu-biz/ims-practice/internal/kvstore"
 	"github.com/yuu-biz/ims-practice/internal/kvstore/hssstore"
 	"github.com/yuu-biz/ims-practice/internal/kvstore/kvjson"
@@ -74,13 +75,27 @@ func (unreachable) CompareAndDelete(context.Context, string, string) error { ret
 
 func newHSS(t *testing.T, kv kvstore.Store) *hss.HSS {
 	t.Helper()
+	return newHSSWithLocks(t, kv, nil)
+}
+
+// newHSSWithLocks is newHSS with the lock per subscriber that locks
+// names; nil gives the HSS the lock in its own process.
+func newHSSWithLocks(t *testing.T, kv kvstore.Store, locks ims.UserLocker) *hss.HSS {
+	t.Helper()
 	if err := diameter.LoadDictionary(); err != nil {
 		t.Fatal(err)
 	}
 	node := diameter.NewNode(diameter.Identity{OriginHost: "hss." + realm, OriginRealm: realm},
 		[]uint32{diameter.ApplicationIDCx, diameter.ApplicationIDSh}, diameter.Timers{}, quiet())
-	return hss.New(hss.Config{Realm: realm, VisitedNetworks: []string{realm}}, hssstore.New(kv, kvjson.Config{}), node, quiet())
+	return hss.New(hss.Config{Realm: realm, VisitedNetworks: []string{realm}, UserLocks: locks},
+		hssstore.New(kv, kvjson.Config{}), node, quiet())
 }
+
+// failingLocks is a UserLocker that hands out no lock, as the lock in
+// the shared store does once the HSS cannot reach it.
+type failingLocks struct{}
+
+func (failingLocks) Lock(context.Context, string) (func(), error) { return nil, errUnreachable }
 
 // provisioned is a store that holds a subscriber with a password and
 // one with AKA credentials, added through the provisioning API.
@@ -285,5 +300,30 @@ func TestProvisioningWhenTheStoreFails(t *testing.T) {
 	}
 	if w := do(api, "GET", "/subscriptions/001010000000009@"+realm, ""); w.Code != http.StatusNotFound {
 		t.Errorf("GET of the subscription whose POST failed: %d %s", w.Code, w.Body)
+	}
+}
+
+// TestRequestsWhoseSubscriberCannotBeLocked: the HSS gets no lock for
+// the subscriber of a request that would change it. Another instance
+// may be changing that subscriber, so this one answers
+// DIAMETER_UNABLE_TO_COMPLY rather than read and write without the
+// lock, and the provisioning API answers 500 and leaves the
+// subscription where it is.
+func TestRequestsWhoseSubscriberCannotBeLocked(t *testing.T) {
+	kv := provisioned(t)
+	h := newHSSWithLocks(t, kv, failingLocks{})
+	for _, r := range []request{
+		{"MAR", digestMAR, maaResult},
+		{"SAR", registrationSAR, saaResult},
+		{"PUR of SMSRegistrationInfo", smsRegistrationPUR, puaResult},
+		{"PUR of repository data", repositoryDataPUR, puaResult},
+	} {
+		check(t, h, r)
+	}
+	if w := do(h.Provisioning(noSCSCFs{}), "DELETE", "/subscriptions/"+impi, ""); w.Code != http.StatusInternalServerError {
+		t.Errorf("DELETE of a subscription that cannot be locked: %d %s, want 500", w.Code, w.Body)
+	}
+	if _, ok, err := hssstore.New(kv, kvjson.Config{}).Subscriber(context.Background(), impi); err != nil || !ok {
+		t.Errorf("the subscription after the DELETE that got no lock: %v, %v", ok, err)
 	}
 }

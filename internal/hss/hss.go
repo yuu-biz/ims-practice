@@ -51,6 +51,13 @@ type Config struct {
 	// MMTelServicesData builds it. Empty gives such a subscription no
 	// supplementary services.
 	MMTelServices *sh.TransparentData
+	// UserLocks serialises the requests that change one subscriber. Nil
+	// means a lock per user in the memory of this process
+	// (ims.UserLocks), which serves an HSS that runs as one instance.
+	// Instances that share a store take the lock of a subscriber in it
+	// (internal/kvstore/kvlock), so that only one of them changes the
+	// subscriber at a time.
+	UserLocks ims.UserLocker
 }
 
 // HSS answers Cx requests from the subscribers in its Store.
@@ -63,11 +70,14 @@ type HSS struct {
 	// users serializes the requests that change one subscriber, so that
 	// a MAR and a SAR for the same user never overwrite each other, and
 	// the requests of other users are not held up.
-	users ims.UserLocks
+	users ims.UserLocker
 }
 
 func New(config Config, store Store, node *diameter.Node, log *slog.Logger) *HSS {
-	return &HSS{config: config, store: store, node: node, log: log}
+	if config.UserLocks == nil {
+		config.UserLocks = &ims.UserLocks{}
+	}
+	return &HSS{config: config, store: store, node: node, log: log, users: config.UserLocks}
 }
 
 // Handle is the diameter.Handler of the HSS.
@@ -127,6 +137,14 @@ func (h *HSS) storeFailed(err error) cx.Result {
 	return cx.Base(cx.DiameterUnableToComply)
 }
 
+// lockFailed is the result for a request whose subscriber the HSS could
+// not lock. Another instance may be changing the subscriber, so this
+// one does not go on without the lock.
+func (h *HSS) lockFailed(err error) cx.Result {
+	h.log.Warn("the lock of the subscriber was not taken", "error", err.Error())
+	return cx.Base(cx.DiameterUnableToComply)
+}
+
 // find runs the identity checks that start the UAR, MAR and SAR
 // procedures: both identities exist, then they belong together. An
 // empty privateID skips the second check.
@@ -173,7 +191,10 @@ func (h *HSS) lock(ctx context.Context, privateID, publicID string) (Subscriber,
 	if !ok {
 		return Subscriber{}, result, nil, false
 	}
-	unlock, _ := h.users.Lock(context.Background(), s.PrivateIdentity)
+	unlock, err := h.users.Lock(context.Background(), s.PrivateIdentity)
+	if err != nil {
+		return Subscriber{}, h.lockFailed(err), nil, false
+	}
 	s, result, ok = h.find(ctx, privateID, publicID)
 	if !ok {
 		unlock()
