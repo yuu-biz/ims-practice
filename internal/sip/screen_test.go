@@ -553,10 +553,17 @@ func TestCloseWaitsForAdmit(t *testing.T) {
 }
 
 // At most maxAdmitQueue requests from one source wait for Admit, the
-// one it is deciding on included, and the stack drops any more without
-// a word. Once Admit has decided on one of them, there is room for the
+// one it is deciding on included, and the stack drops any more and
+// sends nothing back. Once Admit has decided on one of them, there is room for the
 // next request from the source.
 func TestAdmitBoundsTheRequestsThatWaitFromOneSource(t *testing.T) {
+	// A smaller bound, so that the requests over it fit in the socket
+	// buffers of the test.
+	// Registered before the stack's own cleanup, it runs after the stack
+	// has closed.
+	bound := maxAdmitQueue
+	t.Cleanup(func() { maxAdmitQueue = bound })
+	maxAdmitQueue = 16
 	questions := make(chan admitQuestion)
 	stack := newStackWith(t, Config{
 		Timers:    testTimers,
