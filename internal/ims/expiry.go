@@ -32,11 +32,11 @@ import (
 // DueIndex is the same index in the memory of one process, for a Store
 // that keeps the state of the role there.
 
-// ExpiryBatch bounds how many expiries of one kind an instance claims in
+// expiryBatch bounds how many expiries of one kind an instance claims in
 // one round, so that it never holds more claims at once than it can
 // handle within a lease. What is left over is due again at the next
 // round.
-const ExpiryBatch = 100
+const expiryBatch = 100
 
 // Expiry is one expiry that an instance has claimed, as its role names
 // one: which item is due, and until when this instance alone acts on it.
@@ -119,7 +119,7 @@ func (s Sweep[E]) run(ctx context.Context, running *sync.WaitGroup) {
 // rounds that follow do not claim the same expiry again.
 func (s Sweep[E]) round(ctx context.Context, running *sync.WaitGroup) {
 	for _, kind := range s.Kinds {
-		due, err := s.Claim(ctx, kind, time.Now(), s.Lease, ExpiryBatch)
+		due, err := s.Claim(ctx, kind, time.Now(), s.Lease, expiryBatch)
 		if err != nil {
 			s.Log.Warn("expiries not claimed: the store failed; the next sweep claims them again",
 				"kind", kind, "error", err.Error())
