@@ -120,7 +120,7 @@ UE <-- P-CSCF <-- I-CSCF <-- S-CSCF: 200 OK // 10
 | --- | --- |
 | UE の REGISTER の Request-URI | サーバーではなく、ホーム網のドメイン。 |
 | Authorization | `username` に秘密の識別子。`nonce` と `response` は空。 |
-| Contact | `+g.3gpp.smsip` と `expires=600000`。 |
+| Contact | ユーザー部に UUID。`+g.3gpp.smsip` と `expires=600000`。 |
 | DNS の 3 つの問い合わせ | NAPTR、SRV、A の順で I-CSCF が見つかる。 |
 | P-CSCF が足すヘッダ | Path、Require: path、P-Charging-Vector、P-Visited-Network-ID。 |
 

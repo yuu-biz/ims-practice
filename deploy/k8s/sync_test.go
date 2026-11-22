@@ -160,8 +160,9 @@ func TestEveryRoleHasAWorkload(t *testing.T) {
 	}
 }
 
-// TestEveryNameHasAService: each CNAME of the home zone needs a Service
-// of that name in base/.
+// TestEveryNameHasAService: each CNAME of the home zone, and each SRV
+// target, needs a Service of that name in base/. An SRV target that is
+// a CNAME breaks RFC 2782.
 func TestEveryNameHasAService(t *testing.T) {
 	services := map[string]bool{}
 	manifests, err := filepath.Glob("base/*.yaml")
@@ -184,9 +185,19 @@ func TestEveryNameHasAService(t *testing.T) {
 		}
 	}
 	zone := ZoneDir + "/" + homeZone
-	for _, rr := range parseZone(t, zone, copies(t)[zone]) {
+	records := parseZone(t, zone, copies(t)[zone])
+	aliases := map[string]bool{}
+	for _, rr := range records {
+		if cname, ok := rr.(*dns.CNAME); ok {
+			aliases[cname.Hdr.Name] = true
+		}
+	}
+	for _, rr := range records {
 		if cname, ok := rr.(*dns.CNAME); ok && !services[cname.Target] {
 			t.Errorf("%s points to %s, but deploy/k8s/base has no Service of that name", cname.Hdr.Name, cname.Target)
+		}
+		if srv, ok := rr.(*dns.SRV); ok && (aliases[srv.Target] || !services[srv.Target]) {
+			t.Errorf("the SRV record %s points to %s, want a Service of deploy/k8s/base", srv.Hdr.Name, srv.Target)
 		}
 		if a, ok := rr.(*dns.A); ok && a.Hdr.Name != nameServer+"."+strings.TrimSuffix(homeZone, "zone") {
 			t.Errorf("%s keeps an A record", a.Hdr.Name)
@@ -274,6 +285,8 @@ func TestToServices(t *testing.T) {
 	const src = `; Old header.
 $ORIGIN example.
 @         IN NS  dns
+_sip._udp IN SRV   10 50 5060 hss
+_x._udp   IN SRV   10 50 5060 dns
 dns       IN A     172.28.0.2
 hss       IN A     172.28.0.10
 `
@@ -282,7 +295,9 @@ hss       IN A     172.28.0.10
 		t.Fatal(err)
 	}
 	for _, want := range []string{
-		"@         IN NS  dns\nhss       IN CNAME hss.ims.svc.cluster.local.\n",
+		"_sip._udp IN SRV   10 50 5060 hss.ims.svc.cluster.local.\n",
+		"_x._udp   IN SRV   10 50 5060 dns\n",
+		"hss       IN CNAME hss.ims.svc.cluster.local.\n",
 		"so this record comes last.\ndns       IN A 192.0.2.53\n",
 	} {
 		if !strings.Contains(string(out), want) {

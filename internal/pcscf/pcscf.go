@@ -263,7 +263,8 @@ type PCSCF struct {
 
 // New makes a P-CSCF. relay may be nil, and then RTP goes between the
 // UEs directly. Both stacks of the P-CSCF need its Screen in their
-// sip.Config.
+// sip.Config, and the one on the unprotected port its AdmitUnprotected
+// as well.
 func New(cfg Config, locator Locator, store Store, relay Relay, log *slog.Logger) *PCSCF {
 	admitted := newAdmissions()
 	p := &PCSCF{cfg: cfg, locator: locator, store: indexedStore{Store: store, admissions: admitted}, admissions: admitted,
@@ -276,9 +277,7 @@ func New(cfg Config, locator Locator, store Store, relay Relay, log *slog.Logger
 // unprotected port.
 func (p *PCSCF) OnRequest(st *sip.ServerTransaction) {
 	if st.Request.Method != sip.REGISTER {
-		if !p.refusesUnprotected(st) {
-			p.session(st)
-		}
+		p.session(st)
 		return
 	}
 	p.register(st, false)
@@ -293,6 +292,11 @@ func (p *PCSCF) SetStack(stack *sip.Stack) { p.stack.Set(stack) }
 // REGISTER came to the protected server port. After the 200 to the first
 // initial REGISTER of a private identity, the P-CSCF subscribes to the
 // reg event package (5.2.3).
+//
+// SIMPLIFIED: TS 24.229 5.2.2.1 item 6. The P-CSCF does not store the
+// term-ioi of the P-Charging-Vector of the 200: that IOI names the home
+// network in the charging records of the P-CSCF, which no node of this
+// project writes, and no later message carries it.
 func (p *PCSCF) register(st *sip.ServerTransaction, protected bool) {
 	req := st.Request
 	publicID, err := ims.PublicIdentity(req.Get("To"))
@@ -330,7 +334,7 @@ func (p *PCSCF) register(st *sip.ServerTransaction, protected bool) {
 	// Item 2: Require, not Supported.
 	addOptionTag(out, "Require", "path")
 	// Item 3: a new charging identifier for this request (TS 32.260).
-	out.Set("P-Charging-Vector", fmt.Sprintf("icid-value=%s;orig-ioi=%s", rand.Text(), p.cfg.VisitedNetworkID))
+	p.chargeRequest(out, rand.Text())
 	// Item 4.
 	out.Set("P-Visited-Network-ID", p.cfg.VisitedNetworkID)
 
@@ -389,16 +393,17 @@ func (p *PCSCF) register(st *sip.ServerTransaction, protected bool) {
 	case final.StatusCode == 500 || final.StatusCode == 504:
 		// 5.2.2.3: the network failed, so the association can no longer
 		// be trusted.
-		p.deleteAssociation(st.Source, log)
+		p.deleteAssociation(ueSource(st), log)
 	}
 	crossBoundary(final, responseToUE)
 	st.Respond(final)
 	if registered != nil {
 		if !associated || assoc.SignallingLost {
-			// TS 29.214 A.4: on the initial registration. A refresh keeps
-			// the session of the registration it refreshes, unless the
-			// signalling path was lost: this REGISTER shows that the UE
-			// has it again (TS 24.229 5.2.6.4.3 NOTE 1).
+			// TS 29.214 A.4: on the initial registration, after its 200
+			// (TS 29.213 B.1). A refresh keeps the session of the
+			// registration it refreshes, unless the signalling path was
+			// lost: this REGISTER shows that the UE has it again (TS
+			// 24.229 5.2.6.4.3 NOTE 1).
 			*registered = p.watchSignallingPath(*registered, log)
 		}
 		p.subscribeRegEvent(*registered, interval, log)
@@ -472,7 +477,7 @@ func (p *PCSCF) association(st *sip.ServerTransaction, privateID string) (Associ
 func (p *PCSCF) registered(st *sip.ServerTransaction, resp *sip.Message, privateID string, old Association, log *slog.Logger) (Association, time.Duration, bool) {
 	interval := grantedInterval(resp)
 	if interval == 0 {
-		if a, ok := p.store.Association(st.Source); ok {
+		if a, ok := p.store.Association(ueSource(st)); ok {
 			p.endAssociation(a, log)
 		}
 		log.Info("deregistered")
@@ -480,7 +485,7 @@ func (p *PCSCF) registered(st *sip.ServerTransaction, resp *sip.Message, private
 	}
 	via, _ := sip.ParseVia(st.Request.Get("Via"))
 	a := Association{
-		Source:          st.Source,
+		Source:          ueSource(st),
 		Contact:         contactOf(st.Request),
 		SentBy:          via.SentBy(),
 		PrivateIdentity: privateID,

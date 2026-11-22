@@ -26,6 +26,18 @@ import (
 // the choice of another S-CSCF when the chosen one does not answer, are
 // left out. No service of this project sends on behalf of a user, and
 // this network has no redundant S-CSCF to choose.
+//
+// SIMPLIFIED: TS 24.229 5.3.2.1. The I-CSCF does not check whether a
+// request comes from a trusted domain, so it never removes
+// P-Charging-Vector and P-Charging-Function-Addresses for that reason.
+// In the networks that this project sets up, every node that sends to
+// the I-CSCF belongs to its own network: another network reaches it
+// only through the IBCF, which removes both header fields from the
+// requests of an untrusted peer as they enter (5.10.3.2), and a UE only
+// through its P-CSCF. Nor does the I-CSCF store the
+// icid-value of a request or the term-ioi of a response: they are for
+// the charging records of the I-CSCF, which no node of this project
+// writes, and the I-CSCF sees no later request of the dialog.
 func (i *ICSCF) session(st *sip.ServerTransaction) {
 	req := st.Request
 	out := req.Clone()
@@ -41,8 +53,12 @@ func (i *ICSCF) session(st *sip.ServerTransaction) {
 		log.Info("the Request-URI is a number, asking the HSS for its tel URI", "request_uri", out.RequestURI, "tel_uri", tel)
 		out.RequestURI = tel
 	}
-	// Step 2: remove its own URI from the top Route, if it is there.
-	sip.PopOwnRoute(out, i.ownURI())
+	// Step 2: remove its own URI from the top Route, if it is there. The
+	// name of the home domain is the entry point of the network, which
+	// DNS resolves to the I-CSCF, so a Route with it names the I-CSCF
+	// too: an AS puts it there for a request that it sends to a user
+	// (TS 24.229 5.7.3).
+	sip.PopOwnRoute(out, i.ownURI(), sip.URI{Scheme: "sip", Host: i.cfg.HomeDomain})
 
 	// Step 3: the subdomains of public service identities are in DNS,
 	// which leads to the AS that hosts them (TS 23.228 5.4.12.3 b).
@@ -87,6 +103,8 @@ func (i *ICSCF) session(st *sip.ServerTransaction) {
 		st.Respond(sip.NewResponse(req, 404, sip.NewTag()))
 		return
 	}
+	// Step 2 of "upon successful user location query".
+	withICID(out)
 	server := lia.ServerName
 	if server == "" {
 		// "Upon successful user location query, when the response contains
@@ -155,7 +173,10 @@ func (i *ICSCF) psiSubdomain(uri string) (string, bool) {
 // toPSIHost forwards out to where DNS resolves its Request-URI: the AS
 // that hosts the public service identity (TS 24.229 5.3.2.1, "in case
 // the I-CSCF is able to resolve the Request-URI into the IP address of
-// the AS hosting the PSI").
+// the AS hosting the PSI"). The request goes with an icid-value and this
+// network as its orig-ioi (step 1). A response that brings a term-ioi
+// goes back with the orig-ioi of the request and this network as its
+// term-ioi, in place of the IOIs that the AS wrote.
 func (i *ICSCF) toPSIHost(st *sip.ServerTransaction, out *sip.Message, log *slog.Logger) {
 	u, err := sip.ParseURI(out.RequestURI)
 	if err != nil {
@@ -170,8 +191,35 @@ func (i *ICSCF) toPSIHost(st *sip.ServerTransaction, out *sip.Message, log *slog
 		st.Respond(sip.NewResponse(st.Request, 404, sip.NewTag()))
 		return
 	}
-	final, err := st.Proxy(out, dst)
+	charging := withICID(out)
+	charging.OrigIOI, charging.TermIOI = i.cfg.HomeDomain, ""
+	out.Set("P-Charging-Vector", charging.String())
+	received, _ := sip.ChargingVectorOf(st.Request)
+	answer := sip.ChargingVector{ICID: charging.ICID, OrigIOI: received.OrigIOI}.Response(i.cfg.HomeDomain)
+	relay := func(resp *sip.Message) {
+		if got, _ := sip.ChargingVectorOf(resp); got.TermIOI != "" {
+			resp.Set("P-Charging-Vector", answer.String())
+		}
+	}
+	final, err := st.ProxyWith(out, dst, relay)
+	if final != nil {
+		relay(final)
+	}
 	ims.Finish(st, final, err)
+}
+
+// withICID keeps the icid-value that out came with, and gives a request
+// without one a P-Charging-Vector with a new icid-value: TS 24.229
+// 5.3.2.1, step 1 for the AS that hosts a PSI and step 2 of "upon
+// successful user location query". It returns the charging vector of
+// out.
+func withICID(out *sip.Message) sip.ChargingVector {
+	c, ok := sip.ChargingVectorOf(out)
+	if !ok {
+		c = sip.ChargingVector{ICID: sip.NewCallID()}
+		out.Set("P-Charging-Vector", c.String())
+	}
+	return c
 }
 
 // telURIOf is the tel URI that TS 24.229 5.3.2.1 item 1 b puts in place

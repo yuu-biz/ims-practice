@@ -85,7 +85,7 @@ func (s *SCSCF) thirdPartyRegister(req *sip.Message, reg Registration, as ifc.Ap
 	// Item h: the icid-value of the UE's REGISTER, and a type 3 orig-ioi
 	// naming this network.
 	if icid := icidOf(req); icid != "" {
-		m.Add("P-Charging-Vector", "icid-value="+icid+";orig-ioi="+s.cfg.HomeDomain)
+		m.Add("P-Charging-Vector", sip.ChargingVector{ICID: icid, OrigIOI: s.cfg.HomeDomain}.String())
 	}
 	// Item g and 5.4.1.7A.
 	if as.ServiceInfo != "" {
@@ -99,7 +99,8 @@ func (s *SCSCF) thirdPartyRegister(req *sip.Message, reg Registration, as ifc.Ap
 // the criterion when the server fails (TS 24.229 5.4.1.7).
 //
 // SIMPLIFIED: TS 24.229 5.4.1.7. The term-ioi of the response is not
-// stored; the S-CSCF does no charging.
+// stored: it is for the charging records of the S-CSCF, which no node
+// of this project writes.
 func (s *SCSCF) sendThirdPartyRegister(m *sip.Message, reg Registration, as ifc.ApplicationServer, expires time.Duration, log *slog.Logger) {
 	log = log.With("application_server", as.ServerName, "expires", int(expires/time.Second))
 	final, err := s.sendRequest(m)

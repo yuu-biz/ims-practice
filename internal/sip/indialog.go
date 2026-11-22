@@ -28,16 +28,27 @@ const (
 
 // InDialogRequest is a request of the peer within a dialog that the
 // user of the call answers, with Accept or Reject: a re-INVITE, an
-// UPDATE, a PRACK with a session description, or a request of a method
-// that the UA does not handle by itself, such as INFO or REFER. The UA
-// has checked that it is in order (RFC 3261 12.2.2), and that an offer
-// in it does not cross another offer.
+// UPDATE, a PRACK with a session description (any PRACK, after
+// IncomingCall.RelayPRACK), or a request of a method that the UA does
+// not handle by itself, such as INFO or REFER. The UA has checked that
+// it is in order (RFC 3261 12.2.2), and that an offer in it does not
+// cross another offer.
 type InDialogRequest struct {
 	// Request is the request as received.
 	Request *Message
 	// Offer tells that the body of Request is an offer. The user gives
 	// the answer to Accept.
 	Offer bool
+	// Arrival is the place of the request among those of the call that
+	// the UA hands to the user: 1 for the first, and one up for each
+	// after it, in the order in which the UA took them. That is the
+	// order of their CSeq numbers within a dialog (RFC 3261 12.2.2). The
+	// UA hands each request to a goroutine of its own, so one that came
+	// later may run first; a B2BUA that relays the requests to its other
+	// leg uses Arrival to send them on in the order they came. A request
+	// that the UA answers itself, such as one out of order, takes no
+	// number.
+	Arrival uint64
 
 	d  *CallDialog
 	st *ServerTransaction
@@ -180,11 +191,10 @@ func (d *CallDialog) receiveOther(st *ServerTransaction) {
 		d.respond(st, 400)
 		return
 	}
-	ok := d.inOrder(st)
-	c.mu.Unlock()
-	if ok {
-		go handler(&InDialogRequest{Request: st.Request, d: d, st: st, dialog: d.dialog})
+	if d.inOrder(st) {
+		c.handOver(&InDialogRequest{Request: st.Request, d: d, st: st, dialog: d.dialog})
 	}
+	c.mu.Unlock()
 }
 
 var errNoDialog = errors.New("sip: no dialog to send the request in")
@@ -435,12 +445,14 @@ func (d *CallDialog) receiveUpdate(st *ServerTransaction) {
 		c.mu.Unlock()
 		return
 	}
-	handler := c.onRequest
 	d.updatePending = true
+	if c.onRequest != nil {
+		c.handOver(r)
+		c.mu.Unlock()
+		return
+	}
 	c.mu.Unlock()
 	switch {
-	case handler != nil:
-		go handler(r)
 	case r.Offer:
 		r.Reject(488, append(c.ua.own(UPDATE, true, nil), c.ua.noSessionChange())...)
 	default:
@@ -645,8 +657,7 @@ func (d *CallDialog) receiveReInvite(st *ServerTransaction) {
 		d.respond(st, 491)
 		return
 	}
-	handler := c.onRequest
-	if handler == nil {
+	if c.onRequest == nil {
 		d.respond(st, 488, c.ua.noSessionChange())
 		return
 	}
@@ -658,7 +669,7 @@ func (d *CallDialog) receiveReInvite(st *ServerTransaction) {
 	r.cseq, r.settled, r.acked = cseq.Number, make(chan struct{}), make(chan struct{})
 	d.invite = inviteReceived
 	c.ua.spawn(r.watchCancel)
-	go handler(r)
+	c.handOver(r)
 }
 
 // watchCancel answers the re-INVITE with 487 (Request Terminated) when

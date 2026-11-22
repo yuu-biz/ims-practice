@@ -121,6 +121,7 @@ func dialog() pcscf.Dialog {
 		Callee:      pcscf.Party{NameAddr: "<" + otherIMPU + ">", Target: "sip:ue2@192.0.2.20:5060", Route: []string{"<sip:orig@scscf;lr>"}},
 		Relay: &pcscf.RelayContext{ID: "ctx-1", Access: netip.MustParseAddrPort("198.51.100.1:40000"),
 			Core: netip.MustParseAddrPort("198.51.100.1:40002")},
+		ICID: "icid-1",
 	}
 }
 

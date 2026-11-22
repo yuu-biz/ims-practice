@@ -53,11 +53,14 @@ type relayTermination struct {
 
 // channel is one socket of a termination, with the address it sends to.
 type channel struct {
-	conn    *net.UDPConn
-	local   netip.AddrPort
-	mu      sync.Mutex
-	remote  netip.AddrPort
-	latched bool
+	conn  *net.UDPConn
+	local netip.AddrPort
+	mu    sync.Mutex
+	// remote is the address of the SDP, and latched the source that the
+	// channel latched onto, or the zero address. latching is NAPTLatch
+	// or NAPTRelatch while it waits for its packet, and empty otherwise.
+	remote, latched netip.AddrPort
+	latching        Latch
 	// received and sent count packets.
 	received, sent atomic.Uint64
 }
@@ -82,6 +85,18 @@ func (rc *relayContext) add(req TerminationRequest) (*relayTermination, error) {
 	if !mode.valid() {
 		return nil, fmt.Errorf("%w: mode %q", ErrBadRequest, mode)
 	}
+	latch := req.Latch
+	if latch == "" {
+		// SIMPLIFIED: RFC 4961. A termination added without a latching
+		// latches once, and keeps the address for the whole call.
+		// Re-latching only matters when a UE changes address in the
+		// middle of a call, and takes a controller that asks for
+		// NAPTRelatch.
+		latch = NAPTLatch
+	}
+	if !latch.valid() {
+		return nil, fmt.Errorf("%w: latching %q", ErrBadRequest, latch)
+	}
 	if err := req.Events.check(); err != nil {
 		return nil, err
 	}
@@ -98,6 +113,7 @@ func (rc *relayContext) add(req TerminationRequest) (*relayTermination, error) {
 	t := &relayTermination{id: id, ctx: rc, rtp: rtp, rtcp: rtcp, mode: mode, events: req.Events, own: newSource()}
 	t.setSignals(req.Signals, playback)
 	t.setRemote(req.Remote)
+	t.setLatch(latch)
 	rc.terms[id] = t
 	rc.mix.Join(string(id))
 	go t.read(rtpChannel, t.rtp)
@@ -133,6 +149,9 @@ func (t *relayTermination) modify(req TerminationRequest) error {
 	if req.Mode != "" && !req.Mode.valid() {
 		return fmt.Errorf("%w: mode %q", ErrBadRequest, req.Mode)
 	}
+	if req.Latch != "" && !req.Latch.valid() {
+		return fmt.Errorf("%w: latching %q", ErrBadRequest, req.Latch)
+	}
 	if err := req.Events.check(); err != nil {
 		return err
 	}
@@ -153,6 +172,7 @@ func (t *relayTermination) modify(req TerminationRequest) error {
 		t.setSignals(req.Signals, playback)
 	}
 	t.setRemote(req.Remote)
+	t.setLatch(req.Latch)
 	return nil
 }
 
@@ -167,8 +187,9 @@ func (t *relayTermination) setSignals(s *Signals, playback *mixer.Playback) {
 }
 
 // setRemote takes the RTP address of the SDP, and the RTCP address one
-// port above it. Nothing changes for a zero address, or for a channel
-// that has latched.
+// port above it. Nothing changes for a zero address. A channel that has
+// latched keeps sending to the address it latched (H.248.37 (06/2008)
+// 6.6.2).
 //
 // SIMPLIFIED: RFC 3605 and RFC 5761. RTCP is taken to be on the port
 // above RTP (RFC 3550 11, RFC 3264 6.1); a=rtcp and rtcp-mux are not
@@ -181,14 +202,23 @@ func (t *relayTermination) setRemote(remote netip.AddrPort) {
 	t.rtcp.setRemote(netip.AddrPortFrom(remote.Addr(), remote.Port()+1))
 }
 
-// read takes the packets that arrive on one socket of the termination.
-// The first packet from a new source latches the remote address:
-// a UE behind NAT sends from an address its SDP cannot know. RTP and
-// RTCP latch each on their own, by the same rule.
+// setLatch sets the latching of RTP and RTCP alike. An empty l keeps
+// it.
+func (t *relayTermination) setLatch(l Latch) {
+	t.rtp.setLatch(l)
+	t.rtcp.setLatch(l)
+}
+
+// read takes the packets that arrive on one socket of the termination,
+// and latches onto the source of a packet as the latching of the
+// channel asks.
 //
-// SIMPLIFIED: RFC 4961. A latched address is kept for the whole call.
-// Re-latching only matters when a UE changes address in the middle of
-// a call.
+// SIMPLIFIED: H.248.37 (06/2008) 6.6.7.1. After a latch, the packets of
+// other sources pass as well, where H.248.37 has them discarded (6.6.2,
+// 6.6.3). Terminations latch by default, and the P-CSCF gives a
+// termination the remote address of each new SDP without asking it to
+// latch again: the filter would drop what a party sends from a new
+// address.
 func (t *relayTermination) read(kind string, in *channel) {
 	log := t.ctx.relay.log
 	buf := make([]byte, 1500)
@@ -199,7 +229,7 @@ func (t *relayTermination) read(kind string, in *channel) {
 		}
 		src = netip.AddrPortFrom(src.Addr().Unmap(), src.Port())
 		if before, latched := in.latch(src); latched && before != src {
-			log.Info("latched", "context", t.ctx.id, "termination", string(t.id), "channel", kind, "sdp_remote", before.String(), "source", src.String())
+			log.Info("latched", "context", t.ctx.id, "termination", string(t.id), "channel", kind, "before", before.String(), "source", src.String())
 		}
 		t.ctx.receive(t, kind, in, buf[:n])
 	}
@@ -222,16 +252,17 @@ const heardFrames = 3
 // plays a signal; RTCP goes whatever the modes. In a conference the RTP
 // payload waits for the mixer instead, and RTCP goes nowhere.
 //
-// SIMPLIFIED: TS 23.333 5.10 and RFC 3550 6 and 7.1. The mixer takes
-// PCMU only and drops other payloads, telephone-event among
-// them. It keeps no more than heardFrames for jitter, writes no CSRC
-// list of the parties it mixed, and sends no RTCP of its own.
-//
 // The packet is counted, and sent on, while rc.mu is held. A
 // controller that reads the counts and then changes the mode knows
 // that the packets counted went by the mode it had set before, and the
 // counts that a Subtract reports are the packets that went on the
 // wire, as a capture shows them, with none still on its way.
+//
+// SIMPLIFIED: TS 23.333 5.10 and RFC 3550 6 and 7.1. The mixer takes
+// PCMU only and drops other payloads, telephone-event among
+// them. It keeps no more than heardFrames for jitter, writes no CSRC
+// list of the parties it mixed, and sends no RTCP of its own. That is
+// enough for a conference of a few UEs on one bridge.
 func (rc *relayContext) receive(from *relayTermination, kind string, in *channel, packet []byte) {
 	rc.mu.Lock()
 	defer rc.mu.Unlock()
@@ -379,28 +410,52 @@ func (rc *relayContext) step() bool {
 func (c *channel) setRemote(remote netip.AddrPort) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if !c.latched {
-		c.remote = remote
+	c.remote = remote
+}
+
+// setLatch carries out what l asks. An empty l changes nothing.
+func (c *channel) setLatch(l Latch) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	switch l {
+	case NAPTOff:
+		c.latched, c.latching = netip.AddrPort{}, ""
+	case NAPTLatch, NAPTRelatch:
+		c.latching = l
+	case StopLatching:
+		c.latching = ""
 	}
 }
 
-// latch keeps src as the remote address if the channel has not latched
-// yet, and tells what the remote address was before.
+// latch takes src as the address to send to, if the latching that
+// waits asks for it: NAPTLatch for any packet, NAPTRelatch for one from
+// another source than the address the channel sends to. That latching
+// is then done. latch tells where the channel sent before, and whether
+// it latched.
 func (c *channel) latch(src netip.AddrPort) (before netip.AddrPort, latched bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if c.latched {
-		return c.remote, false
+	before = c.destination()
+	if c.latching == NAPTLatch || (c.latching == NAPTRelatch && src != before) {
+		c.latched, c.latching = src, ""
+		return before, true
 	}
-	before, c.remote, c.latched = c.remote, src, true
-	return before, true
+	return before, false
 }
 
-// send writes b to the remote address, once the channel has one: from
-// the SDP or from latching.
+// destination is where the channel sends: the address it latched, or
+// else that of the SDP. c.mu is held.
+func (c *channel) destination() netip.AddrPort {
+	if c.latched.IsValid() {
+		return c.latched
+	}
+	return c.remote
+}
+
+// send writes b to the destination, once the channel has one.
 func (c *channel) send(b []byte) {
 	c.mu.Lock()
-	dst := c.remote
+	dst := c.destination()
 	c.mu.Unlock()
 	if !dst.IsValid() {
 		return
@@ -473,5 +528,5 @@ func (t *relayTermination) view() Termination {
 func (c *channel) view() (local, remote netip.AddrPort, latched bool, received, sent uint64) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	return c.local, c.remote, c.latched, c.received.Load(), c.sent.Load()
+	return c.local, c.destination(), c.latched.IsValid(), c.received.Load(), c.sent.Load()
 }

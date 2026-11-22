@@ -140,6 +140,43 @@ func TestSubmitRefused(t *testing.T) {
 	}
 }
 
+// downStore is a Store that cannot be reached.
+type downStore struct{}
+
+var errDown = errors.New("the store cannot be reached")
+
+func (downStore) PutStatusReportRequest(context.Context, sc.StatusReportRequest) error {
+	return errDown
+}
+
+func (downStore) TakeStatusReportRequest(context.Context, string) (sc.StatusReportRequest, bool, error) {
+	return sc.StatusReportRequest{}, false, errDown
+}
+
+// TestSubmitWhenTheStoreFails: a short message whose sender asks for a
+// status report that the stub cannot keep is refused as one the sender
+// may try again (RP-Cause 41, TP-FCS C2), and not delivered. One without
+// the request needs no store.
+func TestSubmitWhenTheStoreFails(t *testing.T) {
+	c, g := newSC(everyone, downStore{})
+	submit := hello
+	submit.StatusReportRequest = true
+	_, err := c.Submit(context.Background(), alice, submit)
+	var refusal *ipsmgw.Refusal
+	if !errors.As(err, &refusal) || refusal.Cause != sms.RPCauseTemporaryFailure || refusal.Report.FailureCause != sms.FCSSCSystemFailure {
+		t.Fatalf("err = %v, want RP-Cause 41 with TP-FCS C2", err)
+	}
+	if len(g) != 0 {
+		t.Fatalf("refused message delivered: %+v", <-g)
+	}
+	if _, err := c.Submit(context.Background(), alice, hello); err != nil {
+		t.Fatalf("Submit without TP-SRR = %v", err)
+	}
+	if d := g.next(t); d.Recipient != bobTel {
+		t.Errorf("delivery to %s, want %s", d.Recipient, bobTel)
+	}
+}
+
 // TestStatusReport is TS 23.040 9.2.2.3 and 9.2.3.15: when the sender
 // asked for it, the outcome of the delivery goes back to the sender's
 // tel URI in an SMS-STATUS-REPORT. The stub tries no delivery twice, so

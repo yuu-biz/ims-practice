@@ -79,7 +79,7 @@ func TestPlayIsSentAsRTPAndNotified(t *testing.T) {
 		t.Fatal(err)
 	}
 	tid := TerminationID("t1")
-	_, err = client.Modify(t.Context(), c.ID, tid, TerminationRequest{
+	err = client.Modify(t.Context(), c.ID, tid, TerminationRequest{
 		Signals: &Signals{Play: &Play{Announcement: "ramp", Repeat: 2, DelayMS: 20}},
 		Events:  &Events{RequestID: 7, Detect: []EventName{SignalCompleted}, Notify: url},
 	})

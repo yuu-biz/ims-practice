@@ -15,15 +15,27 @@ import (
 	"github.com/yuu-biz/ims-practice/internal/sip"
 )
 
-// Relay is the media relay the P-CSCF controls. *agw.Client is
-// one; it is the only place that talks to the relay, so that H.248
-// over Iq can replace it. The P-CSCF adds a context with the two
-// terminations agw.Access and agw.Core, tells each where to
-// send, and subtracts the context.
+// Relay is the media relay that the P-CSCF, as the IMS-ALG, controls
+// over Iq (TS 23.334, TS 29.334). The operations carry the names of the
+// H.248 commands, on the types of internal/agw, and each is a call
+// related procedure of Iq. The P-CSCF adds a context with the two
+// terminations agw.Access, which faces the UE, and agw.Core, which faces
+// the rest of the network, tells each where to send, and subtracts the
+// context. Two values implement it: *agw.Client, over the HTTP API of
+// the media node, and the H.248 Controller of internal/h248/mediactl.
 type Relay interface {
+	// Add is Reserve AGW Connection Point (TS 29.334 5.17.2.2) for the
+	// terminations of one new context. The context it returns has, for
+	// each termination, the address on which it receives RTP, which the
+	// SDP that its party receives is to show.
 	Add(ctx context.Context, terminations ...agw.TerminationRequest) (agw.Context, error)
-	Modify(ctx context.Context, id string, termination agw.TerminationID, change agw.TerminationRequest) (agw.Termination, error)
-	Subtract(ctx context.Context, id string) (agw.Context, error)
+	// Modify is Configure AGW Connection Point (TS 29.334 5.17.2.3): it
+	// tells a termination where its party takes the media, as the SDP
+	// of that party gives it.
+	Modify(ctx context.Context, id string, termination agw.TerminationID, change agw.TerminationRequest) error
+	// Subtract is Release AGW Termination (TS 29.334 5.17.2.5) for both
+	// terminations of the context.
+	Subtract(ctx context.Context, id string) error
 }
 
 // HostAccess is for UEs that reach the P-CSCF through the NAT of the
@@ -83,6 +95,8 @@ func (p *PCSCF) initial(st *sip.ServerTransaction, out *sip.Message, l leg, log 
 	req := st.Request
 	var dst sip.Destination
 	var ue Association
+	// icid is the icid-value of the request as it leaves the P-CSCF.
+	var icid string
 	if l == originating {
 		a, ok := p.association(st, "")
 		if !ok {
@@ -112,7 +126,8 @@ func (p *PCSCF) initial(st *sip.ServerTransaction, out *sip.Message, l leg, log 
 			out.Add("P-Asserted-Identity", "<"+id+">")
 		}
 		// Step 7.
-		out.Set("P-Charging-Vector", "icid-value="+sip.NewCallID()+";orig-ioi="+p.cfg.VisitedNetworkID)
+		icid = sip.NewCallID()
+		p.chargeRequest(out, icid)
 		u, err := sip.NextHop(out)
 		if err == nil {
 			dst, err = ims.Destination(context.Background(), p.locator, u)
@@ -140,7 +155,10 @@ func (p *PCSCF) initial(st *sip.ServerTransaction, out *sip.Message, l leg, log 
 		// came from, not to its Contact.
 		dst = a.Source
 		// The P-CSCF has read P-Asserted-Service for the PCRF from the
-		// request it received (communicationService).
+		// request it received (communicationService), and reads the
+		// charging vector there when the UE answers (chargeResponse).
+		charging, _ := sip.ChargingVectorOf(req)
+		icid = charging.ICID
 		crossBoundary(out, requestToUE)
 	}
 	// Step 5 of 5.2.6.3.3, and 5.2.6.4.3: later requests of the dialog
@@ -152,7 +170,7 @@ func (p *PCSCF) initial(st *sip.ServerTransaction, out *sip.Message, l leg, log 
 
 	if out.Method != sip.INVITE {
 		log.Info("forwarding", "leg", string(l), "to", dst.String())
-		identity := func(resp *sip.Message) { ueResponse(l, req, resp) }
+		identity := func(resp *sip.Message) { p.ueResponse(l, req, resp) }
 		final, err := st.ProxyWith(out, dst, identity)
 		if final != nil {
 			identity(final)
@@ -160,7 +178,7 @@ func (p *PCSCF) initial(st *sip.ServerTransaction, out *sip.Message, l leg, log 
 		ims.Finish(st, final, err)
 		return
 	}
-	call := p.newSetup(st, l, ue, log)
+	call := p.newSetup(st, l, ue, icid, log)
 	if err := call.offer(out); err != nil {
 		log.Warn("media relay refused the call", "error", err.Error())
 		st.Respond(sip.NewResponse(req, 500, sip.NewTag()))
@@ -197,8 +215,24 @@ func (p *PCSCF) subsequent(st *sip.ServerTransaction, out *sip.Message, log *slo
 	// dialog, such as a NOTIFY, finds none.
 	key := subsequentKey(st.Request, toUE)
 	d, known := p.store.UpdateDialog(key, func(d *Dialog) { d.noteRequest(st.Request, toUE) })
+	// The icid-value of every request of the dialog and of its responses
+	// is that of the INVITE.
+	//
+	// SIMPLIFIED: TS 24.229 5.2.6.3.5 step 7 and 5.2.6.3.9 step 3. A
+	// request that the UE sends in a dialog other than that of an
+	// INVITE, such as the refresh of its subscription, goes on without a
+	// P-Charging-Vector: the P-CSCF keeps no such dialog, and so has no
+	// icid-value of the request that started it. A response from the UE
+	// in such a dialog takes the icid-value of the request it answers.
+	charging, _ := sip.ChargingVectorOf(st.Request)
+	if known && d.ICID != "" {
+		charging.ICID = d.ICID
+		if !toUE {
+			p.chargeRequest(out, d.ICID)
+		}
+	}
 	answer := func(*sip.Message) {}
-	if known && hasSDP(out) {
+	if known && sip.HasSessionDescription(out) {
 		ue := st.Source.Addr.Addr()
 		if toUE {
 			ue = dst.Addr.Addr()
@@ -216,6 +250,9 @@ func (p *PCSCF) subsequent(st *sip.ServerTransaction, out *sip.Message, log *slo
 	}
 	relay := func(resp *sip.Message) {
 		crossBoundary(resp, response)
+		if toUE {
+			p.chargeResponse(resp, charging)
+		}
 		answer(resp)
 	}
 	final, err := st.ProxyWith(out, dst, relay)
@@ -252,7 +289,7 @@ func (p *PCSCF) renegotiate(out *sip.Message, d Dialog, toUE bool, ue netip.Addr
 	offer := ueSide(received, out.Body, toUE)
 	authorized := false
 	return func(resp *sip.Message) {
-		if resp.StatusCode >= 300 || !hasSDP(resp) {
+		if resp.StatusCode >= 300 || !sip.HasSessionDescription(resp) {
 			return
 		}
 		received := resp.Body
@@ -276,13 +313,6 @@ func (p *PCSCF) renegotiate(out *sip.Message, d Dialog, toUE bool, ue netip.Addr
 		}
 		log.Info("changed media authorised", "policy_session", string(d.PolicySession))
 	}
-}
-
-// hasSDP reports whether the body of m is a session description (RFC
-// 3261 13.2.1): only then is it an offer or an answer.
-func hasSDP(m *sip.Message) bool {
-	mediaType, _, _ := strings.Cut(m.Get("Content-Type"), ";")
-	return len(m.Body) > 0 && strings.EqualFold(strings.TrimSpace(mediaType), "application/sdp")
 }
 
 // byeEndsDialog is RFC 3261 15.1.1 as a proxy sees it: the dialog ends
@@ -351,6 +381,10 @@ func (p *PCSCF) forwardACK(ref *ims.StackRef, ack *sip.Message) {
 	}
 	key := subsequentKey(ack, toUE)
 	d, known := p.store.UpdateDialog(key, func(d *Dialog) { d.Acknowledged = true })
+	if !toUE && known && d.ICID != "" {
+		// 5.2.6.3.9 step 3.
+		p.chargeRequest(out, d.ICID)
+	}
 	if err := stack.SendACK(out, dst); err != nil {
 		p.log.Warn("cannot forward ACK", "call_id", ack.Get("Call-ID"), "error", err.Error())
 	}
@@ -384,7 +418,7 @@ func (p *PCSCF) relaySDP(m *sip.Message, rc *RelayContext, toUE bool) error {
 	}
 	ctx, cancel := relayContext()
 	defer cancel()
-	if _, err := p.relay.Modify(ctx, rc.ID, cameFrom, agw.TerminationRequest{Remote: sender}); err != nil {
+	if err := p.relay.Modify(ctx, rc.ID, cameFrom, agw.TerminationRequest{Remote: sender}); err != nil {
 		return err
 	}
 	if err := description.SetAudio(shown); err != nil {
@@ -437,7 +471,7 @@ func (p *PCSCF) free(d Dialog, log *slog.Logger) {
 func (p *PCSCF) subtract(id string, log *slog.Logger) {
 	for attempt := 1; ; attempt++ {
 		ctx, cancel := relayContext()
-		_, err := p.relay.Subtract(ctx, id)
+		err := p.relay.Subtract(ctx, id)
 		cancel()
 		if err == nil {
 			return

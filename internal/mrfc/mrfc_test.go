@@ -17,6 +17,10 @@ import (
 
 	"github.com/yuu-biz/ims-practice/internal/agw"
 	"github.com/yuu-biz/ims-practice/internal/g711"
+	"github.com/yuu-biz/ims-practice/internal/kvstore"
+	"github.com/yuu-biz/ims-practice/internal/kvstore/kvjson"
+	"github.com/yuu-biz/ims-practice/internal/kvstore/mrfcstore"
+	"github.com/yuu-biz/ims-practice/internal/kvstore/storetest"
 	"github.com/yuu-biz/ims-practice/internal/mixer"
 	"github.com/yuu-biz/ims-practice/internal/mrfc"
 	"github.com/yuu-biz/ims-practice/internal/rtp"
@@ -83,6 +87,11 @@ func startMRFP(t *testing.T) testMRFP {
 	api := httptest.NewServer(agw.Handler(relay))
 	t.Cleanup(api.Close)
 	return testMRFP{relay: relay, client: agw.NewClient(api.URL)}
+}
+
+// processor is the MRFP as the MRFC knows it by name.
+func (m testMRFP) processor(name string) mrfc.Processor {
+	return mrfc.Processor{Name: name, Control: m.client, Announcements: m.client}
 }
 
 // testMRFC is an MRFC instance on loopback, and the URI to reach it.
@@ -225,7 +234,7 @@ func waitNoContexts(t *testing.T, r *agw.Relay) {
 // MRFC sends BYE when it has played (TS 24.229 5.8.2.2.1, 5.8.3.2.1).
 func TestAnnouncementAfterAnswer(t *testing.T) {
 	media := startMRFP(t)
-	m := startMRFC(t, mrfc.NewMemoryStore(), mrfc.Processor{Name: "mrfp1", Control: media.client})
+	m := startMRFC(t, mrfc.NewMemoryStore(), media.processor("mrfp1"))
 	as := newUA(t, "mmtel", nil)
 	caller := party(t)
 
@@ -267,7 +276,7 @@ func TestAnnouncementAfterAnswer(t *testing.T) {
 // with it the start of the announcement, until the caller has the 183.
 func TestAnnouncementAsEarlyMedia(t *testing.T) {
 	media := startMRFP(t)
-	m := startMRFC(t, mrfc.NewMemoryStore(), mrfc.Processor{Name: "mrfp1", Control: media.client})
+	m := startMRFC(t, mrfc.NewMemoryStore(), media.processor("mrfp1"))
 	callerMedia := party(t)
 	// The AS takes the caller's INVITE on one UA and sends its own to
 	// the MRFC from another, so that the call handler needs no UA that
@@ -350,7 +359,7 @@ func TestAnnouncementAsEarlyMedia(t *testing.T) {
 // 24.182 4.5.5.3.7), and the MRFP lets go of its termination.
 func TestLoopStoppedByBYE(t *testing.T) {
 	media := startMRFP(t)
-	m := startMRFC(t, mrfc.NewMemoryStore(), mrfc.Processor{Name: "mrfp1", Control: media.client})
+	m := startMRFC(t, mrfc.NewMemoryStore(), media.processor("mrfp1"))
 	as := newUA(t, "mmtel", nil)
 	caller := party(t)
 	out := invite(t, as, "sip:annc@"+m.host+";play=/provisioned/cat1;repeat=forever;delay=100", offerFrom(t, addrOf(caller), "sendrecv"))
@@ -425,14 +434,17 @@ func mrfpAddress(t *testing.T, resp *sip.Message) netip.AddrPort {
 func TestConferenceMixesTheOthers(t *testing.T) {
 	media := startMRFP(t)
 	store := mrfc.NewMemoryStore()
-	m := startMRFC(t, store, mrfc.Processor{Name: "mrfp1", Control: media.client})
+	m := startMRFC(t, store, media.processor("mrfp1"))
 	as := newUA(t, "mmtel", nil)
 	hz := []float64{400, 1000, 1700}
+	// The conference ID does not depend on case (RFC 4240 2), so the
+	// third party joins the same conference.
+	ids := []string{"X", "X", "x"}
 	var calls []*sip.OutgoingCall
 	var parties []*net.UDPConn
 	for i := range hz {
 		p := party(t)
-		out := invite(t, as, "sip:conf=X@"+m.host, offerFrom(t, addrOf(p), "sendrecv"))
+		out := invite(t, as, "sip:conf="+ids[i]+"@"+m.host, offerFrom(t, addrOf(p), "sendrecv"))
 		ok := final(t, out)
 		if ok.StatusCode != 200 {
 			t.Fatalf("party %d got %d", i, ok.StatusCode)
@@ -442,9 +454,6 @@ func TestConferenceMixesTheOthers(t *testing.T) {
 	}
 	if cs := media.relay.Contexts(); len(cs) != 1 || len(cs[0].Terminations) != 3 {
 		t.Fatalf("the MRFP holds %v, want one context of three terminations", cs)
-	}
-	if _, ok := store.Conference("x"); !ok {
-		t.Error("the Store has no conference x (the ID does not depend on case)")
 	}
 	// Each party's socket keeps what comes while the test reads the
 	// others.
@@ -467,7 +476,11 @@ func TestConferenceMixesTheOthers(t *testing.T) {
 	waitNoContexts(t, media.relay)
 	deadline := time.Now().Add(2 * time.Second)
 	for {
-		if _, ok := store.Conference("x"); !ok {
+		_, ok, err := store.Conference(context.Background(), "x")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !ok {
 			break
 		}
 		if time.Now().After(deadline) {
@@ -484,8 +497,8 @@ func TestConferenceMixesTheOthers(t *testing.T) {
 // MRFP.
 func TestConferenceAcrossInstances(t *testing.T) {
 	first, second := startMRFP(t), startMRFP(t)
-	p1 := mrfc.Processor{Name: "mrfp1", Control: first.client}
-	p2 := mrfc.Processor{Name: "mrfp2", Control: second.client}
+	p1 := first.processor("mrfp1")
+	p2 := second.processor("mrfp2")
 	store := mrfc.NewMemoryStore()
 	m1 := startMRFC(t, store, p1, p2)
 	m2 := startMRFC(t, store, p2, p1)
@@ -500,7 +513,7 @@ func TestConferenceAcrossInstances(t *testing.T) {
 		if ok := final(t, out); ok.StatusCode != 200 {
 			t.Fatalf("got %d", ok.StatusCode)
 		}
-		if media, _ := store.Conference(candidate); media.MRFP == "mrfp1" {
+		if len(first.relay.Contexts()) == 1 {
 			id = candidate
 			defer out.Bye()
 			continue
@@ -535,9 +548,58 @@ func TestConferenceAcrossInstances(t *testing.T) {
 	}
 }
 
+// failingStore is a Store on a store outside the process that takes
+// writes writes and then fails every operation, as a store that the
+// MRFC can no longer reach does.
+func failingStore(writes int) mrfc.Store {
+	return mrfcstore.New(storetest.StopAfter(kvstore.NewMemoryStore(nil), writes), kvjson.Config{})
+}
+
+// TestAConferenceThatCannotBeStored: when the Store fails as the first
+// party creates the conference, the MRFC cannot tell whether another
+// instance has created it in another context. It refuses the INVITE
+// with 500 (Server Internal Error), and gives up the context that it
+// made on the MRFP.
+func TestAConferenceThatCannotBeStored(t *testing.T) {
+	media := startMRFP(t)
+	m := startMRFC(t, failingStore(0), media.processor("mrfp1"))
+	as := newUA(t, "mmtel", nil)
+	if resp := final(t, invite(t, as, "sip:conf=room@"+m.host, offerFrom(t, addrOf(party(t)), "sendrecv"))); resp.StatusCode != 500 {
+		t.Errorf("got %d, want 500", resp.StatusCode)
+	}
+	if cs := media.relay.Contexts(); len(cs) != 0 {
+		t.Errorf("the MRFP still holds %v after the refusal", cs)
+	}
+}
+
+// TestAConferenceThatCannotBeRead: the Store fails as the last party of
+// a conference leaves. The BYE is answered all the same, and the MRFP
+// lets go of the context. A party that comes next, while the Store
+// still fails, gets 500 (Server Internal Error): the MRFC does not take
+// a store that it cannot read for one without the conference.
+func TestAConferenceThatCannotBeRead(t *testing.T) {
+	media := startMRFP(t)
+	m := startMRFC(t, failingStore(1), media.processor("mrfp1"))
+	as := newUA(t, "mmtel", nil)
+	out := invite(t, as, "sip:conf=room@"+m.host, offerFrom(t, addrOf(party(t)), "sendrecv"))
+	if ok := final(t, out); ok.StatusCode != 200 {
+		t.Fatalf("the first party got %d, want 200", ok.StatusCode)
+	}
+	if err := out.Bye(); err != nil {
+		t.Fatalf("BYE: %v", err)
+	}
+	waitNoContexts(t, media.relay)
+	if resp := final(t, invite(t, as, "sip:conf=room@"+m.host, offerFrom(t, addrOf(party(t)), "sendrecv"))); resp.StatusCode != 500 {
+		t.Errorf("the next party got %d, want 500", resp.StatusCode)
+	}
+	if cs := media.relay.Contexts(); len(cs) != 0 {
+		t.Errorf("the MRFP holds %v after the refusal", cs)
+	}
+}
+
 func TestRefusals(t *testing.T) {
 	media := startMRFP(t)
-	m := startMRFC(t, mrfc.NewMemoryStore(), mrfc.Processor{Name: "mrfp1", Control: media.client})
+	m := startMRFC(t, mrfc.NewMemoryStore(), media.processor("mrfp1"))
 	as := newUA(t, "mmtel", nil)
 	pcmuOffer := offerFrom(t, netip.MustParseAddrPort("127.0.0.1:4000"), "sendrecv")
 	amrOnly, _ := sdp.AudioOffer("1", netip.MustParseAddrPort("127.0.0.1:4000"), sdp.VoLTECodecs()[:4])
@@ -573,7 +635,7 @@ func TestRefusals(t *testing.T) {
 // MRFC answers recvonly.
 func TestHoldInAConference(t *testing.T) {
 	media := startMRFP(t)
-	m := startMRFC(t, mrfc.NewMemoryStore(), mrfc.Processor{Name: "mrfp1", Control: media.client})
+	m := startMRFC(t, mrfc.NewMemoryStore(), media.processor("mrfp1"))
 	as := newUA(t, "mmtel", nil)
 	p := party(t)
 	out := invite(t, as, "sip:conf=hold@"+m.host, offerFrom(t, addrOf(p), "sendrecv"))

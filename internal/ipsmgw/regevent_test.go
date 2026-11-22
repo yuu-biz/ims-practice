@@ -253,10 +253,12 @@ func TestReregistrationRefreshesTheSubscription(t *testing.T) {
 		t.Errorf("refresh is %s %s, want SUBSCRIBE to the S-CSCF's Contact", refresh.Method, refresh.RequestURI)
 	}
 	checkHeaders(t, refresh, map[string]string{
-		"Call-ID":           subscribe.Get("Call-ID"),
-		"From":              subscribe.Get("From"),
-		"To":                "<" + alice + ">;tag=scscf-tag",
-		"CSeq":              "2 SUBSCRIBE",
+		"Call-ID": subscribe.Get("Call-ID"),
+		"From":    subscribe.Get("From"),
+		"To":      "<" + alice + ">;tag=scscf-tag",
+		"CSeq":    "2 SUBSCRIBE",
+		// The dialog has no route set: the S-CSCF did not record-route.
+		"Route":             "",
 		"Event":             "reg",
 		"Expires":           "1961",
 		"P-Charging-Vector": subscribe.Get("P-Charging-Vector"),

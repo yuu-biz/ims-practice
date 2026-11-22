@@ -168,13 +168,18 @@ docker compose run --rm ue2 xcap \
   --password test-password-2 set cfu on tel:+12025550103
 ```
 
-次に UE 3 に着信を待たせ、UE 1 から UE 2 に発信します。
+次に UE 3 に着信を待たせます。このコマンドは通話が終わるまで戻りません。
 
 ```sh
 docker compose run --rm ue3 answer \
   --impi 001010000000003@ims.mnc001.mcc001.3gppnetwork.org \
   --impu sip:001010000000003@ims.mnc001.mcc001.3gppnetwork.org \
   --password test-password-3
+```
+
+別の端末で、UE 1 から UE 2 に発信します。
+
+```sh
 docker compose run --rm ue call tel:+12025550102
 ```
 
@@ -425,5 +430,7 @@ IR.92 は割込通話を網ではなく UE で行うよう求めています（2
 ## 後片付け
 
 ```sh
-docker compose --profile ue down --rmi all -v --remove-orphans
+docker compose --profile ue --profile sim --profile volte down -v --remove-orphans
 ```
+
+すべてのプロファイルのノードと UE を止め、イメージは残します。次の手順書をビルドし直さずに始められます。イメージも削除するときは、[システムを止める](capture.md#システムを止める)を見てください。

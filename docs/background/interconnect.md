@@ -563,7 +563,7 @@ IBCF は SIP の UA を 2 つ持ちます。内側の UA は自網に向き（Mx
 
 | 項目 | プロキシ | B2BUA |
 | --- | --- | --- |
-| SIP の土台 | 側ごとに `sip.Stack`。中継の処理を自分で持つ | 側ごとに `sip.UA`。MMTel AS と同じ作り（`internal/ibcf/call.go`） |
+| SIP の土台 | 側ごとに `sip.Stack`。中継の処理を自分で持つ | 側ごとに `sip.UA`。2 つのレグの中継は `internal/b2bua` の中核に載せ、IBCF は境界の検査と TrGW を差し込み口で渡す（`internal/ibcf/call.go`） |
 | ダイアログ | 端から端まで 1 つ。Call-ID と tag はそのまま | 呼ごとに、自網の側と相手網の側の 2 つ。Call-ID、tag、CSeq、Via、Contact は側ごとに別 |
 | 構成の秘匿 | 5.10.4 のトークン（AES-GCM）で Via、Route、Record-Route を封じ、Contact をトークン付きの URI に替える | 1 つのダイアログに属するヘッダを、もう一方の側に写さない（`interconnect.CrossingFields`）。トークンは使わない |
 | Record-Route | 内側と外側の 2 つの URI を入れる | 入れない。IBCF はダイアログの相手なので、あとの要求は Contact で届く |
@@ -599,8 +599,8 @@ B2BUA の IBCF の手順は次のとおりです。
 
 #### TrGW の制御
 
-- `TrGW` のインタフェースは、TS 29.238 Table 5.17.2.1.1 の呼に関わる手順のうち、IBCF が使う 3 つです。`Reserve`（Reserve TrGW Connection Point）、`Configure`（Configure TrGW Connection Point）、`Release`（Release TrGW Termination）です。コンテキストには、自網の側（`CoreSide`）と相手網の側（`PeerSide`）のターミネーションがあります（Table 5.4.1）。
-- `AGWClient` は、`internal/agw` の HTTP の制御 API を呼ぶ実装です。中継ノードの `core` を自網の側、`access` を相手網の側にあてます。中継ノードは SDP に書くアドレスを 1 つしか持たないので、`AGWClient` に側ごとの公開アドレスを渡せるようにしています。
+- `TrGW` のインタフェースは、TS 29.238 Table 5.17.2.1.1 の呼に関わる手順のうち、IBCF が使う 3 つです。操作の名前は H.248 のコマンドに合わせて、`Add`（Reserve TrGW Connection Point）、`Modify`（Configure TrGW Connection Point）、`Subtract`（Release TrGW Termination）とし、型は `internal/agw` のものを使います。コンテキストには、自網の側（`CoreSide`）と相手網の側（`PeerSide`）のターミネーションがあります（Table 5.4.1）。
+- 実装には `agw.Client` をそのまま使います。中継ノードの `core` を自網の側、`access` を相手網の側にあてます。中継ノードは SDP に書くアドレスを 1 つしか持ちません。そこで、側ごとのアドレスを IBCF の設定（`Config.TrGWCoreAddress` と `Config.TrGWPeerAddress`）で渡し、IBCF が SDP のアドレスをそれに置き換えます。
 - 音声のストリームがある最初の SDP があれば、1 回の通過ごとに 1 つのコンテキストを作ります。コーデックは、その前に `Border` が絞り込みます（`interconnect.FilterBody`。TS 29.165 7.1）。
 - 書き換えの向きは次のとおりです。出ていくメッセージでは、自網の側のターミネーションに SDP のアドレスを教え、SDP には相手網の側のアドレスを書きます。入ってくるメッセージでは、その逆です。offer と answer で同じです。
 - 解放の契機は 4 つです。ダイアログを終える BYE（RFC 3261 15.1.1 のとおり、2xx、481、408、応答なし）、2xx 以外の最終応答（CANCEL のあとの 487 を含む）、最終応答が来ないまま Timer B で終わったとき、コンテキストを作ったあとで INVITE を送れなかったときです。
@@ -689,9 +689,9 @@ IBCF の先で INVITE がフォークすると、向こう側に early dialog �
 
 そのうえで、次のようにしています。
 
-- 発信側の early dialog のセッション記述は、向こう側で最初にセッション記述を送ってきたダイアログのものです（`sessionFrom`）。発信側は最初の answer を取り、あとのものは無視するので（13.2.1）、ほかのダイアログの応答は、セッション記述を外して渡します（`fromCallerSession`）。
+- 発信側の early dialog のセッション記述は、向こう側で最初にセッション記述を送ってきたダイアログのものです。発信側は最初の answer を取り、あとのものは無視するので（13.2.1）、ほかのダイアログの応答は、セッション記述を外して渡します。この扱いは `internal/b2bua` の中核が持ちます。
 - 向こう側のダイアログごとに、最後にセッション記述を持っていた応答を To の tag で覚えます（`calleeSDP`）。
-- 200 が来たら、そのダイアログに TrGW を向けます。200 に SDP があればそれで、無ければ覚えたもので設定します（`answerFrom`）。応えたのが `sessionFrom` と違うダイアログなら、200 はセッション記述を外して発信側に渡します。
+- 200 が来たら、そのダイアログに TrGW を向けます。200 に SDP があればそれで、無ければ覚えたもので設定します。応えたのが、発信側にセッション記述を渡したのと違うダイアログなら、200 はセッション記述を外して発信側に渡します。
 
 試験 `TestForkBeyondTheBorder` は、網 B で INVITE を 2 つの枝に分け、どちらも信頼性のある 183 で answer を返し、片方が SDP の無い 200 を返します。どちらの枝が応えても、TrGW B は応えた枝を向きます。発信側が受けるセッション記述は 1 つだけで、どの応答も同じ To の tag です。
 
@@ -705,10 +705,231 @@ IBCF の先で INVITE がフォークすると、向こう側に early dialog �
 - answer を運ぶ PRACK と、offer を運ぶ UPDATE を続けて送る発信者では、UPDATE も TrGW を通るので、`mediaMu` で PRACK のあとに並びます。逆になりませんでした。
 - SDP を持たない要求は、毎回再現しました。発信者が answer を運ぶ PRACK を送り、その 200 を待たずに INFO を送ります。RFC 3261 と RFC 3262 の読んだ範囲には、これを禁じる決まりがありませんでした。試験の TrGW が PRACK の answer の設定を止めているあいだに、INFO は TrGW を通らずに出る側へ出ていきます。20 回のうち 20 回、網 B に INFO が PRACK より先に届きました（`TestPRACKGoesBeforeTheRequestThatFollowsIt`、`-race -count=20`）。
 
-answer を運ぶ PRACK を受けた `fromCaller` は、`prackRelayed` を作り、出る側に送り終えたら閉じます。発信側のそのあとの要求は、それを待ってから送ります。残ることは次の 2 つで、どちらも `internal/sip` の助けが要ります。
+今の作りでは、`internal/b2bua` の中核がダイアログの中の要求を、側ごとに届いた順に中継します。`internal/sip` が要求に届いた順の番号（`InDialogRequest.Arrival`）を振り、中核は、もう一方のレグが最終応答を返すまで次の要求を送りません。本文の無い PRACK も、`IncomingCall.RelayPRACK` で中核に渡るので、そのあとの UPDATE や INFO が先に出ることはありません。作りは [b2bua.md](../design/b2bua.md) にあります。
 
-- UA は、ダイアログの中の要求をそれぞれ別の goroutine で渡します。PRACK の goroutine が `pending` を取る前に始まった次の要求は待ちません。
-- 本文の無い PRACK の中継（`relayProvisional`）と、そのあとの要求の順は、IBCF からは見えません。
+### 網をまたぐ SMS
+
+| 案 | 内容 | 強み | 弱み |
+| --- | --- | --- | --- |
+| A. SIP で網のあいだを通す | 網 A の SC のスタブが、受信者の番号を ENUM で引く。相手網の番号なら、IP-SM-GW が RP-DATA を入れた MESSAGE を、相手網の番号の SIP URI 宛てに送る。IBCF を通り、網 B の I-CSCF と S-CSCF が、着信側の iFC で網 B の IP-SM-GW に渡す。網 B の IP-SM-GW が UE-B に届ける | 今ある部品で作れる。SMS が IBCF と II-NNI を通る様子を見られる。TS 23.204 6.0a と 6.4a に近い | MSISDN のある利用者では、標準の道（SMS-GMSC と SGd）ではない。着信側の MESSAGE を拾う iFC は、ループを避けるために入れていない（[docs/design/sms.md](../design/sms.md)）。網 B の側で、網 A から来た MESSAGE だけを IP-SM-GW に渡す条件が要る |
+| B. SGd で網のあいだを通す | 網 A の SC が、S6c で網 B の HSS に経路を問い合わせ、SGd で網 B の IP-SM-GW に届ける（TS 23.204 6.4） | 標準の道そのもの | SGd、S6c、SMS-GMSC が要る。SMS over NAS の部品を先に作ることになる。Diameter が網をまたぐので、IBCF は通らない。Diameter の境界（DEA）は範囲に無い |
+| C. 通話だけにする | SMS は SMS over NAS のあとで B を作る | 余計なものを作らない | 網をまたいで通話と SMS ができる、という要件とロードマップの完了条件を満たさない |
+
+案は A でした。要件は「IBCF と TrGW でつなぎ、網をまたいで通話と SMS ができる」ことで、IBCF を通るのは A だけだからです。A を選ぶときは、標準の道が B であることを `SIMPLIFIED:` と手順書に書きます。SGd が入ったら、B を 2 つ目の道として足せます。
+
+A の細かい点は、TS 24.341 を読み直して決める必要があります。特に、網 B の IP-SM-GW が受けた RP-DATA の向きと、delivery report を網 A へ返す道です。
+
+## 11. 確かめること（e2e）
+
+相互接続の確認は `scripts/e2e-interconnect.sh` で行います。pcap から次のことを確かめます。
+
+- 網 A の pcap。S-CSCF の INVITE の Route に IBCF がある。
+- 網のあいだの pcap。Via に IBCF だけがあり、内部のホスト名とアドレスが無い。Contact が IBCF の URI になっている。SDP のアドレスが TrGW のものになっている。P-Charging-Function-Addresses が無い。
+- 網 B の pcap。172.28.0.0/24（網 A の内部）のアドレスが、IP のヘッダにも SIP と SDP の本文にも現れない。これは `tshark` でフィールドを取り出して調べます。
+- RTP が 2 つの TrGW を通る。
+- 信頼しないプロファイルで、網 B の UE に届く INVITE に P-Asserted-Identity が無い。
+- 食い違いのシナリオが決まった応答コードで失敗し、プロファイルを直すと成功する。
+- SMS の MESSAGE が網のあいだの pcap にあり、Wireshark が RP 層と TP 層をデコードできる。
+
+## 12. 決めた設計と、調査時の案との違い
+
+調べた時点で論点になったことと、結論は次のとおりです。
+
+1. Compose のブリッジは 3 つに分けます。キャプチャのファイルは 3 つになります。
+2. IBCF は、調べた時点の案（プロキシと THIG の暗号化）ではなく、B2BUA で作ります。実際の網の境界の装置が B2BUA であるためです（[docs/design/media-control.md](../design/media-control.md)）。最初はプロキシで作り、あとで B2BUA に作り直しました。13 章に違いを書きます。
+3. THIG の暗号は、プロキシの案のときは AES-GCM で、鍵は呼び出し側が渡す形にしました。B2BUA にしたあとは、1 つのダイアログに属するヘッダをもう一方の側に写さないので、暗号化したトークンは使いません。
+4. 接続先のプロファイルの項目は、100rel とプリコンディション、トランスポート、コーデック、番号の形式と、信頼、ヘッダの削除に絞ります。
+5. 番号ポータビリティの `rn` と `npdi` は作りません。ホストの無い Request-URI からは接続先を選べません（`SIMPLIFIED:`）。
+6. 網をまたぐ SMS は、SIP で IBCF を通る道（案 A）で作ります。標準の道（SGd）は作りません。
+7. コーデックの変換は作りません。TrGW は SDP からコーデックを外すだけです。
+8. roaming と loopback の通り方は作りません。`iotl` も付けません。
+9. 「日本向け」のプロファイルの例は、JJ-90.30 の本文を確かめていないことを書いて用意します。
+10. IR.95 の本文は入手できていません。手順書の IR.95 の節は、確かめられていないことを書きます。
+
+## 13. 実装の記録
+
+IBCF は `internal/ibcf`、境界での書き換えは `internal/interconnect` にあります。この章は、作りと、作りながら確かめたことを書きます。
+
+### 実装のときに読み直した資料
+
+| 仕様 | 版 | 読んだ範囲 |
+| --- | --- | --- |
+| TS 24.229 | V20.1.0 | 4.2A、4.4.1、4.4.2、5.3.2.1、5.4.3.2 の step 10 から 13、5.10.1 から 5.10.8、6.7.1.1、6.7.1.4.1、6.7.2.1 |
+| TS 29.165 | V20.0.0 | 3.2、5.1、5.2.1、5.2.2、6.1.1.2、6.1.3（Table 6.1.3.1 の項目 18、20、29、45、96）、6.2、7.1、8.1、B.8、Table C.3.1.2 |
+| TS 29.238 | V19.0.0 | 1 章、Table 5.4.1、Table 5.17.2.1.1 |
+| TS 23.204 | V19.1.0 | 6.0a、6.3a、6.4、6.4a、6.5 |
+| TS 24.341 | V19.0.0 | 5.3.3.5 |
+| TS 23.040 | V20.0.0 | 9.2.3.15 |
+| TS 32.409 | V19.0.0 | 4.11（4.11.1 から 4.11.4） |
+| TS 24.147 | V19.0.0 | 5.3.1.2、5.3.1.3.2、5.3.1.4.3、5.3.2.3.1、5.3.2.5.4 |
+| RFC 3261 | 本文 | 8.2.2.3、8.2.6.2、12、13.2.1、13.2.2.4、15.1.1、16.6、16.7、16.10、17.1.1.2、18.1.1、18.2.1、21.5.3 |
+| RFC 3262、RFC 3312、RFC 3323、RFC 3326 | 本文 | RFC 3262 の 5 章、RFC 3312 の 4 章の見出しと 11 章、RFC 3323 の 5.3 の見出し、RFC 3326 の 2 章 |
+| RFC 3840、RFC 3966、RFC 4028、RFC 5627 | 本文 | RFC 3840 の 9 章と 10.18、RFC 3966 の 5.1.5、RFC 4028 の 8 章の見出し、RFC 5627 の 3.1 と 4.5 |
+
+本文で確かめた条項は次のとおりです。
+
+- 5.10.2.2 の step 2 と 5.10.3.2 の step 2 は、ALG か伝送の面の制御を行う IBCF に、INVITE の Contact、CSeq、Record-Route を覚えるよう求めます。IBCF が自分でセッションを解放できるようにするためです。5.10.2.3 と 5.10.3.3 の手順 2 と 3 は、後続の要求の Contact と CSeq も、target refresh の要求でもそれ以外でも覚えるよう求めます。
+- 5.10.2.4 と 5.10.3.4 は、伝送の面の異常を知った IBCF が、覚えた情報から両側に BYE を送ってよいとし、両方の 2xx のあとで情報を消すとしています。
+- 5.10.5 は、IMS-ALG の IBCF が B2BUA として 2 つのダイアログのあいだでヘッダを写し、GRUU でない Contact を自分の URI に替えてよいとしています。GRUU の Contact と、相手がその URI で使える能力を示す機能タグを持つ Contact は、そのまま渡すよう求めています。そのまま渡すのがダイアログを作る要求の Contact なら、Record-Route に自分の URI を入れます。NOTE は、機能タグの例として `isfocus` を挙げ、会議に入り直すときに使う一時的な会議の識別子だとしています。
+- 5.10.1 は、在圏網と自網のあいだの B2BUA にだけ、Call-ID と tag を変えないことを求めます。non-roaming の II-NNI には、この決まりがありません。
+- TS 32.409 4.11 は、IBCF の測定として、他の網のドメインからのセッション（4.11.1）、それへの 403（4.11.2）、他の網のドメインへのセッション（4.11.3）、それへの 403（4.11.4）を、ドメインごとの内訳に分けて挙げています。
+- TS 24.147 5.3.1.2 は、ダイアログの外の SUBSCRIBE が 403 で断られたら、参加者は INVITE のダイアログの中で SUBSCRIBE を送るべきだとしています。それも失敗したら、購読なしで会議を続けます。NOTE は、Release 12 より前の網がダイアログの中の SUBSCRIBE しか扱えない場合を挙げています。
+- TS 24.147 5.3.2.5.4 の手順 3 は、フォーカスが利用者を招く INVITE の Contact に、`isfocus` 付きの会議の URI を入れるとしています。5.3.2.3.1 は、フォーカスの 1xx と 2xx の Contact に `isfocus` を付けるとしています。5.3.1.3.2 は、参加者が 200 の Contact を会議の URI として覚え、その URI で購読してよいとしています。
+- RFC 3261 8.2.6.2 は、UAS が 1 つの要求へのすべての応答（100 を除く）に同じ To の tag を使うとしています。13.2.1 は、UAC が最初に受けたセッション記述を answer とし、そのあとの応答のものは無視するとしています。13.2.2.4 は、フォークした INVITE に UAS ごとの 2xx が返ることを書いています。12.2.1.2 と 12.2.2 は、target refresh の要求で remote target を替えるとしています。UAC は 2xx の Contact で、UAS は要求の Contact で替えます。
+- RFC 5627 3.1 と 4.5 は、GRUU が必ず `gr` の URI パラメータを持ち、それで GRUU と分かるとしています。RFC 3840 10.18 は `sip.isfocus` を定義し、9 章は Contact の機能パラメータの文法です。
+- TS 24.229 5.10.6.2 の NOTE 3 は、フォークで early media が複数のダイアログにあるとき、IBCF がダイアログごとのメディアを見分けられれば、選んだものだけのゲートを開けられるとしています。B2BUA の IBCF が発信側にいくつの early dialog を見せるかを決める文は、5.10 にはありませんでした。
+
+### IBCF の作り
+
+IBCF は SIP の UA を 2 つ持ちます。内側の UA は自網に向き（Mx。TS 29.165 3.2）、外側の UA は相手網に向きます（Ici）。内側に届いた要求は相手網へ出ていくので、IBCF は出口として働きます（TS 24.229 5.10.2）。外側に届いた要求は自網に入るので、入口として働きます（5.10.3）。どちらの UA に届いたかで向きが決まります。
+
+最初はプロキシと THIG の暗号化で作りましたが、実際の網の境界の装置が B2BUA であるため、B2BUA に作り直しました。違いは次のとおりです。
+
+| 項目 | プロキシ | B2BUA |
+| --- | --- | --- |
+| SIP の土台 | 側ごとに `sip.Stack`。中継の処理を自分で持つ | 側ごとに `sip.UA`。2 つのレグの中継は `internal/b2bua` の中核に載せ、IBCF は境界の検査と TrGW を差し込み口で渡す（`internal/ibcf/call.go`） |
+| ダイアログ | 端から端まで 1 つ。Call-ID と tag はそのまま | 呼ごとに、自網の側と相手網の側の 2 つ。Call-ID、tag、CSeq、Via、Contact は側ごとに別 |
+| 構成の秘匿 | 5.10.4 のトークン（AES-GCM）で Via、Route、Record-Route を封じ、Contact をトークン付きの URI に替える | 1 つのダイアログに属するヘッダを、もう一方の側に写さない（`interconnect.CrossingFields`）。トークンは使わない |
+| Record-Route | 内側と外側の 2 つの URI を入れる | 入れない。IBCF はダイアログの相手なので、あとの要求は Contact で届く |
+| ダイアログの中の要求 | Route に従って中継する | re-INVITE、UPDATE、PRACK、BYE、そのほかを、もう一方のダイアログの新しい要求にする。2xx への ACK は側ごと。answer を持つ ACK は TrGW を通して写す |
+| CANCEL | スタックが 200 を返し、中継の処理が向こうへ CANCEL を送る | UA が 200 と 487 を返し、IBCF がもう一方の側を CANCEL する |
+| 片側の失敗 | IBCF から BYE は出ない | 一方のダイアログが終わる（BYE、ACK が来ない、481 や応答なし）と、もう一方に BYE を送る |
+| MESSAGE | 中継する | IBCF が自分の Call-ID と From の tag で新しい MESSAGE を送り、その最終応答で答える |
+| TrGW のコンテキスト | offer を持つ最初の INVITE だけ | 音声を持つ最初の SDP（応答の offer でもよい）で作る。呼のプロセスの中に持つ |
+| 複数台 | どの台でもダイアログの中の要求を扱える | ダイアログの中の要求は、Contact に名前を書いた台に戻る。最初の要求は組の名前でどの台にも届く |
+
+B2BUA の IBCF の手順は次のとおりです。
+
+| 手順 | 条項 | 作り |
+| --- | --- | --- |
+| 100 (Trying) | 5.10.2.2 step 1、5.10.3.2 step 1 | UA が INVITE に自分で返す |
+| 自分の Route を外す | 5.10.2.2 step 1A、5.10.3.2 step 1C | 内側と外側の 2 つの URI を、先頭から続くかぎり外す |
+| 出口の次の宛先 | 5.10.2.2 NOTE 3 | 設定した相手の入口（`Peer.EntryPoint`）を Route に入れて送る。無ければ Request-URI のホストを DNS で引く |
+| 入口の次の宛先 | 5.10.3.2 step 4 | Route が残らなければ、設定した I-CSCF を Route に入れる。外した Route に `orig` があれば、I-CSCF の URI にも付ける |
+| 境界の書き換え | 4.4、5.10.6、5.10.8 | `interconnect.Border` の `ExitRequest`、`EntryRequest`、`ExitResponse`、`EntryResponse`。入口では `EntryRequest` を自分の Route を外す前に呼ぶ |
+| 拒否 | 5.10.1 | `Border` の `Rejection` の応答を返す（405、420、488、404、483、500 など） |
+| SDP のアドレス | 6.7.1.4.1 | TrGW のアドレスで offer と answer を書き換える |
+
+接続先は `Peers` で見分けます。入口では送信元のアドレス（`Peer.Sources`）で、出口では次の宛先のホスト（Route の先頭か Request-URI）で探します。ホストは、プロファイルのドメインとその下の名前、入口の URI のホスト、`Peer.Hosts` のどれかです。`PeerTable` は一覧で引く実装です。接続先は加入者ごとではなく事業者の数だけなので、一覧を順に見ます。プロファイルは呼び出し側が渡すデータです。
+
+#### 境界を越えるヘッダ
+
+`interconnect.Border` の手続きは、受けたメッセージの写しに当てます。そのあとで `CrossingFields` が、1 つのダイアログに属さないヘッダだけを選びます。属するのは、Via、From、To、Call-ID、CSeq、Contact、Record-Route、Route、Max-Forwards、本文の枠（Content-Length、Content-Type）、RSeq、RAck、Allow、Supported、Session-Expires、Min-SE、Path、Service-Route と、Require の 100rel と timer です。MMTel AS の `carried` と同じ考え方ですが、境界の規則に属するので `internal/interconnect` に置きました。
+
+- 最初の INVITE だけは、Allow、Supported、Session-Expires、Min-SE を写します。着信側が、発信側の使えない拡張を使わないようにするためです。プロファイルの option tag の規則は、この Supported に当たります。Supported の `replaces` は外します。IBCF は Replaces をもう一方のダイアログに対応づけないためです。
+- Max-Forwards は 1 つ減らして写します（RFC 3261 16.6 の step 3）。2 つの網が呼を回し続けても止まるようにするためです。
+- Contact の URI は IBCF の台のものにし、機能タグ（`+g.3gpp.icsi-ref` など）は写します。`isfocus` と `expires` は外します。ただし、GRUU（`gr` を持つ URI）か `isfocus` を持つ Contact は、5.10.5 のとおりそのまま通します。
+- プライバシーの `header` は、B2BUA なら何もしなくても満たされます（5.10.8 の item 1）。`user` の匿名の From は相手網の側のダイアログにだけ入り、自網の側は元の From のままです。
+
+#### TrGW の制御
+
+- `TrGW` のインタフェースは、TS 29.238 Table 5.17.2.1.1 の呼に関わる手順のうち、IBCF が使う 3 つです。操作の名前は H.248 のコマンドに合わせて、`Add`（Reserve TrGW Connection Point）、`Modify`（Configure TrGW Connection Point）、`Subtract`（Release TrGW Termination）とし、型は `internal/agw` のものを使います。コンテキストには、自網の側（`CoreSide`）と相手網の側（`PeerSide`）のターミネーションがあります（Table 5.4.1）。
+- 実装には `agw.Client` をそのまま使います。中継ノードの `core` を自網の側、`access` を相手網の側にあてます。中継ノードは SDP に書くアドレスを 1 つしか持ちません。そこで、側ごとのアドレスを IBCF の設定（`Config.TrGWCoreAddress` と `Config.TrGWPeerAddress`）で渡し、IBCF が SDP のアドレスをそれに置き換えます。
+- 音声のストリームがある最初の SDP があれば、1 回の通過ごとに 1 つのコンテキストを作ります。コーデックは、その前に `Border` が絞り込みます（`interconnect.FilterBody`。TS 29.165 7.1）。
+- 書き換えの向きは次のとおりです。出ていくメッセージでは、自網の側のターミネーションに SDP のアドレスを教え、SDP には相手網の側のアドレスを書きます。入ってくるメッセージでは、その逆です。offer と answer で同じです。
+- 解放の契機は 4 つです。ダイアログを終える BYE（RFC 3261 15.1.1 のとおり、2xx、481、408、応答なし）、2xx 以外の最終応答（CANCEL のあとの 487 を含む）、最終応答が来ないまま Timer B で終わったとき、コンテキストを作ったあとで INVITE を送れなかったときです。
+
+#### トランスポート
+
+出口では、`Profile.PreferredTransport` で送ります。次の宛先の URI に `transport` があり、プロファイルがそれを挙げていれば、その指定に従います。TS 29.165 6.2.1 は TS 24.229 4.2A に従うとしていて、4.2A は 1300 バイトを超えるメッセージを RFC 3261 18.1.1 の手順で送ることを求めます。スタックはこれを自分で行い、UDP で送るはずの長い要求を TCP で送ります。相手が TCP の接続を断れば UDP に戻ります。SDP 付きの INVITE は 1300 バイトを超えるので、UDP だけを挙げた相手にも TCP で届きます。これを止める手段はスタックに無いので、要るなら `internal/sip` の変更になります。
+
+#### 状態と複数台
+
+冗長構成の設計（[docs/design/state-redundancy.md](../design/state-redundancy.md)）に合わせて、IBCF は、ダイアログの中の要求を最初に INVITE を受けた台に戻し、呼の記録を保存先に置きます。B2BUA は片方の脚の要求をもう片方の脚のトランザクションにするので、2 つのトランザクションが同じプロセスに要るためです。
+
+- 各台は、Contact に自分の台の名前（`Config.Internal`、`Config.External`）を書きます。組の名前（`Config.InternalPool`、`Config.ExternalPool`。設定の `sip.pool`）は、Route の先頭から自分の値として外すだけです。Compose の 2 つの網は 1 台ずつなので、台の名前と組の名前が同じです。
+- 呼の 2 つのダイアログと TrGW のコンテキストは、その台のプロセスの中にあります。要求ごとに保存先を引くことはしません。全部の呼を走査する処理も、役割全体のロックもありません。
+- 保存先に置くのは、台ごとの呼の記録だけです（次の項）。`sip.UA` にはまだ `ResumeCall` が無いので、作り直した台が呼を続けることはできません。
+
+#### TrGW のコンテキストの後始末
+
+IBCF の台を作り直したときに残る TrGW のコンテキストは、メディア中継ノードの扱い（台の名前の下に自分のコンテキストを置き、起動したときに自分のものだけを読み直す）にならって片付けます。
+
+| 決めたこと | 中身 |
+| --- | --- |
+| 記録 | `ibcf.CallRecord`。台の名前、呼の ID（乱数）、向き、相手網、TrGW のコンテキスト、応答のあとは 2 つの `sip.Dialog`。5.10.2.2 の step 2 と 5.10.3.2 の step 2 が覚えるよう求める Contact、CSeq、Record-Route は、`sip.Dialog` の `RemoteTarget`、`LocalSeq`、`RouteSet` に入っています |
+| 書く時 | コンテキストを作ったときと、2xx を渡したときに `PutCall`。呼が終わったら TrGW を解放して `DeleteCall`。要求ごとに 2 つのダイアログを書き直し、呼が終わったら `ended` を立てて、遅れて終わった要求が消した記録を戻さないようにします。`Close` で止めた台は、止まったプロセスと同じく記録を残します |
+| 読む時 | `Listen` が、UA を作る前に自分の台の名前の記録を `CallsOf` で 1 回読みます。UA ができたら、別の goroutine で `ReleaseLeftovers` を行います |
+| 片付け | 記録ごとに TrGW のコンテキストを解放し、2 つのダイアログのそれぞれで BYE を送り、記録を消します。BYE の CSeq は、記録の `LocalSeq` に 65536 を足した値の次です。記録は 2xx のときに書くので、そのあとの要求で CSeq が進んでいるかもしれないためです。受ける側は、前より大きな CSeq なら受け付けます（RFC 3261 12.2.2）。MMTel AS の `ResumeCall` と同じ考え方です |
+| 規模 | 1 つの台の記録は、その台が同時に持っていた呼の数までです。キーは台の名前と呼の ID で、全部の呼を走査しません |
+| 実装 | `MemoryStore` だけです。Compose の 1 つの台のプロセスでは、プロセスと一緒に記録も消えるので、作り直した台は何も見つけません。保存先に置く実装は `internal/kvstore` の上に足せます。キーは `<prefix>ibcf:call:<台の名前>:<呼の ID>` と、台ごとの ID の集合 `ibcf:calls:<台の名前>` が、メディア中継ノードの形に合います |
+
+試験 `TestRestartedInstanceEndsTheCallsItLeft` は、網 A の 1 台目を `Close` して、同じアドレスと同じ `MemoryStore` で新しいプロセスを起動します。発信者と着信者の呼が BYE で終わり、両方の網の TrGW のコンテキストが解放され、記録が消えることを確かめています。
+
+まだ片付かないものがあります。
+
+- 同じ名前で二度と起動しない台の記録とコンテキスト。別の台が引き取る仕組み（台の生死を知る方法と、1 台だけが引き取るリース）は作っていません。
+- TrGW（中継ノード）の側から見た、持ち主のいないコンテキスト。TS 29.238 の監査（Audit）に当たる仕組みはありません。
+- 応答の前に止まった呼。記録にダイアログが無いので、TrGW のコンテキストだけを解放します。発信者の INVITE は時間切れで終わります。
+
+#### 相手網でない送信元からの要求
+
+IBCF は、相手網として設定していない送信元の要求に、応答せずに捨てます。実際の網の境界の装置がそう動くためです（[docs/design/media-control.md](../design/media-control.md)）。TS 24.229 V20.1.0 の 5.10 に、IBCF が送信元を理由に要求を応答なしで捨てる決まりは見つかりませんでした。5.10.1 は、局所的な方針で 4xx を返して断ることを認めているだけです。似た決まりは P-CSCF にあります。5.2.6.3.2A は、IP の対応付け（IP association）に当たらない REGISTER 以外の要求を、100 を返さずに捨てるとしています。
+
+- 外側の UA のスタックは、どのサーバートランザクションにも当たらない要求を受けると、何かをする前に `IBCF.Screen` を呼びます。ACK と CANCEL も含みます。相手網でない送信元なら、`IBCF.Screen` は `"msg":"discarded a request from an address of no peer network"` をログに出し、`ims_ibcf_requests_discarded_total{reason="unknown_source",method}` を増やし、false を返します。スタックはその要求を捨てます。100 も、CANCEL への 200 や 481 も、ダイアログの外の OPTIONS への 200 も、許さないメソッドへの 405 も返しません。再送も、そのたびに捨てます。
+- 内側の UA には渡しません。自網のノードは送信元で見分けないためです。
+- 相手網からの要求を、プロトコルや取り決めの理由で断るときは、応答を返します（405、420、488、404、483、500 など）。
+- 入口で `Peers` が同じアドレスに違う答えを返したときだけ、エラーのログを出して 500 を返します。誤りの応答を捨てると、トランザクションがスタックに残るためです。
+- `IBCF.Screen` は、スタックの goroutine の中で `Peers.BySource` を引き、カウンタを足し、ログを出すだけです。`PeerTable` は作ったあとで変わらない一覧なので、ロックを取りません。カウンタは原子的な加算です。
+
+#### 指標
+
+`internal/ibcf/metrics.go` が、`Config.Metrics` のレジストリに 4 つのカウンタを登録します。名前は [oam.md](oam.md) の決まり（`ims_` で始め、counter は `_total` で終える）に合わせ、役割の名前を名前に入れました。ラベルの値の集合は設定した相手網の名前などで決まり、加入者の数では増えません。
+
+| 名前 | ラベル | 数えるもの | TS 32.409 V19.0.0 |
+| --- | --- | --- | --- |
+| `ims_ibcf_session_attempts_total` | `peer`、`direction`（exit、entry） | 境界の向こうへ送った最初の INVITE | 4.11.1（entry）、4.11.3（exit） |
+| `ims_ibcf_session_failures_total` | `peer`、`direction`、`status` | それに戻った 2xx 以外の最終応答 | 4.11.4（exit の 403） |
+| `ims_ibcf_requests_rejected_total` | `peer`、`direction`、`method`、`status` | IBCF が自分で答えた要求。どの相手網にも向かわない出口の要求への 404 は `peer="other"` | 4.11.2（entry の INVITE への 403） |
+| `ims_ibcf_requests_discarded_total` | `reason`（unknown_source）、`method` | 何も答えずに捨てた要求。相手網でない送信元の要求は、ここだけで数える | なし |
+
+`method` の値は TS 29.165 Table 6.1 のメソッド、`status` の値は IBCF が返す応答コードとよくある失敗のコードです。ほかは `other` で数えます。UA が自分で返す応答（420、481、405 など）は数えていません。
+
+### プリコンディション
+
+TS 24.229 の 5.10 には、IBCF がプリコンディションのしくみに手を入れる手順がありません。TS 29.165 は、このしくみを II-NNI で任意とし（Table 6.1.3.1 の項目 20）、使うかどうかを事業者の取り決めの選択項目にしています（Table C.3.1.2）。RFC 3312 11 は、Supported に挙げるだけの offer に、しくみを持たない着信者がプリコンディションの無い answer を返すとしています。必須にした INVITE には、着信者が 420 を返します（RFC 3261 8.2.2.3）。どちらも呼の両端で決まり、境界の動きではありません。
+
+そこでプロファイルの方針は次のようにしています。
+
+- 方針 `reject` は、その tag を必須にした要求に 420（Unsupported 付き）を返すだけです。B2BUA の IBCF は、受けた側のダイアログの UAS なので、RFC 3261 8.2.2.3 の UAS の規則に当たります。Supported に挙げるだけの要求は、そのまま通します。
+- プロファイルで precondition を `remove` にすることは、検証で断ります。
+- SDP の `a=curr` と `a=des` を外す、境界でプリコンディションを終端する、といった作りは、確かめた仕様の本文に根拠が無いので作りません。
+
+試験 `TestPreconditionsOutsideTheAgreement` が、方針 `pass` では網 B の UE が 420 を返すこと、`reject` では IBCF-A が Unsupported 付きの 420 を返し、Supported だけの INVITE は通ることを確かめています。
+
+### 境界を越える会議
+
+- GRUU（`gr` を持つ URI）か `isfocus` を持つ Contact は、そのまま通します（5.10.5）。INVITE を出す側では `Invitation.RecordRoute`、応答を返す側では `IncomingCall.SetContact` の `recordRoute` で、IBCF の台の URI を Record-Route に入れます。相手のダイアログの中の要求は、Request-URI が会議の URI で、Route に IBCF があります。IBCF はそのダイアログでそれを受け止め、もう一方のダイアログの remote target（届いたままの Contact）に自分の要求を送ります。B2BUA のままです。ほかの Contact は、IBCF の URI に相手の機能タグを付けたものです。応答ごとに設定します。
+- ダイアログの外の SUBSCRIBE は、IBCF が境界の検査（取り決めに SUBSCRIBE が無ければ 405）のあとで、局所的な方針として 403 を返します（5.10.1）。TS 24.147 5.3.1.2 の参加者は 403 のときだけダイアログの中に切り替えるので、405 では相手網の会議を購読できません。数えて、ログに出します。知らないダイアログの中の SUBSCRIBE は 481 です。ダイアログの外の購読そのものを境界の両側で持つ作りは作っていません（`SIMPLIFIED:`）。
+
+### フォークのときに発信側に見せるもの
+
+IBCF の先で INVITE がフォークすると、向こう側に early dialog がいくつもできます。B2BUA の IBCF が発信側に見せる形には、2 つの案があります。
+
+1. 向こう側の early dialog ごとに、発信側にも別の To の tag の early dialog を見せる。
+2. 発信側には 1 つの early dialog だけを見せる。
+
+2 を選びました。IBCF は発信側から見れば 1 つの UAS で、RFC 3261 8.2.6.2 は、UAS が 1 つの要求へのすべての応答に同じ To の tag を使うとしているためです。`internal/sip` の `IncomingCall` も、同時には 1 つの early dialog しか持てません（199 で終えて次の tag に移ることはできます）。TS 24.229 5.10.6.2 の NOTE 3 は、IBCF がフォークの複数の early media を扱う場合に触れていますが、B2BUA が何を見せるかは決めていません。向こう側の early dialog ごとに発信側にも別の early dialog を見せる SBC もありますが、そのためには `internal/sip` の UAS が同時に複数の To の tag で応答できる必要があります。
+
+そのうえで、次のようにしています。
+
+- 発信側の early dialog のセッション記述は、向こう側で最初にセッション記述を送ってきたダイアログのものです。発信側は最初の answer を取り、あとのものは無視するので（13.2.1）、ほかのダイアログの応答は、セッション記述を外して渡します。この扱いは `internal/b2bua` の中核が持ちます。
+- 向こう側のダイアログごとに、最後にセッション記述を持っていた応答を To の tag で覚えます（`calleeSDP`）。
+- 200 が来たら、そのダイアログに TrGW を向けます。200 に SDP があればそれで、無ければ覚えたもので設定します。応えたのが、発信側にセッション記述を渡したのと違うダイアログなら、200 はセッション記述を外して発信側に渡します。
+
+試験 `TestForkBeyondTheBorder` は、網 B で INVITE を 2 つの枝に分け、どちらも信頼性のある 183 で answer を返し、片方が SDP の無い 200 を返します。どちらの枝が応えても、TrGW B は応えた枝を向きます。発信側が受けるセッション記述は 1 つだけで、どの応答も同じ To の tag です。
+
+`SIMPLIFIED:`（RFC 3261 13.2.1、14.1）にしたのは次のことです。応えたダイアログが、発信側がセッション記述を受け取ったダイアログでないとき、IBCF は応えたダイアログのセッションを re-INVITE で発信側に offer し直しません。呼は最初のダイアログが選んだコーデックで続きます。offer の無い INVITE のあとでは、発信側が answer しなかったダイアログの offer には answer が返りません。
+
+### PRACK と次の要求の順
+
+出る側の PRACK と、発信側の次の要求が、逆の順で出ることがあります。
+
+- 本文の無い PRACK（183 が answer を運び、PRACK は確認だけ）には、`internal/sip` の `acceptPRACK` が自分で 200 を返し、IBCF の手には渡りません。IBCF は `in.Progress` が戻ったあとで出る側の PRACK を送ります。その間に試験が割り込める場所が無いので、決まった順では再現できませんでした。
+- answer を運ぶ PRACK と、offer を運ぶ UPDATE を続けて送る発信者では、UPDATE も TrGW を通るので、`mediaMu` で PRACK のあとに並びます。逆になりませんでした。
+- SDP を持たない要求は、毎回再現しました。発信者が answer を運ぶ PRACK を送り、その 200 を待たずに INFO を送ります。RFC 3261 と RFC 3262 の読んだ範囲には、これを禁じる決まりがありませんでした。試験の TrGW が PRACK の answer の設定を止めているあいだに、INFO は TrGW を通らずに出る側へ出ていきます。20 回のうち 20 回、網 B に INFO が PRACK より先に届きました（`TestPRACKGoesBeforeTheRequestThatFollowsIt`、`-race -count=20`）。
+
+今の作りでは、`internal/b2bua` の中核がダイアログの中の要求を、側ごとに届いた順に中継します。`internal/sip` が要求に届いた順の番号（`InDialogRequest.Arrival`）を振り、中核は、もう一方のレグが最終応答を返すまで次の要求を送りません。本文の無い PRACK も、`IncomingCall.RelayPRACK` で中核に渡るので、そのあとの UPDATE や INFO が先に出ることはありません。作りは [b2bua.md](../design/b2bua.md) にあります。
 
 ### 網をまたぐ SMS
 
@@ -771,7 +992,6 @@ S-CSCF の設定 `ibcf` は、ENUM の結果か Request-URI のホストが自�
 | `TestCancelReleasesTheTrGW`、`TestTimeoutReleasesTheTrGW` | CANCEL で両側が 487 になり、両方の TrGW のコンテキストが消える。相手網が答えないとき、Timer B のあとに 504 を返し、コンテキストが消える |
 | `TestPreferredTransport` | 短い MESSAGE が、UDP を先に挙げた相手には UDP で、TCP だけを挙げた相手には TCP で届く |
 | `TestRequestFromNoPeerIsDiscarded`、`TestScreen` | 網のあいだの知らないホストが送る INVITE（2 回）、CANCEL、ACK、MESSAGE に、何も返らない（100 も 481 も無い）。どれも網 A に入らず、TrGW のコンテキストも呼の記録もできない。捨てた数がメソッドごとに増える。相手網 B の MESSAGE は通る。待ち方は時間に頼りません。知らないホストの要求を送ったあとで、相手網 B の MESSAGE を同じ外側のソケットに通し、その 200 が返った時点で前の要求はすべて捨て終わっているとみなします |
-| `TestAGWClient` | `AGWClient` が本物の中継ノード（`agw.Handler`）の制御 API を正しく呼ぶ |
 | `TestRestartedInstanceEndsTheCallsItLeft`、`TestRestartedInstanceEndsACallAtItsNewTarget` | 前の「TrGW のコンテキストの後始末」。網 B の UE が re-INVITE で別の Contact に移ったあとで網 B の IBCF を作り直すと、BYE が新しい Contact に届き、古い Contact には届かない |
 | `TestConferenceFocusAcrossTheBorder`、`TestConferenceFocusAnswersAcrossTheBorder` | 網 A のフォーカスが網 B の利用者を招く。網のあいだと網 B の INVITE が、`isfocus` 付きの会議の URI を Contact に持ち、各 IBCF が Record-Route にいる。ダイアログの中の SUBSCRIBE が両方の境界を越えて会議の URI に届き、フォーカスの NOTIFY が参加者に届く。ダイアログの外の SUBSCRIBE は IBCF-B が 403 で断り、取り決めに SUBSCRIBE が無ければ 405。網 B のフォーカスが 200 の Contact に `isfocus` を付けて応えると、発信者がその Contact と、IBCF-A の入った Record-Route を受け取る |
 | `TestOfferInAReliable183AndAnswerInThePRACK`、`TestOfferInThe200AndAnswerInTheACK` | offer の無い INVITE の 2 つの道。各側の SDP と、TrGW の各終端に伝えた宛先 |
@@ -831,7 +1051,7 @@ tshark -r b-call.pcap -V
 | `ibcf/doc.go` | RFC 3891、RFC 3515 | Replaces と Refer-To の中の Replaces を、もう一方のダイアログに対応づけない。`replaces` を必須にした INVITE は 420 |
 | `ibcf/call.go` | TS 24.229 5.10.5 | 3xx の Contact を写さない。3xx の Contact は次に試す宛先でダイアログのものではなく、このプロジェクトのノードは 3xx を返さない |
 | `ibcf/call.go` | TS 24.229 5.10.2.2、5.10.3.2、RFC 4028 8 | IBCF からセッションタイマーを求めない。発信者の Session-Expires と Min-SE を写し、ダイアログごとに両端が決める |
-| `ibcf/call.go` の `answerFrom` | RFC 3261 13.2.1、14.1 | 前の「フォーク」の項 |
+| `b2bua/early.go` の `answerFrom` | RFC 3261 13.2.1、14.1 | 前の「フォーク」の項 |
 | `ibcf/message.go` | TS 24.229 5.10.2.2、5.10.3.2 | ダイアログの外で越えるのは INVITE と MESSAGE だけ。OPTIONS は IBCF が答え、SUBSCRIBE は 403、PUBLISH は 405。ダイアログの外の購読を両側で持つ作りが無い。MESSAGE への暫定応答は渡さない |
 | `ibcf/ibcf.go` の `peerOfNextHop` | TS 24.229 Annex I、RFC 4694 | ホストの無い Request-URI（tel URI、`rn` 付き）からは接続先を選べない |
 | `ibcf/media.go` の `throughTrGW` | TS 24.229 6.7.1.4.1、RFC 3264 6 | 最初の音声のストリームだけを TrGW に通す |
@@ -841,8 +1061,7 @@ tshark -r b-call.pcap -V
 
 ### 残る課題
 
-- IBCF と MMTel AS の B2BUA には、ほぼ同じ形の写しがあります。`internal/ibcf/call.go` の `leg`、CANCEL の goroutine、`relayProvisional`、`answer`、`fromCaller`、`fromCallee`、`forward`、`answerRequest`、`contactFor` と `setContact`、`internal/interconnect/leg.go` の `legFields`、`legOptions`、`CrossingFields` が、`internal/mmtel` の `call.go`、`focusrelay.go`、`fields.go` の同名の部品に当たります。IBCF にだけ入った直し（フォークで発信側に 1 つのセッション記述だけを渡すこと、最後の SDP を覚えること、記録を target refresh で更新すること、answer を運ぶ PRACK のあとの要求の順）は、MMTel AS にも同じ形があります。2 つのレグを持つ B2BUA の中核を 1 つのパッケージにまとめるかは、未決の論点です。
-- `internal/sip` に、B2BUA が発信側のダイアログの中の要求を届いた順にもう一方のレグへ送る形が要ります。案は、`IncomingCall.Handle` の関数を届いた順に 1 つずつ呼ぶ形を選べるようにするか、`InDialogRequest` に届いた順の番号を持たせることです。あわせて、本文の無い PRACK も、使う側が望めばハンドラに渡す形があるとよいです。
+- MMTel AS は、まだ `internal/b2bua` の中核に載っていません。`internal/mmtel` の `call.go`、`focusrelay.go`、`fields.go` には、中核と同じ形の部品が残っています。移す順番は [b2bua.md](../design/b2bua.md) にあります。
 - `ibcf.Store` の kvstore の実装。役割の `Store` の形が `context.Context` と `error` を取る形に変わったあとに、`internal/kvstore` の上に作ります。
 - カウンタは、ノードのレジストリを `ibcf.Config.Metrics` に渡し、保守用の API の待ち受けで `/metrics` を出すまで、ノードの外から見えません。
 - ダイアログの外の購読（SUBSCRIBE のダイアログ）を、IBCF が両側で持つこと。今は 403 で断り、参加者はダイアログの中で購読します。
@@ -862,7 +1081,7 @@ tshark -r b-call.pcap -V
 - RFC 3323、RFC 3325、RFC 5658、RFC 7549、RFC 4769 は読んでいません。TS 24.229 と TS 29.165 の引用から書きました。
 - TS 24.341 の、網をまたぐ MESSAGE に関わる Stage 3 の手順は、5.3.3.5 だけを読みました。7 章は TS 23.204 を中心に書いています。
 - THIG で暗号化したホスト名を、`internal/sip` のパーサーと Wireshark がどう扱うかは、プロキシで作ったときの試験と tshark で確かめました。長いホスト名を DNS で引く経路は試していません。
-- 試験の TrGW は偽物で、RTP を中継しません。`AGWClient` は本物の中継ノードの制御 API に対してだけ試しました。RTP が 2 つの TrGW を通ることは、Compose の e2e で確かめます。
+- 試験の TrGW は偽物で、RTP を中継しません。網 A の偽物は、中継ノードと同じく両方のターミネーションに 1 つのアドレスを書き、IBCF が設定のアドレスに置き換えます。網 B の偽物は網ごとのアドレスを書き、IBCF はそれをそのまま使います。`agw.Client` そのものは、`internal/agw` の試験で本物の中継ノードに対して試しています。IBCF が `agw.Client` で本物の中継ノードを TrGW として使うこと（IBCF が使うターミネーションの名前と、設定のアドレスへの置き換え）は、`internal/ibcf/relay_trgw_test.go` で試しています。RTP が 2 つの TrGW を通ることは、Compose の e2e で確かめます。
 - 同じ名前で作り直した台が残りを片付ける動きは、1 つのプロセスの中の試験でだけ確かめました。Compose で台を作り直す e2e は作っていません。今の `MemoryStore` では、プロセスと一緒に記録が消えるためです。Compose で通話中に IBCF を作り直したときの動き（ログの行が出ない、古い呼の要求に 481、相手に BYE が届かない、TrGW のコンテキストが残る）は、コードから書きました。Compose で実際に作り直しては確かめていません。
 - 複数の IBCF の台を Compose で動かす構成は作っていません。2 台の振る舞いは、1 つのプロセスの中の試験で確かめました。
 - Compose には、境界を越える会議の場面がありません。`internal/ue` の参加者が 403 のあとでダイアログの中の購読に切り替え、相手網のフォーカスの NOTIFY を受けるところは、通しでは動かしていません。

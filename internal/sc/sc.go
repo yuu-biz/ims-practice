@@ -136,10 +136,16 @@ func (c *ServiceCentre) Submit(ctx context.Context, originator sms.Address, subm
 		log = log.With("text", text)
 	}
 	if submit.StatusReportRequest {
-		c.store.PutStatusReportRequest(StatusReportRequest{
+		if err := c.store.PutStatusReportRequest(ctx, StatusReportRequest{
 			Reference: reference, Originator: originator, MessageReference: submit.MessageReference,
 			Recipient: da, ServiceCentreTimeStamp: now, Expires: now.Add(statusReportLifetime),
-		})
+		}); err != nil {
+			// The stub could not send the status report that the sender
+			// asked for. It refuses the short message as it does when the
+			// HSS does not answer, so that the sender may try again.
+			log.Warn("short message refused: the status report request not stored", "error", err.Error())
+			return sms.SubmitReport{}, refusal(sms.RPCauseTemporaryFailure, sms.FCSSCSystemFailure, now)
+		}
 	}
 	log.Info("short message accepted", "status_report_request", submit.StatusReportRequest)
 	// The SMS-DELIVER of TS 23.040 9.2.2.1 carries what the sender wrote,
@@ -165,7 +171,13 @@ func (c *ServiceCentre) Submit(ctx context.Context, originator sms.Address, subm
 // here.
 func (c *ServiceCentre) Report(ctx context.Context, reference string, outcome ipsmgw.Outcome) {
 	log := c.log.With("reference", reference, "outcome", outcome.String())
-	r, ok := c.store.TakeStatusReportRequest(reference)
+	r, ok, err := c.store.TakeStatusReportRequest(ctx, reference)
+	if err != nil {
+		// No request waits for the status report. The request stays
+		// until its Expires, and the sender gets no report.
+		log.Warn("status report not sent: the store failed", "error", err.Error())
+		return
+	}
 	if !ok {
 		log.Info("delivery ended")
 		return

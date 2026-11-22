@@ -183,6 +183,9 @@ func main() {
 			os.Exit(2)
 		}
 		o.cfg.AKA = usim
+		// The card of -k is a USIM without an ISIM, so -impu is the
+		// temporary public identity derived from the IMSI.
+		o.cfg.TemporaryPublicIdentity = true
 	}
 	codecs, err := o.codecList()
 	if err != nil {
@@ -334,24 +337,25 @@ func openUE(log *slog.Logger, o options, line *ue.Line) (u *opened, err error) {
 			return nil, fmt.Errorf("-port-s: %w", err)
 		}
 	}
-	contact, err := contactAddress(target, transport.LocalAddr())
+	addr, err := contactAddress(target, transport.LocalAddr())
 	if err != nil {
 		closeUnprotected()
 		return nil, err
 	}
-	if access != nil && contact.Addr() != attached.Address {
+	if access != nil && addr.Addr() != attached.Address {
 		// The stub hands out the static address of the subscriber,
 		// which the container must have, since no tunnel carries the
 		// UE's packets.
 		closeUnprotected()
-		return nil, fmt.Errorf("the PDN address %s is not the address %s that this host reaches the P-CSCF from", attached.Address, contact.Addr())
+		return nil, fmt.Errorf("the PDN address %s is not the address %s that this host reaches the P-CSCF from", attached.Address, addr.Addr())
 	}
+	contact := ue.NewContact(o.cfg, addr)
 	// The UA takes the MESSAGEs of SMS over IP before the UE that
 	// handles them exists; none comes before the UE registers.
 	var receiver atomic.Pointer[ue.UE]
 	ua, err := sip.NewUA(transport, ue.UAConfig(sip.UAConfig{
-		SentBy:     contact.String(),
-		Contact:    ue.ContactURI(o.cfg.PublicIdentity, contact),
+		SentBy:     addr.String(),
+		Contact:    contact.URI(),
 		OnCall:     line.Ring,
 		OnOptions:  line.Options,
 		OwnHeaders: ue.OwnHeaders(o.cfg.AccessNetworkInfo),

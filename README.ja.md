@@ -49,21 +49,24 @@ UE シミュレータは SIP Digest で登録し、電話番号で別の UE に�
 
   `scripts/` の e2e のスクリプトは自分でこの設定をします。
 - Wireshark。キャプチャを読むのに使います。
-- ホストの空いているポート。`docker compose up` は、P-CSCF の 5060/udp、ダッシュボードの 8080/tcp、メディア中継の 40000-40039/udp をホストに公開します。
+- ホストの空いているポート。`docker compose up` は、P-CSCF の 5060/udp、ダッシュボードの 8080/tcp、メディア中継の 40000-40039/udp を、ホストのループバックアドレス 127.0.0.1 に公開します。
 - 空いているアドレスの範囲。コンテナは 172.28.0.0/24 を使い、網間接続の手順書の 2 つの網は 172.28.1.0/24 と 172.28.2.0/24 を使います。これらの範囲が LAN、VPN、ほかの Docker のネットワークと重ならないようにしてください。
 - 最初のビルドでのインターネットへの接続。ビルドは Alpine、Go、Node.js のベースイメージを Docker Hub から、ダッシュボードのパッケージを npm のレジストリから、Go のモジュールを Go のモジュールプロキシ（`proxy.golang.org`）から、SIPp、pjsua、tcpdump、tshark を Alpine のパッケージのミラーから取ってきます。
 
+## 始め方
+
+リポジトリのルートで次のコマンドを実行します。1 つ目のあと 10 秒ほど待ってから、2 つ目で UE を登録します。
+
+```sh
+docker compose up -d --build
+docker compose run --rm ue register --deregister-after 5s
+```
+
+続きは[手順書](docs/guide/ja/README.md)にあります。最初のページに、読む順、片付けの方法、Compose のプロジェクトが起動するものをまとめています。
+
 ## ドキュメント
 
-- [信号をキャプチャして Wireshark で開く](docs/guide/ja/capture.md)。
-- [UE が IMS に登録する流れを追う](docs/guide/ja/registration.md)。
-- [音声通話の流れを追う](docs/guide/ja/call.md)。
-- [SMS の流れを追う](docs/guide/ja/sms.md)。
-- [MMTel AS の補足サービス](docs/guide/ja/mmtel.md)。
-- [MRF による音声ガイダンス、呼び出し音、会議](docs/guide/ja/mrf.md)。規制した通話の前の音声ガイダンス、CAT、割込通話、3 人の会議。
-- [VoLTE の呼の流れ](docs/guide/ja/volte.md)。EPC スタブ、IMS-AKA、Rx でのポリシー制御と、プリコンディションを使った AMR-WB の通話。
-- [IMS 網どうしを相互接続する](docs/guide/ja/interconnect.md)。境界の IBCF と TrGW、構成の秘匿、相互接続プロファイルと食い違ったときの動き、網をまたぐショートメッセージ。
-- [ダッシュボードで IMS を見る](docs/guide/ja/dashboard.md)。2 台の UE シミュレータもここから操作できます。
+- [手順書](docs/guide/ja/README.md)。読む順、最初のコマンド、片付け、プロファイル、UE ごとの加入者。
 - [用語集](docs/glossary.md)。IMS で使う略語の英語と日本語の説明。
 - [開発の進め方](CONTRIBUTING.md)。コミットのルールと、開発の記録の一覧。
 

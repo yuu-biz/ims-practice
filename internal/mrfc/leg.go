@@ -17,13 +17,17 @@ import (
 
 // pcmu is the one codec of the MRFP.
 //
-// SIMPLIFIED: TS 23.333 5.12. The MRFP plays and mixes G.711 PCMU only
-// and transcodes nothing, because the product never decodes AMR.
-// The MRFC answers an offer without PCMU with 488 (Not Acceptable Here)
-// and Warning 305 (Incompatible media format): a call whose codec is
-// AMR-WB reaches an announcement or a conference only after the AS has
-// offered PCMU to the MRFC, which the UE simulator's VoLTE offer still
-// carries, and no MRFP transcodes between the two.
+// SIMPLIFIED: TS 23.333 5.12. This MRFP plays and mixes G.711 PCMU
+// only and transcodes nothing. 5.12.1 asks an MRFP to transcode between
+// the terminations of a context and to support AMR at least, and lets
+// it support the other codecs of TS 26.114, AMR-WB among them. Mixing a
+// conference sums decoded speech, and the product decodes no AMR; a
+// decoder would cost much and change little of the signalling that the
+// project shows. The MRFC answers an offer without PCMU with 488 (Not
+// Acceptable Here) and Warning 305 (Incompatible media format): a call
+// whose codec is AMR-WB reaches an announcement or a conference only
+// after the AS has offered PCMU to the MRFC, which the UE simulator's
+// VoLTE offer still carries, and no MRFP transcodes between the two.
 var pcmu = []sdp.Codec{{PayloadType: sdp.PCMU, Name: sdp.NamePCMU, ClockRate: 8000}}
 
 var errNoPCMU = errors.New("mrfc: the offer has no audio stream of PCMU")
@@ -122,8 +126,7 @@ func mp() (context.Context, context.CancelFunc) {
 func (l *leg) modify(change agw.TerminationRequest) error {
 	ctx, cancel := mp()
 	defer cancel()
-	_, err := l.mrfp.Control.Modify(ctx, l.context, l.id, change)
-	return err
+	return l.mrfp.Control.Modify(ctx, l.context, l.id, change)
 }
 
 // takeAnswer points the termination at the SDP answer in body, which

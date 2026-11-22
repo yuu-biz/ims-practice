@@ -5,11 +5,10 @@ import (
 	"testing"
 )
 
-// The guard tests below hold what AudioOffer and AudioAnswer wrote on
-// origin/main before EVS was added (commit 35968e3), byte for byte, so
-// that the EVS additions cannot change them. The last offer has EVS in
-// front of AMR-WB (TS 26.114 A.14.1.3); with the VoLTE codecs it is
-// answered with AMR-WB as before.
+// The tests below pin, byte for byte, the offer that AudioOffer writes
+// with the VoLTE codecs and the answers of AudioAnswer to five offers.
+// The last offer has EVS in front of AMR-WB (TS 26.114 A.14.1.3): the
+// UE, which has no EVS, answers it with AMR-WB.
 
 const evsAndAMROffer = "v=0\r\no=- 1 1 IN IP4 192.0.2.40\r\ns=-\r\nc=IN IP4 192.0.2.40\r\nt=0 0\r\n" +
 	"m=audio 49152 RTP/AVP 97 98 99 100 101 102\r\nb=AS:42\r\nb=RS:0\r\nb=RR:2000\r\n" +

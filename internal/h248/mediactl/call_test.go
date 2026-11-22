@@ -3,11 +3,13 @@ package mediactl
 import (
 	"context"
 	"net/netip"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/yuu-biz/ims-practice/internal/agw"
 	"github.com/yuu-biz/ims-practice/internal/h248"
 	"github.com/yuu-biz/ims-practice/internal/sdp"
 )
@@ -88,45 +90,41 @@ func TestFullCall(t *testing.T) {
 	ctx := context.Background()
 
 	amrwb := sdp.Codec{PayloadType: 96, Name: sdp.NameAMRWB, ClockRate: 16000, Fmtp: "mode-change-capability=2; max-red=0"}
-	r, err := b.controller.Reserve(ctx, Media{Codecs: []sdp.Codec{amrwb, pcmu}, Bandwidth: 41})
+	r, err := reserve(ctx, b.controller, agw.Media{Codecs: []sdp.Codec{amrwb, pcmu}, Bandwidth: 41})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if r.ID != "100@agw1.ims.example.net" {
 		t.Errorf("ID = %q", r.ID)
 	}
-	if r.Local[Access] != netip.MustParseAddrPort("198.51.100.10:40000") || r.Local[Core] != netip.MustParseAddrPort("198.51.100.10:40002") {
-		t.Errorf("local addresses %v", r.Local)
+	if r.Terminations[agw.Access].Local != netip.MustParseAddrPort("198.51.100.10:40000") || r.Terminations[agw.Core].Local != netip.MustParseAddrPort("198.51.100.10:40002") {
+		t.Errorf("terminations %v", r.Terminations)
 	}
 	relayContext, ok := b.relay.context("c1")
-	if !ok || len(relayContext.media.Codecs) != 2 || relayContext.media.Codecs[0] != amrwb || relayContext.media.Bandwidth != 41 {
-		t.Errorf("the relay was asked for %+v", relayContext.media)
+	for _, side := range []agw.TerminationID{agw.Access, agw.Core} {
+		if media := relayContext.media[side]; !ok || len(media.Codecs) != 2 || media.Codecs[0] != amrwb || media.Bandwidth != 41 {
+			t.Errorf("the relay was asked for %+v on %s", media, side)
+		}
 	}
 
-	ue := Media{Address: netip.MustParseAddrPort("192.0.2.30:49170"), Codecs: []sdp.Codec{amrwb}, Bandwidth: 41}
-	network := Media{Address: netip.MustParseAddrPort("203.0.113.40:50000"), Codecs: []sdp.Codec{amrwb}, Bandwidth: 41}
-	if err := b.controller.Configure(ctx, r.ID, Access, ue); err != nil {
+	ue := agw.TerminationRequest{Remote: netip.MustParseAddrPort("192.0.2.30:49170"), RemoteMedia: agw.Media{Codecs: []sdp.Codec{amrwb}, Bandwidth: 41}}
+	network := agw.TerminationRequest{Remote: netip.MustParseAddrPort("203.0.113.40:50000"), RemoteMedia: agw.Media{Codecs: []sdp.Codec{amrwb}, Bandwidth: 41}}
+	if err := b.controller.Modify(ctx, r.ID, agw.Access, ue); err != nil {
 		t.Fatal(err)
 	}
-	if err := b.controller.Configure(ctx, r.ID, Core, network); err != nil {
+	if err := b.controller.Modify(ctx, r.ID, agw.Core, network); err != nil {
 		t.Fatal(err)
 	}
 	relayContext, _ = b.relay.context("c1")
-	if got := relayContext.remote[Access]; got.Address != ue.Address || len(got.Codecs) != 1 || got.Codecs[0] != amrwb || got.Bandwidth != 41 {
+	if got := relayContext.remote[agw.Access]; got.Remote != ue.Remote || len(got.RemoteMedia.Codecs) != 1 || got.RemoteMedia.Codecs[0] != amrwb || got.RemoteMedia.Bandwidth != 41 {
 		t.Errorf("access remote %+v", got)
 	}
-	if got := relayContext.remote[Core]; got.Address != network.Address {
+	if got := relayContext.remote[agw.Core]; got.Remote != network.Remote {
 		t.Errorf("core remote %+v", got)
 	}
 
-	b.clock.Advance(3 * time.Second)
-	stats, err := b.controller.Release(ctx, r.ID)
-	if err != nil {
+	if err := b.controller.Subtract(ctx, r.ID); err != nil {
 		t.Fatal(err)
-	}
-	want := Statistics{Duration: 3 * time.Second, PacketsSent: 50, PacketsReceived: 50, OctetsSent: 8600, OctetsReceived: 8600}
-	if stats[Access] != want || stats[Core] != want {
-		t.Errorf("statistics %+v, want %+v for each side", stats, want)
 	}
 	if _, released, open := b.relay.counts(); released != 1 || open != 0 {
 		t.Errorf("the relay released %d and has %d open", released, open)
@@ -146,7 +144,117 @@ func TestFullCall(t *testing.T) {
 	if !slices.Equal(got, wantMessages) {
 		t.Fatalf("messages:\n%s\nwant:\n%s", strings.Join(got, "\n"), strings.Join(wantMessages, "\n"))
 	}
-	if _, err := b.controller.Release(ctx, r.ID); !errorIs(err, ErrNoContext) {
-		t.Errorf("a second Release: %v", err)
+	if err := b.controller.Subtract(ctx, r.ID); !errorIs(err, agw.ErrNoContext) {
+		t.Errorf("a second Subtract: %v", err)
+	}
+}
+
+// Reserve and Configure AGW Connection Point (TS 29.334 5.17.2.4): the
+// Add of a termination whose request has a remote address carries the
+// Remote descriptor too, and the relay learns where that termination
+// sends.
+func TestAddWithARemoteAddress(t *testing.T) {
+	b := newTestbed(t, ControllerConfig{})
+	b.waitRegistered(t)
+	before := len(b.net.datagrams())
+	ctx := context.Background()
+
+	ue := mustAddrPort("192.0.2.30:49170")
+	pcmuOnly := agw.Media{Codecs: []sdp.Codec{pcmu}}
+	r, err := b.controller.Add(ctx,
+		agw.TerminationRequest{ID: agw.Access, LocalMedia: pcmuOnly, Remote: ue, RemoteMedia: pcmuOnly},
+		agw.TerminationRequest{ID: agw.Core, LocalMedia: pcmuOnly})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if access, core := r.Terminations[agw.Access], r.Terminations[agw.Core]; access == nil || core == nil || access.Remote != ue || core.Remote.IsValid() {
+		t.Errorf("terminations %v", r.Terminations)
+	}
+	add := firstRequest(t, b.net.datagrams()[before:], h248.Add)
+	for _, cmd := range add.Actions[0].Commands {
+		hasRemote := cmd.Media != nil && cmd.Media.OneStream != nil && cmd.Media.OneStream.Remote != nil
+		if want := strings.Contains(string(cmd.TerminationID), "/access/"); hasRemote != want {
+			t.Errorf("the Add of %s has a Remote descriptor: %v, want %v", cmd.TerminationID, hasRemote, want)
+		}
+	}
+	relayContext, _ := b.relay.context("c1")
+	if got, ok := relayContext.remote[agw.Access]; !ok || got.Remote != ue || len(got.RemoteMedia.Codecs) != 1 || got.RemoteMedia.Codecs[0] != pcmu {
+		t.Errorf("the relay sends from the access termination to %+v", got)
+	}
+	if got, ok := relayContext.remote[agw.Core]; ok {
+		t.Errorf("the relay sends from the core termination to %+v", got)
+	}
+}
+
+// A Modify without a remote address keeps where the termination sends:
+// Configure AGW Connection Point (TS 29.334 5.17.2.3) then carries no
+// Remote descriptor, and the relay is not asked to change anything.
+func TestModifyWithoutARemoteAddress(t *testing.T) {
+	b := newTestbed(t, ControllerConfig{})
+	b.waitRegistered(t)
+	ctx := context.Background()
+
+	r, err := reserve(ctx, b.controller, agw.Media{Codecs: []sdp.Codec{pcmu}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ue := mustAddrPort("192.0.2.30:49170")
+	if err := b.controller.Modify(ctx, r.ID, agw.Access, agw.TerminationRequest{Remote: ue}); err != nil {
+		t.Fatal(err)
+	}
+	before := len(b.net.datagrams())
+	if err := b.controller.Modify(ctx, r.ID, agw.Access, agw.TerminationRequest{}); err != nil {
+		t.Fatal(err)
+	}
+	modify := firstRequest(t, b.net.datagrams()[before:], h248.Modify).Actions[0].Commands[0]
+	if modify.Media == nil || modify.Media.OneStream == nil || modify.Media.OneStream.Remote != nil {
+		t.Errorf("the Modify carries %+v, want no Remote descriptor", modify.Media)
+	}
+	if relayContext, _ := b.relay.context("c1"); relayContext.remote[agw.Access].Remote != ue {
+		t.Errorf("the relay sends from the access termination to %+v", relayContext.remote[agw.Access])
+	}
+}
+
+// Iq reports no statistics on Subtract (TS 29.334 5.7.7, Table 5.7.7.2),
+// and the reply to a Subtract has no descriptors (Table 5.8.3.2): the
+// Subtract that the Controller sends has no Audit descriptor, and its
+// reply still names the two terminations and nothing else.
+func TestSubtractReplyCarriesNoStatistics(t *testing.T) {
+	b := newTestbed(t, ControllerConfig{})
+	b.waitRegistered(t)
+	before := len(b.net.datagrams())
+	ctx := context.Background()
+
+	r, err := reserve(ctx, b.controller, agw.Media{Codecs: []sdp.Codec{pcmu}, Bandwidth: 80})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := b.controller.Subtract(ctx, r.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	datagrams := b.net.datagrams()[before:]
+	subtract := firstRequest(t, datagrams, h248.Subtract)
+	if subtract.Actions[0].Commands[0].Audit != nil {
+		t.Fatalf("the Subtract asks for an audit: %+v", subtract.Actions[0].Commands[0].Audit)
+	}
+	reply := firstReply(t, datagrams, subtract.TransactionID)
+	var terminations []h248.TerminationID
+	for _, action := range reply.Actions {
+		for _, cmd := range action.Commands {
+			if want := (h248.CommandReply{Command: h248.Subtract, TerminationID: cmd.TerminationID}); !reflect.DeepEqual(cmd, want) {
+				t.Errorf("the reply for %s is %+v, want a Subtract with no descriptors", cmd.TerminationID, cmd)
+			}
+			terminations = append(terminations, cmd.TerminationID)
+		}
+	}
+	if want := []h248.TerminationID{"ip/1/access/100", "ip/1/core/100"}; !slices.Equal(terminations, want) {
+		t.Errorf("the reply names %v, want %v", terminations, want)
+	}
+	// Whatever the parsed form says, no Statistics descriptor is on the wire.
+	for _, d := range datagrams {
+		if strings.Contains(string(d.payload), "Statistics") {
+			t.Errorf("a Statistics descriptor on the wire:\n%s", d.payload)
+		}
 	}
 }

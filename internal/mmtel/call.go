@@ -1,6 +1,7 @@
 package mmtel
 
 import (
+	"context"
 	"errors"
 	"log/slog"
 	"strconv"
@@ -69,9 +70,14 @@ func (as *AS) serve(in *sip.IncomingCall) {
 	log := as.log.With("call_id", req.Get("Call-ID"))
 	// TS 24.229 5.7.1.3A: the S-CSCF names the served user in
 	// P-Served-User, and this S-CSCF always adds the session case. A
-	// request without one did not come from the S-CSCF.
+	// request without one came by no filter criterion. The INVITE to a
+	// conference URI comes that way, by DNS (conference.go).
 	served, err := sip.ParsePServedUser(req.Get("P-Served-User"))
 	if err != nil || served.SessionCase == sip.SessionCaseNone {
+		if _, ok := as.conferenceID(req.RequestURI); ok {
+			as.joinConference(in, log)
+			return
+		}
 		log.Info("INVITE without a served user and its session case", "p_served_user", req.Get("P-Served-User"))
 		in.Reject(403, as.warning("No served user"))
 		return
@@ -124,8 +130,10 @@ func (as *AS) warning(text string) sip.HeaderField {
 // one leg ends at the AS (forward).
 //
 // The services change the header fields in fields, which go into the
-// Invitation once they are done.
-func (c *call) newInvitation(requestURI string) (sip.Invitation, *sip.Message) {
+// Invitation once they are done. The error is a failure of the Store,
+// which then cannot tell the call that a Replaces names
+// (replacesOnTheOtherSide).
+func (c *call) newInvitation(requestURI string) (sip.Invitation, *sip.Message, error) {
 	req := c.in.Request
 	fields := carried(req, "Allow", "Supported", "Session-Expires", "Min-SE")
 	if pcv := chargingVector(req); pcv != "" {
@@ -136,7 +144,9 @@ func (c *call) newInvitation(requestURI string) (sip.Invitation, *sip.Message) {
 	hops := req.Clone()
 	sip.DecrementMaxForwards(hops)
 	fields.Set("Max-Forwards", hops.Get("Max-Forwards"))
-	c.replacesOnTheOtherSide(fields)
+	if err := c.replacesOnTheOtherSide(fields); err != nil {
+		return sip.Invitation{}, nil, err
+	}
 	from, _ := sip.ParseNameAddr(req.Get("From"))
 	to, _ := sip.ParseNameAddr(req.Get("To"))
 	contact, fromFocus := focusContact(req)
@@ -152,7 +162,7 @@ func (c *call) newInvitation(requestURI string) (sip.Invitation, *sip.Message) {
 		ManualPRACK: true,
 		Contact:     contact,
 		RecordRoute: fromFocus,
-	}, fields
+	}, fields, nil
 }
 
 // relay sends inv on a new outgoing leg, passes on what comes back,
@@ -403,8 +413,25 @@ func (c *call) answer(out *sip.OutgoingCall, resp *sip.Message) {
 		}
 	}
 	record := c.record(out)
-	c.as.store.PutCall(record)
-	defer c.as.store.DeleteCall(record)
+	// sip.IncomingCall carries no context. The Store bounds each of its
+	// operations itself: an adapter on a store outside the process gives
+	// each one a time limit.
+	ctx := context.Background()
+	if err := c.as.store.PutCall(ctx, record); err != nil {
+		// The caller has its 2xx and the callee its ACK, so no request
+		// waits for the record. The call goes on in this instance; a
+		// later request that looks the call up in the store, such as an
+		// INVITE whose Replaces names one of its legs, does not find it.
+		c.log.Warn("call not kept in the store", "error", err.Error())
+	}
+	defer func() {
+		if err := c.as.store.DeleteCall(ctx, record); err != nil {
+			// Both legs have ended, and no request waits for this. The
+			// record stays, as that of a call whose BYE no instance sees;
+			// its dialogs are never used again.
+			c.log.Warn("ended call left in the store", "error", err.Error())
+		}
+	}()
 	c.log.Info("call answered", "services", c.acted)
 	select {
 	case <-c.in.Done():

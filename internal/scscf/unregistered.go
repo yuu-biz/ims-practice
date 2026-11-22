@@ -121,7 +121,7 @@ func (s *SCSCF) unregisteredProfileExpired(p UnregisteredProfile) {
 func (s *SCSCF) routeUnregistered(st *sip.ServerTransaction, out *sip.Message, d OriginalDialog, log *slog.Logger) {
 	if out.Get("Route") != "" {
 		log.Info("routing the terminating request along its Route", "route", out.Get("Route"))
-		s.forward(st, out, log)
+		s.forward(st, out, s.chargeResponses(st.Request, false), log)
 		return
 	}
 	log.Info("no application server took the request for the unregistered callee", "callee", d.ServedUser)

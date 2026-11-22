@@ -201,6 +201,7 @@ func TestRequestAndResponseOfTheUEAtTheEdge(t *testing.T) {
 func TestRequestAndResponseToTheUEAtTheEdge(t *testing.T) {
 	h := newBorderHarness(t)
 	ueAnswer := append(slices.Clone(borderFields), reasonField)
+	ueAnswer[slices.IndexFunc(ueAnswer, func(f sip.HeaderField) bool { return f.Name == "P-Charging-Vector" })].Value = "icid-value=from-ue;orig-ioi=ue"
 	h.ueAnswer.Store(&ueAnswer)
 	called := sip.HeaderField{Name: "P-Called-Party-ID", Value: "<sip:001010000000001@" + domain + ">"}
 	m := borderMessage(h.contact, "<sip:term@pcscf."+domain+":5060;lr>", borderFields, requestOnlyFields, []sip.HeaderField{called})
@@ -225,7 +226,9 @@ func TestRequestAndResponseToTheUEAtTheEdge(t *testing.T) {
 		"Subject":                       {"not a field of the trust domain"},
 	})
 	checkFields(t, "the S-CSCF", final, want{
-		"P-Charging-Vector":             nil,
+		// 5.2.6.4.8 step 3: what the P-CSCF stored of the request, with
+		// its own term-ioi, in place of what the UE put in.
+		"P-Charging-Vector":             {"icid-value=from-sender;orig-ioi=sender;term-ioi=" + domain},
 		"P-Charging-Function-Addresses": nil,
 		"P-Media-Authorization":         nil,
 		"P-Access-Network-Info":         {"3GPP-E-UTRAN-FDD;utran-cell-id-3gpp=0010100010000101"},

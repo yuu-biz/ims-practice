@@ -4,7 +4,7 @@
 
 この手順書では、[UE が IMS に登録する流れを追う](registration.md) と [音声通話の流れを追う](call.md) のソフトフォンに、VoLTE の端末が加えるものを追います。アクセス網、sec-agree を伴う IMS-AKA、Rx でのポリシー制御と、VoLTE の端末がかける通話です。2 台の UE シミュレータが EPC のスタブに attach し、IMS-AKA で登録し、プリコンディションを使って AMR-WB で互いに通話します。PCRF はそれぞれの UE に音声用の bearer を作ります。最後に網が片方の bearer を取り上げ、P-CSCF が通話を終わらせます。
 
-この手順書は次の版に沿っています。TS 24.229 V20.1.0、TS 29.214 V20.0.0（Rx）、TS 29.213（SDP から Rx への対応）、TS 24.301 V20.1.0（EPS のメッセージ）、TS 33.203 と TS 33.102（IMS-AKA）、TS 35.206 と TS 35.208（MILENAGE）、RFC 3310（Digest AKA）、RFC 3329（sec-agree）、RFC 3312（プリコンディション）、RFC 4867（AMR のペイロード形式）、RFC 4028（セッションタイマー）、GSMA IR.92 v24.0 です。以下の条項番号はこれらの版のものです。
+この手順書は次の版に沿っています。TS 24.229 V20.1.0、TS 29.214 V20.0.0（Rx）、TS 29.213（SDP から Rx への対応）、TS 24.301 V20.1.0（EPS のメッセージ）、TS 26.114 V20.1.1（メディアの扱い）、TS 33.203 と TS 33.102（IMS-AKA）、TS 35.206 と TS 35.208（MILENAGE）、RFC 3310（Digest AKA）、RFC 3329（sec-agree）、RFC 3312（プリコンディション）、RFC 4867（AMR のペイロード形式）、RFC 4028（セッションタイマー）、GSMA IR.92 v24.0 です。以下の条項番号はこれらの版のものです。
 
 ## 始める前に
 
@@ -141,10 +141,10 @@ K と OPc は MILENAGE の試験データ 1 の値です。OPc は事業者の O
 6. **P-CSCF が一時的なアソシエーションを作る（#737）。** P-CSCF は 401 から `ik` と `ck` を外します。鍵が UE まで運ばれることはありません。そのうえで自分のアソシエーションを `Security-Server: ipsec-3gpp;q=0.1;alg=hmac-sha2-256-128;ealg=null;spi-c=...;spi-s=...;port-c=50711;port-s=5064` で提示します（5.2.2.2、TS 33.203 7.2）。
 7. **UE が網を確かめる（#740）。** USIM は AUTN の MAC を計算し、AUTN の中の MAC と比べます。一致すれば、網が K を知っていると分かります。SQN が新しいことも確かめ（TS 33.102 6.3.3、C.2）、RES、CK、IK を計算します。
 8. **アソシエーションを通る REGISTER（#740）。** UE は保護サーバーポート 5062 から、P-CSCF の保護サーバーポート 5064 に答えを送ります（TS 33.203 7.1）。Security-Client をもう一度入れ、Security-Server を `Security-Verify` に写します。途中で誰かがもっと強い提案を消していないかを、P-CSCF が確かめられるようにするためです（RFC 3329）。Digest の response は RES をパスワードにして計算します（RFC 3310 3.3）。
-9. **P-CSCF が取り決めを確かめる（#749）。** REGISTER は UE のアドレスとポートから保護ポートに届き、Security-Verify は P-CSCF が送ったものと一致します。P-CSCF は Authorization に `integrity-protected="yes"` を入れます。
+9. **P-CSCF が取り決めを確かめる（#749）。** REGISTER は UE のアドレスとポートから保護ポートに届き、Security-Verify は P-CSCF が送ったものと一致します。1300 バイトを超える REGISTER は TCP で別のポートから届きます。そのときは、P-CSCF は UE のポートを Via から取ります。P-CSCF は Authorization に `integrity-protected="yes"` を入れます。
 10. **S-CSCF が RES を確かめる（#760、#764）。** S-CSCF は XRES で Digest を計算して比べます（TS 24.229 5.4.1.2.2）。一致したので、SAR を送って UE を登録します。
 11. **200 OK（#783）。** 200 はアソシエーションを通って戻り、アソシエーションはこれで確立します。寿命は登録に合わせて決まります（5.2.2.2）。これ以降、UE はすべての要求をポート 5064 に送り、Route の P-CSCF の URI にもそのポートを書きます。P-CSCF は UE の 5062 番に送ります。P-CSCF が足した Path も保護ポートを指します。
-12. **信号の経路（#786）。** UE が登録されると、P-CSCF は、UE が信号用の bearer を失ったら知らせるように PCRF に頼みます（TS 29.214 A.4）。200 OK とこの AAR は、どちらが先に P-CSCF を出るかが決まっていません。
+12. **信号の経路（#786）。** UE が登録されると、P-CSCF は、UE が信号用の bearer を失ったら知らせるように PCRF に頼みます（TS 29.214 A.4）。TS 29.213 B.1 の流れのとおり、頼むのは最初の登録が成功したあとなので、認証に失敗した UE のために Rx のセッションを開くことはありません。200 OK とこの AAR は、どちらが先に P-CSCF を出るかが決まっていません。
 
 再登録と登録の解除は、新しい challenge なしにアソシエーションを通ります（TS 24.229 5.1.1.4.2、5.1.1.6.2）。
 
@@ -183,7 +183,9 @@ go test ./internal/milenage -run TestConformanceTestSets -v   # all 20 sets of T
 ESP が無いので、本物の網と 2 つの点が違います。
 
 - どちらの側も保護サーバーポートから送るので、保護クライアントポート（`port-c`）は取り決めるだけで、使いません。
-- TCP の要求はそのときどきのポートから届きます。VoLTE の INVITE は 1300 バイトより大きいので TCP で送られ（RFC 3261 18.1.1）、P-CSCF は TCP の要求の UE を Via の sent-by で見分けます。REGISTER は 1300 バイトより小さく保ち、取り決めは UDP で行います。
+- TCP の要求はそのときどきのポートから届きます。VoLTE の INVITE は 1300 バイトより大きいので TCP で送られ（RFC 3261 18.1.1）、P-CSCF は TCP の要求の UE を Via の sent-by で見分けます。challenge に答える REGISTER は 1300 バイト前後の大きさなので、TCP で送られるかどうかは SPI の桁数で変わります。TCP と UDP は同じアソシエーションを使うので（TS 33.203 7.1）、P-CSCF はこの REGISTER のアソシエーションも Via の sent-by で探します。この sent-by を認証するものは無いので、UE と同じ IP アドレスを持つホストなら、UE の保護サーバーポートを sent-by に書けます。ESP をかければ、送り手はアソシエーションで認証されます。
+
+保護されたとみなすのは、保護サーバーポートに届いたメッセージだけです。そのため、確立したアソシエーションを持つ UE のアドレスとポートから REGISTER 以外の要求がポート 5060 に届いたら、その要求は保護されていません。P-CSCF はこの要求を捨て、100 (Trying) も含めて何も返さず、どこにも転送しません。ログには `discarded an unprotected request from a UE with security associations` と書きます（TS 24.229 5.2.1 NOTE 8、TS 33.203 7.1）。
 
 ### SIPp
 
@@ -205,7 +207,7 @@ volte-a と volte-b のカードには USIM があり、ISIM はありません�
 
 1. **HSS。** 一時的な識別子の UAR は成功します。その暗黙の登録セットに、規制されていない識別子があるためです。規制された識別子しかないセットなら、DIAMETER_AUTHORIZATION_REJECTED を返します（TS 29.228 6.1.1.1 の手順 4）。
 2. **登録のときの S-CSCF。** プロファイルの識別子のうち、規制されていない最初のものが既定の公開の識別子です（TS 29.228 6.5.1.1）。200 OK の P-Associated-URI には規制されていない識別子だけを、既定の識別子を先頭にして並べます（TS 24.229 5.4.1.2.2F）。reg イベントでも、それらだけを知らせます（5.4.2.1.2）。AS への第三者 REGISTER の To には、既定の識別子を入れます（5.4.1.7）。
-3. **UE。** P-Associated-URI の最初の URI を、既定の公開の識別子として覚えます。登録した識別子はこの一覧に無いので、規制されたものとして扱います（5.1.1.2.1）。INVITE と MESSAGE の From には既定の識別子を書き、reg イベントもこの識別子で購読します（5.1.1.3）。端末の状態にも既定の識別子を表示します。
+3. **UE。** P-Associated-URI の最初の URI を、既定の公開の識別子として覚えます。登録した識別子はこの一覧に無いので、規制されたものとして扱います（5.1.1.2.1）。INVITE と MESSAGE の From には既定の識別子を書き、reg イベントもこの識別子で購読します（5.1.1.3）。端末の状態にも既定の識別子を表示します。登録を終えるまでは、識別子を何も表示しません。規制された一時的な識別子は、UE がだれにも見せないためです（5.1.1.1A）。それまでは、Ut の要求も断ります。Ut の要求には、既定の識別子を XUI として使うためです。
 4. **P-CSCF。** UE の P-Preferred-Identity が P-Associated-URI のどれかを指していれば、その識別子を、そうでなければ既定の識別子を P-Asserted-Identity に入れます（5.2.6.3.1）。UE シミュレータは P-Preferred-Identity を送らないので、P-Asserted-Identity は既定の識別子になります。
 5. **ほかのリクエストでの S-CSCF。** 規制された識別子が利用者（served user）として発信するリクエストには 403 を（5.4.3.2 の手順 1）、規制された識別子あてのリクエストには 404 を返します（5.4.3.3 の手順 1）。番号の識別子を Sh で HSS に問い合わせた AS にも、規制された識別子は返りません（TS 29.328 7.6.2）。
 
@@ -220,7 +222,7 @@ INVITE    P-CSCF -> S-CSCF   P-Asserted-Identity: <sip:+12025550110@ims.mnc001.m
 MESSAGE   volte-a -> P-CSCF  From: <sip:+12025550110@ims.mnc001.mcc001.3gppnetwork.org>;tag=...
 ```
 
-Wireshark のフィルタ `sip && !(sip.CSeq.method == "REGISTER") && frame contains "sip:001010000000010@ims"` に合うパケットはありません。ほかの手順書のソフトフォンには、SIM カードがそもそもありません。識別子は IMC に入っているのと同じように設定で与えられます（TS 24.229 5.1.1.1B.1）。ソフトフォンは規制されていない公開の識別子を登録し、それをそのまま使います。
+Wireshark のフィルタ `sip && !(sip.CSeq.method == "REGISTER") && frame contains "sip:001010000000010@ims"` に合うパケットはありません。Contact にも IMSI は入りません。`sip.Contact contains "001010000000010"` に合うパケットもありません。TS 24.229 5.1.1.2.1 の項目 c は、Contact の URI のユーザー部を、世界で一意で、私的な情報を明かさないものにするよう求めています。そこで UE は秘密の識別子から K を鍵にして導いた UUID をユーザー部に入れます。このプロジェクトのほかの UE も同じで、ソフトフォンはパスワードを鍵にします。ほかの手順書のソフトフォンには、SIM カードがそもそもありません。識別子は IMC に入っているのと同じように設定で与えられます（TS 24.229 5.1.1.1B.1）。ソフトフォンは規制されていない公開の識別子を登録し、それをそのまま使います。
 
 ENUM は VoLTE の UE の番号を、一時的な識別子ではなく番号の SIP URI に変えます。`tel:+12025550112` への通話が着信してよい識別子に届くようにするためです（`deploy/compose/dns/e164.arpa.zone`）。
 
@@ -281,6 +283,8 @@ curl -X DELETE http://localhost:8080/api/epc/network-initiated/ues/0010100000000
 ```
 
 音声の bearer がセッションのメディアをすべて運んでいたので、PCRF は失ったフローを RAR で知らせるのではなく ASR で Rx のセッション全体を終えます（TS 29.214 4.4.6.1、4.4.6.2）。P-CSCF は ASR に答え、STR でセッションを終え、自分で通話を解放します。served user の名前で相手側に BYE を送り、このプロジェクトでは served user の UE にも BYE を送ります（TS 24.229 5.2.8.1.2、IR.92 2.4.2.3）。BYE は、P-CSCF が `Store` の後ろに保存したダイアログの情報（Contact、タグ、CSeq、経路）から作ります。volte-a は自分では BYE を送りません。volte-b の通話が終わると、その P-CSCF が volte-b の Rx のセッションを終え、スタブが volte-b の bearer も解放します。
+
+通話に答える前に bearer を失うこともあります。そのとき P-CSCF は INVITE をあきらめ、発信側に 500 を返し、着信側への INVITE を 503 を示す Reason 付きの CANCEL で取り消します（TS 24.229 5.2.8.1.1）。着信側が CANCEL を受け取る直前に 200 を返していると、200 は CANCEL と行き違います（RFC 3261 9.1）。発信側は 500 を受け取っていてこの 200 を見ないので、P-CSCF が発信側の名前で、200 とその送り直しのそれぞれに ACK を送ります。そのあとで P-CSCF は上と同じ形の BYE を着信側に送り、200 で確立したダイアログを解放します（5.2.8.1.2）。
 
 ## プリコンディション
 
@@ -409,7 +413,7 @@ http://localhost:8080 を開きます。volte-a と volte-b のカードには�
 
 ### コマンドラインで
 
-プロファイルの VoLTE の UE と単発のコマンドは、volte-a と volte-b のアドレスを共有します。先にプロファイルを止めてください（`docker compose --profile volte rm -sf volte-a volte-b`）。そのあとで次のように動かします。
+プロファイルの VoLTE の UE と単発のコマンドは、volte-a と volte-b のアドレスを共有します。先にプロファイルを止めてください（`docker compose --profile volte rm -sf volte-a volte-b`）。そのあとで、volte-b に着信を待たせます。このコマンドは通話が終わるまで戻りません。
 
 ```sh
 docker compose run --rm --no-deps volte-b answer -epc http://172.28.0.80:8080 \
@@ -417,6 +421,11 @@ docker compose run --rm --no-deps volte-b answer -epc http://172.28.0.80:8080 \
   -impu sip:001010000000012@ims.mnc001.mcc001.3gppnetwork.org \
   -k fec86ba6eb707ed08905757b1bb44b8f -opc 1006020f0a478bf6b699f15c062e42b3 \
   -received-out /captures/volte-b-received.amr
+```
+
+別の端末で、volte-a から volte-b に発信します。
+
+```sh
 docker compose run --rm --no-deps volte-a call -epc http://172.28.0.80:8080 \
   -impi 001010000000010@ims.mnc001.mcc001.3gppnetwork.org \
   -impu sip:001010000000010@ims.mnc001.mcc001.3gppnetwork.org \
@@ -514,10 +523,11 @@ docker compose run --rm --entrypoint sipp peer -sf /etc/sipp/register-aka.xml -m
 | P-CSCF、TS 29.214 4.4.2 | サービスの情報の変更を断られても、ログに書くだけ。 | そのときには相手がもう答えている。TS 24.229 が断られた資源を扱うのは最初の INVITE だけ。 |
 | P-CSCF、TS 29.214 A.3 | 分岐した INVITE の早期ダイアログを区別しない。 | S-CSCF は分岐しない。 |
 | P-CSCF、TS 24.229 5.2.8.1.1、5.2.8.1.2 | メディアを取り除く SIP のメッセージを待たずに、すぐに解放する。信号を失った UE のほかのセッションは、それぞれの事象に任せる。BYE を送った時点でダイアログを忘れる。 | 通話ごとに音声のストリームは 1 本で、P-CSCF は UE ごとのダイアログの索引を持たない。 |
+| P-CSCF、TS 24.229 5.2.8.1.2 | 確立した通話が資源を失ったとき、bearer を失ったことに served user の UE が自分で気づくのを待たない。この節は相手側にだけ BYE を送るが、P-CSCF は相手側の名前で UE にも BYE を送る。 | 網が音声の bearer だけを解放したあとも、UE には信号の経路が残っているため。bearer を失ったことに対処しない UE は、BYE が来なければ、網が終えた通話にとどまってしまう。 |
 | P-CSCF、TS 24.229 5.2.8.1.4、5.2.8.3 | P-CSCF を通る BYE なしに終わったダイアログは `Store` に残る。 | 利用者ごとのダイアログの索引か、P-CSCF のセッションタイマーが要る。 |
 | P-CSCF、RFC 3264、RFC 3262 | SDP の無い INVITE と re-INVITE には、中継のコンテキストも許可も無い。 | UE シミュレータはいつも INVITE で offer する。 |
 | P-CSCF と UE、TS 33.203 7.1、7.2 | IPsec の ESP をかけない。アソシエーションは取り決めて保存し、保護サーバーポートを使い、クライアントポートは使わない。 | キャプチャを読めるようにするため。保護しない IMS-AKA は標準に無い。 |
-| P-CSCF、TS 24.229 5.2.2.3 | UE は要求が届いたアドレスとポートで見分け、TCP では Via の sent-by で見分ける。 | ESP が無いと、TCP の接続はそのときどきのポートから来る。 |
+| P-CSCF、TS 24.229 5.2.2.3 | UE は要求が届いたアドレスとポートで見分け、TCP では Via の sent-by で見分ける。sent-by は認証しない。 | ESP が無いと、TCP の接続はそのときどきのポートから来る。 |
 | S-CSCF、TS 33.203 6.1.1、TS 24.229 5.4.1.2.1A | AKAv1-MD5 だけで、AKAv2-SHA-256 は無い。 | SIPp が AKAv1-MD5 しか話さない。 |
 | AKA、TS 33.102 C.2.2、C.3.4 | 受け入れる SQN の古さの限度 L を使わず、IND を領域ごとに分けない。 | Profile 2 は L の値を示していない。IMS は 1 つの領域で、MAR ごとにベクトルは 1 つ。 |
 | UE、TS 24.301、TS 36.331 | UE のパケットは Docker のネットワークにそのまま出る。 | 無線もトンネルも無い。 |
@@ -534,9 +544,10 @@ docker compose run --rm --entrypoint sipp peer -sf /etc/sipp/register-aka.xml -m
 | AMR、IR.92 3.2.5 | 最初に受けたフレームより前のフレームは捨てる。 | それが届くのは、ストリームの始めの順序が入れ替わったときだけ。 |
 | RTCP、RFC 3550 6.2、6.3.4 から 6.3.7、A.1 | 短い最小間隔、reconsideration、新しい送信元の様子見をしない。 | 通話のメンバーはちょうど 2 つで、変わらない。 |
 | DTMF、RFC 4733 2.5.1.3 | 65535 タイムスタンプ単位より長い数字は断る。 | UE が送るのは短い数字だけ。 |
-| 中継ノード、RFC 3605、RFC 5761、RFC 4961 | RTCP は RTP の 1 つ上のポートにあるとみなし、ラッチしたアドレスは通話のあいだ変えない。 | この網の UE は a=rtcp も rtcp-mux も送らず、通話中に移動しない。 |
+| 中継ノード、RFC 3605、RFC 5761、RFC 4961 | RTCP は RTP の 1 つ上のポートにあるとみなし、ラッチしたアドレスは、制御する側がラッチし直しを求めない限り、通話のあいだ変えない。 | この網の UE は a=rtcp も rtcp-mux も送らず、通話中に移動しない。 |
 | プリコンディション、RFC 4032 4.1、4.2 | ストリームが新しいアドレスに移ったことを見つけない。 | UE は通話のあいだアドレスを変えない。 |
 | SDP、RFC 8866 5.7 | c= には IPv4 のユニキャストのアドレスだけを受け付ける。 | この網のノードはどれも IPv4 を使う。 |
+| SDP、TS 26.114 5.2.1.1 | NR のアクセスで使う offer（`sdp.VoNRCodecs`）に EVS を入れない。そのため超広帯域の音声も offer しない。LTE と同じ offer になる。 | UE には EVS のコーデックが無い。EVS のペイロードタイプを offer すると、UE が送れない EVS Primary のビットレートを示すことになる。 |
 | UA、RFC 3261 12.2.1.2 | 早期ダイアログを失っても、PRACK が失敗しても、ログに書くだけ。 | INVITE への最終応答がどのみち通話を終わらせる。 |
 | UA、RFC 3261 13.2.2.4 | 2xx に offer があったダイアログを BYE で終えるときは、answer の無い ACK を先に送る。 | そのとき UA は自分の SDP を持っていない。 |
 | UA、RFC 4028 7.1、10 | timer を Supported に入れるのは INVITE とそのダイアログの要求だけ。更新に失敗してもログに書くだけで、期限切れでセッションが終わる。 | セッションタイマーは通話のダイアログのもので、ダイアログの中の要求に認証を求めるノードは無い。 |
@@ -544,5 +555,7 @@ docker compose run --rm --entrypoint sipp peer -sf /etc/sipp/register-aka.xml -m
 ## 後片付け
 
 ```sh
-docker compose --profile ue --profile volte down --rmi all -v --remove-orphans
+docker compose --profile ue --profile sim --profile volte down -v --remove-orphans
 ```
+
+すべてのプロファイルのノードと UE を止め、イメージは残します。次の手順書をビルドし直さずに始められます。イメージも削除するときは、[システムを止める](capture.md#システムを止める)を見てください。

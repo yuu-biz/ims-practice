@@ -43,14 +43,28 @@ func (noServices) RepositoryData(context.Context, string, string) (sh.Transparen
 	return sh.TransparentData{}, false, nil
 }
 
-// testAS is an AS on loopback, and the address it listens on.
+// testAS is an AS on loopback, the address it listens on, and the
+// store of its calls and conferences.
 type testAS struct {
 	*mmtel.AS
 	addr  netip.AddrPort
-	store *mmtel.MemoryStore
+	store stores
+}
+
+// stores is a Store and a ConferenceStore in one, as both
+// mmtel.MemoryStore and mmtelstore.Store are.
+type stores interface {
+	mmtel.Store
+	mmtel.ConferenceStore
 }
 
 func startAS(t *testing.T, hss mmtel.HSS, cfg mmtel.Config) testAS {
+	t.Helper()
+	return startASOn(t, hss, cfg, mmtel.NewMemoryStore())
+}
+
+// startASOn is startAS with store in place of a MemoryStore.
+func startASOn(t *testing.T, hss mmtel.HSS, cfg mmtel.Config, store stores) testAS {
 	t.Helper()
 	tr, err := sip.Listen("127.0.0.1:0", quiet())
 	if err != nil {
@@ -63,7 +77,6 @@ func startAS(t *testing.T, hss mmtel.HSS, cfg mmtel.Config) testAS {
 	if cfg.MRFC != "" && cfg.ConferenceDomain == "" {
 		cfg.ConferenceDomain = conferenceDomain
 	}
-	store := mmtel.NewMemoryStore()
 	as := mmtel.New(cfg, hss, store, store, ipLocator{}, quiet())
 	if err := as.Listen(tr); err != nil {
 		t.Fatal(err)
@@ -252,8 +265,8 @@ func TestCallThroughTheAS(t *testing.T) {
 	uas, _ := in.Dialog()
 	incoming := sip.DialogID{CallID: uac.ID.CallID, LocalTag: uac.ID.RemoteTag, RemoteTag: uac.ID.LocalTag}
 	outgoing := sip.DialogID{CallID: uas.ID.CallID, LocalTag: uas.ID.RemoteTag, RemoteTag: uas.ID.LocalTag}
-	waitFor(t, func() bool { _, ok := as.store.CallOf(incoming); return ok }, "call record")
-	record, _ := as.store.CallOf(outgoing)
+	waitFor(t, func() bool { _, ok := callOf(t, as, incoming); return ok }, "call record")
+	record, _ := callOf(t, as, outgoing)
 	if record.Incoming.ID != incoming || record.ServedUser != "sip:alice@"+domain || record.SessionCase != sip.SessionCaseOrig {
 		t.Errorf("record is %+v, want both dialogs and the served user", record)
 	}
@@ -275,7 +288,19 @@ func TestCallThroughTheAS(t *testing.T) {
 	if bye := in.EndedBy(); bye == nil || !reflect.DeepEqual(sip.Reasons(bye), []sip.Reason{why}) {
 		t.Errorf("callee's call ended by %v, want a BYE with the caller's Reason", bye)
 	}
-	waitFor(t, func() bool { _, ok := as.store.CallOf(incoming); return !ok }, "the record to go")
+	waitFor(t, func() bool { _, ok := callOf(t, as, incoming); return !ok }, "the record to go")
+}
+
+// callOf is the record in the store of as of the call that the dialog
+// id belongs to. The record is what another instance of the AS would
+// find; no message on the wire shows it.
+func callOf(t *testing.T, as testAS, id sip.DialogID) (mmtel.CallRecord, bool) {
+	t.Helper()
+	r, ok, err := as.store.CallOf(context.Background(), id)
+	if err != nil {
+		t.Fatalf("CallOf(%v): %v", id, err)
+	}
+	return r, ok
 }
 
 func waitFor(t *testing.T, cond func() bool, what string) {

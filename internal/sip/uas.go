@@ -50,6 +50,8 @@ type IncomingCall struct {
 	rseq    uint32
 	unacked *Message
 	pracked chan struct{}
+	// relayPRACK hands every PRACK to the user (RelayPRACK).
+	relayPRACK bool
 }
 
 // receiveInvite is RFC 3261 8.2 and 13.3.1 for an INVITE outside a
@@ -114,6 +116,21 @@ func (c *IncomingCall) Handle(f func(*InDialogRequest)) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.onRequest = f
+}
+
+// RelayPRACK has the UA hand every PRACK of the caller to the handler
+// of the call (Handle), with or without a body, where it otherwise
+// answers a PRACK without a body with 200 itself. The handler answers it
+// with Accept. A B2BUA that relays each reliable provisional response
+// of its other leg, and the PRACK for it back (RFC 3262 4), needs the
+// PRACK among the requests it relays in the order they came (Arrival):
+// the caller may send an UPDATE right after the PRACK, and the far end
+// has to get the two in that order. The user calls it before the first
+// response, as Handle.
+func (c *IncomingCall) RelayPRACK() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.relayPRACK = true
 }
 
 // SetContact has the responses of the call and its later messages carry
@@ -348,10 +365,10 @@ func (c *IncomingCall) makeReliable(resp *Message) {
 // CSeq, stops the retransmissions. Any other PRACK gets 481. It reports
 // whether the PRACK matched. c.mu is held.
 //
-// A PRACK without a body gets its 200 here. One with a body carries the
-// answer to an offer in the response, or a new offer (RFC 3262 5), and
-// goes to the user of the call, who reads the answer or gives the
-// answer for the 200.
+// A PRACK without a body gets its 200 here, unless the user relays the
+// PRACKs (RelayPRACK). One with a body carries the answer to an offer
+// in the response, or a new offer (RFC 3262 5), and goes to the user of
+// the call, who reads the answer or gives the answer for the 200.
 func (c *IncomingCall) acceptPRACK(st *ServerTransaction) bool {
 	req := st.Request
 	rack, err := ParseRAck(req.Get("RAck"))
@@ -373,11 +390,11 @@ func (c *IncomingCall) acceptPRACK(st *ServerTransaction) bool {
 	}
 	c.unacked = nil
 	close(c.pracked)
-	switch handler := c.onRequest; {
+	switch {
+	case c.onRequest != nil && (len(req.Body) > 0 || c.relayPRACK):
+		c.handOver(r)
 	case len(req.Body) == 0:
 		c.ua.respondOwn(st, NewResponse(req, 200, ""))
-	case handler != nil:
-		go handler(r)
 	case r.Offer:
 		c.ua.spawn(func() { r.Reject(488, append(c.ua.own(PRACK, true, nil), c.ua.noSessionChange())...) })
 	default:

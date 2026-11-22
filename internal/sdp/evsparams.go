@@ -141,14 +141,6 @@ func parseEVSBandwidthRange(s string) (EVSBandwidthRange, error) {
 	return EVSBandwidthRange{}, fmt.Errorf("%q is not an EVS audio bandwidth of TS 26.445 A.3.1", s)
 }
 
-// intersect is the bandwidths in both w and o. Since every range starts
-// at narrowband or is one bandwidth, the result is again one A.3.1 can
-// write.
-func (w EVSBandwidthRange) intersect(o EVSBandwidthRange) (EVSBandwidthRange, bool) {
-	r := EVSBandwidthRange{max(w.Min, o.Min), min(w.Max, o.Max)}
-	return r, r.Min <= r.Max
-}
-
 // evsBandwidthBitRates are the bit rates TS 26.445 Table A.6 allows
 // with each audio bandwidth.
 var evsBandwidthBitRates = [...]EVSBitRateRange{

@@ -1,10 +1,13 @@
 package ibcf
 
 import (
+	"context"
 	"errors"
+	"fmt"
 	"log/slog"
-	"strings"
+	"net/netip"
 
+	"github.com/yuu-biz/ims-practice/internal/agw"
 	"github.com/yuu-biz/ims-practice/internal/interconnect"
 	"github.com/yuu-biz/ims-practice/internal/sdp"
 	"github.com/yuu-biz/ims-practice/internal/sip"
@@ -17,6 +20,34 @@ import (
 // peer does not accept are gone from the SDP by then: interconnect.Border
 // filters them out first (TS 29.165 7.1).
 
+// reserveMedia makes a TrGW context with a termination on each side:
+// Reserve TrGW Connection Point (TS 29.238 Table 5.17.2.1.1). The
+// address of each termination, as the SDP of its side shows it, is the
+// TrGW's address in that network (Config), with the port that the TrGW
+// chose.
+func (b *IBCF) reserveMedia(ctx context.Context) (MediaContext, error) {
+	c, err := b.trgw.Add(ctx, agw.TerminationRequest{ID: terminations[PeerSide]}, agw.TerminationRequest{ID: terminations[CoreSide]})
+	if err != nil {
+		return MediaContext{}, err
+	}
+	core, peer := c.Terminations[terminations[CoreSide]], c.Terminations[terminations[PeerSide]]
+	if core == nil || peer == nil {
+		return MediaContext{}, fmt.Errorf("ibcf: TrGW context %s lacks a termination", c.ID)
+	}
+	return MediaContext{
+		ID:   c.ID,
+		Core: withAddress(core.Local, b.cfg.TrGWCoreAddress),
+		Peer: withAddress(peer.Local, b.cfg.TrGWPeerAddress),
+	}, nil
+}
+
+func withAddress(local netip.AddrPort, public netip.Addr) netip.AddrPort {
+	if !public.IsValid() {
+		return local
+	}
+	return netip.AddrPortFrom(public, local.Port())
+}
+
 // releaseMedia releases the TrGW context c. A context that is gone has
 // been released already.
 //
@@ -28,7 +59,7 @@ import (
 func (b *IBCF) releaseMedia(c MediaContext, log *slog.Logger) {
 	ctx, cancel := trgwContext()
 	defer cancel()
-	if err := b.trgw.Release(ctx, c.ID); err != nil && !errors.Is(err, ErrNoContext) {
+	if err := b.trgw.Subtract(ctx, c.ID); err != nil && !errors.Is(err, agw.ErrNoContext) {
 		log.Warn("could not release the TrGW context", "context", c.ID, "error", err.Error())
 		return
 	}
@@ -69,7 +100,7 @@ func (b *IBCF) throughTrGW(m *sip.Message, c MediaContext, d interconnect.Direct
 	from, to := facing(d)
 	ctx, cancel := trgwContext()
 	defer cancel()
-	if err := b.trgw.Configure(ctx, c.ID, from, sender); err != nil {
+	if err := b.trgw.Modify(ctx, c.ID, terminations[from], agw.TerminationRequest{Remote: sender}); err != nil {
 		return err
 	}
 	if err := description.SetAudio(c.local(to)); err != nil {
@@ -82,7 +113,7 @@ func (b *IBCF) throughTrGW(m *sip.Message, c MediaContext, d interconnect.Direct
 // hasAudio reports whether m carries an SDP body with an audio stream
 // that has a port: one that the TrGW has to carry.
 func hasAudio(m *sip.Message) bool {
-	if !hasSDP(m) {
+	if !sip.HasSessionDescription(m) {
 		return false
 	}
 	description, err := sdp.Parse(m.Body)
@@ -91,11 +122,4 @@ func hasAudio(m *sip.Message) bool {
 	}
 	_, _, err = description.Audio()
 	return err == nil
-}
-
-// hasSDP reports whether the body of m is a session description (RFC
-// 3261 13.2.1): only then is it an offer or an answer.
-func hasSDP(m *sip.Message) bool {
-	mediaType, _, _ := strings.Cut(m.Get("Content-Type"), ";")
-	return len(m.Body) > 0 && strings.EqualFold(strings.TrimSpace(mediaType), "application/sdp")
 }

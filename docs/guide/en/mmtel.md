@@ -163,13 +163,18 @@ docker compose run --rm ue2 xcap \
   --password test-password-2 set cfu on tel:+12025550103
 ```
 
-Then have UE 3 wait for a call, and call UE 2 from UE 1:
+Then have UE 3 wait for a call. The command stays in the foreground until the call ends:
 
 ```sh
 docker compose run --rm ue3 answer \
   --impi 001010000000003@ims.mnc001.mcc001.3gppnetwork.org \
   --impu sip:001010000000003@ims.mnc001.mcc001.3gppnetwork.org \
   --password test-password-3
+```
+
+In another terminal, call UE 2 from UE 1:
+
+```sh
 docker compose run --rm ue call tel:+12025550102
 ```
 
@@ -420,5 +425,7 @@ Each item has a `SIMPLIFIED:` comment in the code; `grep -rn "SIMPLIFIED:" inter
 ## Clean up
 
 ```sh
-docker compose --profile ue down --rmi all -v --remove-orphans
+docker compose --profile ue --profile sim --profile volte down -v --remove-orphans
 ```
+
+This stops the nodes and the UEs of every profile and keeps the images, so the next guide starts without a new build. To delete the images as well, see [Stop the system](capture.md#stop-the-system).

@@ -170,6 +170,10 @@ func containsAll(have, want []uint32) bool {
 // SIMPLIFIED: TS 24.229 5.3.1.3. When the S-CSCF times out or answers
 // 3xx or 480, the I-CSCF should pick another S-CSCF. This network has
 // one S-CSCF, so its answer goes back as it is.
+//
+// SIMPLIFIED: RFC 3263 4.2 and 4.3. Only the first target that DNS
+// gives for the S-CSCF is tried, never the next one after a failure.
+// Every name in the DNS of this project leads to one server.
 func (i *ICSCF) forward(st *sip.ServerTransaction, server string, log *slog.Logger) {
 	req := st.Request
 	u, err := sip.ParseURI(server)

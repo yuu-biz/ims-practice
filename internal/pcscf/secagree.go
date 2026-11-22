@@ -32,11 +32,12 @@ import (
 //     their protected server ports. internal/sip sends a message from
 //     the socket it listens on, so the protected client ports are
 //     agreed and kept, but never bound. A message over TCP comes from a
-//     port of the moment: the P-CSCF knows the UE of a request over TCP
-//     by the sent-by of its Via (ueSource), but the agreement takes the
-//     address of a REGISTER, so the REGISTERs of the agreement stay below
-//     the 1300 bytes above which RFC 3261 18.1.1 moves a request to TCP
-//     (ims.SupportedTransforms).
+//     port of the moment: the P-CSCF knows the UE of a request over TCP,
+//     a REGISTER of the agreement as well, by the sent-by of its Via
+//     (ueSource). Nothing authenticates that sent-by, so a host that
+//     shares the UE's IP address could name the UE's protected server
+//     port in it; with ESP the security associations would authenticate
+//     the sender.
 //   - A request that the P-CSCF proxies with its server transaction
 //     leaves from the transport it came in on, so the P-CSCF also talks
 //     to the core about a UE with security associations over the
@@ -190,19 +191,37 @@ func (p *PCSCF) pathURIOf(a Association) string {
 	return p.pathURI()
 }
 
-// refusesUnprotected answers 403 to a request other than REGISTER that
-// came to the unprotected port from a UE with established security
-// associations, which TS 33.203 7.1 item 3 has the P-CSCF discard or
-// reject.
-func (p *PCSCF) refusesUnprotected(st *sip.ServerTransaction) bool {
-	sas, ok := p.store.SecurityAssociations(ueSource(st).Addr)
-	if !ok || sas.Temporary {
-		return false
+// AdmitUnprotected is the sip.Config.Admit of the stack on the
+// P-CSCF's unprotected port. A request other than REGISTER that comes
+// there from a UE with established security associations is not
+// protected, and the P-CSCF discards an unprotected message outside the
+// registration and authentication procedures (TS 24.229 5.2.1 NOTE 8):
+// as Screen does with a request that has no IP association, it sends
+// nothing back, not even a 100 (Trying), and forwards nothing. TS
+// 33.203 7.1 lets it either discard or reject what does not arrive on a
+// protected port. Temporary associations are those of an authentication
+// under way (TS 24.229 5.2.2.2), so they do not count.
+//
+// The SA table is in the Store, which several P-CSCFs may share, and a
+// UE's entry changes with each registration, through whichever of them
+// it goes. So the P-CSCF reads the entry for each request. The stack
+// asks Admit off its loop, so the read holds up only the later requests
+// from the same source.
+func (p *PCSCF) AdmitUnprotected(req *sip.Message, source sip.Destination) bool {
+	if req.Method == sip.REGISTER {
+		return true
 	}
-	p.log.Info("unprotected request from a UE with security associations", "method", string(st.Request.Method),
-		"source", st.Source.String())
-	st.Respond(sip.NewResponse(st.Request, 403, sip.NewTag()))
-	return true
+	ue, _ := ueSourceOf(req, source)
+	// The Store reports a failed read as no entry, and no entry must let
+	// in the requests of a UE without security associations, so a
+	// request gets in when the read fails too, unlike in Screen, which
+	// keeps out a request whose IP association it cannot read.
+	if sas, ok := p.store.SecurityAssociations(ue.Addr); !ok || sas.Temporary {
+		return true
+	}
+	p.log.Info("discarded an unprotected request from a UE with security associations",
+		"method", string(req.Method), "source", source.String(), "call_id", req.Get("Call-ID"))
+	return false
 }
 
 // asksSecAgree reports whether a REGISTER chooses IMS AKA: it carries
@@ -270,7 +289,10 @@ func (p *PCSCF) receiveSecAgree(st *sip.ServerTransaction, out *sip.Message, pri
 		return refuse(494, "no algorithms in common")
 	}
 	if protected {
-		sas, ok := p.store.SecurityAssociations(st.Source.Addr)
+		// Item 3 a: the associations that protected the request. TCP and
+		// UDP share them (TS 33.203 7.1), so a REGISTER over 1300 bytes,
+		// which comes over TCP, has them at the UE that ueSource names.
+		sas, ok := p.store.SecurityAssociations(ueSource(st).Addr)
 		switch {
 		case !ok:
 			// TS 33.203 7.1 item 3: ESP would have dropped it.

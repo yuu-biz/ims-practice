@@ -74,7 +74,8 @@ type Referral struct {
 // Statuses delivers each NOTIFY of the subscription as it comes. It is
 // closed when the subscription ends: with a NOTIFY that says
 // terminated, when it expires, or when the dialog ends; Err then tells
-// which.
+// which. A status comes once the Referral has taken in its NOTIFY: the
+// duration it gave already runs.
 func (r *Referral) Statuses() <-chan ReferStatus { return r.statuses }
 
 // Err tells why the subscription ended once Statuses is closed: nil
@@ -228,24 +229,24 @@ func (d *CallDialog) receiveNotify(st *ServerTransaction) {
 		return
 	}
 	d.respond(st, 200)
-	select {
-	case r.statuses <- ReferStatus{StatusCode: code, Reason: reason, State: state, Request: req}:
-	default:
-		c.ua.log.Warn("NOTIFY of a REFER not delivered: the user does not read them", "call_id", req.Get("Call-ID"))
-	}
 	if r.stopTimerN != nil {
 		r.stopTimerN()
 		r.stopTimerN = nil
 	}
+	// The Referral follows the NOTIFY before the user sees it: a user who
+	// has read a status finds the timers already running for the
+	// duration that the NOTIFY gave. A NOTIFY that ends the subscription
+	// is delivered before end closes Statuses.
+	ends, endErr := false, error(nil)
 	switch {
 	case state.State == SubscriptionTerminated:
-		r.end(nil)
+		ends = true
 	case HasExpires(req.Get("Subscription-State")) && state.Expires == 0:
 		// RFC 6665 4.1.3: the expires of an active or pending NOTIFY is
 		// the time left, and the notifier may shorten it to nothing
 		// (4.2.2). The subscription has ended, although no NOTIFY said
 		// terminated.
-		r.end(ErrSubscriptionExpired)
+		ends, endErr = true, ErrSubscriptionExpired
 	case HasExpires(req.Get("Subscription-State")):
 		// RFC 3515 3.4: the notifier tells in each NOTIFY how long the
 		// subscription lasts; the referrer does not refresh it. When no
@@ -260,6 +261,14 @@ func (d *CallDialog) receiveNotify(st *ServerTransaction) {
 			defer c.mu.Unlock()
 			r.end(ErrSubscriptionExpired)
 		})
+	}
+	select {
+	case r.statuses <- ReferStatus{StatusCode: code, Reason: reason, State: state, Request: req}:
+	default:
+		c.ua.log.Warn("NOTIFY of a REFER not delivered: the user does not read them", "call_id", req.Get("Call-ID"))
+	}
+	if ends {
+		r.end(endErr)
 	}
 }
 

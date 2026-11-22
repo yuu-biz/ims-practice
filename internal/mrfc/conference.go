@@ -1,6 +1,7 @@
 package mrfc
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -26,7 +27,16 @@ func (m *MRFC) join(c *sip.IncomingCall, u sip.URI, conf netann.Conference, log 
 		}
 		direction = sdp.AnswerDirection(o.direction)
 	}
-	media, t, err := m.attach(conf.ID, agw.TerminationRequest{Mode: agw.Mode(direction), Remote: o.remote}, log)
+	// sip.IncomingCall carries no context to bound the work for the
+	// INVITE. The Store bounds each of its operations itself: an adapter
+	// on a store outside the process gives each one a time limit.
+	ctx := context.Background()
+	media, t, err := m.attach(ctx, conf.ID, agw.TerminationRequest{Mode: agw.Mode(direction), Remote: o.remote}, log)
+	if errors.Is(err, errStore) {
+		log.Warn("conference store failed", "error", err.Error())
+		m.refuse(c, u, &netann.Error{Status: 500, Reason: "Server Internal Error"}, log)
+		return
+	}
 	if err != nil {
 		log.Warn("no termination for the conference", "error", err.Error())
 		m.refuse(c, u, &netann.Error{Status: 503, Reason: "Service Unavailable"}, log)
@@ -37,7 +47,12 @@ func (m *MRFC) join(c *sip.IncomingCall, u sip.URI, conf netann.Conference, log 
 		if l.release() {
 			// The last party has left, so the MRFP has deleted the
 			// context, and the conference is over (RFC 4240 5).
-			m.store.RemoveConference(conf.ID, media)
+			if err := m.store.RemoveConference(ctx, conf.ID, media); err != nil {
+				// No request waits for an answer here. The item stays
+				// until a later party finds that the context is gone
+				// (attach).
+				log.Warn("ended conference left in the store", "error", err.Error())
+			}
 			log.Info("conference ended")
 		}
 	}()
@@ -70,6 +85,13 @@ func (m *MRFC) join(c *sip.IncomingCall, u sip.URI, conf netann.Conference, log 
 	log.Info("party left")
 }
 
+// errStore marks a failure of the Store. The MRFC then cannot tell
+// which context holds the conference, and refuses the party with 500
+// (Server Internal Error) rather than risk a mix apart from the other
+// parties. 503 (Service Unavailable) stays for an MRFP that cannot take
+// the party.
+var errStore = errors.New("mrfc: the conference store failed")
+
 // attachAttempts bounds how often attach starts over after another
 // instance changed the conference between its reads and writes.
 const attachAttempts = 3
@@ -78,27 +100,33 @@ const attachAttempts = 3
 // conference id: the one that the Store names, or else a new one on the
 // MRFP that choose gives, which then goes into the Store (TS 23.333
 // 6.2.9.2.2, 6.2.9.2.5).
-func (m *MRFC) attach(id string, req agw.TerminationRequest, log *slog.Logger) (ConferenceMedia, agw.Termination, error) {
+func (m *MRFC) attach(ctx context.Context, id string, req agw.TerminationRequest, log *slog.Logger) (ConferenceMedia, agw.Termination, error) {
 	for range attachAttempts {
-		if media, ok := m.store.Conference(id); ok {
+		media, ok, err := m.store.Conference(ctx, id)
+		if err != nil {
+			return ConferenceMedia{}, agw.Termination{}, fmt.Errorf("%w: %w", errStore, err)
+		}
+		if ok {
 			control, known := m.byName[media.MRFP]
 			if !known {
 				return ConferenceMedia{}, agw.Termination{}, fmt.Errorf("mrfc: the conference is on MRFP %q, which this instance does not know", media.MRFP)
 			}
-			ctx, cancel := mp()
-			t, err := control.AddTermination(ctx, media.Context, req)
+			mpCtx, cancel := mp()
+			t, err := control.AddTermination(mpCtx, media.Context, req)
 			cancel()
 			if errors.Is(err, agw.ErrNoContext) {
 				// The last party left and the context went with it
 				// before the Store forgot it.
-				m.store.RemoveConference(id, media)
+				if err := m.store.RemoveConference(ctx, id, media); err != nil {
+					return ConferenceMedia{}, agw.Termination{}, fmt.Errorf("%w: %w", errStore, err)
+				}
 				continue
 			}
 			return media, t, err
 		}
 		p := m.choose(id)
-		ctx, cancel := mp()
-		cx, err := p.Control.Add(ctx, req)
+		mpCtx, cancel := mp()
+		cx, err := p.Control.Add(mpCtx, req)
 		cancel()
 		if err != nil {
 			return ConferenceMedia{}, agw.Termination{}, err
@@ -107,8 +135,16 @@ func (m *MRFC) attach(id string, req agw.TerminationRequest, log *slog.Logger) (
 		for _, only := range cx.Terminations {
 			t = *only
 		}
-		media := ConferenceMedia{MRFP: p.Name, Context: cx.ID}
-		if _, created := m.store.CreateConference(id, media); created {
+		media = ConferenceMedia{MRFP: p.Name, Context: cx.ID}
+		_, created, err := m.store.CreateConference(ctx, id, media)
+		if err != nil {
+			// The store may hold this context or not. Give it up: a
+			// party that the store sends to it later finds it gone, and
+			// the conference starts again (agw.ErrNoContext above).
+			newLeg(p, cx.ID, t, log).release()
+			return ConferenceMedia{}, agw.Termination{}, fmt.Errorf("%w: %w", errStore, err)
+		}
+		if created {
 			log.Info("conference created", "mrfp", p.Name, "context", cx.ID)
 			return media, t, nil
 		}

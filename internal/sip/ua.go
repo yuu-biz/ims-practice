@@ -35,7 +35,8 @@ type UAConfig struct {
 	Timers Timers
 	Screen func(req *Message, source Destination) bool
 	// Contact is the SIP URI where this UA takes the later requests of
-	// its dialogs, such as sip:001010000000001@192.0.2.10:5060 (RFC 3261
+	// its dialogs, such as
+	// sip:4218b61b-4e20-8e1c-872d-5b39fca1e64f@192.0.2.10:5060 (RFC 3261
 	// 12.1.1, 12.1.2).
 	Contact string
 	// ContactParams are the parameters that the UA writes after that URI
@@ -72,9 +73,18 @@ type UAConfig struct {
 	// within the dialog of a call, both an initial one and one within a
 	// subscription's dialog, which the user keeps (NotifierSubscription)
 	// and answers with st.Respond. Without it the UA answers a SUBSCRIBE
-	// outside a call with 405, or 481 within a dialog it does not know,
-	// and leaves SUBSCRIBE out of Allow.
+	// outside a call with 405, or within a dialog it does not know as it
+	// answers any such request (OnUnknownDialog), and leaves SUBSCRIBE
+	// out of Allow.
 	OnSubscribe func(st *ServerTransaction)
+	// OnUnknownDialog, when set, is called in a goroutine of its own for
+	// each request with a To tag that names no dialog of the UA, nor a
+	// subscription that OnSubscribe or a Subscriber keeps. It lets a role
+	// whose dialogs outlive the process, in a store, decide on the
+	// request before the UA answers it with 481 (RFC 3261 12.2.2): it
+	// answers st with st.Respond and returns true, or returns false
+	// without answering, and the UA sends the 481.
+	OnUnknownDialog func(st *ServerTransaction) (answered bool)
 	// OnOptions, when set, tells how the UA answers an OPTIONS: with the
 	// status code that an INVITE would get now, such as 200, or 486
 	// (Busy Here) while the user is in a call, and with a body that
@@ -321,8 +331,15 @@ func (ua *UA) receiveRequest(st *ServerTransaction) {
 			go ua.cfg.OnSubscribe(st)
 			return
 		}
-		// RFC 3261 12.2.2: no dialog to recreate.
-		ua.respondOwn(st, NewResponse(req, 481, ""))
+		if ua.cfg.OnUnknownDialog != nil {
+			go func() {
+				if !ua.cfg.OnUnknownDialog(st) {
+					ua.respondNoDialog(st)
+				}
+			}()
+			return
+		}
+		ua.respondNoDialog(st)
 		return
 	}
 	switch req.Method {
@@ -386,6 +403,12 @@ func (ua *UA) answerOptions(st *ServerTransaction) {
 	resp.Add("Contact", ua.contact())
 	body.addTo(resp)
 	ua.respondOwn(st, resp)
+}
+
+// respondNoDialog is RFC 3261 12.2.2 for a request within a dialog that
+// the UA does not know and cannot recreate.
+func (ua *UA) respondNoDialog(st *ServerTransaction) {
+	ua.respondOwn(st, NewResponse(st.Request, 481, ""))
 }
 
 // respondNotAllowed is RFC 3261 8.2.1 for a method this UA does not
@@ -455,6 +478,13 @@ func BodyOf(m *Message) Body {
 		return Body{}
 	}
 	return Body{Type: m.Get("Content-Type"), Content: slices.Clone(m.Body)}
+}
+
+// HasSessionDescription reports whether the body of m is a session
+// description (RFC 3261 13.2.1): only then is it an offer or an answer.
+func HasSessionDescription(m *Message) bool {
+	mediaType, _, _ := strings.Cut(m.Get("Content-Type"), ";")
+	return len(m.Body) > 0 && strings.EqualFold(strings.TrimSpace(mediaType), "application/sdp")
 }
 
 // addHeaders appends the header fields that the user of a call gives

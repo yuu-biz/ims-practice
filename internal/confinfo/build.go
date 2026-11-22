@@ -26,7 +26,9 @@ type Participant struct {
 	// DisplayText is the user's name to show, such as the display name
 	// of the P-Asserted-Identity.
 	DisplayText string
-	// Endpoint is the endpoint's own URI, such as its Contact or GRUU.
+	// Endpoint is the key of the endpoint among those of the user, which
+	// the focus makes (RFC 4575 5.7): the endpoint's Contact or GRUU, or
+	// a URI that the focus makes up.
 	Endpoint      string
 	Status        EndpointStatus
 	JoiningMethod JoiningMethod

@@ -1,6 +1,7 @@
 package mmtelstore_test
 
 import (
+	"context"
 	"fmt"
 	"log/slog"
 
@@ -27,15 +28,24 @@ func Example() {
 	_ = as
 
 	// What the focus of mmtel-1 writes once the creator has joined.
-	store.PutConference(mmtel.ConferenceRecord{
+	ctx := context.Background()
+	err := store.PutConference(ctx, mmtel.ConferenceRecord{
 		ID: "conf-a1", URI: "sip:conf-a1@mmtel-1." + domain + ":5060", Creator: "tel:+12025550101",
 		MRFC: "sip:conf=conf-a1@mrfc." + domain,
 		Participants: []mmtel.ConferenceParticipant{{Participant: confinfo.Participant{
 			User: "tel:+12025550101", Status: confinfo.Connected, JoiningMethod: confinfo.DialedIn}}},
 	})
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
 
 	other := mmtelstore.New(kv, cfg) // the Store of mmtel-2
-	r, _ := other.Conference("conf-a1")
+	r, _, err := other.Conference(ctx, "conf-a1")
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
 	for _, p := range r.Participants {
 		fmt.Printf("%s: %s is %s (%s)\n", r.URI, p.User, p.Status, p.JoiningMethod)
 	}

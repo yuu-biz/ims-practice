@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/yuu-biz/ims-practice/internal/agw"
 	"github.com/yuu-biz/ims-practice/internal/h248"
 )
 
@@ -14,11 +15,8 @@ import (
 // threegIq/7: that name would claim every package that Iq makes
 // mandatory (TS 29.334 5.14.1), such as gm, tman, ds and rtcph, which
 // this gateway does not realize. The procedures are those of Iq for the
-// packages in Packages, with one difference: Subtract reports the
-// statistics of RTP, as H.248.1 (05/2002) 7.2.3 does by default, so
-// that a learner sees in the capture what the relay carried. Iq
-// reports no statistics on Subtract (TS 29.334 5.7.7, Table 5.7.7.2),
-// and Mp those of MSRP only (TS 29.333 5.7.6, Table 5.7.6.2).
+// packages in Packages. In particular, Subtract reports no statistics
+// (TS 29.334 5.7.7, Table 5.7.7.2).
 //
 // H.248.1 (05/2002) 14.4 sets out how a profile name is registered with
 // IANA. This one is not: it is for this learning network only.
@@ -40,16 +38,12 @@ const ProtocolVersion = 2
 //   - hangterm (H.248.36 (03/2013) 5): the event hangterm/thb,
 //     termination heartbeat.
 //   - ipnapt (H.248.37 (06/2008) 6): the signal ipnapt/latch.
-//   - nt and rtp (H.248.1 (05/2002) E.11 and E.12): the statistics of
-//     an RTP termination.
 var Packages = h248.PackagesDescriptor{
 	{PackageName: "g", PackageVersion: 1},
 	{PackageName: "root", PackageVersion: 2},
 	{PackageName: "it", PackageVersion: 1},
 	{PackageName: "hangterm", PackageVersion: 1},
 	{PackageName: "ipnapt", PackageVersion: 1},
-	{PackageName: "nt", PackageVersion: 1},
-	{PackageName: "rtp", PackageVersion: 1},
 }
 
 // profile is what tells apart the profiles that this package speaks:
@@ -73,9 +67,6 @@ const (
 	eventHeartbeat         h248.PkgdName = "hangterm/thb"
 	signalLatch            h248.PkgdName = "ipnapt/latch"
 
-	statDuration        h248.PkgdName = "nt/dur"
-	statOctetsSent      h248.PkgdName = "nt/os"
-	statOctetsReceived  h248.PkgdName = "nt/or"
 	statPacketsSent     h248.PkgdName = "rtp/ps"
 	statPacketsReceived h248.PkgdName = "rtp/pr"
 )
@@ -91,8 +82,26 @@ const (
 	// paramNAPT (napt) is OFF, LATCH or RELATCH (H.248.37 (06/2008)
 	// 6.3.1.1.1).
 	paramNAPT = "napt"
-	naptLatch = "LATCH"
 )
+
+// naptValues are the values of napt, with the latching each one asks of
+// the relay (H.248.37 (06/2008) 6.3.1.1.1, 6.6.1 to 6.6.3).
+var naptValues = map[agw.Latch]string{
+	agw.NAPTOff:     "OFF",
+	agw.NAPTLatch:   "LATCH",
+	agw.NAPTRelatch: "RELATCH",
+}
+
+// latchOf is the latching for a value of napt, which is case
+// insensitive as the text encoding is (RFC 3525 Annex B.2).
+func latchOf(napt string) (agw.Latch, bool) {
+	for l, value := range naptValues {
+		if strings.EqualFold(napt, value) {
+			return l, true
+		}
+	}
+	return "", false
+}
 
 // The RequestIDs of the Events descriptors that a Controller sets. A
 // Notify carries the RequestID of the descriptor that asked for its
@@ -112,14 +121,14 @@ const terminationGroup = 1
 // A Gateway gives both terminations of a context the context ID as
 // their <id>: the field must be unique for each interface only, and a
 // learner can then tell from a termination ID which context it is in.
-func terminationID(group uint16, side Side, id h248.ContextID) h248.TerminationID {
+func terminationID(group uint16, side agw.TerminationID, id h248.ContextID) h248.TerminationID {
 	return h248.TerminationID(fmt.Sprintf("ip/%d/%s/%d", group, side, id))
 }
 
 // chooseTerminationID asks the gateway for a termination on side. TS
 // 29.334 5.6.1.1.1 (NOTE 4) has the controller always use CHOOSE in an
 // Add.
-func chooseTerminationID(side Side) h248.TerminationID {
+func chooseTerminationID(side agw.TerminationID) h248.TerminationID {
 	return h248.TerminationID(fmt.Sprintf("ip/%d/%s/$", terminationGroup, side))
 }
 
@@ -128,7 +137,7 @@ func chooseTerminationID(side Side) h248.TerminationID {
 type ipTermination struct {
 	group     uint16
 	groupText string
-	side      Side
+	side      agw.TerminationID
 	id        uint32
 	idText    string
 }
@@ -140,7 +149,7 @@ func parseTerminationID(t h248.TerminationID) (ipTermination, bool) {
 	if len(fields) != 4 || fields[0] != "ip" {
 		return ipTermination{}, false
 	}
-	p := ipTermination{groupText: fields[1], side: Side(fields[2]), idText: fields[3]}
+	p := ipTermination{groupText: fields[1], side: agw.TerminationID(fields[2]), idText: fields[3]}
 	if !isWildcard(p.groupText) {
 		g, err := strconv.ParseUint(p.groupText, 10, 16)
 		if err != nil {

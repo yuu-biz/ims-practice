@@ -29,7 +29,7 @@ func answering(t *testing.T, tag string, media netip.AddrPort) (*sip.Stack, <-ch
 			ok.Add("Record-Route", r)
 		}
 		ok.Add("Contact", "<sip:"+tag+"@"+stack.LocalAddr().String()+">")
-		if hasSDP(st.Request) {
+		if sip.HasSessionDescription(st.Request) {
 			ok.Add("Content-Type", "application/sdp")
 			ok.Body = sdp.Offer("2", media).Bytes()
 		}

@@ -104,7 +104,7 @@ TS 24.229 5.1.1.2.1 と 5.1.1.2.3 です。次のヘッダを見てください�
 
 - **Request-URI.** サーバーではなくホーム網のドメインです。どのサーバーが処理するかは、網の側が決めます。
 - **From と To.** 登録する公開の識別子です。
-- **Contact.** UE のアドレスで、パラメータが 2 つ付いています。`+g.3gpp.smsip` は機能タグ（RFC 3840）で、UE が IP で SMS を受けられることを表します（TS 24.341 5.3.2.2）。`expires=600000` は、TS 24.229 で UE が求めると決まっている登録の期間です。
+- **Contact.** UE のアドレスです。ユーザー部は UUID で、利用者の識別子ではありません。TS 24.229 5.1.1.2.1 の項目 c は、世界で一意で、私的な情報を明かさないユーザー部を求めており、その例に時刻をもとにした UUID を NOTE 3 で挙げています。この UE は例の UUID を使わず、秘密の識別子の HMAC-SHA-256 を、パスワード（IMS-AKA では USIM の K）を鍵にして計算し、バージョン 8 の UUID（RFC 9562 5.8）として書きます。鍵を持たない人はこの値から識別子を割り出せません。UE は起動するたびに同じユーザー部を作るので、起動し直したあとの登録は登録先を置き換えずに更新します。UE はあとの REGISTER でも同じユーザー部を使います（5.1.1.4.1）。Contact にはパラメータが 2 つ付いています。`+g.3gpp.smsip` は機能タグ（RFC 3840）で、UE が IP で SMS を受けられることを表します（TS 24.341 5.3.2.2）。`expires=600000` は、TS 24.229 で UE が求めると決まっている登録の期間です。
 - **Authorization.** `username` に秘密の識別子が入り、`nonce` と `response` は空です。まだ答える認証の要求が無いのですが、どの秘密の識別子を認証すればよいかを網に伝えています。
 - **Via.** 値の無い `rport` が付いています。応答を、要求が実際に来たアドレスとポートへ返すよう P-CSCF に頼んでいます（RFC 3581）。
 
@@ -272,7 +272,7 @@ Wireshark では、本文が XML として表示されます。
 <reginfo xmlns="urn:ietf:params:xml:ns:reginfo" version="0" state="full">
   <registration aor="sip:001010000000001@ims.mnc001.mcc001.3gppnetwork.org" id="reg1" state="active">
     <contact id="..." state="active" event="registered" expires="3600" callid="..." cseq="2">
-      <uri>sip:001010000000001@172.28.0.100:5060</uri>
+      <uri>sip:4218b61b-4e20-8e1c-872d-5b39fca1e64f@172.28.0.100:5060</uri>
       <unknown-param name="+g.3gpp.smsip"></unknown-param>
     </contact>
   </registration>
@@ -455,7 +455,7 @@ P-CSCF が扱うのは、自分を通って登録した UE だけです。IP の
 | Relayed-Charge、Service-Interact-Info | 消す | 消す | TS 24.229 4.4.17、4.4.18 |
 | Cellular-Network-Info | 残す | 要求から消す | TS 24.229 4.4.19 |
 
-UE から受けて転送する要求には、P-CSCF が自分の P-Charging-Vector を付けます（5.2.2.1 の 3 番目の項目、5.2.6.3.3 の手順 7）。Wireshark で `sip.P-Charging-Vector && ip.src == 172.28.0.40 && ip.dst == 172.28.0.100` と入力しても、何も見つかりません。REGISTER への 401 と 200 も、P-Charging-Vector を付けずに UE に届きます。
+UE から受けて転送する要求には、P-CSCF が自分の P-Charging-Vector を付けます（5.2.2.1 の 3 番目の項目、5.2.6.3.3 の手順 7）。UE にあてた要求では、向きが逆になります。P-CSCF はヘッダを消す前に icid-value と orig-ioi を保存しておき、UE の応答に自分の term-ioi と一緒に書き込みます（5.2.6.4.3 の 9 番目の項目、5.2.6.4.4 の 6 番目の項目）。1 つの通話を icid-value でたどる方法は、[音声通話の流れを追う](call.md) にあります。Wireshark で `sip.P-Charging-Vector && ip.src == 172.28.0.40 && ip.dst == 172.28.0.100` と入力しても、何も見つかりません。REGISTER への 401 と 200 も、P-Charging-Vector を付けずに UE に届きます。
 
 UE への応答の Reason は残します。アプリケーションサーバーがアナウンスを流してから通話を断るときは、理由を Reason に入れて発信者へ送るからです（TS 24.628 Annex G）。TS 24.229 4.4.1 は、ヘッダごとに信頼のドメインの境界が違ってよいとしています。
 
@@ -480,6 +480,7 @@ rm ue.exe
 | 箇所 | 省略していること | 理由 |
 | --- | --- | --- |
 | P-CSCF。TS 24.229 5.2.2.1 の 1 番目の項目 | Path の URI に、フロートークンと `ob` パラメータを付けない。 | SIP outbound（RFC 5626）の機能で、このプロジェクトでは実装しないため。 |
+| P-CSCF。TS 24.229 5.2.2.1 の 6 番目の項目 | REGISTER への 200 の P-Charging-Vector にある term-ioi を保存しない。 | この IOI は P-CSCF の課金の記録でホーム網を示すためのもの。このプロジェクトのノードは課金の記録を作らず、後のメッセージもこの IOI を運ばないため。 |
 | S-CSCF。TS 24.229 5.4.1.5 | S-CSCF が自分で登録を解除するのは、アプリケーションサーバーが第三者 REGISTER に失敗し、その iFC が SESSION_TERMINATED のときだけ。ほかは HSS からの RTR でだけ解除する。解除の前にセッションを解放することもしない。 | S-CSCF には保守用の API が無い。また、S-CSCF は中継するダイアログの状態を持たないため。 |
 | S-CSCF。TS 29.228 6.1.3.1 | NEW_SERVER_ASSIGNED と REMOVE_S-CSCF の RTR には DIAMETER_UNABLE_TO_COMPLY で答える。 | HSS のスタブは PERMANENT_TERMINATION しか送らない。また、登録していない利用者のプロファイルは、S-CSCF が数分たつと自分で手放すため。 |
 | 購読者。RFC 6665 4.1.4、5.4.9 | 2 つ目のダイアログから届いた NOTIFY には 481 を返す。 | reg イベントでは、購読が分岐することを禁じているため（RFC 3680 4.9）。 |
@@ -491,23 +492,26 @@ rm ue.exe
 | HSS。TS 29.228 6.1.1.1 の手順 5 | 登録してよい利用者かを確かめない。 | 試験用の加入は全員が登録してよいため。 |
 | 利用者のプロファイル。TS 29.228 Annex E | サービスプロファイルは 1 つ。任意の要素は iFC のほかに入れない。 | 試験用の加入者にはそれ以上要らないため。 |
 | HSS。TS 29.228 B.2.2 | すべての加入者に設定の iFC を渡す。加入者ごとに違うのは ServiceInfo の MSISDN だけ。 | このプロジェクトには、利用者ごとに違うサービスが無いため。 |
+| HSS と S-CSCF。TS 23.228 4.3.3.4、4.2.7.2 | 公開の識別子は 1 つの秘密の識別子にだけ属し、複数の UE で共有できない。公開の識別子への要求は、その識別子のただ 1 つの登録の、ただ 1 つの Contact に届く。S-CSCF はフォークしない。 | このプロジェクトの加入者は、それぞれ UE を 1 台だけ使うため。 |
 | iFC。TS 29.228 B.2.3、Annex E | SPT の SessionDescription、RegistrationType、ProfilePartIndicator、IncludeRegisterRequest、IncludeRegisterResponse を扱わない。 | SMS と MMTel AS の iFC には、どれも要らないため。RegistrationType は S-CSCF にとって任意の機能。 |
-| S-CSCF。TS 24.229 5.4.1.7 | 第三者 REGISTER の To はいつも既定の公開識別子にする。Call-ID は毎回新しくする。応答の term-ioi は保存しない。 | どの識別子にするかは運用者が選べる。Call-ID を変えないには、利用者とサーバーごとに状態が要る。S-CSCF は課金をしないため。 |
+| S-CSCF。TS 24.229 5.4.1.7 | 第三者 REGISTER の To はいつも既定の公開識別子にする。Call-ID は毎回新しくする。応答の term-ioi は保存しない。 | どの識別子にするかは運用者が選べる。Call-ID を変えないには、利用者とサーバーごとに状態が要る。term-ioi は S-CSCF の課金の記録のためのもので、このプロジェクトのノードは課金の記録を作らないため。 |
 | S-CSCF。TS 24.229 5.4.0 | アプリケーションサーバーのアドレスを要求のたびに DNS で引く。最初の第三者 REGISTER を送ったアドレスは覚えない。 | アプリケーションサーバーの役割は、すべての台で共有する Store に状態を置くため。 |
-| IP-SM-GW。TS 24.229 5.7.3 | IP-SM-GW の要求（SUBSCRIBE など）に、網の入口への Route を付けない。 | 網の入口はホームドメインの名前で表す。I-CSCF が取り除くのは自分のホスト名の Route だけなので（5.3.2.1）、ドメインの Route を付けると要求に残ってしまうため。 |
 | IP-SM-GW。RFC 6665 4.1.2.4 | Timer N を使わない。NOTIFY が来なかった SUBSCRIBE は、次の第三者 REGISTER のときに新しい購読に置き換える。 | S-CSCF は受け付けた SUBSCRIBE のすべてにすぐ NOTIFY を送るため。 |
 | IP-SM-GW。TS 24.341 5.3.3.2 | service-info に MSISDN が無いとき、PUR では利用者を公開の識別子で示す。UE の REGISTER の IMSI は使わない。 | IMSI は message/sip の本文に入った UE の REGISTER から取るが、S-CSCF はその本文を送らないため。Sh は公開の識別子も受け付ける（TS 29.328 Table 7.6.1）。 |
 | UE。TS 24.229 5.1.1.3 | UE の購読の更新に 481 が返ると、UE は次の初回登録の後まで購読し直さない。 | 更新は、購読の期限よりずっと前に行うため。 |
 | UE。TS 24.229 5.1.1.7 | `event="rejected"` を受けても、`ue call`、`ue answer`、`ue serve` は通話を解放しない。 | 登録が拒否されるのは HSS から加入を削除したときだけのため。`ue call` と `ue answer` の通話は音声を送り終えると自分で終わり、`ue serve` の通話は操作する側が切ると終わる。 |
+| S-CSCF。TS 24.229 5.4.2.1.2 | reg イベントの NOTIFY への応答にある term-ioi を保存しない。 | この IOI は S-CSCF の課金の記録のためのもので、このプロジェクトのノードは課金の記録を作らないため。 |
 | P-CSCF。TS 24.229 5.2.3 | P-CSCF の購読の更新に 481 が返ると、P-CSCF はすぐには購読し直さない。利用者の次の REGISTER で新しい購読を始める。 | 更新は、購読の期限よりずっと前に行うため。 |
 | P-CSCF と UE。RFC 3680 5.2 | reginfo の文書の version を確かめない。 | S-CSCF は毎回すべての状態を送る。また、後の NOTIFY より遅れて届いた NOTIFY は、CSeq で断るため。 |
 | P-CSCF。TS 24.229 5.2.6.2 | UE と網は、P-CSCF の同じアドレスとポートに要求を送る。P-CSCF が Path に入れた URI、P-CSCF 自身の Contact、P-CSCF が扱う UE の Contact のどれかにあてた要求を、網からの要求とみなす。網からの要求には IP の対応付けを求めない。 | 実際の P-CSCF は、UE の側（Gm）と網の側（Mw）を別のインタフェースで扱うことが多い。このプロジェクトのコンテナは 1 つのネットワークを共有するため。 |
-| P-CSCF。TS 24.229 5.2.2.3 | IP の対応付けは、UDP の要求が届いたアドレスとポートで探す。1300 バイトより大きい要求を、UE は TCP で送る。TCP の要求は、Via の sent-by のアドレスが要求の届いたアドレスと同じなら、sent-by だけで照らし合わせ、接続のポートは確かめない。sent-by が別のアドレスを示す TCP の要求は見分けられない。 | IPsec を使わないと、TCP の接続はそのときどきのポートから来て、そのポートを持つ IP の対応付けが無いため。 |
+| P-CSCF。TS 24.229 5.2.2.3 | IP の対応付けは、UDP の要求が届いたアドレスとポートで探す。1300 バイトより大きい要求を、UE は TCP で送る。TCP の要求は、Via の sent-by のアドレスが要求の届いたアドレスと同じなら、sent-by だけで照らし合わせ、接続のポートは確かめない。sent-by が別のアドレスを示す TCP の要求は見分けられない。sent-by のポートを認証するものは無いので、UE と同じ IP アドレスを持つホストなら、そのポートを書ける。 | IPsec を使わないと、TCP の接続はそのときどきのポートから来て、そのポートを持つ IP の対応付けが無いため。 |
 | SIP Digest。TS 24.229 5.4.1.2.1B、RFC 7616、RFC 8760 | S-CSCF は MD5 と qop=auth だけを提示する。仕様は SHA-256 を優先し、MD5 は後方互換のために残している。 | HSS のスタブが渡すのは MD5 の H(A1) だけで、SHA-256 には別の AVP が必要なため。 |
 | Diameter。RFC 3539 3.4.1 と Appendix A、RFC 6733 5.6.4 | REOPEN の状態とフェイルオーバーが無い。接続を始めるのは設定で決めた側だけなので、同じ相手への 2 本の接続のどちらを残すかを選ぶ手順（election）も無い。 | 各 CSCF の接続先の HSS が 1 台のため。 |
 
 ## 後片付け
 
 ```sh
-docker compose --profile ue down --rmi all -v --remove-orphans
+docker compose --profile ue --profile sim --profile volte down -v --remove-orphans
 ```
+
+すべてのプロファイルのノードと UE を止め、イメージは残します。次の手順書をビルドし直さずに始められます。イメージも削除するときは、[システムを止める](capture.md#システムを止める)を見てください。

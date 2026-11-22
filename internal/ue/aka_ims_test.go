@@ -64,12 +64,19 @@ func newIMSParty(t *testing.T, pcscf netip.AddrPort, private, public, pass strin
 	t.Helper()
 	tr := listenTransport(t)
 	addr := tr.LocalAddr()
+	cfg := ue.Config{PrivateIdentity: private, PublicIdentity: public, Password: pass, HomeDomain: domain,
+		PCSCF: pcscf, PCSCFURI: "sip:pcscf." + domain + ":5060", Features: ue.DefaultFeatures, SCAddress: scAddress}
+	if usim != nil {
+		c := *usim
+		c.Unprotected = stack(t, func(*sip.ServerTransaction) {})
+		cfg.AKA = &c
+	}
 	var u atomic.Pointer[ue.UE]
-	p := &party{calls: make(chan *sip.IncomingCall, 1)}
+	p := &party{calls: make(chan *sip.IncomingCall, 1), contact: ue.NewContact(cfg, addr)}
 	var err error
 	p.ua, err = sip.NewUA(tr, sip.UAConfig{
 		SentBy:    addr.String(),
-		Contact:   ue.ContactURI(public, addr),
+		Contact:   p.contact.URI(),
 		OnCall:    func(ic *sip.IncomingCall) { p.calls <- ic },
 		OnMessage: func(st *sip.ServerTransaction) { u.Load().ReceiveSMS(st) },
 		Locate:    func(sip.URI) (sip.Destination, error) { return u.Load().Outbound(), nil },
@@ -78,14 +85,7 @@ func newIMSParty(t *testing.T, pcscf netip.AddrPort, private, public, pass strin
 		t.Fatal(err)
 	}
 	t.Cleanup(p.ua.Close)
-	cfg := ue.Config{PrivateIdentity: private, PublicIdentity: public, Password: pass, HomeDomain: domain,
-		PCSCF: pcscf, PCSCFURI: "sip:pcscf." + domain + ":5060", Features: ue.DefaultFeatures, SCAddress: scAddress}
-	if usim != nil {
-		c := *usim
-		c.Unprotected = stack(t, func(*sip.ServerTransaction) {})
-		cfg.AKA = &c
-	}
-	u.Store(ue.New(cfg, p.ua.Stack(), addr, quiet()))
+	u.Store(ue.New(cfg, p.ua.Stack(), p.contact, quiet()))
 	p.ue = u.Load()
 	if p.media, err = ue.ListenMedia("127.0.0.1:0"); err != nil {
 		t.Fatal(err)
@@ -124,7 +124,7 @@ func TestIMSAKAThroughTheWholeIMS(t *testing.T) {
 	if sas, ok := n.pcscfStore.SecurityAssociations(protectedAddr); !ok || sas.Temporary || sas.PrivateIdentity != impiAKA {
 		t.Errorf("the P-CSCF's SA table has %+v, %v; want established associations", sas, ok)
 	}
-	if r, ok := n.scscfStore.Registration(impiAKA); !ok || r.Contact != ue.ContactURI(impuAKA, protectedAddr) {
+	if r, ok := n.scscfStore.Registration(impiAKA); !ok || r.Contact != a.contact.URI() {
 		t.Errorf("the S-CSCF registered %+v, %v", r, ok)
 	}
 	// TS 24.229 5.2.3: the P-CSCF subscribes to the registration that
@@ -214,4 +214,85 @@ func TestIMSAKAWithAnotherK(t *testing.T) {
 	if _, ok := n.scscfStore.Registration(impiAKA); ok {
 		t.Error("the S-CSCF registered the UE")
 	}
+}
+
+// TestRestartedUERefreshesItsBinding is a VoLTE UE that switches off
+// without deregistering and starts again on the same addresses, as a UE
+// container does when it restarts. It registers the contact it had, so
+// the S-CSCF refreshes the binding instead of binding a new contact and
+// deregistering the old one (TS 24.229 5.1.1.2.1 NOTE 13), and the
+// refresh goes over the security associations of the new registration.
+func TestRestartedUERefreshesItsBinding(t *testing.T) {
+	n, _ := akaIMS(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	first := openAKAUE(t, n.pcscf, "127.0.0.1:0", "127.0.0.1:0")
+	if _, err := first.ue.Register(ctx); err != nil {
+		t.Fatal(err)
+	}
+	bound, _ := n.scscfStore.Registration(impiAKA)
+	first.close()
+
+	restarted := openAKAUE(t, n.pcscf, first.protected.String(), first.unprotected.String())
+	if _, err := restarted.ue.Register(ctx); err != nil {
+		t.Fatalf("registration after the restart: %v", err)
+	}
+	if _, err := restarted.ue.Register(ctx); err != nil {
+		t.Fatalf("refresh after the restart: %v", err)
+	}
+	if r, _ := n.scscfStore.Registration(impiAKA); r.Contact != bound.Contact {
+		t.Errorf("the S-CSCF binds %s, want the contact from before the restart, %s", r.Contact, bound.Contact)
+	}
+}
+
+// akaUE is a UE of the AKA subscriber that a test can stop and start
+// again on the same addresses.
+type akaUE struct {
+	ue *ue.UE
+	// protected is the protected server port, the port of the contact;
+	// unprotected is where the REGISTERs without protection leave from.
+	protected, unprotected netip.AddrPort
+	close                  func()
+}
+
+// openAKAUE opens the UE's two stacks on protected and unprotected, as
+// "ue -k" does with -port-s and -listen.
+func openAKAUE(t *testing.T, pcscf netip.AddrPort, protected, unprotected string) akaUE {
+	t.Helper()
+	unprotectedTransport, err := sip.Listen(unprotected, quiet())
+	if err != nil {
+		t.Fatal(err)
+	}
+	unprotectedStack, err := sip.NewStack(unprotectedTransport, sip.Config{SentBy: unprotectedTransport.LocalAddr().String(),
+		OnRequest: func(*sip.ServerTransaction) {}}, quiet())
+	if err != nil {
+		t.Fatal(err)
+	}
+	tr, err := sip.Listen(protected, quiet())
+	if err != nil {
+		unprotectedStack.Close()
+		t.Fatal(err)
+	}
+	cfg := ue.Config{PrivateIdentity: impiAKA, PublicIdentity: impuAKA, HomeDomain: domain, PCSCF: pcscf,
+		PCSCFURI: "sip:pcscf." + domain + ":5060",
+		AKA:      &ue.AKA{Secret: testSet1, SQN: aka.NewSQN(5000, 1), Unprotected: unprotectedStack}}
+	contact := ue.NewContact(cfg, tr.LocalAddr())
+	var u atomic.Pointer[ue.UE]
+	ua, err := sip.NewUA(tr, sip.UAConfig{
+		SentBy:  tr.LocalAddr().String(),
+		Contact: contact.URI(),
+		OnCall:  func(ic *sip.IncomingCall) { ic.Reject(486) },
+		Locate:  func(sip.URI) (sip.Destination, error) { return u.Load().Outbound(), nil },
+	}, quiet())
+	if err != nil {
+		unprotectedStack.Close()
+		t.Fatal(err)
+	}
+	stop := func() {
+		ua.Close()
+		unprotectedStack.Close()
+	}
+	t.Cleanup(stop)
+	u.Store(ue.New(cfg, ua.Stack(), contact, quiet()))
+	return akaUE{ue: u.Load(), protected: tr.LocalAddr(), unprotected: unprotectedTransport.LocalAddr(), close: stop}
 }

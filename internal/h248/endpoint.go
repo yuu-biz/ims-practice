@@ -29,19 +29,19 @@ const DefaultPort = 2944
 // an answer comes, and the responder of D.1.1, which carries out each
 // request at most once and answers repetitions from the reply it keeps.
 //
-// SIMPLIFIED: TS 29.334 5.12 (Table 5.12.1) and TS 29.238 5.12
-// recommend SCTP and TS 29.333 5.12 requires it, with UDP as an
-// option in all three. The Go standard library has no SCTP, so only
-// UDP is offered here. Over SCTP, H.248.4 (11/2000) would take the
-// place of parts of Annex D.1: payload protocol identifier 7 (clause
-// 1), no TransactionResponseAck (clause 3) and no three-way handshake
-// (clause 4.2).
-//
 // The state of a transaction lives in the Endpoint only for the
 // lifetime of the transaction and LONG-TIMER after it, keyed by the
 // transaction ID. There is no lock for the whole Endpoint: two
 // transactions never wait for each other, and no lock is held while a
 // datagram is written or a Handler runs.
+//
+// SIMPLIFIED: TS 29.334 5.12 (Table 5.12.1), TS 29.238 5.12 and TS
+// 29.333 5.12. Only UDP is offered, not SCTP, which the first two
+// recommend and the third requires, with UDP as an option in all three.
+// So the parts of H.248.4 (11/2000) that take the place of parts of
+// Annex D.1 over SCTP are left out too: payload protocol identifier 7
+// (clause 1), no TransactionResponseAck (clause 3) and no three-way
+// handshake (clause 4.2). The Go standard library has no SCTP.
 type Endpoint struct {
 	conn    net.PacketConn
 	mid     MId
