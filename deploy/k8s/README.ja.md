@@ -183,7 +183,7 @@ kubectl -n ims exec pcscf-0 -c tap -- tcpdump -i eth0 -U -w - | wireshark -k -i 
 
 ## スクリプトでまとめて確かめる
 
-`e2e-kind.sh` は、1 から 4 までを専用のクラスタで行い、キャプチャを tshark で確かめます。確かめる内容は、Docker Compose で登録、通話、ショートメッセージを確かめる `scripts/` の e2e のスクリプトと同じです。
+`e2e-kind.sh` は、1 から 4 までを専用のクラスタで行い、キャプチャを tshark で確かめます。確かめる内容は、Docker Compose で確かめる `scripts/e2e-registration.sh`（登録）、`scripts/e2e-call.sh`（通話）、`scripts/e2e-sms.sh`（ショートメッセージ）と同じです。
 
 - 登録、登録の解除、間違ったパスワード
 - RTP が中継ノードを通る通話、話中の相手、取り消した呼、登録していない相手

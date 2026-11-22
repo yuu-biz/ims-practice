@@ -438,7 +438,7 @@ Both UEs send RTCP sender reports to the port above RTP, through the relay (RFC 
 
 ## Hold, resume and DTMF
 
-The call that the Lab drives in the e2e script:
+The call that the Lab drives in `scripts/e2e-volte.sh`:
 
 ```text
 #4604 volte10 -> P-CSCF  INVITE      to volte12, set up as above

@@ -438,7 +438,7 @@ Wireshark はキャプチャの中のフレームを見せます。RTP を再生
 
 ## 保留、再開、DTMF
 
-e2e のスクリプトがラボから操作する通話です。
+`scripts/e2e-volte.sh` がラボから操作する通話です。
 
 ```text
 #4604 volte10 -> P-CSCF  INVITE      to volte12, set up as above
