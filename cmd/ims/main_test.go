@@ -348,6 +348,11 @@ func TestRoleStoresAreTheSharedStoreOfTheNode(t *testing.T) {
 			_, _, err := pcscfStore(s, quiet()).Association(ctx, ue)
 			return err
 		}},
+		{string(config.RoleMMTel), func(s roleStores) error {
+			leg := sip.DialogID{CallID: "a-call-id", LocalTag: "local", RemoteTag: "remote"}
+			_, _, err := mmtelStore(s, quiet()).CallOf(ctx, leg)
+			return err
+		}},
 		{string(config.RoleIPSMGW), func(s roleStores) error {
 			_, _, err := ipsmgwStore(s, quiet()).Delivery(ctx, "a-call-id")
 			return err
