@@ -341,6 +341,9 @@ func (s *Session) updated(r updateResult) {
 // preconditions, the table starts from them (TS 24.229 6.1.2): a UE
 // whose access network needs no reservation has them from the start.
 func (s *Session) followResources(r *Resources, preconditions bool, role precondition.Role) (stop func()) {
+	s.mu.Lock()
+	s.reservationNeeded = r != nil
+	s.mu.Unlock()
 	reserved, changed := r.State()
 	if preconditions {
 		s.usePreconditions(role, reserved)
