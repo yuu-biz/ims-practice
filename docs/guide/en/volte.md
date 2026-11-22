@@ -518,6 +518,7 @@ Each item has a `SIMPLIFIED:` comment in the code; `grep -rn "SIMPLIFIED:" inter
 | EPC stub, TS 24.301 6.4.3, 6.4.4.2 | No MODIFY EPS BEARER CONTEXT REQUEST when the rules change, and a bearer is forgotten when the deactivation is sent, without T3495. | The stub enforces no QoS, and a UE only needs to know that the bearer is there. |
 | PCRF, TS 29.213 6.3 | Only audio, with QCI 1; the guaranteed rate is the maximum one, and RTCP has no share of its own. | Every call here has one audio stream. |
 | PCRF, TS 29.214 4.4.2, 5.3.16 | Every AAR is taken to carry the whole service information. | The P-CSCF derives it from the whole SDP each time. |
+| PCRF, TS 24.008 10.5.6.12 | No address masks: a Flow-Description with one is refused with FILTER_RESTRICTIONS. | A packet filter of the stub's TFT holds the remote address without a mask, and the P-CSCF writes only host addresses. |
 | P-CSCF, TS 29.213 7.3.7 | No DRA: the one PCRF of the configuration. | The PCRF is that of the EPC stub, which runs as one node and so holds the IP-CAN session of every UE. |
 | P-CSCF, TS 29.213 Tables 6.2.1, 6.2.2 | No media over TCP, no b=TIAS, and only the flow of the new direction when a stream turns one-way. | No call here uses them. |
 | P-CSCF, TS 29.214 A.1 | Only the callee's P-CSCF sends AF-Application-Identifier. | The caller's would take it from Feature-Caps, which no node writes. |

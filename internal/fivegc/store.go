@@ -8,6 +8,7 @@ import (
 	"sync"
 
 	"github.com/yuu-biz/ims-practice/internal/n5"
+	"github.com/yuu-biz/ims-practice/internal/policy"
 )
 
 // UEContext is what the AMF keeps of a registered UE.
@@ -107,14 +108,14 @@ func (s AppSession) subscribed(ev n5.AfEvent) bool {
 // component of an application session context (TS 29.513 7.3.3) and
 // gives the SMF. The bit rates are in bit/s.
 type PCCRule struct {
-	MedCompN            int               `json:"med_comp_n"`
-	FNums               []int             `json:"f_nums"`
-	FiveQI              FiveQI            `json:"5qi"`
-	Flows               []FlowDescription `json:"flows"`
-	MaxBitRateUL        uint64            `json:"max_bit_rate_ul"`
-	MaxBitRateDL        uint64            `json:"max_bit_rate_dl"`
-	GuaranteedBitRateUL uint64            `json:"guaranteed_bit_rate_ul"`
-	GuaranteedBitRateDL uint64            `json:"guaranteed_bit_rate_dl"`
+	MedCompN            int                      `json:"med_comp_n"`
+	FNums               []int                    `json:"f_nums"`
+	FiveQI              FiveQI                   `json:"5qi"`
+	Flows               []policy.FlowDescription `json:"flows"`
+	MaxBitRateUL        uint64                   `json:"max_bit_rate_ul"`
+	MaxBitRateDL        uint64                   `json:"max_bit_rate_dl"`
+	GuaranteedBitRateUL uint64                   `json:"guaranteed_bit_rate_ul"`
+	GuaranteedBitRateDL uint64                   `json:"guaranteed_bit_rate_dl"`
 }
 
 // Binding names the PDU session an application session context is

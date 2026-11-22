@@ -86,7 +86,7 @@ func voiceQoSFlow(rules []PCCRule) (QoSFlow, error) {
 		gUL, gDL = gUL+r.GuaranteedBitRateUL, gDL+r.GuaranteedBitRateDL
 		mUL, mDL = mUL+r.MaxBitRateUL, mDL+r.MaxBitRateDL
 		for _, fd := range r.Flows {
-			f.PacketFilters = append(f.PacketFilters, fd.packetFilter())
+			f.PacketFilters = append(f.PacketFilters, packetFilter(fd))
 		}
 	}
 	if len(f.PacketFilters) > maxPacketFiltersPerRule {
