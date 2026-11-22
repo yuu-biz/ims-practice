@@ -109,7 +109,7 @@ func (g *IPSMGW) exitIBCF(recipient string) (sip.URI, bool) {
 }
 
 // leaveThroughIBCF prepares m, the delivery of a short message, for a
-// user of another IMS network: the IBCF goes on top of Route, and the
+// user of another IMS network, which send hands to the IBCF: the
 // MESSAGE comes from the SC, by its E.164 number, the RP-OA of the
 // RP-DATA. The IP-SM-GW of the other network takes it as one from
 // outside, and delivers it (shortMessageFromPeer).
@@ -129,7 +129,6 @@ func (g *IPSMGW) leaveThroughIBCF(m *sip.Message, ibcf sip.URI) {
 	sc := sip.NameAddr{URI: "tel:" + g.cfg.ServiceCentre.String()}
 	m.Set("From", sc.String()+";tag="+sip.NewTag())
 	m.Set("P-Asserted-Identity", sc.String())
-	m.Prepend("Route", sip.NameAddr{URI: ibcf.String()}.String())
 }
 
 // deliveryMessage is the MESSAGE of TS 24.341 5.3.3.4.2 or 5.3.3.4.4:

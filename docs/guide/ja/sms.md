@@ -346,7 +346,7 @@ SC がメッセージを受け取ったので、IP-SM-GW は submit report を�
 - **P-Charging-Vector.** 新しい icid-value と orig-ioi を持ちます。IP-SM-GW は発信側の UA として動く AS なので、自分の MESSAGE はどれもこの形で始めます（TS 24.229 5.7.3）。
 - **ボディ.** RP-DATA と同じ RP-MR を持つ RP-ACK で、中に SC のタイムスタンプ（TP-SCTS）を持つ SMS-SUBMIT-REPORT が入っています。
 
-IP-SM-GW は S-CSCF の Route を使いません。自分が出す要求は、DNS で見つけたホーム網の入口、つまり I-CSCF へ送ります（TS 24.229 5.7.3）。I-CSCF は通話と同じように LIR で HSS に問い合わせ、UE 1 の S-CSCF へ MESSAGE を転送します。S-CSCF はこれを着信側の要求として扱い、UE 1 の Path に沿って送ります。
+IP-SM-GW は S-CSCF の Route を使いません。利用者に要求を送る AS は、その利用者の S-CSCF か利用者の網の入口を Route に入れるので（TS 24.229 5.7.3）、IP-SM-GW は自分が出す要求に `Route: <sip:ims.mnc001.mcc001.3gppnetwork.org;lr>` を付けてホーム網の入口へ送ります。ホームドメインの名前は DNS で I-CSCF に解決され、I-CSCF はこの Route を自分のものとして取り除きます（5.3.2.1）。I-CSCF は通話と同じように LIR で HSS に問い合わせ、UE 1 の S-CSCF へ MESSAGE を転送します。S-CSCF はこれを着信側の要求として扱い、UE 1 の Path に沿って送ります。
 
 ### 7. UE 1 が 200 を返す
 
@@ -524,7 +524,6 @@ octet 2: lowest 2 bits of 'l' (00), then rest of 'e' (110010) = 0011 0010 = 32
 
 | 場所 | 省いたこと | 理由 |
 | --- | --- | --- |
-| IP-SM-GW、TS 24.229 5.7.3 | IP-SM-GW の要求（SUBSCRIBE や MESSAGE）に、網の入口への Route を付けない。 | 網の入口はホームドメインの名前で表す。I-CSCF が取り除くのは自分のホスト名の Route だけなので（5.3.2.1）、ドメインの Route を付けると要求に残ってしまう。 |
 | IP-SM-GW、TS 24.229 5.7.1.1 と 5.7.3 | 第三者 REGISTER の icid-value と orig-ioi も、IP-SM-GW が自分で送る要求への応答の term-ioi も保存しない。 | どれも IP-SM-GW の課金の記録のためのもので、このプロジェクトのノードは課金の記録を作らない。 |
 | IP-SM-GW、RFC 6665 4.1.2.4 | Timer N を使わない。NOTIFY が来なかった SUBSCRIBE は、次の第三者 REGISTER のときに新しい購読に置き換える。 | S-CSCF は受け付けた SUBSCRIBE のすべてにすぐ NOTIFY を送る。 |
 | IP-SM-GW、TS 24.341 5.3.3.2 | service-info に MSISDN が無いとき、PUR では利用者を公開ユーザー識別子で示す。UE の REGISTER の IMSI は使わない。 | IMSI は message/sip のボディに入った UE の REGISTER から取るが、S-CSCF はそのボディを送らない。Sh は公開ユーザー識別子も受け付ける（TS 29.328 Table 7.6.1）。 |

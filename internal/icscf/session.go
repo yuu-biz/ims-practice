@@ -53,8 +53,12 @@ func (i *ICSCF) session(st *sip.ServerTransaction) {
 		log.Info("the Request-URI is a number, asking the HSS for its tel URI", "request_uri", out.RequestURI, "tel_uri", tel)
 		out.RequestURI = tel
 	}
-	// Step 2: remove its own URI from the top Route, if it is there.
-	sip.PopOwnRoute(out, i.ownURI())
+	// Step 2: remove its own URI from the top Route, if it is there. The
+	// name of the home domain is the entry point of the network, which
+	// DNS resolves to the I-CSCF, so a Route with it names the I-CSCF
+	// too: an AS puts it there for a request that it sends to a user
+	// (TS 24.229 5.7.3).
+	sip.PopOwnRoute(out, i.ownURI(), sip.URI{Scheme: "sip", Host: i.cfg.HomeDomain})
 
 	// Step 3: the subdomains of public service identities are in DNS,
 	// which leads to the AS that hosts them (TS 23.228 5.4.12.3 b).
