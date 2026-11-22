@@ -145,16 +145,20 @@ func newParticipant(t *testing.T, as testAS, user string, onCall func(*sip.Incom
 	return ua
 }
 
-// contactOf is the address of ua's Contact.
-func contactOf(t *testing.T, ua *sip.UA) string {
+// hop is a node of a test with a stack of its own: a UA, or a stack
+// that answers for several UASs.
+type hop interface{ Stack() *sip.Stack }
+
+// contactOf is the address of h's Contact.
+func contactOf(t *testing.T, h hop) string {
 	t.Helper()
-	return ua.Stack().LocalAddr().String()
+	return h.Stack().LocalAddr().String()
 }
 
 // viaAS is the INVITE of the S-CSCF for served in the session case
 // sescase: the AS on top of the Route, then, where the S-CSCF would be,
 // the callee itself.
-func viaAS(t *testing.T, as testAS, callee *sip.UA, sescase string, body sip.Body) sip.Invitation {
+func viaAS(t *testing.T, as testAS, callee hop, sescase string, body sip.Body) sip.Invitation {
 	t.Helper()
 	served := sip.PServedUser{URI: "sip:alice@" + domain, SessionCase: sip.SessionCase(sescase), RegState: sip.RegStateRegistered}
 	return sip.Invitation{
