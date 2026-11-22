@@ -1,6 +1,8 @@
 package mmtel
 
 import (
+	"context"
+
 	"github.com/yuu-biz/ims-practice/internal/sip"
 )
 
@@ -42,16 +44,26 @@ func (c *call) passFocusContact(resp *sip.Message) {
 // with Replaces. When the dialog that it names is one leg of a call of
 // this AS, the INVITE that goes on names the other leg instead: that is
 // the dialog the next hop knows. Otherwise the Replaces goes on as it
-// came (carried). fields are the header fields of the new INVITE.
-func (c *call) replacesOnTheOtherSide(fields *sip.Message) {
+// came (carried). fields are the header fields of the new INVITE. The
+// error is a failure of the Store.
+func (c *call) replacesOnTheOtherSide(fields *sip.Message) error {
 	r, err := sip.ParseReplaces(fields.Get("Replaces"))
 	if err != nil {
-		return
+		return nil
 	}
-	translated, ok := otherSide(c.as.store, r)
-	if !ok {
-		return
+	// sip.IncomingCall carries no context; the Store bounds the read.
+	translated, ok, err := otherSide(context.Background(), c.as.store, r)
+	if err != nil || !ok {
+		return err
 	}
 	fields.Set("Replaces", translated.String())
 	c.log.Info("Replaces names the other leg of a call", "replaces", r.String(), "now", translated.String())
+	return nil
+}
+
+// storeFailed answers the INVITE with 500 (RFC 3261 21.5.1) when the
+// Store failed as the AS read the call that its Replaces names.
+func (c *call) storeFailed(err error) {
+	c.log.Warn("call store failed", "error", err.Error())
+	c.in.Reject(500, c.as.warning("Call records unavailable"))
 }

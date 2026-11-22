@@ -2,7 +2,6 @@ package mmtel_test
 
 import (
 	"testing"
-	"time"
 
 	"github.com/yuu-biz/ims-practice/internal/mmtel"
 	"github.com/yuu-biz/ims-practice/internal/sip"
@@ -37,15 +36,9 @@ func TestFocusInviteWithReplacesThroughTheAS(t *testing.T) {
 	// the AS, its UAS, has it (RFC 3891 3).
 	callerDialog, _ := out.Dialog()
 	replaces := sip.Replaces{CallID: callerDialog.ID.CallID, ToTag: callerDialog.ID.RemoteTag, FromTag: callerDialog.ID.LocalTag}
-	// The AS keeps the record of the call once the caller's ACK came.
-	for deadline := time.Now().Add(5 * time.Second); ; time.Sleep(10 * time.Millisecond) {
-		if _, ok := as.store.CallOf(replaces.DialogID()); ok {
-			break
-		}
-		if time.Now().After(deadline) {
-			t.Fatal("the AS has no record of the call")
-		}
-	}
+	// The AS keeps the record of the call once the caller's ACK came. No
+	// message tells when, so the test waits for the record itself.
+	waitFor(t, func() bool { _, ok := callOf(t, as, replaces.DialogID()); return ok }, "the record of the call")
 	focus := newUA(t, "focus", func(c *sip.IncomingCall) { c.Reject(480) })
 	contact := sip.NameAddr{URI: "sip:conf-1@" + contactOf(t, focus), Params: sip.Params{{Name: "isfocus"}}}
 	inv := viaAS(t, as, callee, "term", offer)

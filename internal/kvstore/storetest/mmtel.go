@@ -1,6 +1,7 @@
 package storetest
 
 import (
+	"context"
 	"fmt"
 	"testing"
 	"time"
@@ -19,6 +20,57 @@ func MMTel(t *testing.T, newPair func(t *testing.T) (mmtel.Store, mmtel.Store)) 
 	})
 }
 
+// The helpers below call the Store and report any error it returns,
+// since the backends of the suite do not fail. They call t.Errorf, not
+// t.Fatalf, because the concurrent cases call them on goroutines of
+// their own.
+
+func putCall(t *testing.T, s mmtel.Store, r mmtel.CallRecord) {
+	t.Helper()
+	if err := s.PutCall(context.Background(), r); err != nil {
+		t.Errorf("PutCall(%v): %v", r.Incoming.ID, err)
+	}
+}
+
+func callOf(t *testing.T, s mmtel.Store, id sip.DialogID) (mmtel.CallRecord, bool) {
+	t.Helper()
+	r, ok, err := s.CallOf(context.Background(), id)
+	if err != nil {
+		t.Errorf("CallOf(%v): %v", id, err)
+	}
+	return r, ok
+}
+
+func deleteCall(t *testing.T, s mmtel.Store, r mmtel.CallRecord) {
+	t.Helper()
+	if err := s.DeleteCall(context.Background(), r); err != nil {
+		t.Errorf("DeleteCall(%v): %v", r.Incoming.ID, err)
+	}
+}
+
+func putConference(t *testing.T, s mmtel.ConferenceStore, r mmtel.ConferenceRecord) {
+	t.Helper()
+	if err := s.PutConference(context.Background(), r); err != nil {
+		t.Errorf("PutConference(%s): %v", r.ID, err)
+	}
+}
+
+func readConference(t *testing.T, s mmtel.ConferenceStore, id string) (mmtel.ConferenceRecord, bool) {
+	t.Helper()
+	r, ok, err := s.Conference(context.Background(), id)
+	if err != nil {
+		t.Errorf("Conference(%s): %v", id, err)
+	}
+	return r, ok
+}
+
+func deleteConference(t *testing.T, s mmtel.ConferenceStore, id string) {
+	t.Helper()
+	if err := s.DeleteConference(context.Background(), id); err != nil {
+		t.Errorf("DeleteConference(%s): %v", id, err)
+	}
+}
+
 func callRecord(n int) mmtel.CallRecord {
 	return mmtel.CallRecord{
 		Incoming: sip.Dialog{ID: sip.DialogID{CallID: fmt.Sprintf("call:%d@192.0.2.10", n), LocalTag: "as-in", RemoteTag: "ue1"},
@@ -31,25 +83,25 @@ func callRecord(n int) mmtel.CallRecord {
 
 func mmtelCallOf(t *testing.T, a, b mmtel.Store) {
 	r := callRecord(1)
-	a.PutCall(r)
+	putCall(t, a, r)
 	for _, id := range []sip.DialogID{r.Incoming.ID, r.Outgoing.ID} {
-		if got, ok := b.CallOf(id); !ok || !sameJSON(t, got, r) {
+		if got, ok := callOf(t, b, id); !ok || !sameJSON(t, got, r) {
 			t.Errorf("CallOf(%v) = %+v, %v; want %+v", id, got, ok, r)
 		}
 	}
 	unknown := r.Outgoing.ID
 	unknown.RemoteTag = "other"
-	if _, ok := b.CallOf(unknown); ok {
+	if _, ok := callOf(t, b, unknown); ok {
 		t.Error("CallOf of a dialog with another remote tag found the call")
 	}
 }
 
 func mmtelDeleteCall(t *testing.T, a, b mmtel.Store) {
 	r := callRecord(1)
-	a.PutCall(r)
-	b.DeleteCall(r)
+	putCall(t, a, r)
+	deleteCall(t, b, r)
 	for _, id := range []sip.DialogID{r.Incoming.ID, r.Outgoing.ID} {
-		if _, ok := a.CallOf(id); ok {
+		if _, ok := callOf(t, a, id); ok {
 			t.Errorf("CallOf(%v) after DeleteCall", id)
 		}
 	}
@@ -62,11 +114,11 @@ func mmtelManyCalls(t *testing.T, a, b mmtel.Store) {
 		if i%2 == 1 {
 			s = b
 		}
-		s.PutCall(callRecord(i))
+		putCall(t, s, callRecord(i))
 	})
 	for i := range 20 {
 		r := callRecord(i)
-		if got, ok := a.CallOf(r.Outgoing.ID); !ok || got.Incoming.ID != r.Incoming.ID {
+		if got, ok := callOf(t, a, r.Outgoing.ID); !ok || got.Incoming.ID != r.Incoming.ID {
 			t.Errorf("CallOf of call %d = %+v, %v", i, got, ok)
 		}
 	}
@@ -125,11 +177,11 @@ func conferenceRecord(id string, participants int, version uint32) mmtel.Confere
 }
 
 func mmtelNoConference(t *testing.T, a, b mmtel.ConferenceStore) {
-	if got, ok := a.Conference("conf-none"); ok {
+	if got, ok := readConference(t, a, "conf-none"); ok {
 		t.Errorf("Conference of an empty store = %+v", got)
 	}
-	b.DeleteConference("conf-none")
-	if got, ok := a.Conference("conf-none"); ok {
+	deleteConference(t, b, "conf-none")
+	if got, ok := readConference(t, a, "conf-none"); ok {
 		t.Errorf("Conference after deleting a missing one = %+v", got)
 	}
 }
@@ -139,19 +191,19 @@ func mmtelNoConference(t *testing.T, a, b mmtel.ConferenceStore) {
 // the conference has ended.
 func mmtelPutReadDelete(t *testing.T, a, b mmtel.ConferenceStore) {
 	r := conferenceRecord("conf-a1", 3, 2)
-	a.PutConference(r)
-	if got, ok := b.Conference(r.ID); !ok || !sameJSON(t, got, r) {
+	putConference(t, a, r)
+	if got, ok := readConference(t, b, r.ID); !ok || !sameJSON(t, got, r) {
 		t.Fatalf("Conference = %+v, %v; want %+v", got, ok, r)
 	}
 	// The third participant leaves, and the subscriber is told.
 	changed := conferenceRecord("conf-a1", 3, 3)
 	changed.Participants[2].Status = confinfo.Disconnected
-	a.PutConference(changed)
-	if got, ok := b.Conference(r.ID); !ok || !sameJSON(t, got, changed) {
+	putConference(t, a, changed)
+	if got, ok := readConference(t, b, r.ID); !ok || !sameJSON(t, got, changed) {
 		t.Fatalf("Conference after the change = %+v, %v; want %+v", got, ok, changed)
 	}
-	a.DeleteConference(r.ID)
-	if got, ok := b.Conference(r.ID); ok {
+	deleteConference(t, a, r.ID)
+	if got, ok := readConference(t, b, r.ID); ok {
 		t.Errorf("Conference after DeleteConference = %+v", got)
 	}
 }
@@ -161,17 +213,17 @@ func mmtelPutReadDelete(t *testing.T, a, b mmtel.ConferenceStore) {
 // of one that was read, changes nothing in the store.
 func mmtelConferenceCopiesApart(t *testing.T, a, b mmtel.ConferenceStore) {
 	r := conferenceRecord("conf-a1", 2, 1)
-	a.PutConference(r)
+	putConference(t, a, r)
 	want := conferenceRecord("conf-a1", 2, 1)
 	r.Participants[1].Status = confinfo.OnHold
 	r.Subscriptions[0].Version = 9
-	if got, _ := b.Conference(r.ID); !sameJSON(t, got, want) {
+	if got, _ := readConference(t, b, r.ID); !sameJSON(t, got, want) {
 		t.Fatalf("the record changed with the caller's copy: %+v", got)
 	}
-	got, _ := b.Conference(r.ID)
+	got, _ := readConference(t, b, r.ID)
 	got.Participants[0].Status = confinfo.Disconnected
 	got.Subscriptions[0].Version = 9
-	if again, _ := a.Conference(r.ID); !sameJSON(t, again, want) {
+	if again, _ := readConference(t, a, r.ID); !sameJSON(t, again, want) {
 		t.Errorf("the record changed with a copy that was read: %+v", again)
 	}
 }
@@ -187,7 +239,7 @@ func mmtelHostWritesInOrder(t *testing.T, a, b mmtel.ConferenceStore) {
 	// has: one more with each change up to six, the most that the AS
 	// takes, and then one again.
 	participantsAt := func(v uint32) int { return 1 + int(v%6) }
-	a.PutConference(conferenceRecord("conf-a1", participantsAt(1), 1))
+	putConference(t, a, conferenceRecord("conf-a1", participantsAt(1), 1))
 	done := make(chan struct{})
 	errs := make(chan error, 1)
 	go func() {
@@ -199,7 +251,7 @@ func mmtelHostWritesInOrder(t *testing.T, a, b mmtel.ConferenceStore) {
 				return
 			default:
 			}
-			got, ok := b.Conference("conf-a1")
+			got, ok := readConference(t, b, "conf-a1")
 			if !ok {
 				errs <- fmt.Errorf("the reader lost the conference")
 				return
@@ -217,13 +269,13 @@ func mmtelHostWritesInOrder(t *testing.T, a, b mmtel.ConferenceStore) {
 		}
 	}()
 	for v := uint32(2); v <= changes; v++ {
-		a.PutConference(conferenceRecord("conf-a1", participantsAt(v), v))
+		putConference(t, a, conferenceRecord("conf-a1", participantsAt(v), v))
 	}
 	close(done)
 	for err := range errs {
 		t.Error(err)
 	}
-	if got, ok := b.Conference("conf-a1"); !ok || !sameJSON(t, got, conferenceRecord("conf-a1", participantsAt(changes), changes)) {
+	if got, ok := readConference(t, b, "conf-a1"); !ok || !sameJSON(t, got, conferenceRecord("conf-a1", participantsAt(changes), changes)) {
 		t.Errorf("Conference after the last change = %+v, %v", got, ok)
 	}
 }
@@ -237,14 +289,14 @@ func mmtelManyConferences(t *testing.T, a, b mmtel.ConferenceStore) {
 		if i%2 == 1 {
 			s = b
 		}
-		s.PutConference(conferenceRecord(fmt.Sprintf("conf-%d", i), 1+i%6, uint32(i+1)))
+		putConference(t, s, conferenceRecord(fmt.Sprintf("conf-%d", i), 1+i%6, uint32(i+1)))
 	})
 	for i := 0; i < n; i += 3 {
-		b.DeleteConference(fmt.Sprintf("conf-%d", i))
+		deleteConference(t, b, fmt.Sprintf("conf-%d", i))
 	}
 	for i := range n {
 		id := fmt.Sprintf("conf-%d", i)
-		got, ok := a.Conference(id)
+		got, ok := readConference(t, a, id)
 		switch {
 		case i%3 == 0 && ok:
 			t.Errorf("conference %s is there after DeleteConference", id)

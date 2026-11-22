@@ -27,7 +27,11 @@ func (c *call) originating() {
 		c.createConference()
 		return
 	}
-	inv, fields := c.newInvitation(c.in.Request.RequestURI)
+	inv, fields, err := c.newInvitation(c.in.Request.RequestURI)
+	if err != nil {
+		c.storeFailed(err)
+		return
+	}
 	// OCB first: it decides on the called identity, before any service
 	// changes the request (TS 24.611 4.5.2.4.1).
 	if c.barOutgoing(c.callInfo(fields, inv.RequestURI)) {
@@ -46,7 +50,11 @@ func (c *call) originating() {
 // originating services of the diverting user (TS 24.229 5.4.3.3 step 3,
 // RFC 8498).
 func (c *call) originatingAfterDiversion() {
-	inv, fields := c.newInvitation(c.in.Request.RequestURI)
+	inv, fields, err := c.newInvitation(c.in.Request.RequestURI)
+	if err != nil {
+		c.storeFailed(err)
+		return
+	}
 	// The OCB of the diverting user applies to the call to the
 	// diverted-to user (TS 24.611 4.6.7).
 	if c.barOutgoing(c.callInfo(fields, inv.RequestURI)) {
@@ -58,7 +66,11 @@ func (c *call) originatingAfterDiversion() {
 
 // terminating serves a call to the served user, registered or not.
 func (c *call) terminating() {
-	inv, fields := c.newInvitation(c.in.Request.RequestURI)
+	inv, fields, err := c.newInvitation(c.in.Request.RequestURI)
+	if err != nil {
+		c.storeFailed(err)
+		return
+	}
 	// ICB and ACR first: they decide on the caller's identity, which OIP
 	// may take out of the request (TS 24.607 4.3.3 NOTE 2), and they come
 	// before diversion (TS 24.611 4.6.7).

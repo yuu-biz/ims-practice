@@ -1,6 +1,7 @@
 package mmtel_test
 
 import (
+	"context"
 	"fmt"
 	"maps"
 	"net"
@@ -573,17 +574,29 @@ func TestJoinersBeforeTheirACKs(t *testing.T) {
 }
 
 // awaitNoConference waits until the store of as has no record of the
-// conference id.
+// conference id. The store is what the other instances of the AS read,
+// and no message on the wire tells when the focus has removed the
+// record.
 func awaitNoConference(t *testing.T, as testAS, id string) {
 	t.Helper()
 	for deadline := time.Now().Add(10 * time.Second); ; time.Sleep(10 * time.Millisecond) {
-		if _, ok := as.store.Conference(id); !ok {
+		if _, ok := conferenceOf(t, as, id); !ok {
 			return
 		}
 		if time.Now().After(deadline) {
 			t.Fatalf("the store still has a record of the conference %s", id)
 		}
 	}
+}
+
+// conferenceOf is the record of the conference id in the store of as.
+func conferenceOf(t *testing.T, as testAS, id string) (mmtel.ConferenceRecord, bool) {
+	t.Helper()
+	r, ok, err := as.store.Conference(context.Background(), id)
+	if err != nil {
+		t.Fatalf("Conference(%s): %v", id, err)
+	}
+	return r, ok
 }
 
 // TestJoinAsTheConferenceEnds: the creator leaves while the MRFC sets up
@@ -617,7 +630,7 @@ func TestJoinAsTheConferenceEnds(t *testing.T) {
 	if got := statuses(readAll(t, in)); slices.Contains(got, 200) || got[len(got)-1] != 404 {
 		t.Errorf("carol got %v, want 404", got)
 	}
-	if r, ok := as.store.Conference(uri.User); ok {
+	if r, ok := conferenceOf(t, as, uri.User); ok {
 		t.Errorf("the store has the conference again after it ended, with %d participants", len(r.Participants))
 	}
 	receive(t, media.Done(), "BYE of carol's media at the MRFC")
@@ -649,7 +662,7 @@ func TestInvitedAsTheConferenceEnds(t *testing.T) {
 		t.Fatalf("bob's 200 got no ACK: %v", err)
 	}
 	receive(t, bob.Done(), "BYE of the focus at bob")
-	if r, ok := as.store.Conference(uri.User); ok {
+	if r, ok := conferenceOf(t, as, uri.User); ok {
 		t.Errorf("the store has the conference again after it ended, with %d participants", len(r.Participants))
 	}
 }
