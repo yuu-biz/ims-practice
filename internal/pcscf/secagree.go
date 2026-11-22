@@ -212,6 +212,10 @@ func (p *PCSCF) AdmitUnprotected(req *sip.Message, source sip.Destination) bool 
 		return true
 	}
 	ue, _ := ueSourceOf(req, source)
+	// The Store reports a failed read as no entry, and no entry must let
+	// in the requests of a UE without security associations, so a
+	// request gets in when the read fails too, unlike in Screen, which
+	// keeps out a request whose IP association it cannot read.
 	if sas, ok := p.store.SecurityAssociations(ue.Addr); !ok || sas.Temporary {
 		return true
 	}
