@@ -57,21 +57,24 @@ if ! timeout 60 docker wait ims-practice-ue2-call >/dev/null; then
 	fail=1
 fi
 docker rm -f ims-practice-ue2-call >/dev/null
-# The last HEP copies and the capture need a moment to land.
-sleep 3
 
-calls="$(curl -fsS http://localhost:8080/api/calls)"
 # The MMTel AS of each user is a routeing B2BUA, so the call has a
 # dialog between UE 1 and its AS, one between the two ASs and one
 # between the second AS and UE 2, each with a Call-ID of its own. The
 # Lab lists them as one call, the caller's, by the icid-value they
-# share (TS 24.229 5.7.5.1).
-legs="$("$python" -c '
+# share (TS 24.229 5.7.5.1). The HEP copies of the call's end land a
+# moment after UE 2 has ended, so the script asks until the Lab lists
+# the call as terminated, for up to 30 s.
+terminated_call() {
+	calls="$(curl -fsS http://localhost:8080/api/calls)" || return 1
+	legs="$("$python" -c '
 import json, sys
 calls = [c for c in json.load(sys.stdin) if c["state"] == "terminated"]
 print(" ".join(calls[-1]["legs"]) if calls else "")
 ' <<<"$calls")"
-if [ -n "$legs" ] && [ "$(wc -w <<<"$legs")" -eq 3 ]; then
+	[ -n "$legs" ] && [ "$(wc -w <<<"$legs")" -eq 3 ]
+}
+if wait_for 30 terminated_call; then
 	echo "ok   the Lab lists the call as terminated, with its three dialogs"
 else
 	echo "FAIL the Lab has no terminated call of three dialogs: $calls"
@@ -83,18 +86,19 @@ fi
 mkdir -p e2e-out
 # $legs is unquoted on purpose: one argument per Call-ID.
 query="$("$python" -c 'import sys, urllib.parse; print("&".join("call_id=" + urllib.parse.quote(c, safe="") for c in sys.argv[1:]))' $legs)"
-curl -fsS "http://localhost:8080/api/messages?$query" >e2e-out/lab-messages.json
-
 pcap="$(docker compose exec -T capture sh -c 'ls -t /captures/ims-*.pcap | head -n 1' | tr -d '\r')"
 of_the_call="$(sed 's/\([^ ]*\)/sip.Call-ID == "\1"/g; s/" sip/" || sip/g' <<<"$legs")"
-docker compose exec -T capture tshark -r "$pcap" -Y "$of_the_call" -T fields -E separator='|' \
-	-e ip.src -e udp.srcport -e tcp.srcport -e ip.dst -e udp.dstport -e tcp.dstport \
-	-e sip.Request-Line -e sip.Status-Line >e2e-out/pcap-messages.txt
 
 # A hop is "source>destination first-line". The pcap holds each hop once;
 # the Lab holds a copy from the sender and one from the receiver,
-# which count as one hop.
-if "$python" - e2e-out/lab-messages.json e2e-out/pcap-messages.txt <<'EOF'; then
+# which count as one hop. hops_agree reads the call's messages from the
+# Lab and from the pcap, and compares them.
+hops_agree() {
+	curl -fsS "http://localhost:8080/api/messages?$query" >e2e-out/lab-messages.json &&
+		docker compose exec -T capture tshark -r "$pcap" -Y "$of_the_call" -T fields -E separator='|' \
+			-e ip.src -e udp.srcport -e tcp.srcport -e ip.dst -e udp.dstport -e tcp.dstport \
+			-e sip.Request-Line -e sip.Status-Line >e2e-out/pcap-messages.txt &&
+		"$python" - e2e-out/lab-messages.json e2e-out/pcap-messages.txt >e2e-out/lab-hops.txt <<'EOF'
 import collections, json, sys
 
 with open(sys.argv[1], encoding="utf-8") as f:
@@ -132,8 +136,16 @@ for hop in sorted(extra):
 print(f"  {sum(pcap.values())} hops in the pcap, {sum(lab.values())} in the Lab, {sum(inside.values())} inside a node")
 sys.exit(1 if missing or extra or not pcap else 0)
 EOF
+}
+# The last HEP copies and frames of the call may land after the Lab has
+# listed it as terminated, so the script reads both again until they
+# agree, for up to 30 s, and shows the comparison it ended with.
+: >e2e-out/lab-hops.txt
+if wait_for 30 hops_agree; then
+	cat e2e-out/lab-hops.txt
 	echo "ok   every SIP hop of the call in the pcap is in the Lab, and no other"
 else
+	cat e2e-out/lab-hops.txt
 	echo "FAIL the Lab and the pcap differ"
 	fail=1
 fi
@@ -210,8 +222,9 @@ else
 	echo "FAIL the removed subscriber was not refused: $(tail -n 2 <<<"$out")"
 	fail=1
 fi
-sleep 2
 pcap="$(docker compose exec -T capture sh -c 'ls -t /captures/ims-*.pcap | head -n 1' | tr -d '\r')"
+# The RTA is the last frame that this check reads.
+await "the RTA of the S-CSCF" 'diameter.cmd.code == 304 && diameter.flags.request == 0'
 rtr="$(docker compose exec -T capture tshark -r "$pcap" -Y 'diameter.cmd.code == 304' -T fields -E separator=, -e ip.src -e ip.dst | tr -d '\r\n')"
 if [ "$rtr" = "172.28.0.10,172.28.0.30172.28.0.30,172.28.0.10" ]; then
 	echo "ok   the capture holds the RTR from the HSS to the S-CSCF and its RTA"
@@ -296,13 +309,18 @@ else
 	echo "FAIL hanging up (status $status): $(ues)"
 	fail=1
 fi
-sleep 3
 
-state="$(curl -fsS http://localhost:8080/api/calls | "$python" -c '
+# The HEP copies of the BYE land a moment after the UEs are idle, so
+# the script asks until the Lab lists the call as terminated, for up to
+# 30 s.
+sim_terminated() {
+	state="$(curl -fsS http://localhost:8080/api/calls | "$python" -c '
 import json, sys
 print(" ".join(c["state"] for c in json.load(sys.stdin) if c["call_id"] == sys.argv[1]))
 ' "$sim_call_id" | tr -d '\r')"
-if [ "$state" = terminated ]; then
+	[ "$state" = terminated ]
+}
+if wait_for 30 sim_terminated; then
 	echo "ok   the Lab lists the call $sim_call_id as terminated"
 else
 	echo "FAIL the call $sim_call_id is \"$state\" in the Lab"
@@ -310,6 +328,8 @@ else
 fi
 same_nodes
 pcap="$(docker compose exec -T capture sh -c 'ls -t /captures/ims-*.pcap | head -n 1' | tr -d '\r')"
+# The 200 to ue-a's BYE is the last frame that this check reads.
+await "the 200 OK to ue-a's BYE" "sip.Call-ID == \"$sim_call_id\" && sip.CSeq.method == \"BYE\" && sip.Status-Code == 200 && ip.dst == 172.28.0.110"
 bye="$(docker compose exec -T capture tshark -r "$pcap" \
 	-Y "sip.Call-ID == \"$sim_call_id\" && sip.CSeq.method == \"BYE\" && (ip.src == 172.28.0.110 || ip.dst == 172.28.0.110)" \
 	-T fields -E separator=, -e ip.src -e ip.dst -e sip.Method -e sip.Status-Code | tr -d '\r' | tr '\n' ' ')"
