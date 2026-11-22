@@ -15,12 +15,16 @@ import (
 
 // forkedCallee stands beyond the AS for a forking proxy and the two
 // UASs behind it: it answers each INVITE with a 183 from each of two
-// UASs, each with its own To tag and SDP answer, and then with a 200
-// from one of them (RFC 3261 13.2.2.4, 16.7). With reliable, the 183s
-// are reliable and carry the answer, and the 200 comes without one
-// once the 183 of the UAS that answers has its PRACK (RFC 3262 3, 5).
-// Without, the 183s are not reliable, and the 200 carries the answer
-// (RFC 3261 13.2.1).
+// UASs, each with its own To tag, and then with a 200 from one of them
+// (RFC 3261 13.2.2.4, 16.7). With reliable, the 183s are reliable, and
+// the 200 comes once the 183 of the UAS that answers has its PRACK (RFC
+// 3262 3).
+//
+// Each UAS answers the offer of an INVITE with SDP of its own: with
+// reliable in its 183 only (RFC 3262 5), and without in its 183 and its
+// 200 (RFC 3261 13.2.1). After an INVITE without an offer, which a test
+// sends only with reliable, the first UAS offers in its 183 and the
+// second in its 200.
 type forkedCallee struct {
 	// addr is where stack listens, known before it takes requests.
 	addr      netip.AddrPort
@@ -31,6 +35,8 @@ type forkedCallee struct {
 	next chan struct{}
 	// pracked gets the To tag of each PRACK.
 	pracked chan string
+	// acked gets the body of each ACK.
+	acked chan []byte
 }
 
 func startForkedCallee(t *testing.T, answering int, reliable bool) *forkedCallee {
@@ -40,8 +46,14 @@ func startForkedCallee(t *testing.T, answering int, reliable bool) *forkedCallee
 		t.Fatal(err)
 	}
 	f := &forkedCallee{addr: tr.LocalAddr(), answering: answering, reliable: reliable,
-		next: make(chan struct{}), pracked: make(chan string, 4)}
-	f.stack, err = sip.NewStack(tr, sip.Config{SentBy: tr.LocalAddr().String(), OnRequest: f.onRequest, OnACK: func(*sip.Message) {}}, quiet())
+		next: make(chan struct{}), pracked: make(chan string, 4), acked: make(chan []byte, 4)}
+	onACK := func(ack *sip.Message) {
+		select {
+		case f.acked <- ack.Body:
+		default:
+		}
+	}
+	f.stack, err = sip.NewStack(tr, sip.Config{SentBy: tr.LocalAddr().String(), OnRequest: f.onRequest, OnACK: onACK}, quiet())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -64,23 +76,23 @@ func (f *forkedCallee) response(req *sip.Message, code, branch int) *sip.Message
 		resp.Add("Record-Route", rr)
 	}
 	resp.Add("Contact", fmt.Sprintf("<sip:%s@%s>", branchTag(branch), f.addr))
-	if f.reliable {
-		if code == 200 {
-			return resp
-		}
+	if f.reliable && code != 200 {
 		resp.Add("Require", sip.Option100rel)
 		resp.Add("RSeq", "1")
 	}
-	offer, err := sdp.Parse(req.Body)
-	if err != nil {
-		return resp
-	}
-	answer, err := sdp.AudioAnswer(offer, fmt.Sprint(7000+branch), branchMedia(branch), pcmuOnly)
-	if err != nil {
+	var body sdp.Session
+	switch offer, err := sdp.Parse(req.Body); {
+	case err == nil && !(f.reliable && code == 200):
+		if body, err = sdp.AudioAnswer(offer, fmt.Sprint(7000+branch), branchMedia(branch), pcmuOnly); err != nil {
+			return resp
+		}
+	case err != nil && (code == 183 && branch == 1 || code == 200 && branch == 2):
+		body = sdp.Offer(fmt.Sprint(7000+branch), branchMedia(branch))
+	default:
 		return resp
 	}
 	resp.Set("Content-Type", "application/sdp")
-	resp.Body = answer.Bytes()
+	resp.Body = body.Bytes()
 	return resp
 }
 
@@ -144,6 +156,18 @@ func mediaOf(body []byte) netip.AddrPort {
 
 var callerMedia = netip.MustParseAddrPort("192.0.2.1:4000")
 
+// answerAt is the caller's handler of the requests within its dialog
+// with the AS: it answers each offer with its media at callerMedia, and
+// passes each request on to got.
+func answerAt(got chan<- *sip.Message) func(*sip.InDialogRequest) {
+	return func(r *sip.InDialogRequest) {
+		got <- r.Request
+		offer, _ := sdp.Parse(r.Request.Body)
+		a, _ := sdp.AudioAnswer(offer, "1", callerMedia, pcmuOnly)
+		r.Accept(sip.Body{Type: "application/sdp", Content: a.Bytes()})
+	}
+}
+
 // The INVITE forks beyond the AS: two UASs answer it with a 183 each,
 // and one of them with the 200. The AS is one UAS to the caller (RFC
 // 3261 8.2.6.2): the caller has one early dialog, whose session
@@ -183,6 +207,102 @@ func TestForkBeyondTheAS(t *testing.T) {
 				}
 			})
 		}
+	}
+}
+
+// When the branch that answers is not the one whose session
+// description the caller got, the caller's media goes to that branch:
+// once the caller has acknowledged the 200, the AS offers it the
+// session of the branch, in an UPDATE to a caller that allows UPDATE
+// (RFC 3311), and otherwise in a re-INVITE (RFC 3261 14.1). The offer
+// goes on in the session that the caller has, that of the first branch,
+// with its version one up (RFC 3264 8).
+func TestSessionOfTheBranchThatAnswered(t *testing.T) {
+	for _, reliable := range []bool{true, false} {
+		for _, method := range []sip.Method{sip.UPDATE, sip.INVITE} {
+			t.Run(fmt.Sprintf("reliable %t, %s", reliable, method), func(t *testing.T) {
+				as := startAS(t, noServices{}, mmtel.Config{})
+				f := startForkedCallee(t, 2, reliable)
+				caller := newUA(t, "alice", func(c *sip.IncomingCall) { c.Reject(480) })
+				inv := viaAS(t, as, f, "term", pcmuOffer(t, callerMedia, pcmuOnly))
+				if method == sip.INVITE {
+					inv.Headers = append(inv.Headers, sip.HeaderField{Name: "Allow", Value: "INVITE, ACK, CANCEL, BYE, PRACK"})
+				}
+				offers := make(chan *sip.Message, 1)
+				inv.OnRequest = answerAt(offers)
+				out, err := caller.Invite(inv)
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer out.Bye()
+				got := f.relayed(t, out)
+				req := receive(t, offers, "offer at the caller")
+				if req.Method != method {
+					t.Errorf("the caller got the session of the branch that answered in a %s, want a %s", req.Method, method)
+				}
+				if m := mediaOf(req.Body); m != branchMedia(2) {
+					t.Errorf("the %s points the caller's media at %v, want %v of the branch that answered", req.Method, m, branchMedia(2))
+				}
+				had, err := sdp.Parse(got[0].Body)
+				if err != nil {
+					t.Fatalf("the caller's first 183 has no SDP: %v", err)
+				}
+				offer, err := sdp.Parse(req.Body)
+				if err != nil {
+					t.Fatalf("the %s has no SDP: %v", req.Method, err)
+				}
+				want := had.Origin
+				want.Version++
+				if offer.Origin != want {
+					t.Errorf("the %s has the o= line %+v, want %+v", req.Method, offer.Origin, want)
+				}
+			})
+		}
+	}
+}
+
+// After an INVITE without an offer, the first branch offers in its
+// reliable 183, which the caller answers in its PRACK, and the branch
+// that answers offers in its 200 (RFC 3262 5, RFC 3261 13.2.1). The AS
+// offers the caller the session of that branch after the 200, and the
+// caller's answer goes to the branch in the ACK (13.2.2.4).
+func TestOfferOfTheBranchThatAnswered(t *testing.T) {
+	as := startAS(t, noServices{}, mmtel.Config{})
+	f := startForkedCallee(t, 2, true)
+	caller := newUA(t, "alice", func(c *sip.IncomingCall) { c.Reject(480) })
+	inv := viaAS(t, as, f, "term", sip.Body{})
+	offers := make(chan *sip.Message, 1)
+	inv.OnRequest = answerAt(offers)
+	out, err := caller.Invite(inv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer out.Bye()
+	first := receive(t, out.Responses(), "the first 183")
+	offer, err := sdp.Parse(first.Body)
+	if err != nil {
+		t.Fatalf("the first 183 has no offer: %v", err)
+	}
+	answer, err := sdp.AudioAnswer(offer, "1", callerMedia, pcmuOnly)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := out.PRACK(first, sip.Body{Type: "application/sdp", Content: answer.Bytes()}); err != nil {
+		t.Fatal(err)
+	}
+	f.next <- struct{}{}
+	if second := receive(t, out.Responses(), "the second 183"); len(second.Body) != 0 {
+		t.Errorf("the caller got a second session description in its early dialog:\n%s", second.Body)
+	}
+	f.next <- struct{}{}
+	if final := receive(t, out.Responses(), "the 200"); final.StatusCode != 200 || len(final.Body) != 0 {
+		t.Fatalf("the caller got %d with\n%s\nwant a 200 without SDP", final.StatusCode, final.Body)
+	}
+	if m := mediaOf(receive(t, offers, "offer at the caller").Body); m != branchMedia(2) {
+		t.Errorf("the offer to the caller points its media at %v, want %v of the branch that answered", m, branchMedia(2))
+	}
+	if m := mediaOf(receive(t, f.acked, "ACK at the branch that answered")); m != callerMedia {
+		t.Errorf("the ACK to the branch that answered points its media at %v, want the caller's %v", m, callerMedia)
 	}
 }
 

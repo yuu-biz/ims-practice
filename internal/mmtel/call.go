@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/yuu-biz/ims-practice/internal/sdp"
 	"github.com/yuu-biz/ims-practice/internal/simservs"
 	"github.com/yuu-biz/ims-practice/internal/sip"
 )
@@ -394,6 +395,16 @@ func (c *call) relayProvisional(out *sip.OutgoingCall, resp *sip.Message) {
 	from := c.sessionFrom
 	other := len(body.Content) > 0 && from != tag
 	if other {
+		// SIMPLIFIED: RFC 3262 5. After an INVITE without an offer, the
+		// first reliable response with a body in each early dialog has
+		// the offer of its UAS. The caller answers the offer of the
+		// first dialog, and the AS does not offer it those of the other
+		// dialogs in an UPDATE of its early dialog. Such an offer gets
+		// no answer and its response no PRACK, so that UAS ends its
+		// early dialog with a 5xx (RFC 3262 3). The caller's answer to
+		// the first offer may still be on its way then, and a caller
+		// that does not allow UPDATE can take no other offer before the
+		// 2xx.
 		body = sip.Body{}
 	}
 	// RFC 3262 5: after an INVITE without an offer, the first reliable
@@ -431,6 +442,7 @@ func (c *call) relayProvisional(out *sip.OutgoingCall, resp *sip.Message) {
 func (c *call) answer(out *sip.OutgoingCall, resp *sip.Message) {
 	body := sip.BodyOf(resp)
 	tag := toTag(resp)
+	c.keepCalleeSDP(tag, body)
 	played := c.answerAfterTone(resp)
 	if played {
 		// TS 24.182 4.5.5.3.7: the caller had its answer in a reliable
@@ -447,19 +459,14 @@ func (c *call) answer(out *sip.OutgoingCall, resp *sip.Message) {
 	answered := len(c.in.Request.Body) == 0 || c.sessionToCaller
 	held := c.calleeSDP[from]
 	c.mu.Unlock()
-	if !played && from != "" && from != tag {
+	moved := !played && from != "" && from != tag
+	if moved {
 		// The caller has the session description of another early
-		// dialog, and ignores a second one (RFC 3261 13.2.1). When no
-		// reliable response had it, the 2xx still carries the answer,
-		// the same as in the provisional responses (13.2.1).
-		//
-		// SIMPLIFIED: RFC 3261 13.2.1 and 14.1. The caller keeps the
-		// session description of the dialog that sent one first. The AS
-		// does not offer the caller the session of the dialog that
-		// answered in an UPDATE or a re-INVITE, so the caller's media
-		// goes on toward the first dialog. After an INVITE without an
-		// offer, the offer of a dialog that the caller did not answer
-		// gets no answer from the AS, and that UAS ends its dialog.
+		// dialog, and ignores a second one (RFC 3261 13.2.1); it gets
+		// the session of this dialog in an offer of its own once it has
+		// acknowledged the 2xx (moveSession). When no reliable response
+		// had the answer, the 2xx still carries it, the same as in the
+		// provisional responses (13.2.1).
 		body = sip.Body{}
 		if !answered {
 			body = sip.Body{Type: "application/sdp", Content: held}
@@ -482,6 +489,12 @@ func (c *call) answer(out *sip.OutgoingCall, resp *sip.Message) {
 		if err := out.Ack(sip.BodyOf(ack)); err != nil {
 			c.log.Warn("answer in the ACK not relayed", "error", err.Error())
 		}
+	}
+	if moved {
+		// After an INVITE without an offer, SDP in the 2xx of this dialog
+		// is the offer of its UAS: the caller answered the offer of
+		// another dialog (RFC 3261 13.2.1, RFC 3262 5).
+		c.moveSession(out, tag, held, len(c.in.Request.Body) == 0 && len(resp.Body) > 0)
 	}
 	// The dialogs keep their identifiers, by which the record is
 	// deleted, however often it is written again.
@@ -509,6 +522,71 @@ func (c *call) answer(out *sip.OutgoingCall, resp *sip.Message) {
 		c.in.Bye(reasons(out.EndedBy())...)
 	}
 	c.log.Info("call ended")
+}
+
+// moveSession sends the caller's media to the UAS that answered in the
+// dialog of out whose remote tag is tag, when the INVITE forked beyond
+// the AS (RFC 3261 13.2.2.4) and the caller has held, the session
+// description of another early dialog. Once the caller has acknowledged
+// the 2xx, the AS offers it the session of the dialog that answered
+// (offerCaller). When the 2xx had the offer of that UAS (calleeOffered),
+// the caller's answer goes to the UAS in the ACK; without an answer the
+// AS acknowledges the 2xx and ends the dialog, as a UAC that cannot
+// answer the offer of a 2xx does (13.2.2.4).
+func (c *call) moveSession(out *sip.OutgoingCall, tag string, held []byte, calleeOffered bool) {
+	var answer *sip.Message
+	if last, err := sdp.Parse(held); err != nil {
+		c.log.Warn("no SDP of the caller's session to go on from", "error", err.Error())
+	} else {
+		_, answer = c.offerCaller(tag, last.Origin)
+	}
+	switch {
+	case !calleeOffered:
+	case answer == nil:
+		out.Bye()
+	default:
+		if err := out.Ack(sip.BodyOf(answer)); err != nil {
+			c.log.Warn("answer in the ACK not relayed", "error", err.Error())
+		}
+	}
+}
+
+// offerCaller offers the caller the session of the dialog of out whose
+// remote tag is tag: the callee's last SDP in that dialog, in the
+// session that the caller has with the AS, whose o= line was origin.
+// The line stays, with its version one up (RFC 3264 8). In the early
+// dialog the offer goes in an UPDATE (RFC 3311): no re-INVITE goes
+// while the INVITE is in progress (RFC 3261 14.1). Once the dialog is
+// confirmed, a caller that does not list UPDATE in its Allow gets the
+// offer in a re-INVITE. offerCaller returns the o= line of the offer,
+// and the caller's 2xx with the answer, nil when the caller did not
+// take the offer.
+func (c *call) offerCaller(tag string, origin sdp.Origin) (sdp.Origin, *sip.Message) {
+	c.mu.Lock()
+	callee := c.calleeSDP[tag]
+	c.mu.Unlock()
+	offer, err := sdp.Parse(callee)
+	if err != nil {
+		c.log.Warn("no SDP of the callee to offer the caller", "to_tag", tag, "error", err.Error())
+		return origin, nil
+	}
+	offer.Origin = origin
+	offer.Origin.Version++
+	method, send := sip.UPDATE, c.in.Update
+	if d, _ := c.in.Dialog(); d.State == sip.DialogConfirmed && !c.in.Request.Allows(sip.UPDATE) {
+		method, send = sip.INVITE, c.in.ReInvite
+	}
+	resp, err := send(sdpBody(offer))
+	switch {
+	case err != nil:
+		c.log.Warn("the callee's session not offered to the caller", "method", string(method), "error", err.Error())
+		return offer.Origin, nil
+	case resp.StatusCode >= 300:
+		c.log.Warn("the caller refused the callee's session", "method", string(method), "status", resp.StatusCode)
+		return offer.Origin, nil
+	}
+	c.log.Info("the caller has the session of the callee's dialog", "method", string(method), "to_tag", tag)
+	return offer.Origin, resp
 }
 
 // keepRecord writes the record of the call into the Store, with both
