@@ -6,7 +6,7 @@
 // "scscf:", with the private identity in lower case as scscf.MemoryStore
 // compares it:
 //
-//	challenge:<private identity>            Challenge, time to live 2 x reg-await-auth
+//	challenge:<private identity>            Challenge, time to live until its KeepUntil
 //	registration:<private identity>         Registration, no time to live
 //	impu:<public identity>                  index: the private identity of the registration
 //	subscription:<Call-ID>:<tags>           Subscription, no time to live
@@ -39,30 +39,19 @@ import (
 	"github.com/yuu-biz/ims-practice/internal/sip"
 )
 
-// Config is the configuration of the Store.
-type Config struct {
-	kvjson.Config
-	// RegAwaitAuth is the reg-await-auth timer, as scscf.Config has it;
-	// zero means ims.RegAwaitAuth. The Store schedules the timer when a
-	// challenge is put.
-	RegAwaitAuth time.Duration
-}
-
-// Store is a scscf.Store on a kvstore.Store.
+// Store is a scscf.Store on a kvstore.Store. The S-CSCF writes every
+// expiry into what it stores, as a time, and the Store takes the times
+// to live and the due times of the timers from there.
 type Store struct {
-	c            *kvjson.Client
-	regAwaitAuth time.Duration
+	c *kvjson.Client
 }
 
 var _ scscf.Store = (*Store)(nil)
 
 // New returns a Store on kv. Instances with the same kv and Prefix share
 // their state.
-func New(kv kvstore.Store, cfg Config) *Store {
-	if cfg.RegAwaitAuth == 0 {
-		cfg.RegAwaitAuth = ims.RegAwaitAuth
-	}
-	return &Store{c: kvjson.New(kv, cfg.Config, "scscf"), regAwaitAuth: cfg.RegAwaitAuth}
+func New(kv kvstore.Store, cfg kvjson.Config) *Store {
+	return &Store{c: kvjson.New(kv, cfg, "scscf")}
 }
 
 // Timer names a time index of the Store: one of the timers of the
@@ -73,7 +62,7 @@ const (
 	// RegAwaitAuthTimer is reg-await-auth (TS 24.229 5.4.1.2.1, Table
 	// 7.7.1). A member is ChallengeMember: the private identity and the
 	// nonce, so that the timer of an answered challenge never ends a
-	// later one. PutChallenge schedules it.
+	// later one. PutChallenge schedules it at Expires.
 	RegAwaitAuthTimer Timer = "reg-await-auth"
 	// RegistrationTimer is the expiry of a registration (TS 24.229
 	// 5.4.1.2.2A step 10, 5.4.2.1.2). A member is the private identity
@@ -179,11 +168,10 @@ func (s *Store) Challenge(privateID string) (scscf.Challenge, bool) {
 // PutChallenge stores c and starts its reg-await-auth timer. The timer
 // goes into the index first: an instance that stops before the challenge
 // is written leaves a member that ends nothing, since no challenge has
-// its nonce. The challenge itself goes after twice the timer: by then
-// the timer has ended it, or the authentication has.
+// its nonce.
 func (s *Store) PutChallenge(c scscf.Challenge) {
-	s.c.Schedule(string(RegAwaitAuthTimer), ChallengeMember(c.PrivateIdentity, c.Nonce), s.c.Now().Add(s.regAwaitAuth))
-	kvjson.Put(s.c, s.c.Key("challenge", privateKey(c.PrivateIdentity)), c, 2*s.regAwaitAuth)
+	s.c.Schedule(string(RegAwaitAuthTimer), ChallengeMember(c.PrivateIdentity, c.Nonce), c.Expires)
+	kvjson.Put(s.c, s.c.Key("challenge", privateKey(c.PrivateIdentity)), c, s.c.TTLUntil(c.KeepUntil))
 }
 
 // DeleteChallenge removes the challenge and its timer. Its member names

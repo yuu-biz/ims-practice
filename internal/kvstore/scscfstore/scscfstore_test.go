@@ -14,7 +14,7 @@ func TestConformance(t *testing.T) {
 		t.Run(backend.Name, func(t *testing.T) {
 			kv := backend.New(t)
 			storetest.SCSCF(t, func(*testing.T) (scscf.Store, scscf.Store) {
-				cfg := scscfstore.Config{Config: kvjson.Config{Prefix: storetest.Prefix()}}
+				cfg := kvjson.Config{Prefix: storetest.Prefix()}
 				return scscfstore.New(kv, cfg), scscfstore.New(kv, cfg)
 			})
 		})
