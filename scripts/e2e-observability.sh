@@ -156,7 +156,8 @@ if value="$(until_positive prometheus_values 'up{job="ims",node="scscf"}')"; the
 	echo "ok   Prometheus scrapes the S-CSCF: up = $value"
 else
 	echo "FAIL the scscf target of Prometheus is not up: $value"
-	# Shown only to explain the failure, if Prometheus answers at all.
+	# Shown only to explain the failure, if Prometheus answers at all,
+	# hence "|| true".
 	curl -fsS "$prometheus/api/v1/targets?state=active" || true
 	echo
 	fail=1
@@ -166,7 +167,8 @@ if value="$(until_positive prometheus_values "$successes")"; then
 	echo "ok   Prometheus has $successes = $value"
 else
 	echo "FAIL Prometheus has no $successes above 0: $value"
-	# Shown only to explain the failure, if the S-CSCF answers at all.
+	# Shown only to explain the failure, if the S-CSCF answers at all,
+	# hence "|| true".
 	docker compose exec -T scscf wget -qO- http://127.0.0.1:8085/metrics || true
 	fail=1
 fi
