@@ -2,6 +2,7 @@ package storetest
 
 import (
 	"context"
+	"crypto/rand"
 	"net/netip"
 	"sync/atomic"
 	"testing"
@@ -24,6 +25,10 @@ func PCSCF(t *testing.T, newPair func(t *testing.T) (pcscf.Store, pcscf.Store)) 
 		{"DialogOfPolicySession", pcscfDialogOfPolicySession},
 		{"ConcurrentUpdatesOfOneDialog", pcscfConcurrentUpdates},
 		{"OnlyOneTakesADialog", pcscfOnlyOneTakes},
+		{"RegSubscription", pcscfRegSubscription},
+		{"RegSubscriptionReplacesTheOldOne", pcscfRegSubscriptionReplaces},
+		{"OnlyOneCreatesARegSubscription", pcscfOnlyOneCreatesARegSubscription},
+		{"OnlyOneRefreshesARegSubscription", pcscfOnlyOneRefreshesARegSubscription},
 		{"SecurityAssociationsUntilTheyExpire", pcscfSecurityAssociations},
 	})
 }
@@ -362,6 +367,225 @@ func pcscfOnlyOneTakes(t *testing.T, a, b pcscf.Store) {
 			t.Fatalf("%d instances took the dialog, want 1", got)
 		}
 	}
+}
+
+// putPCSCFRegSubscription creates the subscription and reports a
+// failure unless it was written, for the cases that need one there.
+func putPCSCFRegSubscription(t *testing.T, s pcscf.Store, sub pcscf.RegSubscription) {
+	t.Helper()
+	ok, err := s.CreateRegSubscription(context.Background(), sub)
+	if err != nil {
+		t.Errorf("CreateRegSubscription(%s): %v", sub.PrivateIdentity, err)
+	}
+	if !ok {
+		t.Errorf("CreateRegSubscription(%s) wrote nothing", sub.PrivateIdentity)
+	}
+}
+
+func createPCSCFRegSubscription(t *testing.T, s pcscf.Store, sub pcscf.RegSubscription) bool {
+	t.Helper()
+	ok, err := s.CreateRegSubscription(context.Background(), sub)
+	if err != nil {
+		t.Errorf("CreateRegSubscription(%s): %v", sub.PrivateIdentity, err)
+	}
+	return ok
+}
+
+func updatePCSCFRegSubscription(t *testing.T, s pcscf.Store, privateID string, change func(*pcscf.RegSubscription) bool) (pcscf.RegSubscription, bool) {
+	t.Helper()
+	sub, ok, err := s.UpdateRegSubscription(context.Background(), privateID, change)
+	if err != nil {
+		t.Errorf("UpdateRegSubscription(%s): %v", privateID, err)
+	}
+	return sub, ok
+}
+
+func pcscfRegSubscriptionOf(t *testing.T, s pcscf.Store, privateID string) (pcscf.RegSubscription, bool) {
+	t.Helper()
+	sub, ok, err := s.RegSubscription(context.Background(), privateID)
+	if err != nil {
+		t.Errorf("RegSubscription(%s): %v", privateID, err)
+	}
+	return sub, ok
+}
+
+func pcscfRegSubscriptionOfDialog(t *testing.T, s pcscf.Store, callID string) (pcscf.RegSubscription, bool) {
+	t.Helper()
+	sub, ok, err := s.RegSubscriptionOfDialog(context.Background(), callID)
+	if err != nil {
+		t.Errorf("RegSubscriptionOfDialog(%s): %v", callID, err)
+	}
+	return sub, ok
+}
+
+func deletePCSCFRegSubscription(t *testing.T, s pcscf.Store, privateID string) {
+	t.Helper()
+	if err := s.DeleteRegSubscription(context.Background(), privateID); err != nil {
+		t.Errorf("DeleteRegSubscription(%s): %v", privateID, err)
+	}
+}
+
+func newPCSCFRegSubscription(callID string, lifetime time.Duration) pcscf.RegSubscription {
+	return pcscf.RegSubscription{PrivateIdentity: impi, PublicIdentity: impu,
+		Dialog: sip.Dialog{ID: sip.DialogID{CallID: callID, LocalTag: "l", RemoteTag: "r"}, State: sip.DialogConfirmed,
+			LocalSeq: 1, RemoteSeq: 1, LocalURI: "sip:pcscf.ims.mnc001.mcc001.3gppnetwork.org:5060", RemoteURI: impu,
+			RemoteTarget: "sip:scscf.ims.mnc001.mcc001.3gppnetwork.org:5060", RouteSet: []string{"sip:scscf;lr"}},
+		Requested: 3761 * time.Second, Granted: 3761 * time.Second, Subscribed: time.Now().Round(time.Millisecond),
+		Expires: time.Now().Add(lifetime).Round(time.Millisecond)}
+}
+
+// pcscfOnlyOneCreatesARegSubscription: two REGISTERs of one user, at one
+// instance or at two, must leave one subscription; the instance whose
+// write loses does not subscribe (pcscf.Store).
+func pcscfOnlyOneCreatesARegSubscription(t *testing.T, a, b pcscf.Store) {
+	for range 10 {
+		deletePCSCFRegSubscription(t, a, impi)
+		first, second := newPCSCFRegSubscription(rand.Text(), time.Hour), newPCSCFRegSubscription(rand.Text(), time.Hour)
+		var created atomic.Int32
+		var winner atomic.Value
+		parallel(2, func(i int) {
+			s, sub := a, first
+			if i == 1 {
+				s, sub = b, second
+			}
+			if createPCSCFRegSubscription(t, s, sub) {
+				created.Add(1)
+				winner.Store(sub.Dialog.ID.CallID)
+			}
+		})
+		if got := created.Load(); got != 1 {
+			t.Fatalf("%d of two instances created the subscription, want 1", got)
+		}
+		// The subscription of the loser finds none by its dialog, so its
+		// NOTIFYs get 481 rather than reaching the winner's subscription.
+		got, ok := pcscfRegSubscriptionOf(t, a, impi)
+		if !ok || got.Dialog.ID.CallID != winner.Load() {
+			t.Fatalf("RegSubscription = %+v, %v; want the one that was created", got, ok)
+		}
+		for _, sub := range []pcscf.RegSubscription{first, second} {
+			_, found := pcscfRegSubscriptionOfDialog(t, b, sub.Dialog.ID.CallID)
+			if found != (sub.Dialog.ID.CallID == winner.Load()) {
+				t.Errorf("RegSubscriptionOfDialog(%s) = %v", sub.Dialog.ID.CallID, found)
+			}
+		}
+	}
+	deletePCSCFRegSubscription(t, a, impi)
+}
+
+// pcscfOnlyOneRefreshesARegSubscription: the CSeq of a refresh goes up
+// once however many instances find the refresh due at the same moment,
+// so that no two SUBSCRIBEs go out with one CSeq (refreshRegEvent).
+func pcscfOnlyOneRefreshesARegSubscription(t *testing.T, a, b pcscf.Store) {
+	sub := newPCSCFRegSubscription("sub-refresh", time.Hour)
+	putPCSCFRegSubscription(t, a, sub)
+	var refreshing atomic.Int32
+	parallel(4, func(i int) {
+		s := a
+		if i%2 == 1 {
+			s = b
+		}
+		// Each instance takes the next CSeq only while the subscription is
+		// still at the one it read.
+		if _, ok := updatePCSCFRegSubscription(t, s, impi, func(v *pcscf.RegSubscription) bool {
+			if v.Dialog.LocalSeq != sub.Dialog.LocalSeq {
+				return false
+			}
+			v.Dialog.LocalSeq++
+			return true
+		}); ok {
+			refreshing.Add(1)
+		}
+	})
+	if got := refreshing.Load(); got != 1 {
+		t.Errorf("%d instances took the refresh, want 1", got)
+	}
+	if got, ok := pcscfRegSubscriptionOf(t, b, impi); !ok || got.Dialog.LocalSeq != sub.Dialog.LocalSeq+1 {
+		t.Errorf("the CSeq after the refresh = %+v, %v; want %d", got, ok, sub.Dialog.LocalSeq+1)
+	}
+	// A change that reports false writes nothing and says so.
+	if got, ok := updatePCSCFRegSubscription(t, a, impi, func(*pcscf.RegSubscription) bool { return false }); ok {
+		t.Errorf("UpdateRegSubscription of a change that reported false = %+v, %v", got, ok)
+	}
+	// Neither does one of a user with no subscription.
+	if _, ok := updatePCSCFRegSubscription(t, a, "nobody@example.net", func(*pcscf.RegSubscription) bool { return true }); ok {
+		t.Error("UpdateRegSubscription of a user with no subscription reported true")
+	}
+	deletePCSCFRegSubscription(t, a, impi)
+}
+
+// pcscfRegSubscription: the subscription of TS 24.229 5.2.3 is found by
+// the private identity it belongs to, and by the Call-ID of its dialog
+// for a NOTIFY that arrives in it.
+func pcscfRegSubscription(t *testing.T, a, b pcscf.Store) {
+	sub := newPCSCFRegSubscription("sub-1@pcscf", short)
+	putPCSCFRegSubscription(t, a, sub)
+	if got, ok := pcscfRegSubscriptionOf(t, b, sub.PrivateIdentity); !ok || !sameJSON(t, got, sub) {
+		t.Fatalf("RegSubscription = %+v, %v; want %+v", got, ok, sub)
+	}
+	// The realm of a private identity compares without case.
+	if got, ok := pcscfRegSubscriptionOf(t, b, "001010000000001@IMS.mnc001.mcc001.3gppnetwork.org"); !ok || got.Dialog.ID != sub.Dialog.ID {
+		t.Errorf("RegSubscription of the identity in another case = %+v, %v", got, ok)
+	}
+	if got, ok := pcscfRegSubscriptionOfDialog(t, b, sub.Dialog.ID.CallID); !ok || !sameJSON(t, got, sub) {
+		t.Errorf("RegSubscriptionOfDialog = %+v, %v; want %+v", got, ok, sub)
+	}
+	if _, ok := pcscfRegSubscriptionOfDialog(t, b, "another-call-id"); ok {
+		t.Error("RegSubscriptionOfDialog of a Call-ID of no subscription")
+	}
+	waitOut()
+	if _, ok := pcscfRegSubscriptionOf(t, b, sub.PrivateIdentity); ok {
+		t.Error("RegSubscription after its Expires")
+	}
+	if _, ok := pcscfRegSubscriptionOfDialog(t, b, sub.Dialog.ID.CallID); ok {
+		t.Error("RegSubscriptionOfDialog after its Expires")
+	}
+	sub = newPCSCFRegSubscription("sub-2", time.Hour)
+	putPCSCFRegSubscription(t, a, sub)
+	deletePCSCFRegSubscription(t, b, sub.PrivateIdentity)
+	if _, ok := pcscfRegSubscriptionOf(t, a, sub.PrivateIdentity); ok {
+		t.Error("RegSubscription after DeleteRegSubscription")
+	}
+	if _, ok := pcscfRegSubscriptionOfDialog(t, a, sub.Dialog.ID.CallID); ok {
+		t.Error("RegSubscriptionOfDialog after DeleteRegSubscription")
+	}
+}
+
+// pcscfRegSubscriptionReplaces: a live subscription holds its private
+// identity, so the next one takes a Delete first; the dialog of the one
+// before it then finds none.
+func pcscfRegSubscriptionReplaces(t *testing.T, a, b pcscf.Store) {
+	old, sub := newPCSCFRegSubscription("sub-1", time.Hour), newPCSCFRegSubscription("sub-2", time.Hour)
+	putPCSCFRegSubscription(t, a, old)
+	if createPCSCFRegSubscription(t, b, sub) {
+		t.Error("a second subscription was created while the first holds")
+	}
+	deletePCSCFRegSubscription(t, b, old.PrivateIdentity)
+	putPCSCFRegSubscription(t, b, sub)
+	if got, ok := pcscfRegSubscriptionOf(t, a, sub.PrivateIdentity); !ok || got.Dialog.ID.CallID != sub.Dialog.ID.CallID {
+		t.Errorf("RegSubscription = %+v, %v; want the new one", got, ok)
+	}
+	if _, ok := pcscfRegSubscriptionOfDialog(t, a, old.Dialog.ID.CallID); ok {
+		t.Error("the dialog of the old subscription still finds one")
+	}
+	// A refresh of the new one keeps it, with the CSeq of the refresh.
+	if _, ok := updatePCSCFRegSubscription(t, a, sub.PrivateIdentity, func(v *pcscf.RegSubscription) bool {
+		v.Dialog.LocalSeq = 2
+		return true
+	}); !ok {
+		t.Error("the refresh of the new subscription changed nothing")
+	}
+	if got, ok := pcscfRegSubscriptionOfDialog(t, b, sub.Dialog.ID.CallID); !ok || got.Dialog.LocalSeq != 2 {
+		t.Errorf("RegSubscriptionOfDialog after a refresh = %+v, %v", got, ok)
+	}
+	// A subscription that has run out no longer holds the identity.
+	ran := newPCSCFRegSubscription("sub-3", short)
+	deletePCSCFRegSubscription(t, a, sub.PrivateIdentity)
+	putPCSCFRegSubscription(t, a, ran)
+	waitOut()
+	if !createPCSCFRegSubscription(t, b, newPCSCFRegSubscription("sub-4", time.Hour)) {
+		t.Error("no subscription was created while one that had run out was stored")
+	}
+	deletePCSCFRegSubscription(t, a, sub.PrivateIdentity)
 }
 
 func pcscfSecurityAssociations(t *testing.T, a, b pcscf.Store) {

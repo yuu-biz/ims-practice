@@ -47,13 +47,15 @@
 | 役割 | 主の項目 | 索引 | 期限 |
 | --- | --- | --- | --- |
 | S-CSCF | `challenge:<IMPI>`、`registration:<IMPI>`、`subscription:<ダイアログ>`、`original-dialog:<ID>`、`unregistered:<IMPI>` | `impu:<IMPU>`、`subscriptions-of:<IMPI>`、`unregistered-impu:<IMPU>` | challenge は TTL（reg-await-auth の 2 倍）と時刻の索引 `reg-await-auth`。登録、購読、未登録のプロファイルは TTL を付けず、時刻の索引 `registration-expiry`、`subscription-expiry`、`unregistered-profile-expiry` に入れる。ODI は TTL（`Expires` まで） |
-| P-CSCF | `association:<トランスポート>:<アドレス>`、`dialog:<Call-ID>:<UE の tag>`、`sa:<アドレス>`、`reg-subscription:<IMPI>`（新規） | `association-of-contact:<user>:<host>:<port>`、`association-of-session:<ポリシーのセッション>`、`dialog-of-session:<ポリシーのセッション>` | 対応付けは TTL（`Expires` に 64×T1 を足した時刻まで）。SA と購読は TTL（`Expires` まで）。ダイアログは期限なし |
+| P-CSCF | `association:<トランスポート>:<アドレス>`、`dialog:<Call-ID>:<UE の tag>`、`sa:<アドレス>`、`reg-subscription:<IMPI>`（新規） | `association-of-contact:<user>:<host>:<port>`、`association-of-session:<ポリシーのセッション>`、`dialog-of-session:<ポリシーのセッション>`、`reg-subscription-of-dialog:<Call-ID>`（新規） | 対応付けは TTL（`Expires` に 64×T1 を足した時刻まで）。SA と購読は TTL（`Expires` まで）。ダイアログは期限なし |
 | IP-SM-GW と SC | `message-reference:<宛先>`、`delivery:<Call-ID>`、`reg-subscription:<Call-ID>`、`status-report-request:<参照>` | `reg-subscription-of:<公開 ID>` | RP-MR の数は TTL（10 分）。配達は TTL と時刻の索引 `report-timeout`（TR1N）。ほかは TTL |
 | MMTel AS | `call:<Incoming のダイアログ>`、`conference:<ID>`（新規） | `call-of-leg:<Outgoing のダイアログ>` | なし |
 | MRFC | `conference:<ID>`（新規） | なし | なし |
 | IBCF（新規） | `call:<台の名前>:<呼の ID>` | `calls-of:<台の名前>`（その台の呼の ID の集合） | なし |
 | HSS | `subscriber:<IMPI>` | `public:<IMPU>`、`directory:<0 から 15>` | なし |
 | メディア中継ノード（新規） | `<台の名前>:context:<ID>` | `<台の名前>:contexts`（その台のコンテキストの ID の集合） | なし |
+
+P-CSCF の購読は利用者ごとに 1 つなので、主の項目は IMPI で引きます。NOTIFY はダイアログの Call-ID しか名乗らないため、Call-ID から IMPI を引く索引を添えます。IP-SM-GW の購読は逆に、主の項目を Call-ID で引き、公開の識別子の索引を添えます。どちらも、再登録のときに自分の購読を見つけ、NOTIFY のときにその購読を見つけられます。
 
 中継ノードの ID の集合は、その台のポートの範囲で数が決まるので、利用者の数では伸びません。IBCF の ID の集合も、その台が同時に持つ呼の数までしか伸びません。IBCF の台は、起動したときに自分の集合と記録を 1 回だけ読み、前のプロセスが残した呼を終わらせます。BYE を誰も見なかった呼の P-CSCF のダイアログと MMTel AS の呼の記録は、期限が無いので残ります。今の `MemoryStore` と同じで、`SIMPLIFIED:` に書きます。
 

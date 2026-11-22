@@ -76,6 +76,44 @@ type Association struct {
 	SignallingLost bool
 }
 
+// RegSubscription is the P-CSCF's subscription to the reg event package
+// of one user (TS 24.229 5.2.3). Its NOTIFYs tell when a registration
+// ends, also one that the UE did not end itself, and the P-CSCF then
+// forgets the UE (5.2.5.2).
+//
+// The subscription is in the Store, and the Contact of the SUBSCRIBE is
+// the P-CSCF's own host and port, which a P-CSCF made again at the same
+// address answers at: whichever instance a NOTIFY reaches takes it.
+type RegSubscription struct {
+	// PrivateIdentity is the user whose registration state it watches.
+	// The subscription is made once per private identity (5.2.3 NOTE).
+	PrivateIdentity string
+	// PublicIdentity is the resource: the default public identity, the
+	// first P-Associated-URI of the 200 to the REGISTER.
+	PublicIdentity string
+	// Dialog is the dialog of the subscription. Until the first NOTIFY
+	// it is the half that sip.NewSubscriberDialog gives, without a remote
+	// tag.
+	Dialog sip.Dialog
+	// Requested is the duration every SUBSCRIBE of this subscription asks
+	// for, the initial one and each refresh (RFC 6665 4.1.2.2).
+	Requested time.Duration
+	// Granted is the Expires of the last 2xx to a SUBSCRIBE, which is the
+	// duration the notifier gave (RFC 6665 3.1.1). It is the duration a
+	// NOTIFY that carries no expires stands for (TS 24.229 5.1.1.3 item
+	// 2); zero until a 2xx has said one.
+	Granted time.Duration
+	// Subscribed is when the initial SUBSCRIBE went out, which tells how
+	// long a subscription whose dialog no NOTIFY has confirmed has been
+	// waiting.
+	Subscribed time.Time
+	// Expires is when the subscription ends unless a refresh comes
+	// first. The Store forgets it then. Only a 2xx or a NOTIFY moves it:
+	// a refresh that goes unanswered must not keep the subscription past
+	// the time the notifier drops it.
+	Expires time.Time
+}
+
 // Store keeps the associations and the dialogs. It is an interface so
 // that the state can live outside the node; MemoryStore keeps
 // it in the process.
@@ -120,6 +158,34 @@ type Store interface {
 	// DialogOfPolicySession finds the dialog whose PolicySession is
 	// session, for an event that the PCRF reports about that session.
 	DialogOfPolicySession(ctx context.Context, session policy.SessionID) (Dialog, bool, error)
+	// CreateRegSubscription keeps sub until its Expires, but only while
+	// its private identity has no subscription that is still live. It
+	// reports whether it wrote: false means that another instance
+	// subscribed for this user first, and that this caller must not
+	// subscribe. One subscription per private identity (TS 24.229 5.2.3
+	// NOTE) rests on this.
+	CreateRegSubscription(ctx context.Context, sub RegSubscription) (bool, error)
+	// UpdateRegSubscription changes the subscription of a private
+	// identity with change, as one step that no other change of that
+	// subscription comes between, and returns it as it is afterwards. It
+	// reports false, having written nothing, when there is no live
+	// subscription or when change reports false, which is how a caller
+	// stands down once it sees that the subscription has moved on.
+	// change must not block, may run more than once, each time on a fresh
+	// copy, and must leave the Call-ID of the dialog alone: another
+	// subscription is a Delete and a Create.
+	UpdateRegSubscription(ctx context.Context, privateID string, change func(*RegSubscription) bool) (RegSubscription, bool, error)
+	// RegSubscription returns the subscription of a private identity,
+	// and whether there is one.
+	RegSubscription(ctx context.Context, privateID string) (RegSubscription, bool, error)
+	// RegSubscriptionOfDialog returns the subscription whose dialog has
+	// callID, for a NOTIFY that arrives in it. The caller checks the
+	// local tag: a NOTIFY of another dialog with the same Call-ID
+	// belongs to no subscription of the P-CSCF.
+	RegSubscriptionOfDialog(ctx context.Context, callID string) (RegSubscription, bool, error)
+	// DeleteRegSubscription removes the subscription of a private
+	// identity.
+	DeleteRegSubscription(ctx context.Context, privateID string) error
 	// SecurityAssociations returns the entry of the SA table for a UE's
 	// address and protected server port, until it expires;
 	// PutSecurityAssociations replaces it.
@@ -139,12 +205,18 @@ type MemoryStore struct {
 	// dialogs and the associations by policy session.
 	dialogOfSession      map[policy.SessionID]DialogKey
 	associationOfSession map[policy.SessionID]sip.Destination
+	// regSubscriptions are keyed by private identity, and
+	// regSubscriptionOfDialog gives the private identity for the Call-ID
+	// of a dialog, so that neither lookup scans.
+	regSubscriptions        map[string]RegSubscription
+	regSubscriptionOfDialog map[string]string
 	saTable
 }
 
 func NewMemoryStore() *MemoryStore {
 	return &MemoryStore{associations: map[sip.Destination]Association{}, dialogs: map[DialogKey]Dialog{},
-		dialogOfSession: map[policy.SessionID]DialogKey{}, associationOfSession: map[policy.SessionID]sip.Destination{}}
+		dialogOfSession: map[policy.SessionID]DialogKey{}, associationOfSession: map[policy.SessionID]sip.Destination{},
+		regSubscriptions: map[string]RegSubscription{}, regSubscriptionOfDialog: map[string]string{}}
 }
 
 func (s *MemoryStore) AssociationOfContact(_ context.Context, contact string) (Association, bool, error) {
@@ -264,6 +336,106 @@ func (s *MemoryStore) AssociationOfPolicySession(_ context.Context, session poli
 	}
 	a, ok := s.associations[source]
 	return a, ok, nil
+}
+
+// privateKey is the key under which a private identity is kept, as in
+// the Stores of the other roles: the realm of a private identity
+// compares without case (RFC 4282 2.4).
+func privateKey(privateID string) string { return strings.ToLower(privateID) }
+
+// CreateRegSubscription writes sub unless a live subscription of the
+// same private identity is there. The lock of the store stands for the
+// compare and swap that an external store needs. The store removes the
+// subscription at its Expires.
+func (s *MemoryStore) CreateRegSubscription(_ context.Context, sub RegSubscription) (bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	key := privateKey(sub.PrivateIdentity)
+	if _, live := s.regSubscription(key); live {
+		return false, nil
+	}
+	s.putRegSubscription(key, sub)
+	return true, nil
+}
+
+func (s *MemoryStore) UpdateRegSubscription(_ context.Context, privateID string, change func(*RegSubscription) bool) (RegSubscription, bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	key := privateKey(privateID)
+	sub, live := s.regSubscription(key)
+	if !live || !change(&sub) {
+		return RegSubscription{}, false, nil
+	}
+	s.putRegSubscription(key, sub)
+	return sub, true, nil
+}
+
+// putRegSubscription writes sub under key and keeps the index by the
+// Call-ID of its dialog in step. s.mu is held.
+func (s *MemoryStore) putRegSubscription(key string, sub RegSubscription) {
+	callID := sub.Dialog.ID.CallID
+	sub.Dialog.RouteSet = append([]string(nil), sub.Dialog.RouteSet...)
+	if old, ok := s.regSubscriptions[key]; ok && old.Dialog.ID.CallID != callID {
+		delete(s.regSubscriptionOfDialog, old.Dialog.ID.CallID)
+	}
+	s.regSubscriptions[key] = sub
+	s.regSubscriptionOfDialog[callID] = key
+	time.AfterFunc(time.Until(sub.Expires), func() {
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		if stored, ok := s.regSubscriptions[key]; ok && !time.Now().Before(stored.Expires) {
+			s.deleteRegSubscription(key)
+		}
+	})
+}
+
+func (s *MemoryStore) RegSubscription(_ context.Context, privateID string) (RegSubscription, bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	sub, ok := s.regSubscription(privateKey(privateID))
+	return sub, ok, nil
+}
+
+func (s *MemoryStore) RegSubscriptionOfDialog(_ context.Context, callID string) (RegSubscription, bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	key, ok := s.regSubscriptionOfDialog[callID]
+	if !ok {
+		return RegSubscription{}, false, nil
+	}
+	sub, ok := s.regSubscription(key)
+	if !ok || sub.Dialog.ID.CallID != callID {
+		return RegSubscription{}, false, nil
+	}
+	return sub, true, nil
+}
+
+func (s *MemoryStore) DeleteRegSubscription(_ context.Context, privateID string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.deleteRegSubscription(privateKey(privateID))
+	return nil
+}
+
+func (s *MemoryStore) regSubscription(key string) (RegSubscription, bool) {
+	sub, ok := s.regSubscriptions[key]
+	if !ok || !time.Now().Before(sub.Expires) {
+		return RegSubscription{}, false
+	}
+	// The route set is a slice: the caller gets a copy of its own.
+	sub.Dialog.RouteSet = append([]string(nil), sub.Dialog.RouteSet...)
+	return sub, true
+}
+
+func (s *MemoryStore) deleteRegSubscription(key string) {
+	sub, ok := s.regSubscriptions[key]
+	if !ok {
+		return
+	}
+	delete(s.regSubscriptions, key)
+	if s.regSubscriptionOfDialog[sub.Dialog.ID.CallID] == key {
+		delete(s.regSubscriptionOfDialog, sub.Dialog.ID.CallID)
+	}
 }
 
 type PCSCF struct {

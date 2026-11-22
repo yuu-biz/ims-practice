@@ -11,6 +11,8 @@
 //	association-of-session:<policy session>       index: the source of the association
 //	dialog:<Call-ID>:<UE tag>                     Dialog, no time to live
 //	dialog-of-session:<policy session>            index: the key of the dialog
+//	reg-subscription:<IMPI>                       RegSubscription, time to live until its Expires
+//	reg-subscription-of-dialog:<Call-ID>          index: the private identity of the subscription
 //	sa:<address>                                  SecurityAssociations, time to live until Expires
 //
 // Every lookup is a read of one or two keys. AssociationOfContact walked
@@ -289,6 +291,116 @@ func (s *Store) DialogOfPolicySession(ctx context.Context, session policy.Sessio
 		return pcscf.Dialog{}, false, err
 	}
 	return d, true, nil
+}
+
+// privateKey is the key under which a private identity is kept, as in
+// pcscf.MemoryStore and in the Stores of the other roles.
+func privateKey(privateID string) string { return strings.ToLower(privateID) }
+
+func (s *Store) subscriptionKey(privateID string) string {
+	return s.c.Key("reg-subscription", privateKey(privateID))
+}
+
+func (s *Store) subscriptionDialogKey(callID string) string {
+	return s.c.Key("reg-subscription-of-dialog", callID)
+}
+
+// RegSubscription returns the subscription until its Expires, by the
+// clock of the Store, as pcscf.MemoryStore does; the time to live
+// removes it soon after.
+func (s *Store) RegSubscription(ctx context.Context, privateID string) (pcscf.RegSubscription, bool, error) {
+	var sub pcscf.RegSubscription
+	ok, err := read(ctx, s.c, s.subscriptionKey(privateID), &sub)
+	if err != nil || !ok || !s.c.Now().Before(sub.Expires) {
+		return pcscf.RegSubscription{}, false, err
+	}
+	return sub, true, nil
+}
+
+// RegSubscriptionOfDialog reads the index item of the Call-ID, then the
+// subscription. A subscription whose dialog is another is a miss (see
+// kvjson.WriteIndex).
+func (s *Store) RegSubscriptionOfDialog(ctx context.Context, callID string) (pcscf.RegSubscription, bool, error) {
+	privateID, ok, err := s.indexTarget(ctx, s.subscriptionDialogKey(callID))
+	if err != nil || !ok {
+		return pcscf.RegSubscription{}, false, err
+	}
+	sub, ok, err := s.RegSubscription(ctx, privateID)
+	if err != nil || !ok || sub.Dialog.ID.CallID != callID {
+		return pcscf.RegSubscription{}, false, err
+	}
+	return sub, true, nil
+}
+
+// errNoChange stands for a change function that reported false, and for
+// a subscription that has run out: UpdateRegSubscription writes nothing
+// and reports that there is none.
+var errNoChange = errors.New("pcscfstore: the subscription was not changed")
+
+// CreateRegSubscription writes the index item of the dialog, then the
+// subscription itself, but only if the item is still at the version that
+// held no live subscription. Of several instances that subscribe for one
+// user at once, exactly one writes; the losers leave an index item that
+// names a private identity whose subscription has another Call-ID, which
+// is a miss (see RegSubscriptionOfDialog).
+func (s *Store) CreateRegSubscription(ctx context.Context, sub pcscf.RegSubscription) (bool, error) {
+	var old pcscf.RegSubscription
+	version, err := kvjson.Read(ctx, s.c, s.subscriptionKey(sub.PrivateIdentity), &old)
+	switch {
+	case errors.Is(err, kvstore.ErrNotFound):
+		version = ""
+	case err != nil:
+		return false, err
+	case s.c.Now().Before(old.Expires):
+		return false, nil
+	}
+	ttl := s.c.TTLUntil(sub.Expires)
+	if err := s.c.WriteIndex(ctx, s.subscriptionDialogKey(sub.Dialog.ID.CallID), privateKey(sub.PrivateIdentity), ttl); err != nil {
+		return false, err
+	}
+	_, err = kvjson.CompareAndSwap(ctx, s.c, s.subscriptionKey(sub.PrivateIdentity), version, sub, ttl)
+	if errors.Is(err, kvstore.ErrConflict) {
+		return false, nil
+	}
+	return err == nil, err
+}
+
+// UpdateRegSubscription is a read, change, and compare and swap, again
+// from the new value when another instance wrote first. The Call-ID of
+// the dialog does not change, so the index item stands.
+func (s *Store) UpdateRegSubscription(ctx context.Context, privateID string, change func(*pcscf.RegSubscription) bool) (pcscf.RegSubscription, bool, error) {
+	sub, err := kvjson.Modify(ctx, s.c, s.subscriptionKey(privateID),
+		func(v pcscf.RegSubscription) time.Duration { return s.c.TTLUntil(v.Expires) },
+		func(v *pcscf.RegSubscription) error {
+			if !s.c.Now().Before(v.Expires) || !change(v) {
+				return errNoChange
+			}
+			return nil
+		})
+	switch {
+	case errors.Is(err, kvstore.ErrNotFound), errors.Is(err, errNoChange):
+		return pcscf.RegSubscription{}, false, nil
+	case err != nil:
+		return pcscf.RegSubscription{}, false, err
+	}
+	return sub, true, nil
+}
+
+// DeleteRegSubscription removes the subscription, then the index item
+// of its dialog.
+func (s *Store) DeleteRegSubscription(ctx context.Context, privateID string) error {
+	var old pcscf.RegSubscription
+	ok, err := read(ctx, s.c, s.subscriptionKey(privateID), &old)
+	if err != nil {
+		return err
+	}
+	if err := s.c.Remove(ctx, s.subscriptionKey(privateID)); err != nil {
+		return err
+	}
+	if !ok {
+		return nil
+	}
+	return s.c.RemoveIndexIf(ctx, s.subscriptionDialogKey(old.Dialog.ID.CallID), privateKey(privateID))
 }
 
 func (s *Store) saKey(ue netip.AddrPort) string { return s.c.Key("sa", ue.String()) }
