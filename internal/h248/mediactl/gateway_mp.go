@@ -393,6 +393,12 @@ func (g *Gateway) checkMpCommand(c h248.CommandRequest, add bool) (mpCommand, *h
 		// H.248.1 (05/2002) 7.1.7.
 		s.mode = h248.Inactive
 	}
+	if add {
+		// The ipnapt package is not among MpPackages, so no controller
+		// asks for latching, and the termination sends to its Remote
+		// descriptor (H.248.37 (06/2008) 6.6.1).
+		m.change.Latch = agw.NAPTOff
+	}
 	m.change.Mode, _ = modeOf(s.mode)
 	m.change.LocalMedia = s.local.media
 	if s.remote != nil {

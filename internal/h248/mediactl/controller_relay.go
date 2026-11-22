@@ -78,10 +78,9 @@ func (c *Controller) iqAdd(ctx context.Context, terminations []agw.TerminationRe
 // always set: without it an Add would leave the termination Inactive
 // (H.248.1 (05/2002) 7.1.7), and the IMS-AGW passes media both ways, so
 // a request without a mode gets SendReceive. The Events descriptor is
-// that of terminationEvents. An Add carries the Local descriptor, and
-// asks for latching with its signal, because a UE behind NAT sends from
-// another address than its SDP shows; a request with a remote address
-// carries the Remote descriptor too.
+// that of terminationEvents, and the Signals descriptor that of
+// latchSignals. An Add carries the Local descriptor; a request with a
+// remote address carries the Remote descriptor too.
 func (c *Controller) iqCommand(command h248.Command, id h248.TerminationID, t agw.TerminationRequest) (h248.CommandRequest, error) {
 	if t.Signals != nil || t.Events != nil {
 		return h248.CommandRequest{}, errors.New("mediactl: a termination of Iq plays no signal and reports the events of the profile only")
@@ -99,17 +98,47 @@ func (c *Controller) iqCommand(command h248.Command, id h248.TerminationID, t ag
 	switch {
 	case command == h248.Add:
 		parms.Local = &h248.LocalRemoteDescriptor{SDP: controllerSDP(netip.AddrPort{}, t.LocalMedia)}
-		cmd.Signals = &h248.SignalsDescriptor{Signals: []h248.Signal{{
-			SignalName: signalLatch,
-			SigParList: []h248.SigParameter{{Name: paramNAPT, Value: h248.Value{Text: naptLatch}}},
-		}}}
 	case len(t.LocalMedia.Codecs) > 0 || t.LocalMedia.Bandwidth > 0:
 		return h248.CommandRequest{}, errors.New("mediactl: Modify keeps the Local descriptor of a termination")
 	}
 	if t.Remote.IsValid() {
 		parms.Remote = &h248.LocalRemoteDescriptor{SDP: controllerSDP(t.Remote, t.RemoteMedia)}
 	}
+	signals, err := latchSignals(command, t.Latch)
+	if err != nil {
+		return h248.CommandRequest{}, err
+	}
+	cmd.Signals = signals
 	return cmd, nil
+}
+
+// latchSignals is the Signals descriptor that asks the gateway for the
+// latching l, or nil for none (TS 29.334 5.17.2.2 to 5.17.2.4; H.248.37
+// (06/2008) 6.6). A new termination does not latch without the signal
+// (6.6.1), so an Add carries it unless l is NAPTOff or StopLatching. An
+// Add without l asks for NAPTLatch, the latching that the HTTP API of
+// the media relay gives a node that sets none: it reaches a UE behind
+// NAT at the address the UE sends from. A Modify without l carries no
+// Signals descriptor, which keeps the latching, and StopLatching is an
+// empty one (6.6.4).
+func latchSignals(command h248.Command, l agw.Latch) (*h248.SignalsDescriptor, error) {
+	add := command == h248.Add
+	switch {
+	case l == "" && add:
+		l = agw.NAPTLatch
+	case l == "", add && (l == agw.NAPTOff || l == agw.StopLatching):
+		return nil, nil
+	case l == agw.StopLatching:
+		return &h248.SignalsDescriptor{}, nil
+	}
+	napt, ok := naptValues[l]
+	if !ok {
+		return nil, fmt.Errorf("mediactl: no latching %q", l)
+	}
+	return &h248.SignalsDescriptor{Signals: []h248.Signal{{
+		SignalName: signalLatch,
+		SigParList: []h248.SigParameter{{Name: paramNAPT, Value: h248.Value{Text: napt}}},
+	}}}, nil
 }
 
 // added is the termination that an Add made at local, as the request
@@ -161,8 +190,10 @@ func replyLocal(cmd h248.CommandReply) (netip.AddrPort, error) {
 
 // iqModify carries out Configure AGW Connection Point (TS 29.334
 // 5.17.2.3): a Modify of the termination, with the Remote descriptor
-// when change has a remote address. A relay that latches on the first
-// packet it receives (H.248.37 6.6.2) keeps the latched address.
+// when change has a remote address, and the Signals descriptor when it
+// sets a latching. A termination that has latched keeps the latched
+// address whatever the Remote descriptor says, until it is asked for
+// NAPTOff (H.248.37 (06/2008) 6.6.1, 6.6.2).
 func (c *Controller) iqModify(ctx context.Context, id string, side agw.TerminationID, change agw.TerminationRequest) error {
 	if side != agw.Access && side != agw.Core {
 		return fmt.Errorf("mediactl: no termination %q on Iq", side)

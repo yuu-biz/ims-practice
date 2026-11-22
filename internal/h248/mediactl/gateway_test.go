@@ -96,8 +96,8 @@ func TestGatewayRefusesWhatItDoesNotSupport(t *testing.T) {
 			adds[1].TerminationID = adds[0].TerminationID
 			return adds
 		}), 434},
-		{"latching OFF", reserveAction(b.controller, func(adds []h248.CommandRequest) []h248.CommandRequest {
-			adds[0].Signals.Signals[0].SigParList[0].Value.Text = "OFF"
+		{"latching with a napt that H.248.37 does not define", reserveAction(b.controller, func(adds []h248.CommandRequest) []h248.CommandRequest {
+			adds[0].Signals.Signals[0].SigParList[0].Value.Text = "SOMETIMES"
 			return adds
 		}), 449},
 		{"latching without napt", reserveAction(b.controller, func(adds []h248.CommandRequest) []h248.CommandRequest {

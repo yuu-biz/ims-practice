@@ -202,49 +202,51 @@ func (g *Gateway) heartbeatPeriod(ev h248.RequestedEvent) (time.Duration, *h248.
 	return period, nil
 }
 
-// checkSignals reads the Signals descriptor of an Add or a Modify. The
-// one signal of a termination is ipnapt/latch with napt = LATCH (TS
-// 29.334 5.7.5, Table 5.7.5.1; H.248.37 (06/2008) 6.3.1).
-//
-// SIMPLIFIED: H.248.37 (06/2008) 6.6. On Iq the controller asks for
-// latching only where it needs it, with ipnapt/latch in an Add or a
-// Modify (TS 29.334 5.17.2.2 to 5.17.2.4), and the gateway supports
-// every value of napt (Table 5.14.3.12.1). Without the signal, or with
-// OFF, the gateway sends to the address of the Remote descriptor
-// (6.6.1); RELATCH follows a new source (6.6.3); a Signals descriptor
-// without the signal stops latching and keeps the address it latched
-// (6.6.4). This gateway refuses OFF and RELATCH, and the relay latches
-// every termination on its first packet, whether the signal comes or
-// not: Relay has no way to set the mode of a termination.
-func checkSignals(s *h248.SignalsDescriptor) *h248.ErrorDescriptor {
-	if s == nil {
-		return nil
-	}
-	if len(s.SeqSigLists) > 0 {
+// checkSignals reads the Signals descriptor of an Add (add is true) or
+// a Modify, and returns the latching that it asks of the relay. The one
+// signal of a termination is ipnapt/latch (TS 29.334 5.7.5, Table
+// 5.7.5.1; H.248.37 (06/2008) 6.3.1), which the controller sends where
+// it needs latching (TS 29.334 5.17.2.2 to 5.17.2.4), with any value of
+// napt (Table 5.14.3.12.1). Without the signal a new termination sends
+// to the address of its Remote descriptor (6.6.1). On Modify, no Signals
+// descriptor keeps the latching, and one without the signal stops it
+// and keeps the address latched (6.6.4).
+func checkSignals(s *h248.SignalsDescriptor, add bool) (agw.Latch, *h248.ErrorDescriptor) {
+	switch {
+	case s == nil && add:
+		return agw.NAPTOff, nil
+	case s == nil:
+		return "", nil
+	case len(s.SeqSigLists) > 0:
 		// TS 29.334 5.7.5, Table 5.7.5.2.
-		return errorDescriptor(501, "signal lists")
+		return "", errorDescriptor(501, "signal lists")
+	}
+	latch := agw.StopLatching
+	if add {
+		latch = agw.NAPTOff
 	}
 	for _, sig := range s.Signals {
 		if h248.PkgdName(strings.ToLower(string(sig.SignalName))) != signalLatch {
-			return unsupportedItem(Packages, sig.SignalName, 452)
+			return "", unsupportedItem(Packages, sig.SignalName, 452)
 		}
 		napt := ""
 		for _, p := range sig.SigParList {
 			if !strings.EqualFold(p.Name, paramNAPT) {
-				return errorDescriptor(446, p.Name)
+				return "", errorDescriptor(446, p.Name)
 			}
 			napt = p.Value.Text
 		}
-		switch {
-		case napt == "":
+		if napt == "" {
 			// H.248.37 (06/2008) 6.3.1.1.1: the parameter is not
 			// optional.
-			return errorDescriptor(457, paramNAPT)
-		case !strings.EqualFold(napt, naptLatch):
-			return errorDescriptor(449, paramNAPT+" "+napt)
+			return "", errorDescriptor(457, paramNAPT)
+		}
+		var ok bool
+		if latch, ok = latchOf(napt); !ok {
+			return "", errorDescriptor(449, paramNAPT+" "+napt)
 		}
 	}
-	return nil
+	return latch, nil
 }
 
 // setHeartbeat sets the event hangterm/thb of a termination as the
