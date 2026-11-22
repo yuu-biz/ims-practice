@@ -388,7 +388,7 @@ VoLTE の設計（[VoLTE のアクセス網の設計](../design/volte-access.md)
 
 - `internal/evs`。Compact と Header-Full のパケット化と復元、ToC と CMR のバイト、Table A.1 の大きさの表、格納形式の読み書き。`internal/amr` と同じ形にします。
 - `internal/sdp` の EVS の fmtp（`br`、`bw`、`mode-set`、`ch-aw-recv`、`max-red`）と、NG.114 の表（3.2.2.3 の Table 10）による answer の選び方。
-- UE の offer の順番。EVS、AMR-WB、AMR、PCMU、telephone-event にします。TS 26.114 5.2.1.6 によると、超広帯域を示すペイロードタイプは、それより狭い帯域のものより前に並べます。EVS を広帯域まで offer するときも、ほかの広帯域のコーデックより前に並べます。この順番はその決まりに合います。
+- UE の offer の順番。EVS を offer するときは、EVS、AMR-WB、AMR、PCMU、telephone-event の順にします。今の offer には EVS が無く、AMR-WB から始まります（[codecs.md](../design/codecs.md)）。TS 26.114 5.2.1.6 によると、超広帯域を示すペイロードタイプは、それより狭い帯域のものより前に並べます。EVS を広帯域まで offer するときも、ほかの広帯域のコーデックより前に並べます。この順番はその決まりに合います。
 
 中継ノード（`internal/agw`）は RTP をそのまま通すので、変える所はありません。MRFP が音を混ぜるときに EVS をどう扱うかは、[mmtel-mrf.md](mmtel-mrf.md) の「コーデック」の方針（符号化済みのフレーム）に従います。
 
@@ -401,25 +401,25 @@ EVS の実装の方法について、このプロジェクトでは次の方針�
 
 2 つ目の項目の形はやめました。この形では、UE が送れない EVS Primary のビットレートと帯域を SDP に書くことになり、SDP が UE の能力を偽るためです。EVS を offer する端末はビットレートの全範囲を扱える必要があり、端末は最初の offer に `evs-mode-switch` を書けません（TS 26.114 6.2.2.2 の Table 6.2a）。AMR-WB IO しか送れない UE には、事実に合う EVS の offer がありません。今の UE は EVS を offer せず、EVS のコーデックを用意したときに offer に加えます（[codecs.md](../design/codecs.md)）。この節の残りはやめる前の方針と、そのときに本文で確かめたことの記録です。確かめたことは、EVS のコーデックを加えるときにも使えます。
 
-この方針を設計の候補に当てはめると、次のようになります。
+やめる前の方針を設計の候補に当てはめると、次のようになっていました。
 
-- EVS の符号器と復号器は作りません。参照コード（TS 26.442、TS 26.443）も使いません。案 A と案 D は採りません。
-- 方針は案 B に当たります。AMR-WB のフレームを、EVS AMR-WB IO のフレームとして EVS のペイロード形式（TS 26.445 Annex A）で運びます。SDP では EVS を offer し、answer します。
-- `internal/evs` は、AMR-WB IO の 9 つのレートと SID を、Compact と Header-Full の両方で扱え、CMR も読み書きできます。5GC の構成で足すのは、SDP の EVS の fmtp と、UE が offer と answer を作る所です。
+- EVS の符号器と復号器は作らず、参照コード（TS 26.442、TS 26.443）も使わないことにしました。案 A と案 D は採りませんでした。
+- 方針は案 B に当たっていました。AMR-WB のフレームを、EVS AMR-WB IO のフレームとして EVS のペイロード形式（TS 26.445 Annex A）で運び、SDP では EVS を offer し、answer する形でした。
+- `internal/evs` は、AMR-WB IO の 9 つのレートと SID を、Compact と Header-Full の両方で扱え、CMR も読み書きできます。5GC の構成で足すことにしていたのは、SDP の EVS の fmtp と、UE が offer と answer を作る所でした。
 - EVS のペイロードに載るのは、EVS Primary と AMR-WB IO のフレームだけです。AMR-WB IO と相互に通じるのは AMR-WB だけで、AMR（狭帯域）は通じません（TS 26.441 4 章）。そのため、方針の「中身は AMR か AMR-WB」のうち、EVS のペイロードで運べるのは AMR-WB です。AMR は今までどおり、別のペイロードタイプ（RFC 4867）で offer します。
-- 案 C も採りません。AMR-WB のフレームを運べば、受けた音声を聞けるためです。
+- 案 C も採りませんでした。AMR-WB のフレームを運べば、受けた音声を聞けるためです。
 
 この方針で、確かめる点が 1 つありました。
 
 - AMR-WB IO のフレームしか送れない UE が EVS を offer してよいか。TS 26.445 V19.1.0 と TS 26.114 V20.1.1 の本文で、次のことを確かめました。
    - TS 26.445 A.3.1。`evs-mode-switch` が無いか 0 なら、セッションの始めは送りも受けも EVS Primary です。1 なら、両方向とも AMR-WB IO で始めます。
    - TS 26.445 A.3.3.1。offer に `evs-mode-switch` が無いとき、answer の側がそれを加えてもかまいません。offer にあるときは、answer で変えることも消すこともできません。両端がこのプロジェクトの UE なら、着信側が answer に `evs-mode-switch=1` を書けば、始めから AMR-WB IO で送り合えます。案 B の表で「`evs-mode-switch=1` を交渉できない」と書いたのは、offer の側についてです。
-   - TS 26.114 6.2.2.2 の Table 6.2a。端末は最初の offer に `evs-mode-switch` を書けません。また、EVS に対応する端末は `br` の範囲をすべて扱える必要があり、offer で狭い範囲や 1 つのレートを示すことは許されています。発信側の UE は、NG.114 の構成（A1 など）で EVS Primary のレートを示しますが、そのレートでは送れません。この点は仕様に合わないので、`SIMPLIFIED:` になります。
+   - TS 26.114 6.2.2.2 の Table 6.2a。端末は最初の offer に `evs-mode-switch` を書けません。また、EVS に対応する端末は `br` の範囲をすべて扱える必要があり、offer で狭い範囲や 1 つのレートを示すことは許されています。発信側の UE は、NG.114 の構成（A1 など）で EVS Primary のレートを示しますが、そのレートでは送れません。この点は仕様に合わないので、`SIMPLIFIED:` にしました。
    - TS 26.114 6.2.2.3 の Table 6.3a。`evs-mode-switch` は、始めから AMR-WB IO で送るときや、SRVCC などでモードを切り替えるときに、MTSI MGW が使うと説明されています。answer に `evs-mode-switch` を書くときの決まりは、セッションの途中の offer と answer について書かれています。端末が最初の answer に `evs-mode-switch=1` を書いてよいかは、この表からは読み取れません。あとで本文を読み直した答えは、下の「`internal/sdp` の EVS の扱い」に書きました。
    - TS 26.114 A.14.2.1 の例では、網が offer を書き換えて `evs-mode-switch=1` を加えています。このときも `br=5.9-24.4; bw=nb-wb` は残り、`mode-set=0,1,2` が加わっています。
    - `br` と `bw` は EVS Primary のためのパラメータで、AMR-WB IO のレートを絞るのは `mode-set` です（TS 26.445 A.3.1）。offer に `br` や `bw` があってそのペイロードタイプを受けるなら、answer にも、同じものかその一部を書く必要があります（A.3.3.1）。AMR-WB IO だけで送る場合も、answer には `br` と `bw` が入ります。どの値を書くかは、NG.114 の Table 10 による answer の選び方と合わせて決めます。答えは下の「`internal/sdp` の EVS の扱い」に書きました。
    - `b=AS` は、EVS Primary と AMR-WB IO のうち大きいほうに合わせます。`evs-mode-switch` があるかどうかには左右されません（TS 26.114 6.2.5.2）。
-   - 相手が本物の EVS の端末なら、`evs-mode-switch` の無い answer を返し、EVS Primary のフレームを送ってきます。CMR や RTCP の APP の要求（TS 26.114 10.2.1.11 の、AMR-WB IO から EVS Primary への切り替えの要求）で、EVS Primary に戻すよう求めることもあります。このプロジェクトの UE は、どちらにも応えられません。`SIMPLIFIED:` には、このプロジェクトの UE どうしの呼だけを扱うことを書きます。
+   - 相手が本物の EVS の端末なら、`evs-mode-switch` の無い answer を返し、EVS Primary のフレームを送ってきます。CMR や RTCP の APP の要求（TS 26.114 10.2.1.11 の、AMR-WB IO から EVS Primary への切り替えの要求）で、EVS Primary に戻すよう求めることもあります。このプロジェクトの UE は、どちらにも応えられません。`SIMPLIFIED:` には、このプロジェクトの UE どうしの呼だけを扱うことを書きました。
    - NG.114 が answer の `evs-mode-switch` について何か決めているかは、読み直していません。
 
 ### `internal/sdp` の EVS の扱い
@@ -488,8 +488,10 @@ EVS の実装の方法について、このプロジェクトでは次の方針�
 
 #### 試験と確認
 
-- A.3.1 の値と組み合わせ、A.3.3.1 の answer の決まり（断る場合を含む）、NG.114 の 5 つの構成の offer、Table Q.1、Table Q.3、Table 6.9、A.14 の例の `b=AS` を、表の形の試験にしました。
-- `VoLTECodecs`、`AudioOffer`、`AudioAnswer` の出力が変わっていないことを確かめました。EVS を足す前のコードで、offer 1 つと answer 5 つ（今ある試験の offer と、EVS を先頭に置いた offer）をバイト列で書き出し、試験（`evsguard_test.go`）に入れました。足したあとも同じです。今ある試験のファイルは変えておらず、すべて通ります。
+EVS の offer と answer を作るコードを足したときの確認です。
+
+- A.3.1 の値と組み合わせ、A.3.3.1 の answer の決まり（断る場合を含む）、NG.114 の 5 つの構成の offer、Table Q.1、Table Q.3、Table 6.9、A.14 の例の `b=AS` を、表の形の試験にしました。A.3.3.1 の answer の決まりと NG.114 の構成の offer の試験は、そのコードと一緒に消しました。
+- `VoLTECodecs`、`AudioOffer`、`AudioAnswer` の出力が変わっていないことを確かめました。EVS を足す前のコードで、offer 1 つと answer 5 つ（今ある試験の offer と、EVS を先頭に置いた offer）をバイト列で書き出し、試験（`evsguard_test.go`）に入れました。足したあとも同じでした。EVS を足す前からある試験のファイルは変えず、すべて通りました。今の `evsguard_test.go` は VoLTE の offer と answer をバイト列で比べる試験です。EVS を先頭に置いた offer に、EVS を持たない UE が AMR-WB で answer することも、この試験で確かめています。
 - UE どうしの offer と answer を SIP の INVITE と 200 に入れて pcap にし、tshark 4.2.2 で読みました。`a=fmtp` のパラメータが EVS のものとして 1 つずつ読め、誤りの表示はありませんでした。
 
 #### 確かめられなかったこと
