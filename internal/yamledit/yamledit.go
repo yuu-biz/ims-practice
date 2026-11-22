@@ -1,5 +1,6 @@
 // Package yamledit changes the text of a YAML file in place, for the
-// generators of the copies of deploy/compose. The comments, the order of the keys and the
+// generators of the copies of deploy/compose (deploy/k8s and
+// deploy/interconnect). The comments, the order of the keys and the
 // style of every value that a change does not touch stay as they are.
 package yamledit
 

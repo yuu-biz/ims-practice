@@ -3,7 +3,6 @@ package config
 import (
 	"os"
 	"path/filepath"
-	"reflect"
 	"testing"
 
 	"github.com/yuu-biz/ims-practice/internal/sip"
@@ -84,34 +83,26 @@ func TestInterconnectProfilesLoad(t *testing.T) {
 	}
 }
 
-// TestInterconnectHomeConfigsFollowCompose: the S-CSCF and the IP-SM-GW
-// of network A in the interconnect are those of compose.yaml with an
-// IBCF, and
-// nothing else changed.
-func TestInterconnectHomeConfigsFollowCompose(t *testing.T) {
+// TestInterconnectHomeIBCFIsInTheHomeDomain: the S-CSCF and the IP-SM-GW
+// of network A name the IBCF of network A. They are generated from
+// deploy/compose (deploy/interconnect/changes.go), which does not know
+// the domain that their own file sets.
+func TestInterconnectHomeIBCFIsInTheHomeDomain(t *testing.T) {
 	for _, name := range []string{"scscf.yaml", "ipsmgw.yaml"} {
 		t.Run(name, func(t *testing.T) {
-			compose, err := Load(filepath.Join("../../deploy/compose", name))
-			if err != nil {
-				t.Fatal(err)
-			}
 			home, err := Load(filepath.Join("../../deploy/interconnect/home", name))
 			if err != nil {
 				t.Fatal(err)
 			}
-			var ibcf *sip.URI
+			var ibcf sip.URI
 			switch {
 			case home.SCSCF != nil:
-				ibcf = &home.SCSCF.IBCF
+				ibcf = home.SCSCF.IBCF
 			case home.IPSMGW != nil:
-				ibcf = &home.IPSMGW.IBCF
+				ibcf = home.IPSMGW.IBCF
 			}
-			if ibcf == nil || ibcf.Host != "ibcf."+home.HomeDomain || ibcf.Port != 5060 {
-				t.Fatalf("IBCF = %+v, want ibcf.%s:5060", ibcf, home.HomeDomain)
-			}
-			*ibcf = sip.URI{}
-			if !reflect.DeepEqual(home, compose) {
-				t.Errorf("%s differs from deploy/compose/%s in more than the IBCF:\n%+v\n%+v", name, name, home, compose)
+			if ibcf.Host != "ibcf."+home.HomeDomain || ibcf.Port != 5060 {
+				t.Errorf("IBCF = %+v, want ibcf.%s:5060", ibcf, home.HomeDomain)
 			}
 		})
 	}
