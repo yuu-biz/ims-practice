@@ -51,10 +51,16 @@ func (s *Stack) follow(ct *ClientTransaction, req *Message, next []Destination) 
 				continue
 			}
 		}
-		if err == nil {
+		switch {
+		case err == nil:
 			// The TU has cancelled the request.
 			ct.end(unavailable, a.err)
-		} else {
+		case unavailable != nil:
+			// No other target took the request. A 503 is a response
+			// from a server, which tells the TU more than a target that
+			// could not be reached.
+			ct.end(unavailable, nil)
+		default:
 			// No other target took the request; the last one tells why.
 			ct.end(nil, err)
 		}
