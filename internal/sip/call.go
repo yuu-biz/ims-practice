@@ -35,12 +35,25 @@ type call struct {
 	// onRequest answers the requests within the dialogs that the UA
 	// leaves to the user of the call; nil when the user takes none.
 	onRequest func(*InDialogRequest)
+	// arrived counts the requests that the UA has handed to onRequest
+	// (InDialogRequest.Arrival).
+	arrived uint64
 	// contact is the Contact of the messages of the call when its user
 	// gave one (Invitation.Contact, IncomingCall.SetContact), "" for the
 	// UA's own. recordRoute is set when the UA also stays on the route
 	// of the dialog with a Record-Route of its own URI.
 	contact     string
 	recordRoute bool
+}
+
+// handOver starts onRequest for r, numbered after the requests that
+// the UA handed over before it (InDialogRequest.Arrival). c.mu is held,
+// since the UA, holding it, has just taken r in order (RFC 3261
+// 12.2.2).
+func (c *call) handOver(r *InDialogRequest) {
+	c.arrived++
+	r.Arrival = c.arrived
+	go c.onRequest(r)
 }
 
 // contactLocked is the Contact value of the messages of the call: the
