@@ -50,6 +50,7 @@ import (
 	"github.com/yuu-biz/ims-practice/internal/kvstore/scscfstore"
 	"github.com/yuu-biz/ims-practice/internal/kvstore/scstore"
 	"github.com/yuu-biz/ims-practice/internal/lab"
+	"github.com/yuu-biz/ims-practice/internal/metrics"
 	"github.com/yuu-biz/ims-practice/internal/mmtel"
 	"github.com/yuu-biz/ims-practice/internal/mrfc"
 	"github.com/yuu-biz/ims-practice/internal/pcscf"
@@ -91,6 +92,10 @@ func run(configPath string, log *slog.Logger) error {
 
 	stores, closeStores := newRoleStores(cfg.Store)
 	defer closeStores()
+	// One registry for the node: each role registers its own metrics in
+	// it, under its own role label, and the maintenance listener serves
+	// them all at /metrics.
+	registry := metrics.NewRegistry()
 
 	// agent stays nil without a hep section, and then observes nothing.
 	var agent *hepagent.Agent
@@ -310,7 +315,7 @@ func run(configPath string, log *slog.Logger) error {
 		listen := func(s config.SIP) (*sip.TransportLayer, error) {
 			return sip.ListenObserved(s.Listen.String(), roleLog, agent.SIP(string(config.RoleIBCF)))
 		}
-		b, err := startIBCF(cfg.HomeDomain, *c, ibcfStore(stores, roleLog), resolver, listen, roleLog)
+		b, err := startIBCF(cfg.HomeDomain, *c, ibcfStore(stores, roleLog), resolver, registry, listen, roleLog)
 		if err != nil {
 			return err
 		}
@@ -472,6 +477,14 @@ func run(configPath string, log *slog.Logger) error {
 			return err
 		}
 		stop := startFaultAgent(ctx, api, *c, roleLog, cancel)
+		defer stop()
+	}
+	if c := cfg.Maintenance; c != nil {
+		l, err := net.Listen("tcp", c.Listen)
+		if err != nil {
+			return err
+		}
+		stop := serveMaintenance(l, registry, log, cancel)
 		defer stop()
 	}
 	log.Info("node started", "roles", cfg.Roles)
@@ -681,9 +694,10 @@ func agwStore(stores roleStores, node string, role config.Role, log *slog.Logger
 // startIBCF makes the IBCF and its two UAs: the internal one on Mx,
 // towards the home network, and the external one on Ici, towards the
 // peers (TS 29.165 3.2). The IBCF is a B2BUA (TS 24.229 5.10.5), so its
-// transports belong to the UAs rather than to startSIP. The caller
-// closes the IBCF when the node stops.
-func startIBCF(homeDomain string, c config.IBCF, store ibcf.Store, locator ims.Locator,
+// transports belong to the UAs rather than to startSIP. It counts in
+// registry, the registry of the node. The caller closes the IBCF when
+// the node stops.
+func startIBCF(homeDomain string, c config.IBCF, store ibcf.Store, locator ims.Locator, registry *metrics.Registry,
 	listen func(config.SIP) (*sip.TransportLayer, error), log *slog.Logger) (*ibcf.IBCF, error) {
 	internal := sip.URI{Scheme: "sip", Host: c.SIP.Host, Port: int(c.SIP.Listen.Port())}
 	external := sip.URI{Scheme: "sip", Host: c.ExternalSIP.Host, Port: int(c.ExternalSIP.Listen.Port())}
@@ -703,6 +717,7 @@ func startIBCF(homeDomain string, c config.IBCF, store ibcf.Store, locator ims.L
 		TrGWPeerAddress:  c.TrGW.PeerAddress,
 		InternalTimers:   c.SIP.Timers(),
 		ExternalTimers:   c.ExternalSIP.Timers(),
+		Metrics:          registry,
 	}, peers, agw.NewClient(c.TrGW.Control), store, locator, log)
 	if err != nil {
 		return nil, err
@@ -813,6 +828,23 @@ func startFaultAgent(ctx context.Context, l net.Listener, c config.Fault, log *s
 	}()
 	log.Info("fault API listening", "address", l.Addr().String(), "project", c.ComposeProject, "tools_image", c.ToolsImage)
 	return func() { api.Close() }
+}
+
+// serveMaintenance serves the maintenance listener of the node on l:
+// the metrics of its roles at /metrics, in the text format that
+// Prometheus scrapes. The function it returns stops the listener.
+func serveMaintenance(l net.Listener, registry *metrics.Registry, log *slog.Logger, cancel context.CancelFunc) func() {
+	mux := http.NewServeMux()
+	mux.Handle("GET /metrics", metrics.NewHandler(registry))
+	server := &http.Server{Handler: mux}
+	go func() {
+		if err := server.Serve(l); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			log.Error("maintenance listener failed", "error", err.Error())
+			cancel()
+		}
+	}()
+	log.Info("maintenance listener listening", "address", l.Addr().String())
+	return func() { server.Close() }
 }
 
 // iqRelay is the name by which a dialog of the P-CSCF remembers the

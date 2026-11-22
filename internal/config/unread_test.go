@@ -9,8 +9,10 @@ import (
 	"github.com/yuu-biz/ims-practice/internal/hss"
 )
 
+// The node itself reads the maintenance section: it serves its metrics
+// and its maintenance API there.
 func TestUnreadIsEmptyForAConfigurationThatTheRolesRead(t *testing.T) {
-	cfg, err := Parse(strings.NewReader(scscfYAML))
+	cfg, err := Parse(strings.NewReader(scscfYAML + "maintenance: {listen: 0.0.0.0:8085}\n"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -20,15 +22,14 @@ func TestUnreadIsEmptyForAConfigurationThatTheRolesRead(t *testing.T) {
 }
 
 func TestUnreadNamesEverySectionThatNoRoleReads(t *testing.T) {
-	yaml := scscfYAML + "maintenance: {listen: 0.0.0.0:9090}\n"
-	yaml = strings.Replace(yaml, "    host: scscf.ims.mnc001.mcc001.3gppnetwork.org\n",
+	yaml := strings.Replace(scscfYAML, "    host: scscf.ims.mnc001.mcc001.3gppnetwork.org\n",
 		"    host: scscf-1.ims.mnc001.mcc001.3gppnetwork.org\n    pool: scscf.ims.mnc001.mcc001.3gppnetwork.org\n    transaction_timeout: 4s\n", 1)
 	yaml = strings.Replace(yaml, "  max_expires: 600\n", "  max_expires: 600\n  restoration: true\n", 1)
 	cfg, err := Parse(strings.NewReader(yaml))
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []string{"maintenance", "scscf.sip.pool", "scscf.restoration"}
+	want := []string{"scscf.sip.pool", "scscf.restoration"}
 	if got := cfg.Unread(); !slices.Equal(got, want) {
 		t.Errorf("Unread() = %v, want %v", got, want)
 	}
