@@ -699,14 +699,14 @@ async function send(method: string, path: string, init: RequestInit = {}): Promi
 // settings for a rollback in conflict.
 async function httpError(response: Response): Promise<HttpError> {
   const text = (await response.text()).trim();
-  const fallback = text || `${response.status} ${response.statusText}`;
+  const status = `${response.status} ${response.statusText}`;
   try {
     const o = object(JSON.parse(text));
-    if (typeof o["error"] === "string") return new HttpError(response.status, o["error"], stringMap(o, "settings"));
+    if (typeof o["error"] === "string") return new HttpError(response.status, o["error"] || status, stringMap(o, "settings"));
   } catch {
     // Not an ErrorBody, such as the answer of a proxy: the text is the message.
   }
-  return new HttpError(response.status, fallback);
+  return new HttpError(response.status, text || status);
 }
 
 // --- Parsing ---
