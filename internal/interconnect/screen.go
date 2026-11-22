@@ -195,14 +195,3 @@ func indexOutside(s string, sep byte) int {
 	}
 	return -1
 }
-
-// isInDialog reports whether a request belongs to a dialog: its To has
-// a tag (RFC 3261 12.2).
-func isInDialog(req *sip.Message) bool {
-	to, err := sip.ParseNameAddr(req.Get("To"))
-	if err != nil {
-		return false
-	}
-	_, ok := to.Params.Get("tag")
-	return ok
-}
