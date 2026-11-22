@@ -10,9 +10,10 @@
 # get no answer and do not get into network A. Last, the captures of
 # the three bridges are read: each IBCF is a B2BUA, so the INVITEs on
 # either side of it have Call-IDs of their own; network B's capture
-# and the link's hold no address and no node name of network A, and
-# network A's none of network B. Every node of both networks and of
-# the link must keep its container, apart from the IBCF that a mismatch
+# and the link's hold no address, no node name and no identity made
+# from an IMSI of network A, and network A's capture holds no address
+# and no node name of network B. Every node of both networks and of the
+# link must keep its container, apart from the IBCF that a mismatch
 # scenario starts again with another agreement: that IBCF gets a new
 # container each time, and no other node changes with it.
 #
@@ -616,6 +617,25 @@ pcap="$home_pcap" none "node names of network B in network A's capture" \
 	"(sip || sdp) && frame matches \"[@/: <]$node_names\\\\.ims\\\\.mnc002\""
 pcap="$nni_pcap" none "node names of network B on the link" \
 	"(sip || sdp) && frame matches \"[@/: <]$node_names\\\\.ims\\\\.mnc002\""
+
+# The public identities of network A hold its users' numbers, so no
+# identity made from an IMSI of network A leaves it. 001010 begins
+# network A's test IMSIs: its private identities carry one, and so does
+# the temporary public identity that a phone without an ISIM derives,
+# which the operator bars (TS 23.228 E.3.1).
+no_imsi_identity() {
+	local where="$1" filter='sip && frame contains "sip:001010"' frames
+	frames="$(tshark_fields "$filter" | grep . | tr '\n' ' ' || true)"
+	if [ -z "$frames" ]; then
+		echo "ok   no identity made from an IMSI of network A in $where"
+		return
+	fi
+	echo "FAIL an identity made from an IMSI of network A is in $where, in frames ${frames% }:" \
+		"$(tshark_fields "$filter" sip.r-uri sip.From sip.To sip.P-Asserted-Identity | first_line)"
+	fail=1
+}
+pcap="$peer_pcap" no_imsi_identity "network B's capture"
+pcap="$nni_pcap" no_imsi_identity "the link"
 
 for pcap in "$home_pcap" "$peer_pcap" "$nni_pcap"; do
 	none "malformed SIP, SDP, DNS or SMS packets in $pcap" \
