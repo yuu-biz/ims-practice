@@ -47,6 +47,7 @@ func TestUnreadKeepsTheStoreOfARoleThatReadsIt(t *testing.T) {
 		{RoleHSS, Config{HSS: &hss.Config{}}},
 		{RoleIPSMGW, Config{IPSMGW: &IPSMGW{}}},
 		{RoleMMTel, Config{MMTel: &MMTel{}}},
+		{RoleMRFC, Config{MRFC: &MRFC{}}},
 	} {
 		tt.cfg.Store = &Store{Kind: StoreValkey, Address: "valkey:6379"}
 		if got := tt.cfg.Unread(); len(got) != 0 {

@@ -40,6 +40,7 @@ import (
 	"github.com/yuu-biz/ims-practice/internal/kvstore/ipsmgwstore"
 	"github.com/yuu-biz/ims-practice/internal/kvstore/kvjson"
 	"github.com/yuu-biz/ims-practice/internal/kvstore/mmtelstore"
+	"github.com/yuu-biz/ims-practice/internal/kvstore/mrfcstore"
 	"github.com/yuu-biz/ims-practice/internal/kvstore/pcscfstore"
 	"github.com/yuu-biz/ims-practice/internal/kvstore/scscfstore"
 	"github.com/yuu-biz/ims-practice/internal/kvstore/scstore"
@@ -331,7 +332,7 @@ func run(configPath string, log *slog.Logger) error {
 			processors = append(processors, mrfc.Processor{Name: url, Control: client, Announcements: client})
 		}
 		m, err := mrfc.New(mrfc.Config{Host: c.SIP.Host, Port: int(c.SIP.Listen.Port()), NotifyURL: c.NotifyURL()},
-			processors, mrfc.NewMemoryStore(), resolver, roleLog)
+			processors, mrfcStore(stores, roleLog), resolver, roleLog)
 		if err != nil {
 			transport.Close()
 			return err
@@ -526,6 +527,16 @@ func mmtelStore(stores roleStores, log *slog.Logger) mmtelStores {
 		return mmtelstore.New(kv, cfg)
 	}
 	return mmtel.NewMemoryStore()
+}
+
+// mrfcStore is where the MRFC keeps which MRFP and which context hold
+// the mix of each conference, so that a party who reaches any instance
+// joins the same mix (TS 29.333 5.17.2.30).
+func mrfcStore(stores roleStores, log *slog.Logger) mrfc.Store {
+	if kv, cfg, ok := stores.adapter(log); ok {
+		return mrfcstore.New(kv, cfg)
+	}
+	return mrfc.NewMemoryStore()
 }
 
 // ipsmgwStore is where the IP-SM-GW keeps the deliveries it is waiting

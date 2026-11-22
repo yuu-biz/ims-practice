@@ -353,6 +353,10 @@ func TestRoleStoresAreTheSharedStoreOfTheNode(t *testing.T) {
 			_, _, err := mmtelStore(s, quiet()).CallOf(ctx, leg)
 			return err
 		}},
+		{string(config.RoleMRFC), func(s roleStores) error {
+			_, _, err := mrfcStore(s, quiet()).Conference(ctx, "conference-1")
+			return err
+		}},
 		{string(config.RoleIPSMGW), func(s roleStores) error {
 			_, _, err := ipsmgwStore(s, quiet()).Delivery(ctx, "a-call-id")
 			return err
