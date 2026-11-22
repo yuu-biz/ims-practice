@@ -140,6 +140,7 @@ func startIMS(t *testing.T, n int) *network {
 	scscfNode, scscfPeer := connect("scscf."+domain, diameter.ApplicationIDCx, func(m *diam.Message) *diam.Message { return scscfRole.Load().Handle(m) })
 	s := scscf.New(scscf.Config{ServerName: "sip:scscf." + domain + ":5060", Host: "scscf." + domain, Port: 5060,
 		HomeDomain: domain, MinExpires: time.Second, MaxExpires: time.Hour}, scscfPeer, scscfNode, scscf.NewMemoryStore(), net.dns, quiet())
+	t.Cleanup(s.Close)
 	scscfRole.Store(s)
 	scscfStack := newStack(t, sip.Timers{}, s.OnRequest)
 	s.SetStack(scscfStack)

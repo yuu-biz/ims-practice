@@ -195,6 +195,9 @@ func run(configPath string, log *slog.Logger) error {
 			IBCF:       c.IBCF,
 			UserLocks:  stores.locks(config.RoleSCSCF, roleLog),
 		}, hssPeer(peers), node, scscfStore(stores, roleLog), resolver, roleLog)
+		// The sweep that handles the expiries of the users runs until the
+		// node stops.
+		defer s.Close()
 		scscfRole.Store(s)
 		stack, err := startSIP(config.RoleSCSCF, c.SIP, s.OnRequest, s.OnACK)
 		if err != nil {

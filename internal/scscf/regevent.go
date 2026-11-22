@@ -296,44 +296,45 @@ func (s *SCSCF) endRegistration(ctx context.Context, reg Registration, event reg
 }
 
 // subscriptionExpired ends a subscription that was not refreshed (RFC
-// 6665 4.2.1.4).
-func (s *SCSCF) subscriptionExpired(id sip.DialogID) {
-	ctx := context.Background()
+// 6665 4.2.1.4). It returns the failure of the store or of the lock that
+// left the subscription where it was, so that the expiry is handled
+// again (handleExpiry).
+func (s *SCSCF) subscriptionExpired(ctx context.Context, id sip.DialogID) error {
 	log := s.log.With("call_id", id.CallID)
 	sub, unlock, ok, err := s.lockSubscription(ctx, id)
 	if err != nil {
-		log.Warn("expiry of a reg event subscription not handled: the store failed; it stays until the registration ends", "error", err.Error())
-		return
+		return err
 	}
 	if !ok {
-		return
+		return nil
 	}
 	defer unlock()
 	// Under the lock, the subscriber may have refreshed the subscription
 	// since its expiry came up.
 	if time.Now().Before(sub.Expires) {
-		return
+		return nil
 	}
 	reg, registered, err := s.store.Registration(ctx, sub.PrivateIdentity)
 	if err != nil {
-		log.Warn("expiry of a reg event subscription not handled: the store failed; it stays until the registration ends", "error", err.Error())
-		return
+		return err
 	}
 	sub.Terminate(sip.ReasonTimeout)
 	doc := reginfo.Document{}
 	if registered {
 		doc = regInfo(reg, reginfo.Active, reg.ContactEvent, time.Now())
 	}
-	s.notify(ctx, sub, doc, log)
+	return s.notify(ctx, sub, doc, log)
 }
 
 // notify sends sub the next NOTIFY with doc, once the store holds what
-// the NOTIFY changes. The lock of the user is held.
-func (s *SCSCF) notify(ctx context.Context, sub Subscription, doc reginfo.Document, log *slog.Logger) {
+// the NOTIFY changes. The lock of the user is held. It returns the
+// failure of the store that stopped it from sending; a caller that sends
+// to every subscription of a user goes on to the next one.
+func (s *SCSCF) notify(ctx context.Context, sub Subscription, doc reginfo.Document, log *slog.Logger) error {
 	n, err := s.nextNotify(sub, doc)
 	if err != nil {
 		log.Warn("reg event document not built", "error", err.Error())
-		return
+		return nil
 	}
 	if err := s.keepSubscription(ctx, n.sub); err != nil {
 		// Sent, the NOTIFY would leave the next one with its CSeq, which
@@ -341,9 +342,10 @@ func (s *SCSCF) notify(ctx context.Context, sub Subscription, doc reginfo.Docume
 		// 12.2.1.1).
 		log.Warn("reg event NOTIFY not sent: the store failed; the subscription stays as it was until the next event or its expiry",
 			"subscriber", sub.Dialog.RemoteURI, "error", err.Error())
-		return
+		return err
 	}
 	s.sendNotify(n, log)
+	return nil
 }
 
 // notification is a NOTIFY of the reg event package, with the
@@ -374,22 +376,13 @@ func (s *SCSCF) nextNotify(sub Subscription, doc reginfo.Document) (notification
 }
 
 // keepSubscription stores sub as a NOTIFY leaves it, and removes it
-// when the NOTIFY ends it. Its expiry timer follows, once the store has
-// changed.
+// when the NOTIFY ends it. Its expiry goes with it, in the store.
 func (s *SCSCF) keepSubscription(ctx context.Context, sub Subscription) error {
 	id := sub.Dialog.ID
 	if sub.State == sip.SubscriptionTerminated {
-		if err := s.store.DeleteSubscription(ctx, id); err != nil {
-			return err
-		}
-		s.subscriptionTimers.stop(id)
-		return nil
+		return s.store.DeleteSubscription(ctx, id)
 	}
-	if err := s.store.PutSubscription(ctx, sub); err != nil {
-		return err
-	}
-	s.subscriptionTimers.start(id, time.Until(sub.Expires), func() { s.subscriptionExpired(id) })
-	return nil
+	return s.store.PutSubscription(ctx, sub)
 }
 
 // sendNotify sends a NOTIFY whose subscription the store holds as the
@@ -449,7 +442,6 @@ func (s *SCSCF) readNotifyAnswer(ct *sip.ClientTransaction, id sip.DialogID, log
 		log.Warn("reg event subscription not removed after a failed NOTIFY: the store failed; it stays until it expires", "status", status, "error", err.Error())
 		return
 	}
-	s.subscriptionTimers.stop(id)
 	log.Info("reg event subscription removed after a failed NOTIFY", "status", status, "error", fmt.Sprint(ct.Err()))
 }
 

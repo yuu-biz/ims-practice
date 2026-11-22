@@ -42,10 +42,11 @@ type fakeHSS struct {
 	hss *hss.HSS
 	mu  sync.Mutex
 	sar []cx.ServerAssignmentType
-	// stalled, when set, holds the MARs of stalledUser until it closes.
-	// The S-CSCF reads it from its own goroutines, after a message over
-	// a socket, which the race detector does not see as a hand-over;
-	// hence mu.
+	// stalled, when set, holds the requests of stalledUser until it
+	// closes, or until the caller's context ends, as an HSS that does not
+	// answer does. The S-CSCF reads it from its own goroutines, after a
+	// message over a socket, which the race detector does not see as a
+	// hand-over; hence mu.
 	stalled     <-chan struct{}
 	stalledUser string
 }
@@ -56,7 +57,7 @@ func (f *fakeHSS) stall(user string, until <-chan struct{}) {
 	f.stalled, f.stalledUser = until, user
 }
 
-func (f *fakeHSS) Request(_ context.Context, m *diam.Message) (*diam.Message, error) {
+func (f *fakeHSS) Request(ctx context.Context, m *diam.Message) (*diam.Message, error) {
 	b, err := m.Serialize()
 	if err != nil {
 		return nil, err
@@ -65,21 +66,28 @@ func (f *fakeHSS) Request(_ context.Context, m *diam.Message) (*diam.Message, er
 	if err != nil {
 		return nil, err
 	}
+	user := ""
 	if r, err := cx.ParseMultimediaAuthRequest(req); err == nil && req.Header.CommandCode == cx.CommandMultimediaAuth {
-		f.mu.Lock()
-		stalled := f.stalled
-		if r.UserName != f.stalledUser {
-			stalled = nil
-		}
-		f.mu.Unlock()
-		if stalled != nil {
-			<-stalled
-		}
+		user = r.UserName
 	}
 	if r, err := cx.ParseServerAssignmentRequest(req); err == nil && req.Header.CommandCode == cx.CommandServerAssignment {
+		user = r.UserName
 		f.mu.Lock()
 		f.sar = append(f.sar, r.ServerAssignmentType)
 		f.mu.Unlock()
+	}
+	f.mu.Lock()
+	stalled := f.stalled
+	if user != f.stalledUser {
+		stalled = nil
+	}
+	f.mu.Unlock()
+	if stalled != nil {
+		select {
+		case <-stalled:
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
 	}
 	return f.hss.Handle(req), nil
 }
@@ -142,9 +150,15 @@ func newHarnessWithHSS(t *testing.T, cfg Config, resolver Resolver, hssCfg hss.C
 	if cfg.MaxExpires == 0 {
 		cfg.MaxExpires = time.Hour
 	}
+	// The sweep comes round often, so that a test does not wait a second
+	// for an expiry that is due.
+	if cfg.SweepInterval == 0 {
+		cfg.SweepInterval = 20 * time.Millisecond
+	}
 	store := NewMemoryStore()
 	failing := &failingStore{MemoryStore: store}
 	s := New(cfg, f, node, failing, resolver, quiet())
+	t.Cleanup(s.Close)
 	stack := newStack(t, s.OnRequest)
 	s.SetStack(stack)
 	return &harness{t: t, hss: f, scscf: stack, role: s, store: store, failing: failing, ue: newStack(t, func(*sip.ServerTransaction) {})}
@@ -336,6 +350,51 @@ func TestRegAwaitAuthExpiry(t *testing.T) {
 			t.Fatalf("SARs = %v, want AUTHENTICATION_TIMEOUT", h.hss.assignments())
 		}
 		time.Sleep(20 * time.Millisecond)
+	}
+}
+
+// TestASlowExpiryHoldsUpNeitherAnotherNorClose: the HSS does not answer
+// the SAR of one user's expiry, so that handler waits. The expiry of
+// another user is handled all the same, and Close does not wait for the
+// one that hangs: it ends its Cx request and returns.
+func TestASlowExpiryHoldsUpNeitherAnotherNorClose(t *testing.T) {
+	const otherIMPI = "001010000000002@" + domain
+	h := newHarnessWithHSS(t, Config{ExpiryLease: 10 * time.Second}, nil, hss.Config{},
+		hss.Subscription{PrivateIdentity: impi, PublicIdentities: []string{impu}, Password: password})
+	stalled := make(chan struct{})
+	defer close(stalled)
+	h.hss.stall(impi, stalled)
+	ctx := context.Background()
+	// A registration of impi whose time is up: its handler sends the SAR
+	// that the HSS leaves unanswered, and waits there.
+	if err := h.store.PutRegistration(ctx, Registration{PrivateIdentity: impi, PublicIdentities: []string{impu},
+		Contact: ueContact, Expires: time.Now().Add(-time.Second)}); err != nil {
+		t.Fatal(err)
+	}
+	waitForAssignments(t, h.hss, cx.TimeoutDeregistration)
+
+	// The rounds that follow go on claiming: the reg-await-auth of
+	// another user, which runs out while that handler waits, is handled.
+	if err := h.store.PutChallenge(ctx, Challenge{PrivateIdentity: otherIMPI, PublicIdentity: impu, Nonce: "n1",
+		Expires: time.Now().Add(-time.Second), KeepUntil: time.Now().Add(time.Hour)}); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(3 * time.Second)
+	for !slices.Contains(h.hss.assignments(), cx.AuthenticationTimeout) {
+		if time.Now().After(deadline) {
+			t.Fatalf("SARs = %v, want AUTHENTICATION_TIMEOUT while the other expiry waits for the HSS", h.hss.assignments())
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	closed := make(chan struct{})
+	go func() {
+		h.role.Close()
+		close(closed)
+	}()
+	select {
+	case <-closed:
+	case <-time.After(3 * time.Second):
+		t.Error("Close waited for the handler that the HSS keeps waiting")
 	}
 }
 

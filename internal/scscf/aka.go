@@ -34,7 +34,7 @@ func (s *SCSCF) registerAKA(st *sip.ServerTransaction, privateID, publicID strin
 			s.challengeAKA(st, privateID, publicID, nil, false, log)
 			return
 		}
-		if err := s.endChallenge(ctx, privateID); err != nil {
+		if err := s.store.DeleteChallenge(ctx, privateID); err != nil {
 			s.storeFailed(st, err, log)
 			return
 		}
@@ -66,11 +66,11 @@ func (s *SCSCF) registerAKA(st *sip.ServerTransaction, privateID, publicID strin
 		// RES is good for one response; a later nonce count asks for a
 		// new challenge, as for SIP Digest (5.4.1.2.3B).
 		log.Info("stale nonce")
-		// The timer of the challenge goes on until the new challenge,
-		// once stored, takes its place.
+		// The reg-await-auth of the challenge stands until the new
+		// challenge, once stored, takes its place.
 		s.challengeAKA(st, privateID, publicID, nil, true, log)
 	default:
-		if err := s.endChallenge(ctx, privateID); err != nil {
+		if err := s.store.DeleteChallenge(ctx, privateID); err != nil {
 			s.storeFailed(st, err, log)
 			return
 		}
@@ -116,7 +116,7 @@ func (s *SCSCF) reregister(st *sip.ServerTransaction, privateID, publicID string
 // offers AKAv1-MD5 only, not AKAv2-SHA-256 first and AKAv1-MD5 after
 // it: SIPp, the independent test peer, speaks AKAv1-MD5 only.
 func (s *SCSCF) challengeAKA(st *sip.ServerTransaction, privateID, publicID string, resync *cx.Resynchronization, stale bool, log *slog.Logger) {
-	answer, err := s.request(cx.MultimediaAuthRequest{
+	answer, err := s.request(context.Background(), cx.MultimediaAuthRequest{
 		Header:                  cx.NewHeader(s.node, "", s.cfg.HomeDomain),
 		UserName:                privateID,
 		PublicIdentity:          publicID,
@@ -184,10 +184,10 @@ func (s *SCSCF) resynchronise(st *sip.ServerTransaction, ch Challenge, auts stri
 // 33.203 6.1.1).
 func (s *SCSCF) authenticationFailed(st *sip.ServerTransaction, privateID, publicID, hssHost, why string, log *slog.Logger) {
 	log.Info(why)
-	if err := s.endChallenge(context.Background(), privateID); err != nil {
+	if err := s.store.DeleteChallenge(context.Background(), privateID); err != nil {
 		s.storeFailed(st, err, log)
 		return
 	}
-	s.serverAssignment(privateID, publicID, hssHost, cx.AuthenticationFailure)
+	s.serverAssignment(context.Background(), privateID, publicID, hssHost, cx.AuthenticationFailure)
 	s.respond(st, 403, nil)
 }

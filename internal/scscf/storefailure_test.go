@@ -375,3 +375,30 @@ func TestStaleAKAResponseWhenTheStoreFails(t *testing.T) {
 	h.failing.repair()
 	waitForAssignments(t, h.hss, cx.AuthenticationTimeout)
 }
+
+// TestAnExpiryIsClaimedAgainWhenTheStoreFails: the instance that claimed
+// an expiry cannot read the item it is of, so it handles nothing and
+// marks nothing done. Once its claim has run out the expiry is claimed
+// again, and the registration that expired is ended then.
+func TestAnExpiryIsClaimedAgainWhenTheStoreFails(t *testing.T) {
+	const lease = 200 * time.Millisecond
+	h := newHarness(t, Config{MinExpires: time.Second, MaxExpires: time.Second, ExpiryLease: lease})
+	callID := sip.NewCallID()
+	r := h.register(callID, 1, 600000, initial)
+	auth, _ := answer(t, r, password, "ip-assoc-pending")
+	if r := h.register(callID, 2, 600000, auth); r.StatusCode != 200 {
+		t.Fatalf("registration got %d", r.StatusCode)
+	}
+	// The registration expires while no handler can read it, so every
+	// instance that claims its expiry gives up.
+	h.failing.fail("Registration")
+	time.Sleep(time.Second + 3*lease)
+	if got := h.hss.assignments(); !slices.Equal(got, []cx.ServerAssignmentType{cx.AssignRegistration}) {
+		t.Fatalf("SARs while the store fails = %v, want only the one of the registration", got)
+	}
+	h.failing.repair()
+	waitForAssignments(t, h.hss, cx.AssignRegistration, cx.TimeoutDeregistration)
+	if _, ok, err := h.store.Registration(context.Background(), impi); err != nil || ok {
+		t.Errorf("the registration is still there after the expiry: %v, %v", ok, err)
+	}
+}
