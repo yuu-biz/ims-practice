@@ -211,17 +211,20 @@ func TestRegisterThroughThePCSCF(t *testing.T) {
 }
 
 // TestNextICSCFWhenTheFirstIsSilentOrTurnsAway walks the targets of
-// TS 24.229 5.2.2.1 item 7: a silent I-CSCF and one that answers 480 are
-// skipped, and the third answers.
+// TS 24.229 5.2.2.1 item 7: a silent I-CSCF, one that answers 480 and
+// one that answers 503 (RFC 3263 4.3) are skipped, and the fourth
+// answers.
 func TestNextICSCFWhenTheFirstIsSilentOrTurnsAway(t *testing.T) {
 	silent := newStack(t, func(*sip.ServerTransaction) {})
 	away := newStack(t, func(st *sip.ServerTransaction) { st.Respond(sip.NewResponse(st.Request, 480, sip.NewTag())) })
+	unavailable := newStack(t, func(st *sip.ServerTransaction) { st.Respond(sip.NewResponse(st.Request, 503, sip.NewTag())) })
 	good := newStack(t, func(st *sip.ServerTransaction) { st.Respond(sip.NewResponse(st.Request, 401, sip.NewTag())) })
-	targets := []sip.Destination{{Transport: sip.UDP, Addr: silent.LocalAddr()}, {Transport: sip.UDP, Addr: away.LocalAddr()}, {Transport: sip.UDP, Addr: good.LocalAddr()}}
+	targets := []sip.Destination{{Transport: sip.UDP, Addr: silent.LocalAddr()}, {Transport: sip.UDP, Addr: away.LocalAddr()},
+		{Transport: sip.UDP, Addr: unavailable.LocalAddr()}, {Transport: sip.UDP, Addr: good.LocalAddr()}}
 	if got := registerVia(t, targets); got != 401 {
-		t.Errorf("got %d, want the 401 of the third I-CSCF", got)
+		t.Errorf("got %d, want the 401 of the fourth I-CSCF", got)
 	}
-	if got := registerVia(t, targets[:2]); got != 504 {
+	if got := registerVia(t, targets[:3]); got != 504 {
 		t.Errorf("with no I-CSCF left got %d, want 504", got)
 	}
 }

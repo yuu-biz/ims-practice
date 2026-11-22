@@ -16,15 +16,10 @@ type Locator interface {
 	Locate(ctx context.Context, host string, port int, transport sip.Transport) ([]sip.Destination, error)
 }
 
-// Targets is where to send a request for u (RFC 3263), as the targets
-// that sip.Stack.SendRequest takes: the first transport and address
-// that DNS gives.
-//
-// SIMPLIFIED: RFC 3263 4.2 and 4.3. Only the first target is used. When
-// the request to it fails, with a 503, a transport error or no response
-// before Timer B or F, the request is not sent again to the next target
-// in a new transaction. Every name in the DNS of this project leads to
-// one server, so there is no next target to try.
+// Targets is where to send a request for u (RFC 3263 4): every
+// transport and address that DNS gives, best first, as
+// sip.Stack.SendRequest takes them. The stack sends the request to the
+// first and on to the next whenever it fails at one (4.3).
 func Targets(ctx context.Context, loc Locator, u sip.URI) ([]sip.Destination, error) {
 	transport, _ := u.Params.Get("transport")
 	targets, err := loc.Locate(ctx, u.Host, u.Port, sip.Transport(strings.ToUpper(transport)))
@@ -34,7 +29,7 @@ func Targets(ctx context.Context, loc Locator, u sip.URI) ([]sip.Destination, er
 	if len(targets) == 0 {
 		return nil, fmt.Errorf("ims: no address for %s", u)
 	}
-	return targets[:1], nil
+	return targets, nil
 }
 
 // IsInDialog tells a request within a dialog from an initial one: only

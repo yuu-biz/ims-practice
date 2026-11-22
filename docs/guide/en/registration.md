@@ -114,6 +114,8 @@ The P-CSCF looks up the domain of the Request-URI in DNS, as RFC 3263 describes:
 
 The records are in `deploy/compose/dns/ims.mnc001.mcc001.3gppnetwork.org.zone`.
 
+When the I-CSCF runs as several instances, the SRV records give one target for each, best first. The P-CSCF sends the REGISTER to the first. When that I-CSCF cannot be reached, gives no response before Timer F, or answers 3xx, 480 or 503, the P-CSCF sends the REGISTER to the next one, in a new transaction with a new branch in its Via, and answers 504 when none is left (TS 24.229 5.2.2.1 item 7, RFC 3263 4.3). Every SIP node here does the same with the targets of any other request, but sends it on only after a 503, a transport error, or no response at all before Timer B or Timer F (RFC 3263 4.3). The CANCEL of an INVITE, and the ACK for a 300-699 response to it, go to the target that took the INVITE. In this network every name leads to one server, so the capture shows the first target only. Timer B and Timer F last 32 seconds by default. `transaction_timeout` in the `sip` section of a role in the node's configuration shortens them, so that a request sent to a server that has stopped moves on to the next target sooner.
+
 Before it forwards the REGISTER, the P-CSCF adds these headers (TS 24.229 5.2.2.1):
 
 - **Path** with its own URI, `sip:term@pcscf...`. Requests to this UE, such as the INVITE of an incoming call, come back through the P-CSCF along this path (RFC 3327).
