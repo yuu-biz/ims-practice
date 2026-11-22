@@ -235,8 +235,15 @@ func errText(err error) string {
 }
 
 // toTag is the To tag of m.
-func toTag(m *sip.Message) string {
-	na, err := sip.ParseNameAddr(m.Get("To"))
+func toTag(m *sip.Message) string { return tagOf(m, "To") }
+
+// fromTag is the From tag of m: the tag of the dialog's peer in a
+// request that the peer sent (RFC 3261 12.1.1).
+func fromTag(m *sip.Message) string { return tagOf(m, "From") }
+
+// tagOf is the tag of the To or From of m, named by field.
+func tagOf(m *sip.Message, field string) string {
+	na, err := sip.ParseNameAddr(m.Get(field))
 	if err != nil {
 		return ""
 	}
@@ -557,7 +564,9 @@ func (c *call) answer(out *sip.OutgoingCall, resp *sip.Message) {
 	}
 	// The dialogs keep their identifiers, by which the record is
 	// deleted, however often it is written again.
-	record := c.record(out)
+	incoming, _ := c.in.Dialog()
+	outgoing, _ := out.Dialog()
+	record := c.record(incoming, outgoing)
 	c.recordMu.Lock()
 	c.recorded = true
 	c.recordMu.Unlock()
@@ -676,40 +685,23 @@ func crossed(resp *sip.Message, err error) bool {
 	return resp.StatusCode == 491
 }
 
-// keepRecord writes the record of the call into the Store, with both
-// dialogs as they are now: once the callee has answered, and again
-// after each request within the dialogs. A target refresh request
-// changes the remote target of its dialog (RFC 3261 12.2), and each
-// request the CSeq numbers: another instance that ends the dialogs
-// needs both (12.2.1.1, 12.2.2). Before the answer and after the end
-// of the call it writes nothing.
+// keepRecord writes the record of the call into the Store with both
+// dialogs as they are now (KeepDialogs).
 func (c *call) keepRecord() {
-	c.recordMu.Lock()
-	defer c.recordMu.Unlock()
-	if !c.recorded {
-		return
-	}
 	c.mu.Lock()
 	out := c.out
 	c.mu.Unlock()
-	// sip.IncomingCall carries no context. The Store bounds each of its
-	// operations itself: an adapter on a store outside the process gives
-	// each one a time limit.
-	if err := c.as.store.PutCall(context.Background(), c.record(out)); err != nil {
-		// The caller and the callee have their responses, so no request
-		// waits for the record. The call goes on in this instance; a
-		// request that looks the call up in the store, such as an INVITE
-		// whose Replaces names one of its legs, does not find it, or
-		// finds the dialogs as they were, until a later write succeeds.
-		c.log.Warn("call not kept in the store", "error", err.Error())
+	if out == nil {
+		return
 	}
+	in, _ := c.in.Dialog()
+	outgoing, _ := out.Dialog()
+	c.KeepDialogs(in, outgoing)
 }
 
-// record is the record of the call once both dialogs are confirmed.
-func (c *call) record(out *sip.OutgoingCall) CallRecord {
-	r := CallRecord{ServedUser: c.served.URI, SessionCase: c.served.SessionCase}
-	r.Incoming, _ = c.in.Dialog()
-	r.Outgoing, _ = out.Dialog()
+// record is the record of the call with its two dialogs.
+func (c *call) record(in, out sip.Dialog) CallRecord {
+	r := CallRecord{Incoming: in, Outgoing: out, ServedUser: c.served.URI, SessionCase: c.served.SessionCase}
 	c.mu.Lock()
 	r.Services = append(r.Services, c.acted...)
 	c.mu.Unlock()
