@@ -298,6 +298,10 @@ func (s *SCSCF) notify(sub Subscription, doc reginfo.Document, log *slog.Logger)
 // readNotifyAnswer removes the subscription when its NOTIFY fails the
 // way RFC 6665 4.2.2 lists: no answer within Timer F, or a response
 // that says the subscriber has lost it.
+//
+// SIMPLIFIED: TS 24.229 5.4.2.1.2. The term-ioi of the response is not
+// stored: it is for the charging records of the S-CSCF, which no node
+// of this project writes.
 func (s *SCSCF) readNotifyAnswer(ct *sip.ClientTransaction, id sip.DialogID, log *slog.Logger) {
 	var final *sip.Message
 	for resp := range ct.Responses() {
