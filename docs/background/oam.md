@@ -629,7 +629,7 @@ Prometheus と Grafana は別のコンテナとして動かすだけで、`ims` 
 #### `deploy/observability/` に置いたもの
 
 - `compose.observability.yaml`。`docker compose -f compose.yaml -f deploy/observability/compose.observability.yaml up -d` で、Prometheus（`prom/prometheus:v3.15.1`）と Grafana（`grafana/grafana:13.3.0`）を足します。`compose.yaml` は変えません。既定では起動しない（13 章の「採った選択」の 6）という方針を、profile ではなく別のファイルで満たしています。
-- `prometheus/prometheus.yml`。ノードは `<サービス名>:8085` の `/metrics` で指標を出すと仮に決めています。ポートは仮の値で、13 章の未決の論点の 3 で決める番号です。決まるまで、どのノードも down に見えます。
+- `prometheus/prometheus.yml`。ノードは `<サービス名>:8085` の `/metrics` で指標を出すと仮に決めています。ポートは仮の値で、13 章の未決の論点の 3 で決める番号です。今は S-CSCF だけがこの番号で指標を出すので、ほかのノードは down に見えます。
 - Grafana のデータソースとダッシュボード 1 枚の案。ノードの稼働、登録（TS 32.454 5.1.1 の成功率を含む）、セッションと原因ごとの失敗、Diameter の結果を並べます。
 - ライセンスは、Prometheus が Apache-2.0、Grafana が AGPL-3.0-only（一部のディレクトリは Apache-2.0）です。それぞれのリポジトリのタグにある `LICENSE` と、Grafana の `LICENSING.md` で確かめました。Grafana の扱いは 13 章の「採った選択」の 8 に書きました。
 - 版。Docker Hub に `prom/prometheus:v3.15.1`（2026 年 10 月 21 日に push）と `grafana/grafana:13.3.0`（2026 年 10 月 27 日に push）があることを確かめました。prometheus.io の「Download」のページでは、今の最新は 3.16.0、LTS は 3.13.5 です。固定した 3.15.1 は誤りではないので、変えていません。LTS に合わせるかは、作るときに決めます。
@@ -969,6 +969,8 @@ OAM とその画面、指標、警報は、ほかの部分に次のものを求�
 - 要件の「参照する主な仕様」に、TS 32.409、TS 32.454、TS 28.111、TS 28.622、TS 32.600 を足します。
 - 保守用の待ち受け（3 章）で `GET /metrics` に `metrics.NewHandler` を載せます。ポートが決まったら、`deploy/observability/prometheus/prometheus.yml` の targets と、`deploy/observability/observability_test.go` の `metricsPort` を同じ番号に直します（今は仮に 8085）。
 - 各役割で、5 章の「役割ごとの指標の案」の指標を登録して数えます。`metrics.Registry` はノードごとに 1 つ作り、役割の部品に渡します。
+
+このうち、`slog.LevelVar` を使うログ、保守用の待ち受けの `GET /metrics`、ノードごとに 1 つの `metrics.Registry` はできました。指標を数える役割は、今は S-CSCF（登録の試行、成功、失敗）と IBCF です。
 
 ### `internal/oam` のために要る HSS の口
 

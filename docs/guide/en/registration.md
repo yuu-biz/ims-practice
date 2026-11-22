@@ -472,7 +472,7 @@ While it is not `UNLOCKED`, the S-CSCF still serves the requests within a dialog
 
    The next `ue register` registers as before.
 
-The administrative state belongs to the process of the node: a node that starts again is `UNLOCKED`.
+The administrative state belongs to the process of the node: a node that starts again is `UNLOCKED`. `scripts/e2e-observability.sh` runs these steps and checks the capture.
 
 ## A request without an IP association
 
