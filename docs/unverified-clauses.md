@@ -34,3 +34,4 @@
 | `docs/background/cloud.md` の 1 章「開けるのは 2 つだけ」 | NAT 越しの IPsec には UDP のカプセル化が要り、その手順が TS 33.203 と TS 24.229 にある。 | TS 33.203、TS 24.229 | UDP のカプセル化を定める条項の番号。 |
 | `docs/background/cloud.md` の 3 章「キープアライブと、NAT とロードバランサーの寿命」 | TS 24.229 に、UE と P-CSCF が NAT を越えるための付録がある。 | TS 24.229 の NAT 越えの付録 | 付録の番号と、UE と P-CSCF の手順。 |
 | `docs/background/cloud.md` の 5 章「インターネットから引く名前」 | 3GPP は、PCO や DHCP で P-CSCF を見つける方法を定めている。 | TS 24.229 の P-CSCF の見つけ方 | 該当する条項の番号。 |
+| `internal/config/config.go` の `checkMediaControl` の `SIMPLIFIED:` と、`internal/h248/README.md`、`README.ja.md` の同じ行 | コントローラは、持っているメディアゲートウェイとそのコンテキストを、ほかのコントローラに渡さない。実網では、コントローラがゲートウェイを別のコントローラへ移す手順（ServiceChangeMgcId を使う Handoff）と、ゲートウェイが自分でほかのコントローラへ移る手順がある。 | H.248.1 (05/2002)、TS 29.334 | コンテキストを持ったままの結び付きを別のコントローラへ移せるかどうかと、それを定める条項の番号。`internal/h248/mediactl/gateway.go` が挙げる 11.2 と 11.5 は、予備のコントローラの一覧についての条項で、本文は読んでいない。 |

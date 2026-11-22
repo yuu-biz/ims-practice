@@ -329,7 +329,7 @@ func (raw rawConfig) validate(dir string) (Config, error) {
 		return Config{}, err
 	}
 	if raw.AGW != nil {
-		c, err := raw.AGW.validate()
+		c, err := raw.AGW.validate(true)
 		if err != nil {
 			return Config{}, fmt.Errorf("agw: %w", err)
 		}
@@ -435,7 +435,49 @@ func (raw rawConfig) validate(dir string) (Config, error) {
 	if err := cfg.checkPorts(); err != nil {
 		return Config{}, err
 	}
+	if err := cfg.checkMediaControl(); err != nil {
+		return Config{}, err
+	}
 	return cfg, nil
+}
+
+// checkMediaControl refuses the configurations that media control over
+// H.248 cannot serve. A media gateway registers with one controller, so
+// the association, and with it every context the gateway holds for this
+// node, belongs to the one instance that the gateway registered with.
+// Anything that assumes another instance can take those contexts over
+// is refused here, rather than left to fail on the first call that
+// reaches the other instance.
+//
+// SIMPLIFIED: a controller does not hand its media gateways to another
+// instance. A gateway follows the controller that a reply names while
+// it registers, and after a failure registers again with the controller
+// it was given, so it always ends at one controller; nothing moves an
+// association that already holds contexts. So a P-CSCF that controls
+// media over H.248 runs as one instance, and the configurations that
+// ask for a second one are refused here.
+func (c Config) checkMediaControl() error {
+	shared := c.Store != nil && c.Store.Kind == StoreValkey
+	if p := c.PCSCF; p != nil && p.MediaController != nil {
+		if p.SIP.Pool != "" {
+			return errors.New("pcscf.sip.pool: a P-CSCF that controls media over h248 runs as one instance, " +
+				"because a media gateway registers with one controller and no other instance can reach the contexts it holds")
+		}
+		if shared {
+			return errors.New("store: a P-CSCF that controls media over h248 cannot hand its dialogs to another instance, " +
+				"because a media gateway registers with one controller; leave out the store section or control the media relays over media_relays")
+		}
+	}
+	// The gateway's own table of which H.248 context holds which context
+	// of the relay is in its memory. A relay that opened the contexts of
+	// an earlier process again from the store would hold ports for
+	// contexts its gateway knows nothing about, and no controller could
+	// release them.
+	if a := c.AGW; a != nil && a.MediaGateway != nil && shared {
+		return errors.New("store: a media relay that takes its commands over h248 keeps no contexts across processes, " +
+			"because its gateway holds in memory which H.248 context is which; leave out the store section or serve the control API instead")
+	}
+	return nil
 }
 
 // section checks that a role's section is present exactly when the
@@ -504,6 +546,19 @@ func (c Config) checkPorts() error {
 			return err
 		}
 	}
+	// H.248 is carried over UDP, whose port numbers SIP shares, so the
+	// endpoints of media control go in the same list. A node that both
+	// controls media and relays it holds two of them.
+	if c.PCSCF != nil && c.PCSCF.MediaController != nil {
+		if err := listen("the H.248 controller of the pcscf role", c.PCSCF.MediaController.Listen); err != nil {
+			return err
+		}
+	}
+	if c.AGW != nil && c.AGW.MediaGateway != nil {
+		if err := listen("the H.248 gateway of the agw role", c.AGW.MediaGateway.Listen); err != nil {
+			return err
+		}
+	}
 	if err := c.checkMediaNodes(); err != nil {
 		return err
 	}
@@ -519,7 +574,9 @@ func (c Config) checkPorts() error {
 // checkMediaNodes makes sure that the HTTP servers of the media
 // control, the control API of agw and mrfp and the Notify server of
 // mrfc, take ports of their own in one node, and that agw and mrfp do
-// not share RTP ports.
+// not share RTP ports. A relay that takes its commands over H.248
+// serves no control API, so it brings no port here; checkPorts has its
+// H.248 endpoint instead.
 func (c Config) checkMediaNodes() error {
 	used := map[uint16]string{}
 	for _, l := range []struct {
@@ -527,7 +584,7 @@ func (c Config) checkMediaNodes() error {
 		set  bool
 		port func() uint16
 	}{
-		{"agw", c.AGW != nil, func() uint16 { return c.AGW.Control.Port() }},
+		{"agw", c.AGW != nil && c.AGW.MediaGateway == nil, func() uint16 { return c.AGW.Control.Port() }},
 		{"mrfp", c.MRFP != nil, func() uint16 { return c.MRFP.Control.Port() }},
 		{"the notify server of mrfc", c.MRFC != nil, func() uint16 { return c.MRFC.Notify.Port() }},
 	} {
