@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -12,6 +13,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -158,6 +160,47 @@ func (r *recorder) requests(node string, method sip.Method) []*sip.Message {
 		}
 	}
 	return out
+}
+
+// reachableStore is the Store of a network's IBCF: a MemoryStore that
+// fails every operation while down is set, as a store outside the
+// process does that the IBCF cannot reach.
+type reachableStore struct {
+	*ibcf.MemoryStore
+	down atomic.Bool
+}
+
+var errUnreachable = errors.New("the store cannot be reached")
+
+func (s *reachableStore) PutCall(ctx context.Context, r ibcf.CallRecord) error {
+	if s.down.Load() {
+		return errUnreachable
+	}
+	return s.MemoryStore.PutCall(ctx, r)
+}
+
+func (s *reachableStore) DeleteCall(ctx context.Context, instance, id string) error {
+	if s.down.Load() {
+		return errUnreachable
+	}
+	return s.MemoryStore.DeleteCall(ctx, instance, id)
+}
+
+func (s *reachableStore) CallsOf(ctx context.Context, instance string) ([]ibcf.CallRecord, error) {
+	if s.down.Load() {
+		return nil, errUnreachable
+	}
+	return s.MemoryStore.CallsOf(ctx, instance)
+}
+
+// callsOf are the records of instance in the network's Store.
+func (n *network) callsOf(t *testing.T, instance string) []ibcf.CallRecord {
+	t.Helper()
+	records, err := n.store.MemoryStore.CallsOf(context.Background(), instance)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return records
 }
 
 // fakeTrGW is a TrGW that hands out addresses without relaying
@@ -357,7 +400,7 @@ type network struct {
 	rec   *recorder
 	names *names
 	trgw  *fakeTrGW
-	store *ibcf.MemoryStore
+	store *reachableStore
 	// registries are the counters of each running IBCF instance, as
 	// each process of an instance has its own.
 	registries []*metrics.Registry
@@ -507,7 +550,7 @@ func newNetwork(t *testing.T, p plan, dns *names) *network {
 	t.Helper()
 	n := &network{name: p.name, plan: p, domain: p.domain, number: p.number, rec: &recorder{}, names: dns,
 		internal: netip.MustParsePrefix(p.internal + ".0/24"),
-		trgw:     newFakeTrGW(p.internal+".50", p.trgwPeer, p.oneAddressTrGW), store: ibcf.NewMemoryStore(),
+		trgw:     newFakeTrGW(p.internal+".50", p.trgwPeer, p.oneAddressTrGW), store: &reachableStore{MemoryStore: ibcf.NewMemoryStore()},
 		calls: make(chan *sip.IncomingCall, 4), messages: make(chan *sip.Message, 4)}
 
 	n.instances = n.openIBCFs(t, p)
@@ -694,6 +737,15 @@ func (n *network) startIBCFs(t *testing.T) {
 // startIBCF starts instance i on its transports.
 func (n *network) startIBCF(t *testing.T, i int) {
 	t.Helper()
+	if err := n.listenIBCF(t, i); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// listenIBCF makes instance i and has it listen on its transports. It
+// returns the error of Listen, and leaves the transports open then.
+func (n *network) listenIBCF(t *testing.T, i int) error {
+	t.Helper()
 	peers, err := ibcf.NewPeerTable(n.peerOf)
 	if err != nil {
 		t.Fatal(err)
@@ -719,10 +771,11 @@ func (n *network) startIBCF(t *testing.T, i int) {
 		t.Fatal(err)
 	}
 	if err := b.Listen(in.transports[0], in.transports[1]); err != nil {
-		t.Fatal(err)
+		return err
 	}
 	t.Cleanup(b.Close)
 	n.ibcfs[i] = b
+	return nil
 }
 
 // restartIBCF stops instance i and starts a new process of it, with the
@@ -730,8 +783,20 @@ func (n *network) startIBCF(t *testing.T, i int) {
 // recreated does. The counters of the new process start from zero.
 func (n *network) restartIBCF(t *testing.T, i int) {
 	t.Helper()
+	n.stopIBCF(t, i)
+	n.startIBCF(t, i)
+}
+
+// stopIBCF stops instance i, and opens its transports again for the
+// next process of it. The transports of a process whose Listen failed
+// are closed too.
+func (n *network) stopIBCF(t *testing.T, i int) {
+	t.Helper()
 	n.ibcfs[i].Close()
 	in := &n.instances[i]
+	for _, tl := range in.transports {
+		tl.Close()
+	}
 	for k, addr := range []netip.AddrPort{in.internal, in.external} {
 		side := []string{"internal", "external"}[k]
 		tl, err := listen(t, addr.Addr().String(), int(addr.Port()), fmt.Sprintf("ibcf%d-%s", i+1, side), n.rec)
@@ -740,7 +805,6 @@ func (n *network) restartIBCF(t *testing.T, i int) {
 		}
 		in.transports[k] = tl
 	}
-	n.startIBCF(t, i)
 }
 
 func (n *network) mustLocate(t *testing.T, host string) netip.AddrPort {

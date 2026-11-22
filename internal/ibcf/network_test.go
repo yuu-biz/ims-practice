@@ -803,8 +803,8 @@ func TestRequestFromNoPeerIsDiscarded(t *testing.T) {
 	if _, reserved := p.a.trgw.open(); reserved != 0 {
 		t.Errorf("network A's TrGW reserved %d contexts for the stranger", reserved)
 	}
-	if inA, _ := planA.instanceHosts(0); len(p.a.store.CallsOf(inA)) != 0 {
-		t.Errorf("network A's IBCF keeps a call of the stranger: %+v", p.a.store.CallsOf(inA))
+	if inA, _ := planA.instanceHosts(0); len(p.a.callsOf(t, inA)) != 0 {
+		t.Errorf("network A's IBCF keeps a call of the stranger: %+v", p.a.callsOf(t, inA))
 	}
 }
 
@@ -849,7 +849,7 @@ func TestRestartedInstanceEndsTheCallsItLeft(t *testing.T) {
 	inA, _ := planA.instanceHosts(0)
 	deadline := time.Now().Add(5 * time.Second)
 	for {
-		records := p.a.store.CallsOf(inA)
+		records := p.a.callsOf(t, inA)
 		if len(records) == 1 && records[0].Home != nil && records[0].PeerSide != nil {
 			break
 		}
@@ -865,7 +865,7 @@ func TestRestartedInstanceEndsTheCallsItLeft(t *testing.T) {
 	if reservedA, reservedB := p.waitReleased(t); reservedA != 1 || reservedB != 1 {
 		t.Errorf("TrGW contexts reserved: A %d, B %d; want one each", reservedA, reservedB)
 	}
-	if records := p.a.store.CallsOf(inA); len(records) != 0 {
+	if records := p.a.callsOf(t, inA); len(records) != 0 {
 		t.Errorf("records left after the restart: %+v", records)
 	}
 	// The BYEs went in the dialogs of the call, with a CSeq above the
@@ -907,7 +907,7 @@ func TestRestartedInstanceEndsACallAtItsNewTarget(t *testing.T) {
 	inB, _ := planB.instanceHosts(0)
 	deadline := time.Now().Add(5 * time.Second)
 	for {
-		records := p.b.store.CallsOf(inB)
+		records := p.b.callsOf(t, inB)
 		if len(records) == 1 && records[0].Home != nil && records[0].Home.RemoteTarget == moved {
 			break
 		}

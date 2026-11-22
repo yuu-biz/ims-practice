@@ -1,7 +1,9 @@
 package ibcf
 
 import (
+	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"sync"
 
@@ -166,6 +168,11 @@ func withoutReplaces(fields []sip.HeaderField) []sip.HeaderField {
 // end releases what the call held: its TrGW context and its record.
 // A call that ends because the IBCF closes keeps both, as a process
 // that stops without closing would, for ReleaseLeftovers.
+//
+// No request waits for the removal of the record, so a failure of the
+// store is logged. The record then stays until the next process of the
+// instance ends the call again: its BYEs get 481, and the TrGW no
+// longer has the context.
 func (c *call) end() {
 	if c.b.closed.Load() {
 		return
@@ -173,7 +180,9 @@ func (c *call) end() {
 	c.mediaMu.Lock()
 	media := c.media
 	c.ended = true
-	c.b.store.DeleteCall(c.record.Instance, c.record.ID)
+	if err := c.b.store.DeleteCall(context.Background(), c.record.Instance, c.record.ID); err != nil {
+		c.log.Warn("cannot remove the record of the call", "error", err.Error())
+	}
 	c.mediaMu.Unlock()
 	if media != nil {
 		c.b.releaseMedia(*media, c.log)
@@ -193,17 +202,30 @@ func errText(err error) string {
 	return err.Error()
 }
 
+// errNotKept is what throughTrGW returns when the record of the call,
+// with the TrGW context that it has just reserved, cannot be written.
+// The SDP of the message went through the context all the same.
+var errNotKept = errors.New("ibcf: the record of the call cannot be written")
+
 // throughTrGW puts the SDP of m, which crosses the border in direction
 // d, through the TrGW context of the call. The first SDP with an audio
 // stream gets the call a context of its own, one for each pass through
 // the IBCF; that is the offer of the INVITE, or the offer in a
-// response when the INVITE has none.
+// response when the INVITE has none. The record of the call is written
+// with the context, so that a later process of the instance can release
+// it (ReleaseLeftovers). When that write fails, throughTrGW returns
+// errNotKept and the call keeps the context: each later write is of the
+// whole record, so the next one that succeeds has the context too.
+//
+// sip.IncomingCall carries no context, so the store has the time limit
+// of its own adapter.
 func (c *call) throughTrGW(m *sip.Message, d interconnect.Direction) error {
 	if !sip.HasSessionDescription(m) {
 		return nil
 	}
 	c.mediaMu.Lock()
 	defer c.mediaMu.Unlock()
+	var kept error
 	if c.media == nil {
 		if !hasAudio(m) {
 			return nil
@@ -216,10 +238,24 @@ func (c *call) throughTrGW(m *sip.Message, d interconnect.Direction) error {
 		}
 		c.media = &mc
 		c.record.Media = &mc
-		c.b.store.PutCall(c.record)
 		c.log.Info("media through the TrGW", "context", mc.ID, "core", mc.Core.String(), "peer", mc.Peer.String())
+		if err := c.b.store.PutCall(context.Background(), c.record); err != nil {
+			kept = fmt.Errorf("%w: %w", errNotKept, err)
+		}
 	}
-	return c.b.throughTrGW(m, *c.media, d)
+	if err := c.b.throughTrGW(m, *c.media, d); err != nil {
+		return err
+	}
+	return kept
+}
+
+// mediaFailed logs err, which throughTrGW returned for the SDP of what.
+func (c *call) mediaFailed(what string, err error, args ...any) {
+	if errors.Is(err, errNotKept) {
+		c.log.Warn("cannot keep the TrGW context in the record of the call", append(args, "error", err.Error())...)
+		return
+	}
+	c.log.Warn("the TrGW refused the SDP of "+what, append(args, "error", err.Error())...)
 }
 
 // across is the direction in which a message that the call relays in d
@@ -234,6 +270,10 @@ func (c *call) across(d b2bua.Direction) interconnect.Direction {
 // Request prepares req, a request within the dialog that crosses the
 // border, for the other leg. A request that the border turns away gets
 // the refusal instead, which counts among the IBCF's.
+//
+// A request whose SDP gets the call its TrGW context gets 500 (Server
+// Internal Error, RFC 3261 21.5.1) when the record of the call cannot
+// then be written, as the INVITE does in the same case (run).
 func (c *call) Request(req *sip.Message, d b2bua.Direction) (b2bua.Message, *b2bua.Refusal) {
 	m := req.Clone()
 	if err := c.border.Request(m, c.across(d)); err != nil {
@@ -241,7 +281,10 @@ func (c *call) Request(req *sip.Message, d b2bua.Direction) (b2bua.Message, *b2b
 		return b2bua.Message{}, &b2bua.Refusal{Status: r.status, Headers: r.headers}
 	}
 	if err := c.throughTrGW(m, c.across(d)); err != nil {
-		c.log.Warn("the TrGW refused the SDP of a request", "method", string(req.Method), "error", err.Error())
+		c.mediaFailed("a request", err, "method", string(req.Method))
+		if errors.Is(err, errNotKept) {
+			return b2bua.Message{}, &b2bua.Refusal{Status: 500}
+		}
 	}
 	return b2bua.Message{Headers: interconnect.CrossingFields(m), Body: sip.BodyOf(m)}, nil
 }
@@ -252,7 +295,7 @@ func (c *call) Response(resp, _ *sip.Message, d b2bua.Direction) b2bua.Message {
 	m := resp.Clone()
 	c.border.Response(m, c.across(d))
 	if err := c.throughTrGW(m, c.across(d)); err != nil {
-		c.log.Warn("the TrGW refused the SDP of a response", "status", resp.StatusCode, "error", err.Error())
+		c.mediaFailed("a response", err, "status", resp.StatusCode)
 	}
 	return b2bua.Message{Headers: interconnect.CrossingFields(m), Body: sip.BodyOf(m)}
 }
@@ -263,7 +306,7 @@ func (c *call) Response(resp, _ *sip.Message, d b2bua.Direction) b2bua.Message {
 func (c *call) Answer(resp, session *sip.Message) b2bua.Message {
 	if session != nil {
 		if err := c.throughTrGW(session.Clone(), c.across(b2bua.ToCaller)); err != nil {
-			c.log.Warn("the TrGW refused the SDP of the dialog that answered", "error", err.Error())
+			c.mediaFailed("the dialog that answered", err)
 		}
 	}
 	return c.Response(resp, c.in.Request, b2bua.ToCaller)
@@ -273,7 +316,7 @@ func (c *call) Answer(resp, session *sip.Message) b2bua.Message {
 func (c *call) Ack(ack *sip.Message, d b2bua.Direction) sip.Body {
 	m := ack.Clone()
 	if err := c.throughTrGW(m, c.across(d)); err != nil {
-		c.log.Warn("the TrGW refused the answer in the ACK", "error", err.Error())
+		c.mediaFailed("the ACK", err)
 	}
 	return sip.BodyOf(m)
 }
@@ -352,6 +395,12 @@ func (c *call) Contact(resp *sip.Message) (sip.NameAddr, bool, bool) {
 // Contact and CSeq of each subsequent request. A target refresh request
 // changes the remote target of its dialog (RFC 3261 12.2), and so where
 // the BYE of ReleaseLeftovers goes.
+//
+// The response to the 2xx or to the request has gone by then, so a
+// failure of the store is logged. Until a later write succeeds, the
+// store has the dialogs as they were before, or none: a later process
+// of the instance then sends its BYE to the target of the last record
+// written, or only releases the TrGW context.
 func (c *call) KeepDialogs(in, out sip.Dialog) {
 	c.mediaMu.Lock()
 	defer c.mediaMu.Unlock()
@@ -363,5 +412,7 @@ func (c *call) KeepDialogs(in, out sip.Dialog) {
 	} else {
 		c.record.Home, c.record.PeerSide = &out, &in
 	}
-	c.b.store.PutCall(c.record)
+	if err := c.b.store.PutCall(context.Background(), c.record); err != nil {
+		c.log.Warn("cannot keep the dialogs in the record of the call", "error", err.Error())
+	}
 }
