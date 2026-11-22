@@ -61,7 +61,7 @@ To begin: when you call from a mobile phone, what does the network prepare befor
 | MMTel AS, relay | 172.28.0.75, 50 | As in the session on the MMTel AS. The relay passes RTCP too. |
 
 - volte-a and volte-b are services of the profile `volte` in `compose.yaml`. Their keys are in `deploy/compose/hss.yaml`; `deploy/compose/epc.yaml` gives each subscriber the address of its container.
-- The dashboard (172.28.0.60) drives volte-a and volte-b, shows Rx in the ladder, and passes on to the host the EPC stub's paths that start a procedure of the network.
+- The Lab (172.28.0.60) drives volte-a and volte-b, shows Rx in the ladder, and passes on to the host the EPC stub's paths that start a procedure of the network.
 
 > Guide: ["The nodes"](../../../docs/guide/en/volte.md#the-nodes)
 
@@ -88,7 +88,7 @@ To begin: when you call from a mobile phone, what does the network prepare befor
 
 ## Get a capture
 
-- The e2e script of the VoLTE call in `scripts/` runs every step of this session: it registers SIPp, makes the VoLTE call and the call to ue2, drives DTMF and hold through the dashboard, has the network release the bearer, and checks each message in the capture. The guide's ["Run it"](../../../docs/guide/en/volte.md#run-it) names it.
+- The e2e script of the VoLTE call in `scripts/` runs every step of this session: it registers SIPp, makes the VoLTE call and the call to ue2, drives DTMF and hold through the Lab, has the network release the bearer, and checks each message in the capture. The guide's ["Run it"](../../../docs/guide/en/volte.md#run-it) names it.
 - The frame numbers of the guide are from one run of this script. Yours differ.
 - It leaves the capture in `captures/`, the list of frames in `e2e-out/` and the AMR-WB recordings in `captures/volte-*.amr`. It takes about two minutes.
 
@@ -495,7 +495,7 @@ Adaptive Multi-Rate
 The filters are `sip.Session-Expires` and `sip.Reason`.
 
 - A call ended because its media bearer was lost has cause 3 in the UE's Reason; the P-CSCF's BYEs say `Reason: SIP;cause=503`. With no early media authorised, the caller plays a ringing tone of its own after the 180.
-- The hold re-INVITE passes the MMTel AS as it came. The call with hold and DTMF is the one that the e2e script drives through the dashboard.
+- The hold re-INVITE passes the MMTel AS as it came. The call with hold and DTMF is the one that the e2e script drives through the Lab.
 
 > Guide: ["Session timer, Reason and early media"](../../../docs/guide/en/volte.md#session-timer-reason-and-early-media) and ["Hold, resume and DTMF"](../../../docs/guide/en/volte.md#hold-resume-and-dtmf). IR.92 2.2.8, 2.2.4, 2.2.7. RFC 4028 9. TS 24.229 7.2A.18.11. RFC 5009. TS 24.610 4.5.2.1.
 
@@ -508,8 +508,8 @@ curl -X DELETE http://localhost:8080/api/epc/network-initiated/ues/0010100000000
 ```
 
 ```ladder
-volte-a, P-CSCF, S-CSCF, volte-b, EPC and PCRF, dashboard
-EPC and PCRF <- dashboard: DELETE .../bearers/6
+volte-a, P-CSCF, S-CSCF, volte-b, EPC and PCRF, Lab
+EPC and PCRF <- Lab: DELETE .../bearers/6
 volte-a <- EPC and PCRF: DEACTIVATE EPS BEARER CONTEXT REQUEST, on the event stream
 P-CSCF <- EPC and PCRF: ASR, Abort-Cause BEARER_RELEASED (0) // then the ASA
 P-CSCF -> EPC and PCRF: STR // then the STA
@@ -577,7 +577,7 @@ grep -rn "SIMPLIFIED:" internal/epc internal/pcscf internal/ue internal/aka inte
 
 ---
 
-## Drive it from the dashboard
+## Drive it from the Lab
 
 ```sh
 docker compose up -d --build
@@ -591,9 +591,9 @@ curl http://localhost:8080/api/epc/ues/001010000000010
 4. Release the voice bearer with the `curl -X DELETE` of the previous slide.
 
 - The ladder of the call has a column for the PCRF, next to the P-CSCF.
-- The `curl` lists the bearers of volte-a: 5, and 6 during a call. Under `/api/epc` the dashboard passes on the state of a UE and the EPC stub's paths that start a procedure of the network.
+- The `curl` lists the bearers of volte-a: 5, and 6 during a call. Under `/api/epc` the Lab passes on the state of a UE and the EPC stub's paths that start a procedure of the network.
 
-> Guide: ["With the dashboard"](../../../docs/guide/en/volte.md#with-the-dashboard)
+> Guide: ["With the Lab"](../../../docs/guide/en/volte.md#with-the-lab)
 
 ---
 
@@ -721,7 +721,7 @@ For 1, use the commands of "Check the vector by hand" in the guide; the same sec
 docker compose --profile ue --profile volte down --rmi all -v --remove-orphans
 ```
 
-- This is the "Clean up" of the guide. If the `sim` profile of the dashboard was used too, add `--profile sim`.
+- This is the "Clean up" of the guide. If the `sim` profile of the Lab was used too, add `--profile sim`.
 - In the 5GC, SIP signalling uses a QoS flow of 5QI 5 and the voice one of 5QI 1: the same idea as QCI 5 and QCI 1 in EPS.
 
 > The guides are listed in [docs/guide/](../../../docs/guide/).

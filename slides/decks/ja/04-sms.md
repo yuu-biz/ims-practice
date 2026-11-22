@@ -297,7 +297,7 @@ sip.CSeq.method in {"MESSAGE", "REGISTER"} || (sip && ip.addr == 172.28.0.70) ||
 | `23` | RP-User-Data の長さ | このあとの 35 オクテットが TPDU。 |
 
 - まず手で読み、そのあとで Wireshark の木と比べます。`21 20 55 05 01 f0` を 12025550100 に戻してみます。
-- ダッシュボードでは、MESSAGE の詳しい表示の **Body (hex)** に同じオクテットが出ます。
+- ラボでは、MESSAGE の詳しい表示の **Body (hex)** に同じオクテットが出ます。
 
 > 手順書 [「中継層（RP）」](../../../docs/guide/ja/sms.md#中継層rp)。全部のフィールドの表は手順書にあります。TS 24.011 7.3.1.2、8.2。
 
@@ -338,7 +338,7 @@ sip.CSeq.method in {"MESSAGE", "REGISTER"} || (sip && ip.addr == 172.28.0.70) ||
 
 ---
 
-## ダッシュボードで送る
+## ラボで送る
 
 ```sh
 docker compose --profile sim up -d --build
@@ -349,9 +349,9 @@ docker compose --profile sim up -d --build
 3. `ue-b` のカードの **SMS received** に、送信者の番号と本文が出ます。
 4. 各行の **ladder** で、その MESSAGE のラダー図が出ます。矢印を選ぶと、RP と TP のフィールドが出ます。
 
-- ダッシュボードは Call-ID ごとにラダー図を描くので、6 通の MESSAGE は 6 つのラダー図になります。
+- ラボは Call-ID ごとにラダー図を描くので、6 通の MESSAGE は 6 つのラダー図になります。
 
-> 手順書 [ダッシュボードで IMS を見る「UE シミュレータを操作する」](../../../docs/guide/ja/dashboard.md#ue-シミュレータを操作する)
+> 手順書 [ラボで IMS を見る「UE シミュレータを操作する」](../../../docs/guide/ja/lab.md#ue-シミュレータを操作する)
 
 ---
 

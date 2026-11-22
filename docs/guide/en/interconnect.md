@@ -43,7 +43,7 @@ Only the IBCFs and the TrGWs are on the link between the networks, `nni0`. A nod
 | IBCF | IBCF-A: 172.28.0.90 inside, 172.28.2.10 on the link | IBCF-B: 172.28.1.90 inside, 172.28.2.20 on the link |
 | TrGW | TrGW-A: 172.28.0.91 inside, 172.28.2.11 on the link | TrGW-B: 172.28.1.91 inside, 172.28.2.21 on the link |
 
-Network B is kept as small as the scenarios allow. It has no MMTel AS, no EPC with its PCRF, no media relay at its P-CSCF and no dashboard. All numbers are in the 555-0100 to 555-0199 range that the North American Numbering Plan keeps for fiction, and all keys are test values.
+Network B is kept as small as the scenarios allow. It has no MMTel AS, no EPC with its PCRF, no media relay at its P-CSCF and no Lab. All numbers are in the 555-0100 to 555-0199 range that the North American Numbering Plan keeps for fiction, and all keys are test values.
 
 ## What the IBCF and the TrGW do
 

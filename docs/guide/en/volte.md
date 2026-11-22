@@ -37,7 +37,7 @@ The softphones keep working as before. A UE that does not come through the EPC s
 | HSS | 172.28.0.10 | Makes the authentication vectors (MAR and MAA). |
 | MMTel AS | 172.28.0.75 | Takes every call, as in [Supplementary services with the MMTel AS](mmtel.md). |
 | Media relay | 172.28.0.50 | Relays RTP, RTCP and the telephone-events without decoding them. |
-| Dashboard | 172.28.0.60 | Drives volte-a and volte-b, shows Rx in the ladder, and passes on to the host the EPC stub's paths that start a procedure of the network. |
+| Lab | 172.28.0.60 | Drives volte-a and volte-b, shows Rx in the ladder, and passes on to the host the EPC stub's paths that start a procedure of the network. |
 
 volte-a and volte-b are services of the `volte` profile in `compose.yaml`. Their keys are in `deploy/compose/hss.yaml`, and `deploy/compose/epc.yaml` gives each subscriber the address of its container.
 
@@ -263,7 +263,7 @@ When a BYE passes, the P-CSCF of each side ends its Rx session with an STR, `Ter
 
 ### The network takes the bearer
 
-The stub can deactivate a bearer as a lost radio link would: the EPS bearer context deactivation that the network initiates (TS 24.301 6.4.4.2). A DELETE on `/network-initiated/ues/<IMSI>/bearers/<EBI>` starts it, and a POST on `/network-initiated/ues/<IMSI>/detach` starts the network initiated detach (5.5.2.3). The dashboard passes both on, so on the host:
+The stub can deactivate a bearer as a lost radio link would: the EPS bearer context deactivation that the network initiates (TS 24.301 6.4.4.2). A DELETE on `/network-initiated/ues/<IMSI>/bearers/<EBI>` starts it, and a POST on `/network-initiated/ues/<IMSI>/detach` starts the network initiated detach (5.5.2.3). The Lab passes both on, so on the host:
 
 ```sh
 curl http://localhost:8080/api/epc/ues/001010000000010                       # the bearers of volte-a
@@ -271,7 +271,7 @@ curl -X DELETE http://localhost:8080/api/epc/network-initiated/ues/0010100000000
 ```
 
 ```text
-#7775 dashboard -> EPC  DELETE /network-initiated/ues/001010000000010/bearers/6
+#7775 Lab -> EPC        DELETE /network-initiated/ues/001010000000010/bearers/6
 #7776 EPC -> volte-a    DEACTIVATE EPS BEARER CONTEXT REQUEST (event stream)
 #7778 PCRF -> P-CSCF    ASR   Abort-Cause BEARER_RELEASED (0)
 #7785 P-CSCF -> PCRF    ASA 2001
@@ -382,7 +382,7 @@ Both UEs send RTCP sender reports to the port above RTP, through the relay (RFC 
 
 ## Hold, resume and DTMF
 
-The call that the dashboard drives in the e2e script:
+The call that the Lab drives in the e2e script:
 
 ```text
 #4604 volte-a -> P-CSCF  INVITE      to volte-b, set up as above
@@ -400,7 +400,7 @@ Each re-INVITE passes the MMTel AS as it came (TS 24.610 4.5.2.1), and each new 
 
 `scripts/e2e-volte.sh` does everything in this guide and checks each message in the capture, in order. It leaves the capture in `captures/`, the frames of the registrations, the calls, Rx and the EPC stub's API in `e2e-out/volte-ladder.txt`, the AMR-WB recordings in `captures/volte-*.amr`, and the logs of the UEs in `e2e-out/`. It takes about two minutes.
 
-### With the dashboard
+### With the Lab
 
 ```sh
 docker compose up -d --build
@@ -501,7 +501,7 @@ These filters were checked with tshark 4.2 against a capture of `scripts/e2e-vol
 | `internal/amr`, `internal/rtcp`, `internal/rtp` | The RFC 4867 payload and storage formats, RTCP, and the telephone-events. |
 | `internal/ue/session.go`, `call.go`, `media.go` | The UE's VoLTE call: the offer and answer, the preconditions, hold, DTMF, AMR and RTCP. |
 | `internal/sip` | UPDATE, re-INVITE, the session timer, 199, Reason and the B2BUA parts that the MMTel AS uses. |
-| `internal/lab/epc.go`, `causes.go` | The dashboard's pass-through of the stub's paths, and the link of Rx sessions to their calls. |
+| `internal/lab/epc.go`, `causes.go` | The Lab's pass-through of the stub's paths, and the link of Rx sessions to their calls. |
 | `internal/ue/volte_epc_test.go`, `volte_aka_test.go` | The VoLTE call through the whole IMS in one process. |
 
 ## What this project simplifies

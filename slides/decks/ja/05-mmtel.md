@@ -147,7 +147,7 @@ Route: <sip:mmtel.…:5060;lr>,<sip:scscf.…:5060;lr;odi=...>
 | 見るもの | 見どころ |
 | --- | --- |
 | Call-ID | 1 つの通話に 3 つ。転送した通話ではさらに 3 つ増える。 |
-| P-Charging-Vector の icid-value | 網の中では 3 つとも同じ。ダッシュボードはこれで 1 つの通話にまとめる。 |
+| P-Charging-Vector の icid-value | 網の中では 3 つとも同じ。ラボはこれで 1 つの通話にまとめる。 |
 | LIR | ダイアログ C2 のもの。 |
 | PRACK と ACK | ダイアログごとに進む。ACK が 200 より先に UE 2 に届くことがある。 |
 | BYE | AS が答え、同じ Reason を付けた新しい BYE を次に送る。 |
@@ -390,7 +390,7 @@ go test -run 'TestCommunicationWaiting|TestHoldThroughTheIMS' -v ./internal/mmte
 go test -run TestServeTwoCalls -v ./internal/ue
 ```
 
-- `ue serve` は 3 本目の着信に 486 で答えます。ダッシュボードの **Hold** のボタンも HOLD を送ります。
+- `ue serve` は 3 本目の着信に 486 で答えます。ラボの **Hold** のボタンも HOLD を送ります。
 
 > 手順書 [「CW と HOLD」](../../../docs/guide/ja/mmtel.md#cw-と-hold)。TS 24.615 4.5.5.3.2、4.5.5.2.3。RFC 7462。TS 24.610 4.5.2.1。
 
@@ -433,7 +433,7 @@ grep -rn "SIMPLIFIED:" internal/mmtel internal/xcap internal/simservs internal/c
 
 ---
 
-## ダッシュボードで設定する
+## ラボで設定する
 
 ```sh
 docker compose --profile sim up -d --build
@@ -445,9 +445,9 @@ docker compose --profile sim up -d --build
 4. **Off** で止めます。転送先は消えずに残ります。
 
 - ラダー図には XCAP も Sh も出ません。どちらも SIP の要求には属さないからです。キャプチャには、80 番の HTTP と 3868 番の Diameter として残ります。
-- ダッシュボードは 1 つの通話のダイアログをすべて 1 つのラダー図に描き、MMTel AS の列も置きます。`sim` と `ue` のプロファイルを同時に動かさないでください。同じ加入者の UE が 2 台になります。
+- ラボは 1 つの通話のダイアログをすべて 1 つのラダー図に描き、MMTel AS の列も置きます。`sim` と `ue` のプロファイルを同時に動かさないでください。同じ加入者の UE が 2 台になります。
 
-> 手順書 [ダッシュボードで IMS を見る「UE シミュレータを操作する」](../../../docs/guide/ja/dashboard.md#ue-シミュレータを操作する)
+> 手順書 [ラボで IMS を見る「UE シミュレータを操作する」](../../../docs/guide/ja/lab.md#ue-シミュレータを操作する)
 
 ---
 
@@ -531,6 +531,6 @@ docker compose --profile sim up -d --build
 docker compose --profile ue --profile sim down --rmi all -v --remove-orphans
 ```
 
-- このコマンドは `ue` と `sim` の両方のプロファイルを止めます。手順書の「後片付け」は `ue` だけを止めます。ダッシュボードを使っていなければ、それで足ります。
+- このコマンドは `ue` と `sim` の両方のプロファイルを止めます。手順書の「後片付け」は `ue` だけを止めます。ラボを使っていなければ、それで足ります。
 
 > 手順書の一覧は [docs/guide/](../../../docs/guide/) にあります。

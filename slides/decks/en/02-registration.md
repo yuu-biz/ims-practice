@@ -267,7 +267,7 @@ The UE sends a REGISTER whose Contact has `expires=0`.
 | Case | How to try it | What to see |
 | --- | --- | --- |
 | A wrong password | `ue register -password wrong-password` | The same up to step 8. The S-CSCF answers 403 and sends a SAR with AUTHENTICATION_FAILURE (9). |
-| The HSS removes the subscription | Delete the subscription of a registered user in the Subscribers panel of the dashboard. | The HSS sends an RTR with Reason-Code PERMANENT_TERMINATION (0). The UE gets a NOTIFY with `event="rejected"`. |
+| The HSS removes the subscription | Delete the subscription of a registered user in the Subscribers panel of the Lab. | The HSS sends an RTR with Reason-Code PERMANENT_TERMINATION (0). The UE gets a NOTIFY with `event="rejected"`. |
 
 - Put `docker compose run --rm` in front of the command.
 - The filter for RTR and RTA is `diameter.cmd.code == 304`. The RTR is the first Cx request in these sessions that the HSS starts.
@@ -279,21 +279,21 @@ The UE sends a REGISTER whose Contact has `expires=0`.
 
 [layout: two-columns]
 
-## The same flow in the dashboard
+## The same flow in the Lab
 
 - Open <http://localhost:8080> and pick an identity in the **Registrations** panel.
 - The ladder of the last REGISTER appears. Pick an arrow to see the whole message and the clause that defines it.
 - The ladder shows SIP and Cx. It does not show DNS.
-- The dashboard draws from the copies (HEP) that the nodes send it. It is not part of the IMS.
+- The Lab draws from the copies (HEP) that the nodes send it. It is not part of the IMS.
 
 [column]
 
 | Tool | Good for |
 | --- | --- |
 | Wireshark | Every packet: DNS, TCP, the inside of each AVP. |
-| Dashboard | One registration or call as a diagram, at once. |
+| Lab | One registration or call as a diagram, at once. |
 
-> Guide: [Watch the IMS in the dashboard, "What each panel shows"](../../../docs/guide/en/dashboard.md#what-each-panel-shows) and ["How the ladder is built"](../../../docs/guide/en/dashboard.md#how-the-ladder-is-built)
+> Guide: [Watch the IMS in the Lab, "What each panel shows"](../../../docs/guide/en/lab.md#what-each-panel-shows) and ["How the ladder is built"](../../../docs/guide/en/lab.md#how-the-ladder-is-built)
 
 ---
 

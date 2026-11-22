@@ -129,13 +129,13 @@ kubectl -n ims exec deploy/ue -- ue sms $P -status-report +12025550102 "Hello fr
 wait
 ```
 
-## 5. The dashboard
+## 5. The Lab
 
 ```sh
 kubectl -n ims port-forward svc/lab 8080:8080
 ```
 
-Open http://localhost:8080. To drive calls from the dashboard, start the simulators that stay up. They use the same subscribers as `ue` and `ue2`, so stop those first:
+Open http://localhost:8080. To drive calls from the Lab, start the simulators that stay up. They use the same subscribers as `ue` and `ue2`, so stop those first:
 
 ```sh
 kubectl -n ims scale deployment ue ue2 --replicas=0
@@ -177,7 +177,7 @@ An ephemeral container stays in the Pod until the Pod is replaced.
 ### Reading the addresses
 
 - Each node has the address of its Pod, from 10.244.0.0/16: `kubectl -n ims get pods -o wide` lists them. They change when a Pod starts again.
-- The capture keeps each packet once, as it enters the node from the sending Pod (`-Q in`). A packet to a ClusterIP still shows the ClusterIP as its destination: the DNS queries go to 10.96.0.10 (option a) or 10.96.0.53 (option b), and the HEP copies to the dashboard's ClusterIP. Their answers show the address of the Pod that sent them, since kube-proxy changes the source back only after the packet has left that Pod. Wireshark therefore does not pair such a DNS answer with its query; match them by the DNS ID. SIP and Diameter do not go through a ClusterIP, so their addresses are those of the Pods on both sides.
+- The capture keeps each packet once, as it enters the node from the sending Pod (`-Q in`). A packet to a ClusterIP still shows the ClusterIP as its destination: the DNS queries go to 10.96.0.10 (option a) or 10.96.0.53 (option b), and the HEP copies to the Lab's ClusterIP. Their answers show the address of the Pod that sent them, since kube-proxy changes the source back only after the packet has left that Pod. Wireshark therefore does not pair such a DNS answer with its query; match them by the DNS ID. SIP and Diameter do not go through a ClusterIP, so their addresses are those of the Pods on both sides.
 - With option (b), every name in the home network domain shows up twice: the node asks the DNS server, and the DNS server asks the cluster DNS for the Service name of the CNAME.
 - Option (a) logs every query of the IMS zones: `kubectl -n kube-system logs deployment/coredns`.
 

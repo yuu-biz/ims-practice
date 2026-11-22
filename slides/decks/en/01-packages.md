@@ -34,7 +34,7 @@ ims-practice study session 1 (where each node and each specification lives in th
 | `compose.yaml` | Puts the nodes on one Docker network. |
 | `docs/` | The guides (`docs/guide/`) and the glossary. |
 | `scripts/` | The e2e tests, one per scenario, and live capture. |
-| `web/lab/` | The web UI of the dashboard. |
+| `web/lab/` | The web UI of the Lab. |
 | `images/` | Helper images, such as the capture container. |
 
 ---
@@ -73,7 +73,7 @@ home_domain: ims.mnc001.mcc001.3gppnetwork.org
 | `epc`, `mrfc`, `mrfp` | 172.28.0.80, 85, 86 | `epc`, `mrfc`, `mrfp` | `epc.yaml`, `mrfc.yaml`, `mrfp.yaml` |
 | `ue`, `ue2`, `ue3` | 172.28.0.100, 101, 103 | `cmd/ue` | command line |
 
-- Not in the table: the SC stub inside `ipsmgw`, the UEs of the dashboard and of VoLTE (`ue-a` to `ue-c`, `volte-a`, `volte-b`), `peer` and `capture`.
+- Not in the table: the SC stub inside `ipsmgw`, the UEs of the Lab and of VoLTE (`ue-a` to `ue-c`, `volte-a`, `volte-b`), `peer` and `capture`.
 - The IBCF and a second network are in another Compose project, `deploy/interconnect/compose.yaml`.
 
 > Guide: [Capture signaling and open it in Wireshark, "What you see when the nodes start"](../../../docs/guide/en/capture.md#what-you-see-when-the-nodes-start)
@@ -125,9 +125,9 @@ home_domain: ims.mnc001.mcc001.3gppnetwork.org
 | `lab` | Builds registrations and calls from HEP copies. | this project's own |
 
 - A stub keeps the interface of the specification real and makes the inside simple. The HSS and the SC are stubs.
-- The dashboard is not part of the IMS. It only shows what the nodes send it.
+- The Lab is not part of the IMS. It only shows what the nodes send it.
 
-> Guide: [Watch the IMS in the dashboard, "These APIs are this project's own"](../../../docs/guide/en/dashboard.md#these-apis-are-this-projects-own)
+> Guide: [Watch the IMS in the Lab, "These APIs are this project's own"](../../../docs/guide/en/lab.md#these-apis-are-this-projects-own)
 
 ---
 
@@ -154,14 +154,14 @@ home_domain: ims.mnc001.mcc001.3gppnetwork.org
 | --- | --- |
 | `ims` | The IMS rules that more than one role applies. |
 | `config` | Turns the YAML configuration into validated values, and refuses a wrong one at start-up. |
-| `hep`, `hepagent` | Send copies of the signaling to the dashboard (HEP3). |
+| `hep`, `hepagent` | Send copies of the signaling to the Lab (HEP3). |
 | `g711`, `wav` | G.711 μ-law and WAV: the audio of the UE simulator. |
 | `epc`, `policy`, `rx`, `milenage`, `aka`, `amr`, `rtcp`, `precondition` | Parts of the VoLTE call. Not covered in this session. |
 | `h248`, `sgd`, `smsc`, `nas`, `fivegc` and more | Parts that no role starts. Only their own tests use them. |
 
 - Neither `cmd/ims` nor `cmd/ue` imports the parts that no role starts: `go list -deps ./cmd/...` does not list them.
 
-> Guide: [Capture signaling and open it in Wireshark, "Copies for the dashboard (HEP)"](../../../docs/guide/en/capture.md#copies-for-the-dashboard-hep)
+> Guide: [Capture signaling and open it in Wireshark, "Copies for the Lab (HEP)"](../../../docs/guide/en/capture.md#copies-for-the-lab-hep)
 
 ---
 

@@ -48,7 +48,7 @@ The nodes use these addresses:
 | S-CSCF | 172.28.0.30 |
 | P-CSCF | 172.28.0.40 |
 | Media relay (IMS-AGW) | 172.28.0.50 |
-| Dashboard | 172.28.0.60 |
+| Lab | 172.28.0.60 |
 | IP-SM-GW | 172.28.0.70 |
 | UE simulator | 172.28.0.100 |
 
@@ -87,11 +87,11 @@ A short message travels in the body of a SIP MESSAGE, with the media type `appli
 
 `scripts/e2e-sms.sh` writes the frame list of its short messages to `e2e-out/sms-ladder.txt`.
 
-## Copies for the dashboard (HEP)
+## Copies for the Lab (HEP)
 
-A node can also send a copy of every SIP and Diameter message it sends or receives to the dashboard, which listens on UDP port 9060. The copies use HEP version 3 (Homer Encapsulation Protocol). A node sends them when its configuration has a `hep` section, for example `hep: {collector: lab:9060}`. The UE simulator sends them when it gets `-hep lab:9060`. Without either, nothing is sent.
+A node can also send a copy of every SIP and Diameter message it sends or receives to the Lab, which listens on UDP port 9060. The copies use HEP version 3 (Homer Encapsulation Protocol). A node sends them when its configuration has a `hep` section, for example `hep: {collector: lab:9060}`. The UE simulator sends them when it gets `-hep lab:9060`. Without either, nothing is sent.
 
-The dashboard is not on the path of any call, so a node starts even when the collector's name does not resolve, for example because the dashboard is not running yet. The node logs a warning and drops the copies meanwhile. When a copy cannot be sent, the node resolves the name again, at most once every 5 seconds, so the copies reach a dashboard that starts later.
+The Lab is not on the path of any call, so a node starts even when the collector's name does not resolve, for example because the Lab is not running yet. The node logs a warning and drops the copies meanwhile. When a copy cannot be sent, the node resolves the name again, at most once every 5 seconds, so the copies reach a Lab that starts later.
 
 - The copies are in the capture file too, as UDP packets to port 9060. Wireshark has no built-in HEP dissector. To decode them, install the Lua plugin from [sipcapture/hep-wireshark](https://github.com/sipcapture/hep-wireshark). The SIP and Diameter messages themselves are decoded as before, so you can ignore the copies with the filter `not udp.port == 9060`.
 - A SIP copy carries the message exactly as it was on the wire.

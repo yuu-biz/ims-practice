@@ -245,7 +245,7 @@ A registration and a call over this path were checked with the project's own UE 
 
 ## Drive a UE over HTTP
 
-`ue serve` keeps a UE registered and lets another program drive it. This is how the dashboard makes and answers calls. The HTTP API is this project's own, of the kind a test tool offers for remote control. No specification defines it, and none of it goes to the IMS: the capture shows only the SIP that the UE sends as a result.
+`ue serve` keeps a UE registered and lets another program drive it. This is how the Lab makes and answers calls. The HTTP API is this project's own, of the kind a test tool offers for remote control. No specification defines it, and none of it goes to the IMS: the capture shows only the SIP that the UE sends as a result.
 
 1. Start UE 2 and UE 1 in two terminals. Each one publishes its API port on the host:
 

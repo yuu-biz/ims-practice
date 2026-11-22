@@ -129,13 +129,13 @@ kubectl -n ims exec deploy/ue -- ue sms $P -status-report +12025550102 "Hello fr
 wait
 ```
 
-## 5. ダッシュボード
+## 5. ラボ
 
 ```sh
 kubectl -n ims port-forward svc/lab 8080:8080
 ```
 
-http://localhost:8080 を開きます。ダッシュボードから発信するには、起動したままの模擬の UE を起こします。`ue` と `ue2` と同じ加入者を使うので、先にそちらを止めます。
+http://localhost:8080 を開きます。ラボから発信するには、起動したままの模擬の UE を起こします。`ue` と `ue2` と同じ加入者を使うので、先にそちらを止めます。
 
 ```sh
 kubectl -n ims scale deployment ue ue2 --replicas=0
@@ -177,7 +177,7 @@ kubectl -n ims exec pcscf-0 -c tap -- tcpdump -i eth0 -U -w - | wireshark -k -i 
 ### アドレスの読み方
 
 - 各ノードのアドレスは、その Pod の 10.244.0.0/16 のアドレスです。`kubectl -n ims get pods -o wide` で一覧できます。Pod が起動し直すと変わります。
-- キャプチャは、送った Pod からノードに入るところで、各パケットを 1 回だけ記録します（`-Q in`）。ClusterIP 宛てのパケットは、宛先が ClusterIP のままです。DNS の問い合わせは 10.96.0.10（構成 a）か 10.96.0.53（構成 b）宛て、HEP の写しはダッシュボードの ClusterIP 宛てに見えます。その応答は、送った Pod のアドレスから来たように見えます。kube-proxy が送信元を戻すのは、パケットがその Pod を出たあとだからです。そのため、Wireshark はこの DNS の応答を問い合わせと組にしません。DNS の ID で見比べてください。SIP と Diameter は ClusterIP を通らないので、両側とも Pod のアドレスです。
+- キャプチャは、送った Pod からノードに入るところで、各パケットを 1 回だけ記録します（`-Q in`）。ClusterIP 宛てのパケットは、宛先が ClusterIP のままです。DNS の問い合わせは 10.96.0.10（構成 a）か 10.96.0.53（構成 b）宛て、HEP の写しはラボの ClusterIP 宛てに見えます。その応答は、送った Pod のアドレスから来たように見えます。kube-proxy が送信元を戻すのは、パケットがその Pod を出たあとだからです。そのため、Wireshark はこの DNS の応答を問い合わせと組にしません。DNS の ID で見比べてください。SIP と Diameter は ClusterIP を通らないので、両側とも Pod のアドレスです。
 - 構成 (b) では、ホームドメインの名前の問い合わせが 2 回見えます。ノードが DNS サーバーに問い合わせ、DNS サーバーが CNAME の先の Service の名前をクラスタの DNS に問い合わせるためです。
 - 構成 (a) では、IMS のゾーンへの問い合わせがすべてログに出ます。`kubectl -n kube-system logs deployment/coredns` で見られます。
 

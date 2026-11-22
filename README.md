@@ -2,7 +2,7 @@
 
 [日本語](README.ja.md)
 
-ims-practice is a learning implementation of the 3GPP IP Multimedia Subsystem (IMS). You run it on your own machine and follow each call and SMS from the first SIP message to the last, in Wireshark and in a dashboard.
+ims-practice is a learning implementation of the 3GPP IP Multimedia Subsystem (IMS). You run it on your own machine and follow each call and SMS from the first SIP message to the last, in Wireshark and in the Lab, a web page where you try things on the IMS and watch what happens.
 
 ## What you can learn from it
 
@@ -14,7 +14,7 @@ The project is teaching material for engineers who are new to telecom core netwo
 
 ## Status
 
-A UE simulator registers with SIP Digest and calls another UE by its telephone number, through the P-CSCF, the S-CSCFs, the I-CSCF, ENUM and the media relay. The capture shows every SIP, Diameter, DNS and RTP packet. A dashboard at http://localhost:8080 draws the ladder diagram of each call and registration from HEP copies, manages the subscribers in the HSS, and drives two UE simulators. UEs send each other short messages over IP, and the MMTel AS gives the supplementary services, such as identity presentation, call forwarding and barring, which a UE sets up over Ut. VoLTE UEs attach to a stub of the EPC, register with IMS AKA, and call each other in AMR-WB with preconditions, while the P-CSCF has the PCRF authorise the media of each call over Rx.
+A UE simulator registers with SIP Digest and calls another UE by its telephone number, through the P-CSCF, the S-CSCFs, the I-CSCF, ENUM and the media relay. The capture shows every SIP, Diameter, DNS and RTP packet. The Lab at http://localhost:8080 draws the ladder diagram of each call and registration from HEP copies, manages the subscribers in the HSS, and drives two UE simulators. UEs send each other short messages over IP, and the MMTel AS gives the supplementary services, such as identity presentation, call forwarding and barring, which a UE sets up over Ut. VoLTE UEs attach to a stub of the EPC, register with IMS AKA, and call each other in AMR-WB with preconditions, while the P-CSCF has the PCRF authorise the media of each call over Rx.
 
 ## Architecture
 
@@ -49,9 +49,9 @@ A UE simulator registers with SIP Digest and calls another UE by its telephone n
 
   The e2e scripts in `scripts/` set it themselves.
 - Wireshark, to read the captures.
-- Free ports on the host. `docker compose up` publishes 5060/udp for the P-CSCF, 8080/tcp for the dashboard, and 40000 to 40039/udp for the media relay on the loopback address 127.0.0.1.
+- Free ports on the host. `docker compose up` publishes 5060/udp for the P-CSCF, 8080/tcp for the Lab, and 40000 to 40039/udp for the media relay on the loopback address 127.0.0.1.
 - Free address ranges. The containers use 172.28.0.0/24, and the two networks of the interconnect guide use 172.28.1.0/24 and 172.28.2.0/24. These ranges must not overlap with your LAN, a VPN or another Docker network.
-- Internet access for the first build. The build pulls the base images of Alpine, Go and Node.js from Docker Hub, the dashboard's packages from the npm registry, the Go modules through the Go module proxy (`proxy.golang.org`), and SIPp, pjsua, tcpdump and tshark from the Alpine package mirrors.
+- Internet access for the first build. The build pulls the base images of Alpine, Go and Node.js from Docker Hub, the Lab's packages from the npm registry, the Go modules through the Go module proxy (`proxy.golang.org`), and SIPp, pjsua, tcpdump and tshark from the Alpine package mirrors.
 
 ## Get started
 

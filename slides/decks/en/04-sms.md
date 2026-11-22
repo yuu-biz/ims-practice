@@ -297,7 +297,7 @@ This is the body of the MESSAGE of step 1.
 | `23` | Length of RP-User-Data | The 35 octets that follow are the TPDU. |
 
 - Read it by hand first, then compare with the tree in Wireshark. Turn `21 20 55 05 01 f0` back into 12025550100.
-- The dashboard shows the same octets under **Body (hex)** in the details of the MESSAGE.
+- The Lab shows the same octets under **Body (hex)** in the details of the MESSAGE.
 
 > Guide: ["The relay layer (RP)"](../../../docs/guide/en/sms.md#the-relay-layer-rp), which has the table of all fields. TS 24.011 7.3.1.2, 8.2.
 
@@ -338,7 +338,7 @@ Before each filter, guess which of the six MESSAGEs stay.
 
 ---
 
-## Sending from the dashboard
+## Sending from the Lab
 
 ```sh
 docker compose --profile sim up -d --build
@@ -349,9 +349,9 @@ docker compose --profile sim up -d --build
 3. **SMS received** in the card of `ue-b` shows the sender's number and the text.
 4. **ladder** in a row draws the ladder of that MESSAGE. Pick an arrow to see the RP and TP fields.
 
-- The dashboard draws one ladder per Call-ID, so the six MESSAGEs are six ladders.
+- The Lab draws one ladder per Call-ID, so the six MESSAGEs are six ladders.
 
-> Guide: [Watch the IMS in the dashboard, "Drive the UE simulators"](../../../docs/guide/en/dashboard.md#drive-the-ue-simulators)
+> Guide: [Watch the IMS in the Lab, "Drive the UE simulators"](../../../docs/guide/en/lab.md#drive-the-ue-simulators)
 
 ---
 

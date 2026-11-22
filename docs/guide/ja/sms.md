@@ -171,7 +171,7 @@ IP-SM-GW が Timer F（32 秒）のあいだに MESSAGE に応答しないか、
 - **番号が無い。** `docker compose run --rm ue sms +12025550198 "Nobody has this number."`。この番号を持つ加入者はいません。submit report は RP-ERROR になり、`ue sms` は `the SC refused the short message: RP-Cause 1, TP-FCS 0xc3` で終わります。
 - **受信者が登録していない。** `docker compose run --rm ue sms -status-report +12025550103 "Are you there?"`。加入者 3 は存在しますが、登録しません。SC はメッセージを受け付けますが、配達は 480 で失敗します。UE 1 は `"status":98`（TP-ST の 0x62）を付けた `"msg":"status report"` をログに出します。
 
-同じことはダッシュボードでもできます。[ダッシュボードの手順書](dashboard.md) の「UE シミュレータを操作する」を見てください。UE のカードからショートメッセージを送れ、各 UE が送ったものと受けたものが一覧に出ます。MESSAGE の詳細には、デコードしたショートメッセージが表示されます。
+同じことはラボでもできます。[ラボの手順書](lab.md) の「UE シミュレータを操作する」を見てください。UE のカードからショートメッセージを送れ、各 UE が送ったものと受けたものが一覧に出ます。MESSAGE の詳細には、デコードしたショートメッセージが表示されます。
 
 ## キャプチャを開く
 
@@ -300,7 +300,7 @@ UE が登録を解除すると、S-CSCF は Subscription-State が `terminated;r
   |         |---------------------------------------------------->|
 ```
 
-I-CSCF は Record-Route を付けず、MESSAGE はダイアログを作らないので、どの MESSAGE とその応答も 1 ホップずつ進みます。IP-SM-GW が送る MESSAGE は新しい要求で、それぞれが別の Call-ID を持ちます。ダッシュボードのラダー図は 1 つの Call-ID ずつ描きます。
+I-CSCF は Record-Route を付けず、MESSAGE はダイアログを作らないので、どの MESSAGE とその応答も 1 ホップずつ進みます。IP-SM-GW が送る MESSAGE は新しい要求で、それぞれが別の Call-ID を持ちます。ラボのラダー図は 1 つの Call-ID ずつ描きます。
 
 ラダー図は順に並べて描いていますが、同時に進むものもあります。IP-SM-GW は 202 を送るとすぐに SC へメッセージを渡すので、キャプチャでは手順 5 の UDR が 202 より先に来ることがあります。SC がメッセージを受け取ると、submit report（手順 6）と SMS-DELIVER（手順 8）は一緒に送られ、それぞれの LIR と応答は入り混じります。
 
@@ -428,7 +428,7 @@ UE シミュレータのメモリは一杯にならないので、メモリが�
 
 ## ボディを読む
 
-MESSAGE のボディはバイナリです。TS 24.341 では、UE はオクテットをそのまま送ります。次は手順 1 の MESSAGE のボディで、UE シミュレータが `internal/sms` で作ったものです。ダッシュボードでは、MESSAGE の詳細の「Body (hex)」に同じオクテットが表示されます。
+MESSAGE のボディはバイナリです。TS 24.341 では、UE はオクテットをそのまま送ります。次は手順 1 の MESSAGE のボディで、UE シミュレータが `internal/sms` で作ったものです。ラボでは、MESSAGE の詳細の「Body (hex)」に同じオクテットが表示されます。
 
 ```text
 00 00 00 07 91 21 20 55 05 01 f0 23 21 00 0b 91 21 20 55 05 01 f2 00 00 19 c8 32 9b fd 06 55 8b 2d 21 0b
@@ -515,7 +515,7 @@ octet 2: lowest 2 bits of 'l' (00), then rest of 'e' (110010) = 0011 0010 = 32
 | `internal/ipsmgw` | IP-SM-GW。`ipsmgw.go`（第三者 REGISTER）、`regevent.go`（reg イベントの購読と PUR）、`message.go`（UE からの MESSAGE）、`deliver.go`（UE への MESSAGE）、`servicecentre.go`（SC との境界）、`store.go`（配達の途中の状態）。 |
 | `internal/sc` | SC のスタブ。 |
 | `internal/ue/sms.go` | SM-over-IP sender と receiver としての UE。 |
-| `internal/lab/sms.go` | ダッシュボードが詳細の表示のためにショートメッセージをデコードするところ。 |
+| `internal/lab/sms.go` | ラボが詳細の表示のためにショートメッセージをデコードするところ。 |
 | `internal/ipsmgw/network_test.go`、`internal/ue/sms_ims_test.go` | 流れの全体を 1 つのプロセスで動かす試験。上の失敗の場合も含む。 |
 
 ## このプロジェクトで簡略化していること

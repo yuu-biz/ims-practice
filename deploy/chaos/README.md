@@ -4,7 +4,7 @@
 
 This directory lets you break the IMS on purpose and watch what happens: a node that stops, a node that freezes, packets that get lost, and two nodes that can no longer reach each other.
 
-The IMS containers stay exactly as `compose.yaml` defines them. The network faults are put in place by a throw-away container that joins the network namespace of the node, with the `NET_ADMIN` capability, and goes away. `fault.sh` hands the Docker socket to no container. Only the fault agent, which lets the dashboard start faults, has it, and only when you start it with its own override file ([The fault agent](#the-fault-agent)).
+The IMS containers stay exactly as `compose.yaml` defines them. The network faults are put in place by a throw-away container that joins the network namespace of the node, with the `NET_ADMIN` capability, and goes away. `fault.sh` hands the Docker socket to no container. Only the fault agent, which lets the Lab start faults, has it, and only when you start it with its own override file ([The fault agent](#the-fault-agent)).
 
 Every node is a target: the nodes of `compose.yaml`, those of the second network in [deploy/interconnect](../interconnect/compose.yaml), and those of any other override file. `fault.sh` finds the containers by the labels that Docker Compose puts on them, so there is no list of nodes to keep up to date.
 
@@ -61,7 +61,7 @@ The capture container records the bridge that connects the nodes ([the capture g
 - A packet that the node sends and loses never reaches the bridge. It is not in the capture.
 - A packet that the node receives and loses has crossed the bridge already. It is in the capture, but the node never got it.
 
-The dashboard shows a different view. Each node sends it a copy of every SIP and Diameter message it sends or receives, and the faults let these copies through. So the dashboard shows what the node believes: a message that it sent and the fault dropped is on the dashboard, but not in the capture.
+The Lab shows a different view. Each node sends it a copy of every SIP and Diameter message it sends or receives, and the faults let these copies through. So the Lab shows what the node believes: a message that it sent and the fault dropped is in the Lab, but not in the capture.
 
 ## Exercises
 
@@ -116,7 +116,7 @@ docker compose run --rm ue register -deregister-after 2s
 deploy/chaos/fault.sh clear pcscf
 ```
 
-The capture holds the UE's REGISTER and its copies, more and more spaced out up to 4 s (T2). After 32 s (timer F), the UE gives up, and at the same moment the P-CSCF sends a 504 that comes too late. It holds nothing from the P-CSCF to the I-CSCF. The dashboard, however, shows that the P-CSCF sent the REGISTER to the I-CSCF again and again.
+The capture holds the UE's REGISTER and its copies, more and more spaced out up to 4 s (T2). After 32 s (timer F), the UE gives up, and at the same moment the P-CSCF sends a 504 that comes too late. It holds nothing from the P-CSCF to the I-CSCF. The Lab, however, shows that the P-CSCF sent the REGISTER to the I-CSCF again and again.
 
 ### Cut the S-CSCF off from the HSS
 
@@ -125,7 +125,7 @@ deploy/chaos/fault.sh partition scscf hss
 docker compose run --rm ue register -deregister-after 2s
 ```
 
-The REGISTER gets 500 after 5 seconds: the S-CSCF sent a Multimedia-Auth Request (MAR) that the dashboard shows and the capture does not. Leave the partition for about two minutes and read `docker compose logs hss` for `peer state`: the watchdog of RFC 3539 (3.4) moves the connection from `OKAY` to `Pending` and `Suspect`, one step for each Tw of 30 seconds, and then closes it. After `fault.sh clear scscf`, the S-CSCF opens a new connection (SYN, CER, CEA) within Tc, 30 seconds, and then the next registration works.
+The REGISTER gets 500 after 5 seconds: the S-CSCF sent a Multimedia-Auth Request (MAR) that the Lab shows and the capture does not. Leave the partition for about two minutes and read `docker compose logs hss` for `peer state`: the watchdog of RFC 3539 (3.4) moves the connection from `OKAY` to `Pending` and `Suspect`, one step for each Tw of 30 seconds, and then closes it. After `fault.sh clear scscf`, the S-CSCF opens a new connection (SYN, CER, CEA) within Tc, 30 seconds, and then the next registration works.
 
 ### Freeze the MMTel AS during a call
 
@@ -207,14 +207,14 @@ Give the address again when you reconnect; the addresses are in [the capture gui
 
 ## The fault agent
 
-`fault.sh` breaks a node from a terminal. The fault agent does the same for the dashboard, so that a learner can break a node from its page and watch the result next to the signalling: it runs the HTTP API of `internal/fault` in a container of its own (`agent.yaml`), and applies each fault to the containers of the Compose project, as `fault.sh` does. Every fault it starts has a duration and ends by itself when the time is up.
+`fault.sh` breaks a node from a terminal. The fault agent does the same for the Lab, so that a learner can break a node from its page and watch the result next to the signalling: it runs the HTTP API of `internal/fault` in a container of its own (`agent.yaml`), and applies each fault to the containers of the Compose project, as `fault.sh` does. Every fault it starts has a duration and ends by itself when the time is up.
 
 ### Why it starts only when you ask for it
 
 The agent talks to the Docker Engine through the Docker socket, `/var/run/docker.sock`. Whoever can use that socket can start a container with the host's disk and network mounted, which is as much as root on the host. So:
 
 - Only `agent.yaml` mounts the socket, and only into the agent. `compose.yaml` never names `agent.yaml`, and no IMS node gets the socket. `go test ./internal/fault` fails when another service of `compose.yaml` or of an override under `deploy/` mounts it.
-- The agent is on a network of its own, `chaos` (172.28.9.0/24), which it shares with the dashboard only. The IMS nodes cannot reach it, and its HTTP does not show up in the capture of `ims0`.
+- The agent is on a network of its own, `chaos` (172.28.9.0/24), which it shares with the Lab only. The IMS nodes cannot reach it, and its HTTP does not show up in the capture of `ims0`.
 - The API has no password: whoever reaches it can stop any container of the project. Its port is therefore published on the host's loopback address only, `127.0.0.1:8070`, for `curl`.
 - The agent refuses a fault on a container that holds the Docker socket, itself included: a stopped or frozen agent would leave its faults without an end. Like `fault.sh`, it refuses a network fault on the capture containers.
 
@@ -228,9 +228,9 @@ docker compose -f compose.yaml -f deploy/chaos/agent.yaml up -d
 curl http://127.0.0.1:8070/fault/v1/faults
 ```
 
-On a running IMS, the same `up -d` starts the agent and recreates the dashboard only, which joins the network `chaos`. Name both files on every `docker compose` command of this stack, or set them once: `export COMPOSE_FILE=compose.yaml:deploy/chaos/agent.yaml`.
+On a running IMS, the same `up -d` starts the agent and recreates the Lab only, which joins the network `chaos`. Name both files on every `docker compose` command of this stack, or set them once: `export COMPOSE_FILE=compose.yaml:deploy/chaos/agent.yaml`.
 
-The agent keeps its faults in its memory. Clear them, or let them end, before you stop it: a fault that it applied stays when it stops, and `deploy/chaos/fault.sh heal` then undoes it. To stop the agent and keep the IMS running, start the stack again without `agent.yaml`, which removes the agent and takes the dashboard off the network `chaos`, and remove the network:
+The agent keeps its faults in its memory. Clear them, or let them end, before you stop it: a fault that it applied stays when it stops, and `deploy/chaos/fault.sh heal` then undoes it. To stop the agent and keep the IMS running, start the stack again without `agent.yaml`, which removes the agent and takes the Lab off the network `chaos`, and remove the network:
 
 ```sh
 docker compose -f compose.yaml up -d --remove-orphans
@@ -247,7 +247,7 @@ Draining a node, so that new registrations and calls go to the other instances w
 
 ### The HTTP API
 
-The dashboard reaches the API at `http://172.28.9.10:8080`, and the host at `http://127.0.0.1:8070`. The bodies are JSON, and every answer has `Content-Type: application/json`. Times are RFC 3339 in UTC, such as `"2026-11-20T23:57:48.449Z"`. Durations are strings in the form of Go, such as `"200ms"`, `"20s"` or `"5m0s"`.
+The Lab reaches the API at `http://172.28.9.10:8080`, and the host at `http://127.0.0.1:8070`. The bodies are JSON, and every answer has `Content-Type: application/json`. Times are RFC 3339 in UTC, such as `"2026-11-20T23:57:48.449Z"`. Durations are strings in the form of Go, such as `"200ms"`, `"20s"` or `"5m0s"`.
 
 | Method and path | Body | Answer |
 | --- | --- | --- |

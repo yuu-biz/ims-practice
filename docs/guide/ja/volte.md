@@ -37,7 +37,7 @@
 | HSS | 172.28.0.10 | 認証ベクトルを作る（MAR と MAA）。 |
 | MMTel AS | 172.28.0.75 | [MMTel AS の補足サービス](mmtel.md) と同じく、すべての通話を受け持つ。 |
 | メディアの中継ノード | 172.28.0.50 | RTP、RTCP、telephone-event を復号せずに中継する。 |
-| ダッシュボード | 172.28.0.60 | volte-a と volte-b を操作し、ラダー図に Rx を出し、網の手順を始める EPC スタブのパスをホストに取り次ぐ。 |
+| ラボ | 172.28.0.60 | volte-a と volte-b を操作し、ラダー図に Rx を出し、網の手順を始める EPC スタブのパスをホストに取り次ぐ。 |
 
 volte-a と volte-b は `compose.yaml` のプロファイル `volte` のサービスです。鍵は `deploy/compose/hss.yaml` にあり、`deploy/compose/epc.yaml` が加入者ごとにコンテナのアドレスを割り当てています。
 
@@ -263,7 +263,7 @@ BYE が通ると、両側の P-CSCF は STR で Rx のセッションを終え�
 
 ### 網が bearer を落とす
 
-スタブは、無線の切断と同じように bearer を非活性化できます。網が始める EPS bearer コンテキストの非活性化です（TS 24.301 6.4.4.2）。`/network-initiated/ues/<IMSI>/bearers/<EBI>` への DELETE でこの手順が始まり、`/network-initiated/ues/<IMSI>/detach` への POST で網が始める detach（5.5.2.3）が始まります。ダッシュボードがどちらも取り次ぐので、ホストから次のように操作できます。
+スタブは、無線の切断と同じように bearer を非活性化できます。網が始める EPS bearer コンテキストの非活性化です（TS 24.301 6.4.4.2）。`/network-initiated/ues/<IMSI>/bearers/<EBI>` への DELETE でこの手順が始まり、`/network-initiated/ues/<IMSI>/detach` への POST で網が始める detach（5.5.2.3）が始まります。ラボがどちらも取り次ぐので、ホストから次のように操作できます。
 
 ```sh
 curl http://localhost:8080/api/epc/ues/001010000000010                       # the bearers of volte-a
@@ -271,7 +271,7 @@ curl -X DELETE http://localhost:8080/api/epc/network-initiated/ues/0010100000000
 ```
 
 ```text
-#7775 dashboard -> EPC  DELETE /network-initiated/ues/001010000000010/bearers/6
+#7775 Lab -> EPC        DELETE /network-initiated/ues/001010000000010/bearers/6
 #7776 EPC -> volte-a    DEACTIVATE EPS BEARER CONTEXT REQUEST (event stream)
 #7778 PCRF -> P-CSCF    ASR   Abort-Cause BEARER_RELEASED (0)
 #7785 P-CSCF -> PCRF    ASA 2001
@@ -382,7 +382,7 @@ Adaptive Multi-Rate
 
 ## 保留、再開、DTMF
 
-e2e のスクリプトがダッシュボードから操作する通話です。
+e2e のスクリプトがラボから操作する通話です。
 
 ```text
 #4604 volte-a -> P-CSCF  INVITE      to volte-b, set up as above
@@ -400,7 +400,7 @@ re-INVITE は MMTel AS をそのまま通り（TS 24.610 4.5.2.1）、新しい 
 
 `scripts/e2e-volte.sh` は、この手順書のことをすべて行い、キャプチャで各メッセージを順に確かめます。キャプチャは `captures/` に、登録、通話、Rx、EPC スタブの API のフレームは `e2e-out/volte-ladder.txt` に、AMR-WB の録音は `captures/volte-*.amr` に、UE のログは `e2e-out/` に残ります。かかる時間は 2 分ほどです。
 
-### ダッシュボードで
+### ラボで
 
 ```sh
 docker compose up -d --build
@@ -501,7 +501,7 @@ docker compose run --rm --entrypoint sipp peer -sf /etc/sipp/register-aka.xml -m
 | `internal/amr`、`internal/rtcp`、`internal/rtp` | RFC 4867 のペイロード形式と格納形式、RTCP、telephone-event。 |
 | `internal/ue/session.go`、`call.go`、`media.go` | UE の VoLTE の通話。offer と answer、プリコンディション、保留、DTMF、AMR、RTCP。 |
 | `internal/sip` | UPDATE、re-INVITE、セッションタイマー、199、Reason と、MMTel AS が使う B2BUA の部品。 |
-| `internal/lab/epc.go`、`causes.go` | ダッシュボードによるスタブのパスの取り次ぎと、Rx のセッションと通話との結びつけ。 |
+| `internal/lab/epc.go`、`causes.go` | ラボによるスタブのパスの取り次ぎと、Rx のセッションと通話との結びつけ。 |
 | `internal/ue/volte_epc_test.go`、`volte_aka_test.go` | 1 つのプロセスの中で IMS 全体を通る VoLTE の通話。 |
 
 ## このプロジェクトで簡略化していること
