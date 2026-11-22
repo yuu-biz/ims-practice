@@ -110,7 +110,7 @@ The second network of the interconnect guide has its own subscribers in `deploy/
 
 ### The state of the users in a store outside the nodes
 
-`deploy/redundancy/redundancy.yaml` adds a Valkey server to the project, and gives a `store` section that names it to every node that holds the state of users: the HSS, the S-CSCF, the P-CSCF, the IP-SM-GW, the MMTel AS and the MRFC. Start the project with that file on top of `compose.yaml`:
+`deploy/redundancy/redundancy.yaml` adds a Valkey server to the project, and gives a `store` section that names it to every node that holds the state of users: the HSS, the S-CSCF, the P-CSCF, the IP-SM-GW, the MMTel AS, the MRFC and the two media relays, the IMS-AGW and the MRFP. Start the project with that file on top of `compose.yaml`:
 
 ```sh
 export COMPOSE_FILE=compose.yaml:deploy/redundancy/redundancy.yaml COMPOSE_PATH_SEPARATOR=:

@@ -10,9 +10,8 @@ package config
 //
 // The roles that keep the state of the users read the store section
 // (readsStore). The rest of a node keeps its state in its process even
-// then: the I-CSCF holds none, the EPC and PCRF stubs run as a single
-// instance, and a media relay keeps its contexts in the process that
-// opened their ports.
+// then: the I-CSCF holds none, and the EPC and PCRF stubs run as a
+// single instance.
 func (c Config) Unread() []string {
 	var unread []string
 	if c.Store != nil && !c.readsStore() {
@@ -63,8 +62,9 @@ func (c Config) Unread() []string {
 // registrar state, the P-CSCF its IP associations and dialogs, the HSS
 // its subscribers, the IP-SM-GW its deliveries and subscriptions, the
 // MMTel AS the records of its calls and conferences, the MRFC the media
-// of each conference.
+// of each conference, and a media relay in the agw or the mrfp role the
+// contexts whose ports it holds.
 func (c Config) readsStore() bool {
 	return c.IBCF != nil || c.SCSCF != nil || c.PCSCF != nil || c.HSS != nil || c.IPSMGW != nil ||
-		c.MMTel != nil || c.MRFC != nil
+		c.MMTel != nil || c.MRFC != nil || c.AGW != nil || c.MRFP != nil
 }

@@ -13,10 +13,9 @@
 # It adds the store, and gives each node whose roles hold the state of
 # users its file from deploy/redundancy in place of the one from
 # deploy/compose: the same configuration with a store section at the
-# end. The I-CSCF holds no such state, the EPC and PCRF stubs and the
-# dashboard are single instances, and a media relay keeps the contexts
-# of its own ports, so those nodes keep the files of deploy/compose and
-# their state in their processes.
+# end. The I-CSCF holds no such state, and the EPC and PCRF stubs and
+# the dashboard are single instances, so those nodes keep the files of
+# deploy/compose and their state in their processes.
 #
 # The nodes, their addresses and the signaling are those of
 # compose.yaml. Only where the state lives changes, which is why the
@@ -100,6 +99,20 @@ services:
         condition: service_healthy
     volumes:
       - ./deploy/redundancy/mrfc.yaml:/etc/ims/node.yaml:ro
+
+  agw:
+    depends_on:
+      valkey:
+        condition: service_healthy
+    volumes:
+      - ./deploy/redundancy/agw.yaml:/etc/ims/node.yaml:ro
+
+  mrfp:
+    depends_on:
+      valkey:
+        condition: service_healthy
+    volumes:
+      - ./deploy/redundancy/mrfp.yaml:/etc/ims/node.yaml:ro
 
 volumes:
   # The append-only file of the store. "docker compose down -v" deletes
