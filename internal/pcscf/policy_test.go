@@ -152,6 +152,9 @@ func (r *registrar) register(expires int) (Association, bool) {
 	}
 	// The P-CSCF asks the PCRF after it has answered the UE.
 	time.Sleep(100 * time.Millisecond)
+	// The association is read from the Store: its policy session is what
+	// the P-CSCF keeps of the PCRF's answer, and no message shows it until
+	// the P-CSCF releases the session.
 	a, ok, _ := r.store.Association(context.Background(), sip.Destination{Transport: sip.UDP, Addr: r.ue.LocalAddr()})
 	return a, ok
 }

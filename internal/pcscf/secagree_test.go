@@ -200,6 +200,20 @@ var largerThanUDP = sip.HeaderField{Name: "User-Agent", Value: strings.Repeat("x
 // port.
 func (h *akaHarness) ueKey() netip.AddrPort { return h.ueProtected.LocalAddr() }
 
+// noSecurityAssociations checks that the UE has no entry in the SA
+// table: its REGISTER to the protected port is refused, as ESP would
+// drop it (TS 33.203 7.1 item 3).
+//
+// The other checks of the SA table read the Store: the keys, the SPIs
+// and the expiry of an entry are what ESP would use, and this project
+// sets up no ESP, so no message shows them.
+func (h *akaHarness) noSecurityAssociations(after string) {
+	h.t.Helper()
+	if r, got := h.register(true, "6629fae49393a05397450978507c4ef1", "600000"); r.StatusCode != 403 || got != nil {
+		h.t.Errorf("protected REGISTER after %s got %d, want 403 and nothing forwarded", after, r.StatusCode)
+	}
+}
+
 // challenge runs the first REGISTER and returns the Security-Server of
 // the 401, as the UE mirrors it in Security-Verify.
 func (h *akaHarness) challenge() []sip.HeaderField {
@@ -274,9 +288,6 @@ func TestIMSAKASecurityAgreement(t *testing.T) {
 	if !ok || sas.Temporary || time.Until(sas.Expires) < time.Hour {
 		t.Errorf("after the 200 the entry is %+v, %v; want it established past the registration", sas, ok)
 	}
-	if _, ok, _ := h.store.Association(context.Background(), sip.Destination{Transport: sip.UDP, Addr: h.ueKey()}); !ok {
-		t.Error("no association for the protected address of the UE")
-	}
 
 	// TS 24.229 5.2.6.3.3 and 5.2.6.3.4 item 4: an initial request over
 	// the protected port is Record-Routed with that port.
@@ -344,9 +355,7 @@ func TestIMSAKASecurityAgreement(t *testing.T) {
 	if r, _ := h.register(true, "6629fae49393a05397450978507c4ef1", "0", verify...); r.StatusCode != 200 {
 		t.Fatalf("deregistration got %d", r.StatusCode)
 	}
-	if _, ok, _ := h.store.SecurityAssociations(context.Background(), h.ueKey()); ok {
-		t.Error("the SA table still has the UE after its deregistration")
-	}
+	h.noSecurityAssociations("the deregistration")
 }
 
 // TS 24.229 5.2.2.2 item 3 a and RFC 3329 2.3.1: a protected answer whose
@@ -430,9 +439,7 @@ func TestDeregistrationOverTCP(t *testing.T) {
 	if a, ok, _ := h.store.Association(context.Background(), sip.Destination{Transport: sip.UDP, Addr: h.ueKey()}); ok && a.Expires.After(time.Now()) {
 		t.Errorf("the IP association of the UE lasts until %v after its deregistration", a.Expires)
 	}
-	if _, ok, _ := h.store.SecurityAssociations(context.Background(), h.ueKey()); ok {
-		t.Error("the SA table still has the UE after its deregistration")
-	}
+	h.noSecurityAssociations("the deregistration")
 }
 
 // TS 24.229 5.2.2.3: a 500 or a 504 to a REGISTER deletes the IP
@@ -472,9 +479,7 @@ func TestIMSAKAChallengeWithoutKeys(t *testing.T) {
 	if r, _ := h.register(false, "", "600000"); r.StatusCode != 500 {
 		t.Errorf("got %d, want 500", r.StatusCode)
 	}
-	if _, ok, _ := h.store.SecurityAssociations(context.Background(), h.ueKey()); ok {
-		t.Error("temporary associations without keys")
-	}
+	h.noSecurityAssociations("a 401 without keys")
 }
 
 // TS 33.203 7.3.1.2 and 7.3.1.3: the unprotected REGISTER with which the
@@ -486,9 +491,7 @@ func TestIMSAKAFailureReportEndsTheTemporaryAssociations(t *testing.T) {
 	h.securityClient = strings.Replace(h.securityClient, "spi-c=1111;spi-s=2222", "spi-c=3333;spi-s=4444", 1)
 	h.noKeys.Store(true) // the fake home network has no new challenge to give
 	h.register(false, "", "600000")
-	if sas, ok, _ := h.store.SecurityAssociations(context.Background(), h.ueKey()); ok {
-		t.Errorf("SA table entry after the failure report: %+v", sas)
-	}
+	h.noSecurityAssociations("the failure report")
 }
 
 // TS 33.203 7.3.2.1: a Security-Client with none of the P-CSCF's

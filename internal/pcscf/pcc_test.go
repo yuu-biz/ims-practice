@@ -265,6 +265,9 @@ func (n *pcc) register(p *pccParty, expires int) {
 	}
 }
 
+// association reads the association of the party from the Store, for
+// the policy session that the P-CSCF keeps of the PCRF's answer: no
+// message shows it, and the events of the PCRF name it.
 func (n *pcc) association(p *pccParty) Association {
 	n.t.Helper()
 	a, ok, _ := n.store.Association(context.Background(), sip.Destination{Transport: sip.UDP, Addr: p.ua.Stack().LocalAddr()})

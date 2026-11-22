@@ -71,10 +71,8 @@ func TestReleasedBearerEndsTheCallWithBYEs(t *testing.T) {
 	// P-CSCF releases it (TS 29.214 4.4.4).
 	c.pcrf.waitReleased(t, "session-1")
 	c.relay.waitHeld(t, 0, time.Second)
-	if _, ok, _ := c.store.DialogOfPolicySession(context.Background(), "session-1"); ok {
-		t.Error("the dialog is still in the Store")
-	}
 
+	// The dialog has gone, so the same event again releases nothing.
 	c.p.PolicyEvent(event)
 	noRequest(t, "the other party", c.toFar)
 	noRequest(t, "the UE", c.toUE)
@@ -230,8 +228,10 @@ func TestEventForAnUnknownPolicySessionIsIgnored(t *testing.T) {
 	c := newRawCall(t)
 	c.p.PolicyEvent(policy.Event{Session: "session-9", Kind: policy.SessionTerminated})
 	noRequest(t, "the other party", c.toFar)
-	if _, ok, _ := c.store.DialogOfPolicySession(context.Background(), "session-1"); !ok {
-		t.Error("the dialog of another session is gone")
+	// The dialog of the call is still there to be released.
+	c.p.PolicyEvent(policy.Event{Session: "session-1", Kind: policy.ReleaseOfBearer})
+	if m := nextRequest(t, "the other party", c.toFar); m.Method != sip.BYE {
+		t.Errorf("the other party got %s after the event of its session, want BYE", m.Method)
 	}
 }
 
