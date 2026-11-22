@@ -35,6 +35,7 @@ import (
 	"github.com/yuu-biz/ims-practice/internal/ims"
 	"github.com/yuu-biz/ims-practice/internal/ipsmgw"
 	"github.com/yuu-biz/ims-practice/internal/kvstore"
+	"github.com/yuu-biz/ims-practice/internal/kvstore/agwstore"
 	"github.com/yuu-biz/ims-practice/internal/kvstore/hssstore"
 	"github.com/yuu-biz/ims-practice/internal/kvstore/ibcfstore"
 	"github.com/yuu-biz/ims-practice/internal/kvstore/ipsmgwstore"
@@ -359,22 +360,32 @@ func run(configPath string, log *slog.Logger) error {
 		roleLog.Info("Notify server listening", "address", c.Notify.String(), "mrfp", c.MRFPs)
 	}
 	if c := cfg.AGW; c != nil {
-		control, err := startMediaNode(config.RoleAGW, *c, nil, log, cancel)
+		roleLog := log.With("role", config.RoleAGW)
+		store, err := agwStore(stores, cfg.Node, config.RoleAGW, roleLog)
 		if err != nil {
 			return err
 		}
-		defer control.Close()
+		stop, err := startMediaNode(*c, nil, store, roleLog, cancel)
+		if err != nil {
+			return err
+		}
+		defer stop()
 	}
 	if c := cfg.MRFP; c != nil {
+		roleLog := log.With("role", config.RoleMRFP)
 		announcements, err := agw.LoadAnnouncements(c.Announcements)
 		if err != nil {
 			return err
 		}
-		control, err := startMediaNode(config.RoleMRFP, c.AGW, announcements, log, cancel)
+		store, err := agwStore(stores, cfg.Node, config.RoleMRFP, roleLog)
 		if err != nil {
 			return err
 		}
-		defer control.Close()
+		stop, err := startMediaNode(c.AGW, announcements, store, roleLog, cancel)
+		if err != nil {
+			return err
+		}
+		defer stop()
 	}
 	if epcRole != nil {
 		// Close, not Shutdown, on the way out: a UE's event stream never
@@ -611,6 +622,25 @@ func ibcfStore(stores roleStores, log *slog.Logger) ibcf.Store {
 	return ibcf.NewMemoryStore()
 }
 
+// agwStore is where a media relay keeps its contexts: for each pass of
+// a call, the ports it reserved and the address and mode of each
+// termination. A node recreated under the same name opens those ports
+// again, so that the media of the calls through it goes on.
+//
+// The contexts of a relay are under the name of its node and its role,
+// and no other relay reads or writes them. The role is in the name
+// because a node may have both media roles: the relay of its agw role
+// and the relay of its mrfp role are two relays, each with its own
+// ports, and one that opened the contexts of the other would hold ports
+// outside its range and give those contexts up.
+func agwStore(stores roleStores, node string, role config.Role, log *slog.Logger) (agw.ContextStore, error) {
+	kv, cfg, ok := stores.adapter(log)
+	if !ok {
+		return agw.NewMemoryContextStore(), nil
+	}
+	return agwstore.New(kv, agwstore.Config{Config: cfg, Relay: node + "-" + string(role)})
+}
+
 // startIBCF makes the IBCF and its two UAs: the internal one on Mx,
 // towards the home network, and the external one on Ici, towards the
 // peers (TS 29.165 3.2). The IBCF is a B2BUA (TS 24.229 5.10.5), so its
@@ -678,22 +708,28 @@ var roleApplications = map[config.Role][]uint32{
 // diameterApplications are the applications the node advertises in its
 // CER and CEA: those of its roles, and no others.
 // startMediaNode serves the control API of a media node: the IMS-AGW,
-// or the MRFP with its announcements. Both are the same relay.
-func startMediaNode(role config.Role, c config.AGW, announcements agw.Announcements, log *slog.Logger, cancel context.CancelFunc) (*http.Server, error) {
-	roleLog := log.With("role", role)
-	relay, err := agw.NewRelay(c.RTPAddress, c.MinPort, c.MaxPort, announcements, nil, roleLog)
+// or the MRFP with its announcements. Both are the same relay. It opens
+// the ports of the contexts that an earlier process of this relay left
+// in store, so a store that cannot be read keeps the relay from
+// starting. The function it returns stops the control API and the
+// relay, and leaves its contexts in the store for the next process.
+func startMediaNode(c config.AGW, announcements agw.Announcements, store agw.ContextStore, log *slog.Logger, cancel context.CancelFunc) (func(), error) {
+	relay, err := agw.NewRelay(c.RTPAddress, c.MinPort, c.MaxPort, announcements, store, log)
 	if err != nil {
 		return nil, err
 	}
 	control := &http.Server{Addr: c.Control.String(), Handler: agw.Handler(relay)}
 	go func() {
 		if err := control.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			roleLog.Error("control API failed", "error", err.Error())
+			log.Error("control API failed", "error", err.Error())
 			cancel()
 		}
 	}()
-	roleLog.Info("control API listening", "address", c.Control.String(), "announcements", len(announcements))
-	return control, nil
+	log.Info("control API listening", "address", c.Control.String(), "announcements", len(announcements))
+	return func() {
+		control.Close()
+		relay.Close()
+	}, nil
 }
 
 func diameterApplications(cfg config.Config) []uint32 {
