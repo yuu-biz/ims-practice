@@ -96,7 +96,7 @@ func (ua *UA) receiveInvite(st *ServerTransaction) {
 		acked:    make(chan struct{}),
 		reliable: req.Supports(Option100rel),
 	}
-	c.CallDialog = CallDialog{c: &c.call, in: c, invite: inviteReceived, peerAllowsUpdate: allows(req, UPDATE)}
+	c.CallDialog = CallDialog{c: &c.call, in: c, invite: inviteReceived, peerAllowsUpdate: req.Allows(UPDATE)}
 	c.sessionAnswer = session
 	if len(req.Body) > 0 {
 		c.offer = OfferRemote

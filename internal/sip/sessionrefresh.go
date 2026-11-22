@@ -32,11 +32,6 @@ func (ua *UA) afterFunc(d time.Duration, f func()) (stop func() bool) {
 	return time.AfterFunc(d, run).Stop
 }
 
-// allows reports whether m lists the method in Allow.
-func allows(m *Message, method Method) bool {
-	return slices.Contains(m.GetAll("Allow"), string(method))
-}
-
 // setSession makes t the session timer state of the dialog and starts
 // its timers anew. The UA calls it for each 2xx to a session refresh
 // request within the confirmed dialog, sent or received: the session
