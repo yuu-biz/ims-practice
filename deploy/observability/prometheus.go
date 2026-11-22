@@ -55,7 +55,7 @@ type composeService struct {
 // with "docker compose up", that is, that are in no profile. One service
 // builds the image and the others run it by its name. The UE simulators
 // run the same image but only start in a profile, and they are not
-// network nodes. dns, capture and peer run other images.
+// network nodes. dns, capture and softphone run other images.
 func Nodes(compose []byte) ([]string, error) {
 	var doc yaml.Node
 	if err := yaml.Unmarshal(compose, &doc); err != nil {

@@ -113,7 +113,7 @@ pjsua_registered() {
 	return 1
 }
 since="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-docker compose run --no-deps -d -T --name ims-practice-pjsua-answer peer "${pjsua[@]}" --auto-answer 200 >/dev/null
+docker compose run --no-deps -d -T --name ims-practice-pjsua-answer softphone "${pjsua[@]}" --auto-answer 200 >/dev/null
 if ! pjsua_registered "$since"; then
 	echo "FAIL pjsua did not register"
 	fail=1
@@ -128,7 +128,7 @@ docker rm -f ims-practice-pjsua-answer >/dev/null
 
 docker compose run --no-deps -d --name ims-practice-ue2-pjsua ue2 answer "${ue2[@]}" --ring 500ms --tone 4s >/dev/null
 wait_log ims-practice-ue2-pjsua '"msg":"waiting for a call"' || fail=1
-docker compose run --no-deps -d -T --name ims-practice-pjsua-call peer "${pjsua[@]}" --duration 2 	sip:+12025550102@ims.mnc001.mcc001.3gppnetwork.org >/dev/null
+docker compose run --no-deps -d -T --name ims-practice-pjsua-call softphone "${pjsua[@]}" --duration 2 	sip:+12025550102@ims.mnc001.mcc001.3gppnetwork.org >/dev/null
 # The log is read whole before grep -q looks at it. Piped, grep -q exits
 # at the first match, docker logs dies writing the rest (SIGPIPE), and
 # pipefail fails the check although pjsua's call was confirmed.

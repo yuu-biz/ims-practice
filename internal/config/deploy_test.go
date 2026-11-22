@@ -106,7 +106,7 @@ func TestComposeAKASubscribers(t *testing.T) {
 		"001010000000010@ims.mnc001.mcc001.3gppnetwork.org": {hex16("465b5ce8b199b49faa5f0a2ee238a6bc"), hex16("cdc202d5123e20f62b6d676ac72cb318")},
 		// Test set 3.
 		"001010000000012@ims.mnc001.mcc001.3gppnetwork.org": {hex16("fec86ba6eb707ed08905757b1bb44b8f"), hex16("dbc59adcb6f9a0ef735477b7fadf8374")},
-		// images/peer/sipp/register-aka.xml.
+		// images/softphone/sipp/register-aka.xml.
 		"001010000000011@ims.mnc001.mcc001.3gppnetwork.org": {text16("ims-practice-K01"), text16("ims-practice-OP1")},
 	}
 	found := map[string]bool{}

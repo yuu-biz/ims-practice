@@ -189,7 +189,7 @@ ESP が無いので、本物の網と 2 つの点が違います。
 
 ### SIPp
 
-SIPp は `images/peer/sipp/register-aka.xml` のシナリオで、IMS-AKA で登録します。SIPp はすべてを 1 つのポート 5060 から送るので、そのポートが保護サーバーポートにもなります。SIPp 3.7 は K と OP を文字列のバイトとして受け取るので、加入者 11 の鍵は印字できる文字列の `ims-practice-K01` と `ims-practice-OP1` にしました。hss.yaml にはその 16 進と、その OP から MILENAGE で作った OPc を書いています。SIPp は RES と Digest を自分で計算するので、S-CSCF の計算をほかの人が書いたコードと照らし合わせられます。
+SIPp は `images/softphone/sipp/register-aka.xml` のシナリオで、IMS-AKA で登録します。SIPp はすべてを 1 つのポート 5060 から送るので、そのポートが保護サーバーポートにもなります。SIPp 3.7 は K と OP を文字列のバイトとして受け取るので、加入者 11 の鍵は印字できる文字列の `ims-practice-K01` と `ims-practice-OP1` にしました。hss.yaml にはその 16 進と、その OP から MILENAGE で作った OPc を書いています。SIPp は RES と Digest を自分で計算するので、S-CSCF の計算をほかの人が書いたコードと照らし合わせられます。
 
 ## ISIM の無い端末の識別子
 
@@ -447,8 +447,8 @@ VoLTE の UE に使うフラグです。
 SIPp は IMS-AKA で登録し、登録を解除します。
 
 ```sh
-docker compose --profile ue build peer
-docker compose run --rm --entrypoint sipp peer -sf /etc/sipp/register-aka.xml -m 1 -t u1 -p 5060 172.28.0.40:5060
+docker compose --profile ue build softphone
+docker compose run --rm --entrypoint sipp softphone -sf /etc/sipp/register-aka.xml -m 1 -t u1 -p 5060 172.28.0.40:5060
 ```
 
 ## キャプチャを開く

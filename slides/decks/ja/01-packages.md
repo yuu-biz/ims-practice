@@ -73,7 +73,7 @@ home_domain: ims.mnc001.mcc001.3gppnetwork.org
 | `epc`、`mrfc`、`mrfp` | 172.28.0.80、85、86 | `epc`、`mrfc`、`mrfp` | `epc.yaml`、`mrfc.yaml`、`mrfp.yaml` |
 | `ue`、`ue2`、`ue3` | 172.28.0.100、101、103 | `cmd/ue` | コマンドの引数 |
 
-- 表に無いものは、`ipsmgw` の中の SC のスタブ、ラボと VoLTE の UE（`ue-a` から `ue-c`、`volte-a`、`volte-b`）、`peer`、`capture` です。
+- 表に無いものは、`ipsmgw` の中の SC のスタブ、ラボと VoLTE の UE（`ue-a` から `ue-c`、`volte-a`、`volte-b`）、`softphone`、`capture` です。
 - IBCF ともう 1 つの網は、別の Compose のプロジェクト `deploy/interconnect/compose.yaml` にあります。
 
 > 手順書 [信号をキャプチャして Wireshark で開く「ノードを起動すると見えるもの」](../../../docs/guide/ja/capture.md#ノードを起動すると見えるもの)

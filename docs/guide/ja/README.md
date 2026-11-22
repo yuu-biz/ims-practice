@@ -77,7 +77,7 @@ UE はプロファイルに入れてあるので、`docker compose up` では起
 
 | プロファイル | サービス | 動かし方 |
 | --- | --- | --- |
-| `ue` | `ue`、`ue2`、`ue3`、`peer` | `docker compose run --rm ue register` のように、1 回のコマンドごとに動かします。`peer` には、ほかの人が作ったユーザーエージェントの pjsua と SIPp が入っています。 |
+| `ue` | `ue`、`ue2`、`ue3`、`softphone` | `docker compose run --rm ue register` のように、1 回のコマンドごとに動かします。`softphone` には、ほかの人が作ったソフトフォンの pjsua と SIPp が入っています。 |
 | `sim` | `ue-a`、`ue-b`、`ue-c` | 起動したままになり、ラボの指示で動きます。`docker compose --profile sim up -d` で起動します。 |
 | `volte` | `volte-a`、`volte-b` | VoLTE の UE です。`sim` と同じく起動したままになります。`docker compose --profile volte up -d` で起動します。 |
 
@@ -92,9 +92,9 @@ UE はプロファイルに入れてあるので、`docker compose up` では起
 | 1 | `001010000000001@ims.mnc001.mcc001.3gppnetwork.org` | +1-202-555-0101 | `ue`、`ue-a` | UE 1、UE-A、網間接続の手順書では UE A1 |
 | 2 | `001010000000002@ims.mnc001.mcc001.3gppnetwork.org` | +1-202-555-0102 | `ue2`、`ue-b` | UE 2、UE-B |
 | 3 | `001010000000003@ims.mnc001.mcc001.3gppnetwork.org` | +1-202-555-0103 | `ue3`、`ue-c` | UE 3、UE-C |
-| 4 | `+12025550104@ims.mnc001.mcc001.3gppnetwork.org` | +1-202-555-0104 | `peer`（pjsua） | pjsua |
+| 4 | `+12025550104@ims.mnc001.mcc001.3gppnetwork.org` | +1-202-555-0104 | `softphone`（pjsua） | pjsua |
 | 10 | `001010000000010@ims.mnc001.mcc001.3gppnetwork.org` | +1-202-555-0110 | `volte-a` | volte-a |
-| 11 | `001010000000011@ims.mnc001.mcc001.3gppnetwork.org` | +1-202-555-0111 | `peer`（SIPp） | SIPp |
+| 11 | `001010000000011@ims.mnc001.mcc001.3gppnetwork.org` | +1-202-555-0111 | `softphone`（SIPp） | SIPp |
 | 12 | `001010000000012@ims.mnc001.mcc001.3gppnetwork.org` | +1-202-555-0112 | `volte-b` | volte-b |
 
 網間接続の手順書の 2 つ目の網には、`deploy/interconnect/peer/hss.yaml` に別の加入者がいます。サービス `peer-ue` の UE B1 が +1-202-555-0151 で、もう 1 人が +1-202-555-0152 です。

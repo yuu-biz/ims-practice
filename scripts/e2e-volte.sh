@@ -26,8 +26,8 @@ python=python3
 "$python" -c 1 2>/dev/null || python=python
 
 docker compose up -d --build
-# SIPp's scenarios are in the image of the peers (images/peer).
-docker compose --profile ue build peer
+# SIPp's scenarios are in the softphone image (images/softphone).
+docker compose --profile ue build softphone
 
 wait_for_open() {
 	local service="$1" i
@@ -75,7 +75,7 @@ rm -f captures/volte-a-sent.amr captures/volte-b-received.amr
 echo "SIPp registers with IMS AKA"
 # SIPp exits 0 when its one call, the registration and the
 # deregistration, went through the scenario.
-if out="$(docker compose run --no-deps --rm -T --entrypoint sipp peer -sf /etc/sipp/register-aka.xml -m 1 -t u1 -p 5060 \
+if out="$(docker compose run --no-deps --rm -T --entrypoint sipp softphone -sf /etc/sipp/register-aka.xml -m 1 -t u1 -p 5060 \
 	-nostdin -timeout 30 -timeout_error 172.28.0.40:5060 2>&1)"; then
 	echo "ok   SIPp registered and deregistered with AKAv1-MD5 and the security agreement"
 else

@@ -368,11 +368,11 @@ services:
       ims:
         ipv4_address: 172.28.0.121
 
-  # pjsua and SIPp, user agents written by others. Started on
+  # pjsua and SIPp, softphones written by others. Started on
   # demand, like the UE simulators.
-  peer:
-    image: ims-practice/peer:dev
-    build: images/peer
+  softphone:
+    image: ims-practice/softphone:dev
+    build: images/softphone
     profiles: [ue]
     dns: [172.28.0.2]
     volumes:

@@ -6,7 +6,7 @@
 
 - UE は自作の UE シミュレータを基本にします。IMS 固有のヘッダや IMS-AKA の手順を見せるためです。
 - ソフトフォン（Linphone など）は、マイクとスピーカーで会話を試すための補助として、SIP Digest 認証で使います。
-- SIPp と pjsua を、自作の UE とは独立した試験相手として使います。`images/peer` のイメージに pjsua と SIPp を入れてあります。
+- SIPp と pjsua を、自作の UE とは独立した試験相手として使います。`images/softphone` のイメージに pjsua と SIPp を入れてあります。
 
 ## 既存の UE が IMS-AKA にどこまで対応しているか
 
