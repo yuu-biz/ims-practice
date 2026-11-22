@@ -111,7 +111,10 @@ func (s *Store) DeleteCall(ctx context.Context, instance, id string) error {
 // An entry without a record was left by a process that stopped between
 // the two writes of PutCall or of DeleteCall. The IBCF reads its records
 // when it starts, before it writes any, and no other instance writes
-// them, so no PutCall can be under way: CallsOf skips such an entry, and
+// them. This assumes one live process per instance name: with a second
+// one, a PutCall of the old process could be under way, and its record
+// would be left out of the index until that call is written again.
+// CallsOf skips such an entry, and
 // removes it from the index. A failed removal changes nothing that
 // CallsOf returns, so it is only logged; the next CallsOf tries again.
 func (s *Store) CallsOf(ctx context.Context, instance string) ([]ibcf.CallRecord, error) {

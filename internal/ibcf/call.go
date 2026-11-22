@@ -273,7 +273,12 @@ func (c *call) across(d b2bua.Direction) interconnect.Direction {
 //
 // A request whose SDP gets the call its TrGW context gets 500 (Server
 // Internal Error, RFC 3261 21.5.1) when the record of the call cannot
-// then be written, as the INVITE does in the same case (run).
+// then be written, as the INVITE does in the same case (run), and that
+// 500 counts among the IBCF's refusals. It is no promise that every
+// record is written: the context stays reserved, so a request sent again
+// passes, and a record that a response or an ACK fails to write is only
+// logged. Each later write carries the whole record and brings the
+// store up to date.
 func (c *call) Request(req *sip.Message, d b2bua.Direction) (b2bua.Message, *b2bua.Refusal) {
 	m := req.Clone()
 	if err := c.border.Request(m, c.across(d)); err != nil {
@@ -283,7 +288,8 @@ func (c *call) Request(req *sip.Message, d b2bua.Direction) (b2bua.Message, *b2b
 	if err := c.throughTrGW(m, c.across(d)); err != nil {
 		c.mediaFailed("a request", err, "method", string(req.Method))
 		if errors.Is(err, errNotKept) {
-			return b2bua.Message{}, &b2bua.Refusal{Status: 500}
+			r := c.b.refuse(req, c.peer, c.across(d), 500)
+			return b2bua.Message{}, &b2bua.Refusal{Status: r.status, Headers: r.headers}
 		}
 	}
 	return b2bua.Message{Headers: interconnect.CrossingFields(m), Body: sip.BodyOf(m)}, nil

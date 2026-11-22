@@ -48,8 +48,7 @@
 // SIMPLIFIED: TS 24.229 5.10.2.4 and 5.10.3.4. The node gives the IBCF
 // a MemoryStore, in the memory of its process, and not the Store that
 // keeps the records outside it (internal/kvstore/ibcfstore). An IBCF
-// node that is recreated
-// starts with an empty one, so it finds no record and ends none of the
+// node that is recreated starts with an empty one, so it finds no record and ends none of the
 // calls of the process that stopped: their requests get 481 from it,
 // and their TrGW contexts stay reserved.
 //
