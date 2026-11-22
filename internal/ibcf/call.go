@@ -664,12 +664,12 @@ func (c *call) answerRequest(r *sip.InDialogRequest, resp *sip.Message, err erro
 	case errors.Is(err, sip.ErrInviteInProgress), errors.Is(err, sip.ErrOfferPending):
 		// RFC 3261 14.2, RFC 3311 5.2: the request crossed one of the
 		// other side.
-		c.rejectInDialog(r, d, 491)
+		r.Reject(491)
 	case errors.Is(err, sip.ErrCallEnded):
-		c.rejectInDialog(r, d, 481)
+		r.Reject(481)
 	case err != nil:
 		c.log.Info("request within the dialog not relayed", "method", string(r.Request.Method), "error", err.Error())
-		c.rejectInDialog(r, d, 500)
+		r.Reject(500)
 	case resp.StatusCode < 300:
 		headers, body := c.back(resp, reverse(d))
 		ack, err := r.Accept(body, headers...)
@@ -686,10 +686,4 @@ func (c *call) answerRequest(r *sip.InDialogRequest, resp *sip.Message, err erro
 		headers, _ := c.back(resp, reverse(d))
 		r.Reject(resp.StatusCode, headers...)
 	}
-}
-
-// rejectInDialog answers r with a response of the IBCF's own.
-func (c *call) rejectInDialog(r *sip.InDialogRequest, d interconnect.Direction, code int) {
-	c.b.metrics.reject(c.peer.Profile.Name, d, r.Request.Method, code)
-	r.Reject(code)
 }
