@@ -78,11 +78,14 @@ func TestVoLTECallWithPreconditions(t *testing.T) {
 	callee.wire.find(t, "> 183 INVITE")
 	calleeResources.Set(true)
 	caller.wire.find(t, "< 183 INVITE")
-	time.Sleep(50 * time.Millisecond)
-	if slices.Contains(callee.wire.labels(), "> 180 INVITE") {
+	alerted := func() bool { return callee.wire.has("> 180 INVITE") }
+	if came(watch, alerted) {
 		t.Error("the callee alerted before the caller had its resources")
 	}
 	callerResources.Set(true)
+	if !came(watch, alerted) {
+		t.Errorf("the callee did not alert within %v of the caller having its resources", watch)
+	}
 	if err := wait(t, "the call", called); err != nil {
 		t.Fatal(err)
 	}
@@ -222,11 +225,14 @@ func TestCalleeWithoutPreconditionsWaitsForItsResources(t *testing.T) {
 		t.Errorf("183 Require %q with %d octets of SDP; want a reliable 183 with the answer, without preconditions",
 			progress.GetAll("Require"), len(progress.Body))
 	}
-	time.Sleep(100 * time.Millisecond)
-	if slices.Contains(caller.wire.labels(), "< 180 INVITE") {
+	alerted := func() bool { return caller.wire.has("< 180 INVITE") }
+	if came(watch, alerted) {
 		t.Fatal("180 before the callee had its resources")
 	}
 	calleeResources.Set(true)
+	if !came(watch, alerted) {
+		t.Errorf("no 180 within %v of the callee having its resources", watch)
+	}
 	if err := wait(t, "the call", called); err != nil {
 		t.Fatal(err)
 	}
