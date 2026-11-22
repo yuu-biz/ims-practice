@@ -387,7 +387,7 @@ UE は Contact に `expires=0` を付けた REGISTER を送ります（TS 24.229
 
 UE は、登録の解除に成功した時点で、購読は終わったものとして扱います（TS 24.229 5.1.1.6.1）。それでも、最後の NOTIFY が 1 秒以内に届けば答えます。P-CSCF は、この NOTIFY を UE へ渡します。P-CSCF は UE からの要求をもう受け付けませんが、登録の解除のサーバートランザクションが終わるまでは、IP の対応付けを残すからです。UDP では 32 秒です（5.2.5.1 の 2 番目の項目）。
 
-UE が期限までに再登録しないと、登録の期限が切れます。そのとき S-CSCF は `event="expired"` の NOTIFY を送り、続けて **TIMEOUT_DEREGISTRATION**（4）の SAR を送ります。P-CSCF はこの NOTIFY を受けて、同じように UE の IP の対応付けを終わらせます。UE あての NOTIFY は、それでも届きます（TS 24.229 5.2.5.2 と NOTE 2）。UE も、登録が無くなったことを知ります。`ue register` は、そこでエラーとして終了します。`ue call` と `ue answer` はログに出すだけです。`ue serve` は、登録を頼まれるまで未登録のままです。S-CSCF が自分の判断で `event="deactivated"` として登録を終わらせたときは、UE は登録し直します。TS 24.229 5.1.1.7 の決まりです。
+UE が期限までに再登録しないと、登録の期限が切れます。そのとき S-CSCF は `event="expired"` の NOTIFY を送り、続けて **TIMEOUT_DEREGISTRATION**（4）の SAR を送ります。S-CSCF は、期限の来た登録を 1 秒ごとに探します。そのため、この 2 つのメッセージは、期限そのものより 1 秒ほど遅れることがあります。P-CSCF はこの NOTIFY を受けて、同じように UE の IP の対応付けを終わらせます。UE あての NOTIFY は、それでも届きます（TS 24.229 5.2.5.2 と NOTE 2）。UE も、登録が無くなったことを知ります。`ue register` は、そこでエラーとして終了します。`ue call` と `ue answer` はログに出すだけです。`ue serve` は、登録を頼まれるまで未登録のままです。S-CSCF が自分の判断で `event="deactivated"` として登録を終わらせたときは、UE は登録し直します。TS 24.229 5.1.1.7 の決まりです。
 
 ## 加入を削除する（HSS からの登録解除）
 
