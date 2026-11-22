@@ -370,6 +370,62 @@ Adaptive Multi-Rate
 
 One frame of 20 ms per packet: the codec mode request (CMR) of 4 bits, then the table of contents (ToC) entry with F, FT and Q, then the speech bits (RFC 4867 4.3). The receiver writes the frames it gets back to the storage format with `-received-out`, so the frames can be compared bit for bit with what the sender wrote with `-sent-out`; the e2e script does that.
 
+### Hear the call
+
+Nothing here decodes speech: the UE carries the frames, and a player on your own machine turns them into sound. That player is FFmpeg, which has AMR and AMR-WB decoders of its own and brings `ffplay` with it. It is yours to install and it is optional. This project neither ships it nor fetches it, and nothing in the containers decodes the audio.
+
+Each of the three ways below needs the network of this guide running (`docker compose up -d --build`), and each is a flow of its own: the UEs of the `volte` profile and the one-shot `docker compose run` commands share the addresses of volte10 and volte12, so only one of them holds those addresses at a time.
+
+**On your own machine.** Start volte12 of the profile, which waits for calls and answers by itself, then build the UE for your machine and run it beside the containers, as "Talk from your own machine" in [Follow a voice call through the IMS](call.md) shows. `-codecs` asks for AMR-WB, which a UE without `-epc` does not offer of its own accord, and `-play` plays what comes back as it arrives:
+
+```sh
+docker compose --profile volte up -d --no-deps volte12
+docker run --rm -v "$PWD:/src" -w /src golang:1.27.4-alpine go build -o ue ./cmd/ue
+./ue call -pcscf 127.0.0.1:5060 -listen 127.0.0.1:0 -media-listen 127.0.0.1:0 \
+  -codecs AMR-WB,AMR,PCMU -play tel:+12025550112
+```
+
+volte12 answers in AMR-WB and plays its tone, and you hear it. The UE starts `ffplay` itself, with the options the codec of the call needs, and writes the frames to it packet by packet. `-player /path/to/ffplay` names the program when the `PATH` does not reach it; it has to be `ffplay`, or a program that takes ffplay's options. With no player at all, the UE says so once and the call runs on as before, and so it does when the player stops or falls behind the call.
+
+**From a container.** A UE in a container has no audio device: the speakers are on your machine. `-received-out -` writes the stream to standard output as the packets arrive, so your own player can read it through a pipe. The UEs of the profile hold the addresses, so stop them first:
+
+```sh
+docker compose --profile volte rm -sf volte10 volte12
+```
+
+In one terminal, let volte12 answer and give what it hears to the player:
+
+```sh
+docker compose run --rm -T --no-deps volte12 answer -epc http://172.28.0.80:8080 \
+  -impi 001010000000012@ims.mnc001.mcc001.3gppnetwork.org \
+  -impu sip:001010000000012@ims.mnc001.mcc001.3gppnetwork.org \
+  -k fec86ba6eb707ed08905757b1bb44b8f -opc 1006020f0a478bf6b699f15c062e42b3 \
+  -received-out - | ffplay -nodisp -autoexit -i -
+```
+
+In another, call volte12 from volte10, which plays a tone for three seconds and hangs up:
+
+```sh
+docker compose run --rm --no-deps volte10 call -epc http://172.28.0.80:8080 \
+  -impi 001010000000010@ims.mnc001.mcc001.3gppnetwork.org \
+  -impu sip:001010000000010@ims.mnc001.mcc001.3gppnetwork.org \
+  -k 465b5ce8b199b49faa5f0a2ee238a6bc -opc cd63cb71954a9f4e48a5994e37a02baf \
+  -tone 3s tel:+12025550112
+```
+
+`-T` keeps Docker from giving the command a terminal, which would change the bytes of the stream, and the UE's JSON log moves to standard error, so that the pipe carries nothing but the audio. The player first works out what the stream is, which takes about a second with ffplay, so what you hear stays that far behind the call. Closing the player ends the audio and not the call. In a PCMU call the stream is the payloads as they are, which `ffplay -f mulaw -ar 8000 -ac 1 -i -` plays; any player of the storage format of RFC 4867 5 does for AMR and AMR-WB.
+
+**After the call.** With a path instead of `-`, the UE writes the whole recording when the call ends. `scripts/e2e-volte.sh` leaves what volte10 sent and what volte12 received in `captures/`:
+
+```sh
+ffplay captures/volte12-received.amr
+ffmpeg -i captures/volte12-received.amr captures/volte12-received.wav
+```
+
+What comes out is the tone the other UE played, or the file it was given with `-amr-in`. A call that received nothing leaves a file of the magic number alone, and an empty stream, since the magic number goes out with the first frame. A pause in the call, such as a hold or a call that outlasts the tone, is stored as NO_DATA frames, which keep the timing of the recording (RFC 4867 5.3). The AMR-WB decoder turns them into silence. The narrowband AMR decoder of FFmpeg skips them instead, so an AMR call with pauses in it comes out shorter than the call. A frame that arrives after its place has gone to the player is not in what you hear, while the file of the whole call still has it in its place.
+
+Wireshark shows the frames of the capture, and its RTP player plays only the codecs its own build can decode (**Help > About Wireshark > Plugins** lists them).
+
 ### RTCP and DTMF
 
 Both UEs send RTCP sender reports to the port above RTP, through the relay (RFC 3550 6.4.1, IR.92 3.2.4). DTMF digits go as telephone-events in the RTP stream (RFC 4733): each digit is a run of packets, the last three with the end bit. The relay passes them on as they are.
@@ -398,7 +454,7 @@ Each re-INVITE passes the MMTel AS as it came (TS 24.610 4.5.2.1), and each new 
 
 ## Run it
 
-`scripts/e2e-volte.sh` does everything in this guide and checks each message in the capture, in order. It leaves the capture in `captures/`, the frames of the registrations, the calls, Rx and the EPC stub's API in `e2e-out/volte-ladder.txt`, the AMR-WB recordings in `captures/volte-*.amr`, and the logs of the UEs in `e2e-out/`. It takes about two minutes.
+`scripts/e2e-volte.sh` does everything in this guide and checks each message in the capture, in order. It leaves the capture in `captures/`, the frames of the registrations, the calls, Rx and the EPC stub's API in `e2e-out/volte-ladder.txt`, the AMR-WB recordings in `captures/volte-*.amr`, and the logs of the UEs, with what a UE on the host heard, in `e2e-out/`. It takes about two minutes.
 
 ### With the Lab
 
@@ -442,7 +498,8 @@ The flags for a VoLTE UE:
 | `-port-s` | The protected server port, 5062 by default. |
 | `-codecs` | The speech codecs to offer, such as `AMR-WB,AMR,PCMU`. With `-epc` the default is all of them, without it PCMU. |
 | `-no-preconditions` | Leave the precondition mechanism out. |
-| `-amr-in`, `-sent-out`, `-received-out` | Play an AMR or AMR-WB file, and write what was sent and received. |
+| `-amr-in`, `-sent-out`, `-received-out` | Play an AMR or AMR-WB file, and write what was sent and received; `-received-out -` streams what is received to standard output while the call runs. |
+| `-play`, `-player` | Play what is received on your own player while the call runs, and which program that is. |
 
 SIPp registers with IMS AKA and deregisters:
 
