@@ -341,12 +341,12 @@ sip.CSeq.method in {"MESSAGE", "REGISTER"} || (sip && ip.addr == 172.28.0.70) ||
 ## ラボで送る
 
 ```sh
-docker compose --profile sim up -d --build
+docker compose --profile phones up -d --build
 ```
 
-1. `ue-a` のカードの SMS のフォームに本文を書き、**status report** に印を付けて、**Send SMS** を押します。
+1. `phone1` のカードの SMS のフォームに本文を書き、**status report** に印を付けて、**Send SMS** を押します。
 2. **SMS sent** の表示が `waiting for the submit report` から `accepted by the SC` に変わります。
-3. `ue-b` のカードの **SMS received** に、送信者の番号と本文が出ます。
+3. `phone2` のカードの **SMS received** に、送信者の番号と本文が出ます。
 4. 各行の **ladder** で、その MESSAGE のラダー図が出ます。矢印を選ぶと、RP と TP のフィールドが出ます。
 
 - ラボは Call-ID ごとにラダー図を描くので、6 通の MESSAGE は 6 つのラダー図になります。
@@ -414,5 +414,5 @@ IMS の中心となる登録、通話、ショートメッセージの 4 回は�
 - 次は MMTel AS の補足サービス（[mmtel.md](../../../docs/guide/ja/mmtel.md)）です。その次が、補足サービスの上に立つ VoLTE の通話（[volte.md](../../../docs/guide/ja/volte.md)）です。
 
 ```sh
-docker compose --profile ue --profile sim down --rmi all -v --remove-orphans
+docker compose --profile ue --profile phones down --rmi all -v --remove-orphans
 ```

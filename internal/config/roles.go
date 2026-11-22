@@ -708,7 +708,7 @@ type UESimulator struct {
 	// Name is how the Lab API names the UE, as in
 	// /api/ues/{name}/call: letters, digits and hyphens.
 	Name string
-	// Control is the URL of its control API, such as http://ue-a:8090.
+	// Control is the URL of its control API, such as http://phone1:8090.
 	Control string
 }
 

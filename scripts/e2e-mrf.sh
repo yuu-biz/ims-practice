@@ -7,9 +7,9 @@
 # alerting tone cat1 through the Lab, and UE 1 hears it while UE 2
 # rings; the audio that UE 1 received is compared with the WAV file. A
 # call after the tone is switched off rings with UE 1's own ringing
-# tone. Last, the three UE simulators of the sim profile, driven
-# through the Lab: ue-a calls ue-b, ue-c calls ue-a, whose second
-# call waits; ue-a answers it, which holds the first, swaps between the
+# tone. Last, the three UE simulators of the phones profile, driven
+# through the Lab: phone1 calls phone2, phone3 calls phone1, whose second
+# call waits; phone1 answers it, which holds the first, swaps between the
 # two and merges them into a conference whose audio the MRFP mixes. The
 # checks read the capture.
 set -euo pipefail
@@ -155,7 +155,7 @@ fi
 
 echo "call waiting and a conference, driven through the Lab"
 # ues prints "name registered|unregistered|unreachable calls conference"
-# for each UE of the sim profile, the UEs separated by commas: calls is
+# for each UE of the phones profile, the UEs separated by commas: calls is
 # the state of each call on the line, joined by "+", with "/held" and
 # "/waiting"; conference is the number of its users that are connected.
 ues() {
@@ -163,7 +163,7 @@ ues() {
 import json, sys
 out = []
 for u in json.load(sys.stdin):
-    if u["name"] not in ("ue-a", "ue-b", "ue-c"):
+    if u["name"] not in ("phone1", "phone2", "phone3"):
         continue
     s = u["status"] or {}
     reg = "unreachable" if not u["reachable"] else "registered" if s["registered"] else "unregistered"
@@ -199,87 +199,87 @@ for u in json.load(sys.stdin):
 }
 # They restart by themselves and hold subscribers 1 to 3, so they must
 # not outlive the script.
-trap 'docker compose --profile sim rm -sf ue-a ue-b ue-c >/dev/null 2>&1' EXIT
-docker compose --profile sim up -d --no-deps ue-a ue-b ue-c
-if wait_ues "ue-a registered idle 0,ue-b registered idle 0,ue-c registered idle 0"; then
-	echo "ok   ue-a, ue-b and ue-c registered"
+trap 'docker compose --profile phones rm -sf phone1 phone2 phone3 >/dev/null 2>&1' EXIT
+docker compose --profile phones up -d --no-deps phone1 phone2 phone3
+if wait_ues "phone1 registered idle 0,phone2 registered idle 0,phone3 registered idle 0"; then
+	echo "ok   phone1, phone2 and phone3 registered"
 else
 	echo "FAIL the UE simulators did not register: $(ues)"
 	exit 1
 fi
-status="$(ue_post ue-a/call '{"target":"tel:+12025550102"}')"
-if [ "$status" = 200 ] && wait_ues "ue-a registered active 0,ue-b registered active 0,*"; then
-	echo "ok   ue-a called ue-b, which answered"
+status="$(ue_post phone1/call '{"target":"tel:+12025550102"}')"
+if [ "$status" = 200 ] && wait_ues "phone1 registered active 0,phone2 registered active 0,*"; then
+	echo "ok   phone1 called phone2, which answered"
 else
-	echo "FAIL ue-a's call to ue-b (status $status): $(ues)"
+	echo "FAIL phone1's call to phone2 (status $status): $(ues)"
 	exit 1
 fi
-first="$(call_ids ue-a)"
+first="$(call_ids phone1)"
 uea=172.28.0.110
 ueb=172.28.0.111
 uec=172.28.0.112
 ack_to() { echo "sip.Method == \"ACK\" && ip.dst == $1"; }
 bye_to() { echo "sip.Method == \"BYE\" && ip.dst == $1"; }
-status="$(ue_post ue-c/call '{"target":"tel:+12025550101"}')"
-if [ "$status" = 200 ] && wait_ues "ue-a registered active+ringing/waiting 0,*"; then
-	echo "ok   ue-c's call to ue-a waits"
+status="$(ue_post phone3/call '{"target":"tel:+12025550101"}')"
+if [ "$status" = 200 ] && wait_ues "phone1 registered active+ringing/waiting 0,*"; then
+	echo "ok   phone3's call to phone1 waits"
 else
 	echo "FAIL the waiting call (status $status): $(ues)"
 	exit 1
 fi
 acks_b="$(count "$(ack_to $ueb)")"
-status="$(ue_post ue-a/answer)"
-if [ "$status" = 200 ] && wait_ues "ue-a registered active/held+active 0,ue-b registered active 0,ue-c registered active 0"; then
-	echo "ok   ue-a held ue-b and answered ue-c"
+status="$(ue_post phone1/answer)"
+if [ "$status" = 200 ] && wait_ues "phone1 registered active/held+active 0,phone2 registered active 0,phone3 registered active 0"; then
+	echo "ok   phone1 held phone2 and answered phone3"
 else
 	echo "FAIL answering the waiting call (status $status): $(ues)"
 	fail=1
 fi
-second="$(call_ids ue-a | cut -d' ' -f2)"
+second="$(call_ids phone1 | cut -d' ' -f2)"
 # A UA starts no INVITE in a dialog while another INVITE of that dialog
 # is in progress (RFC 3261 14.1), so each step that sends re-INVITEs
 # waits until the ACKs of the step before have arrived: here those of
-# ue-c's call at ue-a and of the hold at ue-b.
-await "the ACK of ue-c's call at ue-a" "$(ack_to $uea) && sip.Call-ID == \"$second\""
-await "the ACK of the hold at ue-b" "$(ack_to $ueb)" $((acks_b + 1))
+# phone3's call at phone1 and of the hold at phone2.
+await "the ACK of phone3's call at phone1" "$(ack_to $uea) && sip.Call-ID == \"$second\""
+await "the ACK of the hold at phone2" "$(ack_to $ueb)" $((acks_b + 1))
 acks_b="$(count "$(ack_to $ueb)")"
 acks_c="$(count "$(ack_to $uec)")"
-status="$(ue_post ue-a/swap)"
-if [ "$status" = 200 ] && wait_ues "ue-a registered active+active/held 0,*"; then
-	echo "ok   ue-a swapped to ue-b and held ue-c"
+status="$(ue_post phone1/swap)"
+if [ "$status" = 200 ] && wait_ues "phone1 registered active+active/held 0,*"; then
+	echo "ok   phone1 swapped to phone2 and held phone3"
 else
 	echo "FAIL the swap (status $status): $(ues)"
 	fail=1
 fi
-await "the ACK of the swap at ue-b" "$(ack_to $ueb)" $((acks_b + 1))
-await "the ACK of the swap at ue-c" "$(ack_to $uec)" $((acks_c + 1))
-status="$(ue_post ue-a/merge)"
-if [ "$status" = 200 ] && wait_ues "ue-a registered active 3,ue-b registered active 3,ue-c registered active 3"; then
-	echo "ok   ue-a merged the calls, and each UE sees three users in the conference"
+await "the ACK of the swap at phone2" "$(ack_to $ueb)" $((acks_b + 1))
+await "the ACK of the swap at phone3" "$(ack_to $uec)" $((acks_c + 1))
+status="$(ue_post phone1/merge)"
+if [ "$status" = 200 ] && wait_ues "phone1 registered active 3,phone2 registered active 3,phone3 registered active 3"; then
+	echo "ok   phone1 merged the calls, and each UE sees three users in the conference"
 else
 	echo "FAIL the merge (status $status): $(ues)"
 	fail=1
 fi
-conference="$(call_ids ue-a)"
+conference="$(call_ids phone1)"
 # The three talk for 3 s, so that the capture holds the mix of their
 # tones that the checks below read.
 sleep 3
 # The checks read the capture up to the BYEs that end the conference
-# for ue-b and ue-c: the ones after those that each has had so far.
+# for phone2 and phone3: the ones after those that each has had so far.
 byes_b="$(count "$(bye_to $ueb)")"
 byes_c="$(count "$(bye_to $uec)")"
-status="$(ue_post ue-a/hangup)"
-if [ "$status" = 200 ] && wait_ues "ue-a registered idle 0,ue-b registered idle 0,ue-c registered idle 0"; then
-	echo "ok   ue-a left, and the conference ended for all three"
+status="$(ue_post phone1/hangup)"
+if [ "$status" = 200 ] && wait_ues "phone1 registered idle 0,phone2 registered idle 0,phone3 registered idle 0"; then
+	echo "ok   phone1 left, and the conference ended for all three"
 else
 	echo "FAIL ending the conference (status $status): $(ues)"
 	fail=1
 fi
-docker compose --profile sim rm -sf ue-a ue-b ue-c >/dev/null 2>&1
+docker compose --profile phones rm -sf phone1 phone2 phone3 >/dev/null 2>&1
 trap - EXIT
 same_nodes
-await "the BYE that ends the conference for ue-b" "$(bye_to $ueb)" $((byes_b + 1))
-await "the BYE that ends the conference for ue-c" "$(bye_to $uec)" $((byes_c + 1))
+await "the BYE that ends the conference for phone2" "$(bye_to $ueb)" $((byes_b + 1))
+await "the BYE that ends the conference for phone3" "$(bye_to $uec)" $((byes_c + 1))
 
 echo "reading $pcap"
 
@@ -380,48 +380,48 @@ none "RTP from the MRFP in that call" "frame.number > $local_start && frame.numb
 echo "call waiting (TS 24.615 4.5.5.3.2, 4.5.5.2.3) and hold (TS 24.610)"
 c1="${first%% *}"
 c2="$second"
-expect "INVITE ue-a -> P-CSCF to ue-b" "$invite && ip.src == $uea && sip.Call-ID == \"$c1\""
-expect "200 OK reaches ue-a" "$ok200 && ip.dst == $uea && sip.Call-ID == \"$c1\""
-expect "INVITE P-CSCF -> ue-a: the second call, from ue-c" "$invite && ip.dst == $uea && sip.Call-ID == \"$c2\""
-expect "180 ue-a -> P-CSCF with Alert-Info: <urn:alert:service:call-waiting>" "sip.Status-Code == 180 && ip.src == $uea && sip.Call-ID == \"$c2\" && sip.Alert-Info contains \"call-waiting\""
+expect "INVITE phone1 -> P-CSCF to phone2" "$invite && ip.src == $uea && sip.Call-ID == \"$c1\""
+expect "200 OK reaches phone1" "$ok200 && ip.dst == $uea && sip.Call-ID == \"$c1\""
+expect "INVITE P-CSCF -> phone1: the second call, from phone3" "$invite && ip.dst == $uea && sip.Call-ID == \"$c2\""
+expect "180 phone1 -> P-CSCF with Alert-Info: <urn:alert:service:call-waiting>" "sip.Status-Code == 180 && ip.src == $uea && sip.Call-ID == \"$c2\" && sip.Alert-Info contains \"call-waiting\""
 waiting="$last"
-expect "180 reaches ue-c without that Alert-Info: the caller is not told, as hss.yaml says" "sip.Status-Code == 180 && ip.dst == $uec && !(sip.Alert-Info contains \"call-waiting\")"
-# ue-a answers once it rings, which it says when it has sent its 180;
-# the 180 may still be on its way to ue-c.
+expect "180 reaches phone3 without that Alert-Info: the caller is not told, as hss.yaml says" "sip.Status-Code == 180 && ip.dst == $uec && !(sip.Alert-Info contains \"call-waiting\")"
+# phone1 answers once it rings, which it says when it has sent its 180;
+# the 180 may still be on its way to phone3.
 last="$waiting"
-expect "re-INVITE ue-a -> P-CSCF: the call with ue-b on hold, a=sendonly" "$invite && ip.src == $uea && sip.Call-ID == \"$c1\" && sdp.media_attr == \"sendonly\""
-expect "200 OK ue-a -> P-CSCF: ue-a answers ue-c" "$ok200 && ip.src == $uea && sip.Call-ID == \"$c2\""
-expect "re-INVITE ue-a: swap, ue-c on hold" "$invite && ip.src == $uea && sip.Call-ID == \"$c2\" && sdp.media_attr == \"sendonly\""
-expect "re-INVITE ue-a: swap, ue-b back with a=sendrecv" "$invite && ip.src == $uea && sip.Call-ID == \"$c1\" && sdp.media_attr == \"sendrecv\""
+expect "re-INVITE phone1 -> P-CSCF: the call with phone2 on hold, a=sendonly" "$invite && ip.src == $uea && sip.Call-ID == \"$c1\" && sdp.media_attr == \"sendonly\""
+expect "200 OK phone1 -> P-CSCF: phone1 answers phone3" "$ok200 && ip.src == $uea && sip.Call-ID == \"$c2\""
+expect "re-INVITE phone1: swap, phone3 on hold" "$invite && ip.src == $uea && sip.Call-ID == \"$c2\" && sdp.media_attr == \"sendonly\""
+expect "re-INVITE phone1: swap, phone2 back with a=sendrecv" "$invite && ip.src == $uea && sip.Call-ID == \"$c1\" && sdp.media_attr == \"sendrecv\""
 
 echo "a conference of three (TS 24.147 5.3.1.3.3, 5.3.2; RFC 4240 5; RFC 4575)"
-expect "INVITE ue-a -> P-CSCF to the conference factory URI" "$invite && ip.src == $uea && sip.r-uri contains \"mmtel@conf-factory.$domain\""
+expect "INVITE phone1 -> P-CSCF to the conference factory URI" "$invite && ip.src == $uea && sip.r-uri contains \"mmtel@conf-factory.$domain\""
 merged="$last"
-expect "INVITE MMTel AS -> MRFC: conf=, with ue-a's offer" "$invite && ip.src == $mmtel && ip.dst == $mrfc && sip.r-uri contains \"conf=\" && sdp"
-expect "200 OK reaches ue-a: the conference URI in the Contact, isfocus, a PSI in conf.$domain" "$ok200 && ip.dst == $uea && sip.Contact contains \"isfocus\" && sip.Contact contains \"@conf.$domain>\""
+expect "INVITE MMTel AS -> MRFC: conf=, with phone1's offer" "$invite && ip.src == $mmtel && ip.dst == $mrfc && sip.r-uri contains \"conf=\" && sdp"
+expect "200 OK reaches phone1: the conference URI in the Contact, isfocus, a PSI in conf.$domain" "$ok200 && ip.dst == $uea && sip.Contact contains \"isfocus\" && sip.Contact contains \"@conf.$domain>\""
 # A conference URI is a public service identity of the home network,
 # with no port (TS 23.003 13.5), so it names no node.
 none "a conference URI with the name of a node or a port" "sip.Contact contains \"isfocus\" && (sip.Contact contains \"@mmtel\" || sip.Contact matches \"@[^>]*:[0-9]+>\")"
 # The SUBSCRIBE and the REFER go out side by side.
 mark
-expect "SUBSCRIBE ue-a -> P-CSCF to the conference URI" "sip.Method == \"SUBSCRIBE\" && ip.src == $uea && sip.r-uri contains \"@conf.$domain\""
+expect "SUBSCRIBE phone1 -> P-CSCF to the conference URI" "sip.Method == \"SUBSCRIBE\" && ip.src == $uea && sip.r-uri contains \"@conf.$domain\""
 # TS 23.228 5.4.12.3: DNS leads from the subdomain of the PSI to the AS
 # that hosts it, by NAPTR and SRV as for the home domain (RFC 3263).
 expect "NAPTR query for conf.$domain, the subdomain of the conference URIs" "dns.flags.response == 0 && dns.qry.type == 35 && dns.qry.name == \"conf.$domain\""
 expect "SRV answer: _sip._udp.conf.$domain is the MMTel AS" "dns.flags.response == 1 && dns.qry.type == 33 && dns.qry.name == \"_sip._udp.conf.$domain\" && dns.srv.target == \"mmtel.$domain\""
 expect "SUBSCRIBE S-CSCF -> MMTel AS, routed by the Request-URI" "sip.Method == \"SUBSCRIBE\" && ip.src == $scscf && ip.dst == $mmtel && sip.r-uri contains \"@conf.$domain\""
 back
-expect "REFER ue-a -> P-CSCF: bring in a peer, with Replaces in the Refer-To" "sip.Method == \"REFER\" && ip.src == $uea && sip.Refer-To contains \"Replaces\""
+expect "REFER phone1 -> P-CSCF: bring in a peer, with Replaces in the Refer-To" "sip.Method == \"REFER\" && ip.src == $uea && sip.Refer-To contains \"Replaces\""
 # The answer and the focus's INVITE to the peer go out side by side.
 mark
 expect "200 OK (REFER) MMTel AS -> S-CSCF: the focus accepts with 200, never 202 (RFC 7647 5)" "sip.Status-Code == 200 && sip.CSeq.method == \"REFER\" && ip.src == $mmtel"
-expect "200 OK (REFER) reaches ue-a" "sip.Status-Code == 200 && sip.CSeq.method == \"REFER\" && ip.dst == $uea"
+expect "200 OK (REFER) reaches phone1" "sip.Status-Code == 200 && sip.CSeq.method == \"REFER\" && ip.dst == $uea"
 back
-expect "INVITE P-CSCF -> a peer with Replaces: the focus takes over its call with ue-a" "$invite && (ip.dst == $ueb || ip.dst == $uec) && sip.Replaces"
-expect "REFER ue-a -> P-CSCF: the other peer" "sip.Method == \"REFER\" && ip.src == $uea && sip.Refer-To contains \"Replaces\""
+expect "INVITE P-CSCF -> a peer with Replaces: the focus takes over its call with phone1" "$invite && (ip.dst == $ueb || ip.dst == $uec) && sip.Replaces"
+expect "REFER phone1 -> P-CSCF: the other peer" "sip.Method == \"REFER\" && ip.src == $uea && sip.Refer-To contains \"Replaces\""
 expect "INVITE P-CSCF -> the other peer with Replaces" "$invite && (ip.dst == $ueb || ip.dst == $uec) && sip.Replaces"
 none "202 to a REFER (RFC 7647 5)" "sip.Status-Code == 202 && sip.CSeq.method == \"REFER\""
-expect "NOTIFY of the conference event package to ue-a with the three users" "sip.Method == \"NOTIFY\" && ip.dst == $uea && sip.Event contains \"conference\" && frame matches \"(?s)<user .*<user .*<user \""
+expect "NOTIFY of the conference event package to phone1 with the three users" "sip.Method == \"NOTIFY\" && ip.dst == $uea && sip.Event contains \"conference\" && frame matches \"(?s)<user .*<user .*<user \""
 # The focus names each endpoint by a key of its own (RFC 4575 5.7), not
 # by the participant's Contact, so the conference state shows no
 # subscriber the address of a UE.
@@ -467,12 +467,12 @@ else
 	echo "FAIL the MRFP sent no mix of two parties: peaks $(cat e2e-out/mrf-mix-peaks.txt 2>/dev/null) (in, out)"
 	fail=1
 fi
-expect "BYE ue-a -> P-CSCF: the creator leaves" "sip.Method == \"BYE\" && ip.src == $uea && sip.Call-ID == \"${conference%% *}\""
+expect "BYE phone1 -> P-CSCF: the creator leaves" "sip.Method == \"BYE\" && ip.src == $uea && sip.Call-ID == \"${conference%% *}\""
 left="$last"
 # The focus ends the call of each party on its own, in no set order.
-expect "BYE reaches ue-b: the conference ends (TS 24.147 5.3.2.7)" "sip.Method == \"BYE\" && ip.dst == $ueb"
+expect "BYE reaches phone2: the conference ends (TS 24.147 5.3.2.7)" "sip.Method == \"BYE\" && ip.dst == $ueb"
 last="$left"
-expect "BYE reaches ue-c" "sip.Method == \"BYE\" && ip.dst == $uec"
+expect "BYE reaches phone3" "sip.Method == \"BYE\" && ip.dst == $uec"
 
 echo "the capture as a whole"
 # The charging information stays in the network (TS 24.229 5.2.1):

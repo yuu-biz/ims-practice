@@ -23,8 +23,8 @@ describe("supplementary services of a UE", () => {
   it("reads the settings through the Lab", async () => {
     const fetch = vi.fn(async () => new Response(JSON.stringify(settings)));
     vi.stubGlobal("fetch", fetch);
-    const got = await fetchUEServices("ue-a");
-    expect(fetch).toHaveBeenCalledWith("/api/ues/ue-a/xcap", undefined);
+    const got = await fetchUEServices("phone1");
+    expect(fetch).toHaveBeenCalledWith("/api/ues/phone1/xcap", undefined);
     expect(got.etag).toBe('"3"');
     expect(got.services[1]).toEqual({ name: "cfb", provisioned: true, active: false, target: "" });
     expect(got.oir_default_behaviour).toBe("presentation-not-restricted");
@@ -33,24 +33,24 @@ describe("supplementary services of a UE", () => {
   it("sends one service with its target, and none when switching off", async () => {
     const fetch = vi.fn(async (_path: string, _init?: RequestInit) => new Response(JSON.stringify(settings)));
     vi.stubGlobal("fetch", fetch);
-    await putUEService("ue-a", "cfu", true, "tel:+12025550102");
-    await putUEService("ue-a", "cfu", false, "");
-    await putUEOIRDefault("ue-a", "presentation-restricted");
+    await putUEService("phone1", "cfu", true, "tel:+12025550102");
+    await putUEService("phone1", "cfu", false, "");
+    await putUEOIRDefault("phone1", "presentation-restricted");
     expect(fetch.mock.calls.map(([path, init]) => [path, init?.method, init?.body])).toEqual([
-      ["/api/ues/ue-a/xcap/services/cfu", "PUT", JSON.stringify({ active: true, target: "tel:+12025550102" })],
-      ["/api/ues/ue-a/xcap/services/cfu", "PUT", JSON.stringify({ active: false })],
-      ["/api/ues/ue-a/xcap/oir", "PUT", JSON.stringify({ default_behaviour: "presentation-restricted" })],
+      ["/api/ues/phone1/xcap/services/cfu", "PUT", JSON.stringify({ active: true, target: "tel:+12025550102" })],
+      ["/api/ues/phone1/xcap/services/cfu", "PUT", JSON.stringify({ active: false })],
+      ["/api/ues/phone1/xcap/oir", "PUT", JSON.stringify({ default_behaviour: "presentation-restricted" })],
     ]);
   });
 
   it("reports why the UE or the XCAP server refused", async () => {
     vi.stubGlobal("fetch", async () => new Response(JSON.stringify({ error: "invalid setting: cfu needs a target" }), { status: 400 }));
-    await expect(putUEService("ue-a", "cfu", true, "")).rejects.toEqual(new HttpError(400, "invalid setting: cfu needs a target"));
+    await expect(putUEService("phone1", "cfu", true, "")).rejects.toEqual(new HttpError(400, "invalid setting: cfu needs a target"));
   });
 
   it("rejects a service the UE does not have", async () => {
     vi.stubGlobal("fetch", async () => new Response(JSON.stringify({ ...settings, services: [{ name: "cfx", provisioned: true, active: true }] })));
-    await expect(fetchUEServices("ue-a")).rejects.toThrow(/name/);
+    await expect(fetchUEServices("phone1")).rejects.toThrow(/name/);
   });
 
   it("describes each service in one line", () => {

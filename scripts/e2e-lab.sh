@@ -4,7 +4,7 @@
 # message of the call in the pcap must appear in the Lab's message
 # list, hop by hop, and nothing else. The Lab also shows what a
 # node sends to itself, which the capture on the bridge cannot see.
-# Last, the two UE simulators of the sim profile make a call that the
+# Last, the two UE simulators of the phones profile make a call that the
 # script drives through the Lab alone.
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -233,7 +233,7 @@ else
 	fail=1
 fi
 
-# The UE simulators of the sim profile, driven through the Lab.
+# The UE simulators of the phones profile, driven through the Lab.
 # They are subscribers 1 and 2, as ue and ue2 above, whose containers
 # have all ended by now.
 # ues prints "name registered|unregistered|unreachable call-state|idle"
@@ -263,10 +263,10 @@ ue_post() {
 %{http_code}' -X "${3:-POST}" -H 'Content-Type: application/json' -d "${2:-}" "http://localhost:8080/api/ues/$1" | tail -n 1
 }
 
-# The VoLTE UEs of the volte profile are listed too, and so is ue-c,
-# the third UE of the sim profile for conferences; they stay down here.
-volte="volte-a unreachable idle,volte-b unreachable idle,ue-c unreachable idle"
-if [ "$(ues)" = "ue-a unreachable idle,ue-b unreachable idle,$volte" ]; then
+# The VoLTE UEs of the volte profile are listed too, and so is phone3,
+# the third UE of the phones profile for conferences; they stay down here.
+volte="volte-a unreachable idle,volte-b unreachable idle,phone3 unreachable idle"
+if [ "$(ues)" = "phone1 unreachable idle,phone2 unreachable idle,$volte" ]; then
 	echo "ok   the Lab lists the UE simulators as unreachable before they start"
 else
 	echo "FAIL the UE simulators before they start: $(ues)"
@@ -274,37 +274,37 @@ else
 fi
 # They restart by themselves and hold subscribers 1 and 2, so they must
 # not outlive the script.
-trap 'docker compose --profile sim rm -sf ue-a ue-b >/dev/null 2>&1' EXIT
-docker compose --profile sim up -d --no-deps ue-a ue-b
-if wait_ues "ue-a registered idle,ue-b registered idle,$volte"; then
+trap 'docker compose --profile phones rm -sf phone1 phone2 >/dev/null 2>&1' EXIT
+docker compose --profile phones up -d --no-deps phone1 phone2
+if wait_ues "phone1 registered idle,phone2 registered idle,$volte"; then
 	echo "ok   both UE simulators report through the Lab that they are registered"
 else
 	echo "FAIL the UE simulators did not register: $(ues)"
 	exit 1
 fi
 
-status="$(ue_post ue-b/answer-policy '{"mode":"manual"}' PUT)"
-call_status="$(ue_post ue-a/call '{"target":"tel:+12025550102"}')"
-if [ "$status" = 200 ] && [ "$call_status" = 200 ] && wait_ues "*ue-b registered ringing,*"; then
-	echo "ok   ue-a called ue-b through the Lab, and ue-b rings"
+status="$(ue_post phone2/answer-policy '{"mode":"manual"}' PUT)"
+call_status="$(ue_post phone1/call '{"target":"tel:+12025550102"}')"
+if [ "$status" = 200 ] && [ "$call_status" = 200 ] && wait_ues "*phone2 registered ringing,*"; then
+	echo "ok   phone1 called phone2 through the Lab, and phone2 rings"
 else
-	echo "FAIL the call from ue-a (policy $status, call $call_status): $(ues)"
+	echo "FAIL the call from phone1 (policy $status, call $call_status): $(ues)"
 	exit 1
 fi
-status="$(ue_post ue-b/answer)"
-if [ "$status" = 200 ] && wait_ues "ue-a registered active,ue-b registered active,$volte"; then
-	echo "ok   ue-b answered through the Lab, and both UEs are in the call"
+status="$(ue_post phone2/answer)"
+if [ "$status" = 200 ] && wait_ues "phone1 registered active,phone2 registered active,$volte"; then
+	echo "ok   phone2 answered through the Lab, and both UEs are in the call"
 else
 	echo "FAIL answering (status $status): $(ues)"
 	exit 1
 fi
-sim_call_id="$(curl -fsS http://localhost:8080/api/ues | "$python" -c '
+phones_call_id="$(curl -fsS http://localhost:8080/api/ues | "$python" -c '
 import json, sys
 print(json.load(sys.stdin)[0]["status"]["call"]["call_id"])
 ' | tr -d '\r')"
-status="$(ue_post ue-a/hangup)"
-if [ "$status" = 200 ] && wait_ues "ue-a registered idle,ue-b registered idle,$volte"; then
-	echo "ok   ue-a hung up through the Lab"
+status="$(ue_post phone1/hangup)"
+if [ "$status" = 200 ] && wait_ues "phone1 registered idle,phone2 registered idle,$volte"; then
+	echo "ok   phone1 hung up through the Lab"
 else
 	echo "FAIL hanging up (status $status): $(ues)"
 	fail=1
@@ -313,30 +313,30 @@ fi
 # The HEP copies of the BYE land a moment after the UEs are idle, so
 # the script asks until the Lab lists the call as terminated, for up to
 # 30 s.
-sim_terminated() {
+phones_terminated() {
 	state="$(curl -fsS http://localhost:8080/api/calls | "$python" -c '
 import json, sys
 print(" ".join(c["state"] for c in json.load(sys.stdin) if c["call_id"] == sys.argv[1]))
-' "$sim_call_id" | tr -d '\r')"
+' "$phones_call_id" | tr -d '\r')"
 	[ "$state" = terminated ]
 }
-if wait_for 30 sim_terminated; then
-	echo "ok   the Lab lists the call $sim_call_id as terminated"
+if wait_for 30 phones_terminated; then
+	echo "ok   the Lab lists the call $phones_call_id as terminated"
 else
-	echo "FAIL the call $sim_call_id is \"$state\" in the Lab"
+	echo "FAIL the call $phones_call_id is \"$state\" in the Lab"
 	fail=1
 fi
 same_nodes
 pcap="$(docker compose exec -T capture sh -c 'ls -t /captures/ims-*.pcap | head -n 1' | tr -d '\r')"
-# The 200 to ue-a's BYE is the last frame that this check reads.
-await "the 200 OK to ue-a's BYE" "sip.Call-ID == \"$sim_call_id\" && sip.CSeq.method == \"BYE\" && sip.Status-Code == 200 && ip.dst == 172.28.0.110"
+# The 200 to phone1's BYE is the last frame that this check reads.
+await "the 200 OK to phone1's BYE" "sip.Call-ID == \"$phones_call_id\" && sip.CSeq.method == \"BYE\" && sip.Status-Code == 200 && ip.dst == 172.28.0.110"
 bye="$(docker compose exec -T capture tshark -r "$pcap" \
-	-Y "sip.Call-ID == \"$sim_call_id\" && sip.CSeq.method == \"BYE\" && (ip.src == 172.28.0.110 || ip.dst == 172.28.0.110)" \
+	-Y "sip.Call-ID == \"$phones_call_id\" && sip.CSeq.method == \"BYE\" && (ip.src == 172.28.0.110 || ip.dst == 172.28.0.110)" \
 	-T fields -E separator=, -e ip.src -e ip.dst -e sip.Method -e sip.Status-Code | tr -d '\r' | tr '\n' ' ')"
 if [ "$bye" = "172.28.0.110,172.28.0.40,BYE, 172.28.0.40,172.28.0.110,,200 " ]; then
-	echo "ok   the capture holds ue-a's BYE and its 200"
+	echo "ok   the capture holds phone1's BYE and its 200"
 else
-	echo "FAIL ue-a's BYE and its 200 are not in the capture: $bye"
+	echo "FAIL phone1's BYE and its 200 are not in the capture: $bye"
 	fail=1
 fi
 

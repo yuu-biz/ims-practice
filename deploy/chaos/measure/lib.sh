@@ -2,8 +2,8 @@
 # state of the roles outside their processes costs and what it saves.
 # Source it from bash, at the root of the repository.
 #
-# The UEs are the two that "ue serve" runs, ue-a and ue-b of
-# compose.yaml (profile sim), driven through their control API
+# The UEs are the two that "ue serve" runs, phone1 and phone2 of
+# compose.yaml (profile phones), driven through their control API
 # (internal/ue/phone_http.go) from inside their containers, so that
 # nothing depends on reaching the Compose network from the host, which
 # Docker Desktop does not allow. The times come from the capture of the
@@ -13,9 +13,9 @@ export MSYS_NO_PATHCONV=1
 : "${COMPOSE_FILE:=compose.yaml:deploy/chaos/chaos.yaml}"
 export COMPOSE_FILE COMPOSE_PATH_SEPARATOR=:
 
-UE_A=${UE_A:-ue-a}
-UE_B=${UE_B:-ue-b}
-# The number of ue-b's subscriber (deploy/compose/hss.yaml), and ue-a's.
+UE_A=${UE_A:-phone1}
+UE_B=${UE_B:-phone2}
+# The number of phone2's subscriber (deploy/compose/hss.yaml), and phone1's.
 NUMBER_A=${NUMBER_A:-tel:+12025550101}
 NUMBER_B=${NUMBER_B:-tel:+12025550102}
 # tshark from the host, or from the capture image when the host has none.
@@ -73,12 +73,12 @@ wait_for() {
 
 state_is() { [ "$(call_state "$1")" = "$2" ]; }
 
-# start_ues starts ue-a and ue-b, ends any call they have, and registers
+# start_ues starts phone1 and phone2, ends any call they have, and registers
 # both again from the start, so that each measurement begins with the
 # network knowing both: a node that a measurement before recreated may
 # have forgotten them, while each UE still believes it is registered.
 start_ues() {
-	c --profile sim up -d "$UE_A" "$UE_B" >/dev/null 2>&1
+	c --profile phones up -d "$UE_A" "$UE_B" >/dev/null 2>&1
 	for u in "$UE_A" "$UE_B"; do
 		wait_for 60 registered "$u" || {
 			echo "measure: $u did not register" >&2

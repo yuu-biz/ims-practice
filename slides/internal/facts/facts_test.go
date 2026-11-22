@@ -41,7 +41,7 @@ func TestStaleCommandsFail(t *testing.T) {
 		"```sh\n"+
 		"curl -X DELETE http://localhost:8080/api/epc/network-initiated/ues/001010000000010/bearers/6\n"+
 		"curl http://localhost:8080/api/epc/ues/001010000000010   # the bearers\n"+
-		"docker compose --profile ue --profile sim down --rmi all -v --remove-orphans\n"+
+		"docker compose --profile ue --profile phones down --rmi all -v --remove-orphans\n"+
 		"docker compose run --rm ue sms --status-report +12025550102 \"Hello; UE-B\"\n"+
 		"docker compose run --rm volte-a call -epc http://172.28.0.80:8080 --tone=3s tel:+12025550112\n"+
 		"docker compose logs scscf | grep I-Open\n"+
@@ -126,8 +126,8 @@ func handler(mux mux) {
 		{"GET", "/a/7", true},
 		{"GET", "/a/7/8", false},
 		{"DELETE", "/b/7/8", true},
-		{"POST", "/api/ues/ue-a/call", true},
-		{"POST", "/api/ues/ue-a/dial", false},
+		{"POST", "/api/ues/phone1/call", true},
+		{"POST", "/api/ues/phone1/dial", false},
 		{"GET", "/", true},
 		{"GET", "/api/nothing", false},
 	} {

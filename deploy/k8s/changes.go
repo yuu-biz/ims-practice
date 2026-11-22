@@ -67,8 +67,8 @@ fault panel stays off.`,
 	{
 		File: "lab.yaml",
 		Key:  "lab.ues",
-		Comment: `The UE simulators ue-a and ue-b of ue.yaml. They start with zero
-replicas, like the sim profile of compose.yaml; until they are
+		Comment: `The UE simulators phone1 and phone2 of ue.yaml. They start with zero
+replicas, like the phones profile of compose.yaml; until they are
 scaled up, the web UI shows them as not reachable. volte-a and
 volte-b have no Pods: a VoLTE UE needs the static address that the
 EPC stub hands its subscriber, which a Pod cannot ask for, so the
@@ -77,17 +77,17 @@ web UI always shows them as not reachable.`,
 	{
 		File:  "lab.yaml",
 		Key:   "lab.ues.0.control",
-		Value: "http://ue-a.ims.svc.cluster.local:8090",
+		Value: "http://phone1.ims.svc.cluster.local:8090",
 	},
 	{
 		File:  "lab.yaml",
 		Key:   "lab.ues.1.control",
-		Value: "http://ue-b.ims.svc.cluster.local:8090",
+		Value: "http://phone2.ims.svc.cluster.local:8090",
 	},
 	{
 		File:  "lab.yaml",
 		Key:   "lab.ues.4.control",
-		Value: "http://ue-c.ims.svc.cluster.local:8090",
+		Value: "http://phone3.ims.svc.cluster.local:8090",
 	},
 	{
 		File:  "lab.yaml",

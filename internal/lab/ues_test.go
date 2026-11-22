@@ -53,9 +53,9 @@ func TestUEListShowsEachUEOrWhyNot(t *testing.T) {
 	up := newFakeUE(t, answerJSON(http.StatusOK, ueStatus+"\n"))
 	broken := newFakeUE(t, answerJSON(http.StatusOK, "not json"))
 	h := newHarness(t, Config{UEs: []UESimulator{
-		{"ue-a", up.server.URL},
-		{"ue-b", unreachable()},
-		{"ue-c", broken.server.URL},
+		{"phone1", up.server.URL},
+		{"phone2", unreachable()},
+		{"phone3", broken.server.URL},
 	}})
 
 	var list []struct {
@@ -65,14 +65,14 @@ func TestUEListShowsEachUEOrWhyNot(t *testing.T) {
 		Error     string          `json:"error"`
 	}
 	h.get("/api/ues", &list)
-	if len(list) != 3 || list[0].Name != "ue-a" || list[1].Name != "ue-b" || list[2].Name != "ue-c" {
-		t.Fatalf("list = %+v, want ue-a, ue-b, ue-c in config order", list)
+	if len(list) != 3 || list[0].Name != "phone1" || list[1].Name != "phone2" || list[2].Name != "phone3" {
+		t.Fatalf("list = %+v, want phone1, phone2, phone3 in config order", list)
 	}
 	if !list[0].Reachable || string(list[0].Status) != ueStatus || list[0].Error != "" {
-		t.Errorf("ue-a = %+v, want its status as the UE gave it", list[0])
+		t.Errorf("phone1 = %+v, want its status as the UE gave it", list[0])
 	}
 	if got := <-up.requests; got.method != http.MethodGet || got.path != "/status" {
-		t.Errorf("ue-a was asked %s %s, want GET /status", got.method, got.path)
+		t.Errorf("phone1 was asked %s %s, want GET /status", got.method, got.path)
 	}
 	for _, e := range list[1:] {
 		if e.Reachable || string(e.Status) != "null" || e.Error == "" {
@@ -92,24 +92,24 @@ func TestUEListWithoutUEsIsEmpty(t *testing.T) {
 
 func TestUERequestsReachTheUE(t *testing.T) {
 	ue := newFakeUE(t, answerJSON(http.StatusConflict, `{"error":"there is a call on the line already"}`))
-	h := newHarness(t, Config{UEs: []UESimulator{{"ue-a", ue.server.URL}}})
+	h := newHarness(t, Config{UEs: []UESimulator{{"phone1", ue.server.URL}}})
 
 	tests := []struct{ method, path, body, wantPath string }{
-		{http.MethodPost, "/api/ues/ue-a/register", "", "/register"},
-		{http.MethodPost, "/api/ues/ue-a/deregister", "", "/deregister"},
-		{http.MethodPost, "/api/ues/ue-a/call", `{"target":"tel:+12025550102"}`, "/call"},
-		{http.MethodPost, "/api/ues/ue-a/answer", "", "/answer"},
-		{http.MethodPost, "/api/ues/ue-a/hangup", `{"reject_status":486}`, "/hangup"},
-		{http.MethodPost, "/api/ues/ue-a/hold", "", "/hold"},
-		{http.MethodPost, "/api/ues/ue-a/resume", "", "/resume"},
-		{http.MethodPost, "/api/ues/ue-a/dtmf", `{"digits":"12#"}`, "/dtmf"},
-		{http.MethodPost, "/api/ues/ue-a/swap", "", "/swap"},
-		{http.MethodPost, "/api/ues/ue-a/merge", "", "/merge"},
-		{http.MethodPut, "/api/ues/ue-a/answer-policy", `{"mode":"manual"}`, "/answer-policy"},
-		{http.MethodPost, "/api/ues/ue-a/sms", `{"to":"+12025550102","text":"Hello, Bob!","status_report":true}`, "/sms"},
-		{http.MethodGet, "/api/ues/ue-a/xcap", "", "/xcap"},
-		{http.MethodPut, "/api/ues/ue-a/xcap/services/cfu", `{"active":true,"target":"tel:+12025550102"}`, "/xcap/services/cfu"},
-		{http.MethodPut, "/api/ues/ue-a/xcap/oir", `{"default_behaviour":"presentation-restricted"}`, "/xcap/oir"},
+		{http.MethodPost, "/api/ues/phone1/register", "", "/register"},
+		{http.MethodPost, "/api/ues/phone1/deregister", "", "/deregister"},
+		{http.MethodPost, "/api/ues/phone1/call", `{"target":"tel:+12025550102"}`, "/call"},
+		{http.MethodPost, "/api/ues/phone1/answer", "", "/answer"},
+		{http.MethodPost, "/api/ues/phone1/hangup", `{"reject_status":486}`, "/hangup"},
+		{http.MethodPost, "/api/ues/phone1/hold", "", "/hold"},
+		{http.MethodPost, "/api/ues/phone1/resume", "", "/resume"},
+		{http.MethodPost, "/api/ues/phone1/dtmf", `{"digits":"12#"}`, "/dtmf"},
+		{http.MethodPost, "/api/ues/phone1/swap", "", "/swap"},
+		{http.MethodPost, "/api/ues/phone1/merge", "", "/merge"},
+		{http.MethodPut, "/api/ues/phone1/answer-policy", `{"mode":"manual"}`, "/answer-policy"},
+		{http.MethodPost, "/api/ues/phone1/sms", `{"to":"+12025550102","text":"Hello, Bob!","status_report":true}`, "/sms"},
+		{http.MethodGet, "/api/ues/phone1/xcap", "", "/xcap"},
+		{http.MethodPut, "/api/ues/phone1/xcap/services/cfu", `{"active":true,"target":"tel:+12025550102"}`, "/xcap/services/cfu"},
+		{http.MethodPut, "/api/ues/phone1/xcap/oir", `{"default_behaviour":"presentation-restricted"}`, "/xcap/oir"},
 	}
 	for _, tt := range tests {
 		req, _ := http.NewRequest(tt.method, h.server.URL+tt.path, strings.NewReader(tt.body))
@@ -130,18 +130,18 @@ func TestUERequestsReachTheUE(t *testing.T) {
 
 func TestUERequestsOutsideTheControlAPI(t *testing.T) {
 	ue := newFakeUE(t, answerJSON(http.StatusOK, ueStatus))
-	h := newHarness(t, Config{UEs: []UESimulator{{"ue-a", ue.server.URL}, {"ue-b", unreachable()}}})
+	h := newHarness(t, Config{UEs: []UESimulator{{"phone1", ue.server.URL}, {"phone2", unreachable()}}})
 
 	tests := []struct {
 		method, path string
 		want         int
 	}{
 		{http.MethodPost, "/api/ues/ue-x/register", http.StatusNotFound},
-		{http.MethodPut, "/api/ues/ue-a/register", http.StatusMethodNotAllowed},
-		{http.MethodGet, "/api/ues/ue-a/status", http.StatusNotFound},
-		{http.MethodGet, "/api/ues/ue-a/sms", http.StatusNotFound},
-		{http.MethodDelete, "/api/ues/ue-a/xcap", http.StatusMethodNotAllowed},
-		{http.MethodPost, "/api/ues/ue-b/register", http.StatusBadGateway},
+		{http.MethodPut, "/api/ues/phone1/register", http.StatusMethodNotAllowed},
+		{http.MethodGet, "/api/ues/phone1/status", http.StatusNotFound},
+		{http.MethodGet, "/api/ues/phone1/sms", http.StatusNotFound},
+		{http.MethodDelete, "/api/ues/phone1/xcap", http.StatusMethodNotAllowed},
+		{http.MethodPost, "/api/ues/phone2/register", http.StatusBadGateway},
 	}
 	for _, tt := range tests {
 		req, _ := http.NewRequest(tt.method, h.server.URL+tt.path, nil)
@@ -170,9 +170,9 @@ func TestUEEventsStreamThrough(t *testing.T) {
 		w.(http.Flusher).Flush()
 		<-r.Context().Done()
 	})
-	h := newHarness(t, Config{UEs: []UESimulator{{"ue-a", ue.server.URL}}})
+	h := newHarness(t, Config{UEs: []UESimulator{{"phone1", ue.server.URL}}})
 
-	resp, err := http.Get(h.server.URL + "/api/ues/ue-a/events")
+	resp, err := http.Get(h.server.URL + "/api/ues/phone1/events")
 	if err != nil {
 		t.Fatal(err)
 	}

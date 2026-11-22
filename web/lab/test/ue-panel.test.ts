@@ -37,13 +37,13 @@ describe("UE simulator responses", () => {
     serve(
       200,
       JSON.stringify([
-        { name: "ue-a", reachable: true, status: { ...idle, call: ringing, answer_policy: { mode: "manual" } } },
-        { name: "ue-b", reachable: false, status: null, error: "connection refused" },
+        { name: "phone1", reachable: true, status: { ...idle, call: ringing, answer_policy: { mode: "manual" } } },
+        { name: "phone2", reachable: false, status: null, error: "connection refused" },
       ]),
     );
     expect(await fetchUESimulators()).toEqual([
       {
-        name: "ue-a",
+        name: "phone1",
         reachable: true,
         status: {
           impu: user1,
@@ -55,37 +55,37 @@ describe("UE simulator responses", () => {
           sms: { sent: [], received: [] },
         },
       },
-      { name: "ue-b", reachable: false, error: "connection refused" },
+      { name: "phone2", reachable: false, error: "connection refused" },
     ]);
   });
 
   it("reads a call whose INVITE is not out yet, without a Call-ID", async () => {
     const calling = { direction: "outgoing", peer: "tel:+12025550102", state: "calling", started: "2026-11-19T09:00:00Z" };
-    serve(200, JSON.stringify([{ name: "ue-a", reachable: true, status: { ...idle, call: calling } }]));
+    serve(200, JSON.stringify([{ name: "phone1", reachable: true, status: { ...idle, call: calling } }]));
     const [ue] = await fetchUESimulators();
     expect(ue?.reachable && ue.status.call?.call_id).toBe("");
   });
 
   it("keeps the ring time and the reject status of the policy", async () => {
     serve(200, JSON.stringify({ mode: "reject", reject_status: 486 }));
-    expect(await putAnswerPolicy("ue-a", "reject")).toEqual({ mode: "reject", reject_status: 486 });
+    expect(await putAnswerPolicy("phone1", "reject")).toEqual({ mode: "reject", reject_status: 486 });
     serve(200, JSON.stringify({ mode: "auto" }));
-    await expect(putAnswerPolicy("ue-a", "auto")).rejects.toThrow(/ring_seconds/);
+    await expect(putAnswerPolicy("phone1", "auto")).rejects.toThrow(/ring_seconds/);
   });
 
   it("rejects a status with a call state the UE does not have", async () => {
-    serve(200, JSON.stringify([{ name: "ue-a", reachable: true, status: { ...idle, call: { ...ringing, state: "early" } } }]));
+    serve(200, JSON.stringify([{ name: "phone1", reachable: true, status: { ...idle, call: { ...ringing, state: "early" } } }]));
     await expect(fetchUESimulators()).rejects.toThrow(/state/);
   });
 
   it("rejects an entry without reachable", async () => {
-    serve(200, JSON.stringify([{ name: "ue-a", status: idle }]));
+    serve(200, JSON.stringify([{ name: "phone1", status: idle }]));
     await expect(fetchUESimulators()).rejects.toThrow(/reachable/);
   });
 
   it("reports the text of a refused action, not its JSON", async () => {
     serve(409, JSON.stringify({ error: "there is no incoming call that rings" }));
-    await expect(postUEAction("ue-a", "answer")).rejects.toEqual(new HttpError(409, "there is no incoming call that rings"));
+    await expect(postUEAction("phone1", "answer")).rejects.toEqual(new HttpError(409, "there is no incoming call that rings"));
   });
 
   it("asks the UE through the Lab, with the name escaped", async () => {
@@ -109,7 +109,7 @@ function reachable(registered: boolean, call: Partial<UECall> | null, ...others:
   });
   const calls = call === null ? [] : [call, ...others].map(full);
   return {
-    name: "ue-a",
+    name: "phone1",
     reachable: true,
     status: {
       impu: user1,
@@ -226,7 +226,7 @@ describe("UE simulator controls", () => {
   });
 
   it("offers nothing for a UE that does not answer", () => {
-    expect(enabledControls({ name: "ue-a", reachable: false, error: "down" }, false)).toEqual(off);
+    expect(enabledControls({ name: "phone1", reachable: false, error: "down" }, false)).toEqual(off);
   });
 
   it("offers nothing while a request to the UE is under way", () => {
@@ -246,7 +246,7 @@ describe("the session of a call", () => {
       held: true,
       media: { packets_sent: 0, packets_received: 0, rtcp_sent: 0, rtcp_received: 0 },
     };
-    serve(200, JSON.stringify([{ name: "ue-a", reachable: true, status: { ...idle, call: { ...ringing, state: "active", session } } }]));
+    serve(200, JSON.stringify([{ name: "phone1", reachable: true, status: { ...idle, call: { ...ringing, state: "active", session } } }]));
     const [ue] = await fetchUESimulators();
     expect(ue?.reachable && ue.status.call?.session).toEqual({
       codec: { name: "AMR", payload_type: 97, clock_rate: 8000, payload_format: "", telephone_event: null },
@@ -289,8 +289,8 @@ describe("the session of a call", () => {
   it("sends the digits to the UE", async () => {
     const fetch = vi.fn(async () => new Response(JSON.stringify(idle)));
     vi.stubGlobal("fetch", fetch);
-    await postUEDTMF("ue-a", "12#");
-    expect(fetch).toHaveBeenCalledWith("/api/ues/ue-a/dtmf", {
+    await postUEDTMF("phone1", "12#");
+    expect(fetch).toHaveBeenCalledWith("/api/ues/phone1/dtmf", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ digits: "12#" }),
@@ -300,7 +300,7 @@ describe("the session of a call", () => {
 
 describe("the call target", () => {
   const a = reachable(true, null);
-  const b: UESimulator = { name: "ue-b", reachable: true, status: { ...idle, impu: user2, calls: [], conference: null, answer_policy: { mode: "manual" }, sms: { sent: [], received: [] } } };
+  const b: UESimulator = { name: "phone2", reachable: true, status: { ...idle, impu: user2, calls: [], conference: null, answer_policy: { mode: "manual" }, sms: { sent: [], received: [] } } };
 
   it("is the tel URI of the other UE's subscription", () => {
     expect(suggestedTarget(a, [a, b], subscribers)).toBe("tel:+12025550102");
@@ -312,7 +312,7 @@ describe("the call target", () => {
   });
 
   it("is empty without another UE that answers", () => {
-    expect(suggestedTarget(a, [a, { name: "ue-b", reachable: false, error: "down" }], subscribers)).toBe("");
+    expect(suggestedTarget(a, [a, { name: "phone2", reachable: false, error: "down" }], subscribers)).toBe("");
   });
 });
 
@@ -356,9 +356,9 @@ describe("short messages", () => {
   it("sends the number, the text and the status report request to the UE", async () => {
     const fetch = vi.fn(async () => new Response(JSON.stringify({ ...sentSMS, state: "submitted", status_report: undefined })));
     vi.stubGlobal("fetch", fetch);
-    const sent = await postUESMS("ue-a", { to: "+12025550102", text: "Hello, Bob!", status_report: true });
+    const sent = await postUESMS("phone1", { to: "+12025550102", text: "Hello, Bob!", status_report: true });
     expect(sent.state).toBe("submitted");
-    expect(fetch).toHaveBeenCalledWith("/api/ues/ue-a/sms", {
+    expect(fetch).toHaveBeenCalledWith("/api/ues/phone1/sms", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ to: "+12025550102", text: "Hello, Bob!", status_report: true }),

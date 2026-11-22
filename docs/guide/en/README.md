@@ -40,13 +40,13 @@ The first command starts the nodes and the capture. Before the second, wait unti
 Each guide ends by stopping everything it started:
 
 ```sh
-docker compose --profile ue --profile sim --profile volte down -v --remove-orphans
+docker compose --profile ue --profile phones --profile volte down -v --remove-orphans
 ```
 
 This keeps the images, so the next guide starts without a new build. When you have finished with the guides, delete the images too:
 
 ```sh
-docker compose --profile ue --profile sim --profile volte down --rmi all -v --remove-orphans
+docker compose --profile ue --profile phones --profile volte down --rmi all -v --remove-orphans
 ```
 
 The capture files stay in `captures/` until you delete them.
@@ -78,10 +78,10 @@ The UEs are in profiles, so `docker compose up` does not start them.
 | Profile | Services | How they run |
 | --- | --- | --- |
 | `ue` | `ue`, `ue2`, `ue3`, `softphone` | One command each, with `docker compose run --rm ue register` and the like. `softphone` holds pjsua and SIPp, softphones written by others. |
-| `sim` | `ue-a`, `ue-b`, `ue-c` | They stay up and do what the Lab asks. `docker compose --profile sim up -d`. |
-| `volte` | `volte-a`, `volte-b` | VoLTE UEs that stay up, like those of `sim`. `docker compose --profile volte up -d`. |
+| `phones` | `phone1`, `phone2`, `phone3` | They stay up and do what the Lab asks. `docker compose --profile phones up -d`. |
+| `volte` | `volte-a`, `volte-b` | VoLTE UEs that stay up, like those of `phones`. `docker compose --profile volte up -d`. |
 
-`ue` and `sim` use the same subscribers, so run one of the two at a time.
+`ue` and `phones` use the same subscribers, so run one of the two at a time.
 
 ### Subscribers, UEs and services
 
@@ -89,9 +89,9 @@ The test subscribers are in `deploy/compose/hss.yaml`. The guides call a UE by i
 
 | Subscriber | Private identity | Number | Services | Called in the guides |
 | --- | --- | --- | --- | --- |
-| 1 | `001010000000001@ims.mnc001.mcc001.3gppnetwork.org` | +1-202-555-0101 | `ue`, `ue-a` | UE 1, UE-A, UE A1 in the interconnect guide |
-| 2 | `001010000000002@ims.mnc001.mcc001.3gppnetwork.org` | +1-202-555-0102 | `ue2`, `ue-b` | UE 2, UE-B |
-| 3 | `001010000000003@ims.mnc001.mcc001.3gppnetwork.org` | +1-202-555-0103 | `ue3`, `ue-c` | UE 3, UE-C |
+| 1 | `001010000000001@ims.mnc001.mcc001.3gppnetwork.org` | +1-202-555-0101 | `ue`, `phone1` | UE 1, UE-A, UE A1 in the interconnect guide |
+| 2 | `001010000000002@ims.mnc001.mcc001.3gppnetwork.org` | +1-202-555-0102 | `ue2`, `phone2` | UE 2, UE-B |
+| 3 | `001010000000003@ims.mnc001.mcc001.3gppnetwork.org` | +1-202-555-0103 | `ue3`, `phone3` | UE 3, UE-C |
 | 4 | `+12025550104@ims.mnc001.mcc001.3gppnetwork.org` | +1-202-555-0104 | `softphone` (pjsua) | pjsua |
 | 10 | `001010000000010@ims.mnc001.mcc001.3gppnetwork.org` | +1-202-555-0110 | `volte-a` | volte-a |
 | 11 | `001010000000011@ims.mnc001.mcc001.3gppnetwork.org` | +1-202-555-0111 | `softphone` (SIPp) | SIPp |

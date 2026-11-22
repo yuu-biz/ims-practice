@@ -320,16 +320,16 @@ UE 1 -> relay access (context 1) -> relay core (context 1)
 ## ラボから通話をかける
 
 ```sh
-docker compose --profile sim up -d --build
+docker compose --profile phones up -d --build
 ```
 
-1. <http://localhost:8080> を開きます。`ue-b` のカードで、応答方針を `manual` にします。
-2. `ue-a` のカードで **Call** を押します。
-3. `ue-b` のカードで **Answer** を押します。どちらかで **Hang up** を押します。
+1. <http://localhost:8080> を開きます。`phone2` のカードで、応答方針を `manual` にします。
+2. `phone1` のカードで **Call** を押します。
+3. `phone2` のカードで **Answer** を押します。どちらかで **Hang up** を押します。
 4. 通話の横の **ladder** を選ぶと、通話中でもラダー図が出ます。
 
 - 応答の前に切ると、発信側は CANCEL を送り、着信側は 603 で断ります。
-- `sim` と `ue` のプロファイルを同時に動かさないでください。同じ加入者の UE が 2 台になり、互いの登録を上書きします。UE を動かす HTTP の API はこのプロジェクト独自のもので、IMS には何も流れません。
+- `phones` と `ue` のプロファイルを同時に動かさないでください。同じ加入者の UE が 2 台になり、互いの登録を上書きします。UE を動かす HTTP の API はこのプロジェクト独自のもので、IMS には何も流れません。
 
 > 手順書 [ラボで IMS を見る「UE シミュレータを操作する」](../../../docs/guide/ja/lab.md#ue-シミュレータを操作する) と、[通話の「HTTP で UE を操作する」](../../../docs/guide/ja/call.md#http-で-ue-を操作する)
 
@@ -387,7 +387,7 @@ docker compose --profile sim up -d --build
 - この回で MMTel AS を呼んだ iFC が、次の回の主役です。ショートメッセージは iFC で IP-SM-GW に届きます。
 
 ```sh
-docker compose --profile ue --profile sim down --rmi all -v --remove-orphans
+docker compose --profile ue --profile phones down --rmi all -v --remove-orphans
 ```
 
 > 次の回の手順書は [SMS の流れを追う](../../../docs/guide/ja/sms.md) です。

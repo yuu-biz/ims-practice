@@ -73,7 +73,7 @@ home_domain: ims.mnc001.mcc001.3gppnetwork.org
 | `epc`, `mrfc`, `mrfp` | 172.28.0.80, 85, 86 | `epc`, `mrfc`, `mrfp` | `epc.yaml`, `mrfc.yaml`, `mrfp.yaml` |
 | `ue`, `ue2`, `ue3` | 172.28.0.100, 101, 103 | `cmd/ue` | command line |
 
-- Not in the table: the SC stub inside `ipsmgw`, the UEs of the Lab and of VoLTE (`ue-a` to `ue-c`, `volte-a`, `volte-b`), `softphone` and `capture`.
+- Not in the table: the SC stub inside `ipsmgw`, the UEs of the Lab and of VoLTE (`phone1` to `phone3`, `volte-a`, `volte-b`), `softphone` and `capture`.
 - The IBCF and a second network are in another Compose project, `deploy/interconnect/compose.yaml`.
 
 > Guide: [Capture signaling and open it in Wireshark, "What you see when the nodes start"](../../../docs/guide/en/capture.md#what-you-see-when-the-nodes-start)

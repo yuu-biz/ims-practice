@@ -58,9 +58,9 @@ The nodes use these addresses. The Service column is the name in `compose.yaml`.
 | UE simulator, subscriber 2 | `ue2` | 172.28.0.101 | `ue` |
 | pjsua and SIPp | `softphone` | 172.28.0.102 | `ue` |
 | UE simulator, subscriber 3 | `ue3` | 172.28.0.103 | `ue` |
-| UE simulator that the Lab drives, subscriber 1 | `ue-a` | 172.28.0.110 | `sim` |
-| UE simulator that the Lab drives, subscriber 2 | `ue-b` | 172.28.0.111 | `sim` |
-| UE simulator that the Lab drives, subscriber 3 | `ue-c` | 172.28.0.112 | `sim` |
+| UE simulator that the Lab drives, subscriber 1 | `phone1` | 172.28.0.110 | `phones` |
+| UE simulator that the Lab drives, subscriber 2 | `phone2` | 172.28.0.111 | `phones` |
+| UE simulator that the Lab drives, subscriber 3 | `phone3` | 172.28.0.112 | `phones` |
 | VoLTE UE, subscriber 10 | `volte-a` | 172.28.0.120 | `volte` |
 | VoLTE UE, subscriber 12 | `volte-b` | 172.28.0.121 | `volte` |
 
@@ -130,11 +130,11 @@ The HEP encoding leaves out two parts of the specification:
 
 ## Stop the system
 
-- To stop the nodes and the UEs of every profile and keep the images, run `docker compose --profile ue --profile sim --profile volte down -v --remove-orphans`. The other guides end with the same command, so the next guide starts without a new build.
+- To stop the nodes and the UEs of every profile and keep the images, run `docker compose --profile ue --profile phones --profile volte down -v --remove-orphans`. The other guides end with the same command, so the next guide starts without a new build.
 - When you have finished with the guides, delete the images that the build created as well:
 
   ```sh
-  docker compose --profile ue --profile sim --profile volte down --rmi all -v --remove-orphans
+  docker compose --profile ue --profile phones --profile volte down --rmi all -v --remove-orphans
   ```
 
 The capture files stay in `captures/` until you delete them.

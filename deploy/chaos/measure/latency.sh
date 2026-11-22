@@ -9,17 +9,17 @@
 #
 # COMPOSE_FILE picks the stack, as for docker compose; LABEL names the
 # run in the result (default: memory). The stack must be up, with its
-# capture. ue-a registers again RUNS times (deregister, then the initial
-# registration with its 401) and calls ue-b RUNS times.
+# capture. phone1 registers again RUNS times (deregister, then the initial
+# registration with its 401) and calls phone2 RUNS times.
 #
 # Each time is measured on the capture between messages of the UEs, so
 # that the UEs' own work (the ring, the answer) is not in it:
 #
 #   register     the REGISTER that the 401 answers, to the 200
 #   register-2   the REGISTER with credentials, to the 200
-#   invite       the INVITE from ue-a, to the INVITE that reaches ue-b
-#   answer       the 200 from ue-b, to the 200 that reaches ue-a
-#   bye          the BYE from ue-a, to its 200
+#   invite       the INVITE from phone1, to the INVITE that reaches phone2
+#   answer       the 200 from phone2, to the 200 that reaches phone1
+#   bye          the BYE from phone1, to its 200
 set -euo pipefail
 cd "$(dirname "$0")/../../.."
 . deploy/chaos/measure/lib.sh

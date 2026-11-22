@@ -64,14 +64,15 @@ spec:
               value: lab.ims.svc.cluster.local:9060
 ---
 # Two UE simulators that stay up and do what the Lab asks ("ue
-# serve"), as ue-a and ue-b of compose.yaml. ue-b is subscriber 2.
+# serve"), as phone1 and phone2 of compose.yaml. phone2 is
+# subscriber 2.
 apiVersion: v1
 kind: Service
 metadata:
-  name: ue-a
+  name: phone1
 spec:
   selector:
-    app.kubernetes.io/name: ue-a
+    app.kubernetes.io/name: phone1
   ports:
     # The control API of "ue serve", reached through the Lab only.
     - name: control
@@ -81,20 +82,20 @@ spec:
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: ue-a
+  name: phone1
 spec:
-  # Zero, like the sim profile of compose.yaml: these UEs use the
+  # Zero, like the phones profile of compose.yaml: these UEs use the
   # subscribers of ue and ue2. Run one pair at a time, with
   # kubectl -n ims scale deployment ue ue2 --replicas=0 and
-  # kubectl -n ims scale deployment ue-a ue-b --replicas=1.
+  # kubectl -n ims scale deployment phone1 phone2 --replicas=1.
   replicas: 0
   selector:
     matchLabels:
-      app.kubernetes.io/name: ue-a
+      app.kubernetes.io/name: phone1
   template:
     metadata:
       labels:
-        app.kubernetes.io/name: ue-a
+        app.kubernetes.io/name: phone1
     spec:
       terminationGracePeriodSeconds: 10
       dnsConfig:
@@ -123,10 +124,10 @@ spec:
 apiVersion: v1
 kind: Service
 metadata:
-  name: ue-b
+  name: phone2
 spec:
   selector:
-    app.kubernetes.io/name: ue-b
+    app.kubernetes.io/name: phone2
   ports:
     # The control API of "ue serve", reached through the Lab only.
     - name: control
@@ -136,20 +137,20 @@ spec:
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: ue-b
+  name: phone2
 spec:
-  # Zero, like the sim profile of compose.yaml: these UEs use the
+  # Zero, like the phones profile of compose.yaml: these UEs use the
   # subscribers of ue and ue2. Run one pair at a time, with
   # kubectl -n ims scale deployment ue ue2 --replicas=0 and
-  # kubectl -n ims scale deployment ue-a ue-b --replicas=1.
+  # kubectl -n ims scale deployment phone1 phone2 --replicas=1.
   replicas: 0
   selector:
     matchLabels:
-      app.kubernetes.io/name: ue-b
+      app.kubernetes.io/name: phone2
   template:
     metadata:
       labels:
-        app.kubernetes.io/name: ue-b
+        app.kubernetes.io/name: phone2
     spec:
       terminationGracePeriodSeconds: 10
       dnsConfig:
@@ -181,14 +182,14 @@ spec:
               containerPort: 8090
               protocol: TCP
 ---
-# ue-c is subscriber 3, the third party of a conference.
+# phone3 is subscriber 3, the third party of a conference.
 apiVersion: v1
 kind: Service
 metadata:
-  name: ue-c
+  name: phone3
 spec:
   selector:
-    app.kubernetes.io/name: ue-c
+    app.kubernetes.io/name: phone3
   ports:
     # The control API of "ue serve", reached through the Lab only.
     - name: control
@@ -198,20 +199,20 @@ spec:
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: ue-c
+  name: phone3
 spec:
-  # Zero, like the sim profile of compose.yaml: these UEs use the
+  # Zero, like the phones profile of compose.yaml: these UEs use the
   # subscribers of ue and ue2. Run one pair at a time, with
   # kubectl -n ims scale deployment ue ue2 --replicas=0 and
-  # kubectl -n ims scale deployment ue-a ue-c --replicas=1.
+  # kubectl -n ims scale deployment phone1 phone3 --replicas=1.
   replicas: 0
   selector:
     matchLabels:
-      app.kubernetes.io/name: ue-c
+      app.kubernetes.io/name: phone3
   template:
     metadata:
       labels:
-        app.kubernetes.io/name: ue-c
+        app.kubernetes.io/name: phone3
     spec:
       terminationGracePeriodSeconds: 10
       dnsConfig:

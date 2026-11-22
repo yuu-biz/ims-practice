@@ -683,8 +683,8 @@ lab:
   epc: http://epc:8080
   fault_agent: http://fault-agent:8080
   ues:
-    - {name: ue-a, control: "http://ue-a:8090"}
-    - {name: ue-b, control: "http://172.28.0.111:8090"}
+    - {name: phone1, control: "http://phone1:8090"}
+    - {name: phone2, control: "http://172.28.0.111:8090"}
 `
 
 func TestParseLab(t *testing.T) {
@@ -694,8 +694,8 @@ func TestParseLab(t *testing.T) {
 	}
 	want := Lab{HEPListen: ":9060", HTTPListen: ":8080", HSSProvisioning: "http://hss:8081", EPC: "http://epc:8080",
 		FaultAgent: "http://fault-agent:8080", UEs: []UESimulator{
-			{Name: "ue-a", Control: "http://ue-a:8090"},
-			{Name: "ue-b", Control: "http://172.28.0.111:8090"},
+			{Name: "phone1", Control: "http://phone1:8090"},
+			{Name: "phone2", Control: "http://172.28.0.111:8090"},
 		}}
 	if cfg.Lab == nil || !reflect.DeepEqual(*cfg.Lab, want) || cfg.Diameter != nil {
 		t.Errorf("lab = %+v, want %+v", cfg.Lab, want)
@@ -721,10 +721,10 @@ func TestParseLab(t *testing.T) {
 		{"provisioning not a URL", "http://hss:8081", "hss:8081", "hss_provisioning"},
 		{"EPC not a URL", "http://epc:8080", "epc:8080", "epc:"},
 		{"fault agent not a URL", "http://fault-agent:8080", "fault-agent:8080", "fault_agent:"},
-		{"UE without a name", "name: ue-a, ", "", "ues[0].name"},
-		{"UE name with a slash", "name: ue-a", "name: ue/a", "ues[0].name"},
-		{"UE name used twice", "name: ue-b", "name: ue-a", `ues[1].name: "ue-a" is used twice`},
-		{"UE control not a URL", `control: "http://ue-a:8090"`, "control: ue-a:8090", "ues[0].control"},
+		{"UE without a name", "name: phone1, ", "", "ues[0].name"},
+		{"UE name with a slash", "name: phone1", "name: ue/a", "ues[0].name"},
+		{"UE name used twice", "name: phone2", "name: phone1", `ues[1].name: "phone1" is used twice`},
+		{"UE control not a URL", `control: "http://phone1:8090"`, "control: phone1:8090", "ues[0].control"},
 		{"section without its role", "roles: [lab]", "roles: [agw]\nagw: {control: 0.0.0.0:8080, rtp_address: 172.28.0.50, rtp_ports: {min: 40000, max: 40099}}", "lab: only the lab role"},
 	}
 	for _, tt := range tests {
