@@ -34,6 +34,9 @@ import (
 	"github.com/yuu-biz/ims-practice/internal/icscf"
 	"github.com/yuu-biz/ims-practice/internal/ims"
 	"github.com/yuu-biz/ims-practice/internal/ipsmgw"
+	"github.com/yuu-biz/ims-practice/internal/kvstore"
+	"github.com/yuu-biz/ims-practice/internal/kvstore/ibcfstore"
+	"github.com/yuu-biz/ims-practice/internal/kvstore/kvjson"
 	"github.com/yuu-biz/ims-practice/internal/mmtel"
 	"github.com/yuu-biz/ims-practice/internal/mrfc"
 	"github.com/yuu-biz/ims-practice/internal/pcscf"
@@ -261,7 +264,9 @@ func run(configPath string, log *slog.Logger) error {
 		listen := func(s config.SIP) (*sip.TransportLayer, error) {
 			return sip.ListenObserved(s.Listen.String(), roleLog, agent.SIP(string(config.RoleIBCF)))
 		}
-		b, err := startIBCF(cfg.HomeDomain, *c, resolver, listen, roleLog)
+		store, closeStore := ibcfStore(cfg.Store, roleLog)
+		defer closeStore()
+		b, err := startIBCF(cfg.HomeDomain, *c, store, resolver, listen, roleLog)
 		if err != nil {
 			return err
 		}
@@ -424,12 +429,26 @@ func run(configPath string, log *slog.Logger) error {
 	return nil
 }
 
+// ibcfStore is where the IBCF keeps the records of its calls. With a
+// store section of kind valkey it is the shared store, so that a node
+// that is recreated under the same name finds the calls that its
+// earlier process left, and ends them (TS 24.229 5.10.2.4, 5.10.3.4).
+// Without one it is the memory of the process, whose records go with
+// it. The caller calls the returned function when the node stops.
+func ibcfStore(s *config.Store, log *slog.Logger) (ibcf.Store, func()) {
+	if s == nil || s.Kind != config.StoreValkey {
+		return ibcf.NewMemoryStore(), func() {}
+	}
+	kv := kvstore.NewValkey(kvstore.ValkeyConfig{Address: s.Address, Timeout: s.Timeout})
+	return ibcfstore.New(kv, kvjson.Config{Prefix: s.Prefix, Timeout: s.Timeout, Log: log}), kv.Close
+}
+
 // startIBCF makes the IBCF and its two UAs: the internal one on Mx,
 // towards the home network, and the external one on Ici, towards the
 // peers (TS 29.165 3.2). The IBCF is a B2BUA (TS 24.229 5.10.5), so its
 // transports belong to the UAs rather than to startSIP. The caller
 // closes the IBCF when the node stops.
-func startIBCF(homeDomain string, c config.IBCF, locator ims.Locator,
+func startIBCF(homeDomain string, c config.IBCF, store ibcf.Store, locator ims.Locator,
 	listen func(config.SIP) (*sip.TransportLayer, error), log *slog.Logger) (*ibcf.IBCF, error) {
 	internal := sip.URI{Scheme: "sip", Host: c.SIP.Host, Port: int(c.SIP.Listen.Port())}
 	external := sip.URI{Scheme: "sip", Host: c.ExternalSIP.Host, Port: int(c.ExternalSIP.Listen.Port())}
@@ -447,7 +466,7 @@ func startIBCF(homeDomain string, c config.IBCF, locator ims.Locator,
 		ICSCF:            c.ICSCF,
 		TrGWCoreAddress:  c.TrGW.CoreAddress,
 		TrGWPeerAddress:  c.TrGW.PeerAddress,
-	}, peers, agw.NewClient(c.TrGW.Control), ibcf.NewMemoryStore(), locator, log)
+	}, peers, agw.NewClient(c.TrGW.Control), store, locator, log)
 	if err != nil {
 		return nil, err
 	}

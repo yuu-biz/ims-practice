@@ -301,13 +301,17 @@ Each IBCF instance keeps such a record of each of its calls in its `Store`, unde
 
 The records of one instance are under its name, so an instance reads only its own, once, when it starts: there is no search through the calls of the whole network.
 
-In the networks of this guide that does not happen. The `Store` of each IBCF node is in the memory of its process (`ibcf.MemoryStore`); the node does not give the IBCF the `Store` that keeps the records outside the process. A recreated IBCF container starts with an empty `Store`, reads nothing and ends nothing. If you recreate IBCF-A during a call:
+The records last only as long as the `Store` that holds them. A node whose configuration has a `store` section of kind `valkey` gives its IBCF an `ibcfstore.Store`, which keeps the records in that Valkey server: each record under `ibcf:call:<instance>:<ID>`, and the IDs of the calls of an instance under `ibcf:calls-of:<instance>`, after the `prefix` of the section. `<instance>` is the host of the IBCF's URI in the home network. A recreated IBCF container reads its records from the server, and ends the calls of the process that stopped as above.
+
+The new process reads its records before its UAs start. When it cannot read them, it does not start: an instance that took calls without its records would never end the calls of its earlier process. The node then logs `"msg":"node failed"` with an error that begins `ibcf: cannot read the calls that an earlier process of <instance> left`, and stops. Start it again once the store answers. In a network with several IBCF instances, the others take the new calls meanwhile.
+
+A node without a `store` section keeps the records in the memory of its process (`ibcf.MemoryStore`), and they go with the process. The IBCF nodes of the networks of this guide have no `store` section, so a recreated IBCF container starts with an empty `Store`, reads nothing and ends nothing. If you recreate IBCF-A during a call:
 
 - IBCF-A logs no `"msg":"ending a call that an earlier process of this instance left"`.
 - A request of a party within that call, such as the BYE when UE A1 hangs up, gets 481 (Call/Transaction Does Not Exist) from the new process, which knows no such dialog (RFC 3261 12.2.2). The party on the other side of IBCF-A gets no BYE.
 - TrGW-A keeps the context of the call reserved: nothing releases it.
 
-The tests of `internal/ibcf` show the release itself: there, the processes of one instance share a `Store` in one program (`TestRestartedInstanceEndsTheCallsItLeft`, `TestRestartedInstanceEndsACallAtItsNewTarget`).
+The tests of `internal/ibcf` show the release itself. In `TestRestartedInstanceEndsTheCallsItLeft`, the first process of an instance holds a call across the border and stops without ending it; the next one sends a BYE in both dialogs and releases the TrGW contexts. It runs twice: with a `Store` in the program that the processes share, and with each process on an `ibcfstore.Store` of its own over a shared store, in place of the Valkey server. `TestRestartedInstanceEndsACallAtItsNewTarget` shows the BYE going to the Contact that a re-INVITE moved the party to.
 
 ## Traffic statistics of the border
 
@@ -456,7 +460,7 @@ Each item has a `SIMPLIFIED:` comment in the code; `grep -rn "SIMPLIFIED:" inter
 
 | Where | What is left out | Why |
 | --- | --- | --- |
-| IBCF, TS 24.229 5.10.2.4, 5.10.3.4 | The IBCF ends a call by itself only when one of its two dialogs fails, and when it takes the place of an earlier process of its instance. It hears nothing from the TrGW, so a call whose TrGW context is lost goes on without media until a party hangs up. The records of an instance that never starts again stay in the Store, with their TrGW contexts. The node gives the IBCF only a Store in the memory of its process, so an IBCF node that is recreated finds no record and ends none of the calls of the process that stopped. | The TrGW of this project reports no failures to the IBCF, and the instances of this project keep their names when they start again. The node does not give the IBCF the Store that keeps the records outside the process. |
+| IBCF, TS 24.229 5.10.2.4, 5.10.3.4 | The IBCF ends a call by itself only when one of its two dialogs fails, and when it takes the place of an earlier process of its instance. It hears nothing from the TrGW, so a call whose TrGW context is lost goes on without media until a party hangs up. The records of an instance that never starts again stay in the Store, with their TrGW contexts. | The TrGW of this project reports no failures to the IBCF, and the instances of this project keep their names when they start again. |
 | IBCF, TS 24.229 5.10.5 | The Contact of a 3xx does not cross, so a redirection from the other network reaches the caller without its targets. | The Contact of a 3xx names where to try next, not a dialog, and no node of this project answers with a 3xx. |
 | IBCF, RFC 3891, RFC 3515 | A Replaces, or a Refer-To that holds one, is not mapped to the dialog of the other side; an INVITE that requires `replaces` gets 420. | No scenario transfers a call across the border. |
 | IBCF, TS 24.229 5.10.2.2, 5.10.3.2 | Of the requests outside a dialog, only INVITE and MESSAGE cross. The IBCF answers an OPTIONS itself, a SUBSCRIBE with 403, and a PUBLISH with 405: a participant of a conference of the other network subscribes to it within the dialog of its conference session, as TS 24.147 5.3.1.2 has it do after a 403. A provisional response to a MESSAGE stays on its side. | A SUBSCRIBE outside a dialog makes a dialog of its own, which the IBCF would have to hold on each side as it holds those of a call; that part of the B2BUA is not built. |

@@ -7,9 +7,12 @@ package config
 // Timer F of RFC 3261 at their full length. The caller warns about
 // each, so that a node configured for a shared store does not appear
 // to have one.
+//
+// The ibcf role reads the store section, for the records of its calls;
+// the other roles of a node keep their state in its process even then.
 func (c Config) Unread() []string {
 	var unread []string
-	if c.Store != nil {
+	if c.Store != nil && c.IBCF == nil {
 		unread = append(unread, "store")
 	}
 	if c.Maintenance != nil {
