@@ -364,6 +364,15 @@ func (c *Call) fromCaller(r *sip.InDialogRequest) {
 		outDone = out.Done()
 	}
 	if !c.callerTurns.wait(r.Arrival, c.in.Done(), outDone) {
+		if req.Method == sip.PRACK {
+			// The copy that this PRACK acknowledges leaves the order in
+			// which the caller acknowledges them, so that the PRACK after
+			// it does not take that copy for its own (acknowledged). A role
+			// that sends the INVITE on to another callee (Attempt again)
+			// goes on relaying the caller's requests after the leg that this
+			// one gave up for has ended.
+			c.acknowledged()
+		}
 		if !answered {
 			r.Reject(481)
 		}
