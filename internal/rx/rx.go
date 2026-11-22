@@ -7,6 +7,10 @@
 //
 // Rx is in go-diameter's default dictionary, so the names of its
 // commands and AVPs are known without a dictionary of this project.
+//
+// The result of an answer, the routing AVPs of a request and the 3GPP
+// Vendor-Id are those of package diameter: the base protocol defines
+// them, not Rx.
 package rx
 
 import (
@@ -17,9 +21,7 @@ import (
 	"github.com/fiorix/go-diameter/v4/diam"
 	"github.com/fiorix/go-diameter/v4/diam/avp"
 	"github.com/fiorix/go-diameter/v4/diam/datatype"
-	"github.com/fiorix/go-diameter/v4/diam/dict"
 
-	"github.com/yuu-biz/ims-practice/internal/cx"
 	"github.com/yuu-biz/ims-practice/internal/diameter"
 )
 
@@ -41,22 +43,6 @@ const (
 	DuplicatedAFSession           uint32 = 5064
 	IPCANSessionNotAvailable      uint32 = 5065
 )
-
-// Base Result-Code values that Rx answers carry (RFC 6733 7.1).
-const (
-	DiameterSuccess          uint32 = 2001 // 7.1.2
-	DiameterUnknownSessionID uint32 = 5002 // 7.1.5
-	DiameterUnableToComply   uint32 = 5012 // 7.1.5
-)
-
-// The result of an answer is cx.Result: a Result-Code or an
-// Experimental-Result-Code, which is the base protocol's choice (RFC
-// 6733 7.1, 7.7) and not particular to Cx.
-type Result = cx.Result
-
-// Header is the routing part every Rx request starts with, the same as
-// on Cx, so cx.NewHeader fills it in.
-type Header = cx.Header
 
 // SpecificAction is the Specific-Action AVP (TS 29.214 5.3.13): in an
 // AAR, an event the AF wants to hear about; in a RAR, the event that
@@ -160,10 +146,6 @@ const (
 	v  = avp.Vbit
 )
 
-func vendorAVP(code uint32, flags uint8, data datatype.Type) *diam.AVP {
-	return diam.NewAVP(code, flags, diameter.VendorID3GPP, data)
-}
-
 // Errors of the parse functions that a PCRF answers with an Rx result
 // code (TS 29.214 5.5.1).
 var (
@@ -175,29 +157,6 @@ var (
 	ErrInvalidServiceInformation = errors.New("rx: invalid service information")
 )
 
-func newRequest(command uint32) *diam.Message {
-	return diam.NewMessage(command, diam.RequestFlag|diam.ProxiableFlag, diameter.ApplicationIDRx, 0, 0, dict.Default)
-}
-
-func sessionID(m *diam.Message, h Header) {
-	m.NewAVP(avp.SessionID, avp.Mbit, 0, datatype.UTF8String(h.SessionID))
-}
-
-func origin(m *diam.Message, h Header) {
-	m.NewAVP(avp.OriginHost, avp.Mbit, 0, datatype.DiameterIdentity(h.OriginHost))
-	m.NewAVP(avp.OriginRealm, avp.Mbit, 0, datatype.DiameterIdentity(h.OriginRealm))
-}
-
-func destinationRealm(m *diam.Message, h Header) {
-	m.NewAVP(avp.DestinationRealm, avp.Mbit, 0, datatype.DiameterIdentity(h.DestinationRealm))
-}
-
-func destinationHost(m *diam.Message, h Header) {
-	if h.DestinationHost != "" {
-		m.NewAVP(avp.DestinationHost, avp.Mbit, 0, datatype.DiameterIdentity(h.DestinationHost))
-	}
-}
-
 func authApplicationID(m *diam.Message) {
 	m.NewAVP(avp.AuthApplicationID, avp.Mbit, 0, datatype.Unsigned32(diameter.ApplicationIDRx))
 }
@@ -205,66 +164,24 @@ func authApplicationID(m *diam.Message) {
 // newAnswer starts the answer to request with Session-Id, the
 // Auth-Application-Id when the answer format has it (only the AAA), the
 // origin of local, and the result.
-func newAnswer(request *diam.Message, local diameter.Identity, result Result, withApplicationID bool) *diam.Message {
-	m := diam.NewMessage(request.Header.CommandCode, request.Header.CommandFlags&diam.ProxiableFlag,
-		request.Header.ApplicationID, request.Header.HopByHopID, request.Header.EndToEndID, dict.Default)
-	if sid, err := request.FindAVP(avp.SessionID, 0); err == nil {
-		m.AddAVP(sid)
-	}
+func newAnswer(request *diam.Message, local diameter.Identity, result diameter.Result, withApplicationID bool) *diam.Message {
+	m := diameter.NewAnswer(request)
 	if withApplicationID {
 		authApplicationID(m)
 	}
-	m.NewAVP(avp.OriginHost, avp.Mbit, 0, datatype.DiameterIdentity(local.OriginHost))
-	m.NewAVP(avp.OriginRealm, avp.Mbit, 0, datatype.DiameterIdentity(local.OriginRealm))
-	if result.Experimental {
-		m.NewAVP(avp.ExperimentalResult, avp.Mbit, 0, &diam.GroupedAVP{AVP: []*diam.AVP{
-			diam.NewAVP(avp.VendorID, avp.Mbit, 0, datatype.Unsigned32(diameter.VendorID3GPP)),
-			diam.NewAVP(avp.ExperimentalResultCode, avp.Mbit, 0, datatype.Unsigned32(result.Code)),
-		}})
-	} else {
-		m.NewAVP(avp.ResultCode, avp.Mbit, 0, datatype.Unsigned32(result.Code))
-	}
+	local.AddOrigin(m)
+	result.AddTo(m)
 	return m
-}
-
-// requestHeader reads the routing AVPs every Rx request has.
-type requestHeader struct {
-	SessionID        string `avp:"Session-Id"`
-	OriginHost       string `avp:"Origin-Host"`
-	OriginRealm      string `avp:"Origin-Realm"`
-	DestinationHost  string `avp:"Destination-Host,omitempty"`
-	DestinationRealm string `avp:"Destination-Realm"`
-}
-
-func (h requestHeader) header() Header {
-	return Header{
-		SessionID:        h.SessionID,
-		OriginHost:       h.OriginHost,
-		OriginRealm:      h.OriginRealm,
-		DestinationHost:  h.DestinationHost,
-		DestinationRealm: h.DestinationRealm,
-	}
 }
 
 // readResult reads the result of an answer from Result-Code or
 // Experimental-Result.
-func readResult(m *diam.Message) (Result, error) {
-	var raw struct {
-		ResultCode         *uint32 `avp:"Result-Code,omitempty"`
-		ExperimentalResult *struct {
-			Code uint32 `avp:"Experimental-Result-Code"`
-		} `avp:"Experimental-Result,omitempty"`
-	}
+func readResult(m *diam.Message) (diameter.Result, error) {
+	var raw diameter.ResultAVPs
 	if err := m.Unmarshal(&raw); err != nil {
-		return Result{}, err
+		return diameter.Result{}, err
 	}
-	switch {
-	case raw.ExperimentalResult != nil:
-		return cx.Experimental(raw.ExperimentalResult.Code), nil
-	case raw.ResultCode != nil:
-		return cx.Base(*raw.ResultCode), nil
-	}
-	return Result{}, errors.New("answer has neither Result-Code nor Experimental-Result")
+	return raw.Result()
 }
 
 // SessionID returns the Session-Id of an Rx message, or "" without one.

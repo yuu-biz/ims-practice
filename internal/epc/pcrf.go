@@ -8,7 +8,6 @@ import (
 
 	"github.com/fiorix/go-diameter/v4/diam"
 
-	"github.com/yuu-biz/ims-practice/internal/cx"
 	"github.com/yuu-biz/ims-practice/internal/diameter"
 	"github.com/yuu-biz/ims-practice/internal/policy"
 	"github.com/yuu-biz/ims-practice/internal/rx"
@@ -44,23 +43,23 @@ func (e *EPC) HandleRx(request *diam.Message) *diam.Message {
 // aaRequest provisions or updates the service information of an Rx
 // session (TS 29.214 4.4.1, 4.4.2, 4.4.5).
 func (e *EPC) aaRequest(request *diam.Message) *diam.Message {
-	answer := func(result rx.Result) *diam.Message {
+	answer := func(result diameter.Result) *diam.Message {
 		return rx.AAAnswer{Result: result}.Message(request, e.node.Identity())
 	}
 	aar, err := rx.ParseAARequest(request)
 	switch {
 	case errors.Is(err, rx.ErrFilterRestrictions):
-		return answer(cx.Experimental(rx.FilterRestrictions))
+		return answer(diameter.Experimental(rx.FilterRestrictions))
 	case errors.Is(err, rx.ErrInvalidServiceInformation):
-		return answer(cx.Experimental(rx.InvalidServiceInformation))
+		return answer(diameter.Experimental(rx.InvalidServiceInformation))
 	case err != nil:
 		e.log.Warn("unreadable AAR", "error", err.Error())
-		return answer(cx.Base(rx.DiameterUnableToComply))
+		return answer(diameter.Base(diameter.DiameterUnableToComply))
 	}
 	rules, err := pccRules(aar.MediaComponents)
 	if err != nil {
 		e.log.Info("refused service information", "session_id", aar.SessionID, "error", err.Error())
-		return answer(cx.Experimental(rx.RequestedServiceNotAuthorized))
+		return answer(diameter.Experimental(rx.RequestedServiceNotAuthorized))
 	}
 
 	// Session binding (TS 29.213 5.2): a new Rx session by the UE's
@@ -69,7 +68,7 @@ func (e *EPC) aaRequest(request *diam.Message) *diam.Message {
 	addr := aar.FramedIPAddress
 	if bound {
 		if binding.Aborted {
-			return answer(cx.Base(rx.DiameterUnknownSessionID))
+			return answer(diameter.Base(diameter.DiameterUnknownSessionID))
 		}
 		addr = binding.Address
 	}
@@ -106,10 +105,10 @@ func (e *EPC) aaRequest(request *diam.Message) *diam.Message {
 		// TS 29.214 4.4.1: session binding failed. A UE that does not come
 		// through the EPC gets this.
 		e.log.Info("no IP-CAN session for the AAR", "session_id", aar.SessionID, "framed_ip_address", addr.String())
-		return answer(cx.Experimental(rx.IPCANSessionNotAvailable))
+		return answer(diameter.Experimental(rx.IPCANSessionNotAvailable))
 	case err != nil:
 		e.log.Info("refused service information", "session_id", aar.SessionID, "error", err.Error())
-		return answer(cx.Experimental(rx.RequestedServiceNotAuthorized))
+		return answer(diameter.Experimental(rx.RequestedServiceNotAuthorized))
 	}
 	if !bound {
 		e.store.PutBinding(aar.SessionID, Binding{Address: addr})
@@ -117,27 +116,27 @@ func (e *EPC) aaRequest(request *diam.Message) *diam.Message {
 	// TS 29.214 4.4.1: the AAA goes before, or in parallel with, the
 	// provisioning of the PCC rules, which here is the bearer for the UE.
 	e.node.AfterAnswer(request, func() { e.carryOut(context.Background(), fx) })
-	return answer(cx.Base(rx.DiameterSuccess))
+	return answer(diameter.Base(diameter.DiameterSuccess))
 }
 
 // sessionTermination ends an Rx session: the STA goes first, then the
 // resources of the session are freed (TS 29.214 4.4.4).
 func (e *EPC) sessionTermination(request *diam.Message) *diam.Message {
 	answer := func(code uint32) *diam.Message {
-		return rx.SessionTerminationAnswer{Result: cx.Base(code)}.Message(request, e.node.Identity())
+		return rx.SessionTerminationAnswer{Result: diameter.Base(code)}.Message(request, e.node.Identity())
 	}
 	str, err := rx.ParseSessionTerminationRequest(request)
 	if err != nil {
 		e.log.Warn("unreadable STR", "error", err.Error())
-		return answer(rx.DiameterUnableToComply)
+		return answer(diameter.DiameterUnableToComply)
 	}
 	binding, ok := e.store.Binding(str.SessionID)
 	if !ok {
-		return answer(rx.DiameterUnknownSessionID)
+		return answer(diameter.DiameterUnknownSessionID)
 	}
 	e.store.DeleteBinding(str.SessionID)
 	if binding.Aborted {
-		return answer(rx.DiameterSuccess)
+		return answer(diameter.DiameterSuccess)
 	}
 	var fx effects
 	_, err = e.store.UpdatePDNConnection(binding.Address, func(c *PDNConnection) error {
@@ -149,7 +148,7 @@ func (e *EPC) sessionTermination(request *diam.Message) *diam.Message {
 		e.log.Warn("could not free the resources of the Rx session", "session_id", str.SessionID, "error", err.Error())
 	}
 	e.node.AfterAnswer(request, func() { e.carryOut(context.Background(), fx) })
-	return answer(rx.DiameterSuccess)
+	return answer(diameter.DiameterSuccess)
 }
 
 // isSignalling reports whether the service information is that of the
@@ -193,9 +192,9 @@ func valueOf(p *uint32) uint32 {
 }
 
 // toAF is the header of a request from the PCRF to the AF of s.
-func (e *EPC) toAF(s AFSession) rx.Header {
+func (e *EPC) toAF(s AFSession) diameter.Header {
 	id := e.node.Identity()
-	return rx.Header{SessionID: s.SessionID, OriginHost: id.OriginHost, OriginRealm: id.OriginRealm,
+	return diameter.Header{SessionID: s.SessionID, OriginHost: id.OriginHost, OriginRealm: id.OriginRealm,
 		DestinationHost: s.AFHost, DestinationRealm: s.AFRealm}
 }
 

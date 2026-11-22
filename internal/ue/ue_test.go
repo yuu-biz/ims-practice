@@ -304,7 +304,7 @@ func startEPC(t *testing.T, p *pcscf.PCSCF, pcscfAddr netip.Addr) string {
 	p.SetPolicyControl(client.Load())
 	deadline := time.Now().Add(5 * time.Second)
 	for {
-		_, err := peer.Request(context.Background(), rx.SessionTerminationRequest{Header: cx.NewHeader(afNode, "", domain),
+		_, err := peer.Request(context.Background(), rx.SessionTerminationRequest{Header: diameter.NewHeader(afNode, "", domain),
 			TerminationCause: rx.DiameterLogout}.Message())
 		if err == nil {
 			break
