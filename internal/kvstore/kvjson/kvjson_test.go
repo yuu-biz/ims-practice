@@ -212,6 +212,76 @@ func TestReadModifyWrite(t *testing.T) {
 	}
 }
 
+// TestModify: two clients that change one item at once lose no change;
+// an item that is not there is not written, and a change that fails
+// writes nothing.
+func TestModify(t *testing.T) {
+	ctx := context.Background()
+	for _, backend := range storetest.Backends() {
+		t.Run(backend.Name, func(t *testing.T) {
+			kv, cfg := backend.New(t), kvjson.Config{Prefix: storetest.Prefix()}
+			a, b := kvjson.New(kv, cfg, "test"), kvjson.New(kv, cfg, "test")
+			key := a.Key("counter", "x")
+			if _, err := kvjson.Modify(ctx, a, key, noTTL, func(v *counter) error { v.N++; return nil }); !errors.Is(err, kvstore.ErrNotFound) {
+				t.Fatalf("Modify of nothing = %v, want ErrNotFound", err)
+			}
+			var got counter
+			if _, err := kvjson.Read(ctx, b, key, &got); !errors.Is(err, kvstore.ErrNotFound) {
+				t.Fatalf("Modify of nothing wrote %+v, %v", got, err)
+			}
+			if err := kvjson.Write(ctx, a, key, counter{}, 0); err != nil {
+				t.Fatal(err)
+			}
+			var wg sync.WaitGroup
+			for _, c := range []*kvjson.Client{a, b} {
+				wg.Go(func() {
+					for range 20 {
+						if _, err := kvjson.Modify(ctx, c, key, noTTL, func(v *counter) error { v.N++; return nil }); err != nil {
+							t.Error(err)
+						}
+					}
+				})
+			}
+			wg.Wait()
+			refused := errors.New("refused")
+			if _, err := kvjson.Modify(ctx, a, key, noTTL, func(v *counter) error { v.N = 0; return refused }); err != refused {
+				t.Errorf("Modify = %v, want the error of the change", err)
+			}
+			if _, err := kvjson.Read(ctx, b, key, &got); err != nil || got.N != 40 {
+				t.Errorf("Read = %+v, %v; want N 40", got, err)
+			}
+		})
+	}
+}
+
+// TestCompareAndSwapIndex: of two writers that claim one index item
+// from the same version, one wins; the other learns of the conflict.
+func TestCompareAndSwapIndex(t *testing.T) {
+	ctx := context.Background()
+	for _, backend := range storetest.Backends() {
+		t.Run(backend.Name, func(t *testing.T) {
+			c := kvjson.New(backend.New(t), kvjson.Config{Prefix: storetest.Prefix()}, "test")
+			key := c.Key("index", "x")
+			version, err := c.CompareAndSwapIndex(ctx, key, "", "a", 0)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := c.CompareAndSwapIndex(ctx, key, "", "b", 0); !errors.Is(err, kvstore.ErrConflict) {
+				t.Errorf("a second claim of a new item = %v, want ErrConflict", err)
+			}
+			if _, err := c.CompareAndSwapIndex(ctx, key, version, "b", 0); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := c.CompareAndSwapIndex(ctx, key, version, "c", 0); !errors.Is(err, kvstore.ErrConflict) {
+				t.Errorf("a claim from an old version = %v, want ErrConflict", err)
+			}
+			if got, _, err := c.ReadIndex(ctx, key); err != nil || got != "b" {
+				t.Errorf("ReadIndex = %q, %v; want b", got, err)
+			}
+		})
+	}
+}
+
 // TestIndexItems: an index item names its main item until it is
 // removed, and RemoveIndexIf leaves one that names another main item.
 func TestIndexItems(t *testing.T) {
@@ -366,6 +436,12 @@ func TestAFailedStoreIsNoMissingItem(t *testing.T) {
 			if err := c.RemoveIndexIf(ctx, index, key); err == nil {
 				t.Error("RemoveIndexIf on a stopped store returned no error")
 			}
+			if _, err := c.CompareAndSwapIndex(ctx, index, "", key, 0); err == nil || errors.Is(err, kvstore.ErrConflict) {
+				t.Errorf("CompareAndSwapIndex on a stopped store = %v, want its failure", err)
+			}
+			if _, err := kvjson.Modify(ctx, c, key, noTTL, func(v *counter) error { v.N++; return nil }); err == nil || errors.Is(err, kvstore.ErrNotFound) || errors.Is(err, kvjson.ErrGaveUp) {
+				t.Errorf("Modify on a stopped store = %v, want its failure", err)
+			}
 			if _, err := kvjson.ReadAndRemove[counter](ctx, c, key); err == nil || errors.Is(err, kvstore.ErrNotFound) {
 				t.Errorf("ReadAndRemove on a stopped store = %v, want its failure", err)
 			}
@@ -457,6 +533,14 @@ func TestTheOperationsEnd(t *testing.T) {
 			return err
 		},
 		"RemoveIndexIf": func(ctx context.Context, c *kvjson.Client) error { return c.RemoveIndexIf(ctx, "k", "t") },
+		"CompareAndSwapIndex": func(ctx context.Context, c *kvjson.Client) error {
+			_, err := c.CompareAndSwapIndex(ctx, "k", "", "t", 0)
+			return err
+		},
+		"Modify": func(ctx context.Context, c *kvjson.Client) error {
+			_, err := kvjson.Modify(ctx, c, "k", noTTL, func(*counter) error { return nil })
+			return err
+		},
 		"ReadAndRemove": func(ctx context.Context, c *kvjson.Client) error {
 			_, err := kvjson.ReadAndRemove[counter](ctx, c, "k")
 			return err
