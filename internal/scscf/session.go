@@ -414,15 +414,18 @@ func (s *SCSCF) exitIBCF(out *sip.Message) (sip.URI, bool) {
 // 5.4.3.2 translates uri with ENUM: a tel URI, or a SIP URI of the home
 // domain whose user part starts with + and that has user=phone.
 func (s *SCSCF) globalNumber(uri string) (string, bool) {
-	if number, ok := ims.TelNumber(uri); ok {
-		return number, true
-	}
-	u, err := sip.ParseURI(uri)
-	if err != nil || !strings.EqualFold(u.Host, s.cfg.HomeDomain) || !strings.HasPrefix(u.User, "+") {
+	n, ok := ims.ParseTelephoneNumber(uri)
+	if !ok {
 		return "", false
 	}
-	if user, ok := u.Params.Get("user"); !ok || !strings.EqualFold(user, "phone") {
+	if n.SIP == nil {
+		return n.Number, true
+	}
+	// Only the home domain writes a number of its users in a SIP URI
+	// this way; in another domain's URI the user part is that domain's
+	// business.
+	if !strings.EqualFold(n.SIP.Host, s.cfg.HomeDomain) || !strings.HasPrefix(n.Number, "+") {
 		return "", false
 	}
-	return ims.TelNumber("tel:" + u.User)
+	return n.Number, true
 }
