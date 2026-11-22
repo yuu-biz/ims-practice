@@ -112,6 +112,25 @@ func TestInviteClientRetransmitsUntilTimerB(t *testing.T) {
 	wantActions(t, "Timer B", actions, []TransactionAction{InformTU{Err: ErrTimeout}})
 }
 
+// The operator's TransactionTimeout replaces 64*T1 for Timer B and
+// Timer F, and leaves the retransmission timers alone.
+func TestTransactionTimeoutShortensTimersBAndF(t *testing.T) {
+	timers := DefaultTimers()
+	timers.TransactionTimeout = 4 * time.Second
+	_, actions := StartInviteClient(timers, false)
+	wantActions(t, "INVITE", actions, []TransactionAction{
+		SendRequest{},
+		StartTimer{Timer: TimerB, Duration: 4 * time.Second},
+		StartTimer{Timer: TimerA, Duration: 500 * time.Millisecond},
+	})
+	_, actions = StartNonInviteClient(timers, false)
+	wantActions(t, "non-INVITE", actions, []TransactionAction{
+		SendRequest{},
+		StartTimer{Timer: TimerF, Duration: 4 * time.Second},
+		StartTimer{Timer: TimerE, Duration: 500 * time.Millisecond},
+	})
+}
+
 func TestInviteClientProceedingStopsRetransmissions(t *testing.T) {
 	s, _ := StartInviteClient(DefaultTimers(), false)
 	trying, ringing := response(100), response(180)

@@ -59,6 +59,23 @@ type Timers struct {
 	T1 time.Duration // RTT estimate
 	T2 time.Duration // maximum retransmit interval for non-INVITE requests
 	T4 time.Duration // maximum time a message stays in the network
+	// TransactionTimeout, when set, is Timer B and Timer F in place of
+	// 64*T1 (RFC 3261 17.1.1.2, 17.1.2.2). An operator shortens it so
+	// that a request to a server that has stopped goes on to the next
+	// server sooner than 32 s (RFC 3263 4.3). TS 24.229 too lets a node
+	// wait less than Timer B and Timer F before it turns to another
+	// server: the I-CSCF before it selects another S-CSCF (5.3.1.3
+	// NOTE 2), and the S-CSCF before it takes a P-CSCF for gone
+	// (5.4.3.3 NOTE 24).
+	TransactionTimeout time.Duration
+}
+
+// transactionTimeout is Timer B and Timer F.
+func (t Timers) transactionTimeout() time.Duration {
+	if t.TransactionTimeout > 0 {
+		return t.TransactionTimeout
+	}
+	return 64 * t.T1
 }
 
 // DefaultTimers are the defaults of RFC 3261 Appendix A.
@@ -233,13 +250,14 @@ type InviteClientState struct {
 }
 
 // StartInviteClient enters Calling: the INVITE goes to the transport,
-// Timer B starts at 64*T1, and over an unreliable transport Timer A
-// starts at T1 (RFC 3261 17.1.1.2).
+// Timer B starts at 64*T1 unless TransactionTimeout says otherwise, and
+// over an unreliable transport Timer A starts at T1 (RFC 3261
+// 17.1.1.2).
 func StartInviteClient(t Timers, reliable bool) (InviteClientState, []TransactionAction) {
 	s := InviteClientState{State: Calling, Timers: t, Reliable: reliable, IntervalA: t.T1}
 	actions := []TransactionAction{
 		SendRequest{},
-		StartTimer{Timer: TimerB, Duration: 64 * t.T1},
+		StartTimer{Timer: TimerB, Duration: t.transactionTimeout()},
 	}
 	if !reliable {
 		actions = append(actions, StartTimer{Timer: TimerA, Duration: t.T1})
@@ -369,13 +387,14 @@ type NonInviteClientState struct {
 }
 
 // StartNonInviteClient enters Trying: the request goes to the
-// transport, Timer F starts at 64*T1, and over an unreliable transport
-// Timer E starts at T1 (RFC 3261 17.1.2.2).
+// transport, Timer F starts at 64*T1 unless TransactionTimeout says
+// otherwise, and over an unreliable transport Timer E starts at T1 (RFC
+// 3261 17.1.2.2).
 func StartNonInviteClient(t Timers, reliable bool) (NonInviteClientState, []TransactionAction) {
 	s := NonInviteClientState{State: Trying, Timers: t, Reliable: reliable, IntervalE: t.T1}
 	actions := []TransactionAction{
 		SendRequest{},
-		StartTimer{Timer: TimerF, Duration: 64 * t.T1},
+		StartTimer{Timer: TimerF, Duration: t.transactionTimeout()},
 	}
 	if !reliable {
 		actions = append(actions, StartTimer{Timer: TimerE, Duration: t.T1})
