@@ -68,6 +68,9 @@ func TestARequestWhoseRecordCannotBeWrittenGets500(t *testing.T) {
 	if err != nil || resp.StatusCode != 500 {
 		t.Fatalf("the PRACK with the offer got %v %v, want 500", resp, err)
 	}
+	if got := p.a.counter(t, `ims_ibcf_requests_rejected_total{peer="peer-b",direction="exit",method="PRACK",status="500"}`); got != 1 {
+		t.Errorf("PRACKs refused with 500 counted %v, want 1", got)
+	}
 	select {
 	case prack := <-pracked:
 		t.Errorf("a PRACK reached network B's UE: %s", prack.Get("CSeq"))
