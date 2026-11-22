@@ -15,6 +15,8 @@ type turns struct {
 	mu sync.Mutex
 	// next is the Arrival of the request whose turn it is.
 	next uint64
+	// taken is the highest Arrival that has taken a place (take).
+	taken uint64
 	// done holds the requests after next that have finished already:
 	// one that gave up waiting, when a leg ended.
 	done map[uint64]bool
@@ -31,7 +33,34 @@ func newTurns() *turns {
 // as soon as it starts, so that a request that returns early, or
 // panics, never holds up the ones after it.
 func (t *turns) take(n uint64) (finish func()) {
+	t.mu.Lock()
+	t.taken = max(t.taken, n)
+	t.mu.Unlock()
 	return sync.OnceFunc(func() { t.finish(n) })
+}
+
+// settle waits until every request that has taken a place has
+// finished, so that a request of the Call's own may go between them
+// instead of while one of them is on its way to the other leg. It gives
+// up when in or out, the ends of the two legs, is closed, and then
+// reports false; out is nil when the outgoing leg has not been sent
+// yet.
+func (t *turns) settle(in, out <-chan struct{}) bool {
+	for {
+		t.mu.Lock()
+		idle, moved := t.next > t.taken, t.moved
+		t.mu.Unlock()
+		if idle {
+			return true
+		}
+		select {
+		case <-moved:
+		case <-in:
+			return false
+		case <-out:
+			return false
+		}
+	}
 }
 
 // wait waits for the turn of request n. It gives up when in or out, the

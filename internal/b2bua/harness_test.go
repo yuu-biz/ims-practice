@@ -161,10 +161,11 @@ func way(d b2bua.Direction) string {
 // toward the callee (b2bua.Call.NoLeg) and reject the caller's INVITE
 // once that channel is closed.
 type hooks struct {
-	request func(req *sip.Message, d b2bua.Direction) *b2bua.Refusal
-	ack     func(ack *sip.Message, d b2bua.Direction)
-	own     func(c *b2bua.Call)
-	noLeg   chan struct{}
+	request  func(req *sip.Message, d b2bua.Direction) *b2bua.Refusal
+	response func(resp *sip.Message, d b2bua.Direction)
+	ack      func(ack *sip.Message, d b2bua.Direction)
+	own      func(c *b2bua.Call)
+	noLeg    chan struct{}
 
 	mu    sync.Mutex
 	kept  int
@@ -181,6 +182,9 @@ func (h *hooks) Request(req *sip.Message, d b2bua.Direction) (b2bua.Message, *b2
 }
 
 func (h *hooks) Response(resp, _ *sip.Message, d b2bua.Direction) b2bua.Message {
+	if h.response != nil {
+		h.response(resp, d)
+	}
 	return b2bua.Message{Headers: []sip.HeaderField{{Name: "Subject", Value: way(d)}}, Body: sip.BodyOf(resp)}
 }
 

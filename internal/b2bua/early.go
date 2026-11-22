@@ -1,6 +1,9 @@
 package b2bua
 
-import "github.com/yuu-biz/ims-practice/internal/sip"
+import (
+	"github.com/yuu-biz/ims-practice/internal/sdp"
+	"github.com/yuu-biz/ims-practice/internal/sip"
+)
 
 // earlyDialogs are the early dialogs of the callee's side as the caller
 // sees them. The INVITE of out may fork beyond the B2BUA, and each UAS
@@ -17,8 +20,13 @@ type earlyDialogs struct {
 	from string
 	// last holds the last response with a session description of each
 	// dialog of out, by To tag, as it came: the role sends the media to
-	// the dialog that answers (Hooks.Answer).
+	// the dialog that answers (Hooks.Answer), and the Call offers the
+	// caller its session (OfferCaller).
 	last map[string]*sip.Message
+	// origin is the o= line of the last session description that went to
+	// the caller, in whose session an offer of the Call's own goes
+	// (sentToCaller).
+	origin sdp.Origin
 }
 
 // toCaller is resp, a response of a dialog of out, as the caller may
@@ -81,25 +89,18 @@ func (c *Call) keepsSession(out *sip.OutgoingCall) bool {
 // and the session description of that dialog when it is not the one
 // whose session description the caller got: the 2xx then reaches the
 // caller without its own, since the caller ignores a second one (RFC
-// 3261 13.2.1).
-//
-// SIMPLIFIED: RFC 3261 13.2.1 and 14.1. The caller keeps the session
-// description of the dialog that sent one first. The B2BUA does not
-// offer the caller the session of the dialog that answered in a
-// re-INVITE, so the call goes on with the codec that the first dialog
-// chose; the media flows when both chose the same. After an INVITE
-// without an offer, the offer of a dialog that the caller did not
-// answer gets no answer from the B2BUA, and that UAS ends its dialog.
+// 3261 13.2.1). The Call offers it that session once the caller has
+// acknowledged the 2xx (moveSession).
 func (c *Call) answerFrom(resp *sip.Message) (toCaller, session *sip.Message) {
 	tag := toTag(resp)
 	c.mu.Lock()
+	if sip.HasSessionDescription(resp) {
+		c.early.last[tag] = resp
+	}
 	from, kept := c.early.from, c.early.last[tag]
 	c.mu.Unlock()
 	if from == "" || from == tag {
 		return resp, nil
-	}
-	if sip.HasSessionDescription(resp) {
-		kept = resp
 	}
 	c.log.Info("answered in another early dialog than the one whose session description the caller has",
 		"to_tag", tag, "caller_has", from)
