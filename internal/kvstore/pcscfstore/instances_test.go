@@ -138,6 +138,23 @@ func createConfirmed(t *testing.T, store *pcscfstore.Store, sub pcscf.RegSubscri
 	}
 }
 
+// watch is how long a test watches for a SUBSCRIBE that must not go
+// out. Both instances sweep every 20 ms, so it leaves each of them
+// several rounds in which it could repeat the work of the other.
+// TestTwoInstancesRefreshASubscriptionOnce sees, within as long, the
+// next refresh go out once it falls due.
+const watch = 200 * time.Millisecond
+
+// refreshedWithin tells whether the S-CSCF was sent a SUBSCRIBE within d.
+func refreshedWithin(in *instances, d time.Duration) bool {
+	select {
+	case <-in.subscribes:
+		return true
+	case <-time.After(d):
+		return false
+	}
+}
+
 // waitForRefresh waits until the S-CSCF has been sent a SUBSCRIBE, and
 // returns how long that took.
 func waitForRefresh(t *testing.T, in *instances) time.Duration {
@@ -161,12 +178,8 @@ func TestTwoInstancesRefreshASubscriptionOnce(t *testing.T) {
 	sub := subscriptionDueToRefresh()
 	createConfirmed(t, in.store(), sub)
 	waitForRefresh(t, in)
-	// Both instances sweep every 20 ms, so this leaves each of them
-	// several rounds in which it could repeat the work of the other.
-	time.Sleep(200 * time.Millisecond)
-
-	if got := len(in.subscribes); got != 0 {
-		t.Errorf("%d refreshes beyond the first, want none", got)
+	if refreshedWithin(in, watch) {
+		t.Error("a refresh beyond the first went out")
 	}
 	// The refresh that went out leaves no refresh due and waits for its
 	// NOTIFY under Timer N.
@@ -183,6 +196,19 @@ func TestTwoInstancesRefreshASubscriptionOnce(t *testing.T) {
 	if stored.Dialog.LocalSeq != sub.Dialog.LocalSeq+1 {
 		t.Errorf("the CSeq of the dialog = %d, want one above the %d of the subscription",
 			stored.Dialog.LocalSeq, sub.Dialog.LocalSeq)
+	}
+
+	// A NOTIFY that sets the next refresh in the past makes it due at
+	// once, and the watch that saw no second refresh sees this one go
+	// out.
+	if _, ok, err := in.store().UpdateRegSubscription(context.Background(), impi, func(s *pcscf.RegSubscription) bool {
+		s.NotifyDeadline, s.RefreshAt = time.Time{}, time.Now().Add(-time.Second)
+		return true
+	}); err != nil || !ok {
+		t.Fatalf("the NOTIFY of the refresh = %v, %v", ok, err)
+	}
+	if !refreshedWithin(in, watch) {
+		t.Errorf("no refresh went out within %v of the time it fell due", watch)
 	}
 }
 
@@ -228,9 +254,8 @@ func TestARefreshThatTheStoreWouldNotTakeComesBack(t *testing.T) {
 	if took < lease {
 		t.Errorf("the refresh went out after %v, want not before the claim it kept ran out at %v", took, lease)
 	}
-	time.Sleep(200 * time.Millisecond)
-	if got := len(in.subscribes); got != 0 {
-		t.Errorf("%d refreshes beyond the first, want none", got)
+	if refreshedWithin(in, watch) {
+		t.Error("a refresh beyond the first went out")
 	}
 }
 
@@ -248,9 +273,8 @@ func TestTimerNEndsTheSubscriptionOfAStoppedInstance(t *testing.T) {
 	ctx := context.Background()
 	for range 150 {
 		if _, ok, err := in.store().RegSubscription(ctx, impi); err == nil && !ok {
-			time.Sleep(100 * time.Millisecond)
-			if got := len(in.subscribes); got != 0 {
-				t.Errorf("Timer N sent %d SUBSCRIBEs, want none", got)
+			if refreshedWithin(in, watch) {
+				t.Error("Timer N sent a SUBSCRIBE, want none")
 			}
 			if got, err := in.store().ClaimDue(ctx, pcscf.RegEventNotifyExpiry, time.Now(), time.Minute, 10); err != nil || len(got) != 0 {
 				t.Errorf("Timer N is still in the store: %+v, %v; want it marked done", got, err)

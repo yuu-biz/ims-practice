@@ -207,6 +207,25 @@ func (in *instances) expire(t *testing.T, store *scscfstore.Store) {
 	must(t, store.PutSubscription(ctx, sub))
 }
 
+// watch is how long a test watches for work that must not be done
+// again. Both instances sweep every 20 ms, so it leaves each of them
+// several rounds in which it could repeat the work of the other; each
+// test that watches this long sees, within as long, an instance handle
+// an expiry that is due.
+const watch = 200 * time.Millisecond
+
+// came tells whether cond held within d.
+func came(d time.Duration, cond func() bool) bool {
+	deadline := time.Now().Add(d)
+	for !cond() {
+		if time.Now().After(deadline) {
+			return false
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	return true
+}
+
 // waitForSAR waits until the HSS has been sent a SAR, and returns how
 // long that took.
 func waitForSAR(t *testing.T, in *instances) time.Duration {
@@ -231,10 +250,7 @@ func TestTwoInstancesHandleARegistrationExpiryOnce(t *testing.T) {
 	in := startInstances(t, 2, time.Minute)
 	in.expire(t, in.store())
 	waitForSAR(t, in)
-	// Both instances sweep every 20 ms, so this leaves each of them
-	// several rounds in which it could repeat the work of the other.
-	time.Sleep(200 * time.Millisecond)
-
+	came(watch, func() bool { return len(in.hss.assignments()) > 1 })
 	if got := in.hss.assignments(); len(got) != 1 || got[0] != cx.TimeoutDeregistration {
 		t.Errorf("SARs = %v, want one TIMEOUT_DEREGISTRATION", got)
 	}
@@ -262,6 +278,13 @@ func TestTwoInstancesHandleARegistrationExpiryOnce(t *testing.T) {
 	if subs, err := in.store().SubscriptionsOf(ctx, impi); err != nil || len(subs) != 0 {
 		t.Errorf("subscriptions after the expiry = %v, %v; want none", subs, err)
 	}
+
+	// The next expiry of the user is handled within the watch, which was
+	// long enough to see a repeat of the first.
+	in.expire(t, in.store())
+	if !came(watch, func() bool { return len(in.hss.assignments()) == 2 }) {
+		t.Errorf("SARs = %v %v after the next expiry, want a second TIMEOUT_DEREGISTRATION", in.hss.assignments(), watch)
+	}
 }
 
 // TestAnotherInstanceTakesOverAnExpiryThatWasNotHandled: the instance
@@ -284,6 +307,11 @@ func TestAnotherInstanceTakesOverAnExpiryThatWasNotHandled(t *testing.T) {
 	if took < lease {
 		t.Errorf("the other instance handled the expiry after %v, want not before the claim ran out at %v", took, lease)
 	}
+	// TestAnExpiryWhoseClaimRunsOutWhileItIsHandled watches as long for
+	// a takeover that must not send a second SAR.
+	if took > 4*lease {
+		t.Errorf("the other instance handled the expiry after %v, want within %v", took, 4*lease)
+	}
 	if got := in.hss.assignments(); len(got) != 1 || got[0] != cx.TimeoutDeregistration {
 		t.Errorf("SARs = %v, want one TIMEOUT_DEREGISTRATION", got)
 	}
@@ -304,8 +332,9 @@ func TestAnExpiryWhoseClaimRunsOutWhileItIsHandled(t *testing.T) {
 
 	waitForSAR(t, in)
 	// Long enough for the claim to run out and for the other instance to
-	// claim the expiry and handle it, several rounds over.
-	time.Sleep(4 * lease)
+	// claim the expiry and handle it, as
+	// TestAnotherInstanceTakesOverAnExpiryThatWasNotHandled sees it do.
+	came(4*lease, func() bool { return len(in.hss.assignments()) > 1 })
 	if got := in.hss.assignments(); len(got) != 1 || got[0] != cx.TimeoutDeregistration {
 		t.Errorf("SARs = %v, want one TIMEOUT_DEREGISTRATION", got)
 	}
@@ -325,33 +354,49 @@ func TestAnExpiryWhoseClaimRunsOutWhileItIsHandled(t *testing.T) {
 // while an instance holds the claim of the old expiry and waits for the
 // lock of the user. That instance then reads the registration it is to
 // end, finds the time it carries is no longer past, and leaves the user
-// registered.
+// registered. Without the refresh, the same watch sees it end the
+// registration.
 func TestARegistrationRefreshedBeforeItsExpiryIsHandled(t *testing.T) {
-	const lease = 2 * time.Second
-	in := startInstances(t, 1, lease)
-	ctx := context.Background()
-	// The test holds the lock of the user, as a third instance would
-	// while it serves a REGISTER of that user.
-	unlock, err := in.locks("test").Lock(ctx, impi)
-	if err != nil {
-		t.Fatal(err)
-	}
-	in.expire(t, in.store())
-	// Several rounds, by when the instance has claimed the expiry and
-	// waits for the lock.
-	time.Sleep(100 * time.Millisecond)
-	refreshed := registration(time.Now().Add(time.Hour))
-	must(t, in.store().PutRegistration(ctx, refreshed))
-	unlock()
+	for _, refresh := range []bool{true, false} {
+		t.Run(fmt.Sprintf("refreshed %v", refresh), func(t *testing.T) {
+			const lease = 2 * time.Second
+			in := startInstances(t, 1, lease)
+			ctx := context.Background()
+			// The test holds the lock of the user, as a third instance
+			// would while it serves a REGISTER of that user.
+			unlock, err := in.locks("test").Lock(ctx, impi)
+			if err != nil {
+				t.Fatal(err)
+			}
+			in.expire(t, in.store())
+			// Once the instance has claimed the expiry, it waits for the
+			// lock. The test's own claims run out within 1 ms, and leave the
+			// expiry to the instance.
+			claimed := func() bool {
+				got, err := in.store().ClaimDue(ctx, scscf.RegistrationExpiry, time.Now(), time.Millisecond, 10)
+				return err == nil && len(got) == 0
+			}
+			if !came(5*time.Second, claimed) {
+				t.Fatal("the instance did not claim the expiry within 5 s")
+			}
+			refreshed := registration(time.Now().Add(time.Hour))
+			if refresh {
+				must(t, in.store().PutRegistration(ctx, refreshed))
+			}
+			unlock()
 
-	time.Sleep(200 * time.Millisecond)
-	if got := in.hss.assignments(); len(got) != 0 {
-		t.Errorf("SARs = %v, want none for a registration that was refreshed", got)
-	}
-	if got := len(in.notify); got != 0 {
-		t.Errorf("%d NOTIFYs, want none", got)
-	}
-	if reg, ok, err := in.store().Registration(ctx, impi); err != nil || !ok || !reg.Expires.Equal(refreshed.Expires) {
-		t.Errorf("the registration = %+v, %v, %v; want the refreshed one", reg, ok, err)
+			if sent := came(watch, func() bool { return len(in.hss.assignments()) > 0 }); sent == refresh {
+				t.Fatalf("SARs = %v within %v of the release of the lock, want one only without the refresh", in.hss.assignments(), watch)
+			}
+			if !refresh {
+				return
+			}
+			if got := len(in.notify); got != 0 {
+				t.Errorf("%d NOTIFYs, want none", got)
+			}
+			if reg, ok, err := in.store().Registration(ctx, impi); err != nil || !ok || !reg.Expires.Equal(refreshed.Expires) {
+				t.Errorf("the registration = %+v, %v, %v; want the refreshed one", reg, ok, err)
+			}
+		})
 	}
 }

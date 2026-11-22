@@ -109,6 +109,25 @@ func (in *instances) expire(t *testing.T, store *ipsmgwstore.Store) ipsmgw.Pendi
 	return d
 }
 
+// watch is how long a test watches for an outcome that must not be told
+// again. Both instances sweep every 20 ms, so it leaves each of them
+// several rounds in which it could repeat the work of the other.
+// TestTwoInstancesEndADeliveryOnce sees, within as long, the next
+// delivery whose TR1N has run out end.
+const watch = 200 * time.Millisecond
+
+// reportedWithin tells whether the SC had been told n outcomes within d.
+func reportedWithin(in *instances, n int, d time.Duration) bool {
+	deadline := time.Now().Add(d)
+	for len(in.sc.reported()) < n {
+		if time.Now().After(deadline) {
+			return false
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	return true
+}
+
 // waitForReport waits until the SC has been told an outcome, and returns
 // how long that took.
 func waitForReport(t *testing.T, in *instances) time.Duration {
@@ -131,10 +150,7 @@ func TestTwoInstancesEndADeliveryOnce(t *testing.T) {
 	in := startInstances(t, 2, time.Minute)
 	d := in.expire(t, in.store())
 	waitForReport(t, in)
-	// Both instances sweep every 20 ms, so this leaves each of them
-	// several rounds in which it could repeat the work of the other.
-	time.Sleep(200 * time.Millisecond)
-
+	reportedWithin(in, 2, watch)
 	if got := in.sc.reported(); len(got) != 1 || got[0] != ipsmgw.SystemFailure {
 		t.Errorf("the SC was told %v, want one system failure", got)
 	}
@@ -144,6 +160,13 @@ func TestTwoInstancesEndADeliveryOnce(t *testing.T) {
 	}
 	if got, err := in.store().ClaimDue(ctx, time.Now(), time.Minute, 10); err != nil || len(got) != 0 {
 		t.Errorf("TR1N is still in the store: %+v, %v; want it marked done", got, err)
+	}
+
+	// The next delivery whose TR1N runs out ends within the watch, which
+	// was long enough to see the first end again.
+	in.expire(t, in.store())
+	if !reportedWithin(in, 2, watch) {
+		t.Errorf("the SC was told %v %v after the next TR1N ran out, want a second outcome", in.sc.reported(), watch)
 	}
 }
 
@@ -190,7 +213,7 @@ func TestADeliveryThatTheStoreWouldNotGiveUpComesBack(t *testing.T) {
 	if took < lease {
 		t.Errorf("the delivery ended after %v, want not before the claim it kept ran out at %v", took, lease)
 	}
-	time.Sleep(200 * time.Millisecond)
+	reportedWithin(in, 2, watch)
 	if got := in.sc.reported(); len(got) != 1 || got[0] != ipsmgw.SystemFailure {
 		t.Errorf("the SC was told %v, want one system failure", got)
 	}
