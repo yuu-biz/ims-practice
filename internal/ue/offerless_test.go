@@ -27,7 +27,9 @@ func newCalledUE(t *testing.T, calls ue.CallConfig) *calledUE {
 	c := &calledUE{calls: make(chan *sip.IncomingCall, 1)}
 	tr := listenTransport(t)
 	addr := tr.LocalAddr()
-	c.contact = ue.NewContact(addr)
+	cfg := ue.Config{PrivateIdentity: impi2, PublicIdentity: impu2, Password: password2, HomeDomain: domain,
+		PCSCF: addr, PCSCFURI: "sip:pcscf." + domain + ":5060", Calls: calls}
+	c.contact = ue.NewContact(cfg, addr)
 	var err error
 	c.ua, err = sip.NewUA(tr, ue.UAConfig(sip.UAConfig{
 		SentBy:  addr.String(),
@@ -38,8 +40,7 @@ func newCalledUE(t *testing.T, calls ue.CallConfig) *calledUE {
 		t.Fatal(err)
 	}
 	t.Cleanup(c.ua.Close)
-	c.ue = ue.New(ue.Config{PrivateIdentity: impi2, PublicIdentity: impu2, Password: password2, HomeDomain: domain,
-		PCSCF: addr, PCSCFURI: "sip:pcscf." + domain + ":5060", Calls: calls}, c.ua.Stack(), c.contact, quiet())
+	c.ue = ue.New(cfg, c.ua.Stack(), c.contact, quiet())
 	c.media = listenMedia(t)
 	c.callerMedia = listenMedia(t)
 	c.caller = newTestUA(t, "caller", func(ic *sip.IncomingCall) { ic.Reject(486) })

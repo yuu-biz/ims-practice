@@ -42,7 +42,9 @@ func TestPhoneRegistersAgainWhenARequestGetsNoResponse(t *testing.T) {
 	fast := sip.Timers{T1: 10 * time.Millisecond, T2: 80 * time.Millisecond, T4: 50 * time.Millisecond}
 	tr := listenTransport(t)
 	addr := tr.LocalAddr()
-	contact := ue.NewContact(addr)
+	cfg := ue.Config{PrivateIdentity: impi, PublicIdentity: impu, Password: password, HomeDomain: domain,
+		PCSCF: pcscf.LocalAddr(), PCSCFURI: "sip:pcscf." + domain + ":5060", Features: ue.DefaultFeatures, SCAddress: scAddress}
+	contact := ue.NewContact(cfg, addr)
 	line := ue.NewLine(true)
 	ua, err := sip.NewUA(tr, ue.UAConfig(sip.UAConfig{
 		SentBy:  addr.String(),
@@ -57,9 +59,7 @@ func TestPhoneRegistersAgainWhenARequestGetsNoResponse(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(ua.Close)
-	u := ue.New(ue.Config{PrivateIdentity: impi, PublicIdentity: impu, Password: password, HomeDomain: domain,
-		PCSCF: pcscf.LocalAddr(), PCSCFURI: "sip:pcscf." + domain + ":5060", Features: ue.DefaultFeatures, SCAddress: scAddress},
-		ua.Stack(), contact, quiet())
+	u := ue.New(cfg, ua.Stack(), contact, quiet())
 	p := ue.NewPhone(u, ua, line, ue.PhoneConfig{MediaListen: "127.0.0.1:0"}, quiet())
 	ctx, stop := context.WithCancel(context.Background())
 	served := make(chan error, 1)

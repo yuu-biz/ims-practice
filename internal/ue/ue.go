@@ -5,7 +5,9 @@ package ue
 
 import (
 	"context"
+	"crypto/hmac"
 	"crypto/rand"
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -139,16 +141,49 @@ type Contact struct {
 	addr netip.AddrPort
 }
 
-// NewContact is a contact address of a UE at addr. TS 24.229 5.1.1.2.1
-// item c has the UE give it a user part that is globally unique and
-// reveals nothing private, and its NOTE 3 names a time-based UUID. The
-// user part of the public identity would not do: a phone without an
-// ISIM makes that identity from its IMSI (C.2). Of the time-based
-// UUIDs, RFC 9562 5.7 prefers version 7, which holds no MAC address.
-// The UE keeps its contact for the refreshes and the removal of the
-// binding (5.1.1.4.1 item c).
-func NewContact(addr netip.AddrPort) Contact {
-	return Contact{user: uuid.NewV7().String(), addr: addr}
+// NewContact is the contact address of the UE of cfg at addr. TS 24.229
+// 5.1.1.2.1 item c has the UE give it a user part that is globally
+// unique and reveals nothing private. The user part of the public
+// identity would not do: a phone without an ISIM makes that identity
+// from its IMSI (C.2). The UE keeps its contact for the refreshes and
+// the removal of the binding (5.1.1.4.1 item c).
+func NewContact(cfg Config, addr netip.AddrPort) Contact {
+	return Contact{user: contactUser(cfg).String(), addr: addr}
+}
+
+// contactLabel keeps this use of the UE's key apart from any other.
+const contactLabel = "contact user part"
+
+// contactUser is a UUID that stays the same when the UE restarts. With a
+// new user part, the restarted UE would bind a new contact address, and
+// the S-CSCF would deregister the old one (TS 24.229 5.1.1.2.1 NOTE 13);
+// with the same one, its registration refreshes the binding.
+//
+// The UUID is HMAC-SHA-256 of the private identity, keyed with what only
+// the UE and its home network hold: K of the USIM, or the password. A
+// hash of the private identity alone could be reversed by trying every
+// IMSI. RFC 9562 5.5 puts a UUID made with SHA-256 in version 8, and its
+// B.2 lays one out: the first 128 bits, with the version and variant
+// bits set. A UE with neither K nor a password has nothing of its own to
+// key the hash with, and takes a random UUID, which changes when it
+// restarts.
+func contactUser(cfg Config) uuid.UUID {
+	key := []byte(cfg.Password)
+	if cfg.AKA != nil {
+		key = cfg.AKA.Secret.K[:]
+	}
+	if len(key) == 0 {
+		return uuid.New()
+	}
+	mac := hmac.New(sha256.New, key)
+	mac.Write([]byte(contactLabel + "\x00" + cfg.PrivateIdentity))
+	var u uuid.UUID
+	copy(u[:], mac.Sum(nil))
+	// RFC 9562 4.2 and 4.1: version 8 in the high 4 bits of octet 6,
+	// variant 10 in the high 2 bits of octet 8.
+	u[6] = u[6]&0x0f | 0x80
+	u[8] = u[8]&0x3f | 0x80
+	return u
 }
 
 // URI is the SIP URI of c.

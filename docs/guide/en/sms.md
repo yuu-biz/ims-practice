@@ -231,7 +231,7 @@ The S-CSCF sends a NOTIFY straight to the IP-SM-GW at once. The 200 OK to the SU
 ```xml
 <registration aor="sip:001010000000002@ims.mnc001.mcc001.3gppnetwork.org" id="reg1" state="active">
   <contact id="LJDTDE6YNM" state="active" event="registered" expires="3600" ...>
-    <uri>sip:01a20145-f43e-764a-9318-681a89f2b5e9@172.28.0.101:5060</uri>
+    <uri>sip:ab6af11f-a43e-860e-9064-207615ae1f12@172.28.0.101:5060</uri>
     <unknown-param name="+g.3gpp.smsip"></unknown-param>
   </contact>
 </registration>

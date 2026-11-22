@@ -62,7 +62,9 @@ func newPhone(t *testing.T, pcscfAddr netip.AddrPort, private, public, pass stri
 	t.Helper()
 	tr := listenTransport(t)
 	addr := tr.LocalAddr()
-	contact := ue.NewContact(addr)
+	cfg := ue.Config{PrivateIdentity: private, PublicIdentity: public, Password: pass, HomeDomain: domain,
+		PCSCF: pcscfAddr, PCSCFURI: "sip:pcscf." + domain + ":5060", Features: ue.DefaultFeatures, SCAddress: scAddress}
+	contact := ue.NewContact(cfg, addr)
 	line := ue.NewLine(true)
 	var receiver atomic.Pointer[ue.UE]
 	ua, err := sip.NewUA(tr, ue.UAConfig(sip.UAConfig{
@@ -78,9 +80,7 @@ func newPhone(t *testing.T, pcscfAddr netip.AddrPort, private, public, pass stri
 		t.Fatal(err)
 	}
 	t.Cleanup(ua.Close)
-	u := ue.New(ue.Config{PrivateIdentity: private, PublicIdentity: public, Password: pass, HomeDomain: domain,
-		PCSCF: pcscfAddr, PCSCFURI: "sip:pcscf." + domain + ":5060", Features: ue.DefaultFeatures, SCAddress: scAddress},
-		ua.Stack(), contact, quiet())
+	u := ue.New(cfg, ua.Stack(), contact, quiet())
 	receiver.Store(u)
 	p := ue.NewPhone(u, ua, line, ue.PhoneConfig{MediaListen: "127.0.0.1:0", Speech: ue.Speech{PCM: ue.Tone(440, 200*time.Millisecond)}, Policy: policy}, quiet())
 	ctx, stop := context.WithCancel(context.Background())

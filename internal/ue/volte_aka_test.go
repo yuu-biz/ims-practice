@@ -23,8 +23,15 @@ func newVoLTEParty(t *testing.T, pcscf netip.AddrPort, private, public, pass str
 		t.Fatal(err)
 	}
 	addr := tr.LocalAddr()
-	p.contact = ue.NewContact(addr)
 	calls := ue.CallConfig{Codecs: voLTECodecs(t)}
+	cfg := ue.Config{PrivateIdentity: private, PublicIdentity: public, Password: pass, HomeDomain: domain,
+		PCSCF: pcscf, PCSCFURI: "sip:pcscf." + domain + ":5060", Calls: calls}
+	if usim != nil {
+		c := *usim
+		c.Unprotected = stack(t, func(*sip.ServerTransaction) {})
+		cfg.AKA = &c
+	}
+	p.contact = ue.NewContact(cfg, addr)
 	var u atomic.Pointer[ue.UE]
 	p.ua, err = sip.NewUA(tr, ue.UAConfig(sip.UAConfig{
 		SentBy:  addr.String(),
@@ -36,13 +43,6 @@ func newVoLTEParty(t *testing.T, pcscf netip.AddrPort, private, public, pass str
 		t.Fatal(err)
 	}
 	t.Cleanup(p.ua.Close)
-	cfg := ue.Config{PrivateIdentity: private, PublicIdentity: public, Password: pass, HomeDomain: domain,
-		PCSCF: pcscf, PCSCFURI: "sip:pcscf." + domain + ":5060", Calls: calls}
-	if usim != nil {
-		c := *usim
-		c.Unprotected = stack(t, func(*sip.ServerTransaction) {})
-		cfg.AKA = &c
-	}
 	u.Store(ue.New(cfg, p.ua.Stack(), p.contact, quiet()))
 	p.ue = u.Load()
 	if p.media, err = ue.ListenMedia("127.0.0.1:0"); err != nil {

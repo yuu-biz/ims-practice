@@ -104,7 +104,7 @@ TS 24.229 5.1.1.2.1 と 5.1.1.2.3 です。次のヘッダを見てください�
 
 - **Request-URI.** サーバーではなくホーム網のドメインです。どのサーバーが処理するかは、網の側が決めます。
 - **From と To.** 登録する公開の識別子です。
-- **Contact.** UE のアドレスです。ユーザー部は UE が作った UUID で、利用者の識別子ではありません。TS 24.229 5.1.1.2.1 の項目 c は、世界で一意で、私的な情報を明かさないユーザー部を求めており、その例に時刻をもとにした UUID を NOTE 3 で挙げています。UE はあとの REGISTER でも同じユーザー部を使います（5.1.1.4.1）。Contact にはパラメータが 2 つ付いています。`+g.3gpp.smsip` は機能タグ（RFC 3840）で、UE が IP で SMS を受けられることを表します（TS 24.341 5.3.2.2）。`expires=600000` は、TS 24.229 で UE が求めると決まっている登録の期間です。
+- **Contact.** UE のアドレスです。ユーザー部は UUID で、利用者の識別子ではありません。TS 24.229 5.1.1.2.1 の項目 c は、世界で一意で、私的な情報を明かさないユーザー部を求めており、その例に時刻をもとにした UUID を NOTE 3 で挙げています。この UE は例の UUID を使わず、秘密の識別子の HMAC-SHA-256 を、パスワード（IMS-AKA では USIM の K）を鍵にして計算し、バージョン 8 の UUID（RFC 9562 5.8）として書きます。鍵を持たない人はこの値から識別子を割り出せません。UE は起動するたびに同じユーザー部を作るので、起動し直したあとの登録は登録先を置き換えずに更新します。UE はあとの REGISTER でも同じユーザー部を使います（5.1.1.4.1）。Contact にはパラメータが 2 つ付いています。`+g.3gpp.smsip` は機能タグ（RFC 3840）で、UE が IP で SMS を受けられることを表します（TS 24.341 5.3.2.2）。`expires=600000` は、TS 24.229 で UE が求めると決まっている登録の期間です。
 - **Authorization.** `username` に秘密の識別子が入り、`nonce` と `response` は空です。まだ答える認証の要求が無いのですが、どの秘密の識別子を認証すればよいかを網に伝えています。
 - **Via.** 値の無い `rport` が付いています。応答を、要求が実際に来たアドレスとポートへ返すよう P-CSCF に頼んでいます（RFC 3581）。
 
@@ -272,7 +272,7 @@ Wireshark では、本文が XML として表示されます。
 <reginfo xmlns="urn:ietf:params:xml:ns:reginfo" version="0" state="full">
   <registration aor="sip:001010000000001@ims.mnc001.mcc001.3gppnetwork.org" id="reg1" state="active">
     <contact id="..." state="active" event="registered" expires="3600" callid="..." cseq="2">
-      <uri>sip:01a20145-ef29-7338-8452-2c105204e98e@172.28.0.100:5060</uri>
+      <uri>sip:4218b61b-4e20-8e1c-872d-5b39fca1e64f@172.28.0.100:5060</uri>
       <unknown-param name="+g.3gpp.smsip"></unknown-param>
     </contact>
   </registration>

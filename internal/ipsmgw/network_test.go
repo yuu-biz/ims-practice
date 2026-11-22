@@ -664,7 +664,10 @@ func (n *network) simulator(subscriber int) *ue.UE {
 		n.t.Fatal(err)
 	}
 	addr := tr.LocalAddr()
-	contact := ue.NewContact(addr)
+	cfg := ue.Config{PrivateIdentity: user, PublicIdentity: "sip:" + user, Password: "test-password-" + strconv.Itoa(subscriber),
+		HomeDomain: domain, PCSCF: n.pcscf, PCSCFURI: "sip:pcscf." + domain + ":5060", Features: ue.DefaultFeatures,
+		SCAddress: n.gw.ServiceCentre.String()}
+	contact := ue.NewContact(cfg, addr)
 	// The UA needs the UE's ReceiveSMS before the UE exists.
 	var u atomic.Pointer[ue.UE]
 	ua, err := sip.NewUA(tr, sip.UAConfig{SentBy: addr.String(), Contact: contact.URI(),
@@ -675,9 +678,7 @@ func (n *network) simulator(subscriber int) *ue.UE {
 		n.t.Fatal(err)
 	}
 	n.t.Cleanup(ua.Close)
-	u.Store(ue.New(ue.Config{PrivateIdentity: user, PublicIdentity: "sip:" + user, Password: "test-password-" + strconv.Itoa(subscriber),
-		HomeDomain: domain, PCSCF: n.pcscf, PCSCFURI: "sip:pcscf." + domain + ":5060", Features: ue.DefaultFeatures,
-		SCAddress: n.gw.ServiceCentre.String()}, ua.Stack(), contact, quiet()))
+	u.Store(ue.New(cfg, ua.Stack(), contact, quiet()))
 	if _, err := u.Load().Register(context.Background()); err != nil {
 		n.t.Fatal(err)
 	}
