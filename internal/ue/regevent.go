@@ -166,6 +166,6 @@ func (u *UE) isOwnContact(uri string) bool {
 	if err != nil {
 		return false
 	}
-	own, _ := sip.ParseURI(ContactURI(u.cfg.PublicIdentity, u.contactAddr))
+	own, _ := sip.ParseURI(u.contact.URI())
 	return got.User == own.User && strings.EqualFold(got.Host, own.Host) && got.Port == own.Port
 }

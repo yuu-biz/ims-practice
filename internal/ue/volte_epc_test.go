@@ -39,9 +39,10 @@ func newEPCParty(t *testing.T, n testNetwork, private, public, pass string) *par
 		t.Skipf("cannot listen on %v, the PDN address of the UE: %v", att.Address, err)
 	}
 	addr := tr.LocalAddr()
+	p.contact = ue.NewContact(public, addr)
 	p.ua, err = sip.NewUA(tr, ue.UAConfig(sip.UAConfig{
 		SentBy:  addr.String(),
-		Contact: ue.ContactURI(public, addr),
+		Contact: p.contact.URI(),
 		OnCall:  func(ic *sip.IncomingCall) { p.calls <- ic },
 		Locate: func(sip.URI) (sip.Destination, error) {
 			return sip.Destination{Transport: sip.UDP, Addr: pcscfAddr}, nil
@@ -53,7 +54,7 @@ func newEPCParty(t *testing.T, n testNetwork, private, public, pass string) *par
 	t.Cleanup(p.ua.Close)
 	p.ue = ue.New(ue.Config{PrivateIdentity: private, PublicIdentity: public, Password: pass, HomeDomain: domain,
 		PCSCF: pcscfAddr, PCSCFURI: "sip:pcscf." + domain + ":5060", AccessNetworkInfo: att.AccessNetworkInfo, Calls: calls},
-		p.ua.Stack(), addr, quiet())
+		p.ua.Stack(), p.contact, quiet())
 	if p.media, err = ue.ListenMedia(netip.AddrPortFrom(att.Address, 0).String()); err != nil {
 		t.Fatal(err)
 	}

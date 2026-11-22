@@ -359,10 +359,11 @@ func (n *network) subscriber(k int, register bool) *subscriber {
 		n.t.Fatal(err)
 	}
 	addr := tr.LocalAddr()
+	contact := ue.NewContact(s.impu, addr)
 	// The UA takes the precondition mechanism, as the UE simulator's UA
 	// does (ue.UAConfig), so that ue.Call and ue.Answer use it.
 	s.ua, err = sip.NewUA(tr, ue.UAConfig(sip.UAConfig{
-		SentBy: addr.String(), Contact: ue.ContactURI(s.impu, addr),
+		SentBy: addr.String(), Contact: contact.URI(),
 		OnCall: func(ic *sip.IncomingCall) { s.calls <- ic },
 		Locate: func(sip.URI) (sip.Destination, error) { return sip.Destination{Transport: sip.UDP, Addr: n.pcscf}, nil },
 	}, ue.CallConfig{}), quiet())
@@ -371,7 +372,7 @@ func (n *network) subscriber(k int, register bool) *subscriber {
 	}
 	n.t.Cleanup(s.ua.Close)
 	s.ue = ue.New(ue.Config{PrivateIdentity: id + "@" + domain, PublicIdentity: s.impu, Password: password, HomeDomain: domain,
-		PCSCF: n.pcscf, PCSCFURI: "sip:pcscf." + domain + ":5060"}, s.ua.Stack(), addr, quiet())
+		PCSCF: n.pcscf, PCSCFURI: "sip:pcscf." + domain + ":5060"}, s.ua.Stack(), contact, quiet())
 	if s.media, err = ue.ListenMedia("127.0.0.1:0"); err != nil {
 		n.t.Fatal(err)
 	}

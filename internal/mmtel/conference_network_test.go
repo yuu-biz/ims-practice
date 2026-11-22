@@ -40,9 +40,10 @@ func (n *network) party(k int, hz float64) *party {
 		n.t.Fatal(err)
 	}
 	addr := tr.LocalAddr()
+	contact := ue.NewContact(p.impu, addr)
 	calls := ue.CallConfig{Codecs: codecs}
 	p.ua, err = sip.NewUA(tr, ue.UAConfig(sip.UAConfig{
-		SentBy: addr.String(), Contact: ue.ContactURI(p.impu, addr),
+		SentBy: addr.String(), Contact: contact.URI(),
 		OnCall: func(ic *sip.IncomingCall) { p.calls <- ic },
 		Locate: func(sip.URI) (sip.Destination, error) { return sip.Destination{Transport: sip.UDP, Addr: n.pcscf}, nil },
 	}, calls), quiet())
@@ -51,7 +52,7 @@ func (n *network) party(k int, hz float64) *party {
 	}
 	n.t.Cleanup(p.ua.Close)
 	p.ue = ue.New(ue.Config{PrivateIdentity: id + "@" + domain, PublicIdentity: p.impu, Password: "test-password-" + string(rune('0'+k)),
-		HomeDomain: domain, PCSCF: n.pcscf, PCSCFURI: "sip:pcscf." + domain + ":5060", Calls: calls}, p.ua.Stack(), addr, quiet())
+		HomeDomain: domain, PCSCF: n.pcscf, PCSCFURI: "sip:pcscf." + domain + ":5060", Calls: calls}, p.ua.Stack(), contact, quiet())
 	if p.reg, err = p.ue.Register(context.Background()); err != nil {
 		n.t.Fatal(err)
 	}
@@ -454,10 +455,11 @@ func (n *network) phone(k int, hz float64) (*ue.Phone, *party) {
 		n.t.Fatal(err)
 	}
 	addr := tr.LocalAddr()
+	contact := ue.NewContact(p.impu, addr)
 	calls := ue.CallConfig{Codecs: codecs}
 	line := ue.NewLine(true)
 	p.ua, err = sip.NewUA(tr, ue.UAConfig(sip.UAConfig{
-		SentBy: addr.String(), Contact: ue.ContactURI(p.impu, addr), OnCall: line.Ring, OnOptions: line.Options,
+		SentBy: addr.String(), Contact: contact.URI(), OnCall: line.Ring, OnOptions: line.Options,
 		Locate: func(sip.URI) (sip.Destination, error) { return sip.Destination{Transport: sip.UDP, Addr: n.pcscf}, nil },
 	}, calls), quiet())
 	if err != nil {
@@ -465,7 +467,7 @@ func (n *network) phone(k int, hz float64) (*ue.Phone, *party) {
 	}
 	n.t.Cleanup(p.ua.Close)
 	p.ue = ue.New(ue.Config{PrivateIdentity: id + "@" + domain, PublicIdentity: p.impu, Password: "test-password-" + string(rune('0'+k)),
-		HomeDomain: domain, PCSCF: n.pcscf, PCSCFURI: "sip:pcscf." + domain + ":5060", Calls: calls}, p.ua.Stack(), addr, quiet())
+		HomeDomain: domain, PCSCF: n.pcscf, PCSCFURI: "sip:pcscf." + domain + ":5060", Calls: calls}, p.ua.Stack(), contact, quiet())
 	phone := ue.NewPhone(p.ue, p.ua, line, ue.PhoneConfig{MediaListen: "127.0.0.1:0", Speech: p.speech(),
 		Policy: ue.AnswerPolicy{Mode: ue.AnswerAuto}}, quiet())
 	ctx, stop := context.WithCancel(context.Background())

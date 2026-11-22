@@ -2,7 +2,6 @@ package ue_test
 
 import (
 	"context"
-	"net/netip"
 	"testing"
 	"time"
 
@@ -13,12 +12,12 @@ import (
 
 // calledUE is a UE with no IMS in front of it that a bare UA calls.
 type calledUE struct {
-	ue     *ue.UE
-	ua     *sip.UA
-	media  *ue.Media
-	addr   netip.AddrPort
-	calls  chan *sip.IncomingCall
-	caller *sip.UA
+	ue      *ue.UE
+	ua      *sip.UA
+	media   *ue.Media
+	contact ue.Contact
+	calls   chan *sip.IncomingCall
+	caller  *sip.UA
 	// callerMedia is where the bare caller takes its RTP.
 	callerMedia *ue.Media
 }
@@ -27,11 +26,12 @@ func newCalledUE(t *testing.T, calls ue.CallConfig) *calledUE {
 	t.Helper()
 	c := &calledUE{calls: make(chan *sip.IncomingCall, 1)}
 	tr := listenTransport(t)
-	c.addr = tr.LocalAddr()
+	addr := tr.LocalAddr()
+	c.contact = ue.NewContact(impu2, addr)
 	var err error
 	c.ua, err = sip.NewUA(tr, ue.UAConfig(sip.UAConfig{
-		SentBy:  c.addr.String(),
-		Contact: ue.ContactURI(impu2, c.addr),
+		SentBy:  addr.String(),
+		Contact: c.contact.URI(),
 		OnCall:  func(ic *sip.IncomingCall) { c.calls <- ic },
 	}, calls), quiet())
 	if err != nil {
@@ -39,7 +39,7 @@ func newCalledUE(t *testing.T, calls ue.CallConfig) *calledUE {
 	}
 	t.Cleanup(c.ua.Close)
 	c.ue = ue.New(ue.Config{PrivateIdentity: impi2, PublicIdentity: impu2, Password: password2, HomeDomain: domain,
-		PCSCF: c.addr, PCSCFURI: "sip:pcscf." + domain + ":5060", Calls: calls}, c.ua.Stack(), c.addr, quiet())
+		PCSCF: addr, PCSCFURI: "sip:pcscf." + domain + ":5060", Calls: calls}, c.ua.Stack(), c.contact, quiet())
 	c.media = listenMedia(t)
 	c.callerMedia = listenMedia(t)
 	c.caller = newTestUA(t, "caller", func(ic *sip.IncomingCall) { ic.Reject(486) })
@@ -87,7 +87,7 @@ func (c *calledUE) answerFor(t *testing.T, offer []byte) sip.Body {
 func TestInviteWithoutSDPGetsTheOfferInTheReliable183(t *testing.T) {
 	c := newCalledUE(t, ue.CallConfig{Codecs: voLTECodecs(t)})
 	answered := c.answer(t, ue.Speech{PCM: ue.Tone(440, 200*time.Millisecond)})
-	call, err := c.caller.Invite(sip.Invitation{RequestURI: ue.ContactURI(impu2, c.addr), From: impu})
+	call, err := c.caller.Invite(sip.Invitation{RequestURI: c.contact.URI(), From: impu})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -121,7 +121,7 @@ func TestInviteWithoutSDPGetsTheOfferInTheReliable183(t *testing.T) {
 func TestInviteWithoutSDPOrReliableResponses(t *testing.T) {
 	c := newCalledUE(t, ue.CallConfig{})
 	answered := c.answer(t, ue.Speech{PCM: ue.Tone(440, 200*time.Millisecond)})
-	call, err := c.caller.Invite(sip.Invitation{RequestURI: ue.ContactURI(impu2, c.addr), From: impu,
+	call, err := c.caller.Invite(sip.Invitation{RequestURI: c.contact.URI(), From: impu,
 		Headers: []sip.HeaderField{{Name: "Supported", Value: sip.OptionTimer}}})
 	if err != nil {
 		t.Fatal(err)

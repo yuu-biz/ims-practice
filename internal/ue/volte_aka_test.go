@@ -22,11 +22,12 @@ func newVoLTEParty(t *testing.T, pcscf netip.AddrPort, private, public, pass str
 		t.Fatal(err)
 	}
 	addr := tr.LocalAddr()
+	p.contact = ue.NewContact(public, addr)
 	calls := ue.CallConfig{Codecs: voLTECodecs(t)}
 	var u atomic.Pointer[ue.UE]
 	p.ua, err = sip.NewUA(tr, ue.UAConfig(sip.UAConfig{
 		SentBy:  addr.String(),
-		Contact: ue.ContactURI(public, addr),
+		Contact: p.contact.URI(),
 		OnCall:  func(ic *sip.IncomingCall) { p.calls <- ic },
 		Locate:  func(sip.URI) (sip.Destination, error) { return u.Load().Outbound(), nil },
 	}, calls), quiet())
@@ -41,7 +42,7 @@ func newVoLTEParty(t *testing.T, pcscf netip.AddrPort, private, public, pass str
 		c.Unprotected = stack(t, func(*sip.ServerTransaction) {})
 		cfg.AKA = &c
 	}
-	u.Store(ue.New(cfg, p.ua.Stack(), addr, quiet()))
+	u.Store(ue.New(cfg, p.ua.Stack(), p.contact, quiet()))
 	p.ue = u.Load()
 	if p.media, err = ue.ListenMedia("127.0.0.1:0"); err != nil {
 		t.Fatal(err)

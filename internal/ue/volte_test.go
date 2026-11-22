@@ -250,7 +250,7 @@ func TestCallCarriesTheHeadersOfIR92(t *testing.T) {
 	pani := ue.AccessNetworkInfo(stubCell)
 	caller := newPartyTweaked(t, addr, impi, impu, password, ue.CallConfig{}, func(c *sip.UAConfig) { c.OwnHeaders = ue.OwnHeaders(pani) })
 	caller.ue = ue.New(ue.Config{PrivateIdentity: impi, PublicIdentity: impu, Password: password, HomeDomain: domain,
-		PCSCF: addr, PCSCFURI: "sip:pcscf." + domain + ":5060", AccessNetworkInfo: pani}, caller.ua.Stack(), caller.ua.Stack().LocalAddr(), quiet())
+		PCSCF: addr, PCSCFURI: "sip:pcscf." + domain + ":5060", AccessNetworkInfo: pani}, caller.ua.Stack(), caller.contact, quiet())
 	if _, err := caller.ue.Register(context.Background()); err != nil {
 		t.Fatal(err)
 	}

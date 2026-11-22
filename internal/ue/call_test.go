@@ -18,11 +18,12 @@ import (
 
 // party is a UE with a UA of its own, registered through pcscfAddr.
 type party struct {
-	ue    *ue.UE
-	ua    *sip.UA
-	media *ue.Media
-	reg   ue.Registration
-	calls chan *sip.IncomingCall
+	ue      *ue.UE
+	ua      *sip.UA
+	contact ue.Contact
+	media   *ue.Media
+	reg     ue.Registration
+	calls   chan *sip.IncomingCall
 	// wire is every SIP message the UE sent and received.
 	wire *wireLog
 }
@@ -45,9 +46,10 @@ func newPartyTweaked(t *testing.T, pcscfAddr netip.AddrPort, private, public, pa
 		t.Fatal(err)
 	}
 	addr := tr.LocalAddr()
+	p.contact = ue.NewContact(public, addr)
 	cfg := ue.UAConfig(sip.UAConfig{
 		SentBy:  addr.String(),
-		Contact: ue.ContactURI(public, addr),
+		Contact: p.contact.URI(),
 		OnCall:  func(ic *sip.IncomingCall) { p.calls <- ic },
 		// Every request of the UE goes to its P-CSCF.
 		Locate: func(sip.URI) (sip.Destination, error) {
@@ -61,7 +63,7 @@ func newPartyTweaked(t *testing.T, pcscfAddr netip.AddrPort, private, public, pa
 	}
 	t.Cleanup(p.ua.Close)
 	p.ue = ue.New(ue.Config{PrivateIdentity: private, PublicIdentity: public, Password: pass, HomeDomain: domain,
-		PCSCF: pcscfAddr, PCSCFURI: "sip:pcscf." + domain + ":5060", Calls: calls}, p.ua.Stack(), addr, quiet())
+		PCSCF: pcscfAddr, PCSCFURI: "sip:pcscf." + domain + ":5060", Calls: calls}, p.ua.Stack(), p.contact, quiet())
 	if p.media, err = ue.ListenMedia("127.0.0.1:0"); err != nil {
 		t.Fatal(err)
 	}
@@ -188,9 +190,10 @@ func directCaller(t *testing.T, onCall func(ic *sip.IncomingCall, media *ue.Medi
 
 	callerTransport := listen()
 	callerAddr := callerTransport.LocalAddr()
+	callerContact := ue.NewContact(impu, callerAddr)
 	caller, err := sip.NewUA(callerTransport, ue.UAConfig(sip.UAConfig{
 		SentBy:  callerAddr.String(),
-		Contact: ue.ContactURI(impu, callerAddr),
+		Contact: callerContact.URI(),
 		OnCall:  func(ic *sip.IncomingCall) { ic.Reject(486) },
 		Locate: func(sip.URI) (sip.Destination, error) {
 			return sip.Destination{Transport: sip.UDP, Addr: calleeAddr}, nil
@@ -201,7 +204,7 @@ func directCaller(t *testing.T, onCall func(ic *sip.IncomingCall, media *ue.Medi
 	}
 	t.Cleanup(caller.Close)
 	u := ue.New(ue.Config{PrivateIdentity: impi, PublicIdentity: impu, Password: password, HomeDomain: domain,
-		PCSCF: calleeAddr, PCSCFURI: "sip:pcscf." + domain + ":5060"}, caller.Stack(), callerAddr, quiet())
+		PCSCF: calleeAddr, PCSCFURI: "sip:pcscf." + domain + ":5060"}, caller.Stack(), callerContact, quiet())
 	return u, caller, media(), "sip:callee@" + calleeAddr.String(), calleeMedia
 }
 
@@ -226,10 +229,11 @@ func TestCalleeSendsToTheStreamItAccepted(t *testing.T) {
 		t.Fatal(err)
 	}
 	calleeAddr := calleeTransport.LocalAddr()
+	calleeContact := ue.NewContact(impu2, calleeAddr)
 	calls := make(chan *sip.IncomingCall, 1)
 	calleeUA, err := sip.NewUA(calleeTransport, ue.UAConfig(sip.UAConfig{
 		SentBy:  calleeAddr.String(),
-		Contact: ue.ContactURI(impu2, calleeAddr),
+		Contact: calleeContact.URI(),
 		OnCall:  func(ic *sip.IncomingCall) { calls <- ic },
 	}, ue.CallConfig{}), quiet())
 	if err != nil {
@@ -237,7 +241,7 @@ func TestCalleeSendsToTheStreamItAccepted(t *testing.T) {
 	}
 	t.Cleanup(calleeUA.Close)
 	calleeUE := ue.New(ue.Config{PrivateIdentity: impi2, PublicIdentity: impu2, Password: password2, HomeDomain: domain,
-		PCSCF: calleeAddr, PCSCFURI: "sip:pcscf." + domain + ":5060"}, calleeUA.Stack(), calleeAddr, quiet())
+		PCSCF: calleeAddr, PCSCFURI: "sip:pcscf." + domain + ":5060"}, calleeUA.Stack(), calleeContact, quiet())
 	listen := func() *ue.Media {
 		m, err := ue.ListenMedia("127.0.0.1:0")
 		if err != nil {
@@ -268,7 +272,7 @@ func TestCalleeSendsToTheStreamItAccepted(t *testing.T) {
 	pcmaOnly := sdp.Media{Type: "audio", Port: int(pcma.Port()), Proto: "RTP/AVP", Formats: []int{8}}
 	offer.Media = append([]sdp.Media{pcmaOnly}, offer.Media...)
 	call, err := callerUA.Invite(sip.Invitation{
-		RequestURI: ue.ContactURI(impu2, calleeAddr),
+		RequestURI: calleeContact.URI(),
 		From:       impu,
 		Body:       sip.Body{Type: "application/sdp", Content: offer.Bytes()},
 	})
@@ -488,10 +492,11 @@ func ringingCallee(t *testing.T, ctx context.Context, opts ue.AnswerOptions) (*s
 	t.Helper()
 	calleeTransport := listenTransport(t)
 	calleeAddr := calleeTransport.LocalAddr()
+	calleeContact := ue.NewContact(impu2, calleeAddr)
 	calls := make(chan *sip.IncomingCall, 1)
 	calleeUA, err := sip.NewUA(calleeTransport, ue.UAConfig(sip.UAConfig{
 		SentBy:  calleeAddr.String(),
-		Contact: ue.ContactURI(impu2, calleeAddr),
+		Contact: calleeContact.URI(),
 		OnCall:  func(ic *sip.IncomingCall) { calls <- ic },
 	}, ue.CallConfig{}), quiet())
 	if err != nil {
@@ -499,7 +504,7 @@ func ringingCallee(t *testing.T, ctx context.Context, opts ue.AnswerOptions) (*s
 	}
 	t.Cleanup(calleeUA.Close)
 	calleeUE := ue.New(ue.Config{PrivateIdentity: impi2, PublicIdentity: impu2, Password: password2, HomeDomain: domain,
-		PCSCF: calleeAddr, PCSCFURI: "sip:pcscf." + domain + ":5060"}, calleeUA.Stack(), calleeAddr, quiet())
+		PCSCF: calleeAddr, PCSCFURI: "sip:pcscf." + domain + ":5060"}, calleeUA.Stack(), calleeContact, quiet())
 	calleeMedia, err := ue.ListenMedia("127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
@@ -509,7 +514,7 @@ func ringingCallee(t *testing.T, ctx context.Context, opts ue.AnswerOptions) (*s
 	callerUA := newTestUA(t, "caller", func(ic *sip.IncomingCall) { ic.Reject(486) })
 	offer := sdp.Offer("1", netip.AddrPortFrom(netip.MustParseAddr("127.0.0.1"), 4000))
 	call, err := callerUA.Invite(sip.Invitation{
-		RequestURI: ue.ContactURI(impu2, calleeAddr),
+		RequestURI: calleeContact.URI(),
 		From:       impu,
 		Body:       sip.Body{Type: "application/sdp", Content: offer.Bytes()},
 	})

@@ -28,6 +28,9 @@ type fakeNetwork struct {
 	t        *testing.T
 	stack    *sip.Stack
 	requests chan *sip.Message
+	// contact is the URI that the UE registered, where requests to the
+	// UE go.
+	contact atomic.Pointer[string]
 }
 
 // newFakeNetwork answers each MESSAGE 202, as the IP-SM-GW does.
@@ -39,6 +42,9 @@ func newFakeNetworkAnswering(t *testing.T, answer int) *fakeNetwork {
 	n.stack = stack(t, func(st *sip.ServerTransaction) {
 		req := st.Request
 		if req.Method == sip.REGISTER {
+			if c, err := sip.ParseNameAddr(req.Get("Contact")); err == nil {
+				n.contact.Store(&c.URI)
+			}
 			resp := sip.NewResponse(req, 200, sip.NewTag())
 			resp.Add("Service-Route", "<sip:orig@scscf."+domain+":5060;lr>")
 			resp.Add("P-Associated-URI", "<"+impu+">")
@@ -80,10 +86,11 @@ func newSMSUE(t *testing.T, pcscf netip.AddrPort, private, public, pass string, 
 	t.Helper()
 	tr := listenTransport(t)
 	addr := tr.LocalAddr()
+	contact := ue.NewContact(public, addr)
 	// The UA needs the UE's ReceiveSMS before the UE exists.
 	var u atomic.Pointer[ue.UE]
 	ua, err := sip.NewUA(tr, sip.UAConfig{
-		SentBy: addr.String(), Contact: ue.ContactURI(public, addr), OnCall: func(c *sip.IncomingCall) { c.Reject(486) },
+		SentBy: addr.String(), Contact: contact.URI(), OnCall: func(c *sip.IncomingCall) { c.Reject(486) },
 		OnMessage: func(st *sip.ServerTransaction) { u.Load().ReceiveSMS(st) },
 	}, quiet())
 	if err != nil {
@@ -92,7 +99,7 @@ func newSMSUE(t *testing.T, pcscf netip.AddrPort, private, public, pass string, 
 	t.Cleanup(ua.Close)
 	u.Store(ue.New(ue.Config{PrivateIdentity: private, PublicIdentity: public, Password: pass, HomeDomain: domain,
 		PCSCF: pcscf, PCSCFURI: "sip:pcscf." + domain + ":5060", Features: features, SCAddress: scAddress},
-		ua.Stack(), addr, quiet()))
+		ua.Stack(), contact, quiet()))
 	return u.Load(), ua
 }
 
@@ -100,7 +107,7 @@ func newSMSUE(t *testing.T, pcscf netip.AddrPort, private, public, pass string, 
 // 5.3.3.4.2) with body, sent straight to the UE's address.
 func (n *fakeNetwork) mtMessage(ua *sip.UA, contentType string, body []byte, extra ...sip.HeaderField) (*sip.Message, int) {
 	n.t.Helper()
-	m := &sip.Message{Method: sip.MESSAGE, RequestURI: ue.ContactURI(impu, ua.Stack().LocalAddr())}
+	m := &sip.Message{Method: sip.MESSAGE, RequestURI: *n.contact.Load()}
 	m.Add("Max-Forwards", "70")
 	m.Add("From", "<"+ipsmgwURI+">;tag="+sip.NewTag())
 	m.Add("To", "<"+impu+">")
