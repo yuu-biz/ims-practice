@@ -486,7 +486,8 @@ docker compose run --rm --entrypoint sipp peer -sf /etc/sipp/register-aka.xml -m
 
 | パッケージかファイル | 中身 |
 | --- | --- |
-| `internal/epc` | EPC スタブと PCRF。UE 向けの API と、網が始める手順（`http.go`）、メッセージ（`api.go`）、PDN 接続と bearer（`network.go`）、Rx（`pcrf.go`）。 |
+| `internal/accessapi` | アクセス網のスタブ（EPC と 5GC）が、UE の側で共通に使う部分。JSON のリクエスト、UE へのイベントの流れ、UE が使うクライアント。 |
+| `internal/epc` | EPC スタブと PCRF。網が始める手順の経路（`http.go`）、メッセージ（`api.go`）、PDN 接続と bearer（`network.go`）、Rx（`pcrf.go`）。 |
 | `internal/ue/access.go`、`access_epc.go` | UE の `AccessNetwork` と、スタブの API のクライアント。 |
 | `internal/milenage`、`internal/aka` | MILENAGE（TS 35.206）、認証ベクトル、USIM の確認、再同期、RFC 3310 の Digest。 |
 | `internal/hss`、`internal/cx` | 加入者の AKA の情報、MAR と MAA。 |

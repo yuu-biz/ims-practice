@@ -20,6 +20,7 @@ import (
 
 	"github.com/fiorix/go-diameter/v4/diam"
 
+	"github.com/yuu-biz/ims-practice/internal/accessapi"
 	"github.com/yuu-biz/ims-practice/internal/diameter"
 )
 
@@ -64,7 +65,7 @@ type EPC struct {
 	// configuration.
 	addresses map[string]netip.Addr
 	store     Store
-	streams   *streams
+	streams   *accessapi.Streams
 	node      *diameter.Node
 	afs       AFs
 	log       *slog.Logger
@@ -73,7 +74,7 @@ type EPC struct {
 // New makes the stub. node is the Diameter node of the PCRF; give it
 // HandleRx as its handler, and the stub its server with SetAFs.
 func New(cfg Config, store Store, node *diameter.Node, log *slog.Logger) *EPC {
-	e := &EPC{cfg: cfg, addresses: map[string]netip.Addr{}, store: store, streams: newStreams(), node: node, log: log}
+	e := &EPC{cfg: cfg, addresses: map[string]netip.Addr{}, store: store, streams: accessapi.NewStreams("epc"), node: node, log: log}
 	for _, s := range cfg.Subscribers {
 		e.addresses[s.IMSI] = s.Address
 	}

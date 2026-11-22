@@ -218,7 +218,7 @@ P-CSCF には、もう 1 つ事情があります。UE は、P-CSCF の IP ア�
 | IBCF | 境界を渡る呼ごとの TrGW のコンテキスト（Media。Call-ID、発信側の tag、向きで引く） | `ibcf.Store` の後ろ | `internal/ibcf/store.go` |
 | IBCF | INVITE のトランザクションと Timer C | プロセスの中 | `internal/ibcf/proxy.go` |
 | EPC スタブ | PDN 接続（bearer、Rx のセッション、PCC の規則）、Rx の Session-Id から PDN 接続への対応（Binding） | `epc.Store` の後ろ | `internal/epc/store.go` |
-| EPC スタブ | UE ごとのイベントの流れ（S1 の接続の代わり） | プロセスの中。UE が接続した台の中 | `internal/epc/streams.go` |
+| EPC スタブと 5GC スタブ | UE ごとのイベントの流れ（S1 と N1 の接続の代わり） | プロセスの中。UE が接続した台の中 | `internal/accessapi/streams.go` |
 
 `Store` の境界はすでにあります。足りないのは、境界の後ろの実装、タイマー、複数の操作をまとめる手段です。境界の後ろの実装は、11.8 で作りました。このうち MMTel AS と MRFC の `Store` を保存先に載せることと、IBCF と EPC の `Store` を載せないことは、[状態と冗長構成の設計](../design/state-redundancy.md)で決めました。
 

@@ -486,7 +486,8 @@ These filters were checked with tshark 4.2 against a capture of `scripts/e2e-vol
 
 | Package or file | What it holds |
 | --- | --- |
-| `internal/epc` | The EPC stub and the PCRF: the UE API and the procedures that the network initiates (`http.go`), the messages (`api.go`), the PDN connections and bearers (`network.go`), Rx (`pcrf.go`). |
+| `internal/accessapi` | What the access stubs (EPC and 5GC) share on the UE side: the JSON requests, the event stream to the UE, and the client that the UE uses. |
+| `internal/epc` | The EPC stub and the PCRF: the paths of the procedures that the network initiates (`http.go`), the messages (`api.go`), the PDN connections and bearers (`network.go`), Rx (`pcrf.go`). |
 | `internal/ue/access.go`, `access_epc.go` | The `AccessNetwork` of the UE and its client of the stub's API. |
 | `internal/milenage`, `internal/aka` | MILENAGE (TS 35.206), the authentication vector, the USIM's checks, re-synchronisation, and the Digest of RFC 3310. |
 | `internal/hss`, `internal/cx` | The AKA credentials of a subscription, MAR and MAA. |
