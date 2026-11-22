@@ -592,9 +592,15 @@ func (f *conference) deallocate() {
 // and logs the failure. Each write is of the whole record, so the next
 // one that succeeds brings the store up to date. f.mu is held.
 func (f *conference) writeRecord() {
-	if err := f.as.conferenceStore.PutConference(context.Background(), f.record); err != nil {
+	if err := f.putRecord(); err != nil {
 		f.log.Warn("conference record not written", "error", err.Error())
 	}
+}
+
+// putRecord writes the record of the conference, and returns the
+// failure of the store. f.mu is held.
+func (f *conference) putRecord() error {
+	return f.as.conferenceStore.PutConference(context.Background(), f.record)
 }
 
 // room is nil while the conference takes one more participant, and
