@@ -10,7 +10,6 @@ import (
 	"github.com/fiorix/go-diameter/v4/diam"
 	"github.com/fiorix/go-diameter/v4/diam/dict"
 
-	"github.com/yuu-biz/ims-practice/internal/cx"
 	"github.com/yuu-biz/ims-practice/internal/diameter"
 )
 
@@ -24,7 +23,7 @@ const (
 
 var hss = diameter.Identity{OriginHost: "hss." + realm, OriginRealm: realm}
 
-var header = Header{SessionID: ipsmgw + ";1;2", OriginHost: ipsmgw, OriginRealm: realm, DestinationRealm: realm}
+var header = diameter.Header{SessionID: ipsmgw + ";1;2", OriginHost: ipsmgw, OriginRealm: realm, DestinationRealm: realm}
 
 func init() {
 	if err := diameter.LoadDictionary(); err != nil {
@@ -61,7 +60,7 @@ func TestUserDataRoundTrip(t *testing.T) {
 			t.Errorf("UDR\n got %+v\nwant %+v", got, udr)
 		}
 
-		uda := UserDataAnswer{Result: cx.Base(cx.DiameterSuccess), UserData: []byte("<Sh-Data/>")}
+		uda := UserDataAnswer{Result: diameter.Base(diameter.DiameterSuccess), UserData: []byte("<Sh-Data/>")}
 		ans := wire(t, uda.Message(req, hss))
 		if ans.Header.ApplicationID != diameter.ApplicationIDSh || ans.Header.CommandCode != CommandUserData {
 			t.Errorf("UDA header = %+v", ans.Header)
@@ -88,7 +87,7 @@ func TestProfileUpdateRoundTrip(t *testing.T) {
 		t.Errorf("PUR\n got %+v\nwant %+v", got, pur)
 	}
 
-	pua := ProfileUpdateAnswer{Result: cx.Experimental(DiameterErrorUserDataCannotBeModified)}
+	pua := ProfileUpdateAnswer{Result: diameter.Experimental(DiameterErrorUserDataCannotBeModified)}
 	gotA, err := ParseProfileUpdateAnswer(wire(t, pua.Message(req, hss)))
 	if err != nil {
 		t.Fatal(err)

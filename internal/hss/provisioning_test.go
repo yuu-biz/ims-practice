@@ -60,7 +60,7 @@ func TestProvisioningAddsASubscriptionTheHSSServes(t *testing.T) {
 
 	// The new subscriber registers like one from the configuration.
 	a := uar(t, h, "001010000000009@"+realm, "tel:+12025550109", cx.Registration)
-	if a.Result != cx.Experimental(cx.DiameterFirstRegistration) {
+	if a.Result != diameter.Experimental(cx.DiameterFirstRegistration) {
 		t.Errorf("UAR for the new subscriber: %+v", a)
 	}
 
@@ -158,7 +158,7 @@ func TestProvisioningTakesTheTelURIApart(t *testing.T) {
 	if len(got.PublicIdentities) != 2 || got.PublicIdentities[0] != "sip:x@"+realm || got.PublicIdentities[1] != "tel:+12025550109" {
 		t.Errorf("public identities: %v", got.PublicIdentities)
 	}
-	if a := uar(t, h, "x@"+realm, "tel:+12025550109", cx.Registration); a.Result != cx.Experimental(cx.DiameterFirstRegistration) {
+	if a := uar(t, h, "x@"+realm, "tel:+12025550109", cx.Registration); a.Result != diameter.Experimental(cx.DiameterFirstRegistration) {
 		t.Errorf("UAR for the tel URI: %+v", a)
 	}
 	bad := `{"private_identity": "y@` + realm + `", "public_identities": ["sip:y@` + realm + `"], "password": "p", "tel": "+12025550110"}`
@@ -251,7 +251,7 @@ func shRepositoryData(t *testing.T, h *HSS, publicID, serviceIndication string) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	if a.Result != cx.Base(cx.DiameterSuccess) {
+	if a.Result != diameter.Base(diameter.DiameterSuccess) {
 		t.Fatalf("UDA for %s of %s: %v", serviceIndication, publicID, a.Result)
 	}
 	if len(a.UserData) == 0 {
@@ -281,7 +281,7 @@ type fakeSCSCFs struct {
 	mu     sync.Mutex
 	hosts  []string
 	rtrs   []cx.RegistrationTerminationRequest
-	result cx.Result
+	result diameter.Result
 }
 
 func (f *fakeSCSCFs) Request(_ context.Context, originHost string, m *diam.Message) (*diam.Message, error) {
@@ -301,8 +301,8 @@ func (f *fakeSCSCFs) Request(_ context.Context, originHost string, m *diam.Messa
 	defer f.mu.Unlock()
 	f.hosts, f.rtrs = append(f.hosts, originHost), append(f.rtrs, rtr)
 	result := f.result
-	if result == (cx.Result{}) {
-		result = cx.Base(cx.DiameterSuccess)
+	if result == (diameter.Result{}) {
+		result = diameter.Base(diameter.DiameterSuccess)
 	}
 	return cx.RegistrationTerminationAnswer{Result: result}.Message(req, diameter.Identity{OriginHost: originHost, OriginRealm: realm}), nil
 }
@@ -326,7 +326,7 @@ func TestProvisioningRemovesASubscription(t *testing.T) {
 		t.Errorf("second DELETE: %d", w.Code)
 	}
 	// TS 29.228 6.1.1.1 step 1: the HSS no longer knows the user.
-	if a := uar(t, h, impi, impu, cx.Registration); a.Result != cx.Experimental(cx.DiameterErrorUserUnknown) {
+	if a := uar(t, h, impi, impu, cx.Registration); a.Result != diameter.Experimental(cx.DiameterErrorUserUnknown) {
 		t.Errorf("UAR after DELETE: %+v", a)
 	}
 }
@@ -335,7 +335,7 @@ func TestProvisioningRemovesASubscription(t *testing.T) {
 // S-CSCF that registered the user hears with PERMANENT_TERMINATION that
 // it no longer serves the private identity and all its public ones.
 func TestRemovingARegisteredSubscriptionSendsRTR(t *testing.T) {
-	for _, result := range []cx.Result{cx.Base(cx.DiameterSuccess), cx.Experimental(cx.DiameterErrorUserUnknown)} {
+	for _, result := range []diameter.Result{diameter.Base(diameter.DiameterSuccess), diameter.Experimental(cx.DiameterErrorUserUnknown)} {
 		h := newTestHSS()
 		mar(t, h, scscf)
 		sar(t, h, scscf, cx.AssignRegistration)
@@ -358,7 +358,7 @@ func TestRemovingARegisteredSubscriptionSendsRTR(t *testing.T) {
 			t.Errorf("RTR header = %+v", rtr.Header)
 		}
 		// Whatever the S-CSCF answers, the HSS no longer has the user.
-		if a := uar(t, h, impi, impu, cx.Registration); a.Result != cx.Experimental(cx.DiameterErrorUserUnknown) {
+		if a := uar(t, h, impi, impu, cx.Registration); a.Result != diameter.Experimental(cx.DiameterErrorUserUnknown) {
 			t.Errorf("UAR after DELETE with RTA %s: %+v", result, a)
 		}
 	}

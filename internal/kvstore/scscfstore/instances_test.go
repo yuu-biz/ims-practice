@@ -94,7 +94,7 @@ func (h *recordingHSS) Request(ctx context.Context, m *diam.Message) (*diam.Mess
 			return nil, ctx.Err()
 		}
 	}
-	return cx.ServerAssignmentAnswer{Result: cx.Base(cx.DiameterSuccess)}.Message(request, h.identity), nil
+	return cx.ServerAssignmentAnswer{Result: diameter.Base(diameter.DiameterSuccess)}.Message(request, h.identity), nil
 }
 
 func (h *recordingHSS) assignments() []cx.ServerAssignmentType {

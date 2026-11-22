@@ -189,7 +189,7 @@ func startIMS(t *testing.T, n int) *network {
 	for _, peer := range []*diameter.Peer{scscfPeer, icscfPeer} {
 		ready(func() error {
 			_, err := peer.Request(context.Background(), cx.UserAuthorizationRequest{
-				Header: cx.NewHeader(icscfNode, "", domain), UserName: "001010000000001@" + domain,
+				Header: diameter.NewHeader(icscfNode, "", domain), UserName: "001010000000001@" + domain,
 				PublicIdentity: alice, VisitedNetworkIdentifier: domain}.Message())
 			return err
 		})

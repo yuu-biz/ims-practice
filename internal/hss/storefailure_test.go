@@ -44,9 +44,9 @@ const (
 )
 
 var (
-	header = cx.Header{SessionID: "s;1;1", OriginHost: "scscf." + realm, OriginRealm: realm, DestinationRealm: realm}
+	header = diameter.Header{SessionID: "s;1;1", OriginHost: "scscf." + realm, OriginRealm: realm, DestinationRealm: realm}
 
-	unableToComply = cx.Base(cx.DiameterUnableToComply)
+	unableToComply = diameter.Base(diameter.DiameterUnableToComply)
 )
 
 func quiet() *slog.Logger { return slog.New(slog.NewTextHandler(io.Discard, nil)) }
@@ -160,35 +160,35 @@ func exchange(t *testing.T, h *hss.HSS, m *diam.Message) *diam.Message {
 type request struct {
 	name    string
 	message func() *diam.Message
-	result  func(*diam.Message) (cx.Result, error)
+	result  func(*diam.Message) (diameter.Result, error)
 }
 
-func uaaResult(m *diam.Message) (cx.Result, error) {
+func uaaResult(m *diam.Message) (diameter.Result, error) {
 	a, err := cx.ParseUserAuthorizationAnswer(m)
 	return a.Result, err
 }
 
-func maaResult(m *diam.Message) (cx.Result, error) {
+func maaResult(m *diam.Message) (diameter.Result, error) {
 	a, err := cx.ParseMultimediaAuthAnswer(m)
 	return a.Result, err
 }
 
-func saaResult(m *diam.Message) (cx.Result, error) {
+func saaResult(m *diam.Message) (diameter.Result, error) {
 	a, err := cx.ParseServerAssignmentAnswer(m)
 	return a.Result, err
 }
 
-func liaResult(m *diam.Message) (cx.Result, error) {
+func liaResult(m *diam.Message) (diameter.Result, error) {
 	a, err := cx.ParseLocationInfoAnswer(m)
 	return a.Result, err
 }
 
-func udaResult(m *diam.Message) (cx.Result, error) {
+func udaResult(m *diam.Message) (diameter.Result, error) {
 	a, err := sh.ParseUserDataAnswer(m)
 	return a.Result, err
 }
 
-func puaResult(m *diam.Message) (cx.Result, error) {
+func puaResult(m *diam.Message) (diameter.Result, error) {
 	a, err := sh.ParseProfileUpdateAnswer(m)
 	return a.Result, err
 }

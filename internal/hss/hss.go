@@ -126,16 +126,16 @@ func (h *HSS) Handle(request *diam.Message) *diam.Message {
 
 func (h *HSS) unableToComply(request *diam.Message, err error) *diam.Message {
 	h.log.Warn("cannot read request", "error", err.Error())
-	return cx.NewAnswer(request, h.node.Identity(), cx.Base(cx.DiameterUnableToComply))
+	return cx.NewAnswer(request, h.node.Identity(), diameter.Base(diameter.DiameterUnableToComply))
 }
 
 // storeFailed is the result for a request whose subscriber the HSS
 // cannot read or write. The HSS cannot tell then whether the user
 // exists, or what the request has changed, so it answers neither
 // DIAMETER_ERROR_USER_UNKNOWN nor a success (RFC 6733 7.1.5).
-func (h *HSS) storeFailed(err error) cx.Result {
+func (h *HSS) storeFailed(err error) diameter.Result {
 	h.log.Warn("subscriber store failed", "error", err.Error())
-	return cx.Base(cx.DiameterUnableToComply)
+	return diameter.Base(diameter.DiameterUnableToComply)
 }
 
 // lockWait is how long a request waits for the lock of its subscriber.
@@ -158,16 +158,16 @@ func (h *HSS) lockSubscriber(privateID string) (unlock func(), err error) {
 // lockFailed is the result for a request whose subscriber the HSS could
 // not lock. Another instance may be changing the subscriber, so this
 // one does not go on without the lock.
-func (h *HSS) lockFailed(err error) cx.Result {
+func (h *HSS) lockFailed(err error) diameter.Result {
 	h.log.Warn("the lock of the subscriber was not taken", "error", err.Error())
-	return cx.Base(cx.DiameterUnableToComply)
+	return diameter.Base(diameter.DiameterUnableToComply)
 }
 
 // find runs the identity checks that start the UAR, MAR and SAR
 // procedures: both identities exist, then they belong together. An
 // empty privateID skips the second check.
-func (h *HSS) find(ctx context.Context, privateID, publicID string) (Subscriber, cx.Result, bool) {
-	unknown := cx.Experimental(cx.DiameterErrorUserUnknown)
+func (h *HSS) find(ctx context.Context, privateID, publicID string) (Subscriber, diameter.Result, bool) {
+	unknown := diameter.Experimental(cx.DiameterErrorUserUnknown)
 	var byPublic, byPrivate Subscriber
 	if publicID != "" {
 		s, ok, err := h.store.SubscriberOf(ctx, publicID)
@@ -193,18 +193,18 @@ func (h *HSS) find(ctx context.Context, privateID, publicID string) (Subscriber,
 	case publicID == "" && privateID == "":
 		return Subscriber{}, unknown, false
 	case publicID == "":
-		return byPrivate, cx.Result{}, true
+		return byPrivate, diameter.Result{}, true
 	case privateID != "" && privateKey(byPublic.PrivateIdentity) != privateKey(byPrivate.PrivateIdentity):
-		return Subscriber{}, cx.Experimental(cx.DiameterErrorIdentitiesDontMatch), false
+		return Subscriber{}, diameter.Experimental(cx.DiameterErrorIdentitiesDontMatch), false
 	}
-	return byPublic, cx.Result{}, true
+	return byPublic, diameter.Result{}, true
 }
 
 // lock is find under the lock of the subscriber it finds, for the
 // requests that change the subscriber. The subscriber is read again once
 // the lock is held, because another request may have changed it, or a
 // provisioning request removed it, in between.
-func (h *HSS) lock(ctx context.Context, privateID, publicID string) (Subscriber, cx.Result, func(), bool) {
+func (h *HSS) lock(ctx context.Context, privateID, publicID string) (Subscriber, diameter.Result, func(), bool) {
 	s, result, ok := h.find(ctx, privateID, publicID)
 	if !ok {
 		return Subscriber{}, result, nil, false
@@ -233,39 +233,39 @@ func (h *HSS) userAuthorization(ctx context.Context, r cx.UserAuthorizationReque
 	// as the temporary public identity of a UE without an ISIM does
 	// (TS 23.228 E.3.1).
 	if u.Barred(r.PublicIdentity) && !slices.ContainsFunc(u.PublicIdentities, func(id string) bool { return !u.Barred(id) }) {
-		return cx.UserAuthorizationAnswer{Result: cx.Base(cx.DiameterAuthorizationRejected)}
+		return cx.UserAuthorizationAnswer{Result: diameter.Base(diameter.DiameterAuthorizationRejected)}
 	}
 	// SIMPLIFIED: TS 29.228 6.1.1.1 step 5. The HSS should check whether
 	// the user may register at all, and answer
 	// DIAMETER_AUTHORIZATION_REJECTED otherwise. Every user of this stub
 	// may register, so only the roaming check is made.
 	if r.UserAuthorizationType != cx.DeRegistration && !slices.Contains(h.config.VisitedNetworks, r.VisitedNetworkIdentifier) {
-		return cx.UserAuthorizationAnswer{Result: cx.Experimental(cx.DiameterErrorRoamingNotAllowed)}
+		return cx.UserAuthorizationAnswer{Result: diameter.Experimental(cx.DiameterErrorRoamingNotAllowed)}
 	}
 	if r.UserAuthorizationType == cx.RegistrationAndCapabilities {
 		caps := h.config.ServerCapabilities
-		return cx.UserAuthorizationAnswer{Result: cx.Base(cx.DiameterSuccess), ServerCapabilities: &caps}
+		return cx.UserAuthorizationAnswer{Result: diameter.Base(diameter.DiameterSuccess), ServerCapabilities: &caps}
 	}
 
 	deregistration := r.UserAuthorizationType == cx.DeRegistration
 	switch {
 	case u.State == Registered || u.State == Unregistered:
 		if deregistration {
-			return cx.UserAuthorizationAnswer{Result: cx.Base(cx.DiameterSuccess), ServerName: u.ServerName}
+			return cx.UserAuthorizationAnswer{Result: diameter.Base(diameter.DiameterSuccess), ServerName: u.ServerName}
 		}
-		return cx.UserAuthorizationAnswer{Result: cx.Experimental(cx.DiameterSubsequentRegistration), ServerName: u.ServerName}
+		return cx.UserAuthorizationAnswer{Result: diameter.Experimental(cx.DiameterSubsequentRegistration), ServerName: u.ServerName}
 	case deregistration:
 		if u.AuthenticationPending {
-			return cx.UserAuthorizationAnswer{Result: cx.Base(cx.DiameterSuccess), ServerName: u.ServerName}
+			return cx.UserAuthorizationAnswer{Result: diameter.Base(diameter.DiameterSuccess), ServerName: u.ServerName}
 		}
-		return cx.UserAuthorizationAnswer{Result: cx.Experimental(cx.DiameterErrorIdentityNotRegistered)}
+		return cx.UserAuthorizationAnswer{Result: diameter.Experimental(cx.DiameterErrorIdentityNotRegistered)}
 	case u.ServerName != "":
 		// Not registered, but an S-CSCF was stored by a MAR whose
 		// authentication is still pending: send the user there again.
-		return cx.UserAuthorizationAnswer{Result: cx.Experimental(cx.DiameterSubsequentRegistration), ServerName: u.ServerName}
+		return cx.UserAuthorizationAnswer{Result: diameter.Experimental(cx.DiameterSubsequentRegistration), ServerName: u.ServerName}
 	}
 	caps := h.config.ServerCapabilities
-	return cx.UserAuthorizationAnswer{Result: cx.Experimental(cx.DiameterFirstRegistration), ServerCapabilities: &caps}
+	return cx.UserAuthorizationAnswer{Result: diameter.Experimental(cx.DiameterFirstRegistration), ServerCapabilities: &caps}
 }
 
 // locationInfo is the HSS side of the user location query, TS 29.228
@@ -286,18 +286,18 @@ func (h *HSS) locationInfo(ctx context.Context, r cx.LocationInfoRequest) cx.Loc
 	// is the one of any identity of the subscription.
 	switch {
 	case (u.State == Registered || u.State == Unregistered) && u.ServerName != "":
-		return cx.LocationInfoAnswer{Result: cx.Base(cx.DiameterSuccess), ServerName: u.ServerName}
+		return cx.LocationInfoAnswer{Result: diameter.Base(diameter.DiameterSuccess), ServerName: u.ServerName}
 	case !ifc.HasSessionCase(h.userProfile(u).InitialFilterCriteria, ifc.TerminatingUnregistered):
-		return cx.LocationInfoAnswer{Result: cx.Experimental(cx.DiameterErrorIdentityNotRegistered)}
+		return cx.LocationInfoAnswer{Result: diameter.Experimental(cx.DiameterErrorIdentityNotRegistered)}
 	case u.ServerName != "":
 		// Not registered, but an S-CSCF is stored, by a MAR whose
 		// authentication is still pending.
-		return cx.LocationInfoAnswer{Result: cx.Base(cx.DiameterSuccess), ServerName: u.ServerName}
+		return cx.LocationInfoAnswer{Result: diameter.Base(diameter.DiameterSuccess), ServerName: u.ServerName}
 	}
 	// The same capabilities as for a first registration, so that the
 	// I-CSCF picks an S-CSCF for the services of the unregistered state.
 	caps := h.config.ServerCapabilities
-	return cx.LocationInfoAnswer{Result: cx.Experimental(cx.DiameterUnregisteredService), ServerCapabilities: &caps}
+	return cx.LocationInfoAnswer{Result: diameter.Experimental(cx.DiameterUnregisteredService), ServerCapabilities: &caps}
 }
 
 // multimediaAuth is the HSS side of the authentication procedure,
@@ -310,15 +310,15 @@ func (h *HSS) multimediaAuth(ctx context.Context, r cx.MultimediaAuthRequest) cx
 	defer unlock()
 	scheme, ok := authenticationScheme(u.Subscription, r.SIPAuthenticationScheme)
 	if !ok {
-		return cx.MultimediaAuthAnswer{Result: cx.Experimental(cx.DiameterErrorAuthSchemeNotSupported)}
+		return cx.MultimediaAuthAnswer{Result: diameter.Experimental(cx.DiameterErrorAuthSchemeNotSupported)}
 	}
 	answer := cx.MultimediaAuthAnswer{
-		Result:                  cx.Base(cx.DiameterSuccess),
+		Result:                  diameter.Base(diameter.DiameterSuccess),
 		UserName:                u.PrivateIdentity,
 		PublicIdentity:          r.PublicIdentity,
 		SIPAuthenticationScheme: scheme,
 	}
-	unableToComply := cx.MultimediaAuthAnswer{Result: cx.Base(cx.DiameterUnableToComply)}
+	unableToComply := cx.MultimediaAuthAnswer{Result: diameter.Base(diameter.DiameterUnableToComply)}
 
 	if resync := r.SIPAuthorization; resync != nil {
 		// Step 4: a synchronization failure is answered only for IMS-AKA
@@ -446,10 +446,10 @@ func (h *HSS) serverAssignment(ctx context.Context, r cx.ServerAssignmentRequest
 	switch r.ServerAssignmentType {
 	case cx.AssignRegistration, cx.ReRegistration:
 		if len(r.PublicIdentities) > 1 {
-			return cx.ServerAssignmentAnswer{Result: cx.Base(cx.DiameterAVPOccursTooManyTimes)}
+			return cx.ServerAssignmentAnswer{Result: diameter.Base(diameter.DiameterAVPOccursTooManyTimes)}
 		}
 		if u.State == Registered && u.ServerName != "" && u.ServerName != r.ServerName {
-			return cx.ServerAssignmentAnswer{Result: cx.Experimental(cx.DiameterErrorIdentityAlreadyRegistered), ServerName: u.ServerName}
+			return cx.ServerAssignmentAnswer{Result: diameter.Experimental(cx.DiameterErrorIdentityAlreadyRegistered), ServerName: u.ServerName}
 		}
 		if err := h.setServer(ctx, u, r.ServerName, origin(r.Header), Registered, false); err != nil {
 			return cx.ServerAssignmentAnswer{Result: h.storeFailed(err)}
@@ -461,7 +461,7 @@ func (h *HSS) serverAssignment(ctx context.Context, r cx.ServerAssignmentRequest
 		// user: the S-CSCF then sends the request there (TS 24.229
 		// 5.4.3.3).
 		if u.ServerName != "" && u.ServerName != r.ServerName {
-			return cx.ServerAssignmentAnswer{Result: cx.Experimental(cx.DiameterErrorIdentityAlreadyRegistered), ServerName: u.ServerName}
+			return cx.ServerAssignmentAnswer{Result: diameter.Experimental(cx.DiameterErrorIdentityAlreadyRegistered), ServerName: u.ServerName}
 		}
 		if err := h.setServer(ctx, u, r.ServerName, origin(r.Header), Unregistered, u.AuthenticationPending); err != nil {
 			return cx.ServerAssignmentAnswer{Result: h.storeFailed(err)}
@@ -471,7 +471,7 @@ func (h *HSS) serverAssignment(ctx context.Context, r cx.ServerAssignmentRequest
 		if err := h.setServer(ctx, u, "", diameter.Identity{}, NotRegistered, false); err != nil {
 			return cx.ServerAssignmentAnswer{Result: h.storeFailed(err)}
 		}
-		return cx.ServerAssignmentAnswer{Result: cx.Base(cx.DiameterSuccess)}
+		return cx.ServerAssignmentAnswer{Result: diameter.Base(diameter.DiameterSuccess)}
 	case cx.AuthenticationFailure, cx.AuthenticationTimeout:
 		name, scscf := u.ServerName, u.SCSCF
 		if u.State == NotRegistered {
@@ -480,21 +480,21 @@ func (h *HSS) serverAssignment(ctx context.Context, r cx.ServerAssignmentRequest
 		if err := h.setServer(ctx, u, name, scscf, u.State, false); err != nil {
 			return cx.ServerAssignmentAnswer{Result: h.storeFailed(err)}
 		}
-		return cx.ServerAssignmentAnswer{Result: cx.Base(cx.DiameterSuccess)}
+		return cx.ServerAssignmentAnswer{Result: diameter.Base(diameter.DiameterSuccess)}
 	case cx.NoAssignment:
 		if u.ServerName != r.ServerName {
-			return cx.ServerAssignmentAnswer{Result: cx.Base(cx.DiameterUnableToComply)}
+			return cx.ServerAssignmentAnswer{Result: diameter.Base(diameter.DiameterUnableToComply)}
 		}
 		return h.withUserData(u, r)
 	}
 	// SIMPLIFIED: TS 29.228 6.1.2.1. The *_STORE_SERVER_NAME and
 	// DEREGISTRATION_TOO_MUCH_DATA assignment types are not used by this
 	// project's S-CSCF.
-	return cx.ServerAssignmentAnswer{Result: cx.Base(cx.DiameterUnableToComply)}
+	return cx.ServerAssignmentAnswer{Result: diameter.Base(diameter.DiameterUnableToComply)}
 }
 
 func (h *HSS) withUserData(u Subscriber, r cx.ServerAssignmentRequest) cx.ServerAssignmentAnswer {
-	a := cx.ServerAssignmentAnswer{Result: cx.Base(cx.DiameterSuccess), UserName: u.PrivateIdentity}
+	a := cx.ServerAssignmentAnswer{Result: diameter.Base(diameter.DiameterSuccess), UserName: u.PrivateIdentity}
 	// TS 29.228 6.6: the HSS may skip the profile when the S-CSCF says it
 	// already has it.
 	if !r.UserDataAlreadyAvailable {
@@ -519,6 +519,6 @@ func (h *HSS) setServer(ctx context.Context, u Subscriber, serverName string, sc
 }
 
 // origin is the Diameter identity of the node that sent a request.
-func origin(h cx.Header) diameter.Identity {
+func origin(h diameter.Header) diameter.Identity {
 	return diameter.Identity{OriginHost: h.OriginHost, OriginRealm: h.OriginRealm}
 }

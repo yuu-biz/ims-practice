@@ -68,7 +68,7 @@ func (h *HSS) handleSh(ctx context.Context, request *diam.Message) *diam.Message
 
 func (h *HSS) shUnableToComply(request *diam.Message, err error) *diam.Message {
 	h.log.Warn("cannot read request", "error", err.Error())
-	return sh.NewAnswer(request, h.node.Identity(), cx.Base(cx.DiameterUnableToComply))
+	return sh.NewAnswer(request, h.node.Identity(), diameter.Base(diameter.DiameterUnableToComply))
 }
 
 // shCheck runs the checks that start both Sh-Pull and Sh-Update, in
@@ -79,31 +79,31 @@ func (h *HSS) shUnableToComply(request *diam.Message, err error) *diam.Message {
 // SIMPLIFIED: TS 29.328 6.1.1.1 and 6.1.2.1 step 2a. The private
 // identity that an AS may add in User-Name is not read, so it is never
 // checked against the user identity.
-func (h *HSS) shCheck(ctx context.Context, id sh.UserIdentity, refs []sh.DataReference, update bool) (Subscriber, sh.DataReference, cx.Result, bool) {
+func (h *HSS) shCheck(ctx context.Context, id sh.UserIdentity, refs []sh.DataReference, update bool) (Subscriber, sh.DataReference, diameter.Result, bool) {
 	if len(refs) != 1 {
 		// Several are allowed only with features this HSS does not
 		// negotiate, and none is a malformed request.
-		return Subscriber{}, 0, cx.Base(cx.DiameterUnableToComply), false
+		return Subscriber{}, 0, diameter.Base(diameter.DiameterUnableToComply), false
 	}
 	ref := refs[0]
 	access, known := shDataAccess[ref]
 	switch {
 	case update && !(known && access.update):
-		return Subscriber{}, ref, cx.Experimental(sh.DiameterErrorUserDataCannotBeModified), false
+		return Subscriber{}, ref, diameter.Experimental(sh.DiameterErrorUserDataCannotBeModified), false
 	case !update && !(known && access.pull):
-		return Subscriber{}, ref, cx.Experimental(sh.DiameterErrorUserDataCannotBeRead), false
+		return Subscriber{}, ref, diameter.Experimental(sh.DiameterErrorUserDataCannotBeRead), false
 	}
 	u, ok, err := h.shSubscriber(ctx, id)
 	if err != nil {
 		return Subscriber{}, ref, h.storeFailed(err), false
 	}
 	if !ok {
-		return Subscriber{}, ref, cx.Experimental(cx.DiameterErrorUserUnknown), false
+		return Subscriber{}, ref, diameter.Experimental(cx.DiameterErrorUserUnknown), false
 	}
 	if id.PublicIdentity != "" && !access.byPublicIdentity || id.PublicIdentity == "" && !access.byMSISDN {
-		return Subscriber{}, ref, cx.Experimental(sh.DiameterErrorOperationNotAllowed), false
+		return Subscriber{}, ref, diameter.Experimental(sh.DiameterErrorOperationNotAllowed), false
 	}
-	return u, ref, cx.Result{}, true
+	return u, ref, diameter.Result{}, true
 }
 
 // shSubscriber finds the subscriber that a User-Identity names. Both
@@ -135,7 +135,7 @@ func (h *HSS) userData(ctx context.Context, r sh.UserDataRequest) sh.UserDataAns
 		// TS 29.328 6.1.1.1: a read of repository data names its
 		// Service-Indication.
 		if len(r.ServiceIndications) != 1 {
-			return sh.UserDataAnswer{Result: cx.Base(cx.DiameterUnableToComply)}
+			return sh.UserDataAnswer{Result: diameter.Base(diameter.DiameterUnableToComply)}
 		}
 		d, ok, err := h.store.RepositoryData(ctx, u.PrivateIdentity, r.ServiceIndications[0])
 		if err != nil {
@@ -161,7 +161,7 @@ func (h *HSS) userData(ctx context.Context, r sh.UserDataRequest) sh.UserDataAns
 			data.ShIMSData = &sh.ShIMSData{SMSRegistrationInfo: &sh.SMSRegistrationInfoData{IPSMGWNumber: u.IPSMGWNumber}}
 		}
 	}
-	a := sh.UserDataAnswer{Result: cx.Base(cx.DiameterSuccess)}
+	a := sh.UserDataAnswer{Result: diameter.Base(diameter.DiameterSuccess)}
 	if !data.Empty() {
 		a.UserData = data.Marshal()
 	}
@@ -205,7 +205,7 @@ func (h *HSS) profileUpdate(ctx context.Context, r sh.ProfileUpdateRequest) sh.P
 	data, err := sh.ParseShData(r.UserData)
 	if err != nil || data.ShIMSData == nil || data.ShIMSData.SMSRegistrationInfo == nil {
 		h.log.Warn("PUR without SMSRegistrationInfo", "public_identity", r.UserIdentity.PublicIdentity, "msisdn", r.UserIdentity.MSISDN)
-		return sh.ProfileUpdateAnswer{Result: cx.Base(cx.DiameterUnableToComply)}
+		return sh.ProfileUpdateAnswer{Result: diameter.Base(diameter.DiameterUnableToComply)}
 	}
 	number := data.ShIMSData.SMSRegistrationInfo.IPSMGWNumber
 
@@ -221,7 +221,7 @@ func (h *HSS) profileUpdate(ctx context.Context, r sh.ProfileUpdateRequest) sh.P
 		return sh.ProfileUpdateAnswer{Result: h.storeFailed(err)}
 	}
 	if !ok {
-		return sh.ProfileUpdateAnswer{Result: cx.Experimental(cx.DiameterErrorUserUnknown)}
+		return sh.ProfileUpdateAnswer{Result: diameter.Experimental(cx.DiameterErrorUserUnknown)}
 	}
 	// Step 4b: an empty number removes the registration. The IP-SM-GW
 	// Diameter identity is stored only when the HSS and the IP-SM-GW
@@ -234,7 +234,7 @@ func (h *HSS) profileUpdate(ctx context.Context, r sh.ProfileUpdateRequest) sh.P
 	if from != number {
 		h.log.Info("SMS registration", "private_identity", u.PrivateIdentity, "from", from, "to", number)
 	}
-	return sh.ProfileUpdateAnswer{Result: cx.Base(cx.DiameterSuccess)}
+	return sh.ProfileUpdateAnswer{Result: diameter.Base(diameter.DiameterSuccess)}
 }
 
 // maxServiceData is the most ServiceData the HSS takes for one
@@ -246,11 +246,11 @@ const maxServiceData = 64 << 10
 
 // updateRepositoryData is steps 5 and 6 of TS 29.328 6.1.2.1 for the
 // repository data of u.
-func (h *HSS) updateRepositoryData(ctx context.Context, u Subscriber, r sh.ProfileUpdateRequest) cx.Result {
+func (h *HSS) updateRepositoryData(ctx context.Context, u Subscriber, r sh.ProfileUpdateRequest) diameter.Result {
 	data, err := sh.ParseShData(r.UserData)
 	if err != nil || len(data.RepositoryData) != 1 {
 		h.log.Warn("PUR without one RepositoryData", "public_identity", r.UserIdentity.PublicIdentity)
-		return cx.Base(cx.DiameterUnableToComply)
+		return diameter.Base(diameter.DiameterUnableToComply)
 	}
 	update := data.RepositoryData[0]
 	unlock, err := h.lockSubscriber(u.PrivateIdentity)
@@ -282,7 +282,7 @@ func (h *HSS) updateRepositoryData(ctx context.Context, u Subscriber, r sh.Profi
 		if swapped {
 			h.log.Info("repository data", "private_identity", u.PrivateIdentity, "service_indication", update.ServiceIndication,
 				"sequence_number", update.SequenceNumber, "removed", update.ServiceData == nil)
-			return cx.Base(cx.DiameterSuccess)
+			return diameter.Base(diameter.DiameterSuccess)
 		}
 		_, ok, err = h.store.Subscriber(ctx, u.PrivateIdentity)
 		if err != nil {
@@ -290,7 +290,7 @@ func (h *HSS) updateRepositoryData(ctx context.Context, u Subscriber, r sh.Profi
 		}
 		if !ok {
 			// The provisioning API removed the subscription meanwhile.
-			return cx.Experimental(cx.DiameterErrorUserUnknown)
+			return diameter.Experimental(cx.DiameterErrorUserUnknown)
 		}
 	}
 }
@@ -300,8 +300,8 @@ func (h *HSS) updateRepositoryData(ctx context.Context, u Subscriber, r sh.Profi
 // under the same Service-Indication, or nil. A success lets the HSS
 // store the update, or remove the data if the update has no
 // ServiceData.
-func repositoryUpdate(stored *sh.TransparentData, update sh.TransparentData) cx.Result {
-	outOfSync := cx.Experimental(sh.DiameterErrorTransparentDataOutOfSync)
+func repositoryUpdate(stored *sh.TransparentData, update sh.TransparentData) diameter.Result {
+	outOfSync := diameter.Experimental(sh.DiameterErrorTransparentDataOutOfSync)
 	tooMuch := update.ServiceData != nil && len(update.ServiceData.XML) > maxServiceData
 	if stored != nil {
 		n := int(update.SequenceNumber)
@@ -313,11 +313,11 @@ func repositoryUpdate(stored *sh.TransparentData, update sh.TransparentData) cx.
 		case update.SequenceNumber != 0:
 			return outOfSync
 		case update.ServiceData == nil:
-			return cx.Experimental(sh.DiameterErrorOperationNotAllowed)
+			return diameter.Experimental(sh.DiameterErrorOperationNotAllowed)
 		}
 	}
 	if tooMuch {
-		return cx.Experimental(sh.DiameterErrorTooMuchData)
+		return diameter.Experimental(sh.DiameterErrorTooMuchData)
 	}
-	return cx.Base(cx.DiameterSuccess)
+	return diameter.Base(diameter.DiameterSuccess)
 }

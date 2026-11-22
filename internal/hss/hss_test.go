@@ -48,7 +48,7 @@ func newTestHSS() *HSS {
 	}, store, node, quiet())
 }
 
-var hdr = cx.Header{SessionID: "s;1;1", OriginHost: "icscf." + realm, OriginRealm: realm, DestinationRealm: realm}
+var hdr = diameter.Header{SessionID: "s;1;1", OriginHost: "icscf." + realm, OriginRealm: realm, DestinationRealm: realm}
 
 // exchange sends a request through the wire format and the handler, as
 // the Diameter peer would.
@@ -106,12 +106,12 @@ func TestRegistrationSequence(t *testing.T) {
 	// First REGISTER: nobody serves the user yet, so the I-CSCF gets
 	// capabilities to choose an S-CSCF with.
 	a := uar(t, h, impi, impu, cx.Registration)
-	if a.Result != cx.Experimental(cx.DiameterFirstRegistration) || a.ServerName != "" || a.ServerCapabilities == nil {
+	if a.Result != diameter.Experimental(cx.DiameterFirstRegistration) || a.ServerName != "" || a.ServerCapabilities == nil {
 		t.Fatalf("first UAA = %+v, want FIRST_REGISTRATION with capabilities", a)
 	}
 
 	m := mar(t, h, scscf)
-	if m.Result != cx.Base(cx.DiameterSuccess) || m.SIPAuthenticationScheme != cx.SchemeSIPDigest {
+	if m.Result != diameter.Base(diameter.DiameterSuccess) || m.SIPAuthenticationScheme != cx.SchemeSIPDigest {
 		t.Fatalf("MAA = %+v", m)
 	}
 	d := m.SIPDigestAuthenticate
@@ -122,28 +122,28 @@ func TestRegistrationSequence(t *testing.T) {
 	// Second REGISTER: the MAR stored the S-CSCF while authentication is
 	// pending, so the I-CSCF is sent back to it.
 	a = uar(t, h, impi, impu, cx.Registration)
-	if a.Result != cx.Experimental(cx.DiameterSubsequentRegistration) || a.ServerName != scscf {
+	if a.Result != diameter.Experimental(cx.DiameterSubsequentRegistration) || a.ServerName != scscf {
 		t.Fatalf("second UAA = %+v, want SUBSEQUENT_REGISTRATION with %s", a, scscf)
 	}
 
 	s := sar(t, h, scscf, cx.AssignRegistration)
-	if s.Result != cx.Base(cx.DiameterSuccess) || !strings.Contains(string(s.UserData), "<Identity>"+impu+"</Identity>") {
+	if s.Result != diameter.Base(diameter.DiameterSuccess) || !strings.Contains(string(s.UserData), "<Identity>"+impu+"</Identity>") {
 		t.Fatalf("SAA = %+v / %s", s, s.UserData)
 	}
 
 	// Another S-CSCF cannot take over a registered user.
-	if s := sar(t, h, scscf2, cx.AssignRegistration); s.Result != cx.Experimental(cx.DiameterErrorIdentityAlreadyRegistered) || s.ServerName != scscf {
+	if s := sar(t, h, scscf2, cx.AssignRegistration); s.Result != diameter.Experimental(cx.DiameterErrorIdentityAlreadyRegistered) || s.ServerName != scscf {
 		t.Errorf("SAR from another S-CSCF = %+v", s)
 	}
 
 	// Deregistration.
-	if a := uar(t, h, impi, impu, cx.DeRegistration); a.Result != cx.Base(cx.DiameterSuccess) || a.ServerName != scscf {
+	if a := uar(t, h, impi, impu, cx.DeRegistration); a.Result != diameter.Base(diameter.DiameterSuccess) || a.ServerName != scscf {
 		t.Errorf("UAA for deregistration = %+v", a)
 	}
-	if s := sar(t, h, scscf, cx.UserDeregistration); s.Result != cx.Base(cx.DiameterSuccess) {
+	if s := sar(t, h, scscf, cx.UserDeregistration); s.Result != diameter.Base(diameter.DiameterSuccess) {
 		t.Errorf("SAA for deregistration = %+v", s)
 	}
-	if a := uar(t, h, impi, impu, cx.DeRegistration); a.Result != cx.Experimental(cx.DiameterErrorIdentityNotRegistered) {
+	if a := uar(t, h, impi, impu, cx.DeRegistration); a.Result != diameter.Experimental(cx.DiameterErrorIdentityNotRegistered) {
 		t.Errorf("UAA for deregistration of a deregistered user = %+v", a)
 	}
 }
@@ -152,17 +152,17 @@ func TestAuthenticationFailureForgetsTheServer(t *testing.T) {
 	h := newTestHSS()
 	mar(t, h, scscf)
 	sar(t, h, scscf, cx.AuthenticationFailure)
-	if a := uar(t, h, impi, impu, cx.Registration); a.Result != cx.Experimental(cx.DiameterFirstRegistration) {
+	if a := uar(t, h, impi, impu, cx.Registration); a.Result != diameter.Experimental(cx.DiameterFirstRegistration) {
 		t.Errorf("UAA after a failed authentication = %+v, want FIRST_REGISTRATION", a)
 	}
 }
 
 func TestIdentityChecks(t *testing.T) {
 	h := newTestHSS()
-	if a := uar(t, h, impi, "sip:unknown@"+realm, cx.Registration); a.Result != cx.Experimental(cx.DiameterErrorUserUnknown) {
+	if a := uar(t, h, impi, "sip:unknown@"+realm, cx.Registration); a.Result != diameter.Experimental(cx.DiameterErrorUserUnknown) {
 		t.Errorf("unknown public identity: %+v", a)
 	}
-	if a := uar(t, h, otherImp, impu, cx.Registration); a.Result != cx.Experimental(cx.DiameterErrorIdentitiesDontMatch) {
+	if a := uar(t, h, otherImp, impu, cx.Registration); a.Result != diameter.Experimental(cx.DiameterErrorIdentitiesDontMatch) {
 		t.Errorf("identities of two users: %+v", a)
 	}
 	if a := uar(t, h, impi, "SIP:001010000000001@IMS.mnc001.mcc001.3gppnetwork.org", cx.Registration); !a.Result.Success() {
@@ -177,7 +177,7 @@ func TestRoamingCheck(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if a.Result != cx.Experimental(cx.DiameterErrorRoamingNotAllowed) {
+	if a.Result != diameter.Experimental(cx.DiameterErrorRoamingNotAllowed) {
 		t.Errorf("UAA from an unknown visited network = %+v", a)
 	}
 }
@@ -201,15 +201,15 @@ func lir(t *testing.T, h *HSS, public string) cx.LocationInfoAnswer {
 
 func TestLocationInfo(t *testing.T) {
 	h := newTestHSS()
-	if a := lir(t, h, "sip:nobody@"+realm); a.Result != cx.Experimental(cx.DiameterErrorUserUnknown) {
+	if a := lir(t, h, "sip:nobody@"+realm); a.Result != diameter.Experimental(cx.DiameterErrorUserUnknown) {
 		t.Errorf("unknown callee: %+v", a)
 	}
-	if a := lir(t, h, impu); a.Result != cx.Experimental(cx.DiameterErrorIdentityNotRegistered) {
+	if a := lir(t, h, impu); a.Result != diameter.Experimental(cx.DiameterErrorIdentityNotRegistered) {
 		t.Errorf("callee not registered: %+v", a)
 	}
 	mar(t, h, scscf)
 	sar(t, h, scscf, cx.AssignRegistration)
-	if a := lir(t, h, impu); a.Result != cx.Base(cx.DiameterSuccess) || a.ServerName != scscf {
+	if a := lir(t, h, impu); a.Result != diameter.Base(diameter.DiameterSuccess) || a.ServerName != scscf {
 		t.Errorf("registered callee: %+v", a)
 	}
 }
@@ -239,30 +239,30 @@ func TestLocationInfoForUnregisteredServices(t *testing.T) {
 	}
 
 	a := lir(t, h, impu)
-	if a.Result != cx.Experimental(cx.DiameterUnregisteredService) || a.ServerName != "" || a.ServerCapabilities == nil ||
+	if a.Result != diameter.Experimental(cx.DiameterUnregisteredService) || a.ServerName != "" || a.ServerCapabilities == nil ||
 		len(a.ServerCapabilities.MandatoryCapabilities) != 1 {
 		t.Fatalf("LIA before any S-CSCF = %+v, want DIAMETER_UNREGISTERED_SERVICE with the capabilities", a)
 	}
 	s := unregisteredUser(scscf)
-	if s.Result != cx.Base(cx.DiameterSuccess) || s.UserName != impi || !strings.Contains(string(s.UserData), "mmtel."+realm) {
+	if s.Result != diameter.Base(diameter.DiameterSuccess) || s.UserName != impi || !strings.Contains(string(s.UserData), "mmtel."+realm) {
 		t.Fatalf("SAA for UNREGISTERED_USER = %+v / %s", s, s.UserData)
 	}
-	if a := lir(t, h, impu); a.Result != cx.Base(cx.DiameterSuccess) || a.ServerName != scscf {
+	if a := lir(t, h, impu); a.Result != diameter.Base(diameter.DiameterSuccess) || a.ServerName != scscf {
 		t.Errorf("LIA in the unregistered state = %+v, want the S-CSCF", a)
 	}
-	if s := unregisteredUser(scscf2); s.Result != cx.Experimental(cx.DiameterErrorIdentityAlreadyRegistered) || s.ServerName != scscf {
+	if s := unregisteredUser(scscf2); s.Result != diameter.Experimental(cx.DiameterErrorIdentityAlreadyRegistered) || s.ServerName != scscf {
 		t.Errorf("SAA for another S-CSCF = %+v, want DIAMETER_ERROR_IDENTITY_ALREADY_REGISTERED with %s", s, scscf)
 	}
-	if a := uar(t, h, impi, impu, cx.Registration); a.Result != cx.Experimental(cx.DiameterSubsequentRegistration) || a.ServerName != scscf {
+	if a := uar(t, h, impi, impu, cx.Registration); a.Result != diameter.Experimental(cx.DiameterSubsequentRegistration) || a.ServerName != scscf {
 		t.Errorf("UAA in the unregistered state = %+v, want SUBSEQUENT_REGISTRATION with %s", a, scscf)
 	}
 	sar(t, h, scscf, cx.TimeoutDeregistration)
-	if a := lir(t, h, impu); a.Result != cx.Experimental(cx.DiameterUnregisteredService) {
+	if a := lir(t, h, impu); a.Result != diameter.Experimental(cx.DiameterUnregisteredService) {
 		t.Errorf("LIA once the S-CSCF let the user go = %+v", a)
 	}
 	// A MAR stores the S-CSCF while the authentication is pending.
 	mar(t, h, scscf2)
-	if a := lir(t, h, impu); a.Result != cx.Base(cx.DiameterSuccess) || a.ServerName != scscf2 {
+	if a := lir(t, h, impu); a.Result != diameter.Base(diameter.DiameterSuccess) || a.ServerName != scscf2 {
 		t.Errorf("LIA while an authentication is pending = %+v, want %s", a, scscf2)
 	}
 }
@@ -290,10 +290,10 @@ func TestBarredIdentity(t *testing.T) {
 	node := diameter.NewNode(diameter.Identity{OriginHost: "hss." + realm, OriginRealm: realm}, []uint32{diameter.ApplicationIDCx}, diameter.Timers{}, quiet())
 	h := New(Config{Realm: realm, VisitedNetworks: []string{realm}, ServerCapabilities: cx.ServerCapabilities{MandatoryCapabilities: []uint32{1}}}, store, node, quiet())
 
-	if a := uar(t, h, volteIMPI, temporary, cx.Registration); a.Result != cx.Experimental(cx.DiameterFirstRegistration) {
+	if a := uar(t, h, volteIMPI, temporary, cx.Registration); a.Result != diameter.Experimental(cx.DiameterFirstRegistration) {
 		t.Errorf("UAA for the temporary identity = %+v, want FIRST_REGISTRATION", a.Result)
 	}
-	if a := uar(t, h, onlyIMPI, only, cx.Registration); a.Result != cx.Base(cx.DiameterAuthorizationRejected) {
+	if a := uar(t, h, onlyIMPI, only, cx.Registration); a.Result != diameter.Base(diameter.DiameterAuthorizationRejected) {
 		t.Errorf("UAA for a set with no identity that is not barred = %+v, want DIAMETER_AUTHORIZATION_REJECTED", a.Result)
 	}
 

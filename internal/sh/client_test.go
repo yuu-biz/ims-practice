@@ -36,7 +36,7 @@ func newClient(t *testing.T, answer func(*diam.Message) *diam.Message) (*Client,
 func TestClientPublicIdentitiesSendsAUDRByMSISDN(t *testing.T) {
 	c, f := newClient(t, func(req *diam.Message) *diam.Message {
 		data := ShData{PublicIdentifiers: &PublicIdentifiers{IMSPublicIdentities: []string{impu, tel}}}
-		return UserDataAnswer{Result: cx.Base(cx.DiameterSuccess), UserData: data.Marshal()}.Message(req, hss)
+		return UserDataAnswer{Result: diameter.Base(diameter.DiameterSuccess), UserData: data.Marshal()}.Message(req, hss)
 	})
 	ids, err := c.PublicIdentities(context.Background(), msisdn)
 	if err != nil {
@@ -56,7 +56,7 @@ func TestClientPublicIdentitiesSendsAUDRByMSISDN(t *testing.T) {
 }
 
 func TestClientReturnsTheResultOfAFailedAnswer(t *testing.T) {
-	unknown := cx.Experimental(cx.DiameterErrorUserUnknown)
+	unknown := diameter.Experimental(cx.DiameterErrorUserUnknown)
 	c, _ := newClient(t, func(req *diam.Message) *diam.Message {
 		return UserDataAnswer{Result: unknown}.Message(req, hss)
 	})
@@ -69,7 +69,7 @@ func TestClientReturnsTheResultOfAFailedAnswer(t *testing.T) {
 
 func TestClientUpdateSMSRegistrationInfoSendsAPUR(t *testing.T) {
 	c, f := newClient(t, func(req *diam.Message) *diam.Message {
-		return ProfileUpdateAnswer{Result: cx.Base(cx.DiameterSuccess)}.Message(req, hss)
+		return ProfileUpdateAnswer{Result: diameter.Base(diameter.DiameterSuccess)}.Message(req, hss)
 	})
 	if err := c.UpdateSMSRegistrationInfo(context.Background(), UserIdentity{PublicIdentity: impu}, "12025550199"); err != nil {
 		t.Fatal(err)
@@ -107,9 +107,9 @@ func TestClientRepositoryData(t *testing.T) {
 	stored := TransparentData{ServiceIndication: "MMTEL-Services", SequenceNumber: 65535, ServiceData: &ServiceData{XML: []byte("<a/>")}}
 	c, f := newClient(t, func(req *diam.Message) *diam.Message {
 		if req.Header.CommandCode == CommandUserData {
-			return UserDataAnswer{Result: cx.Base(cx.DiameterSuccess), UserData: ShData{RepositoryData: []TransparentData{stored}}.Marshal()}.Message(req, hss)
+			return UserDataAnswer{Result: diameter.Base(diameter.DiameterSuccess), UserData: ShData{RepositoryData: []TransparentData{stored}}.Marshal()}.Message(req, hss)
 		}
-		return ProfileUpdateAnswer{Result: cx.Base(cx.DiameterSuccess)}.Message(req, hss)
+		return ProfileUpdateAnswer{Result: diameter.Base(diameter.DiameterSuccess)}.Message(req, hss)
 	})
 	ctx := context.Background()
 	got, found, err := c.RepositoryData(ctx, impu, "MMTEL-Services")

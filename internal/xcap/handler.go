@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"github.com/yuu-biz/ims-practice/internal/diameter"
 	"io"
 	"log/slog"
 	"mime"
@@ -387,7 +388,7 @@ func (h *Handler) change(w http.ResponseWriter, r *http.Request, t target, apply
 			return
 		}
 		err = h.repo.UpdateRepositoryData(r.Context(), t.xui, simservs.ServiceIndication, stored.SequenceNumber, next.RootElement())
-		if isResult(err, cx.Experimental(sh.DiameterErrorTransparentDataOutOfSync)) {
+		if isResult(err, diameter.Experimental(sh.DiameterErrorTransparentDataOutOfSync)) {
 			if conditional {
 				h.answer(w, r, t, http.StatusPreconditionFailed, "the document changed meanwhile")
 				return
@@ -542,7 +543,7 @@ func (h *Handler) fail(w http.ResponseWriter, r *http.Request, t target, err err
 // a user the HSS does not know (RFC 4825 8), 503 when the HSS could not
 // be asked or did not comply.
 func (h *Handler) repositoryFailed(w http.ResponseWriter, r *http.Request, t target, err error) {
-	if isResult(err, cx.Experimental(cx.DiameterErrorUserUnknown)) {
+	if isResult(err, diameter.Experimental(cx.DiameterErrorUserUnknown)) {
 		h.answer(w, r, t, http.StatusNotFound, "no such user")
 		return
 	}
@@ -550,7 +551,7 @@ func (h *Handler) repositoryFailed(w http.ResponseWriter, r *http.Request, t tar
 	h.answer(w, r, t, http.StatusServiceUnavailable, "the HSS did not answer")
 }
 
-func isResult(err error, result cx.Result) bool {
+func isResult(err error, result diameter.Result) bool {
 	var re *sh.ResultError
 	return errors.As(err, &re) && re.Result == result
 }

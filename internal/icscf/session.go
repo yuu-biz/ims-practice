@@ -3,6 +3,7 @@ package icscf
 import (
 	"context"
 	"fmt"
+	"github.com/yuu-biz/ims-practice/internal/diameter"
 	"log/slog"
 	"strings"
 
@@ -75,7 +76,7 @@ func (i *ICSCF) session(st *sip.ServerTransaction) {
 		return
 	}
 	answer, err := i.hss.Request(context.Background(), cx.LocationInfoRequest{
-		Header:         cx.NewHeader(i.node, "", i.cfg.HomeDomain),
+		Header:         diameter.NewHeader(i.node, "", i.cfg.HomeDomain),
 		PublicIdentity: callee,
 	}.Message())
 	if err != nil {
@@ -90,7 +91,7 @@ func (i *ICSCF) session(st *sip.ServerTransaction) {
 	case err != nil:
 		st.Respond(sip.NewResponse(req, 500, sip.NewTag()))
 		return
-	case lia.Result == cx.Experimental(cx.DiameterErrorIdentityNotRegistered):
+	case lia.Result == diameter.Experimental(cx.DiameterErrorIdentityNotRegistered):
 		// 5.3.2.1: a known user who is not registered and has no services
 		// for that state.
 		log.Info("callee is not registered", "callee", callee)

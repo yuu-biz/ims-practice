@@ -3,6 +3,7 @@ package sc_test
 import (
 	"context"
 	"errors"
+	"github.com/yuu-biz/ims-practice/internal/diameter"
 	"io"
 	"log/slog"
 	"reflect"
@@ -38,7 +39,7 @@ func (u users) PublicIdentities(_ context.Context, msisdn string) ([]string, err
 	if ids, ok := u[msisdn]; ok {
 		return ids, nil
 	}
-	return nil, &sh.ResultError{Command: "UDA", Result: cx.Experimental(cx.DiameterErrorUserUnknown)}
+	return nil, &sh.ResultError{Command: "UDA", Result: diameter.Experimental(cx.DiameterErrorUserUnknown)}
 }
 
 type failingUsers struct{}

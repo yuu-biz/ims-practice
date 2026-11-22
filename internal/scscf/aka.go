@@ -3,6 +3,7 @@ package scscf
 import (
 	"context"
 	"encoding/hex"
+	"github.com/yuu-biz/ims-practice/internal/diameter"
 	"log/slog"
 	"strings"
 	"time"
@@ -117,7 +118,7 @@ func (s *SCSCF) reregister(st *sip.ServerTransaction, privateID, publicID string
 // it: SIPp, the independent test peer, speaks AKAv1-MD5 only.
 func (s *SCSCF) challengeAKA(st *sip.ServerTransaction, privateID, publicID string, resync *cx.Resynchronization, stale bool, log *slog.Logger) {
 	answer, err := s.request(context.Background(), cx.MultimediaAuthRequest{
-		Header:                  cx.NewHeader(s.node, "", s.cfg.HomeDomain),
+		Header:                  diameter.NewHeader(s.node, "", s.cfg.HomeDomain),
 		UserName:                privateID,
 		PublicIdentity:          publicID,
 		SIPAuthenticationScheme: cx.SchemeDigestAKAv1MD5,

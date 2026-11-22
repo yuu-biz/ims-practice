@@ -6,14 +6,13 @@ import (
 	"github.com/fiorix/go-diameter/v4/diam"
 	"github.com/fiorix/go-diameter/v4/diam/datatype"
 
-	"github.com/yuu-biz/ims-practice/internal/cx"
 	"github.com/yuu-biz/ims-practice/internal/diameter"
 )
 
 // UserDataRequest is the UDR of TS 29.329 6.1.1. An application server
 // reads user data from the HSS with it (Sh-Pull, TS 29.328 6.1.1).
 type UserDataRequest struct {
-	Header
+	diameter.Header
 	UserIdentity UserIdentity
 	// ServerName is the SIP URI of the AS. TS 29.328 6.1.1.1 needs it
 	// only to read initial filter criteria, which the HSS stub does not
@@ -29,27 +28,27 @@ type UserDataRequest struct {
 }
 
 func (r UserDataRequest) Message() *diam.Message {
-	m := newRequest(CommandUserData)
+	m := diameter.NewRequest(diameter.ApplicationIDSh, CommandUserData)
 	begin(m, r.Header)
 	m.AddAVP(r.UserIdentity.avp())
 	if r.ServerName != "" {
-		m.AddAVP(vendorAVP(avpServerName, mv, datatype.UTF8String(r.ServerName)))
+		m.AddAVP(diameter.VendorAVP(avpServerName, mv, datatype.UTF8String(r.ServerName)))
 	}
 	for _, s := range r.ServiceIndications {
-		m.AddAVP(vendorAVP(avpServiceIndication, mv, datatype.OctetString(s)))
+		m.AddAVP(diameter.VendorAVP(avpServiceIndication, mv, datatype.OctetString(s)))
 	}
 	for _, d := range r.DataReferences {
-		m.AddAVP(vendorAVP(avpDataReference, mv, datatype.Enumerated(d)))
+		m.AddAVP(diameter.VendorAVP(avpDataReference, mv, datatype.Enumerated(d)))
 	}
 	for _, s := range r.IdentitySets {
-		m.AddAVP(vendorAVP(avpIdentitySet, v, datatype.Enumerated(s)))
+		m.AddAVP(diameter.VendorAVP(avpIdentitySet, v, datatype.Enumerated(s)))
 	}
 	return m
 }
 
 func ParseUserDataRequest(m *diam.Message) (UserDataRequest, error) {
 	var raw struct {
-		requestHeader
+		diameter.Header
 		UserIdentity       userIdentityAVP `avp:"User-Identity"`
 		ServerName         string          `avp:"Server-Name,omitempty"`
 		ServiceIndications []string        `avp:"Service-Indication,omitempty"`
@@ -63,7 +62,7 @@ func ParseUserDataRequest(m *diam.Message) (UserDataRequest, error) {
 	if err != nil {
 		return UserDataRequest{}, fmt.Errorf("UDR: User-Identity: %w", err)
 	}
-	r := UserDataRequest{Header: raw.header(), UserIdentity: id, ServerName: raw.ServerName, ServiceIndications: raw.ServiceIndications}
+	r := UserDataRequest{Header: raw.Header, UserIdentity: id, ServerName: raw.ServerName, ServiceIndications: raw.ServiceIndications}
 	for _, d := range raw.DataReferences {
 		r.DataReferences = append(r.DataReferences, DataReference(d))
 	}
@@ -77,27 +76,27 @@ func ParseUserDataRequest(m *diam.Message) (UserDataRequest, error) {
 // document (see ShData), or empty when the HSS has none of the data
 // asked for (TS 29.328 6.1.1.1 step 5).
 type UserDataAnswer struct {
-	Result   cx.Result
+	Result   diameter.Result
 	UserData []byte
 }
 
 func (a UserDataAnswer) Message(request *diam.Message, local diameter.Identity) *diam.Message {
 	m := NewAnswer(request, local, a.Result)
 	if len(a.UserData) > 0 {
-		m.AddAVP(vendorAVP(avpUserData, mv, datatype.OctetString(a.UserData)))
+		m.AddAVP(diameter.VendorAVP(avpUserData, mv, datatype.OctetString(a.UserData)))
 	}
 	return m
 }
 
 func ParseUserDataAnswer(m *diam.Message) (UserDataAnswer, error) {
 	var raw struct {
-		answerResult
+		diameter.ResultAVPs
 		UserData []byte `avp:"User-Data,omitempty"`
 	}
 	if err := m.Unmarshal(&raw); err != nil {
 		return UserDataAnswer{}, fmt.Errorf("UDA: %w", err)
 	}
-	result, err := raw.result()
+	result, err := raw.Result()
 	if err != nil {
 		return UserDataAnswer{}, fmt.Errorf("UDA: %w", err)
 	}
@@ -108,26 +107,26 @@ func ParseUserDataAnswer(m *diam.Message) (UserDataAnswer, error) {
 // server updates user data in the HSS with it (Sh-Update, TS 29.328
 // 6.1.2). UserData holds the new data as an Sh-Data document.
 type ProfileUpdateRequest struct {
-	Header
+	diameter.Header
 	UserIdentity   UserIdentity
 	DataReferences []DataReference
 	UserData       []byte
 }
 
 func (r ProfileUpdateRequest) Message() *diam.Message {
-	m := newRequest(CommandProfileUpdate)
+	m := diameter.NewRequest(diameter.ApplicationIDSh, CommandProfileUpdate)
 	begin(m, r.Header)
 	m.AddAVP(r.UserIdentity.avp())
 	for _, d := range r.DataReferences {
-		m.AddAVP(vendorAVP(avpDataReference, mv, datatype.Enumerated(d)))
+		m.AddAVP(diameter.VendorAVP(avpDataReference, mv, datatype.Enumerated(d)))
 	}
-	m.AddAVP(vendorAVP(avpUserData, mv, datatype.OctetString(r.UserData)))
+	m.AddAVP(diameter.VendorAVP(avpUserData, mv, datatype.OctetString(r.UserData)))
 	return m
 }
 
 func ParseProfileUpdateRequest(m *diam.Message) (ProfileUpdateRequest, error) {
 	var raw struct {
-		requestHeader
+		diameter.Header
 		UserIdentity   userIdentityAVP `avp:"User-Identity"`
 		DataReferences []int32         `avp:"Data-Reference,omitempty"`
 		UserData       []byte          `avp:"User-Data"`
@@ -139,7 +138,7 @@ func ParseProfileUpdateRequest(m *diam.Message) (ProfileUpdateRequest, error) {
 	if err != nil {
 		return ProfileUpdateRequest{}, fmt.Errorf("PUR: User-Identity: %w", err)
 	}
-	r := ProfileUpdateRequest{Header: raw.header(), UserIdentity: id, UserData: raw.UserData}
+	r := ProfileUpdateRequest{Header: raw.Header, UserIdentity: id, UserData: raw.UserData}
 	for _, d := range raw.DataReferences {
 		r.DataReferences = append(r.DataReferences, DataReference(d))
 	}
@@ -148,7 +147,7 @@ func ParseProfileUpdateRequest(m *diam.Message) (ProfileUpdateRequest, error) {
 
 // ProfileUpdateAnswer is the PUA of TS 29.329 6.1.4.
 type ProfileUpdateAnswer struct {
-	Result cx.Result
+	Result diameter.Result
 }
 
 func (a ProfileUpdateAnswer) Message(request *diam.Message, local diameter.Identity) *diam.Message {
@@ -156,11 +155,11 @@ func (a ProfileUpdateAnswer) Message(request *diam.Message, local diameter.Ident
 }
 
 func ParseProfileUpdateAnswer(m *diam.Message) (ProfileUpdateAnswer, error) {
-	var raw answerResult
+	var raw diameter.ResultAVPs
 	if err := m.Unmarshal(&raw); err != nil {
 		return ProfileUpdateAnswer{}, fmt.Errorf("PUA: %w", err)
 	}
-	result, err := raw.result()
+	result, err := raw.Result()
 	if err != nil {
 		return ProfileUpdateAnswer{}, fmt.Errorf("PUA: %w", err)
 	}

@@ -95,12 +95,12 @@ func TestCxHandlerSendsEachRequestToItsRole(t *testing.T) {
 	t.Cleanup(s.Close)
 
 	rtr := cx.RegistrationTerminationRequest{
-		Header:               cx.NewHeader(node, "ims."+domain, domain),
+		Header:               diameter.NewHeader(node, "ims."+domain, domain),
 		UserName:             impi,
 		DeregistrationReason: cx.DeregistrationReason{ReasonCode: cx.PermanentTermination},
 	}.Message()
 	uar := cx.UserAuthorizationRequest{
-		Header: cx.NewHeader(node, "", domain), UserName: impi, PublicIdentity: impu, VisitedNetworkIdentifier: domain,
+		Header: diameter.NewHeader(node, "", domain), UserName: impi, PublicIdentity: impu, VisitedNetworkIdentifier: domain,
 	}.Message()
 	// The HSS does not take an RTR.
 	unsupported := diameter.DiameterCommandUnsupported
@@ -177,7 +177,7 @@ func TestDiameterHandlerSendsRxToTheEPCRole(t *testing.T) {
 	aar := rx.AARequest{Header: diameter.NewHeader(node, "", domain), MediaComponents: []policy.MediaComponent{policy.SignallingComponent()},
 		FramedIPAddress: netip.MustParseAddr("172.28.0.110")}.Message()
 	uar := cx.UserAuthorizationRequest{
-		Header: cx.NewHeader(node, "", domain), UserName: impi, PublicIdentity: impu, VisitedNetworkIdentifier: domain,
+		Header: diameter.NewHeader(node, "", domain), UserName: impi, PublicIdentity: impu, VisitedNetworkIdentifier: domain,
 	}.Message()
 	asr := rx.AbortSessionRequest{Header: diameter.NewHeader(node, "ims."+domain, domain), AbortCause: rx.BearerReleased}.Message()
 	events := make(chan policy.Event, 1)
