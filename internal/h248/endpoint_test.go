@@ -11,6 +11,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/yuu-biz/ims-practice/internal/h248/h248test"
 )
 
 // The addresses of the controller and the media gateway in the tests
@@ -20,11 +22,11 @@ const (
 	gatewayAddr    = "192.0.2.2:2944"
 )
 
-// testbed is a controller and a media gateway on a memNetwork with a
-// fakeClock.
+// testbed is a controller and a media gateway on an h248test.Network
+// with an h248test.Clock.
 type testbed struct {
-	clock      *fakeClock
-	network    *memNetwork
+	clock      *h248test.Clock
+	network    *h248test.Network
 	controller *Endpoint
 	gateway    *Endpoint
 }
@@ -34,8 +36,8 @@ type testbed struct {
 // IDs are filled in.
 func newTestbed(t *testing.T, controller, gateway EndpointConfig) *testbed {
 	t.Helper()
-	b := &testbed{clock: newFakeClock()}
-	b.network = newMemNetwork(b.clock)
+	b := &testbed{clock: h248test.NewClock()}
+	b.network = h248test.NewNetwork(b.clock)
 	controller.MId, controller.Clock, controller.FirstTransactionID = mgc, b.clock, 1
 	gateway.MId, gateway.Clock, gateway.FirstTransactionID = mg, b.clock, 5001
 	b.controller = b.start(t, controllerAddr, controller)
@@ -45,7 +47,7 @@ func newTestbed(t *testing.T, controller, gateway EndpointConfig) *testbed {
 
 func (b *testbed) start(t *testing.T, addr string, config EndpointConfig) *Endpoint {
 	t.Helper()
-	e, err := NewEndpoint(b.network.listen(addr), config)
+	e, err := NewEndpoint(b.network.Listen(addr), config)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -65,7 +67,7 @@ func (b *testbed) start(t *testing.T, addr string, config EndpointConfig) *Endpo
 func (b *testbed) request(ctx context.Context, actions []ActionRequest) <-chan outgoingResult {
 	result := make(chan outgoingResult, 1)
 	go func() {
-		reply, err := b.controller.Request(ctx, memAddr(gatewayAddr), actions)
+		reply, err := b.controller.Request(ctx, h248test.Addr(gatewayAddr), actions)
 		result <- outgoingResult{reply: reply, err: err}
 	}()
 	return result
@@ -73,7 +75,7 @@ func (b *testbed) request(ctx context.Context, actions []ActionRequest) <-chan o
 
 // inject puts a datagram on the network as if from would have sent it.
 func (b *testbed) inject(from, to, text string) {
-	b.network.deliver(datagram{from: from, to: to, payload: []byte(text)})
+	b.network.Deliver(h248test.Datagram{From: from, To: to, Payload: []byte(text)})
 }
 
 // reserve asks for a context with one termination on the access side
@@ -161,7 +163,7 @@ func (b *testbed) advanceUntil(t *testing.T, result <-chan outgoingResult, step 
 			return r
 		default:
 		}
-		b.network.settle(t)
+		b.network.Settle(t)
 		b.clock.Advance(step)
 	}
 	t.Fatal("the request did not end")
@@ -169,18 +171,18 @@ func (b *testbed) advanceUntil(t *testing.T, result <-chan outgoingResult, step 
 }
 
 // parsed reads a datagram back as a message.
-func parsed(t *testing.T, d datagram) Message {
+func parsed(t *testing.T, d h248test.Datagram) Message {
 	t.Helper()
-	m, err := Parse(d.payload)
+	m, err := Parse(d.Payload)
 	if err != nil {
-		t.Fatalf("datagram from %s does not parse: %v\n%s", d.from, err, d.payload)
+		t.Fatalf("datagram from %s does not parse: %v\n%s", d.From, err, d.Payload)
 	}
 	return m
 }
 
 // kinds names the transactions of each datagram, as "Transaction=1" or
 // "Reply=1", with "lost:" in front of the ones the network lost.
-func kinds(t *testing.T, ds []datagram) []string {
+func kinds(t *testing.T, ds []h248test.Datagram) []string {
 	t.Helper()
 	var out []string
 	for _, d := range ds {
@@ -205,7 +207,7 @@ func kinds(t *testing.T, ds []datagram) []string {
 			}
 		}
 		name := strings.Join(names, ",")
-		if d.lost {
+		if d.Lost {
 			name = "lost:" + name
 		}
 		out = append(out, name)
@@ -213,7 +215,7 @@ func kinds(t *testing.T, ds []datagram) []string {
 	return out
 }
 
-func checkKinds(t *testing.T, ds []datagram, want ...string) {
+func checkKinds(t *testing.T, ds []h248test.Datagram, want ...string) {
 	t.Helper()
 	got := kinds(t, ds)
 	if strings.Join(got, " ") != strings.Join(want, " ") {
@@ -222,10 +224,10 @@ func checkKinds(t *testing.T, ds []datagram, want ...string) {
 }
 
 // loseFirst loses the first datagram that from sends.
-func loseFirst(from string) func(d datagram) bool {
+func loseFirst(from string) func(d h248test.Datagram) bool {
 	var lost atomic.Bool
-	return func(d datagram) bool {
-		return d.from == from && lost.CompareAndSwap(false, true)
+	return func(d h248test.Datagram) bool {
+		return d.From == from && lost.CompareAndSwap(false, true)
 	}
 }
 
@@ -240,16 +242,16 @@ func TestRequestAndReply(t *testing.T) {
 	if r.reply.TransactionID != 1 || len(r.reply.Actions) != 1 || r.reply.Actions[0].ContextID != 7 {
 		t.Errorf("reply %+v", r.reply)
 	}
-	ds := b.network.datagrams()
+	ds := b.network.Datagrams()
 	checkKinds(t, ds, "Transaction=1", "Reply=1")
-	if ds[0].from != controllerAddr || ds[0].to != gatewayAddr || ds[1].from != gatewayAddr || ds[1].to != controllerAddr {
+	if ds[0].From != controllerAddr || ds[0].To != gatewayAddr || ds[1].From != gatewayAddr || ds[1].To != controllerAddr {
 		t.Errorf("the reply does not go back to where the request came from: %+v", ds)
 	}
-	if !strings.HasPrefix(string(ds[0].payload), "MEGACO/2 <pcscf1.ims.example.net>\n") ||
-		!strings.HasPrefix(string(ds[1].payload), "MEGACO/2 <agw1.ims.example.net>\n") {
-		t.Errorf("headers:\n%s\n%s", ds[0].payload, ds[1].payload)
+	if !strings.HasPrefix(string(ds[0].Payload), "MEGACO/2 <pcscf1.ims.example.net>\n") ||
+		!strings.HasPrefix(string(ds[1].Payload), "MEGACO/2 <agw1.ims.example.net>\n") {
+		t.Errorf("headers:\n%s\n%s", ds[0].Payload, ds[1].Payload)
 	}
-	b.network.settle(t)
+	b.network.Settle(t)
 	if n := b.controller.outgoingCount.Load(); n != 0 {
 		t.Errorf("the controller still holds %d requests", n)
 	}
@@ -258,12 +260,12 @@ func TestRequestAndReply(t *testing.T) {
 func TestLostRequestIsRepeated(t *testing.T) {
 	var h countingHandler
 	b := newTestbed(t, EndpointConfig{}, EndpointConfig{Handler: h.handle})
-	b.network.setLose(loseFirst(controllerAddr))
+	b.network.SetLose(loseFirst(controllerAddr))
 
 	result := b.request(context.Background(), reserve())
-	b.network.waitDatagrams(t, 1)
+	b.network.WaitDatagrams(t, 1)
 	b.clock.Advance(199 * time.Millisecond)
-	if n := len(b.network.datagrams()); n != 1 {
+	if n := len(b.network.Datagrams()); n != 1 {
 		t.Fatalf("the request was repeated before the timer expired: %d datagrams", n)
 	}
 	b.clock.Advance(time.Millisecond)
@@ -271,12 +273,12 @@ func TestLostRequestIsRepeated(t *testing.T) {
 	if r.err != nil {
 		t.Fatal(r.err)
 	}
-	ds := b.network.datagrams()
+	ds := b.network.Datagrams()
 	checkKinds(t, ds, "lost:Transaction=1", "Transaction=1", "Reply=1")
-	if string(ds[0].payload) != string(ds[1].payload) {
-		t.Errorf("the repetition differs from the request:\n%s\n%s", ds[0].payload, ds[1].payload)
+	if string(ds[0].Payload) != string(ds[1].Payload) {
+		t.Errorf("the repetition differs from the request:\n%s\n%s", ds[0].Payload, ds[1].Payload)
 	}
-	if got := ds[1].at.Sub(ds[0].at); got != 200*time.Millisecond {
+	if got := ds[1].At.Sub(ds[0].At); got != 200*time.Millisecond {
 		t.Errorf("repeated after %v, want 200ms", got)
 	}
 	if h.count(1) != 1 {
@@ -287,19 +289,19 @@ func TestLostRequestIsRepeated(t *testing.T) {
 func TestLostReplyIsSentAgainFromWhatIsKept(t *testing.T) {
 	var h countingHandler
 	b := newTestbed(t, EndpointConfig{}, EndpointConfig{Handler: h.handle})
-	b.network.setLose(loseFirst(gatewayAddr))
+	b.network.SetLose(loseFirst(gatewayAddr))
 
 	result := b.request(context.Background(), reserve())
-	b.network.waitDatagrams(t, 2)
+	b.network.WaitDatagrams(t, 2)
 	b.clock.Advance(200 * time.Millisecond)
 	r := wait(t, result)
 	if r.err != nil {
 		t.Fatal(r.err)
 	}
-	ds := b.network.datagrams()
+	ds := b.network.Datagrams()
 	checkKinds(t, ds, "Transaction=1", "lost:Reply=1", "Transaction=1", "Reply=1")
-	if string(ds[1].payload) != string(ds[3].payload) {
-		t.Errorf("the second reply differs from the first:\n%s\n%s", ds[1].payload, ds[3].payload)
+	if string(ds[1].Payload) != string(ds[3].Payload) {
+		t.Errorf("the second reply differs from the first:\n%s\n%s", ds[1].Payload, ds[3].Payload)
 	}
 	if h.count(1) != 1 {
 		t.Errorf("the handler ran %d times, want once (at most once, RFC 3525 D.1.1)", h.count(1))
@@ -308,15 +310,15 @@ func TestLostReplyIsSentAgainFromWhatIsKept(t *testing.T) {
 
 func TestRetransmissionBacksOffAndGivesUp(t *testing.T) {
 	b := newTestbed(t, EndpointConfig{}, EndpointConfig{})
-	b.network.setLose(func(d datagram) bool { return true })
+	b.network.SetLose(func(d h248test.Datagram) bool { return true })
 
 	result := b.request(context.Background(), reserve())
-	b.network.waitDatagrams(t, 1)
+	b.network.WaitDatagrams(t, 1)
 	r := b.advanceUntil(t, result, 50*time.Millisecond)
 	if !errors.Is(r.err, ErrNoReply) {
 		t.Fatalf("Request returned %v, want ErrNoReply", r.err)
 	}
-	ds := b.network.datagrams()
+	ds := b.network.Datagrams()
 	if len(ds) < 2 || len(ds) > 1+10 {
 		t.Fatalf("%d transmissions, want 2 to 11", len(ds))
 	}
@@ -325,7 +327,7 @@ func TestRetransmissionBacksOffAndGivesUp(t *testing.T) {
 	// and AAD.
 	aad := 200 * time.Millisecond
 	for i := 1; i < len(ds); i++ {
-		gap := ds[i].at.Sub(ds[i-1].at)
+		gap := ds[i].At.Sub(ds[i-1].At)
 		low, high := aad/2, aad
 		if i == 1 {
 			low = aad
@@ -335,38 +337,38 @@ func TestRetransmissionBacksOffAndGivesUp(t *testing.T) {
 		}
 		aad = min(2*aad, 4*time.Second)
 	}
-	if last := ds[len(ds)-1].at.Sub(ds[0].at); last > 25*time.Second {
+	if last := ds[len(ds)-1].At.Sub(ds[0].At); last > 25*time.Second {
 		t.Errorf("the last repetition came %v after the request, after T-MAX", last)
 	}
 }
 
 func TestGiveUpAfterMaxRetransmissions(t *testing.T) {
 	b := newTestbed(t, EndpointConfig{Timers: Timers{MaxRetransmissions: 2}}, EndpointConfig{})
-	b.network.setLose(func(d datagram) bool { return true })
+	b.network.SetLose(func(d h248test.Datagram) bool { return true })
 
 	result := b.request(context.Background(), reserve())
-	b.network.waitDatagrams(t, 1)
+	b.network.WaitDatagrams(t, 1)
 	b.clock.Advance(10 * time.Second)
 	if r := wait(t, result); !errors.Is(r.err, ErrNoReply) {
 		t.Fatalf("Request returned %v, want ErrNoReply", r.err)
 	}
-	checkKinds(t, b.network.datagrams(), "lost:Transaction=1", "lost:Transaction=1", "lost:Transaction=1")
+	checkKinds(t, b.network.Datagrams(), "lost:Transaction=1", "lost:Transaction=1", "lost:Transaction=1")
 }
 
 func TestGiveUpAfterTMax(t *testing.T) {
 	b := newTestbed(t, EndpointConfig{Timers: Timers{TMax: time.Second, LongTimer: 2 * time.Second}}, EndpointConfig{})
-	b.network.setLose(func(d datagram) bool { return true })
+	b.network.SetLose(func(d h248test.Datagram) bool { return true })
 
 	result := b.request(context.Background(), reserve())
-	b.network.waitDatagrams(t, 1)
+	b.network.WaitDatagrams(t, 1)
 	b.clock.Advance(10 * time.Second)
 	if r := wait(t, result); !errors.Is(r.err, ErrNoReply) {
 		t.Fatalf("Request returned %v, want ErrNoReply", r.err)
 	}
-	ds := b.network.datagrams()
+	ds := b.network.Datagrams()
 	for _, d := range ds {
-		if d.at.Sub(ds[0].at) > time.Second {
-			t.Errorf("a repetition went out %v after the request, after T-MAX", d.at.Sub(ds[0].at))
+		if d.At.Sub(ds[0].At) > time.Second {
+			t.Errorf("a repetition went out %v after the request, after T-MAX", d.At.Sub(ds[0].At))
 		}
 	}
 	if len(ds) < 3 {
@@ -380,12 +382,12 @@ func TestReplyIsForgottenAfterLongTimer(t *testing.T) {
 	if r := wait(t, b.request(context.Background(), reserve())); r.err != nil {
 		t.Fatal(r.err)
 	}
-	request := string(b.network.datagrams()[0].payload)
+	request := string(b.network.Datagrams()[0].Payload)
 
 	// Within LONG-TIMER a copy of the request gets the kept reply.
 	b.clock.Advance(29 * time.Second)
 	b.inject(controllerAddr, gatewayAddr, request)
-	b.network.waitDatagrams(t, 4)
+	b.network.WaitDatagrams(t, 4)
 	if h.count(1) != 1 {
 		t.Fatalf("the handler ran %d times", h.count(1))
 	}
@@ -393,16 +395,16 @@ func TestReplyIsForgottenAfterLongTimer(t *testing.T) {
 	// After LONG-TIMER the gateway has forgotten the transaction, and
 	// a copy is a new request (Annex D.1.2.2).
 	b.clock.Advance(time.Second)
-	b.network.settle(t)
+	b.network.Settle(t)
 	if n := b.gateway.incomingCount.Load(); n != 0 {
 		t.Fatalf("the gateway still holds %d transactions", n)
 	}
 	b.inject(controllerAddr, gatewayAddr, request)
-	b.network.waitDatagrams(t, 6)
+	b.network.WaitDatagrams(t, 6)
 	if h.count(1) != 2 {
 		t.Errorf("the handler ran %d times", h.count(1))
 	}
-	checkKinds(t, b.network.datagrams(), "Transaction=1", "Reply=1", "Transaction=1", "Reply=1", "Transaction=1", "Reply=1")
+	checkKinds(t, b.network.Datagrams(), "Transaction=1", "Reply=1", "Transaction=1", "Reply=1", "Transaction=1", "Reply=1")
 }
 
 func TestSecondCopyOfAReplyIsIgnored(t *testing.T) {
@@ -411,15 +413,15 @@ func TestSecondCopyOfAReplyIsIgnored(t *testing.T) {
 	if r := wait(t, b.request(context.Background(), reserve())); r.err != nil {
 		t.Fatal(r.err)
 	}
-	reply := string(b.network.datagrams()[1].payload)
+	reply := string(b.network.Datagrams()[1].Payload)
 	b.inject(gatewayAddr, controllerAddr, reply)
-	b.network.settle(t)
+	b.network.Settle(t)
 
 	r := wait(t, b.request(context.Background(), reserve()))
 	if r.err != nil || r.reply.TransactionID != 2 {
 		t.Fatalf("the next request got %+v, %v", r.reply, r.err)
 	}
-	checkKinds(t, b.network.datagrams(), "Transaction=1", "Reply=1", "Reply=1", "Transaction=2", "Reply=2")
+	checkKinds(t, b.network.Datagrams(), "Transaction=1", "Reply=1", "Reply=1", "Transaction=2", "Reply=2")
 }
 
 // blockingHandler holds every request until release is closed.
@@ -451,7 +453,7 @@ func (h *blockingHandler) handle(ctx context.Context, r *IncomingRequest) Transa
 
 func (h *blockingHandler) waitStarted(t *testing.T, n int32) {
 	t.Helper()
-	eventually(t, "the handler to start", func() bool { return h.calls.Load() == n })
+	h248test.Eventually(t, "the handler to start", func() bool { return h.calls.Load() == n })
 }
 
 func TestRepetitionWhileExecutingGetsPending(t *testing.T) {
@@ -465,14 +467,14 @@ func TestRepetitionWhileExecutingGetsPending(t *testing.T) {
 	result := b.request(context.Background(), reserve())
 	h.waitStarted(t, 1)
 	b.clock.Advance(200 * time.Millisecond)
-	b.network.waitDatagrams(t, 3)
-	b.network.settle(t)
+	b.network.WaitDatagrams(t, 3)
+	b.network.Settle(t)
 	close(h.release)
 	if r := wait(t, result); r.err != nil {
 		t.Fatal(r.err)
 	}
-	b.network.waitDatagrams(t, 5)
-	checkKinds(t, b.network.datagrams(),
+	b.network.WaitDatagrams(t, 5)
+	checkKinds(t, b.network.Datagrams(),
 		"Transaction=1", "Transaction=1", "Pending=1", "Reply=1(ImmAckRequired)", "TransactionResponseAck=[{1 0}]")
 	if h.calls.Load() != 1 {
 		t.Errorf("the handler ran %d times", h.calls.Load())
@@ -489,10 +491,10 @@ func TestPendingHoldsBackRepetition(t *testing.T) {
 	// timer. The Pendings every 100 ms keep the controller from
 	// repeating the request.
 	for range 10 {
-		b.network.settle(t)
+		b.network.Settle(t)
 		b.clock.Advance(100 * time.Millisecond)
 	}
-	b.network.settle(t)
+	b.network.Settle(t)
 	close(h.release)
 	r := wait(t, result)
 	if r.err != nil {
@@ -501,20 +503,20 @@ func TestPendingHoldsBackRepetition(t *testing.T) {
 	if !r.reply.ImmAckRequired {
 		t.Error("the reply after Pendings does not ask for an immediate confirmation")
 	}
-	b.network.waitDatagrams(t, 13)
+	b.network.WaitDatagrams(t, 13)
 	want := []string{"Transaction=1"}
 	for range 10 {
 		want = append(want, "Pending=1")
 	}
 	want = append(want, "Reply=1(ImmAckRequired)", "TransactionResponseAck=[{1 0}]")
-	checkKinds(t, b.network.datagrams(), want...)
+	checkKinds(t, b.network.Datagrams(), want...)
 
 	// The gateway has dropped the confirmed reply: a late copy of the
 	// request gets no answer and is not carried out (Annex D.1.2.2).
-	b.network.settle(t)
-	b.inject(controllerAddr, gatewayAddr, string(b.network.datagrams()[0].payload))
-	b.network.settle(t)
-	if n := len(b.network.datagrams()); n != 14 {
+	b.network.Settle(t)
+	b.inject(controllerAddr, gatewayAddr, string(b.network.Datagrams()[0].Payload))
+	b.network.Settle(t)
+	if n := len(b.network.Datagrams()); n != 14 {
 		t.Errorf("%d datagrams, want no answer to the late copy", n)
 	}
 	if h.calls.Load() != 1 {
@@ -528,14 +530,14 @@ func TestHandlerSendsPendingAtOnce(t *testing.T) {
 	b := newTestbed(t, EndpointConfig{}, EndpointConfig{Handler: h.handle})
 
 	result := b.request(context.Background(), reserve())
-	b.network.waitDatagrams(t, 2)
-	b.network.settle(t)
+	b.network.WaitDatagrams(t, 2)
+	b.network.Settle(t)
 	close(h.release)
 	if r := wait(t, result); r.err != nil {
 		t.Fatal(r.err)
 	}
-	b.network.waitDatagrams(t, 4)
-	checkKinds(t, b.network.datagrams(),
+	b.network.WaitDatagrams(t, 4)
+	checkKinds(t, b.network.Datagrams(),
 		"Transaction=1", "Pending=1", "Reply=1(ImmAckRequired)", "TransactionResponseAck=[{1 0}]")
 }
 
@@ -543,24 +545,24 @@ func TestRequestIsRepeatedWhenPendingsStop(t *testing.T) {
 	h := newBlockingHandler()
 	b := newTestbed(t, EndpointConfig{}, EndpointConfig{Handler: h.handle})
 	var pendings atomic.Int32
-	b.network.setLose(func(d datagram) bool {
-		return d.from == gatewayAddr && strings.Contains(string(d.payload), "Pending") && pendings.Add(1) > 1
+	b.network.SetLose(func(d h248test.Datagram) bool {
+		return d.From == gatewayAddr && strings.Contains(string(d.Payload), "Pending") && pendings.Add(1) > 1
 	})
 
 	result := b.request(context.Background(), reserve())
 	h.waitStarted(t, 1)
 	for range 4 {
-		b.network.settle(t)
+		b.network.Settle(t)
 		b.clock.Advance(100 * time.Millisecond)
 	}
-	b.network.settle(t)
-	ds := b.network.datagrams()
+	b.network.Settle(t)
+	ds := b.network.Datagrams()
 	// The Pending at 100 ms sets the timer to the provisional timer of
 	// the peer plus the initial retransmission timer, 300 ms.
 	var repeated []time.Duration
 	for _, d := range ds[1:] {
-		if d.from == controllerAddr {
-			repeated = append(repeated, d.at.Sub(ds[0].at))
+		if d.From == controllerAddr {
+			repeated = append(repeated, d.At.Sub(ds[0].At))
 		}
 	}
 	if len(repeated) != 1 || repeated[0] != 400*time.Millisecond {
@@ -590,9 +592,9 @@ func TestPendingLimitEndsTheTransaction(t *testing.T) {
 		{Command: Modify, TerminationID: "ip/1/access/7"},
 		{Command: Modify, TerminationID: "ip/1/core/7"},
 	}}})
-	b.network.waitDatagrams(t, 1)
+	b.network.WaitDatagrams(t, 1)
 	for range 3 {
-		b.network.settle(t)
+		b.network.Settle(t)
 		b.clock.Advance(100 * time.Millisecond)
 	}
 	r := wait(t, result)
@@ -608,8 +610,8 @@ func TestPendingLimitEndsTheTransaction(t *testing.T) {
 	if got, _ := cause.Load().(error); !errors.Is(got, ErrPendingLimitReached) {
 		t.Errorf("the handler was stopped with %v", got)
 	}
-	b.network.waitDatagrams(t, 5)
-	checkKinds(t, b.network.datagrams(),
+	b.network.WaitDatagrams(t, 5)
+	checkKinds(t, b.network.Datagrams(),
 		"Transaction=1", "Pending=1", "Pending=1", "Reply=1(ImmAckRequired)", "TransactionResponseAck=[{1 0}]")
 }
 
@@ -621,7 +623,7 @@ func TestPeerPendingLimit(t *testing.T) {
 	result := b.request(context.Background(), reserve())
 	h.waitStarted(t, 1)
 	for range 3 {
-		b.network.settle(t)
+		b.network.Settle(t)
 		b.clock.Advance(100 * time.Millisecond)
 	}
 	if r := wait(t, result); !errors.Is(r.err, ErrPendingLimitExceeded) {
@@ -638,19 +640,19 @@ func TestResponseAckDropsKeptReplies(t *testing.T) {
 		}
 	}
 	var requests []string
-	for _, d := range b.network.datagrams() {
-		if d.from == controllerAddr {
-			requests = append(requests, string(d.payload))
+	for _, d := range b.network.Datagrams() {
+		if d.From == controllerAddr {
+			requests = append(requests, string(d.Payload))
 		}
 	}
 	// The MId is spelt in other case; it names the same controller.
 	b.inject(controllerAddr, gatewayAddr, "MEGACO/2 <PCSCF1.ims.example.net>\nTransactionResponseAck { 1-2, 3 }\n")
-	b.network.settle(t)
+	b.network.Settle(t)
 	for _, request := range requests {
 		b.inject(controllerAddr, gatewayAddr, request)
 	}
-	b.network.settle(t)
-	if n := len(b.network.datagrams()); n != 6+1+3 {
+	b.network.Settle(t)
+	if n := len(b.network.Datagrams()); n != 6+1+3 {
 		t.Errorf("%d datagrams, want no answers to the copies", n)
 	}
 	if h.total() != 3 {
@@ -668,7 +670,7 @@ func TestConcurrentTransactions(t *testing.T) {
 	}
 	b := newTestbed(t, EndpointConfig{}, EndpointConfig{Handler: handler})
 	var n atomic.Int64
-	b.network.setLose(func(d datagram) bool { return n.Add(1)%3 == 0 })
+	b.network.SetLose(func(d h248test.Datagram) bool { return n.Add(1)%3 == 0 })
 
 	const count = 50
 	results := make([]<-chan outgoingResult, count)
@@ -677,7 +679,7 @@ func TestConcurrentTransactions(t *testing.T) {
 		actions[0].ContextID = ContextID(100 + i)
 		results[i] = b.request(context.Background(), actions)
 	}
-	b.network.waitDatagrams(t, count)
+	b.network.WaitDatagrams(t, count)
 	for i := range count {
 		r := b.advanceUntil(t, results[i], 100*time.Millisecond)
 		if r.err != nil {
@@ -712,16 +714,16 @@ func TestTooManyTransactions(t *testing.T) {
 	b := newTestbed(t, EndpointConfig{MaxTransactions: 2}, gateway)
 
 	first := b.request(context.Background(), reserve())
-	eventually(t, "the handler to start", func() bool { return calls.Load() == 1 })
+	h248test.Eventually(t, "the handler to start", func() bool { return calls.Load() == 1 })
 	// The gateway has no room for a second request and drops it.
 	second := b.request(context.Background(), reserve())
-	b.network.waitDatagrams(t, 2)
-	b.network.settle(t)
+	b.network.WaitDatagrams(t, 2)
+	b.network.Settle(t)
 	if calls.Load() != 1 {
 		t.Errorf("the handler ran for a request beyond MaxTransactions")
 	}
 	// The controller has no room for a third.
-	if _, err := b.controller.Request(context.Background(), memAddr(gatewayAddr), reserve()); !errors.Is(err, ErrTooManyTransactions) {
+	if _, err := b.controller.Request(context.Background(), h248test.Addr(gatewayAddr), reserve()); !errors.Is(err, ErrTooManyTransactions) {
 		t.Errorf("a third request returned %v, want ErrTooManyTransactions", err)
 	}
 
@@ -750,10 +752,10 @@ func TestMessageTooLong(t *testing.T) {
 	// A request that does not fit is not sent.
 	actions := reserve()
 	actions[0].Commands[0].Media.OneStream.Local.SDP += long
-	if _, err := b.controller.Request(context.Background(), memAddr(gatewayAddr), actions); !errors.Is(err, ErrMessageTooLong) {
+	if _, err := b.controller.Request(context.Background(), h248test.Addr(gatewayAddr), actions); !errors.Is(err, ErrMessageTooLong) {
 		t.Fatalf("Request returned %v, want ErrMessageTooLong", err)
 	}
-	if n := len(b.network.datagrams()); n != 0 {
+	if n := len(b.network.Datagrams()); n != 0 {
 		t.Fatalf("%d datagrams went out", n)
 	}
 
@@ -767,9 +769,9 @@ func TestMessageTooLong(t *testing.T) {
 		r.reply.Actions[0].ContextID != 7 || r.reply.Actions[0].Error == nil || r.reply.Actions[0].Error.ErrorCode != 533 {
 		t.Errorf("reply %+v, want error 533 for the action of context 7", r.reply)
 	}
-	for _, d := range b.network.datagrams() {
-		if len(d.payload) > 1452 {
-			t.Errorf("a datagram of %d octets went out", len(d.payload))
+	for _, d := range b.network.Datagrams() {
+		if len(d.Payload) > 1452 {
+			t.Errorf("a datagram of %d octets went out", len(d.Payload))
 		}
 	}
 	if n := b.controller.outgoingCount.Load(); n != 0 {
@@ -806,39 +808,39 @@ func TestOverflowKeepsTheRepliesThatFit(t *testing.T) {
 		a[1].Error == nil || a[1].Error.ErrorCode != 533 {
 		t.Errorf("reply %+v, want three command replies and error 533 in the second action", r.reply)
 	}
-	if d := b.network.datagrams()[1]; len(d.payload) > 1452 {
-		t.Errorf("a datagram of %d octets went out", len(d.payload))
+	if d := b.network.Datagrams()[1]; len(d.Payload) > 1452 {
+		t.Errorf("a datagram of %d octets went out", len(d.Payload))
 	}
 }
 
 func TestRequestEndsWithItsContext(t *testing.T) {
 	b := newTestbed(t, EndpointConfig{}, EndpointConfig{})
-	b.network.setLose(func(d datagram) bool { return true })
+	b.network.SetLose(func(d h248test.Datagram) bool { return true })
 
 	ctx, cancel := context.WithCancel(context.Background())
 	result := b.request(ctx, reserve())
-	b.network.waitDatagrams(t, 1)
+	b.network.WaitDatagrams(t, 1)
 	cancel()
 	if r := wait(t, result); !errors.Is(r.err, context.Canceled) {
 		t.Fatalf("Request returned %v", r.err)
 	}
 	b.clock.Advance(time.Minute)
-	if n := len(b.network.datagrams()); n != 1 {
+	if n := len(b.network.Datagrams()); n != 1 {
 		t.Errorf("the request was repeated after its context ended: %d datagrams", n)
 	}
 }
 
 func TestCloseEndsRequests(t *testing.T) {
 	b := newTestbed(t, EndpointConfig{}, EndpointConfig{})
-	b.network.setLose(func(d datagram) bool { return true })
+	b.network.SetLose(func(d h248test.Datagram) bool { return true })
 
 	result := b.request(context.Background(), reserve())
-	b.network.waitDatagrams(t, 1)
+	b.network.WaitDatagrams(t, 1)
 	b.controller.Close()
 	if r := wait(t, result); !errors.Is(r.err, net.ErrClosed) {
 		t.Fatalf("Request returned %v, want net.ErrClosed", r.err)
 	}
-	if _, err := b.controller.Request(context.Background(), memAddr(gatewayAddr), reserve()); !errors.Is(err, net.ErrClosed) {
+	if _, err := b.controller.Request(context.Background(), h248test.Addr(gatewayAddr), reserve()); !errors.Is(err, net.ErrClosed) {
 		t.Errorf("Request after Close returned %v", err)
 	}
 }
@@ -930,12 +932,12 @@ func TestMessageThatCannotBeReadInFull(t *testing.T) {
 			b.inject(controllerAddr, gatewayAddr, tt.message)
 			// The Endpoint carries out a request, and answers it, in a
 			// goroutine of its own, so the test waits for the answers.
-			b.network.settle(t)
+			b.network.Settle(t)
 			if tt.want != "" {
-				b.network.waitDatagrams(t, 1+len(strings.Fields(tt.want)))
+				b.network.WaitDatagrams(t, 1+len(strings.Fields(tt.want)))
 			}
 			var got []string
-			for _, d := range b.network.datagrams()[1:] {
+			for _, d := range b.network.Datagrams()[1:] {
 				got = append(got, answered(parsed(t, d)))
 			}
 			// The transactions of a message are carried out
@@ -956,10 +958,10 @@ func TestPartOfARequestIsCarriedOutOnce(t *testing.T) {
 	}})
 	broken := "MEGACO/2 <pcscf1.ims.example.net>\nTransaction = 9 { Context = 7 { Modify = ip/1/access/7, Bogus } }"
 	b.inject(controllerAddr, gatewayAddr, broken)
-	b.network.waitDatagrams(t, 2)
+	b.network.WaitDatagrams(t, 2)
 	b.inject(controllerAddr, gatewayAddr, broken)
-	ds := b.network.waitDatagrams(t, 4)
-	if n := calls.Load(); n != 1 || len(ds) != 4 || string(ds[1].payload) != string(ds[3].payload) {
+	ds := b.network.WaitDatagrams(t, 4)
+	if n := calls.Load(); n != 1 || len(ds) != 4 || string(ds[1].Payload) != string(ds[3].Payload) {
 		t.Errorf("the handler ran %d times; %d datagrams", n, len(ds))
 	}
 }
@@ -982,22 +984,22 @@ func notify() []ActionRequest {
 func TestRepliesAreHandledBeforeRequests(t *testing.T) {
 	var h countingHandler
 	b := newTestbed(t, EndpointConfig{Handler: h.handle}, EndpointConfig{})
-	if _, err := b.gateway.Request(context.Background(), memAddr(controllerAddr), notify()); err != nil {
+	if _, err := b.gateway.Request(context.Background(), h248test.Addr(controllerAddr), notify()); err != nil {
 		t.Fatal(err)
 	}
 	// The controller sends a request to a peer that never reads it.
 	// Its reply comes in the same message as a repetition of the
 	// gateway's request, after it.
-	go b.controller.Request(context.Background(), memAddr("192.0.2.3:2944"), reserve())
-	ds := b.network.waitDatagrams(t, 3)
-	b.inject(gatewayAddr, controllerAddr, string(ds[0].payload)+
+	go b.controller.Request(context.Background(), h248test.Addr("192.0.2.3:2944"), reserve())
+	ds := b.network.WaitDatagrams(t, 3)
+	b.inject(gatewayAddr, controllerAddr, string(ds[0].Payload)+
 		"Reply = 1 { ImmAckRequired, Context = 7 { Add = ip/1/access/11 } }\n")
-	b.network.waitDatagrams(t, 6)
-	b.network.settle(t)
+	b.network.WaitDatagrams(t, 6)
+	b.network.Settle(t)
 	// H.248.1 version 2 Corrigendum 1, clause 8: the reply is handled
 	// first, so its confirmation goes out before the kept reply to the
 	// repetition.
-	checkKinds(t, b.network.datagrams()[3:],
+	checkKinds(t, b.network.Datagrams()[3:],
 		"Transaction=5001,Reply=1(ImmAckRequired)", "TransactionResponseAck=[{1 0}]", "Reply=5001")
 	if h.count(5001) != 1 {
 		t.Errorf("the handler ran %d times", h.count(5001))
@@ -1026,23 +1028,23 @@ func TestRegistrationIsAVersion1Message(t *testing.T) {
 		Profile: &ServiceChangeProfile{ProfileName: "threegIq", Version: 7},
 		Version: 2,
 	})
-	if _, err := b.gateway.Request(context.Background(), memAddr(controllerAddr), register); err != nil {
+	if _, err := b.gateway.Request(context.Background(), h248test.Addr(controllerAddr), register); err != nil {
 		t.Fatal(err)
 	}
 	// Communication Recovery (TS 29.334 5.17.3.3) carries no version.
 	disconnected := rootServiceChange(ServiceChangeParm{Method: Disconnected, Reason: "900 Service Restored"})
-	if _, err := b.gateway.Request(context.Background(), memAddr(controllerAddr), disconnected); err != nil {
+	if _, err := b.gateway.Request(context.Background(), h248test.Addr(controllerAddr), disconnected); err != nil {
 		t.Fatal(err)
 	}
-	ds := b.network.datagrams()
+	ds := b.network.Datagrams()
 	checkKinds(t, ds, "Transaction=5001", "Reply=5001", "Transaction=5002", "Reply=5002")
 	want := []string{
 		"MEGACO/1 <agw1.ims.example.net>\n", "MEGACO/1 <pcscf1.ims.example.net>\n",
 		"MEGACO/2 <agw1.ims.example.net>\n", "MEGACO/2 <pcscf1.ims.example.net>\n",
 	}
 	for i, d := range ds {
-		if !strings.HasPrefix(string(d.payload), want[i]) {
-			t.Errorf("datagram %d starts\n%s\nwant %q", i, d.payload, want[i])
+		if !strings.HasPrefix(string(d.Payload), want[i]) {
+			t.Errorf("datagram %d starts\n%s\nwant %q", i, d.Payload, want[i])
 		}
 	}
 }
@@ -1061,21 +1063,21 @@ func TestTooManyTransactionsInAMessage(t *testing.T) {
 
 	// Ten transactions are allowed (TS 29.334 5.10, Table 5.10.1).
 	b.inject(controllerAddr, gatewayAddr, message(101, 10))
-	b.network.waitDatagrams(t, 11)
-	b.network.settle(t)
+	b.network.WaitDatagrams(t, 11)
+	b.network.Settle(t)
 	if h.total() != 10 {
 		t.Fatalf("the handler ran %d times for ten transactions", h.total())
 	}
 
 	// Eleven are refused as a whole with error 413 (H.248.8 4.2.9).
 	b.inject(controllerAddr, gatewayAddr, message(201, 11))
-	ds := b.network.waitDatagrams(t, 13)
-	b.network.settle(t)
-	if len(b.network.datagrams()) != 13 || h.total() != 10 {
-		t.Fatalf("%d datagrams and %d handler calls, want one answer and no call", len(b.network.datagrams()), h.total())
+	ds := b.network.WaitDatagrams(t, 13)
+	b.network.Settle(t)
+	if len(b.network.Datagrams()) != 13 || h.total() != 10 {
+		t.Fatalf("%d datagrams and %d handler calls, want one answer and no call", len(b.network.Datagrams()), h.total())
 	}
 	m := parsed(t, ds[12])
-	if ds[12].to != controllerAddr || m.MessageError == nil || m.MessageError.ErrorCode != 413 || len(m.Transactions) != 0 {
+	if ds[12].To != controllerAddr || m.MessageError == nil || m.MessageError.ErrorCode != 413 || len(m.Transactions) != 0 {
 		t.Errorf("answer %+v, want a message with error 413", m)
 	}
 }
@@ -1092,11 +1094,11 @@ func TestNoHandlerAnswersNotImplemented(t *testing.T) {
 }
 
 func TestNewEndpointChecksItsConfiguration(t *testing.T) {
-	n := newMemNetwork(newFakeClock())
-	if _, err := NewEndpoint(n.listen(controllerAddr), EndpointConfig{}); err == nil {
+	n := h248test.NewNetwork(h248test.NewClock())
+	if _, err := NewEndpoint(n.Listen(controllerAddr), EndpointConfig{}); err == nil {
 		t.Error("an Endpoint without an MId was made")
 	}
-	if _, err := NewEndpoint(n.listen(controllerAddr), EndpointConfig{MId: mgc, Timers: Timers{TMax: time.Minute}}); err == nil {
+	if _, err := NewEndpoint(n.Listen(controllerAddr), EndpointConfig{MId: mgc, Timers: Timers{TMax: time.Minute}}); err == nil {
 		t.Error("an Endpoint with LONG-TIMER shorter than T-MAX was made")
 	}
 }

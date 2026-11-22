@@ -13,6 +13,7 @@ import (
 
 	"github.com/yuu-biz/ims-practice/internal/agw"
 	"github.com/yuu-biz/ims-practice/internal/h248"
+	"github.com/yuu-biz/ims-practice/internal/h248/h248test"
 )
 
 // The addresses of the tests are documentation addresses (RFC 5737).
@@ -153,10 +154,10 @@ func (r *fakeRelay) setFail(err error) {
 // alive, as they would for a slow handler, but error 506 would end it.
 var testTimers = h248.Timers{PendingLimit: 1 << 20, PeerPendingLimit: 1 << 20}
 
-// testbed is a controller and a gateway on a memNetwork.
+// testbed is a controller and a gateway on an h248test.Network.
 type testbed struct {
-	clock      *fakeClock
-	net        *memNetwork
+	clock      *h248test.Clock
+	net        *h248test.Network
 	controller *Controller
 	gateway    *Gateway
 	relay      *fakeRelay
@@ -164,8 +165,8 @@ type testbed struct {
 
 func newTestbed(t *testing.T, config ControllerConfig, gateway ...func(*GatewayConfig)) *testbed {
 	t.Helper()
-	clock := newFakeClock()
-	b := &testbed{clock: clock, net: newMemNetwork(clock), relay: newFakeRelay()}
+	clock := h248test.NewClock()
+	b := &testbed{clock: clock, net: h248test.NewNetwork(clock), relay: newFakeRelay()}
 	b.controller = b.startController(t, config, 1)
 	b.gateway = b.startGateway(t, b.relay, 100, 5001, gateway...)
 	return b
@@ -179,7 +180,7 @@ func (b *testbed) startController(t *testing.T, config ControllerConfig, firstTr
 	config.Endpoint.Clock = b.clock
 	config.Endpoint.FirstTransactionID = firstTransaction
 	config.Endpoint.Timers = testTimers
-	c, err := NewController(b.net.listen(controllerAddr), config)
+	c, err := NewController(b.net.Listen(controllerAddr), config)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -196,7 +197,7 @@ func (b *testbed) startGateway(t *testing.T, relay Relay, firstContext, firstTra
 	t.Helper()
 	config := GatewayConfig{
 		Endpoint:         h248.EndpointConfig{MId: gatewayMId, Clock: b.clock, FirstTransactionID: firstTransaction, Timers: testTimers},
-		LocateController: func() (net.Addr, error) { return memAddr(controllerAddr), nil },
+		LocateController: func() (net.Addr, error) { return h248test.Addr(controllerAddr), nil },
 		Relay:            relay,
 		MaxWaitingDelay:  10 * time.Millisecond,
 		FirstContextID:   firstContext,
@@ -204,7 +205,7 @@ func (b *testbed) startGateway(t *testing.T, relay Relay, firstContext, firstTra
 	for _, c := range change {
 		c(&config)
 	}
-	g, err := NewGateway(b.net.listen(gatewayAddr), config)
+	g, err := NewGateway(b.net.Listen(gatewayAddr), config)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -246,33 +247,33 @@ func (b *testbed) pass(t *testing.T, d, step time.Duration) {
 
 func (b *testbed) step(t *testing.T, step time.Duration) {
 	t.Helper()
-	eventually(t, "the replies to the ServiceChanges", func() bool { return serviceChangesAnswered(t, b.net.datagrams()) })
+	h248test.Eventually(t, "the replies to the ServiceChanges", func() bool { return serviceChangesAnswered(t, b.net.Datagrams()) })
 	b.clock.Advance(step)
-	b.net.settle(t)
+	b.net.Settle(t)
 	time.Sleep(time.Millisecond)
 }
 
 // serviceChangesAnswered tells whether a controller has answered every
 // ServiceChange from the gateway that was not lost.
-func serviceChangesAnswered(t *testing.T, ds []datagram) bool {
+func serviceChangesAnswered(t *testing.T, ds []h248test.Datagram) bool {
 	t.Helper()
 	unanswered := map[uint32]bool{}
 	for _, d := range ds {
-		if d.lost {
+		if d.Lost {
 			continue
 		}
-		m, err := h248.Parse(d.payload)
+		m, err := h248.Parse(d.Payload)
 		if err != nil {
-			t.Fatalf("datagram %q: %v", d.payload, err)
+			t.Fatalf("datagram %q: %v", d.Payload, err)
 		}
 		for _, tr := range m.Transactions {
 			switch tr := tr.(type) {
 			case h248.TransactionRequest:
-				if d.from == gatewayAddr && tr.Actions[0].Commands[0].Command == h248.ServiceChange {
+				if d.From == gatewayAddr && tr.Actions[0].Commands[0].Command == h248.ServiceChange {
 					unanswered[tr.TransactionID] = true
 				}
 			case h248.TransactionReply:
-				if d.to == gatewayAddr {
+				if d.To == gatewayAddr {
 					delete(unanswered, tr.TransactionID)
 				}
 			}
@@ -306,14 +307,14 @@ func (b *testbed) waitRegistered(t *testing.T) {
 // summary is a datagram as one line: who sent it, and the first
 // command of each transaction, or the kind of transaction. key names
 // the transactions in it, so that repetitions can be told apart.
-func summary(t *testing.T, d datagram) (line, key string) {
+func summary(t *testing.T, d h248test.Datagram) (line, key string) {
 	t.Helper()
-	m, err := h248.Parse(d.payload)
+	m, err := h248.Parse(d.Payload)
 	if err != nil {
-		t.Fatalf("datagram %q: %v", d.payload, err)
+		t.Fatalf("datagram %q: %v", d.Payload, err)
 	}
 	from := "mgc"
-	if d.from == gatewayAddr {
+	if d.From == gatewayAddr {
 		from = "mg"
 	}
 	var parts, keys []string
@@ -344,12 +345,12 @@ func summary(t *testing.T, d datagram) (line, key string) {
 // procedures of the Endpoint (Pendings, acknowledgements and the
 // repetitions of a request or a reply) depend on how fast the
 // goroutines run against the fake clock, so they are left out.
-func summaries(t *testing.T, ds []datagram) []string {
+func summaries(t *testing.T, ds []h248test.Datagram) []string {
 	t.Helper()
 	var out []string
 	seen := map[string]bool{}
 	for _, d := range ds {
-		if d.lost {
+		if d.Lost {
 			continue
 		}
 		line, key := summary(t, d)
@@ -364,9 +365,9 @@ func summaries(t *testing.T, ds []datagram) []string {
 }
 
 // sent tells whether any datagram, lost or not, holds text.
-func sent(ds []datagram, text string) bool {
+func sent(ds []h248test.Datagram, text string) bool {
 	for _, d := range ds {
-		if strings.Contains(string(d.payload), text) {
+		if strings.Contains(string(d.Payload), text) {
 			return true
 		}
 	}

@@ -13,6 +13,7 @@ import (
 
 	"github.com/yuu-biz/ims-practice/internal/agw"
 	"github.com/yuu-biz/ims-practice/internal/h248"
+	"github.com/yuu-biz/ims-practice/internal/h248/h248test"
 )
 
 // count returns how many datagrams after the first skip summary
@@ -20,7 +21,7 @@ import (
 func count(t *testing.T, b *testbed, skip int, want string) int {
 	t.Helper()
 	n := 0
-	for _, s := range summaries(t, b.net.datagrams()[skip:]) {
+	for _, s := range summaries(t, b.net.Datagrams()[skip:]) {
 		if s == want {
 			n++
 		}
@@ -31,7 +32,7 @@ func count(t *testing.T, b *testbed, skip int, want string) int {
 func TestKeepAliveAuditsRootWhenIdle(t *testing.T) {
 	b := newTestbed(t, ControllerConfig{})
 	b.waitRegistered(t)
-	before := len(b.net.datagrams())
+	before := len(b.net.Datagrams())
 	// The reply to the second keep-alive is written after the
 	// keep-alive, by another goroutine, so the wait is for both.
 	b.until(t, "the keep-alive", 250*time.Millisecond, func() bool {
@@ -39,7 +40,7 @@ func TestKeepAliveAuditsRootWhenIdle(t *testing.T) {
 	})
 	// Two keep-alives 10 s apart, and nothing from the gateway but
 	// the replies: its it/ito (27.5 s) never runs out.
-	got := summaries(t, b.net.datagrams()[before:])
+	got := summaries(t, b.net.Datagrams()[before:])
 	want := []string{"mgc MEGACO/2 AuditValue=ROOT", "mg MEGACO/2 Reply", "mgc MEGACO/2 AuditValue=ROOT", "mg MEGACO/2 Reply"}
 	if !slices.Equal(got, want) {
 		t.Fatalf("messages:\n%s", strings.Join(got, "\n"))
@@ -54,7 +55,7 @@ func TestKeepAliveWaitsForIdleness(t *testing.T) {
 		t.Run(fmt.Sprintf("busy %v", busy), func(t *testing.T) {
 			b := newTestbed(t, ControllerConfig{})
 			b.waitRegistered(t)
-			before := len(b.net.datagrams())
+			before := len(b.net.Datagrams())
 			ctx := context.Background()
 			for range 6 {
 				if busy {
@@ -103,7 +104,7 @@ func TestLossOfTheGatewayAndItsRestart(t *testing.T) {
 
 	// The gateway comes back with no contexts and registers with
 	// Restart. Its context IDs start elsewhere.
-	before := len(b.net.datagrams())
+	before := len(b.net.Datagrams())
 	b.relay = newFakeRelay()
 	b.gateway = b.startGateway(t, b.relay, 200, 7001)
 	b.waitRegistered(t)
@@ -130,7 +131,7 @@ func TestPendingRequestsFailWhenTheGatewayIsLost(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	b.net.setLose(func(d datagram) bool { return true })
+	b.net.SetLose(func(d h248test.Datagram) bool { return true })
 	done := make(chan error, 1)
 	go func() {
 		err := b.controller.Subtract(ctx, r.ID)
@@ -150,21 +151,21 @@ func TestReRegistrationAfterTheNetworkFails(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	before := len(b.net.datagrams())
+	before := len(b.net.Datagrams())
 
 	// Nothing gets through. The controller gives up on the gateway;
 	// the gateway's it/ito runs out, its Notify gets no answer, and it
 	// tries to come back with Disconnected, which gets lost too.
-	b.net.setLose(func(d datagram) bool { return true })
+	b.net.SetLose(func(d h248test.Datagram) bool { return true })
 	b.until(t, "the gateway to lose the association", 250*time.Millisecond, func() bool {
 		b.gateway.mu.Lock()
 		defer b.gateway.mu.Unlock()
 		return !b.gateway.registered
 	})
 	b.until(t, "a Disconnected", 250*time.Millisecond, func() bool {
-		return sent(b.net.datagrams()[before:], "Disconnected")
+		return sent(b.net.Datagrams()[before:], "Disconnected")
 	})
-	if !sent(b.net.datagrams()[before:], "it/ito") {
+	if !sent(b.net.Datagrams()[before:], "it/ito") {
 		t.Error("the gateway sent no Notify of it/ito")
 	}
 	if len(*b.controller.available.Load()) != 0 {
@@ -172,9 +173,9 @@ func TestReRegistrationAfterTheNetworkFails(t *testing.T) {
 	}
 
 	// The network comes back. The next Disconnected gets through.
-	b.net.setLose(nil)
+	b.net.SetLose(nil)
 	b.waitRegistered(t)
-	got := summaries(t, b.net.datagrams()[before:])
+	got := summaries(t, b.net.Datagrams()[before:])
 	if !slices.Contains(got, "mg MEGACO/2 ServiceChange=ROOT") {
 		t.Errorf("messages:\n%s", strings.Join(got, "\n"))
 	}
@@ -190,7 +191,7 @@ func TestReRegistrationAfterTheNetworkFails(t *testing.T) {
 func TestGatewayRegistersAgainWithARestartedController(t *testing.T) {
 	b := newTestbed(t, ControllerConfig{})
 	b.waitRegistered(t)
-	before := len(b.net.datagrams())
+	before := len(b.net.Datagrams())
 
 	// The controller restarts and knows no gateway. When the it/ito of
 	// the gateway runs out, its Notify gets error 507, and it comes
@@ -198,8 +199,8 @@ func TestGatewayRegistersAgainWithARestartedController(t *testing.T) {
 	b.controller.Close()
 	b.controller = b.startController(t, ControllerConfig{}, 3001)
 	b.until(t, "the gateway to register again", 250*time.Millisecond, b.registered)
-	eventually(t, "the reply to the Modify", func() bool { return len(summaries(t, b.net.datagrams()[before:])) >= 6 })
-	got := summaries(t, b.net.datagrams()[before:])
+	h248test.Eventually(t, "the reply to the Modify", func() bool { return len(summaries(t, b.net.Datagrams()[before:])) >= 6 })
+	got := summaries(t, b.net.Datagrams()[before:])
 	want := []string{
 		"mg MEGACO/2 Notify=ROOT",
 		"mgc MEGACO/2 Reply error 507",
@@ -215,7 +216,7 @@ func TestGatewayRegistersAgainWithARestartedController(t *testing.T) {
 
 func TestControllerRefusesAnotherProfile(t *testing.T) {
 	b := newTestbed(t, ControllerConfig{})
-	reply, err := b.gateway.endpoint.Request(context.Background(), memAddr(controllerAddr), []h248.ActionRequest{{
+	reply, err := b.gateway.endpoint.Request(context.Background(), h248test.Addr(controllerAddr), []h248.ActionRequest{{
 		ContextID: h248.ContextNull,
 		Commands: []h248.CommandRequest{{
 			Command:       h248.ServiceChange,
@@ -242,10 +243,10 @@ func TestGatewayFollowsTheAlternateController(t *testing.T) {
 	// The controller the gateway is provisioned with sends it on to
 	// another, at 192.0.2.3, in the reply to its registration.
 	const alternateAddr = "192.0.2.3:2944"
-	clock := newFakeClock()
-	b := &testbed{clock: clock, net: newMemNetwork(clock), relay: newFakeRelay()}
+	clock := h248test.NewClock()
+	b := &testbed{clock: clock, net: h248test.NewNetwork(clock), relay: newFakeRelay()}
 	alternate := h248.MId{DomainAddress: netip.MustParseAddr("192.0.2.3")}
-	first, err := h248.NewEndpoint(b.net.listen(controllerAddr), h248.EndpointConfig{
+	first, err := h248.NewEndpoint(b.net.Listen(controllerAddr), h248.EndpointConfig{
 		MId: controllerMId, Clock: clock, FirstTransactionID: 1, Timers: testTimers,
 		Handler: func(ctx context.Context, r *h248.IncomingRequest) h248.TransactionReply {
 			c := r.Actions[0].Commands[0]
@@ -260,7 +261,7 @@ func TestGatewayFollowsTheAlternateController(t *testing.T) {
 	}
 	go first.Serve()
 	t.Cleanup(func() { first.Close() })
-	c, err := NewController(b.net.listen(alternateAddr), ControllerConfig{Endpoint: h248.EndpointConfig{
+	c, err := NewController(b.net.Listen(alternateAddr), ControllerConfig{Endpoint: h248.EndpointConfig{
 		MId: h248.MId{DomainName: "pcscf2.ims.example.net"}, Clock: clock, FirstTransactionID: 1, Timers: testTimers,
 	}})
 	if err != nil {
@@ -275,9 +276,9 @@ func TestGatewayFollowsTheAlternateController(t *testing.T) {
 	// to the controller that the reply names, and registers there.
 	b.waitRegistered(t)
 	var registrations []string
-	for _, d := range b.net.datagrams() {
-		if d.from == gatewayAddr && strings.Contains(string(d.payload), "Method = Restart") {
-			registrations = append(registrations, d.to)
+	for _, d := range b.net.Datagrams() {
+		if d.From == gatewayAddr && strings.Contains(string(d.Payload), "Method = Restart") {
+			registrations = append(registrations, d.To)
 		}
 	}
 	if len(registrations) != 2 || registrations[0] != controllerAddr || registrations[1] != alternateAddr {
@@ -331,7 +332,7 @@ func TestTerminationOutOfServiceClearsItsContext(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	before := len(b.net.datagrams())
+	before := len(b.net.Datagrams())
 	// Termination Out Of Service (TS 29.334 5.17.3.19).
 	reply, err := b.gateway.request([]h248.ActionRequest{{
 		ContextID: id,
@@ -348,7 +349,7 @@ func TestTerminationOutOfServiceClearsItsContext(t *testing.T) {
 		_, released, _ := b.relay.counts()
 		return released == 1
 	})
-	if !sent(b.net.datagrams()[before:], "Subtract = ") {
+	if !sent(b.net.Datagrams()[before:], "Subtract = ") {
 		t.Error("the controller sent no Subtract")
 	}
 }
@@ -377,7 +378,7 @@ func TestTerminationHeartbeat(t *testing.T) {
 	mu.Lock()
 	inUse[kept.ID] = true
 	mu.Unlock()
-	before := len(b.net.datagrams())
+	before := len(b.net.Datagrams())
 
 	// After timer X, each termination reports its heartbeat. The
 	// controller has no use for the second context and releases it.
@@ -403,7 +404,7 @@ func TestTerminationHeartbeat(t *testing.T) {
 		fmt.Sprintf("mg MEGACO/2 Notify=%s", terminationID(1, agw.Core, 101)),
 	}
 	reported := func() bool {
-		got := summaries(t, b.net.datagrams()[before:])
+		got := summaries(t, b.net.Datagrams()[before:])
 		for _, want := range always {
 			if !slices.Contains(got, want) {
 				return false
@@ -413,7 +414,7 @@ func TestTerminationHeartbeat(t *testing.T) {
 	}
 	t.Cleanup(func() {
 		if t.Failed() {
-			t.Logf("messages:\n%s", strings.Join(summaries(t, b.net.datagrams()[before:]), "\n"))
+			t.Logf("messages:\n%s", strings.Join(summaries(t, b.net.Datagrams()[before:]), "\n"))
 		}
 	})
 	b.until(t, "the hanging context to be released", 250*time.Millisecond, func() bool {

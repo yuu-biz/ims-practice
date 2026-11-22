@@ -12,6 +12,7 @@ import (
 
 	"github.com/yuu-biz/ims-practice/internal/agw"
 	"github.com/yuu-biz/ims-practice/internal/h248"
+	"github.com/yuu-biz/ims-practice/internal/h248/h248test"
 )
 
 var (
@@ -237,9 +238,9 @@ type mpTestbed struct {
 
 func newMpTestbed(t *testing.T, config ControllerConfig) *mpTestbed {
 	t.Helper()
-	clock := newFakeClock()
+	clock := h248test.NewClock()
 	b := &mpTestbed{
-		testbed:   &testbed{clock: clock, net: newMemNetwork(clock)},
+		testbed:   &testbed{clock: clock, net: h248test.NewNetwork(clock)},
 		processor: newFakeProcessor(),
 		notified:  &notifications{},
 	}
@@ -249,7 +250,7 @@ func newMpTestbed(t *testing.T, config ControllerConfig) *mpTestbed {
 	config.Endpoint.Clock = b.clock
 	config.Endpoint.FirstTransactionID = 1
 	config.Endpoint.Timers = testTimers
-	c, err := NewController(b.net.listen(controllerAddr), config)
+	c, err := NewController(b.net.Listen(controllerAddr), config)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -257,9 +258,9 @@ func newMpTestbed(t *testing.T, config ControllerConfig) *mpTestbed {
 	t.Cleanup(func() { c.Close() })
 	b.controller = c
 
-	g, err := NewGateway(b.net.listen(gatewayAddr), GatewayConfig{
+	g, err := NewGateway(b.net.Listen(gatewayAddr), GatewayConfig{
 		Endpoint:         h248.EndpointConfig{MId: mrfpMId, Clock: b.clock, FirstTransactionID: 5001, Timers: testTimers},
-		LocateController: func() (net.Addr, error) { return memAddr(controllerAddr), nil },
+		LocateController: func() (net.Addr, error) { return h248test.Addr(controllerAddr), nil },
 		Processor:        b.processor,
 		MaxWaitingDelay:  10 * time.Millisecond,
 		FirstContextID:   200,

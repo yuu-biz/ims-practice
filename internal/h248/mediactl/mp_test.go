@@ -12,6 +12,7 @@ import (
 
 	"github.com/yuu-biz/ims-practice/internal/agw"
 	"github.com/yuu-biz/ims-practice/internal/h248"
+	"github.com/yuu-biz/ims-practice/internal/h248/h248test"
 	"github.com/yuu-biz/ims-practice/internal/sdp"
 )
 
@@ -22,8 +23,8 @@ import (
 func waitMessages(t *testing.T, b *mpTestbed, before int, want ...string) []string {
 	t.Helper()
 	var got []string
-	eventually(t, "the messages "+strings.Join(want, "; "), func() bool {
-		got = summaries(t, b.net.datagrams()[before:])
+	h248test.Eventually(t, "the messages "+strings.Join(want, "; "), func() bool {
+		got = summaries(t, b.net.Datagrams()[before:])
 		for _, w := range want {
 			n := 0
 			for _, line := range want {
@@ -61,13 +62,13 @@ func countOf(lines []string, line string) int {
 
 // payloadOf returns the text of the first datagram from from that holds
 // every one of parts.
-func payloadOf(t *testing.T, ds []datagram, from string, parts ...string) string {
+func payloadOf(t *testing.T, ds []h248test.Datagram, from string, parts ...string) string {
 	t.Helper()
 	for _, d := range ds {
-		if d.from != from {
+		if d.From != from {
 			continue
 		}
-		text := string(d.payload)
+		text := string(d.Payload)
 		ok := true
 		for _, p := range parts {
 			ok = ok && strings.Contains(text, p)
@@ -83,7 +84,7 @@ func payloadOf(t *testing.T, ds []datagram, from string, parts ...string) string
 func TestMpRegistration(t *testing.T) {
 	b := newMpTestbed(t, ControllerConfig{})
 	b.waitRegistered(t)
-	register := firstRequest(t, b.net.datagrams(), h248.ServiceChange)
+	register := firstRequest(t, b.net.Datagrams(), h248.ServiceChange)
 	if p := register.Actions[0].Commands[0].ServiceChange.Profile; p == nil || *p != MpProfile {
 		t.Errorf("profile %+v, want %+v", p, MpProfile)
 	}
@@ -98,12 +99,12 @@ func TestMpRegistration(t *testing.T) {
 }
 
 func TestIqControllerRefusesAnMRFP(t *testing.T) {
-	clock := newFakeClock()
-	b := &testbed{clock: clock, net: newMemNetwork(clock)}
+	clock := h248test.NewClock()
+	b := &testbed{clock: clock, net: h248test.NewNetwork(clock)}
 	b.controller = b.startController(t, ControllerConfig{}, 1)
-	g, err := NewGateway(b.net.listen(gatewayAddr), GatewayConfig{
+	g, err := NewGateway(b.net.Listen(gatewayAddr), GatewayConfig{
 		Endpoint:         h248.EndpointConfig{MId: mrfpMId, Clock: clock, FirstTransactionID: 5001, Timers: testTimers},
-		LocateController: func() (net.Addr, error) { return memAddr(controllerAddr), nil },
+		LocateController: func() (net.Addr, error) { return h248test.Addr(controllerAddr), nil },
 		Processor:        newFakeProcessor(),
 		MaxWaitingDelay:  10 * time.Millisecond,
 	})
@@ -115,7 +116,7 @@ func TestIqControllerRefusesAnMRFP(t *testing.T) {
 	b.gateway = g
 	// H.248.1 (05/2002) 7.2.8: the reply names the profile that the
 	// controller supports instead.
-	b.until(t, "the refusal", 50*time.Millisecond, func() bool { return sent(b.net.datagrams(), "imsPracticeIq/1") })
+	b.until(t, "the refusal", 50*time.Millisecond, func() bool { return sent(b.net.Datagrams(), "imsPracticeIq/1") })
 	g.mu.Lock()
 	registered := g.registered
 	g.mu.Unlock()
@@ -139,7 +140,7 @@ func onlyTermination(t *testing.T, cx agw.Context) *agw.Termination {
 func TestMpAnnouncement(t *testing.T) {
 	b := newMpTestbed(t, ControllerConfig{})
 	b.waitRegistered(t)
-	before := len(b.net.datagrams())
+	before := len(b.net.Datagrams())
 	ctx := context.Background()
 
 	// The AS asks the MRFC for an announcement; the INVITE offers the
@@ -183,7 +184,7 @@ func TestMpAnnouncement(t *testing.T) {
 	detected := b.clock.Now()
 	b.gateway.SignalCompleted(processorContext, "t1")
 	messages := waitMessages(t, b, before, "mg MEGACO/2 Notify=ip/200/1", "mgc MEGACO/2 Reply")
-	eventually(t, "the notification", func() bool { return len(b.notified.all()) == 1 })
+	h248test.Eventually(t, "the notification", func() bool { return len(b.notified.all()) == 1 })
 	n := b.notified.all()[0]
 	want := Notification{
 		Notify: agw.Notify{Context: cx.ID, Termination: tid, RequestID: 7, Event: agw.SignalCompleted},
@@ -225,7 +226,7 @@ func TestMpAnnouncement(t *testing.T) {
 		t.Fatalf("messages:\n%s\nwant:\n%s", strings.Join(messages, "\n"), strings.Join(wantMessages, "\n"))
 	}
 
-	ds := b.net.datagrams()[before:]
+	ds := b.net.Datagrams()[before:]
 	add := payloadOf(t, ds, controllerAddr, "Add = $")
 	for _, part := range []string{"Context = $", "Mode = SendOnly", "c=IN IP4 $\nm=audio $ RTP/AVP 0\n", "c=IN IP4 192.0.2.30\nm=audio 49170 RTP/AVP 0\n",
 		"Events = 1 {", "hangterm/thb { KeepActive, timerx = 1800 }"} {
@@ -257,7 +258,7 @@ func TestMpAnnouncement(t *testing.T) {
 func TestMpAnnouncementWithDelayAndDuration(t *testing.T) {
 	b := newMpTestbed(t, ControllerConfig{})
 	b.waitRegistered(t)
-	before := len(b.net.datagrams())
+	before := len(b.net.Datagrams())
 	ctx := context.Background()
 
 	// Start Announcement in the Add that reserves the termination, as
@@ -276,14 +277,14 @@ func TestMpAnnouncementWithDelayAndDuration(t *testing.T) {
 	if got := terms["t1"].signals; got == nil || got.Play == nil || *got.Play != play {
 		t.Errorf("the processor plays %+v, want %+v", got, play)
 	}
-	add := payloadOf(t, b.net.datagrams()[before:], controllerAddr, "Add = $")
+	add := payloadOf(t, b.net.Datagrams()[before:], controllerAddr, "Add = $")
 	if want := `aasb/play { SignalType = TimeOut, Duration = 12000, NotifyCompletion = { TimeOut }, an = "sid=<file://welcome>", it = 0, iv = 50 }`; !strings.Contains(add, want) {
 		t.Errorf("the Add has no %s:\n%s", want, add)
 	}
 
 	b.pass(t, 2*time.Minute)
 	b.gateway.SignalCompleted(processorContext, "t1")
-	eventually(t, "the notification", func() bool { return len(b.notified.all()) == 1 })
+	h248test.Eventually(t, "the notification", func() bool { return len(b.notified.all()) == 1 })
 	if n := b.notified.all()[0]; n.Signal != "aasb/play" || n.RequestID != 9 || n.Context != cx.ID {
 		t.Errorf("notification %+v", n)
 	}
@@ -296,7 +297,7 @@ func TestMpAnnouncementWithDelayAndDuration(t *testing.T) {
 func TestMpConference(t *testing.T) {
 	b := newMpTestbed(t, ControllerConfig{})
 	b.waitRegistered(t)
-	before := len(b.net.datagrams())
+	before := len(b.net.Datagrams())
 	ctx := context.Background()
 
 	alice, bob, carol := mustAddrPort("192.0.2.41:49170"), mustAddrPort("192.0.2.42:49170"), mustAddrPort("192.0.2.43:49170")
@@ -377,7 +378,7 @@ func TestMpConference(t *testing.T) {
 	if !slices.Equal(got, want) {
 		t.Fatalf("messages:\n%s\nwant:\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
 	}
-	ds := b.net.datagrams()[before:]
+	ds := b.net.Datagrams()[before:]
 	if add := payloadOf(t, ds, controllerAddr, "Add = $", "192.0.2.42"); strings.Count(add, "Add = $") != 2 || !strings.Contains(add, "192.0.2.41") {
 		t.Errorf("the first two parties are not in one Add transaction:\n%s", add)
 	}
@@ -411,7 +412,7 @@ func TestMpAddWithoutAModeSendsAndReceives(t *testing.T) {
 func TestMpModifyWithoutAModeKeepsIt(t *testing.T) {
 	b := newMpTestbed(t, ControllerConfig{})
 	b.waitRegistered(t)
-	before := len(b.net.datagrams())
+	before := len(b.net.Datagrams())
 	ctx := context.Background()
 	cx, err := b.controller.Add(ctx, agw.TerminationRequest{Mode: agw.SendOnly, Remote: mustAddrPort("192.0.2.30:49170")})
 	if err != nil {
@@ -428,7 +429,7 @@ func TestMpModifyWithoutAModeKeepsIt(t *testing.T) {
 	if got, _ := b.processor.termination(processorContext, "t1"); got.mode != agw.SendOnly || got.signals == nil {
 		t.Errorf("the processor holds %+v", got)
 	}
-	modify := payloadOf(t, b.net.datagrams()[before:], controllerAddr, "Modify = ip/200/1")
+	modify := payloadOf(t, b.net.Datagrams()[before:], controllerAddr, "Modify = ip/200/1")
 	if strings.Contains(modify, "Media") || strings.Contains(modify, "Mode") {
 		t.Errorf("the Modify sets the mode:\n%s", modify)
 	}
@@ -437,7 +438,7 @@ func TestMpModifyWithoutAModeKeepsIt(t *testing.T) {
 func TestMpStopAnnouncement(t *testing.T) {
 	b := newMpTestbed(t, ControllerConfig{})
 	b.waitRegistered(t)
-	before := len(b.net.datagrams())
+	before := len(b.net.Datagrams())
 	ctx := context.Background()
 
 	cx, err := b.controller.Add(ctx, agw.TerminationRequest{
@@ -460,7 +461,7 @@ func TestMpStopAnnouncement(t *testing.T) {
 	if got.signals == nil || got.signals.Play != nil {
 		t.Errorf("the processor was asked to play %+v", got.signals)
 	}
-	modify := payloadOf(t, b.net.datagrams()[before:], controllerAddr, "Modify = "+string(tid))
+	modify := payloadOf(t, b.net.Datagrams()[before:], controllerAddr, "Modify = "+string(tid))
 	if !strings.Contains(modify, "Signals { }") || strings.Contains(modify, "Events") {
 		t.Errorf("the Modify:\n%s", modify)
 	}
@@ -479,8 +480,8 @@ func TestMpStopAnnouncement(t *testing.T) {
 	if _, _, err := b.controller.SubtractTermination(ctx, cx.ID, tid); err != nil {
 		t.Fatal(err)
 	}
-	b.net.settle(t)
-	if sent(b.net.datagrams()[before:], "Notify = ") || len(b.notified.all()) != 0 {
+	b.net.Settle(t)
+	if sent(b.net.Datagrams()[before:], "Notify = ") || len(b.notified.all()) != 0 {
 		t.Errorf("a Notify was sent: %v", b.notified.all())
 	}
 }
@@ -585,7 +586,7 @@ func TestMpErrors(t *testing.T) {
 	}
 
 	// What the controller refuses before it sends anything.
-	before := len(b.net.datagrams())
+	before := len(b.net.Datagrams())
 	if _, err := b.controller.Add(ctx, agw.TerminationRequest{ID: "t1", Mode: agw.SendOnly}); err == nil {
 		t.Error("an Add that names its termination")
 	}
@@ -598,7 +599,7 @@ func TestMpErrors(t *testing.T) {
 	if err := b.controller.Subtract(ctx, cx.ID); err != errNotIq {
 		t.Errorf("Subtract of a whole context on a controller of Mp: %v", err)
 	}
-	if got := len(b.net.datagrams()); got != before {
+	if got := len(b.net.Datagrams()); got != before {
 		t.Errorf("%d datagrams were sent", got-before)
 	}
 
@@ -628,7 +629,7 @@ func TestIqControllerSpeaksNoMp(t *testing.T) {
 	if _, err := b.controller.Add(ctx, agw.TerminationRequest{Mode: agw.SendOnly}); err == nil {
 		t.Error("an Add on Iq without the access and the core termination")
 	}
-	if _, err := NewController(newMemNetwork(b.clock).listen("192.0.2.9:2944"), ControllerConfig{Profile: h248.ServiceChangeProfile{ProfileName: "MRF", Version: 8}}); err == nil {
+	if _, err := NewController(h248test.NewNetwork(b.clock).Listen("192.0.2.9:2944"), ControllerConfig{Profile: h248.ServiceChangeProfile{ProfileName: "MRF", Version: 8}}); err == nil {
 		t.Error("a controller of a profile that the package does not speak")
 	}
 }
@@ -639,7 +640,7 @@ func TestMpTerminationHeartbeat(t *testing.T) {
 		TerminationHeartbeat: func(ctx context.Context, id string) bool { return false },
 	})
 	b.waitRegistered(t)
-	before := len(b.net.datagrams())
+	before := len(b.net.Datagrams())
 	cx, err := b.controller.Add(context.Background(), agw.TerminationRequest{Mode: agw.SendOnly})
 	if err != nil {
 		t.Fatal(err)
@@ -651,7 +652,7 @@ func TestMpTerminationHeartbeat(t *testing.T) {
 	tid := string(onlyTermination(t, cx).ID)
 	want := []string{"mg MEGACO/2 Notify=" + tid, "mgc MEGACO/2 Reply error 411", "mgc MEGACO/2 Subtract=" + tid}
 	b.until(t, "the heartbeat and the Subtract", time.Second, func() bool {
-		got := summaries(t, b.net.datagrams()[before:])
+		got := summaries(t, b.net.Datagrams()[before:])
 		for _, w := range want {
 			if !slices.Contains(got, w) {
 				return false
@@ -659,7 +660,7 @@ func TestMpTerminationHeartbeat(t *testing.T) {
 		}
 		return b.processor.contextCount() == 0
 	})
-	if !strings.Contains(payloadOf(t, b.net.datagrams()[before:], gatewayAddr, "Notify = "+tid), "hangterm/thb") {
+	if !strings.Contains(payloadOf(t, b.net.Datagrams()[before:], gatewayAddr, "Notify = "+tid), "hangterm/thb") {
 		t.Error("the Notify does not report hangterm/thb")
 	}
 }

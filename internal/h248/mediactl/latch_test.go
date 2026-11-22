@@ -13,12 +13,13 @@ import (
 
 	"github.com/yuu-biz/ims-practice/internal/agw"
 	"github.com/yuu-biz/ims-practice/internal/h248"
+	"github.com/yuu-biz/ims-practice/internal/h248/h248test"
 	"github.com/yuu-biz/ims-practice/internal/rtptest"
 )
 
 // signalsOf is the Signals descriptor of the command for side in the
 // first request of ds whose first command is c, in a few words.
-func signalsOf(t *testing.T, ds []datagram, c h248.Command, side agw.TerminationID) string {
+func signalsOf(t *testing.T, ds []h248test.Datagram, c h248.Command, side agw.TerminationID) string {
 	t.Helper()
 	for _, cmd := range firstRequest(t, ds, c).Actions[0].Commands {
 		if !strings.Contains(string(cmd.TerminationID), "/"+string(side)+"/") {
@@ -62,12 +63,12 @@ func TestIqLatchingOfAnAdd(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(fmt.Sprintf("%q", tt.latch), func(t *testing.T) {
-			before := len(b.net.datagrams())
+			before := len(b.net.Datagrams())
 			_, err := b.controller.Add(context.Background(), agw.TerminationRequest{ID: agw.Access, Latch: tt.latch}, agw.TerminationRequest{ID: agw.Core})
 			if err != nil {
 				t.Fatal(err)
 			}
-			if got := signalsOf(t, b.net.datagrams()[before:], h248.Add, agw.Access); got != tt.wire {
+			if got := signalsOf(t, b.net.Datagrams()[before:], h248.Add, agw.Access); got != tt.wire {
 				t.Errorf("the Add carries %s, want %s", got, tt.wire)
 			}
 			if got := b.relay.newest().requests[agw.Access][0].Latch; got != tt.relay {
@@ -101,11 +102,11 @@ func TestIqLatchingOfAModify(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			before := len(b.net.datagrams())
+			before := len(b.net.Datagrams())
 			if err := b.controller.Modify(ctx, r.ID, agw.Access, agw.TerminationRequest{Latch: tt.latch}); err != nil {
 				t.Fatal(err)
 			}
-			if got := signalsOf(t, b.net.datagrams()[before:], h248.Modify, agw.Access); got != tt.wire {
+			if got := signalsOf(t, b.net.Datagrams()[before:], h248.Modify, agw.Access); got != tt.wire {
 				t.Errorf("the Modify carries %s, want %s", got, tt.wire)
 			}
 			var asked []agw.Latch
@@ -123,11 +124,11 @@ func TestIqControllerRefusesAnUnknownLatching(t *testing.T) {
 	b := newTestbed(t, ControllerConfig{})
 	b.waitRegistered(t)
 	ctx := context.Background()
-	before := len(b.net.datagrams())
+	before := len(b.net.Datagrams())
 	if _, err := b.controller.Add(ctx, agw.TerminationRequest{ID: agw.Access, Latch: "sometimes"}, agw.TerminationRequest{ID: agw.Core}); err == nil {
 		t.Error("Add with an unknown latching succeeded")
 	}
-	if sent(b.net.datagrams()[before:], "Add") {
+	if sent(b.net.Datagrams()[before:], "Add") {
 		t.Error("the controller sent the Add")
 	}
 	r, err := reserve(ctx, b.controller, agw.Media{})
