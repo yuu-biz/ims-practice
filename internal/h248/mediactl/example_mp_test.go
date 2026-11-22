@@ -96,10 +96,14 @@ func Example_announcement() {
 	ctx := context.Background()
 	ue := netip.MustParseAddrPort("192.0.2.30:49170")
 	var cx agw.Context
+	deadline := time.Now().Add(10 * time.Second)
 	for {
 		cx, err = mrfp.Add(ctx, agw.TerminationRequest{Mode: agw.SendOnly, Remote: ue})
 		if !errors.Is(err, mediactl.ErrUnavailable) {
 			break
+		}
+		if time.Now().After(deadline) {
+			log.Fatal("the media gateway did not register with the controller within 10 s")
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
