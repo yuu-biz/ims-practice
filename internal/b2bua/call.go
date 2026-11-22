@@ -220,6 +220,8 @@ func (c *Call) RelayProvisional(out *sip.OutgoingCall, resp *sip.Message) {
 		c.mu.Lock()
 		c.copies = slices.DeleteFunc(c.copies, func(k *copied) bool { return k == sent })
 		c.mu.Unlock()
+	} else if len(m.Body.Content) > 0 {
+		c.noteCallerDialog()
 	}
 	if reliable && sent == nil && !offer {
 		// The caller sends no PRACK, so the B2BUA sends its own. The
