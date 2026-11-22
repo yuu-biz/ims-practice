@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/netip"
 	"slices"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -258,6 +259,43 @@ func TestSessionOfTheBranchThatAnswered(t *testing.T) {
 				}
 			})
 		}
+	}
+}
+
+// When the offer that moves the caller's media crosses an offer of the
+// caller, the caller refuses it with 491 (Request Pending), and the AS
+// offers the same session again after a while (RFC 3261 14.1, RFC 3311
+// 5.3).
+func TestSessionOfTheBranchThatAnsweredAfterGlare(t *testing.T) {
+	as := startAS(t, noServices{}, mmtel.Config{})
+	f := startForkedCallee(t, 2, true)
+	caller := newUA(t, "alice", func(c *sip.IncomingCall) { c.Reject(480) })
+	inv := viaAS(t, as, f, "term", pcmuOffer(t, callerMedia, pcmuOnly))
+	offers := make(chan *sip.Message, 2)
+	var refused atomic.Bool
+	accept := answerAt(offers)
+	inv.OnRequest = func(r *sip.InDialogRequest) {
+		if refused.CompareAndSwap(false, true) {
+			offers <- r.Request
+			r.Reject(491)
+			return
+		}
+		accept(r)
+	}
+	out, err := caller.Invite(inv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer out.Bye()
+	f.relayed(t, out)
+	first := receive(t, offers, "first offer at the caller")
+	again := receive(t, offers, "second offer at the caller")
+	if again.Method != sip.UPDATE || mediaOf(again.Body) != branchMedia(2) {
+		t.Errorf("after the 491 the caller got a %s pointing its media at %v, want an UPDATE to %v of the branch that answered",
+			again.Method, mediaOf(again.Body), branchMedia(2))
+	}
+	if !bytes.Equal(again.Body, first.Body) {
+		t.Errorf("the offer after the 491 is\n%s\nwant the one the caller refused\n%s", again.Body, first.Body)
 	}
 }
 
