@@ -591,9 +591,11 @@ func (c *call) moveSession(out *sip.OutgoingCall, tag string, held []byte, calle
 // dialog the offer goes in an UPDATE (RFC 3311): no re-INVITE goes
 // while the INVITE is in progress (RFC 3261 14.1). Once the dialog is
 // confirmed, a caller that does not list UPDATE in its Allow gets the
-// offer in a re-INVITE. offerCaller returns the o= line of the offer,
-// and the caller's 2xx with the answer, nil when the caller did not
-// take the offer.
+// offer in a re-INVITE. When the offer crosses one of the caller, the
+// AS tries again after GlareDelay (RFC 3261 14.1, RFC 3311 5.3), at
+// most glareTries times in all. offerCaller returns the o= line of the
+// offer, and the caller's 2xx with the answer, nil when the caller did
+// not take the offer.
 func (c *call) offerCaller(tag string, origin sdp.Origin) (sdp.Origin, *sip.Message) {
 	c.mu.Lock()
 	callee := c.calleeSDP[tag]
@@ -610,6 +612,16 @@ func (c *call) offerCaller(tag string, origin sdp.Origin) (sdp.Origin, *sip.Mess
 		method, send = sip.INVITE, c.in.ReInvite
 	}
 	resp, err := send(sdpBody(offer))
+	for try := 1; try < glareTries && crossed(resp, err); try++ {
+		c.log.Info("the offer to the caller crossed one of the caller", "method", string(method), "try", try)
+		// The caller created the Call-ID of its dialog with the AS.
+		select {
+		case <-c.in.Done():
+			return offer.Origin, nil
+		case <-time.After(sip.GlareDelay(false)):
+		}
+		resp, err = send(sdpBody(offer))
+	}
 	switch {
 	case err != nil:
 		c.log.Warn("the callee's session not offered to the caller", "method", string(method), "error", err.Error())
@@ -620,6 +632,22 @@ func (c *call) offerCaller(tag string, origin sdp.Origin) (sdp.Origin, *sip.Mess
 	}
 	c.log.Info("the caller has the session of the callee's dialog", "method", string(method), "to_tag", tag)
 	return offer.Origin, resp
+}
+
+// glareTries is how many offers the AS sends the caller in all for one
+// session it moves, when each crosses an offer of the caller. RFC 3261
+// 14.1 leaves the number to the UAC.
+const glareTries = 3
+
+// crossed reports whether an offer within the dialog crossed one of the
+// peer: the peer refused it with 491 (Request Pending), or the UA did
+// not send it while an offer or an INVITE of the peer was open (RFC
+// 3261 14.1, RFC 3311 5.2).
+func crossed(resp *sip.Message, err error) bool {
+	if err != nil {
+		return errors.Is(err, sip.ErrOfferUnanswered) || errors.Is(err, sip.ErrInviteInProgress)
+	}
+	return resp.StatusCode == 491
 }
 
 // keepRecord writes the record of the call into the Store, with both
