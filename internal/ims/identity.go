@@ -94,18 +94,15 @@ func isUnreserved(c byte) bool {
 }
 
 // TelNumber returns the number of a tel URI (RFC 3966 3), without its
-// parameters, and false for any other URI. A tel URI needs a
-// telephone-subscriber: "tel:" with parameters alone names no user, so
-// it is no number either.
+// parameters. It reports false for any other URI, a SIP URI with
+// user=phone included: a caller that takes a number in either form
+// calls ParseTelephoneNumber.
 func TelNumber(uri string) (string, bool) {
-	if len(uri) < 4 || !strings.EqualFold(uri[:4], "tel:") {
+	n, ok := ParseTelephoneNumber(uri)
+	if !ok || n.SIP != nil {
 		return "", false
 	}
-	number, _, _ := strings.Cut(uri[4:], ";")
-	if number == "" {
-		return "", false
-	}
-	return number, true
+	return n.Number, true
 }
 
 // PrivateIdentity is the private user identity of a REGISTER: the
