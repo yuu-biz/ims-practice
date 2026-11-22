@@ -1,10 +1,14 @@
 package agw
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"net"
 	"net/netip"
 	"reflect"
+	"strconv"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -202,6 +206,133 @@ func TestTheRelayStoresEveryContextItChanges(t *testing.T) {
 	}
 }
 
+// TestARecreatedRelayOpensThePortsOfItsContexts: the process of a relay
+// that carries a call stops, and the relay is created again under the
+// same name, on the same ports and the same store. It opens the ports of
+// the context again, with the addresses and the modes of its
+// terminations, and the media of the call goes on: neither party and
+// neither controller has heard of the restart.
+func TestARecreatedRelayOpensThePortsOfItsContexts(t *testing.T) {
+	store := NewMemoryContextStore()
+	minPort, maxPort := rtptest.PortRange(t, 8)
+	first := relayOn(t, minPort, maxPort, store)
+
+	ue, network := udp(t), udp(t)
+	c, err := first.Add(
+		// The UE's SDP names an address it does not send from, as one
+		// behind NAT does; the relay latches onto its first packet.
+		TerminationRequest{ID: Access, Remote: netip.MustParseAddrPort("192.0.2.10:4000")},
+		TerminationRequest{ID: Core, Remote: addr(network)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	access, core := c.Terminations[Access].Local, c.Terminations[Core].Local
+	ue.WriteToUDPAddrPort([]byte("before the restart"), access)
+	if got, _ := read(t, network); !bytes.Equal(got, []byte("before the restart")) {
+		t.Fatalf("the network side got %q before the restart", got)
+	}
+	// The latched address of the UE reaches the store with the next
+	// change of the context, as the P-CSCF's Modify for the answer is.
+	if _, err := first.Modify(c.ID, Core, TerminationRequest{Remote: addr(network)}); err != nil {
+		t.Fatal(err)
+	}
+
+	// The process stops, with the context left in the store.
+	first.Close()
+	saved := contextsOf(t, store)
+	want := []SavedContext{{ID: c.ID, Terminations: []SavedTermination{
+		{ID: Access, LocalRTP: access.Port(), Remote: addr(ue), Mode: SendReceive},
+		{ID: Core, LocalRTP: core.Port(), Remote: addr(network), Mode: SendReceive},
+	}}}
+	if !reflect.DeepEqual(saved, want) {
+		t.Fatalf("the store holds %+v, want %+v", saved, want)
+	}
+
+	again := relayOn(t, minPort, maxPort, store)
+	contexts := again.Contexts()
+	if len(contexts) != 1 || contexts[0].ID != c.ID || len(contexts[0].Terminations) != 2 {
+		t.Fatalf("the relay created again holds %+v, want the context %s with its two terminations", contexts, c.ID)
+	}
+	for id, local := range map[TerminationID]netip.AddrPort{Access: access, Core: core} {
+		if got := contexts[0].Terminations[id]; got.Local != local || got.Mode != SendReceive {
+			t.Errorf("termination %s is %+v, want it on %v in mode %s", id, got, local, SendReceive)
+		}
+	}
+
+	// The media goes on, both ways, without any word from a controller.
+	network.WriteToUDPAddrPort([]byte("after the restart"), core)
+	if got, src := read(t, ue); !bytes.Equal(got, []byte("after the restart")) || src != access {
+		t.Errorf("the UE got %q from %v, want it from the access termination %v", got, src, access)
+	}
+	ue.WriteToUDPAddrPort([]byte("and back"), access)
+	if got, src := read(t, network); !bytes.Equal(got, []byte("and back")) || src != core {
+		t.Errorf("the network side got %q from %v, want it from the core termination %v", got, src, core)
+	}
+
+	// The controller, which heard nothing of the restart, subtracts the
+	// context it knows, and that empties the store.
+	if _, err := again.Subtract(c.ID); err != nil {
+		t.Fatalf("the controller could not subtract the context after the restart: %v", err)
+	}
+	if got := contextsOf(t, store); len(got) != 0 {
+		t.Errorf("the store holds %+v after the Subtract, want nothing", got)
+	}
+}
+
+// TestARecreatedRelayGivesUpAContextWhosePortsAreTaken: a relay that
+// cannot open the ports of a stored context starts without it and
+// removes it from the store, rather than not starting at all.
+func TestARecreatedRelayGivesUpAContextWhosePortsAreTaken(t *testing.T) {
+	store := NewMemoryContextStore()
+	minPort, maxPort := rtptest.PortRange(t, 8)
+	first := relayOn(t, minPort, maxPort, store)
+	kept, err := first.Add(TerminationRequest{ID: Access}, TerminationRequest{ID: Core})
+	if err != nil {
+		t.Fatal(err)
+	}
+	lost, err := first.Add(TerminationRequest{ID: Access}, TerminationRequest{ID: Core})
+	if err != nil {
+		t.Fatal(err)
+	}
+	first.Close()
+
+	// Something else on the host holds the RTP port of one termination.
+	port := lost.Terminations[Core].Local.Port()
+	held, err := net.ListenUDP("udp4", net.UDPAddrFromAddrPort(netip.AddrPortFrom(netip.IPv4Unspecified(), port)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer held.Close()
+
+	again := relayOn(t, minPort, maxPort, store)
+	contexts := again.Contexts()
+	if len(contexts) != 1 || contexts[0].ID != kept.ID {
+		t.Fatalf("the relay created again holds %+v, want the context %s only", contexts, kept.ID)
+	}
+	saved := contextsOf(t, store)
+	if len(saved) != 1 || saved[0].ID != kept.ID {
+		t.Errorf("the store holds %+v, want the context %s only", saved, kept.ID)
+	}
+}
+
+// TestARelayWhoseStoreCannotBeReadDoesNotStart: without its contexts a
+// relay would leave the calls of its earlier process without media, and
+// answer their Subtract with "no such context", while holding their
+// ports.
+func TestARelayWhoseStoreCannotBeReadDoesNotStart(t *testing.T) {
+	minPort, maxPort := rtptest.PortRange(t, 4)
+	_, err := NewRelay(netip.MustParseAddr("127.0.0.1"), minPort, maxPort, nil, unreadableStore{}, quiet())
+	if !errors.Is(err, errBroken) {
+		t.Fatalf("NewRelay on a store that cannot be read: %v, want the error of the store", err)
+	}
+}
+
+// unreadableStore is a ContextStore that cannot be read, as the adapter
+// of a relay is while the shared store cannot be reached.
+type unreadableStore struct{ ContextStore }
+
+func (unreadableStore) Contexts(context.Context) ([]SavedContext, error) { return nil, errBroken }
+
 // TestTheRelayGivesUpWhatItCannotStore: a context, or a termination of
 // one, that the relay cannot write to the store is given up again, with
 // its ports, rather than carrying media that no later process of the
@@ -370,5 +501,93 @@ func TestRTPDoesNotWaitForTheStore(t *testing.T) {
 	}
 	if got := string(buf[:n]); got != "while the store takes its time" || src != core {
 		t.Errorf("the network side got %q from %v, want it from the core termination %v", got, src, core)
+	}
+}
+
+// TestANewContextAvoidsWhatTheRelayOpenedAgain: after a restart neither
+// the ports, nor the context ID, nor the termination names that the
+// relay opened again are handed out to a new context. A controller that
+// still holds an ID of the earlier process must not reach a context
+// that another call has taken.
+func TestANewContextAvoidsWhatTheRelayOpenedAgain(t *testing.T) {
+	store := NewMemoryContextStore()
+	minPort, maxPort := rtptest.PortRange(t, 12)
+	first := relayOn(t, minPort, maxPort, store)
+	old, err := first.Add(TerminationRequest{ID: Access}, TerminationRequest{ID: Core})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A termination whose name the relay chooses itself, as an MRFP
+	// does for its conferences.
+	joined, err := first.AddTermination(old.ID, TerminationRequest{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	first.Close()
+
+	again := relayOn(t, minPort, maxPort, store)
+	// The next ID the relay would hand out is the one of the context it
+	// opened again.
+	n, err := strconv.Atoi(strings.TrimPrefix(old.ID, "c"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	again.nextID.Store(uint64(n) - 1)
+
+	fresh, err := again.Add(TerminationRequest{ID: Access}, TerminationRequest{ID: Core})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fresh.ID == old.ID {
+		t.Errorf("the new context took the ID %s of the context that was opened again", fresh.ID)
+	}
+	for _, side := range []TerminationID{Access, Core} {
+		for _, taken := range old.Terminations {
+			if fresh.Terminations[side].Local.Port() == taken.Local.Port() {
+				t.Errorf("the %s termination took port %d, which was opened again", side, taken.Local.Port())
+			}
+		}
+	}
+
+	third, err := again.AddTermination(old.ID, TerminationRequest{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if third.ID == joined.ID || third.ID == Access || third.ID == Core {
+		t.Errorf("the new termination took the name %s of one that was opened again", third.ID)
+	}
+}
+
+// TestARecreatedMRFPGoesOnMixingAConference: the contexts of the MRFP
+// are those of the same relay, so a conference whose terminations were
+// opened again is mixed on, and each party gets the mix without a word
+// from the MRFC.
+func TestARecreatedMRFPGoesOnMixingAConference(t *testing.T) {
+	store := NewMemoryContextStore()
+	minPort, maxPort := rtptest.PortRange(t, 20)
+	first := relayOn(t, minPort, maxPort, store)
+	a, b, c := udp(t), udp(t), udp(t)
+	conference, err := first.Add(
+		TerminationRequest{ID: "a", Remote: addr(a)},
+		TerminationRequest{ID: "b", Remote: addr(b)},
+		TerminationRequest{ID: "c", Remote: addr(c)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := readRTP(t, a, 2*time.Second); !ok {
+		t.Fatal("the conference sends nothing before the restart")
+	}
+	first.Close()
+	// What was on its way out when the process stopped is in the
+	// socket of the party; the test reads what the relay created again
+	// sends.
+	rtptest.Queued(t, a)
+
+	again := relayOn(t, minPort, maxPort, store)
+	if got := again.Contexts(); len(got) != 1 || got[0].ID != conference.ID || len(got[0].Terminations) != 3 {
+		t.Fatalf("the relay created again holds %+v, want the conference %s with its three terminations", got, conference.ID)
+	}
+	if _, ok := readRTP(t, a, 2*time.Second); !ok {
+		t.Error("the conference that was opened again sends nothing: the mixer has no party")
 	}
 }

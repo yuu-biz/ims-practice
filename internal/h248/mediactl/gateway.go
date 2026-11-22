@@ -221,8 +221,13 @@ func (g *Gateway) Close() error {
 // whenever the association fails, until the gateway is closed.
 //
 // The first registration is IMS-AGW Register (TS 29.334 5.17.3.5):
-// ServiceChange Restart with 901 Cold Boot, since the relay has no
-// contexts when the gateway starts (H.248.8 (03/2013) 5.2.2). After a
+// ServiceChange Restart with 901 Cold Boot, since the gateway has no
+// contexts when it starts (H.248.8 (03/2013) 5.2.2). A relay that
+// opened again the contexts its earlier process left (agw.NewRelay with
+// a context store) still gets a Cold Boot: the gateway's own table of
+// which H.248 context holds which context of the relay is in its
+// memory, and those contexts are not in it. No node of this project
+// puts a gateway in front of a relay with a store. After a
 // failure, the gateway contacts the controller it had with Disconnected
 // and 900 Service Restored, IMS-AGW Communication Up (TS 29.334
 // 5.17.3.3, H.248.1 (05/2002) 11.5); its contexts are still there.
