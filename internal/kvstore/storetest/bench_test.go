@@ -213,11 +213,12 @@ func benchmarkMixes(b *testing.B, r roles, kv *counting) {
 		// status report request at the SC stub.
 		{"ShortMessage", func(user string, n int) {
 			center.PutStatusReportRequest(sc.StatusReportRequest{Reference: "ref-" + user, Expires: time.Now().Add(time.Hour)})
-			now := time.Now()
-			mr := g.NextMessageReference("tel:+12025550102", now.Add(10*time.Minute))
-			g.PutDelivery(ipsmgw.PendingDelivery{CallID: "msg-" + user, Reference: "ref-" + user, MessageReference: mr,
+			// The backends of the benchmarks do not fail.
+			ctx, now := context.Background(), time.Now()
+			mr, _ := g.NextMessageReference(ctx, "tel:+12025550102", now.Add(10*time.Minute))
+			_ = g.PutDelivery(ctx, ipsmgw.PendingDelivery{CallID: "msg-" + user, Reference: "ref-" + user, MessageReference: mr,
 				ReportDeadline: now.Add(time.Minute), Expires: now.Add(2 * time.Minute)})
-			g.TakeDelivery("msg-" + user)
+			_, _, _ = g.TakeDelivery(ctx, "msg-"+user)
 			center.TakeStatusReportRequest("ref-" + user)
 		}},
 	}
