@@ -109,6 +109,16 @@ export function pairArrows(ordered: Message[]): Arrow[] {
   return arrows;
 }
 
+// How a Diameter message came into the ladder, for its details. A SIP
+// message carries the Call-ID that the ladder draws. Nothing in a Cx or
+// Rx message names a SIP message, so the server linked its session to
+// one by a rule (causeWindow in internal/lab/causes.go): every Diameter
+// message with a call_id got it that way.
+export function inferredLink(m: Message): string | null {
+  if (m.protocol !== "diameter" || m.call_id === "") return null;
+  return "Inferred by the Lab, not carried in the message: the request that began its Diameter session was sent by its node at most 2 s after that node received a SIP message of this ladder about the same user.";
+}
+
 export function orderColumns(ordered: Message[], arrows: Arrow[]): Column[] {
   const nodeOf = new Map<string, string>();
   for (const m of ordered) if (m.node !== "") nodeOf.set(localHost(m), m.node);

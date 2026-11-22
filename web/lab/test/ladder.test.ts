@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { Message } from "../src/api.ts";
 import { columnLabel } from "../src/ladder-svg.ts";
-import { buildLadder, captureOrder, hostOf, type Ladder } from "../src/ladder.ts";
+import { buildLadder, captureOrder, hostOf, inferredLink, type Ladder } from "../src/ladder.ts";
 import { allMessages, callCallId, hosts, registrationCallId, subscribeCallId } from "./fixtures.ts";
 
 const nameOf = new Map<string, string>(Object.entries(hosts).map(([name, host]) => [host, name]));
@@ -39,6 +39,18 @@ describe("registration ladder", () => {
     for (const arrow of ladder.arrows) {
       expect(arrow.messages.map((m) => m.direction).sort()).toEqual(["recv", "send"]);
     }
+  });
+
+  it("says that the Cx messages were linked by the rule, and the SIP messages not", () => {
+    const linked = ladder.arrows.filter((a) => a.messages.every((m) => inferredLink(m) !== null)).map((a) => a.summary);
+    expect(linked).toEqual(["UAR", "UAA 2001", "MAR", "MAA 2001", "UAR", "UAA 2001", "SAR", "SAA 2001"]);
+    const [uar] = ladder.arrows.filter((a) => a.summary === "UAR");
+    expect(inferredLink(uar?.messages[0] as Message)).toBe(
+      "Inferred by the Lab, not carried in the message: the request that began its Diameter session was sent by its node at most 2 s after that node received a SIP message of this ladder about the same user.",
+    );
+    const sip = ladder.arrows.filter((a) => a.protocol === "sip");
+    expect(sip.length).toBeGreaterThan(0);
+    expect(sip.flatMap((a) => a.messages).every((m) => inferredLink(m) === null)).toBe(true);
   });
 });
 
