@@ -908,15 +908,11 @@ func (f *conference) inviteUser(rt sip.ReferTo, referredBy string) int {
 // writes a tel URI with a Replaces (TS 24.147 5.3.1.5.3), is its tel
 // URI again, which the S-CSCF finds the user by (RFC 3261 19.1.6).
 func requestURIOf(uri string) string {
-	u, err := sip.ParseURI(uri)
-	if err != nil {
+	n, ok := ims.ParseTelephoneNumber(uri)
+	if !ok || n.SIP == nil || !strings.HasPrefix(n.Number, "+") {
 		return uri
 	}
-	if user, ok := u.Params.Get("user"); !ok || !strings.EqualFold(user, "phone") || !strings.HasPrefix(u.User, "+") {
-		return uri
-	}
-	number, _, _ := strings.Cut(u.User, ";")
-	return "tel:" + number
+	return "tel:" + n.Number
 }
 
 // otherSide is the Replaces that names, for the next hop, the other leg
