@@ -620,8 +620,10 @@ func TestAnUnansweredRegEventRefreshDoesNotHoldTheSubscription(t *testing.T) {
 	f := newRegEventFixture(t, func(time.Duration) time.Duration { return 500 * time.Millisecond }, 0)
 	// The S-CSCF gives the subscription 2 s and turns the refresh down
 	// with a 500, which does not end it (RFC 6665 4.1.2.2).
+	f.home.mu.Lock()
 	f.home.grant = 2 * time.Second
 	f.home.refuseRefresh = 500
+	f.home.mu.Unlock()
 
 	f.register(t, "1")
 	f.nextSubscribe(t, "initial SUBSCRIBE")
@@ -653,7 +655,9 @@ func TestAnUnansweredRegEventRefreshDoesNotHoldTheSubscription(t *testing.T) {
 func TestARegEventNotifyWithoutExpiresTakesTheGrantedDuration(t *testing.T) {
 	f := newRegEventFixture(t, func(time.Duration) time.Duration { return 20 * time.Millisecond }, 0)
 	// The P-CSCF asks for 3761 s; the S-CSCF grants 120.
+	f.home.mu.Lock()
 	f.home.grant = 120 * time.Second
+	f.home.mu.Unlock()
 
 	f.register(t, "1")
 	if asked := f.nextSubscribe(t, "initial SUBSCRIBE").Get("Expires"); asked != "3761" {
