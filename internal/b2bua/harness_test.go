@@ -160,12 +160,19 @@ func way(d b2bua.Direction) string {
 // (b2bua.Call.Progress). noLeg, when set, has the role send no INVITE
 // toward the callee (b2bua.Call.NoLeg) and reject the caller's INVITE
 // once that channel is closed.
+// next, when set, is the callee that the role sends the INVITE on to on
+// a new leg once the first leg has ended without an answer (Attempt
+// again), as a service that diverts a call does; before, when set, is
+// what the role does on the call of the caller before that new leg, such
+// as ending the early dialog of the caller with a 199.
 type hooks struct {
 	request  func(req *sip.Message, d b2bua.Direction) *b2bua.Refusal
 	response func(resp *sip.Message, d b2bua.Direction)
 	ack      func(ack *sip.Message, d b2bua.Direction)
 	own      func(c *b2bua.Call)
 	noLeg    chan struct{}
+	next     string
+	before   func(in *sip.IncomingCall, c *b2bua.Call)
 
 	mu    sync.Mutex
 	kept  int
@@ -247,22 +254,32 @@ func startB2BUA(t *testing.T, h *hooks, callee string, tm sip.Timers) *sip.UA {
 			return
 		}
 		from, _ := sip.ParseNameAddr(in.Request.Get("From"))
-		out, err := c.Attempt(ua, sip.Invitation{RequestURI: callee, From: from.URI, To: callee, Body: sip.BodyOf(in.Request)})
-		if err != nil {
-			c.NoLeg()
-			in.Reject(500)
-			return
+		callees := []string{callee}
+		if h.next != "" {
+			callees = append(callees, h.next)
 		}
 		var final *sip.Message
-		for resp := range out.Responses() {
-			switch {
-			case resp.StatusCode < 200:
-				c.RelayProvisional(out, resp)
-			case resp.StatusCode < 300:
-				c.Answer(out, resp)
+		for i, to := range callees {
+			if i > 0 && h.before != nil {
+				h.before(in, c)
+			}
+			out, err := c.Attempt(ua, sip.Invitation{RequestURI: to, From: from.URI, To: to, Body: sip.BodyOf(in.Request)})
+			if err != nil {
+				c.NoLeg()
+				in.Reject(500)
 				return
-			default:
-				final = resp
+			}
+			final = nil
+			for resp := range out.Responses() {
+				switch {
+				case resp.StatusCode < 200:
+					c.RelayProvisional(out, resp)
+				case resp.StatusCode < 300:
+					c.Answer(out, resp)
+					return
+				default:
+					final = resp
+				}
 			}
 		}
 		if final != nil {
