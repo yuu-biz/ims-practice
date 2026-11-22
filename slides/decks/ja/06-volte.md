@@ -202,7 +202,7 @@ INVITE    P-CSCF -> S-CSCF   P-Asserted-Identity: <sip:+12025550110@ims.mnc001.m
 
 - S-CSCF は、P-Associated-URI に規制されていない識別子だけを、既定の識別子を先頭にして並べます。UE は最初のものを既定の公開の識別子として覚えます。登録した識別子は一覧に無いので、規制されたものとして扱います。
 - UE は P-Preferred-Identity を送らないので、P-CSCF は既定の識別子を P-Asserted-Identity に入れます。規制された識別子からのリクエストには 403、その識別子あてには 404 が返ります。
-- `sip && !(sip.CSeq.method == "REGISTER") && frame contains "sip:001010000000010@ims"` に合うパケットはありません。ソフトフォンには SIM がありません。識別子は IMC に入っているのと同じように設定で与えられ、登録したものをそのまま使います。
+- `sip && !(sip.CSeq.method == "REGISTER") && frame contains "sip:001010000000010@ims"` に合うパケットはありません。Contact にも IMSI は入らず、ユーザー部は UUID です。ソフトフォンには SIM がありません。識別子は IMC に入っているのと同じように設定で与えられ、登録したものをそのまま使います。
 
 > 手順書 [「ISIM の無い端末の識別子」](../../../docs/guide/ja/volte.md#isim-の無い端末の識別子)。TS 24.229 5.4.1.2.2F、5.1.1.2.1、5.2.6.3.1、5.4.3.2、5.4.3.3、5.1.1.1B.1。
 
@@ -549,7 +549,7 @@ volte-b <- EPC と PCRF: DEACTIVATE EPS BEARER CONTEXT REQUEST
 
 ## 作っていないものと、その理由
 
-- REGISTER の Contact には ICSI も +sip.instance も audio のタグも無く、ユーザー部も UUID ではありません。INVITE とその応答の Contact には ICSI と audio があります。
+- REGISTER の Contact には ICSI も +sip.instance も audio のタグもありません。INVITE とその応答の Contact には ICSI と audio があります。
 - CMR に従うには、符号化できる UE が要ります。この UE は、前もって符号化したフレームを送ります。
 - ESP は、キャプチャを読めるようにするために省きました。
 - どのノードも IPv4 で、1 つの Docker のネットワークにいます。

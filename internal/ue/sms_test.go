@@ -86,7 +86,7 @@ func newSMSUE(t *testing.T, pcscf netip.AddrPort, private, public, pass string, 
 	t.Helper()
 	tr := listenTransport(t)
 	addr := tr.LocalAddr()
-	contact := ue.NewContact(public, addr)
+	contact := ue.NewContact(addr)
 	// The UA needs the UE's ReceiveSMS before the UE exists.
 	var u atomic.Pointer[ue.UE]
 	ua, err := sip.NewUA(tr, sip.UAConfig{

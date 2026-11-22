@@ -346,7 +346,7 @@ func openUE(log *slog.Logger, o options, line *ue.Line) (u *opened, err error) {
 		closeUnprotected()
 		return nil, fmt.Errorf("the PDN address %s is not the address %s that this host reaches the P-CSCF from", attached.Address, addr.Addr())
 	}
-	contact := ue.NewContact(o.cfg.PublicIdentity, addr)
+	contact := ue.NewContact(addr)
 	// The UA takes the MESSAGEs of SMS over IP before the UE that
 	// handles them exists; none comes before the UE registers.
 	var receiver atomic.Pointer[ue.UE]

@@ -35,7 +35,8 @@ type UAConfig struct {
 	Timers Timers
 	Screen func(req *Message, source Destination) bool
 	// Contact is the SIP URI where this UA takes the later requests of
-	// its dialogs, such as sip:001010000000001@192.0.2.10:5060 (RFC 3261
+	// its dialogs, such as
+	// sip:01a20145-ef29-7338-8452-2c105204e98e@192.0.2.10:5060 (RFC 3261
 	// 12.1.1, 12.1.2).
 	Contact string
 	// ContactParams are the parameters that the UA writes after that URI

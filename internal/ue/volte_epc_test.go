@@ -39,7 +39,7 @@ func newEPCParty(t *testing.T, n testNetwork, private, public, pass string) *par
 		t.Skipf("cannot listen on %v, the PDN address of the UE: %v", att.Address, err)
 	}
 	addr := tr.LocalAddr()
-	p.contact = ue.NewContact(public, addr)
+	p.contact = ue.NewContact(addr)
 	p.ua, err = sip.NewUA(tr, ue.UAConfig(sip.UAConfig{
 		SentBy:  addr.String(),
 		Contact: p.contact.URI(),

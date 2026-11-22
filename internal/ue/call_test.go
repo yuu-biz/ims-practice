@@ -46,7 +46,7 @@ func newPartyTweaked(t *testing.T, pcscfAddr netip.AddrPort, private, public, pa
 		t.Fatal(err)
 	}
 	addr := tr.LocalAddr()
-	p.contact = ue.NewContact(public, addr)
+	p.contact = ue.NewContact(addr)
 	cfg := ue.UAConfig(sip.UAConfig{
 		SentBy:  addr.String(),
 		Contact: p.contact.URI(),
@@ -190,7 +190,7 @@ func directCaller(t *testing.T, onCall func(ic *sip.IncomingCall, media *ue.Medi
 
 	callerTransport := listen()
 	callerAddr := callerTransport.LocalAddr()
-	callerContact := ue.NewContact(impu, callerAddr)
+	callerContact := ue.NewContact(callerAddr)
 	caller, err := sip.NewUA(callerTransport, ue.UAConfig(sip.UAConfig{
 		SentBy:  callerAddr.String(),
 		Contact: callerContact.URI(),
@@ -229,7 +229,7 @@ func TestCalleeSendsToTheStreamItAccepted(t *testing.T) {
 		t.Fatal(err)
 	}
 	calleeAddr := calleeTransport.LocalAddr()
-	calleeContact := ue.NewContact(impu2, calleeAddr)
+	calleeContact := ue.NewContact(calleeAddr)
 	calls := make(chan *sip.IncomingCall, 1)
 	calleeUA, err := sip.NewUA(calleeTransport, ue.UAConfig(sip.UAConfig{
 		SentBy:  calleeAddr.String(),
@@ -492,7 +492,7 @@ func ringingCallee(t *testing.T, ctx context.Context, opts ue.AnswerOptions) (*s
 	t.Helper()
 	calleeTransport := listenTransport(t)
 	calleeAddr := calleeTransport.LocalAddr()
-	calleeContact := ue.NewContact(impu2, calleeAddr)
+	calleeContact := ue.NewContact(calleeAddr)
 	calls := make(chan *sip.IncomingCall, 1)
 	calleeUA, err := sip.NewUA(calleeTransport, ue.UAConfig(sip.UAConfig{
 		SentBy:  calleeAddr.String(),

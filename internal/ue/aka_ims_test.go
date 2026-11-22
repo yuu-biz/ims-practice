@@ -65,7 +65,7 @@ func newIMSParty(t *testing.T, pcscf netip.AddrPort, private, public, pass strin
 	tr := listenTransport(t)
 	addr := tr.LocalAddr()
 	var u atomic.Pointer[ue.UE]
-	p := &party{calls: make(chan *sip.IncomingCall, 1), contact: ue.NewContact(public, addr)}
+	p := &party{calls: make(chan *sip.IncomingCall, 1), contact: ue.NewContact(addr)}
 	var err error
 	p.ua, err = sip.NewUA(tr, sip.UAConfig{
 		SentBy:    addr.String(),

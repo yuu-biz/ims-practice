@@ -62,7 +62,7 @@ func newPhone(t *testing.T, pcscfAddr netip.AddrPort, private, public, pass stri
 	t.Helper()
 	tr := listenTransport(t)
 	addr := tr.LocalAddr()
-	contact := ue.NewContact(public, addr)
+	contact := ue.NewContact(addr)
 	line := ue.NewLine(true)
 	var receiver atomic.Pointer[ue.UE]
 	ua, err := sip.NewUA(tr, ue.UAConfig(sip.UAConfig{

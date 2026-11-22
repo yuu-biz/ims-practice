@@ -250,7 +250,7 @@ func TestRegisterCarriesTheAccessNetworkInfo(t *testing.T) {
 	s := stack(t, func(st *sip.ServerTransaction) {})
 	pani := ue.AccessNetworkInfo(stubCell)
 	u := ue.New(ue.Config{PrivateIdentity: impi, PublicIdentity: impu, Password: password, HomeDomain: domain,
-		PCSCF: pcscf.LocalAddr(), AccessNetworkInfo: pani}, s, ue.NewContact(impu, s.LocalAddr()), quiet())
+		PCSCF: pcscf.LocalAddr(), AccessNetworkInfo: pani}, s, ue.NewContact(s.LocalAddr()), quiet())
 	if _, err := u.Register(t.Context()); err != nil {
 		t.Fatal(err)
 	}

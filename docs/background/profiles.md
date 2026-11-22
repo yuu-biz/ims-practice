@@ -53,7 +53,7 @@ IR.92 のうち、このプロジェクトに関わる必須の要件です。�
 | 登録の Contact に機能タグ +g.3gpp.smsip を入れる | 2.2.1 | 入れている | 対応済み |
 | 登録の Contact に mmtel の ICSI と +sip.instance を入れる | 2.2.1 | 登録の Contact には入れていない。INVITE とその応答の Contact には ICSI を入れている | 未対応 |
 | REGISTER と INVITE とその応答の Contact に、audio の機能タグ（RFC 3840）を入れる | 2.2.1、2.2.4 | INVITE とその応答には入れている。REGISTER には入れていない | 未対応 |
-| Contact の user part を一意にし、私的な情報を出さない。時刻をもとにした UUID を使える | 2.2.1 | 公開の識別子の user part を使っている | 未対応 |
+| Contact の user part を一意にし、私的な情報を出さない。時刻をもとにした UUID を使える | 2.2.1 | UE が起動するときに作るバージョン 7 の UUID（RFC 9562）を user part にしている。再登録と登録の解除でも同じものを使う | 対応済み |
 | すべての要求に User-Agent、すべての応答に Server を付ける。形は GSMA RCC.07 に IR.92 の拡張を加えたもの | 2.6 | 付けている。形は IR.92 の例に従い、RCC.07 は読んでいない（SIMPLIFIED） | 対応済み |
 | OPTIONS の要求と 200 の Contact に mmtel の ICSI を入れる | 2.2.9 | OPTIONS に 200 で答え、その Contact に ICSI を入れる。UE から OPTIONS は送らない | 対応済み |
 | 発信の 486 での拒否（UDUB） | 2.2.4 | 対応している | 対応済み |

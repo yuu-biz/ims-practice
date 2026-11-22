@@ -27,7 +27,7 @@ func newCalledUE(t *testing.T, calls ue.CallConfig) *calledUE {
 	c := &calledUE{calls: make(chan *sip.IncomingCall, 1)}
 	tr := listenTransport(t)
 	addr := tr.LocalAddr()
-	c.contact = ue.NewContact(impu2, addr)
+	c.contact = ue.NewContact(addr)
 	var err error
 	c.ua, err = sip.NewUA(tr, ue.UAConfig(sip.UAConfig{
 		SentBy:  addr.String(),

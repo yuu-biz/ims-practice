@@ -524,6 +524,9 @@ none "P-Charging-Vector or P-Charging-Function-Addresses from the P-CSCF to a UE
 # The temporary public identities of the VoLTE UEs serve REGISTER only
 # (TS 23.228 E.3.1): no other request or response names them.
 none "a temporary public identity outside REGISTER" "((sip && !(sip.CSeq.method == \"REGISTER\")) || http) && (frame contains \"$temporary_a\" || frame contains \"sip:001010000000012@$domain\")"
+# The user part of a UE's contact is a UUID of its own, not its IMSI
+# (TS 24.229 5.1.1.2.1 item c), in REGISTER and in its calls alike.
+none "the IMSI of a VoLTE UE in a Contact" 'sip.Contact contains "001010000000010" || sip.Contact contains "001010000000012"'
 none "malformed SIP, SDP, Diameter, HTTP, JSON, RTP, RTCP or AMR packets" '(sip || sdp || diameter || http || json || rtp || rtcp || amr || rtpevent) && (_ws.malformed || _ws.expert.severity >= warning)'
 # RFC 3261 18.1.1: a request over 1300 bytes does not go over UDP.
 none "SIP requests over 1300 bytes on UDP" 'sip.Method && udp && udp.length > 1308'

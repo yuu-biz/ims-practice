@@ -358,7 +358,7 @@ func (n *network) subscriber(k int, register bool) *subscriber {
 		n.t.Fatal(err)
 	}
 	addr := tr.LocalAddr()
-	contact := ue.NewContact(s.impu, addr)
+	contact := ue.NewContact(addr)
 	// The UA takes the precondition mechanism, as the UE simulator's UA
 	// does (ue.UAConfig), so that ue.Call and ue.Answer use it.
 	s.ua, err = sip.NewUA(tr, ue.UAConfig(sip.UAConfig{
