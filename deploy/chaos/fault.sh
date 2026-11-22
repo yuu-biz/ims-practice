@@ -43,7 +43,7 @@ Network faults, at the interfaces of TARGET; undo with: clear TARGET
   partition [--network NET] TARGET [PEER...]
         cut TARGET off from the peers, or from everything. A peer is a
         service (all its containers), service:number, a pattern such as
-        'scscf-*' for every instance of a role, or an IPv4 address.
+        'scscf-[0-9]*' for every numbered instance of a role, or an IPv4 address.
 
   --network NET puts the fault on the interface of TARGET on the Compose
   network NET only, such as nni for the link between the two networks of

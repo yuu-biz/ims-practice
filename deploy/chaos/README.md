@@ -182,7 +182,7 @@ A redundant deployment runs the instances of a role as services of their own, su
 
 - `fault.sh recreate pcscf-1` replaces one P-CSCF; the other instances and the store keep the state.
 - `fault.sh kill valkey`, then `fault.sh start valkey`, restarts the store. With an append-only file on a volume, it reads its data again; without persistence, it starts empty, and every instance loses the state it kept there.
-- `fault.sh partition valkey 'scscf-*'` cuts the store off from every S-CSCF instance and leaves the other roles alone.
+- `fault.sh partition valkey 'scscf-[0-9]*'` cuts the store off from every S-CSCF instance and leaves the other roles alone.
 
 ### Take a node off the network
 
