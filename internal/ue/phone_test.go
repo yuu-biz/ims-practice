@@ -184,6 +184,11 @@ func (p *phone) waitFor(what string, ok func(statusJSON) bool) statusJSON {
 	}
 }
 
+// within tells whether the status of the phone came to ok within d.
+func (p *phone) within(d time.Duration, ok func(statusJSON) bool) bool {
+	return came(d, func() bool { return ok(p.status()) })
+}
+
 func (p *phone) waitCall(want string) statusJSON {
 	p.t.Helper()
 	return p.waitFor("call "+want, func(s statusJSON) bool { return s.callState() == want })
@@ -252,9 +257,10 @@ func TestServeRegistersAndDeregistersOnRequest(t *testing.T) {
 		t.Error("not registered after POST /register")
 	}
 	// The NOTIFY that ends the old subscription comes after the new
-	// registration, and must leave it alone.
-	time.Sleep(500 * time.Millisecond)
-	if !p.status().Registered {
+	// registration, and must leave it alone. A NOTIFY that ends the
+	// registration takes it away within the watch, as
+	// TestServeStaysDeregisteredWhenRejected sees.
+	if p.within(watch, func(s statusJSON) bool { return !s.Registered }) {
 		t.Error("the end of the old reg event subscription took the new registration away")
 	}
 }
@@ -288,7 +294,11 @@ func TestServeRegistersAgainWhenDeactivated(t *testing.T) {
 		t.Fatal(err)
 	}
 	nextEvent(t, events, "registered false", func(s statusJSON) bool { return !s.Registered })
-	nextEvent(t, events, "registered true", func(s statusJSON) bool { return s.Registered })
+	// TestServeStaysDeregisteredWhenRejected watches as long for a
+	// registration that must not come.
+	if !p.within(watch, func(s statusJSON) bool { return s.Registered }) {
+		t.Errorf("not registered again within %v of the deactivation", watch)
+	}
 }
 
 func TestServeStaysDeregisteredWhenRejected(t *testing.T) {
@@ -298,9 +308,10 @@ func TestServeStaysDeregisteredWhenRejected(t *testing.T) {
 	if err := n.scscf.Deregister(impi, reginfo.Rejected); err != nil {
 		t.Fatal(err)
 	}
-	p.waitFor("deregistered", func(s statusJSON) bool { return !s.Registered })
-	time.Sleep(300 * time.Millisecond)
-	if p.status().Registered {
+	if !p.within(watch, func(s statusJSON) bool { return !s.Registered }) {
+		t.Fatalf("still registered %v after the network rejected the registration", watch)
+	}
+	if p.within(watch, func(s statusJSON) bool { return s.Registered }) {
 		t.Error("registered again after the network rejected the registration")
 	}
 }
@@ -321,22 +332,30 @@ func TestServeCallsAnotherServe(t *testing.T) {
 	caller.wantCode(http.MethodPost, "/call", `{"target": "`+impu2+`"}`, http.StatusConflict)
 
 	nextEvent(t, calleeEvents, "an incoming call that rings", func(s statusJSON) bool { return s.callState() == "incoming ringing" })
-	got := callee.waitCall("incoming active")
+	// The automatic answer comes within the watch for which a call
+	// without it keeps ringing, in TestServeAnswersByHandInManualMode and
+	// TestServeTwoCalls.
+	if !callee.within(watch, func(s statusJSON) bool { return s.callState() == "incoming active" }) {
+		t.Fatalf("the callee did not answer by itself within %v of ringing", watch)
+	}
+	got := callee.status()
 	if got.Call.CallID != callID || got.Call.Peer != impu {
 		t.Errorf("callee has call %+v, want Call-ID %s from %s", got.Call, callID, impu)
 	}
 	nextEvent(t, calleeEvents, "the answered call", func(s statusJSON) bool { return s.callState() == "incoming active" })
 	caller.waitCall("outgoing active")
-	// The call stays up after the audio.
-	time.Sleep(500 * time.Millisecond)
-	if s := caller.status(); s.callState() != "outgoing active" {
-		t.Fatalf("call %s after the audio, want it still active", s.callState())
+	// The call stays up after the audio. A call that ends shows within
+	// the watch, as the hang-up below does.
+	if caller.within(watch, func(s statusJSON) bool { return s.callState() != "outgoing active" }) {
+		t.Fatalf("call %s after the audio, want it still active", caller.status().callState())
 	}
 	caller.wantCode(http.MethodPost, "/call", `{"target": "`+impu2+`"}`, http.StatusConflict)
 
 	caller.must(http.MethodPost, "/hangup", "")
 	caller.waitCall("none")
-	callee.waitCall("none")
+	if !callee.within(watch, func(s statusJSON) bool { return s.callState() == "none" }) {
+		t.Fatalf("the callee still has the call %v after the hang-up", watch)
+	}
 	nextEvent(t, calleeEvents, "the end of the call", func(s statusJSON) bool { return s.Call == nil })
 	// The line is free for the next call.
 	caller.must(http.MethodPost, "/call", `{"target": "`+impu2+`"}`)
@@ -356,9 +375,8 @@ func TestServeAnswersByHandInManualMode(t *testing.T) {
 	caller.must(http.MethodPost, "/call", `{"target": "`+impu2+`"}`)
 	callee.waitCall("incoming ringing")
 	caller.waitCall("outgoing ringing")
-	time.Sleep(500 * time.Millisecond)
-	if s := callee.status(); s.callState() != "incoming ringing" {
-		t.Fatalf("call %s without POST /answer, want it ringing", s.callState())
+	if callee.within(watch, func(s statusJSON) bool { return s.callState() != "incoming ringing" }) {
+		t.Fatalf("call %s without POST /answer, want it ringing", callee.status().callState())
 	}
 	// Only the callee has a call to answer.
 	caller.wantCode(http.MethodPost, "/answer", "", http.StatusConflict)
@@ -512,9 +530,9 @@ func TestServeTwoCalls(t *testing.T) {
 	callee.waitFor("a waiting call", func(s statusJSON) bool {
 		return len(s.Calls) == 2 && s.Calls[1].Waiting && s.Calls[1].State == "ringing"
 	})
-	time.Sleep(200 * time.Millisecond) // longer than the ring of the automatic answer
-	if s := callee.status(); s.Calls[1].State != "ringing" {
-		t.Fatalf("the waiting call is %s, want it still ringing", s.Calls[1].State)
+	// The watch is longer than the ring of the automatic answer.
+	if callee.within(watch, func(s statusJSON) bool { return len(s.Calls) != 2 || s.Calls[1].State != "ringing" }) {
+		t.Fatalf("the waiting call is %+v, want it still ringing", callee.status().Calls)
 	}
 	callee.must(http.MethodPost, "/answer", "")
 	callee.waitFor("the first call held and the second answered", func(s statusJSON) bool {

@@ -49,14 +49,19 @@ func between(t *testing.T, codec sdp.Codec, events *sdp.Codec) (a, b *ue.Media) 
 	return a, b
 }
 
-func played(t *testing.T, m *ue.Media) {
+// played waits until from has sent all its speech, and to has received
+// all of it: every octet of PCMU, and every AMR frame in its place.
+func played(t *testing.T, from, to *ue.Media) {
 	t.Helper()
 	select {
-	case <-m.Played():
+	case <-from.Played():
 	case <-time.After(5 * time.Second):
 		t.Fatal("the speech never all went out")
 	}
-	time.Sleep(50 * time.Millisecond) // for the last packet to arrive
+	waitFor(t, "all the speech sent to arrive", func() bool {
+		got, _ := to.Received()
+		return len(got) == len(from.Sent()) && len(to.ReceivedFrames()) == len(from.SentFrames())
+	})
 }
 
 // TestMediaSendsSymmetricRTP is RFC 4961: the UE sends its RTP from the
@@ -125,7 +130,7 @@ func TestMediaCarriesPCMU(t *testing.T) {
 	if err := a.Start(ue.Speech{PCM: ue.Tone(440, 200*time.Millisecond)}); err != nil {
 		t.Fatal(err)
 	}
-	played(t, a)
+	played(t, a, b)
 	got, packets := b.Received()
 	if packets != 10 || !bytes.Equal(got, a.Sent()) {
 		t.Errorf("received %d packets, %d bytes; want the 10 packets and %d bytes sent", packets, len(got), len(a.Sent()))
@@ -142,7 +147,7 @@ func TestMediaCarriesAMRWB(t *testing.T) {
 		if err := a.Start(speech); err != nil {
 			t.Fatal(err)
 		}
-		played(t, a)
+		played(t, a, b)
 		want := speech.AMRWB
 		if codec.Name == sdp.NameAMR {
 			want = speech.AMR
@@ -176,7 +181,7 @@ func TestMediaPausesWithoutLosingTheTiming(t *testing.T) {
 	a.SetFlow(ue.Flow{Receive: true})
 	time.Sleep(100 * time.Millisecond)
 	a.SetFlow(ue.Flow{Send: true, Receive: true})
-	played(t, a)
+	played(t, a, b)
 	sent, received := a.SentFrames(), b.ReceivedFrames()
 	speechFrames := 0
 	for _, f := range received {
@@ -232,7 +237,9 @@ func TestRTCPGoesBothWaysAndEndsWithBYE(t *testing.T) {
 	a, b := between(t, pcmu, nil)
 	a.Start(ue.Speech{PCM: ue.Tone(440, time.Second)})
 	b.Start(ue.Speech{})
-	waitFor(t, "RTCP both ways", func() bool { return a.Stats().RTCPReceived > 1 && b.Stats().RTCPReceived > 1 })
+	if !came(watch, func() bool { return a.Stats().RTCPReceived > 1 && b.Stats().RTCPReceived > 1 }) {
+		t.Fatalf("no RTCP both ways within %v", watch)
+	}
 	before := b.Stats().RTCPReceived
 	a.Stop()
 	waitFor(t, "the RTCP BYE", func() bool { return b.Stats().RTCPReceived > before })
@@ -240,8 +247,8 @@ func TestRTCPGoesBothWaysAndEndsWithBYE(t *testing.T) {
 	off, other := between(t, pcmu, nil)
 	off.SetStream(ue.Stream{Remote: loopback(other.Port()), Codec: pcmu})
 	off.Start(ue.Speech{PCM: ue.Tone(440, 100*time.Millisecond)})
-	time.Sleep(100 * time.Millisecond)
-	if s := off.Stats(); s.RTCPSent != 0 {
-		t.Errorf("%d RTCP packets with b=RS:0 and b=RR:0, want none (IR.92 3.2.4)", s.RTCPSent)
+	// The watch that saw RTCP both ways above.
+	if came(watch, func() bool { return off.Stats().RTCPSent != 0 }) {
+		t.Errorf("%d RTCP packets with b=RS:0 and b=RR:0, want none (IR.92 3.2.4)", off.Stats().RTCPSent)
 	}
 }

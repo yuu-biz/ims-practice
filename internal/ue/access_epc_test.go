@@ -213,6 +213,23 @@ func decodeBody(t *testing.T, resp *http.Response, v any) {
 	}
 }
 
+// watch is how long a test watches for something the UE or the network
+// must not do. Each test that watches this long has a twin that waits
+// as long for what they must do, and sees it come.
+const watch = time.Second
+
+// came tells whether cond held within d.
+func came(d time.Duration, cond func() bool) bool {
+	deadline := time.Now().Add(d)
+	for !cond() {
+		if time.Now().After(deadline) {
+			return false
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	return true
+}
+
 // waitFor polls ok until it holds, for what the UE does in goroutines of
 // its own.
 func waitFor(t *testing.T, what string, ok func() bool) {

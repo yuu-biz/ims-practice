@@ -59,23 +59,28 @@ func (c *activeCall) end(t *testing.T) {
 	wait(t, "the answer", c.answered)
 }
 
-// still checks that no RTP flows either way for a while.
+// still checks that no RTP flows either way for as long as flowing
+// waits for it.
 func (c *activeCall) still(t *testing.T, why string) {
 	t.Helper()
 	time.Sleep(60 * time.Millisecond) // for what was on its way
 	a, b := c.caller.media.Stats().PacketsReceived, c.callee.media.Stats().PacketsReceived
-	time.Sleep(200 * time.Millisecond)
-	if a2, b2 := c.caller.media.Stats().PacketsReceived, c.callee.media.Stats().PacketsReceived; a2 != a || b2 != b {
-		t.Errorf("%s: RTP still flows: %d and %d packets more", why, a2-a, b2-b)
+	if came(watch, func() bool {
+		return c.caller.media.Stats().PacketsReceived != a || c.callee.media.Stats().PacketsReceived != b
+	}) {
+		t.Errorf("%s: RTP still flows: %d and %d packets more", why,
+			c.caller.media.Stats().PacketsReceived-a, c.callee.media.Stats().PacketsReceived-b)
 	}
 }
 
 func (c *activeCall) flowing(t *testing.T, why string) {
 	t.Helper()
 	a, b := c.caller.media.Stats().PacketsReceived, c.callee.media.Stats().PacketsReceived
-	waitFor(t, why, func() bool {
+	if !came(watch, func() bool {
 		return c.caller.media.Stats().PacketsReceived > a+2 && c.callee.media.Stats().PacketsReceived > b+2
-	})
+	}) {
+		t.Errorf("%s: no RTP either way within %v", why, watch)
+	}
 }
 
 // TestHoldAndResume is RFC 3264 8.4 with IR.92 2.3.10: the holder offers
