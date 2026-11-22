@@ -193,7 +193,7 @@ docker network disconnect ims-practice_ims ims-practice-icscf-1
 docker network connect --ip 172.28.0.20 ims-practice_ims ims-practice-icscf-1
 ```
 
-つなぎ直すときは、アドレスを指定し直します。アドレスは[キャプチャの手順書](../../docs/guide/ja/capture.md)にあります。I-CSCF が外れているあいだ、キャプチャには、誰も答えない 172.28.0.20 の ARP の問い合わせと、P-CSCF の REGISTER の送り直しと、HSS の TCP の再送が写ります。I-CSCF の側では、HSS への接続が失敗します。ログで監視の状態が `Closed` まで下がり、つなぎ直したあとで `I-Open` に戻るのが分かります。
+つなぎ直すときは、アドレスを指定し直します。アドレスは[キャプチャの手順書](../../docs/guide/ja/capture.md)にあります。I-CSCF が外れているあいだ、キャプチャには、誰も答えない 172.28.0.20 の ARP の問い合わせと、P-CSCF の REGISTER の送り直しと、HSS の TCP の再送が写ります。I-CSCF の側では、HSS への接続が失敗します。監視が接続を閉じるまで、2 分ほど外したままにします。ログで監視の状態が `Closed` まで下がるのが分かります。つなぎ直すと、I-CSCF は Tc の 30 秒以内に新しい接続を開き、ログに `I-Open` が出ます。
 
 ## 遅延には netem が要る
 
