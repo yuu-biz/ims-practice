@@ -39,6 +39,14 @@ type Relay interface {
 	Subtract(ctx context.Context, id string) error
 }
 
+// MediaRelay is a media relay that the P-CSCF can use. Name is how a
+// Dialog remembers it (RelayContext.Relay), the same in every P-CSCF
+// instance, such as the URL of its control API.
+type MediaRelay struct {
+	Name    string
+	Control Relay
+}
+
 // HostAccess is for UEs that reach the P-CSCF through the NAT of the
 // container host, such as a softphone on the same machine. Their
 // requests come from Gateway, and they can reach the relay's published
@@ -467,9 +475,13 @@ func (p *PCSCF) relaySDP(m *sip.Message, rc *RelayContext, toUE bool) error {
 	if toUE {
 		cameFrom, shown = agw.Core, rc.Access
 	}
+	relay, err := p.relayOf(*rc)
+	if err != nil {
+		return err
+	}
 	ctx, cancel := relayContext()
 	defer cancel()
-	if err := p.relay.Modify(ctx, rc.ID, cameFrom, agw.TerminationRequest{Remote: sender}); err != nil {
+	if err := relay.Modify(ctx, rc.ID, cameFrom, agw.TerminationRequest{Remote: sender}); err != nil {
 		return err
 	}
 	if err := description.SetAudio(shown); err != nil {
@@ -524,26 +536,43 @@ func (p *PCSCF) free(d Dialog, log *slog.Logger) {
 	if d.PolicySession != "" && p.policy != nil {
 		p.releasePolicySession(d.PolicySession, log)
 	}
-	if d.Relay != nil && p.relay != nil {
-		p.subtract(d.Relay.ID, log)
+	if d.Relay != nil {
+		p.subtract(*d.Relay, log)
 	}
 }
 
-func (p *PCSCF) subtract(id string, log *slog.Logger) {
+func (p *PCSCF) subtract(rc RelayContext, log *slog.Logger) {
+	relay, err := p.relayOf(rc)
+	if err != nil {
+		log.Warn("the relay context stays", "context", rc.ID, "error", err.Error())
+		return
+	}
 	for attempt := 1; ; attempt++ {
 		ctx, cancel := relayContext()
-		err := p.relay.Subtract(ctx, id)
+		err := relay.Subtract(ctx, rc.ID)
 		cancel()
 		if err == nil {
 			return
 		}
 		if attempt == subtractAttempts {
-			log.Warn("gave up subtracting the relay context", "context", id, "attempts", attempt, "error", err.Error())
+			log.Warn("gave up subtracting the relay context", "relay", rc.Relay, "context", rc.ID, "attempts", attempt, "error", err.Error())
 			return
 		}
-		log.Warn("could not subtract the relay context, trying again", "context", id, "error", err.Error())
+		log.Warn("could not subtract the relay context, trying again", "relay", rc.Relay, "context", rc.ID, "error", err.Error())
 		time.Sleep(subtractRetryAfter)
 	}
+}
+
+// relayOf is the media relay that holds the context rc. A relay that
+// this P-CSCF does not list, such as one taken out of its configuration
+// while a call was on it, is an error.
+func (p *PCSCF) relayOf(rc RelayContext) (Relay, error) {
+	for _, r := range p.relays {
+		if r.Name == rc.Relay {
+			return r.Control, nil
+		}
+	}
+	return nil, fmt.Errorf("pcscf: the context %s is in the media relay %q, which this P-CSCF does not list", rc.ID, rc.Relay)
 }
 
 // relayContext bounds a request to the relay, so that a relay that

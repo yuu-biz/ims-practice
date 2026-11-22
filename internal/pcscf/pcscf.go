@@ -622,7 +622,7 @@ type PCSCF struct {
 	cfg     Config
 	locator Locator
 	store   Store
-	relay   Relay                // nil passes media end to end
+	relays  []MediaRelay         // none passes media end to end
 	policy  policy.PolicyControl // nil asks nothing of a PCRF
 	stack   ims.StackRef
 	// admissions is what Screen knows of the IP associations in store.
@@ -661,11 +661,12 @@ type PCSCF struct {
 }
 
 // New makes a P-CSCF and starts its sweep, which handles the expiries of
-// the reg event subscriptions that are due until Close. relay may be
-// nil, and then RTP goes between the UEs directly. Both stacks of the
-// P-CSCF need its Screen in their sip.Config, and the one on the
-// unprotected port its AdmitUnprotected as well.
-func New(cfg Config, locator Locator, store Store, relay Relay, log *slog.Logger) *PCSCF {
+// the reg event subscriptions that are due until Close. relays are the
+// media relays it may use, the same in every instance; without any, RTP
+// goes between the UEs directly. Both stacks of the P-CSCF need its
+// Screen in their sip.Config, and the one on the unprotected port its
+// AdmitUnprotected as well.
+func New(cfg Config, locator Locator, store Store, relays []MediaRelay, log *slog.Logger) *PCSCF {
 	if cfg.SweepInterval == 0 {
 		cfg.SweepInterval = ims.SweepInterval
 	}
@@ -674,7 +675,7 @@ func New(cfg Config, locator Locator, store Store, relay Relay, log *slog.Logger
 	}
 	admitted := newAdmissions()
 	p := &PCSCF{cfg: cfg, locator: locator, store: indexedStore{Store: store, admissions: admitted}, admissions: admitted,
-		relay: relay, log: log, setups: map[DialogKey]*setup{},
+		relays: relays, log: log, setups: map[DialogKey]*setup{},
 		regEventRefresh: ims.RefreshAfter, notifyWait: 64 * sip.DefaultTimers().T1,
 		ackWait: 64 * sip.DefaultTimers().T1}
 	p.stopSweep = p.sweep()

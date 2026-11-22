@@ -92,10 +92,14 @@ type Party struct {
 	CSeq uint32
 }
 
-// RelayContext is a context of the media relay as a Dialog keeps it: its
-// ID, and the address of each termination as the SDP shows it.
+// RelayContext is a context of a media relay as a Dialog keeps it: the
+// relay that holds it, by its MediaRelay name, its ID in that relay,
+// and the address of each termination as the SDP shows it. The changes
+// and the release of the context go to that relay, from whichever
+// P-CSCF instance handles the request of the dialog.
 type RelayContext struct {
-	ID string
+	Relay string
+	ID    string
 	// Access is where the UE sends its media, and Core where the network
 	// does.
 	Access netip.AddrPort

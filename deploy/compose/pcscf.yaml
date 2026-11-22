@@ -11,8 +11,12 @@ pcscf:
   # The P-CSCF is in the home network, so its network name is the home
   # domain (TS 24.229 5.2.2.1).
   visited_network_id: ims.mnc001.mcc001.3gppnetwork.org
-  # RTP goes through the media relay in the IMS-AGW role.
-  media_relay: http://agw.ims.mnc001.mcc001.3gppnetwork.org:8080
+  # RTP goes through a media relay in the IMS-AGW role. The P-CSCF
+  # picks one of the list for each call by a hash of its Call-ID, and
+  # takes the next one when that one gives no context. This network has
+  # one.
+  media_relays:
+    - http://agw.ims.mnc001.mcc001.3gppnetwork.org:8080
   # A softphone on the host comes through Docker's NAT from the bridge
   # gateway, and reaches the relay's ports where compose.yaml publishes
   # them.

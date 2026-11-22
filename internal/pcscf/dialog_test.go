@@ -81,7 +81,7 @@ func newCallHarness(t *testing.T, cfg harnessConfig) *callHarness {
 	if cfg.wrap != nil {
 		store = cfg.wrap(h.store)
 	}
-	h.p = New(Config{Host: "pcscf." + domain, Port: 5060, VisitedNetworkID: domain}, locate, store, cfg.relay, quiet())
+	h.p = New(Config{Host: "pcscf." + domain, Port: 5060, VisitedNetworkID: domain}, locate, store, only(cfg.relay), quiet())
 	if cfg.configure != nil {
 		cfg.configure(h.p)
 	}
@@ -297,7 +297,7 @@ func TestDialogOfAnOriginatingCall(t *testing.T) {
 		Key: key, Originating: true, Confirmed: true, Acknowledged: true,
 		Caller: Party{NameAddr: out.Request.Get("From"), Target: h.ueContact, CSeq: 2},
 		Callee: Party{NameAddr: ok200.Get("To"), Target: h.coreContact},
-		Relay:  &RelayContext{ID: "1", Access: netip.MustParseAddrPort("127.0.0.1:42000"), Core: netip.MustParseAddrPort("127.0.0.1:42002")},
+		Relay:  &RelayContext{Relay: testRelay, ID: "1", Access: netip.MustParseAddrPort("127.0.0.1:42000"), Core: netip.MustParseAddrPort("127.0.0.1:42002")},
 		// The icid-value that the P-CSCF wrote in the INVITE.
 		ICID: vector.ICID,
 	}
