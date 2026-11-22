@@ -1,0 +1,32 @@
+# The P-CSCF controls the media relay over H.248 (ITU-T H.248.1) on Iq
+# instead of over the relay's HTTP control API. This file goes on top of
+# compose.yaml, from the root of the repository:
+#
+#   docker compose -f compose.yaml -f deploy/h248/h248.yaml up -d --build
+#
+# or, so that every later "docker compose" of the same shell takes both
+# files:
+#
+#   export COMPOSE_FILE=compose.yaml:deploy/h248/h248.yaml COMPOSE_PATH_SEPARATOR=:
+#
+# It gives the P-CSCF and the media relay their files from deploy/h248
+# in place of the ones from deploy/compose: the same configuration with
+# an h248 section in place of the HTTP control API on each side. No
+# other node is concerned, since no other node controls the relay.
+#
+# The nodes, their addresses and the SIP, Diameter and RTP of a call are
+# those of compose.yaml. Only the protocol between the P-CSCF and the
+# relay changes, which is why the scenarios of scripts/e2e-call.sh and
+# the other scripts pass on this deployment as they do on compose.yaml
+# alone. What is new in the capture is the H.248 on port 2944: the
+# ServiceChange of the relay when it registers, and the Add, Modify and
+# Subtract of each call. Wireshark reads them as "megaco".
+
+services:
+  pcscf:
+    volumes:
+      - ./deploy/h248/pcscf.yaml:/etc/ims/node.yaml:ro
+
+  agw:
+    volumes:
+      - ./deploy/h248/agw.yaml:/etc/ims/node.yaml:ro

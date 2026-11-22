@@ -2,11 +2,20 @@ package config
 
 import (
 	"net/netip"
+	"os"
+	"path/filepath"
+	"reflect"
+	"slices"
+	"strconv"
 	"strings"
 	"testing"
+
+	"go.yaml.in/yaml/v3"
 )
 
-// The h248 section of a node that controls media and of a media relay.
+// The h248 section of a node that controls media and of a media relay,
+// and the files of deploy/h248, the deployment whose P-CSCF controls
+// the media relay over H.248 in place of its HTTP control API.
 
 // A media relay on its own, the h248 section that puts a media gateway
 // in front of it, and the two together.
@@ -244,5 +253,140 @@ mrfp:
 	}
 	if strings.Contains(err.Error(), "h248") {
 		t.Errorf("error = %v, want it not to offer h248 to the mrfp role", err)
+	}
+}
+
+// composeH248Overlay is the file of deploy/h248 that is a Compose file
+// rather than a node's configuration.
+const composeH248Overlay = "h248.yaml"
+
+func h248Nodes(t *testing.T) []string {
+	t.Helper()
+	files, err := filepath.Glob("../../deploy/h248/*.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var nodes []string
+	for _, f := range files {
+		if filepath.Base(f) != composeH248Overlay {
+			nodes = append(nodes, f)
+		}
+	}
+	if len(nodes) == 0 {
+		t.Fatal("no node files in deploy/h248")
+	}
+	return nodes
+}
+
+// TestH248ConfigsChangeOnlyTheMediaControl: each node of deploy/h248 is
+// the node of the same name in deploy/compose with its media control
+// changed, and nothing else. The signalling of the deployment is then
+// the one the guides describe, which is why the voice call of
+// scripts/e2e-call.sh passes on it as it does on compose.yaml alone.
+func TestH248ConfigsChangeOnlyTheMediaControl(t *testing.T) {
+	for _, f := range h248Nodes(t) {
+		name := filepath.Base(f)
+		t.Run(name, func(t *testing.T) {
+			compose, err := Load(filepath.Join("../../deploy/compose", name))
+			if err != nil {
+				t.Fatal(err)
+			}
+			h248, err := Load(f)
+			if err != nil {
+				t.Fatal(err)
+			}
+			switch name {
+			case "pcscf.yaml":
+				if h248.PCSCF.MediaController == nil || len(h248.PCSCF.MediaRelays) != 0 {
+					t.Fatalf("media control = %+v, relays %v", h248.PCSCF.MediaController, h248.PCSCF.MediaRelays)
+				}
+				h248.PCSCF.MediaController, h248.PCSCF.MediaRelays = nil, compose.PCSCF.MediaRelays
+			case "agw.yaml":
+				if h248.AGW.MediaGateway == nil || h248.AGW.Control.IsValid() {
+					t.Fatalf("media control = %+v, control API on %v", h248.AGW.MediaGateway, h248.AGW.Control)
+				}
+				h248.AGW.MediaGateway, h248.AGW.Control = nil, compose.AGW.Control
+			default:
+				t.Fatalf("deploy/h248 has the node %s, which this test does not know", name)
+			}
+			if !reflect.DeepEqual(h248, compose) {
+				t.Errorf("%s differs from deploy/compose/%s in more than the media control:\n%+v\n%+v",
+					name, name, h248, compose)
+			}
+		})
+	}
+}
+
+// TestH248ConfigsAreFullyRead: every section of these files reaches a
+// role, so that none of them makes the node look as though it were
+// controlled over H.248 when nothing reads the section.
+func TestH248ConfigsAreFullyRead(t *testing.T) {
+	for _, f := range h248Nodes(t) {
+		t.Run(filepath.Base(f), func(t *testing.T) {
+			cfg, err := Load(f)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := cfg.Unread(); len(got) != 0 {
+				t.Errorf("Unread() = %v, want none", got)
+			}
+		})
+	}
+}
+
+// TestH248GatewayRegistersWithTheControllerOfTheDeployment: the gateway
+// of the media relay sends its ServiceChange to the name and port the
+// P-CSCF of the same deployment listens on. The two files are written
+// apart, so nothing else keeps them pointing at each other.
+func TestH248GatewayRegistersWithTheControllerOfTheDeployment(t *testing.T) {
+	relay, err := Load("../../deploy/h248/agw.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	controller, err := Load("../../deploy/h248/pcscf.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if relay.AGW.MediaGateway == nil || controller.PCSCF.MediaController == nil {
+		t.Fatalf("gateway = %+v, controller = %+v", relay.AGW.MediaGateway, controller.PCSCF.MediaController)
+	}
+	// The controller names itself by the host of its SIP section, which
+	// is the name DNS resolves to the node.
+	want := controller.PCSCF.SIP.Host + ":" + strconv.Itoa(int(controller.PCSCF.MediaController.Listen.Port()))
+	if got := relay.AGW.MediaGateway.Controller; got != want {
+		t.Errorf("the gateway registers with %q, want %q", got, want)
+	}
+}
+
+// TestH248MountsEveryNodeFile: the Compose override gives each node of
+// deploy/h248 its file in place of the one of deploy/compose. A node
+// file that the override does not mount would leave that node on its
+// HTTP control API, while every test of the file itself still passes.
+func TestH248MountsEveryNodeFile(t *testing.T) {
+	b, err := os.ReadFile(filepath.Join("../../deploy/h248", composeH248Overlay))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var overlay struct {
+		Services map[string]struct {
+			Volumes []string `yaml:"volumes"`
+		} `yaml:"services"`
+	}
+	if err := yaml.Unmarshal(b, &overlay); err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range h248Nodes(t) {
+		name := filepath.Base(f)
+		service := strings.TrimSuffix(name, ".yaml")
+		t.Run(service, func(t *testing.T) {
+			s, ok := overlay.Services[service]
+			if !ok {
+				t.Fatalf("%s has no service %s", composeH248Overlay, service)
+			}
+			mount := "./deploy/h248/" + name + ":/etc/ims/node.yaml:ro"
+			if !slices.Contains(s.Volumes, mount) {
+				t.Errorf("volumes = %v, want %s", s.Volumes, mount)
+			}
+		})
 	}
 }

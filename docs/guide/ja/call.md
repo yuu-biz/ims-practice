@@ -141,6 +141,8 @@ TS 24.229 5.1.3.1 と 5.1.2A.1.1 の手順です。次の点を見てくださ�
 
 P-CSCF は複数のメディア中継ノードを使えます。一覧は `deploy/compose/pcscf.yaml` の `media_relays` で、この網には 1 つだけあります。呼が中継ノードに分かれるように、P-CSCF は呼ごとに Call-ID の hash で中継ノードを 1 つ選びます。選んだ中継ノードが応答しないときや空いたポートが無いときのように、コンテキストを作れないときは、一覧の次の中継ノードを使います。P-CSCF が記録するダイアログには、コンテキストを持つ中継ノードも入ります。このあとメディアを変えるときも、コンテキストを解放するときも、P-CSCF はその中継ノードに要求を送ります。
 
+要求は、このプロジェクトの小さな HTTP の制御 API で送ります。P-CSCF と中継ノードの間の通信として、キャプチャにも出てきます。この用途の標準のプロトコルは H.248 です。[構成の手引き](README.md#メディア中継ノードを-h248-で制御する)の構成では、P-CSCF は HTTP の API の代わりに H.248 を話します。
+
 ### 3. S-CSCF が番号を SIP URI に変える
 
 一番上の Route に `orig` があるので、S-CSCF は発信者を担当する側として動きます（TS 24.229 5.4.3.1）。担当する利用者は P-Asserted-Identity の利用者です。網の中のノードが利用者の代わりに要求を送るときは、P-Served-User の利用者です（TS 24.229 5.4.3.2 の手順 1）。S-CSCF は、その利用者が登録済みであることを確かめます。次に、P-Asserted-Identity の SIP URI の別名である UE 1 の tel URI を、2 つ目の P-Asserted-Identity として加えます（TS 24.229 5.4.3.2 の手順 9）。UE 1 の INVITE には MMTel の ICSI を入れた **P-Preferred-Service** があります。S-CSCF は、その INVITE が音声か映像を含む通話であることを確かめます。このプロジェクトの事業者のデータでは、そうした通話を MMTel とみなします。そのうえで ICSI を **P-Asserted-Service** に入れ、P-Preferred-Service を取り除きます（TS 24.229 5.4.3.2 の手順 4C、RFC 6050）。UE 2 の P-CSCF はあとでこのサービスを PCRF に伝えます。そして Record-Route を付けます。どの加入者にも、INVITE をまず MMTel AS に送る iFC（initial filter criteria）があります（TS 24.229 5.4.3.2 の手順 5）。S-CSCF は `sescase=orig` を付けた **P-Served-User** を加えます。Route の先頭に AS の URI を、その次に元のダイアログの識別子（`odi`）を付けた自分の URI を置きます。AS は発信者のサービスの設定を Sh で HSS から読み、その Route に沿って新しい INVITE を送り返します。`deploy/compose/hss.yaml` の既定の設定では、通話のほかの部分は変えません。INVITE が `odi` を持って戻ってくると、S-CSCF はその iFC の次から処理を続けます。Request-URI が tel URI なので、S-CSCF は DNS に問い合わせます（TS 24.229 5.4.3.2 の手順 10、RFC 6116）。
