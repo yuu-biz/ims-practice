@@ -181,7 +181,7 @@ func (c *Call) RelayProvisional(out *sip.OutgoingCall, resp *sip.Message) {
 		}
 		return
 	}
-	m := c.hooks.Response(c.toCaller(resp), c.in.Request, ToCaller)
+	m := c.hooks.Response(c.toCaller(out, resp), c.in.Request, ToCaller)
 	c.mu.Lock()
 	// RFC 3262 5: after an INVITE without an offer, the first reliable
 	// response with a body has the callee's offer, and the PRACK the
