@@ -39,6 +39,9 @@ type Config struct {
 	ServerCapabilities cx.ServerCapabilities
 	// Subscriptions are the subscribers the Store starts with.
 	Subscriptions []Subscription
+	// PSIUsers are the ranges of public service identities that the
+	// application servers of the network host (TS 23.228 5.4.12.4).
+	PSIUsers []PSIUser
 	// InitialFilterCriteria go into the profile of every subscription,
 	// including those added through the provisioning API.
 	// MSISDNPlaceholder in a ServiceInfo becomes the MSISDN of the
@@ -271,11 +274,12 @@ func (h *HSS) userAuthorization(ctx context.Context, r cx.UserAuthorizationReque
 // locationInfo is the HSS side of the user location query, TS 29.228
 // 6.1.4.1, for public user identities.
 //
-// SIMPLIFIED: TS 29.228 6.1.4.1 steps 2, 2a and 3. Public Service
-// Identities and IMS restoration are not part of this stub, so a
-// request is always about a public user identity, and the
-// Originating-Request AVP is not read: no I-CSCF of this project routes
-// an originating request (TS 24.229 5.3.2.1A).
+// SIMPLIFIED: TS 29.228 6.1.4.1 steps 2, 2a and 3. The query finds
+// public user identities only: one for a PSI gets
+// DIAMETER_ERROR_USER_UNKNOWN, as the HSS keeps no S-CSCF of a PSI user
+// (psiServerAssignment). IMS restoration is not part of this stub, and
+// the Originating-Request AVP is not read: no I-CSCF of this project
+// routes an originating request (TS 24.229 5.3.2.1A).
 func (h *HSS) locationInfo(ctx context.Context, r cx.LocationInfoRequest) cx.LocationInfoAnswer {
 	u, result, ok := h.find(ctx, "", r.PublicIdentity)
 	if !ok {
@@ -440,6 +444,9 @@ func (h *HSS) serverAssignment(ctx context.Context, r cx.ServerAssignmentRequest
 	}
 	u, result, unlock, ok := h.lock(ctx, r.UserName, publicID)
 	if !ok {
+		if p, psi := h.psiUserOf(r.UserName, publicID); psi && result == diameter.Experimental(cx.DiameterErrorUserUnknown) {
+			return psiServerAssignment(p, publicID, r)
+		}
 		return cx.ServerAssignmentAnswer{Result: result}
 	}
 	defer unlock()

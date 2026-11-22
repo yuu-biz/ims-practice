@@ -378,6 +378,13 @@ func TestParseCombinedRoles(t *testing.T) {
 	if cfg, err := Parse(strings.NewReader(withAPI)); err != nil || cfg.HSS.ProvisioningListen != ":8081" {
 		t.Errorf("provisioning_listen: %v, %+v", err, cfg.HSS)
 	}
+	// TS 23.228 5.4.12.4: a PSI user is a range of PSIs with its private
+	// service identity.
+	psiUsers := "  psi_users:\n    - private_identity: conference@ims.mnc001.mcc001.3gppnetwork.org\n      wildcarded_psi: sip:!.*!@conf.ims.mnc001.mcc001.3gppnetwork.org\n"
+	if cfg, err := Parse(strings.NewReader(strings.Replace(combinedYAML, "hss:\n", "hss:\n"+psiUsers, 1))); err != nil || len(cfg.HSS.PSIUsers) != 1 ||
+		!cfg.HSS.PSIUsers[0].Matches("sip:conf-7f3a@conf.ims.mnc001.mcc001.3gppnetwork.org") {
+		t.Errorf("psi_users: %v, %+v", err, cfg.HSS.PSIUsers)
+	}
 	if got := cfg.SCSCF.SIP.URI(); got != "sip:scscf.ims.mnc001.mcc001.3gppnetwork.org:5062" {
 		t.Errorf("S-CSCF URI = %s", got)
 	}
@@ -412,6 +419,7 @@ func TestParseRejectsHSS(t *testing.T) {
 		wantErr string
 	}{
 		{"provisioning_listen without a port", "hss:\n", "hss:\n  provisioning_listen: hss\n", "hss: provisioning_listen:"},
+		{"a PSI user of a distinct PSI", "hss:\n", "hss:\n  psi_users: [{private_identity: conference@ims.mnc001.mcc001.3gppnetwork.org, wildcarded_psi: sip:conf-1@conf.ims.mnc001.mcc001.3gppnetwork.org}]\n", "psi_users[0].wildcarded_psi:"},
 		{"no password", "      password: test-password\n", "", "subscriptions[0].password or aka: at least one is required"},
 		{"not a SIP or tel URI", "[sip:001010000000001@", "[mailto:001010000000001@", "subscriptions[0].public_identities: \"mailto:"},
 		{"not an MMTelServices document", "      password: test-password\n", "      password: test-password\n      mmtel_services: <simservs/>\n", "subscriptions[0].mmtel_services:"},

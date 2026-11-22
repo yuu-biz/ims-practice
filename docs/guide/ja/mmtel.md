@@ -430,7 +430,7 @@ IR.92 は割込通話を網ではなく UE で行うよう求めています（2
 | S-CSCF、TS 24.229 5.4.3.3 step 12 | History-Info の項目に非通知（RFC 7044 10.1.2）を掛けない。 | 転送した通話は、AS が書いたとおりの転送元の利用者の項目を運ぶ。 |
 | S-CSCF、TS 24.229 5.4.3.1 と 5.4.3.2 | 登録している利用者だけを担当する。AS が P-Served-User で利用者を示し、その利用者の代わりに送る要求も、利用者が登録していなければ 403 を返す。ORIGINATING_UNREGISTERED の条件は評価しない。 | この網には、利用者の代わりに要求を始める AS が無く、その条件に当たる要求が来ない。 |
 | I-CSCF、TS 24.229 5.3.2.1、5.3.2.1A、5.3.2.2 | 利用者の代わりに送る AS のための「orig」の経路と、選んだ S-CSCF が答えないときの別の S-CSCF を扱わない。 | 利用者の代わりに送るサービスが無く、選び直す冗長な S-CSCF も無い。 |
-| HSS、TS 29.228 6.1.4.1 step 2、2a、3 | 公開サービス識別子と IMS restoration を扱わず、Originating-Request の AVP を読まない。 | このプロジェクトの I-CSCF は発信側の要求を経路づけない。 |
+| HSS、TS 29.228 6.1.4.1 step 2、2a、3 | HSS は PSI ユーザーの S-CSCF を持たないので、PSI についての LIR には DIAMETER_ERROR_USER_UNKNOWN を返す。IMS restoration を扱わず、Originating-Request の AVP を読まない。 | PSI への要求は DNS で AS に届き、このプロジェクトの I-CSCF は発信側の要求を経路づけない。 |
 
 ## 後片付け
 
