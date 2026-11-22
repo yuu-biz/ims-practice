@@ -116,7 +116,7 @@ func TestAReadThatFailsIsNoMissingSubscriber(t *testing.T) {
 			if _, _, err := stopped.RepositoryData(ctx, impi, mmtelServices.ServiceIndication); err == nil {
 				t.Error("RepositoryData on a stopped instance returned no error")
 			}
-			if _, err := stopped.List(ctx, 10); err == nil {
+			if _, _, err := stopped.List(ctx, "", 10); err == nil {
 				t.Error("List on a stopped instance returned no error")
 			}
 		})
@@ -140,7 +140,7 @@ func TestADeleteThatStopsAfterTheSubscriber(t *testing.T) {
 			if _, ok, err := other.SubscriberOf(ctx, tel); err != nil || ok {
 				t.Errorf("the index item left behind finds a subscriber: %v, %v", ok, err)
 			}
-			if subs, err := other.List(ctx, 10); err != nil || len(subs) != 0 {
+			if subs, _, err := other.List(ctx, "", 10); err != nil || len(subs) != 0 {
 				t.Errorf("List = %+v, %v; want none", subs, err)
 			}
 			sub := hss.Subscription{PrivateIdentity: otherIMPI, PublicIdentities: []string{tel}, Password: "p"}

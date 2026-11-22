@@ -212,7 +212,7 @@ func (h *HSS) setCustomizedAlertingTone(w http.ResponseWriter, r *http.Request) 
 }
 
 func (h *HSS) listSubscriptions(w http.ResponseWriter, r *http.Request) {
-	subs, err := h.store.List(r.Context(), listLimit)
+	subs, _, err := h.store.List(r.Context(), "", listLimit)
 	if err != nil {
 		h.writeStoreFailure(w, err)
 		return
