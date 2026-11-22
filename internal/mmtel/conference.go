@@ -64,6 +64,18 @@ func (as *AS) isFactoryURI(uri string) bool {
 // a number.
 const maximumUsers = 6
 
+// refusal is why a conference takes no more participants: the final
+// response to a user who would join, and the text of its Warning.
+type refusal struct {
+	code int
+	text string
+}
+
+// conferenceEnded is the refusal once the conference has ended: it has
+// given its URI up (TS 24.147 5.3.2.7), so a user who would join gets
+// the 404 of a conference URI that is not allocated (5.3.2.4.1 step 1).
+var conferenceEnded = &refusal{code: 404, text: "The conference has ended"}
+
 // referExpires is how long the subscription of a REFER lasts: longer
 // than the INVITE it asks for may take (RFC 3515 3.4), which a proxy
 // gives up on after 3 minutes (RFC 3261 16.6 step 11).
@@ -317,7 +329,12 @@ func (f *conference) admit(in *sip.IncomingCall, p *party, final *sip.Message, u
 	// The 200 gives the user the conference URI, to which it subscribes
 	// (IR.92 2.3.3) as soon as it has it, maybe before the focus has the
 	// ACK. The user is in the conference by then.
-	f.join(p, confinfo.Participant{User: user, Endpoint: contactURIOf(req), Status: confinfo.Connected, JoiningMethod: confinfo.DialedIn})
+	if no := f.join(p, confinfo.Participant{User: user, Endpoint: contactURIOf(req), Status: confinfo.Connected, JoiningMethod: confinfo.DialedIn}); no != nil {
+		f.log.Info("user not taken into the conference", "user", user, "reason", no.text)
+		p.media.Bye()
+		in.Reject(no.code, f.as.warning(no.text))
+		return
+	}
 	ack, err := in.Accept(sip.BodyOf(final), headers...)
 	if err != nil {
 		f.log.Info("the participant did not acknowledge the answer", "creator", p.creator, "error", err.Error())
@@ -396,8 +413,10 @@ func (f *conference) inviteMRFC(offer sip.Body) (*sip.OutgoingCall, *sip.Message
 
 // join adds the participant p to the record, and tells the subscribers
 // (RFC 4575 3.6). The dialog of p has been set up, except for that of a
-// user who dialed in, which dialogConfirmed records later.
-func (f *conference) join(p *party, info confinfo.Participant) {
+// user who dialed in, which dialogConfirmed records later. It returns
+// nil, or why it did not take p: the focus sets up the media of a
+// participant before it joins, and the conference may end meanwhile.
+func (f *conference) join(p *party, info confinfo.Participant) *refusal {
 	d, _ := p.leg.Dialog()
 	m, _ := p.media.Dialog()
 	if info.DisplayText == "" {
@@ -406,6 +425,10 @@ func (f *conference) join(p *party, info confinfo.Participant) {
 		info.DisplayText = info.User
 	}
 	f.mu.Lock()
+	if f.ended {
+		f.mu.Unlock()
+		return conferenceEnded
+	}
 	p.dialog = d.ID
 	f.parties = append(f.parties, p)
 	f.record.Participants = append(f.record.Participants, ConferenceParticipant{Participant: info, Dialog: d, Media: m})
@@ -413,6 +436,7 @@ func (f *conference) join(p *party, info confinfo.Participant) {
 	f.mu.Unlock()
 	f.log.Info("participant joined", "user", info.User, "joining_method", string(info.JoiningMethod))
 	f.notify(nil)
+	return nil
 }
 
 // dialogConfirmed puts the dialog of p into its record once the 200
@@ -676,8 +700,9 @@ func referredMethod(uri string) string {
 // with isfocus, in Contact, and with the Referred-By and the Replaces of
 // the REFER (steps 4 and 4a). The focus first gets an offer from the
 // MRFC, which offers PCMU only, so that the user's answer settles the
-// leg on the codec of the mixer. It returns the final status of
-// the INVITE, for the last NOTIFY of the REFER.
+// leg on the codec of the mixer. It returns the status for the last
+// NOTIFY of the REFER: the final status of the INVITE, or the code of
+// the refusal when the conference did not take the user who answered.
 func (f *conference) inviteUser(rt sip.ReferTo, referredBy string) int {
 	ua := f.as.ua.Load()
 	if ua == nil {
@@ -748,8 +773,13 @@ func (f *conference) inviteUser(rt sip.ReferTo, referredBy string) int {
 	if err := media.Ack(answer); err != nil {
 		f.log.Warn("answer of the invited user not passed on to the MRFC", "error", err.Error())
 	}
-	f.join(p, confinfo.Participant{User: assertedUser(answered, rt.URI), Endpoint: contactURIOf(answered),
-		Status: confinfo.Connected, JoiningMethod: confinfo.DialedOut})
+	if no := f.join(p, confinfo.Participant{User: assertedUser(answered, rt.URI), Endpoint: contactURIOf(answered),
+		Status: confinfo.Connected, JoiningMethod: confinfo.DialedOut}); no != nil {
+		f.log.Info("invited user not taken into the conference", "reason", no.text)
+		out.Bye()
+		media.Bye()
+		return no.code
+	}
 	go func() {
 		<-out.Done()
 		f.left(p)

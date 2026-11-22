@@ -6,6 +6,7 @@ import (
 	"net"
 	"slices"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -28,21 +29,36 @@ func audio(port, direction string) sip.Body {
 type conferenceMRFC struct {
 	ua    *sip.UA
 	calls chan *sip.IncomingCall
+	// While hold is set, the stand-in answers no INVITE by itself: each
+	// comes on held instead of calls, and the test answers it with
+	// answerAsMRFC when it wants the 200 of the MRFC to come.
+	hold *atomic.Bool
+	held chan *sip.IncomingCall
 }
 
 func startConferenceMRFC(t *testing.T) conferenceMRFC {
 	t.Helper()
-	m := conferenceMRFC{calls: make(chan *sip.IncomingCall, 8)}
+	m := conferenceMRFC{calls: make(chan *sip.IncomingCall, 8), hold: new(atomic.Bool), held: make(chan *sip.IncomingCall, 8)}
 	m.ua = newUA(t, "mrfc", func(c *sip.IncomingCall) {
-		m.calls <- c
-		c.Handle(func(r *sip.InDialogRequest) { r.Accept(audio("40002", "recvonly")) })
-		if len(c.Request.Body) > 0 {
-			c.Accept(audio("40000", "sendrecv"))
+		if m.hold.Load() {
+			m.held <- c
 			return
 		}
-		c.Accept(audio("40004", "sendrecv"))
+		m.calls <- c
+		answerAsMRFC(c)
 	})
 	return m
+}
+
+// answerAsMRFC answers an INVITE at the stand-in as the MRFC does: with
+// its answer, or with an offer when the INVITE has none (RFC 4240 5).
+func answerAsMRFC(c *sip.IncomingCall) {
+	c.Handle(func(r *sip.InDialogRequest) { r.Accept(audio("40002", "recvonly")) })
+	if len(c.Request.Body) > 0 {
+		c.Accept(audio("40000", "sendrecv"))
+		return
+	}
+	c.Accept(audio("40004", "sendrecv"))
 }
 
 // conferenceDocument is the conference-info of a NOTIFY.
@@ -434,12 +450,13 @@ func TestJoinWithTheConferenceURI(t *testing.T) {
 }
 
 // aliceConference has alice create a conference at as, with the INVITE
-// to the factory URI that the S-CSCF passes on, and subscribe to it. It
-// returns her conference session, the conference URI with isfocus from
-// the 200, and the NOTIFYs of her subscription.
-func aliceConference(t *testing.T, as testAS) (*sip.OutgoingCall, sip.NameAddr, <-chan sip.Notification) {
+// to the factory URI that the S-CSCF passes on, and subscribe to it.
+// Where the S-CSCF would be for the INVITEs of the focus, bob answers
+// them with invited. It returns her conference session, the conference
+// URI with isfocus from the 200, and the NOTIFYs of her subscription.
+func aliceConference(t *testing.T, as testAS, invited func(*sip.IncomingCall)) (*sip.OutgoingCall, sip.NameAddr, <-chan sip.Notification) {
 	t.Helper()
-	callee := newUA(t, "bob", func(c *sip.IncomingCall) { c.Reject(480) })
+	callee := newUA(t, "bob", invited)
 	alice := newParticipant(t, as, "alice", func(c *sip.IncomingCall) { c.Reject(480) })
 	inv := viaAS(t, as, callee, "orig", audio("42000", "sendrecv"))
 	inv.RequestURI, inv.To = ims.ConferenceFactoryURI(domain), ims.ConferenceFactoryURI(domain)
@@ -502,7 +519,7 @@ func joinWithoutACK(t *testing.T, as testAS, user, uri string) *sip.Message {
 func TestJoinersBeforeTheirACKs(t *testing.T) {
 	mrfc := startConferenceMRFC(t)
 	as := startAS(t, noServices{}, mmtel.Config{MRFC: "sip:" + contactOf(t, mrfc.ua)})
-	_, focus, notifications := aliceConference(t, as)
+	_, focus, notifications := aliceConference(t, as, func(c *sip.IncomingCall) { c.Reject(480) })
 
 	joinWithoutACK(t, as, "dave", focus.URI)
 	carol := newParticipant(t, as, "carol", func(c *sip.IncomingCall) { c.Reject(480) })
@@ -529,6 +546,88 @@ func TestJoinersBeforeTheirACKs(t *testing.T) {
 	}
 	if got := statusOf(conferenceDocument(t, left.Body.Content)); !maps.Equal(got, want) {
 		t.Errorf("after carol left, the NOTIFY has %v, want %v", got, want)
+	}
+}
+
+// awaitNoConference waits until the store of as has no record of the
+// conference id.
+func awaitNoConference(t *testing.T, as testAS, id string) {
+	t.Helper()
+	for deadline := time.Now().Add(10 * time.Second); ; time.Sleep(10 * time.Millisecond) {
+		if _, ok := as.store.Conference(id); !ok {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("the store still has a record of the conference %s", id)
+		}
+	}
+}
+
+// TestJoinAsTheConferenceEnds: the creator leaves while the MRFC sets up
+// the media of a user who joins. When the MRFC answers, the conference
+// has ended and given its URI up (TS 24.147 5.3.2.7): the user gets the
+// 404 of a conference URI that is not allocated (5.3.2.4.1 step 1), the
+// focus releases the user's media at the MRFC, and no record of the
+// conference is left.
+func TestJoinAsTheConferenceEnds(t *testing.T) {
+	mrfc := startConferenceMRFC(t)
+	as := startAS(t, noServices{}, mmtel.Config{MRFC: "sip:" + contactOf(t, mrfc.ua)})
+	conf, focus, _ := aliceConference(t, as, func(c *sip.IncomingCall) { c.Reject(480) })
+	uri, err := sip.ParseURI(focus.URI)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	mrfc.hold.Store(true)
+	carol := newParticipant(t, as, "carol", func(c *sip.IncomingCall) { c.Reject(480) })
+	in, err := carol.Invite(joining("carol", focus.URI))
+	if err != nil {
+		t.Fatal(err)
+	}
+	media := receive(t, mrfc.held, "carol's INVITE at the MRFC")
+	if err := conf.Bye(); err != nil {
+		t.Fatal(err)
+	}
+	awaitNoConference(t, as, uri.User)
+
+	go answerAsMRFC(media)
+	if got := statuses(readAll(t, in)); slices.Contains(got, 200) || got[len(got)-1] != 404 {
+		t.Errorf("carol got %v, want 404", got)
+	}
+	if r, ok := as.store.Conference(uri.User); ok {
+		t.Errorf("the store has the conference again after it ended, with %d participants", len(r.Participants))
+	}
+	receive(t, media.Done(), "BYE of carol's media at the MRFC")
+}
+
+// TestInvitedAsTheConferenceEnds: the creator leaves while the user
+// whom it referred to the focus is still to answer. The focus does not
+// take in the user who then answers: it ends the user's session with a
+// BYE, and no record of the conference is left.
+func TestInvitedAsTheConferenceEnds(t *testing.T) {
+	mrfc := startConferenceMRFC(t)
+	as := startAS(t, noServices{}, mmtel.Config{MRFC: "sip:" + contactOf(t, mrfc.ua)})
+	invited := make(chan *sip.IncomingCall, 1)
+	conf, focus, _ := aliceConference(t, as, func(c *sip.IncomingCall) { invited <- c })
+	uri, err := sip.ParseURI(focus.URI)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r, err := conf.Refer(sip.ReferTo{URI: "sip:bob@" + domain}); err != nil || r.Response.StatusCode != 200 {
+		t.Fatalf("REFER got %v, %v; want 200", r, err)
+	}
+	bob := receive(t, invited, "the focus's INVITE at bob")
+	if err := conf.Bye(); err != nil {
+		t.Fatal(err)
+	}
+	awaitNoConference(t, as, uri.User)
+
+	if _, err := bob.Accept(audio("41000", "sendrecv")); err != nil {
+		t.Fatalf("bob's 200 got no ACK: %v", err)
+	}
+	receive(t, bob.Done(), "BYE of the focus at bob")
+	if r, ok := as.store.Conference(uri.User); ok {
+		t.Errorf("the store has the conference again after it ended, with %d participants", len(r.Participants))
 	}
 }
 
