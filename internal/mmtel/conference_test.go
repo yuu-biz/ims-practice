@@ -417,10 +417,12 @@ func TestJoinWithTheConferenceURI(t *testing.T) {
 	if !strings.HasPrefix(media.Request.RequestURI, "sip:conf="+id.User+"@") || !strings.Contains(string(media.Request.Body), "m=audio 43000") {
 		t.Errorf("MRFC got Request-URI %q with\n%s\nwant the conference with carol's offer", media.Request.RequestURI, media.Request.Body)
 	}
+	var carolKey string
 	awaitNotification(t, notifications, "with carol dialed in", func(_ sip.Notification, d confinfo.Document) bool {
 		for _, u := range d.Users.Users {
 			if u.Entity == "sip:carol@"+domain && len(u.Endpoints) == 1 {
 				e := u.Endpoints[0]
+				carolKey = e.Entity
 				return e.Status == confinfo.Connected && e.JoiningMethod == confinfo.DialedIn
 			}
 		}
@@ -439,6 +441,27 @@ func TestJoinWithTheConferenceURI(t *testing.T) {
 			t.Fatalf("%s got %v, want 200", user, got)
 		}
 	}
+	// RFC 4575 5.7: the focus names each endpoint by a key of its own,
+	// which names no address of the participant and stays the same in
+	// every notification.
+	awaitNotification(t, notifications, "with 6 users", func(_ sip.Notification, d confinfo.Document) bool {
+		if len(d.Users.Users) != 6 {
+			return false
+		}
+		keys := map[string]bool{}
+		for _, u := range d.Users.Users {
+			for _, e := range u.Endpoints {
+				if !strings.HasPrefix(e.Entity, "urn:uuid:") || keys[e.Entity] {
+					t.Errorf("endpoint of %s is %q, want a urn:uuid key of its own", u.Entity, e.Entity)
+				}
+				keys[e.Entity] = true
+				if u.Entity == "sip:carol@"+domain && e.Entity != carolKey {
+					t.Errorf("carol's endpoint is %q, was %q", e.Entity, carolKey)
+				}
+			}
+		}
+		return true
+	})
 	ua := newParticipant(t, as, "user7", func(c *sip.IncomingCall) { c.Reject(480) })
 	out, err := ua.Invite(joining("user7", focus.URI))
 	if err != nil {
