@@ -54,9 +54,10 @@ type Config struct {
 	// every interface. The zero address keeps the one that the TrGW
 	// wrote.
 	TrGWCoreAddress, TrGWPeerAddress netip.Addr
-	// Timers are those of the two UAs; the zero value means
-	// sip.DefaultTimers.
-	Timers sip.Timers
+	// InternalTimers and ExternalTimers are those of the UA on each
+	// side; the zero value means sip.DefaultTimers. The operator may
+	// give each side a transaction timeout of its own.
+	InternalTimers, ExternalTimers sip.Timers
 	// Metrics is where the IBCF registers its counters (metrics.go).
 	// Nil gives it a registry of its own, which nothing serves.
 	Metrics *metrics.Registry
@@ -122,15 +123,16 @@ type side struct {
 	direction interconnect.Direction
 	own       sip.URI
 	pool      string
+	timers    sip.Timers
 	ua        *atomic.Pointer[sip.UA]
 }
 
 func (b *IBCF) inside() side {
-	return side{direction: interconnect.Exit, own: b.cfg.Internal, pool: b.cfg.InternalPool, ua: &b.internal}
+	return side{direction: interconnect.Exit, own: b.cfg.Internal, pool: b.cfg.InternalPool, timers: b.cfg.InternalTimers, ua: &b.internal}
 }
 
 func (b *IBCF) outside() side {
-	return side{direction: interconnect.Entry, own: b.cfg.External, pool: b.cfg.ExternalPool, ua: &b.external}
+	return side{direction: interconnect.Entry, own: b.cfg.External, pool: b.cfg.ExternalPool, timers: b.cfg.ExternalTimers, ua: &b.external}
 }
 
 // other is the side that a request arriving on s leaves on.
@@ -194,7 +196,7 @@ func (b *IBCF) newUA(transport *sip.TransportLayer, s side, locate func(sip.URI)
 	}
 	return sip.NewUA(transport, sip.UAConfig{
 		SentBy:  s.own.Host + ":" + strconv.Itoa(portOf(s.own)),
-		Timers:  b.cfg.Timers,
+		Timers:  s.timers,
 		Contact: sip.URI{Scheme: "sip", Host: s.own.Host, Port: s.own.Port}.String(),
 		// The IBCF carries the SDP of preconditions from leg to leg
 		// without reading it, so an INVITE that requires them is taken

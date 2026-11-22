@@ -28,7 +28,7 @@ func TestUnreadNamesEverySectionThatNoRoleReads(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []string{"maintenance", "scscf.sip.pool", "scscf.sip.transaction_timeout", "scscf.restoration"}
+	want := []string{"maintenance", "scscf.sip.pool", "scscf.restoration"}
 	if got := cfg.Unread(); !slices.Equal(got, want) {
 		t.Errorf("Unread() = %v, want %v", got, want)
 	}
@@ -68,15 +68,13 @@ func TestUnreadNamesTheStoreOfARoleThatDoesNotReadIt(t *testing.T) {
 	}
 }
 
-// The IBCF reads the pool of each side, for its Record-Route, but no role
-// reads transaction_timeout.
+// The IBCF reads the pool of each side, for its Record-Route.
 func TestUnreadKeepsThePoolsOfTheIBCF(t *testing.T) {
 	cfg := Config{IBCF: &IBCF{
 		SIP:         SIP{Pool: "ibcf.ims.mnc001.mcc001.3gppnetwork.org"},
 		ExternalSIP: SIP{Pool: "ibcf.nni.mnc001.example.net", TransactionTimeout: 4 * time.Second},
 	}}
-	want := []string{"ibcf.external_sip.transaction_timeout"}
-	if got := cfg.Unread(); !slices.Equal(got, want) {
-		t.Errorf("Unread() = %v, want %v", got, want)
+	if got := cfg.Unread(); len(got) != 0 {
+		t.Errorf("Unread() = %v, want none", got)
 	}
 }

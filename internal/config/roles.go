@@ -44,6 +44,14 @@ type SIP struct {
 // sip:scscf.ims.mnc001.mcc001.3gppnetwork.org:5060.
 func (s SIP) URI() string { return "sip:" + s.Host + ":" + strconv.Itoa(int(s.Listen.Port())) }
 
+// Timers are the transaction timers of the role's stack: those of RFC
+// 3261, with TransactionTimeout for Timer B and Timer F.
+func (s SIP) Timers() sip.Timers {
+	t := sip.DefaultTimers()
+	t.TransactionTimeout = s.TransactionTimeout
+	return t
+}
+
 // PoolURI is the URI that the instances of a role share: sip:<pool>
 // without a port, which DNS resolves with SRV to every instance
 // (RFC 3263 4.2). Without a pool it is URI(), the instance's own.

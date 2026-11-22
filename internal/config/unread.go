@@ -3,10 +3,9 @@ package config
 // Unread lists the sections that the node checks but no role reads, by
 // their YAML names, such as "store" or "scscf.sip.pool". A node with
 // them runs as it would without them: every role keeps its state in
-// its own process, serves no maintenance API, and takes Timer B and
-// Timer F of RFC 3261 at their full length. The caller warns about
-// each, so that a node configured for a shared store does not appear
-// to have one.
+// its own process and serves no maintenance API. The caller warns
+// about each, so that a node configured for a shared store does not
+// appear to have one.
 //
 // The roles that keep the state of the users read the store section
 // (readsStore). The rest of a node keeps its state in its process even
@@ -23,9 +22,6 @@ func (c Config) Unread() []string {
 	sip := func(section string, s SIP, poolRead bool) {
 		if s.Pool != "" && !poolRead {
 			unread = append(unread, section+".pool")
-		}
-		if s.TransactionTimeout != 0 {
-			unread = append(unread, section+".transaction_timeout")
 		}
 	}
 	if c.PCSCF != nil {
