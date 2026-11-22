@@ -19,7 +19,7 @@ The guide follows 3GPP Release 18 (TS 24.229 V18.11.0, TS 29.228 V18.0.0, TS 29.
 | P-CSCF | 172.28.0.40 | The first SIP hop of the UE. It finds the home network and adds Path. |
 | I-CSCF | 172.28.0.20 | The entry point of the home network. It asks the HSS which S-CSCF serves the user. |
 | S-CSCF | 172.28.0.30 | The registrar. It authenticates the user and stores the registration. |
-| HSS | 172.28.0.10 | The subscriber database. It answers the I-CSCF and the S-CSCF over Diameter Cx, and the IP-SM-GW over Sh. |
+| HSS | 172.28.0.10 | The subscriber database. It answers the I-CSCF and the S-CSCF over Diameter Cx, and the application servers over Sh: here the IP-SM-GW. |
 | IP-SM-GW | 172.28.0.70 | The application server of SMS over IP. The S-CSCF registers the user there too (step 15). |
 | DNS | 172.28.0.2 | It holds the NAPTR, SRV and A records of the home network domain. |
 

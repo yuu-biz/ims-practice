@@ -90,7 +90,7 @@ docker compose run --rm ue register -deregister-after 2s
 deploy/chaos/fault.sh unpause hss
 ```
 
-With the filter `diameter || sip.Status-Code >= 400`, the I-CSCF sends a User-Authorization Request (UAR) that gets no answer. After 5 seconds it gives up and sends 480 to the P-CSCF, and the P-CSCF sends 504 Server Time-out to the UE. Meanwhile a Device-Watchdog Request (DWR) of the I-CSCF, the S-CSCF or the IP-SM-GW that falls due gets no DWA. A node closes its connection once Tw, 30 seconds, has passed twice more after an unanswered DWR (RFC 3539 3.4.1), so freeze the HSS for about two minutes to see that. Once the HSS is back, the node opens a new connection (CER, CEA) within Tc, 30 seconds; the HSS then also sends the UAA that nobody waits for any longer.
+With the filter `diameter || sip.Status-Code >= 400`, the I-CSCF sends a User-Authorization Request (UAR) that gets no answer. After 5 seconds it gives up and sends 480 to the P-CSCF, and the P-CSCF sends 504 Server Time-out to the UE. Meanwhile a Device-Watchdog Request (DWR) of the I-CSCF, the S-CSCF, the IP-SM-GW or the MMTel AS that falls due gets no DWA. A node closes its connection once Tw, 30 seconds, has passed twice more after an unanswered DWR (RFC 3539 3.4.1), so freeze the HSS for about two minutes to see that. Once the HSS is back, the node opens a new connection (CER, CEA) within Tc, 30 seconds; the HSS then also sends the UAA that nobody waits for any longer.
 
 ### Packet loss on the media relay during a call
 
