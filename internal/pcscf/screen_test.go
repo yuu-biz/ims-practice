@@ -9,6 +9,7 @@ import (
 	"net"
 	"net/netip"
 	"os"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -248,7 +249,11 @@ func TestRegisteredUEGetsThroughAfterARestart(t *testing.T) {
 type logRecords struct {
 	mu       sync.Mutex
 	messages []string
+	// logged is closed, and replaced, at each record.
+	logged chan struct{}
 }
+
+func newLogRecords() *logRecords { return &logRecords{logged: make(chan struct{})} }
 
 func (l *logRecords) Enabled(context.Context, slog.Level) bool { return true }
 
@@ -256,25 +261,54 @@ func (l *logRecords) Handle(_ context.Context, r slog.Record) error {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	l.messages = append(l.messages, r.Message)
+	close(l.logged)
+	l.logged = make(chan struct{})
 	return nil
 }
 
 func (l *logRecords) WithAttrs([]slog.Attr) slog.Handler { return l }
 func (l *logRecords) WithGroup(string) slog.Handler      { return l }
 
-func (l *logRecords) count(message string) int {
+// counted is how many records have one of messages, and a channel that
+// is closed at the next record.
+func (l *logRecords) counted(messages ...string) (int, <-chan struct{}) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	n := 0
 	for _, m := range l.messages {
-		if m == message {
+		if slices.Contains(messages, m) {
 			n++
 		}
 	}
+	return n, l.logged
+}
+
+func (l *logRecords) count(message string) int {
+	n, _ := l.counted(message)
 	return n
 }
 
-const discardedUnprotected = "discarded an unprotected request from a UE with security associations"
+// waitFor waits until n records have one of messages.
+func (l *logRecords) waitFor(t *testing.T, n int, messages ...string) {
+	t.Helper()
+	deadline := time.After(5 * time.Second)
+	for {
+		got, logged := l.counted(messages...)
+		if got >= n {
+			return
+		}
+		select {
+		case <-logged:
+		case <-deadline:
+			t.Fatalf("%d records of %q, want %d", got, messages, n)
+		}
+	}
+}
+
+const (
+	discardedUnprotected        = "discarded an unprotected request from a UE with security associations"
+	discardedWithoutAssociation = "discarded a request that does not map to an IP association"
+)
 
 // protectedUE is the IP association and the established security
 // associations of a UE whose protected server port is at ue, as the
@@ -292,6 +326,31 @@ func protectedUE(ue netip.AddrPort) (Association, SecurityAssociations) {
 	return a, SecurityAssociations{UE: ue, PrivateIdentity: impi, Expires: time.Now().Add(time.Hour)}
 }
 
+// forwarded sends m from ue and waits until the home network of h gets
+// it and its final response is back at ue, where it would otherwise
+// come before a later barrier.
+func (h *akaHarness) forwarded(ue *rawUE, m *sip.Message) {
+	h.t.Helper()
+	ue.send(m)
+	select {
+	case got := <-h.received:
+		if got.Method != m.Method || got.Get("Call-ID") != m.Get("Call-ID") {
+			h.t.Errorf("the home network got %s %s, want the %s", got.Method, got.Get("Call-ID"), m.Method)
+		}
+	case <-time.After(5 * time.Second):
+		h.t.Fatalf("the %s did not reach the home network", m.Method)
+	}
+	for {
+		r := ue.read(5 * time.Second)
+		if r == nil {
+			h.t.Fatalf("no final response to the %s came back", m.Method)
+		}
+		if r.StatusCode >= 200 && r.Get("Call-ID") == m.Get("Call-ID") {
+			return
+		}
+	}
+}
+
 // TestUnprotectedRequestFromAUEWithSecurityAssociationsGetsNoAnswer is
 // TS 24.229 5.2.1 NOTE 8: a request other than REGISTER that reaches the
 // unprotected port from a UE with established security associations is
@@ -302,8 +361,8 @@ func protectedUE(ue netip.AddrPort) (Association, SecurityAssociations) {
 func TestUnprotectedRequestFromAUEWithSecurityAssociationsGetsNoAnswer(t *testing.T) {
 	for _, transport := range []sip.Transport{sip.UDP, sip.TCP} {
 		t.Run(string(transport), func(t *testing.T) {
-			logs := &logRecords{}
-			h := newAKAHarnessWith(t, true, slog.New(logs))
+			logs := newLogRecords()
+			h := newAKAHarnessWith(t, true, slog.New(logs), nil)
 			ue := dialRawUE(t, transport, h.unprotected.LocalAddr())
 			a, sas := protectedUE(ue.addr())
 			h.p.store.PutAssociation(a)
@@ -315,6 +374,10 @@ func TestUnprotectedRequestFromAUEWithSecurityAssociationsGetsNoAnswer(t *testin
 				ue.send(requests[i])
 				ue.send(requests[i])
 			}
+			// The P-CSCF reads the SA table off the loop of its stack, so
+			// the barrier shows what came back only once every copy has
+			// been decided on.
+			logs.waitFor(t, 2*len(requests), discardedUnprotected)
 			if got := ue.barrier(); len(got) != 0 {
 				t.Errorf("the P-CSCF sent %d messages for the requests, want none; first: %d %s", len(got), got[0].StatusCode, got[0].Method)
 			}
@@ -332,26 +395,42 @@ func TestUnprotectedRequestFromAUEWithSecurityAssociationsGetsNoAnswer(t *testin
 			if message.Method != sip.MESSAGE {
 				t.Fatalf("request 2 is %s, want the MESSAGE", message.Method)
 			}
-			ue.send(message)
-			select {
-			case got := <-h.received:
-				if got.Method != sip.MESSAGE || got.Get("Call-ID") != message.Get("Call-ID") {
-					t.Errorf("the home network got %s %s, want the MESSAGE", got.Method, got.Get("Call-ID"))
-				}
-			case <-time.After(5 * time.Second):
-				t.Fatal("the MESSAGE did not reach the home network once the security associations were gone")
-			}
+			h.forwarded(ue, message)
 		})
 	}
 }
 
+// heldStore is a Store whose reads of an association by source wait
+// until release is closed, as a read from a Store on another machine
+// may take its time.
+type heldStore struct {
+	*MemoryStore
+	release <-chan struct{}
+	ended   <-chan struct{}
+}
+
+func (s heldStore) Association(source sip.Destination) (Association, bool) {
+	select {
+	case <-s.release:
+	case <-s.ended:
+	}
+	return s.MemoryStore.Association(source)
+}
+
 // TestUnprotectedRequestFromAUEWithSecurityAssociationsAfterARestart:
 // the association and the security associations were written to the
-// Store before this P-CSCF started. Screen reads both from the Store
-// after the first request, which it discards for want of an IP
-// association, and goes on discarding the UE's unprotected requests.
+// Store before this P-CSCF started. Screen knows of the association
+// only once it has read it from the Store, which here waits until the
+// test lets it go on; until then each copy of the UE's unprotected
+// request is discarded for want of an IP association. After that the
+// P-CSCF reads the SA table for the next copy and discards it as
+// unprotected. No copy gets through at any point.
 func TestUnprotectedRequestFromAUEWithSecurityAssociationsAfterARestart(t *testing.T) {
-	h := newAKAHarness(t, true)
+	logs := newLogRecords()
+	release := make(chan struct{})
+	h := newAKAHarnessWith(t, true, slog.New(logs), func(s *MemoryStore) Store {
+		return heldStore{MemoryStore: s, release: release, ended: t.Context().Done()}
+	})
 	ue := dialRawUE(t, sip.UDP, h.unprotected.LocalAddr())
 	a, sas := protectedUE(ue.addr())
 	h.store.PutAssociation(a)
@@ -359,14 +438,20 @@ func TestUnprotectedRequestFromAUEWithSecurityAssociationsAfterARestart(t *testi
 
 	m := ue.request(strangerRequests()[2])
 	ue.send(m)
+	logs.waitFor(t, 1, discardedWithoutAssociation)
+	ue.send(m)
+	logs.waitFor(t, 2, discardedWithoutAssociation)
+	close(release)
 	deadline := time.Now().Add(5 * time.Second)
-	for !h.p.admissions.admitsFrom(a.Source, a.SentBy, time.Now()) {
+	for copies := 2; logs.count(discardedUnprotected) == 0; {
 		if time.Now().After(deadline) {
 			t.Fatal("the P-CSCF did not read the association from the Store")
 		}
-		time.Sleep(10 * time.Millisecond)
+		ue.send(m)
+		copies++
+		// Each copy is discarded, for one reason or the other.
+		logs.waitFor(t, copies, discardedWithoutAssociation, discardedUnprotected)
 	}
-	ue.send(m)
 	if got := ue.barrier(); len(got) != 0 {
 		t.Errorf("the P-CSCF sent %d %s, want nothing", got[0].StatusCode, got[0].Method)
 	}
@@ -386,14 +471,65 @@ func TestProtectedRequestOfAUEWithSecurityAssociationsGetsThrough(t *testing.T) 
 	a, sas := protectedUE(ue.addr())
 	h.p.store.PutAssociation(a)
 	h.p.store.PutSecurityAssociations(sas)
-	m := ue.request(strangerRequests()[2])
-	ue.send(m)
-	select {
-	case got := <-h.received:
-		if got.Get("Call-ID") != m.Get("Call-ID") {
-			t.Errorf("the home network got %s %s, want the MESSAGE", got.Method, got.Get("Call-ID"))
+	h.forwarded(ue, ue.request(strangerRequests()[2]))
+}
+
+// TestUnprotectedRequestDuringAnAuthenticationGetsThrough: temporary
+// security associations are those of an authentication under way (TS
+// 24.229 5.2.2.2), which 5.2.1 NOTE 8 leaves out, so an unprotected
+// request of a UE that has only those goes on to the home network.
+func TestUnprotectedRequestDuringAnAuthenticationGetsThrough(t *testing.T) {
+	h := newAKAHarness(t, true)
+	ue := dialRawUE(t, sip.UDP, h.unprotected.LocalAddr())
+	a, sas := protectedUE(ue.addr())
+	sas.Temporary = true
+	h.p.store.PutAssociation(a)
+	h.p.store.PutSecurityAssociations(sas)
+	h.forwarded(ue, ue.request(strangerRequests()[2]))
+}
+
+// TestUnprotectedRequestFollowsTheSATableOfAllPCSCFs: two P-CSCFs
+// share one Store, as the instances of a P-CSCF do, and either writes
+// the SA table entry of a UE that registers through it. P-CSCF a knows
+// the UE's IP association. While b has set up security associations
+// for the UE, a discards the UE's unprotected requests; once b has
+// deleted them, a lets them in again, also when a set them up itself.
+func TestUnprotectedRequestFollowsTheSATableOfAllPCSCFs(t *testing.T) {
+	logs := newLogRecords()
+	h := newAKAHarnessWith(t, true, slog.New(logs), nil)
+	a := h.p
+	b := New(Config{Host: "pcscf-b." + domain, Port: 5060, VisitedNetworkID: domain}, nil, h.store, nil, quiet())
+	ue := dialRawUE(t, sip.UDP, h.unprotected.LocalAddr())
+	association, sas := protectedUE(ue.addr())
+	a.store.PutAssociation(association)
+
+	discards := 0
+	discarded := func(m *sip.Message) {
+		t.Helper()
+		ue.send(m)
+		discards++
+		deadline := time.After(5 * time.Second)
+		for n, logged := logs.counted(discardedUnprotected); n < discards; n, logged = logs.counted(discardedUnprotected) {
+			select {
+			case got := <-h.received:
+				t.Fatalf("the home network got %s, want nothing", got.Method)
+			case <-logged:
+			case <-deadline:
+				t.Fatal("the P-CSCF neither discarded nor forwarded the request")
+			}
 		}
-	case <-time.After(5 * time.Second):
-		t.Fatal("the protected MESSAGE did not reach the home network")
+		if got := ue.barrier(); len(got) != 0 {
+			t.Errorf("the P-CSCF sent %d %s, want nothing", got[0].StatusCode, got[0].Method)
+		}
 	}
+
+	b.store.PutSecurityAssociations(sas)
+	discarded(ue.request(strangerRequests()[2]))
+	b.store.DeleteSecurityAssociations(ue.addr())
+	h.forwarded(ue, ue.request(strangerRequests()[2]))
+
+	a.store.PutSecurityAssociations(sas)
+	discarded(ue.request(strangerRequests()[2]))
+	b.store.DeleteSecurityAssociations(ue.addr())
+	h.forwarded(ue, ue.request(strangerRequests()[2]))
 }

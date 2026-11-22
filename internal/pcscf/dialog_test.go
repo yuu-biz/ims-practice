@@ -81,7 +81,7 @@ func newCallHarness(t *testing.T, cfg harnessConfig) *callHarness {
 	if err != nil {
 		t.Fatal(err)
 	}
-	h.pcscf, err = sip.NewStack(tr, sip.Config{SentBy: tr.LocalAddr().String(), Screen: h.p.Screen, OnRequest: h.p.OnRequest, OnACK: h.p.OnACK}, quiet())
+	h.pcscf, err = sip.NewStack(tr, sip.Config{SentBy: tr.LocalAddr().String(), Screen: h.p.Screen, Admit: h.p.AdmitUnprotected, OnRequest: h.p.OnRequest, OnACK: h.p.OnACK}, quiet())
 	if err != nil {
 		t.Fatal(err)
 	}
