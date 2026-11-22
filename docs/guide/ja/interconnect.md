@@ -441,7 +441,8 @@ GSMA IR.95 は、IMS 網のあいだの SIP と SDP の GSMA のプロファイ�
 | パッケージかファイル | 中身 |
 | --- | --- |
 | `internal/interconnect` | プロファイルと、IBCF が各メッセージに行うこと。`screen.go`（メソッド、option tag、ヘッダの規則）、`trust.go`（信頼ドメイン、プライバシー）、`number.go`（番号）、`codec.go`（コーデック）、`leg.go`（一方のダイアログから他方へ写すヘッダ）、`border.go`（TS 24.229 5.10.2 と 5.10.3 の順番）。 |
-| `internal/ibcf` | 役割 IBCF。2 つの UA、出口と入口（`ibcf.go`）、呼の 2 つのダイアログ（`call.go`）、ショートメッセージ（`message.go`）、TrGW（`trgw.go`、`media.go`）。試験では 2 つの網を 1 つのプロセスの中で動かす。 |
+| `internal/b2bua` | 呼の 2 つのダイアログのあいだの中継。応答と PRACK、2xx とその ACK、ダイアログの中の要求、フォークしたときの early dialog、呼の終わり。何を渡すかは IBCF が決める（`Hooks`）。 |
+| `internal/ibcf` | 役割 IBCF。2 つの UA、出口と入口（`ibcf.go`）、呼の INVITE と、2 つのダイアログのあいだで渡すもの（`call.go`）、ショートメッセージ（`message.go`）、TrGW（`trgw.go`、`media.go`）。試験では 2 つの網を 1 つのプロセスの中で動かす。 |
 | `internal/scscf/session.go` | `exitIBCF`。別の網への要求を IBCF に送る。 |
 | `internal/icscf/session.go` | `telURIOf`。SIP URI の番号を tel URI に直す。 |
 | `internal/sc/sc.go`、`internal/ipsmgw/deliver.go`、`internal/ipsmgw/message.go` | 網をまたぐショートメッセージ。SC の ENUM、IBCF を通る MESSAGE、別の網からの MESSAGE。 |
@@ -451,7 +452,7 @@ GSMA IR.95 は、IMS 網のあいだの SIP と SDP の GSMA のプロファイ�
 
 ## このプロジェクトで簡略化したこと
 
-それぞれ、コードに `SIMPLIFIED:` のコメントがあります。`grep -rn "SIMPLIFIED:" internal/ibcf internal/interconnect internal/sc internal/ipsmgw` で、SMS の手順書のものと一緒に一覧できます。
+それぞれ、コードに `SIMPLIFIED:` のコメントがあります。`grep -rn "SIMPLIFIED:" internal/ibcf internal/b2bua internal/interconnect internal/sc internal/ipsmgw` で、SMS の手順書のものと一緒に一覧できます。
 
 | 場所 | 省いたこと | 理由 |
 | --- | --- | --- |
