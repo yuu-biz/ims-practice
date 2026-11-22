@@ -114,8 +114,9 @@ var ErrStackClosed = errors.New("sip: stack closed")
 //     Config.OnRequest, except a CANCEL.
 //
 // The stack answers a CANCEL itself (RFC 3261 9.2): 200 when it matches
-// an INVITE server transaction, whose TU then sees Cancelled, and 481
-// otherwise.
+// a server transaction of any method but CANCEL, and 481 otherwise. The
+// TU of an INVITE that has no final response yet then sees Cancelled;
+// the CANCEL changes nothing else.
 type Stack struct {
 	transport *TransportLayer
 	cfg       Config
@@ -133,9 +134,12 @@ type Stack struct {
 	toTU chan func()
 
 	// Only the loop goroutine touches the fields below.
-	clients  map[clientKey]*clientEntry
-	servers  map[serverKey]*serverEntry
-	timerSeq uint64
+	clients map[clientKey]*clientEntry
+	servers map[serverKey]*serverEntry
+	// cancellable are the server transactions in servers but those of
+	// CANCEL, by what a CANCEL matches them on.
+	cancellable map[cancelKey]*serverEntry
+	timerSeq    uint64
 	// admitting holds, for each source with a request in Config.Admit,
 	// that request and then the requests from the source that came
 	// after it.
@@ -176,6 +180,16 @@ type serverKey struct {
 	method Method
 }
 
+// cancelKey matches a CANCEL to the server transaction it cancels: the
+// branch and sent-by of the top Via, whatever the method of the
+// transaction but CANCEL (RFC 3261 9.2, 17.2.3).
+type cancelKey struct {
+	branch string
+	sentBy sentBy
+}
+
+func (k serverKey) cancelKey() cancelKey { return cancelKey{branch: k.branch, sentBy: k.sentBy} }
+
 // NewStack starts the transaction layer. The stack takes over the
 // transport and closes it in Close.
 func NewStack(transport *TransportLayer, cfg Config, log *slog.Logger) (*Stack, error) {
@@ -196,17 +210,18 @@ func NewStack(transport *TransportLayer, cfg Config, log *slog.Logger) (*Stack, 
 		cfg.TimerC = DefaultTimerC
 	}
 	s := &Stack{
-		transport: transport,
-		cfg:       cfg,
-		sentBy:    sentByOf(Via{Host: host, Port: port}),
-		log:       log,
-		inbox:     make(chan stackInput),
-		toTU:      make(chan func()),
-		stop:      make(chan struct{}),
-		done:      make(chan struct{}),
-		clients:   map[clientKey]*clientEntry{},
-		servers:   map[serverKey]*serverEntry{},
-		admitting: map[Destination][]*Message{},
+		transport:   transport,
+		cfg:         cfg,
+		sentBy:      sentByOf(Via{Host: host, Port: port}),
+		log:         log,
+		inbox:       make(chan stackInput),
+		toTU:        make(chan func()),
+		stop:        make(chan struct{}),
+		done:        make(chan struct{}),
+		clients:     map[clientKey]*clientEntry{},
+		servers:     map[serverKey]*serverEntry{},
+		cancellable: map[cancelKey]*serverEntry{},
+		admitting:   map[Destination][]*Message{},
 	}
 	s.cfg.SentBy = joinHostPort(host, port)
 	s.wg.Add(2)
@@ -763,6 +778,9 @@ func (s *Stack) receiveRequest(req *Message, source Destination, admitted bool) 
 		e.machine = StartNonInviteServer(s.cfg.Timers, source.Transport.reliable())
 	}
 	s.servers[key] = e
+	if req.Method != CANCEL {
+		s.cancellable[key.cancelKey()] = e
+	}
 	s.logState("server", req.Method, branch, "request", "", e.machine.current())
 	s.carryOutServer(e, actions)
 	if req.Method == CANCEL {
@@ -774,31 +792,41 @@ func (s *Stack) receiveRequest(req *Message, source Destination, admitted bool) 
 
 // answerCancel is RFC 3261 9.2. The CANCEL has a server transaction of
 // its own, so that a retransmitted CANCEL gets the same answer. The
-// transaction it cancels has the same branch and sent-by.
+// transaction it cancels has the same branch and sent-by, and may be of
+// any method but CANCEL. Only an INVITE that has no final response yet
+// is cancelled; for a transaction of another method the CANCEL gets 200
+// all the same, and changes nothing.
 //
-// SIMPLIFIED: RFC 3261 9.2 and 16.10. Only INVITE transactions are
-// looked up. A CANCEL for another method SHOULD get 200 and change
-// nothing; it gets 481 here, and clients SHOULD NOT send one (9.1). A
-// stateful proxy MUST forward a CANCEL that matches nothing
-// statelessly, in case it forwarded the INVITE statelessly; a proxy on
-// this stack keeps state for every request, so it answers 481 too.
+// SIMPLIFIED: RFC 3261 16.10. A stateful proxy MUST forward statelessly
+// a CANCEL that matches nothing, in case it forwarded the request
+// statelessly, and MUST cancel the pending client transactions of a
+// request of any method. A proxy on this stack forwards every request
+// statefully and cancels only INVITEs, as clients SHOULD NOT cancel
+// other requests (9.1), so the stack leaves both out: a CANCEL that
+// matches nothing gets 481, as at a UAS.
 func (s *Stack) answerCancel(e *serverEntry) {
 	cancel := e.st.Request
-	target, ok := s.servers[serverKey{branch: e.key.branch, sentBy: e.key.sentBy, method: INVITE}]
+	target, ok := s.cancellable[e.key.cancelKey()]
 	if !ok {
 		s.stepServer(e, ResponseFromTU{Response: NewResponse(cancel, 481, NewTag())})
 		return
 	}
-	invite := target.machine.(InviteServerState)
-	if invite.State == Proceeding {
-		select {
-		case <-target.st.cancelled:
-		default:
-			target.st.cancel = cancel
-			close(target.st.cancelled)
+	var last *Message
+	switch m := target.machine.(type) {
+	case InviteServerState:
+		last = m.LastResponse
+		if m.State == Proceeding {
+			select {
+			case <-target.st.cancelled:
+			default:
+				target.st.cancel = cancel
+				close(target.st.cancelled)
+			}
 		}
+	case NonInviteServerState:
+		last = m.LastResponse
 	}
-	s.stepServer(e, ResponseFromTU{Response: NewResponse(cancel, 200, toTag(invite.LastResponse))})
+	s.stepServer(e, ResponseFromTU{Response: NewResponse(cancel, 200, toTag(last))})
 }
 
 // toTag returns the To tag of resp, or a new tag when there is none
@@ -1015,6 +1043,9 @@ func (s *Stack) carryOutServer(e *serverEntry, actions []TransactionAction) {
 	if e.machine.current() == Terminated {
 		stopTimers(e.timers)
 		delete(s.servers, e.key)
+		if s.cancellable[e.key.cancelKey()] == e {
+			delete(s.cancellable, e.key.cancelKey())
+		}
 		return
 	}
 	if sendErr != nil {
