@@ -137,3 +137,31 @@ func TestTwoInstancesSerialiseOneSubscriber(t *testing.T) {
 		t.Errorf("the SAA of the instance that waited names %q as the S-CSCF of the user, want %q", b.ServerName, scscf)
 	}
 }
+
+// TestALockThatAStoppedInstanceLeft: an instance stopped while it held
+// the lock of a subscriber, which stays taken until its lease runs out.
+// A SAR for that subscriber at another instance gets
+// DIAMETER_UNABLE_TO_COMPLY before the S-CSCF stops waiting for the
+// answer (5 s), rather than an answer after the S-CSCF has given the
+// request up, for a registration that it then never learns of.
+func TestALockThatAStoppedInstanceLeft(t *testing.T) {
+	kv := provisioned(t)
+	locker := func() *kvlock.Locker {
+		return kvlock.New(kv, kvlock.Config{Role: "hss", Timeout: time.Second, Log: quiet()})
+	}
+	if _, err := locker().Lock(context.Background(), impi); err != nil {
+		t.Fatal(err)
+	}
+	h := newHSSWithLocks(t, kv, locker())
+	start := time.Now()
+	a, err := cx.ParseServerAssignmentAnswer(h.Handle(wire(t, registrationSARFrom(scscf))))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if a.Result != cx.Base(cx.DiameterUnableToComply) {
+		t.Errorf("the SAA while another instance holds the lock: %v, want DIAMETER_UNABLE_TO_COMPLY", a.Result)
+	}
+	if took := time.Since(start); took >= 5*time.Second {
+		t.Errorf("the SAA took %v, longer than the S-CSCF waits for it", took)
+	}
+}

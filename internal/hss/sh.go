@@ -211,7 +211,7 @@ func (h *HSS) profileUpdate(ctx context.Context, r sh.ProfileUpdateRequest) sh.P
 
 	// The subscriber is read again under its lock, so that a SAR that
 	// writes the registration state at the same time keeps this number.
-	unlock, err := h.users.Lock(context.Background(), u.PrivateIdentity)
+	unlock, err := h.lockSubscriber(u.PrivateIdentity)
 	if err != nil {
 		return sh.ProfileUpdateAnswer{Result: h.lockFailed(err)}
 	}
@@ -253,7 +253,7 @@ func (h *HSS) updateRepositoryData(ctx context.Context, u Subscriber, r sh.Profi
 		return cx.Base(cx.DiameterUnableToComply)
 	}
 	update := data.RepositoryData[0]
-	unlock, err := h.users.Lock(context.Background(), u.PrivateIdentity)
+	unlock, err := h.lockSubscriber(u.PrivateIdentity)
 	if err != nil {
 		return h.lockFailed(err)
 	}
