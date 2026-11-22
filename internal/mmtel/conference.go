@@ -132,8 +132,12 @@ type conference struct {
 	route []string
 	log   *slog.Logger
 
-	mu      sync.Mutex
-	record  ConferenceRecord
+	mu     sync.Mutex
+	record ConferenceRecord
+	// parties are the participants of the record, in its order: parties[i]
+	// is the participant of record.Participants[i]. A participant is
+	// found in the record by its place here, not by its dialog with the
+	// focus, which a user who dials in does not have until the 200.
 	parties []*party
 	ended   bool
 	// expiry stops the expiry timer of each subscription, by its dialog
@@ -150,8 +154,8 @@ type party struct {
 	leg     partyLeg
 	media   *sip.OutgoingCall
 	creator bool
-	// dialog is the ID of the participant's dialog with the focus, by
-	// which the record of the participant is found.
+	// dialog is the ID of the participant's dialog with the focus, which
+	// a subscription within that dialog goes by (conferenceevent.go).
 	dialog sip.DialogID
 	// inDialog is a subscription within that dialog (conferenceevent.go).
 	inDialog *inDialogSubscription
@@ -391,8 +395,8 @@ func (f *conference) inviteMRFC(offer sip.Body) (*sip.OutgoingCall, *sip.Message
 }
 
 // join adds the participant p to the record, and tells the subscribers
-// (RFC 4575 3.6). The dialog of p has been set up, except for the
-// creator's, which dialogConfirmed records later.
+// (RFC 4575 3.6). The dialog of p has been set up, except for that of a
+// user who dialed in, which dialogConfirmed records later.
 func (f *conference) join(p *party, info confinfo.Participant) {
 	d, _ := p.leg.Dialog()
 	m, _ := p.media.Dialog()
@@ -412,17 +416,14 @@ func (f *conference) join(p *party, info confinfo.Participant) {
 }
 
 // dialogConfirmed puts the dialog of p into its record once the 200
-// has created it. The creator joins before the focus answers its
-// INVITE, when there is no dialog yet to record.
+// has created it. A user who dials in joins before the focus answers
+// its INVITE, when there is no dialog yet to record.
 func (f *conference) dialogConfirmed(p *party) {
 	d, _ := p.leg.Dialog()
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	for i := range f.record.Participants {
-		if f.record.Participants[i].Dialog.ID == p.dialog {
-			f.record.Participants[i].Dialog = d
-			break
-		}
+	if e := f.entry(p); e != nil {
+		e.Dialog = d
 	}
 	p.dialog = d.ID
 	f.as.conferenceStore.PutConference(f.record)
@@ -503,22 +504,33 @@ func (f *conference) full() bool {
 	return len(f.record.Participants) >= maximumUsers
 }
 
+// entry is the record of p, nil when p is not in the conference. f.mu
+// is held.
+func (f *conference) entry(p *party) *ConferenceParticipant {
+	i := slices.Index(f.parties, p)
+	if i < 0 {
+		return nil
+	}
+	return &f.record.Participants[i]
+}
+
 // setStatus is the status of p in the record. f.mu is held.
 func (f *conference) setStatus(p *party, status confinfo.EndpointStatus) bool {
-	for i := range f.record.Participants {
-		if f.record.Participants[i].Dialog.ID == p.dialog {
-			changed := f.record.Participants[i].Status != status
-			f.record.Participants[i].Status = status
-			return changed
-		}
+	e := f.entry(p)
+	if e == nil {
+		return false
 	}
-	return false
+	changed := e.Status != status
+	e.Status = status
+	return changed
 }
 
 // remove takes p out of the conference. f.mu is held.
 func (f *conference) remove(p *party) {
-	f.parties = slices.DeleteFunc(f.parties, func(o *party) bool { return o == p })
-	f.record.Participants = slices.DeleteFunc(f.record.Participants, func(o ConferenceParticipant) bool { return o.Dialog.ID == p.dialog })
+	if i := slices.Index(f.parties, p); i >= 0 {
+		f.parties = slices.Delete(f.parties, i, i+1)
+		f.record.Participants = slices.Delete(f.record.Participants, i, i+1)
+	}
 	f.as.conferenceStore.PutConference(f.record)
 }
 
