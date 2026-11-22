@@ -230,9 +230,8 @@ func TestOriginatingCallGoesThroughTheRelay(t *testing.T) {
 	if r := next(t, responses); r.StatusCode != 486 {
 		t.Fatalf("UE got %d, want 486", r.StatusCode)
 	}
-	time.Sleep(100 * time.Millisecond)
-	if n := len(h.relay.Contexts()); n != 0 {
-		t.Errorf("%d relay contexts left after the 486", n)
+	if !came(3*time.Second, func() bool { return len(h.relay.Contexts()) == 0 }) {
+		t.Errorf("%d relay contexts left 3 s after the 486", len(h.relay.Contexts()))
 	}
 }
 
@@ -500,6 +499,12 @@ func (f *fakeRelay) noStrays(t *testing.T, name string) {
 	}
 }
 
+func (f *fakeRelay) held() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return len(f.contexts)
+}
+
 // waitHeld waits until the relay holds n contexts. The P-CSCF subtracts
 // them after it has passed the response on.
 func (f *fakeRelay) waitHeld(t *testing.T, n int, within time.Duration) {
@@ -571,8 +576,11 @@ func TestBYEThatIsRejectedKeepsTheMedia(t *testing.T) {
 	if r := final(t, h.send(h.ue, byeRequest(callID, 1)), 3*time.Second); r.StatusCode != 500 {
 		t.Fatalf("got %d, want the callee's 500", r.StatusCode)
 	}
-	time.Sleep(100 * time.Millisecond)
-	relay.waitHeld(t, 1, 0)
+	// TestBYEAnswered481EndsTheMedia watches as long, and sees the
+	// context go.
+	if came(watch, func() bool { return relay.held() != 1 }) {
+		t.Fatalf("the relay holds %d contexts after the 500, want the call's 1", relay.held())
+	}
 
 	h.byeAnswers <- 200
 	if r := final(t, h.send(h.ue, byeRequest(callID, 2)), 3*time.Second); r.StatusCode != 200 {
@@ -596,7 +604,9 @@ func TestBYEAnswered481EndsTheMedia(t *testing.T) {
 	if r := final(t, h.send(h.ue, byeRequest(callID, 1)), 3*time.Second); r.StatusCode != 481 {
 		t.Fatalf("got %d, want 481", r.StatusCode)
 	}
-	relay.waitHeld(t, 0, time.Second)
+	if !came(watch, func() bool { return relay.held() == 0 }) {
+		t.Errorf("the relay holds %d contexts %v after the 481, want 0", relay.held(), watch)
+	}
 }
 
 // twoRelays is a session harness whose P-CSCF lists two media relays,

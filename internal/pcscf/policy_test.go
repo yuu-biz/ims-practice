@@ -82,6 +82,12 @@ func (f *fakePolicy) mediaRequests() []policy.MediaRequest {
 	return slices.Clone(f.media)
 }
 
+func (f *fakePolicy) releases() []policy.SessionID {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return slices.Clone(f.released)
+}
+
 // waitReleased waits until the sessions released are exactly want. The
 // P-CSCF releases a session after it has passed the SIP message on.
 func (f *fakePolicy) waitReleased(t *testing.T, want ...policy.SessionID) {
@@ -110,11 +116,15 @@ type registrar struct {
 	policy *fakePolicy
 	pcscf  *sip.Stack
 	ue     *sip.Stack
+	// handled tells of each REGISTER that the P-CSCF is done with: what
+	// follows its 200 comes after the response, and no message shows
+	// when it is over.
+	handled chan struct{}
 }
 
 func newRegistrar(t *testing.T) *registrar {
 	t.Helper()
-	r := &registrar{t: t, store: NewMemoryStore(), policy: &fakePolicy{}}
+	r := &registrar{t: t, store: NewMemoryStore(), policy: &fakePolicy{}, handled: make(chan struct{}, 1)}
 	home := newStack(t, func(st *sip.ServerTransaction) {
 		resp := sip.NewResponse(st.Request, 200, sip.NewTag())
 		resp.Add("Service-Route", "<sip:orig@scscf."+domain+":5060;lr>")
@@ -125,7 +135,13 @@ func newRegistrar(t *testing.T) *registrar {
 	locate := locatorFunc(func(string) []sip.Destination { return []sip.Destination{{Transport: sip.UDP, Addr: home.LocalAddr()}} })
 	r.p = New(Config{Host: "pcscf." + domain, Port: 5060, VisitedNetworkID: domain}, locate, r.store, nil, quiet())
 	r.p.SetPolicyControl(r.policy)
-	r.pcscf = newPCSCFStack(t, r.p)
+	r.pcscf = newStackConfig(t, sip.Config{Timers: sip.DefaultTimers(), Screen: r.p.Screen, Admit: r.p.AdmitUnprotected,
+		OnRequest: func(st *sip.ServerTransaction) {
+			r.p.OnRequest(st)
+			if st.Request.Method == sip.REGISTER {
+				r.handled <- struct{}{}
+			}
+		}})
 	r.p.SetStack(r.pcscf)
 	r.ue = newStack(t, func(st *sip.ServerTransaction) { st.Respond(sip.NewResponse(st.Request, 200, "ue")) })
 	return r
@@ -151,7 +167,11 @@ func (r *registrar) register(expires int) (Association, bool) {
 		r.t.Fatalf("REGISTER answered %d, want 200", resp.StatusCode)
 	}
 	// The P-CSCF asks the PCRF after it has answered the UE.
-	time.Sleep(100 * time.Millisecond)
+	select {
+	case <-r.handled:
+	case <-time.After(3 * time.Second):
+		r.t.Fatal("the P-CSCF was not done with the REGISTER 3 s after its 200")
+	}
 	// The association is read from the Store: its policy session is what
 	// the P-CSCF keeps of the PCRF's answer, and no message shows it until
 	// the P-CSCF releases the session.
@@ -457,15 +477,29 @@ func TestLostSignallingPathRefusesRequestsToTheUE(t *testing.T) {
 
 // TestEndedIPCANSessionNeedsNoRelease: when the PCRF itself ended the
 // session that watches the signalling path, the P-CSCF sends it nothing
-// more (TS 29.214 4.4.6.1).
+// more (TS 29.214 4.4.6.1). When only the bearer was released, the
+// P-CSCF releases the session itself (4.4.6.3), and the same watch sees
+// that release come.
 func TestEndedIPCANSessionNeedsNoRelease(t *testing.T) {
-	r := newRegistrar(t)
-	r.register(3600)
-	r.p.PolicyEvent(policy.Event{Session: "session-1", Kind: policy.SessionTerminated})
-	a, _, _ := r.store.Association(context.Background(), sip.Destination{Transport: sip.UDP, Addr: r.ue.LocalAddr()})
-	if !a.SignallingLost {
-		t.Error("the signalling is not marked lost")
+	for _, tc := range []struct {
+		kind policy.EventKind
+		want []policy.SessionID
+	}{
+		{policy.SessionTerminated, nil},
+		{policy.ReleaseOfBearer, []policy.SessionID{"session-1"}},
+	} {
+		t.Run(tc.kind.String(), func(t *testing.T) {
+			r := newRegistrar(t)
+			r.register(3600)
+			r.p.PolicyEvent(policy.Event{Session: "session-1", Kind: tc.kind})
+			a, _, _ := r.store.Association(context.Background(), sip.Destination{Transport: sip.UDP, Addr: r.ue.LocalAddr()})
+			if !a.SignallingLost {
+				t.Error("the signalling is not marked lost")
+			}
+			came(watch, func() bool { return len(r.policy.releases()) > 0 })
+			if got := r.policy.releases(); !slices.Equal(got, tc.want) {
+				t.Errorf("released the policy sessions %v within %v, want %v", got, watch, tc.want)
+			}
+		})
 	}
-	time.Sleep(100 * time.Millisecond)
-	r.policy.waitReleased(t)
 }

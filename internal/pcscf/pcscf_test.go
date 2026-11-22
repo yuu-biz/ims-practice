@@ -25,6 +25,23 @@ func (f locatorFunc) Locate(_ context.Context, host string, _ int, _ sip.Transpo
 	return f(host), nil
 }
 
+// watch is how long a test watches for something the P-CSCF must not
+// do. A test that waits this long for something the P-CSCF must not do
+// has a twin that waits as long for what it must do, and sees it come.
+const watch = 500 * time.Millisecond
+
+// came tells whether cond held within d.
+func came(d time.Duration, cond func() bool) bool {
+	deadline := time.Now().Add(d)
+	for !cond() {
+		if time.Now().After(deadline) {
+			return false
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	return true
+}
+
 // fast makes Timer F fire after 640 ms instead of 32 s.
 var fast = sip.Timers{T1: 10 * time.Millisecond, T2: 40 * time.Millisecond, T4: 50 * time.Millisecond}
 
