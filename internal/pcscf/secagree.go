@@ -191,6 +191,35 @@ func (p *PCSCF) pathURIOf(a Association) string {
 	return p.pathURI()
 }
 
+// AdmitUnprotected is the sip.Config.Admit of the stack on the
+// P-CSCF's unprotected port. A request other than REGISTER that comes
+// there from a UE with established security associations is not
+// protected, and the P-CSCF discards an unprotected message outside the
+// registration and authentication procedures (TS 24.229 5.2.1 NOTE 8):
+// as Screen does with a request that has no IP association, it sends
+// nothing back, not even a 100 (Trying), and forwards nothing. TS
+// 33.203 7.1 lets it either discard or reject what does not arrive on a
+// protected port. Temporary associations are those of an authentication
+// under way (TS 24.229 5.2.2.2), so they do not count.
+//
+// The SA table is in the Store, which several P-CSCFs may share, and a
+// UE's entry changes with each registration, through whichever of them
+// it goes. So the P-CSCF reads the entry for each request. The stack
+// asks Admit in a goroutine of its own, and the read holds up no other
+// message.
+func (p *PCSCF) AdmitUnprotected(req *sip.Message, source sip.Destination) bool {
+	if req.Method == sip.REGISTER {
+		return true
+	}
+	ue, _ := ueSourceOf(req, source)
+	if sas, ok := p.store.SecurityAssociations(ue.Addr); !ok || sas.Temporary {
+		return true
+	}
+	p.log.Info("discarded an unprotected request from a UE with security associations",
+		"method", string(req.Method), "source", source.String(), "call_id", req.Get("Call-ID"))
+	return false
+}
+
 // asksSecAgree reports whether a REGISTER chooses IMS AKA: it carries
 // Security-Client and lists sec-agree in Require and Proxy-Require (TS
 // 24.229 5.2.2.1 item 1).
