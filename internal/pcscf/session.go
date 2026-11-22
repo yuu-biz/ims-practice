@@ -65,7 +65,8 @@ func (p *PCSCF) ownURI() sip.URI {
 // P-CSCF's own reg event subscription is for the P-CSCF; any other
 // request it routes.
 func (p *PCSCF) session(st *sip.ServerTransaction) {
-	if p.subscriber.ReceiveRequest(st) {
+	if p.ownRegEventNotify(st.Request) {
+		p.receiveRegEvent(st)
 		return
 	}
 	req := st.Request

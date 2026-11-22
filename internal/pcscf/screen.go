@@ -58,15 +58,13 @@ func (p *PCSCF) fromNetwork(req *sip.Message) bool {
 		// The Path of a registration (5.2.6.2).
 		return true
 	}
+	// A NOTIFY of the P-CSCF's own reg event subscription.
+	if p.ownRegEventNotify(req) {
+		return true
+	}
 	target, err := sip.ParseURI(req.RequestURI)
 	if err != nil {
 		return false
-	}
-	for _, own := range p.ownURIs() {
-		// A NOTIFY of the P-CSCF's own reg event subscription.
-		if req.Method == sip.NOTIFY && target.User == "" && strings.EqualFold(target.Host, own.Host) && target.Port == own.Port {
-			return true
-		}
 	}
 	return p.admissions.servesContact(target)
 }
