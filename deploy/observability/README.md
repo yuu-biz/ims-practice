@@ -64,7 +64,7 @@ The code leaves out these things that the Prometheus documents and TS 32.409 des
 | --- | --- | --- |
 | `metrics.NewHandler`, prometheus/docs instrumenting/content_negotiation.md | Choosing among the formats in the Accept header, and gzip. The handler always answers in the text format 0.0.4, uncompressed. | Every Prometheus asks for the text format, and gzip is optional. The other formats carry nothing these metrics use. |
 | `metrics.Histogram`, prometheus/docs instrumenting/exposition_formats.md | A consistent snapshot of the buckets, the sum and the count while observations go on. The "+Inf" bucket always equals `_count`, but `_sum` may already include an observation that the buckets do not, until the next scrape. | The snapshot needs a second set of counters and a swap. The mean is off by at most one observation, for one scrape. |
-| S-CSCF, TS 32.409 4.1.1.1.1 and 4.1.1.1.3 | A REGISTER that the S-CSCF answers before it has read what it holds for the user counts in no registration measurement: one that it cannot read, which gets 400, and one whose user it cannot lock, which gets 500. | Whether a REGISTER is an initial registration or a re-registration depends on whether the S-CSCF holds a registration of the user. |
+| S-CSCF, TS 32.409 4.1.1.1.1 and 4.1.1.1.3 | A REGISTER that the S-CSCF answers before it has read what it holds for the user counts in no registration measurement: one that it cannot read, which gets 400, one whose user it cannot lock, which gets 500, and one that it refuses while the operator has it shut down or locked, which gets 503. | Whether a REGISTER is an initial registration or a re-registration depends on whether the S-CSCF holds a registration of the user. |
 
 ## Things to know
 

@@ -13,6 +13,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/fiorix/go-diameter/v4/diam"
@@ -20,6 +21,7 @@ import (
 	"github.com/yuu-biz/ims-practice/internal/cx"
 	"github.com/yuu-biz/ims-practice/internal/diameter"
 	"github.com/yuu-biz/ims-practice/internal/ims"
+	"github.com/yuu-biz/ims-practice/internal/maintenance"
 	"github.com/yuu-biz/ims-practice/internal/metrics"
 	"github.com/yuu-biz/ims-practice/internal/reginfo"
 	"github.com/yuu-biz/ims-practice/internal/sip"
@@ -101,6 +103,12 @@ type SCSCF struct {
 	stopSweep func()
 	// registrations counts the registration procedures (metrics.go).
 	registrations *registrationMetrics
+	// transactions counts the requests that the S-CSCF is serving, the
+	// users of its maintenance function (maintenance.go).
+	transactions atomic.Int64
+	// managed is the administrative state that the maintenance API of
+	// the node keeps for the S-CSCF; nil without one.
+	managed atomic.Pointer[maintenance.ManagedFunction]
 }
 
 // New returns an S-CSCF and starts its sweep, which handles the expiries
@@ -158,6 +166,12 @@ func (s *SCSCF) SetStack(stack *sip.Stack) { s.stack.Set(stack) }
 
 // OnRequest is the sip.Config.OnRequest of the S-CSCF.
 func (s *SCSCF) OnRequest(st *sip.ServerTransaction) {
+	s.transactions.Add(1)
+	defer s.transactionEnded()
+	if !s.unlocked() && !s.carriesOn(st.Request) {
+		s.refuse(st)
+		return
+	}
 	if st.Request.Method != sip.REGISTER {
 		s.session(st)
 		return
@@ -174,10 +188,11 @@ func (s *SCSCF) OnRequest(st *sip.ServerTransaction) {
 // 32.409 4.1.1).
 //
 // SIMPLIFIED: TS 32.409 4.1.1.1.1 and 4.1.1.1.3. A REGISTER that the
-// S-CSCF answers before it reads that, one that it cannot read (400)
-// and one whose user it cannot lock (500), counts in no registration
-// measurement: whether a REGISTER is an initial registration or a
-// re-registration depends on the registration of the user.
+// S-CSCF answers before it reads that counts in no registration
+// measurement: one that it cannot read (400), one whose user it cannot
+// lock (500), and one that it refuses while it is not UNLOCKED (503).
+// Whether a REGISTER is an initial registration or a re-registration
+// depends on the registration of the user.
 func (s *SCSCF) register(st *sip.ServerTransaction) {
 	req := st.Request
 	publicID, err := ims.PublicIdentity(req.Get("To"))
@@ -525,8 +540,9 @@ func (s *SCSCF) deregister(st *sip.ServerTransaction, privateID string, wildcard
 // ADMINISTRATIVE_DEREGISTRATION (TS 29.229 6.3.15; the flow is TS
 // 29.228 A.4.4.3).
 //
-// SIMPLIFIED: TS 24.229 5.4.1.5. Only tests call it: the S-CSCF has no
-// operator interface. The HSS asks for a deregistration
+// SIMPLIFIED: TS 24.229 5.4.1.5. Only tests call it: the maintenance API
+// of the S-CSCF has no operation that ends a registration. The HSS asks
+// for a deregistration
 // with an RTR instead, which Handle takes. The S-CSCF ends a
 // registration on its own only when an application server fails its
 // third-party REGISTER with SESSION_TERMINATED (5.4.1.7).

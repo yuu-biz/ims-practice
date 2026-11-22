@@ -50,6 +50,7 @@ import (
 	"github.com/yuu-biz/ims-practice/internal/kvstore/scscfstore"
 	"github.com/yuu-biz/ims-practice/internal/kvstore/scstore"
 	"github.com/yuu-biz/ims-practice/internal/lab"
+	"github.com/yuu-biz/ims-practice/internal/maintenance"
 	"github.com/yuu-biz/ims-practice/internal/metrics"
 	"github.com/yuu-biz/ims-practice/internal/mmtel"
 	"github.com/yuu-biz/ims-practice/internal/mrfc"
@@ -67,14 +68,16 @@ func main() {
 	configPath := flag.String("config", "/etc/ims/node.yaml", "path to the node's YAML configuration")
 	flag.Parse()
 
-	log := slog.New(slog.NewJSONHandler(os.Stdout, nil))
-	if err := run(*configPath, log); err != nil {
+	// The maintenance API reads and sets the level of the log.
+	level := new(slog.LevelVar)
+	log := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: level}))
+	if err := run(*configPath, log, level); err != nil {
 		log.Error("node failed", "error", err.Error())
 		os.Exit(1)
 	}
 }
 
-func run(configPath string, log *slog.Logger) error {
+func run(configPath string, log *slog.Logger, level *slog.LevelVar) error {
 	cfg, err := config.Load(configPath)
 	if err != nil {
 		return err
@@ -96,6 +99,8 @@ func run(configPath string, log *slog.Logger) error {
 	// it, under its own role label, and the maintenance listener serves
 	// them all at /metrics.
 	registry := metrics.NewRegistry()
+	// managed are the roles that the maintenance API of the node serves.
+	var managed []managedRole
 
 	// agent stays nil without a hep section, and then observes nothing.
 	var agent *hepagent.Agent
@@ -197,6 +202,7 @@ func run(configPath string, log *slog.Logger) error {
 
 	if c := cfg.SCSCF; c != nil {
 		roleLog := log.With("role", config.RoleSCSCF)
+		hss := hssPeers(cfg, peers)
 		s, err := scscf.New(scscf.Config{
 			ServerName: c.SIP.URI(),
 			Host:       c.SIP.Host,
@@ -207,7 +213,7 @@ func run(configPath string, log *slog.Logger) error {
 			IBCF:       c.IBCF,
 			UserLocks:  stores.locks(config.RoleSCSCF, roleLog),
 			Metrics:    registry,
-		}, hssPeers(cfg, peers), node, scscfStore(stores, roleLog), resolver, roleLog)
+		}, hss, node, scscfStore(stores, roleLog), resolver, roleLog)
 		if err != nil {
 			return err
 		}
@@ -215,6 +221,7 @@ func run(configPath string, log *slog.Logger) error {
 		// node stops.
 		defer s.Close()
 		scscfRole.Store(s)
+		managed = append(managed, managedRole{function: s.Function(hss.Available), manage: s.Manage})
 		stack, err := startSIP(config.RoleSCSCF, c.SIP, s.OnRequest, s.OnACK)
 		if err != nil {
 			return err
@@ -488,7 +495,10 @@ func run(configPath string, log *slog.Logger) error {
 		if err != nil {
 			return err
 		}
-		stop := serveMaintenance(l, registry, log, cancel)
+		stop, err := startMaintenance(l, cfg, managed, registry, level, log, cancel)
+		if err != nil {
+			return err
+		}
 		defer stop()
 	}
 	log.Info("node started", "roles", cfg.Roles)
@@ -834,12 +844,49 @@ func startFaultAgent(ctx context.Context, l net.Listener, c config.Fault, log *s
 	return func() { api.Close() }
 }
 
-// serveMaintenance serves the maintenance listener of the node on l:
-// the metrics of its roles at /metrics, in the text format that
-// Prometheus scrapes. The function it returns stops the listener.
-func serveMaintenance(l net.Listener, registry *metrics.Registry, log *slog.Logger, cancel context.CancelFunc) func() {
+// managedRole is a role that the maintenance API of the node serves:
+// what the role tells the API, and how it learns the administrative
+// state that the API keeps for it.
+type managedRole struct {
+	function maintenance.Function
+	manage   func(*maintenance.ManagedFunction)
+}
+
+// startMaintenance serves the maintenance listener of the node on l: the
+// metrics of its roles at /metrics, in the text format that Prometheus
+// scrapes, and, when roles has any, the maintenance API of those roles
+// under maintenance.PathPrefix. The function it returns stops the
+// listener.
+func startMaintenance(l net.Listener, cfg config.Config, roles []managedRole, registry *metrics.Registry,
+	level *slog.LevelVar, log *slog.Logger, cancel context.CancelFunc) (func(), error) {
 	mux := http.NewServeMux()
 	mux.Handle("GET /metrics", metrics.NewHandler(registry))
+	if len(roles) > 0 {
+		var functions []maintenance.Function
+		for _, r := range roles {
+			functions = append(functions, r.function)
+		}
+		// The host name tells apart the processes that run the same
+		// configuration file.
+		instance, _ := os.Hostname()
+		api, err := maintenance.New(maintenance.Config{
+			Node:          cfg.Node,
+			Instance:      instance,
+			Build:         maintenance.ReadBuild(),
+			LogLevel:      level,
+			Functions:     functions,
+			Configuration: func() any { return newConfigurationView(cfg) },
+			Log:           log,
+		})
+		if err != nil {
+			l.Close()
+			return nil, err
+		}
+		for _, r := range roles {
+			r.manage(api.ManagedFunction(r.function.Role))
+		}
+		mux.Handle(maintenance.PathPrefix, api.Handler())
+	}
 	server := &http.Server{Handler: mux}
 	go func() {
 		if err := server.Serve(l); err != nil && !errors.Is(err, http.ErrServerClosed) {
@@ -847,8 +894,62 @@ func serveMaintenance(l net.Listener, registry *metrics.Registry, log *slog.Logg
 			cancel()
 		}
 	}()
-	log.Info("maintenance listener listening", "address", l.Addr().String())
-	return func() { server.Close() }
+	log.Info("maintenance listener listening", "address", l.Addr().String(), "maintenance_api", len(roles) > 0)
+	return func() { server.Close() }, nil
+}
+
+// configurationView is the configuration of the node as its maintenance
+// API shows it, under the names of the configuration file: the node's
+// name, roles, home domain and maintenance listener, and the section of
+// each role that the API serves. None of them holds a secret.
+type configurationView struct {
+	Node        string        `json:"node"`
+	Roles       []config.Role `json:"roles"`
+	HomeDomain  string        `json:"home_domain"`
+	Maintenance struct {
+		Listen string `json:"listen"`
+	} `json:"maintenance"`
+	SCSCF *scscfView `json:"scscf,omitempty"`
+}
+
+type scscfView struct {
+	SIP        sipView `json:"sip"`
+	MinExpires int     `json:"min_expires"`
+	MaxExpires int     `json:"max_expires"`
+	IBCF       string  `json:"ibcf,omitempty"`
+}
+
+type sipView struct {
+	Listen             string `json:"listen"`
+	Host               string `json:"host"`
+	Pool               string `json:"pool,omitempty"`
+	TransactionTimeout string `json:"transaction_timeout,omitempty"`
+}
+
+func newConfigurationView(cfg config.Config) configurationView {
+	v := configurationView{Node: cfg.Node, Roles: cfg.Roles, HomeDomain: cfg.HomeDomain}
+	if m := cfg.Maintenance; m != nil {
+		v.Maintenance.Listen = m.Listen
+	}
+	if c := cfg.SCSCF; c != nil {
+		v.SCSCF = &scscfView{
+			SIP:        newSIPView(c.SIP),
+			MinExpires: int(c.MinExpires / time.Second),
+			MaxExpires: int(c.MaxExpires / time.Second),
+		}
+		if c.IBCF.Host != "" {
+			v.SCSCF.IBCF = c.IBCF.String()
+		}
+	}
+	return v
+}
+
+func newSIPView(c config.SIP) sipView {
+	v := sipView{Listen: c.Listen.String(), Host: c.Host, Pool: c.Pool}
+	if c.TransactionTimeout != 0 {
+		v.TransactionTimeout = c.TransactionTimeout.String()
+	}
+	return v
 }
 
 // iqRelay is the name by which a dialog of the P-CSCF remembers the

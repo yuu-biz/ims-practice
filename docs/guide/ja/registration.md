@@ -443,6 +443,73 @@ UE は `event="rejected"` を受けると、登録し直しません（TS 24.229
 
 待つ時間をランダムにするのは、同じときに登録を失った UE の試行をばらけさせ、一斉に戻ってこないようにするためです。`ue serve` と `ue register` は、登録し直せるまで試し続けます。失敗のたびに `"msg":"registration failed"` をログに出し、`retry_after_ms` に次の試行までの待ち時間を書きます。`ue serve` は最初の登録に失敗したときも待ってから試し直しますが、ほかのコマンドはそのときエラーで終わります。上で、削除した加入の `ue register` が終わったのと同じです。
 
+## S-CSCF を運用から外す
+
+運用者は、ノードが受け持っているものを切らずに、そのノードを運用から外せます。ノードは新しいものを受けず、始めたものは続け、それが無くなるのを待ちます。これをドレインと呼びます。商用の網は S-CSCF を複数台で動かし、どの台も利用者の状態を共有します。そのため、新しい仕事はほかの台へ行き、利用者は登録し直さなくて済みます。
+
+S-CSCF のノードはそのための保守用の API をポート 8085 で出しています。`deploy/compose/scscf.yaml` の `maintenance` の節の待ち受けで、Prometheus が集める指標と同じ所です。この API はパスワードを求めないので、ポートはホストに公開していません。要求は S-CSCF のコンテナの中から送ります。S-CSCF の管理上の状態は TS 28.622 5.3.1 の値を取ります。`UNLOCKED` は新しい仕事を受け、`SHUTTINGDOWN` は持っているものだけを扱い、`LOCKED` は新しいものを何も受けません。shut down を送ると、S-CSCF は処理中のトランザクションがあるあいだは `SHUTTINGDOWN` になり、最後の 1 つが終わると `LOCKED` になります（ITU-T X.731 7.1.3）。
+
+1. S-CSCF を shut down します。
+
+   ```sh
+   docker compose exec scscf sh -c '
+   body="{\"administrative_state\":\"SHUTTINGDOWN\",\"operator\":\"learner\"}"
+   printf "PUT /maintenance/v1/functions/scscf/administrative-state HTTP/1.0\r\nContent-Type: application/json\r\nContent-Length: ${#body}\r\n\r\n%s" "$body" |
+     nc -w 5 127.0.0.1 8085'
+   ```
+
+   応答の最後に S-CSCF の状態が出ます。処理中のトランザクションが無かったので、すぐに `LOCKED` になっています。
+
+   ```json
+   {"role":"scscf","administrative_state":"LOCKED","operational_state":"ENABLED","users":0}
+   ```
+
+   `users` は S-CSCF が処理しているトランザクションの数です。`operational_state` は S-CSCF が動けるかを示します（TS 28.622 5.3.3）。HSS のどの台も Cx の要求を受けないあいだは `DISABLED` です。`docker compose exec scscf wget -qO- http://127.0.0.1:8085/maintenance/v1/state` で、ノード全体の状態を見られます。
+
+2. UE を登録します。
+
+   ```sh
+   docker compose run --rm ue register -deregister-after 5s
+   ```
+
+   UE は `REGISTER answered 504 Server Time-out` で終わります。
+
+```text
+ UE           P-CSCF         I-CSCF          S-CSCF          HSS
+ |  REGISTER    |              |               |              |
+ |------------->|  REGISTER    |               |              |
+ |              |------------->|  UAR, UAA     |              |
+ |              |              |<---------------------------->|
+ |              |              |  REGISTER     |              |
+ |              |              |-------------->|              |
+ |              |              |  503 Retry-After: 30         |
+ |              |  503         |<--------------|              |
+ |  504         |<-------------|               |              |
+ |<-------------|              |               |              |
+```
+
+- REGISTER は登録の手順 1 から 4 と同じように S-CSCF に届きます。I-CSCF が、利用者を受け持つ S-CSCF を HSS に尋ね、そこへ転送します。
+- S-CSCF は **503 Service Unavailable** に **Retry-After: 30** を付けて答えます。ダイアログの外の要求は新しいものを始めるので、S-CSCF は `UNLOCKED` でないあいだは受けません。Retry-After はその秒数のあいだこのサーバーにほかの要求を送らないよう、クライアントに求めます（RFC 3261 21.5.4）。S-CSCF は利用者を認証しないので、HSS へ MAR は送りません。
+- 503 を受けたクライアントは、DNS で得た次のサーバーへ要求を送ります（RFC 3263 4.3）。この網の I-CSCF が知る S-CSCF は 1 つなので、ほかに試す先が無く、503 をそのまま返します。S-CSCF が複数台なら、REGISTER は次の台へ行き、利用者はそこで登録されます。
+- P-CSCF は I-CSCF からの 503 をその I-CSCF の障害として扱います（RFC 3263 4.3）。時間切れのときと同じ扱いです（TS 24.229 5.2.2.1 の 7）。ほかの I-CSCF が残っていないので、UE に **504 Server Time-out** を返します。
+
+Wireshark で `sip.Status-Code == 503` と入力すると、2 つの 503 が見えます。PUT の要求はコンテナのループバックのインタフェースを通るので、キャプチャには入りません。
+
+`UNLOCKED` でないあいだも、S-CSCF はダイアログの中の要求（通話中の呼の BYE など）と、アプリケーションサーバーが元のダイアログの識別子を付けて送り返した要求を扱います。始めたものを、外さなかったときと同じように終わらせるためです。期限の切れた登録も終わらせます。登録の更新はダイアログの外の新しい REGISTER なので、これにも 503 が返ります。
+
+3. 同じ要求に `UNLOCKED` を入れて、S-CSCF を unlock します。
+
+   ```sh
+   docker compose exec scscf sh -c '
+   body="{\"administrative_state\":\"UNLOCKED\",\"operator\":\"learner\"}"
+   printf "PUT /maintenance/v1/functions/scscf/administrative-state HTTP/1.0\r\nContent-Type: application/json\r\nContent-Length: ${#body}\r\n\r\n%s" "$body" |
+     nc -w 5 127.0.0.1 8085'
+   ```
+
+   次の `ue register` は前と同じように登録します。
+
+管理上の状態はノードのプロセスの中にあります。起動し直したノードは `UNLOCKED` です。
+
 ## IP の対応付けが無い要求
 
 P-CSCF が扱うのは、自分を通って登録した UE だけです。IP の対応付けに当たらない、REGISTER 以外の要求は捨てます。P-CSCF が登録の情報を失った UE からの要求も、これに当たります。P-CSCF は何も返さず、100 Trying も返しません。S-CSCF へも転送しません（TS 24.229 5.2.6.3.2A）。応答を返すと、知らない送り手に、このアドレスで P-CSCF が待ち受けていると教えてしまうからです。UE から見えるのは、応答が来ないことだけです。`ue serve` の要求でタイマー B かタイマー F が切れると、UE は自分の Contact がどの識別子にも結び付いていないとみなし、最初から登録し直します（TS 24.229 5.1.2A.1.6）。`ue call` と `ue sms` は時間切れを報告して終了します。
@@ -495,13 +562,13 @@ rm ue.exe
 | --- | --- | --- |
 | P-CSCF。TS 24.229 5.2.2.1 の 1 番目の項目 | Path の URI に、フロートークンと `ob` パラメータを付けない。 | SIP outbound（RFC 5626）の機能で、このプロジェクトでは実装しないため。 |
 | P-CSCF。TS 24.229 5.2.2.1 の 6 番目の項目 | REGISTER への 200 の P-Charging-Vector にある term-ioi を保存しない。 | この IOI は P-CSCF の課金の記録でホーム網を示すためのもの。このプロジェクトのノードは課金の記録を作らず、後のメッセージもこの IOI を運ばないため。 |
-| S-CSCF。TS 24.229 5.4.1.5 | S-CSCF が自分で登録を解除するのは、アプリケーションサーバーが第三者 REGISTER に失敗し、その iFC が SESSION_TERMINATED のときだけ。ほかは HSS からの RTR でだけ解除する。解除の前にセッションを解放することもしない。 | S-CSCF には保守用の API が無い。また、S-CSCF は中継するダイアログの状態を持たないため。 |
+| S-CSCF。TS 24.229 5.4.1.5 | S-CSCF が自分で登録を解除するのは、アプリケーションサーバーが第三者 REGISTER に失敗し、その iFC が SESSION_TERMINATED のときだけ。ほかは HSS からの RTR でだけ解除する。解除の前にセッションを解放することもしない。 | S-CSCF の保守用の API には、登録を終わらせる操作が無い。また、S-CSCF は中継するダイアログの状態を持たないため。 |
 | S-CSCF。TS 29.228 6.1.3.1 | NEW_SERVER_ASSIGNED と REMOVE_S-CSCF の RTR には DIAMETER_UNABLE_TO_COMPLY で答える。 | HSS のスタブは PERMANENT_TERMINATION しか送らない。また、登録していない利用者のプロファイルは、S-CSCF が数分たつと自分で手放すため。 |
 | 購読者。RFC 6665 4.1.4、5.4.9 | 2 つ目のダイアログから届いた NOTIFY には 481 を返す。 | reg イベントでは、購読が分岐することを禁じているため（RFC 3680 4.9）。 |
 | I-CSCF。TS 24.229 5.3.1.3 | S-CSCF が答えないとき、別の S-CSCF を選び直さない。 | 設定に書く S-CSCF が 1 つだけのため。その S-CSCF を何台かで動かすときは、1 台が答えなかった REGISTER は、すでに次の台へ送り直す。 |
 | UE。TS 24.229 9.2.1 | この手順書の UE やホストのソフトフォンのように、アクセス網を使わない UE には P-CSCF のアドレスを設定で与える。EPC スタブを使う UE（`ue -epc`）は attach のときに PCO からアドレスを受け取る。[VoLTE の呼の流れ](volte.md) を参照。 | ソフトフォンと、attach しない UE のための経路を残すため。 |
 | UE。TS 24.229 5.1.2A.1.6 | 応答の無かった要求のあと、UE はすぐに同じ P-CSCF を通って登録し直す。その P-CSCF を使えないものとして扱ったり、別の P-CSCF を探したりはしない。 | UE が知っている P-CSCF のアドレスは 1 つで、P-CSCF を探し直しても同じアドレスになるため。 |
-| UE。TS 24.229 5.1.1.2.1 と 5.1.1.4.1 | REGISTER でタイマー F が切れたときと、タイマー F より長い Retry-After の付いた 503 が返ったときは、待ってから同じ P-CSCF を通って登録する。その P-CSCF を使えないものとして扱ったり、別の P-CSCF を探したりはしない。更新に失敗したあとは、503 の短い Retry-After なら更新してよい場合でも、必ず最初の登録をやり直す。 | UE が知っている P-CSCF のアドレスは 1 つで、P-CSCF を探し直しても同じアドレスになるため。また、この網には REGISTER に Retry-After を付けて答えるノードが無いため。 |
+| UE。TS 24.229 5.1.1.2.1 と 5.1.1.4.1 | REGISTER でタイマー F が切れたときと、タイマー F より長い Retry-After の付いた 503 が返ったときは、待ってから同じ P-CSCF を通って登録する。その P-CSCF を使えないものとして扱ったり、別の P-CSCF を探したりはしない。更新に失敗したあとは、503 の短い Retry-After なら更新してよい場合でも、必ず最初の登録をやり直す。 | UE が知っている P-CSCF のアドレスは 1 つで、P-CSCF を探し直しても同じアドレスになるため。また、REGISTER への応答が Retry-After を付けたまま UE に届くことは無いため。S-CSCF が Retry-After を付けた 503 で答えると、P-CSCF は UE に 504 を返す。 |
 | UE。TS 24.229 5.1.1.2.1 | 再試行の間隔の max-time と base-time は、いつも RFC 5626 4.5 の既定値を使う。 | 網がこれらの値を渡せるのは TS 24.167 の管理オブジェクトを通してだけで、UE はそれを持たないため。 |
 | HSS。TS 29.228 6.1.1.1、6.1.2.1 | 登録の状態を、公開の識別子ごとではなく加入ごとに持つ。一部の Server-Assignment-Type に対応しない。 | 試験用の加入はそれぞれ 1 つの暗黙登録の組で、S-CSCF はほかの値を送らないため。 |
 | HSS。TS 29.228 6.1.1.1 の手順 5 | 登録してよい利用者かを確かめない。 | 試験用の加入は全員が登録してよいため。 |
