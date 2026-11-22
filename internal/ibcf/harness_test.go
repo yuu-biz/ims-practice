@@ -787,7 +787,7 @@ func (n *network) listenIBCF(t *testing.T, i int) error {
 		Internal:     sip.URI{Scheme: "sip", Host: in.internalHost, Port: int(in.internal.Port())},
 		External:     sip.URI{Scheme: "sip", Host: in.externalHost, Port: int(in.external.Port())},
 		InternalPool: n.ibcfInternal.Host, ExternalPool: n.ibcfExternal.Host,
-		HomeDomain: n.domain, ICSCF: icscf, Timers: testTimers, Metrics: registry,
+		HomeDomain: n.domain, ICSCF: icscf, InternalTimers: testTimers, ExternalTimers: testTimers, Metrics: registry,
 	}
 	if n.trgw.oneAddress {
 		// The SDP of each side shows the TrGW's address in that

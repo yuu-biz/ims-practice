@@ -164,6 +164,7 @@ func run(configPath string, log *slog.Logger) error {
 			return nil, err
 		}
 		stack.SentBy = c.Host + ":" + strconv.Itoa(int(c.Listen.Port()))
+		stack.Timers = c.Timers()
 		s, err := sip.NewStack(transport, stack, roleLog)
 		if err != nil {
 			transport.Close()
@@ -247,6 +248,9 @@ func run(configPath string, log *slog.Logger) error {
 		p.SetStack(stack)
 		if port := c.ProtectedServerPort; port != 0 {
 			// TS 33.203 7.1: the protected server port, on the same address.
+			// It sends only to UEs, each at the one address of its security
+			// associations, so its transaction timeout stays 64*T1: there
+			// is no other target to move on to.
 			protected := config.SIP{Listen: netip.AddrPortFrom(c.SIP.Listen.Addr(), port), Host: c.SIP.Host}
 			stack, err := startSIPWith(config.RolePCSCF, protected,
 				sip.Config{Screen: p.Screen, OnRequest: p.OnProtectedRequest, OnACK: p.OnProtectedACK})
@@ -311,6 +315,7 @@ func run(configPath string, log *slog.Logger) error {
 			MRFC:             c.MRFC,
 			Announcement:     c.Announcement,
 			ConferenceDomain: c.ConferenceDomain,
+			Timers:           c.SIP.Timers(),
 		}, users, store, store, resolver, roleLog)
 		if err := mmtelRole.Listen(transport); err != nil {
 			transport.Close()
@@ -340,7 +345,7 @@ func run(configPath string, log *slog.Logger) error {
 			client := agw.NewClient(url)
 			processors = append(processors, mrfc.Processor{Name: url, Control: client, Announcements: client})
 		}
-		m, err := mrfc.New(mrfc.Config{Host: c.SIP.Host, Port: int(c.SIP.Listen.Port()), NotifyURL: c.NotifyURL()},
+		m, err := mrfc.New(mrfc.Config{Host: c.SIP.Host, Port: int(c.SIP.Listen.Port()), NotifyURL: c.NotifyURL(), Timers: c.SIP.Timers()},
 			processors, mrfcStore(stores, roleLog), resolver, roleLog)
 		if err != nil {
 			transport.Close()
@@ -667,6 +672,8 @@ func startIBCF(homeDomain string, c config.IBCF, store ibcf.Store, locator ims.L
 		ICSCF:            c.ICSCF,
 		TrGWCoreAddress:  c.TrGW.CoreAddress,
 		TrGWPeerAddress:  c.TrGW.PeerAddress,
+		InternalTimers:   c.SIP.Timers(),
+		ExternalTimers:   c.ExternalSIP.Timers(),
 	}, peers, agw.NewClient(c.TrGW.Control), store, locator, log)
 	if err != nil {
 		return nil, err

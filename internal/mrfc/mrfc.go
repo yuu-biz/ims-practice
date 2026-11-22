@@ -101,6 +101,9 @@ type Config struct {
 	// NotifyURL is where the MRFPs post the Notify of the terminations
 	// of this instance (NotifyHandler).
 	NotifyURL string
+	// Timers are those of the UA; the zero value means
+	// sip.DefaultTimers.
+	Timers sip.Timers
 }
 
 // MRFC is the mrfc role.
@@ -154,6 +157,7 @@ func (m *MRFC) Listen(transport *sip.TransportLayer) error {
 	contact := "sip:" + m.cfg.Host + ":" + strconv.Itoa(m.cfg.Port)
 	ua, err := sip.NewUA(transport, sip.UAConfig{
 		SentBy:  m.cfg.Host + ":" + strconv.Itoa(m.cfg.Port),
+		Timers:  m.cfg.Timers,
 		Contact: contact,
 		OnCall:  m.serve,
 		Locate: func(u sip.URI) (sip.Destination, error) {

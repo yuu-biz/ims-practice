@@ -72,6 +72,9 @@ type Config struct {
 	// Nil means time.AfterFunc. A test passes its own, to fire the
 	// timer without waiting for it.
 	AfterFunc func(d time.Duration, f func()) (stop func() bool)
+	// Timers are those of the UA; the zero value means
+	// sip.DefaultTimers.
+	Timers sip.Timers
 }
 
 // HSS is the part of Sh that the AS uses. *sh.Client is one.
@@ -127,6 +130,7 @@ func (as *AS) uri() string { return "sip:" + as.cfg.Host + ":" + strconv.Itoa(as
 func (as *AS) Listen(transport *sip.TransportLayer) error {
 	ua, err := sip.NewUA(transport, sip.UAConfig{
 		SentBy:  as.cfg.Host + ":" + strconv.Itoa(as.cfg.Port),
+		Timers:  as.cfg.Timers,
 		Contact: as.uri(),
 		// The AS carries the SDP of preconditions from leg to leg
 		// without reading it, so an INVITE that requires them is taken.

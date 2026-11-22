@@ -10,6 +10,7 @@ import (
 	"github.com/yuu-biz/ims-practice/internal/aka"
 	"github.com/yuu-biz/ims-practice/internal/diameter"
 	"github.com/yuu-biz/ims-practice/internal/epc"
+	"github.com/yuu-biz/ims-practice/internal/sip"
 	"github.com/yuu-biz/ims-practice/internal/sms"
 )
 
@@ -104,6 +105,11 @@ func TestParseSIPPool(t *testing.T) {
 	}
 	if s.TransactionTimeout != 4*time.Second {
 		t.Errorf("TransactionTimeout = %v, want 4s", s.TransactionTimeout)
+	}
+	want := sip.DefaultTimers()
+	want.TransactionTimeout = 4 * time.Second
+	if got := s.Timers(); got != want {
+		t.Errorf("Timers() = %+v, want %+v", got, want)
 	}
 }
 
