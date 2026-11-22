@@ -15,6 +15,7 @@ import (
 	"encoding/hex"
 	"log/slog"
 	"slices"
+	"time"
 
 	"github.com/fiorix/go-diameter/v4/diam"
 
@@ -137,6 +138,23 @@ func (h *HSS) storeFailed(err error) cx.Result {
 	return cx.Base(cx.DiameterUnableToComply)
 }
 
+// lockWait is how long a request waits for the lock of its subscriber.
+// The Diameter client waits 5 s for the answer (the application-defined
+// Timeout of RFC 6733 5.6.2, internal/config) and then gives the
+// request up: an HSS that took the lock after that would change the
+// subscriber for a request that its sender reports as failed. The lease
+// of a lock that a stopped instance left (ims.UserLockLease) is longer,
+// so such a request gets DIAMETER_UNABLE_TO_COMPLY instead.
+const lockWait = 4 * time.Second
+
+// lockSubscriber takes the lock of the subscriber privateID for one
+// request, waiting at most lockWait.
+func (h *HSS) lockSubscriber(privateID string) (unlock func(), err error) {
+	ctx, cancel := context.WithTimeout(context.Background(), lockWait)
+	defer cancel()
+	return h.users.Lock(ctx, privateID)
+}
+
 // lockFailed is the result for a request whose subscriber the HSS could
 // not lock. Another instance may be changing the subscriber, so this
 // one does not go on without the lock.
@@ -191,7 +209,7 @@ func (h *HSS) lock(ctx context.Context, privateID, publicID string) (Subscriber,
 	if !ok {
 		return Subscriber{}, result, nil, false
 	}
-	unlock, err := h.users.Lock(context.Background(), s.PrivateIdentity)
+	unlock, err := h.lockSubscriber(s.PrivateIdentity)
 	if err != nil {
 		return Subscriber{}, h.lockFailed(err), nil, false
 	}

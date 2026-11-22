@@ -299,7 +299,7 @@ func (h *HSS) addSubscription(w http.ResponseWriter, r *http.Request) {
 // subscription itself alone: another instance may be changing the
 // subscriber.
 func (h *HSS) removeSubscription(ctx context.Context, scscfs SCSCFs, privateID string) (bool, error) {
-	unlock, err := h.users.Lock(context.Background(), privateID)
+	unlock, err := h.lockSubscriber(privateID)
 	if err != nil {
 		return false, err
 	}
