@@ -439,13 +439,12 @@ func (s *MemoryStore) deleteRegSubscription(key string) {
 }
 
 type PCSCF struct {
-	cfg        Config
-	locator    Locator
-	store      Store
-	relay      Relay                // nil passes media end to end
-	policy     policy.PolicyControl // nil asks nothing of a PCRF
-	stack      ims.StackRef
-	subscriber *sip.Subscriber
+	cfg     Config
+	locator Locator
+	store   Store
+	relay   Relay                // nil passes media end to end
+	policy  policy.PolicyControl // nil asks nothing of a PCRF
+	stack   ims.StackRef
 	// admissions is what Screen knows of the IP associations in store.
 	admissions *admissions
 	log        *slog.Logger
@@ -453,22 +452,29 @@ type PCSCF struct {
 	// protectedStack listens on the protected server port.
 	protectedStack ims.StackRef
 
-	// regEvents are the P-CSCF's own subscriptions to the reg event
-	// package, by private identity in lower case. Like the other
-	// timers, they live in the process: a subscription is mostly its
-	// refresh and expiry timers.
-	mu        sync.Mutex
-	regEvents map[string]*sip.Subscription
 	// setups are the initial INVITEs that have created a dialog and have
 	// no final response yet. An INVITE transaction lives in the process
 	// that forwards it, and only there can it be cancelled; the PCRF
 	// reports the events of a policy session to the P-CSCF instance that
 	// opened it, which is the one that holds the INVITE. An entry lasts
 	// as long as its transaction, as the stack's own entries do. The
-	// lock is their own, apart from that of regEvents, and is held only
-	// to read or change the map.
+	// lock is held only to read or change the map.
 	setupsMu sync.Mutex
 	setups   map[DialogKey]*setup
+
+	// regEventRefresh gives, for the duration a reg event subscription
+	// has, when to refresh it (TS 24.229 5.2.3), and notifyWait is Timer
+	// N, how long a SUBSCRIBE waits for the NOTIFY that must follow it:
+	// 64*T1 (RFC 6665 4.1.2.2). Both timers run in the process that sent
+	// the SUBSCRIBE.
+	regEventRefresh func(time.Duration) time.Duration
+	notifyWait      time.Duration
+	// refreshTimers are those refresh timers, by private identity: one
+	// per subscription, so that each NOTIFY replaces the timer the NOTIFY
+	// before it set rather than adding another. The lock is held only to
+	// read or change the map.
+	refreshMu     sync.Mutex
+	refreshTimers map[string]*time.Timer
 
 	// ackWait is how long a release waits for the ACK of a 2xx (release):
 	// 64*T1, after which the callee itself gives up waiting for the ACK
@@ -482,10 +488,11 @@ type PCSCF struct {
 // as well.
 func New(cfg Config, locator Locator, store Store, relay Relay, log *slog.Logger) *PCSCF {
 	admitted := newAdmissions()
-	p := &PCSCF{cfg: cfg, locator: locator, store: indexedStore{Store: store, admissions: admitted}, admissions: admitted,
-		relay: relay, log: log, regEvents: map[string]*sip.Subscription{}, setups: map[DialogKey]*setup{}, ackWait: 64 * sip.DefaultTimers().T1}
-	p.subscriber = sip.NewSubscriber(p.contactURI(), p.locate, log)
-	return p
+	return &PCSCF{cfg: cfg, locator: locator, store: indexedStore{Store: store, admissions: admitted}, admissions: admitted,
+		relay: relay, log: log, setups: map[DialogKey]*setup{},
+		regEventRefresh: ims.RefreshAfter, notifyWait: 64 * sip.DefaultTimers().T1,
+		refreshTimers: map[string]*time.Timer{},
+		ackWait:       64 * sip.DefaultTimers().T1}
 }
 
 // OnRequest is the sip.Config.OnRequest of the P-CSCF, on its
@@ -637,7 +644,7 @@ func (p *PCSCF) register(st *sip.ServerTransaction, protected bool) {
 			// 24.229 5.2.6.4.3 NOTE 1).
 			*registered = p.watchSignallingPath(*registered, log)
 		}
-		p.subscribeRegEvent(*registered, interval, log)
+		p.watchRegEvent(*registered, interval, log)
 	}
 }
 
