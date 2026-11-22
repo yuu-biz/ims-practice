@@ -3,6 +3,7 @@ package storetest_test
 import (
 	"context"
 	"math"
+	"net/netip"
 	"strconv"
 	"testing"
 	"time"
@@ -78,10 +79,11 @@ func TestIPSMGWMemoryStore(t *testing.T) {
 	})
 }
 
-// TestMemoryStoreLookupsDoNotGrow fills the MemoryStore of the S-CSCF
-// with few users and with many, and times the lookups by another
-// identifier than the key: the registration of a public identity and
-// the subscriptions to a registration. Each reads an index, so a lookup among many users takes
+// TestMemoryStoreLookupsDoNotGrow fills the MemoryStores of the S-CSCF
+// and the P-CSCF with few users and with many, and times the lookups by
+// another identifier than the key: the registration of a public
+// identity, the subscriptions to a registration and the association of
+// a contact. Each reads an index, so a lookup among many users takes
 // about as long as one among few; a walk over all of them would take
 // as many times longer as there are more users.
 func TestMemoryStoreLookupsDoNotGrow(t *testing.T) {
@@ -121,6 +123,23 @@ func TestMemoryStoreLookupsDoNotGrow(t *testing.T) {
 			return func() {
 				if subs, err := s.SubscriptionsOf(context.Background(), last); len(subs) != 1 || err != nil {
 					t.Fatalf("SubscriptionsOf(%s) is not the one subscription", last)
+				}
+			}
+		}},
+		{"P-CSCF AssociationOfContact", func(t *testing.T, n int) func() {
+			s := pcscf.NewMemoryStore()
+			for i := range n {
+				addr := netip.AddrPortFrom(netip.AddrFrom4([4]byte{10, 0, byte(i >> 8), byte(i)}), 5060)
+				if err := s.PutAssociation(context.Background(), pcscf.Association{Source: sip.Destination{Transport: sip.UDP, Addr: addr},
+					Contact: "sip:" + user(i) + "@" + addr.String()}); err != nil {
+					t.Fatal(err)
+				}
+			}
+			last := netip.AddrPortFrom(netip.AddrFrom4([4]byte{10, 0, byte((n - 1) >> 8), byte(n - 1)}), 5060)
+			contact := "sip:" + user(n-1) + "@" + last.String()
+			return func() {
+				if _, ok, err := s.AssociationOfContact(context.Background(), contact); !ok || err != nil {
+					t.Fatalf("AssociationOfContact(%s) found nothing", contact)
 				}
 			}
 		}},

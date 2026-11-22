@@ -197,14 +197,18 @@ type Store interface {
 // MemoryStore is a Store in the memory of one process. Two P-CSCFs
 // share state only when they share one MemoryStore, as in a test; a
 // network of several nodes needs a store outside them. It never fails.
+// A lookup by another identifier reads an index, as the stores outside
+// the node do, so that its time does not grow with the number of UEs.
 type MemoryStore struct {
 	mu           sync.Mutex
 	associations map[sip.Destination]Association
 	dialogs      map[DialogKey]Dialog
-	// dialogOfSession and associationOfSession are the indexes of the
-	// dialogs and the associations by policy session.
+	// dialogOfSession, associationOfSession and associationOfContact are
+	// the indexes of the dialogs and the associations by policy session,
+	// and of the associations by contact.
 	dialogOfSession      map[policy.SessionID]DialogKey
 	associationOfSession map[policy.SessionID]sip.Destination
+	associationOfContact map[contactKey]sip.Destination
 	// regSubscriptions are keyed by private identity, and
 	// regSubscriptionOfDialog gives the private identity for the Call-ID
 	// of a dialog, so that neither lookup scans.
@@ -216,23 +220,31 @@ type MemoryStore struct {
 func NewMemoryStore() *MemoryStore {
 	return &MemoryStore{associations: map[sip.Destination]Association{}, dialogs: map[DialogKey]Dialog{},
 		dialogOfSession: map[policy.SessionID]DialogKey{}, associationOfSession: map[policy.SessionID]sip.Destination{},
-		regSubscriptions: map[string]RegSubscription{}, regSubscriptionOfDialog: map[string]string{}}
+		associationOfContact: map[contactKey]sip.Destination{},
+		regSubscriptions:     map[string]RegSubscription{}, regSubscriptionOfDialog: map[string]string{}}
+}
+
+func keyOfContact(contact string) (contactKey, bool) {
+	u, err := sip.ParseURI(contact)
+	if err != nil {
+		return contactKey{}, false
+	}
+	return contactKeyOf(u), true
 }
 
 func (s *MemoryStore) AssociationOfContact(_ context.Context, contact string) (Association, bool, error) {
-	want, err := sip.ParseURI(contact)
-	if err != nil {
+	k, ok := keyOfContact(contact)
+	if !ok {
 		return Association{}, false, nil
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	for _, a := range s.associations {
-		got, err := sip.ParseURI(a.Contact)
-		if err == nil && got.User == want.User && strings.EqualFold(got.Host, want.Host) && got.Port == want.Port {
-			return a, true, nil
-		}
+	source, ok := s.associationOfContact[k]
+	if !ok {
+		return Association{}, false, nil
 	}
-	return Association{}, false, nil
+	a, ok := s.associations[source]
+	return a, ok, nil
 }
 
 func (s *MemoryStore) PutDialog(_ context.Context, d Dialog) error {
@@ -297,10 +309,13 @@ func (s *MemoryStore) Association(_ context.Context, source sip.Destination) (As
 func (s *MemoryStore) PutAssociation(_ context.Context, a Association) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	delete(s.associationOfSession, s.associations[a.Source].SignallingSession)
+	s.removeAssociation(a.Source)
 	s.associations[a.Source] = a
 	if a.SignallingSession != "" {
 		s.associationOfSession[a.SignallingSession] = a.Source
+	}
+	if k, ok := keyOfContact(a.Contact); ok {
+		s.associationOfContact[k] = a.Source
 	}
 	if a.KeepUntil.IsZero() {
 		return nil
@@ -309,7 +324,7 @@ func (s *MemoryStore) PutAssociation(_ context.Context, a Association) error {
 		s.mu.Lock()
 		defer s.mu.Unlock()
 		if current, ok := s.associations[a.Source]; ok && current.KeepUntil.Equal(a.KeepUntil) {
-			s.deleteAssociation(a.Source)
+			s.removeAssociation(a.Source)
 		}
 	})
 	return nil
@@ -318,12 +333,23 @@ func (s *MemoryStore) PutAssociation(_ context.Context, a Association) error {
 func (s *MemoryStore) DeleteAssociation(_ context.Context, source sip.Destination) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.deleteAssociation(source)
+	s.removeAssociation(source)
 	return nil
 }
 
-func (s *MemoryStore) deleteAssociation(source sip.Destination) {
-	delete(s.associationOfSession, s.associations[source].SignallingSession)
+// removeAssociation removes the association of source and the index
+// entries that name it. The lock is held.
+func (s *MemoryStore) removeAssociation(source sip.Destination) {
+	a, ok := s.associations[source]
+	if !ok {
+		return
+	}
+	if s.associationOfSession[a.SignallingSession] == source {
+		delete(s.associationOfSession, a.SignallingSession)
+	}
+	if k, ok := keyOfContact(a.Contact); ok && s.associationOfContact[k] == source {
+		delete(s.associationOfContact, k)
+	}
 	delete(s.associations, source)
 }
 
