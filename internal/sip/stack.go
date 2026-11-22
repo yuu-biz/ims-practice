@@ -82,7 +82,9 @@ type Config struct {
 	// TU sees the requests from a source in the order they arrived, the
 	// ACK for a 2xx before a BYE that follows it. While Admit waits over
 	// one request, the later ones from its source wait too, so it should
-	// answer soon. Admit must not change req.
+	// answer soon. At most maxAdmitQueue requests from a source wait,
+	// and the stack drops any more without a word. Admit must not change
+	// req.
 	Admit func(req *Message, source Destination) bool
 }
 
@@ -740,6 +742,12 @@ func (s *Stack) receiveACK(ack *Message, v Via, source Destination, admitted boo
 	s.passACKToTU(ack)
 }
 
+// maxAdmitQueue bounds the requests from one source that wait for
+// Config.Admit, the one it is deciding on included, so that a flood from
+// one address piles up no more than this while Admit waits for a slow
+// store. A UE has far fewer requests under way at once.
+const maxAdmitQueue = 32
+
 // admits tells whether req may go on at once. A request that
 // Config.Screen lets in goes to Config.Admit, when there is one, and
 // comes back to the loop once Admit has let it in.
@@ -752,6 +760,11 @@ func (s *Stack) admits(req *Message, source Destination) bool {
 		return true
 	}
 	waiting := s.admitting[source]
+	if len(waiting) == maxAdmitQueue {
+		s.log.Warn("dropped request since too many from its source wait for admission",
+			"method", string(req.Method), "src", source.String())
+		return false
+	}
 	s.admitting[source] = append(waiting, req)
 	if len(waiting) == 0 {
 		s.askAdmit(req, source)

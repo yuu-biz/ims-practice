@@ -548,3 +548,59 @@ func TestCloseWaitsForAdmit(t *testing.T) {
 		t.Errorf("Admit was asked about %v, want %v, the request it held when the stack stopped", asked, want)
 	}
 }
+
+// At most maxAdmitQueue requests from one source wait for Admit, the
+// one it is deciding on included, and the stack drops any more without
+// a word. Once Admit has decided on one of them, there is room for the
+// next request from the source.
+func TestAdmitBoundsTheRequestsThatWaitFromOneSource(t *testing.T) {
+	questions := make(chan admitQuestion)
+	stack := newStackWith(t, Config{
+		Timers:    testTimers,
+		Admit:     heldAdmit(t, questions, MESSAGE),
+		OnRequest: answerOptions(func(st *ServerTransaction) { t.Errorf("TU got %s", st.Request.Method) }),
+	})
+	peer := newUDPPeer(t, stack.LocalAddr())
+	other := newUDPPeer(t, stack.LocalAddr())
+	var sent []*Message
+	for range maxAdmitQueue + 2 {
+		m := peer.request(MESSAGE)
+		sent = append(sent, m)
+		peer.send(m)
+	}
+	// The stack has read every MESSAGE from peer once it answers this
+	// OPTIONS.
+	other.sync()
+	nextQuestion(t, questions).answer <- false
+	// Admit is asked about the next MESSAGE only after the stack has
+	// taken up the answer about the first, which frees a place.
+	q := nextQuestion(t, questions)
+	late := peer.request(MESSAGE)
+	peer.send(late)
+	other.sync()
+
+	index := map[string]int{late.Get("Call-ID"): len(sent)}
+	for i, m := range sent {
+		index[m.Get("Call-ID")] = i
+	}
+	var asked []int
+	for range maxAdmitQueue {
+		asked = append(asked, index[q.req.Get("Call-ID")])
+		q.answer <- false
+		if q.req.Get("Call-ID") == late.Get("Call-ID") {
+			break
+		}
+		q = nextQuestion(t, questions)
+	}
+	var want []int
+	for i := 1; i < maxAdmitQueue; i++ {
+		want = append(want, i)
+	}
+	want = append(want, len(sent))
+	if !reflect.DeepEqual(asked, want) {
+		t.Errorf("after the first MESSAGE, Admit was asked about the requests %v, want %v: those that waited, then the one sent later", asked, want)
+	}
+	if got := peer.sync(); len(got) != 0 {
+		t.Errorf("stack sent %d messages for refused and dropped requests, want none; first: %s", len(got), startLine(got[0]))
+	}
+}
