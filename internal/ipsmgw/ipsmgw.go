@@ -67,6 +67,13 @@ type Config struct {
 	// message for a user of another IMS network leaves (deliver.go). The
 	// zero value has no host: every recipient is in the home network.
 	IBCF sip.URI
+	// UserLocks serialises what happens to the reg event subscription
+	// of one user. Nil means a lock per user in the memory of this
+	// process (ims.UserLocks), which serves an IP-SM-GW that runs as one
+	// instance. Instances that share a store take the lock of a user in
+	// it (internal/kvstore/kvlock), so that only one of them handles the
+	// user at a time.
+	UserLocks ims.UserLocker
 }
 
 // HSS is the part of Sh that the IP-SM-GW uses. *sh.Client is one.
@@ -85,7 +92,7 @@ type IPSMGW struct {
 	// users serializes what happens to the reg event subscription of
 	// one user, by its public identity. The Store does not lock across
 	// nodes.
-	users ims.UserLocks
+	users ims.UserLocker
 	log   *slog.Logger
 }
 
@@ -96,7 +103,10 @@ func New(cfg Config, sc ServiceCentre, store Store, hss HSS, locator ims.Locator
 	if cfg.ReportTimeout == 0 {
 		cfg.ReportTimeout = defaultReportTimeout
 	}
-	return &IPSMGW{cfg: cfg, sc: sc, store: store, hss: hss, locator: locator, log: log}
+	if cfg.UserLocks == nil {
+		cfg.UserLocks = &ims.UserLocks{}
+	}
+	return &IPSMGW{cfg: cfg, sc: sc, store: store, hss: hss, locator: locator, users: cfg.UserLocks, log: log}
 }
 
 // SetStack hands the IP-SM-GW the stack that calls OnRequest.

@@ -56,7 +56,11 @@ const featureSMSOverIP = "+g.3gpp.smsip"
 // REGISTER of the next reregistration tries again.
 func (g *IPSMGW) watchRegistration(publicID, msisdn string, registered time.Duration, log *slog.Logger) {
 	ctx := context.Background()
-	unlock, _ := g.users.Lock(ctx, publicID)
+	unlock, err := g.users.Lock(ctx, publicID)
+	if err != nil {
+		log.Warn("reg event subscription not read: the lock of the user was not taken", "error", err.Error())
+		return
+	}
 	defer unlock()
 	expires := registered + ims.RegEventMargin
 	sub, ok, err := g.store.RegSubscriptionOf(ctx, publicID)
@@ -123,7 +127,11 @@ func (g *IPSMGW) subscribeRegEvent(publicID, msisdn string, expires time.Duratio
 		log.Warn("reg event SUBSCRIBE failed", "status", statusOf(final), "error", errorText(err))
 		// When the Store fails, the subscription without a dialog stays
 		// until it expires, or the next third-party REGISTER replaces it.
-		unlock, _ := g.users.Lock(ctx, publicID)
+		unlock, err := g.users.Lock(ctx, publicID)
+		if err != nil {
+			log.Warn("failed reg event subscription not removed: the lock of the user was not taken", "error", err.Error())
+			return
+		}
 		defer unlock()
 		sub, ok, err := g.store.RegSubscription(ctx, d.ID.CallID)
 		if err == nil && ok && sub.Dialog.ID.RemoteTag == "" {
@@ -176,7 +184,11 @@ func (g *IPSMGW) refreshRegEvent(sub RegSubscription, expires time.Duration, log
 		// longer hears of the user, so it no longer claims the user's
 		// short messages; the next third-party REGISTER subscribes anew.
 		log.Warn("reg event subscription ended by its refresh", "status", final.StatusCode)
-		unlock, _ := g.users.Lock(ctx, sub.PublicIdentity)
+		unlock, err := g.users.Lock(ctx, sub.PublicIdentity)
+		if err != nil {
+			log.Warn("ended reg event subscription not read: the lock of the user was not taken", "error", err.Error())
+			return
+		}
 		defer unlock()
 		current, ok, err := g.store.RegSubscription(ctx, callID)
 		if err != nil {
@@ -207,9 +219,9 @@ func (g *IPSMGW) refreshRegEvent(sub RegSubscription, expires time.Duration, log
 // too (5.7.1.1 NOTE 5); the user then takes no short messages through
 // this subscription, whatever the document says.
 //
-// A NOTIFY whose subscription the IP-SM-GW cannot read or write gets 500
-// (RFC 3261 21.5.1), which does not end the subscription at the
-// notifier. What the NOTIFY said is then lost until the next one.
+// A NOTIFY whose subscription the IP-SM-GW cannot lock, read or write
+// gets 500 (RFC 3261 21.5.1), which does not end the subscription at
+// the notifier. What the NOTIFY said is then lost until the next one.
 func (g *IPSMGW) receiveRegEvent(st *sip.ServerTransaction) {
 	req := st.Request
 	id := sip.ReceivedDialogID(req)
@@ -228,7 +240,12 @@ func (g *IPSMGW) receiveRegEvent(st *sip.ServerTransaction) {
 		g.respond(st, 481, nil)
 		return
 	}
-	unlock, _ := g.users.Lock(ctx, sub.PublicIdentity)
+	unlock, err := g.users.Lock(ctx, sub.PublicIdentity)
+	if err != nil {
+		log.Warn("reg event NOTIFY refused: the lock of the user was not taken", "error", err.Error())
+		g.respond(st, 500, nil)
+		return
+	}
 	defer unlock()
 	sub, ok, err = g.store.RegSubscription(ctx, id.CallID)
 	if err != nil {

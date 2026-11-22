@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/yuu-biz/ims-practice/internal/ims"
 	"github.com/yuu-biz/ims-practice/internal/ipsmgw"
 	"github.com/yuu-biz/ims-practice/internal/kvstore"
 	"github.com/yuu-biz/ims-practice/internal/kvstore/ipsmgwstore"
@@ -151,6 +152,50 @@ func TestNotifyWhenTheStoreFails(t *testing.T) {
 	h.noUpdate()
 
 	kv.down.Store(false)
+	if resp := h.send(notify(subscribe, 2, "active;expires=3700", doc)); resp.StatusCode != 200 {
+		t.Fatalf("next NOTIFY answered %d, want 200", resp.StatusCode)
+	}
+	if got := h.nextUpdate(); got != registered {
+		t.Errorf("PUR = %+v, want %+v", got, registered)
+	}
+}
+
+// reachableLocks is the lock per user in a store outside the process:
+// it hands out locks until down is set, and then none, as the lock in a
+// store that the IP-SM-GW can no longer reach does.
+type reachableLocks struct {
+	ims.UserLocks
+	down atomic.Bool
+}
+
+func (l *reachableLocks) Lock(ctx context.Context, user string) (func(), error) {
+	if l.down.Load() {
+		return nil, errUnreachable
+	}
+	return l.UserLocks.Lock(ctx, user)
+}
+
+// TestNotifyWhenTheLockFails: a NOTIFY whose user the IP-SM-GW cannot
+// lock gets 500 too. Another instance may be handling the same
+// subscription, so this one does not read and write it without the
+// lock, and the HSS hears nothing. Once the lock is there again, the
+// next NOTIFY carries the full state and the HSS hears of it.
+func TestNotifyWhenTheLockFails(t *testing.T) {
+	locks := &reachableLocks{}
+	h := newHarnessWith(t, ipsmgw.NewMemoryStore(), time.Minute, answerOK, ipsmgw.Config{UserLocks: locks})
+	if resp := h.thirdPartyRegister(3600); resp.StatusCode != 200 {
+		t.Fatalf("third-party REGISTER answered %d", resp.StatusCode)
+	}
+	subscribe := h.subscribed()
+	doc := regDoc(reginfo.Active, reginfo.Active, "+g.3gpp.smsip")
+
+	locks.down.Store(true)
+	if resp := h.send(notify(subscribe, 1, "active;expires=3761", doc)); resp.StatusCode != 500 {
+		t.Fatalf("NOTIFY whose user cannot be locked answered %d, want 500", resp.StatusCode)
+	}
+	h.noUpdate()
+
+	locks.down.Store(false)
 	if resp := h.send(notify(subscribe, 2, "active;expires=3700", doc)); resp.StatusCode != 200 {
 		t.Fatalf("next NOTIFY answered %d, want 200", resp.StatusCode)
 	}
