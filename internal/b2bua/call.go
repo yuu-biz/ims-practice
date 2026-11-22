@@ -374,9 +374,34 @@ func (c *Call) fromCaller(r *sip.InDialogRequest) {
 		// The PRACK of a copy of a response that the callee wants no
 		// PRACK for: the caller has its 200, and the PRACK ends here.
 	case out == nil:
-		r.Reject(481)
+		c.answerWithoutALeg(r)
 	default:
 		c.forward(r, out, ToCallee, finish)
+	}
+}
+
+// answerWithoutALeg answers a request of the caller that the call has
+// no leg to send on: the role sent no INVITE toward the callee (NoLeg)
+// and gave the caller an early dialog of its own all the same, such as
+// the one in which it plays it an announcement before it rejects the
+// INVITE. A request left unanswered would stay at the caller until its
+// transaction times out.
+//
+// The dialog is there, so an UPDATE gets no 481, which would end it
+// along with the announcement (RFC 3261 12.2.1.2): the role keeps the
+// session it gave the caller, so a new offer gets 488, whether it comes
+// in an UPDATE or in the PRACK of a reliable provisional response (RFC
+// 3262 5), while an UPDATE without one changes nothing and gets 200.
+// Any other request gets 481, as there is neither a leg nor a dialog
+// for it to go on in.
+func (c *Call) answerWithoutALeg(r *sip.InDialogRequest) {
+	switch {
+	case r.Offer:
+		r.Reject(488)
+	case r.Request.Method == sip.UPDATE:
+		r.Accept(sip.Body{})
+	default:
+		r.Reject(481)
 	}
 }
 

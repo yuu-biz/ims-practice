@@ -157,11 +157,14 @@ func way(d b2bua.Direction) string {
 // message crossed. request, when set, may refuse a request or hold it
 // in the B2BUA. own, when set, is what the role does on the call of its
 // own before it sends the INVITE on, such as sending the caller a 1xx
-// (b2bua.Call.Progress).
+// (b2bua.Call.Progress). noLeg, when set, has the role send no INVITE
+// toward the callee (b2bua.Call.NoLeg) and reject the caller's INVITE
+// once that channel is closed.
 type hooks struct {
 	request func(req *sip.Message, d b2bua.Direction) *b2bua.Refusal
 	ack     func(ack *sip.Message, d b2bua.Direction)
 	own     func(c *b2bua.Call)
+	noLeg   chan struct{}
 
 	mu    sync.Mutex
 	kept  int
@@ -232,6 +235,12 @@ func startB2BUA(t *testing.T, h *hooks, callee string, tm sip.Timers) *sip.UA {
 		c := b2bua.New(in, h, discard)
 		if h.own != nil {
 			h.own(c)
+		}
+		if h.noLeg != nil {
+			c.NoLeg()
+			<-h.noLeg
+			in.Reject(480)
+			return
 		}
 		from, _ := sip.ParseNameAddr(in.Request.Get("From"))
 		out, err := c.Attempt(ua, sip.Invitation{RequestURI: callee, From: from.URI, To: callee, Body: sip.BodyOf(in.Request)})
