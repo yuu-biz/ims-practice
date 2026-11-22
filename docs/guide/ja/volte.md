@@ -370,6 +370,62 @@ Adaptive Multi-Rate
 
 1 つのパケットに 20 ms のフレームが 1 つ入ります。4 ビットのコーデックモード要求（CMR）、F、FT、Q を持つ目次（ToC）の項目、音声のビットの順です（RFC 4867 4.3）。受けた側は `-received-out` で、受け取ったフレームを格納形式に戻して書き出します。送った側が `-sent-out` で書いたものとビット単位で比べられ、e2e のスクリプトがその比較をしています。
 
+### 通話の音声を聞く
+
+ここには音声を復号するものがありません。UE はフレームを運ぶだけで、音にするのは手元の機械の再生ソフトです。その再生ソフトは FFmpeg です。AMR と AMR-WB の復号器を自分で持っていて、`ffplay` も付いてきます。入れるかどうかは学習者が決めます。このプロジェクトは FFmpeg を同梱も取得もせず、コンテナの中では音声を復号しません。
+
+下の 3 つのやり方は、どれもこの手順書の網が動いていること（`docker compose up -d --build`）が前提です。そして、どれか 1 つだけを動かします。`volte` プロファイルの UE と、`docker compose run` で 1 回だけ動かす UE は、volte10 と volte12 のアドレスを共有するためです。
+
+**手元の機械で聞く。** まず `volte` プロファイルの volte12 を起動します。この UE は着信を待ち、自分で応答します。次に UE を手元の機械向けにビルドし、コンテナの隣で動かします。やり方は [音声通話の流れを追う](call.md) の「自分のマシンから話す」にあります。`-codecs` で AMR-WB を求めます（`-epc` の無い UE は自分からは AMR-WB を offer しません）。`-play` を付けると、返ってきた音声が届くたびに鳴ります。
+
+```sh
+docker compose --profile volte up -d --no-deps volte12
+docker run --rm -v "$PWD:/src" -w /src golang:1.27.4-alpine go build -o ue ./cmd/ue
+./ue call -pcscf 127.0.0.1:5060 -listen 127.0.0.1:0 -media-listen 127.0.0.1:0 \
+  -codecs AMR-WB,AMR,PCMU -play tel:+12025550112
+```
+
+volte12 は AMR-WB で応答して試験音を鳴らし、その音が聞こえます。UE は `ffplay` を自分で起動し、通話のコーデックに合った指定を渡して、フレームをパケットごとに書き込みます。`PATH` に無いときは `-player /path/to/ffplay` で場所を教えます。渡せるのは `ffplay` か、ffplay と同じ指定を受け取れるプログラムです。再生ソフトが無ければ、UE はそれを 1 度伝え、通話はそのまま続きます。再生ソフトが止まったときや、通話に追いつかなくなったときも同じです。
+
+**コンテナから聞く。** コンテナの中の UE には音を出す装置がありません。スピーカーは手元の機械にあります。`-received-out -` は、パケットが届くたびにストリームを標準出力へ書くので、手元の再生ソフトがパイプで読めます。アドレスはプロファイルの UE が持っているので、先に止めます。
+
+```sh
+docker compose --profile volte rm -sf volte10 volte12
+```
+
+1 つ目の端末で、volte12 に着信を待たせ、聞こえたものを再生ソフトに渡します。
+
+```sh
+docker compose run --rm -T --no-deps volte12 answer -epc http://172.28.0.80:8080 \
+  -impi 001010000000012@ims.mnc001.mcc001.3gppnetwork.org \
+  -impu sip:001010000000012@ims.mnc001.mcc001.3gppnetwork.org \
+  -k fec86ba6eb707ed08905757b1bb44b8f -opc 1006020f0a478bf6b699f15c062e42b3 \
+  -received-out - | ffplay -nodisp -autoexit -i -
+```
+
+2 つ目の端末で、volte10 から volte12 を呼びます。volte10 は 3 秒間、試験音を鳴らして切ります。
+
+```sh
+docker compose run --rm --no-deps volte10 call -epc http://172.28.0.80:8080 \
+  -impi 001010000000010@ims.mnc001.mcc001.3gppnetwork.org \
+  -impu sip:001010000000010@ims.mnc001.mcc001.3gppnetwork.org \
+  -k 465b5ce8b199b49faa5f0a2ee238a6bc -opc cd63cb71954a9f4e48a5994e37a02baf \
+  -tone 3s tel:+12025550112
+```
+
+`-T` は、Docker が端末を割り当てないようにするものです。端末があると、音声のバイトが書き換わります。UE の JSON のログは標準エラー出力に移るので、パイプを通るのは音声だけです。再生ソフトは最初にストリームの中身を調べます。ffplay では 1 秒ほどかかり、その分だけ聞こえる音は通話より遅れます。再生ソフトを閉じても、止まるのは音だけで、通話は続きます。PCMU の通話では、ペイロードがそのまま流れるので、`ffplay -f mulaw -ar 8000 -ac 1 -i -` で鳴らせます。AMR と AMR-WB は、RFC 4867 5 章の格納形式を読める再生ソフトなら、ほかのものでも鳴らせます。
+
+**通話のあとで聞く。** `-` の代わりにパスを渡すと、UE は通話が終わるときに録音をまとめて書きます。`scripts/e2e-volte.sh` は、volte10 が送ったものと volte12 が受け取ったものを `captures/` に残します。
+
+```sh
+ffplay captures/volte12-received.amr
+ffmpeg -i captures/volte12-received.amr captures/volte12-received.wav
+```
+
+聞こえるのは、相手の UE が鳴らした試験音か、相手に `-amr-in` で渡したファイルです。1 つも受け取らなかった通話では、ファイルはマジックナンバーだけになり、ストリームは空になります。マジックナンバーは最初のフレームと一緒に出ていくためです。保留や、試験音より長い通話のように、通話の中に音の無い区間があると、そこは NO_DATA のフレームとして格納され、録音の時間の進みが保たれます（RFC 4867 5.3）。AMR-WB の復号器は、これを無音にします。FFmpeg の狭帯域の AMR の復号器は読み飛ばすので、音の無い区間がある AMR の通話は、通話より短くなります。その場所が再生ソフトに流れたあとで届いたフレームは、聞こえる音には入りません。通話が終わってから書くファイルには、その場所に入ります。
+
+Wireshark はキャプチャの中のフレームを見せます。RTP を再生できるのは、そのビルドが復号できるコーデックだけです（**Help > About Wireshark > Plugins** に一覧があります）。
+
 ### RTCP と DTMF
 
 両方の UE は中継ノードを通して RTP の 1 つ上のポートに RTCP の送信者レポートを送ります（RFC 3550 6.4.1、IR.92 3.2.4）。DTMF の数字は RTP のストリームの中の telephone-event で送ります（RFC 4733）。1 つの数字は続けて送るパケットで表し、最後の 3 つに終わりのビットが立ちます。中継ノードはそのまま渡します。
@@ -398,7 +454,7 @@ re-INVITE は MMTel AS をそのまま通り（TS 24.610 4.5.2.1）、新しい 
 
 ## 動かしてみる
 
-`scripts/e2e-volte.sh` は、この手順書のことをすべて行い、キャプチャで各メッセージを順に確かめます。キャプチャは `captures/` に、登録、通話、Rx、EPC スタブの API のフレームは `e2e-out/volte-ladder.txt` に、AMR-WB の録音は `captures/volte-*.amr` に、UE のログは `e2e-out/` に残ります。かかる時間は 2 分ほどです。
+`scripts/e2e-volte.sh` は、この手順書のことをすべて行い、キャプチャで各メッセージを順に確かめます。キャプチャは `captures/` に、登録、通話、Rx、EPC スタブの API のフレームは `e2e-out/volte-ladder.txt` に、AMR-WB の録音は `captures/volte-*.amr` に、UE のログと、手元の機械の UE が聞いたものは `e2e-out/` に残ります。かかる時間は 2 分ほどです。
 
 ### ラボで
 
@@ -442,7 +498,8 @@ VoLTE の UE に使うフラグです。
 | `-port-s` | 保護サーバーポート。既定は 5062。 |
 | `-codecs` | offer する音声のコーデック。`AMR-WB,AMR,PCMU` のように書く。既定は、`-epc` があればすべて、無ければ PCMU。 |
 | `-no-preconditions` | プリコンディションのしくみを使わない。 |
-| `-amr-in`、`-sent-out`、`-received-out` | AMR か AMR-WB のファイルを再生し、送ったものと受けたものを書き出す。 |
+| `-amr-in`、`-sent-out`、`-received-out` | AMR か AMR-WB のファイルを再生し、送ったものと受けたものを書き出す。`-received-out -` は、受け取ったものを通話の最中に標準出力へ流す。 |
+| `-play`、`-player` | 受け取ったものを通話の最中に手元の再生ソフトで鳴らす。鳴らすプログラムを指定する。 |
 
 SIPp は IMS-AKA で登録し、登録を解除します。
 
