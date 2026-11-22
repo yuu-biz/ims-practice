@@ -11,26 +11,30 @@ import (
 	"github.com/yuu-biz/ims-practice/internal/sip"
 )
 
-// This file holds the terminating requests to a user who is not
-// registered here, the last paragraphs of TS 24.229 5.4.3.3: the S-CSCF
-// takes the user profile from the HSS, runs the services of the
-// unregistered state, and answers when none of them took the request.
+// This file holds the requests for a user who is not registered here:
+// those to the user, the last paragraphs of TS 24.229 5.4.3.3, and
+// those that an application server sends on behalf of the user or of a
+// PSI that it hosts, the paragraph of 5.4.3.2 on an unregistered user.
+// The S-CSCF takes the profile from the HSS and runs the services of
+// the unregistered state. A request to the user that none of them took
+// gets an answer; one on behalf of the user goes on to its destination.
 
 // UnregisteredProfileLifetime is how long the S-CSCF keeps the profile
-// of a callee who is not registered. TS 24.229 and TS 29.228 leave it
+// of a user who is not registered. TS 24.229 and TS 29.228 leave it
 // to the S-CSCF. It covers one call attempt with its retries, as long
 // as the original dialog identifiers live, and is short enough that a
 // change of the profile in the HSS applies within minutes: the HSS stub
 // pushes no changes to the S-CSCF (no PPR, TS 29.228 6.2.2).
 const UnregisteredProfileLifetime = originalDialogLifetime
 
-// unregisteredProfile is the profile of a callee who has no
+// unregisteredProfile is the profile of a served user who has no
 // registration here: the one the S-CSCF still keeps, or one it takes
-// from the HSS with a SAR of UNREGISTERED_USER (5.4.3.3 NOTE 27). With
-// no profile to use, it answers st itself and reports false.
-func (s *SCSCF) unregisteredProfile(st *sip.ServerTransaction, callee string, log *slog.Logger) (UnregisteredProfile, bool) {
+// from the HSS with a SAR of UNREGISTERED_USER (5.4.3.3 NOTE 27, 5.4.3.2
+// NOTE 24). With no profile to use, it answers st itself and reports
+// false; unknown is its answer when the HSS does not know the user.
+func (s *SCSCF) unregisteredProfile(st *sip.ServerTransaction, user string, unknown int, log *slog.Logger) (UnregisteredProfile, bool) {
 	ctx := context.Background()
-	p, ok, err := s.store.UnregisteredProfileOf(ctx, callee)
+	p, ok, err := s.store.UnregisteredProfileOf(ctx, user)
 	if err != nil {
 		s.storeFailed(st, err, log)
 		return UnregisteredProfile{}, false
@@ -43,12 +47,12 @@ func (s *SCSCF) unregisteredProfile(st *sip.ServerTransaction, callee string, lo
 	// user yet.
 	answer, err := s.request(ctx, cx.ServerAssignmentRequest{
 		Header:               diameter.NewHeader(s.node, "", s.cfg.HomeDomain),
-		PublicIdentities:     []string{callee},
+		PublicIdentities:     []string{user},
 		ServerName:           s.cfg.ServerName,
 		ServerAssignmentType: cx.UnregisteredUser,
 	}.Message())
 	if err != nil {
-		log.Warn("SAR failed", "callee", callee, "type", cx.UnregisteredUser.String(), "error", err.Error())
+		log.Warn("SAR failed", "served_user", user, "type", cx.UnregisteredUser.String(), "error", err.Error())
 		s.respond(st, 500, nil)
 		return UnregisteredProfile{}, false
 	}
@@ -60,17 +64,17 @@ func (s *SCSCF) unregisteredProfile(st *sip.ServerTransaction, callee string, lo
 		return UnregisteredProfile{}, false
 	case saa.Result == diameter.Experimental(cx.DiameterErrorIdentityAlreadyRegistered) && saa.ServerName != "":
 		// 5.4.3.3: another S-CSCF serves the user. The I-CSCF sends the
-		// request there (5.3.2.1).
-		log.Info("another S-CSCF serves the callee", "callee", callee, "server_name", saa.ServerName)
+		// request there (5.3.2.1). 5.4.3.2 names no answer for a request on
+		// behalf of the user; the application server gets the same one.
+		log.Info("another S-CSCF serves the user", "served_user", user, "server_name", saa.ServerName)
 		s.respond(st, 305, func(r *sip.Message) { r.Add("Contact", sip.NameAddr{URI: saa.ServerName}.String()) })
 		return UnregisteredProfile{}, false
 	case saa.Result == diameter.Experimental(cx.DiameterErrorUserUnknown):
-		// As for a barred identity (5.4.3.3 step 1).
-		log.Info("the HSS does not know the callee", "callee", callee)
-		s.respond(st, 404, nil)
+		log.Info("the HSS does not know the user", "served_user", user)
+		s.respond(st, unknown, nil)
 		return UnregisteredProfile{}, false
 	case !saa.Result.Success():
-		log.Warn("SAR refused", "callee", callee, "result", saa.Result.String())
+		log.Warn("SAR refused", "served_user", user, "result", saa.Result.String())
 		s.respond(st, 500, nil)
 		return UnregisteredProfile{}, false
 	}
@@ -110,7 +114,7 @@ func (s *SCSCF) unregisteredProfile(st *sip.ServerTransaction, callee string, lo
 		s.storeFailed(st, err, log)
 		return UnregisteredProfile{}, false
 	}
-	log.Info("took the profile of an unregistered callee", "callee", callee, "private_identity", p.PrivateIdentity,
+	log.Info("took the profile of an unregistered user", "served_user", user, "private_identity", p.PrivateIdentity,
 		"expires", int(s.cfg.UnregisteredProfileLifetime/time.Second))
 	return p, true
 }
