@@ -21,7 +21,7 @@ import (
 // one that a NOTIFY belongs to.
 type Subscriber struct {
 	contact string
-	locate  func(URI) (Destination, error)
+	locate  func(URI) ([]Destination, error)
 	log     *slog.Logger
 
 	mu   sync.Mutex
@@ -39,10 +39,10 @@ type subscriptionKey struct {
 }
 
 // NewSubscriber makes a Subscriber. contact is the SIP URI it writes in
-// Contact, where the NOTIFYs come. locate gives the destination of a
-// request for the URI that NextHop picks from it; nil means that the
-// host of that URI is an IP address, as for UAConfig.Locate.
-func NewSubscriber(contact string, locate func(URI) (Destination, error), log *slog.Logger) *Subscriber {
+// Contact, where the NOTIFYs come. locate gives the targets of a
+// request for the URI that NextHop picks from it, as UAConfig.Locate
+// does; nil means that the host of that URI is an IP address.
+func NewSubscriber(contact string, locate func(URI) ([]Destination, error), log *slog.Logger) *Subscriber {
 	if locate == nil {
 		locate = locateIPAddress
 	}
@@ -259,11 +259,11 @@ func (sub *Subscription) send(req *Message, expires time.Duration, initial bool)
 	if err != nil {
 		return err
 	}
-	dst, err := sub.subscriber.locate(hop)
+	targets, err := sub.subscriber.locate(hop)
 	if err != nil {
 		return err
 	}
-	ct, err := sub.stack.SendRequest(req, dst)
+	ct, err := sub.stack.SendRequest(req, targets...)
 	if err != nil {
 		return err
 	}

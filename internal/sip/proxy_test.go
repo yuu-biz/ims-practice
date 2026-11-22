@@ -420,9 +420,9 @@ func TestProxyWithRewritesRelayedResponses(t *testing.T) {
 	proxy := newStackWith(t, Config{
 		Timers: testTimers,
 		OnRequest: func(st *ServerTransaction) {
-			st.ProxyWith(st.Request.Clone(), udpTo(uas.LocalAddr()), func(resp *Message) {
+			st.ProxyWith(st.Request.Clone(), func(resp *Message) {
 				resp.Set("X-Rewritten", strconv.Itoa(resp.StatusCode))
-			})
+			}, udpTo(uas.LocalAddr()))
 		},
 		OnACK: func(*Message) {},
 	})

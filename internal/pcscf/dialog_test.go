@@ -55,8 +55,8 @@ func newCallHarness(t *testing.T, cfg harnessConfig) *callHarness {
 	// Both user agents send everything to the P-CSCF, which they know
 	// once it listens.
 	var pcscfAddr netip.AddrPort
-	toPCSCF := func(sip.URI) (sip.Destination, error) {
-		return sip.Destination{Transport: sip.UDP, Addr: pcscfAddr}, nil
+	toPCSCF := func(sip.URI) ([]sip.Destination, error) {
+		return []sip.Destination{{Transport: sip.UDP, Addr: pcscfAddr}}, nil
 	}
 	newUA := func(ip, user string, calls chan *sip.IncomingCall, got *received) (*sip.UA, string) {
 		tr, err := sip.ListenObserved(ip+":0", quiet(), got.observe)

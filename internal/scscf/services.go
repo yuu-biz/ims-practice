@@ -111,13 +111,13 @@ func (s *SCSCF) invoke(st *sip.ServerTransaction, out *sip.Message, d OriginalDi
 
 	provisional := false
 	charge := s.chargeResponses(st.Request, !d.terminating())
-	dst, err := s.nextHop(toAS)
+	targets, err := s.nextHop(toAS)
 	var final *sip.Message
 	if err == nil {
-		final, err = st.ProxyWith(toAS, dst, func(r *sip.Message) {
+		final, err = st.ProxyWith(toAS, func(r *sip.Message) {
 			provisional = provisional || r.StatusCode < 200
 			charge(r)
-		})
+		}, targets...)
 	}
 	if unreachable(final, err) && !provisional {
 		returned, rerr := s.returned(d.ID)

@@ -31,8 +31,8 @@ func TestPhoneShowsNoTemporaryPublicIdentityBeforeItRegisters(t *testing.T) {
 				SentBy:  addr.String(),
 				Contact: contact.URI(),
 				OnCall:  line.Ring,
-				Locate: func(sip.URI) (sip.Destination, error) {
-					return sip.Destination{Transport: sip.UDP, Addr: netip.MustParseAddrPort("127.0.0.1:9")}, nil
+				Locate: func(sip.URI) ([]sip.Destination, error) {
+					return []sip.Destination{{Transport: sip.UDP, Addr: netip.MustParseAddrPort("127.0.0.1:9")}}, nil
 				},
 			}, ue.CallConfig{}), quiet())
 			if err != nil {

@@ -33,8 +33,8 @@ const regEventPackage = "reg"
 // SUBSCRIBEs, where the S-CSCF sends the NOTIFYs.
 func (p *PCSCF) contactURI() string { return fmt.Sprintf("sip:%s:%d", p.cfg.Host, p.cfg.Port) }
 
-func (p *PCSCF) locate(u sip.URI) (sip.Destination, error) {
-	return ims.Destination(context.Background(), p.locator, u)
+func (p *PCSCF) locate(u sip.URI) ([]sip.Destination, error) {
+	return ims.Targets(context.Background(), p.locator, u)
 }
 
 // watchRegEvent subscribes to the registration state of the user that a
@@ -133,7 +133,7 @@ func (p *PCSCF) subscribeRegEvent(a Association, expires time.Duration, log *slo
 		log.Warn("reg event SUBSCRIBE not built", "error", err.Error())
 		return
 	}
-	dst, err := p.regEventHop(m)
+	targets, err := p.regEventHop(m)
 	if err != nil {
 		log.Warn("reg event SUBSCRIBE not sent", "error", err.Error())
 		return
@@ -157,7 +157,7 @@ func (p *PCSCF) subscribeRegEvent(a Association, expires time.Duration, log *slo
 	log.Info("reg event subscribing", "public_identity", defaultID)
 	p.timeRegEventNotify(privateID, d, log)
 	go func() {
-		final, err := p.sendRegEvent(stack, m, dst)
+		final, err := p.sendRegEvent(stack, m, targets)
 		if err == nil && final.StatusCode < 300 {
 			p.grantRegEvent(privateID, d.ID, final, log)
 			return
@@ -207,7 +207,7 @@ func (p *PCSCF) refreshRegEvent(sub RegSubscription, log *slog.Logger) {
 	m.Add("Contact", sip.NameAddr{URI: p.contactURI()}.String())
 	m.Add("Event", regEventPackage)
 	m.Add("Expires", strconv.Itoa(int(sub.Requested/time.Second)))
-	dst, err := p.regEventHop(m)
+	targets, err := p.regEventHop(m)
 	if err != nil {
 		log.Warn("reg event refresh not sent", "error", err.Error())
 		return
@@ -233,7 +233,7 @@ func (p *PCSCF) refreshRegEvent(sub RegSubscription, log *slog.Logger) {
 	log.Info("reg event refreshing", "public_identity", sub.PublicIdentity, "expires", int(sub.Requested/time.Second))
 	p.timeRegEventNotify(privateID, d, log)
 	go func() {
-		final, err := p.sendRegEvent(stack, m, dst)
+		final, err := p.sendRegEvent(stack, m, targets)
 		switch {
 		case err == nil && final.StatusCode < 300:
 			p.grantRegEvent(privateID, d.ID, final, log)
@@ -395,21 +395,22 @@ func (p *PCSCF) refreshRegEventDue(privateID string, sent sip.Dialog, log *slog.
 	p.refreshRegEvent(sub, log)
 }
 
-// regEventHop is where a SUBSCRIBE of the P-CSCF goes: the I-CSCF of the
-// home network for an initial one, whose Request-URI is the user's
-// public identity, and the remote target for one within the dialog.
-func (p *PCSCF) regEventHop(m *sip.Message) (sip.Destination, error) {
+// regEventHop is where a SUBSCRIBE of the P-CSCF goes, best target
+// first: the I-CSCF of the home network for an initial one, whose
+// Request-URI is the user's public identity, and the remote target for
+// one within the dialog.
+func (p *PCSCF) regEventHop(m *sip.Message) ([]sip.Destination, error) {
 	hop, err := sip.NextHop(m)
 	if err != nil {
-		return sip.Destination{}, err
+		return nil, err
 	}
 	return p.locate(hop)
 }
 
 // sendRegEvent sends a SUBSCRIBE of the P-CSCF and returns its final
 // response. With no final response, the error says why.
-func (p *PCSCF) sendRegEvent(stack *sip.Stack, m *sip.Message, dst sip.Destination) (*sip.Message, error) {
-	ct, err := stack.SendRequest(m, dst)
+func (p *PCSCF) sendRegEvent(stack *sip.Stack, m *sip.Message, targets []sip.Destination) (*sip.Message, error) {
+	ct, err := stack.SendRequest(m, targets...)
 	if err != nil {
 		return nil, err
 	}

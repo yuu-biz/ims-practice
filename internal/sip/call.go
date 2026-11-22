@@ -153,27 +153,27 @@ func (c *call) end(event string, err error) {
 // send starts a client transaction for req at the next hop that its
 // Route or Request-URI names (RFC 3261 8.1.2, 12.2.1.1).
 func (c *call) send(req *Message) (*ClientTransaction, error) {
-	addr, err := c.nextHop(req)
+	targets, err := c.nextHop(req)
 	if err != nil {
 		return nil, err
 	}
-	return c.stack.SendRequest(req, addr)
+	return c.stack.SendRequest(req, targets...)
 }
 
 // sendACK passes the ACK for a 2xx straight to the transport (RFC 3261
 // 13.2.2.4).
 func (c *call) sendACK(ack *Message) error {
-	addr, err := c.nextHop(ack)
+	targets, err := c.nextHop(ack)
 	if err != nil {
 		return err
 	}
-	return c.stack.SendACK(ack, addr)
+	return c.stack.SendACK(ack, targets...)
 }
 
-func (c *call) nextHop(req *Message) (Destination, error) {
+func (c *call) nextHop(req *Message) ([]Destination, error) {
 	hop, err := NextHop(req)
 	if err != nil {
-		return Destination{}, err
+		return nil, err
 	}
 	return c.ua.cfg.Locate(hop)
 }

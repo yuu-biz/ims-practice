@@ -169,10 +169,10 @@ func (p *PCSCF) sendBYEs(d Dialog, log *slog.Logger) {
 // sendBYE sends bye, a BYE of TS 24.229 5.2.8.1.2 to the party that
 // what names, and logs its answer.
 func (p *PCSCF) sendBYE(bye *sip.Message, what string, log *slog.Logger) {
-	dst, _, err := p.nextHop(bye)
+	targets, _, err := p.nextHop(bye)
 	var ref *ims.StackRef
 	if err == nil {
-		ref, err = p.stackToward(dst)
+		ref, err = p.stackToward(targets[0])
 	}
 	var stack *sip.Stack
 	if err == nil {
@@ -180,7 +180,7 @@ func (p *PCSCF) sendBYE(bye *sip.Message, what string, log *slog.Logger) {
 	}
 	if err == nil {
 		var ct *sip.ClientTransaction
-		if ct, err = stack.SendRequest(bye, dst); err == nil {
+		if ct, err = stack.SendRequest(bye, targets...); err == nil {
 			log.Info("released the dialog with a BYE", "to", what, "target", bye.RequestURI)
 			go logAnswer(ct, what, log)
 			return
@@ -214,17 +214,17 @@ func (s *setup) crossedCancel(resp *sip.Message, first bool) bool {
 	d.Callee = Party{NameAddr: resp.Get("To"), Target: contactOf(resp), Route: toCallee}
 
 	ack := inDialogRequest(sip.ACK, inviteSeq, d, &d.Callee, &d.Caller)
-	dst, _, err := s.p.nextHop(ack)
+	targets, _, err := s.p.nextHop(ack)
 	var ref *ims.StackRef
 	if err == nil {
-		ref, err = s.p.stackToward(dst)
+		ref, err = s.p.stackToward(targets[0])
 	}
 	var stack *sip.Stack
 	if err == nil {
 		stack, err = ref.Get()
 	}
 	if err == nil {
-		err = stack.SendACK(ack, dst)
+		err = stack.SendACK(ack, targets...)
 	}
 	if err != nil {
 		s.log.Warn("could not acknowledge the 2xx that crossed the CANCEL", "error", err.Error())

@@ -89,8 +89,8 @@ func TestConferenceOfTheUE(t *testing.T) {
 	contact := ue.NewContact(cfg, addr)
 	ua, err := sip.NewUA(tr, ue.UAConfig(sip.UAConfig{
 		SentBy: addr.String(), Contact: contact.URI(), OnCall: func(ic *sip.IncomingCall) { ic.Reject(486) },
-		Locate: func(sip.URI) (sip.Destination, error) {
-			return sip.Destination{Transport: sip.UDP, Addr: f.ua.Stack().LocalAddr()}, nil
+		Locate: func(sip.URI) ([]sip.Destination, error) {
+			return []sip.Destination{{Transport: sip.UDP, Addr: f.ua.Stack().LocalAddr()}}, nil
 		},
 	}, ue.CallConfig{}), quiet())
 	if err != nil {

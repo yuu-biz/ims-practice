@@ -106,12 +106,14 @@ type UAConfig struct {
 	// ErrDialogLost, ErrNoACK), for a Reason (TS 24.229 5.1.5); nil for
 	// anything else, and for the BYE to a 2xx the UA does not want.
 	OwnHeaders func(method Method, response bool, reason error) []HeaderField
-	// Locate gives the destination of a request, for the URI that
-	// NextHop picks from it: the top Route, or else the Request-URI (RFC
-	// 3261 8.1.2). Nil means that the host of that URI is an IP address,
-	// with port 5060 unless the URI names one, and the transport its
-	// transport parameter names, UDP by default (RFC 3263 4.1).
-	Locate func(URI) (Destination, error)
+	// Locate gives the targets of a request, best first, for the URI
+	// that NextHop picks from it: the top Route, or else the Request-URI
+	// (RFC 3261 8.1.2). The stack sends the request on to the next
+	// target when it fails at one (RFC 3263 4.3). Nil means that the
+	// host of that URI is an IP address, with port 5060 unless the URI
+	// names one, and the transport its transport parameter names, UDP
+	// by default (RFC 3263 4.1).
+	Locate func(URI) ([]Destination, error)
 }
 
 // UA is a user agent on top of a Stack of its own. It keeps the dialogs
@@ -163,10 +165,10 @@ func NewUA(transport *TransportLayer, cfg UAConfig, log *slog.Logger) (*UA, erro
 	return ua, nil
 }
 
-func locateIPAddress(u URI) (Destination, error) {
+func locateIPAddress(u URI) ([]Destination, error) {
 	ip, err := netip.ParseAddr(u.Host)
 	if err != nil {
-		return Destination{}, fmt.Errorf("sip: %s names no IP address, and UAConfig.Locate is not set", u)
+		return nil, fmt.Errorf("sip: %s names no IP address, and UAConfig.Locate is not set", u)
 	}
 	port := u.Port
 	if port == 0 {
@@ -176,7 +178,7 @@ func locateIPAddress(u URI) (Destination, error) {
 	if t, ok := u.Params.Get("transport"); ok {
 		transport = Transport(strings.ToUpper(t))
 	}
-	return Destination{Transport: transport, Addr: netip.AddrPortFrom(ip, uint16(port))}, nil
+	return []Destination{{Transport: transport, Addr: netip.AddrPortFrom(ip, uint16(port))}}, nil
 }
 
 // Stack is the stack the UA runs on, for requests outside a call such
@@ -245,18 +247,18 @@ func (ua *UA) Subscribe(r SubscribeRequest) (*Subscription, error) {
 
 // SendRequest sends req, a request outside any call of the UA such as
 // the NOTIFY of a subscription that OnSubscribe took, to the next hop
-// that its Route or Request-URI names (RFC 3261 8.1.2), found with
-// UAConfig.Locate.
+// that its Route or Request-URI names (RFC 3261 8.1.2), at the targets
+// that UAConfig.Locate gives.
 func (ua *UA) SendRequest(req *Message) (*ClientTransaction, error) {
 	hop, err := NextHop(req)
 	if err != nil {
 		return nil, err
 	}
-	dst, err := ua.cfg.Locate(hop)
+	targets, err := ua.cfg.Locate(hop)
 	if err != nil {
 		return nil, err
 	}
-	return ua.stack.SendRequest(req, dst)
+	return ua.stack.SendRequest(req, targets...)
 }
 
 // allowed is what the Allow header field lists: the methods this UA

@@ -80,7 +80,7 @@ func newIMSParty(t *testing.T, pcscf netip.AddrPort, private, public, pass strin
 		Contact:   p.contact.URI(),
 		OnCall:    func(ic *sip.IncomingCall) { p.calls <- ic },
 		OnMessage: func(st *sip.ServerTransaction) { u.Load().ReceiveSMS(st) },
-		Locate:    func(sip.URI) (sip.Destination, error) { return u.Load().Outbound(), nil },
+		Locate:    func(sip.URI) ([]sip.Destination, error) { return []sip.Destination{u.Load().Outbound()}, nil },
 	}, quiet())
 	if err != nil {
 		t.Fatal(err)
@@ -321,7 +321,7 @@ func openAKAUE(t *testing.T, pcscf netip.AddrPort, protected, unprotected string
 		SentBy:  tr.LocalAddr().String(),
 		Contact: contact.URI(),
 		OnCall:  func(ic *sip.IncomingCall) { ic.Reject(486) },
-		Locate:  func(sip.URI) (sip.Destination, error) { return u.Load().Outbound(), nil },
+		Locate:  func(sip.URI) ([]sip.Destination, error) { return []sip.Destination{u.Load().Outbound()}, nil },
 	}, quiet())
 	if err != nil {
 		unprotectedStack.Close()

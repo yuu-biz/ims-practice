@@ -237,22 +237,49 @@ func (s *Stack) Close() {
 	s.wg.Wait()
 }
 
-// ClientTransaction is a client transaction as the TU sees it.
-// Responses delivers every provisional response and then the final
-// one. It is closed after the final response, except after a 2xx to an
-// INVITE: then it stays open until Timer M, 64*T1 later, and delivers
-// every further 2xx, which is either a retransmission that the TU
-// acknowledges again or the answer of another branch of a fork (RFC
-// 6026 7.2). It is also closed after a failure.
+// ClientTransaction is a request that the TU sends, as the TU sees it:
+// the client transaction that takes it to its target, and, when the
+// request fails there, the ones that take it on to the next targets
+// (nexttarget.go). Responses delivers every provisional response and
+// then the final one. It is closed after the final response, except
+// after a 2xx to an INVITE: then it stays open until Timer M, 64*T1
+// later, and delivers every further 2xx, which is either a
+// retransmission that the TU acknowledges again or the answer of
+// another branch of a fork (RFC 6026 7.2). It is also closed after a
+// failure.
 type ClientTransaction struct {
-	// Request is the request as sent, with this node's Via on top. The
-	// stack retransmits it, so it must not be changed.
+	// Request is the request as sent to the first target, with this
+	// node's Via on top. The stack retransmits it, so it must not be
+	// changed.
 	Request *Message
 
-	stack       *Stack
+	stack     *Stack
+	responses chan *Message
+	err       error
+
+	mu sync.Mutex
+	// attempt is the client transaction of the target that the request
+	// went to last.
+	attempt *attempt
+	// cancelled is set by Cancel: the request goes to no other target.
+	cancelled bool
+}
+
+// attempt is one client transaction of a ClientTransaction: the request
+// with a Via of its own, sent to one target. RFC 3261 16.6 step 7 calls
+// each target tried an attempt, and gives each a new client
+// transaction.
+type attempt struct {
+	request     *Message
 	destination Destination
-	responses   chan *Message
-	err         error
+	// responses and err are what the client transaction reports. err is
+	// set before responses is closed.
+	responses chan *Message
+	err       error
+}
+
+func newAttempt(req *Message, destination Destination) *attempt {
+	return &attempt{request: req, destination: destination, responses: make(chan *Message, responseBuffer)}
 }
 
 func (ct *ClientTransaction) Responses() <-chan *Message { return ct.responses }
@@ -261,7 +288,8 @@ func (ct *ClientTransaction) Responses() <-chan *Message { return ct.responses }
 // sends the CANCEL, in a client transaction of its own, as soon as a
 // provisional response has arrived, and not at all once a final
 // response has. Either way the outcome is the INVITE's final response
-// on Responses, normally 487 (Request Terminated).
+// on Responses, normally 487 (Request Terminated). A cancelled INVITE
+// goes to no further target.
 //
 // headers go into the CANCEL: a Reason that tells why (RFC 3326 2),
 // which a proxy also copies from the CANCEL it received.
@@ -271,7 +299,12 @@ func (ct *ClientTransaction) Cancel(headers ...HeaderField) error {
 		// would always race with the answer.
 		return fmt.Errorf("sip: cannot cancel %s", ct.Request.Method)
 	}
-	return ct.stack.post(cancelInvite{ct: ct, headers: headers})
+	ct.mu.Lock()
+	ct.cancelled = true
+	// RFC 3263 4: the CANCEL goes where the INVITE went.
+	a := ct.attempt
+	ct.mu.Unlock()
+	return ct.stack.post(cancelInvite{a: a, headers: headers})
 }
 
 // Err is nil if a final response arrived. Otherwise it is ErrTimeout,
@@ -284,46 +317,72 @@ func (ct *ClientTransaction) Err() error { return ct.err }
 // response and drops other responses that do not fit.
 const responseBuffer = 8
 
+// queue puts resp on ch, unless ch is so full that resp does not fit
+// (responseBuffer). Only one goroutine sends on ch.
+func queue(ch chan<- *Message, resp *Message) bool {
+	room := cap(ch) - len(ch)
+	if room == 0 || (resp.StatusCode < 200 && room == 1) {
+		return false
+	}
+	ch <- resp
+	return true
+}
+
 // SendRequest starts a client transaction, INVITE or non-INVITE, that
-// sends req to destination. The stack puts its own Via, with a new
-// branch, on top of a copy of req.
+// sends req to the first of targets: the transports and addresses that
+// RFC 3263 gives for its next hop, best first. The stack puts its own
+// Via, with a new branch, on top of a copy of req. When the request
+// fails at a target, it goes on to the next one (follow).
 //
 // ACK and CANCEL have no client transaction of their own here: an ACK
 // for a 2xx goes out with SendACK, the transaction sends the ACK for
 // any other final response, and ClientTransaction.Cancel sends CANCEL.
-func (s *Stack) SendRequest(req *Message, destination Destination) (*ClientTransaction, error) {
+func (s *Stack) SendRequest(req *Message, targets ...Destination) (*ClientTransaction, error) {
 	if req.Method == ACK || req.Method == CANCEL {
 		return nil, fmt.Errorf("sip: SendRequest cannot send %s", req.Method)
 	}
-	out, destination, err := s.prepare(req, destination)
+	// The request goes out again to the next target as it is now.
+	req = req.Clone()
+	a, next, err := s.reach(req, targets)
 	if err != nil {
 		return nil, err
 	}
-	ct := s.newClientTransaction(out, destination)
-	if err := s.post(startClient{ct: ct}); err != nil {
+	ct := &ClientTransaction{Request: a.request, stack: s, responses: make(chan *Message, responseBuffer), attempt: a}
+	if err := s.post(sendRequest{ct: ct, req: req, next: next}); err != nil {
 		return nil, err
 	}
 	return ct, nil
 }
 
-func (s *Stack) newClientTransaction(req *Message, destination Destination) *ClientTransaction {
-	return &ClientTransaction{Request: req, stack: s, destination: destination, responses: make(chan *Message, responseBuffer)}
-}
-
-// SendACK sends the ACK for a 2xx to destination. The UAC core passes
-// that ACK straight to the transport, once for the 2xx and again for
-// each retransmission of it (RFC 3261 13.2.2.4); a proxy forwards it
-// the same way. The stack puts its own Via, with a new branch, on top
-// of a copy of ack.
-func (s *Stack) SendACK(ack *Message, destination Destination) error {
+// SendACK sends the ACK for a 2xx to the first of targets. The UAC core
+// passes that ACK straight to the transport, once for the 2xx and again
+// for each retransmission of it (RFC 3261 13.2.2.4); a proxy forwards
+// it the same way. The stack puts its own Via, with a new branch, on
+// top of a copy of ack.
+//
+// The ACK for a 2xx is a transaction of its own, so it need not go to
+// the server that took the INVITE (RFC 3263 4). Nothing answers it, so
+// the only failure it can meet at a target is a transport error, and
+// then it goes to the next target (4.3).
+func (s *Stack) SendACK(ack *Message, targets ...Destination) error {
 	if ack.Method != ACK {
 		return fmt.Errorf("sip: SendACK cannot send %s", ack.Method)
 	}
-	out, destination, err := s.prepare(ack, destination)
-	if err != nil {
-		return err
+	err := errNoTarget
+	for i, target := range targets {
+		var out *Message
+		var dst Destination
+		if out, dst, err = s.prepare(ack, target); err == nil {
+			if err = s.transport.SendRequest(out, dst); err == nil {
+				return nil
+			}
+		}
+		if errors.Is(err, ErrStackClosed) {
+			return err
+		}
+		s.logNextTarget(ack, target, err.Error(), targets[i+1:])
 	}
-	return s.transport.SendRequest(out, destination)
+	return err
 }
 
 // maxUDPRequestSize is the request size above which RFC 3261 18.1.1
@@ -435,9 +494,19 @@ type (
 		source   Destination
 		admitted bool
 	}
-	startClient  struct{ ct *ClientTransaction }
+	// sendRequest starts the first client transaction of ct, and the
+	// goroutine that follows ct to its end (follow). req and next are
+	// what follow needs to send the request on.
+	sendRequest struct {
+		ct   *ClientTransaction
+		req  *Message
+		next []Destination
+	}
+	// startClient starts a client transaction that follow sends the
+	// request on in.
+	startClient  struct{ a *attempt }
 	cancelInvite struct {
-		ct      *ClientTransaction
+		a       *attempt
 		headers []HeaderField
 	}
 	respond struct {
@@ -487,7 +556,7 @@ func (s InviteServerState) next(e TransactionEvent) (stateMachine, []Transaction
 
 type clientEntry struct {
 	key      clientKey
-	ct       *ClientTransaction
+	attempt  *attempt
 	machine  stateMachine
 	timers   map[Timer]armedTimer
 	tuClosed bool
@@ -588,11 +657,17 @@ func (s *Stack) handle(in stackInput) {
 		}
 	case admitDecided:
 		s.receiveAdmitDecision(in)
+	case sendRequest:
+		s.startClient(in.ct.attempt)
+		// The loop holds the WaitGroup until it ends, so Close waits for
+		// this goroutine too.
+		s.wg.Add(1)
+		go s.follow(in.ct, in.req, in.next)
 	case startClient:
-		s.startClient(in.ct)
+		s.startClient(in.a)
 	case cancelInvite:
-		v, _ := ParseVia(in.ct.Request.Get("Via"))
-		if e, ok := s.clients[clientKey{branch: v.Branch(), method: INVITE}]; ok && e.ct == in.ct {
+		v, _ := ParseVia(in.a.request.Get("Via"))
+		if e, ok := s.clients[clientKey{branch: v.Branch(), method: INVITE}]; ok && e.attempt == in.a {
 			e.cancelHeaders = in.headers
 			s.stepClient(e, CancelFromTU{})
 		}
@@ -811,19 +886,19 @@ func (s *Stack) passACKToTU(ack *Message) {
 	s.passRequestToTU(func() { s.cfg.OnACK(ack) })
 }
 
-func (s *Stack) startClient(ct *ClientTransaction) {
-	v, _ := ParseVia(ct.Request.Get("Via"))
+func (s *Stack) startClient(a *attempt) {
+	v, _ := ParseVia(a.request.Get("Via"))
 	e := &clientEntry{
-		key:    clientKey{branch: v.Branch(), method: ct.Request.Method},
-		ct:     ct,
-		timers: map[Timer]armedTimer{},
+		key:     clientKey{branch: v.Branch(), method: a.request.Method},
+		attempt: a,
+		timers:  map[Timer]armedTimer{},
 	}
 	s.clients[e.key] = e
 	var actions []TransactionAction
 	if e.key.method == INVITE {
-		e.machine, actions = StartInviteClient(s.cfg.Timers, ct.destination.Transport.reliable())
+		e.machine, actions = StartInviteClient(s.cfg.Timers, a.destination.Transport.reliable())
 	} else {
-		e.machine, actions = StartNonInviteClient(s.cfg.Timers, ct.destination.Transport.reliable())
+		e.machine, actions = StartNonInviteClient(s.cfg.Timers, a.destination.Transport.reliable())
 	}
 	s.logState("client", e.key.method, e.key.branch, "request from TU", "", e.machine.current())
 	s.carryOutClient(e, actions)
@@ -843,22 +918,23 @@ func (s *Stack) carryOutClient(e *clientEntry, actions []TransactionAction) {
 	for _, a := range actions {
 		switch a := a.(type) {
 		case SendRequest:
-			if err := s.transport.SendRequest(e.ct.Request, e.ct.destination); err != nil {
+			if err := s.transport.SendRequest(e.attempt.request, e.attempt.destination); err != nil {
 				sendErr = err
 			}
 		case SendACK:
-			// RFC 3261 17.1.1.2: the same destination as the INVITE.
-			ack := newMatchingRequest(e.ct.Request, ACK, a.Response.Get("To"))
-			if err := s.transport.SendRequest(ack, e.ct.destination); err != nil {
+			// RFC 3261 17.1.1.2 and RFC 3263 4: the same destination as
+			// the INVITE.
+			ack := newMatchingRequest(e.attempt.request, ACK, a.Response.Get("To"))
+			if err := s.transport.SendRequest(ack, e.attempt.destination); err != nil {
 				sendErr = err
 			}
 		case SendCancel:
-			// RFC 3261 9.1: the same destination as the INVITE. Nobody
-			// reads the CANCEL's own responses; the INVITE's final
-			// response tells the TU how the cancel went.
-			cancel := newMatchingRequest(e.ct.Request, CANCEL, e.ct.Request.Get("To"))
+			// RFC 3261 9.1 and RFC 3263 4: the same destination as the
+			// INVITE. Nobody reads the CANCEL's own responses; the
+			// INVITE's final response tells the TU how the cancel went.
+			cancel := newMatchingRequest(e.attempt.request, CANCEL, e.attempt.request.Get("To"))
 			addHeaders(cancel, e.cancelHeaders)
-			s.startClient(s.newClientTransaction(cancel, e.ct.destination))
+			s.startClient(newAttempt(cancel, e.attempt.destination))
 		case PassToTU:
 			s.passToTU(e, a.Response)
 		case InformTU:
@@ -879,14 +955,11 @@ func (s *Stack) carryOutClient(e *clientEntry, actions []TransactionAction) {
 }
 
 func (s *Stack) passToTU(e *clientEntry, resp *Message) {
-	final := resp.StatusCode >= 200
-	room := cap(e.ct.responses) - len(e.ct.responses)
-	if room == 0 || (!final && room == 1) {
+	if !queue(e.attempt.responses, resp) {
 		s.log.Warn("dropped response the TU has not read", "status", resp.StatusCode, "branch", e.key.branch)
 		return
 	}
-	e.ct.responses <- resp
-	if final && !(e.key.method == INVITE && resp.StatusCode < 300) {
+	if resp.StatusCode >= 200 && !(e.key.method == INVITE && resp.StatusCode < 300) {
 		s.closeTU(e, nil)
 	}
 }
@@ -895,9 +968,9 @@ func (s *Stack) closeTU(e *clientEntry, err error) {
 	if e.tuClosed {
 		return
 	}
-	e.ct.err = err
+	e.attempt.err = err
 	e.tuClosed = true
-	close(e.ct.responses)
+	close(e.attempt.responses)
 }
 
 func (s *Stack) stepServer(e *serverEntry, ev TransactionEvent) {

@@ -128,11 +128,11 @@ func ueSide(received, forwarded []byte, toUE bool) []byte {
 	return received
 }
 
-// forward sends the INVITE on to dst, from stack, and sees it through
-// to its final response, which it passes on. It then frees what the
-// call holds, unless the INVITE was answered with a 2xx.
-func (s *setup) forward(st *sip.ServerTransaction, out *sip.Message, dst sip.Destination, stack *ims.StackRef) {
-	final, err := s.p.proxyInvite(st, out, dst, stack, s)
+// forward sends the INVITE on to the first of targets, from stack, and
+// sees it through to its final response, which it passes on. It then
+// frees what the call holds, unless the INVITE was answered with a 2xx.
+func (s *setup) forward(st *sip.ServerTransaction, out *sip.Message, targets []sip.Destination, stack *ims.StackRef) {
+	final, err := s.p.proxyInvite(st, out, targets, stack, s)
 	s.settle()
 	if final != nil {
 		s.p.ueResponse(s.leg, s.invite, final)

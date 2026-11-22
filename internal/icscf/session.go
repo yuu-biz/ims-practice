@@ -145,13 +145,13 @@ func (i *ICSCF) toSCSCF(st *sip.ServerTransaction, out *sip.Message, server stri
 	}
 	m := out.Clone()
 	m.Prepend("Route", sip.NameAddr{URI: route.String()}.String())
-	dst, err := ims.Destination(context.Background(), i.locator, route)
+	targets, err := ims.Targets(context.Background(), i.locator, route)
 	if err != nil {
 		log.Warn("cannot locate the S-CSCF", "server_name", server, "error", err.Error())
 		return sip.NewResponse(st.Request, 504, sip.NewTag()), nil
 	}
 	log.Info("routing to the callee's S-CSCF", "server_name", server)
-	return st.Proxy(m, dst)
+	return st.Proxy(m, targets...)
 }
 
 // psiSubdomain is the subdomain of public service identities that the
@@ -183,7 +183,7 @@ func (i *ICSCF) toPSIHost(st *sip.ServerTransaction, out *sip.Message, log *slog
 		st.Respond(sip.NewResponse(st.Request, 404, sip.NewTag()))
 		return
 	}
-	dst, err := ims.Destination(context.Background(), i.locator, u)
+	targets, err := ims.Targets(context.Background(), i.locator, u)
 	if err != nil {
 		// 5.3.2.1 names no response for it; the PSI has no host to
 		// reach, as an unknown user has none.
@@ -201,7 +201,7 @@ func (i *ICSCF) toPSIHost(st *sip.ServerTransaction, out *sip.Message, log *slog
 			resp.Set("P-Charging-Vector", answer.String())
 		}
 	}
-	final, err := st.ProxyWith(out, dst, relay)
+	final, err := st.ProxyWith(out, relay, targets...)
 	if final != nil {
 		relay(final)
 	}

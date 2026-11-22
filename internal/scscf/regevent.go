@@ -396,12 +396,12 @@ func (s *SCSCF) sendNotify(n notification, log *slog.Logger) {
 	if err != nil {
 		return
 	}
-	dst, err := s.nextHop(n.req)
+	targets, err := s.nextHop(n.req)
 	if err != nil {
 		log.Warn("cannot route the NOTIFY", "subscriber", n.sub.Dialog.RemoteURI, "error", err.Error())
 		return
 	}
-	ct, err := stack.SendRequest(n.req, dst)
+	ct, err := stack.SendRequest(n.req, targets...)
 	if err != nil {
 		log.Warn("NOTIFY not sent", "subscriber", n.sub.Dialog.RemoteURI, "error", err.Error())
 		return

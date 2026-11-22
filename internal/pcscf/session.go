@@ -95,7 +95,7 @@ func (p *PCSCF) session(st *sip.ServerTransaction) {
 // Record-Route (5.2.6.3.7, 5.2.6.4.7).
 func (p *PCSCF) initial(st *sip.ServerTransaction, out *sip.Message, l leg, log *slog.Logger) {
 	req := st.Request
-	var dst sip.Destination
+	var targets []sip.Destination
 	var ue Association
 	// icid is the icid-value of the request as it leaves the P-CSCF.
 	var icid string
@@ -136,7 +136,7 @@ func (p *PCSCF) initial(st *sip.ServerTransaction, out *sip.Message, l leg, log 
 		p.chargeRequest(out, icid)
 		u, err := sip.NextHop(out)
 		if err == nil {
-			dst, err = ims.Destination(context.Background(), p.locator, u)
+			targets, err = ims.Targets(context.Background(), p.locator, u)
 		}
 		if err != nil {
 			log.Warn("cannot route the request", "error", err.Error())
@@ -163,7 +163,7 @@ func (p *PCSCF) initial(st *sip.ServerTransaction, out *sip.Message, l leg, log 
 		ue = a
 		// The UE is behind NAT, so the request goes to where its REGISTER
 		// came from, not to its Contact.
-		dst = a.Source
+		targets = []sip.Destination{a.Source}
 		// The P-CSCF has read P-Asserted-Service for the PCRF from the
 		// request it received (communicationService), and reads the
 		// charging vector there when the UE answers (chargeResponse).
@@ -184,16 +184,18 @@ func (p *PCSCF) initial(st *sip.ServerTransaction, out *sip.Message, l leg, log 
 	}
 
 	if out.Method != sip.INVITE {
-		log.Info("forwarding", "leg", string(l), "to", dst.String())
+		log.Info("forwarding", "leg", string(l), "to", targets[0].String())
 		identity := func(resp *sip.Message) { p.ueResponse(l, req, resp) }
-		final, err := st.ProxyWith(out, dst, identity)
+		final, err := st.ProxyWith(out, identity, targets...)
 		if final != nil {
 			identity(final)
 		}
 		ims.Finish(st, final, err)
 		return
 	}
-	stack, err := p.stackToward(dst)
+	// Every target of one next hop is on the same side, the UE's or the
+	// network's.
+	stack, err := p.stackToward(targets[0])
 	if err != nil {
 		st.Respond(storeFailed(req, err, log))
 		return
@@ -206,15 +208,15 @@ func (p *PCSCF) initial(st *sip.ServerTransaction, out *sip.Message, l leg, log 
 		call.end()
 		return
 	}
-	log.Info("forwarding", "leg", string(l), "to", dst.String())
-	call.forward(st, out, dst, stack)
+	log.Info("forwarding", "leg", string(l), "to", targets[0].String())
+	call.forward(st, out, targets, stack)
 }
 
 // subsequent forwards a request within a dialog along its route set
 // (RFC 3261 16.12), and keeps the Dialog up to date with it. A BYE that
 // ends the dialog ends what the dialog holds (TS 24.229 5.2.8.2).
 func (p *PCSCF) subsequent(st *sip.ServerTransaction, out *sip.Message, log *slog.Logger) {
-	dst, toUE, err := p.nextHop(out)
+	targets, toUE, err := p.nextHop(out)
 	if errors.Is(err, errStore) {
 		st.Respond(storeFailed(st.Request, err, log))
 		return
@@ -233,7 +235,7 @@ func (p *PCSCF) subsequent(st *sip.ServerTransaction, out *sip.Message, log *slo
 		// 5.2.6.4.5 item 4. For a NOTIFY this is what keeps the P-CSCF
 		// on the route of the subscription: the subscriber takes the
 		// route set from the first NOTIFY (RFC 6665 4.3, 4.4.1).
-		own, err := p.ownURIToward(dst)
+		own, err := p.ownURIToward(targets[0])
 		if err != nil {
 			st.Respond(storeFailed(st.Request, err, log))
 			return
@@ -270,7 +272,7 @@ func (p *PCSCF) subsequent(st *sip.ServerTransaction, out *sip.Message, log *slo
 	if known && sip.HasSessionDescription(out) {
 		ue := st.Source.Addr.Addr()
 		if toUE {
-			ue = dst.Addr.Addr()
+			ue = targets[0].Addr.Addr()
 		}
 		answer = p.renegotiate(out, d, toUE, ue, log)
 	}
@@ -295,7 +297,7 @@ func (p *PCSCF) subsequent(st *sip.ServerTransaction, out *sip.Message, log *slo
 		}
 		answer(resp)
 	}
-	final, err := st.ProxyWith(out, dst, relay)
+	final, err := st.ProxyWith(out, relay, targets...)
 	if final != nil {
 		// Proxy passes on a 2xx to an INVITE itself, and leaves every
 		// other final response to its user.
@@ -368,23 +370,23 @@ func byeEndsDialog(final *sip.Message, err error) bool {
 	return code < 300 || code == 481 || code == 408
 }
 
-// nextHop is the top Route or the Request-URI, except that a UE's
-// contact is reached at the address its REGISTER came from; toUE
-// reports that case.
-func (p *PCSCF) nextHop(m *sip.Message) (dst sip.Destination, toUE bool, err error) {
+// nextHop gives the targets of the top Route or the Request-URI, except
+// that a UE's contact is reached at the address its REGISTER came from;
+// toUE reports that case.
+func (p *PCSCF) nextHop(m *sip.Message) (targets []sip.Destination, toUE bool, err error) {
 	u, err := sip.NextHop(m)
 	if err != nil {
-		return sip.Destination{}, false, err
+		return nil, false, err
 	}
 	a, ok, err := p.associationOfContact(u.String())
 	if err != nil {
-		return sip.Destination{}, false, storeError(err)
+		return nil, false, storeError(err)
 	}
 	if ok {
-		return a.Source, true, nil
+		return []sip.Destination{a.Source}, true, nil
 	}
-	dst, err = ims.Destination(context.Background(), p.locator, u)
-	return dst, false, err
+	targets, err = ims.Targets(context.Background(), p.locator, u)
+	return targets, false, err
 }
 
 // isTargetRefresh reports the target refresh requests of this project:
@@ -413,7 +415,7 @@ func (p *PCSCF) forwardACK(ref *ims.StackRef, ack *sip.Message) {
 		return
 	}
 	sip.PopOwnRoute(out, p.ownURIs()...)
-	dst, toUE, err := p.nextHop(out)
+	targets, toUE, err := p.nextHop(out)
 	if err != nil {
 		p.log.Warn("cannot forward ACK", "call_id", ack.Get("Call-ID"), "error", err.Error())
 		return
@@ -434,7 +436,7 @@ func (p *PCSCF) forwardACK(ref *ims.StackRef, ack *sip.Message) {
 		// 5.2.6.3.9 step 3.
 		p.chargeRequest(out, d.ICID)
 	}
-	if err := stack.SendACK(out, dst); err != nil {
+	if err := stack.SendACK(out, targets...); err != nil {
 		p.log.Warn("cannot forward ACK", "call_id", ack.Get("Call-ID"), "error", err.Error())
 	}
 	// The ACK goes on first, so that the callee has it before the BYE.

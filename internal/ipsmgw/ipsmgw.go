@@ -254,11 +254,11 @@ func (g *IPSMGW) send(m *sip.Message, next sip.URI) (*sip.Message, error) {
 		}
 		m.Prepend("Route", sip.NameAddr{URI: route.String()}.String())
 	}
-	dst, err := ims.Destination(context.Background(), g.locator, next)
+	targets, err := ims.Targets(context.Background(), g.locator, next)
 	if err != nil {
 		return nil, err
 	}
-	ct, err := stack.SendRequest(m, dst)
+	ct, err := stack.SendRequest(m, targets...)
 	if err != nil {
 		return nil, err
 	}

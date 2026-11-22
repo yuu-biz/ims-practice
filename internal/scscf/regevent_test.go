@@ -54,7 +54,9 @@ func newSubscriberHarnessWithHSS(t *testing.T, cfg Config, hssCfg hss.Config) *s
 		SentBy:  tr.LocalAddr().String(),
 		Contact: pcscfURI,
 		OnCall:  func(c *sip.IncomingCall) { c.Reject(480) },
-		Locate:  func(sip.URI) (sip.Destination, error) { return sip.Destination{Transport: sip.UDP, Addr: scscf}, nil },
+		Locate: func(sip.URI) ([]sip.Destination, error) {
+			return []sip.Destination{{Transport: sip.UDP, Addr: scscf}}, nil
+		},
 	}, quiet())
 	if err != nil {
 		t.Fatal(err)

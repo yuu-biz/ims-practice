@@ -128,15 +128,15 @@ func newParticipant(t *testing.T, as testAS, user string, onCall func(*sip.Incom
 	ua, err := sip.NewUA(tr, sip.UAConfig{
 		SentBy: tr.LocalAddr().String(), Contact: "sip:" + user + "@" + tr.LocalAddr().String(),
 		Supported: []string{sip.OptionPrecondition}, OnCall: onCall,
-		Locate: func(u sip.URI) (sip.Destination, error) {
+		Locate: func(u sip.URI) ([]sip.Destination, error) {
 			if u.Host == conferenceDomain {
-				return sip.Destination{Transport: sip.UDP, Addr: as.addr}, nil
+				return []sip.Destination{{Transport: sip.UDP, Addr: as.addr}}, nil
 			}
 			addr, err := netip.ParseAddr(u.Host)
 			if err != nil {
-				return sip.Destination{}, err
+				return nil, err
 			}
-			return sip.Destination{Transport: sip.UDP, Addr: netip.AddrPortFrom(addr, uint16(u.Port))}, nil
+			return []sip.Destination{{Transport: sip.UDP, Addr: netip.AddrPortFrom(addr, uint16(u.Port))}}, nil
 		},
 	}, quiet())
 	if err != nil {

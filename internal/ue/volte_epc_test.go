@@ -46,8 +46,8 @@ func newEPCParty(t *testing.T, n testNetwork, private, public, pass string) *par
 		SentBy:  addr.String(),
 		Contact: p.contact.URI(),
 		OnCall:  func(ic *sip.IncomingCall) { p.calls <- ic },
-		Locate: func(sip.URI) (sip.Destination, error) {
-			return sip.Destination{Transport: sip.UDP, Addr: pcscfAddr}, nil
+		Locate: func(sip.URI) ([]sip.Destination, error) {
+			return []sip.Destination{{Transport: sip.UDP, Addr: pcscfAddr}}, nil
 		},
 	}, calls), quiet())
 	if err != nil {

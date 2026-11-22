@@ -8,10 +8,10 @@ import (
 	"github.com/yuu-biz/ims-practice/internal/sip"
 )
 
-// proxyInvite forwards out, the initial INVITE of call, to dst from
-// stack, the way a stateful proxy does (RFC 3261 16.6, 16.7): it is
-// sip.ServerTransaction.ProxyWith with one more way for the INVITE to
-// end. When the network has no resources for the session, or takes
+// proxyInvite forwards out, the initial INVITE of call, to the first of
+// targets from the stack of ref, the way a stateful proxy does (RFC 3261
+// 16.6, 16.7): it is sip.ServerTransaction.ProxyWith with one more way
+// for the INVITE to end. When the network has no resources for the session, or takes
 // them away while the INVITE is on its way (call.abort), the P-CSCF
 // gives the INVITE up itself: it answers the caller 500 and cancels the
 // INVITE towards the callee with a Reason that gives 503 (TS 24.229
@@ -27,12 +27,12 @@ import (
 // The loop repeats ProxyWith because package sip has no proxy that its
 // user can end; the two must stay alike. Timer C is the default one,
 // since the stack's own setting cannot be read from here.
-func (p *PCSCF) proxyInvite(st *sip.ServerTransaction, out *sip.Message, dst sip.Destination, ref *ims.StackRef, call *setup) (*sip.Message, error) {
+func (p *PCSCF) proxyInvite(st *sip.ServerTransaction, out *sip.Message, targets []sip.Destination, ref *ims.StackRef, call *setup) (*sip.Message, error) {
 	stack, err := ref.Get()
 	if err != nil {
 		return nil, err
 	}
-	ct, err := stack.SendRequest(out, dst)
+	ct, err := stack.SendRequest(out, targets...)
 	if err != nil {
 		return nil, err
 	}
@@ -132,6 +132,8 @@ func (p *PCSCF) proxyInvite(st *sip.ServerTransaction, out *sip.Message, dst sip
 		case <-timerCFired:
 			timerCFired = nil
 			if !provisional {
+				// As ProxyWith does: the INVITE goes to no other target.
+				ct.Cancel()
 				return sip.NewResponse(st.Request, 408, sip.NewTag()), nil
 			}
 			ct.Cancel()

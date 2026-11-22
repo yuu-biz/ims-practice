@@ -369,7 +369,9 @@ func (n *network) subscriber(k int, register bool) *subscriber {
 	s.ua, err = sip.NewUA(tr, ue.UAConfig(sip.UAConfig{
 		SentBy: addr.String(), Contact: contact.URI(),
 		OnCall: func(ic *sip.IncomingCall) { s.calls <- ic },
-		Locate: func(sip.URI) (sip.Destination, error) { return sip.Destination{Transport: sip.UDP, Addr: n.pcscf}, nil },
+		Locate: func(sip.URI) ([]sip.Destination, error) {
+			return []sip.Destination{{Transport: sip.UDP, Addr: n.pcscf}}, nil
+		},
 	}, ue.CallConfig{}), quiet())
 	if err != nil {
 		n.t.Fatal(err)

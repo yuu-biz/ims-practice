@@ -386,8 +386,8 @@ func TestLargeRequestGoesOverTCP(t *testing.T) {
 	if !bytes.Equal(st.Request.Body, req.Body) {
 		t.Errorf("body of %d bytes arrived as %d bytes", len(req.Body), len(st.Request.Body))
 	}
-	if ct.destination.Transport != TCP {
-		t.Errorf("client transaction runs over %v, want TCP", ct.destination)
+	if v, _ := ParseVia(ct.Request.Get("Via")); v.Transport != "TCP" {
+		t.Errorf("client transaction sent its request with Via %s, want TCP", v.Transport)
 	}
 }
 

@@ -160,8 +160,8 @@ func (m *MRFC) Listen(transport *sip.TransportLayer) error {
 		Timers:  m.cfg.Timers,
 		Contact: contact,
 		OnCall:  m.serve,
-		Locate: func(u sip.URI) (sip.Destination, error) {
-			return ims.Destination(context.Background(), m.locator, u)
+		Locate: func(u sip.URI) ([]sip.Destination, error) {
+			return ims.Targets(context.Background(), m.locator, u)
 		},
 	}, m.log)
 	if err != nil {

@@ -78,8 +78,8 @@ func newPhone(t *testing.T, pcscfAddr netip.AddrPort, private, public, pass stri
 		Contact:   contact.URI(),
 		OnCall:    line.Ring,
 		OnMessage: func(st *sip.ServerTransaction) { receiver.Load().ReceiveSMS(st) },
-		Locate: func(sip.URI) (sip.Destination, error) {
-			return sip.Destination{Transport: sip.UDP, Addr: pcscfAddr}, nil
+		Locate: func(sip.URI) ([]sip.Destination, error) {
+			return []sip.Destination{{Transport: sip.UDP, Addr: pcscfAddr}}, nil
 		},
 	}, ue.CallConfig{}), quiet())
 	if err != nil {

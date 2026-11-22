@@ -47,7 +47,7 @@ func newRoutingProxy(t *testing.T) (*Stack, URI, *forwardLog) {
 	own := func() URI {
 		return URI{Scheme: "sip", Host: "127.0.0.1", Port: int(proxy.Load().LocalAddr().Port())}
 	}
-	route := func(req *Message) Destination {
+	route := func(req *Message) []Destination {
 		_, popped := PopOwnRoute(req, own())
 		log.add(forwarded{method: req.Method, cseq: req.Get("CSeq"), rack: req.Get("RAck"), popped: popped})
 		if err := DecrementMaxForwards(req); err != nil {
@@ -57,11 +57,11 @@ func newRoutingProxy(t *testing.T) (*Stack, URI, *forwardLog) {
 		if err != nil {
 			t.Error(err)
 		}
-		addr, err := locateIPAddress(hop)
+		targets, err := locateIPAddress(hop)
 		if err != nil {
 			t.Error(err)
 		}
-		return addr
+		return targets
 	}
 	s := newStackWith(t, Config{
 		Timers: testTimers,
@@ -71,7 +71,7 @@ func newRoutingProxy(t *testing.T) (*Stack, URI, *forwardLog) {
 			if req.Method == INVITE && tagOf(req.Get("To")) == "" {
 				AddRecordRoute(req, own())
 			}
-			final, err := st.Proxy(req, next)
+			final, err := st.Proxy(req, next...)
 			if err != nil {
 				t.Error(err)
 			}
@@ -84,7 +84,7 @@ func newRoutingProxy(t *testing.T) (*Stack, URI, *forwardLog) {
 			// A caller sends its ACK again for each 200 the callee sends
 			// again (RFC 3261 13.2.2.4), and the last one can come in
 			// while the test closes the proxy.
-			if err := proxy.Load().SendACK(ack, route(ack)); err != nil && !errors.Is(err, ErrStackClosed) {
+			if err := proxy.Load().SendACK(ack, route(ack)...); err != nil && !errors.Is(err, ErrStackClosed) {
 				t.Error(err)
 			}
 		},
