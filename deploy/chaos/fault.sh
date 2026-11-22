@@ -3,9 +3,16 @@
 # to watch what a failure does and how the network recovers. Run it from the root of the repository; README.md in this
 # directory explains each fault and what to look for.
 #
-# The network faults run the same nft and tc commands as the fault API
-# (internal/fault), in the target's network namespace, in a container
-# of the fault-tools image of deploy/chaos/chaos.yaml. Both find the
+# The faults are the same ones as those of the fault API
+# (internal/fault): the network faults run the same nft and tc commands,
+# in the target's network namespace, in a container of the fault-tools
+# image of deploy/chaos/chaos.yaml, and the node faults the same docker
+# commands. A test of that package runs this script against a docker of
+# its own and compares the two, command by command, so that neither side
+# drifts from the other. recreate is the one fault where the commands
+# differ: here Compose makes the new container from its file, and the
+# API, which has no Compose file, copies the configuration of the
+# container it replaces (deploy/chaos/README.md). Both find the
 # containers by the labels that Compose puts on them, so every service
 # of compose.yaml and of the override files is a target.
 set -eu
