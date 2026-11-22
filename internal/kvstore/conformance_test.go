@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"errors"
 	"fmt"
+	"slices"
 	"strconv"
 	"sync"
 	"testing"
@@ -44,6 +45,8 @@ func testConformance(t *testing.T, newHarness func(t *testing.T) harness) {
 		{"ClaimRunsOut", testClaimRunsOut},
 		{"ScheduleEndsAClaim", testScheduleEndsAClaim},
 		{"CompetingClaims", testCompetingClaims},
+		{"SortedIndex", testSortedIndex},
+		{"SortedIndexPagesGoOn", testSortedIndexPagesGoOn},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) { tt.run(t, newHarness(t)) })
@@ -429,6 +432,84 @@ func testCompetingClaims(t *testing.T, h harness) {
 		}
 	}
 	t.Logf("handled by instance: %v", byInstance)
+}
+
+func members(t *testing.T, s kvstore.Store, index, after string, limit int) []string {
+	t.Helper()
+	got, err := s.MembersAfter(context.Background(), index, after, limit)
+	if err != nil {
+		t.Fatalf("MembersAfter(%s, %q, %d): %v", index, after, limit, err)
+	}
+	return got
+}
+
+func testSortedIndex(t *testing.T, h harness) {
+	ctx := context.Background()
+	ix := h.key("subscribers")
+	if got := members(t, h.a, ix, "", 10); len(got) != 0 {
+		t.Fatalf("an index that holds nothing = %v", got)
+	}
+	for _, member := range []string{"charlie", "alice", "bob", "alice"} {
+		if err := h.a.AddToIndex(ctx, ix, member); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got := members(t, h.b, ix, "", 10); !slices.Equal(got, []string{"alice", "bob", "charlie"}) {
+		t.Errorf("the whole index = %v, want each member once, in order", got)
+	}
+	if got := members(t, h.b, ix, "", 2); !slices.Equal(got, []string{"alice", "bob"}) {
+		t.Errorf("the first page of two = %v", got)
+	}
+	if got := members(t, h.b, ix, "bob", 10); !slices.Equal(got, []string{"charlie"}) {
+		t.Errorf("after bob = %v, want what comes after it and not bob itself", got)
+	}
+	if got := members(t, h.b, ix, "charlie", 10); len(got) != 0 {
+		t.Errorf("after the last member = %v", got)
+	}
+	if got := members(t, h.b, ix, "", 0); len(got) != 0 {
+		t.Errorf("a limit below one = %v", got)
+	}
+	if err := h.b.RemoveFromIndex(ctx, ix, "bob"); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.b.RemoveFromIndex(ctx, ix, "nobody"); err != nil {
+		t.Fatalf("RemoveFromIndex of a member that is not there: %v", err)
+	}
+	if got := members(t, h.a, ix, "", 10); !slices.Equal(got, []string{"alice", "charlie"}) {
+		t.Errorf("after RemoveFromIndex = %v", got)
+	}
+}
+
+// A page goes on from where the one before it ended, even when that
+// member has been taken out since: the operator who pages through the
+// subscribers sees the rest of them.
+func testSortedIndexPagesGoOn(t *testing.T, h harness) {
+	ctx := context.Background()
+	ix := h.key("subscribers-paged")
+	var want []string
+	for i := range 7 {
+		member := fmt.Sprintf("impi-%02d", i)
+		if err := h.a.AddToIndex(ctx, ix, member); err != nil {
+			t.Fatal(err)
+		}
+		want = append(want, member)
+	}
+	var got []string
+	after := ""
+	for range len(want) {
+		page := members(t, h.b, ix, after, 3)
+		if len(page) == 0 {
+			break
+		}
+		got = append(got, page...)
+		after = page[len(page)-1]
+		if err := h.a.RemoveFromIndex(ctx, ix, after); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if !slices.Equal(got, want) {
+		t.Errorf("the pages held %v, want %v", got, want)
+	}
 }
 
 func equalClaims(got, want []kvstore.Claim) bool {
