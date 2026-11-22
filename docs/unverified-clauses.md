@@ -17,7 +17,6 @@
 | `docs/guide/{en,ja}/interconnect.md` の TS 29.165、GSMA IR.95、TTC の節 | GSMA IR.95 が TS 29.165 をどう絞っているか。 | GSMA IR.95 | 本文を読む。www.gsma.com が 403 を返した。 |
 | `docs/guide/en/mrf.md`、`docs/guide/ja/mrf.md` の「MRF とは」と、用語集の Mr / Mr' と Cr | Mr' は AS と MRFC の間の SIP、Mr は S-CSCF と MRFC の間の SIP、Cr は AS と MRFC の間で文書と音声を取ったりメディア制御の命令を交わしたりする参照点。 | TS 23.218 | 3 つの参照点を定める条項の番号。docs/background/mmtel-mrf.md は 8.2.2 と 9.2.4 を挙げているが、本文は読んでいない。 |
 | `docs/design/state-redundancy.md` の「名前と DNS」の DNS の問い合わせ | `internal/sipdns` は、1 秒で答えの無い問い合わせを送り直し、3 回まで試す。 | 特定していない | 送り直しの回数の根拠にする条項。 |
-| `docs/design/state-redundancy.md` の「ダイアログの中の要求」 | P-CSCF は reg イベントの購読の更新のタイマーを持たず、UE の再登録の 200 のたびに購読を更新する。 | TS 24.229 5.2.3 | 5.2.3 がこの更新の仕方を許すか。 |
 | `docs/design/state-redundancy.md` の「ドレイン」の HSS | ドレイン中の HSS は、Destination-Host の入っていない新しい要求に DIAMETER_TOO_BUSY を返す。 | RFC 6733 7.1.3 | 7.1.3 は、特定の台を指した要求にだけ TOO_BUSY を使うと書いている。Destination-Host を入れない要求に、ドレイン中の台が TOO_BUSY を返してよいか。受け取った側が次の台に送り直すことは 7.1.3 で確かめた。 |
 | `docs/background/mmtel-mrf.md` の「Ut/XCAP の最小の形」 | GAA を使わない網で Ut に TLS が要る場面。TS 24.623 は、GAA を使わない網で ETSI TS 183 038 が TLS を求める箇所に TS 33.310 Annex E の TLS の型を求めている。 | TS 24.623 5.2.3.1、ETSI TS 183 038、TS 33.310 Annex E | どの手順が TLS を求めるか。ETSI TS 183 038 の該当の条項の番号。 |
 | `docs/background/k8s.md` の「各ノードが書くアドレスと設定」 | PCO に P-CSCF のアドレスを入れる。 | TS 24.229、TS 24.008 | PCO で P-CSCF のアドレスを渡す条項の番号と本文。 |

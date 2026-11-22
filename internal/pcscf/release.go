@@ -95,7 +95,10 @@ func (p *PCSCF) PolicyEvent(e policy.Event) {
 // ReleasePending: the BYEs go out when the ACK passes the P-CSCF
 // (forwardACK), or after ackWait without one. The mark is in the
 // Store, so that the instance which forwards the ACK may be another
-// one; the timer lives in the process, as every timer does.
+// one. This wait is one of the few that stay in the process rather than
+// going into a time index of the Store (ExpiryKind): it is short, it
+// belongs to a call that is not yet established, and the dialog it
+// releases is one this instance is holding anyway.
 func (p *PCSCF) release(key DialogKey, log *slog.Logger) {
 	d, ok, err := p.store.UpdateDialog(context.Background(), key, func(d *Dialog) {
 		if d.Confirmed && !d.Acknowledged {
