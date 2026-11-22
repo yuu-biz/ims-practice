@@ -6,6 +6,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/yuu-biz/ims-practice/internal/ims"
 	"github.com/yuu-biz/ims-practice/internal/sip"
 )
 
@@ -35,10 +36,6 @@ const (
 // global and that the agreement does not allow as it is.
 var ErrLocalNumber = errors.New("interconnect: a local number the agreement does not allow")
 
-// visualSeparators are the characters a phone number may have for
-// readability only (RFC 3966 5.1.1).
-var visualSeparators = strings.NewReplacer("-", "", ".", "", "(", "", ")", "")
-
 // NormalizeNumber writes a URI that holds a telephone number in format:
 // a tel URI, or a SIP URI with user=phone. A local number becomes
 // global through the profile's LocalNumbers, and is kept as it is only
@@ -50,83 +47,46 @@ var visualSeparators = strings.NewReplacer("-", "", ".", "", "(", "", ")", "")
 // such as npdi and rn (RFC 4694), stay with it, in the tel URI or in
 // the user part (RFC 3261 19.1.6).
 func NormalizeNumber(uri string, format NumberFormat, host string, p Profile) (string, error) {
-	n, ok := parseNumber(uri)
+	n, ok := ims.ParseTelephoneNumber(uri)
 	if !ok {
 		return uri, nil
 	}
-	n.number = visualSeparators.Replace(n.number)
-	if !strings.HasPrefix(n.number, "+") {
-		context, _ := n.params.Get("phone-context")
+	number := ims.WithoutVisualSeparators(n.Number)
+	if !strings.HasPrefix(number, "+") {
+		context, _ := n.Params.Get("phone-context")
 		i := slices.IndexFunc(p.LocalNumbers, func(l LocalNumberPlan) bool { return sameContext(l.PhoneContext, context) })
 		switch {
 		case i >= 0:
-			n.number = p.LocalNumbers[i].GlobalPrefix + n.number
+			number = p.LocalNumbers[i].GlobalPrefix + number
 		case !p.AllowLocalNumbers:
 			return "", fmt.Errorf("%w: %s", ErrLocalNumber, uri)
 		}
 	}
-	if strings.HasPrefix(n.number, "+") {
+	if strings.HasPrefix(number, "+") {
 		// A global number has no phone-context (RFC 3966 3).
-		n.params.Remove("phone-context")
+		n.Params.Remove("phone-context")
 	}
 	if format == "" {
 		format = NumberFormatTel
-		if n.sip != nil {
+		if n.SIP != nil {
 			format = NumberFormatSIP
 		}
 	}
 	if format == NumberFormatTel {
-		return "tel:" + n.number + n.params.String(), nil
+		return "tel:" + number + n.Params.String(), nil
 	}
 	u := sip.URI{Scheme: "sip", Host: host, Params: sip.Params{{Name: "user", Value: "phone"}}}
-	if n.sip != nil {
-		u = *n.sip
+	if n.SIP != nil {
+		u = *n.SIP
 	} else if host == "" {
 		return "", fmt.Errorf("interconnect: no host for %s as a SIP URI", uri)
 	}
-	u.User = n.number + n.params.String()
+	u.User = number + n.Params.String()
 	return u.String(), nil
 }
 
-// telephoneNumber is a number and its parameters, out of a tel URI or
-// the user part of a SIP URI.
-type telephoneNumber struct {
-	number string
-	params sip.Params
-	// sip is the SIP URI the number came in, without the user part, or
-	// nil for a tel URI.
-	sip *sip.URI
-}
-
-func parseNumber(uri string) (telephoneNumber, bool) {
-	if len(uri) > 4 && strings.EqualFold(uri[:4], "tel:") {
-		number, params, _ := strings.Cut(uri[4:], ";")
-		if number == "" {
-			return telephoneNumber{}, false
-		}
-		return telephoneNumber{number: number, params: sip.ParseParams(params)}, true
-	}
-	u, err := sip.ParseURI(uri)
-	if err != nil {
-		return telephoneNumber{}, false
-	}
-	// RFC 3261 19.1.1: only user=phone makes the user part a number
-	// (also TS 29.165 8.1 NOTE 1).
-	if user, ok := u.Params.Get("user"); !ok || !strings.EqualFold(user, "phone") {
-		return telephoneNumber{}, false
-	}
-	number, params, _ := strings.Cut(u.User, ";")
-	// There is no number to put in a format when the URI holds no
-	// telephone-subscriber, whatever user=phone says.
-	if number == "" {
-		return telephoneNumber{}, false
-	}
-	u.User = ""
-	return telephoneNumber{number: number, params: sip.ParseParams(params), sip: &u}, true
-}
-
 func sameContext(a, b string) bool {
-	clean := func(s string) string { return strings.ToLower(visualSeparators.Replace(s)) }
+	clean := func(s string) string { return strings.ToLower(ims.WithoutVisualSeparators(s)) }
 	if strings.HasPrefix(a, "+") || strings.HasPrefix(b, "+") {
 		return clean(a) == clean(b)
 	}
