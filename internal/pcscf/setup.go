@@ -378,8 +378,17 @@ func (p *PCSCF) abortSetup(d Dialog) bool {
 // end frees what the call holds when its INVITE fails: the dialog, if
 // a response has created one, and otherwise the relay context and the
 // policy session alone.
+//
+// A call whose dialog the network released has freed them already; the
+// closed abort says so, in case the Store fails and endDialog has only
+// holds to go by.
 func (s *setup) end() {
 	holds := Dialog{Relay: s.relay, PolicySession: s.session}
+	select {
+	case <-s.abort:
+		holds.Released = true
+	default:
+	}
 	if s.stored {
 		s.p.endDialog(s.key, holds, s.log)
 		return

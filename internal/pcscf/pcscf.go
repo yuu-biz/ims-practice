@@ -219,7 +219,9 @@ type Store interface {
 	// TakeDialog removes and returns the dialog of key. Only one caller
 	// gets it, and that one ends what the dialog holds; this is what
 	// makes the end of a dialog happen once, however many requests and
-	// events ask for it.
+	// events ask for it. A dialog that the P-CSCF releases itself has
+	// freed what it held when UpdateDialog marked it Released, and is
+	// only removed here.
 	TakeDialog(ctx context.Context, key DialogKey) (Dialog, bool, error)
 	// DialogOfPolicySession finds the dialog whose PolicySession is
 	// session, for an event that the PCRF reports about that session.

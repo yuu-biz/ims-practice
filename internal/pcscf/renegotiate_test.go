@@ -15,7 +15,9 @@ import (
 // a dialog does: with its tag, its Contact and the Record-Route of the
 // request (RFC 3261 12.1.1), and with an SDP answer naming media when
 // the request has an offer. It hands each request to the test.
-func answering(t *testing.T, tag string, media netip.AddrPort) (*sip.Stack, <-chan *sip.Message) {
+//
+// A BYE is answered only once holdBYE is closed, unless holdBYE is nil.
+func answering(t *testing.T, tag string, media netip.AddrPort, holdBYE <-chan struct{}) (*sip.Stack, <-chan *sip.Message) {
 	t.Helper()
 	got := make(chan *sip.Message, 4)
 	// The handler names the stack in its Contact, and the stack exists
@@ -25,6 +27,9 @@ func answering(t *testing.T, tag string, media netip.AddrPort) (*sip.Stack, <-ch
 	stack = newStack(t, func(st *sip.ServerTransaction) {
 		<-listening
 		got <- st.Request
+		if st.Request.Method == sip.BYE && holdBYE != nil {
+			<-holdBYE
+		}
 		ok := sip.NewResponse(st.Request, 200, tag)
 		for _, r := range st.Request.GetAll("Record-Route") {
 			ok.Add("Record-Route", r)
@@ -80,18 +85,19 @@ type rawCall struct {
 
 func newRawCall(t *testing.T) *rawCall {
 	t.Helper()
-	c := newRawCallBeforeACK(t)
+	c := newRawCallBeforeACK(t, nil)
 	c.ack()
 	return c
 }
 
 // newRawCallBeforeACK is a rawCall whose UE has the 200 to its INVITE
-// and has not sent the ACK yet.
-func newRawCallBeforeACK(t *testing.T) *rawCall {
+// and has not sent the ACK yet. The other party answers a BYE only once
+// farHoldsBYE is closed, unless it is nil.
+func newRawCallBeforeACK(t *testing.T, farHoldsBYE <-chan struct{}) *rawCall {
 	t.Helper()
 	c := &rawCall{t: t, pcrf: &fakePolicy{}, relay: newFakeRelay(), store: NewMemoryStore()}
-	c.far, c.toFar = answering(t, "callee", coreMedia)
-	c.ue, c.toUE = answering(t, "ue", ueMedia)
+	c.far, c.toFar = answering(t, "callee", coreMedia, farHoldsBYE)
+	c.ue, c.toUE = answering(t, "ue", ueMedia, nil)
 	c.ueContact = "sip:001010000000001@" + c.ue.LocalAddr().String()
 	c.farContact = "sip:callee@" + c.far.LocalAddr().String()
 	locate := locatorFunc(func(string) []sip.Destination {

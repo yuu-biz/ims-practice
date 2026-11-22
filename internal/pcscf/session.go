@@ -260,6 +260,12 @@ func (p *PCSCF) subsequent(st *sip.ServerTransaction, out *sip.Message, log *slo
 		st.Respond(storeFailed(st.Request, err, log))
 		return
 	}
+	if known && d.Released {
+		// TS 24.229 5.2.8.1.3: the P-CSCF is releasing the dialog itself.
+		log.Info("answered a request within a dialog that the P-CSCF releases")
+		st.Respond(sip.NewResponse(st.Request, 481, ""))
+		return
+	}
 	// The icid-value of every request of the dialog and of its responses
 	// is that of the INVITE.
 	//
@@ -512,7 +518,8 @@ const (
 )
 
 // endDialog ends what the dialog of key holds. A dialog that is gone
-// has been ended already, by a request or an event that came first.
+// has been ended already, by a request or an event that came first, and
+// a Released one has freed what it held when the P-CSCF released it.
 //
 // When the Store fails, the P-CSCF frees what known holds, the dialog as
 // the P-CSCF last read it, since nothing would free it later. The item
@@ -524,7 +531,7 @@ func (p *PCSCF) endDialog(key DialogKey, known Dialog, log *slog.Logger) {
 		log.Warn("the dialog stays in the store: the store failed", "call_id", key.CallID, "error", err.Error())
 		d, ok = known, true
 	}
-	if ok {
+	if ok && !d.Released {
 		p.free(d, log)
 	}
 }

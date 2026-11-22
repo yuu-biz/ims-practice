@@ -44,8 +44,12 @@ type Dialog struct {
 	// (RFC 3261 15), and whichever P-CSCF instance the ACK passes sends
 	// them.
 	ReleasePending bool
-	Caller         Party
-	Callee         Party
+	// Released is true once the P-CSCF has started to release the
+	// dialog itself (TS 24.229 5.2.8.1.1, 5.2.8.1.2) and has freed what
+	// it held. A request within the dialog then gets 481 (5.2.8.1.3).
+	Released bool
+	Caller   Party
+	Callee   Party
 	// Relay is the context of the dialog in the media relay, or nil when
 	// its media does not go through the relay.
 	Relay *RelayContext
