@@ -408,7 +408,7 @@ This project carries short messages between the networks this way because it is 
 | Filter | What it finds |
 | --- | --- |
 | `sip.Method == "INVITE" && count(sip.Via) == 1` | On the link: the INVITEs of the IBCFs, each with its own Via alone. |
-| `sip.Call-ID == "<a Call-ID>"` | One dialog. A Call-ID of the link does not show in the capture of either network. |
+| `sip.Call-ID == "<Call-ID>"` | One dialog. A Call-ID of the link does not show in the capture of either network. |
 | `sip.Route contains "ibcf"` | Requests on their way to or from an IBCF. |
 | `sip.r-uri contains "user=phone"` | Requests with a number in a SIP URI, between the S-CSCF and the I-CSCF of the other network. |
 | `sip.r-uri == "tel:+12025550151"` | The INVITE after the I-CSCF of network B turned it into a tel URI. |

@@ -56,6 +56,10 @@ jobs:
         run: python scripts/check_simplified.py
       - name: every abbreviation in the guides is in the glossary
         run: python scripts/check_glossary.py
+      - name: the display filters of a guide are the same in both languages
+        run: python scripts/guide_filters.py --check
+      - name: the rule that reads the display filters out of a guide
+        run: python -m unittest discover -s scripts -p "*_test.py"
 
   go:
     runs-on: ubuntu-latest
