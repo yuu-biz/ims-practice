@@ -394,10 +394,12 @@ VoLTE の設計（[VoLTE のアクセス網の設計](../design/volte-access.md)
 
 ### このプロジェクトの EVS の方針
 
-EVS の実装の方法について、このプロジェクトでは次の方針をとります。
+EVS の実装の方法について、このプロジェクトでは次の方針をとりました。
 
 - EVS はあると良いものです。ただ、ライセンスの料金がかかりそうなら、コーデックそのものを実装する理由は小さくなります。
 - 代わりに、信号を EVS に合わせる形にします。SDP の offer と answer で EVS を交渉し、運ぶ中身は AMR か AMR-WB にします。このプロジェクトでは、ユーザープレーンの中身は優先しません。
+
+2 つ目の項目の形はやめました。この形では、UE が送れない EVS Primary のビットレートと帯域を SDP に書くことになり、SDP が UE の能力を偽るためです。EVS を offer する端末はビットレートの全範囲を扱える必要があり、端末は最初の offer に `evs-mode-switch` を書けません（TS 26.114 6.2.2.2 の Table 6.2a）。AMR-WB IO しか送れない UE には、事実に合う EVS の offer がありません。今の UE は EVS を offer せず、EVS のコーデックを用意したときに offer に加えます（[codecs.md](../design/codecs.md)）。この節の残りはやめる前の方針と、そのときに本文で確かめたことの記録です。確かめたことは、EVS のコーデックを加えるときにも使えます。
 
 この方針を設計の候補に当てはめると、次のようになります。
 
@@ -423,6 +425,8 @@ EVS の実装の方法について、このプロジェクトでは次の方針�
 ### `internal/sdp` の EVS の扱い
 
 `internal/sdp` に EVS の扱いを足しました。変更は EVS のための追加だけです。既にあるファイルで変えたのは `bandwidth.go` だけで、`ASBandwidth` に EVS の場合を 2 行足しました。今まで EVS を渡すと誤りを返していた所が、値を返すようになります。それ以外の入力に対する既存の関数の振る舞いは変えていません。TS 26.445 V19.1.0 の A.3 と、TS 26.114 V20.1.1 の関わる条項を、本文で読み直しています。NG.114 は、GSMA のサイトが 403 を返したので読み直せませんでした。NG.114 については、この文書の 6 章と 7 章に書いたことに頼っています。
+
+このうち、EVS の offer と answer を作る部分は、上の方針の 2 つ目の項目をやめたときに消しました。消したのは、NG.114 の 5 つの構成（`EVSConfigA1` から `EVSConfigB2`）、`OfferParams`、`EVSCapabilities`、`AnswerEVSParams`、`AudioAnswerEVS`、`UEEVS` と、`VoNRCodecs` の EVS です。どのノードも EVS を offer も answer もしないので、使う所が無くなりました。残したのは、EVS のペイロードタイプを読む部分です（`EVSParams`、`ParseEVSParams`、`Codec.EVSParams`、`Codec.EVSFormat`、`EVSParams.StartMode`、`ASBandwidth` の EVS の場合）。下の「作ったもの」から「`SIMPLIFIED:` にしたこと」までは、消したコードを作ったときの記録です。消したコードは Git の履歴にあります。
 
 #### 本文で確かめたこと
 
@@ -454,12 +458,6 @@ EVS の実装の方法について、このプロジェクトでは次の方針�
 | `ASBandwidth` の EVS の場合 | 上の 6.2.5.2 と Annex Q のとおりです。AMR と PCMU の結果は変わりません |
 | `EVSParams.StartMode`、`UEEVS` | セッションの始めの動作と、このプロジェクトの UE の使い方 |
 
-UE の作者は、次のように使います。
-
-- 発信。`sdp.AudioOffer(id, addr, sdp.VoNRCodecs(sdp.UEEVS.Configuration))` で offer を作ります。
-- 着信。`sdp.AudioAnswerEVS(offer, id, addr, sdp.VoNRCodecs(sdp.UEEVS.Configuration), sdp.UEEVS)` で answer を作ります。
-- 送る形。選ばれたコーデックが EVS なら、`codec.EVSFormat()` でパケットの形を、`codec.EVSParams()` の `StartMode()` で始めの動作を得ます。
-
 #### 決めたこと
 
 - answer の `br` と `bw` は、offer と自分の構成の共通部分にしました。5 つの構成のどの 2 つから共通部分を取っても、結果は 5 つのどれかになります。たとえば A2 と B2 なら B2、A1 と B2 なら B1、A1 と B0 なら B0 です。NG.114 の Table 10 そのものは今回読めませんでした。表の組み合わせとこの操作が一致するかは、確かめていません。
@@ -483,7 +481,7 @@ UE の作者は、次のように使います。
 
 #### `SIMPLIFIED:` にしたこと
 
-`internal/sdp/evsoffer.go` の `UEEVS` に、次の 2 つを書きました。
+`internal/sdp/evsoffer.go` の `UEEVS` に、次の 2 つを書いていました。どちらも `UEEVS` と一緒に消しました。今は `internal/sdp/audio.go` の `VoNRCodecs` の `SIMPLIFIED:` が、offer に EVS が無いことを書いています。
 
 - UE は、送れない EVS Primary のレートと帯域を offer し、answer します。TS 26.114 の Table 6.2a と Table 6.3b は、EVS に対応する端末に `br` の全範囲を求めています。このプロジェクトでは EVS を信号だけに使い、中身は AMR-WB にしているためです。
 - このプロジェクトの UE どうしの呼だけが動きます。発信側の UE が始めから AMR-WB IO で送れるのは、answer に `evs-mode-switch=1` があるときだけです。本物の EVS の端末は `evs-mode-switch` の無い answer を返し、EVS Primary で始めます。セッションの途中で EVS Primary への切り替えを求められても（Table A.3 の CMR、TS 26.114 10.2.1 の RTCP-APP）、UE は応えられません。
@@ -557,7 +555,7 @@ Compose の構成では、pcap から次のことを確かめます。目標は�
 - 切断で、`…/delete` への POST と 204 がある。
 - 異常系で、PCF から P-CSCF への `…/notify` か `…/terminate` のあとに、P-CSCF が BYE を送る。
 - Nhss を使う構成では、`/nhss-ims-uecm/v1/…/authorize`、`/nhss-ims-ueau/v1/…/generate-sip-auth-data`、`/nhss-ims-uecm/v1/…/scscf-registration` の往復がある。
-- SDP の offer に EVS があり、RTP のペイロードタイプが EVS のものである。
+- SDP の offer に AMR-WB と AMR があり、EVS が無い（UE が EVS を送れないため）。
 
 簡略化する見込みの点は次のとおりです。
 
@@ -566,7 +564,7 @@ Compose の構成では、pcap から次のことを確かめます。目標は�
 - N7。PCF と SMF のスタブのあいだを Go の呼び出しにする。
 - PCF と HSS の選び方。NRF と BSF を使わず、設定した接続先に送る。
 - SBI の TLS と OAuth 2.0 を省く。
-- EVS。符号化済みのフレームを送る。このプロジェクトの EVS の方針（7 章）により案 B で作り、セッションの始めから AMR-WB IO を使う。EVS Primary のレートを offer しながら、そのレートでは送らない。
+- EVS。UE は EVS を offer せず、AMR-WB と AMR で通話する。UE に EVS のコーデックが無いためで、NG.114 の EVS の要件を満たさない（7 章の「このプロジェクトの EVS の方針」）。
 - EPC との連携（NG.114 4.8）を作らない。
 
 
@@ -575,7 +573,7 @@ Compose の構成では、pcap から次のことを確かめます。目標は�
 選択肢と、その得失です。
 
 1. Nhss を呼ぶ側まで作るか。5GC の構成では、HSS の SBI を模擬することが要件です。案は、I-CSCF と S-CSCF が設定で Cx と Nhss を選べるようにすることです。呼ぶノードが無いと、Nhss がキャプチャに現れません。そのためには、HSS への境界を操作の高さに上げる変更が要ります。
-2. EVS の実装の方法。このプロジェクトの方針（7 章）は、EVS のコーデックそのものを作らず、信号を EVS に合わせ、中身は AMR-WB のフレームを EVS AMR-WB IO として運ぶことです。これは案 B に当たります。AMR-WB IO しか送れない UE が EVS を offer し answer することは、仕様に合わない点があり、`SIMPLIFIED:` に書きました（7 章）。この方針を見直して案 A を選ぶなら、参照コードの利用条件を 3GPP（ETSI の Legal Service）に確かめるか、プロジェクトの責任で使うと決める必要があります。作ったフレームのファイルをリポジトリに入れるかも、あわせて決めます。判断の材料は 7 章の「利用条件と特許について、公開されている事実」にまとめました。要点は次の 4 つです。参照コードには著作権の表示があるだけで、利用を許すライセンスは書かれていません（基本演算のファイルだけは ITU-T のライセンス）。VoiceAge は EVS に当たる特許の族を公開していて、もっとも遅い満了は 2030 年です。Via LA には EVS と IVAS の特許のプール（Voice Codec）があり、7 者の権利者が入っていて、料金は機器 1 台ごとに 0.35 から 0.60 米ドルです。今のページには免除や閾値の記載が無く、フレームを運ぶだけのソフトウェアや、無償で配る符号器が対象に当たるかは、公開のページからは決められません。これは法律の判断ではありません。
+2. EVS の実装の方法。7 章の方針のうち、信号を EVS に合わせ、中身は AMR-WB のフレームを EVS AMR-WB IO として運ぶ形（案 B）は、SDP が UE の能力を偽るのでやめました。今の UE は EVS を offer しません。EVS を加えるには、EVS Primary のフレームを作る手段が要ります。案 A を選ぶなら、参照コードの利用条件を 3GPP（ETSI の Legal Service）に確かめるか、プロジェクトの責任で使うと決める必要があります。作ったフレームのファイルをリポジトリに入れるかも、あわせて決めます。判断の材料は 7 章の「利用条件と特許について、公開されている事実」にまとめました。要点は次の 4 つです。参照コードには著作権の表示があるだけで、利用を許すライセンスは書かれていません（基本演算のファイルだけは ITU-T のライセンス）。VoiceAge は EVS に当たる特許の族を公開していて、もっとも遅い満了は 2030 年です。Via LA には EVS と IVAS の特許のプール（Voice Codec）があり、7 者の権利者が入っていて、料金は機器 1 台ごとに 0.35 から 0.60 米ドルです。今のページには免除や閾値の記載が無く、フレームを運ぶだけのソフトウェアや、無償で配る符号器が対象に当たるかは、公開のページからは決められません。これは法律の判断ではありません。
 3. NG.114 4.8（EPC との連携、EPS fallback）を、「IR.92 と NG.114 の必須の要件を満たす」という要件から外すか。無線区間と移動の手順が要るので、案は「対象外」に加えることです。
 4. NRF を作るか。案は作らず、接続先を設定に書くことです。
 5. 5GC のスタブで、5GS への登録の往復を模擬するか。案は模擬することです。IMS voice over PS session supported の印を学べるためです。
