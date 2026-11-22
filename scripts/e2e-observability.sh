@@ -71,7 +71,9 @@ print(max(values) if values else "")'
 }
 
 # prometheus_values prints the value of each series that the query
-# returns from the HTTP API of Prometheus, one per line.
+# returns from the HTTP API of Prometheus, one per line. It prints
+# nothing, hence "|| true", while Prometheus has no answer to read, so
+# that until_positive asks again.
 prometheus_values() {
 	curl -fsS --get --data-urlencode "query=$1" "$prometheus/api/v1/query" 2>/dev/null |
 		"$python" -c '
@@ -85,7 +87,8 @@ for series in json.load(sys.stdin)["data"]["result"]:
 # at start (uid prometheus), as a panel of the dashboard does. The
 # dashboard can be read without signing in; should the anonymous viewer
 # not be let to query, the script asks again as admin, whose password
-# nobody has changed here.
+# nobody has changed here. Like prometheus_values, it prints nothing,
+# hence "|| true", while Grafana has no answer to read.
 grafana_values() {
 	local body answer
 	body="$("$python" -c '
@@ -153,6 +156,7 @@ if value="$(until_positive prometheus_values 'up{job="ims",node="scscf"}')"; the
 	echo "ok   Prometheus scrapes the S-CSCF: up = $value"
 else
 	echo "FAIL the scscf target of Prometheus is not up: $value"
+	# Shown only to explain the failure, if Prometheus answers at all.
 	curl -fsS "$prometheus/api/v1/targets?state=active" || true
 	echo
 	fail=1
@@ -162,6 +166,7 @@ if value="$(until_positive prometheus_values "$successes")"; then
 	echo "ok   Prometheus has $successes = $value"
 else
 	echo "FAIL Prometheus has no $successes above 0: $value"
+	# Shown only to explain the failure, if the S-CSCF answers at all.
 	docker compose exec -T scscf wget -qO- http://127.0.0.1:8085/metrics || true
 	fail=1
 fi
@@ -174,7 +179,9 @@ fi
 
 echo "drain"
 # No transaction is in progress, so the shut down makes the S-CSCF
-# LOCKED at once; SHUTTINGDOWN refuses a new REGISTER all the same.
+# LOCKED at once; SHUTTINGDOWN refuses a new REGISTER all the same. A
+# request that fails leaves its answer empty, hence "|| true", and the
+# check reports it with the state of the node.
 answer="$(administrative_state SHUTTINGDOWN || true)"
 state="$(node_state || true)"
 if grep -Eq '"administrative_state":"(SHUTTINGDOWN|LOCKED)"' <<<"$state"; then
@@ -199,6 +206,11 @@ else
 	echo "     state of the node: $state"
 	fail=1
 fi
+# The checks read the capture up to the 200 OK of this registration:
+# the one after those that the S-CSCF has sent so far.
+pcap="$(docker compose exec -T capture sh -c 'ls -t /captures/ims-*.pcap | head -n 1' | tr -d '\r')"
+registered='sip.CSeq.method == "REGISTER" && sip.Status-Code == 200 && ip.src == 172.28.0.30'
+registrations="$(count "$registered")"
 if docker compose run --no-deps --rm ue register -deregister-after 2s; then
 	echo "ok   UE registered after the unlock"
 else
@@ -206,9 +218,8 @@ else
 	fail=1
 fi
 same_nodes
-sleep 1
+await "the 200 OK to the registration after the unlock" "$registered" $((registrations + 1))
 
-pcap="$(docker compose exec -T capture sh -c 'ls -t /captures/ims-*.pcap | head -n 1' | tr -d '\r')"
 echo "reading $pcap"
 last=0
 ue=172.28.0.100
