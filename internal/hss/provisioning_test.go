@@ -7,6 +7,8 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -70,6 +72,79 @@ func TestProvisioningAddsASubscriptionTheHSSServes(t *testing.T) {
 	if len(list) != 3 {
 		t.Errorf("GET all: %+v", list)
 	}
+}
+
+// The listing comes in pages: "limit" says how many, the Link header of
+// rel="next" holds the query of the request for the page that follows,
+// and the body is the same list of subscriptions as a listing that does
+// not page.
+func TestProvisioningPagesTheSubscriptions(t *testing.T) {
+	api := newTestHSS().Provisioning(&fakeSCSCFs{})
+	// The two test users, and a third whose identity sorts after both.
+	if w := do(t, api, "POST", "/subscriptions", newSubscription); w.Code != http.StatusCreated {
+		t.Fatalf("POST: %d %s", w.Code, w.Body)
+	}
+	want := []string{impi, otherImp, "001010000000009@" + realm}
+
+	var got []string
+	path := "/subscriptions?limit=2"
+	pages := 0
+	for path != "" {
+		w := do(t, api, "GET", path, "")
+		if w.Code != http.StatusOK {
+			t.Fatalf("GET %s: %d %s", path, w.Code, w.Body)
+		}
+		for _, s := range decode[[]subscriptionResponse](t, w) {
+			got = append(got, s.PrivateIdentity)
+		}
+		pages++
+		if pages > len(want)+1 {
+			t.Fatalf("still paging after %d pages: %v", pages, got)
+		}
+		path = nextPage(t, "/subscriptions?limit=2", w.Header().Get("Link"))
+	}
+	if !slices.Equal(got, want) {
+		t.Errorf("the pages held %v, want %v", got, want)
+	}
+
+	// A listing that asks for nothing is the whole list, as before, and
+	// has no page after it.
+	w := do(t, api, "GET", "/subscriptions", "")
+	if list := decode[[]subscriptionResponse](t, w); len(list) != len(want) {
+		t.Errorf("GET without a limit: %+v", list)
+	}
+	if link := w.Header().Get("Link"); link != "" {
+		t.Errorf("a listing that holds everything names a next page: %q", link)
+	}
+	if w := do(t, api, "GET", "/subscriptions?limit=none", ""); w.Code != http.StatusBadRequest {
+		t.Errorf("GET with a limit that is not a number: %d %s", w.Code, w.Body)
+	}
+	if w := do(t, api, "GET", "/subscriptions?after="+url.QueryEscape(want[len(want)-1]), ""); len(decode[[]subscriptionResponse](t, w)) != 0 {
+		t.Errorf("GET after the last subscription: %s", w.Body)
+	}
+}
+
+// nextPage is the path of the page that the Link header names, read
+// against the path of the request that answered with it (RFC 3986 4.2),
+// or "" when there is no such header.
+func nextPage(t *testing.T, path, link string) string {
+	t.Helper()
+	if link == "" {
+		return ""
+	}
+	target, ok := strings.CutSuffix(strings.TrimPrefix(link, "<"), `>; rel="next"`)
+	if !ok {
+		t.Fatalf("Link header %q is not a target with rel=\"next\"", link)
+	}
+	base, err := url.Parse(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	next, err := url.Parse(target)
+	if err != nil {
+		t.Fatalf("Link target %q: %v", target, err)
+	}
+	return base.ResolveReference(next).String()
 }
 
 func TestProvisioningTakesTheTelURIApart(t *testing.T) {

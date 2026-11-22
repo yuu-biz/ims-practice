@@ -397,7 +397,7 @@ HSS には HTTP で加入を登録、削除する API（プロビジョニング
 
 | 要求 | 内容 |
 | --- | --- |
-| `GET /subscriptions` | 加入の一覧を、登録の状態と一緒に返す（最大 1000 件）。 |
+| `GET /subscriptions` | 加入の一覧を、登録の状態と一緒に、ページに分けて返す。1 ページは 1000 件で、`?limit=` にそれより小さい件数を書けばその件数になる。`?after={秘密の識別子}` を付けると、識別子の並び順で、その識別子の次から返す。続きのページがあるときは、`Link` ヘッダに、そのページを取るための問い合わせを `rel="next"` 付きで入れる（RFC 8288）。たとえば `<?after=001010000000001%40ims.mnc001.mcc001.3gppnetwork.org&limit=2>; rel="next"` が入る。HSS は秘密の識別子の索引から 1 ページ分だけを読むので、加入が 100 万件ある網でも、1 ページにかかる手間はこの網と変わらない。 |
 | `GET /subscriptions/{秘密の識別子}` | 1 件の加入を返す。 |
 | `POST /subscriptions` | 加入を 1 件追加する。本文は `{"private_identity": "...", "public_identities": ["sip:...", "tel:..."], "password": "..."}`。`"tel": "tel:+..."` を付けると、その tel URI も公開の識別子に加わる。IMS-AKA を使う加入には、16 進数で書いた `"aka": {"k": "...", "opc": "...", "amf": "...", "sqn": "..."}` を、password と一緒に、または password の代わりに付ける。`"ut_password": "..."` を付けると、利用者が Ut で補足サービスを設定できる。HSS はその H(A1) だけを Sh の Repository Data として持つ。`"mmtel_services": "<MMTelServices ...>"` は補足サービスの最初の文書で、省くと hss のキー `mmtel_services` の文書が入る。 |
 | `DELETE /subscriptions/{秘密の識別子}` | 加入を 1 件削除する。 |
