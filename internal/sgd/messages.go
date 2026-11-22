@@ -6,6 +6,8 @@ import (
 	"github.com/fiorix/go-diameter/v4/diam"
 	"github.com/fiorix/go-diameter/v4/diam/avp"
 	"github.com/fiorix/go-diameter/v4/diam/datatype"
+
+	"github.com/yuu-biz/ims-practice/internal/diameter"
 )
 
 // MOForwardShortMessageRequest is the OFR of TS 29.338 6.3.2.3. The node
@@ -13,7 +15,7 @@ import (
 // short message from the UE to the SC with it (6.2.1). Its AVPs are the
 // parts of the RP-DATA that the UE sent (Table 6.2.1.1/1).
 type MOForwardShortMessageRequest struct {
-	Header
+	diameter.Header
 	// SCAddress is SM-RP-DA: the E.164 number of the SC that the UE put
 	// in RP-Destination Address, as digits only, such as 12025550100.
 	SCAddress string
@@ -27,12 +29,12 @@ type MOForwardShortMessageRequest struct {
 
 // Message builds the OFR. SCAddress must pass ValidE164.
 func (r MOForwardShortMessageRequest) Message() *diam.Message {
-	m := newRequest(ApplicationIDSGd, CommandMOForwardShortMessage)
-	r.begin(m)
+	m := diameter.NewRequest(ApplicationIDSGd, CommandMOForwardShortMessage)
+	begin(m, r.Header)
 	// M and V: TS 29.338 Table 6.3.3.1/1.
-	m.AddAVP(vendorAVP(avpSCAddress, mv, encodeTBCD(r.SCAddress)))
+	m.AddAVP(diameter.VendorAVP(avpSCAddress, mv, encodeTBCD(r.SCAddress)))
 	m.AddAVP(r.UserIdentifier.avp())
-	m.AddAVP(vendorAVP(avpSMRPUI, mv, datatype.OctetString(r.SMRPUI)))
+	m.AddAVP(diameter.VendorAVP(avpSMRPUI, mv, datatype.OctetString(r.SMRPUI)))
 	return m
 }
 
@@ -41,7 +43,7 @@ func (r MOForwardShortMessageRequest) Message() *diam.Message {
 // 7.1.5 gives DIAMETER_MISSING_AVP as the result for that.
 func ParseMOForwardShortMessageRequest(m *diam.Message) (MOForwardShortMessageRequest, error) {
 	var raw struct {
-		requestHeader
+		diameter.Header
 		SCAddress      []byte            `avp:"SC-Address"`
 		UserIdentifier userIdentifierAVP `avp:"User-Identifier"`
 		SMRPUI         []byte            `avp:"SM-RP-UI"`
@@ -60,7 +62,7 @@ func ParseMOForwardShortMessageRequest(m *diam.Message) (MOForwardShortMessageRe
 	if err := required("SC-Address", sc, "SM-RP-UI", string(raw.SMRPUI)); err != nil {
 		return MOForwardShortMessageRequest{}, fmt.Errorf("OFR: %w", err)
 	}
-	return MOForwardShortMessageRequest{Header: raw.header(), SCAddress: sc, UserIdentifier: user, SMRPUI: raw.SMRPUI}, nil
+	return MOForwardShortMessageRequest{Header: raw.Header, SCAddress: sc, UserIdentifier: user, SMRPUI: raw.SMRPUI}, nil
 }
 
 // MOForwardShortMessageAnswer is the OFA of TS 29.338 6.3.2.4 (Table
@@ -70,7 +72,7 @@ type MOForwardShortMessageAnswer struct {
 	// Result is DIAMETER_SUCCESS when the SC took the short message.
 	// Otherwise it is DIAMETER_ERROR_FACILITY_NOT_SUPPORTED or
 	// DIAMETER_ERROR_SM_DELIVERY_FAILURE (6.2.1.3).
-	Result Result
+	Result diameter.Result
 	// SMDeliveryFailureCause goes with
 	// DIAMETER_ERROR_SM_DELIVERY_FAILURE, and is nil otherwise.
 	SMDeliveryFailureCause *SMDeliveryFailureCause
@@ -80,7 +82,7 @@ type MOForwardShortMessageAnswer struct {
 }
 
 // Message builds the OFA that answers request.
-func (a MOForwardShortMessageAnswer) Message(request *diam.Message, local Identity) *diam.Message {
+func (a MOForwardShortMessageAnswer) Message(request *diam.Message, local diameter.Identity) *diam.Message {
 	return forwardShortMessageAnswer(request, local, a.Result, a.SMDeliveryFailureCause, a.SMRPUI)
 }
 
@@ -98,7 +100,7 @@ func ParseMOForwardShortMessageAnswer(m *diam.Message) (MOForwardShortMessageAns
 // RP-DATA that the serving node will send to the UE (Table 6.2.2.1/1).
 // DestinationHost names the serving node, as the SRA gave it (6.3.1.2).
 type MTForwardShortMessageRequest struct {
-	Header
+	diameter.Header
 	// UserName is SM-RP-DA: the IMSI of the recipient. Towards an
 	// IP-SM-GW it is the MT Correlation ID that the IP-SM-GW gave in
 	// place of the IMSI in the SRA (TS 23.204 6.4 steps 3c and 4).
@@ -117,15 +119,15 @@ type MTForwardShortMessageRequest struct {
 // Message builds the TFR. SCAddress, and MMENumberForMTSMS if set, must
 // pass ValidE164.
 func (r MTForwardShortMessageRequest) Message() *diam.Message {
-	m := newRequest(ApplicationIDSGd, CommandMTForwardShortMessage)
-	r.begin(m)
+	m := diameter.NewRequest(ApplicationIDSGd, CommandMTForwardShortMessage)
+	begin(m, r.Header)
 	m.NewAVP(avp.UserName, avp.Mbit, 0, datatype.UTF8String(r.UserName))
-	m.AddAVP(vendorAVP(avpSCAddress, mv, encodeTBCD(r.SCAddress)))
-	m.AddAVP(vendorAVP(avpSMRPUI, mv, datatype.OctetString(r.SMRPUI)))
+	m.AddAVP(diameter.VendorAVP(avpSCAddress, mv, encodeTBCD(r.SCAddress)))
+	m.AddAVP(diameter.VendorAVP(avpSMRPUI, mv, datatype.OctetString(r.SMRPUI)))
 	if r.MMENumberForMTSMS != "" {
 		// V without M: TS 29.272 Table 7.3.1/1, which TS 29.338 Table
 		// 6.3.3.1/2 leaves as it is for SGd.
-		m.AddAVP(vendorAVP(avpMMENumberForMTSMS, v, encodeTBCD(r.MMENumberForMTSMS)))
+		m.AddAVP(diameter.VendorAVP(avpMMENumberForMTSMS, v, encodeTBCD(r.MMENumberForMTSMS)))
 	}
 	return m
 }
@@ -135,7 +137,7 @@ func (r MTForwardShortMessageRequest) Message() *diam.Message {
 // missing or empty.
 func ParseMTForwardShortMessageRequest(m *diam.Message) (MTForwardShortMessageRequest, error) {
 	var raw struct {
-		requestHeader
+		diameter.Header
 		UserName          string `avp:"User-Name"`
 		SCAddress         []byte `avp:"SC-Address"`
 		SMRPUI            []byte `avp:"SM-RP-UI"`
@@ -156,7 +158,7 @@ func ParseMTForwardShortMessageRequest(m *diam.Message) (MTForwardShortMessageRe
 		return MTForwardShortMessageRequest{}, fmt.Errorf("TFR: %w", err)
 	}
 	return MTForwardShortMessageRequest{
-		Header:            raw.header(),
+		Header:            raw.Header,
 		UserName:          raw.UserName,
 		SCAddress:         sc,
 		SMRPUI:            raw.SMRPUI,
@@ -174,7 +176,7 @@ type MTForwardShortMessageAnswer struct {
 	// DIAMETER_ERROR_ILLEGAL_USER, DIAMETER_ERROR_ILLEGAL_EQUIPMENT,
 	// DIAMETER_ERROR_FACILITY_NOT_SUPPORTED and
 	// DIAMETER_ERROR_SM_DELIVERY_FAILURE.
-	Result Result
+	Result diameter.Result
 	// SMDeliveryFailureCause goes with
 	// DIAMETER_ERROR_SM_DELIVERY_FAILURE, and is nil otherwise.
 	SMDeliveryFailureCause *SMDeliveryFailureCause
@@ -184,7 +186,7 @@ type MTForwardShortMessageAnswer struct {
 }
 
 // Message builds the TFA that answers request.
-func (a MTForwardShortMessageAnswer) Message(request *diam.Message, local Identity) *diam.Message {
+func (a MTForwardShortMessageAnswer) Message(request *diam.Message, local diameter.Identity) *diam.Message {
 	return forwardShortMessageAnswer(request, local, a.Result, a.SMDeliveryFailureCause, a.SMRPUI)
 }
 
@@ -199,29 +201,29 @@ func ParseMTForwardShortMessageAnswer(m *diam.Message) (MTForwardShortMessageAns
 // forwardShortMessageAnswer builds an OFA or a TFA. Of the AVPs this
 // project sends, the two answers carry the same ones in the same order
 // (6.3.2.4, 6.3.2.6).
-func forwardShortMessageAnswer(request *diam.Message, local Identity, result Result, cause *SMDeliveryFailureCause, tpdu []byte) *diam.Message {
+func forwardShortMessageAnswer(request *diam.Message, local diameter.Identity, result diameter.Result, cause *SMDeliveryFailureCause, tpdu []byte) *diam.Message {
 	m := newAnswer(request, local, result)
 	if cause != nil {
 		m.AddAVP(cause.avp())
 	}
 	if len(tpdu) > 0 {
-		m.AddAVP(vendorAVP(avpSMRPUI, mv, datatype.OctetString(tpdu)))
+		m.AddAVP(diameter.VendorAVP(avpSMRPUI, mv, datatype.OctetString(tpdu)))
 	}
 	return m
 }
 
-func parseForwardShortMessageAnswer(m *diam.Message) (Result, *SMDeliveryFailureCause, []byte, error) {
+func parseForwardShortMessageAnswer(m *diam.Message) (diameter.Result, *SMDeliveryFailureCause, []byte, error) {
 	var raw struct {
-		answerResult
+		diameter.ResultAVPs
 		SMDeliveryFailureCause *smDeliveryFailureCauseAVP `avp:"SM-Delivery-Failure-Cause,omitempty"`
 		SMRPUI                 []byte                     `avp:"SM-RP-UI,omitempty"`
 	}
 	if err := m.Unmarshal(&raw); err != nil {
-		return Result{}, nil, nil, err
+		return diameter.Result{}, nil, nil, err
 	}
-	result, err := raw.result()
+	result, err := raw.Result()
 	if err != nil {
-		return Result{}, nil, nil, err
+		return diameter.Result{}, nil, nil, err
 	}
 	return result, raw.SMDeliveryFailureCause.smDeliveryFailureCause(), raw.SMRPUI, nil
 }

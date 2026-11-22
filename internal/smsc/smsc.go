@@ -34,6 +34,7 @@ package smsc
 import (
 	"context"
 	"crypto/rand"
+	"github.com/yuu-biz/ims-practice/internal/diameter"
 	"log/slog"
 	"sync"
 	"time"
@@ -163,8 +164,8 @@ func (c *SMSC) Run(ctx context.Context) {
 func (c *SMSC) Wait() { c.started.Wait() }
 
 // s6cHeader is the routing part of a request to the HSS.
-func (c *SMSC) s6cHeader() sgd.Header {
-	return sgd.Header{DestinationHost: c.cfg.HSSHost, DestinationRealm: c.cfg.HSSRealm}
+func (c *SMSC) s6cHeader() diameter.Header {
+	return diameter.Header{DestinationHost: c.cfg.HSSHost, DestinationRealm: c.cfg.HSSRealm}
 }
 
 func newMessageID() string { return rand.Text() }

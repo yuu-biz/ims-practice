@@ -6,6 +6,8 @@ import (
 	"github.com/fiorix/go-diameter/v4/diam"
 	"github.com/fiorix/go-diameter/v4/diam/avp"
 	"github.com/fiorix/go-diameter/v4/diam/datatype"
+
+	"github.com/yuu-biz/ims-practice/internal/diameter"
 )
 
 // This file is S6c, the interface between the SMS central functions and
@@ -62,10 +64,10 @@ func (f FeatureList) avp() *diam.AVP {
 	// features only widen the answer the sender accepts, which is all
 	// SMSF-Support does, and has an answer never set it. Feature-List-ID
 	// and Feature-List never set it (Table 6.3.0.1).
-	return vendorAVP(avpSupportedFeatures, v, &diam.GroupedAVP{AVP: []*diam.AVP{
-		diam.NewAVP(avp.VendorID, avp.Mbit, 0, datatype.Unsigned32(VendorID3GPP)),
-		vendorAVP(avpFeatureListID, v, datatype.Unsigned32(featureListID1)),
-		vendorAVP(avpFeatureList, v, datatype.Unsigned32(f)),
+	return diameter.VendorAVP(avpSupportedFeatures, v, &diam.GroupedAVP{AVP: []*diam.AVP{
+		diam.NewAVP(avp.VendorID, avp.Mbit, 0, datatype.Unsigned32(diameter.VendorID3GPP)),
+		diameter.VendorAVP(avpFeatureListID, v, datatype.Unsigned32(featureListID1)),
+		diameter.VendorAVP(avpFeatureList, v, datatype.Unsigned32(f)),
 	}})
 }
 
@@ -82,7 +84,7 @@ type supportedFeaturesAVP struct {
 func featureList(avps []supportedFeaturesAVP) FeatureList {
 	var features FeatureList
 	for _, a := range avps {
-		if a.VendorID == VendorID3GPP && a.FeatureListID == featureListID1 {
+		if a.VendorID == diameter.VendorID3GPP && a.FeatureListID == featureListID1 {
 			features |= FeatureList(a.FeatureList)
 		}
 	}
@@ -94,7 +96,7 @@ func featureList(avps []supportedFeaturesAVP) FeatureList {
 // IP-SM-GW asks the same way before it delivers outside the IMS (TS
 // 23.204 6.4 step 3b).
 type SendRoutingInfoForSMRequest struct {
-	Header
+	diameter.Header
 	// MSISDN is the E.164 number of the recipient, as digits only.
 	MSISDN string
 	// SupportedFeatures are the features of S6c that the sender
@@ -106,15 +108,15 @@ type SendRoutingInfoForSMRequest struct {
 
 // Message builds the SRR. MSISDN and SCAddress must pass ValidE164.
 func (r SendRoutingInfoForSMRequest) Message() *diam.Message {
-	m := newRequest(ApplicationIDS6c, CommandSendRoutingInfoForSM)
-	r.begin(m)
+	m := diameter.NewRequest(ApplicationIDS6c, CommandSendRoutingInfoForSM)
+	begin(m, r.Header)
 	// M and V: TS 29.329 Table 6.3.1.
-	m.AddAVP(vendorAVP(avpMSISDN, mv, encodeTBCD(r.MSISDN)))
+	m.AddAVP(diameter.VendorAVP(avpMSISDN, mv, encodeTBCD(r.MSISDN)))
 	if features := r.SupportedFeatures.avp(); features != nil {
 		m.AddAVP(features)
 	}
 	// M and V: TS 29.338 Table 6.3.3.1/1.
-	m.AddAVP(vendorAVP(avpSCAddress, mv, encodeTBCD(r.SCAddress)))
+	m.AddAVP(diameter.VendorAVP(avpSCAddress, mv, encodeTBCD(r.SCAddress)))
 	return m
 }
 
@@ -123,7 +125,7 @@ func (r SendRoutingInfoForSMRequest) Message() *diam.Message {
 // when its AVP is missing, and the HSS decides what that means.
 func ParseSendRoutingInfoForSMRequest(m *diam.Message) (SendRoutingInfoForSMRequest, error) {
 	var raw struct {
-		requestHeader
+		diameter.Header
 		MSISDN            []byte                 `avp:"MSISDN,omitempty"`
 		SupportedFeatures []supportedFeaturesAVP `avp:"Supported-Features,omitempty"`
 		SCAddress         []byte                 `avp:"SC-Address,omitempty"`
@@ -140,7 +142,7 @@ func ParseSendRoutingInfoForSMRequest(m *diam.Message) (SendRoutingInfoForSMRequ
 		return SendRoutingInfoForSMRequest{}, fmt.Errorf("SRR: SC-Address: %w", err)
 	}
 	return SendRoutingInfoForSMRequest{
-		Header:            raw.header(),
+		Header:            raw.Header,
 		MSISDN:            msisdn,
 		SupportedFeatures: featureList(raw.SupportedFeatures),
 		SCAddress:         sc,
@@ -175,29 +177,29 @@ func (n ServingNode) avp() *diam.AVP {
 	// The order of the AVP format in 5.3.3.6.
 	if n.MMEName != "" {
 		// M and V: TS 29.173 Table 6.4.1/1.
-		children = append(children, vendorAVP(avpMMEName, mv, datatype.DiameterIdentity(n.MMEName)))
+		children = append(children, diameter.VendorAVP(avpMMEName, mv, datatype.DiameterIdentity(n.MMEName)))
 	}
 	if n.MMERealm != "" {
 		// TS 29.338 Table 5.3.3.1/2 has S6c set M on MME-Realm and on
 		// MME-Number-for-MT-SMS, which their own specifications leave
 		// off.
-		children = append(children, vendorAVP(avpMMERealm, mv, datatype.DiameterIdentity(n.MMERealm)))
+		children = append(children, diameter.VendorAVP(avpMMERealm, mv, datatype.DiameterIdentity(n.MMERealm)))
 	}
 	if n.MMENumberForMTSMS != "" {
-		children = append(children, vendorAVP(avpMMENumberForMTSMS, mv, encodeTBCD(n.MMENumberForMTSMS)))
+		children = append(children, diameter.VendorAVP(avpMMENumberForMTSMS, mv, encodeTBCD(n.MMENumberForMTSMS)))
 	}
 	// M and V for the three of the IP-SM-GW: TS 29.336 Table 6.4.1/1.
 	if n.IPSMGWNumber != "" {
-		children = append(children, vendorAVP(avpIPSMGWNumber, mv, encodeTBCD(n.IPSMGWNumber)))
+		children = append(children, diameter.VendorAVP(avpIPSMGWNumber, mv, encodeTBCD(n.IPSMGWNumber)))
 	}
 	if n.IPSMGWName != "" {
-		children = append(children, vendorAVP(avpIPSMGWName, mv, datatype.DiameterIdentity(n.IPSMGWName)))
+		children = append(children, diameter.VendorAVP(avpIPSMGWName, mv, datatype.DiameterIdentity(n.IPSMGWName)))
 	}
 	if n.IPSMGWRealm != "" {
-		children = append(children, vendorAVP(avpIPSMGWRealm, mv, datatype.DiameterIdentity(n.IPSMGWRealm)))
+		children = append(children, diameter.VendorAVP(avpIPSMGWRealm, mv, datatype.DiameterIdentity(n.IPSMGWRealm)))
 	}
 	// M and V: TS 29.173 Table 6.4.1/1.
-	return vendorAVP(avpServingNode, mv, &diam.GroupedAVP{AVP: children})
+	return diameter.VendorAVP(avpServingNode, mv, &diam.GroupedAVP{AVP: children})
 }
 
 // servingNodeAVP reads a Serving-Node AVP.
@@ -252,15 +254,15 @@ func (a SMSF3GPPAddress) avp() *diam.AVP {
 	var children []*diam.AVP
 	// V without M for all four: TS 29.338 Table 5.3.3.1/1.
 	if a.SMSF3GPPNumber != "" {
-		children = append(children, vendorAVP(avpSMSF3GPPNumber, v, encodeTBCD(a.SMSF3GPPNumber)))
+		children = append(children, diameter.VendorAVP(avpSMSF3GPPNumber, v, encodeTBCD(a.SMSF3GPPNumber)))
 	}
 	if a.SMSF3GPPName != "" {
-		children = append(children, vendorAVP(avpSMSF3GPPName, v, datatype.DiameterIdentity(a.SMSF3GPPName)))
+		children = append(children, diameter.VendorAVP(avpSMSF3GPPName, v, datatype.DiameterIdentity(a.SMSF3GPPName)))
 	}
 	if a.SMSF3GPPRealm != "" {
-		children = append(children, vendorAVP(avpSMSF3GPPRealm, v, datatype.DiameterIdentity(a.SMSF3GPPRealm)))
+		children = append(children, diameter.VendorAVP(avpSMSF3GPPRealm, v, datatype.DiameterIdentity(a.SMSF3GPPRealm)))
 	}
-	return vendorAVP(avpSMSF3GPPAddress, v, &diam.GroupedAVP{AVP: children})
+	return diameter.VendorAVP(avpSMSF3GPPAddress, v, &diam.GroupedAVP{AVP: children})
 }
 
 // smsf3GPPAddressAVP reads an SMSF-3GPP-Address AVP.
@@ -289,7 +291,7 @@ type SendRoutingInfoForSMAnswer struct {
 	// DIAMETER_ERROR_SERVICE_NOT_SUBSCRIBED,
 	// DIAMETER_ERROR_SERVICE_BARRED and, when no node is registered for
 	// MT SMS, DIAMETER_ERROR_ABSENT_USER.
-	Result Result
+	Result diameter.Result
 	// UserName is the IMSI of the user, which a successful answer always
 	// carries. An IP-SM-GW that answers in place of the HSS puts an MT
 	// Correlation ID here instead (TS 23.204 6.4 step 3c).
@@ -308,7 +310,7 @@ type SendRoutingInfoForSMAnswer struct {
 
 // Message builds the SRA that answers request. The numbers in
 // ServingNode and SMSF3GPPAddress must pass ValidE164.
-func (a SendRoutingInfoForSMAnswer) Message(request *diam.Message, local Identity) *diam.Message {
+func (a SendRoutingInfoForSMAnswer) Message(request *diam.Message, local diameter.Identity) *diam.Message {
 	m := newAnswer(request, local, a.Result)
 	if a.UserName != "" {
 		m.NewAVP(avp.UserName, avp.Mbit, 0, datatype.UTF8String(a.UserName))
@@ -327,7 +329,7 @@ func (a SendRoutingInfoForSMAnswer) Message(request *diam.Message, local Identit
 
 func ParseSendRoutingInfoForSMAnswer(m *diam.Message) (SendRoutingInfoForSMAnswer, error) {
 	var raw struct {
-		answerResult
+		diameter.ResultAVPs
 		UserName          string                 `avp:"User-Name,omitempty"`
 		SupportedFeatures []supportedFeaturesAVP `avp:"Supported-Features,omitempty"`
 		ServingNode       *servingNodeAVP        `avp:"Serving-Node,omitempty"`
@@ -336,7 +338,7 @@ func ParseSendRoutingInfoForSMAnswer(m *diam.Message) (SendRoutingInfoForSMAnswe
 	if err := m.Unmarshal(&raw); err != nil {
 		return SendRoutingInfoForSMAnswer{}, fmt.Errorf("SRA: %w", err)
 	}
-	result, err := raw.result()
+	result, err := raw.Result()
 	if err != nil {
 		return SendRoutingInfoForSMAnswer{}, fmt.Errorf("SRA: %w", err)
 	}

@@ -2,6 +2,7 @@ package smsc
 
 import (
 	"context"
+	"github.com/yuu-biz/ims-practice/internal/diameter"
 
 	"github.com/yuu-biz/ims-practice/internal/sgd"
 )
@@ -26,7 +27,7 @@ const diameterUnableToComply uint32 = 5012
 // several MSISDNs would be alerted by one of them only; the users of
 // this project have one each.
 func (c *SMSC) AlertServiceCentre(ctx context.Context, req sgd.AlertServiceCentreRequest) sgd.AlertServiceCentreAnswer {
-	ok := sgd.AlertServiceCentreAnswer{Result: sgd.Base(sgd.DiameterSuccess)}
+	ok := sgd.AlertServiceCentreAnswer{Result: diameter.Base(diameter.DiameterSuccess)}
 	msisdn := req.UserIdentifier.MSISDN
 	log := c.log.With("session_id", req.SessionID, "sc_address", req.SCAddress, "msisdn", msisdn)
 	if req.SCAddress != c.cfg.Address {
@@ -40,7 +41,7 @@ func (c *SMSC) AlertServiceCentre(ctx context.Context, req sgd.AlertServiceCentr
 	found, err := c.store.Alert(ctx, msisdn, c.clock.Now())
 	if err != nil {
 		log.Warn("alert lost: the store failed", "error", err.Error())
-		return sgd.AlertServiceCentreAnswer{Result: sgd.Base(diameterUnableToComply)}
+		return sgd.AlertServiceCentreAnswer{Result: diameter.Base(diameterUnableToComply)}
 	}
 	if !found {
 		log.Info("alert for a user the SC holds nothing for")

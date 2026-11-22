@@ -3,6 +3,7 @@ package smsc
 import (
 	"context"
 	"errors"
+	"github.com/yuu-biz/ims-practice/internal/diameter"
 	"io"
 	"log/slog"
 	"sync"
@@ -56,7 +57,7 @@ type fakeHSS struct {
 	srr     []sgd.SendRoutingInfoForSMRequest
 	rdr     []sgd.ReportSMDeliveryStatusRequest
 	// rdaResult is the result of every RDA; zero means success.
-	rdaResult sgd.Result
+	rdaResult diameter.Result
 }
 
 func (h *fakeHSS) ReportSMDeliveryStatus(_ context.Context, req sgd.ReportSMDeliveryStatusRequest) (sgd.ReportSMDeliveryStatusAnswer, error) {
@@ -66,8 +67,8 @@ func (h *fakeHSS) ReportSMDeliveryStatus(_ context.Context, req sgd.ReportSMDeli
 	if h.down {
 		return sgd.ReportSMDeliveryStatusAnswer{}, errors.New("no route to the HSS")
 	}
-	if h.rdaResult == (sgd.Result{}) {
-		return sgd.ReportSMDeliveryStatusAnswer{Result: sgd.Base(sgd.DiameterSuccess)}, nil
+	if h.rdaResult == (diameter.Result{}) {
+		return sgd.ReportSMDeliveryStatusAnswer{Result: diameter.Base(diameter.DiameterSuccess)}, nil
 	}
 	return sgd.ReportSMDeliveryStatusAnswer{Result: h.rdaResult}, nil
 }
@@ -88,7 +89,7 @@ func (h *fakeHSS) SendRoutingInfoForSM(_ context.Context, req sgd.SendRoutingInf
 	if a, ok := h.answers[req.MSISDN]; ok {
 		return a, nil
 	}
-	return sgd.SendRoutingInfoForSMAnswer{Result: sgd.Experimental(sgd.DiameterErrorUserUnknown)}, nil
+	return sgd.SendRoutingInfoForSMAnswer{Result: diameter.Experimental(sgd.DiameterErrorUserUnknown)}, nil
 }
 
 func (h *fakeHSS) set(msisdn string, a sgd.SendRoutingInfoForSMAnswer) {
@@ -106,7 +107,7 @@ func (h *fakeHSS) srrCount() int {
 // servedByMME is the SRA for a user that the MME serves.
 func servedByMME(msisdn string) sgd.SendRoutingInfoForSMAnswer {
 	return sgd.SendRoutingInfoForSMAnswer{
-		Result:      sgd.Base(sgd.DiameterSuccess),
+		Result:      diameter.Base(diameter.DiameterSuccess),
 		UserName:    imsiOf[msisdn],
 		ServingNode: &sgd.ServingNode{MMEName: mmeHost, MMERealm: epcRealm, MMENumberForMTSMS: mmeNumber},
 	}
@@ -144,15 +145,15 @@ func (n *fakeNodes) sent() []sgd.MTForwardShortMessageRequest {
 }
 
 // answerWith is a node that always gives result.
-func answerWith(result sgd.Result) func(sgd.MTForwardShortMessageRequest) (sgd.MTForwardShortMessageAnswer, error) {
+func answerWith(result diameter.Result) func(sgd.MTForwardShortMessageRequest) (sgd.MTForwardShortMessageAnswer, error) {
 	return func(sgd.MTForwardShortMessageRequest) (sgd.MTForwardShortMessageAnswer, error) {
 		return sgd.MTForwardShortMessageAnswer{Result: result}, nil
 	}
 }
 
 var (
-	accepts = answerWith(sgd.Base(sgd.DiameterSuccess))
-	absent  = answerWith(sgd.Experimental(sgd.DiameterErrorAbsentUser))
+	accepts = answerWith(diameter.Base(diameter.DiameterSuccess))
+	absent  = answerWith(diameter.Experimental(sgd.DiameterErrorAbsentUser))
 )
 
 // network is an SC with a fake HSS and fake serving nodes. Alice, Bob
@@ -198,7 +199,7 @@ func (n *network) submit(to string, s sms.Submit) sgd.MOForwardShortMessageAnswe
 		n.t.Fatal(err)
 	}
 	ofa := n.sc.MOForwardShortMessage(context.Background(), sgd.MOForwardShortMessageRequest{
-		Header:         sgd.Header{SessionID: mmeHost + ";1;1", OriginHost: mmeHost, OriginRealm: epcRealm, DestinationRealm: epcRealm},
+		Header:         diameter.Header{SessionID: mmeHost + ";1;1", OriginHost: mmeHost, OriginRealm: epcRealm, DestinationRealm: epcRealm},
 		SCAddress:      scAddress,
 		UserIdentifier: sgd.UserIdentifier{UserName: imsiOf[alice], MSISDN: alice},
 		SMRPUI:         tpdu,
@@ -231,7 +232,7 @@ func tpdu(t *testing.T, tfr sgd.MTForwardShortMessageRequest) sms.TPDU {
 // deliveries that it starts.
 func (n *network) alert(scAddress, msisdn string) sgd.AlertServiceCentreAnswer {
 	ala := n.sc.AlertServiceCentre(context.Background(), sgd.AlertServiceCentreRequest{
-		Header:         sgd.Header{SessionID: "hss." + epcRealm + ";3;1", OriginHost: "hss." + epcRealm, OriginRealm: epcRealm, DestinationRealm: epcRealm},
+		Header:         diameter.Header{SessionID: "hss." + epcRealm + ";3;1", OriginHost: "hss." + epcRealm, OriginRealm: epcRealm, DestinationRealm: epcRealm},
 		SCAddress:      scAddress,
 		UserIdentifier: sgd.UserIdentifier{MSISDN: msisdn},
 	})

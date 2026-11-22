@@ -3,6 +3,7 @@ package sgd
 import (
 	"bytes"
 	"encoding/binary"
+	"github.com/yuu-biz/ims-practice/internal/diameter"
 	"reflect"
 	"testing"
 
@@ -14,7 +15,7 @@ func TestReportSMDeliveryStatusRoundTrip(t *testing.T) {
 	noResponseViaIPSMGW := uint32(12) // TS 23.040 Table 1a
 	for _, rdr := range []ReportSMDeliveryStatusRequest{
 		{ // the MME did not reach the UE
-			Header:         Header{SessionID: scHost + ";4;1", OriginHost: scHost, OriginRealm: realm, DestinationRealm: realm},
+			Header:         diameter.Header{SessionID: scHost + ";4;1", OriginHost: scHost, OriginRealm: realm, DestinationRealm: realm},
 			UserIdentifier: UserIdentifier{MSISDN: msisdn},
 			SCAddress:      scAddress,
 			SMDeliveryOutcome: SMDeliveryOutcome{
@@ -22,7 +23,7 @@ func TestReportSMDeliveryStatusRoundTrip(t *testing.T) {
 			},
 		},
 		{ // the IP-SM-GW and the SMSF both failed
-			Header:         Header{SessionID: scHost + ";4;2", OriginHost: scHost, OriginRealm: realm, DestinationHost: hssHost, DestinationRealm: realm},
+			Header:         diameter.Header{SessionID: scHost + ";4;2", OriginHost: scHost, OriginRealm: realm, DestinationHost: hssHost, DestinationRealm: realm},
 			UserIdentifier: UserIdentifier{MSISDN: msisdn},
 			SCAddress:      scAddress,
 			SMDeliveryOutcome: SMDeliveryOutcome{
@@ -45,10 +46,10 @@ func TestReportSMDeliveryStatusRoundTrip(t *testing.T) {
 		}
 
 		for _, rda := range []ReportSMDeliveryStatusAnswer{
-			{Result: Base(DiameterSuccess)},
-			{Result: Base(DiameterSuccess), UserIdentifier: &UserIdentifier{MSISDN: "12025550113"}},
-			{Result: Experimental(DiameterErrorMWDListFull)},
-			{Result: Experimental(DiameterErrorUserUnknown)},
+			{Result: diameter.Base(diameter.DiameterSuccess)},
+			{Result: diameter.Base(diameter.DiameterSuccess), UserIdentifier: &UserIdentifier{MSISDN: "12025550113"}},
+			{Result: diameter.Experimental(DiameterErrorMWDListFull)},
+			{Result: diameter.Experimental(DiameterErrorUserUnknown)},
 		} {
 			ans := wire(t, rda.Message(req, hss))
 			if h := ans.Header; h.ApplicationID != ApplicationIDS6c || h.CommandCode != CommandReportSMDeliveryStatus ||
@@ -69,7 +70,7 @@ func TestReportSMDeliveryStatusRoundTrip(t *testing.T) {
 // 5.3.3.1/1.
 func TestReportSMDeliveryStatusRequestBytes(t *testing.T) {
 	b, err := ReportSMDeliveryStatusRequest{
-		Header:         Header{SessionID: scHost + ";4;1", OriginHost: scHost, OriginRealm: realm, DestinationRealm: realm},
+		Header:         diameter.Header{SessionID: scHost + ";4;1", OriginHost: scHost, OriginRealm: realm, DestinationRealm: realm},
 		UserIdentifier: UserIdentifier{MSISDN: msisdn},
 		SCAddress:      scAddress,
 		SMDeliveryOutcome: SMDeliveryOutcome{
@@ -117,24 +118,24 @@ func TestReportSMDeliveryStatusRequestBytes(t *testing.T) {
 
 func TestParseReportSMDeliveryStatusErrors(t *testing.T) {
 	rdr := func(avps ...*diam.AVP) *diam.Message {
-		m := newRequest(ApplicationIDS6c, CommandReportSMDeliveryStatus)
-		Header{SessionID: "s", OriginHost: scHost, OriginRealm: realm, DestinationRealm: realm}.begin(m)
+		m := diameter.NewRequest(ApplicationIDS6c, CommandReportSMDeliveryStatus)
+		begin(m, diameter.Header{SessionID: "s", OriginHost: scHost, OriginRealm: realm, DestinationRealm: realm})
 		for _, a := range avps {
 			m.AddAVP(a)
 		}
 		return m
 	}
 	user := UserIdentifier{MSISDN: msisdn}.avp()
-	sc := vendorAVP(avpSCAddress, mv, encodeTBCD(scAddress))
+	sc := diameter.VendorAVP(avpSCAddress, mv, encodeTBCD(scAddress))
 	absent := SMDeliveryOutcome{MMESMDeliveryOutcome: &NodeSMDeliveryOutcome{SMDeliveryCause: SMDeliveryCauseAbsentUser}}.avp()
 	for name, m := range map[string]*diam.Message{
 		"without User-Identifier":     rdr(sc, absent),
 		"without SC-Address":          rdr(user, absent),
 		"without SM-Delivery-Outcome": rdr(user, sc),
 		"with an empty outcome":       rdr(user, sc, SMDeliveryOutcome{}.avp()),
-		"with an outcome without its cause": rdr(user, sc, vendorAVP(avpSMDeliveryOutcome, mv, &diam.GroupedAVP{AVP: []*diam.AVP{
-			vendorAVP(avpMMESMDeliveryOutcome, mv, &diam.GroupedAVP{AVP: []*diam.AVP{
-				vendorAVP(avpAbsentUserDiagnosticSM, mv, datatype.Unsigned32(1)),
+		"with an outcome without its cause": rdr(user, sc, diameter.VendorAVP(avpSMDeliveryOutcome, mv, &diam.GroupedAVP{AVP: []*diam.AVP{
+			diameter.VendorAVP(avpMMESMDeliveryOutcome, mv, &diam.GroupedAVP{AVP: []*diam.AVP{
+				diameter.VendorAVP(avpAbsentUserDiagnosticSM, mv, datatype.Unsigned32(1)),
 			}}),
 		}})),
 	} {

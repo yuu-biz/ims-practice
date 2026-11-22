@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"github.com/yuu-biz/ims-practice/internal/diameter"
 	"io"
 	"log/slog"
 	"sync"
@@ -49,7 +50,7 @@ type diameterNode struct {
 	mme      *standInMME
 }
 
-func (n *diameterNode) header(h sgd.Header) sgd.Header {
+func (n *diameterNode) header(h diameter.Header) diameter.Header {
 	n.mu.Lock()
 	defer n.mu.Unlock()
 	n.sessions++
@@ -63,17 +64,17 @@ func (n *diameterNode) SendRoutingInfoForSM(_ context.Context, req sgd.SendRouti
 	// The stand-in HSS: an MME is registered for MT SMS for Bob.
 	request := overTheWire(req.Message())
 	sra := sgd.SendRoutingInfoForSMAnswer{
-		Result:      sgd.Base(sgd.DiameterSuccess),
+		Result:      diameter.Base(diameter.DiameterSuccess),
 		UserName:    "001010000000002",
 		ServingNode: &sgd.ServingNode{MMEName: mme, MMERealm: realm, MMENumberForMTSMS: "12025550190"},
-	}.Message(request, sgd.Identity{OriginHost: hss, OriginRealm: realm})
+	}.Message(request, diameter.Identity{OriginHost: hss, OriginRealm: realm})
 	return sgd.ParseSendRoutingInfoForSMAnswer(overTheWire(sra))
 }
 
 func (n *diameterNode) ReportSMDeliveryStatus(_ context.Context, req sgd.ReportSMDeliveryStatusRequest) (sgd.ReportSMDeliveryStatusAnswer, error) {
 	req.Header = n.header(req.Header)
-	rda := sgd.ReportSMDeliveryStatusAnswer{Result: sgd.Base(sgd.DiameterSuccess)}.
-		Message(overTheWire(req.Message()), sgd.Identity{OriginHost: hss, OriginRealm: realm})
+	rda := sgd.ReportSMDeliveryStatusAnswer{Result: diameter.Base(diameter.DiameterSuccess)}.
+		Message(overTheWire(req.Message()), diameter.Identity{OriginHost: hss, OriginRealm: realm})
 	return sgd.ParseReportSMDeliveryStatusAnswer(overTheWire(rda))
 }
 
@@ -103,8 +104,8 @@ func (m *standInMME) receive(request *diam.Message) *diam.Message {
 	m.mu.Lock()
 	m.log = append(m.log, fmt.Sprintf("MME: SMS-DELIVER for IMSI %s from %s: %q", tfr.UserName, deliver.OriginatingAddress, text))
 	m.mu.Unlock()
-	return sgd.MTForwardShortMessageAnswer{Result: sgd.Base(sgd.DiameterSuccess)}.
-		Message(request, sgd.Identity{OriginHost: mme, OriginRealm: realm})
+	return sgd.MTForwardShortMessageAnswer{Result: diameter.Base(diameter.DiameterSuccess)}.
+		Message(request, diameter.Identity{OriginHost: mme, OriginRealm: realm})
 }
 
 // Example shows how a role wires the SC: the requests that its Diameter
@@ -133,7 +134,7 @@ func Example() {
 		UserData:           ud,
 	}.Marshal()
 	ofr := overTheWire(sgd.MOForwardShortMessageRequest{
-		Header:         sgd.Header{SessionID: mme + ";1;1", OriginHost: mme, OriginRealm: realm, DestinationRealm: realm},
+		Header:         diameter.Header{SessionID: mme + ";1;1", OriginHost: mme, OriginRealm: realm, DestinationRealm: realm},
 		SCAddress:      "12025550100",
 		UserIdentifier: sgd.UserIdentifier{UserName: "001010000000001", MSISDN: "12025550111"},
 		SMRPUI:         submit,
@@ -145,7 +146,7 @@ func Example() {
 	if err != nil {
 		panic(err)
 	}
-	ofa := sc.MOForwardShortMessage(ctx, received).Message(ofr, sgd.Identity{OriginHost: scHost, OriginRealm: realm})
+	ofa := sc.MOForwardShortMessage(ctx, received).Message(ofr, diameter.Identity{OriginHost: scHost, OriginRealm: realm})
 	answer, err := sgd.ParseMOForwardShortMessageAnswer(overTheWire(ofa))
 	if err != nil {
 		panic(err)

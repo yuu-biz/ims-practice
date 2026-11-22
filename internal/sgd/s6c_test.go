@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/binary"
 	"fmt"
+	"github.com/yuu-biz/ims-practice/internal/diameter"
 	"reflect"
 	"testing"
 
@@ -21,18 +22,18 @@ const (
 	ipsmgwNumber = "12025550192"
 )
 
-var hss = Identity{OriginHost: hssHost, OriginRealm: realm}
+var hss = diameter.Identity{OriginHost: hssHost, OriginRealm: realm}
 
 func TestSendRoutingInfoForSMRoundTrip(t *testing.T) {
 	for _, srr := range []SendRoutingInfoForSMRequest{
 		{
-			Header:            Header{SessionID: scHost + ";2;1", OriginHost: scHost, OriginRealm: realm, DestinationRealm: realm},
+			Header:            diameter.Header{SessionID: scHost + ";2;1", OriginHost: scHost, OriginRealm: realm, DestinationRealm: realm},
 			MSISDN:            msisdn,
 			SupportedFeatures: SMSFSupport,
 			SCAddress:         scAddress,
 		},
 		{ // without Supported-Features, to a known HSS
-			Header:    Header{SessionID: scHost + ";2;2", OriginHost: scHost, OriginRealm: realm, DestinationHost: hssHost, DestinationRealm: realm},
+			Header:    diameter.Header{SessionID: scHost + ";2;2", OriginHost: scHost, OriginRealm: realm, DestinationHost: hssHost, DestinationRealm: realm},
 			MSISDN:    msisdn,
 			SCAddress: scAddress,
 		},
@@ -52,30 +53,30 @@ func TestSendRoutingInfoForSMRoundTrip(t *testing.T) {
 
 		for _, sra := range []SendRoutingInfoForSMAnswer{
 			{ // an MME and an SMSF serve the user
-				Result:            Base(DiameterSuccess),
+				Result:            diameter.Base(diameter.DiameterSuccess),
 				UserName:          imsi,
 				SupportedFeatures: SMSFSupport,
 				ServingNode:       &ServingNode{MMEName: mmeHost, MMERealm: realm, MMENumberForMTSMS: mmeNumber},
 				SMSF3GPPAddress:   &SMSF3GPPAddress{SMSF3GPPNumber: smsfNumber, SMSF3GPPName: smsfHost, SMSF3GPPRealm: realm},
 			},
 			{ // only an MME
-				Result:      Base(DiameterSuccess),
+				Result:      diameter.Base(diameter.DiameterSuccess),
 				UserName:    imsi,
 				ServingNode: &ServingNode{MMEName: mmeHost, MMERealm: realm, MMENumberForMTSMS: mmeNumber},
 			},
 			{ // only an SMSF
-				Result:            Base(DiameterSuccess),
+				Result:            diameter.Base(diameter.DiameterSuccess),
 				UserName:          imsi,
 				SupportedFeatures: SMSFSupport,
 				SMSF3GPPAddress:   &SMSF3GPPAddress{SMSF3GPPNumber: smsfNumber, SMSF3GPPName: smsfHost, SMSF3GPPRealm: realm},
 			},
 			{ // the IP-SM-GW answers with itself and an MT Correlation ID
-				Result:      Base(DiameterSuccess),
+				Result:      diameter.Base(diameter.DiameterSuccess),
 				UserName:    "001019876543210",
 				ServingNode: &ServingNode{IPSMGWNumber: ipsmgwNumber, IPSMGWName: ipsmgwHost, IPSMGWRealm: ipsmgwRealm},
 			},
-			{Result: Experimental(DiameterErrorUserUnknown)},
-			{Result: Experimental(DiameterErrorAbsentUser), SupportedFeatures: SMSFSupport},
+			{Result: diameter.Experimental(DiameterErrorUserUnknown)},
+			{Result: diameter.Experimental(DiameterErrorAbsentUser), SupportedFeatures: SMSFSupport},
 		} {
 			ans := wire(t, sra.Message(req, hss))
 			if h := ans.Header; h.ApplicationID != ApplicationIDS6c || h.CommandCode != CommandSendRoutingInfoForSM ||
@@ -101,7 +102,7 @@ func TestSendRoutingInfoForSMRoundTrip(t *testing.T) {
 // flags of Table 5.3.3.1/1.
 func TestSendRoutingInfoForSMBytes(t *testing.T) {
 	srr := SendRoutingInfoForSMRequest{
-		Header:            Header{SessionID: scHost + ";2;1", OriginHost: scHost, OriginRealm: realm, DestinationRealm: realm},
+		Header:            diameter.Header{SessionID: scHost + ";2;1", OriginHost: scHost, OriginRealm: realm, DestinationRealm: realm},
 		MSISDN:            msisdn,
 		SupportedFeatures: SMSFSupport,
 		SCAddress:         scAddress,
@@ -143,7 +144,7 @@ func TestSendRoutingInfoForSMBytes(t *testing.T) {
 	}
 
 	b, err = SendRoutingInfoForSMAnswer{
-		Result:            Base(DiameterSuccess),
+		Result:            diameter.Base(diameter.DiameterSuccess),
 		UserName:          imsi,
 		SupportedFeatures: SMSFSupport,
 		ServingNode:       &ServingNode{MMEName: mmeHost, MMERealm: realm, MMENumberForMTSMS: mmeNumber},
@@ -201,14 +202,14 @@ func TestSendRoutingInfoForSMBytes(t *testing.T) {
 
 func TestSendRoutingInfoForSMServingNodeIPSMGW(t *testing.T) {
 	srr := SendRoutingInfoForSMRequest{
-		Header: Header{SessionID: "s", OriginHost: scHost, OriginRealm: realm, DestinationRealm: realm},
+		Header: diameter.Header{SessionID: "s", OriginHost: scHost, OriginRealm: realm, DestinationRealm: realm},
 		MSISDN: msisdn, SCAddress: scAddress,
 	}.Message()
 	b, err := SendRoutingInfoForSMAnswer{
-		Result:      Base(DiameterSuccess),
+		Result:      diameter.Base(diameter.DiameterSuccess),
 		UserName:    imsi,
 		ServingNode: &ServingNode{IPSMGWNumber: ipsmgwNumber, IPSMGWName: ipsmgwHost, IPSMGWRealm: ipsmgwRealm},
-	}.Message(wire(t, srr), Identity{OriginHost: ipsmgwHost, OriginRealm: ipsmgwRealm}).Serialize()
+	}.Message(wire(t, srr), diameter.Identity{OriginHost: ipsmgwHost, OriginRealm: ipsmgwRealm}).Serialize()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -228,15 +229,15 @@ func TestSendRoutingInfoForSMServingNodeIPSMGW(t *testing.T) {
 // S6c defines counts: Vendor-Id 10415 and Feature-List-ID 1.
 func TestSupportedFeaturesOfOthers(t *testing.T) {
 	features := func(vendor, id, list uint32) *diam.AVP {
-		return vendorAVP(avpSupportedFeatures, v, &diam.GroupedAVP{AVP: []*diam.AVP{
+		return diameter.VendorAVP(avpSupportedFeatures, v, &diam.GroupedAVP{AVP: []*diam.AVP{
 			diam.NewAVP(avp.VendorID, avp.Mbit, 0, datatype.Unsigned32(vendor)),
-			vendorAVP(avpFeatureListID, v, datatype.Unsigned32(id)),
-			vendorAVP(avpFeatureList, v, datatype.Unsigned32(list)),
+			diameter.VendorAVP(avpFeatureListID, v, datatype.Unsigned32(id)),
+			diameter.VendorAVP(avpFeatureList, v, datatype.Unsigned32(list)),
 		}})
 	}
-	m := newRequest(ApplicationIDS6c, CommandSendRoutingInfoForSM)
-	Header{SessionID: "s", OriginHost: scHost, OriginRealm: realm, DestinationRealm: realm}.begin(m)
-	m.AddAVP(vendorAVP(avpMSISDN, mv, encodeTBCD(msisdn)))
+	m := diameter.NewRequest(ApplicationIDS6c, CommandSendRoutingInfoForSM)
+	begin(m, diameter.Header{SessionID: "s", OriginHost: scHost, OriginRealm: realm, DestinationRealm: realm})
+	m.AddAVP(diameter.VendorAVP(avpMSISDN, mv, encodeTBCD(msisdn)))
 	m.AddAVP(features(10415, 2, 0xff))
 	m.AddAVP(features(99999, 1, 0xff))
 	got, err := ParseSendRoutingInfoForSMRequest(wire(t, m))
@@ -252,8 +253,8 @@ func TestSupportedFeaturesOfOthers(t *testing.T) {
 
 func TestParseSendRoutingInfoForSMErrors(t *testing.T) {
 	srr := func(avps ...*diam.AVP) *diam.Message {
-		m := newRequest(ApplicationIDS6c, CommandSendRoutingInfoForSM)
-		Header{SessionID: "s", OriginHost: scHost, OriginRealm: realm, DestinationRealm: realm}.begin(m)
+		m := diameter.NewRequest(ApplicationIDS6c, CommandSendRoutingInfoForSM)
+		begin(m, diameter.Header{SessionID: "s", OriginHost: scHost, OriginRealm: realm, DestinationRealm: realm})
 		for _, a := range avps {
 			m.AddAVP(a)
 		}
@@ -261,8 +262,8 @@ func TestParseSendRoutingInfoForSMErrors(t *testing.T) {
 	}
 	notTBCD := datatype.OctetString([]byte{0x0A})
 	for name, m := range map[string]*diam.Message{
-		"MSISDN that is not TBCD":     srr(vendorAVP(avpMSISDN, mv, notTBCD)),
-		"SC-Address that is not TBCD": srr(vendorAVP(avpMSISDN, mv, encodeTBCD(msisdn)), vendorAVP(avpSCAddress, mv, notTBCD)),
+		"MSISDN that is not TBCD":     srr(diameter.VendorAVP(avpMSISDN, mv, notTBCD)),
+		"SC-Address that is not TBCD": srr(diameter.VendorAVP(avpMSISDN, mv, encodeTBCD(msisdn)), diameter.VendorAVP(avpSCAddress, mv, notTBCD)),
 	} {
 		if got, err := ParseSendRoutingInfoForSMRequest(wire(t, m)); err == nil {
 			t.Errorf("SRR, %s: got %+v, want an error", name, got)
@@ -275,21 +276,21 @@ func TestParseSendRoutingInfoForSMErrors(t *testing.T) {
 
 	req := wire(t, srr())
 	sra := func(avps ...*diam.AVP) *diam.Message {
-		m := newAnswer(req, hss, Base(DiameterSuccess))
+		m := newAnswer(req, hss, diameter.Base(diameter.DiameterSuccess))
 		for _, a := range avps {
 			m.AddAVP(a)
 		}
 		return m
 	}
 	for name, m := range map[string]*diam.Message{
-		"MME-Number-for-MT-SMS that is not TBCD": sra(vendorAVP(avpServingNode, mv, &diam.GroupedAVP{AVP: []*diam.AVP{
-			vendorAVP(avpMMENumberForMTSMS, mv, notTBCD),
+		"MME-Number-for-MT-SMS that is not TBCD": sra(diameter.VendorAVP(avpServingNode, mv, &diam.GroupedAVP{AVP: []*diam.AVP{
+			diameter.VendorAVP(avpMMENumberForMTSMS, mv, notTBCD),
 		}})),
-		"IP-SM-GW-Number that is not TBCD": sra(vendorAVP(avpServingNode, mv, &diam.GroupedAVP{AVP: []*diam.AVP{
-			vendorAVP(avpIPSMGWNumber, mv, notTBCD),
+		"IP-SM-GW-Number that is not TBCD": sra(diameter.VendorAVP(avpServingNode, mv, &diam.GroupedAVP{AVP: []*diam.AVP{
+			diameter.VendorAVP(avpIPSMGWNumber, mv, notTBCD),
 		}})),
-		"SMSF-3GPP-Number that is not TBCD": sra(vendorAVP(avpSMSF3GPPAddress, v, &diam.GroupedAVP{AVP: []*diam.AVP{
-			vendorAVP(avpSMSF3GPPNumber, v, notTBCD),
+		"SMSF-3GPP-Number that is not TBCD": sra(diameter.VendorAVP(avpSMSF3GPPAddress, v, &diam.GroupedAVP{AVP: []*diam.AVP{
+			diameter.VendorAVP(avpSMSF3GPPNumber, v, notTBCD),
 		}})),
 	} {
 		if got, err := ParseSendRoutingInfoForSMAnswer(wire(t, m)); err == nil {
@@ -311,13 +312,13 @@ func ExampleSendRoutingInfoForSMRequest() {
 		panic(err)
 	}
 	const realm = "epc.mnc001.mcc001.3gppnetwork.org"
-	sc := Identity{OriginHost: "sc." + realm, OriginRealm: realm}
+	sc := diameter.Identity{OriginHost: "sc." + realm, OriginRealm: realm}
 	smsDeliver := []byte{0x04, 0x0B, 0x91, 0x21, 0x20, 0x55, 0x05, 0x11, 0xF2, 0x00, 0x00,
 		0x62, 0x11, 0x02, 0x60, 0x83, 0x13, 0x00, 0x05, 0xE8, 0x32, 0x9B, 0xFD, 0x06}
 
 	// The SC asks for the routing information of the recipient.
 	srr := SendRoutingInfoForSMRequest{
-		Header:            Header{SessionID: sc.OriginHost + ";2;1", OriginHost: sc.OriginHost, OriginRealm: sc.OriginRealm, DestinationRealm: realm},
+		Header:            diameter.Header{SessionID: sc.OriginHost + ";2;1", OriginHost: sc.OriginHost, OriginRealm: sc.OriginRealm, DestinationRealm: realm},
 		MSISDN:            "12025550123",
 		SupportedFeatures: SMSFSupport,
 		SCAddress:         "12025550100",
@@ -326,11 +327,11 @@ func ExampleSendRoutingInfoForSMRequest() {
 	// The HSS: an MME is registered for MT SMS for this user.
 	request := overTheWire(srr)
 	sra := SendRoutingInfoForSMAnswer{
-		Result:            Base(DiameterSuccess),
+		Result:            diameter.Base(diameter.DiameterSuccess),
 		UserName:          "001010000000002",
 		SupportedFeatures: SMSFSupport,
 		ServingNode:       &ServingNode{MMEName: "mme." + realm, MMERealm: realm, MMENumberForMTSMS: "12025550190"},
-	}.Message(request, Identity{OriginHost: "hss." + realm, OriginRealm: realm})
+	}.Message(request, diameter.Identity{OriginHost: "hss." + realm, OriginRealm: realm})
 
 	// The SC: the answer names the node to send the TFR to.
 	routing, err := ParseSendRoutingInfoForSMAnswer(overTheWire(sra))
@@ -340,7 +341,7 @@ func ExampleSendRoutingInfoForSMRequest() {
 	node := routing.ServingNode
 	fmt.Printf("%s: IMSI %s is served by %s\n", routing.Result, routing.UserName, node.MMEName)
 	tfr := MTForwardShortMessageRequest{
-		Header:            Header{SessionID: sc.OriginHost + ";1;7", OriginHost: sc.OriginHost, OriginRealm: sc.OriginRealm, DestinationHost: node.MMEName, DestinationRealm: node.MMERealm},
+		Header:            diameter.Header{SessionID: sc.OriginHost + ";1;7", OriginHost: sc.OriginHost, OriginRealm: sc.OriginRealm, DestinationHost: node.MMEName, DestinationRealm: node.MMERealm},
 		UserName:          routing.UserName,
 		SCAddress:         "12025550100",
 		SMRPUI:            smsDeliver,
@@ -349,8 +350,8 @@ func ExampleSendRoutingInfoForSMRequest() {
 
 	// The MME: the UE is not attached.
 	delivery := overTheWire(tfr)
-	tfa := MTForwardShortMessageAnswer{Result: Experimental(DiameterErrorAbsentUser)}.
-		Message(delivery, Identity{OriginHost: node.MMEName, OriginRealm: node.MMERealm})
+	tfa := MTForwardShortMessageAnswer{Result: diameter.Experimental(DiameterErrorAbsentUser)}.
+		Message(delivery, diameter.Identity{OriginHost: node.MMEName, OriginRealm: node.MMERealm})
 
 	answer, err := ParseMTForwardShortMessageAnswer(overTheWire(tfa))
 	if err != nil {
