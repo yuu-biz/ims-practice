@@ -49,7 +49,7 @@ func TestENUM(t *testing.T) {
 			t.Errorf("ENUM(%s) = %q, %v; want %q", tt.number, got, err, tt.want)
 		}
 	}
-	if _, err := r.ENUM(t.Context(), "+12025550199", ENUMSuffix); !errors.Is(err, ErrNoENUMRecord) {
+	if _, err := r.ENUM(t.Context(), "+12025550198", ENUMSuffix); !errors.Is(err, ErrNoENUMRecord) {
 		t.Errorf("number without records: err = %v, want ErrNoENUMRecord", err)
 	}
 }

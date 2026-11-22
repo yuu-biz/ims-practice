@@ -95,7 +95,7 @@ func TestRefusals(t *testing.T) {
 	national := hello(t, bob, 1)
 	national.DestinationAddress.TypeOfNumber = sms.TONNational
 	nationalTPDU, _ := national.Marshal()
-	unknown, _ := hello(t, "12025550199", 1).Marshal()
+	unknown, _ := hello(t, "12025550198", 1).Marshal()
 	barred, _ := hello(t, carol, 1).Marshal()
 	good, _ := hello(t, bob, 1).Marshal()
 

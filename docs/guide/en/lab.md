@@ -94,7 +94,7 @@ To send a short message (SMS over IP, see [the SMS guide](sms.md)):
 3. The card of `phone2` shows the text under **SMS received**, with the sender's number.
 4. With a status report asked for, the entry on `phone1` ends with `status report: delivered (TP-ST 0x00)`.
 
-A number that no subscriber has, such as `+12025550188`, ends as `refused by the SC: RP-ERROR, RP-Cause 1, TP-FCS 0xc3`. Subscriber 4, `+12025550104`, does not register here: its short message is accepted, and the status report says `not delivered, the SC has given up (TP-ST 0x62)`.
+A number that no subscriber has, such as `+12025550198`, ends as `refused by the SC: RP-ERROR, RP-Cause 1, TP-FCS 0xc3`. Subscriber 4, `+12025550104`, does not register here: its short message is accepted, and the status report says `not delivered, the SC has given up (TP-ST 0x62)`.
 
 Each entry has a **ladder** link that draws the MESSAGE that carried the short message. The submit report, the delivery report and the status report are MESSAGEs of their own, each with its own Call-ID.
 

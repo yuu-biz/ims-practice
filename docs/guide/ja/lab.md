@@ -94,7 +94,7 @@ docker compose --profile phones up -d --build
 3. `phone2` のカードの **SMS received** に、送信者の番号と本文が表示されます。
 4. status report を頼んだときは、`phone1` の行の最後に `status report: delivered (TP-ST 0x00)` と表示されます。
 
-どの加入者も持たない番号（`+12025550188` など）に送ると、`refused by the SC: RP-ERROR, RP-Cause 1, TP-FCS 0xc3` で終わります。加入者 4 の `+12025550104` はここでは登録しないので、SC はメッセージを受け付けますが、status report は `not delivered, the SC has given up (TP-ST 0x62)` になります。
+どの加入者も持たない番号（`+12025550198` など）に送ると、`refused by the SC: RP-ERROR, RP-Cause 1, TP-FCS 0xc3` で終わります。加入者 4 の `+12025550104` はここでは登録しないので、SC はメッセージを受け付けますが、status report は `not delivered, the SC has given up (TP-ST 0x62)` になります。
 
 各行の **ladder** を選ぶと、そのショートメッセージを運んだ MESSAGE のラダー図を描きます。submit report、delivery report、status report は別の MESSAGE で、それぞれ別の Call-ID を持ちます。
 

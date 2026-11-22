@@ -307,7 +307,7 @@ The filter is `rtp || rtcp`. **Play Streams** plays the voice.
 | --- | --- | --- | --- |
 | Busy | Start UE 2 with `-reject 486`. | 486 Busy Here | UE 2 |
 | Not registered | Call `tel:+12025550103`. | 480 Temporarily Unavailable | S-CSCF |
-| Unknown number | Call `tel:+12025550199`. | 404 Not Found | S-CSCF |
+| Unknown number | Call `tel:+12025550198`. | 404 Not Found | S-CSCF |
 
 - An unregistered user still has an iFC that calls the MMTel AS. The LIA says DIAMETER_UNREGISTERED_SERVICE (2003). The S-CSCF that the I-CSCF picks answers 480 once the AS sends the INVITE back.
 - An unknown number has no ENUM record. This project has no BGCF, so the S-CSCF answers 404.

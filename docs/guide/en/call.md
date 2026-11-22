@@ -58,7 +58,7 @@ To try the failures:
 
 - **Busy.** Start UE 2 with `-reject 486`. The call ends with `486 Busy Here`.
 - **Not registered.** Call `tel:+12025550103`, a subscriber that never registers. The call ends with `480 Temporarily Unavailable`.
-- **Unknown number.** Call `tel:+12025550199`, which has no ENUM record. The call ends with `404 Not Found`.
+- **Unknown number.** Call `tel:+12025550198`, which has no ENUM record. The call ends with `404 Not Found`.
 
 ## Open the capture
 
