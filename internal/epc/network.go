@@ -352,6 +352,20 @@ func (e *EPC) Status(imsi string) (Status, error) {
 	return s, nil
 }
 
+// Statuses is what the API shows of every UE that is attached, in the
+// order of the configured subscribers. A UE that has no PDN connection
+// is left out: the network holds nothing of it, and no procedure of its
+// own to start for it.
+func (e *EPC) Statuses() []Status {
+	attached := []Status{}
+	for _, s := range e.cfg.Subscribers {
+		if status, err := e.Status(s.IMSI); err == nil {
+			attached = append(attached, status)
+		}
+	}
+	return attached
+}
+
 // reconcileVoiceBearer makes the voice bearer carry the PCC rules of all
 // the AF sessions of c: it activates the bearer for the first rules and
 // deactivates it when the last ones go (TS 23.401 5.4.1, 5.4.4.1).
