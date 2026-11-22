@@ -58,6 +58,14 @@ since Pod addresses change.`,
 	},
 	{
 		File: "lab.yaml",
+		Key:  "lab.fault_agent",
+		Comment: `No fault agent here: it breaks containers through the Docker socket,
+which no Pod has. The page says that it is not configured, and its
+fault panel stays off.`,
+		Remove: true,
+	},
+	{
+		File: "lab.yaml",
 		Key:  "lab.ues",
 		Comment: `The UE simulators ue-a and ue-b of ue.yaml. They start with zero
 replicas, like the sim profile of compose.yaml; until they are

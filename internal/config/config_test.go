@@ -681,6 +681,7 @@ lab:
   http_listen: ":8080"
   hss_provisioning: http://hss:8081
   epc: http://epc:8080
+  fault_agent: http://fault-agent:8080
   ues:
     - {name: ue-a, control: "http://ue-a:8090"}
     - {name: ue-b, control: "http://172.28.0.111:8090"}
@@ -691,10 +692,11 @@ func TestParseLab(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := Lab{HEPListen: ":9060", HTTPListen: ":8080", HSSProvisioning: "http://hss:8081", EPC: "http://epc:8080", UEs: []UESimulator{
-		{Name: "ue-a", Control: "http://ue-a:8090"},
-		{Name: "ue-b", Control: "http://172.28.0.111:8090"},
-	}}
+	want := Lab{HEPListen: ":9060", HTTPListen: ":8080", HSSProvisioning: "http://hss:8081", EPC: "http://epc:8080",
+		FaultAgent: "http://fault-agent:8080", UEs: []UESimulator{
+			{Name: "ue-a", Control: "http://ue-a:8090"},
+			{Name: "ue-b", Control: "http://172.28.0.111:8090"},
+		}}
 	if cfg.Lab == nil || !reflect.DeepEqual(*cfg.Lab, want) || cfg.Diameter != nil {
 		t.Errorf("lab = %+v, want %+v", cfg.Lab, want)
 	}
@@ -704,8 +706,8 @@ func TestParseLab(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.Lab.HSSProvisioning != "" || cfg.Lab.EPC != "" || cfg.Lab.UEs != nil {
-		t.Errorf("lab = %+v without hss_provisioning, epc and ues", cfg.Lab)
+	if cfg.Lab.HSSProvisioning != "" || cfg.Lab.EPC != "" || cfg.Lab.FaultAgent != "" || cfg.Lab.UEs != nil {
+		t.Errorf("lab = %+v without hss_provisioning, epc, fault_agent and ues", cfg.Lab)
 	}
 
 	tests := []struct {
@@ -718,6 +720,7 @@ func TestParseLab(t *testing.T) {
 		{"http_listen with port 0", `http_listen: ":8080"`, `http_listen: ":0"`, "http_listen"},
 		{"provisioning not a URL", "http://hss:8081", "hss:8081", "hss_provisioning"},
 		{"EPC not a URL", "http://epc:8080", "epc:8080", "epc:"},
+		{"fault agent not a URL", "http://fault-agent:8080", "fault-agent:8080", "fault_agent:"},
 		{"UE without a name", "name: ue-a, ", "", "ues[0].name"},
 		{"UE name with a slash", "name: ue-a", "name: ue/a", "ues[0].name"},
 		{"UE name used twice", "name: ue-b", "name: ue-a", `ues[1].name: "ue-a" is used twice`},

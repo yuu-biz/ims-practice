@@ -42,14 +42,23 @@
 //	    Forwarded with the same method, path and body to the HSS
 //	    provisioning API, whose answer comes back as it is. 503 when no
 //	    provisioning API is configured, 502 when it does not answer.
-//	GET /api/epc/ues/{imsi},
+//	GET /api/epc/ues, GET /api/epc/ues/{imsi},
 //	DELETE /api/epc/network-initiated/ues/{imsi}/bearers/{ebi},
 //	POST /api/epc/network-initiated/ues/{imsi}/detach
 //	    Forwarded with the same method and body to the EPC stub, at the
-//	    path without /api/epc (see epc.EPC.Handler): the state of a UE,
-//	    the network deactivating one of its bearers, the network
-//	    detaching it. 503 when no EPC stub is configured, 502
-//	    when it does not answer.
+//	    path without /api/epc (see epc.EPC.Handler): the UEs that are
+//	    attached, the state of one UE, the network deactivating one of
+//	    its bearers, the network detaching it. 503 when no EPC stub is
+//	    configured, 502 when it does not answer.
+//	GET /api/fault/faults, POST /api/fault/faults,
+//	DELETE /api/fault/faults/{id}
+//	    Forwarded with the same method and body to the fault agent, at
+//	    the paths of its API (see the fault package): the faults it
+//	    holds, injecting one, clearing one. 503 when no fault agent is
+//	    configured, 502 when it does not answer, which is what a Compose
+//	    deployment without deploy/chaos/agent.yaml gives: its
+//	    configuration names the agent, and that file is what starts the
+//	    agent and puts the Lab on its network.
 //	GET /api/ues
 //	    The UE simulators that the Lab controls, in the order of
 //	    its config: [{"name", "reachable", "status", "error"}]. status is
@@ -92,6 +101,9 @@ type Config struct {
 	// procedures that the network initiates the Lab passes on, or
 	// "".
 	EPC string
+	// FaultAgent is the URL of the API of the fault agent, whose faults
+	// the Lab passes on, or "".
+	FaultAgent string
 	// UEs are the UE simulators that the web UI drives.
 	UEs []UESimulator
 }
@@ -101,6 +113,7 @@ type Lab struct {
 	events      *broker
 	subscribers http.Handler
 	epc         http.Handler
+	faults      http.Handler
 	ues         *ueSimulators
 	log         *slog.Logger
 }
@@ -114,11 +127,15 @@ func New(cfg Config, log *slog.Logger) (*Lab, error) {
 	if err != nil {
 		return nil, err
 	}
+	faults, err := faultAPI(cfg.FaultAgent, log)
+	if err != nil {
+		return nil, err
+	}
 	ues, err := newUESimulators(cfg.UEs, log)
 	if err != nil {
 		return nil, err
 	}
-	return &Lab{store: newStore(cfg.MaxMessages), events: newBroker(), subscribers: subscribers, epc: epc, ues: ues, log: log}, nil
+	return &Lab{store: newStore(cfg.MaxMessages), events: newBroker(), subscribers: subscribers, epc: epc, faults: faults, ues: ues, log: log}, nil
 }
 
 // ingest keeps one HEP packet that came from the address from, and tells
@@ -155,6 +172,9 @@ func (l *Lab) Handler() http.Handler {
 	mux.Handle("PUT /api/subscribers/{impi}/customized-alerting-tone", l.subscribers)
 	for _, route := range epcRoutes {
 		mux.Handle(route, l.epc)
+	}
+	for _, route := range faultRoutes {
+		mux.Handle(route, l.faults)
 	}
 	mux.HandleFunc("GET /api/ues", l.ues.getList)
 	for _, route := range ueRoutes {

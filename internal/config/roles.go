@@ -693,6 +693,11 @@ type Lab struct {
 	// the procedures that the network initiates the Lab passes
 	// on. Empty leaves them unavailable.
 	EPC string
+	// FaultAgent is the URL of the API of the fault agent, such as
+	// http://fault-agent:8080, whose faults the Lab passes on. The agent
+	// runs only with deploy/chaos/agent.yaml; empty leaves the fault
+	// endpoints unavailable.
+	FaultAgent string
 	// UEs are the UE simulators ("ue serve") that the web UI drives, in
 	// the order it shows them.
 	UEs []UESimulator
@@ -712,6 +717,7 @@ type rawLab struct {
 	HTTPListen      string `yaml:"http_listen"`
 	HSSProvisioning string `yaml:"hss_provisioning"`
 	EPC             string `yaml:"epc"`
+	FaultAgent      string `yaml:"fault_agent"`
 	UEs             []struct {
 		Name    string `yaml:"name"`
 		Control string `yaml:"control"`
@@ -731,7 +737,10 @@ func (raw *rawLab) validate() (Lab, error) {
 	if raw.EPC != "" && !strings.HasPrefix(raw.EPC, "http://") {
 		return Lab{}, fmt.Errorf("epc: %q is not an http:// URL", raw.EPC)
 	}
-	d := Lab{HEPListen: raw.HEPListen, HTTPListen: raw.HTTPListen, HSSProvisioning: raw.HSSProvisioning, EPC: raw.EPC}
+	if raw.FaultAgent != "" && !strings.HasPrefix(raw.FaultAgent, "http://") {
+		return Lab{}, fmt.Errorf("fault_agent: %q is not an http:// URL", raw.FaultAgent)
+	}
+	d := Lab{HEPListen: raw.HEPListen, HTTPListen: raw.HTTPListen, HSSProvisioning: raw.HSSProvisioning, EPC: raw.EPC, FaultAgent: raw.FaultAgent}
 	names := map[string]bool{}
 	for i, u := range raw.UEs {
 		if !isUEName(u.Name) {

@@ -12,6 +12,7 @@ import (
 // initiates, from the host, where the addresses of the Compose network
 // may not be reachable. The UE API of the stub is not among them.
 var epcRoutes = []string{
+	"GET /api/epc/ues",
 	"GET /api/epc/ues/{imsi}",
 	"DELETE /api/epc/network-initiated/ues/{imsi}/bearers/{ebi}",
 	"POST /api/epc/network-initiated/ues/{imsi}/detach",
