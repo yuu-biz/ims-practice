@@ -297,7 +297,7 @@ func (s *SCSCF) endRegistration(ctx context.Context, reg Registration, event reg
 
 // subscriptionExpired ends a subscription that was not refreshed (RFC
 // 6665 4.2.1.4).
-func (s *SCSCF) subscriptionExpired(id sip.DialogID, expires time.Time) {
+func (s *SCSCF) subscriptionExpired(id sip.DialogID) {
 	ctx := context.Background()
 	log := s.log.With("call_id", id.CallID)
 	sub, unlock, ok, err := s.lockSubscription(ctx, id)
@@ -309,7 +309,9 @@ func (s *SCSCF) subscriptionExpired(id sip.DialogID, expires time.Time) {
 		return
 	}
 	defer unlock()
-	if !sub.Expires.Equal(expires) {
+	// Under the lock, the subscriber may have refreshed the subscription
+	// since its expiry came up.
+	if time.Now().Before(sub.Expires) {
 		return
 	}
 	reg, registered, err := s.store.Registration(ctx, sub.PrivateIdentity)
@@ -386,7 +388,7 @@ func (s *SCSCF) keepSubscription(ctx context.Context, sub Subscription) error {
 	if err := s.store.PutSubscription(ctx, sub); err != nil {
 		return err
 	}
-	s.subscriptionTimers.start(id, time.Until(sub.Expires), func() { s.subscriptionExpired(id, sub.Expires) })
+	s.subscriptionTimers.start(id, time.Until(sub.Expires), func() { s.subscriptionExpired(id) })
 	return nil
 }
 
