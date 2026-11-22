@@ -88,7 +88,7 @@ describe("UE simulator responses", () => {
     await expect(postUEAction("ue-a", "answer")).rejects.toEqual(new HttpError(409, "there is no incoming call that rings"));
   });
 
-  it("asks the UE through the dashboard, with the name escaped", async () => {
+  it("asks the UE through the Lab, with the name escaped", async () => {
     const fetch = vi.fn(async () => new Response(JSON.stringify(idle)));
     vi.stubGlobal("fetch", fetch);
     await postUEAction("ue a", "register");

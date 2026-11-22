@@ -64,7 +64,7 @@ BUILDX_BUILDER=ims-practice docker compose up -d --build
 クラウドの開発環境など、Docker が使えないか、`docker compose` のネットワークやキャプチャが動かない環境でも開発を続けられます。次のように置き換えます。
 
 - Go の試験はホストの Go で `GOTOOLCHAIN=auto go test ./...` を実行します。`go.mod` のバージョン（1.27.4）がホストに無くても、Go がそのバージョンを取ってきます。`-race` は `CGO_ENABLED=1` を付けます。
-- フロントエンドの試験はホストの Node で `web/dashboard` と `web/oam` の `npm ci && npm test && npm run build` を実行します。`node_modules` と `dist` は Git の対象外です。
+- フロントエンドの試験はホストの Node で `web/lab` と `web/oam` の `npm ci && npm test && npm run build` を実行します。`node_modules` と `dist` は Git の対象外です。
 - `go test` には必ず `-timeout` を付けます（パッケージ全体なら `-timeout 500s`、`-count=N` で繰り返すなら回数に合わせて延ばします）。`-timeout 0` は使いません。止まった試験のプロセスが、ほかの実行の邪魔をし続けるためです。
 - 試験は、ほかのプロセスが握っているかもしれない固定のポートに頼りません。待つときは期限を付け、期限が切れたら、何を待っていたかを出して失敗します。
 - 登録と通話の流れは `internal/ue` の試験で、SMS の流れは `internal/ipsmgw` の試験で確かめます。どちらの試験も IMS 全体を 1 つのプロセスの中で動かします。

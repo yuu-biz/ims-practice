@@ -1,7 +1,7 @@
 // Hand-written API data for the tests and the development mock. The
 // sequences, addresses and identities follow the Compose network and the
 // guides (docs/guide/en/registration.md and call.md); the payloads are
-// shortened. Each hop is reported by both nodes, as the dashboard server
+// shortened. Each hop is reported by both nodes, as the Lab server
 // returns it.
 
 import type { Call, Message, Protocol, Registration, SpecRef, Subscriber } from "../src/api.ts";
@@ -116,7 +116,7 @@ class Capture {
     this.sip(leg, false, `SIP/2.0 ${status}`, callId, `${cseq} ${method}`, `${status} (${method})`);
   }
 
-  // A Cx request and its answer, as the dashboard server renders Diameter,
+  // A Cx request and its answer, as the Lab server renders Diameter,
   // with the Call-ID of the SIP request that caused them.
   cx(leg: Leg, command: string, code: number, short: string, sessionId: string, publicIdentity: string, callId: string) {
     const avps = [

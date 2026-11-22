@@ -1,5 +1,5 @@
-// The UE simulator panel: a card per UE that the dashboard controls, kept
-// live by each UE's event stream through the dashboard.
+// The UE simulator panel: a card per UE that the Lab controls, kept
+// live by each UE's event stream through the Lab.
 
 import {
   answerModes,
@@ -47,7 +47,7 @@ interface Card {
   busy: boolean;
   // Open while the UE answers. A stream that fails is closed and opened
   // again by the next retry, since EventSource gives up for good on the
-  // 502 that the dashboard answers for a UE that is down.
+  // 502 that the Lab answers for a UE that is down.
   events: EventSource | null;
   // The user typed a target or a number; the suggestion no longer
   // replaces it.
@@ -166,7 +166,7 @@ export function mountUEPanel(container: HTMLElement, note: HTMLParagraphElement,
     }
     listed = true;
     note.hidden = list.length > 0;
-    note.textContent = "No UE simulators are configured. List them under lab.ues in the dashboard config.";
+    note.textContent = "No UE simulators are configured. List them under lab.ues in the Lab config.";
     for (const ue of list) {
       let card = cards.get(ue.name);
       if (card === undefined) {

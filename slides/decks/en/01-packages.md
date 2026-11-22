@@ -34,7 +34,7 @@ ims-practice study session 1 (where each node and each specification lives in th
 | `compose.yaml` | Puts the nodes on one Docker network. |
 | `docs/` | The guides (`docs/guide/`) and the glossary. |
 | `scripts/` | The e2e tests, one per scenario, and live capture. |
-| `web/dashboard/` | The web UI of the dashboard. |
+| `web/lab/` | The web UI of the dashboard. |
 | `images/` | Helper images, such as the capture container. |
 
 ---

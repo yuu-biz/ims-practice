@@ -1,4 +1,4 @@
-// A stand-in for the dashboard server's HTTP API, served by the Vite dev
+// A stand-in for the Lab server's HTTP API, served by the Vite dev
 // server from the test fixtures. MOCK_PROVISIONING=off makes the
 // subscriber endpoints answer 503, as the server does when
 // lab.hss_provisioning is not set. The UE simulators are in

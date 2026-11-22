@@ -14,5 +14,5 @@ scripts
 *.md
 *.pcap
 *.pcapng
-web/dashboard/node_modules
-web/dashboard/dist
+web/lab/node_modules
+web/lab/dist
