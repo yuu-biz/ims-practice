@@ -1,62 +1,65 @@
 package k8s
 
+import "github.com/yuu-biz/ims-practice/internal/yamledit"
+
 // changes is every difference between a role configuration file of
 // deploy/compose and its copy in base/config. Pods have no fixed
 // addresses, so what Docker Compose gives as an address Kubernetes gives
 // as a Service name, or an init container fills in when the Pod starts.
 // The comments change with the values, so that a learner who reads the
-// copy reads why it differs.
+// copy reads why it differs. A change with no File applies to every
+// role file that has its key.
 //
 // After changing this table or a file in deploy/compose, run
 //
 //	go generate ./deploy/k8s/...
-var changes = []change{
+var changes = []yamledit.Change{
 	{
-		file: "agw.yaml",
-		key:  "agw.rtp_address",
-		comment: `The Pod's own address, which the P-CSCF writes into SDP. Kubernetes
+		File: "agw.yaml",
+		Key:  "agw.rtp_address",
+		Comment: `The Pod's own address, which the P-CSCF writes into SDP. Kubernetes
 gives a Pod a new address each time it starts, so the init container
 in agw.yaml (the StatefulSet) writes it in place of ${POD_IP}. The UE
 Pods send RTP to it directly, without a Service in between.`,
-		value: "${POD_IP}",
+		Value: "${POD_IP}",
 	},
 	{
-		file: "agw.yaml",
-		key:  "agw.rtp_ports",
-		comment: `The same range as in Docker Compose. A UE outside the cluster needs
+		File: "agw.yaml",
+		Key:  "agw.rtp_ports",
+		Comment: `The same range as in Docker Compose. A UE outside the cluster needs
 these ports on the node, which the component edge opens with
 hostPort.`,
 	},
 	{
-		file: "mrfp.yaml",
-		key:  "mrfp.rtp_address",
-		comment: `The Pod's own address, which the MRFC writes into SDP. The init
+		File: "mrfp.yaml",
+		Key:  "mrfp.rtp_address",
+		Comment: `The Pod's own address, which the MRFC writes into SDP. The init
 container in mrfp.yaml (the StatefulSet) writes it in place of
 ${POD_IP}, as for the agw.`,
-		value: "${POD_IP}",
+		Value: "${POD_IP}",
 	},
 	{
-		file: "mrfp.yaml",
-		key:  "mrfp.announcements",
-		comment: `The WAV files that the image carries, the same as those that
+		File: "mrfp.yaml",
+		Key:  "mrfp.announcements",
+		Comment: `The WAV files that the image carries, the same as those that
 compose.yaml mounts from deploy/announcements.`,
 	},
 	{
-		file: "dashboard.yaml",
-		key:  "dashboard.hss_provisioning",
-		comment: `Names of Services instead of the fixed addresses of Docker Compose,
+		File: "dashboard.yaml",
+		Key:  "dashboard.hss_provisioning",
+		Comment: `Names of Services instead of the fixed addresses of Docker Compose,
 since Pod addresses change.`,
-		value: "http://hss.ims.svc.cluster.local:8081",
+		Value: "http://hss.ims.svc.cluster.local:8081",
 	},
 	{
-		file:  "dashboard.yaml",
-		key:   "dashboard.epc",
-		value: "http://epc.ims.svc.cluster.local:8080",
+		File:  "dashboard.yaml",
+		Key:   "dashboard.epc",
+		Value: "http://epc.ims.svc.cluster.local:8080",
 	},
 	{
-		file: "dashboard.yaml",
-		key:  "dashboard.ues",
-		comment: `The UE simulators ue-a and ue-b of ue.yaml. They start with zero
+		File: "dashboard.yaml",
+		Key:  "dashboard.ues",
+		Comment: `The UE simulators ue-a and ue-b of ue.yaml. They start with zero
 replicas, like the sim profile of compose.yaml; until they are
 scaled up, the web UI shows them as not reachable. volte-a and
 volte-b have no Pods: a VoLTE UE needs the static address that the
@@ -64,69 +67,69 @@ EPC stub hands its subscriber, which a Pod cannot ask for, so the
 web UI always shows them as not reachable.`,
 	},
 	{
-		file:  "dashboard.yaml",
-		key:   "dashboard.ues.0.control",
-		value: "http://ue-a.ims.svc.cluster.local:8090",
+		File:  "dashboard.yaml",
+		Key:   "dashboard.ues.0.control",
+		Value: "http://ue-a.ims.svc.cluster.local:8090",
 	},
 	{
-		file:  "dashboard.yaml",
-		key:   "dashboard.ues.1.control",
-		value: "http://ue-b.ims.svc.cluster.local:8090",
+		File:  "dashboard.yaml",
+		Key:   "dashboard.ues.1.control",
+		Value: "http://ue-b.ims.svc.cluster.local:8090",
 	},
 	{
-		file:  "dashboard.yaml",
-		key:   "dashboard.ues.4.control",
-		value: "http://ue-c.ims.svc.cluster.local:8090",
+		File:  "dashboard.yaml",
+		Key:   "dashboard.ues.4.control",
+		Value: "http://ue-c.ims.svc.cluster.local:8090",
 	},
 	{
-		file:  "dashboard.yaml",
-		key:   "dashboard.ues.2.control",
-		value: "http://volte-a.ims.svc.cluster.local:8090",
+		File:  "dashboard.yaml",
+		Key:   "dashboard.ues.2.control",
+		Value: "http://volte-a.ims.svc.cluster.local:8090",
 	},
 	{
-		file:  "dashboard.yaml",
-		key:   "dashboard.ues.3.control",
-		value: "http://volte-b.ims.svc.cluster.local:8090",
+		File:  "dashboard.yaml",
+		Key:   "dashboard.ues.3.control",
+		Value: "http://volte-b.ims.svc.cluster.local:8090",
 	},
 	{
-		file: "epc.yaml",
-		key:  "epc.pcscf_addresses",
-		comment: `Handed to the UE in the PCO, the first one preferred (TS 24.229
+		File: "epc.yaml",
+		Key:  "epc.pcscf_addresses",
+		Comment: `Handed to the UE in the PCO, the first one preferred (TS 24.229
 L.2.2.1). The PCO carries addresses, and the P-CSCF Pod's address
 changes when it starts again, so the init container in epc.yaml (the
 StatefulSet) looks it up and writes it in place of ${PCSCF_IP}.`,
-		value: []string{"${PCSCF_IP}"},
+		Value: []string{"${PCSCF_IP}"},
 	},
 	{
 		// The one place where addresses of the compose network stay
 		// (TestNoComposeAddresses).
-		file: "epc.yaml",
-		key:  "epc.subscribers",
-		comment: `Test IMSIs, as in the private identities of hss.yaml. The stub does
+		File: "epc.yaml",
+		Key:  "epc.subscribers",
+		Comment: `Test IMSIs, as in the private identities of hss.yaml. The stub does
 not route packets, so each UE must already have its address, a static
 one per subscriber (TS 23.401 5.3.1.1). These are the addresses of
 Docker Compose: Pods cannot ask for an address, so on Kubernetes they
 match no UE.`,
 	},
 	{
-		file:   "pcscf.yaml",
-		key:    "pcscf.host_access",
-		remove: true,
-		comment: `No host_access: the UEs run as Pods in the cluster and reach the
+		File:   "pcscf.yaml",
+		Key:    "pcscf.host_access",
+		Remove: true,
+		Comment: `No host_access: the UEs run as Pods in the cluster and reach the
 P-CSCF and the relay without NAT. A UE on the host needs it again,
 with the gateway of the kind network.`,
 	},
 	{
-		key: "hep",
-		comment: `Copies of every SIP and Diameter message for the dashboard.
+		Key: "hep",
+		Comment: `Copies of every SIP and Diameter message for the dashboard.
 The dashboard's Service keeps one ClusterIP while its Pod comes and
 goes, so the name resolves even when the dashboard is down; the
 dashboard is not on the call path. HEP is one-way UDP, and the
 NAT of kube-proxy in front of a ClusterIP does no harm to it.`,
 	},
 	{
-		key:   "hep.collector",
-		value: "dashboard.ims.svc.cluster.local:9060",
+		Key:   "hep.collector",
+		Value: "dashboard.ims.svc.cluster.local:9060",
 	},
 }
 
