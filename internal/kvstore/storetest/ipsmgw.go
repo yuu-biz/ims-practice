@@ -22,6 +22,9 @@ func IPSMGW(t *testing.T, newPair func(t *testing.T) (ipsmgw.Store, ipsmgw.Store
 		{"WhatIsPutPastItsTimeIsGone", ipsmgwPastItsTime},
 		{"Delivery", ipsmgwDelivery},
 		{"OnlyOneTakesADelivery", ipsmgwOnlyOneTakes},
+		{"ReportTimeoutIsClaimedOnce", ipsmgwReportTimeoutClaimedOnce},
+		{"ClaimThatIsNotDoneRunsOut", ipsmgwClaimRunsOut},
+		{"TakenDeliveryLeavesNoExpiry", ipsmgwTakenDeliveryLeavesNoExpiry},
 		{"RegSubscription", ipsmgwRegSubscription},
 		{"RegSubscriptionReplacesTheOldOne", ipsmgwRegSubscriptionReplaces},
 		{"PublicIdentitiesCompareTheUserPartWithCase", ipsmgwUserPartWithCase},
@@ -56,6 +59,25 @@ func getDelivery(t *testing.T, s ipsmgw.Store, callID string) (ipsmgw.PendingDel
 		t.Errorf("Delivery(%s): %v", callID, err)
 	}
 	return d, ok
+}
+
+// claimDueDeliveries claims at most ten deliveries whose TR1N is due.
+// The suite passes the now of its choosing, as the sweep of an IP-SM-GW
+// instance passes its own, so that no case has to wait out a lease.
+func claimDueDeliveries(t *testing.T, s ipsmgw.Store, now time.Time, lease time.Duration) []ipsmgw.Expiry {
+	t.Helper()
+	due, err := s.ClaimDue(context.Background(), now, lease, 10)
+	if err != nil {
+		t.Errorf("ClaimDue: %v", err)
+	}
+	return due
+}
+
+func doneDelivery(t *testing.T, s ipsmgw.Store, e ipsmgw.Expiry) {
+	t.Helper()
+	if err := s.Done(context.Background(), e); err != nil {
+		t.Errorf("Done(%s): %v", e.CallID, err)
+	}
 }
 
 func takeDelivery(t *testing.T, s ipsmgw.Store, callID string) (ipsmgw.PendingDelivery, bool) {
@@ -245,7 +267,81 @@ func ipsmgwDelivery(t *testing.T, a, b ipsmgw.Store) {
 	}
 }
 
-// ipsmgwOnlyOneTakes: the report, a failed MESSAGE and the timer may
+// ipsmgwReportTimeoutClaimedOnce: the TR1N of a delivery that is due
+// goes to one instance, and Done ends it for good.
+func ipsmgwReportTimeoutClaimedOnce(t *testing.T, a, b ipsmgw.Store) {
+	d := delivery("msg-1", time.Hour)
+	putDelivery(t, a, d)
+	if got := claimDueDeliveries(t, b, d.ReportDeadline.Add(-time.Millisecond), time.Minute); len(got) != 0 {
+		t.Fatalf("claimed %+v before TR1N ran out", got)
+	}
+	var mu sync.Mutex
+	var claimed []ipsmgw.Expiry
+	parallel(4, func(i int) {
+		s := a
+		if i%2 == 1 {
+			s = b
+		}
+		got := claimDueDeliveries(t, s, d.ReportDeadline, time.Minute)
+		mu.Lock()
+		defer mu.Unlock()
+		claimed = append(claimed, got...)
+	})
+	if len(claimed) != 1 {
+		t.Fatalf("%d instances claimed TR1N (%+v), want 1", len(claimed), claimed)
+	}
+	if e := claimed[0]; e.CallID != d.CallID || !e.Until.After(d.ReportDeadline) {
+		t.Errorf("the claim = %+v, want the delivery %s until after its ReportDeadline", e, d.CallID)
+	}
+	doneDelivery(t, b, claimed[0])
+	if got := claimDueDeliveries(t, a, d.ReportDeadline.Add(time.Hour), time.Minute); len(got) != 0 {
+		t.Errorf("claimed %+v after Done", got)
+	}
+}
+
+// ipsmgwClaimRunsOut: the instance that claimed a TR1N stops before it
+// has ended the delivery, so no Done comes; once its claim runs out
+// another instance takes the expiry over, and the late Done of the first
+// one takes nothing away from it.
+func ipsmgwClaimRunsOut(t *testing.T, a, b ipsmgw.Store) {
+	d := delivery("msg-1", time.Hour)
+	putDelivery(t, a, d)
+	first := claimDueDeliveries(t, a, d.ReportDeadline, time.Minute)
+	if len(first) != 1 {
+		t.Fatalf("claims = %+v, want the delivery once", first)
+	}
+	if got := claimDueDeliveries(t, b, first[0].Until.Add(-time.Millisecond), time.Minute); len(got) != 0 {
+		t.Fatalf("claimed %+v while the other instance held the claim", got)
+	}
+	second := claimDueDeliveries(t, b, first[0].Until, time.Minute)
+	if len(second) != 1 {
+		t.Fatalf("claims after the lease ran out = %+v, want the delivery once", second)
+	}
+	doneDelivery(t, a, first[0])
+	if got := claimDueDeliveries(t, a, second[0].Until.Add(-time.Millisecond), time.Minute); len(got) != 0 {
+		t.Errorf("the Done of the lost claim gave the expiry away again: %+v", got)
+	}
+	doneDelivery(t, b, second[0])
+	if got := claimDueDeliveries(t, a, second[0].Until, time.Minute); len(got) != 0 {
+		t.Errorf("claimed %+v after Done", got)
+	}
+}
+
+// ipsmgwTakenDeliveryLeavesNoExpiry: the TR1N of a delivery that a
+// report ended is gone with it, so no instance is left to end a delivery
+// that is not there.
+func ipsmgwTakenDeliveryLeavesNoExpiry(t *testing.T, a, b ipsmgw.Store) {
+	d := delivery("msg-1", time.Hour)
+	putDelivery(t, a, d)
+	if _, ok := takeDelivery(t, b, d.CallID); !ok {
+		t.Fatal("TakeDelivery did not get the delivery")
+	}
+	if got := claimDueDeliveries(t, a, d.ReportDeadline, time.Minute); len(got) != 0 {
+		t.Errorf("TR1N of a delivery that was taken = %+v, want nothing", got)
+	}
+}
+
+// ipsmgwOnlyOneTakes: the report, a failed MESSAGE and TR1N may
 // end one delivery at once, on different instances.
 func ipsmgwOnlyOneTakes(t *testing.T, a, b ipsmgw.Store) {
 	for range 10 {
