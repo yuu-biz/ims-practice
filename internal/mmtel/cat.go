@@ -283,8 +283,9 @@ func (c *call) stopAlertingTone(why string) {
 // UPDATE whose offer is the callee's SDP, so that the media goes
 // between the two (a 1 and a 2). The SDP is that of the dialog of the
 // 200, which the INVITE may have forked into beyond the AS (RFC 3261
-// 13.2.2.4). It reports whether the caller had the tone, in which case
-// the 200 goes to the caller without SDP.
+// 13.2.2.4), and the UPDATE is in the caller's early dialog
+// (offerCaller). It reports whether the caller had the tone, in which
+// case the 200 goes to the caller without SDP.
 func (c *call) answerAfterTone(resp *sip.Message) bool {
 	t := c.cat
 	if t == nil || t.phase == catStopped {
@@ -295,25 +296,7 @@ func (c *call) answerAfterTone(resp *sip.Message) bool {
 	if !played {
 		return false
 	}
-	tag := toTag(resp)
-	c.keepCalleeSDP(tag, sip.BodyOf(resp))
-	c.mu.Lock()
-	callee := c.calleeSDP[tag]
-	c.mu.Unlock()
-	offer, err := sdp.Parse(callee)
-	if err != nil {
-		c.log.Warn("CAT: no SDP of the callee for the caller", "error", err.Error())
-		return true
-	}
-	t.origin.Version++
-	offer.Origin = t.origin
-	update, err := c.in.Update(sdpBody(offer))
-	switch {
-	case err != nil:
-		c.log.Warn("CAT: the UPDATE to the caller failed", "error", err.Error())
-	case update.StatusCode >= 300:
-		c.log.Warn("CAT: the caller refused the UPDATE", "status", update.StatusCode)
-	}
+	t.origin, _ = c.offerCaller(toTag(resp), t.origin)
 	return true
 }
 
