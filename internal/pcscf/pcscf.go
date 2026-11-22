@@ -394,7 +394,7 @@ func (p *PCSCF) register(st *sip.ServerTransaction, protected bool) {
 	case final.StatusCode == 500 || final.StatusCode == 504:
 		// 5.2.2.3: the network failed, so the association can no longer
 		// be trusted.
-		p.deleteAssociation(st.Source, log)
+		p.deleteAssociation(ueSource(st), log)
 	}
 	crossBoundary(final, responseToUE)
 	st.Respond(final)
@@ -478,7 +478,7 @@ func (p *PCSCF) association(st *sip.ServerTransaction, privateID string) (Associ
 func (p *PCSCF) registered(st *sip.ServerTransaction, resp *sip.Message, privateID string, old Association, log *slog.Logger) (Association, time.Duration, bool) {
 	interval := grantedInterval(resp)
 	if interval == 0 {
-		if a, ok := p.store.Association(st.Source); ok {
+		if a, ok := p.store.Association(ueSource(st)); ok {
 			p.endAssociation(a, log)
 		}
 		log.Info("deregistered")
@@ -486,7 +486,7 @@ func (p *PCSCF) registered(st *sip.ServerTransaction, resp *sip.Message, private
 	}
 	via, _ := sip.ParseVia(st.Request.Get("Via"))
 	a := Association{
-		Source:          st.Source,
+		Source:          ueSource(st),
 		Contact:         contactOf(st.Request),
 		SentBy:          via.SentBy(),
 		PrivateIdentity: privateID,

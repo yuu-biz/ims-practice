@@ -362,12 +362,15 @@ expect "MAA 2001 with RAND and AUTN, XRES, CK and IK (TS 29.228 6.3)" "$(answer_
 # are found by the comma or space before them, which base64 has not.
 expect "401 S-CSCF -> I-CSCF with ck and ik for the P-CSCF" "sip.Status-Code == 401 && ip.src == $scscf && sip.Call-ID == \"$reg\" && sip.WWW-Authenticate matches \"[, ]ck=\" && sip.WWW-Authenticate matches \"[, ]ik=\""
 expect "401 P-CSCF -> volte-a: Security-Server, ck and ik removed" "sip.Status-Code == 401 && ip.dst == $va_ip && sip.Security-Server && !(sip.WWW-Authenticate matches \"[, ]ck=\") && !(sip.WWW-Authenticate matches \"[, ]ik=\")"
-expect "REGISTER volte-a:5062 -> P-CSCF:5064: Security-Verify and the response from RES" "sip.Method == \"REGISTER\" && ip.src == $va_ip && udp.srcport == 5062 && udp.dstport == 5064 && sip.Security-Verify && !(sip.Authorization contains \"response=\\\"\\\"\")"
+# The answer is close to 1300 bytes: with long SPIs it goes over TCP
+# (RFC 3261 18.1.1), from a port of the moment, and its 200 OK comes
+# back on that connection.
+expect "REGISTER volte-a:5062 -> P-CSCF:5064, or over TCP to 5064: Security-Verify and the response from RES" "sip.Method == \"REGISTER\" && ip.src == $va_ip && ((udp.srcport == 5062 && udp.dstport == 5064) || tcp.dstport == 5064) && sip.Security-Verify && !(sip.Authorization contains \"response=\\\"\\\"\")"
 expect "REGISTER P-CSCF -> I-CSCF: integrity-protected=\"yes\"" "sip.Method == \"REGISTER\" && ip.src == $pcscf && sip.Call-ID == \"$reg\" && sip.Authorization contains \"integrity-protected=\\\"yes\\\"\""
 expect "SAR S-CSCF -> HSS" "diameter.cmd.code == 301 && $req && diameter.User-Name == \"$impi_a\""
 expect "200 OK I-CSCF -> P-CSCF" "sip.Status-Code == 200 && sip.Call-ID == \"$reg\" && ip.dst == $pcscf"
 mark
-expect "200 OK P-CSCF:5064 -> volte-a:5062: P-Associated-URI with the default public identity, without the barred temporary one (TS 24.229 5.4.1.2.2F)" "sip.Status-Code == 200 && sip.CSeq.method == \"REGISTER\" && ip.dst == $va_ip && udp.srcport == 5064 && udp.dstport == 5062 && sip.P-Associated-URI contains \"<$default_a>\" && !(sip.P-Associated-URI contains \"$temporary_a\")"
+expect "200 OK P-CSCF:5064 -> volte-a: P-Associated-URI with the default public identity, without the barred temporary one (TS 24.229 5.4.1.2.2F)" "sip.Status-Code == 200 && sip.CSeq.method == \"REGISTER\" && ip.dst == $va_ip && ((udp.srcport == 5064 && udp.dstport == 5062) || tcp.srcport == 5064) && sip.P-Associated-URI contains \"<$default_a>\" && !(sip.P-Associated-URI contains \"$temporary_a\")"
 registered="$last"
 back
 expect "AAR P-CSCF -> PCRF for the signalling path: AF_SIGNALLING, loss and release of the bearer (TS 29.214 A.4)" "$aar && diameter.Framed-IP-Address.IPv4 == $va_ip && diameter.Flow-Usage == 2 && diameter.Specific-Action == 2 && diameter.Specific-Action == 4"

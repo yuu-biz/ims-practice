@@ -141,7 +141,7 @@ K and OPc are those of MILENAGE test set 1. OPc is derived from the operator's O
 6. **The P-CSCF sets up temporary associations (#737).** It takes `ik` and `ck` out of the 401, so that the keys never travel to the UE, and offers its own associations in `Security-Server: ipsec-3gpp;q=0.1;alg=hmac-sha2-256-128;ealg=null;spi-c=...;spi-s=...;port-c=50711;port-s=5064` (5.2.2.2, TS 33.203 7.2).
 7. **The UE checks the network (#740).** Its USIM computes the MAC of AUTN and compares it with the one in AUTN: a match shows that the network knows K. It checks that the SQN is fresh (TS 33.102 6.3.3, C.2), and computes RES, CK and IK.
 8. **REGISTER over the associations (#740).** The UE answers from its protected server port 5062 to the P-CSCF's protected server port 5064 (TS 33.203 7.1). It repeats its Security-Client and mirrors the Security-Server in `Security-Verify`, so that a man in the middle cannot have removed a stronger offer (RFC 3329). The response of the Digest is computed with RES as the password (RFC 3310 3.3).
-9. **The P-CSCF checks the agreement (#749).** The REGISTER came to the protected port from the UE's address and port, and Security-Verify matches what it sent. It marks the Authorization `integrity-protected="yes"`.
+9. **The P-CSCF checks the agreement (#749).** The REGISTER came to the protected port from the UE's address and port, and Security-Verify matches what it sent. A REGISTER over 1300 bytes comes over TCP from another port, and the P-CSCF takes the UE's port from its Via instead. It marks the Authorization `integrity-protected="yes"`.
 10. **The S-CSCF checks RES (#760, #764).** It computes the Digest with XRES and compares (TS 24.229 5.4.1.2.2). They match, so it sends the SAR and registers the UE.
 11. **The 200 OK (#783).** It goes back over the associations, which now become established; their lifetime follows the registration (5.2.2.2). From now on the UE sends every request to port 5064, with that port in the P-CSCF URI of its Route, and the P-CSCF sends to the UE at 5062; the Path that the P-CSCF added names its protected port.
 12. **The signalling path (#786).** Once the UE is registered, the P-CSCF asks the PCRF to tell it when the UE loses its signalling bearer (TS 29.214 A.4). It does so after the initial registration has succeeded, as the flow of TS 29.213 B.1 shows, so a UE that fails to authenticate opens no Rx session. The 200 OK and this AAR leave the P-CSCF in either order.
@@ -183,7 +183,7 @@ Captures are readable by default, so that a learner sees the SIP of a registered
 Without ESP, two things differ from a real network:
 
 - Each side sends from its protected server port, so the protected client ports (`port-c`) are agreed and never bound.
-- A request over TCP comes from a port of the moment. The VoLTE INVITE is larger than 1300 bytes and goes over TCP (RFC 3261 18.1.1), so the P-CSCF knows the UE of a TCP request by the sent-by of its Via. The REGISTERs stay below 1300 bytes, so that the agreement is made over UDP.
+- A request over TCP comes from a port of the moment. The VoLTE INVITE is larger than 1300 bytes and goes over TCP (RFC 3261 18.1.1), so the P-CSCF knows the UE of a TCP request by the sent-by of its Via. A REGISTER that answers a challenge is close to 1300 bytes, so whether it goes over TCP depends on how many digits its SPIs have. TCP and UDP share the security associations (TS 33.203 7.1), so the P-CSCF finds them for that REGISTER by the sent-by of its Via too.
 
 ### SIPp
 
