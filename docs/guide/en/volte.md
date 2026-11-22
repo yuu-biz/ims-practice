@@ -4,7 +4,7 @@
 
 This guide follows what a VoLTE phone adds to the softphone of [Follow a UE registering with the IMS](registration.md) and [Follow a voice call through the IMS](call.md): the access network, IMS AKA with the security agreement, policy control over Rx, and a voice call the way a VoLTE phone makes it. Two UE simulators attach to a stub of the EPC, register with IMS AKA, and call each other in AMR-WB with preconditions; the PCRF sets up a voice bearer for each of them. Then the network takes one of the bearers away and the P-CSCF ends the call.
 
-The guide follows these editions: TS 24.229 V20.1.0, TS 29.214 V20.0.0 (Rx), TS 29.213 (the SDP to Rx mapping), TS 24.301 V20.1.0 (the EPS messages), TS 33.203 and TS 33.102 (IMS AKA), TS 35.206 and TS 35.208 (MILENAGE), RFC 3310 (Digest AKA), RFC 3329 (sec-agree), RFC 3312 (preconditions), RFC 4867 (AMR payload format), RFC 4028 (session timer) and GSMA IR.92 v24.0. Clause numbers below refer to those editions.
+The guide follows these editions: TS 24.229 V20.1.0, TS 29.214 V20.0.0 (Rx), TS 29.213 (the SDP to Rx mapping), TS 24.301 V20.1.0 (the EPS messages), TS 26.114 V20.1.1 (media handling), TS 33.203 and TS 33.102 (IMS AKA), TS 35.206 and TS 35.208 (MILENAGE), RFC 3310 (Digest AKA), RFC 3329 (sec-agree), RFC 3312 (preconditions), RFC 4867 (AMR payload format), RFC 4028 (session timer) and GSMA IR.92 v24.0. Clause numbers below refer to those editions.
 
 ## Before you start
 
@@ -544,6 +544,7 @@ Each item has a `SIMPLIFIED:` comment in the code; `grep -rn "SIMPLIFIED:" inter
 | Relay, RFC 3605, RFC 5761, RFC 4961 | RTCP is on the port above RTP; a latched address is kept for the whole call. | No UE here sends a=rtcp or rtcp-mux, or moves in a call. |
 | Preconditions, RFC 4032 4.1, 4.2 | A stream that moves to a new address is not detected. | The UE keeps its address for the whole call. |
 | SDP, RFC 8866 5.7 | IPv4 unicast addresses only in c=. | Every node here uses IPv4. |
+| SDP, TS 26.114 5.2.1.1 | No EVS, and so no super-wideband speech, in the offer for NR access (`sdp.VoNRCodecs`): it is the offer for LTE. | The UE has no EVS codec. An EVS payload type would offer bit rates of EVS Primary that the UE cannot send. |
 | UA, RFC 3261 12.2.1.2 | A lost early dialog, or a failed PRACK, is only logged. | The final response to the INVITE ends the call anyway. |
 | UA, RFC 3261 13.2.2.4 | A BYE that ends a dialog whose 2xx had an offer sends the ACK without an answer first. | The UA has no SDP of its own then. |
 | UA, RFC 4028 7.1, 10 | timer is in the Supported of the INVITE and its dialog only; after a refresh fails, the UA only logs and the expiry ends the session. | The session timer concerns the call's dialog; no node challenges a request within a dialog. |

@@ -2,10 +2,9 @@ package sdp
 
 import (
 	"fmt"
+	"net/netip"
 	"slices"
 	"testing"
-
-	"github.com/yuu-biz/ims-practice/internal/evs"
 )
 
 // checkInitialOffer is what TS 26.114 V20.1.1 Table 6.2a and NG.114
@@ -50,46 +49,24 @@ func TestEVSConfigurationOffers(t *testing.T) {
 	}
 }
 
-// TestVoNRCodecs checks the order of TS 26.114 5.2.1.6: EVS, which
-// offers super-wideband, first, then AMR-WB, then AMR; and that the
-// VoLTE part is VoLTECodecs as it is.
-func TestVoNRCodecs(t *testing.T) {
-	cs := VoNRCodecs(EVSConfigA2)
+// TestVoNROfferHasNoEVS checks that the offer for NR access names only
+// what the UE sends: AMR-WB, then AMR (TS 26.114 5.2.1.6), PCMU and
+// telephone-event, and no EVS, for which the UE has no codec.
+func TestVoNROfferHasNoEVS(t *testing.T) {
+	o, err := AudioOffer("7", netip.MustParseAddrPort("172.28.0.100:40002"), VoNRCodecs())
+	if err != nil {
+		t.Fatal(err)
+	}
+	parsed, err := Parse(o.Bytes())
+	if err != nil {
+		t.Fatal(err)
+	}
 	var names []string
-	for _, c := range cs {
+	for _, c := range parsed.AudioMedia().Codecs() {
 		names = append(names, c.Name)
 	}
-	want := []string{NameEVS, NameAMRWB, NameAMRWB, NameAMR, NameAMR, NamePCMU, NameTelephoneEvent, NameTelephoneEvent}
+	want := []string{NameAMRWB, NameAMRWB, NameAMR, NameAMR, NamePCMU, NameTelephoneEvent, NameTelephoneEvent}
 	if !slices.Equal(names, want) {
-		t.Errorf("order %q, want %q", names, want)
-	}
-	if !slices.Equal(cs[1:], VoLTECodecs()) {
-		t.Errorf("the VoLTE codecs changed: %+v", cs[1:])
-	}
-	if got := cs[0].Rtpmap(); got != "102 EVS/16000/1" {
-		t.Errorf("rtpmap %q", got)
-	}
-	if _, err := cs[0].EVSFormat(); err != nil {
-		t.Error(err)
-	}
-}
-
-// TestUEToUE is a call between two UEs of this project: the answer
-// starts both directions in EVS AMR-WB IO.
-func TestUEToUE(t *testing.T) {
-	offered, err := VoNRCodecs(UEEVS.Configuration)[0].EVSParams()
-	if err != nil {
-		t.Fatal(err)
-	}
-	answer, err := AnswerEVSParams(offered, UEEVS)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got, want := answer.String(), "br=5.9-24.4; bw=nb-swb; evs-mode-switch=1; max-red=0"; got != want {
-		t.Errorf("answer %q, want %q", got, want)
-	}
-	// The offerer reads the start mode from the answer (TS 26.114 Table 6.3a).
-	if answer.StartMode() != evs.AMRWBIO {
-		t.Errorf("start mode %v", answer.StartMode())
+		t.Errorf("offered %q, want %q", names, want)
 	}
 }
