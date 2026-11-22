@@ -327,23 +327,33 @@ func TestHSSStartsAgainOnItsStore(t *testing.T) {
 func TestRoleStoresAreTheSharedStoreOfTheNode(t *testing.T) {
 	ctx := context.Background()
 	roles := []struct {
-		role config.Role
+		// name is the role, and the function within it when the role has
+		// more than one Store.
+		name string
 		// read is one operation of the role on its Store, the kind it
 		// does for the first request it serves.
 		read func(roleStores) error
 	}{
-		{config.RoleSCSCF, func(s roleStores) error {
+		{string(config.RoleSCSCF), func(s roleStores) error {
 			_, _, err := scscfStore(s, quiet()).Registration(ctx, impi)
 			return err
 		}},
-		{config.RoleHSS, func(s roleStores) error {
+		{string(config.RoleHSS), func(s roleStores) error {
 			subscriber := hss.Subscription{PrivateIdentity: impi, PublicIdentities: []string{impu}, Password: "p"}
 			_, err := hssStore(ctx, hss.Config{Subscriptions: []hss.Subscription{subscriber}}, s, quiet())
 			return err
 		}},
-		{config.RolePCSCF, func(s roleStores) error {
+		{string(config.RolePCSCF), func(s roleStores) error {
 			ue := sip.Destination{Transport: sip.UDP, Addr: netip.MustParseAddrPort("172.28.0.100:5060")}
 			_, _, err := pcscfStore(s, quiet()).Association(ctx, ue)
+			return err
+		}},
+		{string(config.RoleIPSMGW), func(s roleStores) error {
+			_, _, err := ipsmgwStore(s, quiet()).Delivery(ctx, "a-call-id")
+			return err
+		}},
+		{string(config.RoleIPSMGW) + " sc stub", func(s roleStores) error {
+			_, _, err := scStore(s, quiet()).TakeStatusReportRequest(ctx, "1")
 			return err
 		}},
 	}
@@ -357,12 +367,12 @@ func TestRoleStoresAreTheSharedStoreOfTheNode(t *testing.T) {
 			{"memory", &config.Store{Kind: config.StoreMemory, Timeout: time.Second}, true},
 			{"valkey that cannot be reached", unreachableStore(t), false},
 		} {
-			t.Run(string(r.role)+" with "+tt.name, func(t *testing.T) {
+			t.Run(r.name+" with "+tt.name, func(t *testing.T) {
 				stores, closeStores := newRoleStores(tt.store)
 				defer closeStores()
 				err := r.read(stores)
 				if worked := err == nil; worked != tt.works {
-					t.Errorf("the operation on the Store of the %s worked: %v (error %v), want %v", r.role, worked, err, tt.works)
+					t.Errorf("the operation on the Store of the %s worked: %v (error %v), want %v", r.name, worked, err, tt.works)
 				}
 			})
 		}

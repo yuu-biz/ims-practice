@@ -37,9 +37,11 @@ import (
 	"github.com/yuu-biz/ims-practice/internal/kvstore"
 	"github.com/yuu-biz/ims-practice/internal/kvstore/hssstore"
 	"github.com/yuu-biz/ims-practice/internal/kvstore/ibcfstore"
+	"github.com/yuu-biz/ims-practice/internal/kvstore/ipsmgwstore"
 	"github.com/yuu-biz/ims-practice/internal/kvstore/kvjson"
 	"github.com/yuu-biz/ims-practice/internal/kvstore/pcscfstore"
 	"github.com/yuu-biz/ims-practice/internal/kvstore/scscfstore"
+	"github.com/yuu-biz/ims-practice/internal/kvstore/scstore"
 	"github.com/yuu-biz/ims-practice/internal/mmtel"
 	"github.com/yuu-biz/ims-practice/internal/mrfc"
 	"github.com/yuu-biz/ims-practice/internal/pcscf"
@@ -247,14 +249,15 @@ func run(configPath string, log *slog.Logger) error {
 	if c := cfg.IPSMGW; c != nil {
 		roleLog := log.With("role", config.RoleIPSMGW)
 		users := sh.NewClient(node, hssPeer(peers), cfg.HomeDomain)
-		centre := sc.New(users, sc.NewMemoryStore(), roleLog.With("function", "sc"))
+		centreLog := roleLog.With("function", "sc")
+		centre := sc.New(users, scStore(stores, centreLog), centreLog)
 		g := ipsmgw.New(ipsmgw.Config{
 			URI:           c.SIP.URI(),
 			HomeDomain:    cfg.HomeDomain,
 			Number:        c.Number,
 			ServiceCentre: c.ServiceCentre,
 			IBCF:          c.IBCF,
-		}, centre, ipsmgw.NewMemoryStore(), users, resolver, roleLog)
+		}, centre, ipsmgwStore(stores, roleLog), users, resolver, roleLog)
 		centre.SetIPSMGW(g)
 		if c.IBCF.Host != "" {
 			// A short message for a user of another network leaves
@@ -502,6 +505,28 @@ func hssStore(ctx context.Context, c hss.Config, stores roleStores, log *slog.Lo
 		}
 	}
 	return store, nil
+}
+
+// ipsmgwStore is where the IP-SM-GW keeps the deliveries it is waiting
+// for a report on, the RP-MR counter of each recipient and its
+// subscriptions to the reg event of the users (TS 24.341 5.3.3).
+// Whichever instance a report or a NOTIFY reaches then finds what
+// another one stored.
+func ipsmgwStore(stores roleStores, log *slog.Logger) ipsmgw.Store {
+	if kv, cfg, ok := stores.adapter(log); ok {
+		return ipsmgwstore.New(kv, cfg)
+	}
+	return ipsmgw.NewMemoryStore()
+}
+
+// scStore is where the SC stub keeps the status report that each
+// delivery owes its sender, so that the instance which hears the
+// outcome sends it (TS 23.040 3.2.6).
+func scStore(stores roleStores, log *slog.Logger) sc.Store {
+	if kv, cfg, ok := stores.adapter(log); ok {
+		return scstore.New(kv, cfg)
+	}
+	return sc.NewMemoryStore()
 }
 
 // pcscfStore is where the P-CSCF keeps the IP association of each
