@@ -48,6 +48,7 @@ ue2=(--impi "001010000000002@$domain" --impu "sip:+12025550102@$domain" --passwo
 ue3=(--impi "001010000000003@$domain" --impu "sip:+12025550103@$domain" --password test-password-3)
 remember_nodes
 fail=0
+pcap="$(docker compose exec -T capture sh -c 'ls -t /captures/ims-*.pcap | head -n 1' | tr -d '\r')"
 
 # The UE simulators are ue, ue2 and ue3 of compose.yaml, with fixed
 # addresses, so each runs once at a time.
@@ -70,6 +71,8 @@ xcap() {
 set_service() {
 	local who="$1" service="$2" name="$3" state="$4" out
 	shift 4
+	# A failed "ue xcap" is reported by the check below, from what it
+	# printed, hence "|| true".
 	out="$(xcap "$service" set "$name" "$state" "$@" || true)"
 	# The settings are the JSON object at the end; docker compose may
 	# write lines of its own before it.
@@ -86,16 +89,6 @@ sys.exit(0 if service["active"] == (sys.argv[2] == "on") else 1)
 		fail=1
 	fi
 }
-# wait_log waits until the log of a container started with "run -d"
-# matches pattern.
-wait_log() {
-	local name="$1" pattern="$2" i
-	for i in $(seq 1 30); do
-		grep -q "$pattern" <<<"$(docker logs "$name" 2>/dev/null)" && return 0
-		sleep 1
-	done
-	return 1
-}
 # answer NAME SERVICE ARGS... has that UE wait, as container NAME, for
 # one call that "ue answer" takes as ARGS say.
 answer() {
@@ -108,16 +101,9 @@ answer() {
 		fail=1
 	fi
 }
-# ended NAME waits for the container to end, removes it, and prints its
-# exit status.
-ended() {
-	local status
-	status="$(timeout 60 docker wait "$1" 2>/dev/null || echo timeout)"
-	docker logs "$1" >"e2e-out/$1.log" 2>&1 || true
-	docker rm -f "$1" >/dev/null 2>&1 || true
-	echo "$status"
-}
-# call ARGS... is UE 1's "ue call", whose log it prints.
+# call ARGS... is UE 1's "ue call", whose log it prints. The UE exits 1
+# when the call fails, as the barred calls do; the checks read the log,
+# hence "|| true".
 call() { docker compose run --no-deps --rm ue call --tone 1s "$@" 2>&1 || true; }
 mkdir -p e2e-out
 
@@ -141,6 +127,7 @@ fi
 answer ims-practice-ue2-oir ue2 --ring 500ms --tone 1s
 out="$(call tel:+12025550102)"
 status="$(ended ims-practice-ue2-oir)"
+# Empty when UE 2 logged no incoming call, which the check reports.
 incoming="$(grep '"msg":"incoming call"' e2e-out/ims-practice-ue2-oir.log || true)"
 if [ "$status" = 0 ] && grep -q 'anonymous@anonymous.invalid' <<<"$incoming" && grep -q '"p_asserted_identity":""' <<<"$incoming"; then
 	echo "ok   UE 2 got a call from an anonymous caller, with no asserted identity"
@@ -155,7 +142,7 @@ echo "CFU: UE 2 diverts every call to UE 3, while it is registered"
 # it runs while no other container of ue2 does.
 set_service "UE 2" ue2 cfu on tel:+12025550103
 docker compose run --no-deps -d --name ims-practice-ue2-reg ue2 register "${ue2[@]}" >/dev/null
-wait_log ims-practice-ue2-reg '"msg":"registered"' || true
+wait_log ims-practice-ue2-reg '"msg":"registered"' || fail=1
 answer ims-practice-ue3-cfu ue3 --ring 500ms --tone 1s
 out="$(call tel:+12025550102)"
 if grep -q '"msg":"call progress","status":181' <<<"$out" && grep -q '"msg":"call answered"' <<<"$out" &&
@@ -241,6 +228,10 @@ fi
 set_service "UE 1" ue baoc off
 
 echo "every service off again: a plain call"
+# The checks read the capture up to this call's 200 OK to UE 1: the one
+# after those that UE 1 has had so far.
+answered_ue1='sip.Status-Code == 200 && sip.CSeq.method == "INVITE" && ip.dst == 172.28.0.100'
+answers="$(count "$answered_ue1")"
 answer ims-practice-ue2-last ue2 --ring 500ms --tone 1s
 out="$(call tel:+12025550102)"
 if grep -q '"msg":"call answered"' <<<"$out" && ! grep -q '"status":181' <<<"$out" && [ "$(ended ims-practice-ue2-last)" = 0 ]; then
@@ -250,9 +241,8 @@ else
 	fail=1
 fi
 same_nodes
-sleep 1
+await "the 200 OK of the last call to UE 1" "$answered_ue1" $((answers + 1))
 
-pcap="$(docker compose exec -T capture sh -c 'ls -t /captures/ims-*.pcap | head -n 1' | tr -d '\r')"
 echo "reading $pcap"
 
 # RTP is found by the heuristic too, as some of it flows before tshark
