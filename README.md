@@ -14,7 +14,7 @@ The project is teaching material for engineers who are new to telecom core netwo
 
 ## Status
 
-A UE simulator registers with SIP Digest and calls another UE by its telephone number, through the P-CSCF, the S-CSCFs, the I-CSCF, ENUM and the media relay. The capture shows every SIP, Diameter, DNS and RTP packet. The Lab at http://localhost:8080 draws the ladder diagram of each call and registration from HEP copies, manages the subscribers in the HSS, and drives two UE simulators. UEs send each other short messages over IP, and the MMTel AS gives the supplementary services, such as identity presentation, call forwarding and barring, which a UE sets up over Ut. VoLTE UEs attach to a stub of the EPC, register with IMS AKA, and call each other in AMR-WB with preconditions, while the P-CSCF has the PCRF authorise the media of each call over Rx.
+A UE simulator registers with SIP Digest and calls another UE by its telephone number, through the P-CSCF, the S-CSCFs, the I-CSCF, ENUM and the media relay. The capture shows every SIP, Diameter, DNS and RTP packet. The Lab at http://localhost:8080 draws the ladder diagram of each call and registration from HEP copies, manages the subscribers in the HSS, and drives the UE simulators `phone1`, `phone2` and `phone3`. UEs send each other short messages over IP, and the MMTel AS gives the supplementary services, such as identity presentation, call forwarding and barring, which a UE sets up over Ut. VoLTE UEs attach to a stub of the EPC, register with IMS AKA, and call each other in AMR-WB with preconditions, while the P-CSCF has the PCRF authorise the media of each call over Rx.
 
 ## Architecture
 
