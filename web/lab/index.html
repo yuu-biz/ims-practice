@@ -43,6 +43,11 @@
       <section aria-labelledby="ladder-heading">
         <h2 id="ladder-heading">Ladder diagram <span id="ladder-call" class="mono"></span></h2>
         <p id="ladder-note" class="note">Select a call, or the identity of a registration, to draw its ladder diagram.</p>
+        <p class="ladder-actions">
+          <button type="button" id="ladder-copy" disabled>Copy as text</button>
+          <span id="ladder-copy-note" class="note" role="status"></span>
+        </p>
+        <pre id="ladder-text" class="ladder-text" hidden></pre>
         <div class="ladder-layout">
           <div id="ladder" class="ladder scroll"></div>
           <aside id="detail" class="detail" hidden></aside>

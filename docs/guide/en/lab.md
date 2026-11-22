@@ -36,7 +36,7 @@ Run `docker compose up -d` again, and open `http://<address of the host>:8080` o
 | --- | --- |
 | UE simulators | One card per UE simulator: its public identity (IMPU), whether it is registered, its current call and the session of that call, its answer policy, the short messages it sent and received, and its supplementary services. The buttons and forms drive the UE. |
 | Calls | One row per call, with its caller, callee, state and final status code, and the number of its dialogs. Select a Call-ID to draw the ladder of the whole call. |
-| Ladder diagram | The SIP and Cx messages of the selected call or registration, one column per node. Select an arrow to see the whole message and the clauses of the specifications that describe it. For a MESSAGE that carries a short message, the details also show its RP and TP fields, its text and its body in hex. |
+| Ladder diagram | The SIP and Cx messages of the selected call or registration, one column per node. Select an arrow to see the whole message and the clauses of the specifications that describe it. For a MESSAGE that carries a short message, the details also show its RP and TP fields, its text and its body in hex. **Copy as text** writes the whole ladder out as monospace text. |
 | Registrations | One row per public identity that the Lab saw register, with its contact, expiry and S-CSCF. Select an identity to draw the ladder of its last REGISTER. |
 | Subscribers (HSS) | The subscriptions that the HSS holds. You can add and delete test subscribers here. |
 | Access network (EPC) | One row per UE that is attached to the EPC stub, with the address the stub gave it, its EPS bearers and the Rx sessions of its calls. The buttons start the procedures that the network initiates: deactivating a bearer and detaching the UE. |
@@ -57,6 +57,16 @@ Select a Cx or Rx arrow: its details say under **Link to this ladder** that the 
 A call through the MMTel AS is more than one dialog. The AS is a routeing B2BUA (TS 24.229 5.7.5): it answers the INVITE that the S-CSCF sends it and sends a new INVITE of its own, with a Call-ID of its own. A call from UE 1 to UE 2 is therefore three dialogs: UE 1 with its AS, that AS with the AS of UE 2, and that AS with UE 2. A diverted call has more. Inside the network each dialog carries the same icid-value in P-Charging-Vector, which the caller's P-CSCF puts in and each AS keeps (TS 24.229 5.2.6.3.3 step 7, 5.7.5.1). The P-CSCF removes the header from what it sends to a UE. The Lab lists the dialogs with one icid-value as one call: the row shows the caller's dialog, its Call-ID, state and status, and the Dialogs column counts them. The ladder draws all of them, with a column for the MMTel AS. Select an arrow to see which Call-ID it belongs to. Diverted calls and the other services are in [the MMTel guide](mmtel.md).
 
 A node can send a message to itself, as the S-CSCF does when it serves both the caller and the callee. The ladder draws that as an arrow that turns back to the same column. The capture on the Docker network does not have that message, because it never leaves the container. It is the one kind of message that the Lab shows and the pcap does not.
+
+## Copy the ladder as text
+
+**Copy as text** under the ladder writes the ladder out as monospace text: a row of node names over the lifelines, then one row per message, with its arrow drawn from the sender's lifeline to the receiver's. It is the form of the ladder diagrams in these guides, so the text goes straight into a `text` block of a guide or of your own notes.
+
+Each label sits at the left end of its arrow, and dashes fill the rest, so that the arrowhead reaches the lifeline of the node that received the message. An arrow that runs from right to left starts with `<`. A node that sends to itself turns back to its own lifeline as `<-+`, with the label beside it. Two columns of the same kind of node, such as the UE of the caller and the UE of the callee, are numbered from the left.
+
+A column is as wide as the longest label that crosses it, and the label of a SIP message is its whole request or status line. A call's ladder is therefore wide; once the text is in your notes, shorten the labels and number the steps by hand, as the ladder diagrams in these guides do.
+
+Copying goes through the browser's clipboard, which a browser gives only to a page it considers secure. <http://localhost:8080> is secure; the same Lab opened over plain HTTP from another machine is not. There the button writes the text out below it instead, for you to select and copy.
 
 ## Manage the subscribers
 

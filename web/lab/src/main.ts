@@ -27,8 +27,9 @@ import {
 import { byId, clock, el, fillTable } from "./dom.ts";
 import { mountEPCPanel } from "./epc-panel.ts";
 import { mountFaultPanel } from "./fault-panel.ts";
-import { buildLadder } from "./ladder.ts";
+import { buildLadder, type Ladder } from "./ladder.ts";
 import { arrowKey, renderDetail, renderLadder } from "./ladder-svg.ts";
+import { ladderText } from "./ladder-text.ts";
 import { mountUEPanel } from "./ue-cards.ts";
 
 const view = {
@@ -39,6 +40,8 @@ const view = {
   selectedCallId: null as string | null,
   selectedLegs: [] as string[],
   callMessages: [] as Message[],
+  // The ladder now drawn, which the Copy as text button writes out.
+  ladder: { columns: [], arrows: [] } as Ladder,
   selectedArrow: null as number | null,
   // The HSS subscriptions last loaded, which give the UE panel the tel
   // URI to call.
@@ -48,6 +51,9 @@ const view = {
 const callsTable = byId<HTMLTableElement>("calls");
 const ladderBox = byId<HTMLDivElement>("ladder");
 const detailBox = byId<HTMLElement>("detail");
+const copyButton = byId<HTMLButtonElement>("ladder-copy");
+const copyNote = byId<HTMLSpanElement>("ladder-copy-note");
+const ladderTextBox = byId<HTMLPreElement>("ladder-text");
 const registrationsTable = byId<HTMLTableElement>("registrations");
 const subscribersTable = byId<HTMLTableElement>("subscribers");
 const subscriberForm = byId<HTMLFormElement>("subscriber-form");
@@ -110,6 +116,8 @@ async function selectCall(dialogCallId: string): Promise<void> {
   const legs = ladderCallIds(view.calls, dialogCallId);
   const callId = legs[0] ?? dialogCallId;
   if (view.selectedCallId !== callId) view.selectedArrow = null;
+  copyNote.textContent = "";
+  ladderTextBox.hidden = true;
   view.selectedCallId = callId;
   view.selectedLegs = legs;
   for (const button of document.querySelectorAll<HTMLButtonElement>("button[data-call-id]")) {
@@ -122,6 +130,8 @@ async function selectCall(dialogCallId: string): Promise<void> {
   } catch (error) {
     if (view.selectedCallId !== callId) return;
     view.callMessages = [];
+    view.ladder = { columns: [], arrows: [] };
+    copyButton.disabled = true;
     showNote("ladder-note", `Could not load the messages of ${callId}: ${describe(error)}`);
     ladderBox.replaceChildren();
     detailBox.hidden = true;
@@ -133,9 +143,31 @@ async function selectCall(dialogCallId: string): Promise<void> {
   drawLadder();
 }
 
+// The ladder as the monospace text of the guides' ladder diagrams. The
+// clipboard needs a secure context, which the Lab has on localhost but
+// not over plain HTTP from another machine; there the page shows the
+// text instead, for the reader to select and copy.
+async function copyLadderAsText(): Promise<void> {
+  const text = ladderText(view.ladder);
+  try {
+    await navigator.clipboard.writeText(text);
+    ladderTextBox.hidden = true;
+    copyNote.textContent = "The ladder is on the clipboard as text.";
+  } catch {
+    ladderTextBox.textContent = text;
+    ladderTextBox.hidden = false;
+    copyNote.textContent = "This browser gave the page no clipboard. Select the text below and copy it.";
+  }
+}
+
 function drawLadder(): void {
   if (view.selectedCallId === null) return;
   const ladder = buildLadder(view.callMessages);
+  view.ladder = ladder;
+  copyButton.disabled = ladder.arrows.length === 0;
+  // The ladder of a call that goes on grows; the text shown for copying
+  // grows with it.
+  if (!ladderTextBox.hidden) ladderTextBox.textContent = ladderText(ladder);
   const legend = el(
     "p",
     { className: "legend" },
@@ -317,6 +349,8 @@ function listen(): void {
     onMessage(m);
   });
 }
+
+copyButton.addEventListener("click", () => void copyLadderAsText());
 
 const renderUEPanel = mountUEPanel(byId("ues"), byId("ues-note"), {
   subscribers: () => view.subscribers,
