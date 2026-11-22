@@ -28,10 +28,11 @@ const (
 
 // InDialogRequest is a request of the peer within a dialog that the
 // user of the call answers, with Accept or Reject: a re-INVITE, an
-// UPDATE, a PRACK with a session description, or a request of a method
-// that the UA does not handle by itself, such as INFO or REFER. The UA
-// has checked that it is in order (RFC 3261 12.2.2), and that an offer
-// in it does not cross another offer.
+// UPDATE, a PRACK with a session description (any PRACK, after
+// IncomingCall.RelayPRACK), or a request of a method that the UA does
+// not handle by itself, such as INFO or REFER. The UA has checked that
+// it is in order (RFC 3261 12.2.2), and that an offer in it does not
+// cross another offer.
 type InDialogRequest struct {
 	// Request is the request as received.
 	Request *Message
