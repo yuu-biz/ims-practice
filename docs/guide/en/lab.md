@@ -2,7 +2,7 @@
 
 [日本語](../ja/lab.md)
 
-The Lab is a web page where you try things on the IMS and watch what happens. It shows the registrations and the calls of the IMS while they happen, and draws each one as a ladder diagram. It also lets you manage the subscribers in the HSS and drive two UE simulators, so that you can make a call and watch its signaling without typing commands.
+The Lab is a web page where you try things on the IMS and watch what happens. It shows the registrations and the calls of the IMS while they happen, and draws each one as a ladder diagram. It also lets you manage the subscribers in the HSS and drive the UE simulators `phone1`, `phone2` and `phone3`, so that you can make a call and watch its signaling without typing commands.
 
 ## Before you start
 

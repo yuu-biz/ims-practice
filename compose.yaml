@@ -218,10 +218,10 @@ services:
       ims:
         ipv4_address: 172.28.0.103
 
-  # Two UE simulators that stay up and do what the Lab asks
+  # Three UE simulators that stay up and do what the Lab asks
   # ("ue serve"). Start them with "docker compose --profile phones up -d".
-  # They use subscribers 1 and 2 like ue and ue2, and phone3 below uses
-  # subscriber 3 like ue3, so run one profile at a time. The control API
+  # phone1 and phone2 use subscribers 1 and 2 like ue and ue2, and phone3
+  # below uses subscriber 3 like ue3, so run one profile at a time. The control API
   # is reached through the Lab only.
   phone1:
     image: ims-practice/ims:dev
