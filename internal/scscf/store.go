@@ -222,6 +222,8 @@ type OriginalDialog struct {
 // it in the process.
 type Store interface {
 	Challenge(privateID string) (Challenge, bool)
+	// PutChallenge keeps c, in place of the challenge of its user,
+	// until its KeepUntil.
 	PutChallenge(Challenge)
 	DeleteChallenge(privateID string)
 	Registration(privateID string) (Registration, bool)
@@ -281,11 +283,17 @@ func NewMemoryStore() *MemoryStore {
 
 func key(privateID string) string { return strings.ToLower(privateID) }
 
+// Challenge finds a challenge until its KeepUntil, as an external store
+// would with a time to live. The reg-await-auth timer removes it before
+// then, so it takes no room after that.
 func (s *MemoryStore) Challenge(privateID string) (Challenge, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	c, ok := s.challenges[key(privateID)]
-	return c, ok
+	if !ok || !c.KeepUntil.IsZero() && !time.Now().Before(c.KeepUntil) {
+		return Challenge{}, false
+	}
+	return c, true
 }
 
 func (s *MemoryStore) PutChallenge(c Challenge) {
