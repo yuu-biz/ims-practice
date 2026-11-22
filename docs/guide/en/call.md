@@ -241,7 +241,7 @@ The P-CSCF port 5060/udp and the relay's ports 40000 to 40039/udp are published 
 
 The P-CSCF recognizes a UE that comes from the bridge gateway 172.28.0.1 and gives it the relay's address as `127.0.0.1`, where the ports are published (`host_access` in `deploy/compose/pcscf.yaml`). Latching takes care of the address that Docker's NAT gives the softphone. A softphone on another machine would be told the same `127.0.0.1`, which is its own address, so the softphone runs on the host.
 
-A registration and a call over this path were checked with the project's own UE simulator built for Windows, not with a softphone: UE 2 in its container received every packet the host sent, through the published relay port.
+The call test of `scripts/e2e-call.sh` ends with a call over this path, wherever the machine can run the UE simulator of the container image: the simulator on the host calls UE 2, and UE 2 in its container receives every packet the host sent, through the published relay port. Only the simulator has been tried on this path, built for Windows too, and no softphone.
 
 ## Drive a UE over HTTP
 
