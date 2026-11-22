@@ -477,7 +477,13 @@ func newNetwork(t *testing.T, p plan, dns *names) *network {
 	scscf := n.startCSCF(t, "scscf", p.internal+".20")
 	n.icscf = icscf.own
 	icscf.initial = func(out *sip.Message) (bool, int) {
-		// TS 24.229 5.3.2.1: on to the S-CSCF of the callee, without
+		// TS 24.229 5.3.2.1 step 3: a Request-URI in the subdomain of the
+		// conference URIs, public service identities, goes by DNS to the
+		// AS that hosts it.
+		if u, err := sip.ParseURI(out.RequestURI); err == nil && strings.EqualFold(u.Host, conferenceDomain(n.domain)) {
+			return false, 0
+		}
+		// Otherwise on to the S-CSCF of the callee, without
 		// record-routing.
 		out.Prepend("Route", sip.NameAddr{URI: looseRoute(scscf.own)}.String())
 		return false, 0
