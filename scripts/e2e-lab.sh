@@ -45,18 +45,18 @@ remember_nodes
 fail=0
 
 docker compose run --no-deps -d --name ims-practice-ue2-call ue2 answer "${ue2[@]}" --ring 1s --tone 2s >/dev/null
-for i in $(seq 1 20); do
-	grep -q '"msg":"waiting for a call"' <<<"$(docker logs ims-practice-ue2-call 2>/dev/null)" && break
-	sleep 1
-done
+wait_log ims-practice-ue2-call '"msg":"waiting for a call"' || fail=1
 if docker compose run --no-deps --rm ue call --tone 2s tel:+1-202-555-0102 >/dev/null; then
 	echo "ok   UE 1 called UE 2"
 else
 	echo "FAIL the call"
 	fail=1
 fi
-timeout 60 docker wait ims-practice-ue2-call >/dev/null || true
-docker rm ims-practice-ue2-call >/dev/null
+if ! timeout 60 docker wait ims-practice-ue2-call >/dev/null; then
+	echo "FAIL UE 2 did not end within 60 s of the call"
+	fail=1
+fi
+docker rm -f ims-practice-ue2-call >/dev/null
 # The last HEP copies and the capture need a moment to land.
 sleep 3
 
@@ -183,10 +183,7 @@ else
 	fail=1
 fi
 docker compose run --no-deps -d --name ims-practice-ue5 ue register "${ue5[@]}" >/dev/null
-for i in $(seq 1 20); do
-	grep -q '"msg":"registered"' <<<"$(docker logs ims-practice-ue5 2>/dev/null)" && break
-	sleep 1
-done
+wait_log ims-practice-ue5 '"msg":"registered"' || fail=1
 if grep -q '"registration_state":"Registered"' <<<"$(curl -fsS http://localhost:8080/api/subscribers)"; then
 	echo "ok   the HSS reports the new subscriber as registered"
 else
@@ -204,6 +201,8 @@ else
 	fail=1
 fi
 docker rm -f ims-practice-ue5 >/dev/null
+# The UE exits 1 when it is refused, as it should be here; the check
+# reads its log, hence "|| true".
 out="$(docker compose run --no-deps --rm ue register "${ue5[@]}" 2>/dev/null || true)"
 if grep -q '403' <<<"$out"; then
 	echo "ok   the removed subscriber gets 403"
