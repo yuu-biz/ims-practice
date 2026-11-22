@@ -400,10 +400,11 @@ func (p *PCSCF) register(st *sip.ServerTransaction, protected bool) {
 	st.Respond(final)
 	if registered != nil {
 		if !associated || assoc.SignallingLost {
-			// TS 29.214 A.4: on the initial registration. A refresh keeps
-			// the session of the registration it refreshes, unless the
-			// signalling path was lost: this REGISTER shows that the UE
-			// has it again (TS 24.229 5.2.6.4.3 NOTE 1).
+			// TS 29.214 A.4: on the initial registration, after its 200
+			// (TS 29.213 B.1). A refresh keeps the session of the
+			// registration it refreshes, unless the signalling path was
+			// lost: this REGISTER shows that the UE has it again (TS
+			// 24.229 5.2.6.4.3 NOTE 1).
 			*registered = p.watchSignallingPath(*registered, log)
 		}
 		p.subscribeRegEvent(*registered, interval, log)
