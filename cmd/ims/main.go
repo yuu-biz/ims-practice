@@ -37,6 +37,7 @@ import (
 	"github.com/yuu-biz/ims-practice/internal/kvstore"
 	"github.com/yuu-biz/ims-practice/internal/kvstore/ibcfstore"
 	"github.com/yuu-biz/ims-practice/internal/kvstore/kvjson"
+	"github.com/yuu-biz/ims-practice/internal/kvstore/scscfstore"
 	"github.com/yuu-biz/ims-practice/internal/mmtel"
 	"github.com/yuu-biz/ims-practice/internal/mrfc"
 	"github.com/yuu-biz/ims-practice/internal/pcscf"
@@ -172,6 +173,7 @@ func run(configPath string, log *slog.Logger) error {
 	}
 
 	if c := cfg.SCSCF; c != nil {
+		roleLog := log.With("role", config.RoleSCSCF)
 		s := scscf.New(scscf.Config{
 			ServerName: c.SIP.URI(),
 			Host:       c.SIP.Host,
@@ -180,7 +182,7 @@ func run(configPath string, log *slog.Logger) error {
 			MinExpires: c.MinExpires,
 			MaxExpires: c.MaxExpires,
 			IBCF:       c.IBCF,
-		}, hssPeer(peers), node, scscf.NewMemoryStore(), resolver, log.With("role", config.RoleSCSCF))
+		}, hssPeer(peers), node, scscfStore(stores, roleLog), resolver, roleLog)
 		scscfRole.Store(s)
 		stack, err := startSIP(config.RoleSCSCF, c.SIP, s.OnRequest, s.OnACK)
 		if err != nil {
@@ -463,6 +465,18 @@ func (r roleStores) adapter(log *slog.Logger) (kvstore.Store, kvjson.Config, boo
 		return nil, kvjson.Config{}, false
 	}
 	return r.kv, kvjson.Config{Prefix: r.section.Prefix, Timeout: r.section.Timeout, Log: log}, true
+}
+
+// scscfStore is where the S-CSCF keeps its registrar state: the
+// challenges it is waiting on, the registrations with their user
+// profiles, the subscriptions to the reg event of each registration,
+// and the original dialog identifiers of the requests it sent to an
+// application server (TS 24.229 5.4.1.2.2A, 5.4.2.1.2, 5.4.3.3).
+func scscfStore(stores roleStores, log *slog.Logger) scscf.Store {
+	if kv, cfg, ok := stores.adapter(log); ok {
+		return scscfstore.New(kv, cfg)
+	}
+	return scscf.NewMemoryStore()
 }
 
 // ibcfStore is where the IBCF keeps the records of its calls, so that a

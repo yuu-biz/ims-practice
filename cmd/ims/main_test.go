@@ -286,6 +286,50 @@ func TestIBCFStoreIsTheSharedStoreOfTheNode(t *testing.T) {
 	}
 }
 
+// TestRoleStoresAreTheSharedStoreOfTheNode: with a store section of
+// kind valkey, each role takes its state from that server, so its first
+// operation on its Store fails when nothing listens there. Without a
+// store section, and with kind memory, the role keeps its state in the
+// process and the same operation works.
+//
+// The IBCF is not here: it reads its records when it starts, which
+// TestIBCFStoreIsTheSharedStoreOfTheNode follows all the way to the
+// node that does not start.
+func TestRoleStoresAreTheSharedStoreOfTheNode(t *testing.T) {
+	ctx := context.Background()
+	roles := []struct {
+		role config.Role
+		// read is one operation of the role on its Store, the kind it
+		// does for the first request it serves.
+		read func(roleStores) error
+	}{
+		{config.RoleSCSCF, func(s roleStores) error {
+			_, _, err := scscfStore(s, quiet()).Registration(ctx, impi)
+			return err
+		}},
+	}
+	for _, r := range roles {
+		for _, tt := range []struct {
+			name  string
+			store *config.Store
+			works bool
+		}{
+			{"no store section", nil, true},
+			{"memory", &config.Store{Kind: config.StoreMemory, Timeout: time.Second}, true},
+			{"valkey that cannot be reached", unreachableStore(t), false},
+		} {
+			t.Run(string(r.role)+" with "+tt.name, func(t *testing.T) {
+				stores, closeStores := newRoleStores(tt.store)
+				defer closeStores()
+				err := r.read(stores)
+				if worked := err == nil; worked != tt.works {
+					t.Errorf("the operation on the Store of the %s worked: %v (error %v), want %v", r.role, worked, err, tt.works)
+				}
+			})
+		}
+	}
+}
+
 // unreachableStore is a store section of kind valkey whose server
 // answers nothing: its address is a port that was free a moment ago, so
 // nothing listens there.
