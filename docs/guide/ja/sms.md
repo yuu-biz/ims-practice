@@ -383,7 +383,7 @@ UE 2 は新しい MESSAGE を送ります（TS 24.341 5.3.2.4）。
 
 delivery report は、UE 2 が発信する要求で、SMS のボディを持つ MESSAGE です。そのため、UE 2 自身の 2 つ目の条件によって、手順 3 とまったく同じように ODI 付きで IP-SM-GW へ送られます。IP-SM-GW は 202 Accepted を返し（TS 24.341 5.3.3.4.1）、In-Reply-To の Call-ID で配達を見つけ、メッセージが届いたことを SC に伝えます。
 
-TS 23.204 6.5 step 3 は、delivery report がショートメッセージを送った IP-SM-GW に届くことを求めています。ここでは DNS がほかの IP-SM-GW のノードを返すこともあります。そこで、IP-SM-GW のどのノードも配達の状態を共有の `Store` 1 つに置き、delivery report を受けたノードが配達を終わらせます（`internal/ipsmgw/network_test.go` の `TestDeliveryReportThroughAnotherIPSMGW`）。delivery report を待つ 64 秒のタイマーだけは、メッセージを送ったノードで動きます。
+TS 23.204 6.5 step 3 は、delivery report がショートメッセージを送った IP-SM-GW に届くことを求めています。ここでは DNS がほかの IP-SM-GW のノードを返すこともあります。そこで、IP-SM-GW のどのノードも配達の状態を共有の `Store` 1 つに置き、delivery report を受けたノードが配達を終わらせます（`internal/ipsmgw/network_test.go` の `TestDeliveryReportThroughAnotherIPSMGW`）。delivery report を待つ 64 秒も、配達と一緒に置きます。どのノードも 1 秒ごとに、待ち時間の切れた配達を探し、見つけたものを「確認できなかった」として SC に伝えます。そのため、メッセージを送ったノードが止まっても、配達は結果の分からないままになりません。
 
 ## status report
 

@@ -319,7 +319,7 @@ func (g *IPSMGW) deliveryReport(st *sip.ServerTransaction, callID string, log *s
 		rp = sms.RPError{Direction: sms.MSToNetwork, MessageReference: req.Body[1], Cause: sms.RPCauseProtocolErrorUnspecified}
 	case err != nil:
 		// TS 24.011 9.3.4: the network may ignore any other message it
-		// cannot read. The delivery waits on, until its timer ends it.
+		// cannot read. The delivery waits on, until TR1N ends it.
 		log.Info("delivery report does not decode, ignored", "error", err.Error())
 		return
 	}
@@ -330,7 +330,7 @@ func (g *IPSMGW) deliveryReport(st *sip.ServerTransaction, callID string, log *s
 		log.Info("delivery report does not answer the RP-DATA, ignored", "rp_mti", int(rp.MTI()), "rp_mr", int(mr))
 		return
 	}
-	g.endDelivery(callID, outcomeOfReport(rp), log)
+	g.endDeliveryNow(callID, outcomeOfReport(rp), log)
 }
 
 // reportedReference is the RP-MR of an RP-ACK or RP-ERROR from the UE,

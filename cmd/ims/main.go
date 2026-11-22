@@ -275,6 +275,9 @@ func run(configPath string, log *slog.Logger) error {
 			IBCF:          c.IBCF,
 			UserLocks:     stores.locks(config.RoleIPSMGW, roleLog),
 		}, centre, ipsmgwStore(stores, roleLog), users, resolver, roleLog)
+		// The sweep that ends the deliveries whose TR1N has run out runs
+		// until the node stops.
+		defer g.Close()
 		centre.SetIPSMGW(g)
 		if c.IBCF.Host != "" {
 			// A short message for a user of another network leaves

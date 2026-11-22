@@ -376,7 +376,7 @@ UE 2 sends a new MESSAGE (TS 24.341 5.3.2.4):
 
 The delivery report is an originating request of UE 2, a MESSAGE with an SMS body, so UE 2's own second criterion sends it to the IP-SM-GW, with an ODI, exactly as in step 3. The IP-SM-GW answers 202 Accepted (TS 24.341 5.3.3.4.1), finds the delivery by the Call-ID in In-Reply-To, and tells the SC that the message was delivered.
 
-TS 23.204 6.5 step 3 asks that the delivery report reach the IP-SM-GW that sent the short message. Here DNS may give another IP-SM-GW node, so every IP-SM-GW node keeps the deliveries in one shared `Store`, and whichever node gets the report finishes the delivery (`TestDeliveryReportThroughAnotherIPSMGW` in `internal/ipsmgw/network_test.go`). Only the timer that waits for the report, 64 seconds, runs in the node that sent the message.
+TS 23.204 6.5 step 3 asks that the delivery report reach the IP-SM-GW that sent the short message. Here DNS may give another IP-SM-GW node, so every IP-SM-GW node keeps the deliveries in one shared `Store`, and whichever node gets the report finishes the delivery (`TestDeliveryReportThroughAnotherIPSMGW` in `internal/ipsmgw/network_test.go`). The wait for the report, 64 seconds, is kept with the delivery: every node looks once a second for the deliveries whose wait is over and tells the SC that those it finds could not be confirmed, so a delivery is not left without an outcome when the node that sent the message stops.
 
 ## The status report
 
