@@ -3,6 +3,7 @@ package hssstore_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 
 	"github.com/yuu-biz/ims-practice/internal/hss"
@@ -29,6 +30,59 @@ const (
 	impu = "sip:001010000000001@ims.mnc001.mcc001.3gppnetwork.org"
 	tel  = "tel:+12025550101"
 )
+
+// counting is a store that counts what List asks of it, to show what a
+// page costs.
+type counting struct {
+	kvstore.Store
+	ranges int // MembersAfter, the range lookup of the sorted index
+	gets   int // Get, one per subscriber of the page
+}
+
+func (c *counting) Get(ctx context.Context, key string) (kvstore.Item, error) {
+	c.gets++
+	return c.Store.Get(ctx, key)
+}
+
+func (c *counting) MembersAfter(ctx context.Context, index, after string, limit int) ([]string, error) {
+	c.ranges++
+	return c.Store.MembersAfter(ctx, index, after, limit)
+}
+
+// TestAPageOfTheListingCostsTheSameHoweverManySubscribers: List reads
+// one range of the sorted index and then the subscribers of that page,
+// so a page of a store that holds ten subscribers costs what a page of
+// a store that holds a hundred costs. A List that gathered every
+// private identity to sort it would read more of the store as the
+// network grew.
+func TestAPageOfTheListingCostsTheSameHoweverManySubscribers(t *testing.T) {
+	ctx := context.Background()
+	const page = 5
+	cost := func(subscribers int) (int, int) {
+		kv := &counting{Store: kvstore.NewMemoryStore(nil)}
+		s := hssstore.New(kv, kvjson.Config{})
+		for i := range subscribers {
+			id := fmt.Sprintf("0010100000%05d@ims.mnc001.mcc001.3gppnetwork.org", i)
+			if err := s.Add(ctx, hss.Subscription{PrivateIdentity: id, PublicIdentities: []string{"sip:" + id}, Password: "p"}); err != nil {
+				t.Fatal(err)
+			}
+		}
+		kv.ranges, kv.gets = 0, 0
+		subs, next, err := s.List(ctx, "", page)
+		if err != nil || len(subs) != page || next == "" {
+			t.Fatalf("List of %d subscribers = %d subscribers, next %q, %v", subscribers, len(subs), next, err)
+		}
+		return kv.ranges, kv.gets
+	}
+	ranges, gets := cost(10)
+	if ranges != 1 || gets != page {
+		t.Errorf("a page of %d cost %d range lookups and %d reads; want 1 and %d", page, ranges, gets, page)
+	}
+	if moreRanges, moreGets := cost(100); moreRanges != ranges || moreGets != gets {
+		t.Errorf("a page of a store with 100 subscribers cost %d range lookups and %d reads, one with 10 cost %d and %d",
+			moreRanges, moreGets, ranges, gets)
+	}
+}
 
 // TestAnAddThatStops stops the provisioning API of one instance after
 // it has claimed the private identity and a public one. Until the

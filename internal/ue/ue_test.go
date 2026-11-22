@@ -3,6 +3,7 @@ package ue_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net"
@@ -26,6 +27,11 @@ import (
 	"github.com/yuu-biz/ims-practice/internal/hss"
 	"github.com/yuu-biz/ims-practice/internal/icscf"
 	"github.com/yuu-biz/ims-practice/internal/ifc"
+	"github.com/yuu-biz/ims-practice/internal/ims"
+	"github.com/yuu-biz/ims-practice/internal/kvstore"
+	"github.com/yuu-biz/ims-practice/internal/kvstore/hssstore"
+	"github.com/yuu-biz/ims-practice/internal/kvstore/kvjson"
+	"github.com/yuu-biz/ims-practice/internal/kvstore/kvlock"
 	"github.com/yuu-biz/ims-practice/internal/pcscf"
 	"github.com/yuu-biz/ims-practice/internal/rx"
 	"github.com/yuu-biz/ims-practice/internal/scscf"
@@ -208,6 +214,18 @@ type testNetwork struct {
 	pcscfProtected netip.AddrPort
 	// epc is the API of the EPC stub, "" without one.
 	epc string
+	// hss holds the instances of the HSS, in the order the CSCFs reach
+	// them, for a test that stops one.
+	hss []hssInstance
+}
+
+// hssInstance is one instance of the HSS of the test network.
+type hssInstance struct {
+	// host is the instance's Origin-Host. Each instance has its own,
+	// since a responder refuses a second connection from one Origin-Host
+	// (RFC 6733 5.6).
+	host   string
+	server *diameter.Server
 }
 
 // networkWith is network with the longest registration the S-CSCF
@@ -228,6 +246,10 @@ type networkConfig struct {
 	// epc starts the role epc, the EPC stub with its PCRF, which the
 	// P-CSCF asks over Rx.
 	epc bool
+	// hssInstances is how many instances the HSS runs as, each with its
+	// own Origin-Host and all of them on one shared store. Zero means
+	// one instance, with the store in its own process.
+	hssInstances int
 }
 
 // The UEs of the EPC stub have loopback addresses of their own, as UEs
@@ -307,29 +329,19 @@ func startNetwork(t *testing.T, cfg networkConfig) testNetwork {
 	if err := diameter.LoadDictionary(); err != nil {
 		t.Fatal(err)
 	}
-	hssID := diameter.Identity{OriginHost: "hss." + domain, OriginRealm: domain}
-	hssNode := diameter.NewNode(hssID, []uint32{diameter.ApplicationIDCx}, timers, quiet())
-	hssStore, err := hss.NewMemoryStore(cfg.subscriptions...)
-	if err != nil {
-		t.Fatal(err)
-	}
-	hssRole := hss.New(hss.Config{
-		Realm: domain, VisitedNetworks: []string{domain},
-		ServerCapabilities:    cx.ServerCapabilities{MandatoryCapabilities: []uint32{1}},
-		InitialFilterCriteria: cfg.criteria,
-	}, hssStore, hssNode, quiet())
-	hssNode.Handle(hssRole.Handle)
-	server, err := hssNode.Listen("127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(server.Stop)
-	connect := func(host string, handle diameter.Handler) (*diameter.Node, *diameter.Peer) {
+	hssRole, instances := startHSS(t, cfg)
+	// Every instance of a server farm can answer, so the CSCFs take them
+	// all as one group.
+	connect := func(host string, handle diameter.Handler) (*diameter.Node, *diameter.PeerGroup) {
 		node := diameter.NewNode(diameter.Identity{OriginHost: host, OriginRealm: domain}, []uint32{diameter.ApplicationIDCx}, timers, quiet())
 		node.Handle(handle)
-		peer := node.Connect(diameter.PeerConfig{Address: server.Addr(), OriginHost: hssID.OriginHost})
-		t.Cleanup(peer.Stop)
-		return node, peer
+		var peers []*diameter.Peer
+		for _, instance := range instances {
+			peer := node.Connect(diameter.PeerConfig{Address: instance.server.Addr(), OriginHost: instance.host})
+			t.Cleanup(peer.Stop)
+			peers = append(peers, peer)
+		}
+		return node, diameter.NewPeerGroup(peers...)
 	}
 	dns := &names{hosts: map[string]netip.AddrPort{}}
 
@@ -375,9 +387,10 @@ func startNetwork(t *testing.T, cfg networkConfig) testNetwork {
 	dns.add(net.JoinHostPort("pcscf."+domain, strconv.Itoa(int(protectedPort))), protectedStack.LocalAddr())
 
 	// The Cx connections open in the background; wait until a request
-	// would get through.
+	// would get through on each of them, so that a test that stops one
+	// instance of the HSS finds the connection to the next one open.
 	deadline := time.Now().Add(5 * time.Second)
-	for _, peer := range []*diameter.Peer{scscfPeer, icscfPeer} {
+	for _, peer := range slices.Concat(scscfPeer.Peers(), icscfPeer.Peers()) {
 		for {
 			_, err := peer.Request(context.Background(), cx.UserAuthorizationRequest{
 				Header: cx.NewHeader(icscfNode, "", domain), UserName: impi, PublicIdentity: impu,
@@ -392,7 +405,66 @@ func startNetwork(t *testing.T, cfg networkConfig) testNetwork {
 		}
 	}
 	return testNetwork{pcscf: pcscfStack.LocalAddr(), pcscfProtected: protectedStack.LocalAddr(), pcscfStore: pcscfStore, pcscfLog: pcscfLog, scscf: s, dns: dns,
-		provisioning: hssRole.Provisioning(server), epc: epcAPI}
+		provisioning: hssRole.Provisioning(instances[0].server), epc: epcAPI, hss: instances}
+}
+
+// startHSS starts the instances of the HSS that cfg asks for and
+// returns the first of them, whose provisioning API the test uses, and
+// all of them. One instance keeps its subscribers in its own process,
+// as a network with one HSS does; several share one store, which is
+// what lets any of them answer for any subscriber (TS 29.228 6.4).
+func startHSS(t *testing.T, cfg networkConfig) (*hss.HSS, []hssInstance) {
+	t.Helper()
+	instances := max(cfg.hssInstances, 1)
+	store, locks := sharedSubscribers(t, cfg, instances)
+	var first *hss.HSS
+	var started []hssInstance
+	for i := range instances {
+		host := "hss." + domain
+		if instances > 1 {
+			host = fmt.Sprintf("hss-%d.%s", i+1, domain)
+		}
+		node := diameter.NewNode(diameter.Identity{OriginHost: host, OriginRealm: domain}, []uint32{diameter.ApplicationIDCx}, timers, quiet())
+		role := hss.New(hss.Config{
+			Realm: domain, VisitedNetworks: []string{domain},
+			ServerCapabilities:    cx.ServerCapabilities{MandatoryCapabilities: []uint32{1}},
+			InitialFilterCriteria: cfg.criteria,
+			UserLocks:             locks,
+		}, store, node, quiet())
+		node.Handle(role.Handle)
+		server, err := node.Listen("127.0.0.1:0")
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(server.Stop)
+		if first == nil {
+			first = role
+		}
+		started = append(started, hssInstance{host: host, server: server})
+	}
+	return first, started
+}
+
+// sharedSubscribers is the store that the instances of the HSS share,
+// with the subscriptions of cfg in it, and the lock per subscriber that
+// goes with it. One instance alone keeps both in its own process.
+func sharedSubscribers(t *testing.T, cfg networkConfig, instances int) (hss.Store, ims.UserLocker) {
+	t.Helper()
+	if instances == 1 {
+		store, err := hss.NewMemoryStore(cfg.subscriptions...)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return store, nil
+	}
+	kv := kvstore.NewMemoryStore(nil)
+	store := hssstore.New(kv, kvjson.Config{})
+	for _, sub := range cfg.subscriptions {
+		if err := store.Add(t.Context(), sub); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return store, kvlock.New(kv, kvlock.Config{Role: "hss", Log: quiet()})
 }
 
 func newUE(t *testing.T, pcscfAddr netip.AddrPort, pass string) *ue.UE {
