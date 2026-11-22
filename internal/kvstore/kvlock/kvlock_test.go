@@ -85,6 +85,18 @@ func forEachStore(t *testing.T, test func(t *testing.T, h harness)) {
 	})
 }
 
+// came tells whether cond held within d.
+func came(d time.Duration, cond func() bool) bool {
+	deadline := time.Now().Add(d)
+	for !cond() {
+		if time.Now().After(deadline) {
+			return false
+		}
+		time.Sleep(time.Millisecond)
+	}
+	return true
+}
+
 // lockWithin tries to lock user for d, and returns the unlock function,
 // or nil when the lock was not had in that time.
 func lockWithin(t *testing.T, l *kvlock.Locker, user string, d time.Duration) func() {
@@ -255,6 +267,7 @@ func TestContextEndsWhileWaiting(t *testing.T) {
 		// One waiter tries the store from the other instance; the other
 		// waits in the queue of the holder's own process.
 		for _, l := range []*kvlock.Locker{b, a} {
+			waiting := l.Users(impi) + 1
 			ctx, cancel := context.WithCancel(context.Background())
 			done := make(chan error, 1)
 			go func() {
@@ -267,7 +280,9 @@ func TestContextEndsWhileWaiting(t *testing.T) {
 				}
 				done <- err
 			}()
-			time.Sleep(30 * time.Millisecond)
+			if !came(5*time.Second, func() bool { return l.Users(impi) >= waiting }) {
+				t.Fatal("the waiter did not start to wait for the lock within 5 s")
+			}
 			cancel()
 			select {
 			case err := <-done:
@@ -361,33 +376,56 @@ func (s *countingStore) CompareAndSwap(ctx context.Context, key, version string,
 
 // TestWaitersOfOneInstanceDoNotTryTheStore: while a goroutine of the
 // instance holds the lock, the others of the same instance wait in the
-// process.
+// process. Waiters of another instance try the store, and the same
+// watch sees their tries come.
 func TestWaitersOfOneInstanceDoNotTryTheStore(t *testing.T) {
-	s := &countingStore{Store: kvstore.NewMemoryStore(nil)}
-	l := kvlock.New(s, kvlock.Config{Role: "scscf"})
-	unlock, err := l.Lock(context.Background(), impi)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var wg sync.WaitGroup
-	for range 5 {
-		wg.Go(func() {
-			u, err := l.Lock(context.Background(), impi)
-			if err != nil {
-				t.Error(err)
-				return
+	const watch = 500 * time.Millisecond
+	for _, tc := range []struct {
+		name         string
+		sameInstance bool
+	}{
+		{"same instance", true},
+		{"other instance", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := &countingStore{Store: kvstore.NewMemoryStore(nil)}
+			l := kvlock.New(s, kvlock.Config{Role: "scscf"})
+			waiters := l
+			if !tc.sameInstance {
+				waiters = kvlock.New(s, kvlock.Config{Role: "scscf"})
 			}
-			u()
+			unlock, err := l.Lock(context.Background(), impi)
+			if err != nil {
+				t.Fatal(err)
+			}
+			waiting := waiters.Users(impi) + 5
+			var wg sync.WaitGroup
+			for range 5 {
+				wg.Go(func() {
+					u, err := waiters.Lock(context.Background(), impi)
+					if err != nil {
+						t.Error(err)
+						return
+					}
+					u()
+				})
+			}
+			if !came(5*time.Second, func() bool { return waiters.Users(impi) >= waiting }) {
+				t.Fatal("the 5 waiters did not start to wait for the lock within 5 s")
+			}
+			tried := came(watch, func() bool { return s.swaps.Load() > 1 })
+			if tc.sameInstance && tried {
+				t.Errorf("%d tries of the store while the lock was held in the process, want only the holder's", s.swaps.Load())
+			}
+			if !tc.sameInstance && !tried {
+				t.Errorf("the waiters of another instance did not try the store within %v", watch)
+			}
+			unlock()
+			wg.Wait()
+			if n := s.swaps.Load(); tc.sameInstance && n != 6 {
+				t.Errorf("%d tries of the store, want one for each holder", n)
+			}
 		})
-	}
-	time.Sleep(100 * time.Millisecond)
-	if n := s.swaps.Load(); n != 1 {
-		t.Errorf("%d tries of the store while the lock was held in the process, want only the holder's", n)
-	}
-	unlock()
-	wg.Wait()
-	if n := s.swaps.Load(); n != 6 {
-		t.Errorf("%d tries of the store, want one for each holder", n)
 	}
 }
 
