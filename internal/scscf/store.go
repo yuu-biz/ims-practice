@@ -1,6 +1,7 @@
 package scscf
 
 import (
+	"container/heap"
 	"context"
 	"slices"
 	"strings"
@@ -218,6 +219,57 @@ type OriginalDialog struct {
 	Expires time.Time
 }
 
+// ExpiryKind names one of the expiries that the S-CSCF has to act on
+// when its time comes: each of them sends a SAR, a NOTIFY or both, so
+// the item cannot simply go away by itself. The Store keeps the items of
+// one kind in a time index of its own, named after the kind, and hands
+// out each expiry that is due to one instance at a time (ClaimDue), so
+// that the expiries of an instance that has stopped are handled by
+// another one.
+type ExpiryKind string
+
+const (
+	// RegAwaitAuthExpiry is reg-await-auth (TS 24.229 5.4.1.2.1): the
+	// REGISTER that answers a challenge has not come. Its item is the
+	// challenge, named by the private identity and the nonce.
+	RegAwaitAuthExpiry ExpiryKind = "reg-await-auth"
+	// RegistrationExpiry is the end of a registration that was not
+	// refreshed (TS 24.229 5.4.1.2.2A step 10). Its item is the
+	// registration, named by the private identity.
+	RegistrationExpiry ExpiryKind = "registration-expiry"
+	// SubscriptionExpiry is the end of a subscription to the reg event
+	// package that was not refreshed (RFC 6665 4.2.1.4). Its item is the
+	// subscription, named by its dialog.
+	SubscriptionExpiry ExpiryKind = "subscription-expiry"
+	// UnregisteredProfileExpiry is the end of the profile of a callee who
+	// is not registered (UnregisteredProfileLifetime). Its item is the
+	// profile, named by the private identity.
+	UnregisteredProfileExpiry ExpiryKind = "unregistered-profile-expiry"
+)
+
+// ExpiryKinds are all the kinds, which one sweep goes through.
+var ExpiryKinds = []ExpiryKind{RegAwaitAuthExpiry, RegistrationExpiry, SubscriptionExpiry, UnregisteredProfileExpiry}
+
+// Expiry is one expiry that an instance has claimed: which item is due,
+// and until when this instance alone acts on it.
+type Expiry struct {
+	Kind ExpiryKind
+	// PrivateIdentity names the item of every kind but
+	// SubscriptionExpiry, in the form in which the Store compares one.
+	PrivateIdentity string
+	// Nonce is the nonce of the challenge, for RegAwaitAuthExpiry. The
+	// expiry of a challenge that the UE answered must end no later
+	// challenge of the same user, so the nonce is part of the name.
+	Nonce string
+	// Dialog names the subscription, for SubscriptionExpiry.
+	Dialog sip.DialogID
+	// Until is when the claim runs out, after which another instance may
+	// claim the same item. It also tells this claim from a later one on
+	// the same item, so that the late Done of an instance that was held
+	// up takes nothing away from the instance that has the item now.
+	Until time.Time
+}
+
 // Store keeps the registrar state of the S-CSCF. It is an interface so
 // that the state can live outside the node; MemoryStore keeps
 // it in the process.
@@ -260,15 +312,41 @@ type Store interface {
 	// identifier, until its Expires.
 	OriginalDialog(ctx context.Context, id string) (OriginalDialog, bool, error)
 	PutOriginalDialog(ctx context.Context, d OriginalDialog) error
+	// UnregisteredProfile returns the profile of a private identity,
+	// whether or not it has expired: the instance that claims an
+	// UnregisteredProfileExpiry reads it to find what to tell the HSS.
+	UnregisteredProfile(ctx context.Context, privateID string) (UnregisteredProfile, bool, error)
 	// UnregisteredProfileOf finds, until its Expires, the profile that
 	// holds a public identity in the canonical form of ims.CanonicalURI.
 	// It is a lookup by key, never a walk over all profiles.
 	UnregisteredProfileOf(ctx context.Context, publicID string) (UnregisteredProfile, bool, error)
 	PutUnregisteredProfile(ctx context.Context, p UnregisteredProfile) error
 	// DeleteUnregisteredProfile removes the profile of privateID if it
-	// still expires at expires, and reports whether it did, so that a
-	// timer never removes a profile that came after it.
+	// still expires at expires, and reports whether it did, so that the
+	// instance which handles an expiry never removes a profile that came
+	// after it. Of several instances that end the same profile, the one
+	// that removes it is the one that tells the HSS.
 	DeleteUnregisteredProfile(ctx context.Context, privateID string, expires time.Time) (bool, error)
+
+	// ClaimDue claims the expiries of kind that are due at now, at most
+	// limit of them and the ones due longest first, each until now plus
+	// lease. While an expiry is claimed it is not due, and no other
+	// ClaimDue gives it out; when its claim runs out without Done, it is
+	// due again, for whichever instance asks next.
+	//
+	// A claim is no proof that the item has expired: it may have been
+	// refreshed after it was due, or removed, since the Store does not
+	// take the item of a removed registration or profile out of the index
+	// (DeleteRegistration). The caller therefore reads the item under the
+	// lock of its user and checks its expiry there, as the handlers of
+	// the S-CSCF do.
+	ClaimDue(ctx context.Context, kind ExpiryKind, now time.Time, lease time.Duration, limit int) ([]Expiry, error)
+	// Done takes the item of a claimed expiry out of its index, once the
+	// caller has handled it. A claim that has ended in the meantime, by a
+	// write that rescheduled the item, by its removal, or because it ran
+	// out and another instance has it now, leaves the index as it is;
+	// that is the ordinary end of an expiry, not a failure.
+	Done(ctx context.Context, e Expiry) error
 }
 
 // MemoryStore is a Store in memory. Private identities compare without
@@ -283,12 +361,16 @@ type MemoryStore struct {
 	// unregisteredOf the private identity of each of their public ones.
 	unregistered   map[string]UnregisteredProfile
 	unregisteredOf map[string]string
+	// due holds the time index of each kind of expiry, as a store
+	// outside the process holds one.
+	due map[ExpiryKind]*dueIndex
 }
 
 func NewMemoryStore() *MemoryStore {
 	return &MemoryStore{challenges: map[string]Challenge{}, registrations: map[string]Registration{},
 		subscriptions: map[sip.DialogID]Subscription{}, originalDialogs: map[string]OriginalDialog{},
-		unregistered: map[string]UnregisteredProfile{}, unregisteredOf: map[string]string{}}
+		unregistered: map[string]UnregisteredProfile{}, unregisteredOf: map[string]string{},
+		due: map[ExpiryKind]*dueIndex{}}
 }
 
 func key(privateID string) string { return strings.ToLower(privateID) }
@@ -306,18 +388,33 @@ func (s *MemoryStore) Challenge(_ context.Context, privateID string) (Challenge,
 	return c, true, nil
 }
 
+// PutChallenge stores c and schedules its reg-await-auth at its Expires.
+// The expiry of the challenge that c replaces goes with it, so that a
+// pending challenge has one expiry and no other.
 func (s *MemoryStore) PutChallenge(_ context.Context, c Challenge) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	k := key(c.PrivateIdentity)
+	if old, ok := s.challenges[k]; ok && old.Nonce != c.Nonce {
+		s.unschedule(challengeItem(c.PrivateIdentity, old.Nonce))
+	}
 	c.XRES = slices.Clone(c.XRES)
-	s.challenges[key(c.PrivateIdentity)] = c
+	s.challenges[k] = c
+	s.schedule(challengeItem(c.PrivateIdentity, c.Nonce), c.Expires)
 	return nil
 }
 
+// DeleteChallenge removes the challenge and its reg-await-auth. The
+// expiry names the nonce, so a later challenge of the user keeps its
+// own.
 func (s *MemoryStore) DeleteChallenge(_ context.Context, privateID string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	delete(s.challenges, key(privateID))
+	k := key(privateID)
+	if c, ok := s.challenges[k]; ok {
+		s.unschedule(challengeItem(privateID, c.Nonce))
+	}
+	delete(s.challenges, k)
 	return nil
 }
 
@@ -352,9 +449,15 @@ func (s *MemoryStore) PutRegistration(_ context.Context, r Registration) error {
 	// them apart.
 	r.InitialFilterCriteria = slices.Clone(r.InitialFilterCriteria)
 	s.registrations[key(r.PrivateIdentity)] = r
+	s.schedule(userItem(RegistrationExpiry, r.PrivateIdentity), r.Expires)
 	return nil
 }
 
+// DeleteRegistration removes the registration and leaves its expiry: the
+// item is named by the private identity alone, and a registration that
+// another instance writes at the same moment would lose its own expiry
+// with it. The instance that claims the expiry finds no registration, or
+// one that has not expired, and does nothing.
 func (s *MemoryStore) DeleteRegistration(_ context.Context, privateID string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -385,13 +488,17 @@ func (s *MemoryStore) PutSubscription(_ context.Context, sub Subscription) error
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.subscriptions[sub.Dialog.ID] = copySubscription(sub)
+	s.schedule(subscriptionItem(sub.Dialog.ID), sub.Expires)
 	return nil
 }
 
+// DeleteSubscription removes the subscription and its expiry. A dialog
+// is never used again, so the expiry can go with it.
 func (s *MemoryStore) DeleteSubscription(_ context.Context, id sip.DialogID) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	delete(s.subscriptions, id)
+	s.unschedule(subscriptionItem(id))
 	return nil
 }
 
@@ -433,6 +540,15 @@ func (s *MemoryStore) PutOriginalDialog(_ context.Context, d OriginalDialog) err
 	return nil
 }
 
+// UnregisteredProfile returns the profile of a private identity, expired
+// or not, for the instance that handles its expiry.
+func (s *MemoryStore) UnregisteredProfile(_ context.Context, privateID string) (UnregisteredProfile, bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	p, ok := s.unregistered[key(privateID)]
+	return p, ok, nil
+}
+
 func (s *MemoryStore) UnregisteredProfileOf(_ context.Context, publicID string) (UnregisteredProfile, bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -455,9 +571,13 @@ func (s *MemoryStore) PutUnregisteredProfile(_ context.Context, p UnregisteredPr
 	for _, id := range p.PublicIdentities {
 		s.unregisteredOf[ims.PublicIdentityKey(id)] = k
 	}
+	s.schedule(userItem(UnregisteredProfileExpiry, p.PrivateIdentity), p.Expires)
 	return nil
 }
 
+// DeleteUnregisteredProfile removes the profile if it still expires at
+// expires. Like DeleteRegistration it leaves the expiry, whose item is
+// the private identity alone.
 func (s *MemoryStore) DeleteUnregisteredProfile(_ context.Context, privateID string, expires time.Time) (bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -482,4 +602,157 @@ func (s *MemoryStore) removeUnregistered(k string) {
 		}
 	}
 	delete(s.unregistered, k)
+}
+
+func (s *MemoryStore) ClaimDue(_ context.Context, kind ExpiryKind, now time.Time, lease time.Duration, limit int) ([]Expiry, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	ix, ok := s.due[kind]
+	if !ok {
+		return nil, nil
+	}
+	until := now.Add(lease)
+	var claimed []Expiry
+	// A claimed item moves to the end of its claim, after every item that
+	// is due, so that the front holds the next one each time.
+	for len(claimed) < limit {
+		item, at, ok := ix.front()
+		if !ok || at.After(now) {
+			break
+		}
+		claimed = append(claimed, item.expiry(until))
+		ix.set(item, until)
+	}
+	return claimed, nil
+}
+
+func (s *MemoryStore) Done(_ context.Context, e Expiry) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if ix, ok := s.due[e.Kind]; ok {
+		ix.removeClaimed(itemOf(e), e.Until)
+	}
+	return nil
+}
+
+// schedule puts item in the index of its kind, due at at, and ends any
+// claim on it. The lock is held.
+func (s *MemoryStore) schedule(item dueItem, at time.Time) {
+	ix, ok := s.due[item.kind]
+	if !ok {
+		ix = &dueIndex{entries: map[dueItem]*dueEntry{}}
+		s.due[item.kind] = ix
+	}
+	ix.set(item, at)
+}
+
+// unschedule takes item out of the index of its kind, claimed or not.
+// The lock is held.
+func (s *MemoryStore) unschedule(item dueItem) {
+	if ix, ok := s.due[item.kind]; ok {
+		ix.remove(item)
+	}
+}
+
+// dueItem names the item of one expiry, apart from the claim on it: what
+// the member of a time index names in a store outside the process.
+type dueItem struct {
+	kind   ExpiryKind
+	user   string
+	nonce  string
+	dialog sip.DialogID
+}
+
+func userItem(kind ExpiryKind, privateID string) dueItem {
+	return dueItem{kind: kind, user: key(privateID)}
+}
+
+func challengeItem(privateID, nonce string) dueItem {
+	return dueItem{kind: RegAwaitAuthExpiry, user: key(privateID), nonce: nonce}
+}
+
+func subscriptionItem(id sip.DialogID) dueItem {
+	return dueItem{kind: SubscriptionExpiry, dialog: id}
+}
+
+func itemOf(e Expiry) dueItem {
+	return dueItem{kind: e.Kind, user: key(e.PrivateIdentity), nonce: e.Nonce, dialog: e.Dialog}
+}
+
+func (i dueItem) expiry(until time.Time) Expiry {
+	return Expiry{Kind: i.kind, PrivateIdentity: i.user, Nonce: i.nonce, Dialog: i.dialog, Until: until}
+}
+
+// dueIndex is the time index of one kind of expiry: the items ordered by
+// the time they are due, earliest first. The ones that are due are at
+// the front, so that finding them takes no walk over the users, as the
+// ordered set of a store outside the process takes none.
+type dueIndex struct {
+	heap    dueHeap
+	entries map[dueItem]*dueEntry
+}
+
+type dueEntry struct {
+	item dueItem
+	at   time.Time
+	// position is the place in the heap (container/heap).
+	position int
+}
+
+// front is the item that is due first, if the index holds any.
+func (ix *dueIndex) front() (dueItem, time.Time, bool) {
+	if len(ix.heap) == 0 {
+		return dueItem{}, time.Time{}, false
+	}
+	return ix.heap[0].item, ix.heap[0].at, true
+}
+
+func (ix *dueIndex) set(item dueItem, at time.Time) {
+	if e, ok := ix.entries[item]; ok {
+		e.at = at
+		heap.Fix(&ix.heap, e.position)
+		return
+	}
+	e := &dueEntry{item: item, at: at}
+	ix.entries[item] = e
+	heap.Push(&ix.heap, e)
+}
+
+func (ix *dueIndex) remove(item dueItem) {
+	if e, ok := ix.entries[item]; ok {
+		heap.Remove(&ix.heap, e.position)
+		delete(ix.entries, item)
+	}
+}
+
+// removeClaimed removes item if its claim still ends at until. A claim
+// that another instance has taken over, or whose item was rescheduled or
+// removed, leaves the index as it is.
+func (ix *dueIndex) removeClaimed(item dueItem, until time.Time) {
+	if e, ok := ix.entries[item]; ok && e.at.Equal(until) {
+		ix.remove(item)
+	}
+}
+
+type dueHeap []*dueEntry
+
+func (h dueHeap) Len() int           { return len(h) }
+func (h dueHeap) Less(i, j int) bool { return h[i].at.Before(h[j].at) }
+func (h dueHeap) Swap(i, j int) {
+	h[i], h[j] = h[j], h[i]
+	h[i].position, h[j].position = i, j
+}
+
+func (h *dueHeap) Push(x any) {
+	e := x.(*dueEntry)
+	e.position = len(*h)
+	*h = append(*h, e)
+}
+
+func (h *dueHeap) Pop() any {
+	old := *h
+	e := old[len(old)-1]
+	old[len(old)-1] = nil
+	*h = old[:len(old)-1]
+	return e
 }

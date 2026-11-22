@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"slices"
+	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -36,6 +38,12 @@ func SCSCF(t *testing.T, newPair func(t *testing.T) (scscf.Store, scscf.Store)) 
 		{"OriginalDialogUntilItsExpires", scscfOriginalDialog},
 		{"UnregisteredProfile", scscfUnregisteredProfile},
 		{"UnregisteredProfileEndsOnce", scscfUnregisteredProfileEndsOnce},
+		{"UnregisteredProfileAfterItsExpires", scscfUnregisteredProfileAfterExpires},
+		{"ExpiryIsClaimedOnce", scscfExpiryClaimedOnce},
+		{"ClaimThatIsNotDoneRunsOut", scscfClaimRunsOut},
+		{"RefreshMovesTheExpiry", scscfRefreshMovesExpiry},
+		{"ExpiryOfEachKindNamesItsItem", scscfExpiryOfEachKind},
+		{"ReplacedChallengeKeepsItsOwnExpiry", scscfReplacedChallengeExpiry},
 	})
 }
 
@@ -163,6 +171,15 @@ func putUnregisteredProfile(t *testing.T, s scscf.Store, p scscf.UnregisteredPro
 	}
 }
 
+func getUnregisteredProfile(t *testing.T, s scscf.Store, privateID string) (scscf.UnregisteredProfile, bool) {
+	t.Helper()
+	p, ok, err := s.UnregisteredProfile(context.Background(), privateID)
+	if err != nil {
+		t.Errorf("UnregisteredProfile(%s): %v", privateID, err)
+	}
+	return p, ok
+}
+
 func deleteUnregisteredProfile(t *testing.T, s scscf.Store, privateID string, expires time.Time) bool {
 	t.Helper()
 	deleted, err := s.DeleteUnregisteredProfile(context.Background(), privateID, expires)
@@ -170,6 +187,25 @@ func deleteUnregisteredProfile(t *testing.T, s scscf.Store, privateID string, ex
 		t.Errorf("DeleteUnregisteredProfile(%s): %v", privateID, err)
 	}
 	return deleted
+}
+
+// claimDue claims at most ten expiries of one kind. The suite passes the
+// now of its choosing, as the sweep of an S-CSCF instance passes its
+// own, so that no case has to wait out a lease.
+func claimDue(t *testing.T, s scscf.Store, kind scscf.ExpiryKind, now time.Time, lease time.Duration) []scscf.Expiry {
+	t.Helper()
+	claimed, err := s.ClaimDue(context.Background(), kind, now, lease, 10)
+	if err != nil {
+		t.Errorf("ClaimDue(%s): %v", kind, err)
+	}
+	return claimed
+}
+
+func done(t *testing.T, s scscf.Store, e scscf.Expiry) {
+	t.Helper()
+	if err := s.Done(context.Background(), e); err != nil {
+		t.Errorf("Done(%+v): %v", e, err)
+	}
 }
 
 func registration() scscf.Registration {
@@ -433,8 +469,164 @@ func scscfUnregisteredProfile(t *testing.T, a, b scscf.Store) {
 	}
 }
 
-// scscfUnregisteredProfileEndsOnce has the timers of two instances end
-// the same profile at once: only one of them may send the SAR.
+// scscfUnregisteredProfileAfterExpires: the instance that claims the
+// expiry of a profile reads it after its Expires, which is when it needs
+// it, although no lookup by public identity finds it any more.
+func scscfUnregisteredProfileAfterExpires(t *testing.T, a, b scscf.Store) {
+	p := unregisteredProfile(short)
+	putUnregisteredProfile(t, a, p)
+	waitOut()
+	if _, ok := unregisteredProfileOf(t, b, impu); ok {
+		t.Error("UnregisteredProfileOf after its Expires")
+	}
+	if got, ok := getUnregisteredProfile(t, b, impi); !ok || !sameJSON(t, got, p) {
+		t.Errorf("UnregisteredProfile after its Expires = %+v, %v; want the profile", got, ok)
+	}
+}
+
+// scscfExpiryClaimedOnce: an expiry that is due goes to one instance,
+// and Done ends it for good.
+func scscfExpiryClaimedOnce(t *testing.T, a, b scscf.Store) {
+	r := registration()
+	putRegistration(t, a, r)
+	if got := claimDue(t, b, scscf.RegistrationExpiry, r.Expires.Add(-time.Millisecond), time.Minute); len(got) != 0 {
+		t.Fatalf("claimed %+v before the registration expired", got)
+	}
+	var mu sync.Mutex
+	var claimed []scscf.Expiry
+	parallel(4, func(i int) {
+		s := a
+		if i%2 == 1 {
+			s = b
+		}
+		got := claimDue(t, s, scscf.RegistrationExpiry, r.Expires, time.Minute)
+		mu.Lock()
+		defer mu.Unlock()
+		claimed = append(claimed, got...)
+	})
+	if len(claimed) != 1 {
+		t.Fatalf("%d instances claimed the expiry (%+v), want 1", len(claimed), claimed)
+	}
+	if e := claimed[0]; e.Kind != scscf.RegistrationExpiry || !strings.EqualFold(e.PrivateIdentity, impi) || !e.Until.After(r.Expires) {
+		t.Errorf("the claim = %+v, want the registration of %s until after its Expires", e, impi)
+	}
+	done(t, b, claimed[0])
+	if got := claimDue(t, a, scscf.RegistrationExpiry, r.Expires.Add(time.Hour), time.Minute); len(got) != 0 {
+		t.Errorf("claimed %+v after Done", got)
+	}
+}
+
+// scscfClaimRunsOut: the instance that claimed an expiry stops before it
+// is done, so no Done comes; once its claim runs out another instance
+// takes the expiry over, and the late Done of the first one takes
+// nothing away from it.
+func scscfClaimRunsOut(t *testing.T, a, b scscf.Store) {
+	r := registration()
+	putRegistration(t, a, r)
+	first := claimDue(t, a, scscf.RegistrationExpiry, r.Expires, time.Minute)
+	if len(first) != 1 {
+		t.Fatalf("claims = %+v, want the registration once", first)
+	}
+	if got := claimDue(t, b, scscf.RegistrationExpiry, first[0].Until.Add(-time.Millisecond), time.Minute); len(got) != 0 {
+		t.Fatalf("claimed %+v while the other instance held the claim", got)
+	}
+	second := claimDue(t, b, scscf.RegistrationExpiry, first[0].Until, time.Minute)
+	if len(second) != 1 {
+		t.Fatalf("claims after the lease ran out = %+v, want the registration once", second)
+	}
+	done(t, a, first[0])
+	if got := claimDue(t, a, scscf.RegistrationExpiry, second[0].Until.Add(-time.Millisecond), time.Minute); len(got) != 0 {
+		t.Errorf("the Done of the lost claim gave the expiry away again: %+v", got)
+	}
+	done(t, b, second[0])
+	if got := claimDue(t, a, scscf.RegistrationExpiry, second[0].Until, time.Minute); len(got) != 0 {
+		t.Errorf("claimed %+v after Done", got)
+	}
+}
+
+// scscfRefreshMovesExpiry: a registration that the UE refreshes while an
+// instance holds the claim of its old expiry is due at its new one, and
+// the Done of that claim does not take the new expiry away.
+func scscfRefreshMovesExpiry(t *testing.T, a, b scscf.Store) {
+	r := registration()
+	putRegistration(t, a, r)
+	claimed := claimDue(t, a, scscf.RegistrationExpiry, r.Expires, time.Minute)
+	if len(claimed) != 1 {
+		t.Fatalf("claims = %+v, want the registration once", claimed)
+	}
+	refreshed := registration()
+	refreshed.Expires = r.Expires.Add(time.Hour)
+	putRegistration(t, b, refreshed)
+	done(t, a, claimed[0])
+	if got := claimDue(t, b, scscf.RegistrationExpiry, refreshed.Expires.Add(-time.Millisecond), time.Minute); len(got) != 0 {
+		t.Errorf("claimed %+v before the refreshed registration expires", got)
+	}
+	if got := claimDue(t, b, scscf.RegistrationExpiry, refreshed.Expires, time.Minute); len(got) != 1 {
+		t.Errorf("claims at the Expires of the refreshed registration = %+v, want one", got)
+	}
+}
+
+// scscfExpiryOfEachKind: the expiry of each kind names the item it is
+// of, and the one of an item that is gone is gone with it.
+func scscfExpiryOfEachKind(t *testing.T, a, b scscf.Store) {
+	expires := time.Now().Add(time.Hour).Round(time.Millisecond)
+	ch := scscf.Challenge{PrivateIdentity: impi, PublicIdentity: impu, Nonce: "n1", Expires: expires, KeepUntil: expires.Add(time.Minute)}
+	putChallenge(t, a, ch)
+	sub := subscription("sub:1", impi)
+	sub.Expires = expires
+	putSubscription(t, a, sub)
+	p := unregisteredProfile(time.Hour)
+	putUnregisteredProfile(t, a, p)
+
+	if got := claimDue(t, b, scscf.RegistrationExpiry, expires, time.Minute); len(got) != 0 {
+		t.Errorf("the index of the registrations holds %+v, want nothing", got)
+	}
+	// The expiry of a challenge names its nonce, so that the one of an
+	// answered challenge ends no later challenge of the same user.
+	if got := claimDue(t, b, scscf.RegAwaitAuthExpiry, expires, time.Minute); len(got) != 1 ||
+		!strings.EqualFold(got[0].PrivateIdentity, impi) || got[0].Nonce != "n1" {
+		t.Errorf("reg-await-auth = %+v, want the challenge of %s with nonce n1", got, impi)
+	}
+	if got := claimDue(t, b, scscf.SubscriptionExpiry, expires, time.Minute); len(got) != 1 || got[0].Dialog != sub.Dialog.ID {
+		t.Errorf("the expiry of the subscription = %+v, want the dialog %+v", got, sub.Dialog.ID)
+	}
+	if got := claimDue(t, b, scscf.UnregisteredProfileExpiry, p.Expires, time.Minute); len(got) != 1 ||
+		!strings.EqualFold(got[0].PrivateIdentity, impi) {
+		t.Errorf("the expiry of the profile = %+v, want the profile of %s", got, impi)
+	}
+	// The expiries of the two items that are named once and for all go
+	// with them.
+	deleteChallenge(t, b, impi)
+	deleteSubscription(t, b, sub.Dialog.ID)
+	for _, kind := range []scscf.ExpiryKind{scscf.RegAwaitAuthExpiry, scscf.SubscriptionExpiry} {
+		if got := claimDue(t, a, kind, expires.Add(time.Hour), time.Minute); len(got) != 0 {
+			t.Errorf("%s of a removed item = %+v, want nothing", kind, got)
+		}
+	}
+}
+
+// scscfReplacedChallengeExpiry: a challenge that replaces another takes
+// over its user's reg-await-auth, so that the pending challenge has one
+// expiry, which names its own nonce.
+func scscfReplacedChallengeExpiry(t *testing.T, a, b scscf.Store) {
+	expires := time.Now().Add(time.Hour).Round(time.Millisecond)
+	for _, nonce := range []string{"n1", "n2"} {
+		putChallenge(t, a, scscf.Challenge{PrivateIdentity: impi, PublicIdentity: impu, Nonce: nonce,
+			Expires: expires, KeepUntil: expires.Add(time.Minute)})
+	}
+	current, ok := getChallenge(t, b, impi)
+	if !ok || current.Nonce != "n2" {
+		t.Fatalf("the challenge after the second PutChallenge = %+v, %v; want the one with nonce n2", current, ok)
+	}
+	claimed := claimDue(t, b, scscf.RegAwaitAuthExpiry, expires, time.Minute)
+	if len(claimed) != 1 || !strings.EqualFold(claimed[0].PrivateIdentity, impi) || claimed[0].Nonce != current.Nonce {
+		t.Errorf("reg-await-auth = %+v, want only the challenge of %s with nonce %s", claimed, impi, current.Nonce)
+	}
+}
+
+// scscfUnregisteredProfileEndsOnce has two instances end the same
+// profile at once, as their claims on its expiry may overlap: only one
+// of them may send the SAR.
 func scscfUnregisteredProfileEndsOnce(t *testing.T, a, b scscf.Store) {
 	for range 10 {
 		p := unregisteredProfile(time.Hour)

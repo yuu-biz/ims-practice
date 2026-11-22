@@ -11,10 +11,9 @@ import (
 	"github.com/yuu-biz/ims-practice/internal/scscf"
 )
 
-// An S-CSCF instance takes the Store in place of scscf.NewMemoryStore,
-// and runs one loop that claims the due timers, in place of
-// time.AfterFunc. The loop calls what the timer would have called; that
-// function reads the item and checks that it has really expired.
+// An S-CSCF instance takes the Store in place of scscf.NewMemoryStore.
+// Its sweep claims the expiries that are due, handles each of them, and
+// marks it done; this is one round of it, for the registrations.
 func Example() {
 	ctx := context.Background()
 	now := time.UnixMilli(1_790_000_000_000)
@@ -29,24 +28,23 @@ func Example() {
 		return
 	}
 
-	registrationExpired := func(privateID string, expires time.Time) {
-		fmt.Println("registration expired:", privateID)
-	}
-	// One round of the loop, an hour later. The lease is longer than the
-	// SAR that the timer function sends may take.
+	// An hour later. The lease is longer than the SAR that the handler
+	// sends may take.
 	now = now.Add(time.Hour)
-	claims, _ := store.ClaimDue(ctx, scscfstore.RegistrationTimer, now, 30*time.Second, 100)
-	for _, c := range claims {
-		reg, ok, err := store.Registration(ctx, c.Member)
+	expiries, _ := store.ClaimDue(ctx, scscf.RegistrationExpiry, now, 30*time.Second, 100)
+	for _, e := range expiries {
+		// The handler reads the item under the lock of its user and
+		// checks that it has really expired.
+		reg, ok, err := store.Registration(ctx, e.PrivateIdentity)
 		if err != nil {
-			// Without Done, the lease runs out, and an instance claims
-			// the member again.
+			// Without Done, the lease runs out and an instance claims the
+			// expiry again.
 			continue
 		}
 		if ok && !reg.Expires.After(now) {
-			registrationExpired(reg.PrivateIdentity, reg.Expires)
+			fmt.Println("registration expired:", reg.PrivateIdentity)
 		}
-		store.Done(ctx, c)
+		store.Done(ctx, e)
 	}
 	// Output:
 	// registration expired: 001010000000001@ims.mnc001.mcc001.3gppnetwork.org

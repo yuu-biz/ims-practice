@@ -180,11 +180,11 @@ func TestADeleteThatStopsLeavesOnlyAMiss(t *testing.T) {
 	if got, err := b.SubscriptionsOf(ctx, impi); err != nil || len(got) != 0 {
 		t.Errorf("SubscriptionsOf after the delete = %v, %v; want none", got, err)
 	}
-	if claims, err := b.ClaimDue(ctx, scscfstore.SubscriptionTimer, expires, time.Minute, 10); err != nil || len(claims) != 1 {
-		t.Fatalf("claims of the subscription timer = %v, %v; want the one left behind", claims, err)
+	if claims, err := b.ClaimDue(ctx, scscf.SubscriptionExpiry, expires, time.Minute, 10); err != nil || len(claims) != 1 {
+		t.Fatalf("claims of the subscription expiries = %v, %v; want the one left behind", claims, err)
 	}
 	if _, ok, err := b.Subscription(ctx, subscription(expires).Dialog.ID); err != nil || ok {
-		t.Errorf("the claimer of the timer left behind finds a subscription: %v, %v", ok, err)
+		t.Errorf("the claimer of the expiry left behind finds a subscription: %v, %v", ok, err)
 	}
 	deleted, err := stopping().DeleteUnregisteredProfile(ctx, "001010000000002@ims.mnc001.mcc001.3gppnetwork.org", expires)
 	if err != nil || !deleted {
