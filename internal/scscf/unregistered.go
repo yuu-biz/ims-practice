@@ -86,7 +86,11 @@ func (s *SCSCF) unregisteredProfile(st *sip.ServerTransaction, callee string, lo
 		HSSHost:               originHost(answer),
 		Expires:               time.Now().Add(s.cfg.UnregisteredProfileLifetime),
 	}
-	unlock, _ := s.users.Lock(ctx, p.PrivateIdentity)
+	unlock, err := s.users.Lock(ctx, p.PrivateIdentity)
+	if err != nil {
+		s.lockFailed(st, err, log)
+		return UnregisteredProfile{}, false
+	}
 	defer unlock()
 	// A failure of the store from here on leaves the HSS with the user
 	// assigned to this S-CSCF, as the next SAR for the user finds it.
@@ -118,7 +122,11 @@ func (s *SCSCF) unregisteredProfile(st *sip.ServerTransaction, callee string, lo
 func (s *SCSCF) unregisteredProfileExpired(p UnregisteredProfile) {
 	ctx := context.Background()
 	log := s.log.With("private_identity", p.PrivateIdentity)
-	unlock, _ := s.users.Lock(ctx, p.PrivateIdentity)
+	unlock, err := s.users.Lock(ctx, p.PrivateIdentity)
+	if err != nil {
+		log.Warn("the profile of an unregistered user is not let go: the lock of the user was not taken; the HSS keeps the user assigned to this S-CSCF", "error", err.Error())
+		return
+	}
 	defer unlock()
 	deleted, err := s.store.DeleteUnregisteredProfile(ctx, p.PrivateIdentity, p.Expires)
 	if err != nil {

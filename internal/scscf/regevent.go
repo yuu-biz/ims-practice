@@ -90,7 +90,11 @@ func (s *SCSCF) subscribe(st *sip.ServerTransaction) {
 		return
 	}
 	if ok {
-		unlock, _ := s.users.Lock(ctx, reg.PrivateIdentity)
+		unlock, err := s.users.Lock(ctx, reg.PrivateIdentity)
+		if err != nil {
+			s.lockFailed(st, err, log)
+			return
+		}
 		defer unlock()
 		// The binding may have changed while this waited for the lock.
 		if reg, ok, err = s.store.RegistrationOf(ctx, resource); err != nil {
@@ -450,13 +454,16 @@ func (s *SCSCF) readNotifyAnswer(ct *sip.ClientTransaction, id sip.DialogID, log
 // lockSubscription takes the lock of the user that a subscription is
 // to, and reads the subscription again under it, since it may have
 // changed or ended in the meantime. ok is false, and nothing is locked,
-// when there is no such subscription or the store failed.
+// when there is no such subscription, the lock was not taken or the
+// store failed.
 func (s *SCSCF) lockSubscription(ctx context.Context, id sip.DialogID) (sub Subscription, unlock func(), ok bool, err error) {
 	sub, ok, err = s.store.Subscription(ctx, id)
 	if err != nil || !ok {
 		return Subscription{}, nil, false, err
 	}
-	unlock, _ = s.users.Lock(ctx, sub.PrivateIdentity)
+	if unlock, err = s.users.Lock(ctx, sub.PrivateIdentity); err != nil {
+		return Subscription{}, nil, false, err
+	}
 	if sub, ok, err = s.store.Subscription(ctx, id); err != nil || !ok {
 		unlock()
 		return Subscription{}, nil, false, err

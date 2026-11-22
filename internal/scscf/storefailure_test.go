@@ -35,6 +35,22 @@ type failingStore struct {
 
 var errUnreachable = errors.New("the store cannot be reached")
 
+// failingLocks is a UserLocker that hands out no lock, as the lock in a
+// store outside the process does once the S-CSCF cannot reach it.
+type failingLocks struct{}
+
+func (failingLocks) Lock(context.Context, string) (func(), error) { return nil, errUnreachable }
+
+// TestRegisterWhenTheLockFails: a REGISTER whose user the S-CSCF cannot
+// lock gets 500. Another instance may be handling the user, so this one
+// does not go on without the lock.
+func TestRegisterWhenTheLockFails(t *testing.T) {
+	h := newHarness(t, Config{UserLocks: failingLocks{}})
+	if r := h.register(sip.NewCallID(), 1, 600000, initial); r.StatusCode != 500 {
+		t.Errorf("REGISTER whose user cannot be locked got %d, want 500", r.StatusCode)
+	}
+}
+
 // fail makes the operations named fail, or all of them when none is
 // named.
 func (s *failingStore) fail(methods ...string) {

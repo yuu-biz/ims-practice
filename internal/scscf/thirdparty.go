@@ -117,7 +117,11 @@ func (s *SCSCF) sendThirdPartyRegister(m *sip.Message, reg Registration, as ifc.
 	// registering again would only fail the same way while the server
 	// is down.
 	ctx := context.Background()
-	unlock, _ := s.users.Lock(ctx, reg.PrivateIdentity)
+	unlock, err := s.users.Lock(ctx, reg.PrivateIdentity)
+	if err != nil {
+		log.Warn("the registration stays: the lock of the user was not taken", "error", err.Error())
+		return
+	}
 	defer unlock()
 	current, ok, err := s.store.Registration(ctx, reg.PrivateIdentity)
 	if err != nil {

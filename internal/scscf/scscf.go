@@ -55,6 +55,13 @@ type Config struct {
 	// profile of a callee who is not registered (session.go).
 	// Zero means UnregisteredProfileLifetime. Tests shorten it.
 	UnregisteredProfileLifetime time.Duration
+	// UserLocks serialises what happens to one user. Nil means a lock
+	// per user in the memory of this process (ims.UserLocks), which
+	// serves an S-CSCF that runs as one instance. Instances that share a
+	// store take the lock of a user in it
+	// (internal/kvstore/kvlock), so that only one of them handles the
+	// user at a time.
+	UserLocks ims.UserLocker
 }
 
 // defaultExpires is used when a REGISTER asks for no interval. RFC 3261
@@ -75,7 +82,7 @@ type SCSCF struct {
 	// subscriptions to it, so that the NOTIFYs of a user go out in the
 	// order of the events. Each user has a lock of its own, so that a
 	// Cx round trip of one user never holds up another.
-	users ims.UserLocks
+	users ims.UserLocker
 	// authTimers are the reg-await-auth timers and regTimers the
 	// registration timers of this process, by private identity in the
 	// form of key. They are kept apart so that an authentication that
@@ -129,7 +136,18 @@ func New(cfg Config, hss HSS, node *diameter.Node, store Store, resolver Resolve
 	if cfg.UnregisteredProfileLifetime == 0 {
 		cfg.UnregisteredProfileLifetime = UnregisteredProfileLifetime
 	}
-	return &SCSCF{cfg: cfg, hss: hss, node: node, store: store, resolver: resolver, log: log}
+	if cfg.UserLocks == nil {
+		cfg.UserLocks = &ims.UserLocks{}
+	}
+	return &SCSCF{cfg: cfg, hss: hss, node: node, store: store, resolver: resolver, log: log, users: cfg.UserLocks}
+}
+
+// lockFailed answers a request whose user the S-CSCF could not lock
+// (500, RFC 3261 21.5.1). Another instance may be handling the user, so
+// this one does not go on without the lock.
+func (s *SCSCF) lockFailed(st *sip.ServerTransaction, err error, log *slog.Logger) {
+	log.Warn("the lock of the user was not taken", "method", string(st.Request.Method), "error", err.Error())
+	s.respond(st, 500, nil)
 }
 
 // SetStack gives the S-CSCF the stack it runs on, which it needs to
@@ -174,7 +192,11 @@ func (s *SCSCF) register(st *sip.ServerTransaction) {
 	}
 	log := s.log.With("private_identity", privateID, "public_identity", publicID, "call_id", req.Get("Call-ID"))
 	ctx := context.Background()
-	unlock, _ := s.users.Lock(ctx, privateID)
+	unlock, err := s.users.Lock(ctx, privateID)
+	if err != nil {
+		s.lockFailed(st, err, log)
+		return
+	}
 	defer unlock()
 
 	if expires == 0 {
@@ -504,7 +526,10 @@ func (s *SCSCF) Deregister(privateID string, event reginfo.Event) error {
 		return fmt.Errorf("scscf: a network-initiated deregistration is deactivated or rejected, not %s", event)
 	}
 	ctx := context.Background()
-	unlock, _ := s.users.Lock(ctx, privateID)
+	unlock, err := s.users.Lock(ctx, privateID)
+	if err != nil {
+		return err
+	}
 	defer unlock()
 	reg, ok, err := s.store.Registration(ctx, privateID)
 	if err != nil {
@@ -583,7 +608,10 @@ func (s *SCSCF) registrationTermination(r cx.RegistrationTerminationRequest) cx.
 		return cx.RegistrationTerminationAnswer{Result: cx.Base(cx.DiameterUnableToComply)}
 	}
 	ctx := context.Background()
-	unlock, _ := s.users.Lock(ctx, r.UserName)
+	unlock, err := s.users.Lock(ctx, r.UserName)
+	if err != nil {
+		return s.registrationTerminationFailed(r, err)
+	}
 	defer unlock()
 	reg, ok, err := s.store.Registration(ctx, r.UserName)
 	if err != nil {
@@ -629,7 +657,11 @@ func covers(reg Registration, ids []string) bool {
 func (s *SCSCF) regAwaitAuthExpired(privateID, nonce string) {
 	ctx := context.Background()
 	log := s.log.With("private_identity", privateID)
-	unlock, _ := s.users.Lock(ctx, privateID)
+	unlock, err := s.users.Lock(ctx, privateID)
+	if err != nil {
+		log.Warn("reg-await-auth not handled: the lock of the user was not taken; the HSS is not told, and the challenge goes at its KeepUntil", "error", err.Error())
+		return
+	}
 	defer unlock()
 	ch, ok, err := s.store.Challenge(ctx, privateID)
 	if err != nil {
@@ -665,7 +697,11 @@ func (s *SCSCF) regAwaitAuthExpired(privateID, nonce string) {
 func (s *SCSCF) registrationExpired(privateID string, expires time.Time) {
 	ctx := context.Background()
 	log := s.log.With("private_identity", privateID)
-	unlock, _ := s.users.Lock(ctx, privateID)
+	unlock, err := s.users.Lock(ctx, privateID)
+	if err != nil {
+		log.Warn("expiry of the registration not handled: the lock of the user was not taken; it stays until the UE registers again or the HSS ends it", "error", err.Error())
+		return
+	}
 	defer unlock()
 	reg, ok, err := s.store.Registration(ctx, privateID)
 	if err != nil {
