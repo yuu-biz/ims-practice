@@ -294,6 +294,29 @@ func TestServerTransactionAbsorbsRetransmissions(t *testing.T) {
 	}
 }
 
+// FinalStatus tells the TU which final response it gave a request: none
+// before it has answered, and not a provisional response.
+func TestFinalStatusIsTheFinalResponseOfTheTU(t *testing.T) {
+	seen := make(chan [3]int, 1)
+	server := newStack(t, testTimers, func(st *ServerTransaction) {
+		before := st.FinalStatus()
+		st.Respond(NewResponse(st.Request, 100, ""))
+		provisional := st.FinalStatus()
+		st.Respond(NewResponse(st.Request, 403, NewTag()))
+		seen <- [3]int{before, provisional, st.FinalStatus()}
+	})
+	peer := newUDPPeer(t, server.transport.LocalAddr())
+	peer.send(peer.request(REGISTER))
+	select {
+	case got := <-seen:
+		if got != [3]int{0, 0, 403} {
+			t.Errorf("FinalStatus before, after the 100 and after the 403 = %v, want [0 0 403]", got)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("the REGISTER never reached the TU")
+	}
+}
+
 func TestClientTransactionTimesOut(t *testing.T) {
 	timers := Timers{T1: 10 * time.Millisecond, T2: 40 * time.Millisecond, T4: 50 * time.Millisecond}
 	client := newStack(t, timers, ignoreRequests)
