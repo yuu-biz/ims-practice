@@ -236,6 +236,7 @@ function session(): UESession {
     peer_direction: "sendrecv",
     preconditions: { met: true, rows: [row("local", "send"), row("local", "recv"), row("remote", "send"), row("remote", "recv")] },
     media_resources: true,
+    reservation_needed: true,
     held: false,
     ringback: "",
     dtmf_sent: "",
