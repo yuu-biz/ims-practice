@@ -906,10 +906,17 @@ func (f *conference) inviteUser(rt sip.ReferTo, referredBy string) int {
 // requestURIOf is the Request-URI of the INVITE to the user of a
 // Refer-To URI. A SIP URI of a global number with user=phone, as a UE
 // writes a tel URI with a Replaces (TS 24.147 5.3.1.5.3), is its tel
-// URI again, which the S-CSCF finds the user by (RFC 3261 19.1.6).
+// URI again, which the S-CSCF finds the user by (RFC 3261 19.1.6). A
+// GRUU is not such a URI: it names a UA instance, not a number.
 func requestURIOf(uri string) string {
 	n, ok := ims.ParseTelephoneNumber(uri)
 	if !ok || n.SIP == nil || !strings.HasPrefix(n.Number, "+") {
+		return uri
+	}
+	// A GRUU names one UA instance of the user (RFC 5627 3.1), and the
+	// focus invites that instance: the tel URI of the number would
+	// address the user instead, whose other instances would be alerted.
+	if _, gruu := n.SIP.Params.Get("gr"); gruu {
 		return uri
 	}
 	return "tel:" + n.Number

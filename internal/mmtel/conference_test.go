@@ -667,6 +667,37 @@ func TestInvitedAsTheConferenceEnds(t *testing.T) {
 	}
 }
 
+// TestReferToANumber: the focus invites the user of a Refer-To that
+// holds a number by the tel URI of that number, which the S-CSCF finds
+// the user by (TS 24.147 5.3.1.5.3, RFC 3261 19.1.6). A GRUU keeps its
+// form: it names one UA instance of the user (RFC 5627 3.1), so the
+// number in it is not what the REFER asks for.
+func TestReferToANumber(t *testing.T) {
+	const number = "sip:+12025550102@" + domain + ";user=phone"
+	const gruu = number + ";gr=urn:uuid:f81d4fae-7dec-11d0-a765-00a0c91e6bf6"
+	for name, tc := range map[string]struct{ referTo, requestURI string }{
+		"a number becomes a tel URI": {number, "tel:+12025550102"},
+		"a GRUU stays a SIP URI":     {gruu, gruu},
+	} {
+		t.Run(name, func(t *testing.T) {
+			mrfc := startConferenceMRFC(t)
+			as := startAS(t, noServices{}, mmtel.Config{MRFC: "sip:" + contactOf(t, mrfc.ua)})
+			invited := make(chan *sip.IncomingCall, 1)
+			conf, _, _ := aliceConference(t, as, func(c *sip.IncomingCall) {
+				invited <- c
+				c.Accept(audio("41000", "sendrecv"))
+			})
+			if r, err := conf.Refer(sip.ReferTo{URI: tc.referTo}); err != nil || r.Response.StatusCode != 200 {
+				t.Fatalf("REFER got %v, %v; want 200", r, err)
+			}
+			got := receive(t, invited, "the focus's INVITE at the invited user").Request
+			if got.RequestURI != tc.requestURI {
+				t.Errorf("Request-URI = %q, want %q", got.RequestURI, tc.requestURI)
+			}
+		})
+	}
+}
+
 // TestJoinTheLastPlaceAtOnce: two users dial in at the same time to a
 // conference that has room for one more. Both pass the check before the
 // focus asks the MRFC for their media; the one who joins second gets
