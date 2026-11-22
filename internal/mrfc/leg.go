@@ -17,10 +17,10 @@ import (
 
 // pcmu is the one codec of the MRFP.
 //
-// SIMPLIFIED: TS 23.333 5.12. A real MRFP takes the codecs of the UEs,
-// AMR-WB and AMR among them: 5.12.1 asks an MRFP that transcodes for
-// AMR at least and lets it take the other codecs of TS 26.114. This
-// one plays and mixes G.711 PCMU only and transcodes nothing. Mixing a
+// SIMPLIFIED: TS 23.333 5.12. This MRFP plays and mixes G.711 PCMU
+// only and transcodes nothing. 5.12.1 asks an MRFP to transcode between
+// the terminations of a context and to support AMR at least, and lets
+// it support the other codecs of TS 26.114, AMR-WB among them. Mixing a
 // conference sums decoded speech, and the product decodes no AMR; a
 // decoder would cost much and change little of the signalling that the
 // project shows. The MRFC answers an offer without PCMU with 488 (Not
