@@ -26,6 +26,13 @@ type Identity struct {
 	OriginRealm string
 }
 
+// AddOrigin writes the Origin-Host and Origin-Realm that every request
+// and answer carries.
+func (i Identity) AddOrigin(m *diam.Message) {
+	m.NewAVP(avp.OriginHost, avp.Mbit, 0, datatype.DiameterIdentity(i.OriginHost))
+	m.NewAVP(avp.OriginRealm, avp.Mbit, 0, datatype.DiameterIdentity(i.OriginRealm))
+}
+
 // capabilitiesExchangeRequest is the CER of RFC 6733 5.3.1.
 func capabilitiesExchangeRequest(local Identity, applications []uint32, hostIP net.IP, ids MessageIDs) *diam.Message {
 	m := diam.NewMessage(diam.CapabilitiesExchange, diam.RequestFlag, 0, ids.HopByHop, ids.EndToEnd, dict.Default)
@@ -43,8 +50,7 @@ func capabilitiesExchangeAnswer(local Identity, applications []uint32, hostIP ne
 }
 
 func addCapabilities(m *diam.Message, local Identity, applications []uint32, hostIP net.IP) {
-	m.NewAVP(avp.OriginHost, avp.Mbit, 0, datatype.DiameterIdentity(local.OriginHost))
-	m.NewAVP(avp.OriginRealm, avp.Mbit, 0, datatype.DiameterIdentity(local.OriginRealm))
+	local.AddOrigin(m)
 	m.NewAVP(avp.HostIPAddress, avp.Mbit, 0, datatype.Address(hostIP))
 	m.NewAVP(avp.VendorID, avp.Mbit, 0, datatype.Unsigned32(vendorIDNone))
 	m.NewAVP(avp.ProductName, 0, 0, datatype.UTF8String(productName))
@@ -54,18 +60,14 @@ func addCapabilities(m *diam.Message, local Identity, applications []uint32, hos
 	// capture shows which node speaks what. Both Cx and Sh are
 	// 3GPP applications.
 	for _, id := range applications {
-		m.NewAVP(avp.VendorSpecificApplicationID, avp.Mbit, 0, &diam.GroupedAVP{AVP: []*diam.AVP{
-			diam.NewAVP(avp.VendorID, avp.Mbit, 0, datatype.Unsigned32(VendorID3GPP)),
-			diam.NewAVP(avp.AuthApplicationID, avp.Mbit, 0, datatype.Unsigned32(id)),
-		}})
+		AddVendorSpecificApplicationID(m, id)
 	}
 }
 
 // deviceWatchdogRequest is the DWR of RFC 6733 5.5.1.
 func deviceWatchdogRequest(local Identity, ids MessageIDs) *diam.Message {
 	m := diam.NewMessage(diam.DeviceWatchdog, diam.RequestFlag, 0, ids.HopByHop, ids.EndToEnd, dict.Default)
-	m.NewAVP(avp.OriginHost, avp.Mbit, 0, datatype.DiameterIdentity(local.OriginHost))
-	m.NewAVP(avp.OriginRealm, avp.Mbit, 0, datatype.DiameterIdentity(local.OriginRealm))
+	local.AddOrigin(m)
 	return m
 }
 
@@ -73,16 +75,14 @@ func deviceWatchdogRequest(local Identity, ids MessageIDs) *diam.Message {
 func deviceWatchdogAnswer(local Identity, request MessageIDs) *diam.Message {
 	m := diam.NewMessage(diam.DeviceWatchdog, 0, 0, request.HopByHop, request.EndToEnd, dict.Default)
 	m.NewAVP(avp.ResultCode, avp.Mbit, 0, datatype.Unsigned32(DiameterSuccess))
-	m.NewAVP(avp.OriginHost, avp.Mbit, 0, datatype.DiameterIdentity(local.OriginHost))
-	m.NewAVP(avp.OriginRealm, avp.Mbit, 0, datatype.DiameterIdentity(local.OriginRealm))
+	local.AddOrigin(m)
 	return m
 }
 
 // disconnectPeerRequest is the DPR of RFC 6733 5.4.1.
 func disconnectPeerRequest(local Identity, ids MessageIDs, cause DisconnectCause) *diam.Message {
 	m := diam.NewMessage(diam.DisconnectPeer, diam.RequestFlag, 0, ids.HopByHop, ids.EndToEnd, dict.Default)
-	m.NewAVP(avp.OriginHost, avp.Mbit, 0, datatype.DiameterIdentity(local.OriginHost))
-	m.NewAVP(avp.OriginRealm, avp.Mbit, 0, datatype.DiameterIdentity(local.OriginRealm))
+	local.AddOrigin(m)
 	m.NewAVP(avp.DisconnectCause, avp.Mbit, 0, datatype.Enumerated(cause))
 	return m
 }
@@ -91,8 +91,7 @@ func disconnectPeerRequest(local Identity, ids MessageIDs, cause DisconnectCause
 func disconnectPeerAnswer(local Identity, request MessageIDs) *diam.Message {
 	m := diam.NewMessage(diam.DisconnectPeer, 0, 0, request.HopByHop, request.EndToEnd, dict.Default)
 	m.NewAVP(avp.ResultCode, avp.Mbit, 0, datatype.Unsigned32(DiameterSuccess))
-	m.NewAVP(avp.OriginHost, avp.Mbit, 0, datatype.DiameterIdentity(local.OriginHost))
-	m.NewAVP(avp.OriginRealm, avp.Mbit, 0, datatype.DiameterIdentity(local.OriginRealm))
+	local.AddOrigin(m)
 	return m
 }
 
@@ -100,13 +99,11 @@ func disconnectPeerAnswer(local Identity, request MessageIDs) *diam.Message {
 // for a request this node has no handler for: the E bit is set and the
 // Result-Code is DIAMETER_COMMAND_UNSUPPORTED (7.1.3).
 func CommandUnsupportedAnswer(local Identity, request *diam.Message) *diam.Message {
-	m := diam.NewMessage(request.Header.CommandCode, diam.ErrorFlag, request.Header.ApplicationID,
-		request.Header.HopByHopID, request.Header.EndToEndID, dict.Default)
-	if sid, err := request.FindAVP(avp.SessionID, 0); err == nil {
-		m.AddAVP(sid)
-	}
-	m.NewAVP(avp.OriginHost, avp.Mbit, 0, datatype.DiameterIdentity(local.OriginHost))
-	m.NewAVP(avp.OriginRealm, avp.Mbit, 0, datatype.DiameterIdentity(local.OriginRealm))
+	m := NewAnswer(request)
+	// Where the answer of an application carries the P bit of its
+	// request, this one carries the E bit alone.
+	m.Header.CommandFlags = diam.ErrorFlag
+	local.AddOrigin(m)
 	m.NewAVP(avp.ResultCode, avp.Mbit, 0, datatype.Unsigned32(DiameterCommandUnsupported))
 	return m
 }
