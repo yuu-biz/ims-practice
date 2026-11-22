@@ -132,6 +132,22 @@ func TestRequestGoesToTheNextTargetWhenTheFirstRefusesTCP(t *testing.T) {
 	}
 }
 
+// When the target after a 503 cannot be reached either, the TU gets
+// the 503, not the transport error of the target that never took the
+// request.
+func TestA503OutlivesATargetAfterItThatRefusesTCP(t *testing.T) {
+	unavailable, _ := answering(t, 503)
+	client := newStack(t, failoverTimers, ignoreRequests)
+
+	ct, err := client.SendRequest(registerRequest(), udpTo(unavailable.LocalAddr()), tcpTo(closedTCPPort(t)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if responses := collect(t, ct); !reflect.DeepEqual(codes(responses), []int{503}) || ct.Err() != nil {
+		t.Errorf("TU got %v, err = %v; want the 503 of the first target", codes(responses), ct.Err())
+	}
+}
+
 // A target that has sent a response has the request: when Timer F fires
 // after it, the request goes nowhere else (RFC 3263 4.3).
 func TestTimeoutAfterAResponseKeepsTheRequestAtItsTarget(t *testing.T) {
