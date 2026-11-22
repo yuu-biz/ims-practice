@@ -29,7 +29,9 @@ docker compose up -d --build
 
 wait_for_open() {
 	local service="$1" i
-	for i in $(seq 1 60); do
+	# Up to two minutes: a node that tried before the HSS listened
+	# tries again after Tc, 30 s (RFC 6733 2.1).
+	for i in $(seq 1 120); do
 		if grep -q '"to":"I-Open (OKAY)"' <<<"$(docker compose logs --no-color "$service" 2>/dev/null)"; then
 			return 0
 		fi
