@@ -971,7 +971,7 @@ AOF を毎回書き込む設定（`--appendonly yes --appendfsync always`）で�
 
 | パッケージ | 中身 |
 | --- | --- |
-| `internal/kvstore/kvjson` | どの役割にも要る部品。値を JSON で読み書きする、操作ごとの時間の上限、比べて入れ替える更新（`Update`、`Upsert`）、1 台だけが取る `Take`、索引の項目（`PutIndex`、`IndexTarget`、`DeleteIndexIf`、`SwapIndex`）、時刻の索引 |
+| `internal/kvstore/kvjson` | どの役割にも要る部品。値を JSON で読み書きする、操作ごとの時間の上限、比べて入れ替える更新（`Modify`、`ReadModifyWrite`）、1 台だけが取る `ReadAndRemove`、索引の項目（`WriteIndex`、`ReadIndex`、`RemoveIndexIf`、`CompareAndSwapIndex`）、時刻の索引（`WriteDue`、`RemoveDue`）。どの操作も呼ぶ側の `context` を取り、保存先の失敗を返します |
 | `internal/kvstore/scscfstore` | `scscf.Store` |
 | `internal/kvstore/pcscfstore` | `pcscf.Store` |
 | `internal/kvstore/ipsmgwstore` | `ipsmgw.Store` |
@@ -1163,7 +1163,7 @@ MMTel AS の会議は、次のとおりです。
 
 - キーは `<接頭辞>mmtel:conference:<会議の ID>` で、値は `ConferenceRecord` の全体です。索引も期限もありません（[状態と冗長構成の設計](../design/state-redundancy.md)）。呼の記録と同じ `mmtelstore.Store` が `mmtel.ConferenceStore` も満たすので、`mmtel.New` の 2 つの引数に同じ値を渡します。今の `cmd/ims` が `mmtel.MemoryStore` を渡すのと同じ形です。
 - 記録を書くのは、フォーカスのある台だけです。会議の URI がその台を指し、その台が会議のロックの中で 1 つずつ書きます。ほかの台は書かず、会議を引き継ぎません（[状態と冗長構成の設計](../design/state-redundancy.md)）。そのため、`PutConference` が記録の全体を置き換えても、ほかの台の変更は失われません。
-- それでも `PutConference` は、読んでから版を条件に書きます（`kvjson.Upsert`）。答えが返らずに諦めた書き込みが、次の書き込みのあとで保存先に届くことがあるためです。版を条件にすれば、遅れた書き込みは失敗し、記録はあとの状態（参加者と、購読ごとの会議の文書の版）を保ちます。普通の `Put` だと、古い状態で上書きします。試験（`TestALateWriteDoesNotUndoALaterOne`）は、最初の書き込みを止めておいて遅れて届けます。普通の `Put` に替えると失敗することを確かめました。
+- それでも `PutConference` は、読んでから版を条件に書きます（`kvjson.ReadModifyWrite`）。答えが返らずに諦めた書き込みが、次の書き込みのあとで保存先に届くことがあるためです。版を条件にすれば、遅れた書き込みは失敗し、記録はあとの状態（参加者と、購読ごとの会議の文書の版）を保ちます。版を条件にしない書き込みだと、古い状態で上書きします。試験（`TestALateWriteDoesNotUndoALaterOne`）は、最初の書き込みを止めておいて遅れて届けます。版を条件にしない書き込みに替えると失敗することを確かめました。
 - 例外は、会議の最初の書き込みが遅れて、`DeleteConference` のあとに届いた場合です。版が空の条件は、項目が無ければ通るので、記録が 1 つ残ります。会議の ID は乱数で使い回さないので、動いている会議と取り違えることはありません。
 - 会議の購読の期限には、時刻の索引を使いませんでした。期限が切れたときに動けるのはフォーカスのある台だけで、その台が止まれば会議も終わるので、別の台に渡す意味が無いためです。
 

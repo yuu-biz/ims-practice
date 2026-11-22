@@ -22,7 +22,7 @@
 // not take it for a missing item. A write returns it until the main item
 // is written or removed. What fails after that is the removal of an
 // index item that the main item no longer names, which is what an
-// instance that stops there leaves: a miss (kvjson.PutIndex).
+// instance that stops there leaves: a miss (kvjson.WriteIndex).
 package pcscfstore
 
 import (
@@ -121,7 +121,7 @@ func (s *Store) associationOf(ctx context.Context, indexKey string) (pcscf.Assoc
 
 // AssociationOfContact reads the index item of the contact, then the
 // association. An association whose contact is another is a miss (see
-// kvjson.PutIndex).
+// kvjson.WriteIndex).
 func (s *Store) AssociationOfContact(ctx context.Context, contact string) (pcscf.Association, bool, error) {
 	k, ok := s.contactKey(contact)
 	if !ok {
@@ -147,7 +147,7 @@ func (s *Store) AssociationOfPolicySession(ctx context.Context, session policy.S
 
 // PutAssociation writes the index items of the contact and the policy
 // session, then the association, then removes the index items that the
-// association no longer has. The order is that of kvjson.PutIndex.
+// association no longer has. The order is that of kvjson.WriteIndex.
 func (s *Store) PutAssociation(ctx context.Context, a pcscf.Association) error {
 	old, _, err := s.Association(ctx, a.Source)
 	if err != nil {
