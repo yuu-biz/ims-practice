@@ -17,6 +17,7 @@ func PCSCF(t *testing.T, newPair func(t *testing.T) (pcscf.Store, pcscf.Store)) 
 		{"Association", pcscfAssociation},
 		{"AssociationOfContact", pcscfAssociationOfContact},
 		{"AssociationChangesItsIndexes", pcscfAssociationChangesIndexes},
+		{"AssociationUntilItsKeepUntil", pcscfAssociationKeptUntil},
 		{"Dialog", pcscfDialog},
 		{"DialogOfPolicySession", pcscfDialogOfPolicySession},
 		{"ConcurrentUpdatesOfOneDialog", pcscfConcurrentUpdates},
@@ -111,6 +112,47 @@ func pcscfAssociationChangesIndexes(t *testing.T, a, b pcscf.Store) {
 	a.PutAssociation(as)
 	if _, ok := b.AssociationOfPolicySession("pcscf;2;sig"); ok {
 		t.Error("AssociationOfPolicySession after the session ended")
+	}
+}
+
+// pcscfAssociationKeptUntil: the Store keeps an association until the
+// KeepUntil that the P-CSCF wrote into it, also one put after that time,
+// and then finds it by none of its keys. An association that a refresh
+// keeps for longer stays.
+func pcscfAssociationKeptUntil(t *testing.T, a, b pcscf.Store) {
+	ended := association()
+	ended.KeepUntil = time.Now().Add(short).Round(time.Millisecond)
+	a.PutAssociation(ended)
+	if _, ok := b.Association(ended.Source); !ok {
+		t.Fatal("Association before its KeepUntil")
+	}
+	past := association()
+	past.Source = sip.Destination{Transport: sip.UDP, Addr: netip.MustParseAddrPort("192.0.2.11:5060")}
+	past.Contact, past.SignallingSession = "sip:ue3@192.0.2.11:5060", "pcscf;3;sig"
+	past.KeepUntil = time.Now().Add(-time.Second)
+	b.PutAssociation(past)
+	refreshed := association()
+	refreshed.Source = sip.Destination{Transport: sip.UDP, Addr: netip.MustParseAddrPort("192.0.2.12:5060")}
+	refreshed.Contact, refreshed.SignallingSession = "sip:ue4@192.0.2.12:5060", "pcscf;4;sig"
+	refreshed.KeepUntil = time.Now().Add(short)
+	a.PutAssociation(refreshed)
+	refreshed.KeepUntil = time.Now().Add(time.Hour)
+	b.PutAssociation(refreshed)
+
+	waitOut()
+	for _, gone := range []pcscf.Association{ended, past} {
+		if _, ok := b.Association(gone.Source); ok {
+			t.Errorf("Association of %s after its KeepUntil", gone.Source)
+		}
+		if _, ok := a.AssociationOfContact(gone.Contact); ok {
+			t.Errorf("AssociationOfContact(%s) after its KeepUntil", gone.Contact)
+		}
+		if _, ok := a.AssociationOfPolicySession(gone.SignallingSession); ok {
+			t.Errorf("AssociationOfPolicySession(%s) after its KeepUntil", gone.SignallingSession)
+		}
+	}
+	if _, ok := a.AssociationOfContact(refreshed.Contact); !ok {
+		t.Error("a refresh did not keep the association for longer")
 	}
 }
 

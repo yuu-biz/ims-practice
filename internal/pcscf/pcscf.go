@@ -57,7 +57,10 @@ type Association struct {
 	ServiceRoute     []string
 	Expires          time.Time
 	// KeepUntil is when the Store forgets the association:
-	// associationGrace after Expires (endAssociation).
+	// associationGrace after Expires (endAssociation), also when the
+	// P-CSCF never hears that the registration has ended, such as when
+	// the S-CSCF stops before its NOTIFY. Zero keeps it until
+	// DeleteAssociation.
 	KeepUntil time.Time
 	// SignallingSession is the policy session with which the PCRF
 	// watches the signalling path of the UE (TS 29.214 4.4.5). It is
@@ -80,6 +83,8 @@ type Store interface {
 	// AssociationOfContact finds the association whose registered
 	// contact has this host, port and user.
 	AssociationOfContact(contact string) (Association, bool)
+	// PutAssociation keeps a, in place of the association of its
+	// source, until its KeepUntil.
 	PutAssociation(Association)
 	DeleteAssociation(source sip.Destination)
 	// AssociationOfPolicySession finds the association whose
@@ -198,6 +203,8 @@ func (s *MemoryStore) Association(source sip.Destination) (Association, bool) {
 	return a, ok
 }
 
+// PutAssociation keeps a. The store removes it at its KeepUntil, unless
+// another association of the source has taken its place by then.
 func (s *MemoryStore) PutAssociation(a Association) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -206,11 +213,25 @@ func (s *MemoryStore) PutAssociation(a Association) {
 	if a.SignallingSession != "" {
 		s.associationOfSession[a.SignallingSession] = a.Source
 	}
+	if a.KeepUntil.IsZero() {
+		return
+	}
+	time.AfterFunc(time.Until(a.KeepUntil), func() {
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		if current, ok := s.associations[a.Source]; ok && current.KeepUntil.Equal(a.KeepUntil) {
+			s.deleteAssociation(a.Source)
+		}
+	})
 }
 
 func (s *MemoryStore) DeleteAssociation(source sip.Destination) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.deleteAssociation(source)
+}
+
+func (s *MemoryStore) deleteAssociation(source sip.Destination) {
 	delete(s.associationOfSession, s.associations[source].SignallingSession)
 	delete(s.associations, source)
 }
@@ -529,9 +550,9 @@ var associationGrace = 64 * sip.DefaultTimers().T1
 
 // endAssociation ends the IP association of a UE whose registration has
 // ended. The P-CSCF takes no more requests from the UE at once, but
-// still passes requests to it for associationGrace, and then forgets
-// the association. The timer lives in the process, as every timer does. The
-// watch on the signalling path ends at once (TS 29.214 A.4).
+// still passes requests to it for associationGrace, until the Store
+// forgets the association at its KeepUntil. The watch on the signalling
+// path ends at once (TS 29.214 A.4).
 func (p *PCSCF) endAssociation(a Association, log *slog.Logger) {
 	p.unwatchSignallingPath(&a, log)
 	// TS 33.203 7.4.2a: the security associations of the UE go with its
@@ -540,12 +561,6 @@ func (p *PCSCF) endAssociation(a Association, log *slog.Logger) {
 	a.Expires = time.Now()
 	a.KeepUntil = a.Expires.Add(associationGrace)
 	p.store.PutAssociation(a)
-	ended := a.Expires
-	time.AfterFunc(associationGrace, func() {
-		if current, ok := p.store.Association(a.Source); ok && current.Expires.Equal(ended) {
-			p.store.DeleteAssociation(a.Source)
-		}
-	})
 }
 
 // associationOfContact is the association of a contact, for a request

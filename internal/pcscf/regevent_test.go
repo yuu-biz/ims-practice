@@ -73,6 +73,9 @@ func registration(state, contactState reginfo.State, event reginfo.Event) reginf
 }
 
 func TestPCSCFSubscribesToTheRegEventAndEndsTheAssociation(t *testing.T) {
+	grace := associationGrace
+	associationGrace = 300 * time.Millisecond
+	t.Cleanup(func() { associationGrace = grace })
 	home := newFakeHome(t)
 	store := NewMemoryStore()
 	p := New(Config{Host: "pcscf." + domain, Port: 5060, VisitedNetworkID: domain},
@@ -82,7 +85,7 @@ func TestPCSCFSubscribesToTheRegEventAndEndsTheAssociation(t *testing.T) {
 		store, nil, quiet())
 	pcscfStack := newPCSCFStack(t, p)
 	p.SetStack(pcscfStack)
-	ue := newStack(t, func(*sip.ServerTransaction) {})
+	ue := newStack(t, func(st *sip.ServerTransaction) { st.Respond(sip.NewResponse(st.Request, 200, sip.NewTag())) })
 	ueSource := sip.Destination{Transport: sip.UDP, Addr: ue.LocalAddr()}
 
 	register := func(cseq string) {
@@ -151,9 +154,37 @@ func TestPCSCFSubscribesToTheRegEventAndEndsTheAssociation(t *testing.T) {
 	if ok && a.Expires.After(time.Now()) {
 		t.Error("the association is still valid after the registration ended (TS 24.229 5.2.5.2)")
 	}
-	// 5.2.5.2 NOTE 2: the last NOTIFY must still reach the UE.
-	if _, ok := p.associationOfContact("sip:ue@127.0.0.1"); !ok {
-		t.Error("the association no longer carries requests to the UE")
+	// 5.2.5.2 NOTE 2: the last NOTIFY must still reach the UE, so a
+	// request to it goes on for the grace, and finds no registration
+	// after.
+	toUE := func() int {
+		t.Helper()
+		m := &sip.Message{Method: sip.MESSAGE, RequestURI: "sip:ue@127.0.0.1"}
+		m.Add("Route", "<sip:term@pcscf."+domain+":5060;lr>")
+		m.Add("Max-Forwards", "70")
+		m.Add("From", "<sip:001010000000002@"+domain+">;tag="+sip.NewTag())
+		m.Add("To", "<"+impu+">")
+		m.Add("Call-ID", sip.NewCallID())
+		m.Add("CSeq", "1 MESSAGE")
+		ct, err := home.stack.SendRequest(m, sip.Destination{Transport: sip.UDP, Addr: pcscfStack.LocalAddr()})
+		if err != nil {
+			t.Fatal(err)
+		}
+		var final *sip.Message
+		for r := range ct.Responses() {
+			final = r
+		}
+		if final == nil {
+			t.Fatalf("no answer to the MESSAGE: %v", ct.Err())
+		}
+		return final.StatusCode
+	}
+	if got := toUE(); got != 200 {
+		t.Errorf("a request to the UE within the grace was answered %d, want the UE's 200", got)
+	}
+	time.Sleep(associationGrace + 200*time.Millisecond)
+	if got := toUE(); got != 480 {
+		t.Errorf("a request to the UE after the grace was answered %d, want 480", got)
 	}
 }
 
