@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"net"
 	"reflect"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -670,12 +671,13 @@ func TestMessageOutsideADialog(t *testing.T) {
 	}
 }
 
-// slowLog is a log that takes its time with each line once slow is set,
-// and keeps the lines that it finishes after closed is set.
+// slowLog is a log that takes its time with each line once slow is set.
+// It keeps every line, and apart the lines that it finishes after
+// closed is set.
 type slowLog struct {
 	mu           sync.Mutex
 	slow, closed bool
-	late         []string
+	lines, late  []string
 }
 
 func (l *slowLog) Write(p []byte) (int, error) {
@@ -687,10 +689,17 @@ func (l *slowLog) Write(p []byte) (int, error) {
 	}
 	l.mu.Lock()
 	defer l.mu.Unlock()
+	l.lines = append(l.lines, string(p))
 	if l.closed {
 		l.late = append(l.late, string(p))
 	}
 	return len(p), nil
+}
+
+func (l *slowLog) has(text string) bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return slices.ContainsFunc(l.lines, func(line string) bool { return strings.Contains(line, text) })
 }
 
 func (l *slowLog) set(slow, closed bool) {
@@ -736,7 +745,13 @@ func TestCloseWaitsForWhatTheUARunsByItself(t *testing.T) {
 	log.set(true, false)
 	callerUA.Close()
 	log.set(false, true)
-	time.Sleep(100 * time.Millisecond)
+	// The failed BYE is the last that the UA logs by itself. Once it is
+	// in the log, before Close returned or after, nothing more comes.
+	for deadline := time.Now().Add(5 * time.Second); !log.has("BYE for an unwanted 2xx failed"); time.Sleep(5 * time.Millisecond) {
+		if time.Now().After(deadline) {
+			t.Fatal("the UA did not log that its BYE failed within 5 s of the Close")
+		}
+	}
 	log.mu.Lock()
 	defer log.mu.Unlock()
 	if len(log.late) > 0 {

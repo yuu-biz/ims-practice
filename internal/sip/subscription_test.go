@@ -9,6 +9,11 @@ import (
 
 var fastTimers = Timers{T1: 10 * time.Millisecond, T2: 40 * time.Millisecond, T4: 50 * time.Millisecond}
 
+// pastTimerN is well past Timer N of fastTimers (64*T1, RFC 6665
+// 4.1.2.4). A test that watches this long for a subscription to hold
+// has a twin that watches as long for one that Timer N ends.
+var pastTimerN = 64*fastTimers.T1 + 500*time.Millisecond
+
 // testNotifier answers SUBSCRIBEs on a stack of its own with the
 // notifier's side of this package, the way an S-CSCF does.
 type testNotifier struct {
@@ -236,11 +241,10 @@ func TestNotifyThatComesBeforeThe200CreatesTheSubscription(t *testing.T) {
 		t.Fatalf("first NOTIFY: %+v", first.State)
 	}
 	// Past the 200 and well past Timer N, the subscription still holds.
-	time.Sleep(64*fastTimers.T1 + 200*time.Millisecond)
 	select {
 	case <-sub.Done():
 		t.Fatalf("subscription ended: %v", sub.Err())
-	default:
+	case <-time.After(pastTimerN):
 	}
 	n.notify()
 	if again := nextNotification(t, got); again.State.State != SubscriptionActive {
@@ -257,7 +261,11 @@ func TestSubscriptionWithoutANotifyEndsWithTimerN(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	waitEnded(t, sub)
+	select {
+	case <-sub.Done():
+	case <-time.After(pastTimerN):
+		t.Fatalf("the subscription without a NOTIFY still held %v after the SUBSCRIBE", pastTimerN)
+	}
 	if !errors.Is(sub.Err(), ErrNoNotify) {
 		t.Errorf("Err = %v, want ErrNoNotify", sub.Err())
 	}
