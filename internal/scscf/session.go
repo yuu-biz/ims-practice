@@ -412,7 +412,8 @@ func (s *SCSCF) exitIBCF(out *sip.Message) (sip.URI, bool) {
 
 // globalNumber is the global number of uri when step 10 of TS 24.229
 // 5.4.3.2 translates uri with ENUM: a tel URI, or a SIP URI of the home
-// domain whose user part starts with + and that has user=phone.
+// domain that has user=phone, whose user part starts with +, and that
+// is no GRUU.
 func (s *SCSCF) globalNumber(uri string) (string, bool) {
 	n, ok := ims.ParseTelephoneNumber(uri)
 	if !ok {
@@ -425,6 +426,16 @@ func (s *SCSCF) globalNumber(uri string) (string, bool) {
 	// this way; in another domain's URI the user part is that domain's
 	// business.
 	if !strings.EqualFold(n.SIP.Host, s.cfg.HomeDomain) || !strings.HasPrefix(n.Number, "+") {
+		return "", false
+	}
+	// A GRUU names one UA instance of the user (RFC 5627 3.1), so the
+	// number in it is not what the request is for: with the answer of
+	// ENUM in its place the request would address the user's public
+	// identity, and the terminating side would reach the user's contacts
+	// instead of the one instance the GRUU names. Step 10 leaves this
+	// translation to local policy, and telURIOf of the I-CSCF makes the
+	// same choice.
+	if _, gruu := n.SIP.Params.Get("gr"); gruu {
 		return "", false
 	}
 	return n.Number, true
