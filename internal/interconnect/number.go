@@ -101,6 +101,9 @@ type telephoneNumber struct {
 func parseNumber(uri string) (telephoneNumber, bool) {
 	if len(uri) > 4 && strings.EqualFold(uri[:4], "tel:") {
 		number, params, _ := strings.Cut(uri[4:], ";")
+		if number == "" {
+			return telephoneNumber{}, false
+		}
 		return telephoneNumber{number: number, params: sip.ParseParams(params)}, true
 	}
 	u, err := sip.ParseURI(uri)
@@ -113,6 +116,11 @@ func parseNumber(uri string) (telephoneNumber, bool) {
 		return telephoneNumber{}, false
 	}
 	number, params, _ := strings.Cut(u.User, ";")
+	// There is no number to put in a format when the URI holds no
+	// telephone-subscriber, whatever user=phone says.
+	if number == "" {
+		return telephoneNumber{}, false
+	}
 	u.User = ""
 	return telephoneNumber{number: number, params: sip.ParseParams(params), sip: &u}, true
 }
