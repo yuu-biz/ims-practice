@@ -21,15 +21,15 @@ import (
 // which takes a short message from the IP-SM-GW in a MESSAGE and answers
 // with a delivery report in a MESSAGE of its own.
 //
+// The two layers inside the body of each MESSAGE, RP and TP, are those
+// of a mobile station that sends and receives short messages over the
+// CS or PS domain (TS 24.011, TS 23.040); SIP only carries them.
+//
 // SIMPLIFIED: TS 24.341 5.3.2.5. The receiver sends RP-SMMA when it has
 // memory again after it refused a short message for want of it (RP-Cause
 // 22). The simulator keeps every short message it gets and never runs
 // out of memory, so it never refuses one that way and never sends
 // RP-SMMA.
-//
-// The two layers inside the body of each MESSAGE, RP and TP, are those
-// of a mobile station that sends and receives short messages over the
-// CS or PS domain (TS 24.011, TS 23.040); SIP only carries them.
 
 // SMSContentType is the media type of a short message in a MESSAGE
 // (TS 24.341 5.3.1.2 d).

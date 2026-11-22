@@ -17,16 +17,6 @@
 // the user's Ut password are Repository Data in the HSS too, under
 // CredentialServiceIndication.
 //
-// SIMPLIFIED: TS 24.623 5.2.2 and 5.2.3.1, GSMA IR.92 2.2.2. GBA (TS
-// 33.222, TS 24.109) and the authentication proxy are left out. GBA
-// needs a BSF and the Zh interface, too much for this project to learn
-// from, and IR.92 only recommends it.
-//
-// SIMPLIFIED: TS 24.623 5.2.1.2 and 5.2.3.3. A UE should subscribe to
-// changes of its document with the xcap-diff event package (RFC 5875),
-// which the AS then answers over SIP. Neither the UE nor the MMTel AS
-// does; the UE reads the document again before each change instead.
-//
 // One change of a call forwarding setting, as Wireshark shows it on
 // Ut and Sh:
 //
@@ -52,4 +42,14 @@
 //	|                                |<-------------------------------|  PUA
 //	|  200, ETag "n+1"               |                                |
 //	|<-------------------------------|                                |
+//
+// SIMPLIFIED: TS 24.623 5.2.2 and 5.2.3.1, GSMA IR.92 2.2.2. GBA (TS
+// 33.222, TS 24.109) and the authentication proxy are left out. GBA
+// needs a BSF and the Zh interface, too much for this project to learn
+// from, and IR.92 only recommends it.
+//
+// SIMPLIFIED: TS 24.623 5.2.1.2 and 5.2.3.3. A UE should subscribe to
+// changes of its document with the xcap-diff event package (RFC 5875),
+// which the AS then answers over SIP. Neither the UE nor the MMTel AS
+// does; the UE reads the document again before each change instead.
 package xcap

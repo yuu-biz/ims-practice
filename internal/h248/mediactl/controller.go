@@ -117,13 +117,14 @@ type ControllerConfig struct {
 	// controller answers with error 411 and releases the context, as
 	// H.248.36 (03/2013) 5.6.2 asks of it.
 	//
-	// SIMPLIFIED: TS 29.334 5.17.2.6. A nil TerminationHeartbeat takes
-	// every context to be in use, so a context that the P-CSCF has lost
-	// track of stays in the gateway.
-	//
 	// For Mp, the question is the same, for the context of the
 	// termination that reported (TS 29.333 5.17.2.32); when the answer
 	// is false, the controller subtracts that termination.
+	//
+	// SIMPLIFIED: TS 29.334 5.17.2.6. A nil TerminationHeartbeat takes
+	// every context to be in use, so a context that the P-CSCF has lost
+	// track of stays in the gateway. Only the caller of the controller
+	// knows which contexts are still in use.
 	TerminationHeartbeat func(ctx context.Context, id string) bool
 	// Notify receives, for Mp, the end of each announcement whose
 	// Events descriptor asked for SignalCompleted: Announcement

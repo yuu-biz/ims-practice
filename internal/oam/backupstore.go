@@ -50,17 +50,17 @@ type ArchiveWriter interface {
 // passwords, as the HSS needs them back. The directory is 0700 and each
 // file 0600, readable by the user of the OAM only.
 //
-// SIMPLIFIED: TS 33.102 6.3.1. The key K is available only to the
-// USIM and the AuC of the home environment, so a copy of it outside the
-// HSS must be as well kept as the AuC; a product encrypts such a backup.
-// The archive here is not encrypted: the file permissions are its only
-// protection, and only test credentials may be in the network.
-// Encryption would need a key of its own and its handling, which is not
-// what the backup and restore teach.
-//
 // Several OAM instances can share the directory on one volume. Two
 // restores of one backup at the same moment may lose one of the two
 // runs in the manifest, which records the run after it ends.
+//
+// SIMPLIFIED: TS 33.102 6.3.1. The archive is not encrypted: the file
+// permissions are its only protection. The key K is available only to
+// the USIM and the AuC of the home environment, so a copy of it outside
+// the HSS must be as well kept as the AuC, and a product encrypts such a
+// backup. Here only test credentials may be in the network, and
+// encryption would need a key of its own and its handling, which is not
+// what the backup and restore teach.
 type FileBackupStore struct {
 	dir string
 }
