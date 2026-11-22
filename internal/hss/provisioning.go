@@ -295,9 +295,14 @@ func (h *HSS) addSubscription(w http.ResponseWriter, r *http.Request) {
 // the S-CSCF (TS 29.228 6.1.3). The subscription is gone even when that
 // fails: the HSS answers any later Cx request for the user as for an
 // unknown one. When the store fails, no RTR goes: the HSS cannot tell
-// whether the subscription is gone.
+// whether the subscription is gone. A lock that is not taken leaves the
+// subscription itself alone: another instance may be changing the
+// subscriber.
 func (h *HSS) removeSubscription(ctx context.Context, scscfs SCSCFs, privateID string) (bool, error) {
-	unlock, _ := h.users.Lock(context.Background(), privateID)
+	unlock, err := h.users.Lock(context.Background(), privateID)
+	if err != nil {
+		return false, err
+	}
 	s, ok, err := h.store.Delete(ctx, privateID)
 	// The lock is not held over the RTR: the S-CSCF may be waiting on a
 	// SAA for this user before it can take up the RTR.
