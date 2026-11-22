@@ -156,14 +156,19 @@ func TestOriginatingCallToATelURIGoesToTheICSCF(t *testing.T) {
 	}
 }
 
+// gruu is the "gr" of a public GRUU (RFC 5627 3.1).
+const gruu = "urn:uuid:f81d4fae-7dec-11d0-a765-00a0c91e6bf6"
+
 // TestOriginatingCallToANumberInASIPURI: a SIP URI of a global number
 // with user=phone in the home domain, as an AS writes the target of a
 // diversion, is translated with ENUM like a tel URI (TS 24.229 5.4.3.2
-// step 10); one without user=phone is not.
+// step 10); one without user=phone is not, and neither is a GRUU, which
+// names one UA instance of the user rather than the user's number.
 func TestOriginatingCallToANumberInASIPURI(t *testing.T) {
 	for uri, want := range map[string]string{
 		"sip:+1-202-555-0102@" + domain + ";user=phone;cause=302": "sip:001010000000002@" + domain,
 		"sip:+12025550102@" + domain:                              "sip:+12025550102@" + domain,
+		"sip:+12025550102@" + domain + ";user=phone;gr=" + gruu:   "sip:+12025550102@" + domain + ";user=phone;gr=" + gruu,
 	} {
 		t.Run(uri, func(t *testing.T) {
 			h, icscf, _ := registeredHarness(t)
