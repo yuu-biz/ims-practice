@@ -518,6 +518,7 @@ docker compose run --rm --entrypoint sipp peer -sf /etc/sipp/register-aka.xml -m
 | EPC スタブ、TS 24.301 6.4.3、6.4.4.2 | 規則が変わっても MODIFY EPS BEARER CONTEXT REQUEST を送らない。bearer は解放を送った時点で忘れ、T3495 も動かさない。 | スタブは QoS を強制せず、UE は bearer があることを知れば足りる。 |
 | PCRF、TS 29.213 6.3 | 許可するのは音声だけで、QCI は 1。保証する速度は最大の速度と同じで、RTCP の分は別にしない。 | この網の通話は音声のストリームが 1 本だけ。 |
 | PCRF、TS 29.214 4.4.2、5.3.16 | どの AAR もサービスの情報をすべて含むとみなす。 | P-CSCF は毎回 SDP 全体から情報を作る。 |
+| PCRF、TS 24.008 10.5.6.12 | アドレスのマスクに対応しない。マスクのある Flow-Description は FILTER_RESTRICTIONS で断る。 | スタブの TFT では、パケットフィルタが相手のアドレスをマスク無しで持つ。また、P-CSCF はホストのアドレスしか書かない。 |
 | P-CSCF、TS 29.213 7.3.7 | DRA を使わず、設定した 1 つの PCRF に送る。 | PCRF は EPC スタブのもので、スタブは 1 つのノードとして動き、すべての UE の IP-CAN セッションを持つため。 |
 | P-CSCF、TS 29.213 Table 6.2.1、6.2.2 | TCP のメディア、b=TIAS に対応しない。ストリームが片方向になったときは、新しい向きのフローだけを残す。 | この網の通話はどれも使わない。 |
 | P-CSCF、TS 29.214 A.1 | AF-Application-Identifier を送るのは着信側の P-CSCF だけ。 | 発信側は Feature-Caps から取るが、それを書くノードが無い。 |

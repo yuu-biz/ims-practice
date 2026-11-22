@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/netip"
 	"slices"
 
 	"github.com/fiorix/go-diameter/v4/diam"
@@ -59,6 +60,9 @@ func (e *EPC) aaRequest(request *diam.Message) *diam.Message {
 	rules, err := pccRules(aar.MediaComponents)
 	if err != nil {
 		e.log.Info("refused service information", "session_id", aar.SessionID, "error", err.Error())
+		if errors.Is(err, rx.ErrFilterRestrictions) {
+			return answer(diameter.Experimental(rx.FilterRestrictions))
+		}
 		return answer(diameter.Experimental(rx.RequestedServiceNotAuthorized))
 	}
 
@@ -176,6 +180,14 @@ func pccRules(components []policy.MediaComponent) ([]PCCRule, error) {
 		}
 		r := PCCRule{MediaComponentNumber: c.Number, BitRateUL: valueOf(c.MaxRequestedBandwidthUL), BitRateDL: valueOf(c.MaxRequestedBandwidthDL)}
 		for _, s := range c.SubComponents {
+			// SIMPLIFIED: TS 24.008 10.5.6.12. A packet filter of the
+			// stub's TFT holds the remote address without a mask, so a
+			// flow with a masked address is refused.
+			for _, f := range s.Flows {
+				if !hostOrAny(f.Source) || !hostOrAny(f.Destination) {
+					return nil, fmt.Errorf("%w: %v has an address mask", rx.ErrFilterRestrictions, f)
+				}
+			}
 			r.FlowNumbers = append(r.FlowNumbers, s.FlowNumber)
 			r.Flows = append(r.Flows, s.Flows...)
 		}
@@ -183,6 +195,9 @@ func pccRules(components []policy.MediaComponent) ([]PCCRule, error) {
 	}
 	return rules, nil
 }
+
+// hostOrAny reports whether p is one host or the address "any".
+func hostOrAny(p netip.Prefix) bool { return !p.IsValid() || p.IsSingleIP() }
 
 func valueOf(p *uint32) uint32 {
 	if p == nil {

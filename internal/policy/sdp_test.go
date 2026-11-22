@@ -1,6 +1,7 @@
 package policy
 
 import (
+	"encoding/json"
 	"errors"
 	"net/netip"
 	"reflect"
@@ -30,7 +31,8 @@ var (
 
 func u32(v uint32) *uint32 { return &v }
 
-func addr(s string) netip.Addr { return netip.MustParseAddr(s) }
+// host is s as the one host of a flow.
+func host(s string) netip.Prefix { return netip.PrefixFrom(netip.MustParseAddr(s), 32) }
 
 func TestMediaComponentsOfACallFromTheUE(t *testing.T) {
 	got, err := MediaComponents(OfferAnswer{Offer: ueOffer, Answer: relayAnswer, UEOffered: true})
@@ -52,12 +54,12 @@ func TestMediaComponentsOfACallFromTheUE(t *testing.T) {
 		},
 		SubComponents: []MediaSubComponent{
 			{FlowNumber: 1, Flows: []FlowDescription{
-				{Direction: Uplink, Protocol: 17, Source: addr(ue), Destination: addr(relay), DestinationPort: 40000},
-				{Direction: Downlink, Protocol: 17, Source: addr(relay), Destination: addr(ue), DestinationPort: 49000},
+				{Direction: Uplink, Protocol: 17, Source: host(ue), Destination: host(relay), DestinationPort: 40000},
+				{Direction: Downlink, Protocol: 17, Source: host(relay), Destination: host(ue), DestinationPort: 49000},
 			}},
 			{FlowNumber: 2, Usage: RTCP, Flows: []FlowDescription{
-				{Direction: Uplink, Protocol: 17, Source: addr(ue), Destination: addr(relay), DestinationPort: 40001},
-				{Direction: Downlink, Protocol: 17, Source: addr(relay), Destination: addr(ue), DestinationPort: 49001},
+				{Direction: Uplink, Protocol: 17, Source: host(ue), Destination: host(relay), DestinationPort: 40001},
+				{Direction: Downlink, Protocol: 17, Source: host(relay), Destination: host(ue), DestinationPort: 49001},
 			}},
 		},
 	}}
@@ -115,7 +117,7 @@ func TestHeldCallToTheUE(t *testing.T) {
 		t.Errorf("bandwidths without b=AS: UL %v, DL %v; want none", c.MaxRequestedBandwidthUL, c.MaxRequestedBandwidthDL)
 	}
 	rtp, rtcp := c.SubComponents[0], c.SubComponents[1]
-	wantRTP := []FlowDescription{{Direction: Downlink, Protocol: 17, Source: addr(relay), Destination: addr(ue), DestinationPort: 49000}}
+	wantRTP := []FlowDescription{{Direction: Downlink, Protocol: 17, Source: host(relay), Destination: host(ue), DestinationPort: 49000}}
 	if !reflect.DeepEqual(rtp.Flows, wantRTP) {
 		t.Errorf("RTP flows = %+v, want only the downlink one %+v", rtp.Flows, wantRTP)
 	}
@@ -169,8 +171,8 @@ func TestOfferToTheUEWithoutAnswer(t *testing.T) {
 		t.Fatalf("sub-components = %+v", c.SubComponents)
 	}
 	want := []FlowDescription{
-		{Direction: Uplink, Protocol: 17, Destination: addr(relay), DestinationPort: 40000},
-		{Direction: Downlink, Protocol: 17, Source: addr(relay)},
+		{Direction: Uplink, Protocol: 17, Destination: host(relay), DestinationPort: 40000},
+		{Direction: Downlink, Protocol: 17, Source: host(relay)},
 	}
 	if !reflect.DeepEqual(rtp.Flows, want) {
 		t.Errorf("RTP flows\n got %+v\nwant %+v", rtp.Flows, want)
@@ -194,10 +196,16 @@ func TestFlowDescriptionIsAnIPFilterRule(t *testing.T) {
 		flow FlowDescription
 		rule string
 	}{
-		{FlowDescription{Direction: Uplink, Protocol: 17, Source: addr(ue), Destination: addr(relay), DestinationPort: 40000},
+		{FlowDescription{Direction: Uplink, Protocol: 17, Source: host(ue), Destination: host(relay), DestinationPort: 40000},
 			"permit in 17 from 172.28.0.110 to 172.28.0.50 40000"},
-		{FlowDescription{Direction: Downlink, Protocol: 17, Source: addr(relay)},
+		{FlowDescription{Direction: Downlink, Protocol: 17, Source: host(relay)},
 			"permit out 17 from 172.28.0.50 to any"},
+		{FlowDescription{Direction: Uplink, Protocol: 17, Source: host(ue), SourcePort: 49152, Destination: host(relay), DestinationPort: 40000},
+			"permit in 17 from 172.28.0.110 49152 to 172.28.0.50 40000"},
+		{FlowDescription{Direction: Uplink, Destination: netip.MustParsePrefix("198.51.100.0/24")},
+			"permit in ip from any to 198.51.100.0/24"},
+		{FlowDescription{Direction: Downlink, Protocol: 17, Source: netip.MustParsePrefix("2001:db8::/32"), SourcePort: 5004},
+			"permit out 17 from 2001:db8::/32 5004 to any"},
 	} {
 		if got := tc.flow.String(); got != tc.rule {
 			t.Errorf("String() = %q, want %q", got, tc.rule)
@@ -207,17 +215,51 @@ func TestFlowDescriptionIsAnIPFilterRule(t *testing.T) {
 			t.Errorf("ParseFlowDescription(%q) = %+v, %v; want %+v", tc.rule, back, err, tc.flow)
 		}
 	}
-	// TS 29.214 5.3.8 restrictions this project relies on.
+	// A mask is kept only for the bits it names, and a host is written
+	// without its mask.
+	for rule, want := range map[string]string{
+		"permit out 17 from 198.51.100.7/24 to any": "permit out 17 from 198.51.100.0/24 to any",
+		"permit in 17 from any to 172.28.0.50/32":   "permit in 17 from any to 172.28.0.50",
+	} {
+		if f, err := ParseFlowDescription(rule); err != nil || f.String() != want {
+			t.Errorf("ParseFlowDescription(%q) = %v, %v; want %q", rule, f, err, want)
+		}
+	}
+	// TS 29.214 5.3.8 allows only permit, one port on each side, and no
+	// options, "!" or "assigned".
 	for _, rule := range []string{
 		"deny in 17 from any to any",
-		"permit in 17 from 172.28.0.110 5000 to any",
-		"permit in 17 from any to 172.28.0.50/32 40000",
+		"permit both 17 from any to any",
+		"permit in udp from any to any",
 		"permit in 17 from any to any 40000-40001",
+		"permit in 17 from any to any 40000,40002",
+		"permit in 17 from any to any 0",
 		"permit in 17 from any to any 40000 frag",
+		"permit in 17 from !172.28.0.1 to any",
+		"permit in 17 from assigned to any",
+		"permit in 17 to any",
 	} {
 		if _, err := ParseFlowDescription(rule); err == nil {
 			t.Errorf("ParseFlowDescription(%q) succeeded", rule)
 		}
+	}
+}
+
+// The 5GC stub shows the flows of its PCC rules as JSON, with the
+// direction in words and the wildcards left out.
+func TestFlowDescriptionAsJSON(t *testing.T) {
+	f := FlowDescription{Direction: Uplink, Protocol: 17, Source: host(ue), SourcePort: 49152, Destination: host(relay)}
+	b, err := json.Marshal(f)
+	want := `{"direction":"uplink","protocol":17,"source":"172.28.0.110/32","source_port":49152,"destination":"172.28.0.50/32"}`
+	if err != nil || string(b) != want {
+		t.Fatalf("json.Marshal = %s, %v; want %s", b, err, want)
+	}
+	var back FlowDescription
+	if err := json.Unmarshal(b, &back); err != nil || back != f {
+		t.Errorf("json.Unmarshal = %+v, %v; want %+v", back, err, f)
+	}
+	if b, err := json.Marshal(FlowDescription{Direction: Downlink}); err != nil || string(b) != `{"direction":"downlink"}` {
+		t.Errorf("json.Marshal of any flow = %s, %v", b, err)
 	}
 }
 

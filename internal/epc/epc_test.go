@@ -301,6 +301,29 @@ func TestAttachRefusesWhatTheStubDoesNotServe(t *testing.T) {
 	}
 }
 
+// An AF may name source ports too (TS 29.214 5.3.8). Seen from the UE,
+// that is the local port of an uplink flow and the remote port of a
+// downlink one.
+func TestSourcePortsGoInTheTFT(t *testing.T) {
+	n := newNetwork(t)
+	u := n.ue(imsi1)
+	u.attach()
+	aar := n.callAAR()
+	rtp := aar.MediaComponents[0].SubComponents[0].Flows
+	rtp[0].SourcePort, rtp[1].SourcePort = 49000, 40000
+	if r := n.af.aar(aar); r != diameter.Base(diameter.DiameterSuccess) {
+		t.Fatalf("AAA %v", r)
+	}
+	req, ok := u.next().Message.(*epc.ActivateDedicatedEPSBearerContextRequest)
+	if !ok || len(req.TFT.PacketFilters) < 2 {
+		t.Fatalf("UE got %+v, want ACTIVATE DEDICATED EPS BEARER CONTEXT REQUEST with the flows", req)
+	}
+	up, down := req.TFT.PacketFilters[0], req.TFT.PacketFilters[1]
+	if up.SingleLocalPort != 49000 || up.SingleRemotePort != 40000 || down.SingleLocalPort != 49000 || down.SingleRemotePort != 40000 {
+		t.Errorf("uplink %+v, downlink %+v; want local port 49000 and remote port 40000 in both", up, down)
+	}
+}
+
 // A call's AAR makes the stub activate the voice bearer (QCI 1) with a
 // TFT of the call's flows, and the PCRF reports the resources to an AF
 // that asked once the UE accepts.
@@ -479,6 +502,12 @@ func TestAARsThePCRFRefuses(t *testing.T) {
 	video := rx.AARequest{Header: n.af.header(), MediaComponents: callComponents(t, "video"), FramedIPAddress: ue1Addr}
 	if r := n.af.aar(video); r != diameter.Experimental(rx.RequestedServiceNotAuthorized) {
 		t.Errorf("video: %v, want REQUESTED_SERVICE_NOT_AUTHORIZED", r)
+	}
+	// A packet filter of the stub's TFT names one remote host.
+	masked := n.callAAR()
+	masked.MediaComponents[0].SubComponents[0].Flows[0].Destination = netip.MustParsePrefix("172.28.0.0/24")
+	if r := n.af.aar(masked); r != diameter.Experimental(rx.FilterRestrictions) {
+		t.Errorf("masked address: %v, want FILTER_RESTRICTIONS", r)
 	}
 	if r := n.af.str(other.SessionID); r != diameter.Base(diameter.DiameterUnknownSessionID) {
 		t.Errorf("STR of a refused session: %v, want DIAMETER_UNKNOWN_SESSION_ID", r)

@@ -1,6 +1,9 @@
 package policy
 
-import "net/netip"
+import (
+	"fmt"
+	"net/netip"
+)
 
 // MediaComponent is the service information of one media component of
 // an IMS session, or of its signalling (TS 29.214 5.3.16, the
@@ -92,15 +95,43 @@ const (
 	Downlink
 )
 
-// FlowDescription is one IP flow (TS 29.214 5.3.8). An invalid address
-// or a zero port is a wildcard. Source ports are never given (TS 29.213
-// Table 6.2.2).
+// MarshalText writes the direction as "uplink" or "downlink", the words
+// of Codec-Data (TS 29.214 5.3.7), for the records and APIs that hold
+// flows as JSON.
+func (d Direction) MarshalText() ([]byte, error) {
+	switch d {
+	case Uplink:
+		return []byte("uplink"), nil
+	case Downlink:
+		return []byte("downlink"), nil
+	}
+	return nil, fmt.Errorf("policy: direction %d is neither uplink nor downlink", int(d))
+}
+
+func (d *Direction) UnmarshalText(b []byte) error {
+	switch string(b) {
+	case "uplink":
+		*d = Uplink
+	case "downlink":
+		*d = Downlink
+	default:
+		return fmt.Errorf("policy: direction %q is neither uplink nor downlink", b)
+	}
+	return nil
+}
+
+// FlowDescription is one IP flow (TS 29.214 5.3.8): an IPFilterRule of
+// RFC 6733 4.3.1. An invalid prefix is the address "any", a zero port
+// any port, and a zero protocol the keyword "ip". The flows derived
+// from SDP have host addresses and no source port (TS 29.213 Table
+// 6.2.2).
 type FlowDescription struct {
-	Direction       Direction
-	Protocol        uint8 // IP protocol number: 17 for UDP, 6 for TCP
-	Source          netip.Addr
-	Destination     netip.Addr
-	DestinationPort uint16
+	Direction       Direction    `json:"direction"`
+	Protocol        uint8        `json:"protocol,omitempty"` // IP protocol number: 17 for UDP, 6 for TCP
+	Source          netip.Prefix `json:"source,omitzero"`
+	SourcePort      uint16       `json:"source_port,omitempty"`
+	Destination     netip.Prefix `json:"destination,omitzero"`
+	DestinationPort uint16       `json:"destination_port,omitempty"`
 }
 
 // CodecData is the codec information of a media component (TS 29.214

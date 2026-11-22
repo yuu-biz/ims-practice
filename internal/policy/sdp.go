@@ -306,11 +306,13 @@ func (p linePair) flows(rtcp, bothWays bool) []FlowDescription {
 	return []FlowDescription{uplink, downlink}
 }
 
-func address(l *mediaLine) netip.Addr {
+// address is the connection address of l as the one host of a flow,
+// or any without l.
+func address(l *mediaLine) netip.Prefix {
 	if l == nil {
-		return netip.Addr{}
+		return netip.Prefix{}
 	}
-	return l.address
+	return netip.PrefixFrom(l.address, l.address.BitLen())
 }
 
 func mediaType(name string) MediaType {
@@ -408,35 +410,49 @@ func ParseCodecData(s string) (CodecData, error) {
 
 // String writes the flow as the IPFilterRule of a Flow-Description AVP
 // (RFC 6733 4.3.1, TS 29.214 5.3.8): "in" for uplink, "out" for
-// downlink, and "any" for a wildcard address.
+// downlink, "ip" for any protocol, "any" for any address, and a host
+// address without its mask.
 func (f FlowDescription) String() string {
 	dir := "out"
 	if f.Direction == Uplink {
 		dir = "in"
 	}
-	host := func(a netip.Addr) string {
-		if !a.IsValid() {
-			return "any"
-		}
-		return a.String()
+	proto := "ip"
+	if f.Protocol != 0 {
+		proto = strconv.Itoa(int(f.Protocol))
 	}
-	s := fmt.Sprintf("permit %s %d from %s to %s", dir, f.Protocol, host(f.Source), host(f.Destination))
-	if f.DestinationPort != 0 {
-		s += " " + strconv.Itoa(int(f.DestinationPort))
+	return fmt.Sprintf("permit %s %s from %s to %s", dir, proto,
+		endpoint(f.Source, f.SourcePort), endpoint(f.Destination, f.DestinationPort))
+}
+
+// endpoint writes "<address> [<port>]", one side of an IPFilterRule.
+func endpoint(p netip.Prefix, port uint16) string {
+	s := "any"
+	switch {
+	case !p.IsValid():
+	case p.IsSingleIP():
+		s = p.Addr().String()
+	default:
+		s = p.String()
+	}
+	if port != 0 {
+		s += " " + strconv.Itoa(int(port))
 	}
 	return s
 }
 
-// ParseFlowDescription reads an IPFilterRule within the restrictions of
-// TS 29.214 5.3.8, as String writes it: one destination port at most,
-// and no source port, address mask or option.
+// ParseFlowDescription reads "permit in|out <protocol> from <address>
+// [<port>] to <address> [<port>]", an IPFilterRule within the
+// restrictions of TS 29.214 5.3.8: the action permit only, one port at
+// most on each side, no options, no "!" and no "assigned". An address
+// may carry a mask.
 func ParseFlowDescription(s string) (FlowDescription, error) {
 	bad := func(why string) (FlowDescription, error) {
 		return FlowDescription{}, fmt.Errorf("Flow-Description %q: %s", s, why)
 	}
 	f := strings.Fields(s)
-	if len(f) < 7 || f[0] != "permit" || f[3] != "from" || f[5] != "to" {
-		return bad(`want "permit <in|out> <proto> from <src> to <dst> [port]"`)
+	if len(f) < 3 || f[0] != "permit" {
+		return bad(`want "permit <in|out> <protocol> from <address> [port] to <address> [port]"`)
 	}
 	var fd FlowDescription
 	switch f[1] {
@@ -447,33 +463,55 @@ func ParseFlowDescription(s string) (FlowDescription, error) {
 	default:
 		return bad("direction is neither in nor out")
 	}
-	proto, err := strconv.ParseUint(f[2], 10, 8)
-	if err != nil {
-		return bad("protocol is not a number")
-	}
-	fd.Protocol = uint8(proto)
-	host := func(h string) (netip.Addr, error) {
-		if h == "any" {
-			return netip.Addr{}, nil
-		}
-		return netip.ParseAddr(h)
-	}
-	if fd.Source, err = host(f[4]); err != nil {
-		return bad("source is not an address or any")
-	}
-	if fd.Destination, err = host(f[6]); err != nil {
-		return bad("destination is not an address or any")
-	}
-	switch len(f) {
-	case 7:
-	case 8:
-		port, err := strconv.ParseUint(f[7], 10, 16)
+	if f[2] != "ip" {
+		proto, err := strconv.ParseUint(f[2], 10, 8)
 		if err != nil {
-			return bad("destination port is not one port")
+			return bad("protocol is neither a number nor ip")
 		}
-		fd.DestinationPort = uint16(port)
-	default:
-		return bad("has more than one destination port, or options")
+		fd.Protocol = uint8(proto)
+	}
+	rest := f[3:]
+	var err error
+	if fd.Source, fd.SourcePort, rest, err = parseEndpoint(rest, "from"); err != nil {
+		return bad(err.Error())
+	}
+	if fd.Destination, fd.DestinationPort, rest, err = parseEndpoint(rest, "to"); err != nil {
+		return bad(err.Error())
+	}
+	if len(rest) > 0 {
+		return bad("has options or more than one port")
 	}
 	return fd, nil
+}
+
+// parseEndpoint reads "<keyword> <address> [<port>]" from the head of f.
+func parseEndpoint(f []string, keyword string) (netip.Prefix, uint16, []string, error) {
+	if len(f) < 2 || f[0] != keyword {
+		return netip.Prefix{}, 0, nil, fmt.Errorf("no %q and address", keyword)
+	}
+	var prefix netip.Prefix
+	switch h := f[1]; {
+	case h == "any":
+	case strings.Contains(h, "/"):
+		p, err := netip.ParsePrefix(h)
+		if err != nil {
+			return netip.Prefix{}, 0, nil, fmt.Errorf("%q is not an address with a mask", h)
+		}
+		prefix = p.Masked()
+	default:
+		a, err := netip.ParseAddr(h)
+		if err != nil {
+			return netip.Prefix{}, 0, nil, fmt.Errorf("%q is not an address or any", h)
+		}
+		prefix = netip.PrefixFrom(a, a.BitLen())
+	}
+	f = f[2:]
+	if len(f) > 0 && f[0] != "to" {
+		port, err := strconv.ParseUint(f[0], 10, 16)
+		if err != nil || port == 0 {
+			return netip.Prefix{}, 0, nil, fmt.Errorf("%q is not one port", f[0])
+		}
+		return prefix, uint16(port), f[1:], nil
+	}
+	return prefix, 0, f, nil
 }

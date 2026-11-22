@@ -540,7 +540,7 @@ func TestCallUnderPolicyControlOverRx(t *testing.T) {
 	// The UE sends its media to the relay, so the uplink flow goes to
 	// the address that the SDP to the UE names (TS 29.214 A.1).
 	if flow := media.MediaComponents[0].SubComponents[0].Flows[0]; flow.Direction != policy.Uplink ||
-		netip.AddrPortFrom(flow.Destination, flow.DestinationPort) != relayAccess {
+		netip.AddrPortFrom(flow.Destination.Addr(), flow.DestinationPort) != relayAccess {
 		t.Errorf("first flow %+v, want the uplink to the relay's access termination %v", flow, relayAccess)
 	}
 

@@ -428,9 +428,11 @@ func trafficFlowTemplate(rules []PCCRule) (TrafficFlowTemplate, error) {
 		for _, f := range r.Flows {
 			pf := PacketFilter{ProtocolIdentifier: f.Protocol}
 			if f.Direction == policy.Uplink {
-				pf.Direction, pf.IPv4RemoteAddress, pf.SingleRemotePort = UplinkOnly, f.Destination, f.DestinationPort
+				pf.Direction, pf.IPv4RemoteAddress = UplinkOnly, f.Destination.Addr()
+				pf.SingleRemotePort, pf.SingleLocalPort = f.DestinationPort, f.SourcePort
 			} else {
-				pf.Direction, pf.IPv4RemoteAddress, pf.SingleLocalPort = DownlinkOnly, f.Source, f.DestinationPort
+				pf.Direction, pf.IPv4RemoteAddress = DownlinkOnly, f.Source.Addr()
+				pf.SingleRemotePort, pf.SingleLocalPort = f.SourcePort, f.DestinationPort
 			}
 			tft.PacketFilters = append(tft.PacketFilters, pf)
 		}

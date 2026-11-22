@@ -29,7 +29,8 @@ var (
 	toPCRF  = diameter.Header{SessionID: pcscf + ";1;2", OriginHost: pcscf, OriginRealm: realm, DestinationRealm: realm}
 	toPCSCF = diameter.Header{SessionID: pcscf + ";1;2", OriginHost: pcrf, OriginRealm: realm, DestinationHost: pcscf, DestinationRealm: realm}
 	ueAddr  = netip.MustParseAddr("172.28.0.110")
-	relay   = netip.MustParseAddr("172.28.0.50")
+	ueHost  = netip.PrefixFrom(ueAddr, 32)
+	relay   = netip.MustParsePrefix("172.28.0.50/32")
 	initial = InitialRequest
 	final   = FinalServiceInformation
 )
@@ -68,12 +69,12 @@ var callComponent = policy.MediaComponent{
 	},
 	SubComponents: []policy.MediaSubComponent{
 		{FlowNumber: 1, Flows: []policy.FlowDescription{
-			{Direction: policy.Uplink, Protocol: 17, Source: ueAddr, Destination: relay, DestinationPort: 40000},
-			{Direction: policy.Downlink, Protocol: 17, Source: relay, Destination: ueAddr, DestinationPort: 49000},
+			{Direction: policy.Uplink, Protocol: 17, Source: ueHost, Destination: relay, DestinationPort: 40000},
+			{Direction: policy.Downlink, Protocol: 17, Source: relay, Destination: ueHost, DestinationPort: 49000},
 		}},
 		{FlowNumber: 2, Usage: policy.RTCP, Flows: []policy.FlowDescription{
-			{Direction: policy.Uplink, Protocol: 17, Source: ueAddr, Destination: relay, DestinationPort: 40001},
-			{Direction: policy.Downlink, Protocol: 17, Source: relay, Destination: ueAddr, DestinationPort: 49001},
+			{Direction: policy.Uplink, Protocol: 17, Source: ueHost, Destination: relay, DestinationPort: 40001},
+			{Direction: policy.Downlink, Protocol: 17, Source: relay, Destination: ueHost, DestinationPort: 49001},
 		}},
 	},
 }
@@ -284,11 +285,11 @@ func TestParseAARequestNamesTheFaultInTheServiceInformation(t *testing.T) {
 		diameter.VendorAVP(avpMediaComponentNumber, mv, datatype.Unsigned32(1)),
 		diameter.VendorAVP(avpMediaSubComponent, mv, &diam.GroupedAVP{AVP: []*diam.AVP{
 			diameter.VendorAVP(avpFlowNumber, mv, datatype.Unsigned32(1)),
-			diameter.VendorAVP(avpFlowDescription, mv, datatype.IPFilterRule("permit in 17 from 10.0.0.0/8 to any")),
+			diameter.VendorAVP(avpFlowDescription, mv, datatype.IPFilterRule("permit in 17 from any to any 40000-40001")),
 		}}),
 	}}))
 	if _, err := ParseAARequest(wire(t, m)); !errors.Is(err, ErrFilterRestrictions) {
-		t.Errorf("masked address: %v, want ErrFilterRestrictions", err)
+		t.Errorf("port range: %v, want ErrFilterRestrictions", err)
 	}
 	m = AARequest{Header: toPCRF, FramedIPAddress: ueAddr}.Message()
 	m.AddAVP(diameter.VendorAVP(avpMediaComponentDescription, mv, &diam.GroupedAVP{AVP: []*diam.AVP{

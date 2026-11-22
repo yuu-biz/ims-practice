@@ -14,6 +14,7 @@ import (
 	"slices"
 
 	"github.com/yuu-biz/ims-practice/internal/n5"
+	"github.com/yuu-biz/ims-practice/internal/policy"
 )
 
 // This file is the PCF stub: the server side of Npcf_PolicyAuthorization
@@ -263,11 +264,11 @@ func pccRules(components map[string]n5.MediaComponent) ([]PCCRule, error) {
 			r.FNums = append(r.FNums, sub.FNum)
 			var up, down bool
 			for _, d := range sub.FDescs {
-				f, err := parseFlowDescription(string(d))
+				f, err := parseFDesc(d)
 				if err != nil {
 					return nil, err
 				}
-				up, down = up || f.Direction == Uplink, down || f.Direction == Downlink
+				up, down = up || f.Direction == policy.Uplink, down || f.Direction == policy.Downlink
 				r.Flows = append(r.Flows, f)
 			}
 			ul, dl, err := maxDataRates(c, sub.FlowUsage == n5.FlowUsageRTCP, up, down)
