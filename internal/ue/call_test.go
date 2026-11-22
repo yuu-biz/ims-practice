@@ -289,15 +289,17 @@ func TestCalleeSendsToTheStreamItAccepted(t *testing.T) {
 	}()
 	for range call.Responses() {
 	}
-	time.Sleep(300 * time.Millisecond)
+	// Once the accepted stream has its packets, the rejected one would
+	// have had its own, sent at the same pace.
+	waitFor(t, "packets on the PCMU stream that the callee accepted", func() bool {
+		_, n := pcmu.Received()
+		return n > 2
+	})
 	if err := call.Bye(); err != nil {
 		t.Fatal(err)
 	}
 	if err := <-answered; err != nil {
 		t.Fatal(err)
-	}
-	if _, n := pcmu.Received(); n == 0 {
-		t.Error("nothing reached the PCMU stream that the callee accepted")
 	}
 	if _, n := pcma.Received(); n != 0 {
 		t.Errorf("%d packets reached the PCMA stream that the callee rejected", n)
