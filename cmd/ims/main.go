@@ -227,12 +227,12 @@ func run(configPath string, log *slog.Logger) error {
 		if h := c.HostAccess; h != nil {
 			pc.HostAccess = &pcscf.HostAccess{Gateway: h.Gateway, Address: h.Address}
 		}
-		var relay pcscf.Relay
-		if c.MediaRelay != "" {
-			relay = agw.NewClient(c.MediaRelay)
+		var relays []pcscf.MediaRelay
+		for _, u := range c.MediaRelays {
+			relays = append(relays, pcscf.MediaRelay{Name: u, Control: agw.NewClient(u)})
 		}
 		roleLog := log.With("role", config.RolePCSCF)
-		p := pcscf.New(pc, resolver, pcscfStore(stores, roleLog), relay, roleLog)
+		p := pcscf.New(pc, resolver, pcscfStore(stores, roleLog), relays, roleLog)
 		// The sweep that handles the expiries of the reg event
 		// subscriptions runs until the node stops.
 		defer p.Close()

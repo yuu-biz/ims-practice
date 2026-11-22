@@ -97,7 +97,7 @@ func newRawCallBeforeACK(t *testing.T) *rawCall {
 	locate := locatorFunc(func(string) []sip.Destination {
 		return []sip.Destination{{Transport: sip.UDP, Addr: c.far.LocalAddr()}}
 	})
-	c.p = New(Config{Host: "pcscf." + domain, Port: 5060, VisitedNetworkID: domain}, locate, c.store, c.relay, quiet())
+	c.p = New(Config{Host: "pcscf." + domain, Port: 5060, VisitedNetworkID: domain}, locate, c.store, only(c.relay), quiet())
 	c.p.SetPolicyControl(c.pcrf)
 	c.p.store.PutAssociation(context.Background(), Association{
 		Source: sip.Destination{Transport: sip.UDP, Addr: c.ue.LocalAddr()}, SentBy: c.ue.LocalAddr().String(), Contact: c.ueContact,

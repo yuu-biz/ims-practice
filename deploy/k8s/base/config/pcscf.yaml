@@ -15,8 +15,12 @@ pcscf:
   # The P-CSCF is in the home network, so its network name is the home
   # domain (TS 24.229 5.2.2.1).
   visited_network_id: ims.mnc001.mcc001.3gppnetwork.org
-  # RTP goes through the media relay in the IMS-AGW role.
-  media_relay: http://agw.ims.mnc001.mcc001.3gppnetwork.org:8080
+  # RTP goes through a media relay in the IMS-AGW role. The P-CSCF
+  # picks one of the list for each call by a hash of its Call-ID, and
+  # takes the next one when that one gives no context. This network has
+  # one.
+  media_relays:
+    - http://agw.ims.mnc001.mcc001.3gppnetwork.org:8080
   # No host_access: the UEs run as Pods in the cluster and reach the
   # P-CSCF and the relay without NAT. A UE on the host needs it again,
   # with the gateway of the kind network.

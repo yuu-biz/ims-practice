@@ -68,9 +68,11 @@ type PCSCF struct {
 	// VisitedNetworkID goes into P-Visited-Network-ID (TS 24.229
 	// 5.2.2.1): a string provisioned for the P-CSCF's network.
 	VisitedNetworkID string
-	// MediaRelay is the URL of the control API of the media relay, such
-	// as http://agw:8080. Empty sends RTP between the UEs directly.
-	MediaRelay string
+	// MediaRelays are the URLs of the control APIs of the media relays
+	// that the P-CSCF may use, such as http://agw:8080. A dialog names
+	// the relay of its context by its URL, so every instance lists the
+	// same. Empty sends RTP between the UEs directly.
+	MediaRelays []string
 	// HostAccess, when set, tells UEs that come through the NAT of the
 	// container host (from Gateway) to send RTP to Address, where the
 	// relay's ports are published.
@@ -257,9 +259,9 @@ type rawSIP struct {
 }
 
 type rawPCSCF struct {
-	SIP              rawSIP `yaml:"sip"`
-	VisitedNetworkID string `yaml:"visited_network_id"`
-	MediaRelay       string `yaml:"media_relay"`
+	SIP              rawSIP   `yaml:"sip"`
+	VisitedNetworkID string   `yaml:"visited_network_id"`
+	MediaRelays      []string `yaml:"media_relays"`
 	HostAccess       *struct {
 		Gateway string `yaml:"gateway"`
 		Address string `yaml:"address"`
@@ -372,9 +374,16 @@ func (raw *rawPCSCF) validate() (PCSCF, error) {
 	if raw.VisitedNetworkID == "" {
 		return PCSCF{}, errors.New("visited_network_id: required")
 	}
-	c := PCSCF{SIP: sip, VisitedNetworkID: raw.VisitedNetworkID, MediaRelay: raw.MediaRelay}
-	if c.MediaRelay != "" && !strings.HasPrefix(c.MediaRelay, "http://") {
-		return PCSCF{}, fmt.Errorf("media_relay: %q is not an http:// URL", c.MediaRelay)
+	c := PCSCF{SIP: sip, VisitedNetworkID: raw.VisitedNetworkID, MediaRelays: raw.MediaRelays}
+	seen := map[string]bool{}
+	for _, u := range c.MediaRelays {
+		if !strings.HasPrefix(u, "http://") {
+			return PCSCF{}, fmt.Errorf("media_relays: %q is not an http:// URL", u)
+		}
+		if seen[u] {
+			return PCSCF{}, fmt.Errorf("media_relays: %q is listed twice", u)
+		}
+		seen[u] = true
 	}
 	if h := raw.HostAccess; h != nil {
 		gw, err1 := netip.ParseAddr(h.Gateway)

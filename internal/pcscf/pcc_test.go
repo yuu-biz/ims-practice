@@ -127,7 +127,7 @@ func newPCC(t *testing.T) *pcc {
 		}
 		return []sip.Destination{{Transport: sip.UDP, Addr: n.far.ua.Stack().LocalAddr()}}
 	})
-	n.p = New(Config{Host: "pcscf." + domain, Port: 5060, VisitedNetworkID: domain}, locate, n.store, n.relay, quiet())
+	n.p = New(Config{Host: "pcscf." + domain, Port: 5060, VisitedNetworkID: domain}, locate, n.store, only(n.relay), quiet())
 
 	// The P-CSCF's Diameter node, as cmd/ims makes it for a pcscf with a
 	// PCRF: the client, made after its peer, takes the RARs and ASRs of

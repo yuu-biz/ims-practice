@@ -3,6 +3,7 @@ package config
 import (
 	"net/netip"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -864,6 +865,33 @@ func TestParsePCSCFProtectedServerPort(t *testing.T) {
 		yaml := strings.Replace(withPort, "protected_server_port: 5064", "protected_server_port: "+port, 1)
 		if _, err := Parse(strings.NewReader(yaml)); err == nil || !strings.Contains(err.Error(), want) {
 			t.Errorf("port %s: err = %v, want it to mention %q", port, err, want)
+		}
+	}
+}
+
+// The P-CSCF may list several media relays; a dialog names the one that
+// holds its context by its URL.
+func TestParsePCSCFMediaRelays(t *testing.T) {
+	const visited = "  visited_network_id: ims.mnc001.mcc001.3gppnetwork.org\n"
+	withRelays := func(list string) string {
+		return strings.Replace(combinedYAML, visited, visited+"  media_relays: "+list+"\n", 1)
+	}
+	cfg, err := Parse(strings.NewReader(withRelays("[http://agw-1:8080, http://agw-2:8080]")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"http://agw-1:8080", "http://agw-2:8080"}; !slices.Equal(cfg.PCSCF.MediaRelays, want) {
+		t.Errorf("media relays = %v, want %v", cfg.PCSCF.MediaRelays, want)
+	}
+	if cfg, _ := Parse(strings.NewReader(combinedYAML)); len(cfg.PCSCF.MediaRelays) != 0 {
+		t.Errorf("without media_relays the P-CSCF has the relays %v, want none", cfg.PCSCF.MediaRelays)
+	}
+	for list, want := range map[string]string{
+		"[agw:8080]":                         `media_relays: "agw:8080" is not an http:// URL`,
+		"[http://agw:8080, http://agw:8080]": `media_relays: "http://agw:8080" is listed twice`,
+	} {
+		if _, err := Parse(strings.NewReader(withRelays(list))); err == nil || !strings.Contains(err.Error(), want) {
+			t.Errorf("media_relays %s: err = %v, want it to mention %q", list, err, want)
 		}
 	}
 }

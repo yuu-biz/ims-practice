@@ -279,7 +279,7 @@ func dialog() pcscf.Dialog {
 		Originating: true,
 		Caller:      pcscf.Party{NameAddr: "<" + impu + ">;tag=ue-tag", Target: "sip:ue1@192.0.2.10:5060", CSeq: 1},
 		Callee:      pcscf.Party{NameAddr: "<" + otherIMPU + ">", Target: "sip:ue2@192.0.2.20:5060", Route: []string{"<sip:orig@scscf;lr>"}},
-		Relay: &pcscf.RelayContext{ID: "ctx-1", Access: netip.MustParseAddrPort("198.51.100.1:40000"),
+		Relay: &pcscf.RelayContext{Relay: "http://agw-2:8080", ID: "ctx-1", Access: netip.MustParseAddrPort("198.51.100.1:40000"),
 			Core: netip.MustParseAddrPort("198.51.100.1:40002")},
 		ICID: "icid-1",
 	}

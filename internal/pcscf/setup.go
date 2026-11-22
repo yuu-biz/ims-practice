@@ -3,6 +3,7 @@ package pcscf
 import (
 	"bytes"
 	"context"
+	"hash/fnv"
 	"log/slog"
 
 	"github.com/yuu-biz/ims-practice/internal/agw"
@@ -90,7 +91,7 @@ func (s *setup) offer(out *sip.Message) error {
 }
 
 func (s *setup) throughRelay(out *sip.Message) error {
-	if s.p.relay == nil {
+	if len(s.p.relays) == 0 {
 		return nil
 	}
 	offer, err := sdp.Parse(out.Body)
@@ -101,19 +102,58 @@ func (s *setup) throughRelay(out *sip.Message) error {
 	if err != nil {
 		return nil
 	}
-	ctx, cancel := relayContext()
-	defer cancel()
-	c, err := s.p.relay.Add(ctx, agw.TerminationRequest{ID: agw.Access}, agw.TerminationRequest{ID: agw.Core})
+	relay, c, err := s.p.addContext(s.invite.Get("Call-ID"), s.log)
 	if err != nil {
 		return err
 	}
-	s.relay = &RelayContext{ID: c.ID, Access: s.p.advertise(c, agw.Access, s.ue), Core: c.Terminations[agw.Core].Local}
+	s.relay = &RelayContext{Relay: relay.Name, ID: c.ID, Access: s.p.advertise(c, agw.Access, s.ue), Core: c.Terminations[agw.Core].Local}
 	if err := s.p.relaySDP(out, s.relay, s.toUE()); err != nil {
 		return err
 	}
-	s.log.Info("media through the relay", "context", c.ID, "leg", string(s.leg),
+	s.log.Info("media through the relay", "relay", relay.Name, "context", c.ID, "leg", string(s.leg),
 		"offer_from", offerAddr.String(), "access", s.relay.Access.String(), "core", s.relay.Core.String())
 	return nil
+}
+
+// addContext adds the context of one pass of a call through the P-CSCF
+// to a media relay: Reserve AGW Connection Point (TS 29.334 5.17.2.2),
+// with a termination towards the UE and one towards the network. The
+// relay comes from a hash of the Call-ID, as the MRFC picks an MRFP, so
+// that the calls spread over the relays of the list. When that relay
+// gives no context, because it does not answer or has no port left
+// (503), the next one of the list is tried, and after the last one the
+// first. Both passes of a call between two UEs of the P-CSCF have the
+// same Call-ID, and so start with the same relay. When no relay gives
+// a context, the error is that of the last one tried.
+//
+// SIMPLIFIED: TS 23.334 6.1.2 and 6.1.3. The P-CSCF does not keep track
+// of which relays are unavailable, and does not audit them to find out
+// when one is back: each new call tries the relay its Call-ID picks, and
+// a call that comes to a relay that has gone waits for that Add to fail
+// before it goes on to the next. The calls whose contexts a relay held
+// when it went keep their signalling, without media, until a UE hangs
+// up; the P-CSCF neither ends them nor moves their media to another
+// relay. A relay that comes back at its own address opens its contexts
+// again, and their media goes on, so ending the calls would cut ones
+// that recover. Moving the media would take an offer from the P-CSCF to
+// each party, which a proxy does not send.
+func (p *PCSCF) addContext(callID string, log *slog.Logger) (MediaRelay, agw.Context, error) {
+	h := fnv.New32a()
+	h.Write([]byte(callID))
+	first := int(h.Sum32() % uint32(len(p.relays)))
+	var last error
+	for i := range p.relays {
+		relay := p.relays[(first+i)%len(p.relays)]
+		ctx, cancel := relayContext()
+		c, err := relay.Control.Add(ctx, agw.TerminationRequest{ID: agw.Access}, agw.TerminationRequest{ID: agw.Core})
+		cancel()
+		if err == nil {
+			return relay, c, nil
+		}
+		log.Warn("the media relay gave no context", "relay", relay.Name, "error", err.Error())
+		last = err
+	}
+	return MediaRelay{}, agw.Context{}, last
 }
 
 // ueSide picks, of an SDP body before and after the P-CSCF pointed it

@@ -54,14 +54,14 @@ func newSessionHarness(t *testing.T) *sessionHarness {
 	})
 	api := httptest.NewServer(agw.Handler(relay))
 	t.Cleanup(api.Close)
-	h := newSessionHarnessWith(t, agw.NewClient(api.URL))
+	h := newSessionHarnessWith(t, []MediaRelay{{Name: api.URL, Control: agw.NewClient(api.URL)}})
 	h.relay = relay
 	return h
 }
 
 // newSessionHarnessWith is newSessionHarness with the P-CSCF driving
-// relay instead.
-func newSessionHarnessWith(t *testing.T, relay Relay) *sessionHarness {
+// relays instead.
+func newSessionHarnessWith(t *testing.T, relays []MediaRelay) *sessionHarness {
 	t.Helper()
 	h := &sessionHarness{t: t, store: NewMemoryStore(), release: make(chan struct{}), byeAnswers: make(chan int, 4)}
 
@@ -90,7 +90,7 @@ func newSessionHarnessWith(t *testing.T, relay Relay) *sessionHarness {
 	locate := locatorFunc(func(host string) []sip.Destination {
 		return []sip.Destination{{Transport: sip.UDP, Addr: scscf.LocalAddr()}}
 	})
-	p := New(Config{Host: "pcscf." + domain, Port: 5060, VisitedNetworkID: domain}, locate, h.store, relay, quiet())
+	p := New(Config{Host: "pcscf." + domain, Port: 5060, VisitedNetworkID: domain}, locate, h.store, relays, quiet())
 	h.p = p
 	h.pcscf = newPCSCFStack(t, p)
 	p.SetStack(h.pcscf)
@@ -253,7 +253,7 @@ func TestCallIsRefusedWhenTheRelayHasNoFreePort(t *testing.T) {
 	}
 	api := httptest.NewServer(agw.Handler(relay))
 	t.Cleanup(api.Close)
-	h := newSessionHarnessWith(t, agw.NewClient(api.URL))
+	h := newSessionHarnessWith(t, []MediaRelay{{Name: api.URL, Control: agw.NewClient(api.URL)}})
 	close(h.release)
 	responses := h.send(h.ue, invite("sip:001010000000002@"+domain, "<sip:pcscf."+domain+":5060;lr>"))
 	if r := final(t, responses, 3*time.Second); r.StatusCode != 500 {
@@ -379,6 +379,19 @@ func TestMessageIsRelayedBothWaysWithoutRecordRoute(t *testing.T) {
 	}
 }
 
+// testRelay is the name of the one media relay of a P-CSCF that only
+// lists.
+const testRelay = "http://agw.test:8080"
+
+// only lists relay as the one media relay of a P-CSCF, or none when
+// relay is nil.
+func only(relay Relay) []MediaRelay {
+	if relay == nil {
+		return nil
+	}
+	return []MediaRelay{{Name: testRelay, Control: relay}}
+}
+
 // fakeRelay is a relay that stalls or fails where a test asks it to.
 // It keeps the contexts added and not yet subtracted.
 type fakeRelay struct {
@@ -387,14 +400,22 @@ type fakeRelay struct {
 	stall <-chan struct{}
 	// failModify makes every Modify fail.
 	failModify bool
+	// prefix starts the ID of each context, so that the contexts of two
+	// relays have different IDs.
+	prefix string
 
 	mu   sync.Mutex
 	next int
+	// failAdd, when set, is what every Add returns.
+	failAdd error
 	// failSubtracts is how many Subtracts fail before one succeeds.
 	failSubtracts int
 	contexts      map[string]bool
 	// remotes is where each termination was last told to send.
 	remotes map[termination]netip.AddrPort
+	// strays are the IDs that a Modify or a Subtract named, of contexts
+	// that this relay does not hold.
+	strays []string
 }
 
 type termination struct {
@@ -423,8 +444,11 @@ func (f *fakeRelay) Add(ctx context.Context, _ ...agw.TerminationRequest) (agw.C
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if f.failAdd != nil {
+		return agw.Context{}, f.failAdd
+	}
 	f.next++
-	id := strconv.Itoa(f.next)
+	id := f.prefix + strconv.Itoa(f.next)
 	f.contexts[id] = true
 	return agw.Context{ID: id, Terminations: map[agw.TerminationID]*agw.Termination{
 		agw.Access: {Local: netip.MustParseAddrPort("127.0.0.1:42000")},
@@ -438,6 +462,9 @@ func (f *fakeRelay) Modify(ctx context.Context, id string, side agw.TerminationI
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if !f.contexts[id] {
+		f.strays = append(f.strays, id)
+	}
 	f.remotes[termination{id, side}] = change.Remote
 	return nil
 }
@@ -449,8 +476,28 @@ func (f *fakeRelay) Subtract(ctx context.Context, id string) error {
 		f.failSubtracts--
 		return errors.New("the relay is unreachable")
 	}
+	if !f.contexts[id] {
+		f.strays = append(f.strays, id)
+	}
 	delete(f.contexts, id)
 	return nil
+}
+
+// added is how many contexts the relay has added, and the ID of the
+// last one.
+func (f *fakeRelay) added() (int, string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.next, f.prefix + strconv.Itoa(f.next)
+}
+
+func (f *fakeRelay) noStrays(t *testing.T, name string) {
+	t.Helper()
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if len(f.strays) > 0 {
+		t.Errorf("%s got Modify or Subtract for the contexts %v, which it does not hold", name, f.strays)
+	}
 }
 
 // waitHeld waits until the relay holds n contexts. The P-CSCF subtracts
@@ -477,7 +524,7 @@ func TestRelayThatStallsFailsTheCall(t *testing.T) {
 	t.Cleanup(func() { close(stall) })
 	relay := newFakeRelay()
 	relay.stall = stall
-	h := newSessionHarnessWith(t, relay)
+	h := newSessionHarnessWith(t, only(relay))
 	responses := h.send(h.ue, invite("sip:001010000000002@"+domain, "<sip:pcscf."+domain+":5060;lr>"))
 	if r := final(t, responses, agw.RequestTimeout+time.Second); r.StatusCode != 500 {
 		t.Errorf("got %d, want 500", r.StatusCode)
@@ -487,7 +534,7 @@ func TestRelayThatStallsFailsTheCall(t *testing.T) {
 func TestRefusedModifySubtractsTheContext(t *testing.T) {
 	relay := newFakeRelay()
 	relay.failModify = true
-	h := newSessionHarnessWith(t, relay)
+	h := newSessionHarnessWith(t, only(relay))
 	responses := h.send(h.ue, invite("sip:001010000000002@"+domain, "<sip:pcscf."+domain+":5060;lr>"))
 	if r := final(t, responses, 3*time.Second); r.StatusCode != 500 {
 		t.Errorf("got %d, want 500", r.StatusCode)
@@ -498,7 +545,7 @@ func TestRefusedModifySubtractsTheContext(t *testing.T) {
 func TestSubtractThatFailsOnceIsTriedAgain(t *testing.T) {
 	relay := newFakeRelay()
 	relay.failSubtracts = 1
-	h := newSessionHarnessWith(t, relay)
+	h := newSessionHarnessWith(t, only(relay))
 	responses := h.send(h.ue, invite("sip:001010000000002@"+domain, "<sip:pcscf."+domain+":5060;lr>"))
 	arrives(t, h.scscf, responses, "S-CSCF")
 	close(h.release)
@@ -512,13 +559,13 @@ func TestSubtractThatFailsOnceIsTriedAgain(t *testing.T) {
 // order gets 500 and the call stays up, so its media must too.
 func TestBYEThatIsRejectedKeepsTheMedia(t *testing.T) {
 	relay := newFakeRelay()
-	h := newSessionHarnessWith(t, relay)
+	h := newSessionHarnessWith(t, only(relay))
 	callID := sip.NewCallID()
 	c, err := relay.Add(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
-	h.store.PutDialog(context.Background(), Dialog{Key: DialogKey{CallID: callID, UETag: "caller"}, Originating: true, Relay: &RelayContext{ID: c.ID}})
+	h.store.PutDialog(context.Background(), Dialog{Key: DialogKey{CallID: callID, UETag: "caller"}, Originating: true, Relay: &RelayContext{Relay: testRelay, ID: c.ID}})
 
 	h.byeAnswers <- 500
 	if r := final(t, h.send(h.ue, byeRequest(callID, 1)), 3*time.Second); r.StatusCode != 500 {
@@ -538,18 +585,146 @@ func TestBYEThatIsRejectedKeepsTheMedia(t *testing.T) {
 // caller considers the dialog ended, so no other BYE will come.
 func TestBYEAnswered481EndsTheMedia(t *testing.T) {
 	relay := newFakeRelay()
-	h := newSessionHarnessWith(t, relay)
+	h := newSessionHarnessWith(t, only(relay))
 	callID := sip.NewCallID()
 	c, err := relay.Add(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
-	h.store.PutDialog(context.Background(), Dialog{Key: DialogKey{CallID: callID, UETag: "caller"}, Originating: true, Relay: &RelayContext{ID: c.ID}})
+	h.store.PutDialog(context.Background(), Dialog{Key: DialogKey{CallID: callID, UETag: "caller"}, Originating: true, Relay: &RelayContext{Relay: testRelay, ID: c.ID}})
 	h.byeAnswers <- 481
 	if r := final(t, h.send(h.ue, byeRequest(callID, 1)), 3*time.Second); r.StatusCode != 481 {
 		t.Fatalf("got %d, want 481", r.StatusCode)
 	}
 	relay.waitHeld(t, 0, time.Second)
+}
+
+// twoRelays is a session harness whose P-CSCF lists two media relays,
+// and whose next hops turn every INVITE down right after its 183.
+type twoRelays struct {
+	*sessionHarness
+	relays [2]*fakeRelay
+	names  [2]string
+}
+
+func newTwoRelays(t *testing.T) *twoRelays {
+	t.Helper()
+	h := &twoRelays{relays: [2]*fakeRelay{newFakeRelay(), newFakeRelay()}, names: [2]string{"http://agw-1.test:8080", "http://agw-2.test:8080"}}
+	h.relays[0].prefix, h.relays[1].prefix = "a", "b"
+	h.sessionHarness = newSessionHarnessWith(t, []MediaRelay{{Name: h.names[0], Control: h.relays[0]}, {Name: h.names[1], Control: h.relays[1]}})
+	close(h.release)
+	return h
+}
+
+// call makes a call with callID, and returns the index of the relay that
+// held its context. That relay got the answer of the 183, and neither
+// relay holds the context once the 486 has ended the call.
+func (h *twoRelays) call(callID string) int {
+	h.t.Helper()
+	var before [2]int
+	for i, r := range h.relays {
+		before[i], _ = r.added()
+	}
+	m := invite("sip:001010000000002@"+domain, "<sip:pcscf."+domain+":5060;lr>")
+	m.Set("Call-ID", callID)
+	responses := h.send(h.ue, m)
+	arrives(h.t, h.scscf, responses, "S-CSCF")
+	if r := final(h.t, responses, 3*time.Second); r.StatusCode != 486 {
+		h.t.Fatalf("got %d, want 486", r.StatusCode)
+	}
+	held := -1
+	for i, r := range h.relays {
+		n, id := r.added()
+		if n == before[i] {
+			continue
+		}
+		if held >= 0 || n != before[i]+1 {
+			h.t.Fatalf("call %s added contexts in more than one relay", callID)
+		}
+		held = i
+		if got, want := r.remote(id, agw.Core), netip.MustParseAddrPort("192.0.2.99:6000"); got != want {
+			h.t.Errorf("call %s: the core termination of %s sends to %v, want the answer's %v", callID, h.names[i], got, want)
+		}
+	}
+	if held < 0 {
+		h.t.Fatalf("call %s added no context", callID)
+	}
+	for _, r := range h.relays {
+		r.waitHeld(h.t, 0, time.Second)
+	}
+	return held
+}
+
+func (h *twoRelays) noStrays() {
+	h.t.Helper()
+	for i, r := range h.relays {
+		r.noStrays(h.t, h.names[i])
+	}
+}
+
+// TestCallsSpreadOverTheMediaRelays: the Call-ID of a call picks the
+// relay of its context, so the calls spread over the relays of the
+// list, and a call with the same Call-ID gets the same relay again.
+func TestCallsSpreadOverTheMediaRelays(t *testing.T) {
+	h := newTwoRelays(t)
+	var callIDs []string
+	for i := range 8 {
+		callIDs = append(callIDs, "call-"+strconv.Itoa(i)+"@192.0.2.10")
+	}
+	picked := map[string]int{}
+	var calls [2]int
+	for _, callID := range callIDs {
+		picked[callID] = h.call(callID)
+		calls[picked[callID]]++
+	}
+	if calls[0] == 0 || calls[1] == 0 {
+		t.Errorf("%d calls went to %s and %d to %s, want some on each", calls[0], h.names[0], calls[1], h.names[1])
+	}
+	for _, callID := range callIDs {
+		if got := h.call(callID); got != picked[callID] {
+			t.Errorf("call %s went to %s, and to %s the time before", callID, h.names[got], h.names[picked[callID]])
+		}
+	}
+	h.noStrays()
+}
+
+// TestCallTakesTheNextMediaRelayWhenAddFails: when the relay that its
+// Call-ID picks gives no context, as a relay with no port left answers
+// 503, the call takes the next relay of the list.
+func TestCallTakesTheNextMediaRelayWhenAddFails(t *testing.T) {
+	h := newTwoRelays(t)
+	callID := sip.NewCallID()
+	first := h.call(callID)
+	h.relays[first].mu.Lock()
+	h.relays[first].failAdd = agw.ErrNoPort
+	h.relays[first].mu.Unlock()
+	if got := h.call(callID); got == first {
+		t.Errorf("the call went to %s, whose Add fails", h.names[got])
+	}
+	h.noStrays()
+}
+
+// TestBYEReleasesTheContextInTheRelayThatHoldsIt: the dialog names the
+// relay of its context, so that the context is subtracted there, and
+// not in another relay of the list.
+func TestBYEReleasesTheContextInTheRelayThatHoldsIt(t *testing.T) {
+	h := newTwoRelays(t)
+	for _, r := range h.relays {
+		if _, err := r.Add(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	_, id := h.relays[1].added()
+	callID := sip.NewCallID()
+	h.store.PutDialog(context.Background(), Dialog{Key: DialogKey{CallID: callID, UETag: "caller"}, Originating: true,
+		Relay: &RelayContext{Relay: h.names[1], ID: id}})
+	h.byeAnswers <- 200
+	if r := final(t, h.send(h.ue, byeRequest(callID, 1)), 3*time.Second); r.StatusCode != 200 {
+		t.Fatalf("got %d, want 200", r.StatusCode)
+	}
+	h.relays[1].waitHeld(t, 0, time.Second)
+	h.relays[0].waitHeld(t, 1, 0)
+	h.noStrays()
 }
 
 // TestACKIsForwardedWithMaxForwardsLessOne is RFC 3261 16.6 step 3,
