@@ -59,7 +59,8 @@ type call struct {
 	// early dialog with the AS, which is one UAS: all its responses
 	// have one To tag (8.2.6.2). The caller takes the first session
 	// description as the answer and ignores the rest (13.2.1), so the
-	// responses of the other dialogs go to it without theirs.
+	// responses of the other dialogs go to it without theirs while that
+	// dialog lasts (keepsSession).
 	sessionFrom string
 	// toCaller tells that a provisional response went to the caller, so
 	// that in has an early dialog.
@@ -380,6 +381,7 @@ func (c *call) relayProvisional(out *sip.OutgoingCall, resp *sip.Message) {
 	reliable := resp.Requires(sip.Option100rel)
 	fields := c.responseFields(resp, c.in.Request, true)
 	tag := toTag(resp)
+	keeps := c.keepsSession(out)
 	c.mu.Lock()
 	if c.withhold {
 		if reliable && len(body.Content) > 0 {
@@ -389,7 +391,7 @@ func (c *call) relayProvisional(out *sip.OutgoingCall, resp *sip.Message) {
 		// Without a session description there is no early media.
 		fields.Remove("P-Early-Media")
 	}
-	if len(body.Content) > 0 && c.sessionFrom == "" {
+	if len(body.Content) > 0 && !keeps {
 		c.sessionFrom = tag
 	}
 	from := c.sessionFrom
@@ -434,6 +436,37 @@ func (c *call) relayProvisional(out *sip.OutgoingCall, resp *sip.Message) {
 			c.log.Warn("PRACK not sent", "status", resp.StatusCode, "error", err.Error())
 		}
 	}
+}
+
+// keepsSession tells whether the caller keeps the session description
+// that it has, so that those of the other early dialogs of out do not
+// go to it. It keeps it while the dialog that sent it lasts. A 199 ends
+// that dialog (RFC 6228), and a diversion leaves all those of the leg
+// to the served user, while the early dialog of the caller goes on
+// without a 199 of its own (leaveServedUser). The next session
+// description then goes to the caller as it comes, when it answers the
+// offer of the INVITE: with preconditions the UAS that sent it alerts
+// only once the caller has confirmed its resources, which needs that
+// answer (RFC 3312). After an INVITE without an offer it is the offer
+// of its UAS, and the AS, which has the caller's answer to another one,
+// sends no further offer in its responses to the INVITE (RFC 3261
+// 13.2.1).
+func (c *call) keepsSession(out *sip.OutgoingCall) bool {
+	c.mu.Lock()
+	from := c.sessionFrom
+	c.mu.Unlock()
+	switch {
+	case from == "":
+		return false
+	case len(c.in.Request.Body) == 0:
+		return true
+	}
+	for _, d := range out.Dialogs() {
+		if dialog, ok := d.Dialog(); ok && dialog.ID.RemoteTag == from {
+			return dialog.State != sip.DialogTerminated
+		}
+	}
+	return false
 }
 
 // answer passes the 2xx of out on to the caller, and then the requests

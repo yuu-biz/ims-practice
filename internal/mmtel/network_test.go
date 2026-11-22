@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -584,6 +585,45 @@ func TestCFNRThroughTheIMS(t *testing.T) {
 	}
 	if rs := sip.Reasons(ringing.EndedBy()); len(rs) != 1 || rs[0].Protocol != sip.ReasonSIP || rs[0].Cause != 408 {
 		t.Errorf("the CANCEL at the served user has Reason %q, want SIP cause 408", ringing.EndedBy().GetAll("Reason"))
+	}
+}
+
+// TestCFNRAfterEarlyMediaThroughTheIMS: the served user answers the
+// caller's offer in a 183 before it rings, as a UE with preconditions
+// does. When the no reply timer fires, the served user's AS ends that
+// early dialog with a 199, and the target answers in a 183 of its own.
+// The caller's AS keeps its one early dialog with the caller, and
+// passes the target's answer on in that 183: the target alerts only
+// once the caller has confirmed its resources, which needs the answer
+// (RFC 3312).
+func TestCFNRAfterEarlyMediaThroughTheIMS(t *testing.T) {
+	n := startNetwork(t, func(_ time.Duration, f func()) func() bool { return time.AfterFunc(10*time.Millisecond, f).Stop })
+	caller, served, target := n.subscriber(1, true), n.subscriber(2, true), n.subscriber(3, true)
+	served.set(ue.CFNR, target.tel)
+	out := caller.invite(served.tel)
+	answerIn183 := func(s *subscriber) *sip.IncomingCall {
+		ic := receive(t, s.calls, "call at subscriber "+string(rune('0'+s.number)))
+		offer, err := sdp.Parse(ic.Request.Body)
+		if err != nil {
+			t.Fatal(err)
+		}
+		answer, err := sdp.Answer(offer, fmt.Sprint(s.number), netip.AddrPortFrom(netip.MustParseAddr("127.0.0.1"), s.media.Port()))
+		if err != nil {
+			t.Fatal(err)
+		}
+		ic.Progress(183, sip.Body{Type: "application/sdp", Content: answer.Bytes()})
+		return ic
+	}
+	answerIn183(served).Progress(180, sip.Body{})
+	answerIn183(target).Accept(sip.Body{})
+	resps := readAll(t, out)
+	i := slices.Index(statuses(resps), 181)
+	if i < 0 || statuses(resps)[len(resps)-1] != 200 {
+		t.Fatalf("caller got %v, want a 181 and the 200", statuses(resps))
+	}
+	want := netip.AddrPortFrom(netip.MustParseAddr("127.0.0.1"), target.media.Port())
+	if !slices.ContainsFunc(resps[i:], func(m *sip.Message) bool { return mediaOf(m.Body) == want }) {
+		t.Errorf("no response after the 181 points the caller's media at the target's %v", want)
 	}
 }
 
