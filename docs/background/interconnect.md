@@ -949,9 +949,9 @@ RP-OA を確かめる tshark のフィールドの名前は、版で違います
 
 ### 2 つ目の網の構成
 
-ブリッジは 3 つです。網 A は `compose.yaml` の `ims0`（172.28.0.0/24）、網 B は `ims1`（172.28.1.0/24）、網のあいだは `nni0`（172.28.2.0/24）です。キャプチャも 3 つで、`captures/`、`captures/peer/`、`captures/nni/` に書きます。`images/capture` は変えず、`CAPTURE_INTERFACE` と書き込む先のボリュームだけを変えます。
+ブリッジは 3 つです。網 A は `compose.yaml` の `ims0`（172.28.0.0/24）、網 B は `ims1`（172.28.1.0/24）、網のあいだは `nni0`（172.28.2.0/24）です。キャプチャも 3 つで、`captures/`、`captures/b/`、`captures/nni/` に書きます。`images/capture` は変えず、`CAPTURE_INTERFACE` と書き込む先のボリュームだけを変えます。
 
-10 章の案では網 B を Compose のプロファイル `peer` に入れるとしていましたが、`compose.yaml` を変えずに済むように、別の上書きのファイル（`deploy/interconnect/`）にしました。網 B のサービスの名前は `peer-` で始めます。`compose.yaml` の `peer`（pjsua と SIPp）と紛れないようにするためです。
+10 章の案では網 B を Compose のプロファイル `peer` に入れるとしていましたが、`compose.yaml` を変えずに済むように、別の上書きのファイル（`deploy/interconnect/`）にしました。網 B のサービスの名前は、`ibcf-b` や `scscf-b` のように `-b` で終わらせます。網 A の同じ役のノードと見分けるためです。
 
 | 決めたこと | 中身 | 理由 |
 | --- | --- | --- |

@@ -20,8 +20,8 @@ import (
 // The directories of the originals and the copies, relative to
 // deploy/interconnect, where go generate runs.
 const (
-	ComposeDir = "../compose"
-	homeDir    = "home"
+	ComposeDir  = "../compose"
+	networkADir = "a"
 )
 
 // GenerateCommand is what a person runs, from the root of the
@@ -49,7 +49,7 @@ func Copies(composeDir string) (map[string][]byte, error) {
 			return nil, fmt.Errorf("deploy/compose/%s: %w", name, err)
 		}
 		header := yamledit.Header("#", GenerateCommand, "deploy/compose/"+name, "deploy/interconnect/changes.go")
-		copies[homeDir+"/"+name] = append(header, out...)
+		copies[networkADir+"/"+name] = append(header, out...)
 	}
 	return copies, nil
 }

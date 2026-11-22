@@ -3,7 +3,7 @@ package interconnect
 import "github.com/yuu-biz/ims-practice/internal/yamledit"
 
 // changes is every difference between a role file of deploy/compose and
-// its copy in home: the IBCF through which network A's S-CSCF and
+// its copy in a: the IBCF through which network A's S-CSCF and
 // IP-SM-GW send what is for another network. The S-CSCF does so in
 // steps 11 and 12 of TS 24.229 5.4.3.2; the IP-SM-GW does the same for
 // a short message to a user of network B.
@@ -32,5 +32,5 @@ with a request for another network.`,
 	},
 }
 
-// ibcf is the IBCF of network A (home/ibcf.yaml).
+// ibcf is the IBCF of network A (a/ibcf.yaml).
 const ibcf = "sip:ibcf.ims.mnc001.mcc001.3gppnetwork.org:5060"

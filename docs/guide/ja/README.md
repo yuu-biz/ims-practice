@@ -97,7 +97,7 @@ UE はプロファイルに入れてあるので、`docker compose up` では起
 | 11 | `001010000000011@ims.mnc001.mcc001.3gppnetwork.org` | +1-202-555-0111 | `softphone`（SIPp） | SIPp |
 | 12 | `001010000000012@ims.mnc001.mcc001.3gppnetwork.org` | +1-202-555-0112 | `volte-b` | volte-b |
 
-網間接続の手順書の 2 つ目の網には、`deploy/interconnect/peer/hss.yaml` に別の加入者がいます。サービス `peer-ue` の UE B1 が +1-202-555-0151 で、もう 1 人が +1-202-555-0152 です。
+網間接続の手順書の 2 つ目の網には、`deploy/interconnect/b/hss.yaml` に別の加入者がいます。サービス `ue-b1` の UE B1 が +1-202-555-0151 で、もう 1 人が +1-202-555-0152 です。
 
 ### どのノードも動かさないコード
 

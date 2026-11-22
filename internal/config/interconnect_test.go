@@ -14,8 +14,8 @@ import (
 // mounts as peer-profile.yaml next to each IBCF's file when neither
 // IBCF_A_PROFILE nor IBCF_B_PROFILE names another.
 var defaultProfiles = map[string]string{
-	"home/ibcf.yaml": "network-b.yaml",
-	"peer/ibcf.yaml": "network-a.yaml",
+	"a/ibcf.yaml": "network-b.yaml",
+	"b/ibcf.yaml": "network-a.yaml",
 }
 
 func TestInterconnectConfigsLoad(t *testing.T) {
@@ -90,7 +90,7 @@ func TestInterconnectProfilesLoad(t *testing.T) {
 func TestInterconnectHomeIBCFIsInTheHomeDomain(t *testing.T) {
 	for _, name := range []string{"scscf.yaml", "ipsmgw.yaml"} {
 		t.Run(name, func(t *testing.T) {
-			home, err := Load(filepath.Join("../../deploy/interconnect/home", name))
+			home, err := Load(filepath.Join("../../deploy/interconnect/a", name))
 			if err != nil {
 				t.Fatal(err)
 			}

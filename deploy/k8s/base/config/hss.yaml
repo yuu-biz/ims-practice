@@ -281,7 +281,7 @@ hss:
       application_server: {server_name: sip:ipsmgw.ims.mnc001.mcc001.3gppnetwork.org:5060}
     # A short message for a user from another network reaches the
     # IP-SM-GW that serves the user (TS 23.204 6.4a step 2), as in
-    # the peer network (deploy/interconnect/peer/hss.yaml). The
+    # the peer network (deploy/interconnect/b/hss.yaml). The
     # IP-SM-GW asserts its own URI in the MESSAGEs it sends to users:
     # the negated header leaves them out.
     - priority: 2

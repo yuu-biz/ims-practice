@@ -21,7 +21,7 @@
 # IMS_IMAGE and CAPTURE_IMAGE it builds none and uses those images
 # instead, tagged as compose.yaml names them. E2E_KEEP=1 leaves the
 # networks up afterwards; otherwise they are taken down, and the pcaps
-# stay in captures/, captures/peer/ and captures/nni/.
+# stay in captures/, captures/b/ and captures/nni/.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 . scripts/e2e-lib.sh
@@ -87,7 +87,7 @@ wait_for_open() {
 	echo "FAIL $service never opened its Diameter connection" >&2
 	exit 1
 }
-for service in icscf scscf ipsmgw peer-icscf peer-scscf peer-ipsmgw; do
+for service in icscf scscf ipsmgw icscf-b scscf-b ipsmgw-b; do
 	wait_for_open "$service"
 done
 # wait_ibcf waits for the IBCF of service to log that it is ready, since
@@ -107,12 +107,12 @@ wait_ibcf ibcf-a 1970-01-01T00:00:00Z
 wait_ibcf ibcf-b 1970-01-01T00:00:00Z
 
 # The UEs of network B are subscribers 1 and 2 of
-# deploy/interconnect/peer/hss.yaml, behind network B's P-CSCF.
-peer=(--domain ims.mnc002.mcc001.3gppnetwork.org
+# deploy/interconnect/b/hss.yaml, behind network B's P-CSCF.
+network_b=(--domain ims.mnc002.mcc001.3gppnetwork.org
 	--pcscf 172.28.1.40:5060 --pcscf-uri sip:pcscf.ims.mnc002.mcc001.3gppnetwork.org:5060)
 # Only "ue sms" has -sc: the SC that UE B1's short messages go to.
 sc_b=(--sc +12025550150)
-ue_b1=("${peer[@]}" --impi 001020000000001@ims.mnc002.mcc001.3gppnetwork.org
+ue_b1=("${network_b[@]}" --impi 001020000000001@ims.mnc002.mcc001.3gppnetwork.org
 	--impu sip:+12025550151@ims.mnc002.mcc001.3gppnetwork.org --password test-password-b1)
 ue_a2=(--impi 001010000000002@ims.mnc001.mcc001.3gppnetwork.org
 	--impu sip:+12025550102@ims.mnc001.mcc001.3gppnetwork.org --password test-password-2)
@@ -137,7 +137,7 @@ fi
 # before those of the call.
 answer_b1() {
 	docker rm -f "${project}-ue-b1" >/dev/null 2>&1 || true
-	c run --no-deps -d --name "${project}-ue-b1" peer-ue answer "${ue_b1[@]}" --ring 1s --tone 4s "$@" >/dev/null
+	c run --no-deps -d --name "${project}-ue-b1" ue-b1 answer "${ue_b1[@]}" --ring 1s --tone 4s "$@" >/dev/null
 	wait_log "${project}-ue-b1" '"msg":"waiting for a call"' || fail=1
 }
 # call_status calls uri from UE A1 and prints the status it ended with:
@@ -195,7 +195,7 @@ echo "call from network B to network A"
 docker rm -f "${project}-ue-a2" >/dev/null 2>&1 || true
 c run --no-deps -d --name "${project}-ue-a2" ue2 answer "${ue_a2[@]}" --ring 1s --tone 4s >/dev/null
 wait_log "${project}-ue-a2" '"msg":"waiting for a call"' || fail=1
-if c run --no-deps --rm peer-ue call "${ue_b1[@]}" --tone 3s tel:+12025550102 >/dev/null 2>&1 &&
+if c run --no-deps --rm ue-b1 call "${ue_b1[@]}" --tone 3s tel:+12025550102 >/dev/null 2>&1 &&
 	[ "$(timeout 60 docker wait "${project}-ue-a2")" = "0" ]; then
 	echo "ok   UE B1 called UE A2 by number, and UE A2 answered"
 else
@@ -207,7 +207,7 @@ docker rm -f "${project}-ue-a2" >/dev/null 2>&1 || true
 
 echo "short message from network A to network B"
 docker rm -f "${project}-ue-b1" >/dev/null 2>&1 || true
-c run --no-deps -d --name "${project}-ue-b1" peer-ue register "${ue_b1[@]}" >/dev/null
+c run --no-deps -d --name "${project}-ue-b1" ue-b1 register "${ue_b1[@]}" >/dev/null
 wait_log "${project}-ue-b1" '"msg":"registered"' || fail=1
 # TP-ST 1: the SC forwarded the short message to network B but cannot
 # confirm the delivery (TS 23.040 9.2.3.15).
@@ -237,7 +237,7 @@ docker rm -f "${project}-ue-b1" "${project}-ue-a1" >/dev/null 2>&1 || true
 c run --no-deps -d --name "${project}-ue-a1" ue register >/dev/null
 wait_log "${project}-ue-a1" '"msg":"registered"' || fail=1
 # TP-ST 1 again: the SC of network B forwarded it to network A.
-if out="$(c run --no-deps --rm peer-ue sms "${ue_b1[@]}" "${sc_b[@]}" --status-report +12025550101 "$gsm_text_back" 2>&1)" &&
+if out="$(c run --no-deps --rm ue-b1 sms "${ue_b1[@]}" "${sc_b[@]}" --status-report +12025550101 "$gsm_text_back" 2>&1)" &&
 	grep -q '"msg":"status report".*"status":1,' <<<"$out"; then
 	echo "ok   UE B1 sent UE A1 a short message, and the status report says network A took it"
 else
@@ -259,7 +259,7 @@ docker rm -f "${project}-ue-a1" >/dev/null 2>&1 || true
 
 echo "mismatched profiles"
 # UE B1 stays registered for the short messages of the first scenario.
-c run --no-deps -d --name "${project}-ue-b1" peer-ue register "${ue_b1[@]}" >/dev/null
+c run --no-deps -d --name "${project}-ue-b1" ue-b1 register "${ue_b1[@]}" >/dev/null
 wait_log "${project}-ue-b1" '"msg":"registered"' || fail=1
 # 1. MESSAGE: without the agreement on MESSAGE, IBCF-A answers 405 and
 # the SC of network A reports TP-ST 98, no response from the SME. "ue
@@ -411,13 +411,13 @@ echo "captures"
 pcap_in() {
 	c exec -T capture sh -c "ls -t /captures/$1ims-*.pcap | head -n 1" | tr -d '\r'
 }
-home_pcap="$(pcap_in "")"
-peer_pcap="$(pcap_in peer/)"
-nni_pcap="$(pcap_in nni/)"
-echo "reading $home_pcap, $peer_pcap and $nni_pcap"
+pcap_a="$(pcap_in "")"
+pcap_b="$(pcap_in b/)"
+pcap_nni="$(pcap_in nni/)"
+echo "reading $pcap_a, $pcap_b and $pcap_nni"
 # The requests of the host of no peer network are the last frames that
 # the checks read.
-pcap="$nni_pcap" await "the MESSAGE from the host of no peer network" \
+pcap="$pcap_nni" await "the MESSAGE from the host of no peer network" \
 	"sip.Method == \"MESSAGE\" && ip.src == $stranger && ip.dst == 172.28.2.10"
 
 # The checks below read the capture that pcap names, with the helpers of
@@ -437,16 +437,16 @@ ibcf_b_nni=172.28.2.20
 trgw_a_nni=172.28.2.11
 trgw_b_nni=172.28.2.21
 ibcf_b=172.28.1.90
-peer_icscf=172.28.1.20
-peer_scscf=172.28.1.30
-peer_ipsmgw=172.28.1.70
+icscf_b=172.28.1.20
+scscf_b=172.28.1.30
+ipsmgw_b=172.28.1.70
 trgw_b=172.28.1.91
 ue_b1_ip=172.28.1.100
 ue_a1_ip=172.28.0.100
 invite='sip.Method == "INVITE"'
 
 echo "network A (ims0)"
-pcap="$home_pcap"
+pcap="$pcap_a"
 last=0
 # UE A1 calls UE B1: the S-CSCF finds network B by ENUM and sends the
 # INVITE out of network A through IBCF-A.
@@ -474,7 +474,7 @@ expect "405 from IBCF-A for MESSAGE without the agreement" \
 	"sip.Status-Code == 405 && ip.src == $ibcf_a && sip.CSeq.method == \"MESSAGE\""
 
 echo "the link between the networks (nni0)"
-pcap="$nni_pcap"
+pcap="$pcap_nni"
 last=0
 # UE A1 calls UE B1. Each IBCF is a B2BUA: the INVITE on the link starts
 # a dialog of IBCF-A's own, with its Via and its Contact only, and no
@@ -512,19 +512,19 @@ none "Record-Route on the link" 'sip.Record-Route'
 none "P-Charging-Function-Addresses" 'sip.P-Charging-Function-Addresses'
 
 echo "network B (ims1)"
-pcap="$peer_pcap"
+pcap="$pcap_b"
 last=0
 # UE A1 calls UE B1.
 expect "INVITE IBCF-B -> I-CSCF with the number in a SIP URI" \
-	"$invite && ip.src == $ibcf_b && ip.dst == $peer_icscf && sip.r-uri.user == \"+12025550151\" && sip.r-uri contains \"user=phone\""
+	"$invite && ip.src == $ibcf_b && ip.dst == $icscf_b && sip.r-uri.user == \"+12025550151\" && sip.r-uri contains \"user=phone\""
 expect "INVITE I-CSCF -> S-CSCF with the tel URI" \
-	"$invite && ip.src == $peer_icscf && ip.dst == $peer_scscf && sip.r-uri == \"tel:+12025550151\""
+	"$invite && ip.src == $icscf_b && ip.dst == $scscf_b && sip.r-uri == \"tel:+12025550151\""
 expect "INVITE to UE B1 with TrGW-B in the SDP" \
 	"$invite && ip.dst == $ue_b1_ip && sdp.connection_info.address == $trgw_b"
 expect "RTP TrGW-B -> UE B1" "rtp && ip.src == $trgw_b && ip.dst == $ue_b1_ip"
 # UE A1 sends UE B1 a short message.
 expect "MESSAGE from network A reaches network B's IP-SM-GW" \
-	"sip.Method == \"MESSAGE\" && ip.dst == $peer_ipsmgw && sip.P-Served-User contains \"sescase=term\""
+	"sip.Method == \"MESSAGE\" && ip.dst == $ipsmgw_b && sip.P-Served-User contains \"sescase=term\""
 expect "MESSAGE IP-SM-GW of network B -> UE B1 path" \
 	"sip.Method == \"MESSAGE\" && ip.dst == $ue_b1_ip && gsm_sms.sms_text contains \"UE-B1\""
 # UE B1 answers with one: the IP-SM-GW of network B finds network A by
@@ -532,43 +532,43 @@ expect "MESSAGE IP-SM-GW of network B -> UE B1 path" \
 expect "ENUM gives network A's domain for +1 202 555 0101" \
 	'dns.qry.name == "1.0.1.0.5.5.5.2.0.2.1.e164.arpa" && dns.naptr.regex contains "ims.mnc001"'
 expect "MESSAGE IP-SM-GW -> IBCF-B from the SC's number" \
-	"sip.Method == \"MESSAGE\" && ip.src == $peer_ipsmgw && ip.dst == $ibcf_b && sip.Route contains \"ibcf.ims.mnc002\" && sip.P-Asserted-Identity contains \"tel:+12025550150\""
+	"sip.Method == \"MESSAGE\" && ip.src == $ipsmgw_b && ip.dst == $ibcf_b && sip.Route contains \"ibcf.ims.mnc002\" && sip.P-Asserted-Identity contains \"tel:+12025550150\""
 
 echo "one icid-value in both networks, with the IOIs of each (TS 24.229 5.4.3.2 step 7, 5.4.3.3 step 7)"
 # The first call is UE A1's to UE B1. Network A's P-CSCF wrote its
 # icid-value, and each network writes its own domain in the IOIs.
 home_domain=ims.mnc001.mcc001.3gppnetwork.org
-peer_domain=ims.mnc002.mcc001.3gppnetwork.org
-peer_pcscf=172.28.1.40
-icid="$(pcap="$home_pcap" tshark_fields "$invite && ip.src == $scscf && ip.dst == $ibcf_a" sip.P-Charging-Vector | first_line |
+domain_b=ims.mnc002.mcc001.3gppnetwork.org
+pcscf_b=172.28.1.40
+icid="$(pcap="$pcap_a" tshark_fields "$invite && ip.src == $scscf && ip.dst == $ibcf_a" sip.P-Charging-Vector | first_line |
 	sed -n 's/^icid-value=\([^;]*\);.*/\1/p')"
 [ -n "$icid" ] || icid=none
-pcap="$nni_pcap"
+pcap="$pcap_nni"
 last=0
 expect "INVITE IBCF-A -> IBCF-B with network A's icid-value and orig-ioi" \
 	"$invite && ip.src == $ibcf_a_nni && ip.dst == $ibcf_b_nni && sip.P-Charging-Vector == \"icid-value=$icid;orig-ioi=$home_domain\""
 expect "200 OK IBCF-B -> IBCF-A with network A's orig-ioi and network B's term-ioi" \
-	"sip.Status-Code == 200 && sip.CSeq.method == \"INVITE\" && ip.src == $ibcf_b_nni && sip.P-Charging-Vector == \"icid-value=$icid;orig-ioi=$home_domain;term-ioi=$peer_domain\""
-pcap="$peer_pcap"
+	"sip.Status-Code == 200 && sip.CSeq.method == \"INVITE\" && ip.src == $ibcf_b_nni && sip.P-Charging-Vector == \"icid-value=$icid;orig-ioi=$home_domain;term-ioi=$domain_b\""
+pcap="$pcap_b"
 last=0
 expect "INVITE S-CSCF -> P-CSCF of network B with the same icid-value and network B's orig-ioi" \
-	"$invite && ip.src == $peer_scscf && ip.dst == $peer_pcscf && sip.P-Charging-Vector == \"icid-value=$icid;orig-ioi=$peer_domain\""
-pcap="$peer_pcap" none "P-Charging-Vector to UE B1" "ip.dst == $ue_b1_ip && sip.P-Charging-Vector"
+	"$invite && ip.src == $scscf_b && ip.dst == $pcscf_b && sip.P-Charging-Vector == \"icid-value=$icid;orig-ioi=$domain_b\""
+pcap="$pcap_b" none "P-Charging-Vector to UE B1" "ip.dst == $ue_b1_ip && sip.P-Charging-Vector"
 
 echo "the dialogs of the B2BUAs"
 # call_ids prints the Call-IDs of the INVITEs that filter finds in pcap.
 call_ids() {
 	pcap="$1" tshark_fields "$invite && $2" sip.Call-ID | grep . | sort -u
 }
-home_ids="$(call_ids "$home_pcap" "ip.src == $scscf && ip.dst == $ibcf_a")"
-nni_ids="$(call_ids "$nni_pcap" "ip.src == $ibcf_a_nni && ip.dst == $ibcf_b_nni")"
-peer_ids="$(call_ids "$peer_pcap" "ip.src == $ibcf_b && ip.dst == $peer_icscf")"
-if [ -n "$home_ids" ] && [ -n "$nni_ids" ] && [ -n "$peer_ids" ] &&
-	[ -z "$(comm -12 <(printf '%s\n' "$home_ids") <(printf '%s\n' "$nni_ids"))" ] &&
-	[ -z "$(comm -12 <(printf '%s\n' "$nni_ids") <(printf '%s\n' "$peer_ids"))" ]; then
-	echo "ok   the INVITEs to IBCF-A, between the IBCFs and from IBCF-B have Call-IDs of their own ($(wc -l <<<"$nni_ids") on the link)"
+ids_a="$(call_ids "$pcap_a" "ip.src == $scscf && ip.dst == $ibcf_a")"
+ids_nni="$(call_ids "$pcap_nni" "ip.src == $ibcf_a_nni && ip.dst == $ibcf_b_nni")"
+ids_b="$(call_ids "$pcap_b" "ip.src == $ibcf_b && ip.dst == $icscf_b")"
+if [ -n "$ids_a" ] && [ -n "$ids_nni" ] && [ -n "$ids_b" ] &&
+	[ -z "$(comm -12 <(printf '%s\n' "$ids_a") <(printf '%s\n' "$ids_nni"))" ] &&
+	[ -z "$(comm -12 <(printf '%s\n' "$ids_nni") <(printf '%s\n' "$ids_b"))" ]; then
+	echo "ok   the INVITEs to IBCF-A, between the IBCFs and from IBCF-B have Call-IDs of their own ($(wc -l <<<"$ids_nni") on the link)"
 else
-	echo "FAIL a Call-ID crossed an IBCF: network A $(wc -w <<<"$home_ids"), link $(wc -w <<<"$nni_ids"), network B $(wc -w <<<"$peer_ids")"
+	echo "FAIL a Call-ID crossed an IBCF: network A $(wc -w <<<"$ids_a"), link $(wc -w <<<"$ids_nni"), network B $(wc -w <<<"$ids_b")"
 	fail=1
 fi
 
@@ -603,15 +603,15 @@ in_dialog() {
 echo "the call from network A to network B, dialog by dialog"
 # Each IBCF ends the BYE of one dialog and sends one of its own in the
 # other, so the BYE shows in each of the three dialogs of the call.
-pcap="$home_pcap" in_dialog "network A, S-CSCF and IBCF-A" "ip.src == $scscf && ip.dst == $ibcf_a" \
+pcap="$pcap_a" in_dialog "network A, S-CSCF and IBCF-A" "ip.src == $scscf && ip.dst == $ibcf_a" \
 	"ip.src == $ibcf_a" "ip.dst == $ibcf_a"
-pcap="$nni_pcap" in_dialog "the link, IBCF-A and IBCF-B" "ip.src == $ibcf_a_nni && ip.dst == $ibcf_b_nni" \
+pcap="$pcap_nni" in_dialog "the link, IBCF-A and IBCF-B" "ip.src == $ibcf_a_nni && ip.dst == $ibcf_b_nni" \
 	"ip.src == $ibcf_b_nni" "ip.dst == $ibcf_b_nni"
-pcap="$peer_pcap" in_dialog "network B, IBCF-B and the I-CSCF" "ip.src == $ibcf_b && ip.dst == $peer_icscf" \
+pcap="$pcap_b" in_dialog "network B, IBCF-B and the I-CSCF" "ip.src == $ibcf_b && ip.dst == $icscf_b" \
 	"ip.dst == $ibcf_b" "ip.src == $ibcf_b"
 # Within the dialog on the link, the reliable 183 of the callee's side
 # gets its PRACK from IBCF-A, after the caller's PRACK (RFC 3262).
-pcap="$nni_pcap"
+pcap="$pcap_nni"
 link_call="sip.Call-ID == \"$(dialog_of "ip.src == $ibcf_a_nni && ip.dst == $ibcf_b_nni")\""
 last=0
 expect "the link: INVITE" "$invite && $link_call"
@@ -621,14 +621,14 @@ expect "the link: 200 to the PRACK" "sip.Status-Code == 200 && sip.CSeq.method =
 
 echo "the host of no peer network"
 # The host sent its INVITE and then its MESSAGE after the mismatches.
-pcap="$nni_pcap"
+pcap="$pcap_nni"
 last="$mismatched"
 expect "INVITE from the host of no peer network on the link" \
 	"$invite && ip.src == $stranger && ip.dst == $ibcf_a_nni"
 expect "MESSAGE from the host of no peer network on the link" \
 	"sip.Method == \"MESSAGE\" && ip.src == $stranger && ip.dst == $ibcf_a_nni"
-pcap="$nni_pcap" none "packets to the host of no peer network" "ip.dst == $stranger"
-pcap="$home_pcap" none "requests of the host of no peer network inside network A" \
+pcap="$pcap_nni" none "packets to the host of no peer network" "ip.dst == $stranger"
+pcap="$pcap_a" none "requests of the host of no peer network inside network A" \
 	'sip.From contains "+12025550199"'
 
 echo "topology hiding"
@@ -638,17 +638,17 @@ echo "topology hiding"
 # only after a character that cannot be part of a host name, so that a
 # longer name that ends the same does not count.
 node_names='(pcscf|scscf|icscf|mmtel|xcap|agw|ipsmgw|hss|ibcf|trgw|epc|pcrf|dns|lab)'
-pcap="$peer_pcap" none "addresses of network A in network B's capture" 'ip.addr == 172.28.0.0/24 || frame contains "172.28.0."'
-pcap="$nni_pcap" none "addresses of network A on the link" 'ip.addr == 172.28.0.0/24 || frame contains "172.28.0."'
-pcap="$peer_pcap" none "node names of network A in network B's capture" \
+pcap="$pcap_b" none "addresses of network A in network B's capture" 'ip.addr == 172.28.0.0/24 || frame contains "172.28.0."'
+pcap="$pcap_nni" none "addresses of network A on the link" 'ip.addr == 172.28.0.0/24 || frame contains "172.28.0."'
+pcap="$pcap_b" none "node names of network A in network B's capture" \
 	"(sip || sdp) && frame matches \"[@/: <]$node_names\\\\.ims\\\\.mnc001\""
-pcap="$nni_pcap" none "node names of network A on the link" \
+pcap="$pcap_nni" none "node names of network A on the link" \
 	"(sip || sdp) && frame matches \"[@/: <]$node_names\\\\.ims\\\\.mnc001\""
-pcap="$home_pcap" none "addresses of network B in network A's capture" 'ip.addr == 172.28.1.0/24 || frame contains "172.28.1."'
-pcap="$nni_pcap" none "addresses of network B on the link" 'ip.addr == 172.28.1.0/24 || frame contains "172.28.1."'
-pcap="$home_pcap" none "node names of network B in network A's capture" \
+pcap="$pcap_a" none "addresses of network B in network A's capture" 'ip.addr == 172.28.1.0/24 || frame contains "172.28.1."'
+pcap="$pcap_nni" none "addresses of network B on the link" 'ip.addr == 172.28.1.0/24 || frame contains "172.28.1."'
+pcap="$pcap_a" none "node names of network B in network A's capture" \
 	"(sip || sdp) && frame matches \"[@/: <]$node_names\\\\.ims\\\\.mnc002\""
-pcap="$nni_pcap" none "node names of network B on the link" \
+pcap="$pcap_nni" none "node names of network B on the link" \
 	"(sip || sdp) && frame matches \"[@/: <]$node_names\\\\.ims\\\\.mnc002\""
 
 # The public identities of network A hold its users' numbers, so no
@@ -667,10 +667,10 @@ no_imsi_identity() {
 		"$(tshark_fields "$filter" sip.r-uri sip.From sip.To sip.P-Asserted-Identity | first_line)"
 	fail=1
 }
-pcap="$peer_pcap" no_imsi_identity "network B's capture"
-pcap="$nni_pcap" no_imsi_identity "the link"
+pcap="$pcap_b" no_imsi_identity "network B's capture"
+pcap="$pcap_nni" no_imsi_identity "the link"
 
-for pcap in "$home_pcap" "$peer_pcap" "$nni_pcap"; do
+for pcap in "$pcap_a" "$pcap_b" "$pcap_nni"; do
 	none "malformed SIP, SDP, DNS or SMS packets in $pcap" \
 		'(sip || sdp || dns || gsm_sms) && (_ws.malformed || _ws.expert.severity >= warning)'
 done
