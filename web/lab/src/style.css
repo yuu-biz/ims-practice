@@ -322,6 +322,20 @@ button.danger {
   font-size: 0.85rem;
 }
 
+/* Access network and faults */
+
+.bearer-list {
+  display: grid;
+  gap: 0.1rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+td .muted {
+  color: var(--muted);
+}
+
 /* Ladder diagram */
 
 .ladder-layout {

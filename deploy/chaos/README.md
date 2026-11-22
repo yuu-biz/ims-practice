@@ -241,6 +241,14 @@ docker network rm ims-practice_chaos
 
 The agent's configuration is `fault-agent.yaml`: the address it listens on, where the socket is, the Compose project whose containers it may touch (`ims-practice`, the name in `compose.yaml`), and the tools image. With another project name (`docker compose -p`), change `compose_project` there.
 
+### Faults from the Lab
+
+Open <http://localhost:8080> once the agent runs. The **Faults** panel lists the faults it holds and injects one: choose a target, such as `pcscf`, and a kind, and the form offers the fields of that kind, the same ones as the table in [The HTTP API](#the-http-api). **Inject** puts the fault in place, and **Clear** next to it takes it away again, as `DELETE` does. The panel shows what the agent answers, `conflict` and the reasons of a `failed` fault included.
+
+The Lab reaches the agent at the address in its own configuration (`lab.fault_agent` in `deploy/compose/lab.yaml`), which is on the network `chaos`. Every Compose deployment carries that address, and `agent.yaml` is what puts the Lab on that network, so without the file the panel says that the agent is not running and the form stays off. The browser never reaches the agent itself: it asks the Lab, which passes the request on.
+
+The exercises below use `fault.sh`, which needs no agent and prints the `docker` command of every fault it runs.
+
 ### Breaking a node is not taking it out of service
 
 Draining a node, so that new registrations and calls go to the other instances while the calls in progress go on, is an operation of maintenance, not a fault. It belongs to the OAM, which sets the node's administrative state (`internal/oam`). The fault agent has no drain, and the OAM starts no fault.

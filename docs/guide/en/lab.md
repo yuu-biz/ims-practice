@@ -19,7 +19,7 @@ docker compose up -d --build
 
 Open <http://localhost:8080> in the browser. The dot next to the title says `live` while the page receives updates from the Lab's server.
 
-The Lab is published on the host's loopback address only. It asks for no password, and anyone who reaches it can delete subscribers and drive the UEs. To open it from another machine on your network, create `compose.override.yaml` at the root of the repository. Compose reads this file after `compose.yaml` by itself:
+The Lab is published on the host's loopback address only. It asks for no password, and anyone who reaches it can delete subscribers, drive the UEs, detach a UE from the access network and, while the fault agent runs, break a node. To open it from another machine on your network, create `compose.override.yaml` at the root of the repository. Compose reads this file after `compose.yaml` by itself:
 
 ```yaml
 services:
@@ -39,8 +39,10 @@ Run `docker compose up -d` again, and open `http://<address of the host>:8080` o
 | Ladder diagram | The SIP and Cx messages of the selected call or registration, one column per node. Select an arrow to see the whole message and the clauses of the specifications that describe it. For a MESSAGE that carries a short message, the details also show its RP and TP fields, its text and its body in hex. |
 | Registrations | One row per public identity that the Lab saw register, with its contact, expiry and S-CSCF. Select an identity to draw the ladder of its last REGISTER. |
 | Subscribers (HSS) | The subscriptions that the HSS holds. You can add and delete test subscribers here. |
+| Access network (EPC) | One row per UE that is attached to the EPC stub, with the address the stub gave it, its EPS bearers and the Rx sessions of its calls. The buttons start the procedures that the network initiates: deactivating a bearer and detaching the UE. |
+| Faults | The faults that the fault agent holds, and a form that injects one. The panel is off until that agent runs. |
 
-The Lab knows only what the nodes tell it. Each node, and each UE simulator, sends a copy of every SIP and Diameter message it sends or receives to the Lab over HEP (see "Copies for the Lab (HEP)" in [the capture guide](capture.md)). The Lab builds the registrations and the calls from those copies alone and never asks a node for its state. The UE simulator cards are the one exception: each shows what that UE reports through its control API, so for a moment a card and the Registrations panel can disagree.
+The Lab knows only what the nodes tell it. Each node, and each UE simulator, sends a copy of every SIP and Diameter message it sends or receives to the Lab over HEP (see "Copies for the Lab (HEP)" in [the capture guide](capture.md)). The Lab builds the registrations and the calls from those copies alone and never asks a node for its state. Three panels are the exception: the UE cards show what each UE reports through its control API, and the access network and fault panels what the EPC stub and the fault agent report through theirs. None of the three is built from the copies, so for a moment a UE card and the Registrations panel can disagree.
 
 ## How the ladder is built
 
@@ -118,6 +120,26 @@ To take a second call and make a conference of the two (TS 24.615, TS 24.147):
 The same settings are on the command line: `ue xcap get`, `ue xcap set cfu on tel:+12025550103` and `ue xcap oir restricted`. `ue xcap noreply 5` sets how long a call rings before CFNR diverts it, from 5 to 180 seconds; the card leaves it at 20 seconds.
 
 The UE simulators use subscribers 1, 2 and 3, the same as the `ue`, `ue2` and `ue3` services of the `ue` profile. Run one of the two profiles at a time, or the two UEs of a subscriber will replace each other's registration.
+
+## Take a bearer away, and detach a UE
+
+The **Access network (EPC)** panel lists every UE that has attached to the EPC stub, which are `volte-a` and `volte-b` of the `volte` profile. Each row has the IMSI, the address the stub gave the UE, the access point name, the UE's EPS bearers and the Session-Ids of the Rx sessions that its P-CSCF holds for it.
+
+A UE that has attached has its default bearer, EBI 5 with QCI 5, which carries the SIP signaling (IR.92 4.4.1). While a call is set up, the dedicated bearer of the voice appears beside it, QCI 1 (4.4.2).
+
+- **Release** next to the voice bearer makes the network deactivate it, as a lost radio link would (TS 24.301 6.4.4.2). The PCRF aborts the Rx session of the call, the P-CSCF ends the call with a BYE in the user's name, and both UE cards go back to no call. "The network takes the bearer" in [the VoLTE guide](volte.md) follows the whole sequence in the capture.
+- The default bearer has no **Release**. It goes with the PDN connection, so the stub refuses to deactivate it and asks for a detach instead.
+- **Detach** makes the network detach the UE (5.5.2.3). The PDN connection ends, the PCRF aborts every Rx session of the UE, and the UE answers with DETACH ACCEPT. The stub asks for no re-attach, so the UE stays off the access network until you start it again, for example with `docker compose --profile volte up -d volte-a`.
+
+The stub owns this state and the Lab keeps no copy of it, so the panel asks the stub again every few seconds.
+
+## Break a node on purpose
+
+The **Faults** panel stops, freezes and crashes a node, loses its packets, delays them, and cuts it off from other nodes, so that you can watch a failure beside the signaling. It needs the fault agent, which starts only when you ask for it, because it drives the Docker Engine. [Fault injection](../../../deploy/chaos/README.md) explains why, how to start the agent and what each fault does. Until it runs, the panel says so and the form is off.
+
+Choose a target, such as `pcscf`, and a kind. The form then offers the fields of that kind: a duration for the faults that last, the delay and the jitter of `delay`, the percentage of `loss`, the peers of `partition`, and the Compose network whose interface the fault sits on. Press **Inject**. The fault appears in the table with its id and its state, and **Clear** takes it away again. A fault also ends by itself when its duration is up, five minutes by default, so a forgotten one does not stay. A `crash` and a `recreate` happen once: the node comes back on its own, so such a fault ends as `done` and has nothing to clear.
+
+The agent checks every request and the panel shows what it answers. Asking for a second fault that the target already has gives `conflict`, and a fault that Docker could not carry out appears in the state `failed` with the reason beside it.
 
 ## These APIs are this project's own
 

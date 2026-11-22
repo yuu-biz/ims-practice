@@ -263,7 +263,7 @@ When a BYE passes, the P-CSCF of each side ends its Rx session with an STR, `Ter
 
 ### The network takes the bearer
 
-The stub can deactivate a bearer as a lost radio link would: the EPS bearer context deactivation that the network initiates (TS 24.301 6.4.4.2). A DELETE on `/network-initiated/ues/<IMSI>/bearers/<EBI>` starts it, and a POST on `/network-initiated/ues/<IMSI>/detach` starts the network initiated detach (5.5.2.3). The Lab passes both on, so on the host:
+The stub can deactivate a bearer as a lost radio link would: the EPS bearer context deactivation that the network initiates (TS 24.301 6.4.4.2). A DELETE on `/network-initiated/ues/<IMSI>/bearers/<EBI>` starts it, and a POST on `/network-initiated/ues/<IMSI>/detach` starts the network initiated detach (5.5.2.3). The **Access network (EPC)** panel of the Lab has a button for each of them, next to the bearer and next to the UE ("Take a bearer away, and detach a UE" in [the Lab guide](lab.md)). The Lab also passes both requests on as they are, so on the host:
 
 ```sh
 curl http://localhost:8080/api/epc/ues/001010000000010                       # the bearers of volte-a

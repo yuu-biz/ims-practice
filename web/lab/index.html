@@ -104,6 +104,48 @@
           </fieldset>
         </form>
       </section>
+
+      <section aria-labelledby="epc-heading">
+        <h2 id="epc-heading">Access network (EPC)</h2>
+        <p id="epc-note" class="note" hidden></p>
+        <div class="scroll">
+          <table id="epc-ues">
+            <thead>
+              <tr>
+                <th>IMSI</th>
+                <th>PDN address</th>
+                <th>APN</th>
+                <th>EPS bearers</th>
+                <th>Rx sessions</th>
+                <th><span class="visually-hidden">Actions</span></th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </section>
+
+      <section aria-labelledby="faults-heading">
+        <h2 id="faults-heading">Faults</h2>
+        <p id="faults-note" class="note" hidden></p>
+        <div class="scroll">
+          <table id="faults">
+            <thead>
+              <tr>
+                <th>ID</th>
+                <th>Target</th>
+                <th>Fault</th>
+                <th>State</th>
+                <th>Injected (UTC)</th>
+                <th>Ends or ended (UTC)</th>
+                <th><span class="visually-hidden">Actions</span></th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+        <div id="fault-form"></div>
+      </section>
     </main>
     <script type="module" src="/src/main.ts"></script>
   </body>

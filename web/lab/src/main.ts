@@ -2,7 +2,9 @@
 // HEP copies that the nodes send: the calls, the registrations and the
 // HSS subscribers, and for a selected call or registration a ladder
 // diagram of its SIP and Cx messages with each message's payload and spec
-// references. It also drives the UE simulators that the server controls.
+// references. Through the server it also drives the UE simulators, the
+// procedures that the EPC stub starts on its own, and the faults of the
+// fault agent.
 
 import "./style.css";
 import {
@@ -23,6 +25,8 @@ import {
   type Subscriber,
 } from "./api.ts";
 import { byId, clock, el, fillTable } from "./dom.ts";
+import { mountEPCPanel } from "./epc-panel.ts";
+import { mountFaultPanel } from "./fault-panel.ts";
 import { buildLadder } from "./ladder.ts";
 import { arrowKey, renderDetail, renderLadder } from "./ladder-svg.ts";
 import { mountUEPanel } from "./ue-cards.ts";
@@ -318,6 +322,8 @@ const renderUEPanel = mountUEPanel(byId("ues"), byId("ues-note"), {
   subscribers: () => view.subscribers,
   selectCall: (callId) => void selectCall(callId),
 });
+mountEPCPanel(byId("epc-ues"), byId("epc-note"));
+mountFaultPanel(byId("fault-form"), byId("faults"), byId("faults-note"));
 void refreshCalls();
 void refreshRegistrations();
 void refreshSubscribers();
