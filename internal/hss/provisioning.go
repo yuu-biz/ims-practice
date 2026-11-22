@@ -197,6 +197,15 @@ func (h *HSS) setCustomizedAlertingTone(w http.ResponseWriter, r *http.Request) 
 		if swapped {
 			break
 		}
+		// A swap that lost may have lost to a DELETE of the subscription;
+		// then nothing can ever win, so the request ends here.
+		if _, ok, err := h.store.Subscriber(ctx, impi); err != nil {
+			h.writeStoreFailure(w, err)
+			return
+		} else if !ok {
+			http.Error(w, "no such subscription", http.StatusNotFound)
+			return
+		}
 	}
 	h.log.Info("customized alerting tone", "private_identity", impi, "tone", t.Tone, "active", t.Active)
 	writeJSON(w, http.StatusOK, t)
