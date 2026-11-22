@@ -106,7 +106,7 @@ func (c *call) startAlertingTone(fields *sip.Message) {
 // before it goes to the caller. It reports whether it has dealt with
 // resp; otherwise relayProvisional relays it as without CAT.
 func (c *call) alertWithTone(out *sip.OutgoingCall, resp *sip.Message) bool {
-	c.keepCalleeSDP(sip.BodyOf(resp))
+	c.keepCalleeSDP(toTag(resp), sip.BodyOf(resp))
 	if resp.StatusCode == 180 && waitingIn(resp) {
 		c.announceWaiting()
 	}
@@ -183,6 +183,8 @@ func (c *call) relayDuringTone(out *sip.OutgoingCall, resp *sip.Message) {
 // with the content attribute and P-Early-Media sendonly (TS 24.628
 // G.1), and with the preconditions of the session as the callee last
 // stated them, which are met: the callee alerts only then (RFC 3312).
+// The session is that of the early dialog whose SDP the caller got
+// (sessionFrom), the one the caller has.
 // The tone starts once the caller's 200 says that its preconditions
 // are met too (a 1 ii). It reports whether the tone plays.
 //
@@ -198,7 +200,7 @@ func (c *call) relayDuringTone(out *sip.OutgoingCall, resp *sip.Message) {
 func (c *call) offerTone() bool {
 	t := c.cat
 	c.mu.Lock()
-	callee := c.calleeSDP
+	callee := c.calleeSDP[c.sessionFrom]
 	c.mu.Unlock()
 	last, err := sdp.Parse(callee)
 	if err != nil || last.AudioMedia() == nil {
@@ -254,13 +256,14 @@ func (c *call) prackCallee(out *sip.OutgoingCall, resp *sip.Message) {
 	}
 }
 
-// keepCalleeSDP notes the callee's SDP of a message that came from it.
-func (c *call) keepCalleeSDP(body sip.Body) {
+// keepCalleeSDP notes the callee's SDP of a message that came from it
+// in the dialog of out whose remote tag is tag.
+func (c *call) keepCalleeSDP(tag string, body sip.Body) {
 	if len(body.Content) == 0 {
 		return
 	}
 	c.mu.Lock()
-	c.calleeSDP = body.Content
+	c.calleeSDP[tag] = body.Content
 	c.mu.Unlock()
 }
 
@@ -278,8 +281,10 @@ func (c *call) stopAlertingTone(why string) {
 // answerAfterTone is 4.5.5.3.7 on the callee's 200 to the INVITE: the
 // AS stops the tone and, if the caller had it, sends the caller an
 // UPDATE whose offer is the callee's SDP, so that the media goes
-// between the two (a 1 and a 2). It reports whether the caller had the
-// tone, in which case the 200 goes to the caller without SDP.
+// between the two (a 1 and a 2). The SDP is that of the dialog of the
+// 200, which the INVITE may have forked into beyond the AS (RFC 3261
+// 13.2.2.4). It reports whether the caller had the tone, in which case
+// the 200 goes to the caller without SDP.
 func (c *call) answerAfterTone(resp *sip.Message) bool {
 	t := c.cat
 	if t == nil || t.phase == catStopped {
@@ -290,9 +295,10 @@ func (c *call) answerAfterTone(resp *sip.Message) bool {
 	if !played {
 		return false
 	}
-	c.keepCalleeSDP(sip.BodyOf(resp))
+	tag := toTag(resp)
+	c.keepCalleeSDP(tag, sip.BodyOf(resp))
 	c.mu.Lock()
-	callee := c.calleeSDP
+	callee := c.calleeSDP[tag]
 	c.mu.Unlock()
 	offer, err := sdp.Parse(callee)
 	if err != nil {

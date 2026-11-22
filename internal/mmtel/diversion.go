@@ -97,9 +97,6 @@ func (c *call) divert(d diversion) {
 	c.actedOn(d.service)
 	c.log.Info("CDIV: diverting the call", "service", d.service, "target", target)
 	c.leaveServedUser(d)
-	c.mu.Lock()
-	c.heldAnswer = sip.Body{}
-	c.mu.Unlock()
 	if d.to.NotifyCallerOrDefault() {
 		c.notifyCaller(d, target)
 	}
