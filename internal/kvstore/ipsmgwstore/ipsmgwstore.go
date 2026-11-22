@@ -109,13 +109,13 @@ func (s *Store) Delivery(ctx context.Context, callID string) (ipsmgw.PendingDeli
 }
 
 // TakeDelivery takes the delivery (kvjson.ReadAndRemove) and its timer.
-// A Call-ID is never used again, so the timer can go. When that fails,
-// the client logs it, and the claimer of the member finds no delivery,
-// as after a stop within PutDelivery.
+// A Call-ID is never used again, so the timer can go. A timer that the
+// store fails to remove finds no delivery when it is claimed, as after
+// a stop within PutDelivery.
 func (s *Store) TakeDelivery(ctx context.Context, callID string) (ipsmgw.PendingDelivery, bool, error) {
 	d, err := kvjson.ReadAndRemove[ipsmgw.PendingDelivery](ctx, s.c, s.c.Key("delivery", callID))
 	if err == nil {
-		s.c.Unschedule(ReportTimer, callID)
+		s.c.RemoveDue(ctx, ReportTimer, callID)
 	}
 	return live(d, d.Expires, s.c.Now(), err)
 }
