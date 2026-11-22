@@ -28,14 +28,14 @@ func callCriterion(priority int, sc ifc.SessionCase, server string) ifc.InitialF
 	}
 }
 
-// waitForAssignments waits until the SARs the HSS got are want.
-func waitForAssignments(t *testing.T, h *serviceHarness, want ...cx.ServerAssignmentType) {
+// waitForAssignments waits until the SARs that hss got are want.
+func waitForAssignments(t *testing.T, hss *fakeHSS, want ...cx.ServerAssignmentType) {
 	t.Helper()
 	deadline := time.Now().Add(3 * time.Second)
-	for !slices.Equal(h.hss.assignments(), want) && time.Now().Before(deadline) {
+	for !slices.Equal(hss.assignments(), want) && time.Now().Before(deadline) {
 		time.Sleep(10 * time.Millisecond)
 	}
-	if got := h.hss.assignments(); !slices.Equal(got, want) {
+	if got := hss.assignments(); !slices.Equal(got, want) {
 		t.Fatalf("SARs = %v, want %v", got, want)
 	}
 }
@@ -48,7 +48,7 @@ func TestUnregisteredCalleeWithoutServices(t *testing.T) {
 	if r := h.invite(impu, termRoute, ""); r.StatusCode != 480 {
 		t.Fatalf("got %d, want 480", r.StatusCode)
 	}
-	waitForAssignments(t, h, cx.UnregisteredUser)
+	waitForAssignments(t, h.hss, cx.UnregisteredUser)
 	none(t, h.pcscf, "the P-CSCF")
 }
 
@@ -111,16 +111,16 @@ func TestUnregisteredProfileIsKeptForAWhile(t *testing.T) {
 	h := newServiceHarnessWith(t, lifetime, criteria, hosts)
 	h.invite(impu, termRoute, "")
 	h.invite(telURI, termRoute, "")
-	waitForAssignments(t, h, cx.UnregisteredUser)
-	waitForAssignments(t, h, cx.UnregisteredUser, cx.TimeoutDeregistration)
+	waitForAssignments(t, h.hss, cx.UnregisteredUser)
+	waitForAssignments(t, h.hss, cx.UnregisteredUser, cx.TimeoutDeregistration)
 	h.invite(impu, termRoute, "")
-	waitForAssignments(t, h, cx.UnregisteredUser, cx.TimeoutDeregistration, cx.UnregisteredUser)
+	waitForAssignments(t, h.hss, cx.UnregisteredUser, cx.TimeoutDeregistration, cx.UnregisteredUser)
 
 	h = newServiceHarnessWith(t, lifetime, criteria, hosts)
 	h.invite(impu, termRoute, "")
 	h.registerUser(sip.NewCallID())
 	time.Sleep(700 * time.Millisecond)
-	waitForAssignments(t, h, cx.UnregisteredUser, cx.AssignRegistration)
+	waitForAssignments(t, h.hss, cx.UnregisteredUser, cx.AssignRegistration)
 	if r := h.invite(impu, termRoute, ""); r.StatusCode != 486 {
 		t.Fatalf("call to the registered user got %d, want the 486 of the P-CSCF", r.StatusCode)
 	}

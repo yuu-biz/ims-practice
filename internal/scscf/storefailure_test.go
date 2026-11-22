@@ -311,3 +311,24 @@ func TestRegistrationTerminationWhenTheStoreFails(t *testing.T) {
 	_, doc := nextNotify(t, got)
 	contactState(t, doc, 1, reginfo.Terminated, reginfo.Deactivated)
 }
+
+// TestChallengeThatCannotBeRemoved: a right response whose challenge the
+// S-CSCF cannot remove gets 500, and the challenge stays with its
+// reg-await-auth timer (TS 24.229 5.4.1.2.3). When the timer runs out,
+// the HSS hears that the authentication timed out, as for a UE that
+// never answered.
+func TestChallengeThatCannotBeRemoved(t *testing.T) {
+	h := newHarness(t, Config{RegAwaitAuth: 300 * time.Millisecond})
+	callID := sip.NewCallID()
+	r := h.register(callID, 1, 600000, initial)
+	if r.StatusCode != 401 {
+		t.Fatalf("REGISTER got %d, want 401", r.StatusCode)
+	}
+	auth, _ := answer(t, r, password, "ip-assoc-pending")
+	h.failing.fail("DeleteChallenge")
+	if r := h.register(callID, 2, 600000, auth); r.StatusCode != 500 {
+		t.Fatalf("answer whose challenge cannot be removed got %d, want 500", r.StatusCode)
+	}
+	h.failing.repair()
+	waitForAssignments(t, h.hss, cx.AuthenticationTimeout)
+}
