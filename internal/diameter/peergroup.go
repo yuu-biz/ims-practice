@@ -28,6 +28,10 @@ func NewPeerGroup(peers ...*Peer) *PeerGroup {
 // Peers are the peers of the group, in the order Request tries them.
 func (g *PeerGroup) Peers() []*Peer { return slices.Clone(g.peers) }
 
+// Available says whether a peer of the group takes requests now, so that
+// a request that names no Destination-Host can go out.
+func (g *PeerGroup) Available() bool { return slices.ContainsFunc(g.peers, (*Peer).Available) }
+
 // Request sends request to one peer of the group and returns its
 // answer.
 //

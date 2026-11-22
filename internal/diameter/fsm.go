@@ -73,6 +73,11 @@ type State struct {
 	Applications []uint32
 }
 
+// TakesRequests says whether a request may go out in s: the connection
+// is open, and not SUSPECT (RFC 3539 3.4.1 [3]). Transition refuses one
+// otherwise.
+func (s State) TakesRequests() bool { return s.Phase == Open && s.Watchdog != WatchdogSuspect }
+
 // NewInitiatorState is the state of a peer that this node connects to.
 func NewInitiatorState(peerHost string, applications []uint32) State {
 	return State{Role: Initiator, Phase: Closed, PeerHost: peerHost, Reconnect: true, Applications: applications}

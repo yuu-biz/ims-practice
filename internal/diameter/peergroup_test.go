@@ -288,6 +288,26 @@ func TestPeerGroupWithoutAnOpenPeerFailsFast(t *testing.T) {
 	}
 }
 
+// A group is available while one of its peers has an open connection,
+// and no longer once that one is gone.
+func TestPeerGroupIsAvailableWhileAPeerIsOpen(t *testing.T) {
+	node, logs := newTestNode(scscf, testTimers)
+	dead := NewPeerGroup(deadFarmPeer(t, node, farmHost(1)))
+	if dead.Available() {
+		t.Error("a group whose peer never connected is available")
+	}
+	handler, _ := answering(farmHost(2), DiameterSuccess)
+	open := openFarmPeer(t, node, logs, farmHost(2), handler)
+	group := NewPeerGroup(deadFarmPeer(t, node, farmHost(3)), open)
+	if !group.Available() {
+		t.Error("a group with an open peer is not available")
+	}
+	open.Stop()
+	if group.Available() {
+		t.Error("a group is available after its open peer stopped")
+	}
+}
+
 func TestEmptyPeerGroupHasNowhereToSend(t *testing.T) {
 	node, _ := newTestNode(scscf, testTimers)
 	if _, err := NewPeerGroup().Request(t.Context(), testRequest(node)); !errors.Is(err, ErrPeerUnavailable) {
