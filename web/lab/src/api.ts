@@ -34,8 +34,10 @@ export interface Message {
   // The Call-ID for SIP, the Session-Id for Diameter, empty for Diameter
   // base messages (CER, DWR, DPR).
   correlation_id: string;
-  // The Call-ID for SIP. For a Cx message, the Call-ID of the SIP request
-  // the server found it was sent for, or empty when there was none.
+  // The Call-ID for SIP. For a Cx or Rx message, the Call-ID of the SIP
+  // message the server found by its rule that the Diameter session was
+  // started for, or empty when there was none: the message itself does
+  // not say (see inferredLink in ladder.ts).
   call_id: string;
   payload: string;
   refs: SpecRef[];

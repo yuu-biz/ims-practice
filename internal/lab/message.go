@@ -42,9 +42,10 @@ type Message struct {
 	Direction     Direction `json:"direction"`
 	Summary       string    `json:"summary"`
 	CorrelationID string    `json:"correlation_id"`
-	// CallID is the SIP Call-ID, or for a Cx message the Call-ID of the
-	// SIP request it was sent for (see causeWindow). It is left out when
-	// no request caused the Cx message.
+	// CallID is the SIP Call-ID, or for a Cx or Rx message the Call-ID
+	// of the SIP message that its session was started for, which the
+	// rule of causeWindow finds: a Diameter message names none. It is
+	// left out when no SIP message caused the session.
 	CallID string `json:"call_id,omitempty"`
 	// Payload is the SIP message as it went on the wire, or the JSON
 	// rendering of the Diameter message.

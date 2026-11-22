@@ -2,7 +2,7 @@
 
 import type { Message, ShortMessage } from "./api.ts";
 import { clock, el } from "./dom.ts";
-import type { Arrow, Column, Ladder } from "./ladder.ts";
+import { inferredLink, type Arrow, type Column, type Ladder } from "./ladder.ts";
 
 const svgNs = "http://www.w3.org/2000/svg";
 
@@ -158,6 +158,7 @@ export function renderDetail(arrow: Arrow, ladder: Ladder): Node[] {
     const column = ladder.columns.find((c) => c.host === host);
     return column ? `${columnLabel(column)} ` : "";
   };
+  const link = inferredLink(first);
   const refs = first.refs.map((ref) =>
     el("li", {}, `${ref.spec} ${ref.clause === "" ? "(clause unverified)" : ref.clause}${ref.title ? `, ${ref.title}` : ""}`),
   );
@@ -179,6 +180,7 @@ export function renderDetail(arrow: Arrow, ladder: Ladder): Node[] {
       ...(first.correlation_id && first.protocol === "diameter"
         ? [el("dt", {}, "Session-Id"), el("dd", {}, first.correlation_id)]
         : []),
+      ...(link === null ? [] : [el("dt", {}, "Link to this ladder"), el("dd", {}, link)]),
     ),
     el("h4", {}, "Spec references"),
     refs.length > 0 ? el("ul", {}, ...refs) : el("p", { className: "note" }, "None given."),
