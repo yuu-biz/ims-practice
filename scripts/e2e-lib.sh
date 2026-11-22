@@ -128,6 +128,42 @@ host_ue() {
 	host_ue_bin=./e2e-out/ue
 }
 
+# wait_for SECONDS COMMAND... runs the command once a second until it
+# succeeds, and fails when it has not within that many seconds. The
+# caller says what it waited for.
+wait_for() {
+	local deadline=$((SECONDS + $1))
+	shift
+	until "$@"; do
+		[ "$SECONDS" -lt "$deadline" ] || return 1
+		sleep 1
+	done
+}
+
+# wait_log NAME PATTERN waits up to 30 s for the log of the container
+# NAME, started with "run -d", to match the pattern. When it does not, it
+# says so with the last lines of the log, and fails.
+wait_log() {
+	local name="$1" pattern="$2"
+	wait_for 30 logged "$name" "$pattern" && return 0
+	echo "FAIL $name logged no line that matches $pattern within 30 s; its last lines:"
+	docker logs "$name" 2>&1 | tail -n 5
+	return 1
+}
+logged() { grep -q "$2" <<<"$(docker logs "$1" 2>/dev/null)"; }
+
+# ended NAME waits for the container to end, keeps its log in e2e-out/,
+# removes it, and prints its exit status, or "timeout". docker logs and
+# docker rm fail on a container that is gone already, which is no error
+# here.
+ended() {
+	local status
+	status="$(timeout 60 docker wait "$1" 2>/dev/null || echo timeout)"
+	docker logs "$1" >"e2e-out/$1.log" 2>&1 || true
+	docker rm -f "$1" >/dev/null 2>&1 || true
+	echo "$status"
+}
+
 # first_line prints the first line of its input. It reads the input to
 # the end: "head -n 1" stops reading after one line, the program that
 # writes then dies of SIGPIPE, and pipefail turns that into a failure
@@ -191,6 +227,28 @@ count() {
 	local frames
 	frames="$(tshark_fields "$1")" || exit 2
 	awk 'NF { n++ } END { print n + 0 }' <<<"$frames"
+}
+
+# await LABEL FILTER [MIN [SECONDS]] waits for the capture to hold at
+# least MIN frames, 1 by default, that pass the filter, for up to SECONDS,
+# 30 by default. tcpdump writes as it goes, so the last frames of a
+# scenario may not be in the file the moment the scenario ends, and a
+# node may still be sending. It writes the frames in the order they
+# crossed the bridge, so once the last frame that the checks read is in
+# the file, so is every frame before it. When the frames do not come,
+# await fails the run and says what it waited for.
+await() {
+	local label="$1" filter="$2" min="${3:-1}" seconds="${4:-30}"
+	wait_for "$seconds" holds "$min" "$filter" && return 0
+	echo "FAIL gave up waiting $seconds s for $label in $pcap: $(count "$filter") frames, want $min"
+	fail=1
+}
+# holds MIN FILTER: the capture holds MIN frames or more that pass the
+# filter. tshark may fail on a frame that tcpdump is still writing, so a
+# failure here only means "not yet".
+holds() {
+	local n
+	n="$(count "$2" 2>/dev/null)" && [ "$n" -ge "$1" ]
 }
 
 # none checks that no frame passes the filter.

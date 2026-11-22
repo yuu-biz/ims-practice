@@ -45,20 +45,6 @@ request="$iq && megaco.transaction == \"Request\""
 reply="$iq && megaco.transaction == \"Reply\""
 subtract="$request && ip.src == $pcscf && megaco.command == \"Subtract\""
 
-# await waits for a frame that passes the filter to reach the capture.
-# tcpdump writes as it goes, so the last frames of a call may not be in
-# the file the moment the call ends.
-await() {
-	local what="$1" filter="$2" i
-	for i in $(seq 1 30); do
-		if [ -n "$(tshark_fields "$filter" | first_line)" ]; then
-			return 0
-		fi
-		sleep 1
-	done
-	echo "FAIL gave up waiting 30 s for $what in $pcap" >&2
-	fail=1
-}
 # The Subtract of the last call leaves after its BYE, so it is the last
 # of the H.248 to reach the capture.
 await "the Subtract that released the context of a call" "$subtract"
