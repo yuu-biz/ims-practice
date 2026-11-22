@@ -3,13 +3,17 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"log/slog"
 	"net"
+	"net/http"
 	"net/netip"
+	"path/filepath"
 	"reflect"
 	"slices"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -22,6 +26,7 @@ import (
 	"github.com/yuu-biz/ims-practice/internal/cx"
 	"github.com/yuu-biz/ims-practice/internal/diameter"
 	"github.com/yuu-biz/ims-practice/internal/epc"
+	"github.com/yuu-biz/ims-practice/internal/fault"
 	"github.com/yuu-biz/ims-practice/internal/hss"
 	"github.com/yuu-biz/ims-practice/internal/ibcf"
 	"github.com/yuu-biz/ims-practice/internal/interconnect"
@@ -585,4 +590,49 @@ type noNames struct{}
 
 func (noNames) Locate(context.Context, string, int, sip.Transport) ([]sip.Destination, error) {
 	return nil, errors.New("no such name")
+}
+
+// TestFaultAgentServesTheAPIOfTheRole: a node whose only role is fault
+// serves the fault API, and a fault it takes goes to the Docker Engine
+// at the socket of its configuration. Nothing listens on that socket
+// here, so the answer is the failure of the executor, which shows that
+// the API reaches Docker and not something else.
+func TestFaultAgentServesTheAPIOfTheRole(t *testing.T) {
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	stop := startFaultAgent(ctx, l, config.Fault{
+		DockerSocket:   filepath.Join(t.TempDir(), "docker.sock"),
+		ComposeProject: "lab",
+		ToolsImage:     "lab/fault-tools:dev",
+	}, quiet(), cancel)
+	defer stop()
+
+	api := "http://" + l.Addr().String()
+	resp, err := http.Get(api + fault.FaultsPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK || strings.TrimSpace(string(body)) != "[]" {
+		t.Errorf("GET %s = %s %s, want 200 and no fault", fault.FaultsPath, resp.Status, body)
+	}
+
+	resp, err = http.Post(api+fault.FaultsPath, "application/json", strings.NewReader(`{"target":"pcscf","kind":"stop"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ = io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusInternalServerError || !strings.Contains(string(body), "docker engine") {
+		t.Errorf("POST a fault without an Engine = %s %s, want 500 from the Engine", resp.Status, body)
+	}
+	var answer fault.ErrorBody
+	if err := json.Unmarshal(body, &answer); err != nil || answer.Fault == nil || answer.Fault.State != fault.Failed {
+		t.Errorf("the failed fault is not in the answer: %s", body)
+	}
 }

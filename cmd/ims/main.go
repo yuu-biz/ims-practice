@@ -19,6 +19,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"syscall"
+	"time"
 
 	"github.com/fiorix/go-diameter/v4/diam"
 
@@ -28,6 +29,7 @@ import (
 	"github.com/yuu-biz/ims-practice/internal/dashboard"
 	"github.com/yuu-biz/ims-practice/internal/diameter"
 	"github.com/yuu-biz/ims-practice/internal/epc"
+	"github.com/yuu-biz/ims-practice/internal/fault"
 	"github.com/yuu-biz/ims-practice/internal/hepagent"
 	"github.com/yuu-biz/ims-practice/internal/hss"
 	"github.com/yuu-biz/ims-practice/internal/ibcf"
@@ -453,6 +455,15 @@ func run(configPath string, log *slog.Logger) error {
 		defer web.Close()
 		roleLog.Info("dashboard listening", "hep", c.HEPListen, "http", c.HTTPListen)
 	}
+	if c := cfg.Fault; c != nil {
+		roleLog := log.With("role", config.RoleFault)
+		api, err := net.Listen("tcp", c.HTTPListen)
+		if err != nil {
+			return err
+		}
+		stop := startFaultAgent(ctx, api, *c, roleLog, cancel)
+		defer stop()
+	}
 	log.Info("node started", "roles", cfg.Roles)
 
 	<-ctx.Done()
@@ -748,6 +759,39 @@ func startMediaNode(c config.AGW, announcements agw.Announcements, store agw.Con
 		control.Close()
 		relay.Close()
 	}, nil
+}
+
+// faultExpiryInterval is how often the agent looks for the faults whose
+// time is up, so that a fault ends within a second of its expires_at.
+const faultExpiryInterval = time.Second
+
+// startFaultAgent serves the fault API on l and ends each fault when
+// its duration is up. The agent is not an IMS node: it breaks the
+// others on purpose, so that a learner can watch what a failure does.
+// It reaches their containers through the Engine's socket, which gives
+// it the power of root on the host, so only deploy/chaos/agent.yaml
+// hands that socket over and no IMS node gets it.
+//
+// The function it returns stops the API. A fault that is still in place
+// then stays, as one does when the agent dies, until something removes
+// it (deploy/chaos/fault.sh heal).
+func startFaultAgent(ctx context.Context, l net.Listener, c config.Fault, log *slog.Logger, cancel context.CancelFunc) func() {
+	manager := fault.NewManager(fault.Config{
+		Executor: fault.NewDocker(c.DockerSocket, c.ComposeProject, c.ToolsImage, log),
+		Logger:   log,
+	})
+	go manager.Run(ctx, faultExpiryInterval)
+	// Close, not Shutdown, on the way out: a request that is waiting for
+	// a node to stop would hold the agent back.
+	api := &http.Server{Handler: manager.Handler()}
+	go func() {
+		if err := api.Serve(l); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			log.Error("fault API failed", "error", err.Error())
+			cancel()
+		}
+	}()
+	log.Info("fault API listening", "address", l.Addr().String(), "project", c.ComposeProject, "tools_image", c.ToolsImage)
+	return func() { api.Close() }
 }
 
 func diameterApplications(cfg config.Config) []uint32 {
