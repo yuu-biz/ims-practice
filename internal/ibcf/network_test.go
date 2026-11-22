@@ -836,9 +836,20 @@ func TestScreen(t *testing.T) {
 // An IBCF instance that starts again under the same name ends the
 // calls that its earlier process left: it releases their TrGW
 // contexts, and sends a BYE in each of their two dialogs, from what the
-// Store kept of them (TS 24.229 5.10.2.4).
+// Store kept of them (TS 24.229 5.10.2.4). It does so with a Store in
+// the process, which the processes of the test share, and with the
+// adapter on a shared store, which each process makes again, as a node
+// that is recreated does.
 func TestRestartedInstanceEndsTheCallsItLeft(t *testing.T) {
-	p := newPair(t, nil)
+	for name, start := range map[string]func(*testing.T) *pair{
+		"memory store":    func(t *testing.T) *pair { return newPair(t, nil) },
+		"shared kv store": newPairOnKV,
+	} {
+		t.Run(name, func(t *testing.T) { restartedInstanceEndsTheCallsItLeft(t, start(t)) })
+	}
+}
+
+func restartedInstanceEndsTheCallsItLeft(t *testing.T, p *pair) {
 	call := p.a.invite(t, p.b.sipURI(), p.a.offer(t, sdp.VoLTECodecs(), 1, ""), nil)
 	in := p.b.nextCall(t)
 	go in.Accept(p.b.answer(t, in.Request))
@@ -873,6 +884,10 @@ func TestRestartedInstanceEndsTheCallsItLeft(t *testing.T) {
 	byes := p.a.rec.requests("ue", sip.BYE)
 	if len(byes) != 1 || byes[0].Get("Call-ID") != call.Request.Get("Call-ID") {
 		t.Fatalf("the caller got BYEs %v, want one in its dialog", byes)
+	}
+	byes = p.b.rec.requests("ue", sip.BYE)
+	if len(byes) != 1 || byes[0].Get("Call-ID") != in.Request.Get("Call-ID") {
+		t.Fatalf("the callee got BYEs %v, want one in its dialog", byes)
 	}
 	// The new process takes new calls.
 	if resp, _ := p.callThrough(t, p.b.sipURI(), sdp.VoLTECodecs()); resp.StatusCode != 200 {

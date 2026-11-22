@@ -21,6 +21,9 @@ import (
 	"github.com/yuu-biz/ims-practice/internal/ibcf"
 	"github.com/yuu-biz/ims-practice/internal/ims"
 	"github.com/yuu-biz/ims-practice/internal/interconnect"
+	"github.com/yuu-biz/ims-practice/internal/kvstore"
+	"github.com/yuu-biz/ims-practice/internal/kvstore/ibcfstore"
+	"github.com/yuu-biz/ims-practice/internal/kvstore/kvjson"
 	"github.com/yuu-biz/ims-practice/internal/metrics"
 	"github.com/yuu-biz/ims-practice/internal/sdp"
 	"github.com/yuu-biz/ims-practice/internal/sip"
@@ -196,7 +199,11 @@ func (s *reachableStore) CallsOf(ctx context.Context, instance string) ([]ibcf.C
 // callsOf are the records of instance in the network's Store.
 func (n *network) callsOf(t *testing.T, instance string) []ibcf.CallRecord {
 	t.Helper()
-	records, err := n.store.MemoryStore.CallsOf(context.Background(), instance)
+	var store ibcf.Store = n.store.MemoryStore
+	if n.kv != nil {
+		store = ibcfstore.New(n.kv, kvjson.Config{})
+	}
+	records, err := store.CallsOf(context.Background(), instance)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -401,6 +408,11 @@ type network struct {
 	names *names
 	trgw  *fakeTrGW
 	store *reachableStore
+	// kv, when set, is the shared store of the network in place of
+	// store: each process of an IBCF instance keeps its records there
+	// through an ibcfstore.Store of its own, as the nodes of a network
+	// on a shared store do.
+	kv kvstore.Store
 	// registries are the counters of each running IBCF instance, as
 	// each process of an instance has its own.
 	registries []*metrics.Registry
@@ -490,8 +502,24 @@ func defaultProfile(peer plan) interconnect.Profile {
 // B (ofB) and network B's profile of A (ofA) first.
 func newPair(t *testing.T, tweak func(ofB, ofA *interconnect.Profile)) *pair {
 	t.Helper()
+	return newPairOn(t, tweak, false)
+}
+
+// newPairOnKV starts both networks, each with a shared store of its own
+// (network.kv): a kvstore.MemoryStore, in place of the Valkey server of
+// a network.
+func newPairOnKV(t *testing.T) *pair {
+	t.Helper()
+	return newPairOn(t, nil, true)
+}
+
+func newPairOn(t *testing.T, tweak func(ofB, ofA *interconnect.Profile), onKV bool) *pair {
+	t.Helper()
 	dns := &names{hosts: map[string]netip.AddrPort{}}
 	a, b := newNetwork(t, planA, dns), newNetwork(t, planB, dns)
+	if onKV {
+		a.kv, b.kv = kvstore.NewMemoryStore(nil), kvstore.NewMemoryStore(nil)
+	}
 	ofB, ofA := defaultProfile(planB), defaultProfile(planA)
 	if tweak != nil {
 		tweak(&ofB, &ofA)
@@ -766,7 +794,7 @@ func (n *network) listenIBCF(t *testing.T, i int) error {
 		// network, not the one address that the TrGW wrote.
 		cfg.TrGWCoreAddress, cfg.TrGWPeerAddress = n.trgw.core, n.trgw.peer
 	}
-	b, err := ibcf.New(cfg, peers, n.trgw, n.store, n.names, discard)
+	b, err := ibcf.New(cfg, peers, n.trgw, n.newStore(), n.names, discard)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -778,9 +806,19 @@ func (n *network) listenIBCF(t *testing.T, i int) error {
 	return nil
 }
 
+// newStore is the Store of a new process of an IBCF instance: the one
+// of the network, or a new adapter on the network's shared store.
+func (n *network) newStore() ibcf.Store {
+	if n.kv != nil {
+		return ibcfstore.New(n.kv, kvjson.Config{})
+	}
+	return n.store
+}
+
 // restartIBCF stops instance i and starts a new process of it, with the
-// same names and addresses and the same Store, as a node that is
-// recreated does. The counters of the new process start from zero.
+// same names and addresses and the same Store, or a new adapter on the
+// same shared store, as a node that is recreated does. The counters of
+// the new process start from zero.
 func (n *network) restartIBCF(t *testing.T, i int) {
 	t.Helper()
 	n.stopIBCF(t, i)
