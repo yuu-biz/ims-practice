@@ -128,11 +128,14 @@ func TestNodes(t *testing.T) {
 	compose := []byte(`
 x-node: &node
   image: ims-practice/ims:dev
-  build: .
+  pull_policy: never
 services:
   dns:
     image: coredns/coredns:1.12.1
   hss:
+    <<: *node
+    build: .
+  pcscf:
     <<: *node
   long:
     build:
@@ -148,7 +151,7 @@ services:
 	if err != nil {
 		t.Fatal(err)
 	}
-	if want := []string{"hss", "long"}; !slices.Equal(got, want) {
+	if want := []string{"hss", "pcscf", "long"}; !slices.Equal(got, want) {
 		t.Errorf("Nodes = %v, want %v", got, want)
 	}
 	if _, err := Nodes([]byte("services:\n  dns:\n    image: coredns/coredns:1.12.1\n")); err == nil {

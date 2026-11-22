@@ -21,7 +21,7 @@
 
 x-peer-node: &peer-node
   image: ims-practice/ims:dev
-  build: .
+  pull_policy: never
   restart: unless-stopped
   stop_grace_period: 5s
   # Names in network B's domain are in the zone of peer-dns, as dns is
@@ -33,7 +33,7 @@ x-peer-node: &peer-node
 
 x-peer-ue: &peer-ue
   image: ims-practice/ims:dev
-  build: .
+  pull_policy: never
   profiles: [ue]
   entrypoint: ["ue"]
   dns: [172.28.1.2]
@@ -71,7 +71,7 @@ services:
 
   ibcf-a:
     image: ims-practice/ims:dev
-    build: .
+    pull_policy: never
     hostname: ibcf-a
     restart: unless-stopped
     stop_grace_period: 5s
@@ -94,7 +94,7 @@ services:
 
   trgw-a:
     image: ims-practice/ims:dev
-    build: .
+    pull_policy: never
     hostname: trgw-a
     restart: unless-stopped
     stop_grace_period: 5s

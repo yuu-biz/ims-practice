@@ -1,8 +1,13 @@
 name: ims-practice
 
+# Every node runs the one image ims-practice/ims:dev, and only the hss
+# service builds it: when several services build the same tag, each
+# build gives the tag a different image, and Compose then takes the
+# containers of the others for out of date and recreates them. The
+# others never pull the image either, since no registry has it.
 x-ims-node: &ims-node
   image: ims-practice/ims:dev
-  build: .
+  pull_policy: never
   restart: unless-stopped
   stop_grace_period: 5s
   # Names in the home network domain are in the zone of the dns service.
@@ -38,6 +43,7 @@ services:
 
   hss:
     <<: *ims-node
+    build: .
     hostname: hss
     volumes:
       - ./deploy/compose/hss.yaml:/etc/ims/node.yaml:ro
@@ -172,7 +178,7 @@ services:
   # to with the MMTel AS.
   ue:
     image: ims-practice/ims:dev
-    build: .
+    pull_policy: never
     profiles: [ue]
     entrypoint: ["ue"]
     dns: [172.28.0.2]
@@ -186,7 +192,7 @@ services:
 
   ue2:
     image: ims-practice/ims:dev
-    build: .
+    pull_policy: never
     profiles: [ue]
     entrypoint: ["ue"]
     dns: [172.28.0.2]
@@ -200,7 +206,7 @@ services:
 
   ue3:
     image: ims-practice/ims:dev
-    build: .
+    pull_policy: never
     profiles: [ue]
     entrypoint: ["ue"]
     dns: [172.28.0.2]
@@ -219,7 +225,7 @@ services:
   # is reached through the dashboard only.
   ue-a:
     image: ims-practice/ims:dev
-    build: .
+    pull_policy: never
     profiles: [sim]
     entrypoint: ["ue"]
     command: [serve, -control, "0.0.0.0:8090"]
@@ -235,7 +241,7 @@ services:
 
   ue-b:
     image: ims-practice/ims:dev
-    build: .
+    pull_policy: never
     profiles: [sim]
     entrypoint: ["ue"]
     command:
@@ -262,7 +268,7 @@ services:
   # with the sim profile too.
   ue-c:
     image: ims-practice/ims:dev
-    build: .
+    pull_policy: never
     profiles: [sim]
     entrypoint: ["ue"]
     command:
@@ -298,7 +304,7 @@ services:
   # the UE calls with the default public identity of P-Associated-URI.
   volte-a:
     image: ims-practice/ims:dev
-    build: .
+    pull_policy: never
     profiles: [volte]
     entrypoint: ["ue"]
     command:
@@ -331,7 +337,7 @@ services:
 
   volte-b:
     image: ims-practice/ims:dev
-    build: .
+    pull_policy: never
     profiles: [volte]
     entrypoint: ["ue"]
     command:

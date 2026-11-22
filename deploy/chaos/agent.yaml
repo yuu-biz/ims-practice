@@ -15,7 +15,7 @@
 services:
   fault-agent:
     image: ims-practice/ims:dev
-    build: .
+    pull_policy: never
     restart: unless-stopped
     volumes:
       - ./deploy/chaos/fault-agent.yaml:/etc/ims/node.yaml:ro
