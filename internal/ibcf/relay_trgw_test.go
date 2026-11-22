@@ -22,7 +22,7 @@ import (
 // relay chose.
 func TestTheMediaRelayAsTheTrGW(t *testing.T) {
 	minPort, maxPort := rtptest.PortRange(t, 8)
-	relay, err := agw.NewRelay(netip.MustParseAddr("127.0.0.1"), minPort, maxPort, nil, slog.New(slog.DiscardHandler))
+	relay, err := agw.NewRelay(netip.MustParseAddr("127.0.0.1"), minPort, maxPort, nil, nil, slog.New(slog.DiscardHandler))
 	if err != nil {
 		t.Fatal(err)
 	}

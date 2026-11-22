@@ -71,7 +71,7 @@ func startMRFP(t *testing.T) testMRFP {
 		t.Fatal(err)
 	}
 	minPort, maxPort := rtptest.PortRange(t, 40)
-	relay, err := agw.NewRelay(netip.MustParseAddr("127.0.0.1"), minPort, maxPort, clips, quiet())
+	relay, err := agw.NewRelay(netip.MustParseAddr("127.0.0.1"), minPort, maxPort, clips, nil, quiet())
 	if err != nil {
 		t.Fatal(err)
 	}

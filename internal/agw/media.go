@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"net"
 	"net/netip"
+	"slices"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -20,6 +22,14 @@ import (
 type relayContext struct {
 	id    string
 	relay *Relay
+
+	// writes orders the store writes of this context: an operation takes
+	// it before it changes the context and gives it back once the change
+	// is in the store, so that two changes cannot reach the store the
+	// other way round. The media path takes mu alone, and no store
+	// call is made under mu, so a store that is slow holds up the
+	// controller of this context and never its packets.
+	writes sync.Mutex
 
 	mu     sync.Mutex
 	terms  map[TerminationID]*relayTermination
@@ -119,6 +129,14 @@ func (rc *relayContext) add(req TerminationRequest) (*relayTermination, error) {
 	go t.read(rtpChannel, t.rtp)
 	go t.read(rtcpChannel, t.rtcp)
 	return t, nil
+}
+
+// remove takes a termination out of the context and closes its ports,
+// undoing an add. rc.mu is held.
+func (rc *relayContext) remove(t *relayTermination) {
+	delete(rc.terms, t.id)
+	rc.mix.Leave(string(t.id))
+	t.close()
 }
 
 // terminationID checks the ID that a controller asks for, or chooses
@@ -331,6 +349,15 @@ func (rc *relayContext) needsClock() bool {
 	return false
 }
 
+// tick starts the clock once a change is in the store, so that a change
+// which was given up for a store that failed sends nothing. The caller
+// holds neither lock.
+func (rc *relayContext) tick() {
+	rc.mu.Lock()
+	defer rc.mu.Unlock()
+	rc.startClock()
+}
+
 // startClock starts the clock of the context if it needs one and has
 // none. rc.mu is held.
 func (rc *relayContext) startClock() {
@@ -514,6 +541,22 @@ func (rc *relayContext) view() Context {
 		view := t.view()
 		c.Terminations[id] = &view
 	}
+	return c
+}
+
+// saved is the context as the store keeps it, in the order of the
+// termination IDs. Of each termination it holds what a relay created
+// again under the same name needs to carry the media on: its ports, its
+// mode, and the address it sends to now, which is the one it latched
+// onto once it has. What a termination plays is not kept (see Restore).
+// rc.mu is held.
+func (rc *relayContext) saved() SavedContext {
+	c := SavedContext{ID: rc.id, Terminations: make([]SavedTermination, 0, len(rc.terms))}
+	for id, t := range rc.terms {
+		_, remote, _, _, _ := t.rtp.view()
+		c.Terminations = append(c.Terminations, SavedTermination{ID: id, LocalRTP: t.rtp.local.Port(), Remote: remote, Mode: t.mode})
+	}
+	slices.SortFunc(c.Terminations, func(a, b SavedTermination) int { return strings.Compare(string(a.ID), string(b.ID)) })
 	return c
 }
 

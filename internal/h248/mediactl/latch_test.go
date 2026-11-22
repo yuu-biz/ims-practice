@@ -169,7 +169,7 @@ func TestMpNeverLatches(t *testing.T) {
 // effect (6.6.1 to 6.6.3).
 func TestIqGatewayLatchesOnlyWhenAsked(t *testing.T) {
 	minPort, maxPort := rtptest.PortRange(t, 20)
-	relay, err := agw.NewRelay(netip.MustParseAddr("127.0.0.1"), minPort, maxPort, nil, slog.New(slog.DiscardHandler))
+	relay, err := agw.NewRelay(netip.MustParseAddr("127.0.0.1"), minPort, maxPort, nil, nil, slog.New(slog.DiscardHandler))
 	if err != nil {
 		t.Fatal(err)
 	}

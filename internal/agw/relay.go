@@ -29,6 +29,7 @@
 package agw
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -38,6 +39,7 @@ import (
 	"net/netip"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/yuu-biz/ims-practice/internal/mixer"
 	"github.com/yuu-biz/ims-practice/internal/sdp"
@@ -206,6 +208,7 @@ type Relay struct {
 	ports         *portPool
 	announcements Announcements
 	notifier      *http.Client
+	store         ContextStore
 	log           *slog.Logger
 
 	mu       sync.Mutex
@@ -215,13 +218,19 @@ type Relay struct {
 
 // NewRelay relays on address, with RTP ports taken from [minPort,
 // maxPort]. announcements are what it can play; the IMS-AGW has none.
-func NewRelay(address netip.Addr, minPort, maxPort uint16, announcements Announcements, log *slog.Logger) (*Relay, error) {
+// store is where the relay keeps its contexts, so that a relay created
+// again under the same name finds them; nil keeps them in the memory of
+// this process, which they go with.
+func NewRelay(address netip.Addr, minPort, maxPort uint16, announcements Announcements, store ContextStore, log *slog.Logger) (*Relay, error) {
 	if minPort == 0 || maxPort < minPort {
 		return nil, fmt.Errorf("agw: port range %d-%d", minPort, maxPort)
 	}
+	if store == nil {
+		store = NewMemoryContextStore()
+	}
 	r := &Relay{
 		address: address, ports: newPortPool(minPort, maxPort), announcements: announcements,
-		notifier: &http.Client{Timeout: RequestTimeout}, log: log, contexts: map[string]*relayContext{},
+		notifier: &http.Client{Timeout: RequestTimeout}, store: store, log: log, contexts: map[string]*relayContext{},
 	}
 	// A context ID from before a restart must not name a new context,
 	// or a controller that still holds the old ID would change a
@@ -246,6 +255,12 @@ var (
 
 // Add creates a context with the given terminations, as one transaction
 // of H.248 Add commands to a new context does. It fails as a whole.
+//
+// The context is in the store before the controller hears of it: a
+// context that the relay reserved ports for but could not remember
+// would be gone after a restart, with its ports open and nobody left to
+// subtract it. A controller whose Add fails takes the next relay of its
+// list instead.
 func (r *Relay) Add(terminations ...TerminationRequest) (Context, error) {
 	if len(terminations) == 0 {
 		return Context{}, fmt.Errorf("%w: a context needs at least one termination", ErrBadRequest)
@@ -260,34 +275,129 @@ func (r *Relay) Add(terminations ...TerminationRequest) (Context, error) {
 			return Context{}, err
 		}
 	}
-	rc.startClock()
-	view := rc.view()
+	saved, view := rc.saved(), rc.view()
 	rc.mu.Unlock()
+	// Nothing outside this call knows the context yet, so no change of
+	// it can overtake this write.
+	if err := r.store.PutContext(context.Background(), saved); err != nil {
+		rc.mu.Lock()
+		rc.closed = true
+		rc.mu.Unlock()
+		rc.close()
+		// The write may have landed all the same, or left the entry
+		// that the store writes before the context itself, so the
+		// context the controller is told it never got is removed.
+		r.forget(rc.id)
+		r.log.Warn("the context was given up: it could not be stored", "context", rc.id, "error", err.Error())
+		return Context{}, fmt.Errorf("agw: cannot store the context %s: %w", rc.id, err)
+	}
 	r.mu.Lock()
 	r.contexts[rc.id] = rc
 	r.mu.Unlock()
+	rc.tick()
 	r.log.Info("context added", "context", rc.id, "terminations", view.summary())
 	return view, nil
 }
 
+// keep writes a context that an operation has changed. The caller has
+// let go of rc.mu, so that the packets of the context do not wait for
+// the store, and holds rc.writes, so that two changes of one context
+// cannot reach the store the other way round.
+//
+// Unlike Add, an operation on a context that exists goes on when the
+// store fails, and answers its controller: the change has taken effect
+// in the relay already, and the controller cannot take it back. One
+// told that its Modify failed would end a call whose media flows. The
+// stored context then lacks that one change until the next operation on
+// it writes the context again. It is not written again here: a retry
+// has let go of rc.writes and could land after the write of a later
+// change, which would leave the store further behind than this does.
+func (r *Relay) keep(c SavedContext) {
+	if err := r.store.PutContext(context.Background(), c); err != nil {
+		r.log.Warn("the stored context lacks a change: it could not be written", "context", c.ID, "error", err.Error())
+	}
+}
+
+// forgetAttempts and forgetBackoff bound the attempts to remove a
+// context that is gone from the store: the first, and four more a
+// second further apart each, which covers a store that is restarting
+// (the guides measure 0.2 to 0.3 s) without holding an ID for minutes.
+const (
+	forgetAttempts = 5
+	forgetBackoff  = time.Second
+)
+
+// forget removes a context that is gone from the store. Nothing writes
+// that ID again: the context is closed and out of the list of the
+// relay before forget is called, and the IDs of new contexts skip it,
+// so no attempt here can overtake another write.
+//
+// A failed removal is tried again, after the caller has been answered:
+// a controller tearing a call down waits for no retry, and the ports
+// are closed before the first attempt. What a removal that never
+// succeeds leaves behind is in the comment of restore.
+func (r *Relay) forget(id string) {
+	err := r.store.DeleteContext(context.Background(), id)
+	if err == nil {
+		return
+	}
+	r.log.Warn("could not remove the context from the store, trying again", "context", id, "error", err.Error())
+	go r.forgetAgain(id)
+}
+
+func (r *Relay) forgetAgain(id string) {
+	for attempt := 2; ; attempt++ {
+		time.Sleep(time.Duration(attempt-1) * forgetBackoff)
+		err := r.store.DeleteContext(context.Background(), id)
+		if err == nil {
+			r.log.Info("removed the context from the store", "context", id, "attempts", attempt)
+			return
+		}
+		if attempt == forgetAttempts {
+			r.log.Warn("the context stays in the store: it could not be removed", "context", id, "attempts", attempt, "error", err.Error())
+			return
+		}
+		r.log.Warn("could not remove the context from the store, trying again", "context", id, "error", err.Error())
+	}
+}
+
 // AddTermination adds a termination to a context that exists, as when a
-// participant joins a conference (TS 23.333 6.2.9.2.5).
+// participant joins a conference (TS 23.333 6.2.9.2.5). As with Add, a
+// termination the relay could not store is given up again, and the
+// context as it was goes back into the store, since the write that
+// failed may have landed.
 func (r *Relay) AddTermination(id string, req TerminationRequest) (Termination, error) {
 	rc, ok := r.context(id)
 	if !ok {
 		return Termination{}, ErrNoContext
 	}
+	rc.writes.Lock()
+	defer rc.writes.Unlock()
 	rc.mu.Lock()
-	defer rc.mu.Unlock()
 	if rc.closed {
+		rc.mu.Unlock()
 		return Termination{}, ErrNoContext
 	}
+	before := rc.saved()
 	t, err := rc.add(req)
 	if err != nil {
+		rc.mu.Unlock()
 		return Termination{}, err
 	}
-	rc.startClock()
-	view := t.view()
+	saved, view := rc.saved(), t.view()
+	rc.mu.Unlock()
+	if err := r.store.PutContext(context.Background(), saved); err != nil {
+		rc.mu.Lock()
+		rc.remove(t)
+		rc.mu.Unlock()
+		if back := r.store.PutContext(context.Background(), before); back != nil {
+			r.log.Warn("the stored context may hold a termination that was given up", "context", id,
+				"termination", string(t.id), "error", back.Error())
+		}
+		r.log.Warn("the termination was given up: the context could not be stored", "context", id, "termination", string(t.id), "error", err.Error())
+		return Termination{}, fmt.Errorf("agw: cannot store the context %s: %w", id, err)
+	}
+	rc.tick()
 	r.log.Info("termination added", "context", id, "termination", string(view.ID), "local", view.Local.String(), "mode", string(view.Mode))
 	return view, nil
 }
@@ -300,20 +410,26 @@ func (r *Relay) Modify(id string, tid TerminationID, req TerminationRequest) (Te
 	if !ok {
 		return Termination{}, ErrNoContext
 	}
+	rc.writes.Lock()
+	defer rc.writes.Unlock()
 	rc.mu.Lock()
-	defer rc.mu.Unlock()
 	t, ok := rc.terms[tid]
 	if !ok || rc.closed {
+		rc.mu.Unlock()
 		return Termination{}, fmt.Errorf("%w: %q in context %s", ErrNoTermination, tid, id)
 	}
 	if req.ID != "" && req.ID != tid {
+		rc.mu.Unlock()
 		return Termination{}, fmt.Errorf("%w: Modify cannot rename termination %q", ErrBadRequest, tid)
 	}
 	if err := t.modify(req); err != nil {
+		rc.mu.Unlock()
 		return Termination{}, err
 	}
-	rc.startClock()
-	view := t.view()
+	saved, view := rc.saved(), t.view()
+	rc.mu.Unlock()
+	r.keep(saved)
+	rc.tick()
 	r.log.Info("termination modified", "context", id, "termination", string(tid), "remote", view.Remote.String(), "mode", string(view.Mode),
 		"signals", view.Signals.String())
 	return view, nil
@@ -328,6 +444,8 @@ func (r *Relay) SubtractTermination(id string, tid TerminationID) (_ Termination
 	if !ok {
 		return Termination{}, false, ErrNoContext
 	}
+	rc.writes.Lock()
+	defer rc.writes.Unlock()
 	rc.mu.Lock()
 	t, ok := rc.terms[tid]
 	if !ok || rc.closed {
@@ -339,12 +457,19 @@ func (r *Relay) SubtractTermination(id string, tid TerminationID) (_ Termination
 	deleted = len(rc.terms) == 0
 	rc.closed = deleted
 	view := t.view()
+	var saved SavedContext
+	if !deleted {
+		saved = rc.saved()
+	}
 	rc.mu.Unlock()
 	t.close()
 	if deleted {
 		r.mu.Lock()
 		delete(r.contexts, id)
 		r.mu.Unlock()
+		r.forget(id)
+	} else {
+		r.keep(saved)
 	}
 	r.log.Info("termination subtracted", "context", id, "termination", string(tid), "context_deleted", deleted,
 		"packets", view.Packets, "packets_sent", view.PacketsSent, "rtcp_packets", view.RTCPPackets)
@@ -361,6 +486,8 @@ func (r *Relay) Subtract(id string) (Context, error) {
 	if !ok {
 		return Context{}, ErrNoContext
 	}
+	rc.writes.Lock()
+	defer rc.writes.Unlock()
 	rc.mu.Lock()
 	if rc.closed {
 		rc.mu.Unlock()
@@ -373,8 +500,29 @@ func (r *Relay) Subtract(id string) (Context, error) {
 	r.mu.Lock()
 	delete(r.contexts, id)
 	r.mu.Unlock()
+	r.forget(id)
 	r.log.Info("context subtracted", "context", id, "terminations", view.counts())
 	return view, nil
+}
+
+// Close closes the sockets of every context, as the process of a relay
+// that stops does, and leaves the contexts in the store: a relay
+// created again under the same name opens their ports again. It is not
+// a Subtract, which is what gives a context up.
+func (r *Relay) Close() {
+	r.mu.Lock()
+	all := make([]*relayContext, 0, len(r.contexts))
+	for _, rc := range r.contexts {
+		all = append(all, rc)
+	}
+	clear(r.contexts)
+	r.mu.Unlock()
+	for _, rc := range all {
+		rc.mu.Lock()
+		rc.closed = true
+		rc.mu.Unlock()
+		rc.close()
+	}
 }
 
 // Contexts lists the contexts, for learners and the dashboard.
