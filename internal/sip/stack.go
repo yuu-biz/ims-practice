@@ -188,8 +188,8 @@ func NewStack(transport *TransportLayer, cfg Config, log *slog.Logger) (*Stack, 
 	if cfg.Timers == (Timers{}) {
 		cfg.Timers = DefaultTimers()
 	}
-	if cfg.Timers.T1 <= 0 || cfg.Timers.T2 < cfg.Timers.T1 || cfg.Timers.T4 <= 0 {
-		return nil, fmt.Errorf("sip: Config.Timers %+v: need 0 < T1 <= T2 and T4 > 0", cfg.Timers)
+	if cfg.Timers.T1 <= 0 || cfg.Timers.T2 < cfg.Timers.T1 || cfg.Timers.T4 <= 0 || cfg.Timers.TransactionTimeout < 0 {
+		return nil, fmt.Errorf("sip: Config.Timers %+v: need 0 < T1 <= T2, T4 > 0 and TransactionTimeout >= 0", cfg.Timers)
 	}
 	if cfg.TimerC == 0 {
 		cfg.TimerC = DefaultTimerC

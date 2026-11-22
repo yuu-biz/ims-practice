@@ -345,6 +345,34 @@ func TestClientTransactionTimesOut(t *testing.T) {
 	}
 }
 
+// With the default T1, Timer F would fire after 32 s; the operator's
+// TransactionTimeout ends the transaction long before.
+func TestClientTransactionTimesOutAfterTheTransactionTimeout(t *testing.T) {
+	timers := DefaultTimers()
+	timers.TransactionTimeout = 200 * time.Millisecond
+	client := newStack(t, timers, ignoreRequests)
+	start := time.Now()
+	ct, err := client.SendRequest(registerRequest(), udpTo(addrOf(rawSocket(t))))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := collect(t, ct); len(got) != 0 || !errors.Is(ct.Err(), ErrTimeout) {
+		t.Fatalf("responses = %v, err = %v; want none and ErrTimeout", got, ct.Err())
+	}
+	if elapsed := time.Since(start); elapsed < timers.TransactionTimeout {
+		t.Errorf("timed out after %v, before the transaction timeout (%v)", elapsed, timers.TransactionTimeout)
+	}
+}
+
+func TestNewStackRefusesANegativeTransactionTimeout(t *testing.T) {
+	tr := listenLayer(t, testLogger(t))
+	timers := DefaultTimers()
+	timers.TransactionTimeout = -time.Second
+	if _, err := NewStack(tr, Config{SentBy: tr.LocalAddr().String(), Timers: timers, OnRequest: ignoreRequests}, testLogger(t)); err == nil {
+		t.Error("NewStack took a negative TransactionTimeout")
+	}
+}
+
 func TestCloseEndsRunningClientTransactions(t *testing.T) {
 	tr := listenLayer(t, testLogger(t))
 	client, err := NewStack(tr, Config{SentBy: tr.LocalAddr().String(), OnRequest: ignoreRequests}, testLogger(t))
