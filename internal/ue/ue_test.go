@@ -338,6 +338,7 @@ func startNetwork(t *testing.T, cfg networkConfig) testNetwork {
 	scscfNode, scscfPeer := connect("scscf."+domain, func(m *diam.Message) *diam.Message { return scscfRole.Load().Handle(m) })
 	s := scscf.New(scscf.Config{ServerName: "sip:scscf." + domain + ":5060", Host: "scscf." + domain, Port: 5060,
 		HomeDomain: domain, MinExpires: minExpires, MaxExpires: maxExpires}, scscfPeer, scscfNode, scscf.NewMemoryStore(), dns, quiet())
+	t.Cleanup(s.Close)
 	scscfRole.Store(s)
 	scscfStack := stackWithACK(t, s.OnRequest, s.OnACK)
 	s.SetStack(scscfStack)

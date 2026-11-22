@@ -86,6 +86,7 @@ func TestCxHandlerSendsEachRequestToItsRole(t *testing.T) {
 	}
 	hssRole := hss.New(hss.Config{Realm: domain, VisitedNetworks: []string{domain}}, store, node, quiet())
 	s := scscf.New(scscf.Config{ServerName: "sip:scscf." + domain + ":5060", HomeDomain: domain}, nil, node, scscf.NewMemoryStore(), nil, quiet())
+	t.Cleanup(s.Close)
 
 	rtr := cx.RegistrationTerminationRequest{
 		Header:               cx.NewHeader(node, "ims."+domain, domain),

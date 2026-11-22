@@ -438,14 +438,14 @@ func TestRegEventSubscriptionThatIsNotRefreshedExpires(t *testing.T) {
 	}
 }
 
-// A subscription past its expiry whose timer ran in no process, as when
-// the instance that took it was restarted, gets no NOTIFY that says
-// active: the next change of the registration ends it with reason
-// timeout (RFC 6665 4.2.1.4), and the S-CSCF forgets it. No message
-// stops a timer, so the test does that, and moves the expiry, in the
-// Store.
+// A subscription that is past its expiry, which the sweep has not
+// reached yet, gets no NOTIFY that says active: the next change of the
+// registration ends it with reason timeout (RFC 6665 4.2.1.4), and the
+// S-CSCF forgets it. No message moves an expiry into the past, so the
+// test writes it in the Store, and leaves the sweep an interval long
+// enough that it does not come in between.
 func TestRegEventSubscriptionPastItsExpiryEndsAtTheNextNotify(t *testing.T) {
-	h := newSubscriberHarness(t, Config{})
+	h := newSubscriberHarness(t, Config{SweepInterval: time.Minute})
 	h.registerUser(sip.NewCallID())
 	sub, got := h.subscribe(pcscfPath, "")
 	nextNotify(t, got)
@@ -454,7 +454,6 @@ func TestRegEventSubscriptionPastItsExpiryEndsAtTheNextNotify(t *testing.T) {
 		t.Fatalf("the S-CSCF holds %d subscriptions, want 1", len(subs))
 	}
 	stored := subs[0]
-	h.role.subscriptionTimers.stop(stored.Dialog.ID)
 	stored.Expires = time.Now().Add(-time.Second)
 	h.role.store.PutSubscription(context.Background(), stored)
 

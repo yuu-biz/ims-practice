@@ -55,6 +55,15 @@ type Config struct {
 	// profile of a callee who is not registered (session.go).
 	// Zero means UnregisteredProfileLifetime. Tests shorten it.
 	UnregisteredProfileLifetime time.Duration
+	// SweepInterval is how often this instance claims the expiries that
+	// are due, and so how late an expiry may be handled; zero means
+	// ims.SweepInterval. Tests shorten it.
+	SweepInterval time.Duration
+	// ExpiryLease is how long a claimed expiry is this instance's alone,
+	// after which another instance may claim it; zero means
+	// ims.ExpiryLease. It is longer than handling one takes, a Cx round
+	// trip included. Tests shorten it.
+	ExpiryLease time.Duration
 	// UserLocks serialises what happens to one user. Nil means a lock
 	// per user in the memory of this process (ims.UserLocks), which
 	// serves an S-CSCF that runs as one instance. Instances that share a
@@ -83,49 +92,14 @@ type SCSCF struct {
 	// order of the events. Each user has a lock of its own, so that a
 	// Cx round trip of one user never holds up another.
 	users ims.UserLocker
-	// authTimers are the reg-await-auth timers and regTimers the
-	// registration timers of this process, by private identity in the
-	// form of key. They are kept apart so that an authentication that
-	// ends early never touches the expiry of a registration.
-	// subscriptionTimers are the expiry timers of the reg event
-	// subscriptions, by dialog. When a timer fires, the store decides
-	// whether it still applies.
-	authTimers         timers[string]
-	regTimers          timers[string]
-	subscriptionTimers timers[sip.DialogID]
-	// unregisteredTimers end the unregistered profiles that this process
-	// took, by private identity in the form of key.
-	unregisteredTimers timers[string]
+	// stopSweep ends the sweep of this instance and the handlers it
+	// started, and sweeping waits for them (expiry.go).
+	stopSweep context.CancelFunc
+	sweeping  sync.WaitGroup
 }
 
-// timers are timers by key. Their own lock is held only while the map
-// changes, never while a timer's function runs.
-type timers[K comparable] struct {
-	mu sync.Mutex
-	m  map[K]*time.Timer
-}
-
-func (t *timers[K]) start(k K, d time.Duration, f func()) {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	if timer, ok := t.m[k]; ok {
-		timer.Stop()
-	}
-	if t.m == nil {
-		t.m = map[K]*time.Timer{}
-	}
-	t.m[k] = time.AfterFunc(d, f)
-}
-
-func (t *timers[K]) stop(k K) {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	if timer, ok := t.m[k]; ok {
-		timer.Stop()
-		delete(t.m, k)
-	}
-}
-
+// New returns an S-CSCF and starts its sweep, which handles the expiries
+// that are due until Close.
 func New(cfg Config, hss HSS, node *diameter.Node, store Store, resolver Resolver, log *slog.Logger) *SCSCF {
 	if cfg.RegAwaitAuth == 0 {
 		cfg.RegAwaitAuth = ims.RegAwaitAuth
@@ -139,7 +113,26 @@ func New(cfg Config, hss HSS, node *diameter.Node, store Store, resolver Resolve
 	if cfg.UserLocks == nil {
 		cfg.UserLocks = &ims.UserLocks{}
 	}
-	return &SCSCF{cfg: cfg, hss: hss, node: node, store: store, resolver: resolver, log: log, users: cfg.UserLocks}
+	if cfg.SweepInterval == 0 {
+		cfg.SweepInterval = ims.SweepInterval
+	}
+	if cfg.ExpiryLease == 0 {
+		cfg.ExpiryLease = ims.ExpiryLease
+	}
+	s := &SCSCF{cfg: cfg, hss: hss, node: node, store: store, resolver: resolver, log: log, users: cfg.UserLocks}
+	ctx, cancel := context.WithCancel(context.Background())
+	s.stopSweep = cancel
+	s.sweeping.Go(func() { s.sweep(ctx) })
+	return s
+}
+
+// Close stops the sweep of this instance and waits for the handlers it
+// started, whose lock and Cx requests it ends. An expiry that this
+// instance had claimed and not handled is handled by another instance of
+// the S-CSCF once the claim runs out.
+func (s *SCSCF) Close() {
+	s.stopSweep()
+	s.sweeping.Wait()
 }
 
 // lockFailed answers a request whose user the S-CSCF could not lock
@@ -257,7 +250,7 @@ func (s *SCSCF) register(st *sip.ServerTransaction) {
 		s.challenge(st, privateID, publicID, integrity, true, log)
 		return
 	}
-	if err := s.endChallenge(ctx, privateID); err != nil {
+	if err := s.store.DeleteChallenge(ctx, privateID); err != nil {
 		s.storeFailed(st, err, log)
 		return
 	}
@@ -277,7 +270,7 @@ func (s *SCSCF) challenge(st *sip.ServerTransaction, privateID, publicID string,
 	if integrity == "" {
 		scheme = cx.SchemeUnknown
 	}
-	answer, err := s.request(cx.MultimediaAuthRequest{
+	answer, err := s.request(context.Background(), cx.MultimediaAuthRequest{
 		Header:                  cx.NewHeader(s.node, "", s.cfg.HomeDomain),
 		UserName:                privateID,
 		PublicIdentity:          publicID,
@@ -329,31 +322,15 @@ func (s *SCSCF) challenge(st *sip.ServerTransaction, privateID, publicID string,
 	})
 }
 
-// putChallenge stores ch with its expiries, and starts its
-// reg-await-auth timer (TS 24.229 5.4.1.2.1). The Store keeps the
-// challenge for reg-await-auth again after the timer, so that the
-// instance that handles the timer still finds it: by then the timer
-// has ended it, or the authentication has.
+// putChallenge stores ch with its expiries, which puts reg-await-auth in
+// the store (TS 24.229 5.4.1.2.1). The Store keeps the challenge for
+// reg-await-auth again after that, so that the instance which handles
+// the expiry still finds it: by then the expiry has ended the challenge,
+// or the authentication has.
 func (s *SCSCF) putChallenge(ch Challenge) error {
 	ch.Expires = time.Now().Add(s.cfg.RegAwaitAuth)
 	ch.KeepUntil = ch.Expires.Add(s.cfg.RegAwaitAuth)
-	if err := s.store.PutChallenge(context.Background(), ch); err != nil {
-		return err
-	}
-	s.authTimers.start(key(ch.PrivateIdentity), s.cfg.RegAwaitAuth, func() { s.regAwaitAuthExpired(ch.PrivateIdentity, ch.Nonce) })
-	return nil
-}
-
-// endChallenge removes the challenge of privateID and stops its
-// reg-await-auth timer. The timer stops only once the challenge is
-// gone, so that a challenge that the store failed to remove still ends
-// with its timer.
-func (s *SCSCF) endChallenge(ctx context.Context, privateID string) error {
-	if err := s.store.DeleteChallenge(ctx, privateID); err != nil {
-		return err
-	}
-	s.authTimers.stop(key(privateID))
-	return nil
+	return s.store.PutChallenge(context.Background(), ch)
 }
 
 type verdict int
@@ -398,7 +375,7 @@ func (s *SCSCF) accept(st *sip.ServerTransaction, c sip.Credentials, ch Challeng
 	if registered {
 		assignment = cx.ReRegistration
 	}
-	saa, err := s.serverAssignment(ch.PrivateIdentity, ch.PublicIdentity, ch.HSSHost, assignment)
+	saa, err := s.serverAssignment(ctx, ch.PrivateIdentity, ch.PublicIdentity, ch.HSSHost, assignment)
 	if err != nil || !saa.Result.Success() {
 		log.Warn("SAR failed", "result", describe(saa.Result, err))
 		s.respond(st, 500, nil)
@@ -445,7 +422,6 @@ func (s *SCSCF) accept(st *sip.ServerTransaction, c sip.Credentials, ch Challeng
 		s.storeFailed(st, err, log)
 		return
 	}
-	s.regTimers.start(key(reg.PrivateIdentity), expires, func() { s.registrationExpired(reg.PrivateIdentity) })
 	log.Info("registered", "contact", reg.Contact, "expires", int(expires/time.Second), "assignment", assignment.String())
 
 	s.respond(st, 200, func(r *sip.Message) {
@@ -497,11 +473,10 @@ func (s *SCSCF) deregister(st *sip.ServerTransaction, privateID string, wildcard
 		s.storeFailed(st, err, log)
 		return
 	}
-	s.regTimers.stop(key(privateID))
 	log.Info("deregistered")
 	// TS 23.228 5.3.1 steps 7 to 9: the HSS has answered the SAR before
 	// the S-CSCF answers 200.
-	s.serverAssignment(privateID, reg.PublicIdentities[0], reg.HSSHost, cx.UserDeregistration)
+	s.serverAssignment(ctx, privateID, reg.PublicIdentities[0], reg.HSSHost, cx.UserDeregistration)
 	s.respond(st, 200, func(r *sip.Message) {
 		r.Add("Contact", fmt.Sprintf("<%s>;expires=0", reg.Contact))
 	})
@@ -541,7 +516,7 @@ func (s *SCSCF) Deregister(privateID string, event reginfo.Event) error {
 	if err := s.deregisterByNetwork(ctx, reg, event); err != nil {
 		return err
 	}
-	_, err = s.serverAssignment(privateID, reg.PublicIdentities[0], reg.HSSHost, cx.AdministrativeDeregistration)
+	_, err = s.serverAssignment(ctx, privateID, reg.PublicIdentities[0], reg.HSSHost, cx.AdministrativeDeregistration)
 	return err
 }
 
@@ -557,7 +532,6 @@ func (s *SCSCF) deregisterByNetwork(ctx context.Context, reg Registration, event
 	if err := s.store.DeleteRegistration(ctx, reg.PrivateIdentity); err != nil {
 		return err
 	}
-	s.regTimers.stop(key(reg.PrivateIdentity))
 	log.Info("deregistered by the network", "event", string(event))
 	s.endRegistration(ctx, reg, event, log)
 	s.notifyApplicationServers(s.equivalentRegister(reg), reg, 0, log)
@@ -625,7 +599,7 @@ func (s *SCSCF) registrationTermination(r cx.RegistrationTerminationRequest) cx.
 	}
 	// TS 29.228 6.1.3.1: the S-CSCF removes all it has stored for the
 	// user, a registration under way included.
-	if err := s.endChallenge(ctx, r.UserName); err != nil {
+	if err := s.store.DeleteChallenge(ctx, r.UserName); err != nil {
 		return s.registrationTerminationFailed(r, err)
 	}
 	if err := s.deregisterByNetwork(ctx, reg, event); err != nil {
@@ -654,31 +628,32 @@ func covers(reg Registration, ids []string) bool {
 	})
 }
 
-func (s *SCSCF) regAwaitAuthExpired(privateID, nonce string) {
-	ctx := context.Background()
+// regAwaitAuthExpired ends the challenge of nonce, whose REGISTER never
+// came, and tells the HSS (TS 24.229 5.4.1.2.3). It returns the failure
+// of the store or of the lock that left the challenge where it was, so
+// that the expiry is handled again (handleExpiry).
+func (s *SCSCF) regAwaitAuthExpired(ctx context.Context, privateID, nonce string) error {
 	log := s.log.With("private_identity", privateID)
 	unlock, err := s.users.Lock(ctx, privateID)
 	if err != nil {
-		log.Warn("reg-await-auth not handled: the lock of the user was not taken; the HSS is not told, and the challenge goes at its KeepUntil", "error", err.Error())
-		return
+		return fmt.Errorf("the lock of the user was not taken: %w", err)
 	}
 	defer unlock()
 	ch, ok, err := s.store.Challenge(ctx, privateID)
 	if err != nil {
-		log.Warn("reg-await-auth not handled: the store failed; the HSS is not told, and the challenge goes at its KeepUntil", "error", err.Error())
-		return
+		return err
 	}
 	if !ok || ch.Nonce != nonce {
-		return
+		return nil
 	}
 	// TS 24.229 5.4.1.2.3 NOTE 2: authentication has failed; a user who
 	// was registered stays registered.
 	log.Info("reg-await-auth expired")
 	if err := s.store.DeleteChallenge(ctx, privateID); err != nil {
-		log.Warn("reg-await-auth not handled: the store failed; the HSS is not told, and the challenge goes at its KeepUntil", "error", err.Error())
-		return
+		return err
 	}
-	s.serverAssignment(privateID, ch.PublicIdentity, ch.HSSHost, cx.AuthenticationTimeout)
+	s.serverAssignment(ctx, privateID, ch.PublicIdentity, ch.HSSHost, cx.AuthenticationTimeout)
+	return nil
 }
 
 // registrationExpired ends a registration that was not refreshed, and
@@ -694,36 +669,39 @@ func (s *SCSCF) regAwaitAuthExpired(privateID, nonce string) {
 // same expiration time as the 200 (OK) to the UE (TS 23.218 6.3,
 // 5.4.1.7 item e), and one that subscribed to the reg event package
 // hears of the expiry in the NOTIFY.
-func (s *SCSCF) registrationExpired(privateID string) {
-	ctx := context.Background()
+//
+// It returns the failure of the store or of the lock that left the
+// registration where it was, so that the expiry is handled again
+// (handleExpiry).
+func (s *SCSCF) registrationExpired(ctx context.Context, privateID string) error {
 	log := s.log.With("private_identity", privateID)
 	unlock, err := s.users.Lock(ctx, privateID)
 	if err != nil {
-		log.Warn("expiry of the registration not handled: the lock of the user was not taken; it stays until the UE registers again or the HSS ends it", "error", err.Error())
-		return
+		return fmt.Errorf("the lock of the user was not taken: %w", err)
 	}
 	defer unlock()
 	reg, ok, err := s.store.Registration(ctx, privateID)
 	if err != nil {
-		log.Warn("expiry of the registration not handled: the store failed; it stays until the UE registers again or the HSS ends it", "error", err.Error())
-		return
+		return err
 	}
 	// Under the lock, the registration may have ended or been refreshed
 	// since its expiry came up.
 	if !ok || time.Now().Before(reg.Expires) {
-		return
+		return nil
 	}
 	log.Info("registration expired")
 	if err := s.store.DeleteRegistration(ctx, privateID); err != nil {
-		log.Warn("expiry of the registration not handled: the store failed; it stays until the UE registers again or the HSS ends it", "error", err.Error())
-		return
+		return err
 	}
+	// The registration is gone, so the expiry is handled: a NOTIFY or a
+	// SAR that does not get through is not sent again.
 	s.endRegistration(ctx, reg, reginfo.Expired, log)
-	s.serverAssignment(privateID, reg.PublicIdentities[0], reg.HSSHost, cx.TimeoutDeregistration)
+	s.serverAssignment(ctx, privateID, reg.PublicIdentities[0], reg.HSSHost, cx.TimeoutDeregistration)
+	return nil
 }
 
-func (s *SCSCF) serverAssignment(privateID, publicID, hssHost string, t cx.ServerAssignmentType) (cx.ServerAssignmentAnswer, error) {
-	answer, err := s.request(cx.ServerAssignmentRequest{
+func (s *SCSCF) serverAssignment(ctx context.Context, privateID, publicID, hssHost string, t cx.ServerAssignmentType) (cx.ServerAssignmentAnswer, error) {
+	answer, err := s.request(ctx, cx.ServerAssignmentRequest{
 		Header:               cx.NewHeader(s.node, hssHost, s.cfg.HomeDomain),
 		UserName:             privateID,
 		PublicIdentities:     []string{publicID},
@@ -737,8 +715,11 @@ func (s *SCSCF) serverAssignment(privateID, publicID, hssHost string, t cx.Serve
 	return cx.ParseServerAssignmentAnswer(answer)
 }
 
-func (s *SCSCF) request(m *diam.Message) (*diam.Message, error) {
-	return s.hss.Request(context.Background(), m)
+// request sends a Cx request and waits for its answer, until ctx ends: a
+// request of a claimed expiry ends with the claim, one of a SIP
+// transaction with the transaction.
+func (s *SCSCF) request(ctx context.Context, m *diam.Message) (*diam.Message, error) {
+	return s.hss.Request(ctx, m)
 }
 
 // storeFailed answers st with 500 (Server Internal Error): the S-CSCF

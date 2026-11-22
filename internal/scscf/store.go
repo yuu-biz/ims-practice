@@ -278,10 +278,10 @@ type Expiry struct {
 // tell what the store holds. The S-CSCF writes every expiry into what
 // it stores, as a time.
 //
-// A SIP transaction, a Cx request and a timer carry no context of their
-// own, so the S-CSCF passes context.Background() and relies on the time
-// limit that an adapter on a store outside the process gives each
-// operation.
+// A SIP transaction, a Cx request and a claimed expiry carry no context
+// of their own, so the S-CSCF passes context.Background() and relies on
+// the time limit that an adapter on a store outside the process gives
+// each operation.
 type Store interface {
 	Challenge(ctx context.Context, privateID string) (Challenge, bool, error)
 	// PutChallenge keeps c, in place of the challenge of its user,
@@ -376,8 +376,8 @@ func NewMemoryStore() *MemoryStore {
 func key(privateID string) string { return strings.ToLower(privateID) }
 
 // Challenge finds a challenge until its KeepUntil, as an external store
-// would with a time to live. The reg-await-auth timer removes it before
-// then, so it takes no room after that.
+// would with a time to live. The instance that handles its reg-await-auth
+// removes it before then, so it takes no room after that.
 func (s *MemoryStore) Challenge(_ context.Context, privateID string) (Challenge, bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
