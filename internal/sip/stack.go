@@ -70,10 +70,11 @@ type Config struct {
 	// store on another machine, while the stack goes on with the
 	// messages from other sources. When it returns true, the stack takes
 	// the request up as if it had just arrived; when it returns false,
-	// the stack drops the request as one that Screen refuses. Each copy
-	// of a request is asked about until one is let in, and a copy let in
-	// after another has started the transaction counts as its
-	// retransmission.
+	// the stack drops the request as one that Screen refuses, but logs
+	// nothing of it, since Admit knows why it refused and logs that.
+	// Each copy of a request is asked about until one is let in, and a
+	// copy let in after another has started the transaction counts as
+	// its retransmission.
 	//
 	// Admit is asked about the requests from one source, the same
 	// transport and address, one at a time and in the order they
@@ -753,7 +754,7 @@ const maxAdmitQueue = 32
 // comes back to the loop once Admit has let it in.
 func (s *Stack) admits(req *Message, source Destination) bool {
 	if s.cfg.Screen != nil && !s.cfg.Screen(req, source) {
-		s.logRefused(req, source)
+		s.log.Info("dropped request that the screen refused", "method", string(req.Method), "src", source.String())
 		return false
 	}
 	if s.cfg.Admit == nil {
@@ -788,8 +789,6 @@ func (s *Stack) askAdmit(req *Message, source Destination) {
 func (s *Stack) receiveAdmitDecision(in admitDecided) {
 	if in.admitted {
 		s.receiveRequest(in.req, in.source, true)
-	} else {
-		s.logRefused(in.req, in.source)
 	}
 	waiting := s.admitting[in.source][1:]
 	if len(waiting) == 0 {
@@ -798,10 +797,6 @@ func (s *Stack) receiveAdmitDecision(in admitDecided) {
 	}
 	s.admitting[in.source] = waiting
 	s.askAdmit(waiting[0], in.source)
-}
-
-func (s *Stack) logRefused(req *Message, source Destination) {
-	s.log.Info("dropped request that the screen refused", "method", string(req.Method), "src", source.String())
 }
 
 func (s *Stack) passACKToTU(ack *Message) {

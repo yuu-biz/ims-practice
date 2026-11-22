@@ -1,6 +1,9 @@
 package sip
 
 import (
+	"bytes"
+	"encoding/json"
+	"log/slog"
 	"reflect"
 	"slices"
 	"strings"
@@ -602,5 +605,50 @@ func TestAdmitBoundsTheRequestsThatWaitFromOneSource(t *testing.T) {
 	}
 	if got := peer.sync(); len(got) != 0 {
 		t.Errorf("stack sent %d messages for refused and dropped requests, want none; first: %s", len(got), startLine(got[0]))
+	}
+}
+
+// The stack logs a request that Screen refuses, and leaves one that
+// Admit refuses to Admit, which knows why, so that each discard is
+// logged once.
+func TestAdmitLogsItsOwnRefusals(t *testing.T) {
+	var mu sync.Mutex
+	var logs bytes.Buffer
+	tr := listenLayer(t, testLogger(t))
+	stack, err := NewStack(tr, Config{
+		SentBy:    tr.LocalAddr().String(),
+		Timers:    testTimers,
+		Screen:    func(req *Message, _ Destination) bool { return !strings.HasPrefix(req.Get("Call-ID"), "screened-") },
+		Admit:     refusedCallID,
+		OnRequest: answerOptions(func(st *ServerTransaction) { t.Errorf("TU got %s", st.Request.Method) }),
+	}, slog.New(slog.NewJSONHandler(lockedWriter{&mu, &logs}, nil)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(stack.Close)
+	peer := newUDPPeer(t, stack.LocalAddr())
+	screened := peer.request(MESSAGE)
+	screened.SetFirst("Call-ID", "screened-"+NewCallID())
+	refused := peer.request(INVITE)
+	refused.SetFirst("Call-ID", "refused-"+NewCallID())
+	peer.send(screened)
+	peer.send(refused)
+	// Admit lets this OPTIONS in only after it has refused the INVITE.
+	peer.sync()
+
+	mu.Lock()
+	defer mu.Unlock()
+	var dropped []string
+	for _, line := range strings.Split(strings.TrimSpace(logs.String()), "\n") {
+		var entry struct{ Msg, Method string }
+		if err := json.Unmarshal([]byte(line), &entry); err != nil {
+			t.Fatalf("log line %q: %v", line, err)
+		}
+		if strings.HasPrefix(entry.Msg, "dropped request") {
+			dropped = append(dropped, entry.Method+": "+entry.Msg)
+		}
+	}
+	if want := []string{"MESSAGE: dropped request that the screen refused"}; !reflect.DeepEqual(dropped, want) {
+		t.Errorf("the stack logged %q, want %q: nothing for the INVITE that Admit refused", dropped, want)
 	}
 }
