@@ -997,7 +997,7 @@ EPC と PCRF のスタブは保存先に載せないと決めたので、`intern
 | SC のスタブ | `status-report-request:<参照>` | なし | なし |
 | MMTel AS | `call:<Incoming のダイアログ>` | `call-of-leg:<Outgoing のダイアログ>` | なし。`MemoryStore` は同じ記録を 2 つのキーに書く。ここでは 1 つにし、もう一方を索引にした |
 | EPC | `pdn-connection:<UE のアドレス>`、`binding:<Session-Id>` | なし | なし |
-| HSS | `subscriber:<IMPI>`（加入者とリポジトリのデータ） | `public:<IMPU>`、`directory:<0 から 15>`（`List` のため） | `List` は走査のまま（下の「載らなかったところ」） |
+| HSS | `subscriber:<IMPI>`（加入者とリポジトリのデータ） | `public:<IMPU>`、`directory:<0 から 15>`（`List` のため） | `List` は走査のまま（下の「載らなかったところ」）。この試作のあと、`directory` は並べ替えた索引 `subscribers` に替わり、`List` は 1 ページずつ引くようになりました（[状態と冗長構成の設計](../design/state-redundancy.md)） |
 
 ID の比べ方は、各役割の `MemoryStore` に合わせました。IMPI は小文字にします。S-CSCF の IMPU は `ims.CanonicalURI` の形の小文字です。HSS の IMPU は `hss` の `publicKey` と同じ形にしました（`publicKey` は公開されていないので、同じ処理を写しています）。P-CSCF の Contact は、`MemoryStore` が比べる user、host（小文字）、port の 3 つです。
 
@@ -1042,7 +1042,7 @@ ID の比べ方は、各役割の `MemoryStore` に合わせました。IMPI は
 #### 載らなかったところ
 
 - 各役割の `Store` は、エラーも `context` も返しません。プロセスの中の保存先は失敗しないためです。保存先が失敗したとき、実装はログに書き、項目が無かったことにします。書き込みの失敗は、呼んだ側に伝わりません。これが各役割の `MemoryStore` との一番大きな違いです。
-- HSS の `List` は、16 個の `directory` の項目をすべて読み、全加入者の IMPI を並べ替えます。`kvstore` に範囲の検索が無く（11.2）、`List` に続きの位置を渡す引数が無いためです。`SIMPLIFIED:` を付けました。保守の操作だけで、Cx の処理では使いません。
+- HSS の `List` は、16 個の `directory` の項目をすべて読み、全加入者の IMPI を並べ替えます。`kvstore` に範囲の検索が無く（11.2）、`List` に続きの位置を渡す引数が無いためです。`SIMPLIFIED:` を付けました。保守の操作だけで、Cx の処理では使いません。この試作のあと、`kvstore` に並べ替えた索引と範囲の検索を足し、`List` を続きの位置と件数を取る形にしたので、走査はなくなりました。
 - S-CSCF の未登録のプロファイルの期限を借りた台は、IMPI からプロファイルを読む必要があります。`scscf.Store` にはこの検索が無いので、実装に `UnregisteredProfile(privateID)` を足しました。
 - P-CSCF のダイアログと MMTel AS の呼の記録には、期限がありません。BYE を誰も見なかった呼の項目は残ります。各役割の `MemoryStore` と同じです。
 - P-CSCF の IP の対応付けは、`Expires` に 64×T1 を足した時刻に TTL で消えます。各役割の `MemoryStore` は、`DeleteAssociation` まで残します。S-CSCF が NOTIFY を送る前に止まった場合だけ違いが出ます。
@@ -1089,7 +1089,7 @@ ID の比べ方は、各役割の `MemoryStore` に合わせました。IMPI は
 1. 各役割の `Store` の操作に、`context.Context` を取り、`error` を返す形にすること。今は保存先の失敗が呼んだ側に伝わりません。
 2. 各役割のタイマー（S-CSCF の 4 つ、IP-SM-GW の TR1N）を、`time.AfterFunc` から、実装の `ClaimDue` を短い間隔で呼ぶループに替えること。ループは役割ごとに 1 つで足ります。今の時刻の関数（`registrationExpired` など）は、項目を読んで確かめる作りなので、そのまま呼べます。
 3. `scscf.Store` に、IMPI で未登録のプロファイルを読む操作を足すこと。期限を借りた台がプロファイルを読むためです。
-4. `hss.Store.List` を、続きの位置を受け取り、次の位置を返す形にすること（たとえば `List(after string, limit int) ([]Subscriber, string)`）。並び順を IMPI の順でなく「区画ごとの順」にしてよければ、1 ページで `directory` の項目を 1 つ読むだけになります。
+4. `hss.Store.List` を、続きの位置を受け取り、次の位置を返す形にすること（たとえば `List(after string, limit int) ([]Subscriber, string)`）。並び順を IMPI の順でなく「区画ごとの順」にしてよければ、1 ページで `directory` の項目を 1 つ読むだけになります。（このあと、`kvstore` に並べ替えた索引を足して、IMPI の順のまま 1 ページずつ引く形にしました。）
 5. `hss` の `publicKey` を公開すること。`hssstore` は同じ処理を写しています。
 6. `scscfstore` と `hssstore` が `internal/ims` を import してよいこと。`ims.CanonicalURI` で ID を比べるためです。
 7. P-CSCF が 1 つの要求の中で同じ項目を何度も読む作りを、1 回だけ読む形にすること（上の測定）。
