@@ -1,6 +1,7 @@
 package ipsmgw
 
 import (
+	"context"
 	"sync"
 	"time"
 
@@ -66,33 +67,40 @@ type RegSubscription struct {
 // NOTIFY of a reg event subscription may reach another IP-SM-GW than
 // the one that sent the SUBSCRIBE. MemoryStore keeps the state in the
 // process.
+//
+// An error is a failure of the store, after which the caller cannot
+// tell what the store holds. The IP-SM-GW writes every expiry into what
+// it stores, as a time; the Store keeps nothing longer than that.
 type Store interface {
 	// NextMessageReference gives the RP-MR of the next RP-DATA to a
 	// recipient, and keeps the counter of the recipient until expires.
 	// TS 24.011 8.2.3 counts 0 to 255; the values only need to differ
 	// while a delivery to the same UE waits for its report.
-	NextMessageReference(recipient string, expires time.Time) uint8
+	NextMessageReference(ctx context.Context, recipient string, expires time.Time) (uint8, error)
 	// PutDelivery keeps d until its Expires.
-	PutDelivery(d PendingDelivery)
-	// Delivery returns the delivery whose MESSAGE had callID.
-	Delivery(callID string) (PendingDelivery, bool)
+	PutDelivery(ctx context.Context, d PendingDelivery) error
+	// Delivery returns the delivery whose MESSAGE had callID, and
+	// whether there is one.
+	Delivery(ctx context.Context, callID string) (PendingDelivery, bool, error)
 	// TakeDelivery returns the delivery and removes it, in one step. The
 	// delivery report, a failed MESSAGE and the timer of the sending
 	// IP-SM-GW may all try to end one delivery; only the first gets it,
 	// so the SC hears the outcome once.
-	TakeDelivery(callID string) (PendingDelivery, bool)
+	TakeDelivery(ctx context.Context, callID string) (PendingDelivery, bool, error)
 
 	// PutRegSubscription keeps sub until its Expires, in place of the
 	// one with the same Call-ID and of any other one to the same public
 	// identity.
-	PutRegSubscription(sub RegSubscription)
-	// RegSubscription returns the subscription whose dialog has callID.
-	RegSubscription(callID string) (RegSubscription, bool)
-	// RegSubscriptionOf returns the subscription to a public identity.
-	RegSubscriptionOf(publicID string) (RegSubscription, bool)
+	PutRegSubscription(ctx context.Context, sub RegSubscription) error
+	// RegSubscription returns the subscription whose dialog has callID,
+	// and whether there is one.
+	RegSubscription(ctx context.Context, callID string) (RegSubscription, bool, error)
+	// RegSubscriptionOf returns the subscription to a public identity,
+	// and whether there is one.
+	RegSubscriptionOf(ctx context.Context, publicID string) (RegSubscription, bool, error)
 	// DeleteRegSubscription removes the subscription whose dialog has
 	// callID.
-	DeleteRegSubscription(callID string)
+	DeleteRegSubscription(ctx context.Context, callID string) error
 }
 
 type messageReferences struct {
@@ -102,7 +110,7 @@ type messageReferences struct {
 
 // MemoryStore is a Store in the memory of one process. Two IP-SM-GWs
 // share state only when they share one MemoryStore, as in a test; a
-// network of several nodes needs a store outside them.
+// network of several nodes needs a store outside them. It never fails.
 type MemoryStore struct {
 	mu                sync.Mutex
 	deliveries        map[string]PendingDelivery
@@ -123,7 +131,7 @@ func NewMemoryStore() *MemoryStore {
 // identity, so that two ways of writing one recipient share it. The
 // store forgets the counter once it has expired, as an external store
 // would with a time to live.
-func (s *MemoryStore) NextMessageReference(recipient string, expires time.Time) uint8 {
+func (s *MemoryStore) NextMessageReference(_ context.Context, recipient string, expires time.Time) (uint8, error) {
 	recipient = ims.PublicIdentityKey(recipient)
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -140,11 +148,11 @@ func (s *MemoryStore) NextMessageReference(recipient string, expires time.Time) 
 			delete(s.messageReferences, recipient)
 		}
 	})
-	return mr
+	return mr, nil
 }
 
 // PutDelivery keeps d. The store removes it at its Expires.
-func (s *MemoryStore) PutDelivery(d PendingDelivery) {
+func (s *MemoryStore) PutDelivery(_ context.Context, d PendingDelivery) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.deliveries[d.CallID] = d
@@ -155,20 +163,22 @@ func (s *MemoryStore) PutDelivery(d PendingDelivery) {
 			delete(s.deliveries, d.CallID)
 		}
 	})
+	return nil
 }
 
-func (s *MemoryStore) Delivery(callID string) (PendingDelivery, bool) {
+func (s *MemoryStore) Delivery(_ context.Context, callID string) (PendingDelivery, bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.delivery(callID)
+	d, ok := s.delivery(callID)
+	return d, ok, nil
 }
 
-func (s *MemoryStore) TakeDelivery(callID string) (PendingDelivery, bool) {
+func (s *MemoryStore) TakeDelivery(_ context.Context, callID string) (PendingDelivery, bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	d, ok := s.delivery(callID)
 	delete(s.deliveries, callID)
-	return d, ok
+	return d, ok, nil
 }
 
 func (s *MemoryStore) delivery(callID string) (PendingDelivery, bool) {
@@ -180,7 +190,7 @@ func (s *MemoryStore) delivery(callID string) (PendingDelivery, bool) {
 }
 
 // PutRegSubscription keeps sub. The store removes it at its Expires.
-func (s *MemoryStore) PutRegSubscription(sub RegSubscription) {
+func (s *MemoryStore) PutRegSubscription(_ context.Context, sub RegSubscription) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	callID, key := sub.Dialog.ID.CallID, ims.PublicIdentityKey(sub.PublicIdentity)
@@ -197,28 +207,32 @@ func (s *MemoryStore) PutRegSubscription(sub RegSubscription) {
 			s.deleteRegSubscription(callID)
 		}
 	})
+	return nil
 }
 
-func (s *MemoryStore) RegSubscription(callID string) (RegSubscription, bool) {
+func (s *MemoryStore) RegSubscription(_ context.Context, callID string) (RegSubscription, bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.regSubscription(callID)
+	sub, ok := s.regSubscription(callID)
+	return sub, ok, nil
 }
 
-func (s *MemoryStore) RegSubscriptionOf(publicID string) (RegSubscription, bool) {
+func (s *MemoryStore) RegSubscriptionOf(_ context.Context, publicID string) (RegSubscription, bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	callID, ok := s.regSubscriptionOf[ims.PublicIdentityKey(publicID)]
 	if !ok {
-		return RegSubscription{}, false
+		return RegSubscription{}, false, nil
 	}
-	return s.regSubscription(callID)
+	sub, ok := s.regSubscription(callID)
+	return sub, ok, nil
 }
 
-func (s *MemoryStore) DeleteRegSubscription(callID string) {
+func (s *MemoryStore) DeleteRegSubscription(_ context.Context, callID string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.deleteRegSubscription(callID)
+	return nil
 }
 
 func (s *MemoryStore) regSubscription(callID string) (RegSubscription, bool) {

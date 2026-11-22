@@ -50,18 +50,30 @@ const featureSMSOverIP = "+g.3gpp.smsip"
 // forgets when it expires. The S-CSCF follows every 200 to a SUBSCRIBE
 // with a NOTIFY at once (RFC 6665 4.2.1.2), so the timer would only
 // shorten the wait for a NOTIFY that was lost.
+//
+// The REGISTER has been answered when this runs. When the Store fails,
+// the IP-SM-GW sends no SUBSCRIBE and logs the failure; the third-party
+// REGISTER of the next reregistration tries again.
 func (g *IPSMGW) watchRegistration(publicID, msisdn string, registered time.Duration, log *slog.Logger) {
-	unlock, _ := g.users.Lock(context.Background(), publicID)
+	ctx := context.Background()
+	unlock, _ := g.users.Lock(ctx, publicID)
 	defer unlock()
 	expires := registered + ims.RegEventMargin
-	sub, ok := g.store.RegSubscriptionOf(publicID)
+	sub, ok, err := g.store.RegSubscriptionOf(ctx, publicID)
+	if err != nil {
+		log.Warn("reg event subscription not read: the store failed", "error", err.Error())
+		return
+	}
 	if ok && sub.Dialog.ID.RemoteTag != "" {
 		sub.MSISDN = msisdn
 		g.refreshRegEvent(sub, expires, log)
 		return
 	}
 	if ok {
-		g.store.DeleteRegSubscription(sub.Dialog.ID.CallID)
+		if err := g.store.DeleteRegSubscription(ctx, sub.Dialog.ID.CallID); err != nil {
+			log.Warn("reg event subscription without a dialog not removed: the store failed", "error", err.Error())
+			return
+		}
 	}
 	g.subscribeRegEvent(publicID, msisdn, expires, log)
 }
@@ -93,9 +105,13 @@ func (g *IPSMGW) subscribeRegEvent(publicID, msisdn string, expires time.Duratio
 	}
 	// In the Store before the SUBSCRIBE goes out: the first NOTIFY may
 	// come before the 200, and to another IP-SM-GW (RFC 6665 4.1.2.4).
-	g.store.PutRegSubscription(RegSubscription{PublicIdentity: publicID, MSISDN: msisdn, Dialog: d, ICID: icid,
-		Expires: time.Now().Add(expires)})
+	ctx := context.Background()
 	log = log.With("subscription_call_id", d.ID.CallID)
+	if err := g.store.PutRegSubscription(ctx, RegSubscription{PublicIdentity: publicID, MSISDN: msisdn, Dialog: d, ICID: icid,
+		Expires: time.Now().Add(expires)}); err != nil {
+		log.Warn("reg event SUBSCRIBE not sent: the store failed", "error", err.Error())
+		return
+	}
 	log.Info("reg event subscribing", "expires", int(expires/time.Second))
 	go func() {
 		final, err := g.send(m, g.entryPoint())
@@ -105,10 +121,16 @@ func (g *IPSMGW) subscribeRegEvent(publicID, msisdn string, expires time.Duratio
 		// RFC 6665 4.1.2.1: the SUBSCRIBE failed, and no subscription was
 		// made. One that a NOTIFY has already confirmed stays.
 		log.Warn("reg event SUBSCRIBE failed", "status", statusOf(final), "error", errorText(err))
-		unlock, _ := g.users.Lock(context.Background(), publicID)
+		// When the Store fails, the subscription without a dialog stays
+		// until it expires, or the next third-party REGISTER replaces it.
+		unlock, _ := g.users.Lock(ctx, publicID)
 		defer unlock()
-		if sub, ok := g.store.RegSubscription(d.ID.CallID); ok && sub.Dialog.ID.RemoteTag == "" {
-			g.store.DeleteRegSubscription(d.ID.CallID)
+		sub, ok, err := g.store.RegSubscription(ctx, d.ID.CallID)
+		if err == nil && ok && sub.Dialog.ID.RemoteTag == "" {
+			err = g.store.DeleteRegSubscription(ctx, d.ID.CallID)
+		}
+		if err != nil {
+			log.Warn("failed reg event subscription not removed: the store failed", "error", err.Error())
 		}
 	}()
 }
@@ -128,9 +150,17 @@ func (g *IPSMGW) refreshRegEvent(sub RegSubscription, expires time.Duration, log
 		return
 	}
 	sub.Expires = time.Now().Add(expires)
-	g.store.PutRegSubscription(sub)
 	callID := sub.Dialog.ID.CallID
 	log = log.With("subscription_call_id", callID)
+	// The CSeq of the refresh is in the Store before the refresh goes
+	// out. When the Store fails, the subscription runs out at its old
+	// expiry at both ends, and the next third-party REGISTER subscribes
+	// anew.
+	ctx := context.Background()
+	if err := g.store.PutRegSubscription(ctx, sub); err != nil {
+		log.Warn("reg event refresh not sent: the store failed", "error", err.Error())
+		return
+	}
 	log.Info("reg event refreshing", "expires", int(expires/time.Second))
 	go func() {
 		final, err := g.send(m, hop)
@@ -146,13 +176,23 @@ func (g *IPSMGW) refreshRegEvent(sub RegSubscription, expires time.Duration, log
 		// longer hears of the user, so it no longer claims the user's
 		// short messages; the next third-party REGISTER subscribes anew.
 		log.Warn("reg event subscription ended by its refresh", "status", final.StatusCode)
-		unlock, _ := g.users.Lock(context.Background(), sub.PublicIdentity)
+		unlock, _ := g.users.Lock(ctx, sub.PublicIdentity)
 		defer unlock()
-		current, ok := g.store.RegSubscription(callID)
+		current, ok, err := g.store.RegSubscription(ctx, callID)
+		if err != nil {
+			// The next third-party REGISTER refreshes the subscription
+			// again, which ends it again.
+			log.Warn("ended reg event subscription not read: the store failed", "error", err.Error())
+			return
+		}
 		if !ok {
 			return
 		}
-		g.store.DeleteRegSubscription(callID)
+		if err := g.store.DeleteRegSubscription(ctx, callID); err != nil {
+			// The subscription stays until it expires; the HSS learns all
+			// the same that the user takes no short messages here.
+			log.Warn("ended reg event subscription not removed: the store failed", "error", err.Error())
+		}
 		if current.Available {
 			g.updateHSS(current, false, log)
 		}
@@ -166,18 +206,36 @@ func (g *IPSMGW) refreshRegEvent(sub RegSubscription, expires time.Duration, log
 // (TS 24.341 5.3.3.2). A NOTIFY that ends the subscription ends it here
 // too (5.7.1.1 NOTE 5); the user then takes no short messages through
 // this subscription, whatever the document says.
+//
+// A NOTIFY whose subscription the IP-SM-GW cannot read or write gets 500
+// (RFC 3261 21.5.1), which does not end the subscription at the
+// notifier. What the NOTIFY said is then lost until the next one.
 func (g *IPSMGW) receiveRegEvent(st *sip.ServerTransaction) {
 	req := st.Request
 	id := sip.ReceivedDialogID(req)
 	log := g.log.With("method", "NOTIFY", "call_id", id.CallID)
-	sub, ok := g.store.RegSubscription(id.CallID)
+	ctx := context.Background()
+	storeFailed := func(err error) {
+		log.Warn("reg event NOTIFY refused: the store failed", "error", err.Error())
+		g.respond(st, 500, nil)
+	}
+	sub, ok, err := g.store.RegSubscription(ctx, id.CallID)
+	if err != nil {
+		storeFailed(err)
+		return
+	}
 	if !ok || sub.Dialog.ID.LocalTag != id.LocalTag {
 		g.respond(st, 481, nil)
 		return
 	}
-	unlock, _ := g.users.Lock(context.Background(), sub.PublicIdentity)
+	unlock, _ := g.users.Lock(ctx, sub.PublicIdentity)
 	defer unlock()
-	if sub, ok = g.store.RegSubscription(id.CallID); !ok {
+	sub, ok, err = g.store.RegSubscription(ctx, id.CallID)
+	if err != nil {
+		storeFailed(err)
+		return
+	}
+	if !ok {
 		g.respond(st, 481, nil)
 		return
 	}
@@ -211,9 +269,6 @@ func (g *IPSMGW) receiveRegEvent(st *sip.ServerTransaction) {
 		g.respond(st, 400, nil)
 		return
 	}
-	// 5.7.1.1: the response repeats the icid-value and the orig-ioi of
-	// the NOTIFY, with a type 3 term-ioi.
-	g.respond(st, 200, nil)
 
 	log = log.With("public_identity", sub.PublicIdentity, "subscription_state", string(state.State))
 	// RFC 6665 4.1.3: the expires of the NOTIFY is the time left, so
@@ -222,10 +277,11 @@ func (g *IPSMGW) receiveRegEvent(st *sip.ServerTransaction) {
 	expires := sip.HasExpires(req.Get("Subscription-State"))
 	ends := state.State == sip.SubscriptionTerminated || (expires && state.Expires == 0)
 	available := sub.Available
+	var stored error
 	switch {
 	case ends:
 		available = false
-		g.store.DeleteRegSubscription(id.CallID)
+		stored = g.store.DeleteRegSubscription(ctx, id.CallID)
 	default:
 		doc, err := reginfo.Parse(req.Body)
 		if err != nil {
@@ -239,15 +295,28 @@ func (g *IPSMGW) receiveRegEvent(st *sip.ServerTransaction) {
 			// 5.7.1.1: the expiration time is that of Subscription-State.
 			sub.Expires = time.Now().Add(state.Expires)
 		}
-		g.store.PutRegSubscription(sub)
+		stored = g.store.PutRegSubscription(ctx, sub)
 	}
+	if stored != nil {
+		storeFailed(stored)
+		return
+	}
+	// 5.7.1.1: the response repeats the icid-value and the orig-ioi of
+	// the NOTIFY, with a type 3 term-ioi.
+	g.respond(st, 200, nil)
+
 	log.Info("reg event", "sms_over_ip", available)
 	if available == sub.Available {
 		return
 	}
 	if g.updateHSS(sub, available, log) && !ends {
 		sub.Available = available
-		g.store.PutRegSubscription(sub)
+		if err := g.store.PutRegSubscription(ctx, sub); err != nil {
+			// The NOTIFY has been answered and the HSS told. The Store
+			// keeps what the HSS was told before, so the next NOTIFY
+			// tells the HSS again.
+			log.Warn("what the HSS was told not stored: the store failed", "error", err.Error())
+		}
 	}
 }
 
