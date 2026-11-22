@@ -83,11 +83,16 @@ func (f *conference) subscribe(st *sip.ServerTransaction) {
 			st.Respond(sip.NewResponse(req, 400, sip.NewTag()))
 			return
 		}
-		// The 200 goes before the record is written, in notify, and a
-		// write that fails is only logged: this instance sends the
-		// NOTIFYs and keeps the expiry timer, so the subscription is lost
-		// only if this instance stops before a later write succeeds.
+		// The record holds the subscription before the 200 goes, so that
+		// the 200 is never sent for a subscription that no instance
+		// would find after this one stops.
 		f.record.Subscriptions = append(f.record.Subscriptions, ConferenceSubscription{NotifierSubscription: sub, Subscriber: assertedUser(req, "")})
+		if err := f.putRecord(); err != nil {
+			f.record.Subscriptions = f.record.Subscriptions[:len(f.record.Subscriptions)-1]
+			f.mu.Unlock()
+			f.subscriptionNotStored(st, err)
+			return
+		}
 		id = sub.Dialog.ID
 		if sub.State == sip.SubscriptionActive {
 			f.watchExpiry(id, sub.Expires)
@@ -104,9 +109,20 @@ func (f *conference) subscribe(st *sip.ServerTransaction) {
 			return
 		}
 		s := &f.record.Subscriptions[i]
+		before := *s
 		ok, err := s.ReceiveSubscribe(req, expires, now)
-		if err == nil && s.State == sip.SubscriptionActive {
-			f.watchExpiry(id, s.Expires)
+		if err == nil {
+			// As for a new subscription, the refresh or the end of it is
+			// in the record before the 200 goes.
+			if err = f.putRecord(); err != nil {
+				*s = before
+				f.mu.Unlock()
+				f.subscriptionNotStored(st, err)
+				return
+			}
+			if s.State == sip.SubscriptionActive {
+				f.watchExpiry(id, s.Expires)
+			}
 		}
 		f.mu.Unlock()
 		switch {
@@ -120,6 +136,14 @@ func (f *conference) subscribe(st *sip.ServerTransaction) {
 		st.Respond(ok)
 	}
 	f.notify(&id)
+}
+
+// subscriptionNotStored answers a SUBSCRIBE whose subscription the
+// record could not take with 500 (RFC 3261 21.5.1): the subscription
+// stays as it was, and the subscriber may try again.
+func (f *conference) subscriptionNotStored(st *sip.ServerTransaction, err error) {
+	f.log.Warn("conference subscription not stored", "error", err.Error())
+	st.Respond(sip.NewResponse(st.Request, 500, ""))
 }
 
 // subscriptionIndex is the index of the subscription with dialog id in

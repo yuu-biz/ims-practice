@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/yuu-biz/ims-practice/internal/confinfo"
 	"github.com/yuu-biz/ims-practice/internal/ims"
 	"github.com/yuu-biz/ims-practice/internal/kvstore"
 	"github.com/yuu-biz/ims-practice/internal/kvstore/kvjson"
@@ -251,4 +252,68 @@ func TestAReferWhoseReplacesCannotBeRead(t *testing.T) {
 		t.Errorf("the focus invited bob with Replaces %q", c.Request.Get("Replaces"))
 	default:
 	}
+}
+
+// TestAConferenceSubscriptionThatCannotBeStored: the store fails as a
+// user subscribes to the conference. The focus does not answer 200 for
+// a subscription that its record does not hold: the user gets 500 and
+// no NOTIFY. Once the store is back, the same user subscribes. The
+// store fails again as the user unsubscribes: the focus answers 500,
+// and the subscription stays as it was, so the user gets no last
+// NOTIFY until it unsubscribes once more with the store back (RFC 6665
+// 4.1.2.2, 4.2.1.4).
+func TestAConferenceSubscriptionThatCannotBeStored(t *testing.T) {
+	mrfc := startConferenceMRFC(t)
+	as, kv := startASOnAStore(t, mmtel.Config{MRFC: "sip:" + contactOf(t, mrfc.ua)})
+	_, focus, _ := aliceConference(t, as, func(c *sip.IncomingCall) { c.Reject(480) })
+	carol := newParticipant(t, as, "carol", func(c *sip.IncomingCall) { c.Reject(480) })
+	subscribe := func() (*sip.Subscription, <-chan sip.Notification) {
+		t.Helper()
+		notifications := make(chan sip.Notification, 4)
+		sub, err := carol.Subscribe(sip.SubscribeRequest{RequestURI: focus.URI, From: "sip:carol@" + domain, Event: confinfo.EventPackage,
+			Accept: confinfo.ContentType, Expires: time.Hour,
+			Headers:  []sip.HeaderField{{Name: "P-Asserted-Identity", Value: "<sip:carol@" + domain + ">"}},
+			OnNotify: func(n sip.Notification, _ *sip.Message) { notifications <- n }})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return sub, notifications
+	}
+
+	kv.down.Store(true)
+	sub, notifications := subscribe()
+	receive(t, sub.Done(), "end of the subscription that could not be stored")
+	var refused *sip.SubscribeRefused
+	if err := sub.Err(); !errors.As(err, &refused) || refused.StatusCode != 500 {
+		t.Errorf("the subscription ended with %v, want a SUBSCRIBE refused with 500", err)
+	}
+	select {
+	case n := <-notifications:
+		t.Errorf("carol got a NOTIFY (%+v) for a subscription that was not stored", n.State)
+	case <-time.After(200 * time.Millisecond):
+	}
+
+	kv.down.Store(false)
+	sub, notifications = subscribe()
+	if first := receive(t, notifications, "first NOTIFY once the store was back"); first.State.State != sip.SubscriptionActive {
+		t.Errorf("first NOTIFY says %+v, want active", first.State)
+	}
+
+	kv.down.Store(true)
+	if err := sub.Unsubscribe(); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case n := <-notifications:
+		t.Errorf("carol got a NOTIFY (%+v) for an unsubscribe that was not stored", n.State)
+	case <-time.After(300 * time.Millisecond):
+	}
+	kv.down.Store(false)
+	if err := sub.Unsubscribe(); err != nil {
+		t.Fatal(err)
+	}
+	if last := receive(t, notifications, "last NOTIFY once the store was back"); last.State.State != sip.SubscriptionTerminated {
+		t.Errorf("last NOTIFY says %+v, want terminated", last.State)
+	}
+	receive(t, sub.Done(), "end of the subscription")
 }
