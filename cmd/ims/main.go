@@ -39,6 +39,7 @@ import (
 	"github.com/yuu-biz/ims-practice/internal/kvstore/ibcfstore"
 	"github.com/yuu-biz/ims-practice/internal/kvstore/ipsmgwstore"
 	"github.com/yuu-biz/ims-practice/internal/kvstore/kvjson"
+	"github.com/yuu-biz/ims-practice/internal/kvstore/kvlock"
 	"github.com/yuu-biz/ims-practice/internal/kvstore/mmtelstore"
 	"github.com/yuu-biz/ims-practice/internal/kvstore/mrfcstore"
 	"github.com/yuu-biz/ims-practice/internal/kvstore/pcscfstore"
@@ -113,7 +114,9 @@ func run(configPath string, log *slog.Logger) error {
 			if err != nil {
 				return err
 			}
-			hssRole = hss.New(*cfg.HSS, store, node, roleLog)
+			hssConfig := *cfg.HSS
+			hssConfig.UserLocks = stores.locks(config.RoleHSS, roleLog)
+			hssRole = hss.New(hssConfig, store, node, roleLog)
 		}
 		if cfg.EPC != nil {
 			epcRole = epc.New(cfg.EPC.Config, epc.NewMemoryStore(), node, log.With("role", config.RoleEPC))
@@ -189,6 +192,7 @@ func run(configPath string, log *slog.Logger) error {
 			MinExpires: c.MinExpires,
 			MaxExpires: c.MaxExpires,
 			IBCF:       c.IBCF,
+			UserLocks:  stores.locks(config.RoleSCSCF, roleLog),
 		}, hssPeer(peers), node, scscfStore(stores, roleLog), resolver, roleLog)
 		scscfRole.Store(s)
 		stack, err := startSIP(config.RoleSCSCF, c.SIP, s.OnRequest, s.OnACK)
@@ -259,6 +263,7 @@ func run(configPath string, log *slog.Logger) error {
 			Number:        c.Number,
 			ServiceCentre: c.ServiceCentre,
 			IBCF:          c.IBCF,
+			UserLocks:     stores.locks(config.RoleIPSMGW, roleLog),
 		}, centre, ipsmgwStore(stores, roleLog), users, resolver, roleLog)
 		centre.SetIPSMGW(g)
 		if c.IBCF.Host != "" {
@@ -473,6 +478,19 @@ func (r roleStores) adapter(log *slog.Logger) (kvstore.Store, kvjson.Config, boo
 		return nil, kvjson.Config{}, false
 	}
 	return r.kv, kvjson.Config{Prefix: r.section.Prefix, Timeout: r.section.Timeout, Log: log}, true
+}
+
+// locks is the lock per user of role: a lock in the shared store, under
+// the prefix of the store section and the name of the role, so that the
+// instances of the role exclude each other over one user and the roles
+// do not. It is nil when the role keeps its state in the process, which
+// gives the role the lock per user of its own process (ims.UserLocks).
+func (r roleStores) locks(role config.Role, log *slog.Logger) ims.UserLocker {
+	kv, cfg, ok := r.adapter(log)
+	if !ok {
+		return nil
+	}
+	return kvlock.New(kv, kvlock.Config{Prefix: cfg.Prefix, Role: string(role), Timeout: cfg.Timeout, Log: log})
 }
 
 // hssStore is where the HSS keeps its subscribers: the credentials,

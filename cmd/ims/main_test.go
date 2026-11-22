@@ -402,6 +402,54 @@ func unreachableStore(t *testing.T) *config.Store {
 	return &config.Store{Kind: config.StoreValkey, Address: address, Timeout: time.Second}
 }
 
+// TestRoleLocksAreInTheSharedStoreOfTheNode: the roles that serialise
+// what happens to one user take that lock in the store section's server,
+// so that the instances of one role exclude each other over a user. The
+// roles do not exclude each other, since each locks under its own name.
+// Without a store section, and with kind memory, the role gets no
+// locker and keeps the lock per user of its own process.
+func TestRoleLocksAreInTheSharedStoreOfTheNode(t *testing.T) {
+	ctx := context.Background()
+	// The roles whose Config takes a lock per user.
+	roles := []config.Role{config.RoleSCSCF, config.RoleHSS, config.RoleIPSMGW}
+
+	for _, section := range []*config.Store{nil, {Kind: config.StoreMemory, Timeout: time.Second}} {
+		stores, closeStores := newRoleStores(section)
+		for _, role := range roles {
+			if locks := stores.locks(role, quiet()); locks != nil {
+				t.Errorf("the %s with the store section %+v got a locker, want the lock of its own process", role, section)
+			}
+		}
+		closeStores()
+	}
+
+	unreachable, closeUnreachable := newRoleStores(unreachableStore(t))
+	defer closeUnreachable()
+	for _, role := range roles {
+		if _, err := unreachable.locks(role, quiet()).Lock(ctx, impi); err == nil {
+			t.Errorf("the %s took the lock of a user on a store that cannot be reached", role)
+		}
+	}
+
+	// One node on a store it can reach, as newRoleStores opens it.
+	shared := roleStores{kv: kvstore.NewMemoryStore(nil),
+		section: config.Store{Kind: config.StoreValkey, Prefix: "ims:", Timeout: time.Second}}
+	for _, role := range roles {
+		unlock, err := shared.locks(role, quiet()).Lock(ctx, impi)
+		if err != nil {
+			t.Fatalf("the %s did not take the lock of a user while the other roles hold theirs: %v", role, err)
+		}
+		defer unlock()
+	}
+	// A second instance of one role waits for the lock that the first
+	// holds, until the deadline of this attempt.
+	waiting, cancel := context.WithTimeout(ctx, 20*time.Millisecond)
+	defer cancel()
+	if _, err := shared.locks(config.RoleSCSCF, quiet()).Lock(waiting, impi); err == nil {
+		t.Error("a second S-CSCF on the same store took the lock of a user that the first holds")
+	}
+}
+
 // ibcfConfig is the configuration of an IBCF with one peer.
 func ibcfConfig() config.IBCF {
 	return config.IBCF{
