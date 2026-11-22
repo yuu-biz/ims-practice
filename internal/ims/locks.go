@@ -21,8 +21,9 @@ type UserLocker interface {
 
 const (
 	// UserLockLease bounds how long a lock in the store is held if its
-	// holder stops. It is longer than the two Cx round trips of a
-	// registration, each of which waits up to 5 s for its answer.
+	// holder stops. It is longer than the work under the lock: one Cx
+	// or Sh round trip, which waits up to 5 s for its answer, and a few
+	// operations on the store.
 	UserLockLease = 15 * time.Second
 	// ExpiryLease is the lease of a claimed expiry (kvstore.ClaimDue):
 	// how long the instance that claimed it has to handle it before
