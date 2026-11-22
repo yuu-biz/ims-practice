@@ -46,16 +46,17 @@ go generate ./deploy/observability/...
 
 ## できないこと
 
-`internal/metrics` で数える役割は IBCF だけです。`/metrics` を出すノードは無いので、数えた値はプロセスの中にとどまります。`prometheus/prometheus.yml` は、各ノードが保守用の API の待ち受けで、`http://<サービス名>:8085/metrics` に指標を出す形に合わせて書いてあります。このポート番号を決めた仕様はありません。8085 はこのプロジェクトが選んだ番号で、`prometheus.go` の `MetricsPort` に置いています。ほかの番号にするときは、`MetricsPort` を直し、上のコマンドを実行します。
+`internal/metrics` で数える役割は IBCF と S-CSCF です。`/metrics` を出すノードは無いので、数えた値はプロセスの中にとどまります。`prometheus/prometheus.yml` は、各ノードが保守用の API の待ち受けで、`http://<サービス名>:8085/metrics` に指標を出す形に合わせて書いてあります。このポート番号を決めた仕様はありません。8085 はこのプロジェクトが選んだ番号で、`prometheus.go` の `MetricsPort` に置いています。ほかの番号にするときは、`MetricsPort` を直し、上のコマンドを実行します。
 
 指標は `internal/metrics` が Prometheus のテキスト形式（版 0.0.4）で書きます。ラベルの値は、決まった集合の中からしか取れません。そのため、加入者ごとの系列はできず、加入者が何人いても系列の数は変わりません。
 
-`internal/metrics` は、Prometheus の文書にあることのうち 2 つを省いています。どちらの場所にも、コードに `SIMPLIFIED:` のコメントがあります。
+コードは、Prometheus の文書と TS 32.409 にあることのうち、次のものを省いています。どの場所にも、コードに `SIMPLIFIED:` のコメントがあります。
 
 | 場所 | 省いたこと | 理由 |
 | --- | --- | --- |
 | `metrics.NewHandler`、prometheus/docs instrumenting/content_negotiation.md | Accept ヘッダの形式から選ぶことと、gzip。ハンドラはいつも、圧縮しないテキスト形式 0.0.4 で答えます。 | どの Prometheus もテキスト形式を求め、gzip は任意だからです。ほかの形式は、ここの指標が使うものを何も足しません。 |
 | `metrics.Histogram`、prometheus/docs instrumenting/exposition_formats.md | 観測が続くあいだに、バケット、合計、件数をそろえて写し取ること。"+Inf" のバケットはいつも `_count` と同じですが、`_sum` には、バケットにまだ入っていない観測が次の収集まで含まれることがあります。 | 写し取るには、もう 1 組のカウンタと入れ替えの仕組みが要るためです。平均のずれは観測 1 回分までで、続くのも 1 回の収集のあいだだけです。 |
+| S-CSCF。TS 32.409 4.1.1.1.1 と 4.1.1.1.3 | S-CSCF が利用者について持っているものを読む前に答えた REGISTER は、登録のどの測定にも数えません。読めない REGISTER（400 を返す）と、利用者のロックを取れなかった REGISTER（500 を返す）です。 | REGISTER が最初の登録か再登録かは、S-CSCF がその利用者の登録を持っているかどうかで決まるためです。 |
 
 ## 知っておくこと
 

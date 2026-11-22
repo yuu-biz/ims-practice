@@ -92,7 +92,10 @@ func TestCxHandlerSendsEachRequestToItsRole(t *testing.T) {
 		t.Fatal(err)
 	}
 	hssRole := hss.New(hss.Config{Realm: domain, VisitedNetworks: []string{domain}}, store, node, quiet())
-	s := scscf.New(scscf.Config{ServerName: "sip:scscf." + domain + ":5060", HomeDomain: domain}, nil, node, scscf.NewMemoryStore(), nil, quiet())
+	s, err := scscf.New(scscf.Config{ServerName: "sip:scscf." + domain + ":5060", HomeDomain: domain}, nil, node, scscf.NewMemoryStore(), nil, quiet())
+	if err != nil {
+		t.Fatal(err)
+	}
 	t.Cleanup(s.Close)
 
 	rtr := cx.RegistrationTerminationRequest{

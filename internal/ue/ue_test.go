@@ -348,8 +348,11 @@ func startNetwork(t *testing.T, cfg networkConfig) testNetwork {
 	// The S-CSCF takes the HSS's RTRs, but it is made after its Cx peer.
 	var scscfRole atomic.Pointer[scscf.SCSCF]
 	scscfNode, scscfPeer := connect("scscf."+domain, func(m *diam.Message) *diam.Message { return scscfRole.Load().Handle(m) })
-	s := scscf.New(scscf.Config{ServerName: "sip:scscf." + domain + ":5060", Host: "scscf." + domain, Port: 5060,
+	s, err := scscf.New(scscf.Config{ServerName: "sip:scscf." + domain + ":5060", Host: "scscf." + domain, Port: 5060,
 		HomeDomain: domain, MinExpires: minExpires, MaxExpires: maxExpires}, scscfPeer, scscfNode, scscf.NewMemoryStore(), dns, quiet())
+	if err != nil {
+		t.Fatal(err)
+	}
 	t.Cleanup(s.Close)
 	scscfRole.Store(s)
 	scscfStack := stackWithACK(t, s.OnRequest, s.OnACK)
