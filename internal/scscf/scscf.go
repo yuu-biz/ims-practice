@@ -445,7 +445,7 @@ func (s *SCSCF) accept(st *sip.ServerTransaction, c sip.Credentials, ch Challeng
 		s.storeFailed(st, err, log)
 		return
 	}
-	s.regTimers.start(key(reg.PrivateIdentity), expires, func() { s.registrationExpired(reg.PrivateIdentity, reg.Expires) })
+	s.regTimers.start(key(reg.PrivateIdentity), expires, func() { s.registrationExpired(reg.PrivateIdentity) })
 	log.Info("registered", "contact", reg.Contact, "expires", int(expires/time.Second), "assignment", assignment.String())
 
 	s.respond(st, 200, func(r *sip.Message) {
@@ -694,7 +694,7 @@ func (s *SCSCF) regAwaitAuthExpired(privateID, nonce string) {
 // same expiration time as the 200 (OK) to the UE (TS 23.218 6.3,
 // 5.4.1.7 item e), and one that subscribed to the reg event package
 // hears of the expiry in the NOTIFY.
-func (s *SCSCF) registrationExpired(privateID string, expires time.Time) {
+func (s *SCSCF) registrationExpired(privateID string) {
 	ctx := context.Background()
 	log := s.log.With("private_identity", privateID)
 	unlock, err := s.users.Lock(ctx, privateID)
@@ -708,7 +708,9 @@ func (s *SCSCF) registrationExpired(privateID string, expires time.Time) {
 		log.Warn("expiry of the registration not handled: the store failed; it stays until the UE registers again or the HSS ends it", "error", err.Error())
 		return
 	}
-	if !ok || !reg.Expires.Equal(expires) {
+	// Under the lock, the registration may have ended or been refreshed
+	// since its expiry came up.
+	if !ok || time.Now().Before(reg.Expires) {
 		return
 	}
 	log.Info("registration expired")

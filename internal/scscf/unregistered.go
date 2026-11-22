@@ -108,27 +108,37 @@ func (s *SCSCF) unregisteredProfile(st *sip.ServerTransaction, callee string, lo
 		s.storeFailed(st, err, log)
 		return UnregisteredProfile{}, false
 	}
-	s.unregisteredTimers.start(key(p.PrivateIdentity), s.cfg.UnregisteredProfileLifetime, func() { s.unregisteredProfileExpired(p) })
+	s.unregisteredTimers.start(key(p.PrivateIdentity), s.cfg.UnregisteredProfileLifetime, func() { s.unregisteredProfileExpired(p.PrivateIdentity) })
 	log.Info("took the profile of an unregistered callee", "callee", callee, "private_identity", p.PrivateIdentity,
 		"expires", int(s.cfg.UnregisteredProfileLifetime/time.Second))
 	return p, true
 }
 
-// unregisteredProfileExpired lets the profile p go and tells the HSS,
-// which then has the user not registered, with no S-CSCF (TS 29.228
-// 6.1.2.1). TS 29.229 6.3.15 names no Server-Assignment-Type for the
-// end of the unregistered state; TIMEOUT_DEREGISTRATION, the end of a
-// registration whose time is up, is the nearest.
-func (s *SCSCF) unregisteredProfileExpired(p UnregisteredProfile) {
+// unregisteredProfileExpired lets the profile of privateID go and tells
+// the HSS, which then has the user not registered, with no S-CSCF (TS
+// 29.228 6.1.2.1). TS 29.229 6.3.15 names no Server-Assignment-Type for
+// the end of the unregistered state; TIMEOUT_DEREGISTRATION, the end of
+// a registration whose time is up, is the nearest.
+func (s *SCSCF) unregisteredProfileExpired(privateID string) {
 	ctx := context.Background()
-	log := s.log.With("private_identity", p.PrivateIdentity)
-	unlock, err := s.users.Lock(ctx, p.PrivateIdentity)
+	log := s.log.With("private_identity", privateID)
+	unlock, err := s.users.Lock(ctx, privateID)
 	if err != nil {
 		log.Warn("the profile of an unregistered user is not let go: the lock of the user was not taken; the HSS keeps the user assigned to this S-CSCF", "error", err.Error())
 		return
 	}
 	defer unlock()
-	deleted, err := s.store.DeleteUnregisteredProfile(ctx, p.PrivateIdentity, p.Expires)
+	p, ok, err := s.store.UnregisteredProfile(ctx, privateID)
+	if err != nil {
+		log.Warn("the profile of an unregistered user is not let go: the store failed; the HSS keeps the user assigned to this S-CSCF", "error", err.Error())
+		return
+	}
+	// Under the lock, the profile may be gone, or a newer one may have
+	// taken its place, which has its own expiry.
+	if !ok || time.Now().Before(p.Expires) {
+		return
+	}
+	deleted, err := s.store.DeleteUnregisteredProfile(ctx, privateID, p.Expires)
 	if err != nil {
 		log.Warn("the profile of an unregistered user is not let go: the store failed; the HSS keeps the user assigned to this S-CSCF", "error", err.Error())
 		return
