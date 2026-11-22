@@ -238,23 +238,25 @@ UE B1 に届く INVITE の Contact は、IBCF-B の内側の名前 `sip:ibcf.ims
 
 Contact をいつも替えるわけではありません。TS 24.229 5.10.5 は、GRUU の Contact と、その URI で相手が何をできるかを示す機能タグを持つ Contact を、届いたまま渡すよう IBCF に求めています。例に挙がっているのは、会議のフォーカスのタグ `isfocus` です。その Contact の URI は会議の URI です。参加者はこの URI を覚えて会議の状態を購読し（TS 24.147 5.3.1.3.2）、この URI で会議に入り直します（5.10.5 の NOTE）。こうした Contact を渡すとき、IBCF は Record-Route に自分の URI を入れます。相手が会議の URI に送る要求が、IBCF を通るようにするためです。
 
-それでも IBCF は B2BUA のままです。網 A のフォーカスが網 B の利用者を招く場合で見ます。
+それでも IBCF は B2BUA のままです。網 A のフォーカスが網 B の利用者を招く場合で見ます。フォーカスは自分が受け持つ PSI である会議の URI の代わりに、`orig` を付けて網 A の S-CSCF へ INVITE を送ります。S-CSCF は HSS から受け取った PSI ユーザーのプロファイルでこの PSI を担当し、UE A1 の発信と同じように INVITE の送り先を決めます。ENUM で番号が網 B の SIP URI になるので、INVITE は IBCF-A から出ていきます（[フォーカスが相手を招く方法](mrf.md#フォーカスが相手を招く方法)）。
 
 ```text
-フォーカス（MMTel AS）  IBCF-A ║ IBCF-B   UE B1
-  | INVITE              |   ║   |        |
-  | Contact: <conf>;isfocus  ║   |        |
-  |-------------------->|==========>|------->|  どの INVITE も Contact: <conf>;isfocus
-  |                     | Record-Route:     |  Record-Route は網のあいだで IBCF-A、網 B で IBCF-B
-  |                     |   ║   |        |
-  |   SUBSCRIBE sip:conf（ダイアログの中）     |
-  |<--------------------|<==========|<-------|
-  |   NOTIFY            |   ║   |        |
-  |-------------------->|==========>|------->|
+フォーカス（MMTel AS）  S-CSCF-A   IBCF-A ║ IBCF-B   UE B1
+  | INVITE tel:+12025550151 |    ║   |        |
+  | Route: <S-CSCF-A;lr;orig>    ║   |        |
+  | Contact: <conf>;isfocus |    ║   |        |
+  |---------------->|       |    ║   |        |  P-Asserted-Identity: <conf>、S-CSCF が担当する PSI
+  |                 |------>|==========>|------->|  どの INVITE も Contact: <conf>;isfocus
+  |                 |       | Record-Route:     |  Record-Route は網のあいだで IBCF-A、網 B で IBCF-B
+  |                 |       |    ║   |        |
+  |   SUBSCRIBE sip:conf（ダイアログの中）        |
+  |<----------------|<------|<==========|<-------|
+  |   NOTIFY        |       |    ║   |        |
+  |---------------->|------>|==========>|------->|
 ```
 
 - 網のあいだの INVITE も、UE B1 に届く INVITE も、Contact に `isfocus` 付きの会議の URI を持ちます。UE B1 は、自分が入った会議の URI を知ります。
-- 各 IBCF は Record-Route に自分の名前を入れます。IBCF-A は網のあいだで外側の名前を、IBCF-B は網 B の中で内側の名前を入れます。網のあいだの Record-Route は、これだけです。
+- 各 IBCF は Record-Route に自分の名前を入れます。IBCF-A は網のあいだで外側の名前を、IBCF-B は網 B の中で内側の名前を入れます。網のあいだの Record-Route は、これだけです。網 A の中では S-CSCF-A も Record-Route に入るので、IBCF-A とフォーカスのあいだのダイアログの中の要求は S-CSCF-A を通ります。
 - UE B1 がダイアログの中で送る要求は、Request-URI が会議の URI で、Route に IBCF-B があります。IBCF-B は、呼のほかの要求と同じく、網 B とのダイアログでこれを受け止めます。そして IBCF-A とのダイアログで、会議の URI に宛てた自分の要求を送ります。IBCF-A も、フォーカスに向けて同じことをします。
 - フォーカスから見た UE B1 の側の Contact は、IBCF-A の内側の名前のままです。UE B1 の Contact にはそうしたタグが無いので、IBCF-A が替えます。
 
@@ -264,7 +266,7 @@ Contact をいつも替えるわけではありません。TS 24.229 5.10.5 は�
 
 IBCF は、その URI の中を何も隠しません。フォーカスが書いたものが、そのまま相手網に見えます。このプロジェクトの MMTel AS は、会議の URI をホームドメインのサブドメイン `conf.ims.mnc001.mcc001.3gppnetwork.org` に作ります。このサブドメインはノードの名前ではないので、会議の URI が網 B に網 A のノードの名前を見せることはありません。
 
-参加者は、まずダイアログの外で、会議の URI に SUBSCRIBE を送ります（TS 24.147 5.3.1.2）。これは境界を越えません。参加者の網の IBCF が、自分で 403（Forbidden）を返します。5.10.1 は、局所的な方針で要求を断ることを IBCF に認めています（最後の節を見てください）。403 を受けた参加者は、TS 24.147 5.3.1.2 のとおり、会議のセッションのダイアログの中で SUBSCRIBE を送り直します。こちらは、取り決めが SUBSCRIBE と NOTIFY を許していれば、呼のほかの要求と同じく境界を越えます。取り決めに SUBSCRIBE が無ければ、IBCF はどちらにも 405（Method Not Allowed）を返します。取り決めの外のほかのメソッドと同じです。スクリプトには、境界を越える会議の場面はありません。`internal/ibcf` の試験が、1 つのプロセスの中で両方の向きを動かします（`TestConferenceFocusAcrossTheBorder`、`TestConferenceFocusAnswersAcrossTheBorder`）。
+参加者は、まずダイアログの外で、会議の URI に SUBSCRIBE を送ります（TS 24.147 5.3.1.2）。これは境界を越えません。参加者の網の IBCF が、自分で 403（Forbidden）を返します。5.10.1 は、局所的な方針で要求を断ることを IBCF に認めています（最後の節を見てください）。403 を受けた参加者は、TS 24.147 5.3.1.2 のとおり、会議のセッションのダイアログの中で SUBSCRIBE を送り直します。こちらは、取り決めが SUBSCRIBE と NOTIFY を許していれば、呼のほかの要求と同じく境界を越えます。取り決めに SUBSCRIBE が無ければ、IBCF はどちらにも 405（Method Not Allowed）を返します。取り決めの外のほかのメソッドと同じです。スクリプトには、境界を越える会議の場面はありません。`internal/ibcf` の試験が、1 つのプロセスの中で両方の向きを動かします（`TestConferenceFocusAcrossTheBorder`、`TestConferenceFocusAnswersAcrossTheBorder`）。`internal/mmtel` の `TestConferenceInvitesAUserOfAnotherNetwork` は、このプロジェクトのフォーカスと網 A の S-CSCF を 1 つのプロセスで動かし、網 B の利用者には IBCF-A の代わりに UA を置きます。UE A1 がその利用者との通話と網 A の利用者との通話を 1 つの会議にまとめ、3 人が互いの声を聞きます。
 
 IBCF は会議の状態も読みません。会議の状態は NOTIFY の本文で運ばれます。TS 24.229 5.10.6.3 は、メディアのアドレスを変換するときに SDP を書き換えるよう IBCF に求め、ほかの本文の扱いは局所的な方針に任せています。例に挙がっているのは、そのまま渡すこと、本文を取り除くこと、要求を断ることです。このプロジェクトの IBCF は SDP 以外の本文をそのまま渡します。そのため、網 B に何が見えるかはフォーカスが決めます。RFC 4575 5.7 は `<endpoint>` ごとのキーをフォーカスが作るとし、例として Contact と GRUU を挙げています。網 A のフォーカスが参加者の Contact として持っているのは、網 A の UE のアドレスです。網 B の参加者では、参加者の Contact の代わりに IBCF-A が入れた、IBCF-A の内部の名前です。そこで、このプロジェクトの MMTel AS は `<endpoint>` を Contact ではなく `urn:uuid:` の URI で名付けます。会議の状態には、網 A のアドレスもノードの名前も載りません。`internal/ibcf` の `TestConferenceStateAcrossTheBorder` が、このプロジェクトの会議の AS を網 A のフォーカスにして、これを確かめます。
 

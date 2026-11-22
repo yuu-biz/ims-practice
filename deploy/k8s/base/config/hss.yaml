@@ -129,6 +129,15 @@ hss:
         amf: "3030"
         sqn: "000000000000"
       ut_password: test-password-11
+  # The PSI user of the conference URIs, which the MMTel AS hosts in the
+  # subdomain conf (mmtel.yaml): one wildcarded PSI for all of them,
+  # whose part between the two "!" is a regular expression (TS 23.003
+  # 13.5), and a private service identity, which only ties them to Cx
+  # (13.5A). When the focus invites a user on behalf of a conference,
+  # the S-CSCF takes this profile with a SAR (TS 23.228 5.4.12.5).
+  psi_users:
+    - private_identity: conference@ims.mnc001.mcc001.3gppnetwork.org
+      wildcarded_psi: sip:!.*!@conf.ims.mnc001.mcc001.3gppnetwork.org
   # The first MMTelServices document of every subscription (TS 29.364
   # 7.2), kept as Sh repository data that the MMTel AS reads and the
   # user changes over Ut. Each service is in the state it starts

@@ -25,8 +25,10 @@ import (
 // SIMPLIFIED: TS 24.229 5.3.2.1, 5.3.2.1A and 5.3.2.2. The "orig"
 // routing for an application server that acts on behalf of a user, and
 // the choice of another S-CSCF when the chosen one does not answer, are
-// left out. No service of this project sends on behalf of a user, and
-// this network has no redundant S-CSCF to choose.
+// left out. The one application server of this project that sends on
+// behalf of someone, the conference focus on behalf of a conference
+// URI, sends to the S-CSCF, not to the I-CSCF, and this network has no
+// redundant S-CSCF to choose.
 //
 // SIMPLIFIED: TS 24.229 5.3.2.1. The I-CSCF does not check whether a
 // request comes from a trusted domain, so it never removes

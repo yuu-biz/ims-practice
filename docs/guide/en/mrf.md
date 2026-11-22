@@ -185,6 +185,31 @@ phone1 has two answered calls and presses **Merge**. It creates a conference at 
 - **A participant that asks for privacy is in the state without its identity.** A focus must take such a request and reveal the identity in no URI of the document (RFC 4575 8.2). A user asks for it with the Privacy header field (RFC 3323 4.2): the values `id` and `user` make the user anonymous to an AS (TS 24.229 5.7.1.4), and they are how a user's identity restriction reaches the focus, OIR for one that creates a conference or dials in (TS 24.605 4.6.5) and TIR for one that the focus invites, which asks for it in its 2xx (4.6.3). The `entity` of that participant is then `sip:anonymous1@anonymous.invalid`, with the display text `Anonymous1`, and each further one gets a higher number, which the focus never gives again. This is the convention of RFC 4575 5.6: the host is in the `.invalid` top level domain that RFC 2606 2 reserves, which no DNS resolves, and the user part makes the URI unique among the participants. The participant is a user of the state like any other, with an endpoint and a status of its own, so the others see that someone is there and not who. `Privacy: header`, which hides how the network is built rather than who the user is, leaves the identity in the state. A participant that asks for privacy with `user` also keeps its identity out of the invitation it asks for: the focus sends the INVITE to the referred user without the Referred-By of the REFER, which would name it (TS 24.605 4.6.5). The identity stays with the focus: it is in no NOTIFY, and the focus still knows which subscriber is which participant. `TestPrivacyKeepsTheIdentityOutOfTheConferenceState` in `internal/mmtel` tries all three ways into a conference. The phones of this scenario ask for no privacy, so the capture shows each of them by its identity.
 - **The conference ends with its creator** (TS 24.147 5.3.2.7): when phone1 hangs up, the AS sends BYE to phone2 and phone3 and to the MRFC for each party.
 
+## How the focus invites a peer
+
+The INVITE that brings phone2 in (#7712 above) does not go straight from the AS to phone2. The focus sends it to the S-CSCF, which routes it as it routes a call of a user:
+
+```text
+focus    S-CSCF   HSS      I-CSCF   MMTel AS  P-CSCF   phone2
+                                    services
+ |        |        |        |        |         |        |  INVITE tel:+12025550102 with Replaces, Route: <sip:scscf...;lr;orig>,
+ |        |        |        |        |         |        |  P-Asserted-Identity: <sip:conf-o47ha7ifxyni@conf...>
+ |------->|        |        |        |         |        |
+ |        |------->|        |        |         |        |  SAR UNREGISTERED_USER, sip:conf-o47ha7ifxyni@conf...
+ |        |<-------|        |        |         |        |  SAA, the profile of the PSI user, with no iFCs
+ |        |---------------->|        |         |        |  INVITE sip:+12025550102@ims...;user=phone, from ENUM
+ |        |<----------------|        |         |        |  after the LIR: to the S-CSCF of phone2
+ |        |------------------------->|         |        |  P-Served-User: phone2;sescase=term
+ |        |<-------------------------|         |        |  the INVITE of the B2BUA
+ |        |----------------------------------->|        |
+ |        |        |        |        |         |------->|  INVITE, Contact: <sip:conf-o47ha7ifxyni@conf...>;isfocus
+```
+
+- **The focus is an originating UA on behalf of the conference URI** (TS 24.147 5.3.2.2.1, TS 24.229 5.7.3). The conference URI is a PSI that the AS hosts. It is in P-Asserted-Identity, where TS 24.147 5.3.2.5.4 step 2 puts it, and it is also the identity that the S-CSCF serves. The AS does not route the INVITE itself: it puts the S-CSCF on top of Route with the `orig` parameter. That S-CSCF is the one that brought phone1's INVITE to the factory URI.
+- **`orig` makes the S-CSCF serve the caller** (TS 24.229 5.4.3.1), as the user part `orig` of a UE's Service-Route does. The caller here is the conference URI, which has no registration. The S-CSCF takes its profile from the HSS with a SAR of `UNREGISTERED_USER`, as for an application server that sends on behalf of a user who is not registered (TS 24.229 5.4.3.2, NOTE 24), and evaluates the iFCs of `ORIGINATING_UNREGISTERED`.
+- **The HSS keeps all the conference URIs as one PSI user** (TS 23.228 5.4.12.4): the wildcarded PSI `sip:!.*!@conf.ims.mnc001.mcc001.3gppnetwork.org`, whose part between the two `!` is a regular expression, and the private service identity `conference@ims.mnc001.mcc001.3gppnetwork.org`, which only ties the PSIs to Cx (TS 23.003 13.5 and 13.5A; `psi_users` in `deploy/compose/hss.yaml`). The profile in the SAA names the conference URI with `IdentityType` 2 (`WILDCARDED_PSI`) and the wildcarded PSI it matched (TS 29.228 B.2.1), and has no iFCs. The S-CSCF keeps it for a few minutes, so that the next invitation to the same conference needs no SAR.
+- **From there the INVITE goes as phone1's calls go** (TS 23.228 5.4.12.5 c). ENUM turns the number into a SIP URI (TS 24.229 5.4.3.2 step 10), the S-CSCF puts itself in Record-Route, and the I-CSCF finds the S-CSCF of phone2. That is the same S-CSCF: it now serves phone2, and gives the INVITE to the MMTel AS for phone2's terminating services. For a number of another network, the S-CSCF sends the INVITE to the IBCF instead ([A conference across the border](interconnect.md#a-conference-across-the-border)).
+
 ## Coming back to the conference
 
 A participant that has left can come back while the conference goes on. It sends an INVITE to the conference URI, which it has from the Contact of the focus (TS 24.147 5.3.1.4.1). Say phone2 hangs up, and then calls the conference URI:
@@ -237,10 +262,11 @@ The script does not run this. `TestRejoinWithTheConferenceURI` in `internal/mmte
 | `internal/mmtel/cat.go`, `internal/mmtel/catdata.go` | CAT at the terminating AS, and its data in the HSS. |
 | `internal/mmtel/waiting.go` | CW at the AS. |
 | `internal/mmtel/conference.go`, `internal/mmtel/conferenceevent.go` | The focus and the conference event package. |
+| `internal/scscf/session.go`, `internal/scscf/unregistered.go`, `internal/hss/psi.go` | The S-CSCF that serves a request on behalf of the conference URI, and the PSI user of the HSS. |
 | `internal/mrfc`, `internal/netann` | The MRFC and the Request-URIs of RFC 4240. |
 | `internal/agw` | The MRFP: terminations, announcements and the mixer, and its control API. |
 | `internal/ue/phone_conference.go`, `internal/ue/conference.go` | Swap, Merge and the UE side of a conference. |
-| `internal/mmtel/mrf_network_test.go`, `internal/mmtel/conference_network_test.go` | The same flows through the whole IMS in one process. |
+| `internal/mmtel/mrf_network_test.go`, `internal/mmtel/conference_network_test.go`, `internal/mmtel/conference_border_test.go` | The same flows through the whole IMS in one process, the last with a peer of another network. |
 
 ## What this project simplifies
 
@@ -262,7 +288,7 @@ Each item has a `SIMPLIFIED:` comment in the code; `grep -rn "SIMPLIFIED:" inter
 | AS, TS 24.147 5.3.2.3.1 step 2 and TS 24.229 5.7.1.4 and 5.7.1.5 | Every served user may create a conference; no conference policy, no charging addresses. | There is no conference policy server, and no node of this project writes charging records. |
 | AS, TS 24.147 5.3.2.4.1 step 2 and TS 24.229 5.7.1.4 and 5.7.1.5 | The focus takes the P-Asserted-Identity of the INVITE as the user's identity, as it takes the identity that the S-CSCF asserts for the creator, and checks nothing more. It does not check that the INVITE came from a node of the trust domain (TS 24.229 5.7.1.4 b i, RFC 3325 8). Any user may join a conference that has room. An INVITE that asks for no privacy and has no P-Asserted-Identity gets 403, without a challenge. | There is no conference policy, and the AS holds no credentials of users. In the networks of this project, every request reaches the focus with the identity that a P-CSCF or a trusted peer network asserted. |
 | AS, TS 24.605 4.6.5 and 4.6.3 | The focus goes by the Privacy header field of the signalling alone, and looks up no OIR or TIR of its own. A creator whose OIR is in the permanent mode, and whose INVITE carries no Privacy, is named by its identity in the conference state. | The AS is both the creator's own AS and the focus, and takes the INVITE to the conference factory URI as the conference instead of passing it through the creator's originating services, which would have added `id` to its Privacy. A focus that is an application server of its own gets that INVITE after those services and reads the privacy there. |
-| AS, TS 24.229 5.7.3 NOTE 8 | The S-CSCF of an invited user is taken to be the AS's own. | The configuration names one S-CSCF, which serves every user of the network. When it runs as several instances, they share one name and keep the registrations in one store. |
+| AS, TS 24.229 5.7.3 NOTE 4 | The S-CSCF that hosts the conference URI is taken to be the one of the creator's INVITE, not asked of the HSS over Sh. | The configuration names one S-CSCF, which serves every user and PSI of the network. When it runs as several instances, they share one name and keep their state in one store. |
 | AS, TS 24.147 5.3.2.6.2.2 | A REFER that asks the focus to remove a participant (method BYE) is refused with 403. | IR.92 2.3.3 does not ask for it. |
 | AS, RFC 4575 3.9 | Each change is notified at once, not at most once in 5 seconds. | IR.92 2.3.3 asks for notifications within 5 seconds, and a small conference changes seldom. |
 | AS, TS 24.147 5.3.3.2 step 2 and RFC 4575 3.5 | Every subscriber whose identity the network asserts may subscribe. | There is no conference policy. |
