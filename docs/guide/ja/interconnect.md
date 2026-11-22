@@ -203,10 +203,10 @@ UE B1 から UE A2 への折り返しも、網の役割を入れ替えるだけ�
 | キャプチャ | 見えるもの | 見えてはいけないもの |
 | --- | --- | --- |
 | `captures/ims-*.pcap`（網 A） | 網 B の番号の ENUM、IBCF を Route に入れた S-CSCF から IBCF-A への INVITE、IBCF-A が中継する網 B のメッセージ | 172.28.1.0/24 のアドレスと、網 B のノードのホスト名 |
-| `captures/nni/ims-*.pcap`（網のあいだ） | 2 つの IBCF と 2 つの TrGW だけ。IBCF の外側の名前を持つ 1 つの Via と Contact。IBCF が作った Call-ID。網のあいだの TrGW のアドレスを持つ SDP。TrGW どうしの RTP | どちらの網の中のアドレスも、ノードのホスト名も、Record-Route も |
-| `captures/peer/ims-*.pcap`（網 B） | IBCF-B から I-CSCF への INVITE とその先、tel URI、TrGW-B を指す SDP | 172.28.0.0/24 のアドレスと、網 A のノードのホスト名 |
+| `captures/nni/ims-*.pcap`（網のあいだ） | 2 つの IBCF と 2 つの TrGW だけ。IBCF の外側の名前を持つ 1 つの Via と Contact。IBCF が作った Call-ID。網のあいだの TrGW のアドレスを持つ SDP。TrGW どうしの RTP | どちらの網の中のアドレスも、ノードのホスト名も、網 A の IMSI から作った識別子も、Record-Route も |
+| `captures/peer/ims-*.pcap`（網 B） | IBCF-B から I-CSCF への INVITE とその先、tel URI、TrGW-B を指す SDP | 172.28.0.0/24 のアドレス、網 A のノードのホスト名、網 A の IMSI から作った識別子 |
 
-これがトポロジーの秘匿の確認です。相手網のキャプチャに、自網の中のアドレスが現れてはいけません。スクリプトは、IP のヘッダとフレームの全体からアドレスを探します。また、相手網のドメインの前に `pcscf`、`scscf`、`icscf`、`mmtel`、`agw`、`ipsmgw`、`hss`、`ibcf`、`trgw` などのノードの名前が付いていないかも探します。
+これがトポロジーの秘匿の確認です。相手網のキャプチャに、自網の中のアドレスが現れてはいけません。スクリプトは、IP のヘッダとフレームの全体からアドレスを探します。また、相手網のドメインの前に `pcscf`、`scscf`、`icscf`、`mmtel`、`agw`、`ipsmgw`、`hss`、`ibcf`、`trgw` などのノードの名前が付いていないかも探します。網 B のキャプチャと網のあいだのキャプチャからは、網 A の IMSI で始まるユーザー部も探し、1 つも見つかりません。
 
 自網の名前のうち、相手網に見えてよいものもあります。ドメインそのものは、利用者の識別子に現れます。たとえば From と P-Asserted-Identity の `sip:+12025550101@ims.mnc001.mcc001.3gppnetwork.org` です。網をまたぐのは、利用者の番号の識別子です。相手網は、折り返すためにこれが要ります。番号とドメインからは、網の中のノードも IMSI も分かりません。
 
