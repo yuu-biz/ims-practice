@@ -450,7 +450,7 @@ func trafficFlowTemplate(rules []PCCRule) (TrafficFlowTemplate, error) {
 // then fails as if the UE had rejected it.
 func (e *EPC) carryOut(ctx context.Context, fx effects) {
 	for _, m := range fx.toUE {
-		err := e.streams.send(fx.imsi, m.name, m.message)
+		err := e.streams.Send(fx.imsi, m.name, m.message)
 		if err == nil {
 			e.log.Info("sent to UE", "imsi", fx.imsi, "message", string(m.name))
 			continue

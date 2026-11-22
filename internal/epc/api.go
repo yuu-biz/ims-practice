@@ -5,6 +5,8 @@ import (
 	"net/netip"
 	"strconv"
 	"strings"
+
+	"github.com/yuu-biz/ims-practice/internal/accessapi"
 )
 
 // This file is the API between a UE and the EPC stub: JSON messages
@@ -15,15 +17,17 @@ import (
 //
 // SIMPLIFIED: TS 24.301 and TS 36.413. There is no NAS encoding, no
 // S1-AP and no radio: the messages travel as HTTP and JSON over the one
-// Docker network, and the IMSI in the URL stands for the S1 connection
-// that tells the MME which UE a message is from. Security, GUTI,
+// Docker network, and the IMSI in the URL stands for the UE-associated
+// connection (S1-MME) that tells the MME which UE a message is from. Security, GUTI,
 // tracking area updates and the timers of the network side (T3450,
 // T3485, T3495) are left out; a learner reads the procedures, not the
 // encoding. Real NAS can stand behind the same UE interface.
 
-// MessageType is the name of a message as TS 24.301 8.2 and 8.3 head
-// it. On the event stream it is the event name.
-type MessageType string
+// MessageType is the name of a message, the shared type of accessapi.
+// The constants below are the names with which TS 24.301 8.2 and 8.3
+// head the messages of this stub. On the event stream it is the event
+// name.
+type MessageType = accessapi.MessageType
 
 const (
 	TypeAttachRequest                            MessageType = "ATTACH REQUEST"                                // 8.2.4
@@ -40,17 +44,15 @@ const (
 
 // Path is where a UE posts a message of type t, such as
 // /ues/001010000000001/attach-request.
-func Path(imsi string, t MessageType) string {
-	return "/ues/" + imsi + "/" + strings.ReplaceAll(strings.ToLower(string(t)), " ", "-")
-}
+func Path(imsi string, t MessageType) string { return accessapi.Path(imsi, t) }
 
 // EventsPath is the event stream of a UE: Server-Sent Events whose name
 // is a MessageType and whose data is the message as JSON.
-func EventsPath(imsi string) string { return "/ues/" + imsi + "/events" }
+func EventsPath(imsi string) string { return accessapi.EventsPath(imsi) }
 
 // SystemInformationPath is where a UE reads the identity of the cell it
 // camps on.
-const SystemInformationPath = "/system-information"
+const SystemInformationPath = accessapi.SystemInformationPath
 
 // AttachRequest is ATTACH REQUEST (TS 24.301 8.2.4), which carries the
 // UE's PDN CONNECTIVITY REQUEST for the IMS APN in its ESM message
