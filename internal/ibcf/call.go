@@ -259,7 +259,7 @@ func errText(err error) string {
 // the IBCF; that is the offer of the INVITE, or the offer in a
 // response when the INVITE has none.
 func (c *call) throughTrGW(m *sip.Message, d interconnect.Direction) error {
-	if !hasSDP(m) {
+	if !sip.HasSessionDescription(m) {
 		return nil
 	}
 	c.mediaMu.Lock()
@@ -422,7 +422,7 @@ func (c *call) relayProvisional(out *sip.OutgoingCall, resp *sip.Message) {
 // dialog of out gave the caller one already (sessionFrom). It notes
 // the session description of resp for its dialog.
 func (c *call) fromCallerSession(resp *sip.Message) *sip.Message {
-	if !hasSDP(resp) {
+	if !sip.HasSessionDescription(resp) {
 		return resp
 	}
 	tag := toTag(resp)
@@ -462,7 +462,7 @@ func (c *call) answerFrom(resp *sip.Message) *sip.Message {
 	if from == "" || from == tag {
 		return resp
 	}
-	if hasSDP(resp) {
+	if sip.HasSessionDescription(resp) {
 		kept = resp
 	}
 	if kept != nil {

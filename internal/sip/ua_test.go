@@ -743,3 +743,27 @@ func TestCloseWaitsForWhatTheUARunsByItself(t *testing.T) {
 		t.Errorf("the UA logged after Close had returned:\n%s", strings.Join(log.late, ""))
 	}
 }
+
+// Only a body of type application/sdp is a session description, an
+// offer or an answer (RFC 3261 13.2.1); the media type is not case
+// sensitive and may have parameters (RFC 3261 7.3.1, 20.15).
+func TestHasSessionDescription(t *testing.T) {
+	for _, c := range []struct {
+		contentType, body string
+		want              bool
+	}{
+		{"application/sdp", "v=0\r\n", true},
+		{"Application/SDP; charset=utf-8", "v=0\r\n", true},
+		{"application/sdp", "", false},
+		{"", "v=0\r\n", false},
+		{"application/dtmf-relay", "Signal=5\r\n", false},
+	} {
+		m := &Message{Body: []byte(c.body)}
+		if c.contentType != "" {
+			m.Set("Content-Type", c.contentType)
+		}
+		if got := HasSessionDescription(m); got != c.want {
+			t.Errorf("Content-Type %q with %d bytes of body: got %t, want %t", c.contentType, len(c.body), got, c.want)
+		}
+	}
+}

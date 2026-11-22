@@ -232,7 +232,7 @@ func (p *PCSCF) subsequent(st *sip.ServerTransaction, out *sip.Message, log *slo
 		}
 	}
 	answer := func(*sip.Message) {}
-	if known && hasSDP(out) {
+	if known && sip.HasSessionDescription(out) {
 		ue := st.Source.Addr.Addr()
 		if toUE {
 			ue = dst.Addr.Addr()
@@ -289,7 +289,7 @@ func (p *PCSCF) renegotiate(out *sip.Message, d Dialog, toUE bool, ue netip.Addr
 	offer := ueSide(received, out.Body, toUE)
 	authorized := false
 	return func(resp *sip.Message) {
-		if resp.StatusCode >= 300 || !hasSDP(resp) {
+		if resp.StatusCode >= 300 || !sip.HasSessionDescription(resp) {
 			return
 		}
 		received := resp.Body
@@ -313,13 +313,6 @@ func (p *PCSCF) renegotiate(out *sip.Message, d Dialog, toUE bool, ue netip.Addr
 		}
 		log.Info("changed media authorised", "policy_session", string(d.PolicySession))
 	}
-}
-
-// hasSDP reports whether the body of m is a session description (RFC
-// 3261 13.2.1): only then is it an offer or an answer.
-func hasSDP(m *sip.Message) bool {
-	mediaType, _, _ := strings.Cut(m.Get("Content-Type"), ";")
-	return len(m.Body) > 0 && strings.EqualFold(strings.TrimSpace(mediaType), "application/sdp")
 }
 
 // byeEndsDialog is RFC 3261 15.1.1 as a proxy sees it: the dialog ends
