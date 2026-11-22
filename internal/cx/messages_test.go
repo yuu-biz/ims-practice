@@ -47,7 +47,7 @@ func wire(t *testing.T, m *diam.Message) *diam.Message {
 	return got
 }
 
-var header = Header{SessionID: icscfH + ";1;2", OriginHost: icscfH, OriginRealm: realm, DestinationRealm: realm}
+var header = diameter.Header{SessionID: icscfH + ";1;2", OriginHost: icscfH, OriginRealm: realm, DestinationRealm: realm}
 
 func TestUserAuthorizationRoundTrip(t *testing.T) {
 	uar := UserAuthorizationRequest{Header: header, UserName: impi, PublicIdentity: impu,
@@ -61,7 +61,7 @@ func TestUserAuthorizationRoundTrip(t *testing.T) {
 		t.Errorf("UAR\n got %+v\nwant %+v", got, uar)
 	}
 
-	uaa := UserAuthorizationAnswer{Result: Experimental(DiameterFirstRegistration),
+	uaa := UserAuthorizationAnswer{Result: diameter.Experimental(DiameterFirstRegistration),
 		ServerCapabilities: &ServerCapabilities{MandatoryCapabilities: []uint32{1}, ServerNames: []string{scscf}}}
 	ans := wire(t, uaa.Message(req, hss))
 	if ans.Header.HopByHopID != req.Header.HopByHopID || ans.Header.CommandFlags&diam.RequestFlag != 0 {
@@ -93,7 +93,7 @@ func TestMultimediaAuthRoundTrip(t *testing.T) {
 		t.Errorf("MAR\n got %+v\nwant %+v", got, mar)
 	}
 
-	maa := MultimediaAuthAnswer{Result: Base(DiameterSuccess), UserName: impi, PublicIdentity: impu,
+	maa := MultimediaAuthAnswer{Result: diameter.Base(diameter.DiameterSuccess), UserName: impi, PublicIdentity: impu,
 		SIPAuthenticationScheme: SchemeSIPDigest,
 		SIPDigestAuthenticate: &SIPDigestAuthenticate{DigestRealm: realm, DigestAlgorithm: "MD5",
 			DigestQoP: "auth", DigestHA1: "939e7578ed9e3c518a452acee763bce9"}}
@@ -129,7 +129,7 @@ func TestMultimediaAuthRoundTripForAKA(t *testing.T) {
 		t.Errorf("MAR\n got %+v\nwant %+v", got, mar)
 	}
 
-	maa := MultimediaAuthAnswer{Result: Base(DiameterSuccess), UserName: impi, PublicIdentity: impu,
+	maa := MultimediaAuthAnswer{Result: diameter.Base(diameter.DiameterSuccess), UserName: impi, PublicIdentity: impu,
 		SIPAuthenticationScheme: SchemeDigestAKAv1MD5, AuthenticationVector: &akaVector}
 	gotA, err := ParseMultimediaAuthAnswer(wire(t, maa.Message(req, hss)))
 	if err != nil {
@@ -151,7 +151,7 @@ func TestAKAItemsOnTheWire(t *testing.T) {
 		t.Errorf("MAR SIP-Auth-Data-Item = %v, want SIP-Authentication-Scheme and a 30-octet SIP-Authorization", got)
 	}
 
-	ans := wire(t, MultimediaAuthAnswer{Result: Base(DiameterSuccess), UserName: impi, PublicIdentity: impu,
+	ans := wire(t, MultimediaAuthAnswer{Result: diameter.Base(diameter.DiameterSuccess), UserName: impi, PublicIdentity: impu,
 		SIPAuthenticationScheme: SchemeDigestAKAv1MD5, AuthenticationVector: &akaVector}.Message(req, hss))
 	want := []itemAVP{{613, 4}, {608, 16}, {609, 32}, {610, 8}, {625, 16}, {626, 16}}
 	if got := itemAVPs(t, ans); !reflect.DeepEqual(got, want) {
@@ -183,11 +183,11 @@ func itemAVPs(t *testing.T, m *diam.Message) []itemAVP {
 }
 
 func TestParseMultimediaAuthRequestRefusesShortSIPAuthorization(t *testing.T) {
-	m := newRequest(CommandMultimediaAuth)
-	header.begin(m)
-	m.AddAVP(vendorAVP(avpSIPAuthDataItem, mv, &diam.GroupedAVP{AVP: []*diam.AVP{
-		vendorAVP(avpSIPAuthenticationScheme, mv, datatype.UTF8String(SchemeDigestAKAv1MD5)),
-		vendorAVP(avpSIPAuthorization, mv, datatype.OctetString(make([]byte, 29))),
+	m := diameter.NewRequest(diameter.ApplicationIDCx, CommandMultimediaAuth)
+	begin(m, header)
+	m.AddAVP(diameter.VendorAVP(avpSIPAuthDataItem, mv, &diam.GroupedAVP{AVP: []*diam.AVP{
+		diameter.VendorAVP(avpSIPAuthenticationScheme, mv, datatype.UTF8String(SchemeDigestAKAv1MD5)),
+		diameter.VendorAVP(avpSIPAuthorization, mv, datatype.OctetString(make([]byte, 29))),
 	}}))
 	if _, err := ParseMultimediaAuthRequest(wire(t, m)); err == nil {
 		t.Fatal("a 29-octet SIP-Authorization was accepted")
@@ -206,7 +206,7 @@ func TestServerAssignmentRoundTrip(t *testing.T) {
 		t.Errorf("SAR\n got %+v\nwant %+v", got, sar)
 	}
 
-	saa := ServerAssignmentAnswer{Result: Base(DiameterSuccess), UserName: impi, UserData: []byte("<IMSSubscription/>")}
+	saa := ServerAssignmentAnswer{Result: diameter.Base(diameter.DiameterSuccess), UserName: impi, UserData: []byte("<IMSSubscription/>")}
 	gotA, err := ParseServerAssignmentAnswer(wire(t, saa.Message(req, hss)))
 	if err != nil {
 		t.Fatal(err)
@@ -217,7 +217,7 @@ func TestServerAssignmentRoundTrip(t *testing.T) {
 }
 
 func TestAVPFlagsFollowTS29229(t *testing.T) {
-	maa := MultimediaAuthAnswer{Result: Base(DiameterSuccess), UserName: impi, PublicIdentity: impu,
+	maa := MultimediaAuthAnswer{Result: diameter.Base(diameter.DiameterSuccess), UserName: impi, PublicIdentity: impu,
 		SIPAuthenticationScheme: SchemeSIPDigest,
 		SIPDigestAuthenticate:   &SIPDigestAuthenticate{DigestRealm: realm, DigestQoP: "auth", DigestHA1: "00"}}
 	m := wire(t, maa.Message(wire(t, MultimediaAuthRequest{Header: header}.Message()), hss))
@@ -326,7 +326,7 @@ func TestLocationInfoRoundTrip(t *testing.T) {
 	if !reflect.DeepEqual(got, lir) {
 		t.Errorf("LIR\n got %+v\nwant %+v", got, lir)
 	}
-	lia := LocationInfoAnswer{Result: Base(DiameterSuccess), ServerName: scscf}
+	lia := LocationInfoAnswer{Result: diameter.Base(diameter.DiameterSuccess), ServerName: scscf}
 	gotA, err := ParseLocationInfoAnswer(wire(t, lia.Message(req, hss)))
 	if err != nil {
 		t.Fatal(err)
@@ -338,7 +338,7 @@ func TestLocationInfoRoundTrip(t *testing.T) {
 
 func TestRegistrationTerminationRoundTrip(t *testing.T) {
 	rtr := RegistrationTerminationRequest{
-		Header:               Header{SessionID: hssID + ";1;3", OriginHost: hssID, OriginRealm: realm, DestinationHost: "scscf." + realm, DestinationRealm: realm},
+		Header:               diameter.Header{SessionID: hssID + ";1;3", OriginHost: hssID, OriginRealm: realm, DestinationHost: "scscf." + realm, DestinationRealm: realm},
 		UserName:             impi,
 		PublicIdentities:     []string{impu, "tel:+12025550101"},
 		DeregistrationReason: DeregistrationReason{ReasonCode: PermanentTermination, ReasonInfo: "subscription removed"},
@@ -369,7 +369,7 @@ func TestRegistrationTerminationRoundTrip(t *testing.T) {
 		t.Errorf("RTR without Public-Identity: %+v, %v", got, err)
 	}
 
-	rta := RegistrationTerminationAnswer{Result: Experimental(DiameterErrorUserUnknown)}
+	rta := RegistrationTerminationAnswer{Result: diameter.Experimental(DiameterErrorUserUnknown)}
 	ans := wire(t, rta.Message(req, diameter.Identity{OriginHost: "scscf." + realm, OriginRealm: realm}))
 	if ans.Header.HopByHopID != req.Header.HopByHopID || ans.Header.CommandFlags&diam.RequestFlag != 0 {
 		t.Errorf("RTA header %+v does not answer the RTR", ans.Header)

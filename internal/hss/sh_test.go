@@ -81,10 +81,10 @@ func (n shNetwork) request(t *testing.T, m *diam.Message) *diam.Message {
 	}
 }
 
-func (n shNetwork) udr(t *testing.T, id sh.UserIdentity, ref sh.DataReference, sets ...sh.IdentitySet) (cx.Result, *sh.ShData) {
+func (n shNetwork) udr(t *testing.T, id sh.UserIdentity, ref sh.DataReference, sets ...sh.IdentitySet) (diameter.Result, *sh.ShData) {
 	t.Helper()
 	a, err := sh.ParseUserDataAnswer(n.request(t, sh.UserDataRequest{
-		Header: cx.NewHeader(n.node, "", realm), UserIdentity: id,
+		Header: diameter.NewHeader(n.node, "", realm), UserIdentity: id,
 		DataReferences: []sh.DataReference{ref}, IdentitySets: sets,
 	}.Message()))
 	if err != nil {
@@ -100,10 +100,10 @@ func (n shNetwork) udr(t *testing.T, id sh.UserIdentity, ref sh.DataReference, s
 	return a.Result, &data
 }
 
-func (n shNetwork) pur(t *testing.T, id sh.UserIdentity, refs []sh.DataReference, data []byte) cx.Result {
+func (n shNetwork) pur(t *testing.T, id sh.UserIdentity, refs []sh.DataReference, data []byte) diameter.Result {
 	t.Helper()
 	a, err := sh.ParseProfileUpdateAnswer(n.request(t, sh.ProfileUpdateRequest{
-		Header: cx.NewHeader(n.node, "", realm), UserIdentity: id, DataReferences: refs, UserData: data,
+		Header: diameter.NewHeader(n.node, "", realm), UserIdentity: id, DataReferences: refs, UserData: data,
 	}.Message()))
 	if err != nil {
 		t.Fatal(err)
@@ -115,7 +115,7 @@ func smsRegistration(number string) []byte {
 	return sh.ShData{ShIMSData: &sh.ShIMSData{SMSRegistrationInfo: &sh.SMSRegistrationInfoData{IPSMGWNumber: number}}}.Marshal()
 }
 
-var success = cx.Base(cx.DiameterSuccess)
+var success = diameter.Base(diameter.DiameterSuccess)
 
 // The SC stub turns the TP-DA of a short message into the recipient's
 // public identities with this UDR.
@@ -205,38 +205,38 @@ func TestShErrors(t *testing.T) {
 	byMSISDN := sh.UserIdentity{MSISDN: msisdnA}
 	tests := []struct {
 		name string
-		got  func() cx.Result
-		want cx.Result
+		got  func() diameter.Result
+		want diameter.Result
 	}{
-		{"unknown MSISDN", func() cx.Result {
+		{"unknown MSISDN", func() diameter.Result {
 			r, _ := n.udr(t, sh.UserIdentity{MSISDN: "12025550188"}, sh.IMSPublicIdentity)
 			return r
-		}, cx.Experimental(cx.DiameterErrorUserUnknown)},
-		{"unknown public identity", func() cx.Result {
+		}, diameter.Experimental(cx.DiameterErrorUserUnknown)},
+		{"unknown public identity", func() diameter.Result {
 			r, _ := n.udr(t, sh.UserIdentity{PublicIdentity: "sip:nobody@" + realm}, sh.MSISDN)
 			return r
-		}, cx.Experimental(cx.DiameterErrorUserUnknown)},
+		}, diameter.Experimental(cx.DiameterErrorUserUnknown)},
 		// Table 7.6.1: an MSISDN is not a key of S-CSCFName (step 3).
-		{"S-CSCFName by MSISDN", func() cx.Result {
+		{"S-CSCFName by MSISDN", func() diameter.Result {
 			r, _ := n.udr(t, byMSISDN, sh.SCSCFName)
 			return r
-		}, cx.Experimental(sh.DiameterErrorOperationNotAllowed)},
+		}, diameter.Experimental(sh.DiameterErrorOperationNotAllowed)},
 		// InitialFilterCriteria (13) is not in the stub's permissions
 		// list (step 1).
-		{"data the stub does not serve", func() cx.Result {
+		{"data the stub does not serve", func() diameter.Result {
 			r, _ := n.udr(t, byMSISDN, sh.DataReference(13))
 			return r
-		}, cx.Experimental(sh.DiameterErrorUserDataCannotBeRead)},
+		}, diameter.Experimental(sh.DiameterErrorUserDataCannotBeRead)},
 		// Table 7.6.1 allows only Sh-Pull of IMSPublicIdentity.
-		{"update of read-only data", func() cx.Result {
+		{"update of read-only data", func() diameter.Result {
 			return n.pur(t, byMSISDN, []sh.DataReference{sh.IMSPublicIdentity}, smsRegistration(ipsmgwNumber))
-		}, cx.Experimental(sh.DiameterErrorUserDataCannotBeModified)},
-		{"update without SMSRegistrationInfo", func() cx.Result {
+		}, diameter.Experimental(sh.DiameterErrorUserDataCannotBeModified)},
+		{"update without SMSRegistrationInfo", func() diameter.Result {
 			return n.pur(t, byMSISDN, []sh.DataReference{sh.SMSRegistrationInfo}, sh.ShData{}.Marshal())
-		}, cx.Base(cx.DiameterUnableToComply)},
-		{"two data references without Update-Eff-Enhance", func() cx.Result {
+		}, diameter.Base(diameter.DiameterUnableToComply)},
+		{"two data references without Update-Eff-Enhance", func() diameter.Result {
 			return n.pur(t, byMSISDN, []sh.DataReference{sh.SMSRegistrationInfo, sh.SMSRegistrationInfo}, smsRegistration(ipsmgwNumber))
-		}, cx.Base(cx.DiameterUnableToComply)},
+		}, diameter.Base(diameter.DiameterUnableToComply)},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -307,7 +307,7 @@ func TestShClientAgainstTheHSS(t *testing.T) {
 		t.Errorf("SMSRegistrationInfo = %+v, %v", data, err)
 	}
 	var re *sh.ResultError
-	if _, err := c.PublicIdentities(ctx, "12025550188"); !errors.As(err, &re) || re.Result != cx.Experimental(cx.DiameterErrorUserUnknown) {
+	if _, err := c.PublicIdentities(ctx, "12025550188"); !errors.As(err, &re) || re.Result != diameter.Experimental(cx.DiameterErrorUserUnknown) {
 		t.Errorf("unknown MSISDN: %v", err)
 	}
 }
@@ -316,10 +316,10 @@ const mmtelServices = "MMTEL-Services"
 
 // readRepository reads the repository data of id under serviceIndication
 // with a UDR.
-func (n shNetwork) readRepository(t *testing.T, id sh.UserIdentity, serviceIndication string) (cx.Result, []sh.TransparentData) {
+func (n shNetwork) readRepository(t *testing.T, id sh.UserIdentity, serviceIndication string) (diameter.Result, []sh.TransparentData) {
 	t.Helper()
 	a, err := sh.ParseUserDataAnswer(n.request(t, sh.UserDataRequest{
-		Header: cx.NewHeader(n.node, "", realm), UserIdentity: id,
+		Header: diameter.NewHeader(n.node, "", realm), UserIdentity: id,
 		ServiceIndications: []string{serviceIndication}, DataReferences: []sh.DataReference{sh.RepositoryData},
 	}.Message()))
 	if err != nil {
@@ -336,7 +336,7 @@ func (n shNetwork) readRepository(t *testing.T, id sh.UserIdentity, serviceIndic
 }
 
 // writeRepository sends one RepositoryData in a PUR.
-func (n shNetwork) writeRepository(t *testing.T, id sh.UserIdentity, d sh.TransparentData) cx.Result {
+func (n shNetwork) writeRepository(t *testing.T, id sh.UserIdentity, d sh.TransparentData) diameter.Result {
 	t.Helper()
 	return n.pur(t, id, []sh.DataReference{sh.RepositoryData}, sh.ShData{RepositoryData: []sh.TransparentData{d}}.Marshal())
 }
@@ -359,8 +359,8 @@ func TestRepositoryData(t *testing.T) {
 	user := sh.UserIdentity{PublicIdentity: impu}
 	v0 := `<MMTelServices xmlns="http://uri.etsi.org/ngn/params/xml/simservs/mmtel"><complete-communication-diversion/></MMTelServices>`
 	v1 := `<MMTelServices xmlns="http://uri.etsi.org/ngn/params/xml/simservs/mmtel"/>`
-	outOfSync := cx.Experimental(sh.DiameterErrorTransparentDataOutOfSync)
-	notAllowed := cx.Experimental(sh.DiameterErrorOperationNotAllowed)
+	outOfSync := diameter.Experimental(sh.DiameterErrorTransparentDataOutOfSync)
+	notAllowed := diameter.Experimental(sh.DiameterErrorOperationNotAllowed)
 
 	if result, data := n.readRepository(t, user, mmtelServices); result != success || data != nil {
 		t.Fatalf("read before any data: %v, %+v", result, data)
@@ -368,7 +368,7 @@ func TestRepositoryData(t *testing.T) {
 	for _, step := range []struct {
 		name string
 		pur  sh.TransparentData
-		want cx.Result
+		want diameter.Result
 		// stored is what a read gives afterwards; nil for nothing.
 		stored *sh.TransparentData
 	}{
@@ -379,7 +379,7 @@ func TestRepositoryData(t *testing.T) {
 		{"skip a version", repository(2, v1), outOfSync, ptr(repository(0, v0))},
 		{"change", repository(1, v1), success, ptr(repository(1, v1))},
 		{"same change again", repository(1, v1), outOfSync, ptr(repository(1, v1))},
-		{"too much", repository(2, "<a>"+strings.Repeat("x", maxServiceData)+"</a>"), cx.Experimental(sh.DiameterErrorTooMuchData), ptr(repository(1, v1))},
+		{"too much", repository(2, "<a>"+strings.Repeat("x", maxServiceData)+"</a>"), diameter.Experimental(sh.DiameterErrorTooMuchData), ptr(repository(1, v1))},
 		{"remove", repository(2, ""), success, nil},
 	} {
 		if got := n.writeRepository(t, user, step.pur); got != step.want {
@@ -417,7 +417,7 @@ func TestRepositoryDataOfAliases(t *testing.T) {
 	if _, data := n.readRepository(t, sh.UserIdentity{PublicIdentity: impu}, "Ut-Credentials"); data != nil {
 		t.Errorf("another Service-Indication read %+v", data)
 	}
-	if result, _ := n.readRepository(t, sh.UserIdentity{MSISDN: msisdnA}, mmtelServices); result != cx.Experimental(sh.DiameterErrorOperationNotAllowed) {
+	if result, _ := n.readRepository(t, sh.UserIdentity{MSISDN: msisdnA}, mmtelServices); result != diameter.Experimental(sh.DiameterErrorOperationNotAllowed) {
 		t.Errorf("read by MSISDN: %v, want DIAMETER_ERROR_OPERATION_NOT_ALLOWED", result)
 	}
 }
@@ -432,7 +432,7 @@ func TestRepositoryDataWrapsAround(t *testing.T) {
 		t.Fatalf("cannot store the data: %v, %v", ok, err)
 	}
 	user := sh.UserIdentity{PublicIdentity: impu}
-	if got := n.writeRepository(t, user, repository(0, "<b/>")); got != cx.Experimental(sh.DiameterErrorTransparentDataOutOfSync) {
+	if got := n.writeRepository(t, user, repository(0, "<b/>")); got != diameter.Experimental(sh.DiameterErrorTransparentDataOutOfSync) {
 		t.Errorf("0 after 65535: %v", got)
 	}
 	if got := n.writeRepository(t, user, repository(1, "<b/>")); got != success {
@@ -460,7 +460,7 @@ func TestShClientRepositoryDataAgainstTheHSS(t *testing.T) {
 	}
 	var re *sh.ResultError
 	if err := c.UpdateRepositoryData(ctx, impu, mmtelServices, read.SequenceNumber, []byte("<c/>")); !errors.As(err, &re) ||
-		re.Result != cx.Experimental(sh.DiameterErrorTransparentDataOutOfSync) {
+		re.Result != diameter.Experimental(sh.DiameterErrorTransparentDataOutOfSync) {
 		t.Errorf("second update from the same version: %v", err)
 	}
 	read, _, _ = c.RepositoryData(ctx, impu, mmtelServices)

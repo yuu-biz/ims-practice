@@ -93,7 +93,7 @@ func (i *ICSCF) register(st *sip.ServerTransaction) {
 	log := i.log.With("private_identity", privateID, "public_identity", publicID, "call_id", req.Get("Call-ID"))
 
 	answer, err := i.hss.Request(context.Background(), cx.UserAuthorizationRequest{
-		Header:                   cx.NewHeader(i.node, "", i.cfg.HomeDomain),
+		Header:                   diameter.NewHeader(i.node, "", i.cfg.HomeDomain),
 		UserName:                 privateID,
 		PublicIdentity:           publicID,
 		VisitedNetworkIdentifier: req.Get("P-Visited-Network-ID"),

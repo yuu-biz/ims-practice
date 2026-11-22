@@ -19,6 +19,7 @@ import (
 	"context"
 	"crypto/rand"
 	"errors"
+	"github.com/yuu-biz/ims-practice/internal/diameter"
 	"log/slog"
 	"strings"
 	"time"
@@ -255,7 +256,7 @@ func (c *ServiceCentre) peerUserOf(ctx context.Context, number sms.Address) (str
 func (c *ServiceCentre) userOf(ctx context.Context, number sms.Address) (string, error) {
 	ids, err := c.users.PublicIdentities(ctx, number.Digits)
 	var result *sh.ResultError
-	if errors.As(err, &result) && result.Result == cx.Experimental(cx.DiameterErrorUserUnknown) {
+	if errors.As(err, &result) && result.Result == diameter.Experimental(cx.DiameterErrorUserUnknown) {
 		return "", errNoSuchUser
 	}
 	if err != nil {

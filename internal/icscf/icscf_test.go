@@ -269,9 +269,9 @@ func registeredAtHSS(t *testing.T) hssFunc {
 	h := stubHSS(cx.ServerCapabilities{})
 	// Register the callee at the HSS: MAR then SAR from the S-CSCF.
 	for _, m := range []*diam.Message{
-		cx.MultimediaAuthRequest{Header: cx.Header{SessionID: "s;1", OriginHost: "scscf." + domain, OriginRealm: domain, DestinationRealm: domain},
+		cx.MultimediaAuthRequest{Header: diameter.Header{SessionID: "s;1", OriginHost: "scscf." + domain, OriginRealm: domain, DestinationRealm: domain},
 			UserName: impi, PublicIdentity: impu, SIPAuthenticationScheme: cx.SchemeSIPDigest, SIPNumberAuthItems: 1, ServerName: scscf}.Message(),
-		cx.ServerAssignmentRequest{Header: cx.Header{SessionID: "s;2", OriginHost: "scscf." + domain, OriginRealm: domain, DestinationRealm: domain},
+		cx.ServerAssignmentRequest{Header: diameter.Header{SessionID: "s;2", OriginHost: "scscf." + domain, OriginRealm: domain, DestinationRealm: domain},
 			UserName: impi, PublicIdentities: []string{impu}, ServerName: scscf, ServerAssignmentType: cx.AssignRegistration}.Message(),
 	} {
 		if _, err := h(m); err != nil {

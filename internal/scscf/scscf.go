@@ -265,7 +265,7 @@ func (s *SCSCF) challenge(st *sip.ServerTransaction, privateID, publicID string,
 		scheme = cx.SchemeUnknown
 	}
 	answer, err := s.request(context.Background(), cx.MultimediaAuthRequest{
-		Header:                  cx.NewHeader(s.node, "", s.cfg.HomeDomain),
+		Header:                  diameter.NewHeader(s.node, "", s.cfg.HomeDomain),
 		UserName:                privateID,
 		PublicIdentity:          publicID,
 		SIPAuthenticationScheme: scheme,
@@ -543,7 +543,7 @@ func (s *SCSCF) Handle(request *diam.Message) *diam.Message {
 	rtr, err := cx.ParseRegistrationTerminationRequest(request)
 	if err != nil {
 		s.log.Warn("cannot read RTR", "error", err.Error())
-		return cx.NewAnswer(request, identity, cx.Base(cx.DiameterUnableToComply))
+		return cx.NewAnswer(request, identity, diameter.Base(diameter.DiameterUnableToComply))
 	}
 	return s.registrationTermination(rtr).Message(request, identity)
 }
@@ -573,7 +573,7 @@ func (s *SCSCF) registrationTermination(r cx.RegistrationTerminationRequest) cx.
 	event, ok := deregistrationEvents[r.DeregistrationReason.ReasonCode]
 	if !ok {
 		s.log.Info("RTR with a reason not handled", "private_identity", r.UserName, "reason", r.DeregistrationReason.ReasonCode.String())
-		return cx.RegistrationTerminationAnswer{Result: cx.Base(cx.DiameterUnableToComply)}
+		return cx.RegistrationTerminationAnswer{Result: diameter.Base(diameter.DiameterUnableToComply)}
 	}
 	ctx := context.Background()
 	unlock, err := s.users.Lock(ctx, r.UserName)
@@ -589,7 +589,7 @@ func (s *SCSCF) registrationTermination(r cx.RegistrationTerminationRequest) cx.
 		// TS 29.229 6.2.2.1. TS 29.228 6.1.3.1 names no error of its own
 		// for a user the S-CSCF does not know.
 		s.log.Info("RTR for a user not registered here", "private_identity", r.UserName)
-		return cx.RegistrationTerminationAnswer{Result: cx.Experimental(cx.DiameterErrorUserUnknown)}
+		return cx.RegistrationTerminationAnswer{Result: diameter.Experimental(cx.DiameterErrorUserUnknown)}
 	}
 	// TS 29.228 6.1.3.1: the S-CSCF removes all it has stored for the
 	// user, a registration under way included.
@@ -599,7 +599,7 @@ func (s *SCSCF) registrationTermination(r cx.RegistrationTerminationRequest) cx.
 	if err := s.deregisterByNetwork(ctx, reg, event); err != nil {
 		return s.registrationTerminationFailed(r, err)
 	}
-	return cx.RegistrationTerminationAnswer{Result: cx.Base(cx.DiameterSuccess)}
+	return cx.RegistrationTerminationAnswer{Result: diameter.Base(diameter.DiameterSuccess)}
 }
 
 // registrationTerminationFailed answers an RTR whose user the S-CSCF
@@ -609,7 +609,7 @@ func (s *SCSCF) registrationTermination(r cx.RegistrationTerminationRequest) cx.
 // stays as it was.
 func (s *SCSCF) registrationTerminationFailed(r cx.RegistrationTerminationRequest, err error) cx.RegistrationTerminationAnswer {
 	s.log.Warn("RTR not served: the store failed", "private_identity", r.UserName, "error", err.Error())
-	return cx.RegistrationTerminationAnswer{Result: cx.Base(cx.DiameterUnableToComply)}
+	return cx.RegistrationTerminationAnswer{Result: diameter.Base(diameter.DiameterUnableToComply)}
 }
 
 // covers reports whether an RTR that names ids is about reg. No
@@ -696,7 +696,7 @@ func (s *SCSCF) registrationExpired(ctx context.Context, privateID string) error
 
 func (s *SCSCF) serverAssignment(ctx context.Context, privateID, publicID, hssHost string, t cx.ServerAssignmentType) (cx.ServerAssignmentAnswer, error) {
 	answer, err := s.request(ctx, cx.ServerAssignmentRequest{
-		Header:               cx.NewHeader(s.node, hssHost, s.cfg.HomeDomain),
+		Header:               diameter.NewHeader(s.node, hssHost, s.cfg.HomeDomain),
 		UserName:             privateID,
 		PublicIdentities:     []string{publicID},
 		ServerName:           s.cfg.ServerName,
@@ -776,7 +776,7 @@ func originHost(m *diam.Message) string {
 	return raw.OriginHost
 }
 
-func describe(r cx.Result, err error) string {
+func describe(r diameter.Result, err error) string {
 	if err != nil {
 		return err.Error()
 	}

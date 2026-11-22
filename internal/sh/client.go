@@ -6,7 +6,6 @@ import (
 
 	"github.com/fiorix/go-diameter/v4/diam"
 
-	"github.com/yuu-biz/ims-practice/internal/cx"
 	"github.com/yuu-biz/ims-practice/internal/diameter"
 )
 
@@ -35,10 +34,10 @@ func NewClient(node *diameter.Node, hss HSS, realm string) *Client {
 
 // ResultError is an answer that did not succeed. Callers compare Result
 // with the codes they handle, such as
-// cx.Experimental(cx.DiameterErrorUserUnknown).
+// diameter.Experimental(cx.DiameterErrorUserUnknown).
 type ResultError struct {
 	Command string // "UDA" or "PUA"
-	Result  cx.Result
+	Result  diameter.Result
 }
 
 func (e *ResultError) Error() string { return fmt.Sprintf("sh: %s with %v", e.Command, e.Result) }
@@ -55,7 +54,7 @@ func (c *Client) pull(ctx context.Context, r UserDataRequest) (ShData, error) {
 	if err := checkUserIdentity(r.UserIdentity); err != nil {
 		return ShData{}, err
 	}
-	r.Header = cx.NewHeader(c.node, "", c.realm)
+	r.Header = diameter.NewHeader(c.node, "", c.realm)
 	answer, err := c.hss.Request(ctx, r.Message())
 	if err != nil {
 		return ShData{}, err
@@ -80,7 +79,7 @@ func (c *Client) ProfileUpdate(ctx context.Context, id UserIdentity, ref DataRef
 		return err
 	}
 	answer, err := c.hss.Request(ctx, ProfileUpdateRequest{
-		Header:         cx.NewHeader(c.node, "", c.realm),
+		Header:         diameter.NewHeader(c.node, "", c.realm),
 		UserIdentity:   id,
 		DataReferences: []DataReference{ref},
 		UserData:       data.Marshal(),

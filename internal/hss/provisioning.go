@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/yuu-biz/ims-practice/internal/diameter"
 	"net/http"
 	"net/url"
 	"slices"
@@ -370,7 +371,7 @@ func (h *HSS) registrationTermination(ctx context.Context, scscfs SCSCFs, s Subs
 		return nil
 	}
 	rtr := cx.RegistrationTerminationRequest{
-		Header:   cx.NewHeader(h.node, s.SCSCF.OriginHost, s.SCSCF.OriginRealm),
+		Header:   diameter.NewHeader(h.node, s.SCSCF.OriginHost, s.SCSCF.OriginRealm),
 		UserName: s.PrivateIdentity,
 		// 6.1.3.1: when a private identity goes with all of its public
 		// identities, no Public-Identity is sent.

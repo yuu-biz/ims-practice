@@ -1,6 +1,7 @@
 package scscf
 
 import (
+	"github.com/yuu-biz/ims-practice/internal/diameter"
 	"net/netip"
 	"slices"
 	"testing"
@@ -135,7 +136,7 @@ func TestUnregisteredCalleeServedElsewhere(t *testing.T) {
 	other := "sip:scscf2." + domain + ":5060"
 	// The other S-CSCF has started to authenticate the user.
 	if _, err := h.hss.Request(t.Context(), cx.MultimediaAuthRequest{
-		Header:   cx.Header{SessionID: "scscf2;1", OriginHost: "scscf2." + domain, OriginRealm: domain, DestinationRealm: domain},
+		Header:   diameter.Header{SessionID: "scscf2;1", OriginHost: "scscf2." + domain, OriginRealm: domain, DestinationRealm: domain},
 		UserName: impi, PublicIdentity: impu, SIPAuthenticationScheme: cx.SchemeSIPDigest, SIPNumberAuthItems: 1, ServerName: other,
 	}.Message()); err != nil {
 		t.Fatal(err)

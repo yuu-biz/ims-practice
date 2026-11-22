@@ -394,7 +394,7 @@ func startNetwork(t *testing.T, cfg networkConfig) testNetwork {
 	for _, peer := range slices.Concat(scscfPeer.Peers(), icscfPeer.Peers()) {
 		for {
 			_, err := peer.Request(context.Background(), cx.UserAuthorizationRequest{
-				Header: cx.NewHeader(icscfNode, "", domain), UserName: impi, PublicIdentity: impu,
+				Header: diameter.NewHeader(icscfNode, "", domain), UserName: impi, PublicIdentity: impu,
 				VisitedNetworkIdentifier: domain}.Message())
 			if err == nil {
 				break

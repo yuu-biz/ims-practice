@@ -3,6 +3,7 @@ package scscf
 import (
 	"context"
 	"fmt"
+	"github.com/yuu-biz/ims-practice/internal/diameter"
 	"log/slog"
 	"time"
 
@@ -41,7 +42,7 @@ func (s *SCSCF) unregisteredProfile(st *sip.ServerTransaction, callee string, lo
 	// know, and no Destination-Host, since no HSS has answered for the
 	// user yet.
 	answer, err := s.request(ctx, cx.ServerAssignmentRequest{
-		Header:               cx.NewHeader(s.node, "", s.cfg.HomeDomain),
+		Header:               diameter.NewHeader(s.node, "", s.cfg.HomeDomain),
 		PublicIdentities:     []string{callee},
 		ServerName:           s.cfg.ServerName,
 		ServerAssignmentType: cx.UnregisteredUser,
@@ -57,13 +58,13 @@ func (s *SCSCF) unregisteredProfile(st *sip.ServerTransaction, callee string, lo
 		log.Warn("cannot read the SAA", "error", err.Error())
 		s.respond(st, 500, nil)
 		return UnregisteredProfile{}, false
-	case saa.Result == cx.Experimental(cx.DiameterErrorIdentityAlreadyRegistered) && saa.ServerName != "":
+	case saa.Result == diameter.Experimental(cx.DiameterErrorIdentityAlreadyRegistered) && saa.ServerName != "":
 		// 5.4.3.3: another S-CSCF serves the user. The I-CSCF sends the
 		// request there (5.3.2.1).
 		log.Info("another S-CSCF serves the callee", "callee", callee, "server_name", saa.ServerName)
 		s.respond(st, 305, func(r *sip.Message) { r.Add("Contact", sip.NameAddr{URI: saa.ServerName}.String()) })
 		return UnregisteredProfile{}, false
-	case saa.Result == cx.Experimental(cx.DiameterErrorUserUnknown):
+	case saa.Result == diameter.Experimental(cx.DiameterErrorUserUnknown):
 		// As for a barred identity (5.4.3.3 step 1).
 		log.Info("the HSS does not know the callee", "callee", callee)
 		s.respond(st, 404, nil)

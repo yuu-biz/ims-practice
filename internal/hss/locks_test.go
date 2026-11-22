@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"github.com/yuu-biz/ims-practice/internal/diameter"
 	"sync"
 	"testing"
 	"time"
@@ -121,7 +122,7 @@ func TestTwoInstancesSerialiseOneSubscriber(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if a.Result != cx.Base(cx.DiameterSuccess) {
+	if a.Result != diameter.Base(diameter.DiameterSuccess) {
 		t.Errorf("the SAA of the instance that held the lock: %v, want DIAMETER_SUCCESS", a.Result)
 	}
 
@@ -130,7 +131,7 @@ func TestTwoInstancesSerialiseOneSubscriber(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if b.Result != cx.Experimental(cx.DiameterErrorIdentityAlreadyRegistered) {
+	if b.Result != diameter.Experimental(cx.DiameterErrorIdentityAlreadyRegistered) {
 		t.Errorf("the SAA of the instance that waited: %v, want DIAMETER_ERROR_IDENTITY_ALREADY_REGISTERED", b.Result)
 	}
 	if b.ServerName != scscf {
@@ -158,7 +159,7 @@ func TestALockThatAStoppedInstanceLeft(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if a.Result != cx.Base(cx.DiameterUnableToComply) {
+	if a.Result != diameter.Base(diameter.DiameterUnableToComply) {
 		t.Errorf("the SAA while another instance holds the lock: %v, want DIAMETER_UNABLE_TO_COMPLY", a.Result)
 	}
 	if took := time.Since(start); took >= 5*time.Second {

@@ -77,7 +77,7 @@ func TestAKAVectorsAuthenticateTheUSIM(t *testing.T) {
 	for i := range 2 {
 		a := akaMAR(t, h, cx.SchemeDigestAKAv1MD5, scscf, nil)
 		av := a.AuthenticationVector
-		if a.Result != cx.Base(cx.DiameterSuccess) || a.SIPAuthenticationScheme != cx.SchemeDigestAKAv1MD5 || av == nil || a.SIPDigestAuthenticate != nil {
+		if a.Result != diameter.Base(diameter.DiameterSuccess) || a.SIPAuthenticationScheme != cx.SchemeDigestAKAv1MD5 || av == nil || a.SIPDigestAuthenticate != nil {
 			t.Fatalf("MAA %d = %+v", i, a)
 		}
 		r, err := usim.Authenticate(av.RAND, av.AUTN)
@@ -91,10 +91,10 @@ func TestAKAVectorsAuthenticateTheUSIM(t *testing.T) {
 	// TS 29.228 6.3.1 step 5: the MAR stored the S-CSCF and set the
 	// authentication pending flag, as for SIP Digest. The I-CSCF is sent
 	// back to that S-CSCF, and a deregistration finds it (6.1.1.1).
-	if a := uar(t, h, akaImpi, akaImpu, cx.Registration); a.Result != cx.Experimental(cx.DiameterSubsequentRegistration) || a.ServerName != scscf {
+	if a := uar(t, h, akaImpi, akaImpu, cx.Registration); a.Result != diameter.Experimental(cx.DiameterSubsequentRegistration) || a.ServerName != scscf {
 		t.Errorf("UAA after the MAR = %+v, want SUBSEQUENT_REGISTRATION with %s", a, scscf)
 	}
-	if a := uar(t, h, akaImpi, akaImpu, cx.DeRegistration); a.Result != cx.Base(cx.DiameterSuccess) || a.ServerName != scscf {
+	if a := uar(t, h, akaImpi, akaImpu, cx.DeRegistration); a.Result != diameter.Base(diameter.DiameterSuccess) || a.ServerName != scscf {
 		t.Errorf("UAA for a deregistration while the authentication is pending = %+v, want success with %s", a, scscf)
 	}
 }
@@ -119,11 +119,11 @@ func TestAKAResynchronisation(t *testing.T) {
 	resync := &cx.Resynchronization{RAND: av.RAND, AUTS: failure.AUTS}
 	// Only the S-CSCF that the HSS stored may re-synchronise (TS 29.228
 	// 6.3.1 step 4).
-	if a := akaMAR(t, h, cx.SchemeDigestAKAv1MD5, scscf2, resync); a.Result != cx.Base(cx.DiameterUnableToComply) {
+	if a := akaMAR(t, h, cx.SchemeDigestAKAv1MD5, scscf2, resync); a.Result != diameter.Base(diameter.DiameterUnableToComply) {
 		t.Errorf("re-synchronisation from another S-CSCF = %+v", a)
 	}
 	a := akaMAR(t, h, cx.SchemeDigestAKAv1MD5, scscf, resync)
-	if a.Result != cx.Base(cx.DiameterSuccess) || a.AuthenticationVector == nil {
+	if a.Result != diameter.Base(diameter.DiameterSuccess) || a.AuthenticationVector == nil {
 		t.Fatalf("MAA after the AUTS = %+v", a)
 	}
 	if _, err := usim.Authenticate(a.AuthenticationVector.RAND, a.AuthenticationVector.AUTN); err != nil {
@@ -150,7 +150,7 @@ func TestAKAForgedAUTSKeepsSQN(t *testing.T) {
 	// TS 33.102 6.3.5 step 6: a vector still comes back, from the SQN
 	// that the HSS had.
 	a := akaMAR(t, h, cx.SchemeDigestAKAv1MD5, scscf, &cx.Resynchronization{RAND: av.RAND, AUTS: failure.AUTS})
-	if a.Result != cx.Base(cx.DiameterSuccess) || a.AuthenticationVector == nil {
+	if a.Result != diameter.Base(diameter.DiameterSuccess) || a.AuthenticationVector == nil {
 		t.Fatalf("MAA = %+v", a)
 	}
 	if after := vectorSQN(t, a.AuthenticationVector); after != before.Next() {
@@ -168,17 +168,17 @@ func TestAuthenticationSchemeChoice(t *testing.T) {
 		akaCreds bool
 		scheme   string
 		resync   *cx.Resynchronization
-		want     cx.Result
+		want     diameter.Result
 		answered string
 	}{
-		{"AKA only, Unknown", "", true, cx.SchemeUnknown, nil, cx.Experimental(cx.DiameterErrorAuthSchemeNotSupported), ""},
-		{"AKA only, SIP Digest", "", true, cx.SchemeSIPDigest, nil, cx.Experimental(cx.DiameterErrorAuthSchemeNotSupported), ""},
-		{"AKA only, AKA", "", true, cx.SchemeDigestAKAv1MD5, nil, cx.Base(cx.DiameterSuccess), cx.SchemeDigestAKAv1MD5},
-		{"Digest only, AKA", "p", false, cx.SchemeDigestAKAv1MD5, nil, cx.Experimental(cx.DiameterErrorAuthSchemeNotSupported), ""},
-		{"both, Unknown", "p", true, cx.SchemeUnknown, nil, cx.Base(cx.DiameterSuccess), cx.SchemeSIPDigest},
-		{"both, AKA", "p", true, cx.SchemeDigestAKAv1MD5, nil, cx.Base(cx.DiameterSuccess), cx.SchemeDigestAKAv1MD5},
-		{"both, AUTS with SIP Digest", "p", true, cx.SchemeSIPDigest, akaResync, cx.Base(cx.DiameterUnableToComply), ""},
-		{"another scheme", "p", true, "NASS-Bundled", nil, cx.Experimental(cx.DiameterErrorAuthSchemeNotSupported), ""},
+		{"AKA only, Unknown", "", true, cx.SchemeUnknown, nil, diameter.Experimental(cx.DiameterErrorAuthSchemeNotSupported), ""},
+		{"AKA only, SIP Digest", "", true, cx.SchemeSIPDigest, nil, diameter.Experimental(cx.DiameterErrorAuthSchemeNotSupported), ""},
+		{"AKA only, AKA", "", true, cx.SchemeDigestAKAv1MD5, nil, diameter.Base(diameter.DiameterSuccess), cx.SchemeDigestAKAv1MD5},
+		{"Digest only, AKA", "p", false, cx.SchemeDigestAKAv1MD5, nil, diameter.Experimental(cx.DiameterErrorAuthSchemeNotSupported), ""},
+		{"both, Unknown", "p", true, cx.SchemeUnknown, nil, diameter.Base(diameter.DiameterSuccess), cx.SchemeSIPDigest},
+		{"both, AKA", "p", true, cx.SchemeDigestAKAv1MD5, nil, diameter.Base(diameter.DiameterSuccess), cx.SchemeDigestAKAv1MD5},
+		{"both, AUTS with SIP Digest", "p", true, cx.SchemeSIPDigest, akaResync, diameter.Base(diameter.DiameterUnableToComply), ""},
+		{"another scheme", "p", true, "NASS-Bundled", nil, diameter.Experimental(cx.DiameterErrorAuthSchemeNotSupported), ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			sub := akaSubscription(tc.password)
@@ -265,7 +265,7 @@ func TestAKAOverDiameter(t *testing.T) {
 
 	request := func(resync *cx.Resynchronization) cx.MultimediaAuthAnswer {
 		t.Helper()
-		m := cx.MultimediaAuthRequest{Header: cx.NewHeader(scscfNode, "", realm), UserName: akaImpi, PublicIdentity: akaImpu,
+		m := cx.MultimediaAuthRequest{Header: diameter.NewHeader(scscfNode, "", realm), UserName: akaImpi, PublicIdentity: akaImpu,
 			SIPAuthenticationScheme: cx.SchemeDigestAKAv1MD5, SIPNumberAuthItems: 1, ServerName: scscf, SIPAuthorization: resync}.Message()
 		deadline := time.Now().Add(5 * time.Second)
 		for {

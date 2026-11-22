@@ -3,6 +3,7 @@ package scscf
 import (
 	"context"
 	"errors"
+	"github.com/yuu-biz/ims-practice/internal/diameter"
 	"net/netip"
 	"slices"
 	"sync"
@@ -319,11 +320,11 @@ func TestRegistrationTerminationWhenTheStoreFails(t *testing.T) {
 	_, got := h.subscribe(pcscfPath, "")
 	nextNotify(t, got)
 	h.failing.fail()
-	if r := rtaResult(t, h.rtr(impi, cx.ServerChange)); r != cx.Base(cx.DiameterUnableToComply) {
+	if r := rtaResult(t, h.rtr(impi, cx.ServerChange)); r != diameter.Base(diameter.DiameterUnableToComply) {
 		t.Errorf("RTA with the store down = %s, want DIAMETER_UNABLE_TO_COMPLY", r)
 	}
 	h.failing.repair()
-	if r := rtaResult(t, h.rtr(impi, cx.ServerChange)); r != cx.Base(cx.DiameterSuccess) {
+	if r := rtaResult(t, h.rtr(impi, cx.ServerChange)); r != diameter.Base(diameter.DiameterSuccess) {
 		t.Errorf("RTA after the store came back = %s, want DIAMETER_SUCCESS", r)
 	}
 	_, doc := nextNotify(t, got)

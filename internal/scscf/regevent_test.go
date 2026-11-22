@@ -280,7 +280,7 @@ func (h *harness) rtr(user string, reason cx.ReasonCode, publicIDs ...string) *d
 	h.t.Helper()
 	hssNode := diameter.NewNode(diameter.Identity{OriginHost: "hss." + domain, OriginRealm: domain}, []uint32{diameter.ApplicationIDCx}, diameter.Timers{}, quiet())
 	m := cx.RegistrationTerminationRequest{
-		Header:               cx.NewHeader(hssNode, "scscf."+domain, domain),
+		Header:               diameter.NewHeader(hssNode, "scscf."+domain, domain),
 		UserName:             user,
 		PublicIdentities:     publicIDs,
 		DeregistrationReason: cx.DeregistrationReason{ReasonCode: reason},
@@ -301,7 +301,7 @@ func wire(t *testing.T, m *diam.Message) *diam.Message {
 	return got
 }
 
-func rtaResult(t *testing.T, m *diam.Message) cx.Result {
+func rtaResult(t *testing.T, m *diam.Message) diameter.Result {
 	t.Helper()
 	a, err := cx.ParseRegistrationTerminationAnswer(m)
 	if err != nil {
@@ -321,7 +321,7 @@ func TestRegistrationTerminationByTheHSS(t *testing.T) {
 	sub, got := h.subscribe(pcscfPath, "")
 	nextNotify(t, got)
 
-	if r := rtaResult(t, h.rtr(impi, cx.PermanentTermination)); r != cx.Base(cx.DiameterSuccess) {
+	if r := rtaResult(t, h.rtr(impi, cx.PermanentTermination)); r != diameter.Base(diameter.DiameterSuccess) {
 		t.Errorf("RTA = %s, want DIAMETER_SUCCESS", r)
 	}
 	n, doc := nextNotify(t, got)
@@ -336,7 +336,7 @@ func TestRegistrationTerminationByTheHSS(t *testing.T) {
 
 	// The user is gone: a second RTR is for a user the S-CSCF does not
 	// know (TS 29.229 6.2.2.1), and so is a REGISTER to deregister.
-	if r := rtaResult(t, h.rtr(impi, cx.PermanentTermination)); r != cx.Experimental(cx.DiameterErrorUserUnknown) {
+	if r := rtaResult(t, h.rtr(impi, cx.PermanentTermination)); r != diameter.Experimental(cx.DiameterErrorUserUnknown) {
 		t.Errorf("second RTA = %s, want DIAMETER_ERROR_USER_UNKNOWN", r)
 	}
 	if r := h.register(sip.NewCallID(), 1, 0, initial); r.StatusCode != 481 {
@@ -349,13 +349,13 @@ func TestRegistrationTerminationReasons(t *testing.T) {
 		name      string
 		reason    cx.ReasonCode
 		publicIDs []string
-		result    cx.Result
+		result    diameter.Result
 		event     reginfo.Event // empty: the user stays registered
 	}{
-		{"server change asks the UE to register again", cx.ServerChange, nil, cx.Base(cx.DiameterSuccess), reginfo.Deactivated},
-		{"a public identity of the user", cx.PermanentTermination, []string{impu}, cx.Base(cx.DiameterSuccess), reginfo.Rejected},
-		{"a public identity of someone else", cx.PermanentTermination, []string{"sip:someone@" + domain}, cx.Experimental(cx.DiameterErrorUserUnknown), ""},
-		{"a reason this S-CSCF does not act on", cx.NewServerAssigned, nil, cx.Base(cx.DiameterUnableToComply), ""},
+		{"server change asks the UE to register again", cx.ServerChange, nil, diameter.Base(diameter.DiameterSuccess), reginfo.Deactivated},
+		{"a public identity of the user", cx.PermanentTermination, []string{impu}, diameter.Base(diameter.DiameterSuccess), reginfo.Rejected},
+		{"a public identity of someone else", cx.PermanentTermination, []string{"sip:someone@" + domain}, diameter.Experimental(cx.DiameterErrorUserUnknown), ""},
+		{"a reason this S-CSCF does not act on", cx.NewServerAssigned, nil, diameter.Base(diameter.DiameterUnableToComply), ""},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
