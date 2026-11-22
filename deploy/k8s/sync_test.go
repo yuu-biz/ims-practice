@@ -13,6 +13,8 @@ import (
 
 	"github.com/miekg/dns"
 	"go.yaml.in/yaml/v3"
+
+	"github.com/yuu-biz/ims-practice/internal/yamledit"
 )
 
 // regenerate is said by every failure that the generator fixes.
@@ -37,7 +39,7 @@ func TestCopiesAreGenerated(t *testing.T) {
 			t.Errorf("deploy/k8s/%s is missing: %s", path, regenerate)
 			continue
 		}
-		if line, g, w, differ := firstDifference(got, want[path]); differ {
+		if line, g, w, differ := yamledit.FirstDifference(got, want[path]); differ {
 			t.Errorf("deploy/k8s/%s line %d is\n\t%q\nwant\n\t%q\n%s", path, line, g, w, regenerate)
 		}
 	}
@@ -54,25 +56,7 @@ func TestCopiesAreGenerated(t *testing.T) {
 	}
 }
 
-func firstDifference(got, want []byte) (line int, g, w string, differ bool) {
-	gl := strings.Split(string(got), "\n")
-	wl := strings.Split(string(want), "\n")
-	for i := 0; i < max(len(gl), len(wl)); i++ {
-		g, w = "", ""
-		if i < len(gl) {
-			g = gl[i]
-		}
-		if i < len(wl) {
-			w = wl[i]
-		}
-		if g != w || i >= len(gl) || i >= len(wl) {
-			return i + 1, g, w, true
-		}
-	}
-	return 0, "", "", false
-}
-
-// TestCopiesDifferOnlyByChanges checks the text editing of applyChanges
+// TestCopiesDifferOnlyByChanges checks the text editing of yamledit.Apply
 // from the other side: apart from the keys of changes.go, an original
 // and its copy hold the same data.
 func TestCopiesDifferOnlyByChanges(t *testing.T) {
@@ -88,9 +72,9 @@ func TestCopiesDifferOnlyByChanges(t *testing.T) {
 				t.Fatal(err)
 			}
 			for _, c := range changes {
-				if c.value != nil || c.remove {
-					deleteKey(original, c.key)
-					deleteKey(copied, c.key)
+				if c.Value != nil || c.Remove {
+					deleteKey(original, c.Key)
+					deleteKey(copied, c.Key)
 				}
 			}
 			if !reflect.DeepEqual(original, copied) {
@@ -211,72 +195,6 @@ func TestEveryZoneIsInTheConfigMap(t *testing.T) {
 		name, ok := strings.CutPrefix(path, ZoneDir+"/")
 		if ok && !strings.Contains(kustomization, "- "+name+"\n") {
 			t.Errorf("dns/kustomization.yaml does not put %s into the ConfigMap ims-zones", name)
-		}
-	}
-}
-
-func TestApplyChanges(t *testing.T) {
-	const src = `# Top.
-node: x
-a:
-  # Old comment
-  # of b.
-  b: 172.28.0.1
-  c: [172.28.0.2]
-  d:
-    e: 1
-  items:
-    - name: one
-      url: http://172.28.0.3
-list:
-- 1
-- 2
-# Head of z.
-z: last
-`
-	tests := []struct {
-		name    string
-		changes []change
-		want    string
-	}{
-		{"value of a scalar", []change{{key: "a.b", value: "b.svc"}},
-			"  b: b.svc\n"},
-		{"comment replaced", []change{{key: "a.b", comment: "New."}},
-			"a:\n  # New.\n  b: 172.28.0.1\n"},
-		{"comment inserted with a value", []change{{key: "a.c", comment: "Two\nlines.", value: []string{"${IP}"}}},
-			"  b: 172.28.0.1\n  # Two\n  # lines.\n  c:\n    - ${IP}\n  d:\n"},
-		{"block mapping removed", []change{{key: "a.d", remove: true, comment: "No d."}},
-			"  c: [172.28.0.2]\n  # No d.\n  items:\n"},
-		{"key in an item", []change{{key: "a.items.0.url", value: "http://one.svc"}},
-			"    - name: one\n      url: http://one.svc\nlist:\n"},
-		{"compact sequence removed", []change{{key: "list", remove: true}},
-			"      url: http://172.28.0.3\n# Head of z.\nz: last\n"},
-		{"two changes", []change{{key: "a.b", value: "b.svc"}, {key: "z", comment: "Z."}},
-			"  b: b.svc\n"},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			out, err := applyChanges([]byte(src), tt.changes)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if !strings.Contains(string(out), tt.want) {
-				t.Errorf("got\n%s\nwant it to contain\n%s", out, tt.want)
-			}
-			if !strings.HasPrefix(string(out), "# Top.\nnode: x\n") {
-				t.Errorf("the lines before the change moved:\n%s", out)
-			}
-		})
-	}
-
-	for _, c := range []change{
-		{key: "a.nothing", value: "x"},
-		{key: "a.items.0", value: "x"},
-		{key: "a.items.0.name", comment: "The first key of an item"},
-		{key: "a.b", remove: true, value: "x", comment: "x"},
-	} {
-		if _, err := applyChanges([]byte(src), []change{c, {key: "a.b", value: "y"}}); err == nil {
-			t.Errorf("%+v: no error", c)
 		}
 	}
 }
