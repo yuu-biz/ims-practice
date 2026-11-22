@@ -99,8 +99,8 @@ stop_ue ims-practice-ue1-sms
 
 # A number that no subscriber has (TS 24.011 E-2, cause 1). "ue sms"
 # ends with an error when the SC refuses the short message, as here, or
-# when no status report comes in time; the checks read its log, hence
-# "|| true".
+# when no status report comes in time, which the short message after
+# this one may meet; the checks read its log, hence "|| true" in both.
 out="$(docker compose run --no-deps --rm ue sms +12025550198 'Nobody has this number.' 2>&1 || true)"
 if grep -q 'the SC refused the short message: RP-Cause 1, TP-FCS 0xc3' <<<"$out"; then
 	echo "ok   a short message to an unknown number was refused with RP-Cause 1"
