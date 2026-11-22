@@ -247,7 +247,8 @@ func TestCrossingFieldsLeaveTheLegBehind(t *testing.T) {
 	m := leavingInvite(t)
 	m.Add("Privacy", "header")
 	for _, h := range CrossingFields(m) {
-		if isOneOf(h.Name, []string{"Via", "Record-Route", "Route", "Contact", "Call-ID", "From", "To", "CSeq", "Supported"}) {
+		if slices.ContainsFunc([]string{"Via", "Record-Route", "Route", "Contact", "Call-ID", "From", "To", "CSeq", "Supported"},
+			func(name string) bool { return strings.EqualFold(name, h.Name) }) {
 			t.Errorf("%s crosses the border: %s", h.Name, h.Value)
 		}
 	}
