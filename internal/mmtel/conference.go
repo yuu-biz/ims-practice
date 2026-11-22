@@ -230,31 +230,40 @@ func (c *call) createConference() {
 		return
 	}
 	as.conferences.Store(id, f)
-	p := &party{leg: c.in, media: media, creator: true}
-	c.in.Handle(f.handle(p))
-	c.in.SetContact(f.contact, false)
+	f.admit(c.in, &party{media: media, creator: true}, final, assertedUser(req, c.served.URI))
+}
+
+// admit answers the INVITE of in once the mixer has through-connected
+// the user's media: with the answer of final, the 200 of the MRFC, and
+// the conference URI with isfocus as Contact (TS 24.147 5.3.2.3.1). The
+// user, whose identity is user, is then participant p, dialed in, until
+// its dialog ends.
+func (f *conference) admit(in *sip.IncomingCall, p *party, final *sip.Message, user string) {
+	req := in.Request
+	p.leg = in
+	in.Handle(f.handle(p))
+	in.SetContact(f.contact, false)
 	headers := []sip.HeaderField{{Name: "P-Asserted-Identity", Value: "<" + f.record.URI + ">"}}
-	if pcv := responseChargingVector(req, as.cfg.HomeDomain); pcv != "" {
+	if pcv := responseChargingVector(req, f.as.cfg.HomeDomain); pcv != "" {
 		headers = append(headers, sip.HeaderField{Name: "P-Charging-Vector", Value: pcv})
 	}
-	// The 200 gives the creator the conference URI, to which it
-	// subscribes (IR.92 2.3.3) as soon as it has it, maybe before the
-	// focus has the ACK. The creator is in the conference by then.
-	f.join(p, confinfo.Participant{User: assertedUser(req, c.served.URI), Endpoint: contactURIOf(req),
-		Status: confinfo.Connected, JoiningMethod: confinfo.DialedIn})
-	ack, err := c.in.Accept(sip.BodyOf(final), headers...)
+	// The 200 gives the user the conference URI, to which it subscribes
+	// (IR.92 2.3.3) as soon as it has it, maybe before the focus has the
+	// ACK. The user is in the conference by then.
+	f.join(p, confinfo.Participant{User: user, Endpoint: contactURIOf(req), Status: confinfo.Connected, JoiningMethod: confinfo.DialedIn})
+	ack, err := in.Accept(sip.BodyOf(final), headers...)
 	if err != nil {
-		f.log.Info("the creator did not acknowledge the answer", "error", err.Error())
+		f.log.Info("the participant did not acknowledge the answer", "creator", p.creator, "error", err.Error())
 		f.left(p)
 		return
 	}
 	f.dialogConfirmed(p)
 	if len(req.Body) == 0 {
 		// The INVITE had no offer, so the MRFC's 200 had one, and the
-		// creator's ACK has the answer (RFC 3261 13.2.2.4).
-		media.Ack(sip.BodyOf(ack))
+		// user's ACK has the answer (RFC 3261 13.2.2.4).
+		p.media.Ack(sip.BodyOf(ack))
 	}
-	<-c.in.Done()
+	<-in.Done()
 	f.left(p)
 }
 
