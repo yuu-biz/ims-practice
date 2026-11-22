@@ -184,6 +184,31 @@ ue-a has two answered calls and presses **Merge**. It creates a conference at th
 - **The NOTIFYs** carry conference-info XML (RFC 4575) with a `<user>` and an `<endpoint>` of status `connected` for each party. Each card of the dashboard lists them under **Conference**. ue-a refreshes its subscription before it expires. A subscription that is not refreshed ends at its expiry with a last NOTIFY that says `terminated;reason=timeout`, and the focus sends nothing to it after that (RFC 6665 4.2.1.4).
 - **The conference ends with its creator** (TS 24.147 5.3.2.7): when ue-a hangs up, the AS sends BYE to ue-b and ue-c and to the MRFC for each party.
 
+## Coming back to the conference
+
+A participant that has left can come back while the conference goes on. It sends an INVITE to the conference URI, which it has from the Contact of the focus (TS 24.147 5.3.1.4.1). Say ue-b hangs up, and then calls the conference URI:
+
+```text
+ue-b     P-CSCF   S-CSCF   MMTel AS              MRFC
+                           services  focus
+ | INVITE sip:conf-o47ha7ifxyni@conf...            |
+ |-------->|------->|------->|        |            |  P-Served-User: ue-b;sescase=orig
+ |         |        |<-------|        |            |  the INVITE of the B2BUA, to the same URI
+ |         |        |---------------->|            |  by DNS, without P-Served-User
+ |         |        |        |        |----------->|  INVITE sip:conf=conf-o47ha7ifxyni@mrfc..., ue-b's offer
+ |         |        |        |        |<-----------|  200 OK, the answer of the MRFP
+ |         |        |<----------------|            |  200 OK, Contact: <sip:conf-o47ha7ifxyni@conf...>;isfocus
+ |         |        |------->|        |            |
+ |<--------|<-------|<-------|        |            |  200 OK, the same Contact
+```
+
+- **The INVITE goes as every call of ue-b goes.** The S-CSCF gives it to the MMTel AS for ue-b's originating services, and the AS, a B2BUA, sends a new INVITE to the same URI back. The S-CSCF then finds the focus by DNS, as for the SUBSCRIBE above. From another network, the INVITE comes through the I-CSCF, which sends it by DNS too. No filter criterion brings the INVITE to the focus, so it has no P-Served-User. This is how the AS tells the INVITE for the focus from the INVITE for ue-b's services, which has the same Request-URI.
+- **The focus takes ue-b in as it takes the creator** (5.3.2.4.1). It asks the MRFC for a new termination of the mix with ue-b's offer. Once the MRFC has answered, it answers ue-b with the answer of the MRFP and the conference URI with `isfocus` in Contact. The AS of ue-b's services passes that Contact on and puts itself in Record-Route, as for an invited peer, so that ue-b's requests to the conference URI still pass it (TS 24.229 5.7.5.1).
+- **The NOTIFYs** list ue-b as `connected` again, now with the joining-method `dialed-in`, as for the creator. Before, when the focus invited ue-b, it was `dialed-out`.
+- **Any user whose identity the network asserts may join**, whether or not the user has been in the conference before, up to six participants, the maximum-user-count of the NOTIFYs. The seventh gets 403 (Forbidden). An INVITE to a conference URI that no conference has gets 404 (Not Found) (5.3.2.4.1 step 1). That is what the creator gets too: the conference ended when it left, and its URI with it (5.3.2.7).
+
+The script does not run this. `TestRejoinWithTheConferenceURI` in `internal/mmtel/conference_network_test.go` runs it through the whole IMS in one process: B leaves A's conference, comes back with the conference URI, and hears A through the mixer.
+
 ## Wireshark display filters
 
 | Filter | What it finds |
@@ -233,6 +258,7 @@ Each item has a `SIMPLIFIED:` comment in the code; `grep -rn "SIMPLIFIED:" inter
 | AS, TS 24.182 4.5.5.3.7 | A callee's UPDATE with an offer after its 180 goes on to the caller, which moves the caller away from the tone. | The UE simulator sends none then. |
 | AS, TS 24.182 4.5.5.3.7 b 2 and b 3 | The callee's 183 with preconditions goes to the caller as it came; the tone starts without a look at the caller's preconditions. | The callee has alerted, so both sides have their resources. |
 | AS, TS 24.147 5.3.2.3.1 step 2 and TS 24.229 5.7.1.4 and 5.7.1.5 | Every served user may create a conference; no conference policy, no charging addresses. | There is no conference policy server, and no node of this project writes charging records. |
+| AS, TS 24.147 5.3.2.4.1 step 2 and TS 24.229 5.7.1.4 and 5.7.1.5 | Any user whose identity the network asserts may join a conference that has room. An INVITE without P-Asserted-Identity gets 403, without a challenge. | There is no conference policy, and the AS holds no credentials of users. In the networks of this project, every request reaches the focus with the identity that a P-CSCF or a trusted peer network asserted. |
 | AS, TS 24.229 5.7.3 NOTE 8 | The S-CSCF of an invited user is taken to be the AS's own. | This network has one S-CSCF. |
 | AS, TS 24.147 5.3.2.6.2.2 | A REFER that asks the focus to remove a participant (method BYE) is refused with 403. | IR.92 2.3.3 does not ask for it. |
 | AS, RFC 4575 3.9 | Each change is notified at once, not at most once in 5 seconds. | IR.92 2.3.3 asks for notifications within 5 seconds, and a small conference changes seldom. |

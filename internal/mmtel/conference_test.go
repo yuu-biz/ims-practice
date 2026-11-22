@@ -265,8 +265,6 @@ func TestConferenceSubscriptionExpires(t *testing.T) {
 	}
 }
 
-// TestConferenceRefusals: without an MRFC the AS creates no conference,
-// and a REFER that asks the focus to remove someone is not taken.
 // TestCreatorIsInTheConferenceOnceAnswered: the 200 gives the creator
 // the conference URI, and the creator may subscribe at once, before the
 // focus has its ACK. The conference then already has the creator. The
@@ -339,6 +337,104 @@ func readResponse(t *testing.T, conn *net.UDPConn, code int) *sip.Message {
 	}
 }
 
+// joining is the INVITE of user to the conference URI uri as the focus
+// gets it (TS 24.147 5.3.1.4.1): from the S-CSCF or the I-CSCF, by DNS,
+// with the identity that the network asserts and no P-Served-User.
+func joining(user, uri string) sip.Invitation {
+	return sip.Invitation{RequestURI: uri, From: "sip:" + user + "@" + domain, To: uri,
+		Headers: []sip.HeaderField{
+			{Name: "P-Asserted-Identity", Value: "<sip:" + user + "@" + domain + ">"},
+			{Name: "P-Charging-Vector", Value: "icid-value=icid-" + user + ";orig-ioi=" + domain},
+		},
+		Body: audio("43000", "sendrecv")}
+}
+
+// TestJoinWithTheConferenceURI is TS 24.147 5.3.2.4.1: a user who has
+// the conference URI joins with an INVITE to it, which the focus
+// answers as it answers the creator, until the conference is full.
+func TestJoinWithTheConferenceURI(t *testing.T) {
+	mrfc := startConferenceMRFC(t)
+	as := startAS(t, noServices{}, mmtel.Config{MRFC: "sip:" + contactOf(t, mrfc.ua)})
+	callee := newUA(t, "bob", func(c *sip.IncomingCall) { c.Reject(480) })
+	alice := newParticipant(t, as, "alice", func(c *sip.IncomingCall) { c.Reject(480) })
+	inv := viaAS(t, as, callee, "orig", audio("42000", "sendrecv"))
+	inv.RequestURI, inv.To = ims.ConferenceFactoryURI(domain), ims.ConferenceFactoryURI(domain)
+	conf, err := alice.Invite(inv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { conf.Bye() })
+	resps := readAll(t, conf)
+	focus, err := sip.ParseNameAddr(resps[len(resps)-1].Get("Contact"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	receive(t, mrfc.calls, "the creator's INVITE at the MRFC")
+	notifications := make(chan sip.Notification, 8)
+	if _, err := alice.Subscribe(sip.SubscribeRequest{RequestURI: focus.URI, From: "sip:alice@" + domain, Event: confinfo.EventPackage,
+		Accept: confinfo.ContentType, Expires: time.Hour,
+		Headers:  []sip.HeaderField{{Name: "P-Asserted-Identity", Value: "<sip:alice@" + domain + ">"}},
+		OnNotify: func(n sip.Notification, _ *sip.Message) { notifications <- n }}); err != nil {
+		t.Fatal(err)
+	}
+
+	carol := newParticipant(t, as, "carol", func(c *sip.IncomingCall) { c.Reject(480) })
+	in, err := carol.Invite(joining("carol", focus.URI))
+	if err != nil {
+		t.Fatal(err)
+	}
+	resps = readAll(t, in)
+	ok := resps[len(resps)-1]
+	if ok.StatusCode != 200 || ok.Get("Contact") != focus.String() || ok.Get("P-Asserted-Identity") != "<"+focus.URI+">" {
+		t.Fatalf("carol got %d with Contact %q and P-Asserted-Identity %q, want 200 with the conference URI, with isfocus in Contact",
+			ok.StatusCode, ok.Get("Contact"), ok.Get("P-Asserted-Identity"))
+	}
+	// 5.3.2.2.2: the first response has the icid-value and orig-ioi of
+	// the INVITE, and the network of the focus as term-ioi.
+	if pcv, _ := sip.ChargingVectorOf(ok); pcv.ICID != "icid-carol" || pcv.OrigIOI != domain || pcv.TermIOI != domain {
+		t.Errorf("carol's 200 has P-Charging-Vector %q", ok.Get("P-Charging-Vector"))
+	}
+	media := receive(t, mrfc.calls, "carol's INVITE at the MRFC")
+	id, _ := sip.ParseURI(focus.URI)
+	if !strings.HasPrefix(media.Request.RequestURI, "sip:conf="+id.User+"@") || !strings.Contains(string(media.Request.Body), "m=audio 43000") {
+		t.Errorf("MRFC got Request-URI %q with\n%s\nwant the conference with carol's offer", media.Request.RequestURI, media.Request.Body)
+	}
+	awaitNotification(t, notifications, "with carol dialed in", func(_ sip.Notification, d confinfo.Document) bool {
+		for _, u := range d.Users.Users {
+			if u.Entity == "sip:carol@"+domain && len(u.Endpoints) == 1 {
+				e := u.Endpoints[0]
+				return e.Status == confinfo.Connected && e.JoiningMethod == confinfo.DialedIn
+			}
+		}
+		return false
+	})
+
+	// Alice and carol are 2 of the 6 users that a conference takes.
+	for k := 3; k <= 6; k++ {
+		user := "user" + string(rune('0'+k))
+		ua := newParticipant(t, as, user, func(c *sip.IncomingCall) { c.Reject(480) })
+		out, err := ua.Invite(joining(user, focus.URI))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := statuses(readAll(t, out)); got[len(got)-1] != 200 {
+			t.Fatalf("%s got %v, want 200", user, got)
+		}
+	}
+	ua := newParticipant(t, as, "user7", func(c *sip.IncomingCall) { c.Reject(480) })
+	out, err := ua.Invite(joining("user7", focus.URI))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := statuses(readAll(t, out)); len(got) != 1 || got[0] != 403 {
+		t.Errorf("the seventh user got %v, want 403", got)
+	}
+}
+
+// TestConferenceRefusals: without an MRFC the AS creates no conference,
+// a REFER that asks the focus to remove someone is not taken, and an
+// INVITE to a conference URI joins nothing when no conference has that
+// URI, or when the network asserts no identity of the user.
 func TestConferenceRefusals(t *testing.T) {
 	alice := newUA(t, "alice", func(c *sip.IncomingCall) { c.Reject(480) })
 	callee := newUA(t, "bob", func(c *sip.IncomingCall) { c.Reject(480) })
@@ -362,9 +458,35 @@ func TestConferenceRefusals(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	readAll(t, conf)
+	resps := readAll(t, conf)
 	r, err := conf.Refer(sip.ReferTo{URI: "sip:bob@" + domain + ";method=BYE"})
 	if err != nil || r.Response.StatusCode != 403 {
 		t.Errorf("REFER with method BYE got %v, %v; want 403", r, err)
+	}
+
+	focus, err := sip.ParseNameAddr(resps[len(resps)-1].Get("Contact"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	carol := newParticipant(t, as, "carol", func(c *sip.IncomingCall) { c.Reject(480) })
+	anonymous := joining("carol", focus.URI)
+	anonymous.Headers = anonymous.Headers[1:]
+	for _, c := range []struct {
+		what string
+		inv  sip.Invitation
+		want int
+	}{
+		// TS 24.147 5.3.2.4.1 step 1.
+		{"a conference URI that is not allocated", joining("carol", "sip:conf-none@"+conferenceDomain), 404},
+		// Step 2.
+		{"no P-Asserted-Identity", anonymous, 403},
+	} {
+		out, err := carol.Invite(c.inv)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := statuses(readAll(t, out)); len(got) != 1 || got[0] != c.want {
+			t.Errorf("INVITE with %s got %v, want %d", c.what, got, c.want)
+		}
 	}
 }

@@ -184,6 +184,31 @@ ue-a は応答済みの通話を 2 つ持っていて、**Merge** を押しま�
 - **NOTIFY** には conference-info の XML（RFC 4575）が入っていて、参加者ごとに `<user>` と、状態が `connected` の `<endpoint>` があります。ダッシュボードの各カードは、これを **Conference** の行に並べます。ue-a は購読が切れる前に更新します。更新されなかった購読は期限の時刻に終わり、フォーカスはそのとき `terminated;reason=timeout` の NOTIFY を送ります。そのあと、この購読には何も送りません（RFC 6665 4.2.1.4）。
 - **会議は作った人が抜けると終わります**（TS 24.147 5.3.2.7）。ue-a が切ると、AS は ue-b と ue-c に BYE を送り、参加者ごとの MRFC とのダイアログにも BYE を送ります。
 
+## 会議に戻る
+
+会議を抜けた参加者は、会議が続いているあいだなら戻れます。フォーカスの Contact で知った会議の URI に INVITE を送ります（TS 24.147 5.3.1.4.1）。ue-b が電話を切り、そのあと会議の URI に発信したとします。
+
+```text
+ue-b     P-CSCF   S-CSCF   MMTel AS              MRFC
+                           services  focus
+ | INVITE sip:conf-o47ha7ifxyni@conf...            |
+ |-------->|------->|------->|        |            |  P-Served-User: ue-b;sescase=orig
+ |         |        |<-------|        |            |  the INVITE of the B2BUA, to the same URI
+ |         |        |---------------->|            |  by DNS, without P-Served-User
+ |         |        |        |        |----------->|  INVITE sip:conf=conf-o47ha7ifxyni@mrfc..., ue-b's offer
+ |         |        |        |        |<-----------|  200 OK, the answer of the MRFP
+ |         |        |<----------------|            |  200 OK, Contact: <sip:conf-o47ha7ifxyni@conf...>;isfocus
+ |         |        |------->|        |            |
+ |<--------|<-------|<-------|        |            |  200 OK, the same Contact
+```
+
+- **INVITE は ue-b のほかの発信と同じ道を通ります。** S-CSCF は ue-b の発信側のサービスのために、この INVITE を MMTel AS に渡します。B2BUA である AS は同じ URI に宛てた新しい INVITE を S-CSCF に返します。S-CSCF は上の SUBSCRIBE と同じく、DNS でフォーカスを見つけます。ほかの網からの INVITE は I-CSCF から入り、I-CSCF も DNS でフォーカスに送ります。フォーカスに INVITE を届けるのはフィルタ条件ではないので、この INVITE には P-Served-User がありません。AS は P-Served-User の有無で、フォーカスに宛てた INVITE と ue-b のサービスのための INVITE を見分けます。どちらも Request-URI は同じです。
+- **フォーカスは作った人と同じやり方で ue-b を迎え入れます**（5.3.2.4.1）。ue-b の offer で、混ぜ合わせの新しいターミネーションを MRFC に頼みます。MRFC が応答したら、MRFP の answer を入れ、Contact を `isfocus` 付きの会議の URI にして ue-b に応答します。ue-b のサービスの AS は、招かれた相手のときと同じく、その Contact をそのまま渡し、自分を Record-Route に入れます。ue-b が会議の URI に送る要求が、そのあとも AS を通るようにするためです（TS 24.229 5.7.5.1）。
+- **NOTIFY** は ue-b を再び `connected` として並べます。joining-method は作った人と同じ `dialed-in` になります。フォーカスが ue-b を招いたときは `dialed-out` でした。
+- **網が識別子を保証した利用者なら、誰でも会議に入れます。** 前に会議にいたかどうかは問いません。上限は参加者 6 人で、NOTIFY の maximum-user-count と同じです。7 人目には 403（Forbidden）を返します。どの会議にも使われていない会議の URI に INVITE が来たら、404（Not Found）を返します（5.3.2.4.1 step 1）。会議を作った人が戻ろうとしても同じです。作った人が抜けた時点で会議は終わり、フォーカスはその URI を手放しているためです（5.3.2.7）。
+
+スクリプトではこの場面を動かしません。`internal/mmtel/conference_network_test.go` の `TestRejoinWithTheConferenceURI` が、1 つのプロセスの中の IMS 全体でこの流れを動かします。B が A の会議を抜け、会議の URI で戻り、混ぜ合わせを通して A の声を聞きます。
+
 ## Wireshark の表示フィルタ
 
 | フィルタ | 見つかるもの |
@@ -233,6 +258,7 @@ ue-a は応答済みの通話を 2 つ持っていて、**Merge** を押しま�
 | AS、TS 24.182 4.5.5.3.7 | 着信者が 180 のあとに送る offer の付いた UPDATE を、そのまま発信者に渡します。発信者のメディアは呼び出し音から離れます。 | UE シミュレータはそのときに UPDATE を送りません。 |
 | AS、TS 24.182 4.5.5.3.7 b 2 と b 3 | プリコンディションの付いた着信者の 183 を、そのまま発信者に渡します。発信者のプリコンディションを確かめずに呼び出し音を始めます。 | 着信者が呼び出しを始めた時点で、両方の資源はそろっています。 |
 | AS、TS 24.147 5.3.2.3.1 step 2、TS 24.229 5.7.1.4 と 5.7.1.5 | AS が受け持つ利用者は誰でも会議を作れます。会議のポリシーも課金のアドレスもありません。 | 会議のポリシーのサーバーが無く、このプロジェクトのノードは課金の記録を作りません。 |
+| AS、TS 24.147 5.3.2.4.1 step 2、TS 24.229 5.7.1.4 と 5.7.1.5 | 網が識別子を保証した利用者なら誰でも、空きのある会議に入れます。P-Asserted-Identity の無い INVITE には、認証のチャレンジをせずに 403 を返します。 | 会議のポリシーが無く、AS は利用者の認証情報を持ちません。このプロジェクトの網では、フォーカスに届く要求はどれも、P-CSCF か信頼できる相手網が保証した識別子を持っています。 |
 | AS、TS 24.229 5.7.3 NOTE 8 | 招く利用者の S-CSCF は、AS 自身の S-CSCF と同じとみなします。 | この網の S-CSCF は 1 台です。 |
 | AS、TS 24.147 5.3.2.6.2.2 | 参加者を外すようフォーカスに頼む REFER（method が BYE）は 403 で断ります。 | IR.92 2.3.3 は求めていません。 |
 | AS、RFC 4575 3.9 | 変化があるたびにすぐ通知し、5 秒に 1 回までにまとめません。 | IR.92 2.3.3 は 5 秒以内の通知を求めていて、小さな会議はあまり変わりません。 |
