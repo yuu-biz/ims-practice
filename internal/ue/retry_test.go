@@ -59,8 +59,10 @@ func TestBackoffKeepsToRetryAfter(t *testing.T) {
 // Before each of them the UE waits the retry delay of RFC 5626 4.5,
 // which doubles with each failure in a row. The fourth initial
 // registration succeeds, and a later failure starts the count again.
-// The test records the waits that the phone asks for and lets each end
-// at once.
+// A refresh whose 500 carries Retry-After is followed by an initial
+// registration only after that time. Every REGISTER has the same
+// contact (5.1.1.4.1 item c). The test records the waits that the phone
+// asks for and lets each end at once.
 func TestPhoneRetriesAFailedReregistration(t *testing.T) {
 	waits := make(chan time.Duration, 8)
 	ue.SetRetryTimer(t, func(d time.Duration) *time.Timer {
@@ -71,8 +73,10 @@ func TestPhoneRetriesAFailedReregistration(t *testing.T) {
 	// one get the status of the script in turn; each 200 has expires 1,
 	// so that the UE refreshes after half a second, and the last one an
 	// hour.
-	script := []int{200, 500, 500, 500, 500, 200, 500, 500, 200}
-	expires := []string{"1", "", "", "", "", "1", "", "", "3600"}
+	script := []int{200, 500, 500, 500, 500, 200, 500, 500, 200, 500, 200}
+	expires := []string{"1", "", "", "", "", "1", "", "", "1", "", "3600"}
+	// RFC 3261 20.33: delta-seconds, a comment and a parameter.
+	retryAfter := []string{"", "", "", "", "", "", "", "", "", "120 (maintenance);duration=60", ""}
 	registers := make(chan *sip.Message, 2*len(script)+1)
 	var answered atomic.Int32
 	pcscf := stackConfig(t, sip.Config{
@@ -90,6 +94,9 @@ func TestPhoneRetriesAFailedReregistration(t *testing.T) {
 			}
 			n := min(int(answered.Add(1))-1, len(script)-1)
 			resp := sip.NewResponse(st.Request, script[n], sip.NewTag())
+			if retryAfter[n] != "" {
+				resp.Add("Retry-After", retryAfter[n])
+			}
 			if script[n] == 200 {
 				resp.Add("Service-Route", "<sip:orig@scscf."+domain+":5060;lr>")
 				resp.Add("P-Associated-URI", "<"+impu+">")
@@ -147,6 +154,9 @@ func TestPhoneRetriesAFailedReregistration(t *testing.T) {
 		t.Helper()
 		select {
 		case m := <-registers:
+			if !strings.Contains(m.Get("Contact"), contact.URI()) {
+				t.Errorf("%s has the contact %q, want %q", what, m.Get("Contact"), contact.URI())
+			}
 			return m
 		case <-time.After(5 * time.Second):
 			t.Fatalf("no %s", what)
@@ -193,6 +203,16 @@ func TestPhoneRetriesAFailedReregistration(t *testing.T) {
 	noWait("between the second failed refresh and the initial registration")
 	nextWait(1)
 	initial("REGISTER after the wait")
+	refresh("refresh that gets Retry-After")
+	select {
+	case d := <-waits:
+		if d != 120*time.Second {
+			t.Errorf("wait after a 500 with Retry-After 120: %v", d)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("the phone did not wait for the Retry-After of the failed refresh")
+	}
+	initial("REGISTER after the Retry-After")
 	for deadline := time.Now().Add(5 * time.Second); !p.Status().Registered; {
 		if time.Now().After(deadline) {
 			t.Fatal("the phone does not say it is registered")

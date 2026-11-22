@@ -620,7 +620,8 @@ func registerOnly(ctx context.Context, s *session) error {
 
 // registerAgain refreshes the registration, or makes an initial one.
 // A refresh that fails is followed at once by an initial registration
-// (TS 24.229 5.1.1.4.1). After an initial registration that fails the
+// (TS 24.229 5.1.1.4.1), unless its response asked for a wait with
+// Retry-After. After an initial registration that fails the
 // UE waits before the next one, longer after each failure in a row
 // (5.1.1.2.1), until one succeeds; only the end of ctx stops it.
 func (s *session) registerAgain(ctx context.Context, initial bool) error {
@@ -644,7 +645,7 @@ func (s *session) registerAgain(ctx context.Context, initial bool) error {
 			return ctx.Err()
 		}
 		s.registered = false
-		if !initial {
+		if !initial && !ue.AsksToWait(err) {
 			s.log.Warn("re-registration failed; registering again from the start", "error", err.Error())
 			initial = true
 			continue
