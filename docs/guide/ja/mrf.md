@@ -185,6 +185,31 @@ phone1 は応答済みの通話を 2 つ持っていて、**Merge** を押しま
 - **匿名を求めた参加者は、識別子なしで会議の状態に載ります。** フォーカスはこの求めに応じなければならず、文書のどの URI にも識別子を出しません（RFC 4575 8.2）。利用者は Privacy ヘッダーでこれを求めます（RFC 3323 4.2）。値が `id` か `user` なら、AS はその利用者を匿名として扱います（TS 24.229 5.7.1.4）。利用者の識別子の制限は、この値に乗ってフォーカスに届きます。会議を作る利用者と自分から入る利用者では OIR が（TS 24.605 4.6.5）、フォーカスが招いた利用者では TIR が（4.6.3）そうします。招かれた側は 2xx でこれを求めます。この参加者の `entity` は `sip:anonymous1@anonymous.invalid` になり、display-text は `Anonymous1` になります。次の参加者からは大きい番号になり、一度使った番号をフォーカスがもう一度使うことはありません。これは RFC 4575 5.6 の書き方です。ホストは RFC 2606 2 が予約した `.invalid` のトップレベルドメインにあり、DNS はこれを解決しません。ユーザー部は、参加者の中で URI が重ならないようにするためのものです。この参加者もほかと同じく会議の状態の 1 人で、自分の `<endpoint>` と状態を持ちます。ほかの参加者には、誰かがいることは見えて、それが誰かは見えません。`Privacy: header` は、誰がいるかではなく網の作りを隠す値なので、識別子はそのまま載ります。`user` で匿名を求めた参加者は、自分が頼んだ招待にも識別子を残しません。フォーカスは、招く相手への INVITE に、REFER の Referred-By を入れません。この値はその参加者を名指しするためです（TS 24.605 4.6.5）。識別子はフォーカスの中に留まります。どの NOTIFY にも出ませんが、フォーカスはどの購読者がどの参加者かを変わらず知っています。`internal/mmtel` の `TestPrivacyKeepsTheIdentityOutOfTheConferenceState` が、会議に入る 3 通りの道をすべて試します。この場面の電話は匿名を求めないので、キャプチャにはそれぞれの識別子が出ます。
 - **会議は作った人が抜けると終わります**（TS 24.147 5.3.2.7）。phone1 が切ると、AS は phone2 と phone3 に BYE を送り、参加者ごとの MRFC とのダイアログにも BYE を送ります。
 
+## フォーカスが相手を招く方法
+
+phone2 を会議に招く INVITE（上の #7712）は、AS から phone2 へ直接は届きません。フォーカスはこの INVITE を S-CSCF に送り、S-CSCF は利用者の発信と同じように送り先を決めます。
+
+```text
+focus    S-CSCF   HSS      I-CSCF   MMTel AS  P-CSCF   phone2
+                                    services
+ |        |        |        |        |         |        |  INVITE tel:+12025550102 with Replaces, Route: <sip:scscf...;lr;orig>,
+ |        |        |        |        |         |        |  P-Asserted-Identity: <sip:conf-o47ha7ifxyni@conf...>
+ |------->|        |        |        |         |        |
+ |        |------->|        |        |         |        |  SAR UNREGISTERED_USER, sip:conf-o47ha7ifxyni@conf...
+ |        |<-------|        |        |         |        |  SAA, the profile of the PSI user, with no iFCs
+ |        |---------------->|        |         |        |  INVITE sip:+12025550102@ims...;user=phone, from ENUM
+ |        |<----------------|        |         |        |  after the LIR: to the S-CSCF of phone2
+ |        |------------------------->|         |        |  P-Served-User: phone2;sescase=term
+ |        |<-------------------------|         |        |  the INVITE of the B2BUA
+ |        |----------------------------------->|        |
+ |        |        |        |        |         |------->|  INVITE, Contact: <sip:conf-o47ha7ifxyni@conf...>;isfocus
+```
+
+- **フォーカスは会議の URI の代わりに要求を送る発信側の UA です**（TS 24.147 5.3.2.2.1、TS 24.229 5.7.3）。会議の URI は AS が受け持つ PSI です。フォーカスはこの URI を TS 24.147 5.3.2.5.4 step 2 のとおり P-Asserted-Identity に入れ、S-CSCF が担当する識別子もこの URI になります。AS は INVITE の送り先を自分では決めず、S-CSCF の URI に `orig` パラメータを付けて Route の先頭に入れます。この S-CSCF は、phone1 がファクトリの URI に送った INVITE を AS に届けた S-CSCF です。
+- **`orig` があると、S-CSCF は発信側を担当します**（TS 24.229 5.4.3.1）。UE の Service-Route のユーザー部の `orig` と同じ働きです。ここでの発信側は会議の URI で、登録はありません。S-CSCF は、登録していない利用者の代わりにアプリケーションサーバーが送る要求と同じく、`UNREGISTERED_USER` の SAR で HSS からプロファイルを受け取り（TS 24.229 5.4.3.2、NOTE 24）、`ORIGINATING_UNREGISTERED` の iFC を評価します。
+- **HSS はすべての会議の URI を 1 つの PSI ユーザーとして持ちます**（TS 23.228 5.4.12.4）。ワイルドカードの PSI `sip:!.*!@conf.ims.mnc001.mcc001.3gppnetwork.org` と、私的サービス識別子 `conference@ims.mnc001.mcc001.3gppnetwork.org` です。PSI の 2 つの `!` のあいだは正規表現で、私的サービス識別子は PSI を Cx の手順に結び付けるためだけのものです（TS 23.003 13.5 と 13.5A。`deploy/compose/hss.yaml` の `psi_users`）。SAA のプロファイルは会議の URI に `IdentityType` 2（`WILDCARDED_PSI`）と、一致したワイルドカードの PSI を添えて示し（TS 29.228 B.2.1）、iFC を持ちません。S-CSCF はこのプロファイルを数分のあいだ持っているので、同じ会議へ次に招くときには SAR が要りません。
+- **そこから先、INVITE は phone1 の発信と同じ道を通ります**（TS 23.228 5.4.12.5 c）。ENUM が番号を SIP URI に変え（TS 24.229 5.4.3.2 step 10）、S-CSCF は自分を Record-Route に入れ、I-CSCF が phone2 の S-CSCF を見つけます。それは同じ S-CSCF で、今度は phone2 を担当し、phone2 の着信側のサービスのために INVITE を MMTel AS に渡します。ほかの網の番号なら、S-CSCF は代わりに IBCF へ INVITE を送ります（[境界を越える会議](interconnect.md#境界を越える会議)）。
+
 ## 会議に戻る
 
 会議を抜けた参加者は、会議が続いているあいだなら戻れます。フォーカスの Contact で知った会議の URI に INVITE を送ります（TS 24.147 5.3.1.4.1）。phone2 が電話を切り、そのあと会議の URI に発信したとします。
@@ -237,10 +262,11 @@ phone2     P-CSCF   S-CSCF   MMTel AS              MRFC
 | `internal/mmtel/cat.go`、`internal/mmtel/catdata.go` | 着信側の AS の CAT と、HSS にあるそのデータ。 |
 | `internal/mmtel/waiting.go` | AS の CW。 |
 | `internal/mmtel/conference.go`、`internal/mmtel/conferenceevent.go` | フォーカスと会議イベントパッケージ。 |
+| `internal/scscf/session.go`、`internal/scscf/unregistered.go`、`internal/hss/psi.go` | 会議の URI の代わりに送る要求を担当する S-CSCF と、HSS の PSI ユーザー。 |
 | `internal/mrfc`、`internal/netann` | MRFC と、RFC 4240 の Request-URI。 |
 | `internal/agw` | MRFP。ターミネーション、音声ガイダンス、混ぜ合わせと、その制御の API。 |
 | `internal/ue/phone_conference.go`、`internal/ue/conference.go` | Swap、Merge と、会議の UE の側。 |
-| `internal/mmtel/mrf_network_test.go`、`internal/mmtel/conference_network_test.go` | 同じ流れを、1 つのプロセスの中の IMS 全体で通す試験。 |
+| `internal/mmtel/mrf_network_test.go`、`internal/mmtel/conference_network_test.go`、`internal/mmtel/conference_border_test.go` | 同じ流れを、1 つのプロセスの中の IMS 全体で通す試験。最後のものは、ほかの網の相手と通す。 |
 
 ## このプロジェクトで簡略化していること
 
@@ -262,7 +288,7 @@ phone2     P-CSCF   S-CSCF   MMTel AS              MRFC
 | AS、TS 24.147 5.3.2.3.1 step 2、TS 24.229 5.7.1.4 と 5.7.1.5 | AS が受け持つ利用者は誰でも会議を作れます。会議のポリシーも課金のアドレスもありません。 | 会議のポリシーのサーバーが無く、このプロジェクトのノードは課金の記録を作りません。 |
 | AS、TS 24.147 5.3.2.4.1 step 2、TS 24.229 5.7.1.4 と 5.7.1.5 | フォーカスは INVITE の P-Asserted-Identity を利用者の識別子として受け取ります。作った人について S-CSCF が保証した識別子を受け取るのと同じで、それ以上は何も確かめません。INVITE が信頼ドメインのノードから来たかどうかは確かめません（TS 24.229 5.7.1.4 b i、RFC 3325 8）。空きのある会議には誰でも入れます。匿名を求めておらず P-Asserted-Identity も無い INVITE には、認証のチャレンジをせずに 403 を返します。 | 会議のポリシーが無く、AS は利用者の認証情報を持ちません。このプロジェクトの網では、フォーカスに届く要求はどれも、P-CSCF か信頼できる相手網が保証した識別子を持っています。 |
 | AS、TS 24.605 4.6.5 と 4.6.3 | フォーカスは信号の Privacy ヘッダーだけを見て、自分で OIR や TIR を調べません。OIR が permanent モードの利用者が、Privacy の無い INVITE で会議を作ると、会議の状態にはその識別子が載ります。 | この AS は、会議を作った人自身の AS でもあり、フォーカスでもあります。会議のファクトリ URI への INVITE は、作った人の発信側のサービスを通さずに、そのまま会議になります。通していれば、この利用者の Privacy に `id` が入っていました。フォーカスが独立したアプリケーションサーバーなら、その INVITE は発信側のサービスを経てから届くので、そこで匿名の求めを読み取れます。 |
-| AS、TS 24.229 5.7.3 NOTE 8 | 招く利用者の S-CSCF は、AS 自身の S-CSCF と同じとみなします。 | 設定に書く S-CSCF は 1 つで、網のすべての利用者を受け持つためです。その S-CSCF を何台かで動かすときも、台どうしは 1 つの名前を共有し、登録を 1 つの保存先に置きます。 |
+| AS、TS 24.229 5.7.3 NOTE 4 | AS は、会議の URI を受け持つ S-CSCF を、作った人の INVITE を届けた S-CSCF とみなし、Sh で HSS に問い合わせません。 | 設定に書く S-CSCF は 1 つで、網のすべての利用者と PSI を受け持つためです。その S-CSCF を何台かで動かすときも、台どうしは 1 つの名前を共有し、状態を 1 つの保存先に置きます。 |
 | AS、TS 24.147 5.3.2.6.2.2 | 参加者を外すようフォーカスに頼む REFER（method が BYE）は 403 で断ります。 | IR.92 2.3.3 は求めていません。 |
 | AS、RFC 4575 3.9 | 変化があるたびにすぐ通知し、5 秒に 1 回までにまとめません。 | IR.92 2.3.3 は 5 秒以内の通知を求めていて、小さな会議はあまり変わりません。 |
 | AS、TS 24.147 5.3.3.2 step 2、RFC 4575 3.5 | 網が識別子を保証した購読者なら誰でも購読できます。 | 会議のポリシーがありません。 |

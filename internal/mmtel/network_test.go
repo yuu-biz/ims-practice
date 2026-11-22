@@ -52,6 +52,9 @@ var shTimers = diameter.Timers{Watchdog: time.Minute, Reconnect: 50 * time.Milli
 type names struct {
 	mu    sync.Mutex
 	hosts map[string]netip.AddrPort
+	// peer, when not empty, is the domain of another network, to which
+	// ENUM maps the numbers +1 202 555 0150 to 0159.
+	peer string
 }
 
 func (n *names) add(host string, addr netip.AddrPort) {
@@ -60,7 +63,15 @@ func (n *names) add(host string, addr netip.AddrPort) {
 	n.hosts[host] = addr
 }
 
-func (n *names) Locate(_ context.Context, host string, _ int, _ sip.Transport) ([]sip.Destination, error) {
+func (n *names) Locate(_ context.Context, host string, port int, _ sip.Transport) ([]sip.Destination, error) {
+	// An address needs no lookup (RFC 3263 4.1 and 4.2), such as the
+	// contact of a UE of the peer network.
+	if ip, err := netip.ParseAddr(host); err == nil {
+		if port == 0 {
+			port = 5060
+		}
+		return []sip.Destination{{Transport: sip.UDP, Addr: netip.AddrPortFrom(ip, uint16(port))}}, nil
+	}
 	n.mu.Lock()
 	defer n.mu.Unlock()
 	if a, ok := n.hosts[host]; ok {
@@ -70,9 +81,14 @@ func (n *names) Locate(_ context.Context, host string, _ int, _ sip.Transport) (
 }
 
 // ENUM turns +1 202 555 010x into the SIP URI of that number in the
-// home domain, as the e164.arpa zone of deploy/compose does.
+// home domain, as the e164.arpa zone of deploy/compose does, and +1 202
+// 555 015x into one of the peer network, as the zone of
+// deploy/interconnect/a does.
 func (n *names) ENUM(_ context.Context, number, _ string) (string, error) {
 	number = strings.NewReplacer("-", "", ".", "").Replace(number)
+	if user, ok := strings.CutPrefix(number, "+1202555015"); ok && len(user) == 1 && n.peer != "" {
+		return "sip:" + number + "@" + n.peer + ";user=phone", nil
+	}
 	if user, ok := strings.CutPrefix(number, "+120255501"); ok && len(user) == 2 {
 		return "sip:+120255501" + user + "@" + domain, nil
 	}
@@ -95,6 +111,8 @@ type network struct {
 	provisioning http.Handler
 	// wire is every SIP message that a node or a UE received.
 	wire *wire
+	// dns is the DNS and ENUM of the network.
+	dns *names
 }
 
 // netOptions are the choices of startNetworkWith.
@@ -105,6 +123,10 @@ type netOptions struct {
 	// the one the AS plays before it rejects a call.
 	mrf          bool
 	announcement string
+	// border gives the S-CSCF an IBCF, through which a number of the
+	// peer network leaves the network (the IBCF of the network's
+	// border, startBorder).
+	border bool
 }
 
 // startNetwork starts the IMS without the MRF. afterFunc, when not nil,
@@ -210,6 +232,9 @@ func startNetworkWith(t *testing.T, o netOptions) *network {
 		t.Fatal(err)
 	}
 	dns := &names{hosts: map[string]netip.AddrPort{}}
+	if o.border {
+		dns.peer = peerDomain
+	}
 	w := &wire{}
 	hssNode := diameter.NewNode(diameter.Identity{OriginHost: "hss." + domain, OriginRealm: domain},
 		[]uint32{diameter.ApplicationIDCx, diameter.ApplicationIDSh}, shTimers, quiet())
@@ -250,8 +275,12 @@ func startNetworkWith(t *testing.T, o netOptions) *network {
 
 	var scscfRole atomic.Pointer[scscf.SCSCF]
 	scscfNode, scscfPeer := connect("scscf."+domain, diameter.ApplicationIDCx, func(m *diam.Message) *diam.Message { return scscfRole.Load().Handle(m) })
-	s, err := scscf.New(scscf.Config{ServerName: "sip:scscf." + domain + ":5060", Host: "scscf." + domain, Port: 5060,
-		HomeDomain: domain, MinExpires: time.Second, MaxExpires: time.Hour}, scscfPeer, scscfNode, scscf.NewMemoryStore(), dns, quiet())
+	scscfCfg := scscf.Config{ServerName: "sip:scscf." + domain + ":5060", Host: "scscf." + domain, Port: 5060,
+		HomeDomain: domain, MinExpires: time.Second, MaxExpires: time.Hour}
+	if o.border {
+		scscfCfg.IBCF = sip.URI{Scheme: "sip", Host: ibcfHost, Port: 5060}
+	}
+	s, err := scscf.New(scscfCfg, scscfPeer, scscfNode, scscf.NewMemoryStore(), dns, quiet())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -330,7 +359,7 @@ func startNetworkWith(t *testing.T, o netOptions) *network {
 		time.Sleep(20 * time.Millisecond)
 	}
 	return &network{t: t, pcscf: pcscfStack.LocalAddr(), users: users, ut: ut, cfg: hssCfg, mrfp: mrfp, mp: mp, mrfpPorts: mrfpPorts,
-		provisioning: hssRole.Provisioning(nil), wire: w}
+		provisioning: hssRole.Provisioning(nil), wire: w, dns: dns}
 }
 
 // subscriber is a UE of the network: the UE simulator that registers,

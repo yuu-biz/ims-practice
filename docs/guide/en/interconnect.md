@@ -238,23 +238,25 @@ The INVITE that UE B1 receives has IBCF-B's internal name in Contact, `sip:ibcf.
 
 Not every Contact is replaced. TS 24.229 5.10.5 has the IBCF pass a Contact on as it came when it is a GRUU, or when it has a feature tag that tells what the far end can do at that URI. Its example is `isfocus`, the tag of a conference focus: the URI in that Contact is the conference URI, which a participant stores and subscribes to (TS 24.147 5.3.1.3.2), and with which it rejoins the conference (the NOTE of 5.10.5). When the IBCF passes such a Contact on, it puts its own URI in Record-Route, so that the requests of the far end, sent to the conference URI, still come to it.
 
-The IBCF stays a B2BUA all the same. Take a focus in network A that invites a user of network B:
+The IBCF stays a B2BUA all the same. Take a focus in network A that invites a user of network B. The focus sends the INVITE on behalf of the conference URI, a PSI that it hosts, to the S-CSCF of network A with `orig`. The S-CSCF serves the PSI with the profile of its PSI user from the HSS and routes the INVITE as a call of UE A1: ENUM gives the number a SIP URI of network B, so the INVITE leaves through IBCF-A ([How the focus invites a peer](mrf.md#how-the-focus-invites-a-peer)):
 
 ```text
-focus (MMTel AS)   IBCF-A ║ IBCF-B   UE B1
-  | INVITE              |   ║   |        |
-  | Contact: <conf>;isfocus  ║   |        |
-  |-------------------->|==========>|------->|  Contact: <conf>;isfocus in each INVITE
-  |                     | Record-Route:     |  Record-Route: IBCF-A on the link, IBCF-B in network B
-  |                     |   ║   |        |
-  |   SUBSCRIBE sip:conf (within the dialog)  |
-  |<--------------------|<==========|<-------|
-  |   NOTIFY            |   ║   |        |
-  |-------------------->|==========>|------->|
+focus (MMTel AS)  S-CSCF-A   IBCF-A ║ IBCF-B   UE B1
+  | INVITE tel:+12025550151 |    ║   |        |
+  | Route: <S-CSCF-A;lr;orig>    ║   |        |
+  | Contact: <conf>;isfocus |    ║   |        |
+  |---------------->|       |    ║   |        |  P-Asserted-Identity: <conf>, the PSI that the S-CSCF serves
+  |                 |------>|==========>|------->|  Contact: <conf>;isfocus in each INVITE
+  |                 |       | Record-Route:     |  Record-Route: IBCF-A on the link, IBCF-B in network B
+  |                 |       |    ║   |        |
+  |   SUBSCRIBE sip:conf (within the dialog)     |
+  |<----------------|<------|<==========|<-------|
+  |   NOTIFY        |       |    ║   |        |
+  |---------------->|------>|==========>|------->|
 ```
 
 - Each INVITE has the conference URI with `isfocus` in Contact: the one on the link and the one that UE B1 gets. UE B1 learns the URI of the conference it is in.
-- Each IBCF puts its own name in Record-Route: IBCF-A its external name on the link, IBCF-B its internal name in network B. They are the only Record-Route on the link.
+- Each IBCF puts its own name in Record-Route: IBCF-A its external name on the link, IBCF-B its internal name in network B. They are the only Record-Route on the link. Inside network A, S-CSCF-A record-routes too, so the requests within the dialog between IBCF-A and the focus pass it.
 - A request of UE B1 within the dialog has the conference URI as its Request-URI and IBCF-B in Route. IBCF-B takes it in its dialog with network B, as it takes every request of a call, and sends a request of its own in its dialog with IBCF-A, to the conference URI again, and IBCF-A does the same towards the focus.
 - The focus still sees IBCF-A's internal name as the Contact of UE B1's side: the Contact of UE B1 has no such tag, so IBCF-A replaces it.
 
@@ -264,7 +266,7 @@ A participant of network B that has left the conference can come back with that 
 
 The IBCF hides nothing in that URI: what the focus writes there, the other network sees. The MMTel AS of this project builds its conference URIs in a subdomain of the home domain, `conf.ims.mnc001.mcc001.3gppnetwork.org`, which is not the name of a node, so a conference URI shows network B no name of a node of network A.
 
-A participant first subscribes with a SUBSCRIBE to the conference URI outside the dialog (TS 24.147 5.3.1.2). That one does not cross: the IBCF of the participant's network answers it with 403 (Forbidden) itself, as 5.10.1 lets it reject a request by local policy (see the last section). On a 403, TS 24.147 5.3.1.2 has the participant send its SUBSCRIBE within the dialog of the conference session instead, and that one crosses like any other request of a call, when the agreements allow SUBSCRIBE and NOTIFY. Without SUBSCRIBE in the agreement, the IBCF answers 405 (Method Not Allowed) to both, as to any method outside the agreement. No scenario of the script holds a conference across the border; the tests of `internal/ibcf` run both directions in one process (`TestConferenceFocusAcrossTheBorder`, `TestConferenceFocusAnswersAcrossTheBorder`).
+A participant first subscribes with a SUBSCRIBE to the conference URI outside the dialog (TS 24.147 5.3.1.2). That one does not cross: the IBCF of the participant's network answers it with 403 (Forbidden) itself, as 5.10.1 lets it reject a request by local policy (see the last section). On a 403, TS 24.147 5.3.1.2 has the participant send its SUBSCRIBE within the dialog of the conference session instead, and that one crosses like any other request of a call, when the agreements allow SUBSCRIBE and NOTIFY. Without SUBSCRIBE in the agreement, the IBCF answers 405 (Method Not Allowed) to both, as to any method outside the agreement. No scenario of the script holds a conference across the border; the tests of `internal/ibcf` run both directions in one process (`TestConferenceFocusAcrossTheBorder`, `TestConferenceFocusAnswersAcrossTheBorder`). `TestConferenceInvitesAUserOfAnotherNetwork` in `internal/mmtel` runs the focus of this project and the S-CSCF of network A in one process, with a UA in the place of IBCF-A for the user of network B: UE A1 merges its call with that user and one with a user of network A, and the three hear one another.
 
 The IBCF does not read the conference state either. The NOTIFYs carry it in their body. TS 24.229 5.10.6.3 has the IBCF change the SDP when it translates the addresses of the media, and leaves any other body to local policy, with passing it on unchanged, removing it and rejecting the request as examples. The IBCF of this project passes every other body on unchanged, so the focus decides what network B sees. RFC 4575 5.7 has the focus make the key of each `<endpoint>`, and gives the Contact and a GRUU as examples. The Contact that the focus of network A has for a participant is the address of a UE of network A, or, for a participant of network B, the internal name of IBCF-A, which took the place of the participant's own. The MMTel AS of this project names each endpoint by a `urn:uuid:` URI instead, so the conference state shows network B no address and no node name of network A. `TestConferenceStateAcrossTheBorder` in `internal/ibcf` checks this with the conference AS of this project as the focus of network A.
 

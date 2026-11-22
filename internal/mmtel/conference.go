@@ -419,15 +419,19 @@ func (f *conference) admit(in *sip.IncomingCall, p *party, final *sip.Message, i
 }
 
 // sCSCFRoute is the Route of the INVITEs that a focus sends to invite
-// users: the S-CSCF of the creator's INVITE, without the original
-// dialog identifier, which belongs to that INVITE. The S-CSCF then
-// serves the invited user in the terminating case (TS 24.229 5.7.3).
+// users on behalf of the conference URI, a PSI that the AS hosts (TS
+// 24.229 5.7.3): the S-CSCF of the creator's INVITE, without the
+// original dialog identifier, which belongs to that INVITE, and with
+// "orig". The S-CSCF then serves the PSI in the originating case, and
+// routes the INVITE as it routes a call of a user: to the S-CSCF of an
+// invited user of the home network, or through the IBCF to the network
+// of an invited user of another network (TS 23.228 5.4.12.5 c).
 //
-// SIMPLIFIED: TS 24.229 5.7.3 NOTE 8. An AS learns the S-CSCF of the
-// invited user over Sh or from a third-party registration. The
-// configuration of this network names one S-CSCF, which serves every
-// user of the network; when it runs as several instances, they share
-// one name and keep the registrations in one store.
+// SIMPLIFIED: TS 24.229 5.7.3 NOTE 4. An AS learns the S-CSCF that hosts
+// the PSI over Sh. The configuration of this network names one S-CSCF,
+// which serves every user and PSI of the network; when it runs as
+// several instances, they share one name and keep their state in one
+// store.
 func sCSCFRoute(route []string) []string {
 	if len(route) == 0 {
 		return nil
@@ -441,6 +445,7 @@ func sCSCFRoute(route []string) []string {
 		return nil
 	}
 	u.Params = slices.DeleteFunc(u.Params, func(p sip.Param) bool { return p.Name == "odi" })
+	u.Params.Set("orig", "")
 	return []string{sip.NameAddr{URI: u.String()}.String()}
 }
 
@@ -829,11 +834,15 @@ func referredMethod(uri string) string {
 // inviteUser is TS 24.147 5.3.2.5.4: the focus INVITEs the user of rt
 // to the conference, with the conference URI in P-Asserted-Identity and,
 // with isfocus, in Contact, and with the Referred-By and the Replaces of
-// the REFER (steps 4 and 4a). The focus first gets an offer from the
-// MRFC, which offers PCMU only, so that the user's answer settles the
-// leg on the codec of the mixer. It returns the status for the last
-// NOTIFY of the REFER: the final status of the INVITE, or the code of
-// the refusal when the conference did not take the user who answered.
+// the REFER (steps 4 and 4a). The focus sends it as an originating UA on
+// behalf of the conference URI (TS 24.147 5.3.2.2.1): the PSI in
+// P-Asserted-Identity is also the identity that the S-CSCF serves (TS
+// 24.229 5.7.3), and the Route is that of sCSCFRoute. The focus first
+// gets an offer from the MRFC, which offers PCMU only, so that the
+// user's answer settles the leg on the codec of the mixer. It returns
+// the status for the last NOTIFY of the REFER: the final status of the
+// INVITE, or the code of the refusal when the conference did not take
+// the user who answered.
 func (f *conference) inviteUser(rt sip.ReferTo, referredBy string) int {
 	ua := f.as.ua.Load()
 	if ua == nil {
@@ -928,8 +937,9 @@ func (f *conference) inviteUser(rt sip.ReferTo, referredBy string) int {
 // requestURIOf is the Request-URI of the INVITE to the user of a
 // Refer-To URI. A SIP URI of a global number with user=phone, as a UE
 // writes a tel URI with a Replaces (TS 24.147 5.3.1.5.3), is its tel
-// URI again, which the S-CSCF finds the user by (RFC 3261 19.1.6). A
-// GRUU is not such a URI: it names a UA instance, not a number.
+// URI again (RFC 3261 19.1.6), which the S-CSCF translates with ENUM
+// (TS 24.229 5.4.3.2 step 10). A GRUU is not such a URI: it names a UA
+// instance, not a number.
 func requestURIOf(uri string) string {
 	n, ok := ims.ParseTelephoneNumber(uri)
 	if !ok || n.SIP == nil || !strings.HasPrefix(n.Number, "+") {
