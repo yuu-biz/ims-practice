@@ -1,12 +1,12 @@
 ---
 title: SMS の流れ
-footer: ims-practice 勉強会 4. SMS
+footer: ims-practice 勉強会 5. SMS
 lang: ja
 ---
 
 # SMS の流れ
 
-ims-practice 勉強会 第 4 回（SMS over IP。IP-SM-GW、Sh、3 種類の報告）
+ims-practice 勉強会 第 5 回（SMS over IP。IP-SM-GW、Sh、3 種類の報告）
 
 ---
 
@@ -407,9 +407,9 @@ IMS の中心となる登録、通話、ショートメッセージの 4 回は�
 | 回 | 題 | 読む文書 |
 | --- | --- | --- |
 | 1 | パッケージ構成 | [README.ja.md](../../../README.ja.md) |
-| 2 | 登録 | [docs/guide/ja/registration.md](../../../docs/guide/ja/registration.md) |
-| 3 | 通話 | [docs/guide/ja/call.md](../../../docs/guide/ja/call.md) |
-| 4 | SMS | [docs/guide/ja/sms.md](../../../docs/guide/ja/sms.md) |
+| 3 | 登録 | [docs/guide/ja/registration.md](../../../docs/guide/ja/registration.md) |
+| 4 | 通話 | [docs/guide/ja/call.md](../../../docs/guide/ja/call.md) |
+| 5 | SMS | [docs/guide/ja/sms.md](../../../docs/guide/ja/sms.md) |
 
 - 次は MMTel AS の補足サービス（[mmtel.md](../../../docs/guide/ja/mmtel.md)）です。その次が、補足サービスの上に立つ VoLTE の通話（[volte.md](../../../docs/guide/ja/volte.md)）です。
 

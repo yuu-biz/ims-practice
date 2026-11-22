@@ -10,13 +10,13 @@ The decks do not repeat the guides. Each slide says what to look at in the captu
 | --- | --- | --- | --- |
 | 0. Go for reading this repository | [decks/ja/00-go.md](decks/ja/00-go.md) | [decks/en/00-go.md](decks/en/00-go.md) | [A Tour of Go](https://go.dev/tour/) |
 | 1. Package layout | [decks/ja/01-packages.md](decks/ja/01-packages.md) | [decks/en/01-packages.md](decks/en/01-packages.md) | [README](../README.md) |
-| 2. Registration | [decks/ja/02-registration.md](decks/ja/02-registration.md) | [decks/en/02-registration.md](decks/en/02-registration.md) | [registration](../docs/guide/en/registration.md) |
-| 3. Voice call | [decks/ja/03-call.md](decks/ja/03-call.md) | [decks/en/03-call.md](decks/en/03-call.md) | [call](../docs/guide/en/call.md) |
-| 4. SMS over IP | [decks/ja/04-sms.md](decks/ja/04-sms.md) | [decks/en/04-sms.md](decks/en/04-sms.md) | [sms](../docs/guide/en/sms.md) |
-| 5. Supplementary services (MMTel AS) | [decks/ja/05-mmtel.md](decks/ja/05-mmtel.md) | [decks/en/05-mmtel.md](decks/en/05-mmtel.md) | [mmtel](../docs/guide/en/mmtel.md) |
-| 6. VoLTE (access network, IMS AKA, Rx, preconditions) | [decks/ja/06-volte.md](decks/ja/06-volte.md) | [decks/en/06-volte.md](decks/en/06-volte.md) | [volte](../docs/guide/en/volte.md) |
+| 3. Registration | [decks/ja/03-registration.md](decks/ja/03-registration.md) | [decks/en/03-registration.md](decks/en/03-registration.md) | [registration](../docs/guide/en/registration.md) |
+| 4. Voice call | [decks/ja/04-call.md](decks/ja/04-call.md) | [decks/en/04-call.md](decks/en/04-call.md) | [call](../docs/guide/en/call.md) |
+| 5. SMS over IP | [decks/ja/05-sms.md](decks/ja/05-sms.md) | [decks/en/05-sms.md](decks/en/05-sms.md) | [sms](../docs/guide/en/sms.md) |
+| 6. Supplementary services (MMTel AS) | [decks/ja/06-mmtel.md](decks/ja/06-mmtel.md) | [decks/en/06-mmtel.md](decks/en/06-mmtel.md) | [mmtel](../docs/guide/en/mmtel.md) |
+| 7. VoLTE (access network, IMS AKA, Rx, preconditions) | [decks/ja/07-volte.md](decks/ja/07-volte.md) | [decks/en/07-volte.md](decks/en/07-volte.md) | [volte](../docs/guide/en/volte.md) |
 
-Decks 1 to 6 go from the map of the code through registration, the call and SMS to the supplementary services and the VoLTE call. The numbers are the recommended order: the VoLTE deck comes after the supplementary services, because the VoLTE guide builds on the MMTel AS, and every VoLTE call goes through it. Deck 0 comes before them: it explains the Go that a reader of this repository meets, with excerpts of the code, for those who have not read Go before.
+Decks 1 to 7 go from the map of the code through registration, the call and SMS to the supplementary services and the VoLTE call. The numbers are the recommended order: the VoLTE deck comes after the supplementary services, because the VoLTE guide builds on the MMTel AS, and every VoLTE call goes through it. Deck 0 comes before them: it explains the Go that a reader of this repository meets, with excerpts of the code, for those who have not read Go before.
 
 ## Running a session
 
@@ -30,11 +30,11 @@ Each deck is one session, held in the order of the numbers. The decks carry no s
 | --- | --- | --- |
 | 0. Go | 60 min | 25 for "Why Go" (3), running the tests and the shape of the code (10), then 35 for what you meet on every page (20) and a spec-shaped package (10). The exercises take 15 more, in pairs. For those who program in another language but have not read Go; those who read Go start with deck 1. |
 | 1. Package layout | 45 min | No signaling: the map of what is where. 3 for the top of the repository, 5 for "internal/ in layers", 10 for following one REGISTER through the code in pairs. |
-| 2. Registration | 60 min | 35 for the way to the 200 OK, then 5 for a break or questions at "The UE is registered", and the rest for the subscriptions, the deregistration and the failures. The capture of the CI artifact `registration-capture` can stand in for running it. |
-| 3. Call | 60 min | 30 until the INVITE reaches UE 2 (about the slide "6 and 7"), 20 from the answer to the hang-up, the rest for the failures and "Looking back". Whoever dislikes two terminals can drive the UEs from the Lab. |
-| 4. SMS | 75 min | May be held as two sessions; then the first ends after "13 to 15. The status report", at about 45 minutes, and the second starts with "Read the body". Reading the body by hand is a 10-minute exercise. The table of the six MESSAGEs, printed, keeps everyone on track in the capture. The CI artifact `sms-capture` holds the capture and the list of its frames. Registration and the call come first: Path, Service-Route and the LIR are not explained again. |
-| 5. Supplementary services | 80 min | The first half is how the AS works and where its settings are; the second half reads the capture service by service. May be held as two sessions, split before "Open the capture". The call and SMS come first: INVITE, PRACK, ACK and how to read an iFC are not explained again. The CI artifact `mmtel-capture` holds the capture and the list of its frames. |
-| 6. VoLTE | 90 min | The first half is the access network and IMS AKA, the second half Rx and the call. May be held as two sessions, split before "Policy control over Rx, and the VoLTE call"; end the first half at the AAR right after the registration (#786). Hold it after the session on the MMTel AS: every VoLTE call goes through the MMTel AS, and registration, the call and the three dialogs of the AS are not explained again. The CI artifact `volte-capture` holds the capture, the AMR recordings, the list of frames and the logs of the UEs. |
+| 3. Registration | 60 min | 35 for the way to the 200 OK, then 5 for a break or questions at "The UE is registered", and the rest for the subscriptions, the deregistration and the failures. The capture of the CI artifact `registration-capture` can stand in for running it. |
+| 4. Call | 60 min | 30 until the INVITE reaches UE 2 (about the slide "6 and 7"), 20 from the answer to the hang-up, the rest for the failures and "Looking back". Whoever dislikes two terminals can drive the UEs from the Lab. |
+| 5. SMS | 75 min | May be held as two sessions; then the first ends after "13 to 15. The status report", at about 45 minutes, and the second starts with "Read the body". Reading the body by hand is a 10-minute exercise. The table of the six MESSAGEs, printed, keeps everyone on track in the capture. The CI artifact `sms-capture` holds the capture and the list of its frames. Registration and the call come first: Path, Service-Route and the LIR are not explained again. |
+| 6. Supplementary services | 80 min | The first half is how the AS works and where its settings are; the second half reads the capture service by service. May be held as two sessions, split before "Open the capture". The call and SMS come first: INVITE, PRACK, ACK and how to read an iFC are not explained again. The CI artifact `mmtel-capture` holds the capture and the list of its frames. |
+| 7. VoLTE | 90 min | The first half is the access network and IMS AKA, the second half Rx and the call. May be held as two sessions, split before "Policy control over Rx, and the VoLTE call"; end the first half at the AAR right after the registration (#786). Hold it after the session on the MMTel AS: every VoLTE call goes through the MMTel AS, and registration, the call and the three dialogs of the AS are not explained again. The CI artifact `volte-capture` holds the capture, the AMR recordings, the list of frames and the logs of the UEs. |
 
 ## Build
 
@@ -94,7 +94,7 @@ One file per deck, which opens from disk and loads nothing from the network. One
 
 The address keeps the number of the slide (`#12`), so a link or a reload opens the same slide. Printing gives one slide per page of 10 by 5.625 inches, the size of the pptx slides; "Save as PDF" in the print dialog makes a PDF.
 
-With `?check` at the end of the address (`02-registration.html?check`), the page shows every slide and lists at its bottom each box whose text the browser drew larger than the box. It confirms the measure of the build with the fonts of a real browser.
+With `?check` at the end of the address (`03-registration.html?check`), the page shows every slide and lists at its bottom each box whose text the browser drew larger than the box. It confirms the measure of the build with the fonts of a real browser.
 
 [check-html.js](check-html.js) does this for every deck in a headless Chromium. Run it here after `build`:
 
