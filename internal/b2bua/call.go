@@ -25,8 +25,12 @@ type Call struct {
 	// callerTurns orders the caller's requests.
 	callerTurns *turns
 
-	// answered is set once the callee's 2xx has come.
-	answered atomic.Bool
+	// answered is set once the callee's 2xx has come, and confirmed once
+	// the caller has acknowledged the 2xx that the Call passed on: only
+	// from then on are both dialogs of the call confirmed, and the role
+	// gets them (keepDialogs).
+	answered  atomic.Bool
+	confirmed atomic.Bool
 	// outReady is closed once there is an outgoing leg, or once the
 	// role has said that there will be none (NoLeg).
 	outReady chan struct{}
@@ -270,6 +274,7 @@ func (c *Call) Answer(out *sip.OutgoingCall, resp *sip.Message) {
 		out.Bye()
 		return
 	}
+	c.confirmed.Store(true)
 	if len(ack.Body) > 0 {
 		// The 2xx carried the callee's offer, after an INVITE without
 		// one, and the caller's ACK the answer (RFC 3261 13.2.2.4).
@@ -313,13 +318,16 @@ func (c *Call) setContact(resp *sip.Message) {
 	}
 }
 
-// keepDialogs hands the two dialogs to the role once the call is
-// answered.
+// keepDialogs hands the two dialogs to the role once the caller has
+// acknowledged the answer. A request of the callee that crosses the 2xx
+// and the ACK hands it nothing: the dialog of the caller does not hold
+// until the ACK has come (RFC 3261 13.3.1.4), and the role would keep a
+// call that may never be.
 func (c *Call) keepDialogs() {
 	c.mu.Lock()
 	out := c.out
 	c.mu.Unlock()
-	if out == nil || !c.answered.Load() {
+	if out == nil || !c.confirmed.Load() {
 		return
 	}
 	in, okIn := c.in.Dialog()
