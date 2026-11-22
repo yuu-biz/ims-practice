@@ -420,6 +420,10 @@ expect "REFER ue-a -> P-CSCF: the other peer" "sip.Method == \"REFER\" && ip.src
 expect "INVITE P-CSCF -> the other peer with Replaces" "$invite && (ip.dst == $ueb || ip.dst == $uec) && sip.Replaces"
 none "202 to a REFER (RFC 7647 5)" "sip.Status-Code == 202 && sip.CSeq.method == \"REFER\""
 expect "NOTIFY of the conference event package to ue-a with the three users" "sip.Method == \"NOTIFY\" && ip.dst == $uea && sip.Event contains \"conference\" && frame matches \"(?s)<user .*<user .*<user \""
+# The focus names each endpoint by a key of its own (RFC 4575 5.7), not
+# by the participant's Contact, so the conference state shows no
+# subscriber the address of a UE.
+none "NOTIFY of the conference event package with an endpoint named by its address" 'sip.Method == "NOTIFY" && sip.Event contains "conference" && frame matches "<endpoint entity=.[^>]*172[.]28[.]"'
 at_least "INVITEs MMTel AS -> MRFC to the conference, one per party" 3 "frame.number > $merged && $invite && ip.dst == $mrfc && sip.r-uri contains \"conf=\" && !sip.to.tag" sip.Call-ID
 # The focus passes each party's answer to the MRFC in its ACK, so the
 # MRFC sends each 200 once and does not retransmit it (RFC 3261 13.3.1.4).

@@ -1,12 +1,18 @@
 package ibcf_test
 
 import (
+	"context"
+	"net/netip"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/yuu-biz/ims-practice/internal/confinfo"
+	"github.com/yuu-biz/ims-practice/internal/ims"
 	"github.com/yuu-biz/ims-practice/internal/interconnect"
+	"github.com/yuu-biz/ims-practice/internal/mmtel"
 	"github.com/yuu-biz/ims-practice/internal/sdp"
+	"github.com/yuu-biz/ims-practice/internal/sh"
 	"github.com/yuu-biz/ims-practice/internal/sip"
 )
 
@@ -262,4 +268,145 @@ func TestConferenceFocusAnswersAcrossTheBorder(t *testing.T) {
 	p.waitReleased(t)
 	assertHidden(t, p.b, planA)
 	assertHidden(t, p.a, planB)
+}
+
+// A user of network B joins a conference of network A with an INVITE to
+// its conference URI (TS 24.147 5.3.1.4.1, 5.3.2.4.1), and subscribes
+// to the conference event package within that dialog. The focus is the
+// conference AS of this project. The IBCFs pass the conference state on
+// as the focus wrote it, so it is the focus that keeps the inside of
+// network A out of it: no endpoint is named by the address of the
+// creator's UE, nor by the IBCF that the focus has as the joining user's
+// Contact.
+func TestConferenceStateAcrossTheBorder(t *testing.T) {
+	// The focus takes the identity that a trusted network asserts.
+	p := newPair(t, func(ofB, ofA *interconnect.Profile) {
+		for _, profile := range []*interconnect.Profile{ofB, ofA} {
+			profile.Trusted = true
+			profile.Methods = append(profile.Methods, sip.SUBSCRIBE, sip.NOTIFY)
+		}
+	})
+	focus := startFocus(t, p.a)
+
+	// The UE of network A creates the conference: its INVITE to the
+	// factory URI reaches the AS as the S-CSCF passes it on after the
+	// originating filter criteria (TS 24.147 5.3.1.3.2).
+	factory := ims.ConferenceFactoryURI(domainA)
+	served := sip.PServedUser{URI: p.a.sipURI(), SessionCase: sip.SessionCaseOrig, RegState: sip.RegStateRegistered}
+	creator, err := p.a.ue.Invite(sip.Invitation{
+		RequestURI: factory, From: p.a.sipURI(), To: factory,
+		Route: []string{"<sip:" + focus.String() + ";lr>", p.a.ueRoute},
+		Headers: []sip.HeaderField{
+			{Name: "P-Served-User", Value: served.String()},
+			{Name: "P-Asserted-Identity", Value: "<" + p.a.sipURI() + ">"},
+			{Name: "P-Charging-Vector", Value: "icid-value=" + sip.NewCallID() + ";orig-ioi=" + domainA},
+		},
+		Body:      p.a.offer(t, sdp.VoLTECodecs(), 1, ""),
+		OnRequest: p.a.answerInDialog(nil),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	created := final(t, creator)
+	conference, err := sip.ParseNameAddr(created.Get("Contact"))
+	if err != nil || created.StatusCode != 200 {
+		t.Fatalf("the creator got %d with Contact %q, want 200 with the conference URI", created.StatusCode, created.Get("Contact"))
+	}
+
+	// The user of network B joins and subscribes within the dialog.
+	notified := make(chan *sip.Message, 8)
+	joined := p.b.invite(t, conference.URI, p.b.offer(t, sdp.VoLTECodecs(), 1, ""), notified)
+	if resp := final(t, joined); resp.StatusCode != 200 {
+		t.Fatalf("the user of network B got %d to its INVITE to the conference URI", resp.StatusCode)
+	}
+	resp, err := joined.Send(sip.SUBSCRIBE, sip.Body{},
+		sip.HeaderField{Name: "Event", Value: conferenceEvent},
+		sip.HeaderField{Name: "Accept", Value: conferenceDocument},
+		sip.HeaderField{Name: "Expires", Value: "3600"})
+	if err != nil || resp.StatusCode != 200 {
+		t.Fatalf("SUBSCRIBE within the dialog: %v %v", resp, err)
+	}
+	var notify *sip.Message
+	for notify == nil {
+		select {
+		case r := <-notified:
+			if r.Method == sip.NOTIFY {
+				notify = r
+			}
+		case <-time.After(5 * time.Second):
+			t.Fatal("no NOTIFY reached the user of network B")
+		}
+	}
+	doc, err := confinfo.Parse(notify.Body)
+	if err != nil {
+		t.Fatalf("the NOTIFY has no conference-info: %v\n%s", err, notify.Body)
+	}
+	if len(doc.Users.Users) != 2 {
+		t.Fatalf("the conference state has %d users, want the creator and the user of network B:\n%s", len(doc.Users.Users), notify.Body)
+	}
+	for _, s := range internals(planA) {
+		if strings.Contains(string(notify.Body), s) {
+			t.Errorf("the conference state that reached network B has %q of network A:\n%s", s, notify.Body)
+		}
+	}
+
+	if err := joined.Bye(); err != nil {
+		t.Fatalf("BYE: %v", err)
+	}
+	waitDone(t, "the call of the user of network B", joined.Done())
+	if err := creator.Bye(); err != nil {
+		t.Fatalf("BYE of the creator: %v", err)
+	}
+	p.waitReleased(t)
+	assertHidden(t, p.b, planA)
+	assertHidden(t, p.a, planB)
+}
+
+// conferenceDomain is the subdomain of the conference URIs of the
+// focus in the network of domain.
+func conferenceDomain(domain string) string { return "conf." + domain }
+
+// startFocus starts the conference AS of this project inside network n,
+// where DNS leads the subdomain of its conference URIs, with a stand-in
+// for its MRFC that answers each INVITE as n's UE would. It returns the
+// address of the AS.
+func startFocus(t *testing.T, n *network) netip.AddrPort {
+	t.Helper()
+	mrfcTL, _ := listen(t, n.plan.internal+".41", 0, "mrfc", n.rec)
+	mrfc, err := sip.NewUA(mrfcTL, sip.UAConfig{
+		SentBy: mrfcTL.LocalAddr().String(), Contact: "sip:mrfc@" + mrfcTL.LocalAddr().String(), Timers: testTimers,
+		OnCall: func(c *sip.IncomingCall) {
+			answer, err := answerTo(n, c.Request)
+			if err != nil {
+				c.Reject(488)
+				return
+			}
+			c.Accept(answer)
+		},
+	}, discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(mrfc.Close)
+
+	tl, _ := listen(t, n.plan.internal+".40", 0, "mmtel", n.rec)
+	addr := tl.LocalAddr()
+	store := mmtel.NewMemoryStore()
+	as := mmtel.New(mmtel.Config{
+		Host: addr.Addr().String(), Port: int(addr.Port()), HomeDomain: n.domain,
+		MRFC: "sip:" + mrfcTL.LocalAddr().String(), ConferenceDomain: conferenceDomain(n.domain),
+	}, noServices{}, store, store, n.names, discard)
+	if err := as.Listen(tl); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(as.Close)
+	n.names.set(conferenceDomain(n.domain), addr)
+	return addr
+}
+
+// noServices is an HSS that has no service settings for anybody.
+type noServices struct{}
+
+func (noServices) RepositoryData(context.Context, string, string) (sh.TransparentData, bool, error) {
+	return sh.TransparentData{}, false, nil
 }

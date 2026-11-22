@@ -40,9 +40,9 @@ func ExampleConference_FullState() {
 		MaximumUserCount: 3,
 		Participants: []confinfo.Participant{
 			{User: "sip:+12025550101@ims.mnc001.mcc001.3gppnetwork.org", DisplayText: "Alice",
-				Endpoint: "sip:+12025550101@192.0.2.11:5060", Status: confinfo.Connected, JoiningMethod: confinfo.DialedIn},
+				Endpoint: "urn:uuid:2f6c3e8a-41b7-4d0e-9a55-0c1d7e3b9f21", Status: confinfo.Connected, JoiningMethod: confinfo.DialedIn},
 			{User: "sip:+12025550102@ims.mnc001.mcc001.3gppnetwork.org", DisplayText: "Bob",
-				Endpoint: "sip:+12025550102@192.0.2.12:5060", Status: confinfo.OnHold, JoiningMethod: confinfo.DialedOut},
+				Endpoint: "urn:uuid:8b04d9c2-6e13-4f7a-b8c6-5a2e91d0f4b7", Status: confinfo.OnHold, JoiningMethod: confinfo.DialedOut},
 		},
 	}
 	previous := uint32(3) // the version of the last NOTIFY in this subscription
@@ -66,14 +66,14 @@ func ExampleConference_FullState() {
 	//   <users>
 	//     <user entity="sip:+12025550101@ims.mnc001.mcc001.3gppnetwork.org">
 	//       <display-text>Alice</display-text>
-	//       <endpoint entity="sip:+12025550101@192.0.2.11:5060">
+	//       <endpoint entity="urn:uuid:2f6c3e8a-41b7-4d0e-9a55-0c1d7e3b9f21">
 	//         <status>connected</status>
 	//         <joining-method>dialed-in</joining-method>
 	//       </endpoint>
 	//     </user>
 	//     <user entity="sip:+12025550102@ims.mnc001.mcc001.3gppnetwork.org">
 	//       <display-text>Bob</display-text>
-	//       <endpoint entity="sip:+12025550102@192.0.2.12:5060">
+	//       <endpoint entity="urn:uuid:8b04d9c2-6e13-4f7a-b8c6-5a2e91d0f4b7">
 	//         <status>on-hold</status>
 	//         <joining-method>dialed-out</joining-method>
 	//       </endpoint>

@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"uuid"
 
 	"github.com/yuu-biz/ims-practice/internal/confinfo"
 	"github.com/yuu-biz/ims-practice/internal/ims"
@@ -359,7 +360,7 @@ func (f *conference) admit(in *sip.IncomingCall, p *party, final *sip.Message, u
 	// The 200 gives the user the conference URI, to which it subscribes
 	// (IR.92 2.3.3) as soon as it has it, maybe before the focus has the
 	// ACK. The user is in the conference by then.
-	if no := f.join(p, confinfo.Participant{User: user, Endpoint: contactURIOf(req), Status: confinfo.Connected, JoiningMethod: confinfo.DialedIn}); no != nil {
+	if no := f.join(p, confinfo.Participant{User: user, Status: confinfo.Connected, JoiningMethod: confinfo.DialedIn}); no != nil {
 		f.log.Info("user not taken into the conference", "user", user, "reason", no.text)
 		p.media.Bye()
 		in.Reject(no.code, f.as.warning(no.text))
@@ -455,6 +456,15 @@ func (f *conference) join(p *party, info confinfo.Participant) *refusal {
 		// stands in for it, so that every participant can be told apart.
 		info.DisplayText = info.User
 	}
+	// RFC 4575 5.7: the focus makes the key of each endpoint, unique
+	// among those of the user, and may take the Contact or a GRUU for
+	// it. The Contact that the focus has is the address of a UE, or, for
+	// a user of another network, the URI of the IBCF that took the place
+	// of the user's own (TS 24.229 5.10.5). The IBCF keeps that URI out
+	// of the header fields that cross, but passes this document on as it
+	// came, so a subscriber of another network would read it there. A
+	// UUID as a URN (RFC 9562 4) names no node and no address.
+	info.Endpoint = "urn:uuid:" + uuid.New().String()
 	f.mu.Lock()
 	if no := f.room(); no != nil {
 		f.mu.Unlock()
@@ -813,7 +823,7 @@ func (f *conference) inviteUser(rt sip.ReferTo, referredBy string) int {
 	if err := media.Ack(answer); err != nil {
 		f.log.Warn("answer of the invited user not passed on to the MRFC", "error", err.Error())
 	}
-	if no := f.join(p, confinfo.Participant{User: assertedUser(answered, rt.URI), Endpoint: contactURIOf(answered),
+	if no := f.join(p, confinfo.Participant{User: assertedUser(answered, rt.URI),
 		Status: confinfo.Connected, JoiningMethod: confinfo.DialedOut}); no != nil {
 		f.log.Info("invited user not taken into the conference", "reason", no.text)
 		out.Bye()
@@ -867,16 +877,6 @@ func assertedUser(m *sip.Message, fallback string) string {
 		return na.URI
 	}
 	return fallback
-}
-
-// contactURIOf is the URI of the Contact of m, the endpoint of a
-// participant (RFC 4575 5.7).
-func contactURIOf(m *sip.Message) string {
-	na, err := sip.ParseNameAddr(m.Get("Contact"))
-	if err != nil {
-		return ""
-	}
-	return na.URI
 }
 
 func statusCode(m *sip.Message) int {
