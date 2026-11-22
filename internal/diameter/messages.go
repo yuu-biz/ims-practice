@@ -174,6 +174,18 @@ func originHost(m *diam.Message) string {
 	return string(host)
 }
 
+// destinationHost is the Destination-Host of a request, or "" for a
+// request that names none and is for any node of its realm that serves
+// the application (RFC 6733 6.1).
+func destinationHost(m *diam.Message) string {
+	a, err := m.FindAVP(avp.DestinationHost, 0)
+	if err != nil {
+		return ""
+	}
+	host, _ := a.Data.(datatype.DiameterIdentity)
+	return string(host)
+}
+
 // resultCode returns 0 when the AVP is missing, which no caller treats
 // as success.
 func resultCode(m *diam.Message) uint32 {

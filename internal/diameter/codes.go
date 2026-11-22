@@ -18,8 +18,12 @@ const (
 
 // Result-Code values (RFC 6733 7.1).
 const (
-	DiameterSuccess             uint32 = 2001 // 7.1.2
-	DiameterCommandUnsupported  uint32 = 3001 // 7.1.3
+	DiameterSuccess            uint32 = 2001 // 7.1.2
+	DiameterCommandUnsupported uint32 = 3001 // 7.1.3
+	// DiameterTooBusy is the answer of a node that is up but cannot
+	// serve this request. RFC 6733 7.1.3 tells its sender to try an
+	// alternate peer.
+	DiameterTooBusy             uint32 = 3004 // 7.1.3
 	DiameterNoCommonApplication uint32 = 5010 // 7.1.5
 )
 

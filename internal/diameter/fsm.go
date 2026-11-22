@@ -384,9 +384,11 @@ func watchdogExpired(s State) (State, []Action) {
 		return s, []Action{SendDWR{}, SetTimer{Timer: TimerWatchdog}}
 	case WatchdogPending:
 		// SIMPLIFIED: RFC 3539 3.4.1 [3] failover. Pending requests
-		// should move to an alternate peer here. Each CSCF has a single
-		// HSS, so there is no alternate: SUSPECT refuses new requests
-		// and the pending ones wait for their answer or their timeout.
+		// should move to an alternate peer here. SUSPECT refuses new
+		// requests, but the pending ones stay and wait for their answer
+		// or their timeout. A PeerGroup sends such a request to the next
+		// peer once it has timed out, so it reaches an alternate later
+		// than RFC 3539 asks, and never before its own wait is over.
 		s.Watchdog = WatchdogSuspect
 		return s, []Action{SetTimer{Timer: TimerWatchdog}}
 	}
