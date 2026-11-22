@@ -122,12 +122,13 @@ func (p *PCSCF) releaseNow(key DialogKey, log *slog.Logger) {
 // sendBYEs releases a confirmed dialog (TS 24.229 5.2.8.1.2): a BYE to
 // the other party in the name of the served UE (items 1 and 3).
 //
-// For lost resources the spec has the P-CSCF send only that BYE, and
-// leaves the served UE to notice the lost bearer itself. Here the
-// served UE gets a BYE too, in the name of the other party, built like
-// the one of items 2 and 4 but with the Reason of the first BYE, as the
-// cause is the same: after the network released only the voice
-// bearer the UE still has its signalling, and without a BYE it would
+// SIMPLIFIED: TS 24.229 5.2.8.1.2. For lost resources the clause has
+// the P-CSCF send only that BYE, and leaves the served UE to notice the
+// lost bearer itself. Here the served UE gets a BYE too, in the name of
+// the other party, built like the one of items 2 and 4 but with the
+// Reason of the first BYE, as the cause is the same. After the network
+// released only the voice bearer the UE still has its signalling, and a
+// UE that does not act on the loss of that bearer would, without a BYE,
 // stay in a call that the network has ended. A UE that is gone leaves
 // that BYE unanswered.
 func (p *PCSCF) sendBYEs(d Dialog, log *slog.Logger) {

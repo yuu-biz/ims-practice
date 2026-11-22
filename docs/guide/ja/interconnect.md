@@ -59,7 +59,7 @@ IBCF には 2 つの側があります。このプロジェクトの IBCF は **
 
 一方の網の中でメッセージを運ぶための値は、相手網とのダイアログに入りません。網 A のノードの Via、Route、Record-Route、Contact と、網 A の Call-ID と tag は、網 B に届きません。B2BUA は、こうして自網の構成を隠します。TS 24.229 5.10.4 は、要求をプロキシとして通す IBCF のための別のやり方を書いています。そうした値を暗号化したトークンに封じるやり方です。B2BUA には封じるものがありません。届いたまま境界を越える Contact は、GRUU と会議のフォーカスのものだけです（「境界を越える会議」を見てください）。
 
-TrGW は、ここでも役割 `agw` のメディア中継ノードです。2 つのブリッジにつながっています。ターミネーション `core` は自網を、`access` は相手網の TrGW を向きます。TS 29.165 3.2 は、IBCF と TrGW のあいだの参照点を Ix と呼び、そのプロトコルは H.248 です（TS 29.238）。このプロジェクトの IBCF は、P-CSCF がメディア中継ノードに使うのと同じ HTTP の制御 API で中継ノードを動かします（`internal/ibcf/agwclient.go`）。
+TrGW は、ここでも役割 `agw` のメディア中継ノードです。2 つのブリッジにつながっています。ターミネーション `core` は自網を、`access` は相手網の TrGW を向きます。TS 29.165 3.2 は、IBCF と TrGW のあいだの参照点を Ix と呼び、そのプロトコルは H.248 です（TS 29.238）。このプロジェクトの IBCF は、P-CSCF がメディア中継ノードに使うのと同じ HTTP の制御 API と同じクライアントで、中継ノードを動かします。操作の名前は H.248 のコマンドのものです。Add は両側にターミネーションを 1 つずつ持つコンテキストを確保し、Modify はターミネーションにその側のメディアの宛先を伝え、Subtract はコンテキストを解放します（`internal/ibcf/trgw.go` のインタフェース `TrGW`）。中継ノードは両方のターミネーションに同じアドレスを書きます。そこで IBCF は、それぞれの側の SDP に、その網での TrGW のアドレスと、中継ノードが選んだポートを書きます。
 
 呼の 2 つのダイアログは、その INVITE を受けた IBCF のプロセスの中にあります。IBCF の各台は、自分のダイアログの Contact に自分の台の名前を書きます。そのため、呼のあとの要求はその台に戻り、新しい呼は網のどの台に届いてもかまいません。複数の台で仕事を分けられるように、IBCF は全部の呼の表を持ちません。各台は、自分の呼の記録を自分の名前の下に置きます。
 
@@ -441,7 +441,7 @@ GSMA IR.95 は、IMS 網のあいだの SIP と SDP の GSMA のプロファイ�
 | パッケージかファイル | 中身 |
 | --- | --- |
 | `internal/interconnect` | プロファイルと、IBCF が各メッセージに行うこと。`screen.go`（メソッド、option tag、ヘッダの規則）、`trust.go`（信頼ドメイン、プライバシー）、`number.go`（番号）、`codec.go`（コーデック）、`leg.go`（一方のダイアログから他方へ写すヘッダ）、`border.go`（TS 24.229 5.10.2 と 5.10.3 の順番）。 |
-| `internal/ibcf` | 役割 IBCF。2 つの UA、出口と入口（`ibcf.go`）、呼の 2 つのダイアログ（`call.go`）、ショートメッセージ（`message.go`）、TrGW（`media.go`、`agwclient.go`）。試験では 2 つの網を 1 つのプロセスの中で動かす。 |
+| `internal/ibcf` | 役割 IBCF。2 つの UA、出口と入口（`ibcf.go`）、呼の 2 つのダイアログ（`call.go`）、ショートメッセージ（`message.go`）、TrGW（`trgw.go`、`media.go`）。試験では 2 つの網を 1 つのプロセスの中で動かす。 |
 | `internal/scscf/session.go` | `exitIBCF`。別の網への要求を IBCF に送る。 |
 | `internal/icscf/session.go` | `telURIOf`。SIP URI の番号を tel URI に直す。 |
 | `internal/sc/sc.go`、`internal/ipsmgw/deliver.go`、`internal/ipsmgw/message.go` | 網をまたぐショートメッセージ。SC の ENUM、IBCF を通る MESSAGE、別の網からの MESSAGE。 |

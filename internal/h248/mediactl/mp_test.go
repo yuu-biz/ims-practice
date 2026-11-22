@@ -4,11 +4,13 @@ import (
 	"context"
 	"errors"
 	"net"
+	"net/netip"
 	"slices"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/yuu-biz/ims-practice/internal/agw"
 	"github.com/yuu-biz/ims-practice/internal/h248"
 	"github.com/yuu-biz/ims-practice/internal/sdp"
 )
@@ -122,6 +124,18 @@ func TestIqControllerRefusesAnMRFP(t *testing.T) {
 	}
 }
 
+// onlyTermination is the one termination of a context that Add made.
+func onlyTermination(t *testing.T, cx agw.Context) *agw.Termination {
+	t.Helper()
+	if len(cx.Terminations) != 1 {
+		t.Fatalf("context %+v, want one termination", cx)
+	}
+	for _, only := range cx.Terminations {
+		return only
+	}
+	return nil
+}
+
 func TestMpAnnouncement(t *testing.T) {
 	b := newMpTestbed(t, ControllerConfig{})
 	b.waitRegistered(t)
@@ -130,36 +144,37 @@ func TestMpAnnouncement(t *testing.T) {
 
 	// The AS asks the MRFC for an announcement; the INVITE offers the
 	// UE's PCMU stream, which only listens.
-	ue := Media{Address: mustAddrPort("192.0.2.30:49170"), Codecs: []sdp.Codec{pcmu}}
-	cx, err := b.controller.Add(ctx, TerminationRequest{Mode: SendOnly, Local: Media{Codecs: []sdp.Codec{pcmu}}, Remote: ue})
+	ue := mustAddrPort("192.0.2.30:49170")
+	pcmuOnly := agw.Media{Codecs: []sdp.Codec{pcmu}}
+	cx, err := b.controller.Add(ctx, agw.TerminationRequest{Mode: agw.SendOnly, LocalMedia: pcmuOnly, Remote: ue, RemoteMedia: pcmuOnly})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cx.ID != "200@mrfp1.ims.example.net" || len(cx.Terminations) != 1 ||
-		cx.Terminations[0].ID != "ip/200/1" || cx.Terminations[0].Local != mustAddrPort("198.51.100.20:42000") {
+	if cx.ID != "200@mrfp1.ims.example.net" || len(cx.Terminations) != 1 || cx.Terminations["ip/200/1"] == nil ||
+		*cx.Terminations["ip/200/1"] != (agw.Termination{ID: "ip/200/1", Mode: agw.SendOnly, Local: mustAddrPort("198.51.100.20:42000"), Remote: ue}) {
 		t.Fatalf("context %+v", cx)
 	}
-	tid := cx.Terminations[0].ID
+	tid := agw.TerminationID("ip/200/1")
 	processorContext, terms := b.processor.only(t)
-	if got := terms["t1"]; got.mode != SendOnly || got.remote.Address != ue.Address || len(got.media.Codecs) != 1 || got.media.Codecs[0] != pcmu {
+	if got := terms["t1"]; got.mode != agw.SendOnly || got.remote != ue || len(got.media.Codecs) != 1 || got.media.Codecs[0] != pcmu {
 		t.Errorf("the processor was asked for %+v", got)
 	}
 
 	// The ACK has come: play the announcement three times, and report
 	// its end.
-	err = b.controller.Modify(ctx, cx.ID, tid, TerminationRequest{
-		Mode:    SendOnly,
-		Signals: &Signals{Play: &Play{Announcement: "notice", Repeat: 3}},
-		Events:  &Events{RequestID: 7, Detect: []EventName{SignalCompleted}},
+	err = b.controller.Modify(ctx, cx.ID, tid, agw.TerminationRequest{
+		Mode:    agw.SendOnly,
+		Signals: &agw.Signals{Play: &agw.Play{Announcement: "notice", Repeat: 3}},
+		Events:  &agw.Events{RequestID: 7, Detect: []agw.EventName{agw.SignalCompleted}},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	got, _ := b.processor.termination(processorContext, "t1")
-	if got.signals == nil || got.signals.Play == nil || *got.signals.Play != (Play{Announcement: "notice", Repeat: 3}) {
+	if got.signals == nil || got.signals.Play == nil || *got.signals.Play != (agw.Play{Announcement: "notice", Repeat: 3}) {
 		t.Errorf("the processor plays %+v", got.signals)
 	}
-	if got.events == nil || got.events.RequestID != 7 || !slices.Equal(got.events.Detect, []EventName{SignalCompleted}) || got.mode != SendOnly {
+	if got.events == nil || got.events.RequestID != 7 || !slices.Equal(got.events.Detect, []agw.EventName{agw.SignalCompleted}) || got.mode != agw.SendOnly {
 		t.Errorf("the processor reports %+v in mode %s", got.events, got.mode)
 	}
 
@@ -170,23 +185,26 @@ func TestMpAnnouncement(t *testing.T) {
 	messages := waitMessages(t, b, before, "mg MEGACO/2 Notify=ip/200/1", "mgc MEGACO/2 Reply")
 	eventually(t, "the notification", func() bool { return len(b.notified.all()) == 1 })
 	n := b.notified.all()[0]
-	want := Notification{Context: cx.ID, Termination: tid, RequestID: 7, Event: SignalCompleted, Signal: "an/apf", Method: TimedOut, Detected: detected.Truncate(10 * time.Millisecond)}
+	want := Notification{
+		Notify: agw.Notify{Context: cx.ID, Termination: tid, RequestID: 7, Event: agw.SignalCompleted},
+		Signal: "an/apf", Method: TimedOut, Detected: detected.Truncate(10 * time.Millisecond),
+	}
 	if n != want {
 		t.Errorf("notification %+v\nwant %+v", n, want)
 	}
 
 	// The MRFC ends the dialog with BYE and releases the termination.
-	stats, err := b.controller.SubtractTermination(ctx, cx.ID, tid)
+	gone, deleted, err := b.controller.SubtractTermination(ctx, cx.ID, tid)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if stats != (Statistics{PacketsSent: 250, PacketsReceived: 250}) {
-		t.Errorf("statistics %+v: Mp reports the packets only", stats)
+	if gone != (agw.Termination{ID: tid, Packets: 250, PacketsSent: 250}) || deleted {
+		t.Errorf("subtracted %+v, deleted %v: Mp reports the packets only, and not whether the context went", gone, deleted)
 	}
 	if b.processor.contextCount() != 0 {
 		t.Error("the processor still holds the context")
 	}
-	if err := b.controller.Modify(ctx, cx.ID, tid, TerminationRequest{Mode: SendOnly}); !errors.Is(err, ErrNoContext) {
+	if err := b.controller.Modify(ctx, cx.ID, tid, agw.TerminationRequest{Mode: agw.SendOnly}); !errors.Is(err, agw.ErrNoContext) {
 		t.Errorf("Modify after the last Subtract: %v", err)
 	}
 
@@ -244,12 +262,12 @@ func TestMpAnnouncementWithDelayAndDuration(t *testing.T) {
 
 	// Start Announcement in the Add that reserves the termination, as
 	// TS 29.333 5.17.2.1 lets procedures share one command.
-	play := Play{Announcement: "welcome", Repeat: RepeatForever, Delay: 500 * time.Millisecond, Duration: 2 * time.Minute}
-	cx, err := b.controller.Add(ctx, TerminationRequest{
-		Mode:    SendOnly,
-		Remote:  Media{Address: mustAddrPort("192.0.2.31:49180")},
-		Signals: &Signals{Play: &play},
-		Events:  &Events{RequestID: 9, Detect: []EventName{SignalCompleted}},
+	play := agw.Play{Announcement: "welcome", Repeat: agw.RepeatForever, DelayMS: 500, DurationMS: 120000}
+	cx, err := b.controller.Add(ctx, agw.TerminationRequest{
+		Mode:    agw.SendOnly,
+		Remote:  mustAddrPort("192.0.2.31:49180"),
+		Signals: &agw.Signals{Play: &play},
+		Events:  &agw.Events{RequestID: 9, Detect: []agw.EventName{agw.SignalCompleted}},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -270,7 +288,7 @@ func TestMpAnnouncementWithDelayAndDuration(t *testing.T) {
 		t.Errorf("notification %+v", n)
 	}
 	waitMessages(t, b, before, "mg MEGACO/2 Notify=ip/200/1", "mgc MEGACO/2 Reply")
-	if _, err := b.controller.SubtractTermination(ctx, cx.ID, cx.Terminations[0].ID); err != nil {
+	if _, _, err := b.controller.SubtractTermination(ctx, cx.ID, "ip/200/1"); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -281,25 +299,24 @@ func TestMpConference(t *testing.T) {
 	before := len(b.net.datagrams())
 	ctx := context.Background()
 
-	alice := Media{Address: mustAddrPort("192.0.2.41:49170"), Codecs: []sdp.Codec{pcmu}}
-	bob := Media{Address: mustAddrPort("192.0.2.42:49170"), Codecs: []sdp.Codec{pcmu}}
-	carol := Media{Address: mustAddrPort("192.0.2.43:49170"), Codecs: []sdp.Codec{pcmu}}
-	local := Media{Codecs: []sdp.Codec{pcmu}}
+	alice, bob, carol := mustAddrPort("192.0.2.41:49170"), mustAddrPort("192.0.2.42:49170"), mustAddrPort("192.0.2.43:49170")
+	party := func(remote netip.AddrPort) agw.TerminationRequest {
+		media := agw.Media{Codecs: []sdp.Codec{pcmu}}
+		return agw.TerminationRequest{Mode: agw.SendReceive, LocalMedia: media, Remote: remote, RemoteMedia: media}
+	}
 
 	// The first two parties come in one INVITE each; the MRFC reserves
 	// both in one transaction here, as the conference of TS 29.333
 	// 5.17.2.30 is one context with a termination for each party.
-	cx, err := b.controller.Add(ctx,
-		TerminationRequest{Mode: SendReceive, Local: local, Remote: alice},
-		TerminationRequest{Mode: SendReceive, Local: local, Remote: bob})
+	cx, err := b.controller.Add(ctx, party(alice), party(bob))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(cx.Terminations) != 2 || cx.Terminations[0].ID != "ip/200/1" || cx.Terminations[1].ID != "ip/200/2" ||
-		cx.Terminations[0].Local == cx.Terminations[1].Local {
+	first, second := cx.Terminations["ip/200/1"], cx.Terminations["ip/200/2"]
+	if len(cx.Terminations) != 2 || first == nil || second == nil || first.Remote != alice || second.Remote != bob || first.Local == second.Local {
 		t.Fatalf("context %+v", cx)
 	}
-	third, err := b.controller.AddTermination(ctx, cx.ID, TerminationRequest{Mode: SendReceive, Local: local, Remote: carol})
+	third, err := b.controller.AddTermination(ctx, cx.ID, party(carol))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -307,26 +324,26 @@ func TestMpConference(t *testing.T) {
 		t.Errorf("third termination %+v", third)
 	}
 	processorContext, terms := b.processor.only(t)
-	if len(terms) != 3 || terms["t3"].remote.Address != carol.Address {
+	if len(terms) != 3 || terms["t3"].remote != carol {
 		t.Errorf("the processor holds %+v", terms)
 	}
 
 	// Bob leaves.
-	if _, err := b.controller.SubtractTermination(ctx, cx.ID, cx.Terminations[1].ID); err != nil {
+	if _, _, err := b.controller.SubtractTermination(ctx, cx.ID, second.ID); err != nil {
 		t.Fatal(err)
 	}
 	if _, terms := b.processor.only(t); len(terms) != 2 {
 		t.Errorf("the processor holds %d terminations after one left", len(terms))
 	}
-	err = b.controller.Modify(ctx, cx.ID, cx.Terminations[1].ID, TerminationRequest{Mode: SendReceive})
+	err = b.controller.Modify(ctx, cx.ID, second.ID, agw.TerminationRequest{Mode: agw.SendReceive})
 	var rejected *CommandRejected
-	if !errors.Is(err, ErrNoTermination) || !errors.As(err, &rejected) || rejected.ErrorDescriptor.ErrorCode != 430 {
+	if !errors.Is(err, agw.ErrNoTermination) || !errors.As(err, &rejected) || rejected.ErrorDescriptor.ErrorCode != 430 {
 		t.Errorf("Modify of the termination that left: %v", err)
 	}
 
 	// The last two leave: the context goes with the last.
-	for _, id := range []TerminationID{cx.Terminations[0].ID, third.ID} {
-		if _, err := b.controller.SubtractTermination(ctx, cx.ID, id); err != nil {
+	for _, id := range []agw.TerminationID{first.ID, third.ID} {
+		if _, _, err := b.controller.SubtractTermination(ctx, cx.ID, id); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -336,7 +353,7 @@ func TestMpConference(t *testing.T) {
 	if _, ok := b.processor.termination(processorContext, "t1"); ok {
 		t.Error("the processor still holds t1")
 	}
-	if _, err := b.controller.AddTermination(ctx, cx.ID, TerminationRequest{Mode: SendReceive, Remote: alice}); !errors.Is(err, ErrNoContext) {
+	if _, err := b.controller.AddTermination(ctx, cx.ID, agw.TerminationRequest{Mode: agw.SendReceive, Remote: alice, RemoteMedia: agw.Media{Codecs: []sdp.Codec{pcmu}}}); !errors.Is(err, agw.ErrNoContext) {
 		t.Errorf("AddTermination to the deleted context: %v", err)
 	}
 
@@ -369,26 +386,74 @@ func TestMpConference(t *testing.T) {
 	}
 }
 
+// An Add without a mode makes the termination SendReceive, as the HTTP
+// API of the media node does: H.248 would leave it Inactive (H.248.1
+// (05/2002) 7.1.7), so the Controller writes the mode.
+func TestMpAddWithoutAModeSendsAndReceives(t *testing.T) {
+	b := newMpTestbed(t, ControllerConfig{})
+	b.waitRegistered(t)
+	cx, err := b.controller.Add(context.Background(), agw.TerminationRequest{Remote: mustAddrPort("192.0.2.30:49170")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := onlyTermination(t, cx).Mode; got != agw.SendReceive {
+		t.Errorf("Add returned mode %q", got)
+	}
+	if _, terms := b.processor.only(t); terms["t1"].mode != agw.SendReceive {
+		t.Errorf("the processor holds mode %q", terms["t1"].mode)
+	}
+}
+
+// A Modify without a mode keeps the mode of the termination, as the
+// HTTP API of the media node does: it carries no LocalControl
+// descriptor (H.248.1 (05/2002) 7.1.7). The MRFC starts an announcement
+// so once the ACK has come.
+func TestMpModifyWithoutAModeKeepsIt(t *testing.T) {
+	b := newMpTestbed(t, ControllerConfig{})
+	b.waitRegistered(t)
+	before := len(b.net.datagrams())
+	ctx := context.Background()
+	cx, err := b.controller.Add(ctx, agw.TerminationRequest{Mode: agw.SendOnly, Remote: mustAddrPort("192.0.2.30:49170")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = b.controller.Modify(ctx, cx.ID, onlyTermination(t, cx).ID, agw.TerminationRequest{
+		Signals: &agw.Signals{Play: &agw.Play{Announcement: "notice"}},
+		Events:  &agw.Events{RequestID: 7, Detect: []agw.EventName{agw.SignalCompleted}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	processorContext, _ := b.processor.only(t)
+	if got, _ := b.processor.termination(processorContext, "t1"); got.mode != agw.SendOnly || got.signals == nil {
+		t.Errorf("the processor holds %+v", got)
+	}
+	modify := payloadOf(t, b.net.datagrams()[before:], controllerAddr, "Modify = ip/200/1")
+	if strings.Contains(modify, "Media") || strings.Contains(modify, "Mode") {
+		t.Errorf("the Modify sets the mode:\n%s", modify)
+	}
+}
+
 func TestMpStopAnnouncement(t *testing.T) {
 	b := newMpTestbed(t, ControllerConfig{})
 	b.waitRegistered(t)
 	before := len(b.net.datagrams())
 	ctx := context.Background()
 
-	cx, err := b.controller.Add(ctx, TerminationRequest{
-		Mode:    SendOnly,
-		Remote:  Media{Address: mustAddrPort("192.0.2.30:49170")},
-		Signals: &Signals{Play: &Play{Announcement: "notice", Repeat: RepeatForever}},
-		Events:  &Events{RequestID: 11, Detect: []EventName{SignalCompleted}},
+	cx, err := b.controller.Add(ctx, agw.TerminationRequest{
+		Mode:    agw.SendOnly,
+		Remote:  mustAddrPort("192.0.2.30:49170"),
+		Signals: &agw.Signals{Play: &agw.Play{Announcement: "notice", Repeat: agw.RepeatForever}},
+		Events:  &agw.Events{RequestID: 11, Detect: []agw.EventName{agw.SignalCompleted}},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	tid := cx.Terminations[0].ID
+	tid := onlyTermination(t, cx).ID
 	processorContext, _ := b.processor.only(t)
 
 	// Stop Announcement: a Signals descriptor without the signal.
-	if err := b.controller.Modify(ctx, cx.ID, tid, TerminationRequest{Mode: SendOnly, Signals: &Signals{}}); err != nil {
+	if err := b.controller.Modify(ctx, cx.ID, tid, agw.TerminationRequest{Mode: agw.SendOnly, Signals: &agw.Signals{}}); err != nil {
 		t.Fatal(err)
 	}
 	got, _ := b.processor.termination(processorContext, "t1")
@@ -407,11 +472,11 @@ func TestMpStopAnnouncement(t *testing.T) {
 	b.gateway.signalCompleted(processorContext, "t1", b.clock.Now())
 
 	// An announcement whose end the MRFC did not ask for.
-	if err := b.controller.Modify(ctx, cx.ID, tid, TerminationRequest{Mode: SendOnly, Signals: &Signals{Play: &Play{Announcement: "notice"}}, Events: &Events{}}); err != nil {
+	if err := b.controller.Modify(ctx, cx.ID, tid, agw.TerminationRequest{Mode: agw.SendOnly, Signals: &agw.Signals{Play: &agw.Play{Announcement: "notice"}}, Events: &agw.Events{}}); err != nil {
 		t.Fatal(err)
 	}
 	b.gateway.signalCompleted(processorContext, "t1", b.clock.Now())
-	if _, err := b.controller.SubtractTermination(ctx, cx.ID, tid); err != nil {
+	if _, _, err := b.controller.SubtractTermination(ctx, cx.ID, tid); err != nil {
 		t.Fatal(err)
 	}
 	b.net.settle(t)
@@ -431,7 +496,7 @@ func TestMpGatewayTakesAnAddWithoutModeAsInactive(t *testing.T) {
 	if code := errorCode(reply); code != 0 {
 		t.Fatalf("error %d", code)
 	}
-	if _, terms := b.processor.only(t); terms["t1"].mode != Inactive {
+	if _, terms := b.processor.only(t); terms["t1"].mode != agw.Inactive {
 		t.Errorf("mode %q, want inactive (H.248.1 7.1.7)", terms["t1"].mode)
 	}
 }
@@ -440,11 +505,11 @@ func TestMpErrors(t *testing.T) {
 	b := newMpTestbed(t, ControllerConfig{})
 	b.waitRegistered(t)
 	ctx := context.Background()
-	cx, err := b.controller.Add(ctx, TerminationRequest{Mode: SendOnly})
+	cx, err := b.controller.Add(ctx, agw.TerminationRequest{Mode: agw.SendOnly})
 	if err != nil {
 		t.Fatal(err)
 	}
-	other, err := b.controller.Add(ctx, TerminationRequest{Mode: SendOnly})
+	other, err := b.controller.Add(ctx, agw.TerminationRequest{Mode: agw.SendOnly})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -452,7 +517,7 @@ func TestMpErrors(t *testing.T) {
 	if err != nil || a == nil {
 		t.Fatal(err)
 	}
-	tid := h248.TerminationID(cx.Terminations[0].ID)
+	tid := h248.TerminationID(onlyTermination(t, cx).ID)
 	withSignals := func(signals ...h248.Signal) h248.ActionRequest {
 		return h248.ActionRequest{ContextID: id, Commands: []h248.CommandRequest{{
 			Command: h248.Modify, TerminationID: tid, Signals: &h248.SignalsDescriptor{Signals: signals},
@@ -479,7 +544,7 @@ func TestMpErrors(t *testing.T) {
 	}{
 		{"an unknown context", h248.ActionRequest{ContextID: 999, Commands: []h248.CommandRequest{{Command: h248.Modify, TerminationID: "ip/999/1"}}}, 411},
 		{"an unknown termination", modify("ip/200/9", nil), 430},
-		{"a termination of another context", modify(h248.TerminationID(other.Terminations[0].ID), nil), 435},
+		{"a termination of another context", modify(h248.TerminationID(onlyTermination(t, other).ID), nil), 435},
 		{"a signal of a package the MRFP lacks", withSignals(h248.Signal{SignalName: "cg/rt"}), 440},
 		{"a signal that an does not have", withSignals(h248.Signal{SignalName: "an/apv", SigParList: []h248.SigParameter{parm("an", "notice")}}), 452},
 		{"an unknown announcement", withSignals(apf(parm("an", "goodbye"))), 449},
@@ -521,40 +586,47 @@ func TestMpErrors(t *testing.T) {
 
 	// What the controller refuses before it sends anything.
 	before := len(b.net.datagrams())
-	if err := b.controller.Modify(ctx, cx.ID, cx.Terminations[0].ID, TerminationRequest{Remote: Media{Address: mustAddrPort("192.0.2.30:49170")}}); err == nil {
-		t.Error("a Modify without a mode")
+	if _, err := b.controller.Add(ctx, agw.TerminationRequest{ID: "t1", Mode: agw.SendOnly}); err == nil {
+		t.Error("an Add that names its termination")
 	}
-	if _, err := b.controller.Add(ctx, TerminationRequest{Mode: SendOnly, Events: &Events{Detect: []EventName{"dd/d0"}}}); err == nil {
+	if _, err := b.controller.Add(ctx, agw.TerminationRequest{Mode: agw.SendOnly, Events: &agw.Events{Detect: []agw.EventName{"dd/d0"}}}); err == nil {
 		t.Error("an Add with an event that the MRFP does not report")
 	}
-	if _, err := b.controller.Add(ctx, TerminationRequest{Mode: SendOnly, Signals: &Signals{Play: &Play{Announcement: "notice", Duration: 11 * time.Minute}}}); err == nil {
+	if _, err := b.controller.Add(ctx, agw.TerminationRequest{Mode: agw.SendOnly, Signals: &agw.Signals{Play: &agw.Play{Announcement: "notice", DurationMS: 660000}}}); err == nil {
 		t.Error("an announcement longer than a signal can last")
 	}
-	if _, err := b.controller.Reserve(ctx, Media{}); err != errNotIq {
-		t.Errorf("Reserve on a controller of Mp: %v", err)
+	if err := b.controller.Subtract(ctx, cx.ID); err != errNotIq {
+		t.Errorf("Subtract of a whole context on a controller of Mp: %v", err)
 	}
 	if got := len(b.net.datagrams()); got != before {
 		t.Errorf("%d datagrams were sent", got-before)
 	}
 
 	// What the processor refuses.
-	b.processor.setFail(ErrInsufficientResources)
-	_, err = b.controller.Add(ctx, TerminationRequest{Mode: SendOnly})
+	b.processor.setFail(agw.ErrNoPort)
+	_, err = b.controller.Add(ctx, agw.TerminationRequest{Mode: agw.SendOnly})
 	var rejected *CommandRejected
-	if !errors.Is(err, ErrInsufficientResources) || !errors.As(err, &rejected) || rejected.ErrorDescriptor.ErrorCode != 510 {
+	if !errors.Is(err, agw.ErrNoPort) || !errors.As(err, &rejected) || rejected.ErrorDescriptor.ErrorCode != 510 {
 		t.Errorf("Add: %v", err)
 	}
 	b.processor.setFail(nil)
-	err = b.controller.Modify(ctx, cx.ID, cx.Terminations[0].ID, TerminationRequest{Mode: SendOnly, Signals: &Signals{Play: &Play{Announcement: "goodbye"}}})
-	if !errors.As(err, &rejected) || rejected.ErrorDescriptor.ErrorCode != 449 {
+	err = b.controller.Modify(ctx, cx.ID, onlyTermination(t, cx).ID, agw.TerminationRequest{Mode: agw.SendOnly, Signals: &agw.Signals{Play: &agw.Play{Announcement: "goodbye"}}})
+	if !errors.Is(err, agw.ErrUnknownAnnouncement) || !errors.As(err, &rejected) || rejected.ErrorDescriptor.ErrorCode != 449 {
 		t.Errorf("an unknown announcement: %v", err)
 	}
 }
 
 func TestIqControllerSpeaksNoMp(t *testing.T) {
 	b := newTestbed(t, ControllerConfig{})
-	if _, err := b.controller.Add(context.Background(), TerminationRequest{Mode: SendOnly}); err != errNotMp {
-		t.Errorf("Add on a controller of Iq: %v", err)
+	ctx := context.Background()
+	if _, err := b.controller.AddTermination(ctx, "100@agw1.ims.example.net", agw.TerminationRequest{Mode: agw.SendOnly}); err != errNotMp {
+		t.Errorf("AddTermination on a controller of Iq: %v", err)
+	}
+	if _, _, err := b.controller.SubtractTermination(ctx, "100@agw1.ims.example.net", "ip/1/access/100"); err != errNotMp {
+		t.Errorf("SubtractTermination on a controller of Iq: %v", err)
+	}
+	if _, err := b.controller.Add(ctx, agw.TerminationRequest{Mode: agw.SendOnly}); err == nil {
+		t.Error("an Add on Iq without the access and the core termination")
 	}
 	if _, err := NewController(newMemNetwork(b.clock).listen("192.0.2.9:2944"), ControllerConfig{Profile: h248.ServiceChangeProfile{ProfileName: "MRF", Version: 8}}); err == nil {
 		t.Error("a controller of a profile that the package does not speak")
@@ -568,7 +640,7 @@ func TestMpTerminationHeartbeat(t *testing.T) {
 	})
 	b.waitRegistered(t)
 	before := len(b.net.datagrams())
-	cx, err := b.controller.Add(context.Background(), TerminationRequest{Mode: SendOnly})
+	cx, err := b.controller.Add(context.Background(), agw.TerminationRequest{Mode: agw.SendOnly})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -576,7 +648,7 @@ func TestMpTerminationHeartbeat(t *testing.T) {
 	// has no use for it, answers with error 411 and subtracts it. The
 	// reply and the Subtract leave from different goroutines, and the
 	// reply to the Subtract comes after both, so the wait is for all.
-	tid := string(cx.Terminations[0].ID)
+	tid := string(onlyTermination(t, cx).ID)
 	want := []string{"mg MEGACO/2 Notify=" + tid, "mgc MEGACO/2 Reply error 411", "mgc MEGACO/2 Subtract=" + tid}
 	b.until(t, "the heartbeat and the Subtract", time.Second, func() bool {
 		got := summaries(t, b.net.datagrams()[before:])
@@ -622,7 +694,7 @@ func TestMpHeartbeatThatIsNotKeepActiveStopsTheAnnouncement(t *testing.T) {
 	// H.248.1 (05/2002) 7.1.9: detecting the heartbeat stops the
 	// announcement, and g/sc reports it with the method EV (E.1.2).
 	b.until(t, "the end of the announcement", 500*time.Millisecond, func() bool { return len(b.notified.all()) > 0 })
-	if n := b.notified.all()[0]; n.Event != SignalCompleted || n.Method != InterruptedByEvent || n.Signal != string(signalAnnouncementPlay) || n.RequestID != 12 {
+	if n := b.notified.all()[0]; n.Event != agw.SignalCompleted || n.Method != InterruptedByEvent || n.Signal != string(signalAnnouncementPlay) || n.RequestID != 12 {
 		t.Errorf("notification %+v, want g/sc for an/apf with the method EV", n)
 	}
 	if _, terms := b.processor.only(t); terms["t1"].signals == nil || terms["t1"].signals.Play != nil {

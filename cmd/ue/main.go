@@ -183,6 +183,9 @@ func main() {
 			os.Exit(2)
 		}
 		o.cfg.AKA = usim
+		// The card of -k is a USIM without an ISIM, so -impu is the
+		// temporary public identity derived from the IMSI.
+		o.cfg.TemporaryPublicIdentity = true
 	}
 	codecs, err := o.codecList()
 	if err != nil {

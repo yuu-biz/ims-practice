@@ -4,6 +4,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/yuu-biz/ims-practice/internal/agw"
 	"github.com/yuu-biz/ims-practice/internal/h248"
 )
 
@@ -12,20 +13,20 @@ import (
 func TestPlaySignalRoundTrip(t *testing.T) {
 	tests := []struct {
 		name   string
-		play   Play
+		play   agw.Play
 		signal h248.PkgdName
-		want   Play
+		want   agw.Play
 	}{
-		{"once", Play{Announcement: "notice"}, signalAnnouncementPlay, Play{Announcement: "notice", Repeat: 1}},
-		{"three cycles", Play{Announcement: "notice", Repeat: 3}, signalAnnouncementPlay, Play{Announcement: "notice", Repeat: 3}},
-		{"forever, for 10 s", Play{Announcement: "notice", Repeat: RepeatForever, Duration: 10 * time.Second}, signalAnnouncementPlay,
-			Play{Announcement: "notice", Repeat: RepeatForever, Duration: 10 * time.Second}},
-		{"a duration that is not a step", Play{Announcement: "notice", Duration: 1001 * time.Millisecond}, signalAnnouncementPlay,
-			Play{Announcement: "notice", Repeat: 1, Duration: 1010 * time.Millisecond}},
-		{"with silence between plays", Play{Announcement: "welcome", Repeat: 2, Delay: 1500 * time.Millisecond}, signalAASPlay,
-			Play{Announcement: "welcome", Repeat: 2, Delay: 1500 * time.Millisecond}},
-		{"with silence, forever, for 2 min", Play{Announcement: "welcome", Repeat: RepeatForever, Delay: 5 * time.Millisecond, Duration: 2 * time.Minute}, signalAASPlay,
-			Play{Announcement: "welcome", Repeat: RepeatForever, Delay: 10 * time.Millisecond, Duration: 2 * time.Minute}},
+		{"once", agw.Play{Announcement: "notice"}, signalAnnouncementPlay, agw.Play{Announcement: "notice", Repeat: 1}},
+		{"three cycles", agw.Play{Announcement: "notice", Repeat: 3}, signalAnnouncementPlay, agw.Play{Announcement: "notice", Repeat: 3}},
+		{"forever, for 10 s", agw.Play{Announcement: "notice", Repeat: agw.RepeatForever, DurationMS: 10000}, signalAnnouncementPlay,
+			agw.Play{Announcement: "notice", Repeat: agw.RepeatForever, DurationMS: 10000}},
+		{"a duration that is not a step", agw.Play{Announcement: "notice", DurationMS: 1001}, signalAnnouncementPlay,
+			agw.Play{Announcement: "notice", Repeat: 1, DurationMS: 1010}},
+		{"with silence between plays", agw.Play{Announcement: "welcome", Repeat: 2, DelayMS: 1500}, signalAASPlay,
+			agw.Play{Announcement: "welcome", Repeat: 2, DelayMS: 1500}},
+		{"with silence, forever, for 2 min", agw.Play{Announcement: "welcome", Repeat: agw.RepeatForever, DelayMS: 5, DurationMS: 120000}, signalAASPlay,
+			agw.Play{Announcement: "welcome", Repeat: agw.RepeatForever, DelayMS: 10, DurationMS: 120000}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -58,11 +59,11 @@ func TestPlaySignalRoundTrip(t *testing.T) {
 }
 
 func TestPlaySignalRefuses(t *testing.T) {
-	for _, p := range []Play{
+	for _, p := range []agw.Play{
 		{},
 		{Announcement: "notice", Repeat: -2},
-		{Announcement: "notice", Delay: -time.Second},
-		{Announcement: "notice", Duration: maxSignalDuration + time.Millisecond},
+		{Announcement: "notice", DelayMS: -1000},
+		{Announcement: "notice", DurationMS: int(maxSignalDuration/time.Millisecond) + 1},
 	} {
 		if _, err := playSignal(p); err == nil {
 			t.Errorf("%+v was accepted", p)

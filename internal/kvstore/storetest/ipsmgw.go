@@ -15,6 +15,7 @@ import (
 func IPSMGW(t *testing.T, newPair func(t *testing.T) (ipsmgw.Store, ipsmgw.Store)) {
 	run(t, newPair, []testCase[ipsmgw.Store]{
 		{"MessageReferenceCountsPerRecipient", ipsmgwMessageReference},
+		{"MessageReferenceCountsPerPublicIdentity", ipsmgwMessageReferencePerPublicIdentity},
 		{"ConcurrentMessageReferences", ipsmgwConcurrentMessageReferences},
 		{"Delivery", ipsmgwDelivery},
 		{"OnlyOneTakesADelivery", ipsmgwOnlyOneTakes},
@@ -22,6 +23,30 @@ func IPSMGW(t *testing.T, newPair func(t *testing.T) (ipsmgw.Store, ipsmgw.Store
 		{"RegSubscriptionReplacesTheOldOne", ipsmgwRegSubscriptionReplaces},
 		{"PublicIdentitiesCompareTheUserPartWithCase", ipsmgwUserPartWithCase},
 	})
+}
+
+// ipsmgwMessageReferencePerPublicIdentity writes one recipient in
+// several ways: a tel URI with visual separators names the same number
+// (RFC 3966 4), and a SIP URI compares its host without case (RFC 3261
+// 19.1.4). Each way must count on from the others, or two deliveries
+// waiting for their reports could hold the same RP-MR.
+func ipsmgwMessageReferencePerPublicIdentity(t *testing.T, a, b ipsmgw.Store) {
+	var got []uint8
+	for i, recipient := range []string{tel, "tel:+1-202-555-0101", "tel:+1.202.555.0101"} {
+		s := a
+		if i == 1 {
+			s = b
+		}
+		got = append(got, s.NextMessageReference(recipient))
+	}
+	if !slices.Equal(got, []uint8{0, 1, 2}) {
+		t.Errorf("RP-MRs of one number written three ways = %v, want 0 1 2", got)
+	}
+	sip := "sip:001010000000002@ims.mnc001.mcc001.3gppnetwork.org"
+	a.NextMessageReference(sip)
+	if mr := b.NextMessageReference("sip:001010000000002@IMS.mnc001.mcc001.3gppnetwork.org"); mr != 1 {
+		t.Errorf("RP-MR of a SIP URI with its host in upper case = %d, want 1", mr)
+	}
 }
 
 func ipsmgwMessageReference(t *testing.T, a, b ipsmgw.Store) {

@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -52,7 +53,15 @@ func serve(log *slog.Logger, o options) error {
 	// the phone shows once registered (GSMA IR.92 2.3.2); a VoLTE UE
 	// registers a temporary public identity that is barred.
 	services := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		ue.NewSupplementaryServices(xcapClient(o, phone.Status().IMPU)).Handler().ServeHTTP(w, r)
+		xui := phone.Status().IMPU
+		if xui == "" {
+			// The same {"error": ...} as the phone's own API.
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusServiceUnavailable)
+			_ = json.NewEncoder(w).Encode(map[string]string{"error": "no public identity for the XUI before the phone registers"})
+			return
+		}
+		ue.NewSupplementaryServices(xcapClient(o, xui)).Handler().ServeHTTP(w, r)
 	})
 	mux.Handle("/xcap", services)
 	mux.Handle("/xcap/", services)

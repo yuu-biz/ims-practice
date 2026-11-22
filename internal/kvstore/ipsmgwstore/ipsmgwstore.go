@@ -78,11 +78,13 @@ const messageReferenceLifetime = 10 * time.Minute
 
 // NextMessageReference counts with compare and swap, so that two
 // instances that send to one recipient at once never give the same
-// RP-MR. After 255 comes 0, as in ipsmgw.MemoryStore.
+// RP-MR. After 255 comes 0, as in ipsmgw.MemoryStore. The counter is
+// that of the public identity, so that two ways of writing one recipient
+// share it.
 func (s *Store) NextMessageReference(recipient string) uint8 {
 	// The item holds the next value; a missing one is 0.
 	var mr uint8
-	if _, err := kvjson.Upsert(s.c, s.c.Key("message-reference", recipient),
+	if _, err := kvjson.Upsert(s.c, s.c.Key("message-reference", ims.PublicIdentityKey(recipient)),
 		func(uint8) time.Duration { return messageReferenceLifetime },
 		func(next *uint8) { mr = *next; *next++ }); err != nil {
 		return 0

@@ -63,6 +63,9 @@ func run(configPath string, log *slog.Logger) error {
 		return err
 	}
 	log = log.With("node", cfg.Node)
+	for _, section := range cfg.Unread() {
+		log.Warn("configuration section that no role reads; the node runs as if it were left out", "section", section)
+	}
 	if err := diameter.LoadDictionary(); err != nil {
 		return err
 	}
@@ -311,7 +314,8 @@ func run(configPath string, log *slog.Logger) error {
 		}
 		var processors []mrfc.Processor
 		for _, url := range c.MRFPs {
-			processors = append(processors, mrfc.Processor{Name: url, Control: agw.NewClient(url)})
+			client := agw.NewClient(url)
+			processors = append(processors, mrfc.Processor{Name: url, Control: client, Announcements: client})
 		}
 		m, err := mrfc.New(mrfc.Config{Host: c.SIP.Host, Port: int(c.SIP.Listen.Port()), NotifyURL: c.NotifyURL()},
 			processors, mrfc.NewMemoryStore(), resolver, roleLog)
@@ -435,7 +439,6 @@ func startIBCF(homeDomain string, c config.IBCF, locator ims.Locator,
 	if err != nil {
 		return nil, err
 	}
-	trgw := ibcf.NewAGWClient(c.TrGW.Control, c.TrGW.CoreAddress, c.TrGW.PeerAddress)
 	b, err := ibcf.New(ibcf.Config{
 		Internal:         internal,
 		External:         external,
@@ -444,7 +447,9 @@ func startIBCF(homeDomain string, c config.IBCF, locator ims.Locator,
 		HomeDomain:       homeDomain,
 		HomeNumberFormat: c.HomeNumberFormat,
 		ICSCF:            c.ICSCF,
-	}, peers, trgw, ibcf.NewMemoryStore(), locator, log)
+		TrGWCoreAddress:  c.TrGW.CoreAddress,
+		TrGWPeerAddress:  c.TrGW.PeerAddress,
+	}, peers, agw.NewClient(c.TrGW.Control), ibcf.NewMemoryStore(), locator, log)
 	if err != nil {
 		return nil, err
 	}

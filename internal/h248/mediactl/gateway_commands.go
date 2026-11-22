@@ -4,10 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"net/netip"
 	"slices"
 	"strconv"
 
+	"github.com/yuu-biz/ims-practice/internal/agw"
 	"github.com/yuu-biz/ims-practice/internal/h248"
 )
 
@@ -163,9 +163,10 @@ func failed(c h248.CommandRequest, code int, detail string) h248.CommandReply {
 type reserveAdd struct {
 	request h248.CommandRequest
 	group   uint16
-	side    Side
+	side    agw.TerminationID
 	stream  stream
 	events  terminationEvents
+	latch   agw.Latch
 }
 
 // reserve carries out Reserve AGW Connection Point (TS 29.334
@@ -202,46 +203,39 @@ func (g *Gateway) reserve(t *transaction, a h248.ActionRequest) (h248.ActionRepl
 		return refuse(c, 501, "the gateway reserves the access and the core termination together")
 	}
 
-	// The relay passes every payload format as it is, so one Local
-	// descriptor serves both terminations: that of the access side.
-	media := adds[0].stream.local.media
+	var requests []agw.TerminationRequest
 	for _, add := range adds {
-		if add.side == Access {
-			media = add.stream.local.media
+		mode, _ := modeOf(add.stream.mode)
+		request := agw.TerminationRequest{ID: add.side, Mode: mode, LocalMedia: add.stream.local.media, Latch: add.latch}
+		if add.stream.remote != nil {
+			request.Remote, request.RemoteMedia = add.stream.remote.address, add.stream.remote.media
 		}
+		requests = append(requests, request)
 	}
-	media.Address = netip.AddrPort{}
-	reservation, err := g.relay.Reserve(ctx, media)
+	rc, err := g.relay.Add(ctx, requests...)
+	if err == nil && (rc.Terminations[agw.Access] == nil || rc.Terminations[agw.Core] == nil) {
+		err = errors.New("the relay did not make both terminations")
+	}
 	if err != nil {
 		g.log.Warn("mediactl: the relay could not reserve a context", "error", err)
 		return refuse(adds[0].request, t.errorCode(relayErrorCode(err)), "")
 	}
 	gc := &gatewayContext{
-		relayID:   reservation.ID,
+		relayID:   rc.ID,
 		group:     adds[0].group,
-		heartbeat: map[Side]*heartbeat{},
+		heartbeat: map[agw.TerminationID]*heartbeat{},
 	}
 	g.storeContext(gc)
 	g.log.Info("mediactl: context reserved", "context", gc.id.String(), "relay_context", gc.relayID)
 
 	reply := h248.ActionReply{ContextID: gc.id}
 	for _, add := range adds {
-		id := terminationID(add.group, add.side, gc.id)
-		if add.stream.remote != nil {
-			if err := g.relay.Configure(ctx, gc.relayID, add.side, add.stream.remote.media); err != nil {
-				g.log.Warn("mediactl: the relay could not configure a new termination", "context", gc.id.String(), "error", err)
-				g.release(context.WithoutCancel(ctx), gc)
-				return h248.ActionReply{ContextID: gc.id, Commands: []h248.CommandReply{{
-					Command: h248.Add, TerminationID: id, Error: errorDescriptor(t.errorCode(relayErrorCode(err)), ""),
-				}}}, false
-			}
-		}
 		g.setHeartbeat(gc, add.side, add.events)
 		reply.Commands = append(reply.Commands, h248.CommandReply{
 			Command:       h248.Add,
-			TerminationID: id,
+			TerminationID: terminationID(add.group, add.side, gc.id),
 			Media: &h248.MediaDescriptor{OneStream: &h248.StreamParms{
-				Local: &h248.LocalRemoteDescriptor{SDP: gatewayLocal(add.stream.local, reservation.Local[add.side], gc.id)},
+				Local: &h248.LocalRemoteDescriptor{SDP: gatewayLocal(add.stream.local, rc.Terminations[add.side].Local, gc.id)},
 			}},
 		})
 	}
@@ -261,7 +255,7 @@ func (g *Gateway) checkReserveAdd(c h248.CommandRequest, before []reserveAdd) (r
 		return reserveAdd{}, errorDescriptor(501, fmt.Sprintf("%s in a context to be created", c.Command))
 	}
 	t, ok := parseTerminationID(c.TerminationID)
-	if !ok || (t.side != Access && t.side != Core) {
+	if !ok || (t.side != agw.Access && t.side != agw.Core) {
 		return reserveAdd{}, errorDescriptor(431, "the gateway has ip/<group>/access/$ and ip/<group>/core/$")
 	}
 	if t.idText != choose {
@@ -285,19 +279,20 @@ func (g *Gateway) checkReserveAdd(c h248.CommandRequest, before []reserveAdd) (r
 	if e != nil {
 		return reserveAdd{}, e
 	}
-	if e := checkSignals(c.Signals); e != nil {
+	latch, e := checkSignals(c.Signals, true)
+	if e != nil {
 		return reserveAdd{}, e
 	}
-	return reserveAdd{request: c, group: t.group, side: t.side, stream: s, events: events}, nil
+	return reserveAdd{request: c, group: t.group, side: t.side, stream: s, events: events, latch: latch}, nil
 }
 
 // relayErrorCode is the error code that stands for an error of the
 // relay.
 func relayErrorCode(err error) int {
 	switch {
-	case errors.Is(err, ErrNoContext):
+	case errors.Is(err, agw.ErrNoContext):
 		return 411
-	case errors.Is(err, ErrInsufficientResources):
+	case errors.Is(err, agw.ErrNoPort):
 		return 510
 	}
 	return 500
@@ -344,9 +339,9 @@ func (g *Gateway) contextCommand(ctx context.Context, gc *gatewayContext, c h248
 // termination finds the side of a context that a command names. It
 // returns an error code when the ID names no termination of the
 // context (H.248.8 (03/2013) 4.2.12 and 4.2.17).
-func (g *Gateway) termination(gc *gatewayContext, id h248.TerminationID) (Side, *h248.ErrorDescriptor) {
+func (g *Gateway) termination(gc *gatewayContext, id h248.TerminationID) (agw.TerminationID, *h248.ErrorDescriptor) {
 	t, ok := parseTerminationID(id)
-	if !ok || (t.side != Access && t.side != Core) || isWildcard(t.groupText) || isWildcard(t.idText) {
+	if !ok || (t.side != agw.Access && t.side != agw.Core) || isWildcard(t.groupText) || isWildcard(t.idText) {
 		return "", errorDescriptor(430, string(id))
 	}
 	if t.id != uint32(gc.id) {
@@ -389,15 +384,25 @@ func (g *Gateway) modify(ctx context.Context, gc *gatewayContext, c h248.Command
 		}
 		events = &ev
 	}
-	if e := checkSignals(c.Signals); e != nil {
+	latch, e := checkSignals(c.Signals, false)
+	if e != nil {
 		return h248.CommandReply{Command: c.Command, TerminationID: c.TerminationID, Error: e}
 	}
-	if s.remote != nil {
-		if err := g.relay.Configure(ctx, gc.relayID, side, s.remote.media); err != nil {
+	if s.remote != nil || latch != "" {
+		change := agw.TerminationRequest{Latch: latch}
+		log := []any{"context", gc.id.String(), "side", side}
+		if s.remote != nil {
+			change.Remote, change.RemoteMedia = s.remote.address, s.remote.media
+			log = append(log, "remote", s.remote.address.String())
+		}
+		if latch != "" {
+			log = append(log, "latch", string(latch))
+		}
+		if err := g.relay.Modify(ctx, gc.relayID, side, change); err != nil {
 			g.log.Warn("mediactl: the relay could not configure a termination", "context", gc.id.String(), "side", side, "error", err)
 			return failed(c, relayErrorCode(err), "")
 		}
-		g.log.Info("mediactl: termination configured", "context", gc.id.String(), "side", side, "remote", s.remote.media.Address.String())
+		g.log.Info("mediactl: termination configured", log...)
 	}
 	if events != nil {
 		g.setHeartbeat(gc, side, *events)
@@ -429,7 +434,7 @@ func (g *Gateway) subtract(ctx context.Context, gc *gatewayContext, c h248.Comma
 	// The order of the replies to a wildcard is not specified (H.248.1
 	// (05/2002) 7.2.3); access comes first.
 	var replies []h248.CommandReply
-	for _, side := range []Side{Access, Core} {
+	for _, side := range []agw.TerminationID{agw.Access, agw.Core} {
 		replies = append(replies, h248.CommandReply{Command: h248.Subtract, TerminationID: terminationID(gc.group, side, gc.id)})
 	}
 	return replies

@@ -17,15 +17,15 @@ const shTimeout = 5 * time.Second
 // INVITE and keeps no copy, so a change over Ut applies from the
 // next call on, whichever instance of the AS takes it.
 //
-// SIMPLIFIED: TS 29.364 8.1. An AS that reads the data should subscribe
-// to its changes (Sh-Subs-Notif) and take the notifications. This AS
-// reads the data again for each call instead, which needs neither.
-//
 // A user that has no document gets every service in its default state,
 // as one whose document leaves a service out does: each service file
 // tells what its default is. Together they change nothing in the call,
 // so that a user without services gets the call it would get without
 // the AS.
+//
+// SIMPLIFIED: TS 29.364 8.1. An AS that reads the data should subscribe
+// to its changes (Sh-Subs-Notif) and take the notifications. This AS
+// reads the data again for each call instead, which needs neither.
 func (as *AS) services(user string) (simservs.MMTelServices, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), shTimeout)
 	defer cancel()

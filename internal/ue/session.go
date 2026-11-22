@@ -86,17 +86,17 @@ func (c CallConfig) codecs() []sdp.Codec {
 // the precondition mechanism, whose SDP the UE handles (RFC 3312 11, TS
 // 24.229 5.1.3.1, 5.1.4.1).
 //
-// SIMPLIFIED: TS 24.229 5.1.3.1 b) and 5.1.4A.1. The UA lists
-// precondition in the Supported of every request within a dialog, also
-// when the peer did not use the mechanism, where the UE should leave it
-// out. The UA has one Supported for all its calls; a peer that does not
-// use preconditions ignores the option tag in Supported (5.1.4A.2).
-//
 // It also sets the feature parameters of the Contact of the UE's
 // dialogs (DialogContactParams), unless cfg has some, the session timer
 // of IR.92 2.2.8 (SessionInterval), unless cfg has one, and the header
 // fields of what the UA sends by itself (OwnHeaders), without
 // P-Access-Network-Info unless cfg has its own.
+//
+// SIMPLIFIED: TS 24.229 5.1.3.1 b) and 5.1.4A.1. The UA lists
+// precondition in the Supported of every request within a dialog, also
+// when the peer did not use the mechanism, where the UE should leave it
+// out. The UA has one Supported for all its calls; a peer that does not
+// use preconditions ignores the option tag in Supported (5.1.4A.2).
 func UAConfig(cfg sip.UAConfig, calls CallConfig) sip.UAConfig {
 	if !calls.NoPreconditions {
 		cfg.Supported = append(slices.Clone(cfg.Supported), sip.OptionPrecondition)

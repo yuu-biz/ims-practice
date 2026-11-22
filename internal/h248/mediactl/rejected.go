@@ -4,14 +4,18 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/yuu-biz/ims-practice/internal/agw"
 	"github.com/yuu-biz/ims-practice/internal/h248"
 )
 
 // CommandRejected is the error for a reply that carries an Error
 // descriptor: the procedure Command Rejected of TS 29.334 5.17.3.11.
-// errors.Is matches it with ErrNoContext, ErrNoTermination,
-// ErrInsufficientResources and ErrUnavailable where its code means one
-// of them.
+// errors.Is matches it with agw.ErrNoContext, agw.ErrNoTermination,
+// agw.ErrNoPort, agw.ErrUnknownAnnouncement and ErrUnavailable where
+// its code means one of them, so that a caller of the Controller tells
+// the errors apart as it does for the HTTP client of the media node.
+// The codes are those that a Gateway answers for these errors of its
+// relay or processor.
 type CommandRejected struct {
 	ErrorDescriptor h248.ErrorDescriptor
 }
@@ -29,11 +33,19 @@ func (e *CommandRejected) Is(target error) bool {
 	case 411:
 		// H.248.36 (03/2013) 5.6.1: the codes that tell that one side
 		// has no record of a context or termination.
-		return target == ErrNoContext
+		return target == agw.ErrNoContext
 	case 430, 435:
-		return target == ErrNoContext || target == ErrNoTermination
+		return target == agw.ErrNoContext || target == agw.ErrNoTermination
 	case 510:
-		return target == ErrInsufficientResources
+		// H.248.8 (03/2013) 4.2.49, Insufficient Resources: the media
+		// node has no free port for another context.
+		return target == agw.ErrNoPort
+	case 449:
+		// An unknown parameter value, which an MRFP answers for an
+		// announcement it does not hold (TS 29.333 5.17.1). The
+		// Controller checks the other parameters of what it sends
+		// (playSignal), so that is what a 449 means to its caller.
+		return target == agw.ErrUnknownAnnouncement
 	case 505:
 		// H.248.8 (03/2013) 4.2.46: the gateway is registering.
 		return target == ErrUnavailable

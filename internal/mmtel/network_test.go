@@ -159,8 +159,9 @@ func startMRF(t *testing.T, dns *names, host string) (*agw.Relay, *mpRequests, [
 	notify := http.NewServeMux()
 	notifyServer := httptest.NewServer(notify)
 	t.Cleanup(notifyServer.Close)
+	client := agw.NewClient(api.URL)
 	m, err := mrfc.New(mrfc.Config{Host: host, Port: int(tr.LocalAddr().Port()), NotifyURL: notifyServer.URL + "/notify"},
-		[]mrfc.Processor{{Name: "mrfp1", Control: agw.NewClient(api.URL)}}, mrfc.NewMemoryStore(), dns, quiet())
+		[]mrfc.Processor{{Name: "mrfp1", Control: client, Announcements: client}}, mrfc.NewMemoryStore(), dns, quiet())
 	if err != nil {
 		t.Fatal(err)
 	}

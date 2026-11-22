@@ -15,15 +15,27 @@ import (
 	"github.com/yuu-biz/ims-practice/internal/sip"
 )
 
-// Relay is the media relay the P-CSCF controls. *agw.Client is
-// one; it is the only place that talks to the relay, so that H.248
-// over Iq can replace it. The P-CSCF adds a context with the two
-// terminations agw.Access and agw.Core, tells each where to
-// send, and subtracts the context.
+// Relay is the media relay that the P-CSCF, as the IMS-ALG, controls
+// over Iq (TS 23.334, TS 29.334). The operations carry the names of the
+// H.248 commands, on the types of internal/agw, and each is a call
+// related procedure of Iq. The P-CSCF adds a context with the two
+// terminations agw.Access, which faces the UE, and agw.Core, which faces
+// the rest of the network, tells each where to send, and subtracts the
+// context. Two values implement it: *agw.Client, over the HTTP API of
+// the media node, and the H.248 Controller of internal/h248/mediactl.
 type Relay interface {
+	// Add is Reserve AGW Connection Point (TS 29.334 5.17.2.2) for the
+	// terminations of one new context. The context it returns has, for
+	// each termination, the address on which it receives RTP, which the
+	// SDP that its party receives is to show.
 	Add(ctx context.Context, terminations ...agw.TerminationRequest) (agw.Context, error)
-	Modify(ctx context.Context, id string, termination agw.TerminationID, change agw.TerminationRequest) (agw.Termination, error)
-	Subtract(ctx context.Context, id string) (agw.Context, error)
+	// Modify is Configure AGW Connection Point (TS 29.334 5.17.2.3): it
+	// tells a termination where its party takes the media, as the SDP
+	// of that party gives it.
+	Modify(ctx context.Context, id string, termination agw.TerminationID, change agw.TerminationRequest) error
+	// Subtract is Release AGW Termination (TS 29.334 5.17.2.5) for both
+	// terminations of the context.
+	Subtract(ctx context.Context, id string) error
 }
 
 // HostAccess is for UEs that reach the P-CSCF through the NAT of the
@@ -413,7 +425,7 @@ func (p *PCSCF) relaySDP(m *sip.Message, rc *RelayContext, toUE bool) error {
 	}
 	ctx, cancel := relayContext()
 	defer cancel()
-	if _, err := p.relay.Modify(ctx, rc.ID, cameFrom, agw.TerminationRequest{Remote: sender}); err != nil {
+	if err := p.relay.Modify(ctx, rc.ID, cameFrom, agw.TerminationRequest{Remote: sender}); err != nil {
 		return err
 	}
 	if err := description.SetAudio(shown); err != nil {
@@ -466,7 +478,7 @@ func (p *PCSCF) free(d Dialog, log *slog.Logger) {
 func (p *PCSCF) subtract(id string, log *slog.Logger) {
 	for attempt := 1; ; attempt++ {
 		ctx, cancel := relayContext()
-		_, err := p.relay.Subtract(ctx, id)
+		err := p.relay.Subtract(ctx, id)
 		cancel()
 		if err == nil {
 			return

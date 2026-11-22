@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/yuu-biz/ims-practice/internal/agw"
 	"github.com/yuu-biz/ims-practice/internal/h248"
 )
 
@@ -81,8 +82,26 @@ const (
 	// paramNAPT (napt) is OFF, LATCH or RELATCH (H.248.37 (06/2008)
 	// 6.3.1.1.1).
 	paramNAPT = "napt"
-	naptLatch = "LATCH"
 )
+
+// naptValues are the values of napt, with the latching each one asks of
+// the relay (H.248.37 (06/2008) 6.3.1.1.1, 6.6.1 to 6.6.3).
+var naptValues = map[agw.Latch]string{
+	agw.NAPTOff:     "OFF",
+	agw.NAPTLatch:   "LATCH",
+	agw.NAPTRelatch: "RELATCH",
+}
+
+// latchOf is the latching for a value of napt, which is case
+// insensitive as the text encoding is (RFC 3525 Annex B.2).
+func latchOf(napt string) (agw.Latch, bool) {
+	for l, value := range naptValues {
+		if strings.EqualFold(napt, value) {
+			return l, true
+		}
+	}
+	return "", false
+}
 
 // The RequestIDs of the Events descriptors that a Controller sets. A
 // Notify carries the RequestID of the descriptor that asked for its
@@ -102,14 +121,14 @@ const terminationGroup = 1
 // A Gateway gives both terminations of a context the context ID as
 // their <id>: the field must be unique for each interface only, and a
 // learner can then tell from a termination ID which context it is in.
-func terminationID(group uint16, side Side, id h248.ContextID) h248.TerminationID {
+func terminationID(group uint16, side agw.TerminationID, id h248.ContextID) h248.TerminationID {
 	return h248.TerminationID(fmt.Sprintf("ip/%d/%s/%d", group, side, id))
 }
 
 // chooseTerminationID asks the gateway for a termination on side. TS
 // 29.334 5.6.1.1.1 (NOTE 4) has the controller always use CHOOSE in an
 // Add.
-func chooseTerminationID(side Side) h248.TerminationID {
+func chooseTerminationID(side agw.TerminationID) h248.TerminationID {
 	return h248.TerminationID(fmt.Sprintf("ip/%d/%s/$", terminationGroup, side))
 }
 
@@ -118,7 +137,7 @@ func chooseTerminationID(side Side) h248.TerminationID {
 type ipTermination struct {
 	group     uint16
 	groupText string
-	side      Side
+	side      agw.TerminationID
 	id        uint32
 	idText    string
 }
@@ -130,7 +149,7 @@ func parseTerminationID(t h248.TerminationID) (ipTermination, bool) {
 	if len(fields) != 4 || fields[0] != "ip" {
 		return ipTermination{}, false
 	}
-	p := ipTermination{groupText: fields[1], side: Side(fields[2]), idText: fields[3]}
+	p := ipTermination{groupText: fields[1], side: agw.TerminationID(fields[2]), idText: fields[3]}
 	if !isWildcard(p.groupText) {
 		g, err := strconv.ParseUint(p.groupText, 10, 16)
 		if err != nil {

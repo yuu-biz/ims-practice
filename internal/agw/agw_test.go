@@ -111,10 +111,10 @@ func TestRelayLatchesAndForwards(t *testing.T) {
 	ue, network := udp(t), udp(t)
 	// The SDP of the UE names a private address that is not where it
 	// sends from; the network side's SDP is right.
-	if _, err := client.Modify(t.Context(), c.ID, Access, TerminationRequest{Remote: netip.MustParseAddrPort("192.0.2.10:4000")}); err != nil {
+	if err := client.Modify(t.Context(), c.ID, Access, TerminationRequest{Remote: netip.MustParseAddrPort("192.0.2.10:4000")}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := client.Modify(t.Context(), c.ID, Core, TerminationRequest{Remote: addr(network)}); err != nil {
+	if err := client.Modify(t.Context(), c.ID, Core, TerminationRequest{Remote: addr(network)}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -133,14 +133,16 @@ func TestRelayLatchesAndForwards(t *testing.T) {
 	if len(contexts) != 1 || !contexts[0].Terminations[Access].Latched || contexts[0].Terminations[Access].Remote != addr(ue) {
 		t.Errorf("contexts = %+v, want the access side latched onto %v", contexts[0].Terminations[Access], addr(ue))
 	}
-	gone, err := client.Subtract(t.Context(), c.ID)
-	if err != nil {
+	if access := contexts[0].Terminations[Access]; access.Packets != 1 || access.PacketsSent != 1 {
+		t.Errorf("the access termination counts %+v, want one packet each way", access)
+	}
+	if err := client.Subtract(t.Context(), c.ID); err != nil {
 		t.Fatal(err)
 	}
-	if access := gone.Terminations[Access]; access.Packets != 1 || access.PacketsSent != 1 {
-		t.Errorf("Subtract reports %+v for the access termination, want one packet each way", access)
+	if len(r.Contexts()) != 0 {
+		t.Errorf("the relay still has %+v after Subtract", r.Contexts())
 	}
-	if _, err := client.Subtract(t.Context(), c.ID); !errors.Is(err, ErrNoContext) {
+	if err := client.Subtract(t.Context(), c.ID); !errors.Is(err, ErrNoContext) {
 		t.Errorf("a second Subtract got %v, want ErrNoContext", err)
 	}
 }
@@ -320,7 +322,7 @@ func TestSubtractingTheLastTerminationDeletesTheContext(t *testing.T) {
 	if _, err := client.AddTermination(t.Context(), c.ID, TerminationRequest{}); !errors.Is(err, ErrNoContext) {
 		t.Errorf("adding to the deleted context got %v, want ErrNoContext", err)
 	}
-	if _, err := client.Modify(t.Context(), "c0", "t1", TerminationRequest{}); !errors.Is(err, ErrNoContext) {
+	if err := client.Modify(t.Context(), "c0", "t1", TerminationRequest{}); !errors.Is(err, ErrNoContext) {
 		t.Errorf("Modify of an unknown context got %v, want ErrNoContext", err)
 	}
 }
