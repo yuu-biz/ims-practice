@@ -4,6 +4,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/yuu-biz/ims-practice/internal/ims"
 	"github.com/yuu-biz/ims-practice/internal/sip"
 )
 
@@ -361,39 +362,19 @@ func sameIdentity(a, b string) bool {
 }
 
 // telephoneNumber returns the number of a tel URI, or of a SIP URI with
-// user=phone, without visual separators: +12025550123 for
-// tel:+1-202-555-0123.
+// user=phone, in the form that two numbers compare in: without visual
+// separators, so +12025550123 for tel:+1-202-555-0123. A number of
+// separators alone is no number.
 func telephoneNumber(uri string) (string, bool) {
-	var user string
-	switch scheme, rest, _ := strings.Cut(uri, ":"); strings.ToLower(scheme) {
-	case "tel":
-		user = rest
-	case "sip", "sips":
-		userinfo, hostAndParams, found := strings.Cut(rest, "@")
-		if !found || !hasUserPhone(hostAndParams) {
-			return "", false
-		}
-		user = userinfo
-	default:
+	n, ok := ims.ParseTelephoneNumber(uri)
+	if !ok {
 		return "", false
 	}
-	number, _, _ := strings.Cut(user, ";")
-	number = strings.Map(func(r rune) rune {
-		if strings.ContainsRune("-.()", r) {
-			return -1
-		}
-		return r
-	}, number)
+	number := ims.WithoutVisualSeparators(n.Number)
 	if number == "" || number == "+" {
 		return "", false
 	}
 	return number, true
-}
-
-func hasUserPhone(hostAndParams string) bool {
-	hostAndParams, _, _ = strings.Cut(hostAndParams, "?")
-	params := strings.Split(hostAndParams, ";")
-	return slices.ContainsFunc(params[1:], func(p string) bool { return strings.EqualFold(p, "user=phone") })
 }
 
 // domainOf returns the host of a SIP URI, the domain that cp:many
