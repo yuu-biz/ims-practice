@@ -78,6 +78,8 @@ inject() {
 state_is() {
 	local want="$1" seconds="$2" i got
 	for i in $(seq 1 "$seconds"); do
+		# A container that is gone has no state, hence "|| true"; the
+		# FAIL line below names it "gone".
 		got="$(docker inspect -f '{{.State.Status}}' "$container" 2>/dev/null || true)"
 		if [ "$got" = "$want" ]; then
 			echo "ok   $target is $want"
@@ -167,7 +169,9 @@ else
 	echo "FAIL the new container is at $(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}} {{end}}' "$container"), want $address"
 	fail=1
 fi
-# The name the other nodes reach it by on the Compose network.
+# The name the other nodes reach it by on the Compose network. A
+# container that is gone has none, hence "|| true", which the check
+# reports.
 aliases="$(docker inspect -f '{{range .NetworkSettings.Networks}}{{range .Aliases}}{{.}} {{end}}{{end}}' "$container" 2>/dev/null || true)"
 case " $aliases " in
 *" $target "*) echo "ok   the new container answers to the name $target" ;;
