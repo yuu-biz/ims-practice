@@ -37,10 +37,10 @@ const messageReferenceLifetime = 10 * time.Minute
 //
 // The delivery is in the Store before the MESSAGE goes out, since the
 // report can reach another IP-SM-GW even before the 200 is back here.
-//
-// The timer of ReportTimeout runs only in this process, like the timers
-// of the S-CSCF. If this IP-SM-GW stops, no one reports the
-// end of a delivery whose report never comes; the Store forgets it.
+// Its ReportDeadline goes with it, in the time index of TR1N, so that
+// whichever instance claims the delivery when that time comes ends it
+// (reportTimedOut): the delivery of an IP-SM-GW that stops is not left
+// without an outcome.
 //
 // When the Store fails before the MESSAGE goes out, the SC hears of a
 // system failure at once, and no MESSAGE goes out whose report no
@@ -65,18 +65,15 @@ func (g *IPSMGW) Deliver(ctx context.Context, d Delivery) {
 	if err := g.store.PutDelivery(ctx, PendingDelivery{
 		CallID: callID, Reference: d.Reference, Recipient: d.Recipient, MessageReference: mr,
 		ReportDeadline: now.Add(g.cfg.ReportTimeout),
-		// Longer than the timer below, which therefore always finds a
-		// delivery that no report has ended. The Store forgets it by
-		// itself only when this IP-SM-GW stops before the timer fires.
+		// Longer than TR1N by TR1N itself, so that the round which claims
+		// the expiry still finds the delivery. After that the Store
+		// forgets it, and the SC hears of no outcome.
 		Expires: now.Add(2 * g.cfg.ReportTimeout),
 	}); err != nil {
 		log.Warn("delivery not stored, not delivering", "error", err.Error())
 		g.sc.Report(ctx, d.Reference, SystemFailure)
 		return
 	}
-	time.AfterFunc(g.cfg.ReportTimeout, func() {
-		g.endDelivery(callID, SystemFailure, log.With("reason", "no delivery report"))
-	})
 
 	next := g.entryPoint()
 	ibcf, leaves := g.exitIBCF(d.Recipient)
@@ -90,16 +87,16 @@ func (g *IPSMGW) Deliver(ctx context.Context, d Delivery) {
 	switch {
 	case err != nil:
 		// No final response is a 408 to TS 29.311 Table 6.1.4.4.1.1.
-		g.endDelivery(callID, outcomeOfFailure(408), log.With("error", err.Error()))
+		g.endDeliveryNow(callID, outcomeOfFailure(408), log.With("error", err.Error()))
 	case final.StatusCode >= 300:
-		g.endDelivery(callID, outcomeOfFailure(final.StatusCode), log.With("status", final.StatusCode))
+		g.endDeliveryNow(callID, outcomeOfFailure(final.StatusCode), log.With("status", final.StatusCode))
 	case leaves:
 		// SIMPLIFIED: TS 24.341 5.3.3.5.4 and 5.3.3.5.6, TS 23.204 6.5
 		// step 6. The IP-SM-GW of the other network sends no delivery
 		// report back across the border, so the delivery ends when that
 		// network accepts the MESSAGE. The SC learns that it cannot
 		// confirm the delivery (statusOf in package sc).
-		g.endDelivery(callID, Forwarded, log.With("status", final.StatusCode))
+		g.endDeliveryNow(callID, Forwarded, log.With("status", final.StatusCode))
 	default:
 		log.Info("MESSAGE accepted, waiting for the delivery report", "status", final.StatusCode)
 	}
@@ -169,22 +166,41 @@ func (g *IPSMGW) deliveryMessage(d Delivery, mr uint8) (*sip.Message, error) {
 }
 
 // endDelivery ends the delivery of the MESSAGE with callID, if nothing
-// has ended it yet, and tells the SC.
-//
-// No request waits for the end of a delivery: the delivery report has
-// been answered already. When the Store fails, the delivery stays, and
-// the timer of ReportTimeout tries to end it again; if that fails too,
-// the Store forgets the delivery at its Expires, and the SC hears of no
-// outcome.
-func (g *IPSMGW) endDelivery(callID string, outcome Outcome, log *slog.Logger) {
-	d, ok, err := g.store.TakeDelivery(context.Background(), callID)
+// has ended it yet, and tells the SC. It returns the failure of the
+// Store that left the delivery where it was.
+func (g *IPSMGW) endDelivery(ctx context.Context, callID string, outcome Outcome, log *slog.Logger) error {
+	d, ok, err := g.store.TakeDelivery(ctx, callID)
 	if err != nil {
-		log.Warn("delivery not ended: the store failed", "outcome", outcome.String(), "error", err.Error())
-		return
+		return err
 	}
 	if !ok {
-		return
+		return nil
 	}
 	log.Info("delivery ended", "outcome", outcome.String())
-	g.sc.Report(context.Background(), d.Reference, outcome)
+	g.sc.Report(ctx, d.Reference, outcome)
+	return nil
+}
+
+// endDeliveryNow ends a delivery whose outcome is known while no request
+// waits for it: the MESSAGE has had its final response, or none, and a
+// delivery report has been answered already. When the Store fails, the
+// delivery stays with its TR1N, which ends it instead, on this instance
+// or on another.
+func (g *IPSMGW) endDeliveryNow(callID string, outcome Outcome, log *slog.Logger) {
+	if err := g.endDelivery(context.Background(), callID, outcome, log); err != nil {
+		log.Warn("delivery not ended: the store failed; TR1N ends it", "outcome", outcome.String(), "error", err.Error())
+	}
+}
+
+// reportTimedOut is TR1N running out for a delivery (TS 24.011 6.2.2.2):
+// no delivery report has come, so the SC hears of a system failure.
+//
+// The instance that claimed the expiry takes the delivery, which only
+// one caller wins, so the SC hears the outcome once however many
+// instances claim the same delivery. The lock of the user is not taken:
+// a delivery belongs to one Call-ID, which no other request of the user
+// touches.
+func (g *IPSMGW) reportTimedOut(ctx context.Context, callID string) error {
+	log := g.log.With("call_id", callID, "reason", "no delivery report")
+	return g.endDelivery(ctx, callID, SystemFailure, log)
 }

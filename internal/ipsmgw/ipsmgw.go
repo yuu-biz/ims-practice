@@ -63,6 +63,15 @@ type Config struct {
 	// ReportTimeout is how long the IP-SM-GW waits for the delivery
 	// report of an RP-DATA. Zero means defaultReportTimeout.
 	ReportTimeout time.Duration
+	// SweepInterval is how often this instance claims the deliveries
+	// whose TR1N is due, and so how late a delivery may be ended; zero
+	// means ims.SweepInterval. Tests shorten it.
+	SweepInterval time.Duration
+	// ExpiryLease is how long a claimed delivery is this instance's
+	// alone, after which another instance may claim it; zero means
+	// ims.ExpiryLease. It is longer than ending one takes, the report to
+	// the SC included. Tests shorten it.
+	ExpiryLease time.Duration
 	// IBCF is the IBCF of the home network, through which a short
 	// message for a user of another IMS network leaves (deliver.go). The
 	// zero value has no host: every recipient is in the home network.
@@ -94,11 +103,15 @@ type IPSMGW struct {
 	// nodes.
 	users ims.UserLocker
 	log   *slog.Logger
+	// stopSweep ends the sweep of this instance and waits for the
+	// handlers it started (deliver.go).
+	stopSweep func()
 }
 
-// New returns the IP-SM-GW. sc is where short messages from the UEs go;
-// when it is the SC stub, the stub also needs the IP-SM-GW, to deliver
-// through it.
+// New returns the IP-SM-GW and starts its sweep, which ends the
+// deliveries whose TR1N has run out until Close. sc is where short
+// messages from the UEs go; when it is the SC stub, the stub also needs
+// the IP-SM-GW, to deliver through it.
 func New(cfg Config, sc ServiceCentre, store Store, hss HSS, locator ims.Locator, log *slog.Logger) *IPSMGW {
 	if cfg.ReportTimeout == 0 {
 		cfg.ReportTimeout = defaultReportTimeout
@@ -106,8 +119,30 @@ func New(cfg Config, sc ServiceCentre, store Store, hss HSS, locator ims.Locator
 	if cfg.UserLocks == nil {
 		cfg.UserLocks = &ims.UserLocks{}
 	}
-	return &IPSMGW{cfg: cfg, sc: sc, store: store, hss: hss, locator: locator, users: cfg.UserLocks, log: log}
+	if cfg.SweepInterval == 0 {
+		cfg.SweepInterval = ims.SweepInterval
+	}
+	if cfg.ExpiryLease == 0 {
+		cfg.ExpiryLease = ims.ExpiryLease
+	}
+	g := &IPSMGW{cfg: cfg, sc: sc, store: store, hss: hss, locator: locator, users: cfg.UserLocks, log: log}
+	g.stopSweep = ims.Sweep[Expiry]{
+		Kinds: []string{ReportTimeout}, Interval: cfg.SweepInterval, Lease: cfg.ExpiryLease,
+		Claim: func(ctx context.Context, _ string, now time.Time, lease time.Duration, limit int) ([]Expiry, error) {
+			return store.ClaimDue(ctx, now, lease, limit)
+		},
+		Handle: func(ctx context.Context, e Expiry) error { return g.reportTimedOut(ctx, e.CallID) },
+		Done:   store.Done,
+		Log:    log,
+	}.Start()
+	return g
 }
+
+// Close stops the sweep of this instance and waits for the deliveries it
+// was ending, whose report to the SC it ends. A delivery that this
+// instance had claimed and not ended is ended by another instance of the
+// IP-SM-GW once the claim runs out.
+func (g *IPSMGW) Close() { g.stopSweep() }
 
 // SetStack hands the IP-SM-GW the stack that calls OnRequest.
 func (g *IPSMGW) SetStack(stack *sip.Stack) { g.stack.Set(stack) }

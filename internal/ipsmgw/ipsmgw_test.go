@@ -173,8 +173,13 @@ func newHarnessWith(t *testing.T, store ipsmgw.Store, reportTimeout time.Duratio
 	})
 	h.sc.answerWith(sms.SubmitReport{ServiceCentreTimeStamp: time.Date(2026, 11, 20, 9, 30, 0, 0, time.UTC)}, nil)
 	h.g = ipsmgw.New(ipsmgw.Config{URI: ownURI, HomeDomain: domain, Number: number, ServiceCentre: scAddress, ReportTimeout: reportTimeout,
-		IBCF: extra.IBCF, UserLocks: extra.UserLocks},
+		IBCF: extra.IBCF, UserLocks: extra.UserLocks,
+		// The sweep comes round often, so that a test which shortens
+		// TR1N does not wait a second for the delivery it ends, and ends
+		// it while the Store still keeps the delivery.
+		SweepInterval: 20 * time.Millisecond},
 		h.sc, store, h.hss, locator{domain: entry.LocalAddr(), scscfHost: h.scscf.LocalAddr(), ibcfHost: entry.LocalAddr()}, quiet())
+	t.Cleanup(h.g.Close)
 	stack := newStack(t, fastTimers, h.g.OnRequest)
 	h.g.SetStack(stack)
 	h.gw = stack.LocalAddr()

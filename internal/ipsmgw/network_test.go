@@ -166,6 +166,7 @@ func startIMS(t *testing.T, n int) *network {
 		centre := sc.New(users, scStore, quiet())
 		g := ipsmgw.New(ipsmgw.Config{URI: gwCfg.IPSMGW.SIP.URI(), HomeDomain: domain, Number: gwCfg.IPSMGW.Number,
 			ServiceCentre: gwCfg.IPSMGW.ServiceCentre}, watchedSC{centre, k, net.heard}, gwStore, users, net.dns, quiet())
+		t.Cleanup(g.Close)
 		centre.SetIPSMGW(g)
 		stack := newStack(t, sip.Timers{}, g.OnRequest)
 		g.SetStack(stack)
