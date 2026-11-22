@@ -10,13 +10,14 @@
 | --- | --- | --- | --- |
 | 0. このリポジトリを読むための Go | [decks/ja/00-go.md](decks/ja/00-go.md) | [decks/en/00-go.md](decks/en/00-go.md) | [A Tour of Go](https://go.dev/tour/) |
 | 1. パッケージ構成 | [decks/ja/01-packages.md](decks/ja/01-packages.md) | [decks/en/01-packages.md](decks/en/01-packages.md) | [README](../README.ja.md) |
+| 2. 網の地図 | [decks/ja/02-network.md](decks/ja/02-network.md) | [decks/en/02-network.md](decks/en/02-network.md) | [手順書](../docs/guide/ja/README.md) |
 | 3. 登録 | [decks/ja/03-registration.md](decks/ja/03-registration.md) | [decks/en/03-registration.md](decks/en/03-registration.md) | [登録](../docs/guide/ja/registration.md) |
 | 4. 音声通話 | [decks/ja/04-call.md](decks/ja/04-call.md) | [decks/en/04-call.md](decks/en/04-call.md) | [通話](../docs/guide/ja/call.md) |
 | 5. SMS over IP | [decks/ja/05-sms.md](decks/ja/05-sms.md) | [decks/en/05-sms.md](decks/en/05-sms.md) | [SMS](../docs/guide/ja/sms.md) |
 | 6. 補足サービス（MMTel AS） | [decks/ja/06-mmtel.md](decks/ja/06-mmtel.md) | [decks/en/06-mmtel.md](decks/en/06-mmtel.md) | [補足サービス](../docs/guide/ja/mmtel.md) |
 | 7. VoLTE（アクセス網、IMS-AKA、Rx、プリコンディション） | [decks/ja/07-volte.md](decks/ja/07-volte.md) | [decks/en/07-volte.md](decks/en/07-volte.md) | [VoLTE](../docs/guide/ja/volte.md) |
 
-1 から 7 のデッキは、コードの地図から始めて、登録、通話、SMS、補足サービス、VoLTE の通話へ進みます。番号は勧める順です。VoLTE のデッキは補足サービスのあとに置きます。VoLTE の手順書は MMTel AS を前提にしていて、VoLTE の通話もすべて MMTel AS を通るためです。0 のデッキはその前に置きます。Go を読んだことがない人のために、このリポジトリで出会う Go の書き方を、コードの抜き出しで説明します。
+1 から 7 のデッキは、コードの地図と網の地図から始めて、登録、通話、SMS、補足サービス、VoLTE の通話へ進みます。番号は勧める順です。網の地図は登録の前に置きます。これより先のデッキは、どれもこの地図の一部をキャプチャで読むためです。VoLTE のデッキは補足サービスのあとに置きます。VoLTE の手順書は MMTel AS を前提にしていて、VoLTE の通話もすべて MMTel AS を通るためです。0 のデッキはその前に置きます。Go を読んだことがない人のために、このリポジトリで出会う Go の書き方を、コードの抜き出しで説明します。
 
 ## 勉強会の進め方
 
@@ -30,6 +31,7 @@
 | --- | --- | --- |
 | 0. Go | 60 分 | 前半の 25 分で「なぜ Go なのか」（3 分）、試験の動かし方、コードの形（10 分）を、後半の 35 分で毎ページで出会う書き方（20 分）と仕様の形をしたパッケージ（10 分）を扱います。演習は 2 人 1 組で、さらに 15 分かかります。ほかの言語でプログラムを書けるが Go は読んだことがない人向けです。Go を読める人は 1 のデッキから始めます。 |
 | 1. パッケージ構成 | 45 分 | 信号は読みません。どこに何があるかの地図を作ります。リポジトリの一番上に 3 分、「internal/ を層で見る」に 5 分、2 人 1 組で 1 つの REGISTER をコードで追うのに 10 分を使います。 |
+| 2. 網の地図 | 45 分 | ここも信号は読みません。ノードと、その間のインタフェースと、それぞれに流れるプロトコルを見ます。ノードに 10 分、参照点に 15 分、地図のどこをどの回が開くかに 10 分を使います。登録の前に開きます。これより先の回は、どれもこの地図の一部をキャプチャで読むためです。 |
 | 3. 登録 | 60 分 | 200 OK までに 35 分を使い、「ここまでで登録は完了」で休憩か質問に 5 分を取ります。残りで購読、登録の解除、失敗を見ます。動かす代わりに、CI の成果物 `registration-capture` のキャプチャを使えます。 |
 | 4. 通話 | 60 分 | INVITE が UE 2 に届くまで（「6 と 7」のスライドのあたり）に 30 分、応答から切断までに 20 分、残りを失敗と振り返りに使います。端末を 2 つ開くのが面倒な人は、ラボから UE を動かせます。 |
 | 5. SMS | 75 分 | 2 回に分けても構いません。そのときは「13 から 15。status report」のあと、45 分ほどで 1 回目を終え、2 回目を「ボディを読む」から始めます。ボディを手で読むのは 10 分の演習です。6 通の MESSAGE の表を印刷して配ると、キャプチャの中で迷いません。CI の成果物 `sms-capture` に、キャプチャとフレームの一覧があります。登録と通話の回が先です。Path、Service-Route、LIR は説明し直しません。 |
