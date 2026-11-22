@@ -40,7 +40,7 @@ type sessionHarness struct {
 func newSessionHarness(t *testing.T) *sessionHarness {
 	t.Helper()
 	minPort, maxPort := rtptest.PortRange(t, 20)
-	relay, err := agw.NewRelay(netip.MustParseAddr("127.0.0.1"), minPort, maxPort, nil, quiet())
+	relay, err := agw.NewRelay(netip.MustParseAddr("127.0.0.1"), minPort, maxPort, nil, nil, quiet())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -247,7 +247,7 @@ func TestCallIsRefusedWhenTheRelayHasNoFreePort(t *testing.T) {
 			t.Cleanup(func() { held.Close() })
 		}
 	}
-	relay, err := agw.NewRelay(netip.MustParseAddr("127.0.0.1"), minPort, maxPort, nil, quiet())
+	relay, err := agw.NewRelay(netip.MustParseAddr("127.0.0.1"), minPort, maxPort, nil, nil, quiet())
 	if err != nil {
 		t.Fatal(err)
 	}

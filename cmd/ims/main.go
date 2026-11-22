@@ -681,7 +681,7 @@ var roleApplications = map[config.Role][]uint32{
 // or the MRFP with its announcements. Both are the same relay.
 func startMediaNode(role config.Role, c config.AGW, announcements agw.Announcements, log *slog.Logger, cancel context.CancelFunc) (*http.Server, error) {
 	roleLog := log.With("role", role)
-	relay, err := agw.NewRelay(c.RTPAddress, c.MinPort, c.MaxPort, announcements, roleLog)
+	relay, err := agw.NewRelay(c.RTPAddress, c.MinPort, c.MaxPort, announcements, nil, roleLog)
 	if err != nil {
 		return nil, err
 	}

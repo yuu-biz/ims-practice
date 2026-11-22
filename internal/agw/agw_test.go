@@ -47,7 +47,7 @@ func newRelay(t *testing.T, n int) *Relay {
 func newMRFP(t *testing.T, n int, announcements Announcements) *Relay {
 	t.Helper()
 	minPort, maxPort := rtptest.PortRange(t, n)
-	r, err := NewRelay(netip.MustParseAddr("127.0.0.1"), minPort, maxPort, announcements, quiet())
+	r, err := NewRelay(netip.MustParseAddr("127.0.0.1"), minPort, maxPort, announcements, nil, quiet())
 	if err != nil {
 		t.Fatal(err)
 	}
