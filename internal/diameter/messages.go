@@ -122,11 +122,23 @@ func commandName(m *diam.Message) string {
 	if isRequest(m) {
 		suffix = "R"
 	}
-	cmd, err := dict.Default.FindCommand(m.Header.ApplicationID, m.Header.CommandCode)
-	if err != nil {
+	short, ok := CommandShortName(m.Header.ApplicationID, m.Header.CommandCode)
+	if !ok {
 		return fmt.Sprintf("command %d (%s)", m.Header.CommandCode, suffix)
 	}
-	return cmd.Short + suffix
+	return short + suffix
+}
+
+// CommandShortName is the short name that the dictionary gives a
+// command, such as "UA" for User-Authorization. With R or A after it,
+// it names the request or the answer: "UAR", "UAA". False for a
+// command the dictionary does not have.
+func CommandShortName(applicationID, code uint32) (string, bool) {
+	cmd, err := dict.Default.FindCommand(applicationID, code)
+	if err != nil {
+		return "", false
+	}
+	return cmd.Short, true
 }
 
 // parseEvent turns a received message into a state machine event. A CER

@@ -10,7 +10,13 @@ import (
 	"testing"
 	"time"
 
+	"github.com/fiorix/go-diameter/v4/diam"
+
+	"github.com/yuu-biz/ims-practice/internal/cx"
+	"github.com/yuu-biz/ims-practice/internal/diameter"
 	"github.com/yuu-biz/ims-practice/internal/hep"
+	"github.com/yuu-biz/ims-practice/internal/rx"
+	"github.com/yuu-biz/ims-practice/internal/sh"
 	"github.com/yuu-biz/ims-practice/internal/sip"
 )
 
@@ -146,32 +152,35 @@ func TestMessageJSON(t *testing.T) {
 }
 
 func TestDiameterSummary(t *testing.T) {
+	if err := diameter.LoadDictionary(); err != nil {
+		t.Fatal(err)
+	}
 	tests := []struct {
 		payload string
 		want    string
 	}{
 		{uar(), "UAR"},
 		{uaa(), "UAA 2001"},
-		{`{"command":"Server-Assignment","code":301,"request":false,"avps":[{"name":"Result-Code","code":268,"vendor":0,"value":2001}]}`, "SAA 2001"},
-		{`{"command":"Multimedia-Auth","code":303,"request":true,"avps":[]}`, "MAR"},
-		{`{"command":"Location-Info","code":302,"request":false,"avps":[{"name":"Result-Code","code":268,"vendor":0,"value":5001}]}`, "LIA 5001"},
-		{`{"command":"Registration-Termination","code":304,"request":true,"avps":[]}`, "RTR"},
-		{`{"command":"Registration-Termination","code":304,"request":false,"avps":[{"name":"Result-Code","code":268,"vendor":0,"value":2001}]}`, "RTA 2001"},
-		{`{"command":"Capabilities-Exchange","code":257,"request":true,"avps":[]}`, "CER"},
-		{`{"command":"Device-Watchdog","code":280,"request":false,"avps":[{"name":"Result-Code","code":268,"vendor":0,"value":2001}]}`, "DWA 2001"},
-		{`{"command":"Disconnect-Peer","code":282,"request":true,"avps":[]}`, "DPR"},
-		{`{"command":"Push-Profile","code":305,"request":false,"avps":[]}`, "Push-Profile Answer"},
-		{`{"command":"User-Data","code":306,"request":true,"avps":[]}`, "UDR"},
-		{`{"command":"Profile-Update","code":307,"request":false,"avps":[{"name":"Experimental-Result","code":297,"vendor":0,` +
+		{`{"command":"Server-Assignment","code":301,"application_id":16777216,"request":false,"avps":[{"name":"Result-Code","code":268,"vendor":0,"value":2001}]}`, "SAA 2001"},
+		{`{"command":"Multimedia-Auth","code":303,"application_id":16777216,"request":true,"avps":[]}`, "MAR"},
+		{`{"command":"Location-Info","code":302,"application_id":16777216,"request":false,"avps":[{"name":"Result-Code","code":268,"vendor":0,"value":5001}]}`, "LIA 5001"},
+		{`{"command":"Registration-Termination","code":304,"application_id":16777216,"request":true,"avps":[]}`, "RTR"},
+		{`{"command":"Registration-Termination","code":304,"application_id":16777216,"request":false,"avps":[{"name":"Result-Code","code":268,"vendor":0,"value":2001}]}`, "RTA 2001"},
+		{`{"command":"Capabilities-Exchange","code":257,"application_id":0,"request":true,"avps":[]}`, "CER"},
+		{`{"command":"Device-Watchdog","code":280,"application_id":0,"request":false,"avps":[{"name":"Result-Code","code":268,"vendor":0,"value":2001}]}`, "DWA 2001"},
+		{`{"command":"Disconnect-Peer","code":282,"application_id":0,"request":true,"avps":[]}`, "DPR"},
+		{`{"command":"Push-Profile","code":305,"application_id":16777216,"request":false,"avps":[]}`, "Push-Profile Answer"},
+		{`{"command":"User-Data","code":306,"application_id":16777217,"request":true,"avps":[]}`, "UDR"},
+		{`{"command":"Profile-Update","code":307,"application_id":16777217,"request":false,"avps":[{"name":"Experimental-Result","code":297,"vendor":0,` +
 			`"avps":[{"name":"Vendor-Id","code":266,"vendor":0,"value":10415},{"name":"Experimental-Result-Code","code":298,"vendor":0,"value":5103}]}]}`,
 			"PUA 5103"},
-		{`{"command":"User-Authorization","code":300,"avps":[{"name":"Result-Code","code":268,"vendor":0,"value":5003}]}`, "UAA 5003"},
-		{`{"command":"AA","code":265,"request":true,"avps":[]}`, "AAR"},
-		{`{"command":"AA","code":265,"request":false,"avps":[{"name":"Experimental-Result","code":297,"vendor":0,` +
+		{`{"command":"User-Authorization","code":300,"application_id":16777216,"avps":[{"name":"Result-Code","code":268,"vendor":0,"value":5003}]}`, "UAA 5003"},
+		{`{"command":"AA","code":265,"application_id":16777236,"request":true,"avps":[]}`, "AAR"},
+		{`{"command":"AA","code":265,"application_id":16777236,"request":false,"avps":[{"name":"Experimental-Result","code":297,"vendor":0,` +
 			`"avps":[{"name":"Vendor-Id","code":266,"vendor":0,"value":10415},{"name":"Experimental-Result-Code","code":298,"vendor":0,"value":5065}]}]}`,
 			"AAA 5065"},
-		{`{"command":"Abort-Session","code":274,"request":true,"avps":[]}`, "ASR"},
-		{`{"command":"Session-Termination","code":275,"request":false,"avps":[{"name":"Result-Code","code":268,"vendor":0,"value":2001}]}`, "STA 2001"},
+		{`{"command":"Abort-Session","code":274,"application_id":16777236,"request":true,"avps":[]}`, "ASR"},
+		{`{"command":"Session-Termination","code":275,"application_id":16777236,"request":false,"avps":[{"name":"Result-Code","code":268,"vendor":0,"value":2001}]}`, "STA 2001"},
 	}
 	for _, tt := range tests {
 		d, err := parseDiameter([]byte(tt.payload))
@@ -185,13 +194,35 @@ func TestDiameterSummary(t *testing.T) {
 	}
 }
 
-// Every command the Lab names points the learner at its clauses.
-func TestEveryNamedCommandHasRefs(t *testing.T) {
-	for code := range commandAbbreviations {
+// Every command the nodes send points the learner at its clauses.
+func TestEveryCommandOfTheNodesHasRefs(t *testing.T) {
+	if err := diameter.LoadDictionary(); err != nil {
+		t.Fatal(err)
+	}
+	const base = 0 // the application of the base protocol (RFC 6733 2.4)
+	commands := []struct{ application, code uint32 }{
+		{base, diam.CapabilitiesExchange},
+		{base, diam.DeviceWatchdog},
+		{base, diam.DisconnectPeer},
+		{diameter.ApplicationIDCx, cx.CommandUserAuthorization},
+		{diameter.ApplicationIDCx, cx.CommandServerAssignment},
+		{diameter.ApplicationIDCx, cx.CommandLocationInfo},
+		{diameter.ApplicationIDCx, cx.CommandMultimediaAuth},
+		{diameter.ApplicationIDCx, cx.CommandRegistrationTermination},
+		{diameter.ApplicationIDSh, sh.CommandUserData},
+		{diameter.ApplicationIDSh, sh.CommandProfileUpdate},
+		{diameter.ApplicationIDRx, rx.CommandAA},
+		{diameter.ApplicationIDRx, rx.CommandReAuth},
+		{diameter.ApplicationIDRx, rx.CommandSessionTermination},
+		{diameter.ApplicationIDRx, rx.CommandAbortSession},
+	}
+	for _, c := range commands {
 		for _, request := range []bool{true, false} {
-			d := diameterMessage{Code: code, Request: request}
-			if refs := d.refs(); len(refs) == 0 {
-				t.Errorf("%s (%d) has no refs", d.abbreviation(), code)
+			d := diameterMessage{ApplicationID: c.application, Code: c.code, Request: request}
+			if d.abbreviation() == "" {
+				t.Errorf("command %d of application %d has no short name", c.code, c.application)
+			} else if refs := d.refs(); len(refs) == 0 {
+				t.Errorf("%s (%d) has no refs", d.abbreviation(), c.code)
 			}
 		}
 	}
