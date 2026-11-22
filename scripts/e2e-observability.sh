@@ -20,9 +20,6 @@ export COMPOSE_FILE=compose.yaml:deploy/observability/compose.observability.yaml
 if docker buildx inspect ims-practice >/dev/null 2>&1; then
 	export BUILDX_BUILDER=ims-practice
 fi
-# Windows has a python3 stub that only opens the Store.
-python=python3
-"$python" -c 1 2>/dev/null || python=python
 
 prometheus=http://localhost:9090
 grafana=http://localhost:3000

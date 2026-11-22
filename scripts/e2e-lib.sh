@@ -11,6 +11,11 @@
 # after it would look at another network. remember_nodes and same_nodes
 # prove that no node was recreated or restarted.
 
+# Some of the checks need a little Python, and every scenario finds it
+# here. Windows has a python3 stub that only opens the Store.
+python=python3
+"$python" -c 1 2>/dev/null || python=python
+
 # nodes prints the containers of the given services, one line each: the
 # service, the container ID and the time the container last started. A
 # node that exits is started again in the same container (restart:
