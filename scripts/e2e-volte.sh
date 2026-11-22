@@ -7,8 +7,10 @@
 # AMR-WB and preconditions: the PCRF authorises the media over Rx, the
 # stub sets up a voice bearer for each UE, and the callee alerts only
 # once the caller's UPDATE says its resources are ready. volte12 must
-# receive exactly the AMR-WB frames that volte10 sent. A VoLTE UE then
-# calls ue2, which offers PCMU only. Last, the two VoLTE UEs of the volte
+# receive exactly the AMR-WB frames that volte10 sent. A UE on the host
+# then calls volte12 in AMR-WB through Docker's NAT, as a learner does
+# to hear a call, and writes what it heard. A VoLTE UE then calls ue2,
+# which offers PCMU only. Last, the two VoLTE UEs of the volte
 # profile, driven through the Lab, send DTMF, hold and resume a
 # call, and in a second call the network takes volte10's voice bearer
 # and the P-CSCF ends the call. The checks read the capture.
@@ -114,6 +116,50 @@ if [ "${#sent}" -gt 100 ] && [ "$sent" = "$received" ]; then
 else
 	echo "FAIL the AMR-WB frames differ: sent ${#sent}, received ${#received} hex digits"
 	fail=1
+fi
+
+# A call from a UE on the host, as "Hear the call" in the guide shows:
+# the UE built for the machine asks for AMR-WB with -codecs, volte12
+# answers in it, and the frames come back through Docker's NAT and the
+# published ports of the relay. The host writes its recording under
+# e2e-out, which belongs to whoever runs the script; /captures belongs
+# to the containers.
+echo "a UE on the host calls volte12 in AMR-WB"
+host_called=
+if host_ue; then
+	rm -f e2e-out/host-volte-received.amr
+	docker compose run --no-deps -d --name ims-practice-volte12-host volte12 answer "${vb[@]}" \
+		--ring 500ms --tone 4s >/dev/null
+	if ! wait_log ims-practice-volte12-host '"msg":"waiting for a call"'; then
+		echo "FAIL volte12 did not attach and register for the call from the host"
+		fail=1
+	fi
+	if "$host_ue_bin" call -pcscf 127.0.0.1:5060 -listen 127.0.0.1:0 -media-listen 127.0.0.1:0 \
+		-codecs AMR-WB,AMR,PCMU --tone 3s --received-out e2e-out/host-volte-received.amr \
+		tel:+12025550112 >e2e-out/host-volte-call.log 2>&1; then
+		host_status=0
+	else
+		host_status=$?
+	fi
+	answered_status="$(ended ims-practice-volte12-host)"
+	if [ "$host_status" = 0 ] && [ "$answered_status" = 0 ] &&
+		grep -q '"msg":"media","codec":"AMR-WB"' e2e-out/host-volte-call.log; then
+		echo "ok   a UE on the host called volte12, which answered in AMR-WB"
+		host_called=yes
+	else
+		echo "FAIL the call from the host to volte12: $(grep -E '"msg":"(call progress|ue failed|media)"' e2e-out/host-volte-call.log | tail -n 3)"
+		tail -n 5 e2e-out/ims-practice-volte12-host.log 2>/dev/null || true
+		fail=1
+	fi
+	# The file holds the magic number of AMR-WB (RFC 4867 5.1) and the
+	# frames of volte12's tone after it.
+	heard="$(od -An -v -tx1 e2e-out/host-volte-received.amr 2>/dev/null | tr -d ' \n')"
+	if [ "${heard#2321414d522d57420a}" != "$heard" ] && [ "${#heard}" -gt 100 ]; then
+		echo "ok   the UE on the host wrote what it heard, ${#heard} hex digits of AMR-WB storage format"
+	else
+		echo "FAIL the recording of the UE on the host: ${#heard} hex digits, beginning ${heard:0:18}"
+		fail=1
+	fi
 fi
 
 echo "a VoLTE UE calls a UE that offers PCMU only"
@@ -338,6 +384,10 @@ ue2ip=172.28.0.101
 pcscf=172.28.0.40
 scscf=172.28.0.30
 agw=172.28.0.50
+# A UE on the host reaches the network through the gateway of the
+# compose bridge, and the P-CSCF gives it the published address of the
+# relay (host_access in deploy/compose/pcscf.yaml).
+gateway=172.28.0.1
 epc=172.28.0.80
 lab=172.28.0.60
 impi_a="001010000000010@$domain"
@@ -479,6 +529,27 @@ else
 	fail=1
 fi
 
+if [ -n "$host_called" ]; then
+	echo "a UE on the host calls volte12 in AMR-WB, through Docker's NAT"
+	expect "INVITE from the bridge gateway, offering AMR-WB" "$invite && ip.src == $gateway && ip.dst == $pcscf && sdp.media_attr == \"rtpmap:96 AMR-WB/16000/1\""
+	host_call="$(field sip.Call-ID)"
+	expect "183 to the host: the answer is AMR-WB, at the published address of the relay" "sip.Status-Code == 183 && ip.dst == $gateway && sip.Call-ID == \"$host_call\" && sdp.media_attr contains \"AMR-WB/16000\" && !(sdp.media_attr contains \"PCMU\") && sdp.connection_info.address == 127.0.0.1"
+	expect "200 OK to the host" "sip.Status-Code == 200 && sip.CSeq.method == \"INVITE\" && ip.dst == $gateway && sip.Call-ID == \"$host_call\""
+	# The SDP names the relay to the host at 127.0.0.1, while its packets
+	# cross the NAT from the bridge gateway, so tshark cannot tie them to
+	# the SDP and finds them as RTP by the heuristic only, as in
+	# scripts/e2e-call.sh.
+	tshark_options=(-o rtp.heuristic_rtp:TRUE)
+	expect "RTP of AMR-WB from the host to the relay" "rtp.p_type == 96 && ip.src == $gateway && ip.dst == $agw"
+	# The relay passes each packet on unchanged, so the SSRC of the UE on
+	# the host marks its packets on volte12's side as well.
+	host_ssrc="$(field rtp.ssrc)"
+	expect "RTP relay -> volte12 with the SSRC of the UE on the host" "rtp.p_type == 96 && ip.src == $agw && ip.dst == $vb_ip && rtp.ssrc == ${host_ssrc:-0}"
+	expect "RTP of AMR-WB relay -> the host: what the host UE wrote with -received-out" "rtp.p_type == 96 && ip.src == $agw && ip.dst == $gateway"
+	expect "BYE from the host" "sip.Method == \"BYE\" && ip.src == $gateway && sip.Call-ID == \"$host_call\""
+	tshark_options=()
+fi
+
 echo "a VoLTE UE and a UE that offers PCMU only"
 expect "INVITE volte10 -> P-CSCF to ue2, offering AMR-WB, AMR and PCMU" "$invite && ip.src == $va_ip && sip.r-uri == \"tel:+12025550102\" && sdp.media_attr == \"rtpmap:96 AMR-WB/16000/1\" && sdp.media_attr == \"rtpmap:0 PCMU/8000\""
 a="$(field sip.Call-ID)"
@@ -554,8 +625,12 @@ none "the IMSI of a VoLTE UE in a Contact" 'sip.Contact contains "00101000000001
 # A request to the UE has that contact as its Request-URI.
 none "the IMSI of a VoLTE UE in the Request-URI of a request to it" 'sip.r-uri contains "001010000000010@172." || sip.r-uri contains "001010000000012@172."'
 none "malformed SIP, SDP, Diameter, HTTP, JSON, RTP, RTCP or AMR packets" '(sip || sdp || diameter || http || json || rtp || rtcp || amr || rtpevent) && (_ws.malformed || _ws.expert.severity >= warning)'
-# RFC 3261 18.1.1: a request over 1300 bytes does not go over UDP.
-none "SIP requests over 1300 bytes on UDP" 'sip.Method && udp && udp.length > 1308'
+# RFC 3261 18.1.1: a request over 1300 bytes does not go over UDP. The
+# UE on the host is the exception, in both directions: it sits behind
+# Docker's NAT, which publishes the P-CSCF's port 5060 for UDP only, so
+# neither side can open the TCP connection it tries first, and 18.1.1
+# has the request go over UDP after all, with a warning in the log.
+none "SIP requests over 1300 bytes on UDP" "sip.Method && udp && udp.length > 1308 && ip.src != $gateway && ip.dst != $gateway"
 
 # The ladder of the registrations, the calls, Rx and the EPC stub's API,
 # for the guide and the CI artifact.
