@@ -1,7 +1,6 @@
 package scscf
 
 import (
-	"container/heap"
 	"context"
 	"slices"
 	"strings"
@@ -270,6 +269,14 @@ type Expiry struct {
 	Until time.Time
 }
 
+var _ ims.Expiry = Expiry{}
+
+func (e Expiry) ClaimedUntil() time.Time { return e.Until }
+
+func (e Expiry) LogFields() []any {
+	return []any{"kind", string(e.Kind), "private_identity", e.PrivateIdentity, "call_id", e.Dialog.CallID}
+}
+
 // Store keeps the registrar state of the S-CSCF. It is an interface so
 // that the state can live outside the node; MemoryStore keeps
 // it in the process.
@@ -373,7 +380,7 @@ type MemoryStore struct {
 	unregisteredOf map[string]string
 	// due holds the time index of each kind of expiry, as a store
 	// outside the process holds one.
-	due map[ExpiryKind]*dueIndex
+	due map[ExpiryKind]*ims.DueIndex[dueItem]
 }
 
 func NewMemoryStore() *MemoryStore {
@@ -381,7 +388,7 @@ func NewMemoryStore() *MemoryStore {
 		registrationOf: map[string]string{}, subscriptions: map[sip.DialogID]Subscription{},
 		subscriptionsOf: map[string]map[sip.DialogID]struct{}{}, originalDialogs: map[string]OriginalDialog{},
 		unregistered: map[string]UnregisteredProfile{}, unregisteredOf: map[string]string{},
-		due: map[ExpiryKind]*dueIndex{}}
+		due: map[ExpiryKind]*ims.DueIndex[dueItem]{}}
 }
 
 func key(privateID string) string { return strings.ToLower(privateID) }
@@ -661,17 +668,9 @@ func (s *MemoryStore) ClaimDue(_ context.Context, kind ExpiryKind, now time.Time
 	if !ok {
 		return nil, nil
 	}
-	until := now.Add(lease)
 	var claimed []Expiry
-	// A claimed item moves to the end of its claim, after every item that
-	// is due, so that the front holds the next one each time.
-	for len(claimed) < limit {
-		item, at, ok := ix.front()
-		if !ok || at.After(now) {
-			break
-		}
-		claimed = append(claimed, item.expiry(until))
-		ix.set(item, until)
+	for _, due := range ix.ClaimDue(now, lease, limit) {
+		claimed = append(claimed, due.Member.expiry(due.Until))
 	}
 	return claimed, nil
 }
@@ -680,7 +679,7 @@ func (s *MemoryStore) Done(_ context.Context, e Expiry) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if ix, ok := s.due[e.Kind]; ok {
-		ix.removeClaimed(itemOf(e), e.Until)
+		ix.RemoveClaimed(itemOf(e), e.Until)
 	}
 	return nil
 }
@@ -690,17 +689,17 @@ func (s *MemoryStore) Done(_ context.Context, e Expiry) error {
 func (s *MemoryStore) schedule(item dueItem, at time.Time) {
 	ix, ok := s.due[item.kind]
 	if !ok {
-		ix = &dueIndex{entries: map[dueItem]*dueEntry{}}
+		ix = ims.NewDueIndex[dueItem]()
 		s.due[item.kind] = ix
 	}
-	ix.set(item, at)
+	ix.Set(item, at)
 }
 
 // unschedule takes item out of the index of its kind, claimed or not.
 // The lock is held.
 func (s *MemoryStore) unschedule(item dueItem) {
 	if ix, ok := s.due[item.kind]; ok {
-		ix.remove(item)
+		ix.Remove(item)
 	}
 }
 
@@ -731,78 +730,4 @@ func itemOf(e Expiry) dueItem {
 
 func (i dueItem) expiry(until time.Time) Expiry {
 	return Expiry{Kind: i.kind, PrivateIdentity: i.user, Nonce: i.nonce, Dialog: i.dialog, Until: until}
-}
-
-// dueIndex is the time index of one kind of expiry: the items ordered by
-// the time they are due, earliest first. The ones that are due are at
-// the front, so that finding them takes no walk over the users, as the
-// ordered set of a store outside the process takes none.
-type dueIndex struct {
-	heap    dueHeap
-	entries map[dueItem]*dueEntry
-}
-
-type dueEntry struct {
-	item dueItem
-	at   time.Time
-	// position is the place in the heap (container/heap).
-	position int
-}
-
-// front is the item that is due first, if the index holds any.
-func (ix *dueIndex) front() (dueItem, time.Time, bool) {
-	if len(ix.heap) == 0 {
-		return dueItem{}, time.Time{}, false
-	}
-	return ix.heap[0].item, ix.heap[0].at, true
-}
-
-func (ix *dueIndex) set(item dueItem, at time.Time) {
-	if e, ok := ix.entries[item]; ok {
-		e.at = at
-		heap.Fix(&ix.heap, e.position)
-		return
-	}
-	e := &dueEntry{item: item, at: at}
-	ix.entries[item] = e
-	heap.Push(&ix.heap, e)
-}
-
-func (ix *dueIndex) remove(item dueItem) {
-	if e, ok := ix.entries[item]; ok {
-		heap.Remove(&ix.heap, e.position)
-		delete(ix.entries, item)
-	}
-}
-
-// removeClaimed removes item if its claim still ends at until. A claim
-// that another instance has taken over, or whose item was rescheduled or
-// removed, leaves the index as it is.
-func (ix *dueIndex) removeClaimed(item dueItem, until time.Time) {
-	if e, ok := ix.entries[item]; ok && e.at.Equal(until) {
-		ix.remove(item)
-	}
-}
-
-type dueHeap []*dueEntry
-
-func (h dueHeap) Len() int           { return len(h) }
-func (h dueHeap) Less(i, j int) bool { return h[i].at.Before(h[j].at) }
-func (h dueHeap) Swap(i, j int) {
-	h[i], h[j] = h[j], h[i]
-	h[i].position, h[j].position = i, j
-}
-
-func (h *dueHeap) Push(x any) {
-	e := x.(*dueEntry)
-	e.position = len(*h)
-	*h = append(*h, e)
-}
-
-func (h *dueHeap) Pop() any {
-	old := *h
-	e := old[len(old)-1]
-	old[len(old)-1] = nil
-	*h = old[:len(old)-1]
-	return e
 }
