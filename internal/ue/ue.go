@@ -99,11 +99,10 @@ var ErrForbidden = errors.New("registration refused with 403")
 
 // UE is one simulated UE.
 type UE struct {
-	cfg         Config
-	stack       *sip.Stack
-	contact     string
-	contactAddr netip.AddrPort
-	log         *slog.Logger
+	cfg     Config
+	stack   *sip.Stack
+	contact Contact
+	log     *slog.Logger
 
 	callID string
 	cseq   int
@@ -127,31 +126,39 @@ type UE struct {
 	sa *securityAssociations
 }
 
-// ContactURI is the URI the UE registers, which the UA side of a call
-// puts in Contact too.
-func ContactURI(publicID string, addr netip.AddrPort) string {
-	user, _, _ := cutUser(publicID)
-	return fmt.Sprintf("sip:%s@%s", user, addr)
+// Contact is the contact address of a UE: the SIP URI that it
+// registers, and that the UA side of its calls writes in Contact too.
+type Contact struct {
+	user string
+	addr netip.AddrPort
 }
 
-// New uses stack to send its requests. contact is the address the UE
-// writes in Contact.
-func New(cfg Config, stack *sip.Stack, contact netip.AddrPort, log *slog.Logger) *UE {
+// NewContact is the contact address of the UE of publicID at addr.
+func NewContact(publicID string, addr netip.AddrPort) Contact {
+	user, _, _ := cutUser(publicID)
+	return Contact{user: user, addr: addr}
+}
+
+// URI is the SIP URI of c.
+func (c Contact) URI() string {
+	return fmt.Sprintf("sip:%s@%s", c.user, c.addr)
+}
+
+// New uses stack to send its requests, and registers contact.
+func New(cfg Config, stack *sip.Stack, contact Contact, log *slog.Logger) *UE {
 	if cfg.Expires == 0 {
 		cfg.Expires = DefaultExpires
 	}
-	user, _, _ := cutUser(cfg.PublicIdentity)
 	var usim *aka.USIM
 	if cfg.AKA != nil {
 		usim = aka.NewUSIM(cfg.AKA.Secret, cfg.AKA.SQN)
 	}
 	return &UE{
-		usim:        usim,
-		cfg:         cfg,
-		stack:       stack,
-		contact:     sip.NameAddr{URI: fmt.Sprintf("sip:%s@%s", user, contact), Params: cfg.Features}.String(),
-		contactAddr: contact,
-		log:         log,
+		usim:    usim,
+		cfg:     cfg,
+		stack:   stack,
+		contact: contact,
+		log:     log,
 		// TS 24.229 5.1.1.4.1: refreshes keep the Call-ID of the initial
 		// registration.
 		callID: sip.NewCallID(),
@@ -284,7 +291,7 @@ func (u *UE) newREGISTER(expires time.Duration, authorization string) *sip.Messa
 	m.Add("To", "<"+u.cfg.PublicIdentity+">")
 	m.Add("Call-ID", u.callID)
 	m.Add("CSeq", strconv.Itoa(u.cseq)+" REGISTER")
-	m.Add("Contact", u.contact+";expires="+strconv.Itoa(int(expires/time.Second)))
+	m.Add("Contact", sip.NameAddr{URI: u.contact.URI(), Params: u.cfg.Features}.String()+";expires="+strconv.Itoa(int(expires/time.Second)))
 	// TS 24.229 5.1.1.2.1: the UE supports Path.
 	m.Add("Supported", "path")
 	m.Add("Authorization", authorization)

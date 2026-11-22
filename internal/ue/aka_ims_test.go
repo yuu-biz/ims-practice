@@ -65,11 +65,11 @@ func newIMSParty(t *testing.T, pcscf netip.AddrPort, private, public, pass strin
 	tr := listenTransport(t)
 	addr := tr.LocalAddr()
 	var u atomic.Pointer[ue.UE]
-	p := &party{calls: make(chan *sip.IncomingCall, 1)}
+	p := &party{calls: make(chan *sip.IncomingCall, 1), contact: ue.NewContact(public, addr)}
 	var err error
 	p.ua, err = sip.NewUA(tr, sip.UAConfig{
 		SentBy:    addr.String(),
-		Contact:   ue.ContactURI(public, addr),
+		Contact:   p.contact.URI(),
 		OnCall:    func(ic *sip.IncomingCall) { p.calls <- ic },
 		OnMessage: func(st *sip.ServerTransaction) { u.Load().ReceiveSMS(st) },
 		Locate:    func(sip.URI) (sip.Destination, error) { return u.Load().Outbound(), nil },
@@ -85,7 +85,7 @@ func newIMSParty(t *testing.T, pcscf netip.AddrPort, private, public, pass strin
 		c.Unprotected = stack(t, func(*sip.ServerTransaction) {})
 		cfg.AKA = &c
 	}
-	u.Store(ue.New(cfg, p.ua.Stack(), addr, quiet()))
+	u.Store(ue.New(cfg, p.ua.Stack(), p.contact, quiet()))
 	p.ue = u.Load()
 	if p.media, err = ue.ListenMedia("127.0.0.1:0"); err != nil {
 		t.Fatal(err)
@@ -124,7 +124,7 @@ func TestIMSAKAThroughTheWholeIMS(t *testing.T) {
 	if sas, ok := n.pcscfStore.SecurityAssociations(protectedAddr); !ok || sas.Temporary || sas.PrivateIdentity != impiAKA {
 		t.Errorf("the P-CSCF's SA table has %+v, %v; want established associations", sas, ok)
 	}
-	if r, ok := n.scscfStore.Registration(impiAKA); !ok || r.Contact != ue.ContactURI(impuAKA, protectedAddr) {
+	if r, ok := n.scscfStore.Registration(impiAKA); !ok || r.Contact != a.contact.URI() {
 		t.Errorf("the S-CSCF registered %+v, %v", r, ok)
 	}
 	// TS 24.229 5.2.3: the P-CSCF subscribes to the registration that

@@ -196,7 +196,7 @@ func (u *UE) newSession(media *Media, codecs []sdp.Codec, changed func()) *Sessi
 	if changed == nil {
 		changed = func() {}
 	}
-	s := &Session{log: u.log, media: media, addr: netip.AddrPortFrom(u.contactAddr.Addr(), media.Port()), codecs: codecs,
+	s := &Session{log: u.log, media: media, addr: netip.AddrPortFrom(u.contact.addr.Addr(), media.Port()), codecs: codecs,
 		changed: changed, requestHeaders: u.requestHeaders(), responseHeaders: u.responseHeaders(),
 		id: strconv.FormatInt(time.Now().UnixNano(), 10), kicked: make(chan struct{}, 1)}
 	media.OnDigit(func(d rune) {

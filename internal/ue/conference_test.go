@@ -84,8 +84,9 @@ func TestConferenceOfTheUE(t *testing.T) {
 	f := startFakeFocus(t)
 	tr := listenTransport(t)
 	addr := tr.LocalAddr()
+	contact := ue.NewContact(impu, addr)
 	ua, err := sip.NewUA(tr, ue.UAConfig(sip.UAConfig{
-		SentBy: addr.String(), Contact: ue.ContactURI(impu, addr), OnCall: func(ic *sip.IncomingCall) { ic.Reject(486) },
+		SentBy: addr.String(), Contact: contact.URI(), OnCall: func(ic *sip.IncomingCall) { ic.Reject(486) },
 		Locate: func(sip.URI) (sip.Destination, error) {
 			return sip.Destination{Transport: sip.UDP, Addr: f.ua.Stack().LocalAddr()}, nil
 		},
@@ -95,7 +96,7 @@ func TestConferenceOfTheUE(t *testing.T) {
 	}
 	t.Cleanup(ua.Close)
 	u := ue.New(ue.Config{PrivateIdentity: impi, PublicIdentity: impu, Password: password, HomeDomain: domain,
-		PCSCF: f.ua.Stack().LocalAddr(), PCSCFURI: "sip:pcscf." + domain + ":5060"}, ua.Stack(), addr, quiet())
+		PCSCF: f.ua.Stack().LocalAddr(), PCSCFURI: "sip:pcscf." + domain + ":5060"}, ua.Stack(), contact, quiet())
 	media, err := ue.ListenMedia("127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)

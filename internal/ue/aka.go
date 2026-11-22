@@ -227,7 +227,7 @@ func (u *UE) sendOver(ctx context.Context, expires time.Duration, over *security
 // 5.1.1.5.3). The protected server port stays that of the contact
 // (TS 33.203 7.1 NOTE 10).
 func (u *UE) newSecurityClient(old *securityAssociations) []ims.IPsec3GPP {
-	portS := u.contactAddr.Port()
+	portS := u.contact.addr.Port()
 	var spis []uint32
 	ports := []uint16{portS}
 	if old != nil {
