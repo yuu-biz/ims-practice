@@ -173,7 +173,8 @@ export function describeSession(session: UESession): string[] {
     );
     lines.push(`preconditions ${preconditions.met ? "met" : "not met"}: ${rows.join("; ")}`);
   }
-  lines.push(session.media_resources ? "media resources reserved" : "no media resources yet");
+  if (!session.reservation_needed) lines.push("no reservation of media resources needed on this access network");
+  else lines.push(session.media_resources ? "media resources reserved" : "no media resources yet");
   // TS 24.628 4.7.2.1: a caller plays its own ringing tone unless the
   // network sends early media, such as a customized alerting tone.
   if (session.ringback === "local") lines.push("rang with the UE's own ringing tone");

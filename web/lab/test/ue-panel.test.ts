@@ -137,6 +137,7 @@ const answeredSession: UESession = {
     ],
   },
   media_resources: true,
+  reservation_needed: true,
   held: false,
   ringback: "",
   dtmf_sent: "12#",
@@ -241,6 +242,7 @@ describe("the session of a call", () => {
       peer_direction: "recvonly",
       preconditions: { met: false, rows: [{ segment: "local", direction: "send", reserved: false, strength: "mandatory" }] },
       media_resources: false,
+      reservation_needed: true,
       held: true,
       media: { packets_sent: 0, packets_received: 0, rtcp_sent: 0, rtcp_received: 0 },
     };
@@ -252,6 +254,7 @@ describe("the session of a call", () => {
       peer_direction: "recvonly",
       preconditions: { met: false, rows: [{ segment: "local", direction: "send", reserved: false, strength: "mandatory", confirm: false }] },
       media_resources: false,
+      reservation_needed: true,
       held: true,
       ringback: "",
       dtmf_sent: "",
@@ -272,6 +275,15 @@ describe("the session of a call", () => {
   it("says when the codec is not settled and leaves out what is not there", () => {
     const early: UESession = { ...answeredSession, codec: null, direction: "", preconditions: null, media_resources: false, dtmf_sent: "" };
     expect(describeSession(early)).toEqual(["codec not settled yet", "no media resources yet"]);
+  });
+
+  it("says that the access network needs no reservation", () => {
+    const softphone: UESession = { ...answeredSession, preconditions: null, reservation_needed: false, dtmf_sent: "" };
+    expect(describeSession(softphone)).toEqual([
+      "AMR-WB/16000, payload type 96, bandwidth-efficient, DTMF payload type 100",
+      "sendrecv, the peer sendrecv",
+      "no reservation of media resources needed on this access network",
+    ]);
   });
 
   it("sends the digits to the UE", async () => {

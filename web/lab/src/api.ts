@@ -156,6 +156,10 @@ export interface UESession {
   preconditions: UEPreconditions | null;
   // The access network carries the media (IR.92 2.4.3.1).
   media_resources: boolean;
+  // The access network reserves those resources, as the EPC sets up a
+  // dedicated bearer (IR.92 2.4.1). When it does not, as on the LAN of a
+  // softphone, media_resources is always true (TS 24.229 6.1.2).
+  reservation_needed: boolean;
   // This UE has put the call on hold.
   held: boolean;
   // How the caller heard the call ring before the answer: "local" (its
@@ -813,6 +817,7 @@ function parseUESession(value: unknown): UESession {
     peer_direction: optionalString(o, "peer_direction") ?? "",
     preconditions: o["preconditions"] === undefined || o["preconditions"] === null ? null : parsePreconditions(o["preconditions"]),
     media_resources: boolean(o, "media_resources"),
+    reservation_needed: boolean(o, "reservation_needed"),
     held: boolean(o, "held"),
     ringback: optionalString(o, "ringback") ?? "",
     dtmf_sent: optionalString(o, "dtmf_sent") ?? "",
