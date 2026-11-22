@@ -7,6 +7,7 @@ import (
 
 	"github.com/yuu-biz/ims-practice/internal/agw"
 	"github.com/yuu-biz/ims-practice/internal/h248"
+	"github.com/yuu-biz/ims-practice/internal/h248/h248test"
 )
 
 // modeOnTheWire checks that every Add and Modify of an ephemeral
@@ -15,17 +16,17 @@ import (
 // termination whose LocalControl leaves it out, and the HTTP API of the
 // media relay takes a missing mode as sendrecv, so the H.248 side may
 // never leave it out. It returns the modes it found, in order.
-func modeOnTheWire(t *testing.T, ds []datagram) []h248.StreamMode {
+func modeOnTheWire(t *testing.T, ds []h248test.Datagram) []h248.StreamMode {
 	t.Helper()
 	var modes []h248.StreamMode
 	seen := map[uint32]bool{}
 	for _, d := range ds {
-		if d.from != controllerAddr {
+		if d.From != controllerAddr {
 			continue
 		}
-		m, err := h248.Parse(d.payload)
+		m, err := h248.Parse(d.Payload)
 		if err != nil {
-			t.Fatalf("datagram %q: %v", d.payload, err)
+			t.Fatalf("datagram %q: %v", d.Payload, err)
 		}
 		for _, tr := range m.Transactions {
 			r, ok := tr.(h248.TransactionRequest)
@@ -41,14 +42,14 @@ func modeOnTheWire(t *testing.T, ds []datagram) []h248.StreamMode {
 					}
 					commands++
 					if c.Media == nil || c.Media.OneStream == nil || c.Media.OneStream.LocalControl == nil || c.Media.OneStream.LocalControl.StreamMode == "" {
-						t.Errorf("%s = %s has no stream mode:\n%s", c.Command, c.TerminationID, d.payload)
+						t.Errorf("%s = %s has no stream mode:\n%s", c.Command, c.TerminationID, d.Payload)
 						continue
 					}
 					modes = append(modes, c.Media.OneStream.LocalControl.StreamMode)
 				}
 			}
-			if got := strings.Count(string(d.payload), "Mode = "); got < commands {
-				t.Errorf("%d commands but %d modes in the text:\n%s", commands, got, d.payload)
+			if got := strings.Count(string(d.Payload), "Mode = "); got < commands {
+				t.Errorf("%d commands but %d modes in the text:\n%s", commands, got, d.Payload)
 			}
 		}
 	}
@@ -58,7 +59,7 @@ func modeOnTheWire(t *testing.T, ds []datagram) []h248.StreamMode {
 func TestIqWritesTheModeOnEveryAddAndModify(t *testing.T) {
 	b := newTestbed(t, ControllerConfig{})
 	b.waitRegistered(t)
-	before := len(b.net.datagrams())
+	before := len(b.net.Datagrams())
 	ctx := context.Background()
 	r, err := reserve(ctx, b.controller, agw.Media{})
 	if err != nil {
@@ -73,7 +74,7 @@ func TestIqWritesTheModeOnEveryAddAndModify(t *testing.T) {
 	if err := b.controller.Subtract(ctx, r.ID); err != nil {
 		t.Fatal(err)
 	}
-	modes := modeOnTheWire(t, b.net.datagrams()[before:])
+	modes := modeOnTheWire(t, b.net.Datagrams()[before:])
 	if len(modes) != 4 {
 		t.Fatalf("modes %v, want those of two Adds and two Modifies", modes)
 	}

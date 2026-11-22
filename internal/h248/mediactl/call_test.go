@@ -11,15 +11,16 @@ import (
 
 	"github.com/yuu-biz/ims-practice/internal/agw"
 	"github.com/yuu-biz/ims-practice/internal/h248"
+	"github.com/yuu-biz/ims-practice/internal/h248/h248test"
 	"github.com/yuu-biz/ims-practice/internal/sdp"
 )
 
 func TestRegistration(t *testing.T) {
 	b := newTestbed(t, ControllerConfig{})
 	b.waitRegistered(t)
-	eventually(t, "the reply to the Modify", func() bool { return len(summaries(t, b.net.datagrams())) >= 4 })
+	h248test.Eventually(t, "the reply to the Modify", func() bool { return len(summaries(t, b.net.Datagrams())) >= 4 })
 
-	got := summaries(t, b.net.datagrams())
+	got := summaries(t, b.net.Datagrams())
 	want := []string{
 		"mg MEGACO/1 ServiceChange=ROOT",
 		"mgc MEGACO/1 Reply",
@@ -30,18 +31,18 @@ func TestRegistration(t *testing.T) {
 		t.Fatalf("messages:\n%s\nwant:\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
 	}
 
-	register := firstRequest(t, b.net.datagrams(), h248.ServiceChange)
+	register := firstRequest(t, b.net.Datagrams(), h248.ServiceChange)
 	sc := register.Actions[0].Commands[0].ServiceChange
 	if sc.Method != h248.Restart || sc.Reason != "901 Cold Boot" || sc.Version != 2 ||
 		sc.Profile == nil || *sc.Profile != Profile || sc.TimeStamp.Date != "20261120" {
 		t.Errorf("registration %+v", sc)
 	}
-	reply := firstReply(t, b.net.datagrams(), register.TransactionID)
+	reply := firstReply(t, b.net.Datagrams(), register.TransactionID)
 	result := reply.Actions[0].Commands[0].ServiceChangeResult
 	if result == nil || result.TimeStamp.Date == "" || result.Profile != nil || result.Version != 0 {
 		t.Errorf("reply to the registration %+v", result)
 	}
-	events := firstRequest(t, b.net.datagrams(), h248.Modify).Actions[0].Commands[0].Events
+	events := firstRequest(t, b.net.Datagrams(), h248.Modify).Actions[0].Commands[0].Events
 	if events.EventList[0].PkgdName != "it/ito" || events.EventList[0].EvParList[0].Value.Text != "2750" {
 		t.Errorf("inactivity timer %+v", events)
 	}
@@ -54,10 +55,10 @@ func TestRegistration(t *testing.T) {
 }
 
 // firstRequest finds the first request whose first command is c.
-func firstRequest(t *testing.T, ds []datagram, c h248.Command) h248.TransactionRequest {
+func firstRequest(t *testing.T, ds []h248test.Datagram, c h248.Command) h248.TransactionRequest {
 	t.Helper()
 	for _, d := range ds {
-		m, _ := h248.Parse(d.payload)
+		m, _ := h248.Parse(d.Payload)
 		for _, tr := range m.Transactions {
 			if r, ok := tr.(h248.TransactionRequest); ok && r.Actions[0].Commands[0].Command == c {
 				return r
@@ -69,10 +70,10 @@ func firstRequest(t *testing.T, ds []datagram, c h248.Command) h248.TransactionR
 }
 
 // firstReply finds the reply to transaction id.
-func firstReply(t *testing.T, ds []datagram, id uint32) h248.TransactionReply {
+func firstReply(t *testing.T, ds []h248test.Datagram, id uint32) h248.TransactionReply {
 	t.Helper()
 	for _, d := range ds {
-		m, _ := h248.Parse(d.payload)
+		m, _ := h248.Parse(d.Payload)
 		for _, tr := range m.Transactions {
 			if r, ok := tr.(h248.TransactionReply); ok && r.TransactionID == id {
 				return r
@@ -86,7 +87,7 @@ func firstReply(t *testing.T, ds []datagram, id uint32) h248.TransactionReply {
 func TestFullCall(t *testing.T) {
 	b := newTestbed(t, ControllerConfig{})
 	b.waitRegistered(t)
-	before := len(b.net.datagrams())
+	before := len(b.net.Datagrams())
 	ctx := context.Background()
 
 	amrwb := sdp.Codec{PayloadType: 96, Name: sdp.NameAMRWB, ClockRate: 16000, Fmtp: "mode-change-capability=2; max-red=0"}
@@ -130,7 +131,7 @@ func TestFullCall(t *testing.T) {
 		t.Errorf("the relay released %d and has %d open", released, open)
 	}
 
-	got := summaries(t, b.net.datagrams()[before:])
+	got := summaries(t, b.net.Datagrams()[before:])
 	wantMessages := []string{
 		"mgc MEGACO/2 Add=ip/1/access/$",
 		"mg MEGACO/2 Reply",
@@ -156,7 +157,7 @@ func TestFullCall(t *testing.T) {
 func TestAddWithARemoteAddress(t *testing.T) {
 	b := newTestbed(t, ControllerConfig{})
 	b.waitRegistered(t)
-	before := len(b.net.datagrams())
+	before := len(b.net.Datagrams())
 	ctx := context.Background()
 
 	ue := mustAddrPort("192.0.2.30:49170")
@@ -170,7 +171,7 @@ func TestAddWithARemoteAddress(t *testing.T) {
 	if access, core := r.Terminations[agw.Access], r.Terminations[agw.Core]; access == nil || core == nil || access.Remote != ue || core.Remote.IsValid() {
 		t.Errorf("terminations %v", r.Terminations)
 	}
-	add := firstRequest(t, b.net.datagrams()[before:], h248.Add)
+	add := firstRequest(t, b.net.Datagrams()[before:], h248.Add)
 	for _, cmd := range add.Actions[0].Commands {
 		hasRemote := cmd.Media != nil && cmd.Media.OneStream != nil && cmd.Media.OneStream.Remote != nil
 		if want := strings.Contains(string(cmd.TerminationID), "/access/"); hasRemote != want {
@@ -202,11 +203,11 @@ func TestModifyWithoutARemoteAddress(t *testing.T) {
 	if err := b.controller.Modify(ctx, r.ID, agw.Access, agw.TerminationRequest{Remote: ue}); err != nil {
 		t.Fatal(err)
 	}
-	before := len(b.net.datagrams())
+	before := len(b.net.Datagrams())
 	if err := b.controller.Modify(ctx, r.ID, agw.Access, agw.TerminationRequest{}); err != nil {
 		t.Fatal(err)
 	}
-	modify := firstRequest(t, b.net.datagrams()[before:], h248.Modify).Actions[0].Commands[0]
+	modify := firstRequest(t, b.net.Datagrams()[before:], h248.Modify).Actions[0].Commands[0]
 	if modify.Media == nil || modify.Media.OneStream == nil || modify.Media.OneStream.Remote != nil {
 		t.Errorf("the Modify carries %+v, want no Remote descriptor", modify.Media)
 	}
@@ -222,7 +223,7 @@ func TestModifyWithoutARemoteAddress(t *testing.T) {
 func TestSubtractReplyCarriesNoStatistics(t *testing.T) {
 	b := newTestbed(t, ControllerConfig{})
 	b.waitRegistered(t)
-	before := len(b.net.datagrams())
+	before := len(b.net.Datagrams())
 	ctx := context.Background()
 
 	r, err := reserve(ctx, b.controller, agw.Media{Codecs: []sdp.Codec{pcmu}, Bandwidth: 80})
@@ -233,7 +234,7 @@ func TestSubtractReplyCarriesNoStatistics(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	datagrams := b.net.datagrams()[before:]
+	datagrams := b.net.Datagrams()[before:]
 	subtract := firstRequest(t, datagrams, h248.Subtract)
 	if subtract.Actions[0].Commands[0].Audit != nil {
 		t.Fatalf("the Subtract asks for an audit: %+v", subtract.Actions[0].Commands[0].Audit)
@@ -253,8 +254,8 @@ func TestSubtractReplyCarriesNoStatistics(t *testing.T) {
 	}
 	// Whatever the parsed form says, no Statistics descriptor is on the wire.
 	for _, d := range datagrams {
-		if strings.Contains(string(d.payload), "Statistics") {
-			t.Errorf("a Statistics descriptor on the wire:\n%s", d.payload)
+		if strings.Contains(string(d.Payload), "Statistics") {
+			t.Errorf("a Statistics descriptor on the wire:\n%s", d.Payload)
 		}
 	}
 }

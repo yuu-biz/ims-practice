@@ -11,8 +11,10 @@ type Clock interface {
 	AfterFunc(d time.Duration, f func()) Timer
 }
 
-// Timer is a timer that a Clock started.
-type Timer interface {
+// Timer is a timer that a Clock started. It names the interface rather
+// than being a type of its own, so that a Clock can return one without
+// importing this package, as the clock of package h248test does.
+type Timer = interface {
 	// Stop keeps the timer from firing. It returns false if the timer
 	// has already fired or been stopped.
 	Stop() bool

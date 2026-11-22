@@ -9,13 +9,14 @@ import (
 
 	"github.com/yuu-biz/ims-practice/internal/agw"
 	"github.com/yuu-biz/ims-practice/internal/h248"
+	"github.com/yuu-biz/ims-practice/internal/h248/h248test"
 )
 
 // send sends a request to the gateway from the controller's Endpoint,
 // past the checks of Controller.
 func (b *testbed) send(t *testing.T, actions ...h248.ActionRequest) h248.TransactionReply {
 	t.Helper()
-	reply, err := b.controller.endpoint.Request(context.Background(), memAddr(gatewayAddr), actions)
+	reply, err := b.controller.endpoint.Request(context.Background(), h248test.Addr(gatewayAddr), actions)
 	if err != nil {
 		t.Fatal(err)
 	}
