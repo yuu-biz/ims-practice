@@ -63,6 +63,9 @@ func run(configPath string, log *slog.Logger) error {
 		return err
 	}
 	log = log.With("node", cfg.Node)
+	for _, section := range cfg.Unread() {
+		log.Warn("configuration section that no role reads; the node runs as if it were left out", "section", section)
+	}
 	if err := diameter.LoadDictionary(); err != nil {
 		return err
 	}
