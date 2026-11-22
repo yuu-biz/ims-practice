@@ -13,8 +13,10 @@ import (
 // service profile.
 //
 // SIMPLIFIED: TS 29.228 Annex E. The profile has a single
-// ServiceProfile, and leaves out the optional elements other than
-// InitialFilterCriteria, and the schema's XML namespace.
+// ServiceProfile. Of the optional elements it holds BarringIndication,
+// the IdentityType and WildcardedPSI of a public service identity, and
+// InitialFilterCriteria only, and it leaves out the schema's XML
+// namespace.
 type UserProfile struct {
 	PrivateIdentity  string
 	PublicIdentities []string
@@ -26,7 +28,19 @@ type UserProfile struct {
 	// InitialFilterCriteria are those of the service profile, which all
 	// of PublicIdentities share (TS 29.228 B.2).
 	InitialFilterCriteria []ifc.InitialFilterCriteria
+	// WildcardedPSI, when not empty, makes PublicIdentities public
+	// service identities that match this wildcarded PSI, as the HSS
+	// stores it, delimiters included (TS 29.228 B.2.1). Empty, they are
+	// distinct public user identities. A User-Data holds one kind or the
+	// other (TS 29.228 6.1.2.1).
+	WildcardedPSI string
 }
+
+// identityTypeWildcardedPSI is the IdentityType of a public service
+// identity that matches a wildcarded PSI (TS 29.228 Table E.1). A
+// public identity without an IdentityType is a distinct public user
+// identity (B.2.1).
+const identityTypeWildcardedPSI = 2
 
 type imsSubscription struct {
 	XMLName        xml.Name       `xml:"IMSSubscription"`
@@ -42,11 +56,19 @@ type serviceProfile struct {
 }
 
 // publicIdentity keeps the order of tPublicIdentity (TS 29.228 Annex E):
-// BarringIndication, then Identity. A BarringIndication that is absent
-// is false, so only a barred identity carries one.
+// BarringIndication, then Identity, then Extension. A BarringIndication
+// that is absent is false, so only a barred identity carries one.
 type publicIdentity struct {
-	BarringIndication *bool  `xml:"BarringIndication"`
-	Identity          string `xml:"Identity"`
+	BarringIndication *bool                    `xml:"BarringIndication"`
+	Identity          string                   `xml:"Identity"`
+	Extension         *publicIdentityExtension `xml:"Extension"`
+}
+
+// publicIdentityExtension is tPublicIdentityExtension (TS 29.228 Table
+// E.2): the type of the identity, and the wildcarded PSI it matches.
+type publicIdentityExtension struct {
+	IdentityType  int    `xml:"IdentityType"`
+	WildcardedPSI string `xml:"WildcardedPSI,omitempty"`
 }
 
 // Marshal writes the profile as the XML document that User-Data holds.
@@ -55,6 +77,9 @@ func (p UserProfile) Marshal() []byte {
 	s.ServiceProfile.InitialFilterCriteria = p.InitialFilterCriteria
 	for _, id := range p.PublicIdentities {
 		pi := publicIdentity{Identity: id}
+		if p.WildcardedPSI != "" {
+			pi.Extension = &publicIdentityExtension{IdentityType: identityTypeWildcardedPSI, WildcardedPSI: p.WildcardedPSI}
+		}
 		if slices.Contains(p.BarredIdentities, id) {
 			barred := true
 			pi.BarringIndication = &barred
@@ -83,6 +108,9 @@ func ParseUserProfile(data []byte) (UserProfile, error) {
 		p.PublicIdentities = append(p.PublicIdentities, id.Identity)
 		if id.BarringIndication != nil && *id.BarringIndication {
 			p.BarredIdentities = append(p.BarredIdentities, id.Identity)
+		}
+		if e := id.Extension; e != nil && e.IdentityType == identityTypeWildcardedPSI {
+			p.WildcardedPSI = e.WildcardedPSI
 		}
 	}
 	if len(p.PublicIdentities) == 0 {

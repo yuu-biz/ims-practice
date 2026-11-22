@@ -550,7 +550,7 @@ octet 2: lowest 2 bits of 'l' (00), then rest of 'e' (110010) = 0011 0010 = 32
 | HSS、TS 29.328 7.6.9 | MSISDN は独立したデータではなく、公開ユーザー識別子の中の最初の tel URI から取る。 | 設定に各番号を 1 回だけ書けば済み、tel URI を通して MSISDN で利用者を見つけられる。 |
 | HSS、TS 29.328 7.6.2 | IMPLICIT_IDENTITIES と ALIAS_IDENTITIES は ALL_IDENTITIES と同じ集合を返し、利用者を MSISDN で指定したときも断らない。 | 試験用の加入はどれも、1 つのサービスプロファイルを持つ 1 つの暗黙の登録セットであるため。 |
 | HSS、TS 29.228 B.2.2 | どの加入にも同じ条件を渡し、違うのは ServiceInfo の MSISDN だけである。 | SMS と MMTel AS の iFC は、どの利用者でも同じである。 |
-| ユーザープロファイル、TS 29.228 Annex E | ServiceProfile は 1 つで、条件のほかに省略できる要素は無く、スキーマの XML の名前空間も無い。 | 試験用の加入には、それ以上は要らない。 |
+| ユーザープロファイル、TS 29.228 Annex E | ServiceProfile は 1 つで、省略できる要素は BarringIndication、公開サービス識別子の `IdentityType` と `WildcardedPSI`、条件のほかに無く、スキーマの XML の名前空間も無い。 | 試験用の加入と PSI ユーザーには、それ以上は要らない。 |
 | iFC、TS 29.228 Annex E と B.2.3 | SessionDescription の SPT は断り、ProfilePartIndicator、RegistrationType、IncludeRegisterRequest、IncludeRegisterResponse は読み飛ばす。REGISTER の SPT はすべての REGISTER に一致する。 | SMS と MMTel AS の iFC には、どれも要らない。RegistrationType は S-CSCF にとって省略できる。 |
 | S-CSCF、TS 24.229 5.4.0 | S-CSCF は、最初の第三者 REGISTER を送ったアドレスを覚えておかず、要求のたびに AS を DNS で引く。 | AS の各役割は、すべてのノードで共有する Store に状態を置くので、どのノードでも次の要求を受けられる。 |
 | S-CSCF、TS 24.229 5.4.1.7 item c | 第三者 REGISTER の To は、いつも既定の公開ユーザー識別子にする。item i には写すものが無く、item j、l、m はこのプロジェクトに無い機能のためのものである。 | どの識別子にするかはオペレータが選べる。HSS のスタブは課金のアドレスを送らない。 |
