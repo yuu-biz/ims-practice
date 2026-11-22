@@ -1,6 +1,7 @@
 package scscf
 
 import (
+	"context"
 	"net/netip"
 	"reflect"
 	"slices"
@@ -89,7 +90,7 @@ func TestRegistrationKeepsTheInitialFilterCriteria(t *testing.T) {
 	criteria := []ifc.InitialFilterCriteria{smsCriterion(1, asURI, ifc.SessionContinued), registerCriterion(0, asURI, ifc.SessionContinued)}
 	h := newServiceHarness(t, criteria, nil)
 	h.registerUser(sip.NewCallID())
-	reg, ok := h.store.Registration(impi)
+	reg, ok, _ := h.store.Registration(context.Background(), impi)
 	if !ok {
 		t.Fatal("no registration in the store")
 	}
@@ -197,7 +198,7 @@ func TestThirdPartyRegisterThatFails(t *testing.T) {
 			if got := h.hss.assignments(); !slices.Equal(got, want) {
 				t.Errorf("SARs = %v, want %v", got, want)
 			}
-			if _, ok := h.store.Registration(impi); ok != tt.registered {
+			if _, ok, _ := h.store.Registration(context.Background(), impi); ok != tt.registered {
 				t.Errorf("registered = %v, want %v", ok, tt.registered)
 			}
 		})

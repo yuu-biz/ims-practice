@@ -1,6 +1,7 @@
 package scscf
 
 import (
+	"context"
 	"encoding/hex"
 	"log/slog"
 	"strings"
@@ -16,7 +17,12 @@ import (
 // "no" (5.4.1.2.1 and 5.4.1.2.1A) or "yes" (5.4.1.2.2). The lock of the
 // user is held, and a protected deregistration has been handled before.
 func (s *SCSCF) registerAKA(st *sip.ServerTransaction, privateID, publicID string, c sip.Credentials, protected bool, expires time.Duration, log *slog.Logger) {
-	ch, pending := s.store.Challenge(privateID)
+	ctx := context.Background()
+	ch, pending, err := s.store.Challenge(ctx, privateID)
+	if err != nil {
+		s.storeFailed(st, err, log)
+		return
+	}
 	pending = pending && ch.Algorithm == sip.AlgorithmAKAv1MD5
 	if !protected {
 		// 5.4.1.2.1, last paragraph: an unprotected REGISTER that names the
@@ -28,8 +34,10 @@ func (s *SCSCF) registerAKA(st *sip.ServerTransaction, privateID, publicID strin
 			s.challengeAKA(st, privateID, publicID, nil, false, log)
 			return
 		}
-		s.authTimers.stop(key(privateID))
-		s.store.DeleteChallenge(privateID)
+		if err := s.endChallenge(ctx, privateID); err != nil {
+			s.storeFailed(st, err, log)
+			return
+		}
 		if auts, ok := c.AUTS(); ok {
 			s.resynchronise(st, ch, auts, log)
 			return
@@ -61,8 +69,10 @@ func (s *SCSCF) registerAKA(st *sip.ServerTransaction, privateID, publicID strin
 		s.authTimers.stop(key(privateID))
 		s.challengeAKA(st, privateID, publicID, nil, true, log)
 	default:
-		s.authTimers.stop(key(privateID))
-		s.store.DeleteChallenge(privateID)
+		if err := s.endChallenge(ctx, privateID); err != nil {
+			s.storeFailed(st, err, log)
+			return
+		}
 		s.accept(st, c, ch, expires, log)
 	}
 }
@@ -72,7 +82,11 @@ func (s *SCSCF) registerAKA(st *sip.ServerTransaction, privateID, publicID strin
 // authenticate again; it does not, because the REGISTER came over the
 // security associations of the last authentication (TS 33.203 7.4.0).
 func (s *SCSCF) reregister(st *sip.ServerTransaction, privateID, publicID string, c sip.Credentials, expires time.Duration, log *slog.Logger) {
-	reg, ok := s.store.Registration(privateID)
+	reg, ok, err := s.store.Registration(context.Background(), privateID)
+	if err != nil {
+		s.storeFailed(st, err, log)
+		return
+	}
 	if !ok {
 		// 5.4.1.2.3A: protected, but nobody registered by that name, and
 		// this S-CSCF has no restoration procedures.
@@ -138,7 +152,10 @@ func (s *SCSCF) challengeAKA(st *sip.ServerTransaction, privateID, publicID stri
 		XRES:    av.XRES,
 		HSSHost: originHost(answer),
 	}
-	s.putChallenge(ch)
+	if err := s.putChallenge(ch); err != nil {
+		s.storeFailed(st, err, log)
+		return
+	}
 	log.Info("challenged with IMS AKA", "nonce", ch.Nonce, "stale", stale, "resynchronised", resync != nil)
 	challenge := sip.Challenge{Realm: ch.Realm, Nonce: ch.Nonce, Stale: stale, Algorithm: ch.Algorithm, QOP: []string{"auth"}}
 	// 5.4.1.2.1A item 1 c: IK and CK for the P-CSCF (7.2A.1).
@@ -166,8 +183,10 @@ func (s *SCSCF) resynchronise(st *sip.ServerTransaction, ch Challenge, auts stri
 // 33.203 6.1.1).
 func (s *SCSCF) authenticationFailed(st *sip.ServerTransaction, privateID, publicID, hssHost, why string, log *slog.Logger) {
 	log.Info(why)
-	s.authTimers.stop(key(privateID))
-	s.store.DeleteChallenge(privateID)
+	if err := s.endChallenge(context.Background(), privateID); err != nil {
+		s.storeFailed(st, err, log)
+		return
+	}
 	s.serverAssignment(privateID, publicID, hssHost, cx.AuthenticationFailure)
 	s.respond(st, 403, nil)
 }

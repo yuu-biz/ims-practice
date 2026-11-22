@@ -116,14 +116,22 @@ func (s *SCSCF) sendThirdPartyRegister(m *sip.Message, reg Registration, as ifc.
 	// the REGISTER registered (5.4.1.5). The UE is told rejected, since
 	// registering again would only fail the same way while the server
 	// is down.
-	unlock, _ := s.users.Lock(context.Background(), reg.PrivateIdentity)
+	ctx := context.Background()
+	unlock, _ := s.users.Lock(ctx, reg.PrivateIdentity)
 	defer unlock()
-	current, ok := s.store.Registration(reg.PrivateIdentity)
+	current, ok, err := s.store.Registration(ctx, reg.PrivateIdentity)
+	if err != nil {
+		log.Warn("the registration stays: the store failed", "error", err.Error())
+		return
+	}
 	if !ok || current.ContactID != reg.ContactID {
 		// Already deregistered, or another contact has taken its place.
 		return
 	}
-	s.deregisterByNetwork(current, reginfo.Rejected)
+	if err := s.deregisterByNetwork(ctx, current, reginfo.Rejected); err != nil {
+		log.Warn("the registration stays: the store failed", "error", err.Error())
+		return
+	}
 	s.serverAssignment(current.PrivateIdentity, current.PublicIdentities[0], current.HSSHost, cx.AdministrativeDeregistration)
 }
 

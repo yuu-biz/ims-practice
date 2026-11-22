@@ -95,7 +95,7 @@ func TestVoLTEContactCarriesNoIMSI(t *testing.T) {
 	if err := wait(t, "the answer", answered); err != nil {
 		t.Fatal(err)
 	}
-	registered, ok := n.scscfStore.Registration(impiAKA)
+	registered, ok, _ := n.scscfStore.Registration(context.Background(), impiAKA)
 	if !ok {
 		t.Fatal("the S-CSCF has no binding of the VoLTE UE")
 	}
@@ -111,7 +111,7 @@ func TestVoLTEContactCarriesNoIMSI(t *testing.T) {
 	if _, err := a.ue.Register(ctx); err != nil {
 		t.Fatalf("re-registration: %v", err)
 	}
-	if r, _ := n.scscfStore.Registration(impiAKA); r.Contact != registered.Contact {
+	if r, _, _ := n.scscfStore.Registration(context.Background(), impiAKA); r.Contact != registered.Contact {
 		t.Errorf("the refresh bound %q, want the contact of the initial registration %q", r.Contact, registered.Contact)
 	}
 	if err := a.ue.Deregister(ctx); err != nil {

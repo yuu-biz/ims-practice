@@ -96,7 +96,10 @@ type harness struct {
 	scscf *sip.Stack
 	role  *SCSCF
 	store *MemoryStore
-	ue    *sip.Stack
+	// failing is the Store of the S-CSCF: store, with operations that a
+	// test makes fail.
+	failing *failingStore
+	ue      *sip.Stack
 	// contact is the Contact of the REGISTERs; empty means ueContact.
 	contact string
 	// contactParams follow the contact, such as ";+g.3gpp.smsip".
@@ -140,10 +143,11 @@ func newHarnessWithHSS(t *testing.T, cfg Config, resolver Resolver, hssCfg hss.C
 		cfg.MaxExpires = time.Hour
 	}
 	store := NewMemoryStore()
-	s := New(cfg, f, node, store, resolver, quiet())
+	failing := &failingStore{MemoryStore: store}
+	s := New(cfg, f, node, failing, resolver, quiet())
 	stack := newStack(t, s.OnRequest)
 	s.SetStack(stack)
-	return &harness{t: t, hss: f, scscf: stack, role: s, store: store, ue: newStack(t, func(*sip.ServerTransaction) {})}
+	return &harness{t: t, hss: f, scscf: stack, role: s, store: store, failing: failing, ue: newStack(t, func(*sip.ServerTransaction) {})}
 }
 
 func newStack(t *testing.T, onRequest func(*sip.ServerTransaction)) *sip.Stack {

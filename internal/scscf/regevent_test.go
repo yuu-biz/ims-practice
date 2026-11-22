@@ -2,6 +2,7 @@ package scscf
 
 import (
 	"bytes"
+	"context"
 	"net/netip"
 	"slices"
 	"strconv"
@@ -363,7 +364,7 @@ func TestRegistrationTerminationReasons(t *testing.T) {
 			if r := rtaResult(t, h.rtr(impi, tt.reason, tt.publicIDs...)); r != tt.result {
 				t.Errorf("RTA = %s, want %s", r, tt.result)
 			}
-			_, registered := h.role.store.Registration(impi)
+			_, registered, _ := h.role.store.Registration(context.Background(), impi)
 			if registered != (tt.event == "") {
 				t.Fatalf("registered = %v after the RTR", registered)
 			}
@@ -401,7 +402,7 @@ func TestRegEventRefreshAndUnsubscribe(t *testing.T) {
 		t.Errorf("NOTIFY after the unsubscribe: %+v, want reason timeout (RFC 6665 4.2.1.4)", n.State)
 	}
 	waitEnd(t, sub)
-	if subs := h.role.store.SubscriptionsOf(impi); len(subs) != 0 {
+	if subs, _ := h.role.store.SubscriptionsOf(context.Background(), impi); len(subs) != 0 {
 		t.Errorf("%d subscriptions left after the unsubscribe", len(subs))
 	}
 }
@@ -411,17 +412,17 @@ func TestRegEventSubscriptionThatIsNotRefreshedExpires(t *testing.T) {
 	h.registerUser(sip.NewCallID())
 	_, got := h.subscribeFor(pcscfPath, "", time.Second, nil)
 	nextNotify(t, got)
-	if len(h.role.store.SubscriptionsOf(impi)) != 1 {
+	if subs, _ := h.role.store.SubscriptionsOf(context.Background(), impi); len(subs) != 1 {
 		t.Fatal("the S-CSCF holds no subscription")
 	}
 	deadline := time.Now().Add(3 * time.Second)
-	for len(h.role.store.SubscriptionsOf(impi)) != 0 {
+	for subs, _ := h.role.store.SubscriptionsOf(context.Background(), impi); len(subs) != 0; subs, _ = h.role.store.SubscriptionsOf(context.Background(), impi) {
 		if time.Now().After(deadline) {
 			t.Fatal("the S-CSCF kept a subscription that expired")
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
-	if _, ok := h.role.store.Registration(impi); !ok {
+	if _, ok, _ := h.role.store.Registration(context.Background(), impi); !ok {
 		t.Error("the registration went with the subscription")
 	}
 }
@@ -435,14 +436,14 @@ func TestRegEventSubscriptionPastItsExpiryEndsAtTheNextNotify(t *testing.T) {
 	h.registerUser(sip.NewCallID())
 	sub, got := h.subscribe(pcscfPath, "")
 	nextNotify(t, got)
-	subs := h.role.store.SubscriptionsOf(impi)
+	subs, _ := h.role.store.SubscriptionsOf(context.Background(), impi)
 	if len(subs) != 1 {
 		t.Fatalf("the S-CSCF holds %d subscriptions, want 1", len(subs))
 	}
 	stored := subs[0]
 	h.role.subscriptionTimers.stop(stored.Dialog.ID)
 	stored.Expires = time.Now().Add(-time.Second)
-	h.role.store.PutSubscription(stored)
+	h.role.store.PutSubscription(context.Background(), stored)
 
 	h.registerUser(sip.NewCallID())
 	n, _ := nextNotify(t, got)
@@ -450,7 +451,7 @@ func TestRegEventSubscriptionPastItsExpiryEndsAtTheNextNotify(t *testing.T) {
 		t.Errorf("NOTIFY after the expiry says %+v, want terminated with reason timeout", n.State)
 	}
 	waitEnd(t, sub)
-	if subs := h.role.store.SubscriptionsOf(impi); len(subs) != 0 {
+	if subs, _ := h.role.store.SubscriptionsOf(context.Background(), impi); len(subs) != 0 {
 		t.Errorf("%d subscriptions left after the expiry", len(subs))
 	}
 }

@@ -1,6 +1,7 @@
 package scscf
 
 import (
+	"context"
 	"crypto/rand"
 	"log/slog"
 	"slices"
@@ -76,8 +77,11 @@ func (s *SCSCF) invokeApplicationServers(st *sip.ServerTransaction, out *sip.Mes
 func (s *SCSCF) invoke(st *sip.ServerTransaction, out *sip.Message, d OriginalDialog, i int, log *slog.Logger) bool {
 	as := d.Criteria[i].ApplicationServer
 	d.ID, d.Invoked, d.Returned, d.Expires = rand.Text(), i, false, time.Now().Add(originalDialogLifetime)
-	s.store.PutOriginalDialog(d)
 	log = log.With("application_server", as.ServerName, "original_dialog", d.ID)
+	if err := s.store.PutOriginalDialog(context.Background(), d); err != nil {
+		s.storeFailed(st, err, log)
+		return true
+	}
 
 	toAS := out.Clone()
 	server, err := ims.LooseRoute(as.ServerName)
@@ -115,10 +119,19 @@ func (s *SCSCF) invoke(st *sip.ServerTransaction, out *sip.Message, d OriginalDi
 			charge(r)
 		})
 	}
-	if unreachable(final, err) && !provisional && !s.returned(d.ID) {
-		log.Info("application server failed", "status", statusOf(final), "error", errorText(err), "default_handling", as.DefaultHandling.String())
-		if as.DefaultHandling == ifc.SessionContinued {
-			return false
+	if unreachable(final, err) && !provisional {
+		returned, rerr := s.returned(d.ID)
+		if rerr != nil {
+			// Without the identifier, the S-CSCF cannot tell the failure
+			// of the server from the answer of the session.
+			s.storeFailed(st, rerr, log)
+			return true
+		}
+		if !returned {
+			log.Info("application server failed", "status", statusOf(final), "error", errorText(err), "default_handling", as.DefaultHandling.String())
+			if as.DefaultHandling == ifc.SessionContinued {
+				return false
+			}
 		}
 	}
 	// Any final response from the server goes to the user, without the
@@ -154,9 +167,9 @@ func (d OriginalDialog) pServedUser() sip.PServedUser {
 
 // returned reports whether the server has sent back the request it got
 // with the original dialog identifier id.
-func (s *SCSCF) returned(id string) bool {
-	d, ok := s.store.OriginalDialog(id)
-	return ok && d.Returned
+func (s *SCSCF) returned(id string) (bool, error) {
+	d, ok, err := s.store.OriginalDialog(context.Background(), id)
+	return ok && d.Returned, err
 }
 
 // fromApplicationServer is a request that a server sent back with the
@@ -165,7 +178,12 @@ func (s *SCSCF) returned(id string) bool {
 // the request there, with the list of criteria as it was then.
 func (s *SCSCF) fromApplicationServer(st *sip.ServerTransaction, out *sip.Message, id string, log *slog.Logger) {
 	log = log.With("original_dialog", id)
-	d, ok := s.store.OriginalDialog(id)
+	ctx := context.Background()
+	d, ok, err := s.store.OriginalDialog(ctx, id)
+	if err != nil {
+		s.storeFailed(st, err, log)
+		return
+	}
 	if !ok {
 		// The identifier has expired, or was never given out. Where the
 		// evaluation stood is lost.
@@ -174,7 +192,10 @@ func (s *SCSCF) fromApplicationServer(st *sip.ServerTransaction, out *sip.Messag
 		return
 	}
 	d.Returned = true
-	s.store.PutOriginalDialog(d)
+	if err := s.store.PutOriginalDialog(ctx, d); err != nil {
+		s.storeFailed(st, err, log)
+		return
+	}
 	log.Info("request back from the application server", "session_case", d.SessionCase.String(), "served_user", d.ServedUser, "icid", d.ICID)
 	if d.terminating() && !sameTarget(out.RequestURI, d) {
 		s.retargeted(st, out, d, log)

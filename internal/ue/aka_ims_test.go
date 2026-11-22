@@ -124,7 +124,7 @@ func TestIMSAKAThroughTheWholeIMS(t *testing.T) {
 	if sas, ok, _ := n.pcscfStore.SecurityAssociations(context.Background(), protectedAddr); !ok || sas.Temporary || sas.PrivateIdentity != impiAKA {
 		t.Errorf("the P-CSCF's SA table has %+v, %v; want established associations", sas, ok)
 	}
-	if r, ok := n.scscfStore.Registration(impiAKA); !ok || r.Contact != a.contact.URI() {
+	if r, ok, _ := n.scscfStore.Registration(context.Background(), impiAKA); !ok || r.Contact != a.contact.URI() {
 		t.Errorf("the S-CSCF registered %+v, %v", r, ok)
 	}
 	// TS 24.229 5.2.3: the P-CSCF subscribes to the registration that
@@ -211,7 +211,7 @@ func TestIMSAKAWithAnotherK(t *testing.T) {
 	if sas, ok, _ := n.pcscfStore.SecurityAssociations(context.Background(), a.ua.Stack().LocalAddr()); ok {
 		t.Errorf("the P-CSCF keeps %+v", sas)
 	}
-	if _, ok := n.scscfStore.Registration(impiAKA); ok {
+	if _, ok, _ := n.scscfStore.Registration(context.Background(), impiAKA); ok {
 		t.Error("the S-CSCF registered the UE")
 	}
 }
@@ -230,7 +230,7 @@ func TestRestartedUERefreshesItsBinding(t *testing.T) {
 	if _, err := first.ue.Register(ctx); err != nil {
 		t.Fatal(err)
 	}
-	bound, _ := n.scscfStore.Registration(impiAKA)
+	bound, _, _ := n.scscfStore.Registration(context.Background(), impiAKA)
 	first.close()
 
 	restarted := openAKAUE(t, n.pcscf, first.protected.String(), first.unprotected.String())
@@ -240,7 +240,7 @@ func TestRestartedUERefreshesItsBinding(t *testing.T) {
 	if _, err := restarted.ue.Register(ctx); err != nil {
 		t.Fatalf("refresh after the restart: %v", err)
 	}
-	if r, _ := n.scscfStore.Registration(impiAKA); r.Contact != bound.Contact {
+	if r, _, _ := n.scscfStore.Registration(context.Background(), impiAKA); r.Contact != bound.Contact {
 		t.Errorf("the S-CSCF binds %s, want the contact from before the restart, %s", r.Contact, bound.Contact)
 	}
 }

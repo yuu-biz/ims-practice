@@ -173,14 +173,20 @@ func (s *SCSCF) register(st *sip.ServerTransaction) {
 		expires = time.Duration(seconds) * time.Second
 	}
 	log := s.log.With("private_identity", privateID, "public_identity", publicID, "call_id", req.Get("Call-ID"))
-	unlock, _ := s.users.Lock(context.Background(), privateID)
+	ctx := context.Background()
+	unlock, _ := s.users.Lock(ctx, privateID)
 	defer unlock()
 
 	if expires == 0 {
 		// TS 24.229 5.4.1.4.1: nothing to deregister gets 481 before any
 		// authentication, and an existing IP association needs no new
 		// authentication.
-		if _, ok := s.store.Registration(privateID); !ok {
+		_, ok, err := s.store.Registration(ctx, privateID)
+		if err != nil {
+			s.storeFailed(st, err, log)
+			return
+		}
+		if !ok {
 			s.respond(st, 481, nil)
 			return
 		}
@@ -203,7 +209,11 @@ func (s *SCSCF) register(st *sip.ServerTransaction) {
 		return
 	}
 
-	ch, pending := s.store.Challenge(privateID)
+	ch, pending, err := s.store.Challenge(ctx, privateID)
+	if err != nil {
+		s.storeFailed(st, err, log)
+		return
+	}
 	answersChallenge := creds != nil && creds.Response != "" && pending &&
 		(integrity == sip.IPAssociationPending || integrity == sip.IPAssociationYes)
 	if !answersChallenge {
@@ -225,8 +235,10 @@ func (s *SCSCF) register(st *sip.ServerTransaction) {
 		s.challenge(st, privateID, publicID, integrity, true, log)
 		return
 	}
-	s.authTimers.stop(key(privateID))
-	s.store.DeleteChallenge(privateID)
+	if err := s.endChallenge(ctx, privateID); err != nil {
+		s.storeFailed(st, err, log)
+		return
+	}
 	if expires == 0 {
 		s.deregister(st, privateID, wildcard, log)
 		return
@@ -277,7 +289,10 @@ func (s *SCSCF) challenge(st *sip.ServerTransaction, privateID, publicID string,
 		HA1:             d.DigestHA1,
 		HSSHost:         originHost(answer),
 	}
-	s.putChallenge(ch)
+	if err := s.putChallenge(ch); err != nil {
+		s.storeFailed(st, err, log)
+		return
+	}
 	qop := d.DigestQoP
 	if qop == "" {
 		qop = "auth"
@@ -297,11 +312,26 @@ func (s *SCSCF) challenge(st *sip.ServerTransaction, privateID, publicID string,
 // challenge for reg-await-auth again after the timer, so that the
 // instance that handles the timer still finds it: by then the timer
 // has ended it, or the authentication has.
-func (s *SCSCF) putChallenge(ch Challenge) {
+func (s *SCSCF) putChallenge(ch Challenge) error {
 	ch.Expires = time.Now().Add(s.cfg.RegAwaitAuth)
 	ch.KeepUntil = ch.Expires.Add(s.cfg.RegAwaitAuth)
-	s.store.PutChallenge(ch)
+	if err := s.store.PutChallenge(context.Background(), ch); err != nil {
+		return err
+	}
 	s.authTimers.start(key(ch.PrivateIdentity), s.cfg.RegAwaitAuth, func() { s.regAwaitAuthExpired(ch.PrivateIdentity, ch.Nonce) })
+	return nil
+}
+
+// endChallenge removes the challenge of privateID and stops its
+// reg-await-auth timer. The timer stops only once the challenge is
+// gone, so that a challenge that the store failed to remove still ends
+// with its timer.
+func (s *SCSCF) endChallenge(ctx context.Context, privateID string) error {
+	if err := s.store.DeleteChallenge(ctx, privateID); err != nil {
+		return err
+	}
+	s.authTimers.stop(key(privateID))
+	return nil
 }
 
 type verdict int
@@ -336,7 +366,12 @@ func (s *SCSCF) check(req *sip.Message, c sip.Credentials, ch Challenge) verdict
 // to the registration then learn of it (5.4.2.1.2).
 func (s *SCSCF) accept(st *sip.ServerTransaction, c sip.Credentials, ch Challenge, expires time.Duration, log *slog.Logger) {
 	req := st.Request
-	old, registered := s.store.Registration(ch.PrivateIdentity)
+	ctx := context.Background()
+	old, registered, err := s.store.Registration(ctx, ch.PrivateIdentity)
+	if err != nil {
+		s.storeFailed(st, err, log)
+		return
+	}
 	assignment := cx.AssignRegistration
 	if registered {
 		assignment = cx.ReRegistration
@@ -382,7 +417,12 @@ func (s *SCSCF) accept(st *sip.ServerTransaction, c sip.Credentials, ch Challeng
 			replaced = &old
 		}
 	}
-	s.store.PutRegistration(reg)
+	if err := s.store.PutRegistration(ctx, reg); err != nil {
+		// The HSS has the user registered here, which a REGISTER that
+		// the UE sends again carries on from.
+		s.storeFailed(st, err, log)
+		return
+	}
 	s.regTimers.start(key(reg.PrivateIdentity), expires, func() { s.registrationExpired(reg.PrivateIdentity, reg.Expires) })
 	log.Info("registered", "contact", reg.Contact, "expires", int(expires/time.Second), "assignment", assignment.String())
 
@@ -408,13 +448,18 @@ func (s *SCSCF) accept(st *sip.ServerTransaction, c sip.Credentials, ch Challeng
 			r.Add("Authentication-Info", fmt.Sprintf(`qop=auth, rspauth="%s", cnonce="%s", nc=%s`, rspauth, c.CNonce, c.NC))
 		}
 	})
-	s.notifyRegistration(reg, replaced, log)
+	s.notifyRegistration(ctx, reg, replaced, log)
 	s.notifyApplicationServers(req, reg, expires, log)
 }
 
 // deregister is TS 24.229 5.4.1.4.1.
 func (s *SCSCF) deregister(st *sip.ServerTransaction, privateID string, wildcard bool, log *slog.Logger) {
-	reg, ok := s.store.Registration(privateID)
+	ctx := context.Background()
+	reg, ok, err := s.store.Registration(ctx, privateID)
+	if err != nil {
+		s.storeFailed(st, err, log)
+		return
+	}
 	if !ok {
 		s.respond(st, 481, nil)
 		return
@@ -426,8 +471,11 @@ func (s *SCSCF) deregister(st *sip.ServerTransaction, privateID string, wildcard
 			return
 		}
 	}
+	if err := s.store.DeleteRegistration(ctx, privateID); err != nil {
+		s.storeFailed(st, err, log)
+		return
+	}
 	s.regTimers.stop(key(privateID))
-	s.store.DeleteRegistration(privateID)
 	log.Info("deregistered")
 	// TS 23.228 5.3.1 steps 7 to 9: the HSS has answered the SAR before
 	// the S-CSCF answers 200.
@@ -435,7 +483,7 @@ func (s *SCSCF) deregister(st *sip.ServerTransaction, privateID string, wildcard
 	s.respond(st, 200, func(r *sip.Message) {
 		r.Add("Contact", fmt.Sprintf("<%s>;expires=0", reg.Contact))
 	})
-	s.endRegistration(reg, reginfo.Unregistered, log)
+	s.endRegistration(ctx, reg, reginfo.Unregistered, log)
 	s.notifyApplicationServers(st.Request, reg, 0, log)
 }
 
@@ -455,30 +503,40 @@ func (s *SCSCF) Deregister(privateID string, event reginfo.Event) error {
 	if event != reginfo.Deactivated && event != reginfo.Rejected {
 		return fmt.Errorf("scscf: a network-initiated deregistration is deactivated or rejected, not %s", event)
 	}
-	unlock, _ := s.users.Lock(context.Background(), privateID)
+	ctx := context.Background()
+	unlock, _ := s.users.Lock(ctx, privateID)
 	defer unlock()
-	reg, ok := s.store.Registration(privateID)
+	reg, ok, err := s.store.Registration(ctx, privateID)
+	if err != nil {
+		return err
+	}
 	if !ok {
 		return fmt.Errorf("scscf: %s is not registered", privateID)
 	}
-	s.deregisterByNetwork(reg, event)
-	_, err := s.serverAssignment(privateID, reg.PublicIdentities[0], reg.HSSHost, cx.AdministrativeDeregistration)
+	if err := s.deregisterByNetwork(ctx, reg, event); err != nil {
+		return err
+	}
+	_, err = s.serverAssignment(privateID, reg.PublicIdentities[0], reg.HSSHost, cx.AdministrativeDeregistration)
 	return err
 }
 
 // deregisterByNetwork removes reg and sends the NOTIFYs of TS 24.229
-// 5.4.1.5 with event. The lock of the user is held.
+// 5.4.1.5 with event. The lock of the user is held. It returns the
+// failure of the store to remove reg, and then has sent nothing.
 //
 // SIMPLIFIED: TS 24.229 5.4.1.5. Before the NOTIFY, the S-CSCF should
 // also release the sessions of the contact (5.4.5.1.2); as a proxy it
 // keeps no state of the dialogs it routes, so it cannot.
-func (s *SCSCF) deregisterByNetwork(reg Registration, event reginfo.Event) {
+func (s *SCSCF) deregisterByNetwork(ctx context.Context, reg Registration, event reginfo.Event) error {
 	log := s.log.With("private_identity", reg.PrivateIdentity)
+	if err := s.store.DeleteRegistration(ctx, reg.PrivateIdentity); err != nil {
+		return err
+	}
 	s.regTimers.stop(key(reg.PrivateIdentity))
-	s.store.DeleteRegistration(reg.PrivateIdentity)
 	log.Info("deregistered by the network", "event", string(event))
-	s.endRegistration(reg, event, log)
+	s.endRegistration(ctx, reg, event, log)
 	s.notifyApplicationServers(s.equivalentRegister(reg), reg, 0, log)
+	return nil
 }
 
 // Handle is the diameter.Handler of the S-CSCF. The only Cx request
@@ -524,9 +582,13 @@ func (s *SCSCF) registrationTermination(r cx.RegistrationTerminationRequest) cx.
 		s.log.Info("RTR with a reason not handled", "private_identity", r.UserName, "reason", r.DeregistrationReason.ReasonCode.String())
 		return cx.RegistrationTerminationAnswer{Result: cx.Base(cx.DiameterUnableToComply)}
 	}
-	unlock, _ := s.users.Lock(context.Background(), r.UserName)
+	ctx := context.Background()
+	unlock, _ := s.users.Lock(ctx, r.UserName)
 	defer unlock()
-	reg, ok := s.store.Registration(r.UserName)
+	reg, ok, err := s.store.Registration(ctx, r.UserName)
+	if err != nil {
+		return s.registrationTerminationFailed(r, err)
+	}
 	if !ok || !covers(reg, r.PublicIdentities) {
 		// TS 29.229 6.2.2.1. TS 29.228 6.1.3.1 names no error of its own
 		// for a user the S-CSCF does not know.
@@ -535,10 +597,23 @@ func (s *SCSCF) registrationTermination(r cx.RegistrationTerminationRequest) cx.
 	}
 	// TS 29.228 6.1.3.1: the S-CSCF removes all it has stored for the
 	// user, a registration under way included.
-	s.authTimers.stop(key(r.UserName))
-	s.store.DeleteChallenge(r.UserName)
-	s.deregisterByNetwork(reg, event)
+	if err := s.endChallenge(ctx, r.UserName); err != nil {
+		return s.registrationTerminationFailed(r, err)
+	}
+	if err := s.deregisterByNetwork(ctx, reg, event); err != nil {
+		return s.registrationTerminationFailed(r, err)
+	}
 	return cx.RegistrationTerminationAnswer{Result: cx.Base(cx.DiameterSuccess)}
+}
+
+// registrationTerminationFailed answers an RTR whose user the S-CSCF
+// cannot read or deregister. It can tell the HSS neither that it does
+// not know the user nor that it has deregistered the user, so it
+// answers DIAMETER_UNABLE_TO_COMPLY (RFC 6733 7.1.5). The registration
+// stays as it was.
+func (s *SCSCF) registrationTerminationFailed(r cx.RegistrationTerminationRequest, err error) cx.RegistrationTerminationAnswer {
+	s.log.Warn("RTR not served: the store failed", "private_identity", r.UserName, "error", err.Error())
+	return cx.RegistrationTerminationAnswer{Result: cx.Base(cx.DiameterUnableToComply)}
 }
 
 // covers reports whether an RTR that names ids is about reg. No
@@ -552,16 +627,25 @@ func covers(reg Registration, ids []string) bool {
 }
 
 func (s *SCSCF) regAwaitAuthExpired(privateID, nonce string) {
-	unlock, _ := s.users.Lock(context.Background(), privateID)
+	ctx := context.Background()
+	log := s.log.With("private_identity", privateID)
+	unlock, _ := s.users.Lock(ctx, privateID)
 	defer unlock()
-	ch, ok := s.store.Challenge(privateID)
+	ch, ok, err := s.store.Challenge(ctx, privateID)
+	if err != nil {
+		log.Warn("reg-await-auth not handled: the store failed; the HSS is not told, and the challenge goes at its KeepUntil", "error", err.Error())
+		return
+	}
 	if !ok || ch.Nonce != nonce {
 		return
 	}
 	// TS 24.229 5.4.1.2.3 NOTE 2: authentication has failed; a user who
 	// was registered stays registered.
-	s.log.Info("reg-await-auth expired", "private_identity", privateID)
-	s.store.DeleteChallenge(privateID)
+	log.Info("reg-await-auth expired")
+	if err := s.store.DeleteChallenge(ctx, privateID); err != nil {
+		log.Warn("reg-await-auth not handled: the store failed; the HSS is not told, and the challenge goes at its KeepUntil", "error", err.Error())
+		return
+	}
 	s.serverAssignment(privateID, ch.PublicIdentity, ch.HSSHost, cx.AuthenticationTimeout)
 }
 
@@ -579,16 +663,24 @@ func (s *SCSCF) regAwaitAuthExpired(privateID, nonce string) {
 // 5.4.1.7 item e), and one that subscribed to the reg event package
 // hears of the expiry in the NOTIFY.
 func (s *SCSCF) registrationExpired(privateID string, expires time.Time) {
-	unlock, _ := s.users.Lock(context.Background(), privateID)
+	ctx := context.Background()
+	log := s.log.With("private_identity", privateID)
+	unlock, _ := s.users.Lock(ctx, privateID)
 	defer unlock()
-	reg, ok := s.store.Registration(privateID)
+	reg, ok, err := s.store.Registration(ctx, privateID)
+	if err != nil {
+		log.Warn("expiry of the registration not handled: the store failed; it stays until the UE registers again or the HSS ends it", "error", err.Error())
+		return
+	}
 	if !ok || !reg.Expires.Equal(expires) {
 		return
 	}
-	log := s.log.With("private_identity", privateID)
 	log.Info("registration expired")
-	s.store.DeleteRegistration(privateID)
-	s.endRegistration(reg, reginfo.Expired, log)
+	if err := s.store.DeleteRegistration(ctx, privateID); err != nil {
+		log.Warn("expiry of the registration not handled: the store failed; it stays until the UE registers again or the HSS ends it", "error", err.Error())
+		return
+	}
+	s.endRegistration(ctx, reg, reginfo.Expired, log)
 	s.serverAssignment(privateID, reg.PublicIdentities[0], reg.HSSHost, cx.TimeoutDeregistration)
 }
 
@@ -609,6 +701,16 @@ func (s *SCSCF) serverAssignment(privateID, publicID, hssHost string, t cx.Serve
 
 func (s *SCSCF) request(m *diam.Message) (*diam.Message, error) {
 	return s.hss.Request(context.Background(), m)
+}
+
+// storeFailed answers st with 500 (Server Internal Error): the S-CSCF
+// cannot read or write the state that the request needs (RFC 3261
+// 21.5.1), and takes the failure neither for state that is not there
+// nor for a write that went through. The UE or the network may send
+// the request again.
+func (s *SCSCF) storeFailed(st *sip.ServerTransaction, err error, log *slog.Logger) {
+	log.Warn("the store failed", "method", string(st.Request.Method), "error", err.Error())
+	s.respond(st, 500, nil)
 }
 
 // respond answers with a response to the request.

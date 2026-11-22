@@ -23,7 +23,11 @@ func Example() {
 	store := scscfstore.New(kv, kvjson.Config{Now: func() time.Time { return now }})
 	var _ scscf.Store = store // what scscf.New takes
 
-	store.PutRegistration(scscf.Registration{PrivateIdentity: impi, PublicIdentities: []string{impu}, Expires: now.Add(time.Hour)})
+	err := store.PutRegistration(ctx, scscf.Registration{PrivateIdentity: impi, PublicIdentities: []string{impu}, Expires: now.Add(time.Hour)})
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
 
 	registrationExpired := func(privateID string, expires time.Time) {
 		fmt.Println("registration expired:", privateID)
@@ -33,7 +37,13 @@ func Example() {
 	now = now.Add(time.Hour)
 	claims, _ := store.ClaimDue(ctx, scscfstore.RegistrationTimer, now, 30*time.Second, 100)
 	for _, c := range claims {
-		if reg, ok := store.Registration(c.Member); ok && !reg.Expires.After(now) {
+		reg, ok, err := store.Registration(ctx, c.Member)
+		if err != nil {
+			// Without Done, the lease runs out, and an instance claims
+			// the member again.
+			continue
+		}
+		if ok && !reg.Expires.After(now) {
 			registrationExpired(reg.PrivateIdentity, reg.Expires)
 		}
 		store.Done(ctx, c)

@@ -24,10 +24,18 @@
 // whose end needs an action (a SAR, a NOTIFY) keeps no time to live of
 // its own: the instance that claims its timer reads it, acts, and
 // removes it. The items that only have to go away have one.
+//
+// Every operation returns the failure of the store, and a lookup does
+// not take it for a missing item. A write returns it until the main item
+// is written or removed. What fails after that is the removal of an
+// index item, an entry of a set or a timer that the main item no longer
+// needs, which is what an instance that stops there leaves: a miss
+// (kvjson.WriteIndex), or a timer whose claimer finds nothing to do.
 package scscfstore
 
 import (
 	"context"
+	"errors"
 	"slices"
 	"strings"
 	"time"
@@ -159,52 +167,85 @@ func (s *Store) indexTTL(expires time.Time) time.Duration {
 	return s.c.TTLUntil(expires.Add(expiryGrace))
 }
 
-func (s *Store) Challenge(privateID string) (scscf.Challenge, bool) {
+// read reads the item under key into v, and reports whether there is
+// one.
+func read[T any](ctx context.Context, c *kvjson.Client, key string, v *T) (bool, error) {
+	_, err := kvjson.Read(ctx, c, key, v)
+	if errors.Is(err, kvstore.ErrNotFound) {
+		return false, nil
+	}
+	return err == nil, err
+}
+
+// indexTarget reads the index item key, and reports whether there is
+// one.
+func (s *Store) indexTarget(ctx context.Context, key string) (string, bool, error) {
+	t, _, err := s.c.ReadIndex(ctx, key)
+	if errors.Is(err, kvstore.ErrNotFound) {
+		return "", false, nil
+	}
+	return t, err == nil, err
+}
+
+func (s *Store) challengeKey(privateID string) string {
+	return s.c.Key("challenge", privateKey(privateID))
+}
+
+func (s *Store) Challenge(ctx context.Context, privateID string) (scscf.Challenge, bool, error) {
 	var c scscf.Challenge
-	_, ok := kvjson.Get(s.c, s.c.Key("challenge", privateKey(privateID)), &c)
-	return c, ok
+	ok, err := read(ctx, s.c, s.challengeKey(privateID), &c)
+	return c, ok, err
 }
 
 // PutChallenge stores c and starts its reg-await-auth timer. The timer
 // goes into the index first: an instance that stops before the challenge
 // is written leaves a member that ends nothing, since no challenge has
 // its nonce.
-func (s *Store) PutChallenge(c scscf.Challenge) {
-	s.c.Schedule(string(RegAwaitAuthTimer), ChallengeMember(c.PrivateIdentity, c.Nonce), c.Expires)
-	kvjson.Put(s.c, s.c.Key("challenge", privateKey(c.PrivateIdentity)), c, s.c.TTLUntil(c.KeepUntil))
+func (s *Store) PutChallenge(ctx context.Context, c scscf.Challenge) error {
+	if err := s.c.WriteDue(ctx, string(RegAwaitAuthTimer), ChallengeMember(c.PrivateIdentity, c.Nonce), c.Expires); err != nil {
+		return err
+	}
+	return kvjson.Write(ctx, s.c, s.challengeKey(c.PrivateIdentity), c, s.c.TTLUntil(c.KeepUntil))
 }
 
 // DeleteChallenge removes the challenge and its timer. Its member names
-// the nonce, so a later challenge of the user keeps its own timer.
-func (s *Store) DeleteChallenge(privateID string) {
-	c, ok := s.Challenge(privateID)
-	s.c.Delete(s.c.Key("challenge", privateKey(privateID)))
-	if ok {
-		s.c.Unschedule(string(RegAwaitAuthTimer), ChallengeMember(c.PrivateIdentity, c.Nonce))
+// the nonce, so a later challenge of the user keeps its own timer, and
+// a member that stays ends nothing.
+func (s *Store) DeleteChallenge(ctx context.Context, privateID string) error {
+	c, ok, err := s.Challenge(ctx, privateID)
+	if err != nil {
+		return err
 	}
+	if err := s.c.Remove(ctx, s.challengeKey(privateID)); err != nil {
+		return err
+	}
+	if ok {
+		s.c.RemoveDue(ctx, string(RegAwaitAuthTimer), ChallengeMember(c.PrivateIdentity, c.Nonce))
+	}
+	return nil
 }
 
-func (s *Store) Registration(privateID string) (scscf.Registration, bool) {
+func (s *Store) Registration(ctx context.Context, privateID string) (scscf.Registration, bool, error) {
 	var r scscf.Registration
-	_, ok := kvjson.Get(s.c, s.c.Key("registration", privateKey(privateID)), &r)
-	return r, ok
+	ok, err := read(ctx, s.c, s.c.Key("registration", privateKey(privateID)), &r)
+	return r, ok, err
 }
 
 // RegistrationOf reads the index item of the public identity, then the
 // registration it names. A registration that does not hold the
 // identity is a miss: the index item is one that a writer has not
-// finished with, or one that a stopped instance left (kvjson.PutIndex).
-func (s *Store) RegistrationOf(publicID string) (scscf.Registration, bool) {
+// finished with, or one that a stopped instance left (kvjson.WriteIndex).
+func (s *Store) RegistrationOf(ctx context.Context, publicID string) (scscf.Registration, bool, error) {
 	k := ims.PublicIdentityKey(publicID)
-	target, _, ok := s.c.IndexTarget(s.c.Key("impu", k))
-	if !ok {
-		return scscf.Registration{}, false
+	target, ok, err := s.indexTarget(ctx, s.c.Key("impu", k))
+	if err != nil || !ok {
+		return scscf.Registration{}, false, err
 	}
-	r, ok := s.Registration(target)
-	if !ok || !slices.Contains(publicKeys(r.PublicIdentities), k) {
-		return scscf.Registration{}, false
+	r, ok, err := s.Registration(ctx, target)
+	if err != nil || !ok || !slices.Contains(publicKeys(r.PublicIdentities), k) {
+		return scscf.Registration{}, false, err
 	}
-	return r, true
+	return r, true, nil
 }
 
 // PutRegistration writes, in this order: the index items of the public
@@ -215,20 +256,30 @@ func (s *Store) RegistrationOf(publicID string) (scscf.Registration, bool) {
 // does not hold. Two instances that write the same registration at once
 // end with the one that wrote last, as with scscf.MemoryStore; an index
 // item of the other is a miss.
-func (s *Store) PutRegistration(r scscf.Registration) {
+func (s *Store) PutRegistration(ctx context.Context, r scscf.Registration) error {
 	k := privateKey(r.PrivateIdentity)
-	old, _ := s.Registration(k)
+	old, _, err := s.Registration(ctx, k)
+	if err != nil {
+		return err
+	}
 	keys := publicKeys(r.PublicIdentities)
 	for _, pk := range keys {
-		s.c.PutIndex(s.c.Key("impu", pk), k, s.indexTTL(r.Expires))
-	}
-	s.c.Schedule(string(RegistrationTimer), k, r.Expires)
-	kvjson.Put(s.c, s.c.Key("registration", k), r, 0)
-	for _, pk := range publicKeys(old.PublicIdentities) {
-		if !slices.Contains(keys, pk) {
-			s.c.DeleteIndexIf(s.c.Key("impu", pk), k)
+		if err := s.c.WriteIndex(ctx, s.c.Key("impu", pk), k, s.indexTTL(r.Expires)); err != nil {
+			return err
 		}
 	}
+	if err := s.c.WriteDue(ctx, string(RegistrationTimer), k, r.Expires); err != nil {
+		return err
+	}
+	if err := kvjson.Write(ctx, s.c, s.c.Key("registration", k), r, 0); err != nil {
+		return err
+	}
+	for _, pk := range publicKeys(old.PublicIdentities) {
+		if !slices.Contains(keys, pk) {
+			s.c.RemoveIndexIf(ctx, s.c.Key("impu", pk), k)
+		}
+	}
+	return nil
 }
 
 // DeleteRegistration removes the registration first and its index items
@@ -237,26 +288,32 @@ func (s *Store) PutRegistration(r scscf.Registration) {
 // registration that another instance writes at the same moment would
 // lose its own timer with it. The claim of that member finds no
 // registration, or one with a later Expires, and does nothing.
-func (s *Store) DeleteRegistration(privateID string) {
+func (s *Store) DeleteRegistration(ctx context.Context, privateID string) error {
 	k := privateKey(privateID)
-	old, ok := s.Registration(k)
-	s.c.Delete(s.c.Key("registration", k))
+	old, ok, err := s.Registration(ctx, k)
+	if err != nil {
+		return err
+	}
+	if err := s.c.Remove(ctx, s.c.Key("registration", k)); err != nil {
+		return err
+	}
 	if !ok {
-		return
+		return nil
 	}
 	for _, pk := range publicKeys(old.PublicIdentities) {
-		s.c.DeleteIndexIf(s.c.Key("impu", pk), k)
+		s.c.RemoveIndexIf(ctx, s.c.Key("impu", pk), k)
 	}
+	return nil
 }
 
 func (s *Store) subscriptionKey(id sip.DialogID) string {
 	return s.c.Key("subscription", id.CallID, id.LocalTag, id.RemoteTag)
 }
 
-func (s *Store) Subscription(id sip.DialogID) (scscf.Subscription, bool) {
+func (s *Store) Subscription(ctx context.Context, id sip.DialogID) (scscf.Subscription, bool, error) {
 	var sub scscf.Subscription
-	_, ok := kvjson.Get(s.c, s.subscriptionKey(id), &sub)
-	return sub, ok
+	ok, err := read(ctx, s.c, s.subscriptionKey(id), &sub)
+	return sub, ok, err
 }
 
 // subscriptionRef is one entry of the index of the subscriptions to a
@@ -305,70 +362,91 @@ func (s *Store) setTTL(set subscriptionsOf) time.Duration {
 	return s.indexTTL(last)
 }
 
+func (s *Store) subscriptionsOfKey(privateID string) string {
+	return s.c.Key("subscriptions-of", privateKey(privateID))
+}
+
 // SubscriptionsOf reads the set of the private identity, and then each
 // subscription in it. A subscription that is missing, or that reports
 // another registration, is left out.
-func (s *Store) SubscriptionsOf(privateID string) []scscf.Subscription {
-	k := privateKey(privateID)
+func (s *Store) SubscriptionsOf(ctx context.Context, privateID string) ([]scscf.Subscription, error) {
 	var set subscriptionsOf
-	if _, ok := kvjson.Get(s.c, s.c.Key("subscriptions-of", k), &set); !ok {
-		return nil
+	if ok, err := read(ctx, s.c, s.subscriptionsOfKey(privateID), &set); err != nil || !ok {
+		return nil, err
 	}
 	var subs []scscf.Subscription
 	for _, r := range set.Subscriptions {
-		if sub, ok := s.Subscription(r.ID); ok && privateKey(sub.PrivateIdentity) == k {
+		sub, ok, err := s.Subscription(ctx, r.ID)
+		if err != nil {
+			return nil, err
+		}
+		if ok && privateKey(sub.PrivateIdentity) == privateKey(privateID) {
 			subs = append(subs, sub)
 		}
 	}
-	return subs
+	return subs, nil
 }
 
 // PutSubscription adds the subscription to the set of its registration,
 // then schedules its expiry, then writes it. A reader in between finds
 // an entry without a subscription, and leaves it out.
-func (s *Store) PutSubscription(sub scscf.Subscription) {
+func (s *Store) PutSubscription(ctx context.Context, sub scscf.Subscription) error {
 	id := sub.Dialog.ID
-	setKey := s.c.Key("subscriptions-of", privateKey(sub.PrivateIdentity))
-	if _, err := kvjson.Upsert(s.c, setKey, s.setTTL, func(set *subscriptionsOf) {
+	if _, err := kvjson.ReadModifyWrite(ctx, s.c, s.subscriptionsOfKey(sub.PrivateIdentity), s.setTTL, func(set *subscriptionsOf) {
 		set.removeStale(s.c.Now())
 		set.Subscriptions = slices.DeleteFunc(set.Subscriptions, func(r subscriptionRef) bool { return r.ID == id })
 		set.Subscriptions = append(set.Subscriptions, subscriptionRef{ID: id, Expires: sub.Expires})
 	}); err != nil {
-		return
+		return err
 	}
-	s.c.Schedule(string(SubscriptionTimer), SubscriptionMember(id), sub.Expires)
-	kvjson.Put(s.c, s.subscriptionKey(id), sub, 0)
+	if err := s.c.WriteDue(ctx, string(SubscriptionTimer), SubscriptionMember(id), sub.Expires); err != nil {
+		return err
+	}
+	return kvjson.Write(ctx, s.c, s.subscriptionKey(id), sub, 0)
 }
 
-// DeleteSubscription removes the subscription, then its entry in the set
-// and its timer. A dialog is never used again, so the timer can go.
-func (s *Store) DeleteSubscription(id sip.DialogID) {
-	sub, ok := s.Subscription(id)
-	s.c.Delete(s.subscriptionKey(id))
-	s.c.Unschedule(string(SubscriptionTimer), SubscriptionMember(id))
-	if !ok {
-		return
+// DeleteSubscription removes the subscription, then its timer and its
+// entry in the set. A dialog is never used again, so the timer can go.
+// A timer or an entry that stays finds no subscription: the claimer of
+// the timer does nothing, and SubscriptionsOf leaves the entry out
+// until removeStale drops it.
+func (s *Store) DeleteSubscription(ctx context.Context, id sip.DialogID) error {
+	sub, ok, err := s.Subscription(ctx, id)
+	if err != nil {
+		return err
 	}
-	setKey := s.c.Key("subscriptions-of", privateKey(sub.PrivateIdentity))
-	kvjson.Update(s.c, setKey, s.setTTL, func(set *subscriptionsOf) error {
+	if err := s.c.Remove(ctx, s.subscriptionKey(id)); err != nil {
+		return err
+	}
+	s.c.RemoveDue(ctx, string(SubscriptionTimer), SubscriptionMember(id))
+	if !ok {
+		return nil
+	}
+	kvjson.Modify(ctx, s.c, s.subscriptionsOfKey(sub.PrivateIdentity), s.setTTL, func(set *subscriptionsOf) error {
 		set.Subscriptions = slices.DeleteFunc(set.Subscriptions, func(r subscriptionRef) bool { return r.ID == id })
 		return nil
 	})
+	return nil
 }
 
 // OriginalDialog returns the identifier until its Expires, by the clock
 // of the Store, as scscf.MemoryStore does; the time to live removes it
 // soon after.
-func (s *Store) OriginalDialog(id string) (scscf.OriginalDialog, bool) {
+func (s *Store) OriginalDialog(ctx context.Context, id string) (scscf.OriginalDialog, bool, error) {
 	var d scscf.OriginalDialog
-	if _, ok := kvjson.Get(s.c, s.c.Key("original-dialog", id), &d); !ok || !s.c.Now().Before(d.Expires) {
-		return scscf.OriginalDialog{}, false
+	ok, err := read(ctx, s.c, s.c.Key("original-dialog", id), &d)
+	if err != nil || !ok || !s.c.Now().Before(d.Expires) {
+		return scscf.OriginalDialog{}, false, err
 	}
-	return d, true
+	return d, true, nil
 }
 
-func (s *Store) PutOriginalDialog(d scscf.OriginalDialog) {
-	kvjson.Put(s.c, s.c.Key("original-dialog", d.ID), d, s.c.TTLUntil(d.Expires))
+func (s *Store) PutOriginalDialog(ctx context.Context, d scscf.OriginalDialog) error {
+	return kvjson.Write(ctx, s.c, s.c.Key("original-dialog", d.ID), d, s.c.TTLUntil(d.Expires))
+}
+
+func (s *Store) unregisteredKey(privateID string) string {
+	return s.c.Key("unregistered", privateKey(privateID))
 }
 
 // UnregisteredProfile returns the profile of a private identity,
@@ -376,64 +454,84 @@ func (s *Store) PutOriginalDialog(d scscf.OriginalDialog) {
 // instance that claims UnregisteredProfileTimer needs it, since its
 // member is the private identity, and the timer function of scscf
 // takes the profile.
-func (s *Store) UnregisteredProfile(privateID string) (scscf.UnregisteredProfile, bool) {
+func (s *Store) UnregisteredProfile(ctx context.Context, privateID string) (scscf.UnregisteredProfile, bool, error) {
 	var p scscf.UnregisteredProfile
-	_, ok := kvjson.Get(s.c, s.c.Key("unregistered", privateKey(privateID)), &p)
-	return p, ok
+	ok, err := read(ctx, s.c, s.unregisteredKey(privateID), &p)
+	return p, ok, err
 }
 
-func (s *Store) UnregisteredProfileOf(publicID string) (scscf.UnregisteredProfile, bool) {
+func (s *Store) UnregisteredProfileOf(ctx context.Context, publicID string) (scscf.UnregisteredProfile, bool, error) {
 	k := ims.PublicIdentityKey(publicID)
-	target, _, ok := s.c.IndexTarget(s.c.Key("unregistered-impu", k))
-	if !ok {
-		return scscf.UnregisteredProfile{}, false
+	target, ok, err := s.indexTarget(ctx, s.c.Key("unregistered-impu", k))
+	if err != nil || !ok {
+		return scscf.UnregisteredProfile{}, false, err
 	}
-	p, ok := s.UnregisteredProfile(target)
-	if !ok || !s.c.Now().Before(p.Expires) || !slices.Contains(publicKeys(p.PublicIdentities), k) {
-		return scscf.UnregisteredProfile{}, false
+	p, ok, err := s.UnregisteredProfile(ctx, target)
+	if err != nil || !ok || !s.c.Now().Before(p.Expires) || !slices.Contains(publicKeys(p.PublicIdentities), k) {
+		return scscf.UnregisteredProfile{}, false, err
 	}
-	return p, true
+	return p, true, nil
 }
 
 // PutUnregisteredProfile writes in the order of PutRegistration. The
 // index items go at the Expires of the profile, after which
 // UnregisteredProfileOf finds nothing anyway.
-func (s *Store) PutUnregisteredProfile(p scscf.UnregisteredProfile) {
+func (s *Store) PutUnregisteredProfile(ctx context.Context, p scscf.UnregisteredProfile) error {
 	k := privateKey(p.PrivateIdentity)
-	old, _ := s.UnregisteredProfile(k)
+	old, _, err := s.UnregisteredProfile(ctx, k)
+	if err != nil {
+		return err
+	}
 	keys := publicKeys(p.PublicIdentities)
 	for _, pk := range keys {
-		s.c.PutIndex(s.c.Key("unregistered-impu", pk), k, s.c.TTLUntil(p.Expires))
-	}
-	s.c.Schedule(string(UnregisteredProfileTimer), k, p.Expires)
-	kvjson.Put(s.c, s.c.Key("unregistered", k), p, 0)
-	for _, pk := range publicKeys(old.PublicIdentities) {
-		if !slices.Contains(keys, pk) {
-			s.c.DeleteIndexIf(s.c.Key("unregistered-impu", pk), k)
+		if err := s.c.WriteIndex(ctx, s.c.Key("unregistered-impu", pk), k, s.c.TTLUntil(p.Expires)); err != nil {
+			return err
 		}
 	}
+	if err := s.c.WriteDue(ctx, string(UnregisteredProfileTimer), k, p.Expires); err != nil {
+		return err
+	}
+	if err := kvjson.Write(ctx, s.c, s.unregisteredKey(k), p, 0); err != nil {
+		return err
+	}
+	for _, pk := range publicKeys(old.PublicIdentities) {
+		if !slices.Contains(keys, pk) {
+			s.c.RemoveIndexIf(ctx, s.c.Key("unregistered-impu", pk), k)
+		}
+	}
+	return nil
 }
 
 // DeleteUnregisteredProfile removes the profile only if it still
 // expires at expires and no one changed it since it was read. Of two
 // instances whose timers end the same profile, one removes it and gets
 // true; the other gets false and sends no SAR.
-func (s *Store) DeleteUnregisteredProfile(privateID string, expires time.Time) bool {
+func (s *Store) DeleteUnregisteredProfile(ctx context.Context, privateID string, expires time.Time) (bool, error) {
 	k := privateKey(privateID)
-	key := s.c.Key("unregistered", k)
+	key := s.unregisteredKey(k)
 	for range 3 {
 		var p scscf.UnregisteredProfile
-		version, ok := kvjson.Get(s.c, key, &p)
-		if !ok || !p.Expires.Equal(expires) {
-			return false
+		version, err := kvjson.Read(ctx, s.c, key, &p)
+		if errors.Is(err, kvstore.ErrNotFound) {
+			return false, nil
 		}
-		if s.c.DeleteIf(key, version) {
+		if err != nil {
+			return false, err
+		}
+		if !p.Expires.Equal(expires) {
+			return false, nil
+		}
+		err = s.c.RemoveIf(ctx, key, version)
+		if err == nil {
 			for _, pk := range publicKeys(p.PublicIdentities) {
-				s.c.DeleteIndexIf(s.c.Key("unregistered-impu", pk), k)
+				s.c.RemoveIndexIf(ctx, s.c.Key("unregistered-impu", pk), k)
 			}
-			return true
+			return true, nil
+		}
+		if !errors.Is(err, kvstore.ErrConflict) {
+			return false, err
 		}
 		// Changed or removed since it was read: read it again.
 	}
-	return false
+	return false, nil
 }

@@ -1,6 +1,7 @@
 package scscf
 
 import (
+	"context"
 	"slices"
 	"strings"
 	"sync"
@@ -220,13 +221,22 @@ type OriginalDialog struct {
 // Store keeps the registrar state of the S-CSCF. It is an interface so
 // that the state can live outside the node; MemoryStore keeps
 // it in the process.
+//
+// An error is a failure of the store, after which the caller cannot
+// tell what the store holds. The S-CSCF writes every expiry into what
+// it stores, as a time.
+//
+// A SIP transaction, a Cx request and a timer carry no context of their
+// own, so the S-CSCF passes context.Background() and relies on the time
+// limit that an adapter on a store outside the process gives each
+// operation.
 type Store interface {
-	Challenge(privateID string) (Challenge, bool)
+	Challenge(ctx context.Context, privateID string) (Challenge, bool, error)
 	// PutChallenge keeps c, in place of the challenge of its user,
 	// until its KeepUntil.
-	PutChallenge(Challenge)
-	DeleteChallenge(privateID string)
-	Registration(privateID string) (Registration, bool)
+	PutChallenge(ctx context.Context, c Challenge) error
+	DeleteChallenge(ctx context.Context, privateID string) error
+	Registration(ctx context.Context, privateID string) (Registration, bool, error)
 	// RegistrationOf finds the registration that holds a public
 	// identity, in the canonical form of ims.CanonicalURI.
 	//
@@ -237,28 +247,28 @@ type Store interface {
 	// private identities, and without reg-id the S-CSCF keeps only the
 	// newest contact of a private identity (TS 24.229 5.4.1.2.2A step
 	// 6).
-	RegistrationOf(publicID string) (Registration, bool)
-	PutRegistration(Registration)
-	DeleteRegistration(privateID string)
-	Subscription(id sip.DialogID) (Subscription, bool)
+	RegistrationOf(ctx context.Context, publicID string) (Registration, bool, error)
+	PutRegistration(ctx context.Context, r Registration) error
+	DeleteRegistration(ctx context.Context, privateID string) error
+	Subscription(ctx context.Context, id sip.DialogID) (Subscription, bool, error)
 	// SubscriptionsOf returns the subscriptions to the registration of a
 	// private identity.
-	SubscriptionsOf(privateID string) []Subscription
-	PutSubscription(Subscription)
-	DeleteSubscription(id sip.DialogID)
+	SubscriptionsOf(ctx context.Context, privateID string) ([]Subscription, error)
+	PutSubscription(ctx context.Context, sub Subscription) error
+	DeleteSubscription(ctx context.Context, id sip.DialogID) error
 	// OriginalDialog returns what PutOriginalDialog stored for an
 	// identifier, until its Expires.
-	OriginalDialog(id string) (OriginalDialog, bool)
-	PutOriginalDialog(OriginalDialog)
+	OriginalDialog(ctx context.Context, id string) (OriginalDialog, bool, error)
+	PutOriginalDialog(ctx context.Context, d OriginalDialog) error
 	// UnregisteredProfileOf finds, until its Expires, the profile that
 	// holds a public identity in the canonical form of ims.CanonicalURI.
 	// It is a lookup by key, never a walk over all profiles.
-	UnregisteredProfileOf(publicID string) (UnregisteredProfile, bool)
-	PutUnregisteredProfile(UnregisteredProfile)
+	UnregisteredProfileOf(ctx context.Context, publicID string) (UnregisteredProfile, bool, error)
+	PutUnregisteredProfile(ctx context.Context, p UnregisteredProfile) error
 	// DeleteUnregisteredProfile removes the profile of privateID if it
 	// still expires at expires, and reports whether it did, so that a
 	// timer never removes a profile that came after it.
-	DeleteUnregisteredProfile(privateID string, expires time.Time) bool
+	DeleteUnregisteredProfile(ctx context.Context, privateID string, expires time.Time) (bool, error)
 }
 
 // MemoryStore is a Store in memory. Private identities compare without
@@ -286,50 +296,52 @@ func key(privateID string) string { return strings.ToLower(privateID) }
 // Challenge finds a challenge until its KeepUntil, as an external store
 // would with a time to live. The reg-await-auth timer removes it before
 // then, so it takes no room after that.
-func (s *MemoryStore) Challenge(privateID string) (Challenge, bool) {
+func (s *MemoryStore) Challenge(_ context.Context, privateID string) (Challenge, bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	c, ok := s.challenges[key(privateID)]
 	if !ok || !c.KeepUntil.IsZero() && !time.Now().Before(c.KeepUntil) {
-		return Challenge{}, false
+		return Challenge{}, false, nil
 	}
-	return c, true
+	return c, true, nil
 }
 
-func (s *MemoryStore) PutChallenge(c Challenge) {
+func (s *MemoryStore) PutChallenge(_ context.Context, c Challenge) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	c.XRES = slices.Clone(c.XRES)
 	s.challenges[key(c.PrivateIdentity)] = c
+	return nil
 }
 
-func (s *MemoryStore) DeleteChallenge(privateID string) {
+func (s *MemoryStore) DeleteChallenge(_ context.Context, privateID string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	delete(s.challenges, key(privateID))
+	return nil
 }
 
-func (s *MemoryStore) Registration(privateID string) (Registration, bool) {
+func (s *MemoryStore) Registration(_ context.Context, privateID string) (Registration, bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	r, ok := s.registrations[key(privateID)]
-	return r, ok
+	return r, ok, nil
 }
 
-func (s *MemoryStore) RegistrationOf(publicID string) (Registration, bool) {
+func (s *MemoryStore) RegistrationOf(_ context.Context, publicID string) (Registration, bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	for _, r := range s.registrations {
 		for _, id := range r.PublicIdentities {
 			if ims.SamePublicIdentity(id, publicID) {
-				return r, true
+				return r, true, nil
 			}
 		}
 	}
-	return Registration{}, false
+	return Registration{}, false, nil
 }
 
-func (s *MemoryStore) PutRegistration(r Registration) {
+func (s *MemoryStore) PutRegistration(_ context.Context, r Registration) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	r.PublicIdentities = append([]string(nil), r.PublicIdentities...)
@@ -340,22 +352,24 @@ func (s *MemoryStore) PutRegistration(r Registration) {
 	// them apart.
 	r.InitialFilterCriteria = slices.Clone(r.InitialFilterCriteria)
 	s.registrations[key(r.PrivateIdentity)] = r
+	return nil
 }
 
-func (s *MemoryStore) DeleteRegistration(privateID string) {
+func (s *MemoryStore) DeleteRegistration(_ context.Context, privateID string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	delete(s.registrations, key(privateID))
+	return nil
 }
 
-func (s *MemoryStore) Subscription(id sip.DialogID) (Subscription, bool) {
+func (s *MemoryStore) Subscription(_ context.Context, id sip.DialogID) (Subscription, bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	sub, ok := s.subscriptions[id]
-	return copySubscription(sub), ok
+	return copySubscription(sub), ok, nil
 }
 
-func (s *MemoryStore) SubscriptionsOf(privateID string) []Subscription {
+func (s *MemoryStore) SubscriptionsOf(_ context.Context, privateID string) ([]Subscription, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	var subs []Subscription
@@ -364,19 +378,21 @@ func (s *MemoryStore) SubscriptionsOf(privateID string) []Subscription {
 			subs = append(subs, copySubscription(sub))
 		}
 	}
-	return subs
+	return subs, nil
 }
 
-func (s *MemoryStore) PutSubscription(sub Subscription) {
+func (s *MemoryStore) PutSubscription(_ context.Context, sub Subscription) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.subscriptions[sub.Dialog.ID] = copySubscription(sub)
+	return nil
 }
 
-func (s *MemoryStore) DeleteSubscription(id sip.DialogID) {
+func (s *MemoryStore) DeleteSubscription(_ context.Context, id sip.DialogID) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	delete(s.subscriptions, id)
+	return nil
 }
 
 // copySubscription keeps the route set of the store apart from the
@@ -386,19 +402,19 @@ func copySubscription(sub Subscription) Subscription {
 	return sub
 }
 
-func (s *MemoryStore) OriginalDialog(id string) (OriginalDialog, bool) {
+func (s *MemoryStore) OriginalDialog(_ context.Context, id string) (OriginalDialog, bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	d, ok := s.originalDialogs[id]
 	if !ok || !time.Now().Before(d.Expires) {
-		return OriginalDialog{}, false
+		return OriginalDialog{}, false, nil
 	}
-	return d, true
+	return d, true, nil
 }
 
 // PutOriginalDialog stores d. The store removes it at its Expires, as
 // an external store would with a time to live.
-func (s *MemoryStore) PutOriginalDialog(d OriginalDialog) {
+func (s *MemoryStore) PutOriginalDialog(_ context.Context, d OriginalDialog) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	_, known := s.originalDialogs[d.ID]
@@ -414,19 +430,20 @@ func (s *MemoryStore) PutOriginalDialog(d OriginalDialog) {
 			}
 		})
 	}
+	return nil
 }
 
-func (s *MemoryStore) UnregisteredProfileOf(publicID string) (UnregisteredProfile, bool) {
+func (s *MemoryStore) UnregisteredProfileOf(_ context.Context, publicID string) (UnregisteredProfile, bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	p, ok := s.unregistered[s.unregisteredOf[ims.PublicIdentityKey(publicID)]]
 	if !ok || !time.Now().Before(p.Expires) {
-		return UnregisteredProfile{}, false
+		return UnregisteredProfile{}, false, nil
 	}
-	return p, true
+	return p, true, nil
 }
 
-func (s *MemoryStore) PutUnregisteredProfile(p UnregisteredProfile) {
+func (s *MemoryStore) PutUnregisteredProfile(_ context.Context, p UnregisteredProfile) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	k := key(p.PrivateIdentity)
@@ -438,17 +455,18 @@ func (s *MemoryStore) PutUnregisteredProfile(p UnregisteredProfile) {
 	for _, id := range p.PublicIdentities {
 		s.unregisteredOf[ims.PublicIdentityKey(id)] = k
 	}
+	return nil
 }
 
-func (s *MemoryStore) DeleteUnregisteredProfile(privateID string, expires time.Time) bool {
+func (s *MemoryStore) DeleteUnregisteredProfile(_ context.Context, privateID string, expires time.Time) (bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	k := key(privateID)
 	if p, ok := s.unregistered[k]; !ok || !p.Expires.Equal(expires) {
-		return false
+		return false, nil
 	}
 	s.removeUnregistered(k)
-	return true
+	return true, nil
 }
 
 // removeUnregistered removes the profile of the private key k and its

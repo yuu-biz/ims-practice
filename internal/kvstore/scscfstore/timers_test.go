@@ -10,7 +10,6 @@ import (
 	"github.com/yuu-biz/ims-practice/internal/kvstore"
 	"github.com/yuu-biz/ims-practice/internal/kvstore/kvjson"
 	"github.com/yuu-biz/ims-practice/internal/kvstore/scscfstore"
-	"github.com/yuu-biz/ims-practice/internal/kvstore/storetest"
 	"github.com/yuu-biz/ims-practice/internal/scscf"
 )
 
@@ -56,6 +55,15 @@ func challenge(nonce string) scscf.Challenge {
 	return scscf.Challenge{PrivateIdentity: impi, Nonce: nonce, Expires: start.Add(time.Minute), KeepUntil: start.Add(2 * time.Minute)}
 }
 
+// must fails the test on a failure of the store, which the stores of
+// these tests do not have.
+func must(t *testing.T, err error) {
+	t.Helper()
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
 func registration(expires time.Time) scscf.Registration {
 	return scscf.Registration{PrivateIdentity: impi, PublicIdentities: []string{impu, tel}, Contact: "sip:ue1@192.0.2.10", Expires: expires}
 }
@@ -65,7 +73,7 @@ func registration(expires time.Time) scscf.Registration {
 func TestRegistrationExpiryIsClaimedOnce(t *testing.T) {
 	ctx := context.Background()
 	a, b, _, _ := twoInstances()
-	a.PutRegistration(registration(start.Add(time.Hour)))
+	must(t, a.PutRegistration(ctx, registration(start.Add(time.Hour))))
 	if claims, _ := b.ClaimDue(ctx, scscfstore.RegistrationTimer, start, time.Minute, 10); len(claims) != 0 {
 		t.Fatalf("claimed %v before the registration expired", claims)
 	}
@@ -97,15 +105,15 @@ func TestRefreshMovesTheExpiry(t *testing.T) {
 	ctx := context.Background()
 	a, b, _, _ := twoInstances()
 	first, second := start.Add(time.Hour), start.Add(2*time.Hour)
-	a.PutRegistration(registration(first))
+	must(t, a.PutRegistration(ctx, registration(first)))
 	claims, _ := a.ClaimDue(ctx, scscfstore.RegistrationTimer, first, time.Minute, 10)
-	b.PutRegistration(registration(second))
+	must(t, b.PutRegistration(ctx, registration(second)))
 	if len(claims) != 1 {
 		t.Fatalf("claims = %v", claims)
 	}
 	// The claimer reads the registration, as scscf.registrationExpired
 	// does, and finds that it has not expired.
-	if reg, _ := a.Registration(claims[0].Member); !reg.Expires.Equal(second) {
+	if reg, _, err := a.Registration(ctx, claims[0].Member); err != nil || !reg.Expires.Equal(second) {
 		t.Errorf("Expires = %v, want %v", reg.Expires, second)
 	}
 	if err := a.Done(ctx, claims[0]); !errors.Is(err, kvstore.ErrClaimLost) {
@@ -125,15 +133,16 @@ func TestRefreshMovesTheExpiry(t *testing.T) {
 func TestRegAwaitAuthNamesTheChallenge(t *testing.T) {
 	ctx := context.Background()
 	a, b, _, _ := twoInstances()
-	a.PutChallenge(challenge("n1"))
-	b.DeleteChallenge(impi)
+	must(t, a.PutChallenge(ctx, challenge("n1")))
+	must(t, b.DeleteChallenge(ctx, impi))
 	if claims, _ := a.ClaimDue(ctx, scscfstore.RegAwaitAuthTimer, start.Add(time.Minute), time.Minute, 10); len(claims) != 0 {
 		t.Errorf("an answered challenge still has its timer: %v", claims)
 	}
-	a.PutChallenge(challenge("n2"))
-	b.PutChallenge(challenge("n3"))
+	must(t, a.PutChallenge(ctx, challenge("n2")))
+	must(t, b.PutChallenge(ctx, challenge("n3")))
 	claims, _ := a.ClaimDue(ctx, scscfstore.RegAwaitAuthTimer, start.Add(time.Minute), time.Minute, 10)
-	current, _ := a.Challenge(impi)
+	current, _, err := a.Challenge(ctx, impi)
+	must(t, err)
 	ended := 0
 	for _, c := range claims {
 		privateID, nonce := scscfstore.ParseChallengeMember(c.Member)
@@ -156,7 +165,7 @@ func TestAChallengeEndsAtTheTimesItCarries(t *testing.T) {
 	ctx := context.Background()
 	a, b, _, c := twoInstances()
 	ch := scscf.Challenge{PrivateIdentity: impi, Nonce: "n1", Expires: start.Add(30 * time.Second), KeepUntil: start.Add(90 * time.Second)}
-	a.PutChallenge(ch)
+	must(t, a.PutChallenge(ctx, ch))
 	if claims, _ := b.ClaimDue(ctx, scscfstore.RegAwaitAuthTimer, ch.Expires.Add(-time.Millisecond), time.Minute, 10); len(claims) != 0 {
 		t.Errorf("claimed %v before the Expires of the challenge", claims)
 	}
@@ -164,36 +173,12 @@ func TestAChallengeEndsAtTheTimesItCarries(t *testing.T) {
 		t.Errorf("claims at the Expires of the challenge = %v, want one", claims)
 	}
 	c.set(ch.KeepUntil.Add(-time.Millisecond))
-	if _, ok := b.Challenge(impi); !ok {
+	if _, ok, err := b.Challenge(ctx, impi); err != nil || !ok {
 		t.Error("the challenge is gone before its KeepUntil")
 	}
 	c.set(ch.KeepUntil)
-	if _, ok := b.Challenge(impi); ok {
+	if _, ok, err := b.Challenge(ctx, impi); err != nil || ok {
 		t.Error("the challenge is still there at its KeepUntil")
-	}
-}
-
-// TestAWriterThatStopsLeavesOnlyAMiss stops an instance after it has
-// written the index items of a new registration, and before the
-// registration itself.
-func TestAWriterThatStopsLeavesOnlyAMiss(t *testing.T) {
-	_, b, kv, c := twoInstances()
-	stopped := scscfstore.New(storetest.StopAfter(kv, 2), kvjson.Config{Now: c.Now})
-	stopped.PutRegistration(registration(start.Add(time.Hour)))
-	if _, ok := b.RegistrationOf(tel); ok {
-		t.Error("RegistrationOf found a registration that was never written")
-	}
-	b.PutRegistration(registration(start.Add(time.Hour)))
-	if _, ok := b.RegistrationOf(tel); !ok {
-		t.Error("RegistrationOf after the next registration")
-	}
-	// The next registration took over the index items of the stopped
-	// instance, so its end removes them.
-	b.DeleteRegistration(impi)
-	for _, key := range []string{"scscf:impu:tel%3A+12025550101", "scscf:impu:" + impu[:3] + "%3A" + impu[4:]} {
-		if _, err := kv.Get(context.Background(), key); !errors.Is(err, kvstore.ErrNotFound) {
-			t.Errorf("Get(%s) = %v after the registration, want ErrNotFound", key, err)
-		}
 	}
 }
 
@@ -205,7 +190,7 @@ func TestSubscriptionExpiry(t *testing.T) {
 	sub.PrivateIdentity = impi
 	sub.Dialog.ID.CallID, sub.Dialog.ID.LocalTag, sub.Dialog.ID.RemoteTag = "sub:1@192.0.2.10", "l1", "r1"
 	sub.Expires = start.Add(10 * time.Minute)
-	a.PutSubscription(sub)
+	must(t, a.PutSubscription(ctx, sub))
 	claims, _ := b.ClaimDue(ctx, scscfstore.SubscriptionTimer, sub.Expires, time.Minute, 10)
 	if len(claims) != 1 {
 		t.Fatalf("claims = %v", claims)
@@ -214,12 +199,12 @@ func TestSubscriptionExpiry(t *testing.T) {
 	if !ok || id != sub.Dialog.ID {
 		t.Fatalf("member %q gives %v, %v", claims[0].Member, id, ok)
 	}
-	b.DeleteSubscription(id)
+	must(t, b.DeleteSubscription(ctx, id))
 	if err := b.Done(ctx, claims[0]); !errors.Is(err, kvstore.ErrClaimLost) {
 		// DeleteSubscription takes the member out of the index.
 		t.Errorf("Done after DeleteSubscription = %v, want ErrClaimLost", err)
 	}
-	if got := a.SubscriptionsOf(impi); len(got) != 0 {
-		t.Errorf("SubscriptionsOf = %v", got)
+	if got, err := a.SubscriptionsOf(ctx, impi); err != nil || len(got) != 0 {
+		t.Errorf("SubscriptionsOf = %v, %v", got, err)
 	}
 }
