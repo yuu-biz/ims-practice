@@ -31,6 +31,13 @@ type call struct {
 	route []string
 	log   *slog.Logger
 
+	// recordMu orders the writes of the record of the call into the
+	// Store (keepRecord). recorded tells that the record is there: from
+	// the answer until the call ends, after which no write may put it
+	// back.
+	recordMu sync.Mutex
+	recorded bool
+
 	mu sync.Mutex
 	// out is the outgoing leg the call goes on in. outReady is closed
 	// once there is one.
@@ -467,20 +474,18 @@ func (c *call) answer(out *sip.OutgoingCall, resp *sip.Message) {
 			c.log.Warn("answer in the ACK not relayed", "error", err.Error())
 		}
 	}
+	// The dialogs keep their identifiers, by which the record is
+	// deleted, however often it is written again.
 	record := c.record(out)
-	// sip.IncomingCall carries no context. The Store bounds each of its
-	// operations itself: an adapter on a store outside the process gives
-	// each one a time limit.
-	ctx := context.Background()
-	if err := c.as.store.PutCall(ctx, record); err != nil {
-		// The caller has its 2xx and the callee its ACK, so no request
-		// waits for the record. The call goes on in this instance; a
-		// later request that looks the call up in the store, such as an
-		// INVITE whose Replaces names one of its legs, does not find it.
-		c.log.Warn("call not kept in the store", "error", err.Error())
-	}
+	c.recordMu.Lock()
+	c.recorded = true
+	c.recordMu.Unlock()
+	c.keepRecord()
 	defer func() {
-		if err := c.as.store.DeleteCall(ctx, record); err != nil {
+		c.recordMu.Lock()
+		defer c.recordMu.Unlock()
+		c.recorded = false
+		if err := c.as.store.DeleteCall(context.Background(), record); err != nil {
 			// Both legs have ended, and no request waits for this. The
 			// record stays, as that of a call whose BYE no instance sees;
 			// its dialogs are never used again.
@@ -495,6 +500,35 @@ func (c *call) answer(out *sip.OutgoingCall, resp *sip.Message) {
 		c.in.Bye(reasons(out.EndedBy())...)
 	}
 	c.log.Info("call ended")
+}
+
+// keepRecord writes the record of the call into the Store, with both
+// dialogs as they are now: once the callee has answered, and again
+// after each request within the dialogs. A target refresh request
+// changes the remote target of its dialog (RFC 3261 12.2), and each
+// request the CSeq numbers: another instance that ends the dialogs
+// needs both (12.2.1.1, 12.2.2). Before the answer and after the end
+// of the call it writes nothing.
+func (c *call) keepRecord() {
+	c.recordMu.Lock()
+	defer c.recordMu.Unlock()
+	if !c.recorded {
+		return
+	}
+	c.mu.Lock()
+	out := c.out
+	c.mu.Unlock()
+	// sip.IncomingCall carries no context. The Store bounds each of its
+	// operations itself: an adapter on a store outside the process gives
+	// each one a time limit.
+	if err := c.as.store.PutCall(context.Background(), c.record(out)); err != nil {
+		// The caller and the callee have their responses, so no request
+		// waits for the record. The call goes on in this instance; a
+		// request that looks the call up in the store, such as an INVITE
+		// whose Replaces names one of its legs, does not find it, or
+		// finds the dialogs as they were, until a later write succeeds.
+		c.log.Warn("call not kept in the store", "error", err.Error())
+	}
 }
 
 // record is the record of the call once both dialogs are confirmed.
@@ -542,6 +576,7 @@ type leg interface {
 // fromCaller is the handler of the requests of the caller within the
 // dialog of in, which go on to the leg the call goes on in.
 func (c *call) fromCaller(r *sip.InDialogRequest) {
+	defer c.keepRecord()
 	<-c.outReady
 	c.mu.Lock()
 	out := c.out
@@ -563,6 +598,7 @@ func (c *call) fromCaller(r *sip.InDialogRequest) {
 // fromCallee is the handler of the requests of the callee within a
 // dialog of an outgoing leg, which go on to the caller.
 func (c *call) fromCallee(r *sip.InDialogRequest) {
+	defer c.keepRecord()
 	if d, ok := r.Dialog().Dialog(); ok {
 		c.keepCalleeSDP(d.ID.RemoteTag, sip.BodyOf(r.Request))
 	}

@@ -2,6 +2,7 @@ package mmtel_test
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/netip"
@@ -316,6 +317,59 @@ func waitFor(t *testing.T, cond func() bool, what string) {
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
+}
+
+// The record of a call follows its dialogs after each request within
+// them, for another instance that ends the call: the callee moves to
+// another contact with a re-INVITE, a target refresh request (RFC 3261
+// 12.2), and the caller's HOLD has the AS send the callee a request
+// with a higher CSeq, below which the callee would refuse a BYE
+// (12.2.2).
+func TestRecordFollowsTheDialogs(t *testing.T) {
+	as := startAS(t, noServices{}, mmtel.Config{})
+	calls := make(chan *sip.IncomingCall, 1)
+	holds := make(chan *sip.Message, 1)
+	callee := newUA(t, "bob", func(c *sip.IncomingCall) {
+		c.Handle(func(r *sip.InDialogRequest) {
+			holds <- r.Request
+			r.Accept(held)
+		})
+		calls <- c
+		c.Accept(answer)
+	})
+	caller := newUA(t, "alice", func(c *sip.IncomingCall) { c.Reject(480) })
+	inv := viaAS(t, as, callee, "term", offer)
+	inv.OnRequest = func(r *sip.InDialogRequest) { r.Accept(hold) }
+	out, err := caller.Invite(inv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := statuses(readAll(t, out)); !reflect.DeepEqual(got, []int{200}) {
+		t.Fatalf("caller got %v, want 200", got)
+	}
+	defer out.Bye()
+	in := receive(t, calls, "call at the callee")
+	uas, _ := in.Dialog()
+	outgoing := sip.DialogID{CallID: uas.ID.CallID, LocalTag: uas.ID.RemoteTag, RemoteTag: uas.ID.LocalTag}
+	waitFor(t, func() bool { _, ok := callOf(t, as, outgoing); return ok }, "call record")
+
+	moved := "sip:moved@" + contactOf(t, callee)
+	in.SetContact(sip.NameAddr{URI: moved}, false)
+	if resp, err := in.ReInvite(held); err != nil || resp.StatusCode != 200 {
+		t.Fatalf("re-INVITE from the new contact got %v, %v; want 200", resp, err)
+	}
+	waitFor(t, func() bool { r, _ := callOf(t, as, outgoing); return r.Outgoing.RemoteTarget == moved },
+		"the record to have the callee's new contact "+moved)
+
+	if resp, err := out.ReInvite(hold); err != nil || resp.StatusCode != 200 {
+		t.Fatalf("re-INVITE of the caller got %v, %v; want 200", resp, err)
+	}
+	cseq, err := sip.ParseCSeq(receive(t, holds, "re-INVITE at the callee").Get("CSeq"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, func() bool { r, _ := callOf(t, as, outgoing); return r.Outgoing.LocalSeq == cseq.Number },
+		fmt.Sprintf("the record to have the CSeq %d of the AS's re-INVITE to the callee", cseq.Number))
 }
 
 func TestCancelThroughTheAS(t *testing.T) {
