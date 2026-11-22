@@ -395,7 +395,7 @@ With a wrong password, steps 1 to 8 are the same. In step 9 the response does no
 
 ## A registration that fails
 
-A registered UE refreshes its registration before it expires (TS 24.229 5.1.1.4.1). When the refresh gets 408, 500, 504 or 403, the UE no longer counts on the registration it had and makes an initial registration: a REGISTER like the first one, which the S-CSCF challenges again (5.1.1.4.1). The UE simulator does so after any failed refresh.
+A registered UE refreshes its registration before it expires (TS 24.229 5.1.1.4.1). When the refresh gets 408, 500, 504 or 403, the UE no longer counts on the registration it had and makes an initial registration: a REGISTER like the first one, which the S-CSCF challenges again (5.1.1.4.1). The UE simulator does so after any failed refresh. When the response carries Retry-After, the UE first waits that long: for that time it makes no initial registration through the same P-CSCF (5.1.1.2.1).
 
 When an initial registration fails as well, the UE does not try again at once. Before each new attempt it waits the retry delay of RFC 5626 4.5 (TS 24.229 5.1.1.2.1):
 

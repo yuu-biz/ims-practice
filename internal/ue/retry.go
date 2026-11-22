@@ -46,13 +46,12 @@ type RegistrationBackoff struct {
 // Retry-After of a 503: no node of this network answers a REGISTER with
 // Retry-After.
 func (b *RegistrationBackoff) Failed(err error) time.Duration {
-	var failure *RegisterFailure
-	if errors.As(err, &failure) && failure.RetryAfter > 0 {
+	if wait := retryAfter(err); wait > 0 {
 		// TS 24.229 5.1.1.2.1: no initial registration comes within the
 		// time of Retry-After, so the count of failed attempts starts
 		// again.
 		b.consecutiveFailures = 0
-		return failure.RetryAfter
+		return wait
 	}
 	b.consecutiveFailures++
 	return retryDelay(b.consecutiveFailures, rand.Float64())
@@ -78,4 +77,18 @@ func retryDelay(consecutiveFailures int, uniform float64) time.Duration {
 	}
 	w = min(w, retryMaxTime)
 	return w/2 + time.Duration(uniform*float64(w/2))
+}
+
+// AsksToWait tells whether err is a response with Retry-After. After a
+// refresh that got one, the UE waits too before its initial
+// registration: for the time of Retry-After it makes none through the
+// same P-CSCF (TS 24.229 5.1.1.2.1).
+func AsksToWait(err error) bool { return retryAfter(err) > 0 }
+
+func retryAfter(err error) time.Duration {
+	var failure *RegisterFailure
+	if errors.As(err, &failure) {
+		return failure.RetryAfter
+	}
+	return 0
 }

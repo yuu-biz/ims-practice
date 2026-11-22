@@ -245,7 +245,8 @@ var retryTimer = time.NewTimer
 
 // register registers the UE, or refreshes its registration (TS 24.229
 // 5.1.1.2, 5.1.1.4.1). A refresh that fails is followed at once by an
-// initial registration (5.1.1.4.1). After an initial registration it
+// initial registration (5.1.1.4.1), unless its response asked for a
+// wait with Retry-After (5.1.1.2.1). After an initial registration it
 // subscribes to the reg event (5.1.1.3). After an initial registration
 // that fails, unless the phone is stopping, it starts the wait before
 // the next one (5.1.1.2.1).
@@ -253,7 +254,7 @@ func (r *registrar) register(ctx context.Context) error {
 	r.stopRetry()
 	initial := r.refresh == nil
 	reg, err := r.p.ue.Register(ctx)
-	if err != nil && !initial && ctx.Err() == nil {
+	if err != nil && !initial && ctx.Err() == nil && !AsksToWait(err) {
 		r.p.log.Warn("re-registration failed; registering again from the start", "error", err.Error())
 		r.unregistered()
 		initial = true
