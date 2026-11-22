@@ -83,9 +83,9 @@ type Config struct {
 	// TU sees the requests from a source in the order they arrived, the
 	// ACK for a 2xx before a BYE that follows it. While Admit waits over
 	// one request, the later ones from its source wait too, so it should
-	// answer soon. At most maxAdmitQueue requests from a source wait,
-	// and the stack drops any more without a word. Admit must not change
-	// req.
+	// answer soon. At most maxAdmitQueue requests from a source wait;
+	// the stack drops any more, sends nothing back and logs it. Admit
+	// must not change req.
 	Admit func(req *Message, source Destination) bool
 }
 
@@ -746,8 +746,11 @@ func (s *Stack) receiveACK(ack *Message, v Via, source Destination, admitted boo
 // maxAdmitQueue bounds the requests from one source that wait for
 // Config.Admit, the one it is deciding on included, so that a flood from
 // one address piles up no more than this while Admit waits for a slow
-// store. A UE has far fewer requests under way at once.
-const maxAdmitQueue = 32
+// store. A node of the network is one source for all of its requests,
+// such as the NOTIFYs of the reg event for many UEs at once, so the
+// bound leaves room for a burst of them; a request dropped over TCP is
+// not sent again before its client transaction times out.
+var maxAdmitQueue = 512
 
 // admits tells whether req may go on at once. A request that
 // Config.Screen lets in goes to Config.Admit, when there is one, and
