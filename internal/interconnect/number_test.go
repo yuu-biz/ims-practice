@@ -36,6 +36,12 @@ func TestNormalizeNumber(t *testing.T) {
 		{name: "a local number the agreement allows", uri: "tel:5550151;phone-context=+1-303", format: NumberFormatSIP, allowLocal: true, want: "sip:5550151;phone-context=+1-303@ims.mnc002.mcc001.3gppnetwork.org;user=phone"},
 		{name: "the empty format keeps tel", uri: "tel:+1-202-555-0151", want: "tel:+12025550151"},
 		{name: "a SIP URI without user=phone is no number", uri: "sip:+12025550151@ims.mnc002.mcc001.3gppnetwork.org", format: NumberFormatTel, want: "sip:+12025550151@ims.mnc002.mcc001.3gppnetwork.org"},
+		// A URI with no telephone-subscriber holds no number to put in a
+		// format, whatever user=phone says, so it crosses as it came
+		// instead of becoming a local number of an empty number plan.
+		{name: "a SIP URI with no user part is no number", uri: "sip:" + peerDomain + ";user=phone", format: NumberFormatTel, want: "sip:" + peerDomain + ";user=phone"},
+		{name: "a SIP URI with an empty user part is no number", uri: "sip:@" + peerDomain + ";user=phone", format: NumberFormatTel, want: "sip:@" + peerDomain + ";user=phone"},
+		{name: "a tel URI with parameters only is no number", uri: "tel:;npdi", format: NumberFormatTel, want: "tel:;npdi"},
 		{name: "a user name", uri: "sip:alice@example.net", format: NumberFormatTel, want: "sip:alice@example.net"},
 		{name: "a URN", uri: "urn:service:sos", format: NumberFormatTel, want: "urn:service:sos"},
 	}
