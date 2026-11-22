@@ -28,13 +28,13 @@ func akaSubscription(password string) Subscription {
 		AKA: &AKACredentials{Secret: akaSecret}}
 }
 
-func newAKAHSS(t *testing.T, subs ...Subscription) (*HSS, *MemoryStore) {
+func newAKAHSS(t *testing.T, subs ...Subscription) *HSS {
 	t.Helper()
 	store, err := NewMemoryStore(subs...)
 	if err != nil {
 		t.Fatal(err)
 	}
-	return newHSSOn(store), store
+	return newHSSOn(store)
 }
 
 func newHSSOn(store Store) *HSS {
@@ -53,12 +53,26 @@ func akaMAR(t *testing.T, h *HSS, scheme, server string, resync *cx.Resynchroniz
 	return a
 }
 
+// vectorSQN is the SQN that av carries, as a USIM that has accepted
+// nothing yet reads it from the AUTN (TS 33.102 6.3.3).
+func vectorSQN(t *testing.T, av *aka.AuthenticationVector) aka.SQN {
+	t.Helper()
+	if av == nil {
+		t.Fatal("no vector")
+	}
+	usim := aka.NewUSIM(akaSecret, 0)
+	if _, err := usim.Authenticate(av.RAND, av.AUTN); err != nil {
+		t.Fatalf("USIM: %v", err)
+	}
+	return usim.SQNMS()
+}
+
 // TestAKAVectorsAuthenticateTheUSIM is the HSS side of IMS-AKA
 // registrations: each MAA carries a vector that a USIM with the same
 // secret accepts, with RES equal to XRES, and a later one is still
 // fresh for the USIM.
 func TestAKAVectorsAuthenticateTheUSIM(t *testing.T) {
-	h, store := newAKAHSS(t, akaSubscription(""))
+	h := newAKAHSS(t, akaSubscription(""))
 	usim := aka.NewUSIM(akaSecret, 0)
 	for i := range 2 {
 		a := akaMAR(t, h, cx.SchemeDigestAKAv1MD5, scscf, nil)
@@ -75,9 +89,13 @@ func TestAKAVectorsAuthenticateTheUSIM(t *testing.T) {
 		}
 	}
 	// TS 29.228 6.3.1 step 5: the MAR stored the S-CSCF and set the
-	// authentication pending flag, as for SIP Digest.
-	if u, _ := store.Subscriber(akaImpi); u.ServerName != scscf || !u.AuthenticationPending {
-		t.Errorf("after the MAR: server %q, pending %v", u.ServerName, u.AuthenticationPending)
+	// authentication pending flag, as for SIP Digest. The I-CSCF is sent
+	// back to that S-CSCF, and a deregistration finds it (6.1.1.1).
+	if a := uar(t, h, akaImpi, akaImpu, cx.Registration); a.Result != cx.Experimental(cx.DiameterSubsequentRegistration) || a.ServerName != scscf {
+		t.Errorf("UAA after the MAR = %+v, want SUBSEQUENT_REGISTRATION with %s", a, scscf)
+	}
+	if a := uar(t, h, akaImpi, akaImpu, cx.DeRegistration); a.Result != cx.Base(cx.DiameterSuccess) || a.ServerName != scscf {
+		t.Errorf("UAA for a deregistration while the authentication is pending = %+v, want success with %s", a, scscf)
 	}
 }
 
@@ -86,7 +104,7 @@ func TestAKAVectorsAuthenticateTheUSIM(t *testing.T) {
 // vector with an AUTS, and the MAR with RAND || AUTS returns a vector
 // that it accepts.
 func TestAKAResynchronisation(t *testing.T) {
-	h, _ := newAKAHSS(t, akaSubscription(""))
+	h := newAKAHSS(t, akaSubscription(""))
 	// The first vector has SQN 1 with IND 1; the USIM accepted a higher
 	// one with the same IND.
 	usim := aka.NewUSIM(akaSecret, aka.NewSQN(4000, 1))
@@ -114,9 +132,9 @@ func TestAKAResynchronisation(t *testing.T) {
 }
 
 func TestAKAForgedAUTSKeepsSQN(t *testing.T) {
-	h, store := newAKAHSS(t, akaSubscription(""))
+	h := newAKAHSS(t, akaSubscription(""))
 	av := akaMAR(t, h, cx.SchemeDigestAKAv1MD5, scscf, nil).AuthenticationVector
-	before, _ := store.Subscriber(akaImpi)
+	before := vectorSQN(t, av)
 
 	// An AUTS from a USIM with another key, claiming a far higher SQN.
 	other := akaSecret
@@ -135,8 +153,8 @@ func TestAKAForgedAUTSKeepsSQN(t *testing.T) {
 	if a.Result != cx.Base(cx.DiameterSuccess) || a.AuthenticationVector == nil {
 		t.Fatalf("MAA = %+v", a)
 	}
-	if after, _ := store.Subscriber(akaImpi); after.AKA.SQN != before.AKA.SQN.Next() {
-		t.Errorf("SQN_HE went from %d to %d, want one step", before.AKA.SQN, after.AKA.SQN)
+	if after := vectorSQN(t, a.AuthenticationVector); after != before.Next() {
+		t.Errorf("SQN went from %d to %d, want one step", before, after)
 	}
 }
 
@@ -167,7 +185,7 @@ func TestAuthenticationSchemeChoice(t *testing.T) {
 			if !tc.akaCreds {
 				sub.AKA = nil
 			}
-			h, _ := newAKAHSS(t, sub)
+			h := newAKAHSS(t, sub)
 			a := akaMAR(t, h, tc.scheme, scscf, tc.resync)
 			if a.Result != tc.want || a.SIPAuthenticationScheme != tc.answered {
 				t.Fatalf("MAA = %+v, want %v with %q", a, tc.want, tc.answered)
@@ -191,46 +209,34 @@ func TestSeveralHSSInstancesNeverReuseAnSQN(t *testing.T) {
 	instances := []*HSS{newHSSOn(store), newHSSOn(store)}
 	const perInstance = 50
 	var wg sync.WaitGroup
+	var mu sync.Mutex
+	var vectors []*aka.AuthenticationVector
 	for _, h := range instances {
 		wg.Go(func() {
 			for range perInstance {
-				if a := h.multimediaAuth(cx.MultimediaAuthRequest{UserName: akaImpi, PublicIdentity: akaImpu,
-					SIPAuthenticationScheme: cx.SchemeDigestAKAv1MD5, SIPNumberAuthItems: 1, ServerName: scscf}); a.AuthenticationVector == nil {
+				a := h.multimediaAuth(cx.MultimediaAuthRequest{UserName: akaImpi, PublicIdentity: akaImpu,
+					SIPAuthenticationScheme: cx.SchemeDigestAKAv1MD5, SIPNumberAuthItems: 1, ServerName: scscf})
+				if a.AuthenticationVector == nil {
 					t.Errorf("MAA = %+v", a)
+					continue
 				}
+				mu.Lock()
+				vectors = append(vectors, a.AuthenticationVector)
+				mu.Unlock()
 			}
 		})
 	}
 	wg.Wait()
-	want := aka.SQN(0)
-	for range len(instances) * perInstance {
-		want = want.Next()
+	used := map[aka.SQN]bool{}
+	for _, av := range vectors {
+		sqn := vectorSQN(t, av)
+		if used[sqn] {
+			t.Errorf("SQN %d used twice", sqn)
+		}
+		used[sqn] = true
 	}
-	if u, _ := store.Subscriber(akaImpi); u.AKA.SQN != want {
-		t.Errorf("SQN_HE = %d after %d vectors, want %d", u.AKA.SQN, len(instances)*perInstance, want)
-	}
-}
-
-func TestMemoryStoreKeepsSQNOutOfPut(t *testing.T) {
-	store, err := NewMemoryStore(akaSubscription(""))
-	if err != nil {
-		t.Fatal(err)
-	}
-	stale, _ := store.Subscriber(akaImpi)
-	if !store.CompareAndSwapSQN(akaImpi, 0, 5) {
-		t.Fatal("CompareAndSwapSQN from the stored SQN failed")
-	}
-	if store.CompareAndSwapSQN(akaImpi, 0, 6) {
-		t.Fatal("CompareAndSwapSQN from a stale SQN succeeded")
-	}
-	stale.State = Registered
-	stale.AKA.SQN = 0
-	store.Put(stale)
-	if u, _ := store.Subscriber(akaImpi); u.State != Registered || u.AKA.SQN != 5 {
-		t.Errorf("after Put: state %v, SQN %d; want Registered and SQN 5", u.State, u.AKA.SQN)
-	}
-	if store.CompareAndSwapSQN("nobody@"+realm, 0, 1) {
-		t.Error("CompareAndSwapSQN for an unknown subscriber succeeded")
+	if len(used) != len(instances)*perInstance {
+		t.Errorf("%d SQNs in %d vectors", len(used), len(instances)*perInstance)
 	}
 }
 

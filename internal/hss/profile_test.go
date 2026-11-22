@@ -1,6 +1,7 @@
 package hss
 
 import (
+	"net/http"
 	"testing"
 
 	"github.com/yuu-biz/ims-practice/internal/cx"
@@ -24,8 +25,9 @@ func TestEverySubscriptionGetsTheConfiguredCriteria(t *testing.T) {
 	}
 	node := diameter.NewNode(diameter.Identity{OriginHost: "hss." + realm, OriginRealm: realm}, []uint32{diameter.ApplicationIDCx}, diameter.Timers{}, quiet())
 	h := New(Config{Realm: realm, VisitedNetworks: []string{realm}, InitialFilterCriteria: []ifc.InitialFilterCriteria{register}}, store, node, quiet())
-	if err := store.Add(Subscription{PrivateIdentity: otherImp, PublicIdentities: []string{"sip:001010000000002@" + realm}, Password: "p"}); err != nil {
-		t.Fatal(err)
+	added := `{"private_identity": "` + otherImp + `", "public_identities": ["sip:001010000000002@` + realm + `"], "password": "p"}`
+	if w := do(t, h.Provisioning(&fakeSCSCFs{}), "POST", "/subscriptions", added); w.Code != http.StatusCreated {
+		t.Fatalf("POST: %d %s", w.Code, w.Body)
 	}
 
 	for _, tt := range []struct{ private, public, serviceInfo string }{

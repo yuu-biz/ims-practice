@@ -18,6 +18,7 @@ import (
 	"github.com/yuu-biz/ims-practice/internal/cx"
 	"github.com/yuu-biz/ims-practice/internal/diameter"
 	"github.com/yuu-biz/ims-practice/internal/mmtel"
+	"github.com/yuu-biz/ims-practice/internal/sh"
 )
 
 func do(t *testing.T, api http.Handler, method, path, body string) *httptest.ResponseRecorder {
@@ -78,9 +79,12 @@ func TestProvisioningTakesTheTelURIApart(t *testing.T) {
 	if w := do(t, api, "POST", "/subscriptions", body); w.Code != http.StatusCreated {
 		t.Fatalf("POST: %d %s", w.Code, w.Body)
 	}
-	got, ok := h.store.SubscriberOf("tel:+12025550109")
-	if !ok || got.PrivateIdentity != "x@"+realm || len(got.PublicIdentities) != 2 || got.PublicIdentities[0] != "sip:x@"+realm {
-		t.Errorf("subscriber of the tel URI: %+v, %v", got, ok)
+	got := decode[subscriptionResponse](t, do(t, api, "GET", "/subscriptions/x@"+realm, ""))
+	if len(got.PublicIdentities) != 2 || got.PublicIdentities[0] != "sip:x@"+realm || got.PublicIdentities[1] != "tel:+12025550109" {
+		t.Errorf("public identities: %v", got.PublicIdentities)
+	}
+	if a := uar(t, h, "x@"+realm, "tel:+12025550109", cx.Registration); a.Result != cx.Experimental(cx.DiameterFirstRegistration) {
+		t.Errorf("UAR for the tel URI: %+v", a)
 	}
 	bad := `{"private_identity": "y@` + realm + `", "public_identities": ["sip:y@` + realm + `"], "password": "p", "tel": "+12025550110"}`
 	if w := do(t, api, "POST", "/subscriptions", bad); w.Code != http.StatusBadRequest {
@@ -114,12 +118,12 @@ func TestProvisioningRefusesWhatTheConfigurationRefuses(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			h := newTestHSS()
-			if w := do(t, h.Provisioning(&fakeSCSCFs{}), "POST", "/subscriptions", tt.body); w.Code != tt.want {
+			api := newTestHSS().Provisioning(&fakeSCSCFs{})
+			if w := do(t, api, "POST", "/subscriptions", tt.body); w.Code != tt.want {
 				t.Errorf("POST: %d %s, want %d", w.Code, w.Body, tt.want)
 			}
-			if _, ok := h.store.Subscriber("x@" + realm); ok {
-				t.Error("the refused subscription was stored")
+			if w := do(t, api, "GET", "/subscriptions/x@"+realm, ""); w.Code != http.StatusNotFound {
+				t.Errorf("GET of the refused subscription: %d %s", w.Code, w.Body)
 			}
 		})
 	}
@@ -154,9 +158,38 @@ func TestProvisioningAddsAnAKASubscription(t *testing.T) {
 	if _, err := usim.Authenticate(a.AuthenticationVector.RAND, a.AuthenticationVector.AUTN); err != nil {
 		t.Fatalf("USIM: %v", err)
 	}
-	if u, _ := h.store.Subscriber(akaImpi); u.AKA.SQN != aka.NewSQN(2, 1) || u.AKA.AMF != (aka.AMF{0x80, 0x00}) {
-		t.Errorf("stored SQN %d AMF %x", u.AKA.SQN, u.AKA.AMF)
+	if sqn := vectorSQN(t, a.AuthenticationVector); sqn != aka.NewSQN(2, 1) {
+		t.Errorf("SQN of the vector = %d, want %d", sqn, aka.NewSQN(2, 1))
 	}
+	// AUTN is SQN ⊕ AK || AMF || MAC: the AMF goes in clear.
+	if amf := a.AuthenticationVector.AUTN[6:8]; amf[0] != 0x80 || amf[1] != 0x00 {
+		t.Errorf("AMF of the vector = %x, want 8000", amf)
+	}
+}
+
+// shRepositoryData is what an AS reads with a UDR for the repository
+// data of publicID under serviceIndication, or nil when there is none.
+func shRepositoryData(t *testing.T, h *HSS, publicID, serviceIndication string) *sh.TransparentData {
+	t.Helper()
+	a, err := sh.ParseUserDataAnswer(exchange(t, h, sh.UserDataRequest{Header: hdr, UserIdentity: sh.UserIdentity{PublicIdentity: publicID},
+		ServiceIndications: []string{serviceIndication}, DataReferences: []sh.DataReference{sh.RepositoryData}}.Message()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if a.Result != cx.Base(cx.DiameterSuccess) {
+		t.Fatalf("UDA for %s of %s: %v", serviceIndication, publicID, a.Result)
+	}
+	if len(a.UserData) == 0 {
+		return nil
+	}
+	data, err := sh.ParseShData(a.UserData)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(data.RepositoryData) != 1 {
+		t.Fatalf("UDA for %s of %s: %d RepositoryData", serviceIndication, publicID, len(data.RepositoryData))
+	}
+	return &data.RepositoryData[0]
 }
 
 func TestProvisioningNamesTheDigestScheme(t *testing.T) {
@@ -259,7 +292,7 @@ func TestRemovingARegisteredSubscriptionSendsRTR(t *testing.T) {
 // A subscriber added through the API gets the configured MMTelServices
 // and, with a Ut password, the Ut credential, as H(A1) only.
 func TestProvisioningAddsTheSupplementaryServiceData(t *testing.T) {
-	h, store := newTestHSSWithStore()
+	h := newTestHSS()
 	doc := `<MMTelServices xmlns="http://uri.etsi.org/ngn/params/xml/simservs/xcap"><complete-communication-hold><operator-communication-hold authorized="true"/></complete-communication-hold></MMTelServices>`
 	d, err := MMTelServicesData([]byte(doc))
 	if err != nil {
@@ -272,13 +305,14 @@ func TestProvisioningAddsTheSupplementaryServiceData(t *testing.T) {
 	if w := do(t, api, "POST", "/subscriptions", body); w.Code != http.StatusCreated {
 		t.Fatalf("POST: %d %s", w.Code, w.Body)
 	}
-	got, ok := store.RepositoryData("001010000000009@"+realm, "MMTEL-Services")
-	if !ok || !strings.Contains(string(got.ServiceData.XML), "operator-communication-hold") {
-		t.Errorf("MMTEL-Services = %+v, %v", got, ok)
+	// The MMTel AS and the XCAP server read them over Sh.
+	user := "sip:001010000000009@" + realm
+	if got := shRepositoryData(t, h, user, "MMTEL-Services"); got == nil || !strings.Contains(string(got.ServiceData.XML), "operator-communication-hold") {
+		t.Errorf("MMTEL-Services = %+v", got)
 	}
-	cred, ok := store.RepositoryData("001010000000009@"+realm, "Ut-Digest-Credential")
-	if !ok || strings.Contains(string(cred.ServiceData.XML), "test-ut-password-9") || !strings.Contains(string(cred.ServiceData.XML), realm) {
-		t.Errorf("Ut credential = %s, %v", cred.ServiceData.XML, ok)
+	if cred := shRepositoryData(t, h, user, "Ut-Digest-Credential"); cred == nil || strings.Contains(string(cred.ServiceData.XML), "test-ut-password-9") ||
+		!strings.Contains(string(cred.ServiceData.XML), realm) {
+		t.Errorf("Ut credential = %+v", cred)
 	}
 
 	// A document of its own replaces the configured one; one that is not
@@ -303,12 +337,12 @@ func TestProvisioningSetsTheCustomizedAlertingTone(t *testing.T) {
 		if w := do(t, api, "PUT", path, body); w.Code != http.StatusOK {
 			t.Fatalf("PUT %s: %d %s", body, w.Code, w.Body)
 		}
-		d, ok := h.store.RepositoryData("001010000000009@"+realm, mmtel.CATServiceIndication)
-		if !ok || d.SequenceNumber != uint16(i) {
-			t.Fatalf("after PUT %s the HSS keeps %+v", body, d)
+		d := shRepositoryData(t, h, "tel:+12025550109", mmtel.CATServiceIndication)
+		if d == nil || d.SequenceNumber != uint16(i) {
+			t.Fatalf("after PUT %s Sh reads %+v", body, d)
 		}
 	}
-	d, _ := h.store.RepositoryData("001010000000009@"+realm, mmtel.CATServiceIndication)
+	d := shRepositoryData(t, h, "tel:+12025550109", mmtel.CATServiceIndication)
 	if got, err := mmtel.ParseCustomizedAlertingTone(d.ServiceData.XML); err != nil || got.Tone != "cat2" || !got.Active {
 		t.Errorf("the HSS keeps %s: %+v, %v", d.ServiceData.XML, got, err)
 	}
