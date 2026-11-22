@@ -217,7 +217,7 @@ Diameter の辞書について確かめたことがあります。go-diameter v4
 - `sip.DigestResponse` は MD5 だけです。AKAv2-SHA-256 には SHA-256 の Digest が要ります。
 - P-CSCF は Security-Client、Security-Server、Security-Verify を扱わず、保護ポートを開きません。`sip.Stack` は 1 つのアドレスで待ち受けます。
 - UE に USIM の働き（Milenage、SQN の確認、AUTS）がありません。
-- `images/peer` に SIPp はありますが、AKA のシナリオがありません。
+- `images/softphone` に SIPp はありますが、AKA のシナリオがありません。
 
 SIPp v3.7.7 のソースで、次のことを確かめました。
 
@@ -237,7 +237,7 @@ SIPp v3.7.7 のソースで、次のことを確かめました。
 | AKA の版 | AKAv2-SHA-256 と AKAv1-MD5 の両方の WWW-Authenticate を、AKAv2 を先にして出す（TS 33.203 6.1.1）。UE シミュレータは AKAv2 を選び、SIPp は AKAv1-MD5 を使う。`sip` に SHA-256 の Digest を足す | AKAv1-MD5 だけにして SIMPLIFIED に書く |
 | 既定の平文 | sec-agree の手順と保護ポートはそのまま行い、ESP をかけずに平文で送る。P-CSCF は SA の表（UE の IP とポートの組）で、保護されたものとみなして integrity-protected="yes" を付ける。標準に無い動きなので SIMPLIFIED に書く。tshark 4.2.2 は SIP の UDP と TCP のヒューリスティックが既定で有効なので、5060 以外のポートでも SIP として読める | sec-agree も省き、5060 で AKA だけを行う。Security- のヘッダが見えなくなる |
 | IPsec を有効にする | 設定（P-CSCF と UE の両方）で有効にすると、Linux の xfrm に ESP の SA と SP を入れる。コンテナに NET_ADMIN が要る。Wireshark で読むには、ESP の NULL 暗号を推測して復号する設定（tshark 4.2.2 では既定で無効）か、SA の鍵の登録が要る | 拡張の候補「TLS と IPsec を有効にした構成」に回し、既定の平文だけを作る |
-| SIPp | `images/peer` の SIPp で、AKAv1-MD5 の登録のシナリオを e2e で流す。Security-Client は固定の値、Security-Verify は `[last_Security-Server:]` にする。2 回目の REGISTER を Security-Server の port-s へ送れるかは試作で確かめる | Alpine の pjsua を AKA で使う（対応しているかは確かめていない） |
+| SIPp | `images/softphone` の SIPp で、AKAv1-MD5 の登録のシナリオを e2e で流す。Security-Client は固定の値、Security-Verify は `[last_Security-Server:]` にする。2 回目の REGISTER を Security-Server の port-s へ送れるかは試作で確かめる | Alpine の pjsua を AKA で使う（対応しているかは確かめていない） |
 | 状態（各役割を複数台で動かせるようにするため） | S-CSCF の `Challenge` に RAND、XRES、CK、IK を足す（`Store`）。P-CSCF の SA の表も `Store` に置く。IPsec を有効にすると SA はカーネルにあるので、UE はその P-CSCF の台に結びつく。台が落ちたときは再登録で戻る（冗長構成、TS 23.380） | なし |
 
 SIPp のシナリオは次の形を想定しています。

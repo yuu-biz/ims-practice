@@ -111,8 +111,9 @@ hss:
     # SIPp, the independent test peer of IMS AKA. SIPp 3.7
     # takes its K, OP and AMF as the bytes of their text, so its USIM
     # holds K "ims-practice-K01", OP "ims-practice-OP1" and AMF "00"
-    # (images/peer/sipp/register-aka.xml). Here they are in hexadecimal,
-    # with the OPc that MILENAGE derives from that OP (TS 35.206 4.1).
+    # (images/softphone/sipp/register-aka.xml). Here they are in
+    # hexadecimal, with the OPc that MILENAGE derives from that OP
+    # (TS 35.206 4.1).
     # The AMF has the separation bit 0; its other bits are reserved (TS
     # 33.102 Annex H), and only these test keys set them.
     - private_identity: 001010000000011@ims.mnc001.mcc001.3gppnetwork.org

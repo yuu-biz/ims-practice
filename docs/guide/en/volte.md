@@ -189,7 +189,7 @@ Only a message that comes to the protected server port counts as protected. A re
 
 ### SIPp
 
-SIPp registers with IMS AKA from `images/peer/sipp/register-aka.xml`. It sends everything from one port, 5060, which is therefore its protected server port too. SIPp 3.7 takes its K and OP as the bytes of their text, so subscriber 11 has printable keys, `ims-practice-K01` and `ims-practice-OP1`; hss.yaml has them in hexadecimal, with the OPc that MILENAGE derives from that OP. SIPp computes the RES and the Digest itself, which checks the S-CSCF's computation against code written by others.
+SIPp registers with IMS AKA from `images/softphone/sipp/register-aka.xml`. It sends everything from one port, 5060, which is therefore its protected server port too. SIPp 3.7 takes its K and OP as the bytes of their text, so subscriber 11 has printable keys, `ims-practice-K01` and `ims-practice-OP1`; hss.yaml has them in hexadecimal, with the OPc that MILENAGE derives from that OP. SIPp computes the RES and the Digest itself, which checks the S-CSCF's computation against code written by others.
 
 ## The identities of a phone without an ISIM
 
@@ -447,8 +447,8 @@ The flags for a VoLTE UE:
 SIPp registers with IMS AKA and deregisters:
 
 ```sh
-docker compose --profile ue build peer
-docker compose run --rm --entrypoint sipp peer -sf /etc/sipp/register-aka.xml -m 1 -t u1 -p 5060 172.28.0.40:5060
+docker compose --profile ue build softphone
+docker compose run --rm --entrypoint sipp softphone -sf /etc/sipp/register-aka.xml -m 1 -t u1 -p 5060 172.28.0.40:5060
 ```
 
 ## Open the capture

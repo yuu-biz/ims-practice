@@ -56,7 +56,7 @@ The nodes use these addresses. The Service column is the name in `compose.yaml`.
 | MRFP | `mrfp` | 172.28.0.86 | |
 | UE simulator, subscriber 1 | `ue` | 172.28.0.100 | `ue` |
 | UE simulator, subscriber 2 | `ue2` | 172.28.0.101 | `ue` |
-| pjsua and SIPp | `peer` | 172.28.0.102 | `ue` |
+| pjsua and SIPp | `softphone` | 172.28.0.102 | `ue` |
 | UE simulator, subscriber 3 | `ue3` | 172.28.0.103 | `ue` |
 | UE simulator that the Lab drives, subscriber 1 | `ue-a` | 172.28.0.110 | `sim` |
 | UE simulator that the Lab drives, subscriber 2 | `ue-b` | 172.28.0.111 | `sim` |
