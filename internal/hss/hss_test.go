@@ -33,11 +33,6 @@ func init() {
 func quiet() *slog.Logger { return slog.New(slog.NewTextHandler(io.Discard, nil)) }
 
 func newTestHSS() *HSS {
-	h, _ := newTestHSSWithStore()
-	return h
-}
-
-func newTestHSSWithStore() (*HSS, *MemoryStore) {
 	store, err := NewMemoryStore(
 		Subscription{PrivateIdentity: impi, PublicIdentities: []string{impu}, Password: "test-password-1"},
 		Subscription{PrivateIdentity: otherImp, PublicIdentities: []string{"sip:001010000000002@" + realm}, Password: "test-password-2"},
@@ -50,7 +45,7 @@ func newTestHSSWithStore() (*HSS, *MemoryStore) {
 		Realm:              realm,
 		VisitedNetworks:    []string{realm},
 		ServerCapabilities: cx.ServerCapabilities{MandatoryCapabilities: []uint32{1}},
-	}, store, node, quiet()), store
+	}, store, node, quiet())
 }
 
 var hdr = cx.Header{SessionID: "s;1;1", OriginHost: "icscf." + realm, OriginRealm: realm, DestinationRealm: realm}
@@ -225,7 +220,7 @@ func TestLocationInfo(t *testing.T) {
 // the profile with a SAR of UNREGISTERED_USER, and calls go to that
 // S-CSCF until it lets the user go.
 func TestLocationInfoForUnregisteredServices(t *testing.T) {
-	h, _ := newTestHSSWithStore()
+	h := newTestHSS()
 	unregistered := ifc.TerminatingUnregistered
 	h.config.InitialFilterCriteria = []ifc.InitialFilterCriteria{{
 		TriggerPoint:      &ifc.TriggerPoint{SPT: []ifc.SPT{{Group: []int{0}, SessionCase: &unregistered}}},

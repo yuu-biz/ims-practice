@@ -13,9 +13,6 @@ import (
 )
 
 // HSS runs the suite of hss.Store. newPair returns two empty instances.
-// The first cases are those of internal/hss/store_test.go and
-// TestMemoryStoreKeepsSQNOutOfPut of internal/hss/aka_test.go, written
-// against the interface.
 func HSS(t *testing.T, newPair func(t *testing.T) (hss.Store, hss.Store)) {
 	run(t, newPair, []testCase[hss.Store]{
 		{"FindsASubscriberByEachIdentity", hssFindsByEachIdentity},

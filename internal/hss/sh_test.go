@@ -426,6 +426,8 @@ func TestRepositoryDataOfAliases(t *testing.T) {
 // (TS 29.328 6.1.2.1), never 0.
 func TestRepositoryDataWrapsAround(t *testing.T) {
 	n := newShNetwork(t)
+	// Sh would take 65535 updates to get there, so the data goes into
+	// the store as one that had them.
 	if !n.hss.store.CompareAndSwapRepositoryData(impi, nil, repository(65535, "<a/>")) {
 		t.Fatal("cannot store the data")
 	}
