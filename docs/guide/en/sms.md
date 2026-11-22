@@ -26,7 +26,7 @@ A short message can travel to a phone in several ways. Over the IMS, which this 
 | I-CSCF | 172.28.0.20 | Entry point of the home network for the MESSAGEs that the IP-SM-GW sends. It asks the HSS where the user is (LIR). |
 | IP-SM-GW | 172.28.0.70 | The application server (AS) of SMS over IP (TS 24.341 5.3.3). It turns a MESSAGE into a short message for the SC and back. |
 | SC (stub) | inside the IP-SM-GW | The service centre that takes each short message and delivers it. Here it is a stub inside the IP-SM-GW process, behind a Go interface. |
-| HSS | 172.28.0.10 | Holds the iFCs (Cx) and answers the IP-SM-GW over Sh. |
+| HSS | 172.28.0.10 | Holds the iFCs (Cx). It answers the IP-SM-GW over Sh, as it does every application server. |
 | DNS | 172.28.0.2 | Gives the address of `ipsmgw.ims.mnc001.mcc001.3gppnetwork.org`, the AS named in the iFCs. |
 
 Two more numbers matter. The SC address, `+12025550100`, is what each UE puts in the short message as its SC; the UE simulator has it as `-sc`. The IP-SM-GW has the number `+12025550199`, which it registers in the HSS for each user it serves. All numbers are in the 555-0100 to 555-0199 range that the North American Numbering Plan keeps for fiction.

@@ -90,7 +90,7 @@ docker compose run --rm ue register -deregister-after 2s
 deploy/chaos/fault.sh unpause hss
 ```
 
-フィルタ `diameter || sip.Status-Code >= 400` で見ます。I-CSCF が User-Authorization Request（UAR）を送りますが、答えがありません。I-CSCF は 5 秒で諦めて P-CSCF に 480 を返し、P-CSCF は UE に 504 Server Time-out を返します。そのあいだに I-CSCF、S-CSCF、IP-SM-GW が送る Device-Watchdog Request（DWR）にも、DWA が返りません。答えの無い DWR のあと、Tw の 30 秒がさらに 2 回過ぎると、ノードは接続を閉じます（RFC 3539 3.4.1）。これを見るには、HSS を 2 分ほど止めたままにします。HSS が戻ると、ノードは Tc の 30 秒以内に新しい接続を開きます（CER と CEA）。HSS は戻ったあとで、もう誰も待っていない UAA も送ります。
+フィルタ `diameter || sip.Status-Code >= 400` で見ます。I-CSCF が User-Authorization Request（UAR）を送りますが、答えがありません。I-CSCF は 5 秒で諦めて P-CSCF に 480 を返し、P-CSCF は UE に 504 Server Time-out を返します。そのあいだに I-CSCF、S-CSCF、IP-SM-GW、MMTel AS が送る Device-Watchdog Request（DWR）にも、DWA が返りません。答えの無い DWR のあと、Tw の 30 秒がさらに 2 回過ぎると、ノードは接続を閉じます（RFC 3539 3.4.1）。これを見るには、HSS を 2 分ほど止めたままにします。HSS が戻ると、ノードは Tc の 30 秒以内に新しい接続を開きます（CER と CEA）。HSS は戻ったあとで、もう誰も待っていない UAA も送ります。
 
 ### 通話中にメディア中継ノードでパケットを失う
 

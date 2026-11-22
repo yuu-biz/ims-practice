@@ -38,26 +38,50 @@ To see packets as they happen, stream the capture into Wireshark.
 
 ## What you see when the nodes start
 
-The nodes use these addresses:
+The nodes use these addresses. The Service column is the name in `compose.yaml`. A node with a profile does not start with `docker compose up`: start the profile with `--profile <name>`, or run the UE with `docker compose run --rm <service>`.
 
-| Node | Address |
-| --- | --- |
-| DNS | 172.28.0.2 |
-| HSS | 172.28.0.10 |
-| I-CSCF | 172.28.0.20 |
-| S-CSCF | 172.28.0.30 |
-| P-CSCF | 172.28.0.40 |
-| Media relay (IMS-AGW) | 172.28.0.50 |
-| Lab | 172.28.0.60 |
-| IP-SM-GW | 172.28.0.70 |
-| UE simulator | 172.28.0.100 |
+| Node | Service | Address | Profile |
+| --- | --- | --- | --- |
+| DNS | `dns` | 172.28.0.2 | |
+| HSS | `hss` | 172.28.0.10 | |
+| I-CSCF | `icscf` | 172.28.0.20 | |
+| S-CSCF | `scscf` | 172.28.0.30 | |
+| P-CSCF | `pcscf` | 172.28.0.40 | |
+| Media relay (IMS-AGW) | `agw` | 172.28.0.50 | |
+| Lab | `lab` | 172.28.0.60 | |
+| IP-SM-GW | `ipsmgw` | 172.28.0.70 | |
+| MMTel AS | `mmtel` | 172.28.0.75 | |
+| EPC stub, with the PCRF stub | `epc` | 172.28.0.80 | |
+| MRFC | `mrfc` | 172.28.0.85 | |
+| MRFP | `mrfp` | 172.28.0.86 | |
+| UE simulator, subscriber 1 | `ue` | 172.28.0.100 | `ue` |
+| UE simulator, subscriber 2 | `ue2` | 172.28.0.101 | `ue` |
+| pjsua and SIPp | `peer` | 172.28.0.102 | `ue` |
+| UE simulator, subscriber 3 | `ue3` | 172.28.0.103 | `ue` |
+| UE simulator that the Lab drives, subscriber 1 | `ue-a` | 172.28.0.110 | `sim` |
+| UE simulator that the Lab drives, subscriber 2 | `ue-b` | 172.28.0.111 | `sim` |
+| UE simulator that the Lab drives, subscriber 3 | `ue-c` | 172.28.0.112 | `sim` |
+| VoLTE UE, subscriber 10 | `volte-a` | 172.28.0.120 | `volte` |
+| VoLTE UE, subscriber 12 | `volte-b` | 172.28.0.121 | `volte` |
 
-The I-CSCF, the S-CSCF and the IP-SM-GW each open a Diameter connection to the HSS on TCP port 3868. With the filter `diameter`, the capture shows these messages:
+The `capture` service has no address: it shares the network of the host and captures on the bridge `ims0`.
+
+Five nodes open a Diameter connection, each to the node in the Server column, on TCP:
+
+| Client | Server | Application | Port |
+| --- | --- | --- | --- |
+| `icscf` | `hss` | Cx | 3868 |
+| `scscf` | `hss` | Cx | 3868 |
+| `ipsmgw` | `hss` | Sh | 3868 |
+| `mmtel` | `hss` | Sh | 3868 |
+| `pcscf` | `epc` | Rx | 3868 |
+
+The `epc` node holds the PCRF stub, so the P-CSCF's Rx connection goes there and not to the HSS. With the filter `diameter`, the capture shows these messages:
 
 | Message | From | Meaning |
 | --- | --- | --- |
-| Capabilities-Exchange Request (CER) | I-CSCF, S-CSCF, IP-SM-GW | The client says who it is and which application it supports: Cx for the CSCFs, Sh for the IP-SM-GW. |
-| Capabilities-Exchange Answer (CEA) | HSS | The HSS answers with Result-Code 2001 (DIAMETER_SUCCESS) and lists the applications it supports: Cx, and Sh, which application servers use. |
+| Capabilities-Exchange Request (CER) | I-CSCF, S-CSCF, IP-SM-GW, MMTel AS, P-CSCF | The client says who it is and which application it supports: Cx for the I-CSCF and the S-CSCF, Sh for the two application servers, Rx for the P-CSCF. |
+| Capabilities-Exchange Answer (CEA) | HSS, EPC stub | The server answers with Result-Code 2001 (DIAMETER_SUCCESS) and lists the applications it supports. The HSS lists Cx, and Sh, which application servers use. The PCRF stub lists Rx. |
 | Device-Watchdog Request and Answer (DWR, DWA) | either side | A side that has heard nothing for about 30 seconds checks that its peer is alive. 30 seconds is the default of the watchdog timer (RFC 3539 3.4.1 [1]), and each timer is set up to 2 seconds early or late. |
 | Disconnect-Peer Request and Answer (DPR, DPA) | the node that stops | The node says goodbye before it closes the connection. |
 

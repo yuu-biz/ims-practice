@@ -38,26 +38,50 @@ docker compose up -d --build
 
 ## ノードを起動すると見えるもの
 
-各ノードのアドレスは次のとおりです。
+各ノードのアドレスは次のとおりです。「サービス」の列は `compose.yaml` での名前です。プロファイルのあるノードは `docker compose up` では起動しません。`--profile <名前>` でプロファイルごと起動するか、UE は `docker compose run --rm <サービス>` で実行します。
 
-| ノード | アドレス |
-| --- | --- |
-| DNS | 172.28.0.2 |
-| HSS | 172.28.0.10 |
-| I-CSCF | 172.28.0.20 |
-| S-CSCF | 172.28.0.30 |
-| P-CSCF | 172.28.0.40 |
-| メディア中継ノード（IMS-AGW） | 172.28.0.50 |
-| ラボ | 172.28.0.60 |
-| IP-SM-GW | 172.28.0.70 |
-| UE シミュレータ | 172.28.0.100 |
+| ノード | サービス | アドレス | プロファイル |
+| --- | --- | --- | --- |
+| DNS | `dns` | 172.28.0.2 | |
+| HSS | `hss` | 172.28.0.10 | |
+| I-CSCF | `icscf` | 172.28.0.20 | |
+| S-CSCF | `scscf` | 172.28.0.30 | |
+| P-CSCF | `pcscf` | 172.28.0.40 | |
+| メディア中継ノード（IMS-AGW） | `agw` | 172.28.0.50 | |
+| ラボ | `lab` | 172.28.0.60 | |
+| IP-SM-GW | `ipsmgw` | 172.28.0.70 | |
+| MMTel AS | `mmtel` | 172.28.0.75 | |
+| EPC スタブ（PCRF スタブを含む） | `epc` | 172.28.0.80 | |
+| MRFC | `mrfc` | 172.28.0.85 | |
+| MRFP | `mrfp` | 172.28.0.86 | |
+| UE シミュレータ（加入者 1） | `ue` | 172.28.0.100 | `ue` |
+| UE シミュレータ（加入者 2） | `ue2` | 172.28.0.101 | `ue` |
+| pjsua と SIPp | `peer` | 172.28.0.102 | `ue` |
+| UE シミュレータ（加入者 3） | `ue3` | 172.28.0.103 | `ue` |
+| ラボが操作する UE シミュレータ（加入者 1） | `ue-a` | 172.28.0.110 | `sim` |
+| ラボが操作する UE シミュレータ（加入者 2） | `ue-b` | 172.28.0.111 | `sim` |
+| ラボが操作する UE シミュレータ（加入者 3） | `ue-c` | 172.28.0.112 | `sim` |
+| VoLTE の UE（加入者 10） | `volte-a` | 172.28.0.120 | `volte` |
+| VoLTE の UE（加入者 12） | `volte-b` | 172.28.0.121 | `volte` |
 
-I-CSCF、S-CSCF、IP-SM-GW はそれぞれ HSS の TCP 3868 番ポートに Diameter の接続を開きます。フィルタ `diameter` で、次のメッセージが見えます。
+`capture` サービスにはアドレスがありません。ホストのネットワークをそのまま使い、ブリッジ `ims0` を捕らえます。
+
+次の 5 つのノードが、「サーバー」の列のノードの TCP ポートに Diameter の接続を開きます。
+
+| クライアント | サーバー | アプリケーション | ポート |
+| --- | --- | --- | --- |
+| `icscf` | `hss` | Cx | 3868 |
+| `scscf` | `hss` | Cx | 3868 |
+| `ipsmgw` | `hss` | Sh | 3868 |
+| `mmtel` | `hss` | Sh | 3868 |
+| `pcscf` | `epc` | Rx | 3868 |
+
+PCRF スタブは `epc` ノードの中にあります。P-CSCF の Rx の接続は HSS ではなく、そこに向かいます。フィルタ `diameter` で、次のメッセージが見えます。
 
 | メッセージ | 送信元 | 意味 |
 | --- | --- | --- |
-| Capabilities-Exchange Request（CER） | I-CSCF、S-CSCF、IP-SM-GW | 接続した側が、自分が誰であるかと、対応するアプリケーションを伝える。CSCF は Cx、IP-SM-GW は Sh。 |
-| Capabilities-Exchange Answer（CEA） | HSS | HSS が Result-Code 2001（DIAMETER_SUCCESS）で応え、対応するアプリケーションとして Cx と、AS が使う Sh を示す。 |
+| Capabilities-Exchange Request（CER） | I-CSCF、S-CSCF、IP-SM-GW、MMTel AS、P-CSCF | 接続した側が、自分が誰であるかと、対応するアプリケーションを伝える。I-CSCF と S-CSCF は Cx、2 つの AS は Sh、P-CSCF は Rx。 |
+| Capabilities-Exchange Answer（CEA） | HSS、EPC スタブ | 接続された側が Result-Code 2001（DIAMETER_SUCCESS）で応え、対応するアプリケーションを示す。HSS は Cx と、AS が使う Sh を示す。PCRF スタブは Rx を示す。 |
 | Device-Watchdog Request と Answer（DWR、DWA） | どちらの側も | 約 30 秒間なにも受け取らなかった側が、相手が動いているかを確かめる。30 秒は監視タイマーの既定値で（RFC 3539 3.4.1 [1]）、タイマーごとに最大 2 秒早まったり遅れたりする。 |
 | Disconnect-Peer Request と Answer（DPR、DPA） | 止まるノード | 接続を閉じる前に、切断することを相手に伝える。 |
 

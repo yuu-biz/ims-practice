@@ -20,7 +20,8 @@ The guide follows 3GPP Release 18 (TS 24.229 V18.11.0, TS 29.228 V18.0.0) and th
 | P-CSCF | 172.28.0.40 | Serves both UEs. Each call passes it twice: once on the caller's side, once on the callee's. |
 | S-CSCF | 172.28.0.30 | Serves both UEs too, so it is both the caller's (originating) and the callee's (terminating) S-CSCF. |
 | I-CSCF | 172.28.0.20 | Entry point of the callee's home network. It asks the HSS where the callee is. |
-| HSS | 172.28.0.10 | Answers the I-CSCF's location query. |
+| MMTel AS | 172.28.0.75 | Takes part twice, once for each user (steps 3 and 6). The S-CSCF sends it each INVITE by an iFC. It reads the user's service settings from the HSS over Sh, and with the default settings changes nothing. [Supplementary services with the MMTel AS](mmtel.md) shows what it does with other settings. |
+| HSS | 172.28.0.10 | Answers the I-CSCF's location query over Cx, and the MMTel AS's query for the service settings over Sh. |
 | DNS | 172.28.0.2 | Holds the ENUM records that turn numbers into SIP URIs. |
 | Media relay (IMS-AGW) | 172.28.0.50 | Relays the RTP. The P-CSCF controls it. |
 
