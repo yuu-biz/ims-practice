@@ -192,6 +192,21 @@ func TestValidateAllowsConditionsOfOtherNamespaces(t *testing.T) {
 	if err := s.Validate(); err != nil {
 		t.Errorf("Validate: %v", err)
 	}
+	// The same evaluation tells the two documents apart: the rule of
+	// <busy/> diverts on busy, until a condition it cannot know joins
+	// it.
+	busy := func(cd *CommunicationDiversion) string {
+		if r := EvaluateDiversion(cd, OnBusy, CallInfo{}); r.Rule != nil {
+			return r.Rule.ID
+		}
+		return ""
+	}
+	if got := busy(mustSimservs(t, diversionDocument).CommunicationDiversion); got != "call-diversion-busy" {
+		t.Fatalf("on busy without the foreign condition, rule %q matched, want call-diversion-busy", got)
+	}
+	if got := busy(s.CommunicationDiversion); got == "call-diversion-busy" {
+		t.Errorf("on busy with a condition of another namespace, rule %q matched, want it not to", got)
+	}
 }
 
 func TestUniquenessFailureNamesTheField(t *testing.T) {
