@@ -298,6 +298,10 @@ func TestAdmitDecidesWhileTheStackGoesOn(t *testing.T) {
 
 	peer.send(invite)
 	peer.send(invite)
+	// Both copies wait for Admit once the stack has answered this
+	// OPTIONS. Otherwise the second could arrive after the first had
+	// started the transaction, and match it without Admit.
+	other.sync()
 	nextQuestion(t, questions).answer <- true
 	st := nextTransaction(t, transactions)
 	st.Respond(NewResponse(st.Request, 180, NewTag()))
