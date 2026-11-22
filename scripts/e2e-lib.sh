@@ -23,6 +23,32 @@ nodes() {
 	docker inspect -f '{{index .Config.Labels "com.docker.compose.service"}} {{.Id}} {{.State.StartedAt}}' $ids | sort
 }
 
+# wait_for_h248_relay waits, on a deployment whose media relay takes its
+# commands over H.248, for the relay to register with the P-CSCF. Until
+# it has, the P-CSCF has no gateway to add a context on and answers the
+# first INVITE with 500. A registration that reaches no controller is
+# given up on after T-MAX, 25 s, and tried again after a random wait of
+# up to 5 s (H.248.1 (05/2002) Annex D.1.5, 9.2), so the relay may need
+# a minute when it started before the P-CSCF listened. Call it after
+# every "up" that may have recreated the relay or the P-CSCF: the log of
+# a recreated container starts empty, so an old registration does not
+# count. On a deployment whose relay serves its HTTP control API, it
+# does nothing.
+wait_for_h248_relay() {
+	local i
+	grep -q '^ *h248:' <<<"$(docker compose exec -T agw cat /etc/ims/node.yaml 2>/dev/null)" || return 0
+	for i in $(seq 1 120); do
+		if grep -q '"msg":"mediactl: registered"' <<<"$(docker compose logs --no-color agw 2>/dev/null)"; then
+			echo "ok   the media relay registered with the P-CSCF over H.248"
+			return 0
+		fi
+		sleep 1
+	done
+	echo "FAIL the media relay never registered with the P-CSCF over H.248 within 120 s" >&2
+	docker compose logs --no-color agw | tail -n 20 >&2
+	exit 1
+}
+
 # remember_nodes keeps the nodes that run now. Call it once the network
 # is up and before the first UE starts.
 remember_nodes() {
