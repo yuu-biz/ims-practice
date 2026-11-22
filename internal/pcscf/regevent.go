@@ -191,10 +191,16 @@ func (p *PCSCF) subscribeRegEvent(a Association, expires time.Duration, log *slo
 // 481, the P-CSCF should start a new subscription at once. Here the
 // subscription ends, and the next REGISTER of the user starts the new
 // one.
-func (p *PCSCF) refreshRegEvent(sub RegSubscription, log *slog.Logger) {
+// It returns the failure of the Store, or of the stack of this instance,
+// that left the subscription as it was and sent no SUBSCRIBE: the expiry
+// that brought the refresh about then stays due, and an instance sends
+// it once the claim has run out. A request that cannot be built at all
+// is no such failure: no instance could send it, so it is logged and the
+// refresh given up.
+func (p *PCSCF) refreshRegEvent(sub RegSubscription, log *slog.Logger) error {
 	stack, err := p.stack.Get()
 	if err != nil {
-		return
+		return err
 	}
 	was, privateID := sub.Dialog, sub.PrivateIdentity
 	// NewRequest takes the next CSeq number in this copy of the dialog;
@@ -207,7 +213,7 @@ func (p *PCSCF) refreshRegEvent(sub RegSubscription, log *slog.Logger) {
 	targets, err := p.regEventHop(m)
 	if err != nil {
 		log.Warn("reg event refresh not sent", "error", err.Error())
-		return
+		return nil
 	}
 	ctx, now := context.Background(), time.Now()
 	_, mine, err := p.store.UpdateRegSubscription(ctx, privateID, func(s *RegSubscription) bool {
@@ -221,13 +227,10 @@ func (p *PCSCF) refreshRegEvent(sub RegSubscription, log *slog.Logger) {
 	})
 	switch {
 	case err != nil:
-		// The subscription runs out at both ends, and the next REGISTER
-		// subscribes anew.
-		log.Warn("reg event refresh not sent: the store failed", "error", err.Error())
-		return
+		return err
 	case !mine:
 		// It has ended, or another instance took this refresh.
-		return
+		return nil
 	}
 	log.Info("reg event refreshing", "public_identity", sub.PublicIdentity, "expires", int(sub.Requested/time.Second))
 	go func() {
@@ -256,6 +259,7 @@ func (p *PCSCF) refreshRegEvent(sub RegSubscription, log *slog.Logger) {
 			log.Warn("ended reg event subscription not removed: the store failed", "error", err.Error())
 		}
 	}()
+	return nil
 }
 
 // grantRegEvent keeps the duration that a 2xx to a SUBSCRIBE granted
@@ -347,9 +351,8 @@ func (p *PCSCF) refreshRegEventDue(ctx context.Context, privateID string) error 
 		// No NOTIFY has made a dialog to refresh in; Timer N ends it.
 		return nil
 	}
-	p.refreshRegEvent(sub, p.log.With("private_identity", privateID,
+	return p.refreshRegEvent(sub, p.log.With("private_identity", privateID,
 		"subscription_call_id", sub.Dialog.ID.CallID))
-	return nil
 }
 
 // regEventHop is where a SUBSCRIBE of the P-CSCF goes, best target
