@@ -229,17 +229,16 @@ func withICID(out *sip.Message) sip.ChargingVector {
 // "phone". The user part becomes the telephone-subscriber of the tel
 // URI with the parameters it carries (RFC 3261 19.1.6).
 func telURIOf(uri string) (string, bool) {
-	u, err := sip.ParseURI(uri)
-	if err != nil || !strings.HasPrefix(u.User, "+") {
+	n, ok := ims.ParseTelephoneNumber(uri)
+	// A Request-URI that is a tel URI already names the user as the HSS
+	// knows the number, so only a SIP URI is replaced.
+	if !ok || n.SIP == nil || !strings.HasPrefix(n.Number, "+") {
 		return "", false
 	}
-	if user, ok := u.Params.Get("user"); !ok || !strings.EqualFold(user, "phone") {
+	if _, gruu := n.SIP.Params.Get("gr"); gruu {
 		return "", false
 	}
-	if _, gruu := u.Params.Get("gr"); gruu {
-		return "", false
-	}
-	return "tel:" + u.User, true
+	return "tel:" + n.Number + n.Params.String(), true
 }
 
 func (i *ICSCF) ownURI() sip.URI {
