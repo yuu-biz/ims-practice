@@ -2,6 +2,7 @@
 // API here shares: HTTP/2 without TLS (TS 29.500 5.1 to 5.4), JSON
 // bodies, and the error answers with ProblemDetails (TS 29.571
 // 5.2.4.1) and the application errors of TS 29.500 Table 5.2.7.2-1.
+// No node of this project runs it: no binary in cmd builds it in.
 //
 // The packages of the APIs (n5 for TS 29.514, nhss for TS 29.562) keep
 // what differs between them: their resources and JSON types, their

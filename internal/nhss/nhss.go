@@ -4,6 +4,7 @@
 // Nhss_imsSubscriberDataManagement (SDM). The I-CSCF and the S-CSCF use
 // them over N70 instead of Cx, and an AS such as the IP-SM-GW over N71
 // instead of Sh (TS 23.228 AA.1.2).
+// No node of this project runs it: no binary in cmd builds it in.
 //
 // TS 23.228 Table AA.2.2.2-1 maps the Cx procedures this project uses
 // onto the operations here:

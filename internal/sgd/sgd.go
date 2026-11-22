@@ -44,9 +44,11 @@
 // SMSF-Non-3GPP-Address (a second serving node, non-3GPP access), LMSI
 // (the VLR), the User-Identifier of the SRA (the MSISDN that the HSS
 // stores), and MWD-Status and the absent user diagnostics (what the HSS
-// has stored about earlier deliveries that failed). The nodes of this
-// project that use this package send none of these AVPs and act on none
-// of them.
+// has stored about earlier deliveries that failed). The SC of package
+// smsc, which uses this package, sends none of these AVPs and acts on
+// none of them.
+//
+// No node of this project runs it: no binary in cmd builds it in.
 package sgd
 
 import (
