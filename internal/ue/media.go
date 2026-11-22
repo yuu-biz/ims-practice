@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"errors"
 	"fmt"
+	"io"
 	"math"
 	mathrand "math/rand/v2"
 	"net"
@@ -97,6 +98,15 @@ type Media struct {
 	receivedDTMF           []rune
 	dtmfReceiver           rtp.DTMFReceiver
 	onDigit                func(rune)
+
+	// Where what arrives also goes while the call runs
+	// (StreamReceivedTo), how much of the recording has gone there, and
+	// the first error of writing to it.
+	live       io.Writer
+	liveFrames *amr.StreamWriter
+	liveFiled  int // frames of the recording written
+	liveBytes  int // PCMU payload bytes written
+	liveErr    error
 
 	// RTCP (RFC 3550 6).
 	receiver       *rtcp.Receiver
@@ -216,6 +226,76 @@ func (m *Media) OnDigit(f func(rune)) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.onDigit = f
+}
+
+// StreamReceivedTo also writes what the call receives to w while the
+// call runs, so that a player reading w hears the call as it happens:
+// the AMR or AMR-WB frames in the storage format of RFC 4867 5, or the
+// PCMU payloads as they are. w gets one write per packet.
+//
+// The write happens on the goroutine that reads RTP, so a w that
+// blocks keeps the call from reading its packets, and the socket drops
+// what arrives meanwhile: a listener that can be slower than the call
+// needs a queue of its own, as the player of "ue -play" has.
+//
+// The call goes on when a write fails, which is what a listener that
+// has gone looks like; StreamError tells what happened.
+func (m *Media) StreamReceivedTo(w io.Writer) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.live = w
+}
+
+// StreamError is the first error of writing to the stream of
+// StreamReceivedTo, which stopped the stream.
+func (m *Media) StreamError() error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.liveErr
+}
+
+// streamReceived writes what has arrived since the last packet to the
+// stream of StreamReceivedTo. The write is made without the lock, so
+// that a listener holds up nothing that needs it: the sending of RTP,
+// RTCP, and the call's own view of what it has received. It still holds
+// up the reading of the next packet, which is the listener's to avoid
+// (StreamReceivedTo).
+func (m *Media) streamReceived() {
+	m.mu.Lock()
+	var (
+		frames []amr.Frame
+		pcmu   []byte
+	)
+	switch {
+	case m.live == nil || m.liveErr != nil:
+		m.mu.Unlock()
+		return
+	case m.recorder != nil:
+		if m.liveFrames == nil {
+			m.liveFrames = amr.NewStreamWriter(m.live, m.format.Codec)
+		}
+		filed := m.recorder.Frames()
+		frames = append(frames, filed[m.liveFiled:]...)
+		m.liveFiled = len(filed)
+	default:
+		pcmu = append(pcmu, m.pcmuReceived[m.liveBytes:]...)
+		m.liveBytes = len(m.pcmuReceived)
+	}
+	w, stream := m.live, m.liveFrames
+	m.mu.Unlock()
+
+	var err error
+	switch {
+	case len(frames) > 0:
+		err = stream.Write(frames)
+	case len(pcmu) > 0:
+		_, err = w.Write(pcmu)
+	}
+	if err != nil {
+		m.mu.Lock()
+		m.liveErr = err
+		m.mu.Unlock()
+	}
 }
 
 // Start starts the clock of the RTP this side sends, which plays speech
@@ -439,7 +519,9 @@ func (m *Media) receiveRTP() {
 		if err != nil {
 			continue
 		}
-		if digit, ok := m.receivedPacket(p, time.Now()); ok {
+		digit, isDigit := m.receivedPacket(p, time.Now())
+		m.streamReceived()
+		if isDigit {
 			m.mu.Lock()
 			onDigit := m.onDigit
 			m.mu.Unlock()

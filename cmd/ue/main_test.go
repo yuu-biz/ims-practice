@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"flag"
 	"io"
+	"os"
 	"slices"
 	"strings"
 	"testing"
@@ -35,6 +36,32 @@ func TestUSIMConfig(t *testing.T) {
 	} {
 		if _, err := usimConfig(bad[0], bad[1], bad[2], bad[3]); err == nil {
 			t.Errorf("usimConfig%v: no error", bad)
+		}
+	}
+}
+
+// The JSON log leaves standard output to the stream of the call, so
+// that a player reading it gets the audio and nothing else. Every other
+// run keeps the log on standard output, where the scripts read it.
+func TestLogLeavesStandardOutputToTheStreamOfTheCall(t *testing.T) {
+	if w := logWriter(options{receivedOut: standardOutput}); w != os.Stderr {
+		t.Error("the log of a call streaming to standard output does not go to standard error")
+	}
+	for _, o := range []options{{}, {receivedOut: "/captures/volte12-received.amr"}, {sentOut: "/captures/sent.amr"}} {
+		if w := logWriter(o); w != os.Stdout {
+			t.Errorf("the log of %+v does not go to standard output", o)
+		}
+	}
+}
+
+// One call has one standard output, so only -received-out takes it.
+func TestOnlyReceivedOutTakesStandardOutput(t *testing.T) {
+	if err := (options{receivedOut: standardOutput}).checkRecording(); err != nil {
+		t.Errorf("-received-out %s: %v", standardOutput, err)
+	}
+	for _, o := range []options{{sentOut: standardOutput}, {wavOut: standardOutput}} {
+		if err := o.checkRecording(); err == nil {
+			t.Errorf("%+v: no error", o)
 		}
 	}
 }
