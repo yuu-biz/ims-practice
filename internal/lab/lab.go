@@ -88,6 +88,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/yuu-biz/ims-practice/internal/diameter"
 	"github.com/yuu-biz/ims-practice/internal/hep"
 )
 
@@ -119,6 +120,10 @@ type Lab struct {
 }
 
 func New(cfg Config, log *slog.Logger) (*Lab, error) {
+	// The summaries name the Cx and Sh commands from the dictionary.
+	if err := diameter.LoadDictionary(); err != nil {
+		return nil, err
+	}
 	subscribers, err := subscriberAPI(cfg.HSSProvisioning, log)
 	if err != nil {
 		return nil, err

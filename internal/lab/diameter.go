@@ -4,14 +4,17 @@ import (
 	"encoding/json"
 	"errors"
 	"strconv"
+
+	"github.com/yuu-biz/ims-practice/internal/diameter"
 )
 
 // diameterMessage is the part of the DIAMETER (JSON) payload that the
 // summary needs. The nodes write the whole message: every AVP with its
 // name, code, vendor and value.
 type diameterMessage struct {
-	Command string `json:"command"`
-	Code    uint32 `json:"code"`
+	Command       string `json:"command"`
+	Code          uint32 `json:"code"`
+	ApplicationID uint32 `json:"application_id"`
 	// Request is false for an answer, also when an encoder leaves the
 	// false value out.
 	Request bool          `json:"request"`
@@ -36,31 +39,11 @@ func parseDiameter(payload []byte) (diameterMessage, error) {
 	return d, nil
 }
 
-// commandAbbreviations are the short names of the commands the nodes
-// send, without the R or A for request or answer: the base protocol
-// commands of RFC 6733, the Cx commands of TS 29.229 6.1, the Sh
-// commands of TS 29.329 6.1 and the Rx commands of TS 29.214 5.6. Their
-// codes do not overlap.
-var commandAbbreviations = map[uint32]string{
-	257: "CE", // Capabilities-Exchange
-	280: "DW", // Device-Watchdog
-	282: "DP", // Disconnect-Peer
-	300: "UA", // User-Authorization
-	301: "SA", // Server-Assignment
-	302: "LI", // Location-Info
-	303: "MA", // Multimedia-Auth
-	304: "RT", // Registration-Termination
-	306: "UD", // User-Data
-	307: "PU", // Profile-Update
-	265: "AA", // AA, the Rx session's service information
-	258: "RA", // Re-Auth
-	275: "ST", // Session-Termination
-	274: "AS", // Abort-Session
-}
-
-// abbreviation is "UAR" or "UAA", or "" for a command not in the table.
+// abbreviation is "UAR" or "UAA", from the short name that the
+// dictionary gives the command, as in the logs of the nodes, or "" for
+// a command the dictionary does not have.
 func (d diameterMessage) abbreviation() string {
-	short, ok := commandAbbreviations[d.Code]
+	short, ok := diameter.CommandShortName(d.ApplicationID, d.Code)
 	if !ok {
 		return ""
 	}
