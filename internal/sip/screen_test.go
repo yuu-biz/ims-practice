@@ -2,6 +2,7 @@ package sip
 
 import (
 	"reflect"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -212,5 +213,162 @@ func TestScreenOverTCPKeepsTheConnection(t *testing.T) {
 	if got.StatusCode != 200 || got.Get("Call-ID") != accepted.Get("Call-ID") {
 		t.Errorf("first response on the connection is %s for %s, want the 200 to the second REGISTER",
 			startLine(got), got.Get("Call-ID"))
+	}
+}
+
+// admitQuestion is a request that a test's Config.Admit holds until the
+// test answers.
+type admitQuestion struct {
+	req    *Message
+	answer chan bool
+}
+
+// heldAdmit is a Config.Admit that lets an OPTIONS in at once, for
+// udpPeer.sync, and hands any other request to the test on questions.
+// It refuses what is still held when the test ends.
+func heldAdmit(t *testing.T, questions chan<- admitQuestion) func(*Message, Destination) bool {
+	return func(req *Message, _ Destination) bool {
+		if req.Method == OPTIONS {
+			return true
+		}
+		q := admitQuestion{req: req, answer: make(chan bool)}
+		select {
+		case questions <- q:
+		case <-t.Context().Done():
+			return false
+		}
+		select {
+		case ok := <-q.answer:
+			return ok
+		case <-t.Context().Done():
+			return false
+		}
+	}
+}
+
+func nextQuestion(t *testing.T, questions <-chan admitQuestion) admitQuestion {
+	t.Helper()
+	select {
+	case q := <-questions:
+		return q
+	case <-time.After(5 * time.Second):
+		t.Fatal("Admit was not asked about the INVITE")
+		return admitQuestion{}
+	}
+}
+
+// Config.Admit decides off the loop: while it holds an INVITE, the
+// stack answers an OPTIONS. An INVITE it refuses leaves nothing behind,
+// so the next copy is asked about again. A copy let in starts the
+// transaction, and a copy let in after it is a retransmission of that
+// transaction.
+func TestAdmitDecidesWhileTheStackGoesOn(t *testing.T) {
+	questions := make(chan admitQuestion)
+	transactions := make(chan *ServerTransaction, 2)
+	stack := newStackWith(t, Config{
+		Timers:    testTimers,
+		Admit:     heldAdmit(t, questions),
+		OnRequest: answerOptions(func(st *ServerTransaction) { transactions <- st }),
+	})
+	peer := newUDPPeer(t, stack.LocalAddr())
+	invite := peer.request(INVITE)
+
+	peer.send(invite)
+	q := nextQuestion(t, questions)
+	if got := peer.sync(); len(got) != 0 {
+		t.Errorf("stack sent %s while Admit held the INVITE, want nothing", startLine(got[0]))
+	}
+	q.answer <- false
+	peer.send(invite)
+	nextQuestion(t, questions).answer <- false
+
+	peer.send(invite)
+	first := nextQuestion(t, questions)
+	peer.send(invite)
+	second := nextQuestion(t, questions)
+	first.answer <- true
+	var st *ServerTransaction
+	select {
+	case st = <-transactions:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the INVITE let in did not reach the TU")
+	}
+	st.Respond(NewResponse(st.Request, 180, NewTag()))
+	if got := peer.read(); got.StatusCode != 180 {
+		t.Fatalf("got %s, want the 180 of the TU", startLine(got))
+	}
+	second.answer <- true
+	// RFC 3261 17.2.1: a retransmission gets the last provisional
+	// response again.
+	if got := peer.read(); got.StatusCode != 180 {
+		t.Fatalf("got %s, want the 180 again for the copy let in later", startLine(got))
+	}
+	st.Respond(NewResponse(st.Request, 486, NewTag()))
+	if got := peer.read(); got.StatusCode != 486 {
+		t.Errorf("got %s, want the 486 of the TU", startLine(got))
+	}
+	if len(transactions) != 0 {
+		t.Errorf("the TU got %d more transactions for the INVITE, want none", len(transactions))
+	}
+}
+
+// Admit is asked about every request that Screen lets in, CANCEL and
+// ACK included, and only about those. What it refuses is dropped as
+// what Screen refuses: nothing goes back and nothing reaches the TU.
+func TestAdmitDropsARequestWithoutAWord(t *testing.T) {
+	var log screenLog
+	decided := make(chan struct{}, 16)
+	stack := newStackWith(t, Config{
+		Timers: testTimers,
+		Screen: func(req *Message, _ Destination) bool { return !strings.HasPrefix(req.Get("Call-ID"), "screened-") },
+		Admit: func(req *Message, source Destination) bool {
+			if req.Method == OPTIONS {
+				return true
+			}
+			log.ask(req)
+			defer func() { decided <- struct{}{} }()
+			return refusedCallID(req, source)
+		},
+		OnRequest: answerOptions(func(st *ServerTransaction) {
+			log.reachTU(st.Request)
+			st.Respond(NewResponse(st.Request, 200, NewTag()))
+		}),
+		OnACK: log.reachTU,
+	})
+	peer := newUDPPeer(t, stack.LocalAddr())
+
+	var refused []*Message
+	for _, method := range []Method{INVITE, CANCEL, MESSAGE, ACK} {
+		m := peer.request(method)
+		m.SetFirst("Call-ID", "refused-"+NewCallID())
+		refused = append(refused, m)
+	}
+	screened := peer.request(MESSAGE)
+	screened.SetFirst("Call-ID", "screened-"+NewCallID())
+	for range 2 {
+		for _, m := range refused {
+			peer.send(m)
+		}
+		peer.send(screened)
+	}
+	for range 2 * len(refused) {
+		select {
+		case <-decided:
+		case <-time.After(5 * time.Second):
+			t.Fatal("Admit was not asked about every copy of the requests that Screen let in")
+		}
+	}
+	if got := peer.sync(); len(got) != 0 {
+		t.Errorf("stack sent %d messages for refused requests, want none; first: %s", len(got), startLine(got[0]))
+	}
+
+	asked, tu := log.methods()
+	slices.Sort(asked)
+	want := []Method{ACK, ACK, CANCEL, CANCEL, INVITE, INVITE, MESSAGE, MESSAGE}
+	if !reflect.DeepEqual(asked, want) {
+		t.Errorf("Admit was asked about %v, want each copy of the requests that Screen let in: %v", asked, want)
+	}
+	if len(tu) != 0 {
+		t.Errorf("TU got %v, want nothing", tu)
 	}
 }
