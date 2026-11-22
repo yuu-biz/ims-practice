@@ -338,6 +338,26 @@ td .muted {
 
 /* Ladder diagram */
 
+.ladder-actions {
+  display: flex;
+  gap: 0.75rem;
+  align-items: center;
+  margin: 0.5rem 0;
+}
+
+/* The ladder as text, for the reader to copy when the browser gives the
+   page no clipboard. */
+.ladder-text {
+  max-height: 24rem;
+  margin: 0 0 0.75rem;
+  padding: 0.6rem;
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: var(--bg);
+  font: 12px/1.4 var(--mono);
+}
+
 .ladder-layout {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
