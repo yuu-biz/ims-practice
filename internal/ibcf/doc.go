@@ -45,9 +45,10 @@
 // the TrGW, so a call whose TrGW context is lost goes on without media
 // until a party ends it.
 //
-// SIMPLIFIED: TS 24.229 5.10.2.4 and 5.10.3.4. The one Store is
-// MemoryStore, in the memory of one process; no Store that keeps the
-// records outside the process is built. An IBCF node that is recreated
+// SIMPLIFIED: TS 24.229 5.10.2.4 and 5.10.3.4. The node gives the IBCF
+// a MemoryStore, in the memory of its process, and not the Store that
+// keeps the records outside it (internal/kvstore/ibcfstore). An IBCF
+// node that is recreated
 // starts with an empty one, so it finds no record and ends none of the
 // calls of the process that stopped: their requests get 481 from it,
 // and their TrGW contexts stay reserved.
