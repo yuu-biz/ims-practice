@@ -13,7 +13,6 @@ import (
 	"github.com/fiorix/go-diameter/v4/diam/datatype"
 	"github.com/fiorix/go-diameter/v4/diam/dict"
 
-	"github.com/yuu-biz/ims-practice/internal/cx"
 	"github.com/yuu-biz/ims-practice/internal/diameter"
 	"github.com/yuu-biz/ims-practice/internal/policy"
 )
@@ -27,8 +26,8 @@ const (
 var (
 	pcrfID  = diameter.Identity{OriginHost: pcrf, OriginRealm: realm}
 	pcscfID = diameter.Identity{OriginHost: pcscf, OriginRealm: realm}
-	toPCRF  = Header{SessionID: pcscf + ";1;2", OriginHost: pcscf, OriginRealm: realm, DestinationRealm: realm}
-	toPCSCF = Header{SessionID: pcscf + ";1;2", OriginHost: pcrf, OriginRealm: realm, DestinationHost: pcscf, DestinationRealm: realm}
+	toPCRF  = diameter.Header{SessionID: pcscf + ";1;2", OriginHost: pcscf, OriginRealm: realm, DestinationRealm: realm}
+	toPCSCF = diameter.Header{SessionID: pcscf + ";1;2", OriginHost: pcrf, OriginRealm: realm, DestinationHost: pcscf, DestinationRealm: realm}
 	ueAddr  = netip.MustParseAddr("172.28.0.110")
 	relay   = netip.MustParseAddr("172.28.0.50")
 	initial = InitialRequest
@@ -97,7 +96,7 @@ func TestAARoundTrip(t *testing.T) {
 		if !reflect.DeepEqual(got, aar) {
 			t.Errorf("AAR\n got %+v\nwant %+v", got, aar)
 		}
-		for _, aaa := range []AAAnswer{{Result: cx.Base(DiameterSuccess)}, {Result: cx.Experimental(IPCANSessionNotAvailable)}} {
+		for _, aaa := range []AAAnswer{{Result: diameter.Base(diameter.DiameterSuccess)}, {Result: diameter.Experimental(IPCANSessionNotAvailable)}} {
 			ans := wire(t, aaa.Message(req, pcrfID))
 			if ans.Header.CommandCode != CommandAA || ans.Header.ApplicationID != diameter.ApplicationIDRx || SessionID(ans) != aar.SessionID {
 				t.Errorf("AAA header %+v, Session-Id %q", ans.Header, SessionID(ans))
@@ -121,7 +120,7 @@ func TestReAuthRoundTrip(t *testing.T) {
 	if !reflect.DeepEqual(got, rar) {
 		t.Errorf("RAR\n got %+v\nwant %+v", got, rar)
 	}
-	raa := ReAuthAnswer{Result: cx.Base(DiameterSuccess)}
+	raa := ReAuthAnswer{Result: diameter.Base(diameter.DiameterSuccess)}
 	if gotA, err := ParseReAuthAnswer(wire(t, raa.Message(req, pcscfID))); err != nil || gotA != raa {
 		t.Errorf("RAA = %+v, %v; want %+v", gotA, err, raa)
 	}
@@ -133,7 +132,7 @@ func TestSessionTerminationRoundTrip(t *testing.T) {
 	if got, err := ParseSessionTerminationRequest(req); err != nil || got != str {
 		t.Errorf("STR = %+v, %v; want %+v", got, err, str)
 	}
-	sta := SessionTerminationAnswer{Result: cx.Base(DiameterUnknownSessionID)}
+	sta := SessionTerminationAnswer{Result: diameter.Base(diameter.DiameterUnknownSessionID)}
 	if got, err := ParseSessionTerminationAnswer(wire(t, sta.Message(req, pcrfID))); err != nil || got != sta {
 		t.Errorf("STA = %+v, %v; want %+v", got, err, sta)
 	}
@@ -145,7 +144,7 @@ func TestAbortSessionRoundTrip(t *testing.T) {
 	if got, err := ParseAbortSessionRequest(req); err != nil || got != asr {
 		t.Errorf("ASR = %+v, %v; want %+v", got, err, asr)
 	}
-	asa := AbortSessionAnswer{Result: cx.Base(DiameterSuccess)}
+	asa := AbortSessionAnswer{Result: diameter.Base(diameter.DiameterSuccess)}
 	if got, err := ParseAbortSessionAnswer(wire(t, asa.Message(req, pcscfID))); err != nil || got != asa {
 		t.Errorf("ASA = %+v, %v; want %+v", got, err, asa)
 	}
@@ -281,19 +280,19 @@ func TestRxDictionaryMatchesTS29214(t *testing.T) {
 
 func TestParseAARequestNamesTheFaultInTheServiceInformation(t *testing.T) {
 	m := AARequest{Header: toPCRF, FramedIPAddress: ueAddr}.Message()
-	m.AddAVP(vendorAVP(avpMediaComponentDescription, mv, &diam.GroupedAVP{AVP: []*diam.AVP{
-		vendorAVP(avpMediaComponentNumber, mv, datatype.Unsigned32(1)),
-		vendorAVP(avpMediaSubComponent, mv, &diam.GroupedAVP{AVP: []*diam.AVP{
-			vendorAVP(avpFlowNumber, mv, datatype.Unsigned32(1)),
-			vendorAVP(avpFlowDescription, mv, datatype.IPFilterRule("permit in 17 from 10.0.0.0/8 to any")),
+	m.AddAVP(diameter.VendorAVP(avpMediaComponentDescription, mv, &diam.GroupedAVP{AVP: []*diam.AVP{
+		diameter.VendorAVP(avpMediaComponentNumber, mv, datatype.Unsigned32(1)),
+		diameter.VendorAVP(avpMediaSubComponent, mv, &diam.GroupedAVP{AVP: []*diam.AVP{
+			diameter.VendorAVP(avpFlowNumber, mv, datatype.Unsigned32(1)),
+			diameter.VendorAVP(avpFlowDescription, mv, datatype.IPFilterRule("permit in 17 from 10.0.0.0/8 to any")),
 		}}),
 	}}))
 	if _, err := ParseAARequest(wire(t, m)); !errors.Is(err, ErrFilterRestrictions) {
 		t.Errorf("masked address: %v, want ErrFilterRestrictions", err)
 	}
 	m = AARequest{Header: toPCRF, FramedIPAddress: ueAddr}.Message()
-	m.AddAVP(vendorAVP(avpMediaComponentDescription, mv, &diam.GroupedAVP{AVP: []*diam.AVP{
-		vendorAVP(avpMediaType, mv, datatype.Enumerated(0)),
+	m.AddAVP(diameter.VendorAVP(avpMediaComponentDescription, mv, &diam.GroupedAVP{AVP: []*diam.AVP{
+		diameter.VendorAVP(avpMediaType, mv, datatype.Enumerated(0)),
 	}}))
 	if _, err := ParseAARequest(wire(t, m)); !errors.Is(err, ErrInvalidServiceInformation) {
 		t.Errorf("no Media-Component-Number: %v, want ErrInvalidServiceInformation", err)

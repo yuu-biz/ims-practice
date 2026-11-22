@@ -15,7 +15,6 @@ import (
 
 	"github.com/fiorix/go-diameter/v4/diam"
 
-	"github.com/yuu-biz/ims-practice/internal/cx"
 	"github.com/yuu-biz/ims-practice/internal/diameter"
 	"github.com/yuu-biz/ims-practice/internal/epc"
 	"github.com/yuu-biz/ims-practice/internal/policy"
@@ -172,7 +171,7 @@ func waitForPeer(t *testing.T, node *diameter.Node, peer *diameter.Peer) {
 	t.Helper()
 	deadline := time.Now().Add(5 * time.Second)
 	for {
-		header := cx.NewHeader(node, "", domain)
+		header := diameter.NewHeader(node, "", domain)
 		_, err := peer.Request(t.Context(), rx.SessionTerminationRequest{Header: header, TerminationCause: rx.DiameterLogout}.Message())
 		if err == nil {
 			return
@@ -362,9 +361,9 @@ func parseAAR(t *testing.T, m *diam.Message) rx.AARequest {
 	return aar
 }
 
-func wantResult(t *testing.T, what string, m *diam.Message, want rx.Result) {
+func wantResult(t *testing.T, what string, m *diam.Message, want diameter.Result) {
 	t.Helper()
-	var got rx.Result
+	var got diameter.Result
 	var err error
 	switch m.Header.CommandCode {
 	case rx.CommandAA:
@@ -511,7 +510,7 @@ func TestCallUnderPolicyControlOverRx(t *testing.T) {
 	n.register(u.pccParty, 3600)
 	msgs := n.wantRx("AAR sent", "AAA received")
 	signalling := parseAAR(t, msgs[0])
-	wantResult(t, "AAA of the signalling path", msgs[1], cx.Base(rx.DiameterSuccess))
+	wantResult(t, "AAA of the signalling path", msgs[1], diameter.Base(diameter.DiameterSuccess))
 	if signalling.FramedIPAddress != pccUEAddr ||
 		!slices.Equal(signalling.SpecificActions, []rx.SpecificAction{rx.IndicationOfLossOfBearer, rx.IndicationOfReleaseOfBearer}) ||
 		len(signalling.MediaComponents) != 1 || signalling.MediaComponents[0].Number != 0 {
@@ -528,7 +527,7 @@ func TestCallUnderPolicyControlOverRx(t *testing.T) {
 	}
 	msgs = n.wantRx("AAR sent", "AAA received")
 	media := parseAAR(t, msgs[0])
-	wantResult(t, "AAA of the call", msgs[1], cx.Base(rx.DiameterSuccess))
+	wantResult(t, "AAA of the call", msgs[1], diameter.Base(diameter.DiameterSuccess))
 	if media.FramedIPAddress != pccUEAddr || !slices.Contains(media.SpecificActions, rx.IndicationOfReleaseOfBearer) {
 		t.Errorf("AAR of the call for %v with %v; want the UE's address and the release of the bearer", media.FramedIPAddress, media.SpecificActions)
 	}
@@ -570,7 +569,7 @@ func TestCallUnderPolicyControlOverRx(t *testing.T) {
 	if rx.SessionID(msgs[0]) != media.SessionID {
 		t.Errorf("STR for %q, want the session of the call %q", rx.SessionID(msgs[0]), media.SessionID)
 	}
-	wantResult(t, "STA", msgs[1], cx.Base(rx.DiameterSuccess))
+	wantResult(t, "STA", msgs[1], diameter.Base(diameter.DiameterSuccess))
 	if m, ok := u.nextNetworkMessage(t).(*epc.DeactivateEPSBearerContextRequest); !ok || m.EPSBearerIdentity != bearer.EPSBearerIdentity {
 		t.Errorf("the UE got %+v, want the voice bearer deactivated", m)
 	}
@@ -609,7 +608,7 @@ func TestReleasedBearerEndsTheCall(t *testing.T) {
 	if asr.AbortCause != rx.BearerReleased {
 		t.Errorf("Abort-Cause %v, want BEARER_RELEASED", asr.AbortCause)
 	}
-	wantResult(t, "ASA", msgs[1], cx.Base(rx.DiameterSuccess))
+	wantResult(t, "ASA", msgs[1], diameter.Base(diameter.DiameterSuccess))
 	if rx.SessionID(msgs[2]) != asr.SessionID {
 		t.Errorf("STR for %q, want the aborted session %q", rx.SessionID(msgs[2]), asr.SessionID)
 	}
@@ -672,7 +671,7 @@ func TestUEThatBypassesTheEPCCallsWithoutRx(t *testing.T) {
 	if aar := parseAAR(t, msgs[0]); aar.FramedIPAddress != pccBypassAddr {
 		t.Errorf("AAR for %v, want the softphone's address %v", aar.FramedIPAddress, pccBypassAddr)
 	}
-	wantResult(t, "AAA", msgs[1], cx.Experimental(rx.IPCANSessionNotAvailable))
+	wantResult(t, "AAA", msgs[1], diameter.Experimental(rx.IPCANSessionNotAvailable))
 	if a := n.association(softphone); a.SignallingSession != "" {
 		t.Errorf("signalling session %q, want none", a.SignallingSession)
 	}

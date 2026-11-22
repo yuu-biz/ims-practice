@@ -13,7 +13,6 @@ import (
 
 	"github.com/fiorix/go-diameter/v4/diam"
 
-	"github.com/yuu-biz/ims-practice/internal/cx"
 	"github.com/yuu-biz/ims-practice/internal/diameter"
 	"github.com/yuu-biz/ims-practice/internal/epc"
 	"github.com/yuu-biz/ims-practice/internal/policy"
@@ -66,9 +65,9 @@ func newEPCStub(t *testing.T) *epcStub {
 	af := diameter.NewNode(afID, []uint32{diameter.ApplicationIDRx}, timers, quiet())
 	af.Handle(func(req *diam.Message) *diam.Message {
 		if req.Header.CommandCode == rx.CommandAbortSession {
-			return rx.AbortSessionAnswer{Result: cx.Base(rx.DiameterSuccess)}.Message(req, afID)
+			return rx.AbortSessionAnswer{Result: diameter.Base(diameter.DiameterSuccess)}.Message(req, afID)
 		}
-		return rx.ReAuthAnswer{Result: cx.Base(rx.DiameterSuccess)}.Message(req, afID)
+		return rx.ReAuthAnswer{Result: diameter.Base(diameter.DiameterSuccess)}.Message(req, afID)
 	})
 	peer := af.Connect(diameter.PeerConfig{Address: server.Addr(), OriginHost: pcrfID.OriginHost})
 	t.Cleanup(peer.Stop)
@@ -86,14 +85,14 @@ func (s *epcStub) authorizeCall() {
 	if err != nil {
 		s.t.Fatal(err)
 	}
-	aar := rx.AARequest{Header: cx.NewHeader(s.af, "", domain), MediaComponents: components, FramedIPAddress: ue1Addr,
+	aar := rx.AARequest{Header: diameter.NewHeader(s.af, "", domain), MediaComponents: components, FramedIPAddress: ue1Addr,
 		SpecificActions: []rx.SpecificAction{rx.IndicationOfReleaseOfBearer}}
 	deadline := time.Now().Add(5 * time.Second)
 	for {
 		ans, err := s.rx.Request(context.Background(), aar.Message())
 		if err == nil {
 			aaa, err := rx.ParseAAAnswer(ans)
-			if err != nil || aaa.Result != cx.Base(rx.DiameterSuccess) {
+			if err != nil || aaa.Result != diameter.Base(diameter.DiameterSuccess) {
 				s.t.Fatalf("AAA %+v, %v", aaa.Result, err)
 			}
 			return

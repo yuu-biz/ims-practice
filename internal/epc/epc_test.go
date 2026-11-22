@@ -15,7 +15,6 @@ import (
 
 	"github.com/fiorix/go-diameter/v4/diam"
 
-	"github.com/yuu-biz/ims-practice/internal/cx"
 	"github.com/yuu-biz/ims-practice/internal/diameter"
 	"github.com/yuu-biz/ims-practice/internal/epc"
 	"github.com/yuu-biz/ims-practice/internal/policy"
@@ -91,9 +90,9 @@ func newFakeAF(t *testing.T, pcrfAddr string) *fakeAF {
 	af.node.Handle(func(req *diam.Message) *diam.Message {
 		af.requests <- req
 		if req.Header.CommandCode == rx.CommandAbortSession {
-			return rx.AbortSessionAnswer{Result: cx.Base(rx.DiameterSuccess)}.Message(req, afID)
+			return rx.AbortSessionAnswer{Result: diameter.Base(diameter.DiameterSuccess)}.Message(req, afID)
 		}
-		return rx.ReAuthAnswer{Result: cx.Base(rx.DiameterSuccess)}.Message(req, afID)
+		return rx.ReAuthAnswer{Result: diameter.Base(diameter.DiameterSuccess)}.Message(req, afID)
 	})
 	af.peer = af.node.Connect(diameter.PeerConfig{Address: pcrfAddr, OriginHost: pcrfID.OriginHost})
 	t.Cleanup(af.peer.Stop)
@@ -116,9 +115,9 @@ func (af *fakeAF) send(request *diam.Message) *diam.Message {
 	}
 }
 
-func (af *fakeAF) header() rx.Header { return cx.NewHeader(af.node, "", realm) }
+func (af *fakeAF) header() diameter.Header { return diameter.NewHeader(af.node, "", realm) }
 
-func (af *fakeAF) aar(r rx.AARequest) rx.Result {
+func (af *fakeAF) aar(r rx.AARequest) diameter.Result {
 	af.t.Helper()
 	aaa, err := rx.ParseAAAnswer(af.send(r.Message()))
 	if err != nil {
@@ -127,7 +126,7 @@ func (af *fakeAF) aar(r rx.AARequest) rx.Result {
 	return aaa.Result
 }
 
-func (af *fakeAF) str(sessionID string) rx.Result {
+func (af *fakeAF) str(sessionID string) diameter.Result {
 	af.t.Helper()
 	h := af.header()
 	h.SessionID = sessionID
@@ -310,7 +309,7 @@ func TestTheMediaOfACallGetAVoiceBearer(t *testing.T) {
 	u := n.ue(imsi1)
 	u.attach()
 	aar := n.callAAR(rx.IndicationOfReleaseOfBearer, rx.IndicationOfSuccessfulResourcesAllocation)
-	if r := n.af.aar(aar); r != cx.Base(rx.DiameterSuccess) {
+	if r := n.af.aar(aar); r != diameter.Base(diameter.DiameterSuccess) {
 		t.Fatalf("AAA %v", r)
 	}
 	m := u.next()
@@ -342,7 +341,7 @@ func TestTheMediaOfACallGetAVoiceBearer(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := rx.ReAuthRequest{
-		Header:          rx.Header{SessionID: aar.SessionID, OriginHost: pcrfID.OriginHost, OriginRealm: realm, DestinationHost: afID.OriginHost, DestinationRealm: realm},
+		Header:          diameter.Header{SessionID: aar.SessionID, OriginHost: pcrfID.OriginHost, OriginRealm: realm, DestinationHost: afID.OriginHost, DestinationRealm: realm},
 		SpecificActions: []rx.SpecificAction{rx.IndicationOfSuccessfulResourcesAllocation},
 		Flows:           []rx.Flows{{MediaComponentNumber: 1, FlowNumbers: []uint32{1, 2}}},
 	}
@@ -362,7 +361,7 @@ func TestSTRReleasesTheVoiceBearer(t *testing.T) {
 	aar := n.callAAR()
 	n.af.aar(aar)
 	u.next() // the activation
-	if r := n.af.str(aar.SessionID); r != cx.Base(rx.DiameterSuccess) {
+	if r := n.af.str(aar.SessionID); r != diameter.Base(diameter.DiameterSuccess) {
 		t.Fatalf("STA %v", r)
 	}
 	m := u.next()
@@ -373,7 +372,7 @@ func TestSTRReleasesTheVoiceBearer(t *testing.T) {
 	if s, _ := n.status(imsi1); len(s.Bearers) != 1 || len(s.RxSessions) != 0 {
 		t.Errorf("status %+v, want the default bearer only", s)
 	}
-	if r := n.af.str(aar.SessionID); r != cx.Base(rx.DiameterUnknownSessionID) {
+	if r := n.af.str(aar.SessionID); r != diameter.Base(diameter.DiameterUnknownSessionID) {
 		t.Errorf("second STA %v, want DIAMETER_UNKNOWN_SESSION_ID", r)
 	}
 }
@@ -387,7 +386,7 @@ func TestReleasingTheVoiceBearerAbortsTheCall(t *testing.T) {
 	u.attach()
 	signalling := rx.AARequest{Header: n.af.header(), MediaComponents: []policy.MediaComponent{policy.SignallingComponent()},
 		SpecificActions: []rx.SpecificAction{rx.IndicationOfLossOfBearer, rx.IndicationOfReleaseOfBearer}, FramedIPAddress: ue1Addr}
-	if r := n.af.aar(signalling); r != cx.Base(rx.DiameterSuccess) {
+	if r := n.af.aar(signalling); r != diameter.Base(diameter.DiameterSuccess) {
 		t.Fatalf("AAA of the signalling path %v", r)
 	}
 	call := n.callAAR(rx.IndicationOfReleaseOfBearer)
@@ -412,7 +411,7 @@ func TestReleasingTheVoiceBearerAbortsTheCall(t *testing.T) {
 		t.Errorf("ASR = %+v, want BEARER_RELEASED for the call", asr)
 	}
 	n.af.none()
-	if r := n.af.str(call.SessionID); r != cx.Base(rx.DiameterSuccess) {
+	if r := n.af.str(call.SessionID); r != diameter.Base(diameter.DiameterSuccess) {
 		t.Errorf("STA after the ASR %v", r)
 	}
 	if s, _ := n.status(imsi1); !reflect.DeepEqual(s.RxSessions, []string{signalling.SessionID}) || len(s.Bearers) != 1 {
@@ -455,7 +454,7 @@ func TestDetachAbortsEveryRxSession(t *testing.T) {
 		t.Errorf("ASRs for %v, want both sessions", aborted)
 	}
 	for _, id := range []string{signalling.SessionID, call.SessionID} {
-		if r := n.af.str(id); r != cx.Base(rx.DiameterSuccess) {
+		if r := n.af.str(id); r != diameter.Base(diameter.DiameterSuccess) {
 			t.Errorf("STA after the ASR: %v", r)
 		}
 	}
@@ -474,14 +473,14 @@ func TestAARsThePCRFRefuses(t *testing.T) {
 	// on the host gets this, and its P-CSCF goes on without Rx.
 	other := n.callAAR()
 	other.FramedIPAddress = netip.MustParseAddr("172.28.0.1")
-	if r := n.af.aar(other); r != cx.Experimental(rx.IPCANSessionNotAvailable) {
+	if r := n.af.aar(other); r != diameter.Experimental(rx.IPCANSessionNotAvailable) {
 		t.Errorf("unknown address: %v, want IP-CAN_SESSION_NOT_AVAILABLE", r)
 	}
 	video := rx.AARequest{Header: n.af.header(), MediaComponents: callComponents(t, "video"), FramedIPAddress: ue1Addr}
-	if r := n.af.aar(video); r != cx.Experimental(rx.RequestedServiceNotAuthorized) {
+	if r := n.af.aar(video); r != diameter.Experimental(rx.RequestedServiceNotAuthorized) {
 		t.Errorf("video: %v, want REQUESTED_SERVICE_NOT_AUTHORIZED", r)
 	}
-	if r := n.af.str(other.SessionID); r != cx.Base(rx.DiameterUnknownSessionID) {
+	if r := n.af.str(other.SessionID); r != diameter.Base(diameter.DiameterUnknownSessionID) {
 		t.Errorf("STR of a refused session: %v, want DIAMETER_UNKNOWN_SESSION_ID", r)
 	}
 }
@@ -503,7 +502,7 @@ func TestFailedVoiceBearerIsReported(t *testing.T) {
 			}
 			u.attach()
 			aar := n.callAAR(rx.IndicationOfFailedResourcesAllocation)
-			if r := n.af.aar(aar); r != cx.Base(rx.DiameterSuccess) {
+			if r := n.af.aar(aar); r != diameter.Base(diameter.DiameterSuccess) {
 				t.Fatalf("AAA %v", r)
 			}
 			if tc.stream {

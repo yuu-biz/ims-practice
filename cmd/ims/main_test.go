@@ -174,12 +174,12 @@ func TestDiameterHandlerSendsRxToTheEPCRole(t *testing.T) {
 		t.Fatal(err)
 	}
 	hssRole := hss.New(hss.Config{Realm: domain, VisitedNetworks: []string{domain}}, store, node, quiet())
-	aar := rx.AARequest{Header: cx.NewHeader(node, "", domain), MediaComponents: []policy.MediaComponent{policy.SignallingComponent()},
+	aar := rx.AARequest{Header: diameter.NewHeader(node, "", domain), MediaComponents: []policy.MediaComponent{policy.SignallingComponent()},
 		FramedIPAddress: netip.MustParseAddr("172.28.0.110")}.Message()
 	uar := cx.UserAuthorizationRequest{
 		Header: cx.NewHeader(node, "", domain), UserName: impi, PublicIdentity: impu, VisitedNetworkIdentifier: domain,
 	}.Message()
-	asr := rx.AbortSessionRequest{Header: cx.NewHeader(node, "ims."+domain, domain), AbortCause: rx.BearerReleased}.Message()
+	asr := rx.AbortSessionRequest{Header: diameter.NewHeader(node, "ims."+domain, domain), AbortCause: rx.BearerReleased}.Message()
 	events := make(chan policy.Event, 1)
 	client := rx.NewClient(node, nil, domain, func(e policy.Event) { events <- e }, quiet())
 	var noSCSCF atomic.Pointer[scscf.SCSCF]
@@ -196,8 +196,8 @@ func TestDiameterHandlerSendsRxToTheEPCRole(t *testing.T) {
 		{"UAR on a node with hss and epc", epcRole, nil, uar, cx.DiameterFirstRegistration},
 		// What a PCRF sends is for the P-CSCF, and what an AF sends for
 		// the PCRF, also on a node with both roles.
-		{"ASR on a pcscf node", nil, client, asr, rx.DiameterSuccess},
-		{"ASR on a node with epc and pcscf", epcRole, client, asr, rx.DiameterSuccess},
+		{"ASR on a pcscf node", nil, client, asr, diameter.DiameterSuccess},
+		{"ASR on a node with epc and pcscf", epcRole, client, asr, diameter.DiameterSuccess},
 		{"AAR on a node with epc and pcscf", epcRole, client, aar, rx.IPCANSessionNotAvailable},
 		{"ASR on a pcscf node without a PCRF", nil, nil, asr, diameter.DiameterCommandUnsupported},
 	} {

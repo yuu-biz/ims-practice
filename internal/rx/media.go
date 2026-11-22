@@ -56,44 +56,44 @@ func lookup[K comparable](table map[K]uint32, value uint32) (K, bool) {
 // mediaComponentDescription writes the Media-Component-Description AVP
 // in the order of TS 29.214 5.3.16.
 func mediaComponentDescription(c policy.MediaComponent) *diam.AVP {
-	children := []*diam.AVP{vendorAVP(avpMediaComponentNumber, mv, datatype.Unsigned32(c.Number))}
+	children := []*diam.AVP{diameter.VendorAVP(avpMediaComponentNumber, mv, datatype.Unsigned32(c.Number))}
 	for _, s := range c.SubComponents {
 		children = append(children, mediaSubComponent(s))
 	}
 	if v, ok := mediaTypeValues[c.Type]; ok {
-		children = append(children, vendorAVP(avpMediaType, mv, datatype.Enumerated(v)))
+		children = append(children, diameter.VendorAVP(avpMediaType, mv, datatype.Enumerated(v)))
 	}
 	children = appendUnsigned(children, avpMaxRequestedBandwidthUL, c.MaxRequestedBandwidthUL)
 	children = appendUnsigned(children, avpMaxRequestedBandwidthDL, c.MaxRequestedBandwidthDL)
 	if v, ok := flowStatusValues[c.FlowStatus]; ok {
-		children = append(children, vendorAVP(avpFlowStatus, mv, datatype.Enumerated(v)))
+		children = append(children, diameter.VendorAVP(avpFlowStatus, mv, datatype.Enumerated(v)))
 	}
 	children = appendUnsigned(children, avpRSBandwidth, c.RSBandwidth)
 	children = appendUnsigned(children, avpRRBandwidth, c.RRBandwidth)
 	for _, codec := range c.Codecs {
-		children = append(children, vendorAVP(avpCodecData, mv, datatype.OctetString(codec.String())))
+		children = append(children, diameter.VendorAVP(avpCodecData, mv, datatype.OctetString(codec.String())))
 	}
-	return vendorAVP(avpMediaComponentDescription, mv, &diam.GroupedAVP{AVP: children})
+	return diameter.VendorAVP(avpMediaComponentDescription, mv, &diam.GroupedAVP{AVP: children})
 }
 
 // mediaSubComponent writes the Media-Sub-Component AVP in the order of
 // TS 29.214 5.3.18.
 func mediaSubComponent(s policy.MediaSubComponent) *diam.AVP {
-	children := []*diam.AVP{vendorAVP(avpFlowNumber, mv, datatype.Unsigned32(s.FlowNumber))}
+	children := []*diam.AVP{diameter.VendorAVP(avpFlowNumber, mv, datatype.Unsigned32(s.FlowNumber))}
 	for _, f := range s.Flows {
-		children = append(children, vendorAVP(avpFlowDescription, mv, datatype.IPFilterRule(f.String())))
+		children = append(children, diameter.VendorAVP(avpFlowDescription, mv, datatype.IPFilterRule(f.String())))
 	}
 	if s.Usage != policy.NoInformation {
-		children = append(children, vendorAVP(avpFlowUsage, mv, datatype.Enumerated(flowUsageValues[s.Usage])))
+		children = append(children, diameter.VendorAVP(avpFlowUsage, mv, datatype.Enumerated(flowUsageValues[s.Usage])))
 	}
-	return vendorAVP(avpMediaSubComponent, mv, &diam.GroupedAVP{AVP: children})
+	return diameter.VendorAVP(avpMediaSubComponent, mv, &diam.GroupedAVP{AVP: children})
 }
 
 func appendUnsigned(avps []*diam.AVP, code uint32, value *uint32) []*diam.AVP {
 	if value == nil {
 		return avps
 	}
-	return append(avps, vendorAVP(code, mv, datatype.Unsigned32(*value)))
+	return append(avps, diameter.VendorAVP(code, mv, datatype.Unsigned32(*value)))
 }
 
 // parseMediaComponentDescription reads a Media-Component-Description.
@@ -189,11 +189,11 @@ type Flows struct {
 }
 
 func (f Flows) avp() *diam.AVP {
-	children := []*diam.AVP{vendorAVP(avpMediaComponentNumber, mv, datatype.Unsigned32(f.MediaComponentNumber))}
+	children := []*diam.AVP{diameter.VendorAVP(avpMediaComponentNumber, mv, datatype.Unsigned32(f.MediaComponentNumber))}
 	for _, n := range f.FlowNumbers {
-		children = append(children, vendorAVP(avpFlowNumber, mv, datatype.Unsigned32(n)))
+		children = append(children, diameter.VendorAVP(avpFlowNumber, mv, datatype.Unsigned32(n)))
 	}
-	return vendorAVP(avpFlows, mv, &diam.GroupedAVP{AVP: children})
+	return diameter.VendorAVP(avpFlows, mv, &diam.GroupedAVP{AVP: children})
 }
 
 func parseFlows(a *diam.AVP) (Flows, error) {

@@ -8,7 +8,6 @@ import (
 
 	"github.com/fiorix/go-diameter/v4/diam"
 
-	"github.com/yuu-biz/ims-practice/internal/cx"
 	"github.com/yuu-biz/ims-practice/internal/diameter"
 	"github.com/yuu-biz/ims-practice/internal/policy"
 )
@@ -48,7 +47,7 @@ func NewClient(node *diameter.Node, pcrf PCRF, realm string, notify policy.Notif
 // than those package policy has errors for.
 type ResultError struct {
 	Command string // "AAA" or "STA"
-	Result  Result
+	Result  diameter.Result
 }
 
 func (e *ResultError) Error() string { return fmt.Sprintf("rx: %s with %v", e.Command, e.Result) }
@@ -68,7 +67,7 @@ var eventActions = map[policy.EventKind]SpecificAction{
 func (c *Client) SubscribeSignallingPath(ctx context.Context, ue netip.Addr) (policy.SessionID, error) {
 	initial := InitialRequest
 	return c.authorize(ctx, AARequest{
-		Header:          cx.NewHeader(c.node, "", c.realm),
+		Header:          diameter.NewHeader(c.node, "", c.realm),
 		MediaComponents: []policy.MediaComponent{policy.SignallingComponent()},
 		SpecificActions: []SpecificAction{IndicationOfLossOfBearer, IndicationOfReleaseOfBearer},
 		FramedIPAddress: ue,
@@ -84,7 +83,7 @@ func (c *Client) AuthorizeMedia(ctx context.Context, r policy.MediaRequest) (pol
 	if err != nil {
 		return "", err
 	}
-	header := cx.NewHeader(c.node, "", c.realm)
+	header := diameter.NewHeader(c.node, "", c.realm)
 	requestType := InitialRequest
 	if r.Session != "" {
 		header.SessionID = string(r.Session)
@@ -122,9 +121,9 @@ func (c *Client) authorize(ctx context.Context, aar AARequest) (policy.SessionID
 	switch {
 	case aaa.Result.Success():
 		return policy.SessionID(aar.SessionID), nil
-	case aaa.Result == cx.Experimental(IPCANSessionNotAvailable):
+	case aaa.Result == diameter.Experimental(IPCANSessionNotAvailable):
 		return "", policy.ErrIPCANSessionNotAvailable
-	case aaa.Result == cx.Experimental(RequestedServiceNotAuthorized):
+	case aaa.Result == diameter.Experimental(RequestedServiceNotAuthorized):
 		return "", policy.ErrRequestedServiceNotAuthorized
 	}
 	return "", &ResultError{Command: "AAA", Result: aaa.Result}
@@ -137,7 +136,7 @@ func (c *Client) Release(ctx context.Context, s policy.SessionID) error {
 }
 
 func (c *Client) terminate(ctx context.Context, s policy.SessionID, cause TerminationCause) error {
-	header := cx.NewHeader(c.node, "", c.realm)
+	header := diameter.NewHeader(c.node, "", c.realm)
 	header.SessionID = string(s)
 	answer, err := c.pcrf.Request(ctx, SessionTerminationRequest{Header: header, TerminationCause: cause}.Message())
 	if err != nil {
@@ -147,7 +146,7 @@ func (c *Client) terminate(ctx context.Context, s policy.SessionID, cause Termin
 	if err != nil {
 		return err
 	}
-	if !sta.Result.Success() && sta.Result != cx.Base(DiameterUnknownSessionID) {
+	if !sta.Result.Success() && sta.Result != diameter.Base(diameter.DiameterUnknownSessionID) {
 		return &ResultError{Command: "STA", Result: sta.Result}
 	}
 	return nil
@@ -165,7 +164,7 @@ func (c *Client) Handle(request *diam.Message) *diam.Message {
 		rar, err := ParseReAuthRequest(request)
 		if err != nil {
 			c.log.Warn("unreadable RAR", "error", err.Error())
-			return ReAuthAnswer{Result: cx.Base(DiameterUnableToComply)}.Message(request, local)
+			return ReAuthAnswer{Result: diameter.Base(diameter.DiameterUnableToComply)}.Message(request, local)
 		}
 		session := policy.SessionID(rar.SessionID)
 		c.node.AfterAnswer(request, func() {
@@ -175,12 +174,12 @@ func (c *Client) Handle(request *diam.Message) *diam.Message {
 				}
 			}
 		})
-		return ReAuthAnswer{Result: cx.Base(DiameterSuccess)}.Message(request, local)
+		return ReAuthAnswer{Result: diameter.Base(diameter.DiameterSuccess)}.Message(request, local)
 	case CommandAbortSession:
 		asr, err := ParseAbortSessionRequest(request)
 		if err != nil {
 			c.log.Warn("unreadable ASR", "error", err.Error())
-			return AbortSessionAnswer{Result: cx.Base(DiameterUnableToComply)}.Message(request, local)
+			return AbortSessionAnswer{Result: diameter.Base(diameter.DiameterUnableToComply)}.Message(request, local)
 		}
 		session := policy.SessionID(asr.SessionID)
 		c.node.AfterAnswer(request, func() {
@@ -189,7 +188,7 @@ func (c *Client) Handle(request *diam.Message) *diam.Message {
 			}
 			c.notify(policy.Event{Session: session, Kind: policy.SessionTerminated})
 		})
-		return AbortSessionAnswer{Result: cx.Base(DiameterSuccess)}.Message(request, local)
+		return AbortSessionAnswer{Result: diameter.Base(diameter.DiameterSuccess)}.Message(request, local)
 	}
 	return diameter.CommandUnsupportedAnswer(local, request)
 }
