@@ -5,6 +5,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/yuu-biz/ims-practice/internal/hss"
 )
 
 func TestUnreadIsEmptyForAConfigurationThatTheRolesRead(t *testing.T) {
@@ -42,6 +44,7 @@ func TestUnreadKeepsTheStoreOfARoleThatReadsIt(t *testing.T) {
 		{RoleIBCF, Config{IBCF: &IBCF{}}},
 		{RoleSCSCF, Config{SCSCF: &SCSCF{}}},
 		{RolePCSCF, Config{PCSCF: &PCSCF{}}},
+		{RoleHSS, Config{HSS: &hss.Config{}}},
 	} {
 		tt.cfg.Store = &Store{Kind: StoreValkey, Address: "valkey:6379"}
 		if got := tt.cfg.Unread(); len(got) != 0 {

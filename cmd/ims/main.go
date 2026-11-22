@@ -35,6 +35,7 @@ import (
 	"github.com/yuu-biz/ims-practice/internal/ims"
 	"github.com/yuu-biz/ims-practice/internal/ipsmgw"
 	"github.com/yuu-biz/ims-practice/internal/kvstore"
+	"github.com/yuu-biz/ims-practice/internal/kvstore/hssstore"
 	"github.com/yuu-biz/ims-practice/internal/kvstore/ibcfstore"
 	"github.com/yuu-biz/ims-practice/internal/kvstore/kvjson"
 	"github.com/yuu-biz/ims-practice/internal/kvstore/pcscfstore"
@@ -103,11 +104,12 @@ func run(configPath string, log *slog.Logger) error {
 		node = diameter.NewNode(d.Identity, diameterApplications(cfg), d.Timers, log)
 		node.Observe(agent.Diameter(diameterNodeName(cfg)))
 		if cfg.HSS != nil {
-			store, err := hss.NewMemoryStore(cfg.HSS.Subscriptions...)
+			roleLog := log.With("role", config.RoleHSS)
+			store, err := hssStore(ctx, *cfg.HSS, stores, roleLog)
 			if err != nil {
 				return err
 			}
-			hssRole = hss.New(*cfg.HSS, store, node, log.With("role", config.RoleHSS))
+			hssRole = hss.New(*cfg.HSS, store, node, roleLog)
 		}
 		if cfg.EPC != nil {
 			epcRole = epc.New(cfg.EPC.Config, epc.NewMemoryStore(), node, log.With("role", config.RoleEPC))
@@ -466,6 +468,40 @@ func (r roleStores) adapter(log *slog.Logger) (kvstore.Store, kvjson.Config, boo
 		return nil, kvjson.Config{}, false
 	}
 	return r.kv, kvjson.Config{Prefix: r.section.Prefix, Timeout: r.section.Timeout, Log: log}, true
+}
+
+// hssStore is where the HSS keeps its subscribers: the credentials,
+// the user profile and the registration state of each one. The
+// subscribers of the configuration outlive the process in the shared
+// store, so an instance that starts adds the ones that are not there
+// and leaves the stored ones as they are: the provisioning API and Cx
+// have changed them since (TS 29.228 6.1.2), and a change of such a
+// subscriber in the configuration does not reach the store. A public
+// identity of the configuration that another subscriber holds in the
+// store keeps the HSS from starting.
+func hssStore(ctx context.Context, c hss.Config, stores roleStores, log *slog.Logger) (hss.Store, error) {
+	kv, cfg, ok := stores.adapter(log)
+	if !ok {
+		return hss.NewMemoryStore(c.Subscriptions...)
+	}
+	store := hssstore.New(kv, cfg)
+	for _, sub := range c.Subscriptions {
+		err := store.Add(ctx, sub)
+		if errors.Is(err, hss.ErrIdentityTaken) {
+			_, stored, lookup := store.Subscriber(ctx, sub.PrivateIdentity)
+			switch {
+			case lookup != nil:
+				err = lookup
+			case stored:
+				log.Info("subscriber of the configuration already stored; the stored one is kept", "private_identity", sub.PrivateIdentity)
+				continue
+			}
+		}
+		if err != nil {
+			return nil, fmt.Errorf("hss: cannot store the subscriber %s of the configuration: %w", sub.PrivateIdentity, err)
+		}
+	}
+	return store, nil
 }
 
 // pcscfStore is where the P-CSCF keeps the IP association of each

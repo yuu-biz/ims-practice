@@ -23,6 +23,7 @@ import (
 	"github.com/yuu-biz/ims-practice/internal/hss"
 	"github.com/yuu-biz/ims-practice/internal/ibcf"
 	"github.com/yuu-biz/ims-practice/internal/interconnect"
+	"github.com/yuu-biz/ims-practice/internal/kvstore"
 	"github.com/yuu-biz/ims-practice/internal/policy"
 	"github.com/yuu-biz/ims-practice/internal/rx"
 	"github.com/yuu-biz/ims-practice/internal/scscf"
@@ -286,6 +287,34 @@ func TestIBCFStoreIsTheSharedStoreOfTheNode(t *testing.T) {
 	}
 }
 
+// TestHSSStartsAgainOnItsStore: an HSS that starts again on the shared
+// store keeps the subscribers stored there, and adds those of the
+// configuration that are not. A subscriber of the configuration one of
+// whose public identities another subscriber holds in the store keeps
+// the HSS from starting, rather than being left out.
+func TestHSSStartsAgainOnItsStore(t *testing.T) {
+	ctx := context.Background()
+	stores := roleStores{kv: kvstore.NewMemoryStore(nil), section: config.Store{Kind: config.StoreValkey, Timeout: time.Second}}
+	alice := hss.Subscription{PrivateIdentity: impi, PublicIdentities: []string{impu}, Password: "p"}
+	if _, err := hssStore(ctx, hss.Config{Subscriptions: []hss.Subscription{alice}}, stores, quiet()); err != nil {
+		t.Fatal(err)
+	}
+	bob := hss.Subscription{PrivateIdentity: "bob@" + domain, PublicIdentities: []string{"sip:bob@" + domain}, Password: "q"}
+	store, err := hssStore(ctx, hss.Config{Subscriptions: []hss.Subscription{alice, bob}}, stores, quiet())
+	if err != nil {
+		t.Fatalf("the HSS did not start again on its store: %v", err)
+	}
+	for _, id := range []string{alice.PrivateIdentity, bob.PrivateIdentity} {
+		if _, ok, err := store.Subscriber(ctx, id); err != nil || !ok {
+			t.Errorf("subscriber %s after the second start: %v, %v", id, ok, err)
+		}
+	}
+	carol := hss.Subscription{PrivateIdentity: "carol@" + domain, PublicIdentities: []string{impu}, Password: "r"}
+	if _, err := hssStore(ctx, hss.Config{Subscriptions: []hss.Subscription{carol}}, stores, quiet()); !errors.Is(err, hss.ErrIdentityTaken) {
+		t.Errorf("an HSS whose configuration gives a stored public identity to another subscriber started: %v", err)
+	}
+}
+
 // TestRoleStoresAreTheSharedStoreOfTheNode: with a store section of
 // kind valkey, each role takes its state from that server, so its first
 // operation on its Store fails when nothing listens there. Without a
@@ -305,6 +334,11 @@ func TestRoleStoresAreTheSharedStoreOfTheNode(t *testing.T) {
 	}{
 		{config.RoleSCSCF, func(s roleStores) error {
 			_, _, err := scscfStore(s, quiet()).Registration(ctx, impi)
+			return err
+		}},
+		{config.RoleHSS, func(s roleStores) error {
+			subscriber := hss.Subscription{PrivateIdentity: impi, PublicIdentities: []string{impu}, Password: "p"}
+			_, err := hssStore(ctx, hss.Config{Subscriptions: []hss.Subscription{subscriber}}, s, quiet())
 			return err
 		}},
 		{config.RolePCSCF, func(s roleStores) error {
