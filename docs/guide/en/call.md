@@ -136,7 +136,7 @@ The top Route carries `orig`, so the S-CSCF serves the caller (TS 24.229 5.4.3.1
 2. The NAPTR record there has the service `E2U+sip` and a regular expression that produces `sip:001010000000002@ims.mnc001.mcc001.3gppnetwork.org`.
 3. That becomes the new Request-URI.
 
-The records are in `deploy/compose/dns/e164.arpa.zone`. A number with no record cannot be reached inside the IMS. A real network would send the call to a BGCF towards the telephone network; this project has none, so the S-CSCF answers 404.
+The records are in `deploy/compose/dns/e164.arpa.zone`. A number with no record cannot be reached inside the IMS. A real network may send the call to a BGCF towards the telephone network; this project has none, so the S-CSCF answers 404. TS 24.229 5.4.3.2 step 10 lets the S-CSCF answer the caller in place of sending the call to a BGCF.
 
 ### 4. The S-CSCF finds the callee's home network
 
@@ -148,7 +148,7 @@ The INVITE has grown with every hop. From the S-CSCF on it is larger than 1300 b
 
 The I-CSCF sends a **Location-Info-Request** (LIR, Cx command 302) with the callee's public identity (TS 24.229 5.3.2.1, TS 29.228 6.1.4). The HSS answers DIAMETER_SUCCESS with the **Server-Name** of the S-CSCF where UE 2 is registered.
 
-The I-CSCF puts that S-CSCF on top of Route and forwards the INVITE. It does not add Record-Route.
+The I-CSCF puts that S-CSCF on top of Route and forwards the INVITE. It does not add Record-Route. The P-Charging-Vector goes on as it came; a request that comes without one, such as from a peer network outside the trust domain, gets an icid-value of the I-CSCF (TS 24.229 5.3.2.1).
 
 If UE 2 were not registered, the HSS would answer DIAMETER_ERROR_IDENTITY_NOT_REGISTERED and the I-CSCF 480. An unknown user gives DIAMETER_ERROR_USER_UNKNOWN and 404.
 
@@ -221,6 +221,16 @@ The e2e test checks that UE 2 received exactly the bytes UE 1 encoded. G.711 is 
 
 UE 1 sends **BYE** within the dialog (RFC 3261 15.1.1), along the route set. The BYE carries `Reason: RELEASE_CAUSE;cause=1;text="User ends call"`, which tells why the call ended (TS 24.229 5.1.5, IR.92 2.2.4). UE 2 answers 200 (RFC 3261 15.1.2). When the 200 passes the P-CSCF, the P-CSCF removes the relay contexts of the call. It waits for the answer because a BYE can be turned down, such as with 500 for a BYE out of order (RFC 3261 12.2.2), and then the dialog stays up. A 481, a 408 or no answer at all ends the dialog as well (RFC 3261 15.1.1), so they also remove the contexts.
 
+## One charging identifier for the call
+
+Inside the network, the INVITE and every response to it carry a **P-Charging-Vector** (RFC 7315 4.6). Its **icid-value** names the call for charging. The P-CSCF of UE 1 writes a new one into the INVITE (TS 24.229 5.2.6.3.3 step 7), and the nodes after it pass it on; the MMTel AS puts it into the INVITE of each of its dialogs (5.7.5.1). Its **orig-ioi** names the network that sent the request, and its **term-ioi** the network that sent the response.
+
+Each node writes its own network into the IOIs. The S-CSCF writes its home domain as the orig-ioi of the INVITE that it sends to the MMTel AS and on (TS 24.229 5.4.3.2 steps 5 d and 7, 5.4.3.3 steps 4 d, 7 and 7A). Into the responses that it passes back, it writes the orig-ioi that the INVITE brought and its home domain as the term-ioi. In this one network every IOI is the same domain; in [Connect two IMS networks](interconnect.md) the two networks write different ones.
+
+A UE never sees the header field: the P-CSCF removes it from what goes to the UE and from what comes from it (5.2.1). Before it removes it from the INVITE to UE 2, the P-CSCF of UE 2 stores the icid-value and the orig-ioi (5.2.6.4.3 item 9). It writes them, with its own term-ioi, into UE 2's 183, 180 and 200 (5.2.6.4.4 item 6), and gives each later request of UE 2 in the dialog the icid-value of the INVITE (5.2.6.3.9 step 3). The P-CSCF of UE 1 gives the same icid-value to UE 1's PRACK, ACK and BYE.
+
+To follow the call, copy the icid-value of the INVITE that the P-CSCF sends to the S-CSCF (step 2), and filter with `sip.P-Charging-Vector contains "icid-value=..."`. The INVITE and its responses show up at every node and in all three dialogs.
+
 ## Talk from your own machine
 
 The P-CSCF port 5060/udp and the relay's ports 40000 to 40039/udp are published on the host's loopback address, 127.0.0.1. A softphone on the host, such as Linphone, can register with the SIP Digest credentials of a test subscriber, with the P-CSCF at `127.0.0.1:5060` and the domain `ims.mnc001.mcc001.3gppnetwork.org`.
@@ -277,25 +287,29 @@ Each item has a `SIMPLIFIED:` comment in the code; `grep -rn "SIMPLIFIED:" inter
 
 | Where | What is left out | Why |
 | --- | --- | --- |
-| S-CSCF, TS 24.229 5.4.3.2 and 5.4.3.3 | When the S-CSCF decides whether a failed application server gets the default handling, a 100 (Trying) from the server does not count as a 1xx. The orig-ioi and term-ioi are not handled. | Proxy keeps a 100 to the hop it came over (RFC 3261 16.7 step 5). The S-CSCF does no charging. |
+| S-CSCF, TS 24.229 5.4.3.2 and 5.4.3.3 | When the S-CSCF decides whether a failed application server gets the default handling, a 100 (Trying) from the server does not count as a 1xx. | Proxy keeps a 100 to the hop it came over (RFC 3261 16.7 step 5). |
+| S-CSCF, TS 24.229 5.4.3.2 | The term-ioi that a response to a request outside a dialog brings is not stored. | It names the network that answered in the charging records of the S-CSCF, which no node of this project writes, and no later message carries it. |
 | S-CSCF, TS 24.229 5.4.3.1 and 5.4.3.2 | Only a registered user is served. A request that an application server sends on behalf of a user, who is named in P-Served-User, gets 403 when that user is not registered, and the iFCs of ORIGINATING_UNREGISTERED are not evaluated. | No application server of this network starts a request on behalf of a user, so no request would meet those iFCs. |
 | S-CSCF, TS 24.229 5.4.3.2 steps 4C and 4D, 5.4.3.3 steps 3C and 3D | The user profile lists no subscribed services, so every user subscribes to MMTel. A request that matches no subscribed service is never answered 403. | The HSS keeps only iFCs for a user, and MMTel is the only service of this project with an ICSI. |
-| S-CSCF, TS 24.229 5.4.3.2 step 10 | A number without ENUM record is answered 404, not sent to a BGCF. | The telephone network is out of scope. |
 | ENUM, RFC 6116 5.2.1 | Non-terminal NAPTR records are skipped. | The project's zone holds terminal records only. |
 | ENUM, RFC 3402 3.2 | A delimiter escaped with a backslash inside the NAPTR regexp is not supported; such a record is refused as malformed, or split in the wrong place. | The project's records use `!` and never escape it. |
 | I-CSCF, TS 24.229 5.3.2.1, 5.3.2.1A and 5.3.2.2 | No "orig" routing for an application server that sends on behalf of a user, and no reselection of another S-CSCF. | No service of this project sends on behalf of a user, and this network has no redundant S-CSCF to choose. |
+| I-CSCF, TS 24.229 5.3.2.1 | The I-CSCF does not check whether a request comes from a trusted domain, so it never removes P-Charging-Vector and P-Charging-Function-Addresses for that reason. It stores neither the icid-value of a request nor the term-ioi of a response. | In the networks that this project sets up, every node that sends to the I-CSCF belongs to its own network: another network reaches it only through the IBCF, which removes both header fields from the requests of an untrusted peer as they enter (5.10.3.2), and a UE only through its P-CSCF. The values are for the charging records of the I-CSCF, which no node of this project writes. |
+| P-CSCF, TS 24.229 5.2.6.4.4 step 1 and 5.2.6.4.8 step 2 | The P-Asserted-Identity of the UE that answers carries no display name. | The user profiles of this project hold no display name, so the S-CSCF puts none in P-Associated-URI at registration, and the P-CSCF has none to add. |
+| P-CSCF, TS 24.229 5.2.6.3.5 step 7 and 5.2.6.3.9 step 3 | A request that the UE sends in a dialog other than that of an INVITE, such as the refresh of its subscription, carries no P-Charging-Vector. A response of the UE in such a dialog takes the icid-value of the request that it answers. | The P-CSCF keeps only the dialogs of INVITEs, and with them the icid-value of the INVITE. |
 | P-CSCF, RFC 3264 and RFC 3262 | An INVITE without an offer gets no relay context: the offer that then comes in a reliable 1xx or in the 2xx, and the answer in the PRACK or the ACK, are left as they are. An offer in an UPDATE or a re-INVITE goes through the relay like the one in the INVITE. | The UE simulator always puts its offer in the INVITE. |
 | P-CSCF, RFC 3264 6 | Only the first audio stream with a port goes through the relay. Another stream gets no termination; without an address of its own it points at the relay, where nothing listens on its port. | The UE simulator offers a single stream. |
 | UE, TS 24.229 5.1.3.1 b) and 5.1.4A.1 | The UE lists precondition in the Supported of every request within the dialog, also when the peer does not use preconditions. | The UA has one Supported for all its calls; a peer that does not use the mechanism ignores the option tag in Supported. |
-| Media relay, RFC 4961 | A latched address is kept for the whole call. RTP and RTCP latch separately. | Re-latching only matters when a UE moves in the middle of a call. |
+| Media relay, RFC 4961 | A latched address is kept for the whole call, unless the controller asks the termination to re-latch. RTP and RTCP latch separately. | Re-latching only matters when a UE moves in the middle of a call. |
+| Media relay, H.248.37 6.6.7.1 | After a latch, the packets of other sources are passed on as well, rather than discarded. | Terminations latch by default, and the P-CSCF gives a termination the address of each new SDP without asking it to latch again. The filter would drop what a party sends from a new address. |
 | Media relay, RFC 3605 and RFC 5761 | RTCP is taken to arrive on the port above RTP; a=rtcp and rtcp-mux are not read. | No UE of this project sends either. |
 | UA, RFC 3261 8.2 and 13.3.1 | No Request-URI or merged-request checks, no 415, and Expires in an INVITE is ignored. | The UEs here never send what those checks catch. |
 | UE, IR.92 3.2.1 | AMR and AMR-WB are sent from frames encoded beforehand, in the modes they were encoded with, whatever CMR or mode-set the peer sends. Without `--epc` the UE offers PCMU only. | The UE never encodes AMR. |
-| P-CSCF, RFC 3261 9.1 | A 2xx that crosses the CANCEL is dropped. The P-CSCF does not answer it with an ACK and a BYE, as a UAC would. | The callee retransmits its 2xx, gets no ACK and ends the call itself (RFC 3261 13.3.1.4). |
 | SIP stack, RFC 3261 12.1.1 and 12.1.2 | A dialog keeps no "secure" flag. | The flag is true only for a dialog set up over TLS with a SIPS URI, and SIP here is plain text. |
 | SIP stack, RFC 3261 12.2.1.1, 16.4 and 16.6 step 6 | No strict routing. A route set or a top Route whose URI lacks lr is refused, and a proxy neither restores a Request-URI that a strict router rewrote nor strips a maddr that names it. | No node in this project is a strict router or writes maddr. |
 | SIP stack, RFC 3261 17.2.3 | A request whose branch lacks the magic cookie, as an RFC 2543 client sends it, is dropped. | Every client here follows RFC 3261. |
 | SIP stack, RFC 3261 9.2 and 16.10 | A CANCEL matches INVITE transactions only. One that matches nothing gets 481, also at a proxy. | Clients should not cancel other methods (9.1), and a proxy on this stack keeps state for every request. |
+| SIP nodes, RFC 3263 4.2 and 4.3 | A request goes only to the first target that DNS gives. When that target fails, with a 503, a transport error or no response before Timer B or F, the request is not sent again to the next one. | Every name in the DNS of this project leads to one server, so there is no next target to try. |
 | SIP stack, RFC 3261 18.2.2 | A response is never sent to servers found with RFC 3263 5: neither when its connection cannot be opened again nor for a sent-by that is a domain name. A maddr for multicast is not handled. | Every sent-by here is an IP address or has a received parameter, and no node sends multicast. |
 | SIP stack, RFC 3261 18.3 | A request whose body is shorter than its Content-Length is dropped, not answered 400. | Only a broken peer sends one. |
 

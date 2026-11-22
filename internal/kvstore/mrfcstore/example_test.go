@@ -1,6 +1,7 @@
 package mrfcstore_test
 
 import (
+	"context"
 	"fmt"
 	"log/slog"
 
@@ -23,9 +24,10 @@ func Example() {
 	var instances []*mrfcstore.Store
 	for _, host := range []string{"mrfc-1." + domain, "mrfc-2." + domain} {
 		store := mrfcstore.New(kv, cfg)
-		processors := []mrfc.Processor{
-			{Name: "http://mrfp-1:8080", Control: agw.NewClient("http://mrfp-1:8080")},
-			{Name: "http://mrfp-2:8080", Control: agw.NewClient("http://mrfp-2:8080")},
+		var processors []mrfc.Processor
+		for _, url := range []string{"http://mrfp-1:8080", "http://mrfp-2:8080"} {
+			client := agw.NewClient(url)
+			processors = append(processors, mrfc.Processor{Name: url, Control: client, Announcements: client})
 		}
 		_, err := mrfc.New(mrfc.Config{Host: host, Port: 5060, NotifyURL: "http://" + host + ":8090/notify"},
 			processors, store, nil, slog.New(slog.DiscardHandler))
@@ -37,10 +39,18 @@ func Example() {
 
 	// What the two instances do with the Store when the first parties
 	// of conf=room1 reach both at once, each having made a context on
-	// the MRFP of its own choice.
-	media, created := instances[0].CreateConference("room1", mrfc.ConferenceMedia{MRFP: "http://mrfp-1:8080", Context: "c1"})
+	// the MRFP of its own choice. An error would be a failure of the
+	// store, which the MRFC answers with 500 (Server Internal Error).
+	ctx := context.Background()
+	media, created, err := instances[0].CreateConference(ctx, "room1", mrfc.ConferenceMedia{MRFP: "http://mrfp-1:8080", Context: "c1"})
+	if err != nil {
+		panic(err)
+	}
 	fmt.Printf("mrfc-1: created %v, mix in %s on %s\n", created, media.Context, media.MRFP)
-	media, created = instances[1].CreateConference("room1", mrfc.ConferenceMedia{MRFP: "http://mrfp-2:8080", Context: "c4"})
+	media, created, err = instances[1].CreateConference(ctx, "room1", mrfc.ConferenceMedia{MRFP: "http://mrfp-2:8080", Context: "c4"})
+	if err != nil {
+		panic(err)
+	}
 	fmt.Printf("mrfc-2: created %v, mix in %s on %s\n", created, media.Context, media.MRFP)
 	// Output:
 	// mrfc-1: created true, mix in c1 on http://mrfp-1:8080

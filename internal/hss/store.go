@@ -185,6 +185,13 @@ type Subscriber struct {
 
 // ErrIdentityTaken means that an identity of a new subscription already
 // belongs to another one.
+//
+// SIMPLIFIED: TS 23.228 4.3.3.4. A subscription has one private
+// identity, and a public identity belongs to one subscription, so no
+// public identity is shared by several private identities and
+// registered from several UEs at once. Each subscriber of this project
+// has one UE, and a shared identity would need the S-CSCF to fork the
+// requests to it.
 var ErrIdentityTaken = errors.New("identity already belongs to a subscription")
 
 // Store keeps the subscribers of the HSS. It is an interface so that the

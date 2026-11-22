@@ -181,8 +181,33 @@ ue-a has two answered calls and presses **Merge**. It creates a conference at th
 - **The invited peers use preconditions**, so each answers the MRFP's offer in its reliable 183 and sends its 200 without SDP. The AS passes that answer to the MRFC in the ACK of M2 (RFC 3262 5).
 - **The focus accepts each REFER with 200 (OK).** RFC 3515 answered with 202 (Accepted). RFC 7647 5 has replaced that: an element that accepts a REFER sends 200 and never 202, and one that receives a 202 from an older UA takes it as a 200, as RFC 6665 8.3.1 asks for SUBSCRIBE. The reason is that a 202 tells nothing that a 200 does not, and a proxy may absorb it. TS 24.147 points to RFC 3515 as RFC 6665 and RFC 7647 update it, and its flows show the 200 (A.4.4.1).
 - **Each REFER creates a subscription to the refer event** (RFC 3515 2.4.4). The focus reports at once that it is trying (`SIP/2.0 100 Trying` in a sipfrag body). Once the INVITE to the peer has its final response, it reports that response in a last NOTIFY whose Subscription-State is `terminated;reason=noresource` (2.4.7). The subscription lasts four minutes, longer than the INVITE may take (3.4). Should they run out first, the focus ends the subscription with `terminated;reason=timeout` (RFC 6665 4.2.1.4). ue-a ends it too at the time that the last `expires` gave, and at once on `active;expires=0` (4.1.3).
-- **The NOTIFYs** carry conference-info XML (RFC 4575) with a `<user>` and an `<endpoint>` of status `connected` for each party. Each card of the dashboard lists them under **Conference**. ue-a refreshes its subscription before it expires. A subscription that is not refreshed ends at its expiry with a last NOTIFY that says `terminated;reason=timeout`, and the focus sends nothing to it after that (RFC 6665 4.2.1.4).
+- **The NOTIFYs** carry conference-info XML (RFC 4575) with a `<user>` and an `<endpoint>` of status `connected` for each party. The `entity` of a `<user>` is the identity that the network asserted for the party. The `entity` of an `<endpoint>` is a key that the focus makes for it, a `urn:uuid:` URI. RFC 4575 5.7 leaves the key to the focus and gives the Contact and a GRUU as examples. The focus does not use the Contact: it is the address of the party's UE, and the NOTIFYs would show it to every subscriber, in another network too ([A conference across the border](interconnect.md#a-conference-across-the-border)). Each card of the dashboard lists them under **Conference**. ue-a refreshes its subscription before it expires. A subscription that is not refreshed ends at its expiry with a last NOTIFY that says `terminated;reason=timeout`, and the focus sends nothing to it after that (RFC 6665 4.2.1.4).
 - **The conference ends with its creator** (TS 24.147 5.3.2.7): when ue-a hangs up, the AS sends BYE to ue-b and ue-c and to the MRFC for each party.
+
+## Coming back to the conference
+
+A participant that has left can come back while the conference goes on. It sends an INVITE to the conference URI, which it has from the Contact of the focus (TS 24.147 5.3.1.4.1). Say ue-b hangs up, and then calls the conference URI:
+
+```text
+ue-b     P-CSCF   S-CSCF   MMTel AS              MRFC
+                           services  focus
+ | INVITE sip:conf-o47ha7ifxyni@conf...            |
+ |-------->|------->|------->|        |            |  P-Served-User: ue-b;sescase=orig
+ |         |        |<-------|        |            |  the INVITE of the B2BUA, to the same URI
+ |         |        |---------------->|            |  by DNS, without P-Served-User
+ |         |        |        |        |----------->|  INVITE sip:conf=conf-o47ha7ifxyni@mrfc..., ue-b's offer
+ |         |        |        |        |<-----------|  200 OK, the answer of the MRFP
+ |         |        |<----------------|            |  200 OK, Contact: <sip:conf-o47ha7ifxyni@conf...>;isfocus
+ |         |        |------->|        |            |
+ |<--------|<-------|<-------|        |            |  200 OK, the same Contact
+```
+
+- **The INVITE goes as every call of ue-b goes.** The S-CSCF gives it to the MMTel AS for ue-b's originating services, and the AS, a B2BUA, sends a new INVITE to the same URI back. The S-CSCF then finds the focus by DNS, as for the SUBSCRIBE above. From another network, the INVITE comes through the I-CSCF, which sends it by DNS too. No filter criterion brings the INVITE to the focus, so it has no P-Served-User. This is how the AS tells the INVITE for the focus from the INVITE for ue-b's services, which has the same Request-URI.
+- **The focus takes ue-b in as it takes the creator** (5.3.2.4.1). It asks the MRFC for a new termination of the mix with ue-b's offer. Once the MRFC has answered, it answers ue-b with the answer of the MRFP and the conference URI with `isfocus` in Contact. The AS of ue-b's services passes that Contact on and puts itself in Record-Route, as for an invited peer, so that ue-b's requests to the conference URI still pass it (TS 24.229 5.7.5.1).
+- **The NOTIFYs** list ue-b as `connected` again, now with the joining-method `dialed-in`, as for the creator. Before, when the focus invited ue-b, it was `dialed-out`.
+- **Any user whose identity the network asserts may join**, whether or not the user has been in the conference before, up to six participants, the maximum-user-count of the NOTIFYs. The seventh gets 403 (Forbidden). An INVITE to a conference URI that no conference has gets 404 (Not Found) (5.3.2.4.1 step 1). That is what the creator gets too: the conference ended when it left, and its URI with it (5.3.2.7).
+
+The script does not run this. `TestRejoinWithTheConferenceURI` in `internal/mmtel/conference_network_test.go` runs it through the whole IMS in one process: B leaves A's conference, comes back with the conference URI, and hears A through the mixer.
 
 ## Wireshark display filters
 
@@ -222,17 +247,18 @@ Each item has a `SIMPLIFIED:` comment in the code; `grep -rn "SIMPLIFIED:" inter
 
 | Where | What is left out | Why |
 | --- | --- | --- |
-| MRFC, TS 23.333 5.12 | The MRFP plays and mixes G.711 PCMU only and transcodes nothing; an offer without PCMU gets 488 with Warning 305. | The project has no AMR decoder. The UE simulators still offer PCMU. |
+| MRFC, TS 23.333 5.12 | The MRFP plays and mixes G.711 PCMU only and transcodes nothing. 5.12.1 asks an MRFP to transcode and to support AMR at least, and lets it support the other codecs of TS 26.114, such as AMR-WB. An offer without PCMU gets 488 with Warning 305. | A conference mixes decoded speech, and the product has no AMR decoder. Adding one would cost much and change little of the signalling these guides follow. The UE simulators still offer PCMU. |
 | MRFC, RFC 4240 3 and TS 24.229 10.3.2.2 | Only provisioned announcements; no prompt is fetched from a URL over Cr. | The WAV files are in the MRFP's configuration. |
 | MRFC, TS 24.229 5.8.1 | The Contact is the SIP URI of the instance, not a GRUU. | Nothing sends a request to the MRFC outside a dialog it has with it. |
-| MRFC, TS 24.229 5.8.2.1.1.1 and RFC 4240 2 and 8 | No charging data, sips: is not enforced, no AS is authenticated. | No node of the project collects charging data, and nothing is encrypted so that the capture shows the content. |
+| MRFC, TS 24.229 5.8.2.1.1.1 and RFC 4240 2 and 8 | No charging data, sips: is not enforced, no AS is authenticated. | No node of the project writes charging records, and nothing is encrypted so that the capture shows the content. |
 | MRFC, RFC 4240 3 | The suggested reason phrases go into a Warning. | The UA writes the standard phrase in the status line. |
 | netann, RFC 4240 3 | locale, content-type and param1 to param9 are ignored. | Each announcement has one variant. |
 | MRFP, TS 23.333 5.10 and RFC 3550 6 and 7.1 | The mixer takes PCMU only, keeps three frames for jitter, writes no CSRC list and sends no RTCP. | Enough for a conference of a few UEs on one bridge. |
 | MRFP, RFC 3550 6 | No RTCP sender reports for the media it makes. | The UE simulator needs none. |
 | AS, TS 24.182 4.5.5.3.7 | A callee's UPDATE with an offer after its 180 goes on to the caller, which moves the caller away from the tone. | The UE simulator sends none then. |
 | AS, TS 24.182 4.5.5.3.7 b 2 and b 3 | The callee's 183 with preconditions goes to the caller as it came; the tone starts without a look at the caller's preconditions. | The callee has alerted, so both sides have their resources. |
-| AS, TS 24.147 5.3.2.3.1 step 2 and TS 24.229 5.7.1.4 and 5.7.1.5 | Every served user may create a conference; no conference policy, no charging addresses. | There is no conference policy server. |
+| AS, TS 24.147 5.3.2.3.1 step 2 and TS 24.229 5.7.1.4 and 5.7.1.5 | Every served user may create a conference; no conference policy, no charging addresses. | There is no conference policy server, and no node of this project writes charging records. |
+| AS, TS 24.147 5.3.2.4.1 step 2 and TS 24.229 5.7.1.4 and 5.7.1.5 | The focus takes the P-Asserted-Identity of the INVITE as the user's identity, as it takes the identity that the S-CSCF asserts for the creator, and checks nothing more. It does not check that the INVITE came from a node of the trust domain (TS 24.229 5.7.1.4 b i, RFC 3325 8). A user whose INVITE asks for privacy with `Privacy: id` or `user` is named by that identity in the NOTIFYs, where TS 24.229 5.7.1.4 a takes the user as anonymous and TS 24.605 4.6.5 keeps the identity of a user with OIR out of them. Any user may join a conference that has room. An INVITE without P-Asserted-Identity gets 403, without a challenge. | There is no conference policy, and the AS holds no credentials of users and gives no participant an anonymous URI (RFC 4575 5.6). In the networks of this project, every request reaches the focus with the identity that a P-CSCF or a trusted peer network asserted. |
 | AS, TS 24.229 5.7.3 NOTE 8 | The S-CSCF of an invited user is taken to be the AS's own. | This network has one S-CSCF. |
 | AS, TS 24.147 5.3.2.6.2.2 | A REFER that asks the focus to remove a participant (method BYE) is refused with 403. | IR.92 2.3.3 does not ask for it. |
 | AS, RFC 4575 3.9 | Each change is notified at once, not at most once in 5 seconds. | IR.92 2.3.3 asks for notifications within 5 seconds, and a small conference changes seldom. |

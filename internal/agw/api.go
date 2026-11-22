@@ -147,9 +147,11 @@ func reply(w http.ResponseWriter, v any, err error) {
 }
 
 // Client drives a media node over the control API. The P-CSCF uses it
-// as its IMS-AGW and the MRFC as its MRFP: it is the one place that
-// talks to the media node, so that H.248 over Iq and Mp can stand in for
-// it later.
+// as its IMS-AGW, the MRFC as its MRFP and the IBCF as its TrGW. Each
+// of them declares the operations of its reference point (pcscf.Relay,
+// mrfc.MRFP, ibcf.TrGW), which the H.248 Controller of
+// internal/h248/mediactl implements too, so that the node can take
+// either.
 type Client struct {
 	base string // such as http://agw:8080
 	http *http.Client
@@ -177,10 +179,11 @@ func (c *Client) AddTermination(ctx context.Context, id string, t TerminationReq
 	return out, c.do(ctx, http.MethodPost, "/contexts/"+id+"/terminations", t, &out)
 }
 
-// Modify changes a termination.
-func (c *Client) Modify(ctx context.Context, id string, tid TerminationID, change TerminationRequest) (Termination, error) {
-	var out Termination
-	return out, c.do(ctx, http.MethodPut, "/contexts/"+id+"/terminations/"+string(tid), change, &out)
+// Modify changes a termination. The relay answers with the
+// termination as it is now; no controller needs it, so the client does
+// not read it.
+func (c *Client) Modify(ctx context.Context, id string, tid TerminationID, change TerminationRequest) error {
+	return c.do(ctx, http.MethodPut, "/contexts/"+id+"/terminations/"+string(tid), change, nil)
 }
 
 // SubtractTermination removes a termination, and tells whether that
@@ -191,10 +194,12 @@ func (c *Client) SubtractTermination(ctx context.Context, id string, tid Termina
 	return out.Termination, out.ContextDeleted, err
 }
 
-// Subtract removes a context.
-func (c *Client) Subtract(ctx context.Context, id string) (Context, error) {
-	var out Context
-	return out, c.do(ctx, http.MethodDelete, "/contexts/"+id, nil, &out)
+// Subtract removes a context. The relay answers with the counts of
+// what each termination carried; the client does not read them, as the
+// Subtract reply of Iq carries no statistics (TS 29.334 5.7.7, Table
+// 5.7.7.2).
+func (c *Client) Subtract(ctx context.Context, id string) error {
+	return c.do(ctx, http.MethodDelete, "/contexts/"+id, nil, nil)
 }
 
 // Announcement tells whether the node has the announcement name.

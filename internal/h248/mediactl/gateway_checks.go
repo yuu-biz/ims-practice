@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/yuu-biz/ims-practice/internal/agw"
 	"github.com/yuu-biz/ims-practice/internal/h248"
 )
 
@@ -73,7 +74,7 @@ func readStream(m *h248.MediaDescriptor, add bool, localControl func(lc *h248.Lo
 		if e != nil {
 			return s, e
 		}
-		if remote.chooseAddress || remote.choosePort || !remote.media.Address.Addr().IsValid() {
+		if remote.chooseAddress || remote.choosePort || !remote.address.Addr().IsValid() {
 			// H.248.8 (03/2013) 4.2.19: the Remote descriptor lacks
 			// what the gateway needs to send.
 			return s, errorDescriptor(441, "the Remote descriptor needs an address and a port")
@@ -201,55 +202,57 @@ func (g *Gateway) heartbeatPeriod(ev h248.RequestedEvent) (time.Duration, *h248.
 	return period, nil
 }
 
-// checkSignals reads the Signals descriptor of an Add or a Modify. The
-// one signal of a termination is ipnapt/latch with napt = LATCH (TS
-// 29.334 5.7.5, Table 5.7.5.1; H.248.37 (06/2008) 6.3.1).
-//
-// SIMPLIFIED: H.248.37 (06/2008) 6.6. On Iq the controller asks for
-// latching only where it needs it, with ipnapt/latch in an Add or a
-// Modify (TS 29.334 5.17.2.2 to 5.17.2.4), and the gateway supports
-// every value of napt (Table 5.14.3.12.1). Without the signal, or with
-// OFF, the gateway sends to the address of the Remote descriptor
-// (6.6.1); RELATCH follows a new source (6.6.3); a Signals descriptor
-// without the signal stops latching and keeps the address it latched
-// (6.6.4). This gateway refuses OFF and RELATCH, and the relay latches
-// every termination on its first packet, whether the signal comes or
-// not: Relay has no way to set the mode of a termination.
-func checkSignals(s *h248.SignalsDescriptor) *h248.ErrorDescriptor {
-	if s == nil {
-		return nil
-	}
-	if len(s.SeqSigLists) > 0 {
+// checkSignals reads the Signals descriptor of an Add (add is true) or
+// a Modify, and returns the latching that it asks of the relay. The one
+// signal of a termination is ipnapt/latch (TS 29.334 5.7.5, Table
+// 5.7.5.1; H.248.37 (06/2008) 6.3.1), which the controller sends where
+// it needs latching (TS 29.334 5.17.2.2 to 5.17.2.4), with any value of
+// napt (Table 5.14.3.12.1). Without the signal a new termination sends
+// to the address of its Remote descriptor (6.6.1). On Modify, no Signals
+// descriptor keeps the latching, and one without the signal stops it
+// and keeps the address latched (6.6.4).
+func checkSignals(s *h248.SignalsDescriptor, add bool) (agw.Latch, *h248.ErrorDescriptor) {
+	switch {
+	case s == nil && add:
+		return agw.NAPTOff, nil
+	case s == nil:
+		return "", nil
+	case len(s.SeqSigLists) > 0:
 		// TS 29.334 5.7.5, Table 5.7.5.2.
-		return errorDescriptor(501, "signal lists")
+		return "", errorDescriptor(501, "signal lists")
+	}
+	latch := agw.StopLatching
+	if add {
+		latch = agw.NAPTOff
 	}
 	for _, sig := range s.Signals {
 		if h248.PkgdName(strings.ToLower(string(sig.SignalName))) != signalLatch {
-			return unsupportedItem(Packages, sig.SignalName, 452)
+			return "", unsupportedItem(Packages, sig.SignalName, 452)
 		}
 		napt := ""
 		for _, p := range sig.SigParList {
 			if !strings.EqualFold(p.Name, paramNAPT) {
-				return errorDescriptor(446, p.Name)
+				return "", errorDescriptor(446, p.Name)
 			}
 			napt = p.Value.Text
 		}
-		switch {
-		case napt == "":
+		if napt == "" {
 			// H.248.37 (06/2008) 6.3.1.1.1: the parameter is not
 			// optional.
-			return errorDescriptor(457, paramNAPT)
-		case !strings.EqualFold(napt, naptLatch):
-			return errorDescriptor(449, paramNAPT+" "+napt)
+			return "", errorDescriptor(457, paramNAPT)
+		}
+		var ok bool
+		if latch, ok = latchOf(napt); !ok {
+			return "", errorDescriptor(449, paramNAPT+" "+napt)
 		}
 	}
-	return nil
+	return latch, nil
 }
 
 // setHeartbeat sets the event hangterm/thb of a termination as the
 // latest Events descriptor asks, replacing what was set before
 // (H.248.1 (05/2002) 7.1.9).
-func (g *Gateway) setHeartbeat(gc *gatewayContext, side Side, events terminationEvents) {
+func (g *Gateway) setHeartbeat(gc *gatewayContext, side agw.TerminationID, events terminationEvents) {
 	gc.mu.Lock()
 	defer gc.mu.Unlock()
 	if old := gc.heartbeat[side]; old != nil {
@@ -268,7 +271,7 @@ func (g *Gateway) setHeartbeat(gc *gatewayContext, side Side, events termination
 
 // restartHeartbeat starts timer X again: any message about the
 // termination resets it (H.248.36 (03/2013) 5.2.1.1.1).
-func (g *Gateway) restartHeartbeat(gc *gatewayContext, side Side) {
+func (g *Gateway) restartHeartbeat(gc *gatewayContext, side agw.TerminationID) {
 	gc.mu.Lock()
 	defer gc.mu.Unlock()
 	hb := gc.heartbeat[side]
@@ -282,7 +285,7 @@ func (g *Gateway) restartHeartbeat(gc *gatewayContext, side Side) {
 // sendHeartbeat is Termination Heartbeat Indication (TS 29.334
 // 5.17.2.6). The controller is to correct a mismatch it finds (H.248.36
 // (03/2013) 5.6.2), so the gateway only reports the answer.
-func (g *Gateway) sendHeartbeat(gc *gatewayContext, side Side) {
+func (g *Gateway) sendHeartbeat(gc *gatewayContext, side agw.TerminationID) {
 	gc.mu.Lock()
 	hb := gc.heartbeat[side]
 	gc.mu.Unlock()
@@ -302,13 +305,12 @@ func (g *Gateway) sendHeartbeat(gc *gatewayContext, side Side) {
 	g.restartHeartbeat(gc, side)
 }
 
-// release releases the context in the relay and forgets it. nt/dur is
-// measured here, from the Add to the Subtract.
-func (g *Gateway) release(ctx context.Context, gc *gatewayContext) (map[Side]Statistics, error) {
+// release releases the context in the relay and forgets it.
+func (g *Gateway) release(ctx context.Context, gc *gatewayContext) error {
 	gc.mu.Lock()
 	if gc.released {
 		gc.mu.Unlock()
-		return nil, ErrNoContext
+		return agw.ErrNoContext
 	}
 	gc.released = true
 	for side, hb := range gc.heartbeat {
@@ -317,34 +319,12 @@ func (g *Gateway) release(ctx context.Context, gc *gatewayContext) (map[Side]Sta
 	}
 	gc.mu.Unlock()
 	g.contexts.Delete(gc.id)
-	stats, err := g.relay.Release(ctx, gc.relayID)
-	if err != nil {
+	if err := g.relay.Subtract(ctx, gc.relayID); err != nil {
 		g.log.Warn("mediactl: the relay could not release a context", "context", gc.id.String(), "error", err)
-		return nil, err
+		return err
 	}
-	duration := g.clock.Now().Sub(gc.reserved)
-	out := map[Side]Statistics{}
-	for _, side := range []Side{Access, Core} {
-		s := stats[side]
-		s.Duration = duration
-		out[side] = s
-	}
-	g.log.Info("mediactl: context released", "context", gc.id.String(), "relay_context", gc.relayID,
-		"access_packets_received", out[Access].PacketsReceived, "core_packets_received", out[Core].PacketsReceived)
-	return out, nil
-}
-
-// statisticsDescriptor writes the statistics of a termination. nt/dur
-// is in milliseconds (H.248.1 (05/2002) E.11.4).
-func statisticsDescriptor(s Statistics) h248.StatisticsDescriptor {
-	value := func(n uint64) h248.Value { return h248.Value{Text: strconv.FormatUint(n, 10)} }
-	return h248.StatisticsDescriptor{
-		{StatName: statDuration, StatValue: value(uint64(s.Duration.Milliseconds()))},
-		{StatName: statOctetsSent, StatValue: value(s.OctetsSent)},
-		{StatName: statOctetsReceived, StatValue: value(s.OctetsReceived)},
-		{StatName: statPacketsSent, StatValue: value(s.PacketsSent)},
-		{StatName: statPacketsReceived, StatValue: value(s.PacketsReceived)},
-	}
+	g.log.Info("mediactl: context released", "context", gc.id.String(), "relay_context", gc.relayID)
+	return nil
 }
 
 // rootAction carries out the commands on ROOT, in the NULL context.

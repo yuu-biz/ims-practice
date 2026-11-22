@@ -1,8 +1,11 @@
 package mmtelstore
 
 import (
+	"context"
+	"errors"
 	"time"
 
+	"github.com/yuu-biz/ims-practice/internal/kvstore"
 	"github.com/yuu-biz/ims-practice/internal/kvstore/kvjson"
 	"github.com/yuu-biz/ims-practice/internal/mmtel"
 )
@@ -41,29 +44,37 @@ func (s *Store) conferenceKey(id string) string { return s.c.Key("conference", i
 func noTimeToLive(mmtel.ConferenceRecord) time.Duration { return 0 }
 
 // PutConference writes r by a compare and swap on the version that it
-// reads first (kvjson.Upsert), not by a plain put. A write whose answer
+// reads first (kvjson.ReadModifyWrite), not by a plain put. A write whose answer
 // did not come back in time may still reach the store later, after the
 // host's next write. Written over the version that it read, it then
 // fails, and the record keeps the later state: the later participants,
 // and the later version of each subscription's conference document,
 // which must only grow (RFC 4575 4.3). A plain put would write the older
 // state over the newer one.
-func (s *Store) PutConference(r mmtel.ConferenceRecord) {
-	kvjson.Upsert(s.c, s.conferenceKey(r.ID), noTimeToLive, func(kept *mmtel.ConferenceRecord) { *kept = r })
+func (s *Store) PutConference(ctx context.Context, r mmtel.ConferenceRecord) error {
+	_, err := kvjson.ReadModifyWrite(ctx, s.c, s.conferenceKey(r.ID), noTimeToLive, func(kept *mmtel.ConferenceRecord) { *kept = r })
+	return err
 }
 
 // Conference reads the record of the conference id.
-func (s *Store) Conference(id string) (mmtel.ConferenceRecord, bool) {
+func (s *Store) Conference(ctx context.Context, id string) (mmtel.ConferenceRecord, bool, error) {
 	var r mmtel.ConferenceRecord
-	_, ok := kvjson.Get(s.c, s.conferenceKey(id), &r)
-	return r, ok
+	_, err := kvjson.Read(ctx, s.c, s.conferenceKey(id), &r)
+	if errors.Is(err, kvstore.ErrNotFound) {
+		return mmtel.ConferenceRecord{}, false, nil
+	}
+	if err != nil {
+		return mmtel.ConferenceRecord{}, false, err
+	}
+	return r, true, nil
 }
 
 // DeleteConference removes the record. A late write that read a record
 // fails after it, as above, since there is no record at that version.
 // Only a late first write, which read none, could still land after it
 // and leave a record behind; conference IDs are random and never used
-// again, so that record names no conference that is up.
-func (s *Store) DeleteConference(id string) {
-	s.c.Delete(s.conferenceKey(id))
+// again, so that record names no conference that is up. The same holds
+// for the record that a DeleteConference that failed leaves.
+func (s *Store) DeleteConference(ctx context.Context, id string) error {
+	return s.c.Remove(ctx, s.conferenceKey(id))
 }

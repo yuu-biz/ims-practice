@@ -1,6 +1,7 @@
 package sc
 
 import (
+	"context"
 	"sync"
 	"time"
 
@@ -28,15 +29,18 @@ type StatusReportRequest struct {
 // Store keeps the status report requests. The outcome of a delivery may
 // come to the SC stub of another IP-SM-GW than the one that took the
 // short message, so the requests live outside the stub.
-// MemoryStore keeps them in the process.
+// MemoryStore keeps them in the process. An error is a failure of the
+// store, after which the caller cannot tell what the store holds.
 type Store interface {
-	PutStatusReportRequest(StatusReportRequest)
-	// TakeStatusReportRequest returns the request of a delivery and
-	// removes it, so that one report goes out per short message.
-	TakeStatusReportRequest(reference string) (StatusReportRequest, bool)
+	// PutStatusReportRequest keeps r until its Expires.
+	PutStatusReportRequest(ctx context.Context, r StatusReportRequest) error
+	// TakeStatusReportRequest returns the request of a delivery, and
+	// whether there is one, and removes it, so that one report goes out
+	// per short message.
+	TakeStatusReportRequest(ctx context.Context, reference string) (StatusReportRequest, bool, error)
 }
 
-// MemoryStore is a Store in the memory of one process.
+// MemoryStore is a Store in the memory of one process. It never fails.
 type MemoryStore struct {
 	mu       sync.Mutex
 	requests map[string]StatusReportRequest
@@ -48,7 +52,7 @@ func NewMemoryStore() *MemoryStore {
 
 // PutStatusReportRequest keeps r. The store removes it at its Expires,
 // as an external store would with a time to live.
-func (s *MemoryStore) PutStatusReportRequest(r StatusReportRequest) {
+func (s *MemoryStore) PutStatusReportRequest(_ context.Context, r StatusReportRequest) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.requests[r.Reference] = r
@@ -59,15 +63,16 @@ func (s *MemoryStore) PutStatusReportRequest(r StatusReportRequest) {
 			delete(s.requests, r.Reference)
 		}
 	})
+	return nil
 }
 
-func (s *MemoryStore) TakeStatusReportRequest(reference string) (StatusReportRequest, bool) {
+func (s *MemoryStore) TakeStatusReportRequest(_ context.Context, reference string) (StatusReportRequest, bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	r, ok := s.requests[reference]
 	delete(s.requests, reference)
 	if !ok || !time.Now().Before(r.Expires) {
-		return StatusReportRequest{}, false
+		return StatusReportRequest{}, false, nil
 	}
-	return r, true
+	return r, true, nil
 }

@@ -231,7 +231,7 @@ The S-CSCF sends a NOTIFY straight to the IP-SM-GW at once. The 200 OK to the SU
 ```xml
 <registration aor="sip:001010000000002@ims.mnc001.mcc001.3gppnetwork.org" id="reg1" state="active">
   <contact id="LJDTDE6YNM" state="active" event="registered" expires="3600" ...>
-    <uri>sip:001010000000002@172.28.0.101:5060</uri>
+    <uri>sip:ab6af11f-a43e-860e-9064-207615ae1f12@172.28.0.101:5060</uri>
     <unknown-param name="+g.3gpp.smsip"></unknown-param>
   </contact>
 </registration>
@@ -339,7 +339,7 @@ The SC has taken the message, so the IP-SM-GW sends UE 1 a new MESSAGE with the 
 - **P-Charging-Vector** with a new icid-value and an orig-ioi. The IP-SM-GW starts each of its own MESSAGEs this way, as an AS that acts as an originating UA (TS 24.229 5.7.3).
 - **The body**, an RP-ACK with the same RP-MR as the RP-DATA, and inside it an SMS-SUBMIT-REPORT with the SC's time stamp (TP-SCTS).
 
-The IP-SM-GW does not use the Route of the S-CSCF. It sends its own requests to the entry point of the home network, the I-CSCF, which it finds in DNS (TS 24.229 5.7.3). The I-CSCF asks the HSS with an LIR, as for a call, and forwards the MESSAGE to UE 1's S-CSCF, which serves it as a terminating request and sends it along UE 1's Path.
+The IP-SM-GW does not use the Route of the S-CSCF. It sends its own requests to the entry point of the home network, with `Route: <sip:ims.mnc001.mcc001.3gppnetwork.org;lr>`: an AS that sends a request to a user puts the user's S-CSCF or the entry point of the user's network in Route (TS 24.229 5.7.3). DNS resolves the name of the home domain to the I-CSCF, which takes that Route as its own and removes it (5.3.2.1). The I-CSCF asks the HSS with an LIR, as for a call, and forwards the MESSAGE to UE 1's S-CSCF, which serves it as a terminating request and sends it along UE 1's Path.
 
 ### 7. UE 1 answers 200
 
@@ -517,7 +517,7 @@ Each item has a `SIMPLIFIED:` comment in the code; `grep -rn "SIMPLIFIED:" inter
 
 | Where | What is left out | Why |
 | --- | --- | --- |
-| IP-SM-GW, TS 24.229 5.7.3 | The requests of the IP-SM-GW, such as its SUBSCRIBE and its MESSAGEs, carry no Route to the entry point. | The entry point is the name of the home domain. The I-CSCF removes only a Route that names its own host (5.3.2.1), so a Route with the domain would stay in the request. |
+| IP-SM-GW, TS 24.229 5.7.1.1 and 5.7.3 | The icid-value and the orig-ioi of a third-party REGISTER, and the term-ioi of the responses to the IP-SM-GW's own requests, are not stored. | They are for the charging records of the IP-SM-GW, which no node of this project writes. |
 | IP-SM-GW, RFC 6665 4.1.2.4 | No Timer N. A SUBSCRIBE that no NOTIFY follows is replaced by a new one at the next third-party REGISTER. | The S-CSCF answers every SUBSCRIBE that it accepts with a NOTIFY at once. |
 | IP-SM-GW, TS 24.341 5.3.3.2 | Without an MSISDN in service-info, the PUR names the user by the public identity, not by the IMSI of the UE's REGISTER. | The IMSI would come from the UE's REGISTER in a message/sip body, which the S-CSCF does not send. Sh accepts a public identity (TS 29.328 Table 7.6.1). |
 | IP-SM-GW, TS 24.341 5.3.3.4.1 | A delivery report without In-Reply-To is dropped. | TS 24.341 5.3.2.4 has the UE send it. Finding the delivery by RP-MR alone would need a second key in the Store. |
@@ -548,8 +548,8 @@ Each item has a `SIMPLIFIED:` comment in the code; `grep -rn "SIMPLIFIED:" inter
 | S-CSCF, TS 24.229 5.4.0 | The S-CSCF looks the AS up in DNS for every request, rather than keeping the address that the first third-party REGISTER went to. | Each AS role keeps its state in a Store that all its nodes share, so any node can take the next request. |
 | S-CSCF, TS 24.229 5.4.1.7 item c | The To of the third-party REGISTER is always the default public identity. Item i has nothing to copy, and items j, l and m are for features this project does not have. | The operator may choose the identity. The HSS stub sends no charging addresses. |
 | S-CSCF, RFC 3261 10.2 | Each third-party REGISTER has a new Call-ID. | One Call-ID per user and AS would be more state in the Store; a registrar accepts a new one (RFC 3261 10.3 step 7). |
-| S-CSCF, TS 24.229 5.4.1.7 | The term-ioi of the answer to a third-party REGISTER is not stored. | The S-CSCF does no charging. |
-| S-CSCF, TS 24.229 5.4.3.2 and 5.4.3.3 | A 100 (Trying) from the AS does not count as the 1xx that turns the default handling off. No orig-ioi or term-ioi. | Proxy keeps a 100 to the hop it came over (RFC 3261 16.7 step 5). The S-CSCF does no charging. |
+| S-CSCF, TS 24.229 5.4.1.7 | The term-ioi of the answer to a third-party REGISTER is not stored. | It is for the charging records of the S-CSCF, which no node of this project writes. |
+| S-CSCF, TS 24.229 5.4.3.2 and 5.4.3.3 | A 100 (Trying) from the AS does not count as the 1xx that turns the default handling off. | Proxy keeps a 100 to the hop it came over (RFC 3261 16.7 step 5). |
 | S-CSCF, TS 24.229 5.4.3.1 and 5.4.3.2 | Only a registered user is served. A request that an AS sends on behalf of a user, who is named in P-Served-User, gets 403 when that user is not registered, and the criteria of ORIGINATING_UNREGISTERED are not evaluated. | No AS of this network starts a request on behalf of a user, so no request would meet those criteria. |
 | S-CSCF, RFC 3841 7.2.4 and 9.1, TS 24.229 5.4.3.3 step 10 a | The target set is the one contact kept for a private identity, so matching only decides whether it stays. Qa and q-values are not computed, and Request-Disposition is not acted on. | With one contact, every directive reaches the same contact. |
 | S-CSCF, RFC 3841 8 | A negated value (`!x`) and a numeric one (`#>=4`) in a feature tag are compared as plain tokens. | SMS over IP and the tags of TS 24.229 7.9 use neither. |

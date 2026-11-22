@@ -291,7 +291,14 @@ func telNumber(req *sip.Message) (sms.Address, bool) {
 func (g *IPSMGW) deliveryReport(st *sip.ServerTransaction, callID string, log *slog.Logger) {
 	req := st.Request
 	log = log.With("in_reply_to", callID)
-	d, ok := g.store.Delivery(callID)
+	d, ok, err := g.store.Delivery(context.Background(), callID)
+	if err != nil {
+		// RFC 3261 21.5.1: the IP-SM-GW cannot tell whether it has the
+		// delivery, which a 488 would say it has not.
+		log.Warn("delivery report not read: the store failed", "error", err.Error())
+		g.respond(st, 500, nil)
+		return
+	}
 	if !ok {
 		// Item a: the IP-SM-GW sent no such short message, or has
 		// already ended its delivery.

@@ -5,7 +5,7 @@
 // The items and their keys, after the prefix of the Config and
 // "ipsmgw:":
 //
-//	message-reference:<recipient>      the next RP-MR, time to live 10 min
+//	message-reference:<recipient>      messageReferences, time to live until its Expires
 //	delivery:<Call-ID>                 PendingDelivery, time to live until its Expires
 //	reg-subscription:<Call-ID>         RegSubscription, time to live until its Expires
 //	reg-subscription-of:<identity>     index: the Call-ID of the subscription
@@ -15,6 +15,7 @@ package ipsmgwstore
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"github.com/yuu-biz/ims-practice/internal/ims"
@@ -23,37 +24,23 @@ import (
 	"github.com/yuu-biz/ims-practice/internal/kvstore/kvjson"
 )
 
-// Config is the configuration of the Store.
-type Config struct {
-	kvjson.Config
-	// ReportTimeout is TR1N, as ipsmgw.Config has it; zero means the
-	// default of ipsmgw, 64 s. PutDelivery schedules ReportTimer with it.
-	ReportTimeout time.Duration
-}
-
-// defaultReportTimeout is that of ipsmgw (deliver.go), which does not
-// export it.
-const defaultReportTimeout = 2 * 32 * time.Second
-
-// Store is an ipsmgw.Store on a kvstore.Store.
+// Store is an ipsmgw.Store on a kvstore.Store. The IP-SM-GW writes every
+// expiry into what it stores, as a time, and the Store takes the times
+// to live and the due times of the timer from there.
 type Store struct {
-	c             *kvjson.Client
-	reportTimeout time.Duration
+	c *kvjson.Client
 }
 
 var _ ipsmgw.Store = (*Store)(nil)
 
 // New returns a Store on kv. Instances with the same kv and Prefix share
 // their state.
-func New(kv kvstore.Store, cfg Config) *Store {
-	if cfg.ReportTimeout == 0 {
-		cfg.ReportTimeout = defaultReportTimeout
-	}
-	return &Store{c: kvjson.New(kv, cfg.Config, "ipsmgw"), reportTimeout: cfg.ReportTimeout}
+func New(kv kvstore.Store, cfg kvjson.Config) *Store {
+	return &Store{c: kvjson.New(kv, cfg, "ipsmgw")}
 }
 
 // ReportTimer is the time index of TR1N (TS 24.011 6.2.2.2): a member is
-// the Call-ID of a delivery, due ReportTimeout after PutDelivery.
+// the Call-ID of a delivery, due at its ReportDeadline.
 // ipsmgw runs the timer in the process that sent the MESSAGE, and no
 // one reports a delivery whose sender stopped (deliver.go). An
 // instance that claims the member instead calls what that timer calls,
@@ -71,74 +58,110 @@ func (s *Store) ClaimDue(ctx context.Context, now time.Time, lease time.Duration
 // Done ends a claim of ClaimDue.
 func (s *Store) Done(ctx context.Context, claim kvstore.Claim) error { return s.c.Done(ctx, claim) }
 
-// messageReferenceLifetime is that of ipsmgw (store.go): the counter of
-// a recipient outlives every delivery that could still wait for a
-// report with one of its values.
-const messageReferenceLifetime = 10 * time.Minute
-
 // NextMessageReference counts with compare and swap, so that two
 // instances that send to one recipient at once never give the same
-// RP-MR. After 255 comes 0, as in ipsmgw.MemoryStore.
-func (s *Store) NextMessageReference(recipient string) uint8 {
-	// The item holds the next value; a missing one is 0.
+// RP-MR. After 255 comes 0, as in ipsmgw.MemoryStore. The counter is
+// that of the public identity, so that two ways of writing one recipient
+// share it.
+func (s *Store) NextMessageReference(ctx context.Context, recipient string, expires time.Time) (uint8, error) {
 	var mr uint8
-	if _, err := kvjson.Upsert(s.c, s.c.Key("message-reference", recipient),
-		func(uint8) time.Duration { return messageReferenceLifetime },
-		func(next *uint8) { mr = *next; *next++ }); err != nil {
-		return 0
+	now := s.c.Now()
+	if _, err := kvjson.ReadModifyWrite(ctx, s.c, s.c.Key("message-reference", ims.PublicIdentityKey(recipient)),
+		func(r messageReferences) time.Duration { return s.c.TTLUntil(r.Expires) },
+		func(r *messageReferences) {
+			// A missing counter, or one past its Expires that the store
+			// still keeps by its own clock, starts at 0.
+			if !now.Before(r.Expires) {
+				r.Next = 0
+			}
+			mr = r.Next
+			r.Next++
+			r.Expires = expires
+		}); err != nil {
+		return 0, err
 	}
-	return mr
+	return mr, nil
+}
+
+// messageReferences is the item of the counter of a recipient.
+type messageReferences struct {
+	// Next is the RP-MR of the next RP-DATA.
+	Next uint8
+	// Expires is when the counter goes, as the last NextMessageReference
+	// gave it.
+	Expires time.Time
 }
 
 // PutDelivery schedules TR1N, then writes the delivery. An instance that
-// stops in between leaves a member whose claimer finds no delivery.
-func (s *Store) PutDelivery(d ipsmgw.PendingDelivery) {
-	s.c.Schedule(ReportTimer, d.CallID, s.c.Now().Add(s.reportTimeout))
-	kvjson.Put(s.c, s.c.Key("delivery", d.CallID), d, s.c.TTLUntil(d.Expires))
-}
-
-func (s *Store) Delivery(callID string) (ipsmgw.PendingDelivery, bool) {
-	var d ipsmgw.PendingDelivery
-	if _, ok := kvjson.Get(s.c, s.c.Key("delivery", callID), &d); !ok || !s.c.Now().Before(d.Expires) {
-		return ipsmgw.PendingDelivery{}, false
+// stops in between, or whose write fails, leaves a member whose claimer
+// finds no delivery.
+func (s *Store) PutDelivery(ctx context.Context, d ipsmgw.PendingDelivery) error {
+	if err := s.c.WriteDue(ctx, ReportTimer, d.CallID, d.ReportDeadline); err != nil {
+		return err
 	}
-	return d, true
+	return kvjson.Write(ctx, s.c, s.c.Key("delivery", d.CallID), d, s.c.TTLUntil(d.Expires))
 }
 
-// TakeDelivery takes the delivery (kvjson.Take) and its timer. A Call-ID
-// is never used again, so the timer can go.
-func (s *Store) TakeDelivery(callID string) (ipsmgw.PendingDelivery, bool) {
-	d, ok := kvjson.Take[ipsmgw.PendingDelivery](s.c, s.c.Key("delivery", callID))
-	if ok {
+func (s *Store) Delivery(ctx context.Context, callID string) (ipsmgw.PendingDelivery, bool, error) {
+	var d ipsmgw.PendingDelivery
+	_, err := kvjson.Read(ctx, s.c, s.c.Key("delivery", callID), &d)
+	return live(d, d.Expires, s.c.Now(), err)
+}
+
+// TakeDelivery takes the delivery (kvjson.ReadAndRemove) and its timer.
+// A Call-ID is never used again, so the timer can go. When that fails,
+// the client logs it, and the claimer of the member finds no delivery,
+// as after a stop within PutDelivery.
+func (s *Store) TakeDelivery(ctx context.Context, callID string) (ipsmgw.PendingDelivery, bool, error) {
+	d, err := kvjson.ReadAndRemove[ipsmgw.PendingDelivery](ctx, s.c, s.c.Key("delivery", callID))
+	if err == nil {
 		s.c.Unschedule(ReportTimer, callID)
 	}
-	if !ok || !s.c.Now().Before(d.Expires) {
-		return ipsmgw.PendingDelivery{}, false
+	return live(d, d.Expires, s.c.Now(), err)
+}
+
+// live is the answer to a read of an item v that goes at expires: none
+// when the store has no item, or the item has passed its Expires by the
+// clock of the Client while the store, by its own clock, still keeps
+// it.
+func live[T any](v T, expires, now time.Time, err error) (T, bool, error) {
+	var zero T
+	switch {
+	case errors.Is(err, kvstore.ErrNotFound):
+		return zero, false, nil
+	case err != nil:
+		return zero, false, err
+	case !now.Before(expires):
+		return zero, false, nil
 	}
-	return d, true
+	return v, true, nil
 }
 
 func (s *Store) subscriptionKey(callID string) string { return s.c.Key("reg-subscription", callID) }
 
-func (s *Store) RegSubscription(callID string) (ipsmgw.RegSubscription, bool) {
-	var sub ipsmgw.RegSubscription
-	if _, ok := kvjson.Get(s.c, s.subscriptionKey(callID), &sub); !ok || !s.c.Now().Before(sub.Expires) {
-		return ipsmgw.RegSubscription{}, false
-	}
-	return sub, true
+func (s *Store) subscriptionIndexKey(publicID string) string {
+	return s.c.Key("reg-subscription-of", ims.PublicIdentityKey(publicID))
 }
 
-func (s *Store) RegSubscriptionOf(publicID string) (ipsmgw.RegSubscription, bool) {
-	k := ims.PublicIdentityKey(publicID)
-	callID, _, ok := s.c.IndexTarget(s.c.Key("reg-subscription-of", k))
-	if !ok {
-		return ipsmgw.RegSubscription{}, false
+func (s *Store) RegSubscription(ctx context.Context, callID string) (ipsmgw.RegSubscription, bool, error) {
+	var sub ipsmgw.RegSubscription
+	_, err := kvjson.Read(ctx, s.c, s.subscriptionKey(callID), &sub)
+	return live(sub, sub.Expires, s.c.Now(), err)
+}
+
+func (s *Store) RegSubscriptionOf(ctx context.Context, publicID string) (ipsmgw.RegSubscription, bool, error) {
+	callID, _, err := s.c.ReadIndex(ctx, s.subscriptionIndexKey(publicID))
+	if errors.Is(err, kvstore.ErrNotFound) {
+		return ipsmgw.RegSubscription{}, false, nil
 	}
-	sub, ok := s.RegSubscription(callID)
-	if !ok || ims.PublicIdentityKey(sub.PublicIdentity) != k {
-		return ipsmgw.RegSubscription{}, false
+	if err != nil {
+		return ipsmgw.RegSubscription{}, false, err
 	}
-	return sub, true
+	sub, ok, err := s.RegSubscription(ctx, callID)
+	if err != nil || !ok || ims.PublicIdentityKey(sub.PublicIdentity) != ims.PublicIdentityKey(publicID) {
+		return ipsmgw.RegSubscription{}, false, err
+	}
+	return sub, true, nil
 }
 
 // PutRegSubscription points the index item of the public identity to
@@ -146,23 +169,41 @@ func (s *Store) RegSubscriptionOf(publicID string) (ipsmgw.RegSubscription, bool
 // that the index item named before, if it was another. Of two
 // subscriptions to one identity that two instances put at once, the
 // index item names the one written last, and RegSubscriptionOf finds
-// only that one; the other stays until its Expires.
-func (s *Store) PutRegSubscription(sub ipsmgw.RegSubscription) {
-	callID, indexKey := sub.Dialog.ID.CallID, s.c.Key("reg-subscription-of", ims.PublicIdentityKey(sub.PublicIdentity))
-	old, _, hadOld := s.c.IndexTarget(indexKey)
-	ttl := s.c.TTLUntil(sub.Expires)
-	s.c.PutIndex(indexKey, callID, ttl)
-	kvjson.Put(s.c, s.subscriptionKey(callID), sub, ttl)
-	if hadOld && old != callID {
-		s.c.Delete(s.subscriptionKey(old))
+// only that one; the other stays until its Expires, as does an old one
+// whose removal fails.
+func (s *Store) PutRegSubscription(ctx context.Context, sub ipsmgw.RegSubscription) error {
+	callID, indexKey := sub.Dialog.ID.CallID, s.subscriptionIndexKey(sub.PublicIdentity)
+	old, _, err := s.c.ReadIndex(ctx, indexKey)
+	hadOld := err == nil
+	if err != nil && !errors.Is(err, kvstore.ErrNotFound) {
+		return err
 	}
+	ttl := s.c.TTLUntil(sub.Expires)
+	if err := s.c.WriteIndex(ctx, indexKey, callID, ttl); err != nil {
+		return err
+	}
+	if err := kvjson.Write(ctx, s.c, s.subscriptionKey(callID), sub, ttl); err != nil {
+		return err
+	}
+	if hadOld && old != callID {
+		return s.c.Remove(ctx, s.subscriptionKey(old))
+	}
+	return nil
 }
 
-func (s *Store) DeleteRegSubscription(callID string) {
+// DeleteRegSubscription removes the subscription, and then the index
+// item of its public identity if that still names it.
+func (s *Store) DeleteRegSubscription(ctx context.Context, callID string) error {
 	var sub ipsmgw.RegSubscription
-	_, ok := kvjson.Get(s.c, s.subscriptionKey(callID), &sub)
-	s.c.Delete(s.subscriptionKey(callID))
-	if ok {
-		s.c.DeleteIndexIf(s.c.Key("reg-subscription-of", ims.PublicIdentityKey(sub.PublicIdentity)), callID)
+	_, err := kvjson.Read(ctx, s.c, s.subscriptionKey(callID), &sub)
+	if errors.Is(err, kvstore.ErrNotFound) {
+		return nil
 	}
+	if err != nil {
+		return err
+	}
+	if err := s.c.Remove(ctx, s.subscriptionKey(callID)); err != nil {
+		return err
+	}
+	return s.c.RemoveIndexIf(ctx, s.subscriptionIndexKey(sub.PublicIdentity), callID)
 }

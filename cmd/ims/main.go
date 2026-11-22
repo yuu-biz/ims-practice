@@ -63,6 +63,9 @@ func run(configPath string, log *slog.Logger) error {
 		return err
 	}
 	log = log.With("node", cfg.Node)
+	for _, section := range cfg.Unread() {
+		log.Warn("configuration section that no role reads; the node runs as if it were left out", "section", section)
+	}
 	if err := diameter.LoadDictionary(); err != nil {
 		return err
 	}
@@ -133,21 +136,17 @@ func run(configPath string, log *slog.Logger) error {
 			s.Close()
 		}
 	}()
-	// startScreenedSIP starts a stack that asks screen about each new
-	// request, as the P-CSCF's stacks do.
-	startScreenedSIP := func(role config.Role, c config.SIP, screen func(*sip.Message, sip.Destination) bool,
-		onRequest func(*sip.ServerTransaction), onACK func(*sip.Message)) (*sip.Stack, error) {
+	// startSIPWith starts a stack on c with stack, a sip.Config that
+	// lacks only the sent-by, for the P-CSCF, whose stacks screen
+	// requests.
+	startSIPWith := func(role config.Role, c config.SIP, stack sip.Config) (*sip.Stack, error) {
 		roleLog := log.With("role", role)
 		transport, err := sip.ListenObserved(c.Listen.String(), roleLog, agent.SIP(string(role)))
 		if err != nil {
 			return nil, err
 		}
-		s, err := sip.NewStack(transport, sip.Config{
-			SentBy:    c.Host + ":" + strconv.Itoa(int(c.Listen.Port())),
-			Screen:    screen,
-			OnRequest: onRequest,
-			OnACK:     onACK,
-		}, roleLog)
+		stack.SentBy = c.Host + ":" + strconv.Itoa(int(c.Listen.Port()))
+		s, err := sip.NewStack(transport, stack, roleLog)
 		if err != nil {
 			transport.Close()
 			return nil, err
@@ -156,7 +155,7 @@ func run(configPath string, log *slog.Logger) error {
 		return s, nil
 	}
 	startSIP := func(role config.Role, c config.SIP, onRequest func(*sip.ServerTransaction), onACK func(*sip.Message)) (*sip.Stack, error) {
-		return startScreenedSIP(role, c, nil, onRequest, onACK)
+		return startSIPWith(role, c, sip.Config{OnRequest: onRequest, OnACK: onACK})
 	}
 	var resolver *sipdns.Resolver
 	if cfg.PCSCF != nil || cfg.ICSCF != nil || cfg.SCSCF != nil || cfg.IPSMGW != nil || cfg.MMTel != nil || cfg.MRFC != nil || cfg.IBCF != nil {
@@ -217,7 +216,8 @@ func run(configPath string, log *slog.Logger) error {
 			p.SetPolicyControl(client)
 			roleLog.Info("policy control over Rx")
 		}
-		stack, err := startScreenedSIP(config.RolePCSCF, c.SIP, p.Screen, p.OnRequest, p.OnACK)
+		stack, err := startSIPWith(config.RolePCSCF, c.SIP,
+			sip.Config{Screen: p.Screen, Admit: p.AdmitUnprotected, OnRequest: p.OnRequest, OnACK: p.OnACK})
 		if err != nil {
 			return err
 		}
@@ -225,7 +225,8 @@ func run(configPath string, log *slog.Logger) error {
 		if port := c.ProtectedServerPort; port != 0 {
 			// TS 33.203 7.1: the protected server port, on the same address.
 			protected := config.SIP{Listen: netip.AddrPortFrom(c.SIP.Listen.Addr(), port), Host: c.SIP.Host}
-			stack, err := startScreenedSIP(config.RolePCSCF, protected, p.Screen, p.OnProtectedRequest, p.OnProtectedACK)
+			stack, err := startSIPWith(config.RolePCSCF, protected,
+				sip.Config{Screen: p.Screen, OnRequest: p.OnProtectedRequest, OnACK: p.OnProtectedACK})
 			if err != nil {
 				return err
 			}
@@ -311,7 +312,8 @@ func run(configPath string, log *slog.Logger) error {
 		}
 		var processors []mrfc.Processor
 		for _, url := range c.MRFPs {
-			processors = append(processors, mrfc.Processor{Name: url, Control: agw.NewClient(url)})
+			client := agw.NewClient(url)
+			processors = append(processors, mrfc.Processor{Name: url, Control: client, Announcements: client})
 		}
 		m, err := mrfc.New(mrfc.Config{Host: c.SIP.Host, Port: int(c.SIP.Listen.Port()), NotifyURL: c.NotifyURL()},
 			processors, mrfc.NewMemoryStore(), resolver, roleLog)
@@ -435,7 +437,6 @@ func startIBCF(homeDomain string, c config.IBCF, locator ims.Locator,
 	if err != nil {
 		return nil, err
 	}
-	trgw := ibcf.NewAGWClient(c.TrGW.Control, c.TrGW.CoreAddress, c.TrGW.PeerAddress)
 	b, err := ibcf.New(ibcf.Config{
 		Internal:         internal,
 		External:         external,
@@ -444,7 +445,9 @@ func startIBCF(homeDomain string, c config.IBCF, locator ims.Locator,
 		HomeDomain:       homeDomain,
 		HomeNumberFormat: c.HomeNumberFormat,
 		ICSCF:            c.ICSCF,
-	}, peers, trgw, ibcf.NewMemoryStore(), locator, log)
+		TrGWCoreAddress:  c.TrGW.CoreAddress,
+		TrGWPeerAddress:  c.TrGW.PeerAddress,
+	}, peers, agw.NewClient(c.TrGW.Control), ibcf.NewMemoryStore(), locator, log)
 	if err != nil {
 		return nil, err
 	}

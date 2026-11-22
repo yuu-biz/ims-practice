@@ -38,11 +38,11 @@ func newStackWith(t *testing.T, timers sip.Timers, onRequest func(*sip.ServerTra
 	return newStackConfig(t, sip.Config{Timers: timers, OnRequest: onRequest})
 }
 
-// newPCSCFStack is the unprotected stack of p, screened as the P-CSCF's
-// stacks are.
+// newPCSCFStack is the unprotected stack of p, screened as the
+// P-CSCF's is.
 func newPCSCFStack(t *testing.T, p *PCSCF) *sip.Stack {
 	t.Helper()
-	return newStackConfig(t, sip.Config{Timers: sip.DefaultTimers(), Screen: p.Screen, OnRequest: p.OnRequest})
+	return newStackConfig(t, sip.Config{Timers: sip.DefaultTimers(), Screen: p.Screen, Admit: p.AdmitUnprotected, OnRequest: p.OnRequest})
 }
 
 func newStackConfig(t *testing.T, cfg sip.Config) *sip.Stack {
@@ -185,7 +185,7 @@ func registerVia(t *testing.T, targets []sip.Destination) int {
 	t.Helper()
 	p := New(Config{Host: "pcscf." + domain, Port: 5060, VisitedNetworkID: domain},
 		locatorFunc(func(string) []sip.Destination { return targets }), NewMemoryStore(), nil, quiet())
-	pcscfStack := newStackConfig(t, sip.Config{Timers: fast, Screen: p.Screen, OnRequest: p.OnRequest})
+	pcscfStack := newStackConfig(t, sip.Config{Timers: fast, Screen: p.Screen, Admit: p.AdmitUnprotected, OnRequest: p.OnRequest})
 	ue := newStack(t, func(*sip.ServerTransaction) {})
 	m := &sip.Message{Method: sip.REGISTER, RequestURI: "sip:" + domain}
 	m.Add("From", "<"+impu+">;tag="+sip.NewTag())

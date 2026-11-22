@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/yuu-biz/ims-practice/internal/policy"
+	"github.com/yuu-biz/ims-practice/internal/sdp"
 	"github.com/yuu-biz/ims-practice/internal/sip"
 )
 
@@ -231,4 +232,136 @@ func TestEventForAnUnknownPolicySessionIsIgnored(t *testing.T) {
 	if _, ok := c.store.DialogOfPolicySession("session-1"); !ok {
 		t.Error("the dialog of another session is gone")
 	}
+}
+
+// TestA2xxThatCrossesTheCancelIsAcknowledgedAndReleased is RFC 3261 9.1
+// at the P-CSCF that gave an INVITE up (TS 24.229 5.2.8.1.1): the callee
+// answers 200 before the CANCEL reaches it. The caller keeps its 500,
+// and the P-CSCF acknowledges the 200 and each retransmission in the
+// caller's name, then releases the dialog with one BYE to the callee
+// (5.2.8.1.2 item 1). The caller has sent an UPDATE in the early
+// dialog, so the BYE takes the number after it.
+func TestA2xxThatCrossesTheCancelIsAcknowledgedAndReleased(t *testing.T) {
+	pcrf, relay, store := &fakePolicy{}, newFakeRelay(), NewMemoryStore()
+	requests, acks := make(chan *sip.Message, 4), make(chan *sip.Message, 4)
+	invites := make(chan *sip.ServerTransaction, 1)
+	var far *sip.Stack
+	listening := make(chan struct{})
+	far = newStackConfig(t, sip.Config{Timers: fast, OnACK: func(ack *sip.Message) { acks <- ack },
+		OnRequest: func(st *sip.ServerTransaction) {
+			<-listening
+			if st.Request.Method == sip.INVITE {
+				invites <- st
+				return
+			}
+			requests <- st.Request
+			st.Respond(sip.NewResponse(st.Request, 200, ""))
+		}})
+	close(listening)
+	farContact := "sip:callee@" + far.LocalAddr().String()
+	ue, _ := answering(t, "ue", ueMedia)
+	ueContact := "sip:001010000000001@" + ue.LocalAddr().String()
+	locate := locatorFunc(func(string) []sip.Destination {
+		return []sip.Destination{{Transport: sip.UDP, Addr: far.LocalAddr()}}
+	})
+	p := New(Config{Host: "pcscf." + domain, Port: 5060, VisitedNetworkID: domain}, locate, store, relay, quiet())
+	p.SetPolicyControl(pcrf)
+	store.PutAssociation(Association{
+		Source: sip.Destination{Transport: sip.UDP, Addr: ue.LocalAddr()}, SentBy: ue.LocalAddr().String(), Contact: ueContact,
+		PrivateIdentity: impi, PublicIdentities: []string{impu}, ServiceRoute: []string{"<sip:orig@scscf." + domain + ":5060;lr>"},
+		Expires: time.Now().Add(time.Hour), SignallingSession: "signalling",
+	})
+	pcscf := newPCSCFStack(t, p)
+	p.SetStack(pcscf)
+
+	inv := invite("sip:001010000000002@"+domain, "<sip:pcscf."+domain+":5060;lr>")
+	inv.Set("Contact", "<"+ueContact+">")
+	ct, err := ue.SendRequest(inv, sip.Destination{Transport: sip.UDP, Addr: pcscf.LocalAddr()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var st *sip.ServerTransaction
+	select {
+	case st = <-invites:
+	case <-time.After(3 * time.Second):
+		t.Fatal("the callee got no INVITE")
+	}
+	answer := func(code int) *sip.Message {
+		resp := sip.NewResponse(st.Request, code, "callee")
+		for _, r := range st.Request.GetAll("Record-Route") {
+			resp.Add("Record-Route", r)
+		}
+		resp.Add("Contact", "<"+farContact+">")
+		resp.Add("Content-Type", "application/sdp")
+		resp.Body = sdp.Offer("2", coreMedia).Bytes()
+		return resp
+	}
+	st.Respond(answer(183))
+	// The P-CSCF has the policy session of the 183 once the caller has it.
+	for r := range ct.Responses() {
+		if r.StatusCode == 183 {
+			break
+		}
+	}
+
+	upd := &sip.Message{Method: sip.UPDATE, RequestURI: farContact}
+	upd.Add("Route", "<sip:pcscf."+domain+":5060;lr>")
+	upd.Add("Max-Forwards", "70")
+	upd.Add("From", inv.Get("From"))
+	upd.Add("To", inv.Get("To")+";tag=callee")
+	upd.Add("Call-ID", inv.Get("Call-ID"))
+	upd.Add("CSeq", "2 UPDATE")
+	updated, err := ue.SendRequest(upd, sip.Destination{Transport: sip.UDP, Addr: pcscf.LocalAddr()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp := final(t, updated.Responses(), 3*time.Second); resp.StatusCode != 200 {
+		t.Fatalf("the UPDATE got %d, want 200", resp.StatusCode)
+	}
+	if m := nextRequest(t, "the callee", requests); m.Method != sip.UPDATE {
+		t.Fatalf("the callee got %s, want the UPDATE", m.Method)
+	}
+
+	p.PolicyEvent(policy.Event{Session: "session-1", Kind: policy.LossOfBearer})
+	if resp := final(t, ct.Responses(), 3*time.Second); resp.StatusCode != 500 {
+		t.Fatalf("the caller got %d, want 500", resp.StatusCode)
+	}
+	select {
+	case <-st.Cancelled():
+	case <-time.After(3 * time.Second):
+		t.Fatal("the callee got no CANCEL")
+	}
+	// The 200 left the callee before the CANCEL came.
+	st.Respond(answer(200))
+
+	callee := inv.Get("To") + ";tag=callee"
+	for i := range 2 {
+		if i > 0 {
+			// The callee sends its 200 again, as a UAS does until the ACK
+			// comes (RFC 6026 8.1).
+			st.Respond(answer(200))
+		}
+		ack := nextRequest(t, "the callee", acks)
+		if ack.RequestURI != farContact || ack.Get("CSeq") != "1 ACK" || ack.Get("To") != callee || ack.Get("From") != inv.Get("From") {
+			t.Errorf("ACK %d: %s with CSeq %q, To %q, From %q; want the ACK of the 200 at %s", i+1, ack.RequestURI, ack.Get("CSeq"), ack.Get("To"), ack.Get("From"), farContact)
+		}
+	}
+	bye := nextRequest(t, "the callee", requests)
+	want := map[string]string{"From": inv.Get("From"), "To": callee, "Call-ID": inv.Get("Call-ID"), "CSeq": "3 BYE",
+		"Reason": `SIP;cause=503;text="Service Unavailable"`}
+	if bye.Method != sip.BYE || bye.RequestURI != farContact {
+		t.Errorf("the callee got %s %s, want a BYE to its Contact %s", bye.Method, bye.RequestURI, farContact)
+	}
+	for name, value := range want {
+		if got := bye.Get(name); got != value {
+			t.Errorf("BYE: %s = %q, want %q", name, got, value)
+		}
+	}
+	noRequest(t, "the callee after the BYE", requests)
+	for r := range ct.Responses() {
+		if r.StatusCode/100 == 2 {
+			t.Errorf("the caller got %d after its 500", r.StatusCode)
+		}
+	}
+	pcrf.waitReleased(t, "session-1")
 }

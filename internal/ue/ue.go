@@ -5,7 +5,9 @@ package ue
 
 import (
 	"context"
+	"crypto/hmac"
 	"crypto/rand"
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -14,6 +16,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"uuid"
 
 	"github.com/yuu-biz/ims-practice/internal/aka"
 	"github.com/yuu-biz/ims-practice/internal/sip"
@@ -23,8 +26,13 @@ import (
 type Config struct {
 	PrivateIdentity string
 	PublicIdentity  string
-	Password        string
-	HomeDomain      string
+	// TemporaryPublicIdentity reports that PublicIdentity is the
+	// temporary public identity that a UE without an ISIM derives from
+	// the IMSI (TS 23.003 13.4B). The network bars it: it serves REGISTER
+	// only (TS 24.229 5.1.1.1A), so the UE shows it to nobody.
+	TemporaryPublicIdentity bool
+	Password                string
+	HomeDomain              string
 	// PCSCF is where every request goes, the address that P-CSCF
 	// discovery gives (TS 24.229 5.1.1.1): with an access network the
 	// first one of the PCO (L.2.2.1).
@@ -143,11 +151,10 @@ func registerFailure(resp *sip.Message) *RegisterFailure {
 
 // UE is one simulated UE.
 type UE struct {
-	cfg         Config
-	stack       *sip.Stack
-	contact     string
-	contactAddr netip.AddrPort
-	log         *slog.Logger
+	cfg     Config
+	stack   *sip.Stack
+	contact Contact
+	log     *slog.Logger
 
 	callID string
 	cseq   int
@@ -171,31 +178,78 @@ type UE struct {
 	sa *securityAssociations
 }
 
-// ContactURI is the URI the UE registers, which the UA side of a call
-// puts in Contact too.
-func ContactURI(publicID string, addr netip.AddrPort) string {
-	user, _, _ := cutUser(publicID)
-	return fmt.Sprintf("sip:%s@%s", user, addr)
+// Contact is the contact address of a UE: the SIP URI that it
+// registers, and that the UA side of its calls writes in Contact too.
+type Contact struct {
+	user string
+	addr netip.AddrPort
 }
 
-// New uses stack to send its requests. contact is the address the UE
-// writes in Contact.
-func New(cfg Config, stack *sip.Stack, contact netip.AddrPort, log *slog.Logger) *UE {
+// NewContact is the contact address of the UE of cfg at addr. TS 24.229
+// 5.1.1.2.1 item c has the UE give it a user part that is globally
+// unique and reveals nothing private. The user part of the public
+// identity would not do: a phone without an ISIM makes that identity
+// from its IMSI (C.2). The UE keeps its contact for the refreshes and
+// the removal of the binding (5.1.1.4.1 item c).
+func NewContact(cfg Config, addr netip.AddrPort) Contact {
+	return Contact{user: contactUser(cfg).String(), addr: addr}
+}
+
+// contactLabel keeps this use of the UE's key apart from any other.
+const contactLabel = "contact user part"
+
+// contactUser is a UUID that stays the same when the UE restarts. With a
+// new user part, the restarted UE would bind a new contact address, and
+// the S-CSCF would deregister the old one (TS 24.229 5.1.1.2.1 NOTE 13);
+// with the same one, its registration refreshes the binding.
+//
+// The UUID is HMAC-SHA-256 of the private identity, keyed with what only
+// the UE and its home network hold: K of the USIM, or the password. A
+// hash of the private identity alone could be reversed by trying every
+// IMSI. RFC 9562 5.5 puts a UUID made with SHA-256 in version 8, and its
+// B.2 lays one out: the first 128 bits, with the version and variant
+// bits set. A UE with neither K nor a password has nothing of its own to
+// key the hash with, and takes a random UUID, which changes when it
+// restarts.
+func contactUser(cfg Config) uuid.UUID {
+	key := []byte(cfg.Password)
+	if cfg.AKA != nil {
+		key = cfg.AKA.Secret.K[:]
+	}
+	if len(key) == 0 {
+		return uuid.New()
+	}
+	mac := hmac.New(sha256.New, key)
+	mac.Write([]byte(contactLabel + "\x00" + cfg.PrivateIdentity))
+	var u uuid.UUID
+	copy(u[:], mac.Sum(nil))
+	// RFC 9562 4.2 and 4.1: version 8 in the high 4 bits of octet 6,
+	// variant 10 in the high 2 bits of octet 8.
+	u[6] = u[6]&0x0f | 0x80
+	u[8] = u[8]&0x3f | 0x80
+	return u
+}
+
+// URI is the SIP URI of c.
+func (c Contact) URI() string {
+	return fmt.Sprintf("sip:%s@%s", c.user, c.addr)
+}
+
+// New uses stack to send its requests, and registers contact.
+func New(cfg Config, stack *sip.Stack, contact Contact, log *slog.Logger) *UE {
 	if cfg.Expires == 0 {
 		cfg.Expires = DefaultExpires
 	}
-	user, _, _ := cutUser(cfg.PublicIdentity)
 	var usim *aka.USIM
 	if cfg.AKA != nil {
 		usim = aka.NewUSIM(cfg.AKA.Secret, cfg.AKA.SQN)
 	}
 	return &UE{
-		usim:        usim,
-		cfg:         cfg,
-		stack:       stack,
-		contact:     sip.NameAddr{URI: fmt.Sprintf("sip:%s@%s", user, contact), Params: cfg.Features}.String(),
-		contactAddr: contact,
-		log:         log,
+		usim:    usim,
+		cfg:     cfg,
+		stack:   stack,
+		contact: contact,
+		log:     log,
 		// TS 24.229 5.1.1.4.1: refreshes keep the Call-ID of the initial
 		// registration.
 		callID: sip.NewCallID(),
@@ -333,7 +387,7 @@ func (u *UE) newREGISTER(expires time.Duration, authorization string) *sip.Messa
 	m.Add("To", "<"+u.cfg.PublicIdentity+">")
 	m.Add("Call-ID", u.callID)
 	m.Add("CSeq", strconv.Itoa(u.cseq)+" REGISTER")
-	m.Add("Contact", u.contact+";expires="+strconv.Itoa(int(expires/time.Second)))
+	m.Add("Contact", sip.NameAddr{URI: u.contact.URI(), Params: u.cfg.Features}.String()+";expires="+strconv.Itoa(int(expires/time.Second)))
 	// TS 24.229 5.1.1.2.1: the UE supports Path.
 	m.Add("Supported", "path")
 	m.Add("Authorization", authorization)
@@ -451,12 +505,4 @@ func (u *UE) addAccessNetworkInfo(m *sip.Message) {
 	if u.cfg.AccessNetworkInfo != "" {
 		m.Add("P-Access-Network-Info", u.cfg.AccessNetworkInfo)
 	}
-}
-
-func cutUser(uri string) (user, host string, ok bool) {
-	u, err := sip.ParseURI(uri)
-	if err != nil {
-		return "", "", false
-	}
-	return u.User, u.Host, true
 }

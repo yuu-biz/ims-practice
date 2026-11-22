@@ -120,7 +120,7 @@ UE <-- P-CSCF <-- I-CSCF <-- S-CSCF: 200 OK // 10
 | --- | --- |
 | Request-URI of the UE's REGISTER | The home network domain, not a server. |
 | Authorization | The private identity in `username`. `nonce` and `response` are empty. |
-| Contact | `+g.3gpp.smsip` and `expires=600000`. |
+| Contact | A UUID as the user part, `+g.3gpp.smsip` and `expires=600000`. |
 | Three DNS lookups | NAPTR, SRV, then A lead to the I-CSCF. |
 | Headers the P-CSCF adds | Path, Require: path, P-Charging-Vector, P-Visited-Network-ID. |
 

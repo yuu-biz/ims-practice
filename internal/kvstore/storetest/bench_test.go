@@ -56,7 +56,7 @@ func BenchmarkMixes(b *testing.B) {
 			kv := &counting{Store: store}
 			cfg := kvjson.Config{Prefix: benchPrefix}
 			benchmarkMixes(b, roles{scscf: scscfstore.New(kv, scscfstore.Config{Config: cfg}), pcscf: pcscfstore.New(kv, cfg),
-				ipsmgw: ipsmgwstore.New(kv, ipsmgwstore.Config{Config: cfg}), sc: scstore.New(kv, cfg)}, kv)
+				ipsmgw: ipsmgwstore.New(kv, cfg), sc: scstore.New(kv, cfg)}, kv)
 		})
 	}
 }
@@ -212,12 +212,14 @@ func benchmarkMixes(b *testing.B, r roles, kv *counting) {
 		// ipsmgw.Deliver and the report (deliver.go, message.go), with a
 		// status report request at the SC stub.
 		{"ShortMessage", func(user string, n int) {
-			center.PutStatusReportRequest(sc.StatusReportRequest{Reference: "ref-" + user, Expires: time.Now().Add(time.Hour)})
-			mr := g.NextMessageReference("tel:+12025550102")
-			g.PutDelivery(ipsmgw.PendingDelivery{CallID: "msg-" + user, Reference: "ref-" + user, MessageReference: mr,
-				Expires: time.Now().Add(time.Hour)})
-			g.TakeDelivery("msg-" + user)
-			center.TakeStatusReportRequest("ref-" + user)
+			// The backends of the benchmarks do not fail.
+			ctx, now := context.Background(), time.Now()
+			_ = center.PutStatusReportRequest(ctx, sc.StatusReportRequest{Reference: "ref-" + user, Expires: now.Add(time.Hour)})
+			mr, _ := g.NextMessageReference(ctx, "tel:+12025550102", now.Add(10*time.Minute))
+			_ = g.PutDelivery(ctx, ipsmgw.PendingDelivery{CallID: "msg-" + user, Reference: "ref-" + user, MessageReference: mr,
+				ReportDeadline: now.Add(time.Minute), Expires: now.Add(2 * time.Minute)})
+			_, _, _ = g.TakeDelivery(ctx, "msg-"+user)
+			_, _, _ = center.TakeStatusReportRequest(ctx, "ref-"+user)
 		}},
 	}
 	for _, f := range flows {

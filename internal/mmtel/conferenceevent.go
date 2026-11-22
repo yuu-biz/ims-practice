@@ -83,6 +83,10 @@ func (f *conference) subscribe(st *sip.ServerTransaction) {
 			st.Respond(sip.NewResponse(req, 400, sip.NewTag()))
 			return
 		}
+		// The 200 goes before the record is written, in notify, and a
+		// write that fails is only logged: this instance sends the
+		// NOTIFYs and keeps the expiry timer, so the subscription is lost
+		// only if this instance stops before a later write succeeds.
 		f.record.Subscriptions = append(f.record.Subscriptions, ConferenceSubscription{NotifierSubscription: sub, Subscriber: assertedUser(req, "")})
 		id = sub.Dialog.ID
 		if sub.State == sip.SubscriptionActive {
@@ -292,7 +296,7 @@ func (f *conference) notify(only *sip.DialogID) {
 		}
 		within = append(within, w)
 	}
-	f.as.conferenceStore.PutConference(f.record)
+	f.writeRecord()
 	f.mu.Unlock()
 
 	ua := f.as.ua.Load()
@@ -305,7 +309,7 @@ func (f *conference) notify(only *sip.DialogID) {
 			// still has to be sent.
 			if o.last || final != nil && sip.EndsSubscription(final.StatusCode) {
 				f.record.Subscriptions = append(f.record.Subscriptions[:i], f.record.Subscriptions[i+1:]...)
-				f.as.conferenceStore.PutConference(f.record)
+				f.writeRecord()
 			}
 		}
 		f.mu.Unlock()
@@ -371,10 +375,8 @@ func (f *conference) notifyInDialog(p *party, sub *inDialogSubscription, reason 
 
 // userOf is the user of party p in the record. f.mu is held.
 func (f *conference) userOf(p *party) string {
-	for _, o := range f.record.Participants {
-		if o.Dialog.ID == p.dialog {
-			return o.User
-		}
+	if e := f.entry(p); e != nil {
+		return e.User
 	}
 	return ""
 }

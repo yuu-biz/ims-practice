@@ -57,7 +57,7 @@ func TestDeliveryAndItsReport(t *testing.T) {
 		"Request-Disposition": "no-fork",
 		"In-Reply-To":         "",
 		"Content-Type":        ipsmgw.ContentType,
-		"Route":               "",
+		"Route":               "<sip:" + domain + ";lr>",
 	})
 	if data.OriginatorAddress != scAddress {
 		t.Errorf("RP-OA = %v, want the SC", data.OriginatorAddress)

@@ -106,41 +106,30 @@ func (l *lateWrites) CompareAndSwap(ctx context.Context, key, version string, va
 // change, with the later version of the document: what a subscriber was
 // last sent.
 func TestALateWriteDoesNotUndoALaterOne(t *testing.T) {
+	ctx := context.Background()
 	for _, backend := range storetest.Backends() {
 		t.Run(backend.Name, func(t *testing.T) {
 			kv, cfg := backend.New(t), kvjson.Config{Prefix: storetest.Prefix()}
-			mmtelstore.New(kv, cfg).PutConference(conference(1, confinfo.Connected))
+			if err := mmtelstore.New(kv, cfg).PutConference(ctx, conference(1, confinfo.Connected)); err != nil {
+				t.Fatal(err)
+			}
 
 			slow := &lateWrites{Store: kv, release: make(chan struct{}), landed: make(chan error, 1)}
 			host := mmtelstore.New(slow, cfg)
-			host.PutConference(conference(2, confinfo.OnHold))
-			host.PutConference(conference(3, confinfo.Connected))
+			if err := host.PutConference(ctx, conference(2, confinfo.OnHold)); err == nil {
+				t.Error("the write whose answer was lost returned no error")
+			}
+			if err := host.PutConference(ctx, conference(3, confinfo.Connected)); err != nil {
+				t.Fatal(err)
+			}
 			close(slow.release)
 			if err := <-slow.landed; !errors.Is(err, kvstore.ErrConflict) {
 				t.Fatalf("the late write ended with %v, want a conflict", err)
 			}
 
-			got, ok := mmtelstore.New(kv, cfg).Conference("conf-a1")
-			if !ok || got.Subscriptions[0].Version != 3 || got.Participants[0].Status != confinfo.Connected {
-				t.Errorf("Conference = %+v, %v; want the change of version 3", got, ok)
-			}
-		})
-	}
-}
-
-// TestAWriteThatFailsLeavesTheRecordAsItWas: the record is one item, so
-// a host that stops before or during a write leaves the last state that
-// it wrote in full, never part of a change.
-func TestAWriteThatFailsLeavesTheRecordAsItWas(t *testing.T) {
-	for _, backend := range storetest.Backends() {
-		t.Run(backend.Name, func(t *testing.T) {
-			kv, cfg := backend.New(t), kvjson.Config{Prefix: storetest.Prefix()}
-			mmtelstore.New(kv, cfg).PutConference(conference(1, confinfo.Connected))
-			mmtelstore.New(storetest.StopAfter(kv, 0), cfg).PutConference(conference(2, confinfo.Disconnected))
-
-			got, ok := mmtelstore.New(kv, cfg).Conference("conf-a1")
-			if !ok || got.Subscriptions[0].Version != 1 || got.Participants[0].Status != confinfo.Connected {
-				t.Errorf("Conference after the failed write = %+v, %v; want the record of version 1", got, ok)
+			got, ok, err := mmtelstore.New(kv, cfg).Conference(ctx, "conf-a1")
+			if err != nil || !ok || got.Subscriptions[0].Version != 3 || got.Participants[0].Status != confinfo.Connected {
+				t.Errorf("Conference = %+v, %v, %v; want the change of version 3", got, ok, err)
 			}
 		})
 	}

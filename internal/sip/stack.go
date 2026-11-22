@@ -64,6 +64,29 @@ type Config struct {
 	// in the stack's own goroutine: it must return at once, must not
 	// change req, and must not call the stack.
 	Screen func(req *Message, source Destination) bool
+	// Admit, when set, is asked about each request that Screen lets in,
+	// before the stack does anything with it, as Screen is. It is asked
+	// in a goroutine of its own, so it may wait, for instance for a
+	// store on another machine, while the stack goes on with the
+	// messages from other sources. When it returns true, the stack takes
+	// the request up as if it had just arrived; when it returns false,
+	// the stack drops the request as one that Screen refuses, but logs
+	// nothing of it, since Admit knows why it refused and logs that.
+	// Each copy of a request is asked about until one is let in, and a
+	// copy let in after another has started the transaction counts as
+	// its retransmission.
+	//
+	// Admit is asked about the requests from one source, the same
+	// transport and address, one at a time and in the order they
+	// arrived, and the stack takes them up in that order. A CANCEL thus
+	// finds the INVITE it cancels (RFC 3261 9.2), and with Ordered the
+	// TU sees the requests from a source in the order they arrived, the
+	// ACK for a 2xx before a BYE that follows it. While Admit waits over
+	// one request, the later ones from its source wait too, so it should
+	// answer soon. At most maxAdmitQueue requests from a source wait;
+	// the stack drops any more, sends nothing back and logs it. Admit
+	// must not change req.
+	Admit func(req *Message, source Destination) bool
 }
 
 // DefaultTimerC is Timer C unless Config says otherwise. RFC 3261 16.6
@@ -84,7 +107,7 @@ var ErrStackClosed = errors.New("sip: stack closed")
 //     of every element but a stateless proxy, and a proxy built on this
 //     stack keeps transaction state. A retransmitted 2xx still reaches
 //     the TU while its INVITE client transaction waits in Accepted.
-//   - A request that Config.Screen refuses is dropped.
+//   - A request that Config.Screen or Config.Admit refuses is dropped.
 //   - An ACK goes to Config.OnACK.
 //   - Any other request starts a server transaction and goes to
 //     Config.OnRequest, except a CANCEL.
@@ -112,6 +135,10 @@ type Stack struct {
 	clients  map[clientKey]*clientEntry
 	servers  map[serverKey]*serverEntry
 	timerSeq uint64
+	// admitting holds, for each source with a request in Config.Admit,
+	// that request and then the requests from the source that came
+	// after it.
+	admitting map[Destination][]*Message
 	// forTU are the calls that wait for toTU. The loop never waits for
 	// the TU, so they queue up here.
 	forTU []func()
@@ -178,6 +205,7 @@ func NewStack(transport *TransportLayer, cfg Config, log *slog.Logger) (*Stack, 
 		done:      make(chan struct{}),
 		clients:   map[clientKey]*clientEntry{},
 		servers:   map[serverKey]*serverEntry{},
+		admitting: map[Destination][]*Message{},
 	}
 	s.cfg.SentBy = joinHostPort(host, port)
 	s.wg.Add(2)
@@ -194,7 +222,9 @@ func NewStack(transport *TransportLayer, cfg Config, log *slog.Logger) (*Stack, 
 func (s *Stack) LocalAddr() netip.AddrPort { return s.transport.LocalAddr() }
 
 // Close stops the stack and its transport. Client transactions still
-// running end with ErrStackClosed.
+// running end with ErrStackClosed. Close returns once a call of
+// Config.Admit under way has returned, so that the node may then close
+// what Admit reads, and drops the requests that wait for Admit.
 func (s *Stack) Close() {
 	s.closeOnce.Do(func() {
 		// The loop ends first, so that no transaction sees the closed
@@ -398,6 +428,13 @@ type (
 		msg    *Message
 		source Destination
 	}
+	// admitDecided is the answer of Config.Admit about the first
+	// request in Stack.admitting of source.
+	admitDecided struct {
+		req      *Message
+		source   Destination
+		admitted bool
+	}
 	startClient  struct{ ct *ClientTransaction }
 	cancelInvite struct {
 		ct      *ClientTransaction
@@ -545,10 +582,12 @@ func (s *Stack) handle(in stackInput) {
 	switch in := in.(type) {
 	case receivedMessage:
 		if in.msg.IsRequest() {
-			s.receiveRequest(in.msg, in.source)
+			s.receiveRequest(in.msg, in.source, false)
 		} else {
 			s.receiveResponse(in.msg)
 		}
+	case admitDecided:
+		s.receiveAdmitDecision(in)
 	case startClient:
 		s.startClient(in.ct)
 	case cancelInvite:
@@ -602,7 +641,7 @@ func (s *Stack) receiveResponse(resp *Message) {
 	s.stepClient(e, ResponseReceived{Response: resp})
 }
 
-func (s *Stack) receiveRequest(req *Message, source Destination) {
+func (s *Stack) receiveRequest(req *Message, source Destination, admitted bool) {
 	// The transport has already parsed this Via.
 	v, _ := ParseVia(req.Get("Via"))
 	branch := v.Branch()
@@ -616,7 +655,7 @@ func (s *Stack) receiveRequest(req *Message, source Destination) {
 		return
 	}
 	if req.Method == ACK {
-		s.receiveACK(req, v, source)
+		s.receiveACK(req, v, source, admitted)
 		return
 	}
 	key := serverKey{branch: branch, sentBy: sentByOf(v), method: req.Method}
@@ -624,7 +663,7 @@ func (s *Stack) receiveRequest(req *Message, source Destination) {
 		s.stepServer(e, RequestRetransmitted{})
 		return
 	}
-	if !s.admits(req, source) {
+	if !admitted && !s.admits(req, source) {
 		return
 	}
 	e := &serverEntry{key: key, timers: map[Timer]armedTimer{}}
@@ -693,24 +732,74 @@ func toTag(resp *Message) string {
 // Only the ACK for a 300-699 response matches one, because it carries
 // the INVITE's branch (RFC 3261 17.1.1.3). The ACK for a 2xx has a
 // branch of its own and goes to the TU.
-func (s *Stack) receiveACK(ack *Message, v Via, source Destination) {
+func (s *Stack) receiveACK(ack *Message, v Via, source Destination, admitted bool) {
 	if e, ok := s.servers[serverKey{branch: v.Branch(), sentBy: sentByOf(v), method: INVITE}]; ok {
 		s.stepServer(e, ACKReceived{ACK: ack})
 		return
 	}
-	if !s.admits(ack, source) {
+	if !admitted && !s.admits(ack, source) {
 		return
 	}
 	s.passACKToTU(ack)
 }
 
-// admits tells whether Config.Screen lets req in.
+// maxAdmitQueue bounds the requests from one source that wait for
+// Config.Admit, the one it is deciding on included, so that a flood from
+// one address piles up no more than this while Admit waits for a slow
+// store. A node of the network is one source for all of its requests,
+// such as the NOTIFYs of the reg event for many UEs at once, so the
+// bound leaves room for a burst of them; a request dropped over TCP is
+// not sent again before its client transaction times out.
+var maxAdmitQueue = 512
+
+// admits tells whether req may go on at once. A request that
+// Config.Screen lets in goes to Config.Admit, when there is one, and
+// comes back to the loop once Admit has let it in.
 func (s *Stack) admits(req *Message, source Destination) bool {
-	if s.cfg.Screen == nil || s.cfg.Screen(req, source) {
+	if s.cfg.Screen != nil && !s.cfg.Screen(req, source) {
+		s.log.Info("dropped request that the screen refused", "method", string(req.Method), "src", source.String())
+		return false
+	}
+	if s.cfg.Admit == nil {
 		return true
 	}
-	s.log.Info("dropped request that the screen refused", "method", string(req.Method), "src", source.String())
+	waiting := s.admitting[source]
+	if len(waiting) == maxAdmitQueue {
+		s.log.Warn("dropped request since too many from its source wait for admission",
+			"method", string(req.Method), "src", source.String())
+		return false
+	}
+	s.admitting[source] = append(waiting, req)
+	if len(waiting) == 0 {
+		s.askAdmit(req, source)
+	}
 	return false
+}
+
+// askAdmit asks Config.Admit about req off the loop, in a goroutine
+// that Close waits for.
+func (s *Stack) askAdmit(req *Message, source Destination) {
+	s.wg.Add(1)
+	go func() {
+		defer s.wg.Done()
+		s.post(admitDecided{req: req, source: source, admitted: s.cfg.Admit(req, source)})
+	}()
+}
+
+// receiveAdmitDecision takes up the request that Config.Admit has
+// decided on, and then asks Admit about the next request from the same
+// source.
+func (s *Stack) receiveAdmitDecision(in admitDecided) {
+	if in.admitted {
+		s.receiveRequest(in.req, in.source, true)
+	}
+	waiting := s.admitting[in.source][1:]
+	if len(waiting) == 0 {
+		delete(s.admitting, in.source)
+		return
+	}
+	s.admitting[in.source] = waiting
+	s.askAdmit(waiting[0], in.source)
 }
 
 func (s *Stack) passACKToTU(ack *Message) {

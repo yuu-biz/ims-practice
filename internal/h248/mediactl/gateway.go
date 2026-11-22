@@ -14,6 +14,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/yuu-biz/ims-practice/internal/agw"
 	"github.com/yuu-biz/ims-practice/internal/h248"
 )
 
@@ -86,13 +87,10 @@ type gatewayContext struct {
 	id      h248.ContextID
 	relayID string
 	group   uint16
-	// reserved is when the terminations went into the context; nt/dur
-	// counts from here.
-	reserved time.Time
 
 	mu        sync.Mutex
 	released  bool
-	heartbeat map[Side]*heartbeat
+	heartbeat map[agw.TerminationID]*heartbeat
 }
 
 // heartbeat is the event hangterm/thb on one termination (H.248.36

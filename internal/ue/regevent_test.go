@@ -83,7 +83,7 @@ func TestRegEventReportsTheExpiryThroughTheWholeIMS(t *testing.T) {
 	}
 	n.pcscfLog.waitFor(t, map[string]string{"public_identity": impu, "state": "terminated", "contact_event": "expired",
 		"subscription_state": "terminated"})
-	waitAssociationEnded(t, n, ue.ContactURI(impu, p.ua.Stack().LocalAddr()))
+	waitAssociationEnded(t, n, p.contact.URI())
 }
 
 // TestLostIsTheNOTIFYThatEndsTheRegistration: Lost skips the NOTIFYs
@@ -117,7 +117,7 @@ func TestNetworkInitiatedDeregistrationReachesTheUE(t *testing.T) {
 	if !last.Deregistered() || last.Event != reginfo.Deactivated {
 		t.Errorf("last NOTIFY to the UE: %+v", last)
 	}
-	waitAssociationEnded(t, n, ue.ContactURI(impu, p.ua.Stack().LocalAddr()))
+	waitAssociationEnded(t, n, p.contact.URI())
 }
 
 // TestRemovedSubscriptionIsDeregisteredThroughTheWholeIMS removes the
@@ -141,7 +141,7 @@ func TestRemovedSubscriptionIsDeregisteredThroughTheWholeIMS(t *testing.T) {
 		t.Errorf("last NOTIFY to the UE: %+v", last)
 	}
 	n.pcscfLog.waitFor(t, map[string]string{"public_identity": impu, "state": "terminated", "contact_event": "rejected"})
-	waitAssociationEnded(t, n, ue.ContactURI(impu, p.ua.Stack().LocalAddr()))
+	waitAssociationEnded(t, n, p.contact.URI())
 
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 	defer cancel()

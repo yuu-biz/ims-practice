@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/yuu-biz/ims-practice/internal/agw"
 	"github.com/yuu-biz/ims-practice/internal/h248"
 )
 
@@ -59,17 +60,17 @@ func TestIqWritesTheModeOnEveryAddAndModify(t *testing.T) {
 	b.waitRegistered(t)
 	before := len(b.net.datagrams())
 	ctx := context.Background()
-	r, err := b.controller.Reserve(ctx, Media{})
+	r, err := reserve(ctx, b.controller, agw.Media{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := b.controller.Configure(ctx, r.ID, Access, Media{Address: mustAddrPort("192.0.2.30:49170")}); err != nil {
+	if err := b.controller.Modify(ctx, r.ID, agw.Access, agw.TerminationRequest{Remote: mustAddrPort("192.0.2.30:49170")}); err != nil {
 		t.Fatal(err)
 	}
-	if err := b.controller.Configure(ctx, r.ID, Core, Media{Address: mustAddrPort("203.0.113.40:50000")}); err != nil {
+	if err := b.controller.Modify(ctx, r.ID, agw.Core, agw.TerminationRequest{Remote: mustAddrPort("203.0.113.40:50000")}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := b.controller.Release(ctx, r.ID); err != nil {
+	if err := b.controller.Subtract(ctx, r.ID); err != nil {
 		t.Fatal(err)
 	}
 	modes := modeOnTheWire(t, b.net.datagrams()[before:])

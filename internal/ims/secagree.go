@@ -55,10 +55,7 @@ func (t Transform) same(o Transform) bool {
 // SupportedTransforms are those that the P-CSCF and the UE simulator
 // offer, most preferred first. There is one: HMAC-SHA2-256-128, which
 // Annex H recommends over HMAC-SHA-1-96, with encryption null, which the
-// UE has to accept (TS 33.203 7.2). A longer list makes the REGISTER
-// that answers a challenge, with Security-Client and Security-Verify,
-// longer than the 1300 bytes above which RFC 3261 18.1.1 sends it over
-// TCP, from a port that the P-CSCF does not know (see its Association).
+// UE has to accept (TS 33.203 7.2).
 var SupportedTransforms = []Transform{
 	{Algorithm: "hmac-sha2-256-128", EncryptionAlgorithm: "null"},
 }

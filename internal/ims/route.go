@@ -18,6 +18,12 @@ type Locator interface {
 
 // Destination is where to send a request for u (RFC 3263): the first
 // transport and address DNS gives.
+//
+// SIMPLIFIED: RFC 3263 4.2 and 4.3. Only the first target is used. When
+// the request to it fails, with a 503, a transport error or no response
+// before Timer B or F, the request is not sent again to the next target
+// in a new transaction. Every name in the DNS of this project leads to
+// one server, so there is no next target to try.
 func Destination(ctx context.Context, loc Locator, u sip.URI) (sip.Destination, error) {
 	transport, _ := u.Params.Get("transport")
 	targets, err := loc.Locate(ctx, u.Host, u.Port, sip.Transport(strings.ToUpper(transport)))

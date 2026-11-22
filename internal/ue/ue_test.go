@@ -359,7 +359,7 @@ func startNetwork(t *testing.T, cfg networkConfig) testNetwork {
 	protectedPort := protectedTransport.LocalAddr().Port()
 	p := pcscf.New(pcscf.Config{Host: "pcscf." + domain, Port: 5060, ProtectedServerPort: int(protectedPort), VisitedNetworkID: domain},
 		dns, pcscfStore, nil, slog.New(regEventHandler{log: pcscfLog}))
-	pcscfStack := stackConfig(t, sip.Config{Screen: p.Screen, OnRequest: p.OnRequest, OnACK: p.OnACK})
+	pcscfStack := stackConfig(t, sip.Config{Screen: p.Screen, Admit: p.AdmitUnprotected, OnRequest: p.OnRequest, OnACK: p.OnACK})
 	var epcAPI string
 	if cfg.epc {
 		epcAPI = startEPC(t, p, pcscfStack.LocalAddr().Addr())
@@ -402,8 +402,8 @@ func newUE(t *testing.T, pcscfAddr netip.AddrPort, pass string) *ue.UE {
 
 func newUEAsking(t *testing.T, pcscfAddr netip.AddrPort, pass string, expires time.Duration) *ue.UE {
 	s := stack(t, func(st *sip.ServerTransaction) {})
-	return ue.New(ue.Config{PrivateIdentity: impi, PublicIdentity: impu, Password: pass, HomeDomain: domain, PCSCF: pcscfAddr, Expires: expires},
-		s, s.LocalAddr(), quiet())
+	cfg := ue.Config{PrivateIdentity: impi, PublicIdentity: impu, Password: pass, HomeDomain: domain, PCSCF: pcscfAddr, Expires: expires}
+	return ue.New(cfg, s, ue.NewContact(cfg, s.LocalAddr()), quiet())
 }
 
 func TestRegisterRefreshAndDeregisterThroughTheWholeIMS(t *testing.T) {
@@ -432,8 +432,9 @@ func TestRegisterRefreshAndDeregisterThroughTheWholeIMS(t *testing.T) {
 func TestTheFeatureTagsReachTheSCSCF(t *testing.T) {
 	n := networkWith(t, time.Second, time.Hour)
 	s := stack(t, func(st *sip.ServerTransaction) {})
-	u := ue.New(ue.Config{PrivateIdentity: impi, PublicIdentity: impu, Password: password, HomeDomain: domain, PCSCF: n.pcscf,
-		Features: ue.DefaultFeatures}, s, s.LocalAddr(), quiet())
+	cfg := ue.Config{PrivateIdentity: impi, PublicIdentity: impu, Password: password, HomeDomain: domain, PCSCF: n.pcscf,
+		Features: ue.DefaultFeatures}
+	u := ue.New(cfg, s, ue.NewContact(cfg, s.LocalAddr()), quiet())
 	if _, err := u.Register(context.Background()); err != nil {
 		t.Fatal(err)
 	}
@@ -471,8 +472,9 @@ func TestRegistrationWithoutAnIdentityToUse(t *testing.T) {
 		st.Respond(resp)
 	})
 	s := stack(t, func(st *sip.ServerTransaction) {})
-	u := ue.New(ue.Config{PrivateIdentity: impi, PublicIdentity: impu, Password: password, HomeDomain: domain,
-		PCSCF: pcscf.LocalAddr()}, s, s.LocalAddr(), quiet())
+	cfg := ue.Config{PrivateIdentity: impi, PublicIdentity: impu, Password: password, HomeDomain: domain,
+		PCSCF: pcscf.LocalAddr()}
+	u := ue.New(cfg, s, ue.NewContact(cfg, s.LocalAddr()), quiet())
 	if _, err := u.Register(t.Context()); err == nil || !strings.Contains(err.Error(), "P-Associated-URI") {
 		t.Errorf("Register = %v, want an error about P-Associated-URI", err)
 	}

@@ -2,10 +2,12 @@
 ; deploy/compose/dns/ims.mnc001.mcc001.3gppnetwork.org.zone and
 ; deploy/k8s/changes.go. Change those, not this file.
 
-; The home network domain on Kubernetes. The NAPTR and SRV records are
-; those of deploy/compose/dns. The nodes have no fixed addresses here,
-; so each name is a CNAME to the node's headless Service, which the
-; cluster DNS answers with the Pod's current address.
+; The home network domain on Kubernetes, with the NAPTR and SRV records
+; of deploy/compose/dns. The nodes have no fixed addresses here, so each
+; name is a CNAME to the node's headless Service, which the cluster DNS
+; answers with the Pod's current address. The target of an SRV record
+; must not be such an alias (RFC 2782), so the SRV records name the
+; Service itself.
 $ORIGIN ims.mnc001.mcc001.3gppnetwork.org.
 $TTL 60
 @         IN SOA dns hostmaster 7 3600 600 86400 60
@@ -16,7 +18,7 @@ $TTL 60
 ; I-CSCF, the entry point of the home network, over UDP.
 @         IN NAPTR 10 50 "s" "SIP+D2U" "" _sip._udp
 ; RFC 3263 4.2 and RFC 2782: the SRV record gives the port and the host.
-_sip._udp IN SRV   10 50 5060 icscf
+_sip._udp IN SRV   10 50 5060 icscf.ims.svc.cluster.local.
 
 hss       IN CNAME hss.ims.svc.cluster.local.
 icscf     IN CNAME icscf.ims.svc.cluster.local.
@@ -41,7 +43,7 @@ mrfp      IN CNAME mrfp.ims.svc.cluster.local.
 ; the MMTel AS hosts (TS 23.228 5.4.12.3). As for the home domain, NAPTR
 ; and SRV (RFC 3263) lead to the instance that hosts the conferences.
 conf      IN NAPTR 10 50 "s" "SIP+D2U" "" _sip._udp.conf
-_sip._udp.conf IN SRV 10 50 5060 mmtel
+_sip._udp.conf IN SRV 10 50 5060 mmtel.ims.svc.cluster.local.
 
 ; The name server of the domain has an address of its own: the fixed
 ; ClusterIP of the DNS server's Service (dns, or ims-dns with the

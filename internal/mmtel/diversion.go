@@ -103,7 +103,11 @@ func (c *call) divert(d diversion) {
 	if d.to.NotifyCallerOrDefault() {
 		c.notifyCaller(d, target)
 	}
-	inv, fields := c.newInvitation(target)
+	inv, fields, err := c.newInvitation(target)
+	if err != nil {
+		c.storeFailed(err)
+		return
+	}
 	fields.Remove("History-Info")
 	for _, h := range sip.HistoryInfoHeaders(c.diversionHistory(target, d, c.hiddenFromTarget(d), false)) {
 		fields.Add(h.Name, h.Value)

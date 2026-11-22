@@ -15,6 +15,9 @@
 package mmtelstore
 
 import (
+	"context"
+	"errors"
+
 	"github.com/yuu-biz/ims-practice/internal/kvstore"
 	"github.com/yuu-biz/ims-practice/internal/kvstore/kvjson"
 	"github.com/yuu-biz/ims-practice/internal/mmtel"
@@ -45,34 +48,55 @@ func (s *Store) legKey(id sip.DialogID) string { return s.c.Key("call-of-leg", d
 //
 // A record keeps no time to live: the call lasts until its BYE, however
 // long that is, as in mmtel.MemoryStore. The record of a call whose end
-// no instance sees stays.
-func (s *Store) PutCall(r mmtel.CallRecord) {
-	s.c.PutIndex(s.legKey(r.Outgoing.ID), kvjson.Member(dialogParts(r.Incoming.ID)...), 0)
-	kvjson.Put(s.c, s.callKey(r.Incoming.ID), r, 0)
+// no instance sees stays. So does the index item of a PutCall that
+// failed between its two writes: it names a record that is not there,
+// which CallOf takes as a miss, and dialogs are never used again.
+func (s *Store) PutCall(ctx context.Context, r mmtel.CallRecord) error {
+	if err := s.c.WriteIndex(ctx, s.legKey(r.Outgoing.ID), kvjson.Member(dialogParts(r.Incoming.ID)...), 0); err != nil {
+		return err
+	}
+	return kvjson.Write(ctx, s.c, s.callKey(r.Incoming.ID), r, 0)
 }
 
 // CallOf reads the record under the dialog, or else the index item of
 // an Outgoing dialog and the record it names. A record whose Outgoing
 // dialog is another is a miss.
-func (s *Store) CallOf(id sip.DialogID) (mmtel.CallRecord, bool) {
+func (s *Store) CallOf(ctx context.Context, id sip.DialogID) (mmtel.CallRecord, bool, error) {
 	var r mmtel.CallRecord
-	if _, ok := kvjson.Get(s.c, s.callKey(id), &r); ok {
-		return r, true
+	_, err := kvjson.Read(ctx, s.c, s.callKey(id), &r)
+	if err == nil {
+		return r, true, nil
 	}
-	t, _, ok := s.c.IndexTarget(s.legKey(id))
+	if !errors.Is(err, kvstore.ErrNotFound) {
+		return mmtel.CallRecord{}, false, err
+	}
+	t, _, err := s.c.ReadIndex(ctx, s.legKey(id))
+	if errors.Is(err, kvstore.ErrNotFound) {
+		return mmtel.CallRecord{}, false, nil
+	}
+	if err != nil {
+		return mmtel.CallRecord{}, false, err
+	}
 	parts := kvjson.SplitMember(t)
-	if !ok || len(parts) != 3 {
-		return mmtel.CallRecord{}, false
+	if len(parts) != 3 {
+		return mmtel.CallRecord{}, false, nil
 	}
 	incoming := sip.DialogID{CallID: parts[0], LocalTag: parts[1], RemoteTag: parts[2]}
-	if _, ok := kvjson.Get(s.c, s.callKey(incoming), &r); !ok || r.Outgoing.ID != id {
-		return mmtel.CallRecord{}, false
+	r = mmtel.CallRecord{}
+	_, err = kvjson.Read(ctx, s.c, s.callKey(incoming), &r)
+	if errors.Is(err, kvstore.ErrNotFound) || err == nil && r.Outgoing.ID != id {
+		return mmtel.CallRecord{}, false, nil
 	}
-	return r, true
+	if err != nil {
+		return mmtel.CallRecord{}, false, err
+	}
+	return r, true, nil
 }
 
 // DeleteCall removes the record, then the index item.
-func (s *Store) DeleteCall(r mmtel.CallRecord) {
-	s.c.Delete(s.callKey(r.Incoming.ID))
-	s.c.DeleteIndexIf(s.legKey(r.Outgoing.ID), kvjson.Member(dialogParts(r.Incoming.ID)...))
+func (s *Store) DeleteCall(ctx context.Context, r mmtel.CallRecord) error {
+	if err := s.c.Remove(ctx, s.callKey(r.Incoming.ID)); err != nil {
+		return err
+	}
+	return s.c.RemoveIndexIf(ctx, s.legKey(r.Outgoing.ID), kvjson.Member(dialogParts(r.Incoming.ID)...))
 }

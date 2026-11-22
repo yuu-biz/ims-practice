@@ -151,7 +151,7 @@ func startIMS(t *testing.T, n int) *network {
 	net.dns.add(domain, newStack(t, sip.Timers{}, i.OnRequest).LocalAddr())
 
 	p := pcscf.New(pcscf.Config{Host: "pcscf." + domain, Port: 5060, VisitedNetworkID: domain}, net.dns, pcscf.NewMemoryStore(), nil, quiet())
-	pcscfStack := newStackConfig(t, sip.Config{Screen: p.Screen, OnRequest: p.OnRequest})
+	pcscfStack := newStackConfig(t, sip.Config{Screen: p.Screen, Admit: p.AdmitUnprotected, OnRequest: p.OnRequest})
 	p.SetStack(pcscfStack)
 	net.pcscf = pcscfStack.LocalAddr()
 	net.dns.add("pcscf."+domain, net.pcscf)
@@ -664,9 +664,13 @@ func (n *network) simulator(subscriber int) *ue.UE {
 		n.t.Fatal(err)
 	}
 	addr := tr.LocalAddr()
+	cfg := ue.Config{PrivateIdentity: user, PublicIdentity: "sip:" + user, Password: "test-password-" + strconv.Itoa(subscriber),
+		HomeDomain: domain, PCSCF: n.pcscf, PCSCFURI: "sip:pcscf." + domain + ":5060", Features: ue.DefaultFeatures,
+		SCAddress: n.gw.ServiceCentre.String()}
+	contact := ue.NewContact(cfg, addr)
 	// The UA needs the UE's ReceiveSMS before the UE exists.
 	var u atomic.Pointer[ue.UE]
-	ua, err := sip.NewUA(tr, sip.UAConfig{SentBy: addr.String(), Contact: ue.ContactURI("sip:"+user, addr),
+	ua, err := sip.NewUA(tr, sip.UAConfig{SentBy: addr.String(), Contact: contact.URI(),
 		OnCall:    func(c *sip.IncomingCall) { c.Reject(486) },
 		OnMessage: func(st *sip.ServerTransaction) { u.Load().ReceiveSMS(st) },
 	}, quiet())
@@ -674,9 +678,7 @@ func (n *network) simulator(subscriber int) *ue.UE {
 		n.t.Fatal(err)
 	}
 	n.t.Cleanup(ua.Close)
-	u.Store(ue.New(ue.Config{PrivateIdentity: user, PublicIdentity: "sip:" + user, Password: "test-password-" + strconv.Itoa(subscriber),
-		HomeDomain: domain, PCSCF: n.pcscf, PCSCFURI: "sip:pcscf." + domain + ":5060", Features: ue.DefaultFeatures,
-		SCAddress: n.gw.ServiceCentre.String()}, ua.Stack(), addr, quiet()))
+	u.Store(ue.New(cfg, ua.Stack(), contact, quiet()))
 	if _, err := u.Load().Register(context.Background()); err != nil {
 		n.t.Fatal(err)
 	}

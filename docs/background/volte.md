@@ -272,7 +272,7 @@ SIPp のシナリオは次の形を想定しています。
 | 要件 | 根拠 | 今のコード | 作り方 |
 | --- | --- | --- | --- |
 | REGISTER と INVITE とその応答の Contact に、audio の機能タグ（RFC 3840）を入れる | IR.92 2.2.1、2.2.4 | 入れていない | `internal/ue` |
-| Contact の user part を一意にし、私的な情報を出さない。時刻をもとにした UUID を使える | IR.92 2.2.1 | 公開の識別子の user part を使っている（`ContactURI`） | UUID にする。P-CSCF と S-CSCF は Contact の文字列で引くので、UUID でも動く見込み |
+| Contact の user part を一意にし、私的な情報を出さない。時刻をもとにした UUID を使える | IR.92 2.2.1 | 秘密の識別子から HMAC-SHA-256 で導くバージョン 8 の UUID（RFC 9562）を user part にしている（`NewContact`）。鍵は USIM の K かパスワードで、起動し直しても同じ値になる | なし |
 | すべての要求に User-Agent、すべての応答に Server を付ける。形は GSMA RCC.07 に IR.92 の拡張（`PRD-IR92/<主な版>` など）を加えたもの | IR.92 2.6 | 付けていない | `internal/ue`。RCC.07 は読んでいない |
 | OPTIONS の要求と 200 の Contact に mmtel の ICSI を入れる | IR.92 2.2.9 | `sip.UA` の受け付ける方法に OPTIONS が無い | `sip.UA` が OPTIONS に答えるようにする |
 | 発信の 486 での拒否（UDUB） | IR.92 2.2.4 | 対応している | なし |

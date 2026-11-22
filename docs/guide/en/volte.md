@@ -4,7 +4,7 @@
 
 This guide follows what a VoLTE phone adds to the softphone of [Follow a UE registering with the IMS](registration.md) and [Follow a voice call through the IMS](call.md): the access network, IMS AKA with the security agreement, policy control over Rx, and a voice call the way a VoLTE phone makes it. Two UE simulators attach to a stub of the EPC, register with IMS AKA, and call each other in AMR-WB with preconditions; the PCRF sets up a voice bearer for each of them. Then the network takes one of the bearers away and the P-CSCF ends the call.
 
-The guide follows these editions: TS 24.229 V20.1.0, TS 29.214 V20.0.0 (Rx), TS 29.213 (the SDP to Rx mapping), TS 24.301 V20.1.0 (the EPS messages), TS 33.203 and TS 33.102 (IMS AKA), TS 35.206 and TS 35.208 (MILENAGE), RFC 3310 (Digest AKA), RFC 3329 (sec-agree), RFC 3312 (preconditions), RFC 4867 (AMR payload format), RFC 4028 (session timer) and GSMA IR.92 v24.0. Clause numbers below refer to those editions.
+The guide follows these editions: TS 24.229 V20.1.0, TS 29.214 V20.0.0 (Rx), TS 29.213 (the SDP to Rx mapping), TS 24.301 V20.1.0 (the EPS messages), TS 26.114 V20.1.1 (media handling), TS 33.203 and TS 33.102 (IMS AKA), TS 35.206 and TS 35.208 (MILENAGE), RFC 3310 (Digest AKA), RFC 3329 (sec-agree), RFC 3312 (preconditions), RFC 4867 (AMR payload format), RFC 4028 (session timer) and GSMA IR.92 v24.0. Clause numbers below refer to those editions.
 
 ## Before you start
 
@@ -141,10 +141,10 @@ K and OPc are those of MILENAGE test set 1. OPc is derived from the operator's O
 6. **The P-CSCF sets up temporary associations (#737).** It takes `ik` and `ck` out of the 401, so that the keys never travel to the UE, and offers its own associations in `Security-Server: ipsec-3gpp;q=0.1;alg=hmac-sha2-256-128;ealg=null;spi-c=...;spi-s=...;port-c=50711;port-s=5064` (5.2.2.2, TS 33.203 7.2).
 7. **The UE checks the network (#740).** Its USIM computes the MAC of AUTN and compares it with the one in AUTN: a match shows that the network knows K. It checks that the SQN is fresh (TS 33.102 6.3.3, C.2), and computes RES, CK and IK.
 8. **REGISTER over the associations (#740).** The UE answers from its protected server port 5062 to the P-CSCF's protected server port 5064 (TS 33.203 7.1). It repeats its Security-Client and mirrors the Security-Server in `Security-Verify`, so that a man in the middle cannot have removed a stronger offer (RFC 3329). The response of the Digest is computed with RES as the password (RFC 3310 3.3).
-9. **The P-CSCF checks the agreement (#749).** The REGISTER came to the protected port from the UE's address and port, and Security-Verify matches what it sent. It marks the Authorization `integrity-protected="yes"`.
+9. **The P-CSCF checks the agreement (#749).** The REGISTER came to the protected port from the UE's address and port, and Security-Verify matches what it sent. A REGISTER over 1300 bytes comes over TCP from another port, and the P-CSCF takes the UE's port from its Via instead. It marks the Authorization `integrity-protected="yes"`.
 10. **The S-CSCF checks RES (#760, #764).** It computes the Digest with XRES and compares (TS 24.229 5.4.1.2.2). They match, so it sends the SAR and registers the UE.
 11. **The 200 OK (#783).** It goes back over the associations, which now become established; their lifetime follows the registration (5.2.2.2). From now on the UE sends every request to port 5064, with that port in the P-CSCF URI of its Route, and the P-CSCF sends to the UE at 5062; the Path that the P-CSCF added names its protected port.
-12. **The signalling path (#786).** Once the UE is registered, the P-CSCF asks the PCRF to tell it when the UE loses its signalling bearer (TS 29.214 A.4). The 200 OK and this AAR leave the P-CSCF in either order.
+12. **The signalling path (#786).** Once the UE is registered, the P-CSCF asks the PCRF to tell it when the UE loses its signalling bearer (TS 29.214 A.4). It does so after the initial registration has succeeded, as the flow of TS 29.213 B.1 shows, so a UE that fails to authenticate opens no Rx session. The 200 OK and this AAR leave the P-CSCF in either order.
 
 A refresh and the deregistration go over the associations without a new challenge (TS 24.229 5.1.1.4.2, 5.1.1.6.2).
 
@@ -183,7 +183,9 @@ Captures are readable by default, so that a learner sees the SIP of a registered
 Without ESP, two things differ from a real network:
 
 - Each side sends from its protected server port, so the protected client ports (`port-c`) are agreed and never bound.
-- A request over TCP comes from a port of the moment. The VoLTE INVITE is larger than 1300 bytes and goes over TCP (RFC 3261 18.1.1), so the P-CSCF knows the UE of a TCP request by the sent-by of its Via. The REGISTERs stay below 1300 bytes, so that the agreement is made over UDP.
+- A request over TCP comes from a port of the moment. The VoLTE INVITE is larger than 1300 bytes and goes over TCP (RFC 3261 18.1.1), so the P-CSCF knows the UE of a TCP request by the sent-by of its Via. A REGISTER that answers a challenge is close to 1300 bytes, so whether it goes over TCP depends on how many digits its SPIs have. TCP and UDP share the security associations (TS 33.203 7.1), so the P-CSCF finds them for that REGISTER by the sent-by of its Via too. Nothing authenticates that sent-by, so a host that shares the UE's IP address could name the UE's protected server port in it; with ESP the security associations would authenticate the sender.
+
+Only a message that comes to the protected server port counts as protected. A request other than REGISTER that comes to port 5060 from the address and port of a UE with established associations is therefore unprotected. The P-CSCF discards it: it sends nothing back, not even a 100 (Trying), and forwards it nowhere. It logs `discarded an unprotected request from a UE with security associations` (TS 24.229 5.2.1 NOTE 8, TS 33.203 7.1).
 
 ### SIPp
 
@@ -205,7 +207,7 @@ Each node plays its part:
 
 1. **HSS.** The UAR for the temporary identity succeeds, because its implicit registration set has identities that are not barred. A set with no identity but barred ones would get DIAMETER_AUTHORIZATION_REJECTED (TS 29.228 6.1.1.1 step 4).
 2. **S-CSCF at registration.** The default public identity is the first identity of the profile that is not barred (TS 29.228 6.5.1.1). The 200 OK lists in P-Associated-URI only the identities that are not barred, the default first (TS 24.229 5.4.1.2.2F), and the reg event reports only those (5.4.2.1.2). The third-party REGISTER to an application server names the default identity in To (5.4.1.7).
-3. **UE.** It stores the first URI of P-Associated-URI as its default public identity. The identity it registered is missing from the list, so it takes that one as barred (5.1.1.2.1). It writes the default identity in the From of its INVITEs and MESSAGEs and subscribes to its reg event (5.1.1.3). The status of the phone shows the default identity.
+3. **UE.** It stores the first URI of P-Associated-URI as its default public identity. The identity it registered is missing from the list, so it takes that one as barred (5.1.1.2.1). It writes the default identity in the From of its INVITEs and MESSAGEs and subscribes to its reg event (5.1.1.3). The status of the phone shows the default identity, and no identity before the phone has registered: a UE shows the barred temporary identity to nobody (5.1.1.1A). Until then the phone also refuses requests over Ut, which need the default identity as the XUI.
 4. **P-CSCF.** It asserts the identity that a P-Preferred-Identity of the UE names, when that is one of P-Associated-URI, and otherwise the default identity (5.2.6.3.1). The UE simulator sends no P-Preferred-Identity, so P-Asserted-Identity is the default identity.
 5. **S-CSCF for every other request.** A request whose served user is a barred identity gets 403 (5.4.3.2 step 1), and a request to a barred identity gets 404 (5.4.3.3 step 1). An application server that asks the HSS for the identities of the number over Sh does not get the barred one either (TS 29.328 7.6.2).
 
@@ -220,7 +222,7 @@ INVITE    P-CSCF -> S-CSCF   P-Asserted-Identity: <sip:+12025550110@ims.mnc001.m
 MESSAGE   volte-a -> P-CSCF  From: <sip:+12025550110@ims.mnc001.mcc001.3gppnetwork.org>;tag=...
 ```
 
-The Wireshark filter `sip && !(sip.CSeq.method == "REGISTER") && frame contains "sip:001010000000010@ims"` finds no packet. The softphones of the other guides have no SIM card at all: their identities are configured in them, as an IMC holds them (TS 24.229 5.1.1.1B.1). They register a public identity that is not barred and use it as it is.
+The Wireshark filter `sip && !(sip.CSeq.method == "REGISTER") && frame contains "sip:001010000000010@ims"` finds no packet. The IMSI is not in the Contact either: `sip.Contact contains "001010000000010"` finds no packet. TS 24.229 5.1.1.2.1 item c asks that the user part of the URI in Contact be globally unique and reveal nothing private, so the UE puts a UUID there that it derives from its private identity with K as the key. Every UE of this project does the same, a softphone with its password as the key. The softphones of the other guides have no SIM card at all: their identities are configured in them, as an IMC holds them (TS 24.229 5.1.1.1B.1). They register a public identity that is not barred and use it as it is.
 
 ENUM turns the number of a VoLTE UE into the SIP URI of the number, not into the temporary public identity, so that a call to `tel:+12025550112` reaches an identity that may receive calls (`deploy/compose/dns/e164.arpa.zone`).
 
@@ -281,6 +283,8 @@ curl -X DELETE http://localhost:8080/api/epc/network-initiated/ues/0010100000000
 ```
 
 The voice bearer carried all the media of the session, so the PCRF ends the whole Rx session with an ASR rather than reporting the lost flows in an RAR (TS 29.214 4.4.6.1, 4.4.6.2). The P-CSCF answers it, ends the session with an STR, and releases the call itself: a BYE to the other side in the served user's name and, here, one to the served UE as well (TS 24.229 5.2.8.1.2, IR.92 2.4.2.3). It builds the BYEs from the dialog information it keeps behind its Store: the Contacts, the tags, the CSeq and the route set. volte-a sends no BYE of its own. When volte-b's call ends, its P-CSCF ends volte-b's Rx session and the stub releases volte-b's bearer too.
+
+A bearer can also go before the call is answered. The P-CSCF then gives the INVITE up: it answers the caller 500 and cancels the INVITE towards the callee, with a Reason that gives 503 (TS 24.229 5.2.8.1.1). When the callee has answered 200 just before the CANCEL reaches it, the 200 crosses the CANCEL (RFC 3261 9.1). The caller has its 500 and never sees that 200, so the P-CSCF sends the ACK in the caller's name, for the 200 and for each retransmission of it. Then it releases the dialog that the 200 confirmed with a BYE to the callee, built as above (5.2.8.1.2).
 
 ## Preconditions
 
@@ -519,10 +523,11 @@ Each item has a `SIMPLIFIED:` comment in the code; `grep -rn "SIMPLIFIED:" inter
 | P-CSCF, TS 29.214 4.4.2 | A refused change of the service information is only logged. | The far end has answered by then; TS 24.229 handles refused resources only for the initial INVITE. |
 | P-CSCF, TS 29.214 A.3 | The early dialogs of a forked INVITE are not told apart. | The S-CSCF does not fork. |
 | P-CSCF, TS 24.229 5.2.8.1.1, 5.2.8.1.2 | The release comes at once, not after a wait for a SIP message that removes the media; the other sessions of a UE whose signalling is lost are left to their own events; the dialog is forgotten when the BYEs go. | One audio stream per call; the P-CSCF keeps no index of dialogs by UE. |
+| P-CSCF, TS 24.229 5.2.8.1.2 | When a confirmed call loses its resources, the served UE is not left to notice the lost bearer itself, as the clause has it: the P-CSCF sends it a BYE too, in the name of the other party. | After the network released only the voice bearer the UE still has its signalling, and a UE that does not act on the loss of that bearer would, without a BYE, stay in a call that the network has ended. |
 | P-CSCF, TS 24.229 5.2.8.1.4, 5.2.8.3 | A dialog that ends without a BYE through the P-CSCF stays in the Store. | It would need an index of dialogs by user, or a session timer of the P-CSCF. |
 | P-CSCF, RFC 3264, RFC 3262 | An INVITE or re-INVITE without SDP gets no relay context and no authorisation. | The UE simulator always offers in the INVITE. |
 | P-CSCF and UE, TS 33.203 7.1, 7.2 | No IPsec ESP: the associations are agreed and kept, the protected server ports are used, the client ports are never bound. | Captures stay readable. The standard has no IMS AKA without protection. |
-| P-CSCF, TS 24.229 5.2.2.3 | A UE is known by the address and port its requests come from, or for TCP by the sent-by of its Via. | Without ESP a TCP connection comes from a port of the moment. |
+| P-CSCF, TS 24.229 5.2.2.3 | A UE is known by the address and port its requests come from, or for TCP by the sent-by of its Via, which nothing authenticates. | Without ESP a TCP connection comes from a port of the moment. |
 | S-CSCF, TS 33.203 6.1.1, TS 24.229 5.4.1.2.1A | AKAv1-MD5 only, no AKAv2-SHA-256. | SIPp speaks AKAv1-MD5 only. |
 | AKA, TS 33.102 C.2.2, C.3.4 | No limit L on how old an accepted SQN may be, and IND is not kept per domain. | Profile 2 suggests no L; IMS is one domain with one vector per MAR. |
 | UE, TS 24.301, TS 36.331 | The UE's packets go straight onto the Docker network. | No radio and no tunnel. |
@@ -539,9 +544,10 @@ Each item has a `SIMPLIFIED:` comment in the code; `grep -rn "SIMPLIFIED:" inter
 | AMR, IR.92 3.2.5 | Frames that arrive before the first one received are dropped. | Only a reordered start of the stream brings them. |
 | RTCP, RFC 3550 6.2, 6.3.4 to 6.3.7, A.1 | No reduced minimum interval, no reconsideration, no probation of a new source. | A call has exactly two members, who never change. |
 | DTMF, RFC 4733 2.5.1.3 | A digit longer than 65535 timestamp units is refused. | A UE sends short digits. |
-| Relay, RFC 3605, RFC 5761, RFC 4961 | RTCP is on the port above RTP; a latched address is kept for the whole call. | No UE here sends a=rtcp or rtcp-mux, or moves in a call. |
+| Relay, RFC 3605, RFC 5761, RFC 4961 | RTCP is on the port above RTP; a latched address is kept for the whole call, unless the controller asks the termination to re-latch. | No UE here sends a=rtcp or rtcp-mux, or moves in a call. |
 | Preconditions, RFC 4032 4.1, 4.2 | A stream that moves to a new address is not detected. | The UE keeps its address for the whole call. |
 | SDP, RFC 8866 5.7 | IPv4 unicast addresses only in c=. | Every node here uses IPv4. |
+| SDP, TS 26.114 5.2.1.1 | No EVS, and so no super-wideband speech, in the offer for NR access (`sdp.VoNRCodecs`): it is the offer for LTE. | The UE has no EVS codec. An EVS payload type would offer bit rates of EVS Primary that the UE cannot send. |
 | UA, RFC 3261 12.2.1.2 | A lost early dialog, or a failed PRACK, is only logged. | The final response to the INVITE ends the call anyway. |
 | UA, RFC 3261 13.2.2.4 | A BYE that ends a dialog whose 2xx had an offer sends the ACK without an answer first. | The UA has no SDP of its own then. |
 | UA, RFC 4028 7.1, 10 | timer is in the Supported of the INVITE and its dialog only; after a refresh fails, the UA only logs and the expiry ends the session. | The session timer concerns the call's dialog; no node challenges a request within a dialog. |

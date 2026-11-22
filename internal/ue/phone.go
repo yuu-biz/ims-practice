@@ -85,7 +85,8 @@ const DefaultRing = time.Second
 // included.
 type Status struct {
 	// IMPU is the public identity the phone shows: the default public
-	// identity once registered, the configured one before.
+	// identity once registered, the configured one before, or "" before
+	// when the configured one is a temporary public identity.
 	IMPU       string `json:"impu"`
 	Registered bool   `json:"registered"`
 	// Call is the call in the foreground: the answered call that is not
@@ -704,12 +705,15 @@ func (p *Phone) Status() Status {
 }
 
 func (p *Phone) statusLocked() Status {
-	// Once registered, the phone shows the default public identity: a
+	// Once registered, the phone shows the default public identity. A
 	// UE does not show the user a temporary public identity that is
-	// barred (TS 24.229 5.1.1.1A).
+	// barred (TS 24.229 5.1.1.1A), so before that it shows none.
 	impu := p.ue.cfg.PublicIdentity
-	if p.registered && len(p.reg.PublicIdentities) > 0 {
+	switch {
+	case p.registered && len(p.reg.PublicIdentities) > 0:
 		impu = p.reg.DefaultIdentity()
+	case p.ue.cfg.TemporaryPublicIdentity:
+		impu = ""
 	}
 	s := Status{IMPU: impu, Registered: p.registered, AnswerPolicy: p.policy, SMS: p.ue.SMS(),
 		Calls: []CallInfo{}}
