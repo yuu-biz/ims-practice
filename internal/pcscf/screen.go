@@ -97,8 +97,9 @@ func (p *PCSCF) lookUpAssociation(source sip.Destination, target string) {
 // the Store: the source, Via sent-by and expiry of each, and its
 // contact. It is a copy, in memory, of the associations in the Store,
 // and holds no state of its own: indexedStore keeps it in step with
-// every write of the P-CSCF, and Screen fills it from the Store for an
-// association written before the process started. Only the P-CSCF that
+// every write of the P-CSCF, Screen fills it from the Store for an
+// association written before the process started, and it forgets an
+// association at its KeepUntil, as the Store does. Only the P-CSCF that
 // a UE registered through writes the UE's association, so a copy is not
 // changed behind its back.
 type admissions struct {
@@ -109,9 +110,9 @@ type admissions struct {
 }
 
 type admission struct {
-	sentBy  string
-	expires time.Time
-	contact contactKey
+	sentBy             string
+	expires, keepUntil time.Time
+	contact            contactKey
 }
 
 // contactKey is what AssociationOfContact compares of a contact: user,
@@ -136,18 +137,31 @@ func (s *admissions) put(a Association) {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if old, ok := s.bySource[a.Source]; ok {
-		delete(s.byContact, old.contact)
-	}
-	s.bySource[a.Source] = admission{sentBy: a.SentBy, expires: a.Expires, contact: contact}
+	s.removeLocked(a.Source)
+	s.bySource[a.Source] = admission{sentBy: a.SentBy, expires: a.Expires, keepUntil: a.KeepUntil, contact: contact}
 	if a.Contact != "" {
 		s.byContact[contact] = a.Source
 	}
+	if a.KeepUntil.IsZero() {
+		return
+	}
+	time.AfterFunc(time.Until(a.KeepUntil), func() {
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		if current, ok := s.bySource[a.Source]; ok && current.keepUntil.Equal(a.KeepUntil) {
+			s.removeLocked(a.Source)
+		}
+	})
 }
 
 func (s *admissions) remove(source sip.Destination) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.removeLocked(source)
+}
+
+// removeLocked is remove with s.mu held.
+func (s *admissions) removeLocked(source sip.Destination) {
 	if old, ok := s.bySource[source]; ok {
 		delete(s.byContact, old.contact)
 		delete(s.bySource, source)

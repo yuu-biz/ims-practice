@@ -115,9 +115,6 @@ func (s *Store) AssociationOfPolicySession(session policy.SessionID) (pcscf.Asso
 // association no longer has. The order is that of kvjson.PutIndex.
 func (s *Store) PutAssociation(a pcscf.Association) {
 	old, _ := s.Association(a.Source)
-	// pcscf.MemoryStore keeps an association until DeleteAssociation;
-	// the time to live also ends one whose end the P-CSCF never heard
-	// of, such as when the S-CSCF stopped before its NOTIFY.
 	ttl, t := s.c.TTLUntil(a.KeepUntil), target(a.Source)
 	contact, hasContact := s.contactKey(a.Contact)
 	if hasContact {
