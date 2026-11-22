@@ -25,6 +25,13 @@ func association() pcscf.Association {
 		Expires: time.Now().Add(time.Hour), KeepUntil: time.Now().Add(time.Hour + time.Minute)}
 }
 
+func regSubscription() pcscf.RegSubscription {
+	return pcscf.RegSubscription{PrivateIdentity: "001010000000001@ims.mnc001.mcc001.3gppnetwork.org",
+		PublicIdentity: "sip:001010000000001@ims.mnc001.mcc001.3gppnetwork.org",
+		Dialog:         sip.Dialog{ID: sip.DialogID{CallID: "sub-1", LocalTag: "p", RemoteTag: "s"}, LocalSeq: 1},
+		Expires:        time.Now().Add(time.Hour)}
+}
+
 func dialog() pcscf.Dialog {
 	return pcscf.Dialog{Key: pcscf.DialogKey{CallID: "call-1", UETag: "ue"}, PolicySession: "pcscf;1;media",
 		Caller: pcscf.Party{NameAddr: "<sip:ue1>;tag=ue", CSeq: 1}}
@@ -48,6 +55,10 @@ func TestAStoppedInstanceIsToldOfTheFailure(t *testing.T) {
 			}
 			if err := other.PutSecurityAssociations(ctx, sas); err != nil {
 				t.Fatal(err)
+			}
+			sub := regSubscription()
+			if ok, err := other.CreateRegSubscription(ctx, sub); err != nil || !ok {
+				t.Fatalf("CreateRegSubscription = %v, %v", ok, err)
 			}
 			// The first write stops the instance, and every operation fails
 			// from then on.
@@ -91,6 +102,21 @@ func TestAStoppedInstanceIsToldOfTheFailure(t *testing.T) {
 			if err := stopped.DeleteSecurityAssociations(ctx, sas.UE); err == nil {
 				t.Error("DeleteSecurityAssociations returned no error")
 			}
+			if ok, err := stopped.CreateRegSubscription(ctx, sub); err == nil {
+				t.Errorf("CreateRegSubscription = %v, no error", ok)
+			}
+			if _, ok, err := stopped.UpdateRegSubscription(ctx, sub.PrivateIdentity, func(*pcscf.RegSubscription) bool { return true }); err == nil {
+				t.Errorf("UpdateRegSubscription = %v, no error", ok)
+			}
+			if _, ok, err := stopped.RegSubscription(ctx, sub.PrivateIdentity); err == nil {
+				t.Errorf("RegSubscription = %v, no error", ok)
+			}
+			if _, ok, err := stopped.RegSubscriptionOfDialog(ctx, sub.Dialog.ID.CallID); err == nil {
+				t.Errorf("RegSubscriptionOfDialog = %v, no error", ok)
+			}
+			if err := stopped.DeleteRegSubscription(ctx, sub.PrivateIdentity); err == nil {
+				t.Error("DeleteRegSubscription returned no error")
+			}
 
 			// What the stopped instance failed to change is as it was.
 			if got, ok, err := other.AssociationOfContact(ctx, a.Contact); err != nil || !ok || !got.Expires.Equal(a.Expires) {
@@ -101,6 +127,9 @@ func TestAStoppedInstanceIsToldOfTheFailure(t *testing.T) {
 			}
 			if _, ok, err := other.SecurityAssociations(ctx, sas.UE); err != nil || !ok {
 				t.Errorf("SecurityAssociations on the other instance = %v, %v; want the entry", ok, err)
+			}
+			if got, ok, err := other.RegSubscriptionOfDialog(ctx, sub.Dialog.ID.CallID); err != nil || !ok || got.Dialog.LocalSeq != 1 {
+				t.Errorf("RegSubscriptionOfDialog on the other instance = %+v, %v, %v; want the subscription as it was", got, ok, err)
 			}
 		})
 	}
