@@ -19,7 +19,7 @@ const maxAnnouncement = time.Minute
 // allows this before its 603 or 433 (TS 24.611 4.5.2.4.1, 4.5.2.6.1,
 // 4.5.2.6.2).
 func (c *call) reject(code int, headers ...sip.HeaderField) {
-	c.noLeg()
+	c.legs.NoLeg()
 	if c.announce() {
 		headers = append(headers, sip.NewReason(sip.ReasonSIP, code, sip.ReasonPhrase(code)).Header())
 	}
@@ -64,7 +64,7 @@ func (c *call) announce() bool {
 	if pcv := responseChargingVector(c.in.Request, c.as.cfg.HomeDomain); pcv != "" {
 		fields = append(fields, sip.HeaderField{Name: "P-Charging-Vector", Value: pcv})
 	}
-	if err := c.in.Progress(183, sdpBody(answer), fields...); err != nil {
+	if err := c.legs.Progress(183, sdpBody(answer), fields...); err != nil {
 		c.log.Info("announcement not offered to the caller", "error", err.Error())
 		return false
 	}

@@ -151,7 +151,7 @@ func (c *call) alertWithTone(out *sip.OutgoingCall, resp *sip.Message) bool {
 	c.mu.Lock()
 	c.toCaller, c.sessionToCaller = true, true
 	c.mu.Unlock()
-	if err := c.in.Progress(resp.StatusCode, sdpBody(answer), fields.Headers...); err != nil {
+	if err := c.legs.Progress(resp.StatusCode, sdpBody(answer), fields.Headers...); err != nil {
 		c.log.Info("CAT: the answer did not reach the caller", "error", err.Error())
 		return true
 	}
@@ -173,7 +173,7 @@ func (c *call) relayDuringTone(out *sip.OutgoingCall, resp *sip.Message) {
 	c.prackCallee(out, resp)
 	fields := c.responseFields(resp, c.in.Request, true)
 	fields.Remove("P-Early-Media")
-	if err := c.in.Progress(resp.StatusCode, sip.Body{}, fields.Headers...); err != nil {
+	if err := c.legs.Progress(resp.StatusCode, sip.Body{}, fields.Headers...); err != nil {
 		c.log.Info("provisional response not relayed", "status", resp.StatusCode, "error", err.Error())
 	}
 }
@@ -283,9 +283,10 @@ func (c *call) stopAlertingTone(why string) {
 // UPDATE whose offer is the callee's SDP, so that the media goes
 // between the two (a 1 and a 2). The SDP is that of the dialog of the
 // 200, which the INVITE may have forked into beyond the AS (RFC 3261
-// 13.2.2.4), and the UPDATE is in the caller's early dialog
-// (offerCaller). It reports whether the caller had the tone, in which
-// case the 200 goes to the caller without SDP.
+// 13.2.2.4), and the UPDATE is in the caller's early dialog, in the
+// session that the AS gave the caller with the tone (offerCaller). It
+// reports whether the caller had the tone, in which case the 200 goes
+// to the caller without SDP.
 func (c *call) answerAfterTone(resp *sip.Message) bool {
 	t := c.cat
 	if t == nil || t.phase == catStopped {

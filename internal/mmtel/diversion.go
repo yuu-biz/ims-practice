@@ -90,7 +90,7 @@ func (c *call) divert(d diversion) {
 			code = 486
 		}
 		c.log.Info("CDIV: too many diversions", "service", d.service, "diversions", n, "limit", limit)
-		c.noLeg()
+		c.legs.NoLeg()
 		c.in.Reject(code, c.as.warning("Too many diversions appeared"))
 		return
 	}
@@ -263,7 +263,7 @@ func (c *call) notifyCaller(d diversion, target string) {
 	c.mu.Lock()
 	c.toCaller = true
 	c.mu.Unlock()
-	if err := c.in.Progress(181, sip.Body{}, fields.Headers...); err != nil {
+	if err := c.legs.Progress(181, sip.Body{}, fields.Headers...); err != nil {
 		c.log.Info("181 not sent", "error", err.Error())
 	}
 }
@@ -372,7 +372,7 @@ func (c *call) leaveServedUser(d diversion) {
 		return
 	}
 	c.mu.Lock()
-	c.toCaller, c.sessionToCaller, c.pending, c.sessionFrom = false, false, nil, ""
+	c.toCaller, c.sessionToCaller, c.sessionFrom = false, false, ""
 	c.mu.Unlock()
 }
 
