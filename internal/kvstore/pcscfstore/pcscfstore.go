@@ -15,10 +15,9 @@
 //	reg-subscription-of-dialog:<Call-ID>          index: the private identity of the subscription
 //	sa:<address>                                  SecurityAssociations, time to live until Expires
 //
-// Every lookup is a read of one or two keys. AssociationOfContact walked
-// every association in the MemoryStore; here it reads the index
-// item of the host, port and user of the contact, which is what it
-// compares.
+// Every lookup is a read of one or two keys. AssociationOfContact reads
+// the index item of the host, port and user of the contact, which is
+// what it compares.
 //
 // Every operation returns the failure of the store, and a lookup does
 // not take it for a missing item. A write returns it until the main item
