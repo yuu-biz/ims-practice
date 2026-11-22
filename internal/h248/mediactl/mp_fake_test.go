@@ -44,6 +44,7 @@ type fakeProcessorTermination struct {
 	media       agw.Media
 	remote      netip.AddrPort
 	remoteMedia agw.Media
+	latch       agw.Latch
 	signals     *agw.Signals
 	events      *agw.Events
 }
@@ -73,7 +74,7 @@ func (p *fakeProcessor) open(c *fakeProcessorContext, t agw.TerminationRequest) 
 	}
 	p.opened++
 	local := netip.AddrPortFrom(netip.MustParseAddr("198.51.100.20"), uint16(42000+2*(p.opened-1)))
-	c.terms[id] = &fakeProcessorTermination{local: local, mode: t.Mode, media: t.LocalMedia, remote: t.Remote, remoteMedia: t.RemoteMedia, signals: t.Signals, events: t.Events}
+	c.terms[id] = &fakeProcessorTermination{local: local, mode: t.Mode, media: t.LocalMedia, remote: t.Remote, remoteMedia: t.RemoteMedia, latch: t.Latch, signals: t.Signals, events: t.Events}
 	return agw.Termination{ID: id, Mode: t.Mode, Local: local, Remote: t.Remote}
 }
 

@@ -229,6 +229,10 @@ func (c *Controller) mpCommand(command h248.Command, id h248.TerminationID, t ag
 		// TS 29.333 5.17.2.2, 5.17.2.9: a new termination is CHOOSE.
 		return h248.CommandRequest{}, fmt.Errorf("mediactl: the MRFP chooses the termination ID, not %q", t.ID)
 	}
+	if t.Latch != "" {
+		// The ipnapt package is not among MpPackages.
+		return h248.CommandRequest{}, fmt.Errorf("mediactl: Mp asks for no latching, not %q", t.Latch)
+	}
 	parms := &h248.StreamParms{}
 	mode := t.Mode
 	if mode == "" && add {

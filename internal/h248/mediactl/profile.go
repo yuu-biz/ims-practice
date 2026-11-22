@@ -82,8 +82,26 @@ const (
 	// paramNAPT (napt) is OFF, LATCH or RELATCH (H.248.37 (06/2008)
 	// 6.3.1.1.1).
 	paramNAPT = "napt"
-	naptLatch = "LATCH"
 )
+
+// naptValues are the values of napt, with the latching each one asks of
+// the relay (H.248.37 (06/2008) 6.3.1.1.1, 6.6.1 to 6.6.3).
+var naptValues = map[agw.Latch]string{
+	agw.NAPTOff:     "OFF",
+	agw.NAPTLatch:   "LATCH",
+	agw.NAPTRelatch: "RELATCH",
+}
+
+// latchOf is the latching for a value of napt, which is case
+// insensitive as the text encoding is (RFC 3525 Annex B.2).
+func latchOf(napt string) (agw.Latch, bool) {
+	for l, value := range naptValues {
+		if strings.EqualFold(napt, value) {
+			return l, true
+		}
+	}
+	return "", false
+}
 
 // The RequestIDs of the Events descriptors that a Controller sets. A
 // Notify carries the RequestID of the descriptor that asked for its

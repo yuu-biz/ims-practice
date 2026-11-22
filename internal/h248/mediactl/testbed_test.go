@@ -39,12 +39,14 @@ type fakeRelay struct {
 }
 
 // fakeRelayContext is what the relay was asked of a context: media is
-// what each termination is to receive, local where it receives, and
-// remote the last request that told it where to send.
+// what each termination is to receive, local where it receives, remote
+// the last request that told it where to send, and requests every Add
+// and Modify of it in turn.
 type fakeRelayContext struct {
-	media  map[agw.TerminationID]agw.Media
-	local  map[agw.TerminationID]netip.AddrPort
-	remote map[agw.TerminationID]agw.TerminationRequest
+	media    map[agw.TerminationID]agw.Media
+	local    map[agw.TerminationID]netip.AddrPort
+	remote   map[agw.TerminationID]agw.TerminationRequest
+	requests map[agw.TerminationID][]agw.TerminationRequest
 }
 
 func newFakeRelay() *fakeRelay { return &fakeRelay{contexts: map[string]*fakeRelayContext{}} }
@@ -61,13 +63,15 @@ func (r *fakeRelay) Add(ctx context.Context, terminations ...agw.TerminationRequ
 	addr := netip.MustParseAddr("198.51.100.10")
 	port := uint16(40000 + 4*(r.next-1))
 	c := &fakeRelayContext{
-		media:  map[agw.TerminationID]agw.Media{},
-		local:  map[agw.TerminationID]netip.AddrPort{agw.Access: netip.AddrPortFrom(addr, port), agw.Core: netip.AddrPortFrom(addr, port+2)},
-		remote: map[agw.TerminationID]agw.TerminationRequest{},
+		media:    map[agw.TerminationID]agw.Media{},
+		local:    map[agw.TerminationID]netip.AddrPort{agw.Access: netip.AddrPortFrom(addr, port), agw.Core: netip.AddrPortFrom(addr, port+2)},
+		remote:   map[agw.TerminationID]agw.TerminationRequest{},
+		requests: map[agw.TerminationID][]agw.TerminationRequest{},
 	}
 	out := agw.Context{ID: id, Terminations: map[agw.TerminationID]*agw.Termination{}}
 	for _, t := range terminations {
 		c.media[t.ID] = t.LocalMedia
+		c.requests[t.ID] = append(c.requests[t.ID], t)
 		if t.Remote.IsValid() {
 			c.remote[t.ID] = t
 		}
@@ -88,6 +92,7 @@ func (r *fakeRelay) Modify(ctx context.Context, id string, termination agw.Termi
 		return agw.ErrNoContext
 	}
 	c.remote[termination] = change
+	c.requests[termination] = append(c.requests[termination], change)
 	return nil
 }
 
@@ -119,6 +124,15 @@ func (r *fakeRelay) context(id string) (fakeRelayContext, bool) {
 		return fakeRelayContext{}, false
 	}
 	return *c, true
+}
+
+// newest is the context that the relay made last.
+func (r *fakeRelay) newest() fakeRelayContext {
+	r.mu.Lock()
+	id := fmt.Sprintf("c%d", r.next)
+	r.mu.Unlock()
+	c, _ := r.context(id)
+	return c
 }
 
 func (r *fakeRelay) counts() (reserved, released, open int) {

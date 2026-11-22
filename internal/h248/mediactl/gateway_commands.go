@@ -166,6 +166,7 @@ type reserveAdd struct {
 	side    agw.TerminationID
 	stream  stream
 	events  terminationEvents
+	latch   agw.Latch
 }
 
 // reserve carries out Reserve AGW Connection Point (TS 29.334
@@ -205,7 +206,7 @@ func (g *Gateway) reserve(t *transaction, a h248.ActionRequest) (h248.ActionRepl
 	var requests []agw.TerminationRequest
 	for _, add := range adds {
 		mode, _ := modeOf(add.stream.mode)
-		request := agw.TerminationRequest{ID: add.side, Mode: mode, LocalMedia: add.stream.local.media}
+		request := agw.TerminationRequest{ID: add.side, Mode: mode, LocalMedia: add.stream.local.media, Latch: add.latch}
 		if add.stream.remote != nil {
 			request.Remote, request.RemoteMedia = add.stream.remote.address, add.stream.remote.media
 		}
@@ -278,10 +279,11 @@ func (g *Gateway) checkReserveAdd(c h248.CommandRequest, before []reserveAdd) (r
 	if e != nil {
 		return reserveAdd{}, e
 	}
-	if e := checkSignals(c.Signals); e != nil {
+	latch, e := checkSignals(c.Signals, true)
+	if e != nil {
 		return reserveAdd{}, e
 	}
-	return reserveAdd{request: c, group: t.group, side: t.side, stream: s, events: events}, nil
+	return reserveAdd{request: c, group: t.group, side: t.side, stream: s, events: events, latch: latch}, nil
 }
 
 // relayErrorCode is the error code that stands for an error of the
@@ -382,16 +384,25 @@ func (g *Gateway) modify(ctx context.Context, gc *gatewayContext, c h248.Command
 		}
 		events = &ev
 	}
-	if e := checkSignals(c.Signals); e != nil {
+	latch, e := checkSignals(c.Signals, false)
+	if e != nil {
 		return h248.CommandReply{Command: c.Command, TerminationID: c.TerminationID, Error: e}
 	}
-	if s.remote != nil {
-		change := agw.TerminationRequest{Remote: s.remote.address, RemoteMedia: s.remote.media}
+	if s.remote != nil || latch != "" {
+		change := agw.TerminationRequest{Latch: latch}
+		log := []any{"context", gc.id.String(), "side", side}
+		if s.remote != nil {
+			change.Remote, change.RemoteMedia = s.remote.address, s.remote.media
+			log = append(log, "remote", s.remote.address.String())
+		}
+		if latch != "" {
+			log = append(log, "latch", string(latch))
+		}
 		if err := g.relay.Modify(ctx, gc.relayID, side, change); err != nil {
 			g.log.Warn("mediactl: the relay could not configure a termination", "context", gc.id.String(), "side", side, "error", err)
 			return failed(c, relayErrorCode(err), "")
 		}
-		g.log.Info("mediactl: termination configured", "context", gc.id.String(), "side", side, "remote", s.remote.address.String())
+		g.log.Info("mediactl: termination configured", log...)
 	}
 	if events != nil {
 		g.setHeartbeat(gc, side, *events)
