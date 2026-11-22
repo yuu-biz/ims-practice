@@ -505,6 +505,23 @@ pcap="$peer_pcap" some "ENUM gives network A's domain for +1 202 555 0101" \
 pcap="$peer_pcap" some "MESSAGE IP-SM-GW -> IBCF-B from the SC's number" \
 	"sip.Method == \"MESSAGE\" && ip.src == $peer_ipsmgw && ip.dst == $ibcf_b && sip.Route contains \"ibcf.ims.mnc002\" && sip.P-Asserted-Identity contains \"tel:+12025550150\""
 
+echo "one icid-value in both networks, with the IOIs of each (TS 24.229 5.4.3.2 step 7, 5.4.3.3 step 7)"
+# The first call is UE A1's to UE B1. Network A's P-CSCF wrote its
+# icid-value, and each network writes its own domain in the IOIs.
+home_domain=ims.mnc001.mcc001.3gppnetwork.org
+peer_domain=ims.mnc002.mcc001.3gppnetwork.org
+peer_pcscf=172.28.1.40
+icid="$(pcap="$home_pcap" tshark_fields "$invite && ip.src == $scscf && ip.dst == $ibcf_a" sip.P-Charging-Vector | first_line |
+	sed -n 's/^icid-value=\([^;]*\);.*/\1/p')"
+[ -n "$icid" ] || icid=none
+pcap="$nni_pcap" some "INVITE IBCF-A -> IBCF-B with network A's icid-value and orig-ioi" \
+	"$invite && ip.src == $ibcf_a_nni && ip.dst == $ibcf_b_nni && sip.P-Charging-Vector == \"icid-value=$icid;orig-ioi=$home_domain\""
+pcap="$nni_pcap" some "200 OK IBCF-B -> IBCF-A with network A's orig-ioi and network B's term-ioi" \
+	"sip.Status-Code == 200 && sip.CSeq.method == \"INVITE\" && ip.src == $ibcf_b_nni && sip.P-Charging-Vector == \"icid-value=$icid;orig-ioi=$home_domain;term-ioi=$peer_domain\""
+pcap="$peer_pcap" some "INVITE S-CSCF -> P-CSCF of network B with the same icid-value and network B's orig-ioi" \
+	"$invite && ip.src == $peer_scscf && ip.dst == $peer_pcscf && sip.P-Charging-Vector == \"icid-value=$icid;orig-ioi=$peer_domain\""
+pcap="$peer_pcap" none "P-Charging-Vector to UE B1" "ip.dst == $ue_b1_ip && sip.P-Charging-Vector"
+
 echo "the dialogs of the B2BUAs"
 # call_ids prints the Call-IDs of the INVITEs that filter finds in pcap.
 call_ids() {
