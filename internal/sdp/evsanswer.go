@@ -3,8 +3,6 @@ package sdp
 import (
 	"errors"
 	"fmt"
-	"net/netip"
-	"strconv"
 )
 
 // EVSCapabilities is what the answerer of an EVS offer can use.
@@ -120,68 +118,4 @@ func answerRange[T interface {
 		return Optional[T]{}, fmt.Errorf("%w: %s=%s has nothing in common with %s", ErrEVSNotAnswerable, name, offered.Value, local)
 	}
 	return Some(r), nil
-}
-
-// AudioAnswerEVS is AudioAnswer for a side that supports EVS: it
-// answers offer from addr in the same way, and an offered EVS payload
-// type that supported has is accepted with the parameters
-// AnswerEVSParams gives for local. An EVS payload type that has to be
-// rejected (TS 26.445 A.3.3.1) is passed over, as a codec this side
-// lacks is, so that the next one in the offerer's order is chosen. b=AS
-// fits the answered parameters (TS 26.114 6.2.5.2).
-//
-// AudioAnswer itself does not apply the EVS rules: called with an EVS
-// codec in supported, it would copy the offered a=fmtp unchanged.
-func AudioAnswerEVS(offer Session, sessionID string, addr netip.AddrPort, supported []Codec, local EVSCapabilities) (Session, error) {
-	answer := Session{
-		Origin:     Origin{Username: "-", SessionID: sessionID, Version: 1, Address: addr.Addr()},
-		Name:       "-",
-		Connection: addr.Addr(),
-	}
-	accepted := false
-	for _, m := range offer.Media {
-		reply := Media{Type: m.Type, Proto: m.Proto, Formats: m.Formats}
-		if !accepted && m.Type == "audio" && m.Proto == "RTP/AVP" && m.Port != 0 {
-			if codecs := chooseCodecs(answerableEVS(m.Codecs(), local), supported); codecs != nil {
-				accepted = true
-				reply.Port = int(addr.Port())
-				reply.SetCodecs(codecs)
-				if err := reply.setASBandwidth(Ptime); err != nil {
-					return Session{}, err
-				}
-				reply.setRTCPBandwidth(&m)
-				reply.Attributes = append(reply.Attributes,
-					Attribute{Name: "ptime", Value: strconv.Itoa(Ptime)},
-					Attribute{Name: "maxptime", Value: strconv.Itoa(MaxPtime)},
-					Attribute{Name: AnswerDirection(offer.Direction(m))})
-			}
-		}
-		answer.Media = append(answer.Media, reply)
-	}
-	if !accepted {
-		return Session{}, ErrNoCommonCodec
-	}
-	return answer, nil
-}
-
-// answerableEVS returns offered with each EVS payload type carrying the
-// a=fmtp of its answer, and without those that cannot be answered.
-// What chooseCodecs then picks from it, it copies into the answer.
-func answerableEVS(offered []Codec, local EVSCapabilities) []Codec {
-	var out []Codec
-	for _, o := range offered {
-		if o.is(NameEVS) {
-			if _, err := o.EVSFormat(); err != nil {
-				continue
-			}
-			p, _ := o.EVSParams()
-			a, err := AnswerEVSParams(p, local)
-			if err != nil {
-				continue
-			}
-			o.Fmtp = a.String()
-		}
-		out = append(out, o)
-	}
-	return out
 }
