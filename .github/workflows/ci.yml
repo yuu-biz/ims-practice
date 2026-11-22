@@ -282,6 +282,74 @@ jobs:
           docker compose -p ims-practice-interconnect -f compose.yaml -f deploy/interconnect/compose.yaml
           --profile ue down --rmi all -v --remove-orphans
 
+  # The scenarios of e2e-registration, e2e-call and e2e-sms on the
+  # deployment whose roles keep the state of their users in the shared
+  # store (deploy/redundancy). The scripts are the same: Compose reads
+  # the files of the project from COMPOSE_FILE, so the overlay needs no
+  # scenario of its own, and the flows must come out of the capture as
+  # they do with the state in the memory of each process.
+  e2e-redundancy:
+    runs-on: ubuntu-latest
+    needs: [changes, go]
+    if: needs.changes.outputs.code == 'true'
+    env:
+      COMPOSE_FILE: compose.yaml:deploy/redundancy/redundancy.yaml
+      COMPOSE_PATH_SEPARATOR: ":"
+    steps:
+      - uses: actions/checkout@v7
+      - run: scripts/e2e-registration.sh
+      # Without this step the scenarios would also pass with every role
+      # on the memory of its own process, which is what a node does when
+      # it reads no store section.
+      - name: the S-CSCF keeps its registrations in the store
+        run: |
+          # A UE that stays registered, so that the registration is in
+          # the store while valkey-cli looks for it: the scenario above
+          # leaves its own UE deregistered.
+          docker compose run --no-deps -d --name ims-practice-ue-store ue register >/dev/null
+          registered=
+          for i in $(seq 1 30); do
+            if grep -q '"msg":"registered"' <<<"$(docker logs ims-practice-ue-store 2>/dev/null)"; then
+              registered=yes
+              break
+            fi
+            sleep 1
+          done
+          if [ -z "$registered" ]; then
+            echo "the UE did not register within 30 s"
+            docker logs ims-practice-ue-store
+            docker rm -f ims-practice-ue-store >/dev/null
+            exit 1
+          fi
+          keys="$(docker compose exec -T valkey valkey-cli --scan --pattern 'ims:*' | tr -d '\r' | sort)"
+          docker rm -f ims-practice-ue-store >/dev/null
+          echo "$keys"
+          impi=001010000000001@ims.mnc001.mcc001.3gppnetwork.org
+          grep -Fqx "ims:scscf:registration:$impi" <<<"$keys" ||
+            { echo "no registration of $impi in the store"; exit 1; }
+      # Each scenario starts from an empty store, as it starts from
+      # nodes that hold nothing: down -v deletes the volume of the
+      # store. The images stay, so the next scenario builds nothing.
+      - name: down between the scenarios
+        run: docker compose --profile ue down -v --remove-orphans
+      - run: scripts/e2e-call.sh
+      - name: down again
+        run: docker compose --profile ue down -v --remove-orphans
+      - run: scripts/e2e-sms.sh
+      - name: upload the captures and the ladder of the short messages
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: redundancy-capture
+          path: |
+            captures/*.pcap
+            captures/*.wav
+            e2e-out/sms-ladder.txt
+          if-no-files-found: warn
+      - name: clean up
+        if: always()
+        run: docker compose --profile ue down --rmi all -v --remove-orphans
+
   cloud:
     runs-on: ubuntu-latest
     needs: changes
@@ -368,7 +436,7 @@ jobs:
   # skips count as passed.
   all-passed:
     runs-on: ubuntu-latest
-    needs: [changes, docs, go, web, web-oam, e2e, e2e-registration, e2e-call, e2e-dashboard, e2e-sms, e2e-volte, e2e-mmtel, e2e-mrf, e2e-interconnect, cloud, kustomize]
+    needs: [changes, docs, go, web, web-oam, e2e, e2e-registration, e2e-call, e2e-dashboard, e2e-sms, e2e-volte, e2e-mmtel, e2e-mrf, e2e-interconnect, e2e-redundancy, cloud, kustomize]
     if: always()
     steps:
       - name: no job failed or was cancelled
