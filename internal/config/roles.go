@@ -455,6 +455,12 @@ type rawHSS struct {
 			Active bool   `yaml:"active"`
 		} `yaml:"customized_alerting_tone"`
 	} `yaml:"subscriptions"`
+	// PSIUsers are the ranges of public service identities that
+	// application servers host (hss.PSIUser).
+	PSIUsers []struct {
+		PrivateIdentity string `yaml:"private_identity"`
+		WildcardedPSI   string `yaml:"wildcarded_psi"`
+	} `yaml:"psi_users"`
 	// MMTelServices is the first MMTelServices document of every
 	// subscription that has none of its own, those of the provisioning
 	// API included (hss.Config).
@@ -670,6 +676,13 @@ func (raw *rawHSS) validate(homeDomain string) (hss.Config, error) {
 			return hss.Config{}, fmt.Errorf("subscriptions[%d]: %w", i, err)
 		}
 		c.Subscriptions = append(c.Subscriptions, sub)
+	}
+	for i, u := range raw.PSIUsers {
+		p, err := hss.ParsePSIUser(u.PrivateIdentity, u.WildcardedPSI)
+		if err != nil {
+			return hss.Config{}, fmt.Errorf("psi_users[%d].%w", i, err)
+		}
+		c.PSIUsers = append(c.PSIUsers, p)
 	}
 	criteria, err := parseInitialFilterCriteria(raw.InitialFilterCriteria)
 	if err != nil {

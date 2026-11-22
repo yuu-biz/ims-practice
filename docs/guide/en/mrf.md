@@ -266,6 +266,7 @@ Each item has a `SIMPLIFIED:` comment in the code; `grep -rn "SIMPLIFIED:" inter
 | AS, TS 24.147 5.3.2.6.2.2 | A REFER that asks the focus to remove a participant (method BYE) is refused with 403. | IR.92 2.3.3 does not ask for it. |
 | AS, RFC 4575 3.9 | Each change is notified at once, not at most once in 5 seconds. | IR.92 2.3.3 asks for notifications within 5 seconds, and a small conference changes seldom. |
 | AS, TS 24.147 5.3.3.2 step 2 and RFC 4575 3.5 | Every subscriber whose identity the network asserts may subscribe. | There is no conference policy. |
+| HSS, TS 29.228 6.1.2.1 | A PSI user has no state in the HSS: no S-CSCF name, no registration state and no PSI Activation State. The HSS answers the SAR of any S-CSCF for it. A PSI user is a range of SIP URIs with no iFCs. | The S-CSCF asks for the profile of a PSI only when the AS that hosts it sends a request on its behalf. A request to a PSI finds the AS by DNS, so no node asks the HSS where a PSI is served. |
 | UE, RFC 3891 3 and RFC 3892 | The Referred-By carries no Authenticated Identity Body. | The referrer's network asserted the identity to the focus. |
 
 ## Clean up
