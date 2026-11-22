@@ -155,10 +155,13 @@ func way(d b2bua.Direction) string {
 // hooks are those of the B2BUA of the tests: every header field but
 // those of the dialog stays on its leg, and Subject tells which way the
 // message crossed. request, when set, may refuse a request or hold it
-// in the B2BUA.
+// in the B2BUA. own, when set, is what the role does on the call of its
+// own before it sends the INVITE on, such as sending the caller a 1xx
+// (b2bua.Call.Progress).
 type hooks struct {
 	request func(req *sip.Message, d b2bua.Direction) *b2bua.Refusal
 	ack     func(ack *sip.Message, d b2bua.Direction)
+	own     func(c *b2bua.Call)
 
 	mu    sync.Mutex
 	kept  int
@@ -227,6 +230,9 @@ func startB2BUA(t *testing.T, h *hooks, callee string, tm sip.Timers) *sip.UA {
 	ua = startUA(t, "b2bua", tm, nil, func(in *sip.IncomingCall) {
 		<-started
 		c := b2bua.New(in, h, discard)
+		if h.own != nil {
+			h.own(c)
+		}
 		from, _ := sip.ParseNameAddr(in.Request.Get("From"))
 		out, err := c.Attempt(ua, sip.Invitation{RequestURI: callee, From: from.URI, To: callee, Body: sip.BodyOf(in.Request)})
 		if err != nil {
