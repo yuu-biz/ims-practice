@@ -194,8 +194,16 @@ expect "LIA with the callee's S-CSCF" "diameter.cmd.code == 302 && diameter.flag
 expect "INVITE I-CSCF -> S-CSCF with the same icid-value" "$invite && ip.src == $icscf && ip.dst == $scscf && sip.P-Charging-Vector contains \"icid-value=$icid\""
 expect "INVITE S-CSCF -> P-CSCF along the Path, the icid-value and the S-CSCF's orig-ioi" "$invite && ip.src == $scscf && ip.dst == $pcscf && sip.P-Called-Party-ID && sip.P-Charging-Vector == \"icid-value=$icid;orig-ioi=$domain\""
 expect "INVITE P-CSCF -> UE 2" "$invite && ip.src == $pcscf && ip.dst == $ue2ip && sdp.connection_info.address == $agw"
-expect "183 reliable from UE 2" "sip.Status-Code == 183 && ip.src == $ue2ip && sip.RSeq"
-expect "PRACK" "sip.Method == \"PRACK\" && ip.dst == $ue2ip && sip.RAck"
+expect "183 reliable from UE 2" "sip.Status-Code == 183 && ip.src == $ue2ip && sip.RSeq && sip.Require contains \"100rel\""
+# Each PRACK names in RAck the RSeq of the response it acknowledges
+# (RFC 3262 7.2), so the PRACK of the 183 is told from that of the 180.
+rseq="$(field sip.RSeq)"
+expect "PRACK of the 183" "sip.Method == \"PRACK\" && ip.dst == $ue2ip && sip.RAck.RSeq.seq == ${rseq:-0}"
+# Once every mandatory precondition is met, UE 2 alerts its user and
+# sends the 180, reliably as well (RFC 3312 6, TS 24.229 5.1.4.1).
+expect "180 reliable from UE 2" "sip.Status-Code == 180 && ip.src == $ue2ip && sip.RSeq && sip.Require contains \"100rel\""
+rseq="$(field sip.RSeq)"
+expect "PRACK of the 180" "sip.Method == \"PRACK\" && ip.dst == $ue2ip && sip.RAck.RSeq.seq == ${rseq:-0}"
 expect "200 OK to the INVITE from UE 2" "sip.Status-Code == 200 && sip.CSeq.method == \"INVITE\" && ip.src == $ue2ip"
 # The P-CSCF stored the icid-value and the orig-ioi of the INVITE before
 # it removed them, and writes them back with its own term-ioi (TS 24.229
