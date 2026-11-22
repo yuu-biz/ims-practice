@@ -216,18 +216,13 @@ func (g *IPSMGW) newMessage(to, disposition string, rp sms.RPMessage) (*sip.Mess
 
 // entryPoint leads, through DNS, to the I-CSCF of the home network,
 // where every request of the IP-SM-GW outside a dialog goes.
-//
-// SIMPLIFIED: TS 24.229 5.7.3. An AS that sends a request on its own
-// puts a Route to the S-CSCF of the user or to the entry point of the
-// network on it, as TS 24.341 table B.5-7 shows. The requests of the
-// IP-SM-GW carry none: the entry point is the name of the home domain,
-// and the I-CSCF of this project removes only a Route that names its
-// own host (5.3.2.1 step 2), so a Route with the domain would stay in
-// the request after the I-CSCF and lead the S-CSCF back to it.
 func (g *IPSMGW) entryPoint() sip.URI { return sip.URI{Scheme: "sip", Host: g.cfg.HomeDomain} }
 
 // send sends a request of the IP-SM-GW to next and returns the final
-// response. With no final response, the error says why.
+// response. With no final response, the error says why. The request
+// carries a Route to next: an AS that sends a request to a user puts the
+// S-CSCF of the user or the entry point of the user's network in Route,
+// without "orig" (TS 24.229 5.7.3).
 //
 // SIMPLIFIED: TS 24.229 5.7.1.1 and 5.7.3. The IP-SM-GW stores neither
 // the icid-value and the orig-ioi of a third-party REGISTER nor the
@@ -240,6 +235,11 @@ func (g *IPSMGW) send(m *sip.Message, next sip.URI) (*sip.Message, error) {
 	if err != nil {
 		return nil, err
 	}
+	route, err := ims.LooseRoute(next.String())
+	if err != nil {
+		return nil, err
+	}
+	m.Prepend("Route", sip.NameAddr{URI: route.String()}.String())
 	dst, err := ims.Destination(context.Background(), g.locator, next)
 	if err != nil {
 		return nil, err

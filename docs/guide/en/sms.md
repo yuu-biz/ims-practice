@@ -339,7 +339,7 @@ The SC has taken the message, so the IP-SM-GW sends UE 1 a new MESSAGE with the 
 - **P-Charging-Vector** with a new icid-value and an orig-ioi. The IP-SM-GW starts each of its own MESSAGEs this way, as an AS that acts as an originating UA (TS 24.229 5.7.3).
 - **The body**, an RP-ACK with the same RP-MR as the RP-DATA, and inside it an SMS-SUBMIT-REPORT with the SC's time stamp (TP-SCTS).
 
-The IP-SM-GW does not use the Route of the S-CSCF. It sends its own requests to the entry point of the home network, the I-CSCF, which it finds in DNS (TS 24.229 5.7.3). The I-CSCF asks the HSS with an LIR, as for a call, and forwards the MESSAGE to UE 1's S-CSCF, which serves it as a terminating request and sends it along UE 1's Path.
+The IP-SM-GW does not use the Route of the S-CSCF. It sends its own requests to the entry point of the home network, with `Route: <sip:ims.mnc001.mcc001.3gppnetwork.org;lr>`: an AS that sends a request to a user puts the user's S-CSCF or the entry point of the user's network in Route (TS 24.229 5.7.3). DNS resolves the name of the home domain to the I-CSCF, which takes that Route as its own and removes it (5.3.2.1). The I-CSCF asks the HSS with an LIR, as for a call, and forwards the MESSAGE to UE 1's S-CSCF, which serves it as a terminating request and sends it along UE 1's Path.
 
 ### 7. UE 1 answers 200
 
@@ -517,7 +517,6 @@ Each item has a `SIMPLIFIED:` comment in the code; `grep -rn "SIMPLIFIED:" inter
 
 | Where | What is left out | Why |
 | --- | --- | --- |
-| IP-SM-GW, TS 24.229 5.7.3 | The requests of the IP-SM-GW, such as its SUBSCRIBE and its MESSAGEs, carry no Route to the entry point. | The entry point is the name of the home domain. The I-CSCF removes only a Route that names its own host (5.3.2.1), so a Route with the domain would stay in the request. |
 | IP-SM-GW, TS 24.229 5.7.1.1 and 5.7.3 | The icid-value and the orig-ioi of a third-party REGISTER, and the term-ioi of the responses to the IP-SM-GW's own requests, are not stored. | They are for the charging records of the IP-SM-GW, which no node of this project writes. |
 | IP-SM-GW, RFC 6665 4.1.2.4 | No Timer N. A SUBSCRIBE that no NOTIFY follows is replaced by a new one at the next third-party REGISTER. | The S-CSCF answers every SUBSCRIBE that it accepts with a NOTIFY at once. |
 | IP-SM-GW, TS 24.341 5.3.3.2 | Without an MSISDN in service-info, the PUR names the user by the public identity, not by the IMSI of the UE's REGISTER. | The IMSI would come from the UE's REGISTER in a message/sip body, which the S-CSCF does not send. Sh accepts a public identity (TS 29.328 Table 7.6.1). |

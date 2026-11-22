@@ -302,13 +302,16 @@ func TestNumbersThatStaySIPURIs(t *testing.T) {
 
 // TestMessageFromAnASGoesToTheCalleesSCSCF is a MESSAGE that an AS sends
 // to a user as an originating UA (TS 24.229 5.7.3), such as the
-// IP-SM-GW delivering an SMS. The I-CSCF treats it like any initial
-// request (5.3.2.1): the callee's S-CSCF goes on top of Route, and the
-// asserted identity and the body pass unchanged.
+// IP-SM-GW delivering an SMS, with the entry point of the network, the
+// home domain, in Route. The I-CSCF takes that Route as its own and
+// treats the MESSAGE like any initial request (5.3.2.1): the callee's
+// S-CSCF alone is in Route, and the asserted identity and the body pass
+// unchanged.
 func TestMessageFromAnASGoesToTheCalleesSCSCF(t *testing.T) {
 	ue, icscf, received := setup(t, registeredAtHSS(t))
 	as := "sip:ipsmgw." + domain + ":5060"
 	m := &sip.Message{Method: sip.MESSAGE, RequestURI: impu}
+	m.Add("Route", "<sip:"+domain+";lr>")
 	m.Add("Max-Forwards", "70")
 	m.Add("From", "<"+as+">;tag="+sip.NewTag())
 	m.Add("To", "<"+impu+">")
@@ -321,8 +324,8 @@ func TestMessageFromAnASGoesToTheCalleesSCSCF(t *testing.T) {
 		t.Fatalf("got %d, want the fake S-CSCF's answer", r.StatusCode)
 	}
 	got := <-received
-	if got.Method != sip.MESSAGE || got.Get("Route") != "<sip:scscf."+domain+":5060;lr>" || got.RequestURI != impu {
-		t.Errorf("S-CSCF got %s with Route %q and Request-URI %q", got.Method, got.Get("Route"), got.RequestURI)
+	if routes := got.GetAll("Route"); got.Method != sip.MESSAGE || len(routes) != 1 || routes[0] != "<sip:scscf."+domain+":5060;lr>" || got.RequestURI != impu {
+		t.Errorf("S-CSCF got %s with Route %q and Request-URI %q", got.Method, routes, got.RequestURI)
 	}
 	if got.Get("P-Asserted-Identity") != "<"+as+">" || got.Get("Record-Route") != "" || len(got.Body) != 2 {
 		t.Errorf("P-Asserted-Identity %q, Record-Route %q, body %q", got.Get("P-Asserted-Identity"), got.Get("Record-Route"), got.Body)
