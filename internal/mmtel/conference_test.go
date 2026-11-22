@@ -631,6 +631,98 @@ func TestInvitedAsTheConferenceEnds(t *testing.T) {
 	}
 }
 
+// TestJoinTheLastPlaceAtOnce: two users dial in at the same time to a
+// conference that has room for one more. Both pass the check before the
+// focus asks the MRFC for their media; the one who joins second gets
+// 403, and the focus releases its media at the MRFC.
+func TestJoinTheLastPlaceAtOnce(t *testing.T) {
+	mrfc := startConferenceMRFC(t)
+	as := startAS(t, noServices{}, mmtel.Config{MRFC: "sip:" + contactOf(t, mrfc.ua)})
+	_, focus, _ := aliceConference(t, as, func(c *sip.IncomingCall) { c.Reject(480) })
+	for k := 2; k <= 5; k++ {
+		user := "user" + string(rune('0'+k))
+		ua := newParticipant(t, as, user, func(c *sip.IncomingCall) { c.Reject(480) })
+		out, err := ua.Invite(joining(user, focus.URI))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := statuses(readAll(t, out)); got[len(got)-1] != 200 {
+			t.Fatalf("%s got %v, want 200", user, got)
+		}
+	}
+
+	mrfc.hold.Store(true)
+	var outs []*sip.OutgoingCall
+	var media []*sip.IncomingCall
+	for _, user := range []string{"user6", "user7"} {
+		ua := newParticipant(t, as, user, func(c *sip.IncomingCall) { c.Reject(480) })
+		out, err := ua.Invite(joining(user, focus.URI))
+		if err != nil {
+			t.Fatal(err)
+		}
+		outs = append(outs, out)
+		media = append(media, receive(t, mrfc.held, user+"'s INVITE at the MRFC"))
+	}
+	for _, m := range media {
+		go answerAsMRFC(m)
+	}
+	finals := map[int]int{}
+	for i, out := range outs {
+		resps := readAll(t, out)
+		final := resps[len(resps)-1]
+		finals[final.StatusCode]++
+		if final.StatusCode == 403 && !strings.Contains(final.Get("Warning"), "full") {
+			t.Errorf("the 403 has Warning %q, want one that says the conference is full", final.Get("Warning"))
+		}
+		if final.StatusCode != 200 {
+			receive(t, media[i].Done(), "BYE of the refused user's media at the MRFC")
+		}
+	}
+	if finals[200] != 1 || finals[403] != 1 {
+		t.Errorf("the two users got %v of each final status, want one 200 and one 403", finals)
+	}
+}
+
+// TestInvitedWhenTheConferenceFills: users dial in and fill the
+// conference while the user whom the creator referred to the focus is
+// still to answer. The focus does not take in the user who then
+// answers: it ends the user's session with a BYE, and the last NOTIFY
+// of the REFER says 403.
+func TestInvitedWhenTheConferenceFills(t *testing.T) {
+	mrfc := startConferenceMRFC(t)
+	as := startAS(t, noServices{}, mmtel.Config{MRFC: "sip:" + contactOf(t, mrfc.ua)})
+	invited := make(chan *sip.IncomingCall, 1)
+	conf, focus, _ := aliceConference(t, as, func(c *sip.IncomingCall) { invited <- c })
+	r, err := conf.Refer(sip.ReferTo{URI: "sip:bob@" + domain})
+	if err != nil || r.Response.StatusCode != 200 {
+		t.Fatalf("REFER got %v, %v; want 200", r, err)
+	}
+	bob := receive(t, invited, "the focus's INVITE at bob")
+	for k := 2; k <= 6; k++ {
+		user := "user" + string(rune('0'+k))
+		ua := newParticipant(t, as, user, func(c *sip.IncomingCall) { c.Reject(480) })
+		out, err := ua.Invite(joining(user, focus.URI))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := statuses(readAll(t, out)); got[len(got)-1] != 200 {
+			t.Fatalf("%s got %v, want 200", user, got)
+		}
+	}
+
+	if _, err := bob.Accept(audio("41000", "sendrecv")); err != nil {
+		t.Fatalf("bob's 200 got no ACK: %v", err)
+	}
+	receive(t, bob.Done(), "BYE of the focus at bob")
+	var got []int
+	for s := range r.Statuses() {
+		got = append(got, s.StatusCode)
+	}
+	if len(got) == 0 || got[len(got)-1] != 403 {
+		t.Errorf("REFER got NOTIFYs %v, want the last with 403", got)
+	}
+}
+
 // TestConferenceRefusals: without an MRFC the AS creates no conference,
 // a REFER that asks the focus to remove someone is not taken, and an
 // INVITE to a conference URI joins nothing when no conference has that
