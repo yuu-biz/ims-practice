@@ -119,6 +119,9 @@ type options struct {
 	// Audio and recording.
 	wavIn, amrIn, wavOut, sentOut, receivedOut string
 	toneFor                                    time.Duration
+	// Playing what the call receives on the learner's own player.
+	play   bool
+	player string
 	// Answering.
 	ringFor time.Duration
 	reject  int
@@ -237,12 +240,16 @@ func audioFlags(o *options, flags *flag.FlagSet) {
 	flags.DurationVar(&o.toneFor, "tone", 3*time.Second, "length of the tone when there is no -wav-in or -amr-in")
 }
 
-// recordingFlags are what the one call of a command saves.
+// recordingFlags are what the one call of a command saves, and how it
+// is played while it runs.
 func recordingFlags(o *options, flags *flag.FlagSet) {
 	flags.StringVar(&o.wavOut, "wav-out", "", "WAV file to write what was heard in a PCMU call to")
 	flags.StringVar(&o.sentOut, "sent-out", "", "file to write what was sent to: the PCMU payloads, or an AMR or AMR-WB file of the frames")
 	flags.StringVar(&o.receivedOut, "received-out", "", "file to write what was received to, in the same formats; "+
 		standardOutput+" writes it to standard output while the call runs, for a player to read")
+	flags.BoolVar(&o.play, "play", false, "play what is received while the call runs, on the player of -player; the call goes on when there is none")
+	flags.StringVar(&o.player, "player", "", "the player to run for -play: "+playerName+
+		", or a program that takes its options; empty looks for "+playerName+" on PATH")
 }
 
 // standardOutput is the name that stands for standard output in
@@ -620,10 +627,23 @@ func run(log *slog.Logger, o options, do func(context.Context, *session) error) 
 		return err
 	}
 	defer s.media.Close()
+	// What the call receives can go to standard output, to the
+	// learner's own player, or to both.
+	var ways []*way
 	if o.receivedOut == standardOutput {
 		// The player reading the pipe may stop before the call does.
 		keepWritingOnABrokenPipe()
-		s.media.StreamReceivedTo(os.Stdout)
+		ways = append(ways, &way{what: "on standard output", w: os.Stdout})
+	}
+	if pb := newPlayback(o, log, func() (sdp.Codec, bool) {
+		stream, ok := s.media.Stream()
+		return stream.Codec, ok
+	}); pb != nil {
+		defer pb.close()
+		ways = append(ways, &way{what: "on the player", w: pb})
+	}
+	if len(ways) > 0 {
+		s.media.StreamReceivedTo(newListeners(log, ways...))
 	}
 
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGTERM, os.Interrupt)

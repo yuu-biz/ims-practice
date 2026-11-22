@@ -139,7 +139,7 @@ func TestFlagsOfEachCommand(t *testing.T) {
 	registration := []string{"domain", "impi", "impu", "password", "k", "opc", "op", "sqn", "port-s", "pcscf", "epc", "pcscf-uri", "listen", "hep", "expires", "features"}
 	media := []string{"media-listen", "codecs", "no-preconditions"}
 	audio := []string{"wav-in", "amr-in", "tone"}
-	recording := []string{"wav-out", "sent-out", "received-out"}
+	recording := []string{"wav-out", "sent-out", "received-out", "play", "player"}
 	answering := []string{"ring", "reject"}
 	for command, want := range map[string][]string{
 		"register": slices.Concat(registration, []string{"deregister-after"}),
