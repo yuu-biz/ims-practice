@@ -441,7 +441,8 @@ The Japanese standard for the interconnect between IMS operators is TTC JJ-90.30
 | Package or file | What it holds |
 | --- | --- |
 | `internal/interconnect` | The profile, and what the IBCF does to each message: `screen.go` (methods, option tags, header rules), `trust.go` (the trust domain, privacy), `number.go` (numbers), `codec.go` (codecs), `leg.go` (which header fields go from one dialog to the other), `border.go` (the order of TS 24.229 5.10.2 and 5.10.3). |
-| `internal/ibcf` | The IBCF role: the two UAs, exit and entry (`ibcf.go`), the two dialogs of a call (`call.go`), the short messages (`message.go`), and the TrGW (`trgw.go`, `media.go`). Its tests run two networks in one process. |
+| `internal/b2bua` | The relay between the two dialogs of a call: the responses and PRACKs, the 2xx and its ACK, the requests within the dialogs, the early dialogs of a fork, and the end of the call. The IBCF tells it what crosses (`Hooks`). |
+| `internal/ibcf` | The IBCF role: the two UAs, exit and entry (`ibcf.go`), the INVITE of a call and what crosses between its two dialogs (`call.go`), the short messages (`message.go`), and the TrGW (`trgw.go`, `media.go`). Its tests run two networks in one process. |
 | `internal/scscf/session.go` | `exitIBCF`: the request for another network goes to the IBCF. |
 | `internal/icscf/session.go` | `telURIOf`: the number in a SIP URI becomes a tel URI. |
 | `internal/sc/sc.go`, `internal/ipsmgw/deliver.go`, `internal/ipsmgw/message.go` | The short message across: ENUM in the SC, the MESSAGE through the IBCF, the one from another network. |
@@ -451,7 +452,7 @@ The Japanese standard for the interconnect between IMS operators is TTC JJ-90.30
 
 ## What this project simplifies
 
-Each item has a `SIMPLIFIED:` comment in the code; `grep -rn "SIMPLIFIED:" internal/ibcf internal/interconnect internal/sc internal/ipsmgw` lists them, with those of the SMS guide.
+Each item has a `SIMPLIFIED:` comment in the code; `grep -rn "SIMPLIFIED:" internal/ibcf internal/b2bua internal/interconnect internal/sc internal/ipsmgw` lists them, with those of the SMS guide.
 
 | Where | What is left out | Why |
 | --- | --- | --- |
