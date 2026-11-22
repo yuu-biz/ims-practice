@@ -30,7 +30,7 @@ IR.92 の RTP ペイロードの形式は RFC 4867 です。bandwidth-efficient 
 | vo-amrwbenc 0.1.3 | AMR-WB の符号化 | Apache-2.0 |
 | 3GPP の参照コード（TS 26.073、26.173、26.442、26.443） | AMR、AMR-WB、EVS | オープンソースのライセンスは付いていない。利用条件は確かめていない |
 
-特許の扱いはライセンスとは別に確かめる必要があります。AMR と AMR-WB の特許の扱いと、EVS の実装の方法は、利用条件と特許の扱いを確かめてから決める未決の論点です。
+特許の扱いはライセンスとは別に確かめる必要があります。AMR と AMR-WB について公開されている資料で読み取れたことは、[codecs.md](../design/codecs.md) に書きました。EVS の実装の方法は、利用条件と特許の扱いを確かめてから決める未決の論点です。
 
 AMR と AMR-WB は、符号化済みのフレームで送り、RTP のペイロードの処理は Go だけで書くと決めました（[docs/design/volte-access.md](../design/volte-access.md)）。製品は cgo を使いません。上の opencore-amr と vo-amrwbenc は、フレームを作る道具だけが使います。
 

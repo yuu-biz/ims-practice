@@ -31,6 +31,29 @@ CMR に応じたモードの切り替えを省くときは、`SIMPLIFIED:` に�
 
 製品が AMR を復号しないので、MRFP は AMR の音声を混ぜられません。MRFP の扱いは [mmtel-mrf.md](mmtel-mrf.md) にあります。
 
+## AMR と AMR-WB の特許について公開されている資料
+
+学習者が通話の音声を聞けるようにするために、AMR（TS 26.071、TS 26.090）と AMR-WB（TS 26.171、TS 26.190）の特許とライセンスを調べました。公開されている資料で読み取れたことと、読み取れなかったことを分けて書きます。法律の判断はしません。
+
+読み取れたこと。
+
+- ライセンスの窓口は VoiceAge です。同社の[ライセンスの一覧](https://voiceage.com/Overview-lic.html)には [AMR-NB（AMR）](https://voiceage.com/AMR-NB.AMR.html)と [AMR-WB/G.722.2](https://voiceage.com/AMR-WB.G.722.2.html) の両方が並んでいます。どちらのページにも料率と期限は無く、問い合わせ先の電子メールだけがあります。AMR-WB の窓口は Acacia Research の担当者です。
+- VoiceAge は[標準ごとの特許ファミリーの一覧](https://voiceage.com/Patent-Portfolio.html)を公開しています。この表にはファミリーごとに満了の年が入っていて、3GPP-AMR-WB の列に印が付いたファミリー（VAC 300 から VAC 800）の満了の年は 2019 年から 2024 年です。いちばん遅いのは VAC 800 の 2024 年（米国）と、VAC 400 の 2023 年（ブラジル）です。ページの末尾の著作権の表示は 2021 年なので、この表が今の状態を表しているとはかぎりません。AMR-WB に必須だとする 150 件の登録特許は[国ごとの一覧](https://voiceage.com/Patent-Portfolio-Essential.html)にあります。この表に AMR-NB の列はありません。
+- Via LA が運営している音声コーデックのプログラムが対象にしているのは、[EVS と IVAS](https://www.via-la.com/licensing-2/voice-codec/) です。AMR-WB はその中で EVS の AMR-WB 互換の機能（TS 26.446）として出てくるだけで、AMR-NB と AMR-WB のプログラムはありません。
+- opencore-amr と vo-amrwbenc のライセンスは Apache-2.0 です。Apache-2.0 の特許の許諾は、提供者が持つ請求項のうち、その提供物が必ず侵害するものだけを対象にします（[Apache License 2.0 の 3 条](https://www.apache.org/licenses/LICENSE-2.0.txt)）。ほかの権利者の標準必須特許は入りません。
+- FFmpeg は AMR と AMR-WB の復号器を自分で持っていて、AMR のライブラリを入れなくても復号できます（`libavcodec/amrnbdec.c` と `libavcodec/amrwbdec.c`、LGPL-2.1 以降）。Ubuntu 24.04 の ffmpeg 6.1.1 には amrnb と amrwb の復号器と、格納形式を読む demuxer が入っていて、このリポジトリの試験音（`internal/amr/testdata`）を 440 Hz の正弦波として復号できました。符号器は入っていません。
+- ETSI の [IPR のデータベース](https://ipr.etsi.org/)で、AMR と AMR-WB の仕様（TS 26.071、26.073、26.090 から 26.094、26.104、26.171、26.173、26.190 から 26.194、26.204）に宣言された特許を探しました。これらの仕様を挙げた開示は 580 件ありました。宣言した会社は、Qualcomm、Nokia、Ericsson、NEC、VoiceAge、Orange、Samsung、InterDigital などです。ETSI は、宣言された権利が本当に必須かどうかを保証しないと書いています。そのため、宣言にはコーデックと関わりの薄い題名の特許（ビームフォーミングなど）も含まれています。
+- 開示に出ている米国、欧州、日本の登録公報 475 件の状態を、[Google Patents](https://patents.google.com/) で調べました。満了（Expired）が 458 件、失効や取り消しが 6 件、存続（Active）が 11 件です。Google Patents は、この状態を推定であり法的な結論ではないとしています。
+  - AMR-NB の音声の符号化の本体（TS 26.090）に宣言されたものに、存続の表示はありませんでした。いちばん遅い満了は 2020 年でした。
+  - VoiceAge の AMR-WB の 6 つのファミリーは、どれも満了の表示でした。いちばん遅い満了は 2024 年（米国）です。
+  - 存続の表示のうち、題名がコーデックに関わるものは 1 件でした。Nokia が AMR-WB の C コード（TS 26.173）に宣言した「AMR-WB DTX synchronization」で、米国の公報（US8090588B2）の満了の見込みは 2030 年 11 月です。ほかの 10 件の題名は、VoIP のビットレートの調整やビームフォーミングなど、別の技術のものでした。請求項は読んでいないので、復号に及ぶかどうかは分かりません。
+
+読み取れなかったこと。
+
+- すべての権利者の特許の範囲。宣言の中には、米国、欧州、日本の公報を含まないもの（AMR-NB で 32 件、AMR-WB で 37 件）と、出願の段階のものがあり、その状態は調べていません。ITU-T の G.722.2 の特許の宣言と、GSM の成果物（GSM 06.90 など）だけに宣言されたものも見ていません。存続と表示された特許の請求項が AMR の復号に及ぶかどうかも、読んでいません。
+- AMR-NB の特許の満了。VoiceAge の標準ごとの表に AMR-NB の列は無い一方で、ライセンスの一覧には AMR-NB のプログラムが載っています。どちらのページにも、プログラムを終えたとも続けているとも書いていません。
+- 復号を符号化と別に扱うかどうか。権利者の公開資料に、復号だけの実装を別に扱うという記述は見つかりませんでした。二次資料には、パーソナルコンピュータ向けの製品（メディアプレーヤーなど）の復号器は無償だという記述があります。一次資料で確かめられなかったので、根拠には使いません。
+
 ## EVS を送れるまで、EVS を offer しない
 
 UE は EVS の符号器を持たないので、送れるのは AMR-WB と AMR のフレームです。EVS のペイロードタイプを offer すると、EVS Primary のビットレートと帯域を示すことになります。EVS を offer する端末は、ビットレートの全範囲を扱える必要があります（TS 26.114 6.2.2.2 の Table 6.2a）。端末は最初の offer に `evs-mode-switch` を書けないので（同じ表）、AMR-WB IO だけで送ることも offer では示せません。AMR-WB IO しか送れない UE には、事実に合う EVS の offer を作れません。
