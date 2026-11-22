@@ -4,6 +4,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/yuu-biz/ims-practice/internal/b2bua"
 	"github.com/yuu-biz/ims-practice/internal/simservs"
 	"github.com/yuu-biz/ims-practice/internal/sip"
 )
@@ -228,7 +229,7 @@ func (c *call) restrictTerminatingIdentity(fields *sip.Message) {
 // removeOption takes one option tag out of a header field that lists
 // them, such as Supported.
 func removeOption(fields *sip.Message, name, option string) {
-	list := withoutOptions(strings.Join(fields.GetAll(name), ","), []string{option})
+	list := b2bua.WithoutOptions(strings.Join(fields.GetAll(name), ","), []string{option})
 	if list == "" {
 		fields.Remove(name)
 		return
