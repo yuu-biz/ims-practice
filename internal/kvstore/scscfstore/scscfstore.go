@@ -20,17 +20,19 @@
 // one or two keys; none walks the registrations, so that the time of a
 // lookup does not grow with the number of users.
 //
-// The four timers of the S-CSCF are time indexes (see Timer). An item
-// whose end needs an action (a SAR, a NOTIFY) keeps no time to live of
-// its own: the instance that claims its timer reads it, acts, and
-// removes it. The items that only have to go away have one.
+// The four expiries of the S-CSCF that need an action (scscf.ExpiryKind)
+// are time indexes, each named after its kind. An item whose end needs
+// an action (a SAR, a NOTIFY) keeps no time to live of its own: the
+// instance that claims its expiry reads it, acts, and removes it. The
+// items that only have to go away have one.
 //
 // Every operation returns the failure of the store, and a lookup does
 // not take it for a missing item. A write returns it until the main item
 // is written or removed. What fails after that is the removal of an
-// index item, an entry of a set or a timer that the main item no longer
-// needs, which is what an instance that stops there leaves: a miss
-// (kvjson.WriteIndex), or a timer whose claimer finds nothing to do.
+// index item, an entry of a set or an expiry that the main item no
+// longer needs, which is what an instance that stops there leaves: a
+// miss (kvjson.WriteIndex), or an expiry whose claimer finds nothing to
+// do.
 package scscfstore
 
 import (
@@ -49,7 +51,7 @@ import (
 
 // Store is a scscf.Store on a kvstore.Store. The S-CSCF writes every
 // expiry into what it stores, as a time, and the Store takes the times
-// to live and the due times of the timers from there.
+// to live and the due times of the expiries from there.
 type Store struct {
 	c *kvjson.Client
 }
@@ -62,86 +64,85 @@ func New(kv kvstore.Store, cfg kvjson.Config) *Store {
 	return &Store{c: kvjson.New(kv, cfg, "scscf")}
 }
 
-// Timer names a time index of the Store: one of the timers of the
-// S-CSCF that scscf runs with time.AfterFunc in its MemoryStore.
-type Timer string
-
-const (
-	// RegAwaitAuthTimer is reg-await-auth (TS 24.229 5.4.1.2.1, Table
-	// 7.7.1). A member is ChallengeMember: the private identity and the
-	// nonce, so that the timer of an answered challenge never ends a
-	// later one. PutChallenge schedules it at Expires.
-	RegAwaitAuthTimer Timer = "reg-await-auth"
-	// RegistrationTimer is the expiry of a registration (TS 24.229
-	// 5.4.1.2.2A step 10, 5.4.2.1.2). A member is the private identity
-	// in lower case; PutRegistration schedules it at Expires.
-	RegistrationTimer Timer = "registration-expiry"
-	// SubscriptionTimer is the expiry of a subscription to the reg event
-	// package (RFC 6665 4.2.2). A member is SubscriptionMember;
-	// PutSubscription schedules it at Expires.
-	SubscriptionTimer Timer = "subscription-expiry"
-	// UnregisteredProfileTimer is the end of an unregistered profile
-	// (scscf.UnregisteredProfileLifetime). A member is the private
-	// identity in lower case; PutUnregisteredProfile schedules it.
-	UnregisteredProfileTimer Timer = "unregistered-profile-expiry"
-)
-
 // expiryGrace is how long an index item outlives the Expires of the item
-// it points to. The item itself stays until the instance that claims
-// its timer has acted, which takes a lease and a Cx round trip (5 s)
-// or a few if that instance
-// stops; the index item has to find it until then. After that it goes
-// by itself, so that an index item that a stopped instance left
-// behind does not stay for ever.
+// it points to. That item stays until the instance which claims its
+// expiry has acted, which takes a lease and a Cx round trip, or several
+// leases if that instance stops; until then the index item has to find
+// it. Afterwards it goes by itself, so that an index item left behind by
+// an instance that stopped does not stay for ever.
 const expiryGrace = 10 * time.Minute
 
-// ClaimDue claims at most limit members of timer that are due at now,
-// each for lease (kvstore.Store.ClaimDue). The caller acts on each
-// claim as the timer of scscf would, and then calls Done.
+// ClaimDue claims at most limit members of the time index of kind that
+// are due at now, each for lease (kvstore.Store.ClaimDue). Its name is
+// the name of the kind.
 //
-// A claim does not prove that the item has expired: an instance may
-// have refreshed it after it was due, or removed it, and the Store does
-// not take a removed item out of the index (see DeleteRegistration).
-// So the caller reads the item and checks its Expires first, as the
-// timer functions of scscf already do (registrationExpired compares
-// Expires, regAwaitAuthExpired the nonce). Of two instances that act on
-// the same item, the user lock and those checks let one through; the
-// lease makes it rare.
-func (s *Store) ClaimDue(ctx context.Context, timer Timer, now time.Time, lease time.Duration, limit int) ([]kvstore.Claim, error) {
-	return s.c.ClaimDue(ctx, string(timer), now, lease, limit)
+// A member that does not name an item of its kind, which only a write of
+// an older version of this package could leave, comes back as an expiry
+// that names nothing: the caller finds no item, and its Done takes the
+// member out of the index.
+func (s *Store) ClaimDue(ctx context.Context, kind scscf.ExpiryKind, now time.Time, lease time.Duration, limit int) ([]scscf.Expiry, error) {
+	claims, err := s.c.ClaimDue(ctx, string(kind), now, lease, limit)
+	if err != nil {
+		return nil, err
+	}
+	expiries := make([]scscf.Expiry, 0, len(claims))
+	for _, c := range claims {
+		expiries = append(expiries, expiryOf(kind, c))
+	}
+	return expiries, nil
 }
 
-// Done ends a claim of ClaimDue once the caller has acted on it.
-func (s *Store) Done(ctx context.Context, claim kvstore.Claim) error { return s.c.Done(ctx, claim) }
+// Done takes the member of a claimed expiry out of its index. A claim
+// that has ended, which kvstore.Done reports with ErrClaimLost, leaves
+// the index as it is: the item has been rescheduled, removed with its
+// member (DeleteSubscription), or claimed anew by another instance.
+func (s *Store) Done(ctx context.Context, e scscf.Expiry) error {
+	err := s.c.Done(ctx, kvstore.Claim{Index: s.c.Index(string(e.Kind)), Member: memberOf(e), Until: e.Until})
+	if errors.Is(err, kvstore.ErrClaimLost) {
+		return nil
+	}
+	return err
+}
 
-// ChallengeMember is the member of RegAwaitAuthTimer for a challenge.
-func ChallengeMember(privateID, nonce string) string {
+// expiryOf reads back what memberOf wrote for an expiry of kind.
+func expiryOf(kind scscf.ExpiryKind, c kvstore.Claim) scscf.Expiry {
+	e := scscf.Expiry{Kind: kind, Until: c.Until}
+	parts := kvjson.SplitMember(c.Member)
+	switch {
+	case kind == scscf.RegAwaitAuthExpiry && len(parts) == 2:
+		e.PrivateIdentity, e.Nonce = parts[0], parts[1]
+	case kind == scscf.SubscriptionExpiry && len(parts) == 3:
+		e.Dialog = sip.DialogID{CallID: parts[0], LocalTag: parts[1], RemoteTag: parts[2]}
+	case (kind == scscf.RegistrationExpiry || kind == scscf.UnregisteredProfileExpiry) && len(parts) == 1:
+		e.PrivateIdentity = parts[0]
+	}
+	return e
+}
+
+// memberOf names the item of an expiry in its time index. A challenge is
+// named by the private identity and the nonce, so that the expiry of an
+// answered challenge never ends a later one; a subscription by its
+// dialog; a registration and a profile by the private identity alone,
+// which is the one item of its kind that the user has.
+func memberOf(e scscf.Expiry) string {
+	switch e.Kind {
+	case scscf.RegAwaitAuthExpiry:
+		return challengeMember(e.PrivateIdentity, e.Nonce)
+	case scscf.SubscriptionExpiry:
+		return subscriptionMember(e.Dialog)
+	default:
+		return userMember(e.PrivateIdentity)
+	}
+}
+
+func challengeMember(privateID, nonce string) string {
 	return kvjson.Member(privateKey(privateID), nonce)
 }
 
-// ParseChallengeMember gives back the private identity, in lower case,
-// and the nonce.
-func ParseChallengeMember(member string) (privateID, nonce string) {
-	parts := kvjson.SplitMember(member)
-	if len(parts) != 2 {
-		return "", ""
-	}
-	return parts[0], parts[1]
-}
+func userMember(privateID string) string { return kvjson.Member(privateKey(privateID)) }
 
-// SubscriptionMember is the member of SubscriptionTimer for a
-// subscription.
-func SubscriptionMember(id sip.DialogID) string {
+func subscriptionMember(id sip.DialogID) string {
 	return kvjson.Member(id.CallID, id.LocalTag, id.RemoteTag)
-}
-
-// ParseSubscriptionMember gives back the dialog of a subscription.
-func ParseSubscriptionMember(member string) (sip.DialogID, bool) {
-	parts := kvjson.SplitMember(member)
-	if len(parts) != 3 {
-		return sip.DialogID{}, false
-	}
-	return sip.DialogID{CallID: parts[0], LocalTag: parts[1], RemoteTag: parts[2]}, true
 }
 
 // privateKey is the form in which scscf.MemoryStore compares a private
@@ -197,20 +198,32 @@ func (s *Store) Challenge(ctx context.Context, privateID string) (scscf.Challeng
 	return c, ok, err
 }
 
-// PutChallenge stores c and starts its reg-await-auth timer. The timer
+// PutChallenge stores c and schedules its reg-await-auth. The expiry
 // goes into the index first: an instance that stops before the challenge
 // is written leaves a member that ends nothing, since no challenge has
-// its nonce.
+// its nonce. The expiry of the challenge that c replaces goes once c is
+// written, so that a pending challenge has one expiry and no other.
 func (s *Store) PutChallenge(ctx context.Context, c scscf.Challenge) error {
-	if err := s.c.WriteDue(ctx, string(RegAwaitAuthTimer), ChallengeMember(c.PrivateIdentity, c.Nonce), c.Expires); err != nil {
+	old, replaced, err := s.Challenge(ctx, c.PrivateIdentity)
+	if err != nil {
 		return err
 	}
-	return kvjson.Write(ctx, s.c, s.challengeKey(c.PrivateIdentity), c, s.c.TTLUntil(c.KeepUntil))
+	if err := s.c.WriteDue(ctx, string(scscf.RegAwaitAuthExpiry), challengeMember(c.PrivateIdentity, c.Nonce), c.Expires); err != nil {
+		return err
+	}
+	if err := kvjson.Write(ctx, s.c, s.challengeKey(c.PrivateIdentity), c, s.c.TTLUntil(c.KeepUntil)); err != nil {
+		return err
+	}
+	if replaced && old.Nonce != c.Nonce {
+		s.c.RemoveDue(ctx, string(scscf.RegAwaitAuthExpiry), challengeMember(old.PrivateIdentity, old.Nonce))
+	}
+	return nil
 }
 
-// DeleteChallenge removes the challenge and its timer. Its member names
-// the nonce, so a later challenge of the user keeps its own timer, and
-// a member that stays ends nothing.
+// DeleteChallenge removes the challenge and its expiry. Its member
+// names the nonce, so a later challenge of the user keeps its own, and a
+// member that stays, which only an instance that stopped half way
+// leaves, ends nothing.
 func (s *Store) DeleteChallenge(ctx context.Context, privateID string) error {
 	c, ok, err := s.Challenge(ctx, privateID)
 	if err != nil {
@@ -220,7 +233,7 @@ func (s *Store) DeleteChallenge(ctx context.Context, privateID string) error {
 		return err
 	}
 	if ok {
-		s.c.RemoveDue(ctx, string(RegAwaitAuthTimer), ChallengeMember(c.PrivateIdentity, c.Nonce))
+		s.c.RemoveDue(ctx, string(scscf.RegAwaitAuthExpiry), challengeMember(c.PrivateIdentity, c.Nonce))
 	}
 	return nil
 }
@@ -249,7 +262,7 @@ func (s *Store) RegistrationOf(ctx context.Context, publicID string) (scscf.Regi
 }
 
 // PutRegistration writes, in this order: the index items of the public
-// identities, the timer, the registration, and then removes the index
+// identities, the expiry, the registration, and then removes the index
 // items of the identities that the registration no longer has. A reader
 // in between, or after an instance stopped in between, finds either the
 // old registration or the new one, and never one by an identity it
@@ -268,7 +281,7 @@ func (s *Store) PutRegistration(ctx context.Context, r scscf.Registration) error
 			return err
 		}
 	}
-	if err := s.c.WriteDue(ctx, string(RegistrationTimer), k, r.Expires); err != nil {
+	if err := s.c.WriteDue(ctx, string(scscf.RegistrationExpiry), userMember(k), r.Expires); err != nil {
 		return err
 	}
 	if err := kvjson.Write(ctx, s.c, s.c.Key("registration", k), r, 0); err != nil {
@@ -284,9 +297,9 @@ func (s *Store) PutRegistration(ctx context.Context, r scscf.Registration) error
 
 // DeleteRegistration removes the registration first and its index items
 // after, so that an index item never leads to a registration that is
-// gone. It leaves the timer: the member is the private identity, and a
+// gone. It leaves the expiry: the member is the private identity, and a
 // registration that another instance writes at the same moment would
-// lose its own timer with it. The claim of that member finds no
+// lose its own expiry with it. The claim of that member finds no
 // registration, or one with a later Expires, and does nothing.
 func (s *Store) DeleteRegistration(ctx context.Context, privateID string) error {
 	k := privateKey(privateID)
@@ -335,7 +348,7 @@ type subscriptionsOf struct {
 
 // removeStale drops the entries whose subscription ended more than
 // expiryGrace ago. Their subscription has been removed by now, by the
-// instance that claimed its timer; if it has not, SubscriptionsOf would
+// instance that claimed its expiry; if it has not, SubscriptionsOf would
 // still find it through a newer PutSubscription. An entry is never
 // dropped because its subscription is missing: a writer of another
 // instance may be about to write it.
@@ -399,16 +412,16 @@ func (s *Store) PutSubscription(ctx context.Context, sub scscf.Subscription) err
 	}); err != nil {
 		return err
 	}
-	if err := s.c.WriteDue(ctx, string(SubscriptionTimer), SubscriptionMember(id), sub.Expires); err != nil {
+	if err := s.c.WriteDue(ctx, string(scscf.SubscriptionExpiry), subscriptionMember(id), sub.Expires); err != nil {
 		return err
 	}
 	return kvjson.Write(ctx, s.c, s.subscriptionKey(id), sub, 0)
 }
 
-// DeleteSubscription removes the subscription, then its timer and its
-// entry in the set. A dialog is never used again, so the timer can go.
-// A timer or an entry that stays finds no subscription: the claimer of
-// the timer does nothing, and SubscriptionsOf leaves the entry out
+// DeleteSubscription removes the subscription, then its expiry and its
+// entry in the set. A dialog is never used again, so the expiry can go.
+// An expiry or an entry that stays finds no subscription: the claimer of
+// the expiry does nothing, and SubscriptionsOf leaves the entry out
 // until removeStale drops it.
 func (s *Store) DeleteSubscription(ctx context.Context, id sip.DialogID) error {
 	sub, ok, err := s.Subscription(ctx, id)
@@ -418,7 +431,7 @@ func (s *Store) DeleteSubscription(ctx context.Context, id sip.DialogID) error {
 	if err := s.c.Remove(ctx, s.subscriptionKey(id)); err != nil {
 		return err
 	}
-	s.c.RemoveDue(ctx, string(SubscriptionTimer), SubscriptionMember(id))
+	s.c.RemoveDue(ctx, string(scscf.SubscriptionExpiry), subscriptionMember(id))
 	if !ok {
 		return nil
 	}
@@ -450,10 +463,7 @@ func (s *Store) unregisteredKey(privateID string) string {
 }
 
 // UnregisteredProfile returns the profile of a private identity,
-// whether or not it has expired. scscf.Store has no such lookup; the
-// instance that claims UnregisteredProfileTimer needs it, since its
-// member is the private identity, and the timer function of scscf
-// takes the profile.
+// whether or not it has expired (scscf.Store).
 func (s *Store) UnregisteredProfile(ctx context.Context, privateID string) (scscf.UnregisteredProfile, bool, error) {
 	var p scscf.UnregisteredProfile
 	ok, err := read(ctx, s.c, s.unregisteredKey(privateID), &p)
@@ -488,7 +498,7 @@ func (s *Store) PutUnregisteredProfile(ctx context.Context, p scscf.Unregistered
 			return err
 		}
 	}
-	if err := s.c.WriteDue(ctx, string(UnregisteredProfileTimer), k, p.Expires); err != nil {
+	if err := s.c.WriteDue(ctx, string(scscf.UnregisteredProfileExpiry), userMember(k), p.Expires); err != nil {
 		return err
 	}
 	if err := kvjson.Write(ctx, s.c, s.unregisteredKey(k), p, 0); err != nil {
@@ -504,7 +514,7 @@ func (s *Store) PutUnregisteredProfile(ctx context.Context, p scscf.Unregistered
 
 // DeleteUnregisteredProfile removes the profile only if it still
 // expires at expires and no one changed it since it was read. Of two
-// instances whose timers end the same profile, one removes it and gets
+// instances whose expiries end the same profile, one removes it and gets
 // true; the other gets false and sends no SAR.
 func (s *Store) DeleteUnregisteredProfile(ctx context.Context, privateID string, expires time.Time) (bool, error) {
 	k := privateKey(privateID)
