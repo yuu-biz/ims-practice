@@ -278,13 +278,23 @@ func (c *call) createConference() {
 // user's offer, as it joins the creator (createConference).
 //
 // SIMPLIFIED: TS 24.147 5.3.2.4.1 step 2 and TS 24.229 5.7.1.4 and
-// 5.7.1.5. The focus has no conference policy (TS 24.147 4): any user
-// whose identity the network asserts may join while the conference has
-// room, whether or not the user has been in it before. A request
-// without P-Asserted-Identity gets 403 and is not challenged: the AS
-// holds no credentials of users, and in the networks of this project
-// every request reaches the focus with the identity that a P-CSCF or a
-// trusted peer asserted.
+// 5.7.1.5. The focus takes the identity in the P-Asserted-Identity of
+// the INVITE, as it takes the one that the S-CSCF asserts for the
+// creator, and checks nothing more of the user. It does not check
+// where the INVITE came from: TS 24.229 5.7.1.4 b i counts on the
+// P-Asserted-Identity of a user inside the trust domain (4.4), and a
+// UAS uses none from a node that it does not trust (RFC 3325 8). It
+// names a user who asks for privacy, with Privacy id or user, by that
+// identity in the conference state that the subscribers get, where TS
+// 24.229 5.7.1.4 a takes the user as anonymous and TS 24.605 4.6.5
+// keeps the identity of a user with OIR out of the notifications. It
+// has no conference policy (TS 24.147 4): any user may join while the
+// conference has room, whether or not the user has been in it before.
+// And it answers a request without P-Asserted-Identity with 403, not
+// with the challenge of TS 24.229 5.7.1.4 b ii. The AS holds no
+// credentials of users, and gives no participant an anonymous URI (RFC
+// 4575 5.6). In the networks of this project, every request reaches
+// the focus with the identity that a P-CSCF or a trusted peer asserted.
 func (as *AS) joinConference(in *sip.IncomingCall, log *slog.Logger) {
 	req := in.Request
 	f := as.conferenceAt(req.RequestURI)
