@@ -25,6 +25,11 @@ import (
 // above Timer F for the same reason.
 const defaultReportTimeout = 2 * 32 * time.Second
 
+// messageReferenceLifetime is how long a recipient's counter of RP-MR
+// is kept after the last RP-DATA to it. It outlives every delivery that
+// could still wait for a report with one of its values.
+const messageReferenceLifetime = 10 * time.Minute
+
 // Deliver sends the TPDU of d to the UE of d.Recipient in RP-DATA, and
 // waits for the final response to the MESSAGE. The SC learns how the
 // delivery ends from Report, once: when the MESSAGE fails, when the
@@ -38,7 +43,8 @@ const defaultReportTimeout = 2 * 32 * time.Second
 // end of a delivery whose report never comes; the Store forgets it.
 func (g *IPSMGW) Deliver(ctx context.Context, d Delivery) {
 	log := g.log.With("reference", d.Reference, "recipient", d.Recipient)
-	mr := g.store.NextMessageReference(d.Recipient)
+	now := time.Now()
+	mr := g.store.NextMessageReference(d.Recipient, now.Add(messageReferenceLifetime))
 	m, err := g.deliveryMessage(d, mr)
 	if err != nil {
 		log.Warn("cannot write the RP-DATA", "error", err.Error())
@@ -49,10 +55,11 @@ func (g *IPSMGW) Deliver(ctx context.Context, d Delivery) {
 	log = log.With("call_id", callID, "rp_mr", int(mr))
 	g.store.PutDelivery(PendingDelivery{
 		CallID: callID, Reference: d.Reference, Recipient: d.Recipient, MessageReference: mr,
+		ReportDeadline: now.Add(g.cfg.ReportTimeout),
 		// Longer than the timer below, which therefore always finds a
 		// delivery that no report has ended. The Store forgets it by
 		// itself only when this IP-SM-GW stops before the timer fires.
-		Expires: time.Now().Add(2 * g.cfg.ReportTimeout),
+		Expires: now.Add(2 * g.cfg.ReportTimeout),
 	})
 	time.AfterFunc(g.cfg.ReportTimeout, func() {
 		g.endDelivery(callID, SystemFailure, log.With("reason", "no delivery report"))

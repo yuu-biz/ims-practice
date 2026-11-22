@@ -17,6 +17,7 @@ func IPSMGW(t *testing.T, newPair func(t *testing.T) (ipsmgw.Store, ipsmgw.Store
 		{"MessageReferenceCountsPerRecipient", ipsmgwMessageReference},
 		{"MessageReferenceCountsPerPublicIdentity", ipsmgwMessageReferencePerPublicIdentity},
 		{"ConcurrentMessageReferences", ipsmgwConcurrentMessageReferences},
+		{"MessageReferenceUntilItsExpiry", ipsmgwMessageReferenceExpires},
 		{"Delivery", ipsmgwDelivery},
 		{"OnlyOneTakesADelivery", ipsmgwOnlyOneTakes},
 		{"RegSubscription", ipsmgwRegSubscription},
@@ -37,14 +38,14 @@ func ipsmgwMessageReferencePerPublicIdentity(t *testing.T, a, b ipsmgw.Store) {
 		if i == 1 {
 			s = b
 		}
-		got = append(got, s.NextMessageReference(recipient))
+		got = append(got, s.NextMessageReference(recipient, hourHence()))
 	}
 	if !slices.Equal(got, []uint8{0, 1, 2}) {
 		t.Errorf("RP-MRs of one number written three ways = %v, want 0 1 2", got)
 	}
 	sip := "sip:001010000000002@ims.mnc001.mcc001.3gppnetwork.org"
-	a.NextMessageReference(sip)
-	if mr := b.NextMessageReference("sip:001010000000002@IMS.mnc001.mcc001.3gppnetwork.org"); mr != 1 {
+	a.NextMessageReference(sip, hourHence())
+	if mr := b.NextMessageReference("sip:001010000000002@IMS.mnc001.mcc001.3gppnetwork.org", hourHence()); mr != 1 {
 		t.Errorf("RP-MR of a SIP URI with its host in upper case = %d, want 1", mr)
 	}
 }
@@ -56,19 +57,19 @@ func ipsmgwMessageReference(t *testing.T, a, b ipsmgw.Store) {
 		if i == 1 {
 			s = b
 		}
-		got = append(got, s.NextMessageReference(tel))
+		got = append(got, s.NextMessageReference(tel, hourHence()))
 	}
 	if !slices.Equal(got, []uint8{0, 1, 2}) {
 		t.Errorf("RP-MRs = %v, want 0 1 2", got)
 	}
-	if mr := b.NextMessageReference("tel:+12025550102"); mr != 0 {
+	if mr := b.NextMessageReference("tel:+12025550102", hourHence()); mr != 0 {
 		t.Errorf("first RP-MR of another recipient = %d", mr)
 	}
 	// TS 24.011 8.2.3 counts 0 to 255.
 	for range 253 {
-		a.NextMessageReference(tel)
+		a.NextMessageReference(tel, hourHence())
 	}
-	if mr := a.NextMessageReference(tel); mr != 0 {
+	if mr := a.NextMessageReference(tel, hourHence()); mr != 0 {
 		t.Errorf("RP-MR after 255 = %d, want 0", mr)
 	}
 }
@@ -84,7 +85,7 @@ func ipsmgwConcurrentMessageReferences(t *testing.T, a, b ipsmgw.Store) {
 			s = b
 		}
 		for range 50 {
-			mr := s.NextMessageReference(tel)
+			mr := s.NextMessageReference(tel, hourHence())
 			mu.Lock()
 			if seen[mr] {
 				t.Errorf("RP-MR %d given twice", mr)
@@ -95,9 +96,28 @@ func ipsmgwConcurrentMessageReferences(t *testing.T, a, b ipsmgw.Store) {
 	})
 }
 
+// hourHence is the expiry of a counter of RP-MR that a case does not
+// wait out.
+func hourHence() time.Time { return time.Now().Add(time.Hour) }
+
+// ipsmgwMessageReferenceExpires: the counter is kept until the expiry
+// that the last NextMessageReference gave it, and starts at 0 again
+// after it.
+func ipsmgwMessageReferenceExpires(t *testing.T, a, b ipsmgw.Store) {
+	a.NextMessageReference(tel, hourHence())
+	if mr := b.NextMessageReference(tel, time.Now().Add(short)); mr != 1 {
+		t.Fatalf("second RP-MR = %d, want 1", mr)
+	}
+	waitOut()
+	if mr := a.NextMessageReference(tel, hourHence()); mr != 0 {
+		t.Errorf("RP-MR after the counter expired = %d, want 0", mr)
+	}
+}
+
 func delivery(callID string, lifetime time.Duration) ipsmgw.PendingDelivery {
+	now := time.Now()
 	return ipsmgw.PendingDelivery{CallID: callID, Reference: "ref-" + callID, Recipient: tel, MessageReference: 7,
-		Expires: time.Now().Add(lifetime).Round(time.Millisecond)}
+		ReportDeadline: now.Add(lifetime / 2).Round(time.Millisecond), Expires: now.Add(lifetime).Round(time.Millisecond)}
 }
 
 func ipsmgwDelivery(t *testing.T, a, b ipsmgw.Store) {

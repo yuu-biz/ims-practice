@@ -18,7 +18,7 @@ func TestConformance(t *testing.T) {
 		t.Run(backend.Name, func(t *testing.T) {
 			kv := backend.New(t)
 			storetest.IPSMGW(t, func(*testing.T) (ipsmgw.Store, ipsmgw.Store) {
-				cfg := ipsmgwstore.Config{Config: kvjson.Config{Prefix: storetest.Prefix()}}
+				cfg := kvjson.Config{Prefix: storetest.Prefix()}
 				return ipsmgwstore.New(kv, cfg), ipsmgwstore.New(kv, cfg)
 			})
 		})
@@ -26,16 +26,18 @@ func TestConformance(t *testing.T) {
 }
 
 // TestReportTimeoutOfAStoppedSender: the IP-SM-GW that sent the MESSAGE
-// stops, and another one ends the delivery when TR1N runs out. The SC
-// hears of it once, even if the report comes at the same moment.
+// stops, and another one ends the delivery when TR1N runs out, at the
+// ReportDeadline of the delivery. The SC hears of it once, even if the
+// report comes at the same moment.
 func TestReportTimeoutOfAStoppedSender(t *testing.T) {
 	ctx := context.Background()
 	now := time.UnixMilli(1_790_000_000_000)
 	clock := func() time.Time { return now }
 	kv := kvstore.NewMemoryStore(clock)
-	cfg := ipsmgwstore.Config{Config: kvjson.Config{Now: clock}, ReportTimeout: time.Minute}
+	cfg := kvjson.Config{Now: clock}
 	sender, other := ipsmgwstore.New(kv, cfg), ipsmgwstore.New(kv, cfg)
-	sender.PutDelivery(ipsmgw.PendingDelivery{CallID: "msg-1", Reference: "ref-1", Expires: now.Add(2 * time.Minute)})
+	sender.PutDelivery(ipsmgw.PendingDelivery{CallID: "msg-1", Reference: "ref-1",
+		ReportDeadline: now.Add(time.Minute), Expires: now.Add(2 * time.Minute)})
 
 	if claims, _ := other.ClaimDue(ctx, now.Add(59*time.Second), 10*time.Second, 10); len(claims) != 0 {
 		t.Fatalf("claimed %v before TR1N ran out", claims)
