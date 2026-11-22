@@ -44,17 +44,18 @@ var (
 // composeService holds what decides whether a service of compose.yaml
 // is an IMS node.
 type composeService struct {
+	Image    string   `yaml:"image"`
 	Build    any      `yaml:"build"`
 	Profiles []string `yaml:"profiles"`
 }
 
 // Nodes returns, in the order of compose.yaml, the services that are
-// IMS nodes: those built from the Dockerfile at the root of the
-// repository, which runs one or more roles, and that start
-// with "docker compose up", that is, that are in no profile. The UE
-// simulators are built from the same Dockerfile but only start in a
-// profile, and they are not network nodes. dns, capture and peer run
-// other images.
+// IMS nodes: those that run the image built from the Dockerfile at the
+// root of the repository, which runs one or more roles, and that start
+// with "docker compose up", that is, that are in no profile. One service
+// builds the image and the others run it by its name. The UE simulators
+// run the same image but only start in a profile, and they are not
+// network nodes. dns, capture and peer run other images.
 func Nodes(compose []byte) ([]string, error) {
 	var doc yaml.Node
 	if err := yaml.Unmarshal(compose, &doc); err != nil {
@@ -73,16 +74,28 @@ func Nodes(compose []byte) ([]string, error) {
 	if services == nil || services.Kind != yaml.MappingNode {
 		return nil, errors.New("compose.yaml has no services")
 	}
-	var nodes []string
+	names := make([]string, 0, len(services.Content)/2)
+	all := map[string]composeService{}
+	// The image names that a build of the root gives.
+	built := map[string]bool{}
 	for i := 0; i+1 < len(services.Content); i += 2 {
 		name := services.Content[i].Value
 		// Decode resolves the "<<: *ims-node" merge key, which is where
-		// most nodes get their build.
+		// the nodes get their image.
 		var s composeService
 		if err := services.Content[i+1].Decode(&s); err != nil {
 			return nil, fmt.Errorf("service %s: %w", name, err)
 		}
-		if buildsRoot(s.Build) && len(s.Profiles) == 0 {
+		names = append(names, name)
+		all[name] = s
+		if buildsRoot(s.Build) && s.Image != "" {
+			built[s.Image] = true
+		}
+	}
+	var nodes []string
+	for _, name := range names {
+		s := all[name]
+		if (buildsRoot(s.Build) || built[s.Image]) && len(s.Profiles) == 0 {
 			nodes = append(nodes, name)
 		}
 	}

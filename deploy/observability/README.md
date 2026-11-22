@@ -42,7 +42,7 @@ go generate ./deploy/observability/...
 
 and commit the changed `prometheus.yml`. `go generate ./deploy/...` does the same and also makes the copies of `deploy/k8s` (`go generate ./deploy/k8s/...`), so one command brings both up to date. Until then, `observability_test.go` fails and says which command to run.
 
-A service counts as a node when it is built from the `Dockerfile` at the root of the repository (`build: .`, the image that runs the IMS roles) and is in no profile, so that `docker compose up` starts it. No list of nodes is kept by hand. The UE simulators use the same image but only start in a profile, so they are left out. Everything outside the two marker lines, such as `global`, is written by hand and kept as it is.
+A service counts as a node when it runs the image built from the `Dockerfile` at the root of the repository (the image that runs the IMS roles, which the service with `build: .` builds and the others run by its name) and is in no profile, so that `docker compose up` starts it. No list of nodes is kept by hand. The UE simulators use the same image but only start in a profile, so they are left out. Everything outside the two marker lines, such as `global`, is written by hand and kept as it is.
 
 ## Limits
 
