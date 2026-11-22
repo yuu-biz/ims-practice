@@ -151,6 +151,32 @@ else
 	fail=1
 fi
 docker rm -f ims-practice-ue2-pjsua ims-practice-pjsua-call >/dev/null
+
+# A call from a UE on the host, through Docker's NAT, as "Talk from your
+# own machine" in the guide shows. The P-CSCF knows such a UE by the
+# gateway its requests come from and names the relay's published
+# address in what it sends it, so the media crosses the NAT as well.
+host_called=
+if host_ue; then
+	rm -f e2e-out/host-sent.raw captures/ue2-host-received.raw
+	docker compose run --no-deps -d --name ims-practice-ue2-host ue2 answer "${ue2[@]}" \
+		--ring 500ms --tone 4s --received-out /captures/ue2-host-received.raw >/dev/null
+	for i in $(seq 1 20); do
+		grep -q '"msg":"waiting for a call"' <<<"$(docker logs ims-practice-ue2-host 2>/dev/null)" && break
+		sleep 1
+	done
+	if "$host_ue_bin" call -pcscf 127.0.0.1:5060 -listen 127.0.0.1:0 -media-listen 127.0.0.1:0 \
+		-tone 3s -sent-out e2e-out/host-sent.raw tel:+1-202-555-0102 &&
+		[ "$(timeout 60 docker wait ims-practice-ue2-host)" = "0" ]; then
+		echo "ok   a UE on the host called UE 2 through the NAT"
+		host_called=yes
+	else
+		echo "FAIL the call from the host"
+		docker logs ims-practice-ue2-host 2>&1 | tail -n 15
+		fail=1
+	fi
+	docker rm -f ims-practice-ue2-host >/dev/null
+fi
 same_nodes
 sleep 1
 
@@ -164,6 +190,8 @@ last=0
 
 ue1=172.28.0.100
 ue2ip=172.28.0.101
+# The gateway of the compose bridge, from which a UE on the host arrives.
+gateway=172.28.0.1
 pcscf=172.28.0.40
 icscf=172.28.0.20
 scscf=172.28.0.30
@@ -254,6 +282,33 @@ expect "CANCEL from UE 1" "sip.Method == \"CANCEL\" && ip.src == $ue1"
 expect "487 to UE 1" "sip.Status-Code == 487 && ip.dst == $ue1"
 expect "480 to UE 1" "sip.Status-Code == 480 && ip.dst == $ue1"
 
+# The UE on the host called last of all, so these frames are the last of
+# the capture too.
+if [ -n "$host_called" ]; then
+	echo "a call from the host through the NAT"
+	expect "INVITE from the bridge gateway with SDP" "$invite && ip.src == $gateway && ip.dst == $pcscf && sdp"
+	# The P-CSCF gives a UE that comes from the gateway the address
+	# where the relay's ports are published, not the relay's own.
+	expect "183 to the host naming the relay at the published address" "sip.Status-Code == 183 && ip.src == $pcscf && ip.dst == $gateway && sdp.connection_info.address == 127.0.0.1"
+	expect "200 OK to the host" "sip.Status-Code == 200 && sip.CSeq.method == \"INVITE\" && ip.src == $pcscf && ip.dst == $gateway"
+	expect "RTP from the host to the relay" "rtp && ip.src == $gateway && ip.dst == $agw"
+	# The relay passes each packet on unchanged, so the SSRC of the UE on
+	# the host marks its packets on the side of UE 2 as well.
+	host_ssrc="$(field rtp.ssrc)"
+	expect "RTP relay -> UE 2 with the SSRC of the UE on the host" "rtp && ip.src == $agw && ip.dst == $ue2ip && rtp.ssrc == ${host_ssrc:-0}"
+	expect "BYE from the host" "sip.Method == \"BYE\" && ip.src == $gateway"
+	# What the guide claims of this path: UE 2 in its container received
+	# every packet that the host sent, through the published relay port.
+	host_sent="$(od -An -v -tx1 e2e-out/host-sent.raw | tr -d ' \n')"
+	host_received="$(od -An -v -tx1 captures/ue2-host-received.raw | tr -d ' \n')"
+	if [ -n "$host_sent" ] && [ "$host_sent" = "$host_received" ]; then
+		echo "ok   UE 2 received the ${#host_sent} hex digits of PCMU that the UE on the host sent"
+	else
+		echo "FAIL payloads of the call from the host differ: sent ${#host_sent}, received ${#host_received} hex digits"
+		fail=1
+	fi
+fi
+
 # The roadmap's completion condition: the callee's RTP payload equals
 # what the caller encoded. G.711 is lossy, so no WAV is compared.
 sent="$(od -An -v -tx1 captures/ue1-sent.raw | tr -d ' \n')"
@@ -272,9 +327,10 @@ else
 fi
 
 # The charging information stays in the network (TS 24.229 5.2.1):
-# the P-CSCF sends none of it to a UE. Every UE of this setup has an
-# address from 172.28.0.100 up.
-none "P-Charging-Vector or P-Charging-Function-Addresses from the P-CSCF to a UE" 'ip.src == 172.28.0.40 && ip.dst >= 172.28.0.100 && (sip.P-Charging-Vector || sip.P-Charging-Function-Addresses)'
+# the P-CSCF sends none of it to a UE. Every UE in a container of this
+# setup has an address from 172.28.0.100 up, and a UE on the host comes
+# from the gateway of the bridge.
+none "P-Charging-Vector or P-Charging-Function-Addresses from the P-CSCF to a UE" "ip.src == $pcscf && (ip.dst >= 172.28.0.100 || ip.dst == $gateway) && (sip.P-Charging-Vector || sip.P-Charging-Function-Addresses)"
 none "malformed SIP, SDP, DNS or Diameter packets" '(sip || sdp || dns || diameter) && (_ws.malformed || _ws.expert.severity >= warning)'
 
 if [ "$fail" -ne 0 ]; then
