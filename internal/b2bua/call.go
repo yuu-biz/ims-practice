@@ -49,9 +49,12 @@ type Call struct {
 // copied is a reliable provisional response that the Call sent the
 // caller. of is the response of the callee that it copies, when the
 // callee wants that one acknowledged too (RFC 3262 4); nil when it does
-// not, for a response that came without 100rel.
+// not, for a response that came without 100rel. own tells that the role
+// sent the response itself (Progress), so that it copies no response of
+// the callee at all.
 type copied struct {
-	of *sip.Message
+	of  *sip.Message
+	own bool
 }
 
 // New starts the Call of in, an INVITE that the B2BUA has taken, and
@@ -114,6 +117,55 @@ func (c *Call) NoLeg() {
 	c.ready.Do(func() { close(c.outReady) })
 }
 
+// Progress sends the caller a provisional response of the role's own,
+// from 101 to 199: one that the role makes itself instead of passing a
+// response of the callee on, such as the 181 of a call that a service
+// forwards, or the 183 that carries the session of an announcement or
+// of a tone of the MRF (TS 24.182 4.5.5.3.7). The first response gives
+// the caller an early dialog, whether or not the role sends an INVITE
+// toward the callee (NoLeg).
+//
+// A reliable response waits for its PRACK, as sip.IncomingCall.Progress
+// does. The Call answers that PRACK with 200 itself, since no response
+// of the callee waits for it (RFC 3262 4), and keeps the response in
+// the order in which the caller acknowledges them: the PRACK of a copy
+// of a response of the callee, which the role may relay meanwhile,
+// still goes on as the PRACK of that response.
+//
+// A session description in body after an INVITE without an offer is the
+// role's own offer, and the caller answers it in that PRACK (RFC 3262
+// 5). The Call takes that answer no further, since the offer was not
+// the callee's: a role that offers the caller a session of its own,
+// such as the media of the MRF, answers the caller's offer from that
+// media instead (OfferCaller takes the caller off it again). A new
+// offer in the PRACK does go on to the callee, as one in any other
+// request within the dialog does.
+func (c *Call) Progress(code int, body sip.Body, headers ...sip.HeaderField) error {
+	c.mu.Lock()
+	// RFC 3262 3: the response goes reliably when the caller's INVITE
+	// offered 100rel, and only then does the caller send a PRACK for it.
+	var sent *copied
+	if c.in.Request.Supports(sip.Option100rel) {
+		sent = &copied{own: true}
+		c.copies = append(c.copies, sent)
+		if len(body.Content) > 0 {
+			// RFC 3262 5: the offer and the answer of the INVITE are done
+			// on the caller's leg, so a later response of the callee
+			// carries no further offer to it.
+			c.sessionToCaller = true
+		}
+	}
+	c.mu.Unlock()
+	err := c.in.Progress(code, body, headers...)
+	if err != nil {
+		// No PRACK comes for a response that did not go.
+		c.mu.Lock()
+		c.copies = slices.DeleteFunc(c.copies, func(k *copied) bool { return k == sent })
+		c.mu.Unlock()
+	}
+	return err
+}
+
 // RelayProvisional passes resp, a provisional response of out, on to
 // the caller. A reliable one is acknowledged on out with the PRACK of
 // the caller for its copy (fromCaller), so that the PRACK goes from end
@@ -170,16 +222,18 @@ func (c *Call) RelayProvisional(out *sip.OutgoingCall, resp *sip.Message) {
 
 // acknowledged is the response of the callee whose copy the caller's
 // PRACK, the next in the order they came, acknowledges: nil when that
-// copy was of a response that the callee wants no PRACK for.
-func (c *Call) acknowledged() *sip.Message {
+// copy was of a response that the callee wants no PRACK for. own tells
+// that the response was the role's own (Progress), and copies none of
+// the callee's.
+func (c *Call) acknowledged() (acked *sip.Message, own bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if len(c.copies) == 0 {
-		return nil
+		return nil, false
 	}
 	next := c.copies[0]
 	c.copies = c.copies[1:]
-	return next.of
+	return next.of, next.own
 }
 
 // Answer passes resp, the 2xx of out, on to the caller, and then the
@@ -294,8 +348,9 @@ func (c *Call) fromCaller(r *sip.InDialogRequest) {
 		return
 	}
 	var acked *sip.Message
+	var own bool
 	if req.Method == sip.PRACK {
-		acked = c.acknowledged()
+		acked, own = c.acknowledged()
 	}
 	select {
 	case <-c.outReady:
@@ -307,6 +362,14 @@ func (c *Call) fromCaller(r *sip.InDialogRequest) {
 	switch {
 	case acked != nil && out != nil:
 		c.prack(r, out, acked, answered, finish)
+	case own && !r.Offer:
+		// The PRACK of a response that the role sent itself (Progress):
+		// the Call answers it (RFC 3262 4), and a session description in
+		// it answers the role's own offer, so none of it goes to the
+		// callee. A new offer goes on as any other does, below.
+		if !answered {
+			r.Accept(sip.Body{})
+		}
 	case answered:
 		// The PRACK of a copy of a response that the callee wants no
 		// PRACK for: the caller has its 200, and the PRACK ends here.
