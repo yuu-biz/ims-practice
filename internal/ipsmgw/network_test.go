@@ -258,10 +258,17 @@ type phone struct {
 	contentTypeName string
 }
 
+// identities are the private identity and the public identity of
+// subscriber k of deploy/compose/hss.yaml: the IMSI in the private one,
+// the number in the public one.
+func identities(k int) (impi, impu string) {
+	return fmt.Sprintf("00101000000000%d@%s", k, domain), fmt.Sprintf("sip:+120255501%02d@%s", k, domain)
+}
+
 func (n *network) phone(subscriber int, answer int) *phone {
 	n.t.Helper()
-	user := fmt.Sprintf("00101000000000%d", subscriber)
-	p := &phone{t: n.t, impi: user + "@" + domain, impu: "sip:" + user + "@" + domain,
+	impi, impu := identities(subscriber)
+	p := &phone{t: n.t, impi: impi, impu: impu,
 		password: "test-password-" + strconv.Itoa(subscriber), pcscf: n.pcscf, callID: sip.NewCallID(), inbox: make(chan *sip.Message, 10),
 		features: ";+g.3gpp.smsip", contentTypeName: "Content-Type"}
 	p.stack = newStack(n.t, sip.Timers{}, func(st *sip.ServerTransaction) {
@@ -661,13 +668,13 @@ func TestDeliveryReportThroughAnotherIPSMGW(t *testing.T) {
 // the SC address of its default configuration, +12025550100.
 func (n *network) simulator(subscriber int) *ue.UE {
 	n.t.Helper()
-	user := fmt.Sprintf("00101000000000%d@%s", subscriber, domain)
+	impi, impu := identities(subscriber)
 	tr, err := sip.Listen("127.0.0.1:0", quiet())
 	if err != nil {
 		n.t.Fatal(err)
 	}
 	addr := tr.LocalAddr()
-	cfg := ue.Config{PrivateIdentity: user, PublicIdentity: "sip:" + user, Password: "test-password-" + strconv.Itoa(subscriber),
+	cfg := ue.Config{PrivateIdentity: impi, PublicIdentity: impu, Password: "test-password-" + strconv.Itoa(subscriber),
 		HomeDomain: domain, PCSCF: n.pcscf, PCSCFURI: "sip:pcscf." + domain + ":5060", Features: ue.DefaultFeatures,
 		SCAddress: n.gw.ServiceCentre.String()}
 	contact := ue.NewContact(cfg, addr)

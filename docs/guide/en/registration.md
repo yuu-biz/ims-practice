@@ -23,9 +23,9 @@ The guide follows 3GPP Release 18 (TS 24.229 V18.11.0, TS 29.228 V18.0.0, TS 29.
 | IP-SM-GW | 172.28.0.70 | The application server of SMS over IP. The S-CSCF registers the user there too (step 15). |
 | DNS | 172.28.0.2 | It holds the NAPTR, SRV and A records of the home network domain. |
 
-The home network domain is `ims.mnc001.mcc001.3gppnetwork.org`. The test user has the private identity `001010000000001@ims.mnc001.mcc001.3gppnetwork.org` and the public identity `sip:001010000000001@ims.mnc001.mcc001.3gppnetwork.org`. The password is `test-password-1`.
+The home network domain is `ims.mnc001.mcc001.3gppnetwork.org`. The test user has the private identity `001010000000001@ims.mnc001.mcc001.3gppnetwork.org` and the public identity `sip:+12025550101@ims.mnc001.mcc001.3gppnetwork.org`. The password is `test-password-1`.
 
-The UE of this guide is a softphone without a SIM card. Its identities and its password are configured in it, as an IMC holds them (TS 24.229 5.1.1.1B.1), so it registers the public identity it was given and uses that identity in its other requests too. The test data give that identity the form of one derived from an IMSI, but it is a configured identity and is not barred. A VoLTE phone whose card has a USIM and no ISIM registers a temporary public identity derived from the IMSI instead, which the network bars: see [The identities of a phone without an ISIM](volte.md#the-identities-of-a-phone-without-an-isim).
+The UE of this guide is a softphone without a SIM card. Its identities and its password are configured in it, as an IMC holds them (TS 24.229 5.1.1.1B.1), so it registers the public identity it was given and uses that identity in its other requests too. That identity is the SIP URI of the user's number, the identity other networks see the user by, and it is not barred. A VoLTE phone whose card has a USIM and no ISIM registers a temporary public identity derived from the IMSI instead, which the network bars: see [The identities of a phone without an ISIM](volte.md#the-identities-of-a-phone-without-an-isim).
 
 ## Run a registration
 
@@ -240,7 +240,7 @@ Wireshark shows the body as XML:
 
 ```xml
 <reginfo xmlns="urn:ietf:params:xml:ns:reginfo" version="0" state="full">
-  <registration aor="sip:001010000000001@ims.mnc001.mcc001.3gppnetwork.org" id="reg1" state="active">
+  <registration aor="sip:+12025550101@ims.mnc001.mcc001.3gppnetwork.org" id="reg1" state="active">
     <contact id="..." state="active" event="registered" expires="3600" callid="..." cseq="2">
       <uri>sip:4218b61b-4e20-8e1c-872d-5b39fca1e64f@172.28.0.100:5060</uri>
       <unknown-param name="+g.3gpp.smsip"></unknown-param>

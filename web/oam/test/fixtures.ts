@@ -90,8 +90,8 @@ export const hssConfiguration = {
     hss: {
       provisioning: { listen: "0.0.0.0:8081" },
       subscriptions: [
-        { private_identity: impi1, public_identities: [`sip:001010000000001@${realm}`, "tel:+12025550101"], password: "REDACTED", aka: null },
-        { private_identity: impi2, public_identities: [`sip:001010000000002@${realm}`], password: null, aka: { k: "REDACTED", opc: "REDACTED", amf: "8000" } },
+        { private_identity: impi1, public_identities: [`sip:+12025550101@${realm}`, "tel:+12025550101"], password: "REDACTED", aka: null },
+        { private_identity: impi2, public_identities: [`sip:+12025550102@${realm}`], password: null, aka: { k: "REDACTED", opc: "REDACTED", amf: "8000" } },
       ],
       service_profiles: { default: { features: ["sms"] }, trial: { features: ["sms", "mmtel"] } },
     },
@@ -166,7 +166,7 @@ export const refusedChange = {
 
 export const subscription = {
   private_identity: impi1,
-  public_identities: [`sip:001010000000001@${realm}`, "tel:+12025550101"],
+  public_identities: [`sip:+12025550101@${realm}`, "tel:+12025550101"],
   authentication_schemes: ["SIP Digest"],
   registration_state: "NOT_REGISTERED",
   test_user: true,

@@ -121,7 +121,7 @@ An AS that acts as a proxy sends the request back along that Route. The S-CSCF r
 The S-CSCF also adds P-Served-User (RFC 5502). It names the user whom the AS serves, with the session case and whether that user is registered (TS 24.229 5.4.3.2 step 5 b):
 
 ```text
-P-Served-User: <sip:001010000000001@ims.mnc001.mcc001.3gppnetwork.org>;sescase=orig;regstate=reg
+P-Served-User: <sip:+12025550101@ims.mnc001.mcc001.3gppnetwork.org>;sescase=orig;regstate=reg
 ```
 
 An AS that serves both callers and callees, such as the MMTel AS ([Supplementary services with the MMTel AS](mmtel.md)), tells the cases apart by it (5.7.1.3A). A request to a user's terminating services has `sescase=term`. The S-CSCF removes P-Served-User before a request leaves for its destination or the UE (5.4.3.2 step 14A, 5.4.3.3 step 13A). One that a UE put in never reaches it: the P-CSCF removes it at the edge of the trust domain (TS 24.229 4.4.9).
@@ -143,7 +143,7 @@ If the IP-SM-GW does not answer the MESSAGE within Timer F (32 seconds), or answ
    ```sh
    docker compose run --rm ue2 register \
      --impi 001010000000002@ims.mnc001.mcc001.3gppnetwork.org \
-     --impu sip:001010000000002@ims.mnc001.mcc001.3gppnetwork.org \
+     --impu sip:+12025550102@ims.mnc001.mcc001.3gppnetwork.org \
      --password test-password-2
    ```
 
@@ -229,7 +229,7 @@ The SUBSCRIBE goes to the I-CSCF, the entry point of the home network, which fin
 The S-CSCF sends a NOTIFY straight to the IP-SM-GW at once. The 200 OK to the SUBSCRIBE goes back through the I-CSCF, so the capture may show the NOTIFY before or after it: the NOTIFY, not the 200 OK, creates the dialog of a subscription (RFC 6665 4.4.1). The reginfo lists each contact of the user, and the feature tags of a contact as `<unknown-param>` elements (TS 24.229 5.4.2.1.2):
 
 ```xml
-<registration aor="sip:001010000000002@ims.mnc001.mcc001.3gppnetwork.org" id="reg1" state="active">
+<registration aor="sip:+12025550102@ims.mnc001.mcc001.3gppnetwork.org" id="reg1" state="active">
   <contact id="LJDTDE6YNM" state="active" event="registered" expires="3600" ...>
     <uri>sip:ab6af11f-a43e-860e-9064-207615ae1f12@172.28.0.101:5060</uri>
     <unknown-param name="+g.3gpp.smsip"></unknown-param>
@@ -326,7 +326,7 @@ The IP-SM-GW then checks the RP-DATA: that it decodes, that the RP-DA is the SC'
 
 ### 5. The SC looks the recipient up: UDR and UDA
 
-The IP-SM-GW hands the SMS-SUBMIT and the sender's number to the SC stub. The SC finds the user who has the TP-DA number `+12025550102` with a UDR (command 306), Data-Reference 10, IMSPublicIdentity (TS 29.328 7.6.2), naming the user by MSISDN. The UDA lists `sip:001010000000002@...` and `tel:+12025550102`. In a real network the SC side would ask for routeing information instead (TS 23.204 6.4 step 3); the Sh read takes its place here.
+The IP-SM-GW hands the SMS-SUBMIT and the sender's number to the SC stub. The SC finds the user who has the TP-DA number `+12025550102` with a UDR (command 306), Data-Reference 10, IMSPublicIdentity (TS 29.328 7.6.2), naming the user by MSISDN. The UDA lists `sip:+12025550102@...` and `tel:+12025550102`. In a real network the SC side would ask for routeing information instead (TS 23.204 6.4 step 3); the Sh read takes its place here.
 
 ### 6. The submit report goes back to UE 1
 

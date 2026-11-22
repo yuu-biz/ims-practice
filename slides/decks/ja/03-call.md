@@ -70,7 +70,7 @@ docker compose up -d --build
 # 1 つ目の端末。UE 2 が着信を待つ。
 docker compose run --rm ue2 answer \
   --impi 001010000000002@ims.mnc001.mcc001.3gppnetwork.org \
-  --impu sip:001010000000002@ims.mnc001.mcc001.3gppnetwork.org \
+  --impu sip:+12025550102@ims.mnc001.mcc001.3gppnetwork.org \
   --password test-password-2 --wav-out /captures/ue2-heard.wav
 
 # 2 つ目の端末。UE 1 が番号で発信し、3 秒のトーンを流して切る。
@@ -168,7 +168,7 @@ P-CSCF -> UE 2: INVITE (term) // 7
 | AS に送る INVITE | Route の先頭に AS、次に `odi` 付きの S-CSCF。`sescase=orig`。 |
 | DNS の問い合わせ | `2.0.1.0.5.5.5.2.0.2.1.e164.arpa` の NAPTR。番号を逆順にしたもの。 |
 | NAPTR の答え | サービスは `E2U+sip`。正規表現が SIP URI を作る。 |
-| S-CSCF を出たあとの Request-URI | `sip:001010000000002@ims.mnc001.mcc001.3gppnetwork.org`。 |
+| S-CSCF を出たあとの Request-URI | `sip:+12025550102@ims.mnc001.mcc001.3gppnetwork.org`。 |
 
 フィルタは `dns.qry.type == 35` です。レコードは `deploy/compose/dns/e164.arpa.zone` にあります。
 

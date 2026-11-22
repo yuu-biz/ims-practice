@@ -39,7 +39,7 @@ The numbers are in the 555-0100 to 555-0199 range that the North American Number
    ```sh
    docker compose run --rm ue2 answer \
      --impi 001010000000002@ims.mnc001.mcc001.3gppnetwork.org \
-     --impu sip:001010000000002@ims.mnc001.mcc001.3gppnetwork.org \
+     --impu sip:+12025550102@ims.mnc001.mcc001.3gppnetwork.org \
      --password test-password-2 --wav-out /captures/ue2-heard.wav
    ```
 
@@ -135,7 +135,7 @@ The P-CSCF can have several media relays: `media_relays` in `deploy/compose/pcsc
 The top Route carries `orig`, so the S-CSCF serves the caller (TS 24.229 5.4.3.1). The user it serves is the one in P-Asserted-Identity, or the one in P-Served-User when a node of the network sends a request on behalf of a user (TS 24.229 5.4.3.2 step 1). It checks that this user is registered. It then adds UE 1's tel URI as a second P-Asserted-Identity, because the tel URI is an alias of the asserted SIP URI (TS 24.229 5.4.3.2 step 9). The INVITE of UE 1 carries **P-Preferred-Service** with the ICSI of MMTel. The S-CSCF checks that the INVITE is a call with audio or video, which the operator data of this project counts as MMTel. It then puts the ICSI into **P-Asserted-Service** and removes P-Preferred-Service (TS 24.229 5.4.3.2 step 4C, RFC 6050). The P-CSCF of UE 2 later names this service to the PCRF. Then it record-routes. An initial filter criterion (iFC) of every subscriber sends each INVITE to the MMTel AS first (TS 24.229 5.4.3.2 step 5). The S-CSCF adds **P-Served-User** with `sescase=orig`, and puts on top of Route the AS and then itself, with an original dialog identifier (`odi`). The AS reads the caller's service settings from the HSS over Sh and sends a new INVITE back along that Route. With the default settings of `deploy/compose/hss.yaml` it changes nothing else in the call. The INVITE comes back with the `odi`, and the S-CSCF goes on after that criterion. The Request-URI is a tel URI, so the S-CSCF asks DNS (TS 24.229 5.4.3.2 step 10, RFC 6116):
 
 1. The number `+12025550102` becomes the domain `2.0.1.0.5.5.5.2.0.2.1.e164.arpa`: the digits reversed, one label each.
-2. The NAPTR record there has the service `E2U+sip` and a regular expression that produces `sip:001010000000002@ims.mnc001.mcc001.3gppnetwork.org`.
+2. The NAPTR record there has the service `E2U+sip` and a regular expression that produces `sip:+12025550102@ims.mnc001.mcc001.3gppnetwork.org`.
 3. That becomes the new Request-URI.
 
 The records are in `deploy/compose/dns/e164.arpa.zone`. A number with no record cannot be reached inside the IMS. A real network may send the call to a BGCF towards the telephone network; this project has none, so the S-CSCF answers 404. TS 24.229 5.4.3.2 step 10 lets the S-CSCF answer the caller in place of sending the call to a BGCF.
@@ -250,7 +250,7 @@ A registration and a call over this path were checked with the project's own UE 
    ```sh
    docker compose run --rm -p 127.0.0.1:8091:8090 ue2 serve \
      --impi 001010000000002@ims.mnc001.mcc001.3gppnetwork.org \
-     --impu sip:001010000000002@ims.mnc001.mcc001.3gppnetwork.org \
+     --impu sip:+12025550102@ims.mnc001.mcc001.3gppnetwork.org \
      --password test-password-2
    ```
 

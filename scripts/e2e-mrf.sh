@@ -51,7 +51,7 @@ done
 remember_nodes
 
 domain=ims.mnc001.mcc001.3gppnetwork.org
-ue2=(--impi "001010000000002@$domain" --impu "sip:001010000000002@$domain" --password test-password-2)
+ue2=(--impi "001010000000002@$domain" --impu "sip:+12025550102@$domain" --password test-password-2)
 fail=0
 mkdir -p e2e-out
 rm -f captures/mrf-cat-received.raw

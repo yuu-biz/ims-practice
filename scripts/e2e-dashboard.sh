@@ -40,7 +40,7 @@ for i in $(seq 1 30); do
 done
 
 ue2=(--impi 001010000000002@ims.mnc001.mcc001.3gppnetwork.org
-	--impu sip:001010000000002@ims.mnc001.mcc001.3gppnetwork.org --password test-password-2)
+	--impu sip:+12025550102@ims.mnc001.mcc001.3gppnetwork.org --password test-password-2)
 remember_nodes
 fail=0
 
@@ -154,7 +154,7 @@ else
 fi
 
 registrations="$(curl -fsS http://localhost:8080/api/registrations)"
-if grep -q '"impu":"sip:001010000000001@' <<<"$registrations"; then
+if grep -q '"impu":"sip:+12025550101@' <<<"$registrations"; then
 	echo "ok   the dashboard lists UE 1's registration"
 else
 	echo "FAIL no registration for UE 1: $registrations"

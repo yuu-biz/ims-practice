@@ -113,7 +113,7 @@ The UE simulators wait in the Pods `ue` and `ue2`; each command runs inside them
 
 ```sh
 P="-pcscf pcscf.ims.mnc001.mcc001.3gppnetwork.org:5060"
-U2="-impi 001010000000002@ims.mnc001.mcc001.3gppnetwork.org -impu sip:001010000000002@ims.mnc001.mcc001.3gppnetwork.org -password test-password-2"
+U2="-impi 001010000000002@ims.mnc001.mcc001.3gppnetwork.org -impu sip:+12025550102@ims.mnc001.mcc001.3gppnetwork.org -password test-password-2"
 
 # Registration
 kubectl -n ims exec deploy/ue -- ue register $P -deregister-after 2s

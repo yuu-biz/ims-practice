@@ -40,7 +40,7 @@ wait_for_open scscf
 wait_for_open ipsmgw
 
 ue2=(--impi 001010000000002@ims.mnc001.mcc001.3gppnetwork.org
-	--impu sip:001010000000002@ims.mnc001.mcc001.3gppnetwork.org --password test-password-2)
+	--impu sip:+12025550102@ims.mnc001.mcc001.3gppnetwork.org --password test-password-2)
 gsm_text='Hello UE-B, this is UE-A.'
 ucs2_text='こんにちは、UE-A さん'
 remember_nodes
@@ -164,14 +164,14 @@ expect "CEA 2001 HSS -> IP-SM-GW" "diameter.cmd.code == 257 && $ans && ip.dst ==
 echo "UE 2 registers at the IP-SM-GW too (TS 24.229 5.4.1.7, TS 24.341 5.3.3.2)"
 last=0
 # The S-CSCF answers the UE before it registers the user anywhere else.
-expect "200 OK S-CSCF -> I-CSCF to UE 2's REGISTER" "sip.Status-Code == 200 && sip.CSeq.method == \"REGISTER\" && ip.src == $scscf && ip.dst == $icscf && sip.Service-Route && sip.To contains \"001010000000002\""
+expect "200 OK S-CSCF -> I-CSCF to UE 2's REGISTER" "sip.Status-Code == 200 && sip.CSeq.method == \"REGISTER\" && ip.src == $scscf && ip.dst == $icscf && sip.Service-Route && sip.To contains \"+12025550102\""
 ue2_registered="$last"
 expect "third-party REGISTER S-CSCF -> IP-SM-GW with the MSISDN in service-info" "sip.Method == \"REGISTER\" && ip.src == $scscf && ip.dst == $ipsmgw && sip.Content-Type == \"application/3gpp-ims+xml\" && sip.msg_body contains \"<service-info>12025550102</service-info>\" && sip.Expires == 3600"
 expect "200 OK IP-SM-GW -> S-CSCF with the binding" "sip.Status-Code == 200 && sip.CSeq.method == \"REGISTER\" && ip.src == $ipsmgw && sip.Contact contains \"expires=3600\" && sip.P-Charging-Vector contains \"term-ioi=\""
-expect "SUBSCRIBE IP-SM-GW -> I-CSCF to UE 2's registration state, with the entry point in Route" "sip.Method == \"SUBSCRIBE\" && sip.Event == \"reg\" && ip.src == $ipsmgw && ip.dst == $icscf && sip.Route contains \"<sip:ims.mnc001.mcc001.3gppnetwork.org;lr>\" && sip.r-uri.user == \"001010000000002\" && sip.P-Asserted-Identity contains \"ipsmgw\" && sip.Expires == 3761 && sip.P-Charging-Vector contains \"orig-ioi=\""
+expect "SUBSCRIBE IP-SM-GW -> I-CSCF to UE 2's registration state, with the entry point in Route" "sip.Method == \"SUBSCRIBE\" && sip.Event == \"reg\" && ip.src == $ipsmgw && ip.dst == $icscf && sip.Route contains \"<sip:ims.mnc001.mcc001.3gppnetwork.org;lr>\" && sip.r-uri.user == \"+12025550102\" && sip.P-Asserted-Identity contains \"ipsmgw\" && sip.Expires == 3761 && sip.P-Charging-Vector contains \"orig-ioi=\""
 subscribed="$last"
 expect "SUBSCRIBE I-CSCF -> S-CSCF" "sip.Method == \"SUBSCRIBE\" && sip.Event == \"reg\" && ip.src == $icscf && ip.dst == $scscf && sip.P-Asserted-Identity contains \"ipsmgw\""
-expect "NOTIFY S-CSCF -> IP-SM-GW: a contact with +g.3gpp.smsip" "sip.Method == \"NOTIFY\" && ip.src == $scscf && ip.dst == $ipsmgw && sip.Subscription-State contains \"active\" && sip.msg_body contains \"001010000000002\" && sip.msg_body contains \"+g.3gpp.smsip\""
+expect "NOTIFY S-CSCF -> IP-SM-GW: a contact with +g.3gpp.smsip" "sip.Method == \"NOTIFY\" && ip.src == $scscf && ip.dst == $ipsmgw && sip.Subscription-State contains \"active\" && sip.msg_body contains \"+12025550102\" && sip.msg_body contains \"+g.3gpp.smsip\""
 notified="$last"
 expect "PUR IP-SM-GW -> HSS: SMSRegistrationInfo with the IP-SM-GW's number" "diameter.cmd.code == 307 && $req && ip.src == $ipsmgw && diameter.Data-Reference == 24 && e164.msisdn == \"12025550102\" && diameter.Sh-User-Data contains \"<IP-SM-GW-Number>12025550199<\""
 expect "PUA 2001" "$(answer_to) && diameter.Result-Code == 2001"
@@ -239,7 +239,7 @@ expect "delivery report reaches the IP-SM-GW" "$message && sip.In-Reply-To == \"
 
 echo "UE 2 deregisters, and the IP-SM-GW takes itself out of the HSS"
 last="$reported"
-expect "NOTIFY S-CSCF -> IP-SM-GW: UE 2's subscription terminated" "sip.Method == \"NOTIFY\" && ip.src == $scscf && ip.dst == $ipsmgw && sip.Subscription-State contains \"terminated\" && sip.msg_body contains \"001010000000002\""
+expect "NOTIFY S-CSCF -> IP-SM-GW: UE 2's subscription terminated" "sip.Method == \"NOTIFY\" && ip.src == $scscf && ip.dst == $ipsmgw && sip.Subscription-State contains \"terminated\" && sip.msg_body contains \"+12025550102\""
 expect "PUR IP-SM-GW -> HSS with an empty IP-SM-GW number" "diameter.cmd.code == 307 && $req && e164.msisdn == \"12025550102\" && diameter.Sh-User-Data contains \"<IP-SM-GW-Number></IP-SM-GW-Number>\""
 mark="$last"
 

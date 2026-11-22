@@ -131,7 +131,7 @@ The REGISTER gets 500 after 5 seconds: the S-CSCF sent a Multimedia-Auth Request
 
 ```sh
 docker compose run -d --name ue2-answer ue2 answer --impi 001010000000002@ims.mnc001.mcc001.3gppnetwork.org \
-  --impu sip:001010000000002@ims.mnc001.mcc001.3gppnetwork.org --password test-password-2 --ring 1s --tone 6s
+  --impu sip:+12025550102@ims.mnc001.mcc001.3gppnetwork.org --password test-password-2 --ring 1s --tone 6s
 docker compose run --rm ue call --tone 6s tel:+12025550102
 ```
 
@@ -145,7 +145,7 @@ Start the two IMS networks ([the interconnect guide](../../docs/guide/en/interco
 b1=(--domain ims.mnc002.mcc001.3gppnetwork.org --pcscf 172.28.1.40:5060
   --pcscf-uri sip:pcscf.ims.mnc002.mcc001.3gppnetwork.org:5060 --sc +12025550150
   --impi 001020000000001@ims.mnc002.mcc001.3gppnetwork.org
-  --impu sip:001020000000001@ims.mnc002.mcc001.3gppnetwork.org --password test-password-b1)
+  --impu sip:+12025550151@ims.mnc002.mcc001.3gppnetwork.org --password test-password-b1)
 docker compose run -d --name b1-answer peer-ue answer "${b1[@]}" --ring 1s --tone 12s
 docker compose run --rm ue call --tone 10s tel:+12025550151
 ```

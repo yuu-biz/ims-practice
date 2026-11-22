@@ -34,7 +34,7 @@ wait_for_open icscf
 wait_for_open scscf
 
 ue2=(--impi 001010000000002@ims.mnc001.mcc001.3gppnetwork.org
-	--impu sip:001010000000002@ims.mnc001.mcc001.3gppnetwork.org --password test-password-2)
+	--impu sip:+12025550102@ims.mnc001.mcc001.3gppnetwork.org --password test-password-2)
 rm -f captures/ue1-sent.raw captures/ue2-received.raw
 remember_nodes
 fail=0
@@ -70,7 +70,7 @@ for i in $(seq 1 20); do
 done
 # The UE exits 1 when the call fails, which is expected here; the log
 # says how it failed.
-out="$(docker compose run --no-deps --rm ue call sip:001010000000002@ims.mnc001.mcc001.3gppnetwork.org 2>/dev/null || true)"
+out="$(docker compose run --no-deps --rm ue call sip:+12025550102@ims.mnc001.mcc001.3gppnetwork.org 2>/dev/null || true)"
 if grep -q '"call failed: 486 ' <<<"$out"; then
 	echo "ok   busy callee answered 486"
 else
@@ -104,15 +104,15 @@ fi
 # pjsua, a softphone written by others, both ways: it answers a
 # call from UE 1, then calls UE 2.
 pjsua=(--null-audio --no-tcp --local-port 5060
-	--id sip:001010000000004@ims.mnc001.mcc001.3gppnetwork.org
+	--id sip:+12025550104@ims.mnc001.mcc001.3gppnetwork.org
 	--registrar sip:ims.mnc001.mcc001.3gppnetwork.org --realm ims.mnc001.mcc001.3gppnetwork.org
-	--username 001010000000004@ims.mnc001.mcc001.3gppnetwork.org --password test-password-4
+	--username +12025550104@ims.mnc001.mcc001.3gppnetwork.org --password test-password-4
 	"--outbound=sip:pcscf.ims.mnc001.mcc001.3gppnetwork.org:5060;lr")
 pjsua_registered() {
 	local since="$1" i registered
 	for i in $(seq 1 20); do
 		registered="$(grep '"msg":"registered"' <<<"$(docker compose logs --no-color --since "$since" scscf 2>/dev/null)" || true)"
-		grep -q '001010000000004' <<<"$registered" && return 0
+		grep -q '+12025550104@' <<<"$registered" && return 0
 		sleep 1
 	done
 	return 1
@@ -136,7 +136,7 @@ for i in $(seq 1 20); do
 	grep -q '"msg":"waiting for a call"' <<<"$(docker logs ims-practice-ue2-pjsua 2>/dev/null)" && break
 	sleep 1
 done
-docker compose run --no-deps -d -T --name ims-practice-pjsua-call peer "${pjsua[@]}" --duration 2 	sip:001010000000002@ims.mnc001.mcc001.3gppnetwork.org >/dev/null
+docker compose run --no-deps -d -T --name ims-practice-pjsua-call peer "${pjsua[@]}" --duration 2 	sip:+12025550102@ims.mnc001.mcc001.3gppnetwork.org >/dev/null
 # The log is read whole before grep -q looks at it. Piped, grep -q exits
 # at the first match, docker logs dies writing the rest (SIGPIPE), and
 # pipefail fails the check although pjsua's call was confirmed.
@@ -186,9 +186,9 @@ else
 	icid=none
 fi
 expect "ENUM query for the number" "dns.qry.type == 35 && dns.qry.name == \"2.0.1.0.5.5.5.2.0.2.1.e164.arpa\""
-expect "INVITE S-CSCF -> I-CSCF to the SIP URI from ENUM, the icid-value and the S-CSCF's orig-ioi" "$invite && ip.src == $scscf && ip.dst == $icscf && sip.r-uri.user == \"001010000000002\" && sip.P-Charging-Vector == \"icid-value=$icid;orig-ioi=$domain\""
+expect "INVITE S-CSCF -> I-CSCF to the SIP URI from ENUM, the icid-value and the S-CSCF's orig-ioi" "$invite && ip.src == $scscf && ip.dst == $icscf && sip.r-uri.user == \"+12025550102\" && sip.P-Charging-Vector == \"icid-value=$icid;orig-ioi=$domain\""
 # The P-CSCF's reg event SUBSCRIBE for UE 1 brings an LIR of its own.
-expect "LIR for the callee" "diameter.cmd.code == 302 && diameter.flags.request == 1 && diameter.Public-Identity == \"sip:001010000000002@ims.mnc001.mcc001.3gppnetwork.org\""
+expect "LIR for the callee" "diameter.cmd.code == 302 && diameter.flags.request == 1 && diameter.Public-Identity == \"sip:+12025550102@ims.mnc001.mcc001.3gppnetwork.org\""
 expect "LIA with the callee's S-CSCF" "diameter.cmd.code == 302 && diameter.flags.request == 0 && diameter.Result-Code == 2001 && diameter.Server-Name"
 expect "INVITE I-CSCF -> S-CSCF with the same icid-value" "$invite && ip.src == $icscf && ip.dst == $scscf && sip.P-Charging-Vector contains \"icid-value=$icid\""
 expect "INVITE S-CSCF -> P-CSCF along the Path, the icid-value and the S-CSCF's orig-ioi" "$invite && ip.src == $scscf && ip.dst == $pcscf && sip.P-Called-Party-ID && sip.P-Charging-Vector == \"icid-value=$icid;orig-ioi=$domain\""

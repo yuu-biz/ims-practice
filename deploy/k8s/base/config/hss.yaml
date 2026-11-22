@@ -15,21 +15,27 @@ hss:
   server_capabilities:
     mandatory: [1]
   # Test subscribers only. The private identity follows the
-  # <IMSI>@<home domain> form of TS 23.003 with a test IMSI. The Ut
-  # password is that of SIP Digest, so that a UE simulator needs only one
-  # (TS 24.623 5.2.3.2.1 leaves the Ut credential to the operator).
+  # <IMSI>@<home domain> form of TS 23.003 with a test IMSI, apart from
+  # that of pjsua (below), and stays inside the home network. A public identity is what the user is
+  # called with, and what other networks see of the user, so it holds
+  # the number; the one exception is the temporary identity that the
+  # UEs with IMS AKA register, which the HSS bars. The Ut password is
+  # that of SIP Digest, so that a UE simulator needs only one (TS 24.623
+  # 5.2.3.2.1 leaves the Ut credential to the operator).
   subscriptions:
     - private_identity: 001010000000001@ims.mnc001.mcc001.3gppnetwork.org
-      # The SIP URI and the tel URI form one implicit registration set:
-      # registering one registers both.
+      # The SIP URI and the tel URI of the number form one implicit
+      # registration set: registering one registers both. The SIP URI
+      # comes first, so it is the default public identity (TS 29.228
+      # 6.5.1.1).
       public_identities:
-        - sip:001010000000001@ims.mnc001.mcc001.3gppnetwork.org
+        - sip:+12025550101@ims.mnc001.mcc001.3gppnetwork.org
         - tel:+12025550101
       password: test-password-1
       ut_password: test-password-1
     - private_identity: 001010000000002@ims.mnc001.mcc001.3gppnetwork.org
       public_identities:
-        - sip:001010000000002@ims.mnc001.mcc001.3gppnetwork.org
+        - sip:+12025550102@ims.mnc001.mcc001.3gppnetwork.org
         - tel:+12025550102
       password: test-password-2
       ut_password: test-password-2
@@ -42,15 +48,19 @@ hss:
     # service scenario it is ue3, to which subscriber 2 diverts its calls.
     - private_identity: 001010000000003@ims.mnc001.mcc001.3gppnetwork.org
       public_identities:
-        - sip:001010000000003@ims.mnc001.mcc001.3gppnetwork.org
+        - sip:+12025550103@ims.mnc001.mcc001.3gppnetwork.org
         - tel:+12025550103
       password: test-password-3
       ut_password: test-password-3
     # Used by pjsua, a softphone written by others, as an independent
-    # test peer.
-    - private_identity: 001010000000004@ims.mnc001.mcc001.3gppnetwork.org
+    # test peer. Unlike the UE simulator, pjsua sends its first REGISTER
+    # without an Authorization header, so the CSCFs take the private
+    # identity from the public one, without its scheme (TS 24.229
+    # 5.3.1.2, 5.4.1.1 item 3). Its private identity is therefore the
+    # number at the home domain, not an IMSI.
+    - private_identity: +12025550104@ims.mnc001.mcc001.3gppnetwork.org
       public_identities:
-        - sip:001010000000004@ims.mnc001.mcc001.3gppnetwork.org
+        - sip:+12025550104@ims.mnc001.mcc001.3gppnetwork.org
         - tel:+12025550104
       password: test-password-4
       ut_password: test-password-4

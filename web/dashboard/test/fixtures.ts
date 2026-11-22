@@ -155,8 +155,8 @@ class Capture {
   }
 }
 
-export const user1 = `sip:001010000000001@${domain}`;
-export const user2 = `sip:001010000000002@${domain}`;
+export const user1 = `sip:+12025550101@${domain}`;
+export const user2 = `sip:+12025550102@${domain}`;
 export const registrationCallId = "reg-7f3a1c@172.28.0.100";
 export const callCallId = "call-2b9e44@172.28.0.100";
 export const subscribeCallId = "sub-51d0e2@172.28.0.40";
@@ -275,7 +275,7 @@ export const registrations: Registration[] = [
   {
     impu: user1,
     impi: `001010000000001@${domain}`,
-    contact: `sip:001010000000001@${hosts.ue1}:5060`,
+    contact: `sip:+12025550101@${hosts.ue1}:5060`,
     expires: "2026-11-19T10:00:00Z",
     state: "registered",
     scscf: `sip:scscf.${domain}:5060`,
@@ -284,7 +284,7 @@ export const registrations: Registration[] = [
   {
     impu: "tel:+12025550101",
     impi: `001010000000001@${domain}`,
-    contact: `sip:001010000000001@${hosts.ue1}:5060`,
+    contact: `sip:+12025550101@${hosts.ue1}:5060`,
     expires: "2026-11-19T10:00:00Z",
     state: "registered",
     scscf: `sip:scscf.${domain}:5060`,
@@ -294,6 +294,6 @@ export const registrations: Registration[] = [
 
 export const subscribers: Subscriber[] = [1, 2, 3, 4].map((n) => ({
   private_identity: `00101000000000${n}@${domain}`,
-  public_identities: [`sip:00101000000000${n}@${domain}`, `tel:+120255501${String(n).padStart(2, "0")}`],
+  public_identities: [`sip:+120255501${String(n).padStart(2, "0")}@${domain}`, `tel:+120255501${String(n).padStart(2, "0")}`],
   customized_alerting_tone: n === 2 ? { tone: "cat1", active: false } : null,
 }));

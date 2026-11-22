@@ -33,7 +33,7 @@ func (n *network) party(k int, hz float64) *party {
 		n.t.Fatal(err)
 	}
 	id := "00101000000000" + string(rune('0'+k))
-	p := &party{subscriber: &subscriber{n: n, number: k, impu: "sip:" + id + "@" + domain, tel: "tel:+1202555010" + string(rune('0'+k))},
+	p := &party{subscriber: &subscriber{n: n, number: k, impu: "sip:+1202555010" + string(rune('0'+k)) + "@" + domain, tel: "tel:+1202555010" + string(rune('0'+k))},
 		hz: hz, calls: make(chan *sip.IncomingCall, 2)}
 	tr, err := sip.Listen("127.0.0.1:0", quiet())
 	if err != nil {
@@ -452,7 +452,7 @@ func (n *network) phone(k int, hz float64) (*ue.Phone, *party) {
 		n.t.Fatal(err)
 	}
 	id := "00101000000000" + string(rune('0'+k))
-	p.impu, p.tel = "sip:"+id+"@"+domain, "tel:+1202555010"+string(rune('0'+k))
+	p.impu, p.tel = "sip:+1202555010"+string(rune('0'+k))+"@"+domain, "tel:+1202555010"+string(rune('0'+k))
 	tr, err := sip.Listen("127.0.0.1:0", quiet())
 	if err != nil {
 		n.t.Fatal(err)

@@ -26,7 +26,7 @@ import (
 
 const (
 	utIMPI = "001010000000001@ims.mnc001.mcc001.3gppnetwork.org"
-	utIMPU = "sip:001010000000001@ims.mnc001.mcc001.3gppnetwork.org"
+	utIMPU = "sip:+12025550101@ims.mnc001.mcc001.3gppnetwork.org"
 )
 
 // utNetwork starts the HSS of deploy/compose/hss.yaml and the XCAP

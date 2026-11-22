@@ -81,7 +81,7 @@ TrGW は、ここでも役割 `agw` のメディア中継ノードです。2 つ
    docker compose -f compose.yaml -f deploy/interconnect/compose.yaml run --rm peer-ue answer \
      --domain ims.mnc002.mcc001.3gppnetwork.org \
      --impi 001020000000001@ims.mnc002.mcc001.3gppnetwork.org \
-     --impu sip:001020000000001@ims.mnc002.mcc001.3gppnetwork.org \
+     --impu sip:+12025550151@ims.mnc002.mcc001.3gppnetwork.org \
      --password test-password-b1 \
      --pcscf 172.28.1.40:5060 --pcscf-uri sip:pcscf.ims.mnc002.mcc001.3gppnetwork.org:5060 \
      --sc +12025550150
@@ -95,7 +95,7 @@ TrGW は、ここでも役割 `agw` のメディア中継ノードです。2 つ
 
    UE A1 は `183`、`180`、`200` をログに出し、続けて `"msg":"call answered"` を出します。相手のアドレスは網 A のメディア中継ノード `172.28.0.50` です。UE B1 は `"msg":"media negotiated"` をログに出し、相手のアドレスは TrGW-B の `172.28.1.91` です。どちらの UE にも、相手網のことは何も伝わりません。
 
-4. 折り返すときは、UE A2 に着信を待たせ（`run --rm ue2 answer --impi 001010000000002@... --impu sip:001010000000002@... --password test-password-2`）、UE B1 から手順 2 のフラグで `tel:+12025550102` にかけます。
+4. 折り返すときは、UE A2 に着信を待たせ（`run --rm ue2 answer --impi 001010000000002@... --impu sip:+12025550102@... --password test-password-2`）、UE B1 から手順 2 のフラグで `tel:+12025550102` にかけます。
 
 5. ショートメッセージを送るときは、UE B1 を登録したままにし（手順 2 のフラグで `run --rm peer-ue register`）、UE A1 から送ります。
 
@@ -208,7 +208,7 @@ UE B1 から UE A2 への折り返しも、網の役割を入れ替えるだけ�
 
 これがトポロジーの秘匿の確認です。相手網のキャプチャに、自網の中のアドレスが現れてはいけません。スクリプトは、IP のヘッダとフレームの全体からアドレスを探します。また、相手網のドメインの前に `pcscf`、`scscf`、`icscf`、`mmtel`、`agw`、`ipsmgw`、`hss`、`ibcf`、`trgw` などのノードの名前が付いていないかも探します。
 
-自網の名前のうち、相手網に見えてよいものもあります。ドメインそのものは、利用者の識別子に現れます。たとえば From と P-Asserted-Identity の `sip:001010000000001@ims.mnc001.mcc001.3gppnetwork.org` です。ドメインと識別子からは、網の中のノードは分かりません。
+自網の名前のうち、相手網に見えてよいものもあります。ドメインそのものは、利用者の識別子に現れます。たとえば From と P-Asserted-Identity の `sip:+12025550101@ims.mnc001.mcc001.3gppnetwork.org` です。網をまたぐのは、利用者の番号の識別子です。相手網は、折り返すためにこれが要ります。番号とドメインからは、網の中のノードも IMSI も分かりません。
 
 ## キャプチャで見る 3 つのダイアログ
 
@@ -219,7 +219,7 @@ INVITE sip:+12025550151@ims.mnc002.mcc001.3gppnetwork.org;user=phone SIP/2.0
 Via: SIP/2.0/TCP ibcf.nni.mnc001.example.net:5060;branch=z9hG4bKW6NI6...;rport
 Max-Forwards: 65
 Route: <sip:ibcf.nni.mnc002.example.net:5060;lr>
-From: <sip:001010000000001@ims.mnc001.mcc001.3gppnetwork.org>;tag=5MWO4Z6R4C
+From: <sip:+12025550101@ims.mnc001.mcc001.3gppnetwork.org>;tag=5MWO4Z6R4C
 To: <tel:+12025550151>
 Call-ID: FMZQJ3BZL2YI4ILP6CEIPAUT5Z
 CSeq: 1 INVITE

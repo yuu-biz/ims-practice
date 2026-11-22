@@ -81,10 +81,10 @@ To begin: you call a phone that forwards its calls, and another phone rings. Whi
 ## Originating or terminating: P-Served-User
 
 ```text
-P-Served-User: <sip:001010000000001@…>;sescase=orig;regstate=reg
-P-Served-User: <sip:001010000000002@…>;sescase=term;regstate=reg
-P-Served-User: <sip:001010000000002@…>;sescase=term;regstate=unreg
-P-Served-User: <sip:001010000000002@…>;orig-cdiv;regstate=reg
+P-Served-User: <sip:+12025550101@…>;sescase=orig;regstate=reg
+P-Served-User: <sip:+12025550102@…>;sescase=term;regstate=reg
+P-Served-User: <sip:+12025550102@…>;sescase=term;regstate=unreg
+P-Served-User: <sip:+12025550102@…>;orig-cdiv;regstate=reg
 ```
 
 | Case | The order of the services the AS runs |
@@ -231,12 +231,12 @@ func (n nonces) challenge(h http.Header, c Credential, stale bool) {
 docker compose up -d --build
 docker compose run --rm ue2 xcap \
   --impi 001010000000002@ims.mnc001.mcc001.3gppnetwork.org \
-  --impu sip:001010000000002@ims.mnc001.mcc001.3gppnetwork.org \
+  --impu sip:+12025550102@ims.mnc001.mcc001.3gppnetwork.org \
   --password test-password-2 set cfu on tel:+12025550103
 
 # UE 3 waits for a call
 docker compose run --rm ue3 answer --impi 001010000000003@ims.mnc001.mcc001.3gppnetwork.org \
-  --impu sip:001010000000003@ims.mnc001.mcc001.3gppnetwork.org --password test-password-3
+  --impu sip:+12025550103@ims.mnc001.mcc001.3gppnetwork.org --password test-password-3
 docker compose run --rm ue call tel:+12025550102
 ```
 

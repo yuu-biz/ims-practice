@@ -267,7 +267,7 @@ echo "addresses: ue $ue1, ue2 $ue2ip, pcscf $pcscf, icscf $icscf, scscf $scscf, 
 # Their -pcscf default is the address of Docker Compose.
 P=(--pcscf pcscf.ims.mnc001.mcc001.3gppnetwork.org:5060)
 U2=(--impi 001010000000002@ims.mnc001.mcc001.3gppnetwork.org
-	--impu sip:001010000000002@ims.mnc001.mcc001.3gppnetwork.org --password test-password-2)
+	--impu sip:+12025550102@ims.mnc001.mcc001.3gppnetwork.org --password test-password-2)
 ue() { timeout 90 "$KUBECTL" --kubeconfig "$kubeconfig" -n ims exec deploy/ue -- ue "$1" "${P[@]}" "${@:2}"; }
 ue2() { timeout 90 "$KUBECTL" --kubeconfig "$kubeconfig" -n ims exec deploy/ue2 -- ue "$1" "${P[@]}" "${U2[@]}" "${@:2}"; }
 # ue2_bg runs ue2 in the background, its output in $work/$1.log, and
@@ -316,7 +316,7 @@ fi
 
 ue2_bg busy answer --reject 486
 wait_log busy '"msg":"waiting for a call"' || true
-if grep -q '"call failed: 486 ' <<<"$(ue call sip:001010000000002@ims.mnc001.mcc001.3gppnetwork.org 2>/dev/null || true)"; then
+if grep -q '"call failed: 486 ' <<<"$(ue call sip:+12025550102@ims.mnc001.mcc001.3gppnetwork.org 2>/dev/null || true)"; then
 	ok "busy callee answered 486"
 else bad "busy callee"; fi
 wait "$ue2_pid" || true
@@ -454,8 +454,8 @@ echo "call setup and release"
 expect "INVITE UE 1 -> P-CSCF with SDP" "$invite && ip.src == $ue1 && sip.Request-Line contains \"tel:+1-202-555-0102\" && sdp"
 expect "INVITE P-CSCF -> S-CSCF with the relay in the SDP" "$invite && ip.src == $pcscf && ip.dst == $scscf && sdp.connection_info.address == $agw && sip.P-Asserted-Identity"
 expect "ENUM query for the number" "dns.qry.type == 35 && dns.qry.name == \"2.0.1.0.5.5.5.2.0.2.1.e164.arpa\""
-expect "INVITE S-CSCF -> I-CSCF to the SIP URI from ENUM" "$invite && ip.src == $scscf && ip.dst == $icscf && sip.r-uri.user == \"001010000000002\""
-expect "LIR for the callee" "$lir && $req && diameter.Public-Identity == \"sip:001010000000002@ims.mnc001.mcc001.3gppnetwork.org\""
+expect "INVITE S-CSCF -> I-CSCF to the SIP URI from ENUM" "$invite && ip.src == $scscf && ip.dst == $icscf && sip.r-uri.user == \"+12025550102\""
+expect "LIR for the callee" "$lir && $req && diameter.Public-Identity == \"sip:+12025550102@ims.mnc001.mcc001.3gppnetwork.org\""
 expect "LIA with the callee's S-CSCF" "$lir && $ans && diameter.Result-Code == 2001 && diameter.Server-Name"
 expect "INVITE I-CSCF -> S-CSCF" "$invite && ip.src == $icscf && ip.dst == $scscf"
 expect "INVITE S-CSCF -> P-CSCF along the Path" "$invite && ip.src == $scscf && ip.dst == $pcscf && sip.P-Called-Party-ID"
@@ -497,7 +497,7 @@ else
 fi
 
 echo "a short message from UE 1 to UE 2 with a status report"
-expect "third-party REGISTER S-CSCF -> IP-SM-GW for UE 2" "$register && ip.src == $scscf && ip.dst == $ipsmgw && sip.To contains \"001010000000002\" && sip.Expires == 3600"
+expect "third-party REGISTER S-CSCF -> IP-SM-GW for UE 2" "$register && ip.src == $scscf && ip.dst == $ipsmgw && sip.To contains \"+12025550102\" && sip.Expires == 3600"
 expect "MESSAGE UE 1 -> P-CSCF to the SC: RP-DATA with SMS-SUBMIT" "$message && $sms && ip.src == $ue1 && ip.dst == $pcscf && sip.r-uri == \"tel:+12025550100\" && gsm_sms.tp-da == \"12025550102\" && gsm_sms.sms_text == \"$gsm_text\""
 mo="$(field sip.Call-ID)"
 expect "MESSAGE P-CSCF -> S-CSCF" "$message && sip.Call-ID == \"$mo\" && ip.src == $pcscf && ip.dst == $scscf"
