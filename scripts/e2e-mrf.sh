@@ -424,6 +424,7 @@ expect "NOTIFY of the conference event package to ue-a with the three users" "si
 # by the participant's Contact, so the conference state shows no
 # subscriber the address of a UE.
 none "NOTIFY of the conference event package with an endpoint named by its address" 'sip.Method == "NOTIFY" && sip.Event contains "conference" && frame matches "<endpoint entity=.[^>]*172[.]28[.]"'
+at_least "NOTIFYs of the conference event package with endpoints named by a key of the focus" 1 'sip.Method == "NOTIFY" && sip.Event contains "conference" && frame matches "<endpoint entity=.urn:uuid:"' frame.number
 at_least "INVITEs MMTel AS -> MRFC to the conference, one per party" 3 "frame.number > $merged && $invite && ip.dst == $mrfc && sip.r-uri contains \"conf=\" && !sip.to.tag" sip.Call-ID
 # The focus passes each party's answer to the MRFC in its ACK, so the
 # MRFC sends each 200 once and does not retransmit it (RFC 3261 13.3.1.4).
