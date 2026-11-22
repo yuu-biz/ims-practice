@@ -90,7 +90,7 @@ docker compose run --rm ue register --deregister-after 2s
 deploy/chaos/fault.sh unpause hss
 ```
 
-With the filter `diameter || sip.Status-Code >= 400`, the I-CSCF sends a User-Authorization Request (UAR) that gets no answer. After 5 seconds it gives up and sends 480 to the P-CSCF, and the P-CSCF sends 504 Server Time-out to the UE. Meanwhile the Device-Watchdog Requests (DWR) of the I-CSCF, the S-CSCF and the IP-SM-GW get no DWA. The IP-SM-GW closes its connection and opens a new one (CER, CEA) once the HSS is back; the HSS then also sends the UAA that nobody waits for any longer.
+With the filter `diameter || sip.Status-Code >= 400`, the I-CSCF sends a User-Authorization Request (UAR) that gets no answer. After 5 seconds it gives up and sends 480 to the P-CSCF, and the P-CSCF sends 504 Server Time-out to the UE. Meanwhile a Device-Watchdog Request (DWR) of the I-CSCF, the S-CSCF or the IP-SM-GW that falls due gets no DWA. A node closes its connection once Tw, 30 seconds, has passed twice more after an unanswered DWR (RFC 3539 3.4.1), so freeze the HSS for about two minutes to see that. Once the HSS is back, the node opens a new connection (CER, CEA) within Tc, 30 seconds; the HSS then also sends the UAA that nobody waits for any longer.
 
 ### Packet loss on the media relay during a call
 
@@ -125,7 +125,7 @@ deploy/chaos/fault.sh partition scscf hss
 docker compose run --rm ue register --deregister-after 2s
 ```
 
-The REGISTER gets 500 after 5 seconds: the S-CSCF sent a Multimedia-Auth Request (MAR) that the dashboard shows and the capture does not. Leave the partition for a minute and read `docker compose logs hss` for `peer state`: the watchdog of RFC 3539 (3.4) moves the connection from `OKAY` to `Pending`. After `fault.sh clear scscf`, the S-CSCF opens a new connection (SYN, CER, CEA), and the next registration works.
+The REGISTER gets 500 after 5 seconds: the S-CSCF sent a Multimedia-Auth Request (MAR) that the dashboard shows and the capture does not. Leave the partition for about two minutes and read `docker compose logs hss` for `peer state`: the watchdog of RFC 3539 (3.4) moves the connection from `OKAY` to `Pending` and `Suspect`, one step for each Tw of 30 seconds, and then closes it. After `fault.sh clear scscf`, the S-CSCF opens a new connection (SYN, CER, CEA) within Tc, 30 seconds, and then the next registration works.
 
 ### Freeze the MMTel AS during a call
 

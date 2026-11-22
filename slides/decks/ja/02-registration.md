@@ -64,7 +64,7 @@ docker compose logs scscf | grep I-Open        # Diameter の接続が開いた�
 docker compose run --rm ue register --deregister-after 5s
 ```
 
-起動してから 10 秒ほど待ちます。I-CSCF と S-CSCF が、先に HSS との Diameter の接続を開くためです。
+起動してから、I-CSCF と S-CSCF が HSS との Diameter の接続を開くまで待ちます。HSS より先に起動したノードは 30 秒後（Tc）につなぎ直すので、長くて 1 分ほどです。
 
 UE のログで、次の 3 行を探します。
 

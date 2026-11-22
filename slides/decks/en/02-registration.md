@@ -64,7 +64,7 @@ docker compose logs scscf | grep I-Open        # are the Diameter connections op
 docker compose run --rm ue register --deregister-after 5s
 ```
 
-Wait about ten seconds after the start: the I-CSCF and the S-CSCF open their Diameter connections to the HSS first.
+After the start, wait until the I-CSCF and the S-CSCF have opened their Diameter connections to the HSS. A node that started before the HSS connects again after 30 seconds (Tc), so allow up to a minute.
 
 Find these three lines in the log of the UE.
 
