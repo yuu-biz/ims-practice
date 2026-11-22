@@ -134,7 +134,7 @@ func (as *AS) Listen(transport *sip.TransportLayer) error {
 		// 24.229 5.7.5.1), so it supports Replaces too (RFC 3891 6.2).
 		Supported: []string{sip.OptionPrecondition, sip.OptionReplaces},
 		// REFER goes from leg to leg like any other request within a
-		// dialog (forward).
+		// dialog (b2bua.Call).
 		Allow:  []sip.Method{sip.REFER},
 		OnCall: as.serve,
 		// The focus is the notifier of the conference event package (TS

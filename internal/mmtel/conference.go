@@ -185,6 +185,17 @@ type party struct {
 	inDialog *inDialogSubscription
 }
 
+// leg is what the dialogs of both sides have in common: both an
+// IncomingCall and an OutgoingCall are one. The focus has one dialog
+// per participant, not two to relay between, so it sends the requests
+// within them itself (changeMedia, notifyInDialog).
+type leg interface {
+	Update(body sip.Body, headers ...sip.HeaderField) (*sip.Message, error)
+	ReInvite(body sip.Body, headers ...sip.HeaderField) (*sip.Message, error)
+	Send(method sip.Method, body sip.Body, headers ...sip.HeaderField) (*sip.Message, error)
+	Ack(body sip.Body, headers ...sip.HeaderField) error
+}
+
 // partyLeg is the dialog of a participant with the focus: the creator's
 // IncomingCall or an invited user's OutgoingCall.
 type partyLeg interface {
