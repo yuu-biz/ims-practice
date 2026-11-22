@@ -177,7 +177,10 @@ func newHarnessWithHSS(t *testing.T, cfg Config, resolver Resolver, hssCfg hss.C
 	}
 	store := NewMemoryStore()
 	failing := &failingStore{MemoryStore: store}
-	s := New(cfg, f, node, failing, resolver, quiet())
+	s, err := New(cfg, f, node, failing, resolver, quiet())
+	if err != nil {
+		t.Fatal(err)
+	}
 	t.Cleanup(s.Close)
 	stack := newStack(t, s.OnRequest)
 	s.SetStack(stack)

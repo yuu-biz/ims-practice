@@ -20,6 +20,7 @@ import (
 	"github.com/yuu-biz/ims-practice/internal/cx"
 	"github.com/yuu-biz/ims-practice/internal/diameter"
 	"github.com/yuu-biz/ims-practice/internal/ims"
+	"github.com/yuu-biz/ims-practice/internal/metrics"
 	"github.com/yuu-biz/ims-practice/internal/reginfo"
 	"github.com/yuu-biz/ims-practice/internal/sip"
 	"github.com/yuu-biz/ims-practice/internal/sipdns"
@@ -71,6 +72,9 @@ type Config struct {
 	// (internal/kvstore/kvlock), so that only one of them handles the
 	// user at a time.
 	UserLocks ims.UserLocker
+	// Metrics is where the S-CSCF registers its counters (metrics.go).
+	// Nil gives it a registry of its own, which nothing serves.
+	Metrics *metrics.Registry
 }
 
 // defaultExpires is used when a REGISTER asks for no interval. RFC 3261
@@ -95,11 +99,14 @@ type SCSCF struct {
 	// stopSweep ends the sweep of this instance and waits for the
 	// handlers it started (expiry.go).
 	stopSweep func()
+	// registrations counts the registration procedures (metrics.go).
+	registrations *registrationMetrics
 }
 
 // New returns an S-CSCF and starts its sweep, which handles the expiries
-// that are due until Close.
-func New(cfg Config, hss HSS, node *diameter.Node, store Store, resolver Resolver, log *slog.Logger) *SCSCF {
+// that are due until Close. It fails when cfg.Metrics holds the metrics
+// of another S-CSCF already.
+func New(cfg Config, hss HSS, node *diameter.Node, store Store, resolver Resolver, log *slog.Logger) (*SCSCF, error) {
 	if cfg.RegAwaitAuth == 0 {
 		cfg.RegAwaitAuth = ims.RegAwaitAuth
 	}
@@ -118,9 +125,17 @@ func New(cfg Config, hss HSS, node *diameter.Node, store Store, resolver Resolve
 	if cfg.ExpiryLease == 0 {
 		cfg.ExpiryLease = ims.ExpiryLease
 	}
-	s := &SCSCF{cfg: cfg, hss: hss, node: node, store: store, resolver: resolver, log: log, users: cfg.UserLocks}
+	if cfg.Metrics == nil {
+		cfg.Metrics = metrics.NewRegistry()
+	}
+	registrations, err := newRegistrationMetrics(cfg.Metrics)
+	if err != nil {
+		return nil, err
+	}
+	s := &SCSCF{cfg: cfg, hss: hss, node: node, store: store, resolver: resolver, log: log, users: cfg.UserLocks,
+		registrations: registrations}
 	s.stopSweep = s.sweep()
-	return s
+	return s, nil
 }
 
 // Close stops the sweep of this instance and waits for the handlers it
@@ -152,6 +167,17 @@ func (s *SCSCF) OnRequest(st *sip.ServerTransaction) {
 
 // register is TS 24.229 5.4.1.2. The integrity-protected parameter that
 // the P-CSCF wrote tells IMS AKA from SIP Digest without TLS (5.4.1.1).
+//
+// Under the lock of the user it reads what it holds for the user, which
+// tells the type of the registration procedure and whether the REGISTER
+// starts one or answers its challenge, and counts the procedure (TS
+// 32.409 4.1.1).
+//
+// SIMPLIFIED: TS 32.409 4.1.1.1.1 and 4.1.1.1.3. A REGISTER that the
+// S-CSCF answers before it reads that, one that it cannot read (400)
+// and one whose user it cannot lock (500), counts in no registration
+// measurement: whether a REGISTER is an initial registration or a
+// re-registration depends on the registration of the user.
 func (s *SCSCF) register(st *sip.ServerTransaction) {
 	req := st.Request
 	publicID, err := ims.PublicIdentity(req.Get("To"))
@@ -186,16 +212,27 @@ func (s *SCSCF) register(st *sip.ServerTransaction) {
 	}
 	defer unlock()
 
+	_, registered, err := s.store.Registration(ctx, privateID)
+	if err != nil {
+		s.storeFailed(st, err, log)
+		return
+	}
+	ch, pending, err := s.store.Challenge(ctx, privateID)
+	if err != nil {
+		s.storeFailed(st, err, log)
+		return
+	}
+	kind := registrationTypeOf(expires, registered)
+	if !answersChallenge(creds, ch, pending) {
+		s.registrations.started(kind)
+	}
+	defer func() { s.registrations.answered(kind, st.FinalStatus()) }()
+
 	if expires == 0 {
 		// TS 24.229 5.4.1.4.1: nothing to deregister gets 481 before any
 		// authentication, and an existing IP association needs no new
 		// authentication.
-		_, ok, err := s.store.Registration(ctx, privateID)
-		if err != nil {
-			s.storeFailed(st, err, log)
-			return
-		}
-		if !ok {
+		if !registered {
 			s.respond(st, 481, nil)
 			return
 		}
@@ -214,18 +251,13 @@ func (s *SCSCF) register(st *sip.ServerTransaction) {
 	}
 	// 5.4.1.1 items 1 and 2.
 	if integrity == sip.IntegrityProtectedNo || integrity == sip.IntegrityProtectedYes {
-		s.registerAKA(st, privateID, publicID, *creds, integrity == sip.IntegrityProtectedYes, min(expires, s.cfg.MaxExpires), log)
+		s.registerAKA(st, privateID, publicID, *creds, integrity == sip.IntegrityProtectedYes, min(expires, s.cfg.MaxExpires), ch, pending, log)
 		return
 	}
 
-	ch, pending, err := s.store.Challenge(ctx, privateID)
-	if err != nil {
-		s.storeFailed(st, err, log)
-		return
-	}
-	answersChallenge := creds != nil && creds.Response != "" && pending &&
+	checksResponse := creds != nil && creds.Response != "" && pending &&
 		(integrity == sip.IPAssociationPending || integrity == sip.IPAssociationYes)
-	if !answersChallenge {
+	if !checksResponse {
 		// TS 24.229 5.4.1.2.2A step 1: a new challenge to a REGISTER that
 		// carried a digest response says stale=true.
 		stale := creds != nil && creds.Response != ""
@@ -253,6 +285,14 @@ func (s *SCSCF) register(st *sip.ServerTransaction) {
 		return
 	}
 	s.accept(st, *creds, ch, min(expires, s.cfg.MaxExpires), log)
+}
+
+// answersChallenge reports whether a REGISTER with creds answers the
+// challenge that the S-CSCF holds for the user, if pending: it names the
+// nonce of that challenge. Such a REGISTER goes on with the registration
+// procedure that the challenged one started.
+func answersChallenge(creds *sip.Credentials, ch Challenge, pending bool) bool {
+	return pending && creds != nil && creds.Nonce == ch.Nonce
 }
 
 // challenge runs the MAR and answers 401 (TS 24.229 5.4.1.2.1 and

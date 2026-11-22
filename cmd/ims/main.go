@@ -197,7 +197,7 @@ func run(configPath string, log *slog.Logger) error {
 
 	if c := cfg.SCSCF; c != nil {
 		roleLog := log.With("role", config.RoleSCSCF)
-		s := scscf.New(scscf.Config{
+		s, err := scscf.New(scscf.Config{
 			ServerName: c.SIP.URI(),
 			Host:       c.SIP.Host,
 			Port:       int(c.SIP.Listen.Port()),
@@ -206,7 +206,11 @@ func run(configPath string, log *slog.Logger) error {
 			MaxExpires: c.MaxExpires,
 			IBCF:       c.IBCF,
 			UserLocks:  stores.locks(config.RoleSCSCF, roleLog),
+			Metrics:    registry,
 		}, hssPeers(cfg, peers), node, scscfStore(stores, roleLog), resolver, roleLog)
+		if err != nil {
+			return err
+		}
 		// The sweep that handles the expiries of the users runs until the
 		// node stops.
 		defer s.Close()

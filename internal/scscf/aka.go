@@ -17,13 +17,10 @@ import (
 // mechanism, for a REGISTER that the P-CSCF marked integrity-protected
 // "no" (5.4.1.2.1 and 5.4.1.2.1A) or "yes" (5.4.1.2.2). The lock of the
 // user is held, and a protected deregistration has been handled before.
-func (s *SCSCF) registerAKA(st *sip.ServerTransaction, privateID, publicID string, c sip.Credentials, protected bool, expires time.Duration, log *slog.Logger) {
+// ch is the challenge that the S-CSCF holds for the user, if pending.
+func (s *SCSCF) registerAKA(st *sip.ServerTransaction, privateID, publicID string, c sip.Credentials, protected bool, expires time.Duration,
+	ch Challenge, pending bool, log *slog.Logger) {
 	ctx := context.Background()
-	ch, pending, err := s.store.Challenge(ctx, privateID)
-	if err != nil {
-		s.storeFailed(st, err, log)
-		return
-	}
 	pending = pending && ch.Algorithm == sip.AlgorithmAKAv1MD5
 	if !protected {
 		// 5.4.1.2.1, last paragraph: an unprotected REGISTER that names the

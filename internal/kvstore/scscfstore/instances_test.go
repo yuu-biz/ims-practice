@@ -148,12 +148,15 @@ func startInstances(t *testing.T, n int, lease time.Duration) *instances {
 		host := fmt.Sprintf("scscf-%d.%s", i+1, domain)
 		node := diameter.NewNode(diameter.Identity{OriginHost: host, OriginRealm: domain},
 			[]uint32{diameter.ApplicationIDCx}, diameter.Timers{}, quiet())
-		s := scscf.New(scscf.Config{
+		s, err := scscf.New(scscf.Config{
 			ServerName: "sip:" + host + ":5060", Host: host, Port: 5060, HomeDomain: domain,
 			// The sweep comes round often, so that the test does not wait
 			// a second for an expiry that is due.
 			SweepInterval: 20 * time.Millisecond, ExpiryLease: lease, UserLocks: in.locks(host),
 		}, in.hss, node, in.store(), toSubscriber{addr: in.subscriber}, quiet())
+		if err != nil {
+			t.Fatal(err)
+		}
 		t.Cleanup(s.Close)
 		s.SetStack(listen(t, s.OnRequest))
 	}
