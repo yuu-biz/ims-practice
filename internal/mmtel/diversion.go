@@ -374,7 +374,7 @@ func (c *call) leaveServedUser(d diversion) {
 		return
 	}
 	c.mu.Lock()
-	c.toCaller, c.sessionToCaller, c.pending = false, false, nil
+	c.toCaller, c.sessionToCaller, c.pending, c.sessionFrom = false, false, nil, ""
 	c.mu.Unlock()
 }
 
