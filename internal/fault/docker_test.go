@@ -52,6 +52,18 @@ type fakeEngine struct {
 	containers []fakeContainer
 	calls      []string
 	created    []map[string]any
+	// remade holds the bodies of the creates that name a container, as
+	// a recreate does, named the names those creates and the renames
+	// gave, and execs the bodies of the exec instances.
+	remade []map[string]any
+	named  []string
+	execs  []map[string]any
+	// failCreate makes the create of a named container fail, as the
+	// Engine does when it cannot make one.
+	failCreate bool
+	// hostname is the Config.Hostname that inspect reports; empty means
+	// the service of the container.
+	hostname string
 	// helper is the container that the last helper joined.
 	helper fakeContainer
 	// failCmd, when set, makes the helpers that run it exit with 1 and
@@ -125,6 +137,66 @@ func (e *fakeEngine) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			})
 		}
 		json.NewEncoder(w).Encode(list)
+	case r.Method == "GET" && strings.HasPrefix(path, "/containers/") && strings.HasSuffix(path, "/json"):
+		id := strings.TrimSuffix(strings.TrimPrefix(path, "/containers/"), "/json")
+		for _, c := range e.containers {
+			if c.id() != id {
+				continue
+			}
+			networks := map[string]any{}
+			for _, n := range c.networks {
+				networks[n[0]] = map[string]any{
+					"IPAMConfig": map[string]any{"IPv4Address": n[1]},
+					// The name Compose gives the service on its network.
+					"Aliases": []string{c.service},
+				}
+			}
+			hostname := c.service
+			if e.hostname != "" {
+				hostname = e.hostname
+			}
+			json.NewEncoder(w).Encode(map[string]any{
+				"Name":            "/lab-" + c.service + "-1",
+				"Config":          map[string]any{"Image": "lab/ims:dev", "Hostname": hostname, "Cmd": []string{"ims"}},
+				"HostConfig":      map[string]any{"NetworkMode": "lab_ims", "RestartPolicy": map[string]any{"Name": "unless-stopped"}},
+				"NetworkSettings": map[string]any{"Networks": networks},
+			})
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+		fmt.Fprintf(w, `{"message":"No such container: %s"}`, id)
+	case r.Method == "POST" && strings.HasSuffix(path, "/exec"):
+		var body map[string]any
+		json.NewDecoder(r.Body).Decode(&body)
+		e.execs = append(e.execs, body)
+		w.WriteHeader(http.StatusCreated)
+		fmt.Fprint(w, `{"Id":"exec-1"}`)
+	case r.Method == "POST" && path == "/containers/create" && r.URL.Query().Get("name") != "":
+		var body map[string]any
+		json.NewDecoder(r.Body).Decode(&body)
+		if e.failCreate {
+			w.WriteHeader(http.StatusInternalServerError)
+			fmt.Fprint(w, `{"message":"no space left on device"}`)
+			return
+		}
+		e.remade = append(e.remade, body)
+		e.named = append(e.named, "create "+r.URL.Query().Get("name"))
+		w.WriteHeader(http.StatusCreated)
+		fmt.Fprint(w, `{"Id":"replacement"}`)
+	case r.Method == "POST" && strings.HasSuffix(path, "/rename"):
+		e.named = append(e.named, "rename "+r.URL.Query().Get("name"))
+		w.WriteHeader(http.StatusNoContent)
+	case r.Method == "POST" && strings.HasSuffix(path, "/kill"):
+		// The Engine refuses to kill a container that is not running,
+		// which is the state a node is in after a crash or a stop.
+		for _, c := range e.containers {
+			if c.id() == strings.TrimSuffix(strings.TrimPrefix(path, "/containers/"), "/kill") && c.state != "" && c.state != "running" {
+				w.WriteHeader(http.StatusConflict)
+				fmt.Fprintf(w, `{"message":"Container %s is not running"}`, c.id())
+				return
+			}
+		}
+		w.WriteHeader(http.StatusNoContent)
 	case r.Method == "POST" && path == "/containers/create":
 		var body map[string]any
 		json.NewDecoder(r.Body).Decode(&body)
@@ -271,6 +343,148 @@ func TestDockerNodeFaults(t *testing.T) {
 		if got := e.Calls(); len(got) != 2 || got[1] != tc.clear {
 			t.Errorf("Clear %s %s called %v, want the lookup and %s", tc.kind, tc.target, got, tc.clear)
 		}
+	}
+}
+
+// TestDockerCrashKillsTheProcessInTheContainer: a crash sends SIGQUIT
+// to PID 1, the node's process, from inside the container, and leaves
+// the container to the restart policy. docker kill, which the kill
+// fault uses, would instead count as a stop.
+func TestDockerCrashKillsTheProcessInTheContainer(t *testing.T) {
+	d, e := newTestDocker(t)
+	f := Fault{ID: "0a0b0c0d", Request: Request{Target: "scscf", Kind: Crash}}
+	if err := d.Apply(context.Background(), f); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"GET /containers/json", "POST /containers/scscf-id-1/exec", "POST /exec/exec-1/start"}
+	if got := e.Calls(); fmt.Sprint(got) != fmt.Sprint(want) {
+		t.Fatalf("calls = %v, want %v", got, want)
+	}
+	if len(e.execs) != 1 || fmt.Sprint(e.execs[0]["Cmd"]) != "[kill -QUIT 1]" {
+		t.Fatalf("exec = %v, want the SIGQUIT of crashCommand", e.execs)
+	}
+	if err := d.Clear(context.Background(), f); err == nil || !strings.Contains(err.Error(), "nothing to clear") {
+		t.Errorf("Clear of a crash: %v, want a refusal", err)
+	}
+}
+
+// TestDockerRecreateKeepsTheNameAndTheAddress: the new container is the
+// old one's configuration under the old one's name, so the nodes that
+// reach it by name or address find it again, and it is a new container
+// that holds nothing of what the old one kept in its memory.
+func TestDockerRecreateKeepsTheNameAndTheAddress(t *testing.T) {
+	d, e := newTestDocker(t)
+	f := Fault{ID: "0a0b0c0d", Request: Request{Target: "pcscf", Kind: Recreate}}
+	if err := d.Apply(context.Background(), f); err != nil {
+		t.Fatal(err)
+	}
+	// The new container is made before the old one is removed, so that
+	// a create that fails leaves the node as it was, and takes the name
+	// of the old one once that is gone.
+	want := []string{
+		"GET /containers/json",
+		"GET /containers/pcscf-id-1/json",
+		"POST /containers/create",
+		"DELETE /containers/pcscf-id-1",
+		"POST /containers/replacement/rename",
+		"POST /containers/replacement/start",
+	}
+	if got := e.Calls(); fmt.Sprint(got) != fmt.Sprint(want) {
+		t.Fatalf("calls = %v, want %v", got, want)
+	}
+	if want := "[create lab-pcscf-1-replacing-0a0b0c0d rename lab-pcscf-1]"; fmt.Sprint(e.named) != want {
+		t.Errorf("names = %v, want %s", e.named, want)
+	}
+	if len(e.remade) != 1 {
+		t.Fatalf("created %d containers, want one", len(e.remade))
+	}
+	made := e.remade[0]
+	if made["Image"] != "lab/ims:dev" || fmt.Sprint(made["Cmd"]) != "[ims]" || made["Hostname"] != "pcscf" {
+		t.Errorf("the new container = %v, want the configuration of the old one", made)
+	}
+	if host := made["HostConfig"].(map[string]any); fmt.Sprint(host["RestartPolicy"]) != "map[Name:unless-stopped]" {
+		t.Errorf("HostConfig = %v, want the restart policy of the old container", host)
+	}
+	endpoints := made["NetworkingConfig"].(map[string]any)["EndpointsConfig"].(map[string]any)
+	ims, ok := endpoints["lab_ims"].(map[string]any)
+	if !ok {
+		t.Fatalf("EndpointsConfig = %v, want the network of the old container", endpoints)
+	}
+	if fmt.Sprint(ims["IPAMConfig"]) != "map[IPv4Address:172.28.0.40]" {
+		t.Errorf("IPAMConfig = %v, want the address of the old container", ims["IPAMConfig"])
+	}
+	// The name by which the other nodes reach it.
+	if fmt.Sprint(ims["Aliases"]) != "[pcscf]" {
+		t.Errorf("Aliases = %v, want the names of the old container", ims["Aliases"])
+	}
+}
+
+// TestDockerRecreateOfANodeThatIsNotRunning: a node is replaced exactly
+// when it has stopped or crashed, and the Engine refuses to kill a
+// container that is not running, so the fault removes the container by
+// force instead of killing it first.
+func TestDockerRecreateOfANodeThatIsNotRunning(t *testing.T) {
+	d, e := newTestDocker(t)
+	e.containers = append(e.containers, fakeContainer{service: "gone", number: 1, state: "exited", networks: on("172.28.0.99")})
+	f := Fault{ID: "0a0b0c0d", Request: Request{Target: "gone", Kind: Recreate}}
+	if err := d.Apply(context.Background(), f); err != nil {
+		t.Fatalf("Apply on a node that is not running: %v", err)
+	}
+	for _, c := range e.Calls() {
+		if strings.HasSuffix(c, "/kill") {
+			t.Errorf("the fault killed a container that is not running: %s", c)
+		}
+	}
+	if want := "[create lab-gone-1-replacing-0a0b0c0d rename lab-gone-1]"; fmt.Sprint(e.named) != want {
+		t.Errorf("names = %v, want %s", e.named, want)
+	}
+}
+
+// TestDockerRecreateLeavesTheNodeWhenItCannotMakeTheNewContainer: the
+// node is removed only once its replacement is there, so a create that
+// fails costs nothing.
+func TestDockerRecreateLeavesTheNodeWhenItCannotMakeTheNewContainer(t *testing.T) {
+	d, e := newTestDocker(t)
+	e.failCreate = true
+	err := d.Apply(context.Background(), Fault{ID: "0a0b0c0d", Request: Request{Target: "pcscf", Kind: Recreate}})
+	if err == nil || !strings.Contains(err.Error(), "lab-pcscf-1 is still running") || !strings.Contains(err.Error(), "no space left on device") {
+		t.Fatalf("Apply = %v, want the failure of the create and the node left alone", err)
+	}
+	for _, c := range e.Calls() {
+		if strings.HasPrefix(c, "DELETE ") || strings.HasSuffix(c, "/kill") {
+			t.Errorf("the fault touched the node although the create failed: %s", c)
+		}
+	}
+}
+
+// TestDockerRecreateHostnameOfANodeWithoutOne: Compose names the host
+// of each IMS node, but not of every service (the capture, the store and
+// the UEs have none), and the Engine then makes the Hostname the short
+// id of the container. The new container is another container, so it
+// keeps the host name that Compose gave and not the id of the one that
+// is gone.
+func TestDockerRecreateHostnameOfANodeWithoutOne(t *testing.T) {
+	// The id of the container of scscf-1 in the fake Engine, which is as
+	// long as a short id.
+	shortID := "scscf-1-id-1"
+	for _, tc := range []struct {
+		name     string
+		hostname string
+		want     any
+	}{
+		{"the host of compose.yaml", "scscf-1", "scscf-1"},
+		{"the short id of the container", shortID, nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			d, e := newTestDocker(t)
+			e.hostname = tc.hostname
+			if err := d.Apply(context.Background(), Fault{ID: "0a0b0c0d", Request: Request{Target: "scscf-1", Kind: Recreate}}); err != nil {
+				t.Fatal(err)
+			}
+			if got := e.remade[0]["Hostname"]; got != tc.want {
+				t.Errorf("Hostname = %v, want %v", got, tc.want)
+			}
+		})
 	}
 }
 

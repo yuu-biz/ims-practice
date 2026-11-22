@@ -2,7 +2,9 @@
 // so that a learner can watch what a failure does and how the network
 // recovers. The dashboard drives it through its HTTP API, which the
 // fault agent of deploy/chaos/agent.yaml serves; deploy/chaos/fault.sh
-// holds the same operations as shell commands. The OAM does not use it:
+// holds the same faults as shell commands, and runs the same commands
+// for all of them but recreate, which it leaves to Compose. The OAM
+// does not use it:
 // taking a node out of service, a drain, is maintenance and not a
 // fault.
 //
@@ -18,10 +20,19 @@
 //	stop       docker stop, cleared by docker start
 //	kill       docker kill, cleared by docker start
 //	pause      docker pause, cleared by docker unpause
+//	crash      the node's process dies (SIGQUIT) and the restart policy
+//	           of the container brings it back
+//	recreate   the container is replaced by a new one with the same
+//	           configuration, name and address
 //	delay      tc netem on what the target sends
 //	loss       nftables drops packets at random, both ways
 //	partition  nftables drops the packets to and from some peers, or
 //	           all of them
+//
+// A crash and a recreate happen once: the node comes back by itself, so
+// they take no duration, end in the state Done as soon as the runtime
+// has done them, and have nothing to clear. The others stay until they
+// are cleared or their duration is up.
 //
 // The peers of a partition are services (with every container),
 // single containers, path.Match patterns of services such as "scscf-*"
@@ -53,7 +64,8 @@
 //	GET    /fault/v1/faults
 //	       []Fault, the oldest first, with the ended ones for a while.
 //	POST   /fault/v1/faults
-//	       Request -> 201 Fault, in state active. 400 for a request
+//	       Request -> 201 Fault, in state active, or done for a fault
+//	       that happens once. 400 for a request
 //	       that the API cannot take, 409 when the target already has a
 //	       fault that this one would meet, 500 with the failed Fault in
 //	       ErrorBody.fault when the executor could not apply it.

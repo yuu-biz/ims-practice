@@ -15,28 +15,46 @@ import (
 type Kind string
 
 const (
-	Stop      Kind = "stop"
-	Kill      Kind = "kill"
-	Pause     Kind = "pause"
+	Stop     Kind = "stop"
+	Kill     Kind = "kill"
+	Pause    Kind = "pause"
+	Crash    Kind = "crash"
+	Recreate Kind = "recreate"
+
 	Delay     Kind = "delay"
 	Loss      Kind = "loss"
 	Partition Kind = "partition"
 )
 
+// Kinds are the kinds a request may ask for. deploy/chaos/fault.sh has
+// a command for each of them (TestFaultScriptAndPackageAgree).
+var Kinds = []Kind{Stop, Kill, Pause, Crash, Recreate, Delay, Loss, Partition}
+
+// lasting tells whether a fault of this kind stays on the target until
+// something clears it. A crash and a recreate happen once: the node
+// dies and the container runtime brings it back, so there is nothing to
+// undo and no duration to run out.
+func (k Kind) lasting() bool { return k != Crash && k != Recreate }
+
 // State is where a fault is in its life. Applying and Clearing last as
-// long as the executor works; Cleared, Expired and Failed are ends.
+// long as the executor works; Done, Cleared, Expired and Failed are
+// ends.
 type State string
 
 const (
 	Applying State = "applying"
 	Active   State = "active"
 	Clearing State = "clearing"
-	Cleared  State = "cleared"
-	Expired  State = "expired"
-	Failed   State = "failed"
+	// Done is the end of a fault that happens once, a crash or a
+	// recreate: it is over as soon as the executor has done it, and
+	// there is nothing to clear.
+	Done    State = "done"
+	Cleared State = "cleared"
+	Expired State = "expired"
+	Failed  State = "failed"
 )
 
-func (s State) ended() bool { return s == Cleared || s == Expired || s == Failed }
+func (s State) ended() bool { return s == Done || s == Cleared || s == Expired || s == Failed }
 
 // The bounds of a request. A lab fault lasts minutes; an hour is long
 // enough for any exercise and short enough that a forgotten one ends.
@@ -98,7 +116,8 @@ type Request struct {
 	// off from everything.
 	Peers []string `json:"peers,omitempty"`
 	// Duration is how long the fault lasts; zero means
-	// DefaultDuration.
+	// DefaultDuration. The kinds crash and recreate happen once, so
+	// they take none.
 	Duration Duration `json:"duration,omitzero"`
 }
 
@@ -110,7 +129,9 @@ type Fault struct {
 	// Error says why the fault failed.
 	Error     string    `json:"error,omitempty"`
 	CreatedAt time.Time `json:"created_at"`
-	ExpiresAt time.Time `json:"expires_at"`
+	// ExpiresAt is when the fault ends by itself. A fault that happens
+	// once has none.
+	ExpiresAt time.Time `json:"expires_at,omitzero"`
 	EndedAt   time.Time `json:"ended_at,omitzero"`
 }
 
@@ -143,9 +164,7 @@ func (r *Request) validate() error {
 	if !targetName.MatchString(r.Target) {
 		return bad("target %q is neither a Compose service nor service:number", r.Target)
 	}
-	switch r.Kind {
-	case Stop, Kill, Pause, Delay, Loss, Partition:
-	default:
+	if !slices.Contains(Kinds, r.Kind) {
 		return bad("unknown kind %q", r.Kind)
 	}
 	if r.Kind != Delay && (r.Delay != 0 || r.Jitter != 0) {
@@ -196,6 +215,12 @@ func (r *Request) validate() error {
 			}
 		}
 	}
+	if !r.Kind.lasting() {
+		if r.Duration != 0 {
+			return bad("duration is for the faults that last; a %s is over as soon as it has happened", r.Kind)
+		}
+		return nil
+	}
 	if r.Duration == 0 {
 		r.Duration = Duration(DefaultDuration)
 	}
@@ -206,14 +231,19 @@ func (r *Request) validate() error {
 }
 
 // slot names what a fault occupies on its target; two faults in the
-// same slot would undo each other. The node faults share one slot,
-// since a stopped node can be neither killed nor paused. Delay owns the
-// root qdisc of the interface. Loss and partition each have their own
-// nftables table, but two of one kind would make clearing one look
-// like it did nothing.
+// same slot would undo each other. The node faults that last share one
+// slot, since a stopped node can be neither killed nor paused. Delay
+// owns the root qdisc of the interface. Loss and partition each have
+// their own nftables table, but two of one kind would make clearing one
+// look like it did nothing.
+//
+// A fault that happens once occupies nothing, and takes no slot: it is
+// over before the next request can meet it.
 func (r Request) slot() string {
-	switch r.Kind {
-	case Stop, Kill, Pause:
+	switch {
+	case !r.Kind.lasting():
+		return ""
+	case r.Kind == Stop || r.Kind == Kill || r.Kind == Pause:
 		return r.Target + "/node"
 	default:
 		return r.Target + "/" + string(r.Kind)
