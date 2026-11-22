@@ -7,8 +7,8 @@
 #
 # ASSUMPTION: every IMS node serves internal/metrics at /metrics, on
 # the listener of its maintenance API, on the port MetricsPort in
-# deploy/observability/prometheus.go. No node serves it: a node that
-# does not shows as down, here and in the "Up" panel of the Grafana
+# deploy/observability/prometheus.go. Only the S-CSCF serves it: a node
+# that does not shows as down, here and in the "Up" panel of the Grafana
 # dashboard.
 
 global:

@@ -2,7 +2,7 @@
 
 [English](README.md)
 
-このディレクトリは、Docker Compose のプロジェクトに [Prometheus](https://github.com/prometheus/prometheus) と [Grafana](https://github.com/grafana/grafana) を足します。IMS のノードが数えた値を、広く使われている道具で、時間の推移として見るためです。IMS のノードは指標を出していないので（[できないこと](#できないこと)）、ダッシュボードではノードが落ちているように見えます。指標の名前は TS 32.409 の測定項目に合わせてあり、`internal/metrics` が書きます。
+このディレクトリは、Docker Compose のプロジェクトに [Prometheus](https://github.com/prometheus/prometheus) と [Grafana](https://github.com/grafana/grafana) を足します。IMS のノードが数えた値を、広く使われている道具で、時間の推移として見るためです。IMS のノードのうち指標を出すのは S-CSCF だけなので（[できないこと](#できないこと)）、ダッシュボードではほかのノードが落ちているように見えます。指標の名前は TS 32.409 の測定項目に合わせてあり、`internal/metrics` が書きます。
 
 | パス | 中身 |
 | --- | --- |
@@ -26,6 +26,14 @@ docker compose -f compose.yaml -f deploy/observability/compose.observability.yam
 
 どちらのポートも `127.0.0.1` にだけ公開します。ここではどちらの道具もパスワードを求めないためです。
 
+UE を登録すると、数えた値が見えます。
+
+```sh
+docker compose run --rm ue register -deregister-after 5s
+```
+
+Prometheus は 15 秒ごとに集めます。その時間のうちに、パネル **REGISTER attempts and successes** に S-CSCF が数えた登録と登録の解除が出て、**Initial registration success ratio** に最初の登録のうち成功したものの割合が出ます。
+
 止めて、取ってきたイメージと Prometheus のデータも含めて消すには、次のコマンドを使います。
 
 ```sh
@@ -46,11 +54,11 @@ go generate ./deploy/observability/...
 
 ## できないこと
 
-`internal/metrics` で数える役割は IBCF と S-CSCF です。`/metrics` を出すノードは無いので、数えた値はプロセスの中にとどまります。`prometheus/prometheus.yml` は、各ノードが保守用の API の待ち受けで、`http://<サービス名>:8085/metrics` に指標を出す形に合わせて書いてあります。このポート番号を決めた仕様はありません。8085 はこのプロジェクトが選んだ番号で、`prometheus.go` の `MetricsPort` に置いています。ほかの番号にするときは、`MetricsPort` を直し、上のコマンドを実行します。
+`internal/metrics` で数える役割は S-CSCF と IBCF です。Compose のプロジェクトの S-CSCF は、`deploy/compose/scscf.yaml` の `maintenance` の節が決める待ち受けで、`http://scscf:8085/metrics` に数えた値を出します。ほかのノードは指標を出しません。IBCF のノード（`deploy/interconnect`）にはこの待ち受けが無いので、IBCF が数えた値はプロセスの中にとどまります。`prometheus/prometheus.yml` は、各ノードが保守用の API の待ち受けで、`http://<サービス名>:8085/metrics` に指標を出す形に合わせて書いてあります。このポート番号を決めた仕様はありません。8085 はこのプロジェクトが選んだ番号で、`prometheus.go` の `MetricsPort` に置いています。ほかの番号にするときは、`MetricsPort` を直し、上のコマンドを実行します。
 
 指標は `internal/metrics` が Prometheus のテキスト形式（版 0.0.4）で書きます。ラベルの値は、決まった集合の中からしか取れません。そのため、加入者ごとの系列はできず、加入者が何人いても系列の数は変わりません。
 
-コードは、Prometheus の文書と TS 32.409 にあることのうち、次のものを省いています。どの場所にも、コードに `SIMPLIFIED:` のコメントがあります。
+コードは Prometheus の文書と TS 32.409 にあることのうち、次のものを省いています。どの場所にも、コードに `SIMPLIFIED:` のコメントがあります。
 
 | 場所 | 省いたこと | 理由 |
 | --- | --- | --- |
