@@ -1,6 +1,7 @@
 package mmtel
 
 import (
+	"context"
 	"crypto/rand"
 	"errors"
 	"log/slog"
@@ -81,6 +82,10 @@ var (
 	// conferenceFull is the refusal while the conference has
 	// maximumUsers participants.
 	conferenceFull = &refusal{code: 403, text: "The conference is full"}
+	// conferenceNotStored is the refusal when the ConferenceStore failed
+	// to keep the participant: the focus answers a request whose state
+	// it could not write with 500 (RFC 3261 21.5.1).
+	conferenceNotStored = &refusal{code: 500, text: "Conference record not stored"}
 )
 
 // referExpires is how long the subscription of a REFER lasts: longer
@@ -364,6 +369,14 @@ func (f *conference) admit(in *sip.IncomingCall, p *party, final *sip.Message, u
 		f.log.Info("user not taken into the conference", "user", user, "reason", no.text)
 		p.media.Bye()
 		in.Reject(no.code, f.as.warning(no.text))
+		if p.creator {
+			// No one else has the conference URI yet, so the conference
+			// ends with the refusal of its creator.
+			f.mu.Lock()
+			f.ended = true
+			f.mu.Unlock()
+			f.deallocate()
+		}
 		return
 	}
 	ack, err := in.Accept(sip.BodyOf(final), headers...)
@@ -473,7 +486,13 @@ func (f *conference) join(p *party, info confinfo.Participant) *refusal {
 	p.dialog = d.ID
 	f.parties = append(f.parties, p)
 	f.record.Participants = append(f.record.Participants, ConferenceParticipant{Participant: info, Dialog: d, Media: m})
-	f.as.conferenceStore.PutConference(f.record)
+	if err := f.as.conferenceStore.PutConference(context.Background(), f.record); err != nil {
+		f.parties = f.parties[:len(f.parties)-1]
+		f.record.Participants = f.record.Participants[:len(f.record.Participants)-1]
+		f.mu.Unlock()
+		f.log.Warn("participant not stored", "user", info.User, "error", err.Error())
+		return conferenceNotStored
+	}
 	f.mu.Unlock()
 	f.log.Info("participant joined", "user", info.User, "joining_method", string(info.JoiningMethod))
 	f.notify(nil)
@@ -491,7 +510,7 @@ func (f *conference) dialogConfirmed(p *party) {
 		e.Dialog = d
 	}
 	p.dialog = d.ID
-	f.as.conferenceStore.PutConference(f.record)
+	f.writeRecord()
 }
 
 // left is TS 24.147 5.3.2.6.1 once the dialog of p has ended: the focus
@@ -520,7 +539,7 @@ func (f *conference) left(p *party) {
 		f.ended = true
 		others = slices.Clone(f.parties)
 	}
-	f.as.conferenceStore.PutConference(f.record)
+	f.writeRecord()
 	f.mu.Unlock()
 	f.log.Info("participant left", "creator", p.creator, "connected", connected)
 	if !ends {
@@ -558,7 +577,24 @@ func (f *conference) end(parties []*party) {
 // deallocate gives the conference URI up (TS 24.147 5.3.2.7).
 func (f *conference) deallocate() {
 	f.as.conferences.Delete(f.record.ID)
-	f.as.conferenceStore.DeleteConference(f.record.ID)
+	if err := f.as.conferenceStore.DeleteConference(context.Background(), f.record.ID); err != nil {
+		// No request waits for this. The record stays in the store, with
+		// no time to live; its conference ID is random and never used
+		// again, so it names no conference that is up.
+		f.log.Warn("ended conference left in the store", "error", err.Error())
+	}
+}
+
+// writeRecord writes the record of the conference after a change that
+// has already been answered, or that no request asked for: a dialog
+// that was confirmed or ended, a change of media, a NOTIFY. When the
+// store fails, the focus goes on with the conference in this instance,
+// and logs the failure. Each write is of the whole record, so the next
+// one that succeeds brings the store up to date. f.mu is held.
+func (f *conference) writeRecord() {
+	if err := f.as.conferenceStore.PutConference(context.Background(), f.record); err != nil {
+		f.log.Warn("conference record not written", "error", err.Error())
+	}
 }
 
 // room is nil while the conference takes one more participant, and
@@ -600,7 +636,7 @@ func (f *conference) remove(p *party) {
 		f.parties = slices.Delete(f.parties, i, i+1)
 		f.record.Participants = slices.Delete(f.record.Participants, i, i+1)
 	}
-	f.as.conferenceStore.PutConference(f.record)
+	f.writeRecord()
 }
 
 // handle answers the requests of a participant within its dialog with
@@ -665,7 +701,7 @@ func (f *conference) changeMedia(r *sip.InDialogRequest, p *party) {
 	}
 	f.mu.Lock()
 	changed := f.setStatus(p, status)
-	f.as.conferenceStore.PutConference(f.record)
+	f.writeRecord()
 	f.mu.Unlock()
 	if changed {
 		f.notify(nil)
@@ -774,7 +810,15 @@ func (f *conference) inviteUser(rt sip.ReferTo, referredBy string) int {
 	}
 	if rt.Replaces != nil {
 		replaces := *rt.Replaces
-		if other, ok := otherSide(f.as.store, replaces); ok {
+		other, ok, err := otherSide(context.Background(), f.as.store, replaces)
+		if err != nil {
+			// The focus cannot tell which call the Replaces names, and
+			// reports 500 (RFC 3261 21.5.1) in the last NOTIFY.
+			f.log.Warn("call store failed", "error", err.Error())
+			media.Bye()
+			return 500
+		}
+		if ok {
 			// The participant named its own call with the user, which this
 			// AS relays: the user knows that call by the other leg (TS
 			// 24.229 5.7.5.1).
@@ -855,11 +899,12 @@ func requestURIOf(uri string) string {
 
 // otherSide is the Replaces that names, for the next hop, the other leg
 // of the call of this AS that r names (TS 24.229 5.7.5.1), and false
-// when r names no leg of a call here.
-func otherSide(store Store, r sip.Replaces) (sip.Replaces, bool) {
-	record, ok := store.CallOf(r.DialogID())
-	if !ok {
-		return sip.Replaces{}, false
+// when r names no leg of a call here. The error is the failure of the
+// store.
+func otherSide(ctx context.Context, store Store, r sip.Replaces) (sip.Replaces, bool, error) {
+	record, ok, err := store.CallOf(ctx, r.DialogID())
+	if err != nil || !ok {
+		return sip.Replaces{}, false, err
 	}
 	other := record.Outgoing
 	if record.Outgoing.ID == r.DialogID() {
@@ -867,7 +912,7 @@ func otherSide(store Store, r sip.Replaces) (sip.Replaces, bool) {
 	}
 	// The UA at the other end of that leg compares to-tag with its own
 	// tag, which is the remote tag here (RFC 3891 3).
-	return sip.Replaces{CallID: other.ID.CallID, ToTag: other.ID.RemoteTag, FromTag: other.ID.LocalTag, EarlyOnly: r.EarlyOnly}, true
+	return sip.Replaces{CallID: other.ID.CallID, ToTag: other.ID.RemoteTag, FromTag: other.ID.LocalTag, EarlyOnly: r.EarlyOnly}, true, nil
 }
 
 // assertedUser is the identity of a participant: the first
