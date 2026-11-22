@@ -49,6 +49,7 @@ for i in $(seq 1 30); do
 done
 # Every "run" and "up" below takes --no-deps (see scripts/e2e-lib.sh).
 remember_nodes
+pcap="$(docker compose exec -T capture sh -c 'ls -t /captures/ims-*.pcap | head -n 1' | tr -d '\r')"
 
 domain=ims.mnc001.mcc001.3gppnetwork.org
 ue2=(--impi "001010000000002@$domain" --impu "sip:+12025550102@$domain" --password test-password-2)
@@ -56,28 +57,10 @@ fail=0
 mkdir -p e2e-out
 rm -f captures/mrf-cat-received.raw
 
-# wait_log waits until the log of a container started with "run -d"
-# matches pattern.
-wait_log() {
-	local name="$1" pattern="$2" i
-	for i in $(seq 1 30); do
-		grep -q "$pattern" <<<"$(docker logs "$name" 2>/dev/null)" && return 0
-		sleep 1
-	done
-	return 1
-}
-# ended NAME waits for the container to end, keeps its log, removes it,
-# and prints its exit status.
-ended() {
-	local status
-	status="$(timeout 60 docker wait "$1" 2>/dev/null || echo timeout)"
-	docker logs "$1" >"e2e-out/$1.log" 2>&1 || true
-	docker rm -f "$1" >/dev/null 2>&1 || true
-	echo "$status"
-}
-# call ARGS... is UE 1's "ue call", whose log it prints.
+# call ARGS... is UE 1's "ue call", whose log it prints, and xcap ARGS...
+# is UE 1's "ue xcap". Each exits 1 when it fails, as the barred call
+# does; the checks read what it printed, hence "|| true".
 call() { docker compose run --rm --no-deps ue call --tone 1s "$@" 2>&1 || true; }
-# xcap ARGS... is UE 1's "ue xcap".
 xcap() { docker compose run --rm --no-deps ue xcap "$@" 2>&1 || true; }
 # alerting_tone TONE true|false provisions the CAT of UE 2 in the HSS,
 # through the Lab, as the learner does with the Subscribers panel.
@@ -116,7 +99,7 @@ else
 	fail=1
 fi
 docker compose run -d --no-deps --name ims-practice-ue2-cat ue2 answer "${ue2[@]}" --ring 3s --tone 1s >/dev/null
-wait_log ims-practice-ue2-cat '"msg":"waiting for a call"' || true
+wait_log ims-practice-ue2-cat '"msg":"waiting for a call"' || fail=1
 out="$(call --received-out /captures/mrf-cat-received.raw tel:+12025550102)"
 printf '%s\n' "$out" >e2e-out/mrf-cat.log
 if grep -Eq '"msg":"ringback before the answer".*"ringback":"network"' <<<"$out" && grep -q '"msg":"call answered"' <<<"$out" &&
@@ -159,7 +142,7 @@ else
 fi
 status="$(alerting_tone cat1 false)"
 docker compose run -d --no-deps --name ims-practice-ue2-local ue2 answer "${ue2[@]}" --ring 2s --tone 1s >/dev/null
-wait_log ims-practice-ue2-local '"msg":"waiting for a call"' || true
+wait_log ims-practice-ue2-local '"msg":"waiting for a call"' || fail=1
 out="$(call tel:+12025550102)"
 printf '%s\n' "$out" >e2e-out/mrf-local.log
 if [ "$status" = 200 ] && grep -Eq '"msg":"ringback before the answer".*"ringback":"local"' <<<"$out" &&
@@ -232,6 +215,11 @@ else
 	exit 1
 fi
 first="$(call_ids ue-a)"
+uea=172.28.0.110
+ueb=172.28.0.111
+uec=172.28.0.112
+ack_to() { echo "sip.Method == \"ACK\" && ip.dst == $1"; }
+bye_to() { echo "sip.Method == \"BYE\" && ip.dst == $1"; }
 status="$(ue_post ue-c/call '{"target":"tel:+12025550101"}')"
 if [ "$status" = 200 ] && wait_ues "ue-a registered active+ringing/waiting 0,*"; then
 	echo "ok   ue-c's call to ue-a waits"
@@ -239,6 +227,7 @@ else
 	echo "FAIL the waiting call (status $status): $(ues)"
 	exit 1
 fi
+acks_b="$(count "$(ack_to $ueb)")"
 status="$(ue_post ue-a/answer)"
 if [ "$status" = 200 ] && wait_ues "ue-a registered active/held+active 0,ue-b registered active 0,ue-c registered active 0"; then
 	echo "ok   ue-a held ue-b and answered ue-c"
@@ -247,7 +236,14 @@ else
 	fail=1
 fi
 second="$(call_ids ue-a | cut -d' ' -f2)"
-sleep 1
+# A UA starts no INVITE in a dialog while another INVITE of that dialog
+# is in progress (RFC 3261 14.1), so each step that sends re-INVITEs
+# waits until the ACKs of the step before have arrived: here those of
+# ue-c's call at ue-a and of the hold at ue-b.
+await "the ACK of ue-c's call at ue-a" "$(ack_to $uea) && sip.Call-ID == \"$second\""
+await "the ACK of the hold at ue-b" "$(ack_to $ueb)" $((acks_b + 1))
+acks_b="$(count "$(ack_to $ueb)")"
+acks_c="$(count "$(ack_to $uec)")"
 status="$(ue_post ue-a/swap)"
 if [ "$status" = 200 ] && wait_ues "ue-a registered active+active/held 0,*"; then
 	echo "ok   ue-a swapped to ue-b and held ue-c"
@@ -255,7 +251,8 @@ else
 	echo "FAIL the swap (status $status): $(ues)"
 	fail=1
 fi
-sleep 1
+await "the ACK of the swap at ue-b" "$(ack_to $ueb)" $((acks_b + 1))
+await "the ACK of the swap at ue-c" "$(ack_to $uec)" $((acks_c + 1))
 status="$(ue_post ue-a/merge)"
 if [ "$status" = 200 ] && wait_ues "ue-a registered active 3,ue-b registered active 3,ue-c registered active 3"; then
 	echo "ok   ue-a merged the calls, and each UE sees three users in the conference"
@@ -264,7 +261,13 @@ else
 	fail=1
 fi
 conference="$(call_ids ue-a)"
+# The three talk for 3 s, so that the capture holds the mix of their
+# tones that the checks below read.
 sleep 3
+# The checks read the capture up to the BYEs that end the conference
+# for ue-b and ue-c: the ones after those that each has had so far.
+byes_b="$(count "$(bye_to $ueb)")"
+byes_c="$(count "$(bye_to $uec)")"
 status="$(ue_post ue-a/hangup)"
 if [ "$status" = 200 ] && wait_ues "ue-a registered idle 0,ue-b registered idle 0,ue-c registered idle 0"; then
 	echo "ok   ue-a left, and the conference ended for all three"
@@ -275,9 +278,9 @@ fi
 docker compose --profile sim rm -sf ue-a ue-b ue-c >/dev/null 2>&1
 trap - EXIT
 same_nodes
-sleep 2
+await "the BYE that ends the conference for ue-b" "$(bye_to $ueb)" $((byes_b + 1))
+await "the BYE that ends the conference for ue-c" "$(bye_to $uec)" $((byes_c + 1))
 
-pcap="$(docker compose exec -T capture sh -c 'ls -t /captures/ims-*.pcap | head -n 1' | tr -d '\r')"
 echo "reading $pcap"
 
 # RTP is found by the heuristic too, as some of it flows before tshark
@@ -289,7 +292,7 @@ last=0
 # e2e-diameter.sh counts frames.
 at_least() {
 	local label="$1" n="$2" filter="$3" field="$4" got
-	got="$(tshark_fields "$filter" "$field" | sort -u | grep -c . || true)"
+	got="$(tshark_fields "$filter" "$field" | sort -u | awk 'NF { n++ } END { print n + 0 }')"
 	if [ "$got" -ge "$n" ]; then
 		echo "ok   $label: $got"
 	else
@@ -300,9 +303,6 @@ at_least() {
 
 ue1=172.28.0.100
 ue2ip=172.28.0.101
-uea=172.28.0.110
-ueb=172.28.0.111
-uec=172.28.0.112
 pcscf=172.28.0.40
 scscf=172.28.0.30
 agw=172.28.0.50
