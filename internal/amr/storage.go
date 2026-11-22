@@ -22,6 +22,16 @@ const (
 func WriteStorage(w io.Writer, c Codec, frames []Frame) error {
 	var b bytes.Buffer
 	b.WriteString(magic(c))
+	if err := appendFrames(&b, c, frames); err != nil {
+		return err
+	}
+	_, err := w.Write(b.Bytes())
+	return err
+}
+
+// appendFrames appends each frame as one header octet and its
+// octet-aligned bits (RFC 4867 5.3).
+func appendFrames(b *bytes.Buffer, c Codec, frames []Frame) error {
 	for i, f := range frames {
 		if _, err := c.checkFrame(f); err != nil {
 			return fmt.Errorf("frame %d: %w", i+1, err)
@@ -29,8 +39,47 @@ func WriteStorage(w io.Writer, c Codec, frames []Frame) error {
 		b.WriteByte(storageHeader(f))
 		b.Write(f.Data)
 	}
-	_, err := w.Write(b.Bytes())
-	return err
+	return nil
+}
+
+// A StreamWriter writes the same storage format while the call is still
+// running: the magic number before the first frame, then the frames in
+// the order they are handed over. Each Write is one write on w, so a
+// listener reading the other end of a pipe hears the frames as they
+// arrive instead of waiting for the end of the call.
+//
+// The stream holds what a listener can still hear. A frame that arrives
+// after its place has gone out is left out, where the file of the whole
+// call, written at the end, holds it in its place.
+type StreamWriter struct {
+	w       io.Writer
+	codec   Codec
+	started bool
+}
+
+func NewStreamWriter(w io.Writer, c Codec) *StreamWriter {
+	return &StreamWriter{w: w, codec: c}
+}
+
+// Write puts frames at the end of the stream, oldest first. An empty
+// slice writes nothing, so that the magic number goes out with the
+// first frame and the stream of a call that received nothing is empty.
+func (s *StreamWriter) Write(frames []Frame) error {
+	if len(frames) == 0 {
+		return nil
+	}
+	var b bytes.Buffer
+	if !s.started {
+		b.WriteString(magic(s.codec))
+	}
+	if err := appendFrames(&b, s.codec, frames); err != nil {
+		return err
+	}
+	if _, err := s.w.Write(b.Bytes()); err != nil {
+		return err
+	}
+	s.started = true
+	return nil
 }
 
 func magic(c Codec) string {
