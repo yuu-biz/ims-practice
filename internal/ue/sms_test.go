@@ -446,7 +446,7 @@ func TestStatusReportBeforeSubmitReport(t *testing.T) {
 func TestTheSCRefusesAShortMessage(t *testing.T) {
 	n := newFakeNetwork(t)
 	u, ua := smsUE(t, n)
-	sent, err := u.SendSMS(context.Background(), ue.OutgoingSMS{To: "+12025550199", Text: "nobody"})
+	sent, err := u.SendSMS(context.Background(), ue.OutgoingSMS{To: "+12025550198", Text: "nobody"})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -287,7 +287,7 @@ The SIP stack of IBCF-A asks the IBCF about each request that belongs to no tran
 What you see:
 
 - **The capture of the link.** The INVITE and the MESSAGE from 172.28.2.99 to IBCF-A, and nothing back to 172.28.2.99 but the ARP reply with IBCF-A's MAC address, which any host on the link gets (`ip.dst == 172.28.2.99` finds nothing). **Statistics > Flow Graph** draws each request as an arrow with no answer.
-- **The capture of network A.** Nothing of the host: no request with its From, `+12025550199`.
+- **The capture of network A.** Nothing of the host: no request with its From, `+12025550198`.
 - **The log of IBCF-A.** For each request, `"msg":"discarded a request from an address of no peer network"` with the method, the source and the Call-ID, and then the line of the SIP stack, `"msg":"dropped request that the screen refused"`.
 
 A request from a peer that the border turns away gets a response, such as the 405 of a method outside the agreement: the peer is inside the agreement, and the response tells it what went wrong. TS 24.229 5.10.1 lets an IBCF reject a request with a 4xx response by local policy. TS 24.229 has a similar rule for the P-CSCF (5.2.6.3.2A): a request other than REGISTER that maps to no IP association of a UE is dropped without a 100 (Trying).

@@ -182,7 +182,7 @@ func TestOriginatingCallToANumberInASIPURI(t *testing.T) {
 
 func TestOriginatingCallToANumberWithoutENUMGets404(t *testing.T) {
 	h, _, _ := registeredHarness(t)
-	if r := h.invite("tel:+12025550199", orig, impu); r.StatusCode != 404 {
+	if r := h.invite("tel:+12025550198", orig, impu); r.StatusCode != 404 {
 		t.Fatalf("got %d, want 404", r.StatusCode)
 	}
 }

@@ -334,7 +334,7 @@ echo "requests from an address of no peer network"
 # and drops both without any answer, not even the 100 (Trying) of the
 # INVITE, so that the host learns nothing about network A.
 stranger=172.28.2.99
-stranger_from='<sip:+12025550199@example.invalid>;tag=no-peer'
+stranger_from='<sip:+12025550198@example.invalid>;tag=no-peer'
 since="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 # stranger_request prints a request of method from the stranger, with
 # a Call-ID and a branch of its own, and a body of type when there is
@@ -629,7 +629,7 @@ expect "MESSAGE from the host of no peer network on the link" \
 	"sip.Method == \"MESSAGE\" && ip.src == $stranger && ip.dst == $ibcf_a_nni"
 pcap="$pcap_nni" none "packets to the host of no peer network" "ip.dst == $stranger"
 pcap="$pcap_a" none "requests of the host of no peer network inside network A" \
-	'sip.From contains "+12025550199"'
+	'sip.From contains "+12025550198"'
 
 echo "topology hiding"
 # Over the whole captures, so for the short messages of both directions

@@ -307,7 +307,7 @@ UE 1 -> relay access (context 1) -> relay core (context 1)
 | --- | --- | --- | --- |
 | 話中 | UE 2 を `-reject 486` 付きで起動する。 | 486 Busy Here | UE 2 |
 | 未登録 | `tel:+12025550103` に発信する。 | 480 Temporarily Unavailable | S-CSCF |
-| 存在しない番号 | `tel:+12025550199` に発信する。 | 404 Not Found | S-CSCF |
+| 存在しない番号 | `tel:+12025550198` に発信する。 | 404 Not Found | S-CSCF |
 
 - 未登録の利用者にも、MMTel AS を呼ぶ iFC があります。LIA は DIAMETER_UNREGISTERED_SERVICE（2003）になります。I-CSCF が選んだ S-CSCF は、AS が INVITE を送り返したところで 480 を返します。
 - 存在しない番号には ENUM のレコードがありません。このプロジェクトには BGCF が無いので、S-CSCF が 404 で答えます。
