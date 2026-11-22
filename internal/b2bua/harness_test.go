@@ -169,10 +169,12 @@ type hooks struct {
 	request  func(req *sip.Message, d b2bua.Direction) *b2bua.Refusal
 	response func(resp *sip.Message, d b2bua.Direction)
 	ack      func(ack *sip.Message, d b2bua.Direction)
-	own      func(c *b2bua.Call)
-	noLeg    chan struct{}
-	next     string
-	before   func(in *sip.IncomingCall, c *b2bua.Call)
+	// answer, when set, runs as the Call prepares the 2xx for the caller.
+	answer func()
+	own    func(c *b2bua.Call)
+	noLeg  chan struct{}
+	next   string
+	before func(in *sip.IncomingCall, c *b2bua.Call)
 
 	mu    sync.Mutex
 	kept  int
@@ -196,6 +198,9 @@ func (h *hooks) Response(resp, _ *sip.Message, d b2bua.Direction) b2bua.Message 
 }
 
 func (h *hooks) Answer(resp, _ *sip.Message) b2bua.Message {
+	if h.answer != nil {
+		h.answer()
+	}
 	return h.Response(resp, nil, b2bua.ToCaller)
 }
 

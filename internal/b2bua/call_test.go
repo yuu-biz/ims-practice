@@ -185,3 +185,52 @@ func TestRoleRefusesARequest(t *testing.T) {
 	}
 	out.Bye()
 }
+
+// A request of the callee that crosses its 2xx and the caller's ACK goes
+// on to the caller in its early dialog, but the role gets the dialogs
+// only once the caller has acknowledged the 2xx: until then the call may
+// still fail (RFC 3261 13.3.1.4).
+func TestDialogsKeptOnlyOnceTheCallerAcknowledged(t *testing.T) {
+	h := &hooks{}
+	calls := make(chan *sip.IncomingCall, 1)
+	callee := newUA(t, "callee", func(in *sip.IncomingCall) { calls <- in })
+	b2b := newB2BUA(t, h, contactOf(t, callee))
+	infos := make(chan struct{}, 1)
+	caller := newUA(t, "caller", func(in *sip.IncomingCall) { in.Reject(480) })
+	crossed := make(chan int, 1)
+	h.answer = func() {
+		in := <-calls
+		go in.Send("INFO", sip.Body{})
+		select {
+		case <-infos:
+		case <-time.After(5 * time.Second):
+		}
+		until(200*time.Millisecond, func() bool { return h.keptCount() > 0 })
+		crossed <- h.keptCount()
+	}
+	out, err := caller.Invite(invitation(t, b2b, func(r *sip.InDialogRequest) {
+		r.Accept(sip.Body{})
+		infos <- struct{}{}
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	go func() {
+		in := <-calls
+		calls <- in
+		// The 180 makes the early dialog in which the INFO reaches the
+		// caller before the 2xx.
+		in.Progress(180, sip.Body{})
+		in.Accept(answer)
+	}()
+	if _, final := finalOf(t, out); final.StatusCode != 200 {
+		t.Fatalf("the call got %d", final.StatusCode)
+	}
+	if n := within(t, "the INFO that crosses the 2xx", crossed); n != 0 {
+		t.Errorf("the role kept the dialogs %d times before the caller acknowledged the 2xx", n)
+	}
+	if !until(5*time.Second, func() bool { return h.keptCount() > 0 }) {
+		t.Error("the role never kept the dialogs after the ACK")
+	}
+	out.Bye()
+}
