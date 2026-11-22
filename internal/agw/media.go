@@ -222,16 +222,17 @@ const heardFrames = 3
 // plays a signal; RTCP goes whatever the modes. In a conference the RTP
 // payload waits for the mixer instead, and RTCP goes nowhere.
 //
-// SIMPLIFIED: TS 23.333 5.10 and RFC 3550 6 and 7.1. The mixer takes
-// PCMU only and drops other payloads, telephone-event among
-// them. It keeps no more than heardFrames for jitter, writes no CSRC
-// list of the parties it mixed, and sends no RTCP of its own.
-//
 // The packet is counted, and sent on, while rc.mu is held. A
 // controller that reads the counts and then changes the mode knows
 // that the packets counted went by the mode it had set before, and the
 // counts that a Subtract reports are the packets that went on the
 // wire, as a capture shows them, with none still on its way.
+//
+// SIMPLIFIED: TS 23.333 5.10 and RFC 3550 6 and 7.1. The mixer takes
+// PCMU only and drops other payloads, telephone-event among
+// them. It keeps no more than heardFrames for jitter, writes no CSRC
+// list of the parties it mixed, and sends no RTCP of its own. That is
+// enough for a conference of a few UEs on one bridge.
 func (rc *relayContext) receive(from *relayTermination, kind string, in *channel, packet []byte) {
 	rc.mu.Lock()
 	defer rc.mu.Unlock()

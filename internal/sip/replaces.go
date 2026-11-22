@@ -14,14 +14,14 @@ package sip
 //   - 486 (Busy Here) when it names a confirmed dialog but asks to
 //     replace an early one only.
 //
-// SIMPLIFIED: RFC 3891 3. A dialog that has ended is no longer known to
-// the UA, so a Replaces of it gets 481, where the UA SHOULD answer 603
-// (Declined); keeping ended dialogs only for this is not worth it here.
-//
 // The user of the call checks that whoever sent
 // the INVITE may replace the dialog, for instance by its Referred-By,
 // accepts the new INVITE, and then ends the replaced dialog: with BYE
 // when it is confirmed, with CANCEL of its INVITE when it is early.
+//
+// SIMPLIFIED: RFC 3891 3. A dialog that has ended is no longer known to
+// the UA, so a Replaces of it gets 481, where the UA SHOULD answer 603
+// (Declined); keeping ended dialogs only for this is not worth it here.
 func (c *IncomingCall) ReplacedDialog() (*CallDialog, int) {
 	values := c.Request.GetAll("Replaces")
 	switch len(values) {
