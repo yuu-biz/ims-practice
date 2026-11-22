@@ -9,8 +9,8 @@ package config
 //
 // The roles that keep the state of the users read the store section
 // (readsStore). The rest of a node keeps its state in its process even
-// then: the I-CSCF holds none, and the EPC and PCRF stubs run as a
-// single instance.
+// then: the I-CSCF holds none, the EPC and PCRF stubs run as a single
+// instance, and the fault agent holds the handful of faults of a lab.
 func (c Config) Unread() []string {
 	var unread []string
 	if c.Store != nil && !c.readsStore() {
