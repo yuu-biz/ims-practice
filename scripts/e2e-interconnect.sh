@@ -58,6 +58,9 @@ if [ -n "${IMS_IMAGE:-}" ] && [ -n "${CAPTURE_IMAGE:-}" ]; then
 	build=()
 fi
 
+# docker rm -f, docker stop and docker image rm fail on a container or
+# an image that is gone already, which is no error here, hence their
+# "|| true" in this script.
 cleanup() {
 	docker rm -f "${project}-ue-b1" "${project}-ue-a1" "${project}-ue-a2" >/dev/null 2>&1 || true
 	if [ "${E2E_KEEP:-0}" != 1 ]; then
@@ -130,25 +133,12 @@ else
 	fail=1
 fi
 
-# wait_log waits until the log of a container started with "run -d"
-# matches pattern.
-wait_log() {
-	local name="$1" pattern="$2" i
-	for i in $(seq 1 20); do
-		grep -q "$pattern" <<<"$(docker logs "$name" 2>/dev/null)" && return 0
-		sleep 1
-	done
-	return 1
-}
 # answer_b1 has UE B1 wait in the background for one call; the flags go
 # before those of the call.
 answer_b1() {
 	docker rm -f "${project}-ue-b1" >/dev/null 2>&1 || true
 	c run --no-deps -d --name "${project}-ue-b1" peer-ue answer "${ue_b1[@]}" --ring 1s --tone 4s "$@" >/dev/null
-	wait_log "${project}-ue-b1" '"msg":"waiting for a call"' || {
-		echo "FAIL UE B1 did not register"
-		fail=1
-	}
+	wait_log "${project}-ue-b1" '"msg":"waiting for a call"' || fail=1
 }
 # call_status calls uri from UE A1 and prints the status it ended with:
 # 200 for a call that was answered and ended.
@@ -204,7 +194,7 @@ fi
 echo "call from network B to network A"
 docker rm -f "${project}-ue-a2" >/dev/null 2>&1 || true
 c run --no-deps -d --name "${project}-ue-a2" ue2 answer "${ue_a2[@]}" --ring 1s --tone 4s >/dev/null
-wait_log "${project}-ue-a2" '"msg":"waiting for a call"' || true
+wait_log "${project}-ue-a2" '"msg":"waiting for a call"' || fail=1
 if c run --no-deps --rm peer-ue call "${ue_b1[@]}" --tone 3s tel:+12025550102 >/dev/null 2>&1 &&
 	[ "$(timeout 60 docker wait "${project}-ue-a2")" = "0" ]; then
 	echo "ok   UE B1 called UE A2 by number, and UE A2 answered"
@@ -218,7 +208,7 @@ docker rm -f "${project}-ue-a2" >/dev/null 2>&1 || true
 echo "short message from network A to network B"
 docker rm -f "${project}-ue-b1" >/dev/null 2>&1 || true
 c run --no-deps -d --name "${project}-ue-b1" peer-ue register "${ue_b1[@]}" >/dev/null
-wait_log "${project}-ue-b1" '"msg":"registered"' || true
+wait_log "${project}-ue-b1" '"msg":"registered"' || fail=1
 # TP-ST 1: the SC forwarded the short message to network B but cannot
 # confirm the delivery (TS 23.040 9.2.3.15).
 if out="$(c run --no-deps --rm ue sms --status-report +12025550151 "$gsm_text" 2>&1)" &&
@@ -226,6 +216,7 @@ if out="$(c run --no-deps --rm ue sms --status-report +12025550151 "$gsm_text" 2
 	echo "ok   UE A1 sent UE B1 a short message, and the status report says network B took it"
 else
 	echo "FAIL UE A1 to UE B1"
+	# grep finds nothing when the UE logged none of these lines.
 	grep -E '"msg":"(sms sent|submit report|status report|ue failed)"' <<<"$out" || true
 	fail=1
 fi
@@ -244,13 +235,14 @@ echo "short message from network B to network A"
 docker stop "${project}-ue-b1" >/dev/null 2>&1 || true
 docker rm -f "${project}-ue-b1" "${project}-ue-a1" >/dev/null 2>&1 || true
 c run --no-deps -d --name "${project}-ue-a1" ue register >/dev/null
-wait_log "${project}-ue-a1" '"msg":"registered"' || true
+wait_log "${project}-ue-a1" '"msg":"registered"' || fail=1
 # TP-ST 1 again: the SC of network B forwarded it to network A.
 if out="$(c run --no-deps --rm peer-ue sms "${ue_b1[@]}" "${sc_b[@]}" --status-report +12025550101 "$gsm_text_back" 2>&1)" &&
 	grep -q '"msg":"status report".*"status":1,' <<<"$out"; then
 	echo "ok   UE B1 sent UE A1 a short message, and the status report says network A took it"
 else
 	echo "FAIL UE B1 to UE A1"
+	# grep finds nothing when the UE logged none of these lines.
 	grep -E '"msg":"(sms sent|submit report|status report|ue failed)"' <<<"$out" || true
 	fail=1
 fi
@@ -268,9 +260,11 @@ docker rm -f "${project}-ue-a1" >/dev/null 2>&1 || true
 echo "mismatched profiles"
 # UE B1 stays registered for the short messages of the first scenario.
 c run --no-deps -d --name "${project}-ue-b1" peer-ue register "${ue_b1[@]}" >/dev/null
-wait_log "${project}-ue-b1" '"msg":"registered"' || true
+wait_log "${project}-ue-b1" '"msg":"registered"' || fail=1
 # 1. MESSAGE: without the agreement on MESSAGE, IBCF-A answers 405 and
-# the SC of network A reports TP-ST 98, no response from the SME.
+# the SC of network A reports TP-ST 98, no response from the SME. "ue
+# sms" ends with an error when no status report comes in time; the
+# checks read its log, hence "|| true".
 use_profile ibcf-a network-b-no-message.yaml
 out="$(c run --no-deps --rm ue sms --status-report +12025550151 'Is MESSAGE agreed?' 2>&1 || true)"
 if grep -q '"msg":"status report".*"status":98,' <<<"$out"; then
@@ -363,6 +357,8 @@ stranger_request() {
 }
 # send_as_stranger sends what comes on its input from port 5070 of the
 # stranger, and prints what comes back to that port within two seconds.
+# nc may end with an error when nothing comes back, which is the outcome
+# wanted here, hence "|| true".
 send_as_stranger() {
 	docker run --rm -i --network "${project}_nni" --ip "$stranger" --entrypoint nc ims-practice/ims:dev \
 		-u -w 2 -p 5070 172.28.2.10 5060 2>&1 || true
@@ -376,6 +372,8 @@ else
 	echo "FAIL $stranger got an answer: ${answers%%$'\n'*}"
 	fail=1
 fi
+# Empty when IBCF-A logged no discard; the checks below say which is
+# missing.
 discarded="$(grep '"msg":"discarded a request from an address of no peer network"' <<<"$(c logs --no-color --since "$since" ibcf-a 2>/dev/null)" || true)"
 for method in INVITE MESSAGE; do
 	if grep -q "\"method\":\"$method\"" <<<"$discarded"; then
@@ -385,7 +383,6 @@ for method in INVITE MESSAGE; do
 		fail=1
 	fi
 done
-sleep 1
 same_nodes
 
 echo "TrGW contexts"
@@ -418,6 +415,10 @@ home_pcap="$(pcap_in "")"
 peer_pcap="$(pcap_in peer/)"
 nni_pcap="$(pcap_in nni/)"
 echo "reading $home_pcap, $peer_pcap and $nni_pcap"
+# The requests of the host of no peer network are the last frames that
+# the checks read.
+pcap="$nni_pcap" await "the MESSAGE from the host of no peer network" \
+	"sip.Method == \"MESSAGE\" && ip.src == $stranger && ip.dst == 172.28.2.10"
 
 # The checks below read the capture that pcap names, with the helpers of
 # scripts/e2e-lib.sh. RTP flows before tshark sees the SDP of some of
@@ -627,7 +628,7 @@ pcap="$nni_pcap" none "node names of network B on the link" \
 # which the operator bars (TS 23.228 E.3.1).
 no_imsi_identity() {
 	local where="$1" filter='sip && frame contains "sip:001010"' frames
-	frames="$(tshark_fields "$filter" | grep . | tr '\n' ' ' || true)"
+	frames="$(tshark_fields "$filter" | awk NF | tr '\n' ' ')"
 	if [ -z "$frames" ]; then
 		echo "ok   no identity made from an IMSI of network A in $where"
 		return
