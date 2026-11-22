@@ -12,7 +12,8 @@ type earlyDialogs struct {
 	// from is the To tag of the dialog of out whose session description
 	// the caller got, the first that sent one; the caller takes the
 	// first as the answer and ignores the rest (13.2.1), so the Call
-	// passes on the responses of the other dialogs without theirs.
+	// passes on the responses of the other dialogs without theirs while
+	// that dialog lasts (keepsSession).
 	from string
 	// last holds the last response with a session description of each
 	// dialog of out, by To tag, as it came: the role sends the media to
@@ -21,17 +22,18 @@ type earlyDialogs struct {
 }
 
 // toCaller is resp, a response of a dialog of out, as the caller may
-// get it: without its session description when another dialog of out
-// gave the caller one already. It notes the session description of resp
-// for its dialog.
-func (c *Call) toCaller(resp *sip.Message) *sip.Message {
+// get it: without its session description when another dialog that the
+// caller still follows gave it one already. It notes the session
+// description of resp for its dialog.
+func (c *Call) toCaller(out *sip.OutgoingCall, resp *sip.Message) *sip.Message {
 	if !sip.HasSessionDescription(resp) {
 		return resp
 	}
 	tag := toTag(resp)
+	keeps := c.keepsSession(out)
 	c.mu.Lock()
 	c.early.last[tag] = resp
-	if c.early.from == "" {
+	if !keeps {
 		c.early.from = tag
 	}
 	from := c.early.from
@@ -42,6 +44,37 @@ func (c *Call) toCaller(resp *sip.Message) *sip.Message {
 	c.log.Info("session description of another early dialog of the callee's side not passed on to the caller",
 		"status", resp.StatusCode, "to_tag", tag, "caller_has", from)
 	return withoutBody(resp)
+}
+
+// keepsSession tells whether the caller keeps the session description
+// that it has, so that those of the other early dialogs of out do not
+// go to it. It keeps it while the dialog that sent it lasts. A 199 ends
+// that dialog (RFC 6228 4), and a leg that the role gives up on, to
+// send the INVITE on to another callee (Attempt again), leaves all the
+// dialogs of that leg behind, while the early dialog of the caller goes
+// on. The next session description then goes to the caller as it comes,
+// when it answers the offer of the INVITE: with preconditions the UAS
+// that sent it alerts its user only once the caller has confirmed its
+// resources, which needs that answer (RFC 3312 6). After an INVITE
+// without an offer the next session description is the offer of its
+// UAS, and the Call, whose caller has answered another one, sends no
+// further offer in its responses to the INVITE (RFC 3261 13.2.1).
+func (c *Call) keepsSession(out *sip.OutgoingCall) bool {
+	c.mu.Lock()
+	from := c.early.from
+	c.mu.Unlock()
+	switch {
+	case from == "":
+		return false
+	case len(c.in.Request.Body) == 0:
+		return true
+	}
+	for _, d := range out.Dialogs() {
+		if dialog, ok := d.Dialog(); ok && dialog.ID.RemoteTag == from {
+			return dialog.State != sip.DialogTerminated
+		}
+	}
+	return false
 }
 
 // answerFrom is resp, the 2xx of a dialog of out, as the caller gets it,
