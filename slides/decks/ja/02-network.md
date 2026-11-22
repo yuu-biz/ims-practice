@@ -193,11 +193,11 @@ ims-practice 勉強会 第 2 回（ノード、ノードの間の参照点、地
 
 | 地図の部分 | どこで読むか |
 | --- | --- |
-| Gm、Mw、Cx と、CSCF および HSS | 第 3 回。登録 |
-| ENUM、メディア中継ノード、1 つの通話の両側 | 第 4 回。通話 |
-| ISC と Sh、IP-SM-GW | 第 5 回。SMS |
-| Ut と MMTel AS | 第 6 回。補足サービス |
-| Rx、EPC スタブ、IMS-AKA | 第 7 回。VoLTE |
+| Gm、Mw、Cx と、CSCF および HSS | 第 4 回。登録 |
+| ENUM、メディア中継ノード、1 つの通話の両側 | 第 5 回。通話 |
+| ISC と Sh、IP-SM-GW | 第 6 回。SMS |
+| Ut と MMTel AS | 第 7 回。補足サービス |
+| Rx、EPC スタブ、IMS-AKA | 第 8 回。VoLTE |
 | Mr'、Mp、MRF | 手順書 [MRF による音声ガイダンス、呼び出し音、会議](../../../docs/guide/ja/mrf.md) |
 | Mx、Ici、Izi、境界 | 手順書 [IMS 網どうしを相互接続する](../../../docs/guide/ja/interconnect.md) |
 | HEP とラボ | 手順書 [ラボで IMS を見る](../../../docs/guide/ja/lab.md) |

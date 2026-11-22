@@ -1,12 +1,12 @@
 ---
 title: A UE registers with the IMS
-footer: ims-practice study session 3. Registration
+footer: ims-practice study session 4. Registration
 lang: en
 ---
 
 # A UE registers with the IMS
 
-ims-practice study session 3 (registration with SIP Digest, and the third-party REGISTER to the application server)
+ims-practice study session 4 (registration with SIP Digest, and the third-party REGISTER to the application server)
 
 ---
 

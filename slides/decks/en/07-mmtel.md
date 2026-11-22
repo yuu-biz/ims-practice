@@ -1,12 +1,12 @@
 ---
 title: Supplementary services with the MMTel AS
-footer: ims-practice study session 6. Supplementary services
+footer: ims-practice study session 7. Supplementary services
 lang: en
 ---
 
 # Supplementary services with the MMTel AS
 
-ims-practice study session 6 (the MMTel AS, its settings over Ut/XCAP, and the services in the capture)
+ims-practice study session 7 (the MMTel AS, its settings over Ut/XCAP, and the services in the capture)
 
 ---
 

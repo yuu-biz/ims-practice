@@ -193,11 +193,11 @@ ims-practice study session 2 (the nodes, the reference points between them, and 
 
 | Part of the map | Where to read it |
 | --- | --- |
-| Gm, Mw, Cx, and the CSCFs with the HSS | session 3, registration |
-| ENUM, the media relay, both sides of one call | session 4, the call |
-| ISC and Sh, the IP-SM-GW | session 5, SMS |
-| Ut and the MMTel AS | session 6, the supplementary services |
-| Rx, the EPC stub, IMS AKA | session 7, VoLTE |
+| Gm, Mw, Cx, and the CSCFs with the HSS | session 4, registration |
+| ENUM, the media relay, both sides of one call | session 5, the call |
+| ISC and Sh, the IP-SM-GW | session 6, SMS |
+| Ut and the MMTel AS | session 7, the supplementary services |
+| Rx, the EPC stub, IMS AKA | session 8, VoLTE |
 | Mr', Mp and the MRF | the guide [Announcements, alerting tones and conferences with the MRF](../../../docs/guide/en/mrf.md) |
 | Mx, Ici, Izi and the border | the guide [Connect two IMS networks](../../../docs/guide/en/interconnect.md) |
 | HEP and the Lab | the guide [Watch the IMS in the Lab](../../../docs/guide/en/lab.md) |

@@ -1,12 +1,12 @@
 ---
 title: A short message through the IMS
-footer: ims-practice study session 5. SMS
+footer: ims-practice study session 6. SMS
 lang: en
 ---
 
 # A short message through the IMS
 
-ims-practice study session 5 (SMS over IP: the IP-SM-GW, Sh and the three kinds of report)
+ims-practice study session 6 (SMS over IP: the IP-SM-GW, Sh and the three kinds of report)
 
 ---
 
@@ -408,9 +408,9 @@ These five sessions cover the core of the IMS: registration, calls and short mes
 | --- | --- | --- |
 | 1 | Package layout | [README.md](../../../README.md) |
 | 2 | The map of the network | [docs/guide/en/README.md](../../../docs/guide/en/README.md) |
-| 3 | Registration | [docs/guide/en/registration.md](../../../docs/guide/en/registration.md) |
-| 4 | Call | [docs/guide/en/call.md](../../../docs/guide/en/call.md) |
-| 5 | SMS | [docs/guide/en/sms.md](../../../docs/guide/en/sms.md) |
+| 4 | Registration | [docs/guide/en/registration.md](../../../docs/guide/en/registration.md) |
+| 5 | Call | [docs/guide/en/call.md](../../../docs/guide/en/call.md) |
+| 6 | SMS | [docs/guide/en/sms.md](../../../docs/guide/en/sms.md) |
 
 - Next come the supplementary services of the MMTel AS ([mmtel.md](../../../docs/guide/en/mmtel.md)), then the VoLTE call, which builds on them ([volte.md](../../../docs/guide/en/volte.md)).
 
