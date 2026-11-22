@@ -13,6 +13,7 @@ import (
 	"strconv"
 	"sync"
 	"time"
+	"uuid"
 
 	"github.com/yuu-biz/ims-practice/internal/aka"
 	"github.com/yuu-biz/ims-practice/internal/sip"
@@ -138,10 +139,16 @@ type Contact struct {
 	addr netip.AddrPort
 }
 
-// NewContact is the contact address of the UE of publicID at addr.
-func NewContact(publicID string, addr netip.AddrPort) Contact {
-	user, _, _ := cutUser(publicID)
-	return Contact{user: user, addr: addr}
+// NewContact is a contact address of a UE at addr. TS 24.229 5.1.1.2.1
+// item c has the UE give it a user part that is globally unique and
+// reveals nothing private, and its NOTE 3 names a time-based UUID. The
+// user part of the public identity would not do: a phone without an
+// ISIM makes that identity from its IMSI (C.2). Of the time-based
+// UUIDs, RFC 9562 5.7 prefers version 7, which holds no MAC address.
+// The UE keeps its contact for the refreshes and the removal of the
+// binding (5.1.1.4.1 item c).
+func NewContact(addr netip.AddrPort) Contact {
+	return Contact{user: uuid.NewV7().String(), addr: addr}
 }
 
 // URI is the SIP URI of c.
@@ -414,12 +421,4 @@ func (u *UE) addAccessNetworkInfo(m *sip.Message) {
 	if u.cfg.AccessNetworkInfo != "" {
 		m.Add("P-Access-Network-Info", u.cfg.AccessNetworkInfo)
 	}
-}
-
-func cutUser(uri string) (user, host string, ok bool) {
-	u, err := sip.ParseURI(uri)
-	if err != nil {
-		return "", "", false
-	}
-	return u.User, u.Host, true
 }

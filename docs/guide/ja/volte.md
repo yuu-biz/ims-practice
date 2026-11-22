@@ -220,7 +220,7 @@ INVITE    P-CSCF -> S-CSCF   P-Asserted-Identity: <sip:+12025550110@ims.mnc001.m
 MESSAGE   volte-a -> P-CSCF  From: <sip:+12025550110@ims.mnc001.mcc001.3gppnetwork.org>;tag=...
 ```
 
-Wireshark のフィルタ `sip && !(sip.CSeq.method == "REGISTER") && frame contains "sip:001010000000010@ims"` に合うパケットはありません。ほかの手順書のソフトフォンには、SIM カードがそもそもありません。識別子は IMC に入っているのと同じように設定で与えられます（TS 24.229 5.1.1.1B.1）。ソフトフォンは規制されていない公開の識別子を登録し、それをそのまま使います。
+Wireshark のフィルタ `sip && !(sip.CSeq.method == "REGISTER") && frame contains "sip:001010000000010@ims"` に合うパケットはありません。Contact にも IMSI は入りません。`sip.Contact contains "001010000000010"` に合うパケットもありません。TS 24.229 5.1.1.2.1 の項目 c は、Contact の URI のユーザー部を、世界で一意で、私的な情報を明かさないものにするよう求めています。そこで UE は自分で作った UUID をユーザー部に入れます。このプロジェクトのほかの UE も同じです。ほかの手順書のソフトフォンには、SIM カードがそもそもありません。識別子は IMC に入っているのと同じように設定で与えられます（TS 24.229 5.1.1.1B.1）。ソフトフォンは規制されていない公開の識別子を登録し、それをそのまま使います。
 
 ENUM は VoLTE の UE の番号を、一時的な識別子ではなく番号の SIP URI に変えます。`tel:+12025550112` への通話が着信してよい識別子に届くようにするためです（`deploy/compose/dns/e164.arpa.zone`）。
 

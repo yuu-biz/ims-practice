@@ -664,7 +664,7 @@ func (n *network) simulator(subscriber int) *ue.UE {
 		n.t.Fatal(err)
 	}
 	addr := tr.LocalAddr()
-	contact := ue.NewContact("sip:"+user, addr)
+	contact := ue.NewContact(addr)
 	// The UA needs the UE's ReceiveSMS before the UE exists.
 	var u atomic.Pointer[ue.UE]
 	ua, err := sip.NewUA(tr, sip.UAConfig{SentBy: addr.String(), Contact: contact.URI(),

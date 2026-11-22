@@ -42,7 +42,7 @@ func TestPhoneRegistersAgainWhenARequestGetsNoResponse(t *testing.T) {
 	fast := sip.Timers{T1: 10 * time.Millisecond, T2: 80 * time.Millisecond, T4: 50 * time.Millisecond}
 	tr := listenTransport(t)
 	addr := tr.LocalAddr()
-	contact := ue.NewContact(impu, addr)
+	contact := ue.NewContact(addr)
 	line := ue.NewLine(true)
 	ua, err := sip.NewUA(tr, ue.UAConfig(sip.UAConfig{
 		SentBy:  addr.String(),

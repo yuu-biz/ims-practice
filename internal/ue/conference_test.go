@@ -84,7 +84,7 @@ func TestConferenceOfTheUE(t *testing.T) {
 	f := startFakeFocus(t)
 	tr := listenTransport(t)
 	addr := tr.LocalAddr()
-	contact := ue.NewContact(impu, addr)
+	contact := ue.NewContact(addr)
 	ua, err := sip.NewUA(tr, ue.UAConfig(sip.UAConfig{
 		SentBy: addr.String(), Contact: contact.URI(), OnCall: func(ic *sip.IncomingCall) { ic.Reject(486) },
 		Locate: func(sip.URI) (sip.Destination, error) {

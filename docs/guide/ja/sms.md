@@ -238,7 +238,7 @@ S-CSCF はすぐに、IP-SM-GW へ直接 NOTIFY を送ります。SUBSCRIBE へ�
 ```xml
 <registration aor="sip:001010000000002@ims.mnc001.mcc001.3gppnetwork.org" id="reg1" state="active">
   <contact id="LJDTDE6YNM" state="active" event="registered" expires="3600" ...>
-    <uri>sip:001010000000002@172.28.0.101:5060</uri>
+    <uri>sip:01a20145-f43e-764a-9318-681a89f2b5e9@172.28.0.101:5060</uri>
     <unknown-param name="+g.3gpp.smsip"></unknown-param>
   </contact>
 </registration>

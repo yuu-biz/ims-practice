@@ -40,7 +40,7 @@ func (n *network) party(k int, hz float64) *party {
 		n.t.Fatal(err)
 	}
 	addr := tr.LocalAddr()
-	contact := ue.NewContact(p.impu, addr)
+	contact := ue.NewContact(addr)
 	calls := ue.CallConfig{Codecs: codecs}
 	p.ua, err = sip.NewUA(tr, ue.UAConfig(sip.UAConfig{
 		SentBy: addr.String(), Contact: contact.URI(),
@@ -455,7 +455,7 @@ func (n *network) phone(k int, hz float64) (*ue.Phone, *party) {
 		n.t.Fatal(err)
 	}
 	addr := tr.LocalAddr()
-	contact := ue.NewContact(p.impu, addr)
+	contact := ue.NewContact(addr)
 	calls := ue.CallConfig{Codecs: codecs}
 	line := ue.NewLine(true)
 	p.ua, err = sip.NewUA(tr, ue.UAConfig(sip.UAConfig{
