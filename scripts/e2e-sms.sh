@@ -46,16 +46,6 @@ ucs2_text='こんにちは、UE-A さん'
 remember_nodes
 fail=0
 
-# wait_log waits until the log of a container started with "run -d"
-# matches pattern.
-wait_log() {
-	local name="$1" pattern="$2" i
-	for i in $(seq 1 20); do
-		grep -q "$pattern" <<<"$(docker logs "$name" 2>/dev/null)" && return 0
-		sleep 1
-	done
-	return 1
-}
 # stop_ue stops a UE that "ue register" keeps registered; it
 # deregisters on SIGTERM.
 stop_ue() {
@@ -77,6 +67,7 @@ if out="$(docker compose run --no-deps --rm ue sms --status-report +12025550102 
 	echo "ok   UE 1 sent a short message to UE 2, and got a status report that it was delivered"
 else
 	echo "FAIL UE 1 to UE 2"
+	# grep finds nothing when the UE logged none of these lines.
 	grep -E '"msg":"(sms sent|submit report|status report|ue failed)"' <<<"$out" || true
 	fail=1
 fi
@@ -89,7 +80,7 @@ fi
 stop_ue ims-practice-ue2-sms
 
 docker compose run --no-deps -d --name ims-practice-ue1-sms ue register >/dev/null
-wait_log ims-practice-ue1-sms '"msg":"registered"' || true
+wait_log ims-practice-ue1-sms '"msg":"registered"' || fail=1
 if docker compose run --no-deps --rm ue2 sms "${ue2[@]}" +12025550101 "$ucs2_text" >/dev/null 2>&1; then
 	echo "ok   UE 2 sent a short message in Japanese to UE 1"
 else
@@ -106,7 +97,10 @@ else
 fi
 stop_ue ims-practice-ue1-sms
 
-# A number that no subscriber has (TS 24.011 E-2, cause 1).
+# A number that no subscriber has (TS 24.011 E-2, cause 1). "ue sms"
+# ends with an error when the SC refuses the short message, as here, or
+# when no status report comes in time; the checks read its log, hence
+# "|| true".
 out="$(docker compose run --no-deps --rm ue sms +12025550198 'Nobody has this number.' 2>&1 || true)"
 if grep -q 'the SC refused the short message: RP-Cause 1, TP-FCS 0xc3' <<<"$out"; then
 	echo "ok   a short message to an unknown number was refused with RP-Cause 1"
@@ -125,7 +119,6 @@ else
 	fail=1
 fi
 same_nodes
-sleep 1
 
 pcap="$(docker compose exec -T capture sh -c 'ls -t /captures/ims-*.pcap | head -n 1' | tr -d '\r')"
 echo "reading $pcap"
@@ -154,6 +147,10 @@ rp_data_mt='gsm_a.rp.msg_type == 0x01'
 rp_ack_mo='gsm_a.rp.msg_type == 0x02'
 rp_ack_mt='gsm_a.rp.msg_type == 0x03'
 rp_error_mt='gsm_a.rp.msg_type == 0x05'
+
+# The checks read the capture up to the status report for the user who
+# is not registered.
+await "the status report to UE 1 for +12025550103" "$message && ip.dst == $ue1 && gsm_sms.tp-ra == \"12025550103\""
 
 # The IP-SM-GW opens Sh, and nothing else, to the HSS.
 cer="diameter.cmd.code == 257 && $req && ip.src == $ipsmgw"
