@@ -41,6 +41,14 @@ type Config struct {
 	// HostAccess, when set, gives UEs behind the host's NAT the
 	// published address of the relay.
 	HostAccess *HostAccess
+	// SweepInterval is how often this instance claims the expiries that
+	// are due, and so how late one may be handled; zero means
+	// ims.SweepInterval. Tests shorten it.
+	SweepInterval time.Duration
+	// ExpiryLease is how long a claimed expiry is this instance's alone,
+	// after which another instance may claim it; zero means
+	// ims.ExpiryLease. Tests shorten it.
+	ExpiryLease time.Duration
 }
 
 // Association is the IP association of TS 24.229 5.2.2.3 for SIP Digest
@@ -103,15 +111,73 @@ type RegSubscription struct {
 	// NOTIFY that carries no expires stands for (TS 24.229 5.1.1.3 item
 	// 2); zero until a 2xx has said one.
 	Granted time.Duration
-	// Subscribed is when the initial SUBSCRIBE went out, which tells how
-	// long a subscription whose dialog no NOTIFY has confirmed has been
-	// waiting.
-	Subscribed time.Time
+	// NotifyDeadline is when Timer N runs out for the SUBSCRIBE that went
+	// out last, the initial one or a refresh (RFC 6665 4.1.2.4). Every
+	// SUBSCRIBE sets it, and the NOTIFY that follows clears it, so a
+	// deadline that is set and past means that no NOTIFY has come to any
+	// instance since that SUBSCRIBE.
+	NotifyDeadline time.Time
+	// RefreshAt is when the next refresh falls due (TS 24.229 5.2.3),
+	// counted from the duration the last NOTIFY said the subscription has
+	// (RFC 6665 4.1.3). It is the zero time while no refresh is to be
+	// sent: before the first NOTIFY, after a refresh has gone out and
+	// until the NOTIFY that answers it, and for a subscription too short
+	// for a refresh to come before its end.
+	RefreshAt time.Time
 	// Expires is when the subscription ends unless a refresh comes
 	// first. The Store forgets it then. Only a 2xx or a NOTIFY moves it:
 	// a refresh that goes unanswered must not keep the subscription past
 	// the time the notifier drops it.
 	Expires time.Time
+}
+
+// ExpiryKind names one of the expiries that the P-CSCF has to act on
+// when its time comes: each of them sends a SUBSCRIBE or forgets a
+// subscription, so the item cannot simply go away by itself. The Store
+// keeps the items of one kind in a time index of its own, named after
+// the kind, and hands out each expiry that is due to one instance at a
+// time (ClaimDue), so that the expiries of an instance that has stopped
+// are handled by another one. The IP association and the SA table have
+// no such expiry: an association that ends takes no more requests from
+// the UE, and the Store forgets both at their time (endAssociation).
+type ExpiryKind string
+
+const (
+	// RegEventNotifyExpiry is Timer N (RFC 6665 4.1.2.4): the NOTIFY that
+	// must follow a SUBSCRIBE has not come, so the subscription never
+	// came about or is gone at the notifier. Its item is the
+	// subscription, named by the private identity, due at its
+	// NotifyDeadline.
+	RegEventNotifyExpiry ExpiryKind = "reg-event-notify"
+	// RegEventRefreshExpiry is the refresh of a subscription falling due
+	// (TS 24.229 5.2.3). Its item is the subscription, due at its
+	// RefreshAt.
+	RegEventRefreshExpiry ExpiryKind = "reg-event-refresh"
+)
+
+// ExpiryKinds are all the kinds, which one sweep goes through.
+var ExpiryKinds = []ExpiryKind{RegEventNotifyExpiry, RegEventRefreshExpiry}
+
+// Expiry is one expiry that an instance has claimed: which item is due,
+// and until when this instance alone acts on it.
+type Expiry struct {
+	Kind ExpiryKind
+	// PrivateIdentity names the subscription, in the form in which the
+	// Store compares one.
+	PrivateIdentity string
+	// Until is when the claim runs out, after which another instance may
+	// claim the same item. It also tells this claim from a later one on
+	// the same item, so that the late Done of an instance that was held
+	// up takes nothing away from the instance that has the item now.
+	Until time.Time
+}
+
+var _ ims.Expiry = Expiry{}
+
+func (e Expiry) ClaimedUntil() time.Time { return e.Until }
+
+func (e Expiry) LogFields() []any {
+	return []any{"kind", string(e.Kind), "private_identity", e.PrivateIdentity}
 }
 
 // Store keeps the associations and the dialogs. It is an interface so
@@ -184,8 +250,32 @@ type Store interface {
 	// belongs to no subscription of the P-CSCF.
 	RegSubscriptionOfDialog(ctx context.Context, callID string) (RegSubscription, bool, error)
 	// DeleteRegSubscription removes the subscription of a private
-	// identity.
+	// identity, and its expiries with it.
 	DeleteRegSubscription(ctx context.Context, privateID string) error
+	// DeleteRegSubscriptionIfWaiting removes the subscription of
+	// privateID if its dialog still has callID and it still waits for a
+	// NOTIFY at deadline, and reports whether it did. The instance that
+	// handles a Timer N removes the subscription this way, so that it
+	// never takes away one that a NOTIFY confirmed, or one that a later
+	// SUBSCRIBE made, between its read and the removal.
+	DeleteRegSubscriptionIfWaiting(ctx context.Context, privateID, callID string, deadline time.Time) (bool, error)
+	// ClaimDue claims the expiries of kind that are due at now, at most
+	// limit of them and the ones due longest first, each until now plus
+	// lease. While an expiry is claimed it is not due, and no other
+	// ClaimDue gives it out; when its claim runs out without Done, it is
+	// due again, for whichever instance asks next.
+	//
+	// A claim is no proof that the item has expired: the subscription may
+	// have been refreshed, or a NOTIFY may have come, after it was due.
+	// The caller therefore reads the subscription and checks the time it
+	// carries, as the handlers of the P-CSCF do.
+	ClaimDue(ctx context.Context, kind ExpiryKind, now time.Time, lease time.Duration, limit int) ([]Expiry, error)
+	// Done takes the item of a claimed expiry out of its index, once the
+	// caller has handled it. A claim that has ended in the meantime, by a
+	// write that rescheduled the item, by its removal, or because it ran
+	// out and another instance has it now, leaves the index as it is;
+	// that is the ordinary end of an expiry, not a failure.
+	Done(ctx context.Context, e Expiry) error
 	// SecurityAssociations returns the entry of the SA table for a UE's
 	// address and protected server port, until it expires;
 	// PutSecurityAssociations replaces it.
@@ -214,6 +304,9 @@ type MemoryStore struct {
 	// of a dialog, so that neither lookup scans.
 	regSubscriptions        map[string]RegSubscription
 	regSubscriptionOfDialog map[string]string
+	// due holds the time index of each kind of expiry, as a store
+	// outside the process holds one. A member is a private identity.
+	due map[ExpiryKind]*ims.DueIndex[string]
 	saTable
 }
 
@@ -221,7 +314,11 @@ func NewMemoryStore() *MemoryStore {
 	return &MemoryStore{associations: map[sip.Destination]Association{}, dialogs: map[DialogKey]Dialog{},
 		dialogOfSession: map[policy.SessionID]DialogKey{}, associationOfSession: map[policy.SessionID]sip.Destination{},
 		associationOfContact: map[contactKey]sip.Destination{},
-		regSubscriptions:     map[string]RegSubscription{}, regSubscriptionOfDialog: map[string]string{}}
+		regSubscriptions:     map[string]RegSubscription{}, regSubscriptionOfDialog: map[string]string{},
+		due: map[ExpiryKind]*ims.DueIndex[string]{
+			RegEventNotifyExpiry:  ims.NewDueIndex[string](),
+			RegEventRefreshExpiry: ims.NewDueIndex[string](),
+		}}
 }
 
 func keyOfContact(contact string) (contactKey, bool) {
@@ -397,7 +494,8 @@ func (s *MemoryStore) UpdateRegSubscription(_ context.Context, privateID string,
 }
 
 // putRegSubscription writes sub under key and keeps the index by the
-// Call-ID of its dialog in step. s.mu is held.
+// Call-ID of its dialog and the time indexes of its expiries in step.
+// s.mu is held.
 func (s *MemoryStore) putRegSubscription(key string, sub RegSubscription) {
 	callID := sub.Dialog.ID.CallID
 	sub.Dialog.RouteSet = append([]string(nil), sub.Dialog.RouteSet...)
@@ -406,6 +504,8 @@ func (s *MemoryStore) putRegSubscription(key string, sub RegSubscription) {
 	}
 	s.regSubscriptions[key] = sub
 	s.regSubscriptionOfDialog[callID] = key
+	s.schedule(RegEventNotifyExpiry, key, sub.NotifyDeadline)
+	s.schedule(RegEventRefreshExpiry, key, sub.RefreshAt)
 	time.AfterFunc(time.Until(sub.Expires), func() {
 		s.mu.Lock()
 		defer s.mu.Unlock()
@@ -443,6 +543,21 @@ func (s *MemoryStore) DeleteRegSubscription(_ context.Context, privateID string)
 	return nil
 }
 
+// DeleteRegSubscriptionIfWaiting removes the subscription only while it
+// is the one the caller read. The lock of the store stands for the
+// compare and swap that an external store needs.
+func (s *MemoryStore) DeleteRegSubscriptionIfWaiting(_ context.Context, privateID, callID string, deadline time.Time) (bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	key := privateKey(privateID)
+	sub, live := s.regSubscription(key)
+	if !live || sub.Dialog.ID.CallID != callID || !sub.NotifyDeadline.Equal(deadline) {
+		return false, nil
+	}
+	s.deleteRegSubscription(key)
+	return true, nil
+}
+
 func (s *MemoryStore) regSubscription(key string) (RegSubscription, bool) {
 	sub, ok := s.regSubscriptions[key]
 	if !ok || !time.Now().Before(sub.Expires) {
@@ -462,6 +577,45 @@ func (s *MemoryStore) deleteRegSubscription(key string) {
 	if s.regSubscriptionOfDialog[sub.Dialog.ID.CallID] == key {
 		delete(s.regSubscriptionOfDialog, sub.Dialog.ID.CallID)
 	}
+	// The expiries of a subscription that is gone go with it, claimed or
+	// not: nothing is left for an instance to act on.
+	for _, ix := range s.due {
+		ix.Remove(key)
+	}
+}
+
+// schedule puts the subscription of key in the index of kind, due at at,
+// and ends any claim on it. The zero time is no expiry of that kind, and
+// takes it out of the index. s.mu is held.
+func (s *MemoryStore) schedule(kind ExpiryKind, key string, at time.Time) {
+	if at.IsZero() {
+		s.due[kind].Remove(key)
+		return
+	}
+	s.due[kind].Set(key, at)
+}
+
+func (s *MemoryStore) ClaimDue(_ context.Context, kind ExpiryKind, now time.Time, lease time.Duration, limit int) ([]Expiry, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	ix, ok := s.due[kind]
+	if !ok {
+		return nil, nil
+	}
+	var claimed []Expiry
+	for _, due := range ix.ClaimDue(now, lease, limit) {
+		claimed = append(claimed, Expiry{Kind: kind, PrivateIdentity: due.Member, Until: due.Until})
+	}
+	return claimed, nil
+}
+
+func (s *MemoryStore) Done(_ context.Context, e Expiry) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if ix, ok := s.due[e.Kind]; ok {
+		ix.RemoveClaimed(privateKey(e.PrivateIdentity), e.Until)
+	}
+	return nil
 }
 
 type PCSCF struct {
@@ -491,16 +645,14 @@ type PCSCF struct {
 	// regEventRefresh gives, for the duration a reg event subscription
 	// has, when to refresh it (TS 24.229 5.2.3), and notifyWait is Timer
 	// N, how long a SUBSCRIBE waits for the NOTIFY that must follow it:
-	// 64*T1 (RFC 6665 4.1.2.2). Both timers run in the process that sent
-	// the SUBSCRIBE.
+	// 64*T1 (RFC 6665 4.1.2.2). Both times are written into the stored
+	// subscription, and the sweep of whichever instance claims one acts
+	// on it (regevent.go).
 	regEventRefresh func(time.Duration) time.Duration
 	notifyWait      time.Duration
-	// refreshTimers are those refresh timers, by private identity: one
-	// per subscription, so that each NOTIFY replaces the timer the NOTIFY
-	// before it set rather than adding another. The lock is held only to
-	// read or change the map.
-	refreshMu     sync.Mutex
-	refreshTimers map[string]*time.Timer
+	// stopSweep ends the sweep of this instance and waits for the
+	// handlers it started.
+	stopSweep func()
 
 	// ackWait is how long a release waits for the ACK of a 2xx (release):
 	// 64*T1, after which the callee itself gives up waiting for the ACK
@@ -508,17 +660,65 @@ type PCSCF struct {
 	ackWait time.Duration
 }
 
-// New makes a P-CSCF. relay may be nil, and then RTP goes between the
-// UEs directly. Both stacks of the P-CSCF need its Screen in their
-// sip.Config, and the one on the unprotected port its AdmitUnprotected
-// as well.
+// New makes a P-CSCF and starts its sweep, which handles the expiries of
+// the reg event subscriptions that are due until Close. relay may be
+// nil, and then RTP goes between the UEs directly. Both stacks of the
+// P-CSCF need its Screen in their sip.Config, and the one on the
+// unprotected port its AdmitUnprotected as well.
 func New(cfg Config, locator Locator, store Store, relay Relay, log *slog.Logger) *PCSCF {
+	if cfg.SweepInterval == 0 {
+		cfg.SweepInterval = ims.SweepInterval
+	}
+	if cfg.ExpiryLease == 0 {
+		cfg.ExpiryLease = ims.ExpiryLease
+	}
 	admitted := newAdmissions()
-	return &PCSCF{cfg: cfg, locator: locator, store: indexedStore{Store: store, admissions: admitted}, admissions: admitted,
+	p := &PCSCF{cfg: cfg, locator: locator, store: indexedStore{Store: store, admissions: admitted}, admissions: admitted,
 		relay: relay, log: log, setups: map[DialogKey]*setup{},
 		regEventRefresh: ims.RefreshAfter, notifyWait: 64 * sip.DefaultTimers().T1,
-		refreshTimers: map[string]*time.Timer{},
-		ackWait:       64 * sip.DefaultTimers().T1}
+		ackWait: 64 * sip.DefaultTimers().T1}
+	p.stopSweep = p.sweep()
+	return p
+}
+
+// Close stops the sweep of this instance and waits for the handlers it
+// started, whose requests to the Store it ends. An expiry that this
+// instance had claimed and not handled is handled by another instance of
+// the P-CSCF once the claim runs out.
+func (p *PCSCF) Close() { p.stopSweep() }
+
+// sweep starts the sweep of this instance and returns the function that
+// stops it. Each handler reads the subscription and checks the time it
+// carries, since a NOTIFY or a refresh may have moved it since the
+// expiry came up; it returns the failure of the Store that left the
+// subscription as it was, so that an instance claims the expiry again
+// once the claim has run out.
+func (p *PCSCF) sweep() (stop func()) {
+	kinds := make([]string, 0, len(ExpiryKinds))
+	for _, kind := range ExpiryKinds {
+		kinds = append(kinds, string(kind))
+	}
+	return ims.Sweep[Expiry]{
+		Kinds: kinds, Interval: p.cfg.SweepInterval, Lease: p.cfg.ExpiryLease,
+		Claim: func(ctx context.Context, kind string, now time.Time, lease time.Duration, limit int) ([]Expiry, error) {
+			return p.store.ClaimDue(ctx, ExpiryKind(kind), now, lease, limit)
+		},
+		Handle: p.handleExpiry,
+		Done:   p.store.Done,
+		Log:    p.log,
+	}.Start()
+}
+
+// handleExpiry does what one claimed expiry of a reg event subscription
+// calls for (regevent.go).
+func (p *PCSCF) handleExpiry(ctx context.Context, e Expiry) error {
+	switch e.Kind {
+	case RegEventNotifyExpiry:
+		return p.regEventNotifyWaitOver(ctx, e.PrivateIdentity)
+	case RegEventRefreshExpiry:
+		return p.refreshRegEventDue(ctx, e.PrivateIdentity)
+	}
+	return nil
 }
 
 // OnRequest is the sip.Config.OnRequest of the P-CSCF, on its

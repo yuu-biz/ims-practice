@@ -233,6 +233,9 @@ func run(configPath string, log *slog.Logger) error {
 		}
 		roleLog := log.With("role", config.RolePCSCF)
 		p := pcscf.New(pc, resolver, pcscfStore(stores, roleLog), relay, roleLog)
+		// The sweep that handles the expiries of the reg event
+		// subscriptions runs until the node stops.
+		defer p.Close()
 		// Without a PCRF in the diameter section the P-CSCF asks no
 		// policy control of the network. The PCRF serves
 		// the network the P-CSCF is in, so its realm is the node's own.

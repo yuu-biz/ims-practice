@@ -152,6 +152,7 @@ func startIMS(t *testing.T, n int) *network {
 	net.dns.add(domain, newStack(t, sip.Timers{}, i.OnRequest).LocalAddr())
 
 	p := pcscf.New(pcscf.Config{Host: "pcscf." + domain, Port: 5060, VisitedNetworkID: domain}, net.dns, pcscf.NewMemoryStore(), nil, quiet())
+	t.Cleanup(p.Close)
 	pcscfStack := newStackConfig(t, sip.Config{Screen: p.Screen, Admit: p.AdmitUnprotected, OnRequest: p.OnRequest})
 	p.SetStack(pcscfStack)
 	net.pcscf = pcscfStack.LocalAddr()

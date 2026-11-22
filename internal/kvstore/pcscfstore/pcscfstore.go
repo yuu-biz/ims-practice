@@ -15,6 +15,10 @@
 //	reg-subscription-of-dialog:<Call-ID>          index: the private identity of the subscription
 //	sa:<address>                                  SecurityAssociations, time to live until Expires
 //
+// The two expiries of a reg event subscription, Timer N and the time of
+// its next refresh, are time indexes named after their kinds
+// (pcscf.ExpiryKinds); a member is a private identity.
+//
 // Every lookup is a read of one or two keys. AssociationOfContact reads
 // the index item of the host, port and user of the contact, which is
 // what it compares.
@@ -336,12 +340,117 @@ func (s *Store) RegSubscriptionOfDialog(ctx context.Context, callID string) (pcs
 // and reports that there is none.
 var errNoChange = errors.New("pcscfstore: the subscription was not changed")
 
-// CreateRegSubscription writes the index item of the dialog, then the
-// subscription itself, but only if the item is still at the version that
-// held no live subscription. Of several instances that subscribe for one
-// user at once, exactly one writes; the losers leave an index item that
-// names a private identity whose subscription has another Call-ID, which
-// is a miss (see RegSubscriptionOfDialog).
+// ClaimDue claims at most limit members of the time index of kind that
+// are due at now, each for lease (kvstore.Store.ClaimDue). Its name is
+// the name of the kind.
+func (s *Store) ClaimDue(ctx context.Context, kind pcscf.ExpiryKind, now time.Time, lease time.Duration, limit int) ([]pcscf.Expiry, error) {
+	claims, err := s.c.ClaimDue(ctx, string(kind), now, lease, limit)
+	if err != nil {
+		return nil, err
+	}
+	expiries := make([]pcscf.Expiry, 0, len(claims))
+	for _, c := range claims {
+		expiries = append(expiries, pcscf.Expiry{Kind: kind, PrivateIdentity: c.Member, Until: c.Until})
+	}
+	return expiries, nil
+}
+
+// Done takes the item of a claimed expiry out of its index. A claim that
+// has ended, which kvstore.Done reports with ErrClaimLost, leaves the
+// index as it is: the subscription has been rescheduled or removed with
+// its member, or the claim ran out and another instance has it now.
+func (s *Store) Done(ctx context.Context, e pcscf.Expiry) error {
+	err := s.c.Done(ctx, kvstore.Claim{Index: s.c.Index(string(e.Kind)), Member: privateKey(e.PrivateIdentity), Until: e.Until})
+	if errors.Is(err, kvstore.ErrClaimLost) {
+		return nil
+	}
+	return err
+}
+
+// scheduleExpiries puts the subscription in the time index of each
+// expiry it has, at the time it carries for that kind, which ends any
+// claim on that member. It runs before the subscription itself is
+// written, so that no stored time is ever left without a member to
+// bring it up.
+//
+// A member of a kind the subscription no longer has is left to
+// removeIdleExpiries, after the write. Between the two, and after a
+// write that failed, a member may name a time that the subscription does
+// not carry: the instance that claims it reads the subscription, finds
+// nothing due, and leaves it alone, and its Done takes the member out.
+func (s *Store) scheduleExpiries(ctx context.Context, sub pcscf.RegSubscription) error {
+	key := privateKey(sub.PrivateIdentity)
+	for _, e := range expiriesOf(sub) {
+		if e.at.IsZero() {
+			continue
+		}
+		if err := s.c.WriteDue(ctx, string(e.kind), key, e.at); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// removeIdleExpiries takes the subscription out of the index of each
+// expiry it no longer has. It runs after the subscription is written,
+// for the same reason that the removal of an index item follows the
+// removal of the main item: what is left when it fails is a member that
+// names nothing, not a time that nothing brings up.
+func (s *Store) removeIdleExpiries(ctx context.Context, sub pcscf.RegSubscription) error {
+	key := privateKey(sub.PrivateIdentity)
+	for _, e := range expiriesOf(sub) {
+		if !e.at.IsZero() {
+			continue
+		}
+		if err := s.c.RemoveDue(ctx, string(e.kind), key); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// expiriesOf is each kind of expiry of a subscription with the time the
+// subscription carries for it, the zero time for the kinds it has none
+// of.
+func expiriesOf(sub pcscf.RegSubscription) []struct {
+	kind pcscf.ExpiryKind
+	at   time.Time
+} {
+	return []struct {
+		kind pcscf.ExpiryKind
+		at   time.Time
+	}{
+		{pcscf.RegEventNotifyExpiry, sub.NotifyDeadline},
+		{pcscf.RegEventRefreshExpiry, sub.RefreshAt},
+	}
+}
+
+// removeExpiries takes the subscription of a private identity out of
+// both time indexes, claimed or not.
+func (s *Store) removeExpiries(ctx context.Context, privateID string) error {
+	key := privateKey(privateID)
+	for _, kind := range pcscf.ExpiryKinds {
+		if err := s.c.RemoveDue(ctx, string(kind), key); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// CreateRegSubscription writes the index item of the dialog and the
+// member of Timer N, then the subscription itself, but only if the item
+// is still at the version that held no live subscription. Of several
+// instances that subscribe for one user at once, exactly one writes; the
+// losers leave an index item that names a private identity whose
+// subscription has another Call-ID, which is a miss (see
+// RegSubscriptionOfDialog).
+//
+// A new subscription waits for its first NOTIFY, so Timer N is the one
+// expiry it has. An instance whose write loses therefore takes no member
+// of the refresh away from the instance that won, and adds nothing after
+// the conflict: the Timer N member it wrote names the same user as the
+// winner's, a moment apart, and the instance that claims it reads the
+// winner's subscription.
 func (s *Store) CreateRegSubscription(ctx context.Context, sub pcscf.RegSubscription) (bool, error) {
 	var old pcscf.RegSubscription
 	version, err := kvjson.Read(ctx, s.c, s.subscriptionKey(sub.PrivateIdentity), &old)
@@ -357,6 +466,9 @@ func (s *Store) CreateRegSubscription(ctx context.Context, sub pcscf.RegSubscrip
 	if err := s.c.WriteIndex(ctx, s.subscriptionDialogKey(sub.Dialog.ID.CallID), privateKey(sub.PrivateIdentity), ttl); err != nil {
 		return false, err
 	}
+	if err := s.scheduleExpiries(ctx, sub); err != nil {
+		return false, err
+	}
 	_, err = kvjson.CompareAndSwap(ctx, s.c, s.subscriptionKey(sub.PrivateIdentity), version, sub, ttl)
 	if errors.Is(err, kvstore.ErrConflict) {
 		return false, nil
@@ -366,27 +478,58 @@ func (s *Store) CreateRegSubscription(ctx context.Context, sub pcscf.RegSubscrip
 
 // UpdateRegSubscription is a read, change, and compare and swap, again
 // from the new value when another instance wrote first. The Call-ID of
-// the dialog does not change, so the index item stands.
+// the dialog does not change, so the index item of the dialog stands.
+//
+// The members of the time indexes go in before the subscription that
+// carries their times, as everywhere in this package, so that a failure
+// between the two leaves a member without the item it belongs to rather
+// than an item whose expiry no member would bring up. A caller that
+// stands down after a round that wrote members puts them back to the
+// times the stored subscription carries.
 func (s *Store) UpdateRegSubscription(ctx context.Context, privateID string, change func(*pcscf.RegSubscription) bool) (pcscf.RegSubscription, bool, error) {
-	sub, err := kvjson.Modify(ctx, s.c, s.subscriptionKey(privateID),
-		func(v pcscf.RegSubscription) time.Duration { return s.c.TTLUntil(v.Expires) },
-		func(v *pcscf.RegSubscription) error {
-			if !s.c.Now().Before(v.Expires) || !change(v) {
-				return errNoChange
+	key := s.subscriptionKey(privateID)
+	scheduled := false
+	for range maxAttempts {
+		var stored pcscf.RegSubscription
+		version, err := kvjson.Read(ctx, s.c, key, &stored)
+		switch {
+		case errors.Is(err, kvstore.ErrNotFound):
+			return pcscf.RegSubscription{}, false, nil
+		case err != nil:
+			return pcscf.RegSubscription{}, false, err
+		}
+		sub := stored
+		if !s.c.Now().Before(sub.Expires) || !change(&sub) {
+			if scheduled {
+				if err := s.scheduleExpiries(ctx, stored); err != nil {
+					return pcscf.RegSubscription{}, false, err
+				}
 			}
-			return nil
-		})
-	switch {
-	case errors.Is(err, kvstore.ErrNotFound), errors.Is(err, errNoChange):
-		return pcscf.RegSubscription{}, false, nil
-	case err != nil:
-		return pcscf.RegSubscription{}, false, err
+			return pcscf.RegSubscription{}, false, nil
+		}
+		if err := s.scheduleExpiries(ctx, sub); err != nil {
+			return pcscf.RegSubscription{}, false, err
+		}
+		scheduled = true
+		_, err = kvjson.CompareAndSwap(ctx, s.c, key, version, sub, s.c.TTLUntil(sub.Expires))
+		switch {
+		case err == nil:
+			return sub, true, s.removeIdleExpiries(ctx, sub)
+		case !errors.Is(err, kvstore.ErrConflict):
+			return pcscf.RegSubscription{}, false, err
+		}
+		// Another instance wrote first: read again and decide anew. The
+		// round that wins writes the members of its own value.
 	}
-	return sub, true, nil
+	return pcscf.RegSubscription{}, false, kvjson.ErrGaveUp
 }
 
-// DeleteRegSubscription removes the subscription, then the index item
-// of its dialog.
+// maxAttempts bounds the rounds of UpdateRegSubscription that others
+// keep overtaking, as kvjson bounds its own.
+const maxAttempts = 100
+
+// DeleteRegSubscription removes the subscription, then its expiries and
+// the index item of its dialog.
 func (s *Store) DeleteRegSubscription(ctx context.Context, privateID string) error {
 	var old pcscf.RegSubscription
 	ok, err := read(ctx, s.c, s.subscriptionKey(privateID), &old)
@@ -399,7 +542,38 @@ func (s *Store) DeleteRegSubscription(ctx context.Context, privateID string) err
 	if !ok {
 		return nil
 	}
+	if err := s.removeExpiries(ctx, privateID); err != nil {
+		return err
+	}
 	return s.c.RemoveIndexIf(ctx, s.subscriptionDialogKey(old.Dialog.ID.CallID), privateKey(privateID))
+}
+
+// DeleteRegSubscriptionIfWaiting removes the subscription only while it
+// is still at the version the caller read: a NOTIFY or a new SUBSCRIBE
+// that came in between changed it, and the removal then takes nothing
+// away.
+func (s *Store) DeleteRegSubscriptionIfWaiting(ctx context.Context, privateID, callID string, deadline time.Time) (bool, error) {
+	var sub pcscf.RegSubscription
+	version, err := kvjson.Read(ctx, s.c, s.subscriptionKey(privateID), &sub)
+	switch {
+	case errors.Is(err, kvstore.ErrNotFound):
+		return false, nil
+	case err != nil:
+		return false, err
+	case sub.Dialog.ID.CallID != callID || !sub.NotifyDeadline.Equal(deadline):
+		return false, nil
+	}
+	err = s.c.RemoveIf(ctx, s.subscriptionKey(privateID), version)
+	switch {
+	case errors.Is(err, kvstore.ErrConflict):
+		return false, nil
+	case err != nil:
+		return false, err
+	}
+	if err := s.removeExpiries(ctx, privateID); err != nil {
+		return true, err
+	}
+	return true, s.c.RemoveIndexIf(ctx, s.subscriptionDialogKey(callID), privateKey(privateID))
 }
 
 func (s *Store) saKey(ue netip.AddrPort) string { return s.c.Key("sa", ue.String()) }

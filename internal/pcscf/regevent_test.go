@@ -4,6 +4,7 @@ import (
 	"context"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -326,19 +327,20 @@ func TestARecreatedPCSCFKeepsTheRegEventSubscription(t *testing.T) {
 	store := NewMemoryStore()
 	// Every instance answers at the same host and port: the URI in the
 	// Contact of the SUBSCRIBE, where the NOTIFYs go.
-	newInstance := func(refresh func(time.Duration) time.Duration) *sip.Stack {
+	newInstance := func() (*PCSCF, *sip.Stack) {
 		t.Helper()
-		p := New(Config{Host: "pcscf." + domain, Port: 5060, VisitedNetworkID: domain},
+		p := New(Config{Host: "pcscf." + domain, Port: 5060, VisitedNetworkID: domain,
+			// The sweep comes round often, so that the test does not wait
+			// a second for the refresh that falls due.
+			SweepInterval: 20 * time.Millisecond},
 			locatorFunc(func(string) []sip.Destination {
 				return []sip.Destination{{Transport: sip.UDP, Addr: home.stack.LocalAddr()}}
 			}),
 			store, nil, quiet())
-		if refresh != nil {
-			p.regEventRefresh = refresh
-		}
+		t.Cleanup(p.Close)
 		stack := newPCSCFStack(t, p)
 		p.SetStack(stack)
-		return stack
+		return p, stack
 	}
 	ue := newStackWith(t, fast, func(st *sip.ServerTransaction) { st.Respond(sip.NewResponse(st.Request, 200, sip.NewTag())) })
 	register := func(to *sip.Stack, cseq string) {
@@ -368,7 +370,7 @@ func TestARecreatedPCSCFKeepsTheRegEventSubscription(t *testing.T) {
 		}
 	}
 
-	first := newInstance(nil)
+	firstPCSCF, first := newInstance()
 	register(first, "1")
 	nextSubscribe("initial SUBSCRIBE")
 	sub := <-home.accepted
@@ -378,13 +380,13 @@ func TestARecreatedPCSCFKeepsTheRegEventSubscription(t *testing.T) {
 
 	// The instance stops, and another takes its place at the same
 	// address, with nothing of its own but what the Store holds.
+	firstPCSCF.Close()
 	first.Close()
-	second := newInstance(func(time.Duration) time.Duration { return time.Millisecond })
+	_, second := newInstance()
 
 	// The new instance finds the subscription of the user and leaves it:
-	// it starts no second one, and it refreshes none of its own accord,
-	// even with its own refresh set to fall due at once. The timer of the
-	// refresh went with the process that took the last NOTIFY.
+	// it starts no second one, and the refresh of the one there is is not
+	// due yet.
 	register(second, "2")
 	select {
 	case m := <-home.subscribes:
@@ -392,11 +394,15 @@ func TestARecreatedPCSCFKeepsTheRegEventSubscription(t *testing.T) {
 	case <-time.After(200 * time.Millisecond):
 	}
 
-	// A NOTIFY does give it the subscription to keep: the instance that
-	// takes one starts the timer for the next refresh, and refreshes
-	// within the dialog an earlier process opened.
-	if resp := home.notify(t, sub, second, registration(reginfo.Active, reginfo.Active, reginfo.Refreshed)); resp.StatusCode != 200 {
-		t.Fatalf("a NOTIFY to the recreated instance was answered %d", resp.StatusCode)
+	// The time of that refresh is in the Store, not in the process that
+	// took the last NOTIFY: when it comes, the instance that is there now
+	// sends the refresh, within the dialog that an earlier process
+	// opened, and without waiting for a NOTIFY of its own.
+	if _, ok, err := store.UpdateRegSubscription(context.Background(), impi, func(s *RegSubscription) bool {
+		s.RefreshAt = time.Now()
+		return true
+	}); err != nil || !ok {
+		t.Fatalf("the refresh of the subscription was not brought forward: %v, %v", ok, err)
 	}
 	select {
 	case m := <-home.subscribes:
@@ -442,11 +448,15 @@ type regEventFixture struct {
 func newRegEventFixture(t *testing.T, refresh func(time.Duration) time.Duration, notifyWait time.Duration) *regEventFixture {
 	t.Helper()
 	f := &regEventFixture{home: newFakeHome(t), store: NewMemoryStore()}
-	f.p = New(Config{Host: "pcscf." + domain, Port: 5060, VisitedNetworkID: domain},
+	f.p = New(Config{Host: "pcscf." + domain, Port: 5060, VisitedNetworkID: domain,
+		// The sweep comes round often, so that the tests do not wait a
+		// second for each expiry they shorten.
+		SweepInterval: 20 * time.Millisecond},
 		locatorFunc(func(string) []sip.Destination {
 			return []sip.Destination{{Transport: sip.UDP, Addr: f.home.stack.LocalAddr()}}
 		}),
 		f.store, nil, quiet())
+	t.Cleanup(f.p.Close)
 	if refresh != nil {
 		f.p.regEventRefresh = refresh
 	}
@@ -510,12 +520,12 @@ func (f *regEventFixture) nextSubscribe(t *testing.T, what string) *sip.Message 
 	}
 }
 
-// TestThePCSCFRefreshesItsRegEventSubscriptionOnItsOwnTimer: the refresh
+// TestThePCSCFRefreshesItsRegEventSubscriptionWhenItFallsDue: the refresh
 // of TS 24.229 5.2.3 falls due at the time counted from the duration the
 // subscription has, which its NOTIFY gives, and not at a REGISTER of the
 // UE. The instance that is running sends it within the dialog, straight
 // to the S-CSCF.
-func TestThePCSCFRefreshesItsRegEventSubscriptionOnItsOwnTimer(t *testing.T) {
+func TestThePCSCFRefreshesItsRegEventSubscriptionWhenItFallsDue(t *testing.T) {
 	counted := make(chan time.Duration, 4)
 	f := newRegEventFixture(t, func(d time.Duration) time.Duration {
 		counted <- d
@@ -687,10 +697,10 @@ func TestARecreatedPCSCFReplacesASubscriptionThatGotNoNotify(t *testing.T) {
 	// NOTIFY left behind: a dialog with no remote tag, sent long enough
 	// ago that Timer N would have fired.
 	stale := RegSubscription{PrivateIdentity: impi, PublicIdentity: impu,
-		Dialog:     sip.Dialog{ID: sip.DialogID{CallID: "gone", LocalTag: "l"}, LocalSeq: 1},
-		Requested:  3761 * time.Second,
-		Subscribed: time.Now().Add(-time.Minute),
-		Expires:    time.Now().Add(time.Hour)}
+		Dialog:         sip.Dialog{ID: sip.DialogID{CallID: "gone", LocalTag: "l"}, LocalSeq: 1},
+		Requested:      3761 * time.Second,
+		NotifyDeadline: time.Now().Add(-time.Minute),
+		Expires:        time.Now().Add(time.Hour)}
 	if ok, err := f.store.CreateRegSubscription(context.Background(), stale); err != nil || !ok {
 		t.Fatalf("CreateRegSubscription = %v, %v", ok, err)
 	}
@@ -703,5 +713,72 @@ func TestARecreatedPCSCFReplacesASubscriptionThatGotNoNotify(t *testing.T) {
 	stored, ok, err := f.store.RegSubscription(context.Background(), impi)
 	if err != nil || !ok || stored.Dialog.ID.CallID != m.Get("Call-ID") {
 		t.Errorf("the stored subscription = %+v, %v, %v; want the new one", stored, ok, err)
+	}
+}
+
+// confirmOnRead is the Store of an instance whose Timer N comes up at
+// the moment the NOTIFY it was waiting for reaches another instance: the
+// read of the handler gives the subscription that still waits, and the
+// NOTIFY lands before the handler can act on it.
+type confirmOnRead struct {
+	Store
+	once      sync.Once
+	confirmed atomic.Bool
+}
+
+func (s *confirmOnRead) RegSubscription(ctx context.Context, privateID string) (RegSubscription, bool, error) {
+	sub, ok, err := s.Store.RegSubscription(ctx, privateID)
+	if ok {
+		s.once.Do(func() {
+			_, written, err := s.Store.UpdateRegSubscription(ctx, privateID, func(current *RegSubscription) bool {
+				current.Dialog.ID.RemoteTag = "s"
+				current.NotifyDeadline = time.Time{}
+				current.RefreshAt = time.Now().Add(time.Hour)
+				return true
+			})
+			s.confirmed.Store(written && err == nil)
+		})
+	}
+	return sub, ok, err
+}
+
+// TestTimerNKeepsASubscriptionThatANotifyConfirmed: the NOTIFY that
+// Timer N waited for reaches another instance between the read of the
+// handler and the removal. The subscription stays, since the removal
+// names the dialog and the deadline that the handler read; without that,
+// the user would be left unwatched although the S-CSCF still has the
+// subscription (RFC 6665 4.1.2.4).
+func TestTimerNKeepsASubscriptionThatANotifyConfirmed(t *testing.T) {
+	store := NewMemoryStore()
+	confirming := &confirmOnRead{Store: store}
+	p := New(Config{Host: "pcscf." + domain, Port: 5060, VisitedNetworkID: domain,
+		// The sweep of this instance must not claim the expiry: the test
+		// hands it to the handler itself.
+		SweepInterval: time.Hour},
+		locatorFunc(func(string) []sip.Destination { return nil }), confirming, nil, quiet())
+	t.Cleanup(p.Close)
+
+	ctx := context.Background()
+	waiting := RegSubscription{PrivateIdentity: impi, PublicIdentity: impu,
+		Dialog:         sip.Dialog{ID: sip.DialogID{CallID: "sub-1", LocalTag: "l"}, LocalSeq: 1},
+		Requested:      3761 * time.Second,
+		NotifyDeadline: time.Now().Add(-time.Second),
+		Expires:        time.Now().Add(time.Hour)}
+	if ok, err := store.CreateRegSubscription(ctx, waiting); err != nil || !ok {
+		t.Fatalf("CreateRegSubscription = %v, %v", ok, err)
+	}
+
+	if err := p.regEventNotifyWaitOver(ctx, impi); err != nil {
+		t.Fatalf("Timer N: %v", err)
+	}
+	if !confirming.confirmed.Load() {
+		t.Fatal("no NOTIFY came between the read and the removal; the test proved nothing")
+	}
+	sub, ok, err := store.RegSubscription(ctx, impi)
+	if err != nil || !ok {
+		t.Fatalf("the subscription that the NOTIFY confirmed is gone: %v, %v", ok, err)
+	}
+	if sub.Dialog.ID.RemoteTag == "" || !sub.NotifyDeadline.IsZero() {
+		t.Errorf("the stored subscription = %+v; want the one the NOTIFY confirmed", sub)
 	}
 }

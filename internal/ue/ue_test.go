@@ -370,6 +370,7 @@ func startNetwork(t *testing.T, cfg networkConfig) testNetwork {
 	protectedPort := protectedTransport.LocalAddr().Port()
 	p := pcscf.New(pcscf.Config{Host: "pcscf." + domain, Port: 5060, ProtectedServerPort: int(protectedPort), VisitedNetworkID: domain},
 		dns, pcscfStore, nil, slog.New(regEventHandler{log: pcscfLog}))
+	t.Cleanup(p.Close)
 	pcscfStack := stackConfig(t, sip.Config{Screen: p.Screen, Admit: p.AdmitUnprotected, OnRequest: p.OnRequest, OnACK: p.OnACK})
 	var epcAPI string
 	if cfg.epc {
