@@ -93,15 +93,3 @@ func responseChargingVector(req *sip.Message, homeDomain string) string {
 	}
 	return c.Response(homeDomain).String()
 }
-
-// reasons are the Reason header fields of the request that ended a leg,
-// to pass on in the request that ends the other leg (RFC 3326 2).
-func reasons(ended *sip.Message) []sip.HeaderField {
-	var h []sip.HeaderField
-	if ended != nil {
-		for _, r := range sip.Reasons(ended) {
-			h = append(h, r.Header())
-		}
-	}
-	return h
-}

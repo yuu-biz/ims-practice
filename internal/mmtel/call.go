@@ -301,7 +301,7 @@ func (c *call) attempt(inv sip.Invitation, noReply time.Duration) attemptResult 
 		select {
 		case <-c.in.Done():
 			if !c.answered.Load() {
-				out.Cancel(reasons(c.in.EndedBy())...)
+				out.Cancel(sip.ReasonFields(c.in.EndedBy())...)
 			}
 		case <-settled:
 		}
@@ -576,9 +576,9 @@ func (c *call) answer(out *sip.OutgoingCall, resp *sip.Message) {
 	c.log.Info("call answered", "services", c.acted)
 	select {
 	case <-c.in.Done():
-		out.Bye(reasons(c.in.EndedBy())...)
+		out.Bye(sip.ReasonFields(c.in.EndedBy())...)
 	case <-out.Done():
-		c.in.Bye(reasons(out.EndedBy())...)
+		c.in.Bye(sip.ReasonFields(out.EndedBy())...)
 	}
 	c.log.Info("call ended")
 }
