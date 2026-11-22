@@ -1,4 +1,4 @@
-// The dashboard server's HTTP API. Every response is parsed here, so the
+// The Lab server's HTTP API. Every response is parsed here, so the
 // rest of the frontend can trust these types.
 
 export type Protocol = "sip" | "diameter";
@@ -124,7 +124,7 @@ export interface NewSubscriber extends Omit<Subscriber, "customized_alerting_ton
 }
 
 // The status of one UE simulator, as its control API (ue.Phone.Handler)
-// reports it. Its call states are the UE's own view, not the dashboard's
+// reports it. Its call states are the UE's own view, not the Lab's
 // callStates.
 export const ueCallStates = ["calling", "ringing", "active"] as const;
 export type UECallState = (typeof ueCallStates)[number];
@@ -360,7 +360,7 @@ export async function putAlertingTone(privateIdentity: string, tone: AlertingTon
   });
 }
 
-// The UE simulators that the dashboard controls, each with its status or
+// The UE simulators that the Lab controls, each with its status or
 // the reason it did not answer.
 export function fetchUESimulators(): Promise<UESimulator[]> {
   return getList("/api/ues", parseUESimulator);
@@ -460,7 +460,7 @@ async function send(path: string, init?: RequestInit): Promise<Response> {
   return response;
 }
 
-// The dashboard and the UE simulators answer errors as {"error": text}.
+// The Lab and the UE simulators answer errors as {"error": text}.
 function errorText(body: string): string {
   try {
     const parsed: unknown = JSON.parse(body);

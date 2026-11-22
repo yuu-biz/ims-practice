@@ -225,7 +225,7 @@ describe("call through the MMTel AS", () => {
 
 describe("call with policy control", () => {
   // The caller's side: the 183 makes the P-CSCF send the PCRF an AAR
-  // for the media (TS 29.214 A.1), which the dashboard links to the call.
+  // for the media (TS 29.214 A.1), which the Lab links to the call.
   const sip = (node: string, src: string, dst: string, summary: string) =>
     captured({ node, direction: "send", src, dst, protocol: "sip", summary, payload: summary, call_id: "call-1" });
   const rx = (node: string, src: string, dst: string, summary: string) =>

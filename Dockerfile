@@ -1,10 +1,10 @@
-# The dashboard's web UI (web/dashboard), built into static files that
+# The Lab's web UI (web/lab), built into static files that
 # the Go build embeds.
 FROM node:26.13.1-alpine AS web
 WORKDIR /web
-COPY web/dashboard/package.json web/dashboard/package-lock.json ./
+COPY web/lab/package.json web/lab/package-lock.json ./
 RUN npm ci --no-fund --no-audit
-COPY web/dashboard/ ./
+COPY web/lab/ ./
 RUN npm run build
 
 FROM golang:1.27.4-alpine AS build

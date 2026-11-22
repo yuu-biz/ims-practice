@@ -1,4 +1,4 @@
-// The IMS dashboard. It shows what the dashboard server derived from the
+// The IMS Lab. It shows what the Lab server derived from the
 // HEP copies that the nodes send: the calls, the registrations and the
 // HSS subscribers, and for a selected call or registration a ladder
 // diagram of its SIP and Cx messages with each message's payload and spec
@@ -188,7 +188,7 @@ async function refreshSubscribers(): Promise<void> {
     showNote(
       "subscribers-note",
       unavailable
-        ? "Subscriber provisioning is not configured. Set lab.hss_provisioning in the dashboard config to list, add and delete subscribers."
+        ? "Subscriber provisioning is not configured. Set lab.hss_provisioning in the Lab config to list, add and delete subscribers."
         : `Could not load the subscribers: ${describe(error)}`,
     );
   }

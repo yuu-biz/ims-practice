@@ -20,7 +20,7 @@ const settings = {
 };
 
 describe("supplementary services of a UE", () => {
-  it("reads the settings through the dashboard", async () => {
+  it("reads the settings through the Lab", async () => {
     const fetch = vi.fn(async () => new Response(JSON.stringify(settings)));
     vi.stubGlobal("fetch", fetch);
     const got = await fetchUEServices("ue-a");

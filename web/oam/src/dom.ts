@@ -1,4 +1,4 @@
-// Small DOM helpers, as in the dashboard. Text from the network is set
+// Small DOM helpers, as in the Lab. Text from the network is set
 // as text nodes only, never parsed as HTML.
 
 export type Child = Node | string;

@@ -7,7 +7,7 @@ import (
 )
 
 // webFiles is the built web UI. The repository holds a placeholder; the
-// container build puts the frontend from web/dashboard/ here before it
+// container build puts the frontend from web/lab/ here before it
 // compiles the binary.
 //
 //go:embed web
