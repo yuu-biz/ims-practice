@@ -71,10 +71,16 @@ type refusal struct {
 	text string
 }
 
-// conferenceEnded is the refusal once the conference has ended: it has
-// given its URI up (TS 24.147 5.3.2.7), so a user who would join gets
-// the 404 of a conference URI that is not allocated (5.3.2.4.1 step 1).
-var conferenceEnded = &refusal{code: 404, text: "The conference has ended"}
+var (
+	// conferenceEnded is the refusal once the conference has ended: it
+	// has given its URI up (TS 24.147 5.3.2.7), so a user who would join
+	// gets the 404 of a conference URI that is not allocated (5.3.2.4.1
+	// step 1).
+	conferenceEnded = &refusal{code: 404, text: "The conference has ended"}
+	// conferenceFull is the refusal while the conference has
+	// maximumUsers participants.
+	conferenceFull = &refusal{code: 403, text: "The conference is full"}
+)
 
 // referExpires is how long the subscription of a REFER lasts: longer
 // than the INVITE it asks for may take (RFC 3515 3.4), which a proxy
@@ -294,8 +300,13 @@ func (as *AS) joinConference(in *sip.IncomingCall, log *slog.Logger) {
 		in.Reject(403, as.warning("No asserted identity"))
 		return
 	}
-	if f.full() {
-		in.Reject(403, as.warning("The conference is full"))
+	// join checks again: other users may join while the MRFC sets up the
+	// media of this one.
+	f.mu.Lock()
+	no := f.room()
+	f.mu.Unlock()
+	if no != nil {
+		in.Reject(no.code, as.warning(no.text))
 		return
 	}
 	media, final, err := f.inviteMRFC(sip.BodyOf(req))
@@ -415,7 +426,8 @@ func (f *conference) inviteMRFC(offer sip.Body) (*sip.OutgoingCall, *sip.Message
 // (RFC 4575 3.6). The dialog of p has been set up, except for that of a
 // user who dialed in, which dialogConfirmed records later. It returns
 // nil, or why it did not take p: the focus sets up the media of a
-// participant before it joins, and the conference may end meanwhile.
+// participant before it joins, and meanwhile the conference may end, or
+// other users may fill it.
 func (f *conference) join(p *party, info confinfo.Participant) *refusal {
 	d, _ := p.leg.Dialog()
 	m, _ := p.media.Dialog()
@@ -425,9 +437,9 @@ func (f *conference) join(p *party, info confinfo.Participant) *refusal {
 		info.DisplayText = info.User
 	}
 	f.mu.Lock()
-	if f.ended {
+	if no := f.room(); no != nil {
 		f.mu.Unlock()
-		return conferenceEnded
+		return no
 	}
 	p.dialog = d.ID
 	f.parties = append(f.parties, p)
@@ -520,12 +532,16 @@ func (f *conference) deallocate() {
 	f.as.conferenceStore.DeleteConference(f.record.ID)
 }
 
-// full reports whether the conference has as many participants as it
-// takes.
-func (f *conference) full() bool {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	return len(f.record.Participants) >= maximumUsers
+// room is nil while the conference takes one more participant, and
+// otherwise why it takes none. f.mu is held.
+func (f *conference) room() *refusal {
+	switch {
+	case f.ended:
+		return conferenceEnded
+	case len(f.record.Participants) >= maximumUsers:
+		return conferenceFull
+	}
+	return nil
 }
 
 // entry is the record of p, nil when p is not in the conference. f.mu
@@ -669,8 +685,13 @@ func (f *conference) refer(r *sip.InDialogRequest) {
 			return
 		}
 	}
-	if f.full() {
-		r.Reject(403, f.as.warning("The conference is full"))
+	// join checks again: other users may join while the invited user is
+	// alerted.
+	f.mu.Lock()
+	no := f.room()
+	f.mu.Unlock()
+	if no != nil {
+		r.Reject(403, f.as.warning(no.text))
 		return
 	}
 	sub, err := r.AcceptRefer(referExpires)
