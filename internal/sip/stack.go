@@ -64,6 +64,18 @@ type Config struct {
 	// in the stack's own goroutine: it must return at once, must not
 	// change req, and must not call the stack.
 	Screen func(req *Message, source Destination) bool
+	// Admit, when set, is asked about each request that Screen lets in,
+	// before the stack does anything with it, as Screen is. It is asked
+	// in a goroutine of its own, so it may wait, for instance for a
+	// store on another machine, while the stack goes on with other
+	// messages. When it returns true, the stack takes the request up as
+	// if it had just arrived; when it returns false, the stack drops the
+	// request as one that Screen refuses. Each copy of a request is
+	// asked about until one is let in, and a copy let in after another
+	// has started the transaction counts as its retransmission. With
+	// Ordered, the TU sees the requests in the order Admit lets them in.
+	// Admit must not change req.
+	Admit func(req *Message, source Destination) bool
 }
 
 // DefaultTimerC is Timer C unless Config says otherwise. RFC 3261 16.6
@@ -84,7 +96,7 @@ var ErrStackClosed = errors.New("sip: stack closed")
 //     of every element but a stateless proxy, and a proxy built on this
 //     stack keeps transaction state. A retransmitted 2xx still reaches
 //     the TU while its INVITE client transaction waits in Accepted.
-//   - A request that Config.Screen refuses is dropped.
+//   - A request that Config.Screen or Config.Admit refuses is dropped.
 //   - An ACK goes to Config.OnACK.
 //   - Any other request starts a server transaction and goes to
 //     Config.OnRequest, except a CANCEL.
@@ -397,6 +409,9 @@ type (
 	receivedMessage struct {
 		msg    *Message
 		source Destination
+		// admitted is set on a request that comes back to the loop once
+		// Config.Admit has let it in.
+		admitted bool
 	}
 	startClient  struct{ ct *ClientTransaction }
 	cancelInvite struct {
@@ -545,7 +560,7 @@ func (s *Stack) handle(in stackInput) {
 	switch in := in.(type) {
 	case receivedMessage:
 		if in.msg.IsRequest() {
-			s.receiveRequest(in.msg, in.source)
+			s.receiveRequest(in.msg, in.source, in.admitted)
 		} else {
 			s.receiveResponse(in.msg)
 		}
@@ -602,7 +617,7 @@ func (s *Stack) receiveResponse(resp *Message) {
 	s.stepClient(e, ResponseReceived{Response: resp})
 }
 
-func (s *Stack) receiveRequest(req *Message, source Destination) {
+func (s *Stack) receiveRequest(req *Message, source Destination, admitted bool) {
 	// The transport has already parsed this Via.
 	v, _ := ParseVia(req.Get("Via"))
 	branch := v.Branch()
@@ -616,7 +631,7 @@ func (s *Stack) receiveRequest(req *Message, source Destination) {
 		return
 	}
 	if req.Method == ACK {
-		s.receiveACK(req, v, source)
+		s.receiveACK(req, v, source, admitted)
 		return
 	}
 	key := serverKey{branch: branch, sentBy: sentByOf(v), method: req.Method}
@@ -624,7 +639,7 @@ func (s *Stack) receiveRequest(req *Message, source Destination) {
 		s.stepServer(e, RequestRetransmitted{})
 		return
 	}
-	if !s.admits(req, source) {
+	if !admitted && !s.admits(req, source) {
 		return
 	}
 	e := &serverEntry{key: key, timers: map[Timer]armedTimer{}}
@@ -693,24 +708,40 @@ func toTag(resp *Message) string {
 // Only the ACK for a 300-699 response matches one, because it carries
 // the INVITE's branch (RFC 3261 17.1.1.3). The ACK for a 2xx has a
 // branch of its own and goes to the TU.
-func (s *Stack) receiveACK(ack *Message, v Via, source Destination) {
+func (s *Stack) receiveACK(ack *Message, v Via, source Destination, admitted bool) {
 	if e, ok := s.servers[serverKey{branch: v.Branch(), sentBy: sentByOf(v), method: INVITE}]; ok {
 		s.stepServer(e, ACKReceived{ACK: ack})
 		return
 	}
-	if !s.admits(ack, source) {
+	if !admitted && !s.admits(ack, source) {
 		return
 	}
 	s.passACKToTU(ack)
 }
 
-// admits tells whether Config.Screen lets req in.
+// admits tells whether req may go on at once. A request that
+// Config.Screen lets in goes to Config.Admit, when there is one, and
+// comes back to the loop once Admit has let it in.
 func (s *Stack) admits(req *Message, source Destination) bool {
-	if s.cfg.Screen == nil || s.cfg.Screen(req, source) {
+	if s.cfg.Screen != nil && !s.cfg.Screen(req, source) {
+		s.logRefused(req, source)
+		return false
+	}
+	if s.cfg.Admit == nil {
 		return true
 	}
-	s.log.Info("dropped request that the screen refused", "method", string(req.Method), "src", source.String())
+	go func() {
+		if !s.cfg.Admit(req, source) {
+			s.logRefused(req, source)
+			return
+		}
+		s.post(receivedMessage{msg: req, source: source, admitted: true})
+	}()
 	return false
+}
+
+func (s *Stack) logRefused(req *Message, source Destination) {
+	s.log.Info("dropped request that the screen refused", "method", string(req.Method), "src", source.String())
 }
 
 func (s *Stack) passACKToTU(ack *Message) {
