@@ -84,7 +84,7 @@ export function mountEPCPanel(table: HTMLTableElement, note: HTMLParagraphElemen
       return;
     }
     available = true;
-    show(ues.length > 0 ? null : "Start the VoLTE UEs with: docker compose --profile volte up -d volte-a volte-b", false);
+    show(ues.length > 0 ? null : "Start the VoLTE UEs with: docker compose --profile volte up -d volte10 volte12", false);
     fillTable(table, ues.map(row), "No UE is attached.");
   };
 

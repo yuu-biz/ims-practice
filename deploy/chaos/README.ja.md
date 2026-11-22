@@ -28,7 +28,7 @@ IMS のコンテナは `compose.yaml` のままで、何も変えません。ネ
 
 | 対象 | 例 | 指すもの |
 | --- | --- | --- |
-| サービス | `mmtel`、`epc`、`volte-a`、`ibcf-a`、`scscf-b` | そのサービスの 1 つのコンテナ。 |
+| サービス | `mmtel`、`epc`、`volte10`、`ibcf-a`、`scscf-b` | そのサービスの 1 つのコンテナ。 |
 | `docker compose run` の UE | `ue3` | `docker compose run ue3 ...` で起動し、動いているコンテナ。終わった UE は対象になりません。 |
 | 複数のうちの 1 つのコンテナ | `agw:2` | 複数のコンテナで動くサービス（`docker compose up --scale agw=2`）の 2 つ目。番号を書かないと、`fault.sh` がコンテナを並べて、どれかを選ぶように求めます。 |
 

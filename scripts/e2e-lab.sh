@@ -265,7 +265,7 @@ ue_post() {
 
 # The VoLTE UEs of the volte profile are listed too, and so is phone3,
 # the third UE of the phones profile for conferences; they stay down here.
-volte="volte-a unreachable idle,volte-b unreachable idle,phone3 unreachable idle"
+volte="volte10 unreachable idle,volte12 unreachable idle,phone3 unreachable idle"
 if [ "$(ues)" = "phone1 unreachable idle,phone2 unreachable idle,$volte" ]; then
 	echo "ok   the Lab lists the UE simulators as unreachable before they start"
 else

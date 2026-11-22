@@ -43,7 +43,7 @@ func TestStaleCommandsFail(t *testing.T) {
 		"curl http://localhost:8080/api/epc/ues/001010000000010   # the bearers\n"+
 		"docker compose --profile ue --profile phones down --rmi all -v --remove-orphans\n"+
 		"docker compose run --rm ue sms --status-report +12025550102 \"Hello; UE-B\"\n"+
-		"docker compose run --rm volte-a call -epc http://172.28.0.80:8080 --tone=3s tel:+12025550112\n"+
+		"docker compose run --rm volte10 call -epc http://172.28.0.80:8080 --tone=3s tel:+12025550112\n"+
 		"docker compose logs scscf | grep I-Open\n"+
 		"```\n\n"+
 		"- `ue xcap set cfu on tel:+12025550103`, `ue serve`, the `curl -X DELETE` above, `scripts/e2e-*.sh` and `scripts/`.\n")

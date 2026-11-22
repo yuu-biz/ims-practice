@@ -74,7 +74,7 @@ docker compose --profile phones up -d --build
 
 Until then their cards say that they are not reachable. Once started, each one registers by itself. If a card still says `not registered`, press **Register**.
 
-The cards of `volte-a` and `volte-b` are the VoLTE UEs of the `volte` profile, which attach to the EPC stub and register with IMS AKA. Start them with `docker compose --profile volte up -d volte-a volte-b`, and call `tel:+12025550112` from `volte-a`; [The VoLTE call flow](volte.md) follows such a call. The two profiles use different subscribers and addresses, so they can run at the same time.
+The cards of `volte10` and `volte12` are the VoLTE UEs of the `volte` profile, which attach to the EPC stub and register with IMS AKA. Start them with `docker compose --profile volte up -d volte10 volte12`, and call `tel:+12025550112` from `volte10`; [The VoLTE call flow](volte.md) follows such a call. The two profiles use different subscribers and addresses, so they can run at the same time.
 
 To make a call:
 
@@ -125,13 +125,13 @@ The UE simulators use subscribers 1, 2 and 3, the same as the `ue`, `ue2` and `u
 
 ## Take a bearer away, and detach a UE
 
-The **Access network (EPC)** panel lists every UE that has attached to the EPC stub, which are `volte-a` and `volte-b` of the `volte` profile. Each row has the IMSI, the address the stub gave the UE, the access point name, the UE's EPS bearers and the Session-Ids of the Rx sessions that its P-CSCF holds for it.
+The **Access network (EPC)** panel lists every UE that has attached to the EPC stub, which are `volte10` and `volte12` of the `volte` profile. Each row has the IMSI, the address the stub gave the UE, the access point name, the UE's EPS bearers and the Session-Ids of the Rx sessions that its P-CSCF holds for it.
 
 A UE that has attached has its default bearer, EBI 5 with QCI 5, which carries the SIP signaling (IR.92 4.4.1). While a call is set up, the dedicated bearer of the voice appears beside it, QCI 1 (4.4.2).
 
 - **Release** next to the voice bearer makes the network deactivate it, as a lost radio link would (TS 24.301 6.4.4.2). The PCRF aborts the Rx session of the call, the P-CSCF ends the call with a BYE in the user's name, and both UE cards go back to no call. "The network takes the bearer" in [the VoLTE guide](volte.md) follows the whole sequence in the capture.
 - The default bearer has no **Release**. It goes with the PDN connection, so the stub refuses to deactivate it and asks for a detach instead.
-- **Detach** makes the network detach the UE (5.5.2.3). The PDN connection ends, the PCRF aborts every Rx session of the UE, and the UE answers with DETACH ACCEPT. The stub asks for no re-attach, so the UE stays off the access network until you start it again, for example with `docker compose --profile volte up -d volte-a`.
+- **Detach** makes the network detach the UE (5.5.2.3). The PDN connection ends, the PCRF aborts every Rx session of the UE, and the UE answers with DETACH ACCEPT. The stub asks for no re-attach, so the UE stays off the access network until you start it again, for example with `docker compose --profile volte up -d volte10`.
 
 The stub owns this state and the Lab keeps no copy of it, so the panel asks the stub again every few seconds.
 

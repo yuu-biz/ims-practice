@@ -27,8 +27,8 @@ The softphones keep working as before. A UE that does not come through the EPC s
 
 | Node | Address | What it does in this guide |
 | --- | --- | --- |
-| volte-a | 172.28.0.120 | The caller, `tel:+12025550110`. Subscriber 10, whose USIM holds the K and OPc of MILENAGE test set 1 (TS 35.208 4.3.1). |
-| volte-b | 172.28.0.121 | The callee, `tel:+12025550112`. Subscriber 12, with the K and OPc of test set 3 (4.3.3). |
+| volte10 | 172.28.0.120 | The caller, `tel:+12025550110`. Subscriber 10, whose USIM holds the K and OPc of MILENAGE test set 1 (TS 35.208 4.3.1). |
+| volte12 | 172.28.0.121 | The callee, `tel:+12025550112`. Subscriber 12, with the K and OPc of test set 3 (4.3.3). |
 | ue2 | 172.28.0.101 | A softphone-like UE that offers PCMU only and uses SIP Digest, `tel:+12025550102`. |
 | SIPp | 172.28.0.102 | An independent user agent that registers with IMS AKA as subscriber 11. |
 | EPC stub and PCRF | 172.28.0.80 | The `epc` role: the UE API on HTTP port 8080, and the PCRF on Diameter port 3868 (`pcrf.ims.mnc001.mcc001.3gppnetwork.org`). |
@@ -37,9 +37,9 @@ The softphones keep working as before. A UE that does not come through the EPC s
 | HSS | 172.28.0.10 | Makes the authentication vectors (MAR and MAA). |
 | MMTel AS | 172.28.0.75 | Takes every call, as in [Supplementary services with the MMTel AS](mmtel.md). |
 | Media relay | 172.28.0.50 | Relays RTP, RTCP and the telephone-events without decoding them. |
-| Lab | 172.28.0.60 | Drives volte-a and volte-b, shows Rx in the ladder, and passes on to the host the EPC stub's paths that start a procedure of the network. |
+| Lab | 172.28.0.60 | Drives volte10 and volte12, shows Rx in the ladder, and passes on to the host the EPC stub's paths that start a procedure of the network. |
 
-volte-a and volte-b are services of the `volte` profile in `compose.yaml`. Their keys are in `deploy/compose/hss.yaml`, and `deploy/compose/epc.yaml` gives each subscriber the address of its container.
+volte10 and volte12 are services of the `volte` profile in `compose.yaml`. Their keys are in `deploy/compose/hss.yaml`, and `deploy/compose/epc.yaml` gives each subscriber the address of its container.
 
 ## The access network: the EPC stub
 
@@ -59,11 +59,11 @@ The `ue` command attaches when it gets `-epc` with the URL of the stub. The IMSI
 In one run of `scripts/e2e-volte.sh`:
 
 ```text
-#681  volte-a -> EPC  GET  /system-information                 the cell: MCC 001, MNC 01, TAC 1, ECI 257
-#685  volte-a -> EPC  GET  /ues/001010000000010/events         the event stream stays open
-#690  volte-a -> EPC  POST /ues/001010000000010/attach-request ATTACH REQUEST with a PDN CONNECTIVITY REQUEST for APN ims
-#692  EPC -> volte-a  200  ATTACH ACCEPT with ACTIVATE DEFAULT EPS BEARER CONTEXT REQUEST
-#694  volte-a -> EPC  POST /ues/001010000000010/attach-complete
+#681  volte10 -> EPC  GET  /system-information                 the cell: MCC 001, MNC 01, TAC 1, ECI 257
+#685  volte10 -> EPC  GET  /ues/001010000000010/events         the event stream stays open
+#690  volte10 -> EPC  POST /ues/001010000000010/attach-request ATTACH REQUEST with a PDN CONNECTIVITY REQUEST for APN ims
+#692  EPC -> volte10  200  ATTACH ACCEPT with ACTIVATE DEFAULT EPS BEARER CONTEXT REQUEST
+#694  volte10 -> EPC  POST /ues/001010000000010/attach-complete
 ```
 
 The ATTACH ACCEPT carries the default bearer of the IMS APN in its ESM message container:
@@ -104,7 +104,7 @@ QCI 1 is the guaranteed bit rate class of conversational voice (IR.92 4.4.2). Th
 
 | Who | Holds | Where |
 | --- | --- | --- |
-| The USIM of volte-a | K, OPc and SQN_MS | `-k`, `-opc` and `-sqn` of the `ue` command (`compose.yaml`) |
+| The USIM of volte10 | K, OPc and SQN_MS | `-k`, `-opc` and `-sqn` of the `ue` command (`compose.yaml`) |
 | The HSS | K, OPc, AMF and SQN_HE of the same subscriber | `aka:` of subscriber 10 in `deploy/compose/hss.yaml` |
 
 K and OPc are those of MILENAGE test set 1. OPc is derived from the operator's OP and K (TS 35.206 4.1); `-op` takes the OP instead, as SIPp does. Nothing else is shared: the network and the UE each compute the rest from these and the random challenge.
@@ -112,7 +112,7 @@ K and OPc are those of MILENAGE test set 1. OPc is derived from the operator's O
 ### The ladder
 
 ```text
-#698  volte-a:5060 -> P-CSCF:5060  REGISTER   Security-Client, Require: sec-agree, Authorization with an empty response
+#698  volte10:5060 -> P-CSCF:5060  REGISTER   Security-Client, Require: sec-agree, Authorization with an empty response
 #709  P-CSCF -> I-CSCF             REGISTER   Authorization: ... integrity-protected="no"
 #712  I-CSCF -> HSS                UAR / UAA
 #721  I-CSCF -> S-CSCF             REGISTER
@@ -120,15 +120,15 @@ K and OPc are those of MILENAGE test set 1. OPc is derived from the operator's O
 #726  HSS -> S-CSCF                MAA 2001   SIP-Authenticate (RAND, AUTN), SIP-Authorization (XRES), Confidentiality-Key, Integrity-Key
 #727  S-CSCF -> I-CSCF             401        WWW-Authenticate: nonce, algorithm=AKAv1-MD5, ik, ck
 #734  I-CSCF -> P-CSCF             401
-#737  P-CSCF:5060 -> volte-a:5060  401        ik and ck taken out, Security-Server added
-#740  volte-a:5062 -> P-CSCF:5064  REGISTER   Security-Client, Security-Verify, Authorization with the response from RES
+#737  P-CSCF:5060 -> volte10:5060  401        ik and ck taken out, Security-Server added
+#740  volte10:5062 -> P-CSCF:5064  REGISTER   Security-Client, Security-Verify, Authorization with the response from RES
 #749  P-CSCF -> I-CSCF             REGISTER   Authorization: ... integrity-protected="yes"
 #752  I-CSCF -> HSS                UAR / UAA
 #760  I-CSCF -> S-CSCF             REGISTER
 #764  S-CSCF -> HSS                SAR / SAA
 #771  S-CSCF -> I-CSCF             200 OK
 #776  I-CSCF -> P-CSCF             200 OK
-#783  P-CSCF:5064 -> volte-a:5062  200 OK
+#783  P-CSCF:5064 -> volte10:5062  200 OK
 #786  P-CSCF -> PCRF               AAR        the signalling path of 172.28.0.120 (see "Policy control")
 #793  PCRF -> P-CSCF               AAA 2001
 ```
@@ -193,7 +193,7 @@ SIPp registers with IMS AKA from `images/softphone/sipp/register-aka.xml`. It se
 
 ## The identities of a phone without an ISIM
 
-The card of volte-a and volte-b has a USIM and no ISIM. A USIM holds the IMSI and the keys, but no IMS identity, so the phone makes its identities from the IMSI, here 001010000000010 (TS 24.229 5.1.1.1A, TS 23.003 13.2, 13.3 and 13.4B):
+The card of volte10 and volte12 has a USIM and no ISIM. A USIM holds the IMSI and the keys, but no IMS identity, so the phone makes its identities from the IMSI, here 001010000000010 (TS 24.229 5.1.1.1A, TS 23.003 13.2, 13.3 and 13.4B):
 
 | Identity | Value | Where it appears |
 | --- | --- | --- |
@@ -214,12 +214,12 @@ Each node plays its part:
 In the capture of the VoLTE call:
 
 ```text
-REGISTER  volte-a -> P-CSCF  To: <sip:001010000000010@ims.mnc001.mcc001.3gppnetwork.org>
-200 OK    P-CSCF -> volte-a  P-Associated-URI: <sip:+12025550110@ims.mnc001.mcc001.3gppnetwork.org>
+REGISTER  volte10 -> P-CSCF  To: <sip:001010000000010@ims.mnc001.mcc001.3gppnetwork.org>
+200 OK    P-CSCF -> volte10  P-Associated-URI: <sip:+12025550110@ims.mnc001.mcc001.3gppnetwork.org>
                              P-Associated-URI: <tel:+12025550110>
-INVITE    volte-a -> P-CSCF  From: <sip:+12025550110@ims.mnc001.mcc001.3gppnetwork.org>;tag=...
+INVITE    volte10 -> P-CSCF  From: <sip:+12025550110@ims.mnc001.mcc001.3gppnetwork.org>;tag=...
 INVITE    P-CSCF -> S-CSCF   P-Asserted-Identity: <sip:+12025550110@ims.mnc001.mcc001.3gppnetwork.org>
-MESSAGE   volte-a -> P-CSCF  From: <sip:+12025550110@ims.mnc001.mcc001.3gppnetwork.org>;tag=...
+MESSAGE   volte10 -> P-CSCF  From: <sip:+12025550110@ims.mnc001.mcc001.3gppnetwork.org>;tag=...
 ```
 
 The Wireshark filter `sip && !(sip.CSeq.method == "REGISTER") && frame contains "sip:001010000000010@ims"` finds no packet. The IMSI is not in the Contact either: `sip.Contact contains "001010000000010"` finds no packet. TS 24.229 5.1.1.2.1 item c asks that the user part of the URI in Contact be globally unique and reveal nothing private, so the UE puts a UUID there that it derives from its private identity with K as the key. Every UE of this project does the same, a softphone with its password as the key. The softphones of the other guides have no SIM card at all: their identities are configured in them, as an IMC holds them (TS 24.229 5.1.1.1B.1). They register a public identity that is not barred and use it as it is.
@@ -238,7 +238,7 @@ For a UE that did not attach, such as ue2 or pjsua, the PCRF finds no IP-CAN ses
 
 ### The media of a call
 
-The P-CSCF of each side sends an AAR when it has the SDP answer of the call (TS 29.214 A.1): the callee's P-CSCF when the 183 comes from volte-b, the caller's when the 183 reaches it on the way to volte-a. The AAR of the callee's side in the run above (#1036):
+The P-CSCF of each side sends an AAR when it has the SDP answer of the call (TS 29.214 A.1): the callee's P-CSCF when the 183 comes from volte12, the caller's when the 183 reaches it on the way to volte10. The AAR of the callee's side in the run above (#1036):
 
 | AVP | Value | Meaning |
 | --- | --- | --- |
@@ -266,23 +266,23 @@ When a BYE passes, the P-CSCF of each side ends its Rx session with an STR, `Ter
 The stub can deactivate a bearer as a lost radio link would: the EPS bearer context deactivation that the network initiates (TS 24.301 6.4.4.2). A DELETE on `/network-initiated/ues/<IMSI>/bearers/<EBI>` starts it, and a POST on `/network-initiated/ues/<IMSI>/detach` starts the network initiated detach (5.5.2.3). The **Access network (EPC)** panel of the Lab has a button for each of them, next to the bearer and next to the UE ("Take a bearer away, and detach a UE" in [the Lab guide](lab.md)). The Lab also passes both requests on as they are, so on the host:
 
 ```sh
-curl http://localhost:8080/api/epc/ues/001010000000010                       # the bearers of volte-a
+curl http://localhost:8080/api/epc/ues/001010000000010                       # the bearers of volte10
 curl -X DELETE http://localhost:8080/api/epc/network-initiated/ues/001010000000010/bearers/6    # deactivate the voice bearer
 ```
 
 ```text
 #7775 Lab -> EPC        DELETE /network-initiated/ues/001010000000010/bearers/6
-#7776 EPC -> volte-a    DEACTIVATE EPS BEARER CONTEXT REQUEST (event stream)
+#7776 EPC -> volte10    DEACTIVATE EPS BEARER CONTEXT REQUEST (event stream)
 #7778 PCRF -> P-CSCF    ASR   Abort-Cause BEARER_RELEASED (0)
 #7785 P-CSCF -> PCRF    ASA 2001
 #7787 P-CSCF -> PCRF    STR
-#7804 P-CSCF -> S-CSCF  BYE   in volte-a's name, Reason: SIP;cause=503;text="Service Unavailable"
-#7806 P-CSCF -> volte-a BYE   Reason: SIP;cause=503
-#7872 P-CSCF -> volte-b BYE   through the S-CSCF and the MMTel AS, with the same Reason
-#7885 EPC -> volte-b    DEACTIVATE EPS BEARER CONTEXT REQUEST
+#7804 P-CSCF -> S-CSCF  BYE   in volte10's name, Reason: SIP;cause=503;text="Service Unavailable"
+#7806 P-CSCF -> volte10 BYE   Reason: SIP;cause=503
+#7872 P-CSCF -> volte12 BYE   through the S-CSCF and the MMTel AS, with the same Reason
+#7885 EPC -> volte12    DEACTIVATE EPS BEARER CONTEXT REQUEST
 ```
 
-The voice bearer carried all the media of the session, so the PCRF ends the whole Rx session with an ASR rather than reporting the lost flows in an RAR (TS 29.214 4.4.6.1, 4.4.6.2). The P-CSCF answers it, ends the session with an STR, and releases the call itself: a BYE to the other side in the served user's name and, here, one to the served UE as well (TS 24.229 5.2.8.1.2, IR.92 2.4.2.3). It builds the BYEs from the dialog information it keeps behind its Store: the Contacts, the tags, the CSeq and the route set. It keeps the dialog until both BYEs are answered, and meanwhile answers 481 itself to a request that either party sends in it (TS 24.229 5.2.8.1.3). volte-a sends no BYE of its own. When volte-b's call ends, its P-CSCF ends volte-b's Rx session and the stub releases volte-b's bearer too.
+The voice bearer carried all the media of the session, so the PCRF ends the whole Rx session with an ASR rather than reporting the lost flows in an RAR (TS 29.214 4.4.6.1, 4.4.6.2). The P-CSCF answers it, ends the session with an STR, and releases the call itself: a BYE to the other side in the served user's name and, here, one to the served UE as well (TS 24.229 5.2.8.1.2, IR.92 2.4.2.3). It builds the BYEs from the dialog information it keeps behind its Store: the Contacts, the tags, the CSeq and the route set. It keeps the dialog until both BYEs are answered, and meanwhile answers 481 itself to a request that either party sends in it (TS 24.229 5.2.8.1.3). volte10 sends no BYE of its own. When volte12's call ends, its P-CSCF ends volte12's Rx session and the stub releases volte12's bearer too.
 
 A bearer can also go before the call is answered. The P-CSCF then gives the INVITE up: it answers the caller 500 and cancels the INVITE towards the callee, with a Reason that gives 503 (TS 24.229 5.2.8.1.1). When the callee has answered 200 just before the CANCEL reaches it, the 200 crosses the CANCEL (RFC 3261 9.1). The caller has its 500 and never sees that 200, so the P-CSCF sends the ACK in the caller's name, for the 200 and for each retransmission of it. Then it releases the dialog that the 200 confirmed with a BYE to the callee, built as above (5.2.8.1.2).
 
@@ -291,34 +291,34 @@ A bearer can also go before the call is answered. The P-CSCF then gives the INVI
 A VoLTE caller does not want the callee's phone to ring while the voice cannot flow yet. With the precondition mechanism (RFC 3312), each side says in its SDP whether its resources are reserved, and the callee rings only once every mandatory precondition is met. IR.92 2.4.1 asks for it, with UPDATE to report the status. The INVITE has `Supported: 100rel, timer, 199, precondition`, not Require (TS 24.229 5.1.3.1).
 
 ```text
-#871  volte-a -> P-CSCF  INVITE       offer, curr:qos local none
-#1026 P-CSCF -> volte-b  INVITE       through the S-CSCFs and the MMTel AS of each user
-#1030 volte-b -> P-CSCF  183          Require: 100rel, precondition; answer, conf:qos remote sendrecv
-#1036 P-CSCF -> PCRF     AAR          volte-b's media; the stub sets up volte-b's bearer (#1040, #1046)
-#1083 P-CSCF -> PCRF     AAR          volte-a's media; the stub sets up volte-a's bearer (#1087, #1089)
-#1094 P-CSCF -> volte-a  183
-#1099 volte-a -> P-CSCF  PRACK        and its 200 (#1120)
-#1126 volte-a -> P-CSCF  UPDATE       curr:qos local sendrecv
-#1212 P-CSCF -> volte-b  UPDATE
-#1216 volte-b -> P-CSCF  200 (UPDATE) curr:qos local sendrecv, curr:qos remote sendrecv
-#1219 volte-b -> P-CSCF  180          only now: every mandatory precondition is met
-#1370 volte-b -> P-CSCF  200 (INVITE)
-#1429 P-CSCF -> volte-a  200 (INVITE) and the ACK (#1432)
+#871  volte10 -> P-CSCF  INVITE       offer, curr:qos local none
+#1026 P-CSCF -> volte12  INVITE       through the S-CSCFs and the MMTel AS of each user
+#1030 volte12 -> P-CSCF  183          Require: 100rel, precondition; answer, conf:qos remote sendrecv
+#1036 P-CSCF -> PCRF     AAR          volte12's media; the stub sets up volte12's bearer (#1040, #1046)
+#1083 P-CSCF -> PCRF     AAR          volte10's media; the stub sets up volte10's bearer (#1087, #1089)
+#1094 P-CSCF -> volte10  183
+#1099 volte10 -> P-CSCF  PRACK        and its 200 (#1120)
+#1126 volte10 -> P-CSCF  UPDATE       curr:qos local sendrecv
+#1212 P-CSCF -> volte12  UPDATE
+#1216 volte12 -> P-CSCF  200 (UPDATE) curr:qos local sendrecv, curr:qos remote sendrecv
+#1219 volte12 -> P-CSCF  180          only now: every mandatory precondition is met
+#1370 volte12 -> P-CSCF  200 (INVITE)
+#1429 P-CSCF -> volte10  200 (INVITE) and the ACK (#1432)
 ```
 
 The precondition lines of each SDP, as its sender writes them (local is the sender's own segment):
 
 | Step | Sender | `curr:qos local` | `curr:qos remote` | `des:qos` | `conf:qos` |
 | --- | --- | --- | --- | --- | --- |
-| INVITE | volte-a | none | none | mandatory local sendrecv, optional remote sendrecv | |
-| 183 | volte-b | none | none | mandatory local sendrecv, mandatory remote sendrecv | remote sendrecv |
-| UPDATE | volte-a | sendrecv | none | mandatory local sendrecv, mandatory remote sendrecv | |
-| 200 to the UPDATE | volte-b | sendrecv | sendrecv | mandatory local sendrecv, mandatory remote sendrecv | |
+| INVITE | volte10 | none | none | mandatory local sendrecv, optional remote sendrecv | |
+| 183 | volte12 | none | none | mandatory local sendrecv, mandatory remote sendrecv | remote sendrecv |
+| UPDATE | volte10 | sendrecv | none | mandatory local sendrecv, mandatory remote sendrecv | |
+| 200 to the UPDATE | volte12 | sendrecv | sendrecv | mandatory local sendrecv, mandatory remote sendrecv | |
 
 - The caller uses the segmented status type: it can only say whether its own segment is reserved (TS 24.229 6.1.2).
 - In the 183 the callee raises the caller's strength to mandatory and asks, with `conf:qos remote sendrecv`, to be told when the caller's resources are ready (RFC 3312 7).
 - A UE counts its local resources as reserved when it has the dedicated bearer whose TFT carries the media of the call (TS 24.229 L.2.2.5.1B, IR.92 2.4.3.1). Its UPDATE goes once the PRACK has its 200.
-- The callee does not alert until every mandatory precondition is met (RFC 3312 6). The capture shows the 180 from volte-b after its 200 to the UPDATE. At the caller the 180 may come before the 200 to the UPDATE: the P-CSCF holds that 200 for the AAR of the new answer.
+- The callee does not alert until every mandatory precondition is met (RFC 3312 6). The capture shows the 180 from volte12 after its 200 to the UPDATE. At the caller the 180 may come before the 200 to the UPDATE: the P-CSCF holds that 200 for the AAR of the new answer.
 
 A UE without the EPC stub, such as ue2, takes its resources as reserved from the start and answers `curr:qos local sendrecv`. `-no-preconditions` makes a UE leave the mechanism out.
 
@@ -353,7 +353,7 @@ a=maxptime:240
 - telephone-event comes at the clock rate of each speech codec (TS 26.114 Annex G).
 - b=RS:0 and b=RR:4000 are the RTCP bandwidth of senders and of receivers in bit/s (RFC 3556 2). The UE computes its report interval from them (RFC 3550 6.3.1), never below 5 seconds; both at 0 would turn RTCP off (IR.92 3.2.4).
 
-volte-b answers `m=audio 60734 RTP/AVP 96 100` with AMR-WB in the bandwidth-efficient format and telephone-event/16000, and `b=AS:41`. ue2, which knows PCMU only, answers `m=audio ... RTP/AVP 0 101`, and the VoLTE UE then speaks PCMU (`ue -codecs` changes the list).
+volte12 answers `m=audio 60734 RTP/AVP 96 100` with AMR-WB in the bandwidth-efficient format and telephone-event/16000, and `b=AS:41`. ue2, which knows PCMU only, answers `m=audio ... RTP/AVP 0 101`, and the VoLTE UE then speaks PCMU (`ue -codecs` changes the list).
 
 ### The frames
 
@@ -385,13 +385,13 @@ Both UEs send RTCP sender reports to the port above RTP, through the relay (RFC 
 The call that the Lab drives in the e2e script:
 
 ```text
-#4604 volte-a -> P-CSCF  INVITE      to volte-b, set up as above
-#5820 volte-a -> relay   telephone-event 1, end   ... then 5, 9 and # (event 11)
-#5953 volte-a -> P-CSCF  re-INVITE   a=sendonly: on hold
-#6003 volte-b -> P-CSCF  200         a=recvonly
-#6151 volte-a -> P-CSCF  re-INVITE   a=sendrecv: resumed
-#6201 volte-b -> P-CSCF  200         a=sendrecv
-#6347 volte-a -> P-CSCF  BYE
+#4604 volte10 -> P-CSCF  INVITE      to volte12, set up as above
+#5820 volte10 -> relay   telephone-event 1, end   ... then 5, 9 and # (event 11)
+#5953 volte10 -> P-CSCF  re-INVITE   a=sendonly: on hold
+#6003 volte12 -> P-CSCF  200         a=recvonly
+#6151 volte10 -> P-CSCF  re-INVITE   a=sendrecv: resumed
+#6201 volte12 -> P-CSCF  200         a=sendrecv
+#6347 volte10 -> P-CSCF  BYE
 ```
 
 Each re-INVITE passes the MMTel AS as it came (TS 24.610 4.5.2.1), and each new answer updates both Rx sessions.
@@ -404,33 +404,33 @@ Each re-INVITE passes the MMTel AS as it came (TS 24.610 4.5.2.1), and each new 
 
 ```sh
 docker compose up -d --build
-docker compose --profile volte up -d --no-deps volte-a volte-b
+docker compose --profile volte up -d --no-deps volte10 volte12
 ```
 
 `--no-deps` keeps Compose from recreating the P-CSCF, the EPC and the other nodes that the UEs depend on, which it may do after a fresh build: a recreated node has lost its Diameter connections.
 
-Open http://localhost:8080. The UE cards of volte-a and volte-b say that they are registered. Call `tel:+12025550112` from volte-a; volte-b answers by itself after its ring time. The cards have buttons for hold, resume and DTMF, and show the codec and the precondition table of the call. The ladder of the call has a column for the PCRF, next to the P-CSCF. Release the voice bearer with the `curl` above and watch the P-CSCF end the call.
+Open http://localhost:8080. The UE cards of volte10 and volte12 say that they are registered. Call `tel:+12025550112` from volte10; volte12 answers by itself after its ring time. The cards have buttons for hold, resume and DTMF, and show the codec and the precondition table of the call. The ladder of the call has a column for the PCRF, next to the P-CSCF. Release the voice bearer with the `curl` above and watch the P-CSCF end the call.
 
 ### From the command line
 
-The VoLTE UEs of the profile and the one-shot commands share the addresses of volte-a and volte-b, so stop the profile first (`docker compose --profile volte rm -sf volte-a volte-b`). Then let volte-b wait for a call. The command stays in the foreground until the call ends:
+The VoLTE UEs of the profile and the one-shot commands share the addresses of volte10 and volte12, so stop the profile first (`docker compose --profile volte rm -sf volte10 volte12`). Then let volte12 wait for a call. The command stays in the foreground until the call ends:
 
 ```sh
-docker compose run --rm --no-deps volte-b answer -epc http://172.28.0.80:8080 \
+docker compose run --rm --no-deps volte12 answer -epc http://172.28.0.80:8080 \
   -impi 001010000000012@ims.mnc001.mcc001.3gppnetwork.org \
   -impu sip:001010000000012@ims.mnc001.mcc001.3gppnetwork.org \
   -k fec86ba6eb707ed08905757b1bb44b8f -opc 1006020f0a478bf6b699f15c062e42b3 \
-  -received-out /captures/volte-b-received.amr
+  -received-out /captures/volte12-received.amr
 ```
 
-In another terminal, call volte-b from volte-a:
+In another terminal, call volte12 from volte10:
 
 ```sh
-docker compose run --rm --no-deps volte-a call -epc http://172.28.0.80:8080 \
+docker compose run --rm --no-deps volte10 call -epc http://172.28.0.80:8080 \
   -impi 001010000000010@ims.mnc001.mcc001.3gppnetwork.org \
   -impu sip:001010000000010@ims.mnc001.mcc001.3gppnetwork.org \
   -k 465b5ce8b199b49faa5f0a2ee238a6bc -opc cd63cb71954a9f4e48a5994e37a02baf \
-  -sent-out /captures/volte-a-sent.amr tel:+12025550112
+  -sent-out /captures/volte10-sent.amr tel:+12025550112
 ```
 
 The flags for a VoLTE UE:

@@ -74,7 +74,7 @@ docker compose --profile phones up -d --build
 
 起動するまで、カードには接続できないと表示されます。起動すると、それぞれが自分で登録します。カードが `not registered` のままなら、**Register** を押してください。
 
-`volte-a` と `volte-b` のカードはプロファイル `volte` の VoLTE の UE です。どちらも EPC スタブに attach し、IMS-AKA で登録します。`docker compose --profile volte up -d volte-a volte-b` で起動し、`volte-a` から `tel:+12025550112` に発信します。そうした通話の流れは [VoLTE の呼の流れ](volte.md) で追っています。2 つのプロファイルは加入者もアドレスも別なので、同時に起動できます。
+`volte10` と `volte12` のカードはプロファイル `volte` の VoLTE の UE です。どちらも EPC スタブに attach し、IMS-AKA で登録します。`docker compose --profile volte up -d volte10 volte12` で起動し、`volte10` から `tel:+12025550112` に発信します。そうした通話の流れは [VoLTE の呼の流れ](volte.md) で追っています。2 つのプロファイルは加入者もアドレスも別なので、同時に起動できます。
 
 通話は次の手順でかけます。
 
@@ -125,13 +125,13 @@ docker compose --profile phones up -d --build
 
 ## bearer を落とし、UE を切り離す
 
-**Access network (EPC)** のパネルには、EPC のスタブに接続した UE が並びます。`volte` プロファイルの `volte-a` と `volte-b` です。行には IMSI、スタブが渡したアドレス、アクセスポイント名、UE の EPS bearer、その UE のために P-CSCF が持つ Rx セッションの Session-Id が出ます。
+**Access network (EPC)** のパネルには、EPC のスタブに接続した UE が並びます。`volte` プロファイルの `volte10` と `volte12` です。行には IMSI、スタブが渡したアドレス、アクセスポイント名、UE の EPS bearer、その UE のために P-CSCF が持つ Rx セッションの Session-Id が出ます。
 
 接続した UE には、SIP の信号を運ぶ既定の bearer（EBI 5、QCI 5）があります（IR.92 4.4.1）。通話を組み立てる間は、その隣に音声の専用 bearer（QCI 1）が現れます（4.4.2）。
 
 - 音声の bearer の **Release** を押すと、無線が切れたときと同じように、網がその bearer を非活性化します（TS 24.301 6.4.4.2）。PCRF は通話の Rx セッションを打ち切り、P-CSCF は利用者の代わりに BYE を送って通話を終わらせ、2 台の UE のカードは通話の無い状態に戻ります。この流れをキャプチャで追う手順は、[VoLTE の呼の流れ](volte.md) の「網が bearer を落とす」にあります。
 - 既定の bearer に **Release** はありません。PDN 接続と一緒のものなので、スタブは非活性化を断り、代わりに切り離しを求めます。
-- **Detach** を押すと、網が UE を切り離します（5.5.2.3）。PDN 接続が終わり、PCRF はその UE の Rx セッションをすべて打ち切り、UE は DETACH ACCEPT で答えます。スタブは再接続を求めないので、UE はアクセス網から離れたままです。`docker compose --profile volte up -d volte-a` のように起動し直してください。
+- **Detach** を押すと、網が UE を切り離します（5.5.2.3）。PDN 接続が終わり、PCRF はその UE の Rx セッションをすべて打ち切り、UE は DETACH ACCEPT で答えます。スタブは再接続を求めないので、UE はアクセス網から離れたままです。`docker compose --profile volte up -d volte10` のように起動し直してください。
 
 この状態を持っているのはスタブで、ラボは写しを持ちません。そのため、パネルは数秒ごとにスタブへ問い合わせます。
 

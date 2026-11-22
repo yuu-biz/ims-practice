@@ -23,8 +23,8 @@ lab:
   # fault panel stays off.
   # The UE simulators phone1 and phone2 of ue.yaml. They start with zero
   # replicas, like the phones profile of compose.yaml; until they are
-  # scaled up, the web UI shows them as not reachable. volte-a and
-  # volte-b have no Pods: a VoLTE UE needs the static address that the
+  # scaled up, the web UI shows them as not reachable. volte10 and
+  # volte12 have no Pods: a VoLTE UE needs the static address that the
   # EPC stub hands its subscriber, which a Pod cannot ask for, so the
   # web UI always shows them as not reachable.
   ues:
@@ -32,9 +32,9 @@ lab:
       control: http://phone1.ims.svc.cluster.local:8090
     - name: phone2
       control: http://phone2.ims.svc.cluster.local:8090
-    - name: volte-a
-      control: http://volte-a.ims.svc.cluster.local:8090
-    - name: volte-b
-      control: http://volte-b.ims.svc.cluster.local:8090
+    - name: volte10
+      control: http://volte10.ims.svc.cluster.local:8090
+    - name: volte12
+      control: http://volte12.ims.svc.cluster.local:8090
     - name: phone3
       control: http://phone3.ims.svc.cluster.local:8090

@@ -79,7 +79,7 @@ The UEs are in profiles, so `docker compose up` does not start them.
 | --- | --- | --- |
 | `ue` | `ue`, `ue2`, `ue3`, `softphone` | One command each, with `docker compose run --rm ue register` and the like. `softphone` holds pjsua and SIPp, softphones written by others. |
 | `phones` | `phone1`, `phone2`, `phone3` | They stay up and do what the Lab asks. `docker compose --profile phones up -d`. |
-| `volte` | `volte-a`, `volte-b` | VoLTE UEs that stay up, like those of `phones`. `docker compose --profile volte up -d`. |
+| `volte` | `volte10`, `volte12` | VoLTE UEs that stay up, like those of `phones`. `docker compose --profile volte up -d`. |
 
 `ue` and `phones` use the same subscribers, so run one of the two at a time.
 
@@ -93,9 +93,9 @@ The test subscribers are in `deploy/compose/hss.yaml`. The guides call a UE by i
 | 2 | `001010000000002@ims.mnc001.mcc001.3gppnetwork.org` | +1-202-555-0102 | `ue2`, `phone2` | UE 2, UE-B |
 | 3 | `001010000000003@ims.mnc001.mcc001.3gppnetwork.org` | +1-202-555-0103 | `ue3`, `phone3` | UE 3, UE-C |
 | 4 | `+12025550104@ims.mnc001.mcc001.3gppnetwork.org` | +1-202-555-0104 | `softphone` (pjsua) | pjsua |
-| 10 | `001010000000010@ims.mnc001.mcc001.3gppnetwork.org` | +1-202-555-0110 | `volte-a` | volte-a |
+| 10 | `001010000000010@ims.mnc001.mcc001.3gppnetwork.org` | +1-202-555-0110 | `volte10` | volte10 |
 | 11 | `001010000000011@ims.mnc001.mcc001.3gppnetwork.org` | +1-202-555-0111 | `softphone` (SIPp) | SIPp |
-| 12 | `001010000000012@ims.mnc001.mcc001.3gppnetwork.org` | +1-202-555-0112 | `volte-b` | volte-b |
+| 12 | `001010000000012@ims.mnc001.mcc001.3gppnetwork.org` | +1-202-555-0112 | `volte12` | volte12 |
 
 The second network of the interconnect guide has its own subscribers in `deploy/interconnect/b/hss.yaml`: +1-202-555-0151, UE B1 on the service `ue-b1`, and +1-202-555-0152.
 

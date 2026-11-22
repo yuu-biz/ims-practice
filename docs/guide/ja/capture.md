@@ -61,8 +61,8 @@ docker compose up -d --build
 | ラボが操作する UE シミュレータ（加入者 1） | `phone1` | 172.28.0.110 | `phones` |
 | ラボが操作する UE シミュレータ（加入者 2） | `phone2` | 172.28.0.111 | `phones` |
 | ラボが操作する UE シミュレータ（加入者 3） | `phone3` | 172.28.0.112 | `phones` |
-| VoLTE の UE（加入者 10） | `volte-a` | 172.28.0.120 | `volte` |
-| VoLTE の UE（加入者 12） | `volte-b` | 172.28.0.121 | `volte` |
+| VoLTE の UE（加入者 10） | `volte10` | 172.28.0.120 | `volte` |
+| VoLTE の UE（加入者 12） | `volte12` | 172.28.0.121 | `volte` |
 
 `capture` サービスにはアドレスがありません。ホストのネットワークをそのまま使い、ブリッジ `ims0` を捕らえます。
 
