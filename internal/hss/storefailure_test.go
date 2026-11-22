@@ -73,6 +73,14 @@ func (unreachable) Delete(context.Context, string) error { return errUnreachable
 
 func (unreachable) CompareAndDelete(context.Context, string, string) error { return errUnreachable }
 
+func (unreachable) AddToIndex(context.Context, string, string) error { return errUnreachable }
+
+func (unreachable) RemoveFromIndex(context.Context, string, string) error { return errUnreachable }
+
+func (unreachable) MembersAfter(context.Context, string, string, int) ([]string, error) {
+	return nil, errUnreachable
+}
+
 func newHSS(t *testing.T, kv kvstore.Store) *hss.HSS {
 	t.Helper()
 	return newHSSWithLocks(t, kv, nil)

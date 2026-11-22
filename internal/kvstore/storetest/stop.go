@@ -101,3 +101,24 @@ func (s *stopping) Done(ctx context.Context, c kvstore.Claim) error {
 	}
 	return s.Store.Done(ctx, c)
 }
+
+func (s *stopping) AddToIndex(ctx context.Context, index, member string) error {
+	if !s.write() {
+		return errStopped
+	}
+	return s.Store.AddToIndex(ctx, index, member)
+}
+
+func (s *stopping) RemoveFromIndex(ctx context.Context, index, member string) error {
+	if !s.write() {
+		return errStopped
+	}
+	return s.Store.RemoveFromIndex(ctx, index, member)
+}
+
+func (s *stopping) MembersAfter(ctx context.Context, index, after string, limit int) ([]string, error) {
+	if s.stopped() {
+		return nil, errStopped
+	}
+	return s.Store.MembersAfter(ctx, index, after, limit)
+}

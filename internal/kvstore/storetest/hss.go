@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -19,7 +21,8 @@ func HSS(t *testing.T, newPair func(t *testing.T) (hss.Store, hss.Store)) {
 		{"FindsASubscriberByEachIdentity", hssFindsByEachIdentity},
 		{"RefusesAnIdentityOfAnotherSubscription", hssRefusesTakenIdentity},
 		{"DeleteDropsTheIndex", hssDeleteDropsTheIndex},
-		{"ListIsBoundedAndOrdered", hssListIsBoundedAndOrdered},
+		{"ListIsOrderedAndPaged", hssListIsOrderedAndPaged},
+		{"ListGoesOnFromASubscriberThatIsGone", hssListGoesOnFromASubscriberThatIsGone},
 		{"StoresTheProvisionedRepositoryData", hssStoresRepositoryData},
 		{"KeepsSQNOutOfPut", hssKeepsSQNOutOfPut},
 		{"CompareAndSwapRepositoryData", hssCompareAndSwapRepositoryData},
@@ -120,13 +123,23 @@ func deleteSubscriber(t *testing.T, s hss.Store, privateID string) (hss.Subscrib
 	return sub, ok
 }
 
-func list(t *testing.T, s hss.Store, limit int) []hss.Subscriber {
+func list(t *testing.T, s hss.Store, after string, limit int) ([]hss.Subscriber, string) {
 	t.Helper()
-	subs, err := s.List(context.Background(), limit)
+	subs, next, err := s.List(context.Background(), after, limit)
 	if err != nil {
-		t.Errorf("List(%d): %v", limit, err)
+		t.Errorf("List(%q, %d): %v", after, limit, err)
 	}
-	return subs
+	return subs, next
+}
+
+// privateIdentities are the private identities of subs, for comparing a
+// page against what it should hold.
+func privateIdentities(subs []hss.Subscriber) []string {
+	ids := make([]string, len(subs))
+	for i, s := range subs {
+		ids[i] = s.PrivateIdentity
+	}
+	return ids
 }
 
 func hssFindsByEachIdentity(t *testing.T, a, b hss.Store) {
@@ -195,17 +208,52 @@ func hssDeleteDropsTheIndex(t *testing.T, a, b hss.Store) {
 	}
 }
 
-func hssListIsBoundedAndOrdered(t *testing.T, a, b hss.Store) {
+// hssListIsOrderedAndPaged: a page holds the subscribers after its
+// cursor, in the order of their private identities, and its next cursor
+// leads to the page after it. A page that is not full is the last one.
+func hssListIsOrderedAndPaged(t *testing.T, a, b hss.Store) {
 	for _, name := range []string{"c", "a", "b"} {
 		mustAdd(t, a, hss.Subscription{PrivateIdentity: name + "@" + realm, PublicIdentities: []string{"sip:" + name + "@" + realm}, Password: "p"})
 	}
-	got := list(t, b, 2)
-	if len(got) != 2 || got[0].PrivateIdentity != "a@"+realm || got[1].PrivateIdentity != "b@"+realm {
-		t.Errorf("List(2) = %+v", got)
+	got, next := list(t, b, "", 2)
+	if want := []string{"a@" + realm, "b@" + realm}; !slices.Equal(privateIdentities(got), want) {
+		t.Errorf("the first page of two = %v, want %v", privateIdentities(got), want)
+	}
+	if next == "" {
+		t.Fatal("a full page has no next cursor")
+	}
+	got, next = list(t, b, next, 2)
+	if want := []string{"c@" + realm}; !slices.Equal(privateIdentities(got), want) {
+		t.Errorf("the second page = %v, want %v", privateIdentities(got), want)
+	}
+	if next != "" {
+		t.Errorf("the last page has a next cursor %q", next)
 	}
 	deleteSubscriber(t, a, "a@"+realm)
-	if got := list(t, b, 10); len(got) != 2 || got[0].PrivateIdentity != "b@"+realm {
-		t.Errorf("List after Delete = %+v", got)
+	if got, _ := list(t, b, "", 10); !slices.Equal(privateIdentities(got), []string{"b@" + realm, "c@" + realm}) {
+		t.Errorf("List after Delete = %v", privateIdentities(got))
+	}
+}
+
+// hssListGoesOnFromASubscriberThatIsGone: the operator who pages
+// through the subscribers sees the rest of them even when the one the
+// page before it ended at has been removed since.
+func hssListGoesOnFromASubscriberThatIsGone(t *testing.T, a, b hss.Store) {
+	for _, name := range []string{"a", "b", "c"} {
+		mustAdd(t, a, hss.Subscription{PrivateIdentity: name + "@" + realm, PublicIdentities: []string{"sip:" + name + "@" + realm}, Password: "p"})
+	}
+	got, next := list(t, b, "", 1)
+	if want := []string{"a@" + realm}; !slices.Equal(privateIdentities(got), want) {
+		t.Fatalf("the first page of one = %v, want %v", privateIdentities(got), want)
+	}
+	deleteSubscriber(t, a, "a@"+realm)
+	if got, _ := list(t, b, next, 10); !slices.Equal(privateIdentities(got), []string{"b@" + realm, "c@" + realm}) {
+		t.Errorf("the page after the one that is gone = %v", privateIdentities(got))
+	}
+	// A private identity compares without case, wherever the cursor has
+	// been (TS 29.229 6.3.1 is a NAI, RFC 7542 2.4).
+	if got, _ := list(t, b, "B@"+strings.ToUpper(realm), 10); !slices.Equal(privateIdentities(got), []string{"c@" + realm}) {
+		t.Errorf("the page after the private identity in upper case = %v", privateIdentities(got))
 	}
 }
 

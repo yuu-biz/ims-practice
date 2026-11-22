@@ -241,9 +241,24 @@ type Store interface {
 	// Delete removes the subscriber of privateID, and returns it and
 	// whether there was one.
 	Delete(ctx context.Context, privateID string) (Subscriber, bool, error)
-	// List returns at most limit subscribers, in the order of their
-	// private identities. It is for operators, never for a Cx request.
-	List(ctx context.Context, limit int) ([]Subscriber, error)
+	// List returns one page of the subscribers, in the order of their
+	// private identities: at most limit of them, starting after the
+	// private identity after. An empty after starts at the first
+	// subscriber.
+	//
+	// next is the cursor of the page that follows, which the caller
+	// passes back as after. It is empty once the store has reached its
+	// last subscriber, which a page that is not full shows; a full page
+	// always has a next, even when nothing follows it, and the page
+	// after it is then empty. A full page may hold fewer than limit
+	// subscribers, since an Add or a Delete that another instance has
+	// not finished leaves an entry with no subscriber behind it.
+	//
+	// It is for operators, never for a Cx request. Reading a page costs
+	// the same however many subscribers the store holds, so a listing
+	// of a large network is as many pages as the operator asks for and
+	// no walk over the rest.
+	List(ctx context.Context, after string, limit int) (subs []Subscriber, next string, err error)
 }
 
 // MemoryStore is a Store in the process. It indexes the subscribers by
@@ -253,6 +268,10 @@ type MemoryStore struct {
 	mu        sync.Mutex
 	byPrivate map[string]Subscriber
 	byPublic  map[string]string // public key to private key
+	// order holds the private keys in order, so that a page of List is
+	// a binary search and a slice of it, as a range lookup in a store
+	// outside the process is.
+	order []string
 	// repository holds the repository data by private key, then by
 	// Service-Indication.
 	repository map[string]map[string]sh.TransparentData
@@ -335,6 +354,9 @@ func (s *MemoryStore) Add(_ context.Context, sub Subscription) error {
 	}
 	sub.RepositoryData = nil
 	s.byPrivate[k] = Subscriber{Subscription: sub}
+	if i, found := slices.BinarySearch(s.order, k); !found {
+		s.order = slices.Insert(s.order, i, k)
+	}
 	for _, id := range sub.PublicIdentities {
 		s.byPublic[publicKey(id)] = k
 	}
@@ -372,6 +394,9 @@ func (s *MemoryStore) Delete(_ context.Context, privateID string) (Subscriber, b
 		return Subscriber{}, false, nil
 	}
 	delete(s.byPrivate, k)
+	if i, found := slices.BinarySearch(s.order, k); found {
+		s.order = slices.Delete(s.order, i, i+1)
+	}
 	for _, id := range sub.PublicIdentities {
 		delete(s.byPublic, publicKey(id))
 	}
@@ -417,20 +442,30 @@ func cloneTransparentData(d sh.TransparentData) sh.TransparentData {
 	return d
 }
 
-func (s *MemoryStore) List(_ context.Context, limit int) ([]Subscriber, error) {
+func (s *MemoryStore) List(_ context.Context, after string, limit int) ([]Subscriber, string, error) {
+	if limit < 1 {
+		return nil, "", nil
+	}
 	s.mu.Lock()
-	keys := make([]string, 0, len(s.byPrivate))
-	for k := range s.byPrivate {
-		keys = append(keys, k)
+	defer s.mu.Unlock()
+	start := 0
+	if after != "" {
+		// after is not in the page, whether or not its subscriber is
+		// still there: a page goes on from where the one before it ended.
+		i, found := slices.BinarySearch(s.order, privateKey(after))
+		start = i
+		if found {
+			start++
+		}
 	}
-	slices.Sort(keys)
-	if len(keys) > limit {
-		keys = keys[:limit]
-	}
+	keys := s.order[start:min(start+limit, len(s.order))]
 	subs := make([]Subscriber, 0, len(keys))
 	for _, k := range keys {
 		subs = append(subs, copied(s.byPrivate[k]))
 	}
-	s.mu.Unlock()
-	return subs, nil
+	next := ""
+	if len(keys) == limit {
+		next = keys[len(keys)-1]
+	}
+	return subs, next, nil
 }

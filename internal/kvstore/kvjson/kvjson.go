@@ -91,7 +91,7 @@ var (
 	unescaper = strings.NewReplacer("%3A", ":", "%25", "%")
 )
 
-// Index is the name of a time index of the Client.
+// Index is the name of a time index or a sorted index of the Client.
 func (c *Client) Index(name string) string { return c.prefix + name }
 
 // within bounds ctx by the Timeout of the Client.
@@ -349,4 +349,28 @@ func (c *Client) ClaimDue(ctx context.Context, index string, now time.Time, leas
 // Done ends a claim that ClaimDue gave.
 func (c *Client) Done(ctx context.Context, claim kvstore.Claim) error {
 	return c.kv.Done(ctx, claim)
+}
+
+// AddToIndex puts member in the sorted index of the Client named index,
+// and returns the failure of the store.
+func (c *Client) AddToIndex(ctx context.Context, index, member string) error {
+	ctx, cancel := c.within(ctx)
+	defer cancel()
+	return c.kv.AddToIndex(ctx, c.Index(index), member)
+}
+
+// RemoveFromIndex takes member out of the sorted index, if it is there,
+// and returns the failure of the store.
+func (c *Client) RemoveFromIndex(ctx context.Context, index, member string) error {
+	ctx, cancel := c.within(ctx)
+	defer cancel()
+	return c.kv.RemoveFromIndex(ctx, c.Index(index), member)
+}
+
+// MembersAfter returns one page of the sorted index; see
+// kvstore.Store.MembersAfter.
+func (c *Client) MembersAfter(ctx context.Context, index, after string, limit int) ([]string, error) {
+	ctx, cancel := c.within(ctx)
+	defer cancel()
+	return c.kv.MembersAfter(ctx, c.Index(index), after, limit)
 }

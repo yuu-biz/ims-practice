@@ -6,7 +6,9 @@
 //
 //	subscriber:<private identity>    the Subscriber and its repository data
 //	public:<public identity>         index: the private identity of the subscription
-//	directory:<shard>                the private identities of one shard, for List
+//
+// and one sorted index, "subscribers", of the private identities, which
+// List reads one page at a time.
 //
 // The identities are in the form in which hss.MemoryStore compares them:
 // a private identity in lower case, a public identity as hss's
@@ -18,9 +20,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"hash/fnv"
 	"slices"
-	"strconv"
 	"strings"
 	"time"
 
@@ -69,10 +69,10 @@ type record struct {
 // keep the identity for longer than this.
 const provisionalTime = time.Minute
 
-// directoryShards is the number of directory items. Add and Delete
-// change the item of one shard, so that two of them on different
-// subscribers seldom meet on one item.
-const directoryShards = 16
+// subscriberIndex is the sorted index of the private identities, in the
+// form that privateKey writes them, so that List reads them in order
+// without gathering them all.
+const subscriberIndex = "subscribers"
 
 // privateKey is that of hss.MemoryStore (store.go), which does not
 // export it: a NAI compares without case. A public identity is keyed by
@@ -86,12 +86,6 @@ func (s *Store) subscriberKey(privateID string) string {
 }
 
 func (s *Store) publicIndexKey(publicID string) string { return s.c.Key("public", publicKey(publicID)) }
-
-func (s *Store) directoryKey(privateID string) string {
-	h := fnv.New32a()
-	h.Write([]byte(privateKey(privateID)))
-	return s.c.Key("directory", strconv.Itoa(int(h.Sum32()%directoryShards)))
-}
 
 func noTTL[T any](T) time.Duration { return 0 }
 
@@ -141,8 +135,8 @@ func (s *Store) SubscriberOf(ctx context.Context, publicID string) (hss.Subscrib
 
 // Add claims the private identity with a provisional record, then each
 // public identity with an index item that only one subscription can
-// hold, then enters the subscriber in the directory, and at last makes
-// the record final. Every claim is a compare and swap, so of two Adds
+// hold, then enters the private identity in the sorted index, and at
+// last makes the record final. Every claim is a compare and swap, so of two Adds
 // that share an identity, one fails with ErrIdentityTaken, on whichever
 // instances they run.
 //
@@ -188,11 +182,7 @@ func (s *Store) Add(ctx context.Context, sub hss.Subscription) error {
 		}
 		claimed = append(claimed, c)
 	}
-	if _, err := kvjson.ReadModifyWrite(ctx, s.c, s.directoryKey(k), noTTL, func(ids *[]string) {
-		if i, found := slices.BinarySearch(*ids, k); !found {
-			*ids = slices.Insert(*ids, i, k)
-		}
-	}); err != nil {
+	if err := s.c.AddToIndex(ctx, subscriberIndex, k); err != nil {
 		undo()
 		return err
 	}
@@ -200,7 +190,7 @@ func (s *Store) Add(ctx context.Context, sub hss.Subscription) error {
 	if _, err := kvjson.CompareAndSwap(ctx, s.c, mainKey, version, r, 0); err != nil {
 		// The provisional record ran out, and another Add may hold the
 		// identity now, or the store failed: this one has failed. Its
-		// directory entry stays, for List to skip.
+		// entry in the sorted index stays, for List to skip.
 		undo()
 		return fmt.Errorf("hssstore: add %s: %w", sub.PrivateIdentity, err)
 	}
@@ -332,14 +322,14 @@ func (s *Store) CompareAndSwapRepositoryData(ctx context.Context, privateID stri
 const deleteAttempts = 10
 
 // Delete removes the subscriber with a compare and delete, then its
-// index items and its directory entry. A reader in between finds an
-// index item without its subscriber, which is a miss; an Add takes it
-// over.
+// index items and its entry in the sorted index. A reader in between
+// finds an index item without its subscriber, which is a miss; an Add
+// takes it over.
 //
 // Once the subscriber's item is gone, so is the subscriber, and Delete
-// returns it even when the store fails on what comes after: an index
-// item or a directory entry that stays is what a Delete that stops
-// there leaves, and is a miss as well.
+// returns it even when the store fails on what comes after: an entry in
+// either index that stays is what a Delete that stops there leaves, and
+// is a miss as well.
 func (s *Store) Delete(ctx context.Context, privateID string) (hss.Subscriber, bool, error) {
 	k := privateKey(privateID)
 	for range deleteAttempts {
@@ -357,51 +347,39 @@ func (s *Store) Delete(ctx context.Context, privateID string) (hss.Subscriber, b
 		for _, id := range r.PublicIdentities {
 			s.c.RemoveIndexIf(ctx, s.publicIndexKey(id), k)
 		}
-		kvjson.Modify(ctx, s.c, s.directoryKey(k), noTTL, func(ids *[]string) error {
-			*ids = slices.DeleteFunc(*ids, func(id string) bool { return id == k })
-			return nil
-		})
+		s.c.RemoveFromIndex(ctx, subscriberIndex, k)
 		return r.Subscriber, true, nil
 	}
 	return hss.Subscriber{}, false, fmt.Errorf("hssstore: delete %s: changed by others %d times: %w", privateID, deleteAttempts, kvjson.ErrGaveUp)
 }
 
-// List reads every directory item, and then the subscribers in the order
-// of their private identities until it has limit of them.
-//
-// SIMPLIFIED: a list of every subscriber does not scale to a large
-// network; it would have to come in pages, from a range lookup of the
-// external store. kvstore.Store has no range lookup, and
-// hss.Store.List takes no position to go on from, so List reads all
-// directory items, and with them every private identity, as
-// hss.MemoryStore walks all subscribers. It is for the operator only,
-// never for a Cx request. A List that goes on from a cursor, one shard
-// at a time, would remove the walk.
-func (s *Store) List(ctx context.Context, limit int) ([]hss.Subscriber, error) {
-	var ids []string
-	for shard := range directoryShards {
-		var shardIDs []string
-		_, err := kvjson.Read(ctx, s.c, s.c.Key("directory", strconv.Itoa(shard)), &shardIDs)
-		if err != nil && !errors.Is(err, kvstore.ErrNotFound) {
-			return nil, err
-		}
-		ids = append(ids, shardIDs...)
+// List reads one page of the sorted index of the private identities,
+// and then the subscriber of each: a page of limit subscribers costs
+// one range lookup and limit reads, however many subscribers the store
+// holds.
+func (s *Store) List(ctx context.Context, after string, limit int) ([]hss.Subscriber, string, error) {
+	if limit < 1 {
+		return nil, "", nil
 	}
-	slices.Sort(ids)
-	var subs []hss.Subscriber
+	ids, err := s.c.MembersAfter(ctx, subscriberIndex, privateKey(after), limit)
+	if err != nil {
+		return nil, "", err
+	}
+	subs := make([]hss.Subscriber, 0, len(ids))
 	for _, id := range ids {
-		if len(subs) >= limit {
-			break
-		}
-		// An entry whose subscriber is gone, or still provisional, is
+		// An entry whose subscriber is gone, or is still provisional, is
 		// one that an Add or a Delete has not finished with.
 		sub, ok, err := s.Subscriber(ctx, id)
 		if err != nil {
-			return nil, err
+			return nil, "", err
 		}
 		if ok {
 			subs = append(subs, sub)
 		}
 	}
-	return subs, nil
+	next := ""
+	if len(ids) == limit {
+		next = ids[len(ids)-1]
+	}
+	return subs, next, nil
 }
