@@ -165,22 +165,39 @@ pcscf=172.28.0.40
 icscf=172.28.0.20
 scscf=172.28.0.30
 agw=172.28.0.50
+mmtel=172.28.0.75
+domain=ims.mnc001.mcc001.3gppnetwork.org
 invite='sip.Method == "INVITE"'
 
 echo "call setup"
 expect "INVITE UE 1 -> P-CSCF with SDP" "$invite && ip.src == $ue1 && sip.Request-Line contains \"tel:+1-202-555-0102\" && sdp"
 expect "INVITE P-CSCF -> S-CSCF with the relay in the SDP" "$invite && ip.src == $pcscf && ip.dst == $scscf && sdp.connection_info.address == $agw && sip.P-Asserted-Identity"
+call_start="$last"
+# The P-CSCF writes the icid-value of the call (TS 24.229 5.2.6.3.3
+# step 7), and every node after it passes it on.
+icid="$(field sip.P-Charging-Vector | sed -n 's/^icid-value=\([^;]*\);orig-ioi=.*/\1/p')"
+if [ -n "$icid" ]; then
+	echo "ok   the INVITE leaves the P-CSCF with the icid-value $icid and an orig-ioi"
+else
+	echo "FAIL the INVITE left the P-CSCF with P-Charging-Vector \"$(field sip.P-Charging-Vector)\""
+	fail=1
+	icid=none
+fi
 expect "ENUM query for the number" "dns.qry.type == 35 && dns.qry.name == \"2.0.1.0.5.5.5.2.0.2.1.e164.arpa\""
-expect "INVITE S-CSCF -> I-CSCF to the SIP URI from ENUM" "$invite && ip.src == $scscf && ip.dst == $icscf && sip.r-uri.user == \"001010000000002\""
+expect "INVITE S-CSCF -> I-CSCF to the SIP URI from ENUM, the icid-value and the S-CSCF's orig-ioi" "$invite && ip.src == $scscf && ip.dst == $icscf && sip.r-uri.user == \"001010000000002\" && sip.P-Charging-Vector == \"icid-value=$icid;orig-ioi=$domain\""
 # The P-CSCF's reg event SUBSCRIBE for UE 1 brings an LIR of its own.
 expect "LIR for the callee" "diameter.cmd.code == 302 && diameter.flags.request == 1 && diameter.Public-Identity == \"sip:001010000000002@ims.mnc001.mcc001.3gppnetwork.org\""
 expect "LIA with the callee's S-CSCF" "diameter.cmd.code == 302 && diameter.flags.request == 0 && diameter.Result-Code == 2001 && diameter.Server-Name"
-expect "INVITE I-CSCF -> S-CSCF" "$invite && ip.src == $icscf && ip.dst == $scscf"
-expect "INVITE S-CSCF -> P-CSCF along the Path" "$invite && ip.src == $scscf && ip.dst == $pcscf && sip.P-Called-Party-ID"
+expect "INVITE I-CSCF -> S-CSCF with the same icid-value" "$invite && ip.src == $icscf && ip.dst == $scscf && sip.P-Charging-Vector contains \"icid-value=$icid\""
+expect "INVITE S-CSCF -> P-CSCF along the Path, the icid-value and the S-CSCF's orig-ioi" "$invite && ip.src == $scscf && ip.dst == $pcscf && sip.P-Called-Party-ID && sip.P-Charging-Vector == \"icid-value=$icid;orig-ioi=$domain\""
 expect "INVITE P-CSCF -> UE 2" "$invite && ip.src == $pcscf && ip.dst == $ue2ip && sdp.connection_info.address == $agw"
 expect "183 reliable from UE 2" "sip.Status-Code == 183 && ip.src == $ue2ip && sip.RSeq"
 expect "PRACK" "sip.Method == \"PRACK\" && ip.dst == $ue2ip && sip.RAck"
 expect "200 OK to the INVITE from UE 2" "sip.Status-Code == 200 && sip.CSeq.method == \"INVITE\" && ip.src == $ue2ip"
+# The P-CSCF stored the icid-value and the orig-ioi of the INVITE before
+# it removed them, and writes them back with its own term-ioi (TS 24.229
+# 5.2.6.4.3 item 9, 5.2.6.4.4 item 6).
+expect "200 OK P-CSCF -> S-CSCF with the charging vector of the INVITE and a term-ioi" "sip.Status-Code == 200 && sip.CSeq.method == \"INVITE\" && ip.src == $pcscf && ip.dst == $scscf && sip.P-Charging-Vector == \"icid-value=$icid;orig-ioi=$domain;term-ioi=$domain\""
 answered="$last"
 # The MMTel AS is a B2BUA (TS 24.229 5.7.5): it acknowledges UE 2's 200
 # on its own dialog with UE 2 at once (RFC 3261 13.2.2.4), while its
@@ -202,6 +219,24 @@ first_bye="$last"
 expect "200 OK to the BYE reaches UE 1" "sip.Status-Code == 200 && sip.CSeq.method == \"BYE\" && ip.dst == $ue1"
 last="$first_bye"
 expect "BYE reaches UE 2" "sip.Method == \"BYE\" && ip.dst == $ue2ip"
+
+echo "one icid-value at every node (TS 24.229 5.3.2.1, 5.4.3.2 step 6, 5.4.3.3 step 6, 5.7.5.1)"
+# The INVITEs and the responses to them between two nodes, from the
+# first INVITE that left the P-CSCF to the BYE of UE 1. A 100 (Trying)
+# belongs to one hop and carries none.
+nodes="{$pcscf, $scscf, $icscf, $mmtel}"
+call_window="frame.number >= $call_start && frame.number < $first_bye && ip.src in $nodes && ip.dst in $nodes"
+for hop in "$pcscf $scscf" "$scscf $mmtel" "$mmtel $scscf" "$scscf $icscf" "$icscf $scscf" "$scscf $pcscf"; do
+	read -r src dst <<<"$hop"
+	if [ -n "$(tshark_fields "$call_window && $invite && ip.src == $src && ip.dst == $dst && sip.P-Charging-Vector contains \"icid-value=$icid\"" | first_line)" ]; then
+		echo "ok   INVITE $src -> $dst with the icid-value"
+	else
+		echo "FAIL no INVITE $src -> $dst with the icid-value $icid"
+		fail=1
+	fi
+done
+none "INVITE, or a response to one, between two nodes of the call without its icid-value" \
+	"$call_window && ($invite || (sip.CSeq.method == \"INVITE\" && sip.Status-Code > 100)) && !(sip.P-Charging-Vector contains \"icid-value=$icid\")"
 echo "failures"
 expect "486 to UE 1" "sip.Status-Code == 486 && ip.dst == $ue1"
 expect "CANCEL from UE 1" "sip.Method == \"CANCEL\" && ip.src == $ue1"
