@@ -31,6 +31,7 @@ import (
 	"github.com/yuu-biz/ims-practice/internal/ibcf"
 	"github.com/yuu-biz/ims-practice/internal/interconnect"
 	"github.com/yuu-biz/ims-practice/internal/kvstore"
+	"github.com/yuu-biz/ims-practice/internal/maintenance"
 	"github.com/yuu-biz/ims-practice/internal/metrics"
 	"github.com/yuu-biz/ims-practice/internal/policy"
 	"github.com/yuu-biz/ims-practice/internal/rtptest"
@@ -308,7 +309,8 @@ func TestStartIBCFListensOnBothSides(t *testing.T) {
 
 // TestMaintenanceListenerServesTheMetricsOfTheRoles: the IBCF counts in
 // the registry of the node, which the maintenance listener serves at
-// /metrics in the format that Prometheus scrapes.
+// /metrics in the format that Prometheus scrapes. The IBCF is no role
+// that the maintenance API serves, so a node of it alone has no API.
 func TestMaintenanceListenerServesTheMetricsOfTheRoles(t *testing.T) {
 	registry := metrics.NewRegistry()
 	listen := func(config.SIP) (*sip.TransportLayer, error) { return sip.Listen("127.0.0.1:0", quiet()) }
@@ -321,7 +323,10 @@ func TestMaintenanceListenerServesTheMetricsOfTheRoles(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	stop := serveMaintenance(l, registry, quiet(), func() {})
+	stop, err := startMaintenance(l, config.Config{Node: "ibcf"}, nil, registry, new(slog.LevelVar), quiet(), func() {})
+	if err != nil {
+		t.Fatal(err)
+	}
 	defer stop()
 
 	resp, err := http.Get("http://" + l.Addr().String() + "/metrics")
@@ -335,6 +340,106 @@ func TestMaintenanceListenerServesTheMetricsOfTheRoles(t *testing.T) {
 	}
 	if want := "# TYPE ims_ibcf_session_attempts_total counter\n"; !strings.Contains(string(body), want) {
 		t.Errorf("GET /metrics has no %q:\n%s", want, body)
+	}
+	resp, err = http.Get("http://" + l.Addr().String() + maintenance.StatePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusNotFound {
+		t.Errorf("GET %s on a node without a role of the API = %s, want 404", maintenance.StatePath, resp.Status)
+	}
+}
+
+// TestMaintenanceAPIShutsTheSCSCFDown: on the maintenance listener of a
+// node with the scscf role, the API shows the S-CSCF and its
+// configuration, and a shut down reaches the S-CSCF, which then refuses
+// a new REGISTER.
+func TestMaintenanceAPIShutsTheSCSCFDown(t *testing.T) {
+	if err := diameter.LoadDictionary(); err != nil {
+		t.Fatal(err)
+	}
+	node := diameter.NewNode(diameter.Identity{OriginHost: "scscf." + domain, OriginRealm: domain}, []uint32{diameter.ApplicationIDCx}, diameter.Timers{}, quiet())
+	registry := metrics.NewRegistry()
+	s, err := scscf.New(scscf.Config{ServerName: "sip:scscf." + domain + ":5060", HomeDomain: domain, Metrics: registry},
+		nil, node, scscf.NewMemoryStore(), nil, quiet())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(s.Close)
+	transport, err := sip.Listen("127.0.0.1:0", quiet())
+	if err != nil {
+		t.Fatal(err)
+	}
+	stack, err := sip.NewStack(transport, sip.Config{SentBy: transport.LocalAddr().String(), OnRequest: s.OnRequest}, quiet())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(stack.Close)
+	s.SetStack(stack)
+
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := config.Config{Node: "scscf", Roles: []config.Role{config.RoleSCSCF}, HomeDomain: domain,
+		Maintenance: &config.Maintenance{Listen: l.Addr().String()},
+		SCSCF: &config.SCSCF{SIP: config.SIP{Listen: netip.MustParseAddrPort("0.0.0.0:5060"), Host: "scscf." + domain},
+			MinExpires: time.Minute, MaxExpires: time.Hour}}
+	// No instance of the HSS takes requests.
+	roles := []managedRole{{function: s.Function(func() bool { return false }), manage: s.Manage}}
+	stop, err := startMaintenance(l, cfg, roles, registry, new(slog.LevelVar), quiet(), func() {})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer stop()
+	ctx := t.Context()
+	oam := maintenance.NewClient("http://"+l.Addr().String(), http.DefaultClient)
+
+	state, err := oam.State(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(state.Functions) != 1 || state.Functions[0].Role != string(config.RoleSCSCF) || state.Functions[0].OperationalState != maintenance.Disabled {
+		t.Errorf("functions %+v, want the scscf alone, DISABLED without the HSS", state.Functions)
+	}
+	conf, err := oam.Configuration(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := `"scscf":{"sip":{"listen":"0.0.0.0:5060","host":"scscf.` + domain + `"},"min_expires":60,"max_expires":3600}`; !strings.Contains(string(conf.Configuration), want) {
+		t.Errorf("configuration %s, want %s in it", conf.Configuration, want)
+	}
+	f, err := oam.SetAdministrativeState(ctx, string(config.RoleSCSCF), maintenance.AdministrativeStateRequest{AdministrativeState: maintenance.ShuttingDown})
+	if err != nil || f.AdministrativeState != maintenance.Locked {
+		t.Fatalf("shut down gave %+v (%v), want LOCKED", f, err)
+	}
+
+	ue, err := sip.Listen("127.0.0.1:0", quiet())
+	if err != nil {
+		t.Fatal(err)
+	}
+	client, err := sip.NewStack(ue, sip.Config{SentBy: ue.LocalAddr().String(), OnRequest: func(*sip.ServerTransaction) {}}, quiet())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(client.Close)
+	register := &sip.Message{Method: sip.REGISTER, RequestURI: "sip:" + domain}
+	register.Add("Max-Forwards", "70")
+	register.Add("From", "<"+impu+">;tag="+sip.NewTag())
+	register.Add("To", "<"+impu+">")
+	register.Add("Call-ID", sip.NewCallID())
+	register.Add("CSeq", "1 REGISTER")
+	ct, err := client.SendRequest(register, sip.Destination{Transport: sip.UDP, Addr: stack.LocalAddr()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var final *sip.Message
+	for r := range ct.Responses() {
+		final = r
+	}
+	if final == nil || final.StatusCode != 503 || final.Get("Retry-After") == "" {
+		t.Errorf("REGISTER to the shut down S-CSCF got %v, want 503 with Retry-After", final)
 	}
 }
 

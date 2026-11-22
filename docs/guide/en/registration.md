@@ -407,6 +407,73 @@ When an initial registration fails as well, the UE does not try again at once. B
 
 The random part spreads the attempts of UEs that lost their registration at the same moment, so that they do not all come back at once. `ue serve` and `ue register` keep trying until they are registered again. Each failure is logged as `"msg":"registration failed"`, with `retry_after_ms`, the wait before the next attempt. `ue serve` also waits and tries again when its first registration fails. The other commands end with an error then, as `ue register` does above for a removed subscription.
 
+## Take the S-CSCF out of service
+
+An operator takes a node out of service without cutting what it serves: the node takes nothing new and goes on with what it has begun, until nothing is left. This is called a drain. A commercial network runs several instances of the S-CSCF, which share the state of the users, so the new work goes to the other instances and no user has to register again.
+
+The node of the S-CSCF serves a maintenance API for this on port 8085, the listener of the `maintenance` section of `deploy/compose/scscf.yaml`, next to the metrics that Prometheus scrapes there. The API asks for no password, so the port is not published on the host: send the requests from inside the container of the S-CSCF. The administrative state of the S-CSCF has the values of TS 28.622 5.3.1. `UNLOCKED` takes new work, `SHUTTINGDOWN` serves only what it has, and `LOCKED` takes nothing new. A shut down makes the S-CSCF `SHUTTINGDOWN` while it still has transactions in progress, and `LOCKED` once the last one has ended (ITU-T X.731 7.1.3).
+
+1. Shut the S-CSCF down:
+
+   ```sh
+   docker compose exec scscf sh -c '
+   body="{\"administrative_state\":\"SHUTTINGDOWN\",\"operator\":\"learner\"}"
+   printf "PUT /maintenance/v1/functions/scscf/administrative-state HTTP/1.0\r\nContent-Type: application/json\r\nContent-Length: ${#body}\r\n\r\n%s" "$body" |
+     nc -w 5 127.0.0.1 8085'
+   ```
+
+   The answer ends with the state of the S-CSCF. No transaction was in progress, so it is `LOCKED` at once:
+
+   ```json
+   {"role":"scscf","administrative_state":"LOCKED","operational_state":"ENABLED","users":0}
+   ```
+
+   `users` counts the transactions that the S-CSCF is serving. `operational_state` says whether it can work (TS 28.622 5.3.3): it is `DISABLED` while no instance of the HSS takes its Cx requests. `docker compose exec scscf wget -qO- http://127.0.0.1:8085/maintenance/v1/state` shows the whole node.
+
+2. Register the UE:
+
+   ```sh
+   docker compose run --rm ue register -deregister-after 5s
+   ```
+
+   The UE ends with `REGISTER answered 504 Server Time-out`.
+
+```text
+ UE           P-CSCF         I-CSCF          S-CSCF          HSS
+ |  REGISTER    |              |               |              |
+ |------------->|  REGISTER    |               |              |
+ |              |------------->|  UAR, UAA     |              |
+ |              |              |<---------------------------->|
+ |              |              |  REGISTER     |              |
+ |              |              |-------------->|              |
+ |              |              |  503 Retry-After: 30         |
+ |              |  503         |<--------------|              |
+ |  504         |<-------------|               |              |
+ |<-------------|              |               |              |
+```
+
+- The REGISTER reaches the S-CSCF as in steps 1 to 4 of the registration: the I-CSCF asks the HSS which S-CSCF serves the user, and forwards it there.
+- The S-CSCF answers **503 Service Unavailable** with **Retry-After: 30**. A request outside a dialog starts something new, which the S-CSCF does not take while it is not `UNLOCKED`. Retry-After asks the client to send this server no other request for that many seconds (RFC 3261 21.5.4). The S-CSCF does not authenticate the user, so no MAR goes to the HSS.
+- A client that gets a 503 sends the request to the next server that DNS gave it (RFC 3263 4.3). The I-CSCF of this network has one S-CSCF, so it has no other to try and sends the 503 back. With several instances of the S-CSCF the REGISTER would go to the next instance and register the user there.
+- The P-CSCF takes a 503 from the I-CSCF as a failure of that I-CSCF (RFC 3263 4.3), as it takes a timeout (TS 24.229 5.2.2.1 item 7). No other I-CSCF is left, so it answers the UE **504 Server Time-out**.
+
+In Wireshark, `sip.Status-Code == 503` shows the two 503 responses. The PUT request travels over the loopback interface of the container, so the capture does not hold it.
+
+While it is not `UNLOCKED`, the S-CSCF still serves the requests within a dialog, such as the BYE of a call in progress, and the requests that an application server sends back to it with the original dialog identifier, so that what has begun ends as it would have. It also ends the registrations that expire. A refresh of a registration is a new REGISTER outside a dialog, so it gets the 503 too.
+
+3. Unlock the S-CSCF with the same request and `UNLOCKED`:
+
+   ```sh
+   docker compose exec scscf sh -c '
+   body="{\"administrative_state\":\"UNLOCKED\",\"operator\":\"learner\"}"
+   printf "PUT /maintenance/v1/functions/scscf/administrative-state HTTP/1.0\r\nContent-Type: application/json\r\nContent-Length: ${#body}\r\n\r\n%s" "$body" |
+     nc -w 5 127.0.0.1 8085'
+   ```
+
+   The next `ue register` registers as before.
+
+The administrative state belongs to the process of the node: a node that starts again is `UNLOCKED`.
+
 ## A request without an IP association
 
 The P-CSCF serves only the UEs that have registered through it. It discards a request other than REGISTER that does not map to an IP association, such as a request from a UE whose registration the P-CSCF has lost: it sends nothing back, not even a 100 Trying, and forwards nothing to the S-CSCF (TS 24.229 5.2.6.3.2A). A response would tell an unknown sender that a P-CSCF listens at this address. The UE only sees that no response comes. When Timer B or Timer F fires for a request of `ue serve`, the UE takes its contact as bound to no identity and registers again from the start (TS 24.229 5.1.2A.1.6). `ue call` and `ue sms` report the timeout and exit.
@@ -461,13 +528,13 @@ These parts of the specifications are left out or shortened. Each has a `SIMPLIF
 | --- | --- | --- |
 | P-CSCF, TS 24.229 5.2.2.1 item 1 | The Path URI has no flow token and no `ob` parameter. | They belong to SIP outbound (RFC 5626), which this project does not implement. |
 | P-CSCF, TS 24.229 5.2.2.1 item 6 | The term-ioi of the P-Charging-Vector of the 200 to the REGISTER is not stored. | It names the home network in the charging records of the P-CSCF, which no node of this project writes, and no later message carries it. |
-| S-CSCF, TS 24.229 5.4.1.5 | The S-CSCF ends a registration on its own only when an application server fails the third-party REGISTER and its iFC says SESSION_TERMINATED. Otherwise only an RTR from the HSS ends one. It releases no sessions before the NOTIFY. | The S-CSCF has no operator interface, and it keeps no state of the dialogs it routes. |
+| S-CSCF, TS 24.229 5.4.1.5 | The S-CSCF ends a registration on its own only when an application server fails the third-party REGISTER and its iFC says SESSION_TERMINATED. Otherwise only an RTR from the HSS ends one. It releases no sessions before the NOTIFY. | The maintenance API of the S-CSCF has no operation that ends a registration, and the S-CSCF keeps no state of the dialogs it routes. |
 | S-CSCF, TS 29.228 6.1.3.1 | An RTR with NEW_SERVER_ASSIGNED or REMOVE_S-CSCF gets DIAMETER_UNABLE_TO_COMPLY. | The HSS stub sends only PERMANENT_TERMINATION. The S-CSCF lets the profile of a user who is not registered go by itself after a few minutes. |
 | Subscriber, RFC 6665 4.1.4 and 5.4.9 | A NOTIFY from a second dialog gets 481. | The reg event package forbids a subscription to fork (RFC 3680 4.9). |
 | I-CSCF, TS 24.229 5.3.1.3 | No reselection of another S-CSCF when the S-CSCF does not answer. | The configuration names one S-CSCF. When it runs as several instances, a REGISTER that one leaves unanswered already goes on to the next. |
 | UE, TS 24.229 9.2.1 | A UE without an access network, such as the UEs of this guide or a softphone on the host, has its P-CSCF address configured. A UE on the EPC stub (`ue -epc`) takes it from the PCO when it attaches; see [The VoLTE call flow](volte.md). | The softphone path stays, for softphones and for UEs that do not attach. |
 | UE, TS 24.229 5.1.2A.1.6 | After a request that got no response, the UE registers again through the same P-CSCF at once. It does not mark the P-CSCF as unavailable or look for another one. | The UE knows one P-CSCF address, and finding the P-CSCFs again would give the same one. |
-| UE, TS 24.229 5.1.1.2.1 and 5.1.1.4.1 | When Timer F fires for a REGISTER, or a 503 comes with a Retry-After longer than Timer F, the UE waits and registers through the same P-CSCF. It does not mark the P-CSCF as unavailable or look for another one. After a failed refresh it always makes an initial registration, also where a short Retry-After of a 503 would let it refresh. | The UE knows one P-CSCF address, and finding the P-CSCFs again would give the same one. No node of this network answers a REGISTER with Retry-After. |
+| UE, TS 24.229 5.1.1.2.1 and 5.1.1.4.1 | When Timer F fires for a REGISTER, or a 503 comes with a Retry-After longer than Timer F, the UE waits and registers through the same P-CSCF. It does not mark the P-CSCF as unavailable or look for another one. After a failed refresh it always makes an initial registration, also where a short Retry-After of a 503 would let it refresh. | The UE knows one P-CSCF address, and finding the P-CSCFs again would give the same one. No response to a REGISTER reaches the UE with Retry-After: when the S-CSCF answers 503 with one, the P-CSCF answers the UE 504. |
 | UE, TS 24.229 5.1.1.2.1 | max-time and base-time of the retry delay are always the defaults of RFC 5626 4.5. | The network can provide them only through a management object of TS 24.167, which the UE does not have. |
 | HSS, TS 29.228 6.1.1.1 and 6.1.2.1 | One registration state per subscription, not per public identity. Some Server-Assignment-Type values are not handled. | Each test subscription is one implicit registration set, and the S-CSCF never sends the other values. |
 | HSS, TS 29.228 6.1.1.1 step 5 | No check that the user may register at all. | Every test user may register. |

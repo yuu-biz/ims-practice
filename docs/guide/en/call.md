@@ -317,7 +317,7 @@ Each item has a `SIMPLIFIED:` comment in the code; `grep -rn "SIMPLIFIED:" inter
 | SIP stack, RFC 3261 9.2 and 16.10 | A CANCEL matches INVITE transactions only. One that matches nothing gets 481, also at a proxy. | Clients should not cancel other methods (9.1), and a proxy on this stack keeps state for every request. |
 | SIP stack, RFC 3261 18.2.2 | A response is never sent to servers found with RFC 3263 5: neither when its connection cannot be opened again nor for a sent-by that is a domain name. A maddr for multicast is not handled. | Every sent-by here is an IP address or has a received parameter, and no node sends multicast. |
 | SIP stack, RFC 3261 18.3 | A request whose body is shorter than its Content-Length is dropped, not answered 400. | Only a broken peer sends one. |
-| SIP stack, RFC 3261 21.5.4 | A 503 with Retry-After does not keep other requests away from the server that sent it: each new request goes to the first target again. | No node of this project answers 503 with Retry-After. |
+| SIP stack, RFC 3261 21.5.4 | A 503 with Retry-After does not keep other requests away from the server that sent it: each new request goes to the first target again. | Only an S-CSCF that the operator has shut down or locked answers 503 with Retry-After. A request that goes to it first all the same gets its 503 and goes on to the next target, one round trip later. |
 
 ## Clean up
 
