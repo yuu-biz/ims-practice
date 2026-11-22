@@ -25,6 +25,7 @@ const (
 func SCSCF(t *testing.T, newPair func(t *testing.T) (scscf.Store, scscf.Store)) {
 	run(t, newPair, []testCase[scscf.Store]{
 		{"Challenge", scscfChallenge},
+		{"ChallengeUntilItsKeepUntil", scscfChallengeKeptUntil},
 		{"RegistrationByEachPublicIdentity", scscfRegistrationOf},
 		{"PublicIdentitiesCompareTheUserPartWithCase", scscfUserPartWithCase},
 		{"RegistrationLosesAPublicIdentity", scscfRegistrationLosesIdentity},
@@ -73,6 +74,35 @@ func scscfChallenge(t *testing.T, a, b scscf.Store) {
 	b.DeleteChallenge(impi)
 	if _, ok := a.Challenge(impi); ok {
 		t.Error("the challenge is still there after DeleteChallenge")
+	}
+}
+
+// scscfChallengeKeptUntil: the Store keeps a challenge until the
+// KeepUntil that the S-CSCF wrote into it, also one put after that
+// time. A challenge that replaces it is kept until its own.
+func scscfChallengeKeptUntil(t *testing.T, a, b scscf.Store) {
+	c := scscf.Challenge{PrivateIdentity: impi, Nonce: "n1", Expires: time.Now(), KeepUntil: time.Now().Add(short).Round(time.Millisecond)}
+	a.PutChallenge(c)
+	if _, ok := b.Challenge(impi); !ok {
+		t.Fatal("Challenge before its KeepUntil")
+	}
+	past := scscf.Challenge{PrivateIdentity: otherIMPI, Nonce: "n2", Expires: time.Now().Add(-2 * time.Second), KeepUntil: time.Now().Add(-time.Second)}
+	b.PutChallenge(past)
+	waitOut()
+	if _, ok := b.Challenge(impi); ok {
+		t.Error("Challenge after its KeepUntil")
+	}
+	if _, ok := a.Challenge(otherIMPI); ok {
+		t.Error("Challenge put after its KeepUntil")
+	}
+
+	c.KeepUntil = time.Now().Add(short)
+	a.PutChallenge(c)
+	c.Nonce, c.KeepUntil = "n3", time.Now().Add(time.Hour).Round(time.Millisecond)
+	b.PutChallenge(c)
+	waitOut()
+	if got, ok := a.Challenge(impi); !ok || got.Nonce != "n3" {
+		t.Errorf("Challenge after the KeepUntil of the challenge it replaced = %+v, %v; want n3", got, ok)
 	}
 }
 
