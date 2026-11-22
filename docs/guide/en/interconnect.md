@@ -13,7 +13,7 @@ The guide follows these editions: TS 24.229 V20.1.0, TS 29.165 V20.0.0 (the II-N
 
 ## The two networks
 
-Network A is the network of `compose.yaml`, the home network of the other guides. Network B, the peer network, is a second IMS of another operator: the same image with other settings, another domain, other numbers and other subscribers. `deploy/interconnect/compose.yaml` adds it on top of `compose.yaml`, which stays as it is.
+Network A is the network of `compose.yaml`, the home network of the other guides. Network B, the peer network, is a second IMS of another operator: the same image with other settings, another domain, other numbers and other subscribers. `deploy/interconnect/compose.yaml` adds it on top of `compose.yaml`, which stays as it is. Every service of network B ends in `-b`, so `scscf-b` is its S-CSCF and `scscf` network A's, and the node files of the two networks are in `deploy/interconnect/a` and `deploy/interconnect/b`.
 
 ```text
        network A (ims0)                link (nni0)                network B (ims1)
