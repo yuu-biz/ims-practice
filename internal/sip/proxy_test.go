@@ -113,6 +113,11 @@ func newInviteProxy(t *testing.T, cfg Config, next netip.AddrPort) (*Stack, <-ch
 	return s, results
 }
 
+// ackWatch is how long the UAS of a test watches for an ACK through the
+// proxy: TestProxyInviteEndToEnd sees the ACK for a 2xx come within it,
+// and TestProxyReturnsAFailureForTheTUToSend sees none for a 486.
+const ackWatch = 500 * time.Millisecond
+
 func TestProxyInviteEndToEnd(t *testing.T) {
 	acks := make(chan *Message, 1)
 	uas := newStackWith(t, Config{
@@ -147,8 +152,8 @@ func TestProxyInviteEndToEnd(t *testing.T) {
 		if n := len(ack.GetAll("Via")); n != 2 || ack.Get("CSeq") != "1 ACK" {
 			t.Errorf("UAS got an ACK with %d Vias and CSeq %q, want 2 and 1 ACK", n, ack.Get("CSeq"))
 		}
-	case <-time.After(2 * time.Second):
-		t.Fatal("the ACK never reached the UAS")
+	case <-time.After(ackWatch):
+		t.Fatalf("the ACK did not reach the UAS within %v", ackWatch)
 	}
 	// After the 2xx, Proxy waits out Timer M and leaves nothing to send.
 	select {
@@ -182,8 +187,9 @@ func TestProxyReturnsAFailureForTheTUToSend(t *testing.T) {
 		t.Errorf("Proxy returned %v, %v; want the 486", r.final, r.err)
 	}
 	// Each hop's client transaction acknowledges the 486, and each
-	// server transaction absorbs that ACK.
-	time.Sleep(10 * testTimers.T1)
+	// server transaction absorbs that ACK. An ACK that went on to the
+	// UAS would reach it within ackWatch, as the ACK for a 2xx does.
+	time.Sleep(ackWatch)
 	if n := acks.Load(); n != 0 {
 		t.Errorf("OnACK called %d times at the UAS, want 0", n)
 	}
