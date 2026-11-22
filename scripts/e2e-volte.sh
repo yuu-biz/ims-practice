@@ -293,6 +293,20 @@ else
 	exit 1
 fi
 sleep 2
+# The UEs that are attached, as the Lab lists them for its access
+# network panel: both VoLTE UEs, each with the default bearer of the IMS
+# APN and the voice bearer of the call.
+attached="$(curl -fsS http://localhost:8080/api/epc/ues | "$python" -c '
+import json, sys
+for ue in json.load(sys.stdin):
+    print(ue["imsi"], ",".join(str(b["eps_qos"]["qci"]) for b in ue["bearers"]))
+' | tr -d '\r' | tr '\n' ' ')"
+if [ "$attached" = "001010000000010 5,1 001010000000012 5,1 " ]; then
+	echo "ok   the Lab lists both VoLTE UEs with their signalling and voice bearers"
+else
+	echo "FAIL the Lab lists the attached UEs as: $attached"
+	fail=1
+fi
 # The network initiated EPS bearer context deactivation of the EPC stub
 # (TS 24.301 6.4.4.2), through the Lab: the voice bearer is the
 # one of QCI 1 (TS 23.203 6.1.7.2).

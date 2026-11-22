@@ -25,6 +25,8 @@ fi
 # in this scenario, so breaking it disturbs nothing else.
 target=mmtel
 api=http://127.0.0.1:8070/fault/v1/faults
+# The same API through the Lab, as the page reaches it.
+lab=http://localhost:8080/api/fault/faults
 
 fail=0
 # Built first and started apart. Every node's service builds the same
@@ -53,17 +55,18 @@ container="$(docker compose ps -q "$target" | first_line)"
 [ -n "$container" ] || { echo "FAIL no container of $target"; exit 1; }
 address="$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}} {{end}}' "$container")"
 
-# inject BODY prints the id of the fault the agent took, and stops the
-# script when it took none.
+# inject URL BODY prints the id of the fault the agent took, and stops
+# the script when it took none. URL is the agent's API, or the Lab's,
+# which passes the request on.
 inject() {
 	local body
 	# The messages go to the error output, because the caller reads the
 	# id from this function.
-	body="$(curl -sS -X POST -d "$1" "$api")" || { echo "FAIL the API did not answer $1" >&2; exit 1; }
+	body="$(curl -sS -X POST -d "$2" "$1")" || { echo "FAIL $1 did not answer $2" >&2; exit 1; }
 	case $body in
 	*'"state":"active"'* | *'"state":"done"'*) ;;
 	*)
-		echo "FAIL $1: $body" >&2
+		echo "FAIL $2: $body" >&2
 		exit 1
 		;;
 	esac
@@ -87,10 +90,35 @@ state_is() {
 }
 
 echo "== freeze the node and let it go again"
-id="$(inject "{\"target\":\"$target\",\"kind\":\"pause\",\"duration\":\"2m\"}")"
+id="$(inject "$api" "{\"target\":\"$target\",\"kind\":\"pause\",\"duration\":\"2m\"}")"
 state_is paused 20
 curl -fsS -X DELETE "$api/$id" >/dev/null
 state_is running 20
+
+# The browser reaches the agent through the Lab alone: the agent is on
+# the network chaos, which agent.yaml gives the Lab an address on, and
+# the IMS nodes do not join it.
+echo "== freeze the node through the Lab"
+for i in $(seq 1 60); do
+	curl -fsS "$lab" >/dev/null 2>&1 && break
+	sleep 1
+done
+if [ "$(curl -fsS "$lab")" = "$(curl -fsS "$api")" ]; then
+	echo "ok   the Lab lists the faults of the agent"
+else
+	echo "FAIL the Lab lists $(curl -fsS "$lab"), the agent $(curl -fsS "$api")"
+	fail=1
+fi
+id="$(inject "$lab" "{\"target\":\"$target\",\"kind\":\"pause\",\"duration\":\"2m\"}")"
+state_is paused 20
+curl -fsS -X DELETE "$lab/$id" >/dev/null
+state_is running 20
+if grep -q '"state":"cleared"' <<<"$(curl -fsS "$api/$id")"; then
+	echo "ok   the agent holds the fault $id of the Lab as cleared"
+else
+	echo "FAIL the agent holds $id as $(curl -fsS "$api/$id")"
+	fail=1
+fi
 
 # crashes_and_comes_back makes the node's process die and waits for the
 # restart policy of its container to start it again. On the container
@@ -99,7 +127,7 @@ state_is running 20
 crashes_and_comes_back() {
 	local restarts now i
 	restarts="$(docker inspect -f '{{.RestartCount}}' "$container")"
-	inject "{\"target\":\"$target\",\"kind\":\"crash\"}" >/dev/null
+	inject "$api" "{\"target\":\"$target\",\"kind\":\"crash\"}" >/dev/null
 	for i in $(seq 1 60); do
 		now="$(docker inspect -f '{{.RestartCount}}' "$container" 2>/dev/null || echo "$restarts")"
 		[ "$now" -gt "$restarts" ] && break
@@ -118,7 +146,7 @@ echo "== make the node's process die"
 crashes_and_comes_back
 
 echo "== replace the container"
-inject "{\"target\":\"$target\",\"kind\":\"recreate\"}" >/dev/null
+inject "$api" "{\"target\":\"$target\",\"kind\":\"recreate\"}" >/dev/null
 new=
 for i in $(seq 1 60); do
 	new="$(docker compose ps -q "$target" | first_line)"
