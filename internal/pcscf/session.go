@@ -563,10 +563,15 @@ func (p *PCSCF) subtract(rc RelayContext, log *slog.Logger) {
 	}
 }
 
-// relayOf is the media relay that holds the context rc. A relay that
-// this P-CSCF does not list, such as one taken out of its configuration
-// while a call was on it, is an error.
+// relayOf is the media relay that holds the context rc. A context that
+// names no relay was written by a P-CSCF that had one relay only, and so
+// is in the one relay, when this P-CSCF lists one. A relay that this
+// P-CSCF does not list, such as one taken out of its configuration while
+// a call was on it, is an error.
 func (p *PCSCF) relayOf(rc RelayContext) (Relay, error) {
+	if rc.Relay == "" && len(p.relays) == 1 {
+		return p.relays[0].Control, nil
+	}
 	for _, r := range p.relays {
 		if r.Name == rc.Relay {
 			return r.Control, nil

@@ -727,6 +727,27 @@ func TestBYEReleasesTheContextInTheRelayThatHoldsIt(t *testing.T) {
 	h.noStrays()
 }
 
+// TestBYEReleasesAContextThatNamesNoRelay: a P-CSCF that knew one
+// relay stored its dialogs without the relay's name. A P-CSCF with one
+// relay in its list releases such a context in that relay.
+func TestBYEReleasesAContextThatNamesNoRelay(t *testing.T) {
+	relay := newFakeRelay()
+	h := newSessionHarnessWith(t, []MediaRelay{{Name: "http://agw.test:8080", Control: relay}})
+	close(h.release)
+	if _, err := relay.Add(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	_, id := relay.added()
+	callID := sip.NewCallID()
+	h.store.PutDialog(context.Background(), Dialog{Key: DialogKey{CallID: callID, UETag: "caller"}, Originating: true,
+		Relay: &RelayContext{ID: id}})
+	h.byeAnswers <- 200
+	if r := final(t, h.send(h.ue, byeRequest(callID, 1)), 3*time.Second); r.StatusCode != 200 {
+		t.Fatalf("got %d, want 200", r.StatusCode)
+	}
+	relay.waitHeld(t, 0, time.Second)
+}
+
 // TestACKIsForwardedWithMaxForwardsLessOne is RFC 3261 16.6 step 3,
 // which holds for an ACK as for any other request: an ACK whose
 // Max-Forwards has reached 0 goes no further.
