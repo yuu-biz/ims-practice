@@ -9,7 +9,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/yuu-biz/ims-practice/internal/aka"
 	"github.com/yuu-biz/ims-practice/internal/cx"
+	"github.com/yuu-biz/ims-practice/internal/hss"
 	"github.com/yuu-biz/ims-practice/internal/ifc"
 	"github.com/yuu-biz/ims-practice/internal/reginfo"
 	"github.com/yuu-biz/ims-practice/internal/sip"
@@ -328,6 +330,31 @@ func TestChallengeThatCannotBeRemoved(t *testing.T) {
 	h.failing.fail("DeleteChallenge")
 	if r := h.register(callID, 2, 600000, auth); r.StatusCode != 500 {
 		t.Fatalf("answer whose challenge cannot be removed got %d, want 500", r.StatusCode)
+	}
+	h.failing.repair()
+	waitForAssignments(t, h.hss, cx.AuthenticationTimeout)
+}
+
+// TestStaleAKAResponseWhenTheStoreFails: a response to an IMS AKA
+// challenge with a later nonce count asks for a new challenge (TS
+// 24.229 5.4.1.2.3B). When the S-CSCF cannot store the new one, the UE
+// gets 500, and the challenge it had keeps its reg-await-auth timer.
+func TestStaleAKAResponseWhenTheStoreFails(t *testing.T) {
+	h := newHarnessWithHSS(t, Config{RegAwaitAuth: 300 * time.Millisecond}, nil, hss.Config{},
+		hss.Subscription{PrivateIdentity: impi, PublicIdentities: []string{impu}, AKA: &hss.AKACredentials{Secret: testSet1}})
+	usim := aka.NewUSIM(testSet1, 0)
+	callID := sip.NewCallID()
+	ch := akaChallenge(t, h.register(callID, 1, 600000, akaInitial))
+	res, err := authenticate(t, usim, ch)
+	if err != nil {
+		t.Fatal(err)
+	}
+	creds := akaAnswer(ch, aka.DigestPassword(res.RES), sip.IntegrityProtectedYes)
+	creds.NC = "00000002"
+	creds.Response, _ = sip.DigestResponse(sip.HA1(impi, ch.Realm, aka.DigestPassword(res.RES)), sip.REGISTER, creds)
+	h.failing.fail("PutChallenge")
+	if r := h.register(callID, 2, 600000, creds.String()); r.StatusCode != 500 {
+		t.Fatalf("stale response whose new challenge cannot be stored got %d, want 500", r.StatusCode)
 	}
 	h.failing.repair()
 	waitForAssignments(t, h.hss, cx.AuthenticationTimeout)
