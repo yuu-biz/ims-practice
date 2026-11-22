@@ -151,7 +151,7 @@ func TestRegisterThroughThePCSCF(t *testing.T) {
 	if !strings.Contains(second.Get("Authorization"), `integrity-protected="ip-assoc-pending"`) {
 		t.Errorf("second Authorization = %q, want ip-assoc-pending", second.Get("Authorization"))
 	}
-	a, ok := store.Association(sip.Destination{Transport: sip.UDP, Addr: ue.LocalAddr()})
+	a, ok, _ := store.Association(context.Background(), sip.Destination{Transport: sip.UDP, Addr: ue.LocalAddr()})
 	if !ok || a.PrivateIdentity != impi || len(a.ServiceRoute) != 1 || a.PublicIdentities[0] != impu {
 		t.Fatalf("association after 200 = %+v, %v", a, ok)
 	}
@@ -160,7 +160,7 @@ func TestRegisterThroughThePCSCF(t *testing.T) {
 	if !strings.Contains(third.Get("Authorization"), `integrity-protected="ip-assoc-yes"`) {
 		t.Errorf("deregistration Authorization = %q, want ip-assoc-yes", third.Get("Authorization"))
 	}
-	if a, ok := store.Association(sip.Destination{Transport: sip.UDP, Addr: ue.LocalAddr()}); ok && a.Expires.After(time.Now()) {
+	if a, ok, _ := store.Association(context.Background(), sip.Destination{Transport: sip.UDP, Addr: ue.LocalAddr()}); ok && a.Expires.After(time.Now()) {
 		t.Error("association still valid after deregistration")
 	}
 }

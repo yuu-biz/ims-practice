@@ -94,7 +94,7 @@ func newSessionHarnessWith(t *testing.T, relay Relay) *sessionHarness {
 	h.p = p
 	h.pcscf = newPCSCFStack(t, p)
 	p.SetStack(h.pcscf)
-	p.store.PutAssociation(Association{
+	p.store.PutAssociation(context.Background(), Association{
 		Source:           sip.Destination{Transport: sip.UDP, Addr: h.ue.LocalAddr()},
 		SentBy:           h.ue.LocalAddr().String(),
 		Contact:          "sip:001010000000001@" + h.ue.LocalAddr().String(),
@@ -300,9 +300,9 @@ func TestTerminatingCallGoesToWhereTheUERegisteredFrom(t *testing.T) {
 func TestNotifyToTheUEIsRecordRouted(t *testing.T) {
 	h := newSessionHarness(t)
 	contact := "sip:001010000000001@" + h.ue.LocalAddr().String()
-	a, _ := h.store.AssociationOfContact(contact)
+	a, _, _ := h.store.AssociationOfContact(context.Background(), contact)
 	a.Expires = time.Now().Add(-time.Second)
-	h.p.store.PutAssociation(a)
+	h.p.store.PutAssociation(context.Background(), a)
 	network := newStack(t, func(*sip.ServerTransaction) {})
 	m := &sip.Message{Method: sip.NOTIFY, RequestURI: contact}
 	m.Add("Route", "<sip:pcscf."+domain+":5060;lr>")
@@ -518,7 +518,7 @@ func TestBYEThatIsRejectedKeepsTheMedia(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	h.store.PutDialog(Dialog{Key: DialogKey{CallID: callID, UETag: "caller"}, Originating: true, Relay: &RelayContext{ID: c.ID}})
+	h.store.PutDialog(context.Background(), Dialog{Key: DialogKey{CallID: callID, UETag: "caller"}, Originating: true, Relay: &RelayContext{ID: c.ID}})
 
 	h.byeAnswers <- 500
 	if r := final(t, h.send(h.ue, byeRequest(callID, 1)), 3*time.Second); r.StatusCode != 500 {
@@ -544,7 +544,7 @@ func TestBYEAnswered481EndsTheMedia(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	h.store.PutDialog(Dialog{Key: DialogKey{CallID: callID, UETag: "caller"}, Originating: true, Relay: &RelayContext{ID: c.ID}})
+	h.store.PutDialog(context.Background(), Dialog{Key: DialogKey{CallID: callID, UETag: "caller"}, Originating: true, Relay: &RelayContext{ID: c.ID}})
 	h.byeAnswers <- 481
 	if r := final(t, h.send(h.ue, byeRequest(callID, 1)), 3*time.Second); r.StatusCode != 481 {
 		t.Fatalf("got %d, want 481", r.StatusCode)

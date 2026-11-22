@@ -152,7 +152,8 @@ func (r *registrar) register(expires int) (Association, bool) {
 	}
 	// The P-CSCF asks the PCRF after it has answered the UE.
 	time.Sleep(100 * time.Millisecond)
-	return r.store.Association(sip.Destination{Transport: sip.UDP, Addr: r.ue.LocalAddr()})
+	a, ok, _ := r.store.Association(context.Background(), sip.Destination{Transport: sip.UDP, Addr: r.ue.LocalAddr()})
+	return a, ok
 }
 
 // TestRegistrationWatchesTheSignallingPath is TS 29.214 A.4: the P-CSCF
@@ -334,12 +335,12 @@ func TestCallRightAfterTheRegistrationHasItsMediaAuthorised(t *testing.T) {
 	out, in := h.call()
 	// The PCRF answers the subscription while the INVITE is on its way.
 	source := sip.Destination{Transport: sip.UDP, Addr: h.ue.Stack().LocalAddr()}
-	a, ok := h.store.Association(source)
+	a, ok, _ := h.store.Association(context.Background(), source)
 	if !ok {
 		t.Fatal("no association for the UE")
 	}
 	a.SignallingSession = "signalling"
-	h.store.PutAssociation(a)
+	h.store.PutAssociation(context.Background(), a)
 
 	if err := in.Progress(183, answerTo(t, in.Request, coreMedia)); err != nil {
 		t.Fatal(err)
@@ -428,7 +429,7 @@ func TestLostSignallingPathRefusesRequestsToTheUE(t *testing.T) {
 	}
 
 	r.p.PolicyEvent(policy.Event{Session: "session-1", Kind: policy.ReleaseOfBearer})
-	a, _ := r.store.Association(sip.Destination{Transport: sip.UDP, Addr: r.ue.LocalAddr()})
+	a, _, _ := r.store.Association(context.Background(), sip.Destination{Transport: sip.UDP, Addr: r.ue.LocalAddr()})
 	if !a.SignallingLost || a.SignallingSession != "" {
 		t.Errorf("association after the event = %+v; want the signalling marked lost and no policy session", a)
 	}
@@ -458,7 +459,7 @@ func TestEndedIPCANSessionNeedsNoRelease(t *testing.T) {
 	r := newRegistrar(t)
 	r.register(3600)
 	r.p.PolicyEvent(policy.Event{Session: "session-1", Kind: policy.SessionTerminated})
-	a, _ := r.store.Association(sip.Destination{Transport: sip.UDP, Addr: r.ue.LocalAddr()})
+	a, _, _ := r.store.Association(context.Background(), sip.Destination{Transport: sip.UDP, Addr: r.ue.LocalAddr()})
 	if !a.SignallingLost {
 		t.Error("the signalling is not marked lost")
 	}

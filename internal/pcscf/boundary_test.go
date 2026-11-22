@@ -1,6 +1,7 @@
 package pcscf
 
 import (
+	"context"
 	"slices"
 	"strings"
 	"sync/atomic"
@@ -93,7 +94,7 @@ func newBorderHarness(t *testing.T) *borderHarness {
 	h.pcscf = newPCSCFStack(t, p)
 	p.SetStack(h.pcscf)
 	h.contact = "sip:001010000000001@" + h.ue.LocalAddr().String()
-	p.store.PutAssociation(Association{
+	p.store.PutAssociation(context.Background(), Association{
 		Source:           sip.Destination{Transport: sip.UDP, Addr: h.ue.LocalAddr()},
 		SentBy:           h.ue.LocalAddr().String(),
 		Contact:          h.contact,

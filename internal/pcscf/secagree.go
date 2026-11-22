@@ -1,6 +1,7 @@
 package pcscf
 
 import (
+	"context"
 	"encoding/hex"
 	"fmt"
 	"log/slog"
@@ -94,18 +95,18 @@ type saTable struct {
 	m  map[netip.AddrPort]SecurityAssociations
 }
 
-func (t *saTable) SecurityAssociations(ue netip.AddrPort) (SecurityAssociations, bool) {
+func (t *saTable) SecurityAssociations(_ context.Context, ue netip.AddrPort) (SecurityAssociations, bool, error) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	sas, ok := t.m[ue]
 	if ok && !time.Now().Before(sas.Expires) {
 		delete(t.m, ue)
-		return SecurityAssociations{}, false
+		return SecurityAssociations{}, false, nil
 	}
-	return sas, ok
+	return sas, ok, nil
 }
 
-func (t *saTable) PutSecurityAssociations(sas SecurityAssociations) {
+func (t *saTable) PutSecurityAssociations(_ context.Context, sas SecurityAssociations) error {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	if t.m == nil {
@@ -113,12 +114,14 @@ func (t *saTable) PutSecurityAssociations(sas SecurityAssociations) {
 	}
 	sas.Client, sas.Server = slices.Clone(sas.Client), slices.Clone(sas.Server)
 	t.m[sas.UE] = sas
+	return nil
 }
 
-func (t *saTable) DeleteSecurityAssociations(ue netip.AddrPort) {
+func (t *saTable) DeleteSecurityAssociations(_ context.Context, ue netip.AddrPort) error {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	delete(t.m, ue)
+	return nil
 }
 
 // OnProtectedRequest is the sip.Config.OnRequest of the stack on the
@@ -157,22 +160,35 @@ func (p *PCSCF) ownURIs() []sip.URI {
 // sees: with the protected server port for a UE with established
 // security associations (TS 24.229 5.2.6.3.4 item 4, 5.2.6.4.3 item 4),
 // and with the unprotected port otherwise.
-func (p *PCSCF) ownURIToward(ue sip.Destination) sip.URI {
-	if sas, ok := p.store.SecurityAssociations(ue.Addr); ok && !sas.Temporary {
-		return p.protectedURI()
+func (p *PCSCF) ownURIToward(ue sip.Destination) (sip.URI, error) {
+	established, err := p.established(ue.Addr)
+	if err != nil || !established {
+		return p.ownURI(), err
 	}
-	return p.ownURI()
+	return p.protectedURI(), nil
 }
 
 // stackToward is the stack that a request which the P-CSCF sends with a
 // client transaction of its own leaves from: the one on the protected
 // server port for a UE with established security associations (TS
 // 33.203 7.1), the unprotected one otherwise.
-func (p *PCSCF) stackToward(dst sip.Destination) *ims.StackRef {
-	if sas, ok := p.store.SecurityAssociations(dst.Addr); ok && !sas.Temporary && p.cfg.ProtectedServerPort != 0 {
-		return &p.protectedStack
+func (p *PCSCF) stackToward(dst sip.Destination) (*ims.StackRef, error) {
+	established, err := p.established(dst.Addr)
+	if err != nil {
+		return nil, err
 	}
-	return &p.stack
+	if established && p.cfg.ProtectedServerPort != 0 {
+		return &p.protectedStack, nil
+	}
+	return &p.stack, nil
+}
+
+// established reports whether the UE at ue has established security
+// associations. Temporary ones are those of an authentication under way
+// (TS 24.229 5.2.2.2), so they do not count.
+func (p *PCSCF) established(ue netip.AddrPort) (bool, error) {
+	sas, ok, err := p.store.SecurityAssociations(context.Background(), ue)
+	return ok && !sas.Temporary, err
 }
 
 // protectedPathURI is the Path URI of a REGISTER that came protected,
@@ -184,11 +200,12 @@ func (p *PCSCF) protectedPathURI() string {
 // pathURIOf is the URI that the P-CSCF put in the Path of the
 // registration of a: the protected one for a UE with established
 // security associations.
-func (p *PCSCF) pathURIOf(a Association) string {
-	if sas, ok := p.store.SecurityAssociations(a.Source.Addr); ok && !sas.Temporary {
-		return p.protectedPathURI()
+func (p *PCSCF) pathURIOf(a Association) (string, error) {
+	established, err := p.established(a.Source.Addr)
+	if err != nil || !established {
+		return p.pathURI(), err
 	}
-	return p.pathURI()
+	return p.protectedPathURI(), nil
 }
 
 // AdmitUnprotected is the sip.Config.Admit of the stack on the
@@ -199,8 +216,7 @@ func (p *PCSCF) pathURIOf(a Association) string {
 // as Screen does with a request that has no IP association, it sends
 // nothing back, not even a 100 (Trying), and forwards nothing. TS
 // 33.203 7.1 lets it either discard or reject what does not arrive on a
-// protected port. Temporary associations are those of an authentication
-// under way (TS 24.229 5.2.2.2), so they do not count.
+// protected port.
 //
 // The SA table is in the Store, which several P-CSCFs may share, and a
 // UE's entry changes with each registration, through whichever of them
@@ -212,11 +228,17 @@ func (p *PCSCF) AdmitUnprotected(req *sip.Message, source sip.Destination) bool 
 		return true
 	}
 	ue, _ := ueSourceOf(req, source)
-	// The Store reports a failed read as no entry, and no entry must let
-	// in the requests of a UE without security associations, so a
-	// request gets in when the read fails too, unlike in Screen, which
-	// keeps out a request whose IP association it cannot read.
-	if sas, ok := p.store.SecurityAssociations(ue.Addr); !ok || sas.Temporary {
+	established, err := p.established(ue.Addr)
+	if err != nil {
+		// Unlike Screen, which keeps out a request whose IP association
+		// it cannot read, Admit lets the request in when it cannot read
+		// the SA table: the P-CSCF then reads the Store again to serve
+		// the request, and answers 500 when that fails too.
+		p.log.Warn("could not read the SA table for an unprotected request", "method", string(req.Method),
+			"source", source.String(), "call_id", req.Get("Call-ID"), "error", err.Error())
+		return true
+	}
+	if !established {
 		return true
 	}
 	p.log.Info("discarded an unprotected request from a UE with security associations",
@@ -292,8 +314,10 @@ func (p *PCSCF) receiveSecAgree(st *sip.ServerTransaction, out *sip.Message, pri
 		// Item 3 a: the associations that protected the request. TCP and
 		// UDP share them (TS 33.203 7.1), so a REGISTER over 1300 bytes,
 		// which comes over TCP, has them at the UE that ueSource names.
-		sas, ok := p.store.SecurityAssociations(ueSource(st).Addr)
+		sas, ok, err := p.store.SecurityAssociations(context.Background(), ueSource(st).Addr)
 		switch {
+		case err != nil:
+			return nil, storeFailed(req, err, log)
 		case !ok:
 			// TS 33.203 7.1 item 3: ESP would have dropped it.
 			return refuse(403, "no security associations")
@@ -318,8 +342,13 @@ func (p *PCSCF) receiveSecAgree(st *sip.ServerTransaction, out *sip.Message, pri
 		a.ue = netip.AddrPortFrom(st.Source.Addr.Addr(), a.offered[0].PortS)
 		// TS 33.203 7.3.1.2 to 7.3.1.4: a new unprotected REGISTER ends
 		// an authentication under way, with its temporary associations.
-		if sas, ok := p.store.SecurityAssociations(a.ue); ok && sas.Temporary {
-			p.store.DeleteSecurityAssociations(a.ue)
+		ctx := context.Background()
+		sas, ok, err := p.store.SecurityAssociations(ctx, a.ue)
+		if err == nil && ok && sas.Temporary {
+			err = p.store.DeleteSecurityAssociations(ctx, a.ue)
+		}
+		if err != nil {
+			return nil, storeFailed(req, err, log)
 		}
 	}
 	// Items 2 a, 3 a and 3 b: the security agreement ends here, at the
@@ -346,8 +375,11 @@ func (p *PCSCF) offers(sa ims.IPsec3GPP) []ims.IPsec3GPP {
 }
 
 // answerSecAgree is TS 24.229 5.2.2.2 for the final response to a
-// REGISTER that came with a security agreement.
-func (p *PCSCF) answerSecAgree(st *sip.ServerTransaction, final *sip.Message, a *secAgreement, log *slog.Logger) *sip.Message {
+// REGISTER that came with a security agreement. It returns the failure
+// of the Store when the SA table cannot have what the response tells the
+// UE.
+func (p *PCSCF) answerSecAgree(st *sip.ServerTransaction, final *sip.Message, a *secAgreement, log *slog.Logger) (*sip.Message, error) {
+	ctx := context.Background()
 	switch {
 	case final.StatusCode == 401:
 		return p.challenged(st, final, a, log)
@@ -356,8 +388,7 @@ func (p *PCSCF) answerSecAgree(st *sip.ServerTransaction, final *sip.Message, a 
 		if interval == 0 {
 			// TS 33.203 7.4.2a: the associations go once the UE has no
 			// public user identity registered.
-			p.store.DeleteSecurityAssociations(a.ue)
-			return final
+			return final, p.store.DeleteSecurityAssociations(ctx, a.ue)
 		}
 		// On a 200 (OK), items 1 and 2.
 		sas := *a.over
@@ -369,20 +400,25 @@ func (p *PCSCF) answerSecAgree(st *sip.ServerTransaction, final *sip.Message, a 
 			log.Info("security associations established", "ue", sas.UE.String())
 		}
 		sas.Temporary = false
-		p.store.PutSecurityAssociations(sas)
+		if err := p.store.PutSecurityAssociations(ctx, sas); err != nil {
+			return nil, err
+		}
 	case final.StatusCode >= 300 && a.over != nil && a.over.Temporary:
 		// TS 33.203 7.3.1.1: after a failed authentication both ends
-		// delete the new associations.
-		p.store.DeleteSecurityAssociations(a.ue)
+		// delete the new associations. The UE learns of the failure all
+		// the same; associations that stay go at their Expires.
+		if err := p.store.DeleteSecurityAssociations(ctx, a.ue); err != nil {
+			log.Warn("the temporary security associations stay until they expire: the store failed", "error", err.Error())
+		}
 	}
-	return final
+	return final, nil
 }
 
 // challenged is TS 24.229 5.2.2.2 for a 401: the P-CSCF takes IK and
 // CK out of the challenge, sets up temporary security associations and
 // offers them in Security-Server. A 401 without the keys does not reach
 // the UE (item 2).
-func (p *PCSCF) challenged(st *sip.ServerTransaction, final *sip.Message, a *secAgreement, log *slog.Logger) *sip.Message {
+func (p *PCSCF) challenged(st *sip.ServerTransaction, final *sip.Message, a *secAgreement, log *slog.Logger) (*sip.Message, error) {
 	var ik aka.IK
 	var ck aka.CK
 	found := false
@@ -400,7 +436,7 @@ func (p *PCSCF) challenged(st *sip.ServerTransaction, final *sip.Message, a *sec
 	}
 	if !found {
 		log.Warn("401 without ik and ck")
-		return sip.NewResponse(st.Request, 500, sip.NewTag())
+		return sip.NewResponse(st.Request, 500, sip.NewTag()), nil
 	}
 	// Item 4, and TS 33.203 7.2: the P-CSCF's SPIs differ from the UE's.
 	ue := a.offered[0]
@@ -416,11 +452,15 @@ func (p *PCSCF) challenged(st *sip.ServerTransaction, final *sip.Message, a *sec
 		sas.Server = append(sas.Server, m.SecurityMechanism())
 		final.Add("Security-Server", m.SecurityMechanism().String())
 	}
-	// Item 1: the new set replaces any earlier one.
-	p.store.PutSecurityAssociations(sas)
+	// Item 1: the new set replaces any earlier one. Without it, the UE
+	// would answer the challenge over associations that no P-CSCF
+	// instance knows.
+	if err := p.store.PutSecurityAssociations(context.Background(), sas); err != nil {
+		return nil, err
+	}
 	log.Info("temporary security associations", "ue", sas.UE.String(), "alg", fromPCSCF.Algorithm,
 		"spi_pc", fromPCSCF.SPIC, "spi_ps", fromPCSCF.SPIS, "spi_uc", fromUE.SPIC, "spi_us", fromUE.SPIS)
-	return final
+	return final, nil
 }
 
 func decodeKey(dst []byte, s string) bool {

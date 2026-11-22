@@ -1,6 +1,7 @@
 package pcscf
 
 import (
+	"context"
 	"net/netip"
 	"testing"
 	"time"
@@ -98,7 +99,7 @@ func newRawCallBeforeACK(t *testing.T) *rawCall {
 	})
 	c.p = New(Config{Host: "pcscf." + domain, Port: 5060, VisitedNetworkID: domain}, locate, c.store, c.relay, quiet())
 	c.p.SetPolicyControl(c.pcrf)
-	c.p.store.PutAssociation(Association{
+	c.p.store.PutAssociation(context.Background(), Association{
 		Source: sip.Destination{Transport: sip.UDP, Addr: c.ue.LocalAddr()}, SentBy: c.ue.LocalAddr().String(), Contact: c.ueContact,
 		PrivateIdentity: impi, PublicIdentities: []string{impu}, ServiceRoute: []string{"<sip:orig@scscf." + domain + ":5060;lr>"},
 		Expires: time.Now().Add(time.Hour), SignallingSession: "signalling",
@@ -207,7 +208,7 @@ func TestTargetRefreshReplacesTheContacts(t *testing.T) {
 	<-c.toUE
 
 	key := DialogKey{CallID: c.invite.Get("Call-ID"), UETag: tagOf(c.invite.Get("From"))}
-	d, ok := c.store.UpdateDialog(key, func(*Dialog) {})
+	d, ok, _ := c.store.UpdateDialog(context.Background(), key, func(*Dialog) {})
 	if !ok {
 		t.Fatal("the dialog is gone after the UPDATE")
 	}

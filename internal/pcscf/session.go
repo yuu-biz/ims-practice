@@ -2,6 +2,7 @@ package pcscf
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/netip"
@@ -98,7 +99,11 @@ func (p *PCSCF) initial(st *sip.ServerTransaction, out *sip.Message, l leg, log 
 	// icid is the icid-value of the request as it leaves the P-CSCF.
 	var icid string
 	if l == originating {
-		a, ok := p.association(st, "")
+		a, ok, err := p.association(st, "")
+		if err != nil {
+			st.Respond(storeFailed(req, err, log))
+			return
+		}
 		if !ok {
 			// Screen let the request in, so the association was there when
 			// the request arrived. It has ended since, or Screen is not the
@@ -138,7 +143,11 @@ func (p *PCSCF) initial(st *sip.ServerTransaction, out *sip.Message, l leg, log 
 			return
 		}
 	} else {
-		a, ok := p.associationOfContact(out.RequestURI)
+		a, ok, err := p.associationOfContact(out.RequestURI)
+		if err != nil {
+			st.Respond(storeFailed(req, err, log))
+			return
+		}
 		if !ok {
 			log.Info("no registration for the contact", "contact", out.RequestURI)
 			st.Respond(sip.NewResponse(req, 480, sip.NewTag()))
@@ -165,7 +174,12 @@ func (p *PCSCF) initial(st *sip.ServerTransaction, out *sip.Message, l leg, log 
 	// come through the P-CSCF. A request for a standalone transaction
 	// has no dialog to stay on (5.2.6.3.7, 5.2.6.4.7).
 	if ims.CreatesDialog(out.Method) {
-		sip.AddRecordRoute(out, p.ownURIToward(ue.Source))
+		own, err := p.ownURIToward(ue.Source)
+		if err != nil {
+			st.Respond(storeFailed(req, err, log))
+			return
+		}
+		sip.AddRecordRoute(out, own)
 	}
 
 	if out.Method != sip.INVITE {
@@ -178,6 +192,11 @@ func (p *PCSCF) initial(st *sip.ServerTransaction, out *sip.Message, l leg, log 
 		ims.Finish(st, final, err)
 		return
 	}
+	stack, err := p.stackToward(dst)
+	if err != nil {
+		st.Respond(storeFailed(req, err, log))
+		return
+	}
 	call := p.newSetup(st, l, ue, icid, log)
 	if err := call.offer(out); err != nil {
 		log.Warn("media relay refused the call", "error", err.Error())
@@ -187,7 +206,7 @@ func (p *PCSCF) initial(st *sip.ServerTransaction, out *sip.Message, l leg, log 
 		return
 	}
 	log.Info("forwarding", "leg", string(l), "to", dst.String())
-	call.forward(st, out, dst)
+	call.forward(st, out, dst, stack)
 }
 
 // subsequent forwards a request within a dialog along its route set
@@ -195,6 +214,10 @@ func (p *PCSCF) initial(st *sip.ServerTransaction, out *sip.Message, l leg, log 
 // ends the dialog ends what the dialog holds (TS 24.229 5.2.8.2).
 func (p *PCSCF) subsequent(st *sip.ServerTransaction, out *sip.Message, log *slog.Logger) {
 	dst, toUE, err := p.nextHop(out)
+	if errors.Is(err, errStore) {
+		st.Respond(storeFailed(st.Request, err, log))
+		return
+	}
 	if err != nil {
 		log.Warn("cannot route the request", "error", err.Error())
 		st.Respond(sip.NewResponse(st.Request, 404, sip.NewTag()))
@@ -209,12 +232,23 @@ func (p *PCSCF) subsequent(st *sip.ServerTransaction, out *sip.Message, log *slo
 		// 5.2.6.4.5 item 4. For a NOTIFY this is what keeps the P-CSCF
 		// on the route of the subscription: the subscriber takes the
 		// route set from the first NOTIFY (RFC 6665 4.3, 4.4.1).
-		sip.AddRecordRoute(out, p.ownURIToward(dst))
+		own, err := p.ownURIToward(dst)
+		if err != nil {
+			st.Respond(storeFailed(st.Request, err, log))
+			return
+		}
+		sip.AddRecordRoute(out, own)
 	}
 	// Only the dialogs of INVITEs are kept, so a request of another
 	// dialog, such as a NOTIFY, finds none.
 	key := subsequentKey(st.Request, toUE)
-	d, known := p.store.UpdateDialog(key, func(d *Dialog) { d.noteRequest(st.Request, toUE) })
+	d, known, err := p.store.UpdateDialog(context.Background(), key, func(d *Dialog) { d.noteRequest(st.Request, toUE) })
+	if err != nil {
+		// Without the Dialog the P-CSCF could not release the session
+		// with the right CSeq, nor end what it holds after a BYE.
+		st.Respond(storeFailed(st.Request, err, log))
+		return
+	}
 	// The icid-value of every request of the dialog and of its responses
 	// is that of the INVITE.
 	//
@@ -243,7 +277,12 @@ func (p *PCSCF) subsequent(st *sip.ServerTransaction, out *sip.Message, log *slo
 		renegotiated := answer
 		answer = func(resp *sip.Message) {
 			if resp.StatusCode < 300 {
-				p.store.UpdateDialog(key, func(d *Dialog) { d.noteTargetRefresh(st.Request, resp, toUE) })
+				_, _, err := p.store.UpdateDialog(context.Background(), key, func(d *Dialog) { d.noteTargetRefresh(st.Request, resp, toUE) })
+				if err != nil {
+					// The response goes on; a release would send its BYE
+					// to the targets that the dialog had before.
+					log.Warn("the dialog keeps its old targets: the store failed", "error", err.Error())
+				}
 			}
 			renegotiated(resp)
 		}
@@ -263,7 +302,7 @@ func (p *PCSCF) subsequent(st *sip.ServerTransaction, out *sip.Message, log *slo
 	}
 	ims.Finish(st, final, err)
 	if out.Method == sip.BYE && byeEndsDialog(final, err) {
-		p.endDialog(key, log)
+		p.endDialog(key, d, log)
 	}
 }
 
@@ -336,7 +375,11 @@ func (p *PCSCF) nextHop(m *sip.Message) (dst sip.Destination, toUE bool, err err
 	if err != nil {
 		return sip.Destination{}, false, err
 	}
-	if a, ok := p.associationOfContact(u.String()); ok {
+	a, ok, err := p.associationOfContact(u.String())
+	if err != nil {
+		return sip.Destination{}, false, storeError(err)
+	}
+	if ok {
 		return a.Source, true, nil
 	}
 	dst, err = ims.Destination(context.Background(), p.locator, u)
@@ -380,7 +423,12 @@ func (p *PCSCF) forwardACK(ref *ims.StackRef, ack *sip.Message) {
 		crossBoundary(out, requestFromUE)
 	}
 	key := subsequentKey(ack, toUE)
-	d, known := p.store.UpdateDialog(key, func(d *Dialog) { d.Acknowledged = true })
+	d, known, err := p.store.UpdateDialog(context.Background(), key, func(d *Dialog) { d.Acknowledged = true })
+	if err != nil {
+		// The ACK goes on, without the charging identifier of the dialog.
+		// A release that waits for it sends its BYEs after ackWait.
+		p.log.Warn("could not note the ACK in the dialog: the store failed", "call_id", ack.Get("Call-ID"), "error", err.Error())
+	}
 	if !toUE && known && d.ICID != "" {
 		// 5.2.6.3.9 step 3.
 		p.chargeRequest(out, d.ICID)
@@ -450,8 +498,18 @@ const (
 
 // endDialog ends what the dialog of key holds. A dialog that is gone
 // has been ended already, by a request or an event that came first.
-func (p *PCSCF) endDialog(key DialogKey, log *slog.Logger) {
-	if d, ok := p.store.TakeDialog(key); ok {
+//
+// When the Store fails, the P-CSCF frees what known holds, the dialog as
+// the P-CSCF last read it, since nothing would free it later. The item
+// stays in the Store, as that of a dialog whose BYE never passes the
+// P-CSCF does.
+func (p *PCSCF) endDialog(key DialogKey, known Dialog, log *slog.Logger) {
+	d, ok, err := p.store.TakeDialog(context.Background(), key)
+	if err != nil {
+		log.Warn("the dialog stays in the store: the store failed", "call_id", key.CallID, "error", err.Error())
+		d, ok = known, true
+	}
+	if ok {
 		p.free(d, log)
 	}
 }

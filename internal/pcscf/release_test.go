@@ -1,6 +1,7 @@
 package pcscf
 
 import (
+	"context"
 	"testing"
 	"time"
 
@@ -70,7 +71,7 @@ func TestReleasedBearerEndsTheCallWithBYEs(t *testing.T) {
 	// P-CSCF releases it (TS 29.214 4.4.4).
 	c.pcrf.waitReleased(t, "session-1")
 	c.relay.waitHeld(t, 0, time.Second)
-	if _, ok := c.store.DialogOfPolicySession("session-1"); ok {
+	if _, ok, _ := c.store.DialogOfPolicySession(context.Background(), "session-1"); ok {
 		t.Error("the dialog is still in the Store")
 	}
 
@@ -229,7 +230,7 @@ func TestEventForAnUnknownPolicySessionIsIgnored(t *testing.T) {
 	c := newRawCall(t)
 	c.p.PolicyEvent(policy.Event{Session: "session-9", Kind: policy.SessionTerminated})
 	noRequest(t, "the other party", c.toFar)
-	if _, ok := c.store.DialogOfPolicySession("session-1"); !ok {
+	if _, ok, _ := c.store.DialogOfPolicySession(context.Background(), "session-1"); !ok {
 		t.Error("the dialog of another session is gone")
 	}
 }
@@ -266,7 +267,7 @@ func TestA2xxThatCrossesTheCancelIsAcknowledgedAndReleased(t *testing.T) {
 	})
 	p := New(Config{Host: "pcscf." + domain, Port: 5060, VisitedNetworkID: domain}, locate, store, relay, quiet())
 	p.SetPolicyControl(pcrf)
-	store.PutAssociation(Association{
+	store.PutAssociation(context.Background(), Association{
 		Source: sip.Destination{Transport: sip.UDP, Addr: ue.LocalAddr()}, SentBy: ue.LocalAddr().String(), Contact: ueContact,
 		PrivateIdentity: impi, PublicIdentities: []string{impu}, ServiceRoute: []string{"<sip:orig@scscf." + domain + ":5060;lr>"},
 		Expires: time.Now().Add(time.Hour), SignallingSession: "signalling",

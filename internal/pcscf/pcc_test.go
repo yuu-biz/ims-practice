@@ -267,7 +267,7 @@ func (n *pcc) register(p *pccParty, expires int) {
 
 func (n *pcc) association(p *pccParty) Association {
 	n.t.Helper()
-	a, ok := n.store.Association(sip.Destination{Transport: sip.UDP, Addr: p.ua.Stack().LocalAddr()})
+	a, ok, _ := n.store.Association(context.Background(), sip.Destination{Transport: sip.UDP, Addr: p.ua.Stack().LocalAddr()})
 	if !ok {
 		n.t.Fatal("the UE has no IP association")
 	}

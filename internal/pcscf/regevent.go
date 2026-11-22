@@ -44,6 +44,12 @@ func (p *PCSCF) subscribeRegEvent(a Association, registered time.Duration, log *
 	if err != nil {
 		return
 	}
+	// Item f: the URI that the P-CSCF put in Path.
+	path, err := p.pathURIOf(a)
+	if err != nil {
+		log.Warn("reg event SUBSCRIBE not sent: the store failed; the next REGISTER subscribes", "error", err.Error())
+		return
+	}
 	privateID := strings.ToLower(a.PrivateIdentity)
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -59,8 +65,7 @@ func (p *PCSCF) subscribeRegEvent(a Association, registered time.Duration, log *
 		Event:      "reg",
 		Expires:    registered + ims.RegEventMargin,
 		Headers: []sip.HeaderField{
-			// Item f: the URI that the P-CSCF put in Path.
-			{Name: "P-Asserted-Identity", Value: p.pathURIOf(a)},
+			{Name: "P-Asserted-Identity", Value: path},
 			// Item g.
 			{Name: "P-Charging-Vector", Value: sip.ChargingVector{ICID: icid, OrigIOI: p.cfg.VisitedNetworkID}.String()},
 		},
@@ -93,6 +98,11 @@ func (p *PCSCF) subscribeRegEvent(a Association, registered time.Duration, log *
 // SIMPLIFIED: RFC 3680 5.2. The version of the document is not checked.
 // The S-CSCF sends the full state every time, and a NOTIFY that arrives
 // after a later one is already refused for its CSeq (RFC 3261 12.2.2).
+//
+// A NOTIFY whose association the P-CSCF cannot read or end is still
+// answered 200: sip.Subscriber sends that 200 once this function
+// returns, and lets it change only header fields. The association then
+// stays until its KeepUntil, and with it the requests to the UE.
 func (p *PCSCF) receiveRegEvent(privateID string, n sip.Notification, resp *sip.Message, log *slog.Logger) {
 	// 5.2.3: the response carries the icid-value and the orig-ioi of the
 	// NOTIFY, and this network's term-ioi.
@@ -115,10 +125,14 @@ func (p *PCSCF) receiveRegEvent(privateID string, n sip.Notification, resp *sip.
 			if !removedByTheNetwork(r, c) {
 				continue
 			}
-			a, ok := p.store.AssociationOfContact(c.URI)
-			if ok && strings.EqualFold(a.PrivateIdentity, privateID) {
-				p.endAssociation(a, log)
-				log.Info("reg event ended the IP association", "public_identity", r.AOR, "source", a.Source.String())
+			a, ok, err := p.associationOfContact(c.URI)
+			if err == nil && ok && strings.EqualFold(a.PrivateIdentity, privateID) {
+				if err = p.endAssociation(a, log); err == nil {
+					log.Info("reg event ended the IP association", "public_identity", r.AOR, "source", a.Source.String())
+				}
+			}
+			if err != nil {
+				log.Warn("the IP association stays until it expires: the store failed", "contact", c.URI, "error", err.Error())
 			}
 		}
 	}

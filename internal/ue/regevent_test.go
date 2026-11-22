@@ -51,7 +51,7 @@ func waitAssociationEnded(t *testing.T, n testNetwork, contact string) {
 	t.Helper()
 	deadline := time.Now().Add(5 * time.Second)
 	for {
-		if a, ok := n.pcscfStore.AssociationOfContact(contact); !ok || !a.Expires.After(time.Now()) {
+		if a, ok, _ := n.pcscfStore.AssociationOfContact(context.Background(), contact); !ok || !a.Expires.After(time.Now()) {
 			return
 		}
 		if time.Now().After(deadline) {

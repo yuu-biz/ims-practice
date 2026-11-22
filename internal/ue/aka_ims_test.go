@@ -121,7 +121,7 @@ func TestIMSAKAThroughTheWholeIMS(t *testing.T) {
 		t.Errorf("the UE sends to %s, want the protected server port %s", got.Addr, n.pcscfProtected)
 	}
 	protectedAddr := a.ua.Stack().LocalAddr()
-	if sas, ok := n.pcscfStore.SecurityAssociations(protectedAddr); !ok || sas.Temporary || sas.PrivateIdentity != impiAKA {
+	if sas, ok, _ := n.pcscfStore.SecurityAssociations(context.Background(), protectedAddr); !ok || sas.Temporary || sas.PrivateIdentity != impiAKA {
 		t.Errorf("the P-CSCF's SA table has %+v, %v; want established associations", sas, ok)
 	}
 	if r, ok := n.scscfStore.Registration(impiAKA); !ok || r.Contact != a.contact.URI() {
@@ -188,7 +188,7 @@ func TestIMSAKAThroughTheWholeIMS(t *testing.T) {
 	if err := a.ue.Deregister(ctx); err != nil {
 		t.Fatalf("deregistration: %v", err)
 	}
-	if sas, ok := n.pcscfStore.SecurityAssociations(protectedAddr); ok {
+	if sas, ok, _ := n.pcscfStore.SecurityAssociations(context.Background(), protectedAddr); ok {
 		t.Errorf("the P-CSCF keeps %+v after the deregistration", sas)
 	}
 	if got := a.ue.Outbound(); got.Addr != n.pcscf {
@@ -208,7 +208,7 @@ func TestIMSAKAWithAnotherK(t *testing.T) {
 	if !errors.Is(err, ue.ErrForbidden) || !errors.Is(err, aka.ErrMACFailure) {
 		t.Fatalf("err = %v, want ErrForbidden after ErrMACFailure", err)
 	}
-	if sas, ok := n.pcscfStore.SecurityAssociations(a.ua.Stack().LocalAddr()); ok {
+	if sas, ok, _ := n.pcscfStore.SecurityAssociations(context.Background(), a.ua.Stack().LocalAddr()); ok {
 		t.Errorf("the P-CSCF keeps %+v", sas)
 	}
 	if _, ok := n.scscfStore.Registration(impiAKA); ok {

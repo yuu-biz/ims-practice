@@ -1,6 +1,7 @@
 package pcscf
 
 import (
+	"context"
 	"net/netip"
 	"reflect"
 	"slices"
@@ -39,6 +40,9 @@ type harnessConfig struct {
 	association func(*Association)
 	// configure sets up the P-CSCF before it takes requests.
 	configure func(*PCSCF)
+	// wrap, when set, makes the Store of the P-CSCF of the MemoryStore
+	// of the harness.
+	wrap func(*MemoryStore) Store
 }
 
 func newCallHarness(t *testing.T, cfg harnessConfig) *callHarness {
@@ -73,7 +77,11 @@ func newCallHarness(t *testing.T, cfg harnessConfig) *callHarness {
 
 	coreAddr := h.core.Stack().LocalAddr()
 	locate := locatorFunc(func(string) []sip.Destination { return []sip.Destination{{Transport: sip.UDP, Addr: coreAddr}} })
-	h.p = New(Config{Host: "pcscf." + domain, Port: 5060, VisitedNetworkID: domain}, locate, h.store, cfg.relay, quiet())
+	var store Store = h.store
+	if cfg.wrap != nil {
+		store = cfg.wrap(h.store)
+	}
+	h.p = New(Config{Host: "pcscf." + domain, Port: 5060, VisitedNetworkID: domain}, locate, store, cfg.relay, quiet())
 	if cfg.configure != nil {
 		cfg.configure(h.p)
 	}
@@ -102,7 +110,7 @@ func newCallHarness(t *testing.T, cfg harnessConfig) *callHarness {
 	if cfg.association != nil {
 		cfg.association(&a)
 	}
-	h.p.store.PutAssociation(a)
+	h.p.store.PutAssociation(context.Background(), a)
 	return h
 }
 
@@ -222,7 +230,8 @@ func ended(t *testing.T, what string, done <-chan struct{}) {
 
 // dialog reads the dialog of key from the Store.
 func (h *callHarness) dialog(key DialogKey) (Dialog, bool) {
-	return h.store.UpdateDialog(key, func(*Dialog) {})
+	d, ok, _ := h.store.UpdateDialog(context.Background(), key, func(*Dialog) {})
+	return d, ok
 }
 
 // waitNoDialog waits until the dialog of key is gone: the P-CSCF ends
@@ -372,7 +381,7 @@ func TestTerminatingDialogKeepsTheRouteToTheCaller(t *testing.T) {
 	})
 	contact := "sip:001010000000001@" + ue.LocalAddr().String()
 	p := New(Config{Host: "pcscf." + domain, Port: 5060, VisitedNetworkID: domain}, locatorFunc(func(string) []sip.Destination { return nil }), store, nil, quiet())
-	p.store.PutAssociation(Association{Source: sip.Destination{Transport: sip.UDP, Addr: ue.LocalAddr()}, Contact: contact,
+	p.store.PutAssociation(context.Background(), Association{Source: sip.Destination{Transport: sip.UDP, Addr: ue.LocalAddr()}, Contact: contact,
 		PrivateIdentity: impi, PublicIdentities: []string{impu}, Expires: time.Now().Add(time.Hour)})
 	pcscf := newPCSCFStack(t, p)
 	p.SetStack(pcscf)
@@ -389,7 +398,7 @@ func TestTerminatingDialogKeepsTheRouteToTheCaller(t *testing.T) {
 	if r := final(t, ct.Responses(), 3*time.Second); r.StatusCode != 200 {
 		t.Fatalf("got %d, want 200", r.StatusCode)
 	}
-	d, ok := store.UpdateDialog(DialogKey{CallID: m.Get("Call-ID"), UETag: "ue"}, func(*Dialog) {})
+	d, ok, _ := store.UpdateDialog(context.Background(), DialogKey{CallID: m.Get("Call-ID"), UETag: "ue"}, func(*Dialog) {})
 	if !ok {
 		t.Fatal("no dialog of the called UE")
 	}

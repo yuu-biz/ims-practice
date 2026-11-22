@@ -1,6 +1,7 @@
 package pcscf
 
 import (
+	"context"
 	"strings"
 	"testing"
 	"time"
@@ -142,7 +143,7 @@ func TestPCSCFSubscribesToTheRegEventAndEndsTheAssociation(t *testing.T) {
 		t.Fatalf("second SUBSCRIBE while the first holds:\n%s", m)
 	case <-time.After(200 * time.Millisecond):
 	}
-	if _, ok := store.Association(ueSource); !ok {
+	if _, ok, _ := store.Association(context.Background(), ueSource); !ok {
 		t.Fatal("no association after the registration")
 	}
 
@@ -150,7 +151,7 @@ func TestPCSCFSubscribesToTheRegEventAndEndsTheAssociation(t *testing.T) {
 	if resp := home.notify(t, &sub, pcscfStack, registration(reginfo.Terminated, reginfo.Terminated, reginfo.Expired)); resp.StatusCode != 200 {
 		t.Fatalf("last NOTIFY answered %d", resp.StatusCode)
 	}
-	a, ok := store.Association(ueSource)
+	a, ok, _ := store.Association(context.Background(), ueSource)
 	if ok && a.Expires.After(time.Now()) {
 		t.Error("the association is still valid after the registration ended (TS 24.229 5.2.5.2)")
 	}
