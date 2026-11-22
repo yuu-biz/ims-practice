@@ -830,6 +830,12 @@ func TestConferenceRefusals(t *testing.T) {
 	if err != nil || r.Response.StatusCode != 403 {
 		t.Errorf("REFER with method BYE got %v, %v; want 403", r, err)
 	}
+	// A tel URI with no number names nobody, so the focus has no user to
+	// invite and does not accept the REFER (RFC 3515 2.4.2).
+	r, err = conf.Refer(sip.ReferTo{URI: "tel:"})
+	if err != nil || r.Response.StatusCode != 403 {
+		t.Errorf("REFER to a tel URI with no number got %v, %v; want 403", r, err)
+	}
 
 	focus, err := sip.ParseNameAddr(resps[len(resps)-1].Get("Contact"))
 	if err != nil {

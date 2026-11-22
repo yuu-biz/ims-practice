@@ -87,3 +87,26 @@ func TestSamePublicIdentity(t *testing.T) {
 		}
 	}
 }
+
+// TestTelNumber: the number of a tel URI comes without its parameters.
+// A tel URI with no telephone-subscriber, a form that RFC 3966 3 does
+// not have, carries no number.
+func TestTelNumber(t *testing.T) {
+	numbers := map[string]string{
+		"tel:+12025550101":                 "+12025550101",
+		"TEL:+1-202-555-0101":              "+1-202-555-0101",
+		"tel:+12025550101;npdi":            "+12025550101",
+		"tel:5550101;phone-context=+1-202": "5550101",
+	}
+	for uri, want := range numbers {
+		if got, ok := TelNumber(uri); !ok || got != want {
+			t.Errorf("TelNumber(%q) = %q, %v; want %q", uri, got, ok, want)
+		}
+	}
+	none := []string{"tel:", "tel:;phone-context=+1-202", "sip:+12025550101@" + domain + ";user=phone", "+12025550101", ""}
+	for _, uri := range none {
+		if got, ok := TelNumber(uri); ok {
+			t.Errorf("TelNumber(%q) = %q, true; want no number", uri, got)
+		}
+	}
+}

@@ -94,12 +94,17 @@ func isUnreserved(c byte) bool {
 }
 
 // TelNumber returns the number of a tel URI (RFC 3966 3), without its
-// parameters, and false for any other URI.
+// parameters, and false for any other URI. A tel URI needs a
+// telephone-subscriber: "tel:" with parameters alone names no user, so
+// it is no number either.
 func TelNumber(uri string) (string, bool) {
 	if len(uri) < 4 || !strings.EqualFold(uri[:4], "tel:") {
 		return "", false
 	}
 	number, _, _ := strings.Cut(uri[4:], ";")
+	if number == "" {
+		return "", false
+	}
 	return number, true
 }
 

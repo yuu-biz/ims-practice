@@ -766,8 +766,9 @@ func (f *conference) refer(r *sip.InDialogRequest) {
 	if _, isTel := ims.TelNumber(rt.URI); !isTel {
 		if _, err := sip.ParseURI(rt.URI); err != nil {
 			// RFC 3515 2.4.2: a UA that cannot reach a URI of another
-			// scheme does not accept a REFER to it.
-			r.Reject(403, f.as.warning("Refer-To is neither a SIP nor a tel URI"))
+			// scheme does not accept a REFER to it. Nor can the focus
+			// reach a tel URI that holds no number.
+			r.Reject(403, f.as.warning("Refer-To is neither a SIP URI nor a tel URI with a number"))
 			return
 		}
 	}
