@@ -132,8 +132,10 @@ func run(configPath string, log *slog.Logger) error {
 		if epcRole != nil {
 			epcRole.SetAFs(server)
 		}
+		// One connection per entry of the diameter section, in its order,
+		// so that peersOfKind finds each peer at the entry's index.
 		for _, p := range d.Peers {
-			peers = append(peers, node.Connect(p))
+			peers = append(peers, node.Connect(p.PeerConfig))
 		}
 	}
 	if hssRole != nil && cfg.HSS.ProvisioningListen != "" {
@@ -194,7 +196,7 @@ func run(configPath string, log *slog.Logger) error {
 			MaxExpires: c.MaxExpires,
 			IBCF:       c.IBCF,
 			UserLocks:  stores.locks(config.RoleSCSCF, roleLog),
-		}, hssPeer(peers), node, scscfStore(stores, roleLog), resolver, roleLog)
+		}, hssPeers(cfg, peers), node, scscfStore(stores, roleLog), resolver, roleLog)
 		// The sweep that handles the expiries of the users runs until the
 		// node stops.
 		defer s.Close()
@@ -212,7 +214,7 @@ func run(configPath string, log *slog.Logger) error {
 		}
 		i := icscf.New(icscf.Config{HomeDomain: cfg.HomeDomain, SCSCFs: scscfs, Host: c.SIP.Host, Port: int(c.SIP.Listen.Port()),
 			PSISubdomains: c.PSISubdomains},
-			hssPeer(peers), node, resolver,
+			hssPeers(cfg, peers), node, resolver,
 			log.With("role", config.RoleICSCF))
 		if _, err := startSIP(config.RoleICSCF, c.SIP, i.OnRequest, nil); err != nil {
 			return err
@@ -258,7 +260,7 @@ func run(configPath string, log *slog.Logger) error {
 	}
 	if c := cfg.IPSMGW; c != nil {
 		roleLog := log.With("role", config.RoleIPSMGW)
-		users := sh.NewClient(node, hssPeer(peers), cfg.HomeDomain)
+		users := sh.NewClient(node, hssPeers(cfg, peers), cfg.HomeDomain)
 		centreLog := roleLog.With("function", "sc")
 		centre := sc.New(users, scStore(stores, centreLog), centreLog)
 		g := ipsmgw.New(ipsmgw.Config{
@@ -301,7 +303,7 @@ func run(configPath string, log *slog.Logger) error {
 		if err != nil {
 			return err
 		}
-		users := sh.NewClient(node, hssPeer(peers), cfg.HomeDomain)
+		users := sh.NewClient(node, hssPeers(cfg, peers), cfg.HomeDomain)
 		store := mmtelStore(stores, roleLog)
 		mmtelRole = mmtel.New(mmtel.Config{
 			Host:             c.SIP.Host,
@@ -764,30 +766,43 @@ func diameterNodeName(cfg config.Config) string {
 // message counts once per node that sent or received it.
 const dashboardMessages = 10000
 
-// hssPeer is the Cx or Sh peer of the I-CSCF, the S-CSCF, the IP-SM-GW
-// and the MMTel AS. The configuration gives them exactly one, the HSS.
-func hssPeer(peers []*diameter.Peer) *diameter.Peer {
-	if len(peers) == 0 {
-		return nil
-	}
-	return peers[0]
+// hssPeers are the Cx and Sh peers of the I-CSCF, the S-CSCF, the
+// IP-SM-GW and the MMTel AS: the instances of the HSS, in the order of
+// the configuration. Every instance holds every subscriber, so a
+// request that one of them does not answer goes to the next (TS 29.228
+// 6.4).
+func hssPeers(cfg config.Config, peers []*diameter.Peer) *diameter.PeerGroup {
+	return diameter.NewPeerGroup(peersOfKind(cfg, peers, config.PeerHSS)...)
 }
 
 // pcrfPeer is the Rx peer of the P-CSCF, or nil when the configuration
-// names none. On a node whose other roles need the HSS, the HSS is the
-// first peer and the PCRF the second.
+// names none, which leaves the P-CSCF without policy control.
 func pcrfPeer(cfg config.Config, peers []*diameter.Peer) *diameter.Peer {
 	if !cfg.HasRole(config.RolePCSCF) {
 		return nil
 	}
-	i := 0
-	if cfg.HasRole(config.RoleICSCF) || cfg.HasRole(config.RoleSCSCF) || cfg.HasRole(config.RoleIPSMGW) || cfg.HasRole(config.RoleMMTel) {
-		i = 1
-	}
-	if i >= len(peers) {
+	pcrfs := peersOfKind(cfg, peers, config.PeerPCRF)
+	if len(pcrfs) == 0 {
 		return nil
 	}
-	return peers[i]
+	return pcrfs[0]
+}
+
+// peersOfKind are the connections to the peers that the diameter
+// section calls kind, in its order. peers holds one connection per
+// entry of that section, so the entry and the connection share an
+// index.
+func peersOfKind(cfg config.Config, peers []*diameter.Peer, kind config.PeerKind) []*diameter.Peer {
+	if cfg.Diameter == nil {
+		return nil
+	}
+	var found []*diameter.Peer
+	for i, p := range cfg.Diameter.Peers {
+		if p.Kind == kind && i < len(peers) {
+			found = append(found, peers[i])
+		}
+	}
+	return found
 }
 
 // diameterHandler gives each request that reaches the node to the role

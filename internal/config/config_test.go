@@ -28,6 +28,7 @@ diameter:
   peers:
     - address: hss.ims.mnc001.mcc001.3gppnetwork.org:3868
       origin_host: hss.ims.mnc001.mcc001.3gppnetwork.org
+      kind: hss
   timers:
     tw: 10s
     tc: 5s
@@ -52,9 +53,12 @@ func TestParseScscf(t *testing.T) {
 				OriginHost:  "scscf.ims.mnc001.mcc001.3gppnetwork.org",
 				OriginRealm: "ims.mnc001.mcc001.3gppnetwork.org",
 			},
-			Peers: []diameter.PeerConfig{{
-				Address:    "hss.ims.mnc001.mcc001.3gppnetwork.org:3868",
-				OriginHost: "hss.ims.mnc001.mcc001.3gppnetwork.org",
+			Peers: []Peer{{
+				PeerConfig: diameter.PeerConfig{
+					Address:    "hss.ims.mnc001.mcc001.3gppnetwork.org:3868",
+					OriginHost: "hss.ims.mnc001.mcc001.3gppnetwork.org",
+				},
+				Kind: PeerHSS,
 			}},
 			Timers: diameter.Timers{
 				Watchdog:       10 * time.Second,
@@ -284,7 +288,70 @@ diameter:
   peers:
     - address: 127.0.0.1:3868
       origin_host: ims.ims.mnc001.mcc001.3gppnetwork.org
+      kind: hss
 `
+
+// Every peer of the diameter section says what it is, so that a node
+// whose roles reach both the HSS and the PCRF never has to tell them
+// apart by their place in the list: a configuration with two instances
+// of the HSS and no PCRF would otherwise read the second instance as
+// the PCRF.
+func TestParsePeersSayWhatTheyAre(t *testing.T) {
+	const pcscfAndSCSCF = `
+node: ims
+roles: [pcscf, scscf]
+home_domain: ims.mnc001.mcc001.3gppnetwork.org
+pcscf:
+  sip: {listen: 0.0.0.0:5060, host: pcscf.ims.mnc001.mcc001.3gppnetwork.org}
+  visited_network_id: ims.mnc001.mcc001.3gppnetwork.org
+scscf:
+  sip: {listen: 0.0.0.0:5062, host: scscf.ims.mnc001.mcc001.3gppnetwork.org}
+diameter:
+  origin_host: ims.ims.mnc001.mcc001.3gppnetwork.org
+  origin_realm: ims.mnc001.mcc001.3gppnetwork.org
+  peers:
+    - {address: hss-1.ims.mnc001.mcc001.3gppnetwork.org:3868, origin_host: hss-1.ims.mnc001.mcc001.3gppnetwork.org, kind: hss}
+    - {address: hss-2.ims.mnc001.mcc001.3gppnetwork.org:3868, origin_host: hss-2.ims.mnc001.mcc001.3gppnetwork.org, kind: hss}
+`
+	cfg, err := Parse(strings.NewReader(pcscfAndSCSCF))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cfg.Diameter.Peers) != 2 {
+		t.Fatalf("peers = %+v", cfg.Diameter.Peers)
+	}
+	for i, p := range cfg.Diameter.Peers {
+		if p.Kind != PeerHSS {
+			t.Errorf("peers[%d] is %q, want both to be instances of the HSS", i, p.Kind)
+		}
+	}
+	withPCRF := strings.Replace(pcscfAndSCSCF, "origin_host: hss-2.ims.mnc001.mcc001.3gppnetwork.org, kind: hss",
+		"origin_host: pcrf.ims.mnc001.mcc001.3gppnetwork.org, kind: pcrf", 1)
+	cfg, err = Parse(strings.NewReader(withPCRF))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := cfg.Diameter.Peers[1].Kind; got != PeerPCRF {
+		t.Errorf("the second peer is %q, want the PCRF", got)
+	}
+	for _, tt := range []struct{ name, old, new, wantErr string }{
+		{"no kind", ", kind: hss}", "}", "peers[0].kind: required"},
+		{"a kind of its own", "kind: hss}", "kind: slf}", `"slf" is not`},
+		{"the PCRF without a pcscf role", "roles: [pcscf, scscf]", "roles: [scscf]", "only the pcscf role"},
+		{"the HSS without a role that reaches it", "roles: [pcscf, scscf]", "roles: [pcscf]", "only the icscf, scscf"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			yaml := strings.Replace(withPCRF, tt.old, tt.new, 1)
+			if yaml == withPCRF {
+				t.Fatalf("%q is not in the configuration", tt.old)
+			}
+			_, err := Parse(strings.NewReader(yaml))
+			if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+				t.Errorf("error = %v, want it to mention %q", err, tt.wantErr)
+			}
+		})
+	}
+}
 
 func TestParseCombinedRoles(t *testing.T) {
 	cfg, err := Parse(strings.NewReader(combinedYAML))
@@ -504,7 +571,7 @@ ipsmgw:
 diameter:
   origin_host: ipsmgw.ims.mnc001.mcc001.3gppnetwork.org
   origin_realm: ims.mnc001.mcc001.3gppnetwork.org
-  peers: [{address: hss.ims.mnc001.mcc001.3gppnetwork.org:3868, origin_host: hss.ims.mnc001.mcc001.3gppnetwork.org}]
+  peers: [{address: hss.ims.mnc001.mcc001.3gppnetwork.org:3868, origin_host: hss.ims.mnc001.mcc001.3gppnetwork.org, kind: hss}]
 `
 	cfg, err := Parse(strings.NewReader(yaml))
 	if err != nil {
@@ -548,7 +615,7 @@ mmtel:
 diameter:
   origin_host: mmtel.ims.mnc001.mcc001.3gppnetwork.org
   origin_realm: ims.mnc001.mcc001.3gppnetwork.org
-  peers: [{address: hss.ims.mnc001.mcc001.3gppnetwork.org:3868, origin_host: hss.ims.mnc001.mcc001.3gppnetwork.org}]
+  peers: [{address: hss.ims.mnc001.mcc001.3gppnetwork.org:3868, origin_host: hss.ims.mnc001.mcc001.3gppnetwork.org, kind: hss}]
 `
 	cfg, err := Parse(strings.NewReader(yaml))
 	if err != nil {
@@ -752,7 +819,7 @@ diameter:
   origin_host: pcscf.ims.mnc001.mcc001.3gppnetwork.org
   origin_realm: ims.mnc001.mcc001.3gppnetwork.org
   peers:
-    - {address: pcrf.ims.mnc001.mcc001.3gppnetwork.org:3868, origin_host: pcrf.ims.mnc001.mcc001.3gppnetwork.org}
+    - {address: pcrf.ims.mnc001.mcc001.3gppnetwork.org:3868, origin_host: pcrf.ims.mnc001.mcc001.3gppnetwork.org, kind: pcrf}
 `
 	cfg, err := Parse(strings.NewReader(pcscfYAML))
 	if err != nil {

@@ -98,10 +98,30 @@ type Diameter struct {
 	// connections.
 	Listen string
 	// Peers is set for the icscf, scscf, ipsmgw and mmtel roles, which
-	// connect to the HSS, and for a pcscf, which connects to the PCRF. On a node with
-	// both kinds of role the HSS comes first.
-	Peers  []diameter.PeerConfig
+	// connect to the HSS, and for a pcscf, which connects to the PCRF.
+	// Each peer says which of the two it is, so a node with both kinds
+	// of role has no doubt about it. Several peers of the HSS are its
+	// instances, which all serve the same subscribers.
+	Peers  []Peer
 	Timers diameter.Timers
+}
+
+// PeerKind is what a Diameter peer of the node serves.
+type PeerKind string
+
+const (
+	// PeerHSS serves Cx and Sh. A configuration may name several
+	// instances of one HSS.
+	PeerHSS PeerKind = "hss"
+	// PeerPCRF serves Rx, for the P-CSCF as an AF.
+	PeerPCRF PeerKind = "pcrf"
+)
+
+// Peer is one Diameter peer: where to reach it, the Origin-Host it must
+// send in its CEA, and what it serves.
+type Peer struct {
+	diameter.PeerConfig
+	Kind PeerKind
 }
 
 // HEP is the collector of the HEP copies.
@@ -168,6 +188,7 @@ type rawHEP struct {
 type rawPeer struct {
 	Address    string `yaml:"address"`
 	OriginHost string `yaml:"origin_host"`
+	Kind       string `yaml:"kind"`
 }
 
 type rawTimers struct {
@@ -566,7 +587,24 @@ func (raw rawDiameter) validate(cfg Config) (Diameter, error) {
 		if p.OriginHost == "" {
 			return Diameter{}, fmt.Errorf("peers[%d].origin_host: required", i)
 		}
-		d.Peers = append(d.Peers, diameter.PeerConfig{Address: p.Address, OriginHost: p.OriginHost})
+		kind := PeerKind(p.Kind)
+		switch {
+		case p.Kind == "":
+			return Diameter{}, fmt.Errorf("peers[%d].kind: required, %q or %q", i, PeerHSS, PeerPCRF)
+		case kind != PeerHSS && kind != PeerPCRF:
+			return Diameter{}, fmt.Errorf("peers[%d].kind: %q is not %q or %q", i, p.Kind, PeerHSS, PeerPCRF)
+		case kind == PeerHSS && !needsHSS:
+			return Diameter{}, fmt.Errorf("peers[%d].kind: only the icscf, scscf, ipsmgw and mmtel roles reach the HSS", i)
+		case kind == PeerPCRF && !cfg.HasRole(RolePCSCF):
+			return Diameter{}, fmt.Errorf("peers[%d].kind: only the pcscf role reaches the PCRF", i)
+		}
+		d.Peers = append(d.Peers, Peer{PeerConfig: diameter.PeerConfig{Address: p.Address, OriginHost: p.OriginHost}, Kind: kind})
+	}
+	if needsHSS && !slices.ContainsFunc(d.Peers, func(p Peer) bool { return p.Kind == PeerHSS }) {
+		return Diameter{}, errors.New("peers: the icscf, scscf, ipsmgw and mmtel roles need the HSS as a peer")
+	}
+	if onlyRx && !slices.ContainsFunc(d.Peers, func(p Peer) bool { return p.Kind == PeerPCRF }) {
+		return Diameter{}, errors.New("peers: the pcscf role needs the PCRF as a peer")
 	}
 
 	timers, err := raw.Timers.validate()

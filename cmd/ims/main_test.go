@@ -9,6 +9,7 @@ import (
 	"net"
 	"net/netip"
 	"reflect"
+	"slices"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -208,24 +209,60 @@ func TestDiameterHandlerSendsRxToTheEPCRole(t *testing.T) {
 	}
 }
 
-// The P-CSCF's PCRF is the peer that is not the HSS, and a P-CSCF
-// without one has no policy control.
-func TestPCRFPeer(t *testing.T) {
-	hssPeer, pcrf := &diameter.Peer{}, &diameter.Peer{}
+// The P-CSCF's PCRF is the last peer, after the instances of the HSS,
+// and a P-CSCF without one has no policy control. Every peer before it
+// is an instance of the HSS, so the roles that use Cx and Sh can send
+// to any of them.
+// Each role takes the peers that the diameter section says are for it:
+// the roles that use Cx and Sh take every instance of the HSS, and the
+// P-CSCF takes the PCRF. The kinds, not the places in the list, decide,
+// so a node with two instances of the HSS and no PCRF leaves the
+// P-CSCF without policy control instead of sending Rx to an HSS.
+func TestPeersOfTheHSSAndThePCRF(t *testing.T) {
+	hss1, hss2, pcrf := &diameter.Peer{}, &diameter.Peer{}, &diameter.Peer{}
+	both := []config.Role{config.RolePCSCF, config.RoleSCSCF}
 	for _, tt := range []struct {
 		name  string
 		roles []config.Role
+		// kinds are the diameter section's entries, and peers the
+		// connections in the same order.
+		kinds []config.PeerKind
 		peers []*diameter.Peer
-		want  *diameter.Peer
+		pcscf *diameter.Peer
+		hss   []*diameter.Peer
 	}{
-		{"pcscf with a PCRF", []config.Role{config.RolePCSCF}, []*diameter.Peer{pcrf}, pcrf},
-		{"pcscf without Diameter", []config.Role{config.RolePCSCF}, nil, nil},
-		{"pcscf and scscf with the HSS only", []config.Role{config.RolePCSCF, config.RoleSCSCF}, []*diameter.Peer{hssPeer}, nil},
-		{"pcscf and scscf with both", []config.Role{config.RolePCSCF, config.RoleSCSCF}, []*diameter.Peer{hssPeer, pcrf}, pcrf},
-		{"scscf alone", []config.Role{config.RoleSCSCF}, []*diameter.Peer{hssPeer}, nil},
+		{"pcscf with a PCRF", []config.Role{config.RolePCSCF},
+			[]config.PeerKind{config.PeerPCRF}, []*diameter.Peer{pcrf}, pcrf, nil},
+		{"pcscf without Diameter", []config.Role{config.RolePCSCF}, nil, nil, nil, nil},
+		{"pcscf and scscf with the HSS only", both,
+			[]config.PeerKind{config.PeerHSS}, []*diameter.Peer{hss1}, nil, []*diameter.Peer{hss1}},
+		{"pcscf and scscf with both", both,
+			[]config.PeerKind{config.PeerHSS, config.PeerPCRF}, []*diameter.Peer{hss1, pcrf}, pcrf, []*diameter.Peer{hss1}},
+		{"pcscf and scscf with two instances of the HSS and a PCRF", both,
+			[]config.PeerKind{config.PeerHSS, config.PeerHSS, config.PeerPCRF},
+			[]*diameter.Peer{hss1, hss2, pcrf}, pcrf, []*diameter.Peer{hss1, hss2}},
+		{"pcscf and scscf with two instances of the HSS and no PCRF", both,
+			[]config.PeerKind{config.PeerHSS, config.PeerHSS},
+			[]*diameter.Peer{hss1, hss2}, nil, []*diameter.Peer{hss1, hss2}},
+		{"pcscf and scscf with the PCRF before the HSS", both,
+			[]config.PeerKind{config.PeerPCRF, config.PeerHSS}, []*diameter.Peer{pcrf, hss1}, pcrf, []*diameter.Peer{hss1}},
+		{"scscf alone", []config.Role{config.RoleSCSCF},
+			[]config.PeerKind{config.PeerHSS}, []*diameter.Peer{hss1}, nil, []*diameter.Peer{hss1}},
+		{"scscf with two instances of the HSS", []config.Role{config.RoleSCSCF},
+			[]config.PeerKind{config.PeerHSS, config.PeerHSS}, []*diameter.Peer{hss1, hss2}, nil, []*diameter.Peer{hss1, hss2}},
 	} {
-		if got := pcrfPeer(config.Config{Roles: tt.roles}, tt.peers); got != tt.want {
-			t.Errorf("%s: got peer %p, want %p", tt.name, got, tt.want)
+		cfg := config.Config{Roles: tt.roles}
+		if tt.kinds != nil {
+			cfg.Diameter = &config.Diameter{}
+			for _, kind := range tt.kinds {
+				cfg.Diameter.Peers = append(cfg.Diameter.Peers, config.Peer{Kind: kind})
+			}
+		}
+		if got := pcrfPeer(cfg, tt.peers); got != tt.pcscf {
+			t.Errorf("%s: PCRF %p, want %p", tt.name, got, tt.pcscf)
+		}
+		if got := hssPeers(cfg, tt.peers).Peers(); !slices.Equal(got, tt.hss) {
+			t.Errorf("%s: HSS %v, want %v", tt.name, got, tt.hss)
 		}
 	}
 }
