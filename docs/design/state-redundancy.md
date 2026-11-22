@@ -51,10 +51,11 @@
 | IP-SM-GW と SC | `message-reference:<宛先>`、`delivery:<Call-ID>`、`reg-subscription:<Call-ID>`、`status-report-request:<参照>` | `reg-subscription-of:<公開 ID>` | RP-MR の数は TTL（10 分）。配達は TTL と時刻の索引 `report-timeout`（TR1N）。ほかは TTL |
 | MMTel AS | `call:<Incoming のダイアログ>`、`conference:<ID>`（新規） | `call-of-leg:<Outgoing のダイアログ>` | なし |
 | MRFC | `conference:<ID>`（新規） | なし | なし |
+| IBCF（新規） | `call:<台の名前>:<呼の ID>` | `calls-of:<台の名前>`（その台の呼の ID の集合） | なし |
 | HSS | `subscriber:<IMPI>` | `public:<IMPU>`、`directory:<0 から 15>` | なし |
 | メディア中継ノード（新規） | `<台の名前>:context:<ID>` | `<台の名前>:contexts`（その台のコンテキストの ID の集合） | なし |
 
-中継ノードの ID の集合は、その台のポートの範囲で数が決まるので、利用者の数では伸びません。BYE を誰も見なかった呼の P-CSCF のダイアログと MMTel AS の呼の記録は、期限が無いので残ります。今の `MemoryStore` と同じで、`SIMPLIFIED:` に書きます。
+中継ノードの ID の集合は、その台のポートの範囲で数が決まるので、利用者の数では伸びません。IBCF の ID の集合も、その台が同時に持つ呼の数までしか伸びません。IBCF の台は、起動したときに自分の集合と記録を 1 回だけ読み、前のプロセスが残した呼を終わらせます。BYE を誰も見なかった呼の P-CSCF のダイアログと MMTel AS の呼の記録は、期限が無いので残ります。今の `MemoryStore` と同じで、`SIMPLIFIED:` に書きます。
 
 ## 期限切れを 1 台だけが処理する
 
@@ -109,7 +110,7 @@
 | 戻らない中継ノード | その中継ノードを通る呼は、音声を失ったままになります。P-CSCF は何もせず、UE が切るまで呼は続きます。新しい呼には、ほかの中継ノードが選ばれます。`SIMPLIFIED:` に書きます。 |
 | 採らなかった案 | 別の中継ノードへ移し、両側に re-INVITE か UPDATE を送る案（調査の案 3）は採りません。P-CSCF はプロキシなので、自分で re-INVITE を出すと B2BUA の振る舞いになり、両側のダイアログの CSeq を持つ必要があるためです。中継ノードが止まったら呼を切る案も採りません。中継ノードごとに、そこを通る呼の一覧を持つ必要があり、作り直したときに音声が戻る様子も見せられないためです。 |
 | MRFP | 中継ノードと同じ実装なので、ターミネーションは同じように開き直します。再生中の音声ガイダンスと CAT（シグナル）は戻しません。`SIMPLIFIED:` に書きます。MRFP の選び方は、今の MRFC の一覧と hash のままです。 |
-| TrGW | 同じ実装ですが、IBCF の `Store`（`internal/ibcf`）は保存先に載せません。 |
+| TrGW | 同じ実装です。TrGW のコンテキストは IBCF の呼の記録に入れ、台ごとに保存先に置きます（`internal/kvstore/ibcfstore`）。同じ名前で起動し直した IBCF は、記録を読み、呼ごとにコンテキストを解放して、両側に BYE を送ります。記録を読めなければ、IBCF は起動しません。 |
 
 H.248 で制御すると、中継ノードの作り直しは ServiceChange で、コンテキストの確認は Audit で見られます（[media-control.md](media-control.md)）。
 
