@@ -156,6 +156,9 @@ type Peer struct {
 	stop     chan struct{}
 	stopOnce sync.Once
 	done     chan struct{}
+	// available is what State.TakesRequests says of the state the loop
+	// is in, for Available.
+	available atomic.Bool
 }
 
 // input is what the dialer and reader goroutines hand to the loop. gen
@@ -211,6 +214,10 @@ func (p *Peer) Request(ctx context.Context, request *diam.Message) (*diam.Messag
 		return nil, fmt.Errorf("no answer to %s: %w", commandName(request), ctx.Err())
 	}
 }
+
+// Available says whether the connection to the peer takes requests
+// now: it is open, and the watchdog does not suspect it.
+func (p *Peer) Available() bool { return p.available.Load() }
 
 // Stop sends a DPR if the connection is open, waits for the DPA, and
 // returns once the peer has finished.
@@ -291,6 +298,7 @@ type pending struct {
 
 func (p *Peer) run(s State, first Event, conn net.Conn) {
 	defer close(p.done)
+	defer p.available.Store(false)
 	l := &loop{
 		peer:        p,
 		stop:        p.stop,
@@ -307,6 +315,9 @@ func (p *Peer) run(s State, first Event, conn net.Conn) {
 	ev := first
 	for {
 		next, actions := Transition(s, ev)
+		// Before the log line, so that whoever reads the line finds the
+		// peer as it says.
+		p.available.Store(next.TakesRequests())
 		if next.Phase != s.Phase || next.Watchdog != s.Watchdog {
 			p.log.Info("peer state", "event", ev.eventName(), "from", describe(s), "to", describe(next))
 		}
