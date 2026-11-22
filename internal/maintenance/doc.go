@@ -3,6 +3,7 @@
 // of each role with the drain, the node's configuration with the
 // settings that change while it runs, the level of the node's log, and
 // the node's alarm list. The OAM server uses it through Client.
+// No node of this project runs it: no binary in cmd builds it in.
 //
 // The API is this project's own. 3GPP standardises the management
 // interface above the element manager (Itf-N), and leaves the one

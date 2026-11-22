@@ -1,9 +1,9 @@
 // Package smsc is the Service Centre (SC) of TS 23.040: it takes short
 // messages from UEs, holds them, and delivers them to their recipients,
 // trying again until they arrive or their validity period ends (TS
-// 23.040 6.1). It is the body of the SC role, which replaces the
-// in-process stub of package sc and speaks the Diameter
-// interfaces of TS 29.338:
+// 23.040 6.1). No node of this project runs it: no binary in cmd
+// builds it in, and the SC that the IP-SM-GW reaches is the stub of
+// package sc. It speaks the Diameter interfaces of TS 29.338:
 //
 //   - SGd, as the SMS-IWMSC: a serving node (an MME, an SMSF or an
 //     IP-SM-GW) brings a short message from a UE in an OFR, and the SC

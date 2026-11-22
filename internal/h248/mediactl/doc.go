@@ -3,6 +3,7 @@
 // MRFC and the MRFP (TS 29.333). It holds both sides of each profile.
 // Its tests and examples run a Controller and a Gateway against each
 // other over UDP, so the H.248 messages can be captured.
+// No node of this project runs it: no binary in cmd builds it in.
 //
 // The operations carry the names of the H.248 commands, and their
 // types are those of the HTTP API of the media node in internal/agw.

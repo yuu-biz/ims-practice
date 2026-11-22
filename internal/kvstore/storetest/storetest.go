@@ -4,6 +4,7 @@
 // kvstore of internal/kvstore/<role>store, on a kvstore.MemoryStore and
 // on Valkey. One suite for both is what shows that the adapter can take
 // the place of the MemoryStore.
+// Only tests use it: no binary in cmd builds it in.
 //
 // Each suite takes a function that makes two instances of the Store that
 // share their state: the same MemoryStore twice, or two adapters on one

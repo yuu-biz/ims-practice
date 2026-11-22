@@ -20,6 +20,8 @@
 // The RP message is the same one that SMS over IP puts in the body of a
 // SIP MESSAGE. This package takes and returns it as octets and does not
 // look inside.
+//
+// No node of this project runs it: no binary in cmd builds it in.
 package nas
 
 import (

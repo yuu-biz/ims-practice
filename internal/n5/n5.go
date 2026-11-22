@@ -6,6 +6,7 @@
 // when the SDP changes, and deletes it when the session ends; the PCF
 // notifies the AF of events and asks it to end a context that is no
 // longer valid (TS 29.514 4.2.1).
+// No node of this project runs it: no binary in cmd builds it in.
 //
 // The JSON types carry the attribute names of the OpenAPI file of TS
 // 29.514 Annex A.2 (TS29514_Npcf_PolicyAuthorization.yaml) and of the

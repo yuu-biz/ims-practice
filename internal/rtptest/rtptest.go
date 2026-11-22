@@ -1,5 +1,6 @@
 // Package rtptest receives the RTP that reaches a party in a test, a
 // plain UDP socket that stands in for the media of a UE.
+// Only tests use it: no binary in cmd builds it in.
 //
 // Every wait ends on something the test can observe: a number of
 // packets known in advance (the frames of a WAV file), a packet with a

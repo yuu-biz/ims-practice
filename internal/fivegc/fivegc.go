@@ -1,6 +1,7 @@
 // Package fivegc is the stub of the 5GS access network:
 // one node that stands for the AMF, the SMF and the UPF of a 5GC, with
 // the PCF stub inside it. It is to 5GS what package epc is to EPS.
+// No node of this project runs it: no binary in cmd builds it in.
 //
 // A UE registers and sets up its PDU session over an HTTP and JSON API
 // whose messages are named after the NAS messages of TS 24.501
@@ -30,7 +31,7 @@ import (
 	"github.com/yuu-biz/ims-practice/internal/n5"
 )
 
-// Config is the configuration of the 5gc role.
+// Config is the configuration of the stub.
 type Config struct {
 	// DNN is the data network name of the IMS, such as "ims".
 	DNN string
@@ -58,7 +59,7 @@ type Subscriber struct {
 	Address netip.Addr
 }
 
-// FiveGC is the 5gc role.
+// FiveGC is the stub.
 type FiveGC struct {
 	cfg Config
 	// addresses holds the static address of each subscriber, from the

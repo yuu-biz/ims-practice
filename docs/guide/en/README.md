@@ -99,6 +99,18 @@ The test subscribers are in `deploy/compose/hss.yaml`. The guides call a UE by i
 
 The second network of the interconnect guide has its own subscribers in `deploy/interconnect/peer/hss.yaml`: +1-202-555-0151, UE B1 on the service `peer-ue`, and +1-202-555-0152.
 
+### Code that no node runs
+
+Some packages under `internal`, and one screen, are in the repository but in none of the nodes above: no binary in `cmd` builds them in, so nothing they do shows in the capture. Each package says so in its documentation.
+
+| Package or screen | What it is |
+| --- | --- |
+| `fivegc`, `n5`, `nhss`, `sbi` | The 5GS side: a 5GC stub, the N5 policy API of the PCF, the service based interface of the HSS, and what those APIs share. |
+| `nas`, `sgd`, `smsc` | SMS without the IMS: the NAS messages that carry it, the SGd and S6c Diameter messages, and a Service Centre that speaks them. The SC that the IP-SM-GW reaches is the stub of package `sc`. |
+| `h248`, `h248/mediactl` | H.248 for Iq and Mp. The nodes control the media relays over their HTTP API instead. |
+| `maintenance`, `oam`, `web/oam` | The maintenance API of a node, the OAM server that uses it, and the OAM screen, which CI builds and no node serves. |
+| `kvstore/storetest`, `rtptest` | Helpers that only the tests use. |
+
 ## Other ways to run it
 
 | Directory | What it does |
