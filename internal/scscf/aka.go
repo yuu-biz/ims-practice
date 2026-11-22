@@ -66,7 +66,8 @@ func (s *SCSCF) registerAKA(st *sip.ServerTransaction, privateID, publicID strin
 		// RES is good for one response; a later nonce count asks for a
 		// new challenge, as for SIP Digest (5.4.1.2.3B).
 		log.Info("stale nonce")
-		s.authTimers.stop(key(privateID))
+		// The timer of the challenge goes on until the new challenge,
+		// once stored, takes its place.
 		s.challengeAKA(st, privateID, publicID, nil, true, log)
 	default:
 		if err := s.endChallenge(ctx, privateID); err != nil {
