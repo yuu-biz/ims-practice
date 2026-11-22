@@ -149,9 +149,9 @@ func newHarness(t *testing.T, store ipsmgw.Store, reportTimeout time.Duration, a
 	return newHarnessWith(t, store, reportTimeout, answer, ipsmgw.Config{})
 }
 
-// newHarnessWith is newHarness for an IP-SM-GW with the IBCF of extra.
-// The IBCF is the entry point too, as far as the test sees it: a
-// MESSAGE for it carries the IBCF in Route.
+// newHarnessWith is newHarness for an IP-SM-GW with the IBCF and the
+// lock per user of extra. The IBCF is the entry point too, as far as
+// the test sees it: a MESSAGE for it carries the IBCF in Route.
 func newHarnessWith(t *testing.T, store ipsmgw.Store, reportTimeout time.Duration, answer func(*sip.Message) int, extra ipsmgw.Config) *harness {
 	t.Helper()
 	h := &harness{
@@ -172,7 +172,8 @@ func newHarnessWith(t *testing.T, store ipsmgw.Store, reportTimeout time.Duratio
 		}
 	})
 	h.sc.answerWith(sms.SubmitReport{ServiceCentreTimeStamp: time.Date(2026, 11, 20, 9, 30, 0, 0, time.UTC)}, nil)
-	h.g = ipsmgw.New(ipsmgw.Config{URI: ownURI, HomeDomain: domain, Number: number, ServiceCentre: scAddress, ReportTimeout: reportTimeout, IBCF: extra.IBCF},
+	h.g = ipsmgw.New(ipsmgw.Config{URI: ownURI, HomeDomain: domain, Number: number, ServiceCentre: scAddress, ReportTimeout: reportTimeout,
+		IBCF: extra.IBCF, UserLocks: extra.UserLocks},
 		h.sc, store, h.hss, locator{domain: entry.LocalAddr(), scscfHost: h.scscf.LocalAddr(), ibcfHost: entry.LocalAddr()}, quiet())
 	stack := newStack(t, fastTimers, h.g.OnRequest)
 	h.g.SetStack(stack)
