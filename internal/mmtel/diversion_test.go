@@ -289,6 +289,39 @@ func TestDiversionWithoutA199(t *testing.T) {
 	}
 }
 
+// A caller that uses preconditions and does not take 199 keeps its
+// early dialog, with alice's answer in it, as the AS cannot withhold an
+// answer that the preconditions need (RFC 3312). The leg to carol is a
+// new one, so carol's answer still goes to the caller, in carol's 183:
+// carol alerts only once the caller has confirmed its resources, which
+// needs that answer.
+func TestDiversionWithPreconditionsWithoutA199(t *testing.T) {
+	doc := cdiv("5", forwardRule("cfb", "<busy/>", carolTel, ""))
+	as := startAS(t, &documents{docs: map[string]string{aliceURI: mmtelServices(doc)}}, mmtel.Config{})
+	next := newUA(t, "next", func(c *sip.IncomingCall) {
+		if c.Request.RequestURI == aliceURI {
+			c.Progress(183, answer)
+			c.Reject(486)
+			return
+		}
+		c.Progress(183, answer2)
+		c.Accept(sip.Body{})
+	})
+	caller := newUA(t, "bob", func(c *sip.IncomingCall) { c.Reject(480) })
+	out, err := caller.Invite(toServedUser(t, as, next, "reg", sip.HeaderField{Name: "Supported", Value: "100rel, precondition"}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	resps := readAll(t, out)
+	t.Cleanup(func() { out.Bye() })
+	if !reflect.DeepEqual(statuses(resps), []int{183, 181, 183, 200}) {
+		t.Fatalf("caller got %v, want alice's 183, 181, carol's 183 and 200", statuses(resps))
+	}
+	if string(resps[0].Body) != string(answer.Content) || string(resps[2].Body) != string(answer2.Content) {
+		t.Errorf("caller got answers %q and %q, want alice's in her 183 and carol's in hers", resps[0].Body, resps[2].Body)
+	}
+}
+
 func TestCommunicationForwardingNotReachable(t *testing.T) {
 	doc := cdiv("5", forwardRule("cfnrc", "<not-reachable/>", carolTel, ""))
 	_, resps, got := divertedLater(t, doc, "100rel, 199", func(c *sip.IncomingCall) { c.Reject(503) })

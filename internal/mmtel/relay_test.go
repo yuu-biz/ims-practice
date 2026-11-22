@@ -452,6 +452,34 @@ func TestOfferInTheReliableResponse(t *testing.T) {
 	out.Bye()
 }
 
+// After an INVITE without an offer, the first reliable response with a
+// body in each early dialog has the offer of its UAS (RFC 3262 5). Once
+// the caller has answered the offer of one, that of the next early
+// dialog does not reach it, even after a 199 has ended the first: the
+// AS would send a second offer in its responses to the INVITE (RFC 3261
+// 13.2.1).
+func TestOfferOfTheNextEarlyDialog(t *testing.T) {
+	as := startAS(t, noServices{}, mmtel.Config{})
+	callee := newUA(t, "bob", func(c *sip.IncomingCall) {
+		c.Progress(183, answer)
+		c.EarlyDialogTerminated(480)
+		c.Progress(183, answer2)
+	})
+	caller := newUA(t, "alice", func(c *sip.IncomingCall) { c.Reject(480) })
+	out, err := caller.Invite(viaAS(t, as, callee, "orig", sip.Body{}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer out.Cancel()
+	offered := receive(t, out.Responses(), "183")
+	if _, err := out.PRACK(offered, offer); err != nil {
+		t.Fatal(err)
+	}
+	if next := receive(t, out.Responses(), "the 183 of the next early dialog"); next.StatusCode != 183 || len(next.Body) != 0 {
+		t.Errorf("caller got\n%s\nwant the 183 of the next early dialog without its offer", next)
+	}
+}
+
 // TestUpdateInTheEarlyDialog: an UPDATE of the caller before the 2xx,
 // such as the one that tells the callee that the caller's resources are
 // reserved (RFC 3312, RFC 3311), reaches the callee in its early
