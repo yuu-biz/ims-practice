@@ -388,7 +388,7 @@ func (g *FiveGC) Status(imsi string) (Status, error) {
 // carryOut sends what a change to a PDU session calls for.
 func (g *FiveGC) carryOut(ctx context.Context, fx effects) {
 	for _, m := range fx.toUE {
-		err := g.streams.send(fx.imsi, m.name, m.message)
+		err := g.streams.Send(fx.imsi, m.name, m.message)
 		if err == nil {
 			g.log.Info("sent to UE", "imsi", fx.imsi, "message", string(m.name))
 			continue

@@ -28,6 +28,7 @@ import (
 	"log/slog"
 	"net/netip"
 
+	"github.com/yuu-biz/ims-practice/internal/accessapi"
 	"github.com/yuu-biz/ims-practice/internal/n5"
 )
 
@@ -66,7 +67,7 @@ type FiveGC struct {
 	// configuration.
 	addresses map[string]netip.Addr
 	store     Store
-	streams   *streams
+	streams   *accessapi.Streams
 	notifier  *n5.Notifier
 	log       *slog.Logger
 }
@@ -74,7 +75,7 @@ type FiveGC struct {
 // New makes the stub. Serve Handler to the UEs and N5Handler to the
 // AFs.
 func New(cfg Config, store Store, log *slog.Logger) *FiveGC {
-	g := &FiveGC{cfg: cfg, addresses: map[string]netip.Addr{}, store: store, streams: newStreams(), notifier: n5.NewNotifier(), log: log}
+	g := &FiveGC{cfg: cfg, addresses: map[string]netip.Addr{}, store: store, streams: accessapi.NewStreams("fivegc"), notifier: n5.NewNotifier(), log: log}
 	for _, s := range cfg.Subscribers {
 		g.addresses[s.IMSI] = s.Address
 	}
