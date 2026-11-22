@@ -21,7 +21,7 @@ G.711 を残すのは、国内の網間接続の標準（JJ-90.30）が、移動
 
 ## AMR と AMR-WB は符号化済みのフレームで運ぶ
 
-RFC 4867 5 章の格納形式で、符号化済みのフレームを用意します。UE は Go だけで書いたパケット化と復元で、フレームを RTP に載せます（bandwidth-efficient と octet-aligned、CMR、ToC）。製品は CGO_ENABLED=0 のままで、中継ノードは符号化も復号もしません。
+RFC 4867 5 章の格納形式で、符号化済みのフレームを用意します。UE は Go だけで書いたパケット化と復元で、フレームを RTP に載せます（bandwidth-efficient と octet-aligned、CMR、ToC）。製品は CGO_ENABLED=0 のままで、中継ノードは AMR と AMR-WB の符号化も復号もしません。
 
 フレームを作る道具は cgo で opencore-amr と vo-amrwbenc（Apache-2.0）を使います。この道具はビルドタグで製品のビルドから外します。送ったフレームと受けたフレームをビットで比べられます。
 
