@@ -108,6 +108,46 @@ UE はプロファイルに入れてあるので、`docker compose up` では起
 | [deploy/k8s](../../../deploy/k8s/README.ja.md) | 同じ IMS を、kind で作った手元の Kubernetes のクラスタで動かします。 |
 | [deploy/cloud](../../../deploy/cloud/README.ja.md) | クラウドの資源の定義です。適用すると料金がかかります。 |
 
+### 利用者の状態をノードの外の保存先に置く
+
+`deploy/redundancy/redundancy.yaml` は、プロジェクトに Valkey のサーバーを足し、利用者の状態を持つノードに、その保存先を指す `store` の節を与えます。状態を持つのは HSS、S-CSCF、P-CSCF、IP-SM-GW、MMTel AS、MRFC です。`compose.yaml` にこのファイルを重ねて起動します。
+
+```sh
+export COMPOSE_FILE=compose.yaml:deploy/redundancy/redundancy.yaml COMPOSE_PATH_SEPARATOR=:
+docker compose up -d --build
+```
+
+これで、手順書のどのコマンドもこの構成で動きます。この変数が無いシェルでは、`docker compose` のたびに `-f compose.yaml -f deploy/redundancy/redundancy.yaml` を付けます。ノードのアドレスも、設定も、やり取りするメッセージも変わらないので、キャプチャは手順書のとおりに読めます。変わるのは、各ノードが知ったことをどこに置くかです。
+
+```sh
+docker compose run --no-deps -d --name registered-ue ue register
+docker compose exec valkey valkey-cli --scan --pattern 'ims:*'
+```
+
+`--deregister-after` を付けない `ue register` は、止めるまで登録したままです。そのため、キーを見ているあいだも登録は残っています。キーは、この構成の接頭辞、書いた役割、項目の種類、その項目を引くための名前を、この順に並べたものです。その中に、次の 3 つがあります。どれも加入者 1 の秘密の識別子で引くキーです。
+
+```text
+ims:hss:subscriber:001010000000001@ims.mnc001.mcc001.3gppnetwork.org
+ims:scscf:registration:001010000000001@ims.mnc001.mcc001.3gppnetwork.org
+ims:pcscf:reg-subscription:001010000000001@ims.mnc001.mcc001.3gppnetwork.org
+```
+
+名前の中に SIP の URI や Call-ID のように `:` が入るときは、`%3A` と書きます。キーの区切りと混ざらないようにするためです。項目は、値と版を持つハッシュとして置かれ、値は JSON です。
+
+```sh
+docker compose exec valkey valkey-cli hget \
+  ims:scscf:registration:001010000000001@ims.mnc001.mcc001.3gppnetwork.org value
+```
+
+これは、保存先が無ければ S-CSCF が自分のメモリに持っている登録です。UE の Contact、登録の期限、HSS が Cx で送った利用者のプロファイルが入っています。`docker stop registered-ue` を実行すると UE は登録を解除し、次の scan では登録のキーが消えています。HSS の加入者のキーはそのまま残ります。終わったら、変数を設定したまま、手順書と同じように片付けます。
+
+```sh
+docker rm registered-ue
+docker compose --profile ue down -v --remove-orphans
+```
+
+`-v` を付けると、ノードと一緒に保存先のボリュームも消えます。次に起動したときは、何も入っていない保存先から始まります。
+
 ## 構成全体の作り
 
 どの手順書でも、次のことは変わりません。
