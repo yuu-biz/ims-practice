@@ -27,7 +27,8 @@ type Client struct {
 // NewClient returns a client that sends from node to hss. realm is the
 // Destination-Realm, the home network of the users. Destination-Host
 // is left out, as TS 29.229 5.5 allows when one HSS serves the realm
-// (TS 29.328 6.5).
+// (TS 29.328 6.5): here a server farm, every instance of which holds
+// every subscriber (TS 29.228 6.4).
 func NewClient(node *diameter.Node, hss HSS, realm string) *Client {
 	return &Client{node: node, hss: hss, realm: realm}
 }

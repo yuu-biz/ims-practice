@@ -173,8 +173,11 @@ func containsAll(have, want []uint32) bool {
 // S-CSCF that runs as several share its name.
 //
 // SIMPLIFIED: TS 24.229 5.3.1.3. When the S-CSCF times out or answers
-// 3xx or 480, the I-CSCF should pick another S-CSCF. This network has
-// one S-CSCF, so its answer goes back as it is.
+// 3xx or 480, the I-CSCF should pick another S-CSCF. The configuration
+// of this network names one S-CSCF, so there is no other to pick, and
+// its answer goes back as it is. When that S-CSCF runs as several
+// instances, a REGISTER that one of them leaves unanswered already goes
+// on to the next.
 func (i *ICSCF) forward(st *sip.ServerTransaction, server string, log *slog.Logger) {
 	req := st.Request
 	u, err := sip.ParseURI(server)

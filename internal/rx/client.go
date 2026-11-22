@@ -24,6 +24,8 @@ type PCRF interface {
 //
 // SIMPLIFIED: TS 29.213 7.3.7. The P-CSCF sends to the one PCRF of its
 // configuration; there is no DRA to pick the PCRF that serves the UE.
+// The PCRF is that of the EPC stub, which runs as one node and so holds
+// the IP-CAN session of every UE.
 type Client struct {
 	node   *diameter.Node
 	pcrf   PCRF

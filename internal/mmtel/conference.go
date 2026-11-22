@@ -414,8 +414,10 @@ func (f *conference) admit(in *sip.IncomingCall, p *party, final *sip.Message, u
 // serves the invited user in the terminating case (TS 24.229 5.7.3).
 //
 // SIMPLIFIED: TS 24.229 5.7.3 NOTE 8. An AS learns the S-CSCF of the
-// invited user over Sh or from a third-party registration. This network
-// has one S-CSCF, which serves every user.
+// invited user over Sh or from a third-party registration. The
+// configuration of this network names one S-CSCF, which serves every
+// user of the network; when it runs as several instances, they share
+// one name and keep the registrations in one store.
 func sCSCFRoute(route []string) []string {
 	if len(route) == 0 {
 		return nil
