@@ -185,10 +185,18 @@ field() { tshark_fields "frame.number == $last" "$1"; }
 mark() { fork="$last"; }
 back() { last="$fork"; }
 
+# count prints the number of frames that pass the filter. A filter that
+# tshark cannot read stops the script, as in tshark_fields.
+count() {
+	local frames
+	frames="$(tshark_fields "$1")" || exit 2
+	awk 'NF { n++ } END { print n + 0 }' <<<"$frames"
+}
+
 # none checks that no frame passes the filter.
 none() {
 	local label="$1" filter="$2" n
-	n="$(tshark_fields "$filter" | grep -c . || true)"
+	n="$(count "$filter")" || exit 2
 	if [ "$n" -eq 0 ]; then
 		echo "ok   $label: none"
 	else
