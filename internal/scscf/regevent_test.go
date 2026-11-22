@@ -364,13 +364,18 @@ func TestRegistrationTerminationReasons(t *testing.T) {
 			if r := rtaResult(t, h.rtr(impi, tt.reason, tt.publicIDs...)); r != tt.result {
 				t.Errorf("RTA = %s, want %s", r, tt.result)
 			}
-			_, registered, _ := h.role.store.Registration(context.Background(), impi)
-			if registered != (tt.event == "") {
-				t.Fatalf("registered = %v after the RTR", registered)
-			}
 			if tt.event != "" {
 				_, doc := nextNotify(t, got)
 				contactState(t, doc, 1, reginfo.Terminated, tt.event)
+			}
+			// A REGISTER to deregister is challenged while the user is
+			// registered, and gets 481 once it is not (5.4.1.4.1).
+			want := 401
+			if tt.event != "" {
+				want = 481
+			}
+			if r := h.register(sip.NewCallID(), 1, 0, initial); r.StatusCode != want {
+				t.Errorf("deregistration after the RTR got %d, want %d", r.StatusCode, want)
 			}
 		})
 	}
@@ -402,11 +407,15 @@ func TestRegEventRefreshAndUnsubscribe(t *testing.T) {
 		t.Errorf("NOTIFY after the unsubscribe: %+v, want reason timeout (RFC 6665 4.2.1.4)", n.State)
 	}
 	waitEnd(t, sub)
-	if subs, _ := h.role.store.SubscriptionsOf(context.Background(), impi); len(subs) != 0 {
-		t.Errorf("%d subscriptions left after the unsubscribe", len(subs))
+	if r := h.subscribeWithin(n.Request, 3600); r.StatusCode != 481 {
+		t.Errorf("SUBSCRIBE within the subscription after the unsubscribe got %d, want 481", r.StatusCode)
 	}
 }
 
+// The NOTIFY that the S-CSCF sends at the expiry comes as the
+// subscriber ends the subscription itself, and may get 481 from it, so
+// the test reads the Store to see that the S-CSCF let the subscription
+// go.
 func TestRegEventSubscriptionThatIsNotRefreshedExpires(t *testing.T) {
 	h := newSubscriberHarness(t, Config{})
 	h.registerUser(sip.NewCallID())
@@ -422,15 +431,19 @@ func TestRegEventSubscriptionThatIsNotRefreshedExpires(t *testing.T) {
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
-	if _, ok, _ := h.role.store.Registration(context.Background(), impi); !ok {
-		t.Error("the registration went with the subscription")
+	// The registration stays: a new subscription to it is active.
+	_, got = h.subscribe(pcscfPath, "")
+	if n, _ := nextNotify(t, got); n.State.State != sip.SubscriptionActive {
+		t.Errorf("a new subscription after the expiry: %+v, want active", n.State)
 	}
 }
 
 // A subscription past its expiry whose timer ran in no process, as when
 // the instance that took it was restarted, gets no NOTIFY that says
 // active: the next change of the registration ends it with reason
-// timeout (RFC 6665 4.2.1.4), and the S-CSCF forgets it.
+// timeout (RFC 6665 4.2.1.4), and the S-CSCF forgets it. No message
+// stops a timer, so the test does that, and moves the expiry, in the
+// Store.
 func TestRegEventSubscriptionPastItsExpiryEndsAtTheNextNotify(t *testing.T) {
 	h := newSubscriberHarness(t, Config{})
 	h.registerUser(sip.NewCallID())
@@ -451,9 +464,32 @@ func TestRegEventSubscriptionPastItsExpiryEndsAtTheNextNotify(t *testing.T) {
 		t.Errorf("NOTIFY after the expiry says %+v, want terminated with reason timeout", n.State)
 	}
 	waitEnd(t, sub)
-	if subs, _ := h.role.store.SubscriptionsOf(context.Background(), impi); len(subs) != 0 {
-		t.Errorf("%d subscriptions left after the expiry", len(subs))
+	if r := h.subscribeWithin(n.Request, 3600); r.StatusCode != 481 {
+		t.Errorf("SUBSCRIBE within the subscription after the expiry got %d, want 481", r.StatusCode)
 	}
+}
+
+// subscribeWithin sends a SUBSCRIBE within the subscription of notify,
+// a NOTIFY that the S-CSCF sent, asking for expires seconds, and
+// returns the final response.
+func (h *harness) subscribeWithin(notify *sip.Message, expires int) *sip.Message {
+	h.t.Helper()
+	contact, err := sip.ParseNameAddr(notify.Get("Contact"))
+	if err != nil {
+		h.t.Fatal(err)
+	}
+	cseq, _ := sip.ParseCSeq(notify.Get("CSeq"))
+	m := &sip.Message{Method: sip.SUBSCRIBE, RequestURI: contact.URI}
+	m.Add("Max-Forwards", "70")
+	m.Add("From", notify.Get("To"))
+	m.Add("To", notify.Get("From"))
+	m.Add("Call-ID", notify.Get("Call-ID"))
+	// Past any CSeq of the subscriber's own.
+	m.Add("CSeq", strconv.Itoa(int(cseq.Number)+100)+" SUBSCRIBE")
+	m.Add("Contact", "<"+pcscfURI+">")
+	m.Add("Event", regEventPackage)
+	m.Add("Expires", strconv.Itoa(expires))
+	return h.send(m)
 }
 
 func TestRegEventReportsAReplacedContact(t *testing.T) {

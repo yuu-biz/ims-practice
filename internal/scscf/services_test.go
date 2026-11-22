@@ -198,8 +198,14 @@ func TestThirdPartyRegisterThatFails(t *testing.T) {
 			if got := h.hss.assignments(); !slices.Equal(got, want) {
 				t.Errorf("SARs = %v, want %v", got, want)
 			}
-			if _, ok, _ := h.store.Registration(context.Background(), impi); ok != tt.registered {
-				t.Errorf("registered = %v, want %v", ok, tt.registered)
+			// A call of the user goes on to the I-CSCF while the user is
+			// registered, and gets 403 once it is not.
+			status := 486
+			if !tt.registered {
+				status = 403
+			}
+			if r := h.invite("sip:001010000000002@"+domain, orig, impu); r.StatusCode != status {
+				t.Errorf("INVITE of the user got %d, want %d", r.StatusCode, status)
 			}
 		})
 	}

@@ -80,6 +80,38 @@ func (w *wireLog) find(t *testing.T, label string) *sip.Message {
 	return nil
 }
 
+// has reports whether a message with label is on the wire, among all
+// messages, those of REGISTER and the reg event included.
+func (w *wireLog) has(label string) bool {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	for _, m := range w.messages {
+		if m.label == label {
+			return true
+		}
+	}
+	return false
+}
+
+// binding is the Contact of the last 200 to a REGISTER that the UE
+// got: the binding that the registrar keeps (RFC 3261 10.3 step 8).
+func (w *wireLog) binding(t *testing.T) sip.NameAddr {
+	t.Helper()
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	for i := len(w.messages) - 1; i >= 0; i-- {
+		if m := w.messages[i]; m.label == "< 200 REGISTER" {
+			contact, err := sip.ParseNameAddr(m.message.Get("Contact"))
+			if err != nil {
+				t.Fatalf("the 200 to REGISTER has the Contact %q: %v", m.message.Get("Contact"), err)
+			}
+			return contact
+		}
+	}
+	t.Fatal("the UE got no 200 to a REGISTER")
+	return sip.NameAddr{}
+}
+
 func (w *wireLog) labels() []string {
 	var labels []string
 	for _, m := range w.calls() {

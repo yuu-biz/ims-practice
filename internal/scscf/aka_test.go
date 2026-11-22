@@ -1,7 +1,6 @@
 package scscf
 
 import (
-	"context"
 	"encoding/hex"
 	"errors"
 	"slices"
@@ -164,8 +163,11 @@ func TestIMSAKANetworkAuthenticationFailure(t *testing.T) {
 	if got := h.hss.assignments(); !slices.Equal(got, []cx.ServerAssignmentType{cx.AuthenticationFailure}) {
 		t.Errorf("SARs = %v, want AUTHENTICATION_FAILURE", got)
 	}
-	if _, pending, _ := h.store.Challenge(context.Background(), impi); pending {
-		t.Error("the challenge is still pending")
+	// The challenge is no longer pending: the same REGISTER again is
+	// one that starts an initial registration (5.4.1.2.1), and gets a
+	// new challenge rather than a second 403.
+	if r := h.register(callID, 3, 600000, failure.String()); r.StatusCode != 401 {
+		t.Errorf("the same REGISTER again got %d, want 401", r.StatusCode)
 	}
 }
 

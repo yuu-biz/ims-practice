@@ -198,7 +198,6 @@ type testNetwork struct {
 	pcscfStore *pcscf.MemoryStore
 	pcscfLog   *regEventLog
 	scscf      *scscf.SCSCF
-	scscfStore *scscf.MemoryStore
 	// dns names the hosts of the test network, for a test that adds
 	// one, such as an application server.
 	dns *names
@@ -333,13 +332,12 @@ func startNetwork(t *testing.T, cfg networkConfig) testNetwork {
 		return node, peer
 	}
 	dns := &names{hosts: map[string]netip.AddrPort{}}
-	scscfStore := scscf.NewMemoryStore()
 
 	// The S-CSCF takes the HSS's RTRs, but it is made after its Cx peer.
 	var scscfRole atomic.Pointer[scscf.SCSCF]
 	scscfNode, scscfPeer := connect("scscf."+domain, func(m *diam.Message) *diam.Message { return scscfRole.Load().Handle(m) })
 	s := scscf.New(scscf.Config{ServerName: "sip:scscf." + domain + ":5060", Host: "scscf." + domain, Port: 5060,
-		HomeDomain: domain, MinExpires: minExpires, MaxExpires: maxExpires}, scscfPeer, scscfNode, scscfStore, dns, quiet())
+		HomeDomain: domain, MinExpires: minExpires, MaxExpires: maxExpires}, scscfPeer, scscfNode, scscf.NewMemoryStore(), dns, quiet())
 	scscfRole.Store(s)
 	scscfStack := stackWithACK(t, s.OnRequest, s.OnACK)
 	s.SetStack(scscfStack)
@@ -392,7 +390,7 @@ func startNetwork(t *testing.T, cfg networkConfig) testNetwork {
 			time.Sleep(20 * time.Millisecond)
 		}
 	}
-	return testNetwork{pcscf: pcscfStack.LocalAddr(), pcscfProtected: protectedStack.LocalAddr(), pcscfStore: pcscfStore, pcscfLog: pcscfLog, scscf: s, scscfStore: scscfStore, dns: dns,
+	return testNetwork{pcscf: pcscfStack.LocalAddr(), pcscfProtected: protectedStack.LocalAddr(), pcscfStore: pcscfStore, pcscfLog: pcscfLog, scscf: s, dns: dns,
 		provisioning: hssRole.Provisioning(server), epc: epcAPI}
 }
 
@@ -431,16 +429,28 @@ func TestRegisterRefreshAndDeregisterThroughTheWholeIMS(t *testing.T) {
 // with the binding.
 func TestTheFeatureTagsReachTheSCSCF(t *testing.T) {
 	n := networkWith(t, time.Second, time.Hour)
-	s := stack(t, func(st *sip.ServerTransaction) {})
+	w := &wireLog{}
+	tr, err := sip.ListenObserved("127.0.0.1:0", quiet(), w.observe)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s, err := sip.NewStack(tr, sip.Config{SentBy: tr.LocalAddr().String(), OnRequest: func(*sip.ServerTransaction) {}}, quiet())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(s.Close)
 	cfg := ue.Config{PrivateIdentity: impi, PublicIdentity: impu, Password: password, HomeDomain: domain, PCSCF: n.pcscf,
 		Features: ue.DefaultFeatures}
 	u := ue.New(cfg, s, ue.NewContact(cfg, s.LocalAddr()), quiet())
 	if _, err := u.Register(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	reg, ok, _ := n.scscfStore.Registration(context.Background(), impi)
-	if want := (sip.Params{{Name: "+g.3gpp.smsip"}}); !ok || !slices.Equal(reg.ContactParams, want) {
-		t.Errorf("the S-CSCF keeps the contact parameters %v, want %v", reg.ContactParams, want)
+	// The 200 lists the binding with the parameters the S-CSCF keeps
+	// (TS 24.229 5.4.1.2.2F item f), and the expires it chose.
+	binding := w.binding(t)
+	kept := slices.DeleteFunc(slices.Clone(binding.Params), func(p sip.Param) bool { return p.Name == "expires" })
+	if want := (sip.Params{{Name: "+g.3gpp.smsip"}}); !slices.Equal(kept, want) {
+		t.Errorf("the S-CSCF keeps the contact parameters %v, want %v", kept, want)
 	}
 }
 
