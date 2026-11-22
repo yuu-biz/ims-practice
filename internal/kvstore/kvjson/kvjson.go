@@ -3,11 +3,12 @@
 // operation, read-modify-write by compare and swap, and index items that
 // point to a main item.
 //
-// Read, Write, CompareAndSwap, ReadModifyWrite, Remove and RemoveIf,
-// and ReadIndex, WriteIndex and RemoveIndexIf for index items, take the
-// context of the caller and return the failure of the store, so that a
-// role whose Store interface returns errors can answer that failure,
-// with a 500 in SIP, rather than take it for an item that is not there.
+// Read, Write, CompareAndSwap, ReadModifyWrite, ReadAndRemove, Remove
+// and RemoveIf, ReadIndex, WriteIndex and RemoveIndexIf for index items,
+// and WriteDue and RemoveDue for time indexes, take the context of the
+// caller and return the failure of the store, so that a role whose
+// Store interface returns errors can answer that failure, with a 500 in
+// SIP, rather than take it for an item that is not there.
 //
 // Most of the other operations serve the Store interfaces that return
 // no errors, which were written for a store in the process that cannot
@@ -318,25 +319,41 @@ func Upsert[T any](c *Client, key string, ttl func(T) time.Duration, change func
 	return zero, ErrGaveUp
 }
 
-// Take reads the item under key and removes it, if no one else changed
-// or removed it in between. Of several callers that take the same item,
-// only one gets it (a Get and a CompareAndDelete, 13.2).
-func Take[T any](c *Client, key string) (T, bool) {
+// ReadAndRemove reads the item under key and removes it, if no one else
+// changed or removed it in between: a Read and a RemoveIf at the version
+// read. Of several callers that take the same item, only one gets it. It
+// returns kvstore.ErrNotFound when there is no item, or another caller
+// took it first; the failure of the store; or ErrGaveUp when others
+// changed the item maxAttempts times between the two operations.
+func ReadAndRemove[T any](ctx context.Context, c *Client, key string) (T, error) {
+	var zero T
 	for range maxAttempts {
 		var v T
-		version, ok := Get(c, key, &v)
-		if !ok {
-			return v, false
+		version, err := Read(ctx, c, key, &v)
+		if err != nil {
+			return zero, err
 		}
-		if c.DeleteIf(key, version) {
-			return v, true
+		err = c.RemoveIf(ctx, key, version)
+		if err == nil {
+			return v, nil
 		}
-		// Changed, removed by another taker, or a failure: read again
-		// to tell which.
+		if !errors.Is(err, kvstore.ErrConflict) {
+			return zero, err
+		}
+		// Changed, or removed by another taker: read again to tell which.
 	}
-	c.failed("Take", key, ErrGaveUp)
-	var zero T
-	return zero, false
+	return zero, ErrGaveUp
+}
+
+// Take is ReadAndRemove for a Store interface that returns no errors. It
+// reports false when there is no item, another caller took it, or the
+// store failed, and logs a failure of the store.
+func Take[T any](c *Client, key string) (T, bool) {
+	v, err := ReadAndRemove[T](context.Background(), c, key)
+	if err != nil && !errors.Is(err, kvstore.ErrNotFound) {
+		c.failed("Take", key, err)
+	}
+	return v, err == nil
 }
 
 // encode cannot fail for the values of the Stores: they hold strings,
@@ -443,21 +460,34 @@ func (c *Client) RemoveIndexIf(ctx context.Context, key, target string) error {
 	return nil
 }
 
-// Schedule puts member in the time index of the Client named index, due
-// at at.
-func (c *Client) Schedule(index, member string, at time.Time) {
-	ctx, cancel := c.context()
+// WriteDue puts member in the time index of the Client named index, due
+// at at, and returns the failure of the store.
+func (c *Client) WriteDue(ctx context.Context, index, member string, at time.Time) error {
+	ctx, cancel := c.within(ctx)
 	defer cancel()
-	if err := c.kv.Schedule(ctx, c.Index(index), member, at); err != nil {
+	return c.kv.Schedule(ctx, c.Index(index), member, at)
+}
+
+// Schedule is WriteDue for a Store interface that returns no errors: it
+// logs a failure of the store.
+func (c *Client) Schedule(index, member string, at time.Time) {
+	if err := c.WriteDue(context.Background(), index, member, at); err != nil {
 		c.failed("Schedule", c.Index(index), err)
 	}
 }
 
-// Unschedule takes member out of the time index.
-func (c *Client) Unschedule(index, member string) {
-	ctx, cancel := c.context()
+// RemoveDue takes member out of the time index, if it is there, and
+// returns the failure of the store.
+func (c *Client) RemoveDue(ctx context.Context, index, member string) error {
+	ctx, cancel := c.within(ctx)
 	defer cancel()
-	if err := c.kv.Unschedule(ctx, c.Index(index), member); err != nil {
+	return c.kv.Unschedule(ctx, c.Index(index), member)
+}
+
+// Unschedule is RemoveDue for a Store interface that returns no errors:
+// it logs a failure of the store.
+func (c *Client) Unschedule(index, member string) {
+	if err := c.RemoveDue(context.Background(), index, member); err != nil {
 		c.failed("Unschedule", c.Index(index), err)
 	}
 }
