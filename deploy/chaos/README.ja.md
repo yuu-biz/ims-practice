@@ -182,7 +182,7 @@ deploy/chaos/fault.sh partition --network nni trgw-a
 
 - `fault.sh recreate pcscf-1` は、P-CSCF の 1 台を置き換えます。ほかの台と保存先が状態を持ち続けます。
 - `fault.sh kill valkey` のあとで `fault.sh start valkey` を実行すると、保存先が起動し直します。ボリュームに追記のファイル（AOF）があれば、データを読み直します。永続化が無ければ、空で起動し、どの台もそこに置いた状態を失います。
-- `fault.sh partition valkey 'scscf-*'` は、保存先を S-CSCF のすべての台から切り離し、ほかの役割はそのままにします。
+- `fault.sh partition valkey 'scscf-[0-9]*'` は、保存先を S-CSCF のすべての台から切り離し、ほかの役割はそのままにします。
 
 ### ノードをネットワークから外す
 
