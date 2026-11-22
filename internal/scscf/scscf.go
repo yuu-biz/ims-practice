@@ -13,7 +13,6 @@ import (
 	"slices"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/fiorix/go-diameter/v4/diam"
@@ -93,10 +92,9 @@ type SCSCF struct {
 	// order of the events. Each user has a lock of its own, so that a
 	// Cx round trip of one user never holds up another.
 	users ims.UserLocker
-	// stopSweep ends the sweep of this instance and the handlers it
-	// started, and sweeping waits for them (expiry.go).
-	stopSweep context.CancelFunc
-	sweeping  sync.WaitGroup
+	// stopSweep ends the sweep of this instance and waits for the
+	// handlers it started (expiry.go).
+	stopSweep func()
 }
 
 // New returns an S-CSCF and starts its sweep, which handles the expiries
@@ -121,9 +119,7 @@ func New(cfg Config, hss HSS, node *diameter.Node, store Store, resolver Resolve
 		cfg.ExpiryLease = ims.ExpiryLease
 	}
 	s := &SCSCF{cfg: cfg, hss: hss, node: node, store: store, resolver: resolver, log: log, users: cfg.UserLocks}
-	ctx, cancel := context.WithCancel(context.Background())
-	s.stopSweep = cancel
-	s.sweeping.Go(func() { s.sweep(ctx) })
+	s.stopSweep = s.sweep()
 	return s
 }
 
@@ -131,10 +127,7 @@ func New(cfg Config, hss HSS, node *diameter.Node, store Store, resolver Resolve
 // started, whose lock and Cx requests it ends. An expiry that this
 // instance had claimed and not handled is handled by another instance of
 // the S-CSCF once the claim runs out.
-func (s *SCSCF) Close() {
-	s.stopSweep()
-	s.sweeping.Wait()
-}
+func (s *SCSCF) Close() { s.stopSweep() }
 
 // lockFailed answers a request whose user the S-CSCF could not lock
 // (500, RFC 3261 21.5.1). Another instance may be handling the user, so
