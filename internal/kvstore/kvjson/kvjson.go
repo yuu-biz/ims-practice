@@ -3,9 +3,10 @@
 // operation, read-modify-write by compare and swap, and index items that
 // point to a main item.
 //
-// Read, Write, CompareAndSwap, ReadModifyWrite, ReadAndRemove, Remove
-// and RemoveIf, ReadIndex, WriteIndex and RemoveIndexIf for index items,
-// and WriteDue and RemoveDue for time indexes, take the context of the
+// Read, Write, CompareAndSwap, Modify, ReadModifyWrite, ReadAndRemove,
+// Remove and RemoveIf, ReadIndex, WriteIndex, CompareAndSwapIndex and
+// RemoveIndexIf for index items, and WriteDue and RemoveDue for time
+// indexes, take the context of the
 // caller and return the failure of the store, so that a role whose
 // Store interface returns errors can answer that failure, with a 500 in
 // SIP, rather than take it for an item that is not there.
@@ -109,10 +110,6 @@ func (c *Client) Index(name string) string { return c.prefix + name }
 // within bounds ctx by the Timeout of the Client.
 func (c *Client) within(ctx context.Context) (context.Context, context.CancelFunc) {
 	return context.WithTimeout(ctx, c.timeout)
-}
-
-func (c *Client) context() (context.Context, context.CancelFunc) {
-	return c.within(context.Background())
 }
 
 // failed logs err, the failure of op on key.
@@ -271,6 +268,33 @@ func Update[T any](c *Client, key string, ttl func(T) time.Duration, change func
 	return zero, ErrGaveUp
 }
 
+// Modify is Update with the context of the caller. It returns
+// kvstore.ErrNotFound when there is no item, the error of change when
+// change fails (and then writes nothing), the failure of the store,
+// which it does not take for a missing item, or ErrGaveUp when others
+// overtook it maxAttempts times.
+func Modify[T any](ctx context.Context, c *Client, key string, ttl func(T) time.Duration, change func(*T) error) (T, error) {
+	var zero T
+	for range maxAttempts {
+		var v T
+		version, err := Read(ctx, c, key, &v)
+		if err != nil {
+			return zero, err
+		}
+		if err := change(&v); err != nil {
+			return zero, err
+		}
+		_, err = CompareAndSwap(ctx, c, key, version, v, ttl(v))
+		if err == nil {
+			return v, nil
+		}
+		if !errors.Is(err, kvstore.ErrConflict) {
+			return zero, err
+		}
+	}
+	return zero, ErrGaveUp
+}
+
 // ReadModifyWrite is Update for an item that may not be there yet, with
 // the context of the caller: change gets the zero value when there is no
 // item, and the item is then written only if there is still none. It
@@ -416,15 +440,21 @@ func (c *Client) IndexTarget(key string) (target, version string, ok bool) {
 	return target, version, err == nil
 }
 
-// SwapIndex writes the index item key, pointing to target, only if it
-// is still at version, "" for none: an index item that only one main
-// item may hold, such as a public identity that belongs to one
-// subscription. It returns kvstore.ErrConflict when someone else wrote
-// first.
-func (c *Client) SwapIndex(key, version, target string, ttl time.Duration) (string, error) {
-	ctx, cancel := c.context()
+// CompareAndSwapIndex writes the index item key, pointing to target,
+// only if it is still at version, "" for none: an index item that only
+// one main item may hold, such as a public identity that belongs to one
+// subscription. It returns the new version, kvstore.ErrConflict when
+// someone else wrote first, and the failure of the store otherwise.
+func (c *Client) CompareAndSwapIndex(ctx context.Context, key, version, target string, ttl time.Duration) (string, error) {
+	ctx, cancel := c.within(ctx)
 	defer cancel()
-	newVersion, err := c.kv.CompareAndSwap(ctx, key, version, []byte(target), ttl)
+	return c.kv.CompareAndSwap(ctx, key, version, []byte(target), ttl)
+}
+
+// SwapIndex is CompareAndSwapIndex for a Store interface that returns
+// no errors: it also logs a failure of the store.
+func (c *Client) SwapIndex(key, version, target string, ttl time.Duration) (string, error) {
+	newVersion, err := c.CompareAndSwapIndex(context.Background(), key, version, target, ttl)
 	if err != nil && !errors.Is(err, kvstore.ErrConflict) {
 		c.failed("CompareAndSwap", key, err)
 	}
