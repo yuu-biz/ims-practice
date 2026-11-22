@@ -20,7 +20,7 @@ type Change struct {
 	// means is up to the generator.
 	File string
 	// Key is a dotted path, with the index of an item of a sequence, as
-	// in dashboard.ues.0.control.
+	// in dashboard.ues.0.control. With Add it is the path of a new key.
 	Key string
 	// Comment, when not empty, replaces the comment lines right above
 	// the key, or goes there when there are none.
@@ -30,12 +30,18 @@ type Change struct {
 	// Remove takes the key and its value out, and leaves Comment in
 	// their place.
 	Remove bool
+	// Add puts a new key, with Comment above it and Value, after the
+	// last key of the mapping that the rest of Key names. The mapping
+	// must exist, and Value must be set.
+	Add bool
 }
 
 // An edit replaces lines[start:end] of a file with lines.
 type edit struct {
 	start, end int
 	lines      []string
+	// key is the key of the change that made the edit, for errors.
+	key string
 }
 
 // Apply edits the text of a YAML file, so that its comments,
@@ -50,13 +56,21 @@ func Apply(src []byte, cs []Change) ([]byte, error) {
 	lines := strings.SplitAfter(string(src), "\n")
 	var edits []edit
 	for _, c := range cs {
-		key, value, err := lookup(&doc, c.Key)
+		var e []edit
+		var err error
+		if c.Add {
+			e, err = c.insert(&doc, lines)
+		} else {
+			var key, value *yaml.Node
+			if key, value, err = lookup(&doc, c.Key); err == nil {
+				e, err = c.edits(lines, key, value)
+			}
+		}
 		if err != nil {
 			return nil, fmt.Errorf("%s: %w", c.Key, err)
 		}
-		e, err := c.edits(lines, key, value)
-		if err != nil {
-			return nil, fmt.Errorf("%s: %w", c.Key, err)
+		for i := range e {
+			e[i].key = c.Key
 		}
 		edits = append(edits, e...)
 	}
@@ -73,15 +87,27 @@ func Apply(src []byte, cs []Change) ([]byte, error) {
 		if i > 0 && e.end > edits[i-1].start {
 			return nil, errors.New("two changes touch the same lines")
 		}
+		// Which of two insertions at one line comes first would be left
+		// to the sort, so no order is promised and neither is allowed.
+		if i > 0 && e.start == e.end && edits[i-1].start == edits[i-1].end && e.start == edits[i-1].start {
+			return nil, fmt.Errorf("%s and %s both insert at line %d", edits[i-1].key, e.key, e.start+1)
+		}
 		lines = slices.Replace(lines, e.start, e.end, e.lines...)
 	}
 	out := []byte(strings.Join(lines, ""))
+	for _, c := range cs {
+		if c.Add && !HasKey(out, c.Key) {
+			return nil, fmt.Errorf("%s: the new key is not at its path in the changed file", c.Key)
+		}
+	}
 	if err := yaml.Unmarshal(out, &yaml.Node{}); err != nil {
 		return nil, fmt.Errorf("the changed file is no longer YAML: %w", err)
 	}
 	return out, nil
 }
 
+// HasKey reports whether src is YAML with a key at the dotted path, as
+// Change.Key writes it.
 func HasKey(src []byte, path string) bool {
 	var doc yaml.Node
 	if yaml.Unmarshal(src, &doc) != nil {
@@ -146,7 +172,30 @@ func (c Change) edits(lines []string, key, value *yaml.Node) ([]edit, error) {
 	for commentStart > 0 && isCommentAt(lines[commentStart-1], indent) {
 		commentStart--
 	}
-	valueEnd := at + 1
+	valueEnd := blockEnd(lines, at, indent, value)
+
+	comment := CommentLines(strings.Repeat(" ", indent), "#", c.Comment)
+	if c.Remove {
+		return []edit{{start: commentStart, end: valueEnd, lines: comment}}, nil
+	}
+	var edits []edit
+	if c.Comment != "" {
+		edits = append(edits, edit{start: commentStart, end: at, lines: comment})
+	}
+	if c.Value != nil {
+		v, err := valueLines(line[:indent]+key.Value+":", indent, c.Value)
+		if err != nil {
+			return nil, err
+		}
+		edits = append(edits, edit{start: at, end: valueEnd, lines: v})
+	}
+	return edits, nil
+}
+
+// blockEnd returns the index after the last line of the value of the key
+// that is at lines[at], with the key at column indent.
+func blockEnd(lines []string, at, indent int, value *yaml.Node) int {
+	end := at + 1
 	for i := at + 1; i < len(lines); i++ {
 		text := strings.TrimSpace(lines[i])
 		if text == "" {
@@ -157,25 +206,42 @@ func (c Change) edits(lines []string, key, value *yaml.Node) ([]edit, error) {
 		if in <= indent && !compactItem {
 			break
 		}
-		valueEnd = i + 1
+		end = i + 1
 	}
+	return end
+}
 
-	comment := CommentLines(strings.Repeat(" ", indent), "#", c.Comment)
-	if c.Remove {
-		return []edit{{commentStart, valueEnd, comment}}, nil
+// insert turns an Add change into an edit that puts the new key below
+// the last key of its mapping, indented like the keys already there.
+func (c Change) insert(doc *yaml.Node, lines []string) ([]edit, error) {
+	i := strings.LastIndex(c.Key, ".")
+	if i < 0 || c.Value == nil || c.Remove {
+		return nil, errors.New("Add needs a key below a mapping, and a value")
 	}
-	var edits []edit
-	if c.Comment != "" {
-		edits = append(edits, edit{commentStart, at, comment})
+	parentPath, name := c.Key[:i], c.Key[i+1:]
+	parent, mapping, err := lookup(doc, parentPath)
+	if err != nil {
+		return nil, err
 	}
-	if c.Value != nil {
-		v, err := valueLines(line[:indent]+key.Value+":", indent, c.Value)
-		if err != nil {
-			return nil, err
+	if mapping.Kind != yaml.MappingNode || len(mapping.Content) == 0 || mapping.Style&yaml.FlowStyle != 0 {
+		return nil, fmt.Errorf("%s is not a mapping with keys in block style", parentPath)
+	}
+	for i := 0; i < len(mapping.Content); i += 2 {
+		if mapping.Content[i].Value == name {
+			return nil, fmt.Errorf("%s has the key %q already", parentPath, name)
 		}
-		edits = append(edits, edit{at, valueEnd, v})
 	}
-	return edits, nil
+	indent := mapping.Content[0].Column - 1
+	end := blockEnd(lines, parent.Line-1, parent.Column-1, mapping)
+	if end > 0 && !strings.HasSuffix(lines[end-1], "\n") {
+		return nil, errors.New("the mapping ends the file without a newline")
+	}
+	v, err := valueLines(strings.Repeat(" ", indent)+name+":", indent, c.Value)
+	if err != nil {
+		return nil, err
+	}
+	pad := strings.Repeat(" ", indent)
+	return []edit{{start: end, end: end, lines: append(CommentLines(pad, "#", c.Comment), v...)}}, nil
 }
 
 func isCommentAt(line string, indent int) bool {
