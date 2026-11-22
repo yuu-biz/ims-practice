@@ -85,10 +85,10 @@ func assertedIdentities(req *sip.Message, a Association) []string {
 // (5.2.6.3.1 NOTE 1).
 func registeredIdentity(uri string, registered []string) (string, bool) {
 	candidates := []string{uri}
-	if u, err := sip.ParseURI(uri); err == nil && u.Scheme == "sip" && strings.HasPrefix(u.User, "+") {
-		if phone, _ := u.Params.Get("user"); strings.EqualFold(phone, "phone") {
-			candidates = append(candidates, "tel:"+u.User)
-		}
+	// Only a sip URI stands for the tel URI: a sips URI of the same
+	// number is another identity (RFC 3261 19.1.4).
+	if n, ok := ims.ParseTelephoneNumber(uri); ok && n.SIP != nil && n.SIP.Scheme == "sip" && strings.HasPrefix(n.Number, "+") {
+		candidates = append(candidates, "tel:"+n.Number+n.Params.String())
 	}
 	for _, id := range registered {
 		for _, c := range candidates {
