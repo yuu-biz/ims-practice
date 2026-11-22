@@ -283,36 +283,10 @@ func TestRegEventSubscribeWhenTheStoreFails(t *testing.T) {
 	h.failing.repair()
 
 	// A SUBSCRIBE within a subscription that the S-CSCF holds.
-	notifies := make(chan *sip.Message, 4)
-	_, err := h.ua.Subscribe(sip.SubscribeRequest{
-		RequestURI: impu, From: pcscfURI, Event: "reg", Expires: time.Hour,
-		Headers:  []sip.HeaderField{{Name: "P-Asserted-Identity", Value: pcscfPath}},
-		OnNotify: func(n sip.Notification, _ *sip.Message) { notifies <- n.Request },
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	var notify *sip.Message
-	select {
-	case notify = <-notifies:
-	case <-time.After(5 * time.Second):
-		t.Fatal("no NOTIFY")
-	}
-	contact, err := sip.ParseNameAddr(notify.Get("Contact"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	refresh := &sip.Message{Method: sip.SUBSCRIBE, RequestURI: contact.URI}
-	refresh.Add("Max-Forwards", "70")
-	refresh.Add("From", notify.Get("To"))
-	refresh.Add("To", notify.Get("From"))
-	refresh.Add("Call-ID", notify.Get("Call-ID"))
-	refresh.Add("CSeq", "2 SUBSCRIBE")
-	refresh.Add("Contact", "<"+pcscfURI+">")
-	refresh.Add("Event", "reg")
-	refresh.Add("Expires", "3600")
+	_, got = h.subscribe(pcscfPath, "")
+	n, _ := nextNotify(t, got)
 	h.failing.fail()
-	if r := h.send(refresh); r.StatusCode != 500 {
+	if r := h.subscribeWithin(n.Request, 3600); r.StatusCode != 500 {
 		t.Errorf("SUBSCRIBE within the subscription got %d, want 500", r.StatusCode)
 	}
 }

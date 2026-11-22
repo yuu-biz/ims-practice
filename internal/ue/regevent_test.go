@@ -46,7 +46,9 @@ func subscribed(t *testing.T, n testNetwork) (*party, *ue.RegEvent) {
 }
 
 // waitAssociationEnded waits until the P-CSCF takes no more requests
-// from the UE (TS 24.229 5.2.5.2).
+// from the UE (TS 24.229 5.2.5.2). It reads the Store: the P-CSCF
+// discards such a request, which the UE's stack then waits Timer F,
+// 32 s, for.
 func waitAssociationEnded(t *testing.T, n testNetwork, contact string) {
 	t.Helper()
 	deadline := time.Now().Add(5 * time.Second)

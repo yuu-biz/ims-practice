@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"net/netip"
 	"strings"
 	"sync/atomic"
@@ -120,16 +121,17 @@ func TestIMSAKAThroughTheWholeIMS(t *testing.T) {
 	if got := a.ue.Outbound(); got.Addr != n.pcscfProtected {
 		t.Errorf("the UE sends to %s, want the protected server port %s", got.Addr, n.pcscfProtected)
 	}
+	// The entry of the SA table is what ESP would use, which this
+	// project does not set up, so no message shows it.
 	protectedAddr := a.ua.Stack().LocalAddr()
 	if sas, ok, _ := n.pcscfStore.SecurityAssociations(context.Background(), protectedAddr); !ok || sas.Temporary || sas.PrivateIdentity != impiAKA {
 		t.Errorf("the P-CSCF's SA table has %+v, %v; want established associations", sas, ok)
 	}
-	if r, ok, _ := n.scscfStore.Registration(context.Background(), impiAKA); !ok || r.Contact != a.contact.URI() {
-		t.Errorf("the S-CSCF registered %+v, %v", r, ok)
-	}
 	// TS 24.229 5.2.3: the P-CSCF subscribes to the registration that
-	// names its protected server port in Path.
-	n.pcscfLog.waitFor(t, map[string]string{"public_identity": sipAKA, "state": "active", "contact_event": "registered"})
+	// names its protected server port in Path, and the NOTIFY names the
+	// contact that the S-CSCF registered.
+	n.pcscfLog.waitFor(t, map[string]string{"public_identity": sipAKA, "state": "active", "contact_event": "registered",
+		"contact": a.contact.URI()})
 	// A refresh goes over the associations and needs no new challenge.
 	if _, err := a.ue.Register(ctx); err != nil {
 		t.Fatalf("re-registration: %v", err)
@@ -188,9 +190,7 @@ func TestIMSAKAThroughTheWholeIMS(t *testing.T) {
 	if err := a.ue.Deregister(ctx); err != nil {
 		t.Fatalf("deregistration: %v", err)
 	}
-	if sas, ok, _ := n.pcscfStore.SecurityAssociations(context.Background(), protectedAddr); ok {
-		t.Errorf("the P-CSCF keeps %+v after the deregistration", sas)
-	}
+	noSecurityAssociations(t, n, a, "the deregistration")
 	if got := a.ue.Outbound(); got.Addr != n.pcscf {
 		t.Errorf("after the deregistration the UE sends to %s, want the unprotected port", got.Addr)
 	}
@@ -208,11 +208,47 @@ func TestIMSAKAWithAnotherK(t *testing.T) {
 	if !errors.Is(err, ue.ErrForbidden) || !errors.Is(err, aka.ErrMACFailure) {
 		t.Fatalf("err = %v, want ErrForbidden after ErrMACFailure", err)
 	}
-	if sas, ok, _ := n.pcscfStore.SecurityAssociations(context.Background(), a.ua.Stack().LocalAddr()); ok {
-		t.Errorf("the P-CSCF keeps %+v", sas)
-	}
-	if _, ok, _ := n.scscfStore.Registration(context.Background(), impiAKA); ok {
+	noSecurityAssociations(t, n, a, "the 403")
+	if err := n.scscf.Deregister(impiAKA, reginfo.Rejected); err == nil {
 		t.Error("the S-CSCF registered the UE")
+	}
+}
+
+// noSecurityAssociations checks that the P-CSCF has no security
+// associations with the UE of p: a REGISTER of its contact from its
+// protected port to the protected server port of the P-CSCF is refused
+// with 403, as ESP would drop it (TS 33.203 7.1 item 3). Over security
+// associations, the S-CSCF would refresh the registration with 200
+// (TS 24.229 5.4.1.2.2).
+func noSecurityAssociations(t *testing.T, n testNetwork, p *party, after string) {
+	t.Helper()
+	from := p.ua.Stack()
+	m := &sip.Message{Method: sip.REGISTER, RequestURI: "sip:" + domain}
+	m.Add("Max-Forwards", "70")
+	m.Add("From", "<"+impuAKA+">;tag="+sip.NewTag())
+	m.Add("To", "<"+impuAKA+">")
+	m.Add("Call-ID", sip.NewCallID())
+	m.Add("CSeq", "1 REGISTER")
+	m.Add("Contact", "<"+p.contact.URI()+">;expires=600000")
+	m.Add("Require", sip.OptionSecAgree)
+	m.Add("Proxy-Require", sip.OptionSecAgree)
+	m.Add("Security-Client", fmt.Sprintf("ipsec-3gpp;alg=hmac-sha2-256-128;ealg=null;spi-c=1111;spi-s=2222;port-c=50001;port-s=%d",
+		from.LocalAddr().Port()))
+	m.Add("Authorization", `Digest username="`+impiAKA+`", realm="`+domain+`", nonce="", uri="sip:`+domain+`", response="", algorithm=AKAv1-MD5`)
+	ct, err := from.SendRequest(m, sip.Destination{Transport: sip.UDP, Addr: n.pcscfProtected})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var final *sip.Message
+	for r := range ct.Responses() {
+		final = r
+	}
+	status := 0
+	if final != nil {
+		status = final.StatusCode
+	}
+	if status != 403 {
+		t.Errorf("protected REGISTER after %s got %d, want 403", after, status)
 	}
 }
 
@@ -230,7 +266,7 @@ func TestRestartedUERefreshesItsBinding(t *testing.T) {
 	if _, err := first.ue.Register(ctx); err != nil {
 		t.Fatal(err)
 	}
-	bound, _, _ := n.scscfStore.Registration(context.Background(), impiAKA)
+	bound := first.wire.binding(t)
 	first.close()
 
 	restarted := openAKAUE(t, n.pcscf, first.protected.String(), first.unprotected.String())
@@ -240,8 +276,8 @@ func TestRestartedUERefreshesItsBinding(t *testing.T) {
 	if _, err := restarted.ue.Register(ctx); err != nil {
 		t.Fatalf("refresh after the restart: %v", err)
 	}
-	if r, _, _ := n.scscfStore.Registration(context.Background(), impiAKA); r.Contact != bound.Contact {
-		t.Errorf("the S-CSCF binds %s, want the contact from before the restart, %s", r.Contact, bound.Contact)
+	if r := restarted.wire.binding(t); r.URI != bound.URI {
+		t.Errorf("the S-CSCF binds %s, want the contact from before the restart, %s", r.URI, bound.URI)
 	}
 }
 
@@ -252,7 +288,9 @@ type akaUE struct {
 	// protected is the protected server port, the port of the contact;
 	// unprotected is where the REGISTERs without protection leave from.
 	protected, unprotected netip.AddrPort
-	close                  func()
+	// wire has the messages of the protected server port.
+	wire  *wireLog
+	close func()
 }
 
 // openAKAUE opens the UE's two stacks on protected and unprotected, as
@@ -268,7 +306,8 @@ func openAKAUE(t *testing.T, pcscf netip.AddrPort, protected, unprotected string
 	if err != nil {
 		t.Fatal(err)
 	}
-	tr, err := sip.Listen(protected, quiet())
+	wire := &wireLog{}
+	tr, err := sip.ListenObserved(protected, quiet(), wire.observe)
 	if err != nil {
 		unprotectedStack.Close()
 		t.Fatal(err)
@@ -294,5 +333,5 @@ func openAKAUE(t *testing.T, pcscf netip.AddrPort, protected, unprotected string
 	}
 	t.Cleanup(stop)
 	u.Store(ue.New(cfg, ua.Stack(), contact, quiet()))
-	return akaUE{ue: u.Load(), protected: tr.LocalAddr(), unprotected: unprotectedTransport.LocalAddr(), close: stop}
+	return akaUE{ue: u.Load(), protected: tr.LocalAddr(), unprotected: unprotectedTransport.LocalAddr(), wire: wire, close: stop}
 }

@@ -95,15 +95,12 @@ func TestVoLTEContactCarriesNoIMSI(t *testing.T) {
 	if err := wait(t, "the answer", answered); err != nil {
 		t.Fatal(err)
 	}
-	registered, ok, _ := n.scscfStore.Registration(context.Background(), impiAKA)
-	if !ok {
-		t.Fatal("the S-CSCF has no binding of the VoLTE UE")
-	}
+	registered := a.wire.binding(t)
 	invite, err := sip.ParseNameAddr(a.wire.find(t, "> INVITE").Get("Contact"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	for what, contact := range map[string]string{"binding at the S-CSCF": registered.Contact, "INVITE": invite.URI} {
+	for what, contact := range map[string]string{"binding at the S-CSCF": registered.URI, "INVITE": invite.URI} {
 		if u, err := sip.ParseURI(contact); err != nil || u.User == "" || strings.Contains(u.User, imsi) {
 			t.Errorf("the Contact of the %s is %q, want a user part without the IMSI %s", what, contact, imsi)
 		}
@@ -111,8 +108,8 @@ func TestVoLTEContactCarriesNoIMSI(t *testing.T) {
 	if _, err := a.ue.Register(ctx); err != nil {
 		t.Fatalf("re-registration: %v", err)
 	}
-	if r, _, _ := n.scscfStore.Registration(context.Background(), impiAKA); r.Contact != registered.Contact {
-		t.Errorf("the refresh bound %q, want the contact of the initial registration %q", r.Contact, registered.Contact)
+	if r := a.wire.binding(t); r.URI != registered.URI {
+		t.Errorf("the refresh bound %q, want the contact of the initial registration %q", r.URI, registered.URI)
 	}
 	if err := a.ue.Deregister(ctx); err != nil {
 		t.Errorf("deregistration: %v", err)

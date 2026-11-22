@@ -56,11 +56,17 @@ func (s statusJSON) callState() string {
 type phone struct {
 	t   *testing.T
 	url string
+	// wire has the messages of the phone's SIP transport.
+	wire *wireLog
 }
 
 func newPhone(t *testing.T, pcscfAddr netip.AddrPort, private, public, pass string, policy ue.AnswerPolicy) *phone {
 	t.Helper()
-	tr := listenTransport(t)
+	wire := &wireLog{}
+	tr, err := sip.ListenObserved("127.0.0.1:0", quiet(), wire.observe)
+	if err != nil {
+		t.Fatal(err)
+	}
 	addr := tr.LocalAddr()
 	cfg := ue.Config{PrivateIdentity: private, PublicIdentity: public, Password: pass, HomeDomain: domain,
 		PCSCF: pcscfAddr, PCSCFURI: "sip:pcscf." + domain + ":5060", Features: ue.DefaultFeatures, SCAddress: scAddress}
@@ -99,7 +105,7 @@ func newPhone(t *testing.T, pcscfAddr netip.AddrPort, private, public, pass stri
 		}
 		srv.Close()
 	})
-	ph := &phone{t: t, url: srv.URL}
+	ph := &phone{t: t, url: srv.URL, wire: wire}
 	ph.waitFor("registered", func(s statusJSON) bool { return s.Registered })
 	return ph
 }
@@ -254,23 +260,19 @@ func TestServeRegistersAndDeregistersOnRequest(t *testing.T) {
 }
 
 // waitForUESubscription waits until the S-CSCF has the reg event
-// subscription of UE 1 itself, besides that of the P-CSCF. The phone
-// reports that it is registered once it has the 200 to its REGISTER,
-// and subscribes only after that (TS 24.229 5.1.1.3). A deregistration
-// by the network before the S-CSCF has the subscription reaches the UE
-// in no NOTIFY: the UE learns of it only at its next refresh.
-func waitForUESubscription(t *testing.T, n testNetwork) {
+// subscription of the phone itself, besides that of the P-CSCF: the
+// phone has its first NOTIFY, which the S-CSCF sends once it has stored
+// the subscription. The phone reports that it is registered once it has
+// the 200 to its REGISTER, and subscribes only after that (TS 24.229
+// 5.1.1.3). A deregistration by the network before the S-CSCF has the
+// subscription reaches the UE in no NOTIFY: the UE learns of it only at
+// its next refresh.
+func waitForUESubscription(t *testing.T, p *phone) {
 	t.Helper()
 	deadline := time.Now().Add(5 * time.Second)
-	for {
-		subs, _ := n.scscfStore.SubscriptionsOf(context.Background(), impi)
-		for _, sub := range subs {
-			if sub.Dialog.RemoteURI == impu {
-				return
-			}
-		}
+	for !p.wire.has("< NOTIFY") {
 		if time.Now().After(deadline) {
-			t.Fatal("the S-CSCF has no reg event subscription of the UE")
+			t.Fatal("the phone got no reg event NOTIFY")
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
@@ -281,7 +283,7 @@ func TestServeRegistersAgainWhenDeactivated(t *testing.T) {
 	n := networkWith(t, time.Second, time.Hour)
 	p := newPhone(t, n.pcscf, impi, impu, password, autoAnswer)
 	events := p.events()
-	waitForUESubscription(t, n)
+	waitForUESubscription(t, p)
 	if err := n.scscf.Deregister(impi, reginfo.Deactivated); err != nil {
 		t.Fatal(err)
 	}
@@ -292,7 +294,7 @@ func TestServeRegistersAgainWhenDeactivated(t *testing.T) {
 func TestServeStaysDeregisteredWhenRejected(t *testing.T) {
 	n := networkWith(t, time.Second, time.Hour)
 	p := newPhone(t, n.pcscf, impi, impu, password, autoAnswer)
-	waitForUESubscription(t, n)
+	waitForUESubscription(t, p)
 	if err := n.scscf.Deregister(impi, reginfo.Rejected); err != nil {
 		t.Fatal(err)
 	}
