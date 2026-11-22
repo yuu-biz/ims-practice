@@ -500,6 +500,7 @@ rm ue.exe
 | IP-SM-GW。TS 24.341 5.3.3.2 | service-info に MSISDN が無いとき、PUR では利用者を公開の識別子で示す。UE の REGISTER の IMSI は使わない。 | IMSI は message/sip の本文に入った UE の REGISTER から取るが、S-CSCF はその本文を送らないため。Sh は公開の識別子も受け付ける（TS 29.328 Table 7.6.1）。 |
 | UE。TS 24.229 5.1.1.3 | UE の購読の更新に 481 が返ると、UE は次の初回登録の後まで購読し直さない。 | 更新は、購読の期限よりずっと前に行うため。 |
 | UE。TS 24.229 5.1.1.7 | `event="rejected"` を受けても、`ue call`、`ue answer`、`ue serve` は通話を解放しない。 | 登録が拒否されるのは HSS から加入を削除したときだけのため。`ue call` と `ue answer` の通話は音声を送り終えると自分で終わり、`ue serve` の通話は操作する側が切ると終わる。 |
+| S-CSCF。TS 24.229 5.4.2.1.2 | reg イベントの NOTIFY への応答にある term-ioi を保存しない。 | この IOI は S-CSCF の課金の記録のためのもので、このプロジェクトのノードは課金の記録を作らないため。 |
 | P-CSCF。TS 24.229 5.2.3 | P-CSCF の購読の更新に 481 が返ると、P-CSCF はすぐには購読し直さない。利用者の次の REGISTER で新しい購読を始める。 | 更新は、購読の期限よりずっと前に行うため。 |
 | P-CSCF と UE。RFC 3680 5.2 | reginfo の文書の version を確かめない。 | S-CSCF は毎回すべての状態を送る。また、後の NOTIFY より遅れて届いた NOTIFY は、CSeq で断るため。 |
 | P-CSCF。TS 24.229 5.2.6.2 | UE と網は、P-CSCF の同じアドレスとポートに要求を送る。P-CSCF が Path に入れた URI、P-CSCF 自身の Contact、P-CSCF が扱う UE の Contact のどれかにあてた要求を、網からの要求とみなす。網からの要求には IP の対応付けを求めない。 | 実際の P-CSCF は、UE の側（Gm）と網の側（Mw）を別のインタフェースで扱うことが多い。このプロジェクトのコンテナは 1 つのネットワークを共有するため。 |
