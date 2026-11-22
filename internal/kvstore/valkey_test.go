@@ -197,10 +197,16 @@ func TestRESPCancelledContext(t *testing.T) {
 // command on the connection that has been closed fails, and the one
 // after it opens a new connection.
 func TestRESPServerThatCloses(t *testing.T) {
+	closed := make(chan struct{}, 1)
 	addr := fakeServer(t, func(conn net.Conn) {
 		r := bufio.NewReader(conn)
 		if readCommand(r) == nil {
 			conn.Write([]byte("*2\r\n$1\r\nv\r\n$7\r\nversion\r\n"))
+		}
+		conn.Close()
+		select {
+		case closed <- struct{}{}:
+		default:
 		}
 	})
 	s := kvstore.NewValkey(kvstore.ValkeyConfig{Address: addr})
@@ -208,8 +214,11 @@ func TestRESPServerThatCloses(t *testing.T) {
 	if item, err := s.Get(ctx, "k"); err != nil || string(item.Value) != "v" || item.Version != "version" {
 		t.Fatalf("first Get = %+v, %v", item, err)
 	}
-	// The pooled connection is closed by now.
-	time.Sleep(50 * time.Millisecond)
+	select {
+	case <-closed:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the server did not close the connection of the first Get within 5 s")
+	}
 	if _, err := s.Get(ctx, "k"); err == nil {
 		t.Fatal("Get on the closed connection did not fail")
 	}
