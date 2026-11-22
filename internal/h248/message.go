@@ -176,7 +176,7 @@ func (s *scanner) mId() (MId, error) {
 			return id, s.errorf("a domain name is not closed with \">\"")
 		}
 		s.pos++
-		if !validDomainName(id.DomainName) {
+		if !ValidDomainName(id.DomainName) {
 			return id, s.errorf("%q is not a domain name", id.DomainName)
 		}
 	default:
@@ -206,7 +206,7 @@ func (w *writer) mId(id MId) string {
 	case id.DomainAddress.IsValid() && id.DomainName == "" && id.DeviceName == "":
 		text = "[" + id.DomainAddress.String() + "]"
 	case !id.DomainAddress.IsValid() && id.DomainName != "" && id.DeviceName == "":
-		if !validDomainName(id.DomainName) {
+		if !ValidDomainName(id.DomainName) {
 			w.fail("%q is not a domain name", id.DomainName)
 		}
 		text = "<" + id.DomainName + ">"
@@ -232,9 +232,12 @@ func isDomainNameChar(c byte) bool {
 	return isAlpha(c) || isDigit(c) || c == '-' || c == '.'
 }
 
-// validDomainName follows domainName in the grammar: a letter or digit
-// and up to 63 more letters, digits, "-" and ".".
-func validDomainName(name string) bool {
+// ValidDomainName follows domainName in the grammar: a letter or digit
+// and up to 63 more letters, digits, "-" and ".". It is exported so
+// that whoever configures the MId of an endpoint can refuse a name
+// before the endpoint starts, rather than have every message it sends
+// fail to be written.
+func ValidDomainName(name string) bool {
 	if name == "" || len(name) > 64 || !(isAlpha(name[0]) || isDigit(name[0])) {
 		return false
 	}

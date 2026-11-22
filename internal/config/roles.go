@@ -12,6 +12,7 @@ import (
 
 	"github.com/yuu-biz/ims-practice/internal/cx"
 	"github.com/yuu-biz/ims-practice/internal/epc"
+	"github.com/yuu-biz/ims-practice/internal/h248"
 	"github.com/yuu-biz/ims-practice/internal/hss"
 	"github.com/yuu-biz/ims-practice/internal/mmtel"
 	"github.com/yuu-biz/ims-practice/internal/sh"
@@ -73,6 +74,9 @@ type PCSCF struct {
 	// the relay of its context by its URL, so every instance lists the
 	// same. Empty sends RTP between the UEs directly.
 	MediaRelays []string
+	// MediaController, when set in place of MediaRelays, has the P-CSCF
+	// drive over H.248 the media gateways that register with it.
+	MediaController *MediaController
 	// HostAccess, when set, tells UEs that come through the NAT of the
 	// container host (from Gateway) to send RTP to Address, where the
 	// relay's ports are published.
@@ -86,6 +90,30 @@ type PCSCF struct {
 type HostAccess struct {
 	Gateway netip.Addr
 	Address netip.Addr
+}
+
+// MediaController is the controller side of H.248 in a node that
+// controls media: the IMS-ALG of Iq in the P-CSCF (TS 29.334). It
+// names no gateway. Each media gateway registers with the controller
+// and the controller names it in the ID of every context it holds
+// there, so the gateways of a deployment can come and go without the
+// configuration of this node.
+type MediaController struct {
+	// Listen is the address the H.248 messages arrive on, such as
+	// 0.0.0.0:2944.
+	Listen netip.AddrPort
+}
+
+type rawMediaController struct {
+	Listen string `yaml:"listen"`
+}
+
+func (raw *rawMediaController) validate() (MediaController, error) {
+	listen, err := h248Listen(raw.Listen)
+	if err != nil {
+		return MediaController{}, err
+	}
+	return MediaController{Listen: listen}, nil
 }
 
 // ICSCF is the configuration of the icscf role.
@@ -127,8 +155,13 @@ type SCSCF struct {
 
 // AGW is the configuration of the agw role, the media relay.
 type AGW struct {
-	// Control is where the HTTP control API listens.
+	// Control is where the HTTP control API listens. It is the zero
+	// value when MediaGateway is set: the relay is then driven over
+	// H.248 and serves no HTTP API.
 	Control netip.AddrPort
+	// MediaGateway, when set, has the relay register with a controller
+	// and take its commands over H.248 in place of the HTTP API.
+	MediaGateway *MediaGateway
 	// RTPAddress is the address the relay's terminations have, which the
 	// P-CSCF writes into SDP.
 	RTPAddress netip.Addr
@@ -137,19 +170,69 @@ type AGW struct {
 	MinPort, MaxPort uint16
 }
 
+// MediaGateway is the media gateway side of H.248 in front of a media
+// relay: the IMS-AGW of Iq (TS 29.334).
+type MediaGateway struct {
+	// Listen is the address the H.248 messages arrive on, such as
+	// 0.0.0.0:2944.
+	Listen netip.AddrPort
+	// Host is the name the gateway gives itself in the header of every
+	// message it sends, such as
+	// agw.ims.mnc001.mcc001.3gppnetwork.org. The profile recommends a
+	// domain name (TS 29.334 5.11), and the controller names the
+	// gateway by it in the ID of every context it holds.
+	Host string
+	// Controller is the host:port the gateway registers with, such as
+	// pcscf.ims.mnc001.mcc001.3gppnetwork.org:2944. It is resolved again
+	// before each registration, so a gateway follows a name whose
+	// address has changed.
+	Controller string
+}
+
 type rawAGW struct {
-	Control    string `yaml:"control"`
-	RTPAddress string `yaml:"rtp_address"`
+	Control    string           `yaml:"control"`
+	H248       *rawMediaGateway `yaml:"h248"`
+	RTPAddress string           `yaml:"rtp_address"`
 	RTPPorts   struct {
 		Min uint16 `yaml:"min"`
 		Max uint16 `yaml:"max"`
 	} `yaml:"rtp_ports"`
 }
 
-func (raw *rawAGW) validate() (AGW, error) {
-	control, err := netip.ParseAddrPort(raw.Control)
-	if err != nil {
-		return AGW{}, fmt.Errorf("control: %w", err)
+type rawMediaGateway struct {
+	Listen     string `yaml:"listen"`
+	Host       string `yaml:"host"`
+	Controller string `yaml:"controller"`
+}
+
+// validate checks the section of a media node. allowH248 says whether
+// this node may take its commands over H.248, which only the agw role
+// may: Mp, between the MRFC and the MRFP, has commands of its own (TS
+// 29.333 5.17.2), and the media gateway side of this project speaks
+// them for a processor rather than for a relay.
+func (raw *rawAGW) validate(allowH248 bool) (AGW, error) {
+	c := AGW{}
+	switch {
+	case raw.H248 != nil && !allowH248:
+		return AGW{}, errors.New("h248: only the agw role takes its commands over H.248; this role uses the HTTP control API")
+	case raw.Control != "" && raw.H248 != nil:
+		return AGW{}, errors.New("control: a relay takes its commands over the control API or over h248, not both")
+	case raw.Control == "" && !allowH248:
+		return AGW{}, errors.New("control: required")
+	case raw.Control == "" && raw.H248 == nil:
+		return AGW{}, errors.New("control: required, unless h248 drives the relay instead")
+	case raw.H248 != nil:
+		gateway, err := raw.H248.validate()
+		if err != nil {
+			return AGW{}, err
+		}
+		c.MediaGateway = &gateway
+	default:
+		control, err := netip.ParseAddrPort(raw.Control)
+		if err != nil {
+			return AGW{}, fmt.Errorf("control: %w", err)
+		}
+		c.Control = control
 	}
 	addr, err := netip.ParseAddr(raw.RTPAddress)
 	if err != nil || addr.IsUnspecified() {
@@ -158,7 +241,59 @@ func (raw *rawAGW) validate() (AGW, error) {
 	if raw.RTPPorts.Min == 0 || raw.RTPPorts.Max < raw.RTPPorts.Min+3 {
 		return AGW{}, fmt.Errorf("rtp_ports: %d-%d must hold at least two even ports", raw.RTPPorts.Min, raw.RTPPorts.Max)
 	}
-	return AGW{Control: control, RTPAddress: addr, MinPort: raw.RTPPorts.Min, MaxPort: raw.RTPPorts.Max}, nil
+	c.RTPAddress, c.MinPort, c.MaxPort = addr, raw.RTPPorts.Min, raw.RTPPorts.Max
+	return c, nil
+}
+
+func (raw *rawMediaGateway) validate() (MediaGateway, error) {
+	listen, err := h248Listen(raw.Listen)
+	if err != nil {
+		return MediaGateway{}, err
+	}
+	if err := h248Name("h248.host", raw.Host); err != nil {
+		return MediaGateway{}, err
+	}
+	host, port, err := net.SplitHostPort(raw.Controller)
+	if err != nil || host == "" {
+		return MediaGateway{}, fmt.Errorf("h248.controller: %q must be the host and port of a controller", raw.Controller)
+	}
+	if n, err := strconv.Atoi(port); err != nil || n <= 0 || n > 65535 {
+		return MediaGateway{}, fmt.Errorf("h248.controller: %q has no port to send to", raw.Controller)
+	}
+	return MediaGateway{Listen: listen, Host: raw.Host, Controller: raw.Controller}, nil
+}
+
+// h248Name checks the name an H.248 endpoint gives itself in the header
+// of every message it sends, its MId. TS 29.334 5.11 recommends a
+// domain name, and the grammar of H.248 bounds what such a name may
+// hold, so a name outside it would make every message unwritable: the
+// node is refused here instead, before it starts. An address is refused
+// too, as it belongs in another form of the header than this name takes.
+func h248Name(field, name string) error {
+	switch {
+	case name == "":
+		return fmt.Errorf("%s: required", field)
+	case net.ParseIP(name) != nil:
+		return fmt.Errorf("%s: must be a name that DNS resolves, not an address", field)
+	case !h248.ValidDomainName(name):
+		return fmt.Errorf("%s: %q is not a name that H.248 can carry: a letter or digit and up to 63 more letters, digits, \"-\" and \".\"", field, name)
+	}
+	return nil
+}
+
+// h248Listen reads the address an H.248 endpoint binds. The standard
+// port is 2944 for the text encoding (H.248.1 (05/2002) clause 9, Annex
+// D.1), which the deployments of this project use; a node that has both
+// a controller and a gateway needs another port for one of them.
+func h248Listen(s string) (netip.AddrPort, error) {
+	listen, err := netip.ParseAddrPort(s)
+	if err != nil {
+		return netip.AddrPort{}, fmt.Errorf("h248.listen: %w", err)
+	}
+	if listen.Port() == 0 {
+		return netip.AddrPort{}, errors.New("h248.listen: port 0")
+	}
+	return listen, nil
 }
 
 // MRFP is the configuration of the mrfp role: a media node as for the
@@ -176,7 +311,7 @@ type rawMRFP struct {
 }
 
 func (raw *rawMRFP) validate() (MRFP, error) {
-	node, err := raw.rawAGW.validate()
+	node, err := raw.rawAGW.validate(false)
 	if err != nil {
 		return MRFP{}, err
 	}
@@ -259,9 +394,10 @@ type rawSIP struct {
 }
 
 type rawPCSCF struct {
-	SIP              rawSIP   `yaml:"sip"`
-	VisitedNetworkID string   `yaml:"visited_network_id"`
-	MediaRelays      []string `yaml:"media_relays"`
+	SIP              rawSIP              `yaml:"sip"`
+	VisitedNetworkID string              `yaml:"visited_network_id"`
+	MediaRelays      []string            `yaml:"media_relays"`
+	H248             *rawMediaController `yaml:"h248"`
 	HostAccess       *struct {
 		Gateway string `yaml:"gateway"`
 		Address string `yaml:"address"`
@@ -375,6 +511,21 @@ func (raw *rawPCSCF) validate() (PCSCF, error) {
 		return PCSCF{}, errors.New("visited_network_id: required")
 	}
 	c := PCSCF{SIP: sip, VisitedNetworkID: raw.VisitedNetworkID, MediaRelays: raw.MediaRelays}
+	if raw.H248 != nil {
+		if len(raw.MediaRelays) > 0 {
+			return PCSCF{}, errors.New("h248: the P-CSCF drives its media relays either over H.248 or over the control APIs of media_relays, not both")
+		}
+		// The controller names itself by sip.host, so that name has to be
+		// one an H.248 header can carry as well as one DNS resolves.
+		if err := h248Name("sip.host", sip.Host); err != nil {
+			return PCSCF{}, err
+		}
+		controller, err := raw.H248.validate()
+		if err != nil {
+			return PCSCF{}, err
+		}
+		c.MediaController = &controller
+	}
 	seen := map[string]bool{}
 	for _, u := range c.MediaRelays {
 		if !strings.HasPrefix(u, "http://") {
