@@ -108,6 +108,46 @@ The second network of the interconnect guide has its own subscribers in `deploy/
 | [deploy/k8s](../../../deploy/k8s/README.md) | The same IMS on a local Kubernetes cluster made with kind. |
 | [deploy/cloud](../../../deploy/cloud/README.md) | Definitions for cloud resources. Applying them costs money. |
 
+### The state of the users in a store outside the nodes
+
+`deploy/redundancy/redundancy.yaml` adds a Valkey server to the project, and gives a `store` section that names it to every node that holds the state of users: the HSS, the S-CSCF, the P-CSCF, the IP-SM-GW, the MMTel AS and the MRFC. Start the project with that file on top of `compose.yaml`:
+
+```sh
+export COMPOSE_FILE=compose.yaml:deploy/redundancy/redundancy.yaml COMPOSE_PATH_SEPARATOR=:
+docker compose up -d --build
+```
+
+Every command of the guides then runs on that deployment. In a shell without the variable, pass `-f compose.yaml -f deploy/redundancy/redundancy.yaml` to each `docker compose` instead. The nodes keep their addresses, their configuration and their messages, so the capture reads as it does in the guides. What changes is where each node puts what it learns.
+
+```sh
+docker compose run --no-deps -d --name registered-ue ue register
+docker compose exec valkey valkey-cli --scan --pattern 'ims:*'
+```
+
+`ue register` with no `--deregister-after` stays registered until it is stopped, so the keys of its registration are there while you look. Each key is the prefix of this deployment, the role that wrote it, the kind of item, and the name it is found by. Among them are these three, each found by the private identity of subscriber 1:
+
+```text
+ims:hss:subscriber:001010000000001@ims.mnc001.mcc001.3gppnetwork.org
+ims:scscf:registration:001010000000001@ims.mnc001.mcc001.3gppnetwork.org
+ims:pcscf:reg-subscription:001010000000001@ims.mnc001.mcc001.3gppnetwork.org
+```
+
+A `:` inside a name, as in a SIP URI or a Call-ID, is written `%3A`, so that the parts of a key stay apart. An item is kept as a hash with the value and a version, and the value is JSON:
+
+```sh
+docker compose exec valkey valkey-cli hget \
+  ims:scscf:registration:001010000000001@ims.mnc001.mcc001.3gppnetwork.org value
+```
+
+That is the registration the S-CSCF would otherwise hold in its own memory: the contact of the UE, when the registration expires, and the user profile that the HSS sent over Cx. `docker stop registered-ue` deregisters the UE, and the next scan finds the registration gone, while the subscriber of the HSS stays. Afterwards, clean up as the guides do, with the variable still set:
+
+```sh
+docker rm registered-ue
+docker compose --profile ue down -v --remove-orphans
+```
+
+The `-v` deletes the volume of the store with the nodes, so the next start begins with nothing stored.
+
 ## How the whole setup is built
 
 These choices hold in every guide.
