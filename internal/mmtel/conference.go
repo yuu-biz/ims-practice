@@ -20,11 +20,13 @@ import (
 // UE that has two calls creates a conference by an INVITE to the
 // conference factory URI, and then asks the focus with a REFER for each
 // of its peers to bring the peer in, with a Replaces of its call with
-// that peer (TS 24.147 5.3.1.3.3, option 2b). The focus has a dialog
-// with each participant and, for each, a dialog with the MRFC that
-// joins the participant to the mix of the conference on the MRFP (RFC
-// 4240 5, TS 24.147 4). The AS is also the notification service of the
-// conference event package (conferenceevent.go).
+// that peer (TS 24.147 5.3.1.3.3, option 2b). A user who has the
+// conference URI, such as a participant who left, joins with an INVITE
+// to it (5.3.2.4.1). The focus has a dialog with each participant and,
+// for each, a dialog with the MRFC that joins the participant to the
+// mix of the conference on the MRFP (RFC 4240 5, TS 24.147 4). The AS
+// is also the notification service of the conference event package
+// (conferenceevent.go).
 //
 // The record of a conference is in the Store: its URI, its
 // creator, the conference of the MRFC, the participants with their
@@ -176,14 +178,25 @@ func (as *AS) conferenceURI(id string) string {
 	return "sip:" + id + "@" + as.cfg.ConferenceDomain
 }
 
+// conferenceID is the ID of the conference that uri names, and false
+// when uri is not in the subdomain of the conference URIs of this
+// instance.
+func (as *AS) conferenceID(uri string) (string, bool) {
+	u, err := sip.ParseURI(uri)
+	if err != nil || !strings.EqualFold(strings.TrimSuffix(u.Host, "."), as.cfg.ConferenceDomain) {
+		return "", false
+	}
+	return u.User, true
+}
+
 // conferenceAt is the conference that this instance hosts at the
 // conference URI uri, nil when there is none.
 func (as *AS) conferenceAt(uri string) *conference {
-	u, err := sip.ParseURI(uri)
-	if err != nil || !strings.EqualFold(strings.TrimSuffix(u.Host, "."), as.cfg.ConferenceDomain) {
+	id, ok := as.conferenceID(uri)
+	if !ok {
 		return nil
 	}
-	f, ok := as.conferences.Load(u.User)
+	f, ok := as.conferences.Load(id)
 	if !ok {
 		return nil
 	}
@@ -233,9 +246,59 @@ func (c *call) createConference() {
 	f.admit(c.in, &party{media: media, creator: true}, final, assertedUser(req, c.served.URI))
 }
 
+// joinConference is TS 24.147 5.3.2.4.1: an INVITE to a conference URI
+// from a user who joins the conference, or comes back to it after
+// leaving (5.3.1.4.1). DNS leads the subdomain of the URI to this
+// instance, so the INVITE comes by no filter criterion and has no
+// P-Served-User: from the S-CSCF after the originating services of a
+// user of the home network, or from the I-CSCF for a user of another
+// network. The focus joins the user to the mix at the MRFC with the
+// user's offer, as it joins the creator (createConference).
+//
+// SIMPLIFIED: TS 24.147 5.3.2.4.1 step 2 and TS 24.229 5.7.1.4 and
+// 5.7.1.5. The focus has no conference policy (TS 24.147 4): any user
+// whose identity the network asserts may join while the conference has
+// room, whether or not the user has been in it before. A request
+// without P-Asserted-Identity gets 403 and is not challenged: the AS
+// holds no credentials of users, and in the networks of this project
+// every request reaches the focus with the identity that a P-CSCF or a
+// trusted peer asserted.
+func (as *AS) joinConference(in *sip.IncomingCall, log *slog.Logger) {
+	req := in.Request
+	f := as.conferenceAt(req.RequestURI)
+	if f == nil {
+		// Step 1: no conference has this URI, or none has it any more.
+		log.Info("INVITE to a conference URI that is not allocated", "request_uri", req.RequestURI)
+		in.Reject(404)
+		return
+	}
+	user := assertedUser(req, "")
+	if user == "" {
+		f.log.Info("INVITE to the conference without an asserted identity")
+		in.Reject(403, as.warning("No asserted identity"))
+		return
+	}
+	if f.full() {
+		in.Reject(403, as.warning("The conference is full"))
+		return
+	}
+	media, final, err := f.inviteMRFC(sip.BodyOf(req))
+	if err != nil || final.StatusCode >= 300 {
+		f.log.Warn("the MRFC did not join the user", "user", user, "status", statusCode(final), "error", errText(err))
+		code := 503
+		if final != nil {
+			code = final.StatusCode
+		}
+		in.Reject(code, as.warning("No conference at the MRFC"))
+		return
+	}
+	f.admit(in, &party{media: media}, final, user)
+}
+
 // admit answers the INVITE of in once the mixer has through-connected
 // the user's media: with the answer of final, the 200 of the MRFC, and
-// the conference URI with isfocus as Contact (TS 24.147 5.3.2.3.1). The
+// the conference URI with isfocus as Contact (TS 24.147 5.3.2.3.1 and
+// 5.3.2.4.1), and the charging vector of 5.3.2.2.2. The
 // user, whose identity is user, is then participant p, dialed in, until
 // its dialog ends.
 func (f *conference) admit(in *sip.IncomingCall, p *party, final *sip.Message, user string) {
@@ -432,6 +495,14 @@ func (f *conference) deallocate() {
 	f.as.conferenceStore.DeleteConference(f.record.ID)
 }
 
+// full reports whether the conference has as many participants as it
+// takes.
+func (f *conference) full() bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return len(f.record.Participants) >= maximumUsers
+}
+
 // setStatus is the status of p in the record. f.mu is held.
 func (f *conference) setStatus(p *party, status confinfo.EndpointStatus) bool {
 	for i := range f.record.Participants {
@@ -562,10 +633,7 @@ func (f *conference) refer(r *sip.InDialogRequest) {
 			return
 		}
 	}
-	f.mu.Lock()
-	full := len(f.record.Participants) >= maximumUsers
-	f.mu.Unlock()
-	if full {
+	if f.full() {
 		r.Reject(403, f.as.warning("The conference is full"))
 		return
 	}
