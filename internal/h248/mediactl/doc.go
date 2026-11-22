@@ -3,7 +3,6 @@
 // MRFC and the MRFP (TS 29.333). It holds both sides of each profile.
 // Its tests and examples run a Controller and a Gateway against each
 // other over UDP, so the H.248 messages can be captured.
-// No node of this project runs it: no binary in cmd builds it in.
 //
 // The operations carry the names of the H.248 commands, and their
 // types are those of the HTTP API of the media node in internal/agw.
@@ -23,7 +22,9 @@
 //     Iq. The Controller carries them with the profile of Iq; this
 //     package has no profile of Ix.
 //
-// The nodes of this project run the HTTP client.
+// A node runs the HTTP client or a Controller as its configuration
+// says. The default is the HTTP client; the P-CSCF takes a Controller
+// for Iq, and the media relay then runs a Gateway beside its relay.
 //
 // Two types stand on either side of the H.248 messages:
 //

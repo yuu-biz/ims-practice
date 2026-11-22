@@ -1,7 +1,8 @@
 // Package h248 reads and writes H.248 (Megaco) messages in the text
 // encoding of ITU-T H.248.1 Annex B, as far as the 3GPP profiles for
 // Iq (TS 29.334), Ix (TS 29.238) and Mp (TS 29.333) use the protocol.
-// No node of this project runs it: no binary in cmd builds it in.
+// The nodes of this project reach it through package mediactl, which
+// holds the procedures of the profiles.
 //
 // The types carry the names of the grammar (Annex B.2) and of the
 // ASN.1 syntax (Annex A.2), so that a learner can hold a capture, the

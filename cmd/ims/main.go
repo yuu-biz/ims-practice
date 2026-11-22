@@ -30,6 +30,8 @@ import (
 	"github.com/yuu-biz/ims-practice/internal/diameter"
 	"github.com/yuu-biz/ims-practice/internal/epc"
 	"github.com/yuu-biz/ims-practice/internal/fault"
+	"github.com/yuu-biz/ims-practice/internal/h248"
+	"github.com/yuu-biz/ims-practice/internal/h248/mediactl"
 	"github.com/yuu-biz/ims-practice/internal/hepagent"
 	"github.com/yuu-biz/ims-practice/internal/hss"
 	"github.com/yuu-biz/ims-practice/internal/ibcf"
@@ -229,11 +231,19 @@ func run(configPath string, log *slog.Logger) error {
 		if h := c.HostAccess; h != nil {
 			pc.HostAccess = &pcscf.HostAccess{Gateway: h.Gateway, Address: h.Address}
 		}
+		roleLog := log.With("role", config.RolePCSCF)
 		var relays []pcscf.MediaRelay
+		if m := c.MediaController; m != nil {
+			controller, stop, err := startMediaController(*m, c.SIP.Host, roleLog, cancel)
+			if err != nil {
+				return err
+			}
+			defer stop()
+			relays = []pcscf.MediaRelay{{Name: iqRelay, Control: controller}}
+		}
 		for _, u := range c.MediaRelays {
 			relays = append(relays, pcscf.MediaRelay{Name: u, Control: agw.NewClient(u)})
 		}
-		roleLog := log.With("role", config.RolePCSCF)
 		p := pcscf.New(pc, resolver, pcscfStore(stores, roleLog), relays, roleLog)
 		// The sweep that handles the expiries of the reg event
 		// subscriptions runs until the node stops.
@@ -747,6 +757,17 @@ func startMediaNode(c config.AGW, announcements agw.Announcements, store agw.Con
 	if err != nil {
 		return nil, err
 	}
+	if g := c.MediaGateway; g != nil {
+		stop, err := startMediaGateway(*g, relay, log, cancel)
+		if err != nil {
+			relay.Close()
+			return nil, err
+		}
+		return func() {
+			stop()
+			relay.Close()
+		}, nil
+	}
 	control := &http.Server{Addr: c.Control.String(), Handler: agw.Handler(relay)}
 	go func() {
 		if err := control.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
@@ -792,6 +813,90 @@ func startFaultAgent(ctx context.Context, l net.Listener, c config.Fault, log *s
 	}()
 	log.Info("fault API listening", "address", l.Addr().String(), "project", c.ComposeProject, "tools_image", c.ToolsImage)
 	return func() { api.Close() }
+}
+
+// iqRelay is the name by which a dialog of the P-CSCF remembers the
+// media relay that holds its context (pcscf.RelayContext) when the
+// P-CSCF controls media over H.248. One controller stands for every
+// media gateway that has registered with it, and the ID of a context
+// names the gateway that holds it, so what the dialog has to remember
+// is the reference point and not a gateway.
+const iqRelay = "iq"
+
+// startMediaController serves the controller side of Iq, the IMS-ALG of
+// the P-CSCF (TS 29.334 5.17.2): the media gateways register with it,
+// and the P-CSCF sends them the commands of a call through it in place
+// of the HTTP client of a media node. The controller names itself by
+// host, which is the name DNS resolves to this node, so that a gateway
+// provisioned with that name reaches it.
+//
+// It passes no TerminationHeartbeat, so every context counts as in use:
+// mediactl.ControllerConfig says what that leaves out, in the comment
+// on that field. The function it returns stops the controller. The
+// contexts stay in the gateways, which register again as soon as a
+// controller answers at the same name.
+//
+// SIMPLIFIED: a node that stops sends no ServiceChange to say that it
+// is going out of service. A controller and a gateway of a real network
+// tell each other, so that the other side knows at once rather than
+// after its timers run out; here the socket closes and the other side
+// finds out from the keep-alive or the inactivity timer.
+func startMediaController(c config.MediaController, host string, log *slog.Logger, cancel context.CancelFunc) (*mediactl.Controller, func(), error) {
+	conn, err := net.ListenPacket("udp", c.Listen.String())
+	if err != nil {
+		return nil, nil, err
+	}
+	controller, err := mediactl.NewController(conn, mediactl.ControllerConfig{
+		Endpoint: h248.EndpointConfig{MId: h248.MId{DomainName: host}, Logger: log},
+	})
+	if err != nil {
+		conn.Close()
+		return nil, nil, err
+	}
+	go func() {
+		if err := controller.Serve(); err != nil {
+			log.Error("H.248 controller failed", "error", err.Error())
+			cancel()
+		}
+	}()
+	log.Info("H.248 controller listening", "address", c.Listen.String(), "name", host)
+	return controller, func() { controller.Close() }, nil
+}
+
+// startMediaGateway serves the media gateway side of Iq, the IMS-AGW
+// (TS 29.334 5.17.3.5): it registers with the controller that c names,
+// and carries out the commands it receives by calling relay, in place
+// of the control API, which such a node does not serve. The relay is in
+// this process, so the gateway reaches it through agw.Direct and
+// nothing of the commands goes over HTTP.
+//
+// The controller's name is resolved again before each registration, to
+// the one address that net.ResolveUDPAddr returns, so a gateway follows
+// a controller whose address has changed. The function it returns stops
+// the gateway, which sends no ServiceChange for it (see
+// startMediaController); the caller closes the relay after it.
+func startMediaGateway(c config.MediaGateway, relay *agw.Relay, log *slog.Logger, cancel context.CancelFunc) (func(), error) {
+	conn, err := net.ListenPacket("udp", c.Listen.String())
+	if err != nil {
+		return nil, err
+	}
+	gateway, err := mediactl.NewGateway(conn, mediactl.GatewayConfig{
+		Endpoint:         h248.EndpointConfig{MId: h248.MId{DomainName: c.Host}, Logger: log},
+		LocateController: func() (net.Addr, error) { return net.ResolveUDPAddr("udp", c.Controller) },
+		Relay:            agw.NewDirect(relay),
+	})
+	if err != nil {
+		conn.Close()
+		return nil, err
+	}
+	go func() {
+		if err := gateway.Serve(); err != nil {
+			log.Error("H.248 gateway failed", "error", err.Error())
+			cancel()
+		}
+	}()
+	log.Info("H.248 gateway started", "address", c.Listen.String(), "name", c.Host, "controller", c.Controller)
+	return func() { gateway.Close() }, nil
 }
 
 func diameterApplications(cfg config.Config) []uint32 {

@@ -226,8 +226,8 @@ func (g *Gateway) Close() error {
 // opened again the contexts its earlier process left (agw.NewRelay with
 // a context store) still gets a Cold Boot: the gateway's own table of
 // which H.248 context holds which context of the relay is in its
-// memory, and those contexts are not in it. No node of this project
-// puts a gateway in front of a relay with a store. After a
+// memory, and those contexts are not in it. No deployment of this
+// project puts a gateway in front of a relay with a store. After a
 // failure, the gateway contacts the controller it had with Disconnected
 // and 900 Service Restored, IMS-AGW Communication Up (TS 29.334
 // 5.17.3.3, H.248.1 (05/2002) 11.5); its contexts are still there.
