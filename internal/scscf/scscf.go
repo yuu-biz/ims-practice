@@ -277,8 +277,7 @@ func (s *SCSCF) challenge(st *sip.ServerTransaction, privateID, publicID string,
 		HA1:             d.DigestHA1,
 		HSSHost:         originHost(answer),
 	}
-	s.store.PutChallenge(ch)
-	s.authTimers.start(key(privateID), s.cfg.RegAwaitAuth, func() { s.regAwaitAuthExpired(privateID, ch.Nonce) })
+	s.putChallenge(ch)
 	qop := d.DigestQoP
 	if qop == "" {
 		qop = "auth"
@@ -291,6 +290,18 @@ func (s *SCSCF) challenge(st *sip.ServerTransaction, privateID, publicID string,
 	s.respond(st, 401, func(r *sip.Message) {
 		r.Add("WWW-Authenticate", sip.Challenge{Realm: ch.Realm, Nonce: ch.Nonce, Stale: stale, Algorithm: algorithm, QOP: []string{qop}}.String())
 	})
+}
+
+// putChallenge stores ch with its expiries, and starts its
+// reg-await-auth timer (TS 24.229 5.4.1.2.1). The Store keeps the
+// challenge for reg-await-auth again after the timer, so that the
+// instance that handles the timer still finds it: by then the timer
+// has ended it, or the authentication has.
+func (s *SCSCF) putChallenge(ch Challenge) {
+	ch.Expires = time.Now().Add(s.cfg.RegAwaitAuth)
+	ch.KeepUntil = ch.Expires.Add(s.cfg.RegAwaitAuth)
+	s.store.PutChallenge(ch)
+	s.authTimers.start(key(ch.PrivateIdentity), s.cfg.RegAwaitAuth, func() { s.regAwaitAuthExpired(ch.PrivateIdentity, ch.Nonce) })
 }
 
 type verdict int

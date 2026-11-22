@@ -35,6 +35,13 @@ type Challenge struct {
 	// HSSHost is the Origin-Host of the MAA, the Destination-Host of the
 	// SAR that follows (TS 29.228 6.1.2).
 	HSSHost string
+	// Expires is when reg-await-auth runs out (TS 24.229 5.4.1.2.1):
+	// the authentication fails then if no REGISTER has answered the
+	// challenge.
+	Expires time.Time
+	// KeepUntil is when the Store forgets the challenge: reg-await-auth
+	// after Expires (putChallenge).
+	KeepUntil time.Time
 }
 
 // digestHA1 is H(A1) of the response that the challenge expects: the one

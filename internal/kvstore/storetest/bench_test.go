@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/yuu-biz/ims-practice/internal/ifc"
+	"github.com/yuu-biz/ims-practice/internal/ims"
 	"github.com/yuu-biz/ims-practice/internal/ipsmgw"
 	"github.com/yuu-biz/ims-practice/internal/kvstore"
 	"github.com/yuu-biz/ims-practice/internal/kvstore/ipsmgwstore"
@@ -55,7 +56,7 @@ func BenchmarkMixes(b *testing.B) {
 			}
 			kv := &counting{Store: store}
 			cfg := kvjson.Config{Prefix: benchPrefix}
-			benchmarkMixes(b, roles{scscf: scscfstore.New(kv, scscfstore.Config{Config: cfg}), pcscf: pcscfstore.New(kv, cfg),
+			benchmarkMixes(b, roles{scscf: scscfstore.New(kv, cfg), pcscf: pcscfstore.New(kv, cfg),
 				ipsmgw: ipsmgwstore.New(kv, cfg), sc: scstore.New(kv, cfg)}, kv)
 		})
 	}
@@ -166,7 +167,8 @@ func benchmarkMixes(b *testing.B, r roles, kv *counting) {
 			_, _, _ = p.Association(ctx, source)
 			_, _, _ = p.SecurityAssociations(ctx, source.Addr)
 			s.Challenge(impi)
-			s.PutChallenge(scscf.Challenge{PrivateIdentity: impi, Nonce: user, HA1: strings.Repeat("0", 32)})
+			s.PutChallenge(scscf.Challenge{PrivateIdentity: impi, Nonce: user, HA1: strings.Repeat("0", 32),
+				Expires: time.Now().Add(ims.RegAwaitAuth), KeepUntil: time.Now().Add(2 * ims.RegAwaitAuth)})
 			s.Challenge(impi)
 			s.DeleteChallenge(impi)
 			s.Registration(impi)

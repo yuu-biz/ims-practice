@@ -45,8 +45,15 @@ func (c *clock) set(t time.Time) {
 func twoInstances() (a, b *scscfstore.Store, kv *kvstore.MemoryStore, c *clock) {
 	c = &clock{now: start}
 	kv = kvstore.NewMemoryStore(c.Now)
-	cfg := scscfstore.Config{Config: kvjson.Config{Now: c.Now}, RegAwaitAuth: time.Minute}
+	cfg := kvjson.Config{Now: c.Now}
 	return scscfstore.New(kv, cfg), scscfstore.New(kv, cfg), kv, c
+}
+
+// challenge is a challenge whose reg-await-auth runs out a minute after
+// start, and that the Store keeps for a minute more, as the S-CSCF
+// writes it with a reg-await-auth of a minute.
+func challenge(nonce string) scscf.Challenge {
+	return scscf.Challenge{PrivateIdentity: impi, Nonce: nonce, Expires: start.Add(time.Minute), KeepUntil: start.Add(2 * time.Minute)}
 }
 
 func registration(expires time.Time) scscf.Registration {
@@ -118,13 +125,13 @@ func TestRefreshMovesTheExpiry(t *testing.T) {
 func TestRegAwaitAuthNamesTheChallenge(t *testing.T) {
 	ctx := context.Background()
 	a, b, _, _ := twoInstances()
-	a.PutChallenge(scscf.Challenge{PrivateIdentity: impi, Nonce: "n1"})
+	a.PutChallenge(challenge("n1"))
 	b.DeleteChallenge(impi)
 	if claims, _ := a.ClaimDue(ctx, scscfstore.RegAwaitAuthTimer, start.Add(time.Minute), time.Minute, 10); len(claims) != 0 {
 		t.Errorf("an answered challenge still has its timer: %v", claims)
 	}
-	a.PutChallenge(scscf.Challenge{PrivateIdentity: impi, Nonce: "n2"})
-	b.PutChallenge(scscf.Challenge{PrivateIdentity: impi, Nonce: "n3"})
+	a.PutChallenge(challenge("n2"))
+	b.PutChallenge(challenge("n3"))
 	claims, _ := a.ClaimDue(ctx, scscfstore.RegAwaitAuthTimer, start.Add(time.Minute), time.Minute, 10)
 	current, _ := a.Challenge(impi)
 	ended := 0
@@ -142,12 +149,36 @@ func TestRegAwaitAuthNamesTheChallenge(t *testing.T) {
 	}
 }
 
+// TestAChallengeEndsAtTheTimesItCarries: the reg-await-auth timer of a
+// challenge is due at its Expires, and the Store forgets the challenge
+// at its KeepUntil, whatever the times are.
+func TestAChallengeEndsAtTheTimesItCarries(t *testing.T) {
+	ctx := context.Background()
+	a, b, _, c := twoInstances()
+	ch := scscf.Challenge{PrivateIdentity: impi, Nonce: "n1", Expires: start.Add(30 * time.Second), KeepUntil: start.Add(90 * time.Second)}
+	a.PutChallenge(ch)
+	if claims, _ := b.ClaimDue(ctx, scscfstore.RegAwaitAuthTimer, ch.Expires.Add(-time.Millisecond), time.Minute, 10); len(claims) != 0 {
+		t.Errorf("claimed %v before the Expires of the challenge", claims)
+	}
+	if claims, _ := b.ClaimDue(ctx, scscfstore.RegAwaitAuthTimer, ch.Expires, time.Minute, 10); len(claims) != 1 {
+		t.Errorf("claims at the Expires of the challenge = %v, want one", claims)
+	}
+	c.set(ch.KeepUntil.Add(-time.Millisecond))
+	if _, ok := b.Challenge(impi); !ok {
+		t.Error("the challenge is gone before its KeepUntil")
+	}
+	c.set(ch.KeepUntil)
+	if _, ok := b.Challenge(impi); ok {
+		t.Error("the challenge is still there at its KeepUntil")
+	}
+}
+
 // TestAWriterThatStopsLeavesOnlyAMiss stops an instance after it has
 // written the index items of a new registration, and before the
 // registration itself.
 func TestAWriterThatStopsLeavesOnlyAMiss(t *testing.T) {
 	_, b, kv, c := twoInstances()
-	stopped := scscfstore.New(storetest.StopAfter(kv, 2), scscfstore.Config{Config: kvjson.Config{Now: c.Now}})
+	stopped := scscfstore.New(storetest.StopAfter(kv, 2), kvjson.Config{Now: c.Now})
 	stopped.PutRegistration(registration(start.Add(time.Hour)))
 	if _, ok := b.RegistrationOf(tel); ok {
 		t.Error("RegistrationOf found a registration that was never written")

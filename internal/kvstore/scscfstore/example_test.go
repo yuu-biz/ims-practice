@@ -20,7 +20,7 @@ func Example() {
 	now := time.UnixMilli(1_790_000_000_000)
 	kv := kvstore.NewMemoryStore(func() time.Time { return now })
 	// In a network: kvstore.NewValkey(kvstore.ValkeyConfig{Address: "kvstore:6379"}).
-	store := scscfstore.New(kv, scscfstore.Config{Config: kvjson.Config{Now: func() time.Time { return now }}})
+	store := scscfstore.New(kv, kvjson.Config{Now: func() time.Time { return now }})
 	var _ scscf.Store = store // what scscf.New takes
 
 	store.PutRegistration(scscf.Registration{PrivateIdentity: impi, PublicIdentities: []string{impu}, Expires: now.Add(time.Hour)})

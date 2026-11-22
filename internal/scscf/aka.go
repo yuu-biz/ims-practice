@@ -138,8 +138,7 @@ func (s *SCSCF) challengeAKA(st *sip.ServerTransaction, privateID, publicID stri
 		XRES:    av.XRES,
 		HSSHost: originHost(answer),
 	}
-	s.store.PutChallenge(ch)
-	s.authTimers.start(key(privateID), s.cfg.RegAwaitAuth, func() { s.regAwaitAuthExpired(privateID, ch.Nonce) })
+	s.putChallenge(ch)
 	log.Info("challenged with IMS AKA", "nonce", ch.Nonce, "stale", stale, "resynchronised", resync != nil)
 	challenge := sip.Challenge{Realm: ch.Realm, Nonce: ch.Nonce, Stale: stale, Algorithm: ch.Algorithm, QOP: []string{"auth"}}
 	// 5.4.1.2.1A item 1 c: IK and CK for the P-CSCF (7.2A.1).
