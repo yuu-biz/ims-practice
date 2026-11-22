@@ -4,6 +4,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/yuu-biz/ims-practice/internal/ims"
 	"github.com/yuu-biz/ims-practice/internal/sip"
 )
 
@@ -159,7 +160,7 @@ func withoutURIParam(uri, name string) string {
 // (Forbidden). The caller checks before it removes its own URI from
 // Route.
 func CheckOrig(req *sip.Message, p Profile) error {
-	if p.Trusted || isInDialog(req) {
+	if p.Trusted || ims.IsInDialog(req) {
 		return nil
 	}
 	na, err := sip.ParseNameAddr(req.Get("Route"))
