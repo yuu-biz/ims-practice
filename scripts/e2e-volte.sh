@@ -57,6 +57,7 @@ done
 # Diameter connections waited for above, and a REGISTER that came before
 # they were open again would get a 500.
 remember_nodes
+pcap="$(docker compose exec -T capture sh -c 'ls -t /captures/ims-*.pcap | head -n 1' | tr -d '\r')"
 
 domain=ims.mnc001.mcc001.3gppnetwork.org
 epc_api=http://172.28.0.80:8080
@@ -70,26 +71,6 @@ ue2=(-impi "001010000000002@$domain" -impu "sip:+12025550102@$domain" -password 
 fail=0
 mkdir -p e2e-out
 rm -f captures/volte-a-sent.amr captures/volte-b-received.amr
-
-# wait_log waits until the log of a container started with "run -d"
-# matches pattern.
-wait_log() {
-	local name="$1" pattern="$2" i
-	for i in $(seq 1 30); do
-		grep -q "$pattern" <<<"$(docker logs "$name" 2>/dev/null)" && return 0
-		sleep 1
-	done
-	return 1
-}
-# ended NAME waits for the container to end, keeps its log, removes it,
-# and prints its exit status.
-ended() {
-	local status
-	status="$(timeout 60 docker wait "$1" 2>/dev/null || echo timeout)"
-	docker logs "$1" >"e2e-out/$1.log" 2>&1 || true
-	docker rm -f "$1" >/dev/null 2>&1 || true
-	echo "$status"
-}
 
 echo "SIPp registers with IMS AKA"
 # SIPp exits 0 when its one call, the registration and the
@@ -110,6 +91,8 @@ if ! wait_log ims-practice-volte-b-answer '"msg":"waiting for a call"'; then
 	docker logs ims-practice-volte-b-answer 2>&1 | tail -n 5
 	fail=1
 fi
+# The UE exits 1 when the call fails, here and in the call to ue2 below;
+# the checks read its log, hence "|| true".
 out="$(docker compose run --no-deps --rm volte-a call "${va[@]}" --tone 3s --sent-out /captures/volte-a-sent.amr tel:+12025550112 2>&1 || true)"
 printf '%s\n' "$out" >e2e-out/volte-a-call.log
 if grep -q '"msg":"call answered"' <<<"$out" && grep -q '"msg":"media","codec":"AMR-WB"' <<<"$out" &&
@@ -117,6 +100,7 @@ if grep -q '"msg":"call answered"' <<<"$out" && grep -q '"msg":"media","codec":"
 	echo "ok   volte-a called volte-b in AMR-WB, and volte-b answered"
 else
 	echo "FAIL the VoLTE call: $(grep -E '"msg":"(call progress|ue failed|media)"' <<<"$out" | tail -n 3)"
+	# The container is gone when ended has removed it.
 	docker logs ims-practice-volte-b-answer 2>&1 | tail -n 5 || true
 	fail=1
 fi
@@ -134,7 +118,7 @@ fi
 
 echo "a VoLTE UE calls a UE that offers PCMU only"
 docker compose run --no-deps -d --name ims-practice-ue2-pcmu ue2 answer "${ue2[@]}" --ring 500ms --tone 2s >/dev/null
-wait_log ims-practice-ue2-pcmu '"msg":"waiting for a call"' || true
+wait_log ims-practice-ue2-pcmu '"msg":"waiting for a call"' || fail=1
 out="$(docker compose run --no-deps --rm volte-a call "${va[@]}" --tone 2s tel:+12025550102 2>&1 || true)"
 printf '%s\n' "$out" >e2e-out/volte-a-pcmu.log
 if grep -q '"msg":"call answered"' <<<"$out" && grep -q '"msg":"media","codec":"PCMU"' <<<"$out" &&
@@ -244,6 +228,11 @@ else
 	echo "FAIL DTMF (status $status): volte-b has $(session volte-b)"
 	fail=1
 fi
+# A UA starts no INVITE in a dialog while another INVITE of that dialog
+# is in progress (RFC 3261 14.1), so each re-INVITE below waits until the
+# ACK of the one before has reached volte-b.
+ack_to_b='sip.Method == "ACK" && ip.dst == 172.28.0.121'
+acks="$(count "$ack_to_b")"
 status="$(ue_post volte-a/hold)"
 if [ "$status" = 200 ] && grep -q '"peer_direction": "recvonly"' <<<"$(session volte-a)"; then
 	echo "ok   volte-a held the call, and volte-b answered recvonly"
@@ -251,7 +240,7 @@ else
 	echo "FAIL hold (status $status): volte-a has $(session volte-a)"
 	fail=1
 fi
-sleep 1
+await "the ACK of the hold at volte-b" "$ack_to_b" $((acks + 1))
 status="$(ue_post volte-a/resume)"
 if [ "$status" = 200 ] && grep -q '"peer_direction": "sendrecv"' <<<"$(session volte-a)"; then
 	echo "ok   volte-a resumed the call"
@@ -259,7 +248,7 @@ else
 	echo "FAIL resume (status $status): volte-a has $(session volte-a)"
 	fail=1
 fi
-sleep 1
+await "the ACK of the resume at volte-b" "$ack_to_b" $((acks + 2))
 status="$(ue_post volte-a/hangup)"
 if [ "$status" = 200 ] && wait_ues "$both_idle"; then
 	echo "ok   volte-a hung up"
@@ -268,16 +257,20 @@ else
 	fail=1
 fi
 # The Lab links the Rx sessions of the call to it: one for the
-# media of each UE, through its P-CSCF.
-sleep 2
-rx="$(curl -fsS http://localhost:8080/api/calls | "$python" -c '
+# media of each UE, through its P-CSCF. The STAs come as the call ends,
+# and their HEP copies a moment after, so the script asks until the Lab
+# shows them, for up to 30 s.
+lab_rx() {
+	rx="$(curl -fsS http://localhost:8080/api/calls | "$python" -c '
 import json, sys, urllib.parse, urllib.request
 call = next(c for c in json.load(sys.stdin) if c["call_id"] == sys.argv[1])
 query = "&".join("call_id=" + urllib.parse.quote(l, safe="") for l in call["legs"])
 messages = json.load(urllib.request.urlopen("http://localhost:8080/api/messages?" + query))
 print(" ".join(sorted({m["summary"] for m in messages if m["protocol"] == "diameter"})))
 ' "$lab_call" | tr -d '\r')"
-if [[ " $rx " == *" AAA 2001 AAR "* ]] && [[ " $rx " == *" STA 2001 STR "* ]]; then
+	[[ " $rx " == *" AAA 2001 AAR "* ]] && [[ " $rx " == *" STA 2001 STR "* ]]
+}
+if wait_for 30 lab_rx; then
 	echo "ok   the Lab shows the call's Rx messages: $rx"
 else
 	echo "FAIL the Lab shows these Diameter messages for the call: $rx"
@@ -292,16 +285,19 @@ else
 	echo "FAIL the second call (status $status): $(ues)"
 	exit 1
 fi
-sleep 2
 # The UEs that are attached, as the Lab lists them for its access
 # network panel: both VoLTE UEs, each with the default bearer of the IMS
-# APN and the voice bearer of the call.
-attached="$(curl -fsS http://localhost:8080/api/epc/ues | "$python" -c '
+# APN and the voice bearer of the call. The script asks until the Lab
+# lists them so, for up to 30 s.
+attached_ues() {
+	attached="$(curl -fsS http://localhost:8080/api/epc/ues | "$python" -c '
 import json, sys
 for ue in json.load(sys.stdin):
     print(ue["imsi"], ",".join(str(b["eps_qos"]["qci"]) for b in ue["bearers"]))
 ' | tr -d '\r' | tr '\n' ' ')"
-if [ "$attached" = "001010000000010 5,1 001010000000012 5,1 " ]; then
+	[ "$attached" = "001010000000010 5,1 001010000000012 5,1 " ]
+}
+if wait_for 30 attached_ues; then
 	echo "ok   the Lab lists both VoLTE UEs with their signalling and voice bearers"
 else
 	echo "FAIL the Lab lists the attached UEs as: $attached"
@@ -314,6 +310,10 @@ ebi="$(curl -fsS http://localhost:8080/api/epc/ues/001010000000010 | "$python" -
 import json, sys
 print(next((b["eps_bearer_identity"] for b in json.load(sys.stdin)["bearers"] if b["eps_qos"]["qci"] == 1), ""))
 ' | tr -d '\r')"
+# The checks read the capture up to the release of volte-b's bearer that
+# follows: the one after those that volte-b has had so far.
+released_b='ip.src == 172.28.0.80 && ip.dst == 172.28.0.121 && frame contains "DEACTIVATE EPS BEARER CONTEXT REQUEST"'
+releases="$(count "$released_b")"
 status="$(curl -s -w '
 %{http_code}' -X DELETE "http://localhost:8080/api/epc/network-initiated/ues/001010000000010/bearers/$ebi" | tail -n 1)"
 if [ -n "$ebi" ] && [ "${status:0:1}" = 2 ] && wait_ues "$both_idle"; then
@@ -325,9 +325,8 @@ fi
 docker compose --profile volte rm -sf volte-a volte-b >/dev/null 2>&1
 trap - EXIT
 same_nodes
-sleep 2
+await "the release of volte-b's bearer as the network ends the call" "$released_b" $((releases + 1))
 
-pcap="$(docker compose exec -T capture sh -c 'ls -t /captures/ims-*.pcap | head -n 1' | tr -d '\r')"
 echo "reading $pcap"
 
 last=0
