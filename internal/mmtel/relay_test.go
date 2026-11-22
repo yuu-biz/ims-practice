@@ -372,6 +372,67 @@ func TestRecordFollowsTheDialogs(t *testing.T) {
 		fmt.Sprintf("the record to have the CSeq %d of the AS's re-INVITE to the callee", cseq.Number))
 }
 
+// watchedStore is a store that tells each call record written into it.
+type watchedStore struct {
+	stores
+	put chan mmtel.CallRecord
+}
+
+func (s watchedStore) PutCall(ctx context.Context, r mmtel.CallRecord) error {
+	err := s.stores.PutCall(ctx, r)
+	select {
+	case s.put <- r:
+	default:
+	}
+	return err
+}
+
+// A request within the dialogs that the AS finishes after the call has
+// ended does not write the record of the call back, where another
+// instance would find a call that is over: the callee hangs up while
+// the caller's re-INVITE waits for its answer, which comes only after
+// the AS has deleted the record.
+func TestNoRecordAfterTheCall(t *testing.T) {
+	store := watchedStore{stores: mmtel.NewMemoryStore(), put: make(chan mmtel.CallRecord, 16)}
+	as := startASOn(t, noServices{}, mmtel.Config{}, store)
+	calls := make(chan *sip.IncomingCall, 1)
+	reinvites := make(chan *sip.InDialogRequest, 1)
+	callee := newUA(t, "bob", func(c *sip.IncomingCall) {
+		c.Handle(func(r *sip.InDialogRequest) { reinvites <- r })
+		calls <- c
+		c.Accept(answer)
+	})
+	caller := newUA(t, "alice", func(c *sip.IncomingCall) { c.Reject(480) })
+	out, err := caller.Invite(viaAS(t, as, callee, "term", offer))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := statuses(readAll(t, out)); !reflect.DeepEqual(got, []int{200}) {
+		t.Fatalf("caller got %v, want 200", got)
+	}
+	in := receive(t, calls, "call at the callee")
+	uas, _ := in.Dialog()
+	outgoing := sip.DialogID{CallID: uas.ID.CallID, LocalTag: uas.ID.RemoteTag, RemoteTag: uas.ID.LocalTag}
+	waitFor(t, func() bool { _, ok := callOf(t, as, outgoing); return ok }, "call record")
+
+	go out.ReInvite(hold)
+	r := receive(t, reinvites, "re-INVITE at the callee")
+	in.Bye()
+	waitFor(t, func() bool { _, ok := callOf(t, as, outgoing); return !ok }, "the record of the ended call to go")
+	for len(store.put) > 0 {
+		<-store.put
+	}
+	r.Reject(487)
+	select {
+	case <-store.put:
+		t.Error("the answer to the re-INVITE wrote the record of the ended call again")
+	case <-time.After(500 * time.Millisecond):
+	}
+	if _, ok := callOf(t, as, outgoing); ok {
+		t.Error("the store has the record of the ended call")
+	}
+}
+
 func TestCancelThroughTheAS(t *testing.T) {
 	as := startAS(t, noServices{}, mmtel.Config{})
 	calls := make(chan *sip.IncomingCall, 1)
