@@ -7,6 +7,9 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"slices"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -40,6 +43,42 @@ func TestValkey(t *testing.T) {
 func TestValkeyAfterTheConnectionsAreKilled(t *testing.T) {
 	addr := valkeyAddress(t)
 	ctx := context.Background()
+	// The connections of this store only: other packages share the
+	// server while their tests run, and must keep theirs. Each one asks
+	// the server for its ID when it opens, which the kill names.
+	var mu sync.Mutex
+	var own []string
+	kvstore.SetDialValkey(t, func(ctx context.Context, addr string) (net.Conn, error) {
+		var d net.Dialer
+		conn, err := d.DialContext(ctx, "tcp", addr)
+		if err != nil {
+			return nil, err
+		}
+		if _, err := conn.Write([]byte("*2\r\n$6\r\nCLIENT\r\n$2\r\nID\r\n")); err != nil {
+			conn.Close()
+			return nil, err
+		}
+		// The reply is one short line, read a byte at a time so that
+		// nothing after it is taken from the store's reader.
+		var line []byte
+		b := make([]byte, 1)
+		for len(line) == 0 || line[len(line)-1] != '\n' {
+			if _, err := conn.Read(b); err != nil {
+				conn.Close()
+				return nil, err
+			}
+			line = append(line, b[0])
+		}
+		id, ok := strings.CutPrefix(strings.TrimSpace(string(line)), ":")
+		if !ok {
+			conn.Close()
+			return nil, fmt.Errorf("CLIENT ID = %q", line)
+		}
+		mu.Lock()
+		own = append(own, id)
+		mu.Unlock()
+		return conn, nil
+	})
 	s := kvstore.NewValkey(kvstore.ValkeyConfig{Address: addr})
 	defer s.Close()
 	k := uniquePrefix() + "item"
@@ -51,13 +90,29 @@ func TestValkeyAfterTheConnectionsAreKilled(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer conn.Close()
-	// CLIENT KILL TYPE normal kills every connection of a client but
-	// the one that sends it.
-	if _, err := conn.Write([]byte("*4\r\n$6\r\nCLIENT\r\n$4\r\nKILL\r\n$4\r\nTYPE\r\n$6\r\nnormal\r\n")); err != nil {
-		t.Fatal(err)
+	r := bufio.NewReader(conn)
+	mu.Lock()
+	ids := slices.Clone(own)
+	mu.Unlock()
+	if len(ids) == 0 {
+		t.Fatal("the store opened no connection")
 	}
-	if line, err := bufio.NewReader(conn).ReadString('\n'); err != nil || line[0] != ':' {
-		t.Fatalf("CLIENT KILL = %q, %v", line, err)
+	n := 0
+	for _, id := range ids {
+		cmd := fmt.Sprintf("*4\r\n$6\r\nCLIENT\r\n$4\r\nKILL\r\n$2\r\nID\r\n$%d\r\n%s\r\n", len(id), id)
+		if _, err := conn.Write([]byte(cmd)); err != nil {
+			t.Fatal(err)
+		}
+		line, err := r.ReadString('\n')
+		if err != nil || line[0] != ':' {
+			t.Fatalf("CLIENT KILL ID %s = %q, %v", id, line, err)
+		}
+		if line != ":0\r\n" {
+			n++
+		}
+	}
+	if n == 0 {
+		t.Fatal("CLIENT KILL ID killed none of the store's connections")
 	}
 	failures := 0
 	for range 3 {

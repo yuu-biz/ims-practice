@@ -203,6 +203,13 @@ func exchange(rc *respConn, args []string) (any, error) {
 	return readReply(rc.r)
 }
 
+// dialValkey opens a connection to the server; a test replaces it to
+// learn which connections are its own.
+var dialValkey = func(ctx context.Context, addr string) (net.Conn, error) {
+	var d net.Dialer
+	return d.DialContext(ctx, "tcp", addr)
+}
+
 func (c *respClient) get(ctx context.Context) (*respConn, error) {
 	c.mu.Lock()
 	if n := len(c.idle); n > 0 {
@@ -212,8 +219,7 @@ func (c *respClient) get(ctx context.Context) (*respConn, error) {
 		return rc, nil
 	}
 	c.mu.Unlock()
-	var d net.Dialer
-	conn, err := d.DialContext(ctx, "tcp", c.addr)
+	conn, err := dialValkey(ctx, c.addr)
 	if err != nil {
 		return nil, err
 	}
