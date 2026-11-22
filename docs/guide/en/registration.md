@@ -363,7 +363,7 @@ The HSS has a provisioning API over HTTP, which listens where the hss key `provi
 
 | Request | What it does |
 | --- | --- |
-| `GET /subscriptions` | Lists the subscriptions with their registration state (at most 1000). |
+| `GET /subscriptions` | Lists the subscriptions with their registration state, one page at a time. A page holds 1000 of them, or the smaller number that `?limit=` asks for. `?after={private identity}` starts the page after that identity, in the order the identities sort in. While pages are left, the answer carries the query of the request for the next one in a `Link` header with `rel="next"` (RFC 8288), such as `<?after=001010000000001%40ims.mnc001.mcc001.3gppnetwork.org&limit=2>; rel="next"`. The HSS reads a page from its index of the private identities, so a page of a network with a million subscriptions costs what a page of this one costs. |
 | `GET /subscriptions/{private identity}` | Shows one subscription. |
 | `POST /subscriptions` | Adds one: `{"private_identity": "...", "public_identities": ["sip:...", "tel:..."], "password": "..."}`. An optional `"tel": "tel:+..."` adds that tel URI to the public identities. For IMS-AKA, `"aka": {"k": "...", "opc": "...", "amf": "...", "sqn": "..."}` in hexadecimal goes with the password or in its place. `"ut_password": "..."` lets the user change the supplementary services over Ut; the HSS keeps only H(A1) of it, as Sh repository data. `"mmtel_services": "<MMTelServices ...>"` gives the first supplementary service document; without it the subscription gets the one of the hss key `mmtel_services`. |
 | `DELETE /subscriptions/{private identity}` | Removes one. |

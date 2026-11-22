@@ -6,7 +6,9 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
 	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/fiorix/go-diameter/v4/diam"
@@ -16,9 +18,8 @@ import (
 	"github.com/yuu-biz/ims-practice/internal/sh"
 )
 
-// listLimit bounds a listing of the subscriptions. A product HSS pages
-// through its subscribers instead; the dashboard of this project shows
-// a handful.
+// listLimit bounds one page of the subscriptions, and is the page an
+// operator who asks for no limit gets.
 const listLimit = 1000
 
 // maxRequestBody bounds the body of a POST; a subscription is far
@@ -119,7 +120,8 @@ func response(s Subscriber) subscriptionResponse {
 // project's own API, not one of 3GPP: product HSSs have a provisioning
 // interface of their own too.
 //
-//	GET    /subscriptions          the subscriptions, at most listLimit
+//	GET    /subscriptions[?after={impi}&limit={n}]
+//	                               one page of the subscriptions
 //	GET    /subscriptions/{impi}   one subscription
 //	POST   /subscriptions          add one, from a subscriptionRequest
 //	DELETE /subscriptions/{impi}   remove one
@@ -211,8 +213,20 @@ func (h *HSS) setCustomizedAlertingTone(w http.ResponseWriter, r *http.Request) 
 	writeJSON(w, http.StatusOK, t)
 }
 
+// listSubscriptions answers with one page of the subscriptions, in the
+// order of their private identities. "after" is the private identity
+// the page before it ended at, and "limit" how many to return, at most
+// listLimit. While pages are left, the answer carries the query of the
+// request for the next one as a Link header with rel="next" (RFC 8288
+// 3); the body is the same list of subscriptions whether the request
+// pages or not.
 func (h *HSS) listSubscriptions(w http.ResponseWriter, r *http.Request) {
-	subs, _, err := h.store.List(r.Context(), "", listLimit)
+	limit, err := pageLimit(r)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	subs, next, err := h.store.List(r.Context(), r.URL.Query().Get("after"), limit)
 	if err != nil {
 		h.writeStoreFailure(w, err)
 		return
@@ -226,7 +240,28 @@ func (h *HSS) listSubscriptions(w http.ResponseWriter, r *http.Request) {
 		}
 		list = append(list, resp)
 	}
+	if next != "" {
+		// A target of the query alone, which is read against the request's
+		// own URL (RFC 3986 4.2), so that it holds wherever the API is
+		// reached from.
+		query := url.Values{"after": {next}, "limit": {strconv.Itoa(limit)}}
+		w.Header().Set("Link", `<?`+query.Encode()+`>; rel="next"`)
+	}
 	writeJSON(w, http.StatusOK, list)
+}
+
+// pageLimit is how many subscriptions the request asks for: listLimit
+// when it names no limit, and never more than that.
+func pageLimit(r *http.Request) (int, error) {
+	text := r.URL.Query().Get("limit")
+	if text == "" {
+		return listLimit, nil
+	}
+	limit, err := strconv.Atoi(text)
+	if err != nil || limit < 1 {
+		return 0, fmt.Errorf("limit: %q is not a number of subscriptions", text)
+	}
+	return min(limit, listLimit), nil
 }
 
 // responseWithCAT is the response for s with the CAT of its repository
