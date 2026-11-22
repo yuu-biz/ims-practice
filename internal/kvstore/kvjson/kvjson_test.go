@@ -245,6 +245,89 @@ func TestIndexItems(t *testing.T) {
 	}
 }
 
+// TestReadAndRemove: of several clients that take one item at once,
+// one gets it and the others find nothing; an item that is not there is
+// no failure either.
+func TestReadAndRemove(t *testing.T) {
+	ctx := context.Background()
+	for _, backend := range storetest.Backends() {
+		t.Run(backend.Name, func(t *testing.T) {
+			kv, cfg := backend.New(t), kvjson.Config{Prefix: storetest.Prefix()}
+			a, b := kvjson.New(kv, cfg, "test"), kvjson.New(kv, cfg, "test")
+			key := a.Key("delivery", "x")
+			if _, err := kvjson.ReadAndRemove[counter](ctx, a, key); !errors.Is(err, kvstore.ErrNotFound) {
+				t.Fatalf("ReadAndRemove of nothing = %v, want ErrNotFound", err)
+			}
+			for range 10 {
+				if err := kvjson.Write(ctx, a, key, counter{N: 7}, 0); err != nil {
+					t.Fatal(err)
+				}
+				var mu sync.Mutex
+				var got []counter
+				var wg sync.WaitGroup
+				for i := range 4 {
+					c := a
+					if i%2 == 1 {
+						c = b
+					}
+					wg.Add(1)
+					go func() {
+						defer wg.Done()
+						v, err := kvjson.ReadAndRemove[counter](ctx, c, key)
+						if errors.Is(err, kvstore.ErrNotFound) {
+							return
+						}
+						if err != nil {
+							t.Error(err)
+							return
+						}
+						mu.Lock()
+						got = append(got, v)
+						mu.Unlock()
+					}()
+				}
+				wg.Wait()
+				if len(got) != 1 || got[0].N != 7 {
+					t.Fatalf("the takers got %+v, want one N 7", got)
+				}
+			}
+		})
+	}
+}
+
+// TestTimeIndexMembers: a member is due at the time WriteDue gave it,
+// and RemoveDue takes it out, whether it is there or not.
+func TestTimeIndexMembers(t *testing.T) {
+	ctx := context.Background()
+	now := time.UnixMilli(1_790_000_000_000)
+	for _, backend := range storetest.Backends() {
+		t.Run(backend.Name, func(t *testing.T) {
+			c := kvjson.New(backend.New(t), kvjson.Config{Prefix: storetest.Prefix()}, "test")
+			if err := c.RemoveDue(ctx, "timer", "a"); err != nil {
+				t.Fatalf("RemoveDue of nothing = %v", err)
+			}
+			for member, at := range map[string]time.Time{"a": now, "b": now.Add(time.Minute)} {
+				if err := c.WriteDue(ctx, "timer", member, at); err != nil {
+					t.Fatal(err)
+				}
+			}
+			claims, err := c.ClaimDue(ctx, "timer", now.Add(time.Second), time.Minute, 10)
+			if err != nil || len(claims) != 1 || claims[0].Member != "a" {
+				t.Fatalf("ClaimDue a second after a = %v, %v; want a alone", claims, err)
+			}
+			if err := c.Done(ctx, claims[0]); err != nil {
+				t.Fatal(err)
+			}
+			if err := c.RemoveDue(ctx, "timer", "b"); err != nil {
+				t.Fatal(err)
+			}
+			if claims, err := c.ClaimDue(ctx, "timer", now.Add(time.Hour), time.Minute, 10); err != nil || len(claims) != 0 {
+				t.Errorf("ClaimDue after RemoveDue of b = %v, %v; want nothing", claims, err)
+			}
+		})
+	}
+}
+
 // TestAFailedStoreIsNoMissingItem: when the store fails, the operations
 // that take a context return its failure, which a caller can tell from
 // a missing item and from a lost race.
@@ -282,6 +365,15 @@ func TestAFailedStoreIsNoMissingItem(t *testing.T) {
 			}
 			if err := c.RemoveIndexIf(ctx, index, key); err == nil {
 				t.Error("RemoveIndexIf on a stopped store returned no error")
+			}
+			if _, err := kvjson.ReadAndRemove[counter](ctx, c, key); err == nil || errors.Is(err, kvstore.ErrNotFound) {
+				t.Errorf("ReadAndRemove on a stopped store = %v, want its failure", err)
+			}
+			if err := c.WriteDue(ctx, "timer", "a", time.Now()); err == nil {
+				t.Error("WriteDue on a stopped store returned no error")
+			}
+			if err := c.RemoveDue(ctx, "timer", "a"); err == nil {
+				t.Error("RemoveDue on a stopped store returned no error")
 			}
 		})
 	}
@@ -328,6 +420,16 @@ func (hanging) Delete(ctx context.Context, _ string) error {
 	return ctx.Err()
 }
 
+func (hanging) Schedule(ctx context.Context, _, _ string, _ time.Time) error {
+	<-ctx.Done()
+	return ctx.Err()
+}
+
+func (hanging) Unschedule(ctx context.Context, _, _ string) error {
+	<-ctx.Done()
+	return ctx.Err()
+}
+
 // TestTheOperationsEnd: an operation on a store that does not answer
 // ends when the Timeout of the Config runs out, or when the caller's
 // context ends first.
@@ -355,6 +457,12 @@ func TestTheOperationsEnd(t *testing.T) {
 			return err
 		},
 		"RemoveIndexIf": func(ctx context.Context, c *kvjson.Client) error { return c.RemoveIndexIf(ctx, "k", "t") },
+		"ReadAndRemove": func(ctx context.Context, c *kvjson.Client) error {
+			_, err := kvjson.ReadAndRemove[counter](ctx, c, "k")
+			return err
+		},
+		"WriteDue":  func(ctx context.Context, c *kvjson.Client) error { return c.WriteDue(ctx, "i", "m", time.Now()) },
+		"RemoveDue": func(ctx context.Context, c *kvjson.Client) error { return c.RemoveDue(ctx, "i", "m") },
 	}
 	for name, op := range operations {
 		t.Run(name, func(t *testing.T) {
