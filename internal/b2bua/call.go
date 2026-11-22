@@ -43,7 +43,12 @@ type Call struct {
 	// sessionToCaller tells that a session description went to the
 	// caller in a reliable provisional response.
 	sessionToCaller bool
-	early           earlyDialogs
+	// settled tells that an offer of the caller's or of the callee's own
+	// has crossed the confirmed dialogs since the callee answered: the
+	// two ends have settled the session between them, and the Call
+	// offers the caller no session of its own after that (OfferCaller).
+	settled bool
+	early   earlyDialogs
 }
 
 // copied is a reliable provisional response that the Call sent the
@@ -156,14 +161,19 @@ func (c *Call) Progress(code int, body sip.Body, headers ...sip.HeaderField) err
 		}
 	}
 	c.mu.Unlock()
-	err := c.in.Progress(code, body, headers...)
-	if err != nil {
+	// The session description goes out with the response, which a
+	// reliable one waits for the PRACK of: the next one that the Call
+	// sends goes on from this one (sentToCaller), whether that PRACK
+	// comes or not.
+	c.sentToCaller(body)
+	if err := c.in.Progress(code, body, headers...); err != nil {
 		// No PRACK comes for a response that did not go.
 		c.mu.Lock()
 		c.copies = slices.DeleteFunc(c.copies, func(k *copied) bool { return k == sent })
 		c.mu.Unlock()
+		return err
 	}
-	return err
+	return nil
 }
 
 // RelayProvisional passes resp, a provisional response of out, on to
@@ -203,6 +213,7 @@ func (c *Call) RelayProvisional(out *sip.OutgoingCall, resp *sip.Message) {
 	}
 	c.mu.Unlock()
 	c.setContact(resp)
+	c.sentToCaller(m.Body)
 	if err := c.in.Progress(resp.StatusCode, m.Body, m.Headers...); err != nil {
 		c.log.Info("provisional response not relayed", "status", resp.StatusCode, "error", err.Error())
 		// No PRACK comes for a copy that did not go.
@@ -245,8 +256,10 @@ func (c *Call) acknowledged() (acked *sip.Message, own bool) {
 // and the Call ends the other one.
 func (c *Call) Answer(out *sip.OutgoingCall, resp *sip.Message) {
 	c.answered.Store(true)
-	m := c.hooks.Answer(c.answerFrom(resp))
+	toCaller, session := c.answerFrom(resp)
+	m := c.hooks.Answer(toCaller, session)
 	c.setContact(resp)
+	c.sentToCaller(m.Body)
 	ack, err := c.in.Accept(m.Body, m.Headers...)
 	if err != nil {
 		// No ACK came, and the UA has sent the caller a BYE (RFC 3261
@@ -261,6 +274,13 @@ func (c *Call) Answer(out *sip.OutgoingCall, resp *sip.Message) {
 		if err := out.Ack(c.hooks.Ack(ack, ToCallee)); err != nil {
 			c.log.Warn("answer in the ACK not relayed", "error", err.Error())
 		}
+	}
+	if session != nil {
+		// The caller has the session description of another early dialog
+		// of the callee's side, and ignores a second one (RFC 3261
+		// 13.2.1): it gets the session of the dialog that answered in an
+		// offer of the Call's own, now that it has acknowledged the 2xx.
+		c.moveSession(out, toTag(resp), len(c.in.Request.Body) == 0 && len(resp.Body) > 0)
 	}
 	c.keepDialogs()
 	c.log.Info("call answered")
@@ -422,7 +442,7 @@ func (c *Call) prack(r *sip.InDialogRequest, out *sip.OutgoingCall, acked *sip.M
 	resp, err := out.PRACK(acked, m.Body, m.Headers...)
 	finish()
 	if !answered {
-		c.answerRequest(r, resp, err, out, ToCallee)
+		c.answerRequest(r, m.Body, resp, err, out, ToCallee)
 		return
 	}
 	if err != nil {
@@ -488,12 +508,39 @@ func (c *Call) forward(r *sip.InDialogRequest, to leg, d Direction, finish func(
 	if req.Method != sip.INVITE || r.Offer || err != nil || resp.StatusCode >= 300 {
 		finish()
 	}
-	c.answerRequest(r, resp, err, to, d)
+	c.answerRequest(r, m.Body, resp, err, to, d)
+}
+
+// changesSession reports whether r, a request within a dialog, settles
+// the session of the two dialogs between the two ends: a re-INVITE,
+// whose offer is in it or in the 2xx to it (RFC 3261 14.1), or any
+// other request with an offer, such as an UPDATE (RFC 3311 5.1). A
+// re-INVITE that only refreshes the session counts as well, with the
+// same offer and answer as before (RFC 4028 7.4): the two ends have
+// settled the session between them all the same.
+func changesSession(r *sip.InDialogRequest) bool {
+	return r.Request.Method == sip.INVITE || r.Offer
+}
+
+// settledByTheEnds notes that r, a request of the caller's or of the
+// callee's own, has settled the session of the two dialogs between the
+// two ends (changesSession): the Call offers the caller no session of
+// its own after that (OfferCaller). Only a request that the other end
+// answered with a 2xx settles anything; one that it refused leaves the
+// session as it was.
+func (c *Call) settledByTheEnds(r *sip.InDialogRequest) {
+	if !c.answered.Load() || !changesSession(r) {
+		return
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.settled = true
 }
 
 // answerRequest answers r, a request within a dialog that crossed in
-// direction d to the other leg, with what that leg answered.
-func (c *Call) answerRequest(r *sip.InDialogRequest, resp *sip.Message, err error, to leg, d Direction) {
+// direction d to the other leg with the body sent, with what that leg
+// answered.
+func (c *Call) answerRequest(r *sip.InDialogRequest, sent sip.Body, resp *sip.Message, err error, to leg, d Direction) {
 	switch {
 	case errors.Is(err, sip.ErrInviteInProgress), errors.Is(err, sip.ErrOfferPending):
 		// RFC 3261 14.2, RFC 3311 5.2: the request crossed one of the
@@ -505,12 +552,31 @@ func (c *Call) answerRequest(r *sip.InDialogRequest, resp *sip.Message, err erro
 		c.log.Info("request within the dialog not relayed", "method", string(r.Request.Method), "error", err.Error())
 		r.Reject(500)
 	case resp.StatusCode < 300:
+		if d == ToCaller {
+			// The caller took the session description of the request.
+			c.sentToCaller(sent)
+		}
 		m := c.hooks.Response(resp, r.Request, d.reverse())
+		if d == ToCallee {
+			// The response goes to the caller, which sent the request.
+			c.sentToCaller(m.Body)
+		}
+		offerless := r.Request.Method == sip.INVITE && !r.Offer
+		if !offerless {
+			c.settledByTheEnds(r)
+		}
 		ack, err := r.Accept(m.Body, m.Headers...)
-		if err == nil && r.Request.Method == sip.INVITE && !r.Offer && ack != nil {
+		if err == nil && offerless && ack != nil {
 			// A re-INVITE without an offer: the 2xx had the other side's
 			// offer, and this side's ACK has the answer (RFC 3261 14.1).
-			to.Ack(c.hooks.Ack(ack, d))
+			// Only with that answer have the two ends settled the session.
+			body := c.hooks.Ack(ack, d)
+			if d == ToCaller {
+				// The ACK goes to the caller, which the re-INVITE reached.
+				c.sentToCaller(body)
+			}
+			to.Ack(body)
+			c.settledByTheEnds(r)
 		}
 	default:
 		m := c.hooks.Response(resp, r.Request, d.reverse())

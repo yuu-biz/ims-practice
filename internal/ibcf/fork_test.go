@@ -103,12 +103,38 @@ func (n *network) startForkedCallee(t *testing.T, answering int) *forkedCallee {
 // without its SDP, since a UAC takes the first answer and ignores the
 // rest (13.2.1). Network B's TrGW sends the media to the branch that
 // answered, whichever 183 came last.
+//
+// When that is the second branch, network B's IBCF offers the caller's
+// side the session of the branch that answered once it has the ACK of
+// the 200, in the session that side has, with its version one up (RFC
+// 3264 8). The offer crosses network A, whose IBCF passes it on with
+// the SDP through its own TrGW, so the media of UE A1 still goes
+// through both TrGWs: UE A1 gets it in an UPDATE (RFC 3311), or in a
+// re-INVITE when its INVITE did not list UPDATE in Allow (RFC 3261
+// 14.1), and TrGW A learns from the answer where UE A1 takes its media.
 func TestForkBeyondTheBorder(t *testing.T) {
-	for _, answering := range []int{1, 2} {
-		t.Run(fmt.Sprintf("branch %d answers", answering), func(t *testing.T) {
+	// offer is the method in which the session of the branch that
+	// answered reaches UE A1, and none when the branch that answered is
+	// the one whose session description it got.
+	for _, c := range []struct {
+		answering int
+		offer     sip.Method
+		what      string
+	}{
+		{answering: 1, what: "no offer"},
+		{answering: 2, offer: sip.UPDATE, what: "the offer in an UPDATE"},
+		{answering: 2, offer: sip.INVITE, what: "the offer in a re-INVITE"},
+	} {
+		t.Run(fmt.Sprintf("branch %d answers, %s", c.answering, c.what), func(t *testing.T) {
+			answering := c.answering
 			p := newPair(t, nil)
 			f := p.b.startForkedCallee(t, answering)
-			call := p.a.invite(t, p.b.sipURI(), p.a.offer(t, sdp.VoLTECodecs(), 1, ""), nil)
+			inDialog := make(chan *sip.Message, 2)
+			var headers []sip.HeaderField
+			if c.offer == sip.INVITE {
+				headers = append(headers, sip.HeaderField{Name: "Allow", Value: "INVITE, ACK, CANCEL, BYE, PRACK"})
+			}
+			call := p.a.invite(t, p.b.sipURI(), p.a.offer(t, sdp.VoLTECodecs(), 1, ""), inDialog, headers...)
 			var got []*sip.Message
 			next := func(what string) *sip.Message {
 				t.Helper()
@@ -156,6 +182,51 @@ func TestForkBeyondTheBorder(t *testing.T) {
 			ctxA := onlyContext(t, p.a.trgw)
 			if remote := ctxA.remote[ibcf.PeerSide]; remote != ctxB.local.Peer {
 				t.Errorf("TrGW A sends the media to %s, want TrGW B at %s", remote, ctxB.local.Peer)
+			}
+
+			if c.offer == "" {
+				select {
+				case req := <-inDialog:
+					t.Errorf("the caller got a %s, want no offer for the branch whose session description it has", req.Method)
+				case <-time.After(20 * testTimers.T1):
+				}
+			} else {
+				var offer *sip.Message
+				select {
+				case offer = <-inDialog:
+				case <-time.After(10 * time.Second):
+					t.Fatal("no offer of the session of the branch that answered at the caller")
+				}
+				if offer.Method != c.offer {
+					t.Errorf("the caller got the session of the branch that answered in a %s, want a %s", offer.Method, c.offer)
+				}
+				if media, origin := audioOf(t, offer); media != ctxA.local.Core || origin != ctxA.local.Core.Addr() {
+					t.Errorf("the offer has media %s and origin %s, want TrGW A's core side %s", media, origin, ctxA.local.Core)
+				}
+				had, err := sdp.Parse(got[0].Body)
+				if err != nil {
+					t.Fatalf("SDP of the first 183: %v", err)
+				}
+				offered, err := sdp.Parse(offer.Body)
+				if err != nil {
+					t.Fatalf("SDP of the offer: %v", err)
+				}
+				want := had.Origin
+				want.Version++
+				if offered.Origin != want {
+					t.Errorf("the offer has the o= line %+v, want %+v of the session that the caller has", offered.Origin, want)
+				}
+				// The answer of UE A1 crosses the border too, and tells
+				// TrGW A where that UE now takes its media.
+				answered := netip.AddrPortFrom(p.a.media.Addr(), 50000)
+				deadline := time.Now().Add(10 * time.Second)
+				for onlyContext(t, p.a.trgw).remote[ibcf.CoreSide] != answered {
+					if time.Now().After(deadline) {
+						t.Fatalf("TrGW A sends the media to %s, want %s of the answer of UE A1 to the offer",
+							onlyContext(t, p.a.trgw).remote[ibcf.CoreSide], answered)
+					}
+					time.Sleep(10 * time.Millisecond)
+				}
 			}
 
 			if err := call.Bye(); err != nil {
