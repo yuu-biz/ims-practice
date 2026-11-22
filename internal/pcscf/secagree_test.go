@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/netip"
 	"slices"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -39,6 +40,9 @@ type akaHarness struct {
 	// it from a goroutine of its stack, after a message over a socket,
 	// which the race detector does not see as a hand-over.
 	noKeys atomic.Bool
+	// failWith, when not zero, is the status with which the fake home
+	// network answers a REGISTER marked "yes".
+	failWith atomic.Int32
 }
 
 func newAKAHarness(t *testing.T, protectedPort bool) *akaHarness {
@@ -60,6 +64,10 @@ func newAKAHarness(t *testing.T, protectedPort bool) *akaHarness {
 			}
 			resp.Add("WWW-Authenticate", ch.String())
 			st.Respond(resp)
+			return
+		}
+		if status := h.failWith.Load(); status != 0 {
+			st.Respond(sip.NewResponse(req, int(status), sip.NewTag()))
 			return
 		}
 		expires := "3600"
@@ -105,7 +113,7 @@ func newAKAHarness(t *testing.T, protectedPort bool) *akaHarness {
 
 // register sends a REGISTER of the UE, from its protected server port
 // to the protected server port of the P-CSCF when protected is set, and
-// returns the final response and the request the home network got, if
+// returns the final response and the REGISTER the home network got, if
 // any.
 func (h *akaHarness) register(protected bool, response, expires string, extra ...sip.HeaderField) (*sip.Message, *sip.Message) {
 	h.t.Helper()
@@ -130,11 +138,17 @@ func (h *akaHarness) register(protected bool, response, expires string, extra ..
 		from, to = h.ueProtected, h.protected
 	}
 	final := h.send(from, to, m)
-	select {
-	case got := <-h.received:
-		return final, got
-	case <-time.After(100 * time.Millisecond):
-		return final, nil
+	deadline := time.After(100 * time.Millisecond)
+	for {
+		select {
+		case got := <-h.received:
+			// The P-CSCF's own reg event SUBSCRIBE may come between.
+			if got.Method == sip.REGISTER {
+				return final, got
+			}
+		case <-deadline:
+			return final, nil
+		}
 	}
 }
 
@@ -153,6 +167,21 @@ func (h *akaHarness) send(from, to *sip.Stack, m *sip.Message) *sip.Message {
 	}
 	return final
 }
+
+// overTCP tells whether the UE sent m over TCP: the transport of the
+// UE's Via, the last one of m as the home network got it.
+func overTCP(m *sip.Message) bool {
+	vias := m.GetAll("Via")
+	if len(vias) == 0 {
+		return false
+	}
+	via, err := sip.ParseVia(vias[len(vias)-1])
+	return err == nil && via.Transport == string(sip.TCP)
+}
+
+// largerThanUDP makes a REGISTER larger than 1300 bytes, which the UE
+// then sends over TCP (RFC 3261 18.1.1).
+var largerThanUDP = sip.HeaderField{Name: "User-Agent", Value: strings.Repeat("x", 1300)}
 
 // ueKey is the UE in the SA table: its address and protected server
 // port.
@@ -337,15 +366,71 @@ func TestIMSAKAChangedSecurityHeaders(t *testing.T) {
 func TestProtectedRegisterOverTCP(t *testing.T) {
 	h := newAKAHarness(t, true)
 	headers := h.challenge()
-	headers = append(headers[:len(headers)-1], sip.HeaderField{Name: "User-Agent", Value: strings.Repeat("x", 1300)})
-	if r, got := h.register(true, "6629fae49393a05397450978507c4ef1", "600000", headers...); r.StatusCode != 200 || got == nil {
+	headers = append(headers[:len(headers)-1], largerThanUDP)
+	r, got := h.register(true, "6629fae49393a05397450978507c4ef1", "600000", headers...)
+	if r.StatusCode != 200 || got == nil {
 		t.Fatalf("protected REGISTER over TCP got %d, want the 200 of the home network", r.StatusCode)
+	}
+	if !overTCP(got) {
+		t.Fatalf("the REGISTER came with Via %v, want the UE's over TCP", got.GetAll("Via"))
 	}
 	if sas, ok := h.store.SecurityAssociations(h.ueKey()); !ok || sas.Temporary {
 		t.Errorf("after the 200 the entry is %+v, %v; want it established", sas, ok)
 	}
 	if _, ok := h.store.Association(sip.Destination{Transport: sip.UDP, Addr: h.ueKey()}); !ok {
 		t.Error("no association for the protected address of the UE")
+	}
+}
+
+// registerOverUDP registers the UE with IMS AKA, with REGISTERs small
+// enough for UDP, and returns the Security-Verify of its later
+// REGISTERs.
+func (h *akaHarness) registerOverUDP() []sip.HeaderField {
+	h.t.Helper()
+	headers := h.challenge()
+	verify := headers[:len(headers)-1]
+	if r, got := h.register(true, "6629fae49393a05397450978507c4ef1", "600000", verify...); r.StatusCode != 200 || got == nil || overTCP(got) {
+		h.t.Fatalf("protected REGISTER got %d, want the 200 of the home network over UDP", r.StatusCode)
+	}
+	return verify
+}
+
+// A deregistration larger than 1300 bytes goes over TCP although the UE
+// registered over UDP. The P-CSCF finds the IP association from the
+// sent-by of its Via, and the 200 ends it with the security
+// associations (TS 24.229 5.2.2.3, TS 33.203 7.4.2a).
+func TestDeregistrationOverTCP(t *testing.T) {
+	h := newAKAHarness(t, true)
+	verify := h.registerOverUDP()
+	r, got := h.register(true, "6629fae49393a05397450978507c4ef1", "0", append(verify, largerThanUDP)...)
+	if r.StatusCode != 200 || got == nil || !overTCP(got) {
+		t.Fatalf("deregistration got %d, want the 200 of the home network to a REGISTER over TCP", r.StatusCode)
+	}
+	if a, ok := h.store.Association(sip.Destination{Transport: sip.UDP, Addr: h.ueKey()}); ok && a.Expires.After(time.Now()) {
+		t.Errorf("the IP association of the UE lasts until %v after its deregistration", a.Expires)
+	}
+	if _, ok := h.store.SecurityAssociations(h.ueKey()); ok {
+		t.Error("the SA table still has the UE after its deregistration")
+	}
+}
+
+// TS 24.229 5.2.2.3: a 500 or a 504 to a REGISTER deletes the IP
+// association of the UE, also when the REGISTER went over TCP because
+// it is larger than 1300 bytes.
+func TestNetworkFailureToARegisterOverTCP(t *testing.T) {
+	for _, status := range []int{500, 504} {
+		t.Run(strconv.Itoa(status), func(t *testing.T) {
+			h := newAKAHarness(t, true)
+			verify := h.registerOverUDP()
+			h.failWith.Store(int32(status))
+			r, got := h.register(true, "6629fae49393a05397450978507c4ef1", "600000", append(verify, largerThanUDP)...)
+			if r.StatusCode != status || got == nil || !overTCP(got) {
+				t.Fatalf("REGISTER got %d, want the %d of the home network to a REGISTER over TCP", r.StatusCode, status)
+			}
+			if a, ok := h.store.Association(sip.Destination{Transport: sip.UDP, Addr: h.ueKey()}); ok {
+				t.Errorf("the IP association of the UE is still there after the %d: %+v", status, a)
+			}
+		})
 	}
 }
 
