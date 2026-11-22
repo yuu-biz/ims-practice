@@ -2,16 +2,17 @@ package facts
 
 import (
 	"fmt"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"regexp"
 	"strings"
 )
 
 // ueCommand is what the UE simulator takes on its command line: its
-// subcommands, and its flags with whether each takes a value.
+// subcommands, and the flags of each with whether it takes a value.
 type ueCommand struct {
-	subcommands map[string]bool
-	flags       map[string]bool
+	flags map[string]map[string]bool
 }
 
 var (
@@ -19,26 +20,47 @@ var (
 	flagLine  = regexp.MustCompile(`^  -([A-Za-z0-9-]+)( [^\t]+)?(?:\t|$)`)
 )
 
-// readUE runs "ue register -h" from the source of the repository, which
-// prints the usage of every subcommand and then every flag, one flag to
-// a line as package flag prints them: "  -name type" for a flag that
-// takes a value, "  -name" for a switch.
+// readUE builds the UE simulator from the source of the repository and
+// reads what it prints for "ue register -h", the usage of every
+// subcommand, and for "ue SUBCOMMAND -h", the flags of the subcommand,
+// one to a line as package flag prints them: "  -name type" for a flag
+// that takes a value, "  -name" for a switch.
 func readUE(root string) (*ueCommand, error) {
-	run := exec.Command("go", "run", "./cmd/ue", "register", "-h")
-	run.Dir = root
-	// The help ends with exit status 2, as package flag ends it.
-	out, _ := run.CombinedOutput()
-	c := &ueCommand{subcommands: map[string]bool{}, flags: map[string]bool{}}
-	for _, line := range strings.Split(string(out), "\n") {
+	dir, err := os.MkdirTemp("", "ue-")
+	if err != nil {
+		return nil, err
+	}
+	defer os.RemoveAll(dir)
+	binary := filepath.Join(dir, "ue")
+	build := exec.Command("go", "build", "-o", binary, "./cmd/ue")
+	build.Dir = root
+	if out, err := build.CombinedOutput(); err != nil {
+		return nil, fmt.Errorf("go build ./cmd/ue in %s: %w\n%s", root, err, out)
+	}
+	help := func(args ...string) string {
+		// The help ends with exit status 0, and the usage of a command
+		// that does not exist with 2; the output is what counts.
+		out, _ := exec.Command(binary, append(args, "-h")...).CombinedOutput()
+		return string(out)
+	}
+	c := &ueCommand{flags: map[string]map[string]bool{}}
+	for _, line := range strings.Split(help("register"), "\n") {
 		if m := usageLine.FindStringSubmatch(line); m != nil {
-			c.subcommands[m[1]] = true
-		}
-		if m := flagLine.FindStringSubmatch(line); m != nil {
-			c.flags[m[1]] = m[2] != ""
+			c.flags[m[1]] = map[string]bool{}
 		}
 	}
-	if len(c.subcommands) == 0 || len(c.flags) == 0 {
-		return nil, fmt.Errorf("go run ./cmd/ue register -h in %s printed no usage and flags:\n%s", root, out)
+	if len(c.flags) == 0 {
+		return nil, fmt.Errorf("ue register -h in %s printed no usage:\n%s", root, help("register"))
+	}
+	for subcommand, flags := range c.flags {
+		for _, line := range strings.Split(help(subcommand), "\n") {
+			if m := flagLine.FindStringSubmatch(line); m != nil {
+				flags[m[1]] = m[2] != ""
+			}
+		}
+		if len(flags) == 0 {
+			return nil, fmt.Errorf("ue %s -h in %s printed no flags", subcommand, root)
+		}
 	}
 	return c, nil
 }
@@ -61,14 +83,15 @@ func (r *Repository) checkUE(args []string) []string {
 	if !ok {
 		return problems
 	}
-	if !r.ue.subcommands[args[0]] {
+	flags, ok := r.ue.flags[args[0]]
+	if !ok {
 		return []string{fmt.Sprintf("ue has no subcommand %q", args[0])}
 	}
 	for i := 1; i < len(args) && strings.HasPrefix(args[i], "-") && args[i] != "-" && args[i] != "--"; i++ {
 		name, _, hasValue := strings.Cut(strings.TrimLeft(args[i], "-"), "=")
-		takesValue, known := r.ue.flags[name]
+		takesValue, known := flags[name]
 		if !known {
-			problems = append(problems, fmt.Sprintf("ue has no flag -%s", name))
+			problems = append(problems, fmt.Sprintf("ue %s has no flag -%s", args[0], name))
 			continue
 		}
 		if takesValue && !hasValue {

@@ -83,8 +83,7 @@ The two dialogs of a call live in the IBCF process that took the INVITE. Each IB
      --impi 001020000000001@ims.mnc002.mcc001.3gppnetwork.org \
      --impu sip:+12025550151@ims.mnc002.mcc001.3gppnetwork.org \
      --password test-password-b1 \
-     --pcscf 172.28.1.40:5060 --pcscf-uri sip:pcscf.ims.mnc002.mcc001.3gppnetwork.org:5060 \
-     --sc +12025550150
+     --pcscf 172.28.1.40:5060 --pcscf-uri sip:pcscf.ims.mnc002.mcc001.3gppnetwork.org:5060
    ```
 
 3. In another terminal, call it from UE A1 by its number:
@@ -103,10 +102,10 @@ The two dialogs of a call live in the IBCF process that took the INVITE. Each IB
    docker compose -f compose.yaml -f deploy/interconnect/compose.yaml run --rm ue sms --status-report +12025550151 "Hello UE-B1"
    ```
 
-6. To send one back, stop UE B1's registration of step 5, keep UE A1 registered (`run --rm ue register`) and send from UE B1 with the flags of step 2:
+6. To send one back, stop UE B1's registration of step 5, keep UE A1 registered (`run --rm ue register`) and send from UE B1 with the flags of step 2 and `--sc +12025550150`, the number of the SC of network B:
 
    ```sh
-   docker compose -f compose.yaml -f deploy/interconnect/compose.yaml run --rm peer-ue sms <flags of step 2> --status-report +12025550101 "Hello UE-A1"
+   docker compose -f compose.yaml -f deploy/interconnect/compose.yaml run --rm peer-ue sms <flags of step 2> --sc +12025550150 --status-report +12025550101 "Hello UE-A1"
    ```
 
    UE B1 sends from a registration of its own. With a second one still there, the status report could go to that one instead.

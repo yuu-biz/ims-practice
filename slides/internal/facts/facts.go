@@ -5,7 +5,7 @@
 // longer takes fails the check, as a link to a renamed heading does.
 //
 // Each fact is read from where the learner meets it: the Compose files
-// as they are, the subcommands and flags from "ue register -h", and the
+// as they are, the subcommands and flags from "ue SUBCOMMAND -h", and the
 // routes from the source of the package that serves them. The slides
 // tool imports none of the packages of the nodes.
 package facts

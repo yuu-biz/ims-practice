@@ -106,7 +106,9 @@ wait_ibcf ibcf-b 1970-01-01T00:00:00Z
 # The UEs of network B are subscribers 1 and 2 of
 # deploy/interconnect/peer/hss.yaml, behind network B's P-CSCF.
 peer=(--domain ims.mnc002.mcc001.3gppnetwork.org
-	--pcscf 172.28.1.40:5060 --pcscf-uri sip:pcscf.ims.mnc002.mcc001.3gppnetwork.org:5060 --sc +12025550150)
+	--pcscf 172.28.1.40:5060 --pcscf-uri sip:pcscf.ims.mnc002.mcc001.3gppnetwork.org:5060)
+# Only "ue sms" has -sc: the SC that UE B1's short messages go to.
+sc_b=(--sc +12025550150)
 ue_b1=("${peer[@]}" --impi 001020000000001@ims.mnc002.mcc001.3gppnetwork.org
 	--impu sip:+12025550151@ims.mnc002.mcc001.3gppnetwork.org --password test-password-b1)
 ue_a2=(--impi 001010000000002@ims.mnc001.mcc001.3gppnetwork.org
@@ -244,7 +246,7 @@ docker rm -f "${project}-ue-b1" "${project}-ue-a1" >/dev/null 2>&1 || true
 c run --no-deps -d --name "${project}-ue-a1" ue register >/dev/null
 wait_log "${project}-ue-a1" '"msg":"registered"' || true
 # TP-ST 1 again: the SC of network B forwarded it to network A.
-if out="$(c run --no-deps --rm peer-ue sms "${ue_b1[@]}" --status-report +12025550101 "$gsm_text_back" 2>&1)" &&
+if out="$(c run --no-deps --rm peer-ue sms "${ue_b1[@]}" "${sc_b[@]}" --status-report +12025550101 "$gsm_text_back" 2>&1)" &&
 	grep -q '"msg":"status report".*"status":1,' <<<"$out"; then
 	echo "ok   UE B1 sent UE A1 a short message, and the status report says network A took it"
 else

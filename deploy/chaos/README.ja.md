@@ -143,7 +143,7 @@ docker compose run --rm ue call --tone 6s tel:+12025550102
 
 ```sh
 b1=(--domain ims.mnc002.mcc001.3gppnetwork.org --pcscf 172.28.1.40:5060
-  --pcscf-uri sip:pcscf.ims.mnc002.mcc001.3gppnetwork.org:5060 --sc +12025550150
+  --pcscf-uri sip:pcscf.ims.mnc002.mcc001.3gppnetwork.org:5060
   --impi 001020000000001@ims.mnc002.mcc001.3gppnetwork.org
   --impu sip:+12025550151@ims.mnc002.mcc001.3gppnetwork.org --password test-password-b1)
 docker compose run -d --name b1-answer peer-ue answer "${b1[@]}" --ring 1s --tone 12s
