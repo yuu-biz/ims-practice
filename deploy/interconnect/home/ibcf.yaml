@@ -40,6 +40,6 @@ ibcf:
       entry_point: sip:ibcf.nni.mnc002.example.net:5060
       # IBCF-B sends from here, which tells its requests apart.
       sources: [172.28.2.20]
-# Copies of every SIP message for the dashboard.
+# Copies of every SIP message for the Lab.
 hep:
   collector: 172.28.0.60:9060

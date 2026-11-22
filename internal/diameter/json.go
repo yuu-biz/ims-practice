@@ -17,7 +17,7 @@ import (
 // A HEP packet of type "DIAMETER (JSON)" carries a Diameter message as
 // JSON instead of the message itself, because HEP3 rev. 37 assigns no
 // type to Diameter in its binary form. The names come from the
-// dictionary, so the dashboard shows "Public-Identity" where Wireshark
+// dictionary, so the Lab shows "Public-Identity" where Wireshark
 // does.
 
 type messageJSON struct {

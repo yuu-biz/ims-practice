@@ -14,8 +14,8 @@ RUN go mod download
 COPY . .
 # Replace the committed placeholder page with the built UI before
 # go:embed picks it up.
-RUN rm -rf internal/dashboard/web
-COPY --from=web /web/dist/ internal/dashboard/web/
+RUN rm -rf internal/lab/web
+COPY --from=web /web/dist/ internal/lab/web/
 RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/ ./cmd/ims ./cmd/ue
 
 # Alpine rather than scratch, so that learners have a shell inside the

@@ -158,12 +158,12 @@ services:
       ims:
         ipv4_address: 172.28.0.86
 
-  dashboard:
+  lab:
     <<: *ims-node
-    hostname: dashboard
+    hostname: lab
     volumes:
-      - ./deploy/compose/dashboard.yaml:/etc/ims/node.yaml:ro
-    # Open http://localhost:8080 on the host. The dashboard asks for no
+      - ./deploy/compose/lab.yaml:/etc/ims/node.yaml:ro
+    # Open http://localhost:8080 on the host. The Lab asks for no
     # password and can delete subscribers, so it is published on the
     # loopback address only.
     ports:
@@ -218,11 +218,11 @@ services:
       ims:
         ipv4_address: 172.28.0.103
 
-  # Two UE simulators that stay up and do what the dashboard asks
+  # Two UE simulators that stay up and do what the Lab asks
   # ("ue serve"). Start them with "docker compose --profile sim up -d".
   # They use subscribers 1 and 2 like ue and ue2, and ue-c below uses
   # subscriber 3 like ue3, so run one profile at a time. The control API
-  # is reached through the dashboard only.
+  # is reached through the Lab only.
   ue-a:
     image: ims-practice/ims:dev
     pull_policy: never
@@ -231,7 +231,7 @@ services:
     command: [serve, -control, "0.0.0.0:8090"]
     restart: unless-stopped
     stop_grace_period: 5s
-    depends_on: [pcscf, dashboard]
+    depends_on: [pcscf, lab]
     dns: [172.28.0.2]
     environment:
       UE_HEP: 172.28.0.60:9060
@@ -256,7 +256,7 @@ services:
       - test-password-2
     restart: unless-stopped
     stop_grace_period: 5s
-    depends_on: [pcscf, dashboard]
+    depends_on: [pcscf, lab]
     dns: [172.28.0.2]
     environment:
       UE_HEP: 172.28.0.60:9060
@@ -283,7 +283,7 @@ services:
       - test-password-3
     restart: unless-stopped
     stop_grace_period: 5s
-    depends_on: [pcscf, dashboard]
+    depends_on: [pcscf, lab]
     dns: [172.28.0.2]
     environment:
       UE_HEP: 172.28.0.60:9060
@@ -295,7 +295,7 @@ services:
   # hands it this address and the P-CSCF in the PCO, registers with IMS
   # AKA, and calls with AMR-WB and preconditions over the voice bearer
   # that the network sets up for each call. Like ue-a and ue-b, they stay
-  # up and do what the dashboard asks: start them with "docker compose
+  # up and do what the Lab asks: start them with "docker compose
   # --profile volte up -d". Subscriber 10 has the keys of MILENAGE test
   # set 1 and subscriber 12 those of test set 3 (TS 35.208), as in
   # hss.yaml. Their cards have a USIM and no ISIM: -impi and -impu are
@@ -325,7 +325,7 @@ services:
       - test-password-10
     restart: unless-stopped
     stop_grace_period: 5s
-    depends_on: [pcscf, epc, dashboard]
+    depends_on: [pcscf, epc, lab]
     dns: [172.28.0.2]
     environment:
       UE_HEP: 172.28.0.60:9060
@@ -358,7 +358,7 @@ services:
       - test-password-12
     restart: unless-stopped
     stop_grace_period: 5s
-    depends_on: [pcscf, epc, dashboard]
+    depends_on: [pcscf, epc, lab]
     dns: [172.28.0.2]
     environment:
       UE_HEP: 172.28.0.60:9060

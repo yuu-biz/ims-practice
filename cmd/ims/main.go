@@ -26,7 +26,6 @@ import (
 	"github.com/yuu-biz/ims-practice/internal/agw"
 	"github.com/yuu-biz/ims-practice/internal/config"
 	"github.com/yuu-biz/ims-practice/internal/cx"
-	"github.com/yuu-biz/ims-practice/internal/dashboard"
 	"github.com/yuu-biz/ims-practice/internal/diameter"
 	"github.com/yuu-biz/ims-practice/internal/epc"
 	"github.com/yuu-biz/ims-practice/internal/fault"
@@ -50,6 +49,7 @@ import (
 	"github.com/yuu-biz/ims-practice/internal/kvstore/pcscfstore"
 	"github.com/yuu-biz/ims-practice/internal/kvstore/scscfstore"
 	"github.com/yuu-biz/ims-practice/internal/kvstore/scstore"
+	"github.com/yuu-biz/ims-practice/internal/lab"
 	"github.com/yuu-biz/ims-practice/internal/mmtel"
 	"github.com/yuu-biz/ims-practice/internal/mrfc"
 	"github.com/yuu-biz/ims-practice/internal/pcscf"
@@ -428,13 +428,13 @@ func run(configPath string, log *slog.Logger) error {
 		defer api.Close()
 		log.Info("epc API listening", "address", cfg.EPC.API.String())
 	}
-	if c := cfg.Dashboard; c != nil {
-		roleLog := log.With("role", config.RoleDashboard)
-		var ues []dashboard.UESimulator
+	if c := cfg.Lab; c != nil {
+		roleLog := log.With("role", config.RoleLab)
+		var ues []lab.UESimulator
 		for _, u := range c.UEs {
-			ues = append(ues, dashboard.UESimulator{Name: u.Name, Control: u.Control})
+			ues = append(ues, lab.UESimulator{Name: u.Name, Control: u.Control})
 		}
-		d, err := dashboard.New(dashboard.Config{MaxMessages: dashboardMessages, HSSProvisioning: c.HSSProvisioning, EPC: c.EPC, UEs: ues}, roleLog)
+		l, err := lab.New(lab.Config{MaxMessages: labMessages, HSSProvisioning: c.HSSProvisioning, EPC: c.EPC, UEs: ues}, roleLog)
 		if err != nil {
 			return err
 		}
@@ -448,22 +448,22 @@ func run(configPath string, log *slog.Logger) error {
 		}
 		defer collector.Close()
 		go func() {
-			if err := d.ServeHEP(collector); err != nil {
+			if err := l.ServeHEP(collector); err != nil {
 				roleLog.Error("HEP collector failed", "error", err.Error())
 				cancel()
 			}
 		}()
 		// Close, not Shutdown, on the way out: an open /api/events stream
 		// never finishes by itself.
-		web := &http.Server{Addr: c.HTTPListen, Handler: d.Handler()}
+		web := &http.Server{Addr: c.HTTPListen, Handler: l.Handler()}
 		go func() {
 			if err := web.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-				roleLog.Error("dashboard HTTP server failed", "error", err.Error())
+				roleLog.Error("lab HTTP server failed", "error", err.Error())
 				cancel()
 			}
 		}()
 		defer web.Close()
-		roleLog.Info("dashboard listening", "hep", c.HEPListen, "http", c.HTTPListen)
+		roleLog.Info("lab listening", "hep", c.HEPListen, "http", c.HTTPListen)
 	}
 	if c := cfg.Fault; c != nil {
 		roleLog := log.With("role", config.RoleFault)
@@ -924,9 +924,9 @@ func diameterNodeName(cfg config.Config) string {
 	return strings.Join(roles, "+")
 }
 
-// dashboardMessages bounds the messages the dashboard keeps. Each
+// labMessages bounds the messages the Lab keeps. Each
 // message counts once per node that sent or received it.
-const dashboardMessages = 10000
+const labMessages = 10000
 
 // hssPeers are the Cx and Sh peers of the I-CSCF, the S-CSCF, the
 // IP-SM-GW and the MMTel AS: the instances of the HSS, in the order of

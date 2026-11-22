@@ -117,7 +117,7 @@ func response(s Subscriber) subscriptionResponse {
 }
 
 // Provisioning is the HTTP API that adds, shows and removes
-// subscriptions, which the dashboard uses. It is this
+// subscriptions, which the Lab uses. It is this
 // project's own API, not one of 3GPP: product HSSs have a provisioning
 // interface of their own too.
 //
@@ -266,7 +266,7 @@ func pageLimit(r *http.Request) (int, error) {
 }
 
 // responseWithCAT is the response for s with the CAT of its repository
-// data, so that the dashboard shows which tone the callers of the user
+// data, so that the Lab shows which tone the callers of the user
 // hear.
 func (h *HSS) responseWithCAT(ctx context.Context, s Subscriber) (subscriptionResponse, error) {
 	resp := response(s)

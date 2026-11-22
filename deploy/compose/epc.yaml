@@ -50,8 +50,8 @@ diameter:
   timers:
     tw: 30s
     tc: 30s
-# Copies of every SIP and Diameter message for the dashboard.
-# The address is fixed so that the node starts even when the dashboard
-# is down; the dashboard is not on the call path.
+# Copies of every SIP and Diameter message for the Lab.
+# The address is fixed so that the node starts even when the Lab
+# is down; the Lab is not on the call path.
 hep:
   collector: 172.28.0.60:9060

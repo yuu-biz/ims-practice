@@ -63,7 +63,7 @@ The capture files stay in `captures/` until you delete them.
 | `scscf` | 172.28.0.30 | S-CSCF. |
 | `pcscf` | 172.28.0.40 | P-CSCF. |
 | `agw` | 172.28.0.50 | Media relay in the IMS-AGW role, controlled by the P-CSCF. |
-| `dashboard` | 172.28.0.60 | Dashboard at http://localhost:8080, and the HEP collector. |
+| `lab` | 172.28.0.60 | Dashboard at http://localhost:8080, and the HEP collector. |
 | `ipsmgw` | 172.28.0.70 | IP-SM-GW, the application server of SMS over IP. |
 | `mmtel` | 172.28.0.75 | MMTel AS, the application server of the supplementary services. |
 | `epc` | 172.28.0.80 | EPC stub with a PCRF, for the VoLTE UEs. |

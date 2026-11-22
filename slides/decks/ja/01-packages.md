@@ -51,7 +51,7 @@ roles: [scscf]
 home_domain: ims.mnc001.mcc001.3gppnetwork.org
 ```
 
-- コアの役割は `hss`、`icscf`、`scscf`、`pcscf`、`agw`、`dashboard`、`ipsmgw` です。VoLTE とサービスには `epc`、`mmtel`、`mrfc`、`mrfp` を使います。ほかの網との境界には `ibcf` を使います。
+- コアの役割は `hss`、`icscf`、`scscf`、`pcscf`、`agw`、`lab`、`ipsmgw` です。VoLTE とサービスには `epc`、`mmtel`、`mrfc`、`mrfp` を使います。ほかの網との境界には `ibcf` を使います。
 - `roles` に 2 つ書くと、1 台が 2 つの役割を兼ねます。
 
 > 役割の一覧は `internal/config/config.go` の `knownRoles` にあります。
@@ -68,7 +68,7 @@ home_domain: ims.mnc001.mcc001.3gppnetwork.org
 | `scscf` | 172.28.0.30 | `scscf` | `scscf.yaml` |
 | `pcscf` | 172.28.0.40 | `pcscf` | `pcscf.yaml` |
 | `agw` | 172.28.0.50 | `agw` | `agw.yaml` |
-| `dashboard` | 172.28.0.60 | `dashboard` | `dashboard.yaml` |
+| `lab` | 172.28.0.60 | `lab` | `lab.yaml` |
 | `ipsmgw`、`mmtel` | 172.28.0.70、75 | `ipsmgw`、`mmtel` | `ipsmgw.yaml`、`mmtel.yaml` |
 | `epc`、`mrfc`、`mrfp` | 172.28.0.80、85、86 | `epc`、`mrfc`、`mrfp` | `epc.yaml`、`mrfc.yaml`、`mrfp.yaml` |
 | `ue`、`ue2`、`ue3` | 172.28.0.100、101、103 | `cmd/ue` | コマンドの引数 |
@@ -84,7 +84,7 @@ home_domain: ims.mnc001.mcc001.3gppnetwork.org
 
 | 層 | パッケージ |
 | --- | --- |
-| 役割。ノードの振る舞い。 | `pcscf` `icscf` `scscf` `hss` `ipsmgw` `sc` `agw` `dashboard` `ue` `epc` `mmtel` `mrfc` `ibcf` |
+| 役割。ノードの振る舞い。 | `pcscf` `icscf` `scscf` `hss` `ipsmgw` `sc` `agw` `lab` `ue` `epc` `mmtel` `mrfc` `ibcf` |
 | IMS の決まりとインタフェース | `ims` `ifc` `reginfo` `cx` `sh` `rx` `policy` `simservs` `interconnect` `netann` `confinfo` |
 | プロトコル | `sip` `sipdns` `diameter` `sdp` `rtp` `rtcp` `sms` `hep` `xcap` |
 | 符号化と計算 | `g711` `amr` `evs` `wav` `mixer` `milenage` `aka` `precondition` |
@@ -122,7 +122,7 @@ home_domain: ims.mnc001.mcc001.3gppnetwork.org
 | `mmtel` | MMTel AS。補足サービス。 | TS 24.173、TS 24.604 から 24.611、TS 24.623 |
 | `agw` | メディア中継ノード。IMS-AGW の役割。 | RFC 3550。制御の API はこのプロジェクト独自 |
 | `ue` | UE シミュレータ。 | TS 24.229、TS 24.341 |
-| `dashboard` | HEP の写しから登録と通話を組み立てる。 | このプロジェクト独自 |
+| `lab` | HEP の写しから登録と通話を組み立てる。 | このプロジェクト独自 |
 
 - スタブは、仕様のインタフェースだけを本物にして、中身を簡単にしたものです。HSS と SC がスタブです。
 - ダッシュボードは IMS の一部ではありません。ノードが送るものを見せるだけです。

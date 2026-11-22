@@ -1,0 +1,60 @@
+# The Lab. A Deployment: nothing in the signalling names
+# it, and it keeps no identity a peer depends on. Its Service has a
+# ClusterIP, so the nodes' HEP copies reach whichever Lab Pod is
+# running at one stable address.
+apiVersion: v1
+kind: Service
+metadata:
+  name: lab
+spec:
+  selector:
+    app.kubernetes.io/name: lab
+  ports:
+    # The web UI. Reach it from the host with
+    # kubectl -n ims port-forward svc/lab 8080:8080.
+    - name: http
+      port: 8080
+      protocol: TCP
+    # HEP copies of every SIP and Diameter message, for the ladder diagrams.
+    - name: hep
+      port: 9060
+      protocol: UDP
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: lab
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: lab
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: lab
+    spec:
+      terminationGracePeriodSeconds: 10
+      dnsConfig:
+        options:
+          - name: ndots
+            value: "1"
+      containers:
+        - name: ims
+          image: ims-practice/ims:dev
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+            - name: hep
+              containerPort: 9060
+              protocol: UDP
+          volumeMounts:
+            - name: config
+              mountPath: /etc/ims
+              readOnly: true
+      volumes:
+        - name: config
+          configMap:
+            name: lab-config

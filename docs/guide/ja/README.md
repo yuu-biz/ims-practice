@@ -63,7 +63,7 @@ docker compose --profile ue --profile sim --profile volte down --rmi all -v --re
 | `scscf` | 172.28.0.30 | S-CSCF。 |
 | `pcscf` | 172.28.0.40 | P-CSCF。 |
 | `agw` | 172.28.0.50 | IMS-AGW の役割のメディア中継。P-CSCF が制御します。 |
-| `dashboard` | 172.28.0.60 | http://localhost:8080 のダッシュボードと、HEP の収集先。 |
+| `lab` | 172.28.0.60 | http://localhost:8080 のダッシュボードと、HEP の収集先。 |
 | `ipsmgw` | 172.28.0.70 | IP-SM-GW。SMS over IP のアプリケーションサーバーです。 |
 | `mmtel` | 172.28.0.75 | MMTel AS。補足サービスのアプリケーションサーバーです。 |
 | `epc` | 172.28.0.80 | PCRF を含む EPC のスタブ。VoLTE の UE が使います。 |

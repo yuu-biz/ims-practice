@@ -20,7 +20,7 @@ resources:
   - mrfc.yaml
   - mrfp.yaml
   - epc.yaml
-  - dashboard.yaml
+  - lab.yaml
   - ue.yaml
 # The role configuration files, copied from deploy/compose by
 # "go generate ./deploy/k8s/..." and changed only where Kubernetes needs
@@ -47,5 +47,5 @@ configMapGenerator:
     files: [node.yaml=config/mrfp.yaml]
   - name: epc-config
     files: [node.yaml=config/epc.yaml]
-  - name: dashboard-config
-    files: [node.yaml=config/dashboard.yaml]
+  - name: lab-config
+    files: [node.yaml=config/lab.yaml]

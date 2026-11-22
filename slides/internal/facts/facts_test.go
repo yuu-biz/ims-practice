@@ -52,7 +52,7 @@ func TestStaleCommandsFail(t *testing.T) {
 		got = append(got, strings.TrimPrefix(p.Error(), "stale.md: slide 2: "))
 	}
 	want := []string{
-		"curl -X DELETE http://localhost:8080/api/epc/ues/001010000000010/bearers/6: internal/dashboard registers no route for DELETE /api/epc/ues/001010000000010/bearers/6",
+		"curl -X DELETE http://localhost:8080/api/epc/ues/001010000000010/bearers/6: internal/lab registers no route for DELETE /api/epc/ues/001010000000010/bearers/6",
 		`docker compose run --rm nosuch register: no service "nosuch" in compose.yaml`,
 		`docker compose --profile nosuch up -d: no profile "nosuch" in compose.yaml`,
 		`docker compose logs -f scscf nosuch2: no service "nosuch2" in compose.yaml`,

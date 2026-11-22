@@ -132,7 +132,7 @@ wait
 ## 5. The dashboard
 
 ```sh
-kubectl -n ims port-forward svc/dashboard 8080:8080
+kubectl -n ims port-forward svc/lab 8080:8080
 ```
 
 Open http://localhost:8080. To drive calls from the dashboard, start the simulators that stay up. They use the same subscribers as `ue` and `ue2`, so stop those first:

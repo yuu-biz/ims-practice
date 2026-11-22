@@ -159,7 +159,7 @@ func TestParseHEP(t *testing.T) {
 		want      *HEP
 	}{
 		{"absent", "", nil},
-		{"collector only", "hep: {collector: dashboard:9060}\n", &HEP{Collector: "dashboard:9060"}},
+		{"collector only", "hep: {collector: lab:9060}\n", &HEP{Collector: "lab:9060"}},
 		{"with agent ID", "hep:\n  collector: 172.28.0.60:9060\n  agent_id: 4294967295\n", &HEP{Collector: "172.28.0.60:9060", AgentID: 4294967295}},
 	}
 	for _, tt := range tests {
@@ -246,10 +246,10 @@ func TestParseRejects(t *testing.T) {
 		{"memory store with an address", "roles: [scscf]\n", "roles: [scscf]\nstore: {kind: memory, address: valkey:6379}\n", "only kind valkey"},
 		{"negative store timeout", "roles: [scscf]\n", "roles: [scscf]\nstore: {kind: valkey, address: valkey:6379, timeout: -1s}\n", "store: timeout"},
 		{"maintenance without a port", "roles: [scscf]\n", "roles: [scscf]\nmaintenance: {listen: scscf}\n", "maintenance: listen"},
-		{"HEP collector without port", "roles: [scscf]\n", "roles: [scscf]\nhep: {collector: dashboard}\n", "hep.collector"},
+		{"HEP collector without port", "roles: [scscf]\n", "roles: [scscf]\nhep: {collector: lab}\n", "hep.collector"},
 		{"HEP without collector", "roles: [scscf]\n", "roles: [scscf]\nhep: {agent_id: 1}\n", "hep.collector"},
-		{"HEP agent ID beyond 32 bits", "roles: [scscf]\n", "roles: [scscf]\nhep: {collector: dashboard:9060, agent_id: 4294967296}\n", "into uint32"},
-		{"HEP agent ID below zero", "roles: [scscf]\n", "roles: [scscf]\nhep: {collector: dashboard:9060, agent_id: -1}\n", "into uint32"},
+		{"HEP agent ID beyond 32 bits", "roles: [scscf]\n", "roles: [scscf]\nhep: {collector: lab:9060, agent_id: 4294967296}\n", "into uint32"},
+		{"HEP agent ID below zero", "roles: [scscf]\n", "roles: [scscf]\nhep: {collector: lab:9060, agent_id: -1}\n", "into uint32"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -672,11 +672,11 @@ diameter:
 	}
 }
 
-const dashboardYAML = `
-node: dashboard
-roles: [dashboard]
+const labYAML = `
+node: lab
+roles: [lab]
 home_domain: ims.mnc001.mcc001.3gppnetwork.org
-dashboard:
+lab:
   hep_listen: ":9060"
   http_listen: ":8080"
   hss_provisioning: http://hss:8081
@@ -686,26 +686,26 @@ dashboard:
     - {name: ue-b, control: "http://172.28.0.111:8090"}
 `
 
-func TestParseDashboard(t *testing.T) {
-	cfg, err := Parse(strings.NewReader(dashboardYAML))
+func TestParseLab(t *testing.T) {
+	cfg, err := Parse(strings.NewReader(labYAML))
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := Dashboard{HEPListen: ":9060", HTTPListen: ":8080", HSSProvisioning: "http://hss:8081", EPC: "http://epc:8080", UEs: []UESimulator{
+	want := Lab{HEPListen: ":9060", HTTPListen: ":8080", HSSProvisioning: "http://hss:8081", EPC: "http://epc:8080", UEs: []UESimulator{
 		{Name: "ue-a", Control: "http://ue-a:8090"},
 		{Name: "ue-b", Control: "http://172.28.0.111:8090"},
 	}}
-	if cfg.Dashboard == nil || !reflect.DeepEqual(*cfg.Dashboard, want) || cfg.Diameter != nil {
-		t.Errorf("dashboard = %+v, want %+v", cfg.Dashboard, want)
+	if cfg.Lab == nil || !reflect.DeepEqual(*cfg.Lab, want) || cfg.Diameter != nil {
+		t.Errorf("lab = %+v, want %+v", cfg.Lab, want)
 	}
 
-	optional, _, _ := strings.Cut(dashboardYAML, "  hss_provisioning:")
+	optional, _, _ := strings.Cut(labYAML, "  hss_provisioning:")
 	cfg, err = Parse(strings.NewReader(optional))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.Dashboard.HSSProvisioning != "" || cfg.Dashboard.EPC != "" || cfg.Dashboard.UEs != nil {
-		t.Errorf("dashboard = %+v without hss_provisioning, epc and ues", cfg.Dashboard)
+	if cfg.Lab.HSSProvisioning != "" || cfg.Lab.EPC != "" || cfg.Lab.UEs != nil {
+		t.Errorf("lab = %+v without hss_provisioning, epc and ues", cfg.Lab)
 	}
 
 	tests := []struct {
@@ -714,7 +714,7 @@ func TestParseDashboard(t *testing.T) {
 		new     string
 		wantErr string
 	}{
-		{"hep_listen without port", `hep_listen: ":9060"`, `hep_listen: "dashboard"`, "hep_listen"},
+		{"hep_listen without port", `hep_listen: ":9060"`, `hep_listen: "lab"`, "hep_listen"},
 		{"http_listen with port 0", `http_listen: ":8080"`, `http_listen: ":0"`, "http_listen"},
 		{"provisioning not a URL", "http://hss:8081", "hss:8081", "hss_provisioning"},
 		{"EPC not a URL", "http://epc:8080", "epc:8080", "epc:"},
@@ -722,12 +722,12 @@ func TestParseDashboard(t *testing.T) {
 		{"UE name with a slash", "name: ue-a", "name: ue/a", "ues[0].name"},
 		{"UE name used twice", "name: ue-b", "name: ue-a", `ues[1].name: "ue-a" is used twice`},
 		{"UE control not a URL", `control: "http://ue-a:8090"`, "control: ue-a:8090", "ues[0].control"},
-		{"section without its role", "roles: [dashboard]", "roles: [agw]\nagw: {control: 0.0.0.0:8080, rtp_address: 172.28.0.50, rtp_ports: {min: 40000, max: 40099}}", "dashboard: only the dashboard role"},
+		{"section without its role", "roles: [lab]", "roles: [agw]\nagw: {control: 0.0.0.0:8080, rtp_address: 172.28.0.50, rtp_ports: {min: 40000, max: 40099}}", "lab: only the lab role"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			yaml := strings.Replace(dashboardYAML, tt.old, tt.new, 1)
-			if yaml == dashboardYAML {
+			yaml := strings.Replace(labYAML, tt.old, tt.new, 1)
+			if yaml == labYAML {
 				t.Fatalf("test edit %q did not apply", tt.old)
 			}
 			_, err := Parse(strings.NewReader(yaml))
@@ -736,9 +736,9 @@ func TestParseDashboard(t *testing.T) {
 			}
 		})
 	}
-	noSection := "node: dashboard\nroles: [dashboard]\nhome_domain: ims.mnc001.mcc001.3gppnetwork.org\n"
-	if _, err := Parse(strings.NewReader(noSection)); err == nil || !strings.Contains(err.Error(), "dashboard: required for the dashboard role") {
-		t.Errorf("dashboard role without its section: err = %v", err)
+	noSection := "node: lab\nroles: [lab]\nhome_domain: ims.mnc001.mcc001.3gppnetwork.org\n"
+	if _, err := Parse(strings.NewReader(noSection)); err == nil || !strings.Contains(err.Error(), "lab: required for the lab role") {
+		t.Errorf("lab role without its section: err = %v", err)
 	}
 }
 

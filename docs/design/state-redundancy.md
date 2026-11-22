@@ -175,7 +175,7 @@ IMS の復旧手順（TS 23.380）のうち、次のものを再現します。
 | --- | --- |
 | 障害注入 | 調査の記録の 8 章で決めたもの（`deploy/chaos/fault.sh`、`internal/fault`、nftables の netdev の egress と ingress、tc netem、使い捨ての道具のコンテナ）を使います。冗長構成で増えるサービスの名前を、`fault.sh` と `internal/fault` の対象に足します。 |
 | Docker のソケット | IMS のノードは、Docker のソケットにも `internal/fault` にも依りません。e2e のスクリプトは、ホストの `docker` のコマンドで障害を入れます。API のコンテナ（`deploy/chaos/agent.yaml`）は、上書きのファイルで明示したときだけ起動し、`compose.yaml` には入れません。 |
-| 画面 | 障害の注入は学習用の画面から、ドレインは OAM から操作します（[lab-oam.md](lab-oam.md)）。障害注入の画面は、新しい設定 `dashboard.fault_api` があるときだけ動かし、無ければ使えないことを表示します。 |
+| 画面 | 障害の注入は学習用の画面から、ドレインは OAM から操作します（[lab-oam.md](lab-oam.md)）。障害注入の画面は、新しい設定 `lab.fault_api` があるときだけ動かし、無ければ使えないことを表示します。 |
 | OAM | 冗長構成で全部のノードに保守用の API が入るので、OAM の役割 `oam` はその上に作れます。 |
 
 ## 作らないもの

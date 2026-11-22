@@ -99,7 +99,7 @@ func TestInjectAppliesAndExpires(t *testing.T) {
 		t.Fatalf("calls = %v, want %v", e.Calls(), want)
 	}
 
-	// An ended fault stays for the dashboard, then goes.
+	// An ended fault stays for the Lab, then goes.
 	c.Advance(endedRetention)
 	m.ExpireDue(ctx)
 	if _, err := m.Get(f.ID); err != nil {

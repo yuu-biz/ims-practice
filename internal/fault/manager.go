@@ -50,7 +50,7 @@ var ErrConflict = errors.New("conflict")
 var ErrExecutor = errors.New("executor failed")
 
 // endedRetention is how long an ended fault stays in the list, so that
-// the dashboard can still show what happened.
+// the Lab can still show what happened.
 const endedRetention = time.Hour
 
 // Manager holds the faults, applies and clears them through an

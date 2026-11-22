@@ -324,8 +324,8 @@ func TestPhoneSendsAndListsShortMessages(t *testing.T) {
 		return len(h.Received) == 1 && h.Received[0].Text == "Hi B" && h.Received[0].From == "+12025550101"
 	})
 
-	// /events carries the same history as it changes, as a dashboard
-	// that follows the phone sees it.
+	// /events carries the same history as it changes, as the Lab sees
+	// it when it follows the phone.
 	nextEvent(t, aEvents, "the short message accepted", func(s statusJSON) bool {
 		return len(s.SMS.Sent) == 1 && s.SMS.Sent[0].CallID == sent.CallID && s.SMS.Sent[0].State == ue.SubmitAccepted
 	})

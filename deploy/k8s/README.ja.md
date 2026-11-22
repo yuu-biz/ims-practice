@@ -132,7 +132,7 @@ wait
 ## 5. ダッシュボード
 
 ```sh
-kubectl -n ims port-forward svc/dashboard 8080:8080
+kubectl -n ims port-forward svc/lab 8080:8080
 ```
 
 http://localhost:8080 を開きます。ダッシュボードから発信するには、起動したままの模擬の UE を起こします。`ue` と `ue2` と同じ加入者を使うので、先にそちらを止めます。

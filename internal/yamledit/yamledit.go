@@ -21,7 +21,7 @@ type Change struct {
 	// means is up to the generator.
 	File string
 	// Key is a dotted path, with the index of an item of a sequence, as
-	// in dashboard.ues.0.control. With Add it is the path of a new key.
+	// in lab.ues.0.control. With Add it is the path of a new key.
 	Key string
 	// Comment, when not empty, replaces the comment lines right above
 	// the key, or goes there when there are none.

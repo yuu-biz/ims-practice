@@ -679,8 +679,8 @@ func (raw *rawHSS) validate(homeDomain string) (hss.Config, error) {
 	return c, nil
 }
 
-// Dashboard is the configuration of the dashboard role.
-type Dashboard struct {
+// Lab is the configuration of the lab role.
+type Lab struct {
 	// HEPListen is the UDP address of the HEP collector, such as :9060.
 	HEPListen string
 	// HTTPListen is where the web UI and its API are served.
@@ -690,7 +690,7 @@ type Dashboard struct {
 	HSSProvisioning string
 	// EPC is the URL of the API of the EPC stub, such as
 	// http://epc:8080, whose endpoints for the state of a UE and for
-	// the procedures that the network initiates the dashboard passes
+	// the procedures that the network initiates the Lab passes
 	// on. Empty leaves them unavailable.
 	EPC string
 	// UEs are the UE simulators ("ue serve") that the web UI drives, in
@@ -698,16 +698,16 @@ type Dashboard struct {
 	UEs []UESimulator
 }
 
-// UESimulator is one UE simulator that the dashboard controls.
+// UESimulator is one UE simulator that the Lab controls.
 type UESimulator struct {
-	// Name is how the dashboard API names the UE, as in
+	// Name is how the Lab API names the UE, as in
 	// /api/ues/{name}/call: letters, digits and hyphens.
 	Name string
 	// Control is the URL of its control API, such as http://ue-a:8090.
 	Control string
 }
 
-type rawDashboard struct {
+type rawLab struct {
 	HEPListen       string `yaml:"hep_listen"`
 	HTTPListen      string `yaml:"http_listen"`
 	HSSProvisioning string `yaml:"hss_provisioning"`
@@ -718,31 +718,31 @@ type rawDashboard struct {
 	} `yaml:"ues"`
 }
 
-func (raw *rawDashboard) validate() (Dashboard, error) {
+func (raw *rawLab) validate() (Lab, error) {
 	if err := checkHostPort(raw.HEPListen); err != nil {
-		return Dashboard{}, fmt.Errorf("hep_listen: %w", err)
+		return Lab{}, fmt.Errorf("hep_listen: %w", err)
 	}
 	if err := checkHostPort(raw.HTTPListen); err != nil {
-		return Dashboard{}, fmt.Errorf("http_listen: %w", err)
+		return Lab{}, fmt.Errorf("http_listen: %w", err)
 	}
 	if raw.HSSProvisioning != "" && !strings.HasPrefix(raw.HSSProvisioning, "http://") {
-		return Dashboard{}, fmt.Errorf("hss_provisioning: %q is not an http:// URL", raw.HSSProvisioning)
+		return Lab{}, fmt.Errorf("hss_provisioning: %q is not an http:// URL", raw.HSSProvisioning)
 	}
 	if raw.EPC != "" && !strings.HasPrefix(raw.EPC, "http://") {
-		return Dashboard{}, fmt.Errorf("epc: %q is not an http:// URL", raw.EPC)
+		return Lab{}, fmt.Errorf("epc: %q is not an http:// URL", raw.EPC)
 	}
-	d := Dashboard{HEPListen: raw.HEPListen, HTTPListen: raw.HTTPListen, HSSProvisioning: raw.HSSProvisioning, EPC: raw.EPC}
+	d := Lab{HEPListen: raw.HEPListen, HTTPListen: raw.HTTPListen, HSSProvisioning: raw.HSSProvisioning, EPC: raw.EPC}
 	names := map[string]bool{}
 	for i, u := range raw.UEs {
 		if !isUEName(u.Name) {
-			return Dashboard{}, fmt.Errorf("ues[%d].name: %q is not made of letters, digits and hyphens", i, u.Name)
+			return Lab{}, fmt.Errorf("ues[%d].name: %q is not made of letters, digits and hyphens", i, u.Name)
 		}
 		if names[u.Name] {
-			return Dashboard{}, fmt.Errorf("ues[%d].name: %q is used twice", i, u.Name)
+			return Lab{}, fmt.Errorf("ues[%d].name: %q is used twice", i, u.Name)
 		}
 		names[u.Name] = true
 		if !strings.HasPrefix(u.Control, "http://") {
-			return Dashboard{}, fmt.Errorf("ues[%d].control: %q is not an http:// URL", i, u.Control)
+			return Lab{}, fmt.Errorf("ues[%d].control: %q is not an http:// URL", i, u.Control)
 		}
 		d.UEs = append(d.UEs, UESimulator{Name: u.Name, Control: u.Control})
 	}

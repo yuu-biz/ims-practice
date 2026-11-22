@@ -51,7 +51,7 @@ roles: [scscf]
 home_domain: ims.mnc001.mcc001.3gppnetwork.org
 ```
 
-- The roles of the core: `hss`, `icscf`, `scscf`, `pcscf`, `agw`, `dashboard` and `ipsmgw`. For VoLTE and the services: `epc`, `mmtel`, `mrfc`, `mrfp`. At the border to another network: `ibcf`.
+- The roles of the core: `hss`, `icscf`, `scscf`, `pcscf`, `agw`, `lab` and `ipsmgw`. For VoLTE and the services: `epc`, `mmtel`, `mrfc`, `mrfp`. At the border to another network: `ibcf`.
 - Two entries in `roles` make one node play both roles.
 
 > The list of roles is `knownRoles` in `internal/config/config.go`.
@@ -68,7 +68,7 @@ home_domain: ims.mnc001.mcc001.3gppnetwork.org
 | `scscf` | 172.28.0.30 | `scscf` | `scscf.yaml` |
 | `pcscf` | 172.28.0.40 | `pcscf` | `pcscf.yaml` |
 | `agw` | 172.28.0.50 | `agw` | `agw.yaml` |
-| `dashboard` | 172.28.0.60 | `dashboard` | `dashboard.yaml` |
+| `lab` | 172.28.0.60 | `lab` | `lab.yaml` |
 | `ipsmgw`, `mmtel` | 172.28.0.70, 75 | `ipsmgw`, `mmtel` | `ipsmgw.yaml`, `mmtel.yaml` |
 | `epc`, `mrfc`, `mrfp` | 172.28.0.80, 85, 86 | `epc`, `mrfc`, `mrfp` | `epc.yaml`, `mrfc.yaml`, `mrfp.yaml` |
 | `ue`, `ue2`, `ue3` | 172.28.0.100, 101, 103 | `cmd/ue` | command line |
@@ -84,7 +84,7 @@ home_domain: ims.mnc001.mcc001.3gppnetwork.org
 
 | Layer | Packages |
 | --- | --- |
-| Roles: how a node behaves | `pcscf` `icscf` `scscf` `hss` `ipsmgw` `sc` `agw` `dashboard` `ue` `epc` `mmtel` `mrfc` `ibcf` |
+| Roles: how a node behaves | `pcscf` `icscf` `scscf` `hss` `ipsmgw` `sc` `agw` `lab` `ue` `epc` `mmtel` `mrfc` `ibcf` |
 | IMS rules and interfaces | `ims` `ifc` `reginfo` `cx` `sh` `rx` `policy` `simservs` `interconnect` `netann` `confinfo` |
 | Protocols | `sip` `sipdns` `diameter` `sdp` `rtp` `rtcp` `sms` `hep` `xcap` |
 | Codecs and algorithms | `g711` `amr` `evs` `wav` `mixer` `milenage` `aka` `precondition` |
@@ -122,7 +122,7 @@ home_domain: ims.mnc001.mcc001.3gppnetwork.org
 | `mmtel` | The MMTel AS: supplementary services. | TS 24.173, TS 24.604 to 24.611, TS 24.623 |
 | `agw` | The media relay, in the role of the IMS-AGW. | RFC 3550. The control API is this project's own |
 | `ue` | The UE simulator. | TS 24.229, TS 24.341 |
-| `dashboard` | Builds registrations and calls from HEP copies. | this project's own |
+| `lab` | Builds registrations and calls from HEP copies. | this project's own |
 
 - A stub keeps the interface of the specification real and makes the inside simple. The HSS and the SC are stubs.
 - The dashboard is not part of the IMS. It only shows what the nodes send it.

@@ -1,5 +1,5 @@
 # The fault agent: the fault API of internal/fault in a container of its
-# own, so that the dashboard can break a node from its page. Use it on
+# own, so that the Lab can break a node from its page. Use it on
 # top of the root compose.yaml, from the root of the repository, and
 # only when you want that:
 #
@@ -20,7 +20,7 @@ services:
     volumes:
       - ./deploy/chaos/fault-agent.yaml:/etc/ims/node.yaml:ro
       - /var/run/docker.sock:/var/run/docker.sock
-    # Only on the network chaos, which it shares with the dashboard: the
+    # Only on the network chaos, which it shares with the Lab: the
     # IMS nodes cannot reach it, and its HTTP stays out of the capture
     # of ims0.
     networks:
@@ -31,9 +31,9 @@ services:
     ports:
       - "127.0.0.1:8070:8080"
 
-  # The dashboard joins the network chaos as well, and reaches the agent
+  # The Lab joins the network chaos as well, and reaches the agent
   # at http://172.28.9.10:8080.
-  dashboard:
+  lab:
     networks:
       chaos:
         ipv4_address: 172.28.9.60

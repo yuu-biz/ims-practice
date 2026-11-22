@@ -89,7 +89,7 @@ A short message travels in the body of a SIP MESSAGE, with the media type `appli
 
 ## Copies for the dashboard (HEP)
 
-A node can also send a copy of every SIP and Diameter message it sends or receives to the dashboard, which listens on UDP port 9060. The copies use HEP version 3 (Homer Encapsulation Protocol). A node sends them when its configuration has a `hep` section, for example `hep: {collector: dashboard:9060}`. The UE simulator sends them when it gets `-hep dashboard:9060`. Without either, nothing is sent.
+A node can also send a copy of every SIP and Diameter message it sends or receives to the dashboard, which listens on UDP port 9060. The copies use HEP version 3 (Homer Encapsulation Protocol). A node sends them when its configuration has a `hep` section, for example `hep: {collector: lab:9060}`. The UE simulator sends them when it gets `-hep lab:9060`. Without either, nothing is sent.
 
 The dashboard is not on the path of any call, so a node starts even when the collector's name does not resolve, for example because the dashboard is not running yet. The node logs a warning and drops the copies meanwhile. When a copy cannot be sent, the node resolves the name again, at most once every 5 seconds, so the copies reach a dashboard that starts later.
 

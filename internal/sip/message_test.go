@@ -247,7 +247,7 @@ func TestNewResponse(t *testing.T) {
 }
 
 // The codes outside RFC 3261 that the nodes send carry their reason
-// phrases too, which is what Wireshark and the dashboard show.
+// phrases too, which is what Wireshark and the Lab show.
 func TestNewResponseReasonPhrasesOfLaterRFCs(t *testing.T) {
 	req := mustParse(t, compactRegister)
 	for code, want := range map[int]string{202: "SIP/2.0 202 Accepted\r\n", 489: "SIP/2.0 489 Bad Event\r\n"} {

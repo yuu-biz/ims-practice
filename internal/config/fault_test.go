@@ -71,7 +71,7 @@ func TestParseRejectsFault(t *testing.T) {
 	if _, err := Parse(strings.NewReader(roleOnly)); err == nil || !strings.Contains(err.Error(), "fault: required for the fault role") {
 		t.Errorf("the fault role without its section: %v", err)
 	}
-	sectionOnly := dashboardYAML + "fault:\n" + strings.SplitN(faultYAML, "fault:\n", 2)[1]
+	sectionOnly := labYAML + "fault:\n" + strings.SplitN(faultYAML, "fault:\n", 2)[1]
 	if _, err := Parse(strings.NewReader(sectionOnly)); err == nil || !strings.Contains(err.Error(), "only the fault role") {
 		t.Errorf("the fault section on a node without the role: %v", err)
 	}

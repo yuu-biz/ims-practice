@@ -595,7 +595,7 @@ func (r *Relay) Close() {
 	}
 }
 
-// Contexts lists the contexts, for learners and the dashboard.
+// Contexts lists the contexts, for learners and the Lab.
 func (r *Relay) Contexts() []Context {
 	r.mu.Lock()
 	all := make([]*relayContext, 0, len(r.contexts))

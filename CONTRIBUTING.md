@@ -66,7 +66,7 @@ Refs: <spec number and clause>
 | `ci` | CI の変更 |
 | `chore` | 上のどれにも当たらない雑務 |
 
-`<scope>` は変更する部分の名前です。`pcscf`、`icscf`、`scscf`、`hss`、`epc`、`ue`、`media`、`dashboard`、`sip`、`diameter`、`config`、`ims`（`cmd/ims`）、`capture`、`deploy`、`cloud`、`fault`、`chaos`、`ibcf`、`slides`、`docs` などを使います。コードの構成が決まったら、この一覧を更新します。
+`<scope>` は変更する部分の名前です。`pcscf`、`icscf`、`scscf`、`hss`、`epc`、`ue`、`media`、`lab`、`sip`、`diameter`、`config`、`ims`（`cmd/ims`）、`capture`、`deploy`、`cloud`、`fault`、`chaos`、`ibcf`、`slides`、`docs` などを使います。コードの構成が決まったら、この一覧を更新します。
 
 - 件名は命令形で、何をしたかを 1 行で書きます。末尾にピリオドを付けません。
 - 本文にはなぜその変更をしたかを書きます。件名の繰り返しは書きません。

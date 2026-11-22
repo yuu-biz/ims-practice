@@ -166,7 +166,7 @@ export function mountUEPanel(container: HTMLElement, note: HTMLParagraphElement,
     }
     listed = true;
     note.hidden = list.length > 0;
-    note.textContent = "No UE simulators are configured. List them under dashboard.ues in the dashboard config.";
+    note.textContent = "No UE simulators are configured. List them under lab.ues in the dashboard config.";
     for (const ue of list) {
       let card = cards.get(ue.name);
       if (card === undefined) {

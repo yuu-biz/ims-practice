@@ -235,7 +235,7 @@ func sendUntil(t *testing.T, s *Sender, conn *recordingConn) {
 	}
 }
 
-// A dashboard that starts after the node: its name does not resolve at
+// A Lab that starts after the node: its name does not resolve at
 // first. The sender warns once and finds it later.
 func TestSenderFindsCollectorThatResolvesLater(t *testing.T) {
 	var logs bytes.Buffer
@@ -243,7 +243,7 @@ func TestSenderFindsCollectorThatResolvesLater(t *testing.T) {
 	var dials atomic.Int32
 	dial := func(context.Context) (io.WriteCloser, error) {
 		if dials.Add(1) <= 3 {
-			return nil, errors.New("lookup dashboard: no such host")
+			return nil, errors.New("lookup lab: no such host")
 		}
 		return collector, nil
 	}
@@ -297,7 +297,7 @@ func TestNewSenderTakesAnUnresolvableName(t *testing.T) {
 }
 
 func TestNewSenderRejectsMalformedAddress(t *testing.T) {
-	for _, address := range []string{"dashboard", "dashboard:hep", "dashboard:70000"} {
+	for _, address := range []string{"lab", "lab:hep", "lab:70000"} {
 		if _, err := NewSender(address, 8, discard); err == nil {
 			t.Errorf("NewSender(%q) accepted it", address)
 		}

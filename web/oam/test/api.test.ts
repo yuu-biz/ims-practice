@@ -152,7 +152,7 @@ describe("alarms", () => {
     ]);
     // Go leaves out what is empty: no role for an alarm of the node, no
     // times that have not happened.
-    expect(a.alarms[3]).toMatchObject({ role: "", peer: "dashboard:9060", alarm_changed_time: null, alarm_cleared_time: null, ack_time: null, ack_user_id: "" });
+    expect(a.alarms[3]).toMatchObject({ role: "", peer: "lab:9060", alarm_changed_time: null, alarm_cleared_time: null, ack_time: null, ack_user_id: "" });
     expect(a.alarms[1]).toMatchObject({ ack_state: "ACKNOWLEDGED", ack_time: "2026-11-20T09:05:00Z", ack_user_id: "test-operator" });
     expect(a.alarms[4]).toMatchObject({ specific_problem: "store unreachable", additional_text: "", alarm_cleared_time: "2026-11-20T09:04:30Z" });
   });

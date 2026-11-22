@@ -501,7 +501,7 @@ These filters were checked with tshark 4.2 against a capture of `scripts/e2e-vol
 | `internal/amr`, `internal/rtcp`, `internal/rtp` | The RFC 4867 payload and storage formats, RTCP, and the telephone-events. |
 | `internal/ue/session.go`, `call.go`, `media.go` | The UE's VoLTE call: the offer and answer, the preconditions, hold, DTMF, AMR and RTCP. |
 | `internal/sip` | UPDATE, re-INVITE, the session timer, 199, Reason and the B2BUA parts that the MMTel AS uses. |
-| `internal/dashboard/epc.go`, `causes.go` | The dashboard's pass-through of the stub's paths, and the link of Rx sessions to their calls. |
+| `internal/lab/epc.go`, `causes.go` | The dashboard's pass-through of the stub's paths, and the link of Rx sessions to their calls. |
 | `internal/ue/volte_epc_test.go`, `volte_aka_test.go` | The VoLTE call through the whole IMS in one process. |
 
 ## What this project simplifies

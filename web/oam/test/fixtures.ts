@@ -317,8 +317,8 @@ export const alarms = {
     {
       node: "pcscf-2",
       alarm_id: "8a828216f7c59785",
-      object_instance: "ManagedElement=pcscf,Peer=dashboard:9060",
-      peer: "dashboard:9060",
+      object_instance: "ManagedElement=pcscf,Peer=lab:9060",
+      peer: "lab:9060",
       alarm_raised_time: "2026-11-20T09:03:00.11013465Z",
       alarm_type: "QUALITY_OF_SERVICE_ALARM",
       probable_cause: "REDUCED_EVENT_REPORTING",
