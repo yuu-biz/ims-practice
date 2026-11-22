@@ -723,6 +723,45 @@ func TestInvitedWhenTheConferenceFills(t *testing.T) {
 	}
 }
 
+// TestJoinCancelledWhileTheMRFCAnswers: a user who dials in cancels
+// while the MRFC sets up its media. The user has its 487 (RFC 3261 9.2),
+// the focus releases the media once the MRFC answers, and the
+// subscribers are never told of the user.
+func TestJoinCancelledWhileTheMRFCAnswers(t *testing.T) {
+	mrfc := startConferenceMRFC(t)
+	as := startAS(t, noServices{}, mmtel.Config{MRFC: "sip:" + contactOf(t, mrfc.ua)})
+	conf, focus, notifications := aliceConference(t, as, func(c *sip.IncomingCall) { c.Reject(480) })
+
+	mrfc.hold.Store(true)
+	carol := newParticipant(t, as, "carol", func(c *sip.IncomingCall) { c.Reject(480) })
+	in, err := carol.Invite(joining("carol", focus.URI))
+	if err != nil {
+		t.Fatal(err)
+	}
+	media := receive(t, mrfc.held, "carol's INVITE at the MRFC")
+	if err := in.Cancel(); err != nil {
+		t.Fatal(err)
+	}
+	if got := statuses(readAll(t, in)); got[len(got)-1] != 487 {
+		t.Fatalf("carol got %v after her CANCEL, want 487", got)
+	}
+	go answerAsMRFC(media)
+	receive(t, media.Done(), "BYE of carol's media at the MRFC")
+
+	// Alice holds the conference, which the focus tells her of: every
+	// NOTIFY up to that one tells of alice alone.
+	if resp, err := conf.ReInvite(audio("42000", "sendonly")); err != nil || resp.StatusCode != 200 {
+		t.Fatalf("hold got %v, %v", resp, err)
+	}
+	awaitNotification(t, notifications, "with alice on-hold", func(_ sip.Notification, d confinfo.Document) bool {
+		got := statusOf(d)
+		if _, ok := got["sip:carol@"+domain]; ok {
+			t.Errorf("a NOTIFY tells of carol, who cancelled: %v", got)
+		}
+		return got["sip:alice@"+domain] == confinfo.OnHold
+	})
+}
+
 // TestConferenceRefusals: without an MRFC the AS creates no conference,
 // a REFER that asks the focus to remove someone is not taken, and an
 // INVITE to a conference URI joins nothing when no conference has that
