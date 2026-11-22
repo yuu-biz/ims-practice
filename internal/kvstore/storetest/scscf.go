@@ -34,6 +34,7 @@ func SCSCF(t *testing.T, newPair func(t *testing.T) (scscf.Store, scscf.Store)) 
 		{"RegistrationLosesAPublicIdentity", scscfRegistrationLosesIdentity},
 		{"DeleteRegistration", scscfDeleteRegistration},
 		{"Subscriptions", scscfSubscriptions},
+		{"SubscriptionMovesToAnotherRegistration", scscfSubscriptionMoves},
 		{"ConcurrentSubscriptionsOfOneUser", scscfConcurrentSubscriptions},
 		{"OriginalDialogUntilItsExpires", scscfOriginalDialog},
 		{"UnregisteredProfile", scscfUnregisteredProfile},
@@ -389,6 +390,21 @@ func scscfSubscriptions(t *testing.T, a, b scscf.Store) {
 	}
 	if got := subscriptionsOf(t, b, "nobody@ims.mnc001.mcc001.3gppnetwork.org"); len(got) != 0 {
 		t.Errorf("SubscriptionsOf of nobody = %v", got)
+	}
+}
+
+// A subscription written again for another registration is found only
+// through that one.
+func scscfSubscriptionMoves(t *testing.T, a, b scscf.Store) {
+	sub := subscription("sub-1", impi)
+	putSubscription(t, a, sub)
+	sub.PrivateIdentity = otherIMPI
+	putSubscription(t, b, sub)
+	if got := subscriptionsOf(t, a, impi); len(got) != 0 {
+		t.Errorf("SubscriptionsOf the old registration = %v", callIDs(got))
+	}
+	if got := callIDs(subscriptionsOf(t, a, otherIMPI)); !slices.Equal(got, []string{"sub-1"}) {
+		t.Errorf("SubscriptionsOf the new registration = %v", got)
 	}
 }
 

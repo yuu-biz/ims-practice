@@ -358,7 +358,9 @@ type MemoryStore struct {
 	challenges    map[string]Challenge
 	registrations map[string]Registration
 	// registrationOf is the private key of the registration of each
-	// public identity, by ims.PublicIdentityKey.
+	// public identity, by ims.PublicIdentityKey. A public identity
+	// belongs to one registration, as the HSS gives it to one
+	// subscription (hss.ErrIdentityTaken).
 	registrationOf map[string]string
 	subscriptions  map[sip.DialogID]Subscription
 	// subscriptionsOf holds the dialogs of the subscriptions to the
