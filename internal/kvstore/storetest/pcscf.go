@@ -4,6 +4,8 @@ import (
 	"context"
 	"crypto/rand"
 	"net/netip"
+	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -29,6 +31,11 @@ func PCSCF(t *testing.T, newPair func(t *testing.T) (pcscf.Store, pcscf.Store)) 
 		{"RegSubscriptionReplacesTheOldOne", pcscfRegSubscriptionReplaces},
 		{"OnlyOneCreatesARegSubscription", pcscfOnlyOneCreatesARegSubscription},
 		{"OnlyOneRefreshesARegSubscription", pcscfOnlyOneRefreshesARegSubscription},
+		{"DeleteRegSubscriptionOnlyWhileItWaits", pcscfDeleteRegSubscriptionIfWaiting},
+		{"RegEventExpiryIsClaimedOnce", pcscfExpiryClaimedOnce},
+		{"ClaimThatIsNotDoneRunsOut", pcscfClaimRunsOut},
+		{"EachRegEventExpiryHasAnIndexOfItsOwn", pcscfExpiryOfEachKind},
+		{"AWriteMovesTheRegEventExpiries", pcscfWriteMovesExpiries},
 		{"SecurityAssociationsUntilTheyExpire", pcscfSecurityAssociations},
 	})
 }
@@ -425,13 +432,245 @@ func deletePCSCFRegSubscription(t *testing.T, s pcscf.Store, privateID string) {
 	}
 }
 
+// createRefreshableRegSubscription puts a subscription in a as the
+// P-CSCF writes one: the create leaves it waiting for its first NOTIFY,
+// and the update that follows is what that NOTIFY does. It returns the
+// time the refresh of the subscription falls due.
+func createRefreshableRegSubscription(t *testing.T, a pcscf.Store, callID string, lifetime time.Duration) time.Time {
+	t.Helper()
+	sub := newPCSCFRegSubscription(callID, lifetime)
+	refreshAt := sub.RefreshAt
+	sub.RefreshAt = time.Time{}
+	sub.NotifyDeadline = time.Now().Add(time.Minute).Round(time.Millisecond)
+	createPCSCFRegSubscription(t, a, sub)
+	updatePCSCFRegSubscription(t, a, sub.PrivateIdentity, func(s *pcscf.RegSubscription) bool {
+		s.NotifyDeadline, s.RefreshAt = time.Time{}, refreshAt
+		return true
+	})
+	return refreshAt
+}
+
+// pcscfDeleteRegSubscriptionIfWaiting: the removal that an instance
+// makes when Timer N has run out takes only the subscription it read.
+// One that a NOTIFY confirmed, or that a later SUBSCRIBE replaced,
+// since stays.
+func pcscfDeleteRegSubscriptionIfWaiting(t *testing.T, a, b pcscf.Store) {
+	waiting := newPCSCFRegSubscription("sub-1", time.Hour)
+	waiting.Dialog.ID.RemoteTag = ""
+	waiting.RefreshAt = time.Time{}
+	waiting.NotifyDeadline = time.Now().Add(-time.Second).Round(time.Millisecond)
+	createPCSCFRegSubscription(t, a, waiting)
+
+	other := waiting.NotifyDeadline.Add(time.Minute)
+	for _, tc := range []struct {
+		what     string
+		callID   string
+		deadline time.Time
+	}{
+		{"another dialog", "sub-2", waiting.NotifyDeadline},
+		{"another deadline", "sub-1", other},
+	} {
+		if ended, err := b.DeleteRegSubscriptionIfWaiting(context.Background(), impi, tc.callID, tc.deadline); err != nil || ended {
+			t.Errorf("the removal of %s reported %v, %v; want false", tc.what, ended, err)
+		}
+		if _, ok := pcscfRegSubscriptionOf(t, a, impi); !ok {
+			t.Fatalf("the removal of %s took the subscription", tc.what)
+		}
+	}
+
+	// The NOTIFY arrives: the subscription waits no longer, and the
+	// removal of the instance that held the expiry takes nothing.
+	updatePCSCFRegSubscription(t, b, impi, func(s *pcscf.RegSubscription) bool {
+		s.Dialog.ID.RemoteTag = "r"
+		s.NotifyDeadline = time.Time{}
+		return true
+	})
+	if ended, err := b.DeleteRegSubscriptionIfWaiting(context.Background(), impi, "sub-1", waiting.NotifyDeadline); err != nil || ended {
+		t.Errorf("the removal after the NOTIFY reported %v, %v; want false", ended, err)
+	}
+	if _, ok := pcscfRegSubscriptionOf(t, a, impi); !ok {
+		t.Fatal("the removal took the subscription that the NOTIFY confirmed")
+	}
+
+	// A subscription that still waits goes, with its expiries and the
+	// index item of its dialog.
+	updatePCSCFRegSubscription(t, b, impi, func(s *pcscf.RegSubscription) bool {
+		s.NotifyDeadline = waiting.NotifyDeadline
+		return true
+	})
+	ended, err := b.DeleteRegSubscriptionIfWaiting(context.Background(), impi, "sub-1", waiting.NotifyDeadline)
+	if err != nil || !ended {
+		t.Fatalf("the removal of the subscription that waits = %v, %v; want true", ended, err)
+	}
+	if _, ok := pcscfRegSubscriptionOf(t, a, impi); ok {
+		t.Error("the subscription is still there")
+	}
+	if _, ok := pcscfRegSubscriptionOfDialog(t, a, "sub-1"); ok {
+		t.Error("the index item of the dialog is still there")
+	}
+	for _, kind := range pcscf.ExpiryKinds {
+		if got := claimDuePCSCF(t, a, kind, other.Add(time.Hour), time.Minute); len(got) != 0 {
+			t.Errorf("%s of the subscription that was removed = %+v, want nothing", kind, got)
+		}
+	}
+	if ended, err := b.DeleteRegSubscriptionIfWaiting(context.Background(), impi, "sub-1", waiting.NotifyDeadline); err != nil || ended {
+		t.Errorf("a second removal reported %v, %v; want false", ended, err)
+	}
+}
+
+// claimDuePCSCF claims at most ten expiries of one kind. The suite
+// passes the now of its choosing, as the sweep of a P-CSCF instance
+// passes its own, so that no case has to wait out a lease.
+func claimDuePCSCF(t *testing.T, s pcscf.Store, kind pcscf.ExpiryKind, now time.Time, lease time.Duration) []pcscf.Expiry {
+	t.Helper()
+	due, err := s.ClaimDue(context.Background(), kind, now, lease, 10)
+	if err != nil {
+		t.Errorf("ClaimDue(%s): %v", kind, err)
+	}
+	return due
+}
+
+func donePCSCF(t *testing.T, s pcscf.Store, e pcscf.Expiry) {
+	t.Helper()
+	if err := s.Done(context.Background(), e); err != nil {
+		t.Errorf("Done(%s): %v", e.Kind, err)
+	}
+}
+
+// pcscfExpiryClaimedOnce: an expiry that is due goes to one instance,
+// and Done ends it for good.
+func pcscfExpiryClaimedOnce(t *testing.T, a, b pcscf.Store) {
+	refreshAt := createRefreshableRegSubscription(t, a, "sub-1", time.Hour)
+	if got := claimDuePCSCF(t, b, pcscf.RegEventRefreshExpiry, refreshAt.Add(-time.Millisecond), time.Minute); len(got) != 0 {
+		t.Fatalf("claimed %+v before the refresh fell due", got)
+	}
+	var mu sync.Mutex
+	var claimed []pcscf.Expiry
+	parallel(4, func(i int) {
+		s := a
+		if i%2 == 1 {
+			s = b
+		}
+		got := claimDuePCSCF(t, s, pcscf.RegEventRefreshExpiry, refreshAt, time.Minute)
+		mu.Lock()
+		defer mu.Unlock()
+		claimed = append(claimed, got...)
+	})
+	if len(claimed) != 1 {
+		t.Fatalf("%d instances claimed the expiry (%+v), want 1", len(claimed), claimed)
+	}
+	if e := claimed[0]; e.Kind != pcscf.RegEventRefreshExpiry || !strings.EqualFold(e.PrivateIdentity, impi) || !e.Until.After(refreshAt) {
+		t.Errorf("the claim = %+v, want the subscription of %s until after its RefreshAt", e, impi)
+	}
+	donePCSCF(t, b, claimed[0])
+	if got := claimDuePCSCF(t, a, pcscf.RegEventRefreshExpiry, refreshAt.Add(time.Hour), time.Minute); len(got) != 0 {
+		t.Errorf("claimed %+v after Done", got)
+	}
+}
+
+// pcscfClaimRunsOut: the instance that claimed an expiry stops before it
+// is done, so no Done comes; once its claim runs out another instance
+// takes the expiry over, and the late Done of the first one takes
+// nothing away from it.
+func pcscfClaimRunsOut(t *testing.T, a, b pcscf.Store) {
+	refreshAt := createRefreshableRegSubscription(t, a, "sub-1", time.Hour)
+	first := claimDuePCSCF(t, a, pcscf.RegEventRefreshExpiry, refreshAt, time.Minute)
+	if len(first) != 1 {
+		t.Fatalf("claims = %+v, want the subscription once", first)
+	}
+	if got := claimDuePCSCF(t, b, pcscf.RegEventRefreshExpiry, first[0].Until.Add(-time.Millisecond), time.Minute); len(got) != 0 {
+		t.Fatalf("claimed %+v while the other instance held the claim", got)
+	}
+	second := claimDuePCSCF(t, b, pcscf.RegEventRefreshExpiry, first[0].Until, time.Minute)
+	if len(second) != 1 {
+		t.Fatalf("claims after the lease ran out = %+v, want the subscription once", second)
+	}
+	donePCSCF(t, a, first[0])
+	if got := claimDuePCSCF(t, a, pcscf.RegEventRefreshExpiry, second[0].Until.Add(-time.Millisecond), time.Minute); len(got) != 0 {
+		t.Errorf("the Done of the lost claim gave the expiry away again: %+v", got)
+	}
+	donePCSCF(t, b, second[0])
+	if got := claimDuePCSCF(t, a, pcscf.RegEventRefreshExpiry, second[0].Until, time.Minute); len(got) != 0 {
+		t.Errorf("claimed %+v after Done", got)
+	}
+}
+
+// pcscfExpiryOfEachKind: Timer N and the refresh have an index each, so
+// that a subscription waiting for its first NOTIFY has no refresh due
+// and one that a NOTIFY has confirmed no Timer N. The expiries of a
+// subscription that is removed go with it.
+func pcscfExpiryOfEachKind(t *testing.T, a, b pcscf.Store) {
+	waiting := newPCSCFRegSubscription("sub-1", time.Hour)
+	waiting.Dialog.ID.RemoteTag = ""
+	waiting.RefreshAt = time.Time{}
+	waiting.NotifyDeadline = time.Now().Add(time.Minute).Round(time.Millisecond)
+	createPCSCFRegSubscription(t, a, waiting)
+	later := waiting.NotifyDeadline.Add(time.Hour)
+	if got := claimDuePCSCF(t, b, pcscf.RegEventRefreshExpiry, later, time.Minute); len(got) != 0 {
+		t.Errorf("a subscription without a NOTIFY has the refresh %+v, want none", got)
+	}
+	if got := claimDuePCSCF(t, b, pcscf.RegEventNotifyExpiry, waiting.NotifyDeadline, time.Minute); len(got) != 1 ||
+		!strings.EqualFold(got[0].PrivateIdentity, impi) {
+		t.Errorf("Timer N = %+v, want the subscription of %s", got, impi)
+	}
+
+	// The NOTIFY arrives: Timer N is over, and the refresh falls due.
+	confirmed := newPCSCFRegSubscription("sub-1", time.Hour)
+	updatePCSCFRegSubscription(t, b, impi, func(s *pcscf.RegSubscription) bool {
+		s.NotifyDeadline, s.RefreshAt = time.Time{}, confirmed.RefreshAt
+		return true
+	})
+	if got := claimDuePCSCF(t, a, pcscf.RegEventNotifyExpiry, later, time.Minute); len(got) != 0 {
+		t.Errorf("Timer N after the NOTIFY = %+v, want none", got)
+	}
+	if got := claimDuePCSCF(t, a, pcscf.RegEventRefreshExpiry, confirmed.RefreshAt, time.Minute); len(got) != 1 {
+		t.Errorf("the refresh after the NOTIFY = %+v, want one", got)
+	}
+
+	deletePCSCFRegSubscription(t, b, impi)
+	for _, kind := range pcscf.ExpiryKinds {
+		if got := claimDuePCSCF(t, a, kind, later, time.Minute); len(got) != 0 {
+			t.Errorf("%s of a subscription that was removed = %+v, want nothing", kind, got)
+		}
+	}
+}
+
+// pcscfWriteMovesExpiries: a write of the subscription moves its
+// expiries to the times it carries, and ends a claim on them, so that
+// the Done of an instance which held one takes the new expiry away from
+// nobody.
+func pcscfWriteMovesExpiries(t *testing.T, a, b pcscf.Store) {
+	refreshAt := createRefreshableRegSubscription(t, a, "sub-1", time.Hour)
+	claimed := claimDuePCSCF(t, a, pcscf.RegEventRefreshExpiry, refreshAt, time.Minute)
+	if len(claimed) != 1 {
+		t.Fatalf("claims = %+v, want the subscription once", claimed)
+	}
+	// A refresh goes out at another instance: it leaves no refresh due
+	// and starts Timer N.
+	deadline := time.Now().Add(32 * time.Second).Round(time.Millisecond)
+	updatePCSCFRegSubscription(t, b, impi, func(s *pcscf.RegSubscription) bool {
+		s.RefreshAt, s.NotifyDeadline = time.Time{}, deadline
+		return true
+	})
+	donePCSCF(t, a, claimed[0])
+	if got := claimDuePCSCF(t, b, pcscf.RegEventRefreshExpiry, deadline.Add(time.Hour), time.Minute); len(got) != 0 {
+		t.Errorf("the refresh after one went out = %+v, want none", got)
+	}
+	if got := claimDuePCSCF(t, b, pcscf.RegEventNotifyExpiry, deadline, time.Minute); len(got) != 1 {
+		t.Errorf("Timer N of the refresh = %+v, want one", got)
+	}
+}
+
 func newPCSCFRegSubscription(callID string, lifetime time.Duration) pcscf.RegSubscription {
 	return pcscf.RegSubscription{PrivateIdentity: impi, PublicIdentity: impu,
 		Dialog: sip.Dialog{ID: sip.DialogID{CallID: callID, LocalTag: "l", RemoteTag: "r"}, State: sip.DialogConfirmed,
 			LocalSeq: 1, RemoteSeq: 1, LocalURI: "sip:pcscf.ims.mnc001.mcc001.3gppnetwork.org:5060", RemoteURI: impu,
 			RemoteTarget: "sip:scscf.ims.mnc001.mcc001.3gppnetwork.org:5060", RouteSet: []string{"sip:scscf;lr"}},
-		Requested: 3761 * time.Second, Granted: 3761 * time.Second, Subscribed: time.Now().Round(time.Millisecond),
-		Expires: time.Now().Add(lifetime).Round(time.Millisecond)}
+		Requested: 3761 * time.Second, Granted: 3761 * time.Second,
+		// A subscription that a NOTIFY has confirmed: Timer N is over, and
+		// the next refresh is due within its lifetime.
+		RefreshAt: time.Now().Add(lifetime / 2).Round(time.Millisecond),
+		Expires:   time.Now().Add(lifetime).Round(time.Millisecond)}
 }
 
 // pcscfOnlyOneCreatesARegSubscription: two REGISTERs of one user, at one

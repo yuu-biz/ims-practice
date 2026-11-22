@@ -44,21 +44,12 @@ func (p *PCSCF) locate(u sip.URI) ([]sip.Destination, error) {
 // first (5.2.3 item e).
 //
 // A reregistration sends nothing: the subscription of the user holds,
-// and the instance that took its last NOTIFY refreshes it at the time
-// 5.2.3 gives (timeRegEventRefresh), which is counted from the duration
-// the subscription has and not from the REGISTERs of the UE.
-//
-// SIMPLIFIED: TS 24.229 5.2.3. The timer for that refresh runs in the
-// process that took the subscription's last NOTIFY, so a P-CSCF made
-// again at the same address holds none for a subscription an earlier
-// process was watching: it finds the subscription in the Store and
-// leaves it. A NOTIFY of that subscription hands it over, timer and all,
-// but the S-CSCF sends one only when the registration changes, so
-// usually none comes and the subscription runs out at both ends. The
-// user's next REGISTER after that starts a new one, and in between the
-// P-CSCF hears of no change. Carrying the refresh over without a NOTIFY
-// would need the timers themselves outside the process, and only the
-// subscription is kept there.
+// and it is refreshed at the time 5.2.3 gives (RefreshAt), which is
+// counted from the duration the subscription has and not from the
+// REGISTERs of the UE. That time is in the Store with the subscription,
+// so whichever instance claims it when it comes sends the refresh, and a
+// P-CSCF made again at the same address goes on refreshing a
+// subscription an earlier process opened.
 //
 // Only the instance that a REGISTER of a user reaches writes the
 // subscription of that user, as with the IP association, so the P-CSCF
@@ -77,16 +68,17 @@ func (p *PCSCF) watchRegEvent(a Association, registered time.Duration, log *slog
 		return
 	}
 	switch {
-	case ok && (sub.Dialog.ID.RemoteTag != "" || time.Since(sub.Subscribed) < p.notifyWait):
+	case ok && (sub.Dialog.ID.RemoteTag != "" || time.Now().Before(sub.NotifyDeadline)):
 		// One subscription per private identity (5.2.3 NOTE). One that is
 		// still within Timer N counts as well: it may yet get its first
-		// NOTIFY, and the instance that sent its SUBSCRIBE ends it if it
-		// does not.
+		// NOTIFY.
 		return
 	case ok:
-		// A SUBSCRIBE that no NOTIFY followed within Timer N, whose
-		// instance is gone: no subscription came about (RFC 6665 4.1.2.1),
-		// and nothing is left to end it. Take it away and subscribe again.
+		// A SUBSCRIBE that no NOTIFY followed within Timer N: no
+		// subscription came about (RFC 6665 4.1.2.1). The sweep ends such
+		// a subscription too, within a round; this REGISTER takes it away
+		// at once and subscribes again, so that the user is not left
+		// unwatched until then.
 		if err := p.store.DeleteRegSubscription(ctx, a.PrivateIdentity); err != nil {
 			log.Warn("reg event subscription without a NOTIFY not removed: the store failed", "error", err.Error())
 			return
@@ -143,9 +135,11 @@ func (p *PCSCF) subscribeRegEvent(a Association, expires time.Duration, log *slo
 	// come before the 200, and to another instance (RFC 6665 4.1.2.4).
 	// Only the instance whose write wins subscribes, so that one user
 	// gets one subscription however many REGISTERs are answered at once.
+	// Timer N goes with it, so that a SUBSCRIBE this instance does not
+	// outlive is ended all the same (regEventNotifyWaitOver).
 	now := time.Now()
 	created, err := p.store.CreateRegSubscription(ctx, RegSubscription{PrivateIdentity: privateID, PublicIdentity: defaultID,
-		Dialog: d, Requested: expires, Subscribed: now, Expires: now.Add(expires)})
+		Dialog: d, Requested: expires, NotifyDeadline: now.Add(p.notifyWait), Expires: now.Add(expires)})
 	if err != nil {
 		log.Warn("reg event SUBSCRIBE not sent: the store failed; the next REGISTER subscribes", "error", err.Error())
 		return
@@ -155,7 +149,6 @@ func (p *PCSCF) subscribeRegEvent(a Association, expires time.Duration, log *slo
 		return
 	}
 	log.Info("reg event subscribing", "public_identity", defaultID)
-	p.timeRegEventNotify(privateID, d, log)
 	go func() {
 		final, err := p.sendRegEvent(stack, m, targets)
 		if err == nil && final.StatusCode < 300 {
@@ -186,9 +179,13 @@ func (p *PCSCF) subscribeRegEvent(a Association, expires time.Duration, log *slo
 // Taking the next CSeq number of the dialog is a compare and swap on the
 // stored subscription, so that of several instances whose refresh falls
 // due together exactly one sends one, and no two SUBSCRIBEs go out with
-// the same CSeq. The expiry is not touched: a refresh that goes
-// unanswered must leave the subscription to run out when the notifier
-// drops it, and only the 2xx or a NOTIFY says a new one.
+// the same CSeq. That one write also starts Timer N for the refresh and
+// leaves no refresh due, since the NOTIFY that follows says when the
+// next one falls due (RFC 6665 4.1.3); it ends the claim of the expiry
+// that brought the refresh about, so no other instance sends it again.
+// The expiry of the subscription itself is not touched: a refresh that
+// goes unanswered must leave the subscription to run out when the
+// notifier drops it, and only the 2xx or a NOTIFY says a new one.
 //
 // SIMPLIFIED: TS 24.229 5.2.3, last paragraph. When a refresh fails with
 // 481, the P-CSCF should start a new subscription at once. Here the
@@ -212,12 +209,14 @@ func (p *PCSCF) refreshRegEvent(sub RegSubscription, log *slog.Logger) {
 		log.Warn("reg event refresh not sent", "error", err.Error())
 		return
 	}
-	ctx := context.Background()
+	ctx, now := context.Background(), time.Now()
 	_, mine, err := p.store.UpdateRegSubscription(ctx, privateID, func(s *RegSubscription) bool {
 		if s.Dialog.ID != was.ID || s.Dialog.LocalSeq != was.LocalSeq {
 			return false
 		}
 		s.Dialog.LocalSeq = d.LocalSeq
+		s.NotifyDeadline = now.Add(p.notifyWait)
+		s.RefreshAt = time.Time{}
 		return true
 	})
 	switch {
@@ -231,7 +230,6 @@ func (p *PCSCF) refreshRegEvent(sub RegSubscription, log *slog.Logger) {
 		return
 	}
 	log.Info("reg event refreshing", "public_identity", sub.PublicIdentity, "expires", int(sub.Requested/time.Second))
-	p.timeRegEventNotify(privateID, d, log)
 	go func() {
 		final, err := p.sendRegEvent(stack, m, targets)
 		switch {
@@ -260,14 +258,6 @@ func (p *PCSCF) refreshRegEvent(sub RegSubscription, log *slog.Logger) {
 	}()
 }
 
-// timeRegEventNotify starts Timer N in the process that sent a
-// SUBSCRIBE, initial or within the dialog: every SUBSCRIBE that succeeds
-// is followed by a NOTIFY (RFC 6665 4.1.2.2, 4.1.2.4). sent is the
-// dialog as that SUBSCRIBE left it.
-func (p *PCSCF) timeRegEventNotify(privateID string, sent sip.Dialog, log *slog.Logger) {
-	time.AfterFunc(p.notifyWait, func() { p.regEventNotifyWaitOver(privateID, sent, log) })
-}
-
 // grantRegEvent keeps the duration that a 2xx to a SUBSCRIBE granted
 // (RFC 6665 3.1.1), which is what a NOTIFY that carries no expires
 // stands for (TS 24.229 5.1.1.3 item 2). It does not move the expiry:
@@ -293,106 +283,73 @@ func (p *PCSCF) grantRegEvent(privateID string, id sip.DialogID, final *sip.Mess
 	}
 }
 
-// timeRegEventRefresh starts the timer for the next refresh of sub (TS
-// 24.229 5.2.3), in the process that took the NOTIFY. The NOTIFY is what
-// says how long the subscription has (RFC 6665 4.1.3), so the refresh is
-// counted from that, not from the duration the SUBSCRIBE asked for and
-// not from the REGISTERs of the UE.
-//
-// One timer runs per subscription in this process: the NOTIFYs of a
-// subscription come one after another, and each replaces the timer the
-// one before it set, so that two timers of one subscription cannot fall
-// due together.
-//
-// Like Timer N, the timer reads the Store when it fires and does nothing
-// unless the subscription is still the one it was started for, so a
-// refresh that another instance sent in the meantime stands. A timer is
-// not cancelled when the subscription ends elsewhere: it then finds
-// none.
-func (p *PCSCF) timeRegEventRefresh(sub RegSubscription, log *slog.Logger) {
-	expires := time.Until(sub.Expires).Round(time.Second)
-	after := p.regEventRefresh(expires)
-	if after <= 0 || after >= expires {
-		p.stopRegEventRefresh(sub.PrivateIdentity)
-		return
+// nextRefreshAt is when the next refresh of a subscription falls due (TS
+// 24.229 5.2.3), counted from left, the duration the last NOTIFY says it
+// still has (RFC 6665 4.1.3), and not from the duration the SUBSCRIBE
+// asked for or from the REGISTERs of the UE. It is the zero time when
+// there is no refresh to send, because it would fall due at once or no
+// sooner than the subscription ends.
+func (p *PCSCF) nextRefreshAt(now time.Time, left time.Duration) time.Time {
+	left = left.Round(time.Second)
+	after := p.regEventRefresh(left)
+	if after <= 0 || after >= left {
+		return time.Time{}
 	}
-	key := privateKey(sub.PrivateIdentity)
-	p.refreshMu.Lock()
-	defer p.refreshMu.Unlock()
-	if t := p.refreshTimers[key]; t != nil {
-		t.Stop()
-	}
-	p.refreshTimers[key] = time.AfterFunc(after, func() {
-		p.refreshMu.Lock()
-		delete(p.refreshTimers, key)
-		p.refreshMu.Unlock()
-		p.refreshRegEventDue(sub.PrivateIdentity, sub.Dialog, log)
-	})
+	return now.Add(after)
 }
 
-// stopRegEventRefresh stops the refresh timer of a subscription that has
-// ended, so that the process keeps none for a user it no longer
-// watches.
-func (p *PCSCF) stopRegEventRefresh(privateID string) {
-	key := privateKey(privateID)
-	p.refreshMu.Lock()
-	defer p.refreshMu.Unlock()
-	if t := p.refreshTimers[key]; t != nil {
-		t.Stop()
-		delete(p.refreshTimers, key)
-	}
-}
-
-// regEventNotifyWaitOver is Timer N (RFC 6665 4.1.2.4): no NOTIFY
-// followed the SUBSCRIBE, so the subscription never came about, or the
-// one there was is gone at the notifier. The P-CSCF forgets it, and the
-// user's next REGISTER subscribes again.
+// regEventNotifyWaitOver is Timer N (RFC 6665 4.1.2.4) falling due: no
+// NOTIFY followed the SUBSCRIBE, so the subscription never came about,
+// or the one there was is gone at the notifier. The P-CSCF forgets it,
+// and the user's next REGISTER subscribes again.
 //
-// The dialog of a subscription moves on with every NOTIFY, so a dialog
-// that is still exactly the one the SUBSCRIBE left means that no NOTIFY
-// has arrived, at this instance or at any other.
-func (p *PCSCF) regEventNotifyWaitOver(privateID string, sent sip.Dialog, log *slog.Logger) {
-	ctx := context.Background()
+// Every SUBSCRIBE sets the NotifyDeadline and every NOTIFY clears it, so
+// a deadline that is still set and past means that no NOTIFY has arrived
+// at this instance or at any other. One that has moved on belongs to a
+// SUBSCRIBE sent since, whose own wait is not over.
+//
+// The removal names the dialog and the deadline that were read, so that
+// a NOTIFY which confirms the subscription, or a REGISTER which replaces
+// it, between the read and the removal keeps it: the subscription that
+// goes is the one whose wait was over.
+func (p *PCSCF) regEventNotifyWaitOver(ctx context.Context, privateID string) error {
 	sub, ok, err := p.store.RegSubscription(ctx, privateID)
-	switch {
-	case err != nil:
-		// The subscription stays until it runs out, as one whose refresh
-		// could not be sent does.
-		log.Warn("reg event subscription without a NOTIFY not read: the store failed", "error", err.Error())
-		return
-	case !ok, sub.Dialog.ID != sent.ID, sub.Dialog.LocalSeq != sent.LocalSeq, sub.Dialog.RemoteSeq != sent.RemoteSeq:
-		return
+	if err != nil {
+		return err
 	}
-	log.Info("reg event subscription ended: no NOTIFY for the SUBSCRIBE",
-		"public_identity", sub.PublicIdentity, "subscription_call_id", sent.ID.CallID)
-	if err := p.store.DeleteRegSubscription(ctx, privateID); err != nil {
-		log.Warn("reg event subscription without a NOTIFY not removed: the store failed", "error", err.Error())
+	if !ok || sub.NotifyDeadline.IsZero() || time.Now().Before(sub.NotifyDeadline) {
+		return nil
 	}
+	ended, err := p.store.DeleteRegSubscriptionIfWaiting(ctx, privateID, sub.Dialog.ID.CallID, sub.NotifyDeadline)
+	if err != nil {
+		return err
+	}
+	if ended {
+		p.log.Info("reg event subscription ended: no NOTIFY for the SUBSCRIBE", "private_identity", privateID,
+			"public_identity", sub.PublicIdentity, "subscription_call_id", sub.Dialog.ID.CallID)
+	}
+	return nil
 }
 
-// refreshRegEventDue is the refresh of TS 24.229 5.2.3 falling due at
-// this instance. It stands down when the subscription has ended, or when
-// another instance has refreshed it since and now holds the timer for the
-// refresh after this one.
-func (p *PCSCF) refreshRegEventDue(privateID string, sent sip.Dialog, log *slog.Logger) {
-	sub, ok, err := p.store.RegSubscription(context.Background(), privateID)
+// refreshRegEventDue is the refresh of TS 24.229 5.2.3 falling due. It
+// stands down when the subscription has ended, when a NOTIFY has put the
+// refresh off since, and when the refresh of another instance is still
+// waiting for its NOTIFY, which leaves no refresh due.
+func (p *PCSCF) refreshRegEventDue(ctx context.Context, privateID string) error {
+	sub, ok, err := p.store.RegSubscription(ctx, privateID)
+	if err != nil {
+		return err
+	}
 	switch {
-	case err != nil:
-		// The subscription runs out at both ends, and the next REGISTER
-		// subscribes anew.
-		log.Warn("reg event refresh not sent: the store failed", "error", err.Error())
-		return
-	case !ok:
-		// It has ended, or it ran out and the Store forgot it at its
-		// Expires.
-		return
-	case sub.Dialog.ID.CallID != sent.ID.CallID || sub.Dialog.LocalSeq != sent.LocalSeq:
-		return
+	case !ok, sub.RefreshAt.IsZero(), time.Now().Before(sub.RefreshAt):
+		return nil
 	case sub.Dialog.ID.RemoteTag == "":
 		// No NOTIFY has made a dialog to refresh in; Timer N ends it.
-		return
+		return nil
 	}
-	p.refreshRegEvent(sub, log)
+	p.refreshRegEvent(sub, p.log.With("private_identity", privateID,
+		"subscription_call_id", sub.Dialog.ID.CallID))
+	return nil
 }
 
 // regEventHop is where a SUBSCRIBE of the P-CSCF goes, best target
@@ -546,13 +503,15 @@ func (p *PCSCF) receiveRegEvent(st *sip.ServerTransaction) {
 			storeFailed(err)
 			return
 		}
-		p.stopRegEventRefresh(sub.PrivateIdentity)
 		p.endAssociationsOf(sub, req.Body, log.With("private_identity", sub.PrivateIdentity, "subscription_state", string(state.State)))
 		respond(200)
 		return
 	}
 	// Only what this NOTIFY says is written, so that the CSeq a refresh
-	// took in the meantime stands (refreshRegEvent).
+	// took in the meantime stands (refreshRegEvent). The same write ends
+	// Timer N, since the NOTIFY it waited for is here, and sets the time
+	// of the next refresh, which any instance may send.
+	now := time.Now()
 	sub, ok, err = p.store.UpdateRegSubscription(ctx, sub.PrivateIdentity, func(s *RegSubscription) bool {
 		if s.Dialog.ID.CallID != d.ID.CallID {
 			return false
@@ -569,7 +528,9 @@ func (p *PCSCF) receiveRegEvent(st *sip.ServerTransaction) {
 		if !expires {
 			left = orElse(s.Granted, s.Requested)
 		}
-		s.Expires = time.Now().Add(left)
+		s.Expires = now.Add(left)
+		s.NotifyDeadline = time.Time{}
+		s.RefreshAt = p.nextRefreshAt(now, left)
 		return true
 	})
 	switch {
@@ -581,7 +542,6 @@ func (p *PCSCF) receiveRegEvent(st *sip.ServerTransaction) {
 		respond(481)
 		return
 	}
-	p.timeRegEventRefresh(sub, log)
 
 	p.endAssociationsOf(sub, req.Body, log.With("private_identity", sub.PrivateIdentity, "subscription_state", string(state.State)))
 	respond(200)

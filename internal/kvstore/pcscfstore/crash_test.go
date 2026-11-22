@@ -2,10 +2,15 @@ package pcscfstore_test
 
 import (
 	"context"
+	"errors"
 	"net/netip"
+	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/yuu-biz/ims-practice/internal/kvstore"
 	"github.com/yuu-biz/ims-practice/internal/kvstore/kvjson"
 	"github.com/yuu-biz/ims-practice/internal/kvstore/pcscfstore"
 	"github.com/yuu-biz/ims-practice/internal/kvstore/storetest"
@@ -251,6 +256,133 @@ func TestATakeThatStopsReturnsTheDialog(t *testing.T) {
 			}
 			if _, ok, err := other.TakeDialog(ctx, d.Key); err != nil || ok {
 				t.Errorf("a second TakeDialog = %v, %v; want none", ok, err)
+			}
+		})
+	}
+}
+
+// confirmed is a reg event subscription as a NOTIFY leaves it, with the
+// time of its next refresh. The store that a, the instance writing it,
+// runs on may fail; the subscription goes in through store, which does
+// not.
+func confirmed(t *testing.T, store *pcscfstore.Store, refreshAt time.Time) pcscf.RegSubscription {
+	t.Helper()
+	ctx := context.Background()
+	sub := regSubscription()
+	sub.NotifyDeadline = time.Now().Add(time.Minute).Round(time.Millisecond)
+	if ok, err := store.CreateRegSubscription(ctx, sub); err != nil || !ok {
+		t.Fatalf("CreateRegSubscription = %v, %v", ok, err)
+	}
+	sub, ok, err := store.UpdateRegSubscription(ctx, sub.PrivateIdentity, func(s *pcscf.RegSubscription) bool {
+		s.Dialog.ID.RemoteTag = "s"
+		s.NotifyDeadline, s.RefreshAt = time.Time{}, refreshAt
+		return true
+	})
+	if err != nil || !ok {
+		t.Fatalf("the NOTIFY of the subscription = %v, %v", ok, err)
+	}
+	return sub
+}
+
+// failingSchedule is a store whose time index is out of reach once it is
+// armed: the member of the refresh cannot be written.
+type failingSchedule struct {
+	kvstore.Store
+	armed atomic.Bool
+	hit   atomic.Bool
+}
+
+func (f *failingSchedule) Schedule(ctx context.Context, index, member string, at time.Time) error {
+	if f.armed.Load() && strings.HasSuffix(index, string(pcscf.RegEventRefreshExpiry)) {
+		f.hit.Store(true)
+		return errors.New("crash_test: the time index is out of reach")
+	}
+	return f.Store.Schedule(ctx, index, member, at)
+}
+
+// TestARefreshThatTheIndexWouldNotTakeLeavesTheSubscription: the store
+// fails while the member of the next refresh goes in. The instance is
+// told, and the subscription keeps the refresh of the NOTIFY before,
+// with the member that brings it up. Were the subscription written
+// first, it would carry a refresh that no member brings up, and no
+// instance would ever send it.
+func TestARefreshThatTheIndexWouldNotTakeLeavesTheSubscription(t *testing.T) {
+	ctx := context.Background()
+	for _, backend := range storetest.Backends() {
+		t.Run(backend.Name, func(t *testing.T) {
+			kv := &failingSchedule{Store: backend.New(t)}
+			store := pcscfstore.New(kv, kvjson.Config{Prefix: storetest.Prefix()})
+			was := time.Now().Add(time.Hour).Round(time.Millisecond)
+			sub := confirmed(t, store, was)
+
+			kv.armed.Store(true)
+			if _, ok, err := store.UpdateRegSubscription(ctx, sub.PrivateIdentity, func(s *pcscf.RegSubscription) bool {
+				s.RefreshAt = was.Add(time.Hour)
+				return true
+			}); err == nil {
+				t.Fatalf("the update whose index write failed = %v, %v; want the failure", ok, err)
+			}
+			if !kv.hit.Load() {
+				t.Fatal("the index write did not fail; the test proved nothing")
+			}
+			kv.armed.Store(false)
+
+			stored, ok, err := store.RegSubscription(ctx, sub.PrivateIdentity)
+			if err != nil || !ok {
+				t.Fatalf("the subscription = %v, %v", ok, err)
+			}
+			if !stored.RefreshAt.Equal(was) {
+				t.Errorf("the refresh of the subscription = %v, want the %v of the NOTIFY before", stored.RefreshAt, was)
+			}
+			if got, err := store.ClaimDue(ctx, pcscf.RegEventRefreshExpiry, was, time.Minute, 10); err != nil || len(got) != 1 {
+				t.Errorf("the member of that refresh = %+v, %v; want one", got, err)
+			}
+		})
+	}
+}
+
+// winnerDuringCreate is a store on which another instance subscribes for
+// the same user, and takes the first NOTIFY of that subscription, while
+// this one is still in its own create: the hook runs on the write of the
+// index item of the dialog, which comes before the members of the
+// expiries and the subscription itself.
+type winnerDuringCreate struct {
+	kvstore.Store
+	once sync.Once
+	run  func()
+}
+
+func (w *winnerDuringCreate) Put(ctx context.Context, key string, value []byte, ttl time.Duration) (string, error) {
+	if strings.Contains(key, ":reg-subscription-of-dialog:") {
+		w.once.Do(w.run)
+	}
+	return w.Store.Put(ctx, key, value, ttl)
+}
+
+// TestACreateThatLosesKeepsTheRefreshOfTheWinner: two instances answer a
+// REGISTER of one user at once and both subscribe. The one whose write
+// loses must leave the other's subscription alone, the time of its next
+// refresh included: a new subscription has no refresh of its own to
+// write there.
+func TestACreateThatLosesKeepsTheRefreshOfTheWinner(t *testing.T) {
+	ctx := context.Background()
+	for _, backend := range storetest.Backends() {
+		t.Run(backend.Name, func(t *testing.T) {
+			kv, cfg := backend.New(t), kvjson.Config{Prefix: storetest.Prefix()}
+			winner := pcscfstore.New(kv, cfg)
+			refreshAt := time.Now().Add(time.Hour).Round(time.Millisecond)
+			loser := pcscfstore.New(&winnerDuringCreate{Store: kv, run: func() {
+				confirmed(t, winner, refreshAt)
+			}}, cfg)
+
+			mine := regSubscription()
+			mine.Dialog.ID.CallID = "sub-2"
+			mine.NotifyDeadline = time.Now().Add(time.Minute).Round(time.Millisecond)
+			if ok, err := loser.CreateRegSubscription(ctx, mine); err != nil || ok {
+				t.Fatalf("the create that lost = %v, %v; want false", ok, err)
+			}
+			if got, err := winner.ClaimDue(ctx, pcscf.RegEventRefreshExpiry, refreshAt, time.Minute, 10); err != nil || len(got) != 1 {
+				t.Errorf("the refresh of the winner = %+v, %v; want one member", got, err)
 			}
 		})
 	}
