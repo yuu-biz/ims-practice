@@ -182,9 +182,9 @@ for u in json.load(sys.stdin):
 trap 'docker compose --profile volte rm -sf volte-a volte-b >/dev/null 2>&1' EXIT
 # Only the two UEs start: the network is up already.
 docker compose --profile volte up -d --no-deps volte-a volte-b
-# ue-c, the third UE of the sim profile, is listed after them and stays
+# phone3, the third UE of the phones profile, is listed after them and stays
 # down here.
-both_idle="*volte-a registered idle,volte-b registered idle,ue-c unreachable idle"
+both_idle="*volte-a registered idle,volte-b registered idle,phone3 unreachable idle"
 if wait_ues "$both_idle"; then
 	echo "ok   volte-a and volte-b attached and registered"
 else
@@ -205,7 +205,7 @@ else
 	echo "FAIL volte-a shows $impu_a, or its Ut read failed"
 	fail=1
 fi
-both_active="*volte-a registered active,volte-b registered active,ue-c unreachable idle"
+both_active="*volte-a registered active,volte-b registered active,phone3 unreachable idle"
 status="$(ue_post volte-a/call '{"target":"tel:+12025550112"}')"
 if [ "$status" = 200 ] && wait_ues "$both_active"; then
 	echo "ok   volte-a called volte-b through the Lab, and volte-b answered"

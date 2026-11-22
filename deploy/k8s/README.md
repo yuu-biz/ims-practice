@@ -139,7 +139,7 @@ Open http://localhost:8080. To drive calls from the Lab, start the simulators th
 
 ```sh
 kubectl -n ims scale deployment ue ue2 --replicas=0
-kubectl -n ims scale deployment ue-a ue-b --replicas=1
+kubectl -n ims scale deployment phone1 phone2 --replicas=1
 ```
 
 ## 6. Look at the capture

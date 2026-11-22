@@ -49,7 +49,7 @@ AS は、MRFC への INVITE の Request-URI の user part でサービスを指�
 | --- | --- | --- |
 | UE 1 | 172.28.0.100 | 音声ガイダンスと CAT の発信者。`tel:+12025550101`。 |
 | UE 2 | 172.28.0.101 | CAT を持つ着信者。`tel:+12025550102`。 |
-| ue-a、ue-b、ue-c | 172.28.0.110、.111、.112 | `sim` プロファイルの UE シミュレータ。加入者 1、2、3 で、ラボから操作します。2 つ目の着信と会議に使います。 |
+| phone1、phone2、phone3 | 172.28.0.110、.111、.112 | `phones` プロファイルの UE シミュレータ。加入者 1、2、3 で、ラボから操作します。2 つ目の着信と会議に使います。 |
 | P-CSCF と agw | 172.28.0.40、172.28.0.50 | ほかの通話と同じです。UE と MRFP の間の RTP は agw を通ります。 |
 | MMTel AS | 172.28.0.75 | 何を流すかを決めます。会議ではフォーカスになります。 |
 | MRFC | 172.28.0.85 | 役割 `mrfc`。`mrfc.ims.mnc001.mcc001.3gppnetwork.org`。 |
@@ -65,10 +65,10 @@ AS は、MRFC への INVITE の Request-URI の user part でサービスを指�
 
 ```sh
 docker compose up -d --build
-docker compose --profile sim up -d ue-a ue-b ue-c
+docker compose --profile phones up -d phone1 phone2 phone3
 ```
 
-http://localhost:8080 を開きます。Subscribers の欄で加入者 2 の呼び出し音に `cat1` を選び、`ue-a` から `ue-b` に発信します。2 つ目の着信と会議は、ラボの手順書にある、2 つ目の着信を受けて会議を作る手順のとおりに進めます。通話のラダー図には、通話のダイアログと並んで、AS と MRFC のダイアログも描かれます。どちらも P-Charging-Vector の icid-value が同じだからです。
+http://localhost:8080 を開きます。Subscribers の欄で加入者 2 の呼び出し音に `cat1` を選び、`phone1` から `phone2` に発信します。2 つ目の着信と会議は、ラボの手順書にある、2 つ目の着信を受けて会議を作る手順のとおりに進めます。通話のラダー図には、通話のダイアログと並んで、AS と MRFC のダイアログも描かれます。どちらも P-Charging-Vector の icid-value が同じだからです。
 
 ## キャプチャを開く
 
@@ -129,82 +129,82 @@ UE 1 は `ue xcap set baoc on` で発信を規制し、UE 2 に発信します�
 
 ## 割込通話と保留
 
-ue-a が ue-b に発信し、そのあと ue-c が ue-a に発信します。IR.92 は、待たせる着信の扱いを網ではなく UE に求めています（2.3.4）。
+phone1 が phone2 に発信し、そのあと phone3 が phone1 に発信します。IR.92 は、待たせる着信の扱いを網ではなく UE に求めています（2.3.4）。
 
 ```text
-#4772 29.049 ue-a   -> P-CSCF A1 INVITE tel:+12025550102
-#5171 30.097 P-CSCF -> ue-a   A1 200 OK   ue-b answered
-#5869 34.181 ue-c   -> P-CSCF    INVITE tel:+12025550101
-#5986 34.212 P-CSCF -> ue-a   A2 INVITE
-#6093 34.228 ue-a   -> P-CSCF A2 180      Alert-Info: <urn:alert:service:call-waiting>
-#6134 34.232 P-CSCF -> ue-c      180      without that Alert-Info
-#6278 38.256 ue-a   -> P-CSCF A1 INVITE   re-INVITE, a=sendonly: ue-b on hold
-#6389 38.277 ue-a   -> P-CSCF A2 200 OK   ue-a answers ue-c
-#7172 42.361 ue-a   -> P-CSCF A2 INVITE   Swap: ue-c on hold
-#7283 42.394 ue-a   -> P-CSCF A1 INVITE   Swap: ue-b back, a=sendrecv
+#4772 29.049 phone1   -> P-CSCF A1 INVITE tel:+12025550102
+#5171 30.097 P-CSCF -> phone1   A1 200 OK   phone2 answered
+#5869 34.181 phone3   -> P-CSCF    INVITE tel:+12025550101
+#5986 34.212 P-CSCF -> phone1   A2 INVITE
+#6093 34.228 phone1   -> P-CSCF A2 180      Alert-Info: <urn:alert:service:call-waiting>
+#6134 34.232 P-CSCF -> phone3      180      without that Alert-Info
+#6278 38.256 phone1   -> P-CSCF A1 INVITE   re-INVITE, a=sendonly: phone2 on hold
+#6389 38.277 phone1   -> P-CSCF A2 200 OK   phone1 answers phone3
+#7172 42.361 phone1   -> P-CSCF A2 INVITE   Swap: phone3 on hold
+#7283 42.394 phone1   -> P-CSCF A1 INVITE   Swap: phone2 back, a=sendrecv
 ```
 
-- **ue-a は、call-waiting の Alert-Info を付けて呼び出しを返します**（TS 24.615 4.5.5.3.2、RFC 7462）。自動では応答しません。
-- **ue-a の AS は、ue-c への 180 から Alert-Info を取り除きます。** `deploy/compose/hss.yaml` の CW の事業者の設定が、発信者に待たされていることを知らせないとしているためです（TS 24.615 4.5.5.2.3）。知らせる設定なら、AS は Alert-Info をそのまま渡し、音声ガイダンスを設定してあれば、待たせているあいだ発信者にそれを流します。
+- **phone1 は、call-waiting の Alert-Info を付けて呼び出しを返します**（TS 24.615 4.5.5.3.2、RFC 7462）。自動では応答しません。
+- **phone1 の AS は、phone3 への 180 から Alert-Info を取り除きます。** `deploy/compose/hss.yaml` の CW の事業者の設定が、発信者に待たされていることを知らせないとしているためです（TS 24.615 4.5.5.2.3）。知らせる設定なら、AS は Alert-Info をそのまま渡し、音声ガイダンスを設定してあれば、待たせているあいだ発信者にそれを流します。
 - **待たせた着信に応答すると、先の通話は保留になります。** offer を `sendonly` にした re-INVITE を送ります（TS 24.615 4.5.5.3.3、TS 24.610）。**Swap** は一方の通話を保留にし、もう一方を戻します。
 
 ## 3 人の会議
 
-ue-a は応答済みの通話を 2 つ持っていて、**Merge** を押します。ue-a は会議ファクトリの URI に会議を作り、フォーカスである MMTel AS に、相手ごとに REFER を送ります。REFER の Refer-To には、ue-a とその相手の通話を置き換える Replaces が入っています（TS 24.147 5.3.1.3.3 の option 2b。IR.92 2.3.3 が求める方法です）。
+phone1 は応答済みの通話を 2 つ持っていて、**Merge** を押します。phone1 は会議ファクトリの URI に会議を作り、フォーカスである MMTel AS に、相手ごとに REFER を送ります。REFER の Refer-To には、phone1 とその相手の通話を置き換える Replaces が入っています（TS 24.147 5.3.1.3.3 の option 2b。IR.92 2.3.3 が求める方法です）。
 
 ```text
-#7480 40.121 ue-a   -> P-CSCF F  INVITE sip:mmtel@conf-factory.ims.mnc001.mcc001.3gppnetwork.org
-#7511 40.131 MMTel  -> MRFC   M1 INVITE sip:conf=conf-o47ha7ifxyni@mrfc..., with ue-a's offer
-#7534 40.136 P-CSCF -> ue-a   F  200 OK  Contact: <sip:conf-o47ha7ifxyni@conf.ims.mnc001.mcc001.3gppnetwork.org>;isfocus
-#7549 40.138 ue-a   -> P-CSCF F  SUBSCRIBE sip:conf-o47ha7ifxyni@conf...  Event: conference
+#7480 40.121 phone1   -> P-CSCF F  INVITE sip:mmtel@conf-factory.ims.mnc001.mcc001.3gppnetwork.org
+#7511 40.131 MMTel  -> MRFC   M1 INVITE sip:conf=conf-o47ha7ifxyni@mrfc..., with phone1's offer
+#7534 40.136 P-CSCF -> phone1   F  200 OK  Contact: <sip:conf-o47ha7ifxyni@conf.ims.mnc001.mcc001.3gppnetwork.org>;isfocus
+#7549 40.138 phone1   -> P-CSCF F  SUBSCRIBE sip:conf-o47ha7ifxyni@conf...  Event: conference
 #7565 40.142 S-CSCF -> DNS       NAPTR? conf.ims.mnc001.mcc001.3gppnetwork.org
 #7568 40.143 DNS    -> S-CSCF    SRV _sip._udp.conf...: 5060 mmtel.ims.mnc001.mcc001.3gppnetwork.org
 #7571 40.144 S-CSCF -> MMTel  F  SUBSCRIBE sip:conf-o47ha7ifxyni@conf...
-#7602 40.150 ue-a   -> P-CSCF F  REFER   Refer-To: <sip:+12025550102@...;user=phone?Replaces=...>
-#7635 40.156 P-CSCF -> ue-a   F  200 OK  (REFER), not 202
+#7602 40.150 phone1   -> P-CSCF F  REFER   Refer-To: <sip:+12025550102@...;user=phone?Replaces=...>
+#7635 40.156 P-CSCF -> phone1   F  200 OK  (REFER), not 202
 #7662 40.164 MMTel  -> MRFC   M2 INVITE sip:conf=conf-o47ha7ifxyni@mrfc..., no SDP
 #7667 40.165 MRFC   -> MMTel  M2 200 OK  SDP offer of a new termination of the MRFP
-#7712 40.179 P-CSCF -> ue-b      INVITE  Replaces: ue-b's call with ue-a, the MRFP's offer
-#7716 40.180 ue-b   -> P-CSCF    183     ue-b's answer
-#7825 40.196 ue-b   -> P-CSCF    200 OK  without SDP
-#7867 40.201 ue-b   -> P-CSCF    BYE     the call that was replaced
-#7887 40.204 MMTel  -> MRFC   M2 ACK     ue-b's answer from its 183
-#7943 40.213 P-CSCF -> ue-a   F  NOTIFY  Event: conference, ue-a and ue-b
-#8040 40.225 ue-a   -> P-CSCF F  REFER   the same for ue-c
-#8398 40.306 P-CSCF -> ue-a   F  NOTIFY  Event: conference, three users
+#7712 40.179 P-CSCF -> phone2      INVITE  Replaces: phone2's call with phone1, the MRFP's offer
+#7716 40.180 phone2   -> P-CSCF    183     phone2's answer
+#7825 40.196 phone2   -> P-CSCF    200 OK  without SDP
+#7867 40.201 phone2   -> P-CSCF    BYE     the call that was replaced
+#7887 40.204 MMTel  -> MRFC   M2 ACK     phone2's answer from its 183
+#7943 40.213 P-CSCF -> phone1   F  NOTIFY  Event: conference, phone1 and phone2
+#8040 40.225 phone1   -> P-CSCF F  REFER   the same for phone3
+#8398 40.306 P-CSCF -> phone1   F  NOTIFY  Event: conference, three users
 ```
 
-- **会議の URI はホーム網の公開サービス識別子（PSI）です**（TS 23.228 4.3.6）。形は `sip:conf-<id>@conf.ims.mnc001.mcc001.3gppnetwork.org` です。ドメインは事業者が決め、ポート番号は付けません。網の外に出る可能性がある PSI には、ポート番号を付けないほうがよいためです（TS 23.003 13.5）。この URI はノードの名前を含みません。サブドメインの `conf` は、AS が受け持つ会議の全体を表します。このサブドメインの NAPTR と SRV のレコードが、会議を受け持つ AS を指します（`deploy/compose/dns`）。S-CSCF は、ue-a の SUBSCRIBE も、フォーカスとのダイアログの中の要求も、ほかのホストと同じく RFC 3263 でフォーカスへ届けます。これは TS 23.228 5.4.12.3 のサブドメインを使う方法です。ほかの網からの要求は I-CSCF から入ります。I-CSCF はこのサブドメインを知っていて（`deploy/compose/icscf.yaml` の `psi_subdomains`）、HSS に問い合わせずに、やはり DNS で要求を送ります（TS 24.229 5.3.2.1 step 3）。1 つの会議はそのダイアログとともに AS の 1 台にあります。AS を複数台にするときは台ごとにサブドメインを分け、DNS が会議ごとの要求を、その会議を持つ台へ送るようにします。
+- **会議の URI はホーム網の公開サービス識別子（PSI）です**（TS 23.228 4.3.6）。形は `sip:conf-<id>@conf.ims.mnc001.mcc001.3gppnetwork.org` です。ドメインは事業者が決め、ポート番号は付けません。網の外に出る可能性がある PSI には、ポート番号を付けないほうがよいためです（TS 23.003 13.5）。この URI はノードの名前を含みません。サブドメインの `conf` は、AS が受け持つ会議の全体を表します。このサブドメインの NAPTR と SRV のレコードが、会議を受け持つ AS を指します（`deploy/compose/dns`）。S-CSCF は、phone1 の SUBSCRIBE も、フォーカスとのダイアログの中の要求も、ほかのホストと同じく RFC 3263 でフォーカスへ届けます。これは TS 23.228 5.4.12.3 のサブドメインを使う方法です。ほかの網からの要求は I-CSCF から入ります。I-CSCF はこのサブドメインを知っていて（`deploy/compose/icscf.yaml` の `psi_subdomains`）、HSS に問い合わせずに、やはり DNS で要求を送ります（TS 24.229 5.3.2.1 step 3）。1 つの会議はそのダイアログとともに AS の 1 台にあります。AS を複数台にするときは台ごとにサブドメインを分け、DNS が会議ごとの要求を、その会議を持つ台へ送るようにします。
 - **ファクトリの URI も PSI です。** こちらは発信側の PSI です（TS 23.228 5.4.12.1）。ファクトリの URI への INVITE は、作る人のほかの INVITE と同じく、作る人の発信側のフィルタ条件で AS に届きます。このような PSI を使えるのは、ホーム網の利用者だけです。
 - **AS は会議のフォーカスであり、通知サービスでもあります**（TS 24.147 4）。参加者それぞれとダイアログを持ち、参加者ごとにメディアのための MRFC とのダイアログも持ちます。
 - **MRFC は、最初の `conf=` の INVITE で混ぜ合わせを作り**、そのあとの INVITE ごとにターミネーションを加えます。MRFP は、それぞれの参加者にほかの参加者の音声の和を送ります（TS 23.333 6.2.9）。キャプチャでは、MRFP から agw への 3 つのストリームと、その逆の 3 つが見えます。スクリプトは、ある参加者が受け取る混ぜ合わせた音声が、どの参加者 1 人のトーンよりも大きいことを確かめます。
 - **招かれた相手もプリコンディションを使います。** そのため、それぞれが MRFP の offer に高信頼の 183 で答え、200 には SDP を付けません。AS はその answer を M2 の ACK に入れて MRFC に渡します（RFC 3262 5）。
 - **フォーカスは REFER を 200（OK）で受け付けます。** RFC 3515 では 202（Accepted）で応答していました。RFC 7647 5 がこれを改め、REFER を受け付ける側は 200 を送り、202 を送ってはいけないことになりました。古い UA から 202 を受けた側は、200 と同じに扱います。RFC 6665 8.3.1 が SUBSCRIBE について決めたのと同じです。改めた理由は、202 が 200 と違うことを何も伝えず、途中のプロキシに吸収されることもあるからです。TS 24.147 は RFC 3515 を、RFC 6665 と RFC 7647 による改訂を含めて参照していて、その流れの例でも 200 を返しています（A.4.4.1）。
-- **REFER はそれぞれ refer イベントの購読を作ります**（RFC 3515 2.4.4）。フォーカスはすぐに、試していること（sipfrag の本文の `SIP/2.0 100 Trying`）を知らせます。相手への INVITE に最終応答が来たら、その応答を最後の NOTIFY で知らせ、Subscription-State を `terminated;reason=noresource` にします（2.4.7）。購読の長さは INVITE にかかりうる時間より長い 4 分です（3.4）。先に 4 分が過ぎたら、フォーカスは `terminated;reason=timeout` で購読を終えます（RFC 6665 4.2.1.4）。ue-a の側も、最後の `expires` が示した時刻に購読を終え、`active;expires=0` を受けたときはすぐに終えます（4.1.3）。
-- **NOTIFY** には conference-info の XML（RFC 4575）が入っていて、参加者ごとに `<user>` と、状態が `connected` の `<endpoint>` があります。`<user>` の `entity` は、網が保証した参加者の識別子です。`<endpoint>` の `entity` はフォーカスが作るキーで、`urn:uuid:` の URI です。RFC 4575 5.7 はこのキーの作り方をフォーカスに任せ、例として Contact と GRUU を挙げています。フォーカスは Contact を使いません。Contact は参加者の UE のアドレスなので、NOTIFY に入れると、ほかの網の購読者を含むすべての購読者に見えてしまいます（[境界を越える会議](interconnect.md#境界を越える会議)）。ラボの各カードは、これを **Conference** の行に並べます。ue-a は購読が切れる前に更新します。更新されなかった購読は期限の時刻に終わり、フォーカスはそのとき `terminated;reason=timeout` の NOTIFY を送ります。そのあと、この購読には何も送りません（RFC 6665 4.2.1.4）。
-- **会議は作った人が抜けると終わります**（TS 24.147 5.3.2.7）。ue-a が切ると、AS は ue-b と ue-c に BYE を送り、参加者ごとの MRFC とのダイアログにも BYE を送ります。
+- **REFER はそれぞれ refer イベントの購読を作ります**（RFC 3515 2.4.4）。フォーカスはすぐに、試していること（sipfrag の本文の `SIP/2.0 100 Trying`）を知らせます。相手への INVITE に最終応答が来たら、その応答を最後の NOTIFY で知らせ、Subscription-State を `terminated;reason=noresource` にします（2.4.7）。購読の長さは INVITE にかかりうる時間より長い 4 分です（3.4）。先に 4 分が過ぎたら、フォーカスは `terminated;reason=timeout` で購読を終えます（RFC 6665 4.2.1.4）。phone1 の側も、最後の `expires` が示した時刻に購読を終え、`active;expires=0` を受けたときはすぐに終えます（4.1.3）。
+- **NOTIFY** には conference-info の XML（RFC 4575）が入っていて、参加者ごとに `<user>` と、状態が `connected` の `<endpoint>` があります。`<user>` の `entity` は、網が保証した参加者の識別子です。`<endpoint>` の `entity` はフォーカスが作るキーで、`urn:uuid:` の URI です。RFC 4575 5.7 はこのキーの作り方をフォーカスに任せ、例として Contact と GRUU を挙げています。フォーカスは Contact を使いません。Contact は参加者の UE のアドレスなので、NOTIFY に入れると、ほかの網の購読者を含むすべての購読者に見えてしまいます（[境界を越える会議](interconnect.md#境界を越える会議)）。ラボの各カードは、これを **Conference** の行に並べます。phone1 は購読が切れる前に更新します。更新されなかった購読は期限の時刻に終わり、フォーカスはそのとき `terminated;reason=timeout` の NOTIFY を送ります。そのあと、この購読には何も送りません（RFC 6665 4.2.1.4）。
+- **会議は作った人が抜けると終わります**（TS 24.147 5.3.2.7）。phone1 が切ると、AS は phone2 と phone3 に BYE を送り、参加者ごとの MRFC とのダイアログにも BYE を送ります。
 
 ## 会議に戻る
 
-会議を抜けた参加者は、会議が続いているあいだなら戻れます。フォーカスの Contact で知った会議の URI に INVITE を送ります（TS 24.147 5.3.1.4.1）。ue-b が電話を切り、そのあと会議の URI に発信したとします。
+会議を抜けた参加者は、会議が続いているあいだなら戻れます。フォーカスの Contact で知った会議の URI に INVITE を送ります（TS 24.147 5.3.1.4.1）。phone2 が電話を切り、そのあと会議の URI に発信したとします。
 
 ```text
-ue-b     P-CSCF   S-CSCF   MMTel AS              MRFC
+phone2     P-CSCF   S-CSCF   MMTel AS              MRFC
                            services  focus
  | INVITE sip:conf-o47ha7ifxyni@conf...            |
- |-------->|------->|------->|        |            |  P-Served-User: ue-b;sescase=orig
+ |-------->|------->|------->|        |            |  P-Served-User: phone2;sescase=orig
  |         |        |<-------|        |            |  the INVITE of the B2BUA, to the same URI
  |         |        |---------------->|            |  by DNS, without P-Served-User
- |         |        |        |        |----------->|  INVITE sip:conf=conf-o47ha7ifxyni@mrfc..., ue-b's offer
+ |         |        |        |        |----------->|  INVITE sip:conf=conf-o47ha7ifxyni@mrfc..., phone2's offer
  |         |        |        |        |<-----------|  200 OK, the answer of the MRFP
  |         |        |<----------------|            |  200 OK, Contact: <sip:conf-o47ha7ifxyni@conf...>;isfocus
  |         |        |------->|        |            |
  |<--------|<-------|<-------|        |            |  200 OK, the same Contact
 ```
 
-- **INVITE は ue-b のほかの発信と同じ道を通ります。** S-CSCF は ue-b の発信側のサービスのために、この INVITE を MMTel AS に渡します。B2BUA である AS は同じ URI に宛てた新しい INVITE を S-CSCF に返します。S-CSCF は上の SUBSCRIBE と同じく、DNS でフォーカスを見つけます。ほかの網からの INVITE は I-CSCF から入り、I-CSCF も DNS でフォーカスに送ります。フォーカスに INVITE を届けるのはフィルタ条件ではないので、この INVITE には P-Served-User がありません。AS は P-Served-User の有無で、フォーカスに宛てた INVITE と ue-b のサービスのための INVITE を見分けます。どちらも Request-URI は同じです。
-- **フォーカスは作った人と同じやり方で ue-b を迎え入れます**（5.3.2.4.1）。ue-b の offer で、混ぜ合わせの新しいターミネーションを MRFC に頼みます。MRFC が応答したら、MRFP の answer を入れ、Contact を `isfocus` 付きの会議の URI にして ue-b に応答します。ue-b のサービスの AS は、招かれた相手のときと同じく、その Contact をそのまま渡し、自分を Record-Route に入れます。ue-b が会議の URI に送る要求が、そのあとも AS を通るようにするためです（TS 24.229 5.7.5.1）。
-- **NOTIFY** は ue-b を再び `connected` として並べます。joining-method は作った人と同じ `dialed-in` になります。フォーカスが ue-b を招いたときは `dialed-out` でした。
+- **INVITE は phone2 のほかの発信と同じ道を通ります。** S-CSCF は phone2 の発信側のサービスのために、この INVITE を MMTel AS に渡します。B2BUA である AS は同じ URI に宛てた新しい INVITE を S-CSCF に返します。S-CSCF は上の SUBSCRIBE と同じく、DNS でフォーカスを見つけます。ほかの網からの INVITE は I-CSCF から入り、I-CSCF も DNS でフォーカスに送ります。フォーカスに INVITE を届けるのはフィルタ条件ではないので、この INVITE には P-Served-User がありません。AS は P-Served-User の有無で、フォーカスに宛てた INVITE と phone2 のサービスのための INVITE を見分けます。どちらも Request-URI は同じです。
+- **フォーカスは作った人と同じやり方で phone2 を迎え入れます**（5.3.2.4.1）。phone2 の offer で、混ぜ合わせの新しいターミネーションを MRFC に頼みます。MRFC が応答したら、MRFP の answer を入れ、Contact を `isfocus` 付きの会議の URI にして phone2 に応答します。phone2 のサービスの AS は、招かれた相手のときと同じく、その Contact をそのまま渡し、自分を Record-Route に入れます。phone2 が会議の URI に送る要求が、そのあとも AS を通るようにするためです（TS 24.229 5.7.5.1）。
+- **NOTIFY** は phone2 を再び `connected` として並べます。joining-method は作った人と同じ `dialed-in` になります。フォーカスが phone2 を招いたときは `dialed-out` でした。
 - **網が識別子を保証した利用者なら、誰でも会議に入れます。** 前に会議にいたかどうかは問いません。上限は参加者 6 人で、NOTIFY の maximum-user-count と同じです。7 人目には 403（Forbidden）を返します。どの会議にも使われていない会議の URI に INVITE が来たら、404（Not Found）を返します（5.3.2.4.1 step 1）。会議を作った人が戻ろうとしても同じです。作った人が抜けた時点で会議は終わり、フォーカスはその URI を手放しているためです（5.3.2.7）。
 
 スクリプトではこの場面を動かしません。`internal/mmtel/conference_network_test.go` の `TestRejoinWithTheConferenceURI` が、1 つのプロセスの中の IMS 全体でこの流れを動かします。B が A の会議を抜け、会議の URI で戻り、混ぜ合わせを通して A の声を聞きます。
@@ -269,7 +269,7 @@ ue-b     P-CSCF   S-CSCF   MMTel AS              MRFC
 ## 後片付け
 
 ```sh
-docker compose --profile ue --profile sim --profile volte down -v --remove-orphans
+docker compose --profile ue --profile phones --profile volte down -v --remove-orphans
 ```
 
 すべてのプロファイルのノードと UE を止め、イメージは残します。次の手順書をビルドし直さずに始められます。イメージも削除するときは、[システムを止める](capture.md#システムを止める)を見てください。

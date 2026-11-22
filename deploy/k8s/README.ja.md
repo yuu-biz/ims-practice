@@ -139,7 +139,7 @@ http://localhost:8080 を開きます。ラボから発信するには、起動�
 
 ```sh
 kubectl -n ims scale deployment ue ue2 --replicas=0
-kubectl -n ims scale deployment ue-a ue-b --replicas=1
+kubectl -n ims scale deployment phone1 phone2 --replicas=1
 ```
 
 ## 6. キャプチャを見る

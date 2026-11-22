@@ -219,14 +219,14 @@ services:
         ipv4_address: 172.28.0.103
 
   # Two UE simulators that stay up and do what the Lab asks
-  # ("ue serve"). Start them with "docker compose --profile sim up -d".
-  # They use subscribers 1 and 2 like ue and ue2, and ue-c below uses
+  # ("ue serve"). Start them with "docker compose --profile phones up -d".
+  # They use subscribers 1 and 2 like ue and ue2, and phone3 below uses
   # subscriber 3 like ue3, so run one profile at a time. The control API
   # is reached through the Lab only.
-  ue-a:
+  phone1:
     image: ims-practice/ims:dev
     pull_policy: never
-    profiles: [sim]
+    profiles: [phones]
     entrypoint: ["ue"]
     command: [serve, -control, "0.0.0.0:8090"]
     restart: unless-stopped
@@ -239,10 +239,10 @@ services:
       ims:
         ipv4_address: 172.28.0.110
 
-  ue-b:
+  phone2:
     image: ims-practice/ims:dev
     pull_policy: never
-    profiles: [sim]
+    profiles: [phones]
     entrypoint: ["ue"]
     command:
       - serve
@@ -264,12 +264,12 @@ services:
       ims:
         ipv4_address: 172.28.0.111
 
-  # ue-c, subscriber 3, is the third party of a conference. It starts
-  # with the sim profile too.
-  ue-c:
+  # phone3, subscriber 3, is the third party of a conference. It starts
+  # with the phones profile too.
+  phone3:
     image: ims-practice/ims:dev
     pull_policy: never
-    profiles: [sim]
+    profiles: [phones]
     entrypoint: ["ue"]
     command:
       - serve
@@ -294,8 +294,8 @@ services:
   # Two VoLTE UEs. Each attaches to the EPC stub, which
   # hands it this address and the P-CSCF in the PCO, registers with IMS
   # AKA, and calls with AMR-WB and preconditions over the voice bearer
-  # that the network sets up for each call. Like ue-a and ue-b, they stay
-  # up and do what the Lab asks: start them with "docker compose
+  # that the network sets up for each call. Like phone1 and phone2,
+  # they stay up and do what the Lab asks: start them with "docker compose
   # --profile volte up -d". Subscriber 10 has the keys of MILENAGE test
   # set 1 and subscriber 12 those of test set 3 (TS 35.208), as in
   # hss.yaml. Their cards have a USIM and no ISIM: -impi and -impu are

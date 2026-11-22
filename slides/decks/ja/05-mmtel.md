@@ -436,16 +436,16 @@ grep -rn "SIMPLIFIED:" internal/mmtel internal/xcap internal/simservs internal/c
 ## ラボで設定する
 
 ```sh
-docker compose --profile sim up -d --build
+docker compose --profile phones up -d --build
 ```
 
-1. `ue-b` のカードで **Supplementary services (Ut/XCAP)** を開きます。どのサービスも最初は `off` です。
+1. `phone2` のカードで **Supplementary services (Ut/XCAP)** を開きます。どのサービスも最初は `off` です。
 2. **CFU (unconditional)** を選び、転送先を書いて **On** を押します。
 3. 一覧に `CFU (unconditional): on to …` と出て、ETag が 1 つ増えます。
 4. **Off** で止めます。転送先は消えずに残ります。
 
 - ラダー図には XCAP も Sh も出ません。どちらも SIP の要求には属さないからです。キャプチャには、80 番の HTTP と 3868 番の Diameter として残ります。
-- ラボは 1 つの通話のダイアログをすべて 1 つのラダー図に描き、MMTel AS の列も置きます。`sim` と `ue` のプロファイルを同時に動かさないでください。同じ加入者の UE が 2 台になります。
+- ラボは 1 つの通話のダイアログをすべて 1 つのラダー図に描き、MMTel AS の列も置きます。`phones` と `ue` のプロファイルを同時に動かさないでください。同じ加入者の UE が 2 台になります。
 
 > 手順書 [ラボで IMS を見る「UE シミュレータを操作する」](../../../docs/guide/ja/lab.md#ue-シミュレータを操作する)
 
@@ -528,9 +528,9 @@ docker compose --profile sim up -d --build
 - 音声ガイダンス、着信側が選ぶ呼び出し音、CW、会議は [MRF の手順書](../../../docs/guide/ja/mrf.md) で追います。MRFC と MRFP、それに `scripts/e2e-mrf.sh` を使います。
 
 ```sh
-docker compose --profile ue --profile sim down --rmi all -v --remove-orphans
+docker compose --profile ue --profile phones down --rmi all -v --remove-orphans
 ```
 
-- このコマンドは `ue` と `sim` の両方のプロファイルを止めます。手順書の「後片付け」は `ue` だけを止めます。ラボを使っていなければ、それで足ります。
+- このコマンドは `ue` と `phones` の両方のプロファイルを止めます。手順書の「後片付け」は `ue` だけを止めます。ラボを使っていなければ、それで足ります。
 
 > 手順書の一覧は [docs/guide/](../../../docs/guide/) にあります。

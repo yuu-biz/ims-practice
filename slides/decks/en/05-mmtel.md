@@ -436,16 +436,16 @@ grep -rn "SIMPLIFIED:" internal/mmtel internal/xcap internal/simservs internal/c
 ## Set it from the Lab
 
 ```sh
-docker compose --profile sim up -d --build
+docker compose --profile phones up -d --build
 ```
 
-1. On the card of `ue-b`, open **Supplementary services (Ut/XCAP)**. Every service starts as `off`.
+1. On the card of `phone2`, open **Supplementary services (Ut/XCAP)**. Every service starts as `off`.
 2. Choose **CFU (unconditional)**, type a target and press **On**.
 3. The list shows `CFU (unconditional): on to …`, and the ETag goes up by one.
 4. **Off** switches it off. The target stays.
 
 - The ladders show neither XCAP nor Sh: neither belongs to a SIP request. The capture has them, as HTTP on port 80 and Diameter on port 3868.
-- The Lab draws all the dialogs of a call in one ladder, with a column for the MMTel AS. Do not run the `sim` and `ue` profiles at once: a subscriber would have two UEs.
+- The Lab draws all the dialogs of a call in one ladder, with a column for the MMTel AS. Do not run the `phones` and `ue` profiles at once: a subscriber would have two UEs.
 
 > Guide: ["Drive the UE simulators" in Watch the IMS in the Lab](../../../docs/guide/en/lab.md#drive-the-ue-simulators)
 
@@ -528,9 +528,9 @@ For 1 and 3, run `ue xcap` as UE 1 or UE 2, in the form of the slide "Run it".
 - The announcements, the alerting tone the callee chooses, CW and the conference are in [the MRF guide](../../../docs/guide/en/mrf.md): the MRFC and the MRFP, and `scripts/e2e-mrf.sh`.
 
 ```sh
-docker compose --profile ue --profile sim down --rmi all -v --remove-orphans
+docker compose --profile ue --profile phones down --rmi all -v --remove-orphans
 ```
 
-- This stops the `ue` and the `sim` profiles. The guide's "Clean up" stops only `ue`, which is enough when the Lab was not used.
+- This stops the `ue` and the `phones` profiles. The guide's "Clean up" stops only `ue`, which is enough when the Lab was not used.
 
 > The guides are listed in [docs/guide/](../../../docs/guide/).

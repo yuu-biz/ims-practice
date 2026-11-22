@@ -66,10 +66,10 @@ Deleting a subscriber that is registered ends its registration. The HSS sends a 
 
 ## Drive the UE simulators
 
-The three UE simulators `ue-a` (subscriber 1, `tel:+12025550101`), `ue-b` (subscriber 2, `tel:+12025550102`) and `ue-c` (subscriber 3, `tel:+12025550103`) do not start with the rest of the system. Start them with the `sim` profile:
+The three UE simulators `phone1` (subscriber 1, `tel:+12025550101`), `phone2` (subscriber 2, `tel:+12025550102`) and `phone3` (subscriber 3, `tel:+12025550103`) do not start with the rest of the system. Start them with the `phones` profile:
 
 ```sh
-docker compose --profile sim up -d --build
+docker compose --profile phones up -d --build
 ```
 
 Until then their cards say that they are not reachable. Once started, each one registers by itself. If a card still says `not registered`, press **Register**.
@@ -78,10 +78,10 @@ The cards of `volte-a` and `volte-b` are the VoLTE UEs of the `volte` profile, w
 
 To make a call:
 
-1. On the card of `ue-b`, set the answer policy to `manual`. The UE then rings until you answer. With `auto` it answers after a second; with `reject` it turns every call down with 486 (Busy Here).
-2. On the card of `ue-a`, press **Call**. The form starts with the tel URI of the other UE, which it takes from the HSS subscription.
-3. The card of `ue-b` shows an incoming call in the state `ringing`. Press **Answer**. Both cards show the call as `active`. The **Session** row of each card shows the codec of the call, the direction of the audio in the SDP of each side, the precondition table (RFC 3312) and whether the access network has reserved the media resources. `ue-a` and `ue-b` reach the P-CSCF straight over the Compose network, an access network that needs no reservation, so their cards say `no reservation of media resources needed on this access network`.
-4. Press **Hold** on the card of `ue-a`. The UE sends a re-INVITE whose offer makes the audio `sendonly` (TS 24.610), and the Session row of each card shows the new directions. **Resume** takes the call back with `sendrecv`.
+1. On the card of `phone2`, set the answer policy to `manual`. The UE then rings until you answer. With `auto` it answers after a second; with `reject` it turns every call down with 486 (Busy Here).
+2. On the card of `phone1`, press **Call**. The form starts with the tel URI of the other UE, which it takes from the HSS subscription.
+3. The card of `phone2` shows an incoming call in the state `ringing`. Press **Answer**. Both cards show the call as `active`. The **Session** row of each card shows the codec of the call, the direction of the audio in the SDP of each side, the precondition table (RFC 3312) and whether the access network has reserved the media resources. `phone1` and `phone2` reach the P-CSCF straight over the Compose network, an access network that needs no reservation, so their cards say `no reservation of media resources needed on this access network`.
+4. Press **Hold** on the card of `phone1`. The UE sends a re-INVITE whose offer makes the audio `sendonly` (TS 24.610), and the Session row of each card shows the new directions. **Resume** takes the call back with `sendrecv`.
 5. Type digits such as `12#` and press **Send DTMF**. The UE sends them as telephone events in its RTP (RFC 4733), and the Session row of the other card shows them as received.
 6. Press **Hang up** on either card. Once a call is answered this sends a BYE. Before that, the caller sends a CANCEL and the callee declines with 603 (Decline).
 
@@ -89,10 +89,10 @@ Select **ladder** next to a call to draw it while it goes on. Each card knows on
 
 To send a short message (SMS over IP, see [the SMS guide](sms.md)):
 
-1. On the card of `ue-a`, fill in the SMS form. The number starts as that of the other UE, `+12025550102`. Type a text of up to 160 characters of the GSM 7 bit alphabet, or up to 70 other characters such as Japanese. Tick **status report** to ask the SC to report the delivery.
+1. On the card of `phone1`, fill in the SMS form. The number starts as that of the other UE, `+12025550102`. Type a text of up to 160 characters of the GSM 7 bit alphabet, or up to 70 other characters such as Japanese. Tick **status report** to ask the SC to report the delivery.
 2. Press **Send SMS**. The message appears under **SMS sent** as `waiting for the submit report`, and soon `accepted by the SC`.
-3. The card of `ue-b` shows the text under **SMS received**, with the sender's number.
-4. With a status report asked for, the entry on `ue-a` ends with `status report: delivered (TP-ST 0x00)`.
+3. The card of `phone2` shows the text under **SMS received**, with the sender's number.
+4. With a status report asked for, the entry on `phone1` ends with `status report: delivered (TP-ST 0x00)`.
 
 A number that no subscriber has, such as `+12025550188`, ends as `refused by the SC: RP-ERROR, RP-Cause 1, TP-FCS 0xc3`. Subscriber 4, `+12025550104`, does not register here: its short message is accepted, and the status report says `not delivered, the SC has given up (TP-ST 0x62)`.
 
@@ -102,20 +102,20 @@ The cards follow the short messages through the same event stream that keeps the
 
 To forward calls (the supplementary services, which the UE sets over Ut with XCAP):
 
-1. On the card of `ue-b`, open **Supplementary services (Ut/XCAP)**. The UE reads its document, `simservs.xml`, from the XCAP server of the MMTel AS, and the card lists every service: call forwarding (CFU, CFB, CFNR, CFNRc, CFNL), barring (BAIC, BIC-Roam, ACR, BAOC, BOIC, BOIC-exHC) and the default of OIR. Each starts as `off`, as the HSS provisions them (GSMA IR.92 2.3.2).
+1. On the card of `phone2`, open **Supplementary services (Ut/XCAP)**. The UE reads its document, `simservs.xml`, from the XCAP server of the MMTel AS, and the card lists every service: call forwarding (CFU, CFB, CFNR, CFNRc, CFNL), barring (BAIC, BIC-Roam, ACR, BAOC, BOIC, BOIC-exHC) and the default of OIR. Each starts as `off`, as the HSS provisions them (GSMA IR.92 2.3.2).
 2. Choose a service, such as **CFU (unconditional)**. The target starts as the tel URI of the other UE; type another, such as `tel:+12025550103`, if you like. Press **On**. The list then shows `CFU (unconditional): on to tel:+12025550103`, and the ETag under it has gone up by one.
 3. Press **Off** to switch it off again. The target stays registered, as IR.92 2.3.2 has the UE keep it.
 
 Each press makes the UE send XCAP requests on its own: a GET of the whole document, a PUT of the one rule with `If-Match`, and another GET for the list. The XCAP server reads and writes the document in the HSS over Sh (UDR and PUR, Service-Indication `MMTEL-Services`). The ladders show none of this, because neither HTTP nor these Sh requests belong to a SIP request; the capture has all of it, as HTTP on port 80 and Diameter on port 3868. The first GET gets 401 with two HTTP Digest challenges, SHA-256 and then MD5, and the UE answers the first.
 
-To give a user a customized alerting tone (CAT, TS 24.182), choose a tone in the **Alerting tone (CAT)** column of the Subscribers panel, such as `cat1` for subscriber 2. The Lab passes it to the HSS, and the MMTel AS reads it over Sh for each call to that user. Call `ue-b` from `ue-a` again: the MRFP plays the tone to `ue-a` as early media until `ue-b` answers, and the Session row of `ue-a` says `rang with early media from the network`. With `off (ringing tone)` the same row says `rang with the UE's own ringing tone`.
+To give a user a customized alerting tone (CAT, TS 24.182), choose a tone in the **Alerting tone (CAT)** column of the Subscribers panel, such as `cat1` for subscriber 2. The Lab passes it to the HSS, and the MMTel AS reads it over Sh for each call to that user. Call `phone2` from `phone1` again: the MRFP plays the tone to `phone1` as early media until `phone2` answers, and the Session row of `phone1` says `rang with early media from the network`. With `off (ringing tone)` the same row says `rang with the UE's own ringing tone`.
 
 To take a second call and make a conference of the two (TS 24.615, TS 24.147):
 
-1. Call `ue-b` from `ue-a`, and let it answer.
-2. Call `ue-a` from `ue-c`. The card of `ue-a` shows the new call under **Other call** as `waiting`: `ue-a` rang with `Alert-Info: <urn:alert:service:call-waiting>`.
-3. Press **Answer** on `ue-a`. It puts the call with `ue-b` on hold and answers `ue-c`. **Swap** goes from one call to the other.
-4. Press **Merge** on `ue-a`. It creates a conference at the MMTel AS and asks it with a REFER for each peer to bring the peer in. The **Conference** row of each of the three cards then lists the three users, as the conference event package tells them. The MRFP mixes the audio.
+1. Call `phone2` from `phone1`, and let it answer.
+2. Call `phone1` from `phone3`. The card of `phone1` shows the new call under **Other call** as `waiting`: `phone1` rang with `Alert-Info: <urn:alert:service:call-waiting>`.
+3. Press **Answer** on `phone1`. It puts the call with `phone2` on hold and answers `phone3`. **Swap** goes from one call to the other.
+4. Press **Merge** on `phone1`. It creates a conference at the MMTel AS and asks it with a REFER for each peer to bring the peer in. The **Conference** row of each of the three cards then lists the three users, as the conference event package tells them. The MRFP mixes the audio.
 
 [The MRF guide](mrf.md) follows the tone, the waiting call and the conference in the capture.
 
@@ -156,7 +156,7 @@ What you see in the ladder, though, is the signaling of the IMS as the specifica
 ## Clean up
 
 ```sh
-docker compose --profile ue --profile sim --profile volte down -v --remove-orphans
+docker compose --profile ue --profile phones --profile volte down -v --remove-orphans
 ```
 
 This stops the nodes and the UEs of every profile and keeps the images, so the next guide starts without a new build. To delete the images as well, see [Stop the system](capture.md#stop-the-system).

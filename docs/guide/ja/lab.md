@@ -66,10 +66,10 @@ Subscribers パネルでは、HSS の加入の一覧表示、追加、削除が�
 
 ## UE シミュレータを操作する
 
-3 台の UE シミュレータ `ue-a`（加入者 1、`tel:+12025550101`）、`ue-b`（加入者 2、`tel:+12025550102`）、`ue-c`（加入者 3、`tel:+12025550103`）は、ほかのノードと一緒には起動しません。`sim` プロファイルで起動します。
+3 台の UE シミュレータ `phone1`（加入者 1、`tel:+12025550101`）、`phone2`（加入者 2、`tel:+12025550102`）、`phone3`（加入者 3、`tel:+12025550103`）は、ほかのノードと一緒には起動しません。`phones` プロファイルで起動します。
 
 ```sh
-docker compose --profile sim up -d --build
+docker compose --profile phones up -d --build
 ```
 
 起動するまで、カードには接続できないと表示されます。起動すると、それぞれが自分で登録します。カードが `not registered` のままなら、**Register** を押してください。
@@ -78,10 +78,10 @@ docker compose --profile sim up -d --build
 
 通話は次の手順でかけます。
 
-1. `ue-b` のカードで、応答方針を `manual` にします。こうすると、応答するまで鳴り続けます。`auto` では 1 秒後に自動で応答し、`reject` ではすべての着信を 486（Busy Here）で断ります。
-2. `ue-a` のカードで **Call** を押します。宛先の欄には、HSS の加入から調べたもう一方の UE の tel URI が最初から入っています。
-3. `ue-b` のカードに、`ringing` の状態の着信が表示されます。**Answer** を押すと、両方のカードで通話が `active` になります。それぞれのカードの **Session** の行には、通話のコーデック、両側の SDP での音声の方向、プリコンディションの表（RFC 3312）、アクセス網がメディアのリソースを確保したかどうかが表示されます。`ue-a` と `ue-b` は Compose のネットワークから直接 P-CSCF につながります。このネットワークはメディアのリソースを確保する必要がないアクセス網なので、2 つのカードには `no reservation of media resources needed on this access network` と表示されます。
-4. `ue-a` のカードで **Hold** を押します。UE は音声を `sendonly` にするオファーを入れた re-INVITE を送ります（TS 24.610）。両方のカードの Session の行に、新しい方向が表示されます。**Resume** を押すと、`sendrecv` に戻して通話を再開します。
+1. `phone2` のカードで、応答方針を `manual` にします。こうすると、応答するまで鳴り続けます。`auto` では 1 秒後に自動で応答し、`reject` ではすべての着信を 486（Busy Here）で断ります。
+2. `phone1` のカードで **Call** を押します。宛先の欄には、HSS の加入から調べたもう一方の UE の tel URI が最初から入っています。
+3. `phone2` のカードに、`ringing` の状態の着信が表示されます。**Answer** を押すと、両方のカードで通話が `active` になります。それぞれのカードの **Session** の行には、通話のコーデック、両側の SDP での音声の方向、プリコンディションの表（RFC 3312）、アクセス網がメディアのリソースを確保したかどうかが表示されます。`phone1` と `phone2` は Compose のネットワークから直接 P-CSCF につながります。このネットワークはメディアのリソースを確保する必要がないアクセス網なので、2 つのカードには `no reservation of media resources needed on this access network` と表示されます。
+4. `phone1` のカードで **Hold** を押します。UE は音声を `sendonly` にするオファーを入れた re-INVITE を送ります（TS 24.610）。両方のカードの Session の行に、新しい方向が表示されます。**Resume** を押すと、`sendrecv` に戻して通話を再開します。
 5. `12#` のような数字を入力して **Send DTMF** を押します。UE はその数字を RTP の telephone event として送ります（RFC 4733）。もう一方のカードの Session の行には、その数字が受け取った数字として表示されます。
 6. どちらかのカードで **Hang up** を押します。応答したあとの通話では BYE を送ります。応答の前なら、発信側は CANCEL を送り、着信側は 603（Decline）で断ります。
 
@@ -89,10 +89,10 @@ docker compose --profile sim up -d --build
 
 ショートメッセージ（SMS over IP、[SMS の手順書](sms.md) を参照）は次の手順で送ります。
 
-1. `ue-a` のカードの SMS のフォームに入力します。番号の欄には、もう一方の UE の番号 `+12025550102` が最初から入っています。本文は GSM 7 ビットのアルファベットなら 160 文字まで、日本語などほかの文字なら 70 文字まで書けます。配達の結果を SC に報告してもらうときは、**status report** に印を付けます。
+1. `phone1` のカードの SMS のフォームに入力します。番号の欄には、もう一方の UE の番号 `+12025550102` が最初から入っています。本文は GSM 7 ビットのアルファベットなら 160 文字まで、日本語などほかの文字なら 70 文字まで書けます。配達の結果を SC に報告してもらうときは、**status report** に印を付けます。
 2. **Send SMS** を押します。**SMS sent** にメッセージが `waiting for the submit report` と表示され、すぐに `accepted by the SC` に変わります。
-3. `ue-b` のカードの **SMS received** に、送信者の番号と本文が表示されます。
-4. status report を頼んだときは、`ue-a` の行の最後に `status report: delivered (TP-ST 0x00)` と表示されます。
+3. `phone2` のカードの **SMS received** に、送信者の番号と本文が表示されます。
+4. status report を頼んだときは、`phone1` の行の最後に `status report: delivered (TP-ST 0x00)` と表示されます。
 
 どの加入者も持たない番号（`+12025550188` など）に送ると、`refused by the SC: RP-ERROR, RP-Cause 1, TP-FCS 0xc3` で終わります。加入者 4 の `+12025550104` はここでは登録しないので、SC はメッセージを受け付けますが、status report は `not delivered, the SC has given up (TP-ST 0x62)` になります。
 
@@ -102,20 +102,20 @@ docker compose --profile sim up -d --build
 
 着信転送などの補足サービスは、UE が Ut で XCAP を使って設定します。手順は次のとおりです。
 
-1. `ue-b` のカードで **Supplementary services (Ut/XCAP)** を開きます。UE は MMTel AS の XCAP サーバーから自分の文書 `simservs.xml` を読み、カードにすべてのサービスを並べます。着信転送（CFU、CFB、CFNR、CFNRc、CFNL）、規制（BAIC、BIC-Roam、ACR、BAOC、BOIC、BOIC-exHC）、OIR の既定値です。HSS は各サービスを止めた状態で用意するので、最初はどれも `off` です（GSMA IR.92 2.3.2）。
+1. `phone2` のカードで **Supplementary services (Ut/XCAP)** を開きます。UE は MMTel AS の XCAP サーバーから自分の文書 `simservs.xml` を読み、カードにすべてのサービスを並べます。着信転送（CFU、CFB、CFNR、CFNRc、CFNL）、規制（BAIC、BIC-Roam、ACR、BAOC、BOIC、BOIC-exHC）、OIR の既定値です。HSS は各サービスを止めた状態で用意するので、最初はどれも `off` です（GSMA IR.92 2.3.2）。
 2. サービスを選びます。たとえば **CFU (unconditional)** です。転送先の欄には、もう一方の UE の tel URI が最初から入っています。別の番号にするときは `tel:+12025550103` のように書き換えます。**On** を押すと、一覧に `CFU (unconditional): on to tel:+12025550103` と表示され、その下の ETag が 1 つ増えます。
 3. **Off** を押すと、転送を止めます。IR.92 2.3.2 のとおり、転送先は消さずに残ります。
 
 ボタンを押すたびに、UE が自分で XCAP の要求を送ります。最初に文書全体を GET し、次に変える規則 1 つだけを `If-Match` を付けて PUT し、一覧を表示するためにもう一度 GET します。XCAP サーバーは、HSS にある文書を Sh で読み書きします（UDR と PUR、Service-Indication は `MMTEL-Services`）。HTTP も、この Sh の要求も SIP の要求には結び付かないので、ラダー図には出ません。キャプチャには、80 番ポートの HTTP と 3868 番ポートの Diameter としてすべて残ります。最初の GET には 401 が返り、HTTP Digest の challenge が SHA-256、MD5 の順に 2 つ付いています。UE は先頭の SHA-256 で答えます。
 
-利用者に電話をかけた人が聞く呼び出し音（CAT、customized alerting tone、TS 24.182）を設定するには、Subscribers の欄の **Alerting tone (CAT)** の列で音を選びます。たとえば加入者 2 に `cat1` を選びます。ラボはそれを HSS に渡し、MMTel AS はその利用者への着信のたびに Sh で読みます。もう一度 `ue-a` から `ue-b` に発信すると、`ue-b` が応答するまで MRFP がその音をアーリーメディアとして `ue-a` に流します。`ue-a` の Session の行には `rang with early media from the network` と表示されます。`off (ringing tone)` に戻すと、同じ行は `rang with the UE's own ringing tone` になります。
+利用者に電話をかけた人が聞く呼び出し音（CAT、customized alerting tone、TS 24.182）を設定するには、Subscribers の欄の **Alerting tone (CAT)** の列で音を選びます。たとえば加入者 2 に `cat1` を選びます。ラボはそれを HSS に渡し、MMTel AS はその利用者への着信のたびに Sh で読みます。もう一度 `phone1` から `phone2` に発信すると、`phone2` が応答するまで MRFP がその音をアーリーメディアとして `phone1` に流します。`phone1` の Session の行には `rang with early media from the network` と表示されます。`off (ringing tone)` に戻すと、同じ行は `rang with the UE's own ringing tone` になります。
 
 2 つ目の着信を受け、2 つの通話から会議を作るには、次のようにします（TS 24.615、TS 24.147）。
 
-1. `ue-a` から `ue-b` に発信し、応答させます。
-2. `ue-c` から `ue-a` に発信します。`ue-a` のカードの **Other call** に、新しい着信が `waiting` と表示されます。`ue-a` は `Alert-Info: <urn:alert:service:call-waiting>` を付けて呼び出しを返しています。
-3. `ue-a` で **Answer** を押します。`ue-b` との通話を保留にしてから、`ue-c` に応答します。**Swap** を押すと、もう一方の通話に切り替わります。
-4. `ue-a` で **Merge** を押します。`ue-a` は MMTel AS に会議を作り、相手ごとに REFER を送って、その相手を会議に招くよう頼みます。3 台のカードの **Conference** の行には、会議イベントパッケージが伝える 3 人の利用者が並びます。音声は MRFP が混ぜます。
+1. `phone1` から `phone2` に発信し、応答させます。
+2. `phone3` から `phone1` に発信します。`phone1` のカードの **Other call** に、新しい着信が `waiting` と表示されます。`phone1` は `Alert-Info: <urn:alert:service:call-waiting>` を付けて呼び出しを返しています。
+3. `phone1` で **Answer** を押します。`phone2` との通話を保留にしてから、`phone3` に応答します。**Swap** を押すと、もう一方の通話に切り替わります。
+4. `phone1` で **Merge** を押します。`phone1` は MMTel AS に会議を作り、相手ごとに REFER を送って、その相手を会議に招くよう頼みます。3 台のカードの **Conference** の行には、会議イベントパッケージが伝える 3 人の利用者が並びます。音声は MRFP が混ぜます。
 
 この呼び出し音、2 つ目の着信、会議をキャプチャで追う手順は、[MRF の手順書](mrf.md) にあります。
 
@@ -156,7 +156,7 @@ docker compose --profile sim up -d --build
 ## 後片付け
 
 ```sh
-docker compose --profile ue --profile sim --profile volte down -v --remove-orphans
+docker compose --profile ue --profile phones --profile volte down -v --remove-orphans
 ```
 
 すべてのプロファイルのノードと UE を止め、イメージは残します。次の手順書をビルドし直さずに始められます。イメージも削除するときは、[システムを止める](capture.md#システムを止める)を見てください。

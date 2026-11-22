@@ -58,9 +58,9 @@ docker compose up -d --build
 | UE シミュレータ（加入者 2） | `ue2` | 172.28.0.101 | `ue` |
 | pjsua と SIPp | `softphone` | 172.28.0.102 | `ue` |
 | UE シミュレータ（加入者 3） | `ue3` | 172.28.0.103 | `ue` |
-| ラボが操作する UE シミュレータ（加入者 1） | `ue-a` | 172.28.0.110 | `sim` |
-| ラボが操作する UE シミュレータ（加入者 2） | `ue-b` | 172.28.0.111 | `sim` |
-| ラボが操作する UE シミュレータ（加入者 3） | `ue-c` | 172.28.0.112 | `sim` |
+| ラボが操作する UE シミュレータ（加入者 1） | `phone1` | 172.28.0.110 | `phones` |
+| ラボが操作する UE シミュレータ（加入者 2） | `phone2` | 172.28.0.111 | `phones` |
+| ラボが操作する UE シミュレータ（加入者 3） | `phone3` | 172.28.0.112 | `phones` |
 | VoLTE の UE（加入者 10） | `volte-a` | 172.28.0.120 | `volte` |
 | VoLTE の UE（加入者 12） | `volte-b` | 172.28.0.121 | `volte` |
 
@@ -130,11 +130,11 @@ HEP の符号化では仕様の次の部分を省いています。
 
 ## システムを止める
 
-- すべてのプロファイルのノードと UE を止め、イメージは残すときは `docker compose --profile ue --profile sim --profile volte down -v --remove-orphans` を実行します。ほかの手順書も最後に同じコマンドを打つので、次の手順書をビルドし直さずに始められます。
+- すべてのプロファイルのノードと UE を止め、イメージは残すときは `docker compose --profile ue --profile phones --profile volte down -v --remove-orphans` を実行します。ほかの手順書も最後に同じコマンドを打つので、次の手順書をビルドし直さずに始められます。
 - 手順書をすべて終えたら、ビルドで作ったイメージも削除します。
 
   ```sh
-  docker compose --profile ue --profile sim --profile volte down --rmi all -v --remove-orphans
+  docker compose --profile ue --profile phones --profile volte down --rmi all -v --remove-orphans
   ```
 
 キャプチャのファイルは削除するまで `captures/` に残ります。

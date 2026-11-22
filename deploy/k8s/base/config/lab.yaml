@@ -21,20 +21,20 @@ lab:
   # No fault agent here: it breaks containers through the Docker socket,
   # which no Pod has. The page says that it is not configured, and its
   # fault panel stays off.
-  # The UE simulators ue-a and ue-b of ue.yaml. They start with zero
-  # replicas, like the sim profile of compose.yaml; until they are
+  # The UE simulators phone1 and phone2 of ue.yaml. They start with zero
+  # replicas, like the phones profile of compose.yaml; until they are
   # scaled up, the web UI shows them as not reachable. volte-a and
   # volte-b have no Pods: a VoLTE UE needs the static address that the
   # EPC stub hands its subscriber, which a Pod cannot ask for, so the
   # web UI always shows them as not reachable.
   ues:
-    - name: ue-a
-      control: http://ue-a.ims.svc.cluster.local:8090
-    - name: ue-b
-      control: http://ue-b.ims.svc.cluster.local:8090
+    - name: phone1
+      control: http://phone1.ims.svc.cluster.local:8090
+    - name: phone2
+      control: http://phone2.ims.svc.cluster.local:8090
     - name: volte-a
       control: http://volte-a.ims.svc.cluster.local:8090
     - name: volte-b
       control: http://volte-b.ims.svc.cluster.local:8090
-    - name: ue-c
-      control: http://ue-c.ims.svc.cluster.local:8090
+    - name: phone3
+      control: http://phone3.ims.svc.cluster.local:8090

@@ -426,7 +426,7 @@ function renderCard(
   renderServices(card, ue.reachable ? suggestedTarget(ue, all, subscribers) : "");
   if (!ue.reachable) {
     card.impu.textContent = "";
-    card.registration.textContent = `Not reachable (${ue.error}). Start the UE simulators with: docker compose --profile sim up -d`;
+    card.registration.textContent = `Not reachable (${ue.error}). Start the UE simulators with: docker compose --profile phones up -d`;
     card.call.textContent = "";
     card.otherCall.textContent = "";
     card.conference.replaceChildren();

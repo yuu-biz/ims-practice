@@ -8,13 +8,13 @@
 # run in the result (default: memory). The stack must be up, with its
 # capture. The steps:
 #
-#  1. ue-a calls ue-b, and the call is answered.
+#  1. phone1 calls phone2, and the call is answered.
 #  2. deploy/chaos/fault.sh recreate SERVICE: the container is killed,
 #     removed and created again, with the same name and address.
-#  3. ue-a puts the call on hold (a re-INVITE) until that works, for up
+#  3. phone1 puts the call on hold (a re-INVITE) until that works, for up
 #     to HOLD_FOR seconds (default 40).
-#  4. ue-a hangs up (BYE); the result says whether ue-b heard of it.
-#  5. ue-b calls ue-a, which registered before the fault, every 2 s
+#  4. phone1 hangs up (BYE); the result says whether phone2 heard of it.
+#  5. phone2 calls phone1, which registered before the fault, every 2 s
 #     until a call is answered, for up to CALL_FOR seconds (default
 #     60). No UE registers again on its own in that time, unless its
 #     registration runs out.
@@ -69,7 +69,7 @@ while [ "$(date +%s)" -lt "$deadline" ]; do
 done
 call_ended=$(now)
 
-# The BYE: ue-b hears it if the network still knows the dialog.
+# The BYE: phone2 hears it if the network still knows the dialog.
 bye=lost
 if state_is "$UE_A" active || state_is "$UE_A" none; then
 	ue_api "$UE_A" /hangup '{}' >/dev/null 2>&1 || true
@@ -108,7 +108,7 @@ registers=$(awk -F '\t' -v a="$a" -v b="$b" '($2 == a || $2 == b) && $4 == "REGI
 errors=$(awk -F '\t' '$5 >= 400 { print $5 "/" $6 }' "$raw" | sort | uniq -c | awk '{ printf "%s%s x%s", sep, $2, $1; sep = ", " }')
 read -r gap packets < <(rtp_gap "$pcap" "$from" "$call_ended" "$b")
 
-echo "| stack | node | recreated in | re-INVITE works after (tries) | BYE | new call to the UE works after (tries) | REGISTERs from the UEs | error responses | longest RTP gap to ue-b (packets) |"
+echo "| stack | node | recreated in | re-INVITE works after (tries) | BYE | new call to the UE works after (tries) | REGISTERs from the UEs | error responses | longest RTP gap to phone2 (packets) |"
 echo "| --- | --- | --- | --- | --- | --- | --- | --- | --- |"
 echo "| $label | $service | $recreated ms | $hold | $bye | $incoming | $registers | ${errors:-none} | $gap ms ($packets) |"
 echo "raw: $raw (from the capture $pcap)" >&2

@@ -359,7 +359,7 @@ func TestValidate(t *testing.T) {
 		{Target: "pcscf", Kind: Loss, LossPercent: 100},
 		{Target: "pcscf", Kind: Partition},
 		{Target: "pcscf", Kind: Partition, Peers: []string{"icscf", "172.28.0.30"}},
-		{Target: "ue-a", Kind: Kill, Duration: Duration(time.Hour)},
+		{Target: "phone1", Kind: Kill, Duration: Duration(time.Hour)},
 		{Target: "scscf:2", Kind: Pause},
 		{Target: "ibcf-a", Kind: Partition, Network: "nni"},
 		{Target: "trgw-a", Kind: Loss, LossPercent: 10, Network: "nni"},

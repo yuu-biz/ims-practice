@@ -1195,7 +1195,7 @@ MMTel AS の会議は、次のとおりです。
 | 測るもの | 道具 | 比べるもの |
 | --- | --- | --- |
 | `Store` の操作に足される時間 | 11.4 と 11.8 の Go のベンチマーク。`go test ./internal/kvstore -run '^$' -bench . -benchtime 2000x` と、同じ形の `./internal/kvstore/storetest`。`KVSTORE_VALKEY_ADDR` があれば Valkey でも流れる | `kvstore.MemoryStore` と Valkey。保存先を別の機械に置くなら、その機械の Valkey |
-| 網を通した登録と呼の時間 | `deploy/chaos/measure/latency.sh`。`ue serve` の 2 台の UE（`ue-a`、`ue-b`）を制御の API で動かし、キャプチャから時間を取る | 状態をメモリに置く構成（`compose.yaml`）と、保存先に置く構成（`compose.yaml` に `deploy/redundancy/redundancy.yaml` を重ねたもの） |
+| 網を通した登録と呼の時間 | `deploy/chaos/measure/latency.sh`。`ue serve` の 2 台の UE（`phone1`、`phone2`）を制御の API で動かし、キャプチャから時間を取る | 状態をメモリに置く構成（`compose.yaml`）と、保存先に置く構成（`compose.yaml` に `deploy/redundancy/redundancy.yaml` を重ねたもの） |
 | ノードを作り直したあとで戻るまでの時間と、失うもの | `deploy/chaos/measure/recovery.sh SERVICE`。呼のあいだに `fault.sh recreate` でノードを作り直し、ダイアログの中の要求、BYE、UE への新しい呼が通るかと、その時間を記録する | 上と同じ 2 つの構成。保存先は、AOF を 1 秒ごとに同期する設定と、永続化を切った設定（`deploy/chaos/measure/store-volatile.yaml`） |
 | 保存先が届かないときの振る舞い | `fault.sh partition valkey 'scscf-*'` などで保存先を 1 つの役割から切り、`latency.sh` か UE の登録を流す | 切っているあいだと、戻したあと |
 
@@ -1205,18 +1205,18 @@ MMTel AS の会議は、次のとおりです。
 | --- | --- | --- |
 | register | UE が送る最初の REGISTER（401 が返るもの） | UE に届く 200 |
 | register-2 | 認証の情報を付けた REGISTER | UE に届く 200 |
-| invite | `ue-a` が送る INVITE | `ue-b` に届く INVITE |
-| answer | `ue-b` が送る INVITE への 200 | `ue-a` に届く 200 |
-| bye | `ue-a` が送る BYE | `ue-a` に届く BYE への 200 |
+| invite | `phone1` が送る INVITE | `phone2` に届く INVITE |
+| answer | `phone2` が送る INVITE への 200 | `phone1` に届く 200 |
+| bye | `phone1` が送る BYE | `phone1` に届く BYE への 200 |
 
 `recovery.sh` の手順は次のとおりです。
 
-1. `ue-a` と `ue-b` を登録し直し、`ue-a` が `ue-b` を呼び出して、呼が応答されるのを待ちます。前の測定で作り直したノードが登録を忘れていても、同じ状態から始めるためです。
+1. `phone1` と `phone2` を登録し直し、`phone1` が `phone2` を呼び出して、呼が応答されるのを待ちます。前の測定で作り直したノードが登録を忘れていても、同じ状態から始めるためです。
 2. 応答から `SETTLE` 秒（既定 0.5 秒）のあとで、`fault.sh recreate SERVICE` を実行します。コンテナを kill し、消し、同じ名前とアドレスで作り直します。
-3. `ue-a` が保留の re-INVITE を、通るまで 1 秒ごとに送ります（`HOLD_FOR` 秒まで、既定 40 秒）。
-4. `ue-a` が BYE を送り、`ue-b` に届いたかを見ます。
-5. `ue-b` が `ue-a` に 2 秒ごとに発信し、応答されるまでの時間を測ります（`CALL_FOR` 秒まで、既定 60 秒）。`ue-a` は障害の前に登録したままで、登録し直していません。
-6. 作り直しから終わりまでのキャプチャで、UE の REGISTER の数、400 以上の応答、`ue-b` への RTP の最長の途切れを数えます。
+3. `phone1` が保留の re-INVITE を、通るまで 1 秒ごとに送ります（`HOLD_FOR` 秒まで、既定 40 秒）。
+4. `phone1` が BYE を送り、`phone2` に届いたかを見ます。
+5. `phone2` が `phone1` に 2 秒ごとに発信し、応答されるまでの時間を測ります（`CALL_FOR` 秒まで、既定 60 秒）。`phone1` は障害の前に登録したままで、登録し直していません。
+6. 作り直しから終わりまでのキャプチャで、UE の REGISTER の数、400 以上の応答、`phone2` への RTP の最長の途切れを数えます。
 
 ### 12.2 手順
 
@@ -1232,7 +1232,7 @@ MMTel AS の会議は、次のとおりです。
 8. 冗長構成で、`fault.sh partition valkey 'scscf-*'` のあいだに `latency.sh 5` を流し、返った応答とノードのログを表 12.3.4 に書きます。`fault.sh clear valkey` のあとで、もう一度流します。
 9. 同じ機械で、12.1 の Go のベンチマークを `kvstore.MemoryStore` と Valkey で流し、表 12.3.3 に写します。Valkey は冗長構成の保存先（ポートを公開しない場合は `docker run --network container:<保存先のコンテナ>` で同じ名前空間から）か、`--network host` で動かしたものを使い、どちらかを書きます。
 
-冗長構成の UE は、P-CSCF の一覧を持ちます。`ue-a` と `ue-b` が冗長構成のどの P-CSCF を使うかは、構成に従い、結果に書きます。
+冗長構成の UE は、P-CSCF の一覧を持ちます。`phone1` と `phone2` が冗長構成のどの P-CSCF を使うかは、構成に従い、結果に書きます。
 
 ### 12.3 結果の表
 
@@ -1259,7 +1259,7 @@ MMTel AS の会議は、次のとおりです。
 
 「通るまで」の時間は、作り直しの始まりから測ります。試した回数が 1 のときは、スクリプトの待ち時間を含む上限です。
 
-| 構成 | ノード | 作り直しにかかった時間 | re-INVITE が通るまで（試した回数） | BYE | UE への新しい呼が通るまで（試した回数） | UE の REGISTER | 400 以上の応答 | `ue-b` への RTP の最長の途切れ（パケットの数） |
+| 構成 | ノード | 作り直しにかかった時間 | re-INVITE が通るまで（試した回数） | BYE | UE への新しい呼が通るまで（試した回数） | UE の REGISTER | 400 以上の応答 | `phone2` への RTP の最長の途切れ（パケットの数） |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | memory | pcscf | | | | | | | |
 | memory | scscf | | | | | | | |
@@ -1331,13 +1331,13 @@ MMTel AS の会議は、次のとおりです。
 
 予行で分かった、スクリプトの限りです。
 
-- `ue serve` は、応答のあとで 3 秒（`-tone` の既定）だけ音を送ります。`compose.yaml` の `ue-a` と `ue-b` は `-tone` を渡していないので、RTP の途切れは、作り直しの前後の 2 秒ほどしか測れません。作り直しのあとで RTP が戻るか（設計で決めた中継ノードの作り直し）を測るには、冗長構成の `ue-a` と `ue-b` に長い `-tone` を渡す必要があります。
+- `ue serve` は、応答のあとで 3 秒（`-tone` の既定）だけ音を送ります。`compose.yaml` の `phone1` と `phone2` は `-tone` を渡していないので、RTP の途切れは、作り直しの前後の 2 秒ほどしか測れません。作り直しのあとで RTP が戻るか（設計で決めた中継ノードの作り直し）を測るには、冗長構成の `phone1` と `phone2` に長い `-tone` を渡す必要があります。
 - UE の REGISTER の数は、UE の登録の期限が測定のあいだに来ないので、0 になります。UE が自分で気づいて登録し直す動きを数えるには、REGISTER の時間切れか 503 を受ける場面が要ります。
 - Go のベンチマークは、`go test ./internal/kvstore/storetest -run '^$' -bench . -benchtime 2000x` で、`kvstore.MemoryStore` の上だけを流しました。登録 1 回が 29 回の操作で p50 が 93.5 マイクロ秒、呼 1 回が 55 回で 184.5 マイクロ秒、SMS 1 通が 10 回で 16.6 マイクロ秒でした。11.8 の値とほぼ同じです。同じ機械にあった Valkey のコンテナはほかの作業のもので、使っていません。
 
 ### 12.5 測定に要る構成
 
-1. 冗長構成の `ue-a` と `ue-b`（または測定用の UE）に、`-tone 60s` のような長い音を渡す必要があります。作り直しのあとで RTP が戻るかを、`recovery.sh` で測るためです。
+1. 冗長構成の `phone1` と `phone2`（または測定用の UE）に、`-tone 60s` のような長い音を渡す必要があります。作り直しのあとで RTP が戻るかを、`recovery.sh` で測るためです。
 2. 冗長構成の保存先のサービスの名前は `valkey` にします。`store-volatile.yaml` と、この章の手順がこの名前を使います。
 
 ## 確かめられなかったこと

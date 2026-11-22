@@ -79,13 +79,13 @@ Kustomize には、自分のディレクトリの外のファイルを読まな�
 | EPC（PCRF を含む） | StatefulSet | headless の `epc`（8080）と `pcrf`（3868） | HSS と同じです。PCRF は P-CSCF の Diameter のピアです |
 | メディア中継ノード（agw） | StatefulSet | headless（8080 と RTP の 40000〜40039） | P-CSCF が名前で制御 API を呼びます。RTP は Pod のアドレスへ直接送ります |
 | ダッシュボード | Deployment | ClusterIP（8080、9060/UDP） | 信号の中で名前を使われず、ピアが頼る識別子もありません |
-| UE の模擬（`ue`、`ue2`、`ue-a`、`ue-b`） | Deployment | `ue-a` と `ue-b` だけ ClusterIP（8090） | 網の一部ではなく、名前で探されません。Contact には Pod のアドレスを書きます |
+| UE の模擬（`ue`、`ue2`、`phone1`、`phone2`） | Deployment | `phone1` と `phone2` だけ ClusterIP（8090） | 網の一部ではなく、名前で探されません。Contact には Pod のアドレスを書きます |
 | 外付けの DNS サーバー（overlay b） | Deployment | 固定の ClusterIP（kind では 10.96.0.53） | Pod の resolv.conf にはアドレスを書くので、変わらないアドレスが要ります |
 | キャプチャ | DaemonSet | なし | ノードごとに 1 つ、ノードのネットワークで動きます（8 章） |
 
 StatefulSet は `podManagementPolicy: Parallel` にしました。Compose の `depends_on` のような起動の順番は付けていません。各ノードは Diameter の再接続（Tc）と、要求のたびの DNS の問い合わせで、相手が後から起きても追いつきます。kind で試すと、I-CSCF は最初の接続で HSS の名前を引けずに失敗し、Tc 後の再接続で開きました。
 
-Docker Compose の `ue` と `ue2` は、コマンドごとにコンテナを作ります。Kubernetes では待っている Pod を置き、`kubectl exec deploy/ue -- ue register ...` で中で実行します。`ue-a` と `ue-b` は Compose の `sim` プロファイルに当たるので、replicas を 0 にしておき、`kubectl scale` で起こします。
+Docker Compose の `ue` と `ue2` は、コマンドごとにコンテナを作ります。Kubernetes では待っている Pod を置き、`kubectl exec deploy/ue -- ue register ...` で中で実行します。`phone1` と `phone2` は Compose の `phones` プロファイルに当たるので、replicas を 0 にしておき、`kubectl scale` で起こします。
 
 ## 4. SIP over UDP と Service
 
@@ -206,7 +206,7 @@ Kubernetes の既定の resolv.conf は `ndots:5` です。ドットが 5 つ未
 
 ### HEP とダッシュボード
 
-HEP のエージェントは変えずに動きました。各ノードが `dashboard.ims.svc.cluster.local:9060` へ送り、ダッシュボードの API（`/api/calls`、`/api/registrations`、`/api/ues`）に呼と登録が出ました。`kubectl port-forward svc/dashboard` を通して、画面の HTML も返りました。`ue-a` から `ue-b` への発信を、ダッシュボードの API から行えました。
+HEP のエージェントは変えずに動きました。各ノードが `dashboard.ims.svc.cluster.local:9060` へ送り、ダッシュボードの API（`/api/calls`、`/api/registrations`、`/api/ues`）に呼と登録が出ました。`kubectl port-forward svc/dashboard` を通して、画面の HTML も返りました。`phone1` から `phone2` への発信を、ダッシュボードの API から行えました。
 
 ## 9. 確かめた結果
 
@@ -220,7 +220,7 @@ kind（1 ノード）で、`scripts/e2e-phase*.sh` と同じ UE のコマンド�
 | `ue2 register` と `ue sms --status-report +12025550102` | 成功、受信と status report あり | 成功、受信と status report あり |
 | キャプチャで e2e-registration の登録の順番の 18 の確認（アドレスだけ読み替え） | すべて通過 | すべて通過 |
 | SIP、DNS、Diameter の malformed と警告 | なし | 1 件（EPC の init コンテナの nslookup の再送。登録の前） |
-| ダッシュボードの API と `ue-a` から `ue-b` への発信 | 成功 | API だけ確認 |
+| ダッシュボードの API と `phone1` から `phone2` への発信 | 成功 | API だけ確認 |
 | `kubectl apply --dry-run=server` | 通過 | 通過 |
 | P-CSCF の Pod を消したあとの登録 | 試していない | 成功（EPC の設定は古いアドレスのまま） |
 | S-CSCF を 2 台にしたとき | 試していない | 2 台目の Cx の接続を HSS が拒否 |

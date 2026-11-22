@@ -320,16 +320,16 @@ The filter is `rtp || rtcp`. **Play Streams** plays the voice.
 ## Calling from the Lab
 
 ```sh
-docker compose --profile sim up -d --build
+docker compose --profile phones up -d --build
 ```
 
-1. Open <http://localhost:8080>. In the card of `ue-b`, set the answer policy to `manual`.
-2. In the card of `ue-a`, press **Call**.
-3. In the card of `ue-b`, press **Answer**. Press **Hang up** in either card.
+1. Open <http://localhost:8080>. In the card of `phone2`, set the answer policy to `manual`.
+2. In the card of `phone1`, press **Call**.
+3. In the card of `phone2`, press **Answer**. Press **Hang up** in either card.
 4. **ladder** next to the call draws its ladder, even while the call is up.
 
 - Hanging up before the answer makes the caller send CANCEL, and the callee decline with 603.
-- Do not run the `sim` and the `ue` profiles at once: two UEs of one subscriber overwrite each other's registration. The HTTP API that drives a UE is this project's own; none of it goes to the IMS.
+- Do not run the `phones` and the `ue` profiles at once: two UEs of one subscriber overwrite each other's registration. The HTTP API that drives a UE is this project's own; none of it goes to the IMS.
 
 > Guide: [Watch the IMS in the Lab, "Drive the UE simulators"](../../../docs/guide/en/lab.md#drive-the-ue-simulators), and [the call guide, "Drive a UE over HTTP"](../../../docs/guide/en/call.md#drive-a-ue-over-http)
 
@@ -387,7 +387,7 @@ docker compose --profile sim up -d --build
 - The iFCs that sent this call to the MMTel AS take the lead: they bring a short message to the IP-SM-GW.
 
 ```sh
-docker compose --profile ue --profile sim down --rmi all -v --remove-orphans
+docker compose --profile ue --profile phones down --rmi all -v --remove-orphans
 ```
 
 > The guide of the next session is [Follow a short message through the IMS](../../../docs/guide/en/sms.md).

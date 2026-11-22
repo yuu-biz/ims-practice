@@ -721,7 +721,7 @@ docker compose run --rm volte-a call -epc http://172.28.0.80:8080 \
 docker compose --profile ue --profile volte down --rmi all -v --remove-orphans
 ```
 
-- これは手順書の「後片付け」です。ラボの `sim` のプロファイルも使ったなら、`--profile sim` を足します。
+- これは手順書の「後片付け」です。ラボの `phones` のプロファイルも使ったなら、`--profile phones` を足します。
 - 5GC では、SIP の信号は 5QI 5 の QoS フローを、音声は 5QI 1 を使います。EPS の QCI 5 と QCI 1 と同じ考え方です。
 
 > 手順書の一覧は [docs/guide/](../../../docs/guide/) にあります。

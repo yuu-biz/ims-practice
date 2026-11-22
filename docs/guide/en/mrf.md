@@ -49,7 +49,7 @@ To get the audio to the caller before the call is answered, the AS uses the gate
 | --- | --- | --- |
 | UE 1 | 172.28.0.100 | The caller of the announcement and the CAT, `tel:+12025550101`. |
 | UE 2 | 172.28.0.101 | The called user who has a CAT, `tel:+12025550102`. |
-| ue-a, ue-b, ue-c | 172.28.0.110, .111, .112 | The UE simulators of the `sim` profile, subscribers 1, 2 and 3, driven through the Lab: the waiting call and the conference. |
+| phone1, phone2, phone3 | 172.28.0.110, .111, .112 | The UE simulators of the `phones` profile, subscribers 1, 2 and 3, driven through the Lab: the waiting call and the conference. |
 | P-CSCF and agw | 172.28.0.40, 172.28.0.50 | As in every call; RTP between a UE and the MRFP passes the agw. |
 | MMTel AS | 172.28.0.75 | Decides what is played, and is the conference focus. |
 | MRFC | 172.28.0.85 | The `mrfc` role, `mrfc.ims.mnc001.mcc001.3gppnetwork.org`. |
@@ -65,10 +65,10 @@ By hand, with the Lab (see "Drive the UE simulators" in [the Lab guide](lab.md))
 
 ```sh
 docker compose up -d --build
-docker compose --profile sim up -d ue-a ue-b ue-c
+docker compose --profile phones up -d phone1 phone2 phone3
 ```
 
-Open http://localhost:8080. In the Subscribers panel choose `cat1` as the alerting tone of subscriber 2, then call `ue-b` from `ue-a`. For the waiting call and the conference, follow the steps in the Lab guide that take a second call and make a conference of the two. The ladder of a call draws the AS's dialog with the MRFC beside the dialogs of the call, because they share the icid-value of the P-Charging-Vector.
+Open http://localhost:8080. In the Subscribers panel choose `cat1` as the alerting tone of subscriber 2, then call `phone2` from `phone1`. For the waiting call and the conference, follow the steps in the Lab guide that take a second call and make a conference of the two. The ladder of a call draws the AS's dialog with the MRFC beside the dialogs of the call, because they share the icid-value of the P-Charging-Vector.
 
 ## Open the capture
 
@@ -129,82 +129,82 @@ Then the script switches the tone off (`"active": false`) and calls again. UE 2'
 
 ## Call waiting and hold
 
-ue-a calls ue-b; then ue-c calls ue-a. IR.92 asks the UE, not the network, to handle the waiting call (2.3.4):
+phone1 calls phone2; then phone3 calls phone1. IR.92 asks the UE, not the network, to handle the waiting call (2.3.4):
 
 ```text
-#4772 29.049 ue-a   -> P-CSCF A1 INVITE tel:+12025550102
-#5171 30.097 P-CSCF -> ue-a   A1 200 OK   ue-b answered
-#5869 34.181 ue-c   -> P-CSCF    INVITE tel:+12025550101
-#5986 34.212 P-CSCF -> ue-a   A2 INVITE
-#6093 34.228 ue-a   -> P-CSCF A2 180      Alert-Info: <urn:alert:service:call-waiting>
-#6134 34.232 P-CSCF -> ue-c      180      without that Alert-Info
-#6278 38.256 ue-a   -> P-CSCF A1 INVITE   re-INVITE, a=sendonly: ue-b on hold
-#6389 38.277 ue-a   -> P-CSCF A2 200 OK   ue-a answers ue-c
-#7172 42.361 ue-a   -> P-CSCF A2 INVITE   Swap: ue-c on hold
-#7283 42.394 ue-a   -> P-CSCF A1 INVITE   Swap: ue-b back, a=sendrecv
+#4772 29.049 phone1   -> P-CSCF A1 INVITE tel:+12025550102
+#5171 30.097 P-CSCF -> phone1   A1 200 OK   phone2 answered
+#5869 34.181 phone3   -> P-CSCF    INVITE tel:+12025550101
+#5986 34.212 P-CSCF -> phone1   A2 INVITE
+#6093 34.228 phone1   -> P-CSCF A2 180      Alert-Info: <urn:alert:service:call-waiting>
+#6134 34.232 P-CSCF -> phone3      180      without that Alert-Info
+#6278 38.256 phone1   -> P-CSCF A1 INVITE   re-INVITE, a=sendonly: phone2 on hold
+#6389 38.277 phone1   -> P-CSCF A2 200 OK   phone1 answers phone3
+#7172 42.361 phone1   -> P-CSCF A2 INVITE   Swap: phone3 on hold
+#7283 42.394 phone1   -> P-CSCF A1 INVITE   Swap: phone2 back, a=sendrecv
 ```
 
-- **ue-a rings with the call-waiting Alert-Info** (TS 24.615 4.5.5.3.2, RFC 7462) and does not answer by itself.
-- **The AS of ue-a takes the Alert-Info out** of the 180 to ue-c: the operator part of CW in `deploy/compose/hss.yaml` says that the caller does not learn that its call waits (TS 24.615 4.5.5.2.3). With the other setting the AS passes it on, and when an announcement is configured, plays it to the caller while the call waits.
+- **phone1 rings with the call-waiting Alert-Info** (TS 24.615 4.5.5.3.2, RFC 7462) and does not answer by itself.
+- **The AS of phone1 takes the Alert-Info out** of the 180 to phone3: the operator part of CW in `deploy/compose/hss.yaml` says that the caller does not learn that its call waits (TS 24.615 4.5.5.2.3). With the other setting the AS passes it on, and when an announcement is configured, plays it to the caller while the call waits.
 - **Answering the waiting call holds the first** with a re-INVITE whose offer is `sendonly` (TS 24.615 4.5.5.3.3, TS 24.610). **Swap** holds one call and takes back the other.
 
 ## A conference of three
 
-ue-a has two answered calls and presses **Merge**. It creates a conference at the conference factory URI and asks the focus, the MMTel AS, to bring each peer in with a REFER whose Refer-To carries a Replaces of ue-a's call with that peer (TS 24.147 5.3.1.3.3, option 2b, which IR.92 2.3.3 asks for):
+phone1 has two answered calls and presses **Merge**. It creates a conference at the conference factory URI and asks the focus, the MMTel AS, to bring each peer in with a REFER whose Refer-To carries a Replaces of phone1's call with that peer (TS 24.147 5.3.1.3.3, option 2b, which IR.92 2.3.3 asks for):
 
 ```text
-#7480 40.121 ue-a   -> P-CSCF F  INVITE sip:mmtel@conf-factory.ims.mnc001.mcc001.3gppnetwork.org
-#7511 40.131 MMTel  -> MRFC   M1 INVITE sip:conf=conf-o47ha7ifxyni@mrfc..., with ue-a's offer
-#7534 40.136 P-CSCF -> ue-a   F  200 OK  Contact: <sip:conf-o47ha7ifxyni@conf.ims.mnc001.mcc001.3gppnetwork.org>;isfocus
-#7549 40.138 ue-a   -> P-CSCF F  SUBSCRIBE sip:conf-o47ha7ifxyni@conf...  Event: conference
+#7480 40.121 phone1   -> P-CSCF F  INVITE sip:mmtel@conf-factory.ims.mnc001.mcc001.3gppnetwork.org
+#7511 40.131 MMTel  -> MRFC   M1 INVITE sip:conf=conf-o47ha7ifxyni@mrfc..., with phone1's offer
+#7534 40.136 P-CSCF -> phone1   F  200 OK  Contact: <sip:conf-o47ha7ifxyni@conf.ims.mnc001.mcc001.3gppnetwork.org>;isfocus
+#7549 40.138 phone1   -> P-CSCF F  SUBSCRIBE sip:conf-o47ha7ifxyni@conf...  Event: conference
 #7565 40.142 S-CSCF -> DNS       NAPTR? conf.ims.mnc001.mcc001.3gppnetwork.org
 #7568 40.143 DNS    -> S-CSCF    SRV _sip._udp.conf...: 5060 mmtel.ims.mnc001.mcc001.3gppnetwork.org
 #7571 40.144 S-CSCF -> MMTel  F  SUBSCRIBE sip:conf-o47ha7ifxyni@conf...
-#7602 40.150 ue-a   -> P-CSCF F  REFER   Refer-To: <sip:+12025550102@...;user=phone?Replaces=...>
-#7635 40.156 P-CSCF -> ue-a   F  200 OK  (REFER), not 202
+#7602 40.150 phone1   -> P-CSCF F  REFER   Refer-To: <sip:+12025550102@...;user=phone?Replaces=...>
+#7635 40.156 P-CSCF -> phone1   F  200 OK  (REFER), not 202
 #7662 40.164 MMTel  -> MRFC   M2 INVITE sip:conf=conf-o47ha7ifxyni@mrfc..., no SDP
 #7667 40.165 MRFC   -> MMTel  M2 200 OK  SDP offer of a new termination of the MRFP
-#7712 40.179 P-CSCF -> ue-b      INVITE  Replaces: ue-b's call with ue-a, the MRFP's offer
-#7716 40.180 ue-b   -> P-CSCF    183     ue-b's answer
-#7825 40.196 ue-b   -> P-CSCF    200 OK  without SDP
-#7867 40.201 ue-b   -> P-CSCF    BYE     the call that was replaced
-#7887 40.204 MMTel  -> MRFC   M2 ACK     ue-b's answer from its 183
-#7943 40.213 P-CSCF -> ue-a   F  NOTIFY  Event: conference, ue-a and ue-b
-#8040 40.225 ue-a   -> P-CSCF F  REFER   the same for ue-c
-#8398 40.306 P-CSCF -> ue-a   F  NOTIFY  Event: conference, three users
+#7712 40.179 P-CSCF -> phone2      INVITE  Replaces: phone2's call with phone1, the MRFP's offer
+#7716 40.180 phone2   -> P-CSCF    183     phone2's answer
+#7825 40.196 phone2   -> P-CSCF    200 OK  without SDP
+#7867 40.201 phone2   -> P-CSCF    BYE     the call that was replaced
+#7887 40.204 MMTel  -> MRFC   M2 ACK     phone2's answer from its 183
+#7943 40.213 P-CSCF -> phone1   F  NOTIFY  Event: conference, phone1 and phone2
+#8040 40.225 phone1   -> P-CSCF F  REFER   the same for phone3
+#8398 40.306 P-CSCF -> phone1   F  NOTIFY  Event: conference, three users
 ```
 
-- **The conference URI is a public service identity (PSI) of the home network** (TS 23.228 4.3.6), `sip:conf-<id>@conf.ims.mnc001.mcc001.3gppnetwork.org`. The operator defines its domain, and it has no port, which a PSI that may leave the network should not have (TS 23.003 13.5). It names no node: the subdomain `conf` stands for the conferences of the AS. The NAPTR and SRV records of the subdomain lead to the AS that hosts them (`deploy/compose/dns`), so the S-CSCF finds the focus as it finds any host, by RFC 3263: for the SUBSCRIBE of ue-a, and for each request within a dialog with the focus. This is the subdomain way of TS 23.228 5.4.12.3. A request from another network comes in through the I-CSCF, which knows the subdomain (`psi_subdomains` in `deploy/compose/icscf.yaml`) and sends the request by DNS too, without asking the HSS (TS 24.229 5.3.2.1 step 3). A conference lives on one instance of the AS, with its dialogs. With several instances, each would have a subdomain of its own, so that DNS sends the requests of a conference to the instance that has it.
+- **The conference URI is a public service identity (PSI) of the home network** (TS 23.228 4.3.6), `sip:conf-<id>@conf.ims.mnc001.mcc001.3gppnetwork.org`. The operator defines its domain, and it has no port, which a PSI that may leave the network should not have (TS 23.003 13.5). It names no node: the subdomain `conf` stands for the conferences of the AS. The NAPTR and SRV records of the subdomain lead to the AS that hosts them (`deploy/compose/dns`), so the S-CSCF finds the focus as it finds any host, by RFC 3263: for the SUBSCRIBE of phone1, and for each request within a dialog with the focus. This is the subdomain way of TS 23.228 5.4.12.3. A request from another network comes in through the I-CSCF, which knows the subdomain (`psi_subdomains` in `deploy/compose/icscf.yaml`) and sends the request by DNS too, without asking the HSS (TS 24.229 5.3.2.1 step 3). A conference lives on one instance of the AS, with its dialogs. With several instances, each would have a subdomain of its own, so that DNS sends the requests of a conference to the instance that has it.
 - **The factory URI is a PSI too**, of the originating side (TS 23.228 5.4.12.1): the INVITE to it reaches the AS by the creator's originating filter criteria, as every INVITE of the creator does. Such a PSI serves the users of the home network only.
 - **The AS is the focus and the notification service** of the conference (TS 24.147 4): it holds a dialog with each participant, and a dialog with the MRFC for each participant's media.
 - **The MRFC creates the mix** at the first `conf=` INVITE and adds a termination for each later one. The MRFP sends each party the sum of the others (TS 23.333 6.2.9): in the capture three streams go from the MRFP to the agw and three come back, and the script finds that the mix that one party gets is louder than any single party's tone.
 - **The invited peers use preconditions**, so each answers the MRFP's offer in its reliable 183 and sends its 200 without SDP. The AS passes that answer to the MRFC in the ACK of M2 (RFC 3262 5).
 - **The focus accepts each REFER with 200 (OK).** RFC 3515 answered with 202 (Accepted). RFC 7647 5 has replaced that: an element that accepts a REFER sends 200 and never 202, and one that receives a 202 from an older UA takes it as a 200, as RFC 6665 8.3.1 asks for SUBSCRIBE. The reason is that a 202 tells nothing that a 200 does not, and a proxy may absorb it. TS 24.147 points to RFC 3515 as RFC 6665 and RFC 7647 update it, and its flows show the 200 (A.4.4.1).
-- **Each REFER creates a subscription to the refer event** (RFC 3515 2.4.4). The focus reports at once that it is trying (`SIP/2.0 100 Trying` in a sipfrag body). Once the INVITE to the peer has its final response, it reports that response in a last NOTIFY whose Subscription-State is `terminated;reason=noresource` (2.4.7). The subscription lasts four minutes, longer than the INVITE may take (3.4). Should they run out first, the focus ends the subscription with `terminated;reason=timeout` (RFC 6665 4.2.1.4). ue-a ends it too at the time that the last `expires` gave, and at once on `active;expires=0` (4.1.3).
-- **The NOTIFYs** carry conference-info XML (RFC 4575) with a `<user>` and an `<endpoint>` of status `connected` for each party. The `entity` of a `<user>` is the identity that the network asserted for the party. The `entity` of an `<endpoint>` is a key that the focus makes for it, a `urn:uuid:` URI. RFC 4575 5.7 leaves the key to the focus and gives the Contact and a GRUU as examples. The focus does not use the Contact: it is the address of the party's UE, and the NOTIFYs would show it to every subscriber, in another network too ([A conference across the border](interconnect.md#a-conference-across-the-border)). Each card of the Lab lists them under **Conference**. ue-a refreshes its subscription before it expires. A subscription that is not refreshed ends at its expiry with a last NOTIFY that says `terminated;reason=timeout`, and the focus sends nothing to it after that (RFC 6665 4.2.1.4).
-- **The conference ends with its creator** (TS 24.147 5.3.2.7): when ue-a hangs up, the AS sends BYE to ue-b and ue-c and to the MRFC for each party.
+- **Each REFER creates a subscription to the refer event** (RFC 3515 2.4.4). The focus reports at once that it is trying (`SIP/2.0 100 Trying` in a sipfrag body). Once the INVITE to the peer has its final response, it reports that response in a last NOTIFY whose Subscription-State is `terminated;reason=noresource` (2.4.7). The subscription lasts four minutes, longer than the INVITE may take (3.4). Should they run out first, the focus ends the subscription with `terminated;reason=timeout` (RFC 6665 4.2.1.4). phone1 ends it too at the time that the last `expires` gave, and at once on `active;expires=0` (4.1.3).
+- **The NOTIFYs** carry conference-info XML (RFC 4575) with a `<user>` and an `<endpoint>` of status `connected` for each party. The `entity` of a `<user>` is the identity that the network asserted for the party. The `entity` of an `<endpoint>` is a key that the focus makes for it, a `urn:uuid:` URI. RFC 4575 5.7 leaves the key to the focus and gives the Contact and a GRUU as examples. The focus does not use the Contact: it is the address of the party's UE, and the NOTIFYs would show it to every subscriber, in another network too ([A conference across the border](interconnect.md#a-conference-across-the-border)). Each card of the Lab lists them under **Conference**. phone1 refreshes its subscription before it expires. A subscription that is not refreshed ends at its expiry with a last NOTIFY that says `terminated;reason=timeout`, and the focus sends nothing to it after that (RFC 6665 4.2.1.4).
+- **The conference ends with its creator** (TS 24.147 5.3.2.7): when phone1 hangs up, the AS sends BYE to phone2 and phone3 and to the MRFC for each party.
 
 ## Coming back to the conference
 
-A participant that has left can come back while the conference goes on. It sends an INVITE to the conference URI, which it has from the Contact of the focus (TS 24.147 5.3.1.4.1). Say ue-b hangs up, and then calls the conference URI:
+A participant that has left can come back while the conference goes on. It sends an INVITE to the conference URI, which it has from the Contact of the focus (TS 24.147 5.3.1.4.1). Say phone2 hangs up, and then calls the conference URI:
 
 ```text
-ue-b     P-CSCF   S-CSCF   MMTel AS              MRFC
+phone2     P-CSCF   S-CSCF   MMTel AS              MRFC
                            services  focus
  | INVITE sip:conf-o47ha7ifxyni@conf...            |
- |-------->|------->|------->|        |            |  P-Served-User: ue-b;sescase=orig
+ |-------->|------->|------->|        |            |  P-Served-User: phone2;sescase=orig
  |         |        |<-------|        |            |  the INVITE of the B2BUA, to the same URI
  |         |        |---------------->|            |  by DNS, without P-Served-User
- |         |        |        |        |----------->|  INVITE sip:conf=conf-o47ha7ifxyni@mrfc..., ue-b's offer
+ |         |        |        |        |----------->|  INVITE sip:conf=conf-o47ha7ifxyni@mrfc..., phone2's offer
  |         |        |        |        |<-----------|  200 OK, the answer of the MRFP
  |         |        |<----------------|            |  200 OK, Contact: <sip:conf-o47ha7ifxyni@conf...>;isfocus
  |         |        |------->|        |            |
  |<--------|<-------|<-------|        |            |  200 OK, the same Contact
 ```
 
-- **The INVITE goes as every call of ue-b goes.** The S-CSCF gives it to the MMTel AS for ue-b's originating services, and the AS, a B2BUA, sends a new INVITE to the same URI back. The S-CSCF then finds the focus by DNS, as for the SUBSCRIBE above. From another network, the INVITE comes through the I-CSCF, which sends it by DNS too. No filter criterion brings the INVITE to the focus, so it has no P-Served-User. This is how the AS tells the INVITE for the focus from the INVITE for ue-b's services, which has the same Request-URI.
-- **The focus takes ue-b in as it takes the creator** (5.3.2.4.1). It asks the MRFC for a new termination of the mix with ue-b's offer. Once the MRFC has answered, it answers ue-b with the answer of the MRFP and the conference URI with `isfocus` in Contact. The AS of ue-b's services passes that Contact on and puts itself in Record-Route, as for an invited peer, so that ue-b's requests to the conference URI still pass it (TS 24.229 5.7.5.1).
-- **The NOTIFYs** list ue-b as `connected` again, now with the joining-method `dialed-in`, as for the creator. Before, when the focus invited ue-b, it was `dialed-out`.
+- **The INVITE goes as every call of phone2 goes.** The S-CSCF gives it to the MMTel AS for phone2's originating services, and the AS, a B2BUA, sends a new INVITE to the same URI back. The S-CSCF then finds the focus by DNS, as for the SUBSCRIBE above. From another network, the INVITE comes through the I-CSCF, which sends it by DNS too. No filter criterion brings the INVITE to the focus, so it has no P-Served-User. This is how the AS tells the INVITE for the focus from the INVITE for phone2's services, which has the same Request-URI.
+- **The focus takes phone2 in as it takes the creator** (5.3.2.4.1). It asks the MRFC for a new termination of the mix with phone2's offer. Once the MRFC has answered, it answers phone2 with the answer of the MRFP and the conference URI with `isfocus` in Contact. The AS of phone2's services passes that Contact on and puts itself in Record-Route, as for an invited peer, so that phone2's requests to the conference URI still pass it (TS 24.229 5.7.5.1).
+- **The NOTIFYs** list phone2 as `connected` again, now with the joining-method `dialed-in`, as for the creator. Before, when the focus invited phone2, it was `dialed-out`.
 - **Any user whose identity the network asserts may join**, whether or not the user has been in the conference before, up to six participants, the maximum-user-count of the NOTIFYs. The seventh gets 403 (Forbidden). An INVITE to a conference URI that no conference has gets 404 (Not Found) (5.3.2.4.1 step 1). That is what the creator gets too: the conference ended when it left, and its URI with it (5.3.2.7).
 
 The script does not run this. `TestRejoinWithTheConferenceURI` in `internal/mmtel/conference_network_test.go` runs it through the whole IMS in one process: B leaves A's conference, comes back with the conference URI, and hears A through the mixer.
@@ -269,7 +269,7 @@ Each item has a `SIMPLIFIED:` comment in the code; `grep -rn "SIMPLIFIED:" inter
 ## Clean up
 
 ```sh
-docker compose --profile ue --profile sim --profile volte down -v --remove-orphans
+docker compose --profile ue --profile phones --profile volte down -v --remove-orphans
 ```
 
 This stops the nodes and the UEs of every profile and keeps the images, so the next guide starts without a new build. To delete the images as well, see [Stop the system](capture.md#stop-the-system).

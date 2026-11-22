@@ -341,12 +341,12 @@ Before each filter, guess which of the six MESSAGEs stay.
 ## Sending from the Lab
 
 ```sh
-docker compose --profile sim up -d --build
+docker compose --profile phones up -d --build
 ```
 
-1. Fill in the SMS form in the card of `ue-a`, tick **status report**, and press **Send SMS**.
+1. Fill in the SMS form in the card of `phone1`, tick **status report**, and press **Send SMS**.
 2. Under **SMS sent**, `waiting for the submit report` turns into `accepted by the SC`.
-3. **SMS received** in the card of `ue-b` shows the sender's number and the text.
+3. **SMS received** in the card of `phone2` shows the sender's number and the text.
 4. **ladder** in a row draws the ladder of that MESSAGE. Pick an arrow to see the RP and TP fields.
 
 - The Lab draws one ladder per Call-ID, so the six MESSAGEs are six ladders.
@@ -414,5 +414,5 @@ These four sessions cover the core of the IMS: registration, calls and short mes
 - Next come the supplementary services of the MMTel AS ([mmtel.md](../../../docs/guide/en/mmtel.md)), then the VoLTE call, which builds on them ([volte.md](../../../docs/guide/en/volte.md)).
 
 ```sh
-docker compose --profile ue --profile sim down --rmi all -v --remove-orphans
+docker compose --profile ue --profile phones down --rmi all -v --remove-orphans
 ```

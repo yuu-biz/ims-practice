@@ -721,7 +721,7 @@ For 1, use the commands of "Check the vector by hand" in the guide; the same sec
 docker compose --profile ue --profile volte down --rmi all -v --remove-orphans
 ```
 
-- This is the "Clean up" of the guide. If the `sim` profile of the Lab was used too, add `--profile sim`.
+- This is the "Clean up" of the guide. If the `phones` profile of the Lab was used too, add `--profile phones`.
 - In the 5GC, SIP signalling uses a QoS flow of 5QI 5 and the voice one of 5QI 1: the same idea as QCI 5 and QCI 1 in EPS.
 
 > The guides are listed in [docs/guide/](../../../docs/guide/).

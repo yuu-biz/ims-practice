@@ -228,8 +228,8 @@ else
 	dns="$(kims get service dns -o jsonpath='{.spec.clusterIP}')"
 fi
 for workload in $(kims get statefulset,deployment -o name); do
-	# ue-a and ue-b have no replicas until someone scales them up.
-	case "$workload" in */ue-a | */ue-b) continue ;; esac
+	# phone1 and phone2 have no replicas until someone scales them up.
+	case "$workload" in */phone1 | */phone2) continue ;; esac
 	kims rollout status "$workload" --timeout=180s
 done
 

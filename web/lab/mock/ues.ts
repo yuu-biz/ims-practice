@@ -1,4 +1,4 @@
-// Two stand-in UE simulators for the mock API. ue-a and ue-b act out a
+// Two stand-in UE simulators for the mock API. phone1 and phone2 act out a
 // call between them: whichever calls, the other rings and answers by its
 // answer policy, and either one hangs up for both. A short message to the
 // other's number reaches it, and is accepted and reported; one to any
@@ -31,8 +31,8 @@ interface MockUE {
 }
 
 const ues: MockUE[] = [
-  { name: "ue-a", tel: "tel:+12025550101", impu: user1 },
-  { name: "ue-b", tel: "tel:+12025550102", impu: user2 },
+  { name: "phone1", tel: "tel:+12025550101", impu: user1 },
+  { name: "phone2", tel: "tel:+12025550102", impu: user2 },
 ].map(({ name, tel, impu }) => ({
   name,
   tel,

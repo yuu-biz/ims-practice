@@ -564,7 +564,7 @@ octet 2: lowest 2 bits of 'l' (00), then rest of 'e' (110010) = 0011 0010 = 32
 ## 後片付け
 
 ```sh
-docker compose --profile ue --profile sim --profile volte down -v --remove-orphans
+docker compose --profile ue --profile phones --profile volte down -v --remove-orphans
 ```
 
 すべてのプロファイルのノードと UE を止め、イメージは残します。次の手順書をビルドし直さずに始められます。イメージも削除するときは、[システムを止める](capture.md#システムを止める)を見てください。
