@@ -14,6 +14,28 @@ export interface Column {
   node: string | undefined;
 }
 
+const displayNames: Record<string, string> = {
+  ue: "UE",
+  pcscf: "P-CSCF",
+  icscf: "I-CSCF",
+  scscf: "S-CSCF",
+  ipsmgw: "IP-SM-GW",
+  mmtel: "MMTel AS",
+  mrfc: "MRFC",
+  // The epc node holds the EPC stub and the PCRF, and only the PCRF
+  // sends HEP: its Rx messages.
+  epc: "PCRF",
+  hss: "HSS",
+  agw: "IMS-AGW",
+  mrfp: "MRFP",
+};
+
+// The name over a column, in the SVG ladder and in the text one.
+export function columnLabel(column: Column): string {
+  if (column.node === undefined) return "(no HEP)";
+  return displayNames[column.node] ?? column.node;
+}
+
 // One message on the wire. Its sender and its receiver may both have
 // reported it, so an arrow holds one or two captured copies.
 export interface Arrow {

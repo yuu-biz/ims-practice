@@ -2,7 +2,7 @@
 
 import type { Message, ShortMessage } from "./api.ts";
 import { clock, el } from "./dom.ts";
-import { inferredLink, type Arrow, type Column, type Ladder } from "./ladder.ts";
+import { columnLabel, inferredLink, type Arrow, type Ladder } from "./ladder.ts";
 
 const svgNs = "http://www.w3.org/2000/svg";
 
@@ -13,27 +13,6 @@ const rowHeight = 28;
 // Average width of a label character at 12px, to cut labels that would
 // run past the arrow.
 const charWidth = 6.6;
-
-const displayNames: Record<string, string> = {
-  ue: "UE",
-  pcscf: "P-CSCF",
-  icscf: "I-CSCF",
-  scscf: "S-CSCF",
-  ipsmgw: "IP-SM-GW",
-  mmtel: "MMTel AS",
-  mrfc: "MRFC",
-  // The epc node holds the EPC stub and the PCRF, and only the PCRF
-  // sends HEP: its Rx messages.
-  epc: "PCRF",
-  hss: "HSS",
-  agw: "IMS-AGW",
-  mrfp: "MRFP",
-};
-
-export function columnLabel(column: Column): string {
-  if (column.node === undefined) return "(no HEP)";
-  return displayNames[column.node] ?? column.node;
-}
 
 // The key of an arrow that survives a redraw: the id of its first copy.
 export const arrowKey = (arrow: Arrow): number => arrow.messages[0]?.id ?? -1;

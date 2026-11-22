@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Message } from "../src/api.ts";
-import { columnLabel } from "../src/ladder-svg.ts";
-import { buildLadder, captureOrder, hostOf, inferredLink, type Ladder } from "../src/ladder.ts";
+import { buildLadder, captureOrder, columnLabel, hostOf, inferredLink, type Ladder } from "../src/ladder.ts";
 import { allMessages, callCallId, hosts, registrationCallId, subscribeCallId } from "./fixtures.ts";
 
 const nameOf = new Map<string, string>(Object.entries(hosts).map(([name, host]) => [host, name]));
