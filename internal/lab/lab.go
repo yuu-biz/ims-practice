@@ -65,13 +65,20 @@
 //	    what the UE's control API answers to GET /status, or null with
 //	    reachable false and the reason in error when the UE does not
 //	    answer; the list itself still answers 200.
-//	POST /api/ues/{name}/{register|deregister|call|answer|hangup|hold|resume|dtmf|sms},
+//	POST /api/ues/{name}/{register|deregister|call|answer|hangup|hold|resume|dtmf|swap|merge|sms},
 //	PUT /api/ues/{name}/answer-policy, GET /api/ues/{name}/events
 //	    Forwarded with the same method, body and answer to the control
 //	    API of that UE (see ue.Phone.Handler), /api/ues/{name}/call to
 //	    /call and so on. The events stream through as they come. 404
 //	    for a name that is not configured, 502 when the UE does not
 //	    answer.
+//	GET /api/ues/{name}/xcap,
+//	PUT /api/ues/{name}/xcap/services/{service},
+//	PUT /api/ues/{name}/xcap/oir
+//	    The supplementary services, forwarded in the same way to the
+//	    control API of that UE (see ue.SupplementaryServices.Handler):
+//	    the UE reads and changes its settings with XCAP over Ut. The
+//	    answers are those of the UE, and the errors are those above.
 //	GET /
 //	    The web UI, embedded from web/.
 //
