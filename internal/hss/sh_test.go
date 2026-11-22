@@ -428,8 +428,8 @@ func TestRepositoryDataWrapsAround(t *testing.T) {
 	n := newShNetwork(t)
 	// Sh would take 65535 updates to get there, so the data goes into
 	// the store as one that had them.
-	if !n.hss.store.CompareAndSwapRepositoryData(impi, nil, repository(65535, "<a/>")) {
-		t.Fatal("cannot store the data")
+	if ok, err := n.hss.store.CompareAndSwapRepositoryData(context.Background(), impi, nil, repository(65535, "<a/>")); err != nil || !ok {
+		t.Fatalf("cannot store the data: %v, %v", ok, err)
 	}
 	user := sh.UserIdentity{PublicIdentity: impu}
 	if got := n.writeRepository(t, user, repository(0, "<b/>")); got != cx.Experimental(sh.DiameterErrorTransparentDataOutOfSync) {

@@ -214,7 +214,7 @@ func TestSeveralHSSInstancesNeverReuseAnSQN(t *testing.T) {
 	for _, h := range instances {
 		wg.Go(func() {
 			for range perInstance {
-				a := h.multimediaAuth(cx.MultimediaAuthRequest{UserName: akaImpi, PublicIdentity: akaImpu,
+				a := h.multimediaAuth(context.Background(), cx.MultimediaAuthRequest{UserName: akaImpi, PublicIdentity: akaImpu,
 					SIPAuthenticationScheme: cx.SchemeDigestAKAv1MD5, SIPNumberAuthItems: 1, ServerName: scscf})
 				if a.AuthenticationVector == nil {
 					t.Errorf("MAA = %+v", a)

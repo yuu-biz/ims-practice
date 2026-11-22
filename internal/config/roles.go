@@ -1,6 +1,7 @@
 package config
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net"
@@ -496,7 +497,7 @@ func (raw *rawHSS) validate(homeDomain string) (hss.Config, error) {
 		if err := sub.Validate(); err != nil {
 			return hss.Config{}, fmt.Errorf("subscriptions[%d].%w", i, err)
 		}
-		if err := store.Add(sub); err != nil {
+		if err := store.Add(context.Background(), sub); err != nil {
 			return hss.Config{}, fmt.Errorf("subscriptions[%d]: %w", i, err)
 		}
 		c.Subscriptions = append(c.Subscriptions, sub)

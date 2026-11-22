@@ -2,6 +2,7 @@ package hss
 
 import (
 	"context"
+
 	"github.com/fiorix/go-diameter/v4/diam"
 
 	"github.com/yuu-biz/ims-practice/internal/cx"
@@ -46,7 +47,7 @@ var shDataAccess = map[sh.DataReference]shAccess{
 }
 
 // handleSh answers the Sh requests that reach the HSS.
-func (h *HSS) handleSh(request *diam.Message) *diam.Message {
+func (h *HSS) handleSh(ctx context.Context, request *diam.Message) *diam.Message {
 	identity := h.node.Identity()
 	switch request.Header.CommandCode {
 	case sh.CommandUserData:
@@ -54,13 +55,13 @@ func (h *HSS) handleSh(request *diam.Message) *diam.Message {
 		if err != nil {
 			return h.shUnableToComply(request, err)
 		}
-		return h.userData(udr).Message(request, identity)
+		return h.userData(ctx, udr).Message(request, identity)
 	case sh.CommandProfileUpdate:
 		pur, err := sh.ParseProfileUpdateRequest(request)
 		if err != nil {
 			return h.shUnableToComply(request, err)
 		}
-		return h.profileUpdate(pur).Message(request, identity)
+		return h.profileUpdate(ctx, pur).Message(request, identity)
 	}
 	return diameter.CommandUnsupportedAnswer(identity, request)
 }
@@ -78,7 +79,7 @@ func (h *HSS) shUnableToComply(request *diam.Message, err error) *diam.Message {
 // SIMPLIFIED: TS 29.328 6.1.1.1 and 6.1.2.1 step 2a. The private
 // identity that an AS may add in User-Name is not read, so it is never
 // checked against the user identity.
-func (h *HSS) shCheck(id sh.UserIdentity, refs []sh.DataReference, update bool) (Subscriber, sh.DataReference, cx.Result, bool) {
+func (h *HSS) shCheck(ctx context.Context, id sh.UserIdentity, refs []sh.DataReference, update bool) (Subscriber, sh.DataReference, cx.Result, bool) {
 	if len(refs) != 1 {
 		// Several are allowed only with features this HSS does not
 		// negotiate, and none is a malformed request.
@@ -92,7 +93,10 @@ func (h *HSS) shCheck(id sh.UserIdentity, refs []sh.DataReference, update bool) 
 	case !update && !(known && access.pull):
 		return Subscriber{}, ref, cx.Experimental(sh.DiameterErrorUserDataCannotBeRead), false
 	}
-	u, ok := h.shSubscriber(id)
+	u, ok, err := h.shSubscriber(ctx, id)
+	if err != nil {
+		return Subscriber{}, ref, h.storeFailed(err), false
+	}
 	if !ok {
 		return Subscriber{}, ref, cx.Experimental(cx.DiameterErrorUserUnknown), false
 	}
@@ -105,14 +109,14 @@ func (h *HSS) shCheck(id sh.UserIdentity, refs []sh.DataReference, update bool) 
 // shSubscriber finds the subscriber that a User-Identity names. Both
 // ways are a lookup in the public identity index, never a walk over
 // all subscribers.
-func (h *HSS) shSubscriber(id sh.UserIdentity) (Subscriber, bool) {
+func (h *HSS) shSubscriber(ctx context.Context, id sh.UserIdentity) (Subscriber, bool, error) {
 	switch {
 	case id.PublicIdentity != "":
-		return h.store.SubscriberOf(id.PublicIdentity)
+		return h.store.SubscriberOf(ctx, id.PublicIdentity)
 	case sh.ValidMSISDN(id.MSISDN):
-		return h.store.SubscriberOf(telURI(id.MSISDN))
+		return h.store.SubscriberOf(ctx, telURI(id.MSISDN))
 	}
-	return Subscriber{}, false
+	return Subscriber{}, false, nil
 }
 
 // telURI is the public identity that an MSISDN is stored as, the global
@@ -120,8 +124,8 @@ func (h *HSS) shSubscriber(id sh.UserIdentity) (Subscriber, bool) {
 func telURI(msisdn string) string { return "tel:+" + msisdn }
 
 // userData is the HSS side of Sh-Pull, TS 29.328 6.1.1.1.
-func (h *HSS) userData(r sh.UserDataRequest) sh.UserDataAnswer {
-	u, ref, result, ok := h.shCheck(r.UserIdentity, r.DataReferences, false)
+func (h *HSS) userData(ctx context.Context, r sh.UserDataRequest) sh.UserDataAnswer {
+	u, ref, result, ok := h.shCheck(ctx, r.UserIdentity, r.DataReferences, false)
 	if !ok {
 		return sh.UserDataAnswer{Result: result}
 	}
@@ -133,7 +137,11 @@ func (h *HSS) userData(r sh.UserDataRequest) sh.UserDataAnswer {
 		if len(r.ServiceIndications) != 1 {
 			return sh.UserDataAnswer{Result: cx.Base(cx.DiameterUnableToComply)}
 		}
-		if d, ok := h.store.RepositoryData(u.PrivateIdentity, r.ServiceIndications[0]); ok {
+		d, ok, err := h.store.RepositoryData(ctx, u.PrivateIdentity, r.ServiceIndications[0])
+		if err != nil {
+			return sh.UserDataAnswer{Result: h.storeFailed(err)}
+		}
+		if ok {
 			data.RepositoryData = []sh.TransparentData{d}
 		}
 	case sh.IMSPublicIdentity:
@@ -186,13 +194,13 @@ func publicIdentities(u Subscriber, sets []sh.IdentitySet) []string {
 // profileUpdate is the HSS side of Sh-Update, TS 29.328 6.1.2.1, for
 // the data references an AS may update here: repository data and
 // SMSRegistrationInfo.
-func (h *HSS) profileUpdate(r sh.ProfileUpdateRequest) sh.ProfileUpdateAnswer {
-	u, ref, result, ok := h.shCheck(r.UserIdentity, r.DataReferences, true)
+func (h *HSS) profileUpdate(ctx context.Context, r sh.ProfileUpdateRequest) sh.ProfileUpdateAnswer {
+	u, ref, result, ok := h.shCheck(ctx, r.UserIdentity, r.DataReferences, true)
 	if !ok {
 		return sh.ProfileUpdateAnswer{Result: result}
 	}
 	if ref == sh.RepositoryData {
-		return sh.ProfileUpdateAnswer{Result: h.updateRepositoryData(u, r)}
+		return sh.ProfileUpdateAnswer{Result: h.updateRepositoryData(ctx, u, r)}
 	}
 	data, err := sh.ParseShData(r.UserData)
 	if err != nil || data.ShIMSData == nil || data.ShIMSData.SMSRegistrationInfo == nil {
@@ -205,18 +213,24 @@ func (h *HSS) profileUpdate(r sh.ProfileUpdateRequest) sh.ProfileUpdateAnswer {
 	// writes the registration state at the same time keeps this number.
 	unlock, _ := h.users.Lock(context.Background(), u.PrivateIdentity)
 	defer unlock()
-	u, ok = h.shSubscriber(r.UserIdentity)
+	u, ok, err = h.shSubscriber(ctx, r.UserIdentity)
+	if err != nil {
+		return sh.ProfileUpdateAnswer{Result: h.storeFailed(err)}
+	}
 	if !ok {
 		return sh.ProfileUpdateAnswer{Result: cx.Experimental(cx.DiameterErrorUserUnknown)}
 	}
 	// Step 4b: an empty number removes the registration. The IP-SM-GW
 	// Diameter identity is stored only when the HSS and the IP-SM-GW
 	// support S6c, which neither does here.
-	if u.IPSMGWNumber != number {
-		h.log.Info("SMS registration", "private_identity", u.PrivateIdentity, "from", u.IPSMGWNumber, "to", number)
-	}
+	from := u.IPSMGWNumber
 	u.IPSMGWNumber = number
-	h.store.Put(u)
+	if err := h.store.Put(ctx, u); err != nil {
+		return sh.ProfileUpdateAnswer{Result: h.storeFailed(err)}
+	}
+	if from != number {
+		h.log.Info("SMS registration", "private_identity", u.PrivateIdentity, "from", from, "to", number)
+	}
 	return sh.ProfileUpdateAnswer{Result: cx.Base(cx.DiameterSuccess)}
 }
 
@@ -229,7 +243,7 @@ const maxServiceData = 64 << 10
 
 // updateRepositoryData is steps 5 and 6 of TS 29.328 6.1.2.1 for the
 // repository data of u.
-func (h *HSS) updateRepositoryData(u Subscriber, r sh.ProfileUpdateRequest) cx.Result {
+func (h *HSS) updateRepositoryData(ctx context.Context, u Subscriber, r sh.ProfileUpdateRequest) cx.Result {
 	data, err := sh.ParseShData(r.UserData)
 	if err != nil || len(data.RepositoryData) != 1 {
 		h.log.Warn("PUR without one RepositoryData", "public_identity", r.UserIdentity.PublicIdentity)
@@ -239,7 +253,10 @@ func (h *HSS) updateRepositoryData(u Subscriber, r sh.ProfileUpdateRequest) cx.R
 	unlock, _ := h.users.Lock(context.Background(), u.PrivateIdentity)
 	defer unlock()
 	for {
-		stored, ok := h.store.RepositoryData(u.PrivateIdentity, update.ServiceIndication)
+		stored, ok, err := h.store.RepositoryData(ctx, u.PrivateIdentity, update.ServiceIndication)
+		if err != nil {
+			return h.storeFailed(err)
+		}
 		var old *sh.TransparentData
 		if ok {
 			old = &stored
@@ -252,12 +269,20 @@ func (h *HSS) updateRepositoryData(u Subscriber, r sh.ProfileUpdateRequest) cx.R
 		// Step 5 has another entity's update in progress refused. Here an
 		// update either is done or has not begun, so one that another HSS
 		// instance made in between is caught by step 6 on the next try.
-		if h.store.CompareAndSwapRepositoryData(u.PrivateIdentity, old, update) {
+		swapped, err := h.store.CompareAndSwapRepositoryData(ctx, u.PrivateIdentity, old, update)
+		if err != nil {
+			return h.storeFailed(err)
+		}
+		if swapped {
 			h.log.Info("repository data", "private_identity", u.PrivateIdentity, "service_indication", update.ServiceIndication,
 				"sequence_number", update.SequenceNumber, "removed", update.ServiceData == nil)
 			return cx.Base(cx.DiameterSuccess)
 		}
-		if _, ok := h.store.Subscriber(u.PrivateIdentity); !ok {
+		_, ok, err = h.store.Subscriber(ctx, u.PrivateIdentity)
+		if err != nil {
+			return h.storeFailed(err)
+		}
+		if !ok {
 			// The provisioning API removed the subscription meanwhile.
 			return cx.Experimental(cx.DiameterErrorUserUnknown)
 		}

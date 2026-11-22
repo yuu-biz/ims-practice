@@ -1,6 +1,7 @@
 package hss
 
 import (
+	"context"
 	"encoding/binary"
 	"encoding/hex"
 	"errors"
@@ -198,47 +199,56 @@ var ErrIdentityTaken = errors.New("identity already belongs to a subscription")
 // data can live outside the node; MemoryStore keeps it in the
 // process. Every lookup that a Cx request makes is by a key, the private
 // or a public identity, so that no request walks all subscribers.
+//
+// An error is a failure of the store, after which the caller cannot
+// tell what the store holds: the HSS answers the request with
+// DIAMETER_UNABLE_TO_COMPLY, and the provisioning API with 500.
 type Store interface {
-	Subscriber(privateID string) (Subscriber, bool)
+	// Subscriber returns the subscriber of privateID, and whether there
+	// is one.
+	Subscriber(ctx context.Context, privateID string) (Subscriber, bool, error)
 	// SubscriberOf finds the subscriber one of whose public
 	// identities is publicID.
-	SubscriberOf(publicID string) (Subscriber, bool)
+	SubscriberOf(ctx context.Context, publicID string) (Subscriber, bool, error)
 	// Add stores a new subscription, Not Registered, with its
 	// repository data. It fails with ErrIdentityTaken if one of its
 	// identities is in another subscription.
-	Add(Subscription) error
+	Add(ctx context.Context, sub Subscription) error
 	// Put writes back the registration state of a subscriber that is
-	// stored. The caller holds the subscriber's lock. It does not
-	// change SQN_HE.
-	Put(Subscriber)
+	// stored, and writes nothing for one that is not any more. The
+	// caller holds the subscriber's lock. It does not change SQN_HE.
+	Put(ctx context.Context, sub Subscriber) error
 	// CompareAndSwapSQN sets SQN_HE of the subscriber to new if it is
 	// still old, and reports whether it did. SQN_HE must never go back
 	// or be used twice, even when several HSS instances share the
 	// store and the lock of one instance does not hold the others back,
 	// so it changes only by this one atomic step.
-	CompareAndSwapSQN(privateID string, old, new aka.SQN) bool
+	CompareAndSwapSQN(ctx context.Context, privateID string, old, new aka.SQN) (bool, error)
 	// RepositoryData returns the repository data of the subscription of
-	// privateID under serviceIndication (TS 29.328 7.4). The data belongs
-	// to the subscription, not to one of its public identities: they are
-	// all aliases of each other (TS 29.328 6.1.2.1 step 6), as every
-	// subscription of the stub is one implicit registration set with
-	// one service profile.
-	RepositoryData(privateID, serviceIndication string) (sh.TransparentData, bool)
+	// privateID under serviceIndication (TS 29.328 7.4), and whether
+	// there is any. The data belongs to the subscription, not to one of
+	// its public identities: they are all aliases of each other (TS
+	// 29.328 6.1.2.1 step 6), as every subscription of the stub is one
+	// implicit registration set with one service profile.
+	RepositoryData(ctx context.Context, privateID, serviceIndication string) (sh.TransparentData, bool, error)
 	// CompareAndSwapRepositoryData stores data under its
 	// ServiceIndication, or removes what is stored there when data has
 	// no ServiceData, if what is stored is still old: nil for nothing, or
 	// the data with old's SequenceNumber. It reports whether it did. As
 	// for SQN_HE, this one atomic step keeps two HSS instances from both
 	// taking an update from the same version.
-	CompareAndSwapRepositoryData(privateID string, old *sh.TransparentData, data sh.TransparentData) bool
-	Delete(privateID string) (Subscriber, bool)
+	CompareAndSwapRepositoryData(ctx context.Context, privateID string, old *sh.TransparentData, data sh.TransparentData) (bool, error)
+	// Delete removes the subscriber of privateID, and returns it and
+	// whether there was one.
+	Delete(ctx context.Context, privateID string) (Subscriber, bool, error)
 	// List returns at most limit subscribers, in the order of their
 	// private identities. It is for operators, never for a Cx request.
-	List(limit int) []Subscriber
+	List(ctx context.Context, limit int) ([]Subscriber, error)
 }
 
 // MemoryStore is a Store in the process. It indexes the subscribers by
-// private identity, and the private identities by public identity.
+// private identity, and the private identities by public identity. It
+// never fails.
 type MemoryStore struct {
 	mu        sync.Mutex
 	byPrivate map[string]Subscriber
@@ -252,7 +262,7 @@ type MemoryStore struct {
 func NewMemoryStore(subs ...Subscription) (*MemoryStore, error) {
 	s := &MemoryStore{byPrivate: map[string]Subscriber{}, byPublic: map[string]string{}, repository: map[string]map[string]sh.TransparentData{}}
 	for _, sub := range subs {
-		if err := s.Add(sub); err != nil {
+		if err := s.Add(context.Background(), sub); err != nil {
 			return nil, err
 		}
 	}
@@ -268,11 +278,11 @@ func privateKey(id string) string { return strings.ToLower(id) }
 // same identity, and so is a SIP URI with its host in capitals.
 func publicKey(id string) string { return ims.PublicIdentityKey(id) }
 
-func (s *MemoryStore) Subscriber(privateID string) (Subscriber, bool) {
+func (s *MemoryStore) Subscriber(_ context.Context, privateID string) (Subscriber, bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	sub, ok := s.byPrivate[privateKey(privateID)]
-	return copied(sub), ok
+	return copied(sub), ok, nil
 }
 
 // copied gives a caller its own AKACredentials, so that what it does
@@ -290,18 +300,18 @@ func cloneAKA(a *AKACredentials) *AKACredentials {
 	return &c
 }
 
-func (s *MemoryStore) SubscriberOf(publicID string) (Subscriber, bool) {
+func (s *MemoryStore) SubscriberOf(_ context.Context, publicID string) (Subscriber, bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	k, ok := s.byPublic[publicKey(publicID)]
 	if !ok {
-		return Subscriber{}, false
+		return Subscriber{}, false, nil
 	}
 	sub, ok := s.byPrivate[k]
-	return copied(sub), ok
+	return copied(sub), ok, nil
 }
 
-func (s *MemoryStore) Add(sub Subscription) error {
+func (s *MemoryStore) Add(_ context.Context, sub Subscription) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	k := privateKey(sub.PrivateIdentity)
@@ -331,7 +341,7 @@ func (s *MemoryStore) Add(sub Subscription) error {
 	return nil
 }
 
-func (s *MemoryStore) Put(sub Subscriber) {
+func (s *MemoryStore) Put(_ context.Context, sub Subscriber) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	k := privateKey(sub.PrivateIdentity)
@@ -339,62 +349,63 @@ func (s *MemoryStore) Put(sub Subscriber) {
 		sub.AKA = stored.AKA
 		s.byPrivate[k] = sub
 	}
+	return nil
 }
 
-func (s *MemoryStore) CompareAndSwapSQN(privateID string, old, new aka.SQN) bool {
+func (s *MemoryStore) CompareAndSwapSQN(_ context.Context, privateID string, old, new aka.SQN) (bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	sub, ok := s.byPrivate[privateKey(privateID)]
 	if !ok || sub.AKA == nil || sub.AKA.SQN != old {
-		return false
+		return false, nil
 	}
 	sub.AKA.SQN = new
-	return true
+	return true, nil
 }
 
-func (s *MemoryStore) Delete(privateID string) (Subscriber, bool) {
+func (s *MemoryStore) Delete(_ context.Context, privateID string) (Subscriber, bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	k := privateKey(privateID)
 	sub, ok := s.byPrivate[k]
 	if !ok {
-		return Subscriber{}, false
+		return Subscriber{}, false, nil
 	}
 	delete(s.byPrivate, k)
 	for _, id := range sub.PublicIdentities {
 		delete(s.byPublic, publicKey(id))
 	}
 	delete(s.repository, k)
-	return sub, true
+	return sub, true, nil
 }
 
-func (s *MemoryStore) RepositoryData(privateID, serviceIndication string) (sh.TransparentData, bool) {
+func (s *MemoryStore) RepositoryData(_ context.Context, privateID, serviceIndication string) (sh.TransparentData, bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	d, ok := s.repository[privateKey(privateID)][serviceIndication]
-	return cloneTransparentData(d), ok
+	return cloneTransparentData(d), ok, nil
 }
 
-func (s *MemoryStore) CompareAndSwapRepositoryData(privateID string, old *sh.TransparentData, data sh.TransparentData) bool {
+func (s *MemoryStore) CompareAndSwapRepositoryData(_ context.Context, privateID string, old *sh.TransparentData, data sh.TransparentData) (bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	k := privateKey(privateID)
 	if _, ok := s.byPrivate[k]; !ok {
-		return false
+		return false, nil
 	}
 	stored, ok := s.repository[k][data.ServiceIndication]
 	if ok != (old != nil) || ok && stored.SequenceNumber != old.SequenceNumber {
-		return false
+		return false, nil
 	}
 	if data.ServiceData == nil {
 		delete(s.repository[k], data.ServiceIndication)
-		return true
+		return true, nil
 	}
 	if s.repository[k] == nil {
 		s.repository[k] = map[string]sh.TransparentData{}
 	}
 	s.repository[k][data.ServiceIndication] = cloneTransparentData(data)
-	return true
+	return true, nil
 }
 
 // cloneTransparentData gives the store and its callers each their own
@@ -406,7 +417,7 @@ func cloneTransparentData(d sh.TransparentData) sh.TransparentData {
 	return d
 }
 
-func (s *MemoryStore) List(limit int) []Subscriber {
+func (s *MemoryStore) List(_ context.Context, limit int) ([]Subscriber, error) {
 	s.mu.Lock()
 	keys := make([]string, 0, len(s.byPrivate))
 	for k := range s.byPrivate {
@@ -421,5 +432,5 @@ func (s *MemoryStore) List(limit int) []Subscriber {
 		subs = append(subs, copied(s.byPrivate[k]))
 	}
 	s.mu.Unlock()
-	return subs
+	return subs, nil
 }

@@ -73,8 +73,13 @@ func New(config Config, store Store, node *diameter.Node, log *slog.Logger) *HSS
 // Handle is the diameter.Handler of the HSS.
 func (h *HSS) Handle(request *diam.Message) *diam.Message {
 	identity := h.node.Identity()
+	// diameter.Handler carries no context to bound the work for the
+	// request. The Store bounds each of its operations itself: an
+	// adapter on a store outside the process gives each one a time
+	// limit.
+	ctx := context.Background()
 	if request.Header.ApplicationID == diameter.ApplicationIDSh {
-		return h.handleSh(request)
+		return h.handleSh(ctx, request)
 	}
 	if request.Header.ApplicationID != diameter.ApplicationIDCx {
 		return diameter.CommandUnsupportedAnswer(identity, request)
@@ -85,25 +90,25 @@ func (h *HSS) Handle(request *diam.Message) *diam.Message {
 		if err != nil {
 			return h.unableToComply(request, err)
 		}
-		return h.userAuthorization(uar).Message(request, identity)
+		return h.userAuthorization(ctx, uar).Message(request, identity)
 	case cx.CommandMultimediaAuth:
 		mar, err := cx.ParseMultimediaAuthRequest(request)
 		if err != nil {
 			return h.unableToComply(request, err)
 		}
-		return h.multimediaAuth(mar).Message(request, identity)
+		return h.multimediaAuth(ctx, mar).Message(request, identity)
 	case cx.CommandLocationInfo:
 		lir, err := cx.ParseLocationInfoRequest(request)
 		if err != nil {
 			return h.unableToComply(request, err)
 		}
-		return h.locationInfo(lir).Message(request, identity)
+		return h.locationInfo(ctx, lir).Message(request, identity)
 	case cx.CommandServerAssignment:
 		sar, err := cx.ParseServerAssignmentRequest(request)
 		if err != nil {
 			return h.unableToComply(request, err)
 		}
-		return h.serverAssignment(sar).Message(request, identity)
+		return h.serverAssignment(ctx, sar).Message(request, identity)
 	}
 	return diameter.CommandUnsupportedAnswer(identity, request)
 }
@@ -113,21 +118,36 @@ func (h *HSS) unableToComply(request *diam.Message, err error) *diam.Message {
 	return cx.NewAnswer(request, h.node.Identity(), cx.Base(cx.DiameterUnableToComply))
 }
 
+// storeFailed is the result for a request whose subscriber the HSS
+// cannot read or write. The HSS cannot tell then whether the user
+// exists, or what the request has changed, so it answers neither
+// DIAMETER_ERROR_USER_UNKNOWN nor a success (RFC 6733 7.1.5).
+func (h *HSS) storeFailed(err error) cx.Result {
+	h.log.Warn("subscriber store failed", "error", err.Error())
+	return cx.Base(cx.DiameterUnableToComply)
+}
+
 // find runs the identity checks that start the UAR, MAR and SAR
 // procedures: both identities exist, then they belong together. An
 // empty privateID skips the second check.
-func (h *HSS) find(privateID, publicID string) (Subscriber, cx.Result, bool) {
+func (h *HSS) find(ctx context.Context, privateID, publicID string) (Subscriber, cx.Result, bool) {
 	unknown := cx.Experimental(cx.DiameterErrorUserUnknown)
 	var byPublic, byPrivate Subscriber
 	if publicID != "" {
-		s, ok := h.store.SubscriberOf(publicID)
+		s, ok, err := h.store.SubscriberOf(ctx, publicID)
+		if err != nil {
+			return Subscriber{}, h.storeFailed(err), false
+		}
 		if !ok {
 			return Subscriber{}, unknown, false
 		}
 		byPublic = s
 	}
 	if privateID != "" {
-		s, ok := h.store.Subscriber(privateID)
+		s, ok, err := h.store.Subscriber(ctx, privateID)
+		if err != nil {
+			return Subscriber{}, h.storeFailed(err), false
+		}
 		if !ok {
 			return Subscriber{}, unknown, false
 		}
@@ -148,13 +168,13 @@ func (h *HSS) find(privateID, publicID string) (Subscriber, cx.Result, bool) {
 // requests that change the subscriber. The subscriber is read again once
 // the lock is held, because another request may have changed it, or a
 // provisioning request removed it, in between.
-func (h *HSS) lock(privateID, publicID string) (Subscriber, cx.Result, func(), bool) {
-	s, result, ok := h.find(privateID, publicID)
+func (h *HSS) lock(ctx context.Context, privateID, publicID string) (Subscriber, cx.Result, func(), bool) {
+	s, result, ok := h.find(ctx, privateID, publicID)
 	if !ok {
 		return Subscriber{}, result, nil, false
 	}
 	unlock, _ := h.users.Lock(context.Background(), s.PrivateIdentity)
-	s, result, ok = h.find(privateID, publicID)
+	s, result, ok = h.find(ctx, privateID, publicID)
 	if !ok {
 		unlock()
 		return Subscriber{}, result, nil, false
@@ -164,8 +184,8 @@ func (h *HSS) lock(privateID, publicID string) (Subscriber, cx.Result, func(), b
 
 // userAuthorization is the HSS side of the user registration status
 // query, TS 29.228 6.1.1.1.
-func (h *HSS) userAuthorization(r cx.UserAuthorizationRequest) cx.UserAuthorizationAnswer {
-	u, result, ok := h.find(r.UserName, r.PublicIdentity)
+func (h *HSS) userAuthorization(ctx context.Context, r cx.UserAuthorizationRequest) cx.UserAuthorizationAnswer {
+	u, result, ok := h.find(ctx, r.UserName, r.PublicIdentity)
 	if !ok {
 		return cx.UserAuthorizationAnswer{Result: result}
 	}
@@ -217,8 +237,8 @@ func (h *HSS) userAuthorization(r cx.UserAuthorizationRequest) cx.UserAuthorizat
 // request is always about a public user identity, and the
 // Originating-Request AVP is not read: no I-CSCF of this project routes
 // an originating request (TS 24.229 5.3.2.1A).
-func (h *HSS) locationInfo(r cx.LocationInfoRequest) cx.LocationInfoAnswer {
-	u, result, ok := h.find("", r.PublicIdentity)
+func (h *HSS) locationInfo(ctx context.Context, r cx.LocationInfoRequest) cx.LocationInfoAnswer {
+	u, result, ok := h.find(ctx, "", r.PublicIdentity)
 	if !ok {
 		return cx.LocationInfoAnswer{Result: result}
 	}
@@ -243,8 +263,8 @@ func (h *HSS) locationInfo(r cx.LocationInfoRequest) cx.LocationInfoAnswer {
 
 // multimediaAuth is the HSS side of the authentication procedure,
 // TS 29.228 6.3.1, for SIP Digest and IMS-AKA.
-func (h *HSS) multimediaAuth(r cx.MultimediaAuthRequest) cx.MultimediaAuthAnswer {
-	u, result, unlock, ok := h.lock(r.UserName, r.PublicIdentity)
+func (h *HSS) multimediaAuth(ctx context.Context, r cx.MultimediaAuthRequest) cx.MultimediaAuthAnswer {
+	u, result, unlock, ok := h.lock(ctx, r.UserName, r.PublicIdentity)
 	if !ok {
 		return cx.MultimediaAuthAnswer{Result: result}
 	}
@@ -269,7 +289,10 @@ func (h *HSS) multimediaAuth(r cx.MultimediaAuthRequest) cx.MultimediaAuthAnswer
 		if scheme != cx.SchemeDigestAKAv1MD5 || r.ServerName != u.ServerName {
 			return unableToComply
 		}
-		av, ok := h.authenticationVector(u, resync)
+		av, ok, err := h.authenticationVector(ctx, u, resync)
+		if err != nil {
+			return cx.MultimediaAuthAnswer{Result: h.storeFailed(err)}
+		}
 		if !ok {
 			return unableToComply
 		}
@@ -286,7 +309,10 @@ func (h *HSS) multimediaAuth(r cx.MultimediaAuthRequest) cx.MultimediaAuthAnswer
 			DigestHA1:       HA1(u.PrivateIdentity, h.config.Realm, u.Password),
 		}
 	case cx.SchemeDigestAKAv1MD5:
-		av, ok := h.authenticationVector(u, nil)
+		av, ok, err := h.authenticationVector(ctx, u, nil)
+		if err != nil {
+			return cx.MultimediaAuthAnswer{Result: h.storeFailed(err)}
+		}
 		if !ok {
 			return unableToComply
 		}
@@ -294,7 +320,9 @@ func (h *HSS) multimediaAuth(r cx.MultimediaAuthRequest) cx.MultimediaAuthAnswer
 	}
 	// Step 5.
 	if u.State != Registered || u.ServerName != r.ServerName {
-		h.setServer(u, r.ServerName, origin(r.Header), u.State, true)
+		if err := h.setServer(ctx, u, r.ServerName, origin(r.Header), u.State, true); err != nil {
+			return cx.MultimediaAuthAnswer{Result: h.storeFailed(err)}
+		}
 	}
 	return answer
 }
@@ -316,13 +344,13 @@ func authenticationScheme(s Subscription, requested string) (string, bool) {
 // authenticationVector is the AuC part of an IMS-AKA MAR: it takes the
 // next SQN_HE (TS 33.102 6.3.2), after re-synchronising with the AUTS
 // of resync if there is one (6.3.5), and builds a vector with a fresh
-// RAND. It reports false if the subscription is gone. The lock of u is
-// held.
+// RAND. It reports false if the subscription is gone, and returns the
+// failure of the store. The lock of u is held.
 //
 // The HSS sends one vector whatever SIP-Number-Auth-Items asks for: TS
 // 29.228 6.3.1 lets it send fewer, and the S-CSCF uses one vector per
 // registration (TS 33.203 6.1.1).
-func (h *HSS) authenticationVector(u Subscriber, resync *cx.Resynchronization) (aka.AuthenticationVector, bool) {
+func (h *HSS) authenticationVector(ctx context.Context, u Subscriber, resync *cx.Resynchronization) (aka.AuthenticationVector, bool, error) {
 	log := h.log.With("private_identity", u.PrivateIdentity)
 	for {
 		sqnHE := u.AKA.SQN
@@ -339,17 +367,21 @@ func (h *HSS) authenticationVector(u Subscriber, resync *cx.Resynchronization) (
 			}
 		}
 		next := base.Next()
-		if h.store.CompareAndSwapSQN(u.PrivateIdentity, sqnHE, next) {
+		swapped, err := h.store.CompareAndSwapSQN(ctx, u.PrivateIdentity, sqnHE, next)
+		if err != nil {
+			return aka.AuthenticationVector{}, false, err
+		}
+		if swapped {
 			var rand aka.RAND
 			cryptorand.Read(rand[:])
-			return aka.NewAuthenticationVector(u.AKA.Secret, rand, next, u.AKA.AMF), true
+			return aka.NewAuthenticationVector(u.AKA.Secret, rand, next, u.AKA.AMF), true, nil
 		}
 		// Another HSS instance used SQN_HE first: start again from the
 		// one it stored.
 		var ok bool
-		u, ok = h.store.Subscriber(u.PrivateIdentity)
-		if !ok || u.AKA == nil {
-			return aka.AuthenticationVector{}, false
+		u, ok, err = h.store.Subscriber(ctx, u.PrivateIdentity)
+		if err != nil || !ok || u.AKA == nil {
+			return aka.AuthenticationVector{}, false, err
 		}
 	}
 }
@@ -362,12 +394,12 @@ func HA1(username, realm, password string) string {
 
 // serverAssignment is the HSS side of the S-CSCF registration and
 // deregistration notification, TS 29.228 6.1.2.1.
-func (h *HSS) serverAssignment(r cx.ServerAssignmentRequest) cx.ServerAssignmentAnswer {
+func (h *HSS) serverAssignment(ctx context.Context, r cx.ServerAssignmentRequest) cx.ServerAssignmentAnswer {
 	publicID := ""
 	if len(r.PublicIdentities) > 0 {
 		publicID = r.PublicIdentities[0]
 	}
-	u, result, unlock, ok := h.lock(r.UserName, publicID)
+	u, result, unlock, ok := h.lock(ctx, r.UserName, publicID)
 	if !ok {
 		return cx.ServerAssignmentAnswer{Result: result}
 	}
@@ -380,7 +412,9 @@ func (h *HSS) serverAssignment(r cx.ServerAssignmentRequest) cx.ServerAssignment
 		if u.State == Registered && u.ServerName != "" && u.ServerName != r.ServerName {
 			return cx.ServerAssignmentAnswer{Result: cx.Experimental(cx.DiameterErrorIdentityAlreadyRegistered), ServerName: u.ServerName}
 		}
-		h.setServer(u, r.ServerName, origin(r.Header), Registered, false)
+		if err := h.setServer(ctx, u, r.ServerName, origin(r.Header), Registered, false); err != nil {
+			return cx.ServerAssignmentAnswer{Result: h.storeFailed(err)}
+		}
 		return h.withUserData(u, r)
 	case cx.UnregisteredUser:
 		// The S-CSCF sends it for a request to, or on behalf of, a user it
@@ -390,17 +424,23 @@ func (h *HSS) serverAssignment(r cx.ServerAssignmentRequest) cx.ServerAssignment
 		if u.ServerName != "" && u.ServerName != r.ServerName {
 			return cx.ServerAssignmentAnswer{Result: cx.Experimental(cx.DiameterErrorIdentityAlreadyRegistered), ServerName: u.ServerName}
 		}
-		h.setServer(u, r.ServerName, origin(r.Header), Unregistered, u.AuthenticationPending)
+		if err := h.setServer(ctx, u, r.ServerName, origin(r.Header), Unregistered, u.AuthenticationPending); err != nil {
+			return cx.ServerAssignmentAnswer{Result: h.storeFailed(err)}
+		}
 		return h.withUserData(u, r)
 	case cx.TimeoutDeregistration, cx.UserDeregistration, cx.AdministrativeDeregistration:
-		h.setServer(u, "", diameter.Identity{}, NotRegistered, false)
+		if err := h.setServer(ctx, u, "", diameter.Identity{}, NotRegistered, false); err != nil {
+			return cx.ServerAssignmentAnswer{Result: h.storeFailed(err)}
+		}
 		return cx.ServerAssignmentAnswer{Result: cx.Base(cx.DiameterSuccess)}
 	case cx.AuthenticationFailure, cx.AuthenticationTimeout:
 		name, scscf := u.ServerName, u.SCSCF
 		if u.State == NotRegistered {
 			name, scscf = "", diameter.Identity{}
 		}
-		h.setServer(u, name, scscf, u.State, false)
+		if err := h.setServer(ctx, u, name, scscf, u.State, false); err != nil {
+			return cx.ServerAssignmentAnswer{Result: h.storeFailed(err)}
+		}
 		return cx.ServerAssignmentAnswer{Result: cx.Base(cx.DiameterSuccess)}
 	case cx.NoAssignment:
 		if u.ServerName != r.ServerName {
@@ -424,14 +464,19 @@ func (h *HSS) withUserData(u Subscriber, r cx.ServerAssignmentRequest) cx.Server
 	return a
 }
 
-// setServer stores the registration state of u. The lock of u is held.
-func (h *HSS) setServer(u Subscriber, serverName string, scscf diameter.Identity, state RegistrationState, pending bool) {
-	if u.State != state || u.ServerName != serverName {
-		h.log.Info("registration state", "private_identity", u.PrivateIdentity,
-			"from", u.State.String(), "to", state.String(), "server_name", serverName)
-	}
+// setServer stores the registration state of u, and returns the
+// failure of the store. The lock of u is held.
+func (h *HSS) setServer(ctx context.Context, u Subscriber, serverName string, scscf diameter.Identity, state RegistrationState, pending bool) error {
+	from, changed := u.State, u.State != state || u.ServerName != serverName
 	u.ServerName, u.SCSCF, u.State, u.AuthenticationPending = serverName, scscf, state, pending
-	h.store.Put(u)
+	if err := h.store.Put(ctx, u); err != nil {
+		return err
+	}
+	if changed {
+		h.log.Info("registration state", "private_identity", u.PrivateIdentity,
+			"from", from.String(), "to", state.String(), "server_name", serverName)
+	}
+	return nil
 }
 
 // origin is the Diameter identity of the node that sent a request.

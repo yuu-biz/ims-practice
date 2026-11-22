@@ -1,6 +1,7 @@
 package storetest
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"sync"
@@ -38,10 +39,94 @@ var akaSecret = aka.Secret{
 func mustAdd(t *testing.T, s hss.Store, subs ...hss.Subscription) {
 	t.Helper()
 	for _, sub := range subs {
-		if err := s.Add(sub); err != nil {
+		if err := s.Add(context.Background(), sub); err != nil {
 			t.Fatalf("Add(%s): %v", sub.PrivateIdentity, err)
 		}
 	}
+}
+
+// The helpers below call the Store and report any error it returns,
+// since the backends of the suite do not fail. They call t.Errorf, not
+// t.Fatalf, because the concurrent cases call them on goroutines of
+// their own.
+
+func subscriber(t *testing.T, s hss.Store, privateID string) (hss.Subscriber, bool) {
+	t.Helper()
+	sub, ok, err := s.Subscriber(context.Background(), privateID)
+	if err != nil {
+		t.Errorf("Subscriber(%s): %v", privateID, err)
+	}
+	return sub, ok
+}
+
+func subscriberOf(t *testing.T, s hss.Store, publicID string) (hss.Subscriber, bool) {
+	t.Helper()
+	sub, ok, err := s.SubscriberOf(context.Background(), publicID)
+	if err != nil {
+		t.Errorf("SubscriberOf(%s): %v", publicID, err)
+	}
+	return sub, ok
+}
+
+func add(t *testing.T, s hss.Store, sub hss.Subscription) error {
+	t.Helper()
+	err := s.Add(context.Background(), sub)
+	if err != nil && !errors.Is(err, hss.ErrIdentityTaken) {
+		t.Errorf("Add(%s): %v", sub.PrivateIdentity, err)
+	}
+	return err
+}
+
+func put(t *testing.T, s hss.Store, sub hss.Subscriber) {
+	t.Helper()
+	if err := s.Put(context.Background(), sub); err != nil {
+		t.Errorf("Put(%s): %v", sub.PrivateIdentity, err)
+	}
+}
+
+func compareAndSwapSQN(t *testing.T, s hss.Store, privateID string, old, new aka.SQN) bool {
+	t.Helper()
+	swapped, err := s.CompareAndSwapSQN(context.Background(), privateID, old, new)
+	if err != nil {
+		t.Errorf("CompareAndSwapSQN(%s): %v", privateID, err)
+	}
+	return swapped
+}
+
+func repositoryData(t *testing.T, s hss.Store, privateID, serviceIndication string) (sh.TransparentData, bool) {
+	t.Helper()
+	d, ok, err := s.RepositoryData(context.Background(), privateID, serviceIndication)
+	if err != nil {
+		t.Errorf("RepositoryData(%s, %s): %v", privateID, serviceIndication, err)
+	}
+	return d, ok
+}
+
+func compareAndSwapRepositoryData(t *testing.T, s hss.Store, privateID string, old *sh.TransparentData, data sh.TransparentData) bool {
+	t.Helper()
+	swapped, err := s.CompareAndSwapRepositoryData(context.Background(), privateID, old, data)
+	if err != nil {
+		t.Errorf("CompareAndSwapRepositoryData(%s): %v", privateID, err)
+	}
+	return swapped
+}
+
+func deleteSubscriber(t *testing.T, s hss.Store, privateID string) (hss.Subscriber, bool) {
+	t.Helper()
+	sub, ok, err := s.Delete(context.Background(), privateID)
+	if err != nil {
+		t.Errorf("Delete(%s): %v", privateID, err)
+	}
+	return sub, ok
+}
+
+func list(t *testing.T, s hss.Store, limit int) []hss.Subscriber {
+	t.Helper()
+	subs, err := s.List(context.Background(), limit)
+	if err != nil {
+		t.Errorf("List(%d): %v", limit, err)
+	}
+	return subs
 }
 
 func hssFindsByEachIdentity(t *testing.T, a, b hss.Store) {
@@ -50,18 +135,18 @@ func hssFindsByEachIdentity(t *testing.T, a, b hss.Store) {
 	// the user part does not. A NAI compares without case. A tel URI
 	// compares by its canonical form (TS 29.229 6.3.2).
 	for _, id := range []string{impu, tel, "SIP:001010000000001@IMS.mnc001.mcc001.3gppnetwork.org", "tel:+1-202-555-0101"} {
-		if got, ok := b.SubscriberOf(id); !ok || got.PrivateIdentity != impi {
+		if got, ok := subscriberOf(t, b, id); !ok || got.PrivateIdentity != impi {
 			t.Errorf("SubscriberOf(%s) = %+v, %v", id, got, ok)
 		}
 	}
-	if _, ok := b.SubscriberOf("sip:001010000000001X@" + realm); ok {
+	if _, ok := subscriberOf(t, b, "sip:001010000000001X@"+realm); ok {
 		t.Error("found a subscriber for a user part it does not have")
 	}
 	mustAdd(t, a, hss.Subscription{PrivateIdentity: otherIMPI, PublicIdentities: []string{"sip:Alice@" + realm}, Password: "p"})
-	if _, ok := b.SubscriberOf("sip:alice@" + realm); ok {
+	if _, ok := subscriberOf(t, b, "sip:alice@"+realm); ok {
 		t.Error("found the subscriber of sip:Alice for sip:alice")
 	}
-	if got, ok := b.Subscriber("001010000000001@IMS.MNC001.MCC001.3GPPNETWORK.ORG"); !ok || got.PrivateIdentity != impi {
+	if got, ok := subscriber(t, b, "001010000000001@IMS.MNC001.MCC001.3GPPNETWORK.ORG"); !ok || got.PrivateIdentity != impi {
 		t.Errorf("Subscriber by the private identity in upper case = %+v, %v", got, ok)
 	}
 }
@@ -72,40 +157,40 @@ func hssRefusesTakenIdentity(t *testing.T, a, b hss.Store) {
 		{PrivateIdentity: impi, PublicIdentities: []string{"sip:new@" + realm}, Password: "p"},
 		{PrivateIdentity: otherIMPI, PublicIdentities: []string{"sip:new@" + realm, tel}, Password: "p"},
 	} {
-		if err := b.Add(sub); !errors.Is(err, hss.ErrIdentityTaken) {
+		if err := add(t, b, sub); !errors.Is(err, hss.ErrIdentityTaken) {
 			t.Errorf("Add(%+v) = %v, want ErrIdentityTaken", sub, err)
 		}
 	}
 	// The refused subscription left nothing behind.
-	if _, ok := a.SubscriberOf("sip:new@" + realm); ok {
+	if _, ok := subscriberOf(t, a, "sip:new@"+realm); ok {
 		t.Error("a refused subscription was indexed")
 	}
-	if _, ok := a.Subscriber(otherIMPI); ok {
+	if _, ok := subscriber(t, a, otherIMPI); ok {
 		t.Error("a refused subscription was stored")
 	}
-	if err := a.Add(hss.Subscription{PrivateIdentity: otherIMPI, PublicIdentities: []string{"sip:new@" + realm}, Password: "p"}); err != nil {
+	if err := add(t, a, hss.Subscription{PrivateIdentity: otherIMPI, PublicIdentities: []string{"sip:new@" + realm}, Password: "p"}); err != nil {
 		t.Errorf("Add of the identity that a refused subscription named: %v", err)
 	}
 }
 
 func hssDeleteDropsTheIndex(t *testing.T, a, b hss.Store) {
 	mustAdd(t, a, hss.Subscription{PrivateIdentity: impi, PublicIdentities: []string{impu, tel}, Password: "p"})
-	got, ok := b.Delete(impi)
+	got, ok := deleteSubscriber(t, b, impi)
 	if !ok || got.PrivateIdentity != impi {
 		t.Fatalf("Delete = %+v, %v", got, ok)
 	}
-	if _, ok := a.SubscriberOf(tel); ok {
+	if _, ok := subscriberOf(t, a, tel); ok {
 		t.Error("a public identity of the deleted subscription still finds it")
 	}
 	// The identities are free for a new subscription.
-	if err := a.Add(hss.Subscription{PrivateIdentity: otherIMPI, PublicIdentities: []string{tel}, Password: "p"}); err != nil {
+	if err := add(t, a, hss.Subscription{PrivateIdentity: otherIMPI, PublicIdentities: []string{tel}, Password: "p"}); err != nil {
 		t.Errorf("Add after Delete: %v", err)
 	}
-	b.Put(hss.Subscriber{Subscription: hss.Subscription{PrivateIdentity: impi}, State: hss.Registered})
-	if _, ok := a.Subscriber(impi); ok {
+	put(t, b, hss.Subscriber{Subscription: hss.Subscription{PrivateIdentity: impi}, State: hss.Registered})
+	if _, ok := subscriber(t, a, impi); ok {
 		t.Error("Put brought back a deleted subscriber")
 	}
-	if _, ok := a.Delete(impi); ok {
+	if _, ok := deleteSubscriber(t, a, impi); ok {
 		t.Error("a second Delete reported true")
 	}
 }
@@ -114,12 +199,12 @@ func hssListIsBoundedAndOrdered(t *testing.T, a, b hss.Store) {
 	for _, name := range []string{"c", "a", "b"} {
 		mustAdd(t, a, hss.Subscription{PrivateIdentity: name + "@" + realm, PublicIdentities: []string{"sip:" + name + "@" + realm}, Password: "p"})
 	}
-	got := b.List(2)
+	got := list(t, b, 2)
 	if len(got) != 2 || got[0].PrivateIdentity != "a@"+realm || got[1].PrivateIdentity != "b@"+realm {
 		t.Errorf("List(2) = %+v", got)
 	}
-	a.Delete("a@" + realm)
-	if got := b.List(10); len(got) != 2 || got[0].PrivateIdentity != "b@"+realm {
+	deleteSubscriber(t, a, "a@"+realm)
+	if got := list(t, b, 10); len(got) != 2 || got[0].PrivateIdentity != "b@"+realm {
 		t.Errorf("List after Delete = %+v", got)
 	}
 }
@@ -133,34 +218,34 @@ func hssStoresRepositoryData(t *testing.T, a, b hss.Store) {
 		hss.UtCredentialData(impi, realm, "test-password-1"),
 	}
 	mustAdd(t, a, hss.Subscription{PrivateIdentity: impi, PublicIdentities: []string{impu}, Password: "p", RepositoryData: data})
-	got, ok := b.RepositoryData(impi, "MMTEL-Services")
+	got, ok := repositoryData(t, b, impi, "MMTEL-Services")
 	if !ok || got.SequenceNumber != 0 || string(got.ServiceData.XML) != "<a/>" {
 		t.Errorf("MMTEL-Services = %+v, %v", got, ok)
 	}
-	if _, ok := b.RepositoryData(impi, data[1].ServiceIndication); !ok {
+	if _, ok := repositoryData(t, b, impi, data[1].ServiceIndication); !ok {
 		t.Error("no Ut credential")
 	}
-	if sub, _ := b.Subscriber(impi); sub.RepositoryData != nil {
+	if sub, _ := subscriber(t, b, impi); sub.RepositoryData != nil {
 		t.Errorf("the stored subscription keeps %v", sub.RepositoryData)
 	}
 }
 
 func hssKeepsSQNOutOfPut(t *testing.T, a, b hss.Store) {
 	mustAdd(t, a, hss.Subscription{PrivateIdentity: impi, PublicIdentities: []string{impu}, AKA: &hss.AKACredentials{Secret: akaSecret}})
-	stale, _ := b.Subscriber(impi)
-	if !a.CompareAndSwapSQN(impi, 0, 5) {
+	stale, _ := subscriber(t, b, impi)
+	if !compareAndSwapSQN(t, a, impi, 0, 5) {
 		t.Fatal("CompareAndSwapSQN from the stored SQN failed")
 	}
-	if b.CompareAndSwapSQN(impi, 0, 6) {
+	if compareAndSwapSQN(t, b, impi, 0, 6) {
 		t.Fatal("CompareAndSwapSQN from a stale SQN succeeded")
 	}
 	stale.State = hss.Registered
 	stale.AKA.SQN = 0
-	b.Put(stale)
-	if u, _ := a.Subscriber(impi); u.State != hss.Registered || u.AKA.SQN != 5 || u.AKA.Secret != akaSecret {
+	put(t, b, stale)
+	if u, _ := subscriber(t, a, impi); u.State != hss.Registered || u.AKA.SQN != 5 || u.AKA.Secret != akaSecret {
 		t.Errorf("after Put: state %v, SQN %d; want Registered and SQN 5", u.State, u.AKA.SQN)
 	}
-	if a.CompareAndSwapSQN("nobody@"+realm, 0, 1) {
+	if compareAndSwapSQN(t, a, "nobody@"+realm, 0, 1) {
 		t.Error("CompareAndSwapSQN for an unknown subscriber succeeded")
 	}
 }
@@ -168,10 +253,10 @@ func hssKeepsSQNOutOfPut(t *testing.T, a, b hss.Store) {
 func hssCompareAndSwapRepositoryData(t *testing.T, a, b hss.Store) {
 	mustAdd(t, a, hss.Subscription{PrivateIdentity: impi, PublicIdentities: []string{impu}, Password: "p"})
 	v1 := sh.TransparentData{ServiceIndication: "MMTEL-Services", SequenceNumber: 0, ServiceData: &sh.ServiceData{XML: []byte("<v1/>")}}
-	if !a.CompareAndSwapRepositoryData(impi, nil, v1) {
+	if !compareAndSwapRepositoryData(t, a, impi, nil, v1) {
 		t.Fatal("the first data was refused")
 	}
-	if b.CompareAndSwapRepositoryData(impi, nil, v1) {
+	if compareAndSwapRepositoryData(t, b, impi, nil, v1) {
 		t.Error("new data was taken over data that is there")
 	}
 	v2 := v1
@@ -183,22 +268,25 @@ func hssCompareAndSwapRepositoryData(t *testing.T, a, b hss.Store) {
 		if i == 1 {
 			s = b
 		}
-		if s.CompareAndSwapRepositoryData(impi, &v1, v2) {
+		if compareAndSwapRepositoryData(t, s, impi, &v1, v2) {
 			wins.Add(1)
 		}
 	})
 	if got := wins.Load(); got != 1 {
 		t.Errorf("%d updates from one version succeeded, want 1", got)
 	}
-	if got, _ := a.RepositoryData(impi, "MMTEL-Services"); got.SequenceNumber != 1 || string(got.ServiceData.XML) != "<v2/>" {
+	if got, _ := repositoryData(t, a, impi, "MMTEL-Services"); got.SequenceNumber != 1 || string(got.ServiceData.XML) != "<v2/>" {
 		t.Errorf("RepositoryData = %+v", got)
 	}
 	// Data without ServiceData removes it.
-	if !b.CompareAndSwapRepositoryData(impi, &v2, sh.TransparentData{ServiceIndication: "MMTEL-Services", SequenceNumber: 2}) {
+	if !compareAndSwapRepositoryData(t, b, impi, &v2, sh.TransparentData{ServiceIndication: "MMTEL-Services", SequenceNumber: 2}) {
 		t.Fatal("the removal was refused")
 	}
-	if _, ok := a.RepositoryData(impi, "MMTEL-Services"); ok {
+	if _, ok := repositoryData(t, a, impi, "MMTEL-Services"); ok {
 		t.Error("RepositoryData after its removal")
+	}
+	if compareAndSwapRepositoryData(t, a, "nobody@"+realm, nil, v1) {
+		t.Error("CompareAndSwapRepositoryData for an unknown subscriber succeeded")
 	}
 }
 
@@ -216,9 +304,13 @@ func hssConcurrentSQN(t *testing.T, a, b hss.Store) {
 		}
 		for range n {
 			for {
-				sub, _ := s.Subscriber(impi)
+				sub, ok := subscriber(t, s, impi)
+				if !ok {
+					t.Error("the subscriber is gone")
+					return
+				}
 				next := sub.AKA.SQN.Next()
-				if s.CompareAndSwapSQN(impi, sub.AKA.SQN, next) {
+				if compareAndSwapSQN(t, s, impi, sub.AKA.SQN, next) {
 					mu.Lock()
 					if used[next] {
 						t.Errorf("SQN %d used twice", next)
@@ -234,7 +326,7 @@ func hssConcurrentSQN(t *testing.T, a, b hss.Store) {
 	for range 2 * n {
 		want = want.Next()
 	}
-	if u, _ := a.Subscriber(impi); u.AKA.SQN != want {
+	if u, _ := subscriber(t, a, impi); u.AKA.SQN != want {
 		t.Errorf("SQN_HE = %d after %d vectors, want %d", u.AKA.SQN, 2*n, want)
 	}
 }
@@ -251,18 +343,14 @@ func hssConcurrentAdds(t *testing.T, a, b hss.Store) {
 				s = b
 			}
 			id := fmt.Sprintf("00101000000%d%d@%s", round, i, realm)
-			err := s.Add(hss.Subscription{PrivateIdentity: id, PublicIdentities: []string{"sip:" + id, shared}, Password: "p"})
-			switch {
-			case err == nil:
+			if add(t, s, hss.Subscription{PrivateIdentity: id, PublicIdentities: []string{"sip:" + id, shared}, Password: "p"}) == nil {
 				added.Add(1)
-			case !errors.Is(err, hss.ErrIdentityTaken):
-				t.Errorf("Add: %v", err)
 			}
 		})
 		if got := added.Load(); got != 1 {
 			t.Fatalf("%d subscriptions with %s were added, want 1", got, shared)
 		}
-		if _, ok := a.SubscriberOf(shared); !ok {
+		if _, ok := subscriberOf(t, a, shared); !ok {
 			t.Errorf("SubscriberOf(%s) finds nothing", shared)
 		}
 	}
