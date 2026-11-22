@@ -5,7 +5,7 @@
 // The items and their keys, after the prefix of the Config and
 // "ipsmgw:":
 //
-//	message-reference:<recipient>      the next RP-MR, time to live 10 min
+//	message-reference:<recipient>      the next RP-MR, time to live until the expiry of the counter
 //	delivery:<Call-ID>                 PendingDelivery, time to live until its Expires
 //	reg-subscription:<Call-ID>         RegSubscription, time to live until its Expires
 //	reg-subscription-of:<identity>     index: the Call-ID of the subscription
@@ -23,37 +23,23 @@ import (
 	"github.com/yuu-biz/ims-practice/internal/kvstore/kvjson"
 )
 
-// Config is the configuration of the Store.
-type Config struct {
-	kvjson.Config
-	// ReportTimeout is TR1N, as ipsmgw.Config has it; zero means the
-	// default of ipsmgw, 64 s. PutDelivery schedules ReportTimer with it.
-	ReportTimeout time.Duration
-}
-
-// defaultReportTimeout is that of ipsmgw (deliver.go), which does not
-// export it.
-const defaultReportTimeout = 2 * 32 * time.Second
-
-// Store is an ipsmgw.Store on a kvstore.Store.
+// Store is an ipsmgw.Store on a kvstore.Store. The IP-SM-GW writes every
+// expiry into what it stores, as a time, and the Store takes the times
+// to live and the due times of the timer from there.
 type Store struct {
-	c             *kvjson.Client
-	reportTimeout time.Duration
+	c *kvjson.Client
 }
 
 var _ ipsmgw.Store = (*Store)(nil)
 
 // New returns a Store on kv. Instances with the same kv and Prefix share
 // their state.
-func New(kv kvstore.Store, cfg Config) *Store {
-	if cfg.ReportTimeout == 0 {
-		cfg.ReportTimeout = defaultReportTimeout
-	}
-	return &Store{c: kvjson.New(kv, cfg.Config, "ipsmgw"), reportTimeout: cfg.ReportTimeout}
+func New(kv kvstore.Store, cfg kvjson.Config) *Store {
+	return &Store{c: kvjson.New(kv, cfg, "ipsmgw")}
 }
 
 // ReportTimer is the time index of TR1N (TS 24.011 6.2.2.2): a member is
-// the Call-ID of a delivery, due ReportTimeout after PutDelivery.
+// the Call-ID of a delivery, due at its ReportDeadline.
 // ipsmgw runs the timer in the process that sent the MESSAGE, and no
 // one reports a delivery whose sender stopped (deliver.go). An
 // instance that claims the member instead calls what that timer calls,
@@ -71,21 +57,16 @@ func (s *Store) ClaimDue(ctx context.Context, now time.Time, lease time.Duration
 // Done ends a claim of ClaimDue.
 func (s *Store) Done(ctx context.Context, claim kvstore.Claim) error { return s.c.Done(ctx, claim) }
 
-// messageReferenceLifetime is that of ipsmgw (store.go): the counter of
-// a recipient outlives every delivery that could still wait for a
-// report with one of its values.
-const messageReferenceLifetime = 10 * time.Minute
-
 // NextMessageReference counts with compare and swap, so that two
 // instances that send to one recipient at once never give the same
 // RP-MR. After 255 comes 0, as in ipsmgw.MemoryStore. The counter is
 // that of the public identity, so that two ways of writing one recipient
 // share it.
-func (s *Store) NextMessageReference(recipient string) uint8 {
+func (s *Store) NextMessageReference(recipient string, expires time.Time) uint8 {
 	// The item holds the next value; a missing one is 0.
 	var mr uint8
 	if _, err := kvjson.Upsert(s.c, s.c.Key("message-reference", ims.PublicIdentityKey(recipient)),
-		func(uint8) time.Duration { return messageReferenceLifetime },
+		func(uint8) time.Duration { return s.c.TTLUntil(expires) },
 		func(next *uint8) { mr = *next; *next++ }); err != nil {
 		return 0
 	}
@@ -95,7 +76,7 @@ func (s *Store) NextMessageReference(recipient string) uint8 {
 // PutDelivery schedules TR1N, then writes the delivery. An instance that
 // stops in between leaves a member whose claimer finds no delivery.
 func (s *Store) PutDelivery(d ipsmgw.PendingDelivery) {
-	s.c.Schedule(ReportTimer, d.CallID, s.c.Now().Add(s.reportTimeout))
+	s.c.Schedule(ReportTimer, d.CallID, d.ReportDeadline)
 	kvjson.Put(s.c, s.c.Key("delivery", d.CallID), d, s.c.TTLUntil(d.Expires))
 }
 

@@ -56,7 +56,7 @@ func BenchmarkMixes(b *testing.B) {
 			kv := &counting{Store: store}
 			cfg := kvjson.Config{Prefix: benchPrefix}
 			benchmarkMixes(b, roles{scscf: scscfstore.New(kv, scscfstore.Config{Config: cfg}), pcscf: pcscfstore.New(kv, cfg),
-				ipsmgw: ipsmgwstore.New(kv, ipsmgwstore.Config{Config: cfg}), sc: scstore.New(kv, cfg)}, kv)
+				ipsmgw: ipsmgwstore.New(kv, cfg), sc: scstore.New(kv, cfg)}, kv)
 		})
 	}
 }
@@ -213,9 +213,10 @@ func benchmarkMixes(b *testing.B, r roles, kv *counting) {
 		// status report request at the SC stub.
 		{"ShortMessage", func(user string, n int) {
 			center.PutStatusReportRequest(sc.StatusReportRequest{Reference: "ref-" + user, Expires: time.Now().Add(time.Hour)})
-			mr := g.NextMessageReference("tel:+12025550102")
+			now := time.Now()
+			mr := g.NextMessageReference("tel:+12025550102", now.Add(10*time.Minute))
 			g.PutDelivery(ipsmgw.PendingDelivery{CallID: "msg-" + user, Reference: "ref-" + user, MessageReference: mr,
-				Expires: time.Now().Add(time.Hour)})
+				ReportDeadline: now.Add(time.Minute), Expires: now.Add(2 * time.Minute)})
 			g.TakeDelivery("msg-" + user)
 			center.TakeStatusReportRequest("ref-" + user)
 		}},

@@ -23,6 +23,9 @@ type PendingDelivery struct {
 	// MessageReference is the RP-MR of the RP-DATA, which the RP-ACK or
 	// RP-ERROR of the UE repeats (TS 24.011 8.2.3).
 	MessageReference uint8
+	// ReportDeadline is when TR1N runs out (TS 24.011 6.2.2.2): the
+	// delivery ends then if no report has ended it before.
+	ReportDeadline time.Time
 	// Expires is when the Store forgets the delivery.
 	Expires time.Time
 }
@@ -65,9 +68,10 @@ type RegSubscription struct {
 // process.
 type Store interface {
 	// NextMessageReference gives the RP-MR of the next RP-DATA to a
-	// recipient. TS 24.011 8.2.3 counts 0 to 255; the values only need to
-	// differ while a delivery to the same UE waits for its report.
-	NextMessageReference(recipient string) uint8
+	// recipient, and keeps the counter of the recipient until expires.
+	// TS 24.011 8.2.3 counts 0 to 255; the values only need to differ
+	// while a delivery to the same UE waits for its report.
+	NextMessageReference(recipient string, expires time.Time) uint8
 	// PutDelivery keeps d until its Expires.
 	PutDelivery(d PendingDelivery)
 	// Delivery returns the delivery whose MESSAGE had callID.
@@ -90,11 +94,6 @@ type Store interface {
 	// callID.
 	DeleteRegSubscription(callID string)
 }
-
-// messageReferenceLifetime is how long a recipient's counter of RP-MR
-// is kept after the last RP-DATA to it. It outlives every delivery that
-// could still wait for a report with one of its values.
-const messageReferenceLifetime = 10 * time.Minute
 
 type messageReferences struct {
 	next    uint8
@@ -124,18 +123,17 @@ func NewMemoryStore() *MemoryStore {
 // identity, so that two ways of writing one recipient share it. The
 // store forgets the counter once it has expired, as an external store
 // would with a time to live.
-func (s *MemoryStore) NextMessageReference(recipient string) uint8 {
+func (s *MemoryStore) NextMessageReference(recipient string, expires time.Time) uint8 {
 	recipient = ims.PublicIdentityKey(recipient)
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	now := time.Now()
 	r, ok := s.messageReferences[recipient]
-	if !ok || !now.Before(r.expires) {
+	if !ok || !time.Now().Before(r.expires) {
 		r = messageReferences{}
 	}
 	mr := r.next
-	s.messageReferences[recipient] = messageReferences{next: mr + 1, expires: now.Add(messageReferenceLifetime)}
-	time.AfterFunc(messageReferenceLifetime, func() {
+	s.messageReferences[recipient] = messageReferences{next: mr + 1, expires: expires}
+	time.AfterFunc(time.Until(expires), func() {
 		s.mu.Lock()
 		defer s.mu.Unlock()
 		if r, ok := s.messageReferences[recipient]; ok && !time.Now().Before(r.expires) {
