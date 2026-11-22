@@ -22,8 +22,10 @@ func (p *PCSCF) SetPolicyControl(pc policy.PolicyControl) { p.policy = pc }
 
 // watchSignallingPath asks the PCRF, once a UE has registered, to tell
 // the P-CSCF when the UE loses the bearer of its SIP signalling (TS
-// 29.214 A.4, 4.4.5). It returns the association with the policy
-// session in it.
+// 29.214 A.4, 4.4.5). The AAR follows the initial registration once it
+// has succeeded, when the UE is authenticated and registered (TS 29.213
+// B.1 steps 1 to 5). It returns the association with the policy session
+// in it.
 //
 // A UE that does not come through the EPC, such as a softphone on the
 // host, has no IP-CAN session that the PCRF could bind to. Its

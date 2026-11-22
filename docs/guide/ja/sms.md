@@ -238,7 +238,7 @@ S-CSCF はすぐに、IP-SM-GW へ直接 NOTIFY を送ります。SUBSCRIBE へ�
 ```xml
 <registration aor="sip:001010000000002@ims.mnc001.mcc001.3gppnetwork.org" id="reg1" state="active">
   <contact id="LJDTDE6YNM" state="active" event="registered" expires="3600" ...>
-    <uri>sip:001010000000002@172.28.0.101:5060</uri>
+    <uri>sip:ab6af11f-a43e-860e-9064-207615ae1f12@172.28.0.101:5060</uri>
     <unknown-param name="+g.3gpp.smsip"></unknown-param>
   </contact>
 </registration>
@@ -346,7 +346,7 @@ SC がメッセージを受け取ったので、IP-SM-GW は submit report を�
 - **P-Charging-Vector.** 新しい icid-value と orig-ioi を持ちます。IP-SM-GW は発信側の UA として動く AS なので、自分の MESSAGE はどれもこの形で始めます（TS 24.229 5.7.3）。
 - **ボディ.** RP-DATA と同じ RP-MR を持つ RP-ACK で、中に SC のタイムスタンプ（TP-SCTS）を持つ SMS-SUBMIT-REPORT が入っています。
 
-IP-SM-GW は S-CSCF の Route を使いません。自分が出す要求は、DNS で見つけたホーム網の入口、つまり I-CSCF へ送ります（TS 24.229 5.7.3）。I-CSCF は通話と同じように LIR で HSS に問い合わせ、UE 1 の S-CSCF へ MESSAGE を転送します。S-CSCF はこれを着信側の要求として扱い、UE 1 の Path に沿って送ります。
+IP-SM-GW は S-CSCF の Route を使いません。利用者に要求を送る AS は、その利用者の S-CSCF か利用者の網の入口を Route に入れるので（TS 24.229 5.7.3）、IP-SM-GW は自分が出す要求に `Route: <sip:ims.mnc001.mcc001.3gppnetwork.org;lr>` を付けてホーム網の入口へ送ります。ホームドメインの名前は DNS で I-CSCF に解決され、I-CSCF はこの Route を自分のものとして取り除きます（5.3.2.1）。I-CSCF は通話と同じように LIR で HSS に問い合わせ、UE 1 の S-CSCF へ MESSAGE を転送します。S-CSCF はこれを着信側の要求として扱い、UE 1 の Path に沿って送ります。
 
 ### 7. UE 1 が 200 を返す
 
@@ -524,7 +524,7 @@ octet 2: lowest 2 bits of 'l' (00), then rest of 'e' (110010) = 0011 0010 = 32
 
 | 場所 | 省いたこと | 理由 |
 | --- | --- | --- |
-| IP-SM-GW、TS 24.229 5.7.3 | IP-SM-GW の要求（SUBSCRIBE や MESSAGE）に、網の入口への Route を付けない。 | 網の入口はホームドメインの名前で表す。I-CSCF が取り除くのは自分のホスト名の Route だけなので（5.3.2.1）、ドメインの Route を付けると要求に残ってしまう。 |
+| IP-SM-GW、TS 24.229 5.7.1.1 と 5.7.3 | 第三者 REGISTER の icid-value と orig-ioi も、IP-SM-GW が自分で送る要求への応答の term-ioi も保存しない。 | どれも IP-SM-GW の課金の記録のためのもので、このプロジェクトのノードは課金の記録を作らない。 |
 | IP-SM-GW、RFC 6665 4.1.2.4 | Timer N を使わない。NOTIFY が来なかった SUBSCRIBE は、次の第三者 REGISTER のときに新しい購読に置き換える。 | S-CSCF は受け付けた SUBSCRIBE のすべてにすぐ NOTIFY を送る。 |
 | IP-SM-GW、TS 24.341 5.3.3.2 | service-info に MSISDN が無いとき、PUR では利用者を公開ユーザー識別子で示す。UE の REGISTER の IMSI は使わない。 | IMSI は message/sip のボディに入った UE の REGISTER から取るが、S-CSCF はそのボディを送らない。Sh は公開ユーザー識別子も受け付ける（TS 29.328 Table 7.6.1）。 |
 | IP-SM-GW、TS 24.341 5.3.3.4.1 | In-Reply-To の無い delivery report は捨てる。 | TS 24.341 5.3.2.4 は UE に In-Reply-To を付けさせている。RP-MR だけで配達を探すには、Store に 2 つ目のキーが要る。 |
@@ -555,8 +555,8 @@ octet 2: lowest 2 bits of 'l' (00), then rest of 'e' (110010) = 0011 0010 = 32
 | S-CSCF、TS 24.229 5.4.0 | S-CSCF は、最初の第三者 REGISTER を送ったアドレスを覚えておかず、要求のたびに AS を DNS で引く。 | AS の各役割は、すべてのノードで共有する Store に状態を置くので、どのノードでも次の要求を受けられる。 |
 | S-CSCF、TS 24.229 5.4.1.7 item c | 第三者 REGISTER の To は、いつも既定の公開ユーザー識別子にする。item i には写すものが無く、item j、l、m はこのプロジェクトに無い機能のためのものである。 | どの識別子にするかはオペレータが選べる。HSS のスタブは課金のアドレスを送らない。 |
 | S-CSCF、RFC 3261 10.2 | 第三者 REGISTER ごとに新しい Call-ID を使う。 | 利用者と AS の組ごとに Call-ID を 1 つ保つと、Store の状態が増える。レジストラは新しい Call-ID を受け付ける（RFC 3261 10.3 step 7）。 |
-| S-CSCF、TS 24.229 5.4.1.7 | 第三者 REGISTER の応答の term-ioi を保存しない。 | S-CSCF は課金をしない。 |
-| S-CSCF、TS 24.229 5.4.3.2 と 5.4.3.3 | AS からの 100（Trying）は、DefaultHandling を止める 1xx として数えない。orig-ioi と term-ioi は扱わない。 | プロキシは 100 を、それが来たホップで止める（RFC 3261 16.7 step 5）。S-CSCF は課金をしない。 |
+| S-CSCF、TS 24.229 5.4.1.7 | 第三者 REGISTER の応答の term-ioi を保存しない。 | この IOI は S-CSCF の課金の記録のためのもので、このプロジェクトのノードは課金の記録を作らない。 |
+| S-CSCF、TS 24.229 5.4.3.2 と 5.4.3.3 | AS からの 100（Trying）は、DefaultHandling を止める 1xx として数えない。 | プロキシは 100 を、それが来たホップで止める（RFC 3261 16.7 step 5）。 |
 | S-CSCF、TS 24.229 5.4.3.1 と 5.4.3.2 | 登録している利用者だけを担当する。AS が P-Served-User で利用者を示し、その利用者の代わりに送る要求も、利用者が登録していなければ 403 を返す。ORIGINATING_UNREGISTERED の条件は評価しない。 | この網には、利用者の代わりに要求を始める AS が無く、その条件に当たる要求が来ない。 |
 | S-CSCF、RFC 3841 7.2.4 と 9.1、TS 24.229 5.4.3.3 step 10 a | 宛先の候補は、非公開ユーザー識別子ごとに保つ 1 つの連絡先だけなので、照合はそれを残すかどうかだけを決める。Qa と q 値は計算せず、Request-Disposition にも従わない。 | 連絡先が 1 つなら、どの指示でも同じ連絡先に届く。 |
 | S-CSCF、RFC 3841 8 | 機能タグの否定の値（`!x`）と数値（`#>=4`）は、ただのトークンとして比べる。 | SMS over IP と TS 24.229 7.9 のタグは、どちらも使わない。 |
@@ -564,5 +564,7 @@ octet 2: lowest 2 bits of 'l' (00), then rest of 'e' (110010) = 0011 0010 = 32
 ## 後片付け
 
 ```sh
-docker compose --profile ue down --rmi all -v --remove-orphans
+docker compose --profile ue --profile sim --profile volte down -v --remove-orphans
 ```
+
+すべてのプロファイルのノードと UE を止め、イメージは残します。次の手順書をビルドし直さずに始められます。イメージも削除するときは、[システムを止める](capture.md#システムを止める)を見てください。

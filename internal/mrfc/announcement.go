@@ -42,7 +42,7 @@ func (m *MRFC) announce(c *sip.IncomingCall, u sip.URI, a netann.Announcement, l
 	}
 	p := m.choose(c.Request.Get("Call-ID"))
 	ctx, cancel := mp()
-	found, ok, err := p.Control.Announcement(ctx, name)
+	found, ok, err := p.Announcements.Announcement(ctx, name)
 	cancel()
 	switch {
 	case err != nil:

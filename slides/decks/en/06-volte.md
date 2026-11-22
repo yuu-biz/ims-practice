@@ -202,7 +202,7 @@ INVITE    P-CSCF -> S-CSCF   P-Asserted-Identity: <sip:+12025550110@ims.mnc001.m
 
 - The S-CSCF lists in P-Associated-URI only the identities that are not barred, the default first. The UE keeps the first as its default public identity; the one it registered is missing, so it takes that one as barred.
 - The UE sends no P-Preferred-Identity, so the P-CSCF asserts the default identity. A request from a barred identity gets 403, and one to it 404.
-- `sip && !(sip.CSeq.method == "REGISTER") && frame contains "sip:001010000000010@ims"` finds no packet. A softphone has no SIM: its identity is configured, as an IMC holds it, and it uses the identity it registered.
+- `sip && !(sip.CSeq.method == "REGISTER") && frame contains "sip:001010000000010@ims"` finds no packet. No Contact carries the IMSI either: its user part is a UUID. A softphone has no SIM: its identity is configured, as an IMC holds it, and it uses the identity it registered.
 
 > Guide: ["The identities of a phone without an ISIM"](../../../docs/guide/en/volte.md#the-identities-of-a-phone-without-an-isim). TS 24.229 5.4.1.2.2F, 5.1.1.2.1, 5.2.6.3.1, 5.4.3.2, 5.4.3.3, 5.1.1.1B.1.
 
@@ -288,10 +288,10 @@ go test ./internal/aka -run TestAuthenticationVectorFromTestSet1 -v
 | Unlike a real network | Why |
 | --- | --- |
 | The protected client ports (`port-c`) are never used | Both sides send from their protected server port |
-| For a TCP request, the UE is known by the sent-by of its Via | The INVITE is over 1300 bytes and goes over TCP (RFC 3261 18.1.1) |
+| For a TCP request, the UE is known by the sent-by of its Via | The INVITE, and a REGISTER over 1300 bytes, go over TCP (RFC 3261 18.1.1) |
 
 - Without ESP the SIP of a VoLTE UE reads in Wireshark as plainly as a softphone's, with no keys to load, and the containers need no NET_ADMIN. The associations go into the SA table of the P-CSCF with IK and CK.
-- AKAv1-MD5 only, because SIPp, the independent peer that checks the S-CSCF, speaks only that; it computes the RES and the Digest with code written by others. The REGISTERs stay below 1300 bytes, so the agreement is made over UDP.
+- AKAv1-MD5 only, because SIPp, the independent peer that checks the S-CSCF, speaks only that; it computes the RES and the Digest with code written by others.
 
 > Guide: ["The security agreement without ESP"](../../../docs/guide/en/volte.md#the-security-agreement-without-esp)
 
@@ -549,7 +549,7 @@ volte-b <- EPC and PCRF: DEACTIVATE EPS BEARER CONTEXT REQUEST
 
 ## What is not built, and why
 
-- The Contact of the REGISTER has no ICSI, no +sip.instance and no audio tag, and no UUID as its user part. The Contact of the INVITE and of its responses has the ICSI and audio.
+- The Contact of the REGISTER has no ICSI, no +sip.instance and no audio tag. The Contact of the INVITE and of its responses has the ICSI and audio.
 - Following the CMR needs a UE that can encode; this UE sends frames encoded beforehand.
 - ESP is left out so that the captures stay readable.
 - Every node uses IPv4, on one Docker network.

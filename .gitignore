@@ -14,6 +14,7 @@ node_modules/
 .env
 .env.local
 *.local.yaml
+compose.override.yaml
 
 # エディタと OS
 .vscode/

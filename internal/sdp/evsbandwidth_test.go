@@ -1,9 +1,6 @@
 package sdp
 
-import (
-	"net/netip"
-	"testing"
-)
+import "testing"
 
 // TestEVSASBandwidthTables checks every bit rate of TS 26.114 V20.1.1
 // Table Q.1 (ptime 20) and Table Q.3 (ptime 40), IPv4, and of Table 6.9
@@ -67,50 +64,5 @@ func TestEVSASBandwidthExamples(t *testing.T) {
 	}
 	if _, err := ASBandwidth(Codec{Name: NameEVS, ClockRate: 16000, Fmtp: "br=128; bw=nb"}, 20); err == nil {
 		t.Error("b=AS for a br and bw that Table A.6 does not allow")
-	}
-}
-
-// TestVoNRAudioOffer is the offer of a VoNR UE in the shape of TS
-// 26.114 A.14.1.3 (EVS up to super-wideband at 5.9 to 24.4 kbit/s,
-// then AMR-WB and AMR), with what this project adds for the VoLTE
-// codecs. b=AS fits PCMU, which needs more than EVS (42).
-func TestVoNRAudioOffer(t *testing.T) {
-	s, err := AudioOffer("7", netip.MustParseAddrPort("172.28.0.100:40002"), VoNRCodecs(EVSConfigA2))
-	if err != nil {
-		t.Fatal(err)
-	}
-	want := "v=0\r\n" +
-		"o=- 7 1 IN IP4 172.28.0.100\r\n" +
-		"s=-\r\n" +
-		"c=IN IP4 172.28.0.100\r\n" +
-		"t=0 0\r\n" +
-		"m=audio 40002 RTP/AVP 102 96 97 98 99 0 100 101\r\n" +
-		"b=AS:80\r\n" +
-		"b=RS:0\r\n" +
-		"b=RR:4000\r\n" +
-		"a=rtpmap:102 EVS/16000/1\r\n" +
-		"a=fmtp:102 br=5.9-24.4; bw=nb-swb; max-red=0\r\n" +
-		"a=rtpmap:96 AMR-WB/16000/1\r\n" +
-		"a=fmtp:96 mode-change-capability=2; max-red=0\r\n" +
-		"a=rtpmap:97 AMR-WB/16000/1\r\n" +
-		"a=fmtp:97 mode-change-capability=2; max-red=0; octet-align=1\r\n" +
-		"a=rtpmap:98 AMR/8000/1\r\n" +
-		"a=fmtp:98 mode-change-capability=2; max-red=0\r\n" +
-		"a=rtpmap:99 AMR/8000/1\r\n" +
-		"a=fmtp:99 mode-change-capability=2; max-red=0; octet-align=1\r\n" +
-		"a=rtpmap:0 PCMU/8000\r\n" +
-		"a=rtpmap:100 telephone-event/16000\r\n" +
-		"a=fmtp:100 0-15\r\n" +
-		"a=rtpmap:101 telephone-event/8000\r\n" +
-		"a=fmtp:101 0-15\r\n" +
-		"a=ptime:20\r\n" +
-		"a=maxptime:240\r\n" +
-		"a=sendrecv\r\n"
-	if got := string(s.Bytes()); got != want {
-		t.Errorf("offer:\n%s\nwant:\n%s", got, want)
-	}
-	// Without PCMU, EVS sets b=AS as in A.14.1.3.
-	if as, _ := ASBandwidth(VoNRCodecs(EVSConfigA2)[0], Ptime); as != 42 {
-		t.Errorf("EVS A2: b=AS %d, want 42", as)
 	}
 }

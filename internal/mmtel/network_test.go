@@ -92,6 +92,8 @@ type network struct {
 	mrfpPorts [2]uint16
 	// provisioning is the provisioning API of the HSS.
 	provisioning http.Handler
+	// wire is every SIP message that a node or a UE received.
+	wire *wire
 }
 
 // netOptions are the choices of startNetworkWith.
@@ -157,8 +159,9 @@ func startMRF(t *testing.T, dns *names, host string) (*agw.Relay, *mpRequests, [
 	notify := http.NewServeMux()
 	notifyServer := httptest.NewServer(notify)
 	t.Cleanup(notifyServer.Close)
+	client := agw.NewClient(api.URL)
 	m, err := mrfc.New(mrfc.Config{Host: host, Port: int(tr.LocalAddr().Port()), NotifyURL: notifyServer.URL + "/notify"},
-		[]mrfc.Processor{{Name: "mrfp1", Control: agw.NewClient(api.URL)}}, mrfc.NewMemoryStore(), dns, quiet())
+		[]mrfc.Processor{{Name: "mrfp1", Control: client, Announcements: client}}, mrfc.NewMemoryStore(), dns, quiet())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -206,6 +209,7 @@ func startNetworkWith(t *testing.T, o netOptions) *network {
 		t.Fatal(err)
 	}
 	dns := &names{hosts: map[string]netip.AddrPort{}}
+	w := &wire{}
 	hssNode := diameter.NewNode(diameter.Identity{OriginHost: "hss." + domain, OriginRealm: domain},
 		[]uint32{diameter.ApplicationIDCx, diameter.ApplicationIDSh}, shTimers, quiet())
 	store, err := hss.NewMemoryStore(hssCfg.HSS.Subscriptions...)
@@ -226,8 +230,8 @@ func startNetworkWith(t *testing.T, o netOptions) *network {
 		t.Cleanup(peer.Stop)
 		return node, peer
 	}
-	stackWith := func(cfg sip.Config) *sip.Stack {
-		tr, err := sip.Listen("127.0.0.1:0", quiet())
+	stackWith := func(node string, cfg sip.Config) *sip.Stack {
+		tr, err := sip.ListenObserved("127.0.0.1:0", quiet(), w.observer(node))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -239,8 +243,8 @@ func startNetworkWith(t *testing.T, o netOptions) *network {
 		t.Cleanup(s.Close)
 		return s
 	}
-	stackOf := func(onRequest func(*sip.ServerTransaction), onACK func(*sip.Message)) *sip.Stack {
-		return stackWith(sip.Config{OnRequest: onRequest, OnACK: onACK})
+	stackOf := func(node string, onRequest func(*sip.ServerTransaction), onACK func(*sip.Message)) *sip.Stack {
+		return stackWith(node, sip.Config{OnRequest: onRequest, OnACK: onACK})
 	}
 
 	var scscfRole atomic.Pointer[scscf.SCSCF]
@@ -248,17 +252,17 @@ func startNetworkWith(t *testing.T, o netOptions) *network {
 	s := scscf.New(scscf.Config{ServerName: "sip:scscf." + domain + ":5060", Host: "scscf." + domain, Port: 5060,
 		HomeDomain: domain, MinExpires: time.Second, MaxExpires: time.Hour}, scscfPeer, scscfNode, scscf.NewMemoryStore(), dns, quiet())
 	scscfRole.Store(s)
-	scscfStack := stackOf(s.OnRequest, s.OnACK)
+	scscfStack := stackOf("S-CSCF", s.OnRequest, s.OnACK)
 	s.SetStack(scscfStack)
 	dns.add("scscf."+domain, scscfStack.LocalAddr())
 
 	icscfNode, icscfPeer := connect("icscf."+domain, diameter.ApplicationIDCx, nil)
 	i := icscf.New(icscf.Config{HomeDomain: domain, SCSCFs: []icscf.SCSCF{{Name: "sip:scscf." + domain + ":5060", Capabilities: []uint32{1}}},
 		Host: "icscf." + domain, Port: 5060}, icscfPeer, icscfNode, dns, quiet())
-	dns.add(domain, stackOf(i.OnRequest, nil).LocalAddr())
+	dns.add(domain, stackOf("I-CSCF", i.OnRequest, nil).LocalAddr())
 
 	p := pcscf.New(pcscf.Config{Host: "pcscf." + domain, Port: 5060, VisitedNetworkID: domain}, dns, pcscf.NewMemoryStore(), nil, quiet())
-	pcscfStack := stackWith(sip.Config{Screen: p.Screen, OnRequest: p.OnRequest, OnACK: p.OnACK})
+	pcscfStack := stackWith("P-CSCF", sip.Config{Screen: p.Screen, OnRequest: p.OnRequest, OnACK: p.OnACK})
 	p.SetStack(pcscfStack)
 	dns.add("pcscf."+domain, pcscfStack.LocalAddr())
 
@@ -273,7 +277,7 @@ func startNetworkWith(t *testing.T, o netOptions) *network {
 
 	asNode, asPeer := connect("mmtel."+domain, diameter.ApplicationIDSh, nil)
 	users := sh.NewClient(asNode, asPeer, domain)
-	tr, err := sip.Listen("127.0.0.1:0", quiet())
+	tr, err := sip.ListenObserved("127.0.0.1:0", quiet(), w.observer("MMTel AS"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -320,7 +324,7 @@ func startNetworkWith(t *testing.T, o netOptions) *network {
 		time.Sleep(20 * time.Millisecond)
 	}
 	return &network{t: t, pcscf: pcscfStack.LocalAddr(), users: users, ut: ut, cfg: hssCfg, mrfp: mrfp, mp: mp, mrfpPorts: mrfpPorts,
-		provisioning: hssRole.Provisioning(nil)}
+		provisioning: hssRole.Provisioning(nil), wire: w}
 }
 
 // subscriber is a UE of the network: the UE simulator that registers,
@@ -350,15 +354,18 @@ func (n *network) subscriber(k int, register bool) *subscriber {
 	if !register {
 		return s
 	}
-	tr, err := sip.Listen("127.0.0.1:0", quiet())
+	tr, err := sip.ListenObserved("127.0.0.1:0", quiet(), n.wire.observer("UE "+string(rune('0'+k))))
 	if err != nil {
 		n.t.Fatal(err)
 	}
 	addr := tr.LocalAddr()
+	cfg := ue.Config{PrivateIdentity: id + "@" + domain, PublicIdentity: s.impu, Password: password, HomeDomain: domain,
+		PCSCF: n.pcscf, PCSCFURI: "sip:pcscf." + domain + ":5060"}
+	contact := ue.NewContact(cfg, addr)
 	// The UA takes the precondition mechanism, as the UE simulator's UA
 	// does (ue.UAConfig), so that ue.Call and ue.Answer use it.
 	s.ua, err = sip.NewUA(tr, ue.UAConfig(sip.UAConfig{
-		SentBy: addr.String(), Contact: ue.ContactURI(s.impu, addr),
+		SentBy: addr.String(), Contact: contact.URI(),
 		OnCall: func(ic *sip.IncomingCall) { s.calls <- ic },
 		Locate: func(sip.URI) (sip.Destination, error) { return sip.Destination{Transport: sip.UDP, Addr: n.pcscf}, nil },
 	}, ue.CallConfig{}), quiet())
@@ -366,8 +373,7 @@ func (n *network) subscriber(k int, register bool) *subscriber {
 		n.t.Fatal(err)
 	}
 	n.t.Cleanup(s.ua.Close)
-	s.ue = ue.New(ue.Config{PrivateIdentity: id + "@" + domain, PublicIdentity: s.impu, Password: password, HomeDomain: domain,
-		PCSCF: n.pcscf, PCSCFURI: "sip:pcscf." + domain + ":5060"}, s.ua.Stack(), addr, quiet())
+	s.ue = ue.New(cfg, s.ua.Stack(), contact, quiet())
 	if s.media, err = ue.ListenMedia("127.0.0.1:0"); err != nil {
 		n.t.Fatal(err)
 	}

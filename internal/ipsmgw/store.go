@@ -120,9 +120,12 @@ func NewMemoryStore() *MemoryStore {
 }
 
 // NextMessageReference counts on from the last value given to the
-// recipient; after 255 comes 0 again. The store forgets the counter
-// once it has expired, as an external store would with a time to live.
+// recipient; after 255 comes 0 again. The counter is that of the public
+// identity, so that two ways of writing one recipient share it. The
+// store forgets the counter once it has expired, as an external store
+// would with a time to live.
 func (s *MemoryStore) NextMessageReference(recipient string) uint8 {
+	recipient = ims.PublicIdentityKey(recipient)
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	now := time.Now()

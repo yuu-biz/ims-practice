@@ -269,7 +269,7 @@ func (c *call) throughTrGW(m *sip.Message, d interconnect.Direction) error {
 			return nil
 		}
 		ctx, cancel := trgwContext()
-		mc, err := c.b.trgw.Reserve(ctx)
+		mc, err := c.b.reserveMedia(ctx)
 		cancel()
 		if err != nil {
 			return err

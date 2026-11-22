@@ -25,6 +25,8 @@ type callHarness struct {
 	ueContact, coreContact string
 	// toUE and toCore deliver the calls that reach each of them.
 	toUE, toCore chan *sip.IncomingCall
+	// ueGot and coreGot are the messages that each of them received.
+	ueGot, coreGot *received
 }
 
 // harnessConfig is what newCallHarness varies.
@@ -41,7 +43,8 @@ type harnessConfig struct {
 
 func newCallHarness(t *testing.T, cfg harnessConfig) *callHarness {
 	t.Helper()
-	h := &callHarness{t: t, store: NewMemoryStore(), toUE: make(chan *sip.IncomingCall, 1), toCore: make(chan *sip.IncomingCall, 1)}
+	h := &callHarness{t: t, store: NewMemoryStore(), toUE: make(chan *sip.IncomingCall, 1), toCore: make(chan *sip.IncomingCall, 1),
+		ueGot: &received{}, coreGot: &received{}}
 	if cfg.ueIP == "" {
 		cfg.ueIP = "127.0.0.1"
 	}
@@ -51,8 +54,8 @@ func newCallHarness(t *testing.T, cfg harnessConfig) *callHarness {
 	toPCSCF := func(sip.URI) (sip.Destination, error) {
 		return sip.Destination{Transport: sip.UDP, Addr: pcscfAddr}, nil
 	}
-	newUA := func(ip, user string, calls chan *sip.IncomingCall) (*sip.UA, string) {
-		tr, err := sip.Listen(ip+":0", quiet())
+	newUA := func(ip, user string, calls chan *sip.IncomingCall, got *received) (*sip.UA, string) {
+		tr, err := sip.ListenObserved(ip+":0", quiet(), got.observe)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -65,8 +68,8 @@ func newCallHarness(t *testing.T, cfg harnessConfig) *callHarness {
 		t.Cleanup(ua.Close)
 		return ua, contact
 	}
-	h.ue, h.ueContact = newUA(cfg.ueIP, "001010000000001", h.toUE)
-	h.core, h.coreContact = newUA("127.0.0.1", "far", h.toCore)
+	h.ue, h.ueContact = newUA(cfg.ueIP, "001010000000001", h.toUE, h.ueGot)
+	h.core, h.coreContact = newUA("127.0.0.1", "far", h.toCore, h.coreGot)
 
 	coreAddr := h.core.Stack().LocalAddr()
 	locate := locatorFunc(func(string) []sip.Destination { return []sip.Destination{{Transport: sip.UDP, Addr: coreAddr}} })
@@ -276,11 +279,14 @@ func TestDialogOfAnOriginatingCall(t *testing.T) {
 	waitACK(t, acked)
 
 	d, _ := h.dialog(key)
+	vector, _ := sip.ChargingVectorOf(in.Request)
 	want := Dialog{
 		Key: key, Originating: true, Confirmed: true, Acknowledged: true,
 		Caller: Party{NameAddr: out.Request.Get("From"), Target: h.ueContact, CSeq: 2},
 		Callee: Party{NameAddr: ok200.Get("To"), Target: h.coreContact},
 		Relay:  &RelayContext{ID: "1", Access: netip.MustParseAddrPort("127.0.0.1:42000"), Core: netip.MustParseAddrPort("127.0.0.1:42002")},
+		// The icid-value that the P-CSCF wrote in the INVITE.
+		ICID: vector.ICID,
 	}
 	if !reflect.DeepEqual(d, want) {
 		t.Errorf("dialog = %+v\nwant     %+v", d, want)

@@ -25,18 +25,20 @@
 // TS29562_Nhss_imsSDM.yaml). A Go field is the attribute name with its
 // first letter in upper case.
 //
-// SIMPLIFIED: TS 29.562 Annex A. Only the operations above, and of
-// their types only the attributes these procedures need, are declared.
-// Decoding ignores attributes it does not know. Restoration, IMS AS
-// registration, the subscriptions to data changes (the counterpart of
-// PPR/PPA) and the other SDM resources are left out.
-//
 // For each service the package has the client side (methods of Client)
 // and the skeleton of the HSS side (NewImsUECMHandler, NewImsUEAUHandler,
 // NewImsSDMHandler), which decodes a request, calls an implementation
 // and encodes the answer. The HSS's DeregistrationNotification goes out
 // through Notifier and arrives at NewDeregistrationNotificationHandler
 // on the S-CSCF. None of them keeps state between requests.
+//
+// SIMPLIFIED: TS 29.562 Annex A. Only the operations above, and of
+// their types only the attributes these procedures need, are declared.
+// Restoration, IMS AS registration, the subscriptions to data changes
+// (the counterpart of PPR/PPA) and the other SDM resources are left
+// out. The Cx and Sh procedures that this project uses map onto the
+// operations above alone, and decoding ignores attributes it does not
+// know, so a fuller peer can still talk to this one.
 package nhss
 
 import (

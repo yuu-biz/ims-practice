@@ -62,11 +62,11 @@ func (p *PCSCF) subscribeRegEvent(a Association, registered time.Duration, log *
 			// Item f: the URI that the P-CSCF put in Path.
 			{Name: "P-Asserted-Identity", Value: p.pathURIOf(a)},
 			// Item g.
-			{Name: "P-Charging-Vector", Value: "icid-value=" + icid + ";orig-ioi=" + p.cfg.VisitedNetworkID},
+			{Name: "P-Charging-Vector", Value: sip.ChargingVector{ICID: icid, OrigIOI: p.cfg.VisitedNetworkID}.String()},
 		},
 		RefreshAfter: ims.RefreshAfter,
 		OnNotify: func(n sip.Notification, resp *sip.Message) {
-			p.receiveRegEvent(a.PrivateIdentity, icid, n, resp, log)
+			p.receiveRegEvent(a.PrivateIdentity, n, resp, log)
 		},
 	})
 	if err != nil {
@@ -93,14 +93,11 @@ func (p *PCSCF) subscribeRegEvent(a Association, registered time.Duration, log *
 // SIMPLIFIED: RFC 3680 5.2. The version of the document is not checked.
 // The S-CSCF sends the full state every time, and a NOTIFY that arrives
 // after a later one is already refused for its CSeq (RFC 3261 12.2.2).
-func (p *PCSCF) receiveRegEvent(privateID, icid string, n sip.Notification, resp *sip.Message, log *slog.Logger) {
-	// 5.2.3: the response carries the orig-ioi of the NOTIFY, this
-	// network's term-ioi and the icid-value of the SUBSCRIBE.
-	pcv := "icid-value=" + icid
-	if ioi := chargingParam(n.Request.Get("P-Charging-Vector"), "orig-ioi"); ioi != "" {
-		pcv += ";orig-ioi=" + ioi
-	}
-	resp.Add("P-Charging-Vector", pcv+";term-ioi="+p.cfg.VisitedNetworkID)
+func (p *PCSCF) receiveRegEvent(privateID string, n sip.Notification, resp *sip.Message, log *slog.Logger) {
+	// 5.2.3: the response carries the icid-value and the orig-ioi of the
+	// NOTIFY, and this network's term-ioi.
+	notify, _ := sip.ChargingVectorOf(n.Request)
+	p.chargeResponse(resp, notify)
 
 	if len(n.Body.Content) == 0 {
 		log.Info("reg event", "subscription_state", string(n.State.State))
@@ -141,14 +138,4 @@ func removedByTheNetwork(r reginfo.Registration, c reginfo.Contact) bool {
 		return true
 	}
 	return false
-}
-
-// chargingParam is a parameter of a P-Charging-Vector value.
-func chargingParam(pcv, name string) string {
-	for _, p := range strings.Split(pcv, ";") {
-		if k, v, ok := strings.Cut(strings.TrimSpace(p), "="); ok && strings.EqualFold(strings.TrimSpace(k), name) {
-			return strings.TrimSpace(v)
-		}
-	}
-	return ""
 }

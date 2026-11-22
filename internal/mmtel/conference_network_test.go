@@ -41,8 +41,11 @@ func (n *network) party(k int, hz float64) *party {
 	}
 	addr := tr.LocalAddr()
 	calls := ue.CallConfig{Codecs: codecs}
+	cfg := ue.Config{PrivateIdentity: id + "@" + domain, PublicIdentity: p.impu, Password: "test-password-" + string(rune('0'+k)),
+		HomeDomain: domain, PCSCF: n.pcscf, PCSCFURI: "sip:pcscf." + domain + ":5060", Calls: calls}
+	contact := ue.NewContact(cfg, addr)
 	p.ua, err = sip.NewUA(tr, ue.UAConfig(sip.UAConfig{
-		SentBy: addr.String(), Contact: ue.ContactURI(p.impu, addr),
+		SentBy: addr.String(), Contact: contact.URI(),
 		OnCall: func(ic *sip.IncomingCall) { p.calls <- ic },
 		Locate: func(sip.URI) (sip.Destination, error) { return sip.Destination{Transport: sip.UDP, Addr: n.pcscf}, nil },
 	}, calls), quiet())
@@ -50,8 +53,7 @@ func (n *network) party(k int, hz float64) *party {
 		n.t.Fatal(err)
 	}
 	n.t.Cleanup(p.ua.Close)
-	p.ue = ue.New(ue.Config{PrivateIdentity: id + "@" + domain, PublicIdentity: p.impu, Password: "test-password-" + string(rune('0'+k)),
-		HomeDomain: domain, PCSCF: n.pcscf, PCSCFURI: "sip:pcscf." + domain + ":5060", Calls: calls}, p.ua.Stack(), addr, quiet())
+	p.ue = ue.New(cfg, p.ua.Stack(), contact, quiet())
 	if p.reg, err = p.ue.Register(context.Background()); err != nil {
 		n.t.Fatal(err)
 	}
@@ -347,6 +349,97 @@ func TestThreeWayConference(t *testing.T) {
 	}
 }
 
+// TestRejoinWithTheConferenceURI is TS 24.147 5.3.1.4.1 and 5.3.2.4.1:
+// B, whom the focus brought into A's conference, leaves, and comes back
+// with an INVITE to the conference URI, which the focus's INVITE had in
+// its Contact. The INVITE goes as any call of B goes: through B's
+// originating services at the AS, then from the S-CSCF by DNS to the
+// focus.
+func TestRejoinWithTheConferenceURI(t *testing.T) {
+	n := startNetworkWith(t, netOptions{mrf: true})
+	a, b := n.party(1, 500), n.party(2, 1100)
+
+	ab := a.call(b.tel)
+	ba := b.answer(receive(t, b.calls, "A's call at B"))
+	abSession := ab.await(t, "A's call to B")
+	ba.await(t, "B's call from A")
+	confLeg, ctx := newLeg(a)
+	conf, confEnded, err := a.ue.CreateConference(ctx, a.ua, a.reg, confLeg.media, a.speech(), ue.CallOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := conf.Subscribe(); err != nil {
+		t.Fatalf("SUBSCRIBE to the conference: %v", err)
+	}
+	d, ok := abSession.Dialog()
+	if !ok {
+		t.Fatal("A's call has no dialog")
+	}
+	taken := make(chan *leg, 1)
+	go func() { taken <- b.takeReplacement(t, a.impu) }()
+	if status, err := conf.Invite(b.tel, d); err != nil || status != 200 {
+		t.Fatalf("REFER for B got %d, %v; want 200", status, err)
+	}
+	ab.hangUp()
+	ab.awaitEnd(t, "A's old call")
+	bConf := receive(t, taken, "B's leg of the conference")
+	bConf.await(t, "B's leg of the conference")
+	ba.awaitEnd(t, "B's old call")
+	before := awaitUsers(t, conf, 2)
+
+	// B leaves (5.3.1.6.1); the conference goes on with A.
+	bConf.hangUp()
+	bConf.awaitEnd(t, "B's leg of the conference")
+	awaitUsers(t, conf, 1)
+
+	// B comes back with the conference URI.
+	back, ctx := newLeg(b)
+	progress, session := back.options()
+	answered := make(chan *sip.Message, 1)
+	go func() {
+		back.ended <- b.ue.Call(ctx, b.ua, b.reg, conf.URI, back.media, b.speech(), ue.CallOptions{StayUp: true, Progress: progress, Session: session,
+			Answered: func(_ *sip.OutgoingCall, ok *sip.Message) { answered <- ok }})
+	}()
+	back.await(t, "B's INVITE to the conference URI")
+	if focus, isFocus := ue.FocusOf(receive(t, answered, "the 200 of the focus")); !isFocus || focus != conf.URI {
+		t.Errorf("the 200 to B has Contact %q, isfocus %v; want the conference URI %q with isfocus", focus, isFocus, conf.URI)
+	}
+	// The AS got the INVITE twice: for B's originating services, with
+	// P-Served-User, and as the focus, without.
+	var originating, atFocus bool
+	arrivals, _ := n.wire.arrivals()
+	for _, a := range arrivals {
+		if a.at != "MMTel AS" || a.m.Method != sip.INVITE || a.m.RequestURI != conf.URI || sip.ReceivedDialogID(a.m).LocalTag != "" {
+			continue
+		}
+		served, err := sip.ParsePServedUser(a.m.Get("P-Served-User"))
+		originating = originating || err == nil && served.SessionCase == sip.SessionCaseOrig
+		atFocus = atFocus || a.m.Get("P-Served-User") == ""
+	}
+	if !originating || !atFocus {
+		t.Errorf("the AS got B's INVITE for B's originating services: %v; as the focus: %v; want both", originating, atFocus)
+	}
+	// The focus names B by the P-Asserted-Identity of B's INVITE now, and
+	// by that of B's 200 before: either of B's public identities.
+	after := awaitUsers(t, conf, 2)
+	if after[0].Entity != before[0].Entity || (after[1].Entity != b.impu && after[1].Entity != b.tel) {
+		t.Errorf("the conference lists %v after B came back, want A, as before (%v), and B", after, before)
+	}
+	if cs := n.mrfp.Contexts(); len(cs) != 1 || len(cs[0].Terminations) != 2 {
+		t.Fatalf("the MRFP holds %v, want one context with A and B", cs)
+	}
+	awaitPackets(t, back.media, 75)
+	hearsTheOthers(t, b, back.media, a)
+
+	// A, the creator, leaves: the focus ends the conference, and with it
+	// B's new leg (5.3.2.7).
+	confLeg.hangUp()
+	if err := receive(t, confEnded, "A's conference session"); err != nil && !errors.Is(err, context.Canceled) {
+		t.Errorf("A's conference session ended with %v", err)
+	}
+	back.awaitEnd(t, "B's leg, which the focus ends")
+}
+
 // phone is a party run as ue serve runs it: a Phone that registers
 // and answers by its policy.
 func (n *network) phone(k int, hz float64) (*ue.Phone, *party) {
@@ -364,17 +457,19 @@ func (n *network) phone(k int, hz float64) (*ue.Phone, *party) {
 	}
 	addr := tr.LocalAddr()
 	calls := ue.CallConfig{Codecs: codecs}
+	cfg := ue.Config{PrivateIdentity: id + "@" + domain, PublicIdentity: p.impu, Password: "test-password-" + string(rune('0'+k)),
+		HomeDomain: domain, PCSCF: n.pcscf, PCSCFURI: "sip:pcscf." + domain + ":5060", Calls: calls}
+	contact := ue.NewContact(cfg, addr)
 	line := ue.NewLine(true)
 	p.ua, err = sip.NewUA(tr, ue.UAConfig(sip.UAConfig{
-		SentBy: addr.String(), Contact: ue.ContactURI(p.impu, addr), OnCall: line.Ring, OnOptions: line.Options,
+		SentBy: addr.String(), Contact: contact.URI(), OnCall: line.Ring, OnOptions: line.Options,
 		Locate: func(sip.URI) (sip.Destination, error) { return sip.Destination{Transport: sip.UDP, Addr: n.pcscf}, nil },
 	}, calls), quiet())
 	if err != nil {
 		n.t.Fatal(err)
 	}
 	n.t.Cleanup(p.ua.Close)
-	p.ue = ue.New(ue.Config{PrivateIdentity: id + "@" + domain, PublicIdentity: p.impu, Password: "test-password-" + string(rune('0'+k)),
-		HomeDomain: domain, PCSCF: n.pcscf, PCSCFURI: "sip:pcscf." + domain + ":5060", Calls: calls}, p.ua.Stack(), addr, quiet())
+	p.ue = ue.New(cfg, p.ua.Stack(), contact, quiet())
 	phone := ue.NewPhone(p.ue, p.ua, line, ue.PhoneConfig{MediaListen: "127.0.0.1:0", Speech: p.speech(),
 		Policy: ue.AnswerPolicy{Mode: ue.AnswerAuto}}, quiet())
 	ctx, stop := context.WithCancel(context.Background())

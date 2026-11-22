@@ -127,8 +127,8 @@ func (g *IPSMGW) respond(st *sip.ServerTransaction, code int, fill func(*sip.Mes
 	if fill != nil {
 		fill(resp)
 	}
-	if pcv := st.Request.Get("P-Charging-Vector"); pcv != "" {
-		resp.Add("P-Charging-Vector", pcv+";term-ioi="+g.cfg.HomeDomain)
+	if c, ok := sip.ChargingVectorOf(st.Request); ok {
+		resp.Add("P-Charging-Vector", c.Response(g.cfg.HomeDomain).String())
 	}
 	st.Respond(resp)
 }
@@ -206,7 +206,7 @@ func (g *IPSMGW) newMessage(to, disposition string, rp sms.RPMessage) (*sip.Mess
 	m.Add("Call-ID", sip.NewCallID())
 	m.Add("CSeq", "1 MESSAGE")
 	m.Add("P-Asserted-Identity", sip.NameAddr{URI: g.cfg.URI}.String())
-	m.Add("P-Charging-Vector", "icid-value="+sip.NewCallID()+";orig-ioi="+g.cfg.HomeDomain)
+	m.Add("P-Charging-Vector", sip.ChargingVector{ICID: sip.NewCallID(), OrigIOI: g.cfg.HomeDomain}.String())
 	m.Add("Accept-Contact", acceptContact)
 	m.Add("Request-Disposition", disposition)
 	m.Add("Content-Type", ContentType)
@@ -216,22 +216,33 @@ func (g *IPSMGW) newMessage(to, disposition string, rp sms.RPMessage) (*sip.Mess
 
 // entryPoint leads, through DNS, to the I-CSCF of the home network,
 // where every request of the IP-SM-GW outside a dialog goes.
-//
-// SIMPLIFIED: TS 24.229 5.7.3. An AS that sends a request on its own
-// puts a Route to the S-CSCF of the user or to the entry point of the
-// network on it, as TS 24.341 table B.5-7 shows. The requests of the
-// IP-SM-GW carry none: the entry point is the name of the home domain,
-// and the I-CSCF of this project removes only a Route that names its
-// own host (5.3.2.1 step 2), so a Route with the domain would stay in
-// the request after the I-CSCF and lead the S-CSCF back to it.
 func (g *IPSMGW) entryPoint() sip.URI { return sip.URI{Scheme: "sip", Host: g.cfg.HomeDomain} }
 
 // send sends a request of the IP-SM-GW to next and returns the final
-// response. With no final response, the error says why.
+// response. With no final response, the error says why. A request
+// outside a dialog gets a Route to next: an AS that sends a request to a
+// user puts the S-CSCF of the user or the entry point of the user's
+// network in Route, without "orig" (TS 24.229 5.7.3). A request within a
+// dialog has the route set of the dialog in Route already (RFC 3261
+// 12.2.1.1).
+//
+// SIMPLIFIED: TS 24.229 5.7.1.1 and 5.7.3. The IP-SM-GW stores neither
+// the icid-value and the orig-ioi of a third-party REGISTER nor the
+// term-ioi of the responses to its own requests: they are for the
+// charging records of the IP-SM-GW, which no node of this project
+// writes. The vector of each response that it sends comes from the
+// request that the response answers (respond).
 func (g *IPSMGW) send(m *sip.Message, next sip.URI) (*sip.Message, error) {
 	stack, err := g.stack.Get()
 	if err != nil {
 		return nil, err
+	}
+	if !ims.IsInDialog(m) {
+		route, err := ims.LooseRoute(next.String())
+		if err != nil {
+			return nil, err
+		}
+		m.Prepend("Route", sip.NameAddr{URI: route.String()}.String())
 	}
 	dst, err := ims.Destination(context.Background(), g.locator, next)
 	if err != nil {

@@ -155,12 +155,8 @@ func acceptsReginfo(req *sip.Message) bool {
 
 // icidOf is the icid-value of the request's P-Charging-Vector.
 func icidOf(req *sip.Message) string {
-	for _, p := range strings.Split(req.Get("P-Charging-Vector"), ";") {
-		if name, value, ok := strings.Cut(strings.TrimSpace(p), "="); ok && strings.EqualFold(strings.TrimSpace(name), "icid-value") {
-			return strings.TrimSpace(value)
-		}
-	}
-	return ""
+	c, _ := sip.ChargingVectorOf(req)
+	return c.ICID
 }
 
 // resubscribe is a SUBSCRIBE within a subscription: a refresh, or an
@@ -268,7 +264,7 @@ func (s *SCSCF) notify(sub Subscription, doc reginfo.Document, log *slog.Logger)
 	// Step 5: the icid-value of the SUBSCRIBE and this network's
 	// orig-ioi.
 	if sub.ICID != "" {
-		req.Add("P-Charging-Vector", "icid-value="+sub.ICID+";orig-ioi="+s.cfg.HomeDomain)
+		req.Add("P-Charging-Vector", sip.ChargingVector{ICID: sub.ICID, OrigIOI: s.cfg.HomeDomain}.String())
 	}
 	id := sub.Dialog.ID
 	if sub.State == sip.SubscriptionTerminated {
@@ -302,6 +298,10 @@ func (s *SCSCF) notify(sub Subscription, doc reginfo.Document, log *slog.Logger)
 // readNotifyAnswer removes the subscription when its NOTIFY fails the
 // way RFC 6665 4.2.2 lists: no answer within Timer F, or a response
 // that says the subscriber has lost it.
+//
+// SIMPLIFIED: TS 24.229 5.4.2.1.2. The term-ioi of the response is not
+// stored: it is for the charging records of the S-CSCF, which no node
+// of this project writes.
 func (s *SCSCF) readNotifyAnswer(ct *sip.ClientTransaction, id sip.DialogID, log *slog.Logger) {
 	var final *sip.Message
 	for resp := range ct.Responses() {

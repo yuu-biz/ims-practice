@@ -599,8 +599,8 @@ B2BUA の IBCF の手順は次のとおりです。
 
 #### TrGW の制御
 
-- `TrGW` のインタフェースは、TS 29.238 Table 5.17.2.1.1 の呼に関わる手順のうち、IBCF が使う 3 つです。`Reserve`（Reserve TrGW Connection Point）、`Configure`（Configure TrGW Connection Point）、`Release`（Release TrGW Termination）です。コンテキストには、自網の側（`CoreSide`）と相手網の側（`PeerSide`）のターミネーションがあります（Table 5.4.1）。
-- `AGWClient` は、`internal/agw` の HTTP の制御 API を呼ぶ実装です。中継ノードの `core` を自網の側、`access` を相手網の側にあてます。中継ノードは SDP に書くアドレスを 1 つしか持たないので、`AGWClient` に側ごとの公開アドレスを渡せるようにしています。
+- `TrGW` のインタフェースは、TS 29.238 Table 5.17.2.1.1 の呼に関わる手順のうち、IBCF が使う 3 つです。操作の名前は H.248 のコマンドに合わせて、`Add`（Reserve TrGW Connection Point）、`Modify`（Configure TrGW Connection Point）、`Subtract`（Release TrGW Termination）とし、型は `internal/agw` のものを使います。コンテキストには、自網の側（`CoreSide`）と相手網の側（`PeerSide`）のターミネーションがあります（Table 5.4.1）。
+- 実装には `agw.Client` をそのまま使います。中継ノードの `core` を自網の側、`access` を相手網の側にあてます。中継ノードは SDP に書くアドレスを 1 つしか持ちません。そこで、側ごとのアドレスを IBCF の設定（`Config.TrGWCoreAddress` と `Config.TrGWPeerAddress`）で渡し、IBCF が SDP のアドレスをそれに置き換えます。
 - 音声のストリームがある最初の SDP があれば、1 回の通過ごとに 1 つのコンテキストを作ります。コーデックは、その前に `Border` が絞り込みます（`interconnect.FilterBody`。TS 29.165 7.1）。
 - 書き換えの向きは次のとおりです。出ていくメッセージでは、自網の側のターミネーションに SDP のアドレスを教え、SDP には相手網の側のアドレスを書きます。入ってくるメッセージでは、その逆です。offer と answer で同じです。
 - 解放の契機は 4 つです。ダイアログを終える BYE（RFC 3261 15.1.1 のとおり、2xx、481、408、応答なし）、2xx 以外の最終応答（CANCEL のあとの 487 を含む）、最終応答が来ないまま Timer B で終わったとき、コンテキストを作ったあとで INVITE を送れなかったときです。
@@ -771,7 +771,6 @@ S-CSCF の設定 `ibcf` は、ENUM の結果か Request-URI のホストが自�
 | `TestCancelReleasesTheTrGW`、`TestTimeoutReleasesTheTrGW` | CANCEL で両側が 487 になり、両方の TrGW のコンテキストが消える。相手網が答えないとき、Timer B のあとに 504 を返し、コンテキストが消える |
 | `TestPreferredTransport` | 短い MESSAGE が、UDP を先に挙げた相手には UDP で、TCP だけを挙げた相手には TCP で届く |
 | `TestRequestFromNoPeerIsDiscarded`、`TestScreen` | 網のあいだの知らないホストが送る INVITE（2 回）、CANCEL、ACK、MESSAGE に、何も返らない（100 も 481 も無い）。どれも網 A に入らず、TrGW のコンテキストも呼の記録もできない。捨てた数がメソッドごとに増える。相手網 B の MESSAGE は通る。待ち方は時間に頼りません。知らないホストの要求を送ったあとで、相手網 B の MESSAGE を同じ外側のソケットに通し、その 200 が返った時点で前の要求はすべて捨て終わっているとみなします |
-| `TestAGWClient` | `AGWClient` が本物の中継ノード（`agw.Handler`）の制御 API を正しく呼ぶ |
 | `TestRestartedInstanceEndsTheCallsItLeft`、`TestRestartedInstanceEndsACallAtItsNewTarget` | 前の「TrGW のコンテキストの後始末」。網 B の UE が re-INVITE で別の Contact に移ったあとで網 B の IBCF を作り直すと、BYE が新しい Contact に届き、古い Contact には届かない |
 | `TestConferenceFocusAcrossTheBorder`、`TestConferenceFocusAnswersAcrossTheBorder` | 網 A のフォーカスが網 B の利用者を招く。網のあいだと網 B の INVITE が、`isfocus` 付きの会議の URI を Contact に持ち、各 IBCF が Record-Route にいる。ダイアログの中の SUBSCRIBE が両方の境界を越えて会議の URI に届き、フォーカスの NOTIFY が参加者に届く。ダイアログの外の SUBSCRIBE は IBCF-B が 403 で断り、取り決めに SUBSCRIBE が無ければ 405。網 B のフォーカスが 200 の Contact に `isfocus` を付けて応えると、発信者がその Contact と、IBCF-A の入った Record-Route を受け取る |
 | `TestOfferInAReliable183AndAnswerInThePRACK`、`TestOfferInThe200AndAnswerInTheACK` | offer の無い INVITE の 2 つの道。各側の SDP と、TrGW の各終端に伝えた宛先 |
@@ -862,7 +861,7 @@ tshark -r b-call.pcap -V
 - RFC 3323、RFC 3325、RFC 5658、RFC 7549、RFC 4769 は読んでいません。TS 24.229 と TS 29.165 の引用から書きました。
 - TS 24.341 の、網をまたぐ MESSAGE に関わる Stage 3 の手順は、5.3.3.5 だけを読みました。7 章は TS 23.204 を中心に書いています。
 - THIG で暗号化したホスト名を、`internal/sip` のパーサーと Wireshark がどう扱うかは、プロキシで作ったときの試験と tshark で確かめました。長いホスト名を DNS で引く経路は試していません。
-- 試験の TrGW は偽物で、RTP を中継しません。`AGWClient` は本物の中継ノードの制御 API に対してだけ試しました。RTP が 2 つの TrGW を通ることは、Compose の e2e で確かめます。
+- 試験の TrGW は偽物で、RTP を中継しません。網 A の偽物は、中継ノードと同じく両方のターミネーションに 1 つのアドレスを書き、IBCF が設定のアドレスに置き換えます。網 B の偽物は網ごとのアドレスを書き、IBCF はそれをそのまま使います。`agw.Client` そのものは、`internal/agw` の試験で本物の中継ノードに対して試しています。IBCF が `agw.Client` で本物の中継ノードを TrGW として使うこと（IBCF が使うターミネーションの名前と、設定のアドレスへの置き換え）は、`internal/ibcf/relay_trgw_test.go` で試しています。RTP が 2 つの TrGW を通ることは、Compose の e2e で確かめます。
 - 同じ名前で作り直した台が残りを片付ける動きは、1 つのプロセスの中の試験でだけ確かめました。Compose で台を作り直す e2e は作っていません。今の `MemoryStore` では、プロセスと一緒に記録が消えるためです。Compose で通話中に IBCF を作り直したときの動き（ログの行が出ない、古い呼の要求に 481、相手に BYE が届かない、TrGW のコンテキストが残る）は、コードから書きました。Compose で実際に作り直しては確かめていません。
 - 複数の IBCF の台を Compose で動かす構成は作っていません。2 台の振る舞いは、1 つのプロセスの中の試験で確かめました。
 - Compose には、境界を越える会議の場面がありません。`internal/ue` の参加者が 403 のあとでダイアログの中の購読に切り替え、相手網のフォーカスの NOTIFY を受けるところは、通しでは動かしていません。

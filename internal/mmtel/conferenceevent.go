@@ -371,10 +371,8 @@ func (f *conference) notifyInDialog(p *party, sub *inDialogSubscription, reason 
 
 // userOf is the user of party p in the record. f.mu is held.
 func (f *conference) userOf(p *party) string {
-	for _, o := range f.record.Participants {
-		if o.Dialog.ID == p.dialog {
-			return o.User
-		}
+	if e := f.entry(p); e != nil {
+		return e.User
 	}
 	return ""
 }

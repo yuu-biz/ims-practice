@@ -19,6 +19,17 @@ docker compose up -d --build
 
 ブラウザで <http://localhost:8080> を開きます。タイトルの横の点が `live` になっていれば、画面はダッシュボードから更新を受け取っています。
 
+ダッシュボードは、ホストのループバックアドレスにだけ公開しています。パスワードを求めず、届いた人は誰でも加入者を削除したり UE を操作したりできるためです。同じネットワークの別のマシンから開くときは、リポジトリのルートに `compose.override.yaml` を作ります。Compose は `compose.yaml` のあとにこのファイルを自分で読みます。
+
+```yaml
+services:
+  dashboard:
+    ports: !override
+      - "8080:8080"
+```
+
+もう一度 `docker compose up -d` を実行し、別のマシンで `http://<ホストのアドレス>:8080` を開きます。要らなくなったら、このファイルを削除します。
+
 ## 各パネルの内容
 
 | パネル | 表示する内容 |
@@ -121,5 +132,7 @@ docker compose --profile sim up -d --build
 ## 後片付け
 
 ```sh
-docker compose --profile sim down --rmi all -v --remove-orphans
+docker compose --profile ue --profile sim --profile volte down -v --remove-orphans
 ```
+
+すべてのプロファイルのノードと UE を止め、イメージは残します。次の手順書をビルドし直さずに始められます。イメージも削除するときは、[システムを止める](capture.md#システムを止める)を見てください。

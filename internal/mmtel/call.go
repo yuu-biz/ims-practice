@@ -69,9 +69,14 @@ func (as *AS) serve(in *sip.IncomingCall) {
 	log := as.log.With("call_id", req.Get("Call-ID"))
 	// TS 24.229 5.7.1.3A: the S-CSCF names the served user in
 	// P-Served-User, and this S-CSCF always adds the session case. A
-	// request without one did not come from the S-CSCF.
+	// request without one came by no filter criterion. The INVITE to a
+	// conference URI comes that way, by DNS (conference.go).
 	served, err := sip.ParsePServedUser(req.Get("P-Served-User"))
 	if err != nil || served.SessionCase == sip.SessionCaseNone {
+		if _, ok := as.conferenceID(req.RequestURI); ok {
+			as.joinConference(in, log)
+			return
+		}
 		log.Info("INVITE without a served user and its session case", "p_served_user", req.Get("P-Served-User"))
 		in.Reject(403, as.warning("No served user"))
 		return

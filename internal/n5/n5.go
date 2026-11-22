@@ -13,14 +13,6 @@
 // its first letter in upper case, so that "ascReqData" in a capture is
 // AscReqData here.
 //
-// SIMPLIFIED: TS 29.514 Annex A.2. Only the attributes that the
-// P-CSCF procedures of Annex B and the signalling path status of
-// 4.2.6.7 use are declared; the others (traffic routing, TSC, QoS
-// monitoring, sponsored data, MPS, MCPTT and so on) are left out.
-// Decoding ignores attributes it does not know, as every SBI receiver
-// must for an extensible API, so a fuller peer can still talk to this
-// one.
-//
 // The package has three parts:
 //   - Client: what the AF calls (Create, Update, Delete).
 //   - NewNotificationHandler: what the AF serves at its notifUri for the
@@ -33,6 +25,14 @@
 // context is named by its resource URI, which either side keeps in its
 // own store, so that the state can live outside the node and several
 // instances of each side can run.
+//
+// SIMPLIFIED: TS 29.514 Annex A.2. Only the attributes that the
+// P-CSCF procedures of Annex B and the signalling path status of
+// 4.2.6.7 use are declared; the others (traffic routing, TSC, QoS
+// monitoring, sponsored data, MPS, MCPTT and so on) are left out. The
+// P-CSCF uses none of them, and decoding ignores attributes it does not
+// know, as every SBI receiver must for an extensible API, so a fuller
+// peer can still talk to this one.
 package n5
 
 import (

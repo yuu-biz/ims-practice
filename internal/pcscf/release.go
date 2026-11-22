@@ -106,7 +106,7 @@ func (p *PCSCF) releaseNow(key DialogKey, log *slog.Logger) {
 	}
 	log = log.With("call_id", key.CallID)
 	switch {
-	case p.abortSetup(key):
+	case p.abortSetup(d):
 		log.Info("cancelling the session that is being set up")
 	case d.Confirmed:
 		p.sendBYEs(d, log)
@@ -122,34 +122,97 @@ func (p *PCSCF) releaseNow(key DialogKey, log *slog.Logger) {
 // sendBYEs releases a confirmed dialog (TS 24.229 5.2.8.1.2): a BYE to
 // the other party in the name of the served UE (items 1 and 3).
 //
-// For lost resources the spec has the P-CSCF send only that BYE, and
-// leaves the served UE to notice the lost bearer itself. Here the
-// served UE gets a BYE too, in the name of the other party, built like
-// the one of items 2 and 4 but with the Reason of the first BYE, as the
-// cause is the same: after the network released only the voice
-// bearer the UE still has its signalling, and without a BYE it would
+// SIMPLIFIED: TS 24.229 5.2.8.1.2. For lost resources the clause has
+// the P-CSCF send only that BYE, and leaves the served UE to notice the
+// lost bearer itself. Here the served UE gets a BYE too, in the name of
+// the other party, built like the one of items 2 and 4 but with the
+// Reason of the first BYE, as the cause is the same. After the network
+// released only the voice bearer the UE still has its signalling, and a
+// UE that does not act on the loss of that bearer would, without a BYE,
 // stay in a call that the network has ended. A UE that is gone leaves
 // that BYE unanswered.
 func (p *PCSCF) sendBYEs(d Dialog, log *slog.Logger) {
-	send := func(to, from *Party, what string) {
-		bye := releaseBYE(d, to, from)
-		dst, _, err := p.nextHop(bye)
-		var stack *sip.Stack
-		if err == nil {
-			stack, err = p.stackToward(dst).Get()
-		}
-		if err == nil {
-			var ct *sip.ClientTransaction
-			if ct, err = stack.SendRequest(bye, dst); err == nil {
-				log.Info("released the dialog with a BYE", "to", what, "target", to.Target)
-				go logAnswer(ct, what, log)
-				return
-			}
-		}
-		log.Warn("could not send the BYE", "to", what, "error", err.Error())
+	p.sendBYE(releaseBYE(d, d.remote(), d.ue()), "the other party", log)
+	p.sendBYE(releaseBYE(d, d.ue(), d.remote()), "the served UE", log)
+}
+
+// sendBYE sends bye, a BYE of TS 24.229 5.2.8.1.2 to the party that
+// what names, and logs its answer.
+func (p *PCSCF) sendBYE(bye *sip.Message, what string, log *slog.Logger) {
+	dst, _, err := p.nextHop(bye)
+	var stack *sip.Stack
+	if err == nil {
+		stack, err = p.stackToward(dst).Get()
 	}
-	send(d.remote(), d.ue(), "the other party")
-	send(d.ue(), d.remote(), "the served UE")
+	if err == nil {
+		var ct *sip.ClientTransaction
+		if ct, err = stack.SendRequest(bye, dst); err == nil {
+			log.Info("released the dialog with a BYE", "to", what, "target", bye.RequestURI)
+			go logAnswer(ct, what, log)
+			return
+		}
+	}
+	log.Warn("could not send the BYE", "to", what, "error", err.Error())
+}
+
+// crossedCancel is RFC 3261 9.1 for a 2xx that crossed the CANCEL of an
+// INVITE that the P-CSCF gave up (TS 24.229 5.2.8.1.1). The caller has
+// its 500 and never sees the 2xx, so the P-CSCF acknowledges it in the
+// caller's name, the first 2xx and each retransmission of it (RFC 3261
+// 13.2.2.4). The 2xx has confirmed a dialog whose session has no
+// resources, and the P-CSCF releases it with the BYE of TS 24.229
+// 5.2.8.1.2 to the callee, once: first is true until a call for the
+// dialog has reported true, which it does once it has sent the ACK and
+// the BYE. The BYE follows the ACK, as RFC 3261 15 asks of a caller.
+// At the P-CSCF of the callee, the callee is the served UE, which gets
+// the BYE that sendBYEs also sends a served UE.
+func (s *setup) crossedCancel(resp *sip.Message, first bool) bool {
+	toCallee := []string(nil)
+	if _, route, ok := routeSets(resp.GetAll("Record-Route"), len(s.invite.GetAll("Record-Route"))); ok {
+		toCallee = route
+	}
+	d := Dialog{Key: DialogKey{CallID: s.invite.Get("Call-ID")}}
+	d.Caller = Party{NameAddr: s.invite.Get("From")}
+	inviteSeq := uint32(0)
+	if cseq, err := sip.ParseCSeq(s.invite.Get("CSeq")); err == nil {
+		inviteSeq = cseq.Number
+	}
+	d.Callee = Party{NameAddr: resp.Get("To"), Target: contactOf(resp), Route: toCallee}
+
+	ack := inDialogRequest(sip.ACK, inviteSeq, d, &d.Callee, &d.Caller)
+	dst, _, err := s.p.nextHop(ack)
+	var stack *sip.Stack
+	if err == nil {
+		stack, err = s.p.stackToward(dst).Get()
+	}
+	if err == nil {
+		err = stack.SendACK(ack, dst)
+	}
+	if err != nil {
+		s.log.Warn("could not acknowledge the 2xx that crossed the CANCEL", "error", err.Error())
+		return false
+	}
+	if first {
+		s.log.Info("acknowledged the 2xx that crossed the CANCEL")
+		// The BYE takes a number above every request of the caller,
+		// such as a PRACK or an UPDATE in the early dialog (RFC 3261
+		// 12.2.1.1).
+		d.Caller.CSeq = max(inviteSeq, s.lastCallerSeq())
+		s.p.sendBYE(releaseBYE(d, &d.Callee, &d.Caller), "the callee", s.log)
+	}
+	return true
+}
+
+// lastCallerSeq is the CSeq of the last request that the caller sent in
+// the early dialog: from the Dialog when it is still in the Store, or
+// else as the abort left it (abortSetup).
+func (s *setup) lastCallerSeq() uint32 {
+	if s.stored {
+		if d, ok := s.p.store.UpdateDialog(s.key, func(*Dialog) {}); ok {
+			return max(d.Caller.CSeq, s.callerSeq)
+		}
+	}
+	return s.callerSeq
 }
 
 func logAnswer(ct *sip.ClientTransaction, what string, log *slog.Logger) {
@@ -168,7 +231,15 @@ func logAnswer(ct *sip.ClientTransaction, what string, log *slog.Logger) {
 // INVITE and its 200, the Route is the route to the party, and CSeq is
 // one above the last request from the party it speaks for.
 func releaseBYE(d Dialog, to, from *Party) *sip.Message {
-	m := &sip.Message{Method: sip.BYE, RequestURI: to.Target}
+	m := inDialogRequest(sip.BYE, from.CSeq+1, d, to, from)
+	m.Add("Reason", reasonServiceUnavailable)
+	return m
+}
+
+// inDialogRequest is a request of method to one party of the dialog in
+// the name of the other, with the CSeq number seq (RFC 3261 12.2.1.1).
+func inDialogRequest(method sip.Method, seq uint32, d Dialog, to, from *Party) *sip.Message {
+	m := &sip.Message{Method: method, RequestURI: to.Target}
 	for _, r := range to.Route {
 		m.Add("Route", r)
 	}
@@ -176,8 +247,7 @@ func releaseBYE(d Dialog, to, from *Party) *sip.Message {
 	m.Add("From", from.NameAddr)
 	m.Add("To", to.NameAddr)
 	m.Add("Call-ID", d.Key.CallID)
-	m.Add("CSeq", sip.CSeq{Number: from.CSeq + 1, Method: sip.BYE}.String())
-	m.Add("Reason", reasonServiceUnavailable)
+	m.Add("CSeq", sip.CSeq{Number: seq, Method: method}.String())
 	return m
 }
 

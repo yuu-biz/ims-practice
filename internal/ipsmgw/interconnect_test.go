@@ -39,6 +39,9 @@ func TestDeliveryToAnotherNetworkLeavesThroughTheIBCF(t *testing.T) {
 		"P-Asserted-Identity": "<tel:+12025550100>",
 		"Accept-Contact":      "*;+g.3gpp.smsip;require;explicit",
 	})
+	if routes := mt.GetAll("Route"); len(routes) != 1 || routes[0] != "<sip:"+ibcfHost+":5060;lr>" {
+		t.Errorf("Route = %q, want the IBCF alone", routes)
+	}
 	if from, err := sip.ParseNameAddr(mt.Get("From")); err != nil || from.URI != "tel:+12025550100" {
 		t.Errorf("From = %q, want the SC", mt.Get("From"))
 	}
@@ -58,7 +61,7 @@ func TestDeliveryToAnotherNetworkLeavesThroughTheIBCF(t *testing.T) {
 func TestDeliveryInTheHomeNetworkWithAnIBCF(t *testing.T) {
 	h := newHarnessWith(t, ipsmgw.NewMemoryStore(), time.Minute, answerOK, withIBCF(t))
 	go h.g.Deliver(context.Background(), ipsmgw.Delivery{Reference: "ref", Recipient: bobTel, TPDU: deliver})
-	checkHeaders(t, h.next(), map[string]string{"Route": "", "P-Asserted-Identity": "<" + ownURI + ">"})
+	checkHeaders(t, h.next(), map[string]string{"Route": "<sip:" + domain + ";lr>", "P-Asserted-Identity": "<" + ownURI + ">"})
 }
 
 // TestShortMessageFromAnotherNetworkIsDelivered is TS 23.204 6.4a: the

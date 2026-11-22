@@ -23,9 +23,10 @@ func Example() {
 	var instances []*mrfcstore.Store
 	for _, host := range []string{"mrfc-1." + domain, "mrfc-2." + domain} {
 		store := mrfcstore.New(kv, cfg)
-		processors := []mrfc.Processor{
-			{Name: "http://mrfp-1:8080", Control: agw.NewClient("http://mrfp-1:8080")},
-			{Name: "http://mrfp-2:8080", Control: agw.NewClient("http://mrfp-2:8080")},
+		var processors []mrfc.Processor
+		for _, url := range []string{"http://mrfp-1:8080", "http://mrfp-2:8080"} {
+			client := agw.NewClient(url)
+			processors = append(processors, mrfc.Processor{Name: url, Control: client, Announcements: client})
 		}
 		_, err := mrfc.New(mrfc.Config{Host: host, Port: 5060, NotifyURL: "http://" + host + ":8090/notify"},
 			processors, store, nil, slog.New(slog.DiscardHandler))

@@ -311,7 +311,7 @@ func TestShortMessageGoesToTheSC(t *testing.T) {
 		"Request-Disposition": "fork",
 		"In-Reply-To":         mo.Get("Call-ID"),
 		"Content-Type":        ipsmgw.ContentType,
-		"Route":               "",
+		"Route":               "<sip:" + domain + ";lr>",
 	})
 	ack, ok := parseRP(t, report).(sms.RPAck)
 	if !ok || ack.Direction != sms.NetworkToMS || ack.MessageReference != 7 {

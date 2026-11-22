@@ -117,12 +117,13 @@ func New(cfg Config, hss HSS, store Store, conferences ConferenceStore, locator 
 func (as *AS) uri() string { return "sip:" + as.cfg.Host + ":" + strconv.Itoa(as.cfg.Port) }
 
 // Listen starts the UA of the AS on transport: each INVITE outside a
-// dialog becomes a call of the AS. A SUBSCRIBE outside a call goes to
+// dialog becomes a call of the AS, or joins the conference whose URI it
+// is addressed to (conference.go). A SUBSCRIBE outside a call goes to
 // the conference it names (conferenceevent.go); the UA answers any
 // other request outside a dialog by itself: OPTIONS with 200, anything
 // else with 405 (Method Not Allowed). The filter criteria of the AS
-// match INVITE only (TS 24.604 Annex B); a SUBSCRIBE comes to a
-// conference URI, which names the AS's host.
+// match INVITE only (TS 24.604 Annex B); a request to a conference URI
+// comes by DNS, which leads the subdomain of the URI to the AS.
 func (as *AS) Listen(transport *sip.TransportLayer) error {
 	ua, err := sip.NewUA(transport, sip.UAConfig{
 		SentBy:  as.cfg.Host + ":" + strconv.Itoa(as.cfg.Port),

@@ -307,8 +307,10 @@ func (s indexedStore) DeleteSecurityAssociations(ue netip.AddrPort) {
 // address the request came from: the port of its connection is not
 // checked, since it is a port of the moment that no association holds.
 // A TCP request whose sent-by names another address is not recognized.
-// With IPsec the UE's TCP connections would come from its protected
-// client port instead (TS 33.203 7.1).
+// Nothing authenticates the port in that sent-by, so a host that shares
+// the UE's IP address could name it. With IPsec the UE's TCP
+// connections would come from its protected client port instead, and
+// the security associations would authenticate them (TS 33.203 7.1).
 func ueSourceOf(req *sip.Message, source sip.Destination) (sip.Destination, string) {
 	via, err := sip.ParseVia(req.Get("Via"))
 	if err != nil {

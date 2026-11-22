@@ -100,7 +100,7 @@ TS 24.229 5.1.1.2.1 and 5.1.1.2.3. Look at these headers:
 
 - **Request-URI** is the home network domain, not a server. The network decides which server handles it.
 - **From** and **To** are the public identity being registered.
-- **Contact** is the address of the UE, with two parameters. `+g.3gpp.smsip` is a feature tag (RFC 3840): it says that the UE can receive short messages over IP (TS 24.341 5.3.2.2). `expires=600000` is the interval TS 24.229 has the UE ask for.
+- **Contact** is the address of the UE. Its user part is a UUID, not one of the user's identities. TS 24.229 5.1.1.2.1 item c asks for a user part that is globally unique and reveals nothing private, and its NOTE 3 gives a time-based UUID as an example. The UE derives its UUID instead: HMAC-SHA-256 of its private identity, keyed with its password (with K of the USIM for IMS AKA), written as a version 8 UUID (RFC 9562 5.8). Nobody without the key can work out the identity from it. The UE gets the same user part each time it starts, so its registration after a restart refreshes the binding instead of replacing it. The UE keeps the same user part in its later REGISTERs (5.1.1.4.1). The Contact has two parameters. `+g.3gpp.smsip` is a feature tag (RFC 3840): it says that the UE can receive short messages over IP (TS 24.341 5.3.2.2). `expires=600000` is the interval TS 24.229 has the UE ask for.
 - **Authorization** already carries the private identity in `username`, with an empty `nonce` and `response`. The UE has no challenge to answer yet, but this tells the network which private identity to authenticate.
 - **Via** has `rport` without a value. It asks the P-CSCF to send the response back to the address and port the request really came from (RFC 3581).
 
@@ -240,7 +240,7 @@ Wireshark shows the body as XML:
 <reginfo xmlns="urn:ietf:params:xml:ns:reginfo" version="0" state="full">
   <registration aor="sip:001010000000001@ims.mnc001.mcc001.3gppnetwork.org" id="reg1" state="active">
     <contact id="..." state="active" event="registered" expires="3600" callid="..." cseq="2">
-      <uri>sip:001010000000001@172.28.0.100:5060</uri>
+      <uri>sip:4218b61b-4e20-8e1c-872d-5b39fca1e64f@172.28.0.100:5060</uri>
       <unknown-param name="+g.3gpp.smsip"></unknown-param>
     </contact>
   </registration>
@@ -419,7 +419,7 @@ The nodes of one operator trust each other with some header fields: the identity
 | Relayed-Charge, Service-Interact-Info | removed | removed | TS 24.229 4.4.17, 4.4.18 |
 | Cellular-Network-Info | stays | removed from requests | TS 24.229 4.4.19 |
 
-The P-CSCF adds a P-Charging-Vector of its own to what it forwards from the UE (5.2.2.1 item 3, 5.2.6.3.3 step 7). In Wireshark, `sip.P-Charging-Vector && ip.src == 172.28.0.40 && ip.dst == 172.28.0.100` finds nothing: the 401 and the 200 to the REGISTER reach the UE without it.
+The P-CSCF adds a P-Charging-Vector of its own to what it forwards from the UE (5.2.2.1 item 3, 5.2.6.3.3 step 7). A request to the UE goes the other way round: the P-CSCF stores its icid-value and orig-ioi before it removes the header field, and writes them, with its own term-ioi, into the UE's response (5.2.6.4.3 item 9, 5.2.6.4.4 item 6). [Follow a voice call through the IMS](call.md) follows one call by its icid-value. In Wireshark, `sip.P-Charging-Vector && ip.src == 172.28.0.40 && ip.dst == 172.28.0.100` finds nothing: the 401 and the 200 to the REGISTER reach the UE without it.
 
 A Reason in a response to the UE stays. When an application server rejects a call after an announcement, it sends the cause in a Reason towards the caller (TS 24.628 Annex G), and TS 24.229 4.4.1 lets the trust domain of each header field have its own edge.
 
@@ -444,6 +444,7 @@ These parts of the specifications are left out or shortened. Each has a `SIMPLIF
 | Where | What is left out | Why |
 | --- | --- | --- |
 | P-CSCF, TS 24.229 5.2.2.1 item 1 | The Path URI has no flow token and no `ob` parameter. | They belong to SIP outbound (RFC 5626), which this project does not implement. |
+| P-CSCF, TS 24.229 5.2.2.1 item 6 | The term-ioi of the P-Charging-Vector of the 200 to the REGISTER is not stored. | It names the home network in the charging records of the P-CSCF, which no node of this project writes, and no later message carries it. |
 | S-CSCF, TS 24.229 5.4.1.5 | The S-CSCF ends a registration on its own only when an application server fails the third-party REGISTER and its iFC says SESSION_TERMINATED. Otherwise only an RTR from the HSS ends one. It releases no sessions before the NOTIFY. | The S-CSCF has no operator interface, and it keeps no state of the dialogs it routes. |
 | S-CSCF, TS 29.228 6.1.3.1 | An RTR with NEW_SERVER_ASSIGNED or REMOVE_S-CSCF gets DIAMETER_UNABLE_TO_COMPLY. | The HSS stub sends only PERMANENT_TERMINATION. The S-CSCF lets the profile of a user who is not registered go by itself after a few minutes. |
 | Subscriber, RFC 6665 4.1.4 and 5.4.9 | A NOTIFY from a second dialog gets 481. | The reg event package forbids a subscription to fork (RFC 3680 4.9). |
@@ -455,23 +456,26 @@ These parts of the specifications are left out or shortened. Each has a `SIMPLIF
 | HSS, TS 29.228 6.1.1.1 step 5 | No check that the user may register at all. | Every test user may register. |
 | User profile, TS 29.228 Annex E | One service profile, with no optional elements but the iFCs. | The test subscriptions need nothing more. |
 | HSS, TS 29.228 B.2.2 | Every subscription gets the iFCs of the configuration. Only the MSISDN in ServiceInfo differs. | No service of this project differs between users. |
+| HSS and S-CSCF, TS 23.228 4.3.3.4 and 4.2.7.2 | A public identity belongs to one private identity, so several UEs cannot share it. A request to a public identity goes to the one contact of its one registration: the S-CSCF never forks. | Each subscriber of this project has one UE. |
 | iFC, TS 29.228 B.2.3 and Annex E | No SessionDescription SPT, RegistrationType, ProfilePartIndicator, IncludeRegisterRequest or IncludeRegisterResponse. | The iFCs of SMS and of the MMTel AS need none of them. RegistrationType is optional for the S-CSCF. |
-| S-CSCF, TS 24.229 5.4.1.7 | The third-party REGISTER always names the default public identity in To, and has a new Call-ID each time. The term-ioi of its answer is not stored. | The operator may choose the identity. One Call-ID would need more state for each user and server. The S-CSCF does no charging. |
+| S-CSCF, TS 24.229 5.4.1.7 | The third-party REGISTER always names the default public identity in To, and has a new Call-ID each time. The term-ioi of its answer is not stored. | The operator may choose the identity. One Call-ID would need more state for each user and server. The term-ioi is for the charging records of the S-CSCF, which no node of this project writes. |
 | S-CSCF, TS 24.229 5.4.0 | The S-CSCF looks the application server up in DNS for each request. It does not keep the address that the first third-party REGISTER went to. | Each application server role keeps its state in a Store that all its nodes share. |
-| IP-SM-GW, TS 24.229 5.7.3 | The requests of the IP-SM-GW, such as its SUBSCRIBE, carry no Route to the entry point. | The entry point is the name of the home domain. The I-CSCF removes only a Route that names its own host (5.3.2.1), so a Route with the domain would stay in the request. |
 | IP-SM-GW, RFC 6665 4.1.2.4 | No Timer N. A SUBSCRIBE that no NOTIFY follows is replaced by a new one at the next third-party REGISTER. | The S-CSCF answers every SUBSCRIBE that it accepts with a NOTIFY at once. |
 | IP-SM-GW, TS 24.341 5.3.3.2 | Without an MSISDN in service-info, the PUR names the user by the public identity, not by the IMSI of the UE's REGISTER. | The IMSI would come from the UE's REGISTER in a message/sip body, which the S-CSCF does not send. Sh accepts a public identity (TS 29.328 Table 7.6.1). |
 | UE, TS 24.229 5.1.1.3 | When a refresh of the UE's subscription gets 481, the UE subscribes again only after its next initial registration. | Refreshes come long before the subscription runs out. |
 | UE, TS 24.229 5.1.1.7 | On `event="rejected"`, `ue call`, `ue answer` and `ue serve` do not release their call. | Only removing the subscription from the HSS rejects a registration. A call of `ue call` and `ue answer` ends by itself once its audio is sent, and a call of `ue serve` ends when the controller hangs up. |
+| S-CSCF, TS 24.229 5.4.2.1.2 | The term-ioi of the answer to a NOTIFY of the reg event package is not stored. | It is for the charging records of the S-CSCF, which no node of this project writes. |
 | P-CSCF, TS 24.229 5.2.3 | When a refresh of the P-CSCF's subscription gets 481, the next REGISTER of the user starts a new subscription, not the P-CSCF at once. | Refreshes come long before the subscription runs out. |
 | P-CSCF and UE, RFC 3680 5.2 | The version of the reginfo document is not checked. | The S-CSCF always sends the full state, and a NOTIFY that comes after a later one is refused for its CSeq. |
 | P-CSCF, TS 24.229 5.2.6.2 | The UEs and the network reach the P-CSCF at the same address and port. A request counts as one from the network, and needs no IP association, when it is addressed to the URI that the P-CSCF put in Path, to the P-CSCF's own contact, or to the contact of a UE that it serves. | A real P-CSCF usually serves the UEs (Gm) and the network (Mw) on separate interfaces. The containers of this project share one network. |
-| P-CSCF, TS 24.229 5.2.2.3 | The IP association is looked up by the address and port that a request over UDP comes from. A request over TCP, which a UE sends when the request is larger than 1300 bytes, is matched by the sent-by of its Via alone, when that has the address the request came from; the port of the connection is not checked. A TCP request whose sent-by names another address is not recognized. | Without IPsec a TCP connection comes from a port of the moment, which no IP association holds. |
+| P-CSCF, TS 24.229 5.2.2.3 | The IP association is looked up by the address and port that a request over UDP comes from. A request over TCP, which a UE sends when the request is larger than 1300 bytes, is matched by the sent-by of its Via alone, when that has the address the request came from; the port of the connection is not checked. A TCP request whose sent-by names another address is not recognized. Nothing authenticates the port in that sent-by, so a host that shares the UE's IP address could name it. | Without IPsec a TCP connection comes from a port of the moment, which no IP association holds. |
 | SIP Digest, TS 24.229 5.4.1.2.1B, RFC 7616 and RFC 8760 | The S-CSCF offers MD5 with qop=auth only, although the specifications prefer SHA-256 and keep MD5 for backward compatibility. | The HSS stub provides only the MD5 H(A1); SHA-256 needs the alternate digest AVPs. |
 | Diameter, RFC 3539 3.4.1 and Appendix A, RFC 6733 5.6.4 | No REOPEN state and no failover. Only the configured initiator connects, so there is no election between two connections to the same peer. | Each CSCF has a single HSS. |
 
 ## Clean up
 
 ```sh
-docker compose --profile ue down --rmi all -v --remove-orphans
+docker compose --profile ue --profile sim --profile volte down -v --remove-orphans
 ```
+
+This stops the nodes and the UEs of every profile and keeps the images, so the next guide starts without a new build. To delete the images as well, see [Stop the system](capture.md#stop-the-system).

@@ -220,6 +220,14 @@ type Store interface {
 	Registration(privateID string) (Registration, bool)
 	// RegistrationOf finds the registration that holds a public
 	// identity, in the canonical form of ims.CanonicalURI.
+	//
+	// SIMPLIFIED: TS 23.228 4.3.3.4 and 4.2.7.2. A public identity has
+	// at most one registration, of one private identity with one
+	// contact, so a request to it goes to that contact alone: the
+	// S-CSCF never forks. The HSS shares no public identity between
+	// private identities, and without reg-id the S-CSCF keeps only the
+	// newest contact of a private identity (TS 24.229 5.4.1.2.2A step
+	// 6).
 	RegistrationOf(publicID string) (Registration, bool)
 	PutRegistration(Registration)
 	DeleteRegistration(privateID string)

@@ -83,7 +83,7 @@ func (g *IPSMGW) subscribeRegEvent(publicID, msisdn string, expires time.Duratio
 	// The S-CSCF lets an application server of the user's filter
 	// criteria subscribe, by this URI (item e, NOTE 3).
 	m.Add("P-Asserted-Identity", sip.NameAddr{URI: g.cfg.URI}.String())
-	m.Add("P-Charging-Vector", "icid-value="+icid+";orig-ioi="+g.cfg.HomeDomain) // item f
+	m.Add("P-Charging-Vector", sip.ChargingVector{ICID: icid, OrigIOI: g.cfg.HomeDomain}.String()) // item f
 	// RFC 6665 4.1.2.1: where the NOTIFYs go.
 	m.Add("Contact", sip.NameAddr{URI: g.cfg.URI}.String())
 	d, err := sip.NewSubscriberDialog(m)
@@ -120,7 +120,7 @@ func (g *IPSMGW) refreshRegEvent(sub RegSubscription, expires time.Duration, log
 	m := sub.Dialog.NewRequest(sip.SUBSCRIBE)
 	m.Add("Event", regEventPackage)
 	m.Add("Expires", strconv.Itoa(int(expires/time.Second)))
-	m.Add("P-Charging-Vector", "icid-value="+sub.ICID+";orig-ioi="+g.cfg.HomeDomain)
+	m.Add("P-Charging-Vector", sip.ChargingVector{ICID: sub.ICID, OrigIOI: g.cfg.HomeDomain}.String())
 	m.Add("Contact", sip.NameAddr{URI: g.cfg.URI}.String())
 	hop, err := sip.NextHop(m)
 	if err != nil {

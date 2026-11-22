@@ -11,13 +11,16 @@ import (
 // initial request that passed the P-CSCF in the direction l, before resp
 // goes on. A response to a request from the UE goes to the UE; a
 // response to a request to the UE comes from it. Either way it crosses
-// the edge of the trust domain (crossBoundary).
-func ueResponse(l leg, req, resp *sip.Message) {
+// the edge of the trust domain (crossBoundary). A response from the UE
+// goes on with the charging vector of req (chargeResponse).
+func (p *PCSCF) ueResponse(l leg, req, resp *sip.Message) {
 	if l == originating {
 		crossBoundary(resp, responseToUE)
 		return
 	}
 	crossBoundary(resp, responseFromUE)
+	charging, _ := sip.ChargingVectorOf(req)
+	p.chargeResponse(resp, charging)
 	// 5.2.6.4.4 asserts the identity in the 1xx and 2xx to an initial
 	// request for a dialog, 5.2.6.4.8 in any response to a request for a
 	// standalone transaction.
@@ -33,8 +36,11 @@ func ueResponse(l leg, req, resp *sip.Message) {
 // removed that one. This is the identity that TIP shows the caller (TS
 // 24.608 4.5.2.4).
 //
-// The clause adds the display name stored at registration. The S-CSCF
-// puts none in P-Associated-URI, so the P-CSCF has none to add.
+// SIMPLIFIED: TS 24.229 5.2.6.4.4 step 1 and 5.2.6.4.8 step 2. The
+// P-Asserted-Identity carries no display name, which the clauses add
+// when one was stored at registration. The user profiles of this
+// project hold no display name, so the S-CSCF puts none in
+// P-Associated-URI and the P-CSCF has none to add.
 func assertResponder(req, resp *sip.Message) {
 	called, err := sip.ParseNameAddr(req.Get("P-Called-Party-ID"))
 	if err != nil || called.URI == "" {

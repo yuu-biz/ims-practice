@@ -40,6 +40,7 @@ import (
 	"sync/atomic"
 
 	"github.com/yuu-biz/ims-practice/internal/mixer"
+	"github.com/yuu-biz/ims-practice/internal/sdp"
 )
 
 // TerminationID names a termination within its context.
@@ -78,6 +79,41 @@ func (m Mode) valid() bool {
 func (m Mode) sends() bool    { return m == SendReceive || m == SendOnly }
 func (m Mode) receives() bool { return m == SendReceive || m == ReceiveOnly }
 
+// Latch is the latching of a termination: whether it sends to the
+// remote address that its controller gives, or to the source of the
+// packets it receives. A UE behind NAT sends from an address that its
+// SDP cannot know, and latching still reaches it. The first three
+// values are those of the parameter napt, with which H.248 asks for
+// latching in the signal ipnapt/latch (H.248.37 (06/2008) 6.3.1.1.1).
+// The fourth is what a Signals descriptor without that signal does to
+// a termination (6.6.4), which none of the three does. RTP and RTCP
+// latch each on their own, by the same rule (6.3.1.1.1 applies napt to
+// every flow of a stream).
+type Latch string
+
+const (
+	// NAPTOff sends to the remote address, also after a latch (6.6.1).
+	NAPTOff Latch = "off"
+	// NAPTLatch takes the source of the first packet that arrives as
+	// the address to send to, and keeps it (6.6.2). Until that packet,
+	// the termination sends where it did before.
+	NAPTLatch Latch = "latch"
+	// NAPTRelatch is NAPTLatch for the first packet from another source
+	// than the address that the termination sends to: it follows a
+	// party that has moved (6.6.3).
+	NAPTRelatch Latch = "relatch"
+	// StopLatching stops a NAPTLatch or a NAPTRelatch that still waits
+	// for its packet, and keeps sending where the termination sends
+	// now. Unlike NAPTOff, it keeps an address that the termination has
+	// latched (6.6.4). On Add there is nothing to stop yet, and it does
+	// what NAPTOff does.
+	StopLatching Latch = "stop"
+)
+
+func (l Latch) valid() bool {
+	return l == NAPTOff || l == NAPTLatch || l == NAPTRelatch || l == StopLatching
+}
+
 // TerminationRequest is what Add and Modify set on one termination: one
 // field for each descriptor of the H.248 command (H.248.1 (03/2013)
 // 7.1). A field left at its zero value keeps what the termination has.
@@ -88,15 +124,42 @@ type TerminationRequest struct {
 	// Mode is the StreamMode. An Add without one gives SendReceive,
 	// where H.248 would default to Inactive.
 	Mode Mode `json:"mode,omitempty"`
+	// LocalMedia, on Add, describes the stream that the termination is
+	// to receive, as the Local descriptor does besides the address,
+	// which the node chooses.
+	LocalMedia Media `json:"-"`
 	// Remote is where the termination sends RTP, as the SDP of the party
 	// it faces gives it: the Remote descriptor. RTCP goes to the port
 	// above.
 	Remote netip.AddrPort `json:"remote,omitzero"`
+	// RemoteMedia describes the stream that the termination sends to
+	// Remote, as the Remote descriptor does besides the address.
+	RemoteMedia Media `json:"-"`
+	// Latch is the latching. An Add without one gives NAPTLatch, where
+	// H.248 would leave latching off (H.248.37 (06/2008) 6.6.1); a
+	// Modify without one keeps it.
+	Latch Latch `json:"latch,omitempty"`
 	// Signals, when not nil, replaces what the termination plays.
 	Signals *Signals `json:"signals,omitempty"`
 	// Events, when not nil, replaces the events that the termination
 	// reports.
 	Events *Events `json:"events,omitempty"`
+}
+
+// Media is what the SDP of a Local or a Remote descriptor says of an
+// audio stream besides its address: the payload formats of the m= line
+// and the bandwidth of the b= line (TS 29.334 5.15). The relay does not
+// transcode and passes every payload type as it is, so the HTTP API
+// does not carry it; the H.248 Controller of internal/h248/mediactl
+// writes it into its descriptors.
+type Media struct {
+	// Codecs are the payload formats of the m= line, with their
+	// a=rtpmap and a=fmtp lines, most preferred first. With none, the
+	// m= line carries "-": no resources for a particular format are
+	// reserved (TS 29.334 5.15, Table 5.15.1).
+	Codecs []sdp.Codec
+	// Bandwidth is the b=AS value in kbit/s, or 0 for none.
+	Bandwidth int
 }
 
 // Termination is one end of a context as the API shows it: a pair of
@@ -108,8 +171,9 @@ type Termination struct {
 	Mode   Mode           `json:"mode"`
 	Local  netip.AddrPort `json:"local"`
 	Remote netip.AddrPort `json:"remote,omitzero"`
-	// Latched tells that Remote was learned from the first packet that
-	// arrived, rather than from the SDP.
+	// Latched tells that Remote is the source of a packet that arrived,
+	// which the termination latched onto, rather than the address of the
+	// SDP.
 	Latched bool `json:"latched"`
 	// Packets counts the RTP packets received on this termination, and
 	// PacketsSent those that left through it. They are the statistics
@@ -229,8 +293,8 @@ func (r *Relay) AddTermination(id string, req TerminationRequest) (Termination, 
 }
 
 // Modify changes what req sets on a termination. A remote address
-// counts only until a packet has arrived: latching wins, for RTP and
-// RTCP each.
+// counts only while the termination has not latched, for RTP and RTCP
+// each: the latched address wins until NAPTOff.
 func (r *Relay) Modify(id string, tid TerminationID, req TerminationRequest) (Termination, error) {
 	rc, ok := r.context(id)
 	if !ok {

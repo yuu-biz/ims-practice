@@ -610,13 +610,13 @@ func (s *SCSCF) respond(st *sip.ServerTransaction, code int, fill func(*sip.Mess
 	st.Respond(resp)
 }
 
-// addChargingVector puts in a response the P-Charging-Vector of the
-// request, which holds the icid-value and the orig-ioi, with this
-// network's term-ioi added (TS 24.229 5.4.1.2.2F (e) for REGISTER,
+// addChargingVector puts in a response the icid-value and the orig-ioi
+// of the request's P-Charging-Vector, with this network's term-ioi (TS
+// 24.229 5.4.1.2.2F (e) for REGISTER,
 // 5.4.2.1.1 step 3 for SUBSCRIBE).
 func (s *SCSCF) addChargingVector(resp, req *sip.Message) {
-	if pcv := req.Get("P-Charging-Vector"); pcv != "" {
-		resp.Add("P-Charging-Vector", pcv+";term-ioi="+s.cfg.HomeDomain)
+	if c, ok := sip.ChargingVectorOf(req); ok {
+		resp.Add("P-Charging-Vector", c.Response(s.cfg.HomeDomain).String())
 	}
 }
 

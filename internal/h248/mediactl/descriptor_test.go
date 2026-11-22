@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/yuu-biz/ims-practice/internal/agw"
 	"github.com/yuu-biz/ims-practice/internal/h248"
 	"github.com/yuu-biz/ims-practice/internal/sdp"
 )
@@ -15,21 +16,22 @@ var pcmu = sdp.Codec{PayloadType: 0, Name: sdp.NamePCMU, ClockRate: 8000}
 func TestControllerSDP(t *testing.T) {
 	amr := sdp.Codec{PayloadType: 97, Name: sdp.NameAMR, ClockRate: 8000, Fmtp: "octet-align=1"}
 	tests := []struct {
-		name  string
-		media Media
-		want  string
+		name    string
+		address netip.AddrPort
+		media   agw.Media
+		want    string
 	}{
-		{"CHOOSE without formats", Media{}, "v=0\nc=IN IP4 $\nm=audio $ RTP/AVP -\n"},
-		{"CHOOSE with formats", Media{Codecs: []sdp.Codec{amr, pcmu}, Bandwidth: 29},
+		{"CHOOSE without formats", netip.AddrPort{}, agw.Media{}, "v=0\nc=IN IP4 $\nm=audio $ RTP/AVP -\n"},
+		{"CHOOSE with formats", netip.AddrPort{}, agw.Media{Codecs: []sdp.Codec{amr, pcmu}, Bandwidth: 29},
 			"v=0\nc=IN IP4 $\nm=audio $ RTP/AVP 97 0\nb=AS:29\na=rtpmap:97 AMR/8000\na=fmtp:97 octet-align=1\na=rtpmap:0 PCMU/8000\n"},
-		{"an address", Media{Address: netip.MustParseAddrPort("192.0.2.30:49170"), Codecs: []sdp.Codec{pcmu}},
+		{"an address", netip.MustParseAddrPort("192.0.2.30:49170"), agw.Media{Codecs: []sdp.Codec{pcmu}},
 			"v=0\nc=IN IP4 192.0.2.30\nm=audio 49170 RTP/AVP 0\na=rtpmap:0 PCMU/8000\n"},
-		{"IPv6", Media{Address: netip.MustParseAddrPort("[2001:db8::30]:49170")},
+		{"IPv6", netip.MustParseAddrPort("[2001:db8::30]:49170"), agw.Media{},
 			"v=0\nc=IN IP6 2001:db8::30\nm=audio 49170 RTP/AVP -\n"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := controllerSDP(tt.media)
+			got := controllerSDP(tt.address, tt.media)
 			if got != tt.want {
 				t.Fatalf("got\n%s\nwant\n%s", got, tt.want)
 			}
@@ -37,7 +39,7 @@ func TestControllerSDP(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if d.chooseAddress != !tt.media.Address.IsValid() || d.media.Address != tt.media.Address ||
+			if d.chooseAddress != !tt.address.IsValid() || d.address != tt.address ||
 				d.media.Bandwidth != tt.media.Bandwidth || !slices.Equal(d.media.Codecs, tt.media.Codecs) {
 				t.Errorf("read back %+v", d)
 			}
@@ -53,7 +55,7 @@ func TestParseSDP(t *testing.T) {
 		t.Fatal(err)
 	}
 	if d.origin != "- 1 1 IN IP4 192.0.2.1" || d.name != "-" || d.timing != "0 0" ||
-		d.media.Address != netip.MustParseAddrPort("192.0.2.30:49170") ||
+		d.address != netip.MustParseAddrPort("192.0.2.30:49170") ||
 		!slices.Equal(d.media.Codecs, []sdp.Codec{{PayloadType: 96, Name: sdp.NameAMRWB, ClockRate: 16000, Channels: 1}}) {
 		t.Errorf("%+v", d)
 	}
@@ -84,7 +86,7 @@ func TestGatewayLocalFillsInTheSessionLines(t *testing.T) {
 }
 
 func TestTerminationIDs(t *testing.T) {
-	if got := terminationID(1, Core, 7); got != "ip/1/core/7" {
+	if got := terminationID(1, agw.Core, 7); got != "ip/1/core/7" {
 		t.Errorf("terminationID = %s", got)
 	}
 	tests := []struct {
@@ -92,9 +94,9 @@ func TestTerminationIDs(t *testing.T) {
 		want ipTermination
 		ok   bool
 	}{
-		{"ip/1/access/$", ipTermination{group: 1, groupText: "1", side: Access, idText: "$"}, true},
-		{"IP/2/Core/17", ipTermination{group: 2, groupText: "2", side: Core, id: 17, idText: "17"}, true},
-		{"ip/$/access/$", ipTermination{groupText: "$", side: Access, idText: "$"}, true},
+		{"ip/1/access/$", ipTermination{group: 1, groupText: "1", side: agw.Access, idText: "$"}, true},
+		{"IP/2/Core/17", ipTermination{group: 2, groupText: "2", side: agw.Core, id: 17, idText: "17"}, true},
+		{"ip/$/access/$", ipTermination{groupText: "$", side: agw.Access, idText: "$"}, true},
 		{"ip/1/access/0", ipTermination{}, false},
 		{"ip/65536/access/1", ipTermination{}, false},
 		{"ROOT", ipTermination{}, false},

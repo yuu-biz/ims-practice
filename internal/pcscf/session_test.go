@@ -432,25 +432,25 @@ func (f *fakeRelay) Add(ctx context.Context, _ ...agw.TerminationRequest) (agw.C
 	}}, nil
 }
 
-func (f *fakeRelay) Modify(ctx context.Context, id string, side agw.TerminationID, change agw.TerminationRequest) (agw.Termination, error) {
+func (f *fakeRelay) Modify(ctx context.Context, id string, side agw.TerminationID, change agw.TerminationRequest) error {
 	if f.failModify {
-		return agw.Termination{}, errors.New("the relay refused the Modify")
+		return errors.New("the relay refused the Modify")
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.remotes[termination{id, side}] = change.Remote
-	return agw.Termination{ID: side, Remote: change.Remote}, nil
+	return nil
 }
 
-func (f *fakeRelay) Subtract(ctx context.Context, id string) (agw.Context, error) {
+func (f *fakeRelay) Subtract(ctx context.Context, id string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.failSubtracts > 0 {
 		f.failSubtracts--
-		return agw.Context{}, errors.New("the relay is unreachable")
+		return errors.New("the relay is unreachable")
 	}
 	delete(f.contexts, id)
-	return agw.Context{ID: id}, nil
+	return nil
 }
 
 // waitHeld waits until the relay holds n contexts. The P-CSCF subtracts

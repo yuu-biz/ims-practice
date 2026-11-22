@@ -50,14 +50,16 @@ const (
 // own (8.1.1).
 //
 // SIMPLIFIED: TS 29.338 5.3.3.5. The SRR of this check does not carry
-// SM-Delivery-Not-Intended, which package sgd does not write, so the
-// HSS reads it like the SRR of a delivery.
+// SM-Delivery-Not-Intended, so the HSS reads it like the SRR of a
+// delivery. Package sgd does not write that AVP, as no node of this
+// project acts on it.
 //
 // SIMPLIFIED: TS 23.040 6.2 item 3, 9.2.3.6 and 9.2.3.25. The SC
 // neither rejects a repeated SMS-SUBMIT with TP-RD set nor replaces a
 // short message it holds by a later one of a replace type of TP-PID
 // (9.2.3.9): each SMS-SUBMIT is a short message of its own. A repeat
-// after a lost RP-ACK may therefore arrive twice.
+// after a lost RP-ACK may therefore arrive twice. No UE of this project
+// sets TP-RD or a replace type.
 func (c *SMSC) MOForwardShortMessage(ctx context.Context, req sgd.MOForwardShortMessageRequest) sgd.MOForwardShortMessageAnswer {
 	now := c.clock.Now()
 	log := c.log.With("session_id", req.SessionID, "sc_address", req.SCAddress,
@@ -142,13 +144,15 @@ func (c *SMSC) MOForwardShortMessage(ctx context.Context, req sgd.MOForwardShort
 // parseSubmit reads the SMS-SUBMIT of an OFR. When it cannot, it gives
 // the TP-FCS of TS 23.040 9.2.3.22 that says why.
 //
-// SIMPLIFIED: TS 23.040 9.2.3.12.2 and 9.2.3.12.3. Package sms reads
-// only the relative TP-VP, so an SMS-SUBMIT with the absolute or the
-// enhanced format is refused with "TP-VPF not supported", which TS
-// 23.040 9.2.3.3 allows.
+// SIMPLIFIED: TS 23.040 9.2.3.12.2 and 9.2.3.12.3. An SMS-SUBMIT with
+// the absolute or the enhanced format of TP-VP is refused with "TP-VPF
+// not supported", which TS 23.040 9.2.3.3 allows. Package sms reads
+// only the relative format, and the UE of this project asks for no
+// validity period.
 //
 // SIMPLIFIED: TS 23.040 9.2.2.4. SMS-COMMAND, which asks the SC about a
-// message it holds, is refused with "Command unsupported".
+// message it holds, is refused with "Command unsupported". No UE of
+// this project sends one.
 func parseSubmit(tpdu []byte) (sms.Submit, sms.FailureCause, error) {
 	parsed, err := sms.ParseTPDU(sms.RPDataMSToNetwork{UserData: tpdu})
 	if err == nil {

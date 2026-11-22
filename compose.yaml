@@ -72,9 +72,10 @@ services:
     volumes:
       - ./deploy/compose/pcscf.yaml:/etc/ims/node.yaml:ro
     # A UE or a softphone on the host reaches the P-CSCF here, through
-    # Docker's NAT.
+    # Docker's NAT. Published on the loopback address only, so that no
+    # other machine registers with the test subscribers.
     ports:
-      - "5060:5060/udp"
+      - "127.0.0.1:5060:5060/udp"
     networks:
       ims:
         ipv4_address: 172.28.0.40
@@ -84,8 +85,10 @@ services:
     hostname: agw
     volumes:
       - ./deploy/compose/agw.yaml:/etc/ims/node.yaml:ro
+    # The relay's ports for a softphone on the host, on the loopback
+    # address like the P-CSCF's.
     ports:
-      - "40000-40039:40000-40039/udp"
+      - "127.0.0.1:40000-40039:40000-40039/udp"
     networks:
       ims:
         ipv4_address: 172.28.0.50
@@ -154,9 +157,11 @@ services:
     hostname: dashboard
     volumes:
       - ./deploy/compose/dashboard.yaml:/etc/ims/node.yaml:ro
-    # Open http://localhost:8080 on the host.
+    # Open http://localhost:8080 on the host. The dashboard asks for no
+    # password and can delete subscribers, so it is published on the
+    # loopback address only.
     ports:
-      - "8080:8080"
+      - "127.0.0.1:8080:8080"
     networks:
       ims:
         ipv4_address: 172.28.0.60
