@@ -131,6 +131,31 @@ func (rc *relayContext) add(req TerminationRequest) (*relayTermination, error) {
 	return t, nil
 }
 
+// reopen makes a termination of a stored context again, on the port it
+// had, and starts reading its sockets. It sends where the stored
+// address says, which is the address the earlier process latched onto
+// only if a change of the context was stored after the latch, and it
+// latches as a termination added without a latching does: the first
+// packet that arrives is answered where it comes from, so a party
+// behind NAT is found again whatever was stored. rc.mu is held.
+func (rc *relayContext) reopen(saved SavedTermination) error {
+	if !saved.Mode.valid() {
+		return fmt.Errorf("%w: mode %q", ErrBadRequest, saved.Mode)
+	}
+	rtp, rtcp, err := rc.relay.reopenPorts(saved.LocalRTP)
+	if err != nil {
+		return err
+	}
+	t := &relayTermination{id: saved.ID, ctx: rc, rtp: rtp, rtcp: rtcp, mode: saved.Mode, own: newSource()}
+	t.setRemote(saved.Remote)
+	t.setLatch(NAPTLatch)
+	rc.terms[saved.ID] = t
+	rc.mix.Join(string(saved.ID))
+	go t.read(rtpChannel, t.rtp)
+	go t.read(rtcpChannel, t.rtcp)
+	return nil
+}
+
 // remove takes a termination out of the context and closes its ports,
 // undoing an add. rc.mu is held.
 func (rc *relayContext) remove(t *relayTermination) {
@@ -548,7 +573,7 @@ func (rc *relayContext) view() Context {
 // termination IDs. Of each termination it holds what a relay created
 // again under the same name needs to carry the media on: its ports, its
 // mode, and the address it sends to now, which is the one it latched
-// onto once it has. What a termination plays is not kept (see Restore).
+// onto once it has. What a termination plays is not kept (see restore).
 // rc.mu is held.
 func (rc *relayContext) saved() SavedContext {
 	c := SavedContext{ID: rc.id, Terminations: make([]SavedTermination, 0, len(rc.terms))}

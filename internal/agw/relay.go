@@ -37,6 +37,7 @@ import (
 	"net"
 	"net/http"
 	"net/netip"
+	"slices"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -237,7 +238,76 @@ func NewRelay(address netip.Addr, minPort, maxPort uint16, announcements Announc
 	// context it does not own. The IDs start at a random number, as the
 	// context IDs of an H.248 media gateway do.
 	r.nextID.Store(rand.Uint64N(1 << 32))
+	if err := r.restore(); err != nil {
+		return nil, err
+	}
 	return r, nil
+}
+
+// restore opens again the ports of the contexts that an earlier process
+// of this relay left in the store, with the mode and the remote address
+// each termination had: the media of a call goes on after the gap, and
+// the controller, which knows nothing of the restart, goes on changing
+// and subtracting the contexts it has.
+//
+// A relay whose store cannot be read does not start. One that started
+// without its contexts would leave the calls of its earlier process
+// without media and answer their Subtract with 404, while its ports
+// stayed open; a controller takes the next relay of its list meanwhile.
+//
+// SIMPLIFIED: TS 29.334 5.17.2.5. A context whose removal from the
+// store never succeeded, after the controller released it, cannot be
+// told from one of a call that is still up: this relay and every later
+// process of it open its ports again and hold them, until the store is
+// cleared. Nothing of the call is left to ask, and the items of a
+// relay have no time to live, as those of the IBCF and the P-CSCF
+// dialogs have none.
+//
+// SIMPLIFIED: TS 29.333 5.17.2.9. A termination opened again plays
+// nothing: an announcement or a tone that an MRFP was playing does not
+// start again, and its controller gets no event for an end that never
+// comes. The media the relay makes itself comes from a new RTP source
+// after the gap, and the packet counts of the terminations start at
+// zero. What a termination had played of an announcement is not kept
+// with the context, and the controller starts the next announcement
+// itself.
+func (r *Relay) restore() error {
+	saved, err := r.store.Contexts(context.Background())
+	if err != nil {
+		return fmt.Errorf("agw: cannot read the contexts that an earlier process left: %w", err)
+	}
+	for _, c := range saved {
+		r.reopen(c)
+	}
+	return nil
+}
+
+// reopen makes one stored context again. A context whose ports it
+// cannot open, because something else holds them or the range of the
+// relay no longer covers them, is given up: it is removed from the
+// store, so that no later process tries it again, and its controller
+// finds it gone, as it would a context of a relay that never came back.
+func (r *Relay) reopen(c SavedContext) {
+	rc := &relayContext{id: c.ID, relay: r, terms: map[TerminationID]*relayTermination{}, mix: mixer.NewConference()}
+	rc.mu.Lock()
+	for _, saved := range c.Terminations {
+		if err := rc.reopen(saved); err != nil {
+			rc.closed = true
+			rc.mu.Unlock()
+			rc.close()
+			r.log.Warn("a context of an earlier process was given up: its ports could not be opened again",
+				"context", c.ID, "termination", string(saved.ID), "port", saved.LocalRTP, "error", err.Error())
+			r.forget(c.ID)
+			return
+		}
+	}
+	rc.startClock()
+	view := rc.view()
+	rc.mu.Unlock()
+	r.mu.Lock()
+	r.contexts[c.ID] = rc
+	r.mu.Unlock()
+	r.log.Info("context of an earlier process opened again", "context", c.ID, "terminations", view.summary())
 }
 
 var (
@@ -265,7 +335,7 @@ func (r *Relay) Add(terminations ...TerminationRequest) (Context, error) {
 	if len(terminations) == 0 {
 		return Context{}, fmt.Errorf("%w: a context needs at least one termination", ErrBadRequest)
 	}
-	rc := &relayContext{id: fmt.Sprintf("c%d", r.nextID.Add(1)), relay: r, terms: map[TerminationID]*relayTermination{}, mix: mixer.NewConference()}
+	rc := &relayContext{id: r.newID(), relay: r, terms: map[TerminationID]*relayTermination{}, mix: mixer.NewConference()}
 	rc.mu.Lock()
 	for _, req := range terminations {
 		if _, err := rc.add(req); err != nil {
@@ -542,6 +612,20 @@ func (r *Relay) Contexts() []Context {
 	return out
 }
 
+// newID is the ID of a new context: the next number that no context of
+// the relay holds, so that a context opened again from the store keeps
+// the ID its controller knows it by.
+func (r *Relay) newID() string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for {
+		id := fmt.Sprintf("c%d", r.nextID.Add(1))
+		if _, taken := r.contexts[id]; !taken {
+			return id
+		}
+	}
+}
+
 func (r *Relay) context(id string) (*relayContext, bool) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -570,6 +654,27 @@ func (r *Relay) open() (rtp, rtcp *channel, err error) {
 		return rtp, rtcp, nil
 	}
 	return nil, nil, ErrNoPort
+}
+
+// reopenPorts binds the pair of ports that a termination had before a
+// restart, and takes them out of the pool. A port the pool no longer
+// has is one that another context of this relay has taken, which a
+// stored context whose ports overlap another's would ask for, or one
+// outside the range of the relay.
+func (r *Relay) reopenPorts(port uint16) (rtp, rtcp *channel, err error) {
+	if !r.ports.takePort(port) {
+		return nil, nil, fmt.Errorf("%w: port %d is not free in the range of the relay", ErrNoPort, port)
+	}
+	rtp, err = r.listen(port)
+	if err != nil {
+		return nil, nil, err
+	}
+	rtcp, err = r.listen(port + 1)
+	if err != nil {
+		rtp.conn.Close()
+		return nil, nil, err
+	}
+	return rtp, rtcp, nil
 }
 
 func (r *Relay) listen(port uint16) (*channel, error) {
@@ -628,6 +733,19 @@ func (p *portPool) take() (uint16, bool) {
 	port := p.free[0]
 	p.free = p.free[1:]
 	return port, true
+}
+
+// takePort takes one port of the range, for a termination that had it
+// before a restart, and tells whether the pool had it free.
+func (p *portPool) takePort(port uint16) bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	at := slices.Index(p.free, port)
+	if at < 0 {
+		return false
+	}
+	p.free = slices.Delete(p.free, at, at+1)
+	return true
 }
 
 func (p *portPool) give(port uint16) {
