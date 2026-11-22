@@ -16,6 +16,7 @@ import (
 	"github.com/fiorix/go-diameter/v4/diam"
 	"github.com/fiorix/go-diameter/v4/diam/dict"
 
+	"github.com/yuu-biz/ims-practice/internal/agw"
 	"github.com/yuu-biz/ims-practice/internal/config"
 	"github.com/yuu-biz/ims-practice/internal/cx"
 	"github.com/yuu-biz/ims-practice/internal/diameter"
@@ -25,6 +26,7 @@ import (
 	"github.com/yuu-biz/ims-practice/internal/interconnect"
 	"github.com/yuu-biz/ims-practice/internal/kvstore"
 	"github.com/yuu-biz/ims-practice/internal/policy"
+	"github.com/yuu-biz/ims-practice/internal/rtptest"
 	"github.com/yuu-biz/ims-practice/internal/rx"
 	"github.com/yuu-biz/ims-practice/internal/scscf"
 	"github.com/yuu-biz/ims-practice/internal/sip"
@@ -284,6 +286,81 @@ func TestIBCFStoreIsTheSharedStoreOfTheNode(t *testing.T) {
 				t.Errorf("the IBCF started: %v (error %v), want %v", started, err, tt.starts)
 			}
 		})
+	}
+}
+
+// TestMediaNodeStoreIsTheSharedStoreOfTheNode: with a store section of
+// kind valkey, a media relay reads the contexts of its earlier process
+// from that server when it starts, so a server that cannot be reached
+// keeps the node from starting. Without a store section the contexts
+// are in the process, and it starts.
+func TestMediaNodeStoreIsTheSharedStoreOfTheNode(t *testing.T) {
+	for _, tt := range []struct {
+		name   string
+		store  *config.Store
+		starts bool
+	}{
+		{"no store section", nil, true},
+		{"memory", &config.Store{Kind: config.StoreMemory, Timeout: time.Second}, true},
+		{"valkey that cannot be reached", unreachableStore(t), false},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			stores, closeStores := newRoleStores(tt.store)
+			defer closeStores()
+			store, err := agwStore(stores, "agw-1", config.RoleAGW, quiet())
+			if err != nil {
+				t.Fatal(err)
+			}
+			minPort, maxPort := rtptest.PortRange(t, 4)
+			relay := config.AGW{
+				Control:    netip.MustParseAddrPort("127.0.0.1:0"),
+				RTPAddress: netip.MustParseAddr("127.0.0.1"),
+				MinPort:    minPort, MaxPort: maxPort,
+			}
+			stop, err := startMediaNode(relay, nil, store, quiet(), func() {})
+			if err == nil {
+				stop()
+			}
+			if started := err == nil; started != tt.starts {
+				t.Errorf("the media node started: %v (error %v), want %v", started, err, tt.starts)
+			}
+		})
+	}
+}
+
+// TestTheMediaRolesOfANodeKeepTheirContextsApart: a node that has both
+// the agw and the mrfp role runs two relays, each with ports of its
+// own, so each keeps its contexts under a name of its own. A relay that
+// read the contexts of the other would open ports outside its range,
+// and give those contexts up.
+func TestTheMediaRolesOfANodeKeepTheirContextsApart(t *testing.T) {
+	ctx := context.Background()
+	stores := roleStores{kv: kvstore.NewMemoryStore(nil),
+		section: config.Store{Kind: config.StoreValkey, Prefix: "ims:", Timeout: time.Second}}
+	relay, err := agwStore(stores, "media-1", config.RoleAGW, quiet())
+	if err != nil {
+		t.Fatal(err)
+	}
+	processor, err := agwStore(stores, "media-1", config.RoleMRFP, quiet())
+	if err != nil {
+		t.Fatal(err)
+	}
+	call := agw.SavedContext{ID: "c1", Terminations: []agw.SavedTermination{
+		{ID: agw.Access, LocalRTP: 40000, Mode: agw.SendReceive},
+		{ID: agw.Core, LocalRTP: 40002, Mode: agw.SendReceive},
+	}}
+	if err := relay.PutContext(ctx, call); err != nil {
+		t.Fatal(err)
+	}
+	got, err := processor.Contexts(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 0 {
+		t.Errorf("the mrfp role of the node reads %+v, want none of the contexts of the agw role", got)
+	}
+	if stored, err := relay.Contexts(ctx); err != nil || len(stored) != 1 {
+		t.Errorf("the agw role reads %+v, %v; want the context it stored", stored, err)
 	}
 }
 
