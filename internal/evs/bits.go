@@ -1,7 +1,10 @@
 package evs
 
 // bitWriter packs fields from the most significant bit of each octet
-// on (TS 26.445 A.0).
+// on (TS 26.445 A.0). Package amr has one of the same shape for RFC
+// 4867; each codec keeps its own so that it reads apart from the other,
+// and the two catch a short payload differently: amr at every read,
+// evs by asking left() first.
 type bitWriter struct {
 	bytes []byte
 	n     int // bits written
