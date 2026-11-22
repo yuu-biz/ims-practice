@@ -42,6 +42,9 @@ type fakeHSS struct {
 	hss *hss.HSS
 	mu  sync.Mutex
 	sar []cx.ServerAssignmentType
+	// routing holds, per Cx request that arrived, the command and the
+	// Destination-Host it named.
+	routing []routedTo
 	// stalled, when set, holds the requests of stalledUser until it
 	// closes, or until the caller's context ends, as an HSS that does not
 	// answer does. The S-CSCF reads it from its own goroutines, after a
@@ -69,11 +72,15 @@ func (f *fakeHSS) Request(ctx context.Context, m *diam.Message) (*diam.Message, 
 	user := ""
 	if r, err := cx.ParseMultimediaAuthRequest(req); err == nil && req.Header.CommandCode == cx.CommandMultimediaAuth {
 		user = r.UserName
+		f.mu.Lock()
+		f.routing = append(f.routing, routedTo{"MAR", r.Header.DestinationHost})
+		f.mu.Unlock()
 	}
 	if r, err := cx.ParseServerAssignmentRequest(req); err == nil && req.Header.CommandCode == cx.CommandServerAssignment {
 		user = r.UserName
 		f.mu.Lock()
 		f.sar = append(f.sar, r.ServerAssignmentType)
+		f.routing = append(f.routing, routedTo{"SAR", r.Header.DestinationHost})
 		f.mu.Unlock()
 	}
 	f.mu.Lock()
@@ -96,6 +103,19 @@ func (f *fakeHSS) assignments() []cx.ServerAssignmentType {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return append([]cx.ServerAssignmentType(nil), f.sar...)
+}
+
+// routedTo is one Cx request as the HSS saw it: which command, and the
+// Destination-Host it named, "" for a request that named none.
+type routedTo struct {
+	command         string
+	destinationHost string
+}
+
+func (f *fakeHSS) requestRouting() []routedTo {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]routedTo(nil), f.routing...)
 }
 
 type harness struct {
@@ -234,6 +254,36 @@ func answer(t *testing.T, resp *sip.Message, pass, integrity string) (string, si
 // response, and no integrity-protected because the P-CSCF has no IP
 // association yet.
 var initial = `Digest username="` + impi + `", realm="` + domain + `", nonce="", uri="sip:` + domain + `", response=""`
+
+// The S-CSCF learns which HSS serves the user from the Origin-Host of
+// the MAA and names it in the Destination-Host of the requests that
+// follow, while the MAR of an initial registration names none and goes
+// to the realm (TS 29.229 5.5, TS 29.228 Table 6.3.1 and Table
+// 6.1.2.1). A farm of HSS instances therefore keeps a started
+// registration at the instance that answered first, and only the
+// requests without a Destination-Host can go to another instance.
+func TestTheSARNamesTheHSSThatAnsweredTheMAR(t *testing.T) {
+	h := newHarness(t, Config{})
+	callID := sip.NewCallID()
+
+	r := h.register(callID, 1, 600000, initial)
+	auth, _ := answer(t, r, password, "ip-assoc-pending")
+	if r := h.register(callID, 2, 600000, auth); r.StatusCode != 200 {
+		t.Fatalf("registration got %d, want 200", r.StatusCode)
+	}
+	dereg := `Digest username="` + impi + `", realm="` + domain + `", nonce="", uri="sip:` + domain + `", response="", integrity-protected="ip-assoc-yes"`
+	if r := h.register(callID, 3, 0, dereg); r.StatusCode != 200 {
+		t.Fatalf("deregistration got %d, want 200", r.StatusCode)
+	}
+	want := []routedTo{
+		{"MAR", ""},
+		{"SAR", "hss." + domain},
+		{"SAR", "hss." + domain},
+	}
+	if got := h.hss.requestRouting(); !slices.Equal(got, want) {
+		t.Errorf("the Cx requests went to %+v, want %+v", got, want)
+	}
+}
 
 func TestRegistrationWithSIPDigest(t *testing.T) {
 	h := newHarness(t, Config{})
