@@ -148,7 +148,7 @@ func (as *AS) warning(text string) sip.HeaderField {
 // for. On the outgoing leg the AS is the UAC, so when the callee leaves
 // the refreshes to the UAC, the AS refreshes that leg; on the incoming
 // leg the caller refreshes as it would without the AS. A refresh within
-// one leg ends at the AS (forward).
+// one leg ends at the AS (b2bua.Call).
 //
 // The services change the header fields in fields, which go into the
 // Invitation once they are done. The error is a failure of the Store,
@@ -421,37 +421,6 @@ func (c *call) withholdAnswer(out *sip.OutgoingCall, resp *sip.Message) bool {
 	return true
 }
 
-// keepsSession tells whether the caller keeps the session description
-// that it has, so that those of the other early dialogs of out do not
-// go to it. It keeps it while the dialog that sent it lasts. A 199 ends
-// that dialog (RFC 6228), and a diversion leaves all those of the leg
-// to the served user, while the early dialog of the caller goes on
-// without a 199 of its own (leaveServedUser). The next session
-// description then goes to the caller as it comes, when it answers the
-// offer of the INVITE: with preconditions the UAS that sent it alerts
-// only once the caller has confirmed its resources, which needs that
-// answer (RFC 3312). After an INVITE without an offer it is the offer
-// of its UAS, and the AS, which has the caller's answer to another one,
-// sends no further offer in its responses to the INVITE (RFC 3261
-// 13.2.1).
-func (c *call) keepsSession(out *sip.OutgoingCall) bool {
-	c.mu.Lock()
-	from := c.sessionFrom
-	c.mu.Unlock()
-	switch {
-	case from == "":
-		return false
-	case len(c.in.Request.Body) == 0:
-		return true
-	}
-	for _, d := range out.Dialogs() {
-		if dialog, ok := d.Dialog(); ok && dialog.ID.RemoteTag == from {
-			return dialog.State != sip.DialogTerminated
-		}
-	}
-	return false
-}
-
 // answerCall passes the 2xx of out on to the caller and has the Call
 // relay the call until it ends, with the record of the call in the
 // Store while it lasts: the Call writes it once the caller has
@@ -587,101 +556,6 @@ func (c *call) responseFields(resp, req *sip.Message, toCaller bool) *sip.Messag
 		c.servicesOnResponse(resp, req, fields)
 	}
 	return fields
-}
-
-// leg is what the two legs of a call have in common: both an
-// IncomingCall and an OutgoingCall are one.
-type leg interface {
-	Update(body sip.Body, headers ...sip.HeaderField) (*sip.Message, error)
-	ReInvite(body sip.Body, headers ...sip.HeaderField) (*sip.Message, error)
-	Send(method sip.Method, body sip.Body, headers ...sip.HeaderField) (*sip.Message, error)
-	Ack(body sip.Body, headers ...sip.HeaderField) error
-}
-
-// answerWithoutALeg answers a request of the caller when the call never
-// got a leg for it to go on in: the AS gave the caller an early dialog
-// of its own, to play it an announcement before it rejects the INVITE
-// (announce). A request left unanswered would stay at the caller until
-// its transaction times out. The dialog is there, so an UPDATE does not
-// get 481, which would end it with the announcement (RFC 3261 12.2.1.2):
-// the AS keeps the session of the announcement, and refuses a new offer
-// with 488, in an UPDATE or in the PRACK of its reliable 183 (RFC 3262
-// 5), while an UPDATE without one changes nothing and gets 200.
-// Any other request gets 481, as there is no dialog to take it on.
-func (c *call) answerWithoutALeg(r *sip.InDialogRequest) {
-	switch {
-	case r.Offer:
-		r.Reject(488)
-	case r.Request.Method == sip.UPDATE:
-		r.Accept(sip.Body{})
-	default:
-		r.Reject(481)
-	}
-}
-
-// forward passes r on to the other leg, and the final response back
-// (TS 24.229 5.7.5.1). The re-INVITE of a HOLD goes this way too, as it
-// came: lowering the bandwidth of the held media and an announcement to
-// the held user are network options of TS 24.610 4.5.2.4.2 and
-// 4.5.2.4.3 that this AS does not take, and GSMA IR.92 2.3.10 asks for
-// neither.
-func (c *call) forward(r *sip.InDialogRequest, to leg) {
-	req := r.Request
-	body := sip.BodyOf(req)
-	fields := c.requestFields(req).Headers
-	var resp *sip.Message
-	var err error
-	switch req.Method {
-	case sip.UPDATE:
-		if len(body.Content) == 0 {
-			// RFC 4028 9: an UPDATE without a body refreshes the session
-			// of its own dialog. Each leg has its own session timer, so
-			// the AS answers it.
-			r.Accept(sip.Body{})
-			return
-		}
-		resp, err = to.Update(body, fields...)
-	case sip.INVITE:
-		resp, err = to.ReInvite(body, fields...)
-	case sip.PRACK:
-		// A PRACK with a new offer, after the callee's response had the
-		// answer (RFC 3262 5). The AS has acknowledged that response on
-		// the other leg already, so the offer goes on in an UPDATE
-		// (RFC 3311 5.1).
-		resp, err = to.Update(body, fields...)
-	default:
-		resp, err = to.Send(req.Method, body, fields...)
-	}
-	c.answerRequest(r, resp, err, to)
-}
-
-// answerRequest answers r, a request within a dialog that the AS sent
-// on to the other leg, with what that leg answered.
-func (c *call) answerRequest(r *sip.InDialogRequest, resp *sip.Message, err error, to leg) {
-	toCaller := to != leg(c.in)
-	switch {
-	case errors.Is(err, sip.ErrInviteInProgress), errors.Is(err, sip.ErrOfferPending):
-		// RFC 3261 14.2, RFC 3311 5.2: the request crossed one of the
-		// other side.
-		r.Reject(491)
-	case errors.Is(err, sip.ErrCallEnded):
-		r.Reject(481)
-	case err != nil:
-		c.log.Info("request within the dialog not relayed", "method", string(r.Request.Method), "error", err.Error())
-		r.Reject(500)
-	case resp.StatusCode < 300:
-		if toCaller {
-			c.keepCalleeSDP(toTag(resp), sip.BodyOf(resp))
-		}
-		ack, err := r.Accept(sip.BodyOf(resp), c.responseFields(resp, r.Request, toCaller).Headers...)
-		if err == nil && r.Request.Method == sip.INVITE && !r.Offer {
-			// A re-INVITE without an offer: the 2xx had the other side's
-			// offer, and this side's ACK has the answer (RFC 3261 14.1).
-			to.Ack(sip.BodyOf(ack))
-		}
-	default:
-		r.Reject(resp.StatusCode, c.responseFields(resp, r.Request, toCaller).Headers...)
-	}
 }
 
 // requestFields are the header fields of req, a request of one leg,

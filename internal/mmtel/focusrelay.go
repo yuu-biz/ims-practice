@@ -10,7 +10,8 @@ import (
 // one of its legs belongs to (TS 24.229 5.7.5.1): it names the dialog
 // on its other side in a Replaces, and it passes on the Contact of a
 // conference focus. The requests of a conference within a dialog, such
-// as REFER, SUBSCRIBE and NOTIFY, go on like any other (forward).
+// as REFER, SUBSCRIBE and NOTIFY, go on like any other, which the
+// Call of the two legs does (b2bua.Call).
 
 // isfocus is the feature parameter of the Contact of a conference focus
 // (RFC 3840 9, TS 24.147 5.3.2.3.1).
