@@ -121,7 +121,7 @@ func New(c Config) (*Node, error) {
 	}
 	n.alarms = newAlarmList(maxAlarms, retention, n.start, log)
 	for _, f := range c.Functions {
-		if !isName(f.Role) {
+		if !IsName(f.Role) {
 			return nil, fmt.Errorf("maintenance: role %q is not a name of lowercase letters, digits and hyphens", f.Role)
 		}
 		if _, dup := n.roles[f.Role]; dup {
@@ -149,9 +149,9 @@ func New(c Config) (*Node, error) {
 	return n, nil
 }
 
-// isName says whether s is a name of lowercase letters, digits and
+// IsName says whether s is a name of lowercase letters, digits and
 // hyphens, as the roles of the configuration file are.
-func isName(s string) bool {
+func IsName(s string) bool {
 	if s == "" {
 		return false
 	}
