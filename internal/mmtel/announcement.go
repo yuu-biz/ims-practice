@@ -19,6 +19,7 @@ const maxAnnouncement = time.Minute
 // allows this before its 603 or 433 (TS 24.611 4.5.2.4.1, 4.5.2.6.1,
 // 4.5.2.6.2).
 func (c *call) reject(code int, headers ...sip.HeaderField) {
+	c.noLeg()
 	if c.announce() {
 		headers = append(headers, sip.NewReason(sip.ReasonSIP, code, sip.ReasonPhrase(code)).Header())
 	}

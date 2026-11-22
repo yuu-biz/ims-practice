@@ -462,6 +462,55 @@ func TestCancelThroughTheAS(t *testing.T) {
 	}
 }
 
+// TestRequestWithoutALeg: the AS gave the caller an early dialog of its
+// own to play it an announcement, and sends no INVITE toward the callee.
+// A request of the caller within that dialog has no leg to go on in, and
+// gets an answer of the AS instead of waiting at the caller for its
+// transaction to time out: a PRACK or an UPDATE with an offer 488, since
+// the AS keeps the session of the announcement, an UPDATE without one
+// 200, and any other request 481 (Call/Transaction Does Not Exist).
+func TestRequestWithoutALeg(t *testing.T) {
+	var log events
+	uris := make(chan string, 1)
+	byed := make(chan struct{})
+	mrfc := fakeMRFC(t, &log, uris, byed)
+	hss := &documents{docs: map[string]string{"sip:alice@" + domain: mmtelServices(barring(rule("baic", "", false), ""))}}
+	as := startAS(t, hss, mmtel.Config{MRFC: "sip:" + contactOf(t, mrfc), Announcement: "notice"})
+	callee := newUA(t, "bob", func(c *sip.IncomingCall) { c.Reject(486) })
+	caller := newUA(t, "alice", func(c *sip.IncomingCall) { c.Reject(480) })
+	inv := viaAS(t, as, callee, "term", pcmuOffer(t, netip.MustParseAddrPort("192.0.2.1:4000"), pcmuOnly))
+	inv.ManualPRACK = true
+	out, err := caller.Invite(inv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	announcement := receive(t, out.Responses(), "183 of the announcement")
+	if announcement.StatusCode != 183 || !announcement.Requires(sip.Option100rel) {
+		t.Fatalf("the caller got %d (Require %q), want the reliable 183 that carries the announcement", announcement.StatusCode, announcement.Get("Require"))
+	}
+	// RFC 3262 5: after the answer in the 183, the PRACK may carry a new
+	// offer.
+	resp, err := out.PRACK(announcement, pcmuOffer(t, netip.MustParseAddrPort("192.0.2.1:4002"), pcmuOnly))
+	if err != nil || resp.StatusCode != 488 {
+		t.Errorf("the PRACK with an offer got %v, %v; want 488", resp, err)
+	}
+	resp, err = out.Update(pcmuOffer(t, netip.MustParseAddrPort("192.0.2.1:4002"), pcmuOnly))
+	if err != nil || resp.StatusCode != 488 {
+		t.Errorf("the UPDATE with an offer got %v, %v; want 488", resp, err)
+	}
+	resp, err = out.Update(sip.Body{})
+	if err != nil || resp.StatusCode != 200 {
+		t.Errorf("the UPDATE without an offer got %v, %v; want 200", resp, err)
+	}
+	resp, err = out.Send("INFO", sip.Body{})
+	if err != nil || resp.StatusCode != 481 {
+		t.Errorf("the INFO got %v, %v; want 481, since the call has no leg to send it on", resp, err)
+	}
+	// The announcement waits for the end of the dialog with the MRFC,
+	// which the fake MRFC leaves to the caller's CANCEL.
+	out.Cancel()
+}
+
 // TestCallerEndsItsEarlyDialogBeforeTheAnswer: a caller may end an
 // early dialog with a BYE instead of cancelling its INVITE (RFC 3261
 // 15), and its UA answers the INVITE with 487 itself (15.1.2). The AS

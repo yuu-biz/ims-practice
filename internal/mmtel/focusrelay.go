@@ -64,6 +64,7 @@ func (c *call) replacesOnTheOtherSide(fields *sip.Message) error {
 // storeFailed answers the INVITE with 500 (RFC 3261 21.5.1) when the
 // Store failed as the AS read the call that its Replaces names.
 func (c *call) storeFailed(err error) {
+	c.noLeg()
 	c.log.Warn("call store failed", "error", err.Error())
 	c.in.Reject(500, c.as.warning("Call records unavailable"))
 }

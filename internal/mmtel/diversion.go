@@ -90,6 +90,7 @@ func (c *call) divert(d diversion) {
 			code = 486
 		}
 		c.log.Info("CDIV: too many diversions", "service", d.service, "diversions", n, "limit", limit)
+		c.noLeg()
 		c.in.Reject(code, c.as.warning("Too many diversions appeared"))
 		return
 	}
