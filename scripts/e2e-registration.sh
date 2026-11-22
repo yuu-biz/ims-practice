@@ -67,6 +67,9 @@ Content-Type: text/plain\r
 Content-Length: 5\r
 \r
 hello"
+# nc may end with an error when nothing comes back within its 2 s, which
+# is the outcome wanted here, hence "|| true"; the check reads what it
+# printed.
 reply="$(docker compose run --no-deps --rm -T --entrypoint sh ue -c \
 	'for i in 1 2; do printf "$1" | nc -u -p 5060 -w 2 172.28.0.40 5060; done' sh "$unregistered_message" || true)"
 if [ -z "$reply" ]; then
@@ -88,17 +91,7 @@ docker compose run --no-deps -d --name ims-practice-ue3-rtr ue3 register "${ue3[
 # The UE needs its own reg event subscription before the removal, or the
 # NOTIFY that rejects its registration would have nowhere to go. The UE
 # logs "reg event" once the first NOTIFY of that subscription is in.
-subscribed=
-for i in $(seq 1 30); do
-	grep -q '"msg":"reg event"' <<<"$(docker logs ims-practice-ue3-rtr 2>/dev/null)" && {
-		subscribed=yes
-		break
-	}
-	sleep 1
-done
-if [ -z "$subscribed" ]; then
-	echo "FAIL UE 3 did not register and subscribe to its registration state within 30 s"
-	docker logs ims-practice-ue3-rtr 2>&1 | tail -n 5
+if ! wait_log ims-practice-ue3-rtr '"msg":"reg event"'; then
 	fail=1
 else
 	# The HSS answers the DELETE only once the RTR is over, so there is
@@ -139,7 +132,6 @@ if host_ue; then
 fi
 
 same_nodes
-sleep 1
 
 pcap="$(docker compose exec -T capture sh -c 'ls -t /captures/ims-*.pcap | head -n 1' | tr -d '\r')"
 echo "reading $pcap"
@@ -164,6 +156,15 @@ mar='diameter.cmd.code == 303'
 rtr='diameter.cmd.code == 304'
 req='diameter.flags.request == 1'
 ans='diameter.flags.request == 0'
+
+# The checks read the capture up to the RTA and the NOTIFY that ends UE
+# 3's registration, and, when a UE ran on the host, up to its answer to
+# the NOTIFY of its registration.
+await "the RTA of the S-CSCF" "$rtr && $ans"
+await "the NOTIFY that rejects UE 3's contact" "sip.Method == \"NOTIFY\" && ip.src == $pcscf && ip.dst == $ue3ip && sip.msg_body contains \"event=\\\"rejected\\\"\""
+if [ -n "$host_registered" ]; then
+	await "the host's 200 OK to a NOTIFY" "sip.Status-Code == 200 && sip.CSeq.method == \"NOTIFY\" && ip.src == $gateway"
+fi
 
 echo "first REGISTER, answered with a challenge"
 expect "REGISTER UE -> P-CSCF" "$register && ip.src == $ue && ip.dst == $pcscf"
@@ -291,7 +292,7 @@ if [ -n "$host_registered" ]; then
 fi
 
 echo "request without an IP association"
-some_from_ue="$(tshark_fields "sip.Call-ID == \"$unregistered_call_id\" && ip.src == $ue && ip.dst == $pcscf" | grep -c . || true)"
+some_from_ue="$(count "sip.Call-ID == \"$unregistered_call_id\" && ip.src == $ue && ip.dst == $pcscf")"
 if [ "$some_from_ue" -ge 2 ]; then
 	echo "ok   the MESSAGE and its retransmission reached the P-CSCF ($some_from_ue frames)"
 else
