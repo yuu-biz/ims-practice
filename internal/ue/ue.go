@@ -22,8 +22,13 @@ import (
 type Config struct {
 	PrivateIdentity string
 	PublicIdentity  string
-	Password        string
-	HomeDomain      string
+	// TemporaryPublicIdentity reports that PublicIdentity is the
+	// temporary public identity that a UE without an ISIM derives from
+	// the IMSI (TS 23.003 13.4B). The network bars it: it serves REGISTER
+	// only (TS 24.229 5.1.1.1A), so the UE shows it to nobody.
+	TemporaryPublicIdentity bool
+	Password                string
+	HomeDomain              string
 	// PCSCF is where every request goes, the address that P-CSCF
 	// discovery gives (TS 24.229 5.1.1.1): with an access network the
 	// first one of the PCO (L.2.2.1).
