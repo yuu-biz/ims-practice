@@ -402,11 +402,12 @@ docker compose --profile phones up -d --build
 
 ## Summing up
 
-These four sessions cover the core of the IMS: registration, calls and short messages.
+These five sessions cover the core of the IMS: registration, calls and short messages.
 
 | Session | Subject | What to read |
 | --- | --- | --- |
 | 1 | Package layout | [README.md](../../../README.md) |
+| 2 | The map of the network | [docs/guide/en/README.md](../../../docs/guide/en/README.md) |
 | 3 | Registration | [docs/guide/en/registration.md](../../../docs/guide/en/registration.md) |
 | 4 | Call | [docs/guide/en/call.md](../../../docs/guide/en/call.md) |
 | 5 | SMS | [docs/guide/en/sms.md](../../../docs/guide/en/sms.md) |

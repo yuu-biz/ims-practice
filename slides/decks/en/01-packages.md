@@ -229,7 +229,7 @@ grep -rn "SIMPLIFIED:" internal cmd
 - The shapes of the messages are in `internal/cx/messages.go`.
 - In pairs: find what the last column names, then read the clause number in the comment next to it.
 
-> The next session reads the same flow in a capture. Its guide is [Follow a UE registering with the IMS](../../../docs/guide/en/registration.md).
+> The session on registration reads the same flow in a capture. Its guide is [Follow a UE registering with the IMS](../../../docs/guide/en/registration.md).
 
 ---
 
@@ -270,8 +270,8 @@ MSYS_NO_PATHCONV=1 docker run --rm -v "$PWD:/src" -v ims-practice-gomod:/go/pkg/
 
 ## Next session, and where to read more
 
-- Next is registration: start the system, run one REGISTER, and read the capture.
-- Before then, try [Capture signaling and open it in Wireshark](../../../docs/guide/en/capture.md) once.
+- Next is the map of the network: the nodes, the interfaces between them, and which session opens each part.
+- Before the session on registration, try [Capture signaling and open it in Wireshark](../../../docs/guide/en/capture.md) once.
 
 | Document | Place |
 | --- | --- |

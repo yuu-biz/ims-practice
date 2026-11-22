@@ -229,7 +229,7 @@ grep -rn "SIMPLIFIED:" internal cmd
 - メッセージの形は `internal/cx/messages.go` にあります。
 - 2 人 1 組で、表の「探すもの」を見つけます。見つけたら、その近くのコメントにある条項番号を読み上げます。
 
-> 次の回で、同じ流れをキャプチャで読みます。手順書は [UE が IMS に登録する流れを追う](../../../docs/guide/ja/registration.md) です。
+> 登録の回で、同じ流れをキャプチャで読みます。手順書は [UE が IMS に登録する流れを追う](../../../docs/guide/ja/registration.md) です。
 
 ---
 
@@ -270,8 +270,8 @@ MSYS_NO_PATHCONV=1 docker run --rm -v "$PWD:/src" -v ims-practice-gomod:/go/pkg/
 
 ## 次の回と参照
 
-- 次の回は登録です。構成を起動し、REGISTER を 1 回実行して、キャプチャを読みます。
-- 次の回までに、[信号をキャプチャして Wireshark で開く](../../../docs/guide/ja/capture.md) の手順を一度試しておいてください。
+- 次の回は網の地図です。ノードと、その間のインタフェースと、地図のどこをどの回が開くかを見ます。
+- 登録の回までに、[信号をキャプチャして Wireshark で開く](../../../docs/guide/ja/capture.md) の手順を一度試しておいてください。
 
 | 文書 | 場所 |
 | --- | --- |

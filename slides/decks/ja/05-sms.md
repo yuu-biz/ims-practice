@@ -402,11 +402,12 @@ docker compose --profile phones up -d --build
 
 ## まとめ
 
-IMS の中心となる登録、通話、ショートメッセージの 4 回は、これで終わりです。
+IMS の中心となる登録、通話、ショートメッセージの 5 回は、これで終わりです。
 
 | 回 | 題 | 読む文書 |
 | --- | --- | --- |
 | 1 | パッケージ構成 | [README.ja.md](../../../README.ja.md) |
+| 2 | 網の地図 | [docs/guide/ja/README.md](../../../docs/guide/ja/README.md) |
 | 3 | 登録 | [docs/guide/ja/registration.md](../../../docs/guide/ja/registration.md) |
 | 4 | 通話 | [docs/guide/ja/call.md](../../../docs/guide/ja/call.md) |
 | 5 | SMS | [docs/guide/ja/sms.md](../../../docs/guide/ja/sms.md) |

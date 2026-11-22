@@ -10,13 +10,14 @@ The decks do not repeat the guides. Each slide says what to look at in the captu
 | --- | --- | --- | --- |
 | 0. Go for reading this repository | [decks/ja/00-go.md](decks/ja/00-go.md) | [decks/en/00-go.md](decks/en/00-go.md) | [A Tour of Go](https://go.dev/tour/) |
 | 1. Package layout | [decks/ja/01-packages.md](decks/ja/01-packages.md) | [decks/en/01-packages.md](decks/en/01-packages.md) | [README](../README.md) |
+| 2. The map of the network | [decks/ja/02-network.md](decks/ja/02-network.md) | [decks/en/02-network.md](decks/en/02-network.md) | [Guides](../docs/guide/en/README.md) |
 | 3. Registration | [decks/ja/03-registration.md](decks/ja/03-registration.md) | [decks/en/03-registration.md](decks/en/03-registration.md) | [registration](../docs/guide/en/registration.md) |
 | 4. Voice call | [decks/ja/04-call.md](decks/ja/04-call.md) | [decks/en/04-call.md](decks/en/04-call.md) | [call](../docs/guide/en/call.md) |
 | 5. SMS over IP | [decks/ja/05-sms.md](decks/ja/05-sms.md) | [decks/en/05-sms.md](decks/en/05-sms.md) | [sms](../docs/guide/en/sms.md) |
 | 6. Supplementary services (MMTel AS) | [decks/ja/06-mmtel.md](decks/ja/06-mmtel.md) | [decks/en/06-mmtel.md](decks/en/06-mmtel.md) | [mmtel](../docs/guide/en/mmtel.md) |
 | 7. VoLTE (access network, IMS AKA, Rx, preconditions) | [decks/ja/07-volte.md](decks/ja/07-volte.md) | [decks/en/07-volte.md](decks/en/07-volte.md) | [volte](../docs/guide/en/volte.md) |
 
-Decks 1 to 7 go from the map of the code through registration, the call and SMS to the supplementary services and the VoLTE call. The numbers are the recommended order: the VoLTE deck comes after the supplementary services, because the VoLTE guide builds on the MMTel AS, and every VoLTE call goes through it. Deck 0 comes before them: it explains the Go that a reader of this repository meets, with excerpts of the code, for those who have not read Go before.
+Decks 1 to 7 go from the map of the code and the map of the network through registration, the call and SMS to the supplementary services and the VoLTE call. The numbers are the recommended order: the map of the network comes before registration, because every deck from there on reads a part of that map in a capture; the VoLTE deck comes after the supplementary services, because the VoLTE guide builds on the MMTel AS, and every VoLTE call goes through it. Deck 0 comes before them: it explains the Go that a reader of this repository meets, with excerpts of the code, for those who have not read Go before.
 
 ## Running a session
 
@@ -30,6 +31,7 @@ Each deck is one session, held in the order of the numbers. The decks carry no s
 | --- | --- | --- |
 | 0. Go | 60 min | 25 for "Why Go" (3), running the tests and the shape of the code (10), then 35 for what you meet on every page (20) and a spec-shaped package (10). The exercises take 15 more, in pairs. For those who program in another language but have not read Go; those who read Go start with deck 1. |
 | 1. Package layout | 45 min | No signaling: the map of what is where. 3 for the top of the repository, 5 for "internal/ in layers", 10 for following one REGISTER through the code in pairs. |
+| 2. The map of the network | 45 min | No signaling either: the nodes, the interfaces between them, and the protocol on each. 10 for the nodes, 15 for the reference points, 10 for which session opens which part of the map. It comes before registration, because every session from there on reads a part of the map in a capture. |
 | 3. Registration | 60 min | 35 for the way to the 200 OK, then 5 for a break or questions at "The UE is registered", and the rest for the subscriptions, the deregistration and the failures. The capture of the CI artifact `registration-capture` can stand in for running it. |
 | 4. Call | 60 min | 30 until the INVITE reaches UE 2 (about the slide "6 and 7"), 20 from the answer to the hang-up, the rest for the failures and "Looking back". Whoever dislikes two terminals can drive the UEs from the Lab. |
 | 5. SMS | 75 min | May be held as two sessions; then the first ends after "13 to 15. The status report", at about 45 minutes, and the second starts with "Read the body". Reading the body by hand is a 10-minute exercise. The table of the six MESSAGEs, printed, keeps everyone on track in the capture. The CI artifact `sms-capture` holds the capture and the list of its frames. Registration and the call come first: Path, Service-Route and the LIR are not explained again. |
