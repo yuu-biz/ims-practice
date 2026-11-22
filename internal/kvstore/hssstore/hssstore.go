@@ -136,9 +136,9 @@ func (s *Store) SubscriberOf(ctx context.Context, publicID string) (hss.Subscrib
 // Add claims the private identity with a provisional record, then each
 // public identity with an index item that only one subscription can
 // hold, then enters the private identity in the sorted index, and at
-// last makes the record final. Every claim is a compare and swap, so of two Adds
-// that share an identity, one fails with ErrIdentityTaken, on whichever
-// instances they run.
+// last makes the record final. Every claim is a compare and swap, so of
+// two Adds that share an identity, one fails with ErrIdentityTaken, on
+// whichever instances they run.
 //
 // An index item that names a subscriber that does not hold the identity
 // (one that is gone, or whose Add stopped) is taken over. One that
