@@ -91,13 +91,13 @@ DPR と DPA を見るには、ノードを 1 つ止めます。
 docker compose stop scscf
 ```
 
-S-CSCF が Disconnect-Cause REBOOTING を付けた DPR を送り、HSS が DPA で応えます。`docker compose start scscf` でノードを起動し直すと、新しい CER と CEA が続きます。
+S-CSCF が Disconnect-Cause `REBOOTING` を付けた DPR を送り、HSS が DPA で応えます。`docker compose start scscf` でノードを起動し直すと、新しい CER と CEA が続きます。
 
 これらのメッセージは RFC 6733（Diameter の基本プロトコル）で規定されています。ウォッチドッグは RFC 3539 に従っています。
 
 ## SMS over IP の表示フィルタ
 
-SMS は SIP の MESSAGE の本文に入れて運びます。本文のメディアタイプは `application/vnd.3gpp.sms` です。Wireshark はこの本文を設定なしでデコードします。RP 層（TS 24.011）は GSM A-I/F RP のディセクタが、その中の TPDU（TS 23.040）とテキストは GSM SMS のディセクタが表示します。
+SMS は SIP の MESSAGE の本文に入れて運びます。本文のメディアタイプは `application/vnd.3gpp.sms` です。Wireshark はこの本文を設定なしでデコードします。RP 層（TS 24.011）は `GSM A-I/F RP` のディセクタが、その中の TPDU（TS 23.040）とテキストは `GSM SMS` のディセクタが表示します。
 
 | フィルタ | 表示されるもの |
 | --- | --- |
@@ -119,7 +119,7 @@ SMS は SIP の MESSAGE の本文に入れて運びます。本文のメディ�
 
 - コピーもポート 9060 宛ての UDP パケットとしてキャプチャのファイルに入ります。Wireshark には HEP を解読する機能が標準では無いため、解読するには [sipcapture/hep-wireshark](https://github.com/sipcapture/hep-wireshark) の Lua プラグインを入れます。SIP と Diameter のメッセージ自体はこれまでどおり解読されます。コピーを表示から外すには、フィルタ `not udp.port == 9060` を使います。
 - SIP のコピーには、通信路を流れたとおりのメッセージが入ります。
-- Diameter のコピーには、メッセージを JSON にしたものが入り、プロトコルの種類は 0x38「DIAMETER (JSON)」です。HEP3 rev. 37 には、Diameter のメッセージをバイナリのまま運ぶ種類が定義されていないためです。
+- Diameter のコピーには、メッセージを JSON にしたものが入り、プロトコルの種類は 0x38 の `DIAMETER (JSON)`です。HEP3 rev. 37 には、Diameter のメッセージをバイナリのまま運ぶ種類が定義されていないためです。
 
 HEP の符号化では仕様の次の部分を省いています。
 

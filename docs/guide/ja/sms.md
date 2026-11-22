@@ -181,7 +181,7 @@ IP-SM-GW が Timer F（32 秒）のあいだに MESSAGE に応答しないか、
 sip.CSeq.method in {"MESSAGE", "REGISTER"} || (sip && ip.addr == 172.28.0.70) || diameter.cmd.code in {302, 306, 307}
 ```
 
-REGISTER（第三者 REGISTER を含む）、MESSAGE とその応答、IP-SM-GW の SUBSCRIBE と NOTIFY、LIR、UDR、PUR とその応答が表示されます。MESSAGE のボディは Wireshark が自分でデコードします。Info の列の最後に `(RP) RP-DATA (MS to Network)` のような RP のメッセージが表示され、パケットの詳細には「GSM A-I/F RP」の木と、その中の「GSM SMS TPDU」の木があります。**Statistics > Flow Graph** で **Limit to display filter** を選ぶと、ラダー図を描けます。
+REGISTER（第三者 REGISTER を含む）、MESSAGE とその応答、IP-SM-GW の SUBSCRIBE と NOTIFY、LIR、UDR、PUR とその応答が表示されます。MESSAGE のボディは Wireshark が自分でデコードします。Info の列の最後に `(RP) RP-DATA (MS to Network)` のような RP のメッセージが表示され、パケットの詳細には`GSM A-I/F RP` の木と、その中の `GSM SMS TPDU` の木があります。**Statistics > Flow Graph** で **Limit to display filter** を選ぶと、ラダー図を描けます。
 
 ## IP-SM-GW が利用者の登録を知る
 

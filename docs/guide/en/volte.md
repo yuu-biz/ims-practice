@@ -80,7 +80,7 @@ The ATTACH ACCEPT carries the default bearer of the IMS APN in its ESM message c
 
 - EPS bearer 5 is the default bearer, with QCI 5, the class of IMS signalling (IR.92 4.4.1, TS 23.203 6.1.7).
 - The PDN address is the subscriber's static address. The UE checks that it is the address it reaches the P-CSCF from, and stops if not.
-- The protocol configuration options (PCO) carry the P-CSCF address in a container with the identifier 000CH (TS 24.008 10.5.6.3). This is method II of TS 24.229 L.2.2.1, which IR.92 4.5 asks for. The first address of the list is the preferred one. The PCO gives an address only, so the UE sends to port 5060 of it.
+- The protocol configuration options (PCO) carry the P-CSCF address in a container with the identifier `000CH` (TS 24.008 10.5.6.3). This is method II of TS 24.229 L.2.2.1, which IR.92 4.5 asks for. The first address of the list is the preferred one. The PCO gives an address only, so the UE sends to port 5060 of it.
 
 The UE also writes the cell into P-Access-Network-Info, `3GPP-E-UTRAN-FDD;utran-cell-id-3gpp=0010100010000101`: MCC 001, MNC 01, the TAC in 4 hexadecimal digits and the ECI in 7 (TS 24.229 7.2A.4.3, L.3.1.1).
 
@@ -245,10 +245,10 @@ The P-CSCF of each side sends an AAR when it has the SDP answer of the call (TS 
 | `AF-Application-Identifier` | `urn:urn-7:3gpp-service.ims.icsi.mmtel` | The service, from P-Asserted-Service, which the S-CSCF sets. Only the callee's P-CSCF sends it (see "What this project simplifies"). |
 | `Media-Component-Description` | number 1 | The first m= line (TS 29.213 6.2 Table 6.2.1). |
 | `Media-Sub-Component` | flows 1 and 2 | RTP and RTCP, each with two `Flow-Description` rules: `permit in 17 from 172.28.0.121 to 172.28.0.50 40004` and `permit out 17 from 172.28.0.50 to 172.28.0.121 60734`. The other end of the media is the relay. |
-| `Media-Type` | AUDIO | |
+| `Media-Type` | `AUDIO` | |
 | `Max-Requested-Bandwidth-UL` and `-DL` | 80000 and 41000 | From the b=AS lines of the offer and the answer, in bit/s. |
 | `RR-Bandwidth`, `RS-Bandwidth` | 4000, 0 | From b=RR and b=RS. |
-| `Flow-Status` | ENABLED (2) | From the direction attributes: sendrecv. |
+| `Flow-Status` | `ENABLED` (2) | From the direction attributes: sendrecv. |
 | `Codec-Data` | `uplink offer m=audio ...` and `downlink answer m=audio ...` | The m= lines and attributes of the offer and the answer. |
 | `Specific-Action` | 2, 4, 9 | Report the loss and the release of the bearer, and a failed allocation. |
 | `Service-Info-Status` | FINAL_SERVICE_INFORMATION | Based on the answer, not on the offer only. |
@@ -469,7 +469,7 @@ It shows the registrations, the calls, Rx, the MARs and the EPC stub's API. Wire
 | `sip.WWW-Authenticate contains "AKAv1-MD5"` | The challenges of IMS AKA. `contains "ck="` finds those that the S-CSCF sends to the P-CSCF. |
 | `udp.port == 5064 \|\| tcp.port == 5064` | What goes over the P-CSCF's protected server port. |
 | `diameter.3GPP-SIP-Authentication-Scheme == "Digest-AKAv1-MD5"` | The MARs and MAAs of IMS AKA. |
-| `diameter.cmd.code in {265, 258, 274, 275}` | Rx: AA, RA, AS and ST. |
+| `diameter.cmd.code in {265, 258, 274, 275}` | Rx: AAR and AAA, RAR and RAA, ASR and ASA, STR and STA. |
 | `diameter.Flow-Usage == 2` | The AARs of the signalling path. |
 | `diameter.Codec-Data` | The AARs of a call's media. |
 | `diameter.Experimental-Result-Code == 5065` | IP-CAN_SESSION_NOT_AVAILABLE: a UE that did not attach. |
@@ -533,7 +533,7 @@ Each item has a `SIMPLIFIED:` comment in the code; `grep -rn "SIMPLIFIED:" inter
 | S-CSCF, TS 33.203 6.1.1, TS 24.229 5.4.1.2.1A | AKAv1-MD5 only, no AKAv2-SHA-256. | SIPp speaks AKAv1-MD5 only. |
 | AKA, TS 33.102 C.2.2, C.3.4 | No limit L on how old an accepted SQN may be, and IND is not kept per domain. | Profile 2 suggests no L; IMS is one domain with one vector per MAR. |
 | UE, TS 24.301, TS 36.331 | The UE's packets go straight onto the Docker network. | No radio and no tunnel. |
-| UE, TS 24.229 7.2A.4.3 | The access type is always 3GPP-E-UTRAN-FDD. | The stub says nothing of the duplex mode of its cell. |
+| UE, TS 24.229 7.2A.4.3 | The access type is always `3GPP-E-UTRAN-FDD`. | The stub says nothing of the duplex mode of its cell. |
 | UE, TS 24.229 L.2.2.5.1B | The voice bearer counts as the resources of every call, without matching its TFT. | IR.92 4.4.2 has one voice bearer for all calls. |
 | UE, TS 24.301 5.5.2.3.4, IR.92 2.4.2.1 | After the network detaches it with "re-attach not required" and no EMM cause, the UE should attach again once T3402 expires, 12 minutes by default (TS 24.301 5.2.2.3.3), and register anew. After the event stream of the access network ends, it should set its PDN connection up again. The UE simulator stops with an error instead, and sends no deregistration, which could no longer reach the IMS. | One run of the simulator holds one attach: its SIP transport, its contact and the media resources of its calls are set up once, for the PDN address of that attach. |
 | UE, TS 24.229 6.1.1 | A bearer lost before the answer only changes the precondition table; the network ends the call. | The P-CSCF releases it (5.2.8.1.1). |

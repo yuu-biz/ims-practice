@@ -91,13 +91,13 @@ To see a DPR and a DPA, stop one node:
 docker compose stop scscf
 ```
 
-The S-CSCF sends a DPR with Disconnect-Cause REBOOTING, and the HSS answers with a DPA. Start the node again with `docker compose start scscf`, and a new CER and CEA follow.
+The S-CSCF sends a DPR with Disconnect-Cause `REBOOTING`, and the HSS answers with a DPA. Start the node again with `docker compose start scscf`, and a new CER and CEA follow.
 
 The specification for these messages is RFC 6733 (Diameter base protocol). The watchdog follows RFC 3539.
 
 ## Display filters for SMS over IP
 
-A short message travels in the body of a SIP MESSAGE, with the media type `application/vnd.3gpp.sms`. Wireshark decodes that body without any setting: the GSM A-I/F RP dissector shows the RP layer (TS 24.011), and the GSM SMS dissector the TPDU inside it (TS 23.040), with the text.
+A short message travels in the body of a SIP MESSAGE, with the media type `application/vnd.3gpp.sms`. Wireshark decodes that body without any setting: the `GSM A-I/F RP` dissector shows the RP layer (TS 24.011), and the `GSM SMS` dissector the TPDU inside it (TS 23.040), with the text.
 
 | Filter | What it shows |
 | --- | --- |
@@ -119,7 +119,7 @@ The Lab is not on the path of any call, so a node starts even when the collector
 
 - The copies are in the capture file too, as UDP packets to port 9060. Wireshark has no built-in HEP dissector. To decode them, install the Lua plugin from [sipcapture/hep-wireshark](https://github.com/sipcapture/hep-wireshark). The SIP and Diameter messages themselves are decoded as before, so you can ignore the copies with the filter `not udp.port == 9060`.
 - A SIP copy carries the message exactly as it was on the wire.
-- A Diameter copy carries the message as JSON, with protocol type 0x38 "DIAMETER (JSON)". HEP3 rev. 37 defines no protocol type for a Diameter message in its binary form.
+- A Diameter copy carries the message as JSON, with protocol type 0x38 `DIAMETER (JSON)`. HEP3 rev. 37 defines no protocol type for a Diameter message in its binary form.
 
 The HEP encoding leaves out two parts of the specification:
 

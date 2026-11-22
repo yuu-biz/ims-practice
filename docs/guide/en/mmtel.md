@@ -418,7 +418,7 @@ Each item has a `SIMPLIFIED:` comment in the code; `grep -rn "SIMPLIFIED:" inter
 | simservs, TS 24.611 4.9.1.4 | The country of a number is its country code, so the NANP countries under 1 count as one; a number without a country code is in the user's country. | Number plans per country are out of scope. |
 | simservs, TS 24.611 4.9.1.4 | The home network of BOIC-exHC is taken to be the home country. | There are no number ranges per network. |
 | simservs, RFC 3261 19.1.4, RFC 3966 4 | Numbers are compared without their visual separators and parameters, SIP URIs by scheme, user and host. | The identities that an IMS network asserts need no more. |
-| simservs, RFC 4745 7.1.3 | Domains are compared without percent-decoding or the ToASCII step. | IMS domains are ASCII. |
+| simservs, RFC 4745 7.1.3 | Domains are compared without percent-decoding or the `ToASCII` step. | IMS domains are ASCII. |
 | simservs, TS 29.364 7.2.1 | Only OIP, OIR, TIP, TIR, CDIV, CW, HOLD and CB are modelled; the other services of the document are kept but not read. | They are what IR.92 2.3 asks the network for. |
 | UE, GSMA IR.92 2.6 | The User-Agent of Ut is a plain product token, not built as GSMA PRD RCC.07 C.4.1 says. | This project has not read RCC.07. |
 | UE, GSMA IR.92 2.3.2 | `ue xcap` takes the `-impu` of the command line as the XUI, not the default identity of the last registration. `ue serve` takes the default identity. | `ue xcap` needs no registration. For a softphone the two are the same; a VoLTE UE registers a temporary identity, so its services are set through `ue serve`. |
