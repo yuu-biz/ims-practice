@@ -283,7 +283,7 @@ func (d *CallDialog) setState(s DialogState, event string) {
 		d.stopSessionTimers()
 		d.endReferrals()
 		ua.mu.Lock()
-		delete(ua.calls, d.dialog.ID)
+		ua.forget(d.dialog.ID)
 		ua.mu.Unlock()
 	}
 	ua.logDialog(d.dialog, event, from.String())
