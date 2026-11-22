@@ -707,14 +707,17 @@ func (p *PCSCF) pathURI() string { return fmt.Sprintf("<sip:term@%s:%d;lr>", p.c
 
 // forward tries the I-CSCFs in the order DNS gave them. TS 24.229
 // 5.2.2.1 item 7 moves on to the next one on a timeout, a 3xx or a 480,
-// and answers 504 when none is left.
+// and answers 504 when none is left. A 503 and a transport error are
+// failures of the I-CSCF too, as for any request (RFC 3263 4.3). Only
+// this loop knows that a 3xx or a 480 sends the REGISTER on, so it
+// hands the stack one I-CSCF at a time.
 func (p *PCSCF) forward(st *sip.ServerTransaction, out *sip.Message, targets []sip.Destination, log *slog.Logger) *sip.Message {
 	for _, target := range targets {
 		final, err := st.ProxyWith(out, func(resp *sip.Message) { crossBoundary(resp, responseToUE) }, target)
 		switch {
 		case err != nil:
 			log.Warn("I-CSCF did not answer", "target", target.String(), "error", err.Error())
-		case final.StatusCode/100 == 3 || final.StatusCode == 480:
+		case final.StatusCode/100 == 3 || final.StatusCode == 480 || final.StatusCode == 503:
 			log.Info("I-CSCF turned the request away", "target", target.String(), "status", final.StatusCode)
 		default:
 			return final

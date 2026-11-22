@@ -167,13 +167,13 @@ func containsAll(have, want []uint32) bool {
 // forward sets the Request-URI to the S-CSCF and proxies the REGISTER
 // there (TS 24.229 5.3.1.2).
 //
+// The REGISTER goes to every target that DNS gives for the S-CSCF in
+// turn, until one does not fail (RFC 3263 4.3): the instances of an
+// S-CSCF that runs as several share its name.
+//
 // SIMPLIFIED: TS 24.229 5.3.1.3. When the S-CSCF times out or answers
 // 3xx or 480, the I-CSCF should pick another S-CSCF. This network has
 // one S-CSCF, so its answer goes back as it is.
-//
-// SIMPLIFIED: RFC 3263 4.2 and 4.3. Only the first target that DNS
-// gives for the S-CSCF is tried, never the next one after a failure.
-// Every name in the DNS of this project leads to one server.
 func (i *ICSCF) forward(st *sip.ServerTransaction, server string, log *slog.Logger) {
 	req := st.Request
 	u, err := sip.ParseURI(server)
@@ -194,7 +194,7 @@ func (i *ICSCF) forward(st *sip.ServerTransaction, server string, log *slog.Logg
 		st.Respond(sip.NewResponse(req, 483, sip.NewTag()))
 		return
 	}
-	final, err := st.Proxy(out, targets[0])
+	final, err := st.Proxy(out, targets...)
 	if err != nil {
 		// 5.3.1.3: an S-CSCF that does not answer, with no other to try,
 		// gives 504.

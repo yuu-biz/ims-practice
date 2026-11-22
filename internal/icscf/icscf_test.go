@@ -7,6 +7,7 @@ import (
 	"io"
 	"log/slog"
 	"net/netip"
+	"slices"
 	"testing"
 	"time"
 
@@ -103,12 +104,19 @@ func setup(t *testing.T, h HSS) (*sip.Stack, netip.AddrPort, chan *sip.Message) 
 
 func setupWith(t *testing.T, h HSS, scscfBehaviour func(*sip.ServerTransaction)) (*sip.Stack, netip.AddrPort) {
 	t.Helper()
+	return setupBehind(t, h, nil, scscfBehaviour)
+}
+
+// setupBehind is setupWith with first, the targets that DNS gives for
+// the S-CSCF before the fake one.
+func setupBehind(t *testing.T, h HSS, first []sip.Destination, scscfBehaviour func(*sip.ServerTransaction)) (*sip.Stack, netip.AddrPort) {
+	t.Helper()
 	s := newStack(t, scscfBehaviour)
 	locate := locatorFunc(func(host string, port int) ([]sip.Destination, error) {
 		if host != "scscf."+domain || port != 5060 {
 			return nil, errors.New("unexpected lookup")
 		}
-		return []sip.Destination{{Transport: sip.UDP, Addr: s.LocalAddr()}}, nil
+		return append(slices.Clone(first), sip.Destination{Transport: sip.UDP, Addr: s.LocalAddr()}), nil
 	})
 	node := diameter.NewNode(diameter.Identity{OriginHost: "icscf." + domain, OriginRealm: domain}, []uint32{diameter.ApplicationIDCx}, diameter.Timers{}, quiet())
 	i := New(Config{HomeDomain: domain, SCSCFs: []SCSCF{{Name: scscf, Capabilities: []uint32{1, 2}}}}, h, node, locate, quiet())
@@ -175,6 +183,30 @@ func TestUnreachableHSSGives480(t *testing.T) {
 	ue, icscf, _ := setup(t, down)
 	if r := register(t, ue, icscf, impu); r.StatusCode != 480 {
 		t.Fatalf("got %d, want 480", r.StatusCode)
+	}
+}
+
+// RFC 3263 4.3: when the first target that DNS gives for the S-CSCF
+// does not answer, the REGISTER goes to the next one, in a new client
+// transaction.
+func TestREGISTERGoesToTheNextSCSCFTargetWhenTheFirstIsSilent(t *testing.T) {
+	silent := newStack(t, func(*sip.ServerTransaction) {})
+	received := make(chan *sip.Message, 1)
+	ue, icscf := setupBehind(t, stubHSS(cx.ServerCapabilities{MandatoryCapabilities: []uint32{1}}),
+		[]sip.Destination{{Transport: sip.UDP, Addr: silent.LocalAddr()}}, func(st *sip.ServerTransaction) {
+			received <- st.Request
+			st.Respond(sip.NewResponse(st.Request, 401, sip.NewTag()))
+		})
+	if r := register(t, ue, icscf, impu); r.StatusCode != 401 {
+		t.Fatalf("got %d, want the 401 of the second target", r.StatusCode)
+	}
+	select {
+	case got := <-received:
+		if got.RequestURI != scscf {
+			t.Errorf("Request-URI = %q, want %q", got.RequestURI, scscf)
+		}
+	default:
+		t.Fatal("the second target got no REGISTER")
 	}
 }
 
