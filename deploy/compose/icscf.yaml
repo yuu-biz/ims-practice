@@ -24,6 +24,7 @@ diameter:
   peers:
     - address: hss.ims.mnc001.mcc001.3gppnetwork.org:3868
       origin_host: hss.ims.mnc001.mcc001.3gppnetwork.org
+      kind: hss
   # The RFC defaults, written out where an operator can change them:
   # Tw is the watchdog timer (RFC 3539 3.4.1 [1]), and Tc the time
   # between attempts to connect again (RFC 6733 2.1 and 12).

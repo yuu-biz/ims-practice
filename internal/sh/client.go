@@ -11,7 +11,7 @@ import (
 )
 
 // HSS is how an application server reaches the HSS over Sh.
-// *diameter.Peer is one.
+// *diameter.PeerGroup, the instances of the HSS, is one.
 type HSS interface {
 	Request(ctx context.Context, request *diam.Message) (*diam.Message, error)
 }

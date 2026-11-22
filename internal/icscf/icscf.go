@@ -17,7 +17,8 @@ import (
 	"github.com/yuu-biz/ims-practice/internal/sip"
 )
 
-// HSS is how the I-CSCF reaches the HSS over Cx. *diameter.Peer is one.
+// HSS is how the I-CSCF reaches the HSS over Cx.
+// *diameter.PeerGroup, the instances of the HSS, is one.
 type HSS interface {
 	Request(ctx context.Context, request *diam.Message) (*diam.Message, error)
 }
