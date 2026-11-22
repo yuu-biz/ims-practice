@@ -34,7 +34,8 @@ type Store struct {
 	Timeout time.Duration
 }
 
-// Maintenance is the maintenance section: where the node serves its
+// Maintenance is the maintenance section: where the node serves the
+// metrics of its roles at /metrics (internal/metrics) and its
 // maintenance API (internal/maintenance).
 type Maintenance struct {
 	Listen string // host:port

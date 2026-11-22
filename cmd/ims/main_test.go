@@ -31,6 +31,7 @@ import (
 	"github.com/yuu-biz/ims-practice/internal/ibcf"
 	"github.com/yuu-biz/ims-practice/internal/interconnect"
 	"github.com/yuu-biz/ims-practice/internal/kvstore"
+	"github.com/yuu-biz/ims-practice/internal/metrics"
 	"github.com/yuu-biz/ims-practice/internal/policy"
 	"github.com/yuu-biz/ims-practice/internal/rtptest"
 	"github.com/yuu-biz/ims-practice/internal/rx"
@@ -284,7 +285,7 @@ func TestStartIBCFListensOnBothSides(t *testing.T) {
 		started = append(started, s)
 		return sip.Listen("127.0.0.1:0", quiet())
 	}
-	b, err := startIBCF(domain, c, ibcf.NewMemoryStore(), noNames{}, listen, quiet())
+	b, err := startIBCF(domain, c, ibcf.NewMemoryStore(), noNames{}, metrics.NewRegistry(), listen, quiet())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -294,11 +295,43 @@ func TestStartIBCFListensOnBothSides(t *testing.T) {
 	}
 	c.ICSCF = sip.URI{}
 	started = nil
-	if _, err := startIBCF(domain, c, ibcf.NewMemoryStore(), noNames{}, listen, quiet()); err == nil {
+	if _, err := startIBCF(domain, c, ibcf.NewMemoryStore(), noNames{}, metrics.NewRegistry(), listen, quiet()); err == nil {
 		t.Error("an IBCF without an I-CSCF started")
 	}
 	if len(started) != 0 {
 		t.Errorf("an IBCF that did not start opened %d transports", len(started))
+	}
+}
+
+// TestMaintenanceListenerServesTheMetricsOfTheRoles: the IBCF counts in
+// the registry of the node, which the maintenance listener serves at
+// /metrics in the format that Prometheus scrapes.
+func TestMaintenanceListenerServesTheMetricsOfTheRoles(t *testing.T) {
+	registry := metrics.NewRegistry()
+	listen := func(config.SIP) (*sip.TransportLayer, error) { return sip.Listen("127.0.0.1:0", quiet()) }
+	b, err := startIBCF(domain, ibcfConfig(), ibcf.NewMemoryStore(), noNames{}, registry, listen, quiet())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer b.Close()
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	stop := serveMaintenance(l, registry, quiet(), func() {})
+	defer stop()
+
+	resp, err := http.Get("http://" + l.Addr().String() + "/metrics")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK || resp.Header.Get("Content-Type") != metrics.ContentType {
+		t.Errorf("GET /metrics = %s with Content-Type %q, want 200 with %q", resp.Status, resp.Header.Get("Content-Type"), metrics.ContentType)
+	}
+	if want := "# TYPE ims_ibcf_session_attempts_total counter\n"; !strings.Contains(string(body), want) {
+		t.Errorf("GET /metrics has no %q:\n%s", want, body)
 	}
 }
 
@@ -321,7 +354,7 @@ func TestIBCFStoreIsTheSharedStoreOfTheNode(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			stores, closeStores := newRoleStores(tt.store)
 			defer closeStores()
-			b, err := startIBCF(domain, ibcfConfig(), ibcfStore(stores, quiet()), noNames{}, listen, quiet())
+			b, err := startIBCF(domain, ibcfConfig(), ibcfStore(stores, quiet()), noNames{}, metrics.NewRegistry(), listen, quiet())
 			if err == nil {
 				b.Close()
 			}
