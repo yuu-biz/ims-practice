@@ -14,7 +14,7 @@ These guides run the IMS on your machine and follow its messages in a capture, o
 6. [Announcements, alerting tones and conferences with the MRF](mrf.md). An announcement before a barred call, the customized alerting tone, call waiting and a conference of three.
 7. [The VoLTE call flow](volte.md). The EPC stub, IMS AKA, policy control over Rx, and a call in AMR-WB with preconditions.
 8. [Connect two IMS networks](interconnect.md). The IBCF and the TrGW at the border, topology hiding, and the interconnect profiles.
-9. [Watch the IMS in the dashboard](dashboard.md). The ladder diagrams of the HEP copies, the subscribers, and UE simulators driven from the browser.
+9. [Watch the IMS in the Lab](lab.md). The ladder diagrams of the HEP copies, the subscribers, and UE simulators driven from the browser.
 
 The [glossary](../../glossary.md) explains the abbreviations.
 
@@ -63,7 +63,7 @@ The capture files stay in `captures/` until you delete them.
 | `scscf` | 172.28.0.30 | S-CSCF. |
 | `pcscf` | 172.28.0.40 | P-CSCF. |
 | `agw` | 172.28.0.50 | Media relay in the IMS-AGW role, controlled by the P-CSCF. |
-| `lab` | 172.28.0.60 | Dashboard at http://localhost:8080, and the HEP collector. |
+| `lab` | 172.28.0.60 | The Lab at http://localhost:8080, and the HEP collector. |
 | `ipsmgw` | 172.28.0.70 | IP-SM-GW, the application server of SMS over IP. |
 | `mmtel` | 172.28.0.75 | MMTel AS, the application server of the supplementary services. |
 | `epc` | 172.28.0.80 | EPC stub with a PCRF, for the VoLTE UEs. |
@@ -78,7 +78,7 @@ The UEs are in profiles, so `docker compose up` does not start them.
 | Profile | Services | How they run |
 | --- | --- | --- |
 | `ue` | `ue`, `ue2`, `ue3`, `peer` | One command each, with `docker compose run --rm ue register` and the like. `peer` holds pjsua and SIPp, user agents written by others. |
-| `sim` | `ue-a`, `ue-b`, `ue-c` | They stay up and do what the dashboard asks. `docker compose --profile sim up -d`. |
+| `sim` | `ue-a`, `ue-b`, `ue-c` | They stay up and do what the Lab asks. `docker compose --profile sim up -d`. |
 | `volte` | `volte-a`, `volte-b` | VoLTE UEs that stay up, like those of `sim`. `docker compose --profile volte up -d`. |
 
 `ue` and `sim` use the same subscribers, so run one of the two at a time.

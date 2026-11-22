@@ -13,7 +13,7 @@ AI エージェント（Claude Code、Codex、Cursor など）がこのリポジ
 - [docs/unverified-clauses.md](docs/unverified-clauses.md)。条項を確かめられなかった記述の一覧。
 - [CONTRIBUTING.md](CONTRIBUTING.md)。Issue、ブランチ、コミット、PR のルール。
 
-できているのは、登録、音声通話、ダッシュボード、SMS、VoLTE（EPC スタブ、IMS-AKA、Rx、プリコンディション）、補足サービス（MMTel AS、Ut）、MRF（音声ガイダンス、CAT、3 者会議）、2 つの網の相互接続です。UE シミュレータが登録、発着信、SMS の送受信、Ut での補足サービスの設定をでき、その信号をキャプチャとダッシュボードで見られます。冗長構成、H.248、5GC（VoNR）、SMS over NAS、OAM、Kubernetes、クラウド、スライドは、部品や一部ができています。残っているものは [docs/roadmap.md](docs/roadmap.md) の「これから作るもの」にあります。Compose での動作確認は `scripts/e2e-diameter.sh`（Diameter の接続）、`scripts/e2e-registration.sh`（登録）、`scripts/e2e-call.sh`（通話）、`scripts/e2e-lab.sh`（ダッシュボード）、`scripts/e2e-sms.sh`（SMS）、`scripts/e2e-volte.sh`（IMS-AKA と VoLTE の通話）、`scripts/e2e-mmtel.sh`（補足サービス）、`scripts/e2e-mrf.sh`（MRF）、`scripts/e2e-interconnect.sh`（2 つの網の相互接続）で行います。
+できているのは、登録、音声通話、ラボ、SMS、VoLTE（EPC スタブ、IMS-AKA、Rx、プリコンディション）、補足サービス（MMTel AS、Ut）、MRF（音声ガイダンス、CAT、3 者会議）、2 つの網の相互接続です。UE シミュレータが登録、発着信、SMS の送受信、Ut での補足サービスの設定をでき、その信号をキャプチャとラボで見られます。冗長構成、H.248、5GC（VoNR）、SMS over NAS、OAM、Kubernetes、クラウド、スライドは、部品や一部ができています。残っているものは [docs/roadmap.md](docs/roadmap.md) の「これから作るもの」にあります。Compose での動作確認は `scripts/e2e-diameter.sh`（Diameter の接続）、`scripts/e2e-registration.sh`（登録）、`scripts/e2e-call.sh`（通話）、`scripts/e2e-lab.sh`（ラボ）、`scripts/e2e-sms.sh`（SMS）、`scripts/e2e-volte.sh`（IMS-AKA と VoLTE の通話）、`scripts/e2e-mmtel.sh`（補足サービス）、`scripts/e2e-mrf.sh`（MRF）、`scripts/e2e-interconnect.sh`（2 つの網の相互接続）で行います。
 
 ## ビルドと試験のコマンド
 
@@ -143,7 +143,7 @@ BUILDX_BUILDER=ims-practice docker compose up -d --build
 | | 開発の記録 | 学習者が読むもの |
 | --- | --- | --- |
 | 読む人 | 開発者とエージェント | IMS を学ぶ人 |
-| 含むもの | 要件定義、ロードマップ、設計の記録、調査の記録、確かめられなかった条項の一覧、AGENTS.md、CONTRIBUTING.md、CI の定義（`.github/`）、Issue、PR、コミットメッセージ | README、手順書、用語集、スライド、ダッシュボードと OAM の画面、コードとそのコメント、設定ファイル、スクリプト、ログとエラーの文、試験の名前、コンテナや CI の成果物の名前 |
+| 含むもの | 要件定義、ロードマップ、設計の記録、調査の記録、確かめられなかった条項の一覧、AGENTS.md、CONTRIBUTING.md、CI の定義（`.github/`）、Issue、PR、コミットメッセージ | README、手順書、用語集、スライド、ラボと OAM の画面、コードとそのコメント、設定ファイル、スクリプト、ログとエラーの文、試験の名前、コンテナや CI の成果物の名前 |
 
 参照は一方向です。開発の記録は、コードや手順書を指して構いません。学習者が読むものは、開発の記録を指しません。開発の記録を読まなくても、すべて理解できるように書きます。
 

@@ -49,7 +49,7 @@ To get the audio to the caller before the call is answered, the AS uses the gate
 | --- | --- | --- |
 | UE 1 | 172.28.0.100 | The caller of the announcement and the CAT, `tel:+12025550101`. |
 | UE 2 | 172.28.0.101 | The called user who has a CAT, `tel:+12025550102`. |
-| ue-a, ue-b, ue-c | 172.28.0.110, .111, .112 | The UE simulators of the `sim` profile, subscribers 1, 2 and 3, driven through the dashboard: the waiting call and the conference. |
+| ue-a, ue-b, ue-c | 172.28.0.110, .111, .112 | The UE simulators of the `sim` profile, subscribers 1, 2 and 3, driven through the Lab: the waiting call and the conference. |
 | P-CSCF and agw | 172.28.0.40, 172.28.0.50 | As in every call; RTP between a UE and the MRFP passes the agw. |
 | MMTel AS | 172.28.0.75 | Decides what is played, and is the conference focus. |
 | MRFC | 172.28.0.85 | The `mrfc` role, `mrfc.ims.mnc001.mcc001.3gppnetwork.org`. |
@@ -61,14 +61,14 @@ To get the audio to the caller before the call is answered, the AS uses the gate
 
 `scripts/e2e-mrf.sh` does everything below and checks it in the capture. It leaves the capture in `captures/`, the frames of the calls and the MRF in `e2e-out/mrf-ladder.txt`, the audio that UE 1 heard during the CAT in `captures/mrf-cat-received.raw`, and the logs of the UEs in `e2e-out/`. It takes about a minute after the build.
 
-By hand, with the dashboard (see "Drive the UE simulators" in [the dashboard guide](dashboard.md)):
+By hand, with the Lab (see "Drive the UE simulators" in [the Lab guide](lab.md)):
 
 ```sh
 docker compose up -d --build
 docker compose --profile sim up -d ue-a ue-b ue-c
 ```
 
-Open http://localhost:8080. In the Subscribers panel choose `cat1` as the alerting tone of subscriber 2, then call `ue-b` from `ue-a`. For the waiting call and the conference, follow the steps in the dashboard guide that take a second call and make a conference of the two. The ladder of a call draws the AS's dialog with the MRFC beside the dialogs of the call, because they share the icid-value of the P-Charging-Vector.
+Open http://localhost:8080. In the Subscribers panel choose `cat1` as the alerting tone of subscriber 2, then call `ue-b` from `ue-a`. For the waiting call and the conference, follow the steps in the Lab guide that take a second call and make a conference of the two. The ladder of a call draws the AS's dialog with the MRFC beside the dialogs of the call, because they share the icid-value of the P-Charging-Vector.
 
 ## Open the capture
 
@@ -102,7 +102,7 @@ UE 1 bars its outgoing calls with `ue xcap set baoc on` and calls UE 2. UE 1's A
 
 ## CAT: the tone that the called user chooses
 
-The operator provisions the CAT of a user in the HSS (TS 24.182 4.5.2); here the dashboard does it, with `PUT /api/subscribers/{impi}/customized-alerting-tone` and `{"tone": "cat1", "active": true}`. The terminating AS of UE 2 reads it over Sh for each call (UDR with Service-Indication `Customized-Alerting-Tone`), asks the MRFC for the tone before it sends the INVITE to UE 2, and gives it to UE 1 while UE 2 rings (TS 24.182 4.5.5.3.7):
+The operator provisions the CAT of a user in the HSS (TS 24.182 4.5.2); here the Lab does it, with `PUT /api/subscribers/{impi}/customized-alerting-tone` and `{"tone": "cat1", "active": true}`. The terminating AS of UE 2 reads it over Sh for each call (UDR with Service-Indication `Customized-Alerting-Tone`), asks the MRFC for the tone before it sends the INVITE to UE 2, and gives it to UE 1 while UE 2 rings (TS 24.182 4.5.5.3.7):
 
 ```text
 #1288 12.471 UE 1   -> P-CSCF C1 INVITE tel:+12025550102
@@ -181,7 +181,7 @@ ue-a has two answered calls and presses **Merge**. It creates a conference at th
 - **The invited peers use preconditions**, so each answers the MRFP's offer in its reliable 183 and sends its 200 without SDP. The AS passes that answer to the MRFC in the ACK of M2 (RFC 3262 5).
 - **The focus accepts each REFER with 200 (OK).** RFC 3515 answered with 202 (Accepted). RFC 7647 5 has replaced that: an element that accepts a REFER sends 200 and never 202, and one that receives a 202 from an older UA takes it as a 200, as RFC 6665 8.3.1 asks for SUBSCRIBE. The reason is that a 202 tells nothing that a 200 does not, and a proxy may absorb it. TS 24.147 points to RFC 3515 as RFC 6665 and RFC 7647 update it, and its flows show the 200 (A.4.4.1).
 - **Each REFER creates a subscription to the refer event** (RFC 3515 2.4.4). The focus reports at once that it is trying (`SIP/2.0 100 Trying` in a sipfrag body). Once the INVITE to the peer has its final response, it reports that response in a last NOTIFY whose Subscription-State is `terminated;reason=noresource` (2.4.7). The subscription lasts four minutes, longer than the INVITE may take (3.4). Should they run out first, the focus ends the subscription with `terminated;reason=timeout` (RFC 6665 4.2.1.4). ue-a ends it too at the time that the last `expires` gave, and at once on `active;expires=0` (4.1.3).
-- **The NOTIFYs** carry conference-info XML (RFC 4575) with a `<user>` and an `<endpoint>` of status `connected` for each party. The `entity` of a `<user>` is the identity that the network asserted for the party. The `entity` of an `<endpoint>` is a key that the focus makes for it, a `urn:uuid:` URI. RFC 4575 5.7 leaves the key to the focus and gives the Contact and a GRUU as examples. The focus does not use the Contact: it is the address of the party's UE, and the NOTIFYs would show it to every subscriber, in another network too ([A conference across the border](interconnect.md#a-conference-across-the-border)). Each card of the dashboard lists them under **Conference**. ue-a refreshes its subscription before it expires. A subscription that is not refreshed ends at its expiry with a last NOTIFY that says `terminated;reason=timeout`, and the focus sends nothing to it after that (RFC 6665 4.2.1.4).
+- **The NOTIFYs** carry conference-info XML (RFC 4575) with a `<user>` and an `<endpoint>` of status `connected` for each party. The `entity` of a `<user>` is the identity that the network asserted for the party. The `entity` of an `<endpoint>` is a key that the focus makes for it, a `urn:uuid:` URI. RFC 4575 5.7 leaves the key to the focus and gives the Contact and a GRUU as examples. The focus does not use the Contact: it is the address of the party's UE, and the NOTIFYs would show it to every subscriber, in another network too ([A conference across the border](interconnect.md#a-conference-across-the-border)). Each card of the Lab lists them under **Conference**. ue-a refreshes its subscription before it expires. A subscription that is not refreshed ends at its expiry with a last NOTIFY that says `terminated;reason=timeout`, and the focus sends nothing to it after that (RFC 6665 4.2.1.4).
 - **The conference ends with its creator** (TS 24.147 5.3.2.7): when ue-a hangs up, the AS sends BYE to ue-b and ue-c and to the MRFC for each party.
 
 ## Coming back to the conference

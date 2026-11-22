@@ -2,7 +2,7 @@
 
 [English](README.md)
 
-ims-practice は 3GPP の IMS（IP Multimedia Subsystem）を学習用に実装するプロジェクトです。手元のマシンで起動して、電話や SMS の最初の SIP メッセージから最後のメッセージまでを、Wireshark とダッシュボードで追えるようにします。
+ims-practice は 3GPP の IMS（IP Multimedia Subsystem）を学習用に実装するプロジェクトです。手元のマシンで起動して、電話や SMS の最初の SIP メッセージから最後のメッセージまでを、Wireshark とラボで追えるようにします。ラボは、IMS を試しながらその動きを観察するための Web の画面です。
 
 ## 学べること
 
@@ -14,7 +14,7 @@ ims-practice は 3GPP の IMS（IP Multimedia Subsystem）を学習用に実装�
 
 ## 現在の状態
 
-UE シミュレータは SIP Digest で登録し、電話番号で別の UE に発信できます。呼は P-CSCF、S-CSCF、I-CSCF、ENUM、メディア中継ノードを通ります。SIP、Diameter、DNS、RTP のパケットは、すべてキャプチャで見られます。http://localhost:8080 のダッシュボードは、HEP の写しから呼と登録ごとのラダー図を描きます。HSS の加入者の管理と、2 台の UE シミュレータの操作もできます。UE どうしで SMS over IP のショートメッセージを送り合えます。MMTel AS は、識別子の通知、着信転送、規制などの補足サービスを提供し、UE はそれを Ut で設定します。VoLTE の UE は EPC のスタブに attach し、IMS-AKA で登録し、プリコンディションを使って AMR-WB で通話します。P-CSCF は通話ごとのメディアを Rx で PCRF に許可させます。
+UE シミュレータは SIP Digest で登録し、電話番号で別の UE に発信できます。呼は P-CSCF、S-CSCF、I-CSCF、ENUM、メディア中継ノードを通ります。SIP、Diameter、DNS、RTP のパケットは、すべてキャプチャで見られます。http://localhost:8080 のラボは、HEP の写しから呼と登録ごとのラダー図を描きます。HSS の加入者の管理と、2 台の UE シミュレータの操作もできます。UE どうしで SMS over IP のショートメッセージを送り合えます。MMTel AS は、識別子の通知、着信転送、規制などの補足サービスを提供し、UE はそれを Ut で設定します。VoLTE の UE は EPC のスタブに attach し、IMS-AKA で登録し、プリコンディションを使って AMR-WB で通話します。P-CSCF は通話ごとのメディアを Rx で PCRF に許可させます。
 
 ## 構成
 
@@ -49,9 +49,9 @@ UE シミュレータは SIP Digest で登録し、電話番号で別の UE に�
 
   `scripts/` の e2e のスクリプトは自分でこの設定をします。
 - Wireshark。キャプチャを読むのに使います。
-- ホストの空いているポート。`docker compose up` は、P-CSCF の 5060/udp、ダッシュボードの 8080/tcp、メディア中継の 40000-40039/udp を、ホストのループバックアドレス 127.0.0.1 に公開します。
+- ホストの空いているポート。`docker compose up` は、P-CSCF の 5060/udp、ラボの 8080/tcp、メディア中継の 40000-40039/udp を、ホストのループバックアドレス 127.0.0.1 に公開します。
 - 空いているアドレスの範囲。コンテナは 172.28.0.0/24 を使い、網間接続の手順書の 2 つの網は 172.28.1.0/24 と 172.28.2.0/24 を使います。これらの範囲が LAN、VPN、ほかの Docker のネットワークと重ならないようにしてください。
-- 最初のビルドでのインターネットへの接続。ビルドは Alpine、Go、Node.js のベースイメージを Docker Hub から、ダッシュボードのパッケージを npm のレジストリから、Go のモジュールを Go のモジュールプロキシ（`proxy.golang.org`）から、SIPp、pjsua、tcpdump、tshark を Alpine のパッケージのミラーから取ってきます。
+- 最初のビルドでのインターネットへの接続。ビルドは Alpine、Go、Node.js のベースイメージを Docker Hub から、ラボのパッケージを npm のレジストリから、Go のモジュールを Go のモジュールプロキシ（`proxy.golang.org`）から、SIPp、pjsua、tcpdump、tshark を Alpine のパッケージのミラーから取ってきます。
 
 ## 始め方
 

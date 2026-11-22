@@ -61,7 +61,7 @@ ims-practice 勉強会 第 6 回（アクセス網、IMS-AKA、Rx でのポリ�
 | MMTel AS、中継ノード | 172.28.0.75、50 | MMTel AS の回と同じ。中継は RTCP も通す。 |
 
 - volte-a と volte-b は `compose.yaml` のプロファイル `volte` のサービスです。鍵は `deploy/compose/hss.yaml` に、加入者ごとのコンテナのアドレスは `deploy/compose/epc.yaml` にあります。
-- ダッシュボード（172.28.0.60）は volte-a と volte-b を動かし、ラダー図に Rx を出し、網の手順を始める EPC スタブのパスをホストへ中継します。
+- ラボ（172.28.0.60）は volte-a と volte-b を動かし、ラダー図に Rx を出し、網の手順を始める EPC スタブのパスをホストへ中継します。
 
 > 手順書 [「登場するノード」](../../../docs/guide/ja/volte.md#登場するノード)
 
@@ -88,7 +88,7 @@ ims-practice 勉強会 第 6 回（アクセス網、IMS-AKA、Rx でのポリ�
 
 ## キャプチャを用意する
 
-- `scripts/` にある VoLTE の通話の e2e のスクリプトが、この回の手順をすべて行います。SIPp の登録、VoLTE の通話と ue2 への通話、ダッシュボードからの DTMF と保留、網による bearer の解放を行い、キャプチャのメッセージを 1 つずつ確かめます。スクリプトの名前は手順書の [「動かしてみる」](../../../docs/guide/ja/volte.md#動かしてみる) にあります。
+- `scripts/` にある VoLTE の通話の e2e のスクリプトが、この回の手順をすべて行います。SIPp の登録、VoLTE の通話と ue2 への通話、ラボからの DTMF と保留、網による bearer の解放を行い、キャプチャのメッセージを 1 つずつ確かめます。スクリプトの名前は手順書の [「動かしてみる」](../../../docs/guide/ja/volte.md#動かしてみる) にあります。
 - 手順書のフレーム番号は、このスクリプトを 1 回動かしたときのものです。手元の番号とは違います。
 - キャプチャは `captures/`、フレームの一覧は `e2e-out/`、AMR-WB の録音は `captures/volte-*.amr` に残ります。2 分ほどかかります。
 
@@ -495,7 +495,7 @@ Adaptive Multi-Rate
 フィルタは `sip.Session-Expires` と `sip.Reason` です。
 
 - メディアの bearer を失って終わった通話では、UE の Reason の cause は 3 です。P-CSCF の BYE は `Reason: SIP;cause=503` です。早期メディアを許可するノードが無いので、発信側は 180 のあと自分で呼び出し音を鳴らします。
-- 保留の re-INVITE は、そのまま MMTel AS を通ります。保留と DTMF のある通話は、e2e のスクリプトがダッシュボードから動かすものです。
+- 保留の re-INVITE は、そのまま MMTel AS を通ります。保留と DTMF のある通話は、e2e のスクリプトがラボから動かすものです。
 
 > 手順書 [「セッションタイマー、Reason、早期メディア」](../../../docs/guide/ja/volte.md#セッションタイマーreason早期メディア) と [「保留、再開、DTMF」](../../../docs/guide/ja/volte.md#保留再開dtmf)。IR.92 2.2.8、2.2.4、2.2.7。RFC 4028 9。TS 24.229 7.2A.18.11。RFC 5009。TS 24.610 4.5.2.1。
 
@@ -508,8 +508,8 @@ curl -X DELETE http://localhost:8080/api/epc/network-initiated/ues/0010100000000
 ```
 
 ```ladder
-volte-a, P-CSCF, S-CSCF, volte-b, EPC と PCRF, ダッシュボード
-EPC と PCRF <- ダッシュボード: DELETE .../bearers/6
+volte-a, P-CSCF, S-CSCF, volte-b, EPC と PCRF, ラボ
+EPC と PCRF <- ラボ: DELETE .../bearers/6
 volte-a <- EPC と PCRF: DEACTIVATE EPS BEARER CONTEXT REQUEST（イベントストリーム）
 P-CSCF <- EPC と PCRF: ASR、Abort-Cause BEARER_RELEASED（0） // 続いて ASA
 P-CSCF -> EPC と PCRF: STR // 続いて STA
@@ -577,7 +577,7 @@ grep -rn "SIMPLIFIED:" internal/epc internal/pcscf internal/ue internal/aka inte
 
 ---
 
-## ダッシュボードで動かす
+## ラボで動かす
 
 ```sh
 docker compose up -d --build
@@ -591,9 +591,9 @@ curl http://localhost:8080/api/epc/ues/001010000000010
 4. 前のスライドの `curl -X DELETE` で音声の bearer を解放します。
 
 - 通話のラダー図には、P-CSCF の隣に PCRF の列があります。
-- `curl` は volte-a の bearer を並べます。通話中は 5 と 6 です。ダッシュボードは、UE の状態と、網の手順を始める EPC スタブのパスを、`/api/epc` の下で中継します。
+- `curl` は volte-a の bearer を並べます。通話中は 5 と 6 です。ラボは、UE の状態と、網の手順を始める EPC スタブのパスを、`/api/epc` の下で中継します。
 
-> 手順書 [「ダッシュボードで」](../../../docs/guide/ja/volte.md#ダッシュボードで)
+> 手順書 [「ラボで」](../../../docs/guide/ja/volte.md#ラボで)
 
 ---
 
@@ -721,7 +721,7 @@ docker compose run --rm volte-a call -epc http://172.28.0.80:8080 \
 docker compose --profile ue --profile volte down --rmi all -v --remove-orphans
 ```
 
-- これは手順書の「後片付け」です。ダッシュボードの `sim` のプロファイルも使ったなら、`--profile sim` を足します。
+- これは手順書の「後片付け」です。ラボの `sim` のプロファイルも使ったなら、`--profile sim` を足します。
 - 5GC では、SIP の信号は 5QI 5 の QoS フローを、音声は 5QI 1 を使います。EPS の QCI 5 と QCI 1 と同じ考え方です。
 
 > 手順書の一覧は [docs/guide/](../../../docs/guide/) にあります。

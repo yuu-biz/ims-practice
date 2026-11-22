@@ -34,7 +34,7 @@ ims-practice 勉強会 第 1 回（どのノードとどの仕様が、コード
 | `compose.yaml` | ノードを 1 つの Docker のネットワークに並べる。 |
 | `docs/` | 手順書（`docs/guide/`）と用語集。 |
 | `scripts/` | シナリオごとの e2e の試験と、ライブのキャプチャ。 |
-| `web/lab/` | ダッシュボードの画面。 |
+| `web/lab/` | ラボの画面。 |
 | `images/` | キャプチャ用のコンテナなど、補助のイメージ。 |
 
 ---
@@ -73,7 +73,7 @@ home_domain: ims.mnc001.mcc001.3gppnetwork.org
 | `epc`、`mrfc`、`mrfp` | 172.28.0.80、85、86 | `epc`、`mrfc`、`mrfp` | `epc.yaml`、`mrfc.yaml`、`mrfp.yaml` |
 | `ue`、`ue2`、`ue3` | 172.28.0.100、101、103 | `cmd/ue` | コマンドの引数 |
 
-- 表に無いものは、`ipsmgw` の中の SC のスタブ、ダッシュボードと VoLTE の UE（`ue-a` から `ue-c`、`volte-a`、`volte-b`）、`peer`、`capture` です。
+- 表に無いものは、`ipsmgw` の中の SC のスタブ、ラボと VoLTE の UE（`ue-a` から `ue-c`、`volte-a`、`volte-b`）、`peer`、`capture` です。
 - IBCF ともう 1 つの網は、別の Compose のプロジェクト `deploy/interconnect/compose.yaml` にあります。
 
 > 手順書 [信号をキャプチャして Wireshark で開く「ノードを起動すると見えるもの」](../../../docs/guide/ja/capture.md#ノードを起動すると見えるもの)
@@ -125,9 +125,9 @@ home_domain: ims.mnc001.mcc001.3gppnetwork.org
 | `lab` | HEP の写しから登録と通話を組み立てる。 | このプロジェクト独自 |
 
 - スタブは、仕様のインタフェースだけを本物にして、中身を簡単にしたものです。HSS と SC がスタブです。
-- ダッシュボードは IMS の一部ではありません。ノードが送るものを見せるだけです。
+- ラボは IMS の一部ではありません。ノードが送るものを見せるだけです。
 
-> 手順書 [ダッシュボードで IMS を見る「このプロジェクト独自の API」](../../../docs/guide/ja/dashboard.md#このプロジェクト独自の-api)
+> 手順書 [ラボで IMS を見る「このプロジェクト独自の API」](../../../docs/guide/ja/lab.md#このプロジェクト独自の-api)
 
 ---
 
@@ -154,14 +154,14 @@ home_domain: ims.mnc001.mcc001.3gppnetwork.org
 | --- | --- |
 | `ims` | 複数の役割が共有する IMS の決まり。 |
 | `config` | YAML の設定を、検証済みの値にする。誤った設定は起動のときに断る。 |
-| `hep`、`hepagent` | 信号の写しをダッシュボードへ送る（HEP3）。 |
+| `hep`、`hepagent` | 信号の写しをラボへ送る（HEP3）。 |
 | `g711`、`wav` | G.711 μ-law と WAV。UE シミュレータの音声。 |
 | `epc`、`policy`、`rx`、`milenage`、`aka`、`amr`、`rtcp`、`precondition` | VoLTE の通話で使う部品。この回では扱わない。 |
 | `h248`、`sgd`、`smsc`、`nas`、`fivegc` など | どの役割も起動しない部品。使うのはそれぞれの試験だけ。 |
 
 - どの役割も起動しない部品は、`cmd/ims` からも `cmd/ue` からも import されていません。`go list -deps ./cmd/...` に出てこないことで確かめられます。
 
-> 手順書 [信号をキャプチャして Wireshark で開く「ダッシュボードに送るコピー（HEP）」](../../../docs/guide/ja/capture.md#ダッシュボードに送るコピーhep)
+> 手順書 [信号をキャプチャして Wireshark で開く「ラボに送るコピー（HEP）」](../../../docs/guide/ja/capture.md#ラボに送るコピーhep)
 
 ---
 

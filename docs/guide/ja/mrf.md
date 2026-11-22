@@ -49,7 +49,7 @@ AS は、MRFC への INVITE の Request-URI の user part でサービスを指�
 | --- | --- | --- |
 | UE 1 | 172.28.0.100 | 音声ガイダンスと CAT の発信者。`tel:+12025550101`。 |
 | UE 2 | 172.28.0.101 | CAT を持つ着信者。`tel:+12025550102`。 |
-| ue-a、ue-b、ue-c | 172.28.0.110、.111、.112 | `sim` プロファイルの UE シミュレータ。加入者 1、2、3 で、ダッシュボードから操作します。2 つ目の着信と会議に使います。 |
+| ue-a、ue-b、ue-c | 172.28.0.110、.111、.112 | `sim` プロファイルの UE シミュレータ。加入者 1、2、3 で、ラボから操作します。2 つ目の着信と会議に使います。 |
 | P-CSCF と agw | 172.28.0.40、172.28.0.50 | ほかの通話と同じです。UE と MRFP の間の RTP は agw を通ります。 |
 | MMTel AS | 172.28.0.75 | 何を流すかを決めます。会議ではフォーカスになります。 |
 | MRFC | 172.28.0.85 | 役割 `mrfc`。`mrfc.ims.mnc001.mcc001.3gppnetwork.org`。 |
@@ -61,14 +61,14 @@ AS は、MRFC への INVITE の Request-URI の user part でサービスを指�
 
 `scripts/e2e-mrf.sh` は、以下のすべてを実行し、キャプチャで確かめます。キャプチャは `captures/` に、通話と MRF のフレームは `e2e-out/mrf-ladder.txt` に、CAT のあいだに UE 1 が受け取った音声は `captures/mrf-cat-received.raw` に、UE のログは `e2e-out/` に残ります。ビルドのあと 1 分ほどかかります。
 
-手で動かすときは、ダッシュボードを使います（[ダッシュボードの手順書](dashboard.md) の「UE シミュレータを操作する」を参照）。
+手で動かすときは、ラボを使います（[ラボの手順書](lab.md) の「UE シミュレータを操作する」を参照）。
 
 ```sh
 docker compose up -d --build
 docker compose --profile sim up -d ue-a ue-b ue-c
 ```
 
-http://localhost:8080 を開きます。Subscribers の欄で加入者 2 の呼び出し音に `cat1` を選び、`ue-a` から `ue-b` に発信します。2 つ目の着信と会議は、ダッシュボードの手順書にある、2 つ目の着信を受けて会議を作る手順のとおりに進めます。通話のラダー図には、通話のダイアログと並んで、AS と MRFC のダイアログも描かれます。どちらも P-Charging-Vector の icid-value が同じだからです。
+http://localhost:8080 を開きます。Subscribers の欄で加入者 2 の呼び出し音に `cat1` を選び、`ue-a` から `ue-b` に発信します。2 つ目の着信と会議は、ラボの手順書にある、2 つ目の着信を受けて会議を作る手順のとおりに進めます。通話のラダー図には、通話のダイアログと並んで、AS と MRFC のダイアログも描かれます。どちらも P-Charging-Vector の icid-value が同じだからです。
 
 ## キャプチャを開く
 
@@ -102,7 +102,7 @@ UE 1 は `ue xcap set baoc on` で発信を規制し、UE 2 に発信します�
 
 ## CAT。着信側の利用者が選ぶ呼び出し音
 
-利用者の CAT は、事業者が HSS に設定します（TS 24.182 4.5.2）。ここではダッシュボードが、`PUT /api/subscribers/{impi}/customized-alerting-tone` に `{"tone": "cat1", "active": true}` を送って設定します。UE 2 の着信側の AS は、着信のたびにこの設定を Sh で読みます（Service-Indication が `Customized-Alerting-Tone` の UDR）。そして、UE 2 に INVITE を送る前に MRFC に呼び出し音を頼み、UE 2 が呼び出し中のあいだ UE 1 に流します（TS 24.182 4.5.5.3.7）。
+利用者の CAT は、事業者が HSS に設定します（TS 24.182 4.5.2）。ここではラボが、`PUT /api/subscribers/{impi}/customized-alerting-tone` に `{"tone": "cat1", "active": true}` を送って設定します。UE 2 の着信側の AS は、着信のたびにこの設定を Sh で読みます（Service-Indication が `Customized-Alerting-Tone` の UDR）。そして、UE 2 に INVITE を送る前に MRFC に呼び出し音を頼み、UE 2 が呼び出し中のあいだ UE 1 に流します（TS 24.182 4.5.5.3.7）。
 
 ```text
 #1288 12.471 UE 1   -> P-CSCF C1 INVITE tel:+12025550102
@@ -181,7 +181,7 @@ ue-a は応答済みの通話を 2 つ持っていて、**Merge** を押しま�
 - **招かれた相手もプリコンディションを使います。** そのため、それぞれが MRFP の offer に高信頼の 183 で答え、200 には SDP を付けません。AS はその answer を M2 の ACK に入れて MRFC に渡します（RFC 3262 5）。
 - **フォーカスは REFER を 200（OK）で受け付けます。** RFC 3515 では 202（Accepted）で応答していました。RFC 7647 5 がこれを改め、REFER を受け付ける側は 200 を送り、202 を送ってはいけないことになりました。古い UA から 202 を受けた側は、200 と同じに扱います。RFC 6665 8.3.1 が SUBSCRIBE について決めたのと同じです。改めた理由は、202 が 200 と違うことを何も伝えず、途中のプロキシに吸収されることもあるからです。TS 24.147 は RFC 3515 を、RFC 6665 と RFC 7647 による改訂を含めて参照していて、その流れの例でも 200 を返しています（A.4.4.1）。
 - **REFER はそれぞれ refer イベントの購読を作ります**（RFC 3515 2.4.4）。フォーカスはすぐに、試していること（sipfrag の本文の `SIP/2.0 100 Trying`）を知らせます。相手への INVITE に最終応答が来たら、その応答を最後の NOTIFY で知らせ、Subscription-State を `terminated;reason=noresource` にします（2.4.7）。購読の長さは INVITE にかかりうる時間より長い 4 分です（3.4）。先に 4 分が過ぎたら、フォーカスは `terminated;reason=timeout` で購読を終えます（RFC 6665 4.2.1.4）。ue-a の側も、最後の `expires` が示した時刻に購読を終え、`active;expires=0` を受けたときはすぐに終えます（4.1.3）。
-- **NOTIFY** には conference-info の XML（RFC 4575）が入っていて、参加者ごとに `<user>` と、状態が `connected` の `<endpoint>` があります。`<user>` の `entity` は、網が保証した参加者の識別子です。`<endpoint>` の `entity` はフォーカスが作るキーで、`urn:uuid:` の URI です。RFC 4575 5.7 はこのキーの作り方をフォーカスに任せ、例として Contact と GRUU を挙げています。フォーカスは Contact を使いません。Contact は参加者の UE のアドレスなので、NOTIFY に入れると、ほかの網の購読者を含むすべての購読者に見えてしまいます（[境界を越える会議](interconnect.md#境界を越える会議)）。ダッシュボードの各カードは、これを **Conference** の行に並べます。ue-a は購読が切れる前に更新します。更新されなかった購読は期限の時刻に終わり、フォーカスはそのとき `terminated;reason=timeout` の NOTIFY を送ります。そのあと、この購読には何も送りません（RFC 6665 4.2.1.4）。
+- **NOTIFY** には conference-info の XML（RFC 4575）が入っていて、参加者ごとに `<user>` と、状態が `connected` の `<endpoint>` があります。`<user>` の `entity` は、網が保証した参加者の識別子です。`<endpoint>` の `entity` はフォーカスが作るキーで、`urn:uuid:` の URI です。RFC 4575 5.7 はこのキーの作り方をフォーカスに任せ、例として Contact と GRUU を挙げています。フォーカスは Contact を使いません。Contact は参加者の UE のアドレスなので、NOTIFY に入れると、ほかの網の購読者を含むすべての購読者に見えてしまいます（[境界を越える会議](interconnect.md#境界を越える会議)）。ラボの各カードは、これを **Conference** の行に並べます。ue-a は購読が切れる前に更新します。更新されなかった購読は期限の時刻に終わり、フォーカスはそのとき `terminated;reason=timeout` の NOTIFY を送ります。そのあと、この購読には何も送りません（RFC 6665 4.2.1.4）。
 - **会議は作った人が抜けると終わります**（TS 24.147 5.3.2.7）。ue-a が切ると、AS は ue-b と ue-c に BYE を送り、参加者ごとの MRFC とのダイアログにも BYE を送ります。
 
 ## 会議に戻る

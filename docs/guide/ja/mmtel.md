@@ -114,7 +114,7 @@ MMTel AS は routeing B2BUA として動きます（TS 24.229 5.7.5）。S-CSCF 
 
 キャプチャには次のように表れます。
 
-- **1 つの通話に Call-ID が 3 つ。** 1 つの Call-ID で絞り込むと、1 つのダイアログだけが見えます。網の中では、3 つとも同じ icid-value を持っています（P-CSCF は、UE に送るものからこの値を運ぶヘッダを消します）。ダッシュボードはこれで 3 つを 1 つの通話として表示します（[ダッシュボードの手順書](dashboard.md) の「ラダー図の組み立て方」）。転送した通話ではさらに 3 つ増えます。転送先への AS の INVITE、転送のあとに S-CSCF が AS へ送る orig-cdiv の INVITE、転送先の利用者の AS の INVITE です。
+- **1 つの通話に Call-ID が 3 つ。** 1 つの Call-ID で絞り込むと、1 つのダイアログだけが見えます。網の中では、3 つとも同じ icid-value を持っています（P-CSCF は、UE に送るものからこの値を運ぶヘッダを消します）。ラボはこれで 3 つを 1 つの通話として表示します（[ラボの手順書](lab.md) の「ラダー図の組み立て方」）。転送した通話ではさらに 3 つ増えます。転送先への AS の INVITE、転送のあとに S-CSCF が AS へ送る orig-cdiv の INVITE、転送先の利用者の AS の INVITE です。
 - **LIR はダイアログ C2 のもの。** S-CSCF が I-CSCF に送るのは、AS の INVITE だからです。
 - **ダイアログの中の要求は、ダイアログごとに、届いた順に進む。** UE 1 の PRACK と ACK は UE 1 の AS で終わり、AS が C2 に自分の PRACK と ACK を送ります。UE 2 に PRACK を送るのは UE 2 の AS です。AS が送る PRACK には、UE 1 の PRACK のヘッダのうち、どちらかのレグだけのものではないヘッダ（P-Charging-Vector など）が入ります。UE 1 が PRACK に新しいオファーを入れたときは、そのオファーも AS の PRACK に入って進みます（RFC 3262 5）。AS は、ボディの無い PRACK には UA と同じようにすぐ 200 を返します。そのうえで、それぞれの側の要求を、受け取った順に、前の要求に応答が来てから 1 つずつ送ります。UE と同じく、PRACK に 200 が来てから UPDATE を送るのはこのためです。そうしないと、TCP で送る大きな UPDATE が UDP で送る PRACK より先に着信側に届き、着信側は CSeq の小さい PRACK を拒否します（RFC 3261 12.2.2）。PRACK に入れた answer と、UPDATE に入れた offer が行き違うこともあります（RFC 3264）。順番は発信側と着信側で別々に守るので、着信側の要求が発信側の要求を待つことはありません。AS は自分の側で受けた 2xx にすぐ ACK を返すので、200 が UE 1 に届くより先に、ACK が UE 2 に届くことがあります。BYE は、届いたダイアログの上で AS が答え、AS は同じ Reason を付けた新しい BYE を次のダイアログに送ります（RFC 3326 2）。
 - **SDP を持つ re-INVITE と UPDATE は、もう一方の側に渡り**、その答えが戻ります。HOLD の re-INVITE もこの道を通ります（TS 24.610）。セッションタイマーを更新するボディの無い UPDATE は AS で終わります。タイマーはダイアログごとにあるためです。
@@ -187,7 +187,7 @@ docker compose run --rm ue call tel:+12025550102
 
 UE 1 は `"msg":"call progress","status":181` を、続いて `"msg":"call answered"` をログに出します。UE 3 は着信をログに出します。`set cfu off` でサービスを止めます。ほかのコマンドは `ue xcap get`、`set SERVICE on|off [TARGET]`（`cfu`、`cfb`、`cfnr`、`cfnrc`、`cfnl`、`baic`、`bic-roam`、`acr`、`baoc`、`boic`、`boic-exhc`）、`oir restricted|not-restricted`、`noreply SECONDS` です。サービス `ue2` のアドレスは決まっているので、`ue2` のほかのコンテナが動いているあいだは `ue2 xcap` を動かせません。
 
-ダッシュボードの UE のカードからも同じことができます。[ダッシュボードの手順書](dashboard.md) の「UE シミュレータを操作する」を見てください。ラダー図は通話のすべてのダイアログを MMTel AS の列も含めて 1 つの図に描きます。
+ラボの UE のカードからも同じことができます。[ラボの手順書](lab.md) の「UE シミュレータを操作する」を見てください。ラダー図は通話のすべてのダイアログを MMTel AS の列も含めて 1 つの図に描きます。
 
 ## キャプチャを開く
 

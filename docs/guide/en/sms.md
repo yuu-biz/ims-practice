@@ -164,7 +164,7 @@ To try the failures, which need no other UE:
 - **Unknown number.** `docker compose run --rm ue sms +12025550198 "Nobody has this number."`. No subscriber has the number. The submit report is an RP-ERROR, and `ue sms` exits with `the SC refused the short message: RP-Cause 1, TP-FCS 0xc3`.
 - **Recipient not registered.** `docker compose run --rm ue sms -status-report +12025550103 "Are you there?"`. Subscriber 3 exists but never registers. The SC accepts the message, the delivery fails with 480, and UE 1 logs `"msg":"status report"` with `"status":98`, TP-ST 0x62.
 
-The same can be done from the dashboard: see "Drive the UE simulators" in [the dashboard guide](dashboard.md). The UE cards send short messages and list what each UE sent and received, and the details of each MESSAGE show the decoded short message.
+The same can be done from the Lab: see "Drive the UE simulators" in [the Lab guide](lab.md). The UE cards send short messages and list what each UE sent and received, and the details of each MESSAGE show the decoded short message.
 
 ## Open the capture
 
@@ -293,7 +293,7 @@ When the UE deregisters, the S-CSCF ends the subscription with a NOTIFY whose Su
   |         |---------------------------------------------------->|
 ```
 
-The I-CSCF does not record-route, and a MESSAGE starts no dialog, so every MESSAGE and its response go hop by hop. The MESSAGEs that the IP-SM-GW sends are new requests, each with its own Call-ID; the ladder of the dashboard draws one Call-ID at a time.
+The I-CSCF does not record-route, and a MESSAGE starts no dialog, so every MESSAGE and its response go hop by hop. The MESSAGEs that the IP-SM-GW sends are new requests, each with its own Call-ID; the ladder of the Lab draws one Call-ID at a time.
 
 The ladder draws one thing after another, but some of them run at the same time. The IP-SM-GW hands the message to the SC as soon as it has sent the 202, so the UDR of step 5 may come before the 202 in the capture. Once the SC has taken the message, the submit report (step 6) and the SMS-DELIVER (step 8) leave together, and their LIRs and responses are interleaved.
 
@@ -421,7 +421,7 @@ The UE simulator never runs out of memory, so the memory-full case is only in th
 
 ## Read the body
 
-The body of a MESSAGE is binary: TS 24.341 has the UE send the octets as they are. Here is the body of the MESSAGE of step 1, as the UE simulator built it with `internal/sms`. The dashboard shows the same octets under "Body (hex)" in the details of the MESSAGE.
+The body of a MESSAGE is binary: TS 24.341 has the UE send the octets as they are. Here is the body of the MESSAGE of step 1, as the UE simulator built it with `internal/sms`. The Lab shows the same octets under "Body (hex)" in the details of the MESSAGE.
 
 ```text
 00 00 00 07 91 21 20 55 05 01 f0 23 21 00 0b 91 21 20 55 05 01 f2 00 00 19 c8 32 9b fd 06 55 8b 2d 21 0b
@@ -508,7 +508,7 @@ These filters were checked with tshark 4.2 against MESSAGEs sent by the UE simul
 | `internal/ipsmgw` | The IP-SM-GW: `ipsmgw.go` (the third-party REGISTER), `regevent.go` (the reg event subscription and the PUR), `message.go` (MESSAGEs from UEs), `deliver.go` (MESSAGEs to UEs), `servicecentre.go` (the boundary to the SC), `store.go` (the deliveries in progress). |
 | `internal/sc` | The SC stub. |
 | `internal/ue/sms.go` | The UE as SM-over-IP sender and receiver. |
-| `internal/lab/sms.go` | How the dashboard decodes a short message for the details view. |
+| `internal/lab/sms.go` | How the Lab decodes a short message for the details view. |
 | `internal/ipsmgw/network_test.go`, `internal/ue/sms_ims_test.go` | The whole flow in one process, with the cases above. |
 
 ## What this project simplifies

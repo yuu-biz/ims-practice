@@ -14,7 +14,7 @@
 6. [MRF による音声ガイダンス、呼び出し音、会議](mrf.md)。規制した通話の前の音声ガイダンス、CAT、割込通話、3 人の会議。
 7. [VoLTE の呼の流れ](volte.md)。EPC スタブ、IMS-AKA、Rx でのポリシー制御と、プリコンディションを使った AMR-WB の通話。
 8. [IMS 網どうしを相互接続する](interconnect.md)。境界の IBCF と TrGW、構成の秘匿、相互接続プロファイル。
-9. [ダッシュボードで IMS を見る](dashboard.md)。HEP の写しから描くラダー図、加入者の管理、ブラウザから操作する UE シミュレータ。
+9. [ラボで IMS を見る](lab.md)。HEP の写しから描くラダー図、加入者の管理、ブラウザから操作する UE シミュレータ。
 
 略語は[用語集](../../glossary.md)で説明しています。
 
@@ -63,7 +63,7 @@ docker compose --profile ue --profile sim --profile volte down --rmi all -v --re
 | `scscf` | 172.28.0.30 | S-CSCF。 |
 | `pcscf` | 172.28.0.40 | P-CSCF。 |
 | `agw` | 172.28.0.50 | IMS-AGW の役割のメディア中継。P-CSCF が制御します。 |
-| `lab` | 172.28.0.60 | http://localhost:8080 のダッシュボードと、HEP の収集先。 |
+| `lab` | 172.28.0.60 | http://localhost:8080 のラボと、HEP の収集先。 |
 | `ipsmgw` | 172.28.0.70 | IP-SM-GW。SMS over IP のアプリケーションサーバーです。 |
 | `mmtel` | 172.28.0.75 | MMTel AS。補足サービスのアプリケーションサーバーです。 |
 | `epc` | 172.28.0.80 | PCRF を含む EPC のスタブ。VoLTE の UE が使います。 |
@@ -78,7 +78,7 @@ UE はプロファイルに入れてあるので、`docker compose up` では起
 | プロファイル | サービス | 動かし方 |
 | --- | --- | --- |
 | `ue` | `ue`、`ue2`、`ue3`、`peer` | `docker compose run --rm ue register` のように、1 回のコマンドごとに動かします。`peer` には、ほかの人が作ったユーザーエージェントの pjsua と SIPp が入っています。 |
-| `sim` | `ue-a`、`ue-b`、`ue-c` | 起動したままになり、ダッシュボードの指示で動きます。`docker compose --profile sim up -d` で起動します。 |
+| `sim` | `ue-a`、`ue-b`、`ue-c` | 起動したままになり、ラボの指示で動きます。`docker compose --profile sim up -d` で起動します。 |
 | `volte` | `volte-a`、`volte-b` | VoLTE の UE です。`sim` と同じく起動したままになります。`docker compose --profile volte up -d` で起動します。 |
 
 `ue` と `sim` は同じ加入者を使うので、一度にどちらか一方だけを動かします。

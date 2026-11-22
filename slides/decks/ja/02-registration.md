@@ -267,7 +267,7 @@ UE は Contact に `expires=0` を付けた REGISTER を送ります。
 | 場合 | 試し方 | 見どころ |
 | --- | --- | --- |
 | パスワードが誤っている | `ue register -password wrong-password` | 手順 8 までは同じ。S-CSCF は 403 を返し、AUTHENTICATION_FAILURE（9）の SAR を送る。 |
-| HSS から加入を削除する | ダッシュボードの Subscribers パネルで、登録中の加入を削除する。 | HSS が RTR を送る。Reason-Code は PERMANENT_TERMINATION（0）。UE には `event="rejected"` の NOTIFY が届く。 |
+| HSS から加入を削除する | ラボの Subscribers パネルで、登録中の加入を削除する。 | HSS が RTR を送る。Reason-Code は PERMANENT_TERMINATION（0）。UE には `event="rejected"` の NOTIFY が届く。 |
 
 - コマンドは `docker compose run --rm` に続けて書きます。
 - RTR と RTA のフィルタは `diameter.cmd.code == 304` です。RTR は、この勉強会で初めて HSS から始まる Cx の要求です。
@@ -279,21 +279,21 @@ UE は Contact に `expires=0` を付けた REGISTER を送ります。
 
 [layout: two-columns]
 
-## ダッシュボードで同じ流れを見る
+## ラボで同じ流れを見る
 
 - <http://localhost:8080> を開き、**Registrations** パネルで識別子を選びます。
 - 最後の REGISTER のラダー図が出ます。矢印を選ぶと、メッセージの全文と仕様の条項が出ます。
 - ラダー図には SIP と Cx が並びます。DNS は出ません。
-- ダッシュボードは、ノードが送るコピー（HEP）から図を作ります。IMS の一部ではありません。
+- ラボは、ノードが送るコピー（HEP）から図を作ります。IMS の一部ではありません。
 
 [column]
 
 | 道具 | 向いていること |
 | --- | --- |
 | Wireshark | すべてのパケット。DNS、TCP、AVP の中身まで。 |
-| ダッシュボード | 1 つの登録や通話を、すぐに図で見る。 |
+| ラボ | 1 つの登録や通話を、すぐに図で見る。 |
 
-> 手順書 [ダッシュボードで IMS を見る「各パネルの内容」](../../../docs/guide/ja/dashboard.md#各パネルの内容) と [「ラダー図の組み立て方」](../../../docs/guide/ja/dashboard.md#ラダー図の組み立て方)
+> 手順書 [ラボで IMS を見る「各パネルの内容」](../../../docs/guide/ja/lab.md#各パネルの内容) と [「ラダー図の組み立て方」](../../../docs/guide/ja/lab.md#ラダー図の組み立て方)
 
 ---
 

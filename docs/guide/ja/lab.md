@@ -1,15 +1,15 @@
-# ダッシュボードで IMS を見る
+# ラボで IMS を見る
 
-[English](../en/dashboard.md)
+[English](../en/lab.md)
 
-ダッシュボードには、IMS の登録と通話が起きるとすぐに表示されます。それぞれをラダー図で描くこともできます。HSS の加入者の管理と、2 台の UE シミュレータの操作もできるので、コマンドを打たずに通話をかけて、その信号を確かめられます。
+ラボは、IMS を試しながらその動きを観察するための Web の画面です。IMS の登録と通話は、起きるとすぐにラボに表示されます。それぞれをラダー図で描くこともできます。HSS の加入者の管理と、2 台の UE シミュレータの操作もできるので、コマンドを打たずに通話をかけて、その信号を確かめられます。
 
 ## 始める前に
 
 - Docker と Docker Compose が動いていること。
 - Web ブラウザがあること。
 
-## ダッシュボードを開く
+## ラボを開く
 
 リポジトリのルートで次のコマンドを実行します。
 
@@ -17,9 +17,9 @@
 docker compose up -d --build
 ```
 
-ブラウザで <http://localhost:8080> を開きます。タイトルの横の点が `live` になっていれば、画面はダッシュボードから更新を受け取っています。
+ブラウザで <http://localhost:8080> を開きます。タイトルの横の点が `live` になっていれば、画面はラボのサーバーから更新を受け取っています。
 
-ダッシュボードは、ホストのループバックアドレスにだけ公開しています。パスワードを求めず、届いた人は誰でも加入者を削除したり UE を操作したりできるためです。同じネットワークの別のマシンから開くときは、リポジトリのルートに `compose.override.yaml` を作ります。Compose は `compose.yaml` のあとにこのファイルを自分で読みます。
+ラボは、ホストのループバックアドレスにだけ公開しています。パスワードを求めず、届いた人は誰でも加入者を削除したり UE を操作したりできるためです。同じネットワークの別のマシンから開くときは、リポジトリのルートに `compose.override.yaml` を作ります。Compose は `compose.yaml` のあとにこのファイルを自分で読みます。
 
 ```yaml
 services:
@@ -40,25 +40,25 @@ services:
 | Registrations | 登録を確認できた公開ユーザー識別子ごとの行。Contact、有効期限、S-CSCF を表示します。識別子を選ぶと、最後の REGISTER のラダー図を描きます。 |
 | Subscribers (HSS) | HSS にある加入の一覧。試験用の加入者を追加、削除できます。 |
 
-ダッシュボードが知っているのは、ノードから届いた情報だけです。各ノードと UE シミュレータは送受信した SIP と Diameter のメッセージのコピーをすべて HEP でダッシュボードへ送ります（[キャプチャの手順書](capture.md) の「ダッシュボードに送るコピー（HEP）」を参照）。ダッシュボードはこのコピーだけから登録と通話を組み立て、ノードに状態を問い合わせることはしません。例外は UE シミュレータのカードで、その UE が制御用の API で返す状態を表示します。そのため、カードと Registrations パネルの表示が一時的に食い違うことがあります。
+ラボが知っているのは、ノードから届いた情報だけです。各ノードと UE シミュレータは送受信した SIP と Diameter のメッセージのコピーをすべて HEP でラボへ送ります（[キャプチャの手順書](capture.md) の「ラボに送るコピー（HEP）」を参照）。ラボはこのコピーだけから登録と通話を組み立て、ノードに状態を問い合わせることはしません。例外は UE シミュレータのカードで、その UE が制御用の API で返す状態を表示します。そのため、カードと Registrations パネルの表示が一時的に食い違うことがあります。
 
 ## ラダー図の組み立て方
 
 ノードからノードへ送られたメッセージは、送ったノードと受け取ったノードの両方から届きます。ラダー図では送信側のコピーと受信側のコピーのうち、送信元、宛先、中身が同じものを 1 本の矢印にまとめます。1 本の矢印がネットワーク上の 1 つのメッセージにあたります。まったく同じ中身の再送は、別の矢印になります。
 
-Cx のメッセージには、どの SIP のリクエストのために送ったかを示すものがありません。Diameter の Session-Id と SIP の Call-ID は無関係です。そこでダッシュボードは手順の決まりを使って両者を結び付けます。Cx のリクエストは、同じノードが 2 秒以内に最後に受け取った SIP のリクエストのうち、同じ利用者を指すものに属するとします。UAR、MAR、SAR では、Authorization のユーザー名が User-Name と同じか、To が Public-Identity と同じ REGISTER です。LIR では、Request-URI が Public-Identity と同じリクエストです。応答は Session-Id でリクエストに結び付きます。この決まりは `internal/lab/causes.go` にあります。
+Cx のメッセージには、どの SIP のリクエストのために送ったかを示すものがありません。Diameter の Session-Id と SIP の Call-ID は無関係です。そこでラボは手順の決まりを使って両者を結び付けます。Cx のリクエストは、同じノードが 2 秒以内に最後に受け取った SIP のリクエストのうち、同じ利用者を指すものに属するとします。UAR、MAR、SAR では、Authorization のユーザー名が User-Name と同じか、To が Public-Identity と同じ REGISTER です。LIR では、Request-URI が Public-Identity と同じリクエストです。応答は Session-Id でリクエストに結び付きます。この決まりは `internal/lab/causes.go` にあります。
 
 P-CSCF の Rx のセッションも同じように結び付けます（TS 29.214 A.1、A.4）。最初の AAR が UE を示すのはアドレス（Framed-IP-Address）だけです。この AAR は、P-CSCF がそのアドレスから最後に受け取った SDP 付きの SIP のメッセージか、そのアドレスからの REGISTER のうち、あとに来たほうに属するとします。SDP 付きのメッセージは発信側の UE なら INVITE、着信側の UE なら 183 です。セッションのほかのメッセージ（STR、RAR、ASR と、その応答）は Session-Id で結び付きます。ラダー図では PCRF の列を P-CSCF の隣に描きます。メッセージの中身は [VoLTE の呼の流れ](volte.md) にあります。
 
-MMTel AS を通る通話は、1 つのダイアログではありません。AS は routeing B2BUA で（TS 24.229 5.7.5）、S-CSCF から届いた INVITE に自分で答え、自分の Call-ID を付けた新しい INVITE を送ります。そのため UE 1 から UE 2 への通話は、UE 1 とその AS、その AS と UE 2 の AS、UE 2 の AS と UE 2 の 3 つのダイアログになり、転送した通話ではさらに増えます。網の中では、どのダイアログの P-Charging-Vector にも、発信側の P-CSCF が入れてそれぞれの AS が残した、同じ icid-value が入っています（TS 24.229 5.2.6.3.3 step 7、5.7.5.1）。P-CSCF は、UE に送るものからこのヘッダを消します。ダッシュボードは、icid-value が同じダイアログを 1 つの通話として表示します。行には発信者のダイアログの Call-ID、状態、応答のコードを出し、Dialogs の列にダイアログの数を出します。ラダー図にはすべてのダイアログを、MMTel AS の列も含めて描きます。矢印を選ぶと、そのメッセージの Call-ID が分かります。転送した通話とほかのサービスは、[MMTel AS の補足サービス](mmtel.md) で説明しています。
+MMTel AS を通る通話は、1 つのダイアログではありません。AS は routeing B2BUA で（TS 24.229 5.7.5）、S-CSCF から届いた INVITE に自分で答え、自分の Call-ID を付けた新しい INVITE を送ります。そのため UE 1 から UE 2 への通話は、UE 1 とその AS、その AS と UE 2 の AS、UE 2 の AS と UE 2 の 3 つのダイアログになり、転送した通話ではさらに増えます。網の中では、どのダイアログの P-Charging-Vector にも、発信側の P-CSCF が入れてそれぞれの AS が残した、同じ icid-value が入っています（TS 24.229 5.2.6.3.3 step 7、5.7.5.1）。P-CSCF は、UE に送るものからこのヘッダを消します。ラボは、icid-value が同じダイアログを 1 つの通話として表示します。行には発信者のダイアログの Call-ID、状態、応答のコードを出し、Dialogs の列にダイアログの数を出します。ラダー図にはすべてのダイアログを、MMTel AS の列も含めて描きます。矢印を選ぶと、そのメッセージの Call-ID が分かります。転送した通話とほかのサービスは、[MMTel AS の補足サービス](mmtel.md) で説明しています。
 
-ノードが自分自身にメッセージを送ることもあります。S-CSCF が発信側と着信側の両方を受け持つときがそうです。ラダー図では同じ縦の線に戻る矢印になります。このメッセージはコンテナの外に出ないので、Docker のネットワークでのキャプチャには入りません。ダッシュボードには表示されて pcap には無いメッセージは、これだけです。
+ノードが自分自身にメッセージを送ることもあります。S-CSCF が発信側と着信側の両方を受け持つときがそうです。ラダー図では同じ縦の線に戻る矢印になります。このメッセージはコンテナの外に出ないので、Docker のネットワークでのキャプチャには入りません。ラボには表示されて pcap には無いメッセージは、これだけです。
 
 ## 加入者を管理する
 
-Subscribers パネルでは、HSS の加入の一覧表示、追加、削除ができます。ダッシュボードは要求を HSS へ渡すだけで、加入の写しは持ちません。識別子は試験用のものだけを使ってください。たとえば IMSI 001010000000005 なら `001010000000005@ims.mnc001.mcc001.3gppnetwork.org` です。
+Subscribers パネルでは、HSS の加入の一覧表示、追加、削除ができます。ラボは要求を HSS へ渡すだけで、加入の写しは持ちません。識別子は試験用のものだけを使ってください。たとえば IMSI 001010000000005 なら `001010000000005@ims.mnc001.mcc001.3gppnetwork.org` です。
 
-登録中の加入者を削除すると、その登録は終わります。HSS が S-CSCF に Registration-Termination-Request（RTR）を送り（TS 29.228 6.1.3）、S-CSCF は RTA で答えて、reg イベントの NOTIFY で UE に知らせます。流れの全体は [登録の手順書](registration.md) の「加入を削除する（HSS からの登録解除）」にあります。RTR と RTA はキャプチャには現れますが、ラダー図には描かれません。HSS は SIP のリクエストを受けて RTR を送るわけではないので、ダッシュボードは RTR をどの通話や登録にも結び付けません。
+登録中の加入者を削除すると、その登録は終わります。HSS が S-CSCF に Registration-Termination-Request（RTR）を送り（TS 29.228 6.1.3）、S-CSCF は RTA で答えて、reg イベントの NOTIFY で UE に知らせます。流れの全体は [登録の手順書](registration.md) の「加入を削除する（HSS からの登録解除）」にあります。RTR と RTA はキャプチャには現れますが、ラダー図には描かれません。HSS は SIP のリクエストを受けて RTR を送るわけではないので、ラボは RTR をどの通話や登録にも結び付けません。
 
 ## UE シミュレータを操作する
 
@@ -104,7 +104,7 @@ docker compose --profile sim up -d --build
 
 ボタンを押すたびに、UE が自分で XCAP の要求を送ります。最初に文書全体を GET し、次に変える規則 1 つだけを `If-Match` を付けて PUT し、一覧を表示するためにもう一度 GET します。XCAP サーバーは、HSS にある文書を Sh で読み書きします（UDR と PUR、Service-Indication は `MMTEL-Services`）。HTTP も、この Sh の要求も SIP の要求には結び付かないので、ラダー図には出ません。キャプチャには、80 番ポートの HTTP と 3868 番ポートの Diameter としてすべて残ります。最初の GET には 401 が返り、HTTP Digest の challenge が SHA-256、MD5 の順に 2 つ付いています。UE は先頭の SHA-256 で答えます。
 
-利用者に電話をかけた人が聞く呼び出し音（CAT、customized alerting tone、TS 24.182）を設定するには、Subscribers の欄の **Alerting tone (CAT)** の列で音を選びます。たとえば加入者 2 に `cat1` を選びます。ダッシュボードはそれを HSS に渡し、MMTel AS はその利用者への着信のたびに Sh で読みます。もう一度 `ue-a` から `ue-b` に発信すると、`ue-b` が応答するまで MRFP がその音をアーリーメディアとして `ue-a` に流します。`ue-a` の Session の行には `rang with early media from the network` と表示されます。`off (ringing tone)` に戻すと、同じ行は `rang with the UE's own ringing tone` になります。
+利用者に電話をかけた人が聞く呼び出し音（CAT、customized alerting tone、TS 24.182）を設定するには、Subscribers の欄の **Alerting tone (CAT)** の列で音を選びます。たとえば加入者 2 に `cat1` を選びます。ラボはそれを HSS に渡し、MMTel AS はその利用者への着信のたびに Sh で読みます。もう一度 `ue-a` から `ue-b` に発信すると、`ue-b` が応答するまで MRFP がその音をアーリーメディアとして `ue-a` に流します。`ue-a` の Session の行には `rang with early media from the network` と表示されます。`off (ringing tone)` に戻すと、同じ行は `rang with the UE's own ringing tone` になります。
 
 2 つ目の着信を受け、2 つの通話から会議を作るには、次のようにします（TS 24.615、TS 24.147）。
 
@@ -124,7 +124,7 @@ docker compose --profile sim up -d --build
 次の 3 つは、3GPP や IETF の仕様に無いもので、IMS の一部でもありません。
 
 - HEP によるコピー。HEP は信号を集めるための Homer プロジェクトのプロトコルです。キャプチャには、本来のメッセージとは別に、UDP の 9060 番ポートへのコピーのパケットが入ります。
-- ダッシュボードの HTTP API。`internal/lab/lab.go` のパッケージのコメントに一覧があります。
+- ラボの HTTP API。`internal/lab/lab.go` のパッケージのコメントに一覧があります。
 - UE シミュレータ（`ue serve`）の制御用の API。`internal/ue/phone_http.go` の `Phone.Handler` のコメントに一覧があります。補足サービスの部分は、`internal/ue/xcap.go` の `SupplementaryServices.Handler` のコメントにあります。[通話の手順書](call.md) の「HTTP で UE を操作する」では、この API を直接使います。
 
 一方で、ラダー図に描かれる信号は、仕様で定められたとおりの IMS の信号です。

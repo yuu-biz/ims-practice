@@ -317,7 +317,7 @@ The filter is `rtp || rtcp`. **Play Streams** plays the voice.
 
 ---
 
-## Calling from the dashboard
+## Calling from the Lab
 
 ```sh
 docker compose --profile sim up -d --build
@@ -331,7 +331,7 @@ docker compose --profile sim up -d --build
 - Hanging up before the answer makes the caller send CANCEL, and the callee decline with 603.
 - Do not run the `sim` and the `ue` profiles at once: two UEs of one subscriber overwrite each other's registration. The HTTP API that drives a UE is this project's own; none of it goes to the IMS.
 
-> Guide: [Watch the IMS in the dashboard, "Drive the UE simulators"](../../../docs/guide/en/dashboard.md#drive-the-ue-simulators), and [the call guide, "Drive a UE over HTTP"](../../../docs/guide/en/call.md#drive-a-ue-over-http)
+> Guide: [Watch the IMS in the Lab, "Drive the UE simulators"](../../../docs/guide/en/lab.md#drive-the-ue-simulators), and [the call guide, "Drive a UE over HTTP"](../../../docs/guide/en/call.md#drive-a-ue-over-http)
 
 ---
 

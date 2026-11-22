@@ -147,7 +147,7 @@ Route: <sip:mmtel.…:5060;lr>,<sip:scscf.…:5060;lr;odi=...>
 | Look at | What to see |
 | --- | --- |
 | Call-ID | Three per call. A diverted call adds three more. |
-| icid-value of P-Charging-Vector | The same in all three, inside the network. The dashboard joins them into one call by it. |
+| icid-value of P-Charging-Vector | The same in all three, inside the network. The Lab joins them into one call by it. |
 | LIR | It belongs to dialog C2. |
 | PRACK and ACK | They go dialog by dialog. The ACK can reach UE 2 before the 200 reaches UE 1. |
 | BYE | The AS answers it, and sends a new BYE with the same Reason on the next dialog. |
@@ -390,7 +390,7 @@ go test -run 'TestCommunicationWaiting|TestHoldThroughTheIMS' -v ./internal/mmte
 go test -run TestServeTwoCalls -v ./internal/ue
 ```
 
-- `ue serve` answers a third call with 486. The **Hold** button of the dashboard sends HOLD too.
+- `ue serve` answers a third call with 486. The **Hold** button of the Lab sends HOLD too.
 
 > Guide: ["CW and HOLD"](../../../docs/guide/en/mmtel.md#cw-and-hold). TS 24.615 4.5.5.3.2, 4.5.5.2.3. RFC 7462. TS 24.610 4.5.2.1.
 
@@ -433,7 +433,7 @@ grep -rn "SIMPLIFIED:" internal/mmtel internal/xcap internal/simservs internal/c
 
 ---
 
-## Set it from the dashboard
+## Set it from the Lab
 
 ```sh
 docker compose --profile sim up -d --build
@@ -445,9 +445,9 @@ docker compose --profile sim up -d --build
 4. **Off** switches it off. The target stays.
 
 - The ladders show neither XCAP nor Sh: neither belongs to a SIP request. The capture has them, as HTTP on port 80 and Diameter on port 3868.
-- The dashboard draws all the dialogs of a call in one ladder, with a column for the MMTel AS. Do not run the `sim` and `ue` profiles at once: a subscriber would have two UEs.
+- The Lab draws all the dialogs of a call in one ladder, with a column for the MMTel AS. Do not run the `sim` and `ue` profiles at once: a subscriber would have two UEs.
 
-> Guide: ["Drive the UE simulators" in Watch the IMS in the dashboard](../../../docs/guide/en/dashboard.md#drive-the-ue-simulators)
+> Guide: ["Drive the UE simulators" in Watch the IMS in the Lab](../../../docs/guide/en/lab.md#drive-the-ue-simulators)
 
 ---
 
@@ -531,6 +531,6 @@ For 1 and 3, run `ue xcap` as UE 1 or UE 2, in the form of the slide "Run it".
 docker compose --profile ue --profile sim down --rmi all -v --remove-orphans
 ```
 
-- This stops the `ue` and the `sim` profiles. The guide's "Clean up" stops only `ue`, which is enough when the dashboard was not used.
+- This stops the `ue` and the `sim` profiles. The guide's "Clean up" stops only `ue`, which is enough when the Lab was not used.
 
 > The guides are listed in [docs/guide/](../../../docs/guide/).

@@ -317,7 +317,7 @@ UE 1 -> relay access (context 1) -> relay core (context 1)
 
 ---
 
-## ダッシュボードから通話をかける
+## ラボから通話をかける
 
 ```sh
 docker compose --profile sim up -d --build
@@ -331,7 +331,7 @@ docker compose --profile sim up -d --build
 - 応答の前に切ると、発信側は CANCEL を送り、着信側は 603 で断ります。
 - `sim` と `ue` のプロファイルを同時に動かさないでください。同じ加入者の UE が 2 台になり、互いの登録を上書きします。UE を動かす HTTP の API はこのプロジェクト独自のもので、IMS には何も流れません。
 
-> 手順書 [ダッシュボードで IMS を見る「UE シミュレータを操作する」](../../../docs/guide/ja/dashboard.md#ue-シミュレータを操作する) と、[通話の「HTTP で UE を操作する」](../../../docs/guide/ja/call.md#http-で-ue-を操作する)
+> 手順書 [ラボで IMS を見る「UE シミュレータを操作する」](../../../docs/guide/ja/lab.md#ue-シミュレータを操作する) と、[通話の「HTTP で UE を操作する」](../../../docs/guide/ja/call.md#http-で-ue-を操作する)
 
 ---
 
