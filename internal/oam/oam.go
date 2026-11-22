@@ -12,6 +12,8 @@ import (
 	"slices"
 	"strings"
 	"time"
+
+	"github.com/yuu-biz/ims-practice/internal/maintenance"
 )
 
 // PathPrefix is where the OAM API lives. A role mounts Handler under
@@ -177,14 +179,14 @@ func New(c Config) (*Server, error) {
 }
 
 func checkEndpoint(e Endpoint) error {
-	if !isName(e.Name) {
+	if !maintenance.IsName(e.Name) {
 		return fmt.Errorf("oam: node name %q is not a name of lowercase letters, digits and hyphens", e.Name)
 	}
 	if len(e.Roles) == 0 {
 		return fmt.Errorf("oam: node %s has no roles", e.Name)
 	}
 	for _, r := range e.Roles {
-		if !isName(r) {
+		if !maintenance.IsName(r) {
 			return fmt.Errorf("oam: node %s: role %q is not a name of lowercase letters, digits and hyphens", e.Name, r)
 		}
 	}
@@ -193,20 +195,6 @@ func checkEndpoint(e Endpoint) error {
 		return fmt.Errorf("oam: node %s: %q is not an http or https URL", e.Name, e.URL)
 	}
 	return nil
-}
-
-// isName says whether s is a name of lowercase letters, digits and
-// hyphens, as the roles of the configuration file are.
-func isName(s string) bool {
-	if s == "" {
-		return false
-	}
-	for _, r := range s {
-		if (r < 'a' || r > 'z') && (r < '0' || r > '9') && r != '-' {
-			return false
-		}
-	}
-	return true
 }
 
 // isDottedName says whether s is a dotted name of lowercase words with

@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
+
+	"github.com/yuu-biz/ims-practice/internal/maintenance"
 )
 
 // SecretString is a credential of a subscription record: a SIP Digest
@@ -150,7 +152,7 @@ func (r SubscriptionRecord) validate() error {
 			return fmt.Errorf("repository_data[%d]: service_indication and service_data are required", i)
 		}
 	}
-	if r.ServiceProfile != "" && !isName(r.ServiceProfile) {
+	if r.ServiceProfile != "" && !maintenance.IsName(r.ServiceProfile) {
 		return errors.New("service_profile: not a name of lowercase letters, digits and hyphens")
 	}
 	return nil
