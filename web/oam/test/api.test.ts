@@ -204,6 +204,11 @@ describe("errors", () => {
     expect((error as HttpError).settings).toEqual(rollbackConflict.settings);
   });
 
+  it("takes the status as the message of an empty error", async () => {
+    serve(500, JSON.stringify({ error: "" }));
+    await expect(fetchInventory()).rejects.toThrow(/^500\b/);
+  });
+
   it("takes a body that is not an ErrorBody as the message", async () => {
     serve(502, "Bad Gateway");
     await expect(fetchInventory()).rejects.toEqual(new HttpError(502, "Bad Gateway"));
