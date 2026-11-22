@@ -85,19 +85,19 @@ UE はプロファイルに入れてあるので、`docker compose up` では起
 
 ### 加入者、UE、サービスの対応
 
-試験用の加入者は `deploy/compose/hss.yaml` にあります。手順書では、UE 1 や UE-A のように、加入者の番号やシナリオでの役で UE を呼びます。その名前とサービスの対応は次の表のとおりです。
+この網の試験用の加入者は `deploy/compose/hss.yaml` に、網間接続の手順書に出てくる網 B の加入者は `deploy/interconnect/b/hss.yaml` にあります。手順書では、加入者 1 の UE を UE 1 と呼ぶように、使っている加入者の番号で UE を呼びます。コマンドやラボのカードで要るところには、サービスの名前をそのまま書きます。網が 2 つ出てくるところでは、網の文字を先に付けます。UE A1 は網 A の UE 1 で、UE B1 は網 B の 1 人目の加入者の UE です。網 B のサービスの名前は `scscf-b` のように `-b` で終わり、UE の名前の数字は使っている加入者を指します。
 
 | 加入者 | IMPI（private identity） | 番号 | サービス | 手順書での呼び名 |
 | --- | --- | --- | --- | --- |
-| 1 | `001010000000001@ims.mnc001.mcc001.3gppnetwork.org` | +1-202-555-0101 | `ue`、`phone1` | UE 1、UE-A、網間接続の手順書では UE A1 |
-| 2 | `001010000000002@ims.mnc001.mcc001.3gppnetwork.org` | +1-202-555-0102 | `ue2`、`phone2` | UE 2、UE-B |
-| 3 | `001010000000003@ims.mnc001.mcc001.3gppnetwork.org` | +1-202-555-0103 | `ue3`、`phone3` | UE 3、UE-C |
+| 1 | `001010000000001@ims.mnc001.mcc001.3gppnetwork.org` | +1-202-555-0101 | `ue`、`phone1` | UE 1、網間接続の手順書では UE A1 |
+| 2 | `001010000000002@ims.mnc001.mcc001.3gppnetwork.org` | +1-202-555-0102 | `ue2`、`phone2` | UE 2、網間接続の手順書では UE A2 |
+| 3 | `001010000000003@ims.mnc001.mcc001.3gppnetwork.org` | +1-202-555-0103 | `ue3`、`phone3` | UE 3 |
 | 4 | `+12025550104@ims.mnc001.mcc001.3gppnetwork.org` | +1-202-555-0104 | `softphone`（pjsua） | pjsua |
-| 10 | `001010000000010@ims.mnc001.mcc001.3gppnetwork.org` | +1-202-555-0110 | `volte10` | volte10 |
+| 10 | `001010000000010@ims.mnc001.mcc001.3gppnetwork.org` | +1-202-555-0110 | `volte10` | `volte10` |
 | 11 | `001010000000011@ims.mnc001.mcc001.3gppnetwork.org` | +1-202-555-0111 | `softphone`（SIPp） | SIPp |
-| 12 | `001010000000012@ims.mnc001.mcc001.3gppnetwork.org` | +1-202-555-0112 | `volte12` | volte12 |
-
-網間接続の手順書の 2 つ目の網には、`deploy/interconnect/b/hss.yaml` に別の加入者がいます。サービス `ue-b1` の UE B1 が +1-202-555-0151 で、もう 1 人が +1-202-555-0152 です。
+| 12 | `001010000000012@ims.mnc001.mcc001.3gppnetwork.org` | +1-202-555-0112 | `volte12` | `volte12` |
+| 網 B の 1 | `001020000000001@ims.mnc002.mcc001.3gppnetwork.org` | +1-202-555-0151 | `ue-b1` | UE B1 |
+| 網 B の 2 | `001020000000002@ims.mnc002.mcc001.3gppnetwork.org` | +1-202-555-0152 | `ue-b2` | UE B2 |
 
 ### どのノードも動かさないコード
 

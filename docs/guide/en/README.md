@@ -85,19 +85,19 @@ The UEs are in profiles, so `docker compose up` does not start them.
 
 ### Subscribers, UEs and services
 
-The test subscribers are in `deploy/compose/hss.yaml`. The guides call a UE by its subscriber or its role in the scenario, such as UE 1 or UE-A; this table maps those names to the services.
+The test subscribers of this network are in `deploy/compose/hss.yaml`, those of network B of the interconnect guide in `deploy/interconnect/b/hss.yaml`. The guides call a UE by the subscriber it uses, UE 1 for subscriber 1, and write the name of the service where a command or a card of the Lab needs it. Where two networks are in play, the letter of the network comes first: UE A1 is UE 1 of network A, and UE B1 the UE of network B's first subscriber. A service of network B ends in `-b`, as `scscf-b` does, and a digit in the name of a UE is the subscriber it uses.
 
 | Subscriber | Private identity | Number | Services | Called in the guides |
 | --- | --- | --- | --- | --- |
-| 1 | `001010000000001@ims.mnc001.mcc001.3gppnetwork.org` | +1-202-555-0101 | `ue`, `phone1` | UE 1, UE-A, UE A1 in the interconnect guide |
-| 2 | `001010000000002@ims.mnc001.mcc001.3gppnetwork.org` | +1-202-555-0102 | `ue2`, `phone2` | UE 2, UE-B |
-| 3 | `001010000000003@ims.mnc001.mcc001.3gppnetwork.org` | +1-202-555-0103 | `ue3`, `phone3` | UE 3, UE-C |
+| 1 | `001010000000001@ims.mnc001.mcc001.3gppnetwork.org` | +1-202-555-0101 | `ue`, `phone1` | UE 1, UE A1 in the interconnect guide |
+| 2 | `001010000000002@ims.mnc001.mcc001.3gppnetwork.org` | +1-202-555-0102 | `ue2`, `phone2` | UE 2, UE A2 in the interconnect guide |
+| 3 | `001010000000003@ims.mnc001.mcc001.3gppnetwork.org` | +1-202-555-0103 | `ue3`, `phone3` | UE 3 |
 | 4 | `+12025550104@ims.mnc001.mcc001.3gppnetwork.org` | +1-202-555-0104 | `softphone` (pjsua) | pjsua |
-| 10 | `001010000000010@ims.mnc001.mcc001.3gppnetwork.org` | +1-202-555-0110 | `volte10` | volte10 |
+| 10 | `001010000000010@ims.mnc001.mcc001.3gppnetwork.org` | +1-202-555-0110 | `volte10` | `volte10` |
 | 11 | `001010000000011@ims.mnc001.mcc001.3gppnetwork.org` | +1-202-555-0111 | `softphone` (SIPp) | SIPp |
-| 12 | `001010000000012@ims.mnc001.mcc001.3gppnetwork.org` | +1-202-555-0112 | `volte12` | volte12 |
-
-The second network of the interconnect guide has its own subscribers in `deploy/interconnect/b/hss.yaml`: +1-202-555-0151, UE B1 on the service `ue-b1`, and +1-202-555-0152.
+| 12 | `001010000000012@ims.mnc001.mcc001.3gppnetwork.org` | +1-202-555-0112 | `volte12` | `volte12` |
+| 1 of network B | `001020000000001@ims.mnc002.mcc001.3gppnetwork.org` | +1-202-555-0151 | `ue-b1` | UE B1 |
+| 2 of network B | `001020000000002@ims.mnc002.mcc001.3gppnetwork.org` | +1-202-555-0152 | `ue-b2` | UE B2 |
 
 ### Code that no node runs
 

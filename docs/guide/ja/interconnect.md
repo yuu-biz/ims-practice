@@ -13,7 +13,7 @@
 
 ## 2 つの網
 
-網 A は `compose.yaml` の網で、ほかの手順書の自網です。網 B は相手網で、別の事業者の 2 つ目の IMS です。同じイメージを別の設定で動かし、ドメイン、番号、加入者を網 A と分けています。`deploy/interconnect/compose.yaml` を `compose.yaml` に重ねて足します。`compose.yaml` は変えていません。
+網 A は `compose.yaml` の網で、ほかの手順書の自網です。網 B は相手網で、別の事業者の 2 つ目の IMS です。同じイメージを別の設定で動かし、ドメイン、番号、加入者を網 A と分けています。`deploy/interconnect/compose.yaml` を `compose.yaml` に重ねて足します。`compose.yaml` は変えていません。網 B のサービスの名前は `-b` で終わります。`scscf-b` は網 B の S-CSCF で、`scscf` は網 A の S-CSCF です。ノードの設定ファイルは、網ごとに `deploy/interconnect/a` と `deploy/interconnect/b` にあります。
 
 ```text
        網 A（ims0）                    網のあいだ（nni0）           網 B（ims1）
