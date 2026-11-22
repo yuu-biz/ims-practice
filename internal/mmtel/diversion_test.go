@@ -39,7 +39,7 @@ const (
 
 // toServedUser is the INVITE of the S-CSCF to the AS for a call to the
 // served user alice.
-func toServedUser(t *testing.T, as testAS, next *sip.UA, regstate string, headers ...sip.HeaderField) sip.Invitation {
+func toServedUser(t *testing.T, as testAS, next hop, regstate string, headers ...sip.HeaderField) sip.Invitation {
 	t.Helper()
 	inv := viaAS(t, as, next, "term", offer)
 	inv.RequestURI, inv.To = aliceURI, aliceURI
