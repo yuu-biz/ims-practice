@@ -26,7 +26,7 @@
    |    (.50)-----------(.91) .11                    .21  (.91)---------------------------|
 ```
 
-網のあいだのブリッジ `nni0` には、IBCF と TrGW しかつながっていません。網 A の中のノードは、網 B の中のノードに直接は届きません。すべて境界を通ります。キャプチャはブリッジごとに 1 つずつ取ります。網 A は `captures/ims-*.pcap`、網 B は `captures/peer/ims-*.pcap`、網のあいだは `captures/nni/ims-*.pcap` です。
+網のあいだのブリッジ `nni0` には、IBCF と TrGW しかつながっていません。網 A の中のノードは、網 B の中のノードに直接は届きません。すべて境界を通ります。キャプチャはブリッジごとに 1 つずつ取ります。網 A は `captures/ims-*.pcap`、網 B は `captures/b/ims-*.pcap`、網のあいだは `captures/nni/ims-*.pcap` です。
 
 | ノード | 網 A | 網 B |
 | --- | --- | --- |
@@ -78,7 +78,7 @@ TrGW は、ここでも役割 `agw` のメディア中継ノードです。2 つ
 2. 1 つ目の端末で、UE B1 に着信を待たせます。UE シミュレータには網 B の設定をフラグで渡します。
 
    ```sh
-   docker compose -f compose.yaml -f deploy/interconnect/compose.yaml run --rm peer-ue answer \
+   docker compose -f compose.yaml -f deploy/interconnect/compose.yaml run --rm ue-b1 answer \
      -domain ims.mnc002.mcc001.3gppnetwork.org \
      -impi 001020000000001@ims.mnc002.mcc001.3gppnetwork.org \
      -impu sip:+12025550151@ims.mnc002.mcc001.3gppnetwork.org \
@@ -96,7 +96,7 @@ TrGW は、ここでも役割 `agw` のメディア中継ノードです。2 つ
 
 4. 折り返すときは、UE A2 に着信を待たせ（`run --rm ue2 answer -impi 001010000000002@... -impu sip:+12025550102@... -password test-password-2`）、UE B1 から手順 2 のフラグで `tel:+12025550102` にかけます。
 
-5. ショートメッセージを送るときは、UE B1 を登録したままにし（手順 2 のフラグで `run --rm peer-ue register`）、UE A1 から送ります。
+5. ショートメッセージを送るときは、UE B1 を登録したままにし（手順 2 のフラグで `run --rm ue-b1 register`）、UE A1 から送ります。
 
    ```sh
    docker compose -f compose.yaml -f deploy/interconnect/compose.yaml run --rm ue sms -status-report +12025550151 "Hello UE-B1"
@@ -105,7 +105,7 @@ TrGW は、ここでも役割 `agw` のメディア中継ノードです。2 つ
 6. 返事を送るときは、手順 5 の UE B1 の登録を止め、UE A1 を登録したままにし（`run --rm ue register`）、UE B1 から、手順 2 のフラグに網 B の SC の番号 `-sc +12025550150` を加えて送ります。
 
    ```sh
-   docker compose -f compose.yaml -f deploy/interconnect/compose.yaml run --rm peer-ue sms <手順 2 のフラグ> -sc +12025550150 -status-report +12025550101 "Hello UE-A1"
+   docker compose -f compose.yaml -f deploy/interconnect/compose.yaml run --rm ue-b1 sms <手順 2 のフラグ> -sc +12025550150 -status-report +12025550101 "Hello UE-A1"
    ```
 
    UE B1 は、送るときに自分で登録します。別の登録が残っていると、status report がそちらに届くことがあります。
@@ -151,7 +151,7 @@ NAPTR 10 100 "u" "E2U+sip" "!^.*$!sip:+12025550151@ims.mnc002.mcc001.3gppnetwork
 
 ### 3. S-CSCF が IBCF-A に送る
 
-ドメインは網 A のものではありません。TS 24.229 5.4.3.2 の手順 11 は、相互接続の機能が要る宛先への要求を、自網の IBCF を通して送るように求めます。手順 12 は、網が構成を隠すときに IBCF を Route の先頭に入れるとしています。IBCF の URI は S-CSCF の設定 `ibcf` にあります（`deploy/interconnect/home/scscf.yaml`）。
+ドメインは網 A のものではありません。TS 24.229 5.4.3.2 の手順 11 は、相互接続の機能が要る宛先への要求を、自網の IBCF を通して送るように求めます。手順 12 は、網が構成を隠すときに IBCF を Route の先頭に入れるとしています。IBCF の URI は S-CSCF の設定 `ibcf` にあります（`deploy/interconnect/a/scscf.yaml`）。
 
 ```text
 INVITE sip:+12025550151@ims.mnc002.mcc001.3gppnetwork.org;user=phone SIP/2.0
@@ -203,7 +203,7 @@ UE B1 から UE A2 への折り返しも、網の役割を入れ替えるだけ�
 | --- | --- | --- |
 | `captures/ims-*.pcap`（網 A） | 網 B の番号の ENUM、IBCF を Route に入れた S-CSCF から IBCF-A への INVITE、IBCF-A が中継する網 B のメッセージ | 172.28.1.0/24 のアドレスと、網 B のノードのホスト名 |
 | `captures/nni/ims-*.pcap`（網のあいだ） | 2 つの IBCF と 2 つの TrGW だけ。IBCF の外側の名前を持つ 1 つの Via と Contact。IBCF が作った Call-ID。網のあいだの TrGW のアドレスを持つ SDP。TrGW どうしの RTP | どちらの網の中のアドレスも、ノードのホスト名も、網 A の IMSI から作った識別子も、Record-Route も |
-| `captures/peer/ims-*.pcap`（網 B） | IBCF-B から I-CSCF への INVITE とその先、tel URI、TrGW-B を指す SDP | 172.28.0.0/24 のアドレス、網 A のノードのホスト名、網 A の IMSI から作った識別子 |
+| `captures/b/ims-*.pcap`（網 B） | IBCF-B から I-CSCF への INVITE とその先、tel URI、TrGW-B を指す SDP | 172.28.0.0/24 のアドレス、網 A のノードのホスト名、網 A の IMSI から作った識別子 |
 
 これがトポロジーの秘匿の確認です。相手網のキャプチャに、自網の中のアドレスが現れてはいけません。スクリプトは、IP のヘッダとフレームの全体からアドレスを探します。また、相手網のドメインの前に `pcscf`、`scscf`、`icscf`、`mmtel`、`agw`、`ipsmgw`、`hss`、`ibcf`、`trgw` などのノードの名前が付いていないかも探します。網 B のキャプチャと網のあいだのキャプチャからは、網 A の IMSI で始まるユーザー部も探し、1 つも見つかりません。
 
@@ -383,9 +383,9 @@ UE A1   S-CSCF-A  IP-SM-GW-A+SC  IBCF-A ║ IBCF-B  I-CSCF-B  S-CSCF-B  IP-SM-GW
 ```
 
 1. UE A1 は、SMS の手順書と同じようにショートメッセージを SC に送ります。
-2. SC のスタブは、網 A の HSS に Sh で番号を問い合わせ、「利用者がいない」という答えを受けます。設定 `ibcf` がある（`deploy/interconnect/home/ipsmgw.yaml`）ので、続けて ENUM を引き、番号が網 B のドメインにあると分かります。SC はメッセージを受け付け、UE A1 には submit report が届きます。
+2. SC のスタブは、網 A の HSS に Sh で番号を問い合わせ、「利用者がいない」という答えを受けます。設定 `ibcf` がある（`deploy/interconnect/a/ipsmgw.yaml`）ので、続けて ENUM を引き、番号が網 B のドメインにあると分かります。SC はメッセージを受け付け、UE A1 には submit report が届きます。
 3. IP-SM-GW は、`sip:+12025550151@ims.mnc002.mcc001.3gppnetwork.org;user=phone` 宛ての MESSAGE に SMS-DELIVER を入れ、IBCF-A を Route に入れて送ります。送信者は番号で表した SC（`tel:+12025550100`）です。網 A のホスト名を境界の外に出さないためです。プロファイルは MESSAGE を認めています（TS 29.165 Table 6.1.3.1 の項目 29）。
-4. 網 B では、I-CSCF が Request-URI を tel URI に直し、S-CSCF が着信側のフィルタ条件に当てます。ショートメッセージを運ぶ MESSAGE で、P-Asserted-Identity が網 B 自身の IP-SM-GW でないものは、その IP-SM-GW に送る条件です（`deploy/interconnect/peer/hss.yaml`）。TS 23.204 6.4a の手順 2 は、別の IMS 網からのショートメッセージが、利用者を担当する IP-SM-GW に届くとしています。
+4. 網 B では、I-CSCF が Request-URI を tel URI に直し、S-CSCF が着信側のフィルタ条件に当てます。ショートメッセージを運ぶ MESSAGE で、P-Asserted-Identity が網 B 自身の IP-SM-GW でないものは、その IP-SM-GW に送る条件です（`deploy/interconnect/b/hss.yaml`）。TS 23.204 6.4a の手順 2 は、別の IMS 網からのショートメッセージが、利用者を担当する IP-SM-GW に届くとしています。
 5. 網 B の IP-SM-GW は 202 を返します。delivery report は境界を越えて戻ってこないので、網 A の SC の仕事はここで終わります。status report は TP-ST 1 です。「SC は SME に転送したが、届いたかは確かめられない」という意味です（TS 23.040 9.2.3.15）。
 6. 網 B の IP-SM-GW は、自分の MESSAGE で UE B1 に SMS-DELIVER を届けます。RP-OA には網 A の SC が残ります。UE B1 は `"from":"+12025550101"` を付けて `"msg":"sms received"` をログに出します。
 7. UE B1 の delivery report は網 B の IP-SM-GW に届き、そこで配送が終わります。
@@ -394,7 +394,7 @@ UE A1   S-CSCF-A  IP-SM-GW-A+SC  IBCF-A ║ IBCF-B  I-CSCF-B  S-CSCF-B  IP-SM-GW
 
 UE B1 から UE A1 へのショートメッセージは、網を入れ替えた同じ手順で届きます。
 
-1. 網 B の SC は、自網の HSS で `+12025550101` の利用者を見つけられません。網 B の ENUM は `sip:+12025550101@ims.mnc001.mcc001.3gppnetwork.org;user=phone` を返します。網 B の IP-SM-GW にも設定 `ibcf` がある（`deploy/interconnect/peer/ipsmgw.yaml`）ので、IP-SM-GW は SC（`tel:+12025550150`）を送信者にして、MESSAGE を IBCF-B に送ります。
+1. 網 B の SC は、自網の HSS で `+12025550101` の利用者を見つけられません。網 B の ENUM は `sip:+12025550101@ims.mnc001.mcc001.3gppnetwork.org;user=phone` を返します。網 B の IP-SM-GW にも設定 `ibcf` がある（`deploy/interconnect/b/ipsmgw.yaml`）ので、IP-SM-GW は SC（`tel:+12025550150`）を送信者にして、MESSAGE を IBCF-B に送ります。
 2. IBCF-B は、P-Asserted-Identity の番号を自網のドメインの SIP URI `sip:+12025550150@ims.mnc002.mcc001.3gppnetwork.org;user=phone` に書き直します。取り決めでは、番号は SIP URI で境界を越えるからです（TS 29.165 8.1）。IBCF-A は MESSAGE を網 A の I-CSCF に渡します。I-CSCF は Request-URI を `tel:+12025550101` に直し、利用者の居場所を HSS に問い合わせます（LIR）。
 3. 網 A の S-CSCF は、`deploy/compose/hss.yaml` の優先度 2 の条件に当て、MESSAGE を網 A の IP-SM-GW に送ります。網 B と同じ条件です。P-Served-User には `sescase=term` が付きます。IP-SM-GW は 202 を返し、202 は網 B まで戻ります。UE B1 への status report は TP-ST 1 です。
 4. 網 A の IP-SM-GW は、自分の MESSAGE で UE A1 に SMS-DELIVER を届けます。RP-OA には網 B の SC（`12025550150`）が残ります。UE A1 は `"from":"+12025550151"` を付けて `"msg":"sms received"` をログに出し、delivery report を網 A の IP-SM-GW に送ります。

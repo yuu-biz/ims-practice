@@ -28,7 +28,7 @@ Every node is a target: the nodes of `compose.yaml`, those of the second network
 
 | Target | Example | What it names |
 | --- | --- | --- |
-| A service | `mmtel`, `epc`, `volte-a`, `ibcf-a`, `peer-scscf` | The one container of the service. |
+| A service | `mmtel`, `epc`, `volte-a`, `ibcf-a`, `scscf-b` | The one container of the service. |
 | A UE of `docker compose run` | `ue3` | The running container that `docker compose run ue3 ...` started. A UE that has exited is no longer a target. |
 | One container of several | `agw:2` | The second container of a service that runs several (`docker compose up --scale agw=2`). With several and no number, `fault.sh` lists them and asks you to name one. |
 
@@ -146,7 +146,7 @@ b1=(-domain ims.mnc002.mcc001.3gppnetwork.org -pcscf 172.28.1.40:5060
   -pcscf-uri sip:pcscf.ims.mnc002.mcc001.3gppnetwork.org:5060
   -impi 001020000000001@ims.mnc002.mcc001.3gppnetwork.org
   -impu sip:+12025550151@ims.mnc002.mcc001.3gppnetwork.org -password test-password-b1)
-docker compose run -d --name b1-answer peer-ue answer "${b1[@]}" -ring 1s -tone 12s
+docker compose run -d --name b1-answer ue-b1 answer "${b1[@]}" -ring 1s -tone 12s
 docker compose run --rm ue call -tone 10s tel:+12025550151
 ```
 
@@ -161,7 +161,7 @@ still lists it after the call. TrGW B, whose IBCF kept running, has none left.
 ### Cut the link between the two networks
 
 ```sh
-docker compose run -d --name b1-answer peer-ue answer "${b1[@]}" -ring 1s -tone 30s
+docker compose run -d --name b1-answer ue-b1 answer "${b1[@]}" -ring 1s -tone 30s
 docker compose run --rm ue call -tone 6s tel:+12025550151
 ```
 
@@ -202,7 +202,7 @@ Give the address again when you reconnect; the addresses are in [the capture gui
 ## Privileges and Docker Desktop
 
 - The IMS containers get no capability and no tools. Only the throw-away `fault-tools` container has `NET_ADMIN`, in the node's namespace, for one command.
-- A network fault on a capture service (`capture`, and `capture-peer` and `capture-nni` of `deploy/interconnect`) is refused: those containers share the host's network, and the rules would change the host.
+- A network fault on a capture service (`capture`, and `capture-b` and `capture-nni` of `deploy/interconnect`) is refused: those containers share the host's network, and the rules would change the host.
 - The loss and partition rules use the egress hook of nftables, which needs a kernel built with `CONFIG_NETFILTER_EGRESS`. If `fault.sh loss` fails on the `egress` chain, the kernel lacks it. On Docker Desktop, the node faults (`stop`, `kill`, `pause`, `crash`) use only Docker commands. The network faults depend on the kernel of the Linux virtual machine that Docker Desktop runs, which this guide has not tried; the two errors above tell whether that kernel lacks the egress hook or netem.
 
 ## The fault agent

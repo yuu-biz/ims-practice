@@ -1,7 +1,7 @@
 # HSS stub of network B, the peer network. Network B
 # runs the same image as network A with its own realm, numbers and
 # subscribers, on the bridge ims1 (172.28.1.0/24).
-node: peer-hss
+node: hss-b
 roles: [hss]
 home_domain: ims.mnc002.mcc001.3gppnetwork.org
 hss:

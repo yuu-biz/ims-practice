@@ -28,7 +28,7 @@ IMS のコンテナは `compose.yaml` のままで、何も変えません。ネ
 
 | 対象 | 例 | 指すもの |
 | --- | --- | --- |
-| サービス | `mmtel`、`epc`、`volte-a`、`ibcf-a`、`peer-scscf` | そのサービスの 1 つのコンテナ。 |
+| サービス | `mmtel`、`epc`、`volte-a`、`ibcf-a`、`scscf-b` | そのサービスの 1 つのコンテナ。 |
 | `docker compose run` の UE | `ue3` | `docker compose run ue3 ...` で起動し、動いているコンテナ。終わった UE は対象になりません。 |
 | 複数のうちの 1 つのコンテナ | `agw:2` | 複数のコンテナで動くサービス（`docker compose up --scale agw=2`）の 2 つ目。番号を書かないと、`fault.sh` がコンテナを並べて、どれかを選ぶように求めます。 |
 
@@ -146,7 +146,7 @@ b1=(-domain ims.mnc002.mcc001.3gppnetwork.org -pcscf 172.28.1.40:5060
   -pcscf-uri sip:pcscf.ims.mnc002.mcc001.3gppnetwork.org:5060
   -impi 001020000000001@ims.mnc002.mcc001.3gppnetwork.org
   -impu sip:+12025550151@ims.mnc002.mcc001.3gppnetwork.org -password test-password-b1)
-docker compose run -d --name b1-answer peer-ue answer "${b1[@]}" -ring 1s -tone 12s
+docker compose run -d --name b1-answer ue-b1 answer "${b1[@]}" -ring 1s -tone 12s
 docker compose run --rm ue call -tone 10s tel:+12025550151
 ```
 
@@ -161,7 +161,7 @@ docker compose exec trgw-a wget -qO- http://127.0.0.1:8080/contexts
 ### 2 つの網のあいだの回線を切る
 
 ```sh
-docker compose run -d --name b1-answer peer-ue answer "${b1[@]}" -ring 1s -tone 30s
+docker compose run -d --name b1-answer ue-b1 answer "${b1[@]}" -ring 1s -tone 30s
 docker compose run --rm ue call -tone 6s tel:+12025550151
 ```
 
@@ -202,7 +202,7 @@ docker network connect --ip 172.28.0.20 ims-practice_ims ims-practice-icscf-1
 ## 権限と Docker Desktop
 
 - IMS のコンテナには、権限も道具も足しません。`NET_ADMIN` を持つのは、使い捨ての `fault-tools` のコンテナだけです。それも、ノードの名前空間の中で、コマンド 1 つのあいだだけです。
-- キャプチャのサービス（`capture` と、`deploy/interconnect` の `capture-peer` と `capture-nni`）へのネットワークの障害は断ります。これらのコンテナはホストのネットワークを共有しているので、規則がホストを変えてしまうためです。
+- キャプチャのサービス（`capture` と、`deploy/interconnect` の `capture-b` と `capture-nni`）へのネットワークの障害は断ります。これらのコンテナはホストのネットワークを共有しているので、規則がホストを変えてしまうためです。
 - 損失と分断の規則は、nftables の egress のフックを使います。カーネルが `CONFIG_NETFILTER_EGRESS` 付きで作られている必要があります。`fault.sh loss` が `egress` のチェインで失敗するなら、そのカーネルにはこのフックがありません。Docker Desktop でも、ノードの障害（`stop`、`kill`、`pause`、`crash`）は Docker のコマンドだけで動きます。ネットワークの障害は、Docker Desktop が動かす Linux の仮想マシンのカーネルしだいです。この手順書では試していません。そのカーネルに egress のフックや netem が無いかどうかは、上の 2 つのエラーで分かります。
 
 ## 障害注入のエージェント

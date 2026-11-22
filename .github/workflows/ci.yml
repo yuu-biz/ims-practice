@@ -281,7 +281,7 @@ jobs:
           name: interconnect-capture
           path: |
             captures/*.pcap
-            captures/peer/*.pcap
+            captures/b/*.pcap
             captures/nni/*.pcap
           if-no-files-found: warn
       - name: clean up

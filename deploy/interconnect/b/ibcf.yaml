@@ -1,5 +1,5 @@
 # IBCF-B, the border of network B towards network A, on ims1 and nni0.
-# It mirrors IBCF-A (deploy/interconnect/home/ibcf.yaml).
+# It mirrors IBCF-A (deploy/interconnect/a/ibcf.yaml).
 node: ibcf-b
 roles: [ibcf]
 home_domain: ims.mnc002.mcc001.3gppnetwork.org

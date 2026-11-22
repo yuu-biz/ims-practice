@@ -26,7 +26,7 @@ Network A is the network of `compose.yaml`, the home network of the other guides
    |    (.50)-----------(.91) .11                    .21  (.91)---------------------------|
 ```
 
-Only the IBCFs and the TrGWs are on the link between the networks, `nni0`. A node inside network A cannot reach a node inside network B at all; everything goes through the border. Each bridge has a capture of its own: `captures/ims-*.pcap` for network A, `captures/peer/ims-*.pcap` for network B and `captures/nni/ims-*.pcap` for the link.
+Only the IBCFs and the TrGWs are on the link between the networks, `nni0`. A node inside network A cannot reach a node inside network B at all; everything goes through the border. Each bridge has a capture of its own: `captures/ims-*.pcap` for network A, `captures/b/ims-*.pcap` for network B and `captures/nni/ims-*.pcap` for the link.
 
 | Node | Network A | Network B |
 | --- | --- | --- |
@@ -78,7 +78,7 @@ The two dialogs of a call live in the IBCF process that took the INVITE. Each IB
 2. In one terminal, let UE B1 wait for a call. The UE simulator takes the settings of network B as flags:
 
    ```sh
-   docker compose -f compose.yaml -f deploy/interconnect/compose.yaml run --rm peer-ue answer \
+   docker compose -f compose.yaml -f deploy/interconnect/compose.yaml run --rm ue-b1 answer \
      -domain ims.mnc002.mcc001.3gppnetwork.org \
      -impi 001020000000001@ims.mnc002.mcc001.3gppnetwork.org \
      -impu sip:+12025550151@ims.mnc002.mcc001.3gppnetwork.org \
@@ -96,7 +96,7 @@ The two dialogs of a call live in the IBCF process that took the INVITE. Each IB
 
 4. To call back, let UE A2 wait (`run --rm ue2 answer -impi 001010000000002@... -impu sip:+12025550102@... -password test-password-2`) and call `tel:+12025550102` from UE B1 with the flags of step 2.
 
-5. To send a short message, keep UE B1 registered (`run --rm peer-ue register` with the flags of step 2) and send one from UE A1:
+5. To send a short message, keep UE B1 registered (`run --rm ue-b1 register` with the flags of step 2) and send one from UE A1:
 
    ```sh
    docker compose -f compose.yaml -f deploy/interconnect/compose.yaml run --rm ue sms -status-report +12025550151 "Hello UE-B1"
@@ -105,7 +105,7 @@ The two dialogs of a call live in the IBCF process that took the INVITE. Each IB
 6. To send one back, stop UE B1's registration of step 5, keep UE A1 registered (`run --rm ue register`) and send from UE B1 with the flags of step 2 and `-sc +12025550150`, the number of the SC of network B:
 
    ```sh
-   docker compose -f compose.yaml -f deploy/interconnect/compose.yaml run --rm peer-ue sms <flags of step 2> -sc +12025550150 -status-report +12025550101 "Hello UE-A1"
+   docker compose -f compose.yaml -f deploy/interconnect/compose.yaml run --rm ue-b1 sms <flags of step 2> -sc +12025550150 -status-report +12025550101 "Hello UE-A1"
    ```
 
    UE B1 sends from a registration of its own. With a second one still there, the status report could go to that one instead.
@@ -151,7 +151,7 @@ The result is the global number in a SIP URI of network B's domain with `user=ph
 
 ### 3. The S-CSCF sends the call to IBCF-A
 
-The domain is not network A's. TS 24.229 5.4.3.2 step 11 has the S-CSCF send a request whose destination needs the interconnect functions through an IBCF of its own network, and step 12 puts the IBCF on top of Route when the network hides its topology. The `ibcf` setting of the S-CSCF names it (`deploy/interconnect/home/scscf.yaml`):
+The domain is not network A's. TS 24.229 5.4.3.2 step 11 has the S-CSCF send a request whose destination needs the interconnect functions through an IBCF of its own network, and step 12 puts the IBCF on top of Route when the network hides its topology. The `ibcf` setting of the S-CSCF names it (`deploy/interconnect/a/scscf.yaml`):
 
 ```text
 INVITE sip:+12025550151@ims.mnc002.mcc001.3gppnetwork.org;user=phone SIP/2.0
@@ -203,7 +203,7 @@ The call back from UE B1 to UE A2 is the same with the roles of the networks swa
 | --- | --- | --- |
 | `captures/ims-*.pcap` (network A) | ENUM for network B's number, the INVITE from the S-CSCF to IBCF-A with the IBCF in Route, and the messages of network B as IBCF-A passes them on | Any address of 172.28.1.0/24, and any host name of a node of network B |
 | `captures/nni/ims-*.pcap` (the link) | Only the two IBCFs and the two TrGWs: one Via and a Contact with the external name of an IBCF, Call-IDs of the IBCFs' own, SDP with the addresses of the TrGWs on the link, RTP between the TrGWs | Any address of either network's inside, any host name of their nodes, any identity made from an IMSI of network A, and any Record-Route |
-| `captures/peer/ims-*.pcap` (network B) | The INVITE from IBCF-B to the I-CSCF and on, the tel URI, the SDP with TrGW-B | Any address of 172.28.0.0/24, any host name of a node of network A, and any identity made from an IMSI of network A |
+| `captures/b/ims-*.pcap` (network B) | The INVITE from IBCF-B to the I-CSCF and on, the tel URI, the SDP with TrGW-B | Any address of 172.28.0.0/24, any host name of a node of network A, and any identity made from an IMSI of network A |
 
 These checks show the topology hiding: the capture of the peer network has no internal address of the home network. The script looks for the addresses in the IP headers and anywhere in the frames, and for the names `pcscf`, `scscf`, `icscf`, `mmtel`, `agw`, `ipsmgw`, `hss`, `ibcf`, `trgw` and the others in front of the other network's domain. It also looks in the SIP of network B's capture and of the link for a user part that begins with network A's IMSIs, and finds none.
 
@@ -383,9 +383,9 @@ UE A1   S-CSCF-A  IP-SM-GW-A+SC  IBCF-A ║ IBCF-B  I-CSCF-B  S-CSCF-B  IP-SM-GW
 ```
 
 1. UE A1 submits the short message to its SC, as in the SMS guide.
-2. The SC stub asks the HSS of network A for the number by Sh, and gets "user unknown". With an `ibcf` setting (`deploy/interconnect/home/ipsmgw.yaml`), it then asks ENUM, and finds the number in network B's domain. It accepts the message: UE A1 gets the submit report.
+2. The SC stub asks the HSS of network A for the number by Sh, and gets "user unknown". With an `ibcf` setting (`deploy/interconnect/a/ipsmgw.yaml`), it then asks ENUM, and finds the number in network B's domain. It accepts the message: UE A1 gets the submit report.
 3. The IP-SM-GW sends the SMS-DELIVER in a MESSAGE to `sip:+12025550151@ims.mnc002.mcc001.3gppnetwork.org;user=phone`, with IBCF-A in Route. The sender is the SC by its number, `tel:+12025550100`, so that no host name of network A crosses. The profiles allow MESSAGE (TS 29.165 Table 6.1.3.1 item 29).
-4. In network B the I-CSCF turns the Request-URI into the tel URI, and the S-CSCF finds a filter criterion of the terminating case: a MESSAGE with a short message whose P-Asserted-Identity is not network B's own IP-SM-GW goes to that IP-SM-GW (`deploy/interconnect/peer/hss.yaml`). TS 23.204 6.4a step 2 has a short message from another IMS network reach the IP-SM-GW that serves the user.
+4. In network B the I-CSCF turns the Request-URI into the tel URI, and the S-CSCF finds a filter criterion of the terminating case: a MESSAGE with a short message whose P-Asserted-Identity is not network B's own IP-SM-GW goes to that IP-SM-GW (`deploy/interconnect/b/hss.yaml`). TS 23.204 6.4a step 2 has a short message from another IMS network reach the IP-SM-GW that serves the user.
 5. The IP-SM-GW of network B answers 202. No delivery report comes back across the border, so the SC of network A ends its part there; the status report says TP-ST 1, "forwarded by the SC to the SME but the SC is unable to confirm delivery" (TS 23.040 9.2.3.15).
 6. The IP-SM-GW of network B delivers the SMS-DELIVER to UE B1 in a MESSAGE of its own, keeping the SC of network A in the RP-OA. UE B1 logs `"msg":"sms received"` with `"from":"+12025550101"`.
 7. UE B1's delivery report goes to the IP-SM-GW of network B, which ends the delivery.
@@ -394,7 +394,7 @@ UE A1   S-CSCF-A  IP-SM-GW-A+SC  IBCF-A ║ IBCF-B  I-CSCF-B  S-CSCF-B  IP-SM-GW
 
 A short message from UE B1 to UE A1 takes the same steps with the networks swapped.
 
-1. The SC of network B finds no user for `+12025550101` in its own HSS. ENUM in network B gives `sip:+12025550101@ims.mnc001.mcc001.3gppnetwork.org;user=phone`. The IP-SM-GW of network B has an `ibcf` setting too (`deploy/interconnect/peer/ipsmgw.yaml`), and sends the MESSAGE to IBCF-B, from the SC `tel:+12025550150`.
+1. The SC of network B finds no user for `+12025550101` in its own HSS. ENUM in network B gives `sip:+12025550101@ims.mnc001.mcc001.3gppnetwork.org;user=phone`. The IP-SM-GW of network B has an `ibcf` setting too (`deploy/interconnect/b/ipsmgw.yaml`), and sends the MESSAGE to IBCF-B, from the SC `tel:+12025550150`.
 2. IBCF-B writes the number in P-Asserted-Identity as a SIP URI of its own domain, `sip:+12025550150@ims.mnc002.mcc001.3gppnetwork.org;user=phone`, since numbers cross in SIP URIs by the agreement (TS 29.165 8.1). IBCF-A passes the MESSAGE to the I-CSCF of network A, which turns the Request-URI into `tel:+12025550101` and asks the HSS where the user is (LIR).
 3. The S-CSCF of network A finds the criterion of priority 2 in `deploy/compose/hss.yaml`, the same one that network B has, and sends the MESSAGE to the IP-SM-GW of network A, with `sescase=term` in P-Served-User. The IP-SM-GW answers 202, and the 202 goes back to network B: the status report to UE B1 says TP-ST 1.
 4. The IP-SM-GW of network A delivers the SMS-DELIVER to UE A1 in a MESSAGE of its own, with the SC of network B, `12025550150`, in the RP-OA. UE A1 logs `"msg":"sms received"` with `"from":"+12025550151"`, and sends its delivery report to the IP-SM-GW of network A.

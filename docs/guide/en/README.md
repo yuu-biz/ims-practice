@@ -97,7 +97,7 @@ The test subscribers are in `deploy/compose/hss.yaml`. The guides call a UE by i
 | 11 | `001010000000011@ims.mnc001.mcc001.3gppnetwork.org` | +1-202-555-0111 | `softphone` (SIPp) | SIPp |
 | 12 | `001010000000012@ims.mnc001.mcc001.3gppnetwork.org` | +1-202-555-0112 | `volte-b` | volte-b |
 
-The second network of the interconnect guide has its own subscribers in `deploy/interconnect/peer/hss.yaml`: +1-202-555-0151, UE B1 on the service `peer-ue`, and +1-202-555-0152.
+The second network of the interconnect guide has its own subscribers in `deploy/interconnect/b/hss.yaml`: +1-202-555-0151, UE B1 on the service `ue-b1`, and +1-202-555-0152.
 
 ### Code that no node runs
 

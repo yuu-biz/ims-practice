@@ -84,7 +84,7 @@
 | 主題 | 作り |
 | --- | --- |
 | 定義 | 設定 `hss.service_profiles` が、名前ごとに iFC の一覧を持ちます。各 iFC に、運用者がその機能を呼ぶ名前（`feature`）を付けられます。プロファイルの機能の一覧は、その名前を重複なく集めたものです。機能の一覧を別に書かないので、iFC と機能の一覧が食い違いません。`feature` は設定の層だけのもので、`ifc.InitialFilterCriteria`（TS 29.228 Annex B の XML）には入れません。 |
-| 今の設定の移し方 | 今の `hss.initial_filter_criteria` を、`hss.service_profiles` の `default` に移します。2 つの書き方は残しません。`deploy/compose`、`deploy/k8s`、`deploy/redundancy`、`deploy/interconnect/peer` の設定を同じコミットで移します。 |
+| 今の設定の移し方 | 今の `hss.initial_filter_criteria` を、`hss.service_profiles` の `default` に移します。2 つの書き方は残しません。`deploy/compose`、`deploy/k8s`、`deploy/redundancy`、`deploy/interconnect/b` の設定を同じコミットで移します。 |
 | 加入者のプロファイルの決め方 | 加入者に `service_profile` があればそれ、無くて `test_user` なら `hss.test_user_service_profile`、ほかは `hss.default_service_profile` です。2 つの名前の設定も、動かしたまま変えられる項目にします。機能を全員に広げるときは `hss.default_service_profile` を変えます。 |
 | SAA | User-Data に、選んだプロファイルの iFC と、加入の識別子（barring を含む）を入れます（TS 29.228 6.1.2.1、Annex B.2）。S-CSCF が User-Data-Already-Available で持っていると言えば、プロファイルを返しません（6.6）。 |
 | 名前の扱い | プロファイルの名前は Cx に出ません。User-Data の XML の `ServiceProfile` は、公開の識別子、CoreNetworkServicesAuthorization、iFC、Extension だけを持ち、名前の要素がないためです（TS 29.228 Annex E の Table E.2、Annex B.2 の Figure B.2.1）。S-CSCF が見るのは iFC だけです。 |
@@ -140,7 +140,7 @@ OAM の API（`/oam/v1/…`）と画面（`web/oam`）は変わりません。�
 1 つの PR は、1 つの確かめ方で終わる大きさにします。
 
 1. この設計の記録。
-2. 名前の付いたサービスのプロファイル。`hss.service_profiles` と 2 つの名前の設定を足し、SAA が選んだプロファイルの iFC を返すようにします。設定の読み取り（`internal/config/ifc.go`、`roles.go`）、その試験（`internal/config/ifc_test.go`）、4 つの設定ファイル（`deploy/compose`、`deploy/k8s`、`deploy/redundancy`、`deploy/interconnect/peer`）、この鍵を載せている手順書（`docs/guide/en/sms.md` と `docs/guide/ja/sms.md`）を、1 つのコミットで直します。分けると、どこかの段階で設定が読めなくなるためです。確かめ方は `internal/hss` と `internal/config` の試験と、登録と通話の e2e で信号が変わらないことです。
+2. 名前の付いたサービスのプロファイル。`hss.service_profiles` と 2 つの名前の設定を足し、SAA が選んだプロファイルの iFC を返すようにします。設定の読み取り（`internal/config/ifc.go`、`roles.go`）、その試験（`internal/config/ifc_test.go`）、4 つの設定ファイル（`deploy/compose`、`deploy/k8s`、`deploy/redundancy`、`deploy/interconnect/b`）、この鍵を載せている手順書（`docs/guide/en/sms.md` と `docs/guide/ja/sms.md`）を、1 つのコミットで直します。分けると、どこかの段階で設定が読めなくなるためです。確かめ方は `internal/hss` と `internal/config` の試験と、登録と通話の e2e で信号が変わらないことです。
 3. 加入者のデータの `test_user` と `service_profile`。設定のファイル、`POST`、`GET` の答え、`Store` の形に足し、プロファイルの選び方をこの 2 つで決めます。確かめ方は `internal/hss` と `internal/kvstore/hssstore` の試験です。
 4. `PUT /subscriptions/{IMPI}`（`dry_run` と `repository_data` を含む）。`Store` に `Replace` を足し、`MemoryStore` と `internal/kvstore/hssstore` の両方に実装します。確かめ方は、作成、置き換え、`unchanged`、409、SQN_HE と登録の状態が残ること、Sh の更新と同時に走らせても取り違えないことの試験です。
 5. `PATCH /subscriptions/{IMPI}`。確かめ方は、資格情報が変わらないことの試験です。
