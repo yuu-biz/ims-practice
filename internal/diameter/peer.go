@@ -149,6 +149,7 @@ type answerResult struct {
 type Peer struct {
 	node     *Node
 	address  string // initiator only
+	host     string // the peer's Origin-Host
 	log      *slog.Logger
 	inbox    chan input
 	outbox   chan *outgoing
@@ -180,6 +181,7 @@ func (n *Node) Connect(peer PeerConfig) *Peer {
 func (n *Node) newPeer(peerHost string) *Peer {
 	return &Peer{
 		node:   n,
+		host:   peerHost,
 		log:    n.log.With("peer", peerHost),
 		inbox:  make(chan input),
 		outbox: make(chan *outgoing),
@@ -415,7 +417,14 @@ func (l *loop) do(a Action) {
 		if a.Outgoing.isRequest() {
 			ids := l.nextIDs()
 			a.Outgoing.message.Header.HopByHopID = ids.HopByHop
-			a.Outgoing.message.Header.EndToEndID = ids.EndToEnd
+			// The Hop-by-Hop Identifier belongs to the connection, so every
+			// attempt gets a new one. A retransmission to another peer, the
+			// T flag of RFC 6733 5.5.4, keeps the End-to-End Identifier it
+			// came with: that and the Origin-Host are what tell the
+			// receiver that it is a duplicate.
+			if a.Outgoing.message.Header.CommandFlags&diam.RetransmittedFlag == 0 {
+				a.Outgoing.message.Header.EndToEndID = ids.EndToEnd
+			}
 			l.outstanding[ids.HopByHop] = pending{command: commandName(a.Outgoing.message), answer: a.Outgoing.answer}
 		}
 		l.send(a.Outgoing.message)
