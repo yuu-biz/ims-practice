@@ -262,15 +262,6 @@ func TestStartIBCFListensOnBothSides(t *testing.T) {
 // from starting. Without a store section the records are in the
 // process, and it starts.
 func TestIBCFStoreIsTheSharedStoreOfTheNode(t *testing.T) {
-	// An address where nothing listens: a port that was free a moment
-	// ago.
-	l, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	unreachable := l.Addr().String()
-	l.Close()
-
 	listen := func(config.SIP) (*sip.TransportLayer, error) { return sip.Listen("127.0.0.1:0", quiet()) }
 	for _, tt := range []struct {
 		name   string
@@ -279,12 +270,12 @@ func TestIBCFStoreIsTheSharedStoreOfTheNode(t *testing.T) {
 	}{
 		{"no store section", nil, true},
 		{"memory", &config.Store{Kind: config.StoreMemory, Timeout: time.Second}, true},
-		{"valkey that cannot be reached", &config.Store{Kind: config.StoreValkey, Address: unreachable, Timeout: time.Second}, false},
+		{"valkey that cannot be reached", unreachableStore(t), false},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
-			store, closeStore := ibcfStore(tt.store, quiet())
-			defer closeStore()
-			b, err := startIBCF(domain, ibcfConfig(), store, noNames{}, listen, quiet())
+			stores, closeStores := newRoleStores(tt.store)
+			defer closeStores()
+			b, err := startIBCF(domain, ibcfConfig(), ibcfStore(stores, quiet()), noNames{}, listen, quiet())
 			if err == nil {
 				b.Close()
 			}
@@ -293,6 +284,20 @@ func TestIBCFStoreIsTheSharedStoreOfTheNode(t *testing.T) {
 			}
 		})
 	}
+}
+
+// unreachableStore is a store section of kind valkey whose server
+// answers nothing: its address is a port that was free a moment ago, so
+// nothing listens there.
+func unreachableStore(t *testing.T) *config.Store {
+	t.Helper()
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	address := l.Addr().String()
+	l.Close()
+	return &config.Store{Kind: config.StoreValkey, Address: address, Timeout: time.Second}
 }
 
 // ibcfConfig is the configuration of an IBCF with one peer.

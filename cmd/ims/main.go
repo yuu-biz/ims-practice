@@ -76,6 +76,9 @@ func run(configPath string, log *slog.Logger) error {
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGTERM, os.Interrupt)
 	defer cancel()
 
+	stores, closeStores := newRoleStores(cfg.Store)
+	defer closeStores()
+
 	// agent stays nil without a hep section, and then observes nothing.
 	var agent *hepagent.Agent
 	if h := cfg.HEP; h != nil {
@@ -264,9 +267,7 @@ func run(configPath string, log *slog.Logger) error {
 		listen := func(s config.SIP) (*sip.TransportLayer, error) {
 			return sip.ListenObserved(s.Listen.String(), roleLog, agent.SIP(string(config.RoleIBCF)))
 		}
-		store, closeStore := ibcfStore(cfg.Store, roleLog)
-		defer closeStore()
-		b, err := startIBCF(cfg.HomeDomain, *c, store, resolver, listen, roleLog)
+		b, err := startIBCF(cfg.HomeDomain, *c, ibcfStore(stores, roleLog), resolver, listen, roleLog)
 		if err != nil {
 			return err
 		}
@@ -429,18 +430,49 @@ func run(configPath string, log *slog.Logger) error {
 	return nil
 }
 
-// ibcfStore is where the IBCF keeps the records of its calls. With a
-// store section of kind valkey it is the shared store, so that a node
-// that is recreated under the same name finds the calls that its
-// earlier process left, and ends them (TS 24.229 5.10.2.4, 5.10.3.4).
-// Without one it is the memory of the process, whose records go with
-// it. The caller calls the returned function when the node stops.
-func ibcfStore(s *config.Store, log *slog.Logger) (ibcf.Store, func()) {
+// roleStores is where the roles of the node keep their state. With a
+// store section of kind valkey that is the shared store: every role of
+// the node takes its own adapter (internal/kvstore/<role>store) on one
+// client to that server, so that a node recreated under the same name
+// finds what its earlier process left. Without a store section, or with
+// kind memory, each role keeps its state in the memory of the process,
+// which goes with it.
+type roleStores struct {
+	// kv is nil when the roles keep their state in the process.
+	kv      kvstore.Store
+	section config.Store
+}
+
+// newRoleStores opens the client of the store section, one for the
+// whole node: the roles share it, and it connects when the first
+// operation of a role needs a connection. The caller calls the returned
+// function when the node stops.
+func newRoleStores(s *config.Store) (roleStores, func()) {
 	if s == nil || s.Kind != config.StoreValkey {
-		return ibcf.NewMemoryStore(), func() {}
+		return roleStores{}, func() {}
 	}
 	kv := kvstore.NewValkey(kvstore.ValkeyConfig{Address: s.Address, Timeout: s.Timeout})
-	return ibcfstore.New(kv, kvjson.Config{Prefix: s.Prefix, Timeout: s.Timeout, Log: log}), kv.Close
+	return roleStores{kv: kv, section: *s}, kv.Close
+}
+
+// adapter gives the client and the configuration of the adapter of the
+// role that logs to log, and false when that role keeps its state in
+// the process.
+func (r roleStores) adapter(log *slog.Logger) (kvstore.Store, kvjson.Config, bool) {
+	if r.kv == nil {
+		return nil, kvjson.Config{}, false
+	}
+	return r.kv, kvjson.Config{Prefix: r.section.Prefix, Timeout: r.section.Timeout, Log: log}, true
+}
+
+// ibcfStore is where the IBCF keeps the records of its calls, so that a
+// node that is recreated under the same name finds the calls that its
+// earlier process left, and ends them (TS 24.229 5.10.2.4, 5.10.3.4).
+func ibcfStore(stores roleStores, log *slog.Logger) ibcf.Store {
+	if kv, cfg, ok := stores.adapter(log); ok {
+		return ibcfstore.New(kv, cfg)
+	}
+	return ibcf.NewMemoryStore()
 }
 
 // startIBCF makes the IBCF and its two UAs: the internal one on Mx,
