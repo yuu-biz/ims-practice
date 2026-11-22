@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"strconv"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/yuu-biz/ims-practice/internal/sdp"
@@ -38,6 +39,10 @@ type call struct {
 	// back.
 	recordMu sync.Mutex
 	recorded bool
+
+	// answered is set once the callee's 2xx has come, after which the
+	// end of the caller's leg no longer cancels the leg to the callee.
+	answered atomic.Bool
 
 	mu sync.Mutex
 	// out is the outgoing leg the call goes on in. outReady is closed
@@ -276,14 +281,19 @@ func (c *call) attempt(inv sip.Invitation, noReply time.Duration) attemptResult 
 	}
 	c.log.Info("outgoing leg", "request_uri", inv.RequestURI, "call_id", out.Request.Get("Call-ID"))
 
-	// RFC 3261 9.1: when the caller gives up, the AS cancels the leg, for
-	// the same reason (RFC 3326 2).
+	// RFC 3261 9.1: when the caller's leg ends before the answer, however
+	// it ended, the AS cancels the leg, for the same reason (RFC 3326 2).
+	// A caller that gives up sends a CANCEL, and RFC 3261 15 lets it end
+	// an early dialog with a BYE instead; the leg of a caller that never
+	// acknowledges a reliable provisional response ends with the 500 of
+	// its own UA (RFC 3262 3). Whichever it was, the callee would go on
+	// alerting a user whose caller is gone.
 	settled := make(chan struct{})
 	defer close(settled)
 	go func() {
 		select {
 		case <-c.in.Done():
-			if errors.Is(c.in.Err(), sip.ErrCancelled) {
+			if !c.answered.Load() {
 				out.Cancel(reasons(c.in.EndedBy())...)
 			}
 		case <-settled:
@@ -328,7 +338,15 @@ func (c *call) attempt(inv sip.Invitation, noReply time.Duration) attemptResult 
 		}
 	}
 	r.noReply = r.noReply || c.noReplyFired(timedOut)
-	r.cancelled = errors.Is(c.in.Err(), sip.ErrCancelled)
+	// The caller's leg has ended before the answer, however it ended: the
+	// UA has given the INVITE its final response already (487 to a
+	// CANCEL, RFC 3261 9.2 and 15.1.2; 500 for a missing PRACK, RFC 3262
+	// 3), and no diversion goes on for a caller who is gone.
+	select {
+	case <-c.in.Done():
+		r.cancelled = true
+	default:
+	}
 	if r.final == nil {
 		r.err = out.Err()
 	}
@@ -473,6 +491,7 @@ func (c *call) keepsSession(out *sip.OutgoingCall) bool {
 // within the dialog both ways, until one side hangs up; the other side
 // then gets the BYE, with the Reason of the first (RFC 3326 2).
 func (c *call) answer(out *sip.OutgoingCall, resp *sip.Message) {
+	c.answered.Store(true)
 	body := sip.BodyOf(resp)
 	tag := toTag(resp)
 	c.keepCalleeSDP(tag, body)

@@ -462,6 +462,45 @@ func TestCancelThroughTheAS(t *testing.T) {
 	}
 }
 
+// TestCallerEndsItsEarlyDialogBeforeTheAnswer: a caller may end an
+// early dialog with a BYE instead of cancelling its INVITE (RFC 3261
+// 15), and its UA answers the INVITE with 487 itself (15.1.2). The AS
+// cancels the leg to the callee all the same (RFC 3261 9.1): the callee
+// would otherwise go on alerting a user whose caller is gone.
+func TestCallerEndsItsEarlyDialogBeforeTheAnswer(t *testing.T) {
+	as := startAS(t, noServices{}, mmtel.Config{})
+	calls := make(chan *sip.IncomingCall, 1)
+	callee := newUA(t, "bob", func(c *sip.IncomingCall) {
+		c.Progress(180, sip.Body{})
+		calls <- c
+		// The callee alerts its user until the AS cancels the INVITE.
+		<-c.Done()
+	})
+	caller := newUA(t, "alice", func(c *sip.IncomingCall) { c.Reject(480) })
+	out, err := caller.Invite(viaAS(t, as, callee, "term", offer))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r := receive(t, out.Responses(), "180"); r.StatusCode != 180 {
+		t.Fatalf("got %d, want 180", r.StatusCode)
+	}
+	early, ok := out.Dialog()
+	if !ok {
+		t.Fatal("the caller has no early dialog after the 180")
+	}
+	why := sip.NewReason(sip.ReasonSIP, 487, "Caller hung up")
+	bye := early.NewRequest(sip.BYE)
+	bye.Add("Reason", why.String())
+	if _, err := caller.Stack().SendRequest(bye, sip.Destination{Transport: sip.UDP, Addr: as.addr}); err != nil {
+		t.Fatal(err)
+	}
+	in := receive(t, calls, "call at the callee")
+	receive(t, in.Done(), "end of the leg to the callee")
+	if cancel := in.EndedBy(); cancel == nil || cancel.Method != sip.CANCEL || !reflect.DeepEqual(sip.Reasons(cancel), []sip.Reason{why}) {
+		t.Errorf("leg to the callee ended by %v, want a CANCEL with the Reason of the caller's BYE", cancel)
+	}
+}
+
 func TestRejectionThroughTheAS(t *testing.T) {
 	as := startAS(t, noServices{}, mmtel.Config{})
 	callee := newUA(t, "bob", func(c *sip.IncomingCall) {
