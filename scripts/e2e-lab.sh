@@ -13,9 +13,6 @@ export MSYS_NO_PATHCONV=1
 if docker buildx inspect ims-practice >/dev/null 2>&1; then
 	export BUILDX_BUILDER=ims-practice
 fi
-# Windows has a python3 stub that only opens the Store.
-python=python3
-"$python" -c 1 2>/dev/null || python=python
 
 docker compose up -d --build
 
