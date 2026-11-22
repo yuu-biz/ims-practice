@@ -59,6 +59,37 @@ type RegSubscription struct {
 	Expires time.Time
 }
 
+// ReportTimeout is the name of the time index of TR1N (TS 24.011
+// 6.2.2.2): the deliveries that wait for a delivery report, each due at
+// its ReportDeadline. It is the one expiry of the IP-SM-GW that needs an
+// action when its time comes, since the SC has to hear the outcome of
+// every delivery; everything else the Store keeps only has to be
+// forgotten. The Store hands out each delivery that is due to one
+// instance at a time (ClaimDue), so that the deliveries of an instance
+// that has stopped are ended by another one.
+const ReportTimeout = "report-timeout"
+
+// Expiry is one expiry that an instance has claimed: which delivery is
+// due, and until when this instance alone acts on it.
+type Expiry struct {
+	// CallID is the Call-ID of the MESSAGE that carried the RP-DATA,
+	// which names the delivery.
+	CallID string
+	// Until is when the claim runs out, after which another instance may
+	// claim the same delivery. It also tells this claim from a later one
+	// on the same delivery, so that the late Done of an instance that was
+	// held up takes nothing away from the instance that has it now.
+	Until time.Time
+}
+
+var _ ims.Expiry = Expiry{}
+
+func (e Expiry) ClaimedUntil() time.Time { return e.Until }
+
+func (e Expiry) LogFields() []any {
+	return []any{"kind", ReportTimeout, "call_id", e.CallID}
+}
+
 // Store keeps what the IP-SM-GW needs after a SIP transaction has
 // ended, so that whichever IP-SM-GW of the network a request reaches
 // can handle it. The delivery report in
@@ -77,16 +108,33 @@ type Store interface {
 	// TS 24.011 8.2.3 counts 0 to 255; the values only need to differ
 	// while a delivery to the same UE waits for its report.
 	NextMessageReference(ctx context.Context, recipient string, expires time.Time) (uint8, error)
-	// PutDelivery keeps d until its Expires.
+	// PutDelivery keeps d until its Expires, and puts it in the index of
+	// ReportTimeout, due at its ReportDeadline.
 	PutDelivery(ctx context.Context, d PendingDelivery) error
 	// Delivery returns the delivery whose MESSAGE had callID, and
 	// whether there is one.
 	Delivery(ctx context.Context, callID string) (PendingDelivery, bool, error)
 	// TakeDelivery returns the delivery and removes it, in one step. The
-	// delivery report, a failed MESSAGE and the timer of the sending
-	// IP-SM-GW may all try to end one delivery; only the first gets it,
-	// so the SC hears the outcome once.
+	// delivery report, a failed MESSAGE and TR1N may all try to end one
+	// delivery; only the first gets it, so the SC hears the outcome once.
 	TakeDelivery(ctx context.Context, callID string) (PendingDelivery, bool, error)
+
+	// ClaimDue claims the deliveries whose TR1N is due at now, at most
+	// limit of them and the ones due longest first, each until now plus
+	// lease. While a delivery is claimed it is not due, and no other
+	// ClaimDue gives it out; when its claim runs out without Done, it is
+	// due again, for whichever instance asks next.
+	//
+	// A claim is no proof that the delivery is still there: a report may
+	// have ended it after it was due. The instance that claims it takes
+	// it with TakeDelivery, which only one caller wins.
+	ClaimDue(ctx context.Context, now time.Time, lease time.Duration, limit int) ([]Expiry, error)
+	// Done takes the delivery of a claimed expiry out of the index, once
+	// the caller has ended it. A claim that has ended in the meantime,
+	// because the delivery was taken with its member or because the claim
+	// ran out and another instance has it now, leaves the index as it is;
+	// that is the ordinary end of an expiry, not a failure.
+	Done(ctx context.Context, e Expiry) error
 
 	// PutRegSubscription keeps sub until its Expires, in place of the
 	// one with the same Call-ID and of any other one to the same public
@@ -119,11 +167,16 @@ type MemoryStore struct {
 	// the Call-ID for a public identity, so that neither lookup scans.
 	regSubscriptions  map[string]RegSubscription
 	regSubscriptionOf map[string]string
+	// reportTimeout is the time index of TR1N, as a store outside the
+	// process holds one: the Call-ID of each delivery that waits for a
+	// report.
+	reportTimeout *ims.DueIndex[string]
 }
 
 func NewMemoryStore() *MemoryStore {
 	return &MemoryStore{deliveries: map[string]PendingDelivery{}, messageReferences: map[string]messageReferences{},
-		regSubscriptions: map[string]RegSubscription{}, regSubscriptionOf: map[string]string{}}
+		regSubscriptions: map[string]RegSubscription{}, regSubscriptionOf: map[string]string{},
+		reportTimeout: ims.NewDueIndex[string]()}
 }
 
 // NextMessageReference counts on from the last value given to the
@@ -151,16 +204,22 @@ func (s *MemoryStore) NextMessageReference(_ context.Context, recipient string, 
 	return mr, nil
 }
 
-// PutDelivery keeps d. The store removes it at its Expires.
+// PutDelivery keeps d and schedules its TR1N at its ReportDeadline. The
+// store removes the delivery at its Expires, which comes later, so that
+// the instance which claims the expiry still finds it.
 func (s *MemoryStore) PutDelivery(_ context.Context, d PendingDelivery) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.deliveries[d.CallID] = d
+	s.reportTimeout.Set(d.CallID, d.ReportDeadline)
 	time.AfterFunc(time.Until(d.Expires), func() {
 		s.mu.Lock()
 		defer s.mu.Unlock()
 		if stored, ok := s.deliveries[d.CallID]; ok && !time.Now().Before(stored.Expires) {
 			delete(s.deliveries, d.CallID)
+			// The expiry of a delivery that is gone goes with it, claimed
+			// or not: nothing is left for an instance to end.
+			s.reportTimeout.Remove(d.CallID)
 		}
 	})
 	return nil
@@ -173,12 +232,32 @@ func (s *MemoryStore) Delivery(_ context.Context, callID string) (PendingDeliver
 	return d, ok, nil
 }
 
+// TakeDelivery takes the delivery and its TR1N. A Call-ID is never used
+// again, so the expiry can go with it.
 func (s *MemoryStore) TakeDelivery(_ context.Context, callID string) (PendingDelivery, bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	d, ok := s.delivery(callID)
 	delete(s.deliveries, callID)
+	s.reportTimeout.Remove(callID)
 	return d, ok, nil
+}
+
+func (s *MemoryStore) ClaimDue(_ context.Context, now time.Time, lease time.Duration, limit int) ([]Expiry, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var claimed []Expiry
+	for _, due := range s.reportTimeout.ClaimDue(now, lease, limit) {
+		claimed = append(claimed, Expiry{CallID: due.Member, Until: due.Until})
+	}
+	return claimed, nil
+}
+
+func (s *MemoryStore) Done(_ context.Context, e Expiry) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.reportTimeout.RemoveClaimed(e.CallID, e.Until)
+	return nil
 }
 
 func (s *MemoryStore) delivery(callID string) (PendingDelivery, bool) {

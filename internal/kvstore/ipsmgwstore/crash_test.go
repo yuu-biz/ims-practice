@@ -106,10 +106,10 @@ func TestADeliveryThatStopsHalfWayLeavesOnlyItsTimer(t *testing.T) {
 				t.Fatalf("Delivery on the other instance = %v, %v; want none", ok, err)
 			}
 			claims, err := other.ClaimDue(ctx, d.ReportDeadline, 10*time.Second, 10)
-			if err != nil || len(claims) != 1 || claims[0].Member != d.CallID {
+			if err != nil || len(claims) != 1 || claims[0].CallID != d.CallID {
 				t.Fatalf("ClaimDue at the ReportDeadline = %v, %v; want the timer of %s", claims, err, d.CallID)
 			}
-			if _, ok, err := other.TakeDelivery(ctx, claims[0].Member); err != nil || ok {
+			if _, ok, err := other.TakeDelivery(ctx, claims[0].CallID); err != nil || ok {
 				t.Errorf("the claimer took %v, %v; want no delivery", ok, err)
 			}
 			if err := other.Done(ctx, claims[0]); err != nil {

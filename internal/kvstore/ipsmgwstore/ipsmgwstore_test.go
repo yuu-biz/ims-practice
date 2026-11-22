@@ -2,12 +2,10 @@ package ipsmgwstore_test
 
 import (
 	"context"
-	"errors"
 	"testing"
 	"time"
 
 	"github.com/yuu-biz/ims-practice/internal/ipsmgw"
-	"github.com/yuu-biz/ims-practice/internal/kvstore"
 	"github.com/yuu-biz/ims-practice/internal/kvstore/ipsmgwstore"
 	"github.com/yuu-biz/ims-practice/internal/kvstore/kvjson"
 	"github.com/yuu-biz/ims-practice/internal/kvstore/storetest"
@@ -50,19 +48,20 @@ func TestReportTimeoutOfAStoppedSender(t *testing.T) {
 				t.Fatalf("claimed %v, %v before TR1N ran out", claims, err)
 			}
 			claims, err := other.ClaimDue(ctx, now.Add(time.Minute), 10*time.Second, 10)
-			if err != nil || len(claims) != 1 || claims[0].Member != "msg-1" {
+			if err != nil || len(claims) != 1 || claims[0].CallID != "msg-1" {
 				t.Fatalf("ClaimDue = %v, %v", claims, err)
 			}
-			if _, ok, err := other.TakeDelivery(ctx, claims[0].Member); err != nil || !ok {
+			if _, ok, err := other.TakeDelivery(ctx, claims[0].CallID); err != nil || !ok {
 				t.Fatalf("the claimer did not get the delivery: %v, %v", ok, err)
 			}
 			if _, ok, err := sender.TakeDelivery(ctx, "msg-1"); err != nil || ok {
-				t.Errorf("the delivery report got the delivery after the timer: %v, %v", ok, err)
+				t.Errorf("the delivery report got the delivery after TR1N: %v, %v", ok, err)
 			}
 			// TakeDelivery took the member out of the index, which ends
-			// the claim.
-			if err := other.Done(ctx, claims[0]); !errors.Is(err, kvstore.ErrClaimLost) {
-				t.Errorf("Done = %v, want ErrClaimLost", err)
+			// the claim. A claim that has ended is the ordinary end of an
+			// expiry, which Done does not report as a failure.
+			if err := other.Done(ctx, claims[0]); err != nil {
+				t.Errorf("Done of a claim that had ended = %v, want no error", err)
 			}
 		})
 	}
