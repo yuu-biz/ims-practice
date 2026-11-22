@@ -2,9 +2,11 @@ package ue_test
 
 import (
 	"bytes"
+	"errors"
 	"net"
 	"net/netip"
 	"slices"
+	"sync"
 	"testing"
 	"time"
 
@@ -165,6 +167,88 @@ func TestMediaCarriesAMRWB(t *testing.T) {
 func sameFrame(a, b amr.Frame) bool {
 	return a.Type == b.Type && a.Quality == b.Quality && bytes.Equal(a.Data, b.Data)
 }
+
+// A listener of StreamReceivedTo hears the call while it runs: the
+// frames reach the writer before the call ends, and what it has at the
+// end is the file that -received-out would write.
+func TestMediaStreamsWhatItReceivesWhileTheCallRuns(t *testing.T) {
+	for _, codec := range []sdp.Codec{amrWB, pcmu} {
+		a, b := between(t, codec, nil)
+		var heard syncBuffer
+		b.StreamReceivedTo(&heard)
+		if err := a.Start(ue.ToneSpeech(400 * time.Millisecond)); err != nil {
+			t.Fatal(err)
+		}
+		// Halfway through the 20 packets, the start of the call has
+		// already reached the listener.
+		time.Sleep(200 * time.Millisecond)
+		early := heard.len()
+		if early == 0 {
+			t.Errorf("%s: the listener had nothing halfway through the call", codec.Name)
+		}
+		played(t, a, b)
+		if err := b.StreamError(); err != nil {
+			t.Errorf("%s: %v", codec.Name, err)
+		}
+		var want bytes.Buffer
+		if codec.Name == sdp.NamePCMU {
+			received, _ := b.Received()
+			want.Write(received)
+		} else if err := amr.WriteStorage(&want, amr.AMRWB, b.ReceivedFrames()); err != nil {
+			t.Fatal(err)
+		}
+		if got := heard.bytes(); !bytes.Equal(got, want.Bytes()) {
+			t.Errorf("%s: the stream holds %d bytes, the file of the same call %d", codec.Name, len(got), want.Len())
+		}
+		if heard.len() <= early {
+			t.Errorf("%s: the stream stopped growing after %d bytes", codec.Name, early)
+		}
+	}
+}
+
+// A listener that stops reading ends the stream, not the call.
+func TestMediaKeepsTheCallWhenTheListenerFails(t *testing.T) {
+	a, b := between(t, amrWB, nil)
+	b.StreamReceivedTo(errorWriter{})
+	if err := a.Start(ue.ToneSpeech(100 * time.Millisecond)); err != nil {
+		t.Fatal(err)
+	}
+	played(t, a, b)
+	if b.StreamError() == nil {
+		t.Error("the failed stream is not reported")
+	}
+	if frames := b.ReceivedFrames(); len(frames) != 5 {
+		t.Errorf("the call received %d frames; want the 5 of the tone", len(frames))
+	}
+}
+
+// syncBuffer is read by the test while the media goroutine writes it.
+type syncBuffer struct {
+	mu sync.Mutex
+	b  bytes.Buffer
+}
+
+func (s *syncBuffer) Write(p []byte) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.b.Write(p)
+}
+
+func (s *syncBuffer) len() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.b.Len()
+}
+
+func (s *syncBuffer) bytes() []byte {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]byte(nil), s.b.Bytes()...)
+}
+
+type errorWriter struct{}
+
+func (errorWriter) Write([]byte) (int, error) { return 0, errors.New("the listener stopped reading") }
 
 // TestMediaPausesWithoutLosingTheTiming: while the flow allows no
 // sending, as on hold, the speech waits and the RTP clock runs on, so

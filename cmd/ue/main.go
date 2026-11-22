@@ -62,6 +62,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"log/slog"
 	"net"
 	"net/netip"
@@ -240,7 +241,34 @@ func audioFlags(o *options, flags *flag.FlagSet) {
 func recordingFlags(o *options, flags *flag.FlagSet) {
 	flags.StringVar(&o.wavOut, "wav-out", "", "WAV file to write what was heard in a PCMU call to")
 	flags.StringVar(&o.sentOut, "sent-out", "", "file to write what was sent to: the PCMU payloads, or an AMR or AMR-WB file of the frames")
-	flags.StringVar(&o.receivedOut, "received-out", "", "file to write what was received to: the PCMU payloads, or an AMR or AMR-WB file of the frames")
+	flags.StringVar(&o.receivedOut, "received-out", "", "file to write what was received to, in the same formats; "+
+		standardOutput+" writes it to standard output while the call runs, for a player to read")
+}
+
+// standardOutput is the name that stands for standard output in
+// -received-out. The UE writes the stream there as the packets arrive,
+// so a player at the other end of the pipe plays the call as it
+// happens.
+const standardOutput = "-"
+
+// logWriter keeps the JSON log out of a recording that goes to standard
+// output. Scripts read the log on standard output, so it only moves to
+// standard error when the recording takes the stream's place.
+func logWriter(o options) io.Writer {
+	if o.receivedOut == standardOutput {
+		return os.Stderr
+	}
+	return os.Stdout
+}
+
+// checkRecording rejects what the recording flags cannot name.
+func (o options) checkRecording() error {
+	for _, f := range []struct{ name, value string }{{"sent-out", o.sentOut}, {"wav-out", o.wavOut}} {
+		if f.value == standardOutput {
+			return fmt.Errorf("-%s cannot write to standard output; only -received-out streams, since one call has one standard output", f.name)
+		}
+	}
+	return nil
 }
 
 // answerFlags are the answer policy of a command that takes calls ("ue
@@ -316,8 +344,12 @@ func main() {
 		os.Exit(2)
 	}
 	o.cfg.Calls.Codecs = codecs
+	if err := o.checkRecording(); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(2)
+	}
 
-	log := slog.New(slog.NewJSONHandler(os.Stdout, nil))
+	log := slog.New(slog.NewJSONHandler(logWriter(o), nil))
 	switch command {
 	case "register":
 		err = run(log, o, registerOnly)
@@ -588,6 +620,11 @@ func run(log *slog.Logger, o options, do func(context.Context, *session) error) 
 		return err
 	}
 	defer s.media.Close()
+	if o.receivedOut == standardOutput {
+		// The player reading the pipe may stop before the call does.
+		keepWritingOnABrokenPipe()
+		s.media.StreamReceivedTo(os.Stdout)
+	}
 
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGTERM, os.Interrupt)
 	defer cancel()
@@ -889,7 +926,9 @@ func (s *session) save() error {
 	s.log.Info("media", append([]any{"codec", info.Name, "payload_type", info.PayloadType, "clock_rate", info.ClockRate,
 		"payload_format", info.PayloadFormat, "telephone_event", info.TelephoneEvent}, attrs...)...)
 	write := func(name string, frames []amr.Frame, pcmu []byte) error {
-		if name == "" {
+		if name == "" || name == standardOutput {
+			// The stream of StreamReceivedTo already went out, packet by
+			// packet, while the call ran.
 			return nil
 		}
 		if !amrCall {
@@ -904,6 +943,11 @@ func (s *session) save() error {
 	errs := []error{
 		write(s.o.sentOut, s.media.SentFrames(), s.media.Sent()),
 		write(s.o.receivedOut, s.media.ReceivedFrames(), received),
+	}
+	if err := s.media.StreamError(); err != nil {
+		// The listener stopped reading, which ends the stream but not
+		// the call.
+		s.log.Warn("the stream of what was received stopped", "error", err.Error())
 	}
 	switch {
 	case s.o.wavOut == "":
