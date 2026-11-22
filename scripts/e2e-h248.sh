@@ -9,8 +9,7 @@
 # through the terminations the H.248 commands reserved. Only the media
 # control changes, so that script needs no change of its own.
 #
-# What this script adds is what is new: it waits for the relay to
-# register before the first call, and then reads the H.248 of the calls
+# What this script adds is what is new: it reads the H.248 of the calls
 # out of the same capture.
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -20,34 +19,11 @@ export MSYS_NO_PATHCONV=1
 # other node is the one of compose.yaml. scripts/e2e-call.sh below reads
 # the same files from here.
 export COMPOSE_FILE=compose.yaml:deploy/h248/h248.yaml COMPOSE_PATH_SEPARATOR=:
-# Use the project's own builder when it exists, so the build
-# cache stays separate from other projects. CI has no such builder.
-if docker buildx inspect ims-practice >/dev/null 2>&1; then
-	export BUILDX_BUILDER=ims-practice
-fi
-
-docker compose up -d --build
-
-# The relay registers with the P-CSCF before the first call: until it
-# has, the P-CSCF has no gateway to add a context on and answers 500.
-# A registration that reaches no controller is given up on after T-MAX,
-# 25 s, and tried again after a random wait of up to 5 s (H.248.1
-# (05/2002) Annex D.1.5, 9.2), so the relay may need a minute when it
-# started before the P-CSCF listened.
-registered=
-for i in $(seq 1 120); do
-	if grep -q '"msg":"mediactl: registered"' <<<"$(docker compose logs --no-color agw 2>/dev/null)"; then
-		registered=yes
-		break
-	fi
-	sleep 1
-done
-if [ -z "$registered" ]; then
-	echo "FAIL the media relay never registered with the P-CSCF over H.248 within 120 s" >&2
-	docker compose logs --no-color agw | tail -n 20 >&2
-	exit 1
-fi
-echo "ok   the media relay registered with the P-CSCF over H.248"
+# scripts/e2e-call.sh starts the network itself, and waits for the relay
+# to register before the first call (wait_for_h248_relay in
+# scripts/e2e-lib.sh). Starting it here first would not help: that
+# script builds again, and Compose then recreates every node, so a
+# registration seen here would be with a P-CSCF that is gone.
 
 # The whole voice call scenario on this deployment. Its failure is this
 # script's failure, but the H.248 of whatever did run is still worth

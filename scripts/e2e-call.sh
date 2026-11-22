@@ -32,6 +32,7 @@ wait_for_open() {
 }
 wait_for_open icscf
 wait_for_open scscf
+wait_for_h248_relay
 
 ue2=(--impi 001010000000002@ims.mnc001.mcc001.3gppnetwork.org
 	--impu sip:+12025550102@ims.mnc001.mcc001.3gppnetwork.org --password test-password-2)
