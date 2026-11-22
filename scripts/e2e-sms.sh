@@ -297,6 +297,10 @@ none "retransmitted MESSAGEs and their responses" 'sip.CSeq.method == "MESSAGE" 
 # RFC 3261 18.1.1: a request over 1300 bytes does not go over UDP.
 none "SIP requests over 1300 bytes on UDP" 'sip.Method && udp && udp.length > 1308'
 
+# Every display filter that the guide shows its readers finds something
+# in this capture.
+guide_filters docs/guide/en/sms.md
+
 # The ladder of the short messages and the Sh messages, for the guide
 # and the CI artifact.
 mkdir -p e2e-out

@@ -499,7 +499,7 @@ octet 2: lowest 2 bits of 'l' (00), then rest of 'e' (110010) = 0011 0010 = 32
 | `sip.In-Reply-To` | submit report と delivery report。 |
 | `sip.Accept-Contact` | IP-SM-GW が送る MESSAGE。 |
 
-これらのフィルタは、このプロジェクトの UE シミュレータと IP-SM-GW が送った MESSAGE を使い、tshark 4.2 で確かめました。
+`scripts/e2e-sms.sh` は、この表のフィルタをすべて、このシナリオのキャプチャに当てます。フレームが 1 つも見つからないフィルタがあれば、試験は失敗します。
 
 ## コードの場所
 

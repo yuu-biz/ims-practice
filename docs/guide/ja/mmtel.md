@@ -365,7 +365,7 @@ IR.92 は割込通話を網ではなく UE で行うよう求めています（2
 | --- | --- |
 | `sip.P-Served-User` | S-CSCF が AS に送る INVITE。`sip.P-Served-User contains "orig-cdiv"` は転送のあとの INVITE、`contains "regstate=unreg"` は登録していない利用者のための INVITE。 |
 | `sip.Route contains "odi="` | S-CSCF のオリジナルダイアログ識別子を付けた、AS への要求。 |
-| `sip.P-Charging-Vector contains "icid-value=..."` | 網の中の、1 つの通話のすべてのダイアログ。P-CSCF は UE に送るものから P-Charging-Vector を消します。 |
+| `sip.P-Charging-Vector` | 網の中にとどまる課金の情報。P-CSCF は UE に送るものから P-Charging-Vector を消します。`contains "icid-value=<1 つの通話の値>"` を足すと、その通話のすべてのダイアログが見つかります。 |
 | `sip.History-Info` | 転送した INVITE と、転送を知らせる 181 と 200。 |
 | `sip.r-uri contains "cause="` | RFC 4458 の理由を付けた、転送した INVITE。 |
 | `sip.Status-Code == 181` | 転送の通知。 |
@@ -377,7 +377,7 @@ IR.92 は割込通話を網ではなく UE で行うよう求めています（2
 | `diameter.cmd.code in {306, 307} && ip.addr == 172.28.0.75` | MMTel AS の UDR と PUR。`diameter.Service-Indication == "MMTEL-Services"` はサービスのデータの読み出し、`== "Ut-Digest-Credential"` は Ut のパスワードの読み出しを見つける。 |
 | `diameter.Experimental-Result-Code == 2003` | 未登録の状態のサービスを持つ利用者の LIA。 |
 
-これらのフィルタは `scripts/e2e-mmtel.sh` のキャプチャを使い、tshark 4.2 で確かめました。
+`scripts/e2e-mmtel.sh` は、この表のフィルタをすべて、このシナリオのキャプチャに当てます。フレームが 1 つも見つからないフィルタがあれば、試験は失敗します。
 
 ## コードの場所
 

@@ -629,6 +629,10 @@ none "malformed SIP, SDP, Diameter, HTTP, JSON, RTP, RTCP or AMR packets" '(sip 
 # has the request go over UDP after all, with a warning in the log.
 none "SIP requests over 1300 bytes on UDP" "sip.Method && udp && udp.length > 1308 && ip.src != $gateway && ip.dst != $gateway"
 
+# Every display filter that the guide shows its readers finds something
+# in this capture.
+guide_filters docs/guide/en/volte.md
+
 # The ladder of the registrations, the calls, Rx and the EPC stub's API,
 # for the guide and the CI artifact.
 docker compose exec -T capture tshark -r "$pcap" -T fields -E separator=/t \

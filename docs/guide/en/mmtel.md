@@ -360,7 +360,7 @@ IR.92 asks for call waiting done by the UE, not by the network (2.3.4). The call
 | --- | --- |
 | `sip.P-Served-User` | The INVITEs that the S-CSCF sends to the AS. `sip.P-Served-User contains "orig-cdiv"` finds the passes after a diversion, `contains "regstate=unreg"` those for a user who is not registered. |
 | `sip.Route contains "odi="` | Requests to an AS, with the S-CSCF's original dialog identifier. |
-| `sip.P-Charging-Vector contains "icid-value=..."` | Every dialog of one call, inside the network. The P-CSCF removes P-Charging-Vector from what it sends to a UE. |
+| `sip.P-Charging-Vector` | The charging information, which stays inside the network: the P-CSCF removes P-Charging-Vector from what it sends to a UE. Add `contains "icid-value=<the value of one call>"` to see every dialog of that call. |
 | `sip.History-Info` | Diverted INVITEs, and the 181s and 200s that report a diversion. |
 | `sip.r-uri contains "cause="` | Diverted INVITEs, with the cause of RFC 4458. |
 | `sip.Status-Code == 181` | The notifications of a diversion. |
@@ -372,7 +372,7 @@ IR.92 asks for call waiting done by the UE, not by the network (2.3.4). The call
 | `diameter.cmd.code in {306, 307} && ip.addr == 172.28.0.75` | The UDRs and PURs of the MMTel AS. `diameter.Service-Indication == "MMTEL-Services"` finds the reads of the service data, `== "Ut-Digest-Credential"` those of the Ut passwords. |
 | `diameter.Experimental-Result-Code == 2003` | LIAs for a user who has services when not registered. |
 
-These filters were checked with tshark 4.2 against a capture of `scripts/e2e-mmtel.sh`.
+`scripts/e2e-mmtel.sh` runs every filter of this table against the capture of this scenario: a filter that finds no frame fails the run.
 
 ## Where the code is
 

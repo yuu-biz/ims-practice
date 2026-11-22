@@ -270,6 +270,56 @@ none() {
 	fi
 }
 
+# guide_filters GUIDE checks the Wireshark display filters that the
+# guide shows its readers: each one must find at least one frame in this
+# scenario's capture. The guides say that this scenario's script checks
+# them, so a filter that finds nothing, and one that tshark cannot read,
+# fail the run. scripts/guide_filters.py holds the rule that reads the
+# filters out of the guide's table and prints them one per line, after
+# the place each comes from.
+#
+# It reads the capture itself rather than through tshark_fields, which
+# ends the run on a filter tshark cannot read: here that is one of the
+# findings, and the run goes on to the filters after it. Call it after
+# the checks of the flow, which have waited for the last frames they
+# read; tcpdump writes the frames in the order they crossed the bridge,
+# so every frame before those is in the file too.
+guide_filters() {
+	local guide="$1" filters version where filter frames n
+	if ! filters="$("$python" scripts/guide_filters.py "$guide")"; then
+		echo "FAIL the display filters of $guide could not be read"
+		fail=1
+		return
+	fi
+	version="$(docker compose exec -T capture tshark --version | tr -d '\r' | first_line)"
+	echo "the display filters of $guide, read by the capture image's $version"
+	while IFS=' ' read -r where filter; do
+		# Only what tshark writes to its output is counted. Anything it
+		# says on its error output is not a frame, and shows only when
+		# the filter itself is the trouble.
+		if ! frames="$(frames_passing "$filter" 2>/dev/null)"; then
+			echo "FAIL $where $filter: tshark cannot read this filter"
+			frames_passing "$filter" 2>&1 >/dev/null | sed 's/^/     /'
+			fail=1
+			continue
+		fi
+		n="$(awk 'NF { n++ } END { print n + 0 }' <<<"$frames")"
+		if [ "$n" -gt 0 ]; then
+			echo "ok   $where $filter: $n frames"
+		else
+			echo "FAIL $where $filter: matched no frame"
+			fail=1
+		fi
+	done <<<"$filters"
+}
+
+# frames_passing FILTER prints the number of each frame of the capture
+# that passes the filter, and fails when tshark cannot read the filter.
+frames_passing() {
+	docker compose exec -T capture tshark -r "$pcap" ${tshark_options[@]+"${tshark_options[@]}"} \
+		-Y "$1" -T fields -e frame.number
+}
+
 # answer_to is the filter of the Diameter answer to the request that the
 # last expect found: the same command code and Session-Id, with the R
 # bit clear. A TCP segment may carry more than one message; the first
