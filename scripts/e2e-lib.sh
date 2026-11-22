@@ -60,7 +60,9 @@ remember_nodes() {
 # renew_node accepts that the script recreated one service on purpose,
 # for example to start it with another configuration. It checks that the
 # service runs in a new container and that no other node changed, and
-# then remembers the nodes as they are now.
+# then remembers the nodes as they are now. grep ends with 1 when it
+# selects no line, and diff when the lists differ, which is what it shows
+# here; hence their "|| true", here and in same_nodes.
 renew_node() {
 	local service="$1" before="$nodes_at_start" now
 	now="$(nodes "${node_services[@]}")"
