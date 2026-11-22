@@ -638,10 +638,12 @@ func (s *session) registerAgain(ctx context.Context, initial bool) error {
 			}
 			return nil
 		}
-		s.registered = false
 		if ctx.Err() != nil {
+			// A refresh that a signal cut short leaves the registration
+			// in place, and run still deregisters it.
 			return ctx.Err()
 		}
+		s.registered = false
 		if !initial {
 			s.log.Warn("re-registration failed; registering again from the start", "error", err.Error())
 			initial = true

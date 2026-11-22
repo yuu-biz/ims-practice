@@ -264,7 +264,9 @@ func New(cfg Config, stack *sip.Stack, contact Contact, log *slog.Logger) *UE {
 //
 // Register tries once. After a failure the UE holds no registration,
 // and the next Register is an initial registration (5.1.1.4.1);
-// RegistrationBackoff tells how long to wait before it.
+// RegistrationBackoff tells how long to wait before it. A Register that
+// the end of ctx cuts short leaves the registration as it was, so that
+// the UE can still deregister it.
 func (u *UE) Register(ctx context.Context) (Registration, error) {
 	reg, err := u.send(ctx, u.cfg.Expires)
 	var brief *intervalTooBrief
@@ -273,7 +275,7 @@ func (u *UE) Register(ctx context.Context) (Registration, error) {
 		u.cfg.Expires = brief.min
 		reg, err = u.send(ctx, u.cfg.Expires)
 	}
-	if err != nil {
+	if err != nil && ctx.Err() == nil {
 		u.unbind()
 	}
 	return reg, err
