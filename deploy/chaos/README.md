@@ -193,7 +193,7 @@ docker network disconnect ims-practice_ims ims-practice-icscf-1
 docker network connect --ip 172.28.0.20 ims-practice_ims ims-practice-icscf-1
 ```
 
-Give the address again when you reconnect; the addresses are in [the capture guide](../../docs/guide/en/capture.md). While the I-CSCF is off, the capture shows ARP requests for 172.28.0.20 that nobody answers, the P-CSCF resending the REGISTER, and the HSS resending on its TCP connection. The I-CSCF itself sees its connection to the HSS fail, and its log shows the watchdog states down to `Closed` and back to `I-Open` once it is connected again.
+Give the address again when you reconnect; the addresses are in [the capture guide](../../docs/guide/en/capture.md). While the I-CSCF is off, the capture shows ARP requests for 172.28.0.20 that nobody answers, the P-CSCF resending the REGISTER, and the HSS resending on its TCP connection. The I-CSCF itself sees its connection to the HSS fail. Keep it off for about two minutes, enough for the watchdog to close the connection, and its log shows the watchdog states down to `Closed`; once it is connected again, it opens a new connection within Tc, 30 seconds, and its log shows `I-Open`.
 
 ## Delay needs netem
 
