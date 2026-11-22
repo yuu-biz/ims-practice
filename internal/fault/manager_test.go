@@ -126,7 +126,10 @@ func TestDefaultDuration(t *testing.T) {
 func TestClearBeforeItsTime(t *testing.T) {
 	m, e, c := newTestManager()
 	ctx := context.Background()
-	f, _ := m.Inject(ctx, Request{Target: "hss", Kind: Stop})
+	f, err := m.Inject(ctx, Request{Target: "hss", Kind: Stop})
+	if err != nil {
+		t.Fatalf("Inject: %v", err)
+	}
 	cleared, err := m.Clear(ctx, f.ID)
 	if err != nil || cleared.State != Cleared {
 		t.Fatalf("Clear = %+v, %v; want cleared", cleared, err)
@@ -212,8 +215,13 @@ func TestConflicts(t *testing.T) {
 func TestAnEndedFaultFreesItsSlot(t *testing.T) {
 	m, _, _ := newTestManager()
 	ctx := context.Background()
-	f, _ := m.Inject(ctx, Request{Target: "pcscf", Kind: Stop})
-	m.Clear(ctx, f.ID)
+	f, err := m.Inject(ctx, Request{Target: "pcscf", Kind: Stop})
+	if err != nil {
+		t.Fatalf("Inject: %v", err)
+	}
+	if _, err := m.Clear(ctx, f.ID); err != nil {
+		t.Fatalf("Clear: %v", err)
+	}
 	if _, err := m.Inject(ctx, Request{Target: "pcscf", Kind: Kill}); err != nil {
 		t.Fatalf("Inject after the clear: %v", err)
 	}
@@ -242,7 +250,10 @@ func TestApplyFailure(t *testing.T) {
 func TestClearFailureIsNotRetried(t *testing.T) {
 	m, e, c := newTestManager()
 	ctx := context.Background()
-	f, _ := m.Inject(ctx, Request{Target: "pcscf", Kind: Pause, Duration: Duration(time.Minute)})
+	f, err := m.Inject(ctx, Request{Target: "pcscf", Kind: Pause, Duration: Duration(time.Minute)})
+	if err != nil {
+		t.Fatalf("Inject: %v", err)
+	}
 	e.clearErr = errors.New("container is not paused")
 	c.Advance(time.Minute)
 	m.ExpireDue(ctx)
@@ -260,10 +271,14 @@ func TestClearFailureIsNotRetried(t *testing.T) {
 func TestNoClearWhileApplying(t *testing.T) {
 	e := &fakeExecutor{block: make(chan struct{}), started: make(chan struct{})}
 	m := NewManager(Config{Executor: e, Clock: newFakeClock()})
-	done := make(chan Fault)
+	type result struct {
+		fault Fault
+		err   error
+	}
+	done := make(chan result)
 	go func() {
-		f, _ := m.Inject(context.Background(), Request{Target: "scscf", Kind: Stop})
-		done <- f
+		f, err := m.Inject(context.Background(), Request{Target: "scscf", Kind: Stop})
+		done <- result{f, err}
 	}()
 	<-e.started
 	l := m.List()
@@ -277,8 +292,8 @@ func TestNoClearWhileApplying(t *testing.T) {
 		t.Fatalf("Inject in the same slot while applying: %v, want ErrConflict", err)
 	}
 	close(e.block)
-	if f := <-done; f.State != Active {
-		t.Fatalf("fault = %+v, want active", f)
+	if r := <-done; r.err != nil || r.fault.State != Active {
+		t.Fatalf("Inject = %+v, %v; want active", r.fault, r.err)
 	}
 }
 
@@ -287,7 +302,10 @@ func TestListIsOldestFirst(t *testing.T) {
 	ctx := context.Background()
 	var ids []string
 	for _, target := range []string{"pcscf", "icscf", "scscf"} {
-		f, _ := m.Inject(ctx, Request{Target: target, Kind: Pause})
+		f, err := m.Inject(ctx, Request{Target: target, Kind: Pause})
+		if err != nil {
+			t.Fatalf("Inject on %s: %v", target, err)
+		}
 		ids = append(ids, f.ID)
 		c.Advance(time.Second)
 	}
