@@ -212,9 +212,11 @@ func (s *admissions) endLookUp(key string) {
 }
 
 // indexedStore is the Store of the P-CSCF with admissions kept in step
-// with each write of an association. A write that fails may or may not
-// have reached the Store, so admissions forgets the association, and
-// Screen reads it from the Store again when the UE sends.
+// with each write of an association. A write that fails leaves
+// admissions as it was: the association it held is still bounded by its
+// own Expires, and forgetting it would drop the next request of the UE,
+// which a UE on TCP does not send again, until a lookup in the Store
+// brought it back.
 type indexedStore struct {
 	Store
 	admissions *admissions
@@ -222,7 +224,6 @@ type indexedStore struct {
 
 func (s indexedStore) PutAssociation(ctx context.Context, a Association) error {
 	if err := s.Store.PutAssociation(ctx, a); err != nil {
-		s.admissions.remove(a.Source)
 		return err
 	}
 	s.admissions.put(a)

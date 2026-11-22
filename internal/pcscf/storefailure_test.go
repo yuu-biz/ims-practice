@@ -314,3 +314,54 @@ func TestRequestWithinADialogWhenTheStoreFails(t *testing.T) {
 	}
 	ended(t, "the far end's call", in.Done())
 }
+
+// putFailsStore fails only the writes of associations.
+type putFailsStore struct{ Store }
+
+func (putFailsStore) PutAssociation(context.Context, Association) error {
+	return errors.New("the store is down")
+}
+
+// A refresh whose write fails leaves the copy that Screen reads as it
+// was: the association it holds is still bounded by its own Expires,
+// and the next request of the UE must not wait for a lookup that a UE
+// on TCP would not send it again for.
+func TestAFailedRefreshKeepsTheAdmission(t *testing.T) {
+	copy := newAdmissions()
+	s := indexedStore{Store: putFailsStore{NewMemoryStore()}, admissions: copy}
+	a := Association{Source: sip.Destination{Transport: sip.TCP, Addr: netip.MustParseAddrPort("192.0.2.1:5060")},
+		Expires: time.Now().Add(time.Hour), KeepUntil: time.Now().Add(time.Hour + time.Minute)}
+	copy.put(a)
+	refreshed := a
+	refreshed.Expires = a.Expires.Add(time.Hour)
+	if err := s.PutAssociation(context.Background(), refreshed); err == nil {
+		t.Fatal("the refresh was written to a store that is down")
+	}
+	copy.mu.Lock()
+	got, ok := copy.bySource[a.Source]
+	copy.mu.Unlock()
+	if !ok || !got.expires.Equal(a.Expires) {
+		t.Errorf("the copy after the failed refresh: %+v, %t; want the association as it was", got, ok)
+	}
+}
+
+// An association whose end cannot be written keeps the UE's security
+// associations: an association still in force without them would let
+// the UE's unprotected requests through.
+func TestAnEndThatCannotBeWrittenKeepsTheSecurityAssociations(t *testing.T) {
+	memory := NewMemoryStore()
+	ue := netip.MustParseAddrPort("192.0.2.1:5062")
+	ctx := context.Background()
+	if err := memory.PutSecurityAssociations(ctx, SecurityAssociations{UE: ue, Expires: time.Now().Add(time.Hour)}); err != nil {
+		t.Fatal(err)
+	}
+	locate := locatorFunc(func(string) []sip.Destination { return nil })
+	p := New(Config{Host: "pcscf." + domain, Port: 5060, VisitedNetworkID: domain}, locate, putFailsStore{memory}, nil, quiet())
+	a := Association{Source: sip.Destination{Transport: sip.UDP, Addr: ue}, Expires: time.Now().Add(time.Hour)}
+	if err := p.endAssociation(a, quiet()); err == nil {
+		t.Fatal("the end of the association was written to a store that is down")
+	}
+	if _, ok, err := memory.SecurityAssociations(ctx, ue); err != nil || !ok {
+		t.Errorf("the security associations after the failed end: %t, %v; want them kept", ok, err)
+	}
+}
