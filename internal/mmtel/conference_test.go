@@ -2,7 +2,9 @@ package mmtel_test
 
 import (
 	"fmt"
+	"maps"
 	"net"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -428,6 +430,105 @@ func TestJoinWithTheConferenceURI(t *testing.T) {
 	}
 	if got := statuses(readAll(t, out)); len(got) != 1 || got[0] != 403 {
 		t.Errorf("the seventh user got %v, want 403", got)
+	}
+}
+
+// aliceConference has alice create a conference at as, with the INVITE
+// to the factory URI that the S-CSCF passes on, and subscribe to it. It
+// returns her conference session, the conference URI with isfocus from
+// the 200, and the NOTIFYs of her subscription.
+func aliceConference(t *testing.T, as testAS) (*sip.OutgoingCall, sip.NameAddr, <-chan sip.Notification) {
+	t.Helper()
+	callee := newUA(t, "bob", func(c *sip.IncomingCall) { c.Reject(480) })
+	alice := newParticipant(t, as, "alice", func(c *sip.IncomingCall) { c.Reject(480) })
+	inv := viaAS(t, as, callee, "orig", audio("42000", "sendrecv"))
+	inv.RequestURI, inv.To = ims.ConferenceFactoryURI(domain), ims.ConferenceFactoryURI(domain)
+	conf, err := alice.Invite(inv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { conf.Bye() })
+	resps := readAll(t, conf)
+	focus, err := sip.ParseNameAddr(resps[len(resps)-1].Get("Contact"))
+	if err != nil {
+		t.Fatalf("the creator got %v with Contact %q: %v", statuses(resps), resps[len(resps)-1].Get("Contact"), err)
+	}
+	notifications := make(chan sip.Notification, 16)
+	if _, err := alice.Subscribe(sip.SubscribeRequest{RequestURI: focus.URI, From: "sip:alice@" + domain, Event: confinfo.EventPackage,
+		Accept: confinfo.ContentType, Expires: time.Hour,
+		Headers:  []sip.HeaderField{{Name: "P-Asserted-Identity", Value: "<sip:alice@" + domain + ">"}},
+		OnNotify: func(n sip.Notification, _ *sip.Message) { notifications <- n }}); err != nil {
+		t.Fatal(err)
+	}
+	return conf, focus, notifications
+}
+
+// joinWithoutACK is the INVITE of user to the conference URI uri from a
+// bare socket, as joining has it. The socket reads the 200 of the focus
+// and holds its ACK back, so that the focus has no confirmed dialog with
+// the user.
+func joinWithoutACK(t *testing.T, as testAS, user, uri string) *sip.Message {
+	t.Helper()
+	conn, err := net.ListenUDP("udp", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { conn.Close() })
+	self := conn.LocalAddr().String()
+	sdp := audio("44000", "sendrecv").Content
+	invite := fmt.Sprintf("INVITE %[1]s SIP/2.0\r\n"+
+		"Via: SIP/2.0/UDP %[2]s;branch=z9hG4bK-%[3]s-1\r\n"+
+		"Max-Forwards: 70\r\n"+
+		"From: <sip:%[3]s@%[4]s>;tag=%[3]s\r\n"+
+		"To: <%[1]s>\r\n"+
+		"Call-ID: %[3]s-1@127.0.0.1\r\n"+
+		"CSeq: 1 INVITE\r\n"+
+		"Contact: <sip:%[3]s@%[2]s>\r\n"+
+		"P-Asserted-Identity: <sip:%[3]s@%[4]s>\r\n"+
+		"Content-Type: application/sdp\r\n"+
+		"Content-Length: %[5]d\r\n\r\n%[6]s",
+		uri, self, user, domain, len(sdp), sdp)
+	if _, err := conn.WriteToUDPAddrPort([]byte(invite), as.addr); err != nil {
+		t.Fatal(err)
+	}
+	return readResponse(t, conn, 200)
+}
+
+// TestJoinersBeforeTheirACKs: the focus takes a user who dials in as a
+// participant once it answers, before its ACK (TS 24.147 5.3.2.4.1), so
+// that two users may be in the conference with no confirmed dialog at
+// the same time. Each stays the participant it is: when carol leaves,
+// dave, who holds his ACK back, is still connected.
+func TestJoinersBeforeTheirACKs(t *testing.T) {
+	mrfc := startConferenceMRFC(t)
+	as := startAS(t, noServices{}, mmtel.Config{MRFC: "sip:" + contactOf(t, mrfc.ua)})
+	_, focus, notifications := aliceConference(t, as)
+
+	joinWithoutACK(t, as, "dave", focus.URI)
+	carol := newParticipant(t, as, "carol", func(c *sip.IncomingCall) { c.Reject(480) })
+	in, err := carol.Invite(joining("carol", focus.URI))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := statuses(readAll(t, in)); got[len(got)-1] != 200 {
+		t.Fatalf("carol got %v, want 200", got)
+	}
+	awaitNotification(t, notifications, "with carol and dave connected", func(_ sip.Notification, d confinfo.Document) bool {
+		got := statusOf(d)
+		return got["sip:carol@"+domain] == confinfo.Connected && got["sip:dave@"+domain] == confinfo.Connected
+	})
+
+	if err := in.Bye(); err != nil {
+		t.Fatal(err)
+	}
+	left := awaitNotification(t, notifications, "with a participant disconnected", func(_ sip.Notification, d confinfo.Document) bool {
+		return slices.Contains(slices.Collect(maps.Values(statusOf(d))), confinfo.Disconnected)
+	})
+	want := map[string]confinfo.EndpointStatus{
+		"sip:alice@" + domain: confinfo.Connected, "sip:carol@" + domain: confinfo.Disconnected, "sip:dave@" + domain: confinfo.Connected,
+	}
+	if got := statusOf(conferenceDocument(t, left.Body.Content)); !maps.Equal(got, want) {
+		t.Errorf("after carol left, the NOTIFY has %v, want %v", got, want)
 	}
 }
 
