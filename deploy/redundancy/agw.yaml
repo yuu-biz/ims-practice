@@ -1,0 +1,41 @@
+# The media relay in the IMS-AGW role with the shared store. It is the
+# file of the same name in deploy/compose with the store section at the
+# end, which deploy/redundancy/redundancy.yaml mounts in that file's
+# place.
+# Media relay in the IMS-AGW role (TS 23.334). The P-CSCF controls
+# it over a small HTTP API, and RTP flows through it.
+node: agw
+roles: [agw]
+home_domain: ims.mnc001.mcc001.3gppnetwork.org
+agw:
+  control: 0.0.0.0:8080
+  rtp_address: 172.28.0.50
+  # compose.yaml publishes this range on the host, port for port, so
+  # that a softphone on the host can reach it.
+  rtp_ports:
+    min: 40000
+    max: 40039
+
+# The relay keeps in the shared store the contexts whose RTP ports it
+# holds, with the address and the mode of each termination, so that a
+# node recreated under the same name opens the same ports again and the
+# media of its calls goes on after the gap.
+# Without this section, as in deploy/compose, the node keeps the
+# contexts in the memory of its own process, and the calls through it
+# lose their media for good.
+store:
+  kind: valkey
+  # The address of the store is fixed: the node reads and writes state
+  # before it resolves any name, and the store answers whatever the DNS
+  # of the home network is doing.
+  address: 172.28.0.5:6379
+  # Every key of this deployment begins with it, and the adapter of each
+  # role adds the name of the role after it, as in
+  # ims:scscf:registration:<private identity>. Groups of instances that
+  # must not share their state take a prefix each.
+  prefix: "ims:"
+  # How long one operation on the store may take. A role that does not
+  # get its state within it answers 500 in SIP, or
+  # DIAMETER_UNABLE_TO_COMPLY in Diameter, rather than treat the failure
+  # as an item that is not there.
+  timeout: 1s

@@ -1,0 +1,48 @@
+# The MRFP with the shared store. It is the file of the same name in
+# deploy/compose with the store section at the end, which
+# deploy/redundancy/redundancy.yaml mounts in that file's place.
+# MRFP, the media side of the MRF (TS 23.333). It is the same media
+# relay as the agw node, controlled by the MRFC over a small HTTP API
+# in the place of H.248 on Mp. It plays announcements and mixes the
+# media of a conference.
+node: mrfp
+roles: [mrfp]
+home_domain: ims.mnc001.mcc001.3gppnetwork.org
+mrfp:
+  control: 0.0.0.0:8080
+  rtp_address: 172.28.0.86
+  # A range of its own, apart from the agw's, so that a port in the
+  # capture tells which node it belongs to.
+  rtp_ports:
+    min: 40100
+    max: 40199
+  # The announcements, by the name with which an MRFC asks for one as
+  # /provisioned/<name> (RFC 4240 3.3). compose.yaml mounts the WAV
+  # files of deploy/announcements here.
+  announcements:
+    notice: /usr/share/ims/announcements/notice.wav
+    cat1: /usr/share/ims/announcements/cat1.wav
+    cat2: /usr/share/ims/announcements/cat2.wav
+
+# The MRFP keeps the contexts of its announcements and conferences in
+# the shared store, as the relay of the agw node keeps those of its
+# calls, so that a node recreated under the same name opens the same
+# ports again.
+# Without this section, as in deploy/compose, the node keeps the
+# contexts in the memory of its own process.
+store:
+  kind: valkey
+  # The address of the store is fixed: the node reads and writes state
+  # before it resolves any name, and the store answers whatever the DNS
+  # of the home network is doing.
+  address: 172.28.0.5:6379
+  # Every key of this deployment begins with it, and the adapter of each
+  # role adds the name of the role after it, as in
+  # ims:scscf:registration:<private identity>. Groups of instances that
+  # must not share their state take a prefix each.
+  prefix: "ims:"
+  # How long one operation on the store may take. A role that does not
+  # get its state within it answers 500 in SIP, or
+  # DIAMETER_UNABLE_TO_COMPLY in Diameter, rather than treat the failure
+  # as an item that is not there.
+  timeout: 1s

@@ -110,7 +110,7 @@ UE はプロファイルに入れてあるので、`docker compose up` では起
 
 ### 利用者の状態をノードの外の保存先に置く
 
-`deploy/redundancy/redundancy.yaml` は、プロジェクトに Valkey のサーバーを足し、利用者の状態を持つノードに、その保存先を指す `store` の節を与えます。状態を持つのは HSS、S-CSCF、P-CSCF、IP-SM-GW、MMTel AS、MRFC です。`compose.yaml` にこのファイルを重ねて起動します。
+`deploy/redundancy/redundancy.yaml` は、プロジェクトに Valkey のサーバーを足し、利用者の状態を持つノードに、その保存先を指す `store` の節を与えます。状態を持つのは HSS、S-CSCF、P-CSCF、IP-SM-GW、MMTel AS、MRFC と、2 つのメディア中継ノード（IMS-AGW と MRFP）です。`compose.yaml` にこのファイルを重ねて起動します。
 
 ```sh
 export COMPOSE_FILE=compose.yaml:deploy/redundancy/redundancy.yaml COMPOSE_PATH_SEPARATOR=:
