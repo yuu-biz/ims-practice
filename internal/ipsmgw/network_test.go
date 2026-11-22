@@ -213,6 +213,23 @@ func (n *network) ipsmgwNumber(publicID string) string {
 	return u.IPSMGWNumber
 }
 
+// watch is how long a test watches for something the network must not
+// do. A test that waits this long for something the network must not do
+// waits as long for what it must do, and sees it come.
+const watch = 500 * time.Millisecond
+
+// came tells whether cond held within d.
+func came(d time.Duration, cond func() bool) bool {
+	deadline := time.Now().Add(d)
+	for !cond() {
+		if time.Now().After(deadline) {
+			return false
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	return true
+}
+
 // waitForIPSMGWNumber waits until the PUR of the IP-SM-GW has reached
 // the HSS.
 func (n *network) waitForIPSMGWNumber(publicID, want string) {
@@ -497,16 +514,17 @@ func TestRegistrationWithoutTheFeatureTag(t *testing.T) {
 	net := startIMS(t, 1)
 	alicePhone := net.phone(1, 200)
 	alicePhone.features = ""
+	// Each registration takes a SUBSCRIBE or its refresh, a NOTIFY and,
+	// with the feature tag, a PUR; the HSS is watched as long for each.
 	alicePhone.register(3600)
-	// Long enough for the SUBSCRIBE, the NOTIFY and a PUR, had there
-	// been one; the in-process network answers within milliseconds.
-	time.Sleep(300 * time.Millisecond)
-	if got := net.ipsmgwNumber(aliceTel); got != "" {
-		t.Fatalf("HSS has IP-SM-GW %q for a UE without the feature tag", got)
+	if came(watch, func() bool { return net.ipsmgwNumber(aliceTel) != "" }) {
+		t.Fatalf("HSS has IP-SM-GW %q for a UE without the feature tag", net.ipsmgwNumber(aliceTel))
 	}
 	alicePhone.features = ";+g.3gpp.smsip"
 	alicePhone.register(3600)
-	net.waitForIPSMGWNumber(aliceTel, net.gw.Number)
+	if !came(watch, func() bool { return net.ipsmgwNumber(aliceTel) == net.gw.Number }) {
+		t.Fatalf("HSS has IP-SM-GW %q for a UE with the feature tag %v after its registration, want %q", net.ipsmgwNumber(aliceTel), watch, net.gw.Number)
+	}
 }
 
 // TestJapaneseTextInUCS2 sends a text that the GSM 7 bit alphabet does
