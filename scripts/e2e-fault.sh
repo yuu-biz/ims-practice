@@ -27,7 +27,14 @@ target=mmtel
 api=http://127.0.0.1:8070/fault/v1/faults
 
 fail=0
-docker compose up -d --build
+# Built first and started apart. Every node's service builds the same
+# image name, and "up --build" labels each container with the digest of
+# its own service's build, while a later "up" compares them with the one
+# image the name points to last. The check below, that Compose leaves
+# the replaced container alone, would then fail for every node, not
+# only for the one the fault replaced.
+docker compose build
+docker compose up -d
 
 for i in $(seq 1 60); do
 	curl -fsS "$api" >/dev/null 2>&1 && break
