@@ -462,6 +462,42 @@ func TestCancelThroughTheAS(t *testing.T) {
 	}
 }
 
+// TestReasonOfTheEndGoesOnAsItCame: the Reason of the request that ends
+// one leg goes into the request that ends the other as it came, values
+// that the AS cannot read among them (RFC 3326 2). A dropped value
+// would leave the other side without the cause of the end.
+func TestReasonOfTheEndGoesOnAsItCame(t *testing.T) {
+	as := startAS(t, noServices{}, mmtel.Config{})
+	up := make(chan *sip.IncomingCall, 1)
+	callee := newUA(t, "bob", func(c *sip.IncomingCall) {
+		if _, err := c.Accept(answer); err != nil {
+			return
+		}
+		up <- c
+	})
+	caller := newUA(t, "alice", func(c *sip.IncomingCall) { c.Reject(480) })
+	out, err := caller.Invite(viaAS(t, as, callee, "term", offer))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := statuses(readAll(t, out)); !reflect.DeepEqual(got, []int{200}) {
+		t.Fatalf("the caller got %v, want 200", got)
+	}
+	// The second value has a cause that is no number, which the AS cannot
+	// read; RFC 3326 2 leaves the values of other protocols open.
+	why := []sip.HeaderField{
+		{Name: "Reason", Value: `Q.850;cause=16;text="Normal call clearing"`},
+		{Name: "Reason", Value: `RELEASE_CAUSE;cause=normal;text="Hung up"`},
+	}
+	if err := receive(t, up, "answered call at the callee").Bye(why...); err != nil {
+		t.Fatal(err)
+	}
+	receive(t, out.Done(), "end of the caller's call")
+	if got := sip.ReasonFields(out.EndedBy()); !reflect.DeepEqual(got, why) {
+		t.Errorf("the caller's BYE has Reason %v, want %v, as the callee sent them", got, why)
+	}
+}
+
 // TestRequestWithoutALeg: the AS gave the caller an early dialog of its
 // own to play it an announcement, and sends no INVITE toward the callee.
 // A request of the caller within that dialog has no leg to go on in, and
