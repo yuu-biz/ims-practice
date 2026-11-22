@@ -480,6 +480,13 @@ func BodyOf(m *Message) Body {
 	return Body{Type: m.Get("Content-Type"), Content: slices.Clone(m.Body)}
 }
 
+// HasSessionDescription reports whether the body of m is a session
+// description (RFC 3261 13.2.1): only then is it an offer or an answer.
+func HasSessionDescription(m *Message) bool {
+	mediaType, _, _ := strings.Cut(m.Get("Content-Type"), ";")
+	return len(m.Body) > 0 && strings.EqualFold(strings.TrimSpace(mediaType), "application/sdp")
+}
+
 // addHeaders appends the header fields that the user of a call gives
 // for a message.
 func addHeaders(m *Message, headers []HeaderField) {

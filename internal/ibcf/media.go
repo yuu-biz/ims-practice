@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"log/slog"
 	"net/netip"
-	"strings"
 
 	"github.com/yuu-biz/ims-practice/internal/agw"
 	"github.com/yuu-biz/ims-practice/internal/interconnect"
@@ -114,7 +113,7 @@ func (b *IBCF) throughTrGW(m *sip.Message, c MediaContext, d interconnect.Direct
 // hasAudio reports whether m carries an SDP body with an audio stream
 // that has a port: one that the TrGW has to carry.
 func hasAudio(m *sip.Message) bool {
-	if !hasSDP(m) {
+	if !sip.HasSessionDescription(m) {
 		return false
 	}
 	description, err := sdp.Parse(m.Body)
@@ -123,11 +122,4 @@ func hasAudio(m *sip.Message) bool {
 	}
 	_, _, err = description.Audio()
 	return err == nil
-}
-
-// hasSDP reports whether the body of m is a session description (RFC
-// 3261 13.2.1): only then is it an offer or an answer.
-func hasSDP(m *sip.Message) bool {
-	mediaType, _, _ := strings.Cut(m.Get("Content-Type"), ";")
-	return len(m.Body) > 0 && strings.EqualFold(strings.TrimSpace(mediaType), "application/sdp")
 }
