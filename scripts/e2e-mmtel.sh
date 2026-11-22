@@ -449,6 +449,10 @@ none "malformed SIP, Diameter or HTTP packets" '(sip || diameter || http) && (_w
 # RFC 3261 18.1.1: a request over 1300 bytes does not go over UDP.
 none "SIP requests over 1300 bytes on UDP" 'sip.Method && udp && udp.length > 1308'
 
+# Every display filter that the guide shows its readers finds something
+# in this capture.
+guide_filters docs/guide/en/mmtel.md
+
 # The ladder of the calls, Ut and Sh, for the guide and the CI artifact.
 docker compose exec -T capture tshark -r "$pcap" -T fields -E separator=/t \
 	-Y '(sip && !(sip.CSeq.method == "REGISTER") && !(sip.CSeq.method == "SUBSCRIBE") && !(sip.CSeq.method == "NOTIFY") && !(sip.CSeq.method == "MESSAGE")) || (http && ip.addr == 172.28.0.75) || diameter.cmd.code == 306 || diameter.cmd.code == 307 || diameter.cmd.code == 302 || diameter.cmd.code == 301' \

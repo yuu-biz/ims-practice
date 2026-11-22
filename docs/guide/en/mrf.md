@@ -226,7 +226,7 @@ The script does not run this. `TestRejoinWithTheConferenceURI` in `internal/mmte
 | `rtp && ip.addr == 172.28.0.86` | The RTP of the MRFP, with the RTP heuristic on. |
 | `http && ip.addr == 172.28.0.86` | The control API of the MRFP: the POST, PUT and DELETE of terminations, and the Notify that a play ended. |
 
-These filters were checked with tshark 4.2 against a capture of `scripts/e2e-mrf.sh`.
+`scripts/e2e-mrf.sh` runs every filter of this table against the capture of this scenario: a filter that finds no frame fails the run.
 
 ## Where the code is
 

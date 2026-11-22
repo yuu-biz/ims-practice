@@ -480,6 +480,10 @@ none "malformed SIP, SDP, HTTP, JSON, XML or RTP packets" '(sip || sdp || http |
 # RFC 3261 18.1.1: a request over 1300 bytes does not go over UDP.
 none "SIP requests over 1300 bytes on UDP" 'sip.Method && udp && udp.length > 1308'
 
+# Every display filter that the guide shows its readers finds something
+# in this capture.
+guide_filters docs/guide/en/mrf.md
+
 # The ladder of the calls and the MRF, for the guide and the CI artifact.
 docker compose exec -T capture tshark -r "$pcap" -T fields -E separator=/t \
 	-Y '(sip && !(sip.CSeq.method == "REGISTER") && !(sip.CSeq.method == "SUBSCRIBE" && !(sip.Event contains "conference")) && !(sip.CSeq.method == "NOTIFY" && !(sip.Event contains "conference") && !(sip.Event contains "refer")) && !(sip.CSeq.method == "MESSAGE")) || (http && (ip.addr == 172.28.0.85 || ip.addr == 172.28.0.86))' \

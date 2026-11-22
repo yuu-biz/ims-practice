@@ -537,7 +537,7 @@ It shows the registrations, the calls, Rx, the MARs and the EPC stub's API. Wire
 | `rtcp`, `rtpevent` | RTCP and the telephone-events. |
 | `sip.Session-Expires`, `sip.Reason` | The session timer, and the reasons of BYEs and CANCELs. |
 
-These filters were checked with tshark 4.2 against a capture of `scripts/e2e-volte.sh`.
+`scripts/e2e-volte.sh` runs every filter of this table against the capture of this scenario: a filter that finds no frame fails the run.
 
 ## Where the code is
 

@@ -14,7 +14,10 @@ jobs:
   # A change that touches only documents needs the checks of the docs job
   # and nothing else: no test reads the Markdown files or the licences,
   # except the tables of docs/guide/*/capture.md and docs/guide/*/README.md,
-  # which deploy/compose checks against compose.yaml.
+  # which deploy/compose checks against compose.yaml, and the tables of
+  # display filters of the guides of a scenario, which that scenario's
+  # end-to-end script runs against its capture. Those it reads in English,
+  # and the docs job checks that both languages show the same filters.
   # The other jobs are skipped then, and a skipped job counts as passed.
   changes:
     runs-on: ubuntu-latest
@@ -37,7 +40,7 @@ jobs:
             grep -Ev '\.md$|^docs/|^LICENSE|^NOTICE$' | head -n 1 || true)
           if [ -z "$code" ]; then
             code=$(git diff --name-only "$BASE" HEAD |
-              grep -E '^docs/guide/(en|ja)/(capture|README)\.md$' | head -n 1 || true)
+              grep -E '^docs/guide/(en|ja)/(capture|README)\.md$|^docs/guide/en/(mmtel|mrf|sms|volte)\.md$' | head -n 1 || true)
           fi
           echo "first file that is not a document: ${code:-none}"
           echo "code=$([ -n "$code" ] && echo true || echo false)" >> "$GITHUB_OUTPUT"

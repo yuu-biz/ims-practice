@@ -492,7 +492,7 @@ A text with a character outside the alphabet, such as Japanese, is sent in UCS2 
 | `sip.In-Reply-To` | Submit reports and delivery reports. |
 | `sip.Accept-Contact` | The MESSAGEs that the IP-SM-GW sends. |
 
-These filters were checked with tshark 4.2 against MESSAGEs sent by the UE simulators and the IP-SM-GW of this project.
+`scripts/e2e-sms.sh` runs every filter of this table against the capture of this scenario: a filter that finds no frame fails the run.
 
 ## Where the code is
 

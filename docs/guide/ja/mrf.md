@@ -226,7 +226,7 @@ phone2     P-CSCF   S-CSCF   MMTel AS              MRFC
 | `rtp && ip.addr == 172.28.0.86` | MRFP の RTP。RTP のヒューリスティックを有効にして使います。 |
 | `http && ip.addr == 172.28.0.86` | MRFP の制御の API。ターミネーションの POST、PUT、DELETE と、再生が終わったことを知らせる Notify です。 |
 
-これらのフィルタは、`scripts/e2e-mrf.sh` のキャプチャに対して tshark 4.2 で確かめました。
+`scripts/e2e-mrf.sh` は、この表のフィルタをすべて、このシナリオのキャプチャに当てます。フレームが 1 つも見つからないフィルタがあれば、試験は失敗します。
 
 ## コードの場所
 

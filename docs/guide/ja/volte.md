@@ -537,7 +537,7 @@ docker compose run --rm --entrypoint sipp softphone -sf /etc/sipp/register-aka.x
 | `rtcp`、`rtpevent` | RTCP と telephone-event。 |
 | `sip.Session-Expires`、`sip.Reason` | セッションタイマーと、BYE や CANCEL の理由。 |
 
-これらのフィルタは `scripts/e2e-volte.sh` のキャプチャを tshark 4.2 で読んで確かめました。
+`scripts/e2e-volte.sh` は、この表のフィルタをすべて、このシナリオのキャプチャに当てます。フレームが 1 つも見つからないフィルタがあれば、試験は失敗します。
 
 ## コードの場所
 
