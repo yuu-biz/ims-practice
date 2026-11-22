@@ -524,13 +524,19 @@ expect "DEACTIVATE EPS BEARER CONTEXT REQUEST to volte-a" "$(event_to $va_ip "DE
 back
 expect "ASR PCRF -> P-CSCF: BEARER_RELEASED" "$asr && diameter.Abort-Cause == 0"
 aborted="$(field diameter.Session-Id)"
+# The ASR starts three things that run side by side: the answer and the
+# STR that the P-CSCF sends after it, and the two BYEs of the P-CSCF.
+# Each branch starts at the ASR.
+mark
 expect "ASA 2001" "$(answer_to) && diameter.Result-Code == 2001"
 expect "STR P-CSCF -> PCRF for that session" "$str && diameter.Session-Id == \"$aborted\""
-mark
+back
 expect "BYE P-CSCF -> volte-a with Reason SIP 503" "sip.Method == \"BYE\" && ip.src == $pcscf && ip.dst == $va_ip && sip.Call-ID == \"$a\" && sip.Reason contains \"cause=503\""
 back
 expect "BYE P-CSCF -> S-CSCF in volte-a's name, Reason SIP 503" "sip.Method == \"BYE\" && ip.src == $pcscf && ip.dst == $scscf && sip.Call-ID == \"$a\" && sip.Reason contains \"cause=503\""
 expect "BYE reaches volte-b with that Reason" "sip.Method == \"BYE\" && ip.dst == $vb_ip && sip.Reason contains \"cause=503\""
+# volte-b's answer to that BYE ends its dialog at the P-CSCF, whose STR
+# for volte-b's session takes the bearer away.
 expect "DEACTIVATE EPS BEARER CONTEXT REQUEST to volte-b: its bearer goes with the call" "$(event_to $vb_ip "DEACTIVATE EPS BEARER CONTEXT REQUEST")"
 none "BYE of volte-a's own in that call" "frame.number > $released && sip.Method == \"BYE\" && ip.src == $va_ip && sip.Call-ID == \"$a\""
 
