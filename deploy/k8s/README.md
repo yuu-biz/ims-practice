@@ -183,7 +183,7 @@ An ephemeral container stays in the Pod until the Pod is replaced.
 
 ## Check everything with one script
 
-`e2e-kind.sh` does sections 1 to 4 on a cluster of its own, and then checks the capture with tshark, as the end-to-end scripts of registration, calls and short messages in `scripts/` do with Docker Compose:
+`e2e-kind.sh` does sections 1 to 4 on a cluster of its own, and then checks the capture with tshark, as `scripts/e2e-registration.sh`, `scripts/e2e-call.sh` and `scripts/e2e-sms.sh` do with Docker Compose:
 
 - the registration, the deregistration and a wrong password
 - a call with its RTP through the relay, a busy callee, a cancelled call and an unregistered callee
