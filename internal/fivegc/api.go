@@ -5,6 +5,8 @@ import (
 	"net/netip"
 	"strconv"
 	"strings"
+
+	"github.com/yuu-biz/ims-practice/internal/accessapi"
 )
 
 // This file is the API between a UE and the 5GC stub: JSON messages
@@ -22,8 +24,8 @@ import (
 //
 // SIMPLIFIED: TS 24.501 and TS 38.413. There is no NAS encoding, no
 // NGAP and no radio: the messages travel as HTTP and JSON over the one
-// Docker network, and the IMSI in the URL stands for the N1 connection
-// that tells the AMF which UE a message is from, and for the SUCI the
+// Docker network, and the IMSI in the URL stands for the UE-associated
+// connection (N2) that tells the AMF which UE a message is from, and for the SUCI the
 // UE would send in REGISTRATION REQUEST. Security (5G-AKA, security
 // mode control), the 5G-GUTI, network slicing (NSSAI and S-NSSAI),
 // mobility and periodic registration updating, and the timers of the
@@ -32,10 +34,11 @@ import (
 // access network interface, so an implementation that speaks real NAS
 // can stand in its place.
 
-// MessageType is the name of a message as the "Message type" line of
-// its clause in TS 24.501 8.2 and 8.3 writes it. On the event stream it
-// is the event name.
-type MessageType string
+// MessageType is the name of a message, the shared type of accessapi.
+// The constants below are the names that the "Message type" line of
+// each clause in TS 24.501 8.2 and 8.3 writes. On the event stream it is
+// the event name.
+type MessageType = accessapi.MessageType
 
 const (
 	TypeRegistrationRequest   MessageType = "REGISTRATION REQUEST"   // 8.2.6
@@ -55,17 +58,15 @@ const (
 
 // Path is where a UE posts a message of type t, such as
 // /ues/001010000000001/pdu-session-establishment-request.
-func Path(imsi string, t MessageType) string {
-	return "/ues/" + imsi + "/" + strings.ReplaceAll(strings.ToLower(string(t)), " ", "-")
-}
+func Path(imsi string, t MessageType) string { return accessapi.Path(imsi, t) }
 
 // EventsPath is the event stream of a UE: Server-Sent Events whose name
 // is a MessageType and whose data is the message as JSON.
-func EventsPath(imsi string) string { return "/ues/" + imsi + "/events" }
+func EventsPath(imsi string) string { return accessapi.EventsPath(imsi) }
 
 // SystemInformationPath is where a UE reads the identity of the NR cell
 // it camps on.
-const SystemInformationPath = "/system-information"
+const SystemInformationPath = accessapi.SystemInformationPath
 
 // RegistrationRequest is REGISTRATION REQUEST (TS 24.501 8.2.6).
 type RegistrationRequest struct {
