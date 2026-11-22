@@ -183,7 +183,7 @@ Captures are readable by default, so that a learner sees the SIP of a registered
 Without ESP, two things differ from a real network:
 
 - Each side sends from its protected server port, so the protected client ports (`port-c`) are agreed and never bound.
-- A request over TCP comes from a port of the moment. The VoLTE INVITE is larger than 1300 bytes and goes over TCP (RFC 3261 18.1.1), so the P-CSCF knows the UE of a TCP request by the sent-by of its Via. A REGISTER that answers a challenge is close to 1300 bytes, so whether it goes over TCP depends on how many digits its SPIs have. TCP and UDP share the security associations (TS 33.203 7.1), so the P-CSCF finds them for that REGISTER by the sent-by of its Via too.
+- A request over TCP comes from a port of the moment. The VoLTE INVITE is larger than 1300 bytes and goes over TCP (RFC 3261 18.1.1), so the P-CSCF knows the UE of a TCP request by the sent-by of its Via. A REGISTER that answers a challenge is close to 1300 bytes, so whether it goes over TCP depends on how many digits its SPIs have. TCP and UDP share the security associations (TS 33.203 7.1), so the P-CSCF finds them for that REGISTER by the sent-by of its Via too. Nothing authenticates that sent-by, so a host that shares the UE's IP address could name the UE's protected server port in it; with ESP the security associations would authenticate the sender.
 
 ### SIPp
 
@@ -525,7 +525,7 @@ Each item has a `SIMPLIFIED:` comment in the code; `grep -rn "SIMPLIFIED:" inter
 | P-CSCF, TS 24.229 5.2.8.1.4, 5.2.8.3 | A dialog that ends without a BYE through the P-CSCF stays in the Store. | It would need an index of dialogs by user, or a session timer of the P-CSCF. |
 | P-CSCF, RFC 3264, RFC 3262 | An INVITE or re-INVITE without SDP gets no relay context and no authorisation. | The UE simulator always offers in the INVITE. |
 | P-CSCF and UE, TS 33.203 7.1, 7.2 | No IPsec ESP: the associations are agreed and kept, the protected server ports are used, the client ports are never bound. | Captures stay readable. The standard has no IMS AKA without protection. |
-| P-CSCF, TS 24.229 5.2.2.3 | A UE is known by the address and port its requests come from, or for TCP by the sent-by of its Via. | Without ESP a TCP connection comes from a port of the moment. |
+| P-CSCF, TS 24.229 5.2.2.3 | A UE is known by the address and port its requests come from, or for TCP by the sent-by of its Via, which nothing authenticates. | Without ESP a TCP connection comes from a port of the moment. |
 | S-CSCF, TS 33.203 6.1.1, TS 24.229 5.4.1.2.1A | AKAv1-MD5 only, no AKAv2-SHA-256. | SIPp speaks AKAv1-MD5 only. |
 | AKA, TS 33.102 C.2.2, C.3.4 | No limit L on how old an accepted SQN may be, and IND is not kept per domain. | Profile 2 suggests no L; IMS is one domain with one vector per MAR. |
 | UE, TS 24.301, TS 36.331 | The UE's packets go straight onto the Docker network. | No radio and no tunnel. |

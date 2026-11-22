@@ -183,7 +183,7 @@ go test ./internal/milenage -run TestConformanceTestSets -v   # all 20 sets of T
 ESP が無いので、本物の網と 2 つの点が違います。
 
 - どちらの側も保護サーバーポートから送るので、保護クライアントポート（`port-c`）は取り決めるだけで、使いません。
-- TCP の要求はそのときどきのポートから届きます。VoLTE の INVITE は 1300 バイトより大きいので TCP で送られ（RFC 3261 18.1.1）、P-CSCF は TCP の要求の UE を Via の sent-by で見分けます。challenge に答える REGISTER は 1300 バイト前後の大きさなので、TCP で送られるかどうかは SPI の桁数で変わります。TCP と UDP は同じアソシエーションを使うので（TS 33.203 7.1）、P-CSCF はこの REGISTER のアソシエーションも Via の sent-by で探します。
+- TCP の要求はそのときどきのポートから届きます。VoLTE の INVITE は 1300 バイトより大きいので TCP で送られ（RFC 3261 18.1.1）、P-CSCF は TCP の要求の UE を Via の sent-by で見分けます。challenge に答える REGISTER は 1300 バイト前後の大きさなので、TCP で送られるかどうかは SPI の桁数で変わります。TCP と UDP は同じアソシエーションを使うので（TS 33.203 7.1）、P-CSCF はこの REGISTER のアソシエーションも Via の sent-by で探します。この sent-by を認証するものは無いので、UE と同じ IP アドレスを持つホストなら、UE の保護サーバーポートを sent-by に書けます。ESP をかければ、送り手はアソシエーションで認証されます。
 
 ### SIPp
 
@@ -525,7 +525,7 @@ docker compose run --rm --entrypoint sipp peer -sf /etc/sipp/register-aka.xml -m
 | P-CSCF、TS 24.229 5.2.8.1.4、5.2.8.3 | P-CSCF を通る BYE なしに終わったダイアログは `Store` に残る。 | 利用者ごとのダイアログの索引か、P-CSCF のセッションタイマーが要る。 |
 | P-CSCF、RFC 3264、RFC 3262 | SDP の無い INVITE と re-INVITE には、中継のコンテキストも許可も無い。 | UE シミュレータはいつも INVITE で offer する。 |
 | P-CSCF と UE、TS 33.203 7.1、7.2 | IPsec の ESP をかけない。アソシエーションは取り決めて保存し、保護サーバーポートを使い、クライアントポートは使わない。 | キャプチャを読めるようにするため。保護しない IMS-AKA は標準に無い。 |
-| P-CSCF、TS 24.229 5.2.2.3 | UE は要求が届いたアドレスとポートで見分け、TCP では Via の sent-by で見分ける。 | ESP が無いと、TCP の接続はそのときどきのポートから来る。 |
+| P-CSCF、TS 24.229 5.2.2.3 | UE は要求が届いたアドレスとポートで見分け、TCP では Via の sent-by で見分ける。sent-by は認証しない。 | ESP が無いと、TCP の接続はそのときどきのポートから来る。 |
 | S-CSCF、TS 33.203 6.1.1、TS 24.229 5.4.1.2.1A | AKAv1-MD5 だけで、AKAv2-SHA-256 は無い。 | SIPp が AKAv1-MD5 しか話さない。 |
 | AKA、TS 33.102 C.2.2、C.3.4 | 受け入れる SQN の古さの限度 L を使わず、IND を領域ごとに分けない。 | Profile 2 は L の値を示していない。IMS は 1 つの領域で、MAR ごとにベクトルは 1 つ。 |
 | UE、TS 24.301、TS 36.331 | UE のパケットは Docker のネットワークにそのまま出る。 | 無線もトンネルも無い。 |

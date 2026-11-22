@@ -34,7 +34,10 @@ import (
 //     agreed and kept, but never bound. A message over TCP comes from a
 //     port of the moment: the P-CSCF knows the UE of a request over TCP,
 //     a REGISTER of the agreement as well, by the sent-by of its Via
-//     (ueSource).
+//     (ueSource). Nothing authenticates that sent-by, so a host that
+//     shares the UE's IP address could name the UE's protected server
+//     port in it; with ESP the security associations would authenticate
+//     the sender.
 //   - A request that the P-CSCF proxies with its server transaction
 //     leaves from the transport it came in on, so the P-CSCF also talks
 //     to the core about a UE with security associations over the
