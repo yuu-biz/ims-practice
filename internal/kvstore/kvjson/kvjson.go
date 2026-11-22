@@ -3,10 +3,11 @@
 // operation, read-modify-write by compare and swap, and index items that
 // point to a main item.
 //
-// Read, CompareAndSwap and RemoveIf take the context of the caller and
-// return the failure of the store, so that a role whose Store interface
-// returns errors can answer that failure, with a 500 in SIP, rather
-// than take it for an item that is not there.
+// Read, Write, CompareAndSwap, ReadModifyWrite, Remove and RemoveIf,
+// and ReadIndex, WriteIndex and RemoveIndexIf for index items, take the
+// context of the caller and return the failure of the store, so that a
+// role whose Store interface returns errors can answer that failure,
+// with a 500 in SIP, rather than take it for an item that is not there.
 //
 // Most of the other operations serve the Store interfaces that return
 // no errors, which were written for a store in the process that cannot
@@ -155,11 +156,19 @@ func Get[T any](c *Client, key string, v *T) (version string, ok bool) {
 	return version, err == nil
 }
 
-// Put writes v under key, whatever is there.
-func Put[T any](c *Client, key string, v T, ttl time.Duration) {
-	ctx, cancel := c.context()
+// Write writes v under key, whatever is there, and returns the failure
+// of the store.
+func Write[T any](ctx context.Context, c *Client, key string, v T, ttl time.Duration) error {
+	ctx, cancel := c.within(ctx)
 	defer cancel()
-	if _, err := c.kv.Put(ctx, key, encode(v), ttl); err != nil {
+	_, err := c.kv.Put(ctx, key, encode(v), ttl)
+	return err
+}
+
+// Put is Write for a Store interface that returns no errors: it logs a
+// failure of the store.
+func Put[T any](c *Client, key string, v T, ttl time.Duration) {
+	if err := Write(context.Background(), c, key, v, ttl); err != nil {
 		c.failed("Put", key, err)
 	}
 }
@@ -183,11 +192,18 @@ func Swap[T any](c *Client, key, version string, v T, ttl time.Duration) (string
 	return newVersion, err
 }
 
-// Delete removes the item under key.
-func (c *Client) Delete(key string) {
-	ctx, cancel := c.context()
+// Remove removes the item under key, if there is one, and returns the
+// failure of the store.
+func (c *Client) Remove(ctx context.Context, key string) error {
+	ctx, cancel := c.within(ctx)
 	defer cancel()
-	if err := c.kv.Delete(ctx, key); err != nil {
+	return c.kv.Delete(ctx, key)
+}
+
+// Delete is Remove for a Store interface that returns no errors: it
+// logs a failure of the store.
+func (c *Client) Delete(key string) {
+	if err := c.Remove(context.Background(), key); err != nil {
 		c.failed("Delete", key, err)
 	}
 }
@@ -254,9 +270,35 @@ func Update[T any](c *Client, key string, ttl func(T) time.Duration, change func
 	return zero, ErrGaveUp
 }
 
+// ReadModifyWrite is Update for an item that may not be there yet, with
+// the context of the caller: change gets the zero value when there is no
+// item, and the item is then written only if there is still none. It
+// returns the failure of the store, which it does not take for a
+// missing item, or ErrGaveUp when others overtook it maxAttempts times.
+func ReadModifyWrite[T any](ctx context.Context, c *Client, key string, ttl func(T) time.Duration, change func(*T)) (T, error) {
+	var zero T
+	for range maxAttempts {
+		var v T
+		version, err := Read(ctx, c, key, &v)
+		if err != nil && !errors.Is(err, kvstore.ErrNotFound) {
+			return zero, err
+		}
+		change(&v)
+		_, err = CompareAndSwap(ctx, c, key, version, v, ttl(v))
+		if err == nil {
+			return v, nil
+		}
+		if !errors.Is(err, kvstore.ErrConflict) {
+			return zero, err
+		}
+	}
+	return zero, ErrGaveUp
+}
+
 // Upsert is Update for an item that may not be there yet: change then
 // gets the zero value, and the item is written only if there is still
-// none.
+// none. It serves the Store interfaces that return no errors, and takes
+// a failed read for a missing item.
 func Upsert[T any](c *Client, key string, ttl func(T) time.Duration, change func(*T)) (T, error) {
 	for range maxAttempts {
 		var v T
@@ -316,28 +358,45 @@ func encode[T any](v T) []byte {
 // takes that as a miss (IndexTarget, then a check of the main item).
 // An index item left behind by an instance that stopped between the two
 // writes is only such a miss, and goes with its time to live.
+//
+// PutIndex logs a failure of the store; WriteIndex returns it.
 func (c *Client) PutIndex(key, target string, ttl time.Duration) {
-	ctx, cancel := c.context()
-	defer cancel()
-	if _, err := c.kv.Put(ctx, key, []byte(target), ttl); err != nil {
+	if err := c.WriteIndex(context.Background(), key, target, ttl); err != nil {
 		c.failed("Put", key, err)
 	}
 }
 
-// IndexTarget reads the index item key, and returns the name of the
-// main item it points to and its own version.
-func (c *Client) IndexTarget(key string) (target, version string, ok bool) {
-	ctx, cancel := c.context()
+// WriteIndex is PutIndex with the context of the caller, and returns the
+// failure of the store.
+func (c *Client) WriteIndex(ctx context.Context, key, target string, ttl time.Duration) error {
+	ctx, cancel := c.within(ctx)
+	defer cancel()
+	_, err := c.kv.Put(ctx, key, []byte(target), ttl)
+	return err
+}
+
+// ReadIndex reads the index item key, and returns the name of the main
+// item it points to and its own version. It returns kvstore.ErrNotFound
+// when there is none, and otherwise the failure of the store.
+func (c *Client) ReadIndex(ctx context.Context, key string) (target, version string, err error) {
+	ctx, cancel := c.within(ctx)
 	defer cancel()
 	item, err := c.kv.Get(ctx, key)
-	if errors.Is(err, kvstore.ErrNotFound) {
-		return "", "", false
-	}
 	if err != nil {
-		c.failed("Get", key, err)
-		return "", "", false
+		return "", "", err
 	}
-	return string(item.Value), item.Version, true
+	return string(item.Value), item.Version, nil
+}
+
+// IndexTarget is ReadIndex for a Store interface that returns no
+// errors. It reports false when there is no index item, or the store
+// failed.
+func (c *Client) IndexTarget(key string) (target, version string, ok bool) {
+	target, version, err := c.ReadIndex(context.Background(), key)
+	if err != nil && !errors.Is(err, kvstore.ErrNotFound) {
+		c.failed("Get", key, err)
+	}
+	return target, version, err == nil
 }
 
 // SwapIndex writes the index item key, pointing to target, only if it
@@ -362,6 +421,26 @@ func (c *Client) DeleteIndexIf(key, target string) {
 	if got, version, ok := c.IndexTarget(key); ok && got == target {
 		c.DeleteIf(key, version)
 	}
+}
+
+// RemoveIndexIf is DeleteIndexIf with the context of the caller. An
+// index item that is gone, or that another main item has taken over, is
+// no failure; a failure of the store is.
+func (c *Client) RemoveIndexIf(ctx context.Context, key, target string) error {
+	got, version, err := c.ReadIndex(ctx, key)
+	if errors.Is(err, kvstore.ErrNotFound) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if got != target {
+		return nil
+	}
+	if err := c.RemoveIf(ctx, key, version); err != nil && !errors.Is(err, kvstore.ErrConflict) {
+		return err
+	}
+	return nil
 }
 
 // Schedule puts member in the time index of the Client named index, due
