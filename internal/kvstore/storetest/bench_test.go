@@ -144,7 +144,7 @@ func benchmarkMixes(b *testing.B, r roles, kv *counting) {
 	// The callee of the calls is registered, with an association.
 	callee := sip.Destination{Transport: sip.UDP, Addr: netip.MustParseAddrPort("192.0.2.20:5060")}
 	p.PutAssociation(pcscf.Association{Source: callee, Contact: "sip:ue2@192.0.2.20:5060", PrivateIdentity: "001010000000002@" + realm,
-		PublicIdentities: []string{"sip:001010000000002@" + realm}, Expires: time.Now().Add(time.Hour)})
+		PublicIdentities: []string{"sip:001010000000002@" + realm}, Expires: time.Now().Add(time.Hour), KeepUntil: time.Now().Add(time.Hour + time.Minute)})
 	s.PutRegistration(scscf.Registration{PrivateIdentity: "001010000000002@" + realm,
 		PublicIdentities: []string{"sip:001010000000002@" + realm, "tel:+12025550102"}, Contact: "sip:ue2@192.0.2.20:5060",
 		Expires: time.Now().Add(time.Hour), InitialFilterCriteria: registrationOfTheSuite().InitialFilterCriteria})
@@ -181,7 +181,7 @@ func benchmarkMixes(b *testing.B, r roles, kv *counting) {
 			p.Association(source)
 			p.SecurityAssociations(source.Addr)
 			p.PutAssociation(pcscf.Association{Source: source, Contact: "sip:" + user + "@192.0.2.10", PrivateIdentity: impi,
-				PublicIdentities: reg.PublicIdentities, Expires: time.Now().Add(time.Hour)})
+				PublicIdentities: reg.PublicIdentities, Expires: time.Now().Add(time.Hour), KeepUntil: time.Now().Add(time.Hour + time.Minute)})
 		}},
 		// 13.1: the P-CSCF calls Association 1, AssociationOfContact 7,
 		// SecurityAssociations 10, PutDialog 2, UpdateDialog 8 and

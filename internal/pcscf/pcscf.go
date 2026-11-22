@@ -56,6 +56,9 @@ type Association struct {
 	PublicIdentities []string // from P-Associated-URI, default first
 	ServiceRoute     []string
 	Expires          time.Time
+	// KeepUntil is when the Store forgets the association:
+	// associationGrace after Expires (endAssociation).
+	KeepUntil time.Time
 	// SignallingSession is the policy session with which the PCRF
 	// watches the signalling path of the UE (TS 29.214 4.4.5). It is
 	// empty when the P-CSCF has no policy control, or the PCRF knows no
@@ -484,13 +487,15 @@ func (p *PCSCF) registered(st *sip.ServerTransaction, resp *sip.Message, private
 		return Association{}, 0, false
 	}
 	via, _ := sip.ParseVia(st.Request.Get("Via"))
+	expires := time.Now().Add(interval)
 	a := Association{
 		Source:          ueSource(st),
 		Contact:         contactOf(st.Request),
 		SentBy:          via.SentBy(),
 		PrivateIdentity: privateID,
 		ServiceRoute:    resp.GetAll("Service-Route"),
-		Expires:         time.Now().Add(interval),
+		Expires:         expires,
+		KeepUntil:       expires.Add(associationGrace),
 		// A refresh keeps the watch on the signalling path.
 		SignallingSession: old.SignallingSession,
 	}
@@ -533,6 +538,7 @@ func (p *PCSCF) endAssociation(a Association, log *slog.Logger) {
 	// last registered identity.
 	p.store.DeleteSecurityAssociations(a.Source.Addr)
 	a.Expires = time.Now()
+	a.KeepUntil = a.Expires.Add(associationGrace)
 	p.store.PutAssociation(a)
 	ended := a.Expires
 	time.AfterFunc(associationGrace, func() {

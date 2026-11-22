@@ -6,7 +6,7 @@
 // The items and their keys, after the prefix of the Config and
 // "pcscf:":
 //
-//	association:<transport>:<address>             Association, time to live until Expires + 64*T1
+//	association:<transport>:<address>             Association, time to live until its KeepUntil
 //	association-of-contact:<user>:<host>:<port>   index: the source of the association
 //	association-of-session:<policy session>       index: the source of the association
 //	dialog:<Call-ID>:<UE tag>                     Dialog, no time to live
@@ -32,7 +32,9 @@ import (
 	"github.com/yuu-biz/ims-practice/internal/sip"
 )
 
-// Store is a pcscf.Store on a kvstore.Store.
+// Store is a pcscf.Store on a kvstore.Store. The P-CSCF writes every
+// expiry into what it stores, as a time, and the Store takes the times
+// to live from there.
 type Store struct {
 	c *kvjson.Client
 }
@@ -43,21 +45,6 @@ var _ pcscf.Store = (*Store)(nil)
 // their state.
 func New(kv kvstore.Store, cfg kvjson.Config) *Store {
 	return &Store{c: kvjson.New(kv, cfg, "pcscf")}
-}
-
-// associationGrace is the time after Expires that an association still
-// carries requests to the UE, as pcscf has it: 64*T1 (RFC 3261 17.1.2.2,
-// TS 24.229 5.2.5.1 item 2). pcscf.MemoryStore keeps an association
-// until DeleteAssociation; the time to live here also ends one whose
-// end the P-CSCF never heard of, such as when the S-CSCF stopped before
-// its NOTIFY.
-var associationGrace = 64 * sip.DefaultTimers().T1
-
-func (s *Store) associationTTL(a pcscf.Association) time.Duration {
-	if a.Expires.IsZero() {
-		return 0
-	}
-	return s.c.TTLUntil(a.Expires.Add(associationGrace))
 }
 
 func (s *Store) associationKey(source sip.Destination) string {
@@ -128,7 +115,10 @@ func (s *Store) AssociationOfPolicySession(session policy.SessionID) (pcscf.Asso
 // association no longer has. The order is that of kvjson.PutIndex.
 func (s *Store) PutAssociation(a pcscf.Association) {
 	old, _ := s.Association(a.Source)
-	ttl, t := s.associationTTL(a), target(a.Source)
+	// pcscf.MemoryStore keeps an association until DeleteAssociation;
+	// the time to live also ends one whose end the P-CSCF never heard
+	// of, such as when the S-CSCF stopped before its NOTIFY.
+	ttl, t := s.c.TTLUntil(a.KeepUntil), target(a.Source)
 	contact, hasContact := s.contactKey(a.Contact)
 	if hasContact {
 		s.c.PutIndex(contact, t, ttl)

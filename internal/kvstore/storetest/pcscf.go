@@ -28,11 +28,12 @@ func PCSCF(t *testing.T, newPair func(t *testing.T) (pcscf.Store, pcscf.Store)) 
 var ueSource = sip.Destination{Transport: sip.UDP, Addr: netip.MustParseAddrPort("192.0.2.10:5060")}
 
 func association() pcscf.Association {
+	expires := time.Now().Add(time.Hour).Round(time.Millisecond)
 	return pcscf.Association{
 		Source: ueSource, Contact: "sip:ue1@192.0.2.10:5060;transport=udp", SentBy: "192.0.2.10:5060",
 		PrivateIdentity: impi, PublicIdentities: []string{impu, tel},
 		ServiceRoute: []string{"<sip:orig@scscf.ims.mnc001.mcc001.3gppnetwork.org;lr>"},
-		Expires:      time.Now().Add(time.Hour).Round(time.Millisecond), SignallingSession: "pcscf;1;sig",
+		Expires:      expires, KeepUntil: expires.Add(time.Minute), SignallingSession: "pcscf;1;sig",
 	}
 }
 
