@@ -156,8 +156,20 @@ func (s side) agent() (*sip.UA, error) {
 // network and external on the one towards the peers. It first takes
 // the calls that an earlier process of this instance left in the
 // Store, and ends them once the UAs run (ReleaseLeftovers).
+//
+// When the Store cannot be read, Listen fails and starts neither UA.
+// An instance that took calls without its records would never end the
+// calls of its earlier process: it reads them only here, and their
+// parties would keep their TrGW contexts until they hang up. It could
+// not keep the records of its own calls either, and would answer most
+// of them with 500. A node that stops on this error can start again
+// once the Store is back; the other instances of the pool take the new
+// calls meanwhile.
 func (b *IBCF) Listen(internal, external *sip.TransportLayer) error {
-	leftovers := b.store.CallsOf(b.instance())
+	leftovers, err := b.store.CallsOf(context.Background(), b.instance())
+	if err != nil {
+		return fmt.Errorf("ibcf: cannot read the calls that an earlier process of %s left: %w", b.instance(), err)
+	}
 	in, err := b.newUA(internal, b.inside(), b.locateInside)
 	if err != nil {
 		return err

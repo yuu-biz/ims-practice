@@ -1,6 +1,7 @@
 package ibcf
 
 import (
+	"context"
 	"sync"
 
 	"github.com/yuu-biz/ims-practice/internal/sip"
@@ -52,7 +53,11 @@ func (b *IBCF) ReleaseLeftovers(records []CallRecord) {
 				b.byeInLeftover(s, dialog)
 			}(d.s, *d.dialog)
 		}
-		b.store.DeleteCall(r.Instance, r.ID)
+		if err := b.store.DeleteCall(context.Background(), r.Instance, r.ID); err != nil {
+			// The record stays for the next process of the instance,
+			// whose BYEs get 481 and whose release finds no context.
+			log.Warn("cannot remove the record of the ended call", "error", err.Error())
+		}
 	}
 	wg.Wait()
 }

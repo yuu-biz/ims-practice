@@ -1,6 +1,7 @@
 package ibcf
 
 import (
+	"context"
 	"slices"
 	"strings"
 	"sync"
@@ -46,21 +47,25 @@ type CallRecord struct {
 // reads only its own, once, when it starts: there is no lookup across
 // all calls on the way of a request, so that the store can live
 // outside the IBCF processes and grow with the number of instances.
+// Each operation returns the failure of the store, so that the IBCF
+// does not take a store that it cannot reach for one without the
+// call.
 type Store interface {
 	// PutCall stores r under its instance and ID, replacing what was
 	// there.
-	PutCall(r CallRecord)
-	// DeleteCall removes the record of a call that has ended.
-	DeleteCall(instance, id string)
-	// CallsOf returns the records of one instance: at most the calls
-	// that the instance had at once.
-	CallsOf(instance string) []CallRecord
+	PutCall(ctx context.Context, r CallRecord) error
+	// DeleteCall removes the record of a call that has ended. Removing
+	// one that is not there is not an error.
+	DeleteCall(ctx context.Context, instance, id string) error
+	// CallsOf returns the records of one instance, in the order of
+	// their IDs: at most the calls that the instance had at once.
+	CallsOf(ctx context.Context, instance string) ([]CallRecord, error)
 }
 
 // MemoryStore is a Store in the memory of one process. IBCF instances
 // in the same process may share one; one in a process of its own loses
 // the records with the process, and with them what ReleaseLeftovers
-// would find (doc.go).
+// would find (doc.go). It never fails.
 type MemoryStore struct {
 	mu sync.Mutex
 	// calls holds the records of each instance, by ID.
@@ -71,7 +76,7 @@ func NewMemoryStore() *MemoryStore {
 	return &MemoryStore{calls: map[string]map[string]CallRecord{}}
 }
 
-func (s *MemoryStore) PutCall(r CallRecord) {
+func (s *MemoryStore) PutCall(_ context.Context, r CallRecord) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	of := s.calls[r.Instance]
@@ -80,18 +85,20 @@ func (s *MemoryStore) PutCall(r CallRecord) {
 		s.calls[r.Instance] = of
 	}
 	of[r.ID] = r
+	return nil
 }
 
-func (s *MemoryStore) DeleteCall(instance, id string) {
+func (s *MemoryStore) DeleteCall(_ context.Context, instance, id string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	delete(s.calls[instance], id)
 	if len(s.calls[instance]) == 0 {
 		delete(s.calls, instance)
 	}
+	return nil
 }
 
-func (s *MemoryStore) CallsOf(instance string) []CallRecord {
+func (s *MemoryStore) CallsOf(_ context.Context, instance string) ([]CallRecord, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	var out []CallRecord
@@ -99,5 +106,5 @@ func (s *MemoryStore) CallsOf(instance string) []CallRecord {
 		out = append(out, r)
 	}
 	slices.SortFunc(out, func(a, b CallRecord) int { return strings.Compare(a.ID, b.ID) })
-	return out
+	return out, nil
 }

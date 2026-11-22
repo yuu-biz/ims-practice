@@ -1,6 +1,7 @@
 package ibcf_test
 
 import (
+	"context"
 	"net/netip"
 	"testing"
 
@@ -82,20 +83,30 @@ func TestPeerTableRefusesMistakes(t *testing.T) {
 }
 
 func TestMemoryStore(t *testing.T) {
+	ctx := context.Background()
 	s := ibcf.NewMemoryStore()
-	s.PutCall(ibcf.CallRecord{Instance: "ibcf-1", ID: "b", Direction: interconnect.Exit, Media: &ibcf.MediaContext{ID: "c1"}})
-	s.PutCall(ibcf.CallRecord{Instance: "ibcf-1", ID: "a", Direction: interconnect.Entry})
-	s.PutCall(ibcf.CallRecord{Instance: "ibcf-2", ID: "a", Direction: interconnect.Exit})
-	got := s.CallsOf("ibcf-1")
-	if len(got) != 2 || got[0].ID != "a" || got[1].ID != "b" || got[1].Media.ID != "c1" {
-		t.Errorf("CallsOf(ibcf-1) = %+v", got)
+	for _, r := range []ibcf.CallRecord{
+		{Instance: "ibcf-1", ID: "b", Direction: interconnect.Exit, Media: &ibcf.MediaContext{ID: "c1"}},
+		{Instance: "ibcf-1", ID: "a", Direction: interconnect.Entry},
+		{Instance: "ibcf-2", ID: "a", Direction: interconnect.Exit},
+	} {
+		if err := s.PutCall(ctx, r); err != nil {
+			t.Fatal(err)
+		}
 	}
-	s.DeleteCall("ibcf-1", "a")
-	s.DeleteCall("ibcf-1", "b")
-	if got := s.CallsOf("ibcf-1"); len(got) != 0 {
-		t.Errorf("CallsOf after the deletes = %+v", got)
+	got, err := s.CallsOf(ctx, "ibcf-1")
+	if err != nil || len(got) != 2 || got[0].ID != "a" || got[1].ID != "b" || got[1].Media.ID != "c1" {
+		t.Errorf("CallsOf(ibcf-1) = %+v, %v", got, err)
 	}
-	if got := s.CallsOf("ibcf-2"); len(got) != 1 {
-		t.Errorf("the records of another instance went: %+v", got)
+	for _, id := range []string{"a", "b"} {
+		if err := s.DeleteCall(ctx, "ibcf-1", id); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got, err := s.CallsOf(ctx, "ibcf-1"); err != nil || len(got) != 0 {
+		t.Errorf("CallsOf after the deletes = %+v, %v", got, err)
+	}
+	if got, err := s.CallsOf(ctx, "ibcf-2"); err != nil || len(got) != 1 {
+		t.Errorf("the records of another instance went: %+v, %v", got, err)
 	}
 }
