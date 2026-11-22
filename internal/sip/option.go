@@ -33,6 +33,13 @@ func (m *Message) Requires(option string) bool {
 	return slices.Contains(m.GetAll("Require"), option)
 }
 
+// Allows reports whether the sender of m lists the method in Allow, as
+// one that it takes within a dialog. A message without Allow tells
+// nothing of the methods that its sender takes.
+func (m *Message) Allows(method Method) bool {
+	return slices.Contains(m.GetAll("Allow"), string(method))
+}
+
 // AddOption lists the option tag in the named header field, Supported
 // or Require, unless it is there already.
 func (m *Message) AddOption(name, option string) {

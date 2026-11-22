@@ -309,7 +309,7 @@ func (c *OutgoingCall) receiveProvisional(resp *Message) bool {
 		return false
 	}
 	d.sessionReceived(resp, reliable)
-	if allows(resp, UPDATE) {
+	if resp.Allows(UPDATE) {
 		d.peerAllowsUpdate = true
 	}
 	// RFC 3262 4: the UAS wants a reliable response acknowledged. A
@@ -599,7 +599,7 @@ func (c *OutgoingCall) receive2xx(resp *Message) bool {
 	}
 	d.sessionReceived(resp, true)
 	d.invite = noInvite
-	if allows(resp, UPDATE) {
+	if resp.Allows(UPDATE) {
 		d.peerAllowsUpdate = true
 	}
 	cseq, _ := ParseCSeq(c.invite.Get("CSeq"))
