@@ -25,9 +25,9 @@ lab:
       control: http://172.28.0.110:8090
     - name: phone2
       control: http://172.28.0.111:8090
-    - name: volte-a
+    - name: volte10
       control: http://172.28.0.120:8090
-    - name: volte-b
+    - name: volte12
       control: http://172.28.0.121:8090
     - name: phone3
       control: http://172.28.0.112:8090

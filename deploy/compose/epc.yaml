@@ -22,7 +22,7 @@ epc:
   # static address, and its container must have the same one in
   # compose.yaml: the stub does not route packets. Subscribers 1
   # and 2 are ue and ue2, which attach when they run with -epc; 10 and
-  # 12 are volte-a and volte-b of the volte profile, which always do.
+  # 12 are volte10 and volte12 of the volte profile, which always do.
   subscribers:
     - imsi: "001010000000001"
       address: 172.28.0.100

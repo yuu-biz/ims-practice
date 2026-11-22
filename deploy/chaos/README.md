@@ -28,7 +28,7 @@ Every node is a target: the nodes of `compose.yaml`, those of the second network
 
 | Target | Example | What it names |
 | --- | --- | --- |
-| A service | `mmtel`, `epc`, `volte-a`, `ibcf-a`, `scscf-b` | The one container of the service. |
+| A service | `mmtel`, `epc`, `volte10`, `ibcf-a`, `scscf-b` | The one container of the service. |
 | A UE of `docker compose run` | `ue3` | The running container that `docker compose run ue3 ...` started. A UE that has exited is no longer a target. |
 | One container of several | `agw:2` | The second container of a service that runs several (`docker compose up --scale agw=2`). With several and no number, `fault.sh` lists them and asks you to name one. |
 

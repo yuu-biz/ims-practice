@@ -2,15 +2,15 @@
 # End-to-end check: the access network and the VoLTE procedures.
 #
 # SIPp, a user agent written by others, registers with IMS AKA. Then two
-# VoLTE UEs, volte-a and volte-b, each attach to the EPC stub, register
-# with IMS AKA and the security agreement, and volte-a calls volte-b with
+# VoLTE UEs, volte10 and volte12, each attach to the EPC stub, register
+# with IMS AKA and the security agreement, and volte10 calls volte12 with
 # AMR-WB and preconditions: the PCRF authorises the media over Rx, the
 # stub sets up a voice bearer for each UE, and the callee alerts only
-# once the caller's UPDATE says its resources are ready. volte-b must
-# receive exactly the AMR-WB frames that volte-a sent. A VoLTE UE then
+# once the caller's UPDATE says its resources are ready. volte12 must
+# receive exactly the AMR-WB frames that volte10 sent. A VoLTE UE then
 # calls ue2, which offers PCMU only. Last, the two VoLTE UEs of the volte
 # profile, driven through the Lab, send DTMF, hold and resume a
-# call, and in a second call the network takes volte-a's voice bearer
+# call, and in a second call the network takes volte10's voice bearer
 # and the P-CSCF ends the call. The checks read the capture.
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -70,7 +70,7 @@ vb=(-epc "$epc_api" -impi "001010000000012@$domain" -impu "sip:001010000000012@$
 ue2=(-impi "001010000000002@$domain" -impu "sip:+12025550102@$domain" -password test-password-2)
 fail=0
 mkdir -p e2e-out
-rm -f captures/volte-a-sent.amr captures/volte-b-received.amr
+rm -f captures/volte10-sent.amr captures/volte12-received.amr
 
 echo "SIPp registers with IMS AKA"
 # SIPp exits 0 when its one call, the registration and the
@@ -83,34 +83,34 @@ else
 	fail=1
 fi
 
-echo "a VoLTE call: volte-a calls volte-b"
-docker compose run --no-deps -d --name ims-practice-volte-b-answer volte-b answer "${vb[@]}" \
-	--ring 1s --tone 4s --received-out /captures/volte-b-received.amr >/dev/null
-if ! wait_log ims-practice-volte-b-answer '"msg":"waiting for a call"'; then
-	echo "FAIL volte-b did not attach and register"
-	docker logs ims-practice-volte-b-answer 2>&1 | tail -n 5
+echo "a VoLTE call: volte10 calls volte12"
+docker compose run --no-deps -d --name ims-practice-volte12-answer volte12 answer "${vb[@]}" \
+	--ring 1s --tone 4s --received-out /captures/volte12-received.amr >/dev/null
+if ! wait_log ims-practice-volte12-answer '"msg":"waiting for a call"'; then
+	echo "FAIL volte12 did not attach and register"
+	docker logs ims-practice-volte12-answer 2>&1 | tail -n 5
 	fail=1
 fi
 # The UE exits 1 when the call fails, here and in the call to ue2 below;
 # the checks read its log, hence "|| true".
-out="$(docker compose run --no-deps --rm volte-a call "${va[@]}" --tone 3s --sent-out /captures/volte-a-sent.amr tel:+12025550112 2>&1 || true)"
-printf '%s\n' "$out" >e2e-out/volte-a-call.log
+out="$(docker compose run --no-deps --rm volte10 call "${va[@]}" --tone 3s --sent-out /captures/volte10-sent.amr tel:+12025550112 2>&1 || true)"
+printf '%s\n' "$out" >e2e-out/volte10-call.log
 if grep -q '"msg":"call answered"' <<<"$out" && grep -q '"msg":"media","codec":"AMR-WB"' <<<"$out" &&
-	[ "$(ended ims-practice-volte-b-answer)" = 0 ]; then
-	echo "ok   volte-a called volte-b in AMR-WB, and volte-b answered"
+	[ "$(ended ims-practice-volte12-answer)" = 0 ]; then
+	echo "ok   volte10 called volte12 in AMR-WB, and volte12 answered"
 else
 	echo "FAIL the VoLTE call: $(grep -E '"msg":"(call progress|ue failed|media)"' <<<"$out" | tail -n 3)"
 	# The container is gone when ended has removed it.
-	docker logs ims-practice-volte-b-answer 2>&1 | tail -n 5 || true
+	docker logs ims-practice-volte12-answer 2>&1 | tail -n 5 || true
 	fail=1
 fi
 
 # The UE writes the frames in the storage format of RFC 4867 5, so the
 # two files are equal when every frame arrived as it was sent.
-sent="$(od -An -v -tx1 captures/volte-a-sent.amr 2>/dev/null | tr -d ' \n')"
-received="$(od -An -v -tx1 captures/volte-b-received.amr 2>/dev/null | tr -d ' \n')"
+sent="$(od -An -v -tx1 captures/volte10-sent.amr 2>/dev/null | tr -d ' \n')"
+received="$(od -An -v -tx1 captures/volte12-received.amr 2>/dev/null | tr -d ' \n')"
 if [ "${#sent}" -gt 100 ] && [ "$sent" = "$received" ]; then
-	echo "ok   volte-b received the AMR-WB frames that volte-a sent, ${#sent} hex digits of storage format"
+	echo "ok   volte12 received the AMR-WB frames that volte10 sent, ${#sent} hex digits of storage format"
 else
 	echo "FAIL the AMR-WB frames differ: sent ${#sent}, received ${#received} hex digits"
 	fail=1
@@ -119,11 +119,11 @@ fi
 echo "a VoLTE UE calls a UE that offers PCMU only"
 docker compose run --no-deps -d --name ims-practice-ue2-pcmu ue2 answer "${ue2[@]}" --ring 500ms --tone 2s >/dev/null
 wait_log ims-practice-ue2-pcmu '"msg":"waiting for a call"' || fail=1
-out="$(docker compose run --no-deps --rm volte-a call "${va[@]}" --tone 2s tel:+12025550102 2>&1 || true)"
-printf '%s\n' "$out" >e2e-out/volte-a-pcmu.log
+out="$(docker compose run --no-deps --rm volte10 call "${va[@]}" --tone 2s tel:+12025550102 2>&1 || true)"
+printf '%s\n' "$out" >e2e-out/volte10-pcmu.log
 if grep -q '"msg":"call answered"' <<<"$out" && grep -q '"msg":"media","codec":"PCMU"' <<<"$out" &&
 	[ "$(ended ims-practice-ue2-pcmu)" = 0 ]; then
-	echo "ok   volte-a and ue2 agreed on PCMU"
+	echo "ok   volte10 and ue2 agreed on PCMU"
 else
 	echo "FAIL the call to ue2: $(grep -E '"msg":"(call progress|ue failed|media)"' <<<"$out" | tail -n 3)"
 	fail=1
@@ -132,13 +132,13 @@ fi
 echo "a VoLTE UE sends a short message"
 # ue2 is not registered: the IP-SM-GW accepts the short message for
 # the service centre all the same, and the submit report comes back.
-if out="$(docker compose run --no-deps --rm volte-a sms "${va[@]}" +12025550102 'From the number of volte-a' 2>&1)"; then
-	echo "ok   volte-a sent a short message, and it was accepted"
+if out="$(docker compose run --no-deps --rm volte10 sms "${va[@]}" +12025550102 'From the number of volte10' 2>&1)"; then
+	echo "ok   volte10 sent a short message, and it was accepted"
 else
-	echo "FAIL volte-a's short message: $(grep -E '"msg":"(sms sent|submit report|ue failed)"' <<<"$out" | tail -n 2)"
+	echo "FAIL volte10's short message: $(grep -E '"msg":"(sms sent|submit report|ue failed)"' <<<"$out" | tail -n 2)"
 	fail=1
 fi
-printf '%s\n' "$out" >e2e-out/volte-a-sms.log
+printf '%s\n' "$out" >e2e-out/volte10-sms.log
 
 echo "the VoLTE UEs of the volte profile, driven through the Lab"
 # ues prints "name registered|unregistered|unreachable call-state|idle"
@@ -179,14 +179,14 @@ for u in json.load(sys.stdin):
 }
 # They restart by themselves and hold subscribers 10 and 12, so they
 # must not outlive the script.
-trap 'docker compose --profile volte rm -sf volte-a volte-b >/dev/null 2>&1' EXIT
+trap 'docker compose --profile volte rm -sf volte10 volte12 >/dev/null 2>&1' EXIT
 # Only the two UEs start: the network is up already.
-docker compose --profile volte up -d --no-deps volte-a volte-b
+docker compose --profile volte up -d --no-deps volte10 volte12
 # phone3, the third UE of the phones profile, is listed after them and stays
 # down here.
-both_idle="*volte-a registered idle,volte-b registered idle,phone3 unreachable idle"
+both_idle="*volte10 registered idle,volte12 registered idle,phone3 unreachable idle"
 if wait_ues "$both_idle"; then
-	echo "ok   volte-a and volte-b attached and registered"
+	echo "ok   volte10 and volte12 attached and registered"
 else
 	echo "FAIL the VoLTE UEs did not register: $(ues)"
 	exit 1
@@ -196,62 +196,62 @@ fi
 # IR.92 2.3.2), not with the temporary one it registered.
 impu_a="$(curl -fsS http://localhost:8080/api/ues | "$python" -c '
 import json, sys
-print(next((u["status"] or {}).get("impu", "") for u in json.load(sys.stdin) if u["name"] == "volte-a"))
+print(next((u["status"] or {}).get("impu", "") for u in json.load(sys.stdin) if u["name"] == "volte10"))
 ' | tr -d '\r')"
 if [ "$impu_a" = "sip:+12025550110@ims.mnc001.mcc001.3gppnetwork.org" ] &&
-	curl -fsS http://localhost:8080/api/ues/volte-a/xcap >e2e-out/volte-a-xcap.json; then
-	echo "ok   volte-a shows its default public identity and read its services over Ut"
+	curl -fsS http://localhost:8080/api/ues/volte10/xcap >e2e-out/volte10-xcap.json; then
+	echo "ok   volte10 shows its default public identity and read its services over Ut"
 else
-	echo "FAIL volte-a shows $impu_a, or its Ut read failed"
+	echo "FAIL volte10 shows $impu_a, or its Ut read failed"
 	fail=1
 fi
-both_active="*volte-a registered active,volte-b registered active,phone3 unreachable idle"
-status="$(ue_post volte-a/call '{"target":"tel:+12025550112"}')"
+both_active="*volte10 registered active,volte12 registered active,phone3 unreachable idle"
+status="$(ue_post volte10/call '{"target":"tel:+12025550112"}')"
 if [ "$status" = 200 ] && wait_ues "$both_active"; then
-	echo "ok   volte-a called volte-b through the Lab, and volte-b answered"
+	echo "ok   volte10 called volte12 through the Lab, and volte12 answered"
 else
 	echo "FAIL the call through the Lab (status $status): $(ues)"
 	exit 1
 fi
 lab_call="$(curl -fsS http://localhost:8080/api/ues | "$python" -c '
 import json, sys
-print(next(u["status"]["call"]["call_id"] for u in json.load(sys.stdin) if u["name"] == "volte-a"))
+print(next(u["status"]["call"]["call_id"] for u in json.load(sys.stdin) if u["name"] == "volte10"))
 ' | tr -d '\r')"
-status="$(ue_post volte-a/dtmf '{"digits":"159#"}')"
+status="$(ue_post volte10/dtmf '{"digits":"159#"}')"
 for i in $(seq 1 10); do
-	grep -q '"dtmf_received": "159#"' <<<"$(session volte-b)" && break
+	grep -q '"dtmf_received": "159#"' <<<"$(session volte12)" && break
 	sleep 1
 done
-if [ "$status" = 200 ] && grep -q '"dtmf_received": "159#"' <<<"$(session volte-b)"; then
-	echo "ok   volte-b heard the DTMF digits 159# that volte-a sent"
+if [ "$status" = 200 ] && grep -q '"dtmf_received": "159#"' <<<"$(session volte12)"; then
+	echo "ok   volte12 heard the DTMF digits 159# that volte10 sent"
 else
-	echo "FAIL DTMF (status $status): volte-b has $(session volte-b)"
+	echo "FAIL DTMF (status $status): volte12 has $(session volte12)"
 	fail=1
 fi
 # A UA starts no INVITE in a dialog while another INVITE of that dialog
 # is in progress (RFC 3261 14.1), so each re-INVITE below waits until the
-# ACK of the one before has reached volte-b.
+# ACK of the one before has reached volte12.
 ack_to_b='sip.Method == "ACK" && ip.dst == 172.28.0.121'
 acks="$(count "$ack_to_b")"
-status="$(ue_post volte-a/hold)"
-if [ "$status" = 200 ] && grep -q '"peer_direction": "recvonly"' <<<"$(session volte-a)"; then
-	echo "ok   volte-a held the call, and volte-b answered recvonly"
+status="$(ue_post volte10/hold)"
+if [ "$status" = 200 ] && grep -q '"peer_direction": "recvonly"' <<<"$(session volte10)"; then
+	echo "ok   volte10 held the call, and volte12 answered recvonly"
 else
-	echo "FAIL hold (status $status): volte-a has $(session volte-a)"
+	echo "FAIL hold (status $status): volte10 has $(session volte10)"
 	fail=1
 fi
-await "the ACK of the hold at volte-b" "$ack_to_b" $((acks + 1))
-status="$(ue_post volte-a/resume)"
-if [ "$status" = 200 ] && grep -q '"peer_direction": "sendrecv"' <<<"$(session volte-a)"; then
-	echo "ok   volte-a resumed the call"
+await "the ACK of the hold at volte12" "$ack_to_b" $((acks + 1))
+status="$(ue_post volte10/resume)"
+if [ "$status" = 200 ] && grep -q '"peer_direction": "sendrecv"' <<<"$(session volte10)"; then
+	echo "ok   volte10 resumed the call"
 else
-	echo "FAIL resume (status $status): volte-a has $(session volte-a)"
+	echo "FAIL resume (status $status): volte10 has $(session volte10)"
 	fail=1
 fi
-await "the ACK of the resume at volte-b" "$ack_to_b" $((acks + 2))
-status="$(ue_post volte-a/hangup)"
+await "the ACK of the resume at volte12" "$ack_to_b" $((acks + 2))
+status="$(ue_post volte10/hangup)"
 if [ "$status" = 200 ] && wait_ues "$both_idle"; then
-	echo "ok   volte-a hung up"
+	echo "ok   volte10 hung up"
 else
 	echo "FAIL hanging up (status $status): $(ues)"
 	fail=1
@@ -277,10 +277,10 @@ else
 	fail=1
 fi
 
-echo "the network takes volte-a's voice bearer in a call (IR.92 2.4.2.3)"
-status="$(ue_post volte-a/call '{"target":"tel:+12025550112"}')"
+echo "the network takes volte10's voice bearer in a call (IR.92 2.4.2.3)"
+status="$(ue_post volte10/call '{"target":"tel:+12025550112"}')"
 if [ "$status" = 200 ] && wait_ues "$both_active"; then
-	echo "ok   volte-a called volte-b again"
+	echo "ok   volte10 called volte12 again"
 else
 	echo "FAIL the second call (status $status): $(ues)"
 	exit 1
@@ -310,22 +310,22 @@ ebi="$(curl -fsS http://localhost:8080/api/epc/ues/001010000000010 | "$python" -
 import json, sys
 print(next((b["eps_bearer_identity"] for b in json.load(sys.stdin)["bearers"] if b["eps_qos"]["qci"] == 1), ""))
 ' | tr -d '\r')"
-# The checks read the capture up to the release of volte-b's bearer that
-# follows: the one after those that volte-b has had so far.
+# The checks read the capture up to the release of volte12's bearer that
+# follows: the one after those that volte12 has had so far.
 released_b='ip.src == 172.28.0.80 && ip.dst == 172.28.0.121 && frame contains "DEACTIVATE EPS BEARER CONTEXT REQUEST"'
 releases="$(count "$released_b")"
 status="$(curl -s -w '
 %{http_code}' -X DELETE "http://localhost:8080/api/epc/network-initiated/ues/001010000000010/bearers/$ebi" | tail -n 1)"
 if [ -n "$ebi" ] && [ "${status:0:1}" = 2 ] && wait_ues "$both_idle"; then
-	echo "ok   the stub deactivated bearer $ebi of volte-a, and both UEs are out of the call"
+	echo "ok   the stub deactivated bearer $ebi of volte10, and both UEs are out of the call"
 else
 	echo "FAIL deactivating the voice bearer $ebi (status $status): $(ues)"
 	fail=1
 fi
-docker compose --profile volte rm -sf volte-a volte-b >/dev/null 2>&1
+docker compose --profile volte rm -sf volte10 volte12 >/dev/null 2>&1
 trap - EXIT
 same_nodes
-await "the release of volte-b's bearer as the network ends the call" "$released_b" $((releases + 1))
+await "the release of volte12's bearer as the network ends the call" "$released_b" $((releases + 1))
 
 echo "reading $pcap"
 
@@ -341,7 +341,7 @@ agw=172.28.0.50
 epc=172.28.0.80
 lab=172.28.0.60
 impi_a="001010000000010@$domain"
-# volte-a registers the temporary public identity derived from its IMSI,
+# volte10 registers the temporary public identity derived from its IMSI,
 # which is barred, and uses its default public identity, the SIP URI of
 # its number, in everything else (TS 24.229 5.1.1.1A, 5.1.1.2.1).
 temporary_a="sip:001010000000010@$domain"
@@ -363,29 +363,29 @@ expect "401 P-CSCF -> SIPp: AKAv1-MD5 and Security-Server" "sip.Status-Code == 4
 expect "REGISTER SIPp -> the protected server port 5064 with Security-Verify" "sip.Method == \"REGISTER\" && ip.src == $sipp && udp.dstport == 5064 && sip.Security-Verify"
 expect "200 OK P-CSCF:5064 -> SIPp" "sip.Status-Code == 200 && sip.CSeq.method == \"REGISTER\" && ip.dst == $sipp && udp.srcport == 5064"
 
-echo "volte-a attaches to the EPC stub (the messages of TS 24.301 8.2 over the stub's API)"
-expect "ATTACH REQUEST volte-a -> EPC stub, with a PDN CONNECTIVITY REQUEST for the APN ims" "$(ue_api 001010000000010 attach-request) && json.value.string == \"ims\""
+echo "volte10 attaches to the EPC stub (the messages of TS 24.301 8.2 over the stub's API)"
+expect "ATTACH REQUEST volte10 -> EPC stub, with a PDN CONNECTIVITY REQUEST for the APN ims" "$(ue_api 001010000000010 attach-request) && json.value.string == \"ims\""
 expect "ATTACH ACCEPT: the PDN address, and the P-CSCF in the PCO (container 000CH)" "http.response.code == 200 && ip.src == $epc && ip.dst == $va_ip && json.value.string == \"$va_ip\" && json.value.string == \"000CH\" && json.value.string == \"$pcscf\""
 expect "ATTACH COMPLETE" "$(ue_api 001010000000010 attach-complete)"
 
-echo "volte-a registers with IMS AKA (TS 24.229 5.1.1.2.2, 5.2.2.2, 5.4.1.2.1; TS 33.203 6.1.1, 7.1)"
-expect "REGISTER volte-a -> P-CSCF:5060: To the temporary public identity, Security-Client, sec-agree, AKAv1-MD5 without a response, P-Access-Network-Info" "sip.Method == \"REGISTER\" && ip.src == $va_ip && udp.dstport == 5060 && sip.to.addr == \"$temporary_a\" && sip.Security-Client && sip.Require contains \"sec-agree\" && sip.Authorization contains \"algorithm=AKAv1-MD5\" && sip.Authorization contains \"response=\\\"\\\"\" && sip.P-Access-Network-Info"
+echo "volte10 registers with IMS AKA (TS 24.229 5.1.1.2.2, 5.2.2.2, 5.4.1.2.1; TS 33.203 6.1.1, 7.1)"
+expect "REGISTER volte10 -> P-CSCF:5060: To the temporary public identity, Security-Client, sec-agree, AKAv1-MD5 without a response, P-Access-Network-Info" "sip.Method == \"REGISTER\" && ip.src == $va_ip && udp.dstport == 5060 && sip.to.addr == \"$temporary_a\" && sip.Security-Client && sip.Require contains \"sec-agree\" && sip.Authorization contains \"algorithm=AKAv1-MD5\" && sip.Authorization contains \"response=\\\"\\\"\" && sip.P-Access-Network-Info"
 reg="$(field sip.Call-ID)"
 expect "MAR S-CSCF -> HSS: Digest-AKAv1-MD5" "diameter.cmd.code == 303 && $req && diameter.User-Name == \"$impi_a\" && diameter.3GPP-SIP-Authentication-Scheme == \"Digest-AKAv1-MD5\""
 expect "MAA 2001 with RAND and AUTN, XRES, CK and IK (TS 29.228 6.3)" "$(answer_to) && diameter.Result-Code == 2001 && diameter.3GPP-SIP-Authenticate && diameter.3GPP-SIP-Authorization && diameter.Confidentiality-Key && diameter.Integrity-Key"
 # The nonce is base64 and can end in "ck=" or "ik=", so the parameters
 # are found by the comma or space before them, which base64 has not.
 expect "401 S-CSCF -> I-CSCF with ck and ik for the P-CSCF" "sip.Status-Code == 401 && ip.src == $scscf && sip.Call-ID == \"$reg\" && sip.WWW-Authenticate matches \"[, ]ck=\" && sip.WWW-Authenticate matches \"[, ]ik=\""
-expect "401 P-CSCF -> volte-a: Security-Server, ck and ik removed" "sip.Status-Code == 401 && ip.dst == $va_ip && sip.Security-Server && !(sip.WWW-Authenticate matches \"[, ]ck=\") && !(sip.WWW-Authenticate matches \"[, ]ik=\")"
+expect "401 P-CSCF -> volte10: Security-Server, ck and ik removed" "sip.Status-Code == 401 && ip.dst == $va_ip && sip.Security-Server && !(sip.WWW-Authenticate matches \"[, ]ck=\") && !(sip.WWW-Authenticate matches \"[, ]ik=\")"
 # The answer is close to 1300 bytes: with long SPIs it goes over TCP
 # (RFC 3261 18.1.1), from a port of the moment, and its 200 OK comes
 # back on that connection.
-expect "REGISTER volte-a:5062 -> P-CSCF:5064, or over TCP to 5064: Security-Verify and the response from RES" "sip.Method == \"REGISTER\" && ip.src == $va_ip && ((udp.srcport == 5062 && udp.dstport == 5064) || tcp.dstport == 5064) && sip.Security-Verify && !(sip.Authorization contains \"response=\\\"\\\"\")"
+expect "REGISTER volte10:5062 -> P-CSCF:5064, or over TCP to 5064: Security-Verify and the response from RES" "sip.Method == \"REGISTER\" && ip.src == $va_ip && ((udp.srcport == 5062 && udp.dstport == 5064) || tcp.dstport == 5064) && sip.Security-Verify && !(sip.Authorization contains \"response=\\\"\\\"\")"
 expect "REGISTER P-CSCF -> I-CSCF: integrity-protected=\"yes\"" "sip.Method == \"REGISTER\" && ip.src == $pcscf && sip.Call-ID == \"$reg\" && sip.Authorization contains \"integrity-protected=\\\"yes\\\"\""
 expect "SAR S-CSCF -> HSS" "diameter.cmd.code == 301 && $req && diameter.User-Name == \"$impi_a\""
 expect "200 OK I-CSCF -> P-CSCF" "sip.Status-Code == 200 && sip.Call-ID == \"$reg\" && ip.dst == $pcscf"
 mark
-expect "200 OK P-CSCF:5064 -> volte-a: P-Associated-URI with the default public identity, without the barred temporary one (TS 24.229 5.4.1.2.2F)" "sip.Status-Code == 200 && sip.CSeq.method == \"REGISTER\" && ip.dst == $va_ip && ((udp.srcport == 5064 && udp.dstport == 5062) || tcp.srcport == 5064) && sip.P-Associated-URI contains \"<$default_a>\" && !(sip.P-Associated-URI contains \"$temporary_a\")"
+expect "200 OK P-CSCF:5064 -> volte10: P-Associated-URI with the default public identity, without the barred temporary one (TS 24.229 5.4.1.2.2F)" "sip.Status-Code == 200 && sip.CSeq.method == \"REGISTER\" && ip.dst == $va_ip && ((udp.srcport == 5064 && udp.dstport == 5062) || tcp.srcport == 5064) && sip.P-Associated-URI contains \"<$default_a>\" && !(sip.P-Associated-URI contains \"$temporary_a\")"
 registered="$last"
 back
 expect "AAR P-CSCF -> PCRF for the signalling path: AF_SIGNALLING, loss and release of the bearer (TS 29.214 A.4)" "$aar && diameter.Framed-IP-Address.IPv4 == $va_ip && diameter.Flow-Usage == 2 && diameter.Specific-Action == 2 && diameter.Specific-Action == 4"
@@ -394,133 +394,133 @@ expect "AAA 2001" "$(answer_to) && diameter.Result-Code == 2001"
 # the AAA.
 last="$registered"
 
-echo "a VoLTE call: volte-a calls volte-b (TS 24.229 5.1.4.1, 6.1.2; RFC 3312; TS 29.214 A.1)"
-expect "INVITE volte-a -> P-CSCF:5064 over TCP: From the default public identity, precondition, session timer, AMR-WB first, curr:qos local none" "$invite && ip.src == $va_ip && tcp.dstport == 5064 && sip.from.addr == \"$default_a\" && sip.Supported contains \"precondition\" && sip.Session-Expires && sip.P-Access-Network-Info && sdp.media_attr == \"rtpmap:96 AMR-WB/16000/1\" && sdp.media_attr == \"curr:qos local none\" && sdp.media_attr == \"des:qos mandatory local sendrecv\""
+echo "a VoLTE call: volte10 calls volte12 (TS 24.229 5.1.4.1, 6.1.2; RFC 3312; TS 29.214 A.1)"
+expect "INVITE volte10 -> P-CSCF:5064 over TCP: From the default public identity, precondition, session timer, AMR-WB first, curr:qos local none" "$invite && ip.src == $va_ip && tcp.dstport == 5064 && sip.from.addr == \"$default_a\" && sip.Supported contains \"precondition\" && sip.Session-Expires && sip.P-Access-Network-Info && sdp.media_attr == \"rtpmap:96 AMR-WB/16000/1\" && sdp.media_attr == \"curr:qos local none\" && sdp.media_attr == \"des:qos mandatory local sendrecv\""
 a="$(field sip.Call-ID)"
 call_start="$last"
 mark
 expect "INVITE P-CSCF -> S-CSCF: P-Asserted-Identity the default public identity (TS 24.229 5.2.6.3.1)" "$invite && ip.src == $pcscf && ip.dst == $scscf && sip.Call-ID == \"$a\" && sip.P-Asserted-Identity == \"<$default_a>\""
 back
-expect "INVITE P-CSCF -> volte-b at its protected server port 5062, without P-Asserted-Service (RFC 6050 5.1.2) or the caller's P-Access-Network-Info (TS 24.229 4.4.3)" "$invite && ip.src == $pcscf && ip.dst == $vb_ip && tcp.dstport == 5062 && !sip.P-Asserted-Service && !sip.P-Access-Network-Info"
+expect "INVITE P-CSCF -> volte12 at its protected server port 5062, without P-Asserted-Service (RFC 6050 5.1.2) or the caller's P-Access-Network-Info (TS 24.229 4.4.3)" "$invite && ip.src == $pcscf && ip.dst == $vb_ip && tcp.dstport == 5062 && !sip.P-Asserted-Service && !sip.P-Access-Network-Info"
 c="$(field sip.Call-ID)"
-expect "183 volte-b: Require precondition, RSeq, the answer in AMR-WB with conf:qos remote sendrecv" "sip.Status-Code == 183 && ip.src == $vb_ip && sip.Call-ID == \"$c\" && sip.Require contains \"precondition\" && sip.RSeq && sdp.media_attr == \"rtpmap:96 AMR-WB/16000/1\" && sdp.media_attr == \"conf:qos remote sendrecv\""
-expect "AAR P-CSCF -> PCRF for volte-b's media: Media-Component-Description, the MMTel ICSI" "$aar && diameter.Framed-IP-Address.IPv4 == $vb_ip && diameter.Media-Component-Description && diameter.Codec-Data contains \"AMR-WB\" && diameter.AF-Application-Identifier == \"urn:urn-7:3gpp-service.ims.icsi.mmtel\""
+expect "183 volte12: Require precondition, RSeq, the answer in AMR-WB with conf:qos remote sendrecv" "sip.Status-Code == 183 && ip.src == $vb_ip && sip.Call-ID == \"$c\" && sip.Require contains \"precondition\" && sip.RSeq && sdp.media_attr == \"rtpmap:96 AMR-WB/16000/1\" && sdp.media_attr == \"conf:qos remote sendrecv\""
+expect "AAR P-CSCF -> PCRF for volte12's media: Media-Component-Description, the MMTel ICSI" "$aar && diameter.Framed-IP-Address.IPv4 == $vb_ip && diameter.Media-Component-Description && diameter.Codec-Data contains \"AMR-WB\" && diameter.AF-Application-Identifier == \"urn:urn-7:3gpp-service.ims.icsi.mmtel\""
 session_b="$(field diameter.Session-Id)"
 mark
 expect "AAA 2001" "$(answer_to) && diameter.Result-Code == 2001"
 back
-expect "ACTIVATE DEDICATED EPS BEARER CONTEXT REQUEST to volte-b, QCI 1" "$(event_to $vb_ip "ACTIVATE DEDICATED EPS BEARER CONTEXT REQUEST") && frame contains \"\\\"qci\\\":1\""
-expect "ACTIVATE DEDICATED EPS BEARER CONTEXT ACCEPT from volte-b" "$(ue_api 001010000000012 activate-dedicated-eps-bearer-context-accept)"
+expect "ACTIVATE DEDICATED EPS BEARER CONTEXT REQUEST to volte12, QCI 1" "$(event_to $vb_ip "ACTIVATE DEDICATED EPS BEARER CONTEXT REQUEST") && frame contains \"\\\"qci\\\":1\""
+expect "ACTIVATE DEDICATED EPS BEARER CONTEXT ACCEPT from volte12" "$(ue_api 001010000000012 activate-dedicated-eps-bearer-context-accept)"
 back
-expect "183 S-CSCF -> P-CSCF for volte-a" "sip.Status-Code == 183 && ip.dst == $pcscf && sip.Call-ID == \"$a\""
-expect "AAR P-CSCF -> PCRF for volte-a's media" "$aar && diameter.Framed-IP-Address.IPv4 == $va_ip && diameter.Media-Component-Description && diameter.Codec-Data contains \"AMR-WB\""
+expect "183 S-CSCF -> P-CSCF for volte10" "sip.Status-Code == 183 && ip.dst == $pcscf && sip.Call-ID == \"$a\""
+expect "AAR P-CSCF -> PCRF for volte10's media" "$aar && diameter.Framed-IP-Address.IPv4 == $va_ip && diameter.Media-Component-Description && diameter.Codec-Data contains \"AMR-WB\""
 session_a="$(field diameter.Session-Id)"
 mark
 expect "AAA 2001" "$(answer_to) && diameter.Result-Code == 2001"
 back
-expect "ACTIVATE DEDICATED EPS BEARER CONTEXT REQUEST to volte-a" "$(event_to $va_ip "ACTIVATE DEDICATED EPS BEARER CONTEXT REQUEST")"
-expect "ACTIVATE DEDICATED EPS BEARER CONTEXT ACCEPT from volte-a" "$(ue_api 001010000000010 activate-dedicated-eps-bearer-context-accept)"
+expect "ACTIVATE DEDICATED EPS BEARER CONTEXT REQUEST to volte10" "$(event_to $va_ip "ACTIVATE DEDICATED EPS BEARER CONTEXT REQUEST")"
+expect "ACTIVATE DEDICATED EPS BEARER CONTEXT ACCEPT from volte10" "$(ue_api 001010000000010 activate-dedicated-eps-bearer-context-accept)"
 back
-expect "183 reaches volte-a" "sip.Status-Code == 183 && ip.dst == $va_ip && sip.Call-ID == \"$a\""
-expect "PRACK volte-a -> P-CSCF" "sip.Method == \"PRACK\" && ip.src == $va_ip && sip.RAck"
-expect "200 OK to the PRACK reaches volte-a" "sip.Status-Code == 200 && sip.CSeq.method == \"PRACK\" && ip.dst == $va_ip"
-expect "UPDATE volte-a: curr:qos local sendrecv, its resources are reserved (RFC 3312 5.1)" "sip.Method == \"UPDATE\" && ip.src == $va_ip && sdp.media_attr == \"curr:qos local sendrecv\""
-expect "UPDATE reaches volte-b" "sip.Method == \"UPDATE\" && ip.dst == $vb_ip && sip.Call-ID == \"$c\""
-expect "200 OK to the UPDATE from volte-b: every precondition met" "sip.Status-Code == 200 && sip.CSeq.method == \"UPDATE\" && ip.src == $vb_ip && sdp.media_attr == \"curr:qos local sendrecv\" && sdp.media_attr == \"curr:qos remote sendrecv\""
+expect "183 reaches volte10" "sip.Status-Code == 183 && ip.dst == $va_ip && sip.Call-ID == \"$a\""
+expect "PRACK volte10 -> P-CSCF" "sip.Method == \"PRACK\" && ip.src == $va_ip && sip.RAck"
+expect "200 OK to the PRACK reaches volte10" "sip.Status-Code == 200 && sip.CSeq.method == \"PRACK\" && ip.dst == $va_ip"
+expect "UPDATE volte10: curr:qos local sendrecv, its resources are reserved (RFC 3312 5.1)" "sip.Method == \"UPDATE\" && ip.src == $va_ip && sdp.media_attr == \"curr:qos local sendrecv\""
+expect "UPDATE reaches volte12" "sip.Method == \"UPDATE\" && ip.dst == $vb_ip && sip.Call-ID == \"$c\""
+expect "200 OK to the UPDATE from volte12: every precondition met" "sip.Status-Code == 200 && sip.CSeq.method == \"UPDATE\" && ip.src == $vb_ip && sdp.media_attr == \"curr:qos local sendrecv\" && sdp.media_attr == \"curr:qos remote sendrecv\""
 updated="$last"
-expect "180 volte-b, only now that every mandatory precondition is met (RFC 3312 6)" "sip.Status-Code == 180 && ip.src == $vb_ip && sip.Call-ID == \"$c\""
-none "180 from volte-b before its 200 OK to the UPDATE" "frame.number > $call_start && frame.number < $updated && sip.Status-Code == 180 && ip.src == $vb_ip"
-expect "200 OK to the INVITE from volte-b: Session-Expires with the refresher (RFC 4028 9)" "sip.Status-Code == 200 && sip.CSeq.method == \"INVITE\" && ip.src == $vb_ip && sip.Call-ID == \"$c\" && sip.Session-Expires contains \"refresher=\""
+expect "180 volte12, only now that every mandatory precondition is met (RFC 3312 6)" "sip.Status-Code == 180 && ip.src == $vb_ip && sip.Call-ID == \"$c\""
+none "180 from volte12 before its 200 OK to the UPDATE" "frame.number > $call_start && frame.number < $updated && sip.Status-Code == 180 && ip.src == $vb_ip"
+expect "200 OK to the INVITE from volte12: Session-Expires with the refresher (RFC 4028 9)" "sip.Status-Code == 200 && sip.CSeq.method == \"INVITE\" && ip.src == $vb_ip && sip.Call-ID == \"$c\" && sip.Session-Expires contains \"refresher=\""
 answered="$last"
-expect "200 OK reaches volte-a" "sip.Status-Code == 200 && sip.CSeq.method == \"INVITE\" && ip.dst == $va_ip && sip.Call-ID == \"$a\""
-expect "ACK volte-a -> P-CSCF" "sip.Method == \"ACK\" && ip.src == $va_ip && sip.Call-ID == \"$a\""
+expect "200 OK reaches volte10" "sip.Status-Code == 200 && sip.CSeq.method == \"INVITE\" && ip.dst == $va_ip && sip.Call-ID == \"$a\""
+expect "ACK volte10 -> P-CSCF" "sip.Method == \"ACK\" && ip.src == $va_ip && sip.Call-ID == \"$a\""
 # The media flows both ways at once, so each stream is checked from the
 # answer on.
 last="$answered"
 mark
-expect "RTP volte-a -> relay in AMR-WB: CMR 15, one frame of FT 8 (RFC 4867 4.3)" "amr && ip.src == $va_ip && ip.dst == $agw && amr.wb.cmr == 15 && amr.wb.toc.ft == 8"
-expect "RTP relay -> volte-b in AMR-WB" "amr && ip.src == $agw && ip.dst == $vb_ip"
+expect "RTP volte10 -> relay in AMR-WB: CMR 15, one frame of FT 8 (RFC 4867 4.3)" "amr && ip.src == $va_ip && ip.dst == $agw && amr.wb.cmr == 15 && amr.wb.toc.ft == 8"
+expect "RTP relay -> volte12 in AMR-WB" "amr && ip.src == $agw && ip.dst == $vb_ip"
 back
-expect "RTP volte-b -> relay in AMR-WB" "amr && ip.src == $vb_ip && ip.dst == $agw"
+expect "RTP volte12 -> relay in AMR-WB" "amr && ip.src == $vb_ip && ip.dst == $agw"
 back
-expect "RTCP sender report from volte-a (RFC 3550 6.4.1)" "rtcp.pt == 200 && ip.src == $va_ip"
+expect "RTCP sender report from volte10 (RFC 3550 6.4.1)" "rtcp.pt == 200 && ip.src == $va_ip"
 back
-expect "RTCP sender report from volte-b" "rtcp.pt == 200 && ip.src == $vb_ip"
+expect "RTCP sender report from volte12" "rtcp.pt == 200 && ip.src == $vb_ip"
 back
-expect "BYE volte-a -> P-CSCF with Reason RELEASE_CAUSE (TS 24.229 7.2A.18.11)" "sip.Method == \"BYE\" && ip.src == $va_ip && sip.Call-ID == \"$a\" && sip.Reason contains \"RELEASE_CAUSE\""
+expect "BYE volte10 -> P-CSCF with Reason RELEASE_CAUSE (TS 24.229 7.2A.18.11)" "sip.Method == \"BYE\" && ip.src == $va_ip && sip.Call-ID == \"$a\" && sip.Reason contains \"RELEASE_CAUSE\""
 bye="$last"
 # The STA and the release of the bearer run side by side, on each side.
-expect "STR P-CSCF -> PCRF for volte-a's session, DIAMETER_LOGOUT (TS 29.214 4.4.4)" "$str && diameter.Session-Id == \"$session_a\" && diameter.Termination-Cause == 1"
+expect "STR P-CSCF -> PCRF for volte10's session, DIAMETER_LOGOUT (TS 29.214 4.4.4)" "$str && diameter.Session-Id == \"$session_a\" && diameter.Termination-Cause == 1"
 mark
 expect "STA 2001" "$(answer_to) && diameter.Result-Code == 2001"
 back
-expect "DEACTIVATE EPS BEARER CONTEXT REQUEST to volte-a" "$(event_to $va_ip "DEACTIVATE EPS BEARER CONTEXT REQUEST")"
-expect "DEACTIVATE EPS BEARER CONTEXT ACCEPT from volte-a" "$(ue_api 001010000000010 deactivate-eps-bearer-context-accept)"
+expect "DEACTIVATE EPS BEARER CONTEXT REQUEST to volte10" "$(event_to $va_ip "DEACTIVATE EPS BEARER CONTEXT REQUEST")"
+expect "DEACTIVATE EPS BEARER CONTEXT ACCEPT from volte10" "$(ue_api 001010000000010 deactivate-eps-bearer-context-accept)"
 last="$bye"
-expect "BYE reaches volte-b" "sip.Method == \"BYE\" && ip.dst == $vb_ip && sip.Call-ID == \"$c\""
-expect "STR P-CSCF -> PCRF for volte-b's session" "$str && diameter.Session-Id == \"$session_b\""
+expect "BYE reaches volte12" "sip.Method == \"BYE\" && ip.dst == $vb_ip && sip.Call-ID == \"$c\""
+expect "STR P-CSCF -> PCRF for volte12's session" "$str && diameter.Session-Id == \"$session_b\""
 mark
 expect "STA 2001" "$(answer_to) && diameter.Result-Code == 2001"
 back
-expect "DEACTIVATE EPS BEARER CONTEXT REQUEST to volte-b" "$(event_to $vb_ip "DEACTIVATE EPS BEARER CONTEXT REQUEST")"
-expect "DEACTIVATE EPS BEARER CONTEXT ACCEPT from volte-b" "$(ue_api 001010000000012 deactivate-eps-bearer-context-accept)"
+expect "DEACTIVATE EPS BEARER CONTEXT REQUEST to volte12" "$(event_to $vb_ip "DEACTIVATE EPS BEARER CONTEXT REQUEST")"
+expect "DEACTIVATE EPS BEARER CONTEXT ACCEPT from volte12" "$(ue_api 001010000000012 deactivate-eps-bearer-context-accept)"
 call_end="$last"
-# The relay passes the RTP payloads on as they are: what volte-a sent is
-# what volte-b got, packet by packet. Packets quoted in ICMP do not
-# count: volte-b's last packets can reach the relay after its context
-# has gone, and the port unreachable from the relay to volte-b quotes
+# The relay passes the RTP payloads on as they are: what volte10 sent is
+# what volte12 got, packet by packet. Packets quoted in ICMP do not
+# count: volte12's last packets can reach the relay after its context
+# has gone, and the port unreachable from the relay to volte12 quotes
 # one, with both addresses in it.
 sent="$(tshark_fields "frame.number > $answered && frame.number < $bye && amr && !icmp && ip.src == $va_ip && ip.dst == $agw" rtp.payload | tr -d ':\n')"
 relayed="$(tshark_fields "frame.number > $answered && frame.number < $call_end && amr && !icmp && ip.src == $agw && ip.dst == $vb_ip" rtp.payload | tr -d ':\n')"
 if [ -n "$sent" ] && [ "$sent" = "$relayed" ]; then
-	echo "ok   the relay passed volte-a's AMR-WB payloads to volte-b unchanged, ${#sent} hex digits"
+	echo "ok   the relay passed volte10's AMR-WB payloads to volte12 unchanged, ${#sent} hex digits"
 else
 	echo "FAIL the AMR-WB payloads on the wire differ: ${#sent} sent, ${#relayed} relayed hex digits"
 	fail=1
 fi
 
 echo "a VoLTE UE and a UE that offers PCMU only"
-expect "INVITE volte-a -> P-CSCF to ue2, offering AMR-WB, AMR and PCMU" "$invite && ip.src == $va_ip && sip.r-uri == \"tel:+12025550102\" && sdp.media_attr == \"rtpmap:96 AMR-WB/16000/1\" && sdp.media_attr == \"rtpmap:0 PCMU/8000\""
+expect "INVITE volte10 -> P-CSCF to ue2, offering AMR-WB, AMR and PCMU" "$invite && ip.src == $va_ip && sip.r-uri == \"tel:+12025550102\" && sdp.media_attr == \"rtpmap:96 AMR-WB/16000/1\" && sdp.media_attr == \"rtpmap:0 PCMU/8000\""
 a="$(field sip.Call-ID)"
 interop="$last"
 expect "INVITE P-CSCF -> ue2 with the same offer" "$invite && ip.dst == $ue2ip && sdp.media_attr == \"rtpmap:96 AMR-WB/16000/1\""
 expect "183 ue2: PCMU only" "sip.Status-Code == 183 && ip.src == $ue2ip && sdp.media_attr == \"rtpmap:0 PCMU/8000\" && !(sdp.media_attr contains \"AMR\")"
-expect "AAR P-CSCF -> PCRF for volte-a's media, with the answer in PCMU" "$aar && diameter.Framed-IP-Address.IPv4 == $va_ip && diameter.Codec-Data contains \"RTP/AVP 0 101\""
-expect "200 OK reaches volte-a" "sip.Status-Code == 200 && sip.CSeq.method == \"INVITE\" && ip.dst == $va_ip && sip.Call-ID == \"$a\""
-expect "RTP relay -> volte-a in PCMU" "rtp.p_type == 0 && ip.src == $agw && ip.dst == $va_ip"
+expect "AAR P-CSCF -> PCRF for volte10's media, with the answer in PCMU" "$aar && diameter.Framed-IP-Address.IPv4 == $va_ip && diameter.Codec-Data contains \"RTP/AVP 0 101\""
+expect "200 OK reaches volte10" "sip.Status-Code == 200 && sip.CSeq.method == \"INVITE\" && ip.dst == $va_ip && sip.Call-ID == \"$a\""
+expect "RTP relay -> volte10 in PCMU" "rtp.p_type == 0 && ip.src == $agw && ip.dst == $va_ip"
 none "AAR for the media of ue2, which is not on the EPC stub" "frame.number > $interop && $aar && diameter.Framed-IP-Address.IPv4 == $ue2ip && diameter.Codec-Data"
 
-echo "a short message from volte-a (TS 24.341 5.3.1.2)"
-expect "MESSAGE volte-a -> P-CSCF: From the default public identity" "sip.Method == \"MESSAGE\" && ip.src == $va_ip && sip.from.addr == \"$default_a\""
+echo "a short message from volte10 (TS 24.341 5.3.1.2)"
+expect "MESSAGE volte10 -> P-CSCF: From the default public identity" "sip.Method == \"MESSAGE\" && ip.src == $va_ip && sip.from.addr == \"$default_a\""
 m="$(field sip.Call-ID)"
 expect "MESSAGE P-CSCF -> S-CSCF: P-Asserted-Identity the default public identity" "sip.Method == \"MESSAGE\" && ip.src == $pcscf && ip.dst == $scscf && sip.Call-ID == \"$m\" && sip.P-Asserted-Identity == \"<$default_a>\""
-expect "202 Accepted reaches volte-a" "sip.Status-Code == 202 && ip.dst == $va_ip && sip.Call-ID == \"$m\""
+expect "202 Accepted reaches volte10" "sip.Status-Code == 202 && ip.dst == $va_ip && sip.Call-ID == \"$m\""
 
-echo "volte-a reads its supplementary services over Ut (GSMA IR.92 2.3.2)"
-expect "XCAP GET volte-a -> MMTel AS: the XUI is the default public identity" "http.request.method == \"GET\" && ip.src == $va_ip && http.request.uri contains \"/users/$default_a/simservs.xml\""
+echo "volte10 reads its supplementary services over Ut (GSMA IR.92 2.3.2)"
+expect "XCAP GET volte10 -> MMTel AS: the XUI is the default public identity" "http.request.method == \"GET\" && ip.src == $va_ip && http.request.uri contains \"/users/$default_a/simservs.xml\""
 
 echo "DTMF, hold and resume in a call that the Lab drives (RFC 4733, TS 24.610)"
-expect "INVITE volte-a -> P-CSCF to volte-b" "$invite && ip.src == $va_ip && sip.r-uri == \"tel:+12025550112\" && !(sip.To contains \"tag=\")"
+expect "INVITE volte10 -> P-CSCF to volte12" "$invite && ip.src == $va_ip && sip.r-uri == \"tel:+12025550112\" && !(sip.To contains \"tag=\")"
 a="$(field sip.Call-ID)"
-expect "200 OK reaches volte-a" "sip.Status-Code == 200 && sip.CSeq.method == \"INVITE\" && ip.dst == $va_ip && sip.Call-ID == \"$a\""
+expect "200 OK reaches volte10" "sip.Status-Code == 200 && sip.CSeq.method == \"INVITE\" && ip.dst == $va_ip && sip.Call-ID == \"$a\""
 for digit in 1 5 9 11; do
-	expect "telephone-event $digit, end of the event, volte-a -> relay" "rtpevent && ip.src == $va_ip && rtpevent.event_id == $digit && rtpevent.end_of_event == 1"
-	expect "the same event relayed to volte-b" "rtpevent && ip.dst == $vb_ip && rtpevent.event_id == $digit"
+	expect "telephone-event $digit, end of the event, volte10 -> relay" "rtpevent && ip.src == $va_ip && rtpevent.event_id == $digit && rtpevent.end_of_event == 1"
+	expect "the same event relayed to volte12" "rtpevent && ip.dst == $vb_ip && rtpevent.event_id == $digit"
 done
-expect "re-INVITE volte-a: sendonly, on hold" "$invite && ip.src == $va_ip && sip.Call-ID == \"$a\" && sdp.media_attr == \"sendonly\""
-expect "200 OK from volte-b: recvonly" "sip.Status-Code == 200 && sip.CSeq.method == \"INVITE\" && ip.src == $vb_ip && sdp.media_attr == \"recvonly\""
-expect "re-INVITE volte-a: sendrecv, resumed" "$invite && ip.src == $va_ip && sip.Call-ID == \"$a\" && sdp.media_attr == \"sendrecv\""
-expect "200 OK from volte-b: sendrecv" "sip.Status-Code == 200 && sip.CSeq.method == \"INVITE\" && ip.src == $vb_ip && sdp.media_attr == \"sendrecv\""
-expect "BYE volte-a -> P-CSCF" "sip.Method == \"BYE\" && ip.src == $va_ip && sip.Call-ID == \"$a\""
+expect "re-INVITE volte10: sendonly, on hold" "$invite && ip.src == $va_ip && sip.Call-ID == \"$a\" && sdp.media_attr == \"sendonly\""
+expect "200 OK from volte12: recvonly" "sip.Status-Code == 200 && sip.CSeq.method == \"INVITE\" && ip.src == $vb_ip && sdp.media_attr == \"recvonly\""
+expect "re-INVITE volte10: sendrecv, resumed" "$invite && ip.src == $va_ip && sip.Call-ID == \"$a\" && sdp.media_attr == \"sendrecv\""
+expect "200 OK from volte12: sendrecv" "sip.Status-Code == 200 && sip.CSeq.method == \"INVITE\" && ip.src == $vb_ip && sdp.media_attr == \"sendrecv\""
+expect "BYE volte10 -> P-CSCF" "sip.Method == \"BYE\" && ip.src == $va_ip && sip.Call-ID == \"$a\""
 
-echo "the network takes volte-a's voice bearer (IR.92 2.4.2.3; TS 29.214 4.4.6.2; TS 24.229 5.2.8.1.2)"
-expect "INVITE volte-a -> P-CSCF to volte-b" "$invite && ip.src == $va_ip && sip.r-uri == \"tel:+12025550112\" && !(sip.To contains \"tag=\")"
+echo "the network takes volte10's voice bearer (IR.92 2.4.2.3; TS 29.214 4.4.6.2; TS 24.229 5.2.8.1.2)"
+expect "INVITE volte10 -> P-CSCF to volte12" "$invite && ip.src == $va_ip && sip.r-uri == \"tel:+12025550112\" && !(sip.To contains \"tag=\")"
 a="$(field sip.Call-ID)"
-expect "200 OK reaches volte-a" "sip.Status-Code == 200 && sip.CSeq.method == \"INVITE\" && ip.dst == $va_ip && sip.Call-ID == \"$a\""
+expect "200 OK reaches volte10" "sip.Status-Code == 200 && sip.CSeq.method == \"INVITE\" && ip.dst == $va_ip && sip.Call-ID == \"$a\""
 expect "DELETE Lab -> EPC stub: the network deactivates bearer $ebi" "http.request.method == \"DELETE\" && ip.src == $lab && ip.dst == $epc && http.request.uri == \"/network-initiated/ues/001010000000010/bearers/$ebi\""
 released="$last"
 mark
-expect "DEACTIVATE EPS BEARER CONTEXT REQUEST to volte-a" "$(event_to $va_ip "DEACTIVATE EPS BEARER CONTEXT REQUEST")"
+expect "DEACTIVATE EPS BEARER CONTEXT REQUEST to volte10" "$(event_to $va_ip "DEACTIVATE EPS BEARER CONTEXT REQUEST")"
 back
 expect "ASR PCRF -> P-CSCF: BEARER_RELEASED" "$asr && diameter.Abort-Cause == 0"
 aborted="$(field diameter.Session-Id)"
@@ -531,14 +531,14 @@ mark
 expect "ASA 2001" "$(answer_to) && diameter.Result-Code == 2001"
 expect "STR P-CSCF -> PCRF for that session" "$str && diameter.Session-Id == \"$aborted\""
 back
-expect "BYE P-CSCF -> volte-a with Reason SIP 503" "sip.Method == \"BYE\" && ip.src == $pcscf && ip.dst == $va_ip && sip.Call-ID == \"$a\" && sip.Reason contains \"cause=503\""
+expect "BYE P-CSCF -> volte10 with Reason SIP 503" "sip.Method == \"BYE\" && ip.src == $pcscf && ip.dst == $va_ip && sip.Call-ID == \"$a\" && sip.Reason contains \"cause=503\""
 back
-expect "BYE P-CSCF -> S-CSCF in volte-a's name, Reason SIP 503" "sip.Method == \"BYE\" && ip.src == $pcscf && ip.dst == $scscf && sip.Call-ID == \"$a\" && sip.Reason contains \"cause=503\""
-expect "BYE reaches volte-b with that Reason" "sip.Method == \"BYE\" && ip.dst == $vb_ip && sip.Reason contains \"cause=503\""
-# volte-b's answer to that BYE ends its dialog at the P-CSCF, whose STR
-# for volte-b's session takes the bearer away.
-expect "DEACTIVATE EPS BEARER CONTEXT REQUEST to volte-b: its bearer goes with the call" "$(event_to $vb_ip "DEACTIVATE EPS BEARER CONTEXT REQUEST")"
-none "BYE of volte-a's own in that call" "frame.number > $released && sip.Method == \"BYE\" && ip.src == $va_ip && sip.Call-ID == \"$a\""
+expect "BYE P-CSCF -> S-CSCF in volte10's name, Reason SIP 503" "sip.Method == \"BYE\" && ip.src == $pcscf && ip.dst == $scscf && sip.Call-ID == \"$a\" && sip.Reason contains \"cause=503\""
+expect "BYE reaches volte12 with that Reason" "sip.Method == \"BYE\" && ip.dst == $vb_ip && sip.Reason contains \"cause=503\""
+# volte12's answer to that BYE ends its dialog at the P-CSCF, whose STR
+# for volte12's session takes the bearer away.
+expect "DEACTIVATE EPS BEARER CONTEXT REQUEST to volte12: its bearer goes with the call" "$(event_to $vb_ip "DEACTIVATE EPS BEARER CONTEXT REQUEST")"
+none "BYE of volte10's own in that call" "frame.number > $released && sip.Method == \"BYE\" && ip.src == $va_ip && sip.Call-ID == \"$a\""
 
 echo "the capture as a whole"
 # The charging information stays in the network (TS 24.229 5.2.1):

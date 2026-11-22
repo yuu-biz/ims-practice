@@ -79,7 +79,7 @@ UE はプロファイルに入れてあるので、`docker compose up` では起
 | --- | --- | --- |
 | `ue` | `ue`、`ue2`、`ue3`、`softphone` | `docker compose run --rm ue register` のように、1 回のコマンドごとに動かします。`softphone` には、ほかの人が作ったソフトフォンの pjsua と SIPp が入っています。 |
 | `phones` | `phone1`、`phone2`、`phone3` | 起動したままになり、ラボの指示で動きます。`docker compose --profile phones up -d` で起動します。 |
-| `volte` | `volte-a`、`volte-b` | VoLTE の UE です。`phones` と同じく起動したままになります。`docker compose --profile volte up -d` で起動します。 |
+| `volte` | `volte10`、`volte12` | VoLTE の UE です。`phones` と同じく起動したままになります。`docker compose --profile volte up -d` で起動します。 |
 
 `ue` と `phones` は同じ加入者を使うので、一度にどちらか一方だけを動かします。
 
@@ -93,9 +93,9 @@ UE はプロファイルに入れてあるので、`docker compose up` では起
 | 2 | `001010000000002@ims.mnc001.mcc001.3gppnetwork.org` | +1-202-555-0102 | `ue2`、`phone2` | UE 2、UE-B |
 | 3 | `001010000000003@ims.mnc001.mcc001.3gppnetwork.org` | +1-202-555-0103 | `ue3`、`phone3` | UE 3、UE-C |
 | 4 | `+12025550104@ims.mnc001.mcc001.3gppnetwork.org` | +1-202-555-0104 | `softphone`（pjsua） | pjsua |
-| 10 | `001010000000010@ims.mnc001.mcc001.3gppnetwork.org` | +1-202-555-0110 | `volte-a` | volte-a |
+| 10 | `001010000000010@ims.mnc001.mcc001.3gppnetwork.org` | +1-202-555-0110 | `volte10` | volte10 |
 | 11 | `001010000000011@ims.mnc001.mcc001.3gppnetwork.org` | +1-202-555-0111 | `softphone`（SIPp） | SIPp |
-| 12 | `001010000000012@ims.mnc001.mcc001.3gppnetwork.org` | +1-202-555-0112 | `volte-b` | volte-b |
+| 12 | `001010000000012@ims.mnc001.mcc001.3gppnetwork.org` | +1-202-555-0112 | `volte12` | volte12 |
 
 網間接続の手順書の 2 つ目の網には、`deploy/interconnect/b/hss.yaml` に別の加入者がいます。サービス `ue-b1` の UE B1 が +1-202-555-0151 で、もう 1 人が +1-202-555-0152 です。
 

@@ -61,8 +61,8 @@ The nodes use these addresses. The Service column is the name in `compose.yaml`.
 | UE simulator that the Lab drives, subscriber 1 | `phone1` | 172.28.0.110 | `phones` |
 | UE simulator that the Lab drives, subscriber 2 | `phone2` | 172.28.0.111 | `phones` |
 | UE simulator that the Lab drives, subscriber 3 | `phone3` | 172.28.0.112 | `phones` |
-| VoLTE UE, subscriber 10 | `volte-a` | 172.28.0.120 | `volte` |
-| VoLTE UE, subscriber 12 | `volte-b` | 172.28.0.121 | `volte` |
+| VoLTE UE, subscriber 10 | `volte10` | 172.28.0.120 | `volte` |
+| VoLTE UE, subscriber 12 | `volte12` | 172.28.0.121 | `volte` |
 
 The `capture` service has no address: it shares the network of the host and captures on the bridge `ims0`.
 

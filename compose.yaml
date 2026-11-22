@@ -302,7 +302,7 @@ services:
   # the private identity and the temporary public identity derived from
   # the IMSI (TS 23.003 13.3, 13.4B). The HSS bars the temporary one, and
   # the UE calls with the default public identity of P-Associated-URI.
-  volte-a:
+  volte10:
     image: ims-practice/ims:dev
     pull_policy: never
     profiles: [volte]
@@ -335,7 +335,7 @@ services:
       ims:
         ipv4_address: 172.28.0.120
 
-  volte-b:
+  volte12:
     image: ims-practice/ims:dev
     pull_policy: never
     profiles: [volte]

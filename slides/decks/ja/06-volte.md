@@ -52,16 +52,16 @@ ims-practice 勉強会 第 6 回（アクセス網、IMS-AKA、Rx でのポリ�
 
 | ノード | アドレス | VoLTE の通話での役割 |
 | --- | --- | --- |
-| volte-a | 172.28.0.120 | 発信側。`tel:+12025550110`。加入者 10。 |
-| volte-b | 172.28.0.121 | 着信側。`tel:+12025550112`。加入者 12。 |
+| volte10 | 172.28.0.120 | 発信側。`tel:+12025550110`。加入者 10。 |
+| volte12 | 172.28.0.121 | 着信側。`tel:+12025550112`。加入者 12。 |
 | ue2、SIPp | 172.28.0.101、102 | PCMU だけのソフトフォンと、IMS-AKA の試験相手。 |
 | EPC スタブと PCRF | 172.28.0.80 | 役割 `epc`。UE の API は HTTP の 8080、Rx は 3868。 |
 | P-CSCF | 172.28.0.40 | 5060 番と保護サーバーポート 5064 番。Rx のクライアント。 |
 | S-CSCF、HSS | 172.28.0.30、10 | IMS-AKA の challenge と、認証ベクトル。 |
 | MMTel AS、中継ノード | 172.28.0.75、50 | MMTel AS の回と同じ。中継は RTCP も通す。 |
 
-- volte-a と volte-b は `compose.yaml` のプロファイル `volte` のサービスです。鍵は `deploy/compose/hss.yaml` に、加入者ごとのコンテナのアドレスは `deploy/compose/epc.yaml` にあります。
-- ラボ（172.28.0.60）は volte-a と volte-b を動かし、ラダー図に Rx を出し、網の手順を始める EPC スタブのパスをホストへ中継します。
+- volte10 と volte12 は `compose.yaml` のプロファイル `volte` のサービスです。鍵は `deploy/compose/hss.yaml` に、加入者ごとのコンテナのアドレスは `deploy/compose/epc.yaml` にあります。
+- ラボ（172.28.0.60）は volte10 と volte12 を動かし、ラダー図に Rx を出し、網の手順を始める EPC スタブのパスをホストへ中継します。
 
 > 手順書 [「登場するノード」](../../../docs/guide/ja/volte.md#登場するノード)
 
@@ -107,12 +107,12 @@ ims-practice 勉強会 第 6 回（アクセス網、IMS-AKA、Rx でのポリ�
 ## attach と P-CSCF の発見
 
 ```ladder
-volte-a, EPC スタブ
-volte-a -> EPC スタブ: GET /system-information // セル。MCC 001、MNC 01、TAC 1
-volte-a -> EPC スタブ: GET /ues/001010000000010/events // イベントストリームは開いたまま
-volte-a -> EPC スタブ: POST /ues/001010000000010/attach-request // ATTACH REQUEST、APN ims
-volte-a <-- EPC スタブ: 200、ATTACH ACCEPT と ACTIVATE DEFAULT EPS BEARER CONTEXT REQUEST
-volte-a -> EPC スタブ: POST /ues/001010000000010/attach-complete
+volte10, EPC スタブ
+volte10 -> EPC スタブ: GET /system-information // セル。MCC 001、MNC 01、TAC 1
+volte10 -> EPC スタブ: GET /ues/001010000000010/events // イベントストリームは開いたまま
+volte10 -> EPC スタブ: POST /ues/001010000000010/attach-request // ATTACH REQUEST、APN ims
+volte10 <-- EPC スタブ: 200、ATTACH ACCEPT と ACTIVATE DEFAULT EPS BEARER CONTEXT REQUEST
+volte10 -> EPC スタブ: POST /ues/001010000000010/attach-complete
 ```
 
 | ATTACH ACCEPT の中 | 見どころ |
@@ -162,13 +162,13 @@ type AccessNetwork interface {
 
 | 持つもの | 持っている値 | 書いてある場所 |
 | --- | --- | --- |
-| volte-a の USIM | K、OPc、SQN_MS | `ue` の `-k`、`-opc`、`-sqn`（`compose.yaml`） |
+| volte10 の USIM | K、OPc、SQN_MS | `ue` の `-k`、`-opc`、`-sqn`（`compose.yaml`） |
 | HSS | 同じ加入者の K、OPc、AMF、SQN_HE | `deploy/compose/hss.yaml` の加入者 10 の `aka:` |
 
 - K と OPc は MILENAGE の試験データ 1 の値です（TS 35.208 4.3.1）。
 - OPc は事業者の OP と K から作ります（TS 35.206 4.1）。SIPp のように OP を渡すときは `-op` を使います。
 - 共有するのはこれだけです。ほかの値は、網と UE がそれぞれ、この鍵とランダムな challenge から計算します。SIP Digest で登録する加入者と違い、パスワードはどこにもありません。
-- volte-b は試験データ 3（4.3.3）の K と OPc を持ちます。SIPp 3.7 は K と OP を文字列のバイトとして読むので、SIPp 用の加入者 11 の鍵は印字できる文字です。手順書の「SIPp」の節にあります。
+- volte12 は試験データ 3（4.3.3）の K と OPc を持ちます。SIPp 3.7 は K と OP を文字列のバイトとして読むので、SIPp 用の加入者 11 の鍵は印字できる文字です。手順書の「SIPp」の節にあります。
 
 > 手順書 [「鍵」](../../../docs/guide/ja/volte.md#鍵)
 
@@ -183,7 +183,7 @@ type AccessNetwork interface {
 | 既定の公開の識別子（default public user identity） | `sip:+12025550110@ims.mnc001.mcc001.3gppnetwork.org` | 200 OK の最初の P-Associated-URI。そのあとの From と P-Asserted-Identity。 |
 | 番号の tel URI | `tel:+12025550110` | 2 つ目の P-Associated-URI。 |
 
-- volte-a と volte-b のカードには USIM があり、ISIM はありません。USIM には IMSI と鍵があっても、IMS の識別子はありません。そこで端末は IMSI（ここでは 001010000000010）から識別子を作ります。
+- volte10 と volte12 のカードには USIM があり、ISIM はありません。USIM には IMSI と鍵があっても、IMS の識別子はありません。そこで端末は IMSI（ここでは 001010000000010）から識別子を作ります。
 - 一時的な識別子には IMSI が入っているので、HSS はこれを規制します。登録にだけ使われ、見えるのは CSCF と HSS だけです。`deploy/compose/hss.yaml` では `barred_identities` に挙げてあり、SAA のユーザープロファイルでは `<BarringIndication>` が付きます。
 
 > 手順書 [「ISIM の無い端末の識別子」](../../../docs/guide/ja/volte.md#isim-の無い端末の識別子)。TS 24.229 5.1.1.1A。TS 23.003 13.2、13.3、13.4B。TS 23.228 E.3.1。TS 29.228 B.2.1。
@@ -193,10 +193,10 @@ type AccessNetwork interface {
 ## キャプチャで見る識別子
 
 ```text
-REGISTER  volte-a -> P-CSCF  To: <sip:001010000000010@ims.mnc001.mcc001.3gppnetwork.org>
-200 OK    P-CSCF -> volte-a  P-Associated-URI: <sip:+12025550110@ims.mnc001.mcc001.3gppnetwork.org>
+REGISTER  volte10 -> P-CSCF  To: <sip:001010000000010@ims.mnc001.mcc001.3gppnetwork.org>
+200 OK    P-CSCF -> volte10  P-Associated-URI: <sip:+12025550110@ims.mnc001.mcc001.3gppnetwork.org>
                              P-Associated-URI: <tel:+12025550110>
-INVITE    volte-a -> P-CSCF  From: <sip:+12025550110@ims.mnc001.mcc001.3gppnetwork.org>;tag=...
+INVITE    volte10 -> P-CSCF  From: <sip:+12025550110@ims.mnc001.mcc001.3gppnetwork.org>;tag=...
 INVITE    P-CSCF -> S-CSCF   P-Asserted-Identity: <sip:+12025550110@ims.mnc001.mcc001.3gppnetwork.org>
 ```
 
@@ -323,7 +323,7 @@ P-CSCF はポリシーと課金の制御の AF（application function）です�
 
 ## Rx その 2。通話のメディアの AAR
 
-両側の P-CSCF は、SDP の answer がそろうと AAR を送ります。着信側は volte-b からの 183、発信側は volte-a に向かう 183 がきっかけです。
+両側の P-CSCF は、SDP の answer がそろうと AAR を送ります。着信側は volte12 からの 183、発信側は volte10 に向かう 183 がきっかけです。
 
 | AVP | 着信側の AAR（#1036）の値 |
 | --- | --- |
@@ -373,16 +373,16 @@ data: {"eps_bearer_identity":6,"linked_eps_bearer_identity":5,
 ## プリコンディション。資源がそろうまで鳴らさない
 
 ```ladder
-volte-a, P-CSCF, PCRF, volte-b
-volte-a -> P-CSCF: INVITE // curr:qos local none
-P-CSCF -> volte-b: INVITE。各 S-CSCF と AS を通る
-P-CSCF <-- volte-b: 183 // conf:qos remote sendrecv
+volte10, P-CSCF, PCRF, volte12
+volte10 -> P-CSCF: INVITE // curr:qos local none
+P-CSCF -> volte12: INVITE。各 S-CSCF と AS を通る
+P-CSCF <-- volte12: 183 // conf:qos remote sendrecv
 P-CSCF <-> PCRF: 両側の AAR と AAA // bearer を 1 つずつ
-volte-a <-- P-CSCF: 183。続いて PRACK とその 200
-volte-a -> P-CSCF -> volte-b: UPDATE // curr:qos local sendrecv
-volte-a <-- P-CSCF <-- volte-b: 200 (UPDATE) // 両方の区間が sendrecv
-volte-a <-- P-CSCF <-- volte-b: 180 // ここで初めて
-volte-a <-- P-CSCF <-- volte-b: 200 (INVITE)。続いて ACK
+volte10 <-- P-CSCF: 183。続いて PRACK とその 200
+volte10 -> P-CSCF -> volte12: UPDATE // curr:qos local sendrecv
+volte10 <-- P-CSCF <-- volte12: 200 (UPDATE) // 両方の区間が sendrecv
+volte10 <-- P-CSCF <-- volte12: 180 // ここで初めて
+volte10 <-- P-CSCF <-- volte12: 200 (INVITE)。続いて ACK
 ```
 
 - INVITE は `Supported: 100rel, timer, 199, precondition` です。Require には入れません。183 は `Require: 100rel, precondition` です。UPDATE は、PRACK に 200 が返ってから送ります。
@@ -396,13 +396,13 @@ volte-a <-- P-CSCF <-- volte-b: 200 (INVITE)。続いて ACK
 
 | 段階 | 送った側 | `curr` local | `curr` remote | `des` の強さ（local、remote） | `conf` |
 | --- | --- | --- | --- | --- | --- |
-| INVITE | volte-a | none | none | mandatory、optional | |
-| 183 | volte-b | none | none | mandatory、mandatory | remote |
-| UPDATE | volte-a | sendrecv | none | mandatory、mandatory | |
-| 200 (UPDATE) | volte-b | sendrecv | sendrecv | mandatory、mandatory | |
+| INVITE | volte10 | none | none | mandatory、optional | |
+| 183 | volte12 | none | none | mandatory、mandatory | remote |
+| UPDATE | volte10 | sendrecv | none | mandatory、mandatory | |
+| 200 (UPDATE) | volte12 | sendrecv | sendrecv | mandatory、mandatory | |
 
 - 値は SDP を送った側から見たものです。発信側は segmented status type です（TS 24.229 6.1.2）。
-- 着信側は 183 で発信側の区間を mandatory に上げ、`conf:qos remote sendrecv` で知らせを求めます（RFC 3312 7）。183 の local と remote は volte-b から見たもので、volte-b の remote は volte-a の区間です。
+- 着信側は 183 で発信側の区間を mandatory に上げ、`conf:qos remote sendrecv` で知らせを求めます（RFC 3312 7）。183 の local と remote は volte12 から見たもので、volte12 の remote は volte10 の区間です。
 - UE は dedicated bearer を受け取ると、資源を確保したとみなします（TS 24.229 L.2.2.5.1B、IR.92 2.4.3.1）。UPDATE がそれを伝えます。ue2 のように EPC スタブを使わない UE は、最初から確保済みです。向きはどの行も sendrecv です。
 
 > 手順書 [「プリコンディション」](../../../docs/guide/ja/volte.md#プリコンディション) の表。RFC 3312 6。
@@ -447,7 +447,7 @@ a=fmtp:97 mode-change-capability=2; max-red=0; octet-align=1
 
 - 96 と 98 は bandwidth-efficient、97 と 99 は octet-aligned です。発信側は前者を優先します（IR.92 3.2.5）。mode-set は付けません（IR.92 2.4.3.2）。
 - PCMU を最後に残します。PCMU しか知らないソフトフォンとも話せるようにするためです。b=AS:80 は PCMU に合わせた値で、上りの帯域もこの値になります。
-- volte-b は `m=audio 60734 RTP/AVP 96 100` と `b=AS:41` で答えます。PCMU しか知らない ue2 は `RTP/AVP 0 101` で答え、VoLTE の UE は PCMU で話します。
+- volte12 は `m=audio 60734 RTP/AVP 96 100` と `b=AS:41` で答えます。PCMU しか知らない ue2 は `RTP/AVP 0 101` で答え、VoLTE の UE は PCMU で話します。
 - b=RS:0 と b=RR:4000 は、送信者と受信者の RTCP の帯域で、単位は bit/s です（RFC 3556 2）。UE はこれから報告の間隔を計算します（RFC 3550 6.3.1）。5 秒より短くはなりません。
 
 > 手順書 [「offer と answer」](../../../docs/guide/ja/volte.md#offer-と-answer)。offer の全体は手順書にあります。AMR が 98 と 99、PCMU が 0、telephone-event が 100 と 101 で、telephone-event は音声のコーデックごとのクロックレートです（TS 26.114 Annex G）。ptime は 20、maxptime は 240 です。RFC 4867。
@@ -508,15 +508,15 @@ curl -X DELETE http://localhost:8080/api/epc/network-initiated/ues/0010100000000
 ```
 
 ```ladder
-volte-a, P-CSCF, S-CSCF, volte-b, EPC と PCRF, ラボ
+volte10, P-CSCF, S-CSCF, volte12, EPC と PCRF, ラボ
 EPC と PCRF <- ラボ: DELETE .../bearers/6
-volte-a <- EPC と PCRF: DEACTIVATE EPS BEARER CONTEXT REQUEST（イベントストリーム）
+volte10 <- EPC と PCRF: DEACTIVATE EPS BEARER CONTEXT REQUEST（イベントストリーム）
 P-CSCF <- EPC と PCRF: ASR、Abort-Cause BEARER_RELEASED（0） // 続いて ASA
 P-CSCF -> EPC と PCRF: STR // 続いて STA
-P-CSCF -> S-CSCF: volte-a の名前の BYE // cause=503
-volte-a <- P-CSCF: BYE // cause=503
-P-CSCF -> volte-b: BYE。S-CSCF と MMTel AS を通ったあと
-volte-b <- EPC と PCRF: DEACTIVATE EPS BEARER CONTEXT REQUEST
+P-CSCF -> S-CSCF: volte10 の名前の BYE // cause=503
+volte10 <- P-CSCF: BYE // cause=503
+P-CSCF -> volte12: BYE。S-CSCF と MMTel AS を通ったあと
+volte12 <- EPC と PCRF: DEACTIVATE EPS BEARER CONTEXT REQUEST
 ```
 
 > 手順書 [「網が bearer を落とす」](../../../docs/guide/ja/volte.md#網が-bearer-を落とす)。TS 29.214 4.4.6.1、4.4.6.2。TS 24.229 5.2.8.1.2。IR.92 2.4.2.3。
@@ -525,7 +525,7 @@ volte-b <- EPC と PCRF: DEACTIVATE EPS BEARER CONTEXT REQUEST
 
 ## 網が bearer を落とす。こう見える理由
 
-- 音声の bearer がメディアをすべて運んでいたので、PCRF は RAR ではなく ASR で Rx のセッションを終えます。volte-a は自分では BYE を送りません。
+- 音声の bearer がメディアをすべて運んでいたので、PCRF は RAR ではなく ASR で Rx のセッションを終えます。volte10 は自分では BYE を送りません。
 - P-CSCF は `Store` に置いたダイアログの情報から BYE を作ります。相手の側への BYE は、サービスを受ける利用者の名前で送ります。
 - サービスを受ける UE への BYE は、このプロジェクトが足したものです。音声の bearer だけを失った UE は信号の経路を持ったままなので、BYE が無いと、網が終えた通話に残り続けます（`internal/pcscf/release.go` のコメント）。
 - 普通の BYE で終わる通話では、両側の P-CSCF が STR で Rx のセッションを終えます。Termination-Cause は DIAMETER_LOGOUT です（TS 29.214 4.4.4）。
@@ -581,17 +581,17 @@ grep -rn "SIMPLIFIED:" internal/epc internal/pcscf internal/ue internal/aka inte
 
 ```sh
 docker compose up -d --build
-docker compose --profile volte up -d volte-a volte-b
+docker compose --profile volte up -d volte10 volte12
 curl http://localhost:8080/api/epc/ues/001010000000010
 ```
 
-1. <http://localhost:8080> を開きます。volte-a と volte-b のカードに、登録済みと出ます。
-2. volte-a から `tel:+12025550112` に発信します。volte-b は呼び出し時間のあとで自分で応答します。
+1. <http://localhost:8080> を開きます。volte10 と volte12 のカードに、登録済みと出ます。
+2. volte10 から `tel:+12025550112` に発信します。volte12 は呼び出し時間のあとで自分で応答します。
 3. カードの保留、再開、DTMF のボタンを押します。コーデックとプリコンディションの表も出ます。
 4. 前のスライドの `curl -X DELETE` で音声の bearer を解放します。
 
 - 通話のラダー図には、P-CSCF の隣に PCRF の列があります。
-- `curl` は volte-a の bearer を並べます。通話中は 5 と 6 です。ラボは、UE の状態と、網の手順を始める EPC スタブのパスを、`/api/epc` の下で中継します。
+- `curl` は volte10 の bearer を並べます。通話中は 5 と 6 です。ラボは、UE の状態と、網の手順を始める EPC スタブのパスを、`/api/epc` の下で中継します。
 
 > 手順書 [「ラボで」](../../../docs/guide/ja/volte.md#ラボで)
 
@@ -600,22 +600,22 @@ curl http://localhost:8080/api/epc/ues/001010000000010
 ## コマンドラインで動かす
 
 ```sh
-docker compose --profile volte rm -sf volte-a volte-b
-docker compose run --rm volte-b answer -epc http://172.28.0.80:8080 \
+docker compose --profile volte rm -sf volte10 volte12
+docker compose run --rm volte12 answer -epc http://172.28.0.80:8080 \
   -impi 001010000000012@ims.mnc001.mcc001.3gppnetwork.org \
   -impu sip:001010000000012@ims.mnc001.mcc001.3gppnetwork.org \
   -k fec86ba6eb707ed08905757b1bb44b8f -opc 1006020f0a478bf6b699f15c062e42b3 \
-  -received-out /captures/volte-b-received.amr
-docker compose run --rm volte-a call -epc http://172.28.0.80:8080 \
+  -received-out /captures/volte12-received.amr
+docker compose run --rm volte10 call -epc http://172.28.0.80:8080 \
   -impi 001010000000010@ims.mnc001.mcc001.3gppnetwork.org \
   -impu sip:001010000000010@ims.mnc001.mcc001.3gppnetwork.org \
   -k 465b5ce8b199b49faa5f0a2ee238a6bc -opc cd63cb71954a9f4e48a5994e37a02baf \
-  -sent-out /captures/volte-a-sent.amr tel:+12025550112
+  -sent-out /captures/volte10-sent.amr tel:+12025550112
 ```
 
 - `-epc` で attach し、`-k` と `-opc` で IMS-AKA を使います。
 - `-codecs` で offer のコーデックを選べます。`-no-preconditions` はプリコンディションを使いません。
-- 1 行目は、プロファイルの UE を止めます。この 2 つのコマンドと volte-a、volte-b のアドレスが同じだからです。volte-b と volte-a は別々の端末で動かします。SIPp を IMS-AKA で登録するコマンドは手順書にあります。
+- 1 行目は、プロファイルの UE を止めます。この 2 つのコマンドと volte10、volte12 のアドレスが同じだからです。volte12 と volte10 は別々の端末で動かします。SIPp を IMS-AKA で登録するコマンドは手順書にあります。
 
 > 手順書 [「コマンドラインで」](../../../docs/guide/ja/volte.md#コマンドラインで)。フラグの一覧は手順書の表にあります。
 
@@ -664,9 +664,9 @@ docker compose run --rm volte-a call -epc http://172.28.0.80:8080 \
 
 1. 401 の nonce を base64 で戻し、MAA の SIP-Authenticate と比べます。AUTN の中の AMF はどこにありますか。
 2. 着信側の通話の AAR の `Flow-Description` を読み、どの 2 つのアドレスの間のフローかを言います。
-3. volte-b の 180 と、UPDATE への 200 のフレームの番号を比べます。
+3. volte12 の 180 と、UPDATE への 200 のフレームの番号を比べます。
 4. 保留したあとの AAR で、両側の `Flow-Status` を読みます。
-5. volte-a から ue2 に発信します。answer のコーデックと、通話の AAR があるかを確かめます。
+5. volte10 から ue2 に発信します。answer のコーデックと、通話の AAR があるかを確かめます。
 6. bearer を解放したあとの BYE を探し、誰が送ったか、Reason が何かを読みます。
 
 1 には、手順書の「認証ベクトルを手で確かめる」のコマンドを使います。同じ節で、2 回目の REGISTER の response をシェルで計算します。
@@ -681,8 +681,8 @@ docker compose run --rm volte-a call -epc http://172.28.0.80:8080 \
 2. UE（172.28.0.121）と中継ノード（172.28.0.50）の間です。もう一方の UE ではありません。
 3. 180 のほうがあとです。着信側は、mandatory のプリコンディションがすべてそろってから呼び出します。
 4. 発信側が ENABLED-UPLINK（0）、着信側が ENABLED-DOWNLINK（1）です。
-5. PCMU です。ue2 は attach していないので、ue2 の側には通話の AAR がありません。volte-a の側の AAR を探します。
-6. P-CSCF が `Reason: SIP;cause=503` で送ります。volte-a は自分では BYE を送りません。
+5. PCMU です。ue2 は attach していないので、ue2 の側には通話の AAR がありません。volte10 の側の AAR を探します。
+6. P-CSCF が `Reason: SIP;cause=503` で送ります。volte10 は自分では BYE を送りません。
 
 ---
 
@@ -706,7 +706,7 @@ docker compose run --rm volte-a call -epc http://172.28.0.80:8080 \
 1. ATTACH ACCEPT の PCO にある、識別子 000CH のコンテナからです（TS 24.229 L.2.2.1 の方法 II）。
 2. P-CSCF が取り除くからです。IK と CK はアソシエーションの鍵で、UE は自分の K と RAND から同じ鍵を計算するので、送る必要がありません。
 3. AUTN の MAC と SQN です。MAC が合えば、網が K を知っていることが分かります。
-4. SDP の answer を持ったときです。着信側では volte-b からの 183、発信側では volte-a へ向かう 183 です。
+4. SDP の answer を持ったときです。着信側では volte12 からの 183、発信側では volte10 へ向かう 183 です。
 5. 音声の bearer がそのセッションのメディアをすべて運んでいたので、PCRF が Rx のセッション全体を終えるからです。
 6. PCRF が信号の経路の AAR に 5065（IP-CAN_SESSION_NOT_AVAILABLE）で答え、P-CSCF はその UE をポリシー制御なしで扱います。
 
