@@ -373,11 +373,11 @@ func (c *IncomingCall) acceptPRACK(st *ServerTransaction) bool {
 	}
 	c.unacked = nil
 	close(c.pracked)
-	switch handler := c.onRequest; {
+	switch {
 	case len(req.Body) == 0:
 		c.ua.respondOwn(st, NewResponse(req, 200, ""))
-	case handler != nil:
-		go handler(r)
+	case c.onRequest != nil:
+		c.handOver(r)
 	case r.Offer:
 		c.ua.spawn(func() { r.Reject(488, append(c.ua.own(PRACK, true, nil), c.ua.noSessionChange())...) })
 	default:
