@@ -6,10 +6,12 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"net"
 	"net/netip"
 	"reflect"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/fiorix/go-diameter/v4/diam"
 	"github.com/fiorix/go-diameter/v4/diam/dict"
@@ -228,17 +230,7 @@ func TestPCRFPeer(t *testing.T) {
 // side, the internal one first, and refuses a configuration without an
 // I-CSCF.
 func TestStartIBCFListensOnBothSides(t *testing.T) {
-	c := config.IBCF{
-		SIP:         config.SIP{Listen: netip.MustParseAddrPort("127.0.0.1:5060"), Host: "ibcf." + domain},
-		ExternalSIP: config.SIP{Listen: netip.MustParseAddrPort("127.0.0.2:5060"), Host: "ibcf.nni.mnc001.example.net"},
-		ICSCF:       sip.URI{Scheme: "sip", Host: "icscf." + domain, Port: 5060},
-		TrGW:        config.TrGW{Control: "http://trgw:8080", CoreAddress: netip.MustParseAddr("192.0.2.91"), PeerAddress: netip.MustParseAddr("198.51.100.11")},
-		Peers: []ibcf.Peer{{
-			Profile:    interconnect.Profile{Name: "peer-b", Domain: "ims.mnc002.mcc001.3gppnetwork.org", Transports: []sip.Transport{sip.UDP}},
-			EntryPoint: "sip:ibcf.nni.mnc002.example.net:5060",
-			Sources:    []netip.Prefix{netip.MustParsePrefix("198.51.100.20/32")},
-		}},
-	}
+	c := ibcfConfig()
 	var started []config.SIP
 	// The transports listen on any free port: the test only looks at
 	// which side the IBCF asked for.
@@ -246,7 +238,7 @@ func TestStartIBCFListensOnBothSides(t *testing.T) {
 		started = append(started, s)
 		return sip.Listen("127.0.0.1:0", quiet())
 	}
-	b, err := startIBCF(domain, c, noNames{}, listen, quiet())
+	b, err := startIBCF(domain, c, ibcf.NewMemoryStore(), noNames{}, listen, quiet())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -256,11 +248,65 @@ func TestStartIBCFListensOnBothSides(t *testing.T) {
 	}
 	c.ICSCF = sip.URI{}
 	started = nil
-	if _, err := startIBCF(domain, c, noNames{}, listen, quiet()); err == nil {
+	if _, err := startIBCF(domain, c, ibcf.NewMemoryStore(), noNames{}, listen, quiet()); err == nil {
 		t.Error("an IBCF without an I-CSCF started")
 	}
 	if len(started) != 0 {
 		t.Errorf("an IBCF that did not start opened %d transports", len(started))
+	}
+}
+
+// TestIBCFStoreIsTheSharedStoreOfTheNode: with a store section of kind
+// valkey, the IBCF reads the records of its earlier process from that
+// server when it starts, so a server that cannot be reached keeps it
+// from starting. Without a store section the records are in the
+// process, and it starts.
+func TestIBCFStoreIsTheSharedStoreOfTheNode(t *testing.T) {
+	// An address where nothing listens: a port that was free a moment
+	// ago.
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	unreachable := l.Addr().String()
+	l.Close()
+
+	listen := func(config.SIP) (*sip.TransportLayer, error) { return sip.Listen("127.0.0.1:0", quiet()) }
+	for _, tt := range []struct {
+		name   string
+		store  *config.Store
+		starts bool
+	}{
+		{"no store section", nil, true},
+		{"memory", &config.Store{Kind: config.StoreMemory, Timeout: time.Second}, true},
+		{"valkey that cannot be reached", &config.Store{Kind: config.StoreValkey, Address: unreachable, Timeout: time.Second}, false},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			store, closeStore := ibcfStore(tt.store, quiet())
+			defer closeStore()
+			b, err := startIBCF(domain, ibcfConfig(), store, noNames{}, listen, quiet())
+			if err == nil {
+				b.Close()
+			}
+			if started := err == nil; started != tt.starts {
+				t.Errorf("the IBCF started: %v (error %v), want %v", started, err, tt.starts)
+			}
+		})
+	}
+}
+
+// ibcfConfig is the configuration of an IBCF with one peer.
+func ibcfConfig() config.IBCF {
+	return config.IBCF{
+		SIP:         config.SIP{Listen: netip.MustParseAddrPort("127.0.0.1:5060"), Host: "ibcf." + domain},
+		ExternalSIP: config.SIP{Listen: netip.MustParseAddrPort("127.0.0.2:5060"), Host: "ibcf.nni.mnc001.example.net"},
+		ICSCF:       sip.URI{Scheme: "sip", Host: "icscf." + domain, Port: 5060},
+		TrGW:        config.TrGW{Control: "http://trgw:8080", CoreAddress: netip.MustParseAddr("192.0.2.91"), PeerAddress: netip.MustParseAddr("198.51.100.11")},
+		Peers: []ibcf.Peer{{
+			Profile:    interconnect.Profile{Name: "peer-b", Domain: "ims.mnc002.mcc001.3gppnetwork.org", Transports: []sip.Transport{sip.UDP}},
+			EntryPoint: "sip:ibcf.nni.mnc002.example.net:5060",
+			Sources:    []netip.Prefix{netip.MustParsePrefix("198.51.100.20/32")},
+		}},
 	}
 }
 

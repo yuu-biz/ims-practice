@@ -65,7 +65,7 @@ type Store interface {
 // MemoryStore is a Store in the memory of one process. IBCF instances
 // in the same process may share one; one in a process of its own loses
 // the records with the process, and with them what ReleaseLeftovers
-// would find (doc.go). It never fails.
+// would find. It never fails.
 type MemoryStore struct {
 	mu sync.Mutex
 	// calls holds the records of each instance, by ID.

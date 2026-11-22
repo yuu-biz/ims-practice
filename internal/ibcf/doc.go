@@ -34,7 +34,9 @@
 // answered, as they are after each request within the call (TS 24.229
 // 5.10.2.2 step 2, 5.10.2.3, 5.10.3.2 step 2, 5.10.3.3). An instance
 // that starts again under the same name ends the calls of its earlier
-// process from those records (ReleaseLeftovers).
+// process from those records (ReleaseLeftovers). Only a Store outside
+// the process, such as the one of internal/kvstore/ibcfstore, outlives
+// the process; a MemoryStore goes with it.
 //
 // The IBCF counts what it lets across and what it turns away, per
 // peer, in the Registry of Config.Metrics (metrics.go).
@@ -44,13 +46,6 @@
 // earlier process (ReleaseLeftovers). It does not hear of a failure of
 // the TrGW, so a call whose TrGW context is lost goes on without media
 // until a party ends it.
-//
-// SIMPLIFIED: TS 24.229 5.10.2.4 and 5.10.3.4. The node gives the IBCF
-// a MemoryStore, in the memory of its process, and not the Store that
-// keeps the records outside it (internal/kvstore/ibcfstore). An IBCF
-// node that is recreated starts with an empty one, so it finds no record and ends none of the
-// calls of the process that stopped: their requests get 481 from it,
-// and their TrGW contexts stay reserved.
 //
 // SIMPLIFIED: TS 24.229 5.10.2.1, 5.10.3.1 and TS 29.165 5.3.1. Only the
 // non-roaming II-NNI is handled. A REGISTER does not cross (the border

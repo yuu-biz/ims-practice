@@ -32,6 +32,14 @@ func TestUnreadNamesEverySectionThatNoRoleReads(t *testing.T) {
 	}
 }
 
+// The IBCF keeps the records of its calls in the store of the node.
+func TestUnreadKeepsTheStoreOfAnIBCF(t *testing.T) {
+	cfg := Config{Store: &Store{Kind: StoreValkey, Address: "valkey:6379"}, IBCF: &IBCF{}}
+	if got := cfg.Unread(); len(got) != 0 {
+		t.Errorf("Unread() = %v, want none", got)
+	}
+}
+
 // The IBCF reads the pool of each side, for its Record-Route, but no role
 // reads transaction_timeout.
 func TestUnreadKeepsThePoolsOfTheIBCF(t *testing.T) {
