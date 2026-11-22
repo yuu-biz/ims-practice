@@ -156,8 +156,9 @@ func (e *fakeEngine) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				hostname = e.hostname
 			}
 			json.NewEncoder(w).Encode(map[string]any{
-				"Name":            "/lab-" + c.service + "-1",
-				"Config":          map[string]any{"Image": "lab/ims:dev", "Hostname": hostname, "Cmd": []string{"ims"}},
+				"Name": "/lab-" + c.service + "-1",
+				"Config": map[string]any{"Image": "lab/ims:dev", "Hostname": hostname, "Cmd": []string{"ims"},
+					"Labels": map[string]string{labelProject: "lab", labelService: c.service, labelNumber: fmt.Sprint(c.number)}},
 				"HostConfig":      map[string]any{"NetworkMode": "lab_ims", "RestartPolicy": map[string]any{"Name": "unless-stopped"}},
 				"NetworkSettings": map[string]any{"Networks": networks},
 			})
@@ -401,6 +402,13 @@ func TestDockerRecreateKeepsTheNameAndTheAddress(t *testing.T) {
 	made := e.remade[0]
 	if made["Image"] != "lab/ims:dev" || fmt.Sprint(made["Cmd"]) != "[ims]" || made["Hostname"] != "pcscf" {
 		t.Errorf("the new container = %v, want the configuration of the old one", made)
+	}
+	// The labels of Compose come with the configuration, so "docker
+	// compose ps" finds the new container as a container of the service,
+	// and a later fault finds it as a target.
+	labels, _ := made["Labels"].(map[string]any)
+	if labels[labelService] != "pcscf" || labels[labelProject] != "lab" {
+		t.Errorf("Labels = %v, want the service and the project of Compose", made["Labels"])
 	}
 	if host := made["HostConfig"].(map[string]any); fmt.Sprint(host["RestartPolicy"]) != "map[Name:unless-stopped]" {
 		t.Errorf("HostConfig = %v, want the restart policy of the old container", host)
