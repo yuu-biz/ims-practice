@@ -710,7 +710,7 @@ func (p *PCSCF) pathURI() string { return fmt.Sprintf("<sip:term@%s:%d;lr>", p.c
 // and answers 504 when none is left.
 func (p *PCSCF) forward(st *sip.ServerTransaction, out *sip.Message, targets []sip.Destination, log *slog.Logger) *sip.Message {
 	for _, target := range targets {
-		final, err := st.ProxyWith(out, target, func(resp *sip.Message) { crossBoundary(resp, responseToUE) })
+		final, err := st.ProxyWith(out, func(resp *sip.Message) { crossBoundary(resp, responseToUE) }, target)
 		switch {
 		case err != nil:
 			log.Warn("I-CSCF did not answer", "target", target.String(), "error", err.Error())

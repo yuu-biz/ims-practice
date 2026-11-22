@@ -116,8 +116,8 @@ func TestPhoneRetriesAFailedReregistration(t *testing.T) {
 		SentBy:  addr.String(),
 		Contact: contact.URI(),
 		OnCall:  line.Ring,
-		Locate: func(sip.URI) (sip.Destination, error) {
-			return sip.Destination{Transport: sip.UDP, Addr: pcscf.LocalAddr()}, nil
+		Locate: func(sip.URI) ([]sip.Destination, error) {
+			return []sip.Destination{{Transport: sip.UDP, Addr: pcscf.LocalAddr()}}, nil
 		},
 	}, ue.CallConfig{}), quiet())
 	if err != nil {

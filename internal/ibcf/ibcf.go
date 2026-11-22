@@ -189,7 +189,7 @@ func (b *IBCF) Listen(internal, external *sip.TransportLayer) error {
 	return nil
 }
 
-func (b *IBCF) newUA(transport *sip.TransportLayer, s side, locate func(sip.URI) (sip.Destination, error)) (*sip.UA, error) {
+func (b *IBCF) newUA(transport *sip.TransportLayer, s side, locate func(sip.URI) ([]sip.Destination, error)) (*sip.UA, error) {
 	var screen func(*sip.Message, sip.Destination) bool
 	if s.direction == interconnect.Entry {
 		screen = b.Screen
@@ -404,10 +404,10 @@ func (b *IBCF) peerOfNextHop(m *sip.Message) (Peer, bool) {
 // SIMPLIFIED: RFC 3263 4.2 and 4.3. Only the first target that DNS
 // gives for the peer is used, never the next one after a failure.
 // Every name in the DNS of this project leads to one server.
-func (b *IBCF) locateOutside(u sip.URI) (sip.Destination, error) {
+func (b *IBCF) locateOutside(u sip.URI) ([]sip.Destination, error) {
 	peer, ok := b.peers.ByHost(u.Host)
 	if !ok {
-		return ims.Destination(context.Background(), b.locator, u)
+		return ims.Targets(context.Background(), b.locator, u)
 	}
 	transport := peer.Profile.PreferredTransport()
 	if t, ok := u.Params.Get("transport"); ok && peer.Profile.AcceptsTransport(sip.Transport(strings.ToUpper(t))) {
@@ -415,20 +415,20 @@ func (b *IBCF) locateOutside(u sip.URI) (sip.Destination, error) {
 	}
 	targets, err := b.locator.Locate(context.Background(), u.Host, u.Port, transport)
 	if err != nil {
-		return sip.Destination{}, err
+		return nil, err
 	}
 	if len(targets) == 0 {
-		return sip.Destination{}, fmt.Errorf("ibcf: no address for %s", u)
+		return nil, fmt.Errorf("ibcf: no address for %s", u)
 	}
 	dst := targets[0]
 	dst.Transport = transport
-	return dst, nil
+	return []sip.Destination{dst}, nil
 }
 
 // locateInside is where a request of the internal UA goes in the home
 // network.
-func (b *IBCF) locateInside(u sip.URI) (sip.Destination, error) {
-	return ims.Destination(context.Background(), b.locator, u)
+func (b *IBCF) locateInside(u sip.URI) ([]sip.Destination, error) {
+	return ims.Targets(context.Background(), b.locator, u)
 }
 
 // border is the border with peer. A profile that does not fit the

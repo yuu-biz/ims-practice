@@ -313,6 +313,7 @@ Each item has a `SIMPLIFIED:` comment in the code; `grep -rn "SIMPLIFIED:" inter
 | SIP nodes, RFC 3263 4.2 and 4.3 | A request goes only to the first target that DNS gives. When that target fails, with a 503, a transport error or no response before Timer B or F, the request is not sent again to the next one. | Every name in the DNS of this project leads to one server, so there is no next target to try. |
 | SIP stack, RFC 3261 18.2.2 | A response is never sent to servers found with RFC 3263 5: neither when its connection cannot be opened again nor for a sent-by that is a domain name. A maddr for multicast is not handled. | Every sent-by here is an IP address or has a received parameter, and no node sends multicast. |
 | SIP stack, RFC 3261 18.3 | A request whose body is shorter than its Content-Length is dropped, not answered 400. | Only a broken peer sends one. |
+| SIP stack, RFC 3261 21.5.4 | A 503 with Retry-After does not keep other requests away from the server that sent it: each new request goes to the first target again. | No node of this project answers 503 with Retry-After. |
 
 ## Clean up
 

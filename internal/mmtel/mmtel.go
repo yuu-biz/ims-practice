@@ -144,8 +144,8 @@ func (as *AS) Listen(transport *sip.TransportLayer) error {
 		// The focus is the notifier of the conference event package (TS
 		// 24.147 5.3.3).
 		OnSubscribe: as.subscribe,
-		Locate: func(u sip.URI) (sip.Destination, error) {
-			return ims.Destination(context.Background(), as.locator, u)
+		Locate: func(u sip.URI) ([]sip.Destination, error) {
+			return ims.Targets(context.Background(), as.locator, u)
 		},
 	}, as.log)
 	if err != nil {

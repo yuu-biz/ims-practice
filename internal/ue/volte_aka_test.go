@@ -37,7 +37,7 @@ func newVoLTEParty(t *testing.T, pcscf netip.AddrPort, private, public, pass str
 		SentBy:  addr.String(),
 		Contact: p.contact.URI(),
 		OnCall:  func(ic *sip.IncomingCall) { p.calls <- ic },
-		Locate:  func(sip.URI) (sip.Destination, error) { return u.Load().Outbound(), nil },
+		Locate:  func(sip.URI) ([]sip.Destination, error) { return []sip.Destination{u.Load().Outbound()}, nil },
 	}, calls), quiet())
 	if err != nil {
 		t.Fatal(err)

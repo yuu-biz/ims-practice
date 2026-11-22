@@ -106,7 +106,7 @@ func (n *testNotifier) notifyLocked() *ClientTransaction {
 	if err != nil {
 		n.t.Fatal(err)
 	}
-	ct, err := n.stack.SendRequest(req, dst)
+	ct, err := n.stack.SendRequest(req, dst...)
 	if err != nil {
 		n.t.Fatal(err)
 	}
@@ -126,7 +126,7 @@ func subscriberUA(t *testing.T, n *testNotifier, r *SubscribeRequest) (*UA, chan
 		OnCall:  noCalls,
 		// Every request goes to the notifier, whatever its Route says,
 		// as if one proxy stood in between.
-		Locate: func(URI) (Destination, error) { return Destination{Transport: UDP, Addr: notifier}, nil },
+		Locate: func(URI) ([]Destination, error) { return []Destination{{Transport: UDP, Addr: notifier}}, nil },
 	}, testLogger(t))
 	if err != nil {
 		t.Fatal(err)

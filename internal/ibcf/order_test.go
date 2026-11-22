@@ -47,11 +47,11 @@ func TestPRACKGoesBeforeTheRequestThatFollowsIt(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		dst, err := p.a.names.locate(u)
+		targets, err := p.a.names.locate(u)
 		if err != nil {
 			t.Fatal(err)
 		}
-		ct, err := caller.SendRequest(req, dst)
+		ct, err := caller.SendRequest(req, targets...)
 		if err != nil {
 			t.Fatal(err)
 		}

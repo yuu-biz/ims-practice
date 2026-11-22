@@ -54,8 +54,8 @@ func newPartyTweaked(t *testing.T, pcscfAddr netip.AddrPort, private, public, pa
 		Contact: p.contact.URI(),
 		OnCall:  func(ic *sip.IncomingCall) { p.calls <- ic },
 		// Every request of the UE goes to its P-CSCF.
-		Locate: func(sip.URI) (sip.Destination, error) {
-			return sip.Destination{Transport: sip.UDP, Addr: pcscfAddr}, nil
+		Locate: func(sip.URI) ([]sip.Destination, error) {
+			return []sip.Destination{{Transport: sip.UDP, Addr: pcscfAddr}}, nil
 		},
 	}, calls)
 	tweak(&cfg)
@@ -198,8 +198,8 @@ func directCaller(t *testing.T, onCall func(ic *sip.IncomingCall, media *ue.Medi
 		SentBy:  callerAddr.String(),
 		Contact: callerContact.URI(),
 		OnCall:  func(ic *sip.IncomingCall) { ic.Reject(486) },
-		Locate: func(sip.URI) (sip.Destination, error) {
-			return sip.Destination{Transport: sip.UDP, Addr: calleeAddr}, nil
+		Locate: func(sip.URI) ([]sip.Destination, error) {
+			return []sip.Destination{{Transport: sip.UDP, Addr: calleeAddr}}, nil
 		},
 	}, ue.CallConfig{}), quiet())
 	if err != nil {
@@ -263,8 +263,8 @@ func TestCalleeSendsToTheStreamItAccepted(t *testing.T) {
 		SentBy:  callerTransport.LocalAddr().String(),
 		Contact: "sip:caller@" + callerTransport.LocalAddr().String(),
 		OnCall:  func(ic *sip.IncomingCall) { ic.Reject(486) },
-		Locate: func(sip.URI) (sip.Destination, error) {
-			return sip.Destination{Transport: sip.UDP, Addr: calleeAddr}, nil
+		Locate: func(sip.URI) ([]sip.Destination, error) {
+			return []sip.Destination{{Transport: sip.UDP, Addr: calleeAddr}}, nil
 		},
 	}, quiet())
 	if err != nil {

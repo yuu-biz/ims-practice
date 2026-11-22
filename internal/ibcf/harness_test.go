@@ -88,8 +88,8 @@ func (n *names) Locate(_ context.Context, host string, port int, transport sip.T
 	return []sip.Destination{{Transport: transport, Addr: addr}}, nil
 }
 
-func (n *names) locate(u sip.URI) (sip.Destination, error) {
-	return ims.Destination(context.Background(), n, u)
+func (n *names) locate(u sip.URI) ([]sip.Destination, error) {
+	return ims.Targets(context.Background(), n, u)
 }
 
 // capture is one message that a node of a network received.
@@ -368,15 +368,15 @@ func (f *fakeCSCF) onRequest(st *sip.ServerTransaction) {
 		}
 	}
 	u, err := sip.NextHop(out)
-	var dst sip.Destination
+	var targets []sip.Destination
 	if err == nil {
-		dst, err = f.names.locate(u)
+		targets, err = f.names.locate(u)
 	}
 	if err != nil {
 		st.Respond(sip.NewResponse(st.Request, 404, sip.NewTag()))
 		return
 	}
-	final, err := st.Proxy(out, dst)
+	final, err := st.Proxy(out, targets...)
 	ims.Finish(st, final, err)
 }
 
@@ -387,9 +387,9 @@ func (f *fakeCSCF) onACK(ack *sip.Message) {
 	if err != nil {
 		return
 	}
-	dst, err := f.names.locate(u)
+	targets, err := f.names.locate(u)
 	if stack, serr := f.stack.Get(); err == nil && serr == nil {
-		stack.SendACK(out, dst)
+		stack.SendACK(out, targets...)
 	}
 }
 
@@ -975,11 +975,11 @@ func (n *network) message(t *testing.T, requestURI, text string) *sip.Message {
 func (n *network) send(t *testing.T, req *sip.Message) *sip.Message {
 	t.Helper()
 	u, _ := sip.NextHop(req)
-	dst, err := n.names.locate(u)
+	targets, err := n.names.locate(u)
 	if err != nil {
 		t.Fatal(err)
 	}
-	ct, err := n.ue.Stack().SendRequest(req, dst)
+	ct, err := n.ue.Stack().SendRequest(req, targets...)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -40,7 +40,9 @@ func barredHarness(t *testing.T) (h *harness, calls <-chan string, pcscfUA *sip.
 			got <- c.Request.RequestURI
 			c.Reject(480)
 		},
-		Locate: func(sip.URI) (sip.Destination, error) { return sip.Destination{Transport: sip.UDP, Addr: scscf}, nil },
+		Locate: func(sip.URI) ([]sip.Destination, error) {
+			return []sip.Destination{{Transport: sip.UDP, Addr: scscf}}, nil
+		},
 	}, quiet())
 	if err != nil {
 		t.Fatal(err)

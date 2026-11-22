@@ -377,11 +377,11 @@ func openUE(log *slog.Logger, o options, line *ue.Line) (u *opened, err error) {
 		},
 		// TS 24.229 5.1.2A.1.1: every request of the UE goes to its
 		// P-CSCF, at the protected server port with IMS AKA.
-		Locate: func(sip.URI) (sip.Destination, error) {
+		Locate: func(sip.URI) ([]sip.Destination, error) {
 			if u := receiver.Load(); u != nil {
-				return u.Outbound(), nil
+				return []sip.Destination{u.Outbound()}, nil
 			}
-			return sip.Destination{Transport: sip.UDP, Addr: target}, nil
+			return []sip.Destination{{Transport: sip.UDP, Addr: target}}, nil
 		},
 	}, o.cfg.Calls), log)
 	if err != nil {

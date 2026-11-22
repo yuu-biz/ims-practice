@@ -314,25 +314,25 @@ func (s *SCSCF) routeTerminating(st *sip.ServerTransaction, out *sip.Message, d 
 // Request-URI (RFC 3261 16.6 steps 6 and 7). answer, when not nil, sees
 // each response before it goes back.
 func (s *SCSCF) forward(st *sip.ServerTransaction, out *sip.Message, answer func(*sip.Message), log *slog.Logger) {
-	dst, err := s.nextHop(out)
+	targets, err := s.nextHop(out)
 	if err != nil {
 		log.Warn("cannot route the request", "error", err.Error())
 		s.respond(st, 404, nil)
 		return
 	}
-	final, err := st.ProxyWith(out, dst, answer)
+	final, err := st.ProxyWith(out, answer, targets...)
 	if final != nil && answer != nil {
 		answer(final)
 	}
 	ims.Finish(st, final, err)
 }
 
-func (s *SCSCF) nextHop(m *sip.Message) (sip.Destination, error) {
+func (s *SCSCF) nextHop(m *sip.Message) ([]sip.Destination, error) {
 	u, err := sip.NextHop(m)
 	if err != nil {
-		return sip.Destination{}, err
+		return nil, err
 	}
-	return ims.Destination(context.Background(), s.resolver, u)
+	return ims.Targets(context.Background(), s.resolver, u)
 }
 
 // OnACK forwards the ACK for a 2xx along the dialog's route
@@ -356,9 +356,9 @@ func forwardACK(ref *ims.StackRef, own sip.URI, loc ims.Locator, ack *sip.Messag
 	sip.PopOwnRoute(out, own)
 	u, err := sip.NextHop(out)
 	if err == nil {
-		var dst sip.Destination
-		if dst, err = ims.Destination(context.Background(), loc, u); err == nil {
-			err = stack.SendACK(out, dst)
+		var targets []sip.Destination
+		if targets, err = ims.Targets(context.Background(), loc, u); err == nil {
+			err = stack.SendACK(out, targets...)
 		}
 	}
 	if err != nil && !errors.Is(err, sip.ErrStackClosed) {

@@ -202,8 +202,8 @@ func (n *pcc) newParty(addr netip.Addr, user string) *pccParty {
 		n.t.Skipf("cannot listen on %v, which the test gives the UE: %v", addr, err)
 	}
 	p.contact = "sip:" + user + "@" + tr.LocalAddr().String()
-	toPCSCF := func(sip.URI) (sip.Destination, error) {
-		return sip.Destination{Transport: sip.UDP, Addr: n.pcscfAddr}, nil
+	toPCSCF := func(sip.URI) ([]sip.Destination, error) {
+		return []sip.Destination{{Transport: sip.UDP, Addr: n.pcscfAddr}}, nil
 	}
 	p.ua, err = sip.NewUA(tr, sip.UAConfig{SentBy: tr.LocalAddr().String(), Contact: p.contact, Locate: toPCSCF,
 		OnCall: func(ic *sip.IncomingCall) { p.calls <- ic }}, quiet())

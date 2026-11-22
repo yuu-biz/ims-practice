@@ -160,11 +160,11 @@ func (s *SCSCF) sendRequest(m *sip.Message) (*sip.Message, error) {
 	if err != nil {
 		return nil, err
 	}
-	dst, err := s.nextHop(m)
+	targets, err := s.nextHop(m)
 	if err != nil {
 		return nil, err
 	}
-	ct, err := stack.SendRequest(m, dst)
+	ct, err := stack.SendRequest(m, targets...)
 	if err != nil {
 		return nil, err
 	}

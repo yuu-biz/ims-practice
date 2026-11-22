@@ -47,7 +47,9 @@ func (n *network) party(k int, hz float64) *party {
 	p.ua, err = sip.NewUA(tr, ue.UAConfig(sip.UAConfig{
 		SentBy: addr.String(), Contact: contact.URI(),
 		OnCall: func(ic *sip.IncomingCall) { p.calls <- ic },
-		Locate: func(sip.URI) (sip.Destination, error) { return sip.Destination{Transport: sip.UDP, Addr: n.pcscf}, nil },
+		Locate: func(sip.URI) ([]sip.Destination, error) {
+			return []sip.Destination{{Transport: sip.UDP, Addr: n.pcscf}}, nil
+		},
 	}, calls), quiet())
 	if err != nil {
 		n.t.Fatal(err)
@@ -463,7 +465,9 @@ func (n *network) phone(k int, hz float64) (*ue.Phone, *party) {
 	line := ue.NewLine(true)
 	p.ua, err = sip.NewUA(tr, ue.UAConfig(sip.UAConfig{
 		SentBy: addr.String(), Contact: contact.URI(), OnCall: line.Ring, OnOptions: line.Options,
-		Locate: func(sip.URI) (sip.Destination, error) { return sip.Destination{Transport: sip.UDP, Addr: n.pcscf}, nil },
+		Locate: func(sip.URI) ([]sip.Destination, error) {
+			return []sip.Destination{{Transport: sip.UDP, Addr: n.pcscf}}, nil
+		},
 	}, calls), quiet())
 	if err != nil {
 		n.t.Fatal(err)
