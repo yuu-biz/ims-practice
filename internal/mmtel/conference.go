@@ -249,6 +249,7 @@ func (c *call) createConference() {
 	req := c.in.Request
 	if as.cfg.MRFC == "" || as.cfg.ConferenceDomain == "" {
 		c.log.Warn("conference refused: the AS has no MRFC or no subdomain for conference URIs")
+		c.noLeg()
 		c.in.Reject(503, as.warning("No media resources for conferences"))
 		return
 	}
@@ -267,6 +268,7 @@ func (c *call) createConference() {
 		if final != nil {
 			code = final.StatusCode
 		}
+		c.noLeg()
 		c.in.Reject(code, as.warning("No conference at the MRFC"))
 		return
 	}

@@ -44,11 +44,15 @@ type call struct {
 	// end of the caller's leg no longer cancels the leg to the callee.
 	answered atomic.Bool
 
-	mu sync.Mutex
-	// out is the outgoing leg the call goes on in. outReady is closed
-	// once there is one.
-	out      *sip.OutgoingCall
+	// outReady is closed once there is an outgoing leg, or once the AS
+	// knows that there will be none (noLeg); ready closes it, whichever
+	// comes first.
 	outReady chan struct{}
+	ready    sync.Once
+
+	mu sync.Mutex
+	// out is the outgoing leg the call goes on in.
+	out *sip.OutgoingCall
 	// pending is the reliable provisional response of out that carried
 	// the callee's offer: the caller's answer comes in its PRACK, which
 	// the AS sends on in the PRACK of pending (RFC 3262 5).
@@ -200,10 +204,16 @@ func (c *call) relay(inv sip.Invitation) {
 	c.finish(r)
 }
 
+// noLeg tells the requests of the caller within the dialog that the AS
+// sends no INVITE toward the callee after all, so that they get an
+// answer instead of waiting for a leg that never comes (fromCaller).
+func (c *call) noLeg() { c.ready.Do(func() { close(c.outReady) }) }
+
 // finish ends the INVITE of the caller after an attempt that did not
 // get the call answered: with the final response of the leg, or with a
 // response of the AS when the leg got none.
 func (c *call) finish(r attemptResult) {
+	c.noLeg()
 	switch {
 	case r.answered, r.cancelled:
 		// The call is over, or the UA has answered the CANCEL with 487.
@@ -273,12 +283,9 @@ func (c *call) attempt(inv sip.Invitation, noReply time.Duration) attemptResult 
 		return attemptResult{err: err}
 	}
 	c.mu.Lock()
-	first := c.out == nil
 	c.out = out
 	c.mu.Unlock()
-	if first {
-		close(c.outReady)
-	}
+	c.ready.Do(func() { close(c.outReady) })
 	c.log.Info("outgoing leg", "request_uri", inv.RequestURI, "call_id", out.Request.Get("Call-ID"))
 
 	// RFC 3261 9.1: when the caller's leg ends before the answer, however
@@ -752,6 +759,10 @@ func (c *call) fromCaller(r *sip.InDialogRequest) {
 		c.pending = nil
 	}
 	c.mu.Unlock()
+	if out == nil {
+		c.answerWithoutALeg(r)
+		return
+	}
 	if r.Request.Method == sip.PRACK && pending != nil {
 		// The PRACK with the caller's answer to the callee's offer goes
 		// on as the PRACK of the callee's response (RFC 3262 5).
@@ -760,6 +771,27 @@ func (c *call) fromCaller(r *sip.InDialogRequest) {
 		return
 	}
 	c.forward(r, out)
+}
+
+// answerWithoutALeg answers a request of the caller when the call never
+// got a leg for it to go on in: the AS gave the caller an early dialog
+// of its own, to play it an announcement before it rejects the INVITE
+// (announce). A request left unanswered would stay at the caller until
+// its transaction times out. The dialog is there, so an UPDATE does not
+// get 481, which would end it with the announcement (RFC 3261 12.2.1.2):
+// the AS keeps the session of the announcement, and refuses a new offer
+// with 488, in an UPDATE or in the PRACK of its reliable 183 (RFC 3262
+// 5), while an UPDATE without one changes nothing and gets 200.
+// Any other request gets 481, as there is no dialog to take it on.
+func (c *call) answerWithoutALeg(r *sip.InDialogRequest) {
+	switch {
+	case r.Offer:
+		r.Reject(488)
+	case r.Request.Method == sip.UPDATE:
+		r.Accept(sip.Body{})
+	default:
+		r.Reject(481)
+	}
 }
 
 // fromCallee is the handler of the requests of the callee within a
