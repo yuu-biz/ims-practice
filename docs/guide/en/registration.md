@@ -538,7 +538,7 @@ These parts of the specifications are left out or shortened. Each has a `SIMPLIF
 | UE, TS 24.229 5.1.1.2.1 | max-time and base-time of the retry delay are always the defaults of RFC 5626 4.5. | The network can provide them only through a management object of TS 24.167, which the UE does not have. |
 | HSS, TS 29.228 6.1.1.1 and 6.1.2.1 | One registration state per subscription, not per public identity. Some Server-Assignment-Type values are not handled. | Each test subscription is one implicit registration set, and the S-CSCF never sends the other values. |
 | HSS, TS 29.228 6.1.1.1 step 5 | No check that the user may register at all. | Every test user may register. |
-| User profile, TS 29.228 Annex E | One service profile, with no optional elements but the iFCs. | The test subscriptions need nothing more. |
+| User profile, TS 29.228 Annex E | One service profile. Of the optional elements, only the barring indication, the type of a public service identity and the iFCs. | The test subscriptions and PSI users need nothing more. |
 | HSS, TS 29.228 B.2.2 | Every subscription gets the iFCs of the configuration. Only the MSISDN in ServiceInfo differs. | No service of this project differs between users. |
 | HSS and S-CSCF, TS 23.228 4.3.3.4 and 4.2.7.2 | A public identity belongs to one private identity, so several UEs cannot share it. A request to a public identity goes to the one contact of its one registration: the S-CSCF never forks. | Each subscriber of this project has one UE. |
 | iFC, TS 29.228 B.2.3 and Annex E | No SessionDescription SPT, RegistrationType, ProfilePartIndicator, IncludeRegisterRequest or IncludeRegisterResponse. | The iFCs of SMS and of the MMTel AS need none of them. RegistrationType is optional for the S-CSCF. |

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"reflect"
 	"regexp"
+	"strings"
 	"testing"
 
 	"github.com/fiorix/go-diameter/v4/diam"
@@ -313,6 +314,36 @@ func TestUserProfileWithInitialFilterCriteria(t *testing.T) {
 		InitialFilterCriteria: []ifc.InitialFilterCriteria{want.InitialFilterCriteria[0], want.InitialFilterCriteria[0]}}
 	if _, err := ParseUserProfile(broken.Marshal()); err == nil {
 		t.Error("a profile with two criteria of the same priority was accepted")
+	}
+}
+
+// TestUserProfileOfAPSIUser checks that a public service identity that
+// matches a wildcarded PSI carries IdentityType 2 (WILDCARDED_PSI) and
+// the wildcarded PSI in an Extension after its Identity, as
+// tPublicIdentity and tPublicIdentityExtension of TS 29.228 Table E.2
+// order them, and that a public user identity has no Extension, which
+// makes it a distinct one (B.2.1).
+func TestUserProfileOfAPSIUser(t *testing.T) {
+	want := UserProfile{PrivateIdentity: "conference@" + realm,
+		PublicIdentities: []string{"sip:conf-7f3a@conf." + realm},
+		WildcardedPSI:    "sip:!.*!@conf." + realm}
+	data := want.Marshal()
+	if !regexp.MustCompile(`<PublicIdentity><Identity>sip:conf-7f3a@conf\.[^<]*</Identity><Extension><IdentityType>2</IdentityType><WildcardedPSI>sip:!\.\*!@conf\.[^<]*</WildcardedPSI></Extension></PublicIdentity>`).Match(data) {
+		t.Errorf("User-Data does not type the identity as one of a wildcarded PSI:\n%s", data)
+	}
+	got, err := ParseUserProfile(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("got %+v, want %+v", got, want)
+	}
+	user := UserProfile{PrivateIdentity: impi, PublicIdentities: []string{impu}}.Marshal()
+	if strings.Contains(string(user), "Extension") {
+		t.Errorf("a public user identity has an Extension:\n%s", user)
+	}
+	if got, err := ParseUserProfile(user); err != nil || got.WildcardedPSI != "" {
+		t.Errorf("a public user identity came back with wildcarded PSI %q, error %v", got.WildcardedPSI, err)
 	}
 }
 
