@@ -1,12 +1,12 @@
 ---
 title: 音声通話の流れ
-footer: ims-practice 勉強会 3. 通話
+footer: ims-practice 勉強会 4. 通話
 lang: ja
 ---
 
 # 音声通話の流れ
 
-ims-practice 勉強会 第 3 回（中継ノードを通る通話と、その途中のプリコンディションと MMTel AS）
+ims-practice 勉強会 第 4 回（中継ノードを通る通話と、その途中のプリコンディションと MMTel AS）
 
 ---
 
