@@ -282,7 +282,7 @@ curl -X DELETE http://localhost:8080/api/epc/network-initiated/ues/0010100000000
 #7885 EPC -> volte-b    DEACTIVATE EPS BEARER CONTEXT REQUEST
 ```
 
-音声の bearer がセッションのメディアをすべて運んでいたので、PCRF は失ったフローを RAR で知らせるのではなく ASR で Rx のセッション全体を終えます（TS 29.214 4.4.6.1、4.4.6.2）。P-CSCF は ASR に答え、STR でセッションを終え、自分で通話を解放します。served user の名前で相手側に BYE を送り、このプロジェクトでは served user の UE にも BYE を送ります（TS 24.229 5.2.8.1.2、IR.92 2.4.2.3）。BYE は、P-CSCF が `Store` の後ろに保存したダイアログの情報（Contact、タグ、CSeq、経路）から作ります。volte-a は自分では BYE を送りません。volte-b の通話が終わると、その P-CSCF が volte-b の Rx のセッションを終え、スタブが volte-b の bearer も解放します。
+音声の bearer がセッションのメディアをすべて運んでいたので、PCRF は失ったフローを RAR で知らせるのではなく ASR で Rx のセッション全体を終えます（TS 29.214 4.4.6.1、4.4.6.2）。P-CSCF は ASR に答え、STR でセッションを終え、自分で通話を解放します。served user の名前で相手側に BYE を送り、このプロジェクトでは served user の UE にも BYE を送ります（TS 24.229 5.2.8.1.2、IR.92 2.4.2.3）。BYE は、P-CSCF が `Store` の後ろに保存したダイアログの情報（Contact、タグ、CSeq、経路）から作ります。P-CSCF は 2 つの BYE に応答が来るまでダイアログを残し、その間にどちらかの側がダイアログの中で送った要求には、自分で 481 を返します（TS 24.229 5.2.8.1.3）。volte-a は自分では BYE を送りません。volte-b の通話が終わると、その P-CSCF が volte-b の Rx のセッションを終え、スタブが volte-b の bearer も解放します。
 
 通話に答える前に bearer を失うこともあります。そのとき P-CSCF は INVITE をあきらめ、発信側に 500 を返し、着信側への INVITE を 503 を示す Reason 付きの CANCEL で取り消します（TS 24.229 5.2.8.1.1）。着信側が CANCEL を受け取る直前に 200 を返していると、200 は CANCEL と行き違います（RFC 3261 9.1）。発信側は 500 を受け取っていてこの 200 を見ないので、P-CSCF が発信側の名前で、200 とその送り直しのそれぞれに ACK を送ります。そのあとで P-CSCF は上と同じ形の BYE を着信側に送り、200 で確立したダイアログを解放します（5.2.8.1.2）。
 
@@ -524,7 +524,7 @@ docker compose run --rm --entrypoint sipp peer -sf /etc/sipp/register-aka.xml -m
 | P-CSCF、TS 29.214 A.1 | AF-Application-Identifier を送るのは着信側の P-CSCF だけ。 | 発信側は Feature-Caps から取るが、それを書くノードが無い。 |
 | P-CSCF、TS 29.214 4.4.2 | サービスの情報の変更を断られても、ログに書くだけ。 | そのときには相手がもう答えている。TS 24.229 が断られた資源を扱うのは最初の INVITE だけ。 |
 | P-CSCF、TS 29.214 A.3 | 分岐した INVITE の早期ダイアログを区別しない。 | S-CSCF は分岐しない。 |
-| P-CSCF、TS 24.229 5.2.8.1.1、5.2.8.1.2 | メディアを取り除く SIP のメッセージを待たずに、すぐに解放する。信号を失った UE のほかのセッションは、それぞれの事象に任せる。BYE を送った時点でダイアログを忘れる。 | 通話ごとに音声のストリームは 1 本で、P-CSCF は UE ごとのダイアログの索引を持たない。 |
+| P-CSCF、TS 24.229 5.2.8.1.1、5.2.8.1.2 | メディアを取り除く SIP のメッセージを待たずに、すぐに解放する。信号を失った UE のほかのセッションは、それぞれの事象に任せる。 | 通話ごとに音声のストリームは 1 本で、P-CSCF は UE ごとのダイアログの索引を持たない。 |
 | P-CSCF、TS 24.229 5.2.8.1.2 | 確立した通話が資源を失ったとき、bearer を失ったことに served user の UE が自分で気づくのを待たない。この節は相手側にだけ BYE を送るが、P-CSCF は相手側の名前で UE にも BYE を送る。 | 網が音声の bearer だけを解放したあとも、UE には信号の経路が残っているため。bearer を失ったことに対処しない UE は、BYE が来なければ、網が終えた通話にとどまってしまう。 |
 | P-CSCF、TS 24.229 5.2.8.1.4、5.2.8.3 | P-CSCF を通る BYE なしに終わったダイアログは `Store` に残る。 | 利用者ごとのダイアログの索引か、P-CSCF のセッションタイマーが要る。 |
 | P-CSCF、RFC 3264、RFC 3262 | SDP の無い INVITE と re-INVITE には、中継のコンテキストも許可も無い。 | UE シミュレータはいつも INVITE で offer する。 |

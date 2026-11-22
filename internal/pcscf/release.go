@@ -23,7 +23,8 @@ import (
 // (TS 29.214 4.4.6.1, 4.4.6.2). The P-CSCF then ends the session.
 //
 // An event may come twice, or cross the BYE of a UE. The dialog is then
-// gone from the Store, and the event changes nothing. An event that the
+// released already or gone from the Store, and the event changes
+// nothing. An event that the
 // PCRF sends at once after the answer in which it authorised the
 // session, such as a failed allocation for a UE that has no event
 // stream open to the EPC stub, may also arrive before the P-CSCF has
@@ -81,7 +82,7 @@ func (p *PCSCF) PolicyEvent(e policy.Event) {
 }
 
 // release ends the dialog of key from the P-CSCF. A dialog that is gone
-// has been ended already.
+// has been ended already, and a Released one is being ended.
 //
 // While the INVITE is still on its way, the P-CSCF answers it 500 and
 // cancels it towards the callee (TS 24.229 5.2.8.1.1). Once the dialog
@@ -109,7 +110,7 @@ func (p *PCSCF) release(key DialogKey, log *slog.Logger) {
 		log.Warn("the dialog is not released: the store failed", "call_id", key.CallID, "error", err.Error())
 		return
 	}
-	if !ok {
+	if !ok || d.Released {
 		return
 	}
 	if d.ReleasePending {
@@ -120,21 +121,24 @@ func (p *PCSCF) release(key DialogKey, log *slog.Logger) {
 	p.releaseNow(key, log)
 }
 
-// releaseNow is release once the BYEs may go out.
-//
-// SIMPLIFIED: TS 24.229 5.2.8.1.2, last paragraph, and 5.2.8.1.3. The
-// P-CSCF forgets the dialog when it sends its BYEs, not when they are
-// answered, so a request that a party sends in the dialog afterwards is
-// forwarded like one of a dialog the P-CSCF does not keep, where it
-// should be answered 481. The other party, which has the P-CSCF's BYE
-// or is about to get it, ends the dialog all the same (RFC 3261 15.1.2).
+// releaseNow is release once the BYEs may go out. It marks the dialog
+// Released, once however many events ask for it, and frees what the
+// dialog holds. The dialog stays in the Store until the release is over,
+// so that the P-CSCF answers a request within it 481 meanwhile (TS
+// 24.229 5.2.8.1.3, subsequent): until the BYEs are answered for a
+// confirmed dialog (sendBYEs), and until its INVITE has ended for an
+// early one (setup.end).
 func (p *PCSCF) releaseNow(key DialogKey, log *slog.Logger) {
-	d, ok, err := p.store.TakeDialog(context.Background(), key)
+	first := false
+	d, ok, err := p.store.UpdateDialog(context.Background(), key, func(d *Dialog) {
+		first = !d.Released
+		d.Released = true
+	})
 	if err != nil {
 		log.Warn("the dialog is not released: the store failed", "call_id", key.CallID, "error", err.Error())
 		return
 	}
-	if !ok {
+	if !ok || !first {
 		return
 	}
 	log = log.With("call_id", key.CallID)
@@ -146,8 +150,10 @@ func (p *PCSCF) releaseNow(key DialogKey, log *slog.Logger) {
 	default:
 		// An early dialog whose INVITE another P-CSCF instance forwards.
 		// The PCRF sends the events of a session to the instance that
-		// opened it, so this does not happen in practice.
+		// opened it, so this does not happen in practice. That INVITE
+		// goes on, so its dialog must not stay released.
 		log.Warn("cannot cancel an INVITE that this P-CSCF instance does not hold")
+		p.endDialog(key, d, log)
 	}
 	p.free(d, log)
 }
@@ -164,14 +170,26 @@ func (p *PCSCF) releaseNow(key DialogKey, log *slog.Logger) {
 // UE that does not act on the loss of that bearer would, without a BYE,
 // stay in a call that the network has ended. A UE that is gone leaves
 // that BYE unanswered.
+//
+// Once both BYEs have their answers, the P-CSCF deletes the dialog (the
+// last paragraph of 5.2.8.1.2). It does so after an answer other than
+// 2xx, or none, too: a UAC takes the dialog as ended after a 481, a 408
+// or a timeout of its BYE (RFC 3261 15.1.1), so nothing would delete it
+// later.
 func (p *PCSCF) sendBYEs(d Dialog, log *slog.Logger) {
-	p.sendBYE(releaseBYE(d, d.remote(), d.ue()), "the other party", log)
-	p.sendBYE(releaseBYE(d, d.ue(), d.remote()), "the served UE", log)
+	toRemote := p.sendBYE(releaseBYE(d, d.remote(), d.ue()), "the other party", log)
+	toUE := p.sendBYE(releaseBYE(d, d.ue(), d.remote()), "the served UE", log)
+	go func() {
+		logAnswer(toRemote, "the other party", log)
+		logAnswer(toUE, "the served UE", log)
+		p.endDialog(d.Key, d, log)
+	}()
 }
 
 // sendBYE sends bye, a BYE of TS 24.229 5.2.8.1.2 to the party that
-// what names, and logs its answer.
-func (p *PCSCF) sendBYE(bye *sip.Message, what string, log *slog.Logger) {
+// what names. It returns the client transaction of the BYE, or nil when
+// the BYE could not go out.
+func (p *PCSCF) sendBYE(bye *sip.Message, what string, log *slog.Logger) *sip.ClientTransaction {
 	targets, _, err := p.nextHop(bye)
 	var ref *ims.StackRef
 	if err == nil {
@@ -185,11 +203,11 @@ func (p *PCSCF) sendBYE(bye *sip.Message, what string, log *slog.Logger) {
 		var ct *sip.ClientTransaction
 		if ct, err = stack.SendRequest(bye, targets...); err == nil {
 			log.Info("released the dialog with a BYE", "to", what, "target", bye.RequestURI)
-			go logAnswer(ct, what, log)
-			return
+			return ct
 		}
 	}
 	log.Warn("could not send the BYE", "to", what, "error", err.Error())
+	return nil
 }
 
 // crossedCancel is RFC 3261 9.1 for a 2xx that crossed the CANCEL of an
@@ -239,7 +257,7 @@ func (s *setup) crossedCancel(resp *sip.Message, first bool) bool {
 		// such as a PRACK or an UPDATE in the early dialog (RFC 3261
 		// 12.2.1.1).
 		d.Caller.CSeq = max(inviteSeq, s.lastCallerSeq())
-		s.p.sendBYE(releaseBYE(d, &d.Callee, &d.Caller), "the callee", s.log)
+		go logAnswer(s.p.sendBYE(releaseBYE(d, &d.Callee, &d.Caller), "the callee", s.log), "the callee", s.log)
 	}
 	return true
 }
@@ -264,7 +282,12 @@ func (s *setup) lastCallerSeq() uint32 {
 	return s.callerSeq
 }
 
+// logAnswer logs the answer to the BYE of ct, once it has come or the
+// BYE has failed. A nil ct is a BYE that never went out.
 func logAnswer(ct *sip.ClientTransaction, what string, log *slog.Logger) {
+	if ct == nil {
+		return
+	}
 	for resp := range ct.Responses() {
 		if resp.StatusCode >= 200 {
 			log.Info("BYE answered", "to", what, "status", resp.StatusCode)

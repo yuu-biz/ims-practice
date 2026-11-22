@@ -72,11 +72,51 @@ func TestReleasedBearerEndsTheCallWithBYEs(t *testing.T) {
 	c.pcrf.waitReleased(t, "session-1")
 	c.relay.waitHeld(t, 0, time.Second)
 
-	// The dialog has gone, so the same event again releases nothing.
+	// The dialog has been released, so the same event again releases
+	// nothing.
 	c.p.PolicyEvent(event)
 	noRequest(t, "the other party", c.toFar)
 	noRequest(t, "the UE", c.toUE)
 	c.pcrf.waitReleased(t, "session-1")
+}
+
+// TestRequestWithinAReleasedDialogGets481 is TS 24.229 5.2.8.1.3: while
+// the BYEs of a release are unanswered, the P-CSCF answers a request
+// within the dialog 481 itself. Once they are answered, it deletes the
+// dialog (5.2.8.1.2).
+func TestRequestWithinAReleasedDialogGets481(t *testing.T) {
+	farAnswers := make(chan struct{})
+	c := newRawCallBeforeACK(t, farAnswers)
+	c.ack()
+	c.p.PolicyEvent(policy.Event{Session: "session-1", Kind: policy.ReleaseOfBearer})
+	if m := nextRequest(t, "the other party", c.toFar); m.Method != sip.BYE {
+		t.Fatalf("the other party got %s, want BYE", m.Method)
+	}
+	if m := nextRequest(t, "the UE", c.toUE); m.Method != sip.BYE {
+		t.Fatalf("the UE got %s, want BYE", m.Method)
+	}
+
+	// An UPDATE that the UE sent before its BYE arrived.
+	ct, err := c.ue.SendRequest(update(c.invite, false, c.farContact, "2", ueMedia),
+		sip.Destination{Transport: sip.UDP, Addr: c.pcscf.LocalAddr()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp := final(t, ct.Responses(), 3*time.Second); resp.StatusCode != 481 {
+		t.Errorf("UPDATE within the released dialog answered %d, want 481", resp.StatusCode)
+	}
+	noRequest(t, "the other party", c.toFar)
+
+	close(farAnswers)
+	key := DialogKey{CallID: c.invite.Get("Call-ID"), UETag: tagOf(c.invite.Get("From"))}
+	for deadline := time.Now().Add(3 * time.Second); ; time.Sleep(10 * time.Millisecond) {
+		if _, ok, _ := c.store.UpdateDialog(context.Background(), key, func(*Dialog) {}); !ok {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the dialog is still in the store after both BYEs were answered")
+		}
+	}
 }
 
 // TestTerminatedPolicySessionEndsTheCallWithoutARelease is TS 29.214
@@ -192,7 +232,7 @@ func TestMediaRefusedWithThe2xxEndsTheCallWithBYEs(t *testing.T) {
 // its ACK holds the BYEs back until the ACK has passed, so that they
 // cannot overtake the 200 and find the caller without a dialog.
 func TestReleaseWaitsForTheACKOfThe2xx(t *testing.T) {
-	c := newRawCallBeforeACK(t)
+	c := newRawCallBeforeACK(t, nil)
 	c.p.PolicyEvent(policy.Event{Session: "session-1", Kind: policy.FailedResourcesAllocation})
 	noRequest(t, "the other party before the ACK", c.toFar)
 	noRequest(t, "the UE before the ACK", c.toUE)
@@ -212,7 +252,7 @@ func TestReleaseWaitsForTheACKOfThe2xx(t *testing.T) {
 // once the callee would have given up waiting for it (RFC 3261
 // 13.3.1.4, 15).
 func TestReleaseGoesAheadWhenNoACKComes(t *testing.T) {
-	c := newRawCallBeforeACK(t)
+	c := newRawCallBeforeACK(t, nil)
 	c.p.ackWait = 100 * time.Millisecond
 	c.p.PolicyEvent(policy.Event{Session: "session-1", Kind: policy.FailedResourcesAllocation})
 	if m := nextRequest(t, "the other party", c.toFar); m.Method != sip.BYE {
@@ -260,7 +300,7 @@ func TestA2xxThatCrossesTheCancelIsAcknowledgedAndReleased(t *testing.T) {
 		}})
 	close(listening)
 	farContact := "sip:callee@" + far.LocalAddr().String()
-	ue, _ := answering(t, "ue", ueMedia)
+	ue, _ := answering(t, "ue", ueMedia, nil)
 	ueContact := "sip:001010000000001@" + ue.LocalAddr().String()
 	locate := locatorFunc(func(string) []sip.Destination {
 		return []sip.Destination{{Transport: sip.UDP, Addr: far.LocalAddr()}}
