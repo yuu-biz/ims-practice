@@ -37,6 +37,7 @@ import (
 	"github.com/yuu-biz/ims-practice/internal/kvstore"
 	"github.com/yuu-biz/ims-practice/internal/kvstore/ibcfstore"
 	"github.com/yuu-biz/ims-practice/internal/kvstore/kvjson"
+	"github.com/yuu-biz/ims-practice/internal/kvstore/pcscfstore"
 	"github.com/yuu-biz/ims-practice/internal/kvstore/scscfstore"
 	"github.com/yuu-biz/ims-practice/internal/mmtel"
 	"github.com/yuu-biz/ims-practice/internal/mrfc"
@@ -214,7 +215,7 @@ func run(configPath string, log *slog.Logger) error {
 			relay = agw.NewClient(c.MediaRelay)
 		}
 		roleLog := log.With("role", config.RolePCSCF)
-		p := pcscf.New(pc, resolver, pcscf.NewMemoryStore(), relay, roleLog)
+		p := pcscf.New(pc, resolver, pcscfStore(stores, roleLog), relay, roleLog)
 		// Without a PCRF in the diameter section the P-CSCF asks no
 		// policy control of the network. The PCRF serves
 		// the network the P-CSCF is in, so its realm is the node's own.
@@ -465,6 +466,16 @@ func (r roleStores) adapter(log *slog.Logger) (kvstore.Store, kvjson.Config, boo
 		return nil, kvjson.Config{}, false
 	}
 	return r.kv, kvjson.Config{Prefix: r.section.Prefix, Timeout: r.section.Timeout, Log: log}, true
+}
+
+// pcscfStore is where the P-CSCF keeps the IP association of each
+// registered UE, the dialogs of its calls and its table of security
+// associations (TS 24.229 5.2.2.1, 5.2.6.3, TS 33.203 7.1).
+func pcscfStore(stores roleStores, log *slog.Logger) pcscf.Store {
+	if kv, cfg, ok := stores.adapter(log); ok {
+		return pcscfstore.New(kv, cfg)
+	}
+	return pcscf.NewMemoryStore()
 }
 
 // scscfStore is where the S-CSCF keeps its registrar state: the

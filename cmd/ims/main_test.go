@@ -307,6 +307,11 @@ func TestRoleStoresAreTheSharedStoreOfTheNode(t *testing.T) {
 			_, _, err := scscfStore(s, quiet()).Registration(ctx, impi)
 			return err
 		}},
+		{config.RolePCSCF, func(s roleStores) error {
+			ue := sip.Destination{Transport: sip.UDP, Addr: netip.MustParseAddrPort("172.28.0.100:5060")}
+			_, _, err := pcscfStore(s, quiet()).Association(ctx, ue)
+			return err
+		}},
 	}
 	for _, r := range roles {
 		for _, tt := range []struct {
