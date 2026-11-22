@@ -7,6 +7,7 @@ import (
 	"net/netip"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -452,6 +453,9 @@ type ServerTransaction struct {
 	cancelled chan struct{}
 	// cancel is the CANCEL, set before cancelled is closed.
 	cancel *Message
+	// final is the status code of the last final response passed to
+	// Respond.
+	final atomic.Int32
 }
 
 // Cancelled is closed when a CANCEL for this INVITE arrives before its
@@ -475,8 +479,16 @@ func (st *ServerTransaction) CancelRequest() *Message { return st.cancel }
 // T2, until the ACK reaches Config.OnACK (RFC 6026 8.1, which replaces
 // RFC 3261 13.3.1.4).
 func (st *ServerTransaction) Respond(resp *Message) error {
+	if resp.StatusCode >= 200 {
+		st.final.Store(int32(resp.StatusCode))
+	}
 	return st.stack.post(respond{entry: st.entry, response: resp.Clone()})
 }
+
+// FinalStatus is the status code of the last final response that the TU
+// passed to Respond, or 0 while it has passed none, so that a TU can
+// count how its requests ended.
+func (st *ServerTransaction) FinalStatus() int { return int(st.final.Load()) }
 
 // stackInput is what the reader, the timers, and the TU hand to the
 // loop.
