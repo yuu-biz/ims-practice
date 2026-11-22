@@ -44,10 +44,7 @@ fail=0
 # URI of "ue call", as the flag package stops at the first argument.
 docker compose run --no-deps -d --name ims-practice-ue2-call ue2 answer "${ue2[@]}" \
 	--ring 1s --tone 5s --received-out /captures/ue2-received.raw --wav-out /captures/ue2-received.wav >/dev/null
-for i in $(seq 1 20); do
-	grep -q '"msg":"waiting for a call"' <<<"$(docker logs ims-practice-ue2-call 2>/dev/null)" && break
-	sleep 1
-done
+wait_log ims-practice-ue2-call '"msg":"waiting for a call"' || fail=1
 if docker compose run --no-deps --rm ue call --tone 3s --sent-out /captures/ue1-sent.raw tel:+1-202-555-0102; then
 	echo "ok   UE 1 called UE 2 by number"
 else
@@ -65,12 +62,9 @@ docker rm ims-practice-ue2-call >/dev/null
 
 # A busy callee, then one that is not registered at all.
 docker compose run --no-deps -d --name ims-practice-ue2-busy ue2 answer "${ue2[@]}" --reject 486 >/dev/null
-for i in $(seq 1 20); do
-	grep -q '"msg":"waiting for a call"' <<<"$(docker logs ims-practice-ue2-busy 2>/dev/null)" && break
-	sleep 1
-done
-# The UE exits 1 when the call fails, which is expected here; the log
-# says how it failed.
+wait_log ims-practice-ue2-busy '"msg":"waiting for a call"' || fail=1
+# The UE exits 1 when the call fails, which is expected in this call
+# and the two after it, hence "|| true"; the log says how it failed.
 out="$(docker compose run --no-deps --rm ue call sip:+12025550102@ims.mnc001.mcc001.3gppnetwork.org 2>/dev/null || true)"
 if grep -q '"call failed: 486 ' <<<"$out"; then
 	echo "ok   busy callee answered 486"
@@ -78,14 +72,14 @@ else
 	echo "FAIL busy callee"
 	fail=1
 fi
-timeout 60 docker wait ims-practice-ue2-busy >/dev/null || true
-docker rm ims-practice-ue2-busy >/dev/null
+if ! timeout 60 docker wait ims-practice-ue2-busy >/dev/null; then
+	echo "FAIL UE 2 did not end within 60 s of turning the call down"
+	fail=1
+fi
+docker rm -f ims-practice-ue2-busy >/dev/null
 # No answer: UE 2 rings for longer than UE 1 waits, so UE 1 cancels.
 docker compose run --no-deps -d --name ims-practice-ue2-ring ue2 answer "${ue2[@]}" --ring 30s >/dev/null
-for i in $(seq 1 20); do
-	grep -q '"msg":"waiting for a call"' <<<"$(docker logs ims-practice-ue2-ring 2>/dev/null)" && break
-	sleep 1
-done
+wait_log ims-practice-ue2-ring '"msg":"waiting for a call"' || fail=1
 out="$(docker compose run --no-deps --rm ue call --give-up-after 2s tel:+12025550102 2>/dev/null || true)"
 if grep -q '"call failed: 487 ' <<<"$out"; then
 	echo "ok   unanswered call cancelled with 487"
@@ -110,10 +104,10 @@ pjsua=(--null-audio --no-tcp --local-port 5060
 	--username +12025550104@ims.mnc001.mcc001.3gppnetwork.org --password test-password-4
 	"--outbound=sip:pcscf.ims.mnc001.mcc001.3gppnetwork.org:5060;lr")
 pjsua_registered() {
-	local since="$1" i registered
+	local since="$1" i
 	for i in $(seq 1 20); do
-		registered="$(grep '"msg":"registered"' <<<"$(docker compose logs --no-color --since "$since" scscf 2>/dev/null)" || true)"
-		grep -q '+12025550104@' <<<"$registered" && return 0
+		# The S-CSCF logs the identity after the message.
+		grep -q '"msg":"registered".*+12025550104@' <<<"$(docker compose logs --no-color --since "$since" scscf 2>/dev/null)" && return 0
 		sleep 1
 	done
 	return 1
@@ -133,10 +127,7 @@ fi
 docker rm -f ims-practice-pjsua-answer >/dev/null
 
 docker compose run --no-deps -d --name ims-practice-ue2-pjsua ue2 answer "${ue2[@]}" --ring 500ms --tone 4s >/dev/null
-for i in $(seq 1 20); do
-	grep -q '"msg":"waiting for a call"' <<<"$(docker logs ims-practice-ue2-pjsua 2>/dev/null)" && break
-	sleep 1
-done
+wait_log ims-practice-ue2-pjsua '"msg":"waiting for a call"' || fail=1
 docker compose run --no-deps -d -T --name ims-practice-pjsua-call peer "${pjsua[@]}" --duration 2 	sip:+12025550102@ims.mnc001.mcc001.3gppnetwork.org >/dev/null
 # The log is read whole before grep -q looks at it. Piped, grep -q exits
 # at the first match, docker logs dies writing the rest (SIGPIPE), and
@@ -147,6 +138,7 @@ if [ "$(timeout 60 docker wait ims-practice-ue2-pjsua)" = "0" ] &&
 else
 	echo "FAIL pjsua to UE 2"
 	docker logs ims-practice-ue2-pjsua 2>&1 | tail -n 15
+	# grep finds nothing when pjsua logged none of these lines.
 	docker logs ims-practice-pjsua-call 2>&1 | grep -iE "state changed|error|status|reason" | tail -n 15 || true
 	fail=1
 fi
@@ -161,10 +153,7 @@ if host_ue; then
 	rm -f e2e-out/host-sent.raw captures/ue2-host-received.raw
 	docker compose run --no-deps -d --name ims-practice-ue2-host ue2 answer "${ue2[@]}" \
 		--ring 500ms --tone 4s --received-out /captures/ue2-host-received.raw >/dev/null
-	for i in $(seq 1 20); do
-		grep -q '"msg":"waiting for a call"' <<<"$(docker logs ims-practice-ue2-host 2>/dev/null)" && break
-		sleep 1
-	done
+	wait_log ims-practice-ue2-host '"msg":"waiting for a call"' || fail=1
 	if "$host_ue_bin" call -pcscf 127.0.0.1:5060 -listen 127.0.0.1:0 -media-listen 127.0.0.1:0 \
 		-tone 3s -sent-out e2e-out/host-sent.raw tel:+1-202-555-0102 &&
 		[ "$(timeout 60 docker wait ims-practice-ue2-host)" = "0" ]; then
@@ -178,7 +167,6 @@ if host_ue; then
 	docker rm -f ims-practice-ue2-host >/dev/null
 fi
 same_nodes
-sleep 1
 
 pcap="$(docker compose exec -T capture sh -c 'ls -t /captures/ims-*.pcap | head -n 1' | tr -d '\r')"
 echo "reading $pcap"
@@ -199,6 +187,15 @@ agw=172.28.0.50
 mmtel=172.28.0.75
 domain=ims.mnc001.mcc001.3gppnetwork.org
 invite='sip.Method == "INVITE"'
+
+# The checks read the capture up to the BYE of the UE on the host, or,
+# when no UE ran on the host, up to the 480 of the call to the user who
+# is not registered.
+if [ -n "$host_called" ]; then
+	await "the BYE from the host" "sip.Method == \"BYE\" && ip.src == $gateway"
+else
+	await "the 480 to UE 1" "sip.Status-Code == 480 && ip.dst == $ue1"
+fi
 
 echo "call setup"
 expect "INVITE UE 1 -> P-CSCF with SDP" "$invite && ip.src == $ue1 && sip.Request-Line contains \"tel:+1-202-555-0102\" && sdp"
