@@ -35,7 +35,7 @@ CMR に応じたモードの切り替えを省くときは、`SIMPLIFIED:` に�
 
 UE は EVS の符号器を持たないので、送れるのは AMR-WB と AMR のフレームです。EVS のペイロードタイプを offer すると、EVS Primary のビットレートと帯域を示すことになります。EVS を offer する端末は、ビットレートの全範囲を扱える必要があります（TS 26.114 6.2.2.2 の Table 6.2a）。端末は最初の offer に `evs-mode-switch` を書けないので（同じ表）、AMR-WB IO だけで送ることも offer では示せません。AMR-WB IO しか送れない UE には、事実に合う EVS の offer を作れません。
 
-送れないレートと帯域を書いた SDP は、UE の能力を偽ります。仕様に合う端末はそういう offer をしません。このプロジェクトは実際の網で起きない動きを選ばないので（[AGENTS.md](../../AGENTS.md)）、NR のアクセスで使う offer にも EVS を入れず、AMR-WB と AMR で通話します。EVS を含む offer を受けたときは、UE は持っていない EVS を飛ばし、AMR-WB を選びます（TS 26.114 6.2.2.3 の Table 6.3）。
+送れないレートと帯域を書いた SDP は、UE の能力を偽ります。仕様に合う端末はそういう offer をしません。このプロジェクトは実際の網で起きない動きを選ばないので（[AGENTS.md](../../AGENTS.md)）、NR のアクセスで使う offer にも EVS を入れず、AMR-WB と AMR で通話します。EVS を含む offer を受けたときは、UE は持っていない EVS を断り、AMR-WB を選びます。answer の m= 行には offer にあるコーデックのうち、answer の側が送りも受けもできるものを書きます（RFC 3264 6.1）。端末は RFC 4867 と TS 26.445 のペイロード形式のオプションをすべて使えなくてもかまいませんが、どれも正しく受け入れるか断れる必要があります（TS 26.114 6.2.2.3 の最初の段落）。EVS を断って AMR-WB と AMR が残れば、AMR-WB を選びます（同じ節の Table 6.3）。
 
 TS 26.114 5.2.1.1 は端末に超広帯域の音声を求め、超広帯域には EVS が要ります。NG.114 は VoNR の UE に EVS を求めています。この 2 つを満たさないことは、`internal/sdp` の `VoNRCodecs` に `SIMPLIFIED:` で書きました。
 
