@@ -22,10 +22,29 @@ wait_seconds="${WAIT_SECONDS:-75}"
 fail=0
 docker compose up -d --build
 remember_nodes
-echo "waiting ${wait_seconds}s for CER/CEA and DWR/DWA"
-sleep "$wait_seconds"
+pcap="$(docker compose exec -T capture sh -c 'ls -t /captures/ims-*.pcap | head -n 1' | tr -d '\r')"
+echo "reading $pcap"
+
+hss=172.28.0.10
+icscf=172.28.0.20
+scscf=172.28.0.30
+pcscf=172.28.0.40
+pcrf=172.28.0.80
+cea_to() { echo "diameter.cmd.code == 257 && diameter.flags.request == 0 && diameter.Result-Code == 2001 && ip.dst == $1"; }
+dwa='diameter.cmd.code == 280 && diameter.flags.request == 0'
+sh_cea="diameter.cmd.code == 257 && diameter.flags.request == 0 && ip.src == $hss && diameter.Auth-Application-Id == 16777217"
+
+echo "waiting up to ${wait_seconds} s for CER/CEA and DWR/DWA"
+for node in $icscf $scscf $pcscf; do
+	await "the CEA to $node" "$(cea_to "$node")" 1 "$wait_seconds"
+done
+await "a CEA of the HSS advertising Sh" "$sh_cea" 1 "$wait_seconds"
+# A DWA answers a DWR, so two DWAs mean two DWRs as well.
+await "two DWAs" "$dwa" 2 "$wait_seconds"
 docker compose stop scscf
-sleep 2
+# The S-CSCF sends its DPR and gets the DPA before it exits (RFC 6733
+# 5.4), so they are on their way to the capture once stop returns.
+await "the DPA to the stopped S-CSCF" "diameter.cmd.code == 282 && diameter.flags.request == 0 && ip.dst == $scscf"
 same_nodes scscf
 
 # A node that is started again opens its connection anew, with a CER and
@@ -49,29 +68,16 @@ else
 	docker compose logs --no-color --since "$since" scscf | tail -n 20
 	fail=1
 fi
-sleep 1
+# The S-CSCF logs the open state once the CEA has come, so the CEA has
+# crossed the bridge; this is its second CEA.
+await "the CEA to the S-CSCF that started again" "$(cea_to "$scscf")" 2
 
-pcap="$(docker compose exec -T capture sh -c 'ls -t /captures/ims-*.pcap | head -n 1' | tr -d '\r')"
-echo "reading $pcap"
-
-# count is the number of frames that pass the filter, and at_least
-# checks that there are min or more. The checks here count frames, in
-# any order; e2e-mrf.sh has an at_least of its own that counts distinct
-# values of a field.
-count() {
-	local out
-	if ! out="$(docker compose exec -T capture tshark -r "$pcap" -Y "$1" 2>&1)"; then
-		echo "tshark failed on filter: $1" >&2
-		echo "$out" >&2
-		exit 2
-	fi
-	if [ -z "$out" ]; then echo 0; else printf '%s
-' "$out" | wc -l | tr -d ' '; fi
-}
-
+# at_least checks that min or more frames pass the filter. The checks
+# here count frames, in any order; e2e-mrf.sh has an at_least of its own
+# that counts distinct values of a field.
 at_least() {
 	local label="$1" filter="$2" min="$3" n
-	n="$(count "$filter")"
+	n="$(count "$filter")" || exit 2
 	if [ "$n" -ge "$min" ]; then
 		echo "ok   $label: $n"
 	else
@@ -80,25 +86,20 @@ at_least() {
 	fi
 }
 
-hss=172.28.0.10
-icscf=172.28.0.20
-scscf=172.28.0.30
-pcscf=172.28.0.40
-pcrf=172.28.0.80
 for node in $icscf $scscf $pcscf; do
 	at_least "CER from $node" "diameter.cmd.code == 257 && diameter.flags.request == 1 && ip.src == $node" 1
-	at_least "CEA 2001 to $node" "diameter.cmd.code == 257 && diameter.flags.request == 0 && diameter.Result-Code == 2001 && ip.dst == $node" 1
+	at_least "CEA 2001 to $node" "$(cea_to "$node")" 1
 done
 # The HSS speaks Cx (16777216) with the CSCFs and Sh (16777217) with
 # application servers, and advertises nothing else. The two are
 # adjacent, so a range finds any other one.
 none "CEA of the HSS advertising an application other than Cx and Sh" "diameter.cmd.code == 257 && diameter.flags.request == 0 && ip.src == $hss && (diameter.Auth-Application-Id < 16777216 || diameter.Auth-Application-Id > 16777217)"
-at_least "CEA of the HSS advertising Sh" "diameter.cmd.code == 257 && diameter.flags.request == 0 && ip.src == $hss && diameter.Auth-Application-Id == 16777217" 1
+at_least "CEA of the HSS advertising Sh" "$sh_cea" 1
 # The PCRF speaks Rx (16777236, TS 29.214 5.1) with the P-CSCF only.
 none "CEA of the PCRF advertising an application other than Rx" "diameter.cmd.code == 257 && diameter.flags.request == 0 && ip.src == $pcrf && diameter.Auth-Application-Id != 16777236"
 at_least "CEA of the PCRF advertising Rx to the P-CSCF" "diameter.cmd.code == 257 && diameter.flags.request == 0 && ip.src == $pcrf && ip.dst == $pcscf && diameter.Auth-Application-Id == 16777236" 1
 at_least "DWR" 'diameter.cmd.code == 280 && diameter.flags.request == 1' 2
-at_least "DWA" 'diameter.cmd.code == 280 && diameter.flags.request == 0' 2
+at_least "DWA" "$dwa" 2
 
 # The S-CSCF stopped and started again, in that order, so these checks
 # follow one another: expect takes the first frame after the one before.
