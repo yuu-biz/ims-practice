@@ -20,7 +20,7 @@ func TestAWriterThatStopsLeavesOnlyAMiss(t *testing.T) {
 	kv := kvstore.NewMemoryStore(nil)
 	s := pcscfstore.New(kv, kvjson.Config{})
 	a := pcscf.Association{Source: sip.Destination{Transport: sip.UDP, Addr: netip.MustParseAddrPort("192.0.2.10:5060")},
-		Contact: "sip:ue1@192.0.2.10:5060", Expires: time.Now().Add(time.Hour)}
+		Contact: "sip:ue1@192.0.2.10:5060", Expires: time.Now().Add(time.Hour), KeepUntil: time.Now().Add(time.Hour + time.Minute)}
 	s.PutAssociation(a)
 	refresh := a
 	refresh.Contact = "sip:ue1-new@192.0.2.10:5060"
