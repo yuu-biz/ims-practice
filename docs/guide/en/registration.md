@@ -451,6 +451,8 @@ rm ue.exe
 
 In the capture, the REGISTER arrives at the P-CSCF from the bridge gateway, 172.28.0.1, while its Via names `127.0.0.1`.
 
+The registration test of `scripts/e2e-registration.sh` ends with such a UE, wherever the machine can run the simulator of the container image, and reads its whole registration out of the capture: the REGISTER from the gateway, the `received` and `rport` that the P-CSCF wrote into the UE's Via, the 401 and the 200 OK, and the NOTIFY of the UE's own subscription, which finds its way back through the NAT as well.
+
 ## What this project simplifies
 
 These parts of the specifications are left out or shortened. Each has a `SIMPLIFIED:` comment in the code; `grep -rn "SIMPLIFIED:" internal cmd` lists them all.
