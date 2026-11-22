@@ -319,6 +319,15 @@ func (as *AS) joinConference(in *sip.IncomingCall, log *slog.Logger) {
 		in.Reject(code, as.warning("No conference at the MRFC"))
 		return
 	}
+	select {
+	case <-in.Done():
+		// The user cancelled while the MRFC set up the media, and has had
+		// its 487 (RFC 3261 9.2): the user never joins.
+		f.log.Info("the user cancelled before the focus answered", "user", user)
+		media.Bye()
+		return
+	default:
+	}
 	f.admit(in, &party{media: media}, final, user)
 }
 
