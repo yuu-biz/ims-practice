@@ -297,6 +297,33 @@ jobs:
           docker compose -f compose.yaml -f deploy/chaos/chaos.yaml -f deploy/chaos/agent.yaml
           down --rmi all -v --remove-orphans
 
+  # The scenario of e2e-call on the deployment whose P-CSCF controls the
+  # media relay over H.248 (deploy/h248), with the H.248 of those calls
+  # read out of the same capture. The script sets COMPOSE_FILE itself;
+  # the clean-up step needs the same files to find the containers.
+  e2e-h248:
+    runs-on: ubuntu-latest
+    needs: [changes, go]
+    if: needs.changes.outputs.code == 'true'
+    env:
+      COMPOSE_FILE: compose.yaml:deploy/h248/h248.yaml
+      COMPOSE_PATH_SEPARATOR: ":"
+    steps:
+      - uses: actions/checkout@v7
+      - run: scripts/e2e-h248.sh
+      - name: upload the capture and the recordings
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: h248-capture
+          path: |
+            captures/*.pcap
+            captures/*.wav
+          if-no-files-found: warn
+      - name: clean up
+        if: always()
+        run: docker compose --profile ue down --rmi all -v --remove-orphans
+
   # The scenarios of e2e-registration, e2e-call and e2e-sms on the
   # deployment whose roles keep the state of their users in the shared
   # store (deploy/redundancy). The scripts are the same: Compose reads
@@ -451,7 +478,7 @@ jobs:
   # skips count as passed.
   all-passed:
     runs-on: ubuntu-latest
-    needs: [changes, docs, go, web, web-oam, e2e, e2e-registration, e2e-call, e2e-dashboard, e2e-sms, e2e-volte, e2e-mmtel, e2e-mrf, e2e-interconnect, e2e-redundancy, e2e-fault, cloud, kustomize]
+    needs: [changes, docs, go, web, web-oam, e2e, e2e-registration, e2e-call, e2e-dashboard, e2e-sms, e2e-volte, e2e-mmtel, e2e-mrf, e2e-interconnect, e2e-h248, e2e-redundancy, e2e-fault, cloud, kustomize]
     if: always()
     steps:
       - name: no job failed or was cancelled
