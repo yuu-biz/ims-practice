@@ -55,7 +55,7 @@ A UE simulator registers with SIP Digest and calls another UE by its telephone n
 
 ## Get started
 
-Run these at the root of the repository, wait about 10 seconds, and register a UE:
+Run these at the root of the repository. After the first, wait until the I-CSCF and the S-CSCF have opened their Diameter connections to the HSS, up to a minute; then the second registers a UE:
 
 ```sh
 docker compose up -d --build

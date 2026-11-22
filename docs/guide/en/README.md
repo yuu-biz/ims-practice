@@ -33,7 +33,7 @@ docker compose up -d --build
 docker compose run --rm ue register --deregister-after 5s
 ```
 
-The first command starts the nodes and the capture. Before the second, wait about 10 seconds, until the I-CSCF and the S-CSCF have opened their Diameter connections to the HSS; `docker compose logs scscf | grep I-Open` prints a line once that has happened. The second command registers subscriber 1 and deregisters it 5 seconds later. Then open the newest file in `captures/` in Wireshark, as [Capture signaling and open it in Wireshark](capture.md) shows.
+The first command starts the nodes and the capture. Before the second, wait until the I-CSCF and the S-CSCF have opened their Diameter connections to the HSS. A node that starts before the HSS accepts connections tries again after 30 seconds (Tc, RFC 6733 2.1), so allow up to a minute. `docker compose logs scscf | grep I-Open` prints a line once that has happened. The second command registers subscriber 1 and deregisters it 5 seconds later. Then open the newest file in `captures/` in Wireshark, as [Capture signaling and open it in Wireshark](capture.md) shows.
 
 ## Clean up
 

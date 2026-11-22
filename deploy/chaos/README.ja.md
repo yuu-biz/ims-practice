@@ -90,7 +90,7 @@ docker compose run --rm ue register --deregister-after 2s
 deploy/chaos/fault.sh unpause hss
 ```
 
-フィルタ `diameter || sip.Status-Code >= 400` で見ます。I-CSCF が User-Authorization Request（UAR）を送りますが、答えがありません。I-CSCF は 5 秒で諦めて P-CSCF に 480 を返し、P-CSCF は UE に 504 Server Time-out を返します。そのあいだ、I-CSCF、S-CSCF、IP-SM-GW の Device-Watchdog Request（DWR）にも DWA が返りません。IP-SM-GW は接続を閉じ、HSS が戻ってから新しい接続を開きます（CER と CEA）。HSS は戻ったあとで、もう誰も待っていない UAA も送ります。
+フィルタ `diameter || sip.Status-Code >= 400` で見ます。I-CSCF が User-Authorization Request（UAR）を送りますが、答えがありません。I-CSCF は 5 秒で諦めて P-CSCF に 480 を返し、P-CSCF は UE に 504 Server Time-out を返します。そのあいだに I-CSCF、S-CSCF、IP-SM-GW が送る Device-Watchdog Request（DWR）にも、DWA が返りません。答えの無い DWR のあと、Tw の 30 秒がさらに 2 回過ぎると、ノードは接続を閉じます（RFC 3539 3.4.1）。これを見るには、HSS を 2 分ほど止めたままにします。HSS が戻ると、ノードは Tc の 30 秒以内に新しい接続を開きます（CER と CEA）。HSS は戻ったあとで、もう誰も待っていない UAA も送ります。
 
 ### 通話中にメディア中継ノードでパケットを失う
 
@@ -125,7 +125,7 @@ deploy/chaos/fault.sh partition scscf hss
 docker compose run --rm ue register --deregister-after 2s
 ```
 
-REGISTER には、5 秒後に 500 が返ります。S-CSCF が送った Multimedia-Auth Request（MAR）は、ダッシュボードにはあり、キャプチャにはありません。分断を 1 分ほどそのままにして、`docker compose logs hss` の `peer state` を読みます。RFC 3539（3.4）の監視（watchdog）が、接続を `OKAY` から `Pending` に移しています。`fault.sh clear scscf` のあと、S-CSCF は新しい接続を開き（SYN、CER、CEA）、次の登録は成功します。
+REGISTER には、5 秒後に 500 が返ります。S-CSCF が送った Multimedia-Auth Request（MAR）は、ダッシュボードにはあり、キャプチャにはありません。分断を 2 分ほどそのままにして、`docker compose logs hss` の `peer state` を読みます。RFC 3539（3.4）の監視（watchdog）が、Tw の 30 秒ごとに、接続を `OKAY` から `Pending`、`Suspect` へと移し、そのあと閉じます。`fault.sh clear scscf` のあと、S-CSCF は Tc の 30 秒以内に新しい接続を開き（SYN、CER、CEA）、そのあとの登録は成功します。
 
 ### 通話中に MMTel AS を凍らせる
 

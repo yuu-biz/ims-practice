@@ -33,7 +33,7 @@ docker compose up -d --build
 docker compose run --rm ue register --deregister-after 5s
 ```
 
-1 つ目のコマンドで、ノードとキャプチャが起動します。2 つ目を打つ前に、I-CSCF と S-CSCF が HSS への Diameter の接続を開くまで、10 秒ほど待ちます。接続ができると、`docker compose logs scscf | grep I-Open` が 1 行を表示します。2 つ目のコマンドは、加入者 1 を登録し、5 秒後に登録を解除します。そのあと、`captures/` のいちばん新しいファイルを Wireshark で開きます。開き方は[信号をキャプチャして Wireshark で開く](capture.md)にあります。
+1 つ目のコマンドで、ノードとキャプチャが起動します。2 つ目を打つ前に、I-CSCF と S-CSCF が HSS への Diameter の接続を開くまで待ちます。HSS が接続を受け付ける前に起動したノードは、30 秒後（Tc、RFC 6733 2.1）にもう一度つなぎに行くので、長くて 1 分ほどかかります。接続ができると、`docker compose logs scscf | grep I-Open` が 1 行を表示します。2 つ目のコマンドは、加入者 1 を登録し、5 秒後に登録を解除します。そのあと、`captures/` のいちばん新しいファイルを Wireshark で開きます。開き方は[信号をキャプチャして Wireshark で開く](capture.md)にあります。
 
 ## 片付け
 
