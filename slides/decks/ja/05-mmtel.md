@@ -230,13 +230,13 @@ func (n nonces) challenge(h http.Header, c Credential, stale bool) {
 ```sh
 docker compose up -d --build
 docker compose run --rm ue2 xcap \
-  --impi 001010000000002@ims.mnc001.mcc001.3gppnetwork.org \
-  --impu sip:+12025550102@ims.mnc001.mcc001.3gppnetwork.org \
-  --password test-password-2 set cfu on tel:+12025550103
+  -impi 001010000000002@ims.mnc001.mcc001.3gppnetwork.org \
+  -impu sip:+12025550102@ims.mnc001.mcc001.3gppnetwork.org \
+  -password test-password-2 set cfu on tel:+12025550103
 
 # UE 3 が着信を待つ
-docker compose run --rm ue3 answer --impi 001010000000003@ims.mnc001.mcc001.3gppnetwork.org \
-  --impu sip:+12025550103@ims.mnc001.mcc001.3gppnetwork.org --password test-password-3
+docker compose run --rm ue3 answer -impi 001010000000003@ims.mnc001.mcc001.3gppnetwork.org \
+  -impu sip:+12025550103@ims.mnc001.mcc001.3gppnetwork.org -password test-password-3
 docker compose run --rm ue call tel:+12025550102
 ```
 

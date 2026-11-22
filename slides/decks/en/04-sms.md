@@ -107,12 +107,12 @@ docker compose up -d --build
 
 # First terminal: UE 2 registers and stays registered.
 docker compose run --rm ue2 register \
-  --impi 001010000000002@ims.mnc001.mcc001.3gppnetwork.org \
-  --impu sip:+12025550102@ims.mnc001.mcc001.3gppnetwork.org \
-  --password test-password-2
+  -impi 001010000000002@ims.mnc001.mcc001.3gppnetwork.org \
+  -impu sip:+12025550102@ims.mnc001.mcc001.3gppnetwork.org \
+  -password test-password-2
 
 # Second terminal: UE 1 sends, and asks for a status report.
-docker compose run --rm ue sms --status-report +12025550102 "Hello UE-B, this is UE-A."
+docker compose run --rm ue sms -status-report +12025550102 "Hello UE-B, this is UE-A."
 ```
 
 - The flags come before the number and the text.
@@ -268,7 +268,7 @@ The filter is `gsm_sms.tp-mti == 2`.
 | Case | How to try it | What UE 1 gets |
 | --- | --- | --- |
 | The number has no subscriber | `ue sms +12025550198 "Nobody has this number."` | A submit report that is an RP-ERROR: RP-Cause 1, TP-FCS 0xC3. |
-| The recipient is not registered | `ue sms --status-report +12025550103 "Are you there?"` | A submit report that is an RP-ACK, then a status report with TP-ST 0x62. |
+| The recipient is not registered | `ue sms -status-report +12025550103 "Are you there?"` | A submit report that is an RP-ACK, then a status report with TP-ST 0x62. |
 
 - Put `docker compose run --rm` in front of the command.
 - In both, the SIP response is 202: the failure travels in the RP and TP layers.

@@ -69,12 +69,12 @@ docker compose up -d --build
 
 # 1 つ目の端末。UE 2 が着信を待つ。
 docker compose run --rm ue2 answer \
-  --impi 001010000000002@ims.mnc001.mcc001.3gppnetwork.org \
-  --impu sip:+12025550102@ims.mnc001.mcc001.3gppnetwork.org \
-  --password test-password-2 --wav-out /captures/ue2-heard.wav
+  -impi 001010000000002@ims.mnc001.mcc001.3gppnetwork.org \
+  -impu sip:+12025550102@ims.mnc001.mcc001.3gppnetwork.org \
+  -password test-password-2 -wav-out /captures/ue2-heard.wav
 
 # 2 つ目の端末。UE 1 が番号で発信し、3 秒のトーンを流して切る。
-docker compose run --rm ue call --tone 3s tel:+1-202-555-0102
+docker compose run --rm ue call -tone 3s tel:+1-202-555-0102
 ```
 
 - `captures/ue2-heard.wav` に、UE 2 が聞いた音声が残ります。
@@ -151,7 +151,7 @@ P-CSCF -> UE 2: INVITE (term) // 7
 | P-CSCF を出たあとの SDP | `c=` と `m=` が中継ノードを指す。 |
 
 - 網が信じるのは From ではなく P-Asserted-Identity です。UE が From に何を書いても関係ありません。
-- UE 1 には資源を確保するアクセス網が無いので、オファーは資源がもうあると伝えます。`--epc` を付けて起動した UE は VoLTE の UE で、PCMU より先に AMR-WB と AMR を提示します。その通話は VoLTE の回で追います。
+- UE 1 には資源を確保するアクセス網が無いので、オファーは資源がもうあると伝えます。`-epc` を付けて起動した UE は VoLTE の UE で、PCMU より先に AMR-WB と AMR を提示します。その通話は VoLTE の回で追います。
 
 > 手順書 [1](../../../docs/guide/ja/call.md#1-ue-1-が-invite-を送る) と [2](../../../docs/guide/ja/call.md#2-p-cscf-が発信者の-s-cscf-に送る)。TS 24.229 5.1.3.1、5.1.2A.1.1、6.1.2、5.2.6.2、5.2.6.3.3。RFC 3262 4。RFC 3312。RFC 3264 5.1。
 
@@ -305,7 +305,7 @@ UE 1 -> relay access (context 1) -> relay core (context 1)
 
 | 場合 | 試し方 | 終わり方 | 返すノード |
 | --- | --- | --- | --- |
-| 話中 | UE 2 を `--reject 486` 付きで起動する。 | 486 Busy Here | UE 2 |
+| 話中 | UE 2 を `-reject 486` 付きで起動する。 | 486 Busy Here | UE 2 |
 | 未登録 | `tel:+12025550103` に発信する。 | 480 Temporarily Unavailable | S-CSCF |
 | 存在しない番号 | `tel:+12025550199` に発信する。 | 404 Not Found | S-CSCF |
 

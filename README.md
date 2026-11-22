@@ -59,7 +59,7 @@ Run these at the root of the repository. After the first, wait until the I-CSCF 
 
 ```sh
 docker compose up -d --build
-docker compose run --rm ue register --deregister-after 5s
+docker compose run --rm ue register -deregister-after 5s
 ```
 
 [The guides](docs/guide/en/README.md) go on from there. Their first page gives the order to read them in, how to clean up, and what the Compose project starts.

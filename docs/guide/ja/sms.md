@@ -149,27 +149,27 @@ IP-SM-GW が Timer F（32 秒）のあいだに MESSAGE に応答しないか、
 
    ```sh
    docker compose run --rm ue2 register \
-     --impi 001010000000002@ims.mnc001.mcc001.3gppnetwork.org \
-     --impu sip:+12025550102@ims.mnc001.mcc001.3gppnetwork.org \
-     --password test-password-2
+     -impi 001010000000002@ims.mnc001.mcc001.3gppnetwork.org \
+     -impu sip:+12025550102@ims.mnc001.mcc001.3gppnetwork.org \
+     -password test-password-2
    ```
 
 3. 2 つ目の端末で、UE 1 からショートメッセージを送り、status report を頼みます。フラグは番号と本文より前に書きます。
 
    ```sh
-   docker compose run --rm ue sms --status-report +12025550102 "Hello UE-B, this is UE-A."
+   docker compose run --rm ue sms -status-report +12025550102 "Hello UE-B, this is UE-A."
    ```
 
    UE 1 は登録し、メッセージを送り、`"state":"accepted"` を付けた `"msg":"submit report"` をログに出します。続いて status report を待ち、`"status":0` を付けた `"msg":"status report"` を出して、登録を解除します。UE 2 は `"from":"+12025550101"` と `"text":"Hello UE-B, this is UE-A."` を付けた `"msg":"sms received"` をログに出します。
 
 4. UE 2 を Ctrl+C で止めます。UE 2 は登録を解除します。
 
-本文は GSM 7 ビットのアルファベットなら 160 文字まで、日本語のように UCS2 が要るなら 70 文字まで書けます。スクリプトは UCS2 のショートメッセージを逆の向きに、UE 2 から UE 1 へ送ります。1 つ目の端末で `docker compose run --rm ue register` を実行し、2 つ目の端末で `docker compose run --rm ue2 sms --impi ... --impu ... --password test-password-2 +12025550101 "こんにちは、UE-A さん"` を実行します。これより長い本文は何も送らずに断ります。
+本文は GSM 7 ビットのアルファベットなら 160 文字まで、日本語のように UCS2 が要るなら 70 文字まで書けます。スクリプトは UCS2 のショートメッセージを逆の向きに、UE 2 から UE 1 へ送ります。1 つ目の端末で `docker compose run --rm ue register` を実行し、2 つ目の端末で `docker compose run --rm ue2 sms -impi ... -impu ... -password test-password-2 +12025550101 "こんにちは、UE-A さん"` を実行します。これより長い本文は何も送らずに断ります。
 
 失敗の場合も試せます。どちらも、ほかの UE は要りません。
 
 - **番号が無い。** `docker compose run --rm ue sms +12025550198 "Nobody has this number."`。この番号を持つ加入者はいません。submit report は RP-ERROR になり、`ue sms` は `the SC refused the short message: RP-Cause 1, TP-FCS 0xc3` で終わります。
-- **受信者が登録していない。** `docker compose run --rm ue sms --status-report +12025550103 "Are you there?"`。加入者 3 は存在しますが、登録しません。SC はメッセージを受け付けますが、配達は 480 で失敗します。UE 1 は `"status":98`（TP-ST の 0x62）を付けた `"msg":"status report"` をログに出します。
+- **受信者が登録していない。** `docker compose run --rm ue sms -status-report +12025550103 "Are you there?"`。加入者 3 は存在しますが、登録しません。SC はメッセージを受け付けますが、配達は 480 で失敗します。UE 1 は `"status":98`（TP-ST の 0x62）を付けた `"msg":"status report"` をログに出します。
 
 同じことはダッシュボードでもできます。[ダッシュボードの手順書](dashboard.md) の「UE シミュレータを操作する」を見てください。UE のカードからショートメッセージを送れ、各 UE が送ったものと受けたものが一覧に出ます。MESSAGE の詳細には、デコードしたショートメッセージが表示されます。
 

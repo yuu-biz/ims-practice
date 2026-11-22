@@ -61,7 +61,7 @@ ims-practice 勉強会 第 2 回（SIP Digest での登録と、アプリケー�
 ```sh
 docker compose up -d --build
 docker compose logs scscf | grep I-Open        # Diameter の接続が開いたか
-docker compose run --rm ue register --deregister-after 5s
+docker compose run --rm ue register -deregister-after 5s
 ```
 
 起動してから、I-CSCF と S-CSCF が HSS との Diameter の接続を開くまで待ちます。HSS より先に起動したノードは 30 秒後（Tc）につなぎ直すので、長くて 1 分ほどです。
@@ -266,7 +266,7 @@ UE は Contact に `expires=0` を付けた REGISTER を送ります。
 
 | 場合 | 試し方 | 見どころ |
 | --- | --- | --- |
-| パスワードが誤っている | `ue register --password wrong-password` | 手順 8 までは同じ。S-CSCF は 403 を返し、AUTHENTICATION_FAILURE（9）の SAR を送る。 |
+| パスワードが誤っている | `ue register -password wrong-password` | 手順 8 までは同じ。S-CSCF は 403 を返し、AUTHENTICATION_FAILURE（9）の SAR を送る。 |
 | HSS から加入を削除する | ダッシュボードの Subscribers パネルで、登録中の加入を削除する。 | HSS が RTR を送る。Reason-Code は PERMANENT_TERMINATION（0）。UE には `event="rejected"` の NOTIFY が届く。 |
 
 - コマンドは `docker compose run --rm` に続けて書きます。

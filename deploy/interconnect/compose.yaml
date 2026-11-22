@@ -199,8 +199,8 @@ services:
         ipv4_address: 172.28.1.70
 
   # The UE simulators of network B, subscribers 1 and 2 of hss.yaml. Run
-  # them like ue and ue2, with the flags of network B: --domain, --impi,
-  # --impu, --password, --pcscf and --pcscf-uri, and --sc for "ue sms"
+  # them like ue and ue2, with the flags of network B: -domain, -impi,
+  # -impu, -password, -pcscf and -pcscf-uri, and -sc for "ue sms"
   # (see "Run it" in docs/guide/en/interconnect.md).
   peer-ue:
     <<: *peer-ue

@@ -107,12 +107,12 @@ docker compose up -d --build
 
 # 1 つ目の端末。UE 2 が登録したままで待つ。
 docker compose run --rm ue2 register \
-  --impi 001010000000002@ims.mnc001.mcc001.3gppnetwork.org \
-  --impu sip:+12025550102@ims.mnc001.mcc001.3gppnetwork.org \
-  --password test-password-2
+  -impi 001010000000002@ims.mnc001.mcc001.3gppnetwork.org \
+  -impu sip:+12025550102@ims.mnc001.mcc001.3gppnetwork.org \
+  -password test-password-2
 
 # 2 つ目の端末。UE 1 が送り、status report を頼む。
-docker compose run --rm ue sms --status-report +12025550102 "Hello UE-B, this is UE-A."
+docker compose run --rm ue sms -status-report +12025550102 "Hello UE-B, this is UE-A."
 ```
 
 - オプションは、番号と本文の前に書きます。
@@ -268,7 +268,7 @@ sip.CSeq.method in {"MESSAGE", "REGISTER"} || (sip && ip.addr == 172.28.0.70) ||
 | 場合 | 試し方 | UE 1 が受け取るもの |
 | --- | --- | --- |
 | 番号を持つ加入者がいない | `ue sms +12025550198 "Nobody has this number."` | RP-ERROR の submit report。RP-Cause 1、TP-FCS 0xC3。 |
-| 受信者が登録していない | `ue sms --status-report +12025550103 "Are you there?"` | RP-ACK の submit report のあと、TP-ST が 0x62 の status report。 |
+| 受信者が登録していない | `ue sms -status-report +12025550103 "Are you there?"` | RP-ACK の submit report のあと、TP-ST が 0x62 の status report。 |
 
 - コマンドは `docker compose run --rm` に続けて書きます。
 - どちらも SIP の応答は 202 です。失敗は RP と TP の層で伝わります。

@@ -46,24 +46,24 @@
 
    ```sh
    docker compose run --rm ue2 answer \
-     --impi 001010000000002@ims.mnc001.mcc001.3gppnetwork.org \
-     --impu sip:+12025550102@ims.mnc001.mcc001.3gppnetwork.org \
-     --password test-password-2 --wav-out /captures/ue2-heard.wav
+     -impi 001010000000002@ims.mnc001.mcc001.3gppnetwork.org \
+     -impu sip:+12025550102@ims.mnc001.mcc001.3gppnetwork.org \
+     -password test-password-2 -wav-out /captures/ue2-heard.wav
    ```
 
 3. 2 つ目の端末で、UE 1 から UE 2 に番号で発信します。UE 1 は 3 秒のトーンを流してから切断します。
 
    ```sh
-   docker compose run --rm ue call --tone 3s tel:+1-202-555-0102
+   docker compose run --rm ue call -tone 3s tel:+1-202-555-0102
    ```
 
-   `--tone` の代わりに `--wav-in <ファイル>` を付けると、WAV ファイルを流します。ファイルは 16 ビット PCM、モノラル、8000 Hz にしてください。
+   `-tone` の代わりに `-wav-in <ファイル>` を付けると、WAV ファイルを流します。ファイルは 16 ビット PCM、モノラル、8000 Hz にしてください。
 
 4. `captures/ue2-heard.wav` に、UE 2 が聞いた音声が入っています。音声プレーヤーで再生できます。
 
 失敗する場合も試せます。
 
-- **話中.** UE 2 を `--reject 486` 付きで起動します。通話は `486 Busy Here` で終わります。
+- **話中.** UE 2 を `-reject 486` 付きで起動します。通話は `486 Busy Here` で終わります。
 - **未登録.** 登録しない加入者の `tel:+12025550103` に発信します。通話は `480 Temporarily Unavailable` で終わります。
 - **存在しない番号.** ENUM のレコードが無い `tel:+12025550199` に発信します。通話は `404 Not Found` で終わります。
 
@@ -128,7 +128,7 @@ TS 24.229 5.1.3.1 と 5.1.2A.1.1 の手順です。次の点を見てくださ�
 - **P-Early-Media: supported.** UE 1 が網からの早期メディアの許可を受け付けることを示します（TS 24.229 5.1.3.1、RFC 5009）。**P-Preferred-Service** と **Accept-Contact** にはマルチメディア電話（MMTel）の ICSI が入り（TS 24.229 5.1.2A.1.1）、**User-Agent** には UE の名前が入ります（IR.92 2.6）。Contact にも同じ ICSI と `audio` の機能タグが入ります（IR.92 2.2.4）。
 - **SDP のオファー**（RFC 3264 5.1）。`c=` と `m=audio` に UE 1 自身のアドレスと RTP のポートがあります。`a=rtpmap:0 PCMU/8000` で G.711 を、`a=rtpmap:101 telephone-event/8000` で DTMF を提示しています（TS 24.229 6.1.1）。`b=AS`、`b=RS`、`b=RR` は RTP と RTCP の帯域です（IR.92 3.2.2.4、3.2.4）。`a=curr` と `a=des` の行がプリコンディションです。UE 1 には資源を確保するアクセス網が無いので、自分の資源はすでにあると示します（TS 24.229 6.1.2）。
 
-`--epc` を付けて起動した UE は先に EPC スタブに接続し、VoLTE の UE として動きます。PCMU より前に AMR-WB と AMR を提示し、網が音声の bearer を作るまでは、資源を確保していないとオファーに書きます。この呼の流れは [VoLTE の呼の流れ](volte.md) で追います。
+`-epc` を付けて起動した UE は先に EPC スタブに接続し、VoLTE の UE として動きます。PCMU より前に AMR-WB と AMR を提示し、網が音声の bearer を作るまでは、資源を確保していないとオファーに書きます。この呼の流れは [VoLTE の呼の流れ](volte.md) で追います。
 
 ### 2. P-CSCF が発信者の S-CSCF に送る
 
@@ -270,9 +270,9 @@ P-CSCF はブリッジのゲートウェイ 172.28.0.1 から来た UE を見分
 
    ```sh
    docker compose run --rm -p 127.0.0.1:8091:8090 ue2 serve \
-     --impi 001010000000002@ims.mnc001.mcc001.3gppnetwork.org \
-     --impu sip:+12025550102@ims.mnc001.mcc001.3gppnetwork.org \
-     --password test-password-2
+     -impi 001010000000002@ims.mnc001.mcc001.3gppnetwork.org \
+     -impu sip:+12025550102@ims.mnc001.mcc001.3gppnetwork.org \
+     -password test-password-2
    ```
 
    ```sh
@@ -329,7 +329,7 @@ UE 1 はトーンを 1 回流したあと、どちらかが切断するまで通
 | メディア中継ノード。RFC 3605、RFC 5761 | RTCP は RTP の 1 つ上のポートに来るものとして扱う。a=rtcp と rtcp-mux は読まない。 | このプロジェクトの UE は、どちらも送らないため。 |
 | メディア中継ノード。TS 29.334 5.17.2.5 | `store` の節を持つノードは、制御する側がコンテキストを解放したときに、それを保存先から消します。保存先が答えないときは、数秒のあいだ消し直します。それでも消せなかったコンテキストは、期限が無いので保存先に残ります。その中継ノードも、あとのどのプロセスも、終わった呼のポートを開き直し、保存先を空にするまで握り続けます。 | 中継ノードには、そのコンテキストと、まだ続いている呼のコンテキストとを見分ける手立てが無いため。呼の側に尋ねられるものは残っておらず、IBCF の記録と P-CSCF のダイアログも同じように残ります。 |
 | UA。RFC 3261 8.2、13.3.1 | Request-URI の確認、重複した要求の確認、415 の応答をしない。INVITE の Expires も無視する。 | ここの UE は、それらの確認に引っかかるものを送らないため。 |
-| UE。IR.92 3.2.1 | AMR と AMR-WB は、あらかじめ符号化したフレームを、符号化したときのモードのまま送る。相手の CMR や mode-set には従わない。`--epc` を付けないときは PCMU だけを提示する。 | UE は AMR を符号化しないため。 |
+| UE。IR.92 3.2.1 | AMR と AMR-WB は、あらかじめ符号化したフレームを、符号化したときのモードのまま送る。相手の CMR や mode-set には従わない。`-epc` を付けないときは PCMU だけを提示する。 | UE は AMR を符号化しないため。 |
 | SIP のスタック。RFC 3261 12.1.1、12.1.2 | ダイアログに「secure」のフラグを持たない。 | このフラグが真になるのは TLS と SIPS URI で作ったダイアログだけで、ここの SIP は平文のため。 |
 | SIP のスタック。RFC 3261 12.2.1.1、16.4、16.6 の手順 6 | strict routing を扱わない。最初の URI に lr の無い経路の集合と一番上の Route は受け付けない。Proxy は、strict router が書き換えた Request-URI を戻さず、自分を指す maddr も外さない。 | このプロジェクトのノードは strict router ではなく、maddr も書かないため。 |
 | SIP のスタック。RFC 3261 17.2.3 | RFC 2543 のクライアントが送るような、branch に magic cookie の無い要求は捨てる。 | ここのクライアントはどれも RFC 3261 に従うため。 |

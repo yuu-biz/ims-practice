@@ -30,7 +30,7 @@
 
 ```sh
 docker compose up -d --build
-docker compose run --rm ue register --deregister-after 5s
+docker compose run --rm ue register -deregister-after 5s
 ```
 
 1 つ目のコマンドで、ノードとキャプチャが起動します。2 つ目を打つ前に、I-CSCF と S-CSCF が HSS への Diameter の接続を開くまで待ちます。HSS が接続を受け付ける前に起動したノードは、30 秒後（Tc、RFC 6733 2.1）にもう一度つなぎに行くので、長くて 1 分ほどかかります。接続ができると、`docker compose logs scscf | grep I-Open` が 1 行を表示します。2 つ目のコマンドは、加入者 1 を登録し、5 秒後に登録を解除します。そのあと、`captures/` のいちばん新しいファイルを Wireshark で開きます。開き方は[信号をキャプチャして Wireshark で開く](capture.md)にあります。
@@ -135,7 +135,7 @@ docker compose run --no-deps -d --name registered-ue ue register
 docker compose exec valkey valkey-cli --scan --pattern 'ims:*'
 ```
 
-`--deregister-after` を付けない `ue register` は、止めるまで登録したままです。そのため、キーを見ているあいだも登録は残っています。キーは、この構成の接頭辞、書いた役割、項目の種類、その項目を引くための名前を、この順に並べたものです。その中に、次の 3 つがあります。どれも加入者 1 の秘密の識別子で引くキーです。
+`-deregister-after` を付けない `ue register` は、止めるまで登録したままです。そのため、キーを見ているあいだも登録は残っています。キーは、この構成の接頭辞、書いた役割、項目の種類、その項目を引くための名前を、この順に並べたものです。その中に、次の 3 つがあります。どれも加入者 1 の秘密の識別子で引くキーです。
 
 ```text
 ims:hss:subscriber:001010000000001@ims.mnc001.mcc001.3gppnetwork.org

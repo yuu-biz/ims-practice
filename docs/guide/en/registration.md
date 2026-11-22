@@ -39,7 +39,7 @@ The UE of this guide is a softphone without a SIM card. Its identities and its p
 3. Register the UE, and deregister it 5 seconds later:
 
    ```sh
-   docker compose run --rm ue register --deregister-after 5s
+   docker compose run --rm ue register -deregister-after 5s
    ```
 
    The last log lines show `"msg":"registered"`, with the Service-Route and the associated identities, then `"msg":"reg event"` with `"state":"active"`, and then `"msg":"deregistered"`.
@@ -47,12 +47,12 @@ The UE of this guide is a softphone without a SIM card. Its identities and its p
 4. To see a refused registration, use a wrong password:
 
    ```sh
-   docker compose run --rm ue register --password wrong-password
+   docker compose run --rm ue register -password wrong-password
    ```
 
    The UE ends with `registration refused with 403`.
 
-Without `--deregister-after`, the UE stays registered and re-registers before the registration expires, until you stop it with Ctrl+C.
+Without `-deregister-after`, the UE stays registered and re-registers before the registration expires, until you stop it with Ctrl+C.
 
 ## Open the capture
 

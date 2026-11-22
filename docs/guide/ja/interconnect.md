@@ -79,11 +79,11 @@ TrGW は、ここでも役割 `agw` のメディア中継ノードです。2 つ
 
    ```sh
    docker compose -f compose.yaml -f deploy/interconnect/compose.yaml run --rm peer-ue answer \
-     --domain ims.mnc002.mcc001.3gppnetwork.org \
-     --impi 001020000000001@ims.mnc002.mcc001.3gppnetwork.org \
-     --impu sip:+12025550151@ims.mnc002.mcc001.3gppnetwork.org \
-     --password test-password-b1 \
-     --pcscf 172.28.1.40:5060 --pcscf-uri sip:pcscf.ims.mnc002.mcc001.3gppnetwork.org:5060
+     -domain ims.mnc002.mcc001.3gppnetwork.org \
+     -impi 001020000000001@ims.mnc002.mcc001.3gppnetwork.org \
+     -impu sip:+12025550151@ims.mnc002.mcc001.3gppnetwork.org \
+     -password test-password-b1 \
+     -pcscf 172.28.1.40:5060 -pcscf-uri sip:pcscf.ims.mnc002.mcc001.3gppnetwork.org:5060
    ```
 
 3. 2 つ目の端末で、UE A1 から番号で電話をかけます。
@@ -94,18 +94,18 @@ TrGW は、ここでも役割 `agw` のメディア中継ノードです。2 つ
 
    UE A1 は `183`、`180`、`200` をログに出し、続けて `"msg":"call answered"` を出します。相手のアドレスは網 A のメディア中継ノード `172.28.0.50` です。UE B1 は `"msg":"media negotiated"` をログに出し、相手のアドレスは TrGW-B の `172.28.1.91` です。どちらの UE にも、相手網のことは何も伝わりません。
 
-4. 折り返すときは、UE A2 に着信を待たせ（`run --rm ue2 answer --impi 001010000000002@... --impu sip:+12025550102@... --password test-password-2`）、UE B1 から手順 2 のフラグで `tel:+12025550102` にかけます。
+4. 折り返すときは、UE A2 に着信を待たせ（`run --rm ue2 answer -impi 001010000000002@... -impu sip:+12025550102@... -password test-password-2`）、UE B1 から手順 2 のフラグで `tel:+12025550102` にかけます。
 
 5. ショートメッセージを送るときは、UE B1 を登録したままにし（手順 2 のフラグで `run --rm peer-ue register`）、UE A1 から送ります。
 
    ```sh
-   docker compose -f compose.yaml -f deploy/interconnect/compose.yaml run --rm ue sms --status-report +12025550151 "Hello UE-B1"
+   docker compose -f compose.yaml -f deploy/interconnect/compose.yaml run --rm ue sms -status-report +12025550151 "Hello UE-B1"
    ```
 
-6. 返事を送るときは、手順 5 の UE B1 の登録を止め、UE A1 を登録したままにし（`run --rm ue register`）、UE B1 から、手順 2 のフラグに網 B の SC の番号 `--sc +12025550150` を加えて送ります。
+6. 返事を送るときは、手順 5 の UE B1 の登録を止め、UE A1 を登録したままにし（`run --rm ue register`）、UE B1 から、手順 2 のフラグに網 B の SC の番号 `-sc +12025550150` を加えて送ります。
 
    ```sh
-   docker compose -f compose.yaml -f deploy/interconnect/compose.yaml run --rm peer-ue sms <手順 2 のフラグ> --sc +12025550150 --status-report +12025550101 "Hello UE-A1"
+   docker compose -f compose.yaml -f deploy/interconnect/compose.yaml run --rm peer-ue sms <手順 2 のフラグ> -sc +12025550150 -status-report +12025550101 "Hello UE-A1"
    ```
 
    UE B1 は、送るときに自分で登録します。別の登録が残っていると、status report がそちらに届くことがあります。

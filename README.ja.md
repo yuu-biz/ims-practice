@@ -59,7 +59,7 @@ UE シミュレータは SIP Digest で登録し、電話番号で別の UE に�
 
 ```sh
 docker compose up -d --build
-docker compose run --rm ue register --deregister-after 5s
+docker compose run --rm ue register -deregister-after 5s
 ```
 
 続きは[手順書](docs/guide/ja/README.md)にあります。最初のページに、読む順、片付けの方法、Compose のプロジェクトが起動するものをまとめています。

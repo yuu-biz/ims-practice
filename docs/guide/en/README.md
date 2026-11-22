@@ -30,7 +30,7 @@ Run these at the root of the repository. The first build takes several minutes.
 
 ```sh
 docker compose up -d --build
-docker compose run --rm ue register --deregister-after 5s
+docker compose run --rm ue register -deregister-after 5s
 ```
 
 The first command starts the nodes and the capture. Before the second, wait until the I-CSCF and the S-CSCF have opened their Diameter connections to the HSS. A node that starts before the HSS accepts connections tries again after 30 seconds (Tc, RFC 6733 2.1), so allow up to a minute. `docker compose logs scscf | grep I-Open` prints a line once that has happened. The second command registers subscriber 1 and deregisters it 5 seconds later. Then open the newest file in `captures/` in Wireshark, as [Capture signaling and open it in Wireshark](capture.md) shows.
@@ -135,7 +135,7 @@ docker compose run --no-deps -d --name registered-ue ue register
 docker compose exec valkey valkey-cli --scan --pattern 'ims:*'
 ```
 
-`ue register` with no `--deregister-after` stays registered until it is stopped, so the keys of its registration are there while you look. Each key is the prefix of this deployment, the role that wrote it, the kind of item, and the name it is found by. Among them are these three, each found by the private identity of subscriber 1:
+`ue register` with no `-deregister-after` stays registered until it is stopped, so the keys of its registration are there while you look. Each key is the prefix of this deployment, the role that wrote it, the kind of item, and the name it is found by. Among them are these three, each found by the private identity of subscriber 1:
 
 ```text
 ims:hss:subscriber:001010000000001@ims.mnc001.mcc001.3gppnetwork.org
