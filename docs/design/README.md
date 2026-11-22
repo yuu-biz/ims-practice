@@ -14,3 +14,4 @@
 | [sms.md](sms.md) | IP-SM-GW の役割と、その中の SC のスタブで SMS を運ぶこと | 通話の着信と同じ流れで SMS を届け、SC をあとで差し替えられるようにするため |
 | [mmtel-mrf.md](mmtel-mrf.md) | MMTel AS を routeing B2BUA として作り、MRF を自作すること | IR.92 が必須にする補足サービスの信号を見せるため |
 | [state-redundancy.md](state-redundancy.md) | 状態を `Store` の後ろに置き、冗長構成では外部の保存先に置くこと | 各役割を複数台で動かし、ノードを作り直しても登録と呼を保つため |
+| [b2bua.md](b2bua.md) | IBCF と MMTel AS が 2 つのレグを中継する部分を `internal/b2bua` にまとめ、ダイアログの中の要求を届いた順に中継すること | 同じ直しを 2 か所に入れ続けずに済み、オファーとアンサーの順を崩さないため |
