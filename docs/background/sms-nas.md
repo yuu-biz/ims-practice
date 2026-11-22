@@ -357,7 +357,7 @@ tshark -r sgd_sctp.pcapng -V
 - S6c。`SendRoutingInfoForSMRequest` と `Answer`、`ServingNode`、`SMSF3GPPAddress`、`FeatureList`。
 - 辞書は `sgd.xml` と `s6c.xml` で、`LoadDictionary` が go-diameter の既定の辞書に足します。書き方は `internal/diameter/cx.xml` に合わせました。
 - 番号は数字だけの文字列で受け渡し、TBCD に直します。SM-RP-UI は TPDU の `[]byte` です。
-- `internal/cx`、`internal/sh`、`internal/diameter` は読み込みません。そのため、結果の型、要求の先頭の AVP、TBCD の変換が、ほかのパッケージと重なっています。
+- 結果の型、要求と応答の先頭の AVP、3GPP のベンダ ID、TBCD の変換は、`internal/diameter` のものを使います。`internal/cx` と `internal/sh` は読み込みません。
 
 `SIMPLIFIED:` は次のとおりです。
 

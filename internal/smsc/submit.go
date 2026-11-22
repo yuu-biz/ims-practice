@@ -2,6 +2,7 @@ package smsc
 
 import (
 	"context"
+	"github.com/yuu-biz/ims-practice/internal/diameter"
 	"log/slog"
 	"time"
 
@@ -85,7 +86,7 @@ func (c *SMSC) MOForwardShortMessage(ctx context.Context, req sgd.MOForwardShort
 		// tells the UE more.
 		log.Info("short message refused: TPDU not supported", "error", err.Error(), "tp_fcs", int(fcs))
 		return sgd.MOForwardShortMessageAnswer{
-			Result: sgd.Experimental(sgd.DiameterErrorFacilityNotSupported),
+			Result: diameter.Experimental(sgd.DiameterErrorFacilityNotSupported),
 			SMRPUI: submitReport(fcs, now),
 		}
 	}
@@ -136,7 +137,7 @@ func (c *SMSC) MOForwardShortMessage(ctx context.Context, req sgd.MOForwardShort
 	log.Info("short message accepted", "status_report_request", submit.StatusReportRequest)
 	c.deliverSoon(m.Destination)
 	return sgd.MOForwardShortMessageAnswer{
-		Result: sgd.Base(sgd.DiameterSuccess),
+		Result: diameter.Base(diameter.DiameterSuccess),
 		SMRPUI: submitReport(0, scts),
 	}
 }
@@ -186,10 +187,10 @@ func (c *SMSC) checkRecipient(ctx context.Context, msisdn string, now time.Time,
 		// take the message now; TP-FCS C2 is "SC system failure".
 		log.Warn("short message refused: the HSS did not answer", "error", err.Error())
 		return refusal(sgd.SCCongestion, sms.FCSSCSystemFailure, now), false
-	case sra.Result == sgd.Experimental(sgd.DiameterErrorUserUnknown):
+	case sra.Result == diameter.Experimental(sgd.DiameterErrorUserUnknown):
 		log.Info("short message refused: no user has the number")
 		return refusal(sgd.InvalidSMEAddress, sms.FCSInvalidSMEAddress, now), false
-	case sra.Result == sgd.Experimental(sgd.DiameterErrorServiceBarred):
+	case sra.Result == diameter.Experimental(sgd.DiameterErrorServiceBarred):
 		log.Info("short message refused: the recipient is barred from MT SMS")
 		return refusal(sgd.InvalidSMEAddress, fcsDestinationSMEBarred, now), false
 	}
@@ -203,7 +204,7 @@ func (c *SMSC) checkRecipient(ctx context.Context, msisdn string, now time.Time,
 // SMS-SUBMIT-REPORT for RP-ERROR with fcs, unless fcs is zero.
 func refusal(cause sgd.SMEnumeratedDeliveryFailureCause, fcs sms.FailureCause, now time.Time) sgd.MOForwardShortMessageAnswer {
 	a := sgd.MOForwardShortMessageAnswer{
-		Result:                 sgd.Experimental(sgd.DiameterErrorSMDeliveryFailure),
+		Result:                 diameter.Experimental(sgd.DiameterErrorSMDeliveryFailure),
 		SMDeliveryFailureCause: &sgd.SMDeliveryFailureCause{SMEnumeratedDeliveryFailureCause: cause},
 	}
 	if fcs != 0 {

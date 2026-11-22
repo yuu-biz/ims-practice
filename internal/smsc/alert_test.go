@@ -1,6 +1,7 @@
 package smsc
 
 import (
+	"github.com/yuu-biz/ims-practice/internal/diameter"
 	"reflect"
 	"testing"
 	"time"
@@ -20,7 +21,7 @@ func TestAbsentThenAlert(t *testing.T) {
 
 	reports := n.hss.reports()
 	want := sgd.ReportSMDeliveryStatusRequest{
-		Header:         sgd.Header{DestinationRealm: epcRealm},
+		Header:         diameter.Header{DestinationRealm: epcRealm},
 		UserIdentifier: sgd.UserIdentifier{MSISDN: bob},
 		SCAddress:      scAddress,
 		SMDeliveryOutcome: sgd.SMDeliveryOutcome{
@@ -33,7 +34,7 @@ func TestAbsentThenAlert(t *testing.T) {
 
 	n.nodes.set(mmeHost, accepts)
 	n.clock.Advance(5 * time.Second) // well before the first retry
-	if ala := n.alert(scAddress, bob); ala.Result != sgd.Base(sgd.DiameterSuccess) {
+	if ala := n.alert(scAddress, bob); ala.Result != diameter.Base(diameter.DiameterSuccess) {
 		t.Errorf("ALA = %+v, want success", ala)
 	}
 	sent := n.nodes.sent()
@@ -61,7 +62,7 @@ func TestAlertsThatFindNothing(t *testing.T) {
 		{"a user with nothing held", scAddress, carol},
 		{"no MSISDN", scAddress, ""},
 	} {
-		if ala := n.alert(tc.sc, tc.msisdn); ala.Result != sgd.Base(sgd.DiameterSuccess) {
+		if ala := n.alert(tc.sc, tc.msisdn); ala.Result != diameter.Base(diameter.DiameterSuccess) {
 			t.Errorf("%s: ALA = %+v, want success", tc.name, ala)
 		}
 	}
@@ -82,7 +83,7 @@ func TestDeliveryStatusPerNode(t *testing.T) {
 	}{
 		{
 			name: "absent at the MME, memory full at the SMSF",
-			sra: sgd.SendRoutingInfoForSMAnswer{Result: sgd.Base(sgd.DiameterSuccess), UserName: imsiOf[bob],
+			sra: sgd.SendRoutingInfoForSMAnswer{Result: diameter.Base(diameter.DiameterSuccess), UserName: imsiOf[bob],
 				ServingNode:     &sgd.ServingNode{MMEName: mmeHost, MMERealm: epcRealm, MMENumberForMTSMS: mmeNumber},
 				SMSF3GPPAddress: &sgd.SMSF3GPPAddress{SMSF3GPPName: smsfHost, SMSF3GPPRealm: epcRealm}},
 			answers: map[string]func(sgd.MTForwardShortMessageRequest) (sgd.MTForwardShortMessageAnswer, error){mmeHost: absent, smsfHost: memoryFull},
@@ -93,7 +94,7 @@ func TestDeliveryStatusPerNode(t *testing.T) {
 		},
 		{
 			name: "absent behind the IP-SM-GW",
-			sra: sgd.SendRoutingInfoForSMAnswer{Result: sgd.Base(sgd.DiameterSuccess), UserName: "001019876543210",
+			sra: sgd.SendRoutingInfoForSMAnswer{Result: diameter.Base(diameter.DiameterSuccess), UserName: "001019876543210",
 				ServingNode: &sgd.ServingNode{IPSMGWNumber: "12025550192", IPSMGWName: ipsmgw, IPSMGWRealm: imsRealm}},
 			answers: map[string]func(sgd.MTForwardShortMessageRequest) (sgd.MTForwardShortMessageAnswer, error){ipsmgw: absent},
 			want: &sgd.SMDeliveryOutcome{
@@ -103,12 +104,12 @@ func TestDeliveryStatusPerNode(t *testing.T) {
 		{
 			name:    "busy",
 			sra:     servedByMME(bob),
-			answers: map[string]func(sgd.MTForwardShortMessageRequest) (sgd.MTForwardShortMessageAnswer, error){mmeHost: answerWith(sgd.Experimental(sgd.DiameterErrorUserBusyForMTSMS))},
+			answers: map[string]func(sgd.MTForwardShortMessageRequest) (sgd.MTForwardShortMessageAnswer, error){mmeHost: answerWith(diameter.Experimental(sgd.DiameterErrorUserBusyForMTSMS))},
 		},
 		{
 			// The HSS updates the MWD itself (TS 29.338 5.2.1.3).
 			name: "no node registered",
-			sra:  sgd.SendRoutingInfoForSMAnswer{Result: sgd.Experimental(sgd.DiameterErrorAbsentUser)},
+			sra:  sgd.SendRoutingInfoForSMAnswer{Result: diameter.Experimental(sgd.DiameterErrorAbsentUser)},
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -136,7 +137,7 @@ func TestDeliveryStatusPerNode(t *testing.T) {
 // still retries on its own (TS 23.040 3.2.8).
 func TestMWDListFull(t *testing.T) {
 	n := newNetwork(t)
-	n.hss.rdaResult = sgd.Experimental(sgd.DiameterErrorMWDListFull)
+	n.hss.rdaResult = diameter.Experimental(sgd.DiameterErrorMWDListFull)
 	n.nodes.set(mmeHost, absent)
 	n.submit(bob, hello(t, bob, 1))
 	n.nodes.set(mmeHost, accepts)
@@ -149,7 +150,7 @@ func TestMWDListFull(t *testing.T) {
 func answerWithCause(c sgd.SMEnumeratedDeliveryFailureCause) func(sgd.MTForwardShortMessageRequest) (sgd.MTForwardShortMessageAnswer, error) {
 	return func(sgd.MTForwardShortMessageRequest) (sgd.MTForwardShortMessageAnswer, error) {
 		return sgd.MTForwardShortMessageAnswer{
-			Result:                 sgd.Experimental(sgd.DiameterErrorSMDeliveryFailure),
+			Result:                 diameter.Experimental(sgd.DiameterErrorSMDeliveryFailure),
 			SMDeliveryFailureCause: &sgd.SMDeliveryFailureCause{SMEnumeratedDeliveryFailureCause: c},
 		}, nil
 	}

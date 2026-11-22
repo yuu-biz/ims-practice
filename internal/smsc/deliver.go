@@ -2,6 +2,7 @@ package smsc
 
 import (
 	"context"
+	"github.com/yuu-biz/ims-practice/internal/diameter"
 	"log/slog"
 	"strings"
 	"sync"
@@ -271,15 +272,15 @@ func marshalTPDU(m Message, more bool) ([]byte, error) {
 
 // routingFailure is the outcome of an SRA that names no serving node
 // (TS 29.338 5.2.1.3), read with TS 23.040 Table 1.
-func routingFailure(r sgd.Result) outcome {
+func routingFailure(r diameter.Result) outcome {
 	switch r {
-	case sgd.Experimental(sgd.DiameterErrorUserUnknown):
+	case diameter.Experimental(sgd.DiameterErrorUserUnknown):
 		return outcome{kind: permanentFailure, reason: "unknown subscriber"}
-	case sgd.Experimental(sgd.DiameterErrorServiceNotSubscribed):
+	case diameter.Experimental(sgd.DiameterErrorServiceNotSubscribed):
 		return outcome{kind: permanentFailure, reason: "teleservice not provisioned"}
-	case sgd.Experimental(sgd.DiameterErrorServiceBarred):
+	case diameter.Experimental(sgd.DiameterErrorServiceBarred):
 		return outcome{kind: temporaryFailure, reason: "call barred"}
-	case sgd.Experimental(sgd.DiameterErrorAbsentUser):
+	case diameter.Experimental(sgd.DiameterErrorAbsentUser):
 		// The HSS has put the SC address into the MWD itself (TS 29.338
 		// 5.2.1.3), and alerts the SC when the user is back.
 		return outcome{kind: temporaryFailure, reason: "absent subscriber: no node is registered for MT SMS"}
@@ -360,7 +361,7 @@ func (c *SMSC) forward(ctx context.Context, node servingNode, userName string, t
 	log = log.With("node", node.host)
 	log.Info("forwarding the short message", "node_kind", node.kind.String())
 	tfa, err := c.sgd.MTForwardShortMessage(ctx, sgd.MTForwardShortMessageRequest{
-		Header: sgd.Header{DestinationHost: node.host, DestinationRealm: node.realm},
+		Header: diameter.Header{DestinationHost: node.host, DestinationRealm: node.realm},
 		// The IMSI, or the MT Correlation ID of an IP-SM-GW that
 		// answered the SRR in place of the HSS (TS 23.204 6.4 step 3c).
 		UserName:          userName,
@@ -384,22 +385,22 @@ func (c *SMSC) forward(ctx context.Context, node servingNode, userName string, t
 // 8.1.1 tries the next node after them.
 func deliveryFailure(tfa sgd.MTForwardShortMessageAnswer) failure {
 	switch tfa.Result {
-	case sgd.Experimental(sgd.DiameterErrorAbsentUser):
+	case diameter.Experimental(sgd.DiameterErrorAbsentUser):
 		return failure{tryNextNode: true, waiting: waitingFor(sgd.SMDeliveryCauseAbsentUser), reason: "absent subscriber"}
-	case sgd.Experimental(sgd.DiameterErrorUserUnknown):
+	case diameter.Experimental(sgd.DiameterErrorUserUnknown):
 		// The node does not know the IMSI: "unidentified subscriber",
 		// one of the reasons of an absent subscriber in Table 1, after
 		// which TS 29.338 5.2.3.2 also reports to the HSS.
 		return failure{tryNextNode: true, waiting: waitingFor(sgd.SMDeliveryCauseAbsentUser), reason: "unidentified subscriber"}
-	case sgd.Experimental(sgd.DiameterErrorUserBusyForMTSMS):
+	case diameter.Experimental(sgd.DiameterErrorUserBusyForMTSMS):
 		return failure{reason: "MS busy for MT SMS"}
-	case sgd.Experimental(sgd.DiameterErrorIllegalUser):
+	case diameter.Experimental(sgd.DiameterErrorIllegalUser):
 		return failure{permanent: true, reason: "illegal subscriber"}
-	case sgd.Experimental(sgd.DiameterErrorIllegalEquipment):
+	case diameter.Experimental(sgd.DiameterErrorIllegalEquipment):
 		return failure{permanent: true, reason: "illegal equipment"}
-	case sgd.Experimental(sgd.DiameterErrorFacilityNotSupported):
+	case diameter.Experimental(sgd.DiameterErrorFacilityNotSupported):
 		return failure{tryNextNode: true, reason: "facility not supported"}
-	case sgd.Experimental(sgd.DiameterErrorSMDeliveryFailure):
+	case diameter.Experimental(sgd.DiameterErrorSMDeliveryFailure):
 		if tfa.SMDeliveryFailureCause == nil {
 			return failure{reason: "error in MS"}
 		}

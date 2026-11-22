@@ -3,6 +3,7 @@ package sgd
 import (
 	"bytes"
 	"encoding/binary"
+	"github.com/yuu-biz/ims-practice/internal/diameter"
 	"reflect"
 	"testing"
 
@@ -13,7 +14,7 @@ import (
 
 func TestAlertServiceCentreRoundTrip(t *testing.T) {
 	alr := AlertServiceCentreRequest{
-		Header:         Header{SessionID: hssHost + ";3;1", OriginHost: hssHost, OriginRealm: realm, DestinationHost: scHost, DestinationRealm: realm},
+		Header:         diameter.Header{SessionID: hssHost + ";3;1", OriginHost: hssHost, OriginRealm: realm, DestinationHost: scHost, DestinationRealm: realm},
 		SCAddress:      scAddress,
 		UserIdentifier: UserIdentifier{MSISDN: msisdn},
 	}
@@ -30,7 +31,7 @@ func TestAlertServiceCentreRoundTrip(t *testing.T) {
 		t.Errorf("ALR\n got %+v\nwant %+v", got, alr)
 	}
 
-	ala := AlertServiceCentreAnswer{Result: Base(DiameterSuccess)}
+	ala := AlertServiceCentreAnswer{Result: diameter.Base(diameter.DiameterSuccess)}
 	ans := wire(t, ala.Message(req, sc))
 	if h := ans.Header; h.ApplicationID != ApplicationIDS6c || h.CommandCode != CommandAlertServiceCentre ||
 		h.CommandFlags != diam.ProxiableFlag || h.HopByHopID != req.Header.HopByHopID || h.EndToEndID != req.Header.EndToEndID {
@@ -48,7 +49,7 @@ func TestAlertServiceCentreRoundTrip(t *testing.T) {
 // User-Identifier of TS 29.336 6.4.2.
 func TestAlertServiceCentreRequestBytes(t *testing.T) {
 	b, err := AlertServiceCentreRequest{
-		Header:         Header{SessionID: hssHost + ";3;1", OriginHost: hssHost, OriginRealm: realm, DestinationHost: scHost, DestinationRealm: realm},
+		Header:         diameter.Header{SessionID: hssHost + ";3;1", OriginHost: hssHost, OriginRealm: realm, DestinationHost: scHost, DestinationRealm: realm},
 		SCAddress:      scAddress,
 		UserIdentifier: UserIdentifier{MSISDN: msisdn},
 	}.Message().Serialize()
@@ -82,8 +83,8 @@ func TestAlertServiceCentreRequestBytes(t *testing.T) {
 
 func TestParseAlertServiceCentreErrors(t *testing.T) {
 	alr := func(avps ...*diam.AVP) *diam.Message {
-		m := newRequest(ApplicationIDS6c, CommandAlertServiceCentre)
-		Header{SessionID: "s", OriginHost: hssHost, OriginRealm: realm, DestinationHost: scHost, DestinationRealm: realm}.begin(m)
+		m := diameter.NewRequest(ApplicationIDS6c, CommandAlertServiceCentre)
+		begin(m, diameter.Header{SessionID: "s", OriginHost: hssHost, OriginRealm: realm, DestinationHost: scHost, DestinationRealm: realm})
 		for _, a := range avps {
 			m.AddAVP(a)
 		}
@@ -92,8 +93,8 @@ func TestParseAlertServiceCentreErrors(t *testing.T) {
 	user := UserIdentifier{MSISDN: msisdn}.avp()
 	for name, m := range map[string]*diam.Message{
 		"without SC-Address":          alr(user),
-		"without User-Identifier":     alr(vendorAVP(avpSCAddress, mv, encodeTBCD(scAddress))),
-		"SC-Address that is not TBCD": alr(vendorAVP(avpSCAddress, mv, datatype.OctetString([]byte{0x0A})), user),
+		"without User-Identifier":     alr(diameter.VendorAVP(avpSCAddress, mv, encodeTBCD(scAddress))),
+		"SC-Address that is not TBCD": alr(diameter.VendorAVP(avpSCAddress, mv, datatype.OctetString([]byte{0x0A})), user),
 	} {
 		if got, err := ParseAlertServiceCentreRequest(wire(t, m)); err == nil {
 			t.Errorf("ALR %s: got %+v, want an error", name, got)

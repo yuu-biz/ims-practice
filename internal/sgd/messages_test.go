@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/binary"
 	"encoding/hex"
+	"github.com/yuu-biz/ims-practice/internal/diameter"
 	"reflect"
 	"strings"
 	"testing"
@@ -39,8 +40,8 @@ const (
 )
 
 var (
-	sc  = Identity{OriginHost: scHost, OriginRealm: realm}
-	mme = Identity{OriginHost: mmeHost, OriginRealm: realm}
+	sc  = diameter.Identity{OriginHost: scHost, OriginRealm: realm}
+	mme = diameter.Identity{OriginHost: mmeHost, OriginRealm: realm}
 )
 
 func init() {
@@ -74,7 +75,7 @@ func wire(t *testing.T, m *diam.Message) *diam.Message {
 
 func TestMOForwardShortMessageRoundTrip(t *testing.T) {
 	ofr := MOForwardShortMessageRequest{
-		Header:         Header{SessionID: mmeHost + ";1;1", OriginHost: mmeHost, OriginRealm: realm, DestinationRealm: realm},
+		Header:         diameter.Header{SessionID: mmeHost + ";1;1", OriginHost: mmeHost, OriginRealm: realm, DestinationRealm: realm},
 		SCAddress:      scAddress,
 		UserIdentifier: UserIdentifier{UserName: imsi, MSISDN: msisdn},
 		SMRPUI:         mustHex(t, smsSubmit),
@@ -93,13 +94,13 @@ func TestMOForwardShortMessageRoundTrip(t *testing.T) {
 	}
 
 	for _, ofa := range []MOForwardShortMessageAnswer{
-		{Result: Base(DiameterSuccess), SMRPUI: mustHex(t, smsSubmitReport)},
-		{Result: Base(DiameterSuccess)},
-		{Result: Experimental(DiameterErrorSMDeliveryFailure),
+		{Result: diameter.Base(diameter.DiameterSuccess), SMRPUI: mustHex(t, smsSubmitReport)},
+		{Result: diameter.Base(diameter.DiameterSuccess)},
+		{Result: diameter.Experimental(DiameterErrorSMDeliveryFailure),
 			SMDeliveryFailureCause: &SMDeliveryFailureCause{SMEnumeratedDeliveryFailureCause: UnknownServiceCentre}},
-		{Result: Experimental(DiameterErrorSMDeliveryFailure),
+		{Result: diameter.Experimental(DiameterErrorSMDeliveryFailure),
 			SMDeliveryFailureCause: &SMDeliveryFailureCause{SMEnumeratedDeliveryFailureCause: InvalidSMEAddress, SMDiagnosticInfo: []byte{0xC3}}},
-		{Result: Experimental(DiameterErrorFacilityNotSupported)},
+		{Result: diameter.Experimental(DiameterErrorFacilityNotSupported)},
 	} {
 		ans := wire(t, ofa.Message(req, sc))
 		if h := ans.Header; h.ApplicationID != ApplicationIDSGd || h.CommandCode != CommandMOForwardShortMessage ||
@@ -121,7 +122,7 @@ func TestMOForwardShortMessageUserIdentifier(t *testing.T) {
 	// when it exists. An IP-SM-GW may know only the MSISDN.
 	for _, user := range []UserIdentifier{{UserName: imsi}, {MSISDN: msisdn}} {
 		ofr := MOForwardShortMessageRequest{
-			Header:         Header{SessionID: "s", OriginHost: mmeHost, OriginRealm: realm, DestinationHost: scHost, DestinationRealm: realm},
+			Header:         diameter.Header{SessionID: "s", OriginHost: mmeHost, OriginRealm: realm, DestinationHost: scHost, DestinationRealm: realm},
 			SCAddress:      scAddress,
 			UserIdentifier: user,
 			SMRPUI:         mustHex(t, smsSubmit),
@@ -136,14 +137,14 @@ func TestMOForwardShortMessageUserIdentifier(t *testing.T) {
 func TestMTForwardShortMessageRoundTrip(t *testing.T) {
 	for _, tfr := range []MTForwardShortMessageRequest{
 		{ // to an MME
-			Header:            Header{SessionID: scHost + ";1;2", OriginHost: scHost, OriginRealm: realm, DestinationHost: mmeHost, DestinationRealm: realm},
+			Header:            diameter.Header{SessionID: scHost + ";1;2", OriginHost: scHost, OriginRealm: realm, DestinationHost: mmeHost, DestinationRealm: realm},
 			UserName:          imsi,
 			SCAddress:         scAddress,
 			SMRPUI:            mustHex(t, smsDeliver),
 			MMENumberForMTSMS: mmeNumber,
 		},
 		{ // to an SMSF or an IP-SM-GW
-			Header:    Header{SessionID: scHost + ";1;3", OriginHost: scHost, OriginRealm: realm, DestinationHost: "smsf." + realm, DestinationRealm: realm},
+			Header:    diameter.Header{SessionID: scHost + ";1;3", OriginHost: scHost, OriginRealm: realm, DestinationHost: "smsf." + realm, DestinationRealm: realm},
 			UserName:  imsi,
 			SCAddress: scAddress,
 			SMRPUI:    mustHex(t, smsDeliver),
@@ -163,10 +164,10 @@ func TestMTForwardShortMessageRoundTrip(t *testing.T) {
 		}
 
 		for _, tfa := range []MTForwardShortMessageAnswer{
-			{Result: Base(DiameterSuccess), SMRPUI: mustHex(t, smsDeliverReport)},
-			{Result: Base(DiameterSuccess)},
-			{Result: Experimental(DiameterErrorAbsentUser)},
-			{Result: Experimental(DiameterErrorSMDeliveryFailure),
+			{Result: diameter.Base(diameter.DiameterSuccess), SMRPUI: mustHex(t, smsDeliverReport)},
+			{Result: diameter.Base(diameter.DiameterSuccess)},
+			{Result: diameter.Experimental(DiameterErrorAbsentUser)},
+			{Result: diameter.Experimental(DiameterErrorSMDeliveryFailure),
 				SMDeliveryFailureCause: &SMDeliveryFailureCause{SMEnumeratedDeliveryFailureCause: MemoryCapacityExceeded}},
 		} {
 			ans := wire(t, tfa.Message(req, mme))
@@ -239,7 +240,7 @@ func find(t *testing.T, avps []rawAVP, code, vendor uint32) rawAVP {
 // of TS 29.338 6.3.3.2 and TS 29.329 6.3.2.
 func TestMOForwardShortMessageRequestBytes(t *testing.T) {
 	b, err := MOForwardShortMessageRequest{
-		Header:         Header{SessionID: mmeHost + ";1;1", OriginHost: mmeHost, OriginRealm: realm, DestinationRealm: realm},
+		Header:         diameter.Header{SessionID: mmeHost + ";1;1", OriginHost: mmeHost, OriginRealm: realm, DestinationRealm: realm},
 		SCAddress:      scAddress,
 		UserIdentifier: UserIdentifier{UserName: imsi, MSISDN: msisdn},
 		SMRPUI:         mustHex(t, smsSubmit),
@@ -299,7 +300,7 @@ func TestMOForwardShortMessageRequestBytes(t *testing.T) {
 // TS 29.338 7.3.1 and 6.3.3.5.
 func TestMTForwardShortMessageBytes(t *testing.T) {
 	tfr := MTForwardShortMessageRequest{
-		Header:            Header{SessionID: scHost + ";1;2", OriginHost: scHost, OriginRealm: realm, DestinationHost: mmeHost, DestinationRealm: realm},
+		Header:            diameter.Header{SessionID: scHost + ";1;2", OriginHost: scHost, OriginRealm: realm, DestinationHost: mmeHost, DestinationRealm: realm},
 		UserName:          imsi,
 		SCAddress:         scAddress,
 		SMRPUI:            mustHex(t, smsDeliver),
@@ -326,7 +327,7 @@ func TestMTForwardShortMessageBytes(t *testing.T) {
 	}
 
 	b, err = MTForwardShortMessageAnswer{
-		Result:                 Experimental(DiameterErrorSMDeliveryFailure),
+		Result:                 diameter.Experimental(DiameterErrorSMDeliveryFailure),
 		SMDeliveryFailureCause: &SMDeliveryFailureCause{SMEnumeratedDeliveryFailureCause: MemoryCapacityExceeded, SMDiagnosticInfo: []byte{0xD3}},
 	}.Message(wire(t, tfr), mme).Serialize()
 	if err != nil {
@@ -364,14 +365,14 @@ func TestMTForwardShortMessageBytes(t *testing.T) {
 // request returns an SGd request with only the routing AVPs, for the
 // tests that leave AVPs out.
 func request(command uint32) *diam.Message {
-	m := newRequest(ApplicationIDSGd, command)
-	Header{SessionID: "s", OriginHost: mmeHost, OriginRealm: realm, DestinationHost: scHost, DestinationRealm: realm}.begin(m)
+	m := diameter.NewRequest(ApplicationIDSGd, command)
+	begin(m, diameter.Header{SessionID: "s", OriginHost: mmeHost, OriginRealm: realm, DestinationHost: scHost, DestinationRealm: realm})
 	return m
 }
 
 func TestParseForwardShortMessageErrors(t *testing.T) {
-	scAVP := vendorAVP(avpSCAddress, mv, encodeTBCD(scAddress))
-	tpdu := vendorAVP(avpSMRPUI, mv, datatype.OctetString(mustHex(t, smsSubmit)))
+	scAVP := diameter.VendorAVP(avpSCAddress, mv, encodeTBCD(scAddress))
+	tpdu := diameter.VendorAVP(avpSMRPUI, mv, datatype.OctetString(mustHex(t, smsSubmit)))
 	user := UserIdentifier{UserName: imsi}.avp()
 
 	ofr := map[string][]*diam.AVP{
@@ -379,10 +380,10 @@ func TestParseForwardShortMessageErrors(t *testing.T) {
 		"no User-Identifier":             {scAVP, tpdu},
 		"no SM-RP-UI":                    {scAVP, user},
 		"User-Identifier without a user": {scAVP, UserIdentifier{}.avp(), tpdu},
-		"SC-Address that is not TBCD":    {vendorAVP(avpSCAddress, mv, datatype.OctetString([]byte{0x21, 0xA0})), user, tpdu},
-		"filler before the last digit":   {vendorAVP(avpSCAddress, mv, datatype.OctetString([]byte{0x2F, 0x10})), user, tpdu},
-		"MSISDN that is not TBCD": {scAVP, vendorAVP(avpUserIdentifier, mv, &diam.GroupedAVP{AVP: []*diam.AVP{
-			vendorAVP(avpMSISDN, mv, datatype.OctetString([]byte{0xFF})),
+		"SC-Address that is not TBCD":    {diameter.VendorAVP(avpSCAddress, mv, datatype.OctetString([]byte{0x21, 0xA0})), user, tpdu},
+		"filler before the last digit":   {diameter.VendorAVP(avpSCAddress, mv, datatype.OctetString([]byte{0x2F, 0x10})), user, tpdu},
+		"MSISDN that is not TBCD": {scAVP, diameter.VendorAVP(avpUserIdentifier, mv, &diam.GroupedAVP{AVP: []*diam.AVP{
+			diameter.VendorAVP(avpMSISDN, mv, datatype.OctetString([]byte{0xFF})),
 		}}), tpdu},
 	}
 	for name, avps := range ofr {
@@ -401,7 +402,7 @@ func TestParseForwardShortMessageErrors(t *testing.T) {
 		"no SC-Address": {userName, tpdu},
 		"no SM-RP-UI":   {userName, scAVP},
 		"MME-Number-for-MT-SMS that is not TBCD": {userName, scAVP, tpdu,
-			vendorAVP(avpMMENumberForMTSMS, v, datatype.OctetString([]byte{0x0A}))},
+			diameter.VendorAVP(avpMMENumberForMTSMS, v, datatype.OctetString([]byte{0x0A}))},
 	}
 	for name, avps := range tfr {
 		m := request(CommandMTForwardShortMessage)
@@ -465,17 +466,17 @@ func TestValidE164(t *testing.T) {
 
 func TestNames(t *testing.T) {
 	for got, want := range map[string]string{
-		Base(DiameterSuccess).String():                 "Result-Code 2001",
-		Experimental(DiameterErrorAbsentUser).String(): "Experimental-Result-Code 5550",
-		MemoryCapacityExceeded.String():                "MEMORY_CAPACITY_EXCEEDED",
-		UserNotSCUser.String():                         "USER_NOT_SC-USER",
-		SMEnumeratedDeliveryFailureCause(9).String():   "SM-Enumerated-Delivery-Failure-Cause 9",
+		diameter.Base(diameter.DiameterSuccess).String():        "Result-Code 2001",
+		diameter.Experimental(DiameterErrorAbsentUser).String(): "Experimental-Result-Code 5550",
+		MemoryCapacityExceeded.String():                         "MEMORY_CAPACITY_EXCEEDED",
+		UserNotSCUser.String():                                  "USER_NOT_SC-USER",
+		SMEnumeratedDeliveryFailureCause(9).String():            "SM-Enumerated-Delivery-Failure-Cause 9",
 	} {
 		if got != want {
 			t.Errorf("got %q, want %q", got, want)
 		}
 	}
-	if !Base(DiameterSuccess).Success() || Experimental(DiameterErrorUserUnknown).Success() {
+	if !diameter.Base(diameter.DiameterSuccess).Success() || diameter.Experimental(DiameterErrorUserUnknown).Success() {
 		t.Error("Success() is wrong")
 	}
 }

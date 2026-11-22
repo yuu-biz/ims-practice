@@ -5,6 +5,8 @@ import (
 
 	"github.com/fiorix/go-diameter/v4/diam"
 	"github.com/fiorix/go-diameter/v4/diam/datatype"
+
+	"github.com/yuu-biz/ims-practice/internal/diameter"
 )
 
 // This file is the Report SM Delivery Status procedure of S6c (TS
@@ -65,11 +67,11 @@ type NodeSMDeliveryOutcome struct {
 
 func (o NodeSMDeliveryOutcome) avp(code uint32, flags uint8) *diam.AVP {
 	// M and V for both: TS 29.338 Table 5.3.3.1/1.
-	children := []*diam.AVP{vendorAVP(avpSMDeliveryCause, mv, datatype.Enumerated(o.SMDeliveryCause))}
+	children := []*diam.AVP{diameter.VendorAVP(avpSMDeliveryCause, mv, datatype.Enumerated(o.SMDeliveryCause))}
 	if o.AbsentUserDiagnosticSM != nil {
-		children = append(children, vendorAVP(avpAbsentUserDiagnosticSM, mv, datatype.Unsigned32(*o.AbsentUserDiagnosticSM)))
+		children = append(children, diameter.VendorAVP(avpAbsentUserDiagnosticSM, mv, datatype.Unsigned32(*o.AbsentUserDiagnosticSM)))
 	}
-	return vendorAVP(code, flags, &diam.GroupedAVP{AVP: children})
+	return diameter.VendorAVP(code, flags, &diam.GroupedAVP{AVP: children})
 }
 
 // nodeSMDeliveryOutcomeAVP reads one of the node outcomes.
@@ -116,7 +118,7 @@ func (o SMDeliveryOutcome) avp() *diam.AVP {
 		// V without M: Table 5.3.3.1/1.
 		children = append(children, o.SMSF3GPPSMDeliveryOutcome.avp(avpSMSF3GPPSMDeliveryOutcome, v))
 	}
-	return vendorAVP(avpSMDeliveryOutcome, mv, &diam.GroupedAVP{AVP: children})
+	return diameter.VendorAVP(avpSMDeliveryOutcome, mv, &diam.GroupedAVP{AVP: children})
 }
 
 // smDeliveryOutcomeAVP reads an SM-Delivery-Outcome AVP.
@@ -160,7 +162,7 @@ func (o *smDeliveryOutcomeAVP) smDeliveryOutcome() (SMDeliveryOutcome, error) {
 // project has no SMS without MSISDN and no single attempt delivery, and
 // the HSS of this project keeps one serving node of each kind.
 type ReportSMDeliveryStatusRequest struct {
-	Header
+	diameter.Header
 	// UserIdentifier names the recipient, by MSISDN.
 	UserIdentifier UserIdentifier
 	// SCAddress is the E.164 number of the SC that holds the short
@@ -172,11 +174,11 @@ type ReportSMDeliveryStatusRequest struct {
 // Message builds the RDR. SCAddress and the MSISDN, if set, must pass
 // ValidE164.
 func (r ReportSMDeliveryStatusRequest) Message() *diam.Message {
-	m := newRequest(ApplicationIDS6c, CommandReportSMDeliveryStatus)
-	r.begin(m)
+	m := diameter.NewRequest(ApplicationIDS6c, CommandReportSMDeliveryStatus)
+	begin(m, r.Header)
 	m.AddAVP(r.UserIdentifier.avp())
 	// M and V: TS 29.338 Table 6.3.3.1/1.
-	m.AddAVP(vendorAVP(avpSCAddress, mv, encodeTBCD(r.SCAddress)))
+	m.AddAVP(diameter.VendorAVP(avpSCAddress, mv, encodeTBCD(r.SCAddress)))
 	m.AddAVP(r.SMDeliveryOutcome.avp())
 	return m
 }
@@ -186,7 +188,7 @@ func (r ReportSMDeliveryStatusRequest) Message() *diam.Message {
 // format requires, is missing or empty.
 func ParseReportSMDeliveryStatusRequest(m *diam.Message) (ReportSMDeliveryStatusRequest, error) {
 	var raw struct {
-		requestHeader
+		diameter.Header
 		UserIdentifier    userIdentifierAVP     `avp:"User-Identifier"`
 		SCAddress         []byte                `avp:"SC-Address"`
 		SMDeliveryOutcome *smDeliveryOutcomeAVP `avp:"SM-Delivery-Outcome,omitempty"`
@@ -210,7 +212,7 @@ func ParseReportSMDeliveryStatusRequest(m *diam.Message) (ReportSMDeliveryStatus
 		return ReportSMDeliveryStatusRequest{}, fmt.Errorf("RDR: SM-Delivery-Outcome: %w", err)
 	}
 	return ReportSMDeliveryStatusRequest{
-		Header:            raw.header(),
+		Header:            raw.Header,
 		UserIdentifier:    user,
 		SCAddress:         sc,
 		SMDeliveryOutcome: outcome,
@@ -229,14 +231,14 @@ type ReportSMDeliveryStatusAnswer struct {
 	// Result is DIAMETER_SUCCESS when the HSS updated the MWD. 5.2.3.4
 	// lists the errors: DIAMETER_ERROR_USER_UNKNOWN and
 	// DIAMETER_ERROR_MWD_LIST_FULL.
-	Result Result
+	Result diameter.Result
 	// UserIdentifier holds the MSISDN-Alert of the user when it differs
 	// from the MSISDN of the request, and is nil otherwise.
 	UserIdentifier *UserIdentifier
 }
 
 // Message builds the RDA that answers request.
-func (a ReportSMDeliveryStatusAnswer) Message(request *diam.Message, local Identity) *diam.Message {
+func (a ReportSMDeliveryStatusAnswer) Message(request *diam.Message, local diameter.Identity) *diam.Message {
 	m := newAnswer(request, local, a.Result)
 	if a.UserIdentifier != nil {
 		m.AddAVP(a.UserIdentifier.avp())
@@ -246,13 +248,13 @@ func (a ReportSMDeliveryStatusAnswer) Message(request *diam.Message, local Ident
 
 func ParseReportSMDeliveryStatusAnswer(m *diam.Message) (ReportSMDeliveryStatusAnswer, error) {
 	var raw struct {
-		answerResult
+		diameter.ResultAVPs
 		UserIdentifier *userIdentifierAVP `avp:"User-Identifier,omitempty"`
 	}
 	if err := m.Unmarshal(&raw); err != nil {
 		return ReportSMDeliveryStatusAnswer{}, fmt.Errorf("RDA: %w", err)
 	}
-	result, err := raw.result()
+	result, err := raw.Result()
 	if err != nil {
 		return ReportSMDeliveryStatusAnswer{}, fmt.Errorf("RDA: %w", err)
 	}

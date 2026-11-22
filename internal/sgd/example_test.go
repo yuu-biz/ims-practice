@@ -3,6 +3,7 @@ package sgd
 import (
 	"bytes"
 	"fmt"
+	"github.com/yuu-biz/ims-practice/internal/diameter"
 
 	"github.com/fiorix/go-diameter/v4/diam"
 	"github.com/fiorix/go-diameter/v4/diam/dict"
@@ -34,7 +35,7 @@ func ExampleMOForwardShortMessageRequest() {
 
 	// The MME.
 	ofr := MOForwardShortMessageRequest{
-		Header: Header{
+		Header: diameter.Header{
 			SessionID:        "mme." + realm + ";1;1",
 			OriginHost:       "mme." + realm,
 			OriginRealm:      realm,
@@ -53,8 +54,8 @@ func ExampleMOForwardShortMessageRequest() {
 	}
 	fmt.Printf("to SC %s from IMSI %s, MSISDN %s: TPDU of %d octets\n",
 		received.SCAddress, received.UserIdentifier.UserName, received.UserIdentifier.MSISDN, len(received.SMRPUI))
-	ofa := MOForwardShortMessageAnswer{Result: Base(DiameterSuccess)}.
-		Message(request, Identity{OriginHost: "sc." + realm, OriginRealm: realm})
+	ofa := MOForwardShortMessageAnswer{Result: diameter.Base(diameter.DiameterSuccess)}.
+		Message(request, diameter.Identity{OriginHost: "sc." + realm, OriginRealm: realm})
 
 	// The MME again: a success becomes the RP-ACK for the UE.
 	answer, err := ParseMOForwardShortMessageAnswer(overTheWire(ofa))

@@ -1,11 +1,9 @@
 package sgd
 
 import (
-	"bytes"
 	_ "embed"
-	"sync"
 
-	"github.com/fiorix/go-diameter/v4/diam/dict"
+	"github.com/yuu-biz/ims-practice/internal/diameter"
 )
 
 var (
@@ -15,22 +13,9 @@ var (
 	s6cDictionaryXML []byte
 )
 
-var (
-	loadDictionaryOnce sync.Once
-	errLoadDictionary  error
-)
+var dictionary = diameter.NewDictionary(sgdDictionaryXML, s6cDictionaryXML)
 
 // LoadDictionary adds the SGd and S6c applications to go-diameter's
 // default dictionary. A process must call it before it builds or reads a
-// message of this package. Loading the same XML twice would duplicate
-// it, so later calls return the result of the first.
-func LoadDictionary() error {
-	loadDictionaryOnce.Do(func() {
-		for _, doc := range [][]byte{sgdDictionaryXML, s6cDictionaryXML} {
-			if errLoadDictionary = dict.Default.Load(bytes.NewReader(doc)); errLoadDictionary != nil {
-				return
-			}
-		}
-	})
-	return errLoadDictionary
-}
+// message of this package.
+func LoadDictionary() error { return dictionary.Load() }

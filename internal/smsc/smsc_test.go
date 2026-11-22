@@ -2,6 +2,7 @@ package smsc
 
 import (
 	"context"
+	"github.com/yuu-biz/ims-practice/internal/diameter"
 	"reflect"
 	"sync"
 	"testing"
@@ -16,7 +17,7 @@ func TestShortMessageAcceptedAndDelivered(t *testing.T) {
 	n.clock.Advance(400 * time.Millisecond)
 	ofa := n.submit(bob, hello(t, bob, 7))
 
-	if ofa.Result != sgd.Base(sgd.DiameterSuccess) || ofa.SMDeliveryFailureCause != nil {
+	if ofa.Result != diameter.Base(diameter.DiameterSuccess) || ofa.SMDeliveryFailureCause != nil {
 		t.Fatalf("OFA = %+v, want success", ofa)
 	}
 	// TS 23.040 9.2.2.2a: the SMS-SUBMIT-REPORT for RP-ACK, with the
@@ -101,35 +102,35 @@ func TestRefusals(t *testing.T) {
 	for _, tc := range []struct {
 		name   string
 		change func(*network, *sgd.MOForwardShortMessageRequest)
-		result sgd.Result
+		result diameter.Result
 		cause  sgd.SMEnumeratedDeliveryFailureCause
 		fcs    sms.FailureCause // zero: no SMS-SUBMIT-REPORT
 	}{
 		{"another SC", func(_ *network, r *sgd.MOForwardShortMessageRequest) { r.SCAddress = "12025550101" },
-			sgd.Experimental(sgd.DiameterErrorSMDeliveryFailure), sgd.UnknownServiceCentre, 0},
+			diameter.Experimental(sgd.DiameterErrorSMDeliveryFailure), sgd.UnknownServiceCentre, 0},
 		{"sender without MSISDN", func(_ *network, r *sgd.MOForwardShortMessageRequest) { r.UserIdentifier.MSISDN = "" },
-			sgd.Experimental(sgd.DiameterErrorSMDeliveryFailure), sgd.UserNotSCUser, 0xc1},
+			diameter.Experimental(sgd.DiameterErrorSMDeliveryFailure), sgd.UserNotSCUser, 0xc1},
 		{"not a TPDU", func(_ *network, r *sgd.MOForwardShortMessageRequest) { r.SMRPUI = []byte{0x01} },
-			sgd.Experimental(sgd.DiameterErrorFacilityNotSupported), 0, 0xb0},
+			diameter.Experimental(sgd.DiameterErrorFacilityNotSupported), 0, 0xb0},
 		{"SMS-COMMAND", func(_ *network, r *sgd.MOForwardShortMessageRequest) { r.SMRPUI = []byte{0x02, 0x01, 0x00} },
-			sgd.Experimental(sgd.DiameterErrorFacilityNotSupported), 0, 0xa1},
+			diameter.Experimental(sgd.DiameterErrorFacilityNotSupported), 0, 0xa1},
 		{"absolute TP-VP", func(_ *network, r *sgd.MOForwardShortMessageRequest) { r.SMRPUI = absoluteTPDU },
-			sgd.Experimental(sgd.DiameterErrorFacilityNotSupported), 0, 0xc6},
+			diameter.Experimental(sgd.DiameterErrorFacilityNotSupported), 0, 0xc6},
 		{"national TP-DA", func(_ *network, r *sgd.MOForwardShortMessageRequest) { r.SMRPUI = nationalTPDU },
-			sgd.Experimental(sgd.DiameterErrorSMDeliveryFailure), sgd.InvalidSMEAddress, 0xc3},
+			diameter.Experimental(sgd.DiameterErrorSMDeliveryFailure), sgd.InvalidSMEAddress, 0xc3},
 		{"no user has the number", func(_ *network, r *sgd.MOForwardShortMessageRequest) { r.SMRPUI = unknown },
-			sgd.Experimental(sgd.DiameterErrorSMDeliveryFailure), sgd.InvalidSMEAddress, 0xc3},
+			diameter.Experimental(sgd.DiameterErrorSMDeliveryFailure), sgd.InvalidSMEAddress, 0xc3},
 		{"recipient barred", func(n *network, r *sgd.MOForwardShortMessageRequest) {
-			n.hss.set(carol, sgd.SendRoutingInfoForSMAnswer{Result: sgd.Experimental(sgd.DiameterErrorServiceBarred)})
+			n.hss.set(carol, sgd.SendRoutingInfoForSMAnswer{Result: diameter.Experimental(sgd.DiameterErrorServiceBarred)})
 			r.SMRPUI = barred
-		}, sgd.Experimental(sgd.DiameterErrorSMDeliveryFailure), sgd.InvalidSMEAddress, 0xc4},
+		}, diameter.Experimental(sgd.DiameterErrorSMDeliveryFailure), sgd.InvalidSMEAddress, 0xc4},
 		{"HSS down", func(n *network, r *sgd.MOForwardShortMessageRequest) { n.hss.down = true },
-			sgd.Experimental(sgd.DiameterErrorSMDeliveryFailure), sgd.SCCongestion, 0xc2},
+			diameter.Experimental(sgd.DiameterErrorSMDeliveryFailure), sgd.SCCongestion, 0xc2},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			n := newNetwork(t)
 			req := sgd.MOForwardShortMessageRequest{
-				Header:         sgd.Header{SessionID: "s", OriginHost: mmeHost, OriginRealm: epcRealm, DestinationRealm: epcRealm},
+				Header:         diameter.Header{SessionID: "s", OriginHost: mmeHost, OriginRealm: epcRealm, DestinationRealm: epcRealm},
 				SCAddress:      scAddress,
 				UserIdentifier: sgd.UserIdentifier{UserName: imsiOf[alice], MSISDN: alice},
 				SMRPUI:         good,
@@ -140,7 +141,7 @@ func TestRefusals(t *testing.T) {
 			if ofa.Result != tc.result {
 				t.Errorf("result = %v, want %v", ofa.Result, tc.result)
 			}
-			if tc.result == sgd.Experimental(sgd.DiameterErrorSMDeliveryFailure) &&
+			if tc.result == diameter.Experimental(sgd.DiameterErrorSMDeliveryFailure) &&
 				(ofa.SMDeliveryFailureCause == nil || ofa.SMDeliveryFailureCause.SMEnumeratedDeliveryFailureCause != tc.cause) {
 				t.Errorf("SM-Delivery-Failure-Cause = %+v, want %v", ofa.SMDeliveryFailureCause, tc.cause)
 			}
@@ -210,9 +211,9 @@ func TestValidityPeriodExpires(t *testing.T) {
 	n := newNetwork(t)
 	n.nodes.set(mmeHost, func(r sgd.MTForwardShortMessageRequest) (sgd.MTForwardShortMessageAnswer, error) {
 		if r.UserName == imsiOf[bob] {
-			return sgd.MTForwardShortMessageAnswer{Result: sgd.Experimental(sgd.DiameterErrorAbsentUser)}, nil
+			return sgd.MTForwardShortMessageAnswer{Result: diameter.Experimental(sgd.DiameterErrorAbsentUser)}, nil
 		}
-		return sgd.MTForwardShortMessageAnswer{Result: sgd.Base(sgd.DiameterSuccess)}, nil
+		return sgd.MTForwardShortMessageAnswer{Result: diameter.Base(diameter.DiameterSuccess)}, nil
 	})
 	submit := hello(t, bob, 9)
 	submit.StatusReportRequest = true
@@ -281,16 +282,16 @@ func TestDeliveryFailures(t *testing.T) {
 		kept      bool
 		smsfTried bool
 	}{
-		{"absent user", sgd.MTForwardShortMessageAnswer{Result: sgd.Experimental(sgd.DiameterErrorAbsentUser)}, true, true},
-		{"user unknown in the MME", sgd.MTForwardShortMessageAnswer{Result: sgd.Experimental(sgd.DiameterErrorUserUnknown)}, true, true},
-		{"busy", sgd.MTForwardShortMessageAnswer{Result: sgd.Experimental(sgd.DiameterErrorUserBusyForMTSMS)}, true, false},
-		{"illegal user", sgd.MTForwardShortMessageAnswer{Result: sgd.Experimental(sgd.DiameterErrorIllegalUser)}, false, false},
-		{"illegal equipment", sgd.MTForwardShortMessageAnswer{Result: sgd.Experimental(sgd.DiameterErrorIllegalEquipment)}, false, false},
-		{"facility not supported", sgd.MTForwardShortMessageAnswer{Result: sgd.Experimental(sgd.DiameterErrorFacilityNotSupported)}, true, true},
-		{"memory capacity exceeded", sgd.MTForwardShortMessageAnswer{Result: sgd.Experimental(sgd.DiameterErrorSMDeliveryFailure), SMDeliveryFailureCause: failure(sgd.MemoryCapacityExceeded)}, true, false},
-		{"protocol error", sgd.MTForwardShortMessageAnswer{Result: sgd.Experimental(sgd.DiameterErrorSMDeliveryFailure), SMDeliveryFailureCause: failure(sgd.EquipmentProtocolError)}, true, false},
-		{"not SM equipped", sgd.MTForwardShortMessageAnswer{Result: sgd.Experimental(sgd.DiameterErrorSMDeliveryFailure), SMDeliveryFailureCause: failure(sgd.EquipmentNotSMEquipped)}, true, true},
-		{"base error", sgd.MTForwardShortMessageAnswer{Result: sgd.Base(5012)}, true, true},
+		{"absent user", sgd.MTForwardShortMessageAnswer{Result: diameter.Experimental(sgd.DiameterErrorAbsentUser)}, true, true},
+		{"user unknown in the MME", sgd.MTForwardShortMessageAnswer{Result: diameter.Experimental(sgd.DiameterErrorUserUnknown)}, true, true},
+		{"busy", sgd.MTForwardShortMessageAnswer{Result: diameter.Experimental(sgd.DiameterErrorUserBusyForMTSMS)}, true, false},
+		{"illegal user", sgd.MTForwardShortMessageAnswer{Result: diameter.Experimental(sgd.DiameterErrorIllegalUser)}, false, false},
+		{"illegal equipment", sgd.MTForwardShortMessageAnswer{Result: diameter.Experimental(sgd.DiameterErrorIllegalEquipment)}, false, false},
+		{"facility not supported", sgd.MTForwardShortMessageAnswer{Result: diameter.Experimental(sgd.DiameterErrorFacilityNotSupported)}, true, true},
+		{"memory capacity exceeded", sgd.MTForwardShortMessageAnswer{Result: diameter.Experimental(sgd.DiameterErrorSMDeliveryFailure), SMDeliveryFailureCause: failure(sgd.MemoryCapacityExceeded)}, true, false},
+		{"protocol error", sgd.MTForwardShortMessageAnswer{Result: diameter.Experimental(sgd.DiameterErrorSMDeliveryFailure), SMDeliveryFailureCause: failure(sgd.EquipmentProtocolError)}, true, false},
+		{"not SM equipped", sgd.MTForwardShortMessageAnswer{Result: diameter.Experimental(sgd.DiameterErrorSMDeliveryFailure), SMDeliveryFailureCause: failure(sgd.EquipmentNotSMEquipped)}, true, true},
+		{"base error", sgd.MTForwardShortMessageAnswer{Result: diameter.Base(5012)}, true, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			n := newNetwork(t)
@@ -339,10 +340,10 @@ func TestRoutingFailures(t *testing.T) {
 		sra  sgd.SendRoutingInfoForSMAnswer
 		kept bool
 	}{
-		{"absent user", sgd.SendRoutingInfoForSMAnswer{Result: sgd.Experimental(sgd.DiameterErrorAbsentUser)}, true},
-		{"service barred", sgd.SendRoutingInfoForSMAnswer{Result: sgd.Experimental(sgd.DiameterErrorServiceBarred)}, true},
-		{"not subscribed", sgd.SendRoutingInfoForSMAnswer{Result: sgd.Experimental(sgd.DiameterErrorServiceNotSubscribed)}, false},
-		{"no node for SGd", sgd.SendRoutingInfoForSMAnswer{Result: sgd.Base(sgd.DiameterSuccess), UserName: imsiOf[bob],
+		{"absent user", sgd.SendRoutingInfoForSMAnswer{Result: diameter.Experimental(sgd.DiameterErrorAbsentUser)}, true},
+		{"service barred", sgd.SendRoutingInfoForSMAnswer{Result: diameter.Experimental(sgd.DiameterErrorServiceBarred)}, true},
+		{"not subscribed", sgd.SendRoutingInfoForSMAnswer{Result: diameter.Experimental(sgd.DiameterErrorServiceNotSubscribed)}, false},
+		{"no node for SGd", sgd.SendRoutingInfoForSMAnswer{Result: diameter.Base(diameter.DiameterSuccess), UserName: imsiOf[bob],
 			ServingNode: &sgd.ServingNode{IPSMGWNumber: "12025550192"}}, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -363,7 +364,7 @@ func TestRoutingFailures(t *testing.T) {
 
 func TestServingNodes(t *testing.T) {
 	sra := sgd.SendRoutingInfoForSMAnswer{
-		Result:          sgd.Base(sgd.DiameterSuccess),
+		Result:          diameter.Base(diameter.DiameterSuccess),
 		ServingNode:     &sgd.ServingNode{IPSMGWNumber: "12025550192", IPSMGWName: ipsmgw},
 		SMSF3GPPAddress: &sgd.SMSF3GPPAddress{SMSF3GPPName: smsfHost, SMSF3GPPRealm: epcRealm},
 	}
@@ -417,7 +418,7 @@ func TestTwoInstancesDeliverOnce(t *testing.T) {
 	n.nodes.set(mmeHost, func(sgd.MTForwardShortMessageRequest) (sgd.MTForwardShortMessageAnswer, error) {
 		once.Do(func() { close(arrived) })
 		<-release
-		return sgd.MTForwardShortMessageAnswer{Result: sgd.Base(sgd.DiameterSuccess)}, nil
+		return sgd.MTForwardShortMessageAnswer{Result: diameter.Base(diameter.DiameterSuccess)}, nil
 	})
 	other := n.newSC()
 	n.clock.Advance(DefaultRetrySchedule[0])

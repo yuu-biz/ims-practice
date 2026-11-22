@@ -57,16 +57,14 @@ import (
 	"github.com/fiorix/go-diameter/v4/diam"
 	"github.com/fiorix/go-diameter/v4/diam/avp"
 	"github.com/fiorix/go-diameter/v4/diam/datatype"
-	"github.com/fiorix/go-diameter/v4/diam/dict"
+
+	"github.com/yuu-biz/ims-practice/internal/diameter"
 )
 
 // ApplicationIDSGd is the application identifier of SGd, TS 29.338 4.8.
 // SGd is a vendor specific application of 3GPP, whose IANA enterprise
-// number is VendorID3GPP.
-const (
-	ApplicationIDSGd uint32 = 16777313
-	VendorID3GPP     uint32 = 10415
-)
+// number is diameter.VendorID3GPP.
+const ApplicationIDSGd uint32 = 16777313
 
 // Command codes of SGd, TS 29.338 Table 6.3.2.2/1.
 const (
@@ -74,12 +72,10 @@ const (
 	CommandMTForwardShortMessage uint32 = 8388646 // TFR/TFA
 )
 
-// DiameterSuccess is the Result-Code of a successful answer (RFC 6733
-// 7.1.2), which TS 29.338 7.2 uses as it is.
-const DiameterSuccess uint32 = 2001
-
 // Experimental-Result-Code values, TS 29.338 7.3. They travel inside
-// Experimental-Result with Vendor-Id 10415, never in Result-Code.
+// Experimental-Result with Vendor-Id 10415, never in Result-Code. TS
+// 29.338 7.2 uses the base Result-Code values of RFC 6733 as they are,
+// so a successful answer carries diameter.DiameterSuccess.
 const (
 	DiameterErrorUserUnknown          uint32 = 5001 // 7.3.2
 	DiameterErrorAbsentUser           uint32 = 5550 // 7.3.3
@@ -93,131 +89,33 @@ const (
 	DiameterErrorMWDListFull          uint32 = 5558 // 7.3.11
 )
 
-// authSessionStateNoStateMaintained is the value every request and
-// answer carries in Auth-Session-State: TS 29.338 4.5 has the sessions
-// end implicitly, so that no node keeps session state (RFC 6733 8.11).
-const authSessionStateNoStateMaintained = 1
-
-// Result is the outcome of an answer: a base Result-Code, or an
-// Experimental-Result-Code when Experimental is true.
-type Result struct {
-	Code         uint32
-	Experimental bool
-}
-
-func (r Result) String() string {
-	if r.Experimental {
-		return fmt.Sprintf("Experimental-Result-Code %d", r.Code)
-	}
-	return fmt.Sprintf("Result-Code %d", r.Code)
-}
-
-// Success reports a 2xxx code of either kind.
-func (r Result) Success() bool { return r.Code >= 2000 && r.Code < 3000 }
-
-// Base returns a base protocol Result-Code.
-func Base(code uint32) Result { return Result{Code: code} }
-
-// Experimental returns an Experimental-Result-Code of TS 29.338 7.3.
-func Experimental(code uint32) Result { return Result{Code: code, Experimental: true} }
-
-// Header is the routing part every request starts with (TS 29.338 5.3.2
-// and 6.3.2). DestinationHost may be empty where the command format
-// makes it optional: in an OFR, when the sender knows only the realm of
-// the SC (6.3.1.1), and in an SRR, when it does not know which HSS holds
-// the user (5.3.1.1.3). A TFR always names the serving node (6.3.1.2).
-type Header struct {
-	SessionID        string
-	OriginHost       string
-	OriginRealm      string
-	DestinationHost  string
-	DestinationRealm string
-}
-
-// Identity is how the node that answers names itself.
-type Identity struct {
-	OriginHost  string
-	OriginRealm string
-}
-
-func newRequest(application, command uint32) *diam.Message {
-	return diam.NewMessage(command, diam.RequestFlag|diam.ProxiableFlag, application, 0, 0, dict.Default)
-}
-
 // begin writes the AVPs every request starts with, up to and including
 // Destination-Realm. Unlike Cx and Sh, the commands of TS 29.338 carry
 // no Vendor-Specific-Application-Id: 5.3.2.2 and 6.3.2.2 forbid a
-// sender to include it.
-func (h Header) begin(m *diam.Message) {
-	m.NewAVP(avp.SessionID, avp.Mbit, 0, datatype.UTF8String(h.SessionID))
-	m.NewAVP(avp.AuthSessionState, avp.Mbit, 0, datatype.Enumerated(authSessionStateNoStateMaintained))
-	m.NewAVP(avp.OriginHost, avp.Mbit, 0, datatype.DiameterIdentity(h.OriginHost))
-	m.NewAVP(avp.OriginRealm, avp.Mbit, 0, datatype.DiameterIdentity(h.OriginRealm))
-	if h.DestinationHost != "" {
-		m.NewAVP(avp.DestinationHost, avp.Mbit, 0, datatype.DiameterIdentity(h.DestinationHost))
-	}
-	m.NewAVP(avp.DestinationRealm, avp.Mbit, 0, datatype.DiameterIdentity(h.DestinationRealm))
+// sender to include it. NO_STATE_MAINTAINED is what 4.5 asks for: the
+// sessions end implicitly, so that no node keeps session state.
+//
+// Destination-Host may be empty where the command format makes it
+// optional: in an OFR, when the sender knows only the realm of the SC
+// (6.3.1.1), and in an SRR, when it does not know which HSS holds the
+// user (5.3.1.1.3). A TFR always names the serving node (6.3.1.2).
+func begin(m *diam.Message, h diameter.Header) {
+	h.AddSessionID(m)
+	m.NewAVP(avp.AuthSessionState, avp.Mbit, 0, datatype.Enumerated(diameter.AuthSessionStateNoStateMaintained))
+	h.AddOrigin(m)
+	h.AddDestinationHost(m)
+	h.AddDestinationRealm(m)
 }
 
 // newAnswer starts the answer to request: Session-Id, the result,
 // Auth-Session-State and the origin of local, which is the order of
 // every answer format of TS 29.338.
-func newAnswer(request *diam.Message, local Identity, result Result) *diam.Message {
-	m := diam.NewMessage(request.Header.CommandCode, request.Header.CommandFlags&diam.ProxiableFlag,
-		request.Header.ApplicationID, request.Header.HopByHopID, request.Header.EndToEndID, dict.Default)
-	if sid, err := request.FindAVP(avp.SessionID, 0); err == nil {
-		m.AddAVP(sid)
-	}
-	if result.Experimental {
-		m.NewAVP(avp.ExperimentalResult, avp.Mbit, 0, &diam.GroupedAVP{AVP: []*diam.AVP{
-			diam.NewAVP(avp.VendorID, avp.Mbit, 0, datatype.Unsigned32(VendorID3GPP)),
-			diam.NewAVP(avp.ExperimentalResultCode, avp.Mbit, 0, datatype.Unsigned32(result.Code)),
-		}})
-	} else {
-		m.NewAVP(avp.ResultCode, avp.Mbit, 0, datatype.Unsigned32(result.Code))
-	}
-	m.NewAVP(avp.AuthSessionState, avp.Mbit, 0, datatype.Enumerated(authSessionStateNoStateMaintained))
-	m.NewAVP(avp.OriginHost, avp.Mbit, 0, datatype.DiameterIdentity(local.OriginHost))
-	m.NewAVP(avp.OriginRealm, avp.Mbit, 0, datatype.DiameterIdentity(local.OriginRealm))
+func newAnswer(request *diam.Message, local diameter.Identity, result diameter.Result) *diam.Message {
+	m := diameter.NewAnswer(request)
+	result.AddTo(m)
+	m.NewAVP(avp.AuthSessionState, avp.Mbit, 0, datatype.Enumerated(diameter.AuthSessionStateNoStateMaintained))
+	local.AddOrigin(m)
 	return m
-}
-
-// requestHeader reads the routing AVPs every request starts with.
-type requestHeader struct {
-	SessionID        string `avp:"Session-Id"`
-	OriginHost       string `avp:"Origin-Host"`
-	OriginRealm      string `avp:"Origin-Realm"`
-	DestinationHost  string `avp:"Destination-Host,omitempty"`
-	DestinationRealm string `avp:"Destination-Realm"`
-}
-
-func (h requestHeader) header() Header {
-	return Header{
-		SessionID:        h.SessionID,
-		OriginHost:       h.OriginHost,
-		OriginRealm:      h.OriginRealm,
-		DestinationHost:  h.DestinationHost,
-		DestinationRealm: h.DestinationRealm,
-	}
-}
-
-// answerResult reads the result of an answer from Result-Code or
-// Experimental-Result.
-type answerResult struct {
-	ResultCode         *uint32 `avp:"Result-Code,omitempty"`
-	ExperimentalResult *struct {
-		Code uint32 `avp:"Experimental-Result-Code"`
-	} `avp:"Experimental-Result,omitempty"`
-}
-
-func (a answerResult) result() (Result, error) {
-	switch {
-	case a.ExperimentalResult != nil:
-		return Experimental(a.ExperimentalResult.Code), nil
-	case a.ResultCode != nil:
-		return Base(*a.ResultCode), nil
-	}
-	return Result{}, fmt.Errorf("answer has neither Result-Code nor Experimental-Result")
 }
 
 // AVP codes of SGd. All have Vendor-Id 10415.
@@ -239,10 +137,6 @@ const (
 	v  = avp.Vbit
 )
 
-func vendorAVP(code uint32, flags uint8, data datatype.Type) *diam.AVP {
-	return diam.NewAVP(code, flags, VendorID3GPP, data)
-}
-
 // MaxSMRPUI is the largest TPDU that SM-RP-UI holds, in octets (TS
 // 29.338 6.3.3.3).
 const MaxSMRPUI = 200
@@ -263,41 +157,22 @@ func ValidE164(digits string) bool {
 	return true
 }
 
-// encodeTBCD packs decimal digits two to an octet as TS 29.329 6.3.2
-// says for the MSISDN AVP, and as TS 29.338 6.3.3.2 asks for SC-Address:
-// the first digit in bits 4 to 1, the second in bits 8 to 5, and 1111
-// filling the last high half when the count is odd. There is no octet
-// for the nature of address or the numbering plan. The digits must be
-// decimal, as ValidE164 checks.
+// encodeTBCD is diameter.EncodeTBCD as an AVP value. TS 29.338 6.3.3.2
+// asks for SC-Address what TS 29.329 6.3.2 asks for MSISDN, with no
+// octet for the nature of address or the numbering plan. The digits
+// must be decimal, as ValidE164 checks.
 func encodeTBCD(digits string) datatype.OctetString {
-	out := make([]byte, (len(digits)+1)/2)
-	for i := range out {
-		low := digits[2*i] - '0'
-		high := byte(0x0f)
-		if 2*i+1 < len(digits) {
-			high = digits[2*i+1] - '0'
-		}
-		out[i] = high<<4 | low
-	}
-	return datatype.OctetString(out)
+	return datatype.OctetString(diameter.EncodeTBCD(digits))
 }
 
-// decodeTBCD is the reverse of encodeTBCD. A filler is allowed only as
-// the last high half. An empty AVP gives an empty string.
+// decodeTBCD is the reverse of encodeTBCD. An AVP that is absent, and
+// one that holds no octet, both give an empty string, which the parse
+// functions below read as "not supplied".
 func decodeTBCD(b []byte) (string, error) {
-	digits := make([]byte, 0, 2*len(b))
-	for i, octet := range b {
-		for n, half := range []byte{octet & 0x0f, octet >> 4} {
-			switch {
-			case half <= 9:
-				digits = append(digits, '0'+half)
-			case half == 0x0f && n == 1 && i == len(b)-1:
-			default:
-				return "", fmt.Errorf("octet %d holds %#02x, which is not a TBCD digit", i, octet)
-			}
-		}
+	if len(b) == 0 {
+		return "", nil
 	}
-	return string(digits), nil
+	return diameter.DecodeTBCD(b)
 }
 
 // UserIdentifier is the User-Identifier AVP, TS 29.336 6.4.2: the
@@ -321,11 +196,11 @@ func (u UserIdentifier) avp() *diam.AVP {
 		children = append(children, diam.NewAVP(avp.UserName, avp.Mbit, 0, datatype.UTF8String(u.UserName)))
 	}
 	if u.MSISDN != "" {
-		children = append(children, vendorAVP(avpMSISDN, mv, encodeTBCD(u.MSISDN)))
+		children = append(children, diameter.VendorAVP(avpMSISDN, mv, encodeTBCD(u.MSISDN)))
 	}
 	// M and V: TS 29.336 Table 6.4.1/1, and TS 29.329 Table 6.3.1 for
 	// the MSISDN.
-	return vendorAVP(avpUserIdentifier, mv, &diam.GroupedAVP{AVP: children})
+	return diameter.VendorAVP(avpUserIdentifier, mv, &diam.GroupedAVP{AVP: children})
 }
 
 // userIdentifierAVP reads a User-Identifier AVP.
@@ -394,12 +269,12 @@ type SMDeliveryFailureCause struct {
 func (c SMDeliveryFailureCause) avp() *diam.AVP {
 	// M and V for all three: TS 29.338 Table 6.3.3.1/1.
 	children := []*diam.AVP{
-		vendorAVP(avpSMEnumeratedDeliveryFailureCause, mv, datatype.Enumerated(c.SMEnumeratedDeliveryFailureCause)),
+		diameter.VendorAVP(avpSMEnumeratedDeliveryFailureCause, mv, datatype.Enumerated(c.SMEnumeratedDeliveryFailureCause)),
 	}
 	if len(c.SMDiagnosticInfo) > 0 {
-		children = append(children, vendorAVP(avpSMDiagnosticInfo, mv, datatype.OctetString(c.SMDiagnosticInfo)))
+		children = append(children, diameter.VendorAVP(avpSMDiagnosticInfo, mv, datatype.OctetString(c.SMDiagnosticInfo)))
 	}
-	return vendorAVP(avpSMDeliveryFailureCause, mv, &diam.GroupedAVP{AVP: children})
+	return diameter.VendorAVP(avpSMDeliveryFailureCause, mv, &diam.GroupedAVP{AVP: children})
 }
 
 // smDeliveryFailureCauseAVP reads an SM-Delivery-Failure-Cause AVP.
