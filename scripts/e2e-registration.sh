@@ -37,6 +37,7 @@ wait_for_open scscf
 
 remember_nodes
 fail=0
+domain=ims.mnc001.mcc001.3gppnetwork.org
 if docker compose run --no-deps --rm ue register --deregister-after 2s; then
 	echo "ok   UE registered and deregistered"
 else
@@ -74,6 +75,56 @@ else
 	echo "FAIL a MESSAGE from the deregistered UE got an answer: $(head -n 1 <<<"$reply")"
 	fail=1
 fi
+
+# Removing the subscription of a registered user deregisters the user as
+# well: the HSS sends an RTR, and the S-CSCF ends the registration with
+# a NOTIFY whose contact is rejected (TS 29.228 6.1.3). Subscriber 3 is
+# the one that no other check of this scenario registers, so taking it
+# away leaves the rest of the run as it was. The DELETE goes to the Lab,
+# which passes it to the HSS provisioning API, as its Subscribers panel
+# does.
+ue3=(--impi "001010000000003@$domain" --impu "sip:+12025550103@$domain" --password test-password-3)
+docker compose run --no-deps -d --name ims-practice-ue3-rtr ue3 register "${ue3[@]}" >/dev/null
+# The UE needs its own reg event subscription before the removal, or the
+# NOTIFY that rejects its registration would have nowhere to go. The UE
+# logs "reg event" once the first NOTIFY of that subscription is in.
+subscribed=
+for i in $(seq 1 30); do
+	grep -q '"msg":"reg event"' <<<"$(docker logs ims-practice-ue3-rtr 2>/dev/null)" && {
+		subscribed=yes
+		break
+	}
+	sleep 1
+done
+if [ -z "$subscribed" ]; then
+	echo "FAIL UE 3 did not register and subscribe to its registration state within 30 s"
+	docker logs ims-practice-ue3-rtr 2>&1 | tail -n 5
+	fail=1
+else
+	# The HSS answers the DELETE only once the RTR is over, so there is
+	# nothing else to wait for. The status code is read from the end of
+	# the output, since curl on Windows cannot write to /dev/null when
+	# MSYS_NO_PATHCONV is set.
+	status="$(curl -s -w '
+%{http_code}' -X DELETE "http://localhost:8080/api/subscribers/001010000000003%40$domain" | tail -n 1)"
+	if [ "$status" = 204 ]; then
+		echo "ok   the HSS removed the subscription of UE 3"
+	else
+		echo "FAIL removing the subscription of UE 3: HTTP $status"
+		fail=1
+	fi
+fi
+# On event="rejected" the UE does not register again (TS 24.229
+# 5.1.1.7): "ue register" ends with an error, which is exit status 1.
+if [ "$(timeout 30 docker wait ims-practice-ue3-rtr 2>/dev/null || echo timeout)" = 1 ] &&
+	grep -q 'deregistered by the network, event rejected' <<<"$(docker logs ims-practice-ue3-rtr 2>&1)"; then
+	echo "ok   UE 3 ended, deregistered by the network"
+else
+	echo "FAIL UE 3 after the removal of its subscription: $(docker logs ims-practice-ue3-rtr 2>&1 | tail -n 2)"
+	fail=1
+fi
+docker rm -f ims-practice-ue3-rtr >/dev/null
+
 same_nodes
 sleep 1
 
@@ -85,6 +136,7 @@ echo "reading $pcap"
 last=0
 
 ue=172.28.0.100
+ue3ip=172.28.0.103
 pcscf=172.28.0.40
 icscf=172.28.0.20
 scscf=172.28.0.30
@@ -94,6 +146,7 @@ register='sip.Method == "REGISTER"'
 uar='diameter.cmd.code == 300'
 sar='diameter.cmd.code == 301'
 mar='diameter.cmd.code == 303'
+rtr='diameter.cmd.code == 304'
 req='diameter.flags.request == 1'
 ans='diameter.flags.request == 0'
 
@@ -179,6 +232,31 @@ expect "SAR USER_DEREGISTRATION" "$sar && $req && diameter.Server-Assignment-Typ
 echo "wrong password"
 expect "SAR AUTHENTICATION_FAILURE" "$sar && $req && diameter.Server-Assignment-Type == 9"
 expect "403 to the UE with the wrong password" "sip.Status-Code == 403 && ip.dst == $ue"
+
+# UE 3 registered after the UE with the wrong password had ended, and
+# its subscription was removed from the HSS after that, so this flow is
+# the last of the capture.
+echo "deregistration by the HSS"
+rejected="sip.msg_body contains \"event=\\\"rejected\\\"\""
+expect "200 OK to the REGISTER of UE 3" "sip.Status-Code == 200 && sip.CSeq.method == \"REGISTER\" && ip.dst == $ue3ip"
+# TS 29.228 6.1.3.1: the private identity goes with all of its public
+# identities, so the RTR carries no Public-Identity, and
+# Destination-Host is the Origin-Host of that S-CSCF's SAR.
+expect "RTR HSS -> S-CSCF, PERMANENT_TERMINATION without a Public-Identity" "$rtr && $req && ip.src == $hss && diameter.Destination-Host == \"scscf.$domain\" && diameter.User-Name == \"001010000000003@$domain\" && diameter.Reason-Code == 0 && !diameter.Public-Identity"
+removed="$last"
+# The S-CSCF sends the NOTIFY of every subscription to the registration
+# before it answers the RTR, and the subscribers answer in their own
+# time, so each branch starts at the RTR.
+mark
+expect "NOTIFY S-CSCF -> P-CSCF, the P-CSCF's subscription, contact rejected" "$notify && ip.src == $scscf && ip.dst == $pcscf && !sip.Route && sip.Subscription-State contains \"terminated\" && $rejected"
+back
+expect "NOTIFY S-CSCF -> P-CSCF along UE 3's route, contact rejected" "$notify && ip.src == $scscf && ip.dst == $pcscf && sip.Route && sip.Subscription-State contains \"terminated\" && $rejected"
+expect "NOTIFY P-CSCF -> UE 3, contact rejected" "$notify && ip.src == $pcscf && ip.dst == $ue3ip && $rejected"
+back
+expect "RTA DIAMETER_SUCCESS" "$rtr && $ans && ip.src == $scscf && diameter.Result-Code == 2001"
+# TS 29.228 A.4.4.2: the HSS has deregistered the user already, so the
+# S-CSCF tells it nothing more.
+none "SAR of the S-CSCF for the removed subscription" "frame.number > $removed && $sar && $req && diameter.User-Name == \"001010000000003@$domain\""
 
 echo "request without an IP association"
 some_from_ue="$(tshark_fields "sip.Call-ID == \"$unregistered_call_id\" && ip.src == $ue && ip.dst == $pcscf" | grep -c . || true)"
