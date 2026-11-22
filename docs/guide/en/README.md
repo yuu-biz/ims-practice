@@ -14,7 +14,7 @@ These guides run the IMS on your machine and follow its messages in a capture, o
 6. [Announcements, alerting tones and conferences with the MRF](mrf.md). An announcement before a barred call, the customized alerting tone, call waiting and a conference of three.
 7. [The VoLTE call flow](volte.md). The EPC stub, IMS AKA, policy control over Rx, and a call in AMR-WB with preconditions.
 8. [Connect two IMS networks](interconnect.md). The IBCF and the TrGW at the border, topology hiding, and the interconnect profiles.
-9. [Watch the IMS in the Lab](lab.md). The ladder diagrams of the HEP copies, the subscribers, and UE simulators driven from the browser.
+9. [Watch the IMS in the Lab](lab.md). The ladder diagrams of the HEP copies, the subscribers, UE simulators driven from the browser, the bearers of the access network, and faults on purpose.
 
 The [glossary](../../glossary.md) explains the abbreviations.
 

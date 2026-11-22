@@ -303,6 +303,74 @@ export interface SupplementaryServices {
   document: string;
 }
 
+// What the EPC stub holds of one UE that is attached (epc.Status). The
+// Lab passes the stub's answers on and keeps none of this.
+export interface AttachedUE {
+  imsi: string;
+  pdn_address: string;
+  access_point_name: string;
+  bearers: EPSBearer[];
+  // The Session-Ids of the Rx sessions bound to the UE's IP-CAN
+  // session, one per call leg of the P-CSCF (TS 29.213 5.2).
+  rx_sessions: string[];
+}
+
+// One EPS bearer of the UE (epc.BearerStatus). The bit rates of the QoS
+// are left out: the panel shows the class, which is what tells the
+// bearers apart.
+export interface EPSBearer {
+  eps_bearer_identity: number;
+  // The state on the network side (TS 24.301 6.1.3.3), such as
+  // "BEARER CONTEXT ACTIVE".
+  state: string;
+  eps_qos: { qci: number };
+}
+
+// The faults that the fault agent can inject (internal/fault). The agent
+// checks each request and the panel shows what it says, so these are the
+// kinds the form offers, not a second set of rules.
+export const faultKinds = ["stop", "kill", "pause", "crash", "recreate", "delay", "loss", "partition"] as const;
+export type FaultKind = (typeof faultKinds)[number];
+
+export const faultStates = ["applying", "active", "clearing", "done", "cleared", "expired", "failed"] as const;
+export type FaultState = (typeof faultStates)[number];
+
+// What to inject. Only the fields of the kind may be set; durations are
+// in the form of Go, such as "200ms" or "5m0s".
+export interface FaultRequest {
+  target: string;
+  kind: FaultKind;
+  network?: string;
+  delay?: string;
+  jitter?: string;
+  loss_percent?: number;
+  peers?: string[];
+  duration?: string;
+}
+
+// A fault the agent holds, with the fields of its kind filled in.
+export interface Fault {
+  id: string;
+  target: string;
+  kind: FaultKind;
+  state: FaultState;
+  network: string;
+  delay: string;
+  jitter: string;
+  loss_percent: number | null;
+  peers: string[];
+  // Empty for a crash and a recreate, which happen once and last no
+  // time.
+  duration: string;
+  // Why the fault failed; empty unless its state is "failed".
+  error: string;
+  created_at: string;
+  // When the fault ends by itself, and when it ended. Empty when it has
+  // no such time yet, or none at all.
+  expires_at: string;
+  ended_at: string;
+}
+
 export class HttpError extends Error {
   readonly status: number;
 
@@ -358,6 +426,43 @@ export async function putAlertingTone(privateIdentity: string, tone: AlertingTon
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(tone),
   });
+}
+
+// The UEs that are attached to the EPC stub, with their bearers.
+export function fetchAttachedUEs(): Promise<AttachedUE[]> {
+  return getList("/api/epc/ues", parseAttachedUE);
+}
+
+// The procedures that the network initiates, which the stub starts on
+// the UE's event stream (TS 24.301 6.4.4.2 and 5.5.2.3). Each answers
+// with no content.
+export async function releaseBearer(imsi: string, ebi: number): Promise<void> {
+  await send(`/api/epc/network-initiated/ues/${encodeURIComponent(imsi)}/bearers/${ebi}`, { method: "DELETE" });
+}
+
+export async function detachUE(imsi: string): Promise<void> {
+  await send(`/api/epc/network-initiated/ues/${encodeURIComponent(imsi)}/detach`, { method: "POST" });
+}
+
+// The faults the agent holds, the oldest first, with the ones that
+// ended for an hour after they ended.
+export function fetchFaults(): Promise<Fault[]> {
+  return getList("/api/fault/faults", parseFault);
+}
+
+// Answers once the agent has applied the fault, which takes seconds for
+// a node that is asked to stop.
+export async function injectFault(request: FaultRequest): Promise<Fault> {
+  const response = await send("/api/fault/faults", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(request),
+  });
+  return parseFault(await response.json());
+}
+
+export async function clearFault(id: string): Promise<Fault> {
+  return parseFault(await (await send(`/api/fault/faults/${encodeURIComponent(id)}`, { method: "DELETE" })).json());
 }
 
 // The UE simulators that the Lab controls, each with its status or
@@ -576,6 +681,50 @@ function parseSubscriber(value: unknown): Subscriber {
 function parseAlertingTone(value: unknown): AlertingTone {
   const o = object(value);
   return { tone: string(o, "tone"), active: boolean(o, "active") };
+}
+
+function parseAttachedUE(value: unknown): AttachedUE {
+  const o = object(value);
+  return {
+    imsi: string(o, "imsi"),
+    pdn_address: string(o, "pdn_address"),
+    access_point_name: string(o, "access_point_name"),
+    bearers: array(o, "bearers").map((v) => {
+      const b = object(v);
+      return {
+        eps_bearer_identity: number(b, "eps_bearer_identity"),
+        state: string(b, "state"),
+        eps_qos: { qci: number(object(b["eps_qos"]), "qci") },
+      };
+    }),
+    rx_sessions: array(o, "rx_sessions").map((v) => {
+      if (typeof v !== "string") throw new Error("rx_sessions: expected strings");
+      return v;
+    }),
+  };
+}
+
+export function parseFault(value: unknown): Fault {
+  const o = object(value);
+  return {
+    id: string(o, "id"),
+    target: string(o, "target"),
+    kind: oneOf(o, "kind", faultKinds),
+    state: oneOf(o, "state", faultStates),
+    network: optionalString(o, "network") ?? "",
+    delay: optionalString(o, "delay") ?? "",
+    jitter: optionalString(o, "jitter") ?? "",
+    loss_percent: optionalNumber(o, "loss_percent"),
+    peers: array(o, "peers").map((v) => {
+      if (typeof v !== "string") throw new Error("peers: expected strings");
+      return v;
+    }),
+    duration: optionalString(o, "duration") ?? "",
+    error: optionalString(o, "error") ?? "",
+    created_at: string(o, "created_at"),
+    expires_at: optionalString(o, "expires_at") ?? "",
+    ended_at: optionalString(o, "ended_at") ?? "",
+  };
 }
 
 function parseUESimulator(value: unknown): UESimulator {

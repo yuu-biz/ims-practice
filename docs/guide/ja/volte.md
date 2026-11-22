@@ -263,7 +263,7 @@ BYE が通ると、両側の P-CSCF は STR で Rx のセッションを終え�
 
 ### 網が bearer を落とす
 
-スタブは、無線の切断と同じように bearer を非活性化できます。網が始める EPS bearer コンテキストの非活性化です（TS 24.301 6.4.4.2）。`/network-initiated/ues/<IMSI>/bearers/<EBI>` への DELETE でこの手順が始まり、`/network-initiated/ues/<IMSI>/detach` への POST で網が始める detach（5.5.2.3）が始まります。ラボがどちらも取り次ぐので、ホストから次のように操作できます。
+スタブは、無線の切断と同じように bearer を非活性化できます。網が始める EPS bearer コンテキストの非活性化です（TS 24.301 6.4.4.2）。`/network-initiated/ues/<IMSI>/bearers/<EBI>` への DELETE でこの手順が始まり、`/network-initiated/ues/<IMSI>/detach` への POST で網が始める detach（5.5.2.3）が始まります。ラボの **Access network (EPC)** のパネルには、bearer の隣と UE の隣に、それぞれを起こすボタンがあります（[ラボの手順書](lab.md) の「bearer を落とし、UE を切り離す」）。ラボは要求をそのまま取り次ぐので、ホストから次のように操作することもできます。
 
 ```sh
 curl http://localhost:8080/api/epc/ues/001010000000010                       # the bearers of volte-a

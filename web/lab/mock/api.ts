@@ -1,13 +1,14 @@
 // A stand-in for the Lab server's HTTP API, served by the Vite dev
 // server from the test fixtures. MOCK_PROVISIONING=off makes the
 // subscriber endpoints answer 503, as the server does when
-// lab.hss_provisioning is not set. The UE simulators are in
-// ues.ts.
+// lab.hss_provisioning is not set. The UE simulators are in ues.ts, the
+// EPC stub and the fault agent in chaos.ts.
 
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { Plugin } from "vite";
 import type { Subscriber } from "../src/api.ts";
 import { allMessages, calls, registrations, subscribers } from "../test/fixtures.ts";
+import { handleChaos } from "./chaos.ts";
 import { handleUE } from "./ues.ts";
 
 // The last hop of the call (its two captured copies) arrives late: each
@@ -80,6 +81,15 @@ export function mockApi(): Plugin {
         res.writeHead(204).end();
         return;
       }
+    }
+
+    const chaos = await handleChaos(req.method ?? "", path, () => readBody(req));
+    if (chaos !== null) {
+      if (chaos.body === null) {
+        res.writeHead(chaos.status).end();
+        return;
+      }
+      return json(res, chaos.status, chaos.body);
     }
 
     if (await handleUE(req, res, path, () => readBody(req))) return;
