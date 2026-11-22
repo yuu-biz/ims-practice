@@ -8,11 +8,11 @@ package config
 // each, so that a node configured for a shared store does not appear
 // to have one.
 //
-// The ibcf role reads the store section, for the records of its calls;
-// the other roles of a node keep their state in its process even then.
+// The ibcf and scscf roles read the store section; the other roles of a
+// node keep their state in its process even then.
 func (c Config) Unread() []string {
 	var unread []string
-	if c.Store != nil && c.IBCF == nil {
+	if c.Store != nil && !c.readsStore() {
 		unread = append(unread, "store")
 	}
 	if c.Maintenance != nil {
@@ -53,4 +53,11 @@ func (c Config) Unread() []string {
 		sip("ibcf.external_sip", c.IBCF.ExternalSIP, true)
 	}
 	return unread
+}
+
+// readsStore reports whether a role of the node keeps its state in the
+// store section: the IBCF the records of its calls, the S-CSCF its
+// registrar state.
+func (c Config) readsStore() bool {
+	return c.IBCF != nil || c.SCSCF != nil
 }
