@@ -122,15 +122,17 @@ func (s *setup) throughRelay(out *sip.Message) error {
 // that the calls spread over the relays of the list. When that relay
 // gives no context, because it does not answer or has no port left
 // (503), the next one of the list is tried, and after the last one the
-// first. Both passes of a call between two UEs of the P-CSCF have the
-// same Call-ID, and so start with the same relay. When no relay gives
-// a context, the error is that of the last one tried.
+// first. When no relay gives a context, the error is that of the last
+// one tried. Each pass of a call through the P-CSCF has a dialog of its
+// own, which names the relay of its context.
 //
 // SIMPLIFIED: TS 23.334 6.1.2 and 6.1.3. The P-CSCF does not keep track
 // of which relays are unavailable, and does not audit them to find out
 // when one is back: each new call tries the relay its Call-ID picks, and
 // a call that comes to a relay that has gone waits for that Add to fail
-// before it goes on to the next. The calls whose contexts a relay held
+// before it goes on to the next. A context that a relay added though its
+// answer was lost stays in that relay, since the P-CSCF never learnt
+// its ID. The calls whose contexts a relay held
 // when it went keep their signalling, without media, until a UE hangs
 // up; the P-CSCF neither ends them nor moves their media to another
 // relay. A relay that comes back at its own address opens its contexts
