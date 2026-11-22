@@ -489,3 +489,62 @@ func TestAdmitDropsARequestWithoutAWord(t *testing.T) {
 		t.Errorf("TU got %v, want nothing", tu)
 	}
 }
+
+// Close returns only once the call of Admit under way has returned, so
+// that nothing reads a store that the node closes after the stack.
+// Admit is asked about nothing after the stack has stopped: the request
+// that waited behind the one under way is dropped with the stack.
+func TestCloseWaitsForAdmit(t *testing.T) {
+	questions := make(chan admitQuestion)
+	held := heldAdmit(t, questions, INVITE, MESSAGE)
+	var mu sync.Mutex
+	var asked []Method
+	stack := newStackWith(t, Config{
+		Timers: testTimers,
+		Admit: func(req *Message, source Destination) bool {
+			if req.Method != OPTIONS {
+				mu.Lock()
+				asked = append(asked, req.Method)
+				mu.Unlock()
+			}
+			return held(req, source)
+		},
+		OnRequest: answerOptions(func(st *ServerTransaction) { t.Errorf("TU got %s", st.Request.Method) }),
+	})
+	peer := newUDPPeer(t, stack.LocalAddr())
+	peer.send(peer.request(INVITE))
+	q := nextQuestion(t, questions)
+	peer.send(peer.request(MESSAGE))
+	// The stack reads one socket in order, so it has the MESSAGE in hand
+	// once it answers this OPTIONS.
+	newUDPPeer(t, stack.LocalAddr()).sync()
+
+	closed := make(chan struct{})
+	go func() {
+		stack.Close()
+		close(closed)
+	}()
+	// Close stops the loop first, so that the answer below cannot get
+	// the stack to ask Admit about the MESSAGE.
+	select {
+	case <-stack.done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the loop of the stack did not stop")
+	}
+	select {
+	case <-closed:
+		t.Error("Close returned while Admit was deciding on the INVITE")
+	case <-time.After(100 * time.Millisecond):
+	}
+	q.answer <- true
+	select {
+	case <-closed:
+	case <-time.After(5 * time.Second):
+		t.Fatal("Close did not return after Admit did")
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if want := []Method{INVITE}; !reflect.DeepEqual(asked, want) {
+		t.Errorf("Admit was asked about %v, want %v, the request it held when the stack stopped", asked, want)
+	}
+}

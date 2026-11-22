@@ -219,7 +219,9 @@ func NewStack(transport *TransportLayer, cfg Config, log *slog.Logger) (*Stack, 
 func (s *Stack) LocalAddr() netip.AddrPort { return s.transport.LocalAddr() }
 
 // Close stops the stack and its transport. Client transactions still
-// running end with ErrStackClosed.
+// running end with ErrStackClosed. Close returns once a call of
+// Config.Admit under way has returned, so that the node may then close
+// what Admit reads, and drops the requests that wait for Admit.
 func (s *Stack) Close() {
 	s.closeOnce.Do(func() {
 		// The loop ends first, so that no transaction sees the closed
@@ -757,9 +759,12 @@ func (s *Stack) admits(req *Message, source Destination) bool {
 	return false
 }
 
-// askAdmit asks Config.Admit about req off the loop.
+// askAdmit asks Config.Admit about req off the loop, in a goroutine
+// that Close waits for.
 func (s *Stack) askAdmit(req *Message, source Destination) {
+	s.wg.Add(1)
 	go func() {
+		defer s.wg.Done()
 		s.post(admitDecided{req: req, source: source, admitted: s.cfg.Admit(req, source)})
 	}()
 }
