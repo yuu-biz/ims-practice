@@ -20,8 +20,8 @@ import (
 //
 // SIMPLIFIED: TS 29.212. The PCRF and the PDN GW share the PDN
 // connection in the Store instead of exchanging CCR, CCA and RAR over
-// Gx: the stub has one PCRF and one PDN GW, and Gx would add messages a
-// learner of the IMS does not need.
+// Gx: the stub is one node that plays both, so the two have its Store
+// in common and no network between them.
 
 // Errors of the UE API.
 var (

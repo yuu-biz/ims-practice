@@ -43,9 +43,10 @@ const (
 //
 // SIMPLIFIED: RFC 3539 Appendix A REOPEN. After a reconnect the RFC
 // sends DWRs and waits for three DWAs before it puts the connection
-// back into service. Each CSCF has a single HSS and no alternate peer
-// to prefer meanwhile, so a reconnected peer goes straight to OKAY, the
-// same as on first open.
+// back into service. Here a reconnected peer goes straight to OKAY, the
+// same as on first open. A request that such a peer leaves unanswered
+// goes on to the next peer of its PeerGroup, so a peer that is not yet
+// steady delays requests rather than losing them.
 type WatchdogStatus int
 
 const (

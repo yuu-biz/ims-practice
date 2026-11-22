@@ -513,11 +513,11 @@ Each item has a `SIMPLIFIED:` comment in the code; `grep -rn "SIMPLIFIED:" inter
 | EPC stub, TS 36.331 | System information is an HTTP resource. | There is no radio to broadcast it. |
 | EPC stub, TS 23.401 5.3.1.1 | A static address per subscriber, no pool, no GTP-U or SGi. | The container already has the address, so the packets need no tunnel. |
 | EPC stub, TS 23.401 5.3.2.1 | No authentication, NAS security or S6a in the attach, and no ATTACH REJECT. | The stub serves the IMSIs of its configuration. |
-| EPC stub, TS 29.212 | No Gx: the PCRF and the PDN GW share the PDN connection in the Store. | One PCRF, one PDN GW; Gx adds messages a learner of the IMS does not need. |
+| EPC stub, TS 29.212 | No Gx: the PCRF and the PDN GW share the PDN connection in the Store. | The stub is one node that plays both, so the two have its Store in common and no network between them. |
 | EPC stub, TS 24.301 6.4.3, 6.4.4.2 | No MODIFY EPS BEARER CONTEXT REQUEST when the rules change, and a bearer is forgotten when the deactivation is sent, without T3495. | The stub enforces no QoS, and a UE only needs to know that the bearer is there. |
 | PCRF, TS 29.213 6.3 | Only audio, with QCI 1; the guaranteed rate is the maximum one, and RTCP has no share of its own. | Every call here has one audio stream. |
 | PCRF, TS 29.214 4.4.2, 5.3.16 | Every AAR is taken to carry the whole service information. | The P-CSCF derives it from the whole SDP each time. |
-| P-CSCF, TS 29.213 7.3.7 | No DRA: the one PCRF of the configuration. | One PCRF. |
+| P-CSCF, TS 29.213 7.3.7 | No DRA: the one PCRF of the configuration. | The PCRF is that of the EPC stub, which runs as one node and so holds the IP-CAN session of every UE. |
 | P-CSCF, TS 29.213 Tables 6.2.1, 6.2.2 | No media over TCP, no b=TIAS, and only the flow of the new direction when a stream turns one-way. | No call here uses them. |
 | P-CSCF, TS 29.214 A.1 | Only the callee's P-CSCF sends AF-Application-Identifier. | The caller's would take it from Feature-Caps, which no node writes. |
 | P-CSCF, TS 29.214 4.4.2 | A refused change of the service information is only logged. | The far end has answered by then; TS 24.229 handles refused resources only for the initial INVITE. |
