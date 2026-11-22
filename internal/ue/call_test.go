@@ -46,7 +46,9 @@ func newPartyTweaked(t *testing.T, pcscfAddr netip.AddrPort, private, public, pa
 		t.Fatal(err)
 	}
 	addr := tr.LocalAddr()
-	p.contact = ue.NewContact(addr)
+	ueConfig := ue.Config{PrivateIdentity: private, PublicIdentity: public, Password: pass, HomeDomain: domain,
+		PCSCF: pcscfAddr, PCSCFURI: "sip:pcscf." + domain + ":5060", Calls: calls}
+	p.contact = ue.NewContact(ueConfig, addr)
 	cfg := ue.UAConfig(sip.UAConfig{
 		SentBy:  addr.String(),
 		Contact: p.contact.URI(),
@@ -62,8 +64,7 @@ func newPartyTweaked(t *testing.T, pcscfAddr netip.AddrPort, private, public, pa
 		t.Fatal(err)
 	}
 	t.Cleanup(p.ua.Close)
-	p.ue = ue.New(ue.Config{PrivateIdentity: private, PublicIdentity: public, Password: pass, HomeDomain: domain,
-		PCSCF: pcscfAddr, PCSCFURI: "sip:pcscf." + domain + ":5060", Calls: calls}, p.ua.Stack(), p.contact, quiet())
+	p.ue = ue.New(ueConfig, p.ua.Stack(), p.contact, quiet())
 	if p.media, err = ue.ListenMedia("127.0.0.1:0"); err != nil {
 		t.Fatal(err)
 	}
@@ -190,7 +191,9 @@ func directCaller(t *testing.T, onCall func(ic *sip.IncomingCall, media *ue.Medi
 
 	callerTransport := listen()
 	callerAddr := callerTransport.LocalAddr()
-	callerContact := ue.NewContact(callerAddr)
+	callerConfig := ue.Config{PrivateIdentity: impi, PublicIdentity: impu, Password: password, HomeDomain: domain,
+		PCSCF: calleeAddr, PCSCFURI: "sip:pcscf." + domain + ":5060"}
+	callerContact := ue.NewContact(callerConfig, callerAddr)
 	caller, err := sip.NewUA(callerTransport, ue.UAConfig(sip.UAConfig{
 		SentBy:  callerAddr.String(),
 		Contact: callerContact.URI(),
@@ -203,8 +206,7 @@ func directCaller(t *testing.T, onCall func(ic *sip.IncomingCall, media *ue.Medi
 		t.Fatal(err)
 	}
 	t.Cleanup(caller.Close)
-	u := ue.New(ue.Config{PrivateIdentity: impi, PublicIdentity: impu, Password: password, HomeDomain: domain,
-		PCSCF: calleeAddr, PCSCFURI: "sip:pcscf." + domain + ":5060"}, caller.Stack(), callerContact, quiet())
+	u := ue.New(callerConfig, caller.Stack(), callerContact, quiet())
 	return u, caller, media(), "sip:callee@" + calleeAddr.String(), calleeMedia
 }
 
@@ -229,7 +231,9 @@ func TestCalleeSendsToTheStreamItAccepted(t *testing.T) {
 		t.Fatal(err)
 	}
 	calleeAddr := calleeTransport.LocalAddr()
-	calleeContact := ue.NewContact(calleeAddr)
+	calleeConfig := ue.Config{PrivateIdentity: impi2, PublicIdentity: impu2, Password: password2, HomeDomain: domain,
+		PCSCF: calleeAddr, PCSCFURI: "sip:pcscf." + domain + ":5060"}
+	calleeContact := ue.NewContact(calleeConfig, calleeAddr)
 	calls := make(chan *sip.IncomingCall, 1)
 	calleeUA, err := sip.NewUA(calleeTransport, ue.UAConfig(sip.UAConfig{
 		SentBy:  calleeAddr.String(),
@@ -240,8 +244,7 @@ func TestCalleeSendsToTheStreamItAccepted(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(calleeUA.Close)
-	calleeUE := ue.New(ue.Config{PrivateIdentity: impi2, PublicIdentity: impu2, Password: password2, HomeDomain: domain,
-		PCSCF: calleeAddr, PCSCFURI: "sip:pcscf." + domain + ":5060"}, calleeUA.Stack(), calleeContact, quiet())
+	calleeUE := ue.New(calleeConfig, calleeUA.Stack(), calleeContact, quiet())
 	listen := func() *ue.Media {
 		m, err := ue.ListenMedia("127.0.0.1:0")
 		if err != nil {
@@ -492,7 +495,9 @@ func ringingCallee(t *testing.T, ctx context.Context, opts ue.AnswerOptions) (*s
 	t.Helper()
 	calleeTransport := listenTransport(t)
 	calleeAddr := calleeTransport.LocalAddr()
-	calleeContact := ue.NewContact(calleeAddr)
+	calleeConfig := ue.Config{PrivateIdentity: impi2, PublicIdentity: impu2, Password: password2, HomeDomain: domain,
+		PCSCF: calleeAddr, PCSCFURI: "sip:pcscf." + domain + ":5060"}
+	calleeContact := ue.NewContact(calleeConfig, calleeAddr)
 	calls := make(chan *sip.IncomingCall, 1)
 	calleeUA, err := sip.NewUA(calleeTransport, ue.UAConfig(sip.UAConfig{
 		SentBy:  calleeAddr.String(),
@@ -503,8 +508,7 @@ func ringingCallee(t *testing.T, ctx context.Context, opts ue.AnswerOptions) (*s
 		t.Fatal(err)
 	}
 	t.Cleanup(calleeUA.Close)
-	calleeUE := ue.New(ue.Config{PrivateIdentity: impi2, PublicIdentity: impu2, Password: password2, HomeDomain: domain,
-		PCSCF: calleeAddr, PCSCFURI: "sip:pcscf." + domain + ":5060"}, calleeUA.Stack(), calleeContact, quiet())
+	calleeUE := ue.New(calleeConfig, calleeUA.Stack(), calleeContact, quiet())
 	calleeMedia, err := ue.ListenMedia("127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)

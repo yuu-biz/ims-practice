@@ -100,7 +100,7 @@ TS 24.229 5.1.1.2.1 and 5.1.1.2.3. Look at these headers:
 
 - **Request-URI** is the home network domain, not a server. The network decides which server handles it.
 - **From** and **To** are the public identity being registered.
-- **Contact** is the address of the UE. Its user part is a UUID that the UE made, not one of the user's identities. TS 24.229 5.1.1.2.1 item c asks for a user part that is globally unique and reveals nothing private, and its NOTE 3 gives a time-based UUID as an example. The UE keeps the same user part in its later REGISTERs (5.1.1.4.1). The Contact has two parameters. `+g.3gpp.smsip` is a feature tag (RFC 3840): it says that the UE can receive short messages over IP (TS 24.341 5.3.2.2). `expires=600000` is the interval TS 24.229 has the UE ask for.
+- **Contact** is the address of the UE. Its user part is a UUID, not one of the user's identities. TS 24.229 5.1.1.2.1 item c asks for a user part that is globally unique and reveals nothing private, and its NOTE 3 gives a time-based UUID as an example. The UE derives its UUID instead: HMAC-SHA-256 of its private identity, keyed with its password (with K of the USIM for IMS AKA), written as a version 8 UUID (RFC 9562 5.8). Nobody without the key can work out the identity from it. The UE gets the same user part each time it starts, so its registration after a restart refreshes the binding instead of replacing it. The UE keeps the same user part in its later REGISTERs (5.1.1.4.1). The Contact has two parameters. `+g.3gpp.smsip` is a feature tag (RFC 3840): it says that the UE can receive short messages over IP (TS 24.341 5.3.2.2). `expires=600000` is the interval TS 24.229 has the UE ask for.
 - **Authorization** already carries the private identity in `username`, with an empty `nonce` and `response`. The UE has no challenge to answer yet, but this tells the network which private identity to authenticate.
 - **Via** has `rport` without a value. It asks the P-CSCF to send the response back to the address and port the request really came from (RFC 3581).
 
@@ -240,7 +240,7 @@ Wireshark shows the body as XML:
 <reginfo xmlns="urn:ietf:params:xml:ns:reginfo" version="0" state="full">
   <registration aor="sip:001010000000001@ims.mnc001.mcc001.3gppnetwork.org" id="reg1" state="active">
     <contact id="..." state="active" event="registered" expires="3600" callid="..." cseq="2">
-      <uri>sip:01a20145-ef29-7338-8452-2c105204e98e@172.28.0.100:5060</uri>
+      <uri>sip:4218b61b-4e20-8e1c-872d-5b39fca1e64f@172.28.0.100:5060</uri>
       <unknown-param name="+g.3gpp.smsip"></unknown-param>
     </contact>
   </registration>
