@@ -62,10 +62,17 @@ func newStackConfig(t *testing.T, cfg sip.Config) *sip.Stack {
 
 // TestRegisterThroughThePCSCF plays the home network as a fake I-CSCF:
 // a 401 for the first REGISTER, a 200 for the second, and a 200 with
-// expires=0 for the deregistration.
+// expires=0 for the deregistration. In between, the UE's MESSAGE shows
+// what the P-CSCF kept of the 200.
 func TestRegisterThroughThePCSCF(t *testing.T) {
 	received := make(chan *sip.Message, 3)
+	messages := make(chan *sip.Message, 2)
 	home := newStack(t, func(st *sip.ServerTransaction) {
+		if st.Request.Method == sip.MESSAGE {
+			messages <- st.Request
+			st.Respond(sip.NewResponse(st.Request, 200, sip.NewTag()))
+			return
+		}
 		received <- st.Request
 		expires := "3600"
 		if strings.Contains(st.Request.Get("Contact"), "expires=0") {
@@ -83,15 +90,18 @@ func TestRegisterThroughThePCSCF(t *testing.T) {
 		st.Respond(resp)
 	})
 	locate := locatorFunc(func(host string) []sip.Destination {
-		if host != domain {
-			t.Errorf("located %q, want the home domain", host)
+		// The REGISTER goes to the home domain, and the MESSAGE to the
+		// S-CSCF of the Service-Route; the fake plays both.
+		if host != domain && host != "scscf."+domain {
+			t.Errorf("located %q, want the home domain or its S-CSCF", host)
 		}
 		return []sip.Destination{{Transport: sip.UDP, Addr: home.LocalAddr()}}
 	})
-	store := NewMemoryStore()
-	p := New(Config{Host: "pcscf." + domain, Port: 5060, VisitedNetworkID: domain}, locate, store, nil, quiet())
+	p := New(Config{Host: "pcscf." + domain, Port: 5060, VisitedNetworkID: domain}, locate, NewMemoryStore(), nil, quiet())
 	pcscfStack := newPCSCFStack(t, p)
-	ue := newStack(t, func(*sip.ServerTransaction) {})
+	// Fast timers, so that a request that the P-CSCF discards times out
+	// soon.
+	ue := newStackWith(t, fast, func(*sip.ServerTransaction) {})
 
 	send := func(authorization, expires string) *sip.Message {
 		t.Helper()
@@ -120,6 +130,26 @@ func TestRegisterThroughThePCSCF(t *testing.T) {
 	auth := func(response string) string {
 		return `Digest username="` + impi + `", realm="` + domain + `", nonce="n", uri="sip:` + domain +
 			`", response="` + response + `", integrity-protected="forged-by-ue"`
+	}
+	// message sends a MESSAGE from the UE, and returns its final
+	// response, or nil when none comes.
+	message := func() *sip.Message {
+		t.Helper()
+		m := &sip.Message{Method: sip.MESSAGE, RequestURI: "sip:001010000000002@" + domain}
+		m.Add("Max-Forwards", "70")
+		m.Add("From", "<"+impu+">;tag="+sip.NewTag())
+		m.Add("To", "<sip:001010000000002@"+domain+">")
+		m.Add("Call-ID", sip.NewCallID())
+		m.Add("CSeq", "1 MESSAGE")
+		ct, err := ue.SendRequest(m, sip.Destination{Transport: sip.UDP, Addr: pcscfStack.LocalAddr()})
+		if err != nil {
+			t.Fatal(err)
+		}
+		var final *sip.Message
+		for r := range ct.Responses() {
+			final = r
+		}
+		return final
 	}
 
 	first := send(auth(""), "600000")
@@ -151,17 +181,32 @@ func TestRegisterThroughThePCSCF(t *testing.T) {
 	if !strings.Contains(second.Get("Authorization"), `integrity-protected="ip-assoc-pending"`) {
 		t.Errorf("second Authorization = %q, want ip-assoc-pending", second.Get("Authorization"))
 	}
-	a, ok, _ := store.Association(context.Background(), sip.Destination{Transport: sip.UDP, Addr: ue.LocalAddr()})
-	if !ok || a.PrivateIdentity != impi || len(a.ServiceRoute) != 1 || a.PublicIdentities[0] != impu {
-		t.Fatalf("association after 200 = %+v, %v", a, ok)
+	// 5.2.2.1: the UE's requests go along the Service-Route of the 200,
+	// in the name of the identity of its P-Associated-URI (5.2.6.3.1).
+	if resp := message(); resp == nil || resp.StatusCode != 200 {
+		t.Fatalf("MESSAGE of the registered UE got %v, want the 200 of the home network", resp)
+	}
+	sent := <-messages
+	if got := sent.Get("Route"); got != "<sip:orig@scscf."+domain+":5060;lr>" {
+		t.Errorf("Route of the MESSAGE = %q, want the Service-Route", got)
+	}
+	if got := sent.Get("P-Asserted-Identity"); got != "<"+impu+">" {
+		t.Errorf("P-Asserted-Identity of the MESSAGE = %q, want <%s>", got, impu)
 	}
 
 	third := send(auth(""), "0")
 	if !strings.Contains(third.Get("Authorization"), `integrity-protected="ip-assoc-yes"`) {
 		t.Errorf("deregistration Authorization = %q, want ip-assoc-yes", third.Get("Authorization"))
 	}
-	if a, ok, _ := store.Association(context.Background(), sip.Destination{Transport: sip.UDP, Addr: ue.LocalAddr()}); ok && a.Expires.After(time.Now()) {
-		t.Error("association still valid after deregistration")
+	// 5.2.1: the UE no longer has an IP association, so its MESSAGE is
+	// discarded.
+	if resp := message(); resp != nil {
+		t.Errorf("MESSAGE after the deregistration got %d, want nothing", resp.StatusCode)
+	}
+	select {
+	case m := <-messages:
+		t.Errorf("%s reached the home network after the deregistration", m.Method)
+	default:
 	}
 }
 

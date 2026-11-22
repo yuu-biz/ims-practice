@@ -207,6 +207,11 @@ func TestTargetRefreshReplacesTheContacts(t *testing.T) {
 	c.send(c.far, refresh)
 	<-c.toUE
 
+	// The targets are read from the Store. The UE's stack answers with a
+	// Contact that is not the one the UE registered, so in this harness
+	// a BYE to it would go the way of a request to the network; the BYEs
+	// of a release to the targets of the dialog are checked in
+	// release_test.go.
 	key := DialogKey{CallID: c.invite.Get("Call-ID"), UETag: tagOf(c.invite.Get("From"))}
 	d, ok, _ := c.store.UpdateDialog(context.Background(), key, func(*Dialog) {})
 	if !ok {
@@ -215,7 +220,6 @@ func TestTargetRefreshReplacesTheContacts(t *testing.T) {
 	if d.Callee.Target != farMoved {
 		t.Errorf("target of the callee = %q, want the Contact of its UPDATE %q", d.Callee.Target, farMoved)
 	}
-	// The UE's stack answers with a Contact of its own.
 	if want := "sip:ue@" + c.ue.LocalAddr().String(); d.Caller.Target != want {
 		t.Errorf("target of the UE = %q, want the Contact of its 200 %q", d.Caller.Target, want)
 	}

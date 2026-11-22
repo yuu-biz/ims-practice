@@ -228,7 +228,11 @@ func ended(t *testing.T, what string, done <-chan struct{}) {
 	}
 }
 
-// dialog reads the dialog of key from the Store.
+// dialog reads the dialog of key from the Store. The tests read it
+// there because TS 24.229 5.2.6.3.3 item 8, 5.2.6.3.4, 5.2.6.4.3 and
+// 5.2.6.4.4 name what the P-CSCF saves of a dialog, and the only message
+// that shows it is the BYE of a release, which release_test.go checks
+// for the parts it uses.
 func (h *callHarness) dialog(key DialogKey) (Dialog, bool) {
 	d, ok, _ := h.store.UpdateDialog(context.Background(), key, func(*Dialog) {})
 	return d, ok
