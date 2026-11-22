@@ -15,10 +15,12 @@
 //
 // The lease bounds how long a stopped holder keeps the others waiting.
 // It is not renewed: a live holder has to finish within it. The longest
-// work under the lock is a registration with two Cx round trips, each
-// waiting at most 5 s for its answer, inside the 15 s lease. When
-// the lease runs out first, the release finds the item gone or someone
-// else's, and logs it.
+// work under the lock is one Diameter round trip and a few operations
+// on the store: a registration waits for one Cx answer, a reg event
+// NOTIFY at the IP-SM-GW for one Sh answer, each at most 5 s, and each
+// operation on the store at most its own timeout. That is inside the
+// 15 s lease. When the lease runs out first, the release finds the item
+// gone or someone else's, and logs it.
 //
 // Waiters of the same instance queue in the process, so that only one
 // of them at a time tries the store; the others wait on a channel and do
