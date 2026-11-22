@@ -300,9 +300,9 @@ func TestParseAARequestNamesTheFaultInTheServiceInformation(t *testing.T) {
 	}
 }
 
-// The dashboard reads Diameter as the JSON of diameter.EncodeJSON, so the
+// The Lab reads Diameter as the JSON of diameter.EncodeJSON, so the
 // Rx commands and AVPs must have their names there, as in Wireshark.
-func TestRxMessagesHaveNamesInTheDashboardJSON(t *testing.T) {
+func TestRxMessagesHaveNamesInTheLabJSON(t *testing.T) {
 	b, err := diameter.EncodeJSON(AARequest{Header: toPCRF, MediaComponents: []policy.MediaComponent{callComponent},
 		SpecificActions: []SpecificAction{IndicationOfReleaseOfBearer}, FramedIPAddress: ueAddr}.Message())
 	if err != nil {

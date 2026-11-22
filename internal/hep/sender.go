@@ -35,7 +35,7 @@ type Sender struct {
 
 // NewSender sends to the collector at address ("host:port") with at most
 // queueSize packets waiting. Only a malformed address is an error. The
-// collector, the dashboard, is not on the path of any call and may
+// collector, the Lab, is not on the path of any call and may
 // start after the node, so a name that does not resolve yet is logged as
 // a warning, and the copies are dropped until it does. The sender looks
 // the name up again when a write fails, at most every redialInterval, so

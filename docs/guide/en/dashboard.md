@@ -23,7 +23,7 @@ The dashboard is published on the host's loopback address only. It asks for no p
 
 ```yaml
 services:
-  dashboard:
+  lab:
     ports: !override
       - "8080:8080"
 ```
@@ -46,7 +46,7 @@ The dashboard knows only what the nodes tell it. Each node, and each UE simulato
 
 A message that goes from one node to another is reported twice, once by its sender and once by its receiver. The ladder pairs a sent copy and a received copy with the same source, destination and content into one arrow, so each arrow is one message on the wire; a retransmission that is identical still gets its own arrow.
 
-A Cx message carries nothing that names the SIP request it was sent for: the Session-Id of Diameter and the Call-ID of SIP are unrelated. The dashboard therefore links them by the rule of the procedures. A Cx request belongs to the SIP request that the same node received last, at most 2 seconds before, and that names the same user: for a UAR, MAR or SAR, a REGISTER whose Authorization username is the User-Name or whose To is the Public-Identity; for an LIR, a request whose Request-URI is the Public-Identity. The answer follows its request through the Session-Id. The rule is in `internal/dashboard/causes.go`.
+A Cx message carries nothing that names the SIP request it was sent for: the Session-Id of Diameter and the Call-ID of SIP are unrelated. The dashboard therefore links them by the rule of the procedures. A Cx request belongs to the SIP request that the same node received last, at most 2 seconds before, and that names the same user: for a UAR, MAR or SAR, a REGISTER whose Authorization username is the User-Name or whose To is the Public-Identity; for an LIR, a request whose Request-URI is the Public-Identity. The answer follows its request through the Session-Id. The rule is in `internal/lab/causes.go`.
 
 An Rx session of the P-CSCF links the same way (TS 29.214 A.1, A.4). Its first AAR names the UE only by its address, the Framed-IP-Address. It belongs to the SIP message with SDP that the P-CSCF received last from that address, the INVITE of a calling UE or the 183 of a called one, or to the REGISTER from it, whichever came last. The rest of the session, its STR, RAR or ASR and the answers, follows through the Session-Id. The ladder draws the PCRF in the column next to the P-CSCF; [the VoLTE guide](volte.md) shows the messages.
 
@@ -124,7 +124,7 @@ The UE simulators use subscribers 1, 2 and 3, the same as the `ue`, `ue2` and `u
 Three interfaces here come from no 3GPP or IETF specification, and none of them is part of the IMS:
 
 - The HEP copies. HEP is the protocol of the Homer project for collecting signaling. The capture holds the copies as UDP packets to port 9060 besides the real messages.
-- The HTTP API of the dashboard, listed in the package comment of `internal/dashboard/dashboard.go`.
+- The HTTP API of the dashboard, listed in the package comment of `internal/lab/lab.go`.
 - The control API of the UE simulator (`ue serve`), listed in the comment of `Phone.Handler` in `internal/ue/phone_http.go`, and for the supplementary services in that of `SupplementaryServices.Handler` in `internal/ue/xcap.go`. "Drive a UE over HTTP" in [the call guide](call.md) uses it directly.
 
 What you see in the ladder, though, is the signaling of the IMS as the specifications define it.

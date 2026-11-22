@@ -501,7 +501,7 @@ docker compose run --rm --entrypoint sipp peer -sf /etc/sipp/register-aka.xml -m
 | `internal/amr`、`internal/rtcp`、`internal/rtp` | RFC 4867 のペイロード形式と格納形式、RTCP、telephone-event。 |
 | `internal/ue/session.go`、`call.go`、`media.go` | UE の VoLTE の通話。offer と answer、プリコンディション、保留、DTMF、AMR、RTCP。 |
 | `internal/sip` | UPDATE、re-INVITE、セッションタイマー、199、Reason と、MMTel AS が使う B2BUA の部品。 |
-| `internal/dashboard/epc.go`、`causes.go` | ダッシュボードによるスタブのパスの取り次ぎと、Rx のセッションと通話との結びつけ。 |
+| `internal/lab/epc.go`、`causes.go` | ダッシュボードによるスタブのパスの取り次ぎと、Rx のセッションと通話との結びつけ。 |
 | `internal/ue/volte_epc_test.go`、`volte_aka_test.go` | 1 つのプロセスの中で IMS 全体を通る VoLTE の通話。 |
 
 ## このプロジェクトで簡略化していること

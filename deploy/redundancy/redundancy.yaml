@@ -14,7 +14,7 @@
 # users its file from deploy/redundancy in place of the one from
 # deploy/compose: the same configuration with a store section at the
 # end. The I-CSCF holds no such state, and the EPC and PCRF stubs and
-# the dashboard are single instances, so those nodes keep the files of
+# the Lab are single instances, so those nodes keep the files of
 # deploy/compose and their state in their processes.
 #
 # The nodes, their addresses and the signaling are those of

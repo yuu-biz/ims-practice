@@ -508,7 +508,7 @@ These filters were checked with tshark 4.2 against MESSAGEs sent by the UE simul
 | `internal/ipsmgw` | The IP-SM-GW: `ipsmgw.go` (the third-party REGISTER), `regevent.go` (the reg event subscription and the PUR), `message.go` (MESSAGEs from UEs), `deliver.go` (MESSAGEs to UEs), `servicecentre.go` (the boundary to the SC), `store.go` (the deliveries in progress). |
 | `internal/sc` | The SC stub. |
 | `internal/ue/sms.go` | The UE as SM-over-IP sender and receiver. |
-| `internal/dashboard/sms.go` | How the dashboard decodes a short message for the details view. |
+| `internal/lab/sms.go` | How the dashboard decodes a short message for the details view. |
 | `internal/ipsmgw/network_test.go`, `internal/ue/sms_ims_test.go` | The whole flow in one process, with the cases above. |
 
 ## What this project simplifies

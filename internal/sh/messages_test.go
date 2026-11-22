@@ -215,10 +215,10 @@ func TestShDataPublicIdentifiersAndSCSCFName(t *testing.T) {
 	}
 }
 
-// The dashboard reads Diameter as the JSON of diameter.EncodeJSON, so
+// The Lab reads Diameter as the JSON of diameter.EncodeJSON, so
 // the Sh commands and AVPs must have their names there, as in
 // Wireshark.
-func TestShMessagesHaveNamesInTheDashboardJSON(t *testing.T) {
+func TestShMessagesHaveNamesInTheLabJSON(t *testing.T) {
 	b, err := diameter.EncodeJSON(UserDataRequest{Header: header, UserIdentity: UserIdentity{MSISDN: msisdn},
 		DataReferences: []DataReference{IMSPublicIdentity}}.Message())
 	if err != nil {
@@ -232,7 +232,7 @@ func TestShMessagesHaveNamesInTheDashboardJSON(t *testing.T) {
 }
 
 // TestRepositoryDataRequest: a read of repository data names it with
-// Service-Indication (TS 29.329 6.1.1), which the dashboard shows by
+// Service-Indication (TS 29.329 6.1.1), which the Lab shows by
 // name like any other AVP.
 func TestRepositoryDataRequest(t *testing.T) {
 	udr := UserDataRequest{Header: header, UserIdentity: UserIdentity{PublicIdentity: impu},

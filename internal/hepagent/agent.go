@@ -1,6 +1,6 @@
 // Package hepagent is the HEP capture agent of a node. It turns
 // what the SIP transport layer and the Diameter node observe into HEP
-// packets and sends them to a collector, the dashboard.
+// packets and sends them to a collector, the Lab.
 package hepagent
 
 import (

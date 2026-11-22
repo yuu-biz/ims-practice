@@ -48,8 +48,8 @@ scrape_configs:
         labels: {node: mrfc}
       - targets: ["mrfp:8085"]
         labels: {node: mrfp}
-      - targets: ["dashboard:8085"]
-        labels: {node: dashboard}
+      - targets: ["lab:8085"]
+        labels: {node: lab}
   # END generated
 
   # Prometheus itself, so that the setup can be checked before any IMS

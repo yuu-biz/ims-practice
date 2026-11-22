@@ -18,7 +18,7 @@ import (
 
 // Phone is the UE of "ue serve": it stays up, keeps its registration,
 // takes calls by its answer policy, and makes the calls a controller,
-// such as the dashboard, asks for. Handler is its HTTP API.
+// such as the Lab, asks for. Handler is its HTTP API.
 type Phone struct {
 	ue   *UE
 	ua   *sip.UA

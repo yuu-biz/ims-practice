@@ -15,9 +15,9 @@ import (
 
 // httpHosts are the addresses that a curl of a deck may reach, each
 // with the package whose routes answer there. compose.yaml publishes
-// the port 8080 of the dashboard on the host.
+// the port 8080 of the Lab on the host.
 var httpHosts = map[string]string{
-	"localhost:8080": "internal/dashboard",
+	"localhost:8080": "internal/lab",
 }
 
 // route is a pattern of net/http.ServeMux: a method, or "" for any, and

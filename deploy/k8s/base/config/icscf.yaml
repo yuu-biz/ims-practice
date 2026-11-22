@@ -35,10 +35,10 @@ diameter:
   timers:
     tw: 30s
     tc: 30s
-# Copies of every SIP and Diameter message for the dashboard.
-# The dashboard's Service keeps one ClusterIP while its Pod comes and
-# goes, so the name resolves even when the dashboard is down; the
-# dashboard is not on the call path. HEP is one-way UDP, and the
+# Copies of every SIP and Diameter message for the Lab.
+# The Lab's Service keeps one ClusterIP while its Pod comes and
+# goes, so the name resolves even when the Lab is down; the
+# Lab is not on the call path. HEP is one-way UDP, and the
 # NAT of kube-proxy in front of a ClusterIP does no harm to it.
 hep:
-  collector: dashboard.ims.svc.cluster.local:9060
+  collector: lab.ims.svc.cluster.local:9060

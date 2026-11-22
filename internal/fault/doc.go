@@ -1,6 +1,6 @@
 // Package fault injects faults into the nodes of the Compose network,
 // so that a learner can watch what a failure does and how the network
-// recovers. The dashboard drives it through its HTTP API, which the
+// recovers. The Lab drives it through its HTTP API, which the
 // fault agent of deploy/chaos/agent.yaml serves; deploy/chaos/fault.sh
 // holds the same faults as shell commands, and runs the same commands
 // for all of them but recreate, which it leaves to Compose. The OAM

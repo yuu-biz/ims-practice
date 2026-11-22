@@ -16,7 +16,7 @@ spec:
     - name: diameter
       port: 3868
       protocol: TCP
-    # The project's own subscriber API, used by the dashboard and the OAM.
+    # The project's own subscriber API, used by the Lab and the OAM.
     - name: provisioning
       port: 8081
       protocol: TCP

@@ -80,7 +80,7 @@ func NewEndToEnd(role Role, strength Strength, own Direction) *Table {
 	return t
 }
 
-// Rows returns a copy of the table, for logs and the dashboard.
+// Rows returns a copy of the table, for logs and the Lab.
 func (t *Table) Rows() []Row { return append([]Row(nil), t.rows...) }
 
 // SetReserved records what the access network says about this UA's own

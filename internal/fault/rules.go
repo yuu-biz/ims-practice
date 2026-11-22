@@ -13,9 +13,9 @@ import (
 // deploy/chaos/fault.sh runs the same ones, so that a learner can type
 // what the API does (TestFaultScriptRunsTheCommandsOfThePackage).
 
-// hepPort is the HEP collector's port (the dashboard's). The
-// copies that a node sends to the dashboard are not IMS traffic, so a
-// fault leaves them alone: the dashboard keeps showing what the node
+// hepPort is the HEP collector's port (the Lab's). The
+// copies that a node sends to the Lab are not IMS traffic, so a
+// fault leaves them alone: the Lab keeps showing what the node
 // believes it sent and received.
 const hepPort = 9060
 

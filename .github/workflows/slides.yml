@@ -10,7 +10,7 @@ on:
       - go.mod
       - compose.yaml
       - cmd/ue/**
-      - internal/dashboard/**
+      - internal/lab/**
       - scripts/**
       - .github/workflows/slides.yml
   pull_request:
@@ -20,7 +20,7 @@ on:
       - go.mod
       - compose.yaml
       - cmd/ue/**
-      - internal/dashboard/**
+      - internal/lab/**
       - scripts/**
       - .github/workflows/slides.yml
 

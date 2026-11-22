@@ -45,20 +45,20 @@ ${POD_IP}, as for the agw.`,
 compose.yaml mounts from deploy/announcements.`,
 	},
 	{
-		File: "dashboard.yaml",
-		Key:  "dashboard.hss_provisioning",
+		File: "lab.yaml",
+		Key:  "lab.hss_provisioning",
 		Comment: `Names of Services instead of the fixed addresses of Docker Compose,
 since Pod addresses change.`,
 		Value: "http://hss.ims.svc.cluster.local:8081",
 	},
 	{
-		File:  "dashboard.yaml",
-		Key:   "dashboard.epc",
+		File:  "lab.yaml",
+		Key:   "lab.epc",
 		Value: "http://epc.ims.svc.cluster.local:8080",
 	},
 	{
-		File: "dashboard.yaml",
-		Key:  "dashboard.ues",
+		File: "lab.yaml",
+		Key:  "lab.ues",
 		Comment: `The UE simulators ue-a and ue-b of ue.yaml. They start with zero
 replicas, like the sim profile of compose.yaml; until they are
 scaled up, the web UI shows them as not reachable. volte-a and
@@ -67,28 +67,28 @@ EPC stub hands its subscriber, which a Pod cannot ask for, so the
 web UI always shows them as not reachable.`,
 	},
 	{
-		File:  "dashboard.yaml",
-		Key:   "dashboard.ues.0.control",
+		File:  "lab.yaml",
+		Key:   "lab.ues.0.control",
 		Value: "http://ue-a.ims.svc.cluster.local:8090",
 	},
 	{
-		File:  "dashboard.yaml",
-		Key:   "dashboard.ues.1.control",
+		File:  "lab.yaml",
+		Key:   "lab.ues.1.control",
 		Value: "http://ue-b.ims.svc.cluster.local:8090",
 	},
 	{
-		File:  "dashboard.yaml",
-		Key:   "dashboard.ues.4.control",
+		File:  "lab.yaml",
+		Key:   "lab.ues.4.control",
 		Value: "http://ue-c.ims.svc.cluster.local:8090",
 	},
 	{
-		File:  "dashboard.yaml",
-		Key:   "dashboard.ues.2.control",
+		File:  "lab.yaml",
+		Key:   "lab.ues.2.control",
 		Value: "http://volte-a.ims.svc.cluster.local:8090",
 	},
 	{
-		File:  "dashboard.yaml",
-		Key:   "dashboard.ues.3.control",
+		File:  "lab.yaml",
+		Key:   "lab.ues.3.control",
 		Value: "http://volte-b.ims.svc.cluster.local:8090",
 	},
 	{
@@ -121,15 +121,15 @@ with the gateway of the kind network.`,
 	},
 	{
 		Key: "hep",
-		Comment: `Copies of every SIP and Diameter message for the dashboard.
-The dashboard's Service keeps one ClusterIP while its Pod comes and
-goes, so the name resolves even when the dashboard is down; the
-dashboard is not on the call path. HEP is one-way UDP, and the
+		Comment: `Copies of every SIP and Diameter message for the Lab.
+The Lab's Service keeps one ClusterIP while its Pod comes and
+goes, so the name resolves even when the Lab is down; the
+Lab is not on the call path. HEP is one-way UDP, and the
 NAT of kube-proxy in front of a ClusterIP does no harm to it.`,
 	},
 	{
 		Key:   "hep.collector",
-		Value: "dashboard.ims.svc.cluster.local:9060",
+		Value: "lab.ims.svc.cluster.local:9060",
 	},
 }
 

@@ -188,7 +188,7 @@ async function refreshSubscribers(): Promise<void> {
     showNote(
       "subscribers-note",
       unavailable
-        ? "Subscriber provisioning is not configured. Set dashboard.hss_provisioning in the dashboard config to list, add and delete subscribers."
+        ? "Subscriber provisioning is not configured. Set lab.hss_provisioning in the dashboard config to list, add and delete subscribers."
         : `Could not load the subscribers: ${describe(error)}`,
     );
   }

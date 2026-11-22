@@ -13,7 +13,7 @@
 #
 # Network B is kept as small as the scenarios allow: an HSS, the three
 # CSCFs, an IP-SM-GW, a DNS and two UEs. It has no MMTel AS, no EPC
-# with its PCRF, no media relay at the P-CSCF and no dashboard.
+# with its PCRF, no media relay at the P-CSCF and no Lab.
 #
 # The agreements of the two IBCFs are files in profiles/. IBCF_A_PROFILE
 # and IBCF_B_PROFILE pick another one, such as for the scenarios of

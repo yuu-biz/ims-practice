@@ -421,7 +421,7 @@ func TestProvisioningSetsTheCustomizedAlertingTone(t *testing.T) {
 	if got, err := mmtel.ParseCustomizedAlertingTone(d.ServiceData.XML); err != nil || got.Tone != "cat2" || !got.Active {
 		t.Errorf("the HSS keeps %s: %+v, %v", d.ServiceData.XML, got, err)
 	}
-	// The subscription shows the tone, so that the dashboard can.
+	// The subscription shows the tone, so that the Lab can.
 	w := do(t, api, "GET", "/subscriptions/001010000000009@"+realm, "")
 	if !strings.Contains(w.Body.String(), `"customized_alerting_tone":{"active":true,"tone":"cat2"}`) {
 		t.Errorf("GET of the subscription: %s", w.Body)

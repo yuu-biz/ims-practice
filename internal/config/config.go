@@ -30,9 +30,9 @@ const (
 	RolePCSCF Role = "pcscf"
 	// RoleAGW is the media relay in the IMS-AGW role.
 	RoleAGW Role = "agw"
-	// RoleDashboard collects HEP copies of the signalling and serves the
-	// web dashboard.
-	RoleDashboard Role = "dashboard"
+	// RoleLab collects HEP copies of the signalling and serves the web
+	// UI of the Lab.
+	RoleLab Role = "lab"
 	// RoleIPSMGW is the IP-SM-GW, the application server for SMS over
 	// IP, with the stub of the SC inside it.
 	RoleIPSMGW Role = "ipsmgw"
@@ -56,7 +56,7 @@ const (
 	RoleFault Role = "fault"
 )
 
-var knownRoles = []Role{RoleHSS, RoleICSCF, RoleSCSCF, RolePCSCF, RoleAGW, RoleDashboard, RoleIPSMGW, RoleEPC, RoleMMTel, RoleMRFP, RoleMRFC, RoleIBCF, RoleFault}
+var knownRoles = []Role{RoleHSS, RoleICSCF, RoleSCSCF, RolePCSCF, RoleAGW, RoleLab, RoleIPSMGW, RoleEPC, RoleMMTel, RoleMRFP, RoleMRFC, RoleIBCF, RoleFault}
 
 // Config is a node's validated configuration. Each role's section is
 // set exactly when the node has that role.
@@ -92,8 +92,8 @@ type Config struct {
 	MMTel    *MMTel
 	IBCF     *IBCF
 
-	Dashboard *Dashboard
-	Fault     *Fault
+	Lab   *Lab
+	Fault *Fault
 }
 
 // Diameter is the node's Diameter identity and connections.
@@ -131,7 +131,7 @@ type Peer struct {
 
 // HEP is the collector of the HEP copies.
 type HEP struct {
-	Collector string // host:port, such as dashboard:9060
+	Collector string // host:port, such as lab:9060
 	// AgentID is the capture agent ID in every packet (HEP3 chunk
 	// 0x000c). Zero when the configuration leaves it out.
 	AgentID uint32
@@ -174,8 +174,8 @@ type rawConfig struct {
 	MMTel       *rawMMTel       `yaml:"mmtel"`
 	IBCF        *rawIBCF        `yaml:"ibcf"`
 
-	Dashboard *rawDashboard `yaml:"dashboard"`
-	Fault     *rawFault     `yaml:"fault"`
+	Lab   *rawLab   `yaml:"lab"`
+	Fault *rawFault `yaml:"fault"`
 }
 
 type rawDiameter struct {
@@ -410,15 +410,15 @@ func (raw rawConfig) validate(dir string) (Config, error) {
 		cfg.IBCF = &c
 	}
 
-	if err := section("dashboard", raw.Dashboard != nil, cfg.HasRole(RoleDashboard), "the dashboard role"); err != nil {
+	if err := section("lab", raw.Lab != nil, cfg.HasRole(RoleLab), "the lab role"); err != nil {
 		return Config{}, err
 	}
-	if raw.Dashboard != nil {
-		c, err := raw.Dashboard.validate()
+	if raw.Lab != nil {
+		c, err := raw.Lab.validate()
 		if err != nil {
-			return Config{}, fmt.Errorf("dashboard: %w", err)
+			return Config{}, fmt.Errorf("lab: %w", err)
 		}
-		cfg.Dashboard = &c
+		cfg.Lab = &c
 	}
 
 	if err := section("fault", raw.Fault != nil, cfg.HasRole(RoleFault), "the fault role"); err != nil {

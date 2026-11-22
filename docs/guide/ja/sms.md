@@ -515,7 +515,7 @@ octet 2: lowest 2 bits of 'l' (00), then rest of 'e' (110010) = 0011 0010 = 32
 | `internal/ipsmgw` | IP-SM-GW。`ipsmgw.go`（第三者 REGISTER）、`regevent.go`（reg イベントの購読と PUR）、`message.go`（UE からの MESSAGE）、`deliver.go`（UE への MESSAGE）、`servicecentre.go`（SC との境界）、`store.go`（配達の途中の状態）。 |
 | `internal/sc` | SC のスタブ。 |
 | `internal/ue/sms.go` | SM-over-IP sender と receiver としての UE。 |
-| `internal/dashboard/sms.go` | ダッシュボードが詳細の表示のためにショートメッセージをデコードするところ。 |
+| `internal/lab/sms.go` | ダッシュボードが詳細の表示のためにショートメッセージをデコードするところ。 |
 | `internal/ipsmgw/network_test.go`、`internal/ue/sms_ims_test.go` | 流れの全体を 1 つのプロセスで動かす試験。上の失敗の場合も含む。 |
 
 ## このプロジェクトで簡略化していること
