@@ -255,7 +255,8 @@ type SIPDialogID struct {
 }
 
 // Marshal writes the document as XML 1.0 in UTF-8, as RFC 4575 4.1
-// requires, after checking it.
+// requires, after checking it. Package reginfo writes its documents
+// with the same few lines, which are not worth a package of their own.
 func (d Document) Marshal() ([]byte, error) {
 	if err := d.check(); err != nil {
 		return nil, err
