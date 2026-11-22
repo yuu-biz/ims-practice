@@ -9,14 +9,25 @@ import (
 )
 
 // The commands that the helper container runs inside the target's
-// network namespace. deploy/chaos/fault.sh runs the same ones, so that
-// a learner can type what the API does.
+// network namespace, and the one that a crash runs inside the node's.
+// deploy/chaos/fault.sh runs the same ones, so that a learner can type
+// what the API does (TestFaultScriptRunsTheCommandsOfThePackage).
 
 // hepPort is the HEP collector's port (the dashboard's). The
 // copies that a node sends to the dashboard are not IMS traffic, so a
 // fault leaves them alone: the dashboard keeps showing what the node
 // believes it sent and received.
 const hepPort = 9060
+
+// crashCommand makes the node's process die. PID 1 of a namespace
+// ignores a SIGKILL sent from inside it, but the Go runtime handles
+// SIGQUIT: it prints every goroutine and exits with 2. The runtime of
+// the containers sees a crash, not a stop, so the restart policy of the
+// Compose file starts the node again; a docker kill would count as a
+// stop and leave it down.
+func crashCommand() []string {
+	return []string{"kill", "-QUIT", "1"}
+}
 
 // addressesCommand lists the IPv4 addresses of the namespace, one line
 // each, such as "2: eth0    inet 172.28.0.40/24 brd ...". Docker names

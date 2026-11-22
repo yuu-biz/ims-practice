@@ -90,7 +90,7 @@ func (m *Manager) Inject(ctx context.Context, r Request) (Fault, error) {
 	}
 	m.mu.Lock()
 	for _, f := range m.faults {
-		if !f.State.ended() && f.slot() == r.slot() {
+		if slot := r.slot(); slot != "" && !f.State.ended() && f.slot() == slot {
 			m.mu.Unlock()
 			return Fault{}, fmt.Errorf("%w: fault %s (%s) on %s is not over", ErrConflict, f.ID, f.Kind, f.Target)
 		}
@@ -101,13 +101,19 @@ func (m *Manager) Inject(ctx context.Context, r Request) (Fault, error) {
 		Request:   r,
 		State:     Applying,
 		CreatedAt: now,
-		ExpiresAt: now.Add(time.Duration(r.Duration)),
+	}
+	if r.Kind.lasting() {
+		f.ExpiresAt = now.Add(time.Duration(r.Duration))
 	}
 	m.faults[f.ID] = f
 	applying := *f
 	m.mu.Unlock()
 
-	m.log.Info("fault", "id", f.ID, "target", r.Target, "kind", r.Kind, "event", "apply", "expires_at", applying.ExpiresAt)
+	args := []any{"id", f.ID, "target", r.Target, "kind", r.Kind, "event", "apply"}
+	if r.Kind.lasting() {
+		args = append(args, "expires_at", applying.ExpiresAt)
+	}
+	m.log.Info("fault", args...)
 	err := m.exec.Apply(ctx, applying)
 
 	m.mu.Lock()
@@ -116,6 +122,12 @@ func (m *Manager) Inject(ctx context.Context, r Request) (Fault, error) {
 		m.end(f, Failed, "apply: "+err.Error())
 		m.log.Warn("fault", "id", f.ID, "target", r.Target, "kind", r.Kind, "event", "apply failed", "error", err.Error())
 		return *f, fmt.Errorf("%w: %v", ErrExecutor, err)
+	}
+	if !r.Kind.lasting() {
+		// The node is already on its way back, or has been replaced:
+		// nothing holds it, and nothing is left to clear.
+		m.end(f, Done, "")
+		return *f, nil
 	}
 	f.State = Active
 	return *f, nil

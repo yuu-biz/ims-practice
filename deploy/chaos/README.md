@@ -261,13 +261,13 @@ The request of `POST`:
 | Field | Type | For the kinds | Meaning |
 | --- | --- | --- | --- |
 | `target` | string | all | A Compose service, such as `pcscf` or `ibcf-a`, or one container of a service that runs several, such as `agw:2`. Lower-case letters, digits, `_`, `.` and `-` |
-| `kind` | string | | `stop`, `kill`, `pause`, `delay`, `loss` or `partition`, as in [The faults](#the-faults) |
+| `kind` | string | | `stop`, `kill`, `pause`, `crash`, `recreate`, `delay`, `loss` or `partition`, as in [The faults](#the-faults) |
 | `network` | string | `delay`, `loss`, `partition` | The Compose network, such as `nni`, on whose interface the fault sits. Left out, every interface of the target |
 | `delay` | duration | `delay` | Above 0 and at most `10s` |
 | `jitter` | duration | `delay` | From 0 to `delay` |
 | `loss_percent` | integer | `loss` | From 1 to 100: the chance that each packet sent or received is dropped |
 | `peers` | array of strings | `partition` | Services, containers (`agw:2`), patterns (`scscf-*`) or IPv4 addresses that the target can no longer reach nor hear. Left out, everything. No peer twice, and not the target itself |
-| `duration` | duration | all | From `1s` to `1h`. Left out, `5m` |
+| `duration` | duration | the faults that last | From `1s` to `1h`. Left out, `5m`. A `crash` and a `recreate` happen once and take none |
 
 A field of another kind, or a field that the table does not have, is refused. For example:
 
@@ -282,14 +282,21 @@ A fault is the request, with `duration` filled in, and these fields:
 | Field | Meaning |
 | --- | --- |
 | `id` | 8 hexadecimal digits |
-| `state` | `applying` and `clearing` while the agent works on it; `active` while it is in place; `cleared` (by `DELETE`), `expired` (its time was up) and `failed` at its end |
+| `state` | `applying` and `clearing` while the agent works on it; `active` while it is in place; `done` (it happened and is over), `cleared` (by `DELETE`), `expired` (its time was up) and `failed` at its end |
 | `error` | Why it failed. Only in state `failed` |
-| `created_at`, `expires_at` | When it was asked for, and when it ends by itself |
+| `created_at`, `expires_at` | When it was asked for, and when it ends by itself. A fault that happens once has no `expires_at` |
 | `ended_at` | When it ended. Only at its end |
 
 ```json
 {"id":"113e54e0","target":"pcscf","kind":"pause","duration":"5s","state":"active",
  "created_at":"2026-11-20T23:57:48.449036798Z","expires_at":"2026-11-20T23:57:53.449036798Z"}
+```
+
+A fault that happens once is answered in the state `done`: there is nothing to clear, so `DELETE` on it only reads it back, and it stays in the list for an hour like any other ended fault.
+
+```json
+{"id":"7c2f1a04","target":"scscf","kind":"crash","state":"done",
+ "created_at":"2026-11-20T23:59:02.117Z","ended_at":"2026-11-20T23:59:02.265Z"}
 ```
 
 The agent answers `POST` and `DELETE` once the change is done. `stop` waits until the node has exited, at most its `stop_grace_period` of `compose.yaml` (5 s). A network fault runs a few throw-away containers in the node's namespace, which takes about a second. Keep the request open until the answer comes. The agent looks for faults whose time is up once a second, so a fault ends up to a second after its `expires_at`; `ended_at` says when.
@@ -301,7 +308,7 @@ Every error has the body `{"error": "..."}`:
 | 400 | The request is not one that the table allows: an unknown kind, a field of another kind, a value out of range, an unknown field, a body that is not one JSON object, or a body over 16 KiB |
 | 404 | No fault has the id, or it ended more than an hour ago. Also every other path under `/fault/v1/` |
 | 405 | A method that the path does not take. The header `Allow` lists those it takes |
-| 409 | `POST`: the target has a fault that is not over and that this one would meet. `stop`, `kill` and `pause` meet each other, since a stopped node can be neither killed nor paused; `delay`, `loss` and `partition` each meet only another of their kind. `DELETE`: the fault is being applied or cleared |
+| 409 | `POST`: the target has a fault that is not over and that this one would meet. `stop`, `kill` and `pause` meet each other, since a stopped node can be neither killed nor paused; `delay`, `loss` and `partition` each meet only another of their kind. A `crash` and a `recreate` meet nothing, because they are over before the next request comes. `DELETE`: the fault is being applied or cleared |
 | 500 | Docker could not do it. The body also has `fault`, the fault in state `failed`, which stays in the list. For example: no container of the target, a service with several containers and no number, a network fault on a capture container, a fault on the agent, the tools image not built, a kernel without netem (`delay`) or without the egress hook (`loss`, `partition`). When `DELETE` fails, the fault may still be in place: `deploy/chaos/fault.sh heal` undoes it |
 
 ```text
@@ -310,4 +317,6 @@ Every error has the body `{"error": "..."}`:
   "error":"apply: no container of the service \"nosuch\" in the project \"ims-practice\"", ...}}
 ```
 
-`crash` and `recreate` are only in `fault.sh`. They end at once, with nothing to undo, so they are not faults with a duration.
+`fault.sh recreate` recreates the container with `docker compose up -d --no-deps`, which reads the Compose file again. The agent has no Compose file: it copies the configuration of the container it replaces, which is the one Compose gave it, so the new container has the same name, address and image. It replaces the one container of the target, where `fault.sh` leaves the service to Compose.
+
+The agent makes the new container before the old one goes, under a name of its own (`ims-practice-scscf-1-replacing-<id>`, which `docker ps` shows for a moment), and gives it the name of the old one once that is removed. So a recreate that the Engine cannot carry out leaves the node running, and the answer says so. The address and the names on the network belong to whichever of the two is running, because the Engine takes them when a container starts.

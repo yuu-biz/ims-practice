@@ -147,6 +147,40 @@ func TestClearBeforeItsTime(t *testing.T) {
 	}
 }
 
+// TestAFaultThatHappensOnceIsOverAtOnce: a crash and a recreate have
+// nothing to undo, so the manager ends them as soon as the executor has
+// done them. They hold no slot either: a node can be crashed while a
+// loss sits on it, and twice in a row.
+func TestAFaultThatHappensOnceIsOverAtOnce(t *testing.T) {
+	m, e, c := newTestManager()
+	ctx := context.Background()
+	for _, kind := range []Kind{Crash, Recreate} {
+		f, err := m.Inject(ctx, Request{Target: "scscf", Kind: kind})
+		if err != nil {
+			t.Fatalf("Inject %s: %v", kind, err)
+		}
+		if f.State != Done || !f.EndedAt.Equal(c.Now()) || !f.ExpiresAt.IsZero() || f.Duration != 0 {
+			t.Errorf("%s = %+v, want done now and no duration", kind, f)
+		}
+		// Clearing it, and the sweep, find it over and do nothing more.
+		if cleared, err := m.Clear(ctx, f.ID); err != nil || cleared.State != Done {
+			t.Errorf("Clear of a %s = %+v, %v", kind, cleared, err)
+		}
+		c.Advance(DefaultDuration)
+		m.ExpireDue(ctx)
+	}
+	if _, err := m.Inject(ctx, Request{Target: "scscf", Kind: Loss, LossPercent: 10}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := m.Inject(ctx, Request{Target: "scscf", Kind: Crash}); err != nil {
+		t.Errorf("Inject a crash on a node that has a loss: %v", err)
+	}
+	want := []string{"apply crash scscf", "apply recreate scscf", "apply loss scscf", "apply crash scscf"}
+	if fmt.Sprint(e.Calls()) != fmt.Sprint(want) {
+		t.Errorf("calls = %v, want %v", e.Calls(), want)
+	}
+}
+
 func TestConflicts(t *testing.T) {
 	m, _, _ := newTestManager()
 	ctx := context.Background()
@@ -292,6 +326,11 @@ func TestValidate(t *testing.T) {
 		{Target: "ibcf-a", Kind: Partition, Network: "NNI"},
 		{Target: "valkey", Kind: Partition, Peers: []string{"scscf-[12]"}},
 		{Target: "valkey", Kind: Partition, Peers: []string{"pcscf:x"}},
+		// A fault that happens once takes no duration.
+		{Target: "scscf", Kind: Crash, Duration: Duration(time.Minute)},
+		{Target: "scscf", Kind: Recreate, Duration: Duration(time.Minute)},
+		{Target: "scscf", Kind: Crash, LossPercent: 10},
+		{Target: "scscf", Kind: Recreate, Network: "nni"},
 	} {
 		if err := r.validate(); !errors.Is(err, ErrInvalidRequest) {
 			t.Errorf("validate(%+v) = %v, want ErrInvalidRequest", r, err)
@@ -307,6 +346,8 @@ func TestValidate(t *testing.T) {
 		{Target: "ibcf-a", Kind: Partition, Network: "nni"},
 		{Target: "trgw-a", Kind: Loss, LossPercent: 10, Network: "nni"},
 		{Target: "valkey", Kind: Partition, Peers: []string{"scscf-*", "pcscf:2"}},
+		{Target: "scscf", Kind: Crash},
+		{Target: "scscf-1", Kind: Recreate},
 	} {
 		if err := r.validate(); err != nil {
 			t.Errorf("validate(%+v) = %v", r, err)

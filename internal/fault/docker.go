@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"maps"
 	"net"
 	"net/http"
 	"net/netip"
@@ -98,6 +99,10 @@ func (d *Docker) Apply(ctx context.Context, f Fault) error {
 		return d.post(ctx, "/containers/"+c.ID+"/kill", "docker kill "+c.Name)
 	case Pause:
 		return d.post(ctx, "/containers/"+c.ID+"/pause", "docker pause "+c.Name)
+	case Crash:
+		return d.exec(ctx, c, crashCommand())
+	case Recreate:
+		return d.recreate(ctx, c, f.ID)
 	}
 	devices, err := d.devices(ctx, c, f.Network)
 	if err != nil {
@@ -150,8 +155,109 @@ func (d *Docker) Clear(ctx context.Context, f Fault) error {
 		return errors.Join(errs...)
 	case Loss, Partition:
 		return d.clearInNamespace(ctx, c, nftDeleteCommand(tableName(f.ID)))
+	case Crash, Recreate:
+		return fmt.Errorf("a %s is over as soon as it has happened; there is nothing to clear", f.Kind)
 	}
 	return fmt.Errorf("unknown kind %q", f.Kind)
+}
+
+// exec runs cmd inside the container, as docker exec does: the Engine
+// makes an exec instance and then starts it. Detached, so that the
+// answer does not wait for a process that dies with its container.
+func (d *Docker) exec(ctx context.Context, c container, cmd []string) error {
+	d.log.Info("docker", "equivalent", "docker exec "+c.Name+" "+shellQuote(cmd))
+	var created struct {
+		ID string `json:"Id"`
+	}
+	if err := d.call(ctx, http.MethodPost, "/containers/"+c.ID+"/exec", map[string]any{"Cmd": cmd}, &created); err != nil {
+		return err
+	}
+	return d.call(ctx, http.MethodPost, "/exec/"+created.ID+"/start", map[string]any{"Detach": true}, nil)
+}
+
+// recreate replaces the container with a new one that has the same
+// configuration, name and address, as an orchestrator replaces a node
+// that died. The node says no goodbye, loses what it kept in its
+// memory, and gets a new network namespace, so the network faults on it
+// are gone with it; its volumes stay, so a store with persistence reads
+// its data again.
+//
+// deploy/chaos/fault.sh does this with "docker compose up -d --no-deps",
+// which reads the Compose file again. The agent has no Compose file, so
+// it copies the configuration of the container it replaces, which is
+// the one Compose gave it.
+//
+// The new container is made before the old one goes, under a name of
+// its own, so that a create that fails leaves the node as it was. Two
+// containers may hold the same address and the same aliases in the
+// meantime, because the Engine takes them when a container starts, not
+// when it is made. id, the id of the fault, keeps the temporary name
+// free of the one that another recreate of the same node may be using.
+func (d *Docker) recreate(ctx context.Context, c container, id string) error {
+	var old struct {
+		Config     map[string]any
+		HostConfig map[string]any
+		// NetworkSettings holds, for each Docker network, the fixed
+		// address of the Compose file and the aliases it set, which are
+		// the names the other containers reach the node by.
+		NetworkSettings struct {
+			Networks map[string]struct {
+				IPAMConfig *struct{ IPv4Address string }
+				Aliases    []string
+			}
+		}
+	}
+	if err := d.get(ctx, "/containers/"+c.ID+"/json", &old); err != nil {
+		return err
+	}
+	if len(old.Config) == 0 {
+		return fmt.Errorf("the Engine reports no configuration of %s", c.Name)
+	}
+	create := maps.Clone(old.Config)
+	// Compose names the host of each IMS node in compose.yaml; where it
+	// names none, the Engine makes the Hostname the first 12 characters
+	// of the container's id. The new container is another container, so
+	// it is left to get a Hostname of its own instead of the name of the
+	// one that is gone.
+	if len(c.ID) >= shortIDLength && create["Hostname"] == c.ID[:shortIDLength] {
+		delete(create, "Hostname")
+	}
+	create["HostConfig"] = old.HostConfig
+	endpoints := map[string]any{}
+	for network, n := range old.NetworkSettings.Networks {
+		endpoint := map[string]any{}
+		if n.IPAMConfig != nil && n.IPAMConfig.IPv4Address != "" {
+			endpoint["IPAMConfig"] = map[string]any{"IPv4Address": n.IPAMConfig.IPv4Address}
+		}
+		if len(n.Aliases) > 0 {
+			endpoint["Aliases"] = n.Aliases
+		}
+		endpoints[network] = endpoint
+	}
+	create["NetworkingConfig"] = map[string]any{"EndpointsConfig": endpoints}
+
+	temporary := c.Name + "-replacing-" + id
+	var made struct {
+		ID string `json:"Id"`
+	}
+	d.log.Info("docker", "equivalent", "docker create --name "+temporary+" (the configuration of "+c.Name+")")
+	if err := d.call(ctx, http.MethodPost, "/containers/create?name="+url.QueryEscape(temporary), create, &made); err != nil {
+		return fmt.Errorf("%s is still running; the Engine could not make the container that replaces it: %w", c.Name, err)
+	}
+	// force kills the old container and removes it in one call, whether
+	// it is running, stopped or on its way back up after a crash.
+	d.log.Info("docker", "equivalent", "docker rm -f "+c.Name)
+	if err := d.call(ctx, http.MethodDelete, "/containers/"+c.ID+"?force=1", nil, nil); err != nil {
+		// Nothing of the fault is left behind: the node is as it was,
+		// and the container that would have replaced it goes.
+		d.call(context.WithoutCancel(ctx), http.MethodDelete, "/containers/"+made.ID+"?force=1", nil, nil)
+		return err
+	}
+	d.log.Info("docker", "equivalent", "docker rename "+temporary+" "+c.Name)
+	if err := d.call(ctx, http.MethodPost, "/containers/"+made.ID+"/rename?name="+url.QueryEscape(c.Name), nil, nil); err != nil {
+		return fmt.Errorf("%s is removed and the container that replaces it is still called %s: %w", c.Name, temporary, err)
+	}
+	return d.post(ctx, "/containers/"+made.ID+"/start", "docker start "+c.Name)
 }
 
 // container is what Docker reports of a container of the project.
@@ -181,6 +287,10 @@ type container struct {
 // dockerSocket is the file name of the Engine's socket, wherever it is
 // mounted.
 const dockerSocket = "docker.sock"
+
+// shortIDLength is how much of a container's id the Engine shows as its
+// short id, and makes the host name of a container that was given none.
+const shortIDLength = 12
 
 // target writes the container the way a request names it.
 func (c container) target() string { return c.Service + ":" + strconv.Itoa(c.Number) }
