@@ -94,6 +94,35 @@ export function roleSummaries(rows: readonly NodeRow[]): RoleSummary[] {
   return [...roles.values()];
 }
 
+// What each role counts as its users, the count of its maintenance
+// function: the S-CSCF counts its server transactions
+// (internal/scscf/maintenance.go).
+const userCounts: Record<string, string> = {
+  scscf: "the SIP requests it is still serving",
+};
+
+export interface ColumnNote {
+  column: string;
+  meaning: string;
+}
+
+// What the Users and Generation columns mean for the roles shown. A role
+// that no node reported is left out: its count is not known.
+export function columnNotes(summaries: readonly RoleSummary[]): ColumnNote[] {
+  const reported = summaries.filter((s) => s.failed.length < s.nodes.length);
+  const counted = reported.filter((s) => s.users !== null).map((s) => `${s.role}: ${userCounts[s.role] ?? "counted by the role"}.`);
+  const uncounted = reported.filter((s) => s.users === null).map((s) => s.role);
+  const users = ["What a role still serves on a node; a drain locks the role there once this is 0. The Roles table adds up its nodes.", ...counted];
+  if (uncounted.length > 0) users.push(`${uncounted.join(", ")}: not counted, so a drain locks ${uncounted.length === 1 ? "it" : "them"} at once.`);
+  return [
+    { column: "Users", meaning: users.join(" ") },
+    {
+      column: "Generation",
+      meaning: 'The configuration generation of the node, which each configuration change raises. The nodes of a role keep the same one; "(differ)" marks a node that missed a change.',
+    },
+  ];
+}
+
 // "SHUTTINGDOWN 1, UNLOCKED 2"
 export function describeCounts(counts: Partial<Record<string, number>>): string {
   return Object.entries(counts)

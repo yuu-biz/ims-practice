@@ -16,6 +16,7 @@ import { confirmAction, describe, el, fillSelect, fillTable, showNote, type Chil
 import { scopePicker } from "./scope-picker.ts";
 import {
   administrativeActions,
+  columnNotes,
   describeCounts,
   describeFanOutTotals,
   describeScope,
@@ -36,7 +37,7 @@ export interface NodesPanel {
 }
 
 export function mountNodesPanel(
-  root: { roles: HTMLTableElement; nodes: HTMLTableElement; note: HTMLElement; read: HTMLElement; refresh: HTMLButtonElement; auto: HTMLInputElement; operations: HTMLElement },
+  root: { roles: HTMLTableElement; columns: HTMLElement; nodes: HTMLTableElement; note: HTMLElement; read: HTMLElement; refresh: HTMLButtonElement; auto: HTMLInputElement; operations: HTMLElement },
   inventory: readonly Endpoint[],
   operator: () => string,
 ): NodesPanel {
@@ -49,7 +50,9 @@ export function mountNodesPanel(
       const state = await fetchState();
       const rows = nodeRows(inventory, state);
       showNote(root.note, state.failed > 0 ? `${state.failed} of ${state.nodes.length} nodes did not answer: they are shown as failed.` : null);
-      fillTable(root.roles, roleSummaries(rows).map(roleRow), "The inventory has no roles.");
+      const summaries = roleSummaries(rows);
+      fillTable(root.roles, summaries.map(roleRow), "The inventory has no roles.");
+      root.columns.replaceChildren(...columnNotes(summaries).flatMap((n) => [el("dt", { textContent: n.column }), el("dd", { textContent: n.meaning })]));
       renderNodes(root.nodes, rows);
       root.read.textContent = `Read at ${formatTime(new Date().toISOString())}`;
     } catch (error) {
