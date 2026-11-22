@@ -80,7 +80,7 @@ ATTACH ACCEPT は ESM のメッセージのコンテナに IMS の APN の defau
 
 - EPS bearer 5 が default bearer です。QCI は IMS の信号の種類である 5 です（IR.92 4.4.1、TS 23.203 6.1.7）。
 - PDN のアドレスは加入者の静的なアドレスです。UE はこれが P-CSCF に届くときの自分のアドレスと同じかを確かめ、違えば止まります。
-- プロトコル設定オプション（PCO）は、識別子 000CH のコンテナで P-CSCF のアドレスを運びます（TS 24.008 10.5.6.3）。これは TS 24.229 L.2.2.1 の方法 II で、IR.92 4.5 が求める方法です。一覧の先頭のアドレスがいちばん優先されます。PCO にはアドレスしか無いので、UE はそのアドレスのポート 5060 に送ります。
+- プロトコル設定オプション（PCO）は、識別子 `000CH` のコンテナで P-CSCF のアドレスを運びます（TS 24.008 10.5.6.3）。これは TS 24.229 L.2.2.1 の方法 II で、IR.92 4.5 が求める方法です。一覧の先頭のアドレスがいちばん優先されます。PCO にはアドレスしか無いので、UE はそのアドレスのポート 5060 に送ります。
 
 UE はセルの情報を P-Access-Network-Info にも書きます。`3GPP-E-UTRAN-FDD;utran-cell-id-3gpp=0010100010000101` は、MCC 001、MNC 01、16 進 4 桁の TAC、16 進 7 桁の ECI です（TS 24.229 7.2A.4.3、L.3.1.1）。
 
@@ -245,17 +245,17 @@ ue2 や pjsua のように attach していない UE では、PCRF は IP-CAN �
 | `AF-Application-Identifier` | `urn:urn-7:3gpp-service.ims.icsi.mmtel` | サービス。S-CSCF が付けた P-Asserted-Service から取る。送るのは着信側の P-CSCF だけ（「このプロジェクトで簡略化していること」を参照）。 |
 | `Media-Component-Description` | 番号 1 | 1 つ目の m= の行（TS 29.213 6.2 Table 6.2.1）。 |
 | `Media-Sub-Component` | フロー 1 と 2 | RTP と RTCP。それぞれに 2 つの `Flow-Description` がある。`permit in 17 from 172.28.0.121 to 172.28.0.50 40004` と `permit out 17 from 172.28.0.50 to 172.28.0.121 60734`。メディアのもう一方の端は中継ノード。 |
-| `Media-Type` | AUDIO | |
+| `Media-Type` | `AUDIO` | |
 | `Max-Requested-Bandwidth-UL` と `-DL` | 80000 と 41000 | offer と answer の b=AS から決めた値。単位は bit/s。 |
 | `RR-Bandwidth`、`RS-Bandwidth` | 4000、0 | b=RR と b=RS から。 |
-| `Flow-Status` | ENABLED（2） | 方向の属性 sendrecv から。 |
+| `Flow-Status` | `ENABLED`（2） | 方向の属性 sendrecv から。 |
 | `Codec-Data` | `uplink offer m=audio ...` と `downlink answer m=audio ...` | offer と answer の m= の行と属性。 |
 | `Specific-Action` | 2、4、9 | bearer の喪失と解放、資源の割り当ての失敗を知らせてもらう。 |
 | `Service-Info-Status` | FINAL_SERVICE_INFORMATION | offer だけでなく answer に基づいた情報。 |
 | `Framed-IP-Address` | 172.28.0.121 | UE。PCRF はこれで IP-CAN セッションを見つける。 |
 | `Rx-Request-Type` | INITIAL_REQUEST | 通話のための新しい Rx のセッション。 |
 
-PCRF は音声を QCI 1 で許可し（TS 29.213 6.3、IR.92 4.4.2）、スタブが dedicated bearer を作り、PCRF が 2001 で答えます。そのあと UPDATE や保留で新しい SDP の offer と answer があるたびに、同じセッションで `Rx-Request-Type: UPDATE_REQUEST` の AAR が送られます。保留中は、発信側の `Flow-Status` が ENABLED-UPLINK（0）、着信側が ENABLED-DOWNLINK（1）になります。
+PCRF は音声を QCI 1 で許可し（TS 29.213 6.3、IR.92 4.4.2）、スタブが dedicated bearer を作り、PCRF が 2001 で答えます。そのあと UPDATE や保留で新しい SDP の offer と answer があるたびに、同じセッションで `Rx-Request-Type: UPDATE_REQUEST` の AAR が送られます。保留中は、発信側の `Flow-Status` が `ENABLED-UPLINK`（0）、着信側が `ENABLED-DOWNLINK`（1）になります。
 
 ### 通話の終わり
 
@@ -469,7 +469,7 @@ docker compose run --rm --entrypoint sipp peer -sf /etc/sipp/register-aka.xml -m
 | `sip.WWW-Authenticate contains "AKAv1-MD5"` | IMS-AKA の challenge。`contains "ck="` で、S-CSCF が P-CSCF に送るものが見つかる。 |
 | `udp.port == 5064 \|\| tcp.port == 5064` | P-CSCF の保護サーバーポートを通るもの。 |
 | `diameter.3GPP-SIP-Authentication-Scheme == "Digest-AKAv1-MD5"` | IMS-AKA の MAR と MAA。 |
-| `diameter.cmd.code in {265, 258, 274, 275}` | Rx。AA、RA、AS、ST。 |
+| `diameter.cmd.code in {265, 258, 274, 275}` | Rx。AAR と AAA、RAR と RAA、ASR と ASA、STR と STA。 |
 | `diameter.Flow-Usage == 2` | 信号の経路の AAR。 |
 | `diameter.Codec-Data` | 通話のメディアの AAR。 |
 | `diameter.Experimental-Result-Code == 5065` | IP-CAN_SESSION_NOT_AVAILABLE。attach していない UE。 |
@@ -533,7 +533,7 @@ docker compose run --rm --entrypoint sipp peer -sf /etc/sipp/register-aka.xml -m
 | S-CSCF、TS 33.203 6.1.1、TS 24.229 5.4.1.2.1A | AKAv1-MD5 だけで、AKAv2-SHA-256 は無い。 | SIPp が AKAv1-MD5 しか話さない。 |
 | AKA、TS 33.102 C.2.2、C.3.4 | 受け入れる SQN の古さの限度 L を使わず、IND を領域ごとに分けない。 | Profile 2 は L の値を示していない。IMS は 1 つの領域で、MAR ごとにベクトルは 1 つ。 |
 | UE、TS 24.301、TS 36.331 | UE のパケットは Docker のネットワークにそのまま出る。 | 無線もトンネルも無い。 |
-| UE、TS 24.229 7.2A.4.3 | アクセスの種類はいつも 3GPP-E-UTRAN-FDD。 | スタブはセルの複信方式を伝えない。 |
+| UE、TS 24.229 7.2A.4.3 | アクセスの種類はいつも `3GPP-E-UTRAN-FDD`。 | スタブはセルの複信方式を伝えない。 |
 | UE、TS 24.229 L.2.2.5.1B | 音声の bearer を、TFT と照らし合わせずにすべての通話の資源とみなす。 | IR.92 4.4.2 では、1 本の音声の bearer がすべての通話の音声を運ぶ。 |
 | UE、TS 24.301 5.5.2.3.4、IR.92 2.4.2.1 | 網が「re-attach not required」で EMM cause を付けずに detach したあと、T3402（既定は 12 分）が切れてから attach をやり直し（TS 24.301 5.2.2.3.3）、登録し直すこと。アクセス網のイベントストリームが途切れたあと、PDN 接続を張り直すこと。UE シミュレータはエラーで止まり、IMS に届かなくなった登録の解除も送らない。 | シミュレータの 1 回の実行が扱う attach は 1 回だけで、SIP のトランスポート、Contact、通話のメディアの資源を、その attach の PDN アドレスに合わせて一度だけ用意するため。 |
 | UE、TS 24.229 6.1.1 | answer の前に bearer を失っても、プリコンディションの表を変えるだけで、通話は網が終わらせる。 | 解放は P-CSCF が行う（5.2.8.1.1）。 |

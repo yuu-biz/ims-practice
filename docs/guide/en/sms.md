@@ -174,7 +174,7 @@ Open the newest file in `captures/` in Wireshark with this display filter:
 sip.CSeq.method in {"MESSAGE", "REGISTER"} || (sip && ip.addr == 172.28.0.70) || diameter.cmd.code in {302, 306, 307}
 ```
 
-It shows the REGISTERs (with the third-party ones), the MESSAGEs and their responses, the SUBSCRIBEs and NOTIFYs of the IP-SM-GW, and the LIR, UDR and PUR with their answers. Wireshark decodes the body of each MESSAGE by itself: the Info column ends with the RP message, such as `(RP) RP-DATA (MS to Network)`, and the packet details have a "GSM A-I/F RP" tree with a "GSM SMS TPDU" tree inside. **Statistics > Flow Graph** with **Limit to display filter** draws the ladder.
+It shows the REGISTERs (with the third-party ones), the MESSAGEs and their responses, the SUBSCRIBEs and NOTIFYs of the IP-SM-GW, and the LIR, UDR and PUR with their answers. Wireshark decodes the body of each MESSAGE by itself: the Info column ends with the RP message, such as `(RP) RP-DATA (MS to Network)`, and the packet details have a `GSM A-I/F RP` tree with a `GSM SMS TPDU` tree inside. **Statistics > Flow Graph** with **Limit to display filter** draws the ladder.
 
 ## Registration: the IP-SM-GW learns about the user
 
