@@ -123,7 +123,7 @@ func (s *Store) Subscriber(ctx context.Context, privateID string) (hss.Subscribe
 }
 
 // SubscriberOf reads the index item of the public identity, then the
-// subscriber it names, which must hold the identity (kvjson.PutIndex).
+// subscriber it names, which must hold the identity (kvjson.WriteIndex).
 func (s *Store) SubscriberOf(ctx context.Context, publicID string) (hss.Subscriber, bool, error) {
 	target, _, err := s.c.ReadIndex(ctx, s.publicIndexKey(publicID))
 	if errors.Is(err, kvstore.ErrNotFound) {

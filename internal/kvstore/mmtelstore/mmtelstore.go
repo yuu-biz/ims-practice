@@ -44,7 +44,7 @@ func (s *Store) callKey(id sip.DialogID) string { return s.c.Key("call", dialogP
 func (s *Store) legKey(id sip.DialogID) string { return s.c.Key("call-of-leg", dialogParts(id)...) }
 
 // PutCall writes the index item of the Outgoing dialog first, then the
-// record (kvjson.PutIndex).
+// record (kvjson.WriteIndex).
 //
 // A record keeps no time to live: the call lasts until its BYE, however
 // long that is, as in mmtel.MemoryStore. The record of a call whose end
