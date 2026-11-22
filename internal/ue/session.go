@@ -152,7 +152,10 @@ type Session struct {
 	localDir, remoteDir string
 	precond             *precondition.Table // nil when not used
 	reserved            bool
-	answered            bool // the 2xx to the INVITE has come or gone
+	// reservationNeeded is set when the access network of the UE
+	// reserves the resources for media (CallConfig.Resources).
+	reservationNeeded bool
+	answered          bool // the 2xx to the INVITE has come or gone
 	// For a caller, per early dialog by its To tag: the early media
 	// authorization that the last P-Early-Media gave for the audio
 	// stream (RFC 5009 8), and whether a 180 came (IR.92 2.2.7).
@@ -830,6 +833,11 @@ type SessionStatus struct {
 	// MediaResources tells that the access network carries the media
 	// (IR.92 2.4.3.1).
 	MediaResources bool `json:"media_resources"`
+	// ReservationNeeded tells that the access network reserves those
+	// resources, as the EPC sets up a dedicated bearer (IR.92 2.4.1).
+	// Without it, as on the LAN of a softphone, the UE always has them
+	// (TS 24.229 6.1.2), and MediaResources is always true.
+	ReservationNeeded bool `json:"reservation_needed"`
 	// Held tells that this UE has put the call on hold.
 	Held bool `json:"held"`
 	// EarlyMedia is the early media authorization of the network on the
@@ -866,8 +874,8 @@ type PreconditionRow struct {
 // Status is the session as it is now.
 func (s *Session) Status() SessionStatus {
 	s.mu.Lock()
-	st := SessionStatus{Direction: s.localDir, PeerDirection: s.remoteDir, MediaResources: s.reserved, Held: s.held,
-		LocalRingback: s.localRingback(), Ringback: s.ringback()}
+	st := SessionStatus{Direction: s.localDir, PeerDirection: s.remoteDir, MediaResources: s.reserved,
+		ReservationNeeded: s.reservationNeeded, Held: s.held, LocalRingback: s.localRingback(), Ringback: s.ringback()}
 	if !s.answered && len(s.earlyMedia) > 0 {
 		st.EarlyMedia = maps.Clone(s.earlyMedia)
 	}

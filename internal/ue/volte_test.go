@@ -400,3 +400,43 @@ func TestLossOfTheMediaBearerEndsTheCall(t *testing.T) {
 		t.Errorf("BYE Reason %q", got)
 	}
 }
+
+// TestSessionTellsWhetherTheAccessNetworkReserves calls from a UE whose
+// access network reserves the resources for media, as the EPC does with
+// a dedicated bearer (IR.92 2.4.1), to one whose access network needs no
+// reservation, as a softphone's LAN (TS 24.229 6.1.2). Both have the
+// resources once the call is up; only the first needed them reserved.
+func TestSessionTellsWhetherTheAccessNetworkReserves(t *testing.T) {
+	addr := network(t, time.Second)
+	codecs := voLTECodecs(t)
+	callerResources := ue.NewResources()
+	callerResources.Set(true)
+	caller := newPartyWith(t, addr, impi, impu, password, ue.CallConfig{Codecs: codecs, Resources: callerResources})
+	callee := newPartyWith(t, addr, impi2, impu2, password2, ue.CallConfig{Codecs: codecs})
+	sessions := make(chan *ue.Session, 2)
+	keep := func(s *ue.Session) { sessions <- s }
+	ctx, hangUp := context.WithCancel(context.Background())
+	answered := answerIn(t, callee, ue.ToneSpeech(10*time.Second), ue.AnswerOptions{PickUp: time.After(0), Session: keep})
+	called := make(chan error, 1)
+	go func() {
+		called <- caller.ue.Call(ctx, caller.ua, caller.reg, impu2, caller.media, ue.ToneSpeech(10*time.Second),
+			ue.CallOptions{StayUp: true, Session: keep})
+	}()
+	waitFor(t, "media both ways", func() bool {
+		return caller.media.Stats().PacketsReceived > 2 && callee.media.Stats().PacketsReceived > 2
+	})
+	byNeed := map[bool]ue.SessionStatus{}
+	for range 2 {
+		st := (<-sessions).Status()
+		byNeed[st.ReservationNeeded] = st
+	}
+	if st, ok := byNeed[true]; !ok || !st.MediaResources {
+		t.Errorf("the session over the access network that reserves: %+v, found %v", st, ok)
+	}
+	if st, ok := byNeed[false]; !ok || !st.MediaResources {
+		t.Errorf("the session over the access network that needs no reservation: %+v, found %v", st, ok)
+	}
+	hangUp()
+	wait(t, "the call", called)
+	wait(t, "the answer", answered)
+}
