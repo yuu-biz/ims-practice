@@ -107,7 +107,6 @@ Some packages under `internal`, and one screen, are in the repository but in non
 | --- | --- |
 | `fivegc`, `n5`, `nhss`, `sbi` | The 5GS side: a 5GC stub, the N5 policy API of the PCF, the service based interface of the HSS, and what those APIs share. |
 | `nas`, `sgd`, `smsc` | SMS without the IMS: the NAS messages that carry it, the SGd and S6c Diameter messages, and a Service Centre that speaks them. The SC that the IP-SM-GW reaches is the stub of package `sc`. |
-| `h248`, `h248/mediactl` | H.248 for Iq and Mp. The nodes control the media relays over their HTTP API instead. |
 | `maintenance`, `oam`, `web/oam` | The maintenance API of a node, the OAM server that uses it, and the OAM screen, which CI builds and no node serves. |
 | `kvstore/storetest`, `rtptest` | Helpers that only the tests use. |
 
