@@ -1,0 +1,60 @@
+# The P-CSCF that controls the media relay over H.248. It is the file
+# of the same name in deploy/compose with the h248 section in place of
+# media_relays, which deploy/h248/h248.yaml mounts in that file's place.
+# P-CSCF. The first contact point of the UE. It finds the I-CSCF of the
+# home network through DNS (RFC 3263) and adds Path, so that requests
+# to the UE come back through it.
+node: pcscf
+roles: [pcscf]
+home_domain: ims.mnc001.mcc001.3gppnetwork.org
+pcscf:
+  sip:
+    listen: 0.0.0.0:5060
+    host: pcscf.ims.mnc001.mcc001.3gppnetwork.org
+  # The P-CSCF is in the home network, so its network name is the home
+  # domain (TS 24.229 5.2.2.1).
+  visited_network_id: ims.mnc001.mcc001.3gppnetwork.org
+  # RTP goes through a media relay in the IMS-AGW role, which the
+  # P-CSCF controls over H.248 on Iq (TS 29.334) instead of over the
+  # relay's HTTP control API. This section names no relay: each relay
+  # registers here with a ServiceChange, and the ID of every context
+  # names the relay that holds it, so relays can come and go without
+  # this file. The port is the standard one for the text encoding of
+  # H.248, and nothing encrypts the messages, so a capture shows the
+  # commands of each call.
+  h248:
+    listen: 0.0.0.0:2944
+  # A softphone on the host comes through Docker's NAT from the bridge
+  # gateway, and reaches the relay's ports where compose.yaml publishes
+  # them.
+  host_access:
+    gateway: 172.28.0.1
+    address: 127.0.0.1
+  # IMS AKA: a UE that registers with Security-Client sends
+  # everything after the challenge to this protected server port (TS
+  # 33.203 7.1). No ESP protects it, so that the capture
+  # shows the content.
+  sec_agree:
+    protected_server_port: 5064
+# Rx to the PCRF stub in the epc node. The PCRF knows only
+# the UEs that attached to the EPC stub; for any other UE, such as a
+# softphone on the host, it answers IP-CAN_SESSION_NOT_AVAILABLE, and the
+# P-CSCF serves that UE without policy control.
+diameter:
+  origin_host: pcscf.ims.mnc001.mcc001.3gppnetwork.org
+  origin_realm: ims.mnc001.mcc001.3gppnetwork.org
+  peers:
+    - address: pcrf.ims.mnc001.mcc001.3gppnetwork.org:3868
+      origin_host: pcrf.ims.mnc001.mcc001.3gppnetwork.org
+      kind: pcrf
+  # The RFC defaults, written out where an operator can change them:
+  # Tw is the watchdog timer (RFC 3539 3.4.1 [1]), and Tc the time
+  # between attempts to connect again (RFC 6733 2.1 and 12).
+  timers:
+    tw: 30s
+    tc: 30s
+# Copies of every SIP and Diameter message for the dashboard.
+# The address is fixed so that the node starts even when the dashboard
+# is down; the dashboard is not on the call path.
+hep:
+  collector: 172.28.0.60:9060

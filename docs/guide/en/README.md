@@ -159,6 +159,52 @@ docker compose --profile ue down -v --remove-orphans
 
 The `-v` deletes the volume of the store with the nodes, so the next start begins with nothing stored.
 
+### The media relay controlled over H.248
+
+A media relay is a media gateway that the node handling the call drives from outside. The P-CSCF does that over a small HTTP control API of this project, and `deploy/h248/h248.yaml` switches it to H.248 (ITU-T H.248.1), the standard protocol for the task, which 3GPP profiles for this reference point as Iq (TS 29.334). The messages carry the same procedures, so the same call looks the same everywhere else and only the control between the two nodes changes. Start the project with that file on top of `compose.yaml`:
+
+```sh
+export COMPOSE_FILE=compose.yaml:deploy/h248/h248.yaml COMPOSE_PATH_SEPARATOR=:
+docker compose up -d --build
+```
+
+Every command of the guides then runs on that deployment. In a shell without the variable, pass `-f compose.yaml -f deploy/h248/h248.yaml` to each `docker compose` instead.
+
+Two sections change. The P-CSCF reads `h248` in place of `media_relays`:
+
+```yaml
+pcscf:
+  h248:
+    listen: 0.0.0.0:2944
+```
+
+It names no relay. Each relay registers with the P-CSCF itself, and the ID of a context names the relay that holds it, so relays can be added and taken away without this file. A relay registers with one P-CSCF, though, and only that one can change or release the contexts it holds there. So a P-CSCF that controls media this way runs as one node, and its configuration takes neither a `pool` nor the store of the deployment above; it refuses both rather than let a call reach a node that cannot release its context. The media relay reads `h248` in place of `control`, the address of the HTTP API, which it then does not serve:
+
+```yaml
+agw:
+  h248:
+    listen: 0.0.0.0:2944
+    host: agw.ims.mnc001.mcc001.3gppnetwork.org
+    controller: pcscf.ims.mnc001.mcc001.3gppnetwork.org:2944
+```
+
+Port 2944 is the standard port for the text encoding of H.248, and nothing encrypts the messages, so Wireshark reads them in the capture as `megaco`:
+
+```sh
+docker compose exec capture sh -c 'tshark -r "$(ls -t /captures/ims-*.pcap | head -n 1)" -Y megaco'
+```
+
+Make a call first, and the output holds the whole life of the control between the two nodes:
+
+- `ServiceChange=ROOT` from the relay, which is how it tells the P-CSCF that it has started and has no contexts, and the P-CSCF's reply accepting it. `ROOT` is the termination that stands for the whole gateway.
+- `Modify=ROOT` from the P-CSCF, which asks the relay to report when it has heard nothing from the P-CSCF for a while.
+- `AuditValue` on `ROOT` from the P-CSCF every ten seconds, asking for nothing: the message it sends when it has nothing else to send, so that neither side takes the other for lost.
+- For each call, `Add=ip/1/access/$` and `Add=ip/1/core/$` in one transaction: the P-CSCF asks for a context with a termination towards the UE and one towards the rest of the network, and leaves the identifiers, the address and the ports to the relay, which is what `$` means. The relay answers with what it chose, and the P-CSCF writes that address and port into the SDP it passes on, as it does with the HTTP API.
+- `Modify=ip/1/access/…` and `Modify=ip/1/core/…`, which tell each termination where its party takes the media, from the SDP of that party.
+- `Subtract=*` when the call ends, which releases both terminations of the context at once.
+
+The same call over the HTTP API is in [a voice call](call.md). Reading the two captures side by side shows one call controlled in two protocols: `Add`, `Modify` and `Subtract` here, and the requests of the HTTP API there.
+
 ## How the whole setup is built
 
 These choices hold in every guide.

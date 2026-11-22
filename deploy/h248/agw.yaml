@@ -1,0 +1,29 @@
+# The media relay that takes its commands over H.248. It is the file of
+# the same name in deploy/compose with the h248 section in place of the
+# control API, which deploy/h248/h248.yaml mounts in that file's place.
+# Media relay in the IMS-AGW role (TS 23.334). The P-CSCF controls it
+# over H.248, and RTP flows through it.
+node: agw
+roles: [agw]
+home_domain: ims.mnc001.mcc001.3gppnetwork.org
+agw:
+  # The media gateway side of Iq (TS 29.334). The relay registers with
+  # the controller below and carries out the commands it sends, so it
+  # serves no HTTP control API: one relay takes its commands from one
+  # controller. The port is the standard one for the text encoding of
+  # H.248.
+  h248:
+    listen: 0.0.0.0:2944
+    # The name this relay gives itself in every message it sends. The
+    # controller names it in the ID of every context it holds here, so
+    # that each later command for a call reaches this relay.
+    host: agw.ims.mnc001.mcc001.3gppnetwork.org
+    # The controller to register with, looked up in DNS before each
+    # registration.
+    controller: pcscf.ims.mnc001.mcc001.3gppnetwork.org:2944
+  rtp_address: 172.28.0.50
+  # compose.yaml publishes this range on the host, port for port, so
+  # that a softphone on the host can reach it.
+  rtp_ports:
+    min: 40000
+    max: 40039
