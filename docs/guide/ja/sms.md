@@ -131,7 +131,7 @@ S-CSCF は P-Served-User（RFC 5502）も入れます。AS が担当する利用
 P-Served-User: <sip:+12025550101@ims.mnc001.mcc001.3gppnetwork.org>;sescase=orig;regstate=reg
 ```
 
-MMTel AS（[MMTel AS の補足サービス](mmtel.md)）のように発信者と着信者の両方を担当する AS は、このヘッダで場合を見分けます（5.7.1.3A）。利用者の着信側のサービスへ送る要求では `sescase=term` になります。S-CSCF は要求を宛先や UE へ送る前に P-Served-User を取り除き（5.4.3.2 step 14A、5.4.3.3 step 13A）。UE が入れた P-Served-User は S-CSCF に届きません。P-CSCF が信頼のドメインの境界で取り除くからです（TS 24.229 4.4.9）。
+MMTel AS（[MMTel AS の付加サービス](mmtel.md)）のように発信者と着信者の両方を担当する AS は、このヘッダで場合を見分けます（5.7.1.3A）。利用者の着信側のサービスへ送る要求では `sescase=term` になります。S-CSCF は要求を宛先や UE へ送る前に P-Served-User を取り除き（5.4.3.2 step 14A、5.4.3.3 step 13A）。UE が入れた P-Served-User は S-CSCF に届きません。P-CSCF が信頼のドメインの境界で取り除くからです（TS 24.229 4.4.9）。
 
 IP-SM-GW が Timer F（32 秒）のあいだに MESSAGE に応答しないか、408 や 5xx を返したときは、条件の DefaultHandling に従います（TS 24.229 5.4.3.2）。SESSION_CONTINUED なら、S-CSCF は MESSAGE を Request-URI、つまり SC の tel URI へ送ります。この番号には ENUM のレコードが無いので、その番号への通話と同じように、S-CSCF は 404 を返します（step 10）。
 

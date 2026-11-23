@@ -1,8 +1,8 @@
-# MMTel AS の補足サービス
+# MMTel AS の付加サービス
 
 [English](../en/mmtel.md)
 
-この手順書では、マルチメディア電話（MMTel）の補足サービスが IMS の中でどう働くかを追います。次のことが分かります。
+この手順書では、マルチメディア電話（MMTel）の付加サービスが IMS の中でどう働くかを追います。次のことが分かります。
 
 - S-CSCF がすべての通話を MMTel AS に渡すしくみ。
 - AS が B2BUA として通話をどう扱うか。
@@ -18,7 +18,7 @@
 
 ## MMTel と、AS が要る理由
 
-IMS の電話は MMTel のサービスです（TS 24.173）。その補足サービスは、電話網が通話のほかに昔から提供してきたものです。発信者を通知するか隠すか（OIP、OIR）、応答した相手を通知するか隠すか（TIP、TIR）、着信を転送すること（CDIV）、規制すること（CB）、通話を保留すること（HOLD）、通話中に 2 本目の着信を受けること（CW）があります。VoLTE の網がどれを提供しなければならないかは、GSMA IR.92 2.3 にあります。
+IMS の電話は MMTel のサービスです（TS 24.173）。その付加サービスは、電話網が通話のほかに昔から提供してきたものです。発信者を通知するか隠すか（OIP、OIR）、応答した相手を通知するか隠すか（TIP、TIR）、着信を転送すること（CDIV）、規制すること（CB）、通話を保留すること（HOLD）、通話中に 2 本目の着信を受けること（CW）があります。VoLTE の網がどれを提供しなければならないかは、GSMA IR.92 2.3 にあります。
 
 CSCF は経路を決めるだけです。サービスには、利用者の設定を知り、それに従って通話を変えるノードが要ります。そこでどのサービスもアプリケーションサーバー（AS）である MMTel AS の手順になっています。S-CSCF は利用者の INVITE をすべて iFC で MMTel AS に送り、AS は通話ごとに利用者の設定を Sh で HSS から読みます（TS 29.364）。AS は設定の写しを持たないので、どのインスタンスでもどの通話を受けられます。利用者は UE と AS の間の HTTP のインタフェースである Ut で、XCAP を使って設定を変えます（TS 24.623）。役割 `mmtel` はその両方を動かします。SIP のポート 5060 で AS を、HTTP のポート 80 で XCAP サーバーを動かします。
 
@@ -394,7 +394,7 @@ IR.92 は割込通話を網ではなく UE で行うよう求めています（2
 | `internal/mmtel/services.go`、`store.go` | 通話ごとの Sh の読み出しと、Store に置く通話の記録。 |
 | `internal/simservs` | simservs と MMTelServices の文書、その規則（RFC 4745）、XCAP のノードセレクタ、規則の評価。 |
 | `internal/xcap` | Ut の XCAP サーバー、HTTP Digest、UE のクライアント。 |
-| `internal/ue/xcap.go`、`cmd/ue/xcap.go` | `ue xcap` と UE の補足サービス。 |
+| `internal/ue/xcap.go`、`cmd/ue/xcap.go` | `ue xcap` と UE の付加サービス。 |
 | `internal/scscf/services.go` | P-Served-User、ODI、ORIGINATING_CDIV の条件。 |
 | `internal/scscf/session.go` | 登録していない着信者のサービスと、S-CSCF が着信者の UE に渡さない識別子。 |
 | `internal/pcscf/identity.go` | P-CSCF が着信者の応答で示す識別子と、発信者の UE に渡さない識別子。 |
@@ -426,7 +426,7 @@ IR.92 は割込通話を網ではなく UE で行うよう求めています（2
 | simservs、RFC 4745 7.1.3 | ドメインは、パーセントエンコードを戻さず、`ToASCII` もせずに比べる。 | IMS のドメインは ASCII。 |
 | simservs、TS 29.364 7.2.1 | OIP、OIR、TIP、TIR、CDIV、CW、HOLD、CB だけを扱い、文書のほかのサービスは残すが読まない。 | IR.92 2.3 が網に求めるのはこれらのサービス。 |
 | UE、GSMA IR.92 2.6 | Ut の User-Agent は、GSMA PRD RCC.07 C.4.1 のとおりには作らず、ただの製品トークンにする。 | このプロジェクトは RCC.07 を読んでいない。 |
-| UE、GSMA IR.92 2.3.2 | `ue xcap` は、最後の登録の既定の識別子ではなく、コマンドラインの `-impu` を XUI にする。`ue serve` は既定の識別子を使う。 | `ue xcap` は登録を必要としない。ソフトフォンではどちらも同じ。VoLTE の UE は一時的な識別子で登録するので、補足サービスは `ue serve` で設定する。 |
+| UE、GSMA IR.92 2.3.2 | `ue xcap` は、最後の登録の既定の識別子ではなく、コマンドラインの `-impu` を XUI にする。`ue serve` は既定の識別子を使う。 | `ue xcap` は登録を必要としない。ソフトフォンではどちらも同じ。VoLTE の UE は一時的な識別子で登録するので、付加サービスは `ue serve` で設定する。 |
 | S-CSCF、TS 24.229 5.4.3.3 step 12 | History-Info の項目に非通知（RFC 7044 10.1.2）を掛けない。 | 転送した通話は、AS が書いたとおりの転送元の利用者の項目を運ぶ。 |
 | I-CSCF、TS 24.229 5.3.2.1、5.3.2.1A、5.3.2.2 | 利用者の代わりに送る AS のための「orig」の経路と、選んだ S-CSCF が答えないときの別の S-CSCF を扱わない。 | 誰かの代わりに送る AS は会議のフォーカスだけで、フォーカスは S-CSCF に送る。選び直す冗長な S-CSCF も無い。 |
 | HSS、TS 29.228 6.1.4.1 step 2、2a、3 | HSS は PSI ユーザーの S-CSCF を持たないので、PSI についての LIR には DIAMETER_ERROR_USER_UNKNOWN を返す。IMS restoration を扱わず、Originating-Request の AVP を読まない。 | PSI への要求は DNS で AS に届き、このプロジェクトの I-CSCF は発信側の要求を経路づけない。 |

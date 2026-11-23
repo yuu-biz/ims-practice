@@ -14,7 +14,7 @@ ims-practice は 3GPP の IMS（IP Multimedia Subsystem）を学習用に実装�
 
 ## 現在の状態
 
-UE シミュレータは SIP Digest で登録し、電話番号で別の UE に発信できます。呼は P-CSCF、S-CSCF、I-CSCF、ENUM、メディア中継ノードを通ります。SIP、Diameter、DNS、RTP のパケットは、すべてキャプチャで見られます。http://localhost:8080 のラボは、HEP の写しから呼と登録ごとのラダー図を描きます。HSS の加入者の管理と、UE シミュレータ `phone1`、`phone2`、`phone3` の操作もできます。UE どうしで SMS over IP のショートメッセージを送り合えます。MMTel AS は、識別子の通知、着信転送、規制などの補足サービスを提供し、UE はそれを Ut で設定します。VoLTE の UE は EPC のスタブに attach し、IMS-AKA で登録し、プリコンディションを使って AMR-WB で通話します。P-CSCF は通話ごとのメディアを Rx で PCRF に許可させます。
+UE シミュレータは SIP Digest で登録し、電話番号で別の UE に発信できます。呼は P-CSCF、S-CSCF、I-CSCF、ENUM、メディア中継ノードを通ります。SIP、Diameter、DNS、RTP のパケットは、すべてキャプチャで見られます。http://localhost:8080 のラボは、HEP の写しから呼と登録ごとのラダー図を描きます。HSS の加入者の管理と、UE シミュレータ `phone1`、`phone2`、`phone3` の操作もできます。UE どうしで SMS over IP のショートメッセージを送り合えます。MMTel AS は、識別子の通知、着信転送、規制などの付加サービスを提供し、UE はそれを Ut で設定します。VoLTE の UE は EPC のスタブに attach し、IMS-AKA で登録し、プリコンディションを使って AMR-WB で通話します。P-CSCF は通話ごとのメディアを Rx で PCRF に許可させます。
 
 ## 構成
 
@@ -34,7 +34,7 @@ UE シミュレータは SIP Digest で登録し、電話番号で別の UE に�
 
 - CSCF のすべての役割を 1 つのコンテナイメージで動かします。設定で役割を選ぶので、1 つのノードは P-CSCF、I-CSCF、S-CSCF のどれにもなれ、複数の役割を兼ねることもできます。
 - HSS とアクセス網（EPC と PCRF）はスタブです。IMS からは Diameter の Cx、Sh、Rx などの本物のインタフェースに見えるので、IMS を変えずに本格的な実装と入れ替えられます。
-- S-CSCF は iFC に従ってアプリケーションサーバーを呼び出します。SMS には IP-SM-GW を、着信転送や規制などの補足サービスには MMTel AS を呼び出します。
+- S-CSCF は iFC に従ってアプリケーションサーバーを呼び出します。SMS には IP-SM-GW を、着信転送や規制などの付加サービスには MMTel AS を呼び出します。
 - ほかの IMS 網との境界では、IBCF と TrGW がトポロジーを隠し、メディアを中継します。
 - 既定の設定では信号を暗号化しません。Wireshark が追加の設定なしで、すべてのメッセージをデコードできます。
 

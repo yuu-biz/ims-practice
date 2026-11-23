@@ -6,8 +6,8 @@
 
 - 信号の流れは「登録」が先で「通話」が後です。登録を理解していないと、通話の経路（Path、Service-Route）が読めません。
 - キャプチャと自動試験の仕組みは最初に作ります。後の段階はすべてその上で確認するためです。
-- MMTel AS（補足サービス）と MRF は VoLTE の手順のあと、相互接続の前に置きます。MRF の音声ガイダンスと CAT は、VoLTE の段階で入る early media（P-Early-Media、プリコンディション）、AMR、DTMF を使うためです。また、転送で付く History-Info と、発信者番号の非通知で付く Privacy は、網の境界（IBCF）での扱いが問題になる代表です。相互接続より前に入れておくと、相互接続の段階で試せることが増えます。
-- IMS 網どうしの相互接続は、通話、SMS、VoLTE、補足サービスの手順がそろってから取り組みます。網の間で食い違うのは、主にそれらの手順の細部だからです。
+- MMTel AS（付加サービス）と MRF は VoLTE の手順のあと、相互接続の前に置きます。MRF の音声ガイダンスと CAT は、VoLTE の段階で入る early media（P-Early-Media、プリコンディション）、AMR、DTMF を使うためです。また、転送で付く History-Info と、発信者番号の非通知で付く Privacy は、網の境界（IBCF）での扱いが問題になる代表です。相互接続より前に入れておくと、相互接続の段階で試せることが増えます。
+- IMS 網どうしの相互接続は、通話、SMS、VoLTE、付加サービスの手順がそろってから取り組みます。網の間で食い違うのは、主にそれらの手順の細部だからです。
 - 冗長構成と障害観察は、通話と SMS が動いてから取り組みます。ただし、状態をノードの外に置く設計は最初から守ります。
 - H.248 は冗長構成と障害観察のすぐあとに置きます。H.248 の ServiceChange と Audit は、ゲートウェイの再起動や切り離しと組み合わせて見ると働きが分かるためです。
 - 5GC（VoNR）は H.248 のあと、OAM の前に置きます。VoLTE の段階で EPC と Rx を先に作り、P-CSCF とアクセス網の結びつきを 1 つの境界の後ろにまとめてあるので、5GC はその境界の 2 つ目の実装として加えられます。OAM より前にするのは、OAM がまとめて保守するノードに 5GC のスタブも含めるためです。
@@ -114,21 +114,21 @@
   - AMR と AMR-WB と、その RTP ペイロードの形式（RFC 4867）に対応する。符号化済みのフレームを送り、製品は cgo を使わない。UE の offer には PCMU も残す。
   - RTCP、b=AS、b=RS と b=RR、DTMF の telephone-event に対応する。
   - セッションタイマー、Reason ヘッダ、P-Early-Media、199 応答、登録の機能タグに対応する。
-- `internal/sip` の基盤（UPDATE、セッションタイマー、199、Reason、OPTIONS、re-INVITE、B2BUA に要る部品）を入れ、補足サービスもその上に作る。
+- `internal/sip` の基盤（UPDATE、セッションタイマー、199、Reason、OPTIONS、re-INVITE、B2BUA に要る部品）を入れ、付加サービスもその上に作る。
 - 手順書「VoLTE の呼の流れ」を書く。
 
 手順書は [volte.md](guide/ja/volte.md)、スクリプトは `scripts/e2e-volte.sh` です。作りは [volte-access.md](design/volte-access.md) と [codecs.md](design/codecs.md) にあります。
 
 **完了条件.** CI の試験で IMS-AKA の登録と、プリコンディション付きの通話が成功する。
 
-### 補足サービス（MMTel AS、Ut）
+### 付加サービス（MMTel AS、Ut）
 
-**できること.** S-CSCF が iFC で MMTel AS を呼び出し、発信者番号の通知と非通知、着信転送、着信規制などの補足サービスが働く流れを追える。
+**できること.** S-CSCF が iFC で MMTel AS を呼び出し、発信者番号の通知と非通知、着信転送、着信規制などの付加サービスが働く流れを追える。
 
 - MMTel AS を `ims` コマンドの役割 `mmtel` として作る。AS は最初から全体を routeing B2BUA として作る。
 - 発信側と着信側の呼を、iFC で MMTel AS に通す。AS を加えるときは、HSS の iFC に AS の URI を書けば済むようにする。S-CSCF が P-Served-User（RFC 5502）を入れ、AS は発信と着信をそれで見分ける。
 - 未登録の利用者への着信を、HSS（LIA）、I-CSCF、S-CSCF（SAR と TERMINATING_UNREGISTERED の iFC）に作る。CFNL と、未登録の利用者への CFU に要る。
-- IR.92 2.3 の表 2.1 にある補足サービスのうち、メディアの資源を使わないものに対応する。
+- IR.92 2.3 の表 2.1 にある付加サービスのうち、メディアの資源を使わないものに対応する。
   - OIP と OIR（TS 24.607）。OIR では Privacy ヘッダで発信者の識別子を隠す。
   - TIP と TIR（TS 24.608）。
   - 着信転送（CDIV、TS 24.604）。CFU、CFB、CFNR、CFNRc、CFNL に対応し、転送の経歴を History-Info で運ぶ。
@@ -136,9 +136,9 @@
   - 保留（HOLD、TS 24.610）。
   - 割込通話（CW、TS 24.615）。IR.92 は端末で行う方式だけを求め、網で行う方式は求めていない（2.3.4）。UE シミュレータが通話中に 2 本目の着信を受けられるようにする。
 - 表 2.1 の MWI（TS 24.606）と ECT（TS 24.629）は、IR.92 が網の対応を任意としている（2.3.5、2.3.11）ので、網の側は作らず、拡張の候補に残す。会議は MRF を使うので MRF の段階で扱う。
-- 補足サービスの設定データ（TS 29.364 の `MMTelServices`）を、Sh の Repository Data として HSS にだけ置く。AS は初期の要求ごとに UDR で読み、利用者ごとの状態を持たない。
-- 利用者が Ut の XCAP（TS 24.623）で補足サービスを設定できるようにする。範囲は、IR.92 が求める最小限（2.3.2 と、CDIV と CB の規則の 2.3.8、2.3.9）にする。認証は AS で行う HTTP Digest にし、資格情報は HSS に置く。GBA は作らない。UE シミュレータに XCAP のクライアントを加える。
-- 手順書「補足サービスの流れ」を書く。
+- 付加サービスの設定データ（TS 29.364 の `MMTelServices`）を、Sh の Repository Data として HSS にだけ置く。AS は初期の要求ごとに UDR で読み、利用者ごとの状態を持たない。
+- 利用者が Ut の XCAP（TS 24.623）で付加サービスを設定できるようにする。範囲は、IR.92 が求める最小限（2.3.2 と、CDIV と CB の規則の 2.3.8、2.3.9）にする。認証は AS で行う HTTP Digest にし、資格情報は HSS に置く。GBA は作らない。UE シミュレータに XCAP のクライアントを加える。
+- 手順書「付加サービスの流れ」を書く。
 
 手順書は [mmtel.md](guide/ja/mmtel.md)、スクリプトは `scripts/e2e-mmtel.sh` です。作りは [mmtel-mrf.md](design/mmtel-mrf.md) にあります。
 
@@ -296,12 +296,12 @@
 - スライドをいくつかのデッキに分けて作る。候補は次のとおり。
   - Go と Rust の簡単な説明。
   - このリポジトリのパッケージ構成。
-  - 標準と対応させた IMS の説明（登録、通話、SMS、VoLTE、補足サービス、MRF、相互接続、障害と復旧、VoNR）。
+  - 標準と対応させた IMS の説明（登録、通話、SMS、VoLTE、付加サービス、MRF、相互接続、障害と復旧、VoNR）。
   - このリポジトリの個別の実装の説明。
 - 元データを Markdown などのテキストで管理し、HTML で表示し、pptx を出力する仕組みを選ぶ。自前の生成の道具にした（[implementation.md](design/implementation.md)）。
 - 各段階の手順書とラダー図をスライドから参照する。
 
-今あるもの。Go、パッケージ構成、網の地図、キャプチャとラボ、登録、通話、SMS、補足サービス、MRF、VoLTE、2 つの網の相互接続のデッキが英語と日本語で `slides/decks/` にあり、CI の `slides` のジョブが HTML と pptx を作ります（[slides/README.ja.md](../slides/README.ja.md)）。調査は [slides.md](background/slides.md) にあります。
+今あるもの。Go、パッケージ構成、網の地図、キャプチャとラボ、登録、通話、SMS、付加サービス、MRF、VoLTE、2 つの網の相互接続のデッキが英語と日本語で `slides/decks/` にあり、CI の `slides` のジョブが HTML と pptx を作ります（[slides/README.ja.md](../slides/README.ja.md)）。調査は [slides.md](background/slides.md) にあります。
 
 **完了条件.** CI でスライドの HTML と pptx が生成され、成果物として保存される。
 

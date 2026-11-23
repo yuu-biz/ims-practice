@@ -28,7 +28,7 @@
 | `GET /subscriptions/export?after={IMPI}&limit={n}` | なし | 1 行に 1 件の JSON（`application/x-ndjson`）。資格情報、SQN_HE、Repository Data を含む。続きがあれば `Link` | 200、400、500 |
 | `PUT /subscriptions/{IMPI}/customized-alerting-tone` | CAT | CAT | 200、400、404、500 |
 
-- `PUT` は置き換えです。項目ごとの更新ではありません。本文に書かれていない加入者のデータは消えます。`repository_data`、`mmtel_services`、`ut_password` を 3 つとも省いた `PUT` は、`POST` と同じく、設定の既定の MMTelServices だけを入れます。利用者が Ut で変えた補足サービスの設定は、そのような `PUT` で設定の既定に戻ります。書庫を戻す操作を「書いてあるとおりにする」にするためです。
+- `PUT` は置き換えです。項目ごとの更新ではありません。本文に書かれていない加入者のデータは消えます。`repository_data`、`mmtel_services`、`ut_password` を 3 つとも省いた `PUT` は、`POST` と同じく、設定の既定の MMTelServices だけを入れます。利用者が Ut で変えた付加サービスの設定は、そのような `PUT` で設定の既定に戻ります。書庫を戻す操作を「書いてあるとおりにする」にするためです。
 - `PUT` が残すのは、動いているあいだの状態です。登録の状態、S-CSCF の名前、認証の途中の印、IP-SM-GW の番号、SQN_HE は、置き換えても変わりません。`aka.sqn` を読むのは、新しい加入者を作るときだけです。
 - `unchanged` は、置き換えても加入者のデータが変わらないことです。資格情報と Repository Data も比べます。比べないのは、上の行で残すものです。OAM は資格情報を読み戻せないので、同じかどうかを言えるのは HSS だけです。
 - `PATCH` があるのは、資格情報を知らずに印とプロファイルの名前だけを変えるためです。HSS は資格情報を返しません（TS 29.228 Table 6.3.5、Table 6.3.7）。`PUT` で印だけを変えるには、持っていない資格情報を書く必要があります。

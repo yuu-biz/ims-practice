@@ -1,10 +1,10 @@
 ---
-title: MMTel AS の補足サービス
-footer: ims-practice 勉強会 7. 補足サービス
+title: MMTel AS の付加サービス
+footer: ims-practice 勉強会 7. 付加サービス
 lang: ja
 ---
 
-# MMTel AS の補足サービス
+# MMTel AS の付加サービス
 
 ims-practice 勉強会 第 7 回（MMTel AS、Ut/XCAP での設定、キャプチャで見るサービス）
 
@@ -16,20 +16,20 @@ ims-practice 勉強会 第 7 回（MMTel AS、Ut/XCAP での設定、キャプ�
 
 最初の問い。着信を転送している電話にかけると、別の電話が鳴ります。それを決めているのは、どのノードでしょうか。
 
-- 補足サービスとは何か。どのノードで動くか。
+- 付加サービスとは何か。どのノードで動くか。
 - S-CSCF が通話を AS に渡すしくみ。iFC、P-Served-User、ODI。
 - AS が B2BUA として通話を 3 つのダイアログに分けること。
 - 利用者の設定がどこにあり、UE が Ut の XCAP でそれをどう変えるか。
 - サービスごとに、キャプチャで何を見るか。識別子、着信転送、規制。
 
-> 手順書 [MMTel AS の補足サービス](../../../docs/guide/ja/mmtel.md)（`docs/guide/ja/mmtel.md`）
+> 手順書 [MMTel AS の付加サービス](../../../docs/guide/ja/mmtel.md)（`docs/guide/ja/mmtel.md`）
 > 仕様の版は手順書の冒頭にあります。TS 24.229 V20.1.0、TS 24.604 V19.0.0、TS 24.607 V19.1.0、TS 24.611 V19.0.0、TS 24.623 V19.0.0、TS 29.364 V19.1.0、GSMA IR.92 v24.0 などです。
 
 ---
 
-## 補足サービスはどこで動くか
+## 付加サービスはどこで動くか
 
-- 補足サービスは、電話網が通話のほかに提供してきたものです。番号の通知と非通知、着信転送、規制、保留、割込通話などです。
+- 付加サービスは、電話網が通話のほかに提供してきたものです。番号の通知と非通知、着信転送、規制、保留、割込通話などです。
 - IMS の電話は MMTel のサービスです（TS 24.173）。網が何を提供するかは GSMA IR.92 2.3 にあります。
 - CSCF は経路を決めるだけです。利用者の設定を知って通話を変えるのは、アプリケーションサーバー（AS）の MMTel AS です。
 
@@ -244,7 +244,7 @@ docker compose run --rm ue call tel:+12025550102
 - 止めるときは `set cfu off` です。`ue xcap` は登録を必要としません。ほかのコマンドは `get`、`set SERVICE on|off [TARGET]`、`oir restricted|not-restricted`、`noreply SECONDS` です。
 - `ue2` のサービスはアドレスが決まっているので、ほかの `ue2` のコンテナが動いている間は `ue2 xcap` を実行できません。
 
-> 手順書 [「動かしてみる」](../../../docs/guide/ja/mmtel.md#動かしてみる)。全部のサービスを、`scripts/` にある補足サービスの e2e のスクリプトが順に行います。
+> 手順書 [「動かしてみる」](../../../docs/guide/ja/mmtel.md#動かしてみる)。全部のサービスを、`scripts/` にある付加サービスの e2e のスクリプトが順に行います。
 
 ---
 
@@ -400,7 +400,7 @@ go test -run TestServeTwoCalls -v ./internal/ue
 
 | IR.92 | 内容 | このプロジェクト |
 | --- | --- | --- |
-| 2.3 | VoLTE の網が提供する補足サービス | OIP、OIR、TIP、TIR、CDIV、CB、HOLD、CW |
+| 2.3 | VoLTE の網が提供する付加サービス | OIP、OIR、TIP、TIR、CDIV、CB、HOLD、CW |
 | 2.3.2 | Ut の XCAP で設定する。1 回に規則 1 つ。If-Match | `ue xcap` |
 | 2.3.2 Note 3 | 事業者が最初の文書に規則を入れておく | hss.yaml の止めた規則 |
 | 2.3.4 | CW は UE で行う | AS は Alert-Info を渡す |

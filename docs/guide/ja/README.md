@@ -10,7 +10,7 @@
 2. [UE が IMS に登録する流れを追う](registration.md)。P-CSCF、I-CSCF、S-CSCF を通る REGISTER と、SIP Digest、Cx。
 3. [音声通話の流れを追う](call.md)。電話番号で別の UE にかける INVITE と、ENUM、メディア中継。
 4. [SMS の流れを追う](sms.md)。IP-SM-GW を通る SMS over IP と、その報告。
-5. [MMTel AS の補足サービス](mmtel.md)。番号通知、転送、規制と、Ut での設定。
+5. [MMTel AS の付加サービス](mmtel.md)。番号通知、転送、規制と、Ut での設定。
 6. [MRF による音声ガイダンス、呼び出し音、会議](mrf.md)。規制した通話の前の音声ガイダンス、CAT、割込通話、3 人の会議。
 7. [VoLTE の呼の流れ](volte.md)。EPC スタブ、IMS-AKA、Rx でのポリシー制御と、プリコンディションを使った AMR-WB の通話。
 8. [IMS 網どうしを相互接続する](interconnect.md)。境界の IBCF と TrGW、構成の秘匿、相互接続プロファイル。
@@ -65,7 +65,7 @@ docker compose --profile ue --profile phones --profile volte down --rmi all -v -
 | `agw` | 172.28.0.50 | IMS-AGW の役割のメディア中継。P-CSCF が制御します。 |
 | `lab` | 172.28.0.60 | http://localhost:8080 のラボと、HEP の収集先。 |
 | `ipsmgw` | 172.28.0.70 | IP-SM-GW。SMS over IP のアプリケーションサーバーです。 |
-| `mmtel` | 172.28.0.75 | MMTel AS。補足サービスのアプリケーションサーバーです。 |
+| `mmtel` | 172.28.0.75 | MMTel AS。付加サービスのアプリケーションサーバーです。 |
 | `epc` | 172.28.0.80 | PCRF を含む EPC のスタブ。VoLTE の UE が使います。 |
 | `mrfc` | 172.28.0.85 | MRFC。MRF の制御の側です。 |
 | `mrfp` | 172.28.0.86 | MRFP。メディアを流し、混ぜます。 |
