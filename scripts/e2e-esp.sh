@@ -148,10 +148,10 @@ same_nodes
 # The checks of the capture. tshark reads the SIP inside ESP when its
 # settings name the integrity algorithm, which gives it the length of
 # the integrity check value; nothing is encrypted, so it needs no key.
-# The heuristic of esp.enable_null_encryption_decode_heuristic assumes
-# the 12 octets of HMAC-SHA-1-96 and cannot read the 16 of
-# HMAC-SHA2-256-128, so this names the algorithm instead, for every SA
-# of the capture.
+# The heuristic of esp.enable_null_encryption_decode_heuristic tries
+# several lengths of the integrity check value on each packet. This
+# names the algorithm instead, for every SA of the capture, so that the
+# checks rest on no guess.
 esp_sa=(-o esp.enable_encryption_decode:TRUE
 	-o 'uat:esp_sa:"IPv4","*","*","*","NULL","","HMAC-SHA-256-128 [RFC4868]",""'
 	# SIP is registered on port 5060 and found on any other port by a
