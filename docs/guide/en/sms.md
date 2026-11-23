@@ -41,22 +41,26 @@ The IP-SM-GW talks to the HSS over Sh (TS 29.328, TS 29.329). It writes which IP
 
 ### The filter criteria
 
-The S-CSCF knows nothing of SMS. The HSS tells it, in the user profile that comes with the SAA at registration, which requests go to which AS. Those rules are the initial filter criteria (TS 29.228 B.2.2, schema in Annex E). The HSS stub gives every subscription the two criteria in `deploy/compose/hss.yaml`:
+The S-CSCF knows nothing of SMS. The HSS tells it, in the user profile that comes with the SAA at registration, which requests go to which AS. Those rules are the initial filter criteria (TS 29.228 B.2.2, schema in Annex E). A named list of them is a service profile, and each subscription gets one. The HSS stub has a single profile, `default`, with the two criteria in `deploy/compose/hss.yaml`, so every subscription gets both:
 
 ```yaml
-initial_filter_criteria:
-  - priority: 0
-    trigger_point: {condition_type_cnf: true, spt: [{group: [0], method: REGISTER}]}
-    application_server: {server_name: sip:ipsmgw.ims.mnc001.mcc001.3gppnetwork.org:5060, default_handling: SESSION_CONTINUED, service_info: "{msisdn}"}
-  - priority: 1
-    trigger_point:
-      condition_type_cnf: true
-      spt:
-        - {group: [0], method: MESSAGE}
-        - {group: [1], sip_header: {header: ^Content-Type$, content: '^[Aa][Pp][Pp][Ll][Ii][Cc][Aa][Tt][Ii][Oo][Nn]/[Vv][Nn][Dd]\.3[Gg][Pp][Pp]\.[Ss][Mm][Ss]([[:space:]]*;.*)?$'}}
-        - {group: [2], session_case: ORIGINATING_REGISTERED}
-    application_server: {server_name: sip:ipsmgw.ims.mnc001.mcc001.3gppnetwork.org:5060}
+default_service_profile: default
+service_profiles:
+  default:
+    - priority: 0
+      trigger_point: {condition_type_cnf: true, spt: [{group: [0], method: REGISTER}]}
+      application_server: {server_name: sip:ipsmgw.ims.mnc001.mcc001.3gppnetwork.org:5060, default_handling: SESSION_CONTINUED, service_info: "{msisdn}"}
+    - priority: 1
+      trigger_point:
+        condition_type_cnf: true
+        spt:
+          - {group: [0], method: MESSAGE}
+          - {group: [1], sip_header: {header: ^Content-Type$, content: '^[Aa][Pp][Pp][Ll][Ii][Cc][Aa][Tt][Ii][Oo][Nn]/[Vv][Nn][Dd]\.3[Gg][Pp][Pp]\.[Ss][Mm][Ss]([[:space:]]*;.*)?$'}}
+          - {group: [2], session_case: ORIGINATING_REGISTERED}
+      application_server: {server_name: sip:ipsmgw.ims.mnc001.mcc001.3gppnetwork.org:5060}
 ```
+
+The profile name is the operator's own. Cx carries the criteria of the profile and not its name, so the S-CSCF never learns it.
 
 In the SAA they arrive in the User-Data AVP as XML of the schema of TS 29.228 Annex E. The second criterion looks like this:
 
@@ -549,7 +553,7 @@ Each item has a `SIMPLIFIED:` comment in the code; `grep -rn "SIMPLIFIED:" inter
 | HSS, TS 29.328 6.1.1.1 and 6.1.2.1 step 2a | The private identity in User-Name is not read or checked. | The IP-SM-GW does not send it. |
 | HSS, TS 29.328 7.6.9 | The MSISDN is the first tel URI among the public identities, not data of its own. | The configuration then states each number once, and the user is found by MSISDN through the tel URI. |
 | HSS, TS 29.328 7.6.2 | IMPLICIT_IDENTITIES and ALIAS_IDENTITIES return the same set as ALL_IDENTITIES, and are not refused when the user is named by MSISDN. | Each test subscription is one implicit registration set with one service profile. |
-| HSS, TS 29.228 B.2.2 | Every subscription gets the same criteria; only the MSISDN in ServiceInfo differs. | The iFCs of SMS and of the MMTel AS are the same for every user. |
+| HSS, TS 29.228 B.2.2 | Every subscription gets the service profile that `default_service_profile` names; only the MSISDN in ServiceInfo differs. | The iFCs of SMS and of the MMTel AS are the same for every user. |
 | User profile, TS 29.228 Annex E | One ServiceProfile, with no optional element but BarringIndication, the `IdentityType` and `WildcardedPSI` of a public service identity, and the criteria, and without the schema's XML namespace. | The test subscriptions and PSI users need nothing more. |
 | iFC, TS 29.228 Annex E and B.2.3 | No SessionDescription SPT (refused), and ProfilePartIndicator, RegistrationType, IncludeRegisterRequest and IncludeRegisterResponse are skipped; a REGISTER SPT matches every REGISTER. | The iFCs of SMS and of the MMTel AS need none of them. RegistrationType is optional for the S-CSCF. |
 | S-CSCF, TS 24.229 5.4.0 | The S-CSCF looks the AS up in DNS for every request, rather than keeping the address that the first third-party REGISTER went to. | Each AS role keeps its state in a Store that all its nodes share, so any node can take the next request. |

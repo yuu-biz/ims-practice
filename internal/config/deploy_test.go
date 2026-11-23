@@ -50,9 +50,9 @@ func TestComposeFilterCriteriaNameTheApplicationServers(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	criteria := hssCfg.HSS.InitialFilterCriteria
+	criteria := hssCfg.HSS.ServiceProfiles[hssCfg.HSS.DefaultServiceProfile]
 	if len(criteria) == 0 {
-		t.Fatal("hss.yaml has no filter criteria")
+		t.Fatalf("the service profile %q of hss.yaml has no filter criteria", hssCfg.HSS.DefaultServiceProfile)
 	}
 	var mmtelCases []ifc.SessionCase
 	for _, c := range criteria {
