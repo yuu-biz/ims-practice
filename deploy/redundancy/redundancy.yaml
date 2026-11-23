@@ -13,9 +13,10 @@
 # It adds the store, and gives each node whose roles hold the state of
 # users its file from deploy/redundancy in place of the one from
 # deploy/compose: the same configuration with a store section at the
-# end. The I-CSCF holds no such state, and the EPC and PCRF stubs and
-# the Lab are single instances, so those nodes keep the files of
-# deploy/compose and their state in their processes.
+# end. The I-CSCF holds no such state, and neither does the OAM, whose
+# own files are on its volume. The EPC and PCRF stubs and the Lab are
+# single instances. Those nodes keep the files of deploy/compose and
+# their state in their processes.
 #
 # The nodes, their addresses and the signaling are those of
 # compose.yaml. Only where the state lives changes, which is why the

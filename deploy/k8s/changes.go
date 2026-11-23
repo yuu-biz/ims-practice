@@ -100,6 +100,14 @@ web UI always shows them as not reachable.`,
 		Value: "http://volte12.ims.svc.cluster.local:8090",
 	},
 	{
+		File: "oam.yaml",
+		Key:  "oam.data_dir",
+		Comment: `A directory of the Pod. oam.yaml (the Deployment) gives it an
+emptyDir, so the history and the backups live as long as the Pod. A
+cluster that keeps them past one Pod mounts a volume of its own here
+instead.`,
+	},
+	{
 		File: "epc.yaml",
 		Key:  "epc.pcscf_addresses",
 		Comment: `Handed to the UE in the PCO, the first one preferred (TS 24.229

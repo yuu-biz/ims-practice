@@ -18,6 +18,11 @@ x-ims-node: &ims-node
     dns:
       condition: service_started
 
+volumes:
+  # What the OAM keeps itself. "docker compose down -v" removes it with
+  # the project, as the guides do when they finish.
+  oam:
+
 networks:
   ims:
     driver: bridge
@@ -171,6 +176,26 @@ services:
     networks:
       ims:
         ipv4_address: 172.28.0.60
+
+  # The OAM server. It operates the nodes through their maintenance API
+  # and the subscribers through the provisioning API of the HSS.
+  oam:
+    <<: *ims-node
+    hostname: oam
+    volumes:
+      - ./deploy/compose/oam.yaml:/etc/ims/node.yaml:ro
+      # The history of the configuration changes the OAM made, and the
+      # backups, which hold the credentials of every subscription. A
+      # volume rather than a directory of the host, so that the files
+      # stay readable by the OAM alone.
+      - oam:/var/lib/ims/oam
+    # No port on the host. The OAM API changes the configuration of the
+    # nodes and hands out those backups, and asks for no password, so it
+    # is reachable from this network only:
+    #   docker compose exec oam wget -qO - http://127.0.0.1:8080/oam/v1/state
+    networks:
+      ims:
+        ipv4_address: 172.28.0.65
 
   # The UE simulators. They do not start with "docker compose up"; run
   # them with "docker compose run --rm ue register" and the like. ue2 is

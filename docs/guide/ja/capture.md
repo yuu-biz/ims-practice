@@ -49,6 +49,7 @@ docker compose up -d --build
 | P-CSCF | `pcscf` | 172.28.0.40 | |
 | メディア中継ノード（IMS-AGW） | `agw` | 172.28.0.50 | |
 | ラボ | `lab` | 172.28.0.60 | |
+| OAM のサーバー | `oam` | 172.28.0.65 | |
 | IP-SM-GW | `ipsmgw` | 172.28.0.70 | |
 | MMTel AS | `mmtel` | 172.28.0.75 | |
 | EPC スタブ（PCRF スタブを含む） | `epc` | 172.28.0.80 | |
