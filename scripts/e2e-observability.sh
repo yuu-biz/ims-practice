@@ -7,13 +7,15 @@
 # with the set-up time that the P-CSCF measures, and Grafana returns the
 # count of the S-CSCF through the Prometheus data source that the
 # dashboard uses (deploy/observability). A call adds the terminating
-# session establishment that the I-CSCF counts, and the HSS holds the
-# subscribers it was given and counts the identities of a registration
-# while it lasts. The Cx requests of the registration and of the call,
-# the answers of the HSS to them and the state of each Diameter
-# connection are there as well, and the connection of the I-CSCF reads
-# as down while the HSS is out of service and as up again after the
-# unlock. A shut down through the
+# session establishment that the I-CSCF counts, the successful
+# establishments that the three CSCFs count on the 180 (Ringing) of the
+# callee, and the success ratio that the dashboard divides out of the
+# two. The HSS holds the subscribers it was given and counts the
+# identities of a registration while it lasts. The Cx requests of the
+# registration and of the call, the answers of the HSS to them and the
+# state of each Diameter connection are there as well, and the
+# connection of the I-CSCF reads as down while the HSS is out of service
+# and as up again after the unlock. A shut down through the
 # maintenance API then makes the S-CSCF answer a new REGISTER with 503
 # and Retry-After, which the capture shows hop by hop, and an unlock
 # lets the UE register again. A shut down of the P-CSCF makes the
@@ -301,14 +303,43 @@ else
 	echo "FAIL UE 2 did not answer the call"
 	fail=1
 fi
-attempts='ims_session_attempts_total{role="icscf",direction="terminating"}'
-if value="$(until_positive prometheus_values "$attempts")"; then
-	echo "ok   Prometheus has $attempts = $value"
+# The I-CSCF counts the initial INVITE on receipt (TS 32.409 4.1.2.11),
+# and each of the three CSCFs counts the response that tells the session
+# got through (4.1.2.2, 4.1.2.10, 4.1.2.12). UE 2 rings for 500 ms
+# before it answers, so that response is the 180 (Ringing) and not the
+# 200 (OK). The P-CSCF counts the call on both its legs, as does the
+# S-CSCF, which serves the caller and the callee.
+for wanted in \
+	'icscf ims_session_attempts_total{role="icscf",direction="terminating"}' \
+	'icscf ims_session_successes_total{role="icscf",direction="terminating",response="180"}' \
+	'scscf ims_session_successes_total{role="scscf",direction="originating",response="180"}' \
+	'scscf ims_session_successes_total{role="scscf",direction="terminating",response="180"}' \
+	'pcscf ims_session_successes_total{role="pcscf",direction="originating",response="180"}' \
+	'pcscf ims_session_successes_total{role="pcscf",direction="terminating",response="180"}'; do
+	node="${wanted%% *}"
+	series="${wanted#* }"
+	if value="$(until_positive prometheus_values "$series")"; then
+		echo "ok   Prometheus has $series = $value"
+	else
+		echo "FAIL Prometheus has no $series above 0: $value"
+		# Shown only to explain the failure, if the node answers at all,
+		# hence "|| true".
+		docker compose exec -T "$node" wget -qO- http://127.0.0.1:8085/metrics || true
+		fail=1
+	fi
+done
+# The success ratio panel of the dashboard divides the two by role and
+# direction. Read here for the caller's S-CSCF alone, so that one number
+# comes back, and through the data source that the panel reads, so that
+# the division is the one Grafana computes. The panel divides the rise
+# of the counters over the range it is shown for; this check divides the
+# counters themselves, because the one call of this scene leaves each
+# series at 1, where a rise needs a second call.
+ratio='sum by (role, direction) (ims_session_successes_total{role="scscf",direction="originating"}) / sum by (role, direction) (ims_session_attempts_total{role="scscf",direction="originating"})'
+if value="$(until_positive grafana_values "$ratio")"; then
+	echo "ok   Grafana returns the session establishment success ratio of the S-CSCF = $value"
 else
-	echo "FAIL Prometheus has no $attempts above 0: $value"
-	# Shown only to explain the failure, if the I-CSCF answers at all,
-	# hence "|| true".
-	docker compose exec -T icscf wget -qO- http://127.0.0.1:8085/metrics || true
+	echo "FAIL Grafana returns no session establishment success ratio above 0: $value"
 	fail=1
 fi
 # The Diameter metrics come from the peer group that each role sends

@@ -621,6 +621,64 @@
       ]
     },
     {
+      "type": "stat",
+      "title": "Session establishment success ratio",
+      "description": "Session establishments that got through divided by the attempts, by role and direction, over the time range of the dashboard. A session counts as successful on the first response that says so, the 180 (Ringing) or the 200 (OK) of a session answered without ringing (TS 32.409 4.1.2.2 at the P-CSCF and the S-CSCF, 4.1.2.10 towards the UE and 4.1.2.12 towards the S-CSCF that started the session), and as attempted on receipt of the initial INVITE (4.1.2.1, 4.1.2.9, 4.1.2.11).",
+      "id": 19,
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 6,
+        "w": 24,
+        "x": 0,
+        "y": 37
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "textMode": "value_and_name",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum by (role, direction) (increase(ims_session_successes_total[$__range])) / sum by (role, direction) (increase(ims_session_attempts_total[$__range]))",
+          "legendFormat": "{{role}} {{direction}}",
+          "refId": "A",
+          "range": true
+        }
+      ]
+    },
+    {
       "type": "row",
       "title": "Diameter",
       "id": 13,
@@ -629,7 +687,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 37
+        "y": 43
       },
       "panels": []
     },
@@ -646,7 +704,7 @@
         "h": 8,
         "w": 16,
         "x": 0,
-        "y": 38
+        "y": 44
       },
       "fieldConfig": {
         "defaults": {
@@ -702,7 +760,7 @@
         "h": 8,
         "w": 8,
         "x": 16,
-        "y": 38
+        "y": 44
       },
       "fieldConfig": {
         "defaults": {
@@ -776,7 +834,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 46
+        "y": 52
       },
       "panels": []
     },
@@ -793,7 +851,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 47
+        "y": 53
       },
       "fieldConfig": {
         "defaults": {
@@ -859,7 +917,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 47
+        "y": 53
       },
       "fieldConfig": {
         "defaults": {
