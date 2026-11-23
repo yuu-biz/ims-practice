@@ -49,6 +49,7 @@ The nodes use these addresses. The Service column is the name in `compose.yaml`.
 | P-CSCF | `pcscf` | 172.28.0.40 | |
 | Media relay (IMS-AGW) | `agw` | 172.28.0.50 | |
 | Lab | `lab` | 172.28.0.60 | |
+| OAM server | `oam` | 172.28.0.65 | |
 | IP-SM-GW | `ipsmgw` | 172.28.0.70 | |
 | MMTel AS | `mmtel` | 172.28.0.75 | |
 | EPC stub, with the PCRF stub | `epc` | 172.28.0.80 | |

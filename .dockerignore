@@ -16,3 +16,5 @@ scripts
 *.pcapng
 web/lab/node_modules
 web/lab/dist
+web/oam/node_modules
+web/oam/dist

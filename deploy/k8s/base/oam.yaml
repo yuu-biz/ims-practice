@@ -1,0 +1,63 @@
+# The OAM server. A Deployment, like the Lab (lab.yaml): nothing in the
+# signalling names it, and it keeps no identity a peer depends on. It
+# reaches the nodes it operates by the names of the home network domain,
+# which the DNS overlay turns into the Services of this directory, so
+# the inventory of its configuration needs no address.
+apiVersion: v1
+kind: Service
+metadata:
+  name: oam
+spec:
+  selector:
+    app.kubernetes.io/name: oam
+  ports:
+    # The OAM API and the OAM screen. Reach them from the host with
+    # kubectl -n ims port-forward svc/oam 8080:8080. The API asks for no
+    # password and hands out backups that hold the credentials of every
+    # subscription, so nothing exposes it outside the cluster.
+    - name: http
+      port: 8080
+      protocol: TCP
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: oam
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: oam
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: oam
+    spec:
+      terminationGracePeriodSeconds: 10
+      dnsConfig:
+        options:
+          - name: ndots
+            value: "1"
+      containers:
+        - name: ims
+          image: ims-practice/ims:dev
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+          volumeMounts:
+            - name: config
+              mountPath: /etc/ims
+              readOnly: true
+            - name: data
+              mountPath: /var/lib/ims/oam
+      volumes:
+        - name: config
+          configMap:
+            name: oam-config
+        # The history of the configuration changes the OAM made, and the
+        # backups. They live as long as the Pod here; a cluster that
+        # keeps them past one Pod mounts a volume of its own.
+        - name: data
+          emptyDir: {}

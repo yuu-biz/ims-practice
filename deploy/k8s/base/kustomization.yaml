@@ -21,6 +21,7 @@ resources:
   - mrfp.yaml
   - epc.yaml
   - lab.yaml
+  - oam.yaml
   - ue.yaml
 # The role configuration files, copied from deploy/compose by
 # "go generate ./deploy/k8s/..." and changed only where Kubernetes needs
@@ -49,3 +50,5 @@ configMapGenerator:
     files: [node.yaml=config/epc.yaml]
   - name: lab-config
     files: [node.yaml=config/lab.yaml]
+  - name: oam-config
+    files: [node.yaml=config/oam.yaml]

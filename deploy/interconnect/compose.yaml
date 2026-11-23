@@ -13,9 +13,10 @@
 #
 # Network B is kept as small as the scenarios allow: an HSS, the three
 # CSCFs, an IP-SM-GW, a DNS and two UEs. It has no MMTel AS, no EPC
-# with its PCRF, no media relay at the P-CSCF and no Lab. Every service
-# of network B ends in -b, and its node files are in b/, as network A's
-# are in a/; a name without the suffix, such as scscf, is network A's.
+# with its PCRF, no media relay at the P-CSCF, no Lab and no OAM.
+# Every service of network B ends in -b, and its node files are in b/,
+# as network A's are in a/; a name without the suffix, such as scscf,
+# is network A's.
 #
 # The agreements of the two IBCFs are files in profiles/. IBCF_A_PROFILE
 # and IBCF_B_PROFILE pick another one, such as for the scenarios of

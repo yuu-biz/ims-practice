@@ -64,6 +64,7 @@ The capture files stay in `captures/` until you delete them.
 | `pcscf` | 172.28.0.40 | P-CSCF. |
 | `agw` | 172.28.0.50 | Media relay in the IMS-AGW role, controlled by the P-CSCF. |
 | `lab` | 172.28.0.60 | The Lab at http://localhost:8080, and the HEP collector. |
+| `oam` | 172.28.0.65 | The OAM server, which operates the nodes through their maintenance API and the subscribers through the provisioning API of the HSS. |
 | `ipsmgw` | 172.28.0.70 | IP-SM-GW, the application server of SMS over IP. |
 | `mmtel` | 172.28.0.75 | MMTel AS, the application server of the supplementary services. |
 | `epc` | 172.28.0.80 | EPC stub with a PCRF, for the VoLTE UEs. |
@@ -101,13 +102,12 @@ The test subscribers of this network are in `deploy/compose/hss.yaml`, those of 
 
 ### Code that no node runs
 
-Some packages under `internal`, and one screen, are in the repository but in none of the nodes above: no binary in `cmd` builds them in, so nothing they do shows in the capture. Each package says so in its documentation.
+Some packages under `internal` are in the repository but in none of the nodes above: no binary in `cmd` builds them in, so nothing they do shows in the capture. Each package says so in its documentation.
 
-| Package or screen | What it is |
+| Package | What it is |
 | --- | --- |
 | `fivegc`, `n5`, `nhss`, `sbi` | The 5GS side: a 5GC stub, the N5 policy API of the PCF, the service based interface of the HSS, and what those APIs share. |
 | `nas`, `sgd`, `smsc` | SMS without the IMS: the NAS messages that carry it, the SGd and S6c Diameter messages, and a Service Centre that speaks them. The SC that the IP-SM-GW reaches is the stub of package `sc`. |
-| `oam`, `web/oam` | The OAM server, which uses the maintenance API of the nodes, and the OAM screen, which CI builds and no node serves. The three CSCFs, the HSS, the MMTel AS, the MRFC, the IP-SM-GW and the two media relay roles serve that API; see [Take the S-CSCF out of service](registration.md#take-the-s-cscf-out-of-service), [Take the P-CSCF out of service](registration.md#take-the-p-cscf-out-of-service), [Take the I-CSCF out of service](registration.md#take-the-i-cscf-out-of-service), [Take the HSS out of service](registration.md#take-the-hss-out-of-service), [Take the MMTel AS out of service](mmtel.md#take-the-mmtel-as-out-of-service), [Take the MRFC out of service](mrf.md#take-the-mrfc-out-of-service) [Take the IP-SM-GW out of service](sms.md#take-the-ip-sm-gw-out-of-service), [Take a media relay out of service](call.md#take-a-media-relay-out-of-service) and [Take the MRFP out of service](mrf.md#take-the-mrfp-out-of-service). |
 | `h248/h248test`, `kvstore/storetest`, `rtptest` | Helpers that only the tests use. |
 
 ## Other ways to run it
