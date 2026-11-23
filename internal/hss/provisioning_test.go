@@ -768,6 +768,23 @@ func TestProvisioningPutReplacesTheRepositoryData(t *testing.T) {
 	}
 }
 
+// TestProvisioningPutReadsAnEmptyBarringAsNone: barred_identities with
+// an empty array bars nothing, which is what leaving the field out
+// does, so the two bodies describe one subscription and a PUT of either
+// over the other answers unchanged. An empty repository_data is the
+// other way round: it is not the same as leaving that field out.
+func TestProvisioningPutReadsAnEmptyBarringAsNone(t *testing.T) {
+	api := newTestHSS().Provisioning(&fakeSCSCFs{})
+	newIMPI := "001010000000009@" + realm
+	identities := `"private_identity": "` + newIMPI + `", "public_identities": ["sip:001010000000009@` + realm + `"], "password": "p"`
+	if w, _ := putSubscription(t, api, newIMPI, `{`+identities+`, "barred_identities": []}`); w.Code != http.StatusCreated {
+		t.Fatalf("PUT: %d %s", w.Code, w.Body)
+	}
+	if w, got := putSubscription(t, api, newIMPI, `{`+identities+`}`); w.Code != http.StatusOK || got.Result != resultUnchanged {
+		t.Errorf("the same subscription without the field: %d %s", w.Code, w.Body)
+	}
+}
+
 // updatedBeforeTheSwap makes an update of the repository data land
 // between the read of a PUT and its swap, which an Sh PUR at another
 // instance or a PUT of the tone can: both compare and swap the data
