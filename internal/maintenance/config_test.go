@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -213,5 +214,55 @@ func TestConcurrentConfigurationChanges(t *testing.T) {
 	wg.Wait()
 	if len(seen) != workers*each || tn.node.generation.Load() != workers*each {
 		t.Errorf("%d generations, node at %d, want %d", len(seen), tn.node.generation.Load(), workers*each)
+	}
+}
+
+// TestSettingsOfAGroupGoInForceTogether: a change that names several
+// settings of one group calls begin once, then the set of each, then
+// commit once, and the record reads each value back after the commit.
+// A change that names no setting of the group calls neither.
+func TestSettingsOfAGroupGoInForceTogether(t *testing.T) {
+	var calls []string
+	published := map[string]string{}
+	pending := map[string]string{}
+	setting := func(name string) Setting {
+		return NewSetting(name, "", func() string { return published[name] }, nil,
+			func(v string) { calls = append(calls, "set "+name); pending[name] = v })
+	}
+	settings := Together(
+		func() { calls = append(calls, "begin") },
+		func() {
+			calls = append(calls, "commit")
+			for k, v := range pending {
+				published[k] = v
+			}
+		},
+		setting("hss.a"), setting("hss.b"))
+	settings = append(settings, NewSetting("hss.c", "", func() string { return "" }, nil, func(string) { calls = append(calls, "set hss.c") }))
+	node, err := New(Config{Node: "hss-1", LogLevel: new(slog.LevelVar), Functions: []Function{{Role: "hss"}},
+		Configuration: func() any { return map[string]any{} }, Settings: settings})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	change, err := node.ChangeConfiguration(ConfigurationChangeRequest{Settings: map[string]json.RawMessage{
+		"hss.a": json.RawMessage(`"1"`), "hss.b": json.RawMessage(`"2"`)}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"begin", "set hss.a", "set hss.b", "commit"}; !slices.Equal(calls, want) {
+		t.Errorf("calls = %v, want %v", calls, want)
+	}
+	if len(change.Changes) != 2 || string(change.Changes[0].Value) != `"1"` || string(change.Changes[1].Value) != `"2"` {
+		t.Errorf("record = %+v, want the values read back after the commit", change.Changes)
+	}
+
+	calls = nil
+	if _, err := node.ChangeConfiguration(ConfigurationChangeRequest{Settings: map[string]json.RawMessage{
+		"hss.c": json.RawMessage(`"3"`)}}); err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"set hss.c"}; !slices.Equal(calls, want) {
+		t.Errorf("calls for a setting outside the group = %v, want %v", calls, want)
 	}
 }

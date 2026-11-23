@@ -37,6 +37,31 @@ type Setting struct {
 	// prepare checks a new value and returns the function that sets
 	// it, which cannot fail. prepare changes nothing.
 	prepare func(json.RawMessage) (apply func(), err error)
+	// group, when not nil, is the settings that a change puts in force
+	// together (Together).
+	group *settingGroup
+}
+
+// settingGroup is how the settings of one group are put in force at
+// once: begin before the first of them is set, commit after the last.
+type settingGroup struct{ begin, commit func() }
+
+// Together makes settings one group. A change that names several of
+// them puts them in force at once: the API calls begin, then the set of
+// each setting the change names, then commit, so the role can gather
+// the values that set gives it and publish them in commit. A request of
+// the role that reads its settings then sees them all from before the
+// change or all from after it, never a part of each. begin and commit
+// cannot fail; the API calls them once per change that names a setting
+// of the group, and never for one that names none.
+func Together(begin, commit func(), settings ...Setting) []Setting {
+	g := &settingGroup{begin: begin, commit: commit}
+	grouped := make([]Setting, len(settings))
+	for i, s := range settings {
+		s.group = g
+		grouped[i] = s
+	}
+	return grouped
 }
 
 // NewSetting declares a setting that the maintenance API may change. Its
@@ -228,8 +253,24 @@ func (n *Node) ChangeConfiguration(req ConfigurationChangeRequest) (Configuratio
 		Comment:    req.Comment,
 		Changes:    []SettingChange{},
 	}
+	// The settings of a group go in force together (Together): its begin
+	// comes before the first of them, and its commit after the last.
+	var groups []*settingGroup
+	for _, c := range changes {
+		if g := c.setting.group; g != nil && !slices.Contains(groups, g) {
+			groups = append(groups, g)
+		}
+	}
+	for _, g := range groups {
+		g.begin()
+	}
 	for _, c := range changes {
 		c.apply()
+	}
+	for _, g := range groups {
+		g.commit()
+	}
+	for _, c := range changes {
 		// The value in force is read back, so the record has it as the
 		// configuration shows it, not as the request spelled it.
 		value, err := c.setting.current()
