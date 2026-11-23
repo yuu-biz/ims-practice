@@ -155,6 +155,30 @@ jobs:
         if: always()
         run: docker compose --profile ue down --rmi all -v --remove-orphans
 
+  # The OAM: it reads the state of every node of the inventory,
+  # provisions a file of test subscribers in bulk through the HSS, backs
+  # the subscriptions up and puts them back, and one of the subscribers
+  # it created registers.
+  e2e-oam:
+    runs-on: ubuntu-latest
+    needs: [changes, go, web-oam]
+    if: needs.changes.outputs.code == 'true'
+    steps:
+      - uses: actions/checkout@v7
+      - run: scripts/e2e-oam.sh
+      # The file of subscribers is not uploaded: it holds the password
+      # of each of them, test values though they are.
+      - name: upload the capture
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: oam-capture
+          path: captures/*.pcap
+          if-no-files-found: warn
+      - name: clean up
+        if: always()
+        run: docker compose --profile ue down --rmi all -v --remove-orphans
+
   # The admission policy of the HSS, which the script narrows on the
   # maintenance API of the HSS node once the deployment is up.
   e2e-admission:
@@ -572,7 +596,7 @@ jobs:
   # skips count as passed.
   all-passed:
     runs-on: ubuntu-latest
-    needs: [changes, docs, go, web-lab, web-oam, e2e, e2e-registration, e2e-admission, e2e-call, e2e-lab, e2e-sms, e2e-volte, e2e-esp, e2e-mmtel, e2e-mrf, e2e-interconnect, e2e-h248, e2e-observability, e2e-redundancy, e2e-fault, cloud, kustomize]
+    needs: [changes, docs, go, web-lab, web-oam, e2e, e2e-registration, e2e-oam, e2e-admission, e2e-call, e2e-lab, e2e-sms, e2e-volte, e2e-esp, e2e-mmtel, e2e-mrf, e2e-interconnect, e2e-h248, e2e-observability, e2e-redundancy, e2e-fault, cloud, kustomize]
     if: always()
     steps:
       - name: no job failed or was cancelled
