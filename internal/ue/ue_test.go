@@ -334,7 +334,7 @@ func startNetwork(t *testing.T, cfg networkConfig) testNetwork {
 	hssRole, instances := startHSS(t, cfg)
 	// Every instance of a server farm can answer, so the CSCFs take them
 	// all as one group.
-	connect := func(host string, handle diameter.Handler) (*diameter.Node, *diameter.PeerGroup) {
+	connect := func(role, host string, handle diameter.Handler) (*diameter.Node, *diameter.PeerGroup) {
 		node := diameter.NewNode(diameter.Identity{OriginHost: host, OriginRealm: domain}, []uint32{diameter.ApplicationIDCx}, timers, quiet())
 		node.Handle(handle)
 		var peers []*diameter.Peer
@@ -343,13 +343,19 @@ func startNetwork(t *testing.T, cfg networkConfig) testNetwork {
 			t.Cleanup(peer.Stop)
 			peers = append(peers, peer)
 		}
-		return node, diameter.NewPeerGroup(peers...)
+		// The group counts the Cx requests of the role in the registry of
+		// the node, as the roles of a node in Compose do.
+		group, err := diameter.NewPeerGroup(cfg.metrics, role, peers...)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return node, group
 	}
 	dns := &names{hosts: map[string]netip.AddrPort{}}
 
 	// The S-CSCF takes the HSS's RTRs, but it is made after its Cx peer.
 	var scscfRole atomic.Pointer[scscf.SCSCF]
-	scscfNode, scscfPeer := connect("scscf."+domain, func(m *diam.Message) *diam.Message { return scscfRole.Load().Handle(m) })
+	scscfNode, scscfPeer := connect("scscf", "scscf."+domain, func(m *diam.Message) *diam.Message { return scscfRole.Load().Handle(m) })
 	s, err := scscf.New(scscf.Config{ServerName: "sip:scscf." + domain + ":5060", Host: "scscf." + domain, Port: 5060,
 		HomeDomain: domain, MinExpires: minExpires, MaxExpires: maxExpires, Metrics: cfg.metrics}, scscfPeer, scscfNode, scscf.NewMemoryStore(), dns, quiet())
 	if err != nil {
@@ -361,7 +367,7 @@ func startNetwork(t *testing.T, cfg networkConfig) testNetwork {
 	s.SetStack(scscfStack)
 	dns.add("scscf."+domain, scscfStack.LocalAddr())
 
-	icscfNode, icscfPeer := connect("icscf."+domain, nil)
+	icscfNode, icscfPeer := connect("icscf", "icscf."+domain, nil)
 	i, err := icscf.New(icscf.Config{HomeDomain: domain, SCSCFs: []icscf.SCSCF{{Name: "sip:scscf." + domain + ":5060", Capabilities: []uint32{1}}},
 		Host: "icscf." + domain, Port: 5060},
 		icscfPeer, icscfNode, dns, quiet())

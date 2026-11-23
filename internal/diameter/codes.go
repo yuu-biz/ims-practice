@@ -23,7 +23,10 @@ const (
 	// DiameterTooBusy is the answer of a node that is up but cannot
 	// serve this request. RFC 6733 7.1.3 tells its sender to try an
 	// alternate peer.
-	DiameterTooBusy               uint32 = 3004 // 7.1.3
+	DiameterTooBusy uint32 = 3004 // 7.1.3
+	// DiameterUnableToDeliver says that the request got no further, not
+	// that the node that answered it is gone (7.1.3).
+	DiameterUnableToDeliver       uint32 = 3002 // 7.1.3
 	DiameterUnknownSessionID      uint32 = 5002 // 7.1.5
 	DiameterAuthorizationRejected uint32 = 5003 // 7.1.5
 	DiameterAVPOccursTooManyTimes uint32 = 5009 // 7.1.5

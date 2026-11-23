@@ -14,6 +14,7 @@ import (
 	"github.com/yuu-biz/ims-practice/internal/cx"
 	"github.com/yuu-biz/ims-practice/internal/diameter"
 	"github.com/yuu-biz/ims-practice/internal/maintenance"
+	"github.com/yuu-biz/ims-practice/internal/metrics"
 )
 
 // This file runs two instances of the HSS on their own Diameter nodes,
@@ -135,7 +136,10 @@ func TestPeerGroupMovesToTheSecondHSSWhenTheFirstIsDrained(t *testing.T) {
 	defer peerOne.Stop()
 	peerTwo := client.Connect(diameter.PeerConfig{Address: two.server.Addr(), OriginHost: second})
 	defer peerTwo.Stop()
-	group := diameter.NewPeerGroup(peerOne, peerTwo)
+	group, err := diameter.NewPeerGroup(metrics.NewRegistry(), "icscf", peerOne, peerTwo)
+	if err != nil {
+		t.Fatal(err)
+	}
 	until(t, "both connections to open", func() bool { return peerOne.Available() && peerTwo.Available() })
 
 	ctx := context.Background()

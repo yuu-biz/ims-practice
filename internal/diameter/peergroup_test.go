@@ -73,7 +73,7 @@ func retransmitted(m *diam.Message) bool {
 func TestPeerGroupSendsToTheFirstOpenPeer(t *testing.T) {
 	node, logs := newTestNode(scscf, testTimers)
 	handler, seen := answering(farmHost(2), DiameterSuccess)
-	group := NewPeerGroup(
+	group, _ := countingGroup(t,
 		deadFarmPeer(t, node, farmHost(1)),
 		openFarmPeer(t, node, logs, farmHost(2), handler),
 	)
@@ -104,7 +104,7 @@ func TestPeerGroupFailsOverWhenThePeerDoesNotAnswer(t *testing.T) {
 		return answer
 	}
 	handler, seen := answering(farmHost(2), DiameterSuccess)
-	group := NewPeerGroup(
+	group, _ := countingGroup(t,
 		openFarmPeer(t, node, logs, farmHost(1), blocking),
 		openFarmPeer(t, node, logs, farmHost(2), handler),
 	)
@@ -136,7 +136,7 @@ func TestPeerGroupFailsOverOnTooBusy(t *testing.T) {
 	node, logs := newTestNode(scscf, testTimers)
 	busy, busySeen := answering(farmHost(1), DiameterTooBusy)
 	handler, seen := answering(farmHost(2), DiameterSuccess)
-	group := NewPeerGroup(
+	group, _ := countingGroup(t,
 		openFarmPeer(t, node, logs, farmHost(1), busy),
 		openFarmPeer(t, node, logs, farmHost(2), handler),
 	)
@@ -160,7 +160,7 @@ func TestPeerGroupReturnsTooBusyWhenEveryPeerIsBusy(t *testing.T) {
 	node, logs := newTestNode(scscf, testTimers)
 	first, _ := answering(farmHost(1), DiameterTooBusy)
 	second, _ := answering(farmHost(2), DiameterTooBusy)
-	group := NewPeerGroup(
+	group, _ := countingGroup(t,
 		openFarmPeer(t, node, logs, farmHost(1), first),
 		openFarmPeer(t, node, logs, farmHost(2), second),
 	)
@@ -179,10 +179,9 @@ func TestPeerGroupReturnsTooBusyWhenEveryPeerIsBusy(t *testing.T) {
 // further.
 func TestPeerGroupKeepsAnAnswerThatIsNotTooBusy(t *testing.T) {
 	node, logs := newTestNode(scscf, testTimers)
-	const unableToDeliver uint32 = 3002
-	refusing, _ := answering(farmHost(1), unableToDeliver)
+	refusing, _ := answering(farmHost(1), DiameterUnableToDeliver)
 	handler, seen := answering(farmHost(2), DiameterSuccess)
-	group := NewPeerGroup(
+	group, _ := countingGroup(t,
 		openFarmPeer(t, node, logs, farmHost(1), refusing),
 		openFarmPeer(t, node, logs, farmHost(2), handler),
 	)
@@ -191,8 +190,8 @@ func TestPeerGroupKeepsAnAnswerThatIsNotTooBusy(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := resultCode(answer); got != unableToDeliver {
-		t.Errorf("Result-Code = %d, want %d", got, unableToDeliver)
+	if got := resultCode(answer); got != DiameterUnableToDeliver {
+		t.Errorf("Result-Code = %d, want %d", got, DiameterUnableToDeliver)
 	}
 	select {
 	case <-seen:
@@ -210,7 +209,7 @@ func TestPeerGroupKeepsToTheDestinationHost(t *testing.T) {
 	node, logs := newTestNode(scscf, testTimers)
 	first, firstSeen := answering(farmHost(1), DiameterSuccess)
 	second, secondSeen := answering(farmHost(2), DiameterSuccess)
-	group := NewPeerGroup(
+	group, _ := countingGroup(t,
 		openFarmPeer(t, node, logs, farmHost(1), first),
 		openFarmPeer(t, node, logs, farmHost(2), second),
 	)
@@ -260,7 +259,7 @@ func TestPeerGroupSharesOneAnswerTimerAcrossTheAttempts(t *testing.T) {
 			return m
 		}
 	}
-	group := NewPeerGroup(
+	group, _ := countingGroup(t,
 		openFarmPeer(t, node, logs, farmHost(1), silent(farmHost(1))),
 		openFarmPeer(t, node, logs, farmHost(2), silent(farmHost(2))),
 	)
@@ -276,7 +275,7 @@ func TestPeerGroupSharesOneAnswerTimerAcrossTheAttempts(t *testing.T) {
 
 func TestPeerGroupWithoutAnOpenPeerFailsFast(t *testing.T) {
 	node, _ := newTestNode(scscf, testTimers)
-	group := NewPeerGroup(deadFarmPeer(t, node, farmHost(1)), deadFarmPeer(t, node, farmHost(2)))
+	group, _ := countingGroup(t, deadFarmPeer(t, node, farmHost(1)), deadFarmPeer(t, node, farmHost(2)))
 
 	start := time.Now()
 	_, err := group.Request(t.Context(), testRequest(node))
@@ -292,13 +291,13 @@ func TestPeerGroupWithoutAnOpenPeerFailsFast(t *testing.T) {
 // and no longer once that one is gone.
 func TestPeerGroupIsAvailableWhileAPeerIsOpen(t *testing.T) {
 	node, logs := newTestNode(scscf, testTimers)
-	dead := NewPeerGroup(deadFarmPeer(t, node, farmHost(1)))
+	dead, _ := countingGroup(t, deadFarmPeer(t, node, farmHost(1)))
 	if dead.Available() {
 		t.Error("a group whose peer never connected is available")
 	}
 	handler, _ := answering(farmHost(2), DiameterSuccess)
 	open := openFarmPeer(t, node, logs, farmHost(2), handler)
-	group := NewPeerGroup(deadFarmPeer(t, node, farmHost(3)), open)
+	group, _ := countingGroup(t, deadFarmPeer(t, node, farmHost(3)), open)
 	if !group.Available() {
 		t.Error("a group with an open peer is not available")
 	}
@@ -310,7 +309,8 @@ func TestPeerGroupIsAvailableWhileAPeerIsOpen(t *testing.T) {
 
 func TestEmptyPeerGroupHasNowhereToSend(t *testing.T) {
 	node, _ := newTestNode(scscf, testTimers)
-	if _, err := NewPeerGroup().Request(t.Context(), testRequest(node)); !errors.Is(err, ErrPeerUnavailable) {
+	empty, _ := countingGroup(t)
+	if _, err := empty.Request(t.Context(), testRequest(node)); !errors.Is(err, ErrPeerUnavailable) {
 		t.Fatalf("err = %v, want ErrPeerUnavailable", err)
 	}
 }
