@@ -746,9 +746,10 @@ func (f *conference) changeMedia(r *sip.InDialogRequest, p *party) {
 	ack, err := r.Accept(sip.BodyOf(resp))
 	switch {
 	case errors.Is(err, sip.ErrCallEnded):
-		// The conference ended while the MRFC was answering, and the BYE
-		// to the participant answered its request with 487 (RFC 3261
-		// 15.1.2). There is no session left to record.
+		// The call with the participant ended: its BYE answered the
+		// request with 487 (RFC 3261 15.1.2), or the 2xx went out and the
+		// call ended before the ACK came. Either way there is no session
+		// left to record.
 		return
 	case err != nil:
 		f.log.Info("answer of the MRFC not passed on to the participant", "error", err.Error())

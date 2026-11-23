@@ -415,8 +415,9 @@ func (s *Session) handle(r *sip.InDialogRequest) {
 		ack, err := r.Accept(answer, with(s.responseHeaders, s.answerHeaders(req)...)...)
 		switch {
 		case errors.Is(err, sip.ErrCallEnded):
-			// A BYE ended the call and answered the request with 487 (RFC
-			// 3261 15.1.2), so there is no session left to change.
+			// The call ended: a BYE answered the request with 487 (RFC 3261
+			// 15.1.2), or the 2xx went out and the call ended before the
+			// ACK came. Either way there is no session left to change.
 			return
 		case err != nil:
 			s.log.Warn("answer not sent", "method", string(req.Method), "error", err.Error())
