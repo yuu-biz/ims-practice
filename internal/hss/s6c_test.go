@@ -456,6 +456,42 @@ func TestDeliveredShortMessageClearsTheMemoryFlag(t *testing.T) {
 	}
 }
 
+// A short message that arrived from one service centre shows that the
+// UE is reachable again, so a service centre that waits for the UE to
+// become reachable is alerted then, not only at the next registration
+// (TS 23.040 3.2.6 items 2c, 2g and 2h).
+func TestDeliveredShortMessageAlertsTheServiceCentresThatWait(t *testing.T) {
+	n := newS6cNetwork(t)
+	if a := n.rdr(t, msisdnA, sgd.SMDeliveryCauseAbsentUser); a.Result != success {
+		t.Fatalf("RDA = %v", a.Result)
+	}
+	// Another service centre had a short message on its way, and it
+	// arrived.
+	other := "12025550200"
+	u := n.subscriber(t)
+	u.MessageWaitingData = append(u.MessageWaitingData, other)
+	if err := n.hss.store.Put(context.Background(), u); err != nil {
+		t.Fatal(err)
+	}
+	a, err := sgd.ParseReportSMDeliveryStatusAnswer(n.requestFromSC(t, sgd.ReportSMDeliveryStatusRequest{
+		Header:         diameter.NewHeader(n.scNode, "", realm),
+		UserIdentifier: sgd.UserIdentifier{MSISDN: msisdnA},
+		SCAddress:      other,
+		SMDeliveryOutcome: sgd.SMDeliveryOutcome{
+			IPSMGWSMDeliveryOutcome: &sgd.NodeSMDeliveryOutcome{SMDeliveryCause: sgd.SMDeliveryCauseSuccessfulTransfer},
+		},
+	}.Message()))
+	if err != nil || a.Result != success {
+		t.Fatalf("RDA = %v, %v", a.Result, err)
+	}
+	if alr := n.alert(t); alr.SCAddress != scAddress {
+		t.Errorf("ALR = %+v, want one for %s", alr, scAddress)
+	}
+	n.waitForSubscriber(t, "after the alert", func(u Subscriber) bool {
+		return !u.UNRI && len(u.MessageWaitingData) == 0
+	})
+}
+
 // TS 29.338 5.2.1.3 and 5.2.3.4: for a short message that gets one
 // delivery attempt the HSS does not keep the service centre address,
 // because an alert would come too late to be of use.

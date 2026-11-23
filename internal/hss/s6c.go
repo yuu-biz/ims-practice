@@ -286,7 +286,8 @@ func (h *HSS) updateMessageWaiting(ctx context.Context, u Subscriber, change fun
 		return Subscriber{}, false, h.storeFailed(err)
 	}
 	if !ok {
-		return Subscriber{}, false, diameter.Result{}
+		// The subscription went away since the request read it.
+		return Subscriber{}, false, diameter.Experimental(sgd.DiameterErrorUserUnknown)
 	}
 	before := stored
 	alert := change(&stored)
