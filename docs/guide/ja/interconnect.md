@@ -281,7 +281,13 @@ UE A1     フォーカス（MMTel AS） S-CSCF-A   IBCF-A ║ IBCF-B    UE B1
 
 ダイアログ 1 から 4 はどれも UE A1 と UE B1 の古い呼のもので、この呼は途中の UA と B2BUA の 2 つずつのあいだにダイアログを 1 つずつ持ちます。各網のプロキシは図から省いています。IBCF の呼を指さない Replaces は届いたまま渡します。TS 24.229 5.7.5.1 も、AS が自分のダイアログを指さない Replaces を届いたまま渡すとしています。IBCF の先の B2BUA がそのダイアログを持っているかもしれないためです。どのノードも持っていなければ、端の UA が 481（Call/Transaction Does Not Exist）を返します（RFC 3891 3）。IBCF が `Store` を読めないときは、どちらなのか分からないので、INVITE に 500（Server Internal Error）を返します。
 
-網 B の利用者は会議の URI に INVITE を送って会議に入ります（TS 24.147 5.3.1.4.1）。会議を抜けた参加者が戻るときも同じです。スクリプトでは、UE A1 が UE A2 との呼と UE A3 との呼を 1 つの会議にまとめ、UE B1 がその会議の URI に発信します。スクリプトは会議の URI を UE A1 から読み取り（`ue ctl conference`）、UE B1 に渡します。この INVITE はどのダイアログにも属さない要求で、新しい呼です。ほかの呼と同じく、網 B の P-CSCF と S-CSCF、IBCF-B を通って網のあいだに出て、IBCF-A から網 A に入ります。IBCF-A はこれを網 A の I-CSCF に渡します。URI が公開サービス識別子のサブドメインにあるので、I-CSCF は HSS に何も尋ねず、`conf.ims.mnc001.mcc001.3gppnetwork.org` の NAPTR と SRV のレコードを引いて（RFC 3263）、そこに書かれた MMTel AS へ INVITE を送ります（TS 24.229 5.3.2.1 step 3）。フォーカスは自分の網の利用者と同じように UE B1 を迎え入れ（[会議に戻る](mrf.md#会議に戻る)）、`isfocus` を付けた会議の URI を Contact に入れて応えます。
+スクリプトはこうして UE A1 の UE B1 との呼と UE A2 との呼をまとめます。見えるものは次のとおりです。
+
+- **網 A のキャプチャ。** S-CSCF から IBCF-A へのフォーカスの INVITE があります。Contact に `isfocus` を持ち、Replaces の Call-ID は、UE A1 が UE B1 にかけた呼で S-CSCF が IBCF-A に送った INVITE のものです。ダイアログ 2 です。
+- **網のあいだのキャプチャ。** IBCF-A から IBCF-B への INVITE があります。Replaces の Call-ID は、網のあいだでの同じ呼のものに替わっています。ダイアログ 3 です。
+- **網 B のキャプチャ。** UE B1 に届く INVITE があります。Replaces の Call-ID は、UE B1 自身の呼のものです。ダイアログ 4 です。UE B1 はこれに 200 を返し、古い呼は BYE で終わります。
+
+網 B の利用者は会議の URI に INVITE を送って会議に入ります（TS 24.147 5.3.1.4.1）。会議を抜けた参加者が戻るときも同じです。スクリプトでは、呼をまとめたあとで UE B1 が会議を抜け、会議の URI に発信して戻ります。スクリプトは会議の URI を UE A1 から読み取り（`ue ctl conference`）、UE B1 に渡します。この INVITE はどのダイアログにも属さない要求で、新しい呼です。ほかの呼と同じく、網 B の P-CSCF と S-CSCF、IBCF-B を通って網のあいだに出て、IBCF-A から網 A に入ります。IBCF-A はこれを網 A の I-CSCF に渡します。URI が公開サービス識別子のサブドメインにあるので、I-CSCF は HSS に何も尋ねず、`conf.ims.mnc001.mcc001.3gppnetwork.org` の NAPTR と SRV のレコードを引いて（RFC 3263）、そこに書かれた MMTel AS へ INVITE を送ります（TS 24.229 5.3.2.1 step 3）。フォーカスは自分の網の利用者と同じように UE B1 を迎え入れ（[会議に戻る](mrf.md#会議に戻る)）、`isfocus` を付けた会議の URI を Contact に入れて応えます。
 
 ```text
 UE B1   P-CSCF-B  S-CSCF-B  IBCF-B ║ IBCF-A   I-CSCF-A   DNS    MMTel AS（フォーカス）
@@ -453,6 +459,7 @@ UE B1 から UE A1 へのショートメッセージは、網を入れ替えた�
 | `sdp.connection_info.address == 172.28.2.11` | 網のあいだの TrGW-A のアドレスを持つ SDP。 |
 | `rtp && ip.addr == 172.28.2.0/24` | TrGW どうしの RTP（`rtp.heuristic_rtp` を有効にする）。 |
 | `dns.qry.name contains "5.1.0.5.5.5.2.0.2.1.e164.arpa"` | 網 B の番号の ENUM。 |
+| `sip.Replaces` | UE B1 の呼を引き継ぐフォーカスの INVITE。Replaces の Call-ID は、キャプチャごとに、その側での UE B1 の呼のもの。 |
 | `sip.Status-Code in {404, 405, 420, 488}` | シナリオの拒否の応答。 |
 | `gsm_sms.sms_text` | デコードしたショートメッセージ。網のあいだでも見える。 |
 | `sip.Method == "MESSAGE" && sip.P-Served-User contains "sescase=term"` | 相手網からのショートメッセージ。S-CSCF から IP-SM-GW へ向かうところ。 |
