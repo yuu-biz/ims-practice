@@ -73,6 +73,18 @@ func (h *espHarness) forget() {
 	h.runs = nil
 }
 
+// quietESP is the ESP option with a kernel that takes every command and
+// does nothing, for a test about the P-CSCF rather than about the
+// commands. The protected client port is one of its own, which this
+// P-CSCF announces in Security-Server.
+func quietESP(t *testing.T) *ESP {
+	t.Helper()
+	kernel := ipsec.NewKernel(quiet())
+	kernel.Run = func(context.Context, []ipsec.Command) error { return nil }
+	return &ESP{Address: netip.MustParseAddr("127.0.0.1"), ProtectedClientPort: freePort(t),
+		Kernel: kernel, TeardownDelay: time.Millisecond}
+}
+
 // only is the one run of the kernel since the last forget, and fails
 // when the kernel ran anything else.
 func (h *espHarness) only(t *testing.T) []string {
@@ -291,5 +303,79 @@ func TestESPOfAnotherInstanceIsLeftAlone(t *testing.T) {
 	}
 	if _, ok, err := h.p.store.SecurityAssociations(ctx, elsewhere.UE); err != nil || ok {
 		t.Errorf("the SA table still has the entry: %v, %v", ok, err)
+	}
+}
+
+// TestESPRegistrationFromTheProtectedClientPort: with ESP a UE sends
+// its requests from its protected client port (TS 33.203 7.1 item 2),
+// not from the protected server port that its contact and its Via name
+// and that keys its entry of the SA table. The P-CSCF finds the set and
+// the IP association of the UE all the same, by the sent-by of a Via
+// whose address is the one the request came from, which 7.1 rule 2 has
+// it check anyway and which the security associations authenticate.
+//
+// Without that, the P-CSCF looked the set up under the port the
+// request came from, found none and refused the registration 403, which
+// is what the first deployment with ESP did.
+func TestESPRegistrationFromTheProtectedClientPort(t *testing.T) {
+	h := newAKAHarnessOf(t, akaOptions{protectedPort: true, esp: true, uePortC: true})
+	if h.uePortC == 0 || h.uePortC == h.ueKey().Port() {
+		t.Fatalf("the UE sends from port %d and listens on %s: the two have to differ", h.uePortC, h.ueKey())
+	}
+	r, _ := h.register(false, "", "600000")
+	if r.StatusCode != 401 {
+		t.Fatalf("the first REGISTER got %d, want the challenge", r.StatusCode)
+	}
+	var verify []sip.HeaderField
+	for _, v := range r.GetAll("Security-Server") {
+		verify = append(verify, sip.HeaderField{Name: "Security-Verify", Value: v})
+	}
+	r, forwarded := h.register(true, "6629fae49393a05397450978507c4ef1", "600000", verify...)
+	if r.StatusCode != 200 {
+		t.Fatalf("the protected REGISTER from the protected client port got %d, want 200", r.StatusCode)
+	}
+	if forwarded == nil {
+		t.Fatal("the protected REGISTER never reached the home network")
+	}
+	if c, _ := sip.ParseCredentials(forwarded.Get("Authorization")); c.IntegrityProtected() != sip.IntegrityProtectedYes {
+		t.Errorf("Authorization to the home network = %s, want integrity-protected yes", forwarded.Get("Authorization"))
+	}
+	// The set and the IP association are the UE's, under the protected
+	// server port of its Via, not under the port it sent from.
+	ctx := context.Background()
+	if sas, ok, err := h.store.SecurityAssociations(ctx, h.ueKey()); err != nil || !ok || sas.Temporary {
+		t.Errorf("the SA table entry of %s is %+v, %v, %v; want it established", h.ueKey(), sas, ok, err)
+	}
+	if _, ok, err := h.store.SecurityAssociations(ctx, netip.AddrPortFrom(h.ueKey().Addr(), h.uePortC)); ok || err != nil {
+		t.Errorf("the SA table has an entry under the protected client port %d as well", h.uePortC)
+	}
+	if a, ok, err := h.store.Association(ctx, sip.Destination{Transport: sip.UDP, Addr: h.ueKey()}); err != nil || !ok {
+		t.Errorf("the IP association of %s is %+v, %v, %v", h.ueKey(), a, ok, err)
+	}
+}
+
+// TestESPRefusesAnUnprotectedPortOfTheUE: the associations of a
+// protected message are the ones of the ports it crossed (TS 33.203 7.1
+// rule 4). A message from another port of the UE's address rode none of
+// them, however its Via names the UE, and the kernel let it through
+// because no policy covers that port.
+func TestESPRefusesAnUnprotectedPortOfTheUE(t *testing.T) {
+	h := newAKAHarnessOf(t, akaOptions{protectedPort: true, esp: true, uePortC: true})
+	r, _ := h.register(false, "", "600000")
+	if r.StatusCode != 401 {
+		t.Fatalf("the first REGISTER got %d, want the challenge", r.StatusCode)
+	}
+	var verify []sip.HeaderField
+	for _, v := range r.GetAll("Security-Server") {
+		verify = append(verify, sip.HeaderField{Name: "Security-Verify", Value: v})
+	}
+	// A stack of the UE's address on a port that is neither of its
+	// protected ports, with the sent-by of the UE's protected server
+	// port, as a host that shares the address would write it.
+	other := newStackConfig(t, sip.Config{Timers: sip.DefaultTimers(), SentBy: h.ueKey().String(),
+		OnRequest: func(*sip.ServerTransaction) {}})
+	m := h.aRegister("6629fae49393a05397450978507c4ef1", "600000", verify...)
+	if r := h.send(other, h.protected, m); r.StatusCode != 403 {
+		t.Errorf("a REGISTER from %s got %d, want 403", other.LocalAddr(), r.StatusCode)
 	}
 }

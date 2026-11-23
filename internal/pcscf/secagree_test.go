@@ -42,7 +42,10 @@ type akaHarness struct {
 	// network accepted, for the test to send NOTIFYs in.
 	subscriptions chan *sip.NotifierSubscription
 	// contact is the URI in the Contact of the UE's REGISTERs.
-	contact        string
+	contact string
+	// uePortC is the UE's protected client port, which its requests
+	// leave from; zero when it sends from the port it listens on.
+	uePortC        uint16
 	securityClient string
 	// noKeys leaves ik and ck out of the 401. The fake home network reads
 	// it from a goroutine of its stack, after a message over a socket,
@@ -55,13 +58,44 @@ type akaHarness struct {
 
 func newAKAHarness(t *testing.T, protectedPort bool) *akaHarness {
 	t.Helper()
-	return newAKAHarnessWith(t, protectedPort, quiet(), nil)
+	return newAKAHarnessOf(t, akaOptions{protectedPort: protectedPort})
 }
 
 // newAKAHarnessWith is newAKAHarness with the P-CSCF logging to log. When
 // wrap is not nil, the P-CSCF uses the Store that wrap makes of h.store.
 func newAKAHarnessWith(t *testing.T, protectedPort bool, log *slog.Logger, wrap func(*MemoryStore) Store) *akaHarness {
 	t.Helper()
+	return newAKAHarnessOf(t, akaOptions{protectedPort: protectedPort, log: log, wrap: wrap})
+}
+
+// akaOptions are what one akaHarness has that another does not.
+type akaOptions struct {
+	// protectedPort gives the P-CSCF a protected server port, without
+	// which it does no IMS AKA.
+	protectedPort bool
+	// log is where the P-CSCF writes; nil writes nowhere.
+	log *slog.Logger
+	// wrap, when not nil, puts the Store it makes of h.store in front
+	// of the P-CSCF.
+	wrap func(*MemoryStore) Store
+	// esp has the P-CSCF protect the signalling with IPsec ESP, in a
+	// kernel that takes every command and does nothing.
+	esp bool
+	// uePortC has the UE bind a protected client port and send its
+	// requests from it, which is what a UE with ESP does (TS 33.203 7.1
+	// item 2). Its protected server port stays the one of its contact
+	// and of its Via.
+	uePortC bool
+}
+
+func newAKAHarnessOf(t *testing.T, o akaOptions) *akaHarness {
+	t.Helper()
+	log := o.log
+	if log == nil {
+		log = quiet()
+	}
+	wrap := o.wrap
+	protectedPort := o.protectedPort
 	h := &akaHarness{t: t, received: make(chan *sip.Message, 10), toUE: make(chan *sip.Message, 10),
 		subscriptions: make(chan *sip.NotifierSubscription, 1)}
 	h.home = newStack(t, func(st *sip.ServerTransaction) {
@@ -111,6 +145,9 @@ func newAKAHarnessWith(t *testing.T, protectedPort bool, log *slog.Logger, wrap 
 	if protectedPort {
 		cfg.ProtectedServerPort = int(tr.LocalAddr().Port())
 	}
+	if o.esp {
+		cfg.ESP = quietESP(t)
+	}
 	h.store = NewMemoryStore()
 	var store Store = h.store
 	if wrap != nil {
@@ -126,13 +163,27 @@ func newAKAHarnessWith(t *testing.T, protectedPort bool, log *slog.Logger, wrap 
 	t.Cleanup(h.protected.Close)
 	h.p.SetProtectedStack(h.protected)
 	h.ueUnprotected = newStack(t, func(*sip.ServerTransaction) {})
-	h.ueProtected = newStack(t, func(st *sip.ServerTransaction) {
+	toUE := func(st *sip.ServerTransaction) {
 		h.toUE <- st.Request
 		st.Respond(sip.NewResponse(st.Request, 486, sip.NewTag()))
-	})
+	}
+	if o.uePortC {
+		h.uePortC = freePort(t)
+		h.ueProtected = newProtectedStack(t, h.uePortC, toUE)
+	} else {
+		h.ueProtected = newStack(t, toUE)
+	}
 	h.contact = "sip:ue@" + h.ueProtected.LocalAddr().String()
-	h.securityClient = fmt.Sprintf("ipsec-3gpp;alg=hmac-sha2-256-128;ealg=null;spi-c=1111;spi-s=2222;port-c=50001;port-s=%d",
-		h.ueProtected.LocalAddr().Port())
+	// port-c is the port the UE really sends its requests from, which
+	// the P-CSCF holds the associations of (TS 33.203 7.1 rule 4); the
+	// UE that sends from the port it listens on names one it never
+	// binds, as this project's UE does without ESP.
+	portC := uint16(50001)
+	if h.uePortC != 0 {
+		portC = h.uePortC
+	}
+	h.securityClient = fmt.Sprintf("ipsec-3gpp;alg=hmac-sha2-256-128;ealg=null;spi-c=1111;spi-s=2222;port-c=%d;port-s=%d",
+		portC, h.ueProtected.LocalAddr().Port())
 	return h
 }
 
@@ -162,22 +213,7 @@ func (h *akaHarness) acceptSubscription(st *sip.ServerTransaction) {
 // any.
 func (h *akaHarness) register(protected bool, response, expires string, extra ...sip.HeaderField) (*sip.Message, *sip.Message) {
 	h.t.Helper()
-	m := &sip.Message{Method: sip.REGISTER, RequestURI: "sip:" + domain}
-	m.Add("Max-Forwards", "70")
-	m.Add("From", "<"+impu+">;tag="+sip.NewTag())
-	m.Add("To", "<"+impu+">")
-	m.Add("Call-ID", "call-1")
-	m.Add("CSeq", "1 REGISTER")
-	m.Add("Contact", "<"+h.contact+">;expires="+expires)
-	m.Add("Supported", "path")
-	m.Add("Require", sip.OptionSecAgree)
-	m.Add("Proxy-Require", sip.OptionSecAgree)
-	m.Add("Security-Client", h.securityClient)
-	for _, f := range extra {
-		m.Add(f.Name, f.Value)
-	}
-	m.Add("Authorization", `Digest username="`+impi+`", realm="`+domain+`", nonce="", uri="sip:`+domain+
-		`", response="`+response+`", algorithm=AKAv1-MD5`)
+	m := h.aRegister(response, expires, extra...)
 	from, to := h.ueUnprotected, h.unprotected
 	if protected {
 		from, to = h.ueProtected, h.protected
@@ -195,6 +231,29 @@ func (h *akaHarness) register(protected bool, response, expires string, extra ..
 			return final, nil
 		}
 	}
+}
+
+// aRegister is the REGISTER that register sends, for a test that sends
+// it from somewhere else.
+func (h *akaHarness) aRegister(response, expires string, extra ...sip.HeaderField) *sip.Message {
+	h.t.Helper()
+	m := &sip.Message{Method: sip.REGISTER, RequestURI: "sip:" + domain}
+	m.Add("Max-Forwards", "70")
+	m.Add("From", "<"+impu+">;tag="+sip.NewTag())
+	m.Add("To", "<"+impu+">")
+	m.Add("Call-ID", "call-1")
+	m.Add("CSeq", "1 REGISTER")
+	m.Add("Contact", "<"+h.contact+">;expires="+expires)
+	m.Add("Supported", "path")
+	m.Add("Require", sip.OptionSecAgree)
+	m.Add("Proxy-Require", sip.OptionSecAgree)
+	m.Add("Security-Client", h.securityClient)
+	for _, f := range extra {
+		m.Add(f.Name, f.Value)
+	}
+	m.Add("Authorization", `Digest username="`+impi+`", realm="`+domain+`", nonce="", uri="sip:`+domain+
+		`", response="`+response+`", algorithm=AKAv1-MD5`)
+	return m
 }
 
 func (h *akaHarness) send(from, to *sip.Stack, m *sip.Message) *sip.Message {
