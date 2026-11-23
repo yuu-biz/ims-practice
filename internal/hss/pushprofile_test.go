@@ -45,9 +45,9 @@ func newProfileHSS(t *testing.T, testUsers string) *HSS {
 	}
 	node := diameter.NewNode(diameter.Identity{OriginHost: "hss." + realm, OriginRealm: realm}, []uint32{diameter.ApplicationIDCx}, diameter.Timers{}, quiet())
 	return mustHSS(Config{Realm: realm, VisitedNetworks: []string{realm},
-		ServiceProfiles: map[string][]ifc.InitialFilterCriteria{
-			"default": {profileCriterion(defaultAS)},
-			"trial":   {profileCriterion(trialAS)},
+		ServiceProfiles: map[string]ServiceProfile{
+			"default": {Criteria: []ifc.InitialFilterCriteria{profileCriterion(defaultAS)}},
+			"trial":   {Criteria: []ifc.InitialFilterCriteria{profileCriterion(trialAS)}},
 		},
 		DefaultServiceProfile:  "default",
 		TestUserServiceProfile: testUsers,

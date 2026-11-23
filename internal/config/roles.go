@@ -714,13 +714,13 @@ func (raw *rawHSS) validate(homeDomain string) (hss.Config, error) {
 	if err != nil {
 		return hss.Config{}, err
 	}
-	if err := checkServiceProfileName("default_service_profile", raw.DefaultServiceProfile, profiles); err != nil {
-		return hss.Config{}, err
-	}
-	if err := checkServiceProfileName("test_user_service_profile", raw.TestUserServiceProfile, profiles); err != nil {
-		return hss.Config{}, err
-	}
 	c.ServiceProfiles = profiles
+	if err := c.CheckServiceProfileName("default_service_profile", raw.DefaultServiceProfile); err != nil {
+		return hss.Config{}, err
+	}
+	if err := c.CheckServiceProfileName("test_user_service_profile", raw.TestUserServiceProfile); err != nil {
+		return hss.Config{}, err
+	}
 	c.DefaultServiceProfile = raw.DefaultServiceProfile
 	c.TestUserServiceProfile = raw.TestUserServiceProfile
 	if c.Admission, err = hss.ParseAdmission(raw.Admission); err != nil {

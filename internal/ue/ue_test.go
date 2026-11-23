@@ -248,7 +248,7 @@ type networkConfig struct {
 	// serviceProfiles are the service profiles of the HSS beside
 	// "default", for a test that moves a subscription from one profile
 	// to another.
-	serviceProfiles map[string][]ifc.InitialFilterCriteria
+	serviceProfiles map[string]hss.ServiceProfile
 	// admission is the admission policy of the HSS; the empty one admits
 	// every subscriber.
 	admission hss.Admission
@@ -454,7 +454,7 @@ func startHSS(t *testing.T, cfg networkConfig) (*hss.HSS, []hssInstance) {
 	t.Helper()
 	instances := max(cfg.hssInstances, 1)
 	store, locks := sharedSubscribers(t, cfg, instances)
-	profiles := map[string][]ifc.InitialFilterCriteria{"default": cfg.criteria}
+	profiles := map[string]hss.ServiceProfile{"default": {Criteria: cfg.criteria}}
 	maps.Copy(profiles, cfg.serviceProfiles)
 	var first *hss.HSS
 	var started []hssInstance

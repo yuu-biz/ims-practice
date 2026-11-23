@@ -84,7 +84,7 @@ func TestProvisioningAddsASubscriptionTheHSSServes(t *testing.T) {
 // subscription would reach the SAA with no criteria at all.
 func TestProvisioningTakesTheMarkAndTheProfileOfASubscription(t *testing.T) {
 	h := newTestHSS()
-	h.config.ServiceProfiles = map[string][]ifc.InitialFilterCriteria{"default": nil, "trial": nil}
+	h.config.ServiceProfiles = map[string]ServiceProfile{"default": {}, "trial": {}}
 	h.config.DefaultServiceProfile, h.config.TestUserServiceProfile = "default", "trial"
 	api := h.Provisioning(&fakeSCSCFs{})
 
@@ -640,7 +640,7 @@ func subscriberOrFail(t *testing.T, h *HSS, privateID string) Subscriber {
 // written, on a dry run as on a real request.
 func TestProvisioningPutRefusesWhatItCannotStore(t *testing.T) {
 	h := newTestHSS()
-	h.config.ServiceProfiles = map[string][]ifc.InitialFilterCriteria{"default": nil}
+	h.config.ServiceProfiles = map[string]ServiceProfile{"default": {}}
 	h.config.DefaultServiceProfile = "default"
 	api := h.Provisioning(&fakeSCSCFs{})
 	newIMPI := "001010000000009@" + realm
@@ -955,8 +955,8 @@ func TestProvisioningPatchesTheMarkAndTheProfile(t *testing.T) {
 		}}
 	}
 	h := newTestHSS()
-	h.config.ServiceProfiles = map[string][]ifc.InitialFilterCriteria{
-		"default": profile("mmtel"), "trial": profile("trial"), "cdiv": profile("cdiv")}
+	h.config.ServiceProfiles = map[string]ServiceProfile{
+		"default": {Criteria: profile("mmtel")}, "trial": {Criteria: profile("trial")}, "cdiv": {Criteria: profile("cdiv")}}
 	h.config.DefaultServiceProfile, h.config.TestUserServiceProfile = "default", "trial"
 	api := h.Provisioning(&fakeSCSCFs{})
 
@@ -1022,7 +1022,7 @@ func saaServer(t *testing.T, h *HSS) string {
 // Table 6.3.5 and Table 6.3.7), and SQN_HE is not theirs to send either.
 func TestProvisioningPatchLeavesTheCredentials(t *testing.T) {
 	h := newTestHSS()
-	h.config.ServiceProfiles = map[string][]ifc.InitialFilterCriteria{"default": nil, "trial": nil}
+	h.config.ServiceProfiles = map[string]ServiceProfile{"default": {}, "trial": {}}
 	h.config.DefaultServiceProfile, h.config.TestUserServiceProfile = "default", "trial"
 	api := h.Provisioning(&fakeSCSCFs{})
 	body := `{"private_identity": "` + akaImpi + `", "public_identities": ["` + akaImpu + `"],
@@ -1074,7 +1074,7 @@ func TestProvisioningPatchLeavesTheCredentials(t *testing.T) {
 // quietly nowhere. Nothing is written for a request that is refused.
 func TestProvisioningPatchRefusesWhatItCannotStore(t *testing.T) {
 	h := newTestHSS()
-	h.config.ServiceProfiles = map[string][]ifc.InitialFilterCriteria{"default": nil, "trial": nil}
+	h.config.ServiceProfiles = map[string]ServiceProfile{"default": {}, "trial": {}}
 	h.config.DefaultServiceProfile = "default"
 	api := h.Provisioning(&fakeSCSCFs{})
 	if w := do(t, api, "PATCH", "/subscriptions/"+impi, `{"test_user": true}`); w.Code != http.StatusOK {

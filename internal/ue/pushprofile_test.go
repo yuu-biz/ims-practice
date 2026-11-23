@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/yuu-biz/ims-practice/internal/hss"
 	"github.com/yuu-biz/ims-practice/internal/ifc"
 	"github.com/yuu-biz/ims-practice/internal/sip"
 	"github.com/yuu-biz/ims-practice/internal/ue"
@@ -47,7 +48,7 @@ func TestAProfileChangeReachesTheSCSCFWithoutANewRegistration(t *testing.T) {
 	const first, second = "as1." + domain, "as2." + domain
 	n := startNetwork(t, networkConfig{minExpires: time.Second, maxExpires: time.Hour,
 		criteria:        []ifc.InitialFilterCriteria{smsCriterionTo("sip:" + first + ":5060")},
-		serviceProfiles: map[string][]ifc.InitialFilterCriteria{"trial": {smsCriterionTo("sip:" + second + ":5060")}},
+		serviceProfiles: map[string]hss.ServiceProfile{"trial": {Criteria: []ifc.InitialFilterCriteria{smsCriterionTo("sip:" + second + ":5060")}}},
 	})
 	toFirst := messageServer(t, n, first)
 	toSecond := messageServer(t, n, second)

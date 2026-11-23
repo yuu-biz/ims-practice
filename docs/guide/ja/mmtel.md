@@ -47,18 +47,24 @@ IR.92 が網の対応を任意としている MWI と ECT（2.3.5、2.3.11）は
 
 ```yaml
 - priority: 10
+  feature: mmtel
   trigger_point: {condition_type_cnf: true, spt: [{group: [0], method: INVITE}, {group: [1], session_case: ORIGINATING_REGISTERED}]}
   application_server: {server_name: sip:mmtel.ims.mnc001.mcc001.3gppnetwork.org:5060, default_handling: SESSION_TERMINATED}
 - priority: 11
+  feature: mmtel
   trigger_point: {condition_type_cnf: true, spt: [{group: [0], method: INVITE}, {group: [1], session_case: TERMINATING_REGISTERED}]}
   application_server: {server_name: sip:mmtel.ims.mnc001.mcc001.3gppnetwork.org:5060, default_handling: SESSION_CONTINUED}
 - priority: 12
+  feature: mmtel
   trigger_point: {condition_type_cnf: true, spt: [{group: [0], method: INVITE}, {group: [1], session_case: TERMINATING_UNREGISTERED}]}
   application_server: {server_name: sip:mmtel.ims.mnc001.mcc001.3gppnetwork.org:5060, default_handling: SESSION_CONTINUED}
 - priority: 13
+  feature: mmtel
   trigger_point: {condition_type_cnf: true, spt: [{group: [0], method: INVITE}, {group: [1], session_case: ORIGINATING_CDIV}]}
   application_server: {server_name: sip:mmtel.ims.mnc001.mcc001.3gppnetwork.org:5060, default_handling: SESSION_TERMINATED}
 ```
+
+`feature` は Annex E の要素ではありません。これらの条件が何を有効にするかを表す運用者の言葉で、HSS のノードの保守用の API が、プロファイルの名前と並べて返します（[SMS の手順書](sms.md)）。
 
 要素ごとに読みます（TS 29.228 Annex E。SMS と共通の要素は [SMS の手順書](sms.md) で説明しています）。
 

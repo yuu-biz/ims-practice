@@ -6,6 +6,7 @@ import (
 	"maps"
 	"slices"
 
+	"github.com/yuu-biz/ims-practice/internal/hss"
 	"github.com/yuu-biz/ims-practice/internal/ifc"
 )
 
@@ -15,7 +16,14 @@ import (
 // labels of Annex E, such as ORIGINATING_REGISTERED and
 // SESSION_CONTINUED.
 type rawInitialFilterCriteria struct {
-	Priority     int `yaml:"priority"`
+	// Feature is the operator's word for what this criterion turns on,
+	// such as sms or mmtel. It is no part of the criterion that reaches
+	// an S-CSCF: TS 29.228 Annex E has no element for it, so it stays in
+	// the configuration and in the list of features that the HSS keeps
+	// for the profile (hss.ServiceProfile). A criterion may leave it
+	// out, and several criteria of one profile may share it.
+	Feature      string `yaml:"feature"`
+	Priority     int    `yaml:"priority"`
 	TriggerPoint *struct {
 		ConditionTypeCNF bool     `yaml:"condition_type_cnf"`
 		SPT              []rawSPT `yaml:"spt"`
@@ -43,14 +51,14 @@ type rawSPT struct {
 
 // parseServiceProfiles reads the named service profiles of the hss
 // section, each one the criteria that the HSS puts in the user profile
-// of a subscription that uses it (TS 29.228 B.2.2). A profile without
-// criteria calls no application server, so an empty one is a profile
-// like any other.
-func parseServiceProfiles(raw map[string][]rawInitialFilterCriteria) (map[string][]ifc.InitialFilterCriteria, error) {
+// of a subscription that uses it (TS 29.228 B.2.2), with the features
+// that those criteria name. A profile without criteria calls no
+// application server, so an empty one is a profile like any other.
+func parseServiceProfiles(raw map[string][]rawInitialFilterCriteria) (map[string]hss.ServiceProfile, error) {
 	if len(raw) == 0 {
 		return nil, nil
 	}
-	profiles := make(map[string][]ifc.InitialFilterCriteria, len(raw))
+	profiles := make(map[string]hss.ServiceProfile, len(raw))
 	// Sorted, so that a file with a mistake in two profiles always
 	// fails with the same message.
 	for _, name := range slices.Sorted(maps.Keys(raw)) {
@@ -61,28 +69,23 @@ func parseServiceProfiles(raw map[string][]rawInitialFilterCriteria) (map[string
 		if err != nil {
 			return nil, err
 		}
-		profiles[name] = criteria
+		profiles[name] = hss.ServiceProfile{Criteria: criteria, Features: featuresOf(raw[name])}
 	}
 	return profiles, nil
 }
 
-// checkServiceProfileName checks that a setting of the hss section
-// which names a service profile names one that the section defines. The
-// setting is required where there are profiles, so that the HSS has a
-// profile for every subscription it answers for.
-func checkServiceProfileName(key, name string, profiles map[string][]ifc.InitialFilterCriteria) error {
-	_, found := profiles[name]
-	switch {
-	case len(profiles) == 0 && name != "":
-		return fmt.Errorf("%s: %q, but the node defines no service_profiles", key, name)
-	case len(profiles) == 0:
-		return nil
-	case name == "":
-		return fmt.Errorf("%s: required, one of %v", key, slices.Sorted(maps.Keys(profiles)))
-	case !found:
-		return fmt.Errorf("%s: %q is not a profile of service_profiles, which has %v", key, name, slices.Sorted(maps.Keys(profiles)))
+// featuresOf collects the features that the criteria of one profile
+// name, each one once and in the order the criteria give them. The
+// list is taken from the criteria rather than written out beside them,
+// so a profile cannot claim a feature whose criterion it does not have.
+func featuresOf(raw []rawInitialFilterCriteria) []string {
+	var features []string
+	for _, c := range raw {
+		if c.Feature != "" && !slices.Contains(features, c.Feature) {
+			features = append(features, c.Feature)
+		}
 	}
-	return nil
+	return features
 }
 
 // parseInitialFilterCriteria reads the criteria of the service profile

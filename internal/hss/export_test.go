@@ -13,7 +13,6 @@ import (
 	"github.com/yuu-biz/ims-practice/internal/aka"
 	"github.com/yuu-biz/ims-practice/internal/cx"
 	"github.com/yuu-biz/ims-practice/internal/diameter"
-	"github.com/yuu-biz/ims-practice/internal/ifc"
 	"github.com/yuu-biz/ims-practice/internal/mmtel"
 	"github.com/yuu-biz/ims-practice/internal/sh"
 	"github.com/yuu-biz/ims-practice/internal/simservs"
@@ -78,7 +77,7 @@ func everyKindOfSubscription(t *testing.T, h *HSS, api http.Handler) []string {
 		t.Fatal(err)
 	}
 	h.config.MMTelServices = &d
-	h.config.ServiceProfiles = map[string][]ifc.InitialFilterCriteria{"default": nil, "trial": nil}
+	h.config.ServiceProfiles = map[string]ServiceProfile{"default": {}, "trial": {}}
 	h.config.DefaultServiceProfile, h.config.TestUserServiceProfile = "default", "trial"
 
 	// IMS-AKA, with a sequence number that the authentication moves on
