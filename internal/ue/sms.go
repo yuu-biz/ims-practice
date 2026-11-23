@@ -130,9 +130,10 @@ type smsState struct {
 	// 9.2.3.6). An RP-SMMA takes its RP-MR from nextMR too, which gives
 	// each notification one of its own (TS 24.011 6.3.3.1.3).
 	nextMR, nextTPMR uint8
-	// memoryFull is what the control API set: whether the UE has memory
-	// for an incoming short message.
-	memoryFull bool
+	// unavailable and memoryFull are what the control API set: whether
+	// the UE takes short messages at all, and whether it has memory for
+	// them.
+	unavailable, memoryFull bool
 	// memoryCapacityExceeded is the memory capacity exceeded
 	// notification flag of TS 23.040 10.3 operation 14: the UE owes the
 	// network a notification once it has memory again. The UE sets it
@@ -193,8 +194,13 @@ func (u *UE) WaitSMS(ctx context.Context, done func(SMSHistory) bool) (SMSHistor
 
 // SMSReception is how the UE takes short messages. Nothing of it goes
 // on the wire by itself; it is the state that the control API sets to
-// put the UE in a place where a delivery fails.
+// put the UE in the places where a delivery fails.
 type SMSReception struct {
+	// Available is false while the UE answers every MESSAGE that brings
+	// a short message with 480 (Temporarily Unavailable, RFC 3261
+	// 21.4.18), which the IP-SM-GW reports to the SC as an absent
+	// subscriber (TS 24.341 5.3.3.4.2, TS 29.311 6.1.4.4.1).
+	Available bool `json:"available"`
 	// MemoryFull is true while the UE has no memory for an incoming
 	// short message and refuses each one with RP-Cause 22 (TS 24.011
 	// 8.2.5.4 table 8.4).
@@ -213,8 +219,17 @@ func (u *UE) SMSReception() SMSReception {
 }
 
 func (u *UE) receptionLocked() SMSReception {
-	return SMSReception{MemoryFull: u.sms.memoryFull,
+	return SMSReception{Available: !u.sms.unavailable, MemoryFull: u.sms.memoryFull,
 		MemoryCapacityExceededNotification: u.sms.memoryCapacityExceeded}
+}
+
+// SetSMSAvailable makes the UE take short messages again, or stop
+// taking them. It applies from the next MESSAGE on.
+func (u *UE) SetSMSAvailable(available bool) SMSReception {
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	u.sms.unavailable = !available
+	return u.receptionLocked()
 }
 
 // SetSMSMemoryFull takes the memory of the UE for short messages away,
@@ -415,6 +430,15 @@ func undecodableCause(body []byte) sms.RPCause {
 // report.
 func (u *UE) receiveRPData(st *sip.ServerTransaction, m sms.RPDataNetworkToMS, log *slog.Logger) {
 	req := st.Request
+	// A UE that the control API has made unavailable for short messages
+	// answers the MESSAGE 480 instead (RFC 3261 21.4.18): the user is
+	// registered but in a state that takes none. The RP layer never
+	// runs, so there is no delivery report either.
+	if !u.smsAvailable() {
+		st.Respond(sip.NewResponse(req, 480, sip.NewTag()))
+		log.Info("short message refused: the UE is unavailable for short messages")
+		return
+	}
 	st.Respond(sip.NewResponse(req, 200, sip.NewTag()))
 	tpdu, err := sms.ParseTPDU(m)
 	if report, ok := tpdu.(sms.StatusReport); err == nil && ok {
@@ -463,6 +487,13 @@ func (u *UE) receiveRPData(st *sip.ServerTransaction, m sms.RPDataNetworkToMS, l
 		"service_centre_time_stamp", got.ServiceCentreTimeStamp.Format(time.RFC3339))
 	report, _ := sms.DeliverReport{}.Marshal()
 	u.sendDeliveryReport(req, sms.RPAck{Direction: sms.MSToNetwork, MessageReference: m.MessageReference, UserData: report}, log)
+}
+
+// smsAvailable tells whether the UE takes short messages at all.
+func (u *UE) smsAvailable() bool {
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	return !u.sms.unavailable
 }
 
 // noMemoryFor tells whether the UE has no memory for the short message

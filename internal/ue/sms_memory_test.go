@@ -10,8 +10,9 @@ import (
 	"github.com/yuu-biz/ims-practice/internal/ue"
 )
 
-// The tests of this file drive the memory of the UE for short messages,
-// one of the states in which a delivery to a registered user fails.
+// The tests of this file drive the memory of the UE for short messages
+// and its availability for them, the two states in which a delivery to a
+// registered user fails.
 
 // fullMemory takes the memory of the UE away, with nothing to notify.
 func fullMemory(t *testing.T, u *ue.UE) {
@@ -197,4 +198,46 @@ func TestTheUENotifiesNothingWithoutARefusal(t *testing.T) {
 		t.Fatal(err)
 	}
 	checkNotification(t, n.next(), "tel:"+scAddress)
+}
+
+// RFC 3261 21.4.18: a UE that is registered but takes no short messages
+// answers the MESSAGE that brings one with 480, and sends no delivery
+// report. The IP-SM-GW reports such a delivery to the SC as an absent
+// subscriber (TS 29.311 6.1.4.4.1), which is the one state the UE cannot
+// reach by deregistering.
+func TestTheUEIsUnavailableForShortMessages(t *testing.T) {
+	n := newFakeNetwork(t)
+	u, ua := smsUE(t, n)
+	if got := u.SetSMSAvailable(false); got.Available {
+		t.Fatalf("the UE is %+v, want it unavailable", got)
+	}
+
+	if _, code := n.mtMessage(ua, ue.SMSContentType, rpDataWith(t, 11, deliverOf(t, "Are you there?", time.Now()))); code != 480 {
+		t.Fatalf("MT MESSAGE got %d, want 480", code)
+	}
+	noNotification(t, n)
+	if got := u.SMS().Received; len(got) != 0 {
+		t.Errorf("the UE kept %+v", got)
+	}
+	// Nothing of the refusal is the memory of the UE, so it owes no
+	// notification.
+	if got := u.SMSReception(); got.MemoryCapacityExceededNotification {
+		t.Errorf("the UE is %+v, want no notification owed", got)
+	}
+
+	// Available again, the UE takes the next short message as it always
+	// does.
+	if got := u.SetSMSAvailable(true); !got.Available {
+		t.Fatalf("the UE is %+v, want it available", got)
+	}
+	delivered, code := n.mtMessage(ua, ue.SMSContentType, rpDataWith(t, 12, deliverOf(t, "Are you there?", time.Now())))
+	if code != 200 {
+		t.Fatalf("MT MESSAGE got %d, want 200", code)
+	}
+	if ack, ok := checkDeliveryReport(t, n.next(), delivered).(sms.RPAck); !ok || ack.MessageReference != 12 {
+		t.Errorf("report %+v, want an RP-ACK for RP-MR 12", ack)
+	}
+	if got := u.SMS().Received; len(got) != 1 {
+		t.Errorf("the UE received %+v, want the short message", got)
+	}
 }
