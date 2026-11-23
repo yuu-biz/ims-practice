@@ -2,7 +2,7 @@
 
 [English](README.md)
 
-このディレクトリは、Docker Compose のプロジェクトに [Prometheus](https://github.com/prometheus/prometheus) と [Grafana](https://github.com/grafana/grafana) を足します。IMS のノードが数えた値を、広く使われている道具で、時間の推移として見るためです。IMS のノードのうち指標を出すのは P-CSCF、I-CSCF、S-CSCF、HSS、MMTel AS だけなので（[できないこと](#できないこと)）、ダッシュボードではほかのノードがおおむね落ちているように見えます。MRFC のノードは指標を 1 つも出さないまま動いているように見えます。同じ待ち受けで、MRFC を運用から外す保守用の API を出しているためです。指標の名前は TS 32.409 の測定項目に合わせてあり、`internal/metrics` が書きます。
+このディレクトリは、Docker Compose のプロジェクトに [Prometheus](https://github.com/prometheus/prometheus) と [Grafana](https://github.com/grafana/grafana) を足します。IMS のノードが数えた値を、広く使われている道具で、時間の推移として見るためです。IMS のノードのうち指標を出すのは P-CSCF、I-CSCF、S-CSCF、HSS、MMTel AS、IP-SM-GW だけなので（[できないこと](#できないこと)）、ダッシュボードではほかのノードがおおむね落ちているように見えます。MRFC のノードは指標を 1 つも出さないまま動いているように見えます。同じ待ち受けで、MRFC を運用から外す保守用の API を出しているためです。指標の名前は TS 32.409 の測定項目に合わせてあり、`internal/metrics` が書きます。
 
 | パス | 中身 |
 | --- | --- |
@@ -54,7 +54,7 @@ go generate ./deploy/observability/...
 
 ## できないこと
 
-`internal/metrics` で数える役割は P-CSCF、I-CSCF、S-CSCF、HSS、MMTel AS、IP-SM-GW、IBCF です。Compose のプロジェクトの 3 つの CSCF、HSS、MMTel AS は、`deploy/compose/pcscf.yaml`、`deploy/compose/icscf.yaml`、`deploy/compose/scscf.yaml`、`deploy/compose/hss.yaml`、`deploy/compose/mmtel.yaml` の `maintenance` の節が決める待ち受けで、`http://pcscf:8085/metrics`、`http://icscf:8085/metrics`、`http://scscf:8085/metrics`、`http://hss:8085/metrics`、`http://mmtel:8085/metrics` に数えた値を出します。MRFC のノードにもこの待ち受けがあります（`deploy/compose/mrfc.yaml`）。MRFC を運用から外す保守用の API のためです。MRFC は測定を 1 つも数えないので、`/metrics` は空で、出るのは `up` だけです。パネル **Dropped sessions** は空のままです。P-CSCF も I-CSCF もセッションを期限切れで消さないので、数えるものがありません。MMTel AS は Sh でやり取りする Diameter を数え、その値はパネル **Diameter answers by result** と **Diameter peers** に自分の `role` で出ます。ほかのノードは指標を出しません。IP-SM-GW は Sh でやり取りする Diameter を数え、IBCF のノード（`deploy/interconnect`）にはこの待ち受けが無いので、数えた値はプロセスの中にとどまります。`prometheus/prometheus.yml` は、各ノードが保守用の API の待ち受けで、`http://<サービス名>:8085/metrics` に指標を出す形に合わせて書いてあります。このポート番号を決めた仕様はありません。8085 はこのプロジェクトが選んだ番号で、`prometheus.go` の `MetricsPort` に置いています。ほかの番号にするときは、`MetricsPort` を直し、上のコマンドを実行します。
+`internal/metrics` で数える役割は P-CSCF、I-CSCF、S-CSCF、HSS、MMTel AS、IP-SM-GW、IBCF です。Compose のプロジェクトの 3 つの CSCF、HSS、MMTel AS、IP-SM-GW は、`deploy/compose/pcscf.yaml`、`deploy/compose/icscf.yaml`、`deploy/compose/scscf.yaml`、`deploy/compose/hss.yaml`、`deploy/compose/mmtel.yaml`、`deploy/compose/ipsmgw.yaml` の `maintenance` の節が決める待ち受けで、`http://pcscf:8085/metrics`、`http://icscf:8085/metrics`、`http://scscf:8085/metrics`、`http://hss:8085/metrics`、`http://mmtel:8085/metrics`、`http://ipsmgw:8085/metrics` に数えた値を出します。MRFC のノードにもこの待ち受けがあります（`deploy/compose/mrfc.yaml`）。MRFC を運用から外す保守用の API のためです。MRFC は測定を 1 つも数えないので、`/metrics` は空で、出るのは `up` だけです。パネル **Dropped sessions** は空のままです。P-CSCF も I-CSCF もセッションを期限切れで消さないので、数えるものがありません。MMTel AS と IP-SM-GW は Sh でやり取りする Diameter を数え、その値はパネル **Diameter answers by result** と **Diameter peers** にそれぞれの `role` で出ます。ほかのノードは指標を出しません。IBCF のノード（`deploy/interconnect`）にはこの待ち受けが無いので、数えた値はプロセスの中にとどまります。`prometheus/prometheus.yml` は、各ノードが保守用の API の待ち受けで、`http://<サービス名>:8085/metrics` に指標を出す形に合わせて書いてあります。このポート番号を決めた仕様はありません。8085 はこのプロジェクトが選んだ番号で、`prometheus.go` の `MetricsPort` に置いています。ほかの番号にするときは、`MetricsPort` を直し、上のコマンドを実行します。
 
 `ims_diameter_peer_up` が出すのは、ノードが設定にしたがって自分から接続する相手です。HSS や PCRF のように、ノードが受け付けた接続の相手は入りません。相手が接続してきて初めて分かるので、ラベルに並べる決まった集合がなく、その接続は開いた側のノードが自分の側から出すためです。
 
