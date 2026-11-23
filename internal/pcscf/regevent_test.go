@@ -2,6 +2,7 @@ package pcscf
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -785,4 +786,115 @@ func TestTimerNKeepsASubscriptionThatANotifyConfirmed(t *testing.T) {
 	if sub.Dialog.ID.RemoteTag == "" || !sub.NotifyDeadline.IsZero() {
 		t.Errorf("the stored subscription = %+v; want the one the NOTIFY confirmed", sub)
 	}
+}
+
+// beforeTheAssociation is the Store of a P-CSCF whose write of an IP
+// association is slow, as a write to a store outside the node can be.
+// Once the test has handed it a function on between, its next write of
+// an association runs that function first. A registration has then been
+// accepted and its security associations established, but its IP
+// association is not yet written.
+type beforeTheAssociation struct {
+	Store
+	between chan func(Association)
+}
+
+func (s *beforeTheAssociation) PutAssociation(ctx context.Context, a Association) error {
+	select {
+	case f := <-s.between:
+		f(a)
+	default:
+	}
+	return s.Store.PutAssociation(ctx, a)
+}
+
+// TS 24.229 5.2.2.2, 5.2.5.2 and TS 33.203 7.4.2a: the end of a contact
+// takes the security associations that it was registered over, and no
+// others. A UE that starts again on the same address and protected
+// server port registers another contact over a new set, and the S-CSCF
+// reports the old contact terminated, since the new one replaced it.
+// That NOTIFY reaches the P-CSCF after the 200 (OK) has established the
+// new set, and before the IP association names the new contact. The
+// P-CSCF ends what it kept for the old contact and keeps the new set,
+// so the next protected REGISTER of the UE is not refused. Once the
+// network ends the new contact as well, its set goes.
+func TestTheEndOfAContactTakesOnlyItsOwnSecurityAssociations(t *testing.T) {
+	between := make(chan func(Association), 1)
+	h := newAKAHarnessWith(t, true, quiet(), func(s *MemoryStore) Store {
+		return &beforeTheAssociation{Store: s, between: between}
+	})
+	h.registerOverUDP()
+	var sub *sip.NotifierSubscription
+	select {
+	case sub = <-h.subscriptions:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the P-CSCF did not subscribe to the reg event package")
+	}
+	// notify sends a NOTIFY of the registration with contacts and returns
+	// the status of its answer. It also runs on a goroutine of the
+	// P-CSCF, so it returns its failure rather than end the test.
+	notify := func(contacts ...reginfo.Contact) (int, error) {
+		doc := reginfo.Document{State: reginfo.Full, Registrations: []reginfo.Registration{
+			{AOR: impu, ID: "reg1", State: reginfo.Active, Contacts: contacts}}}
+		body, err := doc.Marshal()
+		if err != nil {
+			return 0, err
+		}
+		req := sub.NewNotify(sip.Body{Type: reginfo.ContentType, Content: body}, time.Now())
+		ct, err := h.home.SendRequest(req, sip.Destination{Transport: sip.UDP, Addr: h.unprotected.LocalAddr()})
+		if err != nil {
+			return 0, err
+		}
+		status := 0
+		for r := range ct.Responses() {
+			status = r.StatusCode
+		}
+		return status, ct.Err()
+	}
+	old := reginfo.Contact{ID: "c1", State: reginfo.Active, Event: reginfo.Registered, URI: h.contact}
+	if status, err := notify(old); status != 200 {
+		t.Fatalf("first NOTIFY answered %d (%v)", status, err)
+	}
+
+	// The UE starts again, with another contact and other SPIs, from the
+	// same address and ports.
+	h.contact = "sip:restarted@" + h.ueProtected.LocalAddr().String()
+	h.securityClient = fmt.Sprintf("ipsec-3gpp;alg=hmac-sha2-256-128;ealg=null;spi-c=3333;spi-s=4444;port-c=50003;port-s=%d",
+		h.ueProtected.LocalAddr().Port())
+	headers := h.challenge()
+	notified := make(chan error, 1)
+	between <- func(a Association) {
+		if a.Contact != h.contact {
+			notified <- fmt.Errorf("the P-CSCF first wrote the association of %s, want that of %s", a.Contact, h.contact)
+			return
+		}
+		old.State, old.Event = reginfo.Terminated, reginfo.Unregistered
+		status, err := notify(old, reginfo.Contact{ID: "c2", State: reginfo.Active, Event: reginfo.Registered, URI: h.contact})
+		if err == nil && status != 200 {
+			err = fmt.Errorf("the NOTIFY that ends the old contact was answered %d", status)
+		}
+		notified <- err
+	}
+	const response = "6629fae49393a05397450978507c4ef1"
+	if r, _ := h.register(true, response, "600000", headers[:len(headers)-1]...); r.StatusCode != 200 {
+		t.Fatalf("protected REGISTER after the restart got %d", r.StatusCode)
+	}
+	select {
+	case err := <-notified:
+		if err != nil {
+			t.Fatal(err)
+		}
+	default:
+		t.Fatal("no NOTIFY came before the IP association of the new contact; the test proved nothing")
+	}
+
+	if r, got := h.register(true, response, "600000"); r.StatusCode != 200 || got == nil {
+		t.Fatalf("the next protected REGISTER got %d, want the 200 of the home network over the new security associations", r.StatusCode)
+	}
+
+	ended := reginfo.Contact{ID: "c2", State: reginfo.Terminated, Event: reginfo.Deactivated, URI: h.contact}
+	if status, err := notify(ended); status != 200 {
+		t.Fatalf("the NOTIFY that ends the new contact was answered %d (%v)", status, err)
+	}
+	h.noSecurityAssociations("the network ended the new contact")
 }

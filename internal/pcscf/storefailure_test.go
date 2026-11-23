@@ -110,6 +110,13 @@ func (s *failingStore) DeleteSecurityAssociations(ctx context.Context, ue netip.
 	return s.Store.DeleteSecurityAssociations(ctx, ue)
 }
 
+func (s *failingStore) DeleteSecurityAssociationsOf(ctx context.Context, ue netip.AddrPort, spis SPIs) error {
+	if s.down.Load() {
+		return errUnreachable
+	}
+	return s.Store.DeleteSecurityAssociationsOf(ctx, ue, spis)
+}
+
 // TestRegisterWhenTheStoreFails: a REGISTER whose IP association the
 // P-CSCF cannot read gets 500 and goes no further. When the P-CSCF
 // cannot store the registration that the home network accepted, the UE

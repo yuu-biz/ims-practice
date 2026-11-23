@@ -24,7 +24,8 @@ const (
 
 // akaHarness is a P-CSCF with a protected server port in front of a
 // fake home network that challenges a REGISTER marked "no" with the
-// 401 of TS 24.229 5.4.1.2.1A, and accepts one marked "yes".
+// 401 of TS 24.229 5.4.1.2.1A, accepts one marked "yes", and accepts
+// the reg event SUBSCRIBE of the P-CSCF.
 type akaHarness struct {
 	t             *testing.T
 	p             *PCSCF
@@ -36,7 +37,12 @@ type akaHarness struct {
 	home          *sip.Stack // the I-CSCF and the S-CSCF
 	received      chan *sip.Message
 	// toUE are the requests that reach the UE's protected server port.
-	toUE           chan *sip.Message
+	toUE chan *sip.Message
+	// subscriptions are the reg event subscriptions that the home
+	// network accepted, for the test to send NOTIFYs in.
+	subscriptions chan *sip.NotifierSubscription
+	// contact is the URI in the Contact of the UE's REGISTERs.
+	contact        string
 	securityClient string
 	// noKeys leaves ik and ck out of the 401. The fake home network reads
 	// it from a goroutine of its stack, after a message over a socket,
@@ -56,10 +62,15 @@ func newAKAHarness(t *testing.T, protectedPort bool) *akaHarness {
 // wrap is not nil, the P-CSCF uses the Store that wrap makes of h.store.
 func newAKAHarnessWith(t *testing.T, protectedPort bool, log *slog.Logger, wrap func(*MemoryStore) Store) *akaHarness {
 	t.Helper()
-	h := &akaHarness{t: t, received: make(chan *sip.Message, 10), toUE: make(chan *sip.Message, 10)}
+	h := &akaHarness{t: t, received: make(chan *sip.Message, 10), toUE: make(chan *sip.Message, 10),
+		subscriptions: make(chan *sip.NotifierSubscription, 1)}
 	h.home = newStack(t, func(st *sip.ServerTransaction) {
 		h.received <- st.Request
 		req := st.Request
+		if req.Method == sip.SUBSCRIBE && sip.ReceivedDialogID(req).LocalTag == "" {
+			h.acceptSubscription(st)
+			return
+		}
 		if req.Method != sip.REGISTER {
 			st.Respond(sip.NewResponse(req, 486, sip.NewTag()))
 			return
@@ -119,9 +130,30 @@ func newAKAHarnessWith(t *testing.T, protectedPort bool, log *slog.Logger, wrap 
 		h.toUE <- st.Request
 		st.Respond(sip.NewResponse(st.Request, 486, sip.NewTag()))
 	})
+	h.contact = "sip:ue@" + h.ueProtected.LocalAddr().String()
 	h.securityClient = fmt.Sprintf("ipsec-3gpp;alg=hmac-sha2-256-128;ealg=null;spi-c=1111;spi-s=2222;port-c=50001;port-s=%d",
 		h.ueProtected.LocalAddr().Port())
 	return h
+}
+
+// acceptSubscription accepts an initial SUBSCRIBE for the duration it
+// asks for, as the S-CSCF does, and hands the subscription to the test.
+func (h *akaHarness) acceptSubscription(st *sip.ServerTransaction) {
+	expires, err := sip.SubscribeExpires(st.Request, time.Hour)
+	if err != nil {
+		h.t.Errorf("SubscribeExpires: %v", err)
+		return
+	}
+	ok, sub, err := sip.AcceptSubscription(st.Request, expires, "sip:scscf."+domain+":5060", time.Now())
+	if err != nil {
+		h.t.Errorf("AcceptSubscription: %v", err)
+		return
+	}
+	st.Respond(ok)
+	select {
+	case h.subscriptions <- &sub:
+	default:
+	}
 }
 
 // register sends a REGISTER of the UE, from its protected server port
@@ -136,7 +168,7 @@ func (h *akaHarness) register(protected bool, response, expires string, extra ..
 	m.Add("To", "<"+impu+">")
 	m.Add("Call-ID", "call-1")
 	m.Add("CSeq", "1 REGISTER")
-	m.Add("Contact", "<sip:ue@"+h.ueProtected.LocalAddr().String()+">;expires="+expires)
+	m.Add("Contact", "<"+h.contact+">;expires="+expires)
 	m.Add("Supported", "path")
 	m.Add("Require", sip.OptionSecAgree)
 	m.Add("Proxy-Require", sip.OptionSecAgree)

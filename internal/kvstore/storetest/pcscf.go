@@ -37,6 +37,7 @@ func PCSCF(t *testing.T, newPair func(t *testing.T) (pcscf.Store, pcscf.Store)) 
 		{"EachRegEventExpiryHasAnIndexOfItsOwn", pcscfExpiryOfEachKind},
 		{"AWriteMovesTheRegEventExpiries", pcscfWriteMovesExpiries},
 		{"SecurityAssociationsUntilTheyExpire", pcscfSecurityAssociations},
+		{"DeleteOnlyTheSetOfSecurityAssociationsNamed", pcscfDeleteSecurityAssociationsOf},
 	})
 }
 
@@ -143,12 +144,19 @@ func deleteSecurityAssociations(t *testing.T, s pcscf.Store, ue netip.AddrPort) 
 	}
 }
 
+func deleteSecurityAssociationsOf(t *testing.T, s pcscf.Store, ue netip.AddrPort, spis pcscf.SPIs) {
+	t.Helper()
+	if err := s.DeleteSecurityAssociationsOf(context.Background(), ue, spis); err != nil {
+		t.Errorf("DeleteSecurityAssociationsOf(%s, %+v): %v", ue, spis, err)
+	}
+}
+
 var ueSource = sip.Destination{Transport: sip.UDP, Addr: netip.MustParseAddrPort("192.0.2.10:5060")}
 
 func association() pcscf.Association {
 	expires := time.Now().Add(time.Hour).Round(time.Millisecond)
 	return pcscf.Association{
-		Source: ueSource, Contact: "sip:ue1@192.0.2.10:5060;transport=udp", SentBy: "192.0.2.10:5060",
+		Source: ueSource, Contact: "sip:ue1@192.0.2.10:5060;transport=udp", SPIs: pcscf.SPIs{PC: 3333, PS: 4444}, SentBy: "192.0.2.10:5060",
 		PrivateIdentity: impi, PublicIdentities: []string{impu, tel},
 		ServiceRoute: []string{"<sip:orig@scscf.ims.mnc001.mcc001.3gppnetwork.org;lr>"},
 		Expires:      expires, KeepUntil: expires.Add(time.Minute), SignallingSession: "pcscf;1;sig",
@@ -849,4 +857,27 @@ func pcscfSecurityAssociations(t *testing.T, a, b pcscf.Store) {
 	if _, ok := securityAssociations(t, b, ue); ok {
 		t.Error("SecurityAssociations after DeleteSecurityAssociations")
 	}
+}
+
+// pcscfDeleteSecurityAssociationsOf: the entry of a UE goes only for
+// the SPIs of the set it holds. A later authentication from the same
+// address and port puts a set with other SPIs in its place, which the
+// end of the earlier registration leaves alone.
+func pcscfDeleteSecurityAssociationsOf(t *testing.T, a, b pcscf.Store) {
+	ue := netip.MustParseAddrPort("192.0.2.10:5062")
+	earlier := pcscf.SecurityAssociations{UE: ue, PrivateIdentity: impi, Expires: time.Now().Add(time.Hour),
+		PCSCFMechanism: ims.IPsec3GPP{Transform: ims.Transform{Algorithm: "hmac-sha-1-96"}, SPIC: 3333, SPIS: 4444, PortC: 5065, PortS: 5064}}
+	later := earlier
+	later.PCSCFMechanism.SPIC, later.PCSCFMechanism.SPIS = 5555, 6666
+	putSecurityAssociations(t, a, later)
+	deleteSecurityAssociationsOf(t, b, ue, earlier.SPIs())
+	if got, ok := securityAssociations(t, a, ue); !ok || got.SPIs() != later.SPIs() {
+		t.Fatalf("after the removal of the earlier set the entry is %+v, %v; want the later set", got, ok)
+	}
+	deleteSecurityAssociationsOf(t, b, ue, later.SPIs())
+	if _, ok := securityAssociations(t, a, ue); ok {
+		t.Error("SecurityAssociations after the removal of the set they held")
+	}
+	// No entry is left to remove.
+	deleteSecurityAssociationsOf(t, b, ue, later.SPIs())
 }
