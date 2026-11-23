@@ -626,10 +626,21 @@ Prometheus と Grafana は別のコンテナとして動かすだけで、`ims` 
 - histogram の種類。「Histograms and summaries」は、使えるなら native histogram を使うよう勧めています。ただし、今の native histogram は protobuf の形式でしか出せず、テキストの形式での対応は OpenMetrics v2 で進んでいる、とあります。`internal/metrics` はテキストの形式だけを出すので、classic histogram になります。Prometheus の側で、classic histogram を NHCB（決まった境界の native histogram）として取り込む設定もできる、とあります。
 - Prometheus がノードに付けるラベルは `node` にします。ノードが自分の指標に `role` を付けるので、同じ名前を対象のラベルに使うと、ノードの側のラベルが `exported_role` に名前を変えられてしまうためです（`deploy/observability/prometheus/prometheus.yml`）。
 
+#### 役割をつないで決めたこと
+
+- P-CSCF と S-CSCF は、同じ登録の手順をそれぞれ数えます。どちらも自分の `role` の値で数えるので、1 つの系列に 2 回数えることはありません。役割をまたいで足すと 1 つの手順が 2 回になるので、式は `role` で分けます。ダッシュボードの登録の式は `sum by (role, type)` か `role="scscf"` の形で、この決まりに合っています。
+- 複数の役割が数える測定の定義は、`internal/ims/measurements.go` に置きます。`role` の値の集合は、TS 32.409 がその測定を数えるとしている機能です。1 つのノードが P-CSCF と S-CSCF の両方を持つと、2 つの役割が同じ名前を登録します。`metrics.Registry` は、種類、HELP、ラベル、値の集合、histogram の境界が同じ定義なら、先に登録した指標を返します。違う定義なら、これまでどおり誤りにします。
+- P-CSCF は、401 で止まった登録の手順を、その 401 の nonce をキーにして、台のプロセスの中に持ちます。その nonce を書いた REGISTER が来るか、S-CSCF が待つ時間（reg-await-auth）が過ぎるまでです。UE は、401 を送った P-CSCF に答えの REGISTER を送るので、トランザクションと同じく台の中に置きます。その間に台が起動し直すと、答えの REGISTER を新しい手順として数えます。UE が 401 のあとで手順をやめると、S-CSCF と同じく、その手順は試行にだけ数え、成功にも失敗にも数えません。
+- TS 32.409 4.1.1.1.4 は、P-CSCF が UE から REGISTER を受けてから、それに対応する初期登録の 200 OK までの時間を測るとしています。図 1 は REGISTER と 200 OK を 1 往復だけ描いています。この作りでは、401 を挟む手順の最初の REGISTER から 200 OK までを測ります。試行を手順で数えるので、それに合わせました。本文からの解釈です。
+- P-CSCF のセッションの測定は、ダッシュボードが使う試行、応答、失敗、応答済みのセッションの数だけを作りました。成功（4.1.2.2）、確立の時間（4.1.2.6）、呼び出し中の解放（4.1.2.19、4.1.2.20）、通話の累積時間（4.1.2.13、4.1.2.14）は作っていません。
+- P-CSCF は、切れたセッション（4.1.2.8）を数えません。4.1.2.8 が数えるのは期限切れで消したセッションで、P-CSCF はセッションを期限切れで消さないからです（`internal/pcscf/dialog.go` の `SIMPLIFIED:`）。
+- `ims_answered_sessions` は、2xx でダイアログを確立した台が 1 増やし、終わったダイアログを保存先から取り出した台が 1 減らします。2 つが別の台になると、台ごとの値は負になることがありますが、`sum by (role)` は網の中の数になります。P-CSCF を通る BYE なしに終わったダイアログは保存先に残るので（`internal/pcscf/dialog.go` の `SIMPLIFIED:`）、数えた台の値は、その台が起動し直すまで 1 つ多いままです。
+- de-registration で登録の無い利用者への 481 を `status` の集合に足すかは、まだ決めていません。P-CSCF も、S-CSCF から受けた 481 を `other` に数えます。
+
 #### `deploy/observability/` に置いたもの
 
 - `compose.observability.yaml`。`docker compose -f compose.yaml -f deploy/observability/compose.observability.yaml up -d` で、Prometheus（`prom/prometheus:v3.15.1`）と Grafana（`grafana/grafana:13.3.0`）を足します。`compose.yaml` は変えません。既定では起動しない（13 章の「採った選択」の 6）という方針を、profile ではなく別のファイルで満たしています。
-- `prometheus/prometheus.yml`。ノードは `<サービス名>:8085` の `/metrics` で指標を出すと仮に決めています。ポートは仮の値で、13 章の未決の論点の 3 で決める番号です。今は S-CSCF だけがこの番号で指標を出すので、ほかのノードは down に見えます。
+- `prometheus/prometheus.yml`。ノードは `<サービス名>:8085` の `/metrics` で指標を出すと仮に決めています。ポートは仮の値で、13 章の未決の論点の 3 で決める番号です。今は P-CSCF と S-CSCF だけがこの番号で指標を出すので、ほかのノードは down に見えます。
 - Grafana のデータソースとダッシュボード 1 枚の案。ノードの稼働、登録（TS 32.454 5.1.1 の成功率を含む）、セッションと原因ごとの失敗、Diameter の結果を並べます。
 - ライセンスは、Prometheus が Apache-2.0、Grafana が AGPL-3.0-only（一部のディレクトリは Apache-2.0）です。それぞれのリポジトリのタグにある `LICENSE` と、Grafana の `LICENSING.md` で確かめました。Grafana の扱いは 13 章の「採った選択」の 8 に書きました。
 - 版。Docker Hub に `prom/prometheus:v3.15.1`（2026 年 10 月 21 日に push）と `grafana/grafana:13.3.0`（2026 年 10 月 27 日に push）があることを確かめました。prometheus.io の「Download」のページでは、今の最新は 3.16.0、LTS は 3.13.5 です。固定した 3.15.1 は誤りではないので、変えていません。LTS に合わせるかは、作るときに決めます。
@@ -970,7 +981,7 @@ OAM とその画面、指標、警報は、ほかの部分に次のものを求�
 - 保守用の待ち受け（3 章）で `GET /metrics` に `metrics.NewHandler` を載せます。ポートが決まったら、`deploy/observability/prometheus/prometheus.yml` の targets と、`deploy/observability/observability_test.go` の `metricsPort` を同じ番号に直します（今は仮に 8085）。
 - 各役割で、5 章の「役割ごとの指標の案」の指標を登録して数えます。`metrics.Registry` はノードごとに 1 つ作り、役割の部品に渡します。
 
-このうち、`slog.LevelVar` を使うログ、保守用の待ち受けの `GET /metrics`、ノードごとに 1 つの `metrics.Registry` はできました。指標を数える役割は、今は S-CSCF（登録の試行、成功、失敗）と IBCF です。
+このうち、`slog.LevelVar` を使うログ、保守用の待ち受けの `GET /metrics`、ノードごとに 1 つの `metrics.Registry` はできました。指標を数える役割は、今は P-CSCF（登録の試行、成功、失敗、最初の登録の時間、セッションの試行、応答、失敗、応答済みのセッションの数）、S-CSCF（登録の試行、成功、失敗）と IBCF です。
 
 ### `internal/oam` のために要る HSS の口
 
