@@ -868,19 +868,25 @@ func served(u Subscriber) bool { return u.State != NotRegistered && u.SCSCF.Orig
 // one away (TS 29.228 6.5.2.1), or by a new MSISDN in the service
 // information of a criterion.
 //
-// SIMPLIFIED: TS 29.228 6.5.2.1. A change of the default public identity
-// of a set whose user is registered or unregistered, for which 6.5.2.1
-// asks for an RTR rather than a PPR, sends neither: the S-CSCF gets the
-// new default identity, and the rest of the changed profile, at the next
-// registration.
+// TS 29.228 6.5.2.1 keeps one change out of the PPR: a new default
+// public identity of a set in the Registered state, which is the first
+// identity of the set that is not barred (6.5.1.1). Barring the first
+// identity, or lifting the barring of one before it, is such a change
+// too.
+//
+// SIMPLIFIED: TS 29.228 6.5.2.1. For a new default public identity of a
+// registered user, the HSS sends no RTR to deregister the set, where the
+// specification asks for one; it sends nothing. The S-CSCF gets the new
+// default identity, with the rest of the changed profile, at the next
+// registration or with the next PPR.
 func (h *HSS) profileChanged(stored, next Subscriber) bool {
 	if !served(stored) {
 		return false
 	}
 	before, after := h.userProfile(stored), h.userProfile(next)
-	if before.DefaultIdentity() != after.DefaultIdentity() {
-		h.log.Warn("default public identity changed: the profile reaches the S-CSCF at the next registration",
-			"private_identity", stored.PrivateIdentity)
+	if stored.State == Registered && before.DefaultIdentity() != after.DefaultIdentity() {
+		h.log.Info("not pushed: a new default public identity of a registered user",
+			"private_identity", stored.PrivateIdentity, "default_identity", after.DefaultIdentity())
 		return false
 	}
 	return !bytes.Equal(before.Marshal(), after.Marshal())

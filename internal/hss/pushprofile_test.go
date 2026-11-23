@@ -105,6 +105,11 @@ func TestChangingTheProfileOfAServedUserPushesIt(t *testing.T) {
 		// 6.6.1: the unregistered state is one in which an S-CSCF keeps
 		// the profile, so a change there is pushed too.
 		{"a user in the unregistered state", "default", cx.UnregisteredUser, "PATCH", "/subscriptions/" + impi, `{"service_profile": "trial"}`},
+		// 6.5.2.1 keeps a new default identity out of the PPR only for a
+		// set in the Registered state.
+		{"a new default identity in the unregistered state", "default", cx.UnregisteredUser, "PUT", "/subscriptions/" + impi,
+			`{"private_identity": "` + impi + `", "public_identities": ["` + impu + `", "tel:+12025550101"], "barred_identities": ["` + impu +
+				`"], "password": "test-password-1", "service_profile": "trial"}`},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -148,6 +153,11 @@ func TestProvisioningThatPushesNothing(t *testing.T) {
 		// asks for an RTR (TS 29.228 6.5.2.1), which is not sent.
 		{"a PUT that moves the default identity", "default", true, "PUT", "/subscriptions/" + impi, `{"private_identity": "` + impi +
 			`", "public_identities": ["tel:+12025550101", "` + impu + `"], "password": "test-password-1"}`},
+		// Barring the first identity makes the second one the default
+		// (TS 29.228 6.5.1.1), even with a new service profile beside it.
+		{"a PUT that bars the default identity", "default", true, "PUT", "/subscriptions/" + impi, `{"private_identity": "` + impi +
+			`", "public_identities": ["` + impu + `", "tel:+12025550101"], "barred_identities": ["` + impu +
+			`"], "password": "test-password-1", "service_profile": "trial"}`},
 		{"a dry run", "default", true, "PUT", "/subscriptions/" + impi + "?dry_run=true", `{"private_identity": "` + impi +
 			`", "public_identities": ["` + impu + `", "tel:+12025550101"], "password": "test-password-1", "service_profile": "trial"}`},
 	}
