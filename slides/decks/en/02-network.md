@@ -197,7 +197,7 @@ ims-practice study session 2 (the nodes, the reference points between them, and 
 | ENUM, the media relay, both sides of one call | session 5, the call |
 | ISC and Sh, the IP-SM-GW | session 6, SMS |
 | Ut and the MMTel AS | session 7, the supplementary services |
-| Rx, the EPC stub, IMS AKA | session 8, VoLTE |
+| Rx, the EPC stub, IMS AKA | session 9, VoLTE |
 | Mr', Mp and the MRF | the guide [Announcements, alerting tones and conferences with the MRF](../../../docs/guide/en/mrf.md) |
 | Mx, Ici, Izi and the border | the guide [Connect two IMS networks](../../../docs/guide/en/interconnect.md) |
 | HEP and the Lab | session 3, captures and the Lab |

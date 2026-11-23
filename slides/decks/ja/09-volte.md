@@ -1,12 +1,12 @@
 ---
 title: VoLTE の呼の流れ
-footer: ims-practice 勉強会 8. VoLTE
+footer: ims-practice 勉強会 9. VoLTE
 lang: ja
 ---
 
 # VoLTE の呼の流れ
 
-ims-practice 勉強会 第 8 回（アクセス網、IMS-AKA、Rx でのポリシー制御、VoLTE の通話）
+ims-practice 勉強会 第 9 回（アクセス網、IMS-AKA、Rx でのポリシー制御、VoLTE の通話）
 
 ---
 
