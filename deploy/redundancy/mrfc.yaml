@@ -29,6 +29,15 @@ mrfc:
 # is down; the Lab is not on the call path.
 hep:
   collector: 172.28.0.60:9060
+# The maintenance listener: the maintenance API under /maintenance/v1/,
+# through which an operator takes the MRFC out of service, and /metrics
+# for Prometheus to scrape. The MRFC counts no measurement of its own,
+# so that page is empty, and the target shows as up. No specification
+# gives a port for the listener; 8085 is this project's choice. The API
+# asks for no password, so the port is not published outside the network
+# of the IMS nodes.
+maintenance:
+  listen: 0.0.0.0:8085
 
 # The MRFC keeps in the shared store which MRFP and which context hold
 # the mix of each conference, so that a party who reaches any instance
