@@ -284,7 +284,15 @@ expect "PPA DIAMETER_SUCCESS" "$ppr && $ans && ip.src == $scscf && diameter.Resu
 # The profile that arrived has no criteria, so the S-CSCF calls no
 # application server for UE 3 any more: the deregistration below sends no
 # third-party REGISTER to the IP-SM-GW, which the registration did.
-none "third-party REGISTER for UE 3 after the push" "frame.number > $pushed && $register && ip.dst == $ipsmgw && sip.To contains \"+12025550103\""
+third_party="$register && ip.dst == $ipsmgw && sip.To contains \"+12025550103\""
+n="$(count "frame.number < $pushed && $third_party")" || exit 2
+if [ "$n" -ge 1 ]; then
+	echo "ok   third-party REGISTER for UE 3 before the push: $n"
+else
+	echo "FAIL third-party REGISTER for UE 3 before the push: none, want the one of its registration"
+	fail=1
+fi
+none "third-party REGISTER for UE 3 after the push" "frame.number > $pushed && $third_party"
 
 echo "deregistration by the HSS"
 # TS 29.228 6.1.3.1: the private identity goes with all of its public
