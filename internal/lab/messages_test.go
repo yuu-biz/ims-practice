@@ -169,7 +169,11 @@ func TestDiameterSummary(t *testing.T) {
 		{`{"command":"Capabilities-Exchange","code":257,"application_id":0,"request":true,"avps":[]}`, "CER"},
 		{`{"command":"Device-Watchdog","code":280,"application_id":0,"request":false,"avps":[{"name":"Result-Code","code":268,"vendor":0,"value":2001}]}`, "DWA 2001"},
 		{`{"command":"Disconnect-Peer","code":282,"application_id":0,"request":true,"avps":[]}`, "DPR"},
-		{`{"command":"Push-Profile","code":305,"application_id":16777216,"request":false,"avps":[]}`, "Push-Profile Answer"},
+		{`{"command":"Push-Profile","code":305,"application_id":16777216,"request":true,"avps":[]}`, "PPR"},
+		{`{"command":"Push-Profile","code":305,"application_id":16777216,"request":false,"avps":[{"name":"Result-Code","code":268,"vendor":0,"value":2001}]}`, "PPA 2001"},
+		// A command of an Sh procedure that this project does not use, so
+		// the dictionary has no short name for it.
+		{`{"command":"Subscribe-Notifications","code":308,"application_id":16777217,"request":false,"avps":[]}`, "Subscribe-Notifications Answer"},
 		{`{"command":"User-Data","code":306,"application_id":16777217,"request":true,"avps":[]}`, "UDR"},
 		{`{"command":"Profile-Update","code":307,"application_id":16777217,"request":false,"avps":[{"name":"Experimental-Result","code":297,"vendor":0,` +
 			`"avps":[{"name":"Vendor-Id","code":266,"vendor":0,"value":10415},{"name":"Experimental-Result-Code","code":298,"vendor":0,"value":5103}]}]}`,
@@ -209,6 +213,7 @@ func TestEveryCommandOfTheNodesHasRefs(t *testing.T) {
 		{diameter.ApplicationIDCx, cx.CommandLocationInfo},
 		{diameter.ApplicationIDCx, cx.CommandMultimediaAuth},
 		{diameter.ApplicationIDCx, cx.CommandRegistrationTermination},
+		{diameter.ApplicationIDCx, cx.CommandPushProfile},
 		{diameter.ApplicationIDSh, sh.CommandUserData},
 		{diameter.ApplicationIDSh, sh.CommandProfileUpdate},
 		{diameter.ApplicationIDRx, rx.CommandAA},

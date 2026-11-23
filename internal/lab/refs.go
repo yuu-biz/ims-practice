@@ -143,6 +143,15 @@ var diameterRefTable = refTable[string]{
 		{"TS 29.228", "6.1.3", "Network initiated de-registration by the HSS"},
 		{"TS 29.229", "6.1.10", "Registration-Termination-Answer"},
 	},
+	"PPR": {
+		{"TS 29.228", "6.2.2", "HSS initiated update of User Information"},
+		{"TS 29.228", "6.6.1", "HSS initiated update of User Profile"},
+		{"TS 29.229", "6.1.11", "Push-Profile-Request"},
+	},
+	"PPA": {
+		{"TS 29.228", "6.2.2", "HSS initiated update of User Information"},
+		{"TS 29.229", "6.1.12", "Push-Profile-Answer"},
+	},
 	// Sh follows TS 29.328 V20.0.0 and TS 29.329 V19.1.0, the editions
 	// that docs/guide/en/sms.md follows.
 	"UDR": {

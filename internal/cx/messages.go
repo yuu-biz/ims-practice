@@ -633,3 +633,71 @@ func ParseRegistrationTerminationAnswer(m *diam.Message) (RegistrationTerminatio
 	}
 	return RegistrationTerminationAnswer{Result: result}, nil
 }
+
+// PushProfileRequest is the PPR of TS 29.229 6.1.11. The HSS sends it to
+// bring the user information it keeps for a user to the S-CSCF that
+// serves that user, without waiting for the next registration (TS 29.228
+// 6.2.2). DestinationHost is required, as in an RTR: it is the
+// Origin-Host of the S-CSCF's earlier requests for the user (TS 29.229
+// 5.5, TS 29.228 Table 6.2.2.1, Routing Information).
+//
+// Of the information that a PPR may update, this one carries the user
+// profile: the HSS of this project pushes nothing else (hss.pushProfile).
+// Charging-Information, SIP-Auth-Data-Item and
+// Allowed-WAF-WWSF-Identities are each sent only when that information
+// changed (TS 29.228 Table 6.2.2.1), so they have no field here.
+type PushProfileRequest struct {
+	diameter.Header
+	UserName string // the private user identity
+	// UserData is the complete user profile of the implicit registration
+	// set, the XML of TS 29.228 Annex E. It is present when the profile
+	// changed, which is what this HSS pushes for (Table 6.2.2.1, 6.5.2.1).
+	UserData []byte
+}
+
+func (r PushProfileRequest) Message() *diam.Message {
+	m := diameter.NewRequest(diameter.ApplicationIDCx, CommandPushProfile)
+	begin(m, r.Header)
+	r.Header.AddDestinationHost(m)
+	r.Header.AddDestinationRealm(m)
+	m.NewAVP(avp.UserName, avp.Mbit, 0, datatype.UTF8String(r.UserName))
+	if len(r.UserData) > 0 {
+		m.AddAVP(diameter.VendorAVP(avpUserData, mv, datatype.OctetString(r.UserData)))
+	}
+	return m
+}
+
+func ParsePushProfileRequest(m *diam.Message) (PushProfileRequest, error) {
+	var raw struct {
+		diameter.Header
+		UserName string `avp:"User-Name"`
+		UserData []byte `avp:"User-Data,omitempty"`
+	}
+	if err := m.Unmarshal(&raw); err != nil {
+		return PushProfileRequest{}, fmt.Errorf("PPR: %w", err)
+	}
+	return PushProfileRequest{Header: raw.Header, UserName: raw.UserName, UserData: raw.UserData}, nil
+}
+
+// PushProfileAnswer is the PPA of TS 29.229 6.1.12. It carries the
+// result alone; TS 29.228 Table 6.2.2.1.1 lists the ones the S-CSCF may
+// return.
+type PushProfileAnswer struct {
+	Result diameter.Result
+}
+
+func (a PushProfileAnswer) Message(request *diam.Message, local diameter.Identity) *diam.Message {
+	return NewAnswer(request, local, a.Result)
+}
+
+func ParsePushProfileAnswer(m *diam.Message) (PushProfileAnswer, error) {
+	var raw struct{ diameter.ResultAVPs }
+	if err := m.Unmarshal(&raw); err != nil {
+		return PushProfileAnswer{}, fmt.Errorf("PPA: %w", err)
+	}
+	result, err := raw.Result()
+	if err != nil {
+		return PushProfileAnswer{}, fmt.Errorf("PPA: %w", err)
+	}
+	return PushProfileAnswer{Result: result}, nil
+}
