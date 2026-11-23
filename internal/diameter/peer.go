@@ -592,13 +592,17 @@ func logMessage(log *slog.Logger, direction string, m *diam.Message) {
 
 // Server accepts connections from peers. It is the responder side.
 type Server struct {
-	node     *Node
-	listener net.Listener
-	wg       sync.WaitGroup // the accept loop and connections still waiting for a CER
+	node *Node
+	// address is the address of the first listener, so that a server
+	// that stopped accepting comes back on the same port.
+	address string
+	wg      sync.WaitGroup // the accept loops and connections still waiting for a CER
 
-	mu     sync.Mutex
-	closed bool
-	peers  map[string]*Peer // by lower-case Origin-Host
+	mu sync.Mutex
+	// listener is nil while the server does not accept connections.
+	listener net.Listener
+	closed   bool
+	peers    map[string]*Peer // by lower-case Origin-Host
 }
 
 // Listen starts accepting connections on address, e.g. ":3868" (RFC
@@ -608,20 +612,95 @@ func (n *Node) Listen(address string) (*Server, error) {
 	if err != nil {
 		return nil, err
 	}
-	s := &Server{node: n, listener: ln, peers: map[string]*Peer{}}
-	n.log.Info("listening", "address", ln.Addr().String())
+	s := &Server{node: n, address: ln.Addr().String(), listener: ln, peers: map[string]*Peer{}}
+	n.log.Info("listening", "address", s.address)
 	s.wg.Add(1)
-	go s.accept()
+	go s.accept(ln)
 	return s, nil
 }
 
-// Addr is the address the server listens on.
-func (s *Server) Addr() string { return s.listener.Addr().String() }
+// Addr is the address the server listens on, and the one it comes back
+// on after it has stopped accepting.
+func (s *Server) Addr() string { return s.address }
 
-func (s *Server) accept() {
+// SetAccepting says whether the server takes new connections from
+// peers. A server that does not accept has no listening socket at all,
+// so a peer that connects is refused by the transport and, if it is an
+// initiator, gives that attempt up and makes another after Tc (RFC 6733
+// 2.1; I-Rcv-Conn-Nack in Wait-Conn-Ack, 5.6). It is how a node that an
+// operator has taken out of service turns peers away.
+//
+// Holding no socket departs from RFC 6733 2.1, which requires a node to
+// be ready for connections on port 3868 at all times (a MUST). It is
+// chosen because it is what the peer of such a node is already told to
+// expect: the node leaves with a DPR whose Disconnect-Cause is
+// REBOOTING, which says the node is about to reboot and that the
+// receiver MAY connect again (5.4.3), and a node that is rebooting
+// holds no listening socket either. The refused connections and the
+// attempt every Tc are then what 2.1 has the peer do until the node is
+// back.
+//
+// The alternatives are worse. An error CEA has no Result-Code that says
+// a node is out of service: 5.3 gives DIAMETER_NO_COMMON_APPLICATION,
+// DIAMETER_NO_COMMON_SECURITY and DIAMETER_UNKNOWN_PEER, and none of
+// them is true of this node. Accepting the connection and answering
+// with another DPR repeats the CER, the CEA, the DPR and the DPA every
+// Tc for as long as the node is out of service.
+//
+// The connections the server already has are untouched; DisconnectPeers
+// ends those. Accepting again binds the address of Listen once more,
+// and fails when something else holds it by then. A server that Stop
+// has closed accepts nothing again.
+func (s *Server) SetAccepting(accepting bool) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.closed || accepting == (s.listener != nil) {
+		return nil
+	}
+	if !accepting {
+		// The accept loop ends on net.ErrClosed; the connections it has
+		// handed on stay open.
+		s.listener.Close()
+		s.listener = nil
+		s.node.log.Info("stopped accepting connections", "address", s.address)
+		return nil
+	}
+	ln, err := net.Listen("tcp", s.address)
+	if err != nil {
+		return err
+	}
+	s.listener = ln
+	s.node.log.Info("listening", "address", s.address)
+	s.wg.Add(1)
+	go s.accept(ln)
+	return nil
+}
+
+// DisconnectPeers sends every peer of the server a DPR with
+// Disconnect-Cause REBOOTING and closes the connection once the DPA
+// comes back, or once the Answer timer has passed (RFC 6733 5.4).
+// REBOOTING is the cause that lets the peer connect again (5.4.3),
+// which an initiator does after Tc (2.1). It returns once the last
+// connection is closed.
+//
+// It goes through the peers the server holds when it is called. The
+// server goes on accepting unless SetAccepting says otherwise, so a
+// node that disconnects its peers without stopping first takes them
+// back as soon as they come.
+func (s *Server) DisconnectPeers() {
+	s.mu.Lock()
+	peers := make([]*Peer, 0, len(s.peers))
+	for _, p := range s.peers {
+		peers = append(peers, p)
+	}
+	s.mu.Unlock()
+	StopAll(peers)
+}
+
+func (s *Server) accept(ln net.Listener) {
 	defer s.wg.Done()
 	for {
-		conn, err := s.listener.Accept()
+		conn, err := ln.Accept()
 		if errors.Is(err, net.ErrClosed) {
 			return
 		}
@@ -665,6 +744,15 @@ func (s *Server) handshake(conn net.Conn) {
 		conn.Close()
 		return
 	}
+	if s.listener == nil {
+		// The connection was accepted while the server still listened and
+		// its CER arrived after that. Answering with a CEA would leave a
+		// node that is out of service holding a peer that DisconnectPeers
+		// has already been through, and that no DPR reaches.
+		log.Info("closed connection whose CER arrived after the server stopped accepting", "peer", cer.OriginHost)
+		conn.Close()
+		return
+	}
 	key := strings.ToLower(cer.OriginHost)
 	if _, exists := s.peers[key]; exists {
 		// R-Reject of RFC 6733 5.6: this peer already has a connection.
@@ -682,18 +770,18 @@ func (s *Server) handshake(conn net.Conn) {
 	}()
 }
 
-// Stop closes the listener and stops every peer, each with a DPR.
+// Stop closes the listener for good and stops every peer, each with a
+// DPR.
 func (s *Server) Stop() {
 	s.mu.Lock()
 	s.closed = true
-	s.listener.Close()
-	peers := make([]*Peer, 0, len(s.peers))
-	for _, p := range s.peers {
-		peers = append(peers, p)
+	if s.listener != nil {
+		s.listener.Close()
+		s.listener = nil
 	}
 	s.mu.Unlock()
 	s.wg.Wait()
-	StopAll(peers)
+	s.DisconnectPeers()
 }
 
 // StopAll stops peers in parallel, so that their DPR/DPA exchanges
