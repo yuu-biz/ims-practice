@@ -7,15 +7,25 @@ RUN npm ci --no-fund --no-audit
 COPY web/lab/ ./
 RUN npm run build
 
+# The OAM screen (web/oam), built the same way. It is a frontend of its
+# own, so it has its own stage and its own dependencies.
+FROM node:26.13.1-alpine AS web-oam
+WORKDIR /web
+COPY web/oam/package.json web/oam/package-lock.json ./
+RUN npm ci --no-fund --no-audit
+COPY web/oam/ ./
+RUN npm run build
+
 FROM golang:1.27.4-alpine AS build
 WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
-# Replace the committed placeholder page with the built UI before
-# go:embed picks it up.
-RUN rm -rf internal/lab/web
+# Replace the committed placeholder pages with the built UIs before
+# go:embed picks them up.
+RUN rm -rf internal/lab/web internal/oam/web
 COPY --from=web /web/dist/ internal/lab/web/
+COPY --from=web-oam /web/dist/ internal/oam/web/
 RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/ ./cmd/ims ./cmd/ue
 
 # Alpine rather than scratch, so that learners have a shell inside the
