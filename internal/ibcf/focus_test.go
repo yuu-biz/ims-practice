@@ -14,6 +14,7 @@ import (
 	"github.com/yuu-biz/ims-practice/internal/sdp"
 	"github.com/yuu-biz/ims-practice/internal/sh"
 	"github.com/yuu-biz/ims-practice/internal/sip"
+	"github.com/yuu-biz/ims-practice/internal/ue"
 )
 
 // The conference event package (RFC 4575 3.1) and its document type.
@@ -362,20 +363,124 @@ func TestConferenceStateAcrossTheBorder(t *testing.T) {
 	assertHidden(t, p.a, planB)
 }
 
+// The three-way session of GSMA IR.92 2.3.3 with a user of the other
+// network: network A's UE has a call with network B's UE, creates a
+// conference, and refers the focus to network B's UE with a Replaces of
+// that call (TS 24.147 5.3.1.5.3). The focus, the conference AS of this
+// project, invites network B's UE with the Replaces (5.3.2.5.4), which
+// names the call as the IBCF of network A has it. The INVITE leaves
+// through the second instance of IBCF-A, which holds nothing of the
+// call. Each IBCF names the dialog of its other side (TS 24.229
+// 5.10.5), so network B's UE finds its own call, takes the focus's call
+// in its place and ends the old one (RFC 3891 3).
+//
+// The fake S-CSCF of network A has no ENUM, so the Refer-To is a SIP URI
+// of network B's domain without user=phone, which the focus invites as
+// it is and the S-CSCF routes by its host.
+func TestConferenceMergesAUserOfTheOtherNetwork(t *testing.T) {
+	p := newPair(t, nil)
+	focus := startFocus(t, p.a)
+	peer := "sip:" + numberB + "@" + domainB
+
+	first := p.a.invite(t, peer, p.a.offer(t, sdp.VoLTECodecs(), 1, ""), nil)
+	old := p.b.nextCall(t)
+	old.Handle(p.b.answerInDialog(nil))
+	go old.Accept(p.b.answer(t, old.Request))
+	if resp := final(t, first); resp.StatusCode != 200 {
+		t.Fatalf("the call to network B's UE got %d", resp.StatusCode)
+	}
+	p.a.awaitDialogs(t, 0)
+	p.b.awaitDialogs(t, 0)
+	p.a.use(1)
+
+	factory := ims.ConferenceFactoryURI(domainA)
+	served := sip.PServedUser{URI: p.a.sipURI(), SessionCase: sip.SessionCaseOrig, RegState: sip.RegStateRegistered}
+	creator, err := p.a.ue.Invite(sip.Invitation{
+		RequestURI: factory, From: p.a.sipURI(), To: factory,
+		Route: []string{"<sip:" + focus.String() + ";lr>", p.a.ueRoute},
+		Headers: []sip.HeaderField{
+			{Name: "P-Served-User", Value: served.String()},
+			{Name: "P-Asserted-Identity", Value: "<" + p.a.sipURI() + ">"},
+			{Name: "P-Charging-Vector", Value: "icid-value=" + sip.NewCallID() + ";orig-ioi=" + domainA},
+		},
+		Body:      p.a.offer(t, sdp.VoLTECodecs(), 1, ""),
+		OnRequest: p.a.answerInDialog(nil),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp := final(t, creator); resp.StatusCode != 200 {
+		t.Fatalf("the INVITE to the conference factory URI got %d", resp.StatusCode)
+	}
+
+	call, _ := first.Dialog()
+	replaces := replacesOf(call)
+	referral, err := creator.Refer(sip.ReferTo{URI: peer, Replaces: &replaces},
+		sip.HeaderField{Name: "Referred-By", Value: "<" + p.a.sipURI() + ">"})
+	if err != nil || referral.Response.StatusCode >= 300 {
+		t.Fatalf("REFER to the focus: %v %v", referral, err)
+	}
+	joined := p.b.nextCall(t)
+	joined.Handle(p.b.answerInDialog(nil))
+	if _, fromFocus := ue.FocusOf(joined.Request); !fromFocus {
+		t.Errorf("network B's UE got an INVITE with Contact %q, want the conference URI with isfocus", joined.Request.Get("Contact"))
+	}
+	replaced, refusal := joined.ReplacedDialog()
+	if refusal != 0 {
+		t.Fatalf("network B's UE refused the focus's INVITE with %d: Replaces %q", refusal, joined.Request.Get("Replaces"))
+	}
+	if got, _ := replaced.Dialog(); got.ID.CallID != old.Request.Get("Call-ID") {
+		t.Fatalf("the Replaces names the dialog %+v, want the call with network A's UE", got.ID)
+	}
+	go joined.Accept(p.b.answer(t, joined.Request))
+	status := 0
+	for s := range referral.Statuses() {
+		status = s.StatusCode
+	}
+	if status != 200 {
+		t.Fatalf("the last NOTIFY of the REFER says %d (%v), want 200: the user joined", status, referral.Err())
+	}
+	if got := p.a.rec.requests("ibcf2-internal", sip.INVITE); len(got) != 1 || got[0].Get("Replaces") == "" {
+		t.Errorf("IBCF-A's second instance got the INVITEs %v, want the focus's with Replaces", got)
+	}
+
+	if err := replaced.Bye(); err != nil {
+		t.Fatalf("BYE in the replaced call: %v", err)
+	}
+	waitDone(t, "network A's UE's call with network B's UE", first.Done())
+	if err := creator.Bye(); err != nil {
+		t.Fatalf("BYE of the creator: %v", err)
+	}
+	waitDone(t, "network B's UE's leg of the conference, which the focus ends", joined.Done())
+	p.waitReleased(t)
+	assertHidden(t, p.b, planA)
+	assertHidden(t, p.a, planB)
+}
+
 // conferenceDomain is the subdomain of the conference URIs of the
 // focus in the network of domain.
 func conferenceDomain(domain string) string { return "conf." + domain }
 
 // startFocus starts the conference AS of this project inside network n,
 // where DNS leads the subdomain of its conference URIs, with a stand-in
-// for its MRFC that answers each INVITE as n's UE would. It returns the
-// address of the AS.
+// for its MRFC that answers each INVITE as n's UE would, and offers in
+// its 200 when the INVITE has no offer, as the MRFC does for a user that
+// the focus invites (RFC 4240 5). It returns the address of the AS.
 func startFocus(t *testing.T, n *network) netip.AddrPort {
 	t.Helper()
 	mrfcTL, _ := listen(t, n.plan.internal+".41", 0, "mrfc", n.rec)
+	termination, err := sdp.AudioOffer("4240", netip.AddrPortFrom(mrfcTL.LocalAddr().Addr(), 42000), sdp.VoLTECodecs())
+	if err != nil {
+		t.Fatal(err)
+	}
+	offer := sip.Body{Type: "application/sdp", Content: termination.Bytes()}
 	mrfc, err := sip.NewUA(mrfcTL, sip.UAConfig{
 		SentBy: mrfcTL.LocalAddr().String(), Contact: "sip:mrfc@" + mrfcTL.LocalAddr().String(), Timers: testTimers,
 		OnCall: func(c *sip.IncomingCall) {
+			if len(c.Request.Body) == 0 {
+				c.Accept(offer)
+				return
+			}
 			answer, err := answerTo(n, c.Request)
 			if err != nil {
 				c.Reject(488)
