@@ -51,7 +51,7 @@ func main() {
 		for _, d := range all {
 			fmt.Println(summary(d))
 		}
-		fmt.Printf("%d decks: every slide parses, fits, links to what exists and names commands that the repository takes\n", len(all))
+		fmt.Printf("%d decks: every slide parses, fits, links to what exists, names commands that the repository takes, and gives the nodes the addresses of the Compose files\n", len(all))
 		return
 	}
 	for _, d := range all {

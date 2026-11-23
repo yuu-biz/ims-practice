@@ -9,6 +9,7 @@ on:
       - docs/guide/**
       - go.mod
       - compose.yaml
+      - deploy/interconnect/compose.yaml
       - cmd/ue/**
       - internal/lab/**
       - scripts/**
@@ -19,6 +20,7 @@ on:
       - docs/guide/**
       - go.mod
       - compose.yaml
+      - deploy/interconnect/compose.yaml
       - cmd/ue/**
       - internal/lab/**
       - scripts/**

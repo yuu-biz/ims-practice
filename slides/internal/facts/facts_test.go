@@ -69,6 +69,49 @@ func TestStaleCommandsFail(t *testing.T) {
 	}
 }
 
+// TestStaleTablesFail checks the tables of a deck against the Compose
+// files of the repository: a table of nodes in either language, with
+// rows that name an address, a subnet or a service that the files do
+// not have, and a table that is not one of nodes.
+func TestStaleTablesFail(t *testing.T) {
+	d := parse(t, "| Node | Address | What it does here |\n"+
+		"| --- | --- | --- |\n"+
+		"| MRFP | 172.28.0.86 | The media side of the MRF. |\n"+
+		"| MRFP | 172.28.0.87 | No service has that address. |\n"+
+		"| `mrfc` | 172.28.0.86 | The row names the other node of the MRF. |\n"+
+		"| `mrfp` | 172.28.0.86 | The row names its own service. |\n"+
+		"| `ipsmgw`, `mmtel` | 172.28.0.70, 75 | Two services, two addresses. |\n"+
+		"| UE | 172.28.0.100, 101, 199 | The third address is no one's. |\n"+
+		"| The link | 172.28.9.0/24 | No network of the two files has it. |\n"+
+		"| P-CSCF | 172.28.0.40 | Port 5060, and the protected server port 5064. |\n\n"+
+		"| ノード | アドレス | 役割 |\n"+
+		"| --- | --- | --- |\n"+
+		"| `phone1`、`phone2` | 172.28.0.110、.199 | 2 つ目のアドレスはどのサービスのものでもありません。 |\n\n"+
+		"| Filter | What it shows |\n"+
+		"| --- | --- |\n"+
+		"| `ip.addr == 172.28.0.86` | The MRFP, in both directions. |\n"+
+		"| `ip.addr == 172.28.0.87` | No service has that address. |\n"+
+		"| TS 24.229 5.4.1.2, 5.4.1.7 | A clause is not an address. |\n"+
+		"| `rtp && ip.addr == 172.28.2.0/24` | The link between the networks. |\n")
+	var got []string
+	for _, p := range NewRepository(repositoryRoot).Check(d) {
+		got = append(got, strings.TrimPrefix(p.Error(), "stale.md: slide 2: "))
+	}
+	const files = "compose.yaml and deploy/interconnect/compose.yaml"
+	want := []string{
+		"172.28.0.87 is the address of no service of " + files,
+		"the row names mrfc; the services of its addresses are mrfp",
+		"172.28.0.199 is the address of no service of " + files,
+		"172.28.9.0/24 is the subnet of no network of " + files,
+		"172.28.0.199 is the address of no service of " + files,
+		"the row names phone1, phone2; the services of its addresses are phone1",
+		"172.28.0.87 is the address of no service of " + files,
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("problems:\n%s\nwant:\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
+	}
+}
+
 func TestShellWords(t *testing.T) {
 	got := splitCommands(shellWords(`A=1 ue sms "a \"b\"; c" 'd e'|grep x && ls # comment ; not a command`))
 	want := [][]string{{"A=1", "ue", "sms", `a "b"; c`, "d e"}, {"grep", "x"}, {"ls"}}

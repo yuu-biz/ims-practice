@@ -10,49 +10,73 @@ import (
 )
 
 // composeFile is what a deck may name of a Compose file: its services,
-// with the entrypoint of each, and its profiles.
+// with the entrypoint and the address of each, its profiles, and the
+// subnet of each of its networks.
 type composeFile struct {
 	entrypoints map[string]string
 	profiles    map[string]bool
+	addresses   map[string]string // the address of a service -> the service
+	subnets     map[string]string // the subnet of a network -> the network
 }
 
 var (
-	serviceLine    = regexp.MustCompile(`^  ([A-Za-z0-9][A-Za-z0-9_.-]*):\s*$`)
+	keyLine        = regexp.MustCompile(`^  ([A-Za-z0-9][A-Za-z0-9_.-]*):\s*$`)
 	entrypointLine = regexp.MustCompile(`^    entrypoint:\s*\[\s*"?([^",\]]+)`)
 	profilesLine   = regexp.MustCompile(`^\s+profiles:\s*\[([^\]]*)\]`)
+	addressLine    = regexp.MustCompile(`^\s+ipv4_address:\s*(\S+)`)
+	subnetLine     = regexp.MustCompile(`^\s+-\s*subnet:\s*(\S+)`)
 )
 
-// readCompose reads the services and the profiles of a Compose file
-// line by line: the keys two spaces deep under "services:", their
-// "entrypoint:", and every "profiles:" list. The Compose files of the
-// repository are written in that one layout. An entrypoint that a
-// service takes from an anchor (<<: *name) is not followed, so the
-// command of such a service is not checked.
+// readCompose reads a Compose file line by line: the keys two spaces
+// deep under "services:" and under "networks:", the "entrypoint:" and
+// every "ipv4_address:" of a service, the "subnet:" of a network, and
+// every "profiles:" list. The Compose files of the repository are
+// written in that one layout. An entrypoint that a service takes from
+// an anchor (<<: *name) is not followed, so the command of such a
+// service is not checked.
 func readCompose(path string) (*composeFile, error) {
 	text, err := os.ReadFile(path)
 	if err != nil {
 		return nil, err
 	}
-	f := &composeFile{entrypoints: map[string]string{}, profiles: map[string]bool{}}
-	inServices, service := false, ""
+	f := &composeFile{
+		entrypoints: map[string]string{},
+		profiles:    map[string]bool{},
+		addresses:   map[string]string{},
+		subnets:     map[string]string{},
+	}
+	inServices, inNetworks := false, false
+	service, network := "", ""
 	for _, line := range strings.Split(string(text), "\n") {
 		line = strings.TrimRight(line, "\r")
 		if line != "" && line[0] != ' ' && line[0] != '#' {
-			inServices, service = strings.HasPrefix(line, "services:"), ""
+			inServices = strings.HasPrefix(line, "services:")
+			inNetworks = strings.HasPrefix(line, "networks:")
+			service, network = "", ""
 		}
 		if m := profilesLine.FindStringSubmatch(line); m != nil {
 			for _, p := range strings.Split(m[1], ",") {
 				f.profiles[strings.Trim(strings.TrimSpace(p), `"'`)] = true
 			}
 		}
-		if !inServices {
-			continue
-		}
-		if m := serviceLine.FindStringSubmatch(line); m != nil {
-			service = m[1]
+		key := keyLine.FindStringSubmatch(line)
+		switch {
+		case inServices && key != nil:
+			service = key[1]
 			f.entrypoints[service] = ""
-		} else if m := entrypointLine.FindStringSubmatch(line); m != nil && service != "" {
-			f.entrypoints[service] = strings.TrimSpace(m[1])
+		case inServices && service != "":
+			if m := entrypointLine.FindStringSubmatch(line); m != nil {
+				f.entrypoints[service] = strings.TrimSpace(m[1])
+			}
+			if m := addressLine.FindStringSubmatch(line); m != nil {
+				f.addresses[m[1]] = service
+			}
+		case inNetworks && key != nil:
+			network = key[1]
+		case inNetworks && network != "":
+			if m := subnetLine.FindStringSubmatch(line); m != nil {
+				f.subnets[m[1]] = network
+			}
 		}
 	}
 	if len(f.entrypoints) == 0 {
