@@ -53,6 +53,7 @@ type call struct {
 func (c *call) handOver(r *InDialogRequest) {
 	c.arrived++
 	r.Arrival = c.arrived
+	r.d.addPending(r)
 	go c.onRequest(r)
 }
 
@@ -218,6 +219,10 @@ type CallDialog struct {
 	// ACK, by CSeq number. A second re-INVITE may come before the ACK of
 	// the first (RFC 3261 14.2), so there may be more than one.
 	unacked map[uint32]*InDialogRequest
+	// pending are the requests of the peer within the dialog that wait
+	// for their final response, in the order they arrived. A BYE in the
+	// dialog answers every one of them (endPending).
+	pending []*InDialogRequest
 
 	// session is the session timer state (RFC 4028 7.2, 9). stopRefresh
 	// and stopExpire stop its timers, and sessionRun counts how often
@@ -369,8 +374,9 @@ func (d *CallDialog) byeOwn(reason error) error {
 
 // bye is RFC 3261 15.1.1: a BYE within the confirmed dialog. The dialog
 // ends as soon as the BYE goes out, whatever the answer, and with it
-// the call, with reason, when this is the dialog the call kept. bye
-// returns an error when the answer is not a 2xx.
+// the call, with reason, when this is the dialog the call kept. The
+// requests of the peer that were waiting for the user of the call get
+// 487 (endPending). bye returns an error when the answer is not a 2xx.
 func (d *CallDialog) bye(reason error, headers []HeaderField) error {
 	c := d.c
 	c.mu.Lock()
@@ -397,12 +403,18 @@ func (d *CallDialog) bye(reason error, headers []HeaderField) error {
 	}
 	req := d.newRequest(BYE, Body{}, headers)
 	d.setState(DialogTerminated, "BYE sent")
+	pending := d.takePending()
 	if d == c.kept {
 		c.end("BYE sent", reason)
 	}
 	c.mu.Unlock()
 
 	ct, err := c.send(req)
+	// RFC 3261 15.1.1: the session is over once the BYE has gone to the
+	// client transaction, so the requests that were waiting are answered
+	// after it. A 487 ahead of the BYE would leave the peer holding a
+	// dialog it still believes in, free to send the next request into it.
+	d.endPending(pending)
 	if err != nil {
 		return err
 	}
@@ -425,10 +437,12 @@ func (d *CallDialog) receiveRequest(st *ServerTransaction) {
 	switch st.Request.Method {
 	case BYE:
 		c.mu.Lock()
-		defer c.mu.Unlock()
+		var pending []*InDialogRequest
 		if d.inOrder(st) {
-			d.receiveBYE(st)
+			pending = d.receiveBYE(st)
 		}
+		c.mu.Unlock()
+		d.endPending(pending)
 	case PRACK:
 		if d.in == nil {
 			// Only a UAS sends reliable provisional responses.
@@ -495,9 +509,10 @@ func (d *CallDialog) inOrder(st *ServerTransaction) bool {
 }
 
 // receiveBYE is RFC 3261 15.1.2: the BYE gets 200 and ends the dialog,
-// and the call with it when this is the dialog the call kept. c.mu is
-// held.
-func (d *CallDialog) receiveBYE(st *ServerTransaction) {
+// and the call with it when this is the dialog the call kept. It
+// returns the requests of the peer that were waiting for the user of
+// the call, for endPending to answer. c.mu is held.
+func (d *CallDialog) receiveBYE(st *ServerTransaction) []*InDialogRequest {
 	if d.in != nil && d.in.final == nil {
 		// RFC 3261 15.1.2: the INVITE still pending gets 487. Only the
 		// caller may send a BYE in an early dialog (15).
@@ -505,9 +520,62 @@ func (d *CallDialog) receiveBYE(st *ServerTransaction) {
 	}
 	d.c.ua.respondOwn(st, NewResponse(st.Request, 200, ""))
 	d.setState(DialogTerminated, "BYE received")
+	pending := d.takePending()
 	if d == d.c.kept {
 		d.c.endedBy = st.Request
 		d.c.end("BYE received", nil)
+	}
+	return pending
+}
+
+// addPending records r among the requests of the dialog that wait for
+// the final response of the user of the call, so that a BYE answers it
+// (endPending). c.mu is held.
+func (d *CallDialog) addPending(r *InDialogRequest) {
+	d.pending = append(d.pending, r)
+}
+
+// removePending takes r out of those requests, once it has its final
+// response. c.mu is held.
+func (d *CallDialog) removePending(r *InDialogRequest) {
+	if i := slices.Index(d.pending, r); i >= 0 {
+		d.pending = slices.Delete(d.pending, i, i+1)
+	}
+}
+
+// takePending takes the requests that wait for the final response of
+// the user of the call out of the dialog, for endPending to answer, and
+// marks each so that an Accept or a Reject of the user from now on
+// changes nothing and returns ErrCallEnded. c.mu is held, so no answer
+// of the user can cross this.
+func (d *CallDialog) takePending() []*InDialogRequest {
+	pending := d.pending
+	d.pending = nil
+	for _, r := range pending {
+		r.ended = true
+	}
+	return pending
+}
+
+// endPending answers each of the requests that takePending took out of
+// the dialog with 487 (Request Terminated).
+//
+// RFC 3261 15.1.2 asks the UAS that received the BYE to answer the
+// requests pending in that dialog, and recommends 487. The UA that
+// sends the BYE itself answers them the same way: it has to consider
+// the session terminated as soon as the BYE goes to the client
+// transaction (15.1.1), so a 2xx after that would accept a change to a
+// session that is over. A re-INVITE answered this way is left to its
+// INVITE server transaction, which retransmits the 487 until the ACK
+// (17.2.1).
+func (d *CallDialog) endPending(pending []*InDialogRequest) {
+	c := d.c
+	for _, r := range pending {
+		resp := NewResponse(r.Request, 487, "")
+		c.mu.Lock()
+		r.settle(resp, false)
+		c.mu.Unlock()
+		c.ua.respondOwn(r.st, resp)
 	}
 }
 

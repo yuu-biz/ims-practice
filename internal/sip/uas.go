@@ -396,6 +396,9 @@ func (c *IncomingCall) acceptPRACK(st *ServerTransaction) bool {
 	case len(req.Body) == 0:
 		c.ua.respondOwn(st, NewResponse(req, 200, ""))
 	case r.Offer:
+		// The UA answers in a goroutine of its own, so a BYE can get there
+		// first (endPending).
+		c.addPending(r)
 		c.ua.spawn(func() { r.Reject(488, append(c.ua.own(PRACK, true, nil), c.ua.noSessionChange())...) })
 	default:
 		c.ua.respondOwn(st, NewResponse(req, 200, ""))
