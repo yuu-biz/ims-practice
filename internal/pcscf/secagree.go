@@ -13,6 +13,7 @@ import (
 
 	"github.com/yuu-biz/ims-practice/internal/aka"
 	"github.com/yuu-biz/ims-practice/internal/ims"
+	"github.com/yuu-biz/ims-practice/internal/ipsec"
 	"github.com/yuu-biz/ims-practice/internal/sip"
 )
 
@@ -22,37 +23,59 @@ import (
 // REGISTER that answers it, the keys that the S-CSCF sends, and the
 // protected server port.
 //
-// SIMPLIFIED: TS 33.203 7.1 and 7.2, TS 24.229 5.2.2.2. No IPsec
-// ESP is set up. The P-CSCF agrees on the security associations, keeps
-// them in its SA table with IK and CK, and counts a message as
-// protected when it arrives on the protected server port from the
-// address of a set of security associations. IMS AKA without ESP is
-// not in the standard; it is left out here so that captures stay
-// readable by default. Without ESP:
+// SIMPLIFIED: TS 33.203 7.1 and 7.2, TS 24.229 5.2.2.2. IPsec ESP is
+// an option, and it is off unless Config.ESP is set. Then the P-CSCF
+// agrees on the security associations, keeps them in its SA table with
+// IK and CK, and counts a message as protected when it arrives on the
+// protected server port from the address of a set of security
+// associations, but nothing protects it on the wire. IMS AKA without
+// ESP is not in the standard; it is left out by default so that
+// captures stay readable. With Config.ESP the P-CSCF puts the four
+// security associations of the agreement into the kernel
+// (internal/ipsec), which then protects every message between the
+// protected ports and discards what arrives there without ESP, as 7.1
+// items 3 and 4 ask. Without ESP:
 //   - The UE and the P-CSCF send and receive every protected message on
 //     their protected server ports. internal/sip sends a message from
-//     the socket it listens on, so the protected client ports are
-//     agreed and kept, but never bound. A message over TCP comes from a
+//     the socket it listens on unless a protected client port is bound,
+//     which only ESP asks for, so the protected client ports are agreed
+//     and kept, but never bound. A message over TCP comes from a
 //     port of the moment: the P-CSCF knows the UE of a request over TCP,
 //     a REGISTER of the agreement as well, by the sent-by of its Via
 //     (ueSource). Nothing authenticates that sent-by, so a host that
 //     shares the UE's IP address could name the UE's protected server
-//     port in it; with ESP the security associations would authenticate
-//     the sender.
+//     port in it; with ESP the security associations authenticate the
+//     sender.
+//
+// Either way:
 //   - A request that the P-CSCF proxies with its server transaction
 //     leaves from the transport it came in on, so the P-CSCF also talks
-//     to the core about a UE with security associations over the
-//     protected server port: its Path and Record-Route name that port.
-//     TS 33.203 7.1 keeps unprotected messages off it. An initial
-//     INVITE, which the P-CSCF forwards with a client transaction of its
-//     own, and the BYEs that it sends itself go from the protected
-//     server port when they go to such a UE, and from the unprotected
-//     one otherwise.
+//     to the core about a UE with security associations over its
+//     protected ports: its Path and Record-Route name the protected
+//     server port, on which the requests of the core arrive, and with
+//     ESP a request to the core leaves from the protected client port.
+//     TS 33.203 7.1 keeps unprotected messages off both, and no
+//     security association protects what goes to the core. An initial
+//     INVITE, which the P-CSCF forwards with a client transaction of
+//     its own, and the BYEs that it sends itself go from the protected
+//     transport when they go to such a UE, and from the unprotected one
+//     otherwise.
 //   - The P-CSCF keeps one set of security associations per UE. A new
 //     challenge replaces the set that the UE had, which TS 24.229 Table
 //     5.2.2-1 keeps until the 200 (OK); a UE that starts again with an
 //     unprotected REGISTER no longer has that set anyway (TS 33.203
 //     7.4.2a), and the S-CSCF here never challenges a protected one.
+//     With ESP the new set replaces the old one in the kernel as well,
+//     so no message rides the old associations after the challenge.
+//
+// With ESP:
+//   - A set of security associations that expires without the UE
+//     registering again stays in the kernel until the next
+//     authentication replaces it: the SA table drops an expired entry
+//     when it is read, and no sweep of the whole table brings it to
+//     the P-CSCF's notice. Requests over those associations are
+//     dropped all the same, since the IP association has gone with the
+//     registration (Screen).
 
 // SecurityAssociations are the two pairs of security associations that
 // one IMS AKA authentication sets up between the P-CSCF and a UE: one
@@ -87,6 +110,107 @@ type SecurityAssociations struct {
 // securityAssociationMargin is how much longer established security
 // associations last than the registration (TS 24.229 5.2.2.2).
 const securityAssociationMargin = 30 * time.Second
+
+// ESP is what the P-CSCF needs to protect the signalling of IMS AKA
+// with IPsec ESP (TS 33.203 6.3).
+type ESP struct {
+	// Address is the P-CSCF's own address, which the security
+	// associations are bound to (TS 33.203 7.1). The P-CSCF cannot read
+	// it off a socket bound to every address, so its configuration
+	// names it.
+	Address netip.Addr
+	// ProtectedClientPort is port_pc, from which the P-CSCF sends its
+	// requests to a UE with security associations (TS 33.203 7.1 item
+	// 1).
+	ProtectedClientPort uint16
+	// Kernel is where the security associations go.
+	Kernel *ipsec.Kernel
+}
+
+// agreement is the security agreement of sas, as the kernel needs it.
+func (p *PCSCF) agreement(sas SecurityAssociations) ipsec.Agreement {
+	return ipsec.Agreement{UE: sas.UE.Addr(), PCSCF: p.cfg.ESP.Address,
+		UEMechanism: sas.UEMechanism, PCSCFMechanism: sas.PCSCFMechanism, IK: sas.IK, CK: sas.CK}
+}
+
+// putSecurityAssociations keeps sas in the SA table. A new set, the one
+// of an authentication under way, replaces in the kernel the security
+// associations of the set it follows (TS 33.203 7.4.2a); the 200 (OK)
+// that establishes it only moves its lifetime, which the kernel leaves
+// to the SIP application (7.1 NOTE 4).
+func (p *PCSCF) putSecurityAssociations(ctx context.Context, sas SecurityAssociations) error {
+	if p.cfg.ESP == nil || !sas.Temporary {
+		return p.store.PutSecurityAssociations(ctx, sas)
+	}
+	if old, ok, err := p.store.SecurityAssociations(ctx, sas.UE); err == nil && ok {
+		if err := p.cfg.ESP.Kernel.Teardown(ctx, p.agreement(old), ipsec.PCSCFEnd); err != nil {
+			return err
+		}
+	}
+	if err := p.store.PutSecurityAssociations(ctx, sas); err != nil {
+		return err
+	}
+	// The UE answers the challenge over the new associations, so they
+	// are in the kernel before the 401 leaves.
+	return p.cfg.ESP.Kernel.Setup(ctx, p.agreement(sas), ipsec.PCSCFEnd)
+}
+
+// deleteSecurityAssociations takes the set of the UE at ue out of the
+// SA table and out of the kernel (TS 33.203 7.4 : deleting an SA means
+// deleting it from both the application and the IPsec layer).
+func (p *PCSCF) deleteSecurityAssociations(ctx context.Context, ue netip.AddrPort) error {
+	if p.cfg.ESP != nil {
+		sas, ok, err := p.store.SecurityAssociations(ctx, ue)
+		if err != nil {
+			return err
+		}
+		if ok {
+			if err := p.cfg.ESP.Kernel.Teardown(ctx, p.agreement(sas), ipsec.PCSCFEnd); err != nil {
+				return err
+			}
+		}
+	}
+	return p.store.DeleteSecurityAssociations(ctx, ue)
+}
+
+// deleteSecurityAssociationsOf is deleteSecurityAssociations for the
+// set that spis name, which is the one a contact was registered over.
+// The kernel keeps the set of the SA table: should a new set replace
+// this one between the read and the delete, the registration that
+// brought it sets it up again.
+func (p *PCSCF) deleteSecurityAssociationsOf(ctx context.Context, ue netip.AddrPort, spis SPIs) error {
+	if p.cfg.ESP != nil {
+		sas, ok, err := p.store.SecurityAssociations(ctx, ue)
+		if err != nil {
+			return err
+		}
+		if ok && sas.SPIs() == spis {
+			if err := p.cfg.ESP.Kernel.Teardown(ctx, p.agreement(sas), ipsec.PCSCFEnd); err != nil {
+				return err
+			}
+		}
+	}
+	return p.store.DeleteSecurityAssociationsOf(ctx, ue, spis)
+}
+
+// protectedClientPort is port_pc, the port the P-CSCF sends the
+// requests of this set of security associations from. Without ESP
+// nothing binds it, so a new number for each set is enough.
+//
+// SIMPLIFIED: TS 33.203 7.4.0. With ESP the P-CSCF binds port_pc, and
+// binds the one port of its configuration: the same port for every UE
+// and for every authentication, where 7.4.0 has the protected client
+// ports change with each authenticated re-registration while the
+// protected server ports stay. A port of its own for each set would
+// mean a socket for each UE, and the associations of different UEs
+// already differ by the UE's address. Requests from the UE arrive on
+// the protected server port, which 7.4.0 keeps unchanged anyway.
+func (p *PCSCF) protectedClientPort() uint16 {
+	if p.cfg.ESP != nil {
+		return p.cfg.ESP.ProtectedClientPort
+	}
+	return ims.NewProtectedPort(uint16(p.cfg.ProtectedServerPort))
+}
 
 // saTable is the SA table of MemoryStore. Each entry is removed when it
 // is read after its Expires, or replaced.
@@ -349,7 +473,7 @@ func (p *PCSCF) receiveSecAgree(st *sip.ServerTransaction, out *sip.Message, pri
 		ctx := context.Background()
 		sas, ok, err := p.store.SecurityAssociations(ctx, a.ue)
 		if err == nil && ok && sas.Temporary {
-			err = p.store.DeleteSecurityAssociations(ctx, a.ue)
+			err = p.deleteSecurityAssociations(ctx, a.ue)
 		}
 		if err != nil {
 			return nil, storeFailed(req, err, log)
@@ -392,7 +516,7 @@ func (p *PCSCF) answerSecAgree(st *sip.ServerTransaction, final *sip.Message, a 
 		if interval == 0 {
 			// TS 33.203 7.4.2a: the associations go once the UE has no
 			// public user identity registered.
-			return final, p.store.DeleteSecurityAssociations(ctx, a.ue)
+			return final, p.deleteSecurityAssociations(ctx, a.ue)
 		}
 		// On a 200 (OK), items 1 and 2.
 		sas := *a.over
@@ -404,14 +528,14 @@ func (p *PCSCF) answerSecAgree(st *sip.ServerTransaction, final *sip.Message, a 
 			log.Info("security associations established", "ue", sas.UE.String())
 		}
 		sas.Temporary = false
-		if err := p.store.PutSecurityAssociations(ctx, sas); err != nil {
+		if err := p.putSecurityAssociations(ctx, sas); err != nil {
 			return nil, err
 		}
 	case final.StatusCode >= 300 && a.over != nil && a.over.Temporary:
 		// TS 33.203 7.3.1.1: after a failed authentication both ends
 		// delete the new associations. The UE learns of the failure all
 		// the same; associations that stay go at their Expires.
-		if err := p.store.DeleteSecurityAssociations(ctx, a.ue); err != nil {
+		if err := p.deleteSecurityAssociations(ctx, a.ue); err != nil {
 			log.Warn("the temporary security associations stay until they expire: the store failed", "error", err.Error())
 		}
 	}
@@ -446,7 +570,7 @@ func (p *PCSCF) challenged(st *sip.ServerTransaction, final *sip.Message, a *sec
 	ue := a.offered[0]
 	spiC := ims.NewSPI(ue.SPIC, ue.SPIS)
 	own := ims.IPsec3GPP{SPIC: spiC, SPIS: ims.NewSPI(ue.SPIC, ue.SPIS, spiC),
-		PortC: ims.NewProtectedPort(uint16(p.cfg.ProtectedServerPort)), PortS: uint16(p.cfg.ProtectedServerPort)}
+		PortC: p.protectedClientPort(), PortS: uint16(p.cfg.ProtectedServerPort)}
 	server := p.offers(own)
 	fromPCSCF, fromUE, _ := ims.ChooseTransform(server, a.offered)
 	sas := SecurityAssociations{UE: a.ue, Temporary: true, UEMechanism: fromUE, PCSCFMechanism: fromPCSCF,
@@ -459,7 +583,7 @@ func (p *PCSCF) challenged(st *sip.ServerTransaction, final *sip.Message, a *sec
 	// Item 1: the new set replaces any earlier one. Without it, the UE
 	// would answer the challenge over associations that no P-CSCF
 	// instance knows.
-	if err := p.store.PutSecurityAssociations(context.Background(), sas); err != nil {
+	if err := p.putSecurityAssociations(context.Background(), sas); err != nil {
 		return nil, err
 	}
 	log.Info("temporary security associations", "ue", sas.UE.String(), "alg", fromPCSCF.Algorithm,

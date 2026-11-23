@@ -85,6 +85,11 @@ type PCSCF struct {
 	// protected messages of UEs that register with IMS AKA, on the
 	// address of SIP.Listen (TS 33.203 7.1). Zero means no IMS AKA.
 	ProtectedServerPort uint16
+	// ProtectedClientPort is port_pc, from which the P-CSCF sends its
+	// requests to such a UE once IPsec ESP protects them (TS 33.203
+	// 7.1). Zero leaves ESP off, and with it the protected ports carry
+	// the signalling unprotected.
+	ProtectedClientPort uint16
 }
 
 type HostAccess struct {
@@ -404,6 +409,9 @@ type rawPCSCF struct {
 	} `yaml:"host_access"`
 	SecAgree *struct {
 		ProtectedServerPort uint16 `yaml:"protected_server_port"`
+		ESP                 *struct {
+			ProtectedClientPort uint16 `yaml:"protected_client_port"`
+		} `yaml:"esp"`
 	} `yaml:"sec_agree"`
 }
 
@@ -556,6 +564,19 @@ func (raw *rawPCSCF) validate() (PCSCF, error) {
 			return PCSCF{}, fmt.Errorf("sec_agree.protected_server_port: %d must be a port of its own, not 5060 or 5061", port)
 		}
 		c.ProtectedServerPort = a.ProtectedServerPort
+		if esp := a.ESP; esp != nil {
+			port := esp.ProtectedClientPort
+			if port == 0 || port == 5060 || port == 5061 || port == c.SIP.Listen.Port() || port == c.ProtectedServerPort {
+				return PCSCF{}, fmt.Errorf("sec_agree.esp.protected_client_port: %d must be a port of its own, not 5060, 5061 or the protected server port", port)
+			}
+			if !c.SIP.Listen.Addr().IsValid() || c.SIP.Listen.Addr().IsUnspecified() {
+				// The security associations are bound to the P-CSCF's
+				// own address (TS 33.203 7.1), which it cannot read off
+				// a socket that listens on every address.
+				return PCSCF{}, fmt.Errorf("sec_agree.esp: sip.listen must name the address of this P-CSCF, not %s", c.SIP.Listen.Addr())
+			}
+			c.ProtectedClientPort = port
+		}
 	}
 	return c, nil
 }

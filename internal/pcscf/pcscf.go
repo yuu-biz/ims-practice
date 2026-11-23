@@ -39,6 +39,11 @@ type Config struct {
 	// with IMS AKA send their protected messages (TS 33.203 7.1). Zero
 	// means that the P-CSCF does not offer IMS AKA.
 	ProtectedServerPort int
+	// ESP, when set, has the P-CSCF protect the signalling of those UEs
+	// with IPsec ESP, as TS 33.203 6.3 asks. Nil leaves the
+	// signalling unprotected on the protected ports, which keeps it
+	// readable in a capture (secagree.go).
+	ESP *ESP
 	// VisitedNetworkID goes into P-Visited-Network-ID.
 	VisitedNetworkID string
 	// HostAccess, when set, gives UEs behind the host's NAT the
@@ -1130,7 +1135,7 @@ func (p *PCSCF) endAssociation(a Association, log *slog.Logger) error {
 	// contact from the same address and port over a set of its own, which
 	// has replaced this one, and the NOTIFY that ends the old contact can
 	// come before the association names the new contact.
-	return p.store.DeleteSecurityAssociationsOf(ctx, a.Source.Addr, a.SPIs)
+	return p.deleteSecurityAssociationsOf(ctx, a.Source.Addr, a.SPIs)
 }
 
 // associationOfContact is the association of a contact, for a request

@@ -33,6 +33,9 @@
 // number the USIM has accepted. The UE then sends its first REGISTER from
 // -listen without protection, and everything after the challenge from
 // its protected server port -port-s to the P-CSCF's (TS 33.203 7.1).
+// With -port-c it binds the protected client port as well, sends its
+// requests from there and protects everything after the challenge with
+// IPsec ESP, which needs NET_ADMIN in the container.
 //
 // Every command takes short messages over IP while the UE is registered
 // (TS 24.341 5.3.2): it logs each one as "sms received", with its sender
@@ -79,6 +82,7 @@ import (
 	"github.com/yuu-biz/ims-practice/internal/g711"
 	"github.com/yuu-biz/ims-practice/internal/hepagent"
 	"github.com/yuu-biz/ims-practice/internal/ims"
+	"github.com/yuu-biz/ims-practice/internal/ipsec"
 	"github.com/yuu-biz/ims-practice/internal/milenage"
 	"github.com/yuu-biz/ims-practice/internal/reginfo"
 	"github.com/yuu-biz/ims-practice/internal/sdp"
@@ -135,8 +139,9 @@ type options struct {
 	reportWait   time.Duration
 	// control is the address of the HTTP API of "ue serve".
 	control string
-	// portS is the protected server port of IMS AKA.
-	portS int
+	// portS is the protected server port of IMS AKA, and portC the
+	// protected client port, which only IPsec ESP binds.
+	portS, portC int
 	// xcapRoot and utPassword are those of the XCAP client of "ue
 	// xcap" and "ue serve".
 	xcapRoot, utPassword string
@@ -210,6 +215,7 @@ func registrationFlags(o *options, flags *flag.FlagSet) {
 	flags.StringVar(&o.op, "op", "", "IMS AKA: the operator's OP, 32 hexadecimal digits, from which the UE derives OPc (TS 35.206 4.1)")
 	flags.StringVar(&o.sqn, "sqn", "000000000000", "IMS AKA: SQN_MS, the highest sequence number the USIM has accepted, 12 hexadecimal digits")
 	flags.IntVar(&o.portS, "port-s", 5062, "IMS AKA: the protected server port (TS 33.203 7.1), on the address of -listen")
+	flags.IntVar(&o.portC, "port-c", 0, "IMS AKA with IPsec ESP: the protected client port (TS 33.203 7.1), which the UE binds, sends its requests from and sets up ESP on; 0 leaves ESP off and the signalling readable in a capture")
 	flags.StringVar(&o.pcscf, "pcscf", "172.28.0.40:5060", "P-CSCF address, host:port; with -epc only the port counts, and the address comes from the PCO")
 	flags.StringVar(&o.epc, "epc", "", "URL of the UE API of the EPC stub, such as http://172.28.0.80:8080, to attach to before registering; the IMSI is the user part of -impi")
 	flags.StringVar(&o.cfg.PCSCFURI, "pcscf-uri", "sip:pcscf.ims.mnc001.mcc001.3gppnetwork.org:5060", "P-CSCF URI for the Route of requests")
@@ -494,9 +500,15 @@ func openUE(log *slog.Logger, o options, line *ue.Line) (u *opened, err error) {
 		}
 		o.cfg.AKA.Unprotected, closeUnprotected = unprotected, unprotected.Close
 		listen := netip.AddrPortFrom(transport.LocalAddr().Addr(), uint16(o.portS))
-		if transport, err = sip.ListenObserved(listen.String(), log, agent.SIP("ue")); err != nil {
+		// With ESP the UE sends its requests from the protected client
+		// port, which the security associations are bound to (TS
+		// 33.203 7.1 item 2).
+		if transport, err = sip.ListenProtected(listen.String(), uint16(o.portC), log, agent.SIP("ue")); err != nil {
 			unprotected.Close()
 			return nil, fmt.Errorf("-port-s: %w", err)
+		}
+		if o.portC != 0 {
+			o.cfg.AKA.ESP = &ue.ESP{ProtectedClientPort: uint16(o.portC), Kernel: ipsec.NewKernel(log)}
 		}
 	}
 	addr, err := contactAddress(target, transport.LocalAddr())

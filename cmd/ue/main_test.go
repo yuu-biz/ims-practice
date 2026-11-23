@@ -136,7 +136,7 @@ func TestCommandsRejectTheFlagsOfOthers(t *testing.T) {
 // The flags that each command defines are the ones its code reads: run
 // for register, call, answer and sms, serve, runXCAP, and runCtl.
 func TestFlagsOfEachCommand(t *testing.T) {
-	registration := []string{"domain", "impi", "impu", "password", "k", "opc", "op", "sqn", "port-s", "pcscf", "epc", "pcscf-uri", "listen", "hep", "expires", "features"}
+	registration := []string{"domain", "impi", "impu", "password", "k", "opc", "op", "sqn", "port-s", "port-c", "pcscf", "epc", "pcscf-uri", "listen", "hep", "expires", "features"}
 	media := []string{"media-listen", "codecs", "no-preconditions"}
 	audio := []string{"wav-in", "amr-in", "tone"}
 	recording := []string{"wav-out", "sent-out", "received-out", "play", "player"}
