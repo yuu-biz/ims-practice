@@ -50,7 +50,7 @@ func TestComposeFilterCriteriaNameTheApplicationServers(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	criteria := hssCfg.HSS.ServiceProfiles[hssCfg.HSS.DefaultServiceProfile]
+	criteria := hssCfg.HSS.ServiceProfiles[hssCfg.HSS.DefaultServiceProfile].Criteria
 	if len(criteria) == 0 {
 		t.Fatalf("the service profile %q of hss.yaml has no filter criteria", hssCfg.HSS.DefaultServiceProfile)
 	}

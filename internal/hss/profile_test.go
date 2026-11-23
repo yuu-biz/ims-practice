@@ -34,7 +34,7 @@ func TestASubscriptionWithoutAProfileNameGetsTheDefaultOne(t *testing.T) {
 	}
 	node := diameter.NewNode(diameter.Identity{OriginHost: "hss." + realm, OriginRealm: realm}, []uint32{diameter.ApplicationIDCx}, diameter.Timers{}, quiet())
 	h := mustHSS(Config{Realm: realm, VisitedNetworks: []string{realm},
-		ServiceProfiles:       map[string][]ifc.InitialFilterCriteria{"default": {register}, "trial": {message}},
+		ServiceProfiles:       map[string]ServiceProfile{"default": {Criteria: []ifc.InitialFilterCriteria{register}}, "trial": {Criteria: []ifc.InitialFilterCriteria{message}}},
 		DefaultServiceProfile: "default"}, store, node)
 	added := `{"private_identity": "` + otherImp + `", "public_identities": ["sip:001010000000002@` + realm + `"], "password": "p"}`
 	if w := do(t, h.Provisioning(&fakeSCSCFs{}), "POST", "/subscriptions", added); w.Code != http.StatusCreated {
@@ -67,7 +67,7 @@ func TestASubscriptionWithoutAProfileNameGetsTheDefaultOne(t *testing.T) {
 			t.Errorf("%s: ServiceInfo = %q, want %q", tt.private, server.ServiceInfo, tt.serviceInfo)
 		}
 	}
-	if got := h.config.ServiceProfiles["default"][0].ApplicationServer.ServiceInfo; got != register.ApplicationServer.ServiceInfo {
+	if got := h.config.ServiceProfiles["default"].Criteria[0].ApplicationServer.ServiceInfo; got != register.ApplicationServer.ServiceInfo {
 		t.Errorf("the configuration changed to %q", got)
 	}
 }
@@ -104,8 +104,8 @@ func TestTheProfileOfASubscriptionIsChosenByItsOwnData(t *testing.T) {
 	}
 	node := diameter.NewNode(diameter.Identity{OriginHost: "hss." + realm, OriginRealm: realm}, []uint32{diameter.ApplicationIDCx}, diameter.Timers{}, quiet())
 	h := mustHSS(Config{Realm: realm, VisitedNetworks: []string{realm},
-		ServiceProfiles: map[string][]ifc.InitialFilterCriteria{
-			"default": profile("mmtel"), "trial": profile("trial"), "cdiv": profile("cdiv")},
+		ServiceProfiles: map[string]ServiceProfile{
+			"default": {Criteria: profile("mmtel")}, "trial": {Criteria: profile("trial")}, "cdiv": {Criteria: profile("cdiv")}},
 		DefaultServiceProfile:  "default",
 		TestUserServiceProfile: "trial"}, store, node)
 

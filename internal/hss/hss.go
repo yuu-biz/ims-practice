@@ -50,12 +50,9 @@ type Config struct {
 	// application servers of the network host (TS 23.228 5.4.12.4).
 	PSIUsers []PSIUser
 	// ServiceProfiles are the service profiles of the network by name
-	// (TS 29.228 B.2.2): the criteria that go into the user profile of
-	// a subscription that gets that profile. MSISDNPlaceholder in a
-	// ServiceInfo becomes the MSISDN of the subscriber. The name stays
-	// in the HSS, as the user profile of Cx has no element for it
-	// (TS 29.228 Annex E, Table E.2).
-	ServiceProfiles map[string][]ifc.InitialFilterCriteria
+	// (TS 29.228 B.2.2). The name stays in the HSS, as the user profile
+	// of Cx has no element for it (TS 29.228 Annex E, Table E.2).
+	ServiceProfiles map[string]ServiceProfile
 	// DefaultServiceProfile is the name of the service profile that a
 	// subscription gets when it names none of its own and is not marked
 	// as a test user, those added through the provisioning API

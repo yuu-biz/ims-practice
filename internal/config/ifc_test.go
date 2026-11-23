@@ -2,6 +2,7 @@ package config
 
 import (
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 
@@ -18,6 +19,7 @@ const smsCriteriaYAML = `  default_service_profile: default
   service_profiles:
     default:
       - priority: 0
+        feature: sms
         trigger_point:
           condition_type_cnf: true
           spt:
@@ -27,6 +29,7 @@ const smsCriteriaYAML = `  default_service_profile: default
           default_handling: SESSION_CONTINUED
           service_info: "{msisdn}"
       - priority: 1
+        feature: sms
         trigger_point:
           condition_type_cnf: true
           spt:
@@ -65,7 +68,8 @@ func TestParseServiceProfiles(t *testing.T) {
 			ApplicationServer: ifc.ApplicationServer{ServerName: server},
 		},
 	}
-	if !reflect.DeepEqual(cfg.HSS.ServiceProfiles, map[string][]ifc.InitialFilterCriteria{"default": want}) {
+	// Both criteria serve the SMS feature, which the profile names once.
+	if !reflect.DeepEqual(cfg.HSS.ServiceProfiles, map[string]hss.ServiceProfile{"default": {Criteria: want, Features: []string{"sms"}}}) {
 		t.Errorf("profiles\n%+v\nwant default\n%+v", cfg.HSS.ServiceProfiles, want)
 	}
 	if cfg.HSS.DefaultServiceProfile != "default" || cfg.HSS.TestUserServiceProfile != "default" {
@@ -100,6 +104,42 @@ func TestParseReadsTheProfileOfASubscription(t *testing.T) {
 	}
 	if sub := plain.HSS.Subscriptions[0]; sub.TestUser || sub.ServiceProfile != "" {
 		t.Errorf("a subscription that names neither is %+v", sub)
+	}
+}
+
+// TestParseCollectsTheFeaturesOfAServiceProfile: the features of a
+// profile are the ones its criteria name, each once and in the order
+// the criteria give them, and a criterion that names none adds none.
+// An operator reads the list to see what a profile turns on, so a
+// second feature in a profile has to show up beside the first.
+func TestParseCollectsTheFeaturesOfAServiceProfile(t *testing.T) {
+	yaml := strings.Replace(withSMSCriteria(combinedYAML), smsCriteriaYAML, smsCriteriaYAML+`      - priority: 10
+        feature: mmtel
+        trigger_point:
+          condition_type_cnf: true
+          spt:
+            - {group: [0], method: INVITE}
+        application_server:
+          server_name: sip:mmtel.ims.mnc001.mcc001.3gppnetwork.org:5060
+      - priority: 11
+        trigger_point:
+          condition_type_cnf: true
+          spt:
+            - {group: [0], method: SUBSCRIBE}
+        application_server:
+          server_name: sip:mmtel.ims.mnc001.mcc001.3gppnetwork.org:5060
+    no-services: []
+`, 1)
+	cfg, err := Parse(strings.NewReader(yaml))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := cfg.HSS.ServiceProfiles["default"]; !slices.Equal(got.Features, []string{"sms", "mmtel"}) {
+		t.Errorf("the features of default are %v, want [sms mmtel] for its %d criteria", got.Features, len(got.Criteria))
+	}
+	// A profile with no criteria has no feature to name.
+	if got := cfg.HSS.ServiceProfiles["no-services"].Features; len(got) != 0 {
+		t.Errorf("the features of no-services are %v", got)
 	}
 }
 
@@ -221,7 +261,7 @@ func TestMMTelCriteria(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	criteria := ifc.Ordered(cfg.HSS.ServiceProfiles["default"])
+	criteria := ifc.Ordered(cfg.HSS.ServiceProfiles["default"].Criteria)
 	invite := &sip.Message{Method: sip.INVITE, RequestURI: "tel:+12025550102"}
 	message := &sip.Message{Method: sip.MESSAGE, RequestURI: "tel:+12025550100"}
 	message.Add("Content-Type", "application/vnd.3gpp.sms")

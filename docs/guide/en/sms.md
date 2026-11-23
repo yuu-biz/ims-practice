@@ -48,9 +48,11 @@ default_service_profile: default
 service_profiles:
   default:
     - priority: 0
+      feature: sms
       trigger_point: {condition_type_cnf: true, spt: [{group: [0], method: REGISTER}]}
       application_server: {server_name: sip:ipsmgw.ims.mnc001.mcc001.3gppnetwork.org:5060, default_handling: SESSION_CONTINUED, service_info: "{msisdn}"}
     - priority: 1
+      feature: sms
       trigger_point:
         condition_type_cnf: true
         spt:
@@ -61,6 +63,8 @@ service_profiles:
 ```
 
 The profile name is the operator's own. Cx carries the criteria of the profile and not its name, so the S-CSCF never learns it.
+
+`feature` is the operator's own word too, for what a criterion turns on. The features of a profile are those words without repetition, and the maintenance API of the HSS node lists them beside the name of each profile, so an operator can see which profile turns SMS over IP on without reading every criterion. Annex E has no element for it either, so it stays in the HSS with the name.
 
 Which profile a subscription gets is read off the subscription. One that names a profile in its own `service_profile` gets that one. One that names none gets the profile of `test_user_service_profile` if it is marked `test_user`, and the one of `default_service_profile` otherwise. So a feature goes to one user by naming a profile on that subscription, to the test users by naming the profile of the feature in `test_user_service_profile`, and to everyone by naming it in `default_service_profile`. The HSS reads the name from the subscription it is already answering for, so none of this costs more as the network grows.
 

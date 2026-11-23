@@ -55,9 +55,11 @@ default_service_profile: default
 service_profiles:
   default:
     - priority: 0
+      feature: sms
       trigger_point: {condition_type_cnf: true, spt: [{group: [0], method: REGISTER}]}
       application_server: {server_name: sip:ipsmgw.ims.mnc001.mcc001.3gppnetwork.org:5060, default_handling: SESSION_CONTINUED, service_info: "{msisdn}"}
     - priority: 1
+      feature: sms
       trigger_point:
         condition_type_cnf: true
         spt:
@@ -68,6 +70,8 @@ service_profiles:
 ```
 
 プロファイルの名前は運用者が付けるものです。Cx が運ぶのはプロファイルの中の iFC だけなので、S-CSCF が名前を知ることはありません。
+
+`feature` も運用者が付けるもので、その条件が何を有効にするかを表す言葉です。プロファイルの機能の一覧は、この言葉を重複なく集めたものです。HSS のノードの保守用の API が、プロファイルの名前と並べてこの一覧を返すので、運用者はどのプロファイルが SMS over IP を有効にするかを、条件を 1 つずつ読まなくても分かります。Annex E にもこれに当たる要素は無いので、名前と同じく HSS の中だけに残ります。
 
 どのプロファイルを渡すかは、加入のデータから決めます。加入が `service_profile` にプロファイルの名前を持っていれば、それを渡します。持っていなければ、`test_user` の印が付いている加入には `test_user_service_profile`、ほかの加入には `default_service_profile` が指すプロファイルを渡します。そのため、ある機能を 1 人だけに使わせるときは、その加入にプロファイルの名前を書きます。試験用の利用者だけに使わせるときは `test_user_service_profile` に、全員に使わせるときは `default_service_profile` に、その機能の iFC を持つプロファイルの名前を書きます。HSS は、答えようとしている加入のデータから名前を読むだけなので、加入者が増えても、この処理にかかる手間は変わりません。
 

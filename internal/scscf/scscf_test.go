@@ -168,7 +168,7 @@ func newHarnessWith(t *testing.T, cfg Config, resolver Resolver) *harness {
 // one that every subscription gets, has these criteria.
 func hssProfile(criteria ...ifc.InitialFilterCriteria) hss.Config {
 	return hss.Config{
-		ServiceProfiles:       map[string][]ifc.InitialFilterCriteria{"default": criteria},
+		ServiceProfiles:       map[string]hss.ServiceProfile{"default": {Criteria: criteria}},
 		DefaultServiceProfile: "default",
 	}
 }

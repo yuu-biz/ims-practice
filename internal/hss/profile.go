@@ -20,12 +20,31 @@ import (
 // tells it of (TS 23.204 6.1 step 4).
 const MSISDNPlaceholder = "{msisdn}"
 
+// ServiceProfile is one of the service profiles of the network, which
+// the HSS holds by name (TS 29.228 B.2.2).
+type ServiceProfile struct {
+	// Criteria go into the user profile of a subscription that gets this
+	// profile. MSISDNPlaceholder in a ServiceInfo becomes the MSISDN of
+	// the subscriber.
+	Criteria []ifc.InitialFilterCriteria
+	// Features are the words an operator uses for what the criteria turn
+	// on, such as sms or mmtel: each criterion may name the feature it
+	// serves, and this is those names without repetition, in the order
+	// the criteria give them. They say what the profile does in the
+	// operator's own terms, which the criteria alone do not, and an
+	// operator reads them from the maintenance API to see which profile
+	// to give a subscription. Nothing of Cx carries them: the user
+	// profile has no element for them, so they stay in the HSS as the
+	// name of the profile does.
+	Features []string
+}
+
 // userProfile is the profile of u that the SAA carries in User-Data (TS
 // 29.228 6.1.2.1): the identities of the subscription and the criteria
 // of its service profile.
 func (h *HSS) userProfile(u Subscriber) cx.UserProfile {
 	var criteria []ifc.InitialFilterCriteria
-	for _, c := range h.config.ServiceProfiles[h.serviceProfile(u.Subscription)] {
+	for _, c := range h.config.ServiceProfiles[h.serviceProfile(u.Subscription)].Criteria {
 		c.ApplicationServer.ServiceInfo = strings.ReplaceAll(c.ApplicationServer.ServiceInfo, MSISDNPlaceholder, u.MSISDN())
 		criteria = append(criteria, c)
 	}
@@ -66,6 +85,28 @@ func (c Config) CheckServiceProfile(name string) error {
 	}
 	if _, found := c.ServiceProfiles[name]; !found {
 		return fmt.Errorf("service_profile: %q is not a profile of service_profiles, which has %v", name, slices.Sorted(maps.Keys(c.ServiceProfiles)))
+	}
+	return nil
+}
+
+// CheckServiceProfileName checks a setting that names the service
+// profile of a kind of subscription, DefaultServiceProfile or
+// TestUserServiceProfile, which the configuration file and the
+// maintenance API both set; key names the setting in the error. A
+// network with service profiles needs a name, so that every
+// subscription it answers for has criteria, and a network without them
+// takes no name.
+func (c Config) CheckServiceProfileName(key, name string) error {
+	_, found := c.ServiceProfiles[name]
+	switch {
+	case len(c.ServiceProfiles) == 0 && name != "":
+		return fmt.Errorf("%s: %q, but the node defines no service_profiles", key, name)
+	case len(c.ServiceProfiles) == 0:
+		return nil
+	case name == "":
+		return fmt.Errorf("%s: required, one of %v", key, slices.Sorted(maps.Keys(c.ServiceProfiles)))
+	case !found:
+		return fmt.Errorf("%s: %q is not a profile of service_profiles, which has %v", key, name, slices.Sorted(maps.Keys(c.ServiceProfiles)))
 	}
 	return nil
 }

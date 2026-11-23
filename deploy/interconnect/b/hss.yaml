@@ -51,12 +51,19 @@ hss:
   # SMS over IP as in network A (deploy/compose/hss.yaml): the
   # third-party REGISTER and the short messages that a user sends go to
   # the IP-SM-GW.
+  # feature on a criterion is the operator's word for what that
+  # criterion turns on. The features of a profile are those words
+  # without repetition, and the maintenance API lists them, so an
+  # operator can read which profile turns a feature on without reading
+  # every criterion. No criterion of Cx carries the word.
   service_profiles:
     default:
       - priority: 0
+        feature: sms
         trigger_point: {condition_type_cnf: true, spt: [{group: [0], method: REGISTER}]}
         application_server: {server_name: sip:ipsmgw.ims.mnc002.mcc001.3gppnetwork.org:5060, default_handling: SESSION_CONTINUED, service_info: "{msisdn}"}
       - priority: 1
+        feature: sms
         trigger_point:
           condition_type_cnf: true
           spt:
@@ -71,6 +78,7 @@ hss:
       # 5.2.3 NOTE 5). Network A has the same criterion with its own
       # IP-SM-GW (deploy/compose/hss.yaml).
       - priority: 2
+        feature: sms
         trigger_point:
           condition_type_cnf: true
           spt:

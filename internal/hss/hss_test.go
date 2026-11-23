@@ -236,10 +236,10 @@ func TestLocationInfo(t *testing.T) {
 func TestLocationInfoForUnregisteredServices(t *testing.T) {
 	h := newTestHSS()
 	unregistered := ifc.TerminatingUnregistered
-	h.config.ServiceProfiles = map[string][]ifc.InitialFilterCriteria{"default": {{
+	h.config.ServiceProfiles = map[string]ServiceProfile{"default": {Criteria: []ifc.InitialFilterCriteria{{
 		TriggerPoint:      &ifc.TriggerPoint{SPT: []ifc.SPT{{Group: []int{0}, SessionCase: &unregistered}}},
 		ApplicationServer: ifc.ApplicationServer{ServerName: "sip:mmtel." + realm + ":5060"},
-	}}}
+	}}}}
 	h.config.DefaultServiceProfile = "default"
 	unregisteredUser := func(server string) cx.ServerAssignmentAnswer {
 		t.Helper()
@@ -311,10 +311,10 @@ func admissionHSS(t *testing.T, policy Admission) *HSS {
 		Admission:              policy,
 		DefaultServiceProfile:  "default",
 		TestUserServiceProfile: "default",
-		ServiceProfiles: map[string][]ifc.InitialFilterCriteria{"default": {{
+		ServiceProfiles: map[string]ServiceProfile{"default": {Criteria: []ifc.InitialFilterCriteria{{
 			TriggerPoint:      &ifc.TriggerPoint{SPT: []ifc.SPT{{Group: []int{0}, SessionCase: &unregistered}}},
 			ApplicationServer: ifc.ApplicationServer{ServerName: "sip:mmtel." + realm + ":5060"},
-		}}},
+		}}}},
 	}, store, node)
 }
 

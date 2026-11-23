@@ -294,12 +294,19 @@ hss:
   # short message to a user goes to the IP-SM-GW only when it comes from
   # another network (priority 2); the IP-SM-GW's own MESSAGE to a user
   # would otherwise come back to it (TS 23.218 5.2.3 NOTE 5).
+  # feature on a criterion is the operator's word for what that
+  # criterion turns on. The features of a profile are those words
+  # without repetition, and the maintenance API lists them, so an
+  # operator can read which profile turns a feature on without reading
+  # every criterion. No criterion of Cx carries the word.
   service_profiles:
     default:
       - priority: 0
+        feature: sms
         trigger_point: {condition_type_cnf: true, spt: [{group: [0], method: REGISTER}]}
         application_server: {server_name: sip:ipsmgw.ims.mnc001.mcc001.3gppnetwork.org:5060, default_handling: SESSION_CONTINUED, service_info: "{msisdn}"}
       - priority: 1
+        feature: sms
         trigger_point:
           condition_type_cnf: true
           spt:
@@ -316,6 +323,7 @@ hss:
       # IP-SM-GW asserts its own URI in the MESSAGEs it sends to users:
       # the negated header leaves them out.
       - priority: 2
+        feature: sms
         trigger_point:
           condition_type_cnf: true
           spt:
@@ -330,15 +338,19 @@ hss:
       # step 3). Barring must hold, so the originating cases end the call
       # when the AS fails; a call to the user goes on without the AS.
       - priority: 10
+        feature: mmtel
         trigger_point: {condition_type_cnf: true, spt: [{group: [0], method: INVITE}, {group: [1], session_case: ORIGINATING_REGISTERED}]}
         application_server: {server_name: sip:mmtel.ims.mnc001.mcc001.3gppnetwork.org:5060, default_handling: SESSION_TERMINATED}
       - priority: 11
+        feature: mmtel
         trigger_point: {condition_type_cnf: true, spt: [{group: [0], method: INVITE}, {group: [1], session_case: TERMINATING_REGISTERED}]}
         application_server: {server_name: sip:mmtel.ims.mnc001.mcc001.3gppnetwork.org:5060, default_handling: SESSION_CONTINUED}
       - priority: 12
+        feature: mmtel
         trigger_point: {condition_type_cnf: true, spt: [{group: [0], method: INVITE}, {group: [1], session_case: TERMINATING_UNREGISTERED}]}
         application_server: {server_name: sip:mmtel.ims.mnc001.mcc001.3gppnetwork.org:5060, default_handling: SESSION_CONTINUED}
       - priority: 13
+        feature: mmtel
         trigger_point: {condition_type_cnf: true, spt: [{group: [0], method: INVITE}, {group: [1], session_case: ORIGINATING_CDIV}]}
         application_server: {server_name: sip:mmtel.ims.mnc001.mcc001.3gppnetwork.org:5060, default_handling: SESSION_TERMINATED}
     # A profile with no criteria: the S-CSCF calls no application server
