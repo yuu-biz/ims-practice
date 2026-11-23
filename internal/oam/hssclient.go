@@ -10,6 +10,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"slices"
 	"strconv"
 	"strings"
 )
@@ -141,28 +142,32 @@ func (c *hssClient) delete(ctx context.Context, impi string) error {
 }
 
 // export reads one page of GET /subscriptions/export and calls emit
-// with each record as the HSS wrote it. It returns how many records the
-// page had and the private identity of the last one, where the next
-// page starts.
-func (c *hssClient) export(ctx context.Context, after string, limit int, emit func(json.RawMessage) error) (int, string, error) {
+// with each record as the HSS wrote it. It returns the private identity
+// that the page after this one starts at, and an empty string for the
+// last page (nextPage).
+func (c *hssClient) export(ctx context.Context, after string, limit int, emit func(json.RawMessage) error) (string, error) {
 	q := url.Values{"limit": {strconv.Itoa(limit)}}
 	if after != "" {
 		q.Set("after", after)
 	}
 	resp, err := c.send(ctx, http.MethodGet, "/subscriptions/export?"+q.Encode(), nil)
 	if err != nil {
-		return 0, "", err
+		return "", err
 	}
 	defer resp.Body.Close()
+	next, err := nextPage(resp, after)
+	if err != nil {
+		return "", err
+	}
 	n, last := 0, after
 	r := bufio.NewReaderSize(resp.Body, maxRecordLine)
 	for {
 		line, err := readLine(r)
 		if errors.Is(err, io.EOF) {
-			return n, last, nil
+			return next, nil
 		}
 		if err != nil {
-			return n, last, fmt.Errorf("%w: export: %v", ErrUpstream, err)
+			return "", fmt.Errorf("%w: export: %v", ErrUpstream, err)
 		}
 		if len(bytes.TrimSpace(line)) == 0 {
 			continue
@@ -171,17 +176,72 @@ func (c *hssClient) export(ctx context.Context, after string, limit int, emit fu
 			PrivateIdentity string `json:"private_identity"`
 		}
 		if err := json.Unmarshal(line, &id); err != nil || id.PrivateIdentity == "" {
-			return n, last, fmt.Errorf("%w: export: record %d after %q is not a subscription", ErrUpstream, n+1, last)
+			return "", fmt.Errorf("%w: export: record %d after %q is not a subscription", ErrUpstream, n+1, last)
 		}
 		if last != "" && strings.ToLower(id.PrivateIdentity) <= strings.ToLower(last) {
-			return n, last, fmt.Errorf("%w: export: %q does not come after %q", ErrUpstream, id.PrivateIdentity, last)
+			return "", fmt.Errorf("%w: export: %q does not come after %q", ErrUpstream, id.PrivateIdentity, last)
 		}
 		if err := emit(json.RawMessage(bytes.Clone(line))); err != nil {
-			return n, last, err
+			return "", err
 		}
 		n++
 		last = id.PrivateIdentity
 	}
+}
+
+// nextPage is the private identity that the page after this answer
+// starts at: the "after" of the query that the HSS names in a Link
+// header of rel="next" while pages are left (RFC 8288 3). The target is
+// a relative reference, read against the URL the page came from (RFC
+// 8288 3.1, RFC 3986 5.1.3), so the OAM follows it wherever it reaches
+// the API. An answer without the header is the last page and gives an
+// empty private identity.
+//
+// The header is the only end of the export. A page of exactly the limit
+// always carries it, so the page that follows can hold no record at all;
+// that page is the end and not a failure. A page can also hold fewer
+// records than it names in the header, as the HSS leaves out a
+// subscription that went while the page was read, so the next page
+// starts where the HSS says and not after the last record read.
+func nextPage(resp *http.Response, after string) (string, error) {
+	for _, link := range resp.Header.Values("Link") {
+		target, params, ok := strings.Cut(link, ";")
+		if !ok || !relNext(params) {
+			continue
+		}
+		target = strings.TrimSpace(target)
+		if !strings.HasPrefix(target, "<") || !strings.HasSuffix(target, ">") {
+			return "", fmt.Errorf("%w: export: Link: %q has no target between < and >", ErrUpstream, link)
+		}
+		ref, err := url.Parse(target[1 : len(target)-1])
+		if err != nil {
+			return "", fmt.Errorf("%w: export: Link: %q: %v", ErrUpstream, target, err)
+		}
+		next := resp.Request.URL.ResolveReference(ref).Query().Get("after")
+		switch {
+		case next == "":
+			return "", fmt.Errorf("%w: export: Link: %q names no page to come after", ErrUpstream, target)
+		case after != "" && strings.ToLower(next) <= strings.ToLower(after):
+			// A page that followed itself would be read for ever.
+			return "", fmt.Errorf("%w: export: the next page starts at %q, which does not come after %q", ErrUpstream, next, after)
+		}
+		return next, nil
+	}
+	return "", nil
+}
+
+// relNext reports whether the parameters of a link say that its target
+// is the next page. The value of rel is a token or a quoted string,
+// which are the same thing (RFC 8288 3), and holds one relation type or
+// several separated by spaces (RFC 8288 3.3).
+func relNext(params string) bool {
+	for _, param := range strings.Split(params, ";") {
+		name, value, _ := strings.Cut(strings.TrimSpace(param), "=")
+		if strings.EqualFold(strings.TrimSpace(name), "rel") {
+			return slices.Contains(strings.Fields(strings.Trim(strings.TrimSpace(value), `"`)), "next")
+		}
+	}
+	return false
 }
 
 func (c *hssClient) do(ctx context.Context, method, path string, body, answer any) error {

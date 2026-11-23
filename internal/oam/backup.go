@@ -41,11 +41,13 @@ type hssSubscriptions struct{ s *Server }
 
 func (h hssSubscriptions) Name() string { return "hss.subscriptions" }
 
+// Export reads the pages of the HSS export in turn, each within the
+// timeout of one call, and stops at the page that names no page after
+// it (hssClient.export).
 func (h hssSubscriptions) Export(ctx context.Context, emit func(json.RawMessage) error) error {
-	after := ""
-	for {
+	for after := ""; ; {
 		pageCtx, cancel := context.WithTimeout(ctx, h.s.nodeTimeout)
-		n, last, err := h.s.hss.export(pageCtx, after, h.s.exportPageSize, emit)
+		next, err := h.s.hss.export(pageCtx, after, h.s.exportPageSize, emit)
 		cancel()
 		if err != nil {
 			var refused *hssError
@@ -54,10 +56,10 @@ func (h hssSubscriptions) Export(ctx context.Context, emit func(json.RawMessage)
 			}
 			return err
 		}
-		if n < h.s.exportPageSize {
+		if next == "" {
 			return nil
 		}
-		after = last
+		after = next
 	}
 }
 

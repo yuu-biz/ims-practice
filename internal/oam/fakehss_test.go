@@ -10,6 +10,7 @@ import (
 	"maps"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"slices"
 	"strconv"
 	"strings"
@@ -33,6 +34,10 @@ type fakeHSS struct {
 	subs map[string]fakeSubscription // by private identity, lower case
 	// byPublic is the private key of each public identity.
 	byPublic map[string]string
+	// hidden are the private keys that the export counts towards a page
+	// and writes no line for, as the HSS leaves out a subscription that
+	// went while its page was read.
+	hidden map[string]bool
 
 	// echo makes a refusal quote the request, as a careless HSS might,
 	// to show that the OAM redacts what the HSS says.
@@ -58,7 +63,7 @@ type fakeSubscription struct {
 
 func newFakeHSS(t *testing.T) *fakeHSS {
 	t.Helper()
-	h := &fakeHSS{subs: map[string]fakeSubscription{}, byPublic: map[string]string{}}
+	h := &fakeHSS{subs: map[string]fakeSubscription{}, byPublic: map[string]string{}, hidden: map[string]bool{}}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /subscriptions", h.list)
 	mux.HandleFunc("GET /subscriptions/{impi}", h.get)
@@ -307,7 +312,9 @@ func (h *fakeHSS) patch(w http.ResponseWriter, r *http.Request) {
 
 // export is GET /subscriptions/export: limit subscriptions after the
 // private identity of after, in the order of the private identities,
-// credentials and SQN_HE included, one per line.
+// credentials and SQN_HE included, one per line. A full page names the
+// page that follows in a Link header, and a hidden subscription fills a
+// place in the page without a line of its own.
 func (h *fakeHSS) export(w http.ResponseWriter, r *http.Request) {
 	limit, err := strconv.Atoi(r.URL.Query().Get("limit"))
 	if err != nil || limit < 1 || limit > 1000 {
@@ -317,12 +324,23 @@ func (h *fakeHSS) export(w http.ResponseWriter, r *http.Request) {
 	after := strings.ToLower(r.URL.Query().Get("after"))
 	h.mu.Lock()
 	var page []fakeSubscription
+	last, taken := "", 0
 	for _, k := range slices.Sorted(maps.Keys(h.subs)) {
-		if k > after && len(page) < limit {
-			page = append(page, h.subs[k])
+		if k > after && taken < limit {
+			taken++
+			last = k
+			if !h.hidden[k] {
+				page = append(page, h.subs[k])
+			}
 		}
 	}
 	h.mu.Unlock()
+	// A page of exactly the limit names the page that follows, whether
+	// or not a subscription is left, as setNextPage of internal/hss does.
+	if taken == limit {
+		next := url.Values{"after": {last}, "limit": {strconv.Itoa(limit)}}
+		w.Header().Set("Link", `<?`+next.Encode()+`>; rel="next"`)
+	}
 	w.Header().Set("Content-Type", "application/x-ndjson")
 	enc := json.NewEncoder(w)
 	for _, s := range page {
