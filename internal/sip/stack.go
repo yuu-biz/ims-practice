@@ -529,6 +529,9 @@ type ServerTransaction struct {
 	// final is the status code of the last final response passed to
 	// Respond.
 	final atomic.Int32
+	// success is the status code of the response that
+	// ClaimFirstSuccess gave away, and 0 while it has given none away.
+	success atomic.Int32
 }
 
 // Cancelled is closed when a CANCEL for this request arrives before its
@@ -562,6 +565,34 @@ func (st *ServerTransaction) Respond(resp *Message) error {
 // passed to Respond, or 0 while it has passed none, so that a TU can
 // count how its requests ended.
 func (st *ServerTransaction) FinalStatus() int { return int(st.final.Load()) }
+
+// ClaimFirstSuccess reports whether resp is the first response of this
+// transaction that tells the sender of the request that the session is
+// getting through: a 180 (Ringing), or a 2xx when no 180 went before
+// it. The call that meets that takes it from the transaction: every
+// later call returns false, for the same resp as for any other, so one
+// transaction gives one success at most.
+//
+// That response is the one TS 32.409 4.1.2.2 counts as a successful
+// session establishment, under the message type that carried it, and it
+// counts it on the transmission, which is why the transaction and not
+// the TU holds the state: for a session that is answered, the TU is
+// through with the transaction only once its own client transaction
+// ends, up to Timer M after the 2xx (RFC 6026 7.1).
+//
+// A TU that counts calls it once for each response it sends, in the
+// order it sends them, so that a 2xx is told from the 180 that went
+// before it. The retransmissions of a 2xx and the 2xx of the other
+// branches of a fork then come after the first and are false, and so is
+// every response that the clause does not name, such as a 183 (Session
+// Progress).
+func (st *ServerTransaction) ClaimFirstSuccess(resp *Message) bool {
+	code := resp.StatusCode
+	if code != 180 && (code < 200 || code >= 300) {
+		return false
+	}
+	return st.success.CompareAndSwap(0, int32(code))
+}
 
 // stackInput is what the reader, the timers, and the TU hand to the
 // loop.

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net"
 	"net/netip"
+	"slices"
 	"strconv"
 	"sync"
 	"sync/atomic"
@@ -317,6 +318,74 @@ func TestFinalStatusIsTheFinalResponseOfTheTU(t *testing.T) {
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("the REGISTER never reached the TU")
+	}
+}
+
+// ClaimFirstSuccess picks out of the responses of a transaction the one
+// that first told the sender that the session was getting through: the
+// 180 (Ringing), or the 2xx when no 180 went before it. TS 32.409
+// 4.1.2.2 counts a successful session establishment on that response,
+// under the message type that carried it, so neither the 100 nor the
+// 183 is it, a 2xx after a 180 does not take its place, and nor does a
+// retransmitted 2xx.
+func TestClaimFirstSuccessIsTheFirstResponseThatTellsOfASuccess(t *testing.T) {
+	for _, c := range []struct {
+		name string
+		sent []int
+		want []bool
+	}{
+		{"a session that rings", []int{100, 183, 180, 200, 200}, []bool{false, false, true, false, false}},
+		{"a session answered without ringing", []int{100, 183, 200}, []bool{false, false, true}},
+		{"a session that the callee refuses", []int{100, 486}, []bool{false, false}},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			seen := make(chan []bool, 1)
+			server := newStack(t, testTimers, func(st *ServerTransaction) {
+				var got []bool
+				for _, code := range c.sent {
+					tag := NewTag()
+					if code == 100 {
+						tag = ""
+					}
+					resp := NewResponse(st.Request, code, tag)
+					st.Respond(resp)
+					got = append(got, st.ClaimFirstSuccess(resp))
+				}
+				seen <- got
+			})
+			peer := newUDPPeer(t, server.transport.LocalAddr())
+			peer.send(peer.request(INVITE))
+			select {
+			case got := <-seen:
+				if !slices.Equal(got, c.want) {
+					t.Errorf("ClaimFirstSuccess for each of %v = %v, want %v", c.sent, got, c.want)
+				}
+			case <-time.After(5 * time.Second):
+				t.Fatal("the INVITE never reached the TU")
+			}
+		})
+	}
+}
+
+// The transaction gives the success away once: a second call returns
+// false even for the response that took it, so a TU that asks twice
+// about one response still counts one successful establishment.
+func TestClaimFirstSuccessGivesTheSuccessAwayOnce(t *testing.T) {
+	seen := make(chan [2]bool, 1)
+	server := newStack(t, testTimers, func(st *ServerTransaction) {
+		ringing := NewResponse(st.Request, 180, NewTag())
+		st.Respond(ringing)
+		seen <- [2]bool{st.ClaimFirstSuccess(ringing), st.ClaimFirstSuccess(ringing)}
+	})
+	peer := newUDPPeer(t, server.transport.LocalAddr())
+	peer.send(peer.request(INVITE))
+	select {
+	case got := <-seen:
+		if got != [2]bool{true, false} {
+			t.Errorf("the two calls for the one 180 = %v, want [true false]", got)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("the INVITE never reached the TU")
 	}
 }
 
