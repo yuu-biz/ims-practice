@@ -430,6 +430,43 @@ func TestSendRoutingInfoLeavesOutANodeMarkedNotReachable(t *testing.T) {
 	}
 }
 
+// TS 23.040 3.2.6 items 2g and 2h: a short message that arrived proves
+// that the UE is reachable and has memory, so the flags go and the
+// service centres that are left are alerted. Without this the memory
+// flag would stop every later alert.
+func TestDeliveredShortMessageClearsTheMemoryFlag(t *testing.T) {
+	n := newS6cNetwork(t)
+	if a := n.rdr(t, msisdnA, sgd.SMDeliveryCauseUEMemoryCapacityExceeded); a.Result != success {
+		t.Fatalf("RDA = %v", a.Result)
+	}
+	// Another service centre holds a short message for the user as well.
+	other := "12025550200"
+	u := n.subscriber(t)
+	u.MessageWaitingData = append(u.MessageWaitingData, other)
+	if err := n.hss.store.Put(context.Background(), u); err != nil {
+		t.Fatal(err)
+	}
+
+	if a := n.rdr(t, msisdnA, sgd.SMDeliveryCauseSuccessfulTransfer); a.Result != success {
+		t.Fatalf("RDA = %v", a.Result)
+	}
+	n.waitForSubscriber(t, "after the delivery", func(u Subscriber) bool { return !u.MCEF && !u.UNRI })
+	// The other service centre has no Diameter identity in the
+	// configuration, so the alert it cannot get purges its address (TS
+	// 29.338 5.2.2.2) rather than filling the list for good.
+	n.waitForSubscriber(t, "the purge of an address that cannot be alerted",
+		func(u Subscriber) bool { return len(u.MessageWaitingData) == 0 })
+
+	// With the flag gone, the return of the user alerts again.
+	if a := n.rdr(t, msisdnA, sgd.SMDeliveryCauseAbsentUser); a.Result != success {
+		t.Fatalf("RDA = %v", a.Result)
+	}
+	n.register(t)
+	if alr := n.alert(t); alr.SCAddress != scAddress {
+		t.Errorf("ALR = %+v", alr)
+	}
+}
+
 // A registration that lands between the read of the subscriber and the
 // write of the message waiting data must not leave an address behind
 // that no alert will ever reach: the query is answered with the serving
