@@ -474,8 +474,12 @@ type rawHSS struct {
 	// subscription that has none of its own, those of the provisioning
 	// API included (hss.Config).
 	MMTelServices string `yaml:"mmtel_services"`
-	// InitialFilterCriteria apply to every subscription (hss.Config).
-	InitialFilterCriteria []rawInitialFilterCriteria `yaml:"initial_filter_criteria"`
+	// ServiceProfiles are the service profiles of the network by name,
+	// each one a list of criteria (hss.Config).
+	ServiceProfiles map[string][]rawInitialFilterCriteria `yaml:"service_profiles"`
+	// DefaultServiceProfile names the profile of ServiceProfiles that a
+	// subscription gets (hss.Config).
+	DefaultServiceProfile string `yaml:"default_service_profile"`
 	// ServiceCentres name the SMS central functions the HSS can alert
 	// (hss.ServiceCentre). TS 29.338 5.3.1.2 routes an alert by the
 	// Diameter identity of the service centre, which the HSS has no
@@ -735,11 +739,15 @@ func (raw *rawHSS) validate(homeDomain string) (hss.Config, error) {
 		}
 		c.PSIUsers = append(c.PSIUsers, p)
 	}
-	criteria, err := parseInitialFilterCriteria(raw.InitialFilterCriteria)
+	profiles, err := parseServiceProfiles(raw.ServiceProfiles)
 	if err != nil {
 		return hss.Config{}, err
 	}
-	c.InitialFilterCriteria = criteria
+	if err := checkServiceProfileName("default_service_profile", raw.DefaultServiceProfile, profiles); err != nil {
+		return hss.Config{}, err
+	}
+	c.ServiceProfiles = profiles
+	c.DefaultServiceProfile = raw.DefaultServiceProfile
 	return c, nil
 }
 

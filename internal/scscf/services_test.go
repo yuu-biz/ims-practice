@@ -78,7 +78,7 @@ func newServiceHarnessWith(t *testing.T, cfg Config, criteria []ifc.InitialFilte
 	for host, addr := range hosts {
 		resolver.hosts[host] = addr
 	}
-	h := newHarnessWithHSS(t, cfg, resolver, hss.Config{InitialFilterCriteria: criteria},
+	h := newHarnessWithHSS(t, cfg, resolver, hssProfile(criteria...),
 		hss.Subscription{PrivateIdentity: impi, PublicIdentities: []string{impu, telURI}, Password: password})
 	return &serviceHarness{harness: h, icscf: icscfGot, pcscf: pcscfGot}
 }
@@ -550,9 +550,7 @@ func TestPServedUser(t *testing.T) {
 // user's registration, as the IP-SM-GW does after the third-party
 // REGISTER (TS 23.204 6.1). Another server may not.
 func TestApplicationServerSubscribesToTheRegEvent(t *testing.T) {
-	h := newSubscriberHarnessWithHSS(t, Config{}, hss.Config{InitialFilterCriteria: []ifc.InitialFilterCriteria{
-		registerCriterion(0, asURI, ifc.SessionContinued),
-	}})
+	h := newSubscriberHarnessWithHSS(t, Config{}, hssProfile(registerCriterion(0, asURI, ifc.SessionContinued)))
 	h.registerUser(sip.NewCallID())
 	_, got := h.subscribe("<"+asURI+">", "")
 	if n, _ := nextNotify(t, got); n.State.State != sip.SubscriptionActive {

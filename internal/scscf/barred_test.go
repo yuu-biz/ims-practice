@@ -148,7 +148,7 @@ func TestRegEventLeavesOutTheBarredIdentity(t *testing.T) {
 func TestThirdPartyRegisterNamesTheDefaultIdentity(t *testing.T) {
 	as, got := fakeAS(t, answers(200))
 	h := newHarnessWithHSS(t, Config{}, fakeResolver{hosts: map[string]netip.AddrPort{asHost: as.LocalAddr()}},
-		hss.Config{InitialFilterCriteria: []ifc.InitialFilterCriteria{registerCriterion(0, asURI, ifc.SessionContinued)}},
+		hssProfile(registerCriterion(0, asURI, ifc.SessionContinued)),
 		hss.Subscription{PrivateIdentity: impi, PublicIdentities: []string{impu, defaultIdentity, telIdentity},
 			BarredIdentities: []string{impu}, Password: password})
 	h.registerUser(sip.NewCallID())

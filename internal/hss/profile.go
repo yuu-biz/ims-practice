@@ -19,15 +19,15 @@ const MSISDNPlaceholder = "{msisdn}"
 
 // userProfile is the profile of u that the SAA carries in User-Data (TS
 // 29.228 6.1.2.1): the identities of the subscription and the criteria
-// of the configuration.
+// of its service profile.
 //
-// SIMPLIFIED: TS 29.228 B.2.2. The HSS stub gives every subscription the
-// same criteria; only the MSISDN in ServiceInfo differs. A product HSS
-// keeps the criteria of each service profile. The stub has no service
-// subscriptions that would differ between users for SMS.
+// SIMPLIFIED: TS 29.228 B.2.2. Every subscription of this HSS gets the
+// service profile that Config.DefaultServiceProfile names; only the
+// MSISDN in ServiceInfo differs. A product HSS keeps the name of a
+// service profile with each subscription.
 func (h *HSS) userProfile(u Subscriber) cx.UserProfile {
 	var criteria []ifc.InitialFilterCriteria
-	for _, c := range h.config.InitialFilterCriteria {
+	for _, c := range h.config.ServiceProfiles[h.config.DefaultServiceProfile] {
 		c.ApplicationServer.ServiceInfo = strings.ReplaceAll(c.ApplicationServer.ServiceInfo, MSISDNPlaceholder, u.MSISDN())
 		criteria = append(criteria, c)
 	}

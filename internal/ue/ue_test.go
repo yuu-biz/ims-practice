@@ -455,7 +455,8 @@ func startHSS(t *testing.T, cfg networkConfig) (*hss.HSS, []hssInstance) {
 		role, err := hss.New(hss.Config{
 			Realm: domain, VisitedNetworks: []string{domain},
 			ServerCapabilities:    cx.ServerCapabilities{MandatoryCapabilities: []uint32{1}},
-			InitialFilterCriteria: cfg.criteria,
+			ServiceProfiles:       map[string][]ifc.InitialFilterCriteria{"default": cfg.criteria},
+			DefaultServiceProfile: "default",
 			UserLocks:             locks,
 		}, store, node, quiet())
 		if err != nil {

@@ -48,11 +48,19 @@ type Config struct {
 	// PSIUsers are the ranges of public service identities that the
 	// application servers of the network host (TS 23.228 5.4.12.4).
 	PSIUsers []PSIUser
-	// InitialFilterCriteria go into the profile of every subscription,
-	// including those added through the provisioning API.
-	// MSISDNPlaceholder in a ServiceInfo becomes the MSISDN of the
-	// subscriber.
-	InitialFilterCriteria []ifc.InitialFilterCriteria
+	// ServiceProfiles are the service profiles of the network by name
+	// (TS 29.228 B.2.2): the criteria that go into the user profile of
+	// a subscription that gets that profile. MSISDNPlaceholder in a
+	// ServiceInfo becomes the MSISDN of the subscriber. The name stays
+	// in the HSS, as the user profile of Cx has no element for it
+	// (TS 29.228 Annex E, Table E.2).
+	ServiceProfiles map[string][]ifc.InitialFilterCriteria
+	// DefaultServiceProfile is the name of the service profile that a
+	// subscription gets, those added through the provisioning API
+	// included. Operators give a feature to every user by naming here
+	// the profile whose criteria call the application server of that
+	// feature.
+	DefaultServiceProfile string
 	// ProvisioningListen is the address of the provisioning API, such as
 	// :8081. Empty means the node has none.
 	ProvisioningListen string

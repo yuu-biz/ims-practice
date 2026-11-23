@@ -89,13 +89,9 @@ func TestCallForwardingWhenNotLoggedIn(t *testing.T) {
 		hosts: map[string]netip.AddrPort{"pcscf." + domain: pcscf.LocalAddr(), mmtel: as.stack.LocalAddr()},
 		enum:  map[string]string{"+12025550101": impu},
 	}}
-	h := newHarnessWithHSS(t, Config{}, resolver, hss.Config{
-		ServerCapabilities: cx.ServerCapabilities{MandatoryCapabilities: []uint32{1}},
-		InitialFilterCriteria: []ifc.InitialFilterCriteria{
-			callCriterion(0, ifc.TerminatingUnregistered, server),
-			callCriterion(1, ifc.OriginatingCDIV, server),
-		},
-	},
+	hssCfg := hssProfile(callCriterion(0, ifc.TerminatingUnregistered, server), callCriterion(1, ifc.OriginatingCDIV, server))
+	hssCfg.ServerCapabilities = cx.ServerCapabilities{MandatoryCapabilities: []uint32{1}}
+	h := newHarnessWithHSS(t, Config{}, resolver, hssCfg,
 		hss.Subscription{PrivateIdentity: impi, PublicIdentities: []string{impu, telURI}, Password: password},
 		hss.Subscription{PrivateIdentity: impi2, PublicIdentities: []string{impu2, tel2}, Password: "test-password-2"},
 	)

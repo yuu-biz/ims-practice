@@ -24,36 +24,45 @@ hss:
         - sip:+12025550152@ims.mnc002.mcc001.3gppnetwork.org
         - tel:+12025550152
       password: test-password-b2
+  # A service profile is a list of initial filter criteria, which tell
+  # the S-CSCF which request goes to which application server (TS 29.228
+  # B.2.2). The HSS holds its profiles by name and answers the SAA with
+  # the criteria of the profile that the subscription gets; the name
+  # itself stays in the HSS. This setting names a profile of
+  # service_profiles below. Only one profile is defined here, so every
+  # subscription gets the same criteria.
+  default_service_profile: default
   # SMS over IP as in network A (deploy/compose/hss.yaml): the
   # third-party REGISTER and the short messages that a user sends go to
   # the IP-SM-GW.
-  initial_filter_criteria:
-    - priority: 0
-      trigger_point: {condition_type_cnf: true, spt: [{group: [0], method: REGISTER}]}
-      application_server: {server_name: sip:ipsmgw.ims.mnc002.mcc001.3gppnetwork.org:5060, default_handling: SESSION_CONTINUED, service_info: "{msisdn}"}
-    - priority: 1
-      trigger_point:
-        condition_type_cnf: true
-        spt:
-          - {group: [0], method: MESSAGE}
-          - {group: [1], sip_header: {header: ^Content-Type$, content: '^[Aa][Pp][Pp][Ll][Ii][Cc][Aa][Tt][Ii][Oo][Nn]/[Vv][Nn][Dd]\.3[Gg][Pp][Pp]\.[Ss][Mm][Ss]([[:space:]]*;.*)?$'}}
-          - {group: [2], session_case: ORIGINATING_REGISTERED}
-      application_server: {server_name: sip:ipsmgw.ims.mnc002.mcc001.3gppnetwork.org:5060}
-    # A short message for a user from another network reaches the
-    # IP-SM-GW that serves the user (TS 23.204 6.4a step 2). The
-    # IP-SM-GW's own MESSAGE to the user asserts its own URI and goes on
-    # to the UE: the negated header keeps it from coming back (TS 23.218
-    # 5.2.3 NOTE 5). Network A has the same criterion with its own
-    # IP-SM-GW (deploy/compose/hss.yaml).
-    - priority: 2
-      trigger_point:
-        condition_type_cnf: true
-        spt:
-          - {group: [0], method: MESSAGE}
-          - {group: [1], sip_header: {header: ^Content-Type$, content: '^[Aa][Pp][Pp][Ll][Ii][Cc][Aa][Tt][Ii][Oo][Nn]/[Vv][Nn][Dd]\.3[Gg][Pp][Pp]\.[Ss][Mm][Ss]([[:space:]]*;.*)?$'}}
-          - {group: [2], session_case: TERMINATING_REGISTERED}
-          - {group: [3], condition_negated: true, sip_header: {header: ^P-Asserted-Identity$, content: 'sip:ipsmgw\.ims\.mnc002\.mcc001\.3gppnetwork\.org'}}
-      application_server: {server_name: sip:ipsmgw.ims.mnc002.mcc001.3gppnetwork.org:5060}
+  service_profiles:
+    default:
+      - priority: 0
+        trigger_point: {condition_type_cnf: true, spt: [{group: [0], method: REGISTER}]}
+        application_server: {server_name: sip:ipsmgw.ims.mnc002.mcc001.3gppnetwork.org:5060, default_handling: SESSION_CONTINUED, service_info: "{msisdn}"}
+      - priority: 1
+        trigger_point:
+          condition_type_cnf: true
+          spt:
+            - {group: [0], method: MESSAGE}
+            - {group: [1], sip_header: {header: ^Content-Type$, content: '^[Aa][Pp][Pp][Ll][Ii][Cc][Aa][Tt][Ii][Oo][Nn]/[Vv][Nn][Dd]\.3[Gg][Pp][Pp]\.[Ss][Mm][Ss]([[:space:]]*;.*)?$'}}
+            - {group: [2], session_case: ORIGINATING_REGISTERED}
+        application_server: {server_name: sip:ipsmgw.ims.mnc002.mcc001.3gppnetwork.org:5060}
+      # A short message for a user from another network reaches the
+      # IP-SM-GW that serves the user (TS 23.204 6.4a step 2). The
+      # IP-SM-GW's own MESSAGE to the user asserts its own URI and goes on
+      # to the UE: the negated header keeps it from coming back (TS 23.218
+      # 5.2.3 NOTE 5). Network A has the same criterion with its own
+      # IP-SM-GW (deploy/compose/hss.yaml).
+      - priority: 2
+        trigger_point:
+          condition_type_cnf: true
+          spt:
+            - {group: [0], method: MESSAGE}
+            - {group: [1], sip_header: {header: ^Content-Type$, content: '^[Aa][Pp][Pp][Ll][Ii][Cc][Aa][Tt][Ii][Oo][Nn]/[Vv][Nn][Dd]\.3[Gg][Pp][Pp]\.[Ss][Mm][Ss]([[:space:]]*;.*)?$'}}
+            - {group: [2], session_case: TERMINATING_REGISTERED}
+            - {group: [3], condition_negated: true, sip_header: {header: ^P-Asserted-Identity$, content: 'sip:ipsmgw\.ims\.mnc002\.mcc001\.3gppnetwork\.org'}}
+        application_server: {server_name: sip:ipsmgw.ims.mnc002.mcc001.3gppnetwork.org:5060}
 diameter:
   origin_host: hss.ims.mnc002.mcc001.3gppnetwork.org
   origin_realm: ims.mnc002.mcc001.3gppnetwork.org

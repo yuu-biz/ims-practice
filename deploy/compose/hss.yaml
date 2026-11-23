@@ -262,6 +262,14 @@ hss:
         <operator-outgoing-communication-barring authorized="true"/>
       </complete-communication-barring>
     </MMTelServices>
+  # A service profile is a list of initial filter criteria, which tell
+  # the S-CSCF which request goes to which application server (TS 29.228
+  # B.2.2). The HSS holds its profiles by name and answers the SAA with
+  # the criteria of the profile that the subscription gets; the name
+  # itself stays in the HSS. This setting names a profile of
+  # service_profiles below. Only one profile is defined here, so every
+  # subscription gets the same criteria.
+  default_service_profile: default
   # The services of SMS over IP, for every subscription. The
   # S-CSCF sends the IP-SM-GW a third-party REGISTER for each
   # registration, with the MSISDN in the body (TS 24.229 5.4.1.7A), and
@@ -269,52 +277,53 @@ hss:
   # short message to a user goes to the IP-SM-GW only when it comes from
   # another network (priority 2); the IP-SM-GW's own MESSAGE to a user
   # would otherwise come back to it (TS 23.218 5.2.3 NOTE 5).
-  initial_filter_criteria:
-    - priority: 0
-      trigger_point: {condition_type_cnf: true, spt: [{group: [0], method: REGISTER}]}
-      application_server: {server_name: sip:ipsmgw.ims.mnc001.mcc001.3gppnetwork.org:5060, default_handling: SESSION_CONTINUED, service_info: "{msisdn}"}
-    - priority: 1
-      trigger_point:
-        condition_type_cnf: true
-        spt:
-          - {group: [0], method: MESSAGE}
-          # The media type in any case (RFC 2045 5.1), with or without
-          # parameters. Annex F of TS 29.228 matches the content with
-          # case, and its regular expressions have no flag to fold it.
-          - {group: [1], sip_header: {header: ^Content-Type$, content: '^[Aa][Pp][Pp][Ll][Ii][Cc][Aa][Tt][Ii][Oo][Nn]/[Vv][Nn][Dd]\.3[Gg][Pp][Pp]\.[Ss][Mm][Ss]([[:space:]]*;.*)?$'}}
-          - {group: [2], session_case: ORIGINATING_REGISTERED}
-      application_server: {server_name: sip:ipsmgw.ims.mnc001.mcc001.3gppnetwork.org:5060}
-    # A short message for a user from another network reaches the
-    # IP-SM-GW that serves the user (TS 23.204 6.4a step 2), as in
-    # the peer network (deploy/interconnect/b/hss.yaml). The
-    # IP-SM-GW asserts its own URI in the MESSAGEs it sends to users:
-    # the negated header leaves them out.
-    - priority: 2
-      trigger_point:
-        condition_type_cnf: true
-        spt:
-          - {group: [0], method: MESSAGE}
-          - {group: [1], sip_header: {header: ^Content-Type$, content: '^[Aa][Pp][Pp][Ll][Ii][Cc][Aa][Tt][Ii][Oo][Nn]/[Vv][Nn][Dd]\.3[Gg][Pp][Pp]\.[Ss][Mm][Ss]([[:space:]]*;.*)?$'}}
-          - {group: [2], session_case: TERMINATING_REGISTERED}
-          - {group: [3], condition_negated: true, sip_header: {header: ^P-Asserted-Identity$, content: 'sip:ipsmgw\.ims\.mnc001\.mcc001\.3gppnetwork\.org'}}
-      application_server: {server_name: sip:ipsmgw.ims.mnc001.mcc001.3gppnetwork.org:5060}
-    # The MMTel AS gets every INVITE of a user: those the
-    # user makes, those to the user, registered or not, and those that
-    # it diverted away from the user (ORIGINATING_CDIV, TS 24.229 5.4.3.3
-    # step 3). Barring must hold, so the originating cases end the call
-    # when the AS fails; a call to the user goes on without the AS.
-    - priority: 10
-      trigger_point: {condition_type_cnf: true, spt: [{group: [0], method: INVITE}, {group: [1], session_case: ORIGINATING_REGISTERED}]}
-      application_server: {server_name: sip:mmtel.ims.mnc001.mcc001.3gppnetwork.org:5060, default_handling: SESSION_TERMINATED}
-    - priority: 11
-      trigger_point: {condition_type_cnf: true, spt: [{group: [0], method: INVITE}, {group: [1], session_case: TERMINATING_REGISTERED}]}
-      application_server: {server_name: sip:mmtel.ims.mnc001.mcc001.3gppnetwork.org:5060, default_handling: SESSION_CONTINUED}
-    - priority: 12
-      trigger_point: {condition_type_cnf: true, spt: [{group: [0], method: INVITE}, {group: [1], session_case: TERMINATING_UNREGISTERED}]}
-      application_server: {server_name: sip:mmtel.ims.mnc001.mcc001.3gppnetwork.org:5060, default_handling: SESSION_CONTINUED}
-    - priority: 13
-      trigger_point: {condition_type_cnf: true, spt: [{group: [0], method: INVITE}, {group: [1], session_case: ORIGINATING_CDIV}]}
-      application_server: {server_name: sip:mmtel.ims.mnc001.mcc001.3gppnetwork.org:5060, default_handling: SESSION_TERMINATED}
+  service_profiles:
+    default:
+      - priority: 0
+        trigger_point: {condition_type_cnf: true, spt: [{group: [0], method: REGISTER}]}
+        application_server: {server_name: sip:ipsmgw.ims.mnc001.mcc001.3gppnetwork.org:5060, default_handling: SESSION_CONTINUED, service_info: "{msisdn}"}
+      - priority: 1
+        trigger_point:
+          condition_type_cnf: true
+          spt:
+            - {group: [0], method: MESSAGE}
+            # The media type in any case (RFC 2045 5.1), with or without
+            # parameters. Annex F of TS 29.228 matches the content with
+            # case, and its regular expressions have no flag to fold it.
+            - {group: [1], sip_header: {header: ^Content-Type$, content: '^[Aa][Pp][Pp][Ll][Ii][Cc][Aa][Tt][Ii][Oo][Nn]/[Vv][Nn][Dd]\.3[Gg][Pp][Pp]\.[Ss][Mm][Ss]([[:space:]]*;.*)?$'}}
+            - {group: [2], session_case: ORIGINATING_REGISTERED}
+        application_server: {server_name: sip:ipsmgw.ims.mnc001.mcc001.3gppnetwork.org:5060}
+      # A short message for a user from another network reaches the
+      # IP-SM-GW that serves the user (TS 23.204 6.4a step 2), as in
+      # the peer network (deploy/interconnect/b/hss.yaml). The
+      # IP-SM-GW asserts its own URI in the MESSAGEs it sends to users:
+      # the negated header leaves them out.
+      - priority: 2
+        trigger_point:
+          condition_type_cnf: true
+          spt:
+            - {group: [0], method: MESSAGE}
+            - {group: [1], sip_header: {header: ^Content-Type$, content: '^[Aa][Pp][Pp][Ll][Ii][Cc][Aa][Tt][Ii][Oo][Nn]/[Vv][Nn][Dd]\.3[Gg][Pp][Pp]\.[Ss][Mm][Ss]([[:space:]]*;.*)?$'}}
+            - {group: [2], session_case: TERMINATING_REGISTERED}
+            - {group: [3], condition_negated: true, sip_header: {header: ^P-Asserted-Identity$, content: 'sip:ipsmgw\.ims\.mnc001\.mcc001\.3gppnetwork\.org'}}
+        application_server: {server_name: sip:ipsmgw.ims.mnc001.mcc001.3gppnetwork.org:5060}
+      # The MMTel AS gets every INVITE of a user: those the
+      # user makes, those to the user, registered or not, and those that
+      # it diverted away from the user (ORIGINATING_CDIV, TS 24.229 5.4.3.3
+      # step 3). Barring must hold, so the originating cases end the call
+      # when the AS fails; a call to the user goes on without the AS.
+      - priority: 10
+        trigger_point: {condition_type_cnf: true, spt: [{group: [0], method: INVITE}, {group: [1], session_case: ORIGINATING_REGISTERED}]}
+        application_server: {server_name: sip:mmtel.ims.mnc001.mcc001.3gppnetwork.org:5060, default_handling: SESSION_TERMINATED}
+      - priority: 11
+        trigger_point: {condition_type_cnf: true, spt: [{group: [0], method: INVITE}, {group: [1], session_case: TERMINATING_REGISTERED}]}
+        application_server: {server_name: sip:mmtel.ims.mnc001.mcc001.3gppnetwork.org:5060, default_handling: SESSION_CONTINUED}
+      - priority: 12
+        trigger_point: {condition_type_cnf: true, spt: [{group: [0], method: INVITE}, {group: [1], session_case: TERMINATING_UNREGISTERED}]}
+        application_server: {server_name: sip:mmtel.ims.mnc001.mcc001.3gppnetwork.org:5060, default_handling: SESSION_CONTINUED}
+      - priority: 13
+        trigger_point: {condition_type_cnf: true, spt: [{group: [0], method: INVITE}, {group: [1], session_case: ORIGINATING_CDIV}]}
+        application_server: {server_name: sip:mmtel.ims.mnc001.mcc001.3gppnetwork.org:5060, default_handling: SESSION_TERMINATED}
 diameter:
   origin_host: hss.ims.mnc001.mcc001.3gppnetwork.org
   origin_realm: ims.mnc001.mcc001.3gppnetwork.org

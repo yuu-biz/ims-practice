@@ -18,6 +18,7 @@ import (
 	"github.com/yuu-biz/ims-practice/internal/cx"
 	"github.com/yuu-biz/ims-practice/internal/diameter"
 	"github.com/yuu-biz/ims-practice/internal/hss"
+	"github.com/yuu-biz/ims-practice/internal/ifc"
 	"github.com/yuu-biz/ims-practice/internal/sip"
 )
 
@@ -161,6 +162,15 @@ func newHarness(t *testing.T, cfg Config) *harness {
 func newHarnessWith(t *testing.T, cfg Config, resolver Resolver) *harness {
 	t.Helper()
 	return newHarnessWithHSS(t, cfg, resolver, hss.Config{}, hss.Subscription{PrivateIdentity: impi, PublicIdentities: []string{impu}, Password: password})
+}
+
+// hssProfile is an HSS configuration whose only service profile, the
+// one that every subscription gets, has these criteria.
+func hssProfile(criteria ...ifc.InitialFilterCriteria) hss.Config {
+	return hss.Config{
+		ServiceProfiles:       map[string][]ifc.InitialFilterCriteria{"default": criteria},
+		DefaultServiceProfile: "default",
+	}
 }
 
 // newHarnessWithHSS is newHarnessWith with the HSS stub configured as
