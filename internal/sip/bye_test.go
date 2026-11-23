@@ -91,7 +91,10 @@ func TestPendingRequestAnsweredWhenTheBYEGoesOut(t *testing.T) {
 	hungUp := make(chan error, 1)
 	go func() { hungUp <- out.Bye() }()
 
-	// The 487 and the BYE may arrive in either order.
+	// The UA answers the re-INVITE once the BYE is on its way (RFC 3261
+	// 15.1.1): a peer that had the 487 first could take its turn for the
+	// next request in the dialog and send it to a UA that has hung up.
+	// Both leave the same socket, so the peer reads them in that order.
 	var bye, terminated *Message
 	for bye == nil || terminated == nil {
 		switch m := readDatagram(t, p.peer); {
@@ -99,6 +102,9 @@ func TestPendingRequestAnsweredWhenTheBYEGoesOut(t *testing.T) {
 			bye = m
 			p.respond(m, 200, Body{})
 		case m.StatusCode >= 200 && m.Get("CSeq") == "1 INVITE":
+			if bye == nil {
+				t.Errorf("the re-INVITE got %s before the BYE came", startLine(m))
+			}
 			terminated = m
 		}
 	}
