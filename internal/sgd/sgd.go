@@ -38,9 +38,10 @@
 // S6c are DRMP and MPS-Priority (priority services), SMSMI-Correlation-ID
 // and User-Name in the request (a user without MSISDN), SM-RP-MTI and
 // SM-RP-SMEA (the RP message type and the originating SME address of the
-// message), SRR-Flags (two serving nodes, delivery despite message
-// waiting data, a single attempt), SM-Delivery-Not-Intended (a query
-// that delivers nothing), Additional-Serving-Node and
+// message), the SRR-Flags bits other than
+// Single-Attempt-Delivery (two serving nodes, delivery despite message
+// waiting data), SM-Delivery-Not-Intended (a query that delivers
+// nothing), Additional-Serving-Node and
 // SMSF-Non-3GPP-Address (a second serving node, non-3GPP access), LMSI
 // (the VLR), the User-Identifier of the SRA (the MSISDN that the HSS
 // stores), and MWD-Status and the absent user diagnostics (what the HSS
