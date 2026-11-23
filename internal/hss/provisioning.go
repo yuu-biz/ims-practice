@@ -3,6 +3,7 @@ package hss
 import (
 	"bytes"
 	"context"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -63,7 +64,12 @@ type subscriptionRequest struct {
 	// CustomizedAlertingTone, so a request carries either it or those. An
 	// empty array, which is not the same as leaving the field out, asks
 	// for a subscription with no repository data at all.
-	RepositoryData []repositoryDataRequest `json:"repository_data,omitempty"`
+	//
+	// It carries no omitempty, so that the export, which writes this
+	// type out, tells those two apart: a subscription that holds no
+	// repository data goes out as an empty array and comes back as one
+	// (exportSubscriptions).
+	RepositoryData []repositoryDataRequest `json:"repository_data"`
 }
 
 // repositoryDataRequest is one piece of the Sh repository data in the
@@ -196,6 +202,9 @@ func response(s Subscriber) subscriptionResponse {
 //
 //	GET    /subscriptions[?after={impi}&limit={n}]
 //	                               one page of the subscriptions
+//	GET    /subscriptions/export[?after={impi}&limit={n}]
+//	                               one page of them with their
+//	                               credentials, one per line
 //	GET    /subscriptions/{impi}   one subscription
 //	POST   /subscriptions          add one, from a subscriptionRequest
 //	PUT    /subscriptions/{impi}[?dry_run=true]
@@ -214,9 +223,20 @@ func response(s Subscriber) subscriptionResponse {
 // user profile of such a user pushes the new profile there instead
 // (profileChanged, pushProfile). A request whose subscription the HSS
 // cannot read or write gets 500 (Internal Server Error).
+//
+// GET /subscriptions/export is the one route that a private identity
+// could stand in the way of. Of two patterns that both match a path,
+// the more specific one answers, so the export does, and a subscription
+// whose private identity is exactly "export" is the one that no GET of
+// a single subscription reaches; the listing, the export itself, the
+// PUT, the PATCH and the DELETE all still reach it. A private identity
+// is a name with a realm, such as
+// 001010000000001@ims.mnc001.mcc001.3gppnetwork.org, so none of a
+// network is that word.
 func (h *HSS) Provisioning(peers Peers) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /subscriptions", h.listSubscriptions)
+	mux.HandleFunc("GET /subscriptions/export", h.exportSubscriptions)
 	mux.HandleFunc("GET /subscriptions/{impi}", h.getSubscription)
 	mux.HandleFunc("POST /subscriptions", h.addSubscription)
 	mux.HandleFunc("PUT /subscriptions/{impi}", func(w http.ResponseWriter, r *http.Request) {
@@ -328,14 +348,22 @@ func (h *HSS) listSubscriptions(w http.ResponseWriter, r *http.Request) {
 		}
 		list = append(list, resp)
 	}
-	if next != "" {
-		// A target of the query alone, which is read against the request's
-		// own URL (RFC 3986 4.2), so that it holds wherever the API is
-		// reached from.
-		query := url.Values{"after": {next}, "limit": {strconv.Itoa(limit)}}
-		w.Header().Set("Link", `<?`+query.Encode()+`>; rel="next"`)
-	}
+	setNextPage(w, next, limit)
 	writeJSON(w, http.StatusOK, list)
+}
+
+// setNextPage names the page that follows in a Link header with
+// rel="next" (RFC 8288 3), and names none once the store has reached
+// its last subscriber. The target is the query alone, which is read
+// against the request's own URL (RFC 3986 4.2), so that it holds
+// wherever the API is reached from and for whichever listing asked:
+// the subscriptions and the export page the same way.
+func setNextPage(w http.ResponseWriter, next string, limit int) {
+	if next == "" {
+		return
+	}
+	query := url.Values{"after": {next}, "limit": {strconv.Itoa(limit)}}
+	w.Header().Set("Link", `<?`+query.Encode()+`>; rel="next"`)
 }
 
 // pageLimit is how many subscriptions the request asks for: listLimit
@@ -350,6 +378,137 @@ func pageLimit(r *http.Request) (int, error) {
 		return 0, fmt.Errorf("limit: %q is not a number of subscriptions", text)
 	}
 	return min(limit, listLimit), nil
+}
+
+// ndjsonContentType is the media type of the export: JSON text with one
+// value per line, which the operator reads a line at a time.
+const ndjsonContentType = "application/x-ndjson"
+
+// exportSubscriptions writes one page of the subscriptions out with
+// their credentials, so that an operator can keep an archive of the
+// network beside it: the SIP Digest password, K, OPc, the AMF, SQN_HE
+// as it stands, and the Sh repository data, the Ut credential and the
+// customized alerting tone among it. The rest of the API
+// hands out no credential at all, as Cx itself gives the S-CSCF only
+// H(A1) or vectors (TS 29.228 Table 6.3.5 and Table 6.3.7). This one
+// gives the secrets themselves to whoever reaches the provisioning
+// listener, which is why that listener belongs on an internal network
+// and on no address of the host.
+//
+// Each line is one subscription, written as the body of the PUT that
+// puts that very subscription back (subscriptionRequest). An archive
+// therefore goes back in with nothing changed, and every line of one
+// answers unchanged.
+//
+// The pages are those of the listing: after, limit and the Link header
+// (listSubscriptions, setNextPage). Left out is what the running
+// subscriber has rather than what the operator provisioned, the
+// registration state and the S-CSCF serving it: a subscription that
+// goes back in is Not Registered, and its user registers again. No lock
+// is held over the whole store either, so each line is the subscription
+// as it stood when that line was written and a page carries the changes
+// that landed while it was read.
+func (h *HSS) exportSubscriptions(w http.ResponseWriter, r *http.Request) {
+	limit, err := pageLimit(r)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	ctx := r.Context()
+	after := r.URL.Query().Get("after")
+	subs, next, err := h.store.List(ctx, after, limit)
+	if err != nil {
+		h.writeStoreFailure(w, err)
+		return
+	}
+	// The repository data of the page is read before the first line goes
+	// out, so that a store that fails still answers 500. A failure after
+	// a line had gone would leave a body that breaks off, and a reader
+	// cannot tell that from the end of a page.
+	//
+	// The subscriber is read again after its repository data. One that
+	// was removed in between is left out: the store answers no repository
+	// data for it, and its line would put back a subscription with none.
+	// A line can still pair the data before a PUT with the subscriber
+	// after it; the next export has them both.
+	lines := make([]subscriptionRequest, 0, len(subs))
+	for _, listed := range subs {
+		data, err := h.store.AllRepositoryData(ctx, listed.PrivateIdentity)
+		if err != nil {
+			h.writeStoreFailure(w, err)
+			return
+		}
+		s, ok, err := h.store.Subscriber(ctx, listed.PrivateIdentity)
+		if err != nil {
+			h.writeStoreFailure(w, err)
+			return
+		}
+		if ok {
+			lines = append(lines, exported(s, data))
+		}
+	}
+	w.Header().Set("Content-Type", ndjsonContentType)
+	// The lines carry the secrets of the subscriptions, which no cache on
+	// the way is to keep (RFC 9111 5.2.2.5).
+	w.Header().Set("Cache-Control", "no-store")
+	setNextPage(w, next, limit)
+	enc := json.NewEncoder(w)
+	// The repository data is XML, which stays as it is rather than going
+	// out with < and > as escapes: the operator reads these lines.
+	enc.SetEscapeHTML(false)
+	for _, line := range lines {
+		// One line at a time, so that the page goes out as it is encoded.
+		if err := enc.Encode(line); err != nil {
+			// Nobody is reading any more, and the status has gone out.
+			h.log.Warn("the export broke off", "private_identity", line.PrivateIdentity, "error", err.Error())
+			return
+		}
+	}
+	h.log.Info("subscriptions exported with their credentials", "subscriptions", len(lines), "after", after)
+}
+
+// exported is the subscriber s with the repository data it holds, as
+// the body of the PUT that puts it back. The credentials are in the
+// form that ParseAKACredentials reads, the hexadecimal of the
+// configuration file and of the provisioning API.
+//
+// SQN_HE goes out as aka.sqn, which a PUT reads only where it adds a
+// subscription (putSubscription): a subscription that is still there
+// keeps the SQN_HE it has, and one that the operator restores from the
+// archive starts again at the one the archive holds.
+func exported(s Subscriber, data []sh.TransparentData) subscriptionRequest {
+	req := subscriptionRequest{
+		PrivateIdentity:  s.PrivateIdentity,
+		PublicIdentities: s.PublicIdentities,
+		BarredIdentities: s.BarredIdentities,
+		Password:         s.Password,
+		TestUser:         s.TestUser,
+		ServiceProfile:   s.ServiceProfile,
+		// Never nil: a subscription with no repository data asks for one
+		// with none, where leaving the field out would ask for the
+		// MMTelServices document of the configuration.
+		RepositoryData: make([]repositoryDataRequest, 0, len(data)),
+	}
+	if s.AKA != nil {
+		req.AKA = &akaRequest{
+			K:   hex.EncodeToString(s.AKA.K[:]),
+			OPc: hex.EncodeToString(s.AKA.OPc[:]),
+			AMF: hex.EncodeToString(s.AKA.AMF[:]),
+			// SQN is 6 octets (ParseAKACredentials).
+			SQN: fmt.Sprintf("%012x", uint64(s.AKA.SQN)),
+		}
+	}
+	for _, d := range data {
+		if d.ServiceData == nil {
+			continue
+		}
+		// The sequence number stays here: it counts the updates that the
+		// data has had rather than saying what is in it, and data that
+		// goes back in starts counting again (sameRepositoryData).
+		req.RepositoryData = append(req.RepositoryData,
+			repositoryDataRequest{ServiceIndication: d.ServiceIndication, ServiceData: string(d.ServiceData.XML)})
+	}
+	return req
 }
 
 // responseWithCAT is the response for s with the CAT of its repository
