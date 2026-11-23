@@ -184,6 +184,7 @@ func TestBulkReportsEachBadLineAndGoesOn(t *testing.T) {
 		`{"private_identity": "` + impiOf(8) + `", "delete": true, "password": "p"}`,
 		`{"private_identity": 7}`,
 		digestLine(2, "test-password-2"),
+		`{"private_identity": "` + impiOf(12) + `", "public_identities": ["sip:alice12@` + testRealm + `"], "barred_identities": ["tel:+12025551234"], "password": "p"}`,
 	}
 	outcomes, summary := ts.bulk(t, "", strings.Join(lines, "\n"))
 	want := []struct {
@@ -204,6 +205,7 @@ func TestBulkReportsEachBadLineAndGoesOn(t *testing.T) {
 		{12, Rejected, "a line that deletes"},
 		{13, Rejected, "private_identity: want a JSON string"},
 		{14, Created, ""},
+		{15, Rejected, "barred_identities[0]: test data"},
 	}
 	if len(outcomes) != len(want) {
 		t.Fatalf("outcomes: %s", results(outcomes))
@@ -214,7 +216,7 @@ func TestBulkReportsEachBadLineAndGoesOn(t *testing.T) {
 			t.Errorf("line %d: %+v, want %s with %q", w.line, o, w.result, w.reason)
 		}
 	}
-	if summary.Lines != 14 || summary.Unchanged != 1 || summary.Created != 1 || summary.Rejected != 11 {
+	if summary.Lines != 15 || summary.Unchanged != 1 || summary.Created != 1 || summary.Rejected != 12 {
 		t.Errorf("summary: %+v", summary)
 	}
 }
