@@ -265,7 +265,10 @@ func (f *conference) notify(only *sip.DialogID) {
 	info := f.record.info()
 	gone := map[string]bool{}
 	for _, p := range f.record.Participants {
-		if p.Status == confinfo.Disconnected {
+		// A participant that asked for privacy may have come in with no
+		// identity at all (TS 24.229 5.7.1.4 a). The focus cannot tell
+		// which subscriber that is, and ends no subscription for it.
+		if p.Status == confinfo.Disconnected && p.User != "" {
 			gone[ims.PublicIdentityKey(p.User)] = true
 		}
 	}

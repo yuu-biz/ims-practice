@@ -159,7 +159,9 @@ type conference struct {
 
 	// anonymous counts the participants whose identity the focus has
 	// withheld, which names each of them by an anonymous URI of its own
-	// (participant).
+	// (participant). A number is never given twice, so a user that the
+	// focus refused leaves a gap. The count is kept with the dialogs of
+	// the conference, which all live on this instance.
 	anonymous atomic.Uint32
 
 	mu     sync.Mutex
