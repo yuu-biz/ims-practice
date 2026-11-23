@@ -162,31 +162,6 @@ button.danger {
   color: var(--danger);
 }
 
-.add-form fieldset {
-  display: grid;
-  gap: 0.5rem;
-  max-width: 40rem;
-  margin: 0.75rem 0 0;
-  border: 1px solid var(--line);
-  border-radius: 6px;
-}
-
-.add-form label {
-  display: grid;
-  gap: 0.2rem;
-  color: var(--muted);
-}
-
-.add-form input,
-.add-form textarea {
-  font: 0.85rem var(--mono);
-  padding: 0.3rem;
-}
-
-.add-form button {
-  justify-self: start;
-}
-
 .visually-hidden {
   position: absolute;
   width: 1px;

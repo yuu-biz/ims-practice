@@ -4,8 +4,10 @@
 # message of the call in the pcap must appear in the Lab's message
 # list, hop by hop, and nothing else. The Lab also shows what a
 # node sends to itself, which the capture on the bridge cannot see.
-# Last, the two UE simulators of the phones profile make a call that the
-# script drives through the Lab alone.
+# Then the experiments of the Lab guide on the subscription of a user:
+# an operator changes it through the OAM, and the Lab shows what the
+# change did. Last, the two UE simulators of the phones profile make a
+# call that the script drives through the Lab alone.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 . scripts/e2e-lib.sh
@@ -35,6 +37,9 @@ for i in $(seq 1 30); do
 	curl -fsS http://localhost:8080/api/calls >/dev/null 2>&1 && break
 	sleep 1
 done
+# The subscription of the experiments below is provisioned through the
+# OAM, as the guide does it.
+wait_for_oam || exit 1
 
 ue2=(--impi 001010000000002@ims.mnc001.mcc001.3gppnetwork.org
 	--impu sip:+12025550102@ims.mnc001.mcc001.3gppnetwork.org --password test-password-2)
@@ -176,51 +181,50 @@ else
 	fail=1
 fi
 
-# Status codes are read from the end of the output, since curl on Windows
-# cannot write to /dev/null when MSYS_NO_PATHCONV is set.
-# Add a subscriber through the Lab, register it, give it another
-# service profile and then remove it. The profile reaches its S-CSCF in
-# a PPR (TS 29.228 6.6.1). The removal reaches it in an RTR, the S-CSCF
-# tells the UE with a reg-event NOTIFY, and the UE can no longer
-# register.
+# The experiments of the Lab guide on the subscription of a user: an
+# operator adds a subscription through the OAM, a UE registers it, the
+# operator gives it another service profile and then removes it. The
+# profile reaches its S-CSCF in a PPR (TS 29.228 6.6.1). The removal
+# reaches it in an RTR, the S-CSCF tells the UE with a reg-event NOTIFY,
+# and the UE can no longer register. The Lab shows what each change did
+# and changes no subscription itself.
 impi5=001010000000005@ims.mnc001.mcc001.3gppnetwork.org
 ue5=(--impi "$impi5" --impu sip:$impi5 --password test-password-5)
-status="$(curl -s -w '
-%{http_code}' -X POST -H 'Content-Type: application/json' 	-d "{\"private_identity\":\"$impi5\",\"public_identities\":[\"sip:$impi5\"],\"password\":\"test-password-5\"}" 	http://localhost:8080/api/subscribers | tail -n 1)"
+subscription5() { printf '{"public_identities":["sip:%s"],"password":"test-password-5"%s}' "$impi5" "$1"; }
+status="$(oam_request PUT "/oam/v1/subscriptions/$impi5" "$(subscription5 "")" | oam_status)"
 if [ "$status" = 201 ]; then
-	echo "ok   a subscriber was added through the Lab"
+	echo "ok   a subscription was added through the OAM"
 else
-	echo "FAIL adding a subscriber answered $status"
+	echo "FAIL adding a subscription answered $status"
 	fail=1
 fi
 docker compose run --no-deps -d --name ims-practice-ue5 ue register "${ue5[@]}" >/dev/null
 wait_log ims-practice-ue5 '"msg":"registered"' || fail=1
 if grep -q '"registration_state":"Registered"' <<<"$(curl -fsS http://localhost:8080/api/subscribers)"; then
-	echo "ok   the HSS reports the new subscriber as registered"
+	echo "ok   the Lab lists the new subscription as registered"
 else
-	echo "FAIL the new subscriber is not registered"
+	echo "FAIL the new subscription is not registered in the Lab's list"
 	fail=1
 fi
-# The subscriber names no service profile, so it has the one that the
-# settings of the HSS name for any other subscription. The PATCH gives
-# it the profile that holds no criteria at all, which changes the user
+# The subscription named no service profile, so it had the one that the
+# settings of the HSS name for any other subscription. Sending it again
+# with the profile that holds no criteria at all changes the user
 # profile its S-CSCF holds.
-status="$(curl -s -w '
-%{http_code}' -X PATCH -H 'Content-Type: application/json' -d '{"service_profile":"no-services"}' "http://localhost:8080/api/subscribers/$impi5" | tail -n 1)"
+status="$(oam_request PUT "/oam/v1/subscriptions/$impi5" "$(subscription5 ',"service_profile":"no-services"')" | oam_status)"
 subscribers="$(curl -fsS http://localhost:8080/api/subscribers)"
 if [ "$status" = 200 ] && grep -q '"service_profile":"no-services","effective_service_profile":"no-services"' <<<"$subscribers"; then
-	echo "ok   the Lab gave the registered subscriber another service profile"
+	echo "ok   the OAM gave the registered subscription another service profile"
 else
-	echo "FAIL the PATCH of the service profile answered $status: $subscribers"
+	echo "FAIL the replacement with another service profile answered $status: $subscribers"
 	fail=1
 fi
-status="$(curl -s -w '
-%{http_code}' -X DELETE "http://localhost:8080/api/subscribers/$impi5" | tail -n 1)"
-if [ "$status" = 204 ] && [ "$(timeout 30 docker wait ims-practice-ue5)" = "1" ] &&
+# The OAM answers the removal with the outcome of the record, not 204.
+status="$(oam_request DELETE "/oam/v1/subscriptions/$impi5" | oam_status)"
+if [ "$status" = 200 ] && [ "$(timeout 30 docker wait ims-practice-ue5)" = "1" ] &&
 	grep -q 'rejected' <<<"$(docker logs ims-practice-ue5 2>&1)"; then
-	echo "ok   removing the subscriber ended its registration"
+	echo "ok   removing the subscription ended its registration"
 else
-	echo "FAIL removing the subscriber (DELETE $status)"
+	echo "FAIL removing the subscription (DELETE $status)"
 	docker logs ims-practice-ue5 2>&1 | tail -n 5
 	fail=1
 fi
@@ -229,9 +233,9 @@ docker rm -f ims-practice-ue5 >/dev/null
 # reads its log, hence "|| true".
 out="$(docker compose run --no-deps --rm ue register "${ue5[@]}" 2>/dev/null || true)"
 if grep -q '403' <<<"$out"; then
-	echo "ok   the removed subscriber gets 403"
+	echo "ok   the user of the removed subscription gets 403"
 else
-	echo "FAIL the removed subscriber was not refused: $(tail -n 2 <<<"$out")"
+	echo "FAIL the user of the removed subscription was not refused: $(tail -n 2 <<<"$out")"
 	fail=1
 fi
 pcap="$(docker compose exec -T capture sh -c 'ls -t /captures/ims-*.pcap | head -n 1' | tr -d '\r')"

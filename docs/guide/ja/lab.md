@@ -2,7 +2,7 @@
 
 [English](../en/lab.md)
 
-ラボは、IMS を試しながらその動きを観察するための Web の画面です。IMS の登録と通話は、起きるとすぐにラボに表示されます。それぞれをラダー図で描くこともできます。HSS の加入者の管理と、UE シミュレータ `phone1`、`phone2`、`phone3` の操作もできるので、コマンドを打たずに通話をかけて、その信号を確かめられます。
+ラボは、IMS を試しながらその動きを観察するための Web の画面です。IMS の登録と通話は、起きるとすぐにラボに表示されます。それぞれをラダー図で描くこともできます。HSS にある加入の一覧も表示します。UE シミュレータ `phone1`、`phone2`、`phone3` の操作もできるので、コマンドを打たずに通話をかけて、その信号を確かめられます。
 
 ## 始める前に
 
@@ -19,7 +19,7 @@ docker compose up -d --build
 
 ブラウザで <http://localhost:8080> を開きます。タイトルの横の点が `live` になっていれば、画面はラボのサーバーから更新を受け取っています。
 
-ラボは、ホストのループバックアドレスにだけ公開しています。パスワードを求めず、届いた人は誰でも、加入者を削除する、UE を操作する、UE をアクセス網から切り離す、障害注入のエージェントが動いていればノードを壊す、といったことができるためです。同じネットワークの別のマシンから開くときは、リポジトリのルートに `compose.override.yaml` を作ります。Compose は `compose.yaml` のあとにこのファイルを自分で読みます。
+ラボは、ホストのループバックアドレスにだけ公開しています。パスワードを求めず、届いた人は誰でも、HSS が持っているものを読む、UE を操作する、UE をアクセス網から切り離す、障害注入のエージェントが動いていればノードを壊す、といったことができるためです。同じネットワークの別のマシンから開くときは、リポジトリのルートに `compose.override.yaml` を作ります。Compose は `compose.yaml` のあとにこのファイルを自分で読みます。
 
 ```yaml
 services:
@@ -38,7 +38,7 @@ services:
 | Calls | 通話ごとの行。発信者、着信者、状態、最終応答のコード、ダイアログの数を表示します。Call-ID を選ぶと、通話全体のラダー図を描きます。 |
 | Ladder diagram | 選んだ通話か登録の、SIP と Cx のメッセージ。ノードごとに縦の線を引きます。矢印を選ぶと、メッセージの全文と、それを定めた仕様の条項を表示します。ショートメッセージを運ぶ MESSAGE では、RP と TP のフィールド、SMS の本文、MESSAGE のボディの 16 進数も表示します。**Copy as text** を押すと、ラダー図の全体を等幅のテキストにして書き出します。 |
 | Registrations | 登録を確認できた公開ユーザー識別子ごとの行。Contact、有効期限、S-CSCF を表示します。識別子を選ぶと、最後の REGISTER のラダー図を描きます。 |
-| Subscribers (HSS) | HSS にある加入の一覧。加入ごとに、公開ユーザー識別子とそのうち規制されているもの、試験用の利用者の印、受け取るサービスプロファイル、CAT を表示します。試験用の加入者を追加、削除でき、印とプロファイルを変えられます。 |
+| Subscribers (HSS) | HSS にある加入ごとの行。公開ユーザー識別子とそのうち規制されているもの、試験用の利用者の印、受け取るサービスプロファイル、CAT を表示します。このパネルは加入を変えません。加入を作るのは運用者で、OAM から行います。 |
 | Access network (EPC) | EPC のスタブに接続した UE ごとの行。スタブが渡したアドレス、EPS bearer、通話の Rx セッションを表示します。ボタンで、網が始める手順を起こせます。bearer の非活性化と、UE の切り離しです。 |
 | Faults | 障害注入のエージェントが持つ障害の一覧と、障害を注入するフォーム。このエージェントを起動するまで、パネルは使えません。 |
 
@@ -68,21 +68,73 @@ MMTel AS を通る通話は、1 つのダイアログではありません。AS 
 
 コピーにはブラウザのクリップボードを使います。ブラウザは、安全とみなしたページにしかクリップボードを渡しません。<http://localhost:8080> は安全とみなされますが、同じラボを別のマシンから平文の HTTP で開いたときはみなされません。そのときはボタンの下にテキストを表示するので、選んでコピーしてください。
 
-## 加入者を管理する
+## HSS にある加入を見る
 
-Subscribers パネルでは、HSS の加入の一覧表示、追加、削除ができます。ラボは要求を HSS へ渡すだけで、加入の写しは持ちません。識別子は試験用のものだけを使ってください。たとえば IMSI 001010000000005 なら `001010000000005@ims.mnc001.mcc001.3gppnetwork.org` です。
+Subscribers パネルは、HSS が今持っている加入の一覧を表示します。加入そのものは変えません。加入を作るのは運用者の仕事で、運用者は OAM から行います（[OAM から網を運用する](registration.md#oam-から網を運用する)）。このパネルは、その変更が何をもたらしたかを見る場所です。
 
 行には、その加入について HSS が持っているものが並びます。
 
 - **Public identities**。規制されている識別子には `(barred)` が付きます。規制された識別子で S-CSCF が通すのは登録だけで、ほかの IMS の通信には使わせません（TS 29.228 B.2.1）。この網で IMS AKA を使う加入は、どれも 1 つ持っています。USIM があり ISIM の無いカードが IMSI から作って登録する、一時的な公開の識別子です。[ISIM の無い端末の識別子](volte.md#isim-の無い端末の識別子) がこの識別子を追っています。
 - **Test user**。運用者が機能を試すために取っておく加入に付ける印です。試験用の利用者のサービスプロファイルを選び、網が試験用の利用者だけを収容しているあいだは、そもそも誰が登録できるかも決めます。[試験用の利用者だけを収容する](registration.md#試験用の利用者だけを収容する) にあります。
-- **Service profile**。S-CSCF がその利用者について受け取るフィルタ条件、つまり利用者のリクエストがどのアプリケーションサーバーに届くかを決めるプロファイルです。欄に入っているのは、その加入自身が持つ名前です。名前を持たない加入は、種類ごとに HSS の設定が指すプロファイルを受け取ります。どれを受け取るかは `from the settings: default` のように欄の下に出ます。運用者はこの設定を、収容の方針を変えるのと同じ保守用の要求（[試験用の利用者だけを収容する](registration.md#試験用の利用者だけを収容する)）で、HSS を動かしたまま変えられます。
+- **Service profile**。S-CSCF がその利用者について受け取るフィルタ条件、つまり利用者のリクエストがどのアプリケーションサーバーに届くかを決めるプロファイルです。欄に入っているのは、その加入自身が持つ名前です。名前を持たない加入は、種類ごとに HSS の設定が指すプロファイルを受け取り、どれを受け取るかが `from the settings: default` のように出ます。運用者はこの設定を、収容の方針を変えるのと同じ保守用の要求（[試験用の利用者だけを収容する](registration.md#試験用の利用者だけを収容する)）で、HSS を動かしたまま変えられます。
+- **Alerting tone (CAT)**。その利用者にかけた相手が、呼び出し中に聞く音です（TS 24.182）。うしろに `(off)` が付いた音は、設定されていて鳴らさない状態なので、かけた相手には自分の呼び出し音が聞こえます。`none` は音を 1 つも持たない加入です。[CAT。着信側の利用者が選ぶ呼び出し音](mrf.md#cat着信側の利用者が選ぶ呼び出し音) が、音を設定して、それを鳴らす通話を追っています。
 
-**Test user** に印を付けるか、プロファイルの名前を入れて欄から離れると、ラボはその加入の `PATCH` を HSS へ送ります。名前は HSS の設定にあるものです。この網には、条件をすべて持つ `default` と、1 つも持たない `no-services` があります。ほかの名前は断られ、表の上の注記に HSS が返した理由が出ます。
+## 加入の変更が何をもたらすかを見る
 
-登録中の利用者のサービスプロファイルが変わると、新しいプロファイルはすぐに S-CSCF へ届きます。Push-Profile-Request（PPR）です。[登録の手順書](registration.md#登録中の利用者のサービスプロファイルを変える) の「登録中の利用者のサービスプロファイルを変える」が、この流れと、そのあと利用者のリクエストがどこへ届くかを追っています。PPR とその答えはキャプチャには現れますが、ラダー図には描かれません。HSS が SIP のリクエストを受けて送るものではないためです。下の RTR がラダー図に出ないのも同じ理由です。
+HSS が自分から行うことのうち、ここで見るとよいものが 2 つあります。変わった利用者プロファイルを S-CSCF へ送ることと、登録を取り消すことです。どちらも、運用者が加入に加えた変更に続いて起きます。そこで、変更は OAM から行い、その結果をラボで見ます。
 
-登録中の加入者を削除すると、その登録は終わります。HSS が S-CSCF に Registration-Termination-Request（RTR）を送り（TS 29.228 6.1.3）、S-CSCF は RTA で答えて、reg イベントの NOTIFY で UE に知らせます。流れの全体は [登録の手順書](registration.md) の「加入を削除する（HSS からの登録解除）」にあります。RTR と RTA はキャプチャには現れますが、ラダー図には描かれません。HSS は SIP のリクエストを受けて RTR を送るわけではないので、ラボは RTR をどの通話や登録にも結び付けません。
+OAM のポートはホストのどのアドレスにもありません。BusyBox の `wget` は `GET` と `POST` のほかのメソッドを送れません。そのため以下の要求は、どれも OAM のコンテナの中から、書き下して `nc` に渡します。
+
+ほかの手順書が使う加入者はそのままにしておきたいので、この試しのための加入を 1 つ足します。
+
+```sh
+docker compose exec oam sh -c '
+body="{\"public_identities\":[\"sip:001010000000005@ims.mnc001.mcc001.3gppnetwork.org\"],\"password\":\"test-password-5\"}"
+printf "PUT /oam/v1/subscriptions/001010000000005@ims.mnc001.mcc001.3gppnetwork.org HTTP/1.0\r\nContent-Type: application/json\r\nContent-Length: ${#body}\r\n\r\n%s" "$body" |
+  nc -w 5 127.0.0.1 8080'
+```
+
+Subscribers パネルにその行が出ます。止めるまで登録したままでいる UE シミュレータで、この加入を登録します。
+
+```sh
+docker compose run --no-deps -d --name lab-subscriber-ue ue register \
+  --impi 001010000000005@ims.mnc001.mcc001.3gppnetwork.org \
+  --impu sip:001010000000005@ims.mnc001.mcc001.3gppnetwork.org \
+  --password test-password-5
+```
+
+Registrations パネルに `sip:001010000000005@ims.mnc001.mcc001.3gppnetwork.org` の行が出ます。この識別子を選ぶと、その REGISTER のラダー図を描きます。
+
+### 網が変わったプロファイルを送る
+
+同じ加入を、フィルタ条件を 1 つも持たないサービスプロファイル `no-services` を付けて送り直します。
+
+```sh
+docker compose exec oam sh -c '
+body="{\"public_identities\":[\"sip:001010000000005@ims.mnc001.mcc001.3gppnetwork.org\"],\"password\":\"test-password-5\",\"service_profile\":\"no-services\"}"
+printf "PUT /oam/v1/subscriptions/001010000000005@ims.mnc001.mcc001.3gppnetwork.org HTTP/1.0\r\nContent-Type: application/json\r\nContent-Length: ${#body}\r\n\r\n%s" "$body" |
+  nc -w 5 127.0.0.1 8080'
+```
+
+行の Service profile の欄が `no-services` になります。この利用者は登録中なので、HSS は登録のときに送った条件のままにしておきません。利用者プロファイルの全体を、すぐに S-CSCF へ送ります。Push-Profile-Request（PPR）です。[登録の手順書](registration.md#登録中の利用者のサービスプロファイルを変える) の「登録中の利用者のサービスプロファイルを変える」が、この流れと、そのあと利用者のリクエストがどこへ届くかを追っています。PPR とその答えはキャプチャには現れますが、ラダー図には描かれません。HSS が SIP のリクエストを受けて送るものではないためです。
+
+### 網が登録を取り消す
+
+加入を削除します。
+
+```sh
+docker compose exec oam sh -c '
+printf "DELETE /oam/v1/subscriptions/001010000000005@ims.mnc001.mcc001.3gppnetwork.org HTTP/1.0\r\n\r\n" |
+  nc -w 5 127.0.0.1 8080'
+```
+
+その行が Subscribers パネルから消え、登録も Registrations パネルから消えます。HSS が S-CSCF に Registration-Termination-Request（RTR）を送り（TS 29.228 6.1.3）、S-CSCF は RTA で答えて、reg イベントの NOTIFY で UE に知らせるためです。`docker logs lab-subscriber-ue` の最後に、網から登録を解除されたことが出ます。この UE は登録し直しません。流れの全体は [登録の手順書](registration.md#加入を削除するhss-からの登録解除) の「加入を削除する（HSS からの登録解除）」にあります。RTR と RTA はキャプチャには現れますが、ラダー図には描かれません。理由は上の PPR と同じです。HSS は SIP のリクエストを受けて RTR を送るわけではないので、ラボは RTR をどの通話や登録にも結び付けません。
+
+終わったら、UE のコンテナを片付けます。
+
+```sh
+docker rm lab-subscriber-ue
+```
 
 ## UE シミュレータを操作する
 
@@ -128,7 +180,7 @@ docker compose --profile phones up -d --build
 
 ボタンを押すたびに、UE が自分で XCAP の要求を送ります。最初に文書全体を GET し、次に変える規則 1 つだけを `If-Match` を付けて PUT し、一覧を表示するためにもう一度 GET します。XCAP サーバーは、HSS にある文書を Sh で読み書きします（UDR と PUR、Service-Indication は `MMTEL-Services`）。HTTP も、この Sh の要求も SIP の要求には結び付かないので、ラダー図には出ません。キャプチャには、80 番ポートの HTTP と 3868 番ポートの Diameter としてすべて残ります。最初の GET には 401 が返り、HTTP Digest の challenge が SHA-256、MD5 の順に 2 つ付いています。UE は先頭の SHA-256 で答えます。
 
-利用者に電話をかけた人が聞く呼び出し音（CAT、customized alerting tone、TS 24.182）を設定するには、Subscribers の欄の **Alerting tone (CAT)** の列で音を選びます。たとえば加入者 2 に `cat1` を選びます。ラボはそれを HSS に渡し、MMTel AS はその利用者への着信のたびに Sh で読みます。もう一度 `phone1` から `phone2` に発信すると、`phone2` が応答するまで MRFP がその音をアーリーメディアとして `phone1` に流します。`phone1` の Session の行には `rang with early media from the network` と表示されます。`off (ringing tone)` に戻すと、同じ行は `rang with the UE's own ringing tone` になります。
+利用者に電話をかけた人が聞く呼び出し音（CAT、customized alerting tone、TS 24.182）を鳴らすには、加入者 2 に `cat1` を OAM から設定します。設定の仕方は [CAT。着信側の利用者が選ぶ呼び出し音](mrf.md#cat着信側の利用者が選ぶ呼び出し音) にあります。設定すると、その行の Alerting tone (CAT) の欄が変わります。MMTel AS は、その利用者への着信のたびにこの設定を Sh で読みます。もう一度 `phone1` から `phone2` に発信すると、`phone2` が応答するまで MRFP がその音をアーリーメディアとして `phone1` に流します。`phone1` の Session の行には `rang with early media from the network` と表示されます。音を鳴らさない設定に戻すと、同じ行は `rang with the UE's own ringing tone` になります。
 
 2 つ目の着信を受け、2 つの通話から会議を作るには、次のようにします（TS 24.615、TS 24.147）。
 

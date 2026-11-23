@@ -37,14 +37,13 @@
 //	    {"registration": {...}}: the entry that changed, as its list has
 //	    it. A browser that falls behind misses events and can reload the
 //	    lists.
-//	GET /api/subscribers, POST /api/subscribers,
-//	PATCH /api/subscribers/{impi}, DELETE /api/subscribers/{impi}
-//	    Forwarded with the same method, path and body to the HSS
-//	    provisioning API, whose answer comes back as it is. The PATCH
-//	    carries the test-user mark and the name of the service profile of
-//	    one subscription, the two the HSS takes without the credentials
-//	    it hands out to nobody. 503 when no provisioning API is
-//	    configured, 502 when it does not answer.
+//	GET /api/subscribers
+//	    The subscriptions of the HSS, forwarded to the listing of the
+//	    HSS provisioning API (GET /subscriptions), whose answer comes
+//	    back as it is. 503 when no provisioning API is configured, 502
+//	    when it does not answer. The Lab shows the subscribers and
+//	    changes none of them: provisioning a subscription is an
+//	    operator's work, which the OAM does (package oam).
 //	GET /api/epc/ues, GET /api/epc/ues/{imsi},
 //	DELETE /api/epc/network-initiated/ues/{imsi}/bearers/{ebi},
 //	POST /api/epc/network-initiated/ues/{imsi}/detach
@@ -106,7 +105,8 @@ import (
 type Config struct {
 	// MaxMessages bounds the message log. It must be at least 1.
 	MaxMessages int
-	// HSSProvisioning is the URL of the HSS provisioning API, or "".
+	// HSSProvisioning is the URL of the HSS provisioning API, whose
+	// subscriptions the Lab lists, or "".
 	HSSProvisioning string
 	// EPC is the URL of the API of the EPC stub, whose state of a UE and
 	// procedures that the network initiates the Lab passes on, or
@@ -180,12 +180,6 @@ func (l *Lab) Handler() http.Handler {
 	})
 	mux.HandleFunc("GET /api/events", l.streamEvents)
 	mux.Handle("GET /api/subscribers", l.subscribers)
-	mux.Handle("POST /api/subscribers", l.subscribers)
-	mux.Handle("PATCH /api/subscribers/{impi}", l.subscribers)
-	mux.Handle("DELETE /api/subscribers/{impi}", l.subscribers)
-	// The customized alerting tone that the callers of the user hear
-	// (TS 24.182), which the operator provisions in the HSS.
-	mux.Handle("PUT /api/subscribers/{impi}/customized-alerting-tone", l.subscribers)
 	for _, route := range epcRoutes {
 		mux.Handle(route, l.epc)
 	}

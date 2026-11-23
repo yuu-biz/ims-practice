@@ -123,7 +123,7 @@ docker compose run --rm ue xcap set baoc off
 docker compose --profile phones up -d phone1 phone2 phone3
 ```
 
-- 呼び出し音は、http://localhost:8080 のラボを開き、Subscribers の欄で加入者 2 に `cat1` を選んでから、`phone1` で `phone2` にかけます。
+- 呼び出し音は、OAM から加入者 2 に `cat1` を設定してから、http://localhost:8080 のラボで `phone1` から `phone2` にかけます。
 - `scripts/e2e-mrf.sh` は、この回のすべてを実行してキャプチャで確かめます。キャプチャ、通話と MRF のフレーム、呼び出し音のあいだに UE 1 が受け取った音声、UE のログが残ります。
 
 > 手順書 [「動かしてみる」](../../../docs/guide/ja/mrf.md#動かしてみる) と [ラボで IMS を見る「UE シミュレータを操作する」](../../../docs/guide/ja/lab.md#ue-シミュレータを操作する)
@@ -323,7 +323,7 @@ phone1 は応答済みの通話を 2 つ持っていて、**Merge** を押しま
 docker compose --profile phones up -d --build
 ```
 
-1. Subscribers の欄で、加入者 2 の **Alerting tone (CAT)** の列に `cat1` を選びます。`phone1` で `phone2` にかけると、`phone1` の Session の行に、網からの early media で呼び出したと表示されます。
+1. OAM から加入者 2 に呼び出し音 `cat1` を設定すると、Subscribers の欄にあるその行の Alerting tone (CAT) が変わります。`phone1` で `phone2` にかけると、`phone1` の Session の行に、網からの early media で呼び出したと表示されます。
 2. もう一度 `phone1` で `phone2` にかけて応答させ、次に `phone3` で `phone1` にかけます。`phone1` のカードに、新しい着信が `waiting` と表示されます。
 3. **Answer** を押すと、`phone2` との通話を保留にして `phone3` に応答します。**Swap** で通話を切り替えます。
 4. **Merge** を押すと会議ができます。3 台のカードの **Conference** の行に、3 人の利用者が並びます。

@@ -123,7 +123,7 @@ docker compose run --rm ue xcap set baoc off
 docker compose --profile phones up -d phone1 phone2 phone3
 ```
 
-- For the tone, choose `cat1` as the alerting tone of subscriber 2 in the Subscribers panel of the Lab at http://localhost:8080, then call `phone2` from `phone1`.
+- For the tone, give subscriber 2 the alerting tone `cat1` through the OAM, then call `phone2` from `phone1` in the Lab at http://localhost:8080.
 - `scripts/e2e-mrf.sh` runs everything of this session and checks it in the capture. It leaves the capture, the frames of the calls and the MRF, the audio UE 1 heard during the tone, and the logs of the UEs.
 
 > Guide: ["Run it"](../../../docs/guide/en/mrf.md#run-it) and ["Drive the UE simulators" in Watch the IMS in the Lab](../../../docs/guide/en/lab.md#drive-the-ue-simulators)
@@ -323,7 +323,7 @@ The filter is `sip.Event contains "conference"`.
 docker compose --profile phones up -d --build
 ```
 
-1. In the Subscribers panel, choose `cat1` in the **Alerting tone (CAT)** column of subscriber 2. Call `phone2` from `phone1`: the Session row of `phone1` says that it rang with early media from the network.
+1. Give subscriber 2 the alerting tone `cat1` through the OAM, and the Alerting tone (CAT) cell of its row in the Subscribers panel changes. Call `phone2` from `phone1`: the Session row of `phone1` says that it rang with early media from the network.
 2. Call `phone2` from `phone1` again and let it answer, then call `phone1` from `phone3`. The card of `phone1` shows the new call as `waiting`.
 3. **Answer** holds the call with `phone2` and takes `phone3`. **Swap** goes from one call to the other.
 4. **Merge** makes the conference. The **Conference** row of all three cards then lists three users.

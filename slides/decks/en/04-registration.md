@@ -267,7 +267,7 @@ The UE sends a REGISTER whose Contact has `expires=0`.
 | Case | How to try it | What to see |
 | --- | --- | --- |
 | A wrong password | `ue register -password wrong-password` | The same up to step 8. The S-CSCF answers 403 and sends a SAR with AUTHENTICATION_FAILURE (9). |
-| The HSS removes the subscription | Delete the subscription of a registered user in the Subscribers panel of the Lab. | The HSS sends an RTR with Reason-Code PERMANENT_TERMINATION (0). The UE gets a NOTIFY with `event="rejected"`. |
+| The HSS removes the subscription | Remove the subscription of a registered user through the OAM, as "The network cancels a registration" in the Lab guide does. | The HSS sends an RTR with Reason-Code PERMANENT_TERMINATION (0). The UE gets a NOTIFY with `event="rejected"`. |
 
 - Put `docker compose run --rm` in front of the command.
 - The filter for RTR and RTA is `diameter.cmd.code == 304`. The RTR is the first Cx request in these sessions that the HSS starts.

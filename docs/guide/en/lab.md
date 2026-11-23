@@ -2,7 +2,7 @@
 
 [日本語](../ja/lab.md)
 
-The Lab is a web page where you try things on the IMS and watch what happens. It shows the registrations and the calls of the IMS while they happen, and draws each one as a ladder diagram. It also lets you manage the subscribers in the HSS and drive the UE simulators `phone1`, `phone2` and `phone3`, so that you can make a call and watch its signaling without typing commands.
+The Lab is a web page where you try things on the IMS and watch what happens. It shows the registrations and the calls of the IMS while they happen, and draws each one as a ladder diagram. It also shows the subscriptions that the HSS holds, and drives the UE simulators `phone1`, `phone2` and `phone3`, so that you can make a call and watch its signaling without typing commands.
 
 ## Before you start
 
@@ -19,7 +19,7 @@ docker compose up -d --build
 
 Open <http://localhost:8080> in the browser. The dot next to the title says `live` while the page receives updates from the Lab's server.
 
-The Lab is published on the host's loopback address only. It asks for no password, and anyone who reaches it can delete subscribers, drive the UEs, detach a UE from the access network and, while the fault agent runs, break a node. To open it from another machine on your network, create `compose.override.yaml` at the root of the repository. Compose reads this file after `compose.yaml` by itself:
+The Lab is published on the host's loopback address only. It asks for no password, and anyone who reaches it can read what the HSS holds, drive the UEs, detach a UE from the access network and, while the fault agent runs, break a node. To open it from another machine on your network, create `compose.override.yaml` at the root of the repository. Compose reads this file after `compose.yaml` by itself:
 
 ```yaml
 services:
@@ -38,7 +38,7 @@ Run `docker compose up -d` again, and open `http://<address of the host>:8080` o
 | Calls | One row per call, with its caller, callee, state and final status code, and the number of its dialogs. Select a Call-ID to draw the ladder of the whole call. |
 | Ladder diagram | The SIP and Cx messages of the selected call or registration, one column per node. Select an arrow to see the whole message and the clauses of the specifications that describe it. For a MESSAGE that carries a short message, the details also show its RP and TP fields, its text and its body in hex. **Copy as text** writes the whole ladder out as monospace text. |
 | Registrations | One row per public identity that the Lab saw register, with its contact, expiry and S-CSCF. Select an identity to draw the ladder of its last REGISTER. |
-| Subscribers (HSS) | The subscriptions that the HSS holds, each with its public identities and the barred ones among them, whether it is marked as a test user, the service profile it gets and its alerting tone. You can add and delete test subscribers here, and change the mark and the profile of one. |
+| Subscribers (HSS) | One row per subscription that the HSS holds, with its public identities and the barred ones among them, whether it is marked as a test user, the service profile it gets and its alerting tone. The panel changes none of them: an operator provisions a subscription from the OAM. |
 | Access network (EPC) | One row per UE that is attached to the EPC stub, with the address the stub gave it, its EPS bearers and the Rx sessions of its calls. The buttons start the procedures that the network initiates: deactivating a bearer and detaching the UE. |
 | Faults | The faults that the fault agent holds, and a form that injects one. The panel is off until that agent runs. |
 
@@ -68,21 +68,73 @@ A column is as wide as the longest label that crosses it, and the label of a SIP
 
 Copying goes through the browser's clipboard, which a browser gives only to a page it considers secure. <http://localhost:8080> is secure; the same Lab opened over plain HTTP from another machine is not. There the button writes the text out below it instead, for you to select and copy.
 
-## Manage the subscribers
+## The subscribers the HSS holds
 
-The Subscribers panel lists, adds and deletes subscriptions in the HSS. The Lab passes each request to the HSS and keeps no copy. Use test identities only, such as the IMSI 001010000000005 in the form `001010000000005@ims.mnc001.mcc001.3gppnetwork.org`.
+The Subscribers panel lists the subscriptions of the HSS as it holds them now, and changes none of them. Provisioning a subscription is an operator's work, which the operator does from the OAM ([Run the network from the OAM](registration.md#run-the-network-from-the-oam)). The panel is where you see what such a change did.
 
 Each row shows what the HSS holds for one subscription:
 
 - **Public identities**, with `(barred)` after each identity that is barred. The S-CSCF lets a barred identity register and keeps it out of every other IMS communication (TS 29.228 B.2.1). Every subscription of this network that authenticates with IMS AKA carries one, the temporary public identity that a card with a USIM and no ISIM derives from the IMSI and registers. [The identities of a phone without an ISIM](volte.md#the-identities-of-a-phone-without-an-isim) follows that identity.
 - **Test user**, the mark of a subscription that an operator keeps for trying a feature out. It picks the service profile of a test user, and while the network admits the test users alone it also decides who may register at all, as [Admit only the test users](registration.md#admit-only-the-test-users) shows.
-- **Service profile**, the profile that decides which filter criteria the S-CSCF gets for the user, and so which application server each of the user's requests reaches. The field holds the name that the subscription itself carries. A subscription that carries none gets the profile that the settings of the HSS name for its kind of subscription, and the cell says which under the field, as `from the settings: default`. An operator changes that setting while the HSS runs, with the same maintenance request that changes the admission policy ([Admit only the test users](registration.md#admit-only-the-test-users)).
+- **Service profile**, the profile that decides which filter criteria the S-CSCF gets for the user, and so which application server each of the user's requests reaches. The cell holds the name that the subscription itself carries. A subscription that carries none gets the profile that the settings of the HSS name for its kind of subscription, and the cell says which instead, as `from the settings: default`. An operator changes that setting while the HSS runs, with the same maintenance request that changes the admission policy ([Admit only the test users](registration.md#admit-only-the-test-users)).
+- **Alerting tone (CAT)**, the tone that the callers of the user hear while it rings (TS 24.182). A tone with `(off)` after it is provisioned and stopped, so the callers hear their own ringing tone; `none` is a subscription that has no tone at all. [CAT: the tone that the called user chooses](mrf.md#cat-the-tone-that-the-called-user-chooses) provisions one and follows the call that plays it.
 
-Tick **Test user**, or type a profile name and leave the field, and the Lab sends the HSS a `PATCH` of that subscription. The names are those that the HSS is configured with. This network has `default`, which holds every criterion, and `no-services`, which holds none. Any other name is refused, and the note over the table gives the reason the HSS sent.
+## Watch what a change to a subscription does
 
-A change that leaves a registered user with another service profile reaches the S-CSCF at once, in a Push-Profile-Request (PPR). "Change the service profile of a registered user" in [the registration guide](registration.md#change-the-service-profile-of-a-registered-user) follows that sequence and says what the requests of the user then reach. The capture holds the PPR and its answer, and no ladder draws them, because the HSS sends them on its own and not for a SIP request. The RTR below is in no ladder for that same reason.
+The HSS does two things of its own accord that are worth watching here: it pushes a user profile that changed to the S-CSCF, and it cancels a registration. Each of the two follows a change that an operator makes to a subscription, so the OAM makes the change and the Lab shows what came of it.
 
-Deleting a subscriber that is registered ends its registration. The HSS sends a Registration-Termination-Request (RTR) to the S-CSCF (TS 29.228 6.1.3), the S-CSCF answers with an RTA, and it tells the UE with a reg-event NOTIFY. The whole sequence is in "Remove a subscription: deregistration by the HSS" in [the registration guide](registration.md). The capture shows the RTR and the RTA, but no ladder draws them: the HSS sends the RTR on its own, not for a SIP request, so the Lab ties it to no call and no registration.
+The OAM's port is on no address of the host, and BusyBox `wget` sends no method but `GET` and `POST`, so each request below is written out to `nc` from inside the OAM's container.
+
+Add a subscription for the experiment, so that the subscribers the other guides use stay as they are:
+
+```sh
+docker compose exec oam sh -c '
+body="{\"public_identities\":[\"sip:001010000000005@ims.mnc001.mcc001.3gppnetwork.org\"],\"password\":\"test-password-5\"}"
+printf "PUT /oam/v1/subscriptions/001010000000005@ims.mnc001.mcc001.3gppnetwork.org HTTP/1.0\r\nContent-Type: application/json\r\nContent-Length: ${#body}\r\n\r\n%s" "$body" |
+  nc -w 5 127.0.0.1 8080'
+```
+
+A row for it appears in the Subscribers panel. Register it with a UE simulator, which stays registered until it is stopped:
+
+```sh
+docker compose run --no-deps -d --name lab-subscriber-ue ue register \
+  --impi 001010000000005@ims.mnc001.mcc001.3gppnetwork.org \
+  --impu sip:001010000000005@ims.mnc001.mcc001.3gppnetwork.org \
+  --password test-password-5
+```
+
+The Registrations panel gets a row for `sip:001010000000005@ims.mnc001.mcc001.3gppnetwork.org`. Select the identity to draw the ladder of that REGISTER.
+
+### The network pushes a changed profile
+
+Send the subscription again with the service profile `no-services`, which holds no filter criteria at all:
+
+```sh
+docker compose exec oam sh -c '
+body="{\"public_identities\":[\"sip:001010000000005@ims.mnc001.mcc001.3gppnetwork.org\"],\"password\":\"test-password-5\",\"service_profile\":\"no-services\"}"
+printf "PUT /oam/v1/subscriptions/001010000000005@ims.mnc001.mcc001.3gppnetwork.org HTTP/1.0\r\nContent-Type: application/json\r\nContent-Length: ${#body}\r\n\r\n%s" "$body" |
+  nc -w 5 127.0.0.1 8080'
+```
+
+The Service profile cell of the row becomes `no-services`. The user is registered, so the HSS does not leave its S-CSCF with the criteria it sent at the registration: it sends the whole user profile there at once, in a Push-Profile-Request (PPR). "Change the service profile of a registered user" in [the registration guide](registration.md#change-the-service-profile-of-a-registered-user) follows that sequence and says what the requests of the user then reach. The capture holds the PPR and its answer, and no ladder draws them, because the HSS sends them on its own and not for a SIP request.
+
+### The network cancels a registration
+
+Remove the subscription:
+
+```sh
+docker compose exec oam sh -c '
+printf "DELETE /oam/v1/subscriptions/001010000000005@ims.mnc001.mcc001.3gppnetwork.org HTTP/1.0\r\n\r\n" |
+  nc -w 5 127.0.0.1 8080'
+```
+
+The row leaves the Subscribers panel, and the registration leaves the Registrations panel. The HSS sends a Registration-Termination-Request (RTR) to the S-CSCF (TS 29.228 6.1.3), the S-CSCF answers with an RTA, and it tells the UE with a reg-event NOTIFY. `docker logs lab-subscriber-ue` ends with the UE deregistered by the network, and the UE does not register again. The whole sequence is in "Remove a subscription: deregistration by the HSS" in [the registration guide](registration.md#remove-a-subscription-deregistration-by-the-hss). The capture shows the RTR and the RTA, and no ladder draws them, for the same reason as the PPR above: the HSS sends the RTR on its own, not for a SIP request, so the Lab ties it to no call and no registration.
+
+Remove the container of the UE when you are done:
+
+```sh
+docker rm lab-subscriber-ue
+```
 
 ## Drive the UE simulators
 
@@ -128,7 +180,7 @@ To forward calls (the supplementary services, which the UE sets over Ut with XCA
 
 Each press makes the UE send XCAP requests on its own: a GET of the whole document, a PUT of the one rule with `If-Match`, and another GET for the list. The XCAP server reads and writes the document in the HSS over Sh (UDR and PUR, Service-Indication `MMTEL-Services`). The ladders show none of this, because neither HTTP nor these Sh requests belong to a SIP request; the capture has all of it, as HTTP on port 80 and Diameter on port 3868. The first GET gets 401 with two HTTP Digest challenges, SHA-256 and then MD5, and the UE answers the first.
 
-To give a user a customized alerting tone (CAT, TS 24.182), choose a tone in the **Alerting tone (CAT)** column of the Subscribers panel, such as `cat1` for subscriber 2. The Lab passes it to the HSS, and the MMTel AS reads it over Sh for each call to that user. Call `phone2` from `phone1` again: the MRFP plays the tone to `phone1` as early media until `phone2` answers, and the Session row of `phone1` says `rang with early media from the network`. With `off (ringing tone)` the same row says `rang with the UE's own ringing tone`.
+To hear a customized alerting tone (CAT, TS 24.182), give subscriber 2 the tone `cat1` through the OAM, as [CAT: the tone that the called user chooses](mrf.md#cat-the-tone-that-the-called-user-chooses) shows, and watch the Alerting tone (CAT) cell of its row change. The MMTel AS reads the tone over Sh for each call to that user. Call `phone2` from `phone1` again: the MRFP plays the tone to `phone1` as early media until `phone2` answers, and the Session row of `phone1` says `rang with early media from the network`. With the tone off, the same row says `rang with the UE's own ringing tone`.
 
 To take a second call and make a conference of the two (TS 24.615, TS 24.147):
 
