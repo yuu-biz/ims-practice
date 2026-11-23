@@ -433,3 +433,27 @@ func TestAShutDownWaitsForADeliveryJustHandedOver(t *testing.T) {
 	waitFor(t, func() bool { return gwState(t, node).AdministrativeState == maintenance.Locked },
 		"the IP-SM-GW to be LOCKED once the delivery is done")
 }
+
+// A shut down waits for a delivery that is in flight: the MESSAGE that
+// carries the short message is a user of the IP-SM-GW until it has its
+// final response, so that the operator does not stop a node whose
+// RP-DATA has gone out with nothing back yet. Here nothing answers the
+// MESSAGE, so the delivery ends when the transaction times out, and the
+// SC hears the outcome before the IP-SM-GW is LOCKED.
+func TestAShutDownWaitsForADeliveryInFlight(t *testing.T) {
+	h := newHarness(t, ipsmgw.NewMemoryStore(), time.Minute, func(*sip.Message) int { return 0 })
+	node := h.manage()
+	h.g.Deliver(ipsmgw.Delivery{Reference: "ref-1", Recipient: bobTel, TPDU: deliver})
+	h.next()
+	waitFor(t, func() bool { return inHand(t, node) == 1 }, "the IP-SM-GW to count the delivery as its user")
+
+	if f := setState(t, node, maintenance.ShuttingDown); f.AdministrativeState != maintenance.ShuttingDown {
+		t.Fatalf("shut down gave %+v, want SHUTTINGDOWN while a delivery is in flight", f)
+	}
+	// No final response is a 408 to TS 29.311 Table 6.1.4.4.1.1.
+	if got := h.nextReport(); got.reference != "ref-1" || got.outcome != ipsmgw.SystemFailure {
+		t.Errorf("the SC heard %+v, want a system failure for ref-1", got)
+	}
+	waitFor(t, func() bool { return gwState(t, node).AdministrativeState == maintenance.Locked },
+		"the IP-SM-GW to be LOCKED once the delivery is done")
+}
