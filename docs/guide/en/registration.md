@@ -429,10 +429,12 @@ The HSS pushes for a user it has as registered, and for a user in the unregister
 
 ## Admit only the test users
 
-An operator who is trying a feature out can keep the network to the users it is tried on. The `admission` setting of `deploy/compose/hss.yaml` says which subscribers the HSS admits:
+An operator who is trying a feature out can keep the network to the users it is tried on. The `admission` setting says which subscribers the HSS admits:
 
-- `all`, the setting of this deployment, admits every subscriber the HSS has.
+- `all`, the setting this deployment starts on, admits every subscriber the HSS has.
 - `test_users` admits only the subscribers marked `test_user`, the mark that `POST`, `PUT` and `PATCH` of the provisioning API set, and that also picks the service profile of a test user.
+
+`admission` is in the `hss` section of `deploy/compose/hss.yaml`, which says what the HSS starts on, and it is one of the settings that the maintenance API changes while the HSS runs, so narrowing the network takes no restart.
 
 With `test_users`, the HSS refuses the UAR of a subscriber that is not marked. Step 5 of the registration status query asks that the identity be authorized to register, and names **DIAMETER_AUTHORIZATION_REJECTED** (5003) for one that is not (TS 29.228 6.1.1.1). That value belongs to the base protocol, not to Cx (RFC 6733 7.1.5), so it arrives in **Result-Code** rather than in Experimental-Result-Code. Cx has a 5003 of its own, DIAMETER_ERROR_IDENTITY_NOT_REGISTERED (TS 29.229 6.2.2.3), which is always in Experimental-Result-Code, so the two are told apart by the AVP that carries them. The I-CSCF turns a negative UAA into **403 Forbidden** (TS 24.229 5.3.1.3).
 
@@ -459,14 +461,30 @@ Refusing the registration is not enough on its own. A call to a user who is not 
 
 Narrowing the policy, or taking the mark off a subscriber while the policy is `test_users`, leaves the registrations that are valid at that moment as they are. The HSS sends no RTR, and calls to those users still find their S-CSCF. Each of them drops out when its registration expires, because the refresh is refused: the S-CSCF holds the expiry, and the HSS neither counts it down nor asks for it to be ended.
 
-To see the refusal, change the setting and start the HSS again. Compose leaves a container that it has no new definition for as it is, so `--force-recreate` is needed for the HSS to read its file again:
+To see the refusal, narrow the policy on the maintenance API of the HSS node, the listener on port 8085 that also takes the HSS out of service ([Take the HSS out of service](#take-the-hss-out-of-service)). A `PATCH` of `/maintenance/v1/config` carries the settings to change by name, with who asks and why:
 
 ```sh
-sed -i 's/^  admission: all/  admission: test_users/' deploy/compose/hss.yaml
-docker compose up -d --no-deps --force-recreate hss
+docker compose exec hss sh -c '
+body="{\"settings\":{\"hss.admission\":\"test_users\"},\"operator\":\"learner\",\"comment\":\"trying a feature out\"}"
+printf "PATCH /maintenance/v1/config HTTP/1.0\r\nContent-Type: application/json\r\nContent-Length: ${#body}\r\n\r\n%s" "$body" |
+  nc -w 5 127.0.0.1 8085'
 ```
 
-The new HSS answers on the new policy, and it starts from the subscriptions of its file: this deployment keeps them in the memory of the HSS, so a change made over the provisioning API before the restart is gone. Wait until the I-CSCF and the S-CSCF have their Diameter connections to it open again, which may take until they retry after Tc, 30 s (RFC 6733 2.1). Then mark subscriber 2 as a test user. The provisioning API is not published on the host, so the request goes from inside the container of the HSS, as above.
+The answer is the record of the change, with the value of each setting before and after, which is what an operator keeps to undo it later:
+
+```json
+{"node":"hss","instance":"...","generation":1,"time":"...","operator":"learner","comment":"trying a feature out","changes":[{"name":"hss.admission","previous":"all","value":"test_users"}]}
+```
+
+The policy is in force at once, for the requests that arrive from that moment on. `GET /maintenance/v1/config` reads it back under `changeable`, beside the two settings that name the service profile of a subscription and, in the `hss` section, the service profiles of the network with the features each one turns on:
+
+```sh
+docker compose exec hss wget -qO- http://127.0.0.1:8085/maintenance/v1/config
+```
+
+The HSS refuses a value it cannot take, and then changes none of the settings of the request: a policy that is neither of the two, or a service profile that `service_profiles` does not define. A node that starts again takes the policy of its file, so a recreated container answers on `all` until an operator sets it afresh.
+
+Now mark subscriber 2 as a test user. The provisioning API is not published on the host either, so this request goes from inside the container of the HSS as well, on port 8081.
 
 ```sh
 docker compose exec hss sh -c '
@@ -484,7 +502,7 @@ docker compose run --no-deps --rm ue register --deregister-after 2s \
   --impu sip:+12025550102@ims.mnc001.mcc001.3gppnetwork.org --password test-password-2
 ```
 
-To leave the deployment as the rest of this guide describes it, put the file back with `git checkout deploy/compose/hss.yaml` and run `docker compose up -d --no-deps --force-recreate hss` again. `scripts/e2e-admission.sh` runs this scenario and reads the UAA and the 403 out of a capture of its own.
+To leave the deployment as the rest of this guide describes it, send the same `PATCH` with `"hss.admission":"all"`, which is the `previous` value of the record above, and take the mark off subscriber 2 with `{"test_user":false}`. `scripts/e2e-admission.sh` runs this scenario and reads the UAA and the 403 out of a capture of its own.
 
 ## A wrong password
 

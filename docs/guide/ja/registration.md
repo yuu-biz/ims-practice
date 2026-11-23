@@ -461,10 +461,12 @@ HSS が push するのは、登録中の利用者と、未登録の状態の利�
 
 ## 試験用の利用者だけを収容する
 
-機能を試しているあいだ、その機能を試す利用者だけを網に収容しておけます。どの加入者を収容するかは、`deploy/compose/hss.yaml` の `admission` で決めます。
+機能を試しているあいだ、その機能を試す利用者だけを網に収容しておけます。どの加入者を収容するかは `admission` で決めます。
 
-- `all`。この構成の値です。HSS が持つ加入者を全員収容します。
+- `all`。この構成が起動時に使う値です。HSS が持つ加入者を全員収容します。
 - `test_users`。`test_user` の印が付いた加入者だけを収容します。この印は、プロビジョニングの API の `POST`、`PUT`、`PATCH` で付けられます。試験用の利用者のサービスプロファイルを選ぶのも、同じ印です。
+
+`admission` は `deploy/compose/hss.yaml` の `hss` にあり、HSS が起動時に使う値を決めます。これは保守用の API で動かしたまま変えられる設定でもあるので、網を狭めるのに起動し直す必要はありません。
 
 `test_users` のとき、HSS は印の付いていない加入者の UAR を断ります。登録の状態の問い合わせの手順 5 は、識別子が登録を認可されていることを求め、認可されていないときの答えを **DIAMETER_AUTHORIZATION_REJECTED**（5003）としています（TS 29.228 6.1.1.1）。この値は Cx ではなく基本のプロトコルのものなので（RFC 6733 7.1.5）、Experimental-Result-Code ではなく **Result-Code** に入ります。Cx にも 5003 の DIAMETER_ERROR_IDENTITY_NOT_REGISTERED があり（TS 29.229 6.2.2.3）、こちらは必ず Experimental-Result-Code に入るので、どちらの AVP に入っているかで見分けます。I-CSCF は、失敗の UAA を **403 Forbidden** にして返します（TS 24.229 5.3.1.3）。
 
@@ -491,14 +493,30 @@ HSS が push するのは、登録中の利用者と、未登録の状態の利�
 
 収容の方針を狭めたときと、`test_users` のあいだに加入者の印を外したときは、そのときに有効な登録をそのままにします。HSS は RTR を送らず、その利用者への呼も S-CSCF に届き続けます。登録の更新は断られるので、利用者は期限が切れたときに落ちます。期限は S-CSCF が持っていて、HSS はそれを数えることも、終わらせるよう頼むこともしません。
 
-断られる様子を見るには、設定を変えて、HSS を起動し直します。Compose は、定義の変わらないコンテナをそのままにするので、HSS にファイルを読み直させるには `--force-recreate` が要ります。
+断られる様子を見るには、HSS のノードの保守用の API で方針を狭めます。HSS を運用から外すのと同じ 8085 番の待ち受けです（[HSS を運用から外す](#hss-を運用から外す)）。`/maintenance/v1/config` への `PATCH` に、変える設定を名前で書き、誰が何のために変えるかを添えます。
 
 ```sh
-sed -i 's/^  admission: all/  admission: test_users/' deploy/compose/hss.yaml
-docker compose up -d --no-deps --force-recreate hss
+docker compose exec hss sh -c '
+body="{\"settings\":{\"hss.admission\":\"test_users\"},\"operator\":\"learner\",\"comment\":\"trying a feature out\"}"
+printf "PATCH /maintenance/v1/config HTTP/1.0\r\nContent-Type: application/json\r\nContent-Length: ${#body}\r\n\r\n%s" "$body" |
+  nc -w 5 127.0.0.1 8085'
 ```
 
-新しい HSS は、新しい方針で答えます。加入は、設定のファイルに書いたものから始まります。この構成では加入を HSS のメモリに置いているので、起動し直す前にプロビジョニングの API で変えたことは消えます。I-CSCF と S-CSCF が HSS との Diameter の接続を開き直すまで待ちます。Tc の 30 秒後の再試行まで待つことがあります（RFC 6733 2.1）。そのあとで、加入者 2 に試験用の印を付けます。プロビジョニングの API はホストに公開していないので、要求は上と同じく HSS のコンテナの中から送ります。
+答えは変更の記録です。設定ごとに、変える前と変えたあとの値が入ります。あとで元に戻すために、運用者が取っておくものです。
+
+```json
+{"node":"hss","instance":"...","generation":1,"time":"...","operator":"learner","comment":"trying a feature out","changes":[{"name":"hss.admission","previous":"all","value":"test_users"}]}
+```
+
+新しい方針は、そのあとに届く要求からすぐに効きます。`GET /maintenance/v1/config` で読み直すと、`changeable` にこの方針が入っています。加入のサービスプロファイルを決める 2 つの設定も並び、`hss` には網のサービスプロファイルが、それぞれが有効にする機能と一緒に入っています。
+
+```sh
+docker compose exec hss wget -qO- http://127.0.0.1:8085/maintenance/v1/config
+```
+
+HSS が受け取れない値は断り、その要求の設定を 1 つも変えません。2 つのどちらでもない方針と、`service_profiles` に無いサービスプロファイルです。ノードは起動し直すと設定のファイルの方針で答えるので、作り直したコンテナは、運用者が設定し直すまで `all` で答えます。
+
+次に、加入者 2 に試験用の印を付けます。プロビジョニングの API もホストに公開していないので、この要求も HSS のコンテナの中から、8081 番に送ります。
 
 ```sh
 docker compose exec hss sh -c '
@@ -516,7 +534,7 @@ docker compose run --no-deps --rm ue register --deregister-after 2s \
   --impu sip:+12025550102@ims.mnc001.mcc001.3gppnetwork.org --password test-password-2
 ```
 
-この手順書のほかの節と同じ構成に戻すには、`git checkout deploy/compose/hss.yaml` でファイルを元に戻し、もう一度 `docker compose up -d --no-deps --force-recreate hss` を実行します。`scripts/e2e-admission.sh` は、この流れを動かして、UAA と 403 を自分のキャプチャから読みます。
+この手順書のほかの節と同じ構成に戻すには、同じ `PATCH` を `"hss.admission":"all"` で送ります。上の記録の `previous` の値です。加入者 2 の印も `{"test_user":false}` で外します。`scripts/e2e-admission.sh` は、この流れを動かして、UAA と 403 を自分のキャプチャから読みます。
 
 ## パスワードが誤っているとき
 
