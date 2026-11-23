@@ -436,7 +436,7 @@ The node of the S-CSCF serves a maintenance API for this on port 8085, the liste
    docker compose run --rm ue register -deregister-after 5s
    ```
 
-   The UE ends with `REGISTER answered 504 Server Time-out`.
+   The UE ends with `REGISTER answered 500 Server Internal Error`.
 
 ```text
  UE           P-CSCF         I-CSCF          S-CSCF          HSS
@@ -447,17 +447,18 @@ The node of the S-CSCF serves a maintenance API for this on port 8085, the liste
  |              |              |  REGISTER     |              |
  |              |              |-------------->|              |
  |              |              |  503 Retry-After: 30         |
- |              |  503         |<--------------|              |
- |  504         |<-------------|               |              |
+ |              |  500         |<--------------|              |
+ |  500         |<-------------|               |              |
  |<-------------|              |               |              |
 ```
 
 - The REGISTER reaches the S-CSCF as in steps 1 to 4 of the registration: the I-CSCF asks the HSS which S-CSCF serves the user, and forwards it there.
 - The S-CSCF answers **503 Service Unavailable** with **Retry-After: 30**. A request outside a dialog starts something new, which the S-CSCF does not take while it is not `UNLOCKED`. Retry-After asks the client to send this server no other request for that many seconds (RFC 3261 21.5.4). The S-CSCF does not authenticate the user, so no MAR goes to the HSS.
-- A client that gets a 503 sends the request to the next server that DNS gave it (RFC 3263 4.3). The I-CSCF of this network has one S-CSCF, so it has no other to try and sends the 503 back. With several instances of the S-CSCF the REGISTER would go to the next instance and register the user there.
-- The P-CSCF takes a 503 from the I-CSCF as a failure of that I-CSCF (RFC 3263 4.3), as it takes a timeout (TS 24.229 5.2.2.1 item 7). No other I-CSCF is left, so it answers the UE **504 Server Time-out**.
+- A client that gets a 503 sends the request to the next server that DNS gave it (RFC 3263 4.3). With several instances of the S-CSCF the REGISTER would go to the next instance and register the user there. The I-CSCF of this network has one S-CSCF, so it has no other to try.
+- A proxy does not pass a 503 on (RFC 3261 16.7 step 6). The 503 says that the S-CSCF takes no request now. Passed on, it would say the same of the I-CSCF, which still takes requests for the other S-CSCFs, and the UE would read it as said of its P-CSCF: a 503 whose Retry-After is longer than Timer F has the UE mark its P-CSCF as unavailable for that time (TS 24.229 5.1.1.2.1). So the I-CSCF answers **500 Server Internal Error** of its own. The Retry-After was about the S-CSCF, so the 500 does not carry it.
+- The P-CSCF passes the 500 on to the UE. A 500 does not send the REGISTER on to another I-CSCF, as a 3xx, a 480 or a 503 would (TS 24.229 5.2.2.1 item 7, RFC 3263 4.3).
 
-In Wireshark, `sip.Status-Code == 503` shows the two 503 responses. The PUT request travels over the loopback interface of the container, so the capture does not hold it.
+In Wireshark, `sip.Status-Code == 503` shows the 503 of the S-CSCF, and `sip.Status-Code == 500` the two 500 responses after it. The PUT request travels over the loopback interface of the container, so the capture does not hold it.
 
 While it is not `UNLOCKED`, the S-CSCF still serves the requests within a dialog, such as the BYE of a call in progress, and the requests that an application server sends back to it with the original dialog identifier, so that what has begun ends as it would have. It also ends the registrations that expire. A refresh of a registration is a new REGISTER outside a dialog, so it gets the 503 too.
 
@@ -534,7 +535,7 @@ These parts of the specifications are left out or shortened. Each has a `SIMPLIF
 | I-CSCF, TS 24.229 5.3.1.3 | No reselection of another S-CSCF when the S-CSCF does not answer. | The configuration names one S-CSCF. When it runs as several instances, a REGISTER that one leaves unanswered already goes on to the next. |
 | UE, TS 24.229 9.2.1 | A UE without an access network, such as the UEs of this guide or a softphone on the host, has its P-CSCF address configured. A UE on the EPC stub (`ue -epc`) takes it from the PCO when it attaches; see [The VoLTE call flow](volte.md). | The softphone path stays, for softphones and for UEs that do not attach. |
 | UE, TS 24.229 5.1.2A.1.6 | After a request that got no response, the UE registers again through the same P-CSCF at once. It does not mark the P-CSCF as unavailable or look for another one. | The UE knows one P-CSCF address, and finding the P-CSCFs again would give the same one. |
-| UE, TS 24.229 5.1.1.2.1 and 5.1.1.4.1 | When Timer F fires for a REGISTER, or a 503 comes with a Retry-After longer than Timer F, the UE waits and registers through the same P-CSCF. It does not mark the P-CSCF as unavailable or look for another one. After a failed refresh it always makes an initial registration, also where a short Retry-After of a 503 would let it refresh. | The UE knows one P-CSCF address, and finding the P-CSCFs again would give the same one. No response to a REGISTER reaches the UE with Retry-After: when the S-CSCF answers 503 with one, the P-CSCF answers the UE 504. |
+| UE, TS 24.229 5.1.1.2.1 and 5.1.1.4.1 | When Timer F fires for a REGISTER, or a 503 comes with a Retry-After longer than Timer F, the UE waits and registers through the same P-CSCF. It does not mark the P-CSCF as unavailable or look for another one. After a failed refresh it always makes an initial registration, also where a short Retry-After of a 503 would let it refresh. | The UE knows one P-CSCF address, and finding the P-CSCFs again would give the same one. No response to a REGISTER reaches the UE with Retry-After: when the S-CSCF answers 503 with one, the I-CSCF answers 500 without it. |
 | UE, TS 24.229 5.1.1.2.1 | max-time and base-time of the retry delay are always the defaults of RFC 5626 4.5. | The network can provide them only through a management object of TS 24.167, which the UE does not have. |
 | HSS, TS 29.228 6.1.1.1 and 6.1.2.1 | One registration state per subscription, not per public identity. Some Server-Assignment-Type values are not handled. | Each test subscription is one implicit registration set, and the S-CSCF never sends the other values. |
 | HSS, TS 29.228 6.1.1.1 step 5 | No check that the user may register at all. | Every test user may register. |

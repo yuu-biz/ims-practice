@@ -220,7 +220,8 @@ func TestSilentSCSCFGives504(t *testing.T) {
 // TestUnavailableSCSCFGives500: the S-CSCF, a shut down one, answers 503
 // with Retry-After, and DNS gives no other target for it. The 503 says
 // that the S-CSCF takes no request, not that the I-CSCF takes none, so
-// the I-CSCF answers 500 without Retry-After (RFC 3261 16.7 step 6).
+// the I-CSCF answers 500 without Retry-After (RFC 3261 16.7 step 6),
+// for a REGISTER as for a request to a callee.
 func TestUnavailableSCSCFGives500(t *testing.T) {
 	unavailable := func(st *sip.ServerTransaction) {
 		resp := sip.NewResponse(st.Request, 503, sip.NewTag())
@@ -232,6 +233,7 @@ func TestUnavailableSCSCFGives500(t *testing.T) {
 		hss  hssFunc
 		send func(*testing.T, *sip.Stack, netip.AddrPort, string) *sip.Message
 	}{
+		{"REGISTER", stubHSS(cx.ServerCapabilities{MandatoryCapabilities: []uint32{1}}), register},
 		{"INVITE", registeredAtHSS(t), invite},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
