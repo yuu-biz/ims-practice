@@ -47,3 +47,14 @@ Data files
   **/*.amr                    A sine tone encoded with opencore-amr and
                               vo-amrwbenc (tools/amrgen).
   Milenage test values        The test sets of 3GPP TS 35.208.
+
+  slides/internal/pptx/testdata/ecma376/*.xsd
+                              Unchanged copies of XML schemas that Ecma
+                              International publishes with ECMA-376, used
+                              by the tests to validate the pptx the slide
+                              generator writes. Copyright (c) Ecma
+                              International. The README beside them names
+                              the editions and carries the copyright
+                              notice and licence of Ecma International,
+                              which allow the files to be copied and
+                              distributed unchanged.
