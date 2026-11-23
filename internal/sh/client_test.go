@@ -5,6 +5,7 @@ import (
 	"errors"
 	"log/slog"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/fiorix/go-diameter/v4/diam"
@@ -95,6 +96,40 @@ func TestClientReturnsTheResultOfAFailedAnswer(t *testing.T) {
 	var re *ResultError
 	if !errors.As(err, &re) || re.Result != unknown {
 		t.Errorf("err = %v, want a ResultError with %v", err, unknown)
+	}
+}
+
+// TestClientNotifyReadyForSMSendsAPUR: the notification is a PUR of
+// SMSRegistrationInfo like the registration, and names this IP-SM-GW's
+// number for the HSS to compare, but carries no S6c support indication:
+// it registers nothing.
+func TestClientNotifyReadyForSMSendsAPUR(t *testing.T) {
+	c, f := newClient(t, func(req *diam.Message) *diam.Message {
+		return ProfileUpdateAnswer{Result: diameter.Base(diameter.DiameterSuccess)}.Message(req, hss)
+	})
+	ctx := context.Background()
+	if err := c.NotifyReadyForSM(ctx, UserIdentity{MSISDN: msisdn}, "12025550199", MemoryAvailable); err != nil {
+		t.Fatal(err)
+	}
+	pur, err := ParseProfileUpdateRequest(f.received[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	notification := `<SMSRegistrationInfo><IP-SM-GW-Number>12025550199</IP-SM-GW-Number>` +
+		`<ReadyForSM xmlns="https://github.com/yuu-biz/ims-practice/ns/sh">memoryAvailable</ReadyForSM></SMSRegistrationInfo>`
+	if got := string(pur.UserData); !strings.Contains(got, notification) {
+		t.Errorf("User-Data = %s\nwant %s", got, notification)
+	}
+	if pur.UserIdentity.MSISDN != msisdn || !reflect.DeepEqual(pur.DataReferences, []DataReference{SMSRegistrationInfo}) {
+		t.Errorf("PUR = %+v", pur)
+	}
+	// A reason the HSS has no handling for is refused before anything is
+	// sent, as a user identity that cannot be carried is.
+	if err := c.NotifyReadyForSM(ctx, UserIdentity{MSISDN: msisdn}, "12025550199", ReadyForSM("reachable")); err == nil {
+		t.Error("a notification with an unknown reason was sent")
+	}
+	if len(f.received) != 1 {
+		t.Errorf("%d requests sent", len(f.received))
 	}
 }
 
