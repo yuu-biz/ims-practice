@@ -35,6 +35,7 @@ import (
 	"github.com/yuu-biz/ims-practice/internal/maintenance"
 	"github.com/yuu-biz/ims-practice/internal/metrics"
 	"github.com/yuu-biz/ims-practice/internal/mmtel"
+	"github.com/yuu-biz/ims-practice/internal/mrfc"
 	"github.com/yuu-biz/ims-practice/internal/pcscf"
 	"github.com/yuu-biz/ims-practice/internal/policy"
 	"github.com/yuu-biz/ims-practice/internal/rtptest"
@@ -1138,4 +1139,100 @@ type noRepositoryData struct{}
 
 func (noRepositoryData) RepositoryData(context.Context, string, string) (sh.TransparentData, bool, error) {
 	return sh.TransparentData{}, false, nil
+}
+
+// TestMaintenanceAPIShutsTheMRFCDown: on the maintenance listener of a
+// node with the mrfc role, the API shows the MRFC and its
+// configuration, and a shut down reaches the MRFC, which then refuses
+// the INVITE of an announcement with 503 and Retry-After. The MRFP of
+// the configuration is never reached: the refusal comes before the MRFC
+// would ask it for the announcement.
+func TestMaintenanceAPIShutsTheMRFCDown(t *testing.T) {
+	transport, err := sip.Listen("127.0.0.1:0", quiet())
+	if err != nil {
+		t.Fatal(err)
+	}
+	mrfp := "http://mrfp." + domain + ":8080"
+	client := agw.NewClient(mrfp)
+	m, err := mrfc.New(mrfc.Config{Host: "mrfc." + domain, Port: int(transport.LocalAddr().Port()),
+		NotifyURL: "http://mrfc." + domain + ":8080/notify"},
+		[]mrfc.Processor{{Name: mrfp, Control: client, Announcements: client}}, mrfc.NewMemoryStore(), noNames{}, quiet())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := m.Listen(transport); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(m.Close)
+
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := config.Config{Node: "mrfc", Roles: []config.Role{config.RoleMRFC}, HomeDomain: domain,
+		Maintenance: &config.Maintenance{Listen: l.Addr().String()},
+		MRFC: &config.MRFC{SIP: config.SIP{Listen: netip.MustParseAddrPort("0.0.0.0:5060"), Host: "mrfc." + domain},
+			Notify: netip.MustParseAddrPort("0.0.0.0:8080"), MRFPs: []string{mrfp}}}
+	roles := []managedRole{{function: m.Function(), manage: m.Manage}}
+	stop, err := startMaintenance(l, cfg, roles, metrics.NewRegistry(), new(slog.LevelVar), quiet(), func() {})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer stop()
+	ctx := t.Context()
+	oam := maintenance.NewClient("http://"+l.Addr().String(), http.DefaultClient)
+
+	state, err := oam.State(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The MRFC holds no association with an MRFP, so it is ENABLED while
+	// the node runs, with no dialog of its own.
+	functions := state.Functions
+	if len(functions) != 1 || functions[0].Role != string(config.RoleMRFC) ||
+		functions[0].OperationalState != maintenance.Enabled ||
+		functions[0].Users == nil || *functions[0].Users != 0 {
+		t.Errorf("functions %+v, want the MRFC ENABLED with no user", functions)
+	}
+	conf, err := oam.Configuration(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := `"mrfc":{"sip":{"listen":"0.0.0.0:5060","host":"mrfc.` + domain +
+		`"},"notify":"0.0.0.0:8080","mrfp":["` + mrfp + `"]}`
+	if !strings.Contains(string(conf.Configuration), want) {
+		t.Errorf("configuration %s, want %s in it", conf.Configuration, want)
+	}
+	shut, err := oam.SetAdministrativeState(ctx, string(config.RoleMRFC),
+		maintenance.AdministrativeStateRequest{AdministrativeState: maintenance.ShuttingDown})
+	if err != nil || shut.AdministrativeState != maintenance.Locked {
+		t.Fatalf("shut down gave %+v (%v), want LOCKED with no dialog in progress", shut, err)
+	}
+
+	caller, err := sip.Listen("127.0.0.1:0", quiet())
+	if err != nil {
+		t.Fatal(err)
+	}
+	as, err := sip.NewUA(caller, sip.UAConfig{SentBy: caller.LocalAddr().String(),
+		Contact: "sip:mmtel@" + caller.LocalAddr().String(),
+		OnCall:  func(c *sip.IncomingCall) { c.Reject(480) },
+		Locate: func(sip.URI) ([]sip.Destination, error) {
+			return []sip.Destination{{Transport: sip.UDP, Addr: transport.LocalAddr()}}, nil
+		}}, quiet())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(as.Close)
+	out, err := as.Invite(sip.Invitation{
+		RequestURI: "sip:annc@mrfc." + domain + ";play=/provisioned/notice", From: "sip:mmtel@" + domain})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var last *sip.Message
+	for r := range out.Responses() {
+		last = r
+	}
+	if last == nil || last.StatusCode != 503 || last.Get("Retry-After") == "" {
+		t.Errorf("the INVITE to the shut down MRFC got %v, want 503 with Retry-After", last)
+	}
 }

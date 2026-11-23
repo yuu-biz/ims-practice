@@ -471,6 +471,7 @@ func run(configPath string, log *slog.Logger, level *slog.LevelVar) error {
 			transport.Close()
 			return err
 		}
+		managed = append(managed, managedRole{function: m.Function(), manage: m.Manage})
 		if err := m.Listen(transport); err != nil {
 			transport.Close()
 			return err
@@ -1000,6 +1001,7 @@ type configurationView struct {
 	ICSCF *icscfView `json:"icscf,omitempty"`
 	SCSCF *scscfView `json:"scscf,omitempty"`
 	MMTel *mmtelView `json:"mmtel,omitempty"`
+	MRFC  *mrfcView  `json:"mrfc,omitempty"`
 }
 
 type pcscfView struct {
@@ -1058,6 +1060,14 @@ type mmtelView struct {
 	// ConferenceDomain is the subdomain whose public service identities
 	// are the conferences of this instance (TS 23.003 13.5).
 	ConferenceDomain string `json:"conference_domain,omitempty"`
+}
+
+type mrfcView struct {
+	SIP sipView `json:"sip"`
+	// Notify is where the MRFPs report the end of an announcement, and
+	// MRFPs the control APIs of the MRFPs this instance may use.
+	Notify string   `json:"notify"`
+	MRFPs  []string `json:"mrfp,omitempty"`
 }
 
 // xcapView is the XCAP server of Ut. The key that signs its nonces is a
@@ -1121,6 +1131,9 @@ func newConfigurationView(cfg config.Config) configurationView {
 			Announcement:     c.Announcement,
 			ConferenceDomain: c.ConferenceDomain,
 		}
+	}
+	if c := cfg.MRFC; c != nil {
+		v.MRFC = &mrfcView{SIP: newSIPView(c.SIP), Notify: c.Notify.String(), MRFPs: c.MRFPs}
 	}
 	return v
 }
