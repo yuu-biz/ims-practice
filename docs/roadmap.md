@@ -197,7 +197,7 @@
 - 学習用の画面から障害注入を操作する。ドレインは OAM の側の操作にする（[lab-oam.md](design/lab-oam.md)）。
 - 手順書「障害を起こして観察する」を書く。
 
-今あるもの。保守用の API の共通部分（`internal/maintenance`）、障害注入の部品（`internal/fault`、`deploy/chaos/`）、保存先のクライアント（`internal/kvstore`）があります。保守用の API のドレインは、P-CSCF、I-CSCF、S-CSCF につないであります。
+今あるもの。保守用の API の共通部分（`internal/maintenance`）、障害注入の部品（`internal/fault`、`deploy/chaos/`）、保存先のクライアント（`internal/kvstore`）があります。保守用の API のドレインは、P-CSCF、I-CSCF、S-CSCF につないであります。HSS のドレインは、DPR を送って接続を閉じると決めました。その作りはコードにありません（[state-redundancy.md](design/state-redundancy.md)）。
 
 **完了条件.** ドレイン中のノードを経由する通話が切れずに終わり、その後の新規の呼が他のノードを経由することを、CI の試験で確認できる。通話中に P-CSCF か S-CSCF のコンテナを削除し、同じ名前とアドレスで作り直しても、その呼が切れず、登録済みの UE が再登録なしで着信できることを、CI の試験で確認できる。メディア中継ノードの障害は、設計の記録で決めた範囲を確認する。作り直した中継ノードを通る呼で、RTP が途切れたあとで同じポートから戻り、呼が BYE まで続く。
 
@@ -259,7 +259,7 @@
 - 設定の変更の記録と、前の設定への戻しを作る。
 - 手順書「OAM で運用する」を書く。
 
-今あるもの。OAM のサーバーの本体（`internal/oam`）と画面（`web/oam`）の部品があり、こちらは役割にはつないでいません。保守用の API（`internal/maintenance`）と指標（`internal/metrics`）は P-CSCF、I-CSCF、S-CSCF につないであります。`maintenance.listen` を持つノードは、その待ち受けで `/metrics` を出し、この 3 つのどれかの役割を持てば保守用の API も出します。P-CSCF と S-CSCF は、登録の試行、成功、失敗を種類ごとに数えます（TS 32.409 4.1.1）。P-CSCF は、最初の登録にかかった時間（4.1.1.1.4）と、セッションの試行、応答、失敗、応答済みのセッションの数（4.1.2）も数えます。I-CSCF はホーム網に入る着信のセッションの確立を数えます（4.1.2.11）。shut down か lock をしたあいだ、S-CSCF はダイアログの外の新しい要求に、P-CSCF は登録を始める REGISTER と更新する REGISTER に、I-CSCF はすべての要求に、503 と Retry-After を返します。Compose では Prometheus が 3 つの指標を集め、Grafana のダッシュボードに出ます（`deploy/observability/`）。確認は `scripts/e2e-observability.sh` で行います。ほかの役割はまだつないでいません。調査は [oam.md](background/oam.md) にあります。
+今あるもの。OAM のサーバーの本体（`internal/oam`）と画面（`web/oam`）の部品があり、こちらは役割にはつないでいません。保守用の API（`internal/maintenance`）は P-CSCF、I-CSCF、S-CSCF に、指標（`internal/metrics`）はこの 3 つと HSS につないであります。`maintenance.listen` を持つノードは、その待ち受けで `/metrics` を出し、3 つの CSCF のどれかの役割を持てば保守用の API も出します。P-CSCF と S-CSCF は、登録の試行、成功、失敗を種類ごとに数えます（TS 32.409 4.1.1）。P-CSCF は、最初の登録にかかった時間（4.1.1.1.4）と、セッションの試行、応答、失敗、応答済みのセッションの数（4.1.2）も数えます。I-CSCF はホーム網に入る着信のセッションの確立を数えます（4.1.2.11）。HSS は、持っている加入者と公開識別子の数（4.2.1.1）と、そのうち登録の状態にあるものの数（4.2.1.2）を出します。加入者をプロセスの外の保存先に置いた HSS は、どれも出しません。数は保存先のもので、1 台が自分の操作から出せるものではないためです。shut down か lock をしたあいだ、S-CSCF はダイアログの外の新しい要求に、P-CSCF は登録を始める REGISTER と更新する REGISTER に、I-CSCF はすべての要求に、503 と Retry-After を返します。HSS のドレインは、DPR を送って接続を閉じると決めました。その作りはコードにありません（[state-redundancy.md](design/state-redundancy.md) の「HSS のドレインで何を返すか」）。Compose では Prometheus が 4 つのノードの指標を集め、Grafana のダッシュボードに出ます（`deploy/observability/`）。確認は `scripts/e2e-observability.sh` で行います。ほかの役割はまだつないでいません。調査は [oam.md](background/oam.md) にあります。
 
 **完了条件.** CI の試験で、OAM から加入者を一括で登録し、HSS を止めてデータを戻したあとに登録と通話が成功する。試験用の利用者だけに有効にした機能が、ほかの利用者には効かないことを確かめられる。
 

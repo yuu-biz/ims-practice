@@ -207,6 +207,8 @@ S-CSCF は次のことを確かめます（TS 24.229 5.4.1.2.2A）。
 
 次に、`Server-Assignment-Type` を **`REGISTRATION`**（1）にした **Server-Assignment-Request**（SAR、Cx のコマンド 301）を送ります。HSS は、利用者がこの S-CSCF に登録されたと記録します。そして、利用者のプロファイルを **User-Data** で返します。Wireshark での名前は `Cx-User-Data` です。プロファイルは XML の文書で（TS 29.228 Annex E）、一緒に登録される識別子の一覧が入っています。利用者の要求にどのアプリケーションサーバーを加えるかを S-CSCF に伝える iFC（initial filter criteria）も入っています。`deploy/compose/hss.yaml` では、すべての利用者に SMS over IP の iFC を 2 つ設定しています。1 つ目の iFC が REGISTER で何をするかは、ステップ 15 で説明します。
 
+HSS はこの記録を数えています。利用者が登録しているあいだ、その公開識別子は `ims_hss_registered_public_identities` に、私的識別子は `ims_hss_registered_private_identities` に入り、登録の解除で外れます。HSS のノードはコンテナの中の `http://127.0.0.1:8085/metrics` に、この 2 つと `ims_hss_subscriptions`、`ims_hss_public_identities` を出します。後の 2 つは、登録している利用者がいるかどうかに関わらず、HSS が持っているものの数です。この待ち受けに保守用の API は出しません。HSS には、運用者が設定する管理状態がないためです。
+
 ### 10. S-CSCF が登録を受け付ける（200 OK）
 
 200 OK には、この後 UE と P-CSCF が使う情報が入っています（TS 24.229 5.4.1.2.2F）。
