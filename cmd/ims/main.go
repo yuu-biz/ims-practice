@@ -233,10 +233,13 @@ func run(configPath string, log *slog.Logger, level *slog.LevelVar) error {
 		for _, e := range c.SCSCFs {
 			scscfs = append(scscfs, icscf.SCSCF{Name: e.Name, Capabilities: e.Capabilities})
 		}
-		i := icscf.New(icscf.Config{HomeDomain: cfg.HomeDomain, SCSCFs: scscfs, Host: c.SIP.Host, Port: int(c.SIP.Listen.Port()),
-			PSISubdomains: c.PSISubdomains},
+		i, err := icscf.New(icscf.Config{HomeDomain: cfg.HomeDomain, SCSCFs: scscfs, Host: c.SIP.Host, Port: int(c.SIP.Listen.Port()),
+			PSISubdomains: c.PSISubdomains, Metrics: registry},
 			hssPeers(cfg, peers), node, resolver,
 			log.With("role", config.RoleICSCF))
+		if err != nil {
+			return err
+		}
 		stack, err := startSIPWith(config.RoleICSCF, c.SIP, sip.Config{OnRequest: i.OnRequest, OnCANCEL: i.OnCANCEL})
 		if err != nil {
 			return err

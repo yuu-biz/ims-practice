@@ -291,8 +291,11 @@ func startNetworkWith(t *testing.T, o netOptions) *network {
 	dns.add("scscf."+domain, scscfStack.LocalAddr())
 
 	icscfNode, icscfPeer := connect("icscf."+domain, diameter.ApplicationIDCx, nil)
-	i := icscf.New(icscf.Config{HomeDomain: domain, SCSCFs: []icscf.SCSCF{{Name: "sip:scscf." + domain + ":5060", Capabilities: []uint32{1}}},
+	i, err := icscf.New(icscf.Config{HomeDomain: domain, SCSCFs: []icscf.SCSCF{{Name: "sip:scscf." + domain + ":5060", Capabilities: []uint32{1}}},
 		Host: "icscf." + domain, Port: 5060}, icscfPeer, icscfNode, dns, quiet())
+	if err != nil {
+		t.Fatal(err)
+	}
 	dns.add(domain, stackOf("I-CSCF", i.OnRequest, nil).LocalAddr())
 
 	p, err := pcscf.New(pcscf.Config{Host: "pcscf." + domain, Port: 5060, VisitedNetworkID: domain}, dns, pcscf.NewMemoryStore(), nil, quiet())

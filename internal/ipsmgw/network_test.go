@@ -150,8 +150,11 @@ func startIMS(t *testing.T, n int) *network {
 	net.dns.add("scscf."+domain, scscfStack.LocalAddr())
 
 	icscfNode, icscfPeer := connect("icscf."+domain, diameter.ApplicationIDCx, nil)
-	i := icscf.New(icscf.Config{HomeDomain: domain, SCSCFs: []icscf.SCSCF{{Name: "sip:scscf." + domain + ":5060", Capabilities: []uint32{1}}},
+	i, err := icscf.New(icscf.Config{HomeDomain: domain, SCSCFs: []icscf.SCSCF{{Name: "sip:scscf." + domain + ":5060", Capabilities: []uint32{1}}},
 		Host: "icscf." + domain, Port: 5060}, icscfPeer, icscfNode, net.dns, quiet())
+	if err != nil {
+		t.Fatal(err)
+	}
 	net.dns.add(domain, newStack(t, sip.Timers{}, i.OnRequest).LocalAddr())
 
 	p, err := pcscf.New(pcscf.Config{Host: "pcscf." + domain, Port: 5060, VisitedNetworkID: domain}, net.dns, pcscf.NewMemoryStore(), nil, quiet())

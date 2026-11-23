@@ -103,8 +103,11 @@ func TestCallForwardingWhenNotLoggedIn(t *testing.T) {
 	as.scscf.Store(&scscfAddr)
 	resolver.add("scscf."+domain, scscfAddr)
 	node := diameter.NewNode(diameter.Identity{OriginHost: "icscf." + domain, OriginRealm: domain}, []uint32{diameter.ApplicationIDCx}, diameter.Timers{}, quiet())
-	i := icscf.New(icscf.Config{HomeDomain: domain, Host: domain, Port: 5060,
+	i, err := icscf.New(icscf.Config{HomeDomain: domain, Host: domain, Port: 5060,
 		SCSCFs: []icscf.SCSCF{{Name: "sip:scscf." + domain + ":5060", Capabilities: []uint32{1}}}}, h.hss, node, resolver, quiet())
+	if err != nil {
+		t.Fatal(err)
+	}
 	ic := newStack(t, i.OnRequest)
 	// The S-CSCF finds the I-CSCF as the entry point of the home domain.
 	resolver.add(domain, ic.LocalAddr())
