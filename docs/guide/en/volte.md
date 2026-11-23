@@ -16,7 +16,7 @@ The guide follows these editions: TS 24.229 V20.1.0, TS 29.214 V20.0.0 (Rx), TS 
 The UE of the other guides is a softphone: its P-CSCF address is configured, it authenticates with SIP Digest and a password, and it offers G.711 (PCMU). A VoLTE phone (IR.92) works differently in five ways:
 
 1. **The access network.** The phone first attaches to the EPC. The network gives it an IP address, the P-CSCF address and a default bearer for SIP. For each call it sets up a second bearer for the voice (IR.92 4.4).
-2. **IMS AKA.** The phone proves that it holds the keys of its USIM, the network proves that it knows them too, and both agree on security associations (TS 33.203 6.1.1, 7). There is no password.
+2. **IMS AKA.** The phone proves that it holds the keys of its USIM, the network proves that it knows them too, and both agree on security associations (TS 33.203 6.1.1, 7). There is no password. By default the two ends agree on the associations and use the protected ports without setting up IPsec ESP, so the SIP of a registered phone reads in a capture as plainly as a softphone's. [The same agreement with ESP](#the-same-agreement-with-esp) turns the protection on, the way a real VoLTE phone has it.
 3. **Policy control.** The P-CSCF tells the PCRF over Rx which media each call needs, and the PCRF has the access network reserve it (TS 29.214 4.4.1). When the access network loses the bearer, the PCRF tells the P-CSCF, and the P-CSCF ends the call (TS 24.229 5.2.8.1.2, IR.92 2.4.2.3).
 4. **The VoLTE call.** The callee does not ring until both sides have their bearers (RFC 3312, IR.92 2.4.1). The speech is AMR-WB (IR.92 3.2.1), with RTCP, DTMF as telephone-events, a session timer and a Reason in the BYE.
 5. **The identities.** The phone's card has a USIM and no ISIM, so the phone derives its identities from the IMSI. It registers a temporary public identity that the network bars, and calls with the default public identity that the network gives back (see "The identities of a phone without an ISIM").
@@ -197,7 +197,9 @@ Start it with the deployment that turns ESP on:
 docker compose -f compose.yaml -f deploy/esp/esp.yaml --profile volte up -d --build
 ```
 
-It gives the P-CSCF and the two VoLTE UEs the capability NET_ADMIN and a protected client port each: `sec_agree.esp.protected_client_port` for the P-CSCF, `-port-c` for a UE. Each end then binds that port, sends its requests from it, and puts the four security associations of every authenticated registration into the kernel, which protects the packets between the two ends' protected ports and discards what arrives there without ESP. The containers share the kernel of the machine that runs the engine, so this needs that machine to run Linux.
+It gives the P-CSCF and the two VoLTE UEs the capability NET_ADMIN and a protected client port each: `sec_agree.esp.protected_client_port` for the P-CSCF, `-port-c` for a UE. Each end then binds that port, sends its requests from it, and puts the four security associations of every authenticated registration into the kernel, which protects the packets between the two ends' protected ports and discards what arrives there without ESP.
+
+A container has no kernel of its own: it uses the kernel of the machine that runs the engine, so the security associations go into that kernel and need its XFRM, the part of a Linux kernel that holds them, with its support for ESP. Most Linux kernels have both. On Windows, Docker Desktop with its WSL2 backend runs the engine on a Linux kernel of its own, which has them too: a node loads what it needs through NET_ADMIN, with nothing to set up by hand. Where the kernel lacks them, a node cannot add its associations. The P-CSCF logs `the store failed` with the error of `ip xfrm` and answers the REGISTER 500, so the registration fails rather than falling back to unprotected signalling.
 
 In the capture, the first REGISTER, the 401 and everything between the other nodes look as they did. Between a registered VoLTE UE and the P-CSCF there is no SIP any more, only `ESP (SPI=0x...)`. The SPIs are the ones of the Security-Client and the Security-Server, so each packet says which of the four associations carries it, and the ports say the same: the requests of the UE go from its protected client port 5063 to the P-CSCF's protected server port 5064, the responses to them come back the other way, the requests of the P-CSCF go from its protected client port 5065 to the UE's protected server port 5062, and the responses to those come back from there.
 
@@ -235,7 +237,7 @@ tshark -r captures/ims-*.pcap -o esp.enable_encryption_decode:TRUE \
 
 The two `-d` options name the protected ports as SIP over TCP. SIP is registered on port 5060 and found on any other port by a heuristic, which inside ESP has less to go on; in Wireshark the same thing is **Decode As** on a packet of the stream.
 
-The ESP setting that detects null encryption on its own, `esp.enable_null_encryption_decode_heuristic`, is not enough here: that heuristic assumes the 12 octets of HMAC-SHA-1-96, and this agreement uses the 16 of HMAC-SHA2-256-128, so it reads the wrong octets as the next header.
+The same dialog has one setting that needs no row at all, **Attempt to detect/decode NULL encrypted ESP payloads** (`esp.enable_null_encryption_decode_heuristic`). It works out the length of the integrity check value instead of being told it: it tries 12, 16, 24 and 32 octets and keeps the first length whose padding and next header come out valid. That is the quickest way to look inside one capture. The row above names the algorithm, which gives the length outright, so nothing is guessed per packet; the checks of this project use the row for that reason.
 
 Three things still differ from a real network with ESP on. The protected client ports are the one port of each end's configuration, the same for every UE and every authentication, where TS 33.203 7.4.0 has them change with each authenticated re-registration. The P-CSCF forwards to the core on the transport the request came in on, so the core sees requests from its protected server port, which no association protects; the P-CSCF's own requests to a UE leave its protected client port, and everything else the port it listens on. And the security associations live in the kernel of the one P-CSCF that set them up, while the SA table can be shared by several: a UE that registered through one of them and then sends to another is answered as though it had no associations, and registers again.
 
@@ -507,6 +509,8 @@ Each re-INVITE passes the MMTel AS as it came (TS 24.610 4.5.2.1), and each new 
 ## Run it
 
 `scripts/e2e-volte.sh` does everything in this guide and checks each message in the capture, in order. It leaves the capture in `captures/`, the frames of the registrations, the calls, Rx and the EPC stub's API in `e2e-out/volte-ladder.txt`, the AMR-WB recordings in `captures/volte-*.amr`, and the logs of the UEs, with what a UE on the host heard, in `e2e-out/`. It takes about two minutes.
+
+`scripts/e2e-esp.sh` runs a registration and a call with IPsec ESP on the signalling between the UEs and the P-CSCF, and checks the security associations in the kernel as well as the capture. [The same agreement with ESP](#the-same-agreement-with-esp) says how to start that deployment by hand and how to read what it captures.
 
 ### With the Lab
 

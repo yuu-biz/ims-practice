@@ -112,6 +112,12 @@ A short message travels in the body of a SIP MESSAGE, with the media type `appli
 
 `scripts/e2e-sms.sh` writes the frame list of its short messages to `e2e-out/sms-ladder.txt`.
 
+## Read the SIP inside ESP
+
+The signalling between a VoLTE UE and the P-CSCF can be protected with IPsec ESP, which the deployment in [The VoLTE call flow](volte.md#the-same-agreement-with-esp) turns on. Nothing in it is encrypted, so the SIP is still there to read, but Wireshark needs one setting before it looks inside: until then those packets show as `ESP (SPI=0x...)` and no display filter on `sip` matches them.
+
+In **Edit > Preferences > Protocols > ESP**, tick **Attempt to detect/decode NULL encrypted ESP payloads**. Wireshark then works out where the payload ends by trying the lengths of the integrity check value that the algorithms use, 12, 16, 24 and 32 octets, and dissects what it finds inside. The VoLTE guide gives the other way, an **ESP SAs** row that names the integrity algorithm instead of leaving Wireshark to work the length out, and the options that read the protected ports as SIP over TCP.
+
 ## Copies for the Lab (HEP)
 
 A node can also send a copy of every SIP and Diameter message it sends or receives to the Lab, which listens on UDP port 9060. The copies use HEP version 3 (Homer Encapsulation Protocol). A node sends them when its configuration has a `hep` section, for example `hep: {collector: lab:9060}`. The UE simulator sends them when it gets `-hep lab:9060`. Without either, nothing is sent.
