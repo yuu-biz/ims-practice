@@ -208,7 +208,15 @@ docker compose exec pcscf ip xfrm state
 docker compose exec pcscf ip xfrm policy
 ```
 
-Each state is one association: the two addresses, `proto esp` with its SPI, `mode transport`, `auth-trunc hmac(sha256) 0x... 128` with IK_ESP and the 128 bits of the integrity check value, and `enc ecb(cipher_null) 0x`, which is null encryption with an empty key. IK_ESP is not IK: Annex I expands it from CK and IK with the key derivation function of TS 33.220 Annex B.2.0. Each policy binds one association to the two ports of its pair, once for UDP and once for TCP, since the two share the association (TS 33.203 7.1). The node writes the same commands with `ip xfrm` that a reader can type by hand.
+Each state is one association: the two addresses, `proto esp` with its SPI, `mode transport`, the integrity algorithm with IK_ESP and the 128 bits of its integrity check value, null encryption with an empty key, and a lifetime. IK_ESP is not IK: Annex I expands it from CK and IK with the key derivation function of TS 33.220 Annex B.2.0. Each policy binds one association to the two ports of its pair, once for UDP and once for TCP, since the two share the association (TS 33.203 7.1). The node runs the same commands a reader can type by hand, one of them being:
+
+```sh
+ip xfrm state add src 172.28.0.120 dst 172.28.0.40 proto esp spi 0x3b9b0ea3 \
+  reqid 1000017571 mode transport replay-window 32 limit time-hard 3630 \
+  auth-trunc 'hmac(sha256)' 0x<IK_ESP> 128 enc 'ecb(cipher_null)' ''
+```
+
+The lifetime is the one the SIP layer gives the associations: the time an authentication has to finish while the UE answers the challenge, and the time left of the registration once the 200 (OK) has established them (TS 33.203 7.4.2a). The kernel deletes a state whose lifetime is over, so the associations of a UE that stops answering go even though no registration ends to take them out.
 
 To read the SIP inside ESP, Wireshark needs to know how long the integrity check value is, which it takes from the integrity algorithm. In **Edit > Preferences > Protocols > ESP**, tick **Attempt to detect/decode encrypted ESP payloads** and open **ESP SAs**, then add one row:
 
@@ -221,12 +229,15 @@ Neither key is needed: nothing is encrypted, and Wireshark checks no integrity. 
 ```sh
 tshark -r captures/ims-*.pcap -o esp.enable_encryption_decode:TRUE \
   -o 'uat:esp_sa:"IPv4","*","*","*","NULL","","HMAC-SHA-256-128 [RFC4868]",""' \
+  -d tcp.port==5062,sip -d tcp.port==5064,sip \
   -Y 'esp && sip'
 ```
 
+The two `-d` options name the protected ports as SIP over TCP. SIP is registered on port 5060 and found on any other port by a heuristic, which inside ESP has less to go on; in Wireshark the same thing is **Decode As** on a packet of the stream.
+
 The ESP setting that detects null encryption on its own, `esp.enable_null_encryption_decode_heuristic`, is not enough here: that heuristic assumes the 12 octets of HMAC-SHA-1-96, and this agreement uses the 16 of HMAC-SHA2-256-128, so it reads the wrong octets as the next header.
 
-Two things still differ from a real network with ESP on. The protected client ports are the one port of each end's configuration, the same for every UE and every authentication, where TS 33.203 7.4.0 has them change with each authenticated re-registration. And the P-CSCF talks to the core over its protected ports, where no association protects the packets, because it forwards a request on the transport it came in on.
+Three things still differ from a real network with ESP on. The protected client ports are the one port of each end's configuration, the same for every UE and every authentication, where TS 33.203 7.4.0 has them change with each authenticated re-registration. The P-CSCF forwards to the core on the transport the request came in on, so the core sees requests from its protected server port, which no association protects; the P-CSCF's own requests to a UE leave its protected client port, and everything else the port it listens on. And the security associations live in the kernel of the one P-CSCF that set them up, while the SA table can be shared by several: a UE that registered through one of them and then sends to another is answered as though it had no associations, and registers again.
 
 ### SIPp
 
@@ -626,7 +637,7 @@ Each item has a `SIMPLIFIED:` comment in the code; `grep -rn "SIMPLIFIED:" inter
 | P-CSCF, TS 24.229 5.2.8.1.2 | When a confirmed call loses its resources, the served UE is not left to notice the lost bearer itself, as the clause has it: the P-CSCF sends it a BYE too, in the name of the other party. | After the network released only the voice bearer the UE still has its signalling, and a UE that does not act on the loss of that bearer would, without a BYE, stay in a call that the network has ended. |
 | P-CSCF, TS 24.229 5.2.8.1.4, 5.2.8.3 | A dialog that ends without a BYE through the P-CSCF stays in the Store, and an answered one stays in `ims_answered_sessions`. | It would need an index of dialogs by user, or a session timer of the P-CSCF. |
 | P-CSCF, RFC 3264, RFC 3262 | An INVITE or re-INVITE without SDP gets no relay context and no authorisation. | The UE simulator always offers in the INVITE. |
-| P-CSCF and UE, TS 33.203 7.1, 7.2 | By default no IPsec ESP: the associations are agreed and kept, the protected server ports are used, the client ports are never bound. The deployment of `deploy/esp` sets ESP up and binds them. | Captures stay readable either way. The standard has no IMS AKA without protection. |
+| P-CSCF and UE, TS 33.203 7.1, 7.2 | By default no IPsec ESP: the associations are agreed and kept, the protected server ports are used, the client ports are never bound. The deployment of `deploy/esp` sets ESP up and binds them, in the kernel of the one P-CSCF that set them up, which the SA table of a shared Store does not follow. | Captures stay readable either way. The standard has no IMS AKA without protection. A kernel holds the associations of its own host alone. |
 | P-CSCF and UE, TS 33.203 7.4.0 | With ESP, the protected client ports are the one port of each end’s configuration, for every UE and every authentication, where the standard has them change with each authenticated re-registration. | A port of its own for each set of associations would mean a socket for each. The associations of different UEs already differ by the UE’s address. |
 | P-CSCF, TS 24.229 5.2.2.3 | A UE is known by the address and port its requests come from, or for TCP by the sent-by of its Via, which nothing authenticates. | Without ESP a TCP connection comes from a port of the moment. |
 | S-CSCF, TS 33.203 6.1.1, TS 24.229 5.4.1.2.1A | AKAv1-MD5 only, no AKAv2-SHA-256. | SIPp speaks AKAv1-MD5 only. |
