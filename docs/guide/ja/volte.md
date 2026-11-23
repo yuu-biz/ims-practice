@@ -208,15 +208,15 @@ docker compose exec pcscf ip xfrm state
 docker compose exec pcscf ip xfrm policy
 ```
 
-state の 1 つ 1 つがアソシエーションです。両端のアドレス、`proto esp` と SPI、`mode transport`、IK_ESP と完全性チェック値の 128 ビットを持つ完全性のアルゴリズム、空の鍵による null の暗号化、そして寿命が並びます。IK_ESP は IK そのものではありません。Annex I が、TS 33.220 Annex B.2.0 の鍵導出関数で CK と IK から作ります。policy は、アソシエーションを 1 組のポートに結び付けるもので、UDP と TCP に 1 つずつあります。2 つのトランスポートが同じアソシエーションを使うためです（TS 33.203 7.1）。ノードは、読み手が手で打てるのと同じコマンドを実行します。その 1 つは次のようなものです。
+state の 1 つ 1 つがアソシエーションです。両端のアドレス、`proto esp` と SPI、`mode transport`、IK_ESP と完全性チェック値の 128 ビットを持つ完全性のアルゴリズム、そして空の鍵による null の暗号化が並びます。IK_ESP は IK そのものではありません。Annex I が、TS 33.220 Annex B.2.0 の鍵導出関数で CK と IK から作ります。policy は、アソシエーションを 1 組のポートに結び付けるもので、UDP と TCP に 1 つずつあります。2 つのトランスポートが同じアソシエーションを使うためです（TS 33.203 7.1）。ノードは、読み手が手で打てるのと同じコマンドを実行します。その 1 つは次のようなものです。
 
 ```sh
 ip xfrm state add src 172.28.0.120 dst 172.28.0.40 proto esp spi 0x3b9b0ea3 \
-  reqid 1000017571 mode transport replay-window 32 limit time-hard 3630 \
+  reqid 1000017571 mode transport replay-window 32 \
   auth-trunc 'hmac(sha256)' 0x<IK_ESP> 128 enc 'ecb(cipher_null)' ''
 ```
 
-寿命は、SIP の層がアソシエーションに与えるものです。UE が challenge に答えるあいだは認証を終えるのに要る時間、200 (OK) で確立したあとは登録の残りの時間です（TS 33.203 7.4.2a）。カーネルは寿命の切れた state を消すので、返事をしなくなった UE のアソシエーションは、登録が終わらなくても消えます。
+カーネルに寿命は渡しません。TS 33.203 7.1 は、セキュリティアソシエーションの寿命を SIP のアプリケーションに任せていて、アプリケーションがそれを持ちます（7.4）。UE が challenge に答えるあいだは認証を終えるのに要る時間、200 (OK) で確立したあとは登録の残りの時間です。その時間が過ぎると P-CSCF と UE が消すので、返事をしなくなった UE のアソシエーションは、登録が終わらなくても消えます。
 
 ESP の中の SIP を読むには、完全性チェック値の長さを Wireshark に教えます。長さは完全性のアルゴリズムから決まります。**Edit > Preferences > Protocols > ESP** で **Attempt to detect/decode encrypted ESP payloads** にチェックを入れ、**ESP SAs** を開いて、次の 1 行を足します。
 
