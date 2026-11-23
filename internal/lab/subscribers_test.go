@@ -42,7 +42,7 @@ func TestSubscribersGoToTheHSS(t *testing.T) {
 			w.WriteHeader(http.StatusCreated)
 		case http.MethodDelete:
 			w.WriteHeader(http.StatusNotFound)
-		case http.MethodPut:
+		case http.MethodPut, http.MethodPatch:
 			w.Write(b)
 		}
 	}))
@@ -56,6 +56,12 @@ func TestSubscribersGoToTheHSS(t *testing.T) {
 	if status, _ := send(t, http.MethodPost, h.server.URL+"/api/subscribers", added); status != http.StatusCreated {
 		t.Errorf("POST: %d", status)
 	}
+	// The mark and the service profile name of a subscription, which the
+	// HSS takes without its credentials.
+	const patch = `{"test_user":true,"service_profile":"no-services"}`
+	if status, body := send(t, http.MethodPatch, h.server.URL+"/api/subscribers/"+impi, patch); status != 200 || body != patch {
+		t.Errorf("PATCH: %d %s", status, body)
+	}
 	if status, _ := send(t, http.MethodDelete, h.server.URL+"/api/subscribers/"+impi, ""); status != http.StatusNotFound {
 		t.Errorf("DELETE: %d, want the HSS's 404", status)
 	}
@@ -66,6 +72,7 @@ func TestSubscribersGoToTheHSS(t *testing.T) {
 	want := []seen{
 		{http.MethodGet, "/subscriptions", ""},
 		{http.MethodPost, "/subscriptions", added},
+		{http.MethodPatch, "/subscriptions/" + impi, patch},
 		{http.MethodDelete, "/subscriptions/" + impi, ""},
 		{http.MethodPut, "/subscriptions/" + impi + "/customized-alerting-tone", `{"tone":"cat2","active":true}`},
 	}
@@ -93,7 +100,9 @@ func TestSubscribersWithoutProvisioning(t *testing.T) {
 			t.Errorf("%s: %d %s, want 503 with an error", method, status, body)
 		}
 	}
-	if status, _ := send(t, http.MethodDelete, h.server.URL+"/api/subscribers/"+impi, ""); status != http.StatusServiceUnavailable {
-		t.Errorf("DELETE: %d, want 503", status)
+	for _, method := range []string{http.MethodPatch, http.MethodDelete} {
+		if status, _ := send(t, method, h.server.URL+"/api/subscribers/"+impi, ""); status != http.StatusServiceUnavailable {
+			t.Errorf("%s: %d, want 503", method, status)
+		}
 	}
 }
