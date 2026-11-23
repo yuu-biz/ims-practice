@@ -152,6 +152,32 @@ func TestClientUpdateSMSRegistrationInfoSendsAPUR(t *testing.T) {
 		data.ShIMSData == nil || data.ShIMSData.SMSRegistrationInfo == nil || data.ShIMSData.SMSRegistrationInfo.IPSMGWNumber != "12025550199" {
 		t.Errorf("PUR = %+v, data %+v", pur, data)
 	}
+	// The document of the registration, element for element: the number,
+	// and the S6c support indication three Extension elements below it
+	// (TS 29.328 Annex D, tSMSRegistrationInfo).
+	registration := "<Sh-Data><Sh-IMS-Data><Extension><Extension><Extension><SMSRegistrationInfo>" +
+		"<IP-SM-GW-Number>12025550199</IP-SM-GW-Number>" +
+		"<Extension><Extension><Extension><IP-SM-GW-S6cSupportIndication>1</IP-SM-GW-S6cSupportIndication>" +
+		"</Extension></Extension></Extension></SMSRegistrationInfo></Extension></Extension></Extension></Sh-IMS-Data></Sh-Data>"
+	if got := string(pur.UserData); !strings.HasSuffix(got, registration) {
+		t.Errorf("User-Data = %s\nwant suffix %s", got, registration)
+	}
+	if !data.ShIMSData.SMSRegistrationInfo.SupportsS6c() {
+		t.Error("the registration does not announce S6c support")
+	}
+
+	// A removal names no IP-SM-GW, so it carries no indication either.
+	if err := c.UpdateSMSRegistrationInfo(context.Background(), UserIdentity{PublicIdentity: impu}, ""); err != nil {
+		t.Fatal(err)
+	}
+	removal := "<SMSRegistrationInfo><IP-SM-GW-Number></IP-SM-GW-Number></SMSRegistrationInfo>"
+	pur, err = ParseProfileUpdateRequest(f.received[1])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := string(pur.UserData); !strings.Contains(got, removal) {
+		t.Errorf("User-Data of the removal = %s\nwant %s", got, removal)
+	}
 }
 
 func TestClientRefusesABadUserIdentityBeforeSending(t *testing.T) {

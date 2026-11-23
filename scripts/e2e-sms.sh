@@ -176,7 +176,7 @@ notified="$last"
 # message over SGd names its recipient by IMSI.
 expect "UDR IP-SM-GW -> HSS: IMSI of UE 2" "diameter.cmd.code == 306 && $req && ip.src == $ipsmgw && diameter.Data-Reference == 32"
 expect "UDA 2001" "$(answer_to) && diameter.Result-Code == 2001"
-expect "PUR IP-SM-GW -> HSS: SMSRegistrationInfo with the IP-SM-GW's number" "diameter.cmd.code == 307 && $req && ip.src == $ipsmgw && diameter.Data-Reference == 24 && e164.msisdn == \"12025550102\" && diameter.Sh-User-Data contains \"<IP-SM-GW-Number>12025550199<\""
+expect "PUR IP-SM-GW -> HSS: SMSRegistrationInfo with the IP-SM-GW's number, reachable over S6c" "diameter.cmd.code == 307 && $req && ip.src == $ipsmgw && diameter.Data-Reference == 24 && e164.msisdn == \"12025550102\" && diameter.Sh-User-Data contains \"<IP-SM-GW-Number>12025550199<\" && diameter.Sh-User-Data contains \"<IP-SM-GW-S6cSupportIndication>1<\""
 expect "PUA 2001" "$(answer_to) && diameter.Result-Code == 2001"
 # The 200 to the SUBSCRIBE comes back through the I-CSCF, and may come
 # after the NOTIFY, which the S-CSCF sends straight to the IP-SM-GW. The
