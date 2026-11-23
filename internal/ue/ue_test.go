@@ -209,6 +209,10 @@ type testNetwork struct {
 	dns *names
 	// provisioning is the HSS provisioning API.
 	provisioning http.Handler
+	// hssRole is the instance of the HSS whose provisioning API this is,
+	// for a test that changes a setting of the HSS while the network
+	// runs.
+	hssRole *hss.HSS
 	// pcscfProtected is the P-CSCF's protected server port, where UEs
 	// with IMS AKA send (TS 33.203 7.1).
 	pcscfProtected netip.AddrPort
@@ -442,7 +446,7 @@ func startNetwork(t *testing.T, cfg networkConfig) testNetwork {
 		}
 	}
 	return testNetwork{pcscf: pcscfStack.LocalAddr(), pcscfRole: p, pcscfProtected: protectedStack.LocalAddr(), pcscfStore: pcscfStore, pcscfLog: pcscfLog, scscf: s, dns: dns,
-		provisioning: hssRole.Provisioning(instances[0].server), epc: epcAPI, hss: instances}
+		provisioning: hssRole.Provisioning(instances[0].server), hssRole: hssRole, epc: epcAPI, hss: instances}
 }
 
 // startHSS starts the instances of the HSS that cfg asks for and
@@ -482,6 +486,11 @@ func startHSS(t *testing.T, cfg networkConfig) (*hss.HSS, []hssInstance) {
 			t.Fatal(err)
 		}
 		t.Cleanup(server.Stop)
+		// The S-CSCF connects to the HSS, so a PPR of this instance goes
+		// back over its server's connections (cmd/ims wires the two this
+		// way).
+		role.SetPeers(server)
+		t.Cleanup(role.Close)
 		if first == nil {
 			first = role
 		}
