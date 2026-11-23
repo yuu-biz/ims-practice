@@ -176,9 +176,9 @@ go test ./internal/milenage -run TestConformanceTestSets -v   # all 20 sets of T
 
 ### The security agreement without ESP
 
-The standard protects everything after the 401 with IPsec ESP: two pairs of security associations between the UE's and the P-CSCF's protected ports, with the keys derived from IK and CK (TS 33.203 7.1). This project agrees on the associations, keeps them in the P-CSCF's SA table with IK and CK, and uses the protected ports, but sets up no ESP. A message counts as protected when it comes to the protected server port from the address and port of a set of associations. The Security-Client says `ealg=null`, and nothing is encrypted or integrity protected on the wire.
+The standard protects everything after the 401 with IPsec ESP: two pairs of security associations between the UE's and the P-CSCF's protected ports, with the keys derived from IK and CK (TS 33.203 7.1). By default this project agrees on the associations, keeps them in the P-CSCF's SA table with IK and CK, and uses the protected ports, but sets up no ESP. A message counts as protected when it comes to the protected server port from the address and port of a set of associations. The Security-Client says `ealg=null`, and nothing is encrypted or integrity protected on the wire.
 
-This project does not encrypt signalling by default, so that captures can be read: the SIP of a registered VoLTE UE shows in Wireshark as plainly as that of a softphone. ESP would also need NET_ADMIN in the UE and P-CSCF containers. The standard has no IMS AKA without protection: without IPsec it has only AKAv2-SHA-256 over TLS (TS 24.229 4.2B.1), so this is a simplification of its own. This implementation turns on neither ESP nor TLS.
+This project does not encrypt signalling by default, so that captures can be read: the SIP of a registered VoLTE UE shows in Wireshark as plainly as that of a softphone. The standard has no IMS AKA without protection: without IPsec it has only AKAv2-SHA-256 over TLS (TS 24.229 4.2B.1), so this is a simplification of its own. ESP with null encryption keeps a capture readable too, and "The same agreement with ESP" below turns it on; TLS stays off either way.
 
 Without ESP, two things differ from a real network:
 
@@ -186,6 +186,47 @@ Without ESP, two things differ from a real network:
 - A request over TCP comes from a port of the moment. The VoLTE INVITE is larger than 1300 bytes and goes over TCP (RFC 3261 18.1.1), so the P-CSCF knows the UE of a TCP request by the sent-by of its Via. A REGISTER that answers a challenge is close to 1300 bytes, so whether it goes over TCP depends on how many digits its SPIs have. TCP and UDP share the security associations (TS 33.203 7.1), so the P-CSCF finds them for that REGISTER by the sent-by of its Via too. Nothing authenticates that sent-by, so a host that shares the UE's IP address could name the UE's protected server port in it; with ESP the security associations would authenticate the sender.
 
 Only a message that comes to the protected server port counts as protected. A request other than REGISTER that comes to port 5060 from the address and port of a UE with established associations is therefore unprotected. The P-CSCF discards it: it sends nothing back, not even a 100 (Trying), and forwards it nowhere. It logs `discarded an unprotected request from a UE with security associations` (TS 24.229 5.2.1 NOTE 8, TS 33.203 7.1).
+
+### The same agreement with ESP
+
+The same network can protect the signalling for real, with the integrity algorithm the two ends agreed on and null encryption. The encryption is what the capture needs: ESP integrity protection is what TS 33.203 6.3 asks for in every case, while confidentiality is applied only when the P-CSCF's policy requires it (6.2), and `ealg=null` is a value the security agreement carries (Annex H). So a network with null encryption is a network a real operator may run, and its SIP is still readable.
+
+Start it with the deployment that turns ESP on:
+
+```sh
+docker compose -f compose.yaml -f deploy/esp/esp.yaml --profile volte up -d --build
+```
+
+It gives the P-CSCF and the two VoLTE UEs the capability NET_ADMIN and a protected client port each: `sec_agree.esp.protected_client_port` for the P-CSCF, `-port-c` for a UE. Each end then binds that port, sends its requests from it, and puts the four security associations of every authenticated registration into the kernel, which protects the packets between the two ends' protected ports and discards what arrives there without ESP. The containers share the kernel of the machine that runs the engine, so this needs that machine to run Linux.
+
+In the capture, the first REGISTER, the 401 and everything between the other nodes look as they did. Between a registered VoLTE UE and the P-CSCF there is no SIP any more, only `ESP (SPI=0x...)`. The SPIs are the ones of the Security-Client and the Security-Server, so each packet says which of the four associations carries it, and the ports say the same: the requests of the UE go from its protected client port 5063 to the P-CSCF's protected server port 5064, the responses to them come back the other way, the requests of the P-CSCF go from its protected client port 5065 to the UE's protected server port 5062, and the responses to those come back from there.
+
+The associations live in the kernel of each container, which holds them while the UE is registered:
+
+```sh
+docker compose exec pcscf ip xfrm state
+docker compose exec pcscf ip xfrm policy
+```
+
+Each state is one association: the two addresses, `proto esp` with its SPI, `mode transport`, `auth-trunc hmac(sha256) 0x... 128` with IK_ESP and the 128 bits of the integrity check value, and `enc ecb(cipher_null) 0x`, which is null encryption with an empty key. IK_ESP is not IK: Annex I expands it from CK and IK with the key derivation function of TS 33.220 Annex B.2.0. Each policy binds one association to the two ports of its pair, once for UDP and once for TCP, since the two share the association (TS 33.203 7.1). The node writes the same commands with `ip xfrm` that a reader can type by hand.
+
+To read the SIP inside ESP, Wireshark needs to know how long the integrity check value is, which it takes from the integrity algorithm. In **Edit > Preferences > Protocols > ESP**, tick **Attempt to detect/decode encrypted ESP payloads** and open **ESP SAs**, then add one row:
+
+| Protocol | Src IP | Dest IP | SPI | Encryption | Encryption Key | Authentication | Authentication Key |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| IPv4 | `*` | `*` | `*` | `NULL` | | `HMAC-SHA-256-128 [RFC4868]` | |
+
+Neither key is needed: nothing is encrypted, and Wireshark checks no integrity. The same row on the command line, with the SIP of the capture:
+
+```sh
+tshark -r captures/ims-*.pcap -o esp.enable_encryption_decode:TRUE \
+  -o 'uat:esp_sa:"IPv4","*","*","*","NULL","","HMAC-SHA-256-128 [RFC4868]",""' \
+  -Y 'esp && sip'
+```
+
+The ESP setting that detects null encryption on its own, `esp.enable_null_encryption_decode_heuristic`, is not enough here: that heuristic assumes the 12 octets of HMAC-SHA-1-96, and this agreement uses the 16 of HMAC-SHA2-256-128, so it reads the wrong octets as the next header.
+
+Two things still differ from a real network with ESP on. The protected client ports are the one port of each end's configuration, the same for every UE and every authentication, where TS 33.203 7.4.0 has them change with each authenticated re-registration. And the P-CSCF talks to the core over its protected ports, where no association protects the packets, because it forwards a request on the transport it came in on.
 
 ### SIPp
 
@@ -585,7 +626,8 @@ Each item has a `SIMPLIFIED:` comment in the code; `grep -rn "SIMPLIFIED:" inter
 | P-CSCF, TS 24.229 5.2.8.1.2 | When a confirmed call loses its resources, the served UE is not left to notice the lost bearer itself, as the clause has it: the P-CSCF sends it a BYE too, in the name of the other party. | After the network released only the voice bearer the UE still has its signalling, and a UE that does not act on the loss of that bearer would, without a BYE, stay in a call that the network has ended. |
 | P-CSCF, TS 24.229 5.2.8.1.4, 5.2.8.3 | A dialog that ends without a BYE through the P-CSCF stays in the Store, and an answered one stays in `ims_answered_sessions`. | It would need an index of dialogs by user, or a session timer of the P-CSCF. |
 | P-CSCF, RFC 3264, RFC 3262 | An INVITE or re-INVITE without SDP gets no relay context and no authorisation. | The UE simulator always offers in the INVITE. |
-| P-CSCF and UE, TS 33.203 7.1, 7.2 | No IPsec ESP: the associations are agreed and kept, the protected server ports are used, the client ports are never bound. | Captures stay readable. The standard has no IMS AKA without protection. |
+| P-CSCF and UE, TS 33.203 7.1, 7.2 | By default no IPsec ESP: the associations are agreed and kept, the protected server ports are used, the client ports are never bound. The deployment of `deploy/esp` sets ESP up and binds them. | Captures stay readable either way. The standard has no IMS AKA without protection. |
+| P-CSCF and UE, TS 33.203 7.4.0 | With ESP, the protected client ports are the one port of each end’s configuration, for every UE and every authentication, where the standard has them change with each authenticated re-registration. | A port of its own for each set of associations would mean a socket for each. The associations of different UEs already differ by the UE’s address. |
 | P-CSCF, TS 24.229 5.2.2.3 | A UE is known by the address and port its requests come from, or for TCP by the sent-by of its Via, which nothing authenticates. | Without ESP a TCP connection comes from a port of the moment. |
 | S-CSCF, TS 33.203 6.1.1, TS 24.229 5.4.1.2.1A | AKAv1-MD5 only, no AKAv2-SHA-256. | SIPp speaks AKAv1-MD5 only. |
 | AKA, TS 33.102 C.2.2, C.3.4 | No limit L on how old an accepted SQN may be, and IND is not kept per domain. | Profile 2 suggests no L; IMS is one domain with one vector per MAR. |

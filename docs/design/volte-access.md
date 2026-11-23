@@ -7,7 +7,7 @@
 - EPC と PCRF はスタブにし、役割 `epc` に置きます。
 - UE と EPC スタブのあいだは TS 24.301 の ESM のメッセージに合わせた HTTP の API にします。
 - UE の IP アドレスは加入者ごとの静的なアドレスにします。
-- IMS-AKA は sec-agree と保護ポートの手順を行い、ESP だけをかけません。
+- IMS-AKA は既定では sec-agree と保護ポートの手順だけを行い、ESP をかけません。ESP（暗号化は null）は上書きの構成で有効にします。
 - AKA の版は AKAv1-MD5（RFC 3310）だけにします。
 - P-CSCF と PCRF のあいだは Diameter の Rx（TS 29.214）です。
 
@@ -15,14 +15,30 @@
 | --- | --- |
 | UE と EPC スタブの境界 | UE の側に `AccessNetwork` のインタフェースを置き、EPC スタブへの HTTP のクライアントで実装します。メッセージの名前と項目は TS 24.301 の ESM のメッセージに合わせ、本文は JSON にします。bearer の活性化や解放のような網からの通知は、Server-Sent Events で送ります。NAS と S1 を省いたことを `SIMPLIFIED:` に書きます。SMS を NAS で届けるときは、同じインタフェースの後ろに NAS の実装を置きます。スタブを、インタフェースの境界で本格的な実装に差し替えられるようにするためです。 |
 | UE の IP アドレス | 加入者ごとの静的なアドレス（TS 23.401 5.3.1.1）にし、今の 1 つのブリッジ（ims0）に置きます。TUN は使いません。TUN はコンテナに NET_ADMIN が要るので、Open5GS と UERANSIM の構成で扱います。1 つのブリッジのままなら、キャプチャ（[environment-capture.md](environment-capture.md)）を変えずに済み、ホスト固有のネットワーク設定にも依りません。GTP-U と SGi を省いたことを `SIMPLIFIED:` に書きます。 |
-| IPsec | ESP をかける設定は作っていません。既定は無効で、IPsec を有効にする構成は拡張の候補です（[roadmap.md](../roadmap.md)）。P-CSCF と UE のコンテナに NET_ADMIN が要り、Windows の Docker Desktop で xfrm が使えるかも確かめていないためです。 |
-| 平文の AKA | sec-agree（Security-Client、Security-Server、Security-Verify）と保護ポートの手順はそのまま行い、ESP だけを省きます。学習者がキャプチャで sec-agree の手順を見られるようにするためです。sec-agree を行って ESP だけを省く形は標準に無いので、`SIMPLIFIED:` に理由を書きます。IPsec を使わない AKA は、標準では TLS の上の AKAv2-SHA-256 だけです（TS 24.229 4.2B.1）。 |
+| IPsec | ESP は上書きの構成（`deploy/esp/`）で有効にし、既定は無効のままにします。暗号化は null にし、完全性の保護だけをかけます。TS 33.203 6.3 は完全性の保護をどの場合にも求め、秘匿は P-CSCF の方針が求めるときだけです（6.2）。`ealg=null` は sec-agree が運ぶ値の 1 つなので（Annex H）、実際の網にある組み合わせです。カーネルへの設定は `internal/ipsec` が `ip xfrm` のコマンドで行います。学習者が同じコマンドを手で打って `ip xfrm state` で結果を見られるようにするためで、netlink のライブラリを足さずに済みます。P-CSCF と UE のコンテナに NET_ADMIN が要り、Windows の Docker Desktop で xfrm が使えるかは確かめていないので、既定を切り替えるかはその結果で決めます。 |
+| 平文の AKA | 既定では sec-agree（Security-Client、Security-Server、Security-Verify）と保護ポートの手順はそのまま行い、ESP だけを省きます。学習者がキャプチャで sec-agree の手順を見られるようにするためです。sec-agree を行って ESP だけを省く形は標準に無いので、`SIMPLIFIED:` に理由を書きます。IPsec を使わない AKA は、標準では TLS の上の AKAv2-SHA-256 だけです（TS 24.229 4.2B.1）。ESP を有効にすると、暗号化が null なのでキャプチャの中身は読めたまま、組み合わせは標準どおりになります。 |
 | AKA の版 | AKAv1-MD5（RFC 3310）だけにします。独立した試験相手の SIPp（[ue-simulator.md](ue-simulator.md)）が AKAv2 に対応していないので、同じ AKAv1-MD5 で比べるためです。TS 33.203 6.1.1 は、S-CSCF が AKAv2-SHA-256 と AKAv1-MD5 の両方を示し、UE が AKAv2-SHA-256 に対応することを求めています。AKAv2 を省いたことを `SIMPLIFIED:` に書きます。 |
 | PCRF スタブ | 役割 `epc` の中に置きます。PGW のスタブとのあいだの Gx はプロセスの中の関数の呼び出しにし、`SIMPLIFIED:` に書きます。P-CSCF とのあいだの Rx は Diameter（TS 29.214）です。 |
 | EPC を通らない UE | ホストのソフトフォンのように EPC を通らない UE では、PCRF が IP-CAN_SESSION_NOT_AVAILABLE を返します。そのとき P-CSCF は、その UE の呼で Rx を使わずに進めます。 |
 | P-CSCF のダイアログ | P-CSCF は、自分で BYE を作るのに要るダイアログの情報（相手の Contact、To と From、CSeq、Route）を `Store` の後ろに置きます。bearer を失ったときに、網の側から呼を切るためです（TS 24.229 5.2.8.1.2）。どの台でもこの情報を読めるように、`Store` の後ろに置きます（[state-redundancy.md](state-redundancy.md)）。 |
 
 コーデック（AMR と AMR-WB、UE の offer の順）は [codecs.md](codecs.md) にあります。
+
+## ESP の試作の結果
+
+ESP（暗号化は null）を上書きの構成で有効にする形を試しました。
+
+| 確かめたこと | 結果 |
+| --- | --- |
+| TS 33.203 が null の暗号化を認めるか | 認めます。Annex H の `ealg` の値に `null` があり、`ealg` が無いときの既定も null です。6.2 は秘匿を P-CSCF の方針が求めるときだけかけるものとし、7.2 は UE が秘匿のアルゴリズムを示さなかったときに P-CSCF が null を選ぶか手順を中断するかを方針で決めるとしています。完全性の保護は 6.3 がどの場合にも求めます。 |
+| 鍵の導出 | Annex I が、HMAC-SHA2-256-128 のとき IK_ESP を TS 33.220 Annex B.2.0 の鍵導出関数で作ります。入力の鍵は CK \|\| IK、S は FC = 0x5A、P0 = "HMAC-SHA2-256-128"、L0 = 0x0011 で、出力は 256 ビットです。これは RFC 4868 の AUTH_HMAC_SHA2_256_128 の鍵長と一致します。 |
+| カーネルへの入れ方 | `ip xfrm` に `-batch` でコマンドをまとめて渡します。1 回の認証で state が 4 つ、policy が 8 つ（4 つのアソシエーション × UDP と TCP）です。policy から state を指すのは reqid で、SPI と同じ値を入れます。同じ 2 つのアドレスの間に出ていく state が 2 つあり、ポートと SPI しか違わないためです。`ip xfrm` のセレクタはポートを `proto udp` か `proto tcp` の下でしか書けないので、policy をトランスポートごとに分けます。 |
+| 保護クライアントポート | 取り決めるだけでなく開きます。アソシエーションの組は、片方の端のクライアントポートともう片方のサーバーポートの間にあるので（7.1）、ほかのポートから出たパケットはどのアソシエーションにも当たりません。`internal/sip` の transport に、要求を送るためのクライアントポートを足しました。応答は、要求が届いたポートから返します。 |
+| Go の試験（この環境） | 通ります。合意からカーネルのパラメータへの変換と IK_ESP の導出は純粋な関数で、`internal/ipsec` の試験で確かめます。P-CSCF と UE が、challenge のとき・登録を解除したとき・認証に失敗したときにカーネルを呼ぶことも試験で確かめます。 |
+| カーネルでの動作（この環境） | 確かめられません。`ip xfrm state add` が「Requested type not found」で失敗します。ESP の xfrm がこのカーネルに無いためです。`ecb(cipher_null)` は `/proc/crypto` にあり、`ip` も ESP には `enc` か `aead` が要ると言うので、コマンドの形だけは確かめました。 |
+| Wireshark での読み方 | ESP の設定で完全性のアルゴリズムを教えると、中の SIP を読めます。tshark 4.2.2 に ESP のパケットを与えて確かめました。`esp.enable_null_encryption_decode_heuristic` だけでは読めません。この推定は完全性チェック値を 12 オクテット（HMAC-SHA-1-96）と仮定するので、16 オクテットの HMAC-SHA2-256-128 では次ヘッダを読み違えます。ESP SAs の表に `IPv4,*,*,*,NULL,,HMAC-SHA-256-128 [RFC4868],` の 1 行を足すと読めます。鍵は要りません。 |
+| Compose と CI | `scripts/e2e-esp.sh` と CI の `e2e-esp` のジョブを足しました。Docker の無い環境で作ったので、この結果はまだありません。CI の実行で確かめます。 |
+| Windows の Docker Desktop | 確かめていません。メンテナーが手元で確かめ、その結果で既定を決めます。 |
 
 ## 採らなかった案
 

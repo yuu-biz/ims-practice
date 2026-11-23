@@ -117,7 +117,7 @@
 - `internal/sip` の基盤（UPDATE、セッションタイマー、199、Reason、OPTIONS、re-INVITE、B2BUA に要る部品）を入れ、付加サービスもその上に作る。
 - 手順書「VoLTE の呼の流れ」を書く。
 
-手順書は [volte.md](guide/ja/volte.md)、スクリプトは `scripts/e2e-volte.sh` です。作りは [volte-access.md](design/volte-access.md) と [codecs.md](design/codecs.md) にあります。
+手順書は [volte.md](guide/ja/volte.md)、スクリプトは `scripts/e2e-volte.sh` です。ESP（暗号化は null）を有効にした構成は `deploy/esp/`、その確認は `scripts/e2e-esp.sh` で、カーネルのアソシエーションとキャプチャの ESP の中の SIP を読みます。作りは [volte-access.md](design/volte-access.md) と [codecs.md](design/codecs.md) にあります。
 
 **完了条件.** CI の試験で IMS-AKA の登録と、プリコンディション付きの通話が成功する。
 
@@ -312,7 +312,7 @@
 - Open5GS と UERANSIM を使う構成。
 - ブラウザから通話できる WebRTC の UE。
 - PSTN への発信（BGCF、MGCF）。
-- TLS と IPsec を有効にした構成と、暗号化された信号を Wireshark で復号する手順。IPsec は VoLTE の段階では試さず、ここに残した。
+- TLS を有効にした構成と、暗号化された信号を Wireshark で復号する手順。IMS-AKA の IPsec は `deploy/esp/` の構成で有効にでき、暗号化が null なので復号は要らない。秘匿までかける構成は、ここに残っている。
 - 網の側の MWI（TS 24.606）と ECT（TS 24.629）。IR.92 は網の対応を任意としている。
 - 保存先の冗長（Valkey の Sentinel、クラスタ）。
 - SLF（Dx）。加入者を別々の HSS に分けて置くときに要る。
