@@ -139,8 +139,8 @@ else
 	# the request only once the PPA is in. The profile no-services has no
 	# criteria, so from here on the S-CSCF calls no application server for
 	# UE 3. The provisioning API is not published on the host, so the
-	# request goes from inside the container of the HSS; the Lab passes no
-	# PATCH on.
+	# request goes from inside the container of the HSS; the Lab passes
+	# on no change of a subscription at all.
 	reply="$(docker compose exec -T hss sh -c '
 		printf "PATCH /subscriptions/$1 HTTP/1.0\r\nContent-Type: application/json\r\nContent-Length: ${#2}\r\n\r\n%s" "$2" |
 			nc -w 5 127.0.0.1 8081' sh "001010000000003@$domain" '{"service_profile": "no-services"}')"
@@ -151,15 +151,15 @@ else
 		fail=1
 	fi
 	# The HSS answers the DELETE only once the RTR is over, so there is
-	# nothing else to wait for. The status code is read from the end of
-	# the output, since curl on Windows cannot write to /dev/null when
-	# MSYS_NO_PATHCONV is set.
-	status="$(curl -s -w '
-%{http_code}' -X DELETE "http://localhost:8080/api/subscribers/001010000000003%40$domain" | tail -n 1)"
-	if [ "$status" = 204 ]; then
+	# nothing else to wait for. BusyBox wget cannot send a DELETE
+	# either, hence this request written out to nc as well.
+	reply="$(docker compose exec -T hss sh -c '
+		printf "DELETE /subscriptions/$1 HTTP/1.0\r\n\r\n" |
+			nc -w 5 127.0.0.1 8081' sh "001010000000003@$domain")"
+	if grep -qi '^HTTP/1\.[01] 204' <<<"$reply"; then
 		echo "ok   the HSS removed the subscription of UE 3"
 	else
-		echo "FAIL removing the subscription of UE 3: HTTP $status"
+		echo "FAIL removing the subscription of UE 3: $(head -n 1 <<<"$reply")"
 		fail=1
 	fi
 fi

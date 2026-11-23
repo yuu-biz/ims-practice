@@ -86,30 +86,11 @@
                 <th>Test user</th>
                 <th>Service profile</th>
                 <th>Alerting tone (CAT)</th>
-                <th><span class="visually-hidden">Actions</span></th>
               </tr>
             </thead>
             <tbody></tbody>
           </table>
         </div>
-        <form id="subscriber-form" class="add-form">
-          <fieldset>
-            <legend>Add a test subscriber</legend>
-            <label>
-              Private identity
-              <input name="private_identity" required placeholder="001010000000005@ims.mnc001.mcc001.3gppnetwork.org" />
-            </label>
-            <label>
-              Public identities, one per line
-              <textarea name="public_identities" required rows="2" placeholder="sip:+12025550105@ims.mnc001.mcc001.3gppnetwork.org&#10;tel:+12025550105"></textarea>
-            </label>
-            <label>
-              Password
-              <input name="password" type="password" required autocomplete="new-password" />
-            </label>
-            <button type="submit">Add subscriber</button>
-          </fieldset>
-        </form>
       </section>
 
       <section aria-labelledby="epc-heading">

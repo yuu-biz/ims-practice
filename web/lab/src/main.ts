@@ -1,16 +1,14 @@
 // The IMS Lab. It shows what the Lab server derived from the
 // HEP copies that the nodes send: the calls, the registrations and the
-// HSS subscribers, and for a selected call or registration a ladder
-// diagram of its SIP and Cx messages with each message's payload and spec
+// subscriptions the HSS holds, and for a selected call or registration
+// a ladder diagram of its SIP and Cx messages with each message's
+// payload and spec
 // references. Through the server it also drives the UE simulators, the
 // procedures that the EPC stub starts on its own, and the faults of the
 // fault agent.
 
 import "./style.css";
 import {
-  addSubscriber,
-  alertingTones,
-  deleteSubscriber,
   fetchCallMessages,
   fetchCalls,
   fetchRegistrations,
@@ -18,13 +16,10 @@ import {
   HttpError,
   ladderCallIds,
   parseMessage,
-  patchSubscriber,
-  putAlertingTone,
   type Call,
   type Message,
   type Registration,
   type Subscriber,
-  type SubscriberPatch,
 } from "./api.ts";
 import { byId, clock, el, fillTable, type Child } from "./dom.ts";
 import { mountEPCPanel } from "./epc-panel.ts";
@@ -58,7 +53,6 @@ const copyNote = byId<HTMLSpanElement>("ladder-copy-note");
 const ladderTextBox = byId<HTMLPreElement>("ladder-text");
 const registrationsTable = byId<HTMLTableElement>("registrations");
 const subscribersTable = byId<HTMLTableElement>("subscribers");
-const subscriberForm = byId<HTMLFormElement>("subscriber-form");
 
 function showNote(id: string, text: string | null, isError = true): void {
   const note = byId<HTMLParagraphElement>(id);
@@ -214,32 +208,26 @@ function registrationRow(r: Registration): (string | Node)[] {
 async function refreshSubscribers(): Promise<void> {
   try {
     const subscribers = await fetchSubscribers();
-    setProvisioning(true);
     showNote("subscribers-note", null);
     view.subscribers = subscribers;
     renderUEPanel();
     fillTable(subscribersTable, subscribers.map(subscriberRow), "The HSS has no subscribers.");
   } catch (error) {
-    const unavailable = error instanceof HttpError && error.status === 503;
-    setProvisioning(!unavailable);
     fillTable(subscribersTable, [], "Not available.");
     showNote(
       "subscribers-note",
-      unavailable
-        ? "Subscriber provisioning is not configured. Set lab.hss_provisioning in the Lab config to list, add and delete subscribers."
+      error instanceof HttpError && error.status === 503
+        ? "The subscriber list is not configured. Set lab.hss_provisioning in the Lab config to list what the HSS holds."
         : `Could not load the subscribers: ${describe(error)}`,
     );
   }
 }
 
-function setProvisioning(available: boolean): void {
-  subscriberForm.querySelector("fieldset")!.disabled = !available;
-}
-
+// One row per subscription, as the HSS holds it now. The Lab changes
+// none of them: an operator provisions a subscription, and the page
+// shows what that did.
 function subscriberRow(s: Subscriber): (string | Node)[] {
-  const remove = el("button", { type: "button", className: "link danger", textContent: "Delete" });
-  remove.addEventListener("click", () => void removeSubscriber(s.private_identity));
-  return [s.private_identity, identities(s), testUserBox(s), profileField(s), toneSelect(s), remove];
+  return [s.private_identity, identities(s), s.test_user ? "yes" : "no", profileCell(s), toneCell(s)];
 }
 
 // The public identities of a subscription, the barred ones marked. The
@@ -255,115 +243,23 @@ function identities(s: Subscriber): HTMLElement {
   return el("div", {}, ...lines);
 }
 
-// The mark of a subscription that the operator keeps for trying a
-// feature out. It picks the service profile of a test user, and the
-// admission policy of the HSS can hold the network to the marked
-// subscriptions.
-function testUserBox(s: Subscriber): HTMLInputElement {
-  const box = el("input", { type: "checkbox", checked: s.test_user });
-  box.setAttribute("aria-label", `Test user mark of ${s.private_identity}`);
-  box.addEventListener("change", () => void changeSubscriber(s.private_identity, { test_user: box.checked }, box));
-  return box;
-}
-
-// The service profile that a subscription names, which decides the
-// filter criteria its S-CSCF gets. The names are those the HSS is
-// configured with. A subscription that names none gets the profile that
-// the settings of the HSS name for its kind of subscription, which the
-// cell shows below the field.
-function profileField(s: Subscriber): HTMLElement {
-  const input = el("input", { value: s.service_profile, size: 12 });
-  input.setAttribute("aria-label", `Service profile of ${s.private_identity}`);
-  input.addEventListener("change", () => {
-    const name = input.value.trim();
-    if (name === s.service_profile) return;
-    void changeSubscriber(s.private_identity, { service_profile: name }, input);
-  });
-  if (s.service_profile !== "") return el("div", {}, input);
-  return el("div", {}, input, el("span", { className: "muted", textContent: `\nfrom the settings: ${s.effective_service_profile}` }));
-}
-
-// The list is loaded again either way, so a field and a box that the
-// HSS refused go back to what it holds, and the profile it chose by its
-// settings appears. The reason comes after that load, which clears the
-// note of its own. The control that sent the change takes no other
-// until the list is back, so two changes cannot come back out of order.
-async function changeSubscriber(privateIdentity: string, patch: SubscriberPatch, control: HTMLInputElement): Promise<void> {
-  control.disabled = true;
-  let refused: string | null = null;
-  try {
-    await patchSubscriber(privateIdentity, patch);
-  } catch (error) {
-    refused = `Could not change ${privateIdentity}: ${describe(error)}`;
-  }
-  try {
-    await refreshSubscribers();
-  } finally {
-    control.disabled = false;
-  }
-  if (refused !== null) showNote("subscribers-note", refused);
+// The service profile decides which filter criteria the S-CSCF gets for
+// the user, and so which application server each of the user's requests
+// reaches. The cell shows the name the subscription carries, and for one
+// that carries none the profile that the settings of the HSS give it.
+function profileCell(s: Subscriber): string | Node {
+  if (s.service_profile !== "") return s.service_profile;
+  return el("span", { className: "muted", textContent: `from the settings: ${s.effective_service_profile}` });
 }
 
 // The customized alerting tone of a subscriber: what its callers hear
-// while it rings. "off" keeps the provisioned tone but stops it, so the
-// callers hear their own ringing tone again.
-function toneSelect(s: Subscriber): HTMLSelectElement {
-  const current = s.customized_alerting_tone;
-  const select = el(
-    "select",
-    { name: "customized_alerting_tone" },
-    el("option", { value: "", textContent: "off (ringing tone)" }),
-    ...alertingTones.map((tone) => el("option", { value: tone, textContent: tone })),
-  );
-  select.value = current?.active ? current.tone : "";
-  select.setAttribute("aria-label", `Customized alerting tone of ${s.private_identity}`);
-  select.addEventListener("change", () => {
-    const tone = select.value === "" ? { tone: current?.tone ?? alertingTones[0], active: false } : { tone: select.value, active: true };
-    void (async () => {
-      try {
-        await putAlertingTone(s.private_identity, tone);
-      } catch (error) {
-        showNote("subscribers-note", `Could not set the alerting tone of ${s.private_identity}: ${describe(error)}`);
-      }
-      await refreshSubscribers();
-    })();
-  });
-  return select;
+// while it rings (TS 24.182). A tone that is provisioned and off leaves
+// them their own ringing tone.
+function toneCell(s: Subscriber): string {
+  const tone = s.customized_alerting_tone;
+  if (tone === null) return "none";
+  return tone.active ? tone.tone : `${tone.tone} (off)`;
 }
-
-async function removeSubscriber(privateIdentity: string): Promise<void> {
-  if (!confirm(`Delete the subscriber ${privateIdentity} from the HSS?`)) return;
-  try {
-    await deleteSubscriber(privateIdentity);
-  } catch (error) {
-    showNote("subscribers-note", `Could not delete ${privateIdentity}: ${describe(error)}`);
-    return;
-  }
-  await refreshSubscribers();
-}
-
-subscriberForm.addEventListener("submit", (event) => {
-  event.preventDefault();
-  const data = new FormData(subscriberForm);
-  const field = (name: string) => String(data.get(name) ?? "").trim();
-  const subscriber = {
-    private_identity: field("private_identity"),
-    public_identities: field("public_identities")
-      .split(/\s*\n\s*/)
-      .filter((line) => line !== ""),
-    password: field("password"),
-  };
-  void (async () => {
-    try {
-      await addSubscriber(subscriber);
-    } catch (error) {
-      showNote("subscribers-note", `Could not add ${subscriber.private_identity}: ${describe(error)}`);
-      return;
-    }
-    subscriberForm.reset();
-    await refreshSubscribers();
-  })();
-});
 
 // A Cx copy that arrived before the server could link it comes without a
 // call_id; the next reload of the ladder has it.

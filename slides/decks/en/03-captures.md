@@ -139,7 +139,7 @@ docker compose up -d --build
 ```
 
 - Open <http://localhost:8080>. The dot next to the title says `live` while the page receives updates from the Lab's server.
-- The Lab is published on the host's loopback address only. It asks for no password, and anyone who reaches it can delete subscribers, drive the UEs and detach a UE from the access network.
+- The Lab is published on the host's loopback address only. It asks for no password, and anyone who reaches it can read what the HSS holds, drive the UEs and detach a UE from the access network.
 - The Lab is not part of the IMS, and it is not on the path of any call. A node starts and runs even when the Lab is not there.
 
 > Guide: ["Open the Lab"](../../../docs/guide/en/lab.md#open-the-lab)
@@ -154,7 +154,7 @@ docker compose up -d --build
 | Calls | One row per call, with its caller, callee, state, final status code and number of dialogs. |
 | Ladder diagram | The SIP and Cx messages of the selected call or registration, one column per node. |
 | Registrations | One row per public identity that registered, with its contact, its expiry and its S-CSCF. |
-| Subscribers (HSS) | The subscriptions the HSS holds. Test subscribers can be added and deleted here. |
+| Subscribers (HSS) | The subscriptions the HSS holds. The panel changes none of them: an operator provisions a subscription from the OAM. |
 | Access network (EPC) | One row per UE attached to the EPC stub, with its address, its bearers and the Rx sessions of its calls. |
 | Faults | The faults the fault agent holds, and a form that injects one. The panel is off until that agent runs. |
 
@@ -221,7 +221,7 @@ docker compose up -d --build
 - It is the one kind of message that the Lab shows and the pcap does not. Everything else of a ladder is in the capture too.
 - The other way round, the capture has what no ladder draws, such as the RTR the HSS sends when a registered subscriber is deleted. The HSS sends it on its own, not for a SIP request, so the Lab ties it to nothing.
 
-> Guide: ["How the ladder is built"](../../../docs/guide/en/lab.md#how-the-ladder-is-built) and ["Manage the subscribers"](../../../docs/guide/en/lab.md#manage-the-subscribers)
+> Guide: ["How the ladder is built"](../../../docs/guide/en/lab.md#how-the-ladder-is-built) and ["The network cancels a registration"](../../../docs/guide/en/lab.md#the-network-cancels-a-registration)
 
 ---
 

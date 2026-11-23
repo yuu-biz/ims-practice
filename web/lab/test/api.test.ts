@@ -8,8 +8,6 @@ import {
   HttpError,
   ladderCallIds,
   parseMessage,
-  patchSubscriber,
-  putAlertingTone,
 } from "../src/api.ts";
 
 function serve(status: number, body: string): void {
@@ -60,28 +58,6 @@ describe("API responses", () => {
     // subscription does not name and an empty list of barred
     // identities, and names the profile the settings give it instead.
     expect(b).toMatchObject({ barred_identities: [], test_user: false, service_profile: "", effective_service_profile: "default" });
-  });
-
-  it("patches the service profile of a subscriber", async () => {
-    const fetch = vi.fn(async () => new Response("{}", { status: 200 }));
-    vi.stubGlobal("fetch", fetch);
-    await patchSubscriber("a@example.test", { service_profile: "no-services" });
-    expect(fetch).toHaveBeenCalledWith("/api/subscribers/a%40example.test", {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: '{"service_profile":"no-services"}',
-    });
-  });
-
-  it("puts the alerting tone of a subscriber to the HSS", async () => {
-    const fetch = vi.fn(async () => new Response("{}", { status: 200 }));
-    vi.stubGlobal("fetch", fetch);
-    await putAlertingTone("a@example.test", { tone: "cat1", active: false });
-    expect(fetch).toHaveBeenCalledWith("/api/subscribers/a%40example.test/customized-alerting-tone", {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: '{"tone":"cat1","active":false}',
-    });
   });
 
   it("reads a null list, as Go encodes an empty slice, as no entries", async () => {

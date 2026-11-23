@@ -267,7 +267,7 @@ UE は Contact に `expires=0` を付けた REGISTER を送ります。
 | 場合 | 試し方 | 見どころ |
 | --- | --- | --- |
 | パスワードが誤っている | `ue register -password wrong-password` | 手順 8 までは同じ。S-CSCF は 403 を返し、AUTHENTICATION_FAILURE（9）の SAR を送る。 |
-| HSS から加入を削除する | ラボの Subscribers パネルで、登録中の加入を削除する。 | HSS が RTR を送る。Reason-Code は PERMANENT_TERMINATION（0）。UE には `event="rejected"` の NOTIFY が届く。 |
+| HSS から加入を削除する | ラボの手順書の「網が登録を取り消す」のとおり、登録中の加入を OAM から削除する。 | HSS が RTR を送る。Reason-Code は PERMANENT_TERMINATION（0）。UE には `event="rejected"` の NOTIFY が届く。 |
 
 - コマンドは `docker compose run --rm` に続けて書きます。
 - RTR と RTA のフィルタは `diameter.cmd.code == 304` です。RTR は、この勉強会で初めて HSS から始まる Cx の要求です。

@@ -3,13 +3,14 @@ package lab
 import (
 	"log/slog"
 	"net/http"
-	"strings"
 )
 
-// subscriberAPI forwards the subscriber endpoints to the HSS
-// provisioning API, /api/subscribers[/{impi}] to /subscriptions[/{impi}].
+// subscriberAPI forwards the subscriber endpoint to the HSS
+// provisioning API, /api/subscribers to /subscriptions. The Lab lists
+// the subscriptions and changes none of them: an operator provisions
+// them, which the OAM does.
 func subscriberAPI(provisioning string, log *slog.Logger) (http.Handler, error) {
-	return apiProxy("HSS provisioning API", provisioning, func(path string) string {
-		return "/subscriptions" + strings.TrimPrefix(path, "/api/subscribers")
+	return apiProxy("HSS provisioning API", provisioning, func(string) string {
+		return "/subscriptions"
 	}, log)
 }

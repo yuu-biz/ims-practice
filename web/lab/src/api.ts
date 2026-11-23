@@ -127,26 +127,10 @@ export interface Subscriber {
   customized_alerting_tone: AlertingTone | null;
 }
 
-// What a PATCH of a subscription carries: the two fields the HSS takes
-// without the credentials of the subscription, which it hands out to
-// nobody. A field left out stays as it is.
-export interface SubscriberPatch {
-  test_user?: boolean;
-  service_profile?: string;
-}
-
 export interface AlertingTone {
   // The announcement of the MRFP that plays, such as cat1.
   tone: string;
   active: boolean;
-}
-
-// The tones that the MRFP of the Compose project has, besides the
-// announcement notice (deploy/compose/mrfp.yaml).
-export const alertingTones = ["cat1", "cat2"] as const;
-
-export interface NewSubscriber extends Pick<Subscriber, "private_identity" | "public_identities"> {
-  password: string;
 }
 
 // The status of one UE simulator, as its control API (ue.Phone.Handler)
@@ -431,41 +415,10 @@ export function ladderCallIds(calls: readonly Call[], callId: string): string[] 
   return calls.find((c) => c.legs.includes(callId))?.legs ?? [callId];
 }
 
+// The subscriptions as the HSS holds them now. The Lab shows them and
+// changes none: an operator provisions a subscription.
 export function fetchSubscribers(): Promise<Subscriber[]> {
   return getList("/api/subscribers", parseSubscriber);
-}
-
-export async function addSubscriber(subscriber: NewSubscriber): Promise<void> {
-  await send("/api/subscribers", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(subscriber),
-  });
-}
-
-// The HSS pushes the user profile that follows from the change to the
-// S-CSCF of a registered user before it answers.
-export async function patchSubscriber(privateIdentity: string, patch: SubscriberPatch): Promise<void> {
-  await send(`/api/subscribers/${encodeURIComponent(privateIdentity)}`, {
-    method: "PATCH",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(patch),
-  });
-}
-
-export async function deleteSubscriber(privateIdentity: string): Promise<void> {
-  // A private identity has the form user@domain, so it must be escaped.
-  await send(`/api/subscribers/${encodeURIComponent(privateIdentity)}`, { method: "DELETE" });
-}
-
-// The operator provisions the tone in the HSS; the MMTel AS reads it
-// over Sh for each call to the user.
-export async function putAlertingTone(privateIdentity: string, tone: AlertingTone): Promise<void> {
-  await send(`/api/subscribers/${encodeURIComponent(privateIdentity)}/customized-alerting-tone`, {
-    method: "PUT",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(tone),
-  });
 }
 
 // The UEs that are attached to the EPC stub, with their bearers.
