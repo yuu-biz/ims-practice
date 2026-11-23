@@ -24,6 +24,7 @@ import (
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/netip"
@@ -190,17 +191,19 @@ func (c Command) String() string {
 }
 
 // Setup is the "ip xfrm" commands that set the agreement up at end.
-// lifetime is how long the associations may live at most.
 //
 // Each security association becomes one entry of the kernel's security
 // association database, in transport mode and with the anti-replay
-// service that TS 33.203 6.3 asks for. TS 33.203 7.1 fixes the SA
-// duration at 2^32-1 seconds and NOTE 4 leaves the lifetime to the SIP
-// application; the kernel gets a hard lifetime all the same, so that
-// the associations of a UE that stops answering go even though no
-// registration ends to take them out (7.4.2a: the P-CSCF deletes any SA
-// whose lifetime is exceeded). Refresh moves it when a registration is
-// refreshed without a new authentication.
+// service that TS 33.203 6.3 asks for. None of them carries a lifetime:
+// TS 33.203 7.1 fixes the SA duration at 2^32-1 seconds and NOTE 4
+// leaves the lifetime to the SIP application, which holds it (7.4) and
+// calls Teardown when it is over. A hard lifetime in the kernel would
+// also be wrong after the first one: the kernel counts it from the time
+// the state was added (xfrm_timer_handler adds
+// lft.hard_add_expires_seconds to curlft.add_time), and an update of a
+// state replaces its limits but not that time, so a registration that
+// is refreshed would carry the lifetime of the authentication that set
+// the associations up.
 //
 // Each association also becomes two policies, which bind it to the SIP
 // between the two protected ports: one for UDP and one for TCP, since
@@ -221,22 +224,7 @@ func (c Command) String() string {
 // and a policy is updated, which the kernel takes as add or replace. A
 // state cannot be updated into being: the kernel answers ESRCH to an
 // update of an SPI it does not hold.
-func (a Agreement) Setup(end End, lifetime time.Duration) ([]Command, error) {
-	return a.states(end, "add", lifetime, true)
-}
-
-// Refresh is the commands that give the associations of the agreement a
-// new lifetime, for a registration that was refreshed without a new
-// authentication (TS 33.203 7.4.2a raises the lifetime so that it ends
-// shortly after the registration). It changes nothing else, and the
-// policies stay as Setup left them.
-func (a Agreement) Refresh(end End, lifetime time.Duration) ([]Command, error) {
-	return a.states(end, "update", lifetime, false)
-}
-
-// states are the commands for the four security associations, with
-// their policies when withPolicies.
-func (a Agreement) states(end End, verb string, lifetime time.Duration, withPolicies bool) ([]Command, error) {
+func (a Agreement) Setup(end End) ([]Command, error) {
 	k, err := mechanism(a.UEMechanism)
 	if err != nil {
 		return nil, err
@@ -245,31 +233,22 @@ func (a Agreement) states(end End, verb string, lifetime time.Duration, withPoli
 	if err != nil {
 		return nil, err
 	}
-	seconds := int(lifetime.Round(time.Second) / time.Second)
-	if seconds < 1 {
-		return nil, fmt.Errorf("ipsec: the security associations have %s left to live", lifetime)
-	}
 	var out []Command
 	for _, sa := range a.SecurityAssociations() {
-		if verb == "add" {
-			// A state of this SPI that an earlier set-up left behind
-			// would make the add fail. deleteall succeeds with nothing
-			// to delete, and names the SPI and both addresses, so it
-			// touches no other UE's associations.
-			out = append(out, sa.deleteState())
-		}
-		out = append(out, Command{"xfrm", "state", verb,
+		// A state of this SPI that an earlier set-up left behind would
+		// make the add fail. deleteall succeeds with nothing to delete,
+		// and names the SPI and both addresses, so it touches no other
+		// UE's associations.
+		out = append(out, sa.deleteState(), Command{"xfrm", "state", "add",
 			"src", sa.Source.Addr().String(), "dst", sa.Destination.Addr().String(),
 			"proto", "esp", "spi", spi(sa.SPI), "reqid", reqid(sa.SPI), "mode", "transport",
-			"replay-window", "32", "limit", "time-hard", strconv.Itoa(seconds),
+			"replay-window", "32",
 			// The key of null encryption is empty, which iproute2 reads
 			// from an empty argument; "0x" alone it reads as the two
 			// characters.
 			"auth-trunc", k.integrity, "0x" + hex.EncodeToString(key), strconv.Itoa(k.truncation),
 			"enc", k.encryption, ""})
-		if withPolicies {
-			out = append(out, sa.policies(end, "update", seconds)...)
-		}
+		out = append(out, sa.policies(end, "update")...)
 	}
 	return out, nil
 }
@@ -280,10 +259,23 @@ func (a Agreement) states(end End, verb string, lifetime time.Duration, withPoli
 // or one that follows a set-up that got only halfway, ends in the same
 // state.
 func (a Agreement) Teardown(end End) []Command {
+	out := a.TeardownStates()
+	for _, sa := range a.SecurityAssociations() {
+		out = append(out, sa.policies(end, "deleteall")...)
+	}
+	return out
+}
+
+// TeardownStates deletes the four security associations and leaves the
+// policies, for a set that another one of the same ports replaces: the
+// policies of the new set take their place as it is set up (TS 33.203
+// 7.4.2a), and deleting them first would leave the protected ports for
+// a moment with nothing to say that what arrives there has to be
+// protected.
+func (a Agreement) TeardownStates() []Command {
 	var out []Command
 	for _, sa := range a.SecurityAssociations() {
 		out = append(out, sa.deleteState())
-		out = append(out, sa.policies(end, "deleteall", 0)...)
 	}
 	return out
 }
@@ -301,7 +293,7 @@ func (sa SecurityAssociation) deleteState() Command {
 // UDP and one for TCP. The association is outbound at the end that
 // sends on it and inbound at the other. A deleteall names the selector
 // alone, which is what identifies a policy.
-func (sa SecurityAssociation) policies(end End, verb string, seconds int) []Command {
+func (sa SecurityAssociation) policies(end End, verb string) []Command {
 	direction := "in"
 	if sa.From == end {
 		direction = "out"
@@ -313,8 +305,7 @@ func (sa SecurityAssociation) policies(end End, verb string, seconds int) []Comm
 			"proto", protocol, "sport", strconv.Itoa(int(sa.Source.Port())),
 			"dport", strconv.Itoa(int(sa.Destination.Port())), "dir", direction}
 		if verb != "deleteall" {
-			c = append(c, "limit", "time-hard", strconv.Itoa(seconds),
-				"tmpl", "src", sa.Source.Addr().String(), "dst", sa.Destination.Addr().String(),
+			c = append(c, "tmpl", "src", sa.Source.Addr().String(), "dst", sa.Destination.Addr().String(),
 				"proto", "esp", "reqid", reqid(sa.SPI), "mode", "transport")
 		}
 		out = append(out, c)
@@ -343,10 +334,9 @@ func NewKernel(log *slog.Logger) *Kernel { return &Kernel{log: log} }
 // else.
 const runFor = 10 * time.Second
 
-// Setup sets the agreement's security associations up at end, to live
-// for at most lifetime.
-func (k *Kernel) Setup(ctx context.Context, a Agreement, end End, lifetime time.Duration) error {
-	cmds, err := a.Setup(end, lifetime)
+// Setup sets the agreement's security associations up at end.
+func (k *Kernel) Setup(ctx context.Context, a Agreement, end End) error {
+	cmds, err := a.Setup(end)
 	if err != nil {
 		return err
 	}
@@ -355,18 +345,18 @@ func (k *Kernel) Setup(ctx context.Context, a Agreement, end End, lifetime time.
 	}
 	k.log.Info("ESP security associations set up", "end", string(end), "ue", a.UE.String(),
 		"port_uc", a.UEMechanism.PortC, "port_us", a.UEMechanism.PortS,
-		"port_pc", a.PCSCFMechanism.PortC, "port_ps", a.PCSCFMechanism.PortS,
-		"lifetime", lifetime.Round(time.Second).String())
+		"port_pc", a.PCSCFMechanism.PortC, "port_ps", a.PCSCFMechanism.PortS)
 	return nil
 }
 
-// Refresh gives them a new lifetime.
-func (k *Kernel) Refresh(ctx context.Context, a Agreement, end End, lifetime time.Duration) error {
-	cmds, err := a.Refresh(end, lifetime)
-	if err != nil {
-		return err
+// Replace deletes the security associations of a set that another one
+// of the same ports takes the place of, and leaves the policies to it
+// (TeardownStates). Like Teardown it gives the caller no error.
+func (k *Kernel) Replace(ctx context.Context, a Agreement) {
+	if err := k.run(ctx, a.TeardownStates(), true); err != nil {
+		k.log.Warn("the ESP security associations of the set before may stay in the kernel",
+			"ue", a.UE.String(), "error", err.Error())
 	}
-	return k.run(ctx, cmds, false)
 }
 
 // Teardown deletes them again. It gives the caller no error: the
@@ -384,9 +374,12 @@ func (k *Kernel) Teardown(ctx context.Context, a Agreement, end End) {
 	k.log.Info("ESP security associations torn down", "end", string(end), "ue", a.UE.String())
 }
 
-// secret is a key in the text that ip wrote back, which the log is no
-// place for.
+// secret is a key, in the command or in the text that ip wrote back,
+// which the log is no place for.
 var secret = regexp.MustCompile(`0x[0-9a-f]{32,}`)
+
+// redact takes the keys out of what is about to be logged.
+func redact(text string) string { return secret.ReplaceAllString(text, "0x...") }
 
 // run runs each command with an ip of its own, rather than one "ip
 // -batch": a batch stops at the first command that fails, and only the
@@ -416,7 +409,9 @@ func (k *Kernel) one(ctx context.Context, c Command) error {
 	defer cancel()
 	out, err := exec.CommandContext(ctx, "ip", c...).CombinedOutput()
 	if err != nil {
-		return fmt.Errorf("%s: %w: %s", c, err, secret.ReplaceAllString(strings.TrimSpace(string(out)), "0x..."))
+		// The command carries IK_ESP, so the whole of what goes to the
+		// caller, which logs it, is redacted and not only what ip wrote.
+		return errors.New(redact(fmt.Sprintf("%s: %s: %s", c, err, strings.TrimSpace(string(out)))))
 	}
 	return nil
 }

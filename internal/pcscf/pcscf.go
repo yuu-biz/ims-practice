@@ -687,6 +687,9 @@ type PCSCF struct {
 
 	// protectedStack listens on the protected server port.
 	protectedStack ims.StackRef
+	// esp holds the sets of security associations that are in this
+	// host's kernel, for a P-CSCF with Config.ESP.
+	esp espSets
 
 	// setups are the initial INVITEs that have created a dialog and have
 	// no final response yet. An INVITE transaction lives in the process
@@ -750,8 +753,15 @@ func New(cfg Config, locator Locator, store Store, relays []MediaRelay, log *slo
 // Close stops the sweep of this instance and waits for the handlers it
 // started, whose requests to the Store it ends. An expiry that this
 // instance had claimed and not handled is handled by another instance of
-// the P-CSCF once the claim runs out.
-func (p *PCSCF) Close() { p.stopSweep() }
+// the P-CSCF once the claim runs out. It also stops the timers that end
+// the security associations of ESP, which leaves them in the kernel
+// (stopESP).
+func (p *PCSCF) Close() {
+	p.stopSweep()
+	if p.cfg.ESP != nil {
+		p.stopESP()
+	}
+}
 
 // sweep starts the sweep of this instance and returns the function that
 // stops it. Each handler reads the subscription and checks the time it
