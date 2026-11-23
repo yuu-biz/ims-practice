@@ -156,6 +156,36 @@
             </answer>
         </command>
 
+        <!--
+            The HSS pushes changed user information to the S-CSCF with
+            this command (TS 29.228 6.2.2, TS 29.229 6.1.11 and 6.1.12).
+            Like the RTR it always carries Destination-Host. User-Data
+            holds the complete user profile; the other information a PPR
+            may update is not sent (PushProfileRequest in internal/cx).
+        -->
+        <command code="305" short="PP" name="Push-Profile">
+            <request>
+                <rule avp="Session-Id" required="true" max="1"/>
+                <rule avp="Vendor-Specific-Application-Id" required="true" max="1"/>
+                <rule avp="Auth-Session-State" required="true" max="1"/>
+                <rule avp="Origin-Host" required="true" max="1"/>
+                <rule avp="Origin-Realm" required="true" max="1"/>
+                <rule avp="Destination-Host" required="true" max="1"/>
+                <rule avp="Destination-Realm" required="true" max="1"/>
+                <rule avp="User-Name" required="true" max="1"/>
+                <rule avp="User-Data" required="false" max="1"/>
+            </request>
+            <answer>
+                <rule avp="Session-Id" required="true" max="1"/>
+                <rule avp="Vendor-Specific-Application-Id" required="true" max="1"/>
+                <rule avp="Result-Code" required="false" max="1"/>
+                <rule avp="Experimental-Result" required="false" max="1"/>
+                <rule avp="Auth-Session-State" required="true" max="1"/>
+                <rule avp="Origin-Host" required="true" max="1"/>
+                <rule avp="Origin-Realm" required="true" max="1"/>
+            </answer>
+        </command>
+
         <avp name="Visited-Network-Identifier" code="600" must="M,V" may-encrypt="N" vendor-id="10415">
             <data type="OctetString"/>
         </avp>

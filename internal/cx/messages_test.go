@@ -409,3 +409,48 @@ func TestRegistrationTerminationRoundTrip(t *testing.T) {
 		t.Errorf("RTA = %+v, %v; want %+v", got, err, rta)
 	}
 }
+
+func TestPushProfileRoundTrip(t *testing.T) {
+	profile := UserProfile{PrivateIdentity: impi, PublicIdentities: []string{impu, "tel:+12025550101"}}
+	ppr := PushProfileRequest{
+		Header:   diameter.Header{SessionID: hssID + ";1;4", OriginHost: hssID, OriginRealm: realm, DestinationHost: "scscf." + realm, DestinationRealm: realm},
+		UserName: impi,
+		UserData: profile.Marshal(),
+	}
+	req := wire(t, ppr.Message())
+	if req.Header.CommandCode != 305 || req.Header.CommandFlags&diam.RequestFlag == 0 {
+		t.Errorf("header %+v, want a PPR (305 with R set, TS 29.229 6.1.11)", req.Header)
+	}
+	got, err := ParsePushProfileRequest(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(got, ppr) {
+		t.Errorf("PPR\n got %+v\nwant %+v", got, ppr)
+	}
+	// TS 29.228 Table 6.2.2.1: Destination-Host names the S-CSCF that
+	// last stored the server name, so a PPR is never routed by realm
+	// alone.
+	if _, err := req.FindAVP(avp.DestinationHost, 0); err != nil {
+		t.Error("PPR without Destination-Host")
+	}
+	if back, err := ParseUserProfile(got.UserData); err != nil || !reflect.DeepEqual(back, profile) {
+		t.Errorf("User-Data of the PPR = %+v, %v; want %+v", back, err, profile)
+	}
+
+	ppa := PushProfileAnswer{Result: diameter.Base(diameter.DiameterSuccess)}
+	ans := wire(t, ppa.Message(req, diameter.Identity{OriginHost: "scscf." + realm, OriginRealm: realm}))
+	if ans.Header.HopByHopID != req.Header.HopByHopID || ans.Header.CommandFlags&diam.RequestFlag != 0 {
+		t.Errorf("PPA header %+v does not answer the PPR", ans.Header)
+	}
+	if got, err := ParsePushProfileAnswer(ans); err != nil || got != ppa {
+		t.Errorf("PPA = %+v, %v; want %+v", got, err, ppa)
+	}
+
+	// Table 6.2.2.1.1: the errors that the S-CSCF returns are Cx errors,
+	// so they travel in Experimental-Result (TS 29.229 6.2).
+	refused := PushProfileAnswer{Result: diameter.Experimental(DiameterErrorNotSupportedUserData)}
+	if got, err := ParsePushProfileAnswer(wire(t, refused.Message(req, hss))); err != nil || got != refused {
+		t.Errorf("PPA = %+v, %v; want %+v", got, err, refused)
+	}
+}

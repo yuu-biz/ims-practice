@@ -25,6 +25,7 @@ const (
 	CommandLocationInfo            uint32 = 302 // LIR/LIA
 	CommandMultimediaAuth          uint32 = 303 // MAR/MAA
 	CommandRegistrationTermination uint32 = 304 // RTR/RTA
+	CommandPushProfile             uint32 = 305 // PPR/PPA
 )
 
 // Experimental-Result-Code values, TS 29.229 6.2. They travel inside
@@ -44,6 +45,7 @@ const (
 	DiameterErrorIdentityAlreadyRegistered uint32 = 5005 // 6.2.2.5
 	DiameterErrorAuthSchemeNotSupported    uint32 = 5006 // 6.2.2.6
 	DiameterErrorInAssignmentType          uint32 = 5007 // 6.2.2.7
+	DiameterErrorNotSupportedUserData      uint32 = 5009 // 6.2.2.9
 )
 
 // UserAuthorizationType is the User-Authorization-Type AVP, TS 29.229
