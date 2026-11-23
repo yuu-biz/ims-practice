@@ -2,6 +2,7 @@ package oam
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"io"
 	"log/slog"
@@ -428,5 +429,21 @@ func TestNewRefusesABadInventory(t *testing.T) {
 		if _, err := New(Config{Nodes: nodes}); err == nil {
 			t.Errorf("New took %+v", nodes)
 		}
+	}
+}
+
+// TestAnOperationOutlivesTheClient: a client that closes its side of the
+// connection once the request is sent, as nc does, cancels the context
+// of the request. The OAM still asks every node and answers.
+func TestAnOperationOutlivesTheClient(t *testing.T) {
+	node := newFakeNode(t, "pcscf-1", []string{"pcscf"})
+	ts := newTestServer(t, Config{}, node)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	w := httptest.NewRecorder()
+	ts.oam.Handler().ServeHTTP(w, httptest.NewRequestWithContext(ctx, "GET", "/oam/v1/state", nil))
+	got := decodeAs[FanOut[maintenance.NodeState]](t, w.Body.Bytes())
+	if w.Code != http.StatusOK || got.Succeeded != 1 {
+		t.Errorf("GET state with the client gone: %d %s, want the state of the node", w.Code, w.Body)
 	}
 }

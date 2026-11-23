@@ -145,6 +145,12 @@ func (s *Server) withNode(h func(http.ResponseWriter, *http.Request, []Endpoint)
 
 // Handler serves the OAM API at the paths of the package documentation.
 // A role mounts it under PathPrefix.
+//
+// An operation runs to its end once its request is read: a client that
+// closes its side of the connection after the request, as nc does, makes
+// net/http cancel the context of the request, and every call of the
+// operation to the nodes and to the HSS would fail with it. Each of those
+// calls is bounded by NodeTimeout on its own.
 func (s *Server) Handler() http.Handler {
 	rt := newRoutes()
 	s.nodeRoutes(rt)
@@ -153,5 +159,8 @@ func (s *Server) Handler() http.Handler {
 	s.historyRoutes(rt)
 	s.testUserRoutes(rt)
 	s.alarmRoutes(rt)
-	return rt.handler()
+	h := rt.handler()
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		h.ServeHTTP(w, r.WithContext(context.WithoutCancel(r.Context())))
+	})
 }
