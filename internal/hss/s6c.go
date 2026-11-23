@@ -248,7 +248,9 @@ func servingNode(u Subscriber) *sgd.ServingNode {
 // SIMPLIFIED: TS 29.338 Table 5.2.1.1-2. A successful SRA leaves
 // User-Name out for a subscription whose private identity is not
 // derived from an IMSI, such as one a softphone registers by its
-// number. This HSS keeps no IMSI of its own.
+// number. This HSS keeps no IMSI of its own. An Sh-Pull of the IMSI
+// (TS 29.328 7.6.24) answers out of the same private identity, and
+// without User-Data when there is none to read.
 func imsi(privateIdentity string) string {
 	for i, c := range privateIdentity {
 		switch {

@@ -224,6 +224,33 @@ func TestShDataS6cSupportIndicationPath(t *testing.T) {
 	}
 }
 
+// The IMSI of a UDA sits five Extension elements below Sh-Data, where
+// the schema of TS 29.328 Annex D has it (tSh-Data-Extension5), and
+// the Extension chain comes after the elements that the schema puts
+// before it.
+func TestShDataIMSIPath(t *testing.T) {
+	id := "001010000000001"
+	d := ShData{ShIMSData: &ShIMSData{SCSCFName: "sip:scscf." + realm + ":5060"}, IMSI: &id}
+	b := d.Marshal()
+	want := "</Sh-IMS-Data><Extension><Extension><Extension><Extension><Extension>" +
+		"<IMSI>001010000000001</IMSI></Extension></Extension></Extension></Extension></Extension></Sh-Data>"
+	if !strings.HasSuffix(string(b), want) {
+		t.Errorf("Sh-Data = %s\nwant suffix %s", b, want)
+	}
+	got, err := ParseShData(b)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(got, d) {
+		t.Errorf("parsed %+v, want %+v", got, d)
+	}
+	// A user without an IMSI leaves the whole chain out, so the HSS has
+	// no data to answer with (TS 29.328 6.1.1.1 step 5).
+	if empty := (ShData{}); !empty.Empty() || strings.Contains(string(empty.Marshal()), "Extension") {
+		t.Errorf("Sh-Data without an IMSI = %s", empty.Marshal())
+	}
+}
+
 func TestShDataPublicIdentifiersAndSCSCFName(t *testing.T) {
 	d := ShData{
 		PublicIdentifiers: &PublicIdentifiers{IMSPublicIdentities: []string{impu, tel}, MSISDNs: []string{msisdn}},
