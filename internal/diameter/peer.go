@@ -30,8 +30,10 @@ type Timers struct {
 	// Reconnect is Tc (RFC 6733 2.1 and 12).
 	Reconnect time.Duration
 	// Answer bounds the wait for the CER on a new connection, for a CEA,
-	// for a DPA, and for the peer to disconnect after a DPA. RFC 6733
-	// 5.6.2 leaves this timer to the application.
+	// for a DPA, and for the peer to disconnect after a DPA, and the wait
+	// for the answer to an application request that carries no timeout of
+	// its own (WithAnswerTimeout). RFC 6733 5.6.2 leaves this timer to the
+	// application.
 	Answer time.Duration
 }
 
@@ -206,10 +208,11 @@ func (n *Node) newPeer(peerHost string) *Peer {
 }
 
 // Request sends an application request to the peer and waits for its
-// answer, at most the Answer timer. The peer sets the Hop-by-Hop and
+// answer, at most the Answer timer, or the timeout that
+// WithAnswerTimeout put in ctx. The peer sets the Hop-by-Hop and
 // End-to-End Identifiers.
 func (p *Peer) Request(ctx context.Context, request *diam.Message) (*diam.Message, error) {
-	ctx, cancel := context.WithTimeout(ctx, p.node.timers.Answer)
+	ctx, cancel := context.WithTimeout(ctx, answerTimeout(ctx, p.node.timers))
 	defer cancel()
 	out := &outgoing{message: request, answer: make(chan answerResult, 1)}
 	select {

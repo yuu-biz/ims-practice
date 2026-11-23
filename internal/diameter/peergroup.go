@@ -76,7 +76,8 @@ func (g *PeerGroup) Available() bool { return slices.ContainsFunc(g.peers, (*Pee
 // among them: that peer did deliver its answer, and it says that the
 // request got no further, not that this peer is gone.
 //
-// All of the attempts together get the Answer timer, not one each, so
+// All of the attempts together get the Answer timer, or the timeout
+// that WithAnswerTimeout put in the context, not one each, so
 // that a request costs the caller the same whether the group holds one
 // peer or ten. A role that makes two of them under the lock of a user,
 // as a registration does, then stays well inside the lock's lease
@@ -97,7 +98,7 @@ func (g *PeerGroup) Request(ctx context.Context, request *diam.Message) (*diam.M
 	if len(peers) == 0 {
 		return nil, err
 	}
-	ctx, cancel := context.WithTimeout(ctx, peers[0].node.timers.Answer)
+	ctx, cancel := context.WithTimeout(ctx, answerTimeout(ctx, peers[0].node.timers))
 	defer cancel()
 	deadline, _ := ctx.Deadline()
 	sent := false
