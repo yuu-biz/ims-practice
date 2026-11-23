@@ -249,6 +249,9 @@ type networkConfig struct {
 	// "default", for a test that moves a subscription from one profile
 	// to another.
 	serviceProfiles map[string][]ifc.InitialFilterCriteria
+	// admission is the admission policy of the HSS; the empty one admits
+	// every subscriber.
+	admission hss.Admission
 	// epc starts the role epc, the EPC stub with its PCRF, which the
 	// P-CSCF asks over Rx.
 	epc bool
@@ -463,10 +466,12 @@ func startHSS(t *testing.T, cfg networkConfig) (*hss.HSS, []hssInstance) {
 		node := diameter.NewNode(diameter.Identity{OriginHost: host, OriginRealm: domain}, []uint32{diameter.ApplicationIDCx}, timers, quiet())
 		role, err := hss.New(hss.Config{
 			Realm: domain, VisitedNetworks: []string{domain},
-			ServerCapabilities:    cx.ServerCapabilities{MandatoryCapabilities: []uint32{1}},
-			ServiceProfiles:       profiles,
-			DefaultServiceProfile: "default",
-			UserLocks:             locks,
+			ServerCapabilities:     cx.ServerCapabilities{MandatoryCapabilities: []uint32{1}},
+			ServiceProfiles:        profiles,
+			DefaultServiceProfile:  "default",
+			TestUserServiceProfile: "default",
+			Admission:              cfg.admission,
+			UserLocks:              locks,
 		}, store, node, quiet())
 		if err != nil {
 			t.Fatal(err)
@@ -564,6 +569,36 @@ func TestTheFeatureTagsReachTheSCSCF(t *testing.T) {
 	kept := slices.DeleteFunc(slices.Clone(binding.Params), func(p sip.Param) bool { return p.Name == "expires" })
 	if want := (sip.Params{{Name: "+g.3gpp.smsip"}}); !slices.Equal(kept, want) {
 		t.Errorf("the S-CSCF keeps the contact parameters %v, want %v", kept, want)
+	}
+}
+
+// TestAdmissionPolicyRefusesARegistration runs the whole IMS with the
+// HSS admitting its test users alone: the UAR of the subscriber that is
+// not marked gets DIAMETER_AUTHORIZATION_REJECTED (TS 29.228 6.1.1.1
+// step 5), the I-CSCF turns that negative UAA into 403 (TS 24.229
+// 5.3.1.3), and the UE gives its registration up. The test user
+// registers as it would under any policy.
+func TestAdmissionPolicyRefusesARegistration(t *testing.T) {
+	n := startNetwork(t, networkConfig{
+		minExpires: time.Second,
+		maxExpires: time.Hour,
+		admission:  hss.AdmitTestUsers,
+		subscriptions: []hss.Subscription{
+			{PrivateIdentity: impi, PublicIdentities: []string{impu}, Password: password},
+			{PrivateIdentity: impi2, PublicIdentities: []string{impu2}, Password: password2, TestUser: true},
+		},
+	})
+	if _, err := newUE(t, n.pcscf, password).Register(t.Context()); !errors.Is(err, ue.ErrForbidden) {
+		t.Fatalf("the subscriber that is not a test user: err = %v, want ErrForbidden", err)
+	}
+	s := stack(t, func(*sip.ServerTransaction) {})
+	cfg := ue.Config{PrivateIdentity: impi2, PublicIdentity: impu2, Password: password2, HomeDomain: domain, PCSCF: n.pcscf}
+	u := ue.New(cfg, s, ue.NewContact(cfg, s.LocalAddr()), quiet())
+	if _, err := u.Register(t.Context()); err != nil {
+		t.Fatalf("the test user: %v", err)
+	}
+	if err := u.Deregister(t.Context()); err != nil {
+		t.Fatalf("the test user's deregistration: %v", err)
 	}
 }
 

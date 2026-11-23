@@ -491,6 +491,9 @@ type rawHSS struct {
 	// TestUserServiceProfile names the profile of ServiceProfiles that
 	// a subscription marked test_user gets (hss.Config).
 	TestUserServiceProfile string `yaml:"test_user_service_profile"`
+	// Admission is the admission policy of the network, one of
+	// hss.Admissions. Empty admits every subscriber (hss.Admission).
+	Admission string `yaml:"admission"`
 	// ServiceCentres name the SMS central functions the HSS can alert
 	// (hss.ServiceCentre). TS 29.338 5.3.1.2 routes an alert by the
 	// Diameter identity of the service centre, which the HSS has no
@@ -720,6 +723,9 @@ func (raw *rawHSS) validate(homeDomain string) (hss.Config, error) {
 	c.ServiceProfiles = profiles
 	c.DefaultServiceProfile = raw.DefaultServiceProfile
 	c.TestUserServiceProfile = raw.TestUserServiceProfile
+	if c.Admission, err = hss.ParseAdmission(raw.Admission); err != nil {
+		return hss.Config{}, err
+	}
 	if len(raw.Subscriptions) == 0 {
 		return hss.Config{}, errors.New("subscriptions: at least one is required")
 	}

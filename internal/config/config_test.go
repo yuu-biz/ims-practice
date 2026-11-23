@@ -433,6 +433,7 @@ func TestParseRejectsHSS(t *testing.T) {
 		{"a service centre without a host", "hss:\n", "hss:\n  service_centres: [{address: \"12025550100\"}]\n", "service_centres[0].host:"},
 		{"a service centre twice", "hss:\n", "hss:\n  service_centres: [{address: \"12025550100\", host: sc1}, {address: \"12025550100\", host: sc2}]\n", "service_centres[1].address: 12025550100 appears twice"},
 		{"a PSI user of a distinct PSI", "hss:\n", "hss:\n  psi_users: [{private_identity: conference@ims.mnc001.mcc001.3gppnetwork.org, wildcarded_psi: sip:conf-1@conf.ims.mnc001.mcc001.3gppnetwork.org}]\n", "psi_users[0].wildcarded_psi:"},
+		{"an admission policy of its own", "hss:\n", "hss:\n  admission: testusers\n", `admission: "testusers" is not one of [all test_users]`},
 		{"no password", "      password: test-password\n", "", "subscriptions[0].password or aka: at least one is required"},
 		{"not a SIP or tel URI", "[sip:001010000000001@", "[mailto:001010000000001@", "subscriptions[0].public_identities: \"mailto:"},
 		{"not an MMTelServices document", "      password: test-password\n", "      password: test-password\n      mmtel_services: <simservs/>\n", "subscriptions[0].mmtel_services:"},
@@ -469,6 +470,32 @@ func TestParseHSSAKASubscription(t *testing.T) {
 	}
 	if sub.AKA.K[0] != 0x46 || sub.AKA.OPc[15] != 0xaf || sub.AKA.AMF != (aka.AMF{0x80, 0}) || sub.AKA.SQN != 0x20 {
 		t.Errorf("AKA = %+v", *sub.AKA)
+	}
+}
+
+// TestParseAdmission: the admission policy of the HSS, and the policy
+// of a file that names none. A deployment written before the setting
+// existed admits every subscriber, as it did.
+func TestParseAdmission(t *testing.T) {
+	for policy, want := range map[string]hss.Admission{
+		"all":        hss.AdmitAll,
+		"test_users": hss.AdmitTestUsers,
+	} {
+		yaml := strings.Replace(combinedYAML, "hss:\n", "hss:\n  admission: "+policy+"\n", 1)
+		cfg, err := Parse(strings.NewReader(yaml))
+		if err != nil {
+			t.Fatalf("admission %s: %v", policy, err)
+		}
+		if cfg.HSS.Admission != want {
+			t.Errorf("admission %s = %q, want %q", policy, cfg.HSS.Admission, want)
+		}
+	}
+	cfg, err := Parse(strings.NewReader(combinedYAML))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.HSS.Admission != hss.AdmitAll {
+		t.Errorf("without admission the policy is %q, want %q", cfg.HSS.Admission, hss.AdmitAll)
 	}
 }
 
