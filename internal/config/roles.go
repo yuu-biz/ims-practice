@@ -671,13 +671,20 @@ func (raw *rawHSS) validate(homeDomain string) (hss.Config, error) {
 		}
 		c.MMTelServices = &d
 	}
+	addresses := map[string]bool{}
 	for i, s := range raw.ServiceCentres {
 		switch {
 		case !sgd.ValidE164(s.Address):
 			return hss.Config{}, fmt.Errorf("service_centres[%d].address: want 1 to 15 decimal digits", i)
 		case s.Host == "":
 			return hss.Config{}, fmt.Errorf("service_centres[%d].host: required", i)
+		case addresses[s.Address]:
+			// The HSS finds a service centre by its address, so a second
+			// entry for one address would decide nothing but which host is
+			// forgotten.
+			return hss.Config{}, fmt.Errorf("service_centres[%d].address: %s appears twice", i, s.Address)
 		}
+		addresses[s.Address] = true
 		realm := s.Realm
 		if realm == "" {
 			realm = homeDomain
