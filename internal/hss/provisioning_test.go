@@ -806,6 +806,67 @@ func TestProvisioningPutWithAnUpdateInBetween(t *testing.T) {
 	}
 }
 
+// TestProvisioningPutDryRunChangesNothing: a dry run of a replacement
+// answers what the request would do and leaves the subscription exactly
+// as it stands, down to the sequence numbers of its repository data,
+// and claims none of the public identities it names.
+func TestProvisioningPutDryRunChangesNothing(t *testing.T) {
+	h := newTestHSS()
+	api := h.Provisioning(&fakeSCSCFs{})
+	newIMPI := "001010000000009@" + realm
+	user := "sip:001010000000009@" + realm
+	if w, _ := putSubscription(t, api, newIMPI, `{"private_identity": "`+newIMPI+`", "public_identities": ["`+user+`"],
+		"password": "test-password-9", "ut_password": "test-ut-password-9"}`); w.Code != http.StatusCreated {
+		t.Fatalf("PUT: %d %s", w.Code, w.Body)
+	}
+	before := storedState(t, h, newIMPI)
+
+	changed := `{"private_identity": "` + newIMPI + `", "public_identities": ["` + user + `", "tel:+12025550109"],
+		"password": "test-password-8", "test_user": true,
+		"repository_data": [{"service_indication": "MMTEL-Services", "service_data": "<MMTelServices/>"}]}`
+	w, got := putSubscription(t, api, newIMPI+"?dry_run=true", changed)
+	if w.Code != http.StatusOK || got.Result != resultUpdated {
+		t.Fatalf("the dry run: %d %s", w.Code, w.Body)
+	}
+	if !got.Subscription.TestUser || len(got.Subscription.PublicIdentities) != 2 {
+		t.Errorf("the answer does not show what the request would leave: %+v", got.Subscription)
+	}
+	if after := storedState(t, h, newIMPI); !bytes.Equal(before, after) {
+		t.Errorf("the dry run changed the subscription:\nbefore %s\nafter  %s", before, after)
+	}
+	if _, ok, err := h.store.SubscriberOf(context.Background(), "tel:+12025550109"); ok || err != nil {
+		t.Errorf("the dry run gave the telephone number to the subscription: %v, %v", ok, err)
+	}
+
+	// The same body without the dry run does change it, so the comparison
+	// above is of a request that had something to do.
+	if w, got := putSubscription(t, api, newIMPI, changed); w.Code != http.StatusOK || got.Result != resultUpdated {
+		t.Fatalf("the request that is no dry run: %d %s", w.Code, w.Body)
+	}
+	if after := storedState(t, h, newIMPI); bytes.Equal(before, after) {
+		t.Errorf("the request that is no dry run left the subscription at %s", before)
+	}
+}
+
+// storedState is everything the HSS keeps for a subscription, as JSON,
+// so that a test can tell that a request left all of it alone.
+func storedState(t *testing.T, h *HSS, privateID string) []byte {
+	t.Helper()
+	data, err := h.store.AllRepositoryData(context.Background(), privateID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	state := struct {
+		Subscriber Subscriber
+		Repository []sh.TransparentData
+	}{subscriberOrFail(t, h, privateID), data}
+	b, err := json.Marshal(state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return b
+}
+
 // losesEverySwap lets no swap of the repository data through, as an
 // endless run of updates from elsewhere would.
 type losesEverySwap struct{ Store }
