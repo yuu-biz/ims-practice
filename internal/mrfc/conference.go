@@ -124,10 +124,7 @@ func (m *MRFC) attach(ctx context.Context, id string, req agw.TerminationRequest
 			}
 			return media, t, err
 		}
-		p := m.choose(id)
-		mpCtx, cancel := mp()
-		cx, err := p.Control.Add(mpCtx, req)
-		cancel()
+		p, cx, err := m.create(id, req, log)
 		if err != nil {
 			return ConferenceMedia{}, agw.Termination{}, err
 		}
@@ -153,4 +150,28 @@ func (m *MRFC) attach(ctx context.Context, id string, req agw.TerminationRequest
 		newLeg(p, cx.ID, t, log).release()
 	}
 	return ConferenceMedia{}, agw.Termination{}, fmt.Errorf("mrfc: conference %q kept changing", id)
+}
+
+// create makes the context of a new conference on the first of the
+// candidates for id that gives one (TS 23.333 6.2.9.2.2). An MRFP that
+// does not answer, that has no port left, or that an operator has taken
+// out of service gives none, and the next one is asked. The error is
+// that of the last MRFP tried.
+//
+// Only a conference that has no context yet is placed this way. A party
+// of one that exists goes to the MRFP that the Store names, since that
+// is where the mix is (attach).
+func (m *MRFC) create(id string, req agw.TerminationRequest, log *slog.Logger) (Processor, agw.Context, error) {
+	var last error
+	for _, p := range m.candidates(id) {
+		mpCtx, cancel := mp()
+		cx, err := p.Control.Add(mpCtx, req)
+		cancel()
+		if err == nil {
+			return p, cx, nil
+		}
+		log.Warn("the MRFP gave no context for the conference", "mrfp", p.Name, "error", err.Error())
+		last = err
+	}
+	return Processor{}, agw.Context{}, last
 }
