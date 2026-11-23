@@ -23,6 +23,7 @@ ims-practice 勉強会 第 5 回（中継ノードを通る通話と、その途
 
 > 手順書 [音声通話の流れを追う](../../../docs/guide/ja/call.md)（`docs/guide/ja/call.md`）
 > 仕様の版は Release 18 です。TS 24.229 V18.11.0、TS 29.228 V18.0.0 と、各手順で挙げる RFC。
+> トランザクション、ダイアログ、SDP、PRACK、プリコンディションは [用語集](../../../docs/glossary.md) にあります。
 
 ---
 
@@ -119,7 +120,7 @@ P-CSCF -> UE 2: INVITE (term) // 7
 ```
 
 - `orig` は発信側の立場（originating）、`term` は着信側の立場（terminating）です。
-- AS はルーティングの B2BUA です（TS 24.229 5.7.5）。AS の新しい INVITE は自分の Call-ID を持つので、1 つの通話にダイアログが 3 つできます。
+- AS はルーティングの B2BUA です（TS 24.229 5.7.5）。AS の新しい INVITE は自分の Call-ID を持つので、1 つの通話にダイアログが 3 つできます。AS がこれを作るしくみは第 7 回で読みます。
 
 ---
 
@@ -151,7 +152,7 @@ P-CSCF -> UE 2: INVITE (term) // 7
 | P-CSCF を出たあとの SDP | `c=` と `m=` が中継ノードを指す。 |
 
 - 網が信じるのは From ではなく P-Asserted-Identity です。UE が From に何を書いても関係ありません。
-- UE 1 には資源を確保するアクセス網が無いので、オファーは資源がもうあると伝えます。`-epc` を付けて起動した UE は VoLTE の UE で、PCMU より先に AMR-WB と AMR を提示します。その通話は VoLTE の回で追います。
+- UE 1 には資源を確保するアクセス網が無いので、オファーは資源がもうあると伝えます。`-epc` を付けて起動した UE は VoLTE の UE で、PCMU より先に AMR-WB と AMR を提示します。その通話と、電話が鳴る前に資源を確保する流れは、第 9 回（VoLTE）で追います。
 
 > 手順書 [1](../../../docs/guide/ja/call.md#1-ue-1-が-invite-を送る) と [2](../../../docs/guide/ja/call.md#2-p-cscf-が発信者の-s-cscf-に送る)。TS 24.229 5.1.3.1、5.1.2A.1.1、6.1.2、5.2.6.2、5.2.6.3.3。RFC 3262 4。RFC 3312。RFC 3264 5.1。
 
