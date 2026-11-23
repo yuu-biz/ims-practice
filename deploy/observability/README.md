@@ -2,7 +2,7 @@
 
 [日本語](README.ja.md)
 
-This directory adds [Prometheus](https://github.com/prometheus/prometheus) and [Grafana](https://github.com/grafana/grafana) to the Docker Compose project, so that the counts of the IMS nodes can be seen over time with widely used tools. Of the IMS nodes, only the P-CSCF and the S-CSCF serve their metrics (see [Limits](#limits)), so the dashboard shows the others as down. The metric names follow the measurements of TS 32.409, and `internal/metrics` writes them.
+This directory adds [Prometheus](https://github.com/prometheus/prometheus) and [Grafana](https://github.com/grafana/grafana) to the Docker Compose project, so that the counts of the IMS nodes can be seen over time with widely used tools. Of the IMS nodes, only the P-CSCF, the I-CSCF and the S-CSCF serve their metrics (see [Limits](#limits)), so the dashboard shows the others as down. The metric names follow the measurements of TS 32.409, and `internal/metrics` writes them.
 
 | Path | What it is |
 | --- | --- |
@@ -32,7 +32,7 @@ Register a UE to see a count:
 docker compose run --rm ue register -deregister-after 5s
 ```
 
-Prometheus scrapes every 15 seconds. Within that time the panel **REGISTER attempts and successes** shows the registration and the deregistration that the P-CSCF and the S-CSCF counted, each under its own `role`, **Initial registration success ratio** the share of the initial registrations that succeeded, and **Initial registration set-up time** how long the initial registration took at the P-CSCF. A call, as in [Follow a voice call through the IMS](../../docs/guide/en/call.md), shows in the panels **Session attempts and answers** and **Answered sessions**, which the P-CSCF counts on both legs of the call.
+Prometheus scrapes every 15 seconds. Within that time the panel **REGISTER attempts and successes** shows the registration and the deregistration that the P-CSCF and the S-CSCF counted, each under its own `role`, **Initial registration success ratio** the share of the initial registrations that succeeded, and **Initial registration set-up time** how long the initial registration took at the P-CSCF. A call, as in [Follow a voice call through the IMS](../../docs/guide/en/call.md), shows in the panels **Session attempts and answers** and **Answered sessions**: the P-CSCF counts the call on both its legs, and the I-CSCF counts it once, as the terminating session establishment that enters the home network.
 
 To stop and remove everything, including the pulled images and Prometheus's data:
 
@@ -54,7 +54,7 @@ A service counts as a node when it runs the image built from the `Dockerfile` at
 
 ## Limits
 
-The P-CSCF, the S-CSCF and the IBCF count with `internal/metrics`. The P-CSCF and the S-CSCF of the Compose project serve their counts at `http://pcscf:8085/metrics` and `http://scscf:8085/metrics`, on the listener that the `maintenance` section of `deploy/compose/pcscf.yaml` and of `deploy/compose/scscf.yaml` names. The panel **Dropped sessions** stays empty: the P-CSCF lets no session expire, so it has none to count. The other nodes serve no metrics, and the node of the IBCF, in `deploy/interconnect`, has no such listener, so its counts stay inside the process. `prometheus/prometheus.yml` is written for nodes that serve their metrics at `http://<service name>:8085/metrics`, on the listener of their maintenance API. No specification gives a port for this; 8085 is this project's choice, kept in `MetricsPort` in `prometheus.go`. To use another port, change `MetricsPort` and run the command above.
+The P-CSCF, the I-CSCF, the S-CSCF and the IBCF count with `internal/metrics`. The three CSCFs of the Compose project serve their counts at `http://pcscf:8085/metrics`, `http://icscf:8085/metrics` and `http://scscf:8085/metrics`, on the listener that the `maintenance` section of `deploy/compose/pcscf.yaml`, of `deploy/compose/icscf.yaml` and of `deploy/compose/scscf.yaml` names. The panel **Dropped sessions** stays empty: neither the P-CSCF nor the I-CSCF lets a session expire, so neither has one to count. The other nodes serve no metrics, and the node of the IBCF, in `deploy/interconnect`, has no such listener, so its counts stay inside the process. `prometheus/prometheus.yml` is written for nodes that serve their metrics at `http://<service name>:8085/metrics`, on the listener of their maintenance API. No specification gives a port for this; 8085 is this project's choice, kept in `MetricsPort` in `prometheus.go`. To use another port, change `MetricsPort` and run the command above.
 
 The metrics are written by `internal/metrics` in the Prometheus text format, version 0.0.4. Its labels take values from a closed set only, so no series is ever made per subscriber, and the number of series stays the same however many subscribers the network has.
 
@@ -65,6 +65,8 @@ The code leaves out these things that the Prometheus documents and TS 32.409 des
 | `metrics.NewHandler`, prometheus/docs instrumenting/content_negotiation.md | Choosing among the formats in the Accept header, and gzip. The handler always answers in the text format 0.0.4, uncompressed. | Every Prometheus asks for the text format, and gzip is optional. The other formats carry nothing these metrics use. |
 | `metrics.Histogram`, prometheus/docs instrumenting/exposition_formats.md | A consistent snapshot of the buckets, the sum and the count while observations go on. The "+Inf" bucket always equals `_count`, but `_sum` may already include an observation that the buckets do not, until the next scrape. | The snapshot needs a second set of counters and a swap. The mean is off by at most one observation, for one scrape. |
 | P-CSCF, TS 32.409 4.1.1.1.1 and 4.1.1.1.3 | A REGISTER that the P-CSCF answers before it has read the IP association of the UE counts in no registration measurement: one that it cannot read, which gets 400, one that has used up its Max-Forwards, which gets 483, and one whose association it cannot read, which gets 500. | Whether a REGISTER starts an initial registration or a re-registration depends on whether the UE has an IP association with the P-CSCF. |
+| I-CSCF, TS 32.409 4.1.2.12 and 4.1.2.8 | The I-CSCF counts no successful terminating session establishments and no dropped sessions. | No panel reads the successes, as none reads those of the P-CSCF and the S-CSCF. The I-CSCF does not record-route, so it keeps no session that could expire. |
+| I-CSCF, TS 32.409 4.1.2.11 | An initial INVITE that the I-CSCF refuses while it is shut down or locked counts in no measurement. | Its sender tries the next I-CSCF, which counts it, so the instances add up to the attempts of the network. |
 | S-CSCF, TS 32.409 4.1.1.1.1 and 4.1.1.1.3 | A REGISTER that the S-CSCF answers before it has read what it holds for the user counts in no registration measurement: one that it cannot read, which gets 400, one whose user it cannot lock, which gets 500, and one that it refuses while the operator has it shut down or locked, which gets 503. | Whether a REGISTER is an initial registration or a re-registration depends on whether the S-CSCF holds a registration of the user. |
 
 ## Things to know

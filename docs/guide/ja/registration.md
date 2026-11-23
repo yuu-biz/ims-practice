@@ -571,6 +571,67 @@ Wireshark で `sip.Status-Code == 503 && ip.src == 172.28.0.40` と入力する�
 
 `scripts/e2e-observability.sh` はこの手順も実行し、キャプチャで 503 を確かめます。
 
+## I-CSCF を運用から外す
+
+I-CSCF はホーム網の入口です。要求と要求のあいだに何も持たず、Record-Route にも入らないので、ダイアログの 2 つ目以降の要求が戻ってくることもありません。そのため、運用者が運用から外した I-CSCF には、自分で続けるものがありません。すべての要求を断り、送り手は次の I-CSCF を試します。
+
+I-CSCF のノードも同じ保守用の API をポート 8085 で出しています。`deploy/compose/icscf.yaml` の `maintenance` の節の待ち受けです。I-CSCF の `users` は処理中のトランザクションの数です。処理中のものが無ければ、shut down を送るとすぐに `LOCKED` になります。`operational_state` は、Cx の要求を受ける HSS が 1 台も開いていないあいだ `DISABLED` になります。I-CSCF は、REGISTER ごとにどの S-CSCF が利用者を扱うかを、初めの要求ごとに着信先がどこにいるかを、それぞれ HSS に尋ねるので、HSS が無ければどちらも扱えないためです。
+
+1. I-CSCF を shut down します。
+
+   ```sh
+   docker compose exec icscf sh -c '
+   body="{\"administrative_state\":\"SHUTTINGDOWN\",\"operator\":\"learner\"}"
+   printf "PUT /maintenance/v1/functions/icscf/administrative-state HTTP/1.0\r\nContent-Type: application/json\r\nContent-Length: ${#body}\r\n\r\n%s" "$body" |
+     nc -w 5 127.0.0.1 8085'
+   ```
+
+   応答の最後に I-CSCF の状態が出ます。
+
+   ```json
+   {"role":"icscf","administrative_state":"LOCKED","operational_state":"ENABLED","users":0}
+   ```
+
+2. UE を登録します。
+
+   ```sh
+   docker compose run --rm ue register -deregister-after 5s
+   ```
+
+   UE は `REGISTER answered 504 Server Time-out` で終わります。
+
+```text
+ UE           P-CSCF         I-CSCF          S-CSCF          HSS
+ |  REGISTER    |              |               |              |
+ |------------->|  REGISTER    |               |              |
+ |              |------------->|               |              |
+ |              |  503 Retry-After: 30         |              |
+ |              |<-------------|               |              |
+ |  504         |              |               |              |
+ |<-------------|              |               |              |
+```
+
+- I-CSCF は、HSS に何も尋ねないまま **503 Service Unavailable** と **Retry-After: 30** を返します。UAR は出ず、S-CSCF は REGISTER を見ません。Retry-After の値を決めた仕様はありません。30 秒はこのプロジェクトが選んだ値です。
+- 503 を受けたクライアントは、DNS が返した次のサーバーへ要求を送ります（RFC 3263 4.3）。REGISTER については、P-CSCF 自身も次の I-CSCF へ移ります（TS 24.229 5.2.2.1 の 7 番目の項目）。I-CSCF が複数台あれば、REGISTER は次の台へ行き、いつもどおり登録できます。この網の DNS のゾーンには I-CSCF が 1 つしかないので、次がありません。
+- P-CSCF は **504 Server Time-out** を返します。TS 24.229 5.2.2.1 の 7 番目の項目が、どの I-CSCF にも REGISTER を転送できなかったときに 504 を返すよう求めているためです。503 をそのまま返さない理由は、I-CSCF が S-CSCF の 503 をそのまま返さないのと同じです。
+- ほかの網や発信側の S-CSCF から、ホーム網に入ってくる最初の INVITE も同じ 503 を受け、送り手は次の I-CSCF を試します（RFC 3263 4.3）。次が残っていなければ、発信側の S-CSCF か IBCF が **500 Server Internal Error** を返します。プロキシは 503 をそのまま返さないためです（RFC 3261 16.7 の手順 6）。504 になるのは REGISTER だけです。I-CSCF は、断った INVITE を `ims_session_attempts_total{role="icscf",direction="terminating"}` に数えません。その INVITE を扱う次の I-CSCF が数えるので、台ごとの数を足すと網の中の試行の数になります。
+- shut down の前から I-CSCF が転送していた INVITE は、そのあとに来た CANCEL で取り消せます。CANCEL は新しい要求ではなく、SIP のスタックが INVITE のトランザクションで答えるためです。
+
+Wireshark では、`sip.Status-Code == 503 && ip.src == 172.28.0.20` で I-CSCF の 503 が、`sip.Status-Code == 504` で P-CSCF が UE に返した 504 が見られます。
+
+3. 同じ要求に `UNLOCKED` を入れて、I-CSCF の lock を解きます。
+
+   ```sh
+   docker compose exec icscf sh -c '
+   body="{\"administrative_state\":\"UNLOCKED\",\"operator\":\"learner\"}"
+   printf "PUT /maintenance/v1/functions/icscf/administrative-state HTTP/1.0\r\nContent-Type: application/json\r\nContent-Length: ${#body}\r\n\r\n%s" "$body" |
+     nc -w 5 127.0.0.1 8085'
+   ```
+
+   次の `ue register` は前と同じように登録します。
+
+`scripts/e2e-observability.sh` はこの手順も実行し、キャプチャで 503 と 504 を確かめます。
+
 ## IP の対応付けが無い要求
 
 P-CSCF が扱うのは、自分を通って登録した UE だけです。IP の対応付けに当たらない、REGISTER 以外の要求は捨てます。P-CSCF が登録の情報を失った UE からの要求も、これに当たります。P-CSCF は何も返さず、100 Trying も返しません。S-CSCF へも転送しません（TS 24.229 5.2.6.3.2A）。応答を返すと、知らない送り手に、このアドレスで P-CSCF が待ち受けていると教えてしまうからです。UE から見えるのは、応答が来ないことだけです。`ue serve` の要求でタイマー B かタイマー F が切れると、UE は自分の Contact がどの識別子にも結び付いていないとみなし、最初から登録し直します（TS 24.229 5.1.2A.1.6）。`ue call` と `ue sms` は時間切れを報告して終了します。

@@ -535,6 +535,67 @@ In Wireshark, `sip.Status-Code == 503 && ip.src == 172.28.0.40` shows the 503 of
 
 `scripts/e2e-observability.sh` runs these steps as well, and checks the 503 in the capture.
 
+## Take the I-CSCF out of service
+
+The I-CSCF is the entry point of the home network. It holds nothing from one request to the next, and it does not record-route, so no later request of a dialog comes back to it. An instance that the operator takes out of service therefore has nothing of its own to carry on with: it refuses every request, and the sender tries the next I-CSCF.
+
+The node of the I-CSCF serves the same maintenance API on port 8085, the listener of the `maintenance` section of `deploy/compose/icscf.yaml`. Its `users` count the transactions it is serving, so a shut down with nothing in progress makes it `LOCKED` at once. Its `operational_state` is `DISABLED` while no instance of the HSS takes its Cx requests: the I-CSCF asks the HSS which S-CSCF serves the user of every REGISTER, and where the callee of every initial request is, so without the HSS it can serve neither.
+
+1. Shut the I-CSCF down:
+
+   ```sh
+   docker compose exec icscf sh -c '
+   body="{\"administrative_state\":\"SHUTTINGDOWN\",\"operator\":\"learner\"}"
+   printf "PUT /maintenance/v1/functions/icscf/administrative-state HTTP/1.0\r\nContent-Type: application/json\r\nContent-Length: ${#body}\r\n\r\n%s" "$body" |
+     nc -w 5 127.0.0.1 8085'
+   ```
+
+   The answer ends with the state of the I-CSCF:
+
+   ```json
+   {"role":"icscf","administrative_state":"LOCKED","operational_state":"ENABLED","users":0}
+   ```
+
+2. Register the UE:
+
+   ```sh
+   docker compose run --rm ue register -deregister-after 5s
+   ```
+
+   The UE ends with `REGISTER answered 504 Server Time-out`.
+
+```text
+ UE           P-CSCF         I-CSCF          S-CSCF          HSS
+ |  REGISTER    |              |               |              |
+ |------------->|  REGISTER    |               |              |
+ |              |------------->|               |              |
+ |              |  503 Retry-After: 30         |              |
+ |              |<-------------|               |              |
+ |  504         |              |               |              |
+ |<-------------|              |               |              |
+```
+
+- The I-CSCF answers **503 Service Unavailable** with **Retry-After: 30** before it asks the HSS anything: no UAR goes out, and the S-CSCF never sees the REGISTER. No specification gives the value of Retry-After; 30 seconds is this project's choice.
+- A client that gets a 503 sends the request to the next server that DNS gave it (RFC 3263 4.3), and for a REGISTER the P-CSCF moves to the next I-CSCF of its own accord as well (TS 24.229 5.2.2.1 item 7). With several instances of the I-CSCF the REGISTER would go to the next one and register the user as usual. The DNS zone of this network names one I-CSCF, so none is left.
+- The P-CSCF answers **504 Server Time-out**: TS 24.229 5.2.2.1 item 7 has it send one when it fails to forward the REGISTER to any I-CSCF. It does not pass the 503 on, for the same reason the I-CSCF does not pass on the 503 of the S-CSCF.
+- An initial INVITE into the home network, from another network or from the originating S-CSCF, gets the same 503, and its sender tries the next I-CSCF (RFC 3263 4.3). With none left, the originating S-CSCF or the IBCF answers **500 Server Internal Error**, as a proxy does not pass a 503 on (RFC 3261 16.7 step 6); the 504 is for a REGISTER only. The I-CSCF does not count the INVITE it refused in `ims_session_attempts_total{role="icscf",direction="terminating"}`: the next I-CSCF, which serves it, counts it, so the instances add up to the attempts of the network.
+- A CANCEL for an INVITE that the I-CSCF was already proxying when it was shut down still cancels that INVITE: the CANCEL is not a new request, and the SIP stack answers it with the transaction of the INVITE.
+
+In Wireshark, `sip.Status-Code == 503 && ip.src == 172.28.0.20` shows the 503 of the I-CSCF, and `sip.Status-Code == 504` the 504 that the P-CSCF sends the UE.
+
+3. Unlock the I-CSCF with the same request and `UNLOCKED`:
+
+   ```sh
+   docker compose exec icscf sh -c '
+   body="{\"administrative_state\":\"UNLOCKED\",\"operator\":\"learner\"}"
+   printf "PUT /maintenance/v1/functions/icscf/administrative-state HTTP/1.0\r\nContent-Type: application/json\r\nContent-Length: ${#body}\r\n\r\n%s" "$body" |
+     nc -w 5 127.0.0.1 8085'
+   ```
+
+   The next `ue register` registers as before.
+
+`scripts/e2e-observability.sh` runs these steps as well, and checks the 503 and the 504 in the capture.
+
 ## A request without an IP association
 
 The P-CSCF serves only the UEs that have registered through it. It discards a request other than REGISTER that does not map to an IP association, such as a request from a UE whose registration the P-CSCF has lost: it sends nothing back, not even a 100 Trying, and forwards nothing to the S-CSCF (TS 24.229 5.2.6.3.2A). A response would tell an unknown sender that a P-CSCF listens at this address. The UE only sees that no response comes. When Timer B or Timer F fires for a request of `ue serve`, the UE takes its contact as bound to no identity and registers again from the start (TS 24.229 5.1.2A.1.6). `ue call` and `ue sms` report the timeout and exit.
