@@ -112,9 +112,12 @@ func (e *hssError) Error() string {
 	return fmt.Sprintf("HSS: %d: %s", e.StatusCode, e.Message)
 }
 
-// errNoSubscription is the HSS's 404 for a subscription, which says
+// errNoSubscription is the HSS's 404 for a request about one
+// subscription that is there already (GET, PATCH, DELETE), which says
 // that the subscription is not there and nothing else: every operation
-// here is one that the HSS has.
+// here is one that the HSS has. A 404 to a PUT or a POST, which make
+// one, or to the export says that what answered is not this API, and
+// is an hssError.
 var errNoSubscription = errors.New("no such subscription")
 
 type hssClient struct {
@@ -269,8 +272,8 @@ func (c *hssClient) do(ctx context.Context, method, path string, body, answer an
 }
 
 // send makes the request and returns a response with a success status,
-// or the error: errNoSubscription for a 404, hssError for another
-// failure status.
+// or the error: errNoSubscription for a 404 about one subscription,
+// hssError for another failure status.
 func (c *hssClient) send(ctx context.Context, method, path string, body any) (*http.Response, error) {
 	var reader io.Reader
 	if body != nil {
@@ -296,10 +299,11 @@ func (c *hssClient) send(ctx context.Context, method, path string, body any) (*h
 	}
 	defer resp.Body.Close()
 	b, _ := io.ReadAll(io.LimitReader(resp.Body, maxRequestBody))
-	// The export is of the whole store rather than of one subscription,
-	// so its 404 is not a subscription that is not there; it says that
-	// what answered is not this API.
-	if resp.StatusCode == http.StatusNotFound && !strings.HasPrefix(path, "/subscriptions/export") {
+	// Only a request about one subscription that is there already can
+	// find it missing; the export is of the whole store, and a PUT or a
+	// POST makes the subscription.
+	aboutOne := method != http.MethodPut && method != http.MethodPost && !strings.HasPrefix(path, "/subscriptions/export")
+	if resp.StatusCode == http.StatusNotFound && aboutOne {
 		return nil, errNoSubscription
 	}
 	return nil, &hssError{StatusCode: resp.StatusCode, Message: strings.TrimSpace(string(b))}
