@@ -240,6 +240,12 @@ func (h *HSS) response(s Subscriber) subscriptionResponse {
 // is a name with a realm, such as
 // 001010000000001@ims.mnc001.mcc001.3gppnetwork.org, so none of a
 // network is that word.
+//
+// A request is carried out to its end once it is read. A client that
+// closes its side of the connection after the request, as nc does,
+// makes net/http cancel the context of the request, which would stop a
+// change between its write and the PPR or RTR that follows it, and fail
+// every read of a store that honours the context.
 func (h *HSS) Provisioning(peers Peers) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /subscriptions", h.listSubscriptions)
@@ -264,7 +270,9 @@ func (h *HSS) Provisioning(peers Peers) http.Handler {
 		}
 	})
 	mux.HandleFunc("PUT /subscriptions/{impi}/customized-alerting-tone", h.setCustomizedAlertingTone)
-	return mux
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mux.ServeHTTP(w, r.WithContext(context.WithoutCancel(r.Context())))
+	})
 }
 
 // setCustomizedAlertingTone provisions or changes the CAT of a
@@ -638,11 +646,7 @@ func (h *HSS) putSubscription(w http.ResponseWriter, r *http.Request, peers Peer
 	}
 	want := sub.RepositoryData
 
-	// The request is carried out to the end once its body is read: a
-	// client that closes its side of the connection after the request,
-	// as nc does, would otherwise stop it between the write of the
-	// subscription and its PPR.
-	ctx := context.WithoutCancel(r.Context())
+	ctx := r.Context()
 	// The lock is held over the read and the write, so that the request
 	// replaces the subscription it has read and no Cx or Sh request of
 	// the user is halfway through one of its own. A PPR goes without it,
@@ -937,11 +941,7 @@ func (h *HSS) patchSubscription(w http.ResponseWriter, r *http.Request, peers Pe
 		}
 	}
 
-	// The request is carried out to the end once its body is read: a
-	// client that closes its side of the connection after the request,
-	// as nc does, would otherwise stop it between the write of the
-	// subscription and its PPR.
-	ctx := context.WithoutCancel(r.Context())
+	ctx := r.Context()
 	// The lock is held over the read and the write, so that the change
 	// goes onto the subscriber the request has read and no Cx or Sh
 	// request of the user is halfway through one of its own. It is let go
