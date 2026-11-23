@@ -34,12 +34,14 @@ import (
 	"github.com/yuu-biz/ims-practice/internal/kvstore"
 	"github.com/yuu-biz/ims-practice/internal/maintenance"
 	"github.com/yuu-biz/ims-practice/internal/metrics"
+	"github.com/yuu-biz/ims-practice/internal/mmtel"
 	"github.com/yuu-biz/ims-practice/internal/pcscf"
 	"github.com/yuu-biz/ims-practice/internal/policy"
 	"github.com/yuu-biz/ims-practice/internal/rtptest"
 	"github.com/yuu-biz/ims-practice/internal/rx"
 	"github.com/yuu-biz/ims-practice/internal/scscf"
 	"github.com/yuu-biz/ims-practice/internal/sgd"
+	"github.com/yuu-biz/ims-practice/internal/sh"
 	"github.com/yuu-biz/ims-practice/internal/sip"
 )
 
@@ -1039,4 +1041,101 @@ func TestFaultAgentServesTheAPIOfTheRole(t *testing.T) {
 	if err := json.Unmarshal(body, &answer); err != nil || answer.Fault == nil || answer.Fault.State != fault.Failed {
 		t.Errorf("the failed fault is not in the answer: %s", body)
 	}
+}
+
+// TestMaintenanceAPIShutsTheMMTelASDown: on the maintenance listener of
+// a node with the mmtel role, the API shows the AS and its
+// configuration, with the key that signs the nonces of Ut redacted, and
+// a shut down reaches the AS, which then refuses an INVITE outside a
+// dialog.
+func TestMaintenanceAPIShutsTheMMTelASDown(t *testing.T) {
+	transport, err := sip.Listen("127.0.0.1:0", quiet())
+	if err != nil {
+		t.Fatal(err)
+	}
+	store := mmtel.NewMemoryStore()
+	as := mmtel.New(mmtel.Config{Host: "mmtel." + domain, Port: int(transport.LocalAddr().Port()), HomeDomain: domain},
+		noRepositoryData{}, store, store, noNames{}, quiet())
+	if err := as.Listen(transport); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(as.Close)
+
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := config.Config{Node: "mmtel", Roles: []config.Role{config.RoleMMTel}, HomeDomain: domain,
+		Maintenance: &config.Maintenance{Listen: l.Addr().String()},
+		MMTel: &config.MMTel{SIP: config.SIP{Listen: netip.MustParseAddrPort("0.0.0.0:5060"), Host: "mmtel." + domain},
+			HomeCountryCode: "1", ConferenceDomain: "conf." + domain,
+			XCAP: config.XCAP{Listen: netip.MustParseAddrPort("0.0.0.0:80"), NonceKey: []byte("test-nonce-key")}}}
+	// No instance of the HSS takes the Sh requests of this AS, so it is
+	// DISABLED.
+	roles := []managedRole{{function: as.Function(func() bool { return false }), manage: as.Manage}}
+	stop, err := startMaintenance(l, cfg, roles, metrics.NewRegistry(), new(slog.LevelVar), quiet(), func() {})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer stop()
+	ctx := t.Context()
+	oam := maintenance.NewClient("http://"+l.Addr().String(), http.DefaultClient)
+
+	state, err := oam.State(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(state.Functions) != 1 || state.Functions[0].Role != string(config.RoleMMTel) ||
+		state.Functions[0].OperationalState != maintenance.Disabled {
+		t.Errorf("functions %+v, want the MMTel AS DISABLED without an Sh peer", state.Functions)
+	}
+	conf, err := oam.Configuration(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := `"mmtel":{"sip":{"listen":"0.0.0.0:5060","host":"mmtel.` + domain +
+		`"},"home_country_code":"1","xcap":{"listen":"0.0.0.0:80","nonce_key":"` + maintenance.RedactedValue +
+		`"},"conference_domain":"conf.` + domain + `"}`
+	if !strings.Contains(string(conf.Configuration), want) {
+		t.Errorf("configuration %s, want %s in it", conf.Configuration, want)
+	}
+	f, err := oam.SetAdministrativeState(ctx, string(config.RoleMMTel), maintenance.AdministrativeStateRequest{AdministrativeState: maintenance.ShuttingDown})
+	if err != nil || f.AdministrativeState != maintenance.Locked {
+		t.Fatalf("shut down gave %+v (%v), want LOCKED with no call in progress", f, err)
+	}
+
+	caller, err := sip.Listen("127.0.0.1:0", quiet())
+	if err != nil {
+		t.Fatal(err)
+	}
+	client, err := sip.NewStack(caller, sip.Config{SentBy: caller.LocalAddr().String(), OnRequest: func(*sip.ServerTransaction) {}}, quiet())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(client.Close)
+	invite := &sip.Message{Method: sip.INVITE, RequestURI: "sip:+12025550102@" + domain}
+	invite.Add("Max-Forwards", "70")
+	invite.Add("From", "<"+impu+">;tag="+sip.NewTag())
+	invite.Add("To", "<sip:+12025550102@"+domain+">")
+	invite.Add("Call-ID", sip.NewCallID())
+	invite.Add("CSeq", "1 INVITE")
+	invite.Add("Contact", "<sip:ue@"+caller.LocalAddr().String()+">")
+	ct, err := client.SendRequest(invite, sip.Destination{Transport: sip.UDP, Addr: transport.LocalAddr()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var final *sip.Message
+	for r := range ct.Responses() {
+		final = r
+	}
+	if final == nil || final.StatusCode != 503 || final.Get("Retry-After") == "" {
+		t.Errorf("INVITE to the shut down MMTel AS got %v, want 503 with Retry-After", final)
+	}
+}
+
+// noRepositoryData is an HSS that answers the AS no service document.
+type noRepositoryData struct{}
+
+func (noRepositoryData) RepositoryData(context.Context, string, string) (sh.TransparentData, bool, error) {
+	return sh.TransparentData{}, false, nil
 }
