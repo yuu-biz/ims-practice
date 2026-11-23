@@ -12,7 +12,9 @@ import (
 	"github.com/yuu-biz/ims-practice/internal/policy"
 )
 
-// PCRF is how the AF reaches the PCRF. *diameter.Peer is one.
+// PCRF is how the AF reaches the PCRF. *diameter.PeerGroup, the one
+// PCRF of the configuration, is one: the group is where the P-CSCF
+// counts the requests it sends over Rx and the answers it gets back.
 type PCRF interface {
 	Request(ctx context.Context, request *diam.Message) (*diam.Message, error)
 }
