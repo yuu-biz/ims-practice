@@ -124,10 +124,18 @@ func (c *Client) IMSI(ctx context.Context, publicID string) (string, error) {
 // is ipsmgwNumber (digits only) for the user's short messages, or
 // removes the registration when it is empty (TS 29.328 6.1.2.1 step
 // 4b).
+//
+// A registration announces that S6c reaches this IP-SM-GW, so that the
+// HSS keeps its Diameter identity and can name it to an SMS-GMSC as the
+// node that serves the user. A removal leaves the indication out: it
+// registers no IP-SM-GW for the HSS to reach.
 func (c *Client) UpdateSMSRegistrationInfo(ctx context.Context, id UserIdentity, ipsmgwNumber string) error {
-	return c.ProfileUpdate(ctx, id, SMSRegistrationInfo, ShData{
-		ShIMSData: &ShIMSData{SMSRegistrationInfo: &SMSRegistrationInfoData{IPSMGWNumber: ipsmgwNumber}},
-	})
+	info := &SMSRegistrationInfoData{IPSMGWNumber: ipsmgwNumber}
+	if ipsmgwNumber != "" {
+		supported := S6cSupported
+		info.S6cSupport = &supported
+	}
+	return c.ProfileUpdate(ctx, id, SMSRegistrationInfo, ShData{ShIMSData: &ShIMSData{SMSRegistrationInfo: info}})
 }
 
 // NotifyReadyForSM tells the HSS that the user can take short messages

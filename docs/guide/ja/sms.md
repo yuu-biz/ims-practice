@@ -283,7 +283,7 @@ IP-SM-GW は 200 OK を返し、`+g.3gpp.smsip` を持つ active の連絡先が
 
 まず、Data-Reference に 32（IMSI、TS 29.328 7.6.24）を指定した UDR（コマンド 306）で利用者の IMSI を読み、購読と一緒に保存します。SGd で届くショートメッセージは宛先を IMSI で示すので、そのときに利用者を見つける手がかりになります。IP-SM-GW は、IMSI を読み、利用者がショートメッセージを受け取れることと一緒に保存してから、登録を送ります。この IP-SM-GW をサービスセンタに教えるのは登録そのもので、HSS は登録を受けるとすぐに、待っているサービスセンタに知らせます。そのため、IP-SM-GW が登録の答えを受け取る前に、ショートメッセージが届くことがあります。登録が失敗したら、受け取れることを取り消し、次の NOTIFY でもう一度登録します。
 
-続いて登録そのものです。TS 24.341 5.3.3.2 と TS 23.204 6.1 では MAP の更新（TS 29.002）で行いますが、このプロジェクトでは代わりに Sh の更新を使います（TS 29.328 6.1.2）。PUR（コマンド 307）は利用者を R2 の MSISDN で示し、Data-Reference に 24（SMSRegistrationInfo、TS 29.328 7.6.16）を使い、Sh-Data の `<IP-SM-GW-Number>` に IP-SM-GW の番号 `12025550199` を入れます。HSS は DIAMETER_SUCCESS（2001）の PUA で答えます。
+続いて登録そのものです。TS 24.341 5.3.3.2 と TS 23.204 6.1 では MAP の更新（TS 29.002）で行いますが、このプロジェクトでは代わりに Sh の更新を使います（TS 29.328 6.1.2）。PUR（コマンド 307）は利用者を R2 の MSISDN で示し、Data-Reference に 24（SMSRegistrationInfo、TS 29.328 7.6.16）を使い、Sh-Data の `<IP-SM-GW-Number>` に IP-SM-GW の番号 `12025550199` を入れます。番号の下、スキーマが置く位置である 3 つの `<Extension>` の中には、この IP-SM-GW に S6c で届くことを示す `<IP-SM-GW-S6cSupportIndication>1</IP-SM-GW-S6cSupportIndication>` が入ります。これにより HSS は、番号だけでなく Diameter の名前も覚え、この利用者を受け持つノードとして SMS-GMSC に教えられるようになります（TS 29.328 6.1.2.1）。HSS は DIAMETER_SUCCESS（2001）の PUA で答えます。
 
 IP-SM-GW が PUR を送るのは、そのような連絡先があるかどうかが NOTIFY で変わったときだけです。`+g.3gpp.smsip` を付けずに登録した UE には PUR が送られないので、HSS にはその利用者の IP-SM-GW が登録されません。
 
