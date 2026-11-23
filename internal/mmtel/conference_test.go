@@ -32,29 +32,45 @@ type conferenceMRFC struct {
 	calls chan *sip.IncomingCall
 	// While hold is set, the stand-in answers no INVITE by itself: each
 	// comes on held instead of calls, and the test answers it with
-	// answerAsMRFC when it wants the 200 of the MRFC to come.
+	// answer when it wants the 200 of the MRFC to come.
 	hold *atomic.Bool
 	held chan *sip.IncomingCall
+	// While holdInDialog is set, the stand-in answers no request within
+	// a dialog it has by itself: each comes on inDialog, and the test
+	// answers it when it wants the response of the MRFC to come.
+	holdInDialog *atomic.Bool
+	inDialog     chan *sip.InDialogRequest
 }
 
 func startConferenceMRFC(t *testing.T) conferenceMRFC {
 	t.Helper()
-	m := conferenceMRFC{calls: make(chan *sip.IncomingCall, 8), hold: new(atomic.Bool), held: make(chan *sip.IncomingCall, 8)}
+	m := conferenceMRFC{calls: make(chan *sip.IncomingCall, 8), hold: new(atomic.Bool), held: make(chan *sip.IncomingCall, 8),
+		holdInDialog: new(atomic.Bool), inDialog: make(chan *sip.InDialogRequest, 8)}
+	// answers is the copy of the stand-in that takes its calls. It holds
+	// no UA: the field below is set once the UA is up, which is after the
+	// UA may have taken a call.
+	answers := m
 	m.ua = newUA(t, "mrfc", func(c *sip.IncomingCall) {
-		if m.hold.Load() {
-			m.held <- c
+		if answers.hold.Load() {
+			answers.held <- c
 			return
 		}
-		m.calls <- c
-		answerAsMRFC(c)
+		answers.calls <- c
+		answers.answer(c)
 	})
 	return m
 }
 
-// answerAsMRFC answers an INVITE at the stand-in as the MRFC does: with
-// its answer, or with an offer when the INVITE has none (RFC 4240 5).
-func answerAsMRFC(c *sip.IncomingCall) {
-	c.Handle(func(r *sip.InDialogRequest) { r.Accept(audio("40002", "recvonly")) })
+// answer answers an INVITE at the stand-in as the MRFC does: with its
+// answer, or with an offer when the INVITE has none (RFC 4240 5).
+func (m conferenceMRFC) answer(c *sip.IncomingCall) {
+	c.Handle(func(r *sip.InDialogRequest) {
+		if m.holdInDialog.Load() {
+			m.inDialog <- r
+			return
+		}
+		r.Accept(audio("40002", "recvonly"))
+	})
 	if len(c.Request.Body) > 0 {
 		c.Accept(audio("40000", "sendrecv"))
 		return
@@ -731,7 +747,7 @@ func TestJoinAsTheConferenceEnds(t *testing.T) {
 	}
 	awaitNoConference(t, as, uri.User)
 
-	go answerAsMRFC(media)
+	go mrfc.answer(media)
 	if got := statuses(readAll(t, in)); slices.Contains(got, 200) || got[len(got)-1] != 404 {
 		t.Errorf("carol got %v, want 404", got)
 	}
@@ -739,6 +755,57 @@ func TestJoinAsTheConferenceEnds(t *testing.T) {
 		t.Errorf("the store has the conference again after it ended, with %d participants", len(r.Participants))
 	}
 	receive(t, media.Done(), "BYE of carol's media at the MRFC")
+}
+
+// TestMediaChangeAsTheConferenceEnds: a participant changes its media
+// while the conference ends, and the MRFC answers the change only
+// afterwards. The conference has given its URI up by then (TS 24.147
+// 5.3.2.7) and its record is out of the store, and the change that
+// finishes after that puts no record back: the other instances read
+// the store, and a record there names a conference that no instance
+// hosts and no request would reach.
+func TestMediaChangeAsTheConferenceEnds(t *testing.T) {
+	mrfc := startConferenceMRFC(t)
+	as := startAS(t, noServices{}, mmtel.Config{MRFC: "sip:" + contactOf(t, mrfc.ua)})
+	conf, focus, _ := aliceConference(t, as, func(c *sip.IncomingCall) { c.Reject(480) })
+	uri, err := sip.ParseURI(focus.URI)
+	if err != nil {
+		t.Fatal(err)
+	}
+	receive(t, mrfc.calls, "the creator's INVITE at the MRFC")
+	carol := newParticipant(t, as, "carol", func(c *sip.IncomingCall) { c.Reject(480) })
+	in, err := carol.Invite(joining("carol", focus.URI))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := statuses(readAll(t, in)); got[len(got)-1] != 200 {
+		t.Fatalf("carol got %v, want 200", got)
+	}
+	media := receive(t, mrfc.calls, "carol's INVITE at the MRFC")
+
+	// Carol holds the conference (TS 24.610 4.5.2.1), which the focus
+	// passes on to its dialog with the MRFC (TS 24.229 5.8.4.1.1.1). The
+	// stand-in holds that re-INVITE, so the change is still on at the
+	// MRFC while the conference ends.
+	mrfc.holdInDialog.Store(true)
+	answered := make(chan *sip.Message, 1)
+	go func() {
+		resp, _ := in.ReInvite(audio("43000", "sendonly"))
+		answered <- resp
+	}()
+	change := receive(t, mrfc.inDialog, "carol's change of media at the MRFC")
+
+	if err := conf.Bye(); err != nil {
+		t.Fatal(err)
+	}
+	awaitNoConference(t, as, uri.User)
+	receive(t, media.Done(), "BYE of carol's media at the MRFC")
+
+	change.Accept(audio("40002", "recvonly"))
+	receive(t, answered, "the focus's answer to carol's change of media")
+	if r, ok := conferenceOf(t, as, uri.User); ok {
+		t.Errorf("the store has the conference again after it ended, with %d participants", len(r.Participants))
+	}
 }
 
 // TestInvitedAsTheConferenceEnds: the creator leaves while the user
@@ -931,7 +998,7 @@ func TestJoinTheLastPlaceAtOnce(t *testing.T) {
 		media = append(media, receive(t, mrfc.held, user+"'s INVITE at the MRFC"))
 	}
 	for _, m := range media {
-		go answerAsMRFC(m)
+		go mrfc.answer(m)
 	}
 	finals := map[int]int{}
 	for i, out := range outs {
@@ -1012,7 +1079,7 @@ func TestJoinCancelledWhileTheMRFCAnswers(t *testing.T) {
 	if got := statuses(readAll(t, in)); got[len(got)-1] != 487 {
 		t.Fatalf("carol got %v after her CANCEL, want 487", got)
 	}
-	go answerAsMRFC(media)
+	go mrfc.answer(media)
 	receive(t, media.Done(), "BYE of carol's media at the MRFC")
 
 	// Alice holds the conference, which the focus tells her of: every
