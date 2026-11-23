@@ -19,6 +19,8 @@ func TestCollectorOverUDP(t *testing.T) {
 	}
 	served := make(chan error, 1)
 	go func() { served <- h.l.ServeHEP(conn) }()
+	events, unsubscribe := h.l.events.subscribe()
+	defer unsubscribe()
 
 	raw, err := net.Dial("udp", conn.LocalAddr().String())
 	if err != nil {
@@ -50,14 +52,14 @@ func TestCollectorOverUDP(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	var messages []Message
-	for deadline := time.Now().Add(5 * time.Second); len(messages) == 0; {
-		if time.Now().After(deadline) {
-			t.Fatal("no message reached the API")
-		}
-		time.Sleep(10 * time.Millisecond)
-		h.get("/api/messages", &messages)
+	// The Lab tells its event streams of each message once it has kept it.
+	select {
+	case <-events:
+	case <-time.After(5 * time.Second):
+		t.Fatal("no message reached the Lab")
 	}
+	var messages []Message
+	h.get("/api/messages", &messages)
 	m := messages[0]
 	if len(messages) != 1 || m.ID != 1 || m.CallID != id || m.Node != "ue" || m.Direction != DirectionSend || !m.Time.Equal(start) {
 		t.Errorf("messages = %+v, want only the INVITE, sent by ue", messages)
