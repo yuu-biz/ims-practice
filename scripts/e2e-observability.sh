@@ -1,13 +1,17 @@
 #!/usr/bin/env bash
-# End-to-end check: the S-CSCF serves its metrics and its maintenance
-# API on its maintenance listener (deploy/compose/scscf.yaml). After a
-# registration, Prometheus has scraped the S-CSCF and holds a count of
-# successful registrations, and Grafana returns that count through the
+# End-to-end check: the P-CSCF and the S-CSCF serve their metrics and
+# their maintenance API on their maintenance listeners
+# (deploy/compose/pcscf.yaml, deploy/compose/scscf.yaml). After a
+# registration, Prometheus has scraped both and holds their counts of
+# successful registrations, with the set-up time that the P-CSCF
+# measures, and Grafana returns the count of the S-CSCF through the
 # Prometheus data source that the dashboard uses
 # (deploy/observability). A shut down through the maintenance API then
 # makes the S-CSCF answer a new REGISTER with 503 and Retry-After, which
 # the capture shows hop by hop, and an unlock lets the UE register
-# again.
+# again. A shut down of the P-CSCF makes the P-CSCF answer the REGISTER
+# itself with 503 and Retry-After, forwarding nothing, until it is
+# unlocked.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 . scripts/e2e-lib.sh
@@ -122,21 +126,23 @@ until_positive() {
 	return 1
 }
 
-# administrative_state asks the maintenance API of the S-CSCF for the
-# administrative state $1, as the registration guide does, and prints
-# the answer. The API is not published on the host, so the request goes
-# from inside the container of the S-CSCF, with the nc of the image.
+# administrative_state asks the maintenance API of the node of the
+# service $1, which runs the role of the same name, for the
+# administrative state $2 of that role, as the registration guide does,
+# and prints the answer. The API is not published on the host, so the
+# request goes from inside the container of the node, with the nc of
+# the image.
 administrative_state() {
-	docker compose exec -T scscf sh -c '
-body="{\"administrative_state\":\"$1\",\"operator\":\"e2e\"}"
-printf "PUT /maintenance/v1/functions/scscf/administrative-state HTTP/1.0\r\nContent-Type: application/json\r\nContent-Length: ${#body}\r\n\r\n%s" "$body" |
-	nc -w 5 127.0.0.1 8085' sh "$1" | tr -d '\r'
+	docker compose exec -T "$1" sh -c '
+body="{\"administrative_state\":\"$2\",\"operator\":\"e2e\"}"
+printf "PUT /maintenance/v1/functions/$1/administrative-state HTTP/1.0\r\nContent-Type: application/json\r\nContent-Length: ${#body}\r\n\r\n%s" "$body" |
+	nc -w 5 127.0.0.1 8085' sh "$1" "$2" | tr -d '\r'
 }
 
-# node_state prints the state of the node of the S-CSCF, from its
+# node_state prints the state of the node of the service $1, from its
 # maintenance API.
 node_state() {
-	docker compose exec -T scscf wget -qO- http://127.0.0.1:8085/maintenance/v1/state | tr -d '\r'
+	docker compose exec -T "$1" wget -qO- http://127.0.0.1:8085/maintenance/v1/state | tr -d '\r'
 }
 
 remember_nodes
@@ -175,14 +181,35 @@ else
 	echo "FAIL Grafana returns no $successes above 0: $value"
 	fail=1
 fi
+if value="$(until_positive prometheus_values 'up{job="ims",node="pcscf"}')"; then
+	echo "ok   Prometheus scrapes the P-CSCF: up = $value"
+else
+	echo "FAIL the pcscf target of Prometheus is not up: $value"
+	curl -fsS "$prometheus/api/v1/targets?state=active" || true
+	echo
+	fail=1
+fi
+# The P-CSCF counts the same registration, under its own role, and the
+# time that the initial registration took (TS 32.409 4.1.1.1.4).
+for series in 'ims_registration_successes_total{role="pcscf"}' 'ims_registration_setup_seconds_count{role="pcscf"}'; do
+	if value="$(until_positive prometheus_values "$series")"; then
+		echo "ok   Prometheus has $series = $value"
+	else
+		echo "FAIL Prometheus has no $series above 0: $value"
+		# Shown only to explain the failure, if the P-CSCF answers at
+		# all, hence "|| true".
+		docker compose exec -T pcscf wget -qO- http://127.0.0.1:8085/metrics || true
+		fail=1
+	fi
+done
 
-echo "drain"
+echo "drain of the S-CSCF"
 # No transaction is in progress, so the shut down makes the S-CSCF
 # LOCKED at once; SHUTTINGDOWN refuses a new REGISTER all the same. A
 # request that fails leaves its answer empty, hence "|| true", and the
 # check reports it with the state of the node.
-answer="$(administrative_state SHUTTINGDOWN || true)"
-state="$(node_state || true)"
+answer="$(administrative_state scscf SHUTTINGDOWN || true)"
+state="$(node_state scscf || true)"
 if grep -Eq '"administrative_state":"(SHUTTINGDOWN|LOCKED)"' <<<"$state"; then
 	echo "ok   the maintenance API shut the S-CSCF down"
 else
@@ -196,8 +223,8 @@ if docker compose run --no-deps --rm ue register -deregister-after 2s 2>/dev/nul
 else
 	echo "ok   UE could not register while the S-CSCF is shut down"
 fi
-answer="$(administrative_state UNLOCKED || true)"
-state="$(node_state || true)"
+answer="$(administrative_state scscf UNLOCKED || true)"
+state="$(node_state scscf || true)"
 if grep -q '"administrative_state":"UNLOCKED"' <<<"$state"; then
 	echo "ok   the maintenance API unlocked the S-CSCF"
 else
@@ -211,13 +238,51 @@ pcap="$(docker compose exec -T capture sh -c 'ls -t /captures/ims-*.pcap | head 
 registered='sip.CSeq.method == "REGISTER" && sip.Status-Code == 200 && ip.src == 172.28.0.30'
 registrations="$(count "$registered")"
 if docker compose run --no-deps --rm ue register -deregister-after 2s; then
-	echo "ok   UE registered after the unlock"
+	echo "ok   UE registered after the unlock of the S-CSCF"
 else
-	echo "FAIL UE registration after the unlock"
+	echo "FAIL UE registration after the unlock of the S-CSCF"
+	fail=1
+fi
+await "the 200 OK to the registration after the unlock of the S-CSCF" "$registered" $((registrations + 1))
+
+echo "drain of the P-CSCF"
+# The UEs that registered above have deregistered, but the P-CSCF counts
+# each as a user until it forgets its IP association, 64*T1 later, so
+# the shut down may leave it SHUTTINGDOWN for a while. Either state
+# refuses a new REGISTER.
+answer="$(administrative_state pcscf SHUTTINGDOWN || true)"
+state="$(node_state pcscf || true)"
+if grep -Eq '"administrative_state":"(SHUTTINGDOWN|LOCKED)"' <<<"$state"; then
+	echo "ok   the maintenance API shut the P-CSCF down"
+else
+	echo "FAIL the shut down of the P-CSCF: $answer"
+	echo "     state of the node: $state"
+	fail=1
+fi
+if docker compose run --no-deps --rm ue register -deregister-after 2s 2>/dev/null; then
+	echo "FAIL UE registered with a shut down P-CSCF"
+	fail=1
+else
+	echo "ok   UE could not register while the P-CSCF is shut down"
+fi
+answer="$(administrative_state pcscf UNLOCKED || true)"
+state="$(node_state pcscf || true)"
+if grep -q '"administrative_state":"UNLOCKED"' <<<"$state"; then
+	echo "ok   the maintenance API unlocked the P-CSCF"
+else
+	echo "FAIL the unlock of the P-CSCF: $answer"
+	echo "     state of the node: $state"
+	fail=1
+fi
+registrations="$(count "$registered")"
+if docker compose run --no-deps --rm ue register -deregister-after 2s; then
+	echo "ok   UE registered after the unlock of the P-CSCF"
+else
+	echo "FAIL UE registration after the unlock of the P-CSCF"
 	fail=1
 fi
 same_nodes
-await "the 200 OK to the registration after the unlock" "$registered" $((registrations + 1))
+await "the 200 OK to the registration after the unlock of the P-CSCF" "$registered" $((registrations + 1))
 
 echo "reading $pcap"
 last=0
@@ -233,11 +298,23 @@ expect "503 S-CSCF -> I-CSCF with Retry-After 30" "$register && sip.Status-Code 
 # no other S-CSCF to try, so it answers 500 of its own.
 expect "500 I-CSCF -> P-CSCF without Retry-After" "$register && sip.Status-Code == 500 && ip.src == $icscf && ip.dst == $pcscf && !sip.Retry-After"
 expect "500 P-CSCF -> UE without Retry-After" "$register && sip.Status-Code == 500 && ip.src == $pcscf && ip.dst == $ue && !sip.Retry-After"
-echo "the REGISTER after the unlock"
+echo "the REGISTER after the unlock of the S-CSCF"
 expect "401 S-CSCF -> I-CSCF" "$register && sip.Status-Code == 401 && ip.src == $scscf"
 expect "200 S-CSCF -> I-CSCF" "$register && sip.Status-Code == 200 && ip.src == $scscf"
+echo "the REGISTER while the P-CSCF is shut down"
+# The P-CSCF answers itself, with a Retry-After longer than Timer F of
+# the UE (TS 24.229 5.1.1.2.1), and sends the REGISTER nowhere.
+before="$last"
+expect "503 P-CSCF -> UE with Retry-After 300" "$register && sip.Status-Code == 503 && ip.src == $pcscf && ip.dst == $ue && sip.Retry-After == 300"
+if [ "$last" != "$before" ]; then
+	refused="sip.Call-ID == \"$(field sip.Call-ID)\""
+	none "REGISTERs of that call that the P-CSCF sent on" "sip.Method == \"REGISTER\" && ip.src == $pcscf && $refused"
+fi
+echo "the REGISTER after the unlock of the P-CSCF"
+expect "401 P-CSCF -> UE" "$register && sip.Status-Code == 401 && ip.src == $pcscf && ip.dst == $ue"
+expect "200 P-CSCF -> UE" "$register && sip.Status-Code == 200 && ip.src == $pcscf && ip.dst == $ue"
 
 if [ "$fail" -ne 0 ]; then
-	docker compose logs --no-color scscf prometheus grafana | tail -n 80
+	docker compose logs --no-color pcscf scscf prometheus grafana | tail -n 80
 fi
 exit "$fail"

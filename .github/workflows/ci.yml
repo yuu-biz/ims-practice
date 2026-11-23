@@ -340,10 +340,11 @@ jobs:
         run: docker compose --profile ue down --rmi all -v --remove-orphans
 
   # Prometheus and Grafana beside the Compose project
-  # (deploy/observability): the S-CSCF's count of registrations reaches
-  # both, and the maintenance API of the S-CSCF takes it out of service
-  # and back. The script sets COMPOSE_FILE itself; the clean-up step
-  # needs the same files to find the containers.
+  # (deploy/observability): the counts of registrations of the S-CSCF
+  # and of the P-CSCF reach Prometheus, that of the S-CSCF Grafana too,
+  # and the maintenance API of each CSCF takes it out of service and
+  # back. The script sets COMPOSE_FILE itself; the clean-up step needs
+  # the same files to find the containers.
   e2e-observability:
     runs-on: ubuntu-latest
     needs: [changes, go]
