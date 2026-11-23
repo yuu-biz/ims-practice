@@ -68,7 +68,16 @@ docker compose up -d --build
 docker compose --profile phones up -d phone1 phone2 phone3
 ```
 
-http://localhost:8080 を開きます。Subscribers の欄で加入者 2 の呼び出し音に `cat1` を選び、`phone1` から `phone2` に発信します。2 つ目の着信と会議は、ラボの手順書にある、2 つ目の着信を受けて会議を作る手順のとおりに進めます。通話のラダー図には、通話のダイアログと並んで、AS と MRFC のダイアログも描かれます。どちらも P-Charging-Vector の icid-value が同じだからです。
+加入者 2 に呼び出し音 `cat1` を設定します。設定するのは事業者で、OAM から行います。OAM のポートはホストのどのアドレスにもないので、要求は OAM のコンテナの中から送ります。BusyBox の `wget` は `PUT` を送れないので、要求を書き下して `nc` に渡します。
+
+```sh
+docker compose exec oam sh -c '
+body="{\"tone\":\"cat1\",\"active\":true}"
+printf "PUT /oam/v1/subscriptions/001010000000002@ims.mnc001.mcc001.3gppnetwork.org/customized-alerting-tone HTTP/1.0\r\nContent-Type: application/json\r\nContent-Length: ${#body}\r\n\r\n%s" "$body" |
+  nc -w 5 127.0.0.1 8080'
+```
+
+そのあと http://localhost:8080 を開き、`phone1` から `phone2` に発信します。2 つ目の着信と会議は、ラボの手順書にある、2 つ目の着信を受けて会議を作る手順のとおりに進めます。通話のラダー図には、通話のダイアログと並んで、AS と MRFC のダイアログも描かれます。どちらも P-Charging-Vector の icid-value が同じだからです。
 
 ## キャプチャを開く
 
@@ -102,7 +111,7 @@ UE 1 は `ue xcap set baoc on` で発信を規制し、UE 2 に発信します�
 
 ## CAT。着信側の利用者が選ぶ呼び出し音
 
-利用者の CAT は、事業者が HSS に設定します（TS 24.182 4.5.2）。ここではラボが、`PUT /api/subscribers/{impi}/customized-alerting-tone` に `{"tone": "cat1", "active": true}` を送って設定します。UE 2 の着信側の AS は、着信のたびにこの設定を Sh で読みます（Service-Indication が `Customized-Alerting-Tone` の UDR）。そして、UE 2 に INVITE を送る前に MRFC に呼び出し音を頼み、UE 2 が呼び出し中のあいだ UE 1 に流します（TS 24.182 4.5.5.3.7）。
+利用者の CAT は、事業者が HSS に設定します（TS 24.182 4.5.2）。ここでは OAM が、`PUT /oam/v1/subscriptions/{秘密の識別子}/customized-alerting-tone` に `{"tone": "cat1", "active": true}` を送り、それを HSS へ渡して設定します。利用者が自分で設定する標準の手段はありません（4.8）。UE 2 の着信側の AS は、着信のたびにこの設定を Sh で読みます（Service-Indication が `Customized-Alerting-Tone` の UDR）。そして、UE 2 に INVITE を送る前に MRFC に呼び出し音を頼み、UE 2 が呼び出し中のあいだ UE 1 に流します（TS 24.182 4.5.5.3.7）。
 
 ```text
 #1288 12.471 UE 1   -> P-CSCF C1 INVITE tel:+12025550102

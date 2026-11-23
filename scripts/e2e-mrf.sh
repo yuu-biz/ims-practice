@@ -4,7 +4,7 @@
 #
 # UE 1 bars its outgoing calls and calls UE 2: it hears the announcement
 # notice from the MRFP before the 603. Then UE 2 gets the customized
-# alerting tone cat1 through the Lab, and UE 1 hears it while UE 2
+# alerting tone cat1 through the OAM, and UE 1 hears it while UE 2
 # rings; the audio that UE 1 received is compared with the WAV file. A
 # call after the tone is switched off rings with UE 1's own ringing
 # tone. Last, the three UE simulators of the phones profile, driven
@@ -44,6 +44,8 @@ for i in $(seq 1 30); do
 	curl -fsS http://localhost:8080/api/calls >/dev/null 2>&1 && break
 	sleep 1
 done
+# The CAT of UE 2 is provisioned through the OAM below.
+wait_for_oam || exit 1
 # Every "run" and "up" below takes --no-deps (see scripts/e2e-lib.sh).
 remember_nodes
 pcap="$(docker compose exec -T capture sh -c 'ls -t /captures/ims-*.pcap | head -n 1' | tr -d '\r')"
@@ -59,15 +61,12 @@ rm -f captures/mrf-cat-received.raw
 # does; the checks read what it printed, hence "|| true".
 call() { docker compose run --rm --no-deps ue call --tone 1s "$@" 2>&1 || true; }
 xcap() { docker compose run --rm --no-deps ue xcap "$@" 2>&1 || true; }
-# alerting_tone TONE true|false provisions the CAT of UE 2 in the HSS,
-# through the Lab, as the learner does with the Subscribers panel.
-# The status code is read from the end of the output, since curl on
-# Windows cannot write to /dev/null when MSYS_NO_PATHCONV is set.
+# alerting_tone TONE true|false provisions the CAT of UE 2 in the HSS
+# through the OAM, as the guide does, and prints the status code. The
+# CAT is the operator's to provision, so the OAM is where it is set.
 alerting_tone() {
-	curl -s -w '
-%{http_code}' -X PUT -H 'Content-Type: application/json' \
-		-d "{\"tone\":\"$1\",\"active\":$2}" \
-		"http://localhost:8080/api/subscribers/001010000000002%40$domain/customized-alerting-tone" | tail -n 1
+	oam_request PUT "/oam/v1/subscriptions/001010000000002@$domain/customized-alerting-tone" \
+		"{\"tone\":\"$1\",\"active\":$2}" | oam_status
 }
 
 echo "an announcement before a barred call is rejected"
@@ -90,7 +89,7 @@ xcap set baoc off >/dev/null
 echo "CAT: UE 2's callers hear cat1 while it rings"
 status="$(alerting_tone cat1 true)"
 if [ "$status" = 200 ]; then
-	echo "ok   the Lab provisioned cat1 for UE 2 in the HSS"
+	echo "ok   the OAM provisioned cat1 for UE 2 in the HSS"
 else
 	echo "FAIL provisioning cat1 for UE 2: HTTP $status"
 	fail=1
