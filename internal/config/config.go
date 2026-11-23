@@ -33,6 +33,10 @@ const (
 	// RoleLab collects HEP copies of the signalling and serves the web
 	// UI of the Lab.
 	RoleLab Role = "lab"
+	// RoleOAM is the OAM server: it operates the other nodes through
+	// their maintenance API and serves the OAM screen. It is not an IMS
+	// function and sends no signalling.
+	RoleOAM Role = "oam"
 	// RoleIPSMGW is the IP-SM-GW, the application server for SMS over
 	// IP, with the stub of the SC inside it.
 	RoleIPSMGW Role = "ipsmgw"
@@ -56,7 +60,7 @@ const (
 	RoleFault Role = "fault"
 )
 
-var knownRoles = []Role{RoleHSS, RoleICSCF, RoleSCSCF, RolePCSCF, RoleAGW, RoleLab, RoleIPSMGW, RoleEPC, RoleMMTel, RoleMRFP, RoleMRFC, RoleIBCF, RoleFault}
+var knownRoles = []Role{RoleHSS, RoleICSCF, RoleSCSCF, RolePCSCF, RoleAGW, RoleLab, RoleOAM, RoleIPSMGW, RoleEPC, RoleMMTel, RoleMRFP, RoleMRFC, RoleIBCF, RoleFault}
 
 // Config is a node's validated configuration. Each role's section is
 // set exactly when the node has that role.
@@ -93,6 +97,7 @@ type Config struct {
 	IBCF     *IBCF
 
 	Lab   *Lab
+	OAM   *OAM
 	Fault *Fault
 }
 
@@ -175,6 +180,7 @@ type rawConfig struct {
 	IBCF        *rawIBCF        `yaml:"ibcf"`
 
 	Lab   *rawLab   `yaml:"lab"`
+	OAM   *rawOAM   `yaml:"oam"`
 	Fault *rawFault `yaml:"fault"`
 }
 
@@ -419,6 +425,17 @@ func (raw rawConfig) validate(dir string) (Config, error) {
 			return Config{}, fmt.Errorf("lab: %w", err)
 		}
 		cfg.Lab = &c
+	}
+
+	if err := section("oam", raw.OAM != nil, cfg.HasRole(RoleOAM), "the oam role"); err != nil {
+		return Config{}, err
+	}
+	if raw.OAM != nil {
+		c, err := raw.OAM.validate()
+		if err != nil {
+			return Config{}, fmt.Errorf("oam: %w", err)
+		}
+		cfg.OAM = &c
 	}
 
 	if err := section("fault", raw.Fault != nil, cfg.HasRole(RoleFault), "the fault role"); err != nil {
