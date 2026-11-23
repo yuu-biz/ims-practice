@@ -95,6 +95,45 @@ func (g *Gauge) write(w *bufio.Writer) {
 	})
 }
 
+// gaugeFunc is a gauge whose values are read at the scrape, from the
+// function given at registration. It has no slot to count in, so it
+// holds its label space itself. See Registry.NewGaugeFunc.
+type gaugeFunc struct {
+	name  string
+	help  string
+	space labelSpace
+	read  func(emit func(value float64, labelValues ...string))
+}
+
+func (g *gaugeFunc) metricName() string { return g.name }
+
+// definition tells a gauge func apart from a Gauge of the same name,
+// help and labels. The two carry the same type to Prometheus but not to
+// a role: one is written as it changes and the other read at the
+// scrape, so letting them share would drop one of the two.
+func (g *gaugeFunc) definition() string {
+	return fmt.Sprintf("%s func\n%s\n%q\n%q", gaugeKind, g.help, g.space.names, g.space.values)
+}
+
+// write calls read once and writes the samples it emitted, in the order
+// of the declared label values, so that the output is in the same order
+// from one scrape to the next. A series emitted twice keeps the value
+// emitted last.
+func (g *gaugeFunc) write(w *bufio.Writer) {
+	writeHeader(w, g.name, gaugeKind, g.help)
+	values := make([]float64, g.space.size)
+	emitted := make([]bool, g.space.size)
+	g.read(func(v float64, labelValues ...string) {
+		i := g.space.index(g.name, labelValues)
+		values[i], emitted[i] = v, true
+	})
+	for i, ok := range emitted {
+		if ok {
+			writeSample(w, g.name, g.space.pairs(i), values[i])
+		}
+	}
+}
+
 // DefaultBuckets returns the bucket bounds, in seconds, that the
 // official clients use when none are given (client_golang's
 // DefBuckets). They cover a registration in a few milliseconds as well
