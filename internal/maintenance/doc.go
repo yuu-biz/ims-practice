@@ -4,7 +4,7 @@
 // settings that change while it runs, the level of the node's log, and
 // the node's alarm list. The OAM server uses it through Client. A node
 // serves it on its maintenance listener (cmd/ims) for the roles that
-// supply a Function: the S-CSCF.
+// supply a Function: the P-CSCF and the S-CSCF.
 //
 // The API is this project's own. 3GPP standardises the management
 // interface above the element manager (Itf-N), and leaves the one

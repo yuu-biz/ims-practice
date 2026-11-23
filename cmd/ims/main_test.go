@@ -33,6 +33,7 @@ import (
 	"github.com/yuu-biz/ims-practice/internal/kvstore"
 	"github.com/yuu-biz/ims-practice/internal/maintenance"
 	"github.com/yuu-biz/ims-practice/internal/metrics"
+	"github.com/yuu-biz/ims-practice/internal/pcscf"
 	"github.com/yuu-biz/ims-practice/internal/policy"
 	"github.com/yuu-biz/ims-practice/internal/rtptest"
 	"github.com/yuu-biz/ims-practice/internal/rx"
@@ -440,6 +441,127 @@ func TestMaintenanceAPIShutsTheSCSCFDown(t *testing.T) {
 	}
 	if final == nil || final.StatusCode != 503 || final.Get("Retry-After") == "" {
 		t.Errorf("REGISTER to the shut down S-CSCF got %v, want 503 with Retry-After", final)
+	}
+}
+
+// TestMaintenanceAPIShutsThePCSCFDown: a node with the pcscf and the
+// scscf roles counts both in its one registry, and its maintenance API
+// serves both. The configuration shows the section of the P-CSCF, and a
+// shut down reaches the P-CSCF, which then answers a new REGISTER itself
+// with 503 and Retry-After.
+func TestMaintenanceAPIShutsThePCSCFDown(t *testing.T) {
+	if err := diameter.LoadDictionary(); err != nil {
+		t.Fatal(err)
+	}
+	registry := metrics.NewRegistry()
+	node := diameter.NewNode(diameter.Identity{OriginHost: "ims." + domain, OriginRealm: domain}, []uint32{diameter.ApplicationIDCx}, diameter.Timers{}, quiet())
+	s, err := scscf.New(scscf.Config{ServerName: "sip:scscf." + domain + ":5060", HomeDomain: domain, Metrics: registry},
+		nil, node, scscf.NewMemoryStore(), nil, quiet())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(s.Close)
+	p, err := pcscf.New(pcscf.Config{Host: "pcscf." + domain, Port: 5060, VisitedNetworkID: domain, Metrics: registry},
+		nil, pcscf.NewMemoryStore(), nil, quiet())
+	if err != nil {
+		t.Fatalf("the P-CSCF does not start beside the S-CSCF: %v", err)
+	}
+	t.Cleanup(p.Close)
+	transport, err := sip.Listen("127.0.0.1:0", quiet())
+	if err != nil {
+		t.Fatal(err)
+	}
+	stack, err := sip.NewStack(transport, sip.Config{SentBy: transport.LocalAddr().String(), Screen: p.Screen,
+		Admit: p.AdmitUnprotected, OnRequest: p.OnRequest}, quiet())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(stack.Close)
+	p.SetStack(stack)
+
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := config.Config{Node: "ims", Roles: []config.Role{config.RolePCSCF, config.RoleSCSCF}, HomeDomain: domain,
+		Maintenance: &config.Maintenance{Listen: l.Addr().String()},
+		PCSCF: &config.PCSCF{SIP: config.SIP{Listen: netip.MustParseAddrPort("0.0.0.0:5060"), Host: "pcscf." + domain},
+			VisitedNetworkID: domain, ProtectedServerPort: 5064},
+		SCSCF: &config.SCSCF{SIP: config.SIP{Listen: netip.MustParseAddrPort("0.0.0.0:5060"), Host: "scscf." + domain},
+			MinExpires: time.Minute, MaxExpires: time.Hour}}
+	roles := []managedRole{
+		{function: p.Function(), manage: p.Manage},
+		{function: s.Function(func() bool { return true }), manage: s.Manage},
+	}
+	stop, err := startMaintenance(l, cfg, roles, registry, new(slog.LevelVar), quiet(), func() {})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer stop()
+	ctx := t.Context()
+	oam := maintenance.NewClient("http://"+l.Addr().String(), http.DefaultClient)
+
+	resp, err := http.Get("http://" + l.Addr().String() + "/metrics")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	for _, want := range []string{"# TYPE ims_registration_attempts_total counter\n", "# TYPE ims_registration_setup_seconds histogram\n",
+		"# TYPE ims_session_attempts_total counter\n", "# TYPE ims_answered_sessions gauge\n"} {
+		if !strings.Contains(string(body), want) {
+			t.Errorf("GET /metrics has no %q:\n%s", want, body)
+		}
+	}
+	state, err := oam.State(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var functions []string
+	for _, f := range state.Functions {
+		functions = append(functions, f.Role+" "+string(f.OperationalState))
+	}
+	if want := []string{"pcscf ENABLED", "scscf ENABLED"}; !slices.Equal(functions, want) {
+		t.Errorf("functions %v, want %v", functions, want)
+	}
+	conf, err := oam.Configuration(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := `"pcscf":{"sip":{"listen":"0.0.0.0:5060","host":"pcscf.` + domain + `"},"visited_network_id":"` + domain + `","sec_agree":{"protected_server_port":5064}}`; !strings.Contains(string(conf.Configuration), want) {
+		t.Errorf("configuration %s, want %s in it", conf.Configuration, want)
+	}
+	f, err := oam.SetAdministrativeState(ctx, string(config.RolePCSCF), maintenance.AdministrativeStateRequest{AdministrativeState: maintenance.ShuttingDown})
+	if err != nil || f.AdministrativeState != maintenance.Locked {
+		t.Fatalf("shut down gave %+v (%v), want LOCKED", f, err)
+	}
+
+	ue, err := sip.Listen("127.0.0.1:0", quiet())
+	if err != nil {
+		t.Fatal(err)
+	}
+	client, err := sip.NewStack(ue, sip.Config{SentBy: ue.LocalAddr().String(), OnRequest: func(*sip.ServerTransaction) {}}, quiet())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(client.Close)
+	register := &sip.Message{Method: sip.REGISTER, RequestURI: "sip:" + domain}
+	register.Add("Max-Forwards", "70")
+	register.Add("From", "<"+impu+">;tag="+sip.NewTag())
+	register.Add("To", "<"+impu+">")
+	register.Add("Call-ID", sip.NewCallID())
+	register.Add("CSeq", "1 REGISTER")
+	register.Add("Contact", "<sip:ue@"+ue.LocalAddr().String()+">")
+	ct, err := client.SendRequest(register, sip.Destination{Transport: sip.UDP, Addr: stack.LocalAddr()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var final *sip.Message
+	for r := range ct.Responses() {
+		final = r
+	}
+	if final == nil || final.StatusCode != 503 || final.Get("Retry-After") == "" {
+		t.Errorf("REGISTER to the shut down P-CSCF got %v, want 503 with Retry-After", final)
 	}
 }
 
