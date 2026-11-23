@@ -22,7 +22,6 @@
 | `docs/background/k8s.md` の「各ノードが書くアドレスと設定」 | PCO に P-CSCF のアドレスを入れる。 | TS 24.229、TS 24.008 | PCO で P-CSCF のアドレスを渡す条項の番号と本文。 |
 | `docs/background/oam.md` の「役割ごとの指標の案」 | 登録の試行、成功、失敗の 3 つの測定に「2 out of 3 approach」を当てている。3 つのうち 2 つがあれば残りが分かる、という意味だと読める。 | TS 32.409 4.1.1.1、4.1.1.2、4.1.1.3.1 | 「2 out of 3 approach」の定義の箇所。 |
 | `docs/background/redundancy.md` の 6 章「P-CSCF の reg イベントの購読」 | P-CSCF は、UE の再登録の 200 のたびに reg イベントの購読を更新する形にでき、更新のタイマーを持たなくてよい。 | TS 24.229 5.2.3 | 5.2.3 の本文が、この更新の仕方を許すか。 |
-| `docs/background/redundancy.md` の 9 章「新しい要求を断る方法」の I-CSCF の行 | P-CSCF は、I-CSCF が 503 を返したとき、DNS の次の I-CSCF へ送り直す。 | TS 24.229 5.2.2.1 の item 7 | item 7 の本文が、503 での送り直しを定めるか。 |
 | `docs/background/5gc.md` の 1 章「仕様が求めること」 | IMS の DNN の名前は、NG.113 の「IMS well-known APN/DNN」が定める。値は `ims`。 | GSMA NG.113 | NG.113 の該当する節の番号と、値が `ims` であること。 |
 | `docs/background/5gc.md` の 3 章の表（UAA の S-CSCF の能力） | S-CSCF の能力は ImsSDM_Get で `GET /{imsUeId}/ims-data/location-data/scscf-capabilities` を呼んで得る。 | TS 29.562 | この操作を定める節の番号。 |
 | `docs/background/5gc.md` の 3 章の表（LIR と LIA） | LIR に当たる操作は ImsUECM_Authorize で、S-CSCF の能力は ImsSDM_Get で得る。`GET /{imsUeId}/ims-data/location-data/server-name` もある。 | TS 29.562 | 着信のときに何を送るかを定める節の番号。 |
