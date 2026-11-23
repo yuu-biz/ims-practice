@@ -813,6 +813,7 @@ func TestReferredByOfAParticipantThatAsksForPrivacy(t *testing.T) {
 	for name, tc := range map[string]struct{ privacy, want string }{
 		"user privacy takes the Referred-By out": {sip.PrivacyUser, ""},
 		"id privacy leaves it":                   {sip.PrivacyID, referredBy},
+		"header privacy leaves it":               {sip.PrivacyHeader, referredBy},
 		"no privacy leaves it":                   {"", referredBy},
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -834,6 +835,66 @@ func TestReferredByOfAParticipantThatAsksForPrivacy(t *testing.T) {
 				t.Errorf("the INVITE has Referred-By %q, want %q", got, tc.want)
 			}
 		})
+	}
+}
+
+// TestAnonymousParticipantsWithoutAnIdentity: a user that asks for
+// privacy needs no asserted identity to dial in (TS 24.229 5.7.1.4 a).
+// When one such participant leaves, the subscription of another one,
+// which the focus knows by no identity either, goes on: the focus ends
+// the subscription of a participant that left (TS 24.147 5.3.3.3), and
+// cannot tell that either of them is the subscriber.
+func TestAnonymousParticipantsWithoutAnIdentity(t *testing.T) {
+	mrfc := startConferenceMRFC(t)
+	as := startAS(t, noServices{}, mmtel.Config{MRFC: "sip:" + contactOf(t, mrfc.ua)})
+	_, focus, _ := aliceConference(t, as, func(c *sip.IncomingCall) { c.Reject(480) })
+	anonymously := func(user string) sip.Invitation {
+		inv := joining(user, focus.URI)
+		inv.Headers = slices.DeleteFunc(inv.Headers, func(h sip.HeaderField) bool { return h.Name == "P-Asserted-Identity" })
+		inv.Headers = append(inv.Headers, sip.HeaderField{Name: "Privacy", Value: sip.PrivacyID})
+		return inv
+	}
+
+	carol := newParticipant(t, as, "carol", func(c *sip.IncomingCall) { c.Reject(480) })
+	if out, err := carol.Invite(anonymously("carol")); err != nil {
+		t.Fatal(err)
+	} else if got := statuses(readAll(t, out)); got[len(got)-1] != 200 {
+		t.Fatalf("carol got %v, want 200", got)
+	}
+	notifications := make(chan sip.Notification, 16)
+	if _, err := carol.Subscribe(sip.SubscribeRequest{RequestURI: focus.URI, From: "sip:carol@" + domain, Event: confinfo.EventPackage,
+		Accept: confinfo.ContentType, Expires: time.Hour,
+		Headers:  []sip.HeaderField{{Name: "Privacy", Value: sip.PrivacyID}},
+		OnNotify: func(n sip.Notification, _ *sip.Message) { notifications <- n }}); err != nil {
+		t.Fatal(err)
+	}
+
+	dave := newParticipant(t, as, "dave", func(c *sip.IncomingCall) { c.Reject(480) })
+	out, err := dave.Invite(anonymously("dave"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := statuses(readAll(t, out)); got[len(got)-1] != 200 {
+		t.Fatalf("dave got %v, want 200", got)
+	}
+	awaitNotification(t, notifications, "with dave connected", func(_ sip.Notification, d confinfo.Document) bool {
+		return len(d.Users.Users) == 3
+	})
+	if err := out.Bye(); err != nil {
+		t.Fatal(err)
+	}
+	n := awaitNotification(t, notifications, "with dave gone", func(_ sip.Notification, d confinfo.Document) bool {
+		for _, u := range d.Users.Users {
+			for _, e := range u.Endpoints {
+				if e.Status == confinfo.Disconnected {
+					return true
+				}
+			}
+		}
+		return false
+	})
+	if n.State.State != sip.SubscriptionActive {
+		t.Errorf("carol's subscription is %+v after dave left, want active", n.State)
 	}
 }
 
