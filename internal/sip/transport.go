@@ -62,7 +62,10 @@ type Observer func(Capture)
 // server that listens on a UDP port listens on the same TCP port
 // (18.2.1). Messages from either transport come out of one Receive.
 type TransportLayer struct {
-	udp         *UDPTransport
+	udp *UDPTransport
+	// client is the socket on the protected client port of TS 33.203
+	// 7.1, from which the requests leave; nil everywhere else.
+	client      *UDPTransport
 	listener    *net.TCPListener
 	log         *slog.Logger
 	observe     Observer // nil when nothing observes
@@ -94,6 +97,34 @@ func ListenObserved(address string, log *slog.Logger, observe Observer) (*Transp
 	return newTransportLayer(address, log, observe, tcpIdleTimeout)
 }
 
+// ListenProtected is ListenObserved on the protected server port of TS
+// 33.203 7.1, with the protected client port of the same address bound
+// as well. The requests this transport layer sends leave from the
+// client port, over UDP and over TCP, and the responses to them come
+// back there; the responses to the requests that arrive on the server
+// port go back from the server port. That is how a UE and a P-CSCF
+// send to each other once IMS AKA has set up IPsec ESP: each pair of
+// security associations runs between one end's client port and the
+// other end's server port, so a message that left the wrong port would
+// match no security association. A zero client port is
+// ListenObserved, which sends everything from the port it listens on.
+func ListenProtected(address string, clientPort uint16, log *slog.Logger, observe Observer) (*TransportLayer, error) {
+	t, err := newTransportLayer(address, log, observe, tcpIdleTimeout)
+	if err != nil || clientPort == 0 {
+		return t, err
+	}
+	client, err := ListenUDP(netip.AddrPortFrom(t.LocalAddr().Addr(), clientPort).String(), log)
+	if err != nil {
+		t.Close()
+		return nil, err
+	}
+	client.observe = observe
+	t.client = client
+	t.wg.Add(1)
+	go t.readUDP(client)
+	return t, nil
+}
+
 func newTransportLayer(address string, log *slog.Logger, observe Observer, idleTimeout time.Duration) (*TransportLayer, error) {
 	for attempt := 1; ; attempt++ {
 		udp, err := ListenUDP(address, log)
@@ -123,7 +154,7 @@ func newTransportLayer(address string, log *slog.Logger, observe Observer, idleT
 		}
 		log.Info("sip listening", "transport", string(TCP), "address", unmapped(listener.Addr()).String())
 		t.wg.Add(2)
-		go t.readUDP()
+		go t.readUDP(udp)
 		go t.acceptTCP()
 		return t, nil
 	}
@@ -143,6 +174,9 @@ func (t *TransportLayer) Close() error {
 		t.mu.Unlock()
 		t.listener.Close()
 		t.udp.Close()
+		if t.client != nil {
+			t.client.Close()
+		}
 		for _, c := range conns {
 			c.Close()
 		}
@@ -174,10 +208,13 @@ func (t *TransportLayer) deliver(in incoming) bool {
 	}
 }
 
-func (t *TransportLayer) readUDP() {
+// readUDP hands the messages of one of the layer's UDP sockets to
+// Receive: those of the port it listens on, and those of the protected
+// client port, which are the responses to the requests that left there.
+func (t *TransportLayer) readUDP(u *UDPTransport) {
 	defer t.wg.Done()
 	for {
-		m, src, err := t.udp.Receive()
+		m, src, err := u.Receive()
 		if err != nil {
 			select {
 			case <-t.closed:
@@ -198,6 +235,11 @@ func (t *TransportLayer) readUDP() {
 func (t *TransportLayer) SendRequest(req *Message, dst Destination) error {
 	switch dst.Transport {
 	case UDP:
+		if t.client != nil {
+			// TS 33.203 7.1: a request leaves from the protected client
+			// port.
+			return t.client.SendRequest(req, dst.Addr)
+		}
 		return t.udp.SendRequest(req, dst.Addr)
 	case TCP:
 		return t.sendTCP(req, dst.Addr)
