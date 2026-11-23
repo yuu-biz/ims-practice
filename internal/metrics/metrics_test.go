@@ -215,11 +215,25 @@ func TestRegistrationRejects(t *testing.T) {
 			_, err := r.NewGauge("ims_sessions", "")
 			return err
 		}},
-		{"same name twice", func(r *Registry) error {
+		{"same name with other labels", func(r *Registry) error {
 			if _, err := r.NewGauge("ims_sessions", "h"); err != nil {
 				return nil
 			}
-			_, err := r.NewGauge("ims_sessions", "h")
+			_, err := r.NewGauge("ims_sessions", "h", roles)
+			return err
+		}},
+		{"same name with other label values", func(r *Registry) error {
+			if _, err := r.NewGauge("ims_sessions", "h", roles); err != nil {
+				return nil
+			}
+			_, err := r.NewGauge("ims_sessions", "h", Label{Name: "role", Values: []string{"pcscf"}})
+			return err
+		}},
+		{"same name with other buckets", func(r *Registry) error {
+			if _, err := r.NewHistogram("ims_setup_seconds", "h", []float64{1}); err != nil {
+				return nil
+			}
+			_, err := r.NewHistogram("ims_setup_seconds", "h", []float64{2})
 			return err
 		}},
 		{"reserved label prefix", func(r *Registry) error {
@@ -302,6 +316,34 @@ func TestRejectedMetricIsNotExposed(t *testing.T) {
 	}
 	if out := text(t, r); strings.Count(out, "# TYPE") != 1 || strings.Contains(out, "other help") {
 		t.Errorf("output:\n%s", out)
+	}
+}
+
+// Two parts of a node that register a name with the same definition
+// count in one metric, and the output has it once.
+func TestSameDefinitionSharesTheMetric(t *testing.T) {
+	r := NewRegistry()
+	types := Label{Name: "type", Values: []string{"initial", "re", "de"}}
+	byPCSCF := mustCounter(t, r, "ims_registration_attempts_total", "h", roles, types)
+	bySCSCF := mustCounter(t, r, "ims_registration_attempts_total", "h", roles, types)
+	if byPCSCF != bySCSCF {
+		t.Fatal("the second registration made another counter")
+	}
+	byPCSCF.Inc("pcscf", "initial")
+	bySCSCF.Inc("scscf", "initial")
+	bySCSCF.Inc("pcscf", "initial")
+	out := text(t, r)
+	if strings.Count(out, "# TYPE ims_registration_attempts_total") != 1 ||
+		!strings.Contains(out, `ims_registration_attempts_total{role="pcscf",type="initial"} 2`+"\n") ||
+		!strings.Contains(out, `ims_registration_attempts_total{role="scscf",type="initial"} 1`+"\n") {
+		t.Errorf("output:\n%s", out)
+	}
+	if g, h := mustGauge(t, r, "ims_sessions", "h", roles), mustGauge(t, r, "ims_sessions", "h", roles); g != h {
+		t.Error("the second registration made another gauge")
+	}
+	buckets := []float64{0.5, 1}
+	if g, h := mustHistogram(t, r, "ims_setup_seconds", "h", buckets), mustHistogram(t, r, "ims_setup_seconds", "h", buckets); g != h {
+		t.Error("the second registration made another histogram")
 	}
 }
 

@@ -83,6 +83,13 @@ func (f *family[V]) get(values []string) *V {
 
 func (f *family[V]) metricName() string { return f.name }
 
+// definition is what two registrations of one name must agree on to
+// share the metric: the kind, the help text and the labels with their
+// values.
+func (f *family[V]) definition() string {
+	return fmt.Sprintf("%s\n%s\n%q\n%q", f.kind, f.help, f.space.names, f.space.values)
+}
+
 // writeHeader writes the HELP and TYPE lines.
 func (f *family[V]) writeHeader(w *bufio.Writer) {
 	fmt.Fprintf(w, "# HELP %s %s\n", f.name, escapeHelp(f.help))
@@ -111,6 +118,7 @@ func writeSample(w *bufio.Writer, name, pairs string, value float64) {
 // metric is a registered Counter, Gauge or Histogram.
 type metric interface {
 	metricName() string
+	definition() string
 	write(w *bufio.Writer)
 }
 
@@ -120,6 +128,13 @@ type metric interface {
 // client. Each node, and each test, creates its own and passes it to
 // the parts that count, so that two nodes in one process (the e2e
 // tests in internal/ue) do not share counts.
+//
+// A name registered again with the same definition gives the metric
+// registered first. The roles of one node that count the same
+// measurement, such as the P-CSCF and the S-CSCF counting registration
+// procedures (TS 32.409 4.1.1), so count in one metric, each under its
+// own value of the role label. A name registered again with another
+// definition is an error.
 type Registry struct {
 	// mu guards metrics. Only registration and scraping take it;
 	// counting does not.
@@ -132,18 +147,23 @@ func NewRegistry() *Registry {
 	return &Registry{}
 }
 
-func (r *Registry) register(m metric) error {
+// register adds m, or returns the metric of the same name and
+// definition that is there already.
+func (r *Registry) register(m metric) (metric, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	name := m.metricName()
 	i := sort.Search(len(r.metrics), func(i int) bool { return r.metrics[i].metricName() >= name })
 	if i < len(r.metrics) && r.metrics[i].metricName() == name {
-		return fmt.Errorf("metrics: %s is already registered", name)
+		if r.metrics[i].definition() == m.definition() {
+			return r.metrics[i], nil
+		}
+		return nil, fmt.Errorf("metrics: %s is already registered with another definition", name)
 	}
 	r.metrics = append(r.metrics, nil)
 	copy(r.metrics[i+1:], r.metrics[i:])
 	r.metrics[i] = m
-	return nil
+	return m, nil
 }
 
 // NewCounter registers a counter. Its name ends in "_total". Every
@@ -153,11 +173,11 @@ func (r *Registry) NewCounter(name, help string, labels ...Label) (*Counter, err
 	if err != nil {
 		return nil, err
 	}
-	c := &Counter{f: f}
-	if err := r.register(c); err != nil {
+	m, err := r.register(&Counter{f: f})
+	if err != nil {
 		return nil, err
 	}
-	return c, nil
+	return m.(*Counter), nil
 }
 
 // NewGauge registers a gauge.
@@ -166,11 +186,11 @@ func (r *Registry) NewGauge(name, help string, labels ...Label) (*Gauge, error) 
 	if err != nil {
 		return nil, err
 	}
-	g := &Gauge{f: f}
-	if err := r.register(g); err != nil {
+	m, err := r.register(&Gauge{f: f})
+	if err != nil {
 		return nil, err
 	}
-	return g, nil
+	return m.(*Gauge), nil
 }
 
 // NewHistogram registers a histogram with the given bucket upper
@@ -187,11 +207,11 @@ func (r *Registry) NewHistogram(name, help string, buckets []float64, labels ...
 	if err != nil {
 		return nil, err
 	}
-	h := &Histogram{f: f, bounds: bounds}
-	if err := r.register(h); err != nil {
+	m, err := r.register(&Histogram{f: f, bounds: bounds})
+	if err != nil {
 		return nil, err
 	}
-	return h, nil
+	return m.(*Histogram), nil
 }
 
 // WriteText writes every metric in the text exposition format, version
