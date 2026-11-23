@@ -242,7 +242,10 @@ func startNetworkWith(t *testing.T, o netOptions) *network {
 	if err != nil {
 		t.Fatal(err)
 	}
-	hssRole := hss.New(*hssCfg.HSS, store, hssNode, quiet())
+	hssRole, err := hss.New(*hssCfg.HSS, store, hssNode, quiet())
+	if err != nil {
+		t.Fatal(err)
+	}
 	hssNode.Handle(hssRole.Handle)
 	server, err := hssNode.Listen("127.0.0.1:0")
 	if err != nil {

@@ -32,6 +32,16 @@ func init() {
 
 func quiet() *slog.Logger { return slog.New(slog.NewTextHandler(io.Discard, nil)) }
 
+// mustHSS is New with a registry of the HSS's own, which fails only
+// when that registry holds the measurements of another HSS.
+func mustHSS(cfg Config, store Store, node *diameter.Node) *HSS {
+	h, err := New(cfg, store, node, quiet())
+	if err != nil {
+		panic(err)
+	}
+	return h
+}
+
 func newTestHSS() *HSS {
 	store, err := NewMemoryStore(
 		Subscription{PrivateIdentity: impi, PublicIdentities: []string{impu}, Password: "test-password-1"},
@@ -41,11 +51,11 @@ func newTestHSS() *HSS {
 		panic(err)
 	}
 	node := diameter.NewNode(diameter.Identity{OriginHost: "hss." + realm, OriginRealm: realm}, []uint32{diameter.ApplicationIDCx}, diameter.Timers{}, quiet())
-	return New(Config{
+	return mustHSS(Config{
 		Realm:              realm,
 		VisitedNetworks:    []string{realm},
 		ServerCapabilities: cx.ServerCapabilities{MandatoryCapabilities: []uint32{1}},
-	}, store, node, quiet())
+	}, store, node)
 }
 
 var hdr = diameter.Header{SessionID: "s;1;1", OriginHost: "icscf." + realm, OriginRealm: realm, DestinationRealm: realm}
@@ -288,7 +298,7 @@ func TestBarredIdentity(t *testing.T) {
 		t.Fatal(err)
 	}
 	node := diameter.NewNode(diameter.Identity{OriginHost: "hss." + realm, OriginRealm: realm}, []uint32{diameter.ApplicationIDCx}, diameter.Timers{}, quiet())
-	h := New(Config{Realm: realm, VisitedNetworks: []string{realm}, ServerCapabilities: cx.ServerCapabilities{MandatoryCapabilities: []uint32{1}}}, store, node, quiet())
+	h := mustHSS(Config{Realm: realm, VisitedNetworks: []string{realm}, ServerCapabilities: cx.ServerCapabilities{MandatoryCapabilities: []uint32{1}}}, store, node)
 
 	if a := uar(t, h, volteIMPI, temporary, cx.Registration); a.Result != diameter.Experimental(cx.DiameterFirstRegistration) {
 		t.Errorf("UAA for the temporary identity = %+v, want FIRST_REGISTRATION", a.Result)

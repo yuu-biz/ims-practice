@@ -440,12 +440,15 @@ func startHSS(t *testing.T, cfg networkConfig) (*hss.HSS, []hssInstance) {
 			host = fmt.Sprintf("hss-%d.%s", i+1, domain)
 		}
 		node := diameter.NewNode(diameter.Identity{OriginHost: host, OriginRealm: domain}, []uint32{diameter.ApplicationIDCx}, timers, quiet())
-		role := hss.New(hss.Config{
+		role, err := hss.New(hss.Config{
 			Realm: domain, VisitedNetworks: []string{domain},
 			ServerCapabilities:    cx.ServerCapabilities{MandatoryCapabilities: []uint32{1}},
 			InitialFilterCriteria: cfg.criteria,
 			UserLocks:             locks,
 		}, store, node, quiet())
+		if err != nil {
+			t.Fatal(err)
+		}
 		node.Handle(role.Handle)
 		server, err := node.Listen("127.0.0.1:0")
 		if err != nil {

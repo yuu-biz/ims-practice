@@ -24,7 +24,7 @@ func TestEverySubscriptionGetsTheConfiguredCriteria(t *testing.T) {
 		t.Fatal(err)
 	}
 	node := diameter.NewNode(diameter.Identity{OriginHost: "hss." + realm, OriginRealm: realm}, []uint32{diameter.ApplicationIDCx}, diameter.Timers{}, quiet())
-	h := New(Config{Realm: realm, VisitedNetworks: []string{realm}, InitialFilterCriteria: []ifc.InitialFilterCriteria{register}}, store, node, quiet())
+	h := mustHSS(Config{Realm: realm, VisitedNetworks: []string{realm}, InitialFilterCriteria: []ifc.InitialFilterCriteria{register}}, store, node)
 	added := `{"private_identity": "` + otherImp + `", "public_identities": ["sip:001010000000002@` + realm + `"], "password": "p"}`
 	if w := do(t, h.Provisioning(&fakeSCSCFs{}), "POST", "/subscriptions", added); w.Code != http.StatusCreated {
 		t.Fatalf("POST: %d %s", w.Code, w.Body)

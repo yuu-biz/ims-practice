@@ -131,7 +131,10 @@ func run(configPath string, log *slog.Logger, level *slog.LevelVar) error {
 			}
 			hssConfig := *cfg.HSS
 			hssConfig.UserLocks = stores.locks(config.RoleHSS, roleLog)
-			hssRole = hss.New(hssConfig, store, node, roleLog)
+			hssConfig.Metrics = registry
+			if hssRole, err = hss.New(hssConfig, store, node, roleLog); err != nil {
+				return err
+			}
 		}
 		if cfg.EPC != nil {
 			epcRole = epc.New(cfg.EPC.Config, epc.NewMemoryStore(), node, log.With("role", config.RoleEPC))

@@ -94,7 +94,10 @@ func TestCxHandlerSendsEachRequestToItsRole(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	hssRole := hss.New(hss.Config{Realm: domain, VisitedNetworks: []string{domain}}, store, node, quiet())
+	hssRole, err := hss.New(hss.Config{Realm: domain, VisitedNetworks: []string{domain}}, store, node, quiet())
+	if err != nil {
+		t.Fatal(err)
+	}
 	s, err := scscf.New(scscf.Config{ServerName: "sip:scscf." + domain + ":5060", HomeDomain: domain}, nil, node, scscf.NewMemoryStore(), nil, quiet())
 	if err != nil {
 		t.Fatal(err)
@@ -180,7 +183,10 @@ func TestDiameterHandlerSendsRxToTheEPCRole(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	hssRole := hss.New(hss.Config{Realm: domain, VisitedNetworks: []string{domain}}, store, node, quiet())
+	hssRole, err := hss.New(hss.Config{Realm: domain, VisitedNetworks: []string{domain}}, store, node, quiet())
+	if err != nil {
+		t.Fatal(err)
+	}
 	aar := rx.AARequest{Header: diameter.NewHeader(node, "", domain), MediaComponents: []policy.MediaComponent{policy.SignallingComponent()},
 		FramedIPAddress: netip.MustParseAddr("172.28.0.110")}.Message()
 	uar := cx.UserAuthorizationRequest{

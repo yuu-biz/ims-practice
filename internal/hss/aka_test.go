@@ -39,7 +39,7 @@ func newAKAHSS(t *testing.T, subs ...Subscription) *HSS {
 
 func newHSSOn(store Store) *HSS {
 	node := diameter.NewNode(diameter.Identity{OriginHost: "hss." + realm, OriginRealm: realm}, []uint32{diameter.ApplicationIDCx}, diameter.Timers{}, quiet())
-	return New(Config{Realm: realm, VisitedNetworks: []string{realm}}, store, node, quiet())
+	return mustHSS(Config{Realm: realm, VisitedNetworks: []string{realm}}, store, node)
 }
 
 func akaMAR(t *testing.T, h *HSS, scheme, server string, resync *cx.Resynchronization) cx.MultimediaAuthAnswer {
@@ -251,7 +251,7 @@ func TestAKAOverDiameter(t *testing.T) {
 	hssID := diameter.Identity{OriginHost: "hss." + realm, OriginRealm: realm}
 	timers := diameter.Timers{Watchdog: time.Minute, Reconnect: time.Second, Answer: 2 * time.Second}
 	hssNode := diameter.NewNode(hssID, []uint32{diameter.ApplicationIDCx}, timers, quiet())
-	h := New(Config{Realm: realm, VisitedNetworks: []string{realm}}, store, hssNode, quiet())
+	h := mustHSS(Config{Realm: realm, VisitedNetworks: []string{realm}}, store, hssNode)
 	hssNode.Handle(h.Handle)
 	server, err := hssNode.Listen("127.0.0.1:0")
 	if err != nil {
