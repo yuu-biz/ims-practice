@@ -13,7 +13,7 @@ AI エージェント（Claude Code、Codex、Cursor など）がこのリポジ
 - [docs/unverified-clauses.md](docs/unverified-clauses.md)。条項を確かめられなかった記述の一覧。
 - [CONTRIBUTING.md](CONTRIBUTING.md)。Issue、ブランチ、コミット、PR のルール。
 
-できているのは、登録、音声通話、ラボ、SMS、VoLTE（EPC スタブ、IMS-AKA、Rx、プリコンディション）、付加サービス（MMTel AS、Ut）、MRF（音声ガイダンス、CAT、3 者会議）、2 つの網の相互接続です。UE シミュレータが登録、発着信、SMS の送受信、Ut での付加サービスの設定をでき、その信号をキャプチャとラボで見られます。冗長構成、H.248、5GC（VoNR）、SMS over NAS、OAM、Kubernetes、クラウド、スライドは、部品や一部ができています。残っているものは [docs/roadmap.md](docs/roadmap.md) の「これから作るもの」にあります。Compose での動作確認は `scripts/e2e-diameter.sh`（Diameter の接続）、`scripts/e2e-registration.sh`（登録）、`scripts/e2e-call.sh`（通話）、`scripts/e2e-lab.sh`（ラボ）、`scripts/e2e-sms.sh`（SMS）、`scripts/e2e-volte.sh`（IMS-AKA と VoLTE の通話）、`scripts/e2e-mmtel.sh`（付加サービス）、`scripts/e2e-mrf.sh`（MRF）、`scripts/e2e-interconnect.sh`（2 つの網の相互接続）で行います。
+できているのは、登録、音声通話、ラボ、SMS、VoLTE（EPC スタブ、IMS-AKA、Rx、プリコンディション）、付加サービス（MMTel AS、Ut）、MRF（音声ガイダンス、CAT、3 者会議）、2 つの網の相互接続です。UE シミュレータが登録、発着信、SMS の送受信、Ut での付加サービスの設定をでき、その信号をキャプチャとラボで見られます。冗長構成、H.248、5GC（VoNR）、SMS over NAS、OAM、Kubernetes、クラウド、スライドは、部品や一部ができています。残っているものは [docs/roadmap.md](docs/roadmap.md) の「これから作るもの」にあります。Compose での動作確認は `scripts/e2e-diameter.sh`（Diameter の接続）、`scripts/e2e-registration.sh`（登録）、`scripts/e2e-admission.sh`（収容の方針）、`scripts/e2e-call.sh`（通話）、`scripts/e2e-lab.sh`（ラボ）、`scripts/e2e-sms.sh`（SMS）、`scripts/e2e-volte.sh`（IMS-AKA と VoLTE の通話）、`scripts/e2e-mmtel.sh`（付加サービス）、`scripts/e2e-mrf.sh`（MRF）、`scripts/e2e-interconnect.sh`（2 つの網の相互接続）で行います。
 
 ## ビルドと試験のコマンド
 
