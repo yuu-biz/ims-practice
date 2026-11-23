@@ -32,6 +32,11 @@ type failingStore struct {
 	mu      sync.Mutex
 	all     bool
 	methods map[string]bool
+	// failures counts, per operation, the calls that failed.
+	failures map[string]int
+	// done counts, per kind, the expiries whose handling the sweep
+	// finished: it marks one done once its handler has returned.
+	done map[ExpiryKind]int
 }
 
 var errUnreachable = errors.New("the store cannot be reached")
@@ -67,11 +72,42 @@ func (s *failingStore) fail(methods ...string) {
 // repair ends what fail began.
 func (s *failingStore) repair() { s.fail("none") }
 
-// down reports whether method fails.
+// down reports whether method fails, and counts the failure.
 func (s *failingStore) down(method string) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.all || s.methods[method]
+	if !s.all && !s.methods[method] {
+		return false
+	}
+	if s.failures == nil {
+		s.failures = map[string]int{}
+	}
+	s.failures[method]++
+	return true
+}
+
+// failed tells how many calls of method have failed.
+func (s *failingStore) failed(method string) int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.failures[method]
+}
+
+func (s *failingStore) Done(ctx context.Context, e Expiry) error {
+	s.mu.Lock()
+	if s.done == nil {
+		s.done = map[ExpiryKind]int{}
+	}
+	s.done[e.Kind]++
+	s.mu.Unlock()
+	return s.MemoryStore.Done(ctx, e)
+}
+
+// handled tells how many expiries of kind the sweep has handled.
+func (s *failingStore) handled(kind ExpiryKind) int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.done[kind]
 }
 
 func (s *failingStore) Challenge(ctx context.Context, privateID string) (Challenge, bool, error) {
@@ -391,9 +427,13 @@ func TestAnExpiryIsClaimedAgainWhenTheStoreFails(t *testing.T) {
 		t.Fatalf("registration got %d", r.StatusCode)
 	}
 	// The registration expires while no handler can read it, so every
-	// instance that claims its expiry gives up.
+	// instance that claims its expiry gives up. The second read that
+	// fails is the expiry claimed again, once the first claim ran out.
 	h.failing.fail("Registration")
-	time.Sleep(time.Second + 3*lease)
+	if !came(3*time.Second, func() bool { return h.failing.failed("Registration") >= 2 }) {
+		t.Fatalf("the expiry was claimed %d times within 3 s, want it claimed again after its lease of %v",
+			h.failing.failed("Registration"), lease)
+	}
 	if got := h.hss.assignments(); !slices.Equal(got, []cx.ServerAssignmentType{cx.AssignRegistration}) {
 		t.Fatalf("SARs while the store fails = %v, want only the one of the registration", got)
 	}

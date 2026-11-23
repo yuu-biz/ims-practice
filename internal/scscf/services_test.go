@@ -190,13 +190,11 @@ func TestThirdPartyRegisterThatFails(t *testing.T) {
 					t.Errorf("second third-party REGISTER has Expires %q, want the deregistration", m.Get("Expires"))
 				}
 			}
-			deadline := time.Now().Add(3 * time.Second)
-			for !slices.Equal(h.hss.assignments(), want) && time.Now().Before(deadline) {
-				time.Sleep(20 * time.Millisecond)
-			}
-			time.Sleep(100 * time.Millisecond)
+			// The SAR of SESSION_TERMINATED comes within watch, and the same
+			// watch sees none come for SESSION_CONTINUED.
+			came(watch, func() bool { return len(h.hss.assignments()) > 1 })
 			if got := h.hss.assignments(); !slices.Equal(got, want) {
-				t.Errorf("SARs = %v, want %v", got, want)
+				t.Errorf("SARs within %v = %v, want %v", watch, got, want)
 			}
 			// A call of the user goes on to the I-CSCF while the user is
 			// registered, and gets 403 once it is not.
