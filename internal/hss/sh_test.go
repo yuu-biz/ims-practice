@@ -13,6 +13,7 @@ import (
 
 	"github.com/yuu-biz/ims-practice/internal/cx"
 	"github.com/yuu-biz/ims-practice/internal/diameter"
+	"github.com/yuu-biz/ims-practice/internal/sgd"
 	"github.com/yuu-biz/ims-practice/internal/sh"
 )
 
@@ -27,9 +28,10 @@ const (
 // shNetwork is the HSS listening for Diameter with Cx and Sh, and an
 // IP-SM-GW connected to it with Sh only, as the two roles would run.
 type shNetwork struct {
-	hss  *HSS
-	node *diameter.Node // the IP-SM-GW's
-	peer *diameter.Peer // its connection to the HSS
+	hss    *HSS
+	node   *diameter.Node   // the IP-SM-GW's
+	peer   *diameter.Peer   // its connection to the HSS
+	server *diameter.Server // the HSS's listener, which the SC also connects to
 }
 
 func newShNetwork(t *testing.T) shNetwork {
@@ -48,7 +50,7 @@ func newShNetworkWith(t *testing.T, subscriptions ...Subscription) shNetwork {
 	}
 	timers := diameter.Timers{Watchdog: time.Minute, Reconnect: 50 * time.Millisecond, Answer: 2 * time.Second}
 	hssNode := diameter.NewNode(diameter.Identity{OriginHost: "hss." + realm, OriginRealm: realm},
-		[]uint32{diameter.ApplicationIDCx, diameter.ApplicationIDSh}, timers, quiet())
+		[]uint32{diameter.ApplicationIDCx, diameter.ApplicationIDSh, sgd.ApplicationIDS6c}, timers, quiet())
 	h := mustHSS(Config{Realm: realm, VisitedNetworks: []string{realm}}, store, hssNode)
 	hssNode.Handle(h.Handle)
 	server, err := hssNode.Listen("127.0.0.1:0")
@@ -60,7 +62,7 @@ func newShNetworkWith(t *testing.T, subscriptions ...Subscription) shNetwork {
 		[]uint32{diameter.ApplicationIDSh}, timers, quiet())
 	peer := node.Connect(diameter.PeerConfig{Address: server.Addr(), OriginHost: "hss." + realm})
 	t.Cleanup(peer.Stop)
-	return shNetwork{hss: h, node: node, peer: peer}
+	return shNetwork{hss: h, node: node, peer: peer, server: server}
 }
 
 // request sends m to the HSS, waiting for the CER/CEA if the

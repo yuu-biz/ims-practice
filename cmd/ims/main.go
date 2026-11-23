@@ -59,6 +59,7 @@ import (
 	"github.com/yuu-biz/ims-practice/internal/rx"
 	"github.com/yuu-biz/ims-practice/internal/sc"
 	"github.com/yuu-biz/ims-practice/internal/scscf"
+	"github.com/yuu-biz/ims-practice/internal/sgd"
 	"github.com/yuu-biz/ims-practice/internal/sh"
 	"github.com/yuu-biz/ims-practice/internal/sip"
 	"github.com/yuu-biz/ims-practice/internal/sipdns"
@@ -89,6 +90,12 @@ func run(configPath string, log *slog.Logger, level *slog.LevelVar) error {
 	}
 	if err := diameter.LoadDictionary(); err != nil {
 		return err
+	}
+	applications := diameterApplications(cfg)
+	if slices.Contains(applications, sgd.ApplicationIDS6c) || slices.Contains(applications, sgd.ApplicationIDSGd) {
+		if err := sgd.LoadDictionary(); err != nil {
+			return err
+		}
 	}
 
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGTERM, os.Interrupt)
@@ -122,7 +129,7 @@ func run(configPath string, log *slog.Logger, level *slog.LevelVar) error {
 	// the S-CSCF it is made after its peer, so the handler finds it here.
 	var policyControl atomic.Pointer[rx.Client]
 	if d := cfg.Diameter; d != nil {
-		node = diameter.NewNode(d.Identity, diameterApplications(cfg), d.Timers, log)
+		node = diameter.NewNode(d.Identity, applications, d.Timers, log)
 		node.Observe(agent.Diameter(diameterNodeName(cfg)))
 		if cfg.HSS != nil {
 			roleLog := log.With("role", config.RoleHSS)
@@ -801,7 +808,10 @@ func startIBCF(homeDomain string, c config.IBCF, store ibcf.Store, locator ims.L
 
 // roleApplications are the Diameter applications each role speaks.
 var roleApplications = map[config.Role][]uint32{
-	config.RoleHSS:   {diameter.ApplicationIDCx, diameter.ApplicationIDSh},
+	// The HSS answers the routing info query and the delivery status
+	// report of the SMS central functions over S6c, and alerts them over
+	// it.
+	config.RoleHSS:   {diameter.ApplicationIDCx, diameter.ApplicationIDSh, sgd.ApplicationIDS6c},
 	config.RoleICSCF: {diameter.ApplicationIDCx},
 	config.RoleSCSCF: {diameter.ApplicationIDCx},
 	// The IP-SM-GW registers itself and finds users over Sh.

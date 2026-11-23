@@ -46,9 +46,10 @@
 // stores), and MWD-Status and the absent user diagnostics (what the HSS
 // has stored about earlier deliveries that failed). The SC of package
 // smsc, which uses this package, sends none of these AVPs and acts on
-// none of them.
+// none of them, and so does the HSS of package hss on its side of S6c.
 //
-// No node of this project runs it: no binary in cmd builds it in.
+// The hss role speaks S6c with this package. SGd has no role yet: no
+// binary in cmd builds in the SC that would take an OFR or send a TFR.
 package sgd
 
 import (

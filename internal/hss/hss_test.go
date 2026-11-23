@@ -13,6 +13,7 @@ import (
 	"github.com/yuu-biz/ims-practice/internal/cx"
 	"github.com/yuu-biz/ims-practice/internal/diameter"
 	"github.com/yuu-biz/ims-practice/internal/ifc"
+	"github.com/yuu-biz/ims-practice/internal/sgd"
 )
 
 const (
@@ -26,6 +27,9 @@ const (
 
 func init() {
 	if err := diameter.LoadDictionary(); err != nil {
+		panic(err)
+	}
+	if err := sgd.LoadDictionary(); err != nil {
 		panic(err)
 	}
 }
