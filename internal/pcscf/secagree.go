@@ -221,8 +221,9 @@ func (p *PCSCF) pathURIOf(a Association) (string, error) {
 // The SA table is in the Store, which several P-CSCFs may share, and a
 // UE's entry changes with each registration, through whichever of them
 // it goes. So the P-CSCF reads the entry for each request. The stack
-// asks Admit off its loop, so the read holds up only the later requests
-// from the same source.
+// asks Admit off its loop, and about the requests with different
+// Call-IDs side by side, so the read holds up only the later requests
+// with the same Call-ID from the same source.
 func (p *PCSCF) AdmitUnprotected(req *sip.Message, source sip.Destination) bool {
 	if req.Method == sip.REGISTER {
 		return true

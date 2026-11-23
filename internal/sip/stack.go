@@ -31,7 +31,8 @@ type Config struct {
 	OnACK func(ack *Message)
 	// Ordered has the stack call OnRequest and OnACK one after the
 	// other, in the order the requests arrived, instead of each in a
-	// goroutine of its own. The callbacks then must return at once, and
+	// goroutine of its own; with Admit, that order holds for the requests
+	// of each Call-ID from a source. The callbacks then must return at once, and
 	// start a goroutine themselves for whatever takes time. A UA sets
 	// it: the requests within a dialog count on their order (RFC 3261
 	// 12.2.2), and a peer may send two of them back to back.
@@ -77,16 +78,22 @@ type Config struct {
 	// copy let in after another has started the transaction counts as
 	// its retransmission.
 	//
-	// Admit is asked about the requests from one source, the same
-	// transport and address, one at a time and in the order they
-	// arrived, and the stack takes them up in that order. A CANCEL thus
-	// finds the INVITE it cancels (RFC 3261 9.2), and with Ordered the
-	// TU sees the requests from a source in the order they arrived, the
-	// ACK for a 2xx before a BYE that follows it. While Admit waits over
-	// one request, the later ones from its source wait too, so it should
-	// answer soon. At most maxAdmitQueue requests from a source wait;
-	// the stack drops any more, sends nothing back and logs it. Admit
-	// must not change req.
+	// Admit is asked about the requests with the same Call-ID from one
+	// source, the same transport and address, one at a time and in the
+	// order they arrived, and the stack takes them up in that order. A
+	// CANCEL has the Call-ID of the INVITE it cancels (RFC 3261 9.1), so
+	// it finds that INVITE (9.2), and the requests of a dialog have its
+	// Call-ID (12), so with Ordered the TU sees them in the order they
+	// arrived, the ACK for a 2xx before a BYE that follows it. While
+	// Admit waits over one request, the later ones with its Call-ID from
+	// its source wait too, so it should answer soon. Those with other
+	// Call-IDs do not wait for it, so that the requests of many users
+	// that a node of the network sends from one address do not queue up
+	// behind one another. Admit may thus be called for several requests
+	// at once, from one source or from several. At most maxAdmitQueue
+	// requests from a source wait, whatever their Call-IDs; the stack
+	// drops any more, sends nothing back and logs it. Admit must not
+	// change req.
 	Admit func(req *Message, source Destination) bool
 }
 
@@ -141,9 +148,8 @@ type Stack struct {
 	cancellable map[cancelKey]*serverEntry
 	timerSeq    uint64
 	// admitting holds, for each source with a request in Config.Admit,
-	// that request and then the requests from the source that came
-	// after it.
-	admitting map[Destination][]*Message
+	// the requests from it that wait for Admit.
+	admitting map[Destination]*admitQueue
 	// forTU are the calls that wait for toTU. The loop never waits for
 	// the TU, so they queue up here.
 	forTU []func()
@@ -221,7 +227,7 @@ func NewStack(transport *TransportLayer, cfg Config, log *slog.Logger) (*Stack, 
 		clients:     map[clientKey]*clientEntry{},
 		servers:     map[serverKey]*serverEntry{},
 		cancellable: map[cancelKey]*serverEntry{},
-		admitting:   map[Destination][]*Message{},
+		admitting:   map[Destination]*admitQueue{},
 	}
 	s.cfg.SentBy = joinHostPort(host, port)
 	s.wg.Add(2)
@@ -238,8 +244,8 @@ func NewStack(transport *TransportLayer, cfg Config, log *slog.Logger) (*Stack, 
 func (s *Stack) LocalAddr() netip.AddrPort { return s.transport.LocalAddr() }
 
 // Close stops the stack and its transport. Client transactions still
-// running end with ErrStackClosed. Close returns once a call of
-// Config.Admit under way has returned, so that the node may then close
+// running end with ErrStackClosed. Close returns once the calls of
+// Config.Admit under way have returned, so that the node may then close
 // what Admit reads, and drops the requests that wait for Admit.
 func (s *Stack) Close() {
 	s.closeOnce.Do(func() {
@@ -514,8 +520,8 @@ type (
 		msg    *Message
 		source Destination
 	}
-	// admitDecided is the answer of Config.Admit about the first
-	// request in Stack.admitting of source.
+	// admitDecided is the answer of Config.Admit about req, the first
+	// request with its Call-ID in the admitQueue of source.
 	admitDecided struct {
 		req      *Message
 		source   Destination
@@ -859,13 +865,26 @@ func (s *Stack) receiveACK(ack *Message, v Via, source Destination, admitted boo
 }
 
 // maxAdmitQueue bounds the requests from one source that wait for
-// Config.Admit, the one it is deciding on included, so that a flood from
-// one address piles up no more than this while Admit waits for a slow
-// store. A node of the network is one source for all of its requests,
-// such as the NOTIFYs of the reg event for many UEs at once, so the
-// bound leaves room for a burst of them; a request dropped over TCP is
-// not sent again before its client transaction times out.
+// Config.Admit, whatever their Call-IDs, the ones it is deciding on
+// included. A flood from one address thus piles up no more than this,
+// and starts no more calls of Admit at once, while Admit waits for a
+// slow store. A node of the network is one source for all of its
+// requests, such as the NOTIFYs of the reg event for many UEs at once,
+// so the bound leaves room for a burst of them; a request dropped over
+// TCP is not sent again before its client transaction times out.
 var maxAdmitQueue = 512
+
+// admitQueue is what waits for Config.Admit from one source: the
+// requests with each Call-ID in the order they arrived, Admit deciding
+// on the first of each. A Call-ID leaves byCallID once Admit has
+// decided on its last request, and the source leaves Stack.admitting
+// with its last Call-ID, so neither map keeps what no longer waits.
+type admitQueue struct {
+	byCallID map[string][]*Message
+	// waiting is how many requests byCallID holds in all, which
+	// maxAdmitQueue bounds.
+	waiting int
+}
 
 // admits tells whether req may go on at once. A request that
 // Config.Screen lets in goes to Config.Admit, when there is one, and
@@ -878,14 +897,21 @@ func (s *Stack) admits(req *Message, source Destination) bool {
 	if s.cfg.Admit == nil {
 		return true
 	}
-	waiting := s.admitting[source]
-	if len(waiting) == maxAdmitQueue {
+	q := s.admitting[source]
+	if q == nil {
+		q = &admitQueue{byCallID: map[string][]*Message{}}
+		s.admitting[source] = q
+	}
+	if q.waiting == maxAdmitQueue {
 		s.log.Warn("dropped request since too many from its source wait for admission",
 			"method", string(req.Method), "src", source.String())
 		return false
 	}
-	s.admitting[source] = append(waiting, req)
-	if len(waiting) == 0 {
+	q.waiting++
+	callID := req.Get("Call-ID")
+	earlier := q.byCallID[callID]
+	q.byCallID[callID] = append(earlier, req)
+	if len(earlier) == 0 {
 		s.askAdmit(req, source)
 	}
 	return false
@@ -902,19 +928,26 @@ func (s *Stack) askAdmit(req *Message, source Destination) {
 }
 
 // receiveAdmitDecision takes up the request that Config.Admit has
-// decided on, and then asks Admit about the next request from the same
-// source.
+// decided on, and then asks Admit about the next request with the same
+// Call-ID from the same source.
 func (s *Stack) receiveAdmitDecision(in admitDecided) {
+	// Read before receiveRequest hands the request to the TU, which
+	// runs in a goroutine of its own.
+	callID := in.req.Get("Call-ID")
 	if in.admitted {
 		s.receiveRequest(in.req, in.source, true)
 	}
-	waiting := s.admitting[in.source][1:]
-	if len(waiting) == 0 {
-		delete(s.admitting, in.source)
+	q := s.admitting[in.source]
+	q.waiting--
+	if later := q.byCallID[callID][1:]; len(later) > 0 {
+		q.byCallID[callID] = later
+		s.askAdmit(later[0], in.source)
 		return
 	}
-	s.admitting[in.source] = waiting
-	s.askAdmit(waiting[0], in.source)
+	delete(q.byCallID, callID)
+	if q.waiting == 0 {
+		delete(s.admitting, in.source)
+	}
 }
 
 func (s *Stack) passACKToTU(ack *Message) {
