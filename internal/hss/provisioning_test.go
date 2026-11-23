@@ -901,6 +901,171 @@ func TestProvisioningPutThatKeepsLosingTheSwap(t *testing.T) {
 	}
 }
 
+// TestProvisioningPatchesTheMarkAndTheProfile: a PATCH changes the mark
+// and the service profile name of a subscription and leaves the rest of
+// it alone. A field the body leaves out stays as it is, so each one
+// changes on its own and a body of {} changes nothing. The criteria that
+// the SAA carries follow the name the PATCH leaves behind.
+func TestProvisioningPatchesTheMarkAndTheProfile(t *testing.T) {
+	// One criterion per profile, each naming an application server of its
+	// own, so that the SAA says which profile the subscription has.
+	profile := func(server string) []ifc.InitialFilterCriteria {
+		return []ifc.InitialFilterCriteria{{
+			TriggerPoint:      &ifc.TriggerPoint{SPT: []ifc.SPT{{Group: []int{0}, Method: "INVITE"}}},
+			ApplicationServer: ifc.ApplicationServer{ServerName: "sip:" + server + "." + realm + ":5060"},
+		}}
+	}
+	h := newTestHSS()
+	h.config.ServiceProfiles = map[string][]ifc.InitialFilterCriteria{
+		"default": profile("mmtel"), "trial": profile("trial"), "cdiv": profile("cdiv")}
+	h.config.DefaultServiceProfile, h.config.TestUserServiceProfile = "default", "trial"
+	api := h.Provisioning(&fakeSCSCFs{})
+
+	for _, c := range []struct {
+		name, body  string
+		testUser    bool
+		profileName string
+		// server names the profile the SAA then carries: the one of the
+		// subscription, else the one of its kind of user.
+		server string
+	}{
+		{"both fields", `{"test_user": true, "service_profile": "cdiv"}`, true, "cdiv", "cdiv"},
+		{"an empty body, which changes nothing", `{}`, true, "cdiv", "cdiv"},
+		{"the profile name alone, back to the one of a test user", `{"service_profile": ""}`, true, "", "trial"},
+		{"the mark alone", `{"test_user": false}`, false, "", "mmtel"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			w := do(t, api, "PATCH", "/subscriptions/"+impi, c.body)
+			if w.Code != http.StatusOK {
+				t.Fatalf("PATCH: %d %s", w.Code, w.Body)
+			}
+			if got := decode[subscriptionResponse](t, w); got.TestUser != c.testUser || got.ServiceProfile != c.profileName {
+				t.Errorf("the answer: %+v", got)
+			}
+			got := decode[subscriptionResponse](t, do(t, api, "GET", "/subscriptions/"+impi, ""))
+			if got.TestUser != c.testUser || got.ServiceProfile != c.profileName {
+				t.Errorf("GET after the PATCH: %+v", got)
+			}
+			if len(got.PublicIdentities) != 1 || got.PublicIdentities[0] != impu {
+				t.Errorf("the public identities after the PATCH: %v", got.PublicIdentities)
+			}
+			server, want := saaServer(t, h), "sip:"+c.server+"."+realm+":5060"
+			if server != want {
+				t.Errorf("the criterion of the SAA names %q, want the %q of the %s profile", server, want, c.server)
+			}
+		})
+	}
+}
+
+// saaServer is the application server of the one criterion that the
+// SAA of a registration carries for the subscription of impi, which
+// says which service profile the HSS chose for it.
+func saaServer(t *testing.T, h *HSS) string {
+	t.Helper()
+	a := sar(t, h, scscf, cx.AssignRegistration)
+	if !a.Result.Success() {
+		t.Fatalf("SAA: %+v", a)
+	}
+	got, err := cx.ParseUserProfile(a.UserData)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.InitialFilterCriteria) != 1 {
+		t.Fatalf("the SAA carries %d criteria, want 1", len(got.InitialFilterCriteria))
+	}
+	return got.InitialFilterCriteria[0].ApplicationServer.ServerName
+}
+
+// TestProvisioningPatchLeavesTheCredentials: a PATCH carries no
+// credentials, and the subscription answers afterwards with the ones it
+// had. That is why the API has a PATCH at all: the operator cannot read
+// the password or the AKA keys back to send them in a PUT (TS 29.228
+// Table 6.3.5 and Table 6.3.7), and SQN_HE is not theirs to send either.
+func TestProvisioningPatchLeavesTheCredentials(t *testing.T) {
+	h := newTestHSS()
+	h.config.ServiceProfiles = map[string][]ifc.InitialFilterCriteria{"default": nil, "trial": nil}
+	h.config.DefaultServiceProfile, h.config.TestUserServiceProfile = "default", "trial"
+	api := h.Provisioning(&fakeSCSCFs{})
+	body := `{"private_identity": "` + akaImpi + `", "public_identities": ["` + akaImpu + `"],
+		"password": "test-password-10",
+		"aka": {"k": "465b5ce8b199b49faa5f0a2ee238a6bc", "opc": "cd63cb71954a9f4e48a5994e37a02baf", "amf": "8000", "sqn": "000000000020"}}`
+	if w := do(t, api, "POST", "/subscriptions", body); w.Code != http.StatusCreated {
+		t.Fatalf("POST: %d %s", w.Code, w.Body)
+	}
+	// The user takes one vector, which moves SQN_HE on from the sqn that
+	// was provisioned.
+	before := akaMAR(t, h, cx.SchemeDigestAKAv1MD5, scscf, nil)
+	used := vectorSQN(t, before.AuthenticationVector)
+
+	w := do(t, api, "PATCH", "/subscriptions/"+akaImpi, `{"test_user": true, "service_profile": "trial"}`)
+	if w.Code != http.StatusOK {
+		t.Fatalf("PATCH: %d %s", w.Code, w.Body)
+	}
+	if got := decode[subscriptionResponse](t, w); !got.TestUser || got.ServiceProfile != "trial" {
+		t.Errorf("the answer: %+v", got)
+	}
+	if strings.Contains(w.Body.String(), "test-password-10") || strings.Contains(w.Body.String(), "465b5ce8") {
+		t.Errorf("the answer gives out a credential: %s", w.Body)
+	}
+
+	// The password is the one of the POST: the S-CSCF gets its H(A1).
+	digest := akaMAR(t, h, cx.SchemeSIPDigest, scscf, nil)
+	if d := digest.SIPDigestAuthenticate; d == nil || d.DigestHA1 != HA1(akaImpi, realm, "test-password-10") {
+		t.Errorf("the H(A1) after the PATCH: %+v", d)
+	}
+	// The keys are the ones of the POST, and SQN_HE is where the
+	// authentication left it: a USIM that has taken the vector from
+	// before the PATCH takes this one as well.
+	usim := aka.NewUSIM(akaSecret, used)
+	next := akaMAR(t, h, cx.SchemeDigestAKAv1MD5, scscf, nil)
+	if next.AuthenticationVector == nil {
+		t.Fatalf("MAA after the PATCH: %+v", next)
+	}
+	if _, err := usim.Authenticate(next.AuthenticationVector.RAND, next.AuthenticationVector.AUTN); err != nil {
+		t.Errorf("the USIM of the subscriber refuses the vector after the PATCH: %v", err)
+	}
+	if sqn := vectorSQN(t, next.AuthenticationVector); sqn <= used {
+		t.Errorf("the SQN of the vector after the PATCH = %d, want one above the %d already used", sqn, used)
+	}
+}
+
+// TestProvisioningPatchRefusesWhatItCannotStore: the subscription is
+// one the HSS has, the profile is one of the configuration, and a field
+// the API does not have is a mistake rather than a change that goes
+// quietly nowhere. Nothing is written for a request that is refused.
+func TestProvisioningPatchRefusesWhatItCannotStore(t *testing.T) {
+	h := newTestHSS()
+	h.config.ServiceProfiles = map[string][]ifc.InitialFilterCriteria{"default": nil, "trial": nil}
+	h.config.DefaultServiceProfile = "default"
+	api := h.Provisioning(&fakeSCSCFs{})
+	if w := do(t, api, "PATCH", "/subscriptions/"+impi, `{"test_user": true}`); w.Code != http.StatusOK {
+		t.Fatalf("PATCH: %d %s", w.Code, w.Body)
+	}
+	for _, c := range []struct {
+		name, impi, body string
+		status           int
+	}{
+		{"a subscription the HSS does not have", "001010000000009@" + realm, `{"test_user": false}`, http.StatusNotFound},
+		{"a profile that the configuration does not define", impi, `{"service_profile": "gold"}`, http.StatusBadRequest},
+		{"a field the API does not have", impi, `{"password": "p"}`, http.StatusBadRequest},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			if w := do(t, api, "PATCH", "/subscriptions/"+c.impi, c.body); w.Code != c.status {
+				t.Errorf("PATCH: %d %s, want %d", w.Code, w.Body, c.status)
+			}
+			if got := decode[subscriptionResponse](t, do(t, api, "GET", "/subscriptions/"+impi, "")); !got.TestUser || got.ServiceProfile != "" {
+				t.Errorf("the refused PATCH changed the subscription: %+v", got)
+			}
+		})
+	}
+	// A method that the path has no route for, which http.ServeMux
+	// answers with the methods it does have, the PATCH among them.
+	w := do(t, api, "POST", "/subscriptions/"+impi, "")
+	if w.Code != http.StatusMethodNotAllowed || !strings.Contains(w.Header().Get("Allow"), "PATCH") {
+		t.Errorf("POST of one subscription: %d, Allow %q", w.Code, w.Header().Get("Allow"))
+	}
+}
+
 // storedData is the repository data stored under serviceIndication,
 // which has to be there.
 func storedData(t *testing.T, h *HSS, privateID, serviceIndication string) sh.TransparentData {

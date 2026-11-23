@@ -191,6 +191,9 @@ func response(s Subscriber) subscriptionResponse {
 //	PUT    /subscriptions/{impi}[?dry_run=true]
 //	                               add one or replace the whole of it,
 //	                               from a subscriptionRequest
+//	PATCH  /subscriptions/{impi}   change its mark and its service
+//	                               profile name alone, from a
+//	                               subscriptionPatch
 //	DELETE /subscriptions/{impi}   remove one
 //	PUT    /subscriptions/{impi}/customized-alerting-tone
 //	                               provision or change its CAT, from
@@ -205,6 +208,7 @@ func (h *HSS) Provisioning(peers Peers) http.Handler {
 	mux.HandleFunc("GET /subscriptions/{impi}", h.getSubscription)
 	mux.HandleFunc("POST /subscriptions", h.addSubscription)
 	mux.HandleFunc("PUT /subscriptions/{impi}", h.putSubscription)
+	mux.HandleFunc("PATCH /subscriptions/{impi}", h.patchSubscription)
 	mux.HandleFunc("DELETE /subscriptions/{impi}", func(w http.ResponseWriter, r *http.Request) {
 		removed, err := h.removeSubscription(r.Context(), peers, r.PathValue("impi"))
 		switch {
@@ -695,6 +699,80 @@ func catOf(data []sh.TransparentData) *mmtel.CustomizedAlertingTone {
 		}
 	}
 	return nil
+}
+
+// subscriptionPatch is the body of a PATCH: the fields of a
+// subscription it can change. Each is a pointer, so that a field the
+// body leaves out stays as it is and a body of {} changes nothing.
+type subscriptionPatch struct {
+	TestUser       *bool   `json:"test_user"`
+	ServiceProfile *string `json:"service_profile"`
+}
+
+// patchSubscription changes the mark and the service profile name of a
+// subscription and nothing else. These two are what an operator can
+// change at all without the credentials of the subscription: the HSS
+// hands out neither the password nor the AKA keys (TS 29.228 Table
+// 6.3.5 and Table 6.3.7), so changing the mark with a PUT would mean
+// writing credentials the operator cannot read back.
+//
+// Neither field is an identity or a credential, so the request writes
+// the subscriber back with Put rather than Replace: no public identity
+// moves from one subscription to another, and Put keeps the credentials
+// and SQN_HE that are stored.
+func (h *HSS) patchSubscription(w http.ResponseWriter, r *http.Request) {
+	impi := r.PathValue("impi")
+	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxRequestBody))
+	dec.DisallowUnknownFields()
+	var patch subscriptionPatch
+	if err := dec.Decode(&patch); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if patch.ServiceProfile != nil {
+		if err := h.config.CheckServiceProfile(*patch.ServiceProfile); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+	}
+
+	ctx := r.Context()
+	// The lock is held over the read and the write, so that the change
+	// goes onto the subscriber the request has read and no Cx or Sh
+	// request of the user is halfway through one of its own.
+	unlock, err := h.lockSubscriber(impi)
+	if err != nil {
+		h.writeStoreFailure(w, err)
+		return
+	}
+	defer unlock()
+	s, ok, err := h.store.Subscriber(ctx, impi)
+	if err != nil {
+		h.writeStoreFailure(w, err)
+		return
+	}
+	if !ok {
+		http.Error(w, "no such subscription", http.StatusNotFound)
+		return
+	}
+	if patch.TestUser != nil {
+		s.TestUser = *patch.TestUser
+	}
+	if patch.ServiceProfile != nil {
+		s.ServiceProfile = *patch.ServiceProfile
+	}
+	if err := h.store.Put(ctx, s); err != nil {
+		h.writeStoreFailure(w, err)
+		return
+	}
+	h.log.Info("subscription changed", "private_identity", s.PrivateIdentity,
+		"test_user", s.TestUser, "service_profile", s.ServiceProfile)
+	resp, err := h.responseWithCAT(ctx, s)
+	if err != nil {
+		h.writeStoreFailure(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, resp)
 }
 
 // writeAddFailure answers a request that would have given a public
