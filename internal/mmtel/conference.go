@@ -8,6 +8,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 	"uuid"
 
@@ -156,6 +157,11 @@ type conference struct {
 	route []string
 	log   *slog.Logger
 
+	// anonymous counts the participants whose identity the focus has
+	// withheld, which names each of them by an anonymous URI of its own
+	// (participant).
+	anonymous atomic.Uint32
+
 	mu     sync.Mutex
 	record ConferenceRecord
 	// parties are the participants of the record, in its order: parties[i]
@@ -284,7 +290,7 @@ func (c *call) createConference() {
 		return
 	}
 	as.conferences.Store(id, f)
-	f.admit(c.in, &party{media: media, creator: true}, final, assertedUser(req, c.served.URI))
+	f.admit(c.in, &party{media: media, creator: true}, final, f.participant(req, c.served.URI, confinfo.DialedIn))
 }
 
 // joinConference is TS 24.147 5.3.2.4.1: an INVITE to a conference URI
@@ -303,17 +309,13 @@ func (c *call) createConference() {
 // where the INVITE came from: TS 24.229 5.7.1.4 b i counts on the
 // P-Asserted-Identity of a user inside the trust domain (4.4), and a
 // UAS uses none from a node that it does not trust (RFC 3325 8). It
-// names a user who asks for privacy, with Privacy id or user, by that
-// identity in the conference state that the subscribers get, where TS
-// 24.229 5.7.1.4 a takes the user as anonymous and TS 24.605 4.6.5
-// keeps the identity of a user with OIR out of the notifications. It
 // has no conference policy (TS 24.147 4): any user may join while the
 // conference has room, whether or not the user has been in it before.
-// And it answers a request without P-Asserted-Identity with 403, not
-// with the challenge of TS 24.229 5.7.1.4 b ii. The AS holds no
-// credentials of users, and gives no participant an anonymous URI (RFC
-// 4575 5.6). In the networks of this project, every request reaches
-// the focus with the identity that a P-CSCF or a trusted peer asserted.
+// And it answers a request that asks for no privacy and has no
+// P-Asserted-Identity with 403, not with the challenge of TS 24.229
+// 5.7.1.4 b ii; the AS holds no credentials of users. In the networks
+// of this project, every request reaches the focus with the identity
+// that a P-CSCF or a trusted peer asserted.
 func (as *AS) joinConference(in *sip.IncomingCall, log *slog.Logger) {
 	req := in.Request
 	f := as.conferenceAt(req.RequestURI)
@@ -323,7 +325,13 @@ func (as *AS) joinConference(in *sip.IncomingCall, log *slog.Logger) {
 		in.Reject(404)
 		return
 	}
-	user := assertedUser(req, "")
+	// TS 24.229 5.7.1.4: a request that asks for privacy is anonymous and
+	// needs no identity of its own (item a); one that asks for none and
+	// has no P-Asserted-Identity leaves the focus with no identity for
+	// the user (item b ii). The focus logs and tells the subscribers the
+	// name that the conference state uses, not the identity behind it.
+	who := f.participant(req, "", confinfo.DialedIn)
+	user := who.Entity()
 	if user == "" {
 		f.log.Info("INVITE to the conference without an asserted identity")
 		in.Reject(403, as.warning("No asserted identity"))
@@ -357,16 +365,16 @@ func (as *AS) joinConference(in *sip.IncomingCall, log *slog.Logger) {
 		return
 	default:
 	}
-	f.admit(in, &party{media: media}, final, user)
+	f.admit(in, &party{media: media}, final, who)
 }
 
 // admit answers the INVITE of in once the mixer has through-connected
 // the user's media: with the answer of final, the 200 of the MRFC, and
 // the conference URI with isfocus as Contact (TS 24.147 5.3.2.3.1 and
 // 5.3.2.4.1), and the charging vector of 5.3.2.2.2. The
-// user, whose identity is user, is then participant p, dialed in, until
-// its dialog ends.
-func (f *conference) admit(in *sip.IncomingCall, p *party, final *sip.Message, user string) {
+// user, which the conference state knows as info, is then participant
+// p, dialed in, until its dialog ends.
+func (f *conference) admit(in *sip.IncomingCall, p *party, final *sip.Message, info confinfo.Participant) {
 	req := in.Request
 	p.leg = in
 	in.Handle(f.handle(p))
@@ -378,8 +386,8 @@ func (f *conference) admit(in *sip.IncomingCall, p *party, final *sip.Message, u
 	// The 200 gives the user the conference URI, to which it subscribes
 	// (IR.92 2.3.3) as soon as it has it, maybe before the focus has the
 	// ACK. The user is in the conference by then.
-	if no := f.join(p, confinfo.Participant{User: user, Status: confinfo.Connected, JoiningMethod: confinfo.DialedIn}); no != nil {
-		f.log.Info("user not taken into the conference", "user", user, "reason", no.text)
+	if no := f.join(p, info); no != nil {
+		f.log.Info("user not taken into the conference", "user", info.Entity(), "reason", no.text)
 		p.media.Bye()
 		in.Reject(no.code, f.as.warning(no.text))
 		if p.creator {
@@ -482,7 +490,7 @@ func (f *conference) join(p *party, info confinfo.Participant) *refusal {
 	if info.DisplayText == "" {
 		// GSMA IR.92 2.3.3: without a display text, the user's entity
 		// stands in for it, so that every participant can be told apart.
-		info.DisplayText = info.User
+		info.DisplayText = info.Entity()
 	}
 	// RFC 4575 5.7: the focus makes the key of each endpoint, unique
 	// among those of the user, and may take the Contact or a GRUU for
@@ -505,11 +513,11 @@ func (f *conference) join(p *party, info confinfo.Participant) *refusal {
 		f.parties = f.parties[:len(f.parties)-1]
 		f.record.Participants = f.record.Participants[:len(f.record.Participants)-1]
 		f.mu.Unlock()
-		f.log.Warn("participant not stored", "user", info.User, "error", err.Error())
+		f.log.Warn("participant not stored", "user", info.Entity(), "error", err.Error())
 		return conferenceNotStored
 	}
 	f.mu.Unlock()
-	f.log.Info("participant joined", "user", info.User, "joining_method", string(info.JoiningMethod))
+	f.log.Info("participant joined", "user", info.Entity(), "joining_method", string(info.JoiningMethod))
 	f.notify(nil)
 	return nil
 }
@@ -889,8 +897,7 @@ func (f *conference) inviteUser(rt sip.ReferTo, referredBy string) int {
 	if err := media.Ack(answer); err != nil {
 		f.log.Warn("answer of the invited user not passed on to the MRFC", "error", err.Error())
 	}
-	if no := f.join(p, confinfo.Participant{User: assertedUser(answered, rt.URI),
-		Status: confinfo.Connected, JoiningMethod: confinfo.DialedOut}); no != nil {
+	if no := f.join(p, f.participant(answered, rt.URI, confinfo.DialedOut)); no != nil {
 		f.log.Info("invited user not taken into the conference", "reason", no.text)
 		out.Bye()
 		media.Bye()
@@ -938,6 +945,50 @@ func otherSide(ctx context.Context, store Store, r sip.Replaces) (sip.Replaces, 
 	// The UA at the other end of that leg compares to-tag with its own
 	// tag, which is the remote tag here (RFC 3891 3).
 	return sip.Replaces{CallID: other.ID.CallID, ToTag: other.ID.RemoteTag, FromTag: other.ID.LocalTag, EarlyOnly: r.EarlyOnly}, true, nil
+}
+
+// participant is the entry of a new participant in the conference
+// state: the identity that the network asserted for it in m, its INVITE
+// or the 2xx that answered the focus's INVITE, how it came in, and that
+// it is connected. fallback is its identity when m asserts none.
+//
+// A participant that asked for privacy is named by an anonymous URI
+// instead, which tells the other participants that someone is there
+// without telling them who: the focus must take such a request and
+// reveal the identity in no URI of the document (RFC 4575 8.2). The
+// identity of the originating party of a session with OIR (TS 24.605
+// 4.6.5) and of its terminating party with TIR (4.6.3) both stay out of
+// the notifications, and the focus learns of either from the Privacy
+// header field: of the INVITE for a user that creates a conference or
+// dials in, of the 2xx for one that the focus invited.
+//
+// SIMPLIFIED: TS 24.605 4.6.5 and 4.6.3. The focus goes by the Privacy
+// header field alone and looks up no OIR or TIR of its own. So a
+// creator whose OIR is in the permanent mode, and whose INVITE carries
+// no Privacy, is named by its identity. This AS is both the creator's
+// own AS and the focus, and takes the INVITE to the factory URI as the
+// conference instead of passing it through the originating services
+// (sessioncase.go), which would have added "id" to its Privacy for such
+// a user (identity.go). A focus that is an AS of its own gets that
+// INVITE after those services, and reads the privacy there.
+func (f *conference) participant(m *sip.Message, fallback string, how confinfo.JoiningMethod) confinfo.Participant {
+	p := confinfo.Participant{User: assertedUser(m, fallback), Status: confinfo.Connected, JoiningMethod: how}
+	if asksForPrivacy(m) {
+		p.AnonymousURI, p.DisplayText = confinfo.AnonymousName(f.anonymous.Add(1))
+	}
+	return p
+}
+
+// asksForPrivacy reports whether the sender of m asks the network to
+// keep its identity to itself: a Privacy header field with "id" or
+// "user" (RFC 3323 4.2, RFC 3325 7). TS 24.229 5.7.1.4 a has an AS take
+// the user of such a request as anonymous, whatever identity the
+// request carries. A value such as "header", which hides how the
+// network is built rather than who the user is, does not: 5.7.1.4 b
+// has the AS go by the P-Asserted-Identity then.
+func asksForPrivacy(m *sip.Message) bool {
+	p := sip.ParsePrivacy(m.Get("Privacy"))
+	return p.Has(sip.PrivacyID) || p.Has(sip.PrivacyUser)
 }
 
 // assertedUser is the identity of a participant: the first
