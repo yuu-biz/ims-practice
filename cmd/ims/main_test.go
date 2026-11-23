@@ -84,7 +84,7 @@ func result(t *testing.T, m *diam.Message) uint32 {
 }
 
 // TestCxHandlerSendsEachRequestToItsRole checks the dispatch of a node
-// with the hss role, the scscf role or both: an RTR goes to the
+// with the hss role, the scscf role or both: an RTR and a PPR go to the
 // S-CSCF, and the rest to the HSS.
 func TestCxHandlerSendsEachRequestToItsRole(t *testing.T) {
 	if err := diameter.LoadDictionary(); err != nil {
@@ -110,6 +110,11 @@ func TestCxHandlerSendsEachRequestToItsRole(t *testing.T) {
 		UserName:             impi,
 		DeregistrationReason: cx.DeregistrationReason{ReasonCode: cx.PermanentTermination},
 	}.Message()
+	ppr := cx.PushProfileRequest{
+		Header:   diameter.NewHeader(node, "ims."+domain, domain),
+		UserName: impi,
+		UserData: cx.UserProfile{PrivateIdentity: impi, PublicIdentities: []string{impu}}.Marshal(),
+	}.Message()
 	uar := cx.UserAuthorizationRequest{
 		Header: diameter.NewHeader(node, "", domain), UserName: impi, PublicIdentity: impu, VisitedNetworkIdentifier: domain,
 	}.Message()
@@ -128,6 +133,9 @@ func TestCxHandlerSendsEachRequestToItsRole(t *testing.T) {
 		{"RTR on an S-CSCF node", nil, s, rtr, unknown},
 		{"RTR on a node with both roles", hssRole, s, rtr, unknown},
 		{"RTR on an HSS node", hssRole, nil, rtr, unsupported},
+		{"PPR on an S-CSCF node", nil, s, ppr, unknown},
+		{"PPR on a node with both roles", hssRole, s, ppr, unknown},
+		{"PPR on an HSS node", hssRole, nil, ppr, unsupported},
 		{"UAR on a node with both roles", hssRole, s, uar, cx.DiameterFirstRegistration},
 		{"UAR on an S-CSCF node", nil, s, uar, unsupported},
 	}
