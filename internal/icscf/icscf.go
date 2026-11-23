@@ -8,12 +8,14 @@ import (
 	"context"
 	"log/slog"
 	"slices"
+	"sync/atomic"
 
 	"github.com/fiorix/go-diameter/v4/diam"
 
 	"github.com/yuu-biz/ims-practice/internal/cx"
 	"github.com/yuu-biz/ims-practice/internal/diameter"
 	"github.com/yuu-biz/ims-practice/internal/ims"
+	"github.com/yuu-biz/ims-practice/internal/maintenance"
 	"github.com/yuu-biz/ims-practice/internal/metrics"
 	"github.com/yuu-biz/ims-practice/internal/sip"
 )
@@ -69,6 +71,12 @@ type ICSCF struct {
 
 	// sessions counts the session establishments.
 	sessions *ims.Sessions
+	// transactions counts the requests that the I-CSCF is serving, the
+	// users of its maintenance function (maintenance.go).
+	transactions atomic.Int64
+	// managed is the administrative state that the maintenance API of
+	// the node keeps for the I-CSCF; nil without one.
+	managed atomic.Pointer[maintenance.ManagedFunction]
 }
 
 // New returns an I-CSCF. It fails when cfg.Metrics holds the metrics of
@@ -103,7 +111,18 @@ func (i *ICSCF) SetStack(stack *sip.Stack) { i.stack.Set(stack) }
 // sessions (4.1.2.8) are the sessions removed when they expire, and
 // the I-CSCF has none to remove: it does not record-route, so it sees
 // no request of a dialog after the first.
+//
+// An initial INVITE that the I-CSCF refuses while it is not UNLOCKED
+// counts in no measurement. Its sender tries the next I-CSCF, which
+// counts it, so the instances add up to the attempts of the network,
+// as the refused REGISTERs of the P-CSCF and the S-CSCF do.
 func (i *ICSCF) OnRequest(st *sip.ServerTransaction) {
+	i.transactions.Add(1)
+	defer i.transactionEnded()
+	if !i.unlocked() {
+		i.refuse(st)
+		return
+	}
 	if st.Request.Method == sip.INVITE && !ims.IsInDialog(st.Request) {
 		i.sessions.Started(role, ims.TerminatingSession)
 	}
