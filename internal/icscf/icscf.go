@@ -104,14 +104,14 @@ func (i *ICSCF) SetStack(stack *sip.Stack) { i.stack.Set(stack) }
 // network, from the IBCF: it is a terminating session establishment,
 // which TS 32.409 4.1.2.11 counts on receipt.
 //
-// SIMPLIFIED: TS 32.409 4.1.2.12 and 4.1.2.8. The I-CSCF counts
-// neither the successful terminating session establishments, the first
-// 180 or 200 that it passes back to the originating S-CSCF (4.1.2.12),
-// nor the dropped sessions, those removed when they expire (4.1.2.8).
-// No panel of the dashboard reads the successes, as none reads those of
-// the P-CSCF and the S-CSCF (4.1.2.2), and the I-CSCF keeps no session
-// that could expire: it does not record-route, so it sees no request of
-// a dialog after the first.
+// The first 180 or 2xx that the I-CSCF passes back to the originating
+// S-CSCF is the successful terminating session establishment of
+// 4.1.2.12, which it counts as that response goes out (session.go).
+//
+// SIMPLIFIED: TS 32.409 4.1.2.8. The I-CSCF counts no dropped sessions,
+// the sessions removed when they expire. It keeps no session that could
+// expire: it does not record-route, so it sees no request of a dialog
+// after the first.
 //
 // SIMPLIFIED: TS 32.409 4.1.2.11. An initial INVITE that the I-CSCF
 // refuses while it is not UNLOCKED counts in no measurement. Its sender
