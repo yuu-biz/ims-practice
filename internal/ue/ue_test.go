@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"maps"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -240,8 +241,14 @@ type networkConfig struct {
 	// subscriptions are those of the HSS; nil means the two test users,
 	// each with a SIP URI only.
 	subscriptions []hss.Subscription
-	// criteria are the initial filter criteria of every user.
+	// criteria are the initial filter criteria of every user: those of
+	// the service profile "default", which a subscription that names
+	// none gets.
 	criteria []ifc.InitialFilterCriteria
+	// serviceProfiles are the service profiles of the HSS beside
+	// "default", for a test that moves a subscription from one profile
+	// to another.
+	serviceProfiles map[string][]ifc.InitialFilterCriteria
 	// epc starts the role epc, the EPC stub with its PCRF, which the
 	// P-CSCF asks over Rx.
 	epc bool
@@ -444,6 +451,8 @@ func startHSS(t *testing.T, cfg networkConfig) (*hss.HSS, []hssInstance) {
 	t.Helper()
 	instances := max(cfg.hssInstances, 1)
 	store, locks := sharedSubscribers(t, cfg, instances)
+	profiles := map[string][]ifc.InitialFilterCriteria{"default": cfg.criteria}
+	maps.Copy(profiles, cfg.serviceProfiles)
 	var first *hss.HSS
 	var started []hssInstance
 	for i := range instances {
@@ -455,7 +464,7 @@ func startHSS(t *testing.T, cfg networkConfig) (*hss.HSS, []hssInstance) {
 		role, err := hss.New(hss.Config{
 			Realm: domain, VisitedNetworks: []string{domain},
 			ServerCapabilities:    cx.ServerCapabilities{MandatoryCapabilities: []uint32{1}},
-			ServiceProfiles:       map[string][]ifc.InitialFilterCriteria{"default": cfg.criteria},
+			ServiceProfiles:       profiles,
 			DefaultServiceProfile: "default",
 			UserLocks:             locks,
 		}, store, node, quiet())

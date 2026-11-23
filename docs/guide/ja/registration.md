@@ -402,8 +402,8 @@ HSS には HTTP で加入を登録、削除する API（プロビジョニング
 | `GET /subscriptions` | 加入の一覧を、登録の状態と一緒に、ページに分けて返す。1 ページは 1000 件で、`?limit=` にそれより小さい件数を書けばその件数になる。`?after={秘密の識別子}` を付けると、識別子の並び順で、その識別子の次から返す。続きのページがあるときは、`Link` ヘッダに、そのページを取るための問い合わせを `rel="next"` 付きで入れる（RFC 8288）。たとえば `<?after=001010000000001%40ims.mnc001.mcc001.3gppnetwork.org&limit=2>; rel="next"` が入る。HSS は秘密の識別子の索引から 1 ページ分だけを読むので、加入が 100 万件ある網でも、1 ページにかかる手間はこの網と変わらない。 |
 | `GET /subscriptions/{秘密の識別子}` | 1 件の加入を返す。`test_user` と `service_profile` は、その加入が持つときだけ入る。 |
 | `POST /subscriptions` | 加入を 1 件追加する。本文は `{"private_identity": "...", "public_identities": ["sip:...", "tel:..."], "password": "..."}`。`"tel": "tel:+..."` を付けると、その tel URI も公開の識別子に加わる。IMS-AKA を使う加入には、16 進数で書いた `"aka": {"k": "...", "opc": "...", "amf": "...", "sqn": "..."}` を、password と一緒に、または password の代わりに付ける。`"ut_password": "..."` を付けると、利用者が Ut で付加サービスを設定できる。HSS はその H(A1) だけを Sh の Repository Data として持つ。`"mmtel_services": "<MMTelServices ...>"` は付加サービスの最初の文書で、省くと hss のキー `mmtel_services` の文書が入る。`"test_user": true` を付けると、運用者が機能を試すために使う加入という印が付く。`"service_profile": "..."` はその加入が受け取るサービスプロファイルの名前で、どちらも S-CSCF に渡るフィルタ条件を決める（[SMS の流れを追う](sms.md)）。hss のキー `service_profiles` に無い名前は 400 で断る。 |
-| `PUT /subscriptions/{秘密の識別子}` | 加入を 1 件追加するか、まるごと置き換える。本文は `POST` と同じで、`repository_data` を足せる。本文の `private_identity` には、経路に書いた識別子と同じものを書く。本文に書かなかったものは消える。`repository_data`、`mmtel_services`、`ut_password` のどれも書かなければ、その加入が持つ文書は hss のキー `mmtel_services` のものになり、利用者が Ut で設定した付加サービスもその既定に戻る。`"repository_data": [{"service_indication": "MMTEL-Services", "service_data": "<MMTelServices ...>"}]` は、Sh の Repository Data をそのまま渡すもので、`mmtel_services`、`ut_password`、`customized_alerting_tone` の代わりに使う。空の配列を書くと、Repository Data を 1 つも持たない加入になる。置き換えても変わらないものがある。登録の状態、割り当てられている S-CSCF、届けられずに待っている短いメッセージの記録、SQN_HE は、そのまま残る。`aka.sqn` は、加入を新しく作るときだけ読む。同じファイルを送り直しても SQN_HE が戻らないので、認証ベクタを 2 度使うことがない。答えは `{"result": "created", "subscription": {…}}` で、中身が変わったときは `updated`、資格情報と Repository Data を含めて本文のとおりだったときは `unchanged` を返す。状態コードは、加入を作ったときが 201 で、ほかは 200 になる。`?dry_run=true` を付けると、何も変えずに、その要求が何をするかだけを返す。`created` と答えるときも、状態コードは 200 になる。 |
-| `PATCH /subscriptions/{秘密の識別子}` | 加入 1 件の印とサービスプロファイルの名前だけを変える。本文は `{"test_user": true, "service_profile": "..."}` で、片方だけでも書ける。本文に書かなかった項目はそのまま残るので、`{}` を送っても何も変わらない。この 2 つをこの要求で変えるのは、`PUT` で変えるとその加入の資格情報を一緒に書くことになり、その資格情報を API が誰にも渡さないためである。hss のキー `service_profiles` に無い名前は 400 で断る。答えは `GET` と同じ、1 件の加入になる。登録中の利用者の S-CSCF は、登録したときに受け取ったプロファイルを持ち続ける。そのため、変えたプロファイルが S-CSCF に届くのは、次の登録のときである。 |
+| `PUT /subscriptions/{秘密の識別子}` | 加入を 1 件追加するか、まるごと置き換える。本文は `POST` と同じで、`repository_data` を足せる。本文の `private_identity` には、経路に書いた識別子と同じものを書く。本文に書かなかったものは消える。`repository_data`、`mmtel_services`、`ut_password` のどれも書かなければ、その加入が持つ文書は hss のキー `mmtel_services` のものになり、利用者が Ut で設定した付加サービスもその既定に戻る。`"repository_data": [{"service_indication": "MMTEL-Services", "service_data": "<MMTelServices ...>"}]` は、Sh の Repository Data をそのまま渡すもので、`mmtel_services`、`ut_password`、`customized_alerting_tone` の代わりに使う。空の配列を書くと、Repository Data を 1 つも持たない加入になる。置き換えても変わらないものがある。登録の状態、割り当てられている S-CSCF、届けられずに待っている短いメッセージの記録、SQN_HE は、そのまま残る。`aka.sqn` は、加入を新しく作るときだけ読む。同じファイルを送り直しても SQN_HE が戻らないので、認証ベクタを 2 度使うことがない。答えは `{"result": "created", "subscription": {…}}` で、中身が変わったときは `updated`、資格情報と Repository Data を含めて本文のとおりだったときは `unchanged` を返す。状態コードは、加入を作ったときが 201 で、ほかは 200 になる。`?dry_run=true` を付けると、何も変えずに、その要求が何をするかだけを返す。`created` と答えるときも、状態コードは 200 になる。登録中の利用者のサービスプロファイルが変わる置き換えでも、`PATCH` と同じように、新しいプロファイルがすぐにその利用者の S-CSCF へ届く。 |
+| `PATCH /subscriptions/{秘密の識別子}` | 加入 1 件の印とサービスプロファイルの名前だけを変える。本文は `{"test_user": true, "service_profile": "..."}` で、片方だけでも書ける。本文に書かなかった項目はそのまま残るので、`{}` を送っても何も変わらない。この 2 つをこの要求で変えるのは、`PUT` で変えるとその加入の資格情報を一緒に書くことになり、その資格情報を API が誰にも渡さないためである。hss のキー `service_profiles` に無い名前は 400 で断る。答えは `GET` と同じ、1 件の加入になる。登録中の利用者のサービスプロファイルが変わる要求では、新しいプロファイルがすぐにその利用者の S-CSCF へ届く（[登録中の利用者のサービスプロファイルを変える](#登録中の利用者のサービスプロファイルを変える)）。 |
 | `DELETE /subscriptions/{秘密の識別子}` | 加入を 1 件削除する。 |
 
 応答にパスワードと AKA の鍵（K と OPc）は入りません。その加入で使える認証の方式を `authentication_schemes` に並べます。追加する加入には設定ファイルと同じ決まりを当てはめます。項目が足りないときや、公開の識別子が SIP か tel の URI でないときは 400 を返します。識別子がすでにほかの加入にあるときは 409 を返します。
@@ -426,6 +426,37 @@ HSS には HTTP で加入を登録、削除する API（プロビジョニング
 3. S-CSCF は DIAMETER_SUCCESS（2001）の **Registration-Termination-Answer**（RTA）で答えます。HSS がすでに登録を解除しているので、SAR は送りません（TS 29.228 A.4.4.2）。S-CSCF が知らない利用者の RTR には、DIAMETER_ERROR_USER_UNKNOWN（5001）で答えます（TS 29.229 6.2.2.1）。
 
 UE は `event="rejected"` を受けると、登録し直しません（TS 24.229 5.1.1.7）。`ue register` はエラーとして終了します。もう一度 `ue register` を実行すると、**403 Forbidden** が返ります。HSS は UAR に DIAMETER_ERROR_USER_UNKNOWN で答え（TS 29.228 6.1.1.1）、I-CSCF は失敗の UAA を 403 にして返すからです（TS 24.229 5.3.1.3）。
+
+## 登録中の利用者のサービスプロファイルを変える
+
+運用者は、利用者が登録しているあいだに、その利用者のサービスプロファイルを変えられます。`service_profile` か `test_user` を `PATCH` で変えるか、`PUT` で加入ごと置き換えます。S-CSCF が持っているのは、登録のときの SAA で受け取った前のプロファイルの iFC です。HSS は、次の登録までそのままにはしません。ユーザープロファイル全体を **Push-Profile-Request**（PPR、Cx のコマンド 305）ですぐに送ります（TS 29.228 6.2.2、6.6.1）。Wireshark では、`diameter.cmd.code == 305` でこの流れが見られます。
+
+加入者 3 が登録しているあいだに、iFC を 1 つも持たないプロファイル `no-services` に移してみます。プロビジョニングの API はホストに公開していないので、要求は HSS のコンテナの中から送ります。BusyBox の `wget` は `PATCH` を送れないので、要求を書き下して `nc` に渡します。
+
+```sh
+docker compose exec hss sh -c '
+body="{\"service_profile\":\"no-services\"}"
+printf "PATCH /subscriptions/001010000000003@ims.mnc001.mcc001.3gppnetwork.org HTTP/1.0\r\nContent-Type: application/json\r\nContent-Length: ${#body}\r\n\r\n%s" "$body" |
+  nc -w 5 127.0.0.1 8081'
+```
+
+```text
+ S-CSCF          HSS
+ |                |  PATCH /subscriptions/...
+ |  PPR (1)       |
+ |<---------------|
+ |  PPA (2)       |
+ |--------------->|
+ |                |  200 OK（加入を返す）(3)
+```
+
+1. HSS は、その利用者について名前を覚えている S-CSCF に PPR を送ります。宛先は、その S-CSCF が送った SAR の Origin-Host で、RTR と同じです（TS 29.228 Table 6.2.2.1）。User-Name は秘密の識別子です。**User-Data** にはユーザープロファイル全体、つまり暗黙登録の組のすべての公開の識別子と、新しいサービスプロファイルの iFC が入ります。変わっていない識別子も入れます（6.5.2.1）。
+2. S-CSCF は、要求に入っている識別子について、持っているものを受け取ったもので置き換え、DIAMETER_SUCCESS（2001）の **Push-Profile-Answer**（PPA）で答えます（6.2.2.1）。登録そのものは、期限も Contact の対応付けもそのまま残ります。UE はこの変更を知らされず、その利用者の次の要求から新しい iFC で判定されます。S-CSCF がプロファイルを持っていない利用者の PPR には DIAMETER_ERROR_USER_UNKNOWN（5001）、読めないユーザー情報には DIAMETER_ERROR_NOT_SUPPORTED_USER_DATA（5009）を返し、持っているものはそのままにします（Table 6.2.2.1.1）。
+3. HSS は PPA を受け取ってから、プロビジョニングの要求に答えます。
+
+`no-services` にすると、加入者 3 の iFC はどれも一致しなくなります。この利用者の短いメッセージは IP-SM-GW に届かず、呼も MMTel AS に届きません。同じ `PATCH` を `"service_profile":"default"` で送れば、元の iFC が push されて戻ります。
+
+HSS が push するのは、登録中の利用者と、未登録の状態の利用者です。未登録の状態は、登録していない利用者への呼のために S-CSCF がプロファイルを持っているあいだを指します（6.6.1）。ほかの利用者については、加入を書くだけです。プロファイルは次の登録で届きます。push するのは、その利用者が受け取るプロファイルが実際に変わったときだけです。前と同じプロファイルを選ぶ `test_user` の変更では、送るものがありません。
 
 ## パスワードが誤っているとき
 
@@ -784,6 +815,9 @@ rm ue.exe
 | UE。TS 24.229 5.1.1.2.1 | 再試行の間隔の max-time と base-time は、いつも RFC 5626 4.5 の既定値を使う。 | 網がこれらの値を渡せるのは TS 24.167 の管理オブジェクトを通してだけで、UE はそれを持たないため。 |
 | HSS。TS 29.228 6.1.1.1、6.1.2.1 | 登録の状態を、公開の識別子ごとではなく加入ごとに持つ。一部の Server-Assignment-Type に対応しない。 | 試験用の加入はそれぞれ 1 つの暗黙登録の組で、S-CSCF はほかの値を送らないため。 |
 | HSS。TS 29.228 6.1.1.1 の手順 5 | 登録してよい利用者かを確かめない。 | 試験用の加入は全員が登録してよいため。 |
+| HSS。TS 29.228 6.2.2.1 | 誤りを返す PPA を受けても、登録の状態をそのままにする。S-CSCF が知らない利用者を未登録にすることも、SERVER_CHANGE で登録を解除することもしない。 | 送れなかった push のために、利用者の登録を取り上げないため。S-CSCF は次の登録でプロファイルを読み直し、知らない利用者のことは HSS に問い合わせ直す。 |
+| HSS。TS 29.228 6.5.2.1 | 登録中の利用者の暗黙登録の組に公開の識別子を足す `PUT`、組から外す `PUT` では push しない。既定の公開の識別子が変わるときに仕様が求める RTR も送らない。 | 組の識別子は次の登録で S-CSCF に届く。登録中にこれを変えるのは、この手順書が見せる流れの一部ではなく、運用者の誤りであるため。 |
+| HSS。TS 29.228 6.5.2.3、6.5.2.4、6.5.2.5 | PPR が運ぶのはユーザープロファイルだけ。課金のアドレスも、変わった SIP Digest のパスワードも、PPR が運べるほかのユーザー情報も送らない。 | HSS は課金のアドレスを持たない。パスワードは、登録と登録のあいだ S-CSCF が持っていないので、新しい値で置き換えるものが無いため。 |
 | 利用者のプロファイル。TS 29.228 Annex E | サービスプロファイルは 1 つ。任意の要素は、規制の表示、公開サービス識別子の種類、iFC のほかに入れない。 | 試験用の加入者と PSI ユーザーにはそれ以上要らないため。 |
 | HSS と S-CSCF。TS 23.228 4.3.3.4、4.2.7.2 | 公開の識別子は 1 つの秘密の識別子にだけ属し、複数の UE で共有できない。公開の識別子への要求は、その識別子のただ 1 つの登録の、ただ 1 つの Contact に届く。S-CSCF はフォークしない。 | このプロジェクトの加入者は、それぞれ UE を 1 台だけ使うため。 |
 | iFC。TS 29.228 B.2.3、Annex E | SPT の SessionDescription、RegistrationType、ProfilePartIndicator、IncludeRegisterRequest、IncludeRegisterResponse を扱わない。 | SMS と MMTel AS の iFC には、どれも要らないため。RegistrationType は S-CSCF にとって任意の機能。 |

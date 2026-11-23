@@ -317,12 +317,13 @@ func TestProvisioningNamesTheDigestScheme(t *testing.T) {
 	}
 }
 
-// fakeSCSCFs answers each RTR as an S-CSCF would, through the wire
-// format, and keeps the RTRs.
+// fakeSCSCFs answers the requests of the HSS as an S-CSCF would,
+// through the wire format, and keeps them.
 type fakeSCSCFs struct {
 	mu     sync.Mutex
 	hosts  []string
 	rtrs   []cx.RegistrationTerminationRequest
+	pprs   []cx.PushProfileRequest
 	result diameter.Result
 }
 
@@ -335,6 +336,20 @@ func (f *fakeSCSCFs) Request(_ context.Context, originHost string, m *diam.Messa
 	if err != nil {
 		return nil, err
 	}
+	result := f.result
+	if result == (diameter.Result{}) {
+		result = diameter.Base(diameter.DiameterSuccess)
+	}
+	if req.Header.CommandCode == cx.CommandPushProfile {
+		ppr, err := cx.ParsePushProfileRequest(req)
+		if err != nil {
+			return nil, err
+		}
+		f.mu.Lock()
+		f.hosts, f.pprs = append(f.hosts, originHost), append(f.pprs, ppr)
+		f.mu.Unlock()
+		return cx.PushProfileAnswer{Result: result}.Message(req, diameter.Identity{OriginHost: originHost, OriginRealm: realm}), nil
+	}
 	rtr, err := cx.ParseRegistrationTerminationRequest(req)
 	if err != nil {
 		return nil, err
@@ -342,10 +357,6 @@ func (f *fakeSCSCFs) Request(_ context.Context, originHost string, m *diam.Messa
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.hosts, f.rtrs = append(f.hosts, originHost), append(f.rtrs, rtr)
-	result := f.result
-	if result == (diameter.Result{}) {
-		result = diameter.Base(diameter.DiameterSuccess)
-	}
 	return cx.RegistrationTerminationAnswer{Result: result}.Message(req, diameter.Identity{OriginHost: originHost, OriginRealm: realm}), nil
 }
 

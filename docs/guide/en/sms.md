@@ -41,7 +41,7 @@ The IP-SM-GW talks to the HSS over Sh (TS 29.328, TS 29.329). It writes which IP
 
 ### The filter criteria
 
-The S-CSCF knows nothing of SMS. The HSS tells it, in the user profile that comes with the SAA at registration, which requests go to which AS. Those rules are the initial filter criteria (TS 29.228 B.2.2, schema in Annex E). A named list of them is a service profile, and each subscription gets one. The HSS stub has a single profile, `default`, with the two criteria in `deploy/compose/hss.yaml`, so every subscription gets both:
+The S-CSCF knows nothing of SMS. The HSS tells it, in the user profile that comes with the SAA at registration, which requests go to which AS. Those rules are the initial filter criteria (TS 29.228 B.2.2, schema in Annex E). A named list of them is a service profile, and each subscription gets one. Every subscription of the HSS stub gets the profile `default`, which `deploy/compose/hss.yaml` defines. Two of its criteria are the ones of SMS over IP:
 
 ```yaml
 default_service_profile: default

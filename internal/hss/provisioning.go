@@ -12,6 +12,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/fiorix/go-diameter/v4/diam"
 
@@ -200,15 +201,21 @@ func response(s Subscriber) subscriptionResponse {
 //	                               {"tone": "cat1", "active": true}
 //
 // Removing a subscription whose user is registered deregisters the user
-// at its S-CSCF, which peers reaches. A request whose subscription the
-// HSS cannot read or write gets 500 (Internal Server Error).
+// at its S-CSCF, which peers reaches. A PUT or a PATCH that gives such a
+// user another service profile pushes the new profile there instead
+// (pushProfile). A request whose subscription the HSS cannot read or
+// write gets 500 (Internal Server Error).
 func (h *HSS) Provisioning(peers Peers) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /subscriptions", h.listSubscriptions)
 	mux.HandleFunc("GET /subscriptions/{impi}", h.getSubscription)
 	mux.HandleFunc("POST /subscriptions", h.addSubscription)
-	mux.HandleFunc("PUT /subscriptions/{impi}", h.putSubscription)
-	mux.HandleFunc("PATCH /subscriptions/{impi}", h.patchSubscription)
+	mux.HandleFunc("PUT /subscriptions/{impi}", func(w http.ResponseWriter, r *http.Request) {
+		h.putSubscription(w, r, peers)
+	})
+	mux.HandleFunc("PATCH /subscriptions/{impi}", func(w http.ResponseWriter, r *http.Request) {
+		h.patchSubscription(w, r, peers)
+	})
 	mux.HandleFunc("DELETE /subscriptions/{impi}", func(w http.ResponseWriter, r *http.Request) {
 		removed, err := h.removeSubscription(r.Context(), peers, r.PathValue("impi"))
 		switch {
@@ -427,7 +434,10 @@ const (
 // answer says which of created, updated and unchanged it did. With
 // dry_run it changes nothing and answers the same, except that a
 // creation it did not make answers 200 rather than 201.
-func (h *HSS) putSubscription(w http.ResponseWriter, r *http.Request) {
+//
+// A replacement that gives a registered user another service profile
+// pushes the new profile to the S-CSCF before it answers (pushProfile).
+func (h *HSS) putSubscription(w http.ResponseWriter, r *http.Request, peers Peers) {
 	impi := r.PathValue("impi")
 	dry, err := dryRun(r)
 	if err != nil {
@@ -455,12 +465,15 @@ func (h *HSS) putSubscription(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	// The lock is held over the read and the write, so that the request
 	// replaces the subscription it has read and no Cx or Sh request of
-	// the user is halfway through one of its own.
+	// the user is halfway through one of its own. A PPR goes without it,
+	// so the way out that sends one lets it go first; the rest leave it
+	// to the deferred call, which the once makes harmless either way.
 	unlock, err := h.lockSubscriber(impi)
 	if err != nil {
 		h.writeStoreFailure(w, err)
 		return
 	}
+	unlock = sync.OnceFunc(unlock)
 	defer unlock()
 	stored, exists, err := h.store.Subscriber(ctx, impi)
 	if err != nil {
@@ -530,6 +543,10 @@ func (h *HSS) putSubscription(w http.ResponseWriter, r *http.Request) {
 		}
 		h.log.Info("subscription replaced", "private_identity", sub.PrivateIdentity, "public_identities", sub.PublicIdentities,
 			"state", stored.State.String())
+		if h.profileChanged(stored, next) {
+			unlock()
+			h.pushChangedProfile(ctx, peers, impi)
+		}
 	}
 	writePutAnswer(w, http.StatusOK, resultUpdated, next, want)
 }
@@ -720,7 +737,11 @@ type subscriptionPatch struct {
 // the subscriber back with Put rather than Replace: no public identity
 // moves from one subscription to another, and Put keeps the credentials
 // and SQN_HE that are stored.
-func (h *HSS) patchSubscription(w http.ResponseWriter, r *http.Request) {
+//
+// Both fields choose the service profile of the subscription, so a
+// change that gives a registered user another profile pushes the new
+// profile to the S-CSCF before the answer (pushProfile).
+func (h *HSS) patchSubscription(w http.ResponseWriter, r *http.Request, peers Peers) {
 	impi := r.PathValue("impi")
 	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxRequestBody))
 	dec.DisallowUnknownFields()
@@ -739,14 +760,16 @@ func (h *HSS) patchSubscription(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	// The lock is held over the read and the write, so that the change
 	// goes onto the subscriber the request has read and no Cx or Sh
-	// request of the user is halfway through one of its own.
+	// request of the user is halfway through one of its own. It is let go
+	// before a PPR, as in putSubscription.
 	unlock, err := h.lockSubscriber(impi)
 	if err != nil {
 		h.writeStoreFailure(w, err)
 		return
 	}
+	unlock = sync.OnceFunc(unlock)
 	defer unlock()
-	s, ok, err := h.store.Subscriber(ctx, impi)
+	stored, ok, err := h.store.Subscriber(ctx, impi)
 	if err != nil {
 		h.writeStoreFailure(w, err)
 		return
@@ -755,6 +778,7 @@ func (h *HSS) patchSubscription(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "no such subscription", http.StatusNotFound)
 		return
 	}
+	s := stored
 	if patch.TestUser != nil {
 		s.TestUser = *patch.TestUser
 	}
@@ -767,6 +791,10 @@ func (h *HSS) patchSubscription(w http.ResponseWriter, r *http.Request) {
 	}
 	h.log.Info("subscription changed", "private_identity", s.PrivateIdentity,
 		"test_user", s.TestUser, "service_profile", s.ServiceProfile)
+	if h.profileChanged(stored, s) {
+		unlock()
+		h.pushChangedProfile(ctx, peers, impi)
+	}
 	resp, err := h.responseWithCAT(ctx, s)
 	if err != nil {
 		h.writeStoreFailure(w, err)
@@ -815,11 +843,112 @@ func (h *HSS) removeSubscription(ctx context.Context, peers Peers, privateID str
 
 // Peers is how the HSS reaches a node that connected to it, by the
 // Origin-Host of that node: an S-CSCF for a Registration-Termination-
-// Request, and an SMS-IWMSC for an Alert-Service-Centre-Request.
-// *diameter.Server is one.
+// Request or a Push-Profile-Request, and an SMS-IWMSC for an
+// Alert-Service-Centre-Request. *diameter.Server is one.
 type Peers interface {
 	Request(ctx context.Context, originHost string, request *diam.Message) (*diam.Message, error)
 }
+
+// served reports whether an S-CSCF holds the user profile of u: u is
+// Registered, or Unregistered, which is the state while an S-CSCF keeps
+// the profile of a user who is not registered (TS 29.228 6.6.1). These
+// are the states whose profile the HSS pushes, and whose S-CSCF it
+// deregisters the user at, and u.SCSCF names the S-CSCF that either
+// request goes to.
+func served(u Subscriber) bool { return u.State != NotRegistered && u.SCSCF.OriginHost != "" }
+
+// profileChanged reports whether a provisioning request that turned
+// stored into next has to push the profile: an S-CSCF holds the user
+// profile of this user, and the service profile the HSS would now give
+// it is another one. The criteria of a profile are in the configuration,
+// so a request can only change which profile the subscription gets.
+//
+// SIMPLIFIED: TS 29.228 6.5.2.1. A PUT that adds a public identity to
+// the implicit registration set of a user who is registered or
+// unregistered, or takes one away, is not pushed; a change of the
+// default public identity of such a set, for which 6.5.2.1 asks for an
+// RTR, is not sent either. The S-CSCF gets the identities of the set at
+// the next registration.
+func (h *HSS) profileChanged(stored, next Subscriber) bool {
+	return served(stored) && h.serviceProfile(stored.Subscription) != h.serviceProfile(next.Subscription)
+}
+
+// pushChangedProfile sends the PPR of a provisioning request that
+// changed the profile, and logs the failure that the operator's request
+// does not report: the subscription itself is written either way, and
+// the S-CSCF gets the new profile at the next registration.
+func (h *HSS) pushChangedProfile(ctx context.Context, peers Peers, privateID string) {
+	if err := h.pushProfile(ctx, peers, privateID); err != nil {
+		h.log.Warn("PPR failed", "private_identity", privateID, "error", err.Error())
+	}
+}
+
+// pushProfile is the HSS initiated update of user information, TS 29.228
+// 6.2.2: the S-CSCF that serves the user is given the whole user profile
+// at once, rather than waiting for the next registration (6.6.1). The
+// profile holds the public identities of the implicit registration set
+// with their service profile, the unchanged ones included (6.5.2.1).
+//
+// The subscriber is read here, so the PPR carries the profile of the
+// moment it is sent rather than the one the provisioning request wrote;
+// the pushes of one subscriber are serialised, so an older profile never
+// lands at the S-CSCF after a newer one. The lock held meanwhile is not
+// the subscriber's own: the S-CSCF may have to answer a SAR of this user
+// before it takes the PPR up, as it may for an RTR
+// (removeSubscription), and that SAR needs the subscriber's lock.
+//
+// SIMPLIFIED: TS 29.228 6.5.2.3, 6.5.2.4 and 6.5.2.5. The PPR carries
+// the user profile alone. The HSS stub keeps no charging addresses and
+// no allowed WAF or WWSF identities to update, and it pushes no changed
+// SIP Digest password: between two registrations the S-CSCF keeps no
+// password of the user, so there would be nothing for SIP-Auth-Data-Item
+// to replace.
+//
+// SIMPLIFIED: TS 29.228 6.2.2.1. A PPA that reports an error leaves the
+// registration state as it is: the HSS neither sets a user the S-CSCF
+// does not know to Not Registered nor deregisters the user with
+// SERVER_CHANGE when the S-CSCF could not take the user information. The
+// registration of a user is not ended for a push that failed; the
+// S-CSCF reads the profile again at the next registration, and a user
+// it does not know it asks the HSS for anew.
+func (h *HSS) pushProfile(ctx context.Context, peers Peers, privateID string) error {
+	unlock, err := h.lockSubscriber(profilePushes(privateID))
+	if err != nil {
+		return err
+	}
+	defer unlock()
+	u, ok, err := h.store.Subscriber(ctx, privateID)
+	if err != nil || !ok || !served(u) {
+		return err
+	}
+	ppr := cx.PushProfileRequest{
+		Header:   diameter.NewHeader(h.node, u.SCSCF.OriginHost, u.SCSCF.OriginRealm),
+		UserName: u.PrivateIdentity,
+		UserData: h.userProfile(u).Marshal(),
+	}
+	answer, err := peers.Request(ctx, u.SCSCF.OriginHost, ppr.Message())
+	if err != nil {
+		return err
+	}
+	ppa, err := cx.ParsePushProfileAnswer(answer)
+	if err != nil {
+		return err
+	}
+	if !ppa.Result.Success() {
+		return fmt.Errorf("PPA with %s", ppa.Result)
+	}
+	h.log.Info("pushed the user profile", "private_identity", u.PrivateIdentity, "scscf", u.SCSCF.OriginHost,
+		"service_profile", h.serviceProfile(u.Subscription), "state", u.State.String())
+	return nil
+}
+
+// profilePushes is the name under which the pushes of one subscriber's
+// profile are serialised. It is a lock of its own rather than the
+// subscriber's, so that a Cx request of the user is still answered while
+// a PPR is on its way. Both locks live in the same table, so the name
+// carries a prefix; a private identity that carried the same prefix
+// would only make the two locks wait for each other.
+func profilePushes(privateID string) string { return "profile-push:" + privateID }
 
 // registrationTermination is the network initiated de-registration by
 // the HSS, TS 29.228 6.1.3, for a removed subscription: the S-CSCF of a
@@ -828,7 +957,7 @@ type Peers interface {
 // other S-CSCF will (6.1.3.1). The HSS has already forgotten the user,
 // which is the Not Registered state with no S-CSCF name.
 func (h *HSS) registrationTermination(ctx context.Context, peers Peers, s Subscriber) error {
-	if s.State == NotRegistered || s.SCSCF.OriginHost == "" {
+	if !served(s) {
 		return nil
 	}
 	rtr := cx.RegistrationTerminationRequest{
