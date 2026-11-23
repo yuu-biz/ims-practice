@@ -951,7 +951,7 @@ func (p *PCSCF) register(st *sip.ServerTransaction, protected bool) {
 	case final.StatusCode == 500 || final.StatusCode == 504:
 		// 5.2.2.3: the network failed, so the association can no longer
 		// be trusted.
-		if err := p.deleteAssociation(ueSource(st), log); err != nil {
+		if err := p.deleteAssociation(p.ueSource(st), log); err != nil {
 			log.Warn("the IP association stays until it expires: the store failed", "error", err.Error())
 		}
 	}
@@ -1023,8 +1023,8 @@ func (p *PCSCF) forward(st *sip.ServerTransaction, out *sip.Message, targets []s
 }
 
 // ueSource is ueSourceOf for the request of st.
-func ueSource(st *sip.ServerTransaction) sip.Destination {
-	source, _ := ueSourceOf(st.Request, st.Source)
+func (p *PCSCF) ueSource(st *sip.ServerTransaction) sip.Destination {
+	source, _ := p.ueSourceOf(st.Request, st.Source)
 	return source
 }
 
@@ -1033,7 +1033,7 @@ func ueSource(st *sip.ServerTransaction) sip.Destination {
 // privateID accepts any user.
 func (p *PCSCF) association(st *sip.ServerTransaction, privateID string) (Association, bool, error) {
 	via, viaErr := sip.ParseVia(st.Request.Get("Via"))
-	source := ueSource(st)
+	source := p.ueSource(st)
 	a, ok, err := p.store.Association(context.Background(), source)
 	if err != nil || !ok {
 		return Association{}, false, err
@@ -1057,7 +1057,7 @@ func (p *PCSCF) registered(st *sip.ServerTransaction, resp *sip.Message, private
 	ctx := context.Background()
 	interval := grantedInterval(resp)
 	if interval == 0 {
-		a, ok, err := p.store.Association(ctx, ueSource(st))
+		a, ok, err := p.store.Association(ctx, p.ueSource(st))
 		if err == nil && ok {
 			err = p.endAssociation(a, log)
 		}
@@ -1070,7 +1070,7 @@ func (p *PCSCF) registered(st *sip.ServerTransaction, resp *sip.Message, private
 	via, _ := sip.ParseVia(st.Request.Get("Via"))
 	expires := time.Now().Add(interval)
 	a := Association{
-		Source:          ueSource(st),
+		Source:          p.ueSource(st),
 		Contact:         contactOf(st.Request),
 		SPIs:            over,
 		SentBy:          via.SentBy(),

@@ -4,6 +4,8 @@ import (
 	"context"
 	"io"
 	"log/slog"
+	"net"
+	"net/netip"
 	"strings"
 	"testing"
 	"time"
@@ -63,6 +65,38 @@ func newStack(t *testing.T, onRequest func(*sip.ServerTransaction)) *sip.Stack {
 func newStackWith(t *testing.T, timers sip.Timers, onRequest func(*sip.ServerTransaction)) *sip.Stack {
 	t.Helper()
 	return newStackConfig(t, sip.Config{Timers: timers, OnRequest: onRequest})
+}
+
+// newProtectedStack is newStack whose transport binds clientPort as
+// the protected client port of TS 33.203 7.1, so that its requests
+// leave from there while its sent-by stays the port it listens on.
+func newProtectedStack(t *testing.T, clientPort uint16, onRequest func(*sip.ServerTransaction)) *sip.Stack {
+	t.Helper()
+	tr, err := sip.ListenProtected("127.0.0.1:0", clientPort, nil, quiet(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s, err := sip.NewStack(tr, sip.Config{Timers: sip.DefaultTimers(), SentBy: tr.LocalAddr().String(), OnRequest: onRequest}, quiet())
+	if err != nil {
+		tr.Close()
+		t.Fatal(err)
+	}
+	t.Cleanup(s.Close)
+	return s
+}
+
+// freePort is a port that nothing listens on when the test starts: a
+// protected client port, which TS 33.203 7.1 NOTE 16 has the UE choose
+// at random and which this test cannot pick out of thin air.
+func freePort(t *testing.T) uint16 {
+	t.Helper()
+	c, err := net.ListenUDP("udp", net.UDPAddrFromAddrPort(netip.MustParseAddrPort("127.0.0.1:0")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	port := c.LocalAddr().(*net.UDPAddr).AddrPort().Port()
+	c.Close()
+	return port
 }
 
 // newPCSCFStack is the unprotected stack of p, screened as the

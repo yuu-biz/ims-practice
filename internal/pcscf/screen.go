@@ -38,7 +38,7 @@ func (p *PCSCF) Screen(req *sip.Message, source sip.Destination) bool {
 	if req.Method == sip.REGISTER {
 		return true
 	}
-	ue, sentBy := ueSourceOf(req, source)
+	ue, sentBy := p.ueSourceOf(req, source)
 	if p.admissions.admitsFrom(ue, sentBy, time.Now()) || p.fromNetwork(req) {
 		return true
 	}
@@ -273,22 +273,29 @@ func (s indexedStore) DeleteAssociation(ctx context.Context, source sip.Destinat
 // moment, so the UE of such a request is the one at the sent-by of its
 // Via, when that has the address the request came from.
 //
+// With ESP every request of a UE comes from its protected client port,
+// over UDP as well (TS 33.203 7.1 item 2), which no association holds
+// either, so such a request is matched by its sent-by too. The kernel
+// has let it through on the security associations of that UE, so the
+// address it came from is the UE's, and TS 33.203 7.1 rule 2 has the
+// P-CSCF check that the Via names that same address, which is what
+// matching it here does.
+//
 // SIMPLIFIED: TS 24.229 5.2.2.3. The IP association pairs the address
 // and port that the REGISTER came from with the sent-by of its Via. A
 // request over TCP is matched by its sent-by alone, when that has the
 // address the request came from: the port of its connection is not
 // checked, since it is a port of the moment that no association holds.
 // A TCP request whose sent-by names another address is not recognized.
-// Nothing authenticates the port in that sent-by, so a host that shares
-// the UE's IP address could name it. With IPsec the UE's TCP
-// connections would come from its protected client port instead, and
-// the security associations would authenticate them (TS 33.203 7.1).
-func ueSourceOf(req *sip.Message, source sip.Destination) (sip.Destination, string) {
+// Without ESP nothing authenticates the port in that sent-by, so a host
+// that shares the UE's IP address could name it; with ESP the security
+// associations authenticate the sender (TS 33.203 7.1).
+func (p *PCSCF) ueSourceOf(req *sip.Message, source sip.Destination) (sip.Destination, string) {
 	via, err := sip.ParseVia(req.Get("Via"))
 	if err != nil {
 		return source, ""
 	}
-	if source.Transport != sip.TCP {
+	if source.Transport != sip.TCP && p.cfg.ESP == nil {
 		return source, via.SentBy()
 	}
 	sentBy, err := netip.ParseAddrPort(via.SentBy())

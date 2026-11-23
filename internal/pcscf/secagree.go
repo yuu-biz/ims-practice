@@ -123,6 +123,13 @@ type SecurityAssociations struct {
 	Expires time.Time
 }
 
+// protect reports whether port is one of the UE's protected ports of
+// this set, which is where a message of these associations comes from
+// (TS 33.203 7.1 rule 1).
+func (s SecurityAssociations) protect(port uint16) bool {
+	return port == s.UEMechanism.PortC || port == s.UEMechanism.PortS
+}
+
 // securityAssociationMargin is how much longer established security
 // associations last than the registration (TS 24.229 5.2.2.2).
 const securityAssociationMargin = 30 * time.Second
@@ -424,7 +431,7 @@ func (p *PCSCF) AdmitUnprotected(req *sip.Message, source sip.Destination) bool 
 	if req.Method == sip.REGISTER {
 		return true
 	}
-	ue, _ := ueSourceOf(req, source)
+	ue, _ := p.ueSourceOf(req, source)
 	established, err := p.established(ue.Addr)
 	if err != nil {
 		// Unlike Screen, which keeps out a request whose IP association
@@ -473,7 +480,11 @@ type secAgreement struct {
 func (p *PCSCF) receiveSecAgree(st *sip.ServerTransaction, out *sip.Message, privateID string, creds *sip.Credentials, protected bool, log *slog.Logger) (*secAgreement, *sip.Message) {
 	req := st.Request
 	refuse := func(code int, why string) (*secAgreement, *sip.Message) {
-		log.Info("security agreement refused", "why", why, "status", code)
+		// At Warn, not Info: this is the end of the UE's registration,
+		// and the reason is what names the fault in a log that only
+		// keeps the failures.
+		log.Warn("security agreement refused", "why", why, "status", code,
+			"source", st.Source.String(), "call_id", req.Get("Call-ID"))
 		resp := sip.NewResponse(req, code, sip.NewTag())
 		if code == 420 {
 			resp.Add("Unsupported", sip.OptionSecAgree)
@@ -511,13 +522,21 @@ func (p *PCSCF) receiveSecAgree(st *sip.ServerTransaction, out *sip.Message, pri
 		// Item 3 a: the associations that protected the request. TCP and
 		// UDP share them (TS 33.203 7.1), so a REGISTER over 1300 bytes,
 		// which comes over TCP, has them at the UE that ueSource names.
-		sas, ok, err := p.store.SecurityAssociations(context.Background(), ueSource(st).Addr)
+		sas, ok, err := p.store.SecurityAssociations(context.Background(), p.ueSource(st).Addr)
 		switch {
 		case err != nil:
 			return nil, storeFailed(req, err, log)
 		case !ok:
 			// TS 33.203 7.1 item 3: ESP would have dropped it.
 			return refuse(403, "no security associations")
+		case p.cfg.ESP != nil && !sas.protect(st.Source.Addr.Port()):
+			// TS 33.203 7.1 rule 4: the associations of a protected
+			// message are the ones of the ports it crossed. Without ESP
+			// the port it came from is the key of the set, so there is
+			// nothing left to check; with ESP it is the protected
+			// client port, and a message from any other port of the
+			// UE's address rode no association of this set.
+			return refuse(403, "not a protected port of these security associations")
 		case !strings.EqualFold(sas.PrivateIdentity, privateID):
 			// Item 3 c.
 			return refuse(403, "another private user identity")
