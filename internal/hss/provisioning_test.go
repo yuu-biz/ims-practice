@@ -104,6 +104,26 @@ func TestProvisioningTakesTheMarkAndTheProfileOfASubscription(t *testing.T) {
 	if got := decode[subscriptionResponse](t, do(t, api, "GET", "/subscriptions/"+impi, "")); got.TestUser || got.ServiceProfile != "" {
 		t.Errorf("GET a subscription that is neither marked nor named: %+v", got)
 	}
+	// The profile each of the three kinds of subscription gets. The
+	// screen that lists them shows it, since the settings that name the
+	// profile of a marked subscription and of any other change while the
+	// HSS runs.
+	effective := func(t *testing.T, privateID string) string {
+		t.Helper()
+		return decode[subscriptionResponse](t, do(t, api, "GET", "/subscriptions/"+privateID, "")).EffectiveServiceProfile
+	}
+	if got := effective(t, "001010000000009@"+realm); got != "trial" {
+		t.Errorf("the profile of a subscription that names trial: %q", got)
+	}
+	if got := effective(t, impi); got != "default" {
+		t.Errorf("the profile of a subscription that names none: %q", got)
+	}
+	if w := do(t, api, "PATCH", "/subscriptions/"+impi, `{"test_user": true}`); w.Code != http.StatusOK {
+		t.Fatalf("PATCH: %d %s", w.Code, w.Body)
+	}
+	if got := effective(t, impi); got != "trial" {
+		t.Errorf("the profile of a marked subscription that names none: %q", got)
+	}
 
 	unknown := strings.NewReplacer("000009", "000008", `"trial"`, `"gold"`).Replace(marked)
 	if w := do(t, api, "POST", "/subscriptions", unknown); w.Code != http.StatusBadRequest ||

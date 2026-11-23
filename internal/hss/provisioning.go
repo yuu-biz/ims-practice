@@ -173,9 +173,15 @@ type subscriptionResponse struct {
 	// the subscription, absent where it has neither.
 	TestUser       bool   `json:"test_user,omitempty"`
 	ServiceProfile string `json:"service_profile,omitempty"`
+	// EffectiveServiceProfile is the profile that the subscription gets
+	// under the settings in force (HSS.serviceProfile): ServiceProfile
+	// where it names one, and otherwise the profile of its kind of user,
+	// which a reader of the subscription alone cannot name, since the two
+	// settings that hold those names change while the HSS runs.
+	EffectiveServiceProfile string `json:"effective_service_profile"`
 }
 
-func response(s Subscriber) subscriptionResponse {
+func (h *HSS) response(s Subscriber) subscriptionResponse {
 	var schemes []string
 	if s.Password != "" {
 		schemes = append(schemes, cx.SchemeSIPDigest)
@@ -184,14 +190,15 @@ func response(s Subscriber) subscriptionResponse {
 		schemes = append(schemes, cx.SchemeDigestAKAv1MD5)
 	}
 	return subscriptionResponse{
-		PrivateIdentity:       s.PrivateIdentity,
-		PublicIdentities:      s.PublicIdentities,
-		BarredIdentities:      s.BarredIdentities,
-		AuthenticationSchemes: schemes,
-		RegistrationState:     s.State.String(),
-		ServerName:            s.ServerName,
-		TestUser:              s.TestUser,
-		ServiceProfile:        s.ServiceProfile,
+		PrivateIdentity:         s.PrivateIdentity,
+		PublicIdentities:        s.PublicIdentities,
+		BarredIdentities:        s.BarredIdentities,
+		AuthenticationSchemes:   schemes,
+		RegistrationState:       s.State.String(),
+		ServerName:              s.ServerName,
+		TestUser:                s.TestUser,
+		ServiceProfile:          s.ServiceProfile,
+		EffectiveServiceProfile: h.serviceProfile(s.Subscription),
 	}
 }
 
@@ -515,7 +522,7 @@ func exported(s Subscriber, data []sh.TransparentData) subscriptionRequest {
 // data, so that the Lab shows which tone the callers of the user
 // hear.
 func (h *HSS) responseWithCAT(ctx context.Context, s Subscriber) (subscriptionResponse, error) {
-	resp := response(s)
+	resp := h.response(s)
 	d, ok, err := h.store.RepositoryData(ctx, s.PrivateIdentity, mmtel.CATServiceIndication)
 	if err != nil {
 		return subscriptionResponse{}, err
@@ -565,7 +572,7 @@ func (h *HSS) addSubscription(w http.ResponseWriter, r *http.Request) {
 	}
 	h.log.Info("subscription added", "private_identity", sub.PrivateIdentity, "public_identities", sub.PublicIdentities)
 	w.Header().Set("Location", "/subscriptions/"+sub.PrivateIdentity)
-	writeJSON(w, http.StatusCreated, response(Subscriber{Subscription: sub}))
+	writeJSON(w, http.StatusCreated, h.response(Subscriber{Subscription: sub}))
 }
 
 // putAnswer is the answer to a PUT of a subscription: what the HSS did,
@@ -679,7 +686,7 @@ func (h *HSS) putSubscription(w http.ResponseWriter, r *http.Request, peers Peer
 		if dry {
 			status = http.StatusOK
 		}
-		writePutAnswer(w, status, resultCreated, Subscriber{Subscription: sub}, want)
+		h.writePutAnswer(w, status, resultCreated, Subscriber{Subscription: sub}, want)
 		return
 	}
 
@@ -694,7 +701,7 @@ func (h *HSS) putSubscription(w http.ResponseWriter, r *http.Request, peers Peer
 		return
 	}
 	if sameSubscription(stored.Subscription, next.Subscription) && sameRepositoryData(data, want) {
-		writePutAnswer(w, http.StatusOK, resultUnchanged, stored, data)
+		h.writePutAnswer(w, http.StatusOK, resultUnchanged, stored, data)
 		return
 	}
 	if !dry {
@@ -721,7 +728,7 @@ func (h *HSS) putSubscription(w http.ResponseWriter, r *http.Request, peers Peer
 			h.pushChangedProfile(ctx, peers, impi)
 		}
 	}
-	writePutAnswer(w, http.StatusOK, resultUpdated, next, want)
+	h.writePutAnswer(w, http.StatusOK, resultUpdated, next, want)
 }
 
 // dryRun reads the dry_run of a request. Absent is false.
@@ -872,8 +879,8 @@ func (h *HSS) swapRepositoryData(ctx context.Context, privateID string, data sh.
 
 // writePutAnswer answers a PUT with the subscription it leaves behind
 // and the tone of the repository data that goes with it.
-func writePutAnswer(w http.ResponseWriter, status int, result string, sub Subscriber, data []sh.TransparentData) {
-	resp := response(sub)
+func (h *HSS) writePutAnswer(w http.ResponseWriter, status int, result string, sub Subscriber, data []sh.TransparentData) {
+	resp := h.response(sub)
 	resp.CustomizedAlertingTone = catOf(data)
 	writeJSON(w, status, putAnswer{Result: result, Subscription: resp})
 }
