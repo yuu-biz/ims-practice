@@ -155,7 +155,30 @@ func (i *ICSCF) toSCSCF(st *sip.ServerTransaction, out *sip.Message, server stri
 		return sip.NewResponse(st.Request, 504, sip.NewTag()), nil
 	}
 	log.Info("routing to the callee's S-CSCF", "server_name", server)
-	return st.Proxy(m, targets...)
+	return st.ProxyWith(m, i.sessionSucceeded(st), targets...)
+}
+
+// sessionSucceeded is a hook for the responses that the I-CSCF passes
+// back towards the S-CSCF that started the session. It counts the
+// successful terminating session establishment on the one that tells of
+// it: the first 180 (Ringing), or the 2xx when the session was answered
+// without ringing (TS 32.409 4.1.2.12,
+// sip.ServerTransaction.ClaimFirstSuccess). A request that the I-CSCF
+// sends to a second S-CSCF, the one that a 305 named, keeps the same
+// transaction, so the session is counted once however many S-CSCFs the
+// request visited.
+//
+// Only the initial INVITE that the attempts count (OnRequest) sets up a
+// session, so the responses of every other request are left alone: a
+// standalone request, such as a SUBSCRIBE to a conference URI, is
+// answered 2xx by the application server that hosts it.
+func (i *ICSCF) sessionSucceeded(st *sip.ServerTransaction) func(*sip.Message) {
+	initial := st.Request.Method == sip.INVITE && !ims.IsInDialog(st.Request)
+	return func(resp *sip.Message) {
+		if initial && st.ClaimFirstSuccess(resp) {
+			i.sessions.Succeeded(role, ims.TerminatingSession, resp.StatusCode)
+		}
+	}
 }
 
 // psiSubdomain is the subdomain of public service identities that the
@@ -200,10 +223,12 @@ func (i *ICSCF) toPSIHost(st *sip.ServerTransaction, out *sip.Message, log *slog
 	out.Set("P-Charging-Vector", charging.String())
 	received, _ := sip.ChargingVectorOf(st.Request)
 	answer := sip.ChargingVector{ICID: charging.ICID, OrigIOI: received.OrigIOI}.Response(i.cfg.HomeDomain)
+	succeeded := i.sessionSucceeded(st)
 	relay := func(resp *sip.Message) {
 		if got, _ := sip.ChargingVectorOf(resp); got.TermIOI != "" {
 			resp.Set("P-Charging-Vector", answer.String())
 		}
+		succeeded(resp)
 	}
 	final, err := st.ProxyWith(out, relay, targets...)
 	if final != nil {

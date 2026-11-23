@@ -18,6 +18,7 @@ import (
 	"github.com/yuu-biz/ims-practice/internal/diameter"
 	"github.com/yuu-biz/ims-practice/internal/hss"
 	"github.com/yuu-biz/ims-practice/internal/ifc"
+	"github.com/yuu-biz/ims-practice/internal/metrics"
 	"github.com/yuu-biz/ims-practice/internal/sip"
 )
 
@@ -488,8 +489,11 @@ func TestUseProxyFromTheSCSCF(t *testing.T) {
 // SUBSCRIBE from another network to a conference URI, whose host is a
 // subdomain of public service identities, goes where DNS resolves that
 // subdomain, the AS that hosts the conference. The I-CSCF asks the HSS
-// nothing for it (TS 23.228 5.4.12.3 b).
+// nothing for it (TS 23.228 5.4.12.3 b). The 200 (OK) of that server
+// sets up no session, so it counts in no session measurement: TS 32.409
+// 4.1.2.11 and 4.1.2.12 count initial INVITEs.
 func TestPSISubdomainGoesToTheASByDNS(t *testing.T) {
+	reg := metrics.NewRegistry()
 	const subdomain = "conf." + domain
 	received := make(chan *sip.Message, 1)
 	as := newStack(t, func(st *sip.ServerTransaction) {
@@ -509,7 +513,7 @@ func TestPSISubdomainGoesToTheASByDNS(t *testing.T) {
 	})
 	node := diameter.NewNode(diameter.Identity{OriginHost: "icscf." + domain, OriginRealm: domain}, []uint32{diameter.ApplicationIDCx}, diameter.Timers{}, quiet())
 	i := newICSCF(t, Config{HomeDomain: domain, SCSCFs: []SCSCF{{Name: scscf}}, Host: "icscf." + domain, Port: 5060,
-		PSISubdomains: []string{subdomain}}, h, node, locate)
+		PSISubdomains: []string{subdomain}, Metrics: reg}, h, node, locate)
 	icscf := newStack(t, i.OnRequest)
 	ue := newStackWith(t, sip.DefaultTimers(), func(*sip.ServerTransaction) {})
 
@@ -538,6 +542,12 @@ func TestPSISubdomainGoesToTheASByDNS(t *testing.T) {
 	case m := <-asked:
 		t.Errorf("the I-CSCF asked the HSS: command %d", m.Header.CommandCode)
 	default:
+	}
+	for _, series := range []string{terminatingAttempts,
+		`ims_session_successes_total{role="icscf",direction="terminating",response="200"}`} {
+		if got := scraped(t, reg, series); got != 0 {
+			t.Errorf("%s = %v, want 0", series, got)
+		}
 	}
 }
 
