@@ -9,7 +9,9 @@
 # the listener of its maintenance API, on the port MetricsPort in
 # deploy/observability/prometheus.go. Only the P-CSCF, the I-CSCF, the
 # S-CSCF, the HSS and the MMTel AS serve it: a node that does not shows
-# as down, here and in the "Up" panel of the Grafana dashboard.
+# as down, here and in the "Up" panel of the Grafana dashboard. The node
+# of the MRFC has that listener for its maintenance API and counts no
+# measurement, so it is up with nothing to scrape.
 
 global:
   scrape_interval: 15s
