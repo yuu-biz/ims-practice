@@ -846,11 +846,14 @@ func TestJoinAsTheConferenceEnds(t *testing.T) {
 
 // TestMediaChangeAsTheConferenceEnds: a participant changes its media
 // while the conference ends, and the MRFC answers the change only
-// afterwards. The conference has given its URI up by then (TS 24.147
-// 5.3.2.7) and its record is out of the store, and the change that
-// finishes after that puts no record back: the other instances read
-// the store, and a record there names a conference that no instance
-// hosts and no request would reach.
+// afterwards. The BYE that removes the participant answers the change
+// with 487 (RFC 3261 15.1.2), so the answer of the MRFC reaches nobody:
+// a 2xx would have accepted a change to a session that is over. The
+// conference has given its URI up by then (TS 24.147 5.3.2.7) and its
+// record is out of the store, and the change that finishes after that
+// puts no record back: the other instances read the store, and a record
+// there names a conference that no instance hosts and no request would
+// reach.
 func TestMediaChangeAsTheConferenceEnds(t *testing.T) {
 	mrfc := startConferenceMRFC(t)
 	as := startAS(t, noServices{}, mmtel.Config{MRFC: "sip:" + contactOf(t, mrfc.ua)})
@@ -889,7 +892,9 @@ func TestMediaChangeAsTheConferenceEnds(t *testing.T) {
 	receive(t, media.Done(), "BYE of carol's media at the MRFC")
 
 	change.Accept(audio("40002", "recvonly"))
-	receive(t, answered, "the focus's answer to carol's change of media")
+	if resp := receive(t, answered, "the focus's answer to carol's change of media"); resp == nil || resp.StatusCode != 487 {
+		t.Errorf("carol's change of media got %v, want 487", resp)
+	}
 	if r, ok := conferenceOf(t, as, uri.User); ok {
 		t.Errorf("the store has the conference again after it ended, with %d participants", len(r.Participants))
 	}
