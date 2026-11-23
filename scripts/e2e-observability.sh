@@ -9,7 +9,11 @@
 # dashboard uses (deploy/observability). A call adds the terminating
 # session establishment that the I-CSCF counts, and the HSS holds the
 # subscribers it was given and counts the identities of a registration
-# while it lasts. A shut down through the
+# while it lasts. The Cx requests of the registration and of the call,
+# the answers of the HSS to them and the state of each Diameter
+# connection are there as well, and the connection of the I-CSCF reads
+# as down while the HSS is out of service and as up again after the
+# unlock. A shut down through the
 # maintenance API then makes the S-CSCF answer a new REGISTER with 503
 # and Retry-After, which the capture shows hop by hop, and an unlock
 # lets the UE register again. A shut down of the P-CSCF makes the
@@ -307,6 +311,37 @@ else
 	docker compose exec -T icscf wget -qO- http://127.0.0.1:8085/metrics || true
 	fail=1
 fi
+# The Diameter metrics come from the peer group that each role sends
+# through: the I-CSCF asks the HSS whether the user may register (UAR)
+# and where the callee is (LIR), and the S-CSCF asks for the
+# authentication vector (MAR) and tells the HSS that it serves the user
+# (SAR). The result of each answer is in the result label, which this
+# check leaves open so that it reads whichever result the HSS gave.
+# ims_diameter_peer_up is read from the state of the connection at the
+# scrape.
+for wanted in \
+	'icscf ims_diameter_requests_total{role="icscf",command="UAR"}' \
+	'icscf ims_diameter_answers_total{role="icscf",command="UAR"}' \
+	'icscf ims_diameter_requests_total{role="icscf",command="LIR"}' \
+	'icscf ims_diameter_answers_total{role="icscf",command="LIR"}' \
+	'scscf ims_diameter_requests_total{role="scscf",command="MAR"}' \
+	'scscf ims_diameter_answers_total{role="scscf",command="MAR"}' \
+	'scscf ims_diameter_requests_total{role="scscf",command="SAR"}' \
+	'scscf ims_diameter_answers_total{role="scscf",command="SAR"}' \
+	'icscf ims_diameter_peer_up{node="icscf"}' \
+	'scscf ims_diameter_peer_up{node="scscf"}'; do
+	node="${wanted%% *}"
+	series="${wanted#* }"
+	if value="$(until_positive prometheus_values "$series")"; then
+		echo "ok   Prometheus has $series = $value"
+	else
+		echo "FAIL Prometheus has no $series above 0: $value"
+		# Shown only to explain the failure, if the node answers at all,
+		# hence "|| true".
+		docker compose exec -T "$node" wget -qO- http://127.0.0.1:8085/metrics || true
+		fail=1
+	fi
+done
 if value="$(until_positive prometheus_values 'up{job="ims",node="hss"}')"; then
 	echo "ok   Prometheus scrapes the HSS: up = $value"
 else
@@ -512,6 +547,15 @@ if docker compose run --no-deps --rm ue register -deregister-after 2s 2>/dev/nul
 else
 	echo "ok   UE could not register while the HSS is shut down"
 fi
+# The gauge is read from the state of the connection at each scrape, so
+# the closed connection shows without anything writing to it.
+peer_up='ims_diameter_peer_up{node="icscf"}'
+if value="$(until_equal prometheus_values "$peer_up" 0)"; then
+	echo "ok   $peer_up is $value while the HSS is out of service"
+else
+	echo "FAIL $peer_up did not fall to 0 while the HSS is out of service: $value"
+	fail=1
+fi
 answer="$(administrative_state hss UNLOCKED || true)"
 state="$(node_state hss || true)"
 if grep -q '"administrative_state":"UNLOCKED"' <<<"$state"; then
@@ -529,6 +573,12 @@ if wait_for_opens icscf $((icscf_opens + 1)) && wait_for_opens scscf $((scscf_op
 else
 	echo "FAIL a peer of the HSS did not open its Diameter connection again after the unlock"
 	echo "     opens so far: icscf $(diameter_opens icscf), scscf $(diameter_opens scscf), ipsmgw $(diameter_opens ipsmgw), mmtel $(diameter_opens mmtel)"
+	fail=1
+fi
+if value="$(until_positive prometheus_values "$peer_up")"; then
+	echo "ok   $peer_up is $value again after the unlock of the HSS"
+else
+	echo "FAIL $peer_up did not come back to 1 after the unlock of the HSS: $value"
 	fail=1
 fi
 registrations="$(count "$registered")"
