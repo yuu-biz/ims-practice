@@ -516,7 +516,7 @@ func (f *conference) join(p *party, info confinfo.Participant) *refusal {
 	p.dialog = d.ID
 	f.parties = append(f.parties, p)
 	f.record.Participants = append(f.record.Participants, ConferenceParticipant{Participant: info, Dialog: d, Media: m})
-	if err := f.as.conferenceStore.PutConference(context.Background(), f.record); err != nil {
+	if err := f.putRecord(); err != nil {
 		f.parties = f.parties[:len(f.parties)-1]
 		f.record.Participants = f.record.Participants[:len(f.record.Participants)-1]
 		f.mu.Unlock()
@@ -628,8 +628,20 @@ func (f *conference) writeRecord() {
 }
 
 // putRecord writes the record of the conference, and returns the
-// failure of the store. f.mu is held.
+// failure of the store. It writes nothing once the conference has
+// ended: the focus has given the conference URI up and taken the
+// record out of the store (deallocate), and a write after that would
+// leave the other instances a conference that no instance hosts, for
+// as long as the store keeps it. The focus sets ended under f.mu, and
+// deallocates after it, so a write that gets this far is one from
+// before the end. A caller that answers a request by the failure of
+// the store (join, subscribe) refuses an ended conference before it
+// writes, and so never takes this for a write that went through. f.mu
+// is held.
 func (f *conference) putRecord() error {
+	if f.ended {
+		return nil
+	}
 	return f.as.conferenceStore.PutConference(context.Background(), f.record)
 }
 
