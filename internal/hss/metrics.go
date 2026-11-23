@@ -22,24 +22,24 @@ import (
 // counts them, and no other role registers them, so nothing can
 // collide in the registry of a node.
 //
-// TS 32.409 gives the HSS these further measurements, which it does not
-// serve.
+// SIMPLIFIED: TS 32.409 4.2.1.1.2, 4.2.1.1.5, 4.2.1.1.6 and 4.2.1.1.7.
+// The HSS counts neither the provisioned private user identities
+// (4.2.1.1.2) nor the private and public service identities (4.2.1.1.5
+// to 4.2.1.1.7). A subscription here has exactly one private user
+// identity (Subscription), so that number would be the subscriptions
+// (4.2.1.1.1) under a second name. The public service identities are
+// wildcarded ranges (PSIUser), one of which stands for every
+// conference URI of a subdomain, so the HSS holds no number of them.
 //
-//   - The provisioned private user identities (4.2.1.1.2,
-//     DBU.NbrPriUserId). A subscription of this HSS has exactly one
-//     private user identity (Subscription), so the number would be the
-//     subscriptions (4.2.1.1.1) under a second name.
-//   - The public user identities in the unregistered state (4.2.1.2.2,
-//     DBU.NbrUnregPubUserId), that is, those whose profile an S-CSCF
-//     holds for services to a user who is not registered.
-//   - The private and public service identities (4.2.1.1.5 to
-//     4.2.1.1.7). The public service identities of this network are
-//     wildcarded ranges (PSIUser), so the HSS holds no number of them:
-//     one range stands for every conference URI of a subdomain.
-//   - The requests it receives and the answers it sends (4.2.12.1
-//     UR.Request and 4.2.12.2 UR.Answer). These are the Diameter
-//     messages of every role, which internal/diameter counts in one
-//     place for all of them.
+// SIMPLIFIED: TS 32.409 4.2.1.2.2. The HSS does not count the public
+// user identities in the unregistered state, those whose profile an
+// S-CSCF holds for services to a user who is not registered. No panel
+// of the dashboard reads them.
+//
+// SIMPLIFIED: TS 32.409 4.2.1.1 and 4.2.1.2. An HSS whose subscribers
+// live in a store outside its process serves none of these gauges. The
+// numbers belong to that store, which every instance shares, and an
+// instance cannot work them out from what it did itself (Store.Counts).
 
 // databaseUsageGauges are the database usage measurements of TS 32.409
 // 4.2.1 that the HSS serves, each from the numbers of one read of the
