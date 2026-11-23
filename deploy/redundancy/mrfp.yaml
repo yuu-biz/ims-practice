@@ -24,6 +24,16 @@ mrfp:
     cat1: /usr/share/ims/announcements/cat1.wav
     cat2: /usr/share/ims/announcements/cat2.wav
 
+# The maintenance listener: the maintenance API under /maintenance/v1/,
+# through which an operator takes this media relay out of service, and
+# /metrics for Prometheus to scrape. The relay counts no measurement of
+# its own, so that page is empty, and the target shows as up. No
+# specification gives a port for the listener; 8085 is this project's
+# choice. The API asks for no password, so the port is not published
+# outside the network of the IMS nodes.
+maintenance:
+  listen: 0.0.0.0:8085
+
 # The MRFP keeps the contexts of its announcements and conferences in
 # the shared store, as the relay of the agw node keeps those of its
 # calls, so that a node recreated under the same name opens the same

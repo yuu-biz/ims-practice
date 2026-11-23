@@ -11,3 +11,13 @@ agw:
   rtp_ports:
     min: 40000
     max: 40039
+
+# The maintenance listener: the maintenance API under /maintenance/v1/,
+# through which an operator takes this media relay out of service, and
+# /metrics for Prometheus to scrape. The relay counts no measurement of
+# its own, so that page is empty, and the target shows as up. No
+# specification gives a port for the listener; 8085 is this project's
+# choice. The API asks for no password, so the port is not published
+# outside the network of the IMS nodes.
+maintenance:
+  listen: 0.0.0.0:8085
