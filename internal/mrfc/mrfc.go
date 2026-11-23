@@ -221,12 +221,35 @@ func (m *MRFC) forget(e *agw.Events) {
 	m.mu.Unlock()
 }
 
-// choose is the MRFP for a new context: the same for the same key in
-// every instance.
-func (m *MRFC) choose(key string) Processor {
+// candidates are the MRFPs for a new context, in the order this
+// instance tries them: the one that the hash of key picks, then the
+// rest of the list in turn, and after the last one the first. Every
+// instance lists the MRFPs in the same order, so the same key picks the
+// same MRFP, and the contexts spread over the MRFPs.
+//
+// An MRFP gives no context when it does not answer, when it has no port
+// left, and when an operator has taken it out of service (internal/agw).
+// The MRFC then asks the next one, as the P-CSCF asks the next media
+// relay (internal/pcscf, addContext). TS 23.333 6.1.2 has the MRFC
+// establish no new connection on an MRFP that is locked for new calls.
+// The context of a conference that exists is not among these: that
+// party goes to the MRFP that holds the mix, or nowhere (attach).
+//
+// SIMPLIFIED: TS 23.333 6.1.2 and 6.1.3. The MRFC does not keep track
+// of which MRFPs are unavailable, and audits none of them to find out
+// when one is back, where 6.1.2 asks it to prevent the usage of an
+// MRFP until that MRFP has recovered. Each request tries the MRFP that
+// its key picks, and one whose MRFP has gone waits for that Add to fail
+// before it goes on to the next.
+func (m *MRFC) candidates(key string) []Processor {
 	h := fnv.New32a()
 	h.Write([]byte(key))
-	return m.processors[h.Sum32()%uint32(len(m.processors))]
+	first := int(h.Sum32() % uint32(len(m.processors)))
+	ordered := make([]Processor, 0, len(m.processors))
+	for i := range m.processors {
+		ordered = append(ordered, m.processors[(first+i)%len(m.processors)])
+	}
+	return ordered
 }
 
 // serve answers an INVITE outside a dialog whose Request-URI u is, for

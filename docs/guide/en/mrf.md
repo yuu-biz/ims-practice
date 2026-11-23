@@ -357,6 +357,7 @@ Each item has a `SIMPLIFIED:` comment in the code; `grep -rn "SIMPLIFIED:" inter
 | MRFC, TS 24.229 5.8.1 | The Contact is the SIP URI of the instance, not a GRUU. | Nothing sends a request to the MRFC outside a dialog it has with it. |
 | MRFC, TS 24.229 5.8.2.1.1.1 and RFC 4240 2 and 8 | No charging data, sips: is not enforced, no AS is authenticated. | No node of the project writes charging records, and nothing is encrypted so that the capture shows the content. |
 | MRFC, RFC 4240 3 | The suggested reason phrases go into a Warning. | The UA writes the standard phrase in the status line. |
+| MRFC, TS 23.333 6.1.2 and 6.1.3 | The MRFC keeps no list of the MRFPs that are unavailable, and audits none of them to find out when one is back, where 6.1.2 asks it to prevent the usage of an MRFP until that MRFP has recovered. Each request tries the MRFP that its Call-ID, or the conference ID, picks, and one whose MRFP has stopped waits for that Add to fail before it asks the next one. | An MRFP answers from memory, so the wait is one failed request, and the capture then shows both the refusal and the request that followed it. |
 | netann, RFC 4240 3 | locale, content-type and param1 to param9 are ignored. | Each announcement has one variant. |
 | MRFP, TS 23.333 5.10 and RFC 3550 6 and 7.1 | The mixer takes PCMU only, keeps three frames for jitter, writes no CSRC list and sends no RTCP. | Enough for a conference of a few UEs on one bridge. |
 | MRFP, RFC 3550 6 | No RTCP sender reports for the media it makes. | The UE simulator needs none. |

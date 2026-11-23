@@ -40,30 +40,13 @@ func (m *MRFC) announce(c *sip.IncomingCall, u sip.URI, a netann.Announcement, l
 			return
 		}
 	}
-	p := m.choose(c.Request.Get("Call-ID"))
-	ctx, cancel := mp()
-	found, ok, err := p.Announcements.Announcement(ctx, name)
-	cancel()
-	switch {
-	case err != nil:
-		log.Warn("MRFP not reached", "mrfp", p.Name, "error", err.Error())
-		m.refuse(c, u, &netann.Error{Status: 400, Reason: "Announcement content could not be retrieved"}, log)
-		return
-	case !ok:
-		m.refuse(c, u, &netann.Error{Status: 404, Reason: "Announcement content not found"}, log)
-		return
-	}
-
 	direction := "sendonly"
 	if hasOffer {
 		direction = announcementDirection(o.direction)
 	}
-	ctx, cancel = mp()
-	cx, err := p.Control.Add(ctx, agw.TerminationRequest{Mode: agw.Mode(direction), Remote: o.remote})
-	cancel()
-	if err != nil {
-		log.Warn("no termination in the MRFP", "mrfp", p.Name, "error", err.Error())
-		m.refuse(c, u, &netann.Error{Status: 503, Reason: "Service Unavailable"}, log)
+	p, found, cx, refusal := m.reserve(c.Request.Get("Call-ID"), name, agw.TerminationRequest{Mode: agw.Mode(direction), Remote: o.remote}, log)
+	if refusal != nil {
+		m.refuse(c, u, refusal, log)
 		return
 	}
 	var t agw.Termination
@@ -75,6 +58,7 @@ func (m *MRFC) announce(c *sip.IncomingCall, u sip.URI, a netann.Announcement, l
 	c.Handle(m.handle(l, announcementDirection))
 
 	var body sip.Body
+	var err error
 	if hasOffer {
 		body, err = l.answer(o, direction)
 	} else {
@@ -121,6 +105,46 @@ func (m *MRFC) announce(c *sip.IncomingCall, u sip.URI, a netann.Announcement, l
 		// which the Subtract of release does.
 		log.Info("announcement stopped by the peer")
 	}
+}
+
+// reserve finds the MRFP that plays the announcement name and the
+// context for it: the first of the candidates for key that holds the
+// announcement and gives a context (TS 29.333 5.17.2.2). It returns the
+// refusal for the INVITE when none does, which is that of the last MRFP
+// tried, so that one MRFP alone gives the same answer as before there
+// were several.
+//
+// An MRFP that does not answer at all is passed over, and so is one
+// that gives no context, as an MRFP out of service does. An MRFP that
+// answers that it does not hold the announcement is not: every MRFP of
+// the network is provisioned with the same announcements, so the name
+// is wrong wherever it is asked for, and the MRFC says so with 404
+// rather than ask every MRFP in turn.
+func (m *MRFC) reserve(key, name string, req agw.TerminationRequest, log *slog.Logger) (Processor, agw.Announcement, agw.Context, *netann.Error) {
+	var refusal *netann.Error
+	for _, p := range m.candidates(key) {
+		ctx, cancel := mp()
+		found, ok, err := p.Announcements.Announcement(ctx, name)
+		cancel()
+		if err != nil {
+			log.Warn("MRFP not reached", "mrfp", p.Name, "error", err.Error())
+			refusal = &netann.Error{Status: 400, Reason: "Announcement content could not be retrieved"}
+			continue
+		}
+		if !ok {
+			return Processor{}, agw.Announcement{}, agw.Context{}, &netann.Error{Status: 404, Reason: "Announcement content not found"}
+		}
+		ctx, cancel = mp()
+		cx, err := p.Control.Add(ctx, req)
+		cancel()
+		if err != nil {
+			log.Warn("no termination in the MRFP", "mrfp", p.Name, "error", err.Error())
+			refusal = &netann.Error{Status: 503, Reason: "Service Unavailable"}
+			continue
+		}
+		return p, found, cx, nil
+	}
+	return Processor{}, agw.Announcement{}, agw.Context{}, refusal
 }
 
 // refuseMedia answers an INVITE whose SDP the MRFP cannot take.
