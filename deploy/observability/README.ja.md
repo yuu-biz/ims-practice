@@ -10,7 +10,7 @@
 | `prometheus/prometheus.yml` | Prometheus が何を、どの間隔で集めるか。中の `ims` のジョブは生成したもの |
 | `prometheus.go`、`genprometheus/` | ルートの `compose.yaml` のサービスから `ims` のジョブを作る生成器 |
 | `grafana/provisioning/` | Prometheus のデータソースと、ダッシュボードのフォルダ。Grafana の起動時に読み込まれる |
-| `grafana/dashboards/ims-overview.json` | ダッシュボード 1 枚。ノードの稼働、登録、セッション、Diameter の結果 |
+| `grafana/dashboards/ims-overview.json` | ダッシュボード 1 枚。ノードの稼働、登録、セッションとその成功率、Diameter の結果 |
 | `observability_test.go` | `prometheus.yml` が `compose.yaml` に追いついていることと、ダッシュボードが用意したデータソースを使っていることを確かめる試験 |
 
 ## 起動と停止
@@ -32,7 +32,7 @@ UE を登録すると、数えた値が見えます。
 docker compose run --rm ue register -deregister-after 5s
 ```
 
-Prometheus は 15 秒ごとに集めます。その時間のうちに、パネル **REGISTER attempts and successes** に P-CSCF と S-CSCF がそれぞれの `role` で数えた登録と登録の解除が出て、**Initial registration success ratio** に最初の登録のうち成功したものの割合が、**Initial registration set-up time** に P-CSCF での最初の登録にかかった時間が出ます。[音声通話の流れを追う](../../docs/guide/ja/call.md) のとおりに通話すると、パネル **Session attempts and answers** と **Answered sessions** に値が出ます。P-CSCF は通話の発信側と着信側の両方の区間で数え、I-CSCF はホーム網に入る着信のセッションとして 1 回数えます。パネル **Diameter answers by result** は、同じ登録を Cx の側から見たものです。I-CSCF は利用者が登録してよいかを HSS に問い合わせ（UAR）、S-CSCF は認証ベクトルを求め（MAR）、自分がその利用者を受け持つことを HSS に伝えます（SAR）。どれもそれぞれの `role` で、HSS が返した結果ごとに出ます。パネル **Diameter peers** は、各ノードが設定に書いた相手へ開く接続を出します。その接続が要求を通せるあいだは 1 です。値は収集のときに各接続の状態から読むので、HSS を止めたノードは 0 に落ち、HSS が戻れば自分で 1 に戻ります。パネル **Registered identities** は、同じ登録を HSS の側から見たものです。加入者の SIP URI と tel URI がそろって登録済みになり、登録の解除でそろって外れます。パネル **Provisioned subscriptions and identities** は、登録している利用者がいるかどうかに関わらず、HSS が持っている加入者と公開識別子の数を出します。
+Prometheus は 15 秒ごとに集めます。その時間のうちに、パネル **REGISTER attempts and successes** に P-CSCF と S-CSCF がそれぞれの `role` で数えた登録と登録の解除が出て、**Initial registration success ratio** に最初の登録のうち成功したものの割合が、**Initial registration set-up time** に P-CSCF での最初の登録にかかった時間が出ます。[音声通話の流れを追う](../../docs/guide/ja/call.md) のとおりに通話すると、パネル **Session attempts and answers**、**Answered sessions**、**Session establishment success ratio** に値が出ます。P-CSCF と S-CSCF は通話の発信側と着信側の両方の区間で数え、I-CSCF はホーム網に入る着信のセッションとして 1 回数えます。セッションが通ったと数えるのは、最初にそれを示す応答のときです。着信側が呼び出し中を知らせれば 180（Ringing）で、呼び出しをせずに応答したときだけ 200（OK）で数えます。成功率のパネルに出るのは、その成功の数を試行の数で割った値です。呼び出し中のまま誰も応答しなかった通話は、その 180 で成功に数えたあと、それを終わらせた最終応答でパネル **Session failures by cause** にも出ます。1 つの役割の成功と失敗を足すと試行より多くなることがあるのは、このためです。成功率が 1 を下回るのは、着信側の呼び出しに届かなかったセッション、つまり 180 も 2xx も返らなかったものがあったときです。パネルが割るのは、2 つのカウンタがその表示の範囲でどれだけ増えたかなので、同じ役割と向きのセッションが範囲の中で 2 回目になるまで、値は出ません。パネル **Diameter answers by result** は、同じ登録を Cx の側から見たものです。I-CSCF は利用者が登録してよいかを HSS に問い合わせ（UAR）、S-CSCF は認証ベクトルを求め（MAR）、自分がその利用者を受け持つことを HSS に伝えます（SAR）。どれもそれぞれの `role` で、HSS が返した結果ごとに出ます。パネル **Diameter peers** は、各ノードが設定に書いた相手へ開く接続を出します。その接続が要求を通せるあいだは 1 です。値は収集のときに各接続の状態から読むので、HSS を止めたノードは 0 に落ち、HSS が戻れば自分で 1 に戻ります。パネル **Registered identities** は、同じ登録を HSS の側から見たものです。加入者の SIP URI と tel URI がそろって登録済みになり、登録の解除でそろって外れます。パネル **Provisioned subscriptions and identities** は、登録している利用者がいるかどうかに関わらず、HSS が持っている加入者と公開識別子の数を出します。
 
 止めて、取ってきたイメージと Prometheus のデータも含めて消すには、次のコマンドを使います。
 
