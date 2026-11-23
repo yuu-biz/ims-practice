@@ -15,4 +15,5 @@
 | [mmtel-mrf.md](mmtel-mrf.md) | MMTel AS を routeing B2BUA として作り、MRF を自作すること | IR.92 が必須にする付加サービスの信号を見せるため |
 | [state-redundancy.md](state-redundancy.md) | 状態を `Store` の後ろに置き、冗長構成では外部の保存先に置くこと | 各役割を複数台で動かし、ノードを作り直しても登録と呼を保つため |
 | [hss-provisioning.md](hss-provisioning.md) | HSS の加入者のプロビジョニングの API。1 件ずつの操作、ページに分けた一覧と書き出し、一括の登録、試験用の利用者の印、サービスのプロファイルの選び方、収容の方針 | 加入者のデータを OAM からまとめて扱い、機能を試験用の利用者だけに有効にするため |
+| [provisioning-northbound.md](provisioning-northbound.md) | BSS から加入者を入れる口を、標準に寄せずに独自の API のままにすること | 標準にある形（SuM の Itf-N に流す Bulk CM の XML）が、この実装の運ぶ長期の鍵、OPc、SIP Digest のパスワードを持たないため |
 | [b2bua.md](b2bua.md) | IBCF と MMTel AS が 2 つのレグを中継する部分を `internal/b2bua` にまとめ、ダイアログの中の要求を届いた順に中継すること | 同じ直しを 2 か所に入れ続けずに済み、オファーとアンサーの順を崩さないため |
