@@ -856,19 +856,8 @@ func restartedInstanceEndsTheCallsItLeft(t *testing.T, p *pair) {
 	if resp := final(t, call); resp.StatusCode != 200 {
 		t.Fatalf("the call got %d", resp.StatusCode)
 	}
-	// The call has its two dialogs in the record once the 2xx crossed.
 	inA, _ := planA.instanceHosts(0)
-	deadline := time.Now().Add(5 * time.Second)
-	for {
-		records := p.a.callsOf(t, inA)
-		if len(records) == 1 && records[0].Home != nil && records[0].PeerSide != nil {
-			break
-		}
-		if time.Now().After(deadline) {
-			t.Fatalf("records of the instance: %+v", records)
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
+	p.a.waitAcknowledged(t, inA)
 
 	p.a.restartIBCF(t, 0)
 	waitDone(t, "the caller's call", call.Done())
@@ -904,10 +893,32 @@ func TestRestartedInstanceEndsACallAtItsNewTarget(t *testing.T) {
 	call := p.a.invite(t, p.b.sipURI(), p.a.offer(t, sdp.VoLTECodecs(), 1, ""), nil)
 	in := p.b.nextCall(t)
 	in.Handle(p.b.answerInDialog(nil))
-	go in.Accept(p.b.answer(t, in.Request))
+	answer := p.b.answer(t, in.Request)
+	acked := make(chan error, 1)
+	go func() {
+		_, err := in.Accept(answer)
+		acked <- err
+	}()
 	if resp := final(t, call); resp.StatusCode != 200 {
 		t.Fatalf("the call got %d", resp.StatusCode)
 	}
+	// The ACK of the 2xx goes hop by hop: each IBCF sends its own as the
+	// 2xx reaches it, and the caller's comes last, to network A's IBCF.
+	// Until its ACK has come, a UA has the INVITE transaction in progress
+	// and sends no re-INVITE in the dialog (RFC 3261 14.1): the callee
+	// refuses to send one, and an IBCF answers one 491 (Request Pending).
+	select {
+	case err := <-acked:
+		if err != nil {
+			t.Fatalf("the callee's 2xx: %v", err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("the callee got no ACK for its 2xx")
+	}
+	inA, _ := planA.instanceHosts(0)
+	inB, _ := planB.instanceHosts(0)
+	p.b.waitAcknowledged(t, inB)
+	p.a.waitAcknowledged(t, inA)
 
 	tl, _ := listen(t, planB.internal+".13", 0, "moved", p.b.rec)
 	newStack(t, tl, tl.LocalAddr().String(), func(st *sip.ServerTransaction) {
@@ -919,28 +930,14 @@ func TestRestartedInstanceEndsACallAtItsNewTarget(t *testing.T) {
 		t.Fatalf("re-INVITE from the new contact: %v %v", resp, err)
 	}
 
-	inB, _ := planB.instanceHosts(0)
-	deadline := time.Now().Add(5 * time.Second)
-	for {
+	waitFor(t, "the new contact "+moved+" in the record of network B's IBCF", func() bool {
 		records := p.b.callsOf(t, inB)
-		if len(records) == 1 && records[0].Home != nil && records[0].Home.RemoteTarget == moved {
-			break
-		}
-		if time.Now().After(deadline) {
-			t.Fatalf("the record does not have the new contact %s: %+v", moved, records)
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
+		return len(records) == 1 && records[0].Home != nil && records[0].Home.RemoteTarget == moved
+	})
 
 	p.b.restartIBCF(t, 0)
 	waitDone(t, "the caller's call", call.Done())
-	deadline = time.Now().Add(5 * time.Second)
-	for len(p.b.rec.requests("moved", sip.BYE)) == 0 {
-		if time.Now().After(deadline) {
-			t.Fatal("no BYE reached the new contact")
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
+	waitFor(t, "a BYE at the new contact", func() bool { return len(p.b.rec.requests("moved", sip.BYE)) > 0 })
 	if got := p.b.rec.requests("ue", sip.BYE); len(got) != 0 {
 		t.Errorf("the old contact got %d BYEs", len(got))
 	}

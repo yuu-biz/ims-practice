@@ -123,13 +123,7 @@ func TestAnInstanceThatCannotReadItsCallsDoesNotStart(t *testing.T) {
 		t.Fatalf("the call got %d", resp.StatusCode)
 	}
 	inA, _ := planA.instanceHosts(0)
-	deadline := time.Now().Add(5 * time.Second)
-	for records := p.a.callsOf(t, inA); len(records) != 1 || records[0].Home == nil; records = p.a.callsOf(t, inA) {
-		if time.Now().After(deadline) {
-			t.Fatalf("records of the instance: %+v", records)
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
+	p.a.waitAcknowledged(t, inA)
 
 	p.a.store.down.Store(true)
 	p.a.stopIBCF(t, 0)

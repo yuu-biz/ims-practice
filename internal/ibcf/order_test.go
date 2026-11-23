@@ -26,9 +26,15 @@ func sdpBody(s sdp.Session) sip.Body {
 // before the PRACK has its answer. The test holds network A's TrGW
 // while the IBCF passes on the answer of the PRACK, which keeps that
 // PRACK in the IBCF, and lets it go once the INFO has reached network
-// B, or after half a second if it has not: an IBCF that sent the INFO
-// ahead of the PRACK shows it then.
+// B, or after watch if it has not: an IBCF that sent the INFO ahead of
+// the PRACK shows it then. Its twin holds nothing, and sees the INFO
+// reach network B within the same watch.
 func TestPRACKGoesBeforeTheRequestThatFollowsIt(t *testing.T) {
+	t.Run("held", func(t *testing.T) { prackGoesBeforeTheRequestThatFollowsIt(t, true) })
+	t.Run("not held", func(t *testing.T) { prackGoesBeforeTheRequestThatFollowsIt(t, false) })
+}
+
+func prackGoesBeforeTheRequestThatFollowsIt(t *testing.T, hold bool) {
 	// INFO crosses by agreement (TS 29.165 Table 6.1).
 	p := newPair(t, func(ofB, ofA *interconnect.Profile) {
 		ofB.Methods = append(ofB.Methods, "INFO")
@@ -112,16 +118,19 @@ func TestPRACKGoesBeforeTheRequestThatFollowsIt(t *testing.T) {
 	prack.Add("RAck", offer.Get("RSeq")+" 1 INVITE")
 	info := within("INFO", "3 INFO", sip.Body{Type: "application/dtmf-relay", Content: []byte("Signal=5\r\nDuration=160\r\n")})
 
-	release := p.a.trgw.hold(answerAt)
+	release := func() {}
+	if hold {
+		release = p.a.trgw.hold(answerAt)
+	}
 	defer release()
 	pct := send(prack, remote.URI)
 	// The INFO goes once network A's IBCF has the PRACK, which its stack
 	// then handles first (RFC 3261 12.2.2).
 	waitFor(t, "the PRACK at network A's IBCF", func() bool { return len(p.a.rec.requests("ibcf1-internal", sip.PRACK)) > 0 })
 	ict2 := send(info, remote.URI)
-	deadline := time.Now().Add(500 * time.Millisecond)
-	for len(p.b.rec.requests("ibcf1-external", "INFO")) == 0 && time.Now().Before(deadline) {
-		time.Sleep(5 * time.Millisecond)
+	crossed := came(watch, func() bool { return len(p.b.rec.requests("ibcf1-external", "INFO")) > 0 })
+	if !hold && !crossed {
+		t.Fatalf("the INFO did not reach network B within %v with nothing held", watch)
 	}
 	release()
 
@@ -145,14 +154,27 @@ func TestPRACKGoesBeforeTheRequestThatFollowsIt(t *testing.T) {
 	}
 }
 
+// watch is how long a test watches for something the IBCF must not
+// do. Each test that watches this long has a twin that waits as long
+// for what the IBCF must do, and sees it come.
+const watch = time.Second
+
+// came tells whether cond held within d.
+func came(d time.Duration, cond func() bool) bool {
+	deadline := time.Now().Add(d)
+	for !cond() {
+		if time.Now().After(deadline) {
+			return false
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	return true
+}
+
 // waitFor waits until cond holds.
 func waitFor(t *testing.T, what string, cond func() bool) {
 	t.Helper()
-	deadline := time.Now().Add(5 * time.Second)
-	for !cond() {
-		if time.Now().After(deadline) {
-			t.Fatalf("%s did not happen", what)
-		}
-		time.Sleep(5 * time.Millisecond)
+	if !came(5*time.Second, cond) {
+		t.Fatalf("%s did not happen", what)
 	}
 }
