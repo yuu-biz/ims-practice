@@ -19,6 +19,7 @@ import (
 	"github.com/yuu-biz/ims-practice/internal/aka"
 	"github.com/yuu-biz/ims-practice/internal/cx"
 	"github.com/yuu-biz/ims-practice/internal/diameter"
+	"github.com/yuu-biz/ims-practice/internal/ifc"
 	"github.com/yuu-biz/ims-practice/internal/mmtel"
 	"github.com/yuu-biz/ims-practice/internal/sh"
 )
@@ -71,6 +72,45 @@ func TestProvisioningAddsASubscriptionTheHSSServes(t *testing.T) {
 	list := decode[[]subscriptionResponse](t, do(t, api, "GET", "/subscriptions", ""))
 	if len(list) != 3 {
 		t.Errorf("GET all: %+v", list)
+	}
+}
+
+// TestProvisioningTakesTheMarkAndTheProfileOfASubscription: a POST
+// marks a subscription as a test user and names its service profile,
+// and a GET shows both. A name that no profile of the configuration
+// answers to is refused, and nothing is stored for it: such a
+// subscription would reach the SAA with no criteria at all.
+func TestProvisioningTakesTheMarkAndTheProfileOfASubscription(t *testing.T) {
+	h := newTestHSS()
+	h.config.ServiceProfiles = map[string][]ifc.InitialFilterCriteria{"default": nil, "trial": nil}
+	h.config.DefaultServiceProfile, h.config.TestUserServiceProfile = "default", "trial"
+	api := h.Provisioning(&fakeSCSCFs{})
+
+	marked := `{"private_identity": "001010000000009@` + realm + `",
+		"public_identities": ["sip:001010000000009@` + realm + `"], "password": "test-password-9",
+		"test_user": true, "service_profile": "trial"}`
+	w := do(t, api, "POST", "/subscriptions", marked)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("POST: %d %s", w.Code, w.Body)
+	}
+	if got := decode[subscriptionResponse](t, w); !got.TestUser || got.ServiceProfile != "trial" {
+		t.Errorf("the answer to the POST: %+v", got)
+	}
+	if got := decode[subscriptionResponse](t, do(t, api, "GET", "/subscriptions/001010000000009@"+realm, "")); !got.TestUser || got.ServiceProfile != "trial" {
+		t.Errorf("GET one: %+v", got)
+	}
+	// A subscription of the configuration file, which names neither.
+	if got := decode[subscriptionResponse](t, do(t, api, "GET", "/subscriptions/"+impi, "")); got.TestUser || got.ServiceProfile != "" {
+		t.Errorf("GET a subscription that is neither marked nor named: %+v", got)
+	}
+
+	unknown := strings.NewReplacer("000009", "000008", `"trial"`, `"gold"`).Replace(marked)
+	if w := do(t, api, "POST", "/subscriptions", unknown); w.Code != http.StatusBadRequest ||
+		!strings.Contains(w.Body.String(), `"gold" is not a profile of service_profiles`) {
+		t.Errorf("POST with a profile that the configuration does not define: %d %s", w.Code, w.Body)
+	}
+	if w := do(t, api, "GET", "/subscriptions/001010000000008@"+realm, ""); w.Code != http.StatusNotFound {
+		t.Errorf("the refused subscription was stored: %d %s", w.Code, w.Body)
 	}
 }
 

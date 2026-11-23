@@ -69,6 +69,8 @@ service_profiles:
 
 プロファイルの名前は運用者が付けるものです。Cx が運ぶのはプロファイルの中の iFC だけなので、S-CSCF が名前を知ることはありません。
 
+どのプロファイルを渡すかは、加入のデータから決めます。加入が `service_profile` にプロファイルの名前を持っていれば、それを渡します。持っていなければ、`test_user` の印が付いている加入には `test_user_service_profile`、ほかの加入には `default_service_profile` が指すプロファイルを渡します。そのため、ある機能を 1 人だけに使わせるときは、その加入にプロファイルの名前を書きます。試験用の利用者だけに使わせるときは `test_user_service_profile` に、全員に使わせるときは `default_service_profile` に、その機能の iFC を持つプロファイルの名前を書きます。HSS は、答えようとしている加入のデータから名前を読むだけなので、加入者が増えても、この処理にかかる手間は変わりません。
+
 SAA では、これが User-Data の AVP に TS 29.228 Annex E のスキーマの XML で入ります。2 つ目の条件は次のとおりです。
 
 ```xml
@@ -560,7 +562,6 @@ octet 2: lowest 2 bits of 'l' (00), then rest of 'e' (110010) = 0011 0010 = 32
 | HSS、TS 29.328 6.1.1.1 と 6.1.2.1 step 2a | User-Name の非公開ユーザー識別子を読まず、確かめない。 | IP-SM-GW はそれを送らない。 |
 | HSS、TS 29.328 7.6.9 | MSISDN は独立したデータではなく、公開ユーザー識別子の中の最初の tel URI から取る。 | 設定に各番号を 1 回だけ書けば済み、tel URI を通して MSISDN で利用者を見つけられる。 |
 | HSS、TS 29.328 7.6.2 | IMPLICIT_IDENTITIES と ALIAS_IDENTITIES は ALL_IDENTITIES と同じ集合を返し、利用者を MSISDN で指定したときも断らない。 | 試験用の加入はどれも、1 つのサービスプロファイルを持つ 1 つの暗黙の登録セットであるため。 |
-| HSS、TS 29.228 B.2.2 | どの加入にも `default_service_profile` が指すサービスプロファイルを渡し、違うのは ServiceInfo の MSISDN だけである。 | SMS と MMTel AS の iFC は、どの利用者でも同じである。 |
 | ユーザープロファイル、TS 29.228 Annex E | ServiceProfile は 1 つで、省略できる要素は BarringIndication、公開サービス識別子の `IdentityType` と `WildcardedPSI`、条件のほかに無く、スキーマの XML の名前空間も無い。 | 試験用の加入と PSI ユーザーには、それ以上は要らない。 |
 | iFC、TS 29.228 Annex E と B.2.3 | SessionDescription の SPT は断り、ProfilePartIndicator、RegistrationType、IncludeRegisterRequest、IncludeRegisterResponse は読み飛ばす。REGISTER の SPT はすべての REGISTER に一致する。 | SMS と MMTel AS の iFC には、どれも要らない。RegistrationType は S-CSCF にとって省略できる。 |
 | S-CSCF、TS 24.229 5.4.0 | S-CSCF は、最初の第三者 REGISTER を送ったアドレスを覚えておかず、要求のたびに AS を DNS で引く。 | AS の各役割は、すべてのノードで共有する Store に状態を置くので、どのノードでも次の要求を受けられる。 |

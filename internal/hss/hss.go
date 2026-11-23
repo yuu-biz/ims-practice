@@ -56,11 +56,19 @@ type Config struct {
 	// (TS 29.228 Annex E, Table E.2).
 	ServiceProfiles map[string][]ifc.InitialFilterCriteria
 	// DefaultServiceProfile is the name of the service profile that a
-	// subscription gets, those added through the provisioning API
+	// subscription gets when it names none of its own and is not marked
+	// as a test user, those added through the provisioning API
 	// included. Operators give a feature to every user by naming here
 	// the profile whose criteria call the application server of that
 	// feature.
 	DefaultServiceProfile string
+	// TestUserServiceProfile is the name of the service profile that a
+	// subscription marked Subscription.TestUser gets when it names none
+	// of its own. Operators try a feature out on the test users alone
+	// by naming here the profile whose criteria call the application
+	// server of that feature, and leaving DefaultServiceProfile as it
+	// is.
+	TestUserServiceProfile string
 	// ProvisioningListen is the address of the provisioning API, such as
 	// :8081. Empty means the node has none.
 	ProvisioningListen string

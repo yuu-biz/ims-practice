@@ -463,6 +463,14 @@ type rawHSS struct {
 			Tone   string `yaml:"tone"`
 			Active bool   `yaml:"active"`
 		} `yaml:"customized_alerting_tone"`
+		// TestUser marks a subscription that the operator keeps for
+		// trying features out (hss.Subscription).
+		TestUser bool `yaml:"test_user"`
+		// ServiceProfile names the service profile of this subscription,
+		// one of ServiceProfiles. Without it the subscription takes
+		// TestUserServiceProfile or DefaultServiceProfile
+		// (hss.Subscription).
+		ServiceProfile string `yaml:"service_profile"`
 	} `yaml:"subscriptions"`
 	// PSIUsers are the ranges of public service identities that
 	// application servers host (hss.PSIUser).
@@ -480,6 +488,9 @@ type rawHSS struct {
 	// DefaultServiceProfile names the profile of ServiceProfiles that a
 	// subscription gets (hss.Config).
 	DefaultServiceProfile string `yaml:"default_service_profile"`
+	// TestUserServiceProfile names the profile of ServiceProfiles that
+	// a subscription marked test_user gets (hss.Config).
+	TestUserServiceProfile string `yaml:"test_user_service_profile"`
 	// ServiceCentres name the SMS central functions the HSS can alert
 	// (hss.ServiceCentre). TS 29.338 5.3.1.2 routes an alert by the
 	// Diameter identity of the service centre, which the HSS has no
@@ -695,6 +706,20 @@ func (raw *rawHSS) validate(homeDomain string) (hss.Config, error) {
 		}
 		c.ServiceCentres = append(c.ServiceCentres, hss.ServiceCentre{Address: s.Address, Host: s.Host, Realm: realm})
 	}
+	// The profiles come before the subscriptions, which name them.
+	profiles, err := parseServiceProfiles(raw.ServiceProfiles)
+	if err != nil {
+		return hss.Config{}, err
+	}
+	if err := checkServiceProfileName("default_service_profile", raw.DefaultServiceProfile, profiles); err != nil {
+		return hss.Config{}, err
+	}
+	if err := checkServiceProfileName("test_user_service_profile", raw.TestUserServiceProfile, profiles); err != nil {
+		return hss.Config{}, err
+	}
+	c.ServiceProfiles = profiles
+	c.DefaultServiceProfile = raw.DefaultServiceProfile
+	c.TestUserServiceProfile = raw.TestUserServiceProfile
 	if len(raw.Subscriptions) == 0 {
 		return hss.Config{}, errors.New("subscriptions: at least one is required")
 	}
@@ -707,6 +732,11 @@ func (raw *rawHSS) validate(homeDomain string) (hss.Config, error) {
 			PublicIdentities: s.PublicIdentities,
 			BarredIdentities: s.BarredIdentities,
 			Password:         s.Password,
+			TestUser:         s.TestUser,
+			ServiceProfile:   s.ServiceProfile,
+		}
+		if err := c.CheckServiceProfile(s.ServiceProfile); err != nil {
+			return hss.Config{}, fmt.Errorf("subscriptions[%d].%w", i, err)
 		}
 		if s.AKA != nil {
 			creds, err := hss.ParseAKACredentials(s.AKA.K, s.AKA.OPc, s.AKA.AMF, s.AKA.SQN)
@@ -739,15 +769,6 @@ func (raw *rawHSS) validate(homeDomain string) (hss.Config, error) {
 		}
 		c.PSIUsers = append(c.PSIUsers, p)
 	}
-	profiles, err := parseServiceProfiles(raw.ServiceProfiles)
-	if err != nil {
-		return hss.Config{}, err
-	}
-	if err := checkServiceProfileName("default_service_profile", raw.DefaultServiceProfile, profiles); err != nil {
-		return hss.Config{}, err
-	}
-	c.ServiceProfiles = profiles
-	c.DefaultServiceProfile = raw.DefaultServiceProfile
 	return c, nil
 }
 

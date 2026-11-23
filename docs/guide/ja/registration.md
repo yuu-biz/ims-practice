@@ -400,8 +400,8 @@ HSS には HTTP で加入を登録、削除する API（プロビジョニング
 | 要求 | 内容 |
 | --- | --- |
 | `GET /subscriptions` | 加入の一覧を、登録の状態と一緒に、ページに分けて返す。1 ページは 1000 件で、`?limit=` にそれより小さい件数を書けばその件数になる。`?after={秘密の識別子}` を付けると、識別子の並び順で、その識別子の次から返す。続きのページがあるときは、`Link` ヘッダに、そのページを取るための問い合わせを `rel="next"` 付きで入れる（RFC 8288）。たとえば `<?after=001010000000001%40ims.mnc001.mcc001.3gppnetwork.org&limit=2>; rel="next"` が入る。HSS は秘密の識別子の索引から 1 ページ分だけを読むので、加入が 100 万件ある網でも、1 ページにかかる手間はこの網と変わらない。 |
-| `GET /subscriptions/{秘密の識別子}` | 1 件の加入を返す。 |
-| `POST /subscriptions` | 加入を 1 件追加する。本文は `{"private_identity": "...", "public_identities": ["sip:...", "tel:..."], "password": "..."}`。`"tel": "tel:+..."` を付けると、その tel URI も公開の識別子に加わる。IMS-AKA を使う加入には、16 進数で書いた `"aka": {"k": "...", "opc": "...", "amf": "...", "sqn": "..."}` を、password と一緒に、または password の代わりに付ける。`"ut_password": "..."` を付けると、利用者が Ut で付加サービスを設定できる。HSS はその H(A1) だけを Sh の Repository Data として持つ。`"mmtel_services": "<MMTelServices ...>"` は付加サービスの最初の文書で、省くと hss のキー `mmtel_services` の文書が入る。 |
+| `GET /subscriptions/{秘密の識別子}` | 1 件の加入を返す。`test_user` と `service_profile` は、その加入が持つときだけ入る。 |
+| `POST /subscriptions` | 加入を 1 件追加する。本文は `{"private_identity": "...", "public_identities": ["sip:...", "tel:..."], "password": "..."}`。`"tel": "tel:+..."` を付けると、その tel URI も公開の識別子に加わる。IMS-AKA を使う加入には、16 進数で書いた `"aka": {"k": "...", "opc": "...", "amf": "...", "sqn": "..."}` を、password と一緒に、または password の代わりに付ける。`"ut_password": "..."` を付けると、利用者が Ut で付加サービスを設定できる。HSS はその H(A1) だけを Sh の Repository Data として持つ。`"mmtel_services": "<MMTelServices ...>"` は付加サービスの最初の文書で、省くと hss のキー `mmtel_services` の文書が入る。`"test_user": true` を付けると、運用者が機能を試すために使う加入という印が付く。`"service_profile": "..."` はその加入が受け取るサービスプロファイルの名前で、どちらも S-CSCF に渡るフィルタ条件を決める（[SMS の流れを追う](sms.md)）。hss のキー `service_profiles` に無い名前は 400 で断る。 |
 | `DELETE /subscriptions/{秘密の識別子}` | 加入を 1 件削除する。 |
 
 応答にパスワードと AKA の鍵（K と OPc）は入りません。その加入で使える認証の方式を `authentication_schemes` に並べます。追加する加入には設定ファイルと同じ決まりを当てはめます。項目が足りないときや、公開の識別子が SIP か tel の URI でないときは 400 を返します。識別子がすでにほかの加入にあるときは 409 を返します。
@@ -783,7 +783,6 @@ rm ue.exe
 | HSS。TS 29.228 6.1.1.1、6.1.2.1 | 登録の状態を、公開の識別子ごとではなく加入ごとに持つ。一部の Server-Assignment-Type に対応しない。 | 試験用の加入はそれぞれ 1 つの暗黙登録の組で、S-CSCF はほかの値を送らないため。 |
 | HSS。TS 29.228 6.1.1.1 の手順 5 | 登録してよい利用者かを確かめない。 | 試験用の加入は全員が登録してよいため。 |
 | 利用者のプロファイル。TS 29.228 Annex E | サービスプロファイルは 1 つ。任意の要素は、規制の表示、公開サービス識別子の種類、iFC のほかに入れない。 | 試験用の加入者と PSI ユーザーにはそれ以上要らないため。 |
-| HSS。TS 29.228 B.2.2 | すべての加入者に設定の iFC を渡す。加入者ごとに違うのは ServiceInfo の MSISDN だけ。 | このプロジェクトには、利用者ごとに違うサービスが無いため。 |
 | HSS と S-CSCF。TS 23.228 4.3.3.4、4.2.7.2 | 公開の識別子は 1 つの秘密の識別子にだけ属し、複数の UE で共有できない。公開の識別子への要求は、その識別子のただ 1 つの登録の、ただ 1 つの Contact に届く。S-CSCF はフォークしない。 | このプロジェクトの加入者は、それぞれ UE を 1 台だけ使うため。 |
 | iFC。TS 29.228 B.2.3、Annex E | SPT の SessionDescription、RegistrationType、ProfilePartIndicator、IncludeRegisterRequest、IncludeRegisterResponse を扱わない。 | SMS と MMTel AS の iFC には、どれも要らないため。RegistrationType は S-CSCF にとって任意の機能。 |
 | S-CSCF。TS 24.229 5.4.1.7 | 第三者 REGISTER の To はいつも既定の公開識別子にする。Call-ID は毎回新しくする。応答の term-ioi は保存しない。 | どの識別子にするかは運用者が選べる。Call-ID を変えないには、利用者とサーバーごとに状態が要る。term-ioi は S-CSCF の課金の記録のためのもので、このプロジェクトのノードは課金の記録を作らないため。 |

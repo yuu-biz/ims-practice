@@ -42,6 +42,16 @@ type Subscription struct {
 	// registration uses is the S-CSCF's choice in the MAR (TS 29.228
 	// 6.3.1 step 4).
 	AKA *AKACredentials
+	// TestUser marks a subscription that the operator keeps for trying
+	// features out, as against one of an ordinary user. The HSS reads
+	// the mark when it answers for this subscription, so marking one
+	// user costs the same however many the network has.
+	TestUser bool
+	// ServiceProfile is the name of the service profile that this
+	// subscription gets, one of Config.ServiceProfiles. It is empty for
+	// a subscription that takes the profile of its kind of user instead
+	// (HSS.serviceProfile).
+	ServiceProfile string
 	// RepositoryData is the repository data that the operator provisions
 	// with the subscription, such as MMTelServicesData and
 	// UtCredentialData. Store.Add stores each with Sequence Number 0;

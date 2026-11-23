@@ -44,7 +44,8 @@ type Subscription struct {
 	AuthenticationSchemes []string `json:"authentication_schemes"`
 	RegistrationState     string   `json:"registration_state"`
 	ServerName            string   `json:"server_name,omitempty"`
-	// TestUser and ServiceProfile are not in the API of internal/hss.
+	// TestUser and ServiceProfile are the mark and the profile name of
+	// the subscription, absent where it has neither.
 	TestUser       bool   `json:"test_user,omitempty"`
 	ServiceProfile string `json:"service_profile,omitempty"`
 }

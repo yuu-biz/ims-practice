@@ -1,6 +1,9 @@
 package hss
 
 import (
+	"fmt"
+	"maps"
+	"slices"
 	"strings"
 
 	"github.com/yuu-biz/ims-practice/internal/cx"
@@ -20,14 +23,9 @@ const MSISDNPlaceholder = "{msisdn}"
 // userProfile is the profile of u that the SAA carries in User-Data (TS
 // 29.228 6.1.2.1): the identities of the subscription and the criteria
 // of its service profile.
-//
-// SIMPLIFIED: TS 29.228 B.2.2. Every subscription of this HSS gets the
-// service profile that Config.DefaultServiceProfile names; only the
-// MSISDN in ServiceInfo differs. A product HSS keeps the name of a
-// service profile with each subscription.
 func (h *HSS) userProfile(u Subscriber) cx.UserProfile {
 	var criteria []ifc.InitialFilterCriteria
-	for _, c := range h.config.ServiceProfiles[h.config.DefaultServiceProfile] {
+	for _, c := range h.config.ServiceProfiles[h.serviceProfile(u.Subscription)] {
 		c.ApplicationServer.ServiceInfo = strings.ReplaceAll(c.ApplicationServer.ServiceInfo, MSISDNPlaceholder, u.MSISDN())
 		criteria = append(criteria, c)
 	}
@@ -38,6 +36,38 @@ func (h *HSS) userProfile(u Subscriber) cx.UserProfile {
 		}
 	}
 	return p
+}
+
+// serviceProfile is the name of the service profile of s: the one the
+// subscription names, else the profile of its kind of user, a test user
+// or any other. The choice is made from the data of this one
+// subscription, so the HSS answers for it without reading anything
+// else.
+func (h *HSS) serviceProfile(s Subscription) string {
+	switch {
+	case s.ServiceProfile != "":
+		return s.ServiceProfile
+	case s.TestUser:
+		return h.config.TestUserServiceProfile
+	default:
+		return h.config.DefaultServiceProfile
+	}
+}
+
+// CheckServiceProfile checks the name of the service profile of a
+// subscription, as the configuration file and the provisioning API give
+// it. A subscription that names none takes the profile of its kind of
+// user, so an empty name is no mistake; any other name is one that
+// ServiceProfiles has, since a name that no profile answers to would
+// leave the subscription with no criteria at all.
+func (c Config) CheckServiceProfile(name string) error {
+	if name == "" {
+		return nil
+	}
+	if _, found := c.ServiceProfiles[name]; !found {
+		return fmt.Errorf("service_profile: %q is not a profile of service_profiles, which has %v", name, slices.Sorted(maps.Keys(c.ServiceProfiles)))
+	}
+	return nil
 }
 
 // MSISDN is the MSISDN of the subscription (TS 29.328 7.6.9): the
