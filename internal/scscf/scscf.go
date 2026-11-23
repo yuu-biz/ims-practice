@@ -601,20 +601,32 @@ func (s *SCSCF) deregisterByNetwork(ctx context.Context, reg Registration, event
 	return nil
 }
 
-// Handle is the diameter.Handler of the S-CSCF. The only Cx request
-// that the HSS sends it is the Registration-Termination-Request (TS
-// 29.228 6.1.3).
+// Handle is the diameter.Handler of the S-CSCF. The HSS sends it two Cx
+// requests: the Registration-Termination-Request, which deregisters a
+// user (TS 29.228 6.1.3), and the Push-Profile-Request, which updates
+// the user information it holds (6.2.2).
 func (s *SCSCF) Handle(request *diam.Message) *diam.Message {
 	identity := s.node.Identity()
-	if request.Header.ApplicationID != diameter.ApplicationIDCx || request.Header.CommandCode != cx.CommandRegistrationTermination {
+	if request.Header.ApplicationID != diameter.ApplicationIDCx {
 		return diameter.CommandUnsupportedAnswer(identity, request)
 	}
-	rtr, err := cx.ParseRegistrationTerminationRequest(request)
-	if err != nil {
-		s.log.Warn("cannot read RTR", "error", err.Error())
-		return cx.NewAnswer(request, identity, diameter.Base(diameter.DiameterUnableToComply))
+	switch request.Header.CommandCode {
+	case cx.CommandRegistrationTermination:
+		rtr, err := cx.ParseRegistrationTerminationRequest(request)
+		if err != nil {
+			s.log.Warn("cannot read RTR", "error", err.Error())
+			return cx.NewAnswer(request, identity, diameter.Base(diameter.DiameterUnableToComply))
+		}
+		return s.registrationTermination(rtr).Message(request, identity)
+	case cx.CommandPushProfile:
+		ppr, err := cx.ParsePushProfileRequest(request)
+		if err != nil {
+			s.log.Warn("cannot read PPR", "error", err.Error())
+			return cx.NewAnswer(request, identity, diameter.Base(diameter.DiameterUnableToComply))
+		}
+		return s.pushProfile(ppr).Message(request, identity)
 	}
-	return s.registrationTermination(rtr).Message(request, identity)
+	return diameter.CommandUnsupportedAnswer(identity, request)
 }
 
 // deregistrationEvents is the event that the NOTIFY gives for each
@@ -679,6 +691,82 @@ func (s *SCSCF) registrationTermination(r cx.RegistrationTerminationRequest) cx.
 func (s *SCSCF) registrationTerminationFailed(r cx.RegistrationTerminationRequest, err error) cx.RegistrationTerminationAnswer {
 	s.log.Warn("RTR not served: the store failed", "private_identity", r.UserName, "error", err.Error())
 	return cx.RegistrationTerminationAnswer{Result: diameter.Base(diameter.DiameterUnableToComply)}
+}
+
+// pushProfile is the S-CSCF side of the HSS initiated update of user
+// information, TS 29.228 6.2.2.1: for the public identities of the
+// profile in the request, the S-CSCF replaces what it holds with what
+// the HSS sent. It holds a user profile in the registration of a user,
+// and in the profile it took for a user who is not registered; a user it
+// has neither of is unknown to it. The identities of the request are one
+// implicit registration set with their service profiles (6.5.2.1), which
+// is what either of those holds, so the whole of it is replaced.
+func (s *SCSCF) pushProfile(r cx.PushProfileRequest) cx.PushProfileAnswer {
+	log := s.log.With("private_identity", r.UserName)
+	if len(r.UserData) == 0 {
+		// 6.2.2.1: a request carries at least one of the pieces of user
+		// information, and the user profile is the only one this S-CSCF
+		// keeps.
+		log.Info("PPR without User-Data")
+		return cx.PushProfileAnswer{Result: diameter.Base(diameter.DiameterUnableToComply)}
+	}
+	profile, err := cx.ParseUserProfile(r.UserData)
+	if err != nil {
+		// Table 6.2.2.1.1: user information that the S-CSCF cannot
+		// recognise. It keeps what it has (6.2.2.1).
+		log.Warn("PPR has no usable User-Data", "error", err.Error())
+		return cx.PushProfileAnswer{Result: diameter.Experimental(cx.DiameterErrorNotSupportedUserData)}
+	}
+	ctx := context.Background()
+	unlock, err := s.users.Lock(ctx, r.UserName)
+	if err != nil {
+		return s.pushProfileFailed(r, err)
+	}
+	defer unlock()
+	reg, registered, err := s.store.Registration(ctx, r.UserName)
+	if err != nil {
+		return s.pushProfileFailed(r, err)
+	}
+	if registered {
+		reg.PublicIdentities, reg.BarredIdentities = profile.PublicIdentities, profile.BarredIdentities
+		reg.InitialFilterCriteria = profile.InitialFilterCriteria
+		if err := s.store.PutRegistration(ctx, reg); err != nil {
+			return s.pushProfileFailed(r, err)
+		}
+		log.Info("took a pushed user profile", "state", "registered", "criteria", len(profile.InitialFilterCriteria))
+		return cx.PushProfileAnswer{Result: diameter.Base(diameter.DiameterSuccess)}
+	}
+	p, kept, err := s.store.UnregisteredProfile(ctx, r.UserName)
+	if err != nil {
+		return s.pushProfileFailed(r, err)
+	}
+	if kept && time.Now().Before(p.Expires) {
+		p.PublicIdentities, p.BarredIdentities = profile.PublicIdentities, profile.BarredIdentities
+		p.InitialFilterCriteria = profile.InitialFilterCriteria
+		// Expires stays where it is: the push does not make the S-CSCF keep
+		// the profile of a user who is not registered any longer than it
+		// would have.
+		if err := s.store.PutUnregisteredProfile(ctx, p); err != nil {
+			return s.pushProfileFailed(r, err)
+		}
+		log.Info("took a pushed user profile", "state", "unregistered", "criteria", len(profile.InitialFilterCriteria))
+		return cx.PushProfileAnswer{Result: diameter.Base(diameter.DiameterSuccess)}
+	}
+	// TS 29.228 Table 6.2.2.1.1: the private identity is not found in the
+	// S-CSCF, which is DIAMETER_ERROR_USER_UNKNOWN (TS 29.229 6.2.2.1).
+	// The profile of a user who is not registered may have run out here
+	// while the HSS still had the user in the unregistered state.
+	log.Info("PPR for a user whose profile this S-CSCF does not hold")
+	return cx.PushProfileAnswer{Result: diameter.Experimental(cx.DiameterErrorUserUnknown)}
+}
+
+// pushProfileFailed answers a PPR that the S-CSCF could not take: it can
+// say neither that it does not know the user nor that it has the new
+// profile, so it answers DIAMETER_UNABLE_TO_COMPLY (TS 29.228 Table
+// 6.2.2.1.1). What it holds is unchanged, and the HSS logs the answer.
+func (s *SCSCF) pushProfileFailed(r cx.PushProfileRequest, err error) cx.PushProfileAnswer {
+	s.log.Warn("PPR not taken: the store failed", "private_identity", r.UserName, "error", err.Error())
+	return cx.PushProfileAnswer{Result: diameter.Base(diameter.DiameterUnableToComply)}
 }
 
 // covers reports whether an RTR that names ids is about reg. No

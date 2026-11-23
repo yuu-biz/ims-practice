@@ -367,6 +367,32 @@ func TestRegistrationTerminationWhenTheStoreFails(t *testing.T) {
 	contactState(t, doc, 1, reginfo.Terminated, reginfo.Deactivated)
 }
 
+// TestPushProfileWhenTheStoreFails: a PPR whose registration the S-CSCF
+// cannot read gets DIAMETER_UNABLE_TO_COMPLY, not
+// DIAMETER_ERROR_USER_UNKNOWN: the user may well be registered here. The
+// HSS sends the profile again, and once the store is back the S-CSCF
+// takes it.
+func TestPushProfileWhenTheStoreFails(t *testing.T) {
+	h := newServiceHarness(t, []ifc.InitialFilterCriteria{smsCriterion(0, asURI, ifc.SessionContinued)}, nil)
+	h.registerUser(sip.NewCallID())
+	pushed := userProfile(smsCriterion(0, "sip:"+secondAS+":5060", ifc.SessionContinued))
+	h.failing.fail()
+	if r := h.ppr(impi, pushed); r != diameter.Base(diameter.DiameterUnableToComply) {
+		t.Errorf("PPA with the store down = %s, want DIAMETER_UNABLE_TO_COMPLY", r)
+	}
+	h.failing.repair()
+	if r := h.ppr(impi, pushed); r != diameter.Base(diameter.DiameterSuccess) {
+		t.Errorf("PPA after the store came back = %s, want DIAMETER_SUCCESS", r)
+	}
+	reg, ok, err := h.store.Registration(context.Background(), impi)
+	if err != nil || !ok {
+		t.Fatalf("registration = %v, %v", ok, err)
+	}
+	if got := reg.InitialFilterCriteria[0].ApplicationServer.ServerName; got != "sip:"+secondAS+":5060" {
+		t.Errorf("server of the criterion = %q, want the one of the pushed profile", got)
+	}
+}
+
 // TestChallengeThatCannotBeRemoved: a right response whose challenge the
 // S-CSCF cannot remove gets 500, and the challenge stays with its
 // reg-await-auth timer (TS 24.229 5.4.1.2.3). When the timer runs out,
