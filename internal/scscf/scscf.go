@@ -75,8 +75,9 @@ type Config struct {
 	// user at a time.
 	UserLocks ims.UserLocker
 	// Metrics is where the S-CSCF registers its counters, the
-	// registration measurements (ims.Registrations). Nil gives it a
-	// registry of its own, which nothing serves.
+	// registration measurements (ims.Registrations) and the session
+	// ones (ims.Sessions). Nil gives it a registry of its own, which
+	// nothing serves.
 	Metrics *metrics.Registry
 }
 
@@ -107,8 +108,10 @@ type SCSCF struct {
 	// stopSweep ends the sweep of this instance and waits for the
 	// handlers it started (expiry.go).
 	stopSweep func()
-	// registrations counts the registration procedures.
+	// registrations counts the registration procedures, and sessions
+	// the session establishments (measurements.go).
 	registrations *ims.Registrations
+	sessions      *ims.Sessions
 	// transactions counts the requests that the S-CSCF is serving, the
 	// users of its maintenance function (maintenance.go).
 	transactions atomic.Int64
@@ -146,8 +149,12 @@ func New(cfg Config, hss HSS, node *diameter.Node, store Store, resolver Resolve
 	if err != nil {
 		return nil, err
 	}
+	sessions, err := ims.NewSessions(cfg.Metrics)
+	if err != nil {
+		return nil, err
+	}
 	s := &SCSCF{cfg: cfg, hss: hss, node: node, store: store, resolver: resolver, log: log, users: cfg.UserLocks,
-		registrations: registrations}
+		registrations: registrations, sessions: sessions}
 	s.stopSweep = s.sweep()
 	return s, nil
 }

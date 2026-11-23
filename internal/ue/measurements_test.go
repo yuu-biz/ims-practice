@@ -155,6 +155,53 @@ func settles(t *testing.T, reg *metrics.Registry, want []string, forbidden ...st
 	}
 }
 
+// TS 32.409 4.1.2.2 and 4.1.2.12 count a successful session
+// establishment on the first response that tells of one, which is the
+// 180 (Ringing) of a callee that alerts its user before it answers. One
+// call between two users of this network passes the S-CSCF twice, as
+// the originating and as the terminating establishment, and the I-CSCF
+// once, when it enters the home network. The call that the callee
+// refuses outright never rings, so it succeeds nowhere.
+func TestTheCSCFsCountTheSuccessfulSessionEstablishments(t *testing.T) {
+	reg := metrics.NewRegistry()
+	n := startNetwork(t, networkConfig{minExpires: time.Second, maxExpires: time.Hour, metrics: reg})
+	caller := newParty(t, n.pcscf, impi, impu, password)
+	callee := newParty(t, n.pcscf, impi2, impu2, password2)
+	ctx := t.Context()
+
+	go func() {
+		ic := <-callee.calls
+		callee.ue.Answer(ctx, ic, callee.media, ue.Speech{}, ue.AnswerOptions{Reject: 486})
+	}()
+	if err := caller.ue.Call(ctx, caller.ua, caller.reg, impu2, caller.media, ue.Speech{}, ue.CallOptions{}); err == nil {
+		t.Fatal("the rejected call went through")
+	}
+	settles(t, reg, []string{
+		`ims_session_attempts_total{role="icscf",direction="terminating"} 1`,
+		`ims_session_attempts_total{role="scscf",direction="originating"} 1`,
+		`ims_session_attempts_total{role="scscf",direction="terminating"} 1`,
+	}, "ims_session_successes_total{")
+
+	answered := make(chan error, 1)
+	go func() {
+		ic := <-callee.calls
+		answered <- callee.ue.Answer(ctx, ic, callee.media, ue.Speech{}, ue.AnswerOptions{PickUp: time.After(100 * time.Millisecond)})
+	}()
+	if err := caller.ue.Call(ctx, caller.ua, caller.reg, impu2, caller.media, ue.Speech{}, ue.CallOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	if err := <-answered; err != nil {
+		t.Fatal(err)
+	}
+	settles(t, reg, []string{
+		`ims_session_successes_total{role="icscf",direction="terminating",response="180"} 1`,
+		`ims_session_successes_total{role="scscf",direction="originating",response="180"} 1`,
+		`ims_session_successes_total{role="scscf",direction="terminating",response="180"} 1`,
+		`ims_session_successes_total{role="pcscf",direction="originating",response="180"} 1`,
+		`ims_session_successes_total{role="pcscf",direction="terminating",response="180"} 1`,
+	}, `ims_session_successes_total{role="icscf",direction="terminating",response="200"}`)
+}
+
 // TS 32.409 has the I-CSCF count the Cx requests of the registration
 // status query (4.1.1.5) and of the user location query (4.1.3), and
 // the S-CSCF those of the authentication (4.1.6) and of the

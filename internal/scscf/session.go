@@ -38,6 +38,17 @@ func (s *SCSCF) ownURI() sip.URI {
 // request that comes back from an application server carries an
 // original dialog identifier instead, and the S-CSCF has kept which case
 // it was.
+//
+// An initial INVITE that reaches the S-CSCF for the first time is a
+// session establishment, counted on receipt under the direction that
+// the Route gives, and again with the response that tells of its
+// success (TS 32.409 4.1.2, measurements.go).
+//
+// SIMPLIFIED: TS 32.409 4.1.2.1. An initial INVITE that the S-CSCF
+// answers before it has read that Route counts in no session
+// measurement: one that it refuses while it is not UNLOCKED (503), and
+// one whose Max-Forwards is used up (483). Until the Route is read,
+// there is no direction to count the attempt under.
 func (s *SCSCF) session(st *sip.ServerTransaction) {
 	if s.receiveRegEvent(st) {
 		return
@@ -61,10 +72,13 @@ func (s *SCSCF) session(st *sip.ServerTransaction) {
 	case popped && returned:
 		s.fromApplicationServer(st, out, odi, log)
 	case popped && top.User == "orig":
+		s.startedSession(st, ims.OriginatingSession)
 		s.originating(st, out, false, log)
 	case popped && onBehalf(top):
+		s.startedSession(st, ims.OriginatingSession)
 		s.originating(st, out, true, log)
 	default:
+		s.startedSession(st, ims.TerminatingSession)
 		s.terminating(st, out, log)
 	}
 }
@@ -186,7 +200,7 @@ func (s *SCSCF) routeOriginating(st *sip.ServerTransaction, out *sip.Message, lo
 	// request to an application server only from invoke.
 	out.Remove("P-Served-User")
 	log.Info("routing the originating request", "request_uri", out.RequestURI)
-	s.forward(st, out, s.chargeResponses(st.Request, true), log)
+	s.forward(st, out, s.onResponses(st, ims.OriginatingSession), log)
 }
 
 // assertAlias is TS 24.229 5.4.3.2 step 9: when P-Asserted-Identity
@@ -301,7 +315,7 @@ func canonicalIdentities(ids []string) []string {
 func (s *SCSCF) routeTerminating(st *sip.ServerTransaction, out *sip.Message, d OriginalDialog, log *slog.Logger) {
 	if out.Get("Route") != "" {
 		log.Info("routing the terminating request along its Route", "route", out.Get("Route"))
-		s.forward(st, out, s.chargeResponses(st.Request, false), log)
+		s.forward(st, out, s.onResponses(st, ims.TerminatingSession), log)
 		return
 	}
 	reg, ok, err := s.store.RegistrationOf(context.Background(), d.ServedUser)
@@ -338,7 +352,7 @@ func (s *SCSCF) routeTerminating(st *sip.ServerTransaction, out *sip.Message, d 
 		out.Prepend("Route", reg.Path[i])
 	}
 	log.Info("routing to the contact", "callee", d.ServedUser, "contact", reg.Contact)
-	s.forward(st, out, s.chargeResponses(st.Request, false), log)
+	s.forward(st, out, s.onResponses(st, ims.TerminatingSession), log)
 }
 
 // forward sends out to its next hop: the top Route, or else the

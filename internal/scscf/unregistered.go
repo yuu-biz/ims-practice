@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/yuu-biz/ims-practice/internal/cx"
+	"github.com/yuu-biz/ims-practice/internal/ims"
 	"github.com/yuu-biz/ims-practice/internal/sip"
 )
 
@@ -175,7 +176,7 @@ func (s *SCSCF) unregisteredProfileExpired(ctx context.Context, privateID string
 func (s *SCSCF) routeUnregistered(st *sip.ServerTransaction, out *sip.Message, d OriginalDialog, log *slog.Logger) {
 	if out.Get("Route") != "" {
 		log.Info("routing the terminating request along its Route", "route", out.Get("Route"))
-		s.forward(st, out, s.chargeResponses(st.Request, false), log)
+		s.forward(st, out, s.onResponses(st, ims.TerminatingSession), log)
 		return
 	}
 	log.Info("no application server took the request for the unregistered callee", "callee", d.ServedUser)

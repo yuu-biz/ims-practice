@@ -249,8 +249,8 @@ type networkConfig struct {
 	// own Origin-Host and all of them on one shared store. Zero means
 	// one instance, with the store in its own process.
 	hssInstances int
-	// metrics is the registry in which the P-CSCF and the S-CSCF count,
-	// as the roles of one node do; nil gives each a registry of its own.
+	// metrics is the registry in which the three CSCFs count, as the
+	// roles of one node do; nil gives each a registry of its own.
 	metrics *metrics.Registry
 }
 
@@ -375,7 +375,7 @@ func startNetwork(t *testing.T, cfg networkConfig) testNetwork {
 
 	icscfNode, icscfPeer := connect("icscf", "icscf."+domain, nil)
 	i, err := icscf.New(icscf.Config{HomeDomain: domain, SCSCFs: []icscf.SCSCF{{Name: "sip:scscf." + domain + ":5060", Capabilities: []uint32{1}}},
-		Host: "icscf." + domain, Port: 5060},
+		Host: "icscf." + domain, Port: 5060, Metrics: cfg.metrics},
 		icscfPeer, icscfNode, dns, quiet())
 	if err != nil {
 		t.Fatal(err)
