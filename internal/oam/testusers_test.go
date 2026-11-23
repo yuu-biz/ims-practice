@@ -106,7 +106,7 @@ func (ts *testServer) feature(t *testing.T, impi, feature string) FeatureState {
 }
 
 func TestAFeatureForTestUsersOnly(t *testing.T) {
-	hss := newFakeHSS(t, false)
+	hss := newFakeHSS(t)
 	h1, h2 := newHSSNode(t, true), newHSSNode(t, true)
 	ts := newTestUserServer(t, hss, h1, h2)
 	tester, other := impiOf(1), impiOf(2)
@@ -158,7 +158,7 @@ func TestAFeatureForTestUsersOnly(t *testing.T) {
 }
 
 func TestAdmitTestUsersOnly(t *testing.T) {
-	hss := newFakeHSS(t, false)
+	hss := newFakeHSS(t)
 	ts := newTestUserServer(t, hss, newHSSNode(t, true))
 	ts.bulk(t, "", strings.Replace(digestLine(1, "test-password-1"), `"password"`, `"test_user": true, "password"`, 1)+"\n"+
 		strings.Replace(digestLine(2, "test-password-2"), `"password"`, `"service_profile": "trial", "password"`, 1))
@@ -183,7 +183,7 @@ func TestAdmitTestUsersOnly(t *testing.T) {
 }
 
 func TestTestUserErrors(t *testing.T) {
-	hss := newFakeHSS(t, false)
+	hss := newFakeHSS(t)
 	ts := newTestUserServer(t, hss, newHSSNode(t, true))
 	ts.bulk(t, "", digestLine(1, "test-password-1"))
 	for _, tt := range []struct {
@@ -203,15 +203,12 @@ func TestTestUserErrors(t *testing.T) {
 		}
 	}
 
-	// A basic HSS, as in internal/hss: no profiles in its configuration,
-	// no PATCH.
-	basic := newTestUserServer(t, newFakeHSS(t, true), newHSSNode(t, false))
-	status, body := basic.call(t, "GET", "/oam/v1/subscriptions/"+impiOf(1)+"/features/sms", "")
+	// A node whose configuration carries neither the service profiles nor
+	// the settings: it is not an HSS of this network.
+	other := newTestUserServer(t, newFakeHSS(t), newHSSNode(t, false))
+	status, body := other.call(t, "GET", "/oam/v1/subscriptions/"+impiOf(1)+"/features/sms", "")
 	if status != http.StatusBadGateway || !strings.Contains(string(body), "no service profiles") {
-		t.Errorf("feature against a basic HSS: %d %s", status, body)
-	}
-	if status, body := basic.call(t, "PUT", "/oam/v1/subscriptions/"+impiOf(1)+"/test-user", `{"test_user": true}`); status != http.StatusBadGateway {
-		t.Errorf("mark against a basic HSS: %d %s", status, body)
+		t.Errorf("feature against a node without the profiles: %d %s", status, body)
 	}
 	none := newTestServer(t, Config{HSSProvisioning: hss.server.URL}, newFakeNode(t, "pcscf-1", []string{"pcscf"}))
 	if status, body := none.call(t, "GET", "/oam/v1/test-users", ""); status != http.StatusServiceUnavailable {

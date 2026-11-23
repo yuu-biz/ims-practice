@@ -24,12 +24,12 @@ import (
 // HSS provisioning API and the maintenance API of the HSS nodes, and
 // keeps nothing.
 //
-// The HSS of internal/hss keeps the test_user and service_profile
-// attributes and the service profiles of its configuration, picks the
-// profile of a subscription as above, and takes the three settings
-// below on the maintenance API of its node. Against an HSS that has
-// neither PATCH /subscriptions/{impi} nor those settings, the OAM
-// answers 502 and names what is missing.
+// The HSS keeps the test_user and service_profile attributes and the
+// service profiles of its configuration, picks the profile of a
+// subscription as above, and takes the three settings below on the
+// maintenance API of its node. A node whose configuration carries
+// neither the profiles nor those settings is not an HSS of this
+// network, and the OAM answers 502 and names what is missing.
 const (
 	SettingAdmission              = "hss.admission"
 	SettingDefaultServiceProfile  = "hss.default_service_profile"

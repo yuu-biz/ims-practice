@@ -30,9 +30,9 @@ func (s SecretString) LogValue() slog.Value { return slog.StringValue(s.String()
 
 // SubscriptionRecord is one line of a bulk provisioning file, and one
 // subscription of a backup: the subscriptionRequest of the HSS
-// provisioning API (internal/hss), with the fields that the OAM uses
-// beyond those of internal/hss. The names are those of the
-// HSS API and of the configuration file.
+// provisioning API (internal/hss), with the Delete field that the OAM
+// reads itself. The names are those of the HSS API and of the
+// configuration file.
 type SubscriptionRecord struct {
 	PrivateIdentity string `json:"private_identity"`
 	// PublicIdentities are SIP and tel URIs; the first is the default
@@ -48,13 +48,12 @@ type SubscriptionRecord struct {
 	MMTelServices string `json:"mmtel_services,omitempty"`
 	// RepositoryData is the Sh repository data of the subscription as
 	// the HSS holds it now, which a backup has in place of
-	// MMTelServices and UtPassword (not in the API of internal/hss).
+	// MMTelServices and UtPassword.
 	RepositoryData []RepositoryDataRecord `json:"repository_data,omitempty"`
-	// TestUser marks a test user (not in the API of internal/hss).
+	// TestUser marks a test user.
 	TestUser bool `json:"test_user,omitempty"`
 	// ServiceProfile names the service profile of the subscription;
-	// empty lets the HSS choose by TestUser (not in the API of
-	// internal/hss).
+	// empty lets the HSS choose by TestUser.
 	ServiceProfile string `json:"service_profile,omitempty"`
 	// Delete removes the subscription of PrivateIdentity; the line then
 	// has no other field. It is the OAM's, not sent to the HSS.
