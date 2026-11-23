@@ -28,8 +28,96 @@ func (h *HSS) handleS6c(ctx context.Context, request *diam.Message) *diam.Messag
 			return sgd.SendRoutingInfoForSMAnswer{Result: diameter.Base(diameter.DiameterUnableToComply)}.Message(request, identity)
 		}
 		return h.sendRoutingInfoForSM(ctx, srr).Message(request, identity)
+	case sgd.CommandReportSMDeliveryStatus:
+		rdr, err := sgd.ParseReportSMDeliveryStatusRequest(request)
+		if err != nil {
+			h.log.Warn("cannot read request", "error", err.Error())
+			return sgd.ReportSMDeliveryStatusAnswer{Result: diameter.Base(diameter.DiameterUnableToComply)}.Message(request, identity)
+		}
+		return h.reportSMDeliveryStatus(ctx, rdr).Message(request, identity)
 	}
 	return diameter.CommandUnsupportedAnswer(identity, request)
+}
+
+// reportSMDeliveryStatus is the HSS side of the delivery status report,
+// TS 29.338 5.2.3.4: the SMS-GMSC tells the HSS how a delivery ended,
+// and the HSS keeps or drops the service centre address accordingly (TS
+// 23.040 3.2.8 case 1).
+//
+// The answer never carries the MSISDN-Alert of Table 5.2.3.1-2: the HSS
+// of this project finds the user by the very MSISDN of the request, so
+// the two are never different.
+func (h *HSS) reportSMDeliveryStatus(ctx context.Context, r sgd.ReportSMDeliveryStatusRequest) sgd.ReportSMDeliveryStatusAnswer {
+	log := h.log.With("msisdn", r.UserIdentifier.MSISDN, "sc_address", r.SCAddress)
+	u, ok, err := h.shSubscriber(ctx, sh.UserIdentity{MSISDN: r.UserIdentifier.MSISDN})
+	if err != nil {
+		return sgd.ReportSMDeliveryStatusAnswer{Result: h.storeFailed(err)}
+	}
+	if !ok {
+		log.Info("delivery status report: no such user")
+		return sgd.ReportSMDeliveryStatusAnswer{Result: diameter.Experimental(sgd.DiameterErrorUserUnknown)}
+	}
+	switch report, cause := reportedOutcome(r.SMDeliveryOutcome); report {
+	case messageDelivered:
+		// The short message got through after all, which TS 29.338 5.2.3.1
+		// also reports here: the SC that delivered it has nothing waiting
+		// any more.
+		if fail := h.forgetMessageWaiting(ctx, u, r.SCAddress); fail != (diameter.Result{}) {
+			return sgd.ReportSMDeliveryStatusAnswer{Result: fail}
+		}
+	case messageWaits:
+		stored, fail := h.recordMessageWaiting(ctx, u, r.SCAddress, cause)
+		switch {
+		case fail != (diameter.Result{}):
+			return sgd.ReportSMDeliveryStatusAnswer{Result: fail}
+		case !stored:
+			log.Info("the message waiting data is full; the SC is left with its own retries")
+			return sgd.ReportSMDeliveryStatusAnswer{Result: diameter.Experimental(sgd.DiameterErrorMWDListFull)}
+		}
+	default:
+		log.Info("delivery status report with no cause this HSS acts on")
+	}
+	return sgd.ReportSMDeliveryStatusAnswer{Result: diameter.Base(diameter.DiameterSuccess)}
+}
+
+// smDeliveryReport is what an RDR asks the HSS to do with the service
+// centre address.
+type smDeliveryReport int
+
+const (
+	// noSuchCause is a report whose causes the HSS knows none of. It
+	// leaves the message waiting data as it is.
+	noSuchCause smDeliveryReport = iota
+	// messageWaits is a delivery that failed, so the short message stays
+	// at the service centre.
+	messageWaits
+	// messageDelivered is a delivery that succeeded.
+	messageDelivered
+)
+
+// reportedOutcome reads the outcomes of an RDR, and for a delivery that
+// failed the cause the HSS records. A memory that was full decides over
+// an absent user, whichever node reported which: the UE is reachable
+// then, so only free memory helps (TS 23.040 3.2.8 case 1 items 1e and
+// 2f).
+func reportedOutcome(o sgd.SMDeliveryOutcome) (smDeliveryReport, DeliveryFailure) {
+	report, cause := noSuchCause, AbsentUser
+	for _, n := range []*sgd.NodeSMDeliveryOutcome{o.MMESMDeliveryOutcome, o.IPSMGWSMDeliveryOutcome, o.SMSF3GPPSMDeliveryOutcome} {
+		if n == nil {
+			continue
+		}
+		switch n.SMDeliveryCause {
+		case sgd.SMDeliveryCauseUEMemoryCapacityExceeded:
+			return messageWaits, MemoryCapacityExceeded
+		case sgd.SMDeliveryCauseAbsentUser:
+			report, cause = messageWaits, AbsentUser
+		case sgd.SMDeliveryCauseSuccessfulTransfer:
+			if report == noSuchCause {
+				report = messageDelivered
+			}
+		}
+	}
+	return report, cause
 }
 
 // sendRoutingInfoForSM is the HSS side of the routing info query, TS
@@ -146,4 +234,28 @@ func (h *HSS) recordMessageWaiting(ctx context.Context, u Subscriber, scAddress 
 	h.log.Info("message waiting data", "private_identity", stored.PrivateIdentity, "sc_address", scAddress,
 		"cause", cause.String(), "stored", added, "unri", stored.UNRI, "mcef", stored.MCEF)
 	return added, diameter.Result{}
+}
+
+// forgetMessageWaiting takes scAddress out of the message waiting data
+// of u, under the lock of the subscriber. The flags stay as they are:
+// TS 23.040 3.2.8 NOTE 3 has them outlive an empty MWD, so that the HSS
+// still answers the next routing info query with what it knows.
+func (h *HSS) forgetMessageWaiting(ctx context.Context, u Subscriber, scAddress string) diameter.Result {
+	unlock, err := h.lockSubscriber(u.PrivateIdentity)
+	if err != nil {
+		return h.lockFailed(err)
+	}
+	defer unlock()
+	stored, ok, err := h.store.Subscriber(ctx, u.PrivateIdentity)
+	if err != nil {
+		return h.storeFailed(err)
+	}
+	if !ok || !stored.removeMessageWaiting(scAddress) {
+		return diameter.Result{}
+	}
+	if err := h.store.Put(ctx, stored); err != nil {
+		return h.storeFailed(err)
+	}
+	h.log.Info("message waiting data", "private_identity", stored.PrivateIdentity, "sc_address", scAddress, "stored", false)
+	return diameter.Result{}
 }

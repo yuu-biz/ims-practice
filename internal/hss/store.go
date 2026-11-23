@@ -255,6 +255,17 @@ func (s *Subscriber) addMessageWaiting(scAddress string, cause DeliveryFailure) 
 	return true
 }
 
+// removeMessageWaiting takes the address of a service centre out of the
+// message waiting data, and reports whether it was there.
+func (s *Subscriber) removeMessageWaiting(scAddress string) bool {
+	i := slices.Index(s.MessageWaitingData, scAddress)
+	if i < 0 {
+		return false
+	}
+	s.MessageWaitingData = slices.Delete(s.MessageWaitingData, i, i+1)
+	return true
+}
+
 // ErrIdentityTaken means that an identity of a new subscription already
 // belongs to another one.
 //
