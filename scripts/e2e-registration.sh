@@ -94,6 +94,23 @@ docker compose run --no-deps -d --name ims-practice-ue3-rtr ue3 register "${ue3[
 if ! wait_log ims-practice-ue3-rtr '"msg":"reg event"'; then
 	fail=1
 else
+	# Giving a registered user another service profile pushes the new
+	# profile to its S-CSCF with a PPR, instead of leaving the S-CSCF with
+	# the profile of the registration (TS 29.228 6.6.1). The HSS answers
+	# the request only once the PPA is in. The profile no-services has no
+	# criteria, so from here on the S-CSCF calls no application server for
+	# UE 3. The provisioning API is not published on the host, so the
+	# request goes from inside the container of the HSS; the Lab passes no
+	# PATCH on.
+	reply="$(docker compose exec -T hss sh -c '
+		printf "PATCH /subscriptions/$1 HTTP/1.0\r\nContent-Type: application/json\r\nContent-Length: ${#2}\r\n\r\n%s" "$2" |
+			nc -w 5 127.0.0.1 8081' sh "001010000000003@$domain" '{"service_profile": "no-services"}')"
+	if grep -qi '^HTTP/1\.[01] 200' <<<"$reply"; then
+		echo "ok   the HSS took the new service profile of UE 3"
+	else
+		echo "FAIL changing the service profile of UE 3: $(head -n 1 <<<"$reply")"
+		fail=1
+	fi
 	# The HSS answers the DELETE only once the RTR is over, so there is
 	# nothing else to wait for. The status code is read from the end of
 	# the output, since curl on Windows cannot write to /dev/null when
@@ -148,12 +165,14 @@ pcscf=172.28.0.40
 icscf=172.28.0.20
 scscf=172.28.0.30
 hss=172.28.0.10
+ipsmgw=172.28.0.70
 dns=172.28.0.2
 register='sip.Method == "REGISTER"'
 uar='diameter.cmd.code == 300'
 sar='diameter.cmd.code == 301'
 mar='diameter.cmd.code == 303'
 rtr='diameter.cmd.code == 304'
+ppr='diameter.cmd.code == 305'
 req='diameter.flags.request == 1'
 ans='diameter.flags.request == 0'
 
@@ -249,12 +268,25 @@ echo "wrong password"
 expect "SAR AUTHENTICATION_FAILURE" "$sar && $req && diameter.Server-Assignment-Type == 9"
 expect "403 to the UE with the wrong password" "sip.Status-Code == 403 && ip.dst == $ue"
 
-# UE 3 registered after the UE with the wrong password had ended, and
-# its subscription was removed from the HSS after that, so this flow is
-# the last of the capture.
-echo "deregistration by the HSS"
+# UE 3 registered after the UE with the wrong password had ended, its
+# service profile changed while it was registered, and its subscription
+# was removed from the HSS after that, so these flows are the last of the
+# capture.
+echo "a changed service profile, pushed to the S-CSCF"
 rejected="sip.msg_body contains \"event=\\\"rejected\\\"\""
 expect "200 OK to the REGISTER of UE 3" "sip.Status-Code == 200 && sip.CSeq.method == \"REGISTER\" && ip.dst == $ue3ip"
+# TS 29.228 Table 6.2.2.1: User-Name is the private identity,
+# Destination-Host the S-CSCF that stored the server name, and User-Data
+# the whole profile of the implicit registration set (6.5.2.1).
+expect "PPR HSS -> S-CSCF with the whole profile" "$ppr && $req && ip.src == $hss && diameter.Destination-Host == \"scscf.$domain\" && diameter.User-Name == \"001010000000003@$domain\" && diameter.Cx-User-Data"
+pushed="$last"
+expect "PPA DIAMETER_SUCCESS" "$ppr && $ans && ip.src == $scscf && diameter.Result-Code == 2001"
+# The profile that arrived has no criteria, so the S-CSCF calls no
+# application server for UE 3 any more: the deregistration below sends no
+# third-party REGISTER to the IP-SM-GW, which the registration did.
+none "third-party REGISTER for UE 3 after the push" "frame.number > $pushed && $register && ip.dst == $ipsmgw && sip.To contains \"+12025550103\""
+
+echo "deregistration by the HSS"
 # TS 29.228 6.1.3.1: the private identity goes with all of its public
 # identities, so the RTR carries no Public-Identity, and
 # Destination-Host is the Origin-Host of that S-CSCF's SAR.

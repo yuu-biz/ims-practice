@@ -23,9 +23,9 @@ import (
 // UnregisteredProfileLifetime is how long the S-CSCF keeps the profile
 // of a user who is not registered. TS 24.229 and TS 29.228 leave it
 // to the S-CSCF. It covers one call attempt with its retries, as long
-// as the original dialog identifiers live, and is short enough that a
-// change of the profile in the HSS applies within minutes: the HSS stub
-// pushes no changes to the S-CSCF (no PPR, TS 29.228 6.2.2).
+// as the original dialog identifiers live. While the S-CSCF holds the
+// profile, the HSS has the user in the unregistered state and pushes a
+// change of the profile here (TS 29.228 6.2.2).
 const UnregisteredProfileLifetime = originalDialogLifetime
 
 // unregisteredProfile is the profile of a served user who has no

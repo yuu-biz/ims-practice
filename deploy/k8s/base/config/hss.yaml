@@ -273,8 +273,9 @@ hss:
   # itself stays in the HSS. A subscription that names no profile of its
   # own gets the one named here, or the one of test_user_service_profile
   # when it is marked test_user. Both settings name a profile of
-  # service_profiles below. Only one profile is defined here, so every
-  # subscription gets the same criteria.
+  # service_profiles below. Every subscription here starts on default,
+  # which holds every criterion; no-services is there for an operator to
+  # move one to.
   default_service_profile: default
   # Test users get the same criteria as every other user here. To try a
   # feature out on the test users alone, define a second profile with
@@ -334,6 +335,13 @@ hss:
       - priority: 13
         trigger_point: {condition_type_cnf: true, spt: [{group: [0], method: INVITE}, {group: [1], session_case: ORIGINATING_CDIV}]}
         application_server: {server_name: sip:mmtel.ims.mnc001.mcc001.3gppnetwork.org:5060, default_handling: SESSION_TERMINATED}
+    # A profile with no criteria: the S-CSCF calls no application server
+    # for a user that has it, so neither SMS over IP nor the
+    # supplementary services work for that user. No subscription starts
+    # on it. "Change the service profile of a registered user" in the
+    # registration guide moves one to it, which is a change the capture
+    # shows reaching the S-CSCF.
+    no-services: []
 diameter:
   origin_host: hss.ims.mnc001.mcc001.3gppnetwork.org
   origin_realm: ims.mnc001.mcc001.3gppnetwork.org
