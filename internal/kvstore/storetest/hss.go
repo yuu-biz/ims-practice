@@ -25,6 +25,7 @@ func HSS(t *testing.T, newPair func(t *testing.T) (hss.Store, hss.Store)) {
 		{"ListIsOrderedAndPaged", hssListIsOrderedAndPaged},
 		{"ListGoesOnFromASubscriberThatIsGone", hssListGoesOnFromASubscriberThatIsGone},
 		{"StoresTheProvisionedRepositoryData", hssStoresRepositoryData},
+		{"ReadsAllTheRepositoryDataOfASubscription", hssReadsAllRepositoryData},
 		{"KeepsSQNOutOfPut", hssKeepsSQNOutOfPut},
 		{"CompareAndSwapRepositoryData", hssCompareAndSwapRepositoryData},
 		{"ConcurrentSQN", hssConcurrentSQN},
@@ -105,6 +106,15 @@ func repositoryData(t *testing.T, s hss.Store, privateID, serviceIndication stri
 		t.Errorf("RepositoryData(%s, %s): %v", privateID, serviceIndication, err)
 	}
 	return d, ok
+}
+
+func allRepositoryData(t *testing.T, s hss.Store, privateID string) []sh.TransparentData {
+	t.Helper()
+	data, err := s.AllRepositoryData(context.Background(), privateID)
+	if err != nil {
+		t.Errorf("AllRepositoryData(%s): %v", privateID, err)
+	}
+	return data
 }
 
 func compareAndSwapRepositoryData(t *testing.T, s hss.Store, privateID string, old *sh.TransparentData, data sh.TransparentData) bool {
@@ -306,6 +316,50 @@ func hssStoresRepositoryData(t *testing.T, a, b hss.Store) {
 	if sub, _ := subscriber(t, b, impi); sub.RepositoryData != nil {
 		t.Errorf("the stored subscription keeps %v", sub.RepositoryData)
 	}
+}
+
+// The provisioning API reads the repository data of a subscription
+// whole, to replace it or to write it out: every Service-Indication the
+// subscription has, with the Sequence Number that is stored, in the
+// order the indications sort in. A subscription with no data, and a
+// private identity that no subscription has, have none.
+func hssReadsAllRepositoryData(t *testing.T, a, b hss.Store) {
+	mmtel := sh.TransparentData{ServiceIndication: "MMTEL-Services", ServiceData: &sh.ServiceData{XML: []byte("<a/>")}}
+	mustAdd(t, a,
+		hss.Subscription{PrivateIdentity: impi, PublicIdentities: []string{impu}, Password: "p",
+			RepositoryData: []sh.TransparentData{hss.UtCredentialData(impi, realm, "test-password-1"), mmtel}},
+		hss.Subscription{PrivateIdentity: otherIMPI, PublicIdentities: []string{"sip:other@" + realm}, Password: "p"},
+	)
+	got := allRepositoryData(t, b, impi)
+	if want := []string{"MMTEL-Services", "Ut-Digest-Credential"}; !slices.Equal(indications(got), want) {
+		t.Fatalf("AllRepositoryData = %v, want %v", indications(got), want)
+	}
+	if string(got[0].ServiceData.XML) != "<a/>" || got[0].SequenceNumber != 0 {
+		t.Errorf("the MMTelServices data = %+v", got[0])
+	}
+	// What an Sh update wrote comes back with the Sequence Number it gave.
+	next := mmtel
+	next.SequenceNumber, next.ServiceData = 1, &sh.ServiceData{XML: []byte("<b/>")}
+	if !compareAndSwapRepositoryData(t, a, impi, &mmtel, next) {
+		t.Fatal("the update of the MMTelServices data was refused")
+	}
+	if got := allRepositoryData(t, b, impi); len(got) != 2 || string(got[0].ServiceData.XML) != "<b/>" || got[0].SequenceNumber != 1 {
+		t.Errorf("after an update, AllRepositoryData = %+v", got)
+	}
+	if got := allRepositoryData(t, b, otherIMPI); len(got) != 0 {
+		t.Errorf("a subscription provisioned with no repository data has %+v", got)
+	}
+	if got := allRepositoryData(t, b, "nobody@"+realm); len(got) != 0 {
+		t.Errorf("a private identity of no subscription has %+v", got)
+	}
+}
+
+func indications(data []sh.TransparentData) []string {
+	names := make([]string, 0, len(data))
+	for _, d := range data {
+		names = append(names, d.ServiceIndication)
+	}
+	return names
 }
 
 func hssKeepsSQNOutOfPut(t *testing.T, a, b hss.Store) {
