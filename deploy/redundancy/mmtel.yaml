@@ -63,6 +63,14 @@ diameter:
 # is down; the Lab is not on the call path.
 hep:
   collector: 172.28.0.60:9060
+# The maintenance listener: the metrics of the MMTel AS at /metrics for
+# Prometheus to scrape, and the maintenance API under /maintenance/v1/,
+# through which an operator takes the AS out of service. No
+# specification gives a port for it; 8085 is this project's choice. The
+# API asks for no password, so the port is not published outside the
+# network of the IMS nodes.
+maintenance:
+  listen: 0.0.0.0:8085
 
 # The MMTel AS keeps its state in the shared store: the record of each
 # two-party call, from which an instance recreated under the same name
