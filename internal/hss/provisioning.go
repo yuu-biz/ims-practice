@@ -1058,7 +1058,8 @@ func (h *HSS) profileChanged(stored, next Subscriber) bool {
 	if !served(stored) {
 		return false
 	}
-	before, after := h.userProfile(stored), h.userProfile(next)
+	set := h.settings.Load()
+	before, after := h.userProfileIn(set, stored), h.userProfileIn(set, next)
 	if stored.State == Registered && before.DefaultIdentity() != after.DefaultIdentity() {
 		h.log.Info("not pushed: a new default public identity of a registered user",
 			"private_identity", stored.PrivateIdentity, "default_identity", after.DefaultIdentity())
@@ -1121,10 +1122,11 @@ func (h *HSS) pushProfile(ctx context.Context, peers Peers, privateID string) er
 	if err != nil || !ok || !served(u) {
 		return err
 	}
+	set := h.settings.Load()
 	ppr := cx.PushProfileRequest{
 		Header:   diameter.NewHeader(h.node, u.SCSCF.OriginHost, u.SCSCF.OriginRealm),
 		UserName: u.PrivateIdentity,
-		UserData: h.userProfile(u).Marshal(),
+		UserData: h.userProfileIn(set, u).Marshal(),
 	}
 	answer, err := peers.Request(ctx, u.SCSCF.OriginHost, ppr.Message())
 	if err != nil {
@@ -1138,7 +1140,7 @@ func (h *HSS) pushProfile(ctx context.Context, peers Peers, privateID string) er
 		return fmt.Errorf("PPA with %s", ppa.Result)
 	}
 	h.log.Info("pushed the user profile", "private_identity", u.PrivateIdentity, "scscf", u.SCSCF.OriginHost,
-		"service_profile", h.serviceProfile(u.Subscription), "state", u.State.String())
+		"service_profile", set.serviceProfile(u.Subscription), "state", u.State.String())
 	return nil
 }
 

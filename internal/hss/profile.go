@@ -41,10 +41,13 @@ type ServiceProfile struct {
 
 // userProfile is the profile of u that the SAA carries in User-Data (TS
 // 29.228 6.1.2.1): the identities of the subscription and the criteria
-// of its service profile.
-func (h *HSS) userProfile(u Subscriber) cx.UserProfile {
+// of its service profile under the settings in force.
+func (h *HSS) userProfile(u Subscriber) cx.UserProfile { return h.userProfileIn(h.settings.Load(), u) }
+
+// userProfileIn is the profile of u under the settings set.
+func (h *HSS) userProfileIn(set *settings, u Subscriber) cx.UserProfile {
 	var criteria []ifc.InitialFilterCriteria
-	for _, c := range h.config.ServiceProfiles[h.serviceProfile(u.Subscription)].Criteria {
+	for _, c := range h.config.ServiceProfiles[set.serviceProfile(u.Subscription)].Criteria {
 		c.ApplicationServer.ServiceInfo = strings.ReplaceAll(c.ApplicationServer.ServiceInfo, MSISDNPlaceholder, u.MSISDN())
 		criteria = append(criteria, c)
 	}
@@ -62,10 +65,11 @@ func (h *HSS) userProfile(u Subscriber) cx.UserProfile {
 // or any other. The choice is made from the data of this one
 // subscription and the settings in force, so the HSS answers for it
 // without reading anything else.
-func (h *HSS) serviceProfile(s Subscription) string {
-	// One load of the settings, so that an operator who changes both
-	// names at once cannot leave a subscription with the name of neither.
-	set := h.settings.Load()
+func (h *HSS) serviceProfile(s Subscription) string { return h.settings.Load().serviceProfile(s) }
+
+// serviceProfile is the name of the service profile of sub under the
+// settings set.
+func (set *settings) serviceProfile(s Subscription) string {
 	switch {
 	case s.ServiceProfile != "":
 		return s.ServiceProfile

@@ -116,7 +116,11 @@ func (h *HSS) Settings() []maintenance.Setting {
 		defaultName = role + ".default_service_profile"
 		testUser    = role + ".test_user_service_profile"
 	)
-	return []maintenance.Setting{
+	// One group: a change that names several of them puts them in force
+	// at once, so no request sees the policy of one change beside the
+	// profile names of the one before it. Each set writes the pending
+	// settings, which commitSettings publishes.
+	return maintenance.Together(h.beginSettings, h.commitSettings,
 		maintenance.NewSetting(admission,
 			"which subscribers the network admits: all, or test_users for the subscriptions marked test_user",
 			h.Admission,
@@ -129,18 +133,18 @@ func (h *HSS) Settings() []maintenance.Setting {
 				}
 				return nil
 			},
-			func(a Admission) { h.changeSettings(func(s *settings) { s.admission = a }) }),
+			func(a Admission) { h.pending.admission = a }),
 		maintenance.NewSetting(defaultName,
 			"the service profile of a subscription that names none of its own",
 			h.DefaultServiceProfile,
 			func(name string) error { return h.config.CheckServiceProfileName(defaultName, name) },
-			func(name string) { h.changeSettings(func(s *settings) { s.defaultServiceProfile = name }) }),
+			func(name string) { h.pending.defaultServiceProfile = name }),
 		maintenance.NewSetting(testUser,
 			"the service profile of a subscription marked test_user that names none of its own",
 			h.TestUserServiceProfile,
 			func(name string) error { return h.config.CheckServiceProfileName(testUser, name) },
-			func(name string) { h.changeSettings(func(s *settings) { s.testUserServiceProfile = name }) }),
-	}
+			func(name string) { h.pending.testUserServiceProfile = name }),
+	)
 }
 
 // requestAnswered counts the end of a Cx or Sh request, which may be
