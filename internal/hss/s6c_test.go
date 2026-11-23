@@ -430,6 +430,46 @@ func TestSendRoutingInfoLeavesOutANodeMarkedNotReachable(t *testing.T) {
 	}
 }
 
+// A registration that lands between the read of the subscriber and the
+// write of the message waiting data must not leave an address behind
+// that no alert will ever reach: the query is answered with the serving
+// node that the registration brought.
+func TestSendRoutingInfoSeesARegistrationUnderTheLock(t *testing.T) {
+	n := newS6cNetwork(t)
+	// Open the connection of the SC first, so that the query below is
+	// the only thing the HSS waits for.
+	n.srr(t, msisdnA)
+	n.waitForSubscriber(t, "the first query", func(u Subscriber) bool { return len(u.MessageWaitingData) == 1 })
+
+	// Hold the lock of the subscriber, register the IP-SM-GW behind it
+	// and clear what the first query left, as a PUR would, and only then
+	// let the query that is waiting go on.
+	unlock, err := n.hss.users.Lock(context.Background(), impi)
+	if err != nil {
+		t.Fatal(err)
+	}
+	answers := make(chan sgd.SendRoutingInfoForSMAnswer, 1)
+	go func() { answers <- n.srr(t, msisdnA) }()
+	// The query is past its unlocked read by the time it blocks on the
+	// lock; waiting makes the interleaving the one under test.
+	time.Sleep(200 * time.Millisecond)
+	u := n.subscriber(t)
+	u.IPSMGWNumber, u.IPSMGW = ipsmgwNumber, diameter.Identity{OriginHost: ipsmgwHost, OriginRealm: realm}
+	u.MessageWaitingData, u.UNRI = nil, false
+	if err := n.hss.store.Put(context.Background(), u); err != nil {
+		t.Fatal(err)
+	}
+	unlock()
+
+	a := <-answers
+	if a.Result != success || a.ServingNode == nil {
+		t.Fatalf("SRA = %v, %+v, want the serving node that the registration brought", a.Result, a.ServingNode)
+	}
+	if u := n.subscriber(t); len(u.MessageWaitingData) != 0 || u.UNRI {
+		t.Errorf("message waiting data = %v, UNRI = %v, want nothing waiting", u.MessageWaitingData, u.UNRI)
+	}
+}
+
 // The IMSI of TS 23.003 13.3 is the user part of the private identity,
 // and a private identity that is not derived from one has none.
 func TestIMSI(t *testing.T) {

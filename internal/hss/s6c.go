@@ -64,15 +64,23 @@ func (h *HSS) reportSMDeliveryStatus(ctx context.Context, r sgd.ReportSMDelivery
 		// The short message got through after all, which TS 29.338 5.2.3.1
 		// also reports here: the SC that delivered it has nothing waiting
 		// any more.
-		if fail := h.forgetMessageWaiting(ctx, u, r.SCAddress); fail != (diameter.Result{}) {
+		_, _, fail := h.updateMessageWaiting(ctx, u, func(s *Subscriber) bool {
+			s.removeMessageWaiting(r.SCAddress)
+			return false
+		})
+		if fail != (diameter.Result{}) {
 			return sgd.ReportSMDeliveryStatusAnswer{Result: fail}
 		}
 	case messageWaits:
-		stored, fail := h.recordMessageWaiting(ctx, u, r.SCAddress, cause)
+		kept := false
+		_, _, fail := h.updateMessageWaiting(ctx, u, func(s *Subscriber) bool {
+			kept = s.addMessageWaiting(r.SCAddress, cause)
+			return false
+		})
 		switch {
 		case fail != (diameter.Result{}):
 			return sgd.ReportSMDeliveryStatusAnswer{Result: fail}
-		case !stored:
+		case !kept:
 			log.Info("the message waiting data is full; the SC is left with its own retries")
 			return sgd.ReportSMDeliveryStatusAnswer{Result: diameter.Experimental(sgd.DiameterErrorMWDListFull)}
 		}
@@ -157,14 +165,32 @@ func (h *HSS) sendRoutingInfoForSM(ctx context.Context, r sgd.SendRoutingInfoFor
 	}
 	// No node is registered for MT SMS. The SC address goes into the
 	// message waiting data, so that the HSS alerts the SC once a node
-	// registers again.
-	if sgd.ValidE164(r.SCAddress) {
-		stored, fail := h.recordMessageWaiting(ctx, u, r.SCAddress, AbsentUser)
+	// registers again. The read above is not under the lock of the
+	// subscriber, so a PUR may have registered an IP-SM-GW in between: it
+	// would have found an empty message waiting data and sent no alert,
+	// and the address written here would wait for an alert that never
+	// comes. The decision is therefore taken again under the lock.
+	stored, _, fail := h.updateMessageWaiting(ctx, u, func(s *Subscriber) bool {
 		switch {
-		case fail != (diameter.Result{}):
-			return sgd.SendRoutingInfoForSMAnswer{Result: fail}
-		case !stored:
+		case servingNode(*s) != nil:
+			return false
+		case !sgd.ValidE164(r.SCAddress):
+			return false
+		}
+		if !s.addMessageWaiting(r.SCAddress, AbsentUser) {
 			log.Info("the message waiting data is full; the SC is left with its own retries")
+		}
+		return false
+	})
+	if fail != (diameter.Result{}) {
+		return sgd.SendRoutingInfoForSMAnswer{Result: fail}
+	}
+	if node := servingNode(stored); node != nil {
+		log.Info("routing info for a short message: a node registered while the query was answered", "serving_node", node.IPSMGWName)
+		return sgd.SendRoutingInfoForSMAnswer{
+			Result:      diameter.Base(diameter.DiameterSuccess),
+			UserName:    imsi(stored.PrivateIdentity),
+			ServingNode: node,
 		}
 	}
 	log.Info("routing info for a short message: no node is registered for MT SMS")
@@ -216,58 +242,48 @@ func imsi(privateIdentity string) string {
 	return ""
 }
 
-// recordMessageWaiting records that the service centre at scAddress
-// holds a short message for u, under the lock of the subscriber. It
-// reports whether the address is in the message waiting data
-// afterwards, and the result of a store or lock that failed, which is
-// the zero Result when neither did.
-func (h *HSS) recordMessageWaiting(ctx context.Context, u Subscriber, scAddress string, cause DeliveryFailure) (bool, diameter.Result) {
+// updateMessageWaiting changes the message waiting data of u under the
+// lock of the subscriber. change works on the subscriber as the store
+// holds it, which is read again under the lock so that a PUR or a SAR
+// that writes at the same time neither loses the change nor hides what
+// it has written; it reports whether the service centres that are left
+// are to be alerted.
+//
+// It returns the subscriber as the store now holds it, what change
+// reported, and the result of a store or lock that failed, which is the
+// zero Result when neither did. The subscriber is the zero value when
+// the provisioning API removed the subscription in between.
+func (h *HSS) updateMessageWaiting(ctx context.Context, u Subscriber, change func(*Subscriber) bool) (Subscriber, bool, diameter.Result) {
 	unlock, err := h.lockSubscriber(u.PrivateIdentity)
 	if err != nil {
-		return false, h.lockFailed(err)
+		return Subscriber{}, false, h.lockFailed(err)
 	}
 	defer unlock()
-	// The subscriber is read again under its lock, so that a PUR or a
-	// SAR that writes at the same time does not lose the entry.
 	stored, ok, err := h.store.Subscriber(ctx, u.PrivateIdentity)
 	if err != nil {
-		return false, h.storeFailed(err)
+		return Subscriber{}, false, h.storeFailed(err)
 	}
 	if !ok {
-		// The provisioning API removed the subscription meanwhile.
-		return false, diameter.Result{}
+		return Subscriber{}, false, diameter.Result{}
 	}
-	added := stored.addMessageWaiting(scAddress, cause)
+	before := stored
+	alert := change(&stored)
+	if sameMessageWaiting(before, stored) {
+		return stored, alert, diameter.Result{}
+	}
 	if err := h.store.Put(ctx, stored); err != nil {
-		return false, h.storeFailed(err)
+		return Subscriber{}, false, h.storeFailed(err)
 	}
-	h.log.Info("message waiting data", "private_identity", stored.PrivateIdentity, "sc_address", scAddress,
-		"cause", cause.String(), "stored", added, "unri", stored.UNRI, "mcef", stored.MCEF)
-	return added, diameter.Result{}
+	h.log.Info("message waiting data", "private_identity", stored.PrivateIdentity,
+		"service_centres", stored.MessageWaitingData, "unri", stored.UNRI, "mcef", stored.MCEF)
+	return stored, alert, diameter.Result{}
 }
 
-// forgetMessageWaiting takes scAddress out of the message waiting data
-// of u, under the lock of the subscriber. The flags stay as they are:
-// TS 23.040 3.2.8 NOTE 3 has them outlive an empty MWD, so that the HSS
-// still answers the next routing info query with what it knows.
-func (h *HSS) forgetMessageWaiting(ctx context.Context, u Subscriber, scAddress string) diameter.Result {
-	unlock, err := h.lockSubscriber(u.PrivateIdentity)
-	if err != nil {
-		return h.lockFailed(err)
-	}
-	defer unlock()
-	stored, ok, err := h.store.Subscriber(ctx, u.PrivateIdentity)
-	if err != nil {
-		return h.storeFailed(err)
-	}
-	if !ok || !stored.removeMessageWaiting(scAddress) {
-		return diameter.Result{}
-	}
-	if err := h.store.Put(ctx, stored); err != nil {
-		return h.storeFailed(err)
-	}
-	h.log.Info("message waiting data", "private_identity", stored.PrivateIdentity, "sc_address", scAddress, "stored", false)
-	return diameter.Result{}
+// sameMessageWaiting reports whether two copies of a subscriber hold the
+// same message waiting indication, so that a change that writes nothing
+// stores nothing.
+func sameMessageWaiting(a, b Subscriber) bool {
+	return a.UNRI == b.UNRI && a.MCEF == b.MCEF && slices.Equal(a.MessageWaitingData, b.MessageWaitingData)
 }
 
 // alertTimeout bounds one alert, which the HSS sends outside the
@@ -298,7 +314,11 @@ func (h *HSS) alertServiceCentres(u Subscriber) {
 			if !h.alertServiceCentre(ctx, u, address) {
 				continue
 			}
-			if fail := h.forgetMessageWaiting(ctx, u, address); fail != (diameter.Result{}) {
+			_, _, fail := h.updateMessageWaiting(ctx, u, func(s *Subscriber) bool {
+				s.removeMessageWaiting(address)
+				return false
+			})
+			if fail != (diameter.Result{}) {
 				return
 			}
 		}
