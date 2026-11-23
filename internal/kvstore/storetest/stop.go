@@ -3,6 +3,7 @@ package storetest
 import (
 	"context"
 	"errors"
+	"math"
 	"sync"
 	"time"
 
@@ -17,20 +18,45 @@ func StopAfter(kv kvstore.Store, writes int) kvstore.Store {
 	return &stopping{Store: kv, left: writes}
 }
 
+// BeforeWrite is kv as an instance sees it that runs f just before its
+// nth write, counting from one, and goes on as usual afterwards. The
+// tests use it to let another instance do its work in the middle of an
+// operation, so that an interleaving of the two is a case of its own
+// rather than a race to lose sleep over. f runs on the caller's
+// goroutine, and reaches the store through another instance of its own.
+func BeforeWrite(kv kvstore.Store, n int, f func()) kvstore.Store {
+	return &stopping{Store: kv, left: math.MaxInt, before: n, hook: f}
+}
+
 type stopping struct {
 	kvstore.Store
 	mu   sync.Mutex
 	left int
+	// writes counts the writes so far, for before.
+	writes int
+	before int
+	hook   func()
 }
 
 var errStopped = errors.New("storetest: the instance has stopped")
 
-// write counts one write, and reports whether it may go ahead.
+// write counts one write, runs the hook if this is the write it waits
+// for, and reports whether the write may go ahead. The hook runs outside
+// the lock, since it works on the store itself.
 func (s *stopping) write() bool {
 	s.mu.Lock()
-	defer s.mu.Unlock()
+	s.writes++
+	hook := s.hook
+	if s.writes != s.before {
+		hook = nil
+	}
 	s.left--
-	return s.left >= 0
+	ok := s.left >= 0
+	s.mu.Unlock()
+	if hook != nil {
+		hook()
+	}
+	return ok
 }
 
 func (s *stopping) stopped() bool {
@@ -88,8 +114,11 @@ func (s *stopping) Unschedule(ctx context.Context, index, member string) error {
 	return s.Store.Unschedule(ctx, index, member)
 }
 
+// ClaimDue counts as a write: a claim moves the members it hands out to
+// the end of the claim, which is a change to the index that outlives the
+// instance that asked for it.
 func (s *stopping) ClaimDue(ctx context.Context, index string, now time.Time, lease time.Duration, limit int) ([]kvstore.Claim, error) {
-	if s.stopped() {
+	if !s.write() {
 		return nil, errStopped
 	}
 	return s.Store.ClaimDue(ctx, index, now, lease, limit)
