@@ -197,7 +197,7 @@
 - 学習用の画面から障害注入を操作する。ドレインは OAM の側の操作にする（[lab-oam.md](design/lab-oam.md)）。
 - 手順書「障害を起こして観察する」を書く。
 
-今あるもの。保守用の API の共通部分（`internal/maintenance`）、障害注入の部品（`internal/fault`、`deploy/chaos/`）、保存先のクライアント（`internal/kvstore`）があります。保守用の API のドレインは、S-CSCF にだけつないであります。
+今あるもの。保守用の API の共通部分（`internal/maintenance`）、障害注入の部品（`internal/fault`、`deploy/chaos/`）、保存先のクライアント（`internal/kvstore`）があります。保守用の API のドレインは、P-CSCF と S-CSCF につないであります。
 
 **完了条件.** ドレイン中のノードを経由する通話が切れずに終わり、その後の新規の呼が他のノードを経由することを、CI の試験で確認できる。通話中に P-CSCF か S-CSCF のコンテナを削除し、同じ名前とアドレスで作り直しても、その呼が切れず、登録済みの UE が再登録なしで着信できることを、CI の試験で確認できる。メディア中継ノードの障害は、設計の記録で決めた範囲を確認する。作り直した中継ノードを通る呼で、RTP が途切れたあとで同じポートから戻り、呼が BYE まで続く。
 
@@ -259,7 +259,7 @@
 - 設定の変更の記録と、前の設定への戻しを作る。
 - 手順書「OAM で運用する」を書く。
 
-今あるもの。OAM のサーバーの本体（`internal/oam`）と画面（`web/oam`）の部品があり、こちらは役割にはつないでいません。保守用の API（`internal/maintenance`）と指標（`internal/metrics`）は S-CSCF につないであります。`maintenance.listen` を持つノードは、その待ち受けで `/metrics` を出し、S-CSCF の役割を持てば保守用の API も出します。S-CSCF は登録の試行、成功、失敗を種類ごとに数えます（TS 32.409 4.1.1）。shut down か lock をしたあいだは、ダイアログの外の新しい要求に 503 と Retry-After を返します。Compose では Prometheus が S-CSCF の指標を集め、Grafana のダッシュボードに出ます（`deploy/observability/`）。確認は `scripts/e2e-observability.sh` で行います。ほかの役割はまだつないでいません。調査は [oam.md](background/oam.md) にあります。
+今あるもの。OAM のサーバーの本体（`internal/oam`）と画面（`web/oam`）の部品があり、こちらは役割にはつないでいません。保守用の API（`internal/maintenance`）と指標（`internal/metrics`）は P-CSCF と S-CSCF につないであります。`maintenance.listen` を持つノードは、その待ち受けで `/metrics` を出し、P-CSCF か S-CSCF の役割を持てば保守用の API も出します。P-CSCF と S-CSCF は、登録の試行、成功、失敗を種類ごとに数えます（TS 32.409 4.1.1）。P-CSCF は、最初の登録にかかった時間（4.1.1.1.4）と、セッションの試行、応答、失敗、応答済みのセッションの数（4.1.2）も数えます。shut down か lock をしたあいだ、S-CSCF はダイアログの外の新しい要求に、P-CSCF は登録を始める REGISTER と更新する REGISTER に、503 と Retry-After を返します。Compose では Prometheus が P-CSCF と S-CSCF の指標を集め、Grafana のダッシュボードに出ます（`deploy/observability/`）。確認は `scripts/e2e-observability.sh` で行います。ほかの役割はまだつないでいません。調査は [oam.md](background/oam.md) にあります。
 
 **完了条件.** CI の試験で、OAM から加入者を一括で登録し、HSS を止めてデータを戻したあとに登録と通話が成功する。試験用の利用者だけに有効にした機能が、ほかの利用者には効かないことを確かめられる。
 
