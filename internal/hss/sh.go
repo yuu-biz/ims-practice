@@ -44,6 +44,7 @@ var shDataAccess = map[sh.DataReference]shAccess{
 	sh.SCSCFName:           {pull: true, byPublicIdentity: true},
 	sh.MSISDN:              {pull: true, byPublicIdentity: true, byMSISDN: true},
 	sh.SMSRegistrationInfo: {pull: true, update: true, byPublicIdentity: true, byMSISDN: true},
+	sh.IMSI:                {pull: true, byPublicIdentity: true, byMSISDN: true},
 }
 
 // handleSh answers the Sh requests that reach the HSS.
@@ -159,6 +160,10 @@ func (h *HSS) userData(ctx context.Context, r sh.UserDataRequest) sh.UserDataAns
 	case sh.SMSRegistrationInfo:
 		if u.IPSMGWNumber != "" {
 			data.ShIMSData = &sh.ShIMSData{SMSRegistrationInfo: &sh.SMSRegistrationInfoData{IPSMGWNumber: u.IPSMGWNumber}}
+		}
+	case sh.IMSI:
+		if id := imsi(u.PrivateIdentity); id != "" {
+			data.IMSI = &id
 		}
 	}
 	a := sh.UserDataAnswer{Result: diameter.Base(diameter.DiameterSuccess)}

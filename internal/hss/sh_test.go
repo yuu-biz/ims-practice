@@ -164,6 +164,34 @@ func TestUserDataReadsTheMSISDN(t *testing.T) {
 	}
 }
 
+// TS 29.328 Table 7.6.1: the IMSI (Data-Reference 32) is read by the
+// public identity and by the MSISDN. The IP-SM-GW reads it to know the
+// user that a short message over SGd, which names the recipient by
+// IMSI, is for.
+func TestUserDataReadsTheIMSI(t *testing.T) {
+	n := newShNetwork(t)
+	want := "001010000000001"
+	for _, id := range []sh.UserIdentity{{PublicIdentity: impu}, {MSISDN: msisdnA}} {
+		result, data := n.udr(t, id, sh.IMSI)
+		if result != success || data == nil || data.IMSI == nil || *data.IMSI != want {
+			t.Errorf("UDA for %+v = %v, %+v; want IMSI %s", id, result, data, want)
+		}
+	}
+	// A private identity that is not derived from an IMSI has none, and
+	// no data means no User-Data (TS 29.328 6.1.1.1 step 5).
+	byNumber := newShNetworkWith(t, Subscription{PrivateIdentity: "+12025550104@" + realm,
+		PublicIdentities: []string{"tel:+12025550104"}, Password: "p"})
+	if result, data := byNumber.udr(t, sh.UserIdentity{MSISDN: "12025550104"}, sh.IMSI); result != success || data != nil {
+		t.Errorf("UDA for a user without an IMSI = %v, %+v; want success without User-Data", result, data)
+	}
+	// Sh-Update of the IMSI is not allowed (Table 7.6.1 has Sh-Pull
+	// alone).
+	if r := n.pur(t, sh.UserIdentity{PublicIdentity: impu}, []sh.DataReference{sh.IMSI}, smsRegistration(ipsmgwNumber)); r !=
+		diameter.Experimental(sh.DiameterErrorUserDataCannotBeModified) {
+		t.Errorf("PUR of the IMSI = %v", r)
+	}
+}
+
 // TestTheMSISDNOfATelURIWithSeparators: the MSISDN that Sh gives is
 // the one that the profile of the SAA carries, the canonical number of
 // the tel URI (TS 29.229 6.3.2), whatever visual separators and

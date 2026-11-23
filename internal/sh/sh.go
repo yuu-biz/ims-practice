@@ -65,6 +65,7 @@ const (
 	SCSCFName           DataReference = 12 // TS 29.328 7.6.4
 	MSISDN              DataReference = 17 // TS 29.328 7.6.9
 	SMSRegistrationInfo DataReference = 24 // TS 29.328 7.6.16
+	IMSI                DataReference = 32 // TS 29.328 7.6.24
 )
 
 func (d DataReference) String() string {
@@ -79,6 +80,8 @@ func (d DataReference) String() string {
 		return "MSISDN"
 	case SMSRegistrationInfo:
 		return "SMSRegistrationInfo"
+	case IMSI:
+		return "IMSI"
 	}
 	return fmt.Sprintf("Data-Reference %d", uint32(d))
 }

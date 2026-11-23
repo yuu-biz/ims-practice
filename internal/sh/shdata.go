@@ -11,19 +11,26 @@ import (
 //
 // SIMPLIFIED: TS 29.328 Annex D. Only the elements of the data
 // references the HSS stub serves are here: PublicIdentifiers with its
-// IMSPublicIdentity and MSISDN elements, RepositoryData, and from
-// Sh-IMS-Data the SCSCFName and SMSRegistrationInfo. The rest of the
-// schema is left out until a role needs it.
+// IMSPublicIdentity and MSISDN elements, RepositoryData, the IMSI, and
+// from Sh-IMS-Data the SCSCFName and SMSRegistrationInfo. The rest of
+// the schema is left out until a role needs it.
 type ShData struct {
 	PublicIdentifiers *PublicIdentifiers `xml:"PublicIdentifiers,omitempty"`
 	RepositoryData    []TransparentData  `xml:"RepositoryData,omitempty"`
 	ShIMSData         *ShIMSData         `xml:"Sh-IMS-Data,omitempty"`
+	// IMSI is the IMSI of the user (TS 29.328 7.6.24), as digits, and
+	// nil when the document carries none. It sits five Extension
+	// elements below Sh-Data: the schema of Annex D ends tSh-Data and
+	// each of its first four extensions with one, and the fifth holds
+	// the element. It comes last in this struct so that the Extension
+	// element comes last in the document, where the schema puts it.
+	IMSI *string `xml:"Extension>Extension>Extension>Extension>Extension>IMSI,omitempty"`
 }
 
 // Empty reports whether d holds no data at all, the case in which a UDA
 // has no User-Data (TS 29.328 6.1.1.1 step 5).
 func (d ShData) Empty() bool {
-	return d.PublicIdentifiers == nil && len(d.RepositoryData) == 0 && d.ShIMSData == nil
+	return d.PublicIdentifiers == nil && len(d.RepositoryData) == 0 && d.ShIMSData == nil && d.IMSI == nil
 }
 
 // TransparentData is the tTransparentData type of Annex D: the

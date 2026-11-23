@@ -108,6 +108,18 @@ func (c *Client) PublicIdentities(ctx context.Context, msisdn string) ([]string,
 	return data.PublicIdentifiers.IMSPublicIdentities, nil
 }
 
+// IMSI returns the IMSI of the user of publicID (TS 29.328 7.6.24), or
+// "" when the HSS has none. The IP-SM-GW needs it to recognise the
+// user of a short message that reaches it over SGd, which names the
+// recipient by IMSI.
+func (c *Client) IMSI(ctx context.Context, publicID string) (string, error) {
+	data, err := c.UserData(ctx, UserIdentity{PublicIdentity: publicID}, IMSI)
+	if err != nil || data.IMSI == nil {
+		return "", err
+	}
+	return *data.IMSI, nil
+}
+
 // UpdateSMSRegistrationInfo registers the IP-SM-GW whose E.164 number
 // is ipsmgwNumber (digits only) for the user's short messages, or
 // removes the registration when it is empty (TS 29.328 6.1.2.1 step

@@ -96,6 +96,7 @@
                 <item code="12" name="S-CSCFName"/>
                 <item code="17" name="MSISDN"/>
                 <item code="24" name="SMSRegistrationInfo"/>
+                <item code="32" name="IMSI"/>
             </data>
         </avp>
         <!-- TS 29.329 6.3.5: which repository data, such as the
