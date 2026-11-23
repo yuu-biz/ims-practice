@@ -3,6 +3,7 @@ package sgd
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/fiorix/go-diameter/v4/diam"
 
@@ -82,6 +83,69 @@ func (c *S6cClient) ReportSMDeliveryStatus(ctx context.Context, req ReportSMDeli
 		return ReportSMDeliveryStatusAnswer{}, err
 	}
 	return ParseReportSMDeliveryStatusAnswer(answer)
+}
+
+// Peers is how the SC reaches one serving node over SGd, by the
+// Origin-Host that the node sent in its CER. Of the two ends, the
+// serving node is the one that opens the connection here, since it is
+// also the one that brings the mobile originated short messages.
+// *diameter.Server is one.
+type Peers interface {
+	Request(ctx context.Context, originHost string, request *diam.Message) (*diam.Message, error)
+}
+
+// SGdClient sends the SGd requests of the SMS-GMSC: a short message for
+// a UE, to the node that serves it (TFR).
+type SGdClient struct {
+	node  *diameter.Node
+	peers Peers
+	// answerTimeout is how long the client waits for a TFA, or zero to
+	// wait the Answer timer of the node.
+	answerTimeout time.Duration
+}
+
+// NewSGdClient returns a client that sends from node to the serving
+// nodes that peers holds.
+//
+// answerTimeout is how long it waits for a TFA. A serving node answers
+// only once the UE has acknowledged the short message, which it waits
+// for as long as TR1N (TS 24.011 6.2.2.2), and an IP-SM-GW may try one
+// domain after another within that answer (TS 23.204 6.5a): TS 23.204
+// 6.5a NOTE 1 has the timer of the SMS-GMSC reconfigured to be longer
+// where it leaves the IP-SM-GW too little time. Zero leaves the Answer
+// timer of the node, which bounds its base protocol exchanges.
+func NewSGdClient(node *diameter.Node, peers Peers, answerTimeout time.Duration) *SGdClient {
+	return &SGdClient{node: node, peers: peers, answerTimeout: answerTimeout}
+}
+
+// MTForwardShortMessage forwards a short message, or a status report, to
+// the serving node that req.DestinationHost names (TS 29.338 6.2.2).
+func (c *SGdClient) MTForwardShortMessage(ctx context.Context, req MTForwardShortMessageRequest) (MTForwardShortMessageAnswer, error) {
+	// TS 29.338 6.3.1.2: the SMS-GMSC names the serving node that the HSS
+	// gave it, and Destination-Host is mandatory in the command format of
+	// every request it sends. It is also how the client finds the
+	// connection to send on.
+	if req.Header.DestinationHost == "" {
+		return MTForwardShortMessageAnswer{}, fmt.Errorf("sgd: a TFR names the serving node in Destination-Host")
+	}
+	if err := requireRealm(req.Header); err != nil {
+		return MTForwardShortMessageAnswer{}, err
+	}
+	// 6.3.2.5: { SC-Address }, the RP-OA that the serving node gives the
+	// UE. The number of the MME is optional, and empty towards any other
+	// kind of node.
+	if err := requireE164("SC-Address", req.SCAddress); err != nil {
+		return MTForwardShortMessageAnswer{}, err
+	}
+	if err := checkE164("MME-Number-for-MT-SMS", req.MMENumberForMTSMS); err != nil {
+		return MTForwardShortMessageAnswer{}, err
+	}
+	req.Header = routing(c.node, req.Header)
+	answer, err := c.peers.Request(diameter.WithAnswerTimeout(ctx, c.answerTimeout), req.Header.DestinationHost, req.Message())
+	if err != nil {
+		return MTForwardShortMessageAnswer{}, err
+	}
+	return ParseMTForwardShortMessageAnswer(answer)
 }
 
 // routing completes the routing AVPs of a request: the Session-Id and
