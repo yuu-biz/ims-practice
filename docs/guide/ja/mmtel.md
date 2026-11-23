@@ -361,6 +361,91 @@ BOIC と BOIC-exHC は着信者の番号の国番号をホーム網の国番号�
 
 IR.92 は割込通話を網ではなく UE で行うよう求めています（2.3.4）。着信者の UE は `Alert-Info: <urn:alert:service:call-waiting>` を付けた 180 で、着信が待っていることを知らせます（TS 24.615 4.5.5.3.2、RFC 7462）。着信者の AS はそれをそのまま渡します。発信者に知らせないという事業者の設定があれば、hss.yaml のように Alert-Info を取り除きます（TS 24.615 4.5.5.2.3）。`ue serve` は通話中にも 2 本目の着信を受けます。UE はこの Alert-Info を付けて呼び出すだけで、自分からは応答しません。`POST /answer` を送ると、1 本目を保留にしてから待っている着信に応答します（TS 24.615 4.5.5.3.3）。3 本目の着信には 486 を返します。CW は `scripts/e2e-mrf.sh` がキャプチャで確かめていて、その流れは [MRF の手順書](mrf.md) で追っています。1 つのプロセスの中では、`internal/mmtel/waiting_test.go` の `TestCommunicationWaiting` と、`internal/ue/phone_test.go` の `TestServeTwoCalls` が確かめています。HOLD は `a=sendonly` を持つ re-INVITE で、AS はこれを届いたままもう一方の側に渡します（TS 24.610 4.5.2.1）。1 つのプロセスで動かす試験 `TestHoldThroughTheIMS` で確かめています。
 
+## MMTel AS を運用から外す
+
+運用者は、ノードが受け持っているものを切らずに、そのノードを運用から外せます。ノードは新しいものを受けず、始めたものは続け、それが無くなるのを待ちます。これをドレインと呼びます。
+
+AS が始めたものを続けなければならないのは、受け持つ通話がその INVITE を受けた台の中にあるからです。通話の両方のレグが Contact にその台の名前を持つので、ダイアログの中の要求はその台に戻ってきます。会議の URI も、DNS がフォーカスの台へ導きます。商用の網は AS を複数台で動かし、iFC に書く 1 つのサーバー名の後ろに並べて、新しい通話を DNS でその台に振り分けます。
+
+AS のノードはそのための保守用の API をポート 8085 で出しています。`deploy/compose/mmtel.yaml` の `maintenance` の節の待ち受けで、Prometheus が集める指標と同じ所です。この API はパスワードを求めないので、ポートはホストに公開していません。要求は AS のコンテナの中から送ります。管理上の状態は TS 28.622 5.3.1 の値を取ります。`UNLOCKED` は新しい仕事を受け、`SHUTTINGDOWN` は持っているものだけを扱い、`LOCKED` は新しいものを何も受けません。
+
+1. AS を shut down します。
+
+   ```sh
+   docker compose exec mmtel sh -c '
+   body="{\"administrative_state\":\"SHUTTINGDOWN\",\"operator\":\"learner\"}"
+   printf "PUT /maintenance/v1/functions/mmtel/administrative-state HTTP/1.0\r\nContent-Type: application/json\r\nContent-Length: ${#body}\r\n\r\n%s" "$body" |
+     nc -w 5 127.0.0.1 8085'
+   ```
+
+   応答の最後に AS の状態が出ます。処理中の通話が無かったので、すぐに `LOCKED` になっています。
+
+   ```json
+   {"role":"mmtel","administrative_state":"LOCKED","operational_state":"ENABLED","users":0}
+   ```
+
+   `users` は AS が引き受けて、まだ終わっていない仕事の数です。ダイアログの外の INVITE 1 つが 1 つ、答えている途中の Ut の要求が 1 つずつです。利用者どうしの通話は 1 つで、AS が中継する 2 つのレグを合わせて数えます。会議はそれを作った利用者の通話として数えます。会議はその利用者が抜けたときに終わるので、通話は会議と同じあいだ続きます（TS 24.147 5.3.2.7 の 3 番目の項目）。この台の会議に入る INVITE はそれぞれもう 1 つで、その参加者が会議にいるあいだ続きます。フォーカス宛てにダイヤルインする INVITE を数え、同じ台がその利用者の発信側のサービスも受け持つときは、そちらの通話も数えます。フォーカスが招いた参加者は数えません。招く INVITE が出ていくのは、頼んだ参加者のダイアログの中の REFER からです。Ut の要求は、XCAP のサーバーが答えているあいだ数に入ります。HSS の文書を読むか書くあいだだけです。通話があるあいだに shut down を送ると、AS は `SHUTTINGDOWN` になり、最後の通話が終わると `LOCKED` になります。`operational_state` は AS が動けるかを示します（TS 28.622 5.3.3）。HSS のどの台も Sh の要求を受けないあいだは `DISABLED` です。AS は最初の INVITE ごとに、受け持つ利用者のサービスの設定を読み、それが無ければどの通話も扱えないためです。`docker compose exec mmtel wget -qO- http://127.0.0.1:8085/maintenance/v1/state` で、ノード全体の状態を見られます。
+
+2. UE 1 から UE 2 に発信します。
+
+   ```sh
+   docker compose run --rm ue call tel:+12025550102
+   ```
+
+   通話は `500 Server Internal Error` で終わります。
+
+```text
+ UE 1         P-CSCF         S-CSCF         MMTel AS
+ |  INVITE      |              |               |
+ |------------->|  INVITE      |               |
+ |              |------------->|  INVITE       |
+ |              |              |-------------->|  P-Served-User: <UE 1>;sescase=orig
+ |              |              |  503 Retry-After: 30
+ |              |  500         |<--------------|
+ |  500         |<-------------|               |
+ |<-------------|              |               |
+```
+
+- INVITE は [AS を通る通常の通話](#as-を通る通常の通話) と同じように AS に届きます。S-CSCF が UE 1 の iFC を発信側から順に照らし合わせ、`P-Served-User` と、Route に入れた元のダイアログの識別子を付けて、INVITE を AS に送ります。
+- AS は **503 Service Unavailable** と **Retry-After: 30** を返し、INVITE をどこにも送りません。ダイアログの外の要求は新しいものを始める要求なので、`UNLOCKED` でない AS はそれを受けません。Retry-After はその時間だけこのサーバーにほかの要求を送らないよう、クライアントに求めるものです（RFC 3261 21.5.4）。値を決めた仕様はありません。30 秒はこのプロジェクトが選んだ値です。
+- AS は HSS に何も尋ねません。断るのが Sh の読み出しより先なので、断った通話の UDR は出ません。
+- S-CSCF はこの 503 をアプリケーションサーバーの失敗として読み、サーバー名について DNS が返した次の台へ INVITE を送ります（RFC 3263 4.3）。この網には台が 1 つしかないので、次がありません。TS 24.229 5.4.3.2 の NOTE 25A が、複数台のときの動きを書いています。S-CSCF は利用者の新しいセッションを別の AS に任せ、503 を返した AS は受け持っているセッションを続けます。
+- 次の台が無いとき、S-CSCF はその INVITE を送った iFC の **既定の処理**（default handling）に従います（TS 24.229 5.4.3.2、5.4.3.3）。`hss.yaml` は発信側の iFC に **SESSION_TERMINATED** を書いているので、通話はここで終わります。規制は必ず効かなければならず、AS を飛ばして続けた通話は、利用者が規制した相手にもつながってしまうためです。S-CSCF は **500 Server Internal Error** を自分で返し、優先度の低い iFC は照らし合わせません。プロキシは 503 をそのまま返さないためです（RFC 3261 16.7 の手順 6）。
+- 利用者への着信の iFC は **SESSION_CONTINUED** です。着信側の iFC だけで AS に届いた通話は、この AS のサービスを受けないまま着信者へ進みます。S-CSCF はその次の iFC から照らし合わせを続け、どれも残っていなければ着信者の Contact へ INVITE を送ります。この通話では発信側の iFC が先に当たって終わるので、着信側の iFC には届きません。
+- P-CSCF は 500 を UE 1 に返します。
+
+`UNLOCKED` でないあいだ、AS は始めたものを続け、新しく始める要求を断ります。
+
+続けるのは次のものです。
+
+- **受け持っているダイアログの中の要求**。それらの通話、その転送、保留、AS がフォーカスである会議は、そのまま終わりまで続きます。AS が持っている購読のダイアログの中の SUBSCRIBE もここに入るので、購読している利用者は持っている購読を更新したり終わらせたりできます（RFC 6665 4.1.2.3）。
+- **この台が持っている会議を宛先にした要求**。ダイヤルインして入る利用者と、抜けたあとに戻る利用者の INVITE（TS 24.147 5.3.2.4.1）、同じ URI を宛先にして、その利用者の発信側のサービスのために AS に届く INVITE、そして会議への購読を始める SUBSCRIBE です。その会議はこの台だけで動いています。URI は DNS がこの台へ導き、対話もほかの台にはないので、これらを断ると、続いている会議からその参加者を締め出すことになります。
+- **AS が転送した呼の INVITE**。S-CSCF は、転送した利用者の発信側のサービスのために、P-Served-User に `orig-cdiv` を付けてこの INVITE を AS に渡し直します（TS 24.229 5.4.3.3 の step 3）。呼は shut down の前に始まっています。また、このセッションの場合の iFC は、AS が失敗するとセッションを終わらせます。そのため、503 を返すと、続いている呼を終わらせることになります。
+- **ダイアログの外の OPTIONS**。いつもと同じように 200 を返します（RFC 3261 11.2）。ノードに何ができるかを尋ねる要求で、ノードは生きています。
+- **XCAP のサーバーが答え始めている Ut の要求**。
+
+503 を返すのは次のものです。
+
+- **新しい通話の INVITE**。上のラダーのように、受け持つ利用者の iFC が AS に送るものです。
+- **会議のファクトリ URI 宛ての INVITE**。この台に会議を作る要求です（TS 24.147 5.3.2.3.1）。
+- **この台が持っていない会議の URI 宛ての INVITE と、購読を始める SUBSCRIBE**。この台にとってはほかのセッションと同じく新しいものです。会議は終わるときに URI を手放します（5.3.2.7）。
+- **新しい Ut の要求**。XCAP のサーバーは AS の隣で別の待ち受けに立っていて、管理上の状態は AS のものを使うので、AS を運用から外すと Ut も外れます。`docker compose run --no-deps --rm ue xcap get` は、設定ではなく HTTP の 503 を、Retry-After を付けて受け取ります。この状態は、計画した保守のためにサーバーが今その要求を扱えないことを表し、Retry-After は、クライアントがどれだけ待つべきかを表します（RFC 9110 15.6.4、10.2.3）。利用者が失うものはありません。設定の文書は HSS にあってどの台も読み書きするので、同じ要求はほかのどの台からでも同じ文書に届きます。そして X.731 のいう `LOCKED` はどの利用者にも応じない状態で、だからこそ運用者はその台を止められます。
+
+3. 同じ要求に `UNLOCKED` を入れて、AS の lock を解きます。
+
+   ```sh
+   docker compose exec mmtel sh -c '
+   body="{\"administrative_state\":\"UNLOCKED\",\"operator\":\"learner\"}"
+   printf "PUT /maintenance/v1/functions/mmtel/administrative-state HTTP/1.0\r\nContent-Type: application/json\r\nContent-Length: ${#body}\r\n\r\n%s" "$body" |
+     nc -w 5 127.0.0.1 8085'
+   ```
+
+   次の通話は前と同じように両方のレグで AS を通ります。
+
+Wireshark では、`sip.Status-Code == 503 && ip.src == 172.28.0.75` で AS の 503 が、`sip.Status-Code == 500` でそのあとの 500 が見られます。PUT の要求はコンテナのループバックを通るので、キャプチャには写りません。
+
+管理上の状態はノードのプロセスの中にあります。起動し直したノードは `UNLOCKED` です。`scripts/e2e-observability.sh` はこの手順を実行し、キャプチャを確かめます。
+
 ## Wireshark の表示フィルタ
 
 | フィルタ | 見つかるもの |
@@ -394,6 +479,7 @@ IR.92 は割込通話を網ではなく UE で行うよう求めています（2
 | `internal/mmtel/barring.go` | OCB、ICB、ACR。 |
 | `internal/mmtel/waiting.go` | CW。 |
 | `internal/mmtel/services.go`、`store.go` | 通話ごとの Sh の読み出しと、Store に置く通話の記録。 |
+| `internal/mmtel/maintenance.go` | AS がノードの保守用の API に伝えるものと、運用から外されているあいだ断るもの。 |
 | `internal/simservs` | simservs と MMTelServices の文書、その規則（RFC 4745）、XCAP のノードセレクタ、規則の評価。 |
 | `internal/xcap` | Ut の XCAP サーバー、HTTP Digest、UE のクライアント。 |
 | `internal/ue/xcap.go`、`cmd/ue/xcap.go` | `ue xcap` と UE の付加サービス。 |

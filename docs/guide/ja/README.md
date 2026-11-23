@@ -107,7 +107,7 @@ UE はプロファイルに入れてあるので、`docker compose up` では起
 | --- | --- |
 | `fivegc`、`n5`、`nhss`、`sbi` | 5GS の側です。5GC のスタブ、PCF の N5 のポリシーの API、HSS のサービスベースのインタフェース、それらの API が共有する部分です。 |
 | `nas`、`sgd`、`smsc` | IMS を通らない SMS です。SMS を運ぶ NAS のメッセージ、SGd と S6c の Diameter のメッセージ、それらを話す SC（Service Centre）です。IP-SM-GW が送る SC は、パッケージ `sc` のスタブです。 |
-| `oam`、`web/oam` | ノードの保守用の API を使う OAM のサーバーと、OAM の画面です。画面は CI がビルドするだけで、どのノードも配信しません。保守用の API は P-CSCF、I-CSCF、S-CSCF が出しています。[P-CSCF を運用から外す](registration.md#p-cscf-を運用から外す)、[I-CSCF を運用から外す](registration.md#i-cscf-を運用から外す)、[S-CSCF を運用から外す](registration.md#s-cscf-を運用から外す)を見てください。 |
+| `oam`、`web/oam` | ノードの保守用の API を使う OAM のサーバーと、OAM の画面です。画面は CI がビルドするだけで、どのノードも配信しません。保守用の API は 3 つの CSCF、HSS、MMTel AS が出しています。[P-CSCF を運用から外す](registration.md#p-cscf-を運用から外す)、[I-CSCF を運用から外す](registration.md#i-cscf-を運用から外す)、[S-CSCF を運用から外す](registration.md#s-cscf-を運用から外す)、[HSS を運用から外す](registration.md#hss-を運用から外す)、[MMTel AS を運用から外す](mmtel.md#mmtel-as-を運用から外す)を見てください。 |
 | `h248/h248test`、`kvstore/storetest`、`rtptest` | 試験だけが使う道具です。 |
 
 ## ほかの動かし方
