@@ -88,6 +88,14 @@ type akaRequest struct {
 func (r subscriptionRequest) subscription(config Config) (Subscription, error) {
 	s := Subscription{PrivateIdentity: r.PrivateIdentity, PublicIdentities: r.PublicIdentities, BarredIdentities: r.BarredIdentities, Password: r.Password,
 		TestUser: r.TestUser, ServiceProfile: r.ServiceProfile}
+	if len(s.BarredIdentities) == 0 {
+		// An empty array and no field at all both bar nothing, so they are
+		// one subscription: a PUT of either over the other answers
+		// unchanged (sameSubscription). An empty repository_data is not
+		// read this way; it asks for a subscription with no repository
+		// data (repositoryData).
+		s.BarredIdentities = nil
+	}
 	if err := config.CheckServiceProfile(r.ServiceProfile); err != nil {
 		return Subscription{}, err
 	}
