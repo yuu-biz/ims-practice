@@ -140,7 +140,23 @@ export interface Subscription {
   server_name: string;
   test_user: boolean;
   service_profile: string;
+  // The tone the callers of the user hear while it rings, null where
+  // the operator provisioned none.
+  customized_alerting_tone: AlertingTone | null;
 }
+
+// oam.AlertingTone: the customized alerting tone of a subscription
+// (CAT, TS 24.182). tone names an announcement that the MRFPs have
+// provisioned, and active says whether the callers hear it.
+export interface AlertingTone {
+  tone: string;
+  active: boolean;
+}
+
+// The tones that the MRFPs of this project's deployments have, besides
+// the announcement notice. Any other name that an MRFP has is accepted
+// too; the OAM refuses one that is no announcement at all.
+export const alertingTones = ["cat1", "cat2"] as const;
 
 // oam.SubscriptionRecord: one line of a bulk provisioning file. The
 // screen builds one only for the single-record form; the lines of a
@@ -451,6 +467,14 @@ export async function deleteSubscription(impi: string, dryRun: boolean): Promise
 
 export async function putTestUser(impi: string, testUser: boolean, operator: string): Promise<Subscription> {
   return parseSubscription(await sendJSON("PUT", `${subscriptionPath(impi)}/test-user`, withOperator({ test_user: testUser }, operator)));
+}
+
+// The operator provisions the tone in the HSS; the MMTel AS of the user
+// reads it over Sh for each call to it. The rest of the subscription
+// stays as it is.
+export async function putAlertingTone(impi: string, tone: AlertingTone, operator: string): Promise<AlertingTone> {
+  const path = `${subscriptionPath(impi)}/customized-alerting-tone`;
+  return parseAlertingTone(await sendJSON("PUT", path, withOperator({ ...tone }, operator)));
 }
 
 export async function fetchFeature(impi: string, feature: string): Promise<FeatureState> {
@@ -858,7 +882,13 @@ function parseSubscription(value: unknown): Subscription {
     server_name: optionalString(o, "server_name") ?? "",
     test_user: o["test_user"] === true,
     service_profile: optionalString(o, "service_profile") ?? "",
+    customized_alerting_tone: o["customized_alerting_tone"] == null ? null : parseAlertingTone(o["customized_alerting_tone"]),
   };
+}
+
+function parseAlertingTone(value: unknown): AlertingTone {
+  const o = object(value);
+  return { tone: string(o, "tone"), active: boolean(o, "active") };
 }
 
 export function parseOutcome(value: unknown): Outcome {

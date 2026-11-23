@@ -158,6 +158,7 @@ func (s *Server) Handler() http.Handler {
 	s.backupRoutes(rt)
 	s.historyRoutes(rt)
 	s.testUserRoutes(rt)
+	s.alertingToneRoutes(rt)
 	s.alarmRoutes(rt)
 	h := rt.handler()
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

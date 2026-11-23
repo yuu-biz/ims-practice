@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
@@ -131,6 +132,60 @@ func TestABackupOfTheHSSGoesBackUnchanged(t *testing.T) {
 	for _, o := range restore.outcomes {
 		if o.Result != Unchanged {
 			t.Errorf("%s restored as %s: %s", o.PrivateIdentity, o.Result, o.Reason)
+		}
+	}
+}
+
+// TestTheAlertingToneReachesTheSubscriptionOfTheHSS: the OAM provisions
+// the CAT of one subscription, and the HSS shows it on that
+// subscription afterwards. Only the real HSS can show that: it keeps
+// the tone as Sh repository data, in the XML of TS 24.182, and reads it
+// back out of that data for the answer. The rest of the subscription
+// stays as it is, as the tone is no replacement of the subscription.
+func TestTheAlertingToneReachesTheSubscriptionOfTheHSS(t *testing.T) {
+	ts := newTestServer(t, Config{HSSProvisioning: newRealHSS(t).URL}, newFakeNode(t, "hss-1", []string{"hss"}))
+	if _, summary := ts.bulk(t, "", digestLine(1, "test-password-1")); summary.Created != 1 {
+		t.Fatalf("provisioning: %+v", summary)
+	}
+	tonePath := "/oam/v1/subscriptions/" + impiOf(1) + "/customized-alerting-tone"
+
+	status, body := ts.call(t, http.MethodPut, tonePath, `{"tone": "cat1", "active": true, "operator": "alice"}`)
+	if tone := decodeAs[AlertingTone](t, body); status != 200 || tone != (AlertingTone{Tone: "cat1", Active: true}) {
+		t.Fatalf("PUT of the tone: %d %s", status, body)
+	}
+	status, body = ts.call(t, http.MethodGet, "/oam/v1/subscriptions/"+impiOf(1), "")
+	sub := decodeAs[Subscription](t, body)
+	if status != 200 || sub.CustomizedAlertingTone == nil || *sub.CustomizedAlertingTone != (AlertingTone{Tone: "cat1", Active: true}) {
+		t.Fatalf("the subscription after the tone: %d %s", status, body)
+	}
+	if !slices.Equal(sub.PublicIdentities, []string{fmt.Sprintf("sip:00101%010d@%s", 1, testRealm), "tel:+12025550101"}) {
+		t.Errorf("the identities of the subscription are %v", sub.PublicIdentities)
+	}
+
+	// Turning the tone off keeps it provisioned, so that the callers
+	// hear their own ringing tone and the operator can turn the same
+	// tone on again.
+	status, body = ts.call(t, http.MethodPut, tonePath, `{"tone": "cat1", "active": false}`)
+	if tone := decodeAs[AlertingTone](t, body); status != 200 || tone != (AlertingTone{Tone: "cat1"}) {
+		t.Fatalf("turning the tone off: %d %s", status, body)
+	}
+	_, body = ts.call(t, http.MethodGet, "/oam/v1/subscriptions/"+impiOf(1), "")
+	if tone := decodeAs[Subscription](t, body).CustomizedAlertingTone; tone == nil || tone.Active {
+		t.Errorf("the tone of the subscription after it was turned off: %s", body)
+	}
+
+	for _, c := range []struct {
+		what, body, impi string
+		want             int
+	}{
+		{"a name that is no announcement", `{"tone": "cat 1", "active": true}`, impiOf(1), http.StatusBadRequest},
+		{"no tone", `{"active": true}`, impiOf(1), http.StatusBadRequest},
+		{"a field the API does not have", `{"tone": "cat1", "on": true}`, impiOf(1), http.StatusBadRequest},
+		{"a subscription that is not there", `{"tone": "cat1", "active": true}`, impiOf(9), http.StatusNotFound},
+	} {
+		path := "/oam/v1/subscriptions/" + c.impi + "/customized-alerting-tone"
+		if status, body := ts.call(t, http.MethodPut, path, c.body); status != c.want {
+			t.Errorf("%s: %d %s, want %d", c.what, status, body, c.want)
 		}
 	}
 }

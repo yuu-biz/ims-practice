@@ -1,5 +1,6 @@
 // The subscriber panel: bulk provisioning from a file of
-// subscription records, one subscription at a time, and the test users.
+// subscription records, one subscription at a time with its alerting
+// tone, and the test users.
 //
 // The records carry credentials (password, ut_password, aka.k, aka.opc).
 // The screen never shows a line of the file, never logs a record, and
@@ -9,12 +10,14 @@
 
 import {
   admissions,
+  alertingTones,
   deleteSubscription,
   fetchFeature,
   fetchSubscription,
   fetchTestUsers,
   provision,
   putAdmission,
+  putAlertingTone,
   putSubscription,
   putTestUser,
   putTestUserServiceProfile,
@@ -194,6 +197,33 @@ function subscriptionView(s: Subscription, operator: () => string, features: () 
       }
     })();
   });
+  // The customized alerting tone of the user: what its callers hear
+  // while it rings (TS 24.182 4.5.2). "off (ringing tone)" keeps the
+  // provisioned tone and stops it, so the callers hear their own
+  // ringing tone again and the same tone goes back on with one change.
+  const provisioned = s.customized_alerting_tone;
+  const names = [...new Set([...alertingTones, ...(provisioned === null ? [] : [provisioned.tone])])];
+  const tone = el("select", { name: "alerting-tone" }, el("option", { value: "", textContent: "off (ringing tone)" }), ...names.map((t) => el("option", { value: t, textContent: t })));
+  tone.value = provisioned?.active === true ? provisioned.tone : "";
+  const setTone = el("button", { type: "submit", textContent: "Set the tone…" });
+  const toneForm = el("form", { className: "controls" }, el("label", {}, "Alerting tone (CAT)", tone), setTone);
+  toneForm.addEventListener("submit", (event) => {
+    event.preventDefault();
+    void (async () => {
+      const chosen = tone.value === "" ? { tone: provisioned?.tone ?? alertingTones[0], active: false } : { tone: tone.value, active: true };
+      const lines = [
+        `Subscription ${s.private_identity} in the HSS, the rest of it as it is`,
+        chosen.active ? `Its callers hear ${chosen.tone} from the MRFP while it rings` : "Its callers hear their own ringing tone",
+      ];
+      if (!(await confirmAction("Set the alerting tone?", lines, "Set"))) return;
+      try {
+        await putAlertingTone(s.private_identity, chosen, operator());
+        reshow(s);
+      } catch (error) {
+        showNote(note, `Could not set the alerting tone: ${describe(error)}`);
+      }
+    })();
+  });
   const feature = el("input", { name: "feature", placeholder: "mmtel", spellcheck: false });
   feature.setAttribute("list", "features");
   const list = el("datalist", { id: "features" }, ...features().map((f) => el("option", { value: f })));
@@ -226,9 +256,11 @@ function subscriptionView(s: Subscription, operator: () => string, features: () 
       ...fact("Registration", s.registration_state + (s.server_name === "" ? "" : ` at ${s.server_name}`)),
       ...fact("Test user", s.test_user ? "yes" : "no"),
       ...fact("Service profile", s.service_profile === "" ? "chosen by the HSS" : s.service_profile),
+      ...fact("Alerting tone (CAT)", provisioned === null ? "none provisioned" : `${provisioned.tone}, ${provisioned.active ? "on" : "off"}`),
     ),
     el("div", { className: "controls" }, mark, remove),
     note,
+    toneForm,
     featureForm,
     answer,
   );
@@ -306,7 +338,8 @@ function recordForm(saved: (impi: string) => void): { root: HTMLElement; fill(s:
     el("h3", { textContent: "Create or replace a subscription" }),
     el("p", {
       className: "note",
-      textContent: "The whole subscription is replaced. The HSS never shows a credential, so a password or the AKA K and OPc must be typed again. Numbers must be test data: a test IMSI of PLMN 001/01 or a fictional +1 NXX 555 01XX number.",
+      textContent:
+        "The whole subscription is replaced. The HSS never shows a credential, so a password or the AKA K and OPc must be typed again. The Sh repository data of the subscription is replaced too, so an alerting tone set above goes with it and is set again afterwards. Numbers must be test data: a test IMSI of PLMN 001/01 or a fictional +1 NXX 555 01XX number.",
     }),
     el(
       "div",

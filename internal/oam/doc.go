@@ -122,6 +122,12 @@
 //	       unchanged.
 //	DELETE /oam/v1/subscriptions/{impi}[?dry_run=true]
 //	       Outcome: 200 deleted, 404 when there is none.
+//	PUT    /oam/v1/subscriptions/{impi}/customized-alerting-tone
+//	       AlertingToneRequest -> AlertingTone: the tone that the
+//	       callers of the user hear while it rings (CAT, TS 24.182
+//	       4.5.2), which the operator provisions and the user has no
+//	       standard way to set (4.8). The rest of the subscription
+//	       stays as it is.
 //
 // Every identity of a record must be test data, so that no real
 // subscriber's data enters the network: a number is

@@ -28,6 +28,8 @@ import (
 //	GET    /subscriptions/export?after={impi}&limit={n}
 //	       the subscriptions after impi, credentials included, one JSON
 //	       object per line, in the order of the private identities
+//	PUT    /subscriptions/{impi}/customized-alerting-tone
+//	       provision or change the CAT of one, from an AlertingTone
 //
 // The types here mirror the JSON of the HSS; the OAM does not import
 // internal/hss.
@@ -44,6 +46,23 @@ type Subscription struct {
 	// the subscription, absent where it has neither.
 	TestUser       bool   `json:"test_user,omitempty"`
 	ServiceProfile string `json:"service_profile,omitempty"`
+	// CustomizedAlertingTone is the tone that the callers of the user
+	// hear while it rings, absent where the operator provisioned none.
+	CustomizedAlertingTone *AlertingTone `json:"customized_alerting_tone,omitempty"`
+}
+
+// AlertingTone is the customized alerting tone of a subscription (CAT,
+// TS 24.182): the announcement that the MRFP plays to the callers of
+// the user while it rings, and whether they hear it. The HSS keeps it
+// as Sh repository data, which the MMTel AS of the user reads for each
+// call to it.
+type AlertingTone struct {
+	// Tone names an announcement that the MRFPs have provisioned (RFC
+	// 4240 3.3), such as cat1.
+	Tone string `json:"tone"`
+	// Active says whether the callers hear the tone. A tone that is
+	// provisioned and not active leaves them their own ringing tone.
+	Active bool `json:"active"`
 }
 
 // hssSubscriptionRequest is the body of PUT /subscriptions/{impi}: the
@@ -151,6 +170,12 @@ func (c *hssClient) patch(ctx context.Context, impi string, p hssPatch) (Subscri
 
 func (c *hssClient) delete(ctx context.Context, impi string) error {
 	return c.do(ctx, http.MethodDelete, subscriptionPath(impi), nil, nil)
+}
+
+func (c *hssClient) setAlertingTone(ctx context.Context, impi string, t AlertingTone) (AlertingTone, error) {
+	var stored AlertingTone
+	err := c.do(ctx, http.MethodPut, subscriptionPath(impi)+"/customized-alerting-tone", t, &stored)
+	return stored, err
 }
 
 // export reads one page of GET /subscriptions/export and calls emit
@@ -333,8 +358,11 @@ func (c *hssClient) send(ctx context.Context, method, path string, body any) (*h
 	b, _ := io.ReadAll(io.LimitReader(resp.Body, maxRequestBody))
 	// Only a request about one subscription that is there already can
 	// find it missing; the export is of the whole store, and a PUT or a
-	// POST makes the subscription.
-	aboutOne := method != http.MethodPut && method != http.MethodPost && !strings.HasPrefix(path, "/subscriptions/export")
+	// POST of a subscription makes it. The PUT of an alerting tone is
+	// about a subscription that is there, so its 404 is the missing
+	// subscription like that of a GET.
+	aboutOne := strings.HasSuffix(path, "/customized-alerting-tone") ||
+		(method != http.MethodPut && method != http.MethodPost && !strings.HasPrefix(path, "/subscriptions/export"))
 	if resp.StatusCode == http.StatusNotFound && aboutOne {
 		return nil, errNoSubscription
 	}
