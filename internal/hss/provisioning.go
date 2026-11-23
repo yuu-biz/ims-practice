@@ -13,6 +13,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/fiorix/go-diameter/v4/diam"
 
@@ -904,15 +905,14 @@ func (h *HSS) pushChangedProfile(ctx context.Context, peers Peers, privateID str
 // The subscriber is read here, so the PPR carries the profile of the
 // moment it is sent rather than the one the provisioning request wrote;
 // the pushes of one subscriber are serialised, so an older profile never
-// lands at the S-CSCF after a newer one. Once the PPA is in, the
-// subscriber is read again, and a profile that changed meanwhile goes in
-// another PPR. A request that finds the lock still held after lockWait
-// therefore sends nothing itself: its change was stored before it waited,
-// so the push under way reads it after its PPA, which may take longer
-// than lockWait to come. The lock held meanwhile is not
-// the subscriber's own: the S-CSCF may have to answer a SAR of this user
-// before it takes the PPR up, as it may for an RTR
-// (removeSubscription), and that SAR needs the subscriber's lock.
+// lands at the S-CSCF after a newer one. A change made while a push of
+// the subscriber is on its way waits for that push, up to pushLockWait,
+// and then sends a PPR of its own.
+//
+// The lock held meanwhile is not the subscriber's own: the S-CSCF may
+// have to answer a SAR of this user before it takes the PPR up, as it
+// may for an RTR (removeSubscription), and that SAR needs the
+// subscriber's lock.
 //
 // SIMPLIFIED: TS 29.228 6.5.2.3, 6.5.2.4 and 6.5.2.5. The PPR carries
 // the user profile alone. The HSS stub keeps no charging addresses and
@@ -929,45 +929,21 @@ func (h *HSS) pushChangedProfile(ctx context.Context, peers Peers, privateID str
 // S-CSCF reads the profile again at the next registration, and a user
 // it does not know it asks the HSS for anew.
 func (h *HSS) pushProfile(ctx context.Context, peers Peers, privateID string) error {
-	unlock, err := h.lockSubscriber(profilePushes(privateID))
-	if errors.Is(err, context.DeadlineExceeded) {
-		h.log.Info("a push of the profile is under way; it sends this change after its PPA",
-			"private_identity", privateID)
-		return nil
-	}
+	lockCtx, cancel := context.WithTimeout(ctx, pushLockWait)
+	defer cancel()
+	unlock, err := h.users.Lock(lockCtx, profilePushes(privateID))
 	if err != nil {
 		return err
 	}
 	defer unlock()
-	var sent []byte
-	for range pushRounds {
-		u, ok, err := h.store.Subscriber(ctx, privateID)
-		if err != nil || !ok || !served(u) {
-			return err
-		}
-		data := h.userProfile(u).Marshal()
-		if bytes.Equal(data, sent) {
-			return nil
-		}
-		if err := h.sendProfile(ctx, peers, u, data); err != nil {
-			return err
-		}
-		sent = data
+	u, ok, err := h.store.Subscriber(ctx, privateID)
+	if err != nil || !ok || !served(u) {
+		return err
 	}
-	return fmt.Errorf("the profile still changed after %d PPRs", pushRounds)
-}
-
-// pushRounds bounds the PPRs that one push sends for a profile that
-// keeps changing while they are on their way.
-const pushRounds = 5
-
-// sendProfile sends one PPR with the user profile data of u, and reads
-// its PPA.
-func (h *HSS) sendProfile(ctx context.Context, peers Peers, u Subscriber, data []byte) error {
 	ppr := cx.PushProfileRequest{
 		Header:   diameter.NewHeader(h.node, u.SCSCF.OriginHost, u.SCSCF.OriginRealm),
 		UserName: u.PrivateIdentity,
-		UserData: data,
+		UserData: h.userProfile(u).Marshal(),
 	}
 	answer, err := peers.Request(ctx, u.SCSCF.OriginHost, ppr.Message())
 	if err != nil {
@@ -984,6 +960,14 @@ func (h *HSS) sendProfile(ctx context.Context, peers Peers, u Subscriber, data [
 		"service_profile", h.serviceProfile(u.Subscription), "state", u.State.String())
 	return nil
 }
+
+// pushLockWait is how long a push waits for the one of the same
+// subscriber that is on its way. That one may wait up to 5 s for its PPA,
+// which is more than lockWait, and a change that gave up before it ends
+// would leave the S-CSCF with the profile before the change. It stays
+// below ims.UserLockLease, after which the lock of a stopped instance is
+// free anyway.
+const pushLockWait = 8 * time.Second
 
 // profilePushes is the name under which the pushes of one subscriber's
 // profile are serialised. It is a lock of its own rather than the
