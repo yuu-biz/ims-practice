@@ -45,8 +45,9 @@ func (m *Message) RemoveFirst(name string) {
 //
 // When no final response arrives from the last target tried, Proxy
 // returns ErrTimeout after Timer B or Timer F, or the error that kept
-// the request from being sent there. RFC 3261 16.8 and 16.9 then answer
-// 408 and 503; the IMS roles answer as TS 24.229 says instead, which is
+// the request from being sent there. RFC 3261 would answer 408 for the
+// first (16.7 step 6) and, counting the error as a 503 (16.9), 500 for
+// the second; the IMS roles answer as TS 24.229 says instead, which is
 // why the choice is left to the TU.
 //
 // While it waits for the final response to an INVITE, Proxy cancels the
