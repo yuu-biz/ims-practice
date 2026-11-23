@@ -91,7 +91,7 @@ func results(os []Outcome) string {
 }
 
 func TestBulkProvisioningIsIdempotent(t *testing.T) {
-	hss := newFakeHSS(t, false)
+	hss := newFakeHSS(t)
 	ts := newProvisioningServer(t, hss, Config{})
 	file := strings.Join([]string{digestLine(1, "test-password-1"), digestLine(2, "test-password-2"), akaLine(10)}, "\n") + "\n"
 
@@ -135,7 +135,7 @@ func TestBulkProvisioningIsIdempotent(t *testing.T) {
 }
 
 func TestBulkDryRunChangesNothing(t *testing.T) {
-	hss := newFakeHSS(t, false)
+	hss := newFakeHSS(t)
 	ts := newProvisioningServer(t, hss, Config{})
 	file := digestLine(1, "test-password-1") + "\n" + digestLine(2, "test-password-2") + "\n"
 
@@ -163,7 +163,7 @@ func TestBulkDryRunChangesNothing(t *testing.T) {
 }
 
 func TestBulkReportsEachBadLineAndGoesOn(t *testing.T) {
-	hss := newFakeHSS(t, false)
+	hss := newFakeHSS(t)
 	ts := newProvisioningServer(t, hss, Config{})
 	// Stored before, so that line 10 meets it whatever the order in
 	// which the records reach the HSS.
@@ -220,7 +220,7 @@ func TestBulkReportsEachBadLineAndGoesOn(t *testing.T) {
 }
 
 func TestSecretsNeverReachReportsLogsOrPrints(t *testing.T) {
-	hss := newFakeHSS(t, false)
+	hss := newFakeHSS(t)
 	hss.echo.Store(true)
 	ts := newProvisioningServer(t, hss, Config{})
 	secrets := []string{"test-secret-password-77", "test-secret-ut-77", testK, testOPc}
@@ -264,7 +264,7 @@ func TestSecretsNeverReachReportsLogsOrPrints(t *testing.T) {
 // the file until it has read that outcome.
 func TestBulkStreamsALargeFile(t *testing.T) {
 	const lines, first = 3000, 50
-	hss := newFakeHSS(t, false)
+	hss := newFakeHSS(t)
 	ts := newProvisioningServer(t, hss, Config{ProvisioningConcurrency: 4})
 
 	body, writer := io.Pipe()
@@ -320,17 +320,8 @@ func TestBulkStreamsALargeFile(t *testing.T) {
 	}
 }
 
-func TestBulkAgainstABasicHSSSaysWhatIsMissing(t *testing.T) {
-	hss := newFakeHSS(t, true)
-	ts := newProvisioningServer(t, hss, Config{})
-	outcomes, summary := ts.bulk(t, "", digestLine(1, "test-password-1"))
-	if summary.Failed != 1 || !strings.Contains(outcomes[0].Reason, "lacks this operation") {
-		t.Errorf("against a basic HSS: %+v", outcomes)
-	}
-}
-
 func TestSingleRecordOperations(t *testing.T) {
-	hss := newFakeHSS(t, false)
+	hss := newFakeHSS(t)
 	ts := newProvisioningServer(t, hss, Config{})
 	path := "/oam/v1/subscriptions/" + impiOf(1)
 	record := digestLine(1, "test-password-1")

@@ -23,9 +23,9 @@ const testRealm = "ims.mnc001.mcc001.3gppnetwork.org"
 
 // fakeHSS is the HSS provisioning API in the shape of internal/hss: the
 // paths, the JSON of the requests and answers, and errors as text from
-// http.Error. It also serves the operations that the OAM uses beyond
-// those of internal/hss (PUT, PATCH and the export), unless it is
-// basic.
+// http.Error. It serves the operations that the OAM uses, and the tests
+// that read the records back reach into what it keeps, which the API
+// of an HSS never hands out.
 type fakeHSS struct {
 	server *httptest.Server
 
@@ -56,9 +56,7 @@ type fakeSubscription struct {
 	ServiceProfile   string                 `json:"service_profile,omitempty"`
 }
 
-// newFakeHSS serves the HSS; basic leaves out what the HSS of
-// internal/hss does not have.
-func newFakeHSS(t *testing.T, basic bool) *fakeHSS {
+func newFakeHSS(t *testing.T) *fakeHSS {
 	t.Helper()
 	h := &fakeHSS{subs: map[string]fakeSubscription{}, byPublic: map[string]string{}}
 	mux := http.NewServeMux()
@@ -66,11 +64,9 @@ func newFakeHSS(t *testing.T, basic bool) *fakeHSS {
 	mux.HandleFunc("GET /subscriptions/{impi}", h.get)
 	mux.HandleFunc("POST /subscriptions", h.post)
 	mux.HandleFunc("DELETE /subscriptions/{impi}", h.delete)
-	if !basic {
-		mux.HandleFunc("PUT /subscriptions/{impi}", h.put)
-		mux.HandleFunc("PATCH /subscriptions/{impi}", h.patch)
-		mux.HandleFunc("GET /subscriptions/export", h.export)
-	}
+	mux.HandleFunc("PUT /subscriptions/{impi}", h.put)
+	mux.HandleFunc("PATCH /subscriptions/{impi}", h.patch)
+	mux.HandleFunc("GET /subscriptions/export", h.export)
 	h.server = httptest.NewServer(mux)
 	t.Cleanup(h.server.Close)
 	return h
@@ -216,9 +212,8 @@ func (h *fakeHSS) store(s fakeSubscription) {
 	}
 }
 
-// put is PUT /subscriptions/{impi}, which internal/hss lacks: create
-// or replace, with SQN_HE taken from the request only for a new
-// subscription.
+// put is PUT /subscriptions/{impi}: create or replace, with SQN_HE
+// taken from the request only for a new subscription.
 func (h *fakeHSS) put(w http.ResponseWriter, r *http.Request) {
 	now := h.inFlight.Add(1)
 	defer h.inFlight.Add(-1)
@@ -310,10 +305,9 @@ func (h *fakeHSS) patch(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, s.response())
 }
 
-// export is GET /subscriptions/export, which internal/hss lacks: limit
-// subscriptions after the private identity of after, in the order of
-// the private identities, credentials and SQN_HE included, one per
-// line.
+// export is GET /subscriptions/export: limit subscriptions after the
+// private identity of after, in the order of the private identities,
+// credentials and SQN_HE included, one per line.
 func (h *fakeHSS) export(w http.ResponseWriter, r *http.Request) {
 	limit, err := strconv.Atoi(r.URL.Query().Get("limit"))
 	if err != nil || limit < 1 || limit > 1000 {

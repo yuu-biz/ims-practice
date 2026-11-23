@@ -15,20 +15,15 @@ import (
 )
 
 // The HSS provisioning API (internal/hss, Provisioning) as the OAM
-// speaks it. The HSS of internal/hss has:
+// speaks it:
 //
 //	GET    /subscriptions/{impi}   one subscription
 //	POST   /subscriptions          add one
-//	DELETE /subscriptions/{impi}   remove one
-//
-// and the OAM uses these as well, which internal/hss does not have; an
-// HSS without them answers 404 or 405, and the OAM reports that the
-// operation is missing:
-//
 //	PUT    /subscriptions/{impi}[?dry_run=true]
 //	       create or replace one, answering hssPutAnswer
 //	PATCH  /subscriptions/{impi}
 //	       change test_user and service_profile only (hssPatch)
+//	DELETE /subscriptions/{impi}   remove one
 //	GET    /subscriptions/export?after={impi}&limit={n}
 //	       the subscriptions after impi, credentials included, one JSON
 //	       object per line, in the order of the private identities
@@ -104,15 +99,12 @@ type hssError struct {
 }
 
 func (e *hssError) Error() string {
-	if e.StatusCode == http.StatusMethodNotAllowed || e.StatusCode == http.StatusNotFound {
-		// The HSS of internal/hss has neither PUT and PATCH on a
-		// subscription nor the export.
-		return fmt.Sprintf("HSS: %d: the HSS provisioning API lacks this operation: %s", e.StatusCode, e.Message)
-	}
 	return fmt.Sprintf("HSS: %d: %s", e.StatusCode, e.Message)
 }
 
-// errNoSubscription is the HSS's 404 for a subscription.
+// errNoSubscription is the HSS's 404 for a subscription, which says
+// that the subscription is not there and nothing else: every operation
+// here is one that the HSS has.
 var errNoSubscription = errors.New("no such subscription")
 
 type hssClient struct {
@@ -235,6 +227,9 @@ func (c *hssClient) send(ctx context.Context, method, path string, body any) (*h
 	}
 	defer resp.Body.Close()
 	b, _ := io.ReadAll(io.LimitReader(resp.Body, maxRequestBody))
+	// The export is of the whole store rather than of one subscription,
+	// so its 404 is not a subscription that is not there; it says that
+	// what answered is not this API.
 	if resp.StatusCode == http.StatusNotFound && !strings.HasPrefix(path, "/subscriptions/export") {
 		return nil, errNoSubscription
 	}

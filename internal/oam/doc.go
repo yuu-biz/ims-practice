@@ -182,9 +182,8 @@
 // record that the HSS refuses because one of its identities belongs to
 // another subscription, a rollback in conflict (with
 // ErrorBody.settings) or a restore of a backup that did not complete;
-// 502 when the HSS or a node does not answer, fails or lacks an
-// operation; 503 when the OAM has no HSS provisioning API, history,
-// backup store or HSS node.
+// 502 when the HSS or a node does not answer or fails; 503 when the OAM
+// has no HSS provisioning API, history, backup store or HSS node.
 //
 // SIMPLIFIED: TS 32.600 4.2.1.1. Only operators with the right
 // authorisation may change the configuration of the network. The OAM

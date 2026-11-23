@@ -90,7 +90,7 @@ func TestBackupAndRestoreRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	before := newFakeHSS(t, false)
+	before := newFakeHSS(t)
 	ts := newProvisioningServer(t, before, Config{Backups: store})
 	ts.oam.exportPageSize = 2 // three pages for five subscriptions
 	provisionForBackup(t, ts)
@@ -139,7 +139,7 @@ func TestBackupAndRestoreRoundTrip(t *testing.T) {
 	}
 
 	// The HSS lost its data; a new one starts empty.
-	after := newFakeHSS(t, false)
+	after := newFakeHSS(t)
 	ts2 := newProvisioningServer(t, after, Config{Backups: store})
 
 	status, diff := ts2.streamCall(t, "/oam/v1/backups/"+m.ID+"/restore?dry_run=true")
@@ -185,7 +185,7 @@ func TestBackupAndRestoreRoundTrip(t *testing.T) {
 func TestRestoreRefusesAnArchiveThatIsCutShort(t *testing.T) {
 	dir := t.TempDir()
 	store, _ := NewFileBackupStore(dir)
-	hss := newFakeHSS(t, false)
+	hss := newFakeHSS(t)
 	ts := newProvisioningServer(t, hss, Config{Backups: store})
 	provisionForBackup(t, ts)
 	_, backup := ts.streamCall(t, "/oam/v1/backups")
@@ -197,7 +197,7 @@ func TestRestoreRefusesAnArchiveThatIsCutShort(t *testing.T) {
 	if err := os.WriteFile(archive, []byte(strings.Join(lines[:len(lines)-2], "\n")+"\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	empty := newFakeHSS(t, false)
+	empty := newFakeHSS(t)
 	ts2 := newProvisioningServer(t, empty, Config{Backups: store})
 	_, restore := ts2.streamCall(t, "/oam/v1/backups/"+m.ID+"/restore")
 	if len(restore.errors) != 1 || !strings.Contains(restore.errors[0], "cut short") || len(restore.outcomes) != 0 || empty.count() != 0 {
@@ -219,12 +219,14 @@ func TestRestoreRefusesAnArchiveThatIsCutShort(t *testing.T) {
 func TestABackupThatFailsLeavesNoArchive(t *testing.T) {
 	dir := t.TempDir()
 	store, _ := NewFileBackupStore(dir)
-	basic := newFakeHSS(t, true)
-	ts := newProvisioningServer(t, basic, Config{Backups: store})
+	hss := newFakeHSS(t)
+	ts := newProvisioningServer(t, hss, Config{Backups: store})
+	// The HSS is down before the export reads its first page.
+	hss.server.Close()
 
 	_, backup := ts.streamCall(t, "/oam/v1/backups")
-	if backup.manifest == nil || backup.manifest.State != JobFailed || len(backup.errors) != 1 || !strings.Contains(backup.errors[0], "lacks this operation") {
-		t.Fatalf("backup against a basic HSS: %+v", backup)
+	if backup.manifest == nil || backup.manifest.State != JobFailed || len(backup.errors) != 1 || !strings.Contains(backup.errors[0], "upstream") {
+		t.Fatalf("backup with the HSS down: %+v", backup)
 	}
 	if got := stepStates(backup.steps); got != "export/hss.subscriptions:running export/hss.subscriptions:failed" {
 		t.Errorf("steps: %s", got)
@@ -245,7 +247,7 @@ func TestABackupThatFailsLeavesNoArchive(t *testing.T) {
 
 func TestBackupErrors(t *testing.T) {
 	store, _ := NewFileBackupStore(t.TempDir())
-	hss := newFakeHSS(t, false)
+	hss := newFakeHSS(t)
 	ts := newProvisioningServer(t, hss, Config{Backups: store})
 	for _, tt := range []struct {
 		method, path, body string

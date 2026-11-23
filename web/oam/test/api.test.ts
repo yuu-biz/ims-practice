@@ -423,7 +423,7 @@ describe("backups", () => {
     serve(200, JSON.stringify({ backups: [backup, failedBackup] }));
     const [ok, failed] = await fetchBackups();
     expect(ok).toMatchObject({ id: backup.id, state: "completed", records: { "hss.subscriptions": 2 }, bytes: 912, restores: [] });
-    expect(failed?.steps[0]?.error).toMatch(/lacks this operation/);
+    expect(failed?.steps[0]?.error).toMatch(/upstream failed/);
     expect(failed?.operator).toBe("");
   });
 

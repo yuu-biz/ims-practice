@@ -216,7 +216,7 @@ export const failedBackup = {
       state: "failed",
       started: "2026-11-20T08:55:00Z",
       finished: "2026-11-20T08:55:05Z",
-      error: "upstream failed: HSS: 404: the HSS provisioning API lacks this operation: 404 page not found",
+      error: "upstream failed: export: unexpected EOF",
     },
   ],
   records: { "hss.subscriptions": 0 },
