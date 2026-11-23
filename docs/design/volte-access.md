@@ -15,7 +15,7 @@
 | --- | --- |
 | UE と EPC スタブの境界 | UE の側に `AccessNetwork` のインタフェースを置き、EPC スタブへの HTTP のクライアントで実装します。メッセージの名前と項目は TS 24.301 の ESM のメッセージに合わせ、本文は JSON にします。bearer の活性化や解放のような網からの通知は、Server-Sent Events で送ります。NAS と S1 を省いたことを `SIMPLIFIED:` に書きます。SMS を NAS で届けるときは、同じインタフェースの後ろに NAS の実装を置きます。スタブを、インタフェースの境界で本格的な実装に差し替えられるようにするためです。 |
 | UE の IP アドレス | 加入者ごとの静的なアドレス（TS 23.401 5.3.1.1）にし、今の 1 つのブリッジ（ims0）に置きます。TUN は使いません。TUN はコンテナに NET_ADMIN が要るので、Open5GS と UERANSIM の構成で扱います。1 つのブリッジのままなら、キャプチャ（[environment-capture.md](environment-capture.md)）を変えずに済み、ホスト固有のネットワーク設定にも依りません。GTP-U と SGi を省いたことを `SIMPLIFIED:` に書きます。 |
-| IPsec | ESP は上書きの構成（`deploy/esp/`）で有効にし、既定は無効のままにします。暗号化は null にし、完全性の保護だけをかけます。TS 33.203 6.3 は完全性の保護をどの場合にも求め、秘匿は P-CSCF の方針が求めるときだけです（6.2）。`ealg=null` は sec-agree が運ぶ値の 1 つなので（Annex H）、実際の網にある組み合わせです。カーネルへの設定は `internal/ipsec` が `ip xfrm` のコマンドで行います。学習者が同じコマンドを手で打って `ip xfrm state` で結果を見られるようにするためで、netlink のライブラリを足さずに済みます。P-CSCF と UE のコンテナに NET_ADMIN が要り、Windows の Docker Desktop で xfrm が使えるかは確かめていないので、既定を切り替えるかはその結果で決めます。 |
+| IPsec | ESP は上書きの構成（`deploy/esp/`）で有効にし、既定は無効のままにします。暗号化は null にし、完全性の保護だけをかけます。TS 33.203 6.3 は完全性の保護をどの場合にも求め、秘匿は P-CSCF の方針が求めるときだけです（6.2）。`ealg=null` は sec-agree が運ぶ値の 1 つなので（Annex H）、実際の網にある組み合わせです。カーネルへの設定は `internal/ipsec` が `ip xfrm` のコマンドで行います。学習者が同じコマンドを手で打って `ip xfrm state` で結果を見られるようにするためで、netlink のライブラリを足さずに済みます。P-CSCF と UE のコンテナには NET_ADMIN が要ります。既定にしない理由は下の「ESP を既定にしない理由」にあります。 |
 | 平文の AKA | 既定では sec-agree（Security-Client、Security-Server、Security-Verify）と保護ポートの手順はそのまま行い、ESP だけを省きます。学習者がキャプチャで sec-agree の手順を見られるようにするためです。sec-agree を行って ESP だけを省く形は標準に無いので、`SIMPLIFIED:` に理由を書きます。IPsec を使わない AKA は、標準では TLS の上の AKAv2-SHA-256 だけです（TS 24.229 4.2B.1）。ESP を有効にすると、暗号化が null なのでキャプチャの中身は読めたまま、組み合わせは標準どおりになります。 |
 | AKA の版 | AKAv1-MD5（RFC 3310）だけにします。独立した試験相手の SIPp（[ue-simulator.md](ue-simulator.md)）が AKAv2 に対応していないので、同じ AKAv1-MD5 で比べるためです。TS 33.203 6.1.1 は、S-CSCF が AKAv2-SHA-256 と AKAv1-MD5 の両方を示し、UE が AKAv2-SHA-256 に対応することを求めています。AKAv2 を省いたことを `SIMPLIFIED:` に書きます。 |
 | PCRF スタブ | 役割 `epc` の中に置きます。PGW のスタブとのあいだの Gx はプロセスの中の関数の呼び出しにし、`SIMPLIFIED:` に書きます。P-CSCF とのあいだの Rx は Diameter（TS 29.214）です。 |
@@ -36,9 +36,20 @@ ESP（暗号化は null）を上書きの構成で有効にする形を試しま
 | 保護クライアントポート | 取り決めるだけでなく開きます。アソシエーションの組は、片方の端のクライアントポートともう片方のサーバーポートの間にあるので（7.1）、ほかのポートから出たパケットはどのアソシエーションにも当たりません。`internal/sip` の transport に、要求を送るためのクライアントポートを足しました。応答は、要求が届いたポートから返します。 |
 | Go の試験（この環境） | 通ります。合意からカーネルのパラメータへの変換と IK_ESP の導出は純粋な関数で、`internal/ipsec` の試験で確かめます。P-CSCF と UE が、challenge のとき・登録を解除したとき・認証に失敗したときにカーネルを呼ぶことも試験で確かめます。 |
 | カーネルでの動作（この環境） | 確かめられません。`ip xfrm state add` が「Requested type not found」で失敗します。ESP の xfrm がこのカーネルに無いためです。`ecb(cipher_null)` は `/proc/crypto` にあり、`ip` も ESP には `enc` か `aead` が要ると言うので、コマンドの形だけは確かめました。 |
-| Wireshark での読み方 | ESP の設定で完全性のアルゴリズムを教えると、中の SIP を読めます。tshark 4.2.2 に ESP のパケットを与えて確かめました。`esp.enable_null_encryption_decode_heuristic` だけでは読めません。この推定は完全性チェック値を 12 オクテット（HMAC-SHA-1-96）と仮定するので、16 オクテットの HMAC-SHA2-256-128 では次ヘッダを読み違えます。ESP SAs の表に `IPv4,*,*,*,NULL,,HMAC-SHA-256-128 [RFC4868],` の 1 行を足すと読めます。鍵は要りません。 |
+| Wireshark での読み方 | ESP の設定で完全性のアルゴリズムを教えると、中の SIP を読めます。ESP SAs の表に `IPv4,*,*,*,NULL,,HMAC-SHA-256-128 [RFC4868],` の 1 行を足し、`esp.enable_encryption_decode` を入れます。鍵はどちらも要りません。暗号化は null なので復号するものが無く、完全性の検査は別の設定です。設定が無ければ、キャプチャには `ESP (SPI=0x...)` しか出ません。 |
+| 推定の設定だけで読めるか | 読めます。`esp.enable_null_encryption_decode_heuristic`（GUI では **Attempt to detect/decode NULL encrypted ESP payloads**）は、完全性チェック値の長さを 12、16、24、32 オクテットの順に試し、padding と次ヘッダが整う最初の長さを採ります。tshark 4.2.2 の設定の説明文にそう書いてあり、`libwireshark.so.17` の文字列でも確かめました。16 オクテットの HMAC-SHA2-256-128 の ESP パケットを 500 個組み立てて与えると、500 個とも中の SIP を読みました。パケットを組み立てたのは、この環境のカーネルに ESP の xfrm が無く（`state add` が `Requested type not found`）、カーネルに作らせられないためです。完全性チェック値を 0 で埋めたパケットでは読めません。12 オクテットと見た場合の padding と次ヘッダがどちらも 0 になり、推定がそこで止まるからです。本物の完全性チェック値は HMAC を切り詰めた値なので、この止まり方はしません。それでも長さを推定することに変わりはないので、確認の側（`scripts/e2e-esp.sh`）はアルゴリズムを明示する ESP SAs の行を使います。 |
 | Compose と CI | `scripts/e2e-esp.sh` と CI の `e2e-esp` のジョブで確かめます。Docker の無い環境で作ったので、Compose での結果はありません。CI では、カーネルが 4 つのアソシエーションと 8 つの policy を持ち、REGISTER、INVITE、200 (OK)、BYE が ESP の中を通り、登録を解除したあとにアソシエーションが残らないことを確かめました。そこに至るまでに直したことは、下の「カーネルで分かったこと」にあります。 |
-| Windows の Docker Desktop | 通ります。Windows 11 Pro 25H2、Docker Desktop 4.94.0（Engine 29.8.2、Compose v5.5.1）、バックエンドは WSL2 で、カーネルは 6.18.33.1-microsoft-standard-WSL2 です。`docker compose -f compose.yaml -f deploy/esp/esp.yaml up -d --build` のあとで `scripts/e2e-esp.sh` を流すと、17 項目がすべて通りました。ESP のパケットの数、ESP の中の REGISTER、INVITE、200 (OK)、BYE の数、state と policy の形は、CI と同じでした。登録を解除したあとには、state も policy も残りませんでした。このカーネルでは `CONFIG_XFRM_USER` と `CONFIG_INET_ESP` がモジュールですが、`NET_ADMIN` を付けたコンテナで `ip xfrm` を使うと、手で読み込まなくても読み込まれました。既定にするかは、ほかの環境（kind、クラウド、ほかの Docker の環境）での互換性と移植性を確かめてから、別に決めます。それまでは、上書きの構成で有効にする形のままにします。 |
+| Windows の Docker Desktop | 通ります。Windows 11 Pro 25H2、Docker Desktop 4.94.0（Engine 29.8.2、Compose v5.5.1）、バックエンドは WSL2 で、カーネルは 6.18.33.1-microsoft-standard-WSL2 です。`docker compose -f compose.yaml -f deploy/esp/esp.yaml up -d --build` のあとで `scripts/e2e-esp.sh` を流すと、17 項目がすべて通りました。ESP のパケットの数、ESP の中の REGISTER、INVITE、200 (OK)、BYE の数、state と policy の形は、CI と同じでした。登録を解除したあとには、state も policy も残りませんでした。このカーネルでは `CONFIG_XFRM_USER` と `CONFIG_INET_ESP` がモジュールですが、`NET_ADMIN` を付けたコンテナで `ip xfrm` を使うと、手で読み込まなくても読み込まれました。 |
+
+## ESP を既定にしない理由
+
+試作が通ったあとも、ESP は上書きの構成（`deploy/esp/`）で有効にする形のままにし、既定にはしません。理由は 3 つです。
+
+- 要件では、既定で信号を暗号化しません。キャプチャをそのまま読めるようにするためです。ESP の暗号化は null で、かかるのは完全性の保護だけですが、それでも Wireshark に ESP の中を読ませる設定が要ります。設定が無ければ、見えるのは `ESP (SPI=0x...)` だけです。既定の構成は、設定なしで読める状態に保ちます。
+- ESP はホストのカーネルの xfrm に頼ります。Linux と、WSL2 を使う Windows の Docker Desktop では通りました。macOS の Docker Desktop とクラウドの環境では確かめていません。要件の「ホスト固有のネットワーク設定に依存しない」を、既定の構成で崩さないためです。
+- 実際の VoLTE の端末は ESP を使います（GSMA IR.92 の IMS-AKA と sec-agree）。この動きは、上書きの構成で有効にすれば見られます。既定にしなくても学べるので、既定を平文のままにする方を採ります。
+
+手順書（`docs/guide/{en,ja}/volte.md`）は、有効にする手順、キャプチャの読み方、ESP が動く環境を、学習者向けに書きます。
 
 ## カーネルで分かったこと
 
