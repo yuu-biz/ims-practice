@@ -74,6 +74,24 @@ func (n s6cNetwork) requestFromSC(t *testing.T, m *diam.Message) *diam.Message {
 	}
 }
 
+// rdr reports how a delivery through the IP-SM-GW ended, as the
+// SMS-GMSC of the SC does.
+func (n s6cNetwork) rdr(t *testing.T, msisdn string, cause sgd.SMDeliveryCause) sgd.ReportSMDeliveryStatusAnswer {
+	t.Helper()
+	a, err := sgd.ParseReportSMDeliveryStatusAnswer(n.requestFromSC(t, sgd.ReportSMDeliveryStatusRequest{
+		Header:         diameter.NewHeader(n.scNode, "", realm),
+		UserIdentifier: sgd.UserIdentifier{MSISDN: msisdn},
+		SCAddress:      scAddress,
+		SMDeliveryOutcome: sgd.SMDeliveryOutcome{
+			IPSMGWSMDeliveryOutcome: &sgd.NodeSMDeliveryOutcome{SMDeliveryCause: cause},
+		},
+	}.Message()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return a
+}
+
 // subscriber reads what the HSS stored for the user of impi.
 func (n s6cNetwork) subscriber(t *testing.T) Subscriber {
 	t.Helper()
@@ -158,6 +176,84 @@ func TestSendRoutingInfoForAnUnknownNumber(t *testing.T) {
 	a := n.srr(t, "12025550188")
 	if want := diameter.Experimental(sgd.DiameterErrorUserUnknown); a.Result != want {
 		t.Errorf("SRA = %v, want %v", a.Result, want)
+	}
+}
+
+// TS 23.040 3.2.8 case 1: a delivery that found the user absent puts
+// the SC address into the message waiting data and sets UNRI; one that
+// the UE refused for want of memory sets MCEF and clears UNRI, because
+// the UE is reachable and only free memory helps.
+func TestReportSMDeliveryStatusKeepsTheSCAddress(t *testing.T) {
+	n := newS6cNetwork(t)
+	if a := n.rdr(t, msisdnA, sgd.SMDeliveryCauseAbsentUser); a.Result != success {
+		t.Fatalf("RDA = %v", a.Result)
+	}
+	u := n.subscriber(t)
+	if len(u.MessageWaitingData) != 1 || u.MessageWaitingData[0] != scAddress || !u.UNRI || u.MCEF {
+		t.Fatalf("after an absent user: MWD %v, UNRI %v, MCEF %v", u.MessageWaitingData, u.UNRI, u.MCEF)
+	}
+
+	if a := n.rdr(t, msisdnA, sgd.SMDeliveryCauseUEMemoryCapacityExceeded); a.Result != success {
+		t.Fatalf("RDA = %v", a.Result)
+	}
+	u = n.subscriber(t)
+	if len(u.MessageWaitingData) != 1 || u.UNRI || !u.MCEF {
+		t.Fatalf("after a full memory: MWD %v, UNRI %v, MCEF %v", u.MessageWaitingData, u.UNRI, u.MCEF)
+	}
+
+	// A transfer that succeeded takes the address out again (TS 29.338
+	// 5.2.3.1).
+	if a := n.rdr(t, msisdnA, sgd.SMDeliveryCauseSuccessfulTransfer); a.Result != success {
+		t.Fatalf("RDA = %v", a.Result)
+	}
+	if u := n.subscriber(t); len(u.MessageWaitingData) != 0 {
+		t.Errorf("after a successful transfer: MWD %v", u.MessageWaitingData)
+	}
+}
+
+// TS 29.338 5.2.3.4: a message waiting list that is full is refused, so
+// that the SC knows that only its own retries are left.
+func TestReportSMDeliveryStatusWithAFullMessageWaitingList(t *testing.T) {
+	n := newS6cNetwork(t)
+	u := n.subscriber(t)
+	// Other service centres, none of them the one that now reports.
+	for i := range maxMessageWaitingData {
+		u.MessageWaitingData = append(u.MessageWaitingData, "1202555020"+string(rune('0'+i)))
+	}
+	if err := n.hss.store.Put(context.Background(), u); err != nil {
+		t.Fatal(err)
+	}
+	a := n.rdr(t, msisdnA, sgd.SMDeliveryCauseAbsentUser)
+	if want := diameter.Experimental(sgd.DiameterErrorMWDListFull); a.Result != want {
+		t.Errorf("RDA = %v, want %v", a.Result, want)
+	}
+	// The flag is still set, so that the user's return still alerts the
+	// service centres that did fit.
+	if u := n.subscriber(t); !u.UNRI {
+		t.Error("UNRI = false, want true")
+	}
+}
+
+// A cause the HSS does not know leaves the message waiting data as it
+// is, rather than counting as a delivery that succeeded.
+func TestReportSMDeliveryStatusWithAnUnknownCause(t *testing.T) {
+	n := newS6cNetwork(t)
+	if a := n.rdr(t, msisdnA, sgd.SMDeliveryCauseAbsentUser); a.Result != success {
+		t.Fatalf("RDA = %v", a.Result)
+	}
+	if a := n.rdr(t, msisdnA, sgd.SMDeliveryCause(99)); a.Result != success {
+		t.Fatalf("RDA = %v", a.Result)
+	}
+	if u := n.subscriber(t); len(u.MessageWaitingData) != 1 || !u.UNRI {
+		t.Errorf("message waiting data = %v, UNRI = %v", u.MessageWaitingData, u.UNRI)
+	}
+}
+
+func TestReportSMDeliveryStatusForAnUnknownNumber(t *testing.T) {
+	n := newS6cNetwork(t)
+	a := n.rdr(t, "12025550188", sgd.SMDeliveryCauseAbsentUser)
+	if want := diameter.Experimental(sgd.DiameterErrorUserUnknown); a.Result != want {
+		t.Errorf("RDA = %v, want %v", a.Result, want)
 	}
 }
 
