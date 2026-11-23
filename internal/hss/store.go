@@ -285,6 +285,35 @@ func (s *Subscriber) shortMessageDelivered(scAddress string) bool {
 	return len(s.MessageWaitingData) > 0
 }
 
+// readyForShortMessages records a notification from the IP-SM-GW that
+// the user can take short messages again, and reports whether the
+// service centres in the message waiting data are to be alerted (TS
+// 23.040 3.2.6 items 2c and 2f).
+//
+// A notification alerts whenever service centres still wait, even when
+// its flag is clear already: an alert that a service centre refused, or
+// that never reached it, leaves its address in the message waiting
+// data, and only a later notification can alert it again. Where no
+// service centre waits, the HSS answers and alerts nobody (item 2i).
+func (s *Subscriber) readyForShortMessages(reason sh.ReadyForSM) bool {
+	switch reason {
+	case sh.MSPresent:
+		// Item 2c: the UE is reachable over IP again, so UNRI goes. While
+		// MCEF is set the service centres wait for free memory instead.
+		s.UNRI = false
+		return len(s.MessageWaitingData) > 0 && !s.MCEF
+	case sh.MemoryAvailable:
+		// Item 2f alerts the service centres when the UE has memory
+		// again, and clears UNRI, since a UE that says so is reachable.
+		// It leaves MCEF set, which items 2d and 2e clear for the same
+		// notification through an MSC and through an SGSN; this HSS
+		// clears it, as the memory is no longer full.
+		s.MCEF, s.UNRI = false, false
+		return len(s.MessageWaitingData) > 0
+	}
+	return false
+}
+
 // removeMessageWaiting takes the address of a service centre out of the
 // message waiting data, and reports whether it was there.
 func (s *Subscriber) removeMessageWaiting(scAddress string) bool {
