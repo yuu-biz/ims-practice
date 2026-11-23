@@ -23,7 +23,9 @@ import (
 // without a BYE through the P-CSCF stays in the Store: the dialogs of a
 // user are not discarded when the registration ends, which would need
 // an index of the dialogs by user, and the P-CSCF asks for no session
-// timer (RFC 4028) to notice a session that hangs.
+// timer (RFC 4028) to notice a session that hangs. Such a dialog, once
+// answered, also stays in the answered sessions that the P-CSCF counts
+// (TS 32.409 4.1.2.5) until the instance that counted it starts again.
 //
 // SIMPLIFIED: TS 29.214 A.3. The early dialogs of a forked INVITE are
 // not told apart: the dialog of the calling UE follows the To tag of

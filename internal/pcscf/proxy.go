@@ -108,6 +108,9 @@ func (p *PCSCF) proxyInvite(st *sip.ServerTransaction, out *sip.Message, targets
 					giveUp(refused)
 					continue
 				}
+				if !answered {
+					p.measurements.sessions.Answered(role, call.leg.direction())
+				}
 				answered = true
 				timerC.Stop()
 				timerCFired = nil

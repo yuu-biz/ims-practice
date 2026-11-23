@@ -11,7 +11,10 @@ import (
 
 // This file holds what the P-CSCF counts for the operator: the
 // registration procedures and the set-up time of the initial ones (TS
-// 32.409 4.1.1).
+// 32.409 4.1.1), and the session establishments (4.1.2).
+//
+// The P-CSCF counts no dropped sessions, the sessions removed when they
+// expire (4.1.2.8): it lets no session expire (Dialog).
 
 // role is the name of the role in the configuration file: the value of
 // the role label of what the P-CSCF counts, and the role of its
@@ -21,6 +24,7 @@ const role = "pcscf"
 // measurements are the counters of one P-CSCF instance.
 type measurements struct {
 	registrations *ims.Registrations
+	sessions      *ims.Sessions
 	// registrationSetup gives UR.MeanInitRegSetupTime, the mean set-up
 	// time of the successful initial registrations at the P-CSCF (TS
 	// 32.409 4.1.1.1.4): its sum divided by its count.
@@ -43,13 +47,17 @@ func newMeasurements(reg *metrics.Registry) (*measurements, error) {
 	if err != nil {
 		return nil, err
 	}
+	sessions, err := ims.NewSessions(reg)
+	if err != nil {
+		return nil, err
+	}
 	setup, err := reg.NewHistogram("ims_registration_setup_seconds",
 		"Time from the REGISTER that starts a successful initial registration to its 200 (OK), at the P-CSCF; the sum divided by the count is TS 32.409 UR.MeanInitRegSetupTime.",
 		metrics.DefaultBuckets(), metrics.Label{Name: "role", Values: []string{role}})
 	if err != nil {
 		return nil, err
 	}
-	return &measurements{registrations: registrations, registrationSetup: setup}, nil
+	return &measurements{registrations: registrations, registrationSetup: setup, sessions: sessions}, nil
 }
 
 // registrationProcedure is one registration procedure at the P-CSCF: its
