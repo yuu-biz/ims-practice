@@ -269,6 +269,7 @@ func run(configPath string, log *slog.Logger, level *slog.LevelVar) error {
 		// The sweep that handles the expiries of the reg event
 		// subscriptions runs until the node stops.
 		defer p.Close()
+		managed = append(managed, managedRole{function: p.Function(), manage: p.Manage})
 		// Without a PCRF in the diameter section the P-CSCF asks no
 		// policy control of the network. The PCRF serves
 		// the network the P-CSCF is in, so its realm is the node's own.
@@ -914,7 +915,30 @@ type configurationView struct {
 	Maintenance struct {
 		Listen string `json:"listen"`
 	} `json:"maintenance"`
+	PCSCF *pcscfView `json:"pcscf,omitempty"`
 	SCSCF *scscfView `json:"scscf,omitempty"`
+}
+
+type pcscfView struct {
+	SIP              sipView         `json:"sip"`
+	VisitedNetworkID string          `json:"visited_network_id"`
+	MediaRelays      []string        `json:"media_relays,omitempty"`
+	H248             *h248View       `json:"h248,omitempty"`
+	HostAccess       *hostAccessView `json:"host_access,omitempty"`
+	SecAgree         *secAgreeView   `json:"sec_agree,omitempty"`
+}
+
+type h248View struct {
+	Listen string `json:"listen"`
+}
+
+type hostAccessView struct {
+	Gateway string `json:"gateway"`
+	Address string `json:"address"`
+}
+
+type secAgreeView struct {
+	ProtectedServerPort int `json:"protected_server_port"`
 }
 
 type scscfView struct {
@@ -935,6 +959,18 @@ func newConfigurationView(cfg config.Config) configurationView {
 	v := configurationView{Node: cfg.Node, Roles: cfg.Roles, HomeDomain: cfg.HomeDomain}
 	if m := cfg.Maintenance; m != nil {
 		v.Maintenance.Listen = m.Listen
+	}
+	if c := cfg.PCSCF; c != nil {
+		v.PCSCF = &pcscfView{SIP: newSIPView(c.SIP), VisitedNetworkID: c.VisitedNetworkID, MediaRelays: c.MediaRelays}
+		if m := c.MediaController; m != nil {
+			v.PCSCF.H248 = &h248View{Listen: m.Listen.String()}
+		}
+		if h := c.HostAccess; h != nil {
+			v.PCSCF.HostAccess = &hostAccessView{Gateway: h.Gateway.String(), Address: h.Address.String()}
+		}
+		if c.ProtectedServerPort != 0 {
+			v.PCSCF.SecAgree = &secAgreeView{ProtectedServerPort: int(c.ProtectedServerPort)}
+		}
 	}
 	if c := cfg.SCSCF; c != nil {
 		v.SCSCF = &scscfView{
