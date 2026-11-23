@@ -176,6 +176,12 @@ func run(configPath string, log *slog.Logger, level *slog.LevelVar) error {
 		for _, p := range d.Peers {
 			peers = append(peers, node.Connect(p.PeerConfig))
 		}
+		// The gauge over the state of the connections belongs to the
+		// node, not to a role: the roles of the node send over the same
+		// connections.
+		if err := diameter.RegisterPeerUp(registry, peers); err != nil {
+			return err
+		}
 	}
 	if hssRole != nil && cfg.HSS.ProvisioningListen != "" {
 		api := &http.Server{Addr: cfg.HSS.ProvisioningListen, Handler: hssRole.Provisioning(server)}
