@@ -112,6 +112,9 @@ type SCSCF struct {
 	// the session establishments (measurements.go).
 	registrations *ims.Registrations
 	sessions      *ims.Sessions
+	// measured counts the RTR and the PPR that the HSS sends, with the
+	// answers the S-CSCF gives them (Handle).
+	measured *diameter.Answering
 	// transactions counts the requests that the S-CSCF is serving, the
 	// users of its maintenance function (maintenance.go).
 	transactions atomic.Int64
@@ -153,8 +156,12 @@ func New(cfg Config, hss HSS, node *diameter.Node, store Store, resolver Resolve
 	if err != nil {
 		return nil, err
 	}
+	measured, err := diameter.NewAnswering(cfg.Metrics, role)
+	if err != nil {
+		return nil, err
+	}
 	s := &SCSCF{cfg: cfg, hss: hss, node: node, store: store, resolver: resolver, log: log, users: cfg.UserLocks,
-		registrations: registrations, sessions: sessions}
+		registrations: registrations, sessions: sessions, measured: measured}
 	s.stopSweep = s.sweep()
 	return s, nil
 }
@@ -605,7 +612,23 @@ func (s *SCSCF) deregisterByNetwork(ctx context.Context, reg Registration, event
 // requests: the Registration-Termination-Request, which deregisters a
 // user (TS 29.228 6.1.3), and the Push-Profile-Request, which updates
 // the user information it holds (6.2.2).
+//
+// Each is counted on its receipt, where TS 32.409 4.1.1.3.2.1 counts
+// the de-registrations the HSS starts and 4.1.7.1 the user profile
+// updates it starts, and its answer as the S-CSCF hands it back, where
+// 4.1.1.3.2.2 and 4.1.7.2 count the ones that succeeded and 4.1.1.3.2.3
+// and 4.1.7.3 the ones that failed, by the Diameter result code. The
+// result label holds that code, so the successes and the failures of a
+// command are read apart without a measurement of each.
 func (s *SCSCF) Handle(request *diam.Message) *diam.Message {
+	s.measured.RequestReceived(request)
+	answer := s.answer(request)
+	s.measured.AnswerSent(request, answer)
+	return answer
+}
+
+// answer is the answer that Handle gives request.
+func (s *SCSCF) answer(request *diam.Message) *diam.Message {
 	identity := s.node.Identity()
 	if request.Header.ApplicationID != diameter.ApplicationIDCx {
 		return diameter.CommandUnsupportedAnswer(identity, request)
