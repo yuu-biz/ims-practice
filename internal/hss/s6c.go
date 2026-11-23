@@ -329,15 +329,10 @@ const alertTimeout = 30 * time.Second
 // request that brought the user back must not wait for a service
 // centre.
 //
-// SIMPLIFIED: TS 23.204 6.5b step 2 and 6.6, TS 23.040 3.2.6 items 2c
-// and 2f. Of the two things that make a user ready for short messages
-// again, the HSS learns only of the registration of an IP-SM-GW. A UE
-// that becomes available without registering again, and one whose
-// memory becomes free, are notifications that the IP-SM-GW of this
-// project does not send: it subscribes to no reachability notification
-// and passes no memory available on. So UNRI is cleared by a
-// registration and by a short message that arrives, and MCEF only by a
-// short message that arrives.
+// An alert goes out on the registration of an IP-SM-GW
+// (profileUpdate), on either notification that the user is ready for
+// short messages again (readyForSM), and on a short message that
+// arrived (reportSMDeliveryStatus).
 func (h *HSS) alertServiceCentres(u Subscriber) {
 	addresses := slices.Clone(u.MessageWaitingData)
 	h.alerts.Add(1)
