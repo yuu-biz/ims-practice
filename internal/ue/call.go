@@ -413,7 +413,12 @@ func (s *Session) handle(r *sip.InDialogRequest) {
 			return
 		}
 		ack, err := r.Accept(answer, with(s.responseHeaders, s.answerHeaders(req)...)...)
-		if err != nil {
+		switch {
+		case errors.Is(err, sip.ErrCallEnded):
+			// A BYE ended the call and answered the request with 487 (RFC
+			// 3261 15.1.2), so there is no session left to change.
+			return
+		case err != nil:
 			s.log.Warn("answer not sent", "method", string(req.Method), "error", err.Error())
 			return
 		}
@@ -436,7 +441,10 @@ func (s *Session) handle(r *sip.InDialogRequest) {
 			return
 		}
 		ack, err := r.Accept(offer, with(s.responseHeaders, s.answerHeaders(req)...)...)
-		if err != nil {
+		switch {
+		case errors.Is(err, sip.ErrCallEnded):
+			return
+		case err != nil:
 			s.log.Warn("offer not sent", "error", err.Error())
 			return
 		}
