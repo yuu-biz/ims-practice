@@ -543,7 +543,7 @@ octet 2: lowest 2 bits of 'l' (00), then rest of 'e' (110010) = 0011 0010 = 32
 | Sh、TS 29.328 6.1.3 と 6.1.4 | 通知の購読（SNR/SNA、PNR/PNA、コマンド 308 と 309）は無い。 | IP-SM-GW は自分を登録し、利用者を調べるだけである。MMTel AS は初期の要求ごとに Repository Data を読み、写しを持たない。TS 29.364 8.1 はそのような AS に購読を勧めている。 |
 | Sh、TS 29.328 7.1.3 | External-Identifier は無い。 | マシン型の通信のためのもので、このプロジェクトでは扱わない。 |
 | Sh、TS 29.328 Annex D | Sh-Data には PublicIdentifiers（IMSPublicIdentity、MSISDN）と RepositoryData、Sh-IMS-Data の SCSCFName と SMSRegistrationInfo だけがある。 | 残りは、使う役割ができたときに加える。 |
-| Sh、TS 29.328 7.6.16 | SMSRegistrationInfo に SCAddress と、SBI と S6c に対応しているかの表示が無い。 | SC は IP-SM-GW の中にあり、IP-SM-GW は SBI も S6c も話さない。 |
+| Sh、TS 29.328 7.6.16 | SMSRegistrationInfo に SCAddress と、SBI に対応しているかの表示が無い。 | HSS は IP-SM-GW にサービスセンタのアドレスを渡さず、IP-SM-GW は SC に Diameter だけで届く。 |
 | HSS、TS 29.329 7.1 | Supported-Features で機能を取り決めない。HSS は、省略できる機能にどれも対応しない AS と同じように扱うので、要求は Data-Reference を 1 つだけ指定し、Repository Data では Service-Indication か RepositoryData も 1 つだけにする。HSS にデータが無いときの応答には User-Data が無い。 | このプロジェクトの IP-SM-GW は、省略できる機能をどれも示さない。 |
 | HSS、TS 29.328 6.2 | AS ごとの権限が無く、接続したピアならどれでも Sh を使える。 | このプロジェクトの AS は IP-SM-GW だけである。 |
 | HSS、TS 29.328 6.1.1.1 と 6.1.2.1 step 2a | User-Name の非公開ユーザー識別子を読まず、確かめない。 | IP-SM-GW はそれを送らない。 |

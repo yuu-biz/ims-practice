@@ -536,7 +536,7 @@ Each item has a `SIMPLIFIED:` comment in the code; `grep -rn "SIMPLIFIED:" inter
 | Sh, TS 29.328 6.1.3 and 6.1.4 | No subscriptions to notifications (SNR/SNA, PNR/PNA, commands 308 and 309). | The IP-SM-GW only registers itself and looks users up, and the MMTel AS reads its repository data for each initial request and keeps no copy. TS 29.364 8.1 recommends that such an AS subscribes. |
 | Sh, TS 29.328 7.1.3 | No External-Identifier. | It is for machine-type communication, which this project does not serve. |
 | Sh, TS 29.328 Annex D | Sh-Data has only PublicIdentifiers (IMSPublicIdentity, MSISDN), RepositoryData, and SCSCFName and SMSRegistrationInfo of Sh-IMS-Data. | The rest waits until a role needs it. |
-| Sh, TS 29.328 7.6.16 | SMSRegistrationInfo has no SCAddress and no indications of SBI or S6c support. | The SC is inside the IP-SM-GW, which speaks neither SBI nor S6c. |
+| Sh, TS 29.328 7.6.16 | SMSRegistrationInfo has no SCAddress and no indication of SBI support. | The HSS hands no Service Centre address to the IP-SM-GW, which reaches the SC over Diameter only. |
 | HSS, TS 29.329 7.1 | No Supported-Features negotiation: the HSS acts as for an AS that supports none of the optional features, so a request names one Data-Reference, and for repository data one Service-Indication or one RepositoryData, and an answer leaves User-Data out when the HSS has none of the data. | The IP-SM-GW of this project announces no optional feature. |
 | HSS, TS 29.328 6.2 | No permissions per AS: every peer that connected may use Sh. | The IP-SM-GW is the only AS of this project. |
 | HSS, TS 29.328 6.1.1.1 and 6.1.2.1 step 2a | The private identity in User-Name is not read or checked. | The IP-SM-GW does not send it. |
