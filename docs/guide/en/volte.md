@@ -208,15 +208,15 @@ docker compose exec pcscf ip xfrm state
 docker compose exec pcscf ip xfrm policy
 ```
 
-Each state is one association: the two addresses, `proto esp` with its SPI, `mode transport`, the integrity algorithm with IK_ESP and the 128 bits of its integrity check value, null encryption with an empty key, and a lifetime. IK_ESP is not IK: Annex I expands it from CK and IK with the key derivation function of TS 33.220 Annex B.2.0. Each policy binds one association to the two ports of its pair, once for UDP and once for TCP, since the two share the association (TS 33.203 7.1). The node runs the same commands a reader can type by hand, one of them being:
+Each state is one association: the two addresses, `proto esp` with its SPI, `mode transport`, the integrity algorithm with IK_ESP and the 128 bits of its integrity check value, and null encryption with an empty key. IK_ESP is not IK: Annex I expands it from CK and IK with the key derivation function of TS 33.220 Annex B.2.0. Each policy binds one association to the two ports of its pair, once for UDP and once for TCP, since the two share the association (TS 33.203 7.1). The node runs the same commands a reader can type by hand, one of them being:
 
 ```sh
 ip xfrm state add src 172.28.0.120 dst 172.28.0.40 proto esp spi 0x3b9b0ea3 \
-  reqid 1000017571 mode transport replay-window 32 limit time-hard 3630 \
+  reqid 1000017571 mode transport replay-window 32 \
   auth-trunc 'hmac(sha256)' 0x<IK_ESP> 128 enc 'ecb(cipher_null)' ''
 ```
 
-The lifetime is the one the SIP layer gives the associations: the time an authentication has to finish while the UE answers the challenge, and the time left of the registration once the 200 (OK) has established them (TS 33.203 7.4.2a). The kernel deletes a state whose lifetime is over, so the associations of a UE that stops answering go even though no registration ends to take them out.
+No command gives the kernel a lifetime. TS 33.203 7.1 leaves the lifetime of a security association to the SIP application, which holds it (7.4): the time an authentication has to finish while the UE answers the challenge, and the time left of the registration once the 200 (OK) has established the associations. The P-CSCF and the UE delete them when that time is over, so the associations of a UE that stops answering go even though no registration ends to take them out.
 
 To read the SIP inside ESP, Wireshark needs to know how long the integrity check value is, which it takes from the integrity algorithm. In **Edit > Preferences > Protocols > ESP**, tick **Attempt to detect/decode encrypted ESP payloads** and open **ESP SAs**, then add one row:
 

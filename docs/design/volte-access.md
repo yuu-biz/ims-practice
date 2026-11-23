@@ -32,12 +32,12 @@ ESP（暗号化は null）を上書きの構成で有効にする形を試しま
 | --- | --- |
 | TS 33.203 が null の暗号化を認めるか | 認めます。Annex H の `ealg` の値に `null` があり、`ealg` が無いときの既定も null です。6.2 は秘匿を P-CSCF の方針が求めるときだけかけるものとし、7.2 は UE が秘匿のアルゴリズムを示さなかったときに P-CSCF が null を選ぶか手順を中断するかを方針で決めるとしています。完全性の保護は 6.3 がどの場合にも求めます。 |
 | 鍵の導出 | Annex I が、HMAC-SHA2-256-128 のとき IK_ESP を TS 33.220 Annex B.2.0 の鍵導出関数で作ります。入力の鍵は CK \|\| IK、S は FC = 0x5A、P0 = "HMAC-SHA2-256-128"、L0 = 0x0011 で、出力は 256 ビットです。これは RFC 4868 の AUTH_HMAC_SHA2_256_128 の鍵長と一致します。 |
-| カーネルへの入れ方 | `ip xfrm` のコマンドを 1 つずつ実行します。1 回の認証で state が 4 つ、policy が 8 つ（4 つのアソシエーション × UDP と TCP）です。policy から state を指すのは reqid で、SPI と同じ値を入れます。同じ 2 つのアドレスの間に出ていく state が 2 つあり、ポートと SPI しか違わないためです。`ip xfrm` のセレクタはポートを `proto udp` か `proto tcp` の下でしか書けないので、policy をトランスポートごとに分けます。`-batch` でまとめて渡すのはやめました。理由は下の「カーネルで分かったこと」にあります。 |
+| カーネルへの入れ方 | `ip xfrm` のコマンドを 1 つずつ実行します。寿命はカーネルに渡さず、SIP のアプリケーションが持ちます（TS 33.203 7.1 NOTE 4、7.4）。1 回の認証で state が 4 つ、policy が 8 つ（4 つのアソシエーション × UDP と TCP）です。policy から state を指すのは reqid で、SPI と同じ値を入れます。同じ 2 つのアドレスの間に出ていく state が 2 つあり、ポートと SPI しか違わないためです。`ip xfrm` のセレクタはポートを `proto udp` か `proto tcp` の下でしか書けないので、policy をトランスポートごとに分けます。`-batch` でまとめて渡すのはやめました。理由は下の「カーネルで分かったこと」にあります。 |
 | 保護クライアントポート | 取り決めるだけでなく開きます。アソシエーションの組は、片方の端のクライアントポートともう片方のサーバーポートの間にあるので（7.1）、ほかのポートから出たパケットはどのアソシエーションにも当たりません。`internal/sip` の transport に、要求を送るためのクライアントポートを足しました。応答は、要求が届いたポートから返します。 |
 | Go の試験（この環境） | 通ります。合意からカーネルのパラメータへの変換と IK_ESP の導出は純粋な関数で、`internal/ipsec` の試験で確かめます。P-CSCF と UE が、challenge のとき・登録を解除したとき・認証に失敗したときにカーネルを呼ぶことも試験で確かめます。 |
 | カーネルでの動作（この環境） | 確かめられません。`ip xfrm state add` が「Requested type not found」で失敗します。ESP の xfrm がこのカーネルに無いためです。`ecb(cipher_null)` は `/proc/crypto` にあり、`ip` も ESP には `enc` か `aead` が要ると言うので、コマンドの形だけは確かめました。 |
 | Wireshark での読み方 | ESP の設定で完全性のアルゴリズムを教えると、中の SIP を読めます。tshark 4.2.2 に ESP のパケットを与えて確かめました。`esp.enable_null_encryption_decode_heuristic` だけでは読めません。この推定は完全性チェック値を 12 オクテット（HMAC-SHA-1-96）と仮定するので、16 オクテットの HMAC-SHA2-256-128 では次ヘッダを読み違えます。ESP SAs の表に `IPv4,*,*,*,NULL,,HMAC-SHA-256-128 [RFC4868],` の 1 行を足すと読めます。鍵は要りません。 |
-| Compose と CI | `scripts/e2e-esp.sh` と CI の `e2e-esp` のジョブを足しました。Docker の無い環境で作ったので、Compose での結果はありません。最初の CI の実行では、すべての REGISTER が 500 になりました。原因は下の「カーネルで分かったこと」の 1 つ目です。 |
+| Compose と CI | `scripts/e2e-esp.sh` と CI の `e2e-esp` のジョブで確かめます。Docker の無い環境で作ったので、Compose での結果はありません。CI では、カーネルが 4 つのアソシエーションと 8 つの policy を持ち、REGISTER、INVITE、200 (OK)、BYE が ESP の中を通り、登録を解除したあとにアソシエーションが残らないことを確かめました。そこに至るまでに直したことは、下の「カーネルで分かったこと」にあります。 |
 | Windows の Docker Desktop | 確かめていません。メンテナーが手元で確かめ、その結果で既定を決めます。 |
 
 ## カーネルで分かったこと
@@ -54,6 +54,14 @@ CI の実行と、xfrm を持たないカーネルでの `ip` の試しで分か
 | 1 回の `ip -batch` の中では、最初の `deleteall` しか効きません。8 つの `policy deleteall` を渡すと 1 つだけ消えました。`ip` が dump と delete に同じ netlink のソケットを使うためと見られます。 | コマンドを 1 つずつ実行します。消すときは最後まで続け、失敗はログに書きます。 |
 | policy のコマンドは、xfrm の ESP が無いカーネルでも通ります。 | 生成したコマンドをそのまま実行し、8 つの policy が入り、`deleteall` で 8 つとも消えることを確かめました。state の方は `Requested type not found`（カーネルに ESP の xfrm が無い）までで、構文は通ります。 |
 | Wireshark は、ESP の中の TCP を SIP として読むのに手がかりが要ります。SIP が登録されているのはポート 5060 だけです。 | キャプチャの確認と手順書のコマンドに `-d tcp.port==5062,sip -d tcp.port==5064,sip` を付けます。 |
+| `limit time-hard` は、state を足した時刻から数えます（`xfrm_timer_handler` が `lft.hard_add_expires_seconds` に `curlft.add_time` を足します）。state の update は限度を置き換えますが、この時刻は置き換えません（`xfrm_state_update` は `lft` だけを写します）。登録を更新しても、寿命は最初の認証のときのままです。 | 寿命をカーネルに渡すのをやめました。TS 33.203 7.1 NOTE 4 と 7.4 が、寿命を SIP のアプリケーションに任せています。P-CSCF は UE ごとにタイマーを 1 つ持ち、set を入れ替えるときにそのタイマーも入れ替えます。 |
+| policy にも `limit time-hard` を付けていたので、登録が続いているのに policy だけが消えていました。`ip xfrm policy update ... limit time-hard 3` で確かめました。 | 同じく、寿命を渡しません。policy は、set を消すときと、次の set で上書きするときに動きます。 |
+| 1 つの UE の新旧の set は同じポートに結び付くので、selector で消す policy の削除は、入れ替わった新しい set の policy まで消します。 | set を入れ替えるときは state だけを消し、policy は新しい set の `update` に上書きさせます。タイマーは set ごとなので、古い set のタイマーが新しい set を消すこともありません。 |
+
+## 残っていること
+
+- ノードが落ちて立ち上がり直すと、前の実行が入れた state と policy がカーネルに残ります。カーネルはプロセスより長く生きるためです。UE が登録し直すと policy は上書きされ、state は SPI ごとに消されますが、前の実行の SPI の state はそのまま残ります。全体を消す `ip xfrm state flush` は、同じ netns のほかの用途まで消すので使いません。
+- UE ごとのタイマーは 1 つのプロセスの中にあります。アソシエーションもそのホストのカーネルにしかないので、この 2 つは同じ場所にあります（`SecurityAssociations.PCSCF`）。
 
 ## 採らなかった案
 
