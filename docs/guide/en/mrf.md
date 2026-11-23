@@ -235,6 +235,83 @@ phone2     P-CSCF   S-CSCF   MMTel AS              MRFC
 
 The script does not run this. `TestRejoinWithTheConferenceURI` in `internal/mmtel/conference_network_test.go` runs it through the whole IMS in one process: B leaves A's conference, comes back with the conference URI, and hears A through the mixer.
 
+## Take the MRFC out of service
+
+An operator takes a node out of service without cutting what it serves: the node takes nothing new and goes on with what it has begun, until nothing is left. This is called a drain.
+
+The MRFC has to go on with what it has begun, because each dialog lives in the instance that took its INVITE. The Contact of the dialog names that instance, and the termination on the MRFP, the timers and the wait for the report that an announcement has ended are all in that instance. A commercial network runs several instances of the MRFC behind the one name that the AS has in its configuration, and DNS spreads the new requests over them.
+
+The node of the MRFC serves a maintenance API for this on port 8085, the listener of the `maintenance` section of `deploy/compose/mrfc.yaml`. The API asks for no password, so the port is not published on the host: send the requests from inside the container of the MRFC. The administrative state has the values of TS 28.622 5.3.1. `UNLOCKED` takes new work, `SHUTTINGDOWN` serves only what it has, and `LOCKED` takes nothing new.
+
+1. Shut the MRFC down:
+
+   ```sh
+   docker compose exec mrfc sh -c '
+   body="{\"administrative_state\":\"SHUTTINGDOWN\",\"operator\":\"learner\"}"
+   printf "PUT /maintenance/v1/functions/mrfc/administrative-state HTTP/1.0\r\nContent-Type: application/json\r\nContent-Length: ${#body}\r\n\r\n%s" "$body" |
+     nc -w 5 127.0.0.1 8085'
+   ```
+
+   The answer ends with the state of the MRFC. With no dialog of its own it is `LOCKED` at once:
+
+   ```json
+   {"role":"mrfc","administrative_state":"LOCKED","operational_state":"ENABLED","users":0}
+   ```
+
+   `users` counts the dialogs that this instance holds, one for every INVITE outside a dialog that it has taken and not yet finished with: an announcement until it has played or the AS has stopped it, and a party of a conference for as long as that party is in the mix. An INVITE that the MRFC refuses for the service its Request-URI names, or for its SDP, is one for the moment it takes to answer it; an INVITE whose Request-URI does not parse at all is answered 400 (Bad Request) before it is counted. With an announcement playing the shut down leaves the MRFC `SHUTTINGDOWN`, and it becomes `LOCKED` once the last of its dialogs has ended; the mixes themselves are in the MRFPs and outlive this node. `operational_state` says whether the MRFC can work (TS 28.622 5.3.3): it is `ENABLED` while the node runs, since the MRFC keeps no association with an MRFP whose state it could report. Every operation it sends an MRFP is a request of its own, and one that an MRFP does not answer shows in the refusal of the INVITE that needed it. `docker compose exec mrfc wget -qO- http://127.0.0.1:8085/maintenance/v1/state` shows the whole node.
+
+2. Have UE 1 bar its own outgoing calls, as in [An announcement before a rejection](#an-announcement-before-a-rejection), and call UE 2:
+
+   ```sh
+   docker compose run --rm ue xcap set baoc on
+   docker compose run --rm ue call tel:+12025550102
+   ```
+
+   The call ends with `603 Decline`, as a barred call does, and UE 1 hears no announcement before it.
+
+```text
+ UE 1        P-CSCF      S-CSCF      MMTel AS      MRFC
+ |  INVITE     |           |            |            |
+ |------------>|---------->|----------->|            |  tel:+12025550102, which OCB bars
+ |             |           |            |----------->|  INVITE sip:annc@mrfc...;play=/provisioned/notice
+ |             |           |            |  503 Retry-After: 30
+ |             |           |            |<-----------|
+ |  603        |  603      |  603       |            |  no early media, no Reason
+ |<------------|<----------|<-----------|            |
+```
+
+- **The AS asks the MRFC for the announcement** with the Request-URI of RFC 4240 3, as it does for a call it rejects when the MRFC is in service.
+- **The MRFC answers 503 Service Unavailable** with **Retry-After: 30**, and has an MRFP set up nothing. A request outside a dialog starts something new, which the MRFC does not take while it is not `UNLOCKED`. Retry-After asks the client to send this server no other request for that many seconds (RFC 3261 21.5.4). No specification gives the value; 30 seconds is this project's choice. The response carries the P-Asserted-Identity of the service that was asked for, as every response of the MRFC to an initial INVITE does (TS 24.229 5.8.2.1.1.1).
+- **The AS sends the INVITE on to the next instance** that DNS gave it for the name of the MRFC (RFC 3263 4.3), so the 503 reaches the AS itself only once there is none left to try. This network runs one instance.
+- **The AS then rejects the barred call without the announcement.** UE 1 gets the 603 straight away, with neither the reliable 183 that would have authorized the early media of the MRFP nor the `Reason` that the AS adds to a rejection the caller has heard an announcement before (TS 24.628 4.2.4). The service itself holds: the call is barred either way, and only the announcement is lost. A customized alerting tone goes the same way, and the caller hears the ringing tone of its own UE while the callee rings.
+- **An INVITE that would create a conference or join one is refused.** A conference has no media without a mixer, so the focus takes no participant it cannot connect. The AS rejects it with the status that the MRFC gave, 503, and the party sees 500 (Server Internal Error): a proxy on the way does not pass a 503 on, it answers 500 of its own instead, since the 503 is about the server that sent it and not about the proxy (RFC 3261 16.7 step 6).
+
+While it is not `UNLOCKED`, the MRFC goes on with what it has begun and refuses what would start something new.
+
+It goes on with:
+
+- **Every request within the dialogs it holds**, so an announcement plays to its end and a party stays in its mix: the re-INVITE of a hold, or of a party that leaves the mix and rejoins it (TS 24.229 5.8.4.1.1.1), the BYE with which the AS stops a play (5.8.3.1.1), and the BYE that the MRFC itself sends once the MRFP reports that the play has ended (5.8.3.2.1).
+- **An OPTIONS outside a dialog**, which it answers with 200 as ever (RFC 3261 11.2). The request asks what the node can do, and the node is alive.
+
+It answers 503 to **every INVITE outside a dialog**: the announcement of RFC 4240 3, and the party of a conference of RFC 4240 5, even for a conference it already holds a party of. That last refusal costs the party nothing where another instance can take it, which is what tells the MRFC apart from the AS. A conference of the MRFC is tied to no instance of it as long as the instances share one `Store`: it holds which MRFP and which context hold the mix, and every instance knows every MRFP, so a party that another instance takes joins the same mix, beside the parties of the instance that is out of service. That is the deployment of `deploy/redundancy/redundancy.yaml`, where the `store` section of each node names one Valkey server. Instances that each keep the conferences in the memory of their own process share none of it: the instance that took the refused party would find no media for the conference, have an MRFP make a second context, and the mix would be split in two. The Compose project of these guides runs one MRFC, with the conferences in its own memory, so here a party that leaves the mix and rejoins it while the MRFC is out of service is refused outright, and the mix goes on without it. The focus of the conference is the MMTel AS, and it stays where it is ([A conference of three](#a-conference-of-three)). The MRFC takes no SUBSCRIBE at all: the conference event package is in the focus, so a SUBSCRIBE that reaches the MRFC gets 405 (Method Not Allowed), out of service or not.
+
+3. Unlock the MRFC with the same request and `UNLOCKED`, and let UE 1 call again:
+
+   ```sh
+   docker compose exec mrfc sh -c '
+   body="{\"administrative_state\":\"UNLOCKED\",\"operator\":\"learner\"}"
+   printf "PUT /maintenance/v1/functions/mrfc/administrative-state HTTP/1.0\r\nContent-Type: application/json\r\nContent-Length: ${#body}\r\n\r\n%s" "$body" |
+     nc -w 5 127.0.0.1 8085'
+   docker compose run --rm ue call tel:+12025550102
+   docker compose run --rm ue xcap set baoc off
+   ```
+
+   UE 1 hears the announcement before the 603 again. The last command lets its outgoing calls through, for the scenarios that follow.
+
+In Wireshark, `sip.Status-Code == 503 && ip.src == 172.28.0.85` shows the 503 of the MRFC, and `sip.r-uri contains "annc@"` the INVITEs that asked for the announcement. The PUT request travels over the loopback interface of the container, so the capture does not hold it.
+
+The administrative state belongs to the process of the node: a node that starts again is `UNLOCKED`. `scripts/e2e-observability.sh` runs these steps and checks the capture.
+
 ## Wireshark display filters
 
 | Filter | What it finds |
@@ -264,6 +341,7 @@ The script does not run this. `TestRejoinWithTheConferenceURI` in `internal/mmte
 | `internal/mmtel/conference.go`, `internal/mmtel/conferenceevent.go` | The focus and the conference event package. |
 | `internal/scscf/session.go`, `internal/scscf/unregistered.go`, `internal/hss/psi.go` | The S-CSCF that serves a request on behalf of the conference URI, and the PSI user of the HSS. |
 | `internal/mrfc`, `internal/netann` | The MRFC and the Request-URIs of RFC 4240. |
+| `internal/mrfc/maintenance.go` | What the MRFC tells the maintenance API of its node, and what it refuses while the operator has it out of service. |
 | `internal/agw` | The MRFP: terminations, announcements and the mixer, and its control API. |
 | `internal/ue/phone_conference.go`, `internal/ue/conference.go` | Swap, Merge and the UE side of a conference. |
 | `internal/mmtel/mrf_network_test.go`, `internal/mmtel/conference_network_test.go`, `internal/mmtel/conference_border_test.go` | The same flows through the whole IMS in one process, the last with a peer of another network. |
