@@ -273,7 +273,8 @@ func nextTransaction(t *testing.T, transactions <-chan *ServerTransaction) *Serv
 }
 
 // Config.Admit decides off the loop: while it holds an INVITE, the
-// stack answers an OPTIONS from another source. An INVITE it refuses
+// stack answers an OPTIONS from another source, and one from the same
+// source with a Call-ID of its own. An INVITE it refuses
 // leaves nothing behind, so the next copy is asked about again. A copy
 // let in starts the transaction, and a copy let in after it is a
 // retransmission of that transaction.
@@ -293,6 +294,9 @@ func TestAdmitDecidesWhileTheStackGoesOn(t *testing.T) {
 	q := nextQuestion(t, questions)
 	if got := other.sync(); len(got) != 0 {
 		t.Errorf("stack sent %s to the other source, want only the 200 to its OPTIONS", startLine(got[0]))
+	}
+	if got := peer.sync(); len(got) != 0 {
+		t.Errorf("stack sent %s to the source of the INVITE, want only the 200 to its OPTIONS", startLine(got[0]))
 	}
 	expectSilence(t, peer.conn, 50*time.Millisecond, "the stack sends nothing while Admit holds the INVITE")
 	q.answer <- false
@@ -374,29 +378,30 @@ func TestAdmitLetsACANCELInAfterItsINVITE(t *testing.T) {
 	peer.send(newMatchingRequest(invite, ACK, terminated.Get("To")))
 }
 
-// Admit decides on the requests from one source one at a time, in the
-// order they arrived. A request it refuses holds up none after it.
-func TestAdmitTakesTheRequestsOfOneSourceInTurn(t *testing.T) {
+// Admit decides on the requests with one Call-ID from a source one at a
+// time, in the order they arrived, and on those with other Call-IDs side
+// by side, so that a request it holds holds up only the later ones with
+// its Call-ID. A request it refuses holds up none after it.
+func TestAdmitTakesTheRequestsOfOneCallIDInTurn(t *testing.T) {
 	questions := make(chan admitQuestion)
 	held := heldAdmit(t, questions, INVITE, CANCEL, MESSAGE, ACK)
-	// most is the most requests from peer that Admit has decided on at
-	// once.
+	// most is the most requests with one Call-ID that Admit has decided
+	// on at once.
 	var mu sync.Mutex
-	var deciding, most int
+	deciding := map[string]int{}
+	most := 0
 	stack := newStackWith(t, Config{
 		Timers: testTimers,
 		Admit: func(req *Message, source Destination) bool {
-			if req.Method == OPTIONS {
-				return true
-			}
+			callID := req.Get("Call-ID")
 			mu.Lock()
-			deciding++
-			most = max(most, deciding)
+			deciding[callID]++
+			most = max(most, deciding[callID])
 			mu.Unlock()
 			defer func() {
 				mu.Lock()
 				defer mu.Unlock()
-				deciding--
+				deciding[callID]--
 			}()
 			return held(req, source)
 		},
@@ -405,30 +410,49 @@ func TestAdmitTakesTheRequestsOfOneSourceInTurn(t *testing.T) {
 	peer := newUDPPeer(t, stack.LocalAddr())
 	other := newUDPPeer(t, stack.LocalAddr())
 	invite := peer.request(INVITE)
-	sent := []*Message{invite, newMatchingRequest(invite, CANCEL, invite.Get("To")), peer.request(MESSAGE), peer.request(ACK)}
+	message := peer.request(MESSAGE)
+	again := peer.request(MESSAGE)
+	again.SetFirst("Call-ID", message.Get("Call-ID"))
+	again.SetFirst("CSeq", "2 MESSAGE")
+	// The requests of the two Call-IDs arrive in turn.
+	sent := []*Message{invite, message, newMatchingRequest(invite, CANCEL, invite.Get("To")), again, newMatchingRequest(invite, ACK, invite.Get("To"))}
+	remaining := map[string]int{}
+	want := map[string][]string{}
 	for _, m := range sent {
 		peer.send(m)
+		remaining[m.Get("Call-ID")]++
+		want[m.Get("Call-ID")] = append(want[m.Get("Call-ID")], m.Get("CSeq"))
 	}
+	// The stack has read every request from peer by the time it answers
+	// this OPTIONS.
+	other.sync()
 
-	var asked []Method
-	for range sent {
-		// The stack has read every request from peer by the time it
-		// answers this OPTIONS, so all of them could be asked about.
-		other.sync()
-		q := nextQuestion(t, questions)
-		asked = append(asked, q.req.Method)
+	// Admit is asked about the first request of each Call-ID while it
+	// holds the other. Each answer then lets it be asked about the next
+	// request with the same Call-ID, if there is one.
+	pending := []admitQuestion{nextQuestion(t, questions), nextQuestion(t, questions)}
+	asked := map[string][]string{}
+	for len(pending) > 0 {
+		q := pending[0]
+		pending = pending[1:]
+		callID := q.req.Get("Call-ID")
+		asked[callID] = append(asked[callID], q.req.Get("CSeq"))
 		q.answer <- false
+		remaining[callID]--
+		if remaining[callID] > 0 {
+			pending = append(pending, nextQuestion(t, questions))
+		}
 	}
-	if want := []Method{INVITE, CANCEL, MESSAGE, ACK}; !reflect.DeepEqual(asked, want) {
-		t.Errorf("Admit was asked about %v, want %v, the order they arrived in", asked, want)
+	if !reflect.DeepEqual(asked, want) {
+		t.Errorf("Admit was asked about %v by Call-ID, want %v, the order they arrived in", asked, want)
+	}
+	if got := peer.sync(); len(got) != 0 {
+		t.Errorf("stack sent %d messages for refused requests, want none; first: %s", len(got), startLine(got[0]))
 	}
 	mu.Lock()
 	defer mu.Unlock()
 	if most != 1 {
-		t.Errorf("Admit decided on %d requests from the source at once, want one at a time", most)
-	}
-	if got := peer.sync(); len(got) != 0 {
-		t.Errorf("stack sent %d messages for refused requests, want none; first: %s", len(got), startLine(got[0]))
+		t.Errorf("Admit decided on %d requests with one Call-ID at once, want one at a time", most)
 	}
 }
 
@@ -493,13 +517,13 @@ func TestAdmitDropsARequestWithoutAWord(t *testing.T) {
 	}
 }
 
-// Close returns only once the call of Admit under way has returned, so
-// that nothing reads a store that the node closes after the stack.
-// Admit is asked about nothing after the stack has stopped: the request
-// that waited behind the one under way is dropped with the stack.
+// Close returns only once every call of Admit under way has returned,
+// so that nothing reads a store that the node closes after the stack.
+// Admit is asked about nothing after the stack has stopped: the CANCEL
+// that waited behind its INVITE is dropped with the stack.
 func TestCloseWaitsForAdmit(t *testing.T) {
 	questions := make(chan admitQuestion)
-	held := heldAdmit(t, questions, INVITE, MESSAGE)
+	held := heldAdmit(t, questions, INVITE, CANCEL, MESSAGE)
 	var mu sync.Mutex
 	var asked []Method
 	stack := newStackWith(t, Config{
@@ -515,10 +539,14 @@ func TestCloseWaitsForAdmit(t *testing.T) {
 		OnRequest: answerOptions(func(st *ServerTransaction) { t.Errorf("TU got %s", st.Request.Method) }),
 	})
 	peer := newUDPPeer(t, stack.LocalAddr())
-	peer.send(peer.request(INVITE))
-	q := nextQuestion(t, questions)
+	invite := peer.request(INVITE)
+	peer.send(invite)
 	peer.send(peer.request(MESSAGE))
-	// The stack reads one socket in order, so it has the MESSAGE in hand
+	peer.send(newMatchingRequest(invite, CANCEL, invite.Get("To")))
+	// The INVITE and the MESSAGE have Call-IDs of their own, so Admit
+	// decides on both at once.
+	underWay := []admitQuestion{nextQuestion(t, questions), nextQuestion(t, questions)}
+	// The stack reads one socket in order, so it has the CANCEL in hand
 	// once it answers this OPTIONS.
 	newUDPPeer(t, stack.LocalAddr()).sync()
 
@@ -527,19 +555,21 @@ func TestCloseWaitsForAdmit(t *testing.T) {
 		stack.Close()
 		close(closed)
 	}()
-	// Close stops the loop first, so that the answer below cannot get
-	// the stack to ask Admit about the MESSAGE.
+	// Close stops the loop first, so that the answers below cannot get
+	// the stack to ask Admit about the CANCEL.
 	select {
 	case <-stack.done:
 	case <-time.After(5 * time.Second):
 		t.Fatal("the loop of the stack did not stop")
 	}
-	select {
-	case <-closed:
-		t.Error("Close returned while Admit was deciding on the INVITE")
-	case <-time.After(100 * time.Millisecond):
+	for _, q := range underWay {
+		select {
+		case <-closed:
+			t.Errorf("Close returned while Admit was deciding on the %s", q.req.Method)
+		case <-time.After(100 * time.Millisecond):
+		}
+		q.answer <- true
 	}
-	q.answer <- true
 	select {
 	case <-closed:
 	case <-time.After(5 * time.Second):
@@ -547,15 +577,16 @@ func TestCloseWaitsForAdmit(t *testing.T) {
 	}
 	mu.Lock()
 	defer mu.Unlock()
-	if want := []Method{INVITE}; !reflect.DeepEqual(asked, want) {
-		t.Errorf("Admit was asked about %v, want %v, the request it held when the stack stopped", asked, want)
+	slices.Sort(asked)
+	if want := []Method{INVITE, MESSAGE}; !reflect.DeepEqual(asked, want) {
+		t.Errorf("Admit was asked about %v, want %v, the requests it held when the stack stopped", asked, want)
 	}
 }
 
-// At most maxAdmitQueue requests from one source wait for Admit, the
-// one it is deciding on included, and the stack drops any more and
-// sends nothing back. Once Admit has decided on one of them, there is room for the
-// next request from the source.
+// At most maxAdmitQueue requests from one source wait for Admit,
+// whatever their Call-IDs, the ones it is deciding on included, and the
+// stack drops any more and sends nothing back. Once Admit has decided on
+// one of them, there is room for the next request from the source.
 func TestAdmitBoundsTheRequestsThatWaitFromOneSource(t *testing.T) {
 	// A smaller bound, so that the requests over it fit in the socket
 	// buffers of the test.
@@ -565,54 +596,92 @@ func TestAdmitBoundsTheRequestsThatWaitFromOneSource(t *testing.T) {
 	t.Cleanup(func() { maxAdmitQueue = bound })
 	maxAdmitQueue = 16
 	questions := make(chan admitQuestion)
+	held := heldAdmit(t, questions, MESSAGE)
+	var mu sync.Mutex
+	var asked []string
 	stack := newStackWith(t, Config{
-		Timers:    testTimers,
-		Admit:     heldAdmit(t, questions, MESSAGE),
+		Timers: testTimers,
+		Admit: func(req *Message, source Destination) bool {
+			if req.Method == MESSAGE {
+				mu.Lock()
+				asked = append(asked, branchOf(req))
+				mu.Unlock()
+			}
+			return held(req, source)
+		},
 		OnRequest: answerOptions(func(st *ServerTransaction) { t.Errorf("TU got %s", st.Request.Method) }),
 	})
 	peer := newUDPPeer(t, stack.LocalAddr())
 	other := newUDPPeer(t, stack.LocalAddr())
+	// The first two MESSAGEs share a Call-ID, so that Admit is asked
+	// about the second only once the stack has taken up the answer about
+	// the first. The others have a Call-ID each.
 	var sent []*Message
-	for range maxAdmitQueue + 2 {
+	for i := range maxAdmitQueue + 2 {
 		m := peer.request(MESSAGE)
+		if i == 1 {
+			m.SetFirst("Call-ID", sent[0].Get("Call-ID"))
+			m.SetFirst("CSeq", "2 MESSAGE")
+		}
 		sent = append(sent, m)
 		peer.send(m)
 	}
 	// The stack has read every MESSAGE from peer once it answers this
 	// OPTIONS.
 	other.sync()
-	nextQuestion(t, questions).answer <- false
-	// Admit is asked about the next MESSAGE only after the stack has
-	// taken up the answer about the first, which frees a place.
+	// Admit is asked about the first MESSAGE of each Call-ID among those
+	// that wait, and holds them all.
+	holding := map[string]admitQuestion{}
+	for range maxAdmitQueue - 1 {
+		q := nextQuestion(t, questions)
+		holding[branchOf(q.req)] = q
+	}
+	first, ok := holding[branchOf(sent[0])]
+	if !ok {
+		t.Fatal("Admit holds the first MESSAGEs of the other Call-IDs, but not the first one sent")
+	}
+	delete(holding, branchOf(sent[0]))
+	first.answer <- false
+	// The second MESSAGE is asked about once the stack has taken up the
+	// answer about the first, which frees a place.
 	q := nextQuestion(t, questions)
+	holding[branchOf(q.req)] = q
 	late := peer.request(MESSAGE)
 	peer.send(late)
 	other.sync()
-
-	index := map[string]int{late.Get("Call-ID"): len(sent)}
-	for i, m := range sent {
-		index[m.Get("Call-ID")] = i
-	}
-	var asked []int
-	for range maxAdmitQueue {
-		asked = append(asked, index[q.req.Get("Call-ID")])
+	q = nextQuestion(t, questions)
+	holding[branchOf(q.req)] = q
+	for _, q := range holding {
 		q.answer <- false
-		if q.req.Get("Call-ID") == late.Get("Call-ID") {
-			break
-		}
-		q = nextQuestion(t, questions)
-	}
-	var want []int
-	for i := 1; i < maxAdmitQueue; i++ {
-		want = append(want, i)
-	}
-	want = append(want, len(sent))
-	if !reflect.DeepEqual(asked, want) {
-		t.Errorf("after the first MESSAGE, Admit was asked about the requests %v, want %v: those that waited, then the one sent later", asked, want)
 	}
 	if got := peer.sync(); len(got) != 0 {
 		t.Errorf("stack sent %d messages for refused and dropped requests, want none; first: %s", len(got), startLine(got[0]))
 	}
+
+	index := map[string]int{branchOf(late): len(sent)}
+	for i, m := range sent {
+		index[branchOf(m)] = i
+	}
+	var want []int
+	for i := range maxAdmitQueue {
+		want = append(want, i)
+	}
+	want = append(want, len(sent))
+	mu.Lock()
+	defer mu.Unlock()
+	var got []int
+	for _, branch := range asked {
+		got = append(got, index[branch])
+	}
+	slices.Sort(got)
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("Admit was asked about the requests %v, want %v: those that waited, then the one sent later", got, want)
+	}
+}
+
+func branchOf(m *Message) string {
+	v, _ := ParseVia(m.Get("Via"))
+	return v.Branch()
 }
 
 // The stack logs a request that Screen refuses, and leaves one that
@@ -626,7 +695,7 @@ func TestAdmitLogsItsOwnRefusals(t *testing.T) {
 		SentBy:    tr.LocalAddr().String(),
 		Timers:    testTimers,
 		Screen:    func(req *Message, _ Destination) bool { return !strings.HasPrefix(req.Get("Call-ID"), "screened-") },
-		Admit:     refusedCallID,
+		Admit:     func(req *Message, _ Destination) bool { return req.Method != INVITE },
 		OnRequest: answerOptions(func(st *ServerTransaction) { t.Errorf("TU got %s", st.Request.Method) }),
 	}, slog.New(slog.NewJSONHandler(lockedWriter{&mu, &logs}, nil)))
 	if err != nil {
@@ -637,11 +706,16 @@ func TestAdmitLogsItsOwnRefusals(t *testing.T) {
 	screened := peer.request(MESSAGE)
 	screened.SetFirst("Call-ID", "screened-"+NewCallID())
 	refused := peer.request(INVITE)
-	refused.SetFirst("Call-ID", "refused-"+NewCallID())
 	peer.send(screened)
 	peer.send(refused)
-	// Admit lets this OPTIONS in only after it has refused the INVITE.
-	peer.sync()
+	// Admit is asked about this OPTIONS, which has the Call-ID of the
+	// INVITE, only once the stack has taken up the refusal of the INVITE.
+	probe := peer.request(OPTIONS)
+	probe.SetFirst("Call-ID", refused.Get("Call-ID"))
+	peer.send(probe)
+	if got := peer.read(); got.StatusCode != 200 || got.Get("CSeq") != "1 OPTIONS" {
+		t.Fatalf("got %s for %q, want the 200 for the OPTIONS", startLine(got), got.Get("CSeq"))
+	}
 
 	mu.Lock()
 	defer mu.Unlock()

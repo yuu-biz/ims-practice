@@ -232,7 +232,10 @@ func (p *udpPeer) read() *Message {
 // order and handles each message to the end before the next, so
 // everything it sent for the requests before the OPTIONS is in the
 // returned list. With Config.Ordered, the TU has also seen those
-// requests by then.
+// requests by then. With Config.Admit, both hold only for the requests
+// from other sockets: the OPTIONS has a Call-ID of its own, so Admit
+// may let it in while it still decides on earlier requests from this
+// one.
 func (p *udpPeer) sync() []*Message {
 	p.t.Helper()
 	options := p.request(OPTIONS)
