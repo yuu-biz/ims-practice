@@ -239,7 +239,7 @@ API の形の案です。経路は確定ではありません。
 
 ### 作った API
 
-`internal/oam` に、OAM のサーバーの本体を作りました。HTTP のハンドラと、その後ろの処理です。画面はありません。`cmd/ims`、設定、Compose へのつなぎ込みは作っていません。経路はすべて `/oam/v1/` で始まり、役割はハンドラを `oam.PathPrefix` の下に載せます。本文は JSON です。エラーの本文は、保守用の API と同じ `maintenance.ErrorBody`（`{"error": "…"}`）です。経路と型はパッケージの文書にも書いてあります。
+`internal/oam` に、OAM のサーバーの本体を作りました。HTTP のハンドラと、その後ろの処理です。`cmd/ims` の役割 `oam` がこれを動かします（設定は `internal/config/oam.go`、Compose は `deploy/compose/oam.yaml`）。経路はすべて `/oam/v1/` で始まり、役割はハンドラを `oam.PathPrefix` の下に載せます。本文は JSON です。エラーの本文は、保守用の API と同じ `maintenance.ErrorBody`（`{"error": "…"}`）です。経路と型はパッケージの文書にも書いてあります。
 
 OAM が import するのは `internal/maintenance` と標準ライブラリだけです。HSS のプロビジョニングの API は、`internal/hss` を import せずに、JSON の形を自分の型に写して話します。
 
@@ -1121,11 +1121,11 @@ OAM とその画面、指標、警報は、ほかの部分に次のものを求�
 - 加入者の `test_user` と `service_profile`。`Subscription`、`Store`、`subscriptionRequest`、`subscriptionResponse` に足す。
 - HSS の設定の `hss.service_profiles`。名前ごとに、機能の名前の一覧と、機能ごとの iFC を持つ。`userProfile` は、加入者の `service_profile`、試験用の利用者なら `hss.test_user_service_profile`、ほかは `hss.default_service_profile` の順にプロファイルを選び、その iFC を返す（今の `SIMPLIFIED: TS 29.228 B.2.2` を外せる）。保守用の API の設定の見え方には、プロファイルごとの機能の名前の一覧を `{"hss": {"service_profiles": {"<名前>": {"features": [...]}}}}` の形で入れる。
 - 動かしたまま変えられる項目を 3 つ。`hss.admission`（`all` か `test_users`）、`hss.default_service_profile`、`hss.test_user_service_profile`。値は文字列。`test_users` のとき、試験用でない利用者の UAR を断る（9 章）。
-- 役割 `oam` のつなぎ込み。`internal/config` に、ノードの一覧（名前、役割、保守用の待ち受けの URL）、HSS のプロビジョニングの URL、履歴のファイルの場所、退避の置き場所を足す。`cmd/ims` で `oam.New` を呼び、`oam.Handler` を `oam.PathPrefix` の下に載せる。履歴と退避は `oam.NewFileChangeStore` と `oam.NewFileBackupStore` で作る。Compose では、OAM に名前付きのボリュームを付け、ホストには公開しない。
+- 役割 `oam` のつなぎ込み。`internal/config` に、ノードの一覧（名前、役割、保守用の待ち受けの URL）、HSS のプロビジョニングの URL、履歴のファイルの場所、退避の置き場所を足す。`cmd/ims` で `oam.New` を呼び、`oam.Handler` を `oam.PathPrefix` の下に載せる。履歴と退避は `oam.NewFileChangeStore` と `oam.NewFileBackupStore` で作る。Compose では、OAM に名前付きのボリュームを付け、ホストには公開しない。この項目は作りました。履歴のファイルの場所と退避の置き場所は、`oam.data_dir` の 1 つにまとめ、その下の `config-history.jsonl` と `backups/` にしています。
 
 ### `web/oam` のために要るもの
 
-- 役割 `oam` で、組み立てた画面を `/oam/v1/` と同じオリジンから配る。画面は API を `/oam/v1/…` の絶対の経路で呼び、ページの資源は相対の経路（Vite の `base: "./"`）で読むので、ページを置く経路はどこでも構いません（`/` でも `/oam/` でも）。形は `internal/dashboard` と同じにできます。`Dockerfile` に `web/oam` を `npm ci` と `npm run build` で組み立てる段を足し、`dist/` を Go のパッケージの `web` ディレクトリに写してから `go build` する。リポジトリには、組み立てていないことを知らせる仮のページを置き、`//go:embed` で埋め込み、`http.FileServerFS` で配る。
+- 役割 `oam` で、組み立てた画面を `/oam/v1/` と同じオリジンから配る。この項目は作りました。画面は API を `/oam/v1/…` の絶対の経路で呼び、ページの資源は相対の経路（Vite の `base: "./"`）で読むので、ページを置く経路はどこでも構いません（`/` でも `/oam/` でも）。形は `internal/dashboard` と同じにできます。`Dockerfile` に `web/oam` を `npm ci` と `npm run build` で組み立てる段を足し、`dist/` を Go のパッケージの `web` ディレクトリに写してから `go build` する。リポジトリには、組み立てていないことを知らせる仮のページを置き、`//go:embed` で埋め込み、`http.FileServerFS` で配る。
 - CI に `web/oam` のジョブを足す。今の `web` のジョブと同じ形で、`working-directory: web/oam`、Node 26.13.1、`npm ci --no-fund --no-audit`、`npm test`、`npm run build` です。
 - Docker が使えない環境でのフロントエンドの試験の手順に、`web/oam` を足す。
 - 警報の API。保守用の API に `GET /maintenance/v1/alarms`（3 章の案）を足し、OAM に、すべてのノードの警報の `FanOut` を返す経路（たとえば `GET /oam/v1/alarms`）を足す。形は 6 章の最初の案（TS 28.111 6.3 の属性）です。この項目は作りました（6 章の「作ったもの」）。
