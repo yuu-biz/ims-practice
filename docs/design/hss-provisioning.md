@@ -2,6 +2,8 @@
 
 この記録は、HSS が持つ加入者のプロビジョニングの API を決めます。1 件ずつの操作、ページに分けた一覧、一括の登録、書き出しと読み戻し、試験用の利用者の印、サービスのプロファイルの選び方、収容の方針が対象です。OAM がこの API を使います。OAM 自体の作りは [lab-oam.md](lab-oam.md)、状態の置き場所とページに分けた一覧の仕組みは [state-redundancy.md](state-redundancy.md)、調査は [oam.md](../background/oam.md) の 7 章から 9 章にあります。
 
+この API を標準の形に寄せるかどうかは [provisioning-northbound.md](provisioning-northbound.md) が決めています。標準の加入者の管理（SuM）には OSS に面する Itf-N がありますが、その情報モデルに長期の鍵、OPc、SIP Digest のパスワードを入れる項目が無いので、この独自の API のままにしています。その記録は、ここで足す `test_user`、`service_profile`、`repository_data` にも当たる項目が無いことまで確かめているので、この記録の中身は標準の調査によって変わりません。
+
 ## 選んだこと
 
 - API は HSS の側で 1 つに決めます。OAM は HSS が持つ口に合わせ、HSS が持たない口を当てにしません。取りかかる前の OAM は、`PUT` と `PATCH`、書き出し、`test_user` と `service_profile` の項目、`hss.service_profiles` と `hss.admission` の設定を当てにしていて、それらを持つのは OAM の試験の中の偽の HSS だけでした。
@@ -74,8 +76,30 @@
 | 印 | 加入者のデータの `test_user` です。設定のファイル、`POST`、`PUT`、`PATCH` で付けられます。`hss.Subscription` の項目なので、保存先に置く実装では加入者の記録が 1 項目増えるだけで、キーも索引も増えません。 |
 | 方針の置き場所 | HSS の設定の `hss.admission`（`all` か `test_users`）です。保守用の API で動かしたまま変えられる項目にします（`maintenance.NewSetting`）。OAM が役割のすべての台に同じ世代で配り、変更を履歴に残し、前の値に戻せます。設定の変更を記録して前の設定に戻せることが要件にあるためです（[requirements.md](../requirements.md) の「運用と保守（OAM）」）。 |
 | 断る場所 | UAR です。方針が `test_users` で、加入者の `test_user` が false なら、UAA の Result-Code を DIAMETER_AUTHORIZATION_REJECTED にします。TS 29.228 6.1.1.1 の step 5 が、登録を認可されていない利用者にこの結果を求めています。この値は基本のプロトコルの Result-Code で、TS 29.229 6.2 にはありません（RFC 6733 7.1.5、`internal/cx/cx.go` と同じ）。I-CSCF は、否定の UAA に 403 を返します（TS 24.229 5.3.1.3。できています）。 |
-| 断る範囲 | HSS が登録を持っていない利用者の UAR です。能力を求める要求（REGISTRATION_AND_CAPABILITIES）も、同じ検査を通ってから答えます。6.1.1.1 の step 5 は、この 2 つの枝だけで登録の認可を確かめ、DE_REGISTRATION の枝では確かめません。すでに登録している利用者と DE_REGISTRATION の扱いは、「決めていないこと」で決めます。 |
+| 断る範囲 | 登録と、登録の更新と、未登録の状態のサービスのための割り当てです。手順ごとの扱いは下の「収容を制限するあいだの振る舞い」にあります。 |
 | 今のコード | `internal/hss/hss.go` の `userAuthorization` にある `SIMPLIFIED:`（6.1.1.1 の step 5。この HSS はすべての利用者の登録を通す）を、この検査に置き換えます。 |
+
+### 収容を制限するあいだの振る舞い
+
+方針を `test_users` にしたときと、`test_users` のあいだに加入者の `test_user` を外したときは、同じ扱いです。そのときに有効な登録はそのままにし、そのあとに届く要求から断ります。RTR は送りません。利用者は、登録の期限が切れたときに落ちます。期限は S-CSCF が持っているので、HSS が断っても、期限までの登録はそのまま動きます。
+
+| 手順 | 収容の対象外の利用者への扱い | 理由 |
+| --- | --- | --- |
+| UAR（REGISTRATION か、User-Authorization-Type が無いもの） | 断る。Result-Code は DIAMETER_AUTHORIZATION_REJECTED | 6.1.1.1 の step 5 が、登録を認可されていない利用者にこの結果を求めています。最初の登録も登録の更新も、同じこの枝を通るので、同じ検査で断ります。 |
+| UAR（REGISTRATION_AND_CAPABILITIES） | 断る。同じ結果 | step 5 の同じ枝です。I-CSCF が S-CSCF を選ぶ前に断ります。 |
+| UAR（DE_REGISTRATION） | 通す | step 5 はこの枝で登録の認可を確かめません。断ると、利用者が登録を終えられず、S-CSCF と P-CSCF に登録が残ります。 |
+| LIR | 通す | 6.1.4.1 の step 3 が、登録している識別子に S-CSCF の名前を返します。期限までの登録への着信が、収容の方針で切れないようにします。 |
+| SAR（REGISTRATION、RE_REGISTRATION） | 届かない | その前の UAR を断るので、S-CSCF がこの SAR を送りません。 |
+| SAR（UNREGISTERED_USER） | 断る。Result-Code は DIAMETER_AUTHORIZATION_REJECTED | 有効な登録を持たない利用者に、S-CSCF を新しく割り当てません。 |
+| SAR（UNREGISTERED_USER 以外の型） | 通す | 6.1.2.1 の step 5 のほかの枝は、登録を終えるか、すでにある割り当てを確かめるものです。断ると、HSS に登録と認証の途中の印が残ります。 |
+
+通す型は、登録を終える TIMEOUT_DEREGISTRATION、USER_DEREGISTRATION、ADMINISTRATIVE_DEREGISTRATION、DEREGISTRATION_TOO_MUCH_DATA と、S-CSCF の名前を残したまま登録を終える TIMEOUT_DEREGISTRATION_STORE_SERVER_NAME と USER_DEREGISTRATION_STORE_SERVER_NAME、失敗した登録の後始末をする AUTHENTICATION_FAILURE と AUTHENTICATION_TIMEOUT、そして NO_ASSIGNMENT です。REGISTRATION と RE_REGISTRATION を入れて、6.1.2.1 の step 5 の枝はこれで全部です。NO_ASSIGNMENT は、要求元の S-CSCF がすでにその利用者に割り当てられているときだけプロファイルを渡し、ほかの S-CSCF には DIAMETER_UNABLE_TO_COMPLY を返す枝なので、新しい割り当てにはなりません。
+
+有効な登録を持たない利用者への着信は、LIR では止まらず、そのあとの SAR で止まります。6.1.4.1 の step 3 は、未登録の状態の着信サービスを持つ識別子に DIAMETER_UNREGISTERED_SERVICE と S-CSCF の能力を返すので、I-CSCF は S-CSCF を選び、その S-CSCF が UNREGISTERED_USER の SAR を送ります。
+
+UNREGISTERED_USER を断るかどうかは、HSS が持つ登録の状態で決めます。状態が Registered でなければ断り、S-CSCF の名前を持っているかどうかは見ません。`*_STORE_SERVER_NAME` の登録解除のあとのように、状態が Unregistered で S-CSCF の名前が残っている利用者も、有効な登録を持たないので断ります。
+
+この検査は、手順に無いものです。6.1.2.1 の step 5 は、この枝で認可を確かめません。それでも断るのは、登録だけを断っても、収容の対象外の利用者に未登録の状態のサービスが残るからです。DIAMETER_AUTHORIZATION_REJECTED は基本のプロトコルの Result-Code なので、この答えにも入れられます（RFC 6733 7.1.5）。`internal/hss/hss.go` の `serverAssignment` のコメントに、手順に足した検査であることと、この条項を書きます。
 
 作り直した HSS の台は、設定のファイルの値で起動します。OAM は、あるべき世代より古い台を見つけて、今の設定を送り直します（TS 32.600 4.2.1.3 の監査）。送り直すまでのあいだ、その台だけが前の方針で答えます。「残っている課題」に書きます。
 
@@ -89,9 +113,20 @@
 | SAA | User-Data に、選んだプロファイルの iFC と、加入の識別子（barring を含む）を入れます（TS 29.228 6.1.2.1、Annex B.2）。S-CSCF が User-Data-Already-Available で持っていると言えば、プロファイルを返しません（6.6）。 |
 | 名前の扱い | プロファイルの名前は Cx に出ません。User-Data の XML の `ServiceProfile` は、公開の識別子、CoreNetworkServicesAuthorization、iFC、Extension だけを持ち、名前の要素がないためです（TS 29.228 Annex E の Table E.2、Annex B.2 の Figure B.2.1）。S-CSCF が見るのは iFC だけです。 |
 | 無い名前 | `POST` と `PUT` は、`hss.service_profiles` に無い名前を 400 で断ります。2 つの名前の設定の変更も、無い名前を断ります。 |
-| 今のコード | `internal/hss/profile.go` の `SIMPLIFIED:`（すべての加入に同じ iFC を渡す）は外れます。ServiceInfo の MSISDN の置き換えは残ります。 |
+| 加入者を変えたときの反映 | 1 件のプロビジョニングの要求が、登録中か未登録の状態の加入者に渡すプロファイルを変えたら、HSS が完全なユーザープロファイルを PPR で S-CSCF に送ります。きっかけが `service_profile` でも `test_user` でも同じです。次の登録を待ちません。 |
+| 設定を変えたときの反映 | `hss.default_service_profile` と `hss.test_user_service_profile` を変えても、PPR は送りません。この扱いは、加入者 1 人の変更ではないので、上の行とは別にこの記録で決めたものです。6.6.1 の「ただちに push する」からは外れます（「残っている課題」）。送るには、その時点の登録をすべてたどる必要があり、加入者の数に比例する処理を役割に入れないためです（[requirements.md](../requirements.md) の「商用網の規模に向けて水平に広げられる組み方」）。登録中の利用者には、次の登録で新しいプロファイルが届きます。この S-CSCF は SAR に User-Data-Already-Available を入れないので、登録のたびにプロファイルを受け取り直すためです（`internal/scscf/scscf.go` の `serverAssignment`）。この設定を保守用の API で変えられるようにする作業で、送らないことを `SIMPLIFIED:` に書きます。 |
+| 今のコード | `internal/hss/profile.go` の `SIMPLIFIED:`（すべての加入に同じ iFC を渡す）は外れます。ServiceInfo の MSISDN の置き換えは残ります。`internal/scscf/unregistered.go` の `UnregisteredProfileLifetime` のコメントにある「この HSS は S-CSCF に変更を push しない」という断りも外れます。 |
 
 機能を試験用の利用者だけに有効にするのは、その機能の iFC を持つプロファイルを `hss.test_user_service_profile` にすることです。ほかの利用者には、その AS を呼ぶ iFC が渡りません。キャプチャには、試験用の利用者の呼にだけ AS への INVITE が写ります。
+
+### プロファイルの push
+
+TS 29.228 6.6.1 は、登録中か未登録の状態の識別子のプロファイルが変わったら、HSS が完全なユーザープロファイルをただちに S-CSCF に push することを求めています（should）。手順は 6.2.2 の Push-Profile-Request と Push-Profile-Answer です。
+
+- 送る中身は、暗黙の登録の集合の公開の識別子と、そのサービスプロファイルです。変わっていない識別子のプロファイルも入れます（6.5.2.1）。User-Data は、プロファイルが変わったときに入れる条件付きの項目です（Table 6.2.2.1）。
+- S-CSCF は、要求に入っている公開の識別子について、持っている情報を受け取ったもので上書きします（6.2.2.1）。
+- 送り先は、その加入者に割り当てている S-CSCF です。加入者 1 人の変更が、1 回の PPR になります。
+- 登録を持たない加入者のプロファイルを変えても、PPR は送りません。6.6.1 が push を求めるのは、登録中か未登録の状態の識別子だけです。
 
 ## OAM の変更
 
@@ -118,43 +153,35 @@ OAM の API（`/oam/v1/…`）と画面（`web/oam`）は変わりません。�
 
 ## 作らないもの
 
-- 登録中の利用者へのプロファイルの push（PPR、TS 29.228 6.2.2、6.6.1）。「決めていないこと」の答えで範囲を決めます。
 - 1 つの加入に複数のサービスプロファイルを持たせること。公開の識別子ごとのプロファイルと、複数の暗黙の登録の集合は、`internal/hss/store.go` の `SIMPLIFIED:` のままです。
 - プロファイルの中身（iFC）を動かしたまま変えること。設定のファイルの項目にします。変えられるのは、どのプロファイルを使うかだけです。
 - プロビジョニングの API の認証と認可。保守用の API と OAM の API と同じく、平文の HTTP で動かし、内部の網からだけ届くことに頼ります（`internal/oam` のパッケージのコメントの `SIMPLIFIED:`）。
 - 書き出した内容の暗号化。試験用の値だけを使う決まりがあるためです（調査の 8 章）。
 - 加入者を複数の HSS に分けて置くこと（SLF）。HSS は状態を共有するサーバーファームです（[state-redundancy.md](state-redundancy.md)）。
 
-## 決めていないこと
-
-次の 5 つは、運用の方針に関わるので、メンテナーに確かめてから決めます。収容の検査を入れる作業は、1 と 2 の答えを待ちます。
-
-1. 収容の方針を `test_users` にしたとき、すでに登録している試験用でない利用者をどうするか。案は次のとおりです。(a) 何もしない。登録は期限まで続き、再登録も通る。(b) 再登録の UAR も断る。利用者は期限が切れたときに落ちる。(c) RTR を送って登録を解除する。
-2. User-Authorization-Type が DE_REGISTRATION の UAR を断ることがあるか。TS 29.228 6.1.1.1 の step 5 は、この枝で登録の認可を確かめないので、断らない形が仕様に沿います。断ると、試験用でない利用者は登録を終えられません。
-3. 試験用でない利用者への着信（LIR）と、未登録の利用者へのサービス（SAR の UNREGISTERED_USER）も断るか。断ると、試験用でない利用者は呼び出せなくなります。断らないと、登録はできないのに着信の手順は進みます。
-4. 加入者の `test_user` を変えたとき、すでに登録している利用者にいつから効くか。印はプロファイルの選び方と収容の両方に関わります。次の登録からにするか、1 と同じ手段（再登録を断る、RTR を送る）で今の登録に効かせるかを決めます。
-5. 登録中の利用者の `service_profile` を変えたとき、S-CSCF にすぐ知らせるか（PPR）。TS 29.228 6.6.1 は、登録または未登録の識別子のプロファイルが変わったとき、HSS が完全なプロファイルをただちに push することを求めています（should）。知らせないなら、S-CSCF は次の登録まで前のプロファイルで動きます。PPR の手順は TS 29.228 6.2.2 です。
-
 ## 作る順番
 
 1 つの PR は、1 つの確かめ方で終わる大きさにします。
 
 1. この設計の記録。
-2. 名前の付いたサービスのプロファイル。`hss.service_profiles` と 2 つの名前の設定を足し、SAA が選んだプロファイルの iFC を返すようにします。設定の読み取り（`internal/config/ifc.go`、`roles.go`）、その試験（`internal/config/ifc_test.go`）、4 つの設定ファイル（`deploy/compose`、`deploy/k8s`、`deploy/redundancy`、`deploy/interconnect/b`）、この鍵を載せている手順書（`docs/guide/en/sms.md` と `docs/guide/ja/sms.md`）を、1 つのコミットで直します。分けると、どこかの段階で設定が読めなくなるためです。確かめ方は `internal/hss` と `internal/config` の試験と、登録と通話の e2e で信号が変わらないことです。
-3. 加入者のデータの `test_user` と `service_profile`。設定のファイル、`POST`、`GET` の答え、`Store` の形に足し、プロファイルの選び方をこの 2 つで決めます。確かめ方は `internal/hss` と `internal/kvstore/hssstore` の試験です。
+2. 名前の付いたサービスのプロファイル。`hss.service_profiles` と `hss.default_service_profile` を足し、SAA が選んだプロファイルの iFC を返すようにします。`hss.test_user_service_profile` は、それを読む `test_user` の印と同じ作業で足します。読む側の無い設定を、先に入れないためです。設定の読み取り（`internal/config/ifc.go`、`roles.go`）、その試験（`internal/config/ifc_test.go`）、4 つの設定ファイル（`deploy/compose`、`deploy/k8s`、`deploy/redundancy`、`deploy/interconnect/b`）、この鍵を載せている手順書（`docs/guide/en/sms.md` と `docs/guide/ja/sms.md`）を、1 つのコミットで直します。分けると、どこかの段階で設定が読めなくなるためです。確かめ方は `internal/hss` と `internal/config` の試験と、登録と通話の e2e で信号が変わらないことです。
+3. 加入者のデータの `test_user` と `service_profile`。設定のファイル、`POST`、`GET` の答え、`Store` の形に足し、`hss.test_user_service_profile` と合わせて、プロファイルの選び方を決めます。確かめ方は `internal/hss` と `internal/kvstore/hssstore` の試験です。
 4. `PUT /subscriptions/{IMPI}`（`dry_run` と `repository_data` を含む）。`Store` に `Replace` を足し、`MemoryStore` と `internal/kvstore/hssstore` の両方に実装します。確かめ方は、作成、置き換え、`unchanged`、409、SQN_HE と登録の状態が残ること、Sh の更新と同時に走らせても取り違えないことの試験です。
 5. `PATCH /subscriptions/{IMPI}`。確かめ方は、資格情報が変わらないことの試験です。
-6. `GET /subscriptions/export`。確かめ方は、書き出した内容を `PUT` で戻すと `unchanged` になることの試験です。
-7. `hss.admission` と UAR の検査。設定のファイルの項目として入れ、`SIMPLIFIED:` を置き換えます。「決めていないこと」の 1 と 2 の答えが要ります。確かめ方は `internal/hss` の試験と、試験用でない利用者の REGISTER が 403 になる e2e です。この e2e は Compose と pcap を使うので、手元では流さず、PR の CI の結果で確かめます。
-8. `hss.admission` と 2 つのプロファイルの名前を、保守用の API で変えられる項目にします。HSS の役割が `internal/maintenance` をつなぎ、設定の変更を受けられるようになってからにします。その前では、変えられる項目を載せる先がありません。確かめ方は、OAM から方針を変え、履歴から戻せることです。
-9. OAM を HSS の API に合わせます（上の「OAM の変更」）。偽の HSS の `basic` をなくすのはここです。
-10. 手順書（英語と日本語）と学習用の画面。
+6. プロファイルの push。`internal/cx` に PPR と PPA を足し、HSS が送り、S-CSCF が受け取ったプロファイルで持っているものを上書きします（上の「プロファイルの push」）。プロファイルを変えられるようになってからにします。確かめ方は、登録中の加入者のプロファイルを変えると PPR が出て、次の呼が新しい iFC で動くことの試験です。
+7. `GET /subscriptions/export`。確かめ方は、書き出した内容を `PUT` で戻すと `unchanged` になることの試験です。
+8. `hss.admission` と、UAR と SAR の検査（上の「収容を制限するあいだの振る舞い」）。設定のファイルの項目として入れ、UAR の `SIMPLIFIED:` を置き換えます。確かめ方は `internal/hss` の試験と、試験用でない利用者の REGISTER が 403 になる e2e です。この e2e は Compose と pcap を使うので、手元では流さず、PR の CI の結果で確かめます。
+9. `hss.admission` と 2 つのプロファイルの名前を、保守用の API で変えられる項目にします。HSS の役割が `internal/maintenance` をつなぎ、設定の変更を受けられるようになってからにします。その前では、変えられる項目を載せる先がありません。保守用の API が返す設定に、プロファイルごとの機能の一覧を載せるのもここです。各 iFC の `feature` を重複なく集めたものを返し、OAM がそれを読みます。確かめ方は、OAM から方針を変え、履歴から戻せることです。
+10. OAM を HSS の API に合わせます（上の「OAM の変更」）。偽の HSS の `basic` をなくすのはここです。
+11. 手順書（英語と日本語）と学習用の画面。
 
 ## 読んだ仕様
 
-この記録の条項は、次の版の本文で確かめました。ETSI TS 129 228 V19.2.0（6.1.1.1、6.1.2.1、6.2.2、6.6、6.6.1、Table 6.3.5、Table 6.3.7、Annex B.2、Annex E の Table E.2）、ETSI TS 129 229 V19.1.0（6.2 に基本の Result-Code が無いこと）、ETSI TS 124 229 V19.7.0（5.3.1.2、5.3.1.3）、ETSI TS 133 102 V19.1.0（6.3.5、C.2.2）、RFC 6733（7.1.5）です。
+この記録の条項は、次の版の本文で確かめました。ETSI TS 129 228 V19.2.0（6.1.1.1、6.1.2.1、6.1.4.1、6.2.2、Table 6.2.2.1、6.2.2.1、6.5.2.1、6.6、6.6.1、Table 6.3.5、Table 6.3.7、Annex B.2、Annex E の Table E.2）、ETSI TS 129 229 V19.1.0（6.2 に基本の Result-Code が無いこと）、ETSI TS 124 229 V19.7.0（5.3.1.2、5.3.1.3）、ETSI TS 133 102 V19.1.0（6.3.5、C.2.2）、RFC 6733（7.1.5）です。
 
 ## 残っている課題
 
 - 作り直した HSS の台は、OAM が今の世代を送り直すまで、設定のファイルの収容の方針で答えます。そのあいだ、役割の台のあいだで方針が食い違います。
+- 収容の対象外で登録していない利用者への着信は、S-CSCF が未成功の SAA に返す 500 で終わります（`internal/scscf/unregistered.go`）。断った理由は、発信側に伝わりません。
+- 2 つのプロファイルの名前の設定を変えても PPR を送らないので、登録中の利用者は、次の登録まで前の iFC で動きます。TS 29.228 6.6.1 はプロファイルが変わったら push することを求めているので、この設定の変更はそこから外れます。
 - 一括の登録は、OAM が 1 台の HSS に送ります。宛先に組の名前を書けば、DNS が台を選びます。行ごとに台を選び分けることはしません。
