@@ -92,7 +92,9 @@ func (p *PCSCF) proxyInvite(st *sip.ServerTransaction, out *sip.Message, targets
 					giveUp(err)
 					continue
 				}
-				st.Respond(resp)
+				if err := st.Respond(resp); err == nil {
+					p.sessionSucceeded(st, resp, call.leg)
+				}
 			case code < 300:
 				refused := call.response(resp)
 				if !call.settle() {
@@ -114,7 +116,9 @@ func (p *PCSCF) proxyInvite(st *sip.ServerTransaction, out *sip.Message, targets
 				answered = true
 				timerC.Stop()
 				timerCFired = nil
-				st.Respond(resp)
+				if err := st.Respond(resp); err == nil {
+					p.sessionSucceeded(st, resp, call.leg)
+				}
 				if refused != nil {
 					// The callee has answered, so the caller gets the 2xx,
 					// and the dialog is then released (5.2.8.1.2).

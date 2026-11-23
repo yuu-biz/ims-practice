@@ -129,10 +129,14 @@ const (
 )
 
 var (
-	// sessionRoles are the functions that TS 32.409 4.1.2.1 to 4.1.2.11
+	// sessionRoles are the functions that TS 32.409 4.1.2.1 to 4.1.2.12
 	// has count the session establishments.
 	sessionRoles      = metrics.Label{Name: "role", Values: []string{"pcscf", "icscf", "scscf"}}
 	sessionDirections = metrics.Label{Name: "direction", Values: []string{string(OriginatingSession), string(TerminatingSession)}}
+	// sessionResponses are the message types that TS 32.409 4.1.2.2
+	// splits the successful session establishments by: the 180
+	// (Ringing), or the 200 (OK) when no 180 went before it.
+	sessionResponses = metrics.Label{Name: "response", Values: []string{"180", "200"}}
 	// sessionStatuses are the status codes of a failed session
 	// establishment that are counted one by one; any other one counts
 	// under "other", so that the codes add up to all the failures (TS
@@ -146,10 +150,11 @@ var (
 // 4.1.2: the initial INVITEs, how they ended, and the sessions that
 // they set up and that have not ended yet.
 type Sessions struct {
-	attempts *metrics.Counter
-	answers  *metrics.Counter
-	failures *metrics.Counter
-	answered *metrics.Gauge
+	attempts  *metrics.Counter
+	successes *metrics.Counter
+	answers   *metrics.Counter
+	failures  *metrics.Counter
+	answered  *metrics.Gauge
 }
 
 // NewSessions registers the session measurements in reg, or finds them
@@ -160,6 +165,11 @@ func NewSessions(reg *metrics.Registry) (*Sessions, error) {
 	if m.attempts, err = reg.NewCounter("ims_session_attempts_total",
 		"Initial INVITE requests received, by direction (TS 32.409 SC.AttSession, SC.AttSessionOrig, SC.AttSessionTerm).",
 		sessionRoles, sessionDirections); err != nil {
+		return nil, err
+	}
+	if m.successes, err = reg.NewCounter("ims_session_successes_total",
+		"First responses sent to an initial INVITE that tell of a successful session establishment, by direction and by the type of that message (TS 32.409 SC.SuccSession.type, SC.SuccSessionOrig.type, SC.SuccSessionTerm.type).",
+		sessionRoles, sessionDirections, sessionResponses); err != nil {
 		return nil, err
 	}
 	if m.answers, err = reg.NewCounter("ims_session_answers_total",
@@ -184,6 +194,23 @@ func NewSessions(reg *metrics.Registry) (*Sessions, error) {
 // 32.409 4.1.2.1, 4.1.2.9, 4.1.2.11).
 func (m *Sessions) Started(role string, d SessionDirection) {
 	m.attempts.Inc(role, string(d))
+}
+
+// Succeeded counts the session establishment that role answered with
+// status, the first response it sent to the initial INVITE that tells of
+// a success: the 180 (Ringing), or the 2xx when no 180 went before it
+// (sip.ServerTransaction.ClaimFirstSuccess). Summed over the
+// directions it is the successful session establishments of TS 32.409
+// 4.1.2.2, which the P-CSCF and the S-CSCF count; the originating
+// direction at the P-CSCF is the response that goes to the UE
+// (4.1.2.10), and the terminating direction at the P-CSCF and the
+// I-CSCF the response that goes towards the S-CSCF that started the
+// session (4.1.2.12).
+//
+// The spread over the message types is that of 4.1.2.2: the response
+// label is "180" or "200", and the two add up to the successes.
+func (m *Sessions) Succeeded(role string, d SessionDirection, status int) {
+	m.successes.Inc(role, string(d), strconv.Itoa(status))
 }
 
 // Answered counts the 2xx that role sends to an initial INVITE (TS

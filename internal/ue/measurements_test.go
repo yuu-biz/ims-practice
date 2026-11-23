@@ -64,9 +64,11 @@ func TestThePCSCFAndTheSCSCFCountTheSameRegistrations(t *testing.T) {
 
 // TS 32.409 4.1.2 at the P-CSCF: a call between two of its UEs passes it
 // twice, as an originating and as a terminating session establishment.
-// The rejected call fails on both legs with the status of the callee,
-// and the answered one is among the answered sessions from its 200 (OK)
-// to its BYE.
+// The rejected call fails on both legs with the status of the callee and
+// succeeds on neither. The answered one succeeds on both, under the 180
+// (Ringing) that the callee sends before it picks up and not under the
+// 200 (OK) after it (4.1.2.2), and is among the answered sessions from
+// that 200 (OK) to its BYE.
 func TestThePCSCFCountsTheSessionEstablishments(t *testing.T) {
 	reg := metrics.NewRegistry()
 	n := startNetwork(t, networkConfig{minExpires: time.Second, maxExpires: time.Hour, metrics: reg})
@@ -86,7 +88,7 @@ func TestThePCSCFCountsTheSessionEstablishments(t *testing.T) {
 		`ims_session_attempts_total{role="pcscf",direction="terminating"} 1`,
 		`ims_session_failures_total{role="pcscf",direction="originating",status="486"} 1`,
 		`ims_session_failures_total{role="pcscf",direction="terminating",status="486"} 1`,
-	}, "ims_session_answers_total{")
+	}, "ims_session_answers_total{", "ims_session_successes_total{")
 
 	answered := make(chan error, 1)
 	go func() {
@@ -98,7 +100,7 @@ func TestThePCSCFCountsTheSessionEstablishments(t *testing.T) {
 		called <- caller.ue.Call(ctx, caller.ua, caller.reg, impu2, caller.media, ue.Speech{PCM: ue.Tone(440, time.Second)}, ue.CallOptions{})
 	}()
 	// Both dialogs of the call are at the P-CSCF while the call lasts.
-	settles(t, reg, []string{`ims_answered_sessions{role="pcscf"} 2`}, "")
+	settles(t, reg, []string{`ims_answered_sessions{role="pcscf"} 2`})
 	for _, ended := range []chan error{called, answered} {
 		select {
 		case err := <-ended:
@@ -112,16 +114,17 @@ func TestThePCSCFCountsTheSessionEstablishments(t *testing.T) {
 	settles(t, reg, []string{
 		`ims_session_attempts_total{role="pcscf",direction="originating"} 2`,
 		`ims_session_attempts_total{role="pcscf",direction="terminating"} 2`,
+		`ims_session_successes_total{role="pcscf",direction="originating",response="180"} 1`,
+		`ims_session_successes_total{role="pcscf",direction="terminating",response="180"} 1`,
 		`ims_session_answers_total{role="pcscf",direction="originating"} 1`,
 		`ims_session_answers_total{role="pcscf",direction="terminating"} 1`,
 		`ims_answered_sessions{role="pcscf"} 0`,
-	}, "")
+	}, `ims_session_successes_total{role="pcscf",direction="originating",response="200"}`)
 }
 
 // settles waits up to 3 seconds for every line of want to be in the
-// series of reg, and for none to start with forbidden, unless that is
-// empty.
-func settles(t *testing.T, reg *metrics.Registry, want []string, forbidden string) {
+// series of reg, and for no line to start with any of forbidden.
+func settles(t *testing.T, reg *metrics.Registry, want []string, forbidden ...string) {
 	t.Helper()
 	var text bytes.Buffer
 	deadline := time.Now().Add(3 * time.Second)
@@ -136,11 +139,17 @@ func settles(t *testing.T, reg *metrics.Registry, want []string, forbidden strin
 				missing++
 			}
 		}
-		if missing == 0 && (forbidden == "" || !strings.Contains(text.String(), "\n"+forbidden)) {
+		there := 0
+		for _, prefix := range forbidden {
+			if strings.Contains(text.String(), "\n"+prefix) {
+				there++
+			}
+		}
+		if missing == 0 && there == 0 {
 			return
 		}
 		if time.Now().After(deadline) {
-			t.Fatalf("want the lines %q, and none that starts with %q, in:\n%s", want, forbidden, text.String())
+			t.Fatalf("want the lines %q, and none that starts with one of %q, in:\n%s", want, forbidden, text.String())
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
