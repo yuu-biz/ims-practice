@@ -81,7 +81,7 @@ PCRF スタブは `epc` ノードの中にあります。P-CSCF の Rx の接続
 | メッセージ | 送信元 | 意味 |
 | --- | --- | --- |
 | Capabilities-Exchange Request（CER） | I-CSCF、S-CSCF、IP-SM-GW、MMTel AS、P-CSCF | 接続した側が、自分が誰であるかと、対応するアプリケーションを伝える。I-CSCF と S-CSCF は Cx、2 つの AS は Sh、P-CSCF は Rx。 |
-| Capabilities-Exchange Answer（CEA） | HSS、EPC スタブ | 接続された側が Result-Code 2001（DIAMETER_SUCCESS）で応え、対応するアプリケーションを示す。HSS は Cx と、AS が使う Sh を示す。PCRF スタブは Rx を示す。 |
+| Capabilities-Exchange Answer（CEA） | HSS、EPC スタブ | 接続された側が Result-Code 2001（DIAMETER_SUCCESS）で応え、対応するアプリケーションを示す。HSS は Cx と、AS が使う Sh と、短メッセージの SC が使う S6c（TS 29.338）を示す。PCRF スタブは Rx を示す。 |
 | Device-Watchdog Request と Answer（DWR、DWA） | どちらの側も | 約 30 秒間なにも受け取らなかった側が、相手が動いているかを確かめる。30 秒は監視タイマーの既定値で（RFC 3539 3.4.1 [1]）、タイマーごとに最大 2 秒早まったり遅れたりする。 |
 | Disconnect-Peer Request と Answer（DPR、DPA） | 止まるノード | 接続を閉じる前に、切断することを相手に伝える。 |
 

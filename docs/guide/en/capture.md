@@ -81,7 +81,7 @@ The `epc` node holds the PCRF stub, so the P-CSCF's Rx connection goes there and
 | Message | From | Meaning |
 | --- | --- | --- |
 | Capabilities-Exchange Request (CER) | I-CSCF, S-CSCF, IP-SM-GW, MMTel AS, P-CSCF | The client says who it is and which application it supports: Cx for the I-CSCF and the S-CSCF, Sh for the two application servers, Rx for the P-CSCF. |
-| Capabilities-Exchange Answer (CEA) | HSS, EPC stub | The server answers with Result-Code 2001 (DIAMETER_SUCCESS) and lists the applications it supports. The HSS lists Cx, and Sh, which application servers use. The PCRF stub lists Rx. |
+| Capabilities-Exchange Answer (CEA) | HSS, EPC stub | The server answers with Result-Code 2001 (DIAMETER_SUCCESS) and lists the applications it supports. The HSS lists Cx, Sh, which application servers use, and S6c, which a service centre of short messages uses (TS 29.338). The PCRF stub lists Rx. |
 | Device-Watchdog Request and Answer (DWR, DWA) | either side | A side that has heard nothing for about 30 seconds checks that its peer is alive. 30 seconds is the default of the watchdog timer (RFC 3539 3.4.1 [1]), and each timer is set up to 2 seconds early or late. |
 | Disconnect-Peer Request and Answer (DPR, DPA) | the node that stops | The node says goodbye before it closes the connection. |
 
