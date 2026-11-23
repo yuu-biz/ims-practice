@@ -43,8 +43,9 @@ type RegistrationBackoff struct {
 // discovery would give again, so it waits and registers through the
 // same P-CSCF. After a failed refresh it always makes an initial
 // registration, also where 5.1.1.4.1 lets it refresh after a short
-// Retry-After of a 503: no response to a REGISTER reaches the UE with
-// Retry-After here. When the S-CSCF answers 503 with one, the I-CSCF
+// Retry-After of a 503: no such response reaches the UE here. A P-CSCF
+// that the operator has shut down answers 503 with a Retry-After longer
+// than Timer F, and when the S-CSCF answers 503 with one, the I-CSCF
 // answers 500 without it.
 func (b *RegistrationBackoff) Failed(err error) time.Duration {
 	if wait := retryAfter(err); wait > 0 {

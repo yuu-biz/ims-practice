@@ -334,7 +334,7 @@ func (putFailsStore) PutAssociation(context.Context, Association) error {
 // and the next request of the UE must not wait for a lookup that a UE
 // on TCP would not send it again for.
 func TestAFailedRefreshKeepsTheAdmission(t *testing.T) {
-	copy := newAdmissions()
+	copy := newAdmissions(func() {})
 	s := indexedStore{Store: putFailsStore{NewMemoryStore()}, admissions: copy}
 	a := Association{Source: sip.Destination{Transport: sip.TCP, Addr: netip.MustParseAddrPort("192.0.2.1:5060")},
 		Expires: time.Now().Add(time.Hour), KeepUntil: time.Now().Add(time.Hour + time.Minute)}

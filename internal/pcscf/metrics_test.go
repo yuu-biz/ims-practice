@@ -2,6 +2,7 @@ package pcscf
 
 import (
 	"bytes"
+	"net/netip"
 	"strconv"
 	"strings"
 	"sync"
@@ -47,17 +48,25 @@ func counted(t *testing.T, reg *metrics.Registry, want map[string]float64) {
 // digestRegistrar is a fake home network that challenges a REGISTER, accepts
 // the one that answers its last challenge, and answers 403 to one that
 // does so with the response "wrong". A deregistration it accepts at
-// once.
+// once. It refuses any other request, such as the reg event SUBSCRIBE
+// of the P-CSCF, which the P-CSCF then only logs.
 type digestRegistrar struct {
 	mu      sync.Mutex
 	pending string
 	nonces  int
+	// registers counts the REGISTERs that reached it.
+	registers int
 }
 
 func (r *digestRegistrar) serve(st *sip.ServerTransaction) {
 	req := st.Request
+	if req.Method != sip.REGISTER {
+		st.Respond(sip.NewResponse(req, 403, sip.NewTag()))
+		return
+	}
 	c, _ := sip.ParseCredentials(req.Get("Authorization"))
 	r.mu.Lock()
+	r.registers++
 	answers := c.Nonce != "" && c.Nonce == r.pending
 	if answers {
 		r.pending = ""
@@ -89,6 +98,63 @@ func (r *digestRegistrar) serve(st *sip.ServerTransaction) {
 	}
 }
 
+// digestUE is a UE that registers with SIP Digest through the P-CSCF at
+// pcscf, from a port of its own.
+type digestUE struct {
+	t     *testing.T
+	stack *sip.Stack
+	pcscf netip.AddrPort
+	cseq  int
+}
+
+func newDigestUE(t *testing.T, pcscf netip.AddrPort) *digestUE {
+	t.Helper()
+	return &digestUE{t: t, stack: newStack(t, func(*sip.ServerTransaction) {}), pcscf: pcscf}
+}
+
+// register sends a REGISTER that names nonce and response and asks for
+// expires, and returns its final response.
+func (u *digestUE) register(nonce, response, expires string) *sip.Message {
+	u.t.Helper()
+	u.cseq++
+	m := &sip.Message{Method: sip.REGISTER, RequestURI: "sip:" + domain}
+	m.Add("Max-Forwards", "70")
+	m.Add("From", "<"+impu+">;tag="+sip.NewTag())
+	m.Add("To", "<"+impu+">")
+	m.Add("Call-ID", "call-"+u.stack.LocalAddr().String())
+	m.Add("CSeq", strconv.Itoa(u.cseq)+" REGISTER")
+	m.Add("Contact", "<sip:ue@"+u.stack.LocalAddr().String()+">;expires="+expires)
+	m.Add("Authorization", `Digest username="`+impi+`", realm="`+domain+`", nonce="`+nonce+`", uri="sip:`+domain+`", response="`+response+`"`)
+	return u.send(m)
+}
+
+// answer answers the challenge of r, which must be a 401, with response.
+func (u *digestUE) answer(r *sip.Message, response string) *sip.Message {
+	u.t.Helper()
+	ch, err := sip.ParseChallenge(r.Get("WWW-Authenticate"))
+	if r.StatusCode != 401 || err != nil {
+		u.t.Fatalf("got %d with %q, want a 401 with a challenge", r.StatusCode, r.Get("WWW-Authenticate"))
+	}
+	return u.register(ch.Nonce, response, "600000")
+}
+
+// send sends m to the P-CSCF and returns its final response.
+func (u *digestUE) send(m *sip.Message) *sip.Message {
+	u.t.Helper()
+	ct, err := u.stack.SendRequest(m, sip.Destination{Transport: sip.UDP, Addr: u.pcscf})
+	if err != nil {
+		u.t.Fatal(err)
+	}
+	var final *sip.Message
+	for r := range ct.Responses() {
+		final = r
+	}
+	if final == nil {
+		u.t.Fatalf("no final response: %v", ct.Err())
+	}
+	return final
+}
+
 // TS 32.409 4.1.1 at the P-CSCF: a REGISTER that the home network
 // challenges and the one that answers the challenge are one procedure,
 // whose type comes from the IP association that the UE has when the
@@ -104,40 +170,8 @@ func TestRegistrationProceduresAreCountedAtThePCSCF(t *testing.T) {
 		NewMemoryStore(), nil, quiet())
 	pcscfStack := newPCSCFStack(t, p)
 	p.SetStack(pcscfStack)
-	ue := newStack(t, func(*sip.ServerTransaction) {})
-	cseq := 0
-	register := func(nonce, response, expires string) *sip.Message {
-		t.Helper()
-		cseq++
-		m := &sip.Message{Method: sip.REGISTER, RequestURI: "sip:" + domain}
-		m.Add("Max-Forwards", "70")
-		m.Add("From", "<"+impu+">;tag="+sip.NewTag())
-		m.Add("To", "<"+impu+">")
-		m.Add("Call-ID", "call-1")
-		m.Add("CSeq", strconv.Itoa(cseq)+" REGISTER")
-		m.Add("Contact", "<sip:ue@127.0.0.1>;expires="+expires)
-		m.Add("Authorization", `Digest username="`+impi+`", realm="`+domain+`", nonce="`+nonce+`", uri="sip:`+domain+`", response="`+response+`"`)
-		ct, err := ue.SendRequest(m, sip.Destination{Transport: sip.UDP, Addr: pcscfStack.LocalAddr()})
-		if err != nil {
-			t.Fatal(err)
-		}
-		var final *sip.Message
-		for r := range ct.Responses() {
-			final = r
-		}
-		if final == nil {
-			t.Fatalf("no final response: %v", ct.Err())
-		}
-		return final
-	}
-	answer := func(r *sip.Message, response string) *sip.Message {
-		t.Helper()
-		ch, err := sip.ParseChallenge(r.Get("WWW-Authenticate"))
-		if r.StatusCode != 401 || err != nil {
-			t.Fatalf("got %d with %q, want a 401 with a challenge", r.StatusCode, r.Get("WWW-Authenticate"))
-		}
-		return register(ch.Nonce, response, "600000")
-	}
+	ue := newDigestUE(t, pcscfStack.LocalAddr())
+	register, answer := ue.register, ue.answer
 
 	if r := answer(register("", "", "600000"), "right"); r.StatusCode != 200 {
 		t.Fatalf("initial registration got %d, want 200", r.StatusCode)
