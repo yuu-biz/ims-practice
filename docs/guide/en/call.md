@@ -282,6 +282,81 @@ During the call, `curl -X POST localhost:8090/hold` puts it on hold with a re-IN
 
 UE 1 plays its tone once and stays on the line until one side hangs up. `curl -N localhost:8091/events` follows the status as it changes. The answer policy can also be `{"mode": "auto", "ring_seconds": 2}`, which answers after two seconds, or `{"mode": "reject", "reject_status": 486}`, which turns every call down. Each UE has one line, which holds two calls at most. A second call goes out only once the first is on hold (`POST /hold`); until then the API answers 409 (Conflict). An INVITE that comes during a call waits: the UE rings with `Alert-Info: <urn:alert:service:call-waiting>` and does not answer by itself, and `POST /answer` puts the first call on hold and takes the waiting one (TS 24.615 4.5.5.3). A third INVITE gets 486 (Busy Here). `ue ctl` sends these requests from a shell. All the requests are listed in the comment of `Phone.Handler` in `internal/ue/phone_http.go`.
 
+## Take a media relay out of service
+
+An operator takes a node out of service without cutting what it serves: the node takes nothing new and goes on with what it has begun, until nothing is left. This is called a drain.
+
+A media relay has to go on with what it carries, because a context lives in the node that opened its ports. The relay holds the UDP sockets of the call, the P-CSCF holds the context ID that this relay gave it, and the RTP of the call passes through this process and no other. A commercial network runs several relays, and the P-CSCF picks one per call from a hash of the Call-ID, so the new calls go to the others while this one drains. What the relay does is the graceful method of TS 23.334 6.1.2 for an IMS-AGW and of TS 23.333 6.1.2 for an MRFP: the node is locked for new calls, and the connections it holds are cleared as their calls are disconnected.
+
+The node of the relay serves a maintenance API for this on port 8085, the listener of the `maintenance` section of `deploy/compose/agw.yaml`. The API asks for no password, so the port is not published on the host: send the requests from inside the container. The administrative state has the values of TS 28.622 5.3.1. `UNLOCKED` takes new work, `SHUTTINGDOWN` serves only what it has, and `LOCKED` takes nothing new.
+
+1. Shut the relay down:
+
+   ```sh
+   docker compose exec agw sh -c '
+   body="{\"administrative_state\":\"SHUTTINGDOWN\",\"operator\":\"learner\"}"
+   printf "PUT /maintenance/v1/functions/agw/administrative-state HTTP/1.0\r\nContent-Type: application/json\r\nContent-Length: ${#body}\r\n\r\n%s" "$body" |
+     nc -w 5 127.0.0.1 8085'
+   ```
+
+   The answer ends with the state of the relay. With no call going through it, it is `LOCKED` at once:
+
+   ```json
+   {"role":"agw","administrative_state":"LOCKED","operational_state":"ENABLED","users":0}
+   ```
+
+   `users` counts the contexts this relay holds: one for each pass of a call through a P-CSCF, one for each announcement, and one for each conference, whatever the number of terminations in it. The contexts that an earlier process of the relay left in its store, and that it opened again when it started, are among them. With a call going through it the shut down leaves the relay `SHUTTINGDOWN`, and it becomes `LOCKED` once the P-CSCF has subtracted the last of its contexts, which tells the operator that stopping the node would cut no media. `operational_state` says whether the relay can work (TS 28.622 5.3.3): it is `ENABLED` while the node runs, since the relay answers from its own sockets and holds no association whose state it could report. `docker compose exec agw wget -qO- http://127.0.0.1:8085/maintenance/v1/state` shows the whole node.
+
+2. Call UE 2 from UE 1:
+
+   ```sh
+   docker compose run --rm ue call tel:+12025550102
+   ```
+
+   The call fails with `500 Server Internal Error`, because this network has one relay and the P-CSCF has no other to put the media through.
+
+```text
+ UE 1          P-CSCF         media relay
+ |   INVITE      |                 |
+ |-------------->|                 |  the SDP offer of UE 1
+ |               | POST /contexts  |  Add: one termination towards the UE, one towards the network
+ |               |---------------->|
+ |               | 503 Service Unavailable
+ |               |<----------------|  out of service, so no context
+ |   500         |                 |  no other relay in the list, and the INVITE goes no further
+ |<--------------|                 |
+```
+
+- **The P-CSCF asks for a context** for this pass of the call, a termination towards the UE and one towards the network, as it does for every call with an offer in the INVITE (TS 29.334 5.17.2.2). It picks the relay from a hash of the Call-ID and knows nothing of the drain.
+- **The relay answers 503 (Service Unavailable)** with the error code `out_of_service`, and reserves no port. The answer carries no `Retry-After`: the P-CSCF keeps no list of the relays that are unavailable, so nothing would read one.
+- **The P-CSCF takes the next relay of its list**, and answers only once none is left. Here the list has one, so the call ends: the P-CSCF answers the INVITE 500 and forwards nothing. It sends no `Retry-After` of its own, since the 503 was about the relay and not about the P-CSCF.
+
+While it is not `UNLOCKED`, the relay goes on with what it carries and refuses what would start something new.
+
+It goes on with:
+
+- **Every operation on a context it holds.** The `Modify` with which a controller points a termination at the other party, after the answer of the callee or a re-INVITE, and the `Subtract` with which it releases a termination or the whole context when the call ends. Without them a drained relay would hold its ports for good.
+- **The `Add` of a termination to a context it holds**, with which a party joins a conference whose mix is in this node. The mix is here and nowhere else, so a refusal would take a party out of a conference that is in progress. It adds no context either: the relay counts the contexts, and their number only falls while it is shutting down.
+- **The events it reports to its controller**, and the audits that read its contexts and its announcements. They say what the node holds, and the node is alive.
+
+It answers 503 to the `Add` of a new context, the one operation that would start something new.
+
+3. Unlock the relay with the same request and `UNLOCKED`, and call again:
+
+   ```sh
+   docker compose exec agw sh -c '
+   body="{\"administrative_state\":\"UNLOCKED\",\"operator\":\"learner\"}"
+   printf "PUT /maintenance/v1/functions/agw/administrative-state HTTP/1.0\r\nContent-Type: application/json\r\nContent-Length: ${#body}\r\n\r\n%s" "$body" |
+     nc -w 5 127.0.0.1 8085'
+   docker compose run --rm ue call tel:+12025550102
+   ```
+
+   The call goes through the relay again. The node of the MRFP is drained the same way, with `mrfp` in the place of `agw` in the path and in the service name; what its drain costs the MRFC is in [Take the MRFP out of service](mrf.md#take-the-mrfp-out-of-service).
+
+In Wireshark, `http.request.uri == "/contexts" && http.request.method == "POST"` shows each request for a context, and `http.response.code == 503 && ip.src == 172.28.0.50` the refusals of the drained relay. The PUT request travels over the loopback interface of the container, so the capture does not hold it.
+
+The administrative state belongs to the process of the node: a node that starts again is `UNLOCKED`. `scripts/e2e-observability.sh` runs these steps and checks the capture.
+
 ## What this project simplifies
 
 Each item has a `SIMPLIFIED:` comment in the code; `grep -rn "SIMPLIFIED:" internal cmd` lists them all.

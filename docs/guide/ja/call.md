@@ -301,6 +301,81 @@ P-CSCF はブリッジのゲートウェイ 172.28.0.1 から来た UE を見分
 
 UE 1 はトーンを 1 回流したあと、どちらかが切断するまで通話を続けます。`curl -N localhost:8091/events` を使うと、状態が変わるたびに新しい状態を受け取れます。応答の方針には、2 秒鳴らしてから応答する `{"mode": "auto", "ring_seconds": 2}` と、すべて断る `{"mode": "reject", "reject_status": 486}` もあります。UE の回線は 1 つで、通話を 2 本まで持てます。2 本目を発信するには、先に 1 本目を保留にします（`POST /hold`）。保留にしないうちは、API が 409（Conflict）を返します。通話中に INVITE が届くと、UE はその着信を待たせ、`Alert-Info: <urn:alert:service:call-waiting>` を付けて呼び出すだけで自分からは応答しません。`POST /answer` を送ると、1 本目を保留にしてから待っている着信に応答します（TS 24.615 4.5.5.3）。3 本目の INVITE には 486（Busy Here）で答えます。これらの要求は、シェルから `ue ctl` でも送れます。要求の一覧は `internal/ue/phone_http.go` の `Phone.Handler` のコメントにあります。
 
+## メディア中継ノードを運用から外す
+
+運用する人は、ノードが扱っているものを切らずに、そのノードを運用から外します。新しいものを受けず、始めたものを最後まで扱い、何も残らなくなるまで続けます。これをドレインと呼びます。
+
+メディア中継ノードは運んでいるものを続けなければなりません。コンテキストがあるのは、そのポートを開いたノードの中だけだからです。呼の UDP ソケットを持っているのはこの中継ノードで、P-CSCF が持っているのはこの中継ノードが渡したコンテキストの ID です。呼の RTP はこのプロセスだけを通ります。商用の網は中継ノードを複数台で動かし、P-CSCF は Call-ID の hash で呼ごとに 1 台を選ぶので、ドレイン中の台を避けて新しい呼はほかの台に向かいます。この中継ノードの振る舞いは、IMS-AGW については TS 23.334 6.1.2、MRFP については TS 23.333 6.1.2 が言う graceful の方法です。新しい呼には使えなくなり、持っている接続は、その呼が切れるにつれて解放されます。
+
+このための保守用の API は、中継ノードのノードが 8085 番で出します。`deploy/compose/agw.yaml` の `maintenance` の節が決める待ち受けです。この API はパスワードを求めないので、ポートをホストに公開していません。要求はコンテナの中から送ります。administrative state の値は TS 28.622 5.3.1 のものです。`UNLOCKED` は新しい仕事を受け、`SHUTTINGDOWN` は持っているものだけを扱い、`LOCKED` は新しいものを何も受けません。
+
+1. 中継ノードを shut down します。
+
+   ```sh
+   docker compose exec agw sh -c '
+   body="{\"administrative_state\":\"SHUTTINGDOWN\",\"operator\":\"learner\"}"
+   printf "PUT /maintenance/v1/functions/agw/administrative-state HTTP/1.0\r\nContent-Type: application/json\r\nContent-Length: ${#body}\r\n\r\n%s" "$body" |
+     nc -w 5 127.0.0.1 8085'
+   ```
+
+   答えの最後に中継ノードの状態が入ります。通っている呼が無ければ、すぐに `LOCKED` になります。
+
+   ```json
+   {"role":"agw","administrative_state":"LOCKED","operational_state":"ENABLED","users":0}
+   ```
+
+   `users` は、この中継ノードが持っているコンテキストの数です。P-CSCF を通る呼の片側ごとに 1 つ、音声ガイダンス 1 つにつき 1 つ、会議 1 つにつき 1 つで、会議はターミネーションの数によらず 1 つです。前のプロセスが保存先に残し、起動したときに開き直したコンテキストも、この数に入ります。呼が通っているあいだに shut down すると、中継ノードは `SHUTTINGDOWN` のままで、P-CSCF が最後のコンテキストを解放したときに `LOCKED` に移ります。ノードを止めてもメディアを切らないと、運用する人はこれで分かります。`operational_state` は、中継ノードが働けるかどうかを示します（TS 28.622 5.3.3）。ノードが動いているあいだは `ENABLED` です。中継ノードは自分のソケットで答え、状態を報告できるような結び付きを持たないためです。ノード全体の状態は `docker compose exec agw wget -qO- http://127.0.0.1:8085/maintenance/v1/state` で見られます。
+
+2. UE 1 から UE 2 に発信します。
+
+   ```sh
+   docker compose run --rm ue call tel:+12025550102
+   ```
+
+   呼は `500 Server Internal Error` で失敗します。この網の中継ノードは 1 台で、P-CSCF にはメディアを通す先がほかに無いためです。
+
+```text
+ UE 1          P-CSCF         メディア中継ノード
+ |   INVITE      |                 |
+ |-------------->|                 |  UE 1 の SDP の offer
+ |               | POST /contexts  |  Add。UE 側と網側のターミネーションを 1 つずつ
+ |               |---------------->|
+ |               | 503 Service Unavailable
+ |               |<----------------|  運用から外れているので、コンテキストを作らない
+ |   500         |                 |  一覧にほかの中継ノードが無く、INVITE は先へ進まない
+ |<--------------|                 |
+```
+
+- **P-CSCF はコンテキストを求めます。** この呼の片側のために、UE 側と網側のターミネーションを 1 つずつ求めます。INVITE に offer の入った呼では、いつもこうします（TS 29.334 5.17.2.2）。中継ノードは Call-ID の hash で選び、ドレインのことは知りません。
+- **中継ノードは 503（Service Unavailable）を返します。** 誤りの符号は `out_of_service` で、ポートは 1 つも確保しません。この答えに `Retry-After` は付きません。P-CSCF は使えない中継ノードを覚えないので、読むものがいないためです。
+- **P-CSCF は一覧の次の中継ノードを試し**、1 台も残らなくなってから答えます。ここでは一覧が 1 台なので、呼はそこで終わります。P-CSCF は INVITE に 500 を返し、どこにも転送しません。自分の `Retry-After` は付けません。503 は中継ノードについてのもので、P-CSCF についてのものではないためです。
+
+`UNLOCKED` でないあいだ、中継ノードは運んでいるものを続け、新しく始まるものを断ります。
+
+続けるのは次のものです。
+
+- **持っているコンテキストへの操作すべて。** 着信側が答えたあとや re-INVITE のあとに、制御する側がターミネーションの相手を指す `Modify` と、呼が終わったときにターミネーションやコンテキスト全体を解放する `Subtract` です。これを断ると、ドレイン中の中継ノードはポートを握ったままになります。
+- **持っているコンテキストへのターミネーションの `Add`。** この中継ノードに混合がある会議に、参加者が入るときのものです。混合はここにしか無いので、断ると、続いている会議から参加者を締め出します。コンテキストも増えません。中継ノードが数えるのはコンテキストで、shut down のあいだ、その数は減るだけです。
+- **制御する側に知らせるイベント**と、コンテキストと音声ガイダンスを読む Audit。どちらもノードが持っているものを伝えるもので、ノードは生きています。
+
+503 を返すのは、新しいコンテキストを作る `Add` です。新しく始まる操作はこれだけです。
+
+3. 同じ要求に `UNLOCKED` を入れて中継ノードを unlock し、もう一度発信します。
+
+   ```sh
+   docker compose exec agw sh -c '
+   body="{\"administrative_state\":\"UNLOCKED\",\"operator\":\"learner\"}"
+   printf "PUT /maintenance/v1/functions/agw/administrative-state HTTP/1.0\r\nContent-Type: application/json\r\nContent-Length: ${#body}\r\n\r\n%s" "$body" |
+     nc -w 5 127.0.0.1 8085'
+   docker compose run --rm ue call tel:+12025550102
+   ```
+
+   呼はまた中継ノードを通ります。MRFP のノードも同じようにドレインします。パスとサービスの名前の `agw` を `mrfp` に替えるだけです。MRFP のドレインが MRFC に何をもたらすかは、[MRFP を運用から外す](mrf.md#mrfp-を運用から外す)にあります。
+
+Wireshark では `http.request.uri == "/contexts" && http.request.method == "POST"` でコンテキストを求める要求が、`http.response.code == 503 && ip.src == 172.28.0.50` でドレイン中の中継ノードの断りが見られます。PUT の要求はコンテナのループバックを通るので、キャプチャには入りません。
+
+administrative state はノードのプロセスの中にあります。起動し直したノードは `UNLOCKED` です。`scripts/e2e-observability.sh` は、この手順を実行してキャプチャを確かめます。
+
 ## このプロジェクトで簡略化していること
 
 次の表の項目には、それぞれコードに `SIMPLIFIED:` のコメントがあり、`grep -rn "SIMPLIFIED:" internal cmd` ですべて一覧できます。

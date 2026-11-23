@@ -312,6 +312,64 @@ Wireshark では、`sip.Status-Code == 503 && ip.src == 172.28.0.85` が MRFC �
 
 管理上の状態はノードのプロセスの中にあります。起動し直したノードは `UNLOCKED` です。`scripts/e2e-observability.sh` はこの手順を実行し、キャプチャを確かめます。
 
+## MRFP を運用から外す
+
+MRFP は呼の音声を運ぶノードと同じメディア中継ノードです。運用から外す手順も同じで、`deploy/compose/mrfp.yaml` が決める 8085 番の保守用の API を使い、パスの役割の名前を `mrfp` にします。状態の意味と、中継ノードが続けるものは、[メディア中継ノードを運用から外す](call.md#メディア中継ノードを運用から外す)にあります。`users` は、この MRFP が持っているコンテキストの数です。流している音声ガイダンス 1 つにつき 1 つ、混合している会議 1 つにつき 1 つです。
+
+MRFP だけのものは、断りがどこに届くかです。MRFC は音声ガイダンスの INVITE を受けたときと、会議の最初の参加者が来たときに、MRFP にコンテキストを求めます。
+
+1. [MRFC を運用から外す](#mrfc-を運用から外す)と同じように UE 1 の発信を Ut で禁止してから、MRFP を shut down して UE 2 に発信します。
+
+   ```sh
+   docker compose exec mrfp sh -c '
+   body="{\"administrative_state\":\"SHUTTINGDOWN\",\"operator\":\"learner\"}"
+   printf "PUT /maintenance/v1/functions/mrfp/administrative-state HTTP/1.0\r\nContent-Type: application/json\r\nContent-Length: ${#body}\r\n\r\n%s" "$body" |
+     nc -w 5 127.0.0.1 8085'
+   docker compose run --rm ue xcap set baoc on
+   docker compose run --rm ue call tel:+12025550102
+   ```
+
+   呼は発信を禁止した呼のとおり `603 Decline` で終わり、その前に UE 1 は音声ガイダンスを聞きません。MRFC 自身を運用から外したときとまったく同じです。
+
+```text
+ MMTel AS        MRFC             MRFP
+ |   INVITE        |               |  sip:annc@mrfc...;play=/provisioned/notice
+ |---------------->|               |
+ |                 | GET /announcements/notice
+ |                 |-------------->|
+ |                 | 200 OK        |  MRFP は持っていて、1 回の長さも答える
+ |                 |<--------------|
+ |                 | POST /contexts|  Add。発信側に向けたターミネーション
+ |                 |-------------->|
+ |                 | 503 Service Unavailable
+ |                 |<--------------|  運用から外れているので、コンテキストを作らない
+ |   503           |               |  一覧にほかの MRFP が無い
+ |<----------------|               |
+```
+
+- **MRFC は、その音声ガイダンスを MRFP が持っているかを尋ねます。** MRFP は持っていると答えます。これはコンテキストを作る操作ではなく、持っているものを読む Audit なので、ドレイン中の MRFP もいつもどおり答えます。
+- **MRFC はその音声ガイダンスを流すコンテキストを求めます**（TS 29.333 5.17.2.2）。MRFP は 503（Service Unavailable）を返し、誤りの符号は `out_of_service` です。
+- **MRFC は一覧の次の MRFP を試します。** Call-ID の hash が選んだ台から始め、最後の台のあとは最初の台に戻ります。P-CSCF が中継ノードを試す順と同じです。TS 23.333 6.1.2 は新しい呼に使えなくなった MRFP に新しい接続を作らないよう求めています。この網の MRFP は 1 台なので、一覧はすぐ尽きます。
+- **MRFC は AS に 503 を返します。** MRFP が 1 台も残らなくなってからです。この応答に `Retry-After` は付きません。MRFC 自身は運用に入っていて、`Retry-After` を付けると、そのあいだ MRFC には何も送らないよう AS に求めることになるためです（RFC 3261 21.5.4）。
+- **AS は MRF なしで呼を扱います。** 禁止された呼は本来なら許可する早期メディアなしで断られ、603 に `Reason` は付きません。CAT も同じで、会議に入ろうとした利用者は断られます。混合するものが無ければ、会議のメディアがないためです。
+
+混合がすでにドレイン中の MRFP にある会議には、参加者はそのまま入れます。混合はその MRFP にしか無いので、MRFC はその MRFP に、持っているコンテキストへのターミネーションを求め、MRFP はそれを足します。これでコンテキストが増えることはないため、この MRFP の最後の会議と最後の音声ガイダンスが終われば、ドレインも終わります。
+
+2. 同じ要求に `UNLOCKED` を入れて MRFP を unlock し、UE 1 からもう一度発信します。
+
+   ```sh
+   docker compose exec mrfp sh -c '
+   body="{\"administrative_state\":\"UNLOCKED\",\"operator\":\"learner\"}"
+   printf "PUT /maintenance/v1/functions/mrfp/administrative-state HTTP/1.0\r\nContent-Type: application/json\r\nContent-Length: ${#body}\r\n\r\n%s" "$body" |
+     nc -w 5 127.0.0.1 8085'
+   docker compose run --rm ue call tel:+12025550102
+   docker compose run --rm ue xcap set baoc off
+   ```
+
+   UE 1 は、603 の前に音声ガイダンスをまた聞きます。最後のコマンドは、このあとの場面のために、UE 1 の発信を通すように戻します。
+
+Wireshark では、`http.response.code == 503 && ip.src == 172.28.0.86` でドレイン中の MRFP の断りが、`sip.Status-Code == 503 && ip.src == 172.28.0.85` で MRFC が AS に渡す 503 が見られます。
+
 ## Wireshark の表示フィルタ
 
 | フィルタ | 見つかるもの |
@@ -343,6 +401,7 @@ Wireshark では、`sip.Status-Code == 503 && ip.src == 172.28.0.85` が MRFC �
 | `internal/mrfc`、`internal/netann` | MRFC と、RFC 4240 の Request-URI。 |
 | `internal/mrfc/maintenance.go` | MRFC がノードの保守用の API に伝えるものと、運用者が運用から外しているあいだに断るもの。 |
 | `internal/agw` | MRFP。ターミネーション、音声ガイダンス、混ぜ合わせと、その制御の API。 |
+| `internal/agw/maintenance.go` | メディア中継ノードがノードの保守用の API に伝えるものと、運用者が運用から外しているあいだに断るもの。 |
 | `internal/ue/phone_conference.go`、`internal/ue/conference.go` | Swap、Merge と、会議の UE の側。 |
 | `internal/mmtel/mrf_network_test.go`、`internal/mmtel/conference_network_test.go`、`internal/mmtel/conference_border_test.go` | 同じ流れを、1 つのプロセスの中の IMS 全体で通す試験。最後のものは、ほかの網の相手と通す。 |
 

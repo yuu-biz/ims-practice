@@ -312,6 +312,64 @@ In Wireshark, `sip.Status-Code == 503 && ip.src == 172.28.0.85` shows the 503 of
 
 The administrative state belongs to the process of the node: a node that starts again is `UNLOCKED`. `scripts/e2e-observability.sh` runs these steps and checks the capture.
 
+## Take the MRFP out of service
+
+The MRFP is the same media relay as the node that carries the voice of a call, so an operator drains it the same way, through the maintenance API on port 8085 of `deploy/compose/mrfp.yaml`, with `mrfp` as the role in the path. What the states mean and what the relay goes on with are in [Take a media relay out of service](call.md#take-a-media-relay-out-of-service); `users` counts the contexts of this MRFP, one for each announcement it plays and one for each conference it mixes.
+
+What is its own is where the refusal lands. The MRFC asks an MRFP for a context when it takes an INVITE for an announcement, and when the first party of a conference arrives:
+
+1. Shut the MRFP down, with UE 1's own calls barred over Ut as in [Take the MRFC out of service](#take-the-mrfc-out-of-service), and call UE 2:
+
+   ```sh
+   docker compose exec mrfp sh -c '
+   body="{\"administrative_state\":\"SHUTTINGDOWN\",\"operator\":\"learner\"}"
+   printf "PUT /maintenance/v1/functions/mrfp/administrative-state HTTP/1.0\r\nContent-Type: application/json\r\nContent-Length: ${#body}\r\n\r\n%s" "$body" |
+     nc -w 5 127.0.0.1 8085'
+   docker compose run --rm ue xcap set baoc on
+   docker compose run --rm ue call tel:+12025550102
+   ```
+
+   The call ends with `603 Decline`, as a barred call does, and UE 1 hears no announcement before it, exactly as when the MRFC itself is out of service.
+
+```text
+ MMTel AS        MRFC             MRFP
+ |   INVITE        |               |  sip:annc@mrfc...;play=/provisioned/notice
+ |---------------->|               |
+ |                 | GET /announcements/notice
+ |                 |-------------->|
+ |                 | 200 OK        |  the MRFP holds it, and how long one play lasts
+ |                 |<--------------|
+ |                 | POST /contexts|  Add: a termination towards the caller
+ |                 |-------------->|
+ |                 | 503 Service Unavailable
+ |                 |<--------------|  out of service, so no context
+ |   503           |               |  no other MRFP in the list
+ |<----------------|               |
+```
+
+- **The MRFC asks whether the MRFP holds the announcement**, and the MRFP answers that it does. That is an audit, not a context, and a drained MRFP answers it as ever.
+- **The MRFC asks for the context** that would play the announcement (TS 29.333 5.17.2.2), and the MRFP answers **503 (Service Unavailable)** with the error code `out_of_service`.
+- **The MRFC asks the next MRFP of its list**, from the one that the hash of the Call-ID picked, and after the last one the first, as the P-CSCF does for its relays. TS 23.333 6.1.2 has it establish no new connection on an MRFP that is locked for new calls. This network has one MRFP, so the list runs out.
+- **The MRFC answers the AS 503** once no MRFP is left. The response carries no `Retry-After`: the MRFC itself is in service, and `Retry-After` would ask the AS to send the MRFC nothing for that long (RFC 3261 21.5.4).
+- **The AS serves the call without the MRF.** It rejects the barred call without the early media it would have authorized, and the 603 carries no `Reason`. A customized alerting tone goes the same way, and a user that was to join a conference is refused, since a conference has no media without a mixer.
+
+A party of a conference whose mix is already in a drained MRFP still joins it: the mix is in that MRFP and nowhere else, so the MRFC asks it for a termination in the context it holds, and the MRFP adds one. That adds no context, so the drain still ends when the last conference and the last announcement of this MRFP are over.
+
+2. Unlock the MRFP with the same request and `UNLOCKED`, and let UE 1 call again:
+
+   ```sh
+   docker compose exec mrfp sh -c '
+   body="{\"administrative_state\":\"UNLOCKED\",\"operator\":\"learner\"}"
+   printf "PUT /maintenance/v1/functions/mrfp/administrative-state HTTP/1.0\r\nContent-Type: application/json\r\nContent-Length: ${#body}\r\n\r\n%s" "$body" |
+     nc -w 5 127.0.0.1 8085'
+   docker compose run --rm ue call tel:+12025550102
+   docker compose run --rm ue xcap set baoc off
+   ```
+
+   UE 1 hears the announcement before the 603 again. The last command lets its outgoing calls through, for the scenarios that follow.
+
+In Wireshark, `http.response.code == 503 && ip.src == 172.28.0.86` shows the refusals of the drained MRFP, and `sip.Status-Code == 503 && ip.src == 172.28.0.85` the 503 that the MRFC passes to the AS.
+
 ## Wireshark display filters
 
 | Filter | What it finds |
@@ -343,6 +401,7 @@ The administrative state belongs to the process of the node: a node that starts 
 | `internal/mrfc`, `internal/netann` | The MRFC and the Request-URIs of RFC 4240. |
 | `internal/mrfc/maintenance.go` | What the MRFC tells the maintenance API of its node, and what it refuses while the operator has it out of service. |
 | `internal/agw` | The MRFP: terminations, announcements and the mixer, and its control API. |
+| `internal/agw/maintenance.go` | What a media relay tells the maintenance API of its node, and what it refuses while the operator has it out of service. |
 | `internal/ue/phone_conference.go`, `internal/ue/conference.go` | Swap, Merge and the UE side of a conference. |
 | `internal/mmtel/mrf_network_test.go`, `internal/mmtel/conference_network_test.go`, `internal/mmtel/conference_border_test.go` | The same flows through the whole IMS in one process, the last with a peer of another network. |
 
