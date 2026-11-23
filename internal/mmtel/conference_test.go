@@ -567,8 +567,10 @@ func usersOf(d confinfo.Document) map[string]confinfo.User {
 // participant's request for privacy and reveals its identity in no URI
 // of the conference state. Such a participant is a user of the document
 // under an anonymous URI of RFC 4575 5.6, with a status and a joining
-// method of its own; every other participant is named by its identity,
-// one that asked for "header" privacy included.
+// method of its own; a participant that asks for nothing is named by
+// its identity. "header" asks for privacy as "id" and "user" do: it is
+// the other value with which the AS of a user with OIR restricts that
+// user's identity (TS 24.607 4.5.2.4 item 1 b).
 func TestPrivacyKeepsTheIdentityOutOfTheConferenceState(t *testing.T) {
 	mrfc := startConferenceMRFC(t)
 	as := startAS(t, noServices{}, mmtel.Config{MRFC: "sip:" + contactOf(t, mrfc.ua)})
@@ -593,7 +595,8 @@ func TestPrivacyKeepsTheIdentityOutOfTheConferenceState(t *testing.T) {
 	})
 
 	// carol withholds its identity with "user", dave asks for nothing,
-	// and eve asks to hide how the network is built, not who it is.
+	// and eve comes in with the "header" of a user whose AS restricts
+	// all of its private information.
 	for _, user := range []struct {
 		name    string
 		privacy string
@@ -615,20 +618,21 @@ func TestPrivacyKeepsTheIdentityOutOfTheConferenceState(t *testing.T) {
 	creator, _ := confinfo.AnonymousName(1)
 	invited, _ := confinfo.AnonymousName(2)
 	dialedIn, _ := confinfo.AnonymousName(3)
+	headerPrivacy, _ := confinfo.AnonymousName(4)
 	n := awaitNotification(t, notifications, "with all five participants", func(_ sip.Notification, d confinfo.Document) bool {
 		return len(d.Users.Users) == 5
 	})
 	got := usersOf(conferenceDocument(t, n.Body.Content))
 	for entity, want := range map[string]confinfo.User{
-		// The focus withheld these three identities, and names each
+		// The focus withheld these four identities, and names each
 		// participant by an anonymous URI of its own.
-		creator:  {Entity: creator, DisplayText: "Anonymous1"},
-		invited:  {Entity: invited, DisplayText: "Anonymous2"},
-		dialedIn: {Entity: dialedIn, DisplayText: "Anonymous3"},
+		creator:       {Entity: creator, DisplayText: "Anonymous1"},
+		invited:       {Entity: invited, DisplayText: "Anonymous2"},
+		dialedIn:      {Entity: dialedIn, DisplayText: "Anonymous3"},
+		headerPrivacy: {Entity: headerPrivacy, DisplayText: "Anonymous4"},
 		// GSMA IR.92 2.3.3: without a display text of its own, a user's
 		// entity stands in for it.
 		"sip:dave@" + domain: {Entity: "sip:dave@" + domain, DisplayText: "sip:dave@" + domain},
-		"sip:eve@" + domain:  {Entity: "sip:eve@" + domain, DisplayText: "sip:eve@" + domain},
 	} {
 		u, ok := got[entity]
 		if !ok {
@@ -641,7 +645,7 @@ func TestPrivacyKeepsTheIdentityOutOfTheConferenceState(t *testing.T) {
 	}
 	// The identity behind each anonymous URI is nowhere in the document,
 	// and no participant is named twice.
-	for _, hidden := range []string{"alice", "bob", "carol"} {
+	for _, hidden := range []string{"alice", "bob", "carol", "eve"} {
 		if strings.Contains(string(n.Body.Content), hidden+"@"+domain) {
 			t.Errorf("the conference state tells the identity of %s:\n%s", hidden, n.Body.Content)
 		}
@@ -654,6 +658,88 @@ func TestPrivacyKeepsTheIdentityOutOfTheConferenceState(t *testing.T) {
 		if method := got[entity].Endpoints[0].JoiningMethod; method != want {
 			t.Errorf("user %s joined by %q, want %q", entity, method, want)
 		}
+	}
+}
+
+// TestTheCreatorsIdentityRestrictionReachesTheConferenceState is TS
+// 24.605 4.6.5 for the user that creates the conference: the network
+// decides whether its identity is in the conference state, and its UE
+// does not have to ask for anything. The INVITE to the factory URI
+// passes the originating services of the creator before it becomes a
+// conference, and OIR puts "id" or "header" in its Privacy there, by
+// the subscription option of the user (TS 24.607 4.5.2.4 item 1 a and
+// b). A creator that presents its identity for this conference with
+// "none" keeps it: OIR in the temporary mode lets such a request
+// through as it is.
+func TestTheCreatorsIdentityRestrictionReachesTheConferenceState(t *testing.T) {
+	alice := "sip:alice@" + domain
+	anonymous, anonymousText := confinfo.AnonymousName(1)
+	for _, tc := range []struct {
+		name, doc, privacy   string
+		wantEntity, wantText string
+	}{
+		// A user whose OIR is in the permanent mode never presents its
+		// identity, and its UE asks for nothing.
+		{"permanent, the UE asks for nothing", oir("permanent", "presentation-not-restricted"), "", anonymous, anonymousText},
+		// The AS of a user whose subscription option restricts all the
+		// private information asks for that with "header", which restricts
+		// the identity as "id" does.
+		{"permanent, all private information", oirOption("permanent", "presentation-not-restricted", "all-private-information"), "", anonymous, anonymousText},
+		// In the temporary mode the identity is restricted by default, and
+		// the UE of this creator asks for nothing either.
+		{"temporary, restricted by default", oir("temporary", "presentation-restricted"), "", anonymous, anonymousText},
+		// In the temporary mode the user presents its identity for this
+		// conference with "none".
+		{"temporary, restricted by default, presented this time", oir("temporary", "presentation-restricted"), "none", alice, alice},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			mrfc := startConferenceMRFC(t)
+			hss := &documents{docs: map[string]string{alice: mmtelServices(tc.doc)}}
+			as := startAS(t, hss, mmtel.Config{MRFC: "sip:" + contactOf(t, mrfc.ua)})
+			var headers []sip.HeaderField
+			if tc.privacy != "" {
+				headers = append(headers, sip.HeaderField{Name: "Privacy", Value: tc.privacy})
+			}
+			_, _, notifications := aliceConference(t, as, func(c *sip.IncomingCall) { c.Reject(480) }, headers...)
+			receive(t, mrfc.calls, "the creator's INVITE at the MRFC")
+			n := awaitNotification(t, notifications, "with the creator in the conference", func(_ sip.Notification, d confinfo.Document) bool {
+				return len(d.Users.Users) == 1
+			})
+			creator := conferenceDocument(t, n.Body.Content).Users.Users[0]
+			if creator.Entity != tc.wantEntity || creator.DisplayText != tc.wantText {
+				t.Errorf("the creator is %q with the display text %q; want %q and %q",
+					creator.Entity, creator.DisplayText, tc.wantEntity, tc.wantText)
+			}
+			if tc.wantEntity == anonymous && strings.Contains(string(n.Body.Content), "alice@"+domain) {
+				t.Errorf("the conference state tells the creator's identity:\n%s", n.Body.Content)
+			}
+		})
+	}
+}
+
+// TestOutgoingBarringStopsTheCreator is TS 24.611 4.5.2.4.1 at the
+// conference factory URI: the INVITE to it is an outgoing call of the
+// creator like any other, so the barring rules of the creator decide on
+// it before it becomes a conference. A creator whose outgoing calls are
+// all barred gets 603 (Decline), and no conference is made: the focus
+// asks the MRFC for no mix.
+func TestOutgoingBarringStopsTheCreator(t *testing.T) {
+	mrfc := startConferenceMRFC(t)
+	hss := &documents{docs: map[string]string{"sip:alice@" + domain: mmtelServices(barring("", rule("baoc", "", false)))}}
+	as := startAS(t, hss, mmtel.Config{MRFC: "sip:" + contactOf(t, mrfc.ua)})
+	callee := newUA(t, "bob", func(c *sip.IncomingCall) { c.Reject(480) })
+	alice := newParticipant(t, as, "alice", func(c *sip.IncomingCall) { c.Reject(480) })
+	inv := viaAS(t, as, callee, "orig", audio("42000", "sendrecv"))
+	inv.RequestURI, inv.To = ims.ConferenceFactoryURI(domain), ims.ConferenceFactoryURI(domain)
+	out, err := alice.Invite(inv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := statuses(readAll(t, out)); !slices.Equal(got, []int{603}) {
+		t.Fatalf("the creator got %v, want 603 alone", got)
+	}
+	if len(mrfc.calls) > 0 {
+		t.Error("the AS set up media at the MRFC although the barring rules stop the call")
 	}
 }
 

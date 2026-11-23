@@ -7,10 +7,19 @@ import (
 	"github.com/yuu-biz/ims-practice/internal/sip"
 )
 
+// oir is the OIR settings of a user whose AS restricts the identity
+// alone, which it does with Privacy: id.
 func oir(mode, defaultBehaviour string) string {
+	return oirOption(mode, defaultBehaviour, "only-identity")
+}
+
+// oirOption is the OIR settings with the subscription option by which
+// the AS chooses between restricting the identity alone and restricting
+// all the private information of the request (TS 24.607 4.5.2.4 item 1).
+func oirOption(mode, defaultBehaviour, restriction string) string {
 	return `<complete-originating-identity-restriction>
   <originating-identity-presentation-restriction active="true"><default-behaviour>` + defaultBehaviour + `</default-behaviour></originating-identity-presentation-restriction>
-  <operator-originating-identity-presentation-restriction authorized="true"><mode>` + mode + `</mode><restriction>only-identity</restriction></operator-originating-identity-presentation-restriction>
+  <operator-originating-identity-presentation-restriction authorized="true"><mode>` + mode + `</mode><restriction>` + restriction + `</restriction></operator-originating-identity-presentation-restriction>
 </complete-originating-identity-restriction>`
 }
 
@@ -58,6 +67,7 @@ func TestOriginatingIdentityRestriction(t *testing.T) {
 		{"no OIR, the caller asks", "", "id", "id", false},
 		{"permanent", oir("permanent", "presentation-not-restricted"), "", "id", true},
 		{"permanent, the caller asks to present", oir("permanent", "presentation-not-restricted"), "none", "id", true},
+		{"permanent, all private information", oirOption("permanent", "presentation-not-restricted", "all-private-information"), "", "header", true},
 		{"temporary, restricted by default", oir("temporary", "presentation-restricted"), "", "id", true},
 		{"temporary, restricted by default, presented this time", oir("temporary", "presentation-restricted"), "none", "none", false},
 		{"temporary, presented by default", oir("temporary", "presentation-not-restricted"), "", "", false},
