@@ -136,9 +136,9 @@ func (u *UE) securityAssociations() *securityAssociations {
 
 // setUpESP puts the security associations of sa into the kernel, in
 // place of those of the set old that it replaces (TS 33.203 7.4.1a).
-// They live only as long as the authentication has to finish, which
-// registeredOver raises once it is over. Without the option it does
-// nothing.
+// Their lifetime is the one the UE holds (securityAssociations), not
+// one the kernel keeps: TS 33.203 7.1 NOTE 4 leaves it to the SIP
+// application. Without the option it does nothing.
 func (u *UE) setUpESP(sa, old *securityAssociations) error {
 	esp := u.esp()
 	if esp == nil {
@@ -152,20 +152,7 @@ func (u *UE) setUpESP(sa, old *securityAssociations) error {
 		// replace them here.
 		u.tearDownESP(old)
 	}
-	return esp.Kernel.Setup(context.Background(), u.agreement(sa), ipsec.UEEnd, time.Until(sa.expires))
-}
-
-// refreshESP gives the associations of sa the lifetime of the
-// registration that was just granted (TS 33.203 7.4.1a: the UE raises
-// it so that it ends shortly after the registration timer).
-func (u *UE) refreshESP(sa *securityAssociations) {
-	esp := u.esp()
-	if esp == nil {
-		return
-	}
-	if err := esp.Kernel.Refresh(context.Background(), u.agreement(sa), ipsec.UEEnd, time.Until(sa.expires)); err != nil {
-		u.log.Warn("the ESP security associations keep the lifetime of the authentication", "error", err.Error())
-	}
+	return esp.Kernel.Setup(context.Background(), u.agreement(sa), ipsec.UEEnd)
 }
 
 // tearDownESP takes them out again. Nothing can be done about a kernel
@@ -312,7 +299,6 @@ func (u *UE) registeredOver(sa *securityAssociations, interval time.Duration) {
 	}
 	established.temporary = false
 	u.setSecurityAssociations(&established)
-	u.refreshESP(&established)
 }
 
 // sendOver sends a REGISTER with the security agreement of RFC 3329 2.3.1

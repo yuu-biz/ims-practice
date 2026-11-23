@@ -69,13 +69,13 @@ import (
 //     so no message rides the old associations after the challenge.
 //
 // With ESP:
-//   - A set of security associations that expires without the UE
-//     registering again stays in the kernel until the next
-//     authentication replaces it: the SA table drops an expired entry
-//     when it is read, and no sweep of the whole table brings it to
-//     the P-CSCF's notice. Requests over those associations are
-//     dropped all the same, since the IP association has gone with the
-//     registration (Screen).
+//   - The lifetime of a set is a timer of this instance (espSets), as
+//     TS 33.203 7.1 NOTE 4 and 7.4 leave it to the SIP application.
+//     What an earlier run of this node left in the kernel stays there:
+//     the kernel outlives the process, and nothing sweeps it. A UE that
+//     registers again writes its policies over the old ones and takes
+//     the states of its new SPIs; the states of the run before keep
+//     their place, with no policy to send anything over them.
 
 // SecurityAssociations are the two pairs of security associations that
 // one IMS AKA authentication sets up between the P-CSCF and a UE: one
@@ -154,6 +154,107 @@ type ESP struct {
 	TeardownDelay time.Duration
 }
 
+// espSets are the sets of security associations that this P-CSCF holds
+// in its own kernel, one for each UE, with the timer that deletes each.
+// The SIP application holds the lifetime of a security association (TS
+// 33.203 7.1 NOTE 4, 7.4), so a timer of this P-CSCF, and not the
+// kernel, is what ends a set: at the end of its lifetime, or a moment
+// after the SIP layer has let it go, so that the last message of the
+// registration still rides it.
+//
+// One timer to a UE, replaced with the set it belongs to: the sets of
+// one UE are bound to the same ports, so a timer of a set that another
+// has replaced would otherwise delete the policies of the new one. The
+// lock holds the kernel and this table together, so that a set-up and
+// the firing of a timer do not cross.
+type espSets struct {
+	mu sync.Mutex
+	m  map[netip.AddrPort]*espSet
+}
+
+type espSet struct {
+	// spis says which set of the UE this is.
+	spis SPIs
+	// agreement is what the kernel needs to delete it.
+	agreement ipsec.Agreement
+	// deletes it when its time is up; nil once it has fired.
+	timer *time.Timer
+}
+
+// holdESP has the kernel keep the security associations of sas until
+// for_ has passed, in place of whatever set this UE had. set, when not nil,
+// puts them there; nothing else writes to the kernel for this UE while
+// it runs.
+func (p *PCSCF) holdESP(ctx context.Context, sas SecurityAssociations, for_ time.Duration, set func(ipsec.Agreement) error) error {
+	agreement := p.agreement(sas)
+	p.esp.mu.Lock()
+	defer p.esp.mu.Unlock()
+	if p.esp.m == nil {
+		p.esp.m = map[netip.AddrPort]*espSet{}
+	}
+	if old := p.esp.m[sas.UE]; old != nil && old.timer != nil {
+		old.timer.Stop()
+		if old.spis != sas.SPIs() {
+			// TS 33.203 7.4.2a: the new associations replace the old.
+			// Only their states go: the policies of both sets name the
+			// same ports, and the set-up below writes the new ones over
+			// them, which leaves the protected ports covered throughout.
+			p.cfg.ESP.Kernel.Replace(ctx, old.agreement)
+		}
+	}
+	if set != nil {
+		if err := set(agreement); err != nil {
+			delete(p.esp.m, sas.UE)
+			return err
+		}
+	}
+	held := &espSet{spis: sas.SPIs(), agreement: agreement}
+	held.timer = time.AfterFunc(for_, func() { p.espExpired(sas.UE, held) })
+	p.esp.m[sas.UE] = held
+	return nil
+}
+
+// espExpired deletes the security associations of held, unless the UE
+// has a set of its own again by now.
+func (p *PCSCF) espExpired(ue netip.AddrPort, held *espSet) {
+	p.esp.mu.Lock()
+	defer p.esp.mu.Unlock()
+	if p.esp.m[ue] != held {
+		return
+	}
+	held.timer = nil
+	delete(p.esp.m, ue)
+	p.cfg.ESP.Kernel.Teardown(context.Background(), held.agreement, ipsec.PCSCFEnd)
+}
+
+// releaseESP has the kernel let the set of the UE at ue go once the
+// last message of the registration has had time to leave over it.
+func (p *PCSCF) releaseESP(ue netip.AddrPort) {
+	delay := p.cfg.ESP.TeardownDelay
+	if delay == 0 {
+		delay = afterTheLastMessage
+	}
+	p.esp.mu.Lock()
+	defer p.esp.mu.Unlock()
+	if held := p.esp.m[ue]; held != nil && held.timer != nil {
+		held.timer.Reset(delay)
+	}
+}
+
+// stopESP stops the timers of the sets this instance holds, for a
+// P-CSCF that is closing. The associations stay in the kernel, which
+// outlives the process: the next registration of the UE replaces them.
+func (p *PCSCF) stopESP() {
+	p.esp.mu.Lock()
+	defer p.esp.mu.Unlock()
+	for _, held := range p.esp.m {
+		if held.timer != nil {
+			held.timer.Stop()
+		}
+	}
+	clear(p.esp.m)
+}
+
 // afterTheLastMessage is how long the security associations of a UE
 // stay in the kernel after the SA table has let them go. TS 33.203
 // 7.4.2a has the P-CSCF delete them once the last message of the
@@ -187,9 +288,6 @@ func (p *PCSCF) putSecurityAssociations(ctx context.Context, sas SecurityAssocia
 	}
 	if sas.Temporary {
 		sas.PCSCF = p.cfg.ESP.Address
-		if old, ok, err := p.store.SecurityAssociations(ctx, sas.UE); err == nil && ok && p.ours(old) {
-			p.cfg.ESP.Kernel.Teardown(ctx, p.agreement(old), ipsec.PCSCFEnd)
-		}
 	}
 	if err := p.store.PutSecurityAssociations(ctx, sas); err != nil {
 		return err
@@ -199,12 +297,16 @@ func (p *PCSCF) putSecurityAssociations(ctx context.Context, sas SecurityAssocia
 	}
 	if sas.Temporary {
 		// The UE answers the challenge over the new associations, so
-		// they are in the kernel before the 401 leaves.
-		return p.cfg.ESP.Kernel.Setup(ctx, p.agreement(sas), ipsec.PCSCFEnd, time.Until(sas.Expires))
+		// they are in the kernel before the 401 leaves, and they live
+		// as long as the authentication has to finish.
+		return p.holdESP(ctx, sas, time.Until(sas.Expires), func(a ipsec.Agreement) error {
+			return p.cfg.ESP.Kernel.Setup(ctx, a, ipsec.PCSCFEnd)
+		})
 	}
 	// A registration that was refreshed moved the lifetime of the SA
-	// table entry, and the kernel follows (TS 33.203 7.4.2a).
-	return p.cfg.ESP.Kernel.Refresh(ctx, p.agreement(sas), ipsec.PCSCFEnd, time.Until(sas.Expires))
+	// table entry, and the timer that ends the set follows it (TS
+	// 33.203 7.4.2a). The kernel has the associations already.
+	return p.holdESP(ctx, sas, time.Until(sas.Expires), nil)
 }
 
 // deleteSecurityAssociations takes the set of the UE at ue out of the
@@ -241,14 +343,7 @@ func (p *PCSCF) tearDown(ctx context.Context, ue netip.AddrPort, spis *SPIs) err
 	case !ok || !p.ours(sas) || (spis != nil && sas.SPIs() != *spis):
 		return nil
 	}
-	delay := p.cfg.ESP.TeardownDelay
-	if delay == 0 {
-		delay = afterTheLastMessage
-	}
-	agreement := p.agreement(sas)
-	time.AfterFunc(delay, func() {
-		p.cfg.ESP.Kernel.Teardown(context.Background(), agreement, ipsec.PCSCFEnd)
-	})
+	p.releaseESP(ue)
 	return nil
 }
 
@@ -446,6 +541,47 @@ func (p *PCSCF) AdmitUnprotected(req *sip.Message, source sip.Destination) bool 
 		return true
 	}
 	p.log.Info("discarded an unprotected request from a UE with security associations",
+		"method", string(req.Method), "source", source.String(), "call_id", req.Get("Call-ID"))
+	return false
+}
+
+// AdmitProtected is the sip.Config.Admit of the stack on the P-CSCF's
+// protected server port, for a P-CSCF with ESP. The associations of a
+// protected message are the ones of the ports it crossed (TS 33.203 7.1
+// rule 4), so a request from a UE that has a set has to come from one
+// of that set's protected ports. The kernel lets a packet from any
+// other port of the UE's address through, since the policies it would
+// have to break cover the protected ports alone, and the sent-by of its
+// Via is enough to name the UE (ueSourceOf); this is what keeps such a
+// request out. It is discarded, as TS 24.229 5.2.1 NOTE 8 has the
+// P-CSCF discard an unprotected message and 7.1 item 3 allows: nothing
+// goes back, not even a 100 (Trying).
+//
+// A REGISTER goes through: the security agreement itself checks the
+// ports of the set it claims, and refuses with a response that tells
+// the UE to start again (receiveSecAgree). Without ESP there is nothing
+// to check, since the port a request came from is the key of the set.
+//
+// Like AdmitUnprotected it reads the SA table for each request, off the
+// stack's loop.
+func (p *PCSCF) AdmitProtected(req *sip.Message, source sip.Destination) bool {
+	if p.cfg.ESP == nil || req.Method == sip.REGISTER {
+		return true
+	}
+	ue, _ := p.ueSourceOf(req, source)
+	sas, ok, err := p.store.SecurityAssociations(context.Background(), ue.Addr)
+	switch {
+	case err != nil:
+		// As AdmitUnprotected does, the request goes in: the P-CSCF
+		// reads the Store again to serve it, and answers 500 when that
+		// fails too.
+		p.log.Warn("could not read the SA table for a request on the protected port", "method", string(req.Method),
+			"source", source.String(), "call_id", req.Get("Call-ID"), "error", err.Error())
+		return true
+	case !ok || sas.protect(source.Addr.Port()):
+		return true
+	}
+	p.log.Info("discarded a request that came from no protected port of its security associations",
 		"method", string(req.Method), "source", source.String(), "call_id", req.Get("Call-ID"))
 	return false
 }

@@ -320,7 +320,8 @@ func run(configPath string, log *slog.Logger, level *slog.LevelVar) error {
 			// associations of each UE are bound to.
 			protected := config.SIP{Listen: netip.AddrPortFrom(c.SIP.Listen.Addr(), port), Host: c.SIP.Host}
 			stack, err := startProtectedSIP(config.RolePCSCF, protected, c.ProtectedClientPort, p.ProtectedPeer,
-				sip.Config{Screen: p.Screen, OnRequest: p.OnProtectedRequest, OnACK: p.OnProtectedACK, OnCANCEL: p.OnProtectedCANCEL})
+				sip.Config{Screen: p.Screen, Admit: p.AdmitProtected, OnRequest: p.OnProtectedRequest,
+					OnACK: p.OnProtectedACK, OnCANCEL: p.OnProtectedCANCEL})
 			if err != nil {
 				return err
 			}

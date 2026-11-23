@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/netip"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -165,10 +166,6 @@ func TestESPSetUpWithTheChallenge(t *testing.T) {
 	holds(t, run, "ip xfrm state add src 127.0.0.1 dst 127.0.0.1 proto esp spi 0x457 ") // spi_uc, 1111
 	holds(t, run, "ip xfrm policy update src 127.0.0.1/32 dst 127.0.0.1/32 proto udp sport 50001 dport 5064 dir in ")
 	holds(t, run, "ip xfrm policy update src 127.0.0.1/32 dst 127.0.0.1/32 proto udp sport 5065 dport 5062 dir out ")
-	// The lifetime of the new associations is the one of the
-	// authentication, which the 200 (OK) raises.
-	holds(t, run, "ip xfrm state add src 127.0.0.1 dst 127.0.0.1 proto esp spi 0x8af reqid 2223 mode transport"+
-		" replay-window 32 limit time-hard 240 ")
 	stored, ok, err := h.p.store.SecurityAssociations(ctx, sas.UE)
 	if err != nil || !ok {
 		t.Fatalf("the SA table has no entry for the UE: %v, %v", ok, err)
@@ -181,14 +178,32 @@ func TestESPSetUpWithTheChallenge(t *testing.T) {
 	}
 }
 
-// TestESPLifetimeFollowsTheRegistration: the 200 (OK) that establishes
-// the associations, and every refresh after it, raises their lifetime
-// in the kernel to the one of the registration (TS 33.203 7.4.2a), so
-// that the kernel keeps nothing that the SA table has let go of.
-func TestESPLifetimeFollowsTheRegistration(t *testing.T) {
+// TestESPEndsWithItsLifetime: the SIP application holds the lifetime
+// of the associations (TS 33.203 7.1 NOTE 4, 7.4), so a set whose
+// lifetime is over leaves the kernel even though no registration ended
+// to take it out, and nothing of this P-CSCF sweeps the SA table.
+func TestESPEndsWithItsLifetime(t *testing.T) {
+	h := newESPHarness(t)
+	sas := h.associations(1111, 2222)
+	sas.Expires = time.Now().Add(teardownDelay)
+	if err := h.p.putSecurityAssociations(context.Background(), sas); err != nil {
+		t.Fatal(err)
+	}
+	h.forget()
+	h.ran(t, 1)
+	holds(t, h.only(t), "ip xfrm state deleteall src 127.0.0.1 dst 127.0.0.1 proto esp spi 0x8af")
+}
+
+// TestESPKeptForARefreshedRegistration: a registration refreshed
+// without a new authentication keeps its associations and moves their
+// lifetime (TS 33.203 7.4.2a). The kernel hears nothing of it: the
+// associations are there already, and a lifetime in the kernel would
+// count from the moment the state was added.
+func TestESPKeptForARefreshedRegistration(t *testing.T) {
 	h := newESPHarness(t)
 	ctx := context.Background()
 	sas := h.associations(1111, 2222)
+	sas.Expires = time.Now().Add(teardownDelay)
 	if err := h.p.putSecurityAssociations(ctx, sas); err != nil {
 		t.Fatal(err)
 	}
@@ -196,16 +211,14 @@ func TestESPLifetimeFollowsTheRegistration(t *testing.T) {
 	established := sas
 	established.Temporary = false
 	established.PCSCF = netip.MustParseAddr("127.0.0.1")
-	established.Expires = time.Now().Add(600*time.Second + securityAssociationMargin)
+	established.Expires = time.Now().Add(time.Hour)
 	if err := h.p.putSecurityAssociations(ctx, established); err != nil {
 		t.Fatal(err)
 	}
-	run := h.only(t)
-	if n := len(run); n != 4 {
-		t.Errorf("the kernel ran %d commands, want an update of each association:\n  %s", n, strings.Join(run, "\n  "))
+	time.Sleep(4 * teardownDelay)
+	if h.count() != 0 {
+		t.Errorf("the kernel heard of the refresh, or let the associations go at the lifetime of the authentication:\n%s", h.printed())
 	}
-	holds(t, run, "ip xfrm state update src 127.0.0.1 dst 127.0.0.1 proto esp spi 0x8af reqid 2223 mode transport"+
-		" replay-window 32 limit time-hard 630 ")
 }
 
 // TestESPReplacedByANewAuthentication: a new authentication takes the
@@ -222,10 +235,19 @@ func TestESPReplacedByANewAuthentication(t *testing.T) {
 		t.Fatal(err)
 	}
 	h.ran(t, 2)
-	// The teardown of the old associations comes first, and right away:
-	// the challenge, not a response, is the message that follows.
+	// The states of the old associations go first, and right away: the
+	// challenge, not a response, is the message that follows. Their
+	// policies stay for the new set to be written over them, so that
+	// the protected ports are covered throughout.
+	if n := len(h.run(0)); n != 4 {
+		t.Errorf("the first run is %d commands, want the four old states:\n  %s", n, strings.Join(h.run(0), "\n  "))
+	}
 	holds(t, h.run(0), "ip xfrm state deleteall src 127.0.0.1 dst 127.0.0.1 proto esp spi 0x8af")
-	holds(t, h.run(0), "ip xfrm policy deleteall src 127.0.0.1/32 dst 127.0.0.1/32 proto udp sport 50001 dport 5064 dir in")
+	for _, c := range h.run(0) {
+		if strings.HasPrefix(c, "ip xfrm policy ") {
+			t.Errorf("the set that is replaced gives up a policy: %q", c)
+		}
+	}
 	holds(t, h.run(1), "ip xfrm state add src 127.0.0.1 dst 127.0.0.1 proto esp spi 0x115d ") // spi_ps of the new set, 4445
 }
 
@@ -377,5 +399,93 @@ func TestESPRefusesAnUnprotectedPortOfTheUE(t *testing.T) {
 	m := h.aRegister("6629fae49393a05397450978507c4ef1", "600000", verify...)
 	if r := h.send(other, h.protected, m); r.StatusCode != 403 {
 		t.Errorf("a REGISTER from %s got %d, want 403", other.LocalAddr(), r.StatusCode)
+	}
+}
+
+// TestESPReRegistrationWithinTheTeardownDelay: the sets of one UE are
+// bound to the same ports, so the set that a UE registers again with,
+// within the moment that the one it let go is still in the kernel for,
+// keeps its policies: the timer of the old set is the old set's alone
+// (TS 33.203 7.4.2a).
+func TestESPReRegistrationWithinTheTeardownDelay(t *testing.T) {
+	h := newESPHarness(t)
+	ctx := context.Background()
+	old := h.associations(1111, 2222)
+	if err := h.p.putSecurityAssociations(ctx, old); err != nil {
+		t.Fatal(err)
+	}
+	// The UE deregisters, which lets the set go once the 200 (OK) has
+	// had time to leave over it.
+	if err := h.p.deleteSecurityAssociations(ctx, old.UE); err != nil {
+		t.Fatal(err)
+	}
+	h.forget()
+	// And registers again before that moment is over.
+	if err := h.p.putSecurityAssociations(ctx, h.associations(3333, 4444)); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(4 * teardownDelay)
+	for i := 0; i < h.count(); i++ {
+		for _, c := range h.run(i) {
+			if strings.HasPrefix(c, "ip xfrm policy deleteall") {
+				t.Errorf("run %d deletes a policy of the new set: %q", i+1, c)
+			}
+		}
+	}
+	if h.count() != 2 {
+		t.Fatalf("the kernel ran %d times, want the states of the old set and the set-up of the new:\n%s", h.count(), h.printed())
+	}
+	holds(t, h.run(0), "ip xfrm state deleteall src 127.0.0.1 dst 127.0.0.1 proto esp spi 0x8af")
+	holds(t, h.run(1), "ip xfrm state add src 127.0.0.1 dst 127.0.0.1 proto esp spi 0x115d ")
+	holds(t, h.run(1), "ip xfrm policy update src 127.0.0.1/32 dst 127.0.0.1/32 proto udp sport 50001 dport 5064 dir in ")
+}
+
+// TestAdmitProtected: the associations of a protected message are the
+// ones of the ports it crossed (TS 33.203 7.1 rule 4), so a request
+// from a UE that has a set is taken on the protected server port only
+// when it comes from one of that set's protected ports. The kernel
+// lets a packet from another port of the UE's address through, since
+// no policy covers that port.
+func TestAdmitProtected(t *testing.T) {
+	h := newESPHarness(t)
+	sas := h.associations(1111, 2222)
+	if err := h.p.putSecurityAssociations(context.Background(), sas); err != nil {
+		t.Fatal(err)
+	}
+	// An in-dialog request of the UE, whose Via names the UE's
+	// protected server port however it was sent.
+	request := func(from uint16) (*sip.Message, sip.Destination) {
+		m := &sip.Message{Method: sip.BYE, RequestURI: "sip:001010000000002@" + domain}
+		m.Add("Via", "SIP/2.0/UDP "+sas.UE.String()+";branch="+sip.NewBranch()+";rport="+strconv.Itoa(int(from)))
+		m.Add("Call-ID", "call-1")
+		return m, sip.Destination{Transport: sip.UDP, Addr: netip.AddrPortFrom(sas.UE.Addr(), from)}
+	}
+	for _, c := range []struct {
+		what string
+		port uint16
+		want bool
+	}{
+		{"the protected client port", sas.UEMechanism.PortC, true},
+		{"the protected server port", sas.UEMechanism.PortS, true},
+		{"another port of the UE's address", 50002, false},
+	} {
+		if got := h.p.AdmitProtected(request(c.port)); got != c.want {
+			t.Errorf("a request from %s was admitted %v, want %v", c.what, got, c.want)
+		}
+	}
+	// A REGISTER goes through from anywhere: the security agreement
+	// checks the ports of the set it claims.
+	m, source := request(50002)
+	m.Method = sip.REGISTER
+	if !h.p.AdmitProtected(m, source) {
+		t.Error("a REGISTER was not admitted")
+	}
+	// A UE with no set of its own is nothing to this rule.
+	other := sip.Destination{Transport: sip.UDP, Addr: netip.MustParseAddrPort("127.0.0.2:50002")}
+	m, _ = request(50002)
+	m.Remove("Via")
+	m.Add("Via", "SIP/2.0/UDP 127.0.0.2:5062;branch="+sip.NewBranch())
+	if !h.p.AdmitProtected(m, other) {
+		t.Error("a request of a UE without security associations was not admitted")
 	}
 }
