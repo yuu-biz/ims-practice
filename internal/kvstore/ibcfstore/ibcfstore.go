@@ -3,21 +3,22 @@
 // process or host, finds the records of the calls that its earlier
 // process left, and ends them.
 //
-// Each instance owns its records: no other instance reads or writes
-// them. The items and their keys, after the prefix of the Config and
-// "ibcf:":
+// Each instance owns its records: no other instance writes them. The
+// items and their keys, after the prefix of the Config and "ibcf:":
 //
-//	call:<instance>:<ID>   the CallRecord, as JSON
-//	calls-of:<instance>    index: the IDs of the calls of the instance
+//	call:<instance>:<ID>                       the CallRecord, as JSON
+//	calls-of:<instance>                        index: the IDs of the calls of the instance
+//	dialog:<Call-ID>:<local tag>:<remote tag>  index: <instance>:<ID> of the call that has the dialog
 //
 // An instance that starts reads its index and then each record in it,
 // and never walks the keys of the store, which other instances and
 // roles share. The index holds at most as many IDs as the instance has
 // calls at once, so it does not grow with the number of users or of
-// instances.
+// instances. Any instance reads one record by one of its dialogs, two
+// keys, for the Replaces of an INVITE (ibcf.Store.CallOf).
 //
-// Neither item has a time to live. A call lasts until its BYE, however
-// long that is, as in ibcf.MemoryStore; the records of an instance that
+// No item has a time to live. A call lasts until its BYE, however long
+// that is, as in ibcf.MemoryStore; the records of an instance that
 // never starts again stay, as their TrGW contexts do.
 package ibcfstore
 
@@ -31,6 +32,7 @@ import (
 	"github.com/yuu-biz/ims-practice/internal/ibcf"
 	"github.com/yuu-biz/ims-practice/internal/kvstore"
 	"github.com/yuu-biz/ims-practice/internal/kvstore/kvjson"
+	"github.com/yuu-biz/ims-practice/internal/sip"
 )
 
 // Store is an ibcf.Store on a kvstore.Store.
@@ -59,6 +61,10 @@ func (s *Store) callKey(instance, id string) string { return s.c.Key("call", ins
 
 func (s *Store) indexKey(instance string) string { return s.c.Key("calls-of", instance) }
 
+func (s *Store) dialogKey(id sip.DialogID) string {
+	return s.c.Key("dialog", id.CallID, id.LocalTag, id.RemoteTag)
+}
+
 // callsOf is the value of the index of an instance: the IDs of its
 // calls, in order.
 type callsOf struct {
@@ -71,12 +77,21 @@ const maxAttempts = 100
 
 var errGaveUp = errors.New("ibcfstore: the index of the instance could not be changed")
 
-// PutCall writes the ID of r in the index of its instance, and then r.
-// The index comes first so that an instance that stops between the two
-// writes leaves at worst an entry without a record, which CallsOf skips:
-// never a record that CallsOf cannot find, whose TrGW context a later
-// process would not release. The IBCF writes a record again after each
-// request within its call; the index is then read but not written.
+// PutCall writes the ID of r in the index of its instance, then r, and
+// then the entry of each of its dialogs. The index comes first so that
+// an instance that stops between the two writes leaves at worst an
+// entry without a record, which CallsOf skips: never a record that
+// CallsOf cannot find, whose TrGW context a later process would not
+// release. The IBCF writes a record again after each request within its
+// call; the index is then read but not written.
+//
+// The entries of the dialogs come after the record, unlike the other
+// index items of the adapters (kvjson.WriteIndex), because the record
+// is what DeleteCall reads to find them. An instance that stops in
+// between leaves a record whose dialogs CallOf does not find yet, never
+// an entry that no DeleteCall removes. The entries are written again
+// with the record each time, so the next write that gets through puts
+// them back.
 func (s *Store) PutCall(ctx context.Context, r ibcf.CallRecord) error {
 	err := s.changeIndex(ctx, r.Instance, func(ix *callsOf) bool {
 		i, found := slices.BinarySearch(ix.IDs, r.ID)
@@ -89,12 +104,32 @@ func (s *Store) PutCall(ctx context.Context, r ibcf.CallRecord) error {
 	if err != nil {
 		return fmt.Errorf("ibcfstore: put call %s of %s: %w", r.ID, r.Instance, err)
 	}
-	return kvjson.Write(ctx, s.c, s.callKey(r.Instance, r.ID), r, 0)
+	if err := kvjson.Write(ctx, s.c, s.callKey(r.Instance, r.ID), r, 0); err != nil {
+		return err
+	}
+	for _, id := range r.DialogIDs() {
+		if err := s.c.WriteIndex(ctx, s.dialogKey(id), kvjson.Member(r.Instance, r.ID), 0); err != nil {
+			return fmt.Errorf("ibcfstore: put the dialog %s of call %s of %s: %w", id.CallID, r.ID, r.Instance, err)
+		}
+	}
+	return nil
 }
 
-// DeleteCall removes the record, and then its entry in the index, in
-// the opposite order to PutCall and for the same reason.
+// DeleteCall reads the record for its dialogs, removes their entries,
+// then the record, and then its entry in the index: the opposite order
+// to PutCall, and for the same reasons. An instance that stops before
+// the record is gone leaves it in the index, and the next process of the
+// instance ends the call again and removes the rest.
 func (s *Store) DeleteCall(ctx context.Context, instance, id string) error {
+	var r ibcf.CallRecord
+	if _, err := kvjson.Read(ctx, s.c, s.callKey(instance, id), &r); err != nil && !errors.Is(err, kvstore.ErrNotFound) {
+		return err
+	}
+	for _, d := range r.DialogIDs() {
+		if err := s.c.RemoveIndexIf(ctx, s.dialogKey(d), kvjson.Member(instance, id)); err != nil {
+			return fmt.Errorf("ibcfstore: delete the dialog %s of call %s of %s: %w", d.CallID, id, instance, err)
+		}
+	}
 	if err := s.c.Remove(ctx, s.callKey(instance, id)); err != nil {
 		return err
 	}
@@ -102,6 +137,34 @@ func (s *Store) DeleteCall(ctx context.Context, instance, id string) error {
 		return fmt.Errorf("ibcfstore: delete call %s of %s: %w", id, instance, err)
 	}
 	return nil
+}
+
+// CallOf reads the entry of the dialog, and then the record that it
+// names. An entry whose record is gone, or does not have the dialog, is
+// a miss, as it is for kvjson.ReadIndex.
+func (s *Store) CallOf(ctx context.Context, id sip.DialogID) (ibcf.CallRecord, bool, error) {
+	target, _, err := s.c.ReadIndex(ctx, s.dialogKey(id))
+	if errors.Is(err, kvstore.ErrNotFound) {
+		return ibcf.CallRecord{}, false, nil
+	}
+	if err != nil {
+		return ibcf.CallRecord{}, false, err
+	}
+	parts := kvjson.SplitMember(target)
+	if len(parts) != 2 {
+		return ibcf.CallRecord{}, false, nil
+	}
+	var r ibcf.CallRecord
+	_, err = kvjson.Read(ctx, s.c, s.callKey(parts[0], parts[1]), &r)
+	switch {
+	case errors.Is(err, kvstore.ErrNotFound):
+		return ibcf.CallRecord{}, false, nil
+	case err != nil:
+		return ibcf.CallRecord{}, false, err
+	case !slices.Contains(r.DialogIDs(), id):
+		return ibcf.CallRecord{}, false, nil
+	}
+	return r, true, nil
 }
 
 // CallsOf reads the index of the instance, and then each record in it.
