@@ -363,7 +363,7 @@ If the UE does not re-register in time, the registration expires. The S-CSCF sen
 
 ## Remove a subscription: deregistration by the HSS
 
-The HSS has a provisioning API over HTTP, which listens where the hss key `provisioning_listen` says, for example `:8081`. The API is this project's own, not a 3GPP interface. Product HSSs have a provisioning interface too, each one its own. The JSON fields have the names of the configuration keys.
+The HSS has a provisioning API over HTTP, which listens where the hss key `provisioning_listen` says, for example `:8081`. The API is this project's own, not a 3GPP interface. In User Data Convergence (UDC), where one repository holds the subscriber data of a network, that repository has a provisioning interface towards the operator's OSS. The interface itself is outside the scope of the specification (TS 23.335 4.2.3). Subscription Management (SuM) does have a standard interface towards the OSS, an IRP on Itf-N (TS 32.141 4.2.1) in the form of a Bulk CM file in XML (TS 28.753 Annex A.3.1), but its information model (TS 28.752) has no attribute for the long-term key, OPc or the SIP Digest password that this API carries. The standard form alone cannot bring a subscription of this network in, so the provisioning goes over an API of this project's own. The JSON fields have the names of the configuration keys.
 
 | Request | What it does |
 | --- | --- |
