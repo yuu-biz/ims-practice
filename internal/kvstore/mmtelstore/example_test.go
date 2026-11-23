@@ -23,14 +23,15 @@ func Example() {
 	const domain = "ims.mnc001.mcc001.3gppnetwork.org"
 
 	store := mmtelstore.New(kv, cfg)
-	as := mmtel.New(mmtel.Config{Host: "mmtel-1." + domain, Port: 5060, HomeDomain: domain, MRFC: "sip:mrfc." + domain},
+	as := mmtel.New(mmtel.Config{Host: "mmtel-1." + domain, Port: 5060, HomeDomain: domain,
+		MRFC: "sip:mrfc." + domain, ConferenceDomain: "conf." + domain},
 		nil, store, store, nil, slog.New(slog.DiscardHandler))
 	_ = as
 
 	// What the focus of mmtel-1 writes once the creator has joined.
 	ctx := context.Background()
 	err := store.PutConference(ctx, mmtel.ConferenceRecord{
-		ID: "conf-a1", URI: "sip:conf-a1@mmtel-1." + domain + ":5060", Creator: "tel:+12025550101",
+		ID: "conf-a1", URI: "sip:conf-a1@conf." + domain, Creator: "tel:+12025550101",
 		MRFC: "sip:conf=conf-a1@mrfc." + domain,
 		Participants: []mmtel.ConferenceParticipant{{Participant: confinfo.Participant{
 			User: "tel:+12025550101", Status: confinfo.Connected, JoiningMethod: confinfo.DialedIn}}},
@@ -50,5 +51,5 @@ func Example() {
 		fmt.Printf("%s: %s is %s (%s)\n", r.URI, p.User, p.Status, p.JoiningMethod)
 	}
 	// Output:
-	// sip:conf-a1@mmtel-1.ims.mnc001.mcc001.3gppnetwork.org:5060: tel:+12025550101 is connected (dialed-in)
+	// sip:conf-a1@conf.ims.mnc001.mcc001.3gppnetwork.org: tel:+12025550101 is connected (dialed-in)
 }
