@@ -337,8 +337,10 @@ diameter:
 hep:
   collector: lab.ims.svc.cluster.local:9060
 # The maintenance listener: the metrics of the HSS at /metrics for
-# Prometheus to scrape. It serves no maintenance API, since the HSS
-# holds no administrative state that an operator sets. No specification
+# Prometheus to scrape, and the maintenance API that takes the HSS out
+# of service. A shut down there has the HSS send each Diameter peer a
+# DPR and close the connection, and stop listening on port 3868 until
+# the operator unlocks it. No specification
 # gives a port for this listener; 8085 is this project's choice. It
 # asks for no password, so the port is not published outside the
 # network of the IMS nodes.

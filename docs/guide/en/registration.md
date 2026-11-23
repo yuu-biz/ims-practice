@@ -183,7 +183,7 @@ The S-CSCF checks that the Call-ID matches the challenged REGISTER, that the rea
 
 It then sends a **Server-Assignment-Request** (SAR, Cx command 301) with `Server-Assignment-Type` **`REGISTRATION`** (1). The HSS records the user as registered at this S-CSCF and returns the user profile in **User-Data** (Wireshark: `Cx-User-Data`). The profile is an XML document (TS 29.228 Annex E) that lists the identities registered together. It also carries the initial filter criteria (iFCs), which tell the S-CSCF which application servers to involve in the user's requests. `deploy/compose/hss.yaml` gives every user the two iFCs of SMS over IP. Step 15 shows what the first one does with the REGISTER.
 
-The HSS counts that record. While the user is registered, its public identities are in `ims_hss_registered_public_identities` and its private identity in `ims_hss_registered_private_identities`; the deregistration takes them out again. The node of the HSS serves them at `http://127.0.0.1:8085/metrics` inside its container, beside `ims_hss_subscriptions` and `ims_hss_public_identities`, which count what the HSS holds whether anyone is registered or not. It serves no maintenance API there, since the HSS holds no administrative state that an operator sets.
+The HSS counts that record. While the user is registered, its public identities are in `ims_hss_registered_public_identities` and its private identity in `ims_hss_registered_private_identities`; the deregistration takes them out again. The node of the HSS serves them at `http://127.0.0.1:8085/metrics` inside its container, beside `ims_hss_subscriptions` and `ims_hss_public_identities`, which count what the HSS holds whether anyone is registered or not. The same listener serves the maintenance API that takes the HSS out of service ([Take the HSS out of service](#take-the-hss-out-of-service)).
 
 ### 10. The S-CSCF accepts: 200 OK
 
@@ -597,6 +597,90 @@ In Wireshark, `sip.Status-Code == 503 && ip.src == 172.28.0.20` shows the 503 of
    The next `ue register` registers as before.
 
 `scripts/e2e-observability.sh` runs these steps as well, and checks the 503 and the 504 in the capture.
+
+## Take the HSS out of service
+
+The CSCFs and the application servers reach the HSS over Diameter, so an instance that goes out of service does not say so in an answer the way a CSCF does: it ends its Diameter connections instead. Every peer gets a **Disconnect-Peer-Request** (DPR) whose `Disconnect-Cause` is `REBOOTING`, and the HSS closes the connection once the peer's **Disconnect-Peer-Answer** (DPA) comes back (RFC 6733 5.4). Until the operator unlocks it, the node does not listen on port 3868 at all, so a peer that tries to open a connection is refused by the transport and tries again Tc later, 30 seconds here (RFC 6733 2.1).
+
+`REBOOTING` is the cause that invites the peer back: a node that receives a DPR with `REBOOTING` may connect again, while `BUSY` and `DO_NOT_WANT_TO_TALK_TO_YOU` ask it not to (RFC 6733 5.4.3). The instance means to come back, so it sends `REBOOTING`, and its peers are there again at their next attempt after the unlock.
+
+Holding no socket on 3868 departs from RFC 6733 2.1, which requires a node to be ready for connections on that port at all times. It is a deliberate choice for the time the HSS is out of service, and the `REBOOTING` it sent is what makes it fit: that cause says the node is about to reboot (5.4.3), and a node that is rebooting has nothing listening either, so a refused connection and another attempt after Tc are what the peer is told to expect. The alternatives are worse. A CEA that refuses the CER has no Result-Code that says a node is out of service: 5.3 gives `DIAMETER_NO_COMMON_APPLICATION`, `DIAMETER_NO_COMMON_SECURITY` and `DIAMETER_UNKNOWN_PEER`, and none of them is true of this node. Taking the connection and answering with another DPR repeats the CER, the CEA, the DPR and the DPA every Tc for as long as the HSS is out of service.
+
+A commercial network runs several instances of the HSS, and each of them holds every subscriber (TS 29.228 6.4). A client keeps a connection to each and sends a Cx or an Sh request on the first one that is open, so the requests of a drained instance go to the next instance and no user has to register again. This network has one HSS, so while it is out of service the I-CSCF and the S-CSCF have none.
+
+The node of the HSS serves the same maintenance API on port 8085, the listener of the `maintenance` section of `deploy/compose/hss.yaml`, beside the metrics that Prometheus scrapes there. Its `users` count the Cx and Sh requests it is answering. A shut down with none of them in flight makes it `LOCKED` at once; with one in flight it stays `SHUTTINGDOWN` until that answer is on its way, so the DPR follows the answer instead of cutting it off.
+
+A `SHUTTINGDOWN` HSS keeps the connections it has, and its peers go on sending Cx and Sh requests over them, since nothing has told them to stop. The count of requests in flight therefore reaches zero when the traffic pauses, and under a steady stream of registrations it need not reach zero at all. A shut down may carry `timeout_seconds` for that: when that many seconds have passed the HSS becomes `LOCKED` with the requests it still has, as it does the moment the operator locks it instead of shutting it down. Both of those close the connections while requests are in flight, and the answer to such a request is then dropped rather than sent, so the peer that asked sees its connection close with no answer. Only a shut down that ends because the last request was answered sends its DPRs behind every answer the HSS owed.
+
+`operational_state` stays `ENABLED`: the HSS answers from the subscribers it holds, so it needs no connection of its own to another node.
+
+An instance out of service could answer every new request `DIAMETER_TOO_BUSY` instead, which tells the sender to try another server. It does not, because that answer is only for a request that asks for one named server which cannot serve it (RFC 6733 7.1.3). A request names a server in `Destination-Host`; the UAR, the LIR, the MAR, the SAR for a user who is not registered, and the Sh requests carry a `Destination-Realm` and no host, so any instance of the realm may answer them and `DIAMETER_TOO_BUSY` would be the wrong answer to give.
+
+1. Shut the HSS down:
+
+   ```sh
+   docker compose exec hss sh -c '
+   body="{\"administrative_state\":\"SHUTTINGDOWN\",\"operator\":\"learner\"}"
+   printf "PUT /maintenance/v1/functions/hss/administrative-state HTTP/1.0\r\nContent-Type: application/json\r\nContent-Length: ${#body}\r\n\r\n%s" "$body" |
+     nc -w 5 127.0.0.1 8085'
+   ```
+
+   The answer ends with the state of the HSS. No Cx or Sh request was in flight, so it is `LOCKED` at once:
+
+   ```json
+   {"role":"hss","administrative_state":"LOCKED","operational_state":"ENABLED","users":0}
+   ```
+
+```text
+ UE           P-CSCF         I-CSCF          S-CSCF          HSS
+ |              |              |  DPR, DPA     |              |
+ |              |              |<---------------------------->|
+ |              |              |               |  DPR, DPA    |
+ |              |              |               |<------------>|
+```
+
+- The HSS sends the DPR, the peer answers the DPA, and the peer that received the DPA closes the transport connection (RFC 6733 5.4). The ladder has the two Cx connections; the IP-SM-GW and the MMTel AS hold an Sh connection each and get a DPR too, so four of these exchanges go out. `docker compose logs hss` shows `stopped accepting connections` after them.
+- In Wireshark, `diameter.cmd.code == 282` shows the DPRs and the DPAs. The Disconnect-Cause AVP of each DPR reads `REBOOTING (0)`.
+- The I-CSCF and the S-CSCF now have no instance of the HSS to take their requests. `docker compose exec icscf wget -qO- http://127.0.0.1:8085/maintenance/v1/state` shows `"operational_state":"DISABLED"` for the I-CSCF: it cannot work without the HSS, although the operator has not taken it out of service.
+- Each of them tries to connect again every Tc, 30 seconds, and is refused until the unlock. `docker compose logs icscf` shows `connection failed` once per attempt.
+
+2. Register the UE:
+
+   ```sh
+   docker compose run --rm ue register -deregister-after 5s
+   ```
+
+   The UE ends with `REGISTER answered 504 Server Time-out`.
+
+```text
+ UE           P-CSCF         I-CSCF          S-CSCF          HSS
+ |  REGISTER    |              |               |              |
+ |------------->|  REGISTER    |               |              |
+ |              |------------->|               |              |
+ |              |  480         |               |              |
+ |              |<-------------|               |              |
+ |  504         |              |               |              |
+ |<-------------|              |               |              |
+```
+
+- The I-CSCF has no HSS to send the UAR to, so it cannot find out which S-CSCF serves the user, and answers **480 Temporarily Unavailable** (TS 24.229 5.3.1.3).
+- The P-CSCF moves a REGISTER on to the next I-CSCF when it gets a 480 (TS 24.229 5.2.2.1 item 7). The DNS zone of this network names one I-CSCF, so none is left, and the P-CSCF answers the UE **504 Server Time-out**.
+- In Wireshark, `sip.Status-Code == 480` shows the answer of the I-CSCF. No UAR goes out before it: the Cx connection is gone.
+
+3. Unlock the HSS with the same request and `UNLOCKED`:
+
+   ```sh
+   docker compose exec hss sh -c '
+   body="{\"administrative_state\":\"UNLOCKED\",\"operator\":\"learner\"}"
+   printf "PUT /maintenance/v1/functions/hss/administrative-state HTTP/1.0\r\nContent-Type: application/json\r\nContent-Length: ${#body}\r\n\r\n%s" "$body" |
+     nc -w 5 127.0.0.1 8085'
+   ```
+
+   The node listens again, and the I-CSCF and the S-CSCF come back at their next attempt, up to Tc later. `docker compose logs icscf` shows a new CER, CEA and `"to":"I-Open (OKAY)"`; the next `ue register` registers as before.
+
+The node binds port 3868 again as part of the unlock, and that can fail, if something else took the port while the HSS was out of service. The HSS is then `UNLOCKED` and reports `"operational_state":"DISABLED"`, and `docker compose logs hss` holds `cannot listen for Diameter connections again`. A second unlock does nothing, since the HSS is `UNLOCKED` already: lock it and unlock it again to have it try the port once more.
+
+The administrative state belongs to the process of the node: a node that starts again is `UNLOCKED`. `scripts/e2e-observability.sh` runs these steps as well, and checks the DPRs in the capture.
 
 ## A request without an IP association
 

@@ -207,7 +207,7 @@ S-CSCF は次のことを確かめます（TS 24.229 5.4.1.2.2A）。
 
 次に、`Server-Assignment-Type` を **`REGISTRATION`**（1）にした **Server-Assignment-Request**（SAR、Cx のコマンド 301）を送ります。HSS は、利用者がこの S-CSCF に登録されたと記録します。そして、利用者のプロファイルを **User-Data** で返します。Wireshark での名前は `Cx-User-Data` です。プロファイルは XML の文書で（TS 29.228 Annex E）、一緒に登録される識別子の一覧が入っています。利用者の要求にどのアプリケーションサーバーを加えるかを S-CSCF に伝える iFC（initial filter criteria）も入っています。`deploy/compose/hss.yaml` では、すべての利用者に SMS over IP の iFC を 2 つ設定しています。1 つ目の iFC が REGISTER で何をするかは、ステップ 15 で説明します。
 
-HSS はこの記録を数えています。利用者が登録しているあいだ、その公開識別子は `ims_hss_registered_public_identities` に、私的識別子は `ims_hss_registered_private_identities` に入り、登録の解除で外れます。HSS のノードはコンテナの中の `http://127.0.0.1:8085/metrics` に、この 2 つと `ims_hss_subscriptions`、`ims_hss_public_identities` を出します。後の 2 つは、登録している利用者がいるかどうかに関わらず、HSS が持っているものの数です。この待ち受けに保守用の API は出しません。HSS には、運用者が設定する管理状態がないためです。
+HSS はこの記録を数えています。利用者が登録しているあいだ、その公開識別子は `ims_hss_registered_public_identities` に、私的識別子は `ims_hss_registered_private_identities` に入り、登録の解除で外れます。HSS のノードはコンテナの中の `http://127.0.0.1:8085/metrics` に、この 2 つと `ims_hss_subscriptions`、`ims_hss_public_identities` を出します。後の 2 つは、登録している利用者がいるかどうかに関わらず、HSS が持っているものの数です。同じ待ち受けに、HSS を運用から外すための保守用の API も出ます（[HSS を運用から外す](#hss-を運用から外す)）。
 
 ### 10. S-CSCF が登録を受け付ける（200 OK）
 
@@ -633,6 +633,90 @@ Wireshark では、`sip.Status-Code == 503 && ip.src == 172.28.0.20` で I-CSCF 
    次の `ue register` は前と同じように登録します。
 
 `scripts/e2e-observability.sh` はこの手順も実行し、キャプチャで 503 と 504 を確かめます。
+
+## HSS を運用から外す
+
+CSCF とアプリケーションサーバーは、HSS に Diameter で届きます。そのため、運用から外した HSS は CSCF のように応答で知らせるのではなく、Diameter の接続を自分から終わらせます。相手ごとに **Disconnect-Peer-Request**（DPR）を送り、`Disconnect-Cause` に `REBOOTING` を入れ、相手の **Disconnect-Peer-Answer**（DPA）が返ったところで接続を閉じます（RFC 6733 5.4）。運用者が lock を解くまで、ノードはポート 3868 で待ち受けません。接続しに来た相手は TCP の段階で断られ、Tc のあと、ここでは 30 秒後にもう一度試します（RFC 6733 2.1）。
+
+`REBOOTING` は、相手を呼び戻す理由です。`REBOOTING` の DPR を受け取ったノードは接続し直してよく、`BUSY` と `DO_NOT_WANT_TO_TALK_TO_YOU` の DPR を受け取ったノードは接続し直さないほうがよいとされています（RFC 6733 5.4.3）。運用から外した HSS は作業のあとに戻るので、`REBOOTING` を送ります。相手は、lock が解けたあとの次の試行で戻ってきます。
+
+ポート 3868 で待ち受けないことは、RFC 6733 2.1 から外れています。2.1 は、ノードがいつでもこのポートで接続を受けられることを求めています。運用から外しているあいだに限って、そこから外れると決めました。根拠は先に送った `REBOOTING` です。この理由は、ノードがこれから再起動することを表します（5.4.3）。再起動中のノードも待ち受けていないので、接続を断られて Tc のあとにもう一度試すことは、相手が元から見込んでいる動きです。ほかの案はこれより劣ります。CER を CEA で断る案では、運用から外れていることを表す Result-Code がありません。5.3 にあるのは `DIAMETER_NO_COMMON_APPLICATION`、`DIAMETER_NO_COMMON_SECURITY`、`DIAMETER_UNKNOWN_PEER` で、どれもこのノードには当てはまりません。接続を受けてからまた DPR を送る案では、運用から外しているあいだ、CER、CEA、DPR、DPA のやり取りを Tc ごとに繰り返します。
+
+商用の網には HSS が複数台あり、どの台も全加入者を持っています（TS 29.228 6.4）。クライアントは各台への接続を保ち、Cx と Sh の要求を、開いている最初の接続に送ります。外した台への要求は次の台へ行くので、利用者が登録し直す必要はありません。この網の HSS は 1 台なので、外しているあいだ、I-CSCF と S-CSCF には HSS がありません。
+
+HSS のノードも同じ保守用の API をポート 8085 で出しています。`deploy/compose/hss.yaml` の `maintenance` の節の待ち受けで、Prometheus が読む metrics と同じところです。HSS の `users` は処理中の Cx と Sh の要求の数です。処理中のものが無ければ、shut down を送るとすぐに `LOCKED` になります。処理中のものがあれば、その応答が送り出されるまで `SHUTTINGDOWN` のままで、DPR は応答のあとに出ます。応答を途中で切らないためです。
+
+`SHUTTINGDOWN` の HSS は今ある接続をそのまま持ちます。相手には止まるようにと伝えないので、相手は Cx と Sh の要求をその接続で送り続けます。そのため、処理中の要求が 0 になるのは要求の流れが途切れたときで、登録が続けて来ているあいだは 0 にならないこともあります。そこを区切る期限が `timeout_seconds` です。指定した秒数が過ぎると、HSS は処理中の要求を残したまま `LOCKED` になります。shut down ではなく lock を送ったときも、その時点で同じことが起きます。どちらの場合も、処理中の要求を残して接続を閉じるので、送り出す途中だった応答は捨てられ、送り手には応答が届きません。受けた要求すべてに応答を返してから DPR を送るのは、最後の要求の応答で `LOCKED` になった shut down だけです。
+
+`operational_state` は `ENABLED` のままです。HSS は自分が持つ加入者から答えるので、ほかのノードへの接続を必要としません。
+
+運用から外した HSS が新しい要求すべてに `DIAMETER_TOO_BUSY` を返す作りも考えられます。この応答は、送り手に別のサーバーを試すよう伝えるものです。しかし、そうはしません。この応答を使ってよいのは、特定のサーバーを指した要求を、そのサーバーが扱えないときだけだからです（RFC 6733 7.1.3）。サーバーを指すのは `Destination-Host` です。UAR、LIR、MAR、未登録の利用者への SAR、Sh の要求は `Destination-Realm` だけを持ち、ホストを指しません。これらはレルムのどの台が扱ってもよい要求なので、`DIAMETER_TOO_BUSY` は誤った応答になります。
+
+1. HSS を shut down します。
+
+   ```sh
+   docker compose exec hss sh -c '
+   body="{\"administrative_state\":\"SHUTTINGDOWN\",\"operator\":\"learner\"}"
+   printf "PUT /maintenance/v1/functions/hss/administrative-state HTTP/1.0\r\nContent-Type: application/json\r\nContent-Length: ${#body}\r\n\r\n%s" "$body" |
+     nc -w 5 127.0.0.1 8085'
+   ```
+
+   応答の最後に HSS の状態が出ます。処理中の Cx と Sh の要求が無いので、すぐに `LOCKED` になります。
+
+   ```json
+   {"role":"hss","administrative_state":"LOCKED","operational_state":"ENABLED","users":0}
+   ```
+
+```text
+ UE           P-CSCF         I-CSCF          S-CSCF          HSS
+ |              |              |  DPR, DPA     |              |
+ |              |              |<---------------------------->|
+ |              |              |               |  DPR, DPA    |
+ |              |              |               |<------------>|
+```
+
+- HSS が DPR を送り、相手が DPA を返し、DPA を受け取った側が TCP の接続を閉じます（RFC 6733 5.4）。ラダー図にあるのは Cx の 2 本です。IP-SM-GW と MMTel AS も Sh の接続を 1 本ずつ持っていて、そちらにも DPR が出るので、このやり取りは全部で 4 回です。`docker compose logs hss` には、そのあとに `stopped accepting connections` が出ます。
+- Wireshark では、`diameter.cmd.code == 282` で DPR と DPA が見られます。どの DPR も `Disconnect-Cause` AVP は `REBOOTING (0)` です。
+- I-CSCF と S-CSCF には、要求を受ける HSS が 1 台も無くなりました。`docker compose exec icscf wget -qO- http://127.0.0.1:8085/maintenance/v1/state` を見ると、I-CSCF の `"operational_state":"DISABLED"` が出ます。運用者は I-CSCF を外していませんが、HSS が無ければ I-CSCF は動けないためです。
+- どちらも Tc ごと、つまり 30 秒ごとに接続し直そうとして、lock が解けるまで断られます。`docker compose logs icscf` には、試すたびに `connection failed` が出ます。
+
+2. UE を登録します。
+
+   ```sh
+   docker compose run --rm ue register -deregister-after 5s
+   ```
+
+   UE は `REGISTER answered 504 Server Time-out` で終わります。
+
+```text
+ UE           P-CSCF         I-CSCF          S-CSCF          HSS
+ |  REGISTER    |              |               |              |
+ |------------->|  REGISTER    |               |              |
+ |              |------------->|               |              |
+ |              |  480         |               |              |
+ |              |<-------------|               |              |
+ |  504         |              |               |              |
+ |<-------------|              |               |              |
+```
+
+- I-CSCF には UAR を送る先の HSS がありません。どの S-CSCF が利用者を扱うかを調べられないので、**480 Temporarily Unavailable** を返します（TS 24.229 5.3.1.3）。
+- P-CSCF は 480 を受けると REGISTER を次の I-CSCF へ送ります（TS 24.229 5.2.2.1 の 7 番目の項目）。この網の DNS のゾーンには I-CSCF が 1 つしかないので、次がありません。そこで P-CSCF は UE に **504 Server Time-out** を返します。
+- Wireshark では、`sip.Status-Code == 480` で I-CSCF の応答が見られます。その前に UAR は出ていません。Cx の接続が無いためです。
+
+3. 同じ要求に `UNLOCKED` を入れて、HSS の lock を解きます。
+
+   ```sh
+   docker compose exec hss sh -c '
+   body="{\"administrative_state\":\"UNLOCKED\",\"operator\":\"learner\"}"
+   printf "PUT /maintenance/v1/functions/hss/administrative-state HTTP/1.0\r\nContent-Type: application/json\r\nContent-Length: ${#body}\r\n\r\n%s" "$body" |
+     nc -w 5 127.0.0.1 8085'
+   ```
+
+   ノードはまた待ち受けを始めます。I-CSCF と S-CSCF は遅くとも Tc 後の次の試行で戻ってきます。`docker compose logs icscf` には、新しい CER と CEA、それに `"to":"I-Open (OKAY)"` が出ます。次の `ue register` は前と同じように登録します。
+
+lock を解くとき、ノードはポート 3868 をもう一度確保しますが、運用から外しているあいだにほかのものがそのポートを取っていれば失敗します。失敗しても HSS の管理状態は `UNLOCKED` で、`"operational_state":"DISABLED"` を返し、`docker compose logs hss` には `cannot listen for Diameter connections again` が出ます。HSS はすでに `UNLOCKED` なので、もう一度 lock を解いても何も起きません。ポートを取り直させるには、lock をかけて、もう一度解きます。
+
+管理状態はノードのプロセスのものです。起動し直したノードは `UNLOCKED` です。`scripts/e2e-observability.sh` はこの手順も実行し、キャプチャで DPR を確かめます。
 
 ## IP の対応付けが無い要求
 
