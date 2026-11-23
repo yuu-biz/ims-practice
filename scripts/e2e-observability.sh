@@ -1,17 +1,19 @@
 #!/usr/bin/env bash
-# End-to-end check: the P-CSCF and the S-CSCF serve their metrics and
-# their maintenance API on their maintenance listeners
-# (deploy/compose/pcscf.yaml, deploy/compose/scscf.yaml). After a
-# registration, Prometheus has scraped both and holds their counts of
-# successful registrations, with the set-up time that the P-CSCF
-# measures, and Grafana returns the count of the S-CSCF through the
-# Prometheus data source that the dashboard uses
-# (deploy/observability). A shut down through the maintenance API then
-# makes the S-CSCF answer a new REGISTER with 503 and Retry-After, which
-# the capture shows hop by hop, and an unlock lets the UE register
-# again. A shut down of the P-CSCF makes the P-CSCF answer the REGISTER
-# itself with 503 and Retry-After, forwarding nothing, until it is
-# unlocked.
+# End-to-end check: the three CSCFs serve their metrics and their
+# maintenance API on their maintenance listeners
+# (deploy/compose/pcscf.yaml, deploy/compose/icscf.yaml,
+# deploy/compose/scscf.yaml). After a registration, Prometheus has
+# scraped all three and holds their counts of successful registrations,
+# with the set-up time that the P-CSCF measures, and Grafana returns the
+# count of the S-CSCF through the Prometheus data source that the
+# dashboard uses (deploy/observability). A call adds the terminating
+# session establishment that the I-CSCF counts. A shut down through the
+# maintenance API then makes the S-CSCF answer a new REGISTER with 503
+# and Retry-After, which the capture shows hop by hop, and an unlock
+# lets the UE register again. A shut down of the P-CSCF makes the
+# P-CSCF answer the REGISTER itself with 503 and Retry-After, forwarding
+# nothing, and a shut down of the I-CSCF makes the I-CSCF answer 503,
+# after which the P-CSCF, with no other I-CSCF left, answers the UE 504.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 . scripts/e2e-lib.sh
@@ -202,6 +204,48 @@ for series in 'ims_registration_successes_total{role="pcscf"}' 'ims_registration
 		fail=1
 	fi
 done
+if value="$(until_positive prometheus_values 'up{job="ims",node="icscf"}')"; then
+	echo "ok   Prometheus scrapes the I-CSCF: up = $value"
+else
+	echo "FAIL the icscf target of Prometheus is not up: $value"
+	curl -fsS "$prometheus/api/v1/targets?state=active" || true
+	echo
+	fail=1
+fi
+# The I-CSCF counts the initial INVITE that enters the home network (TS
+# 32.409 4.1.2.11), so a call is needed to give it anything to count.
+# The callee waits in the background for one call; flags go before the
+# URI of "ue call", as the flag package stops at the first argument.
+ue2=(--impi 001010000000002@ims.mnc001.mcc001.3gppnetwork.org
+	--impu sip:+12025550102@ims.mnc001.mcc001.3gppnetwork.org --password test-password-2)
+mkdir -p e2e-out
+docker compose run --no-deps -d --name ims-practice-ue2-metrics ue2 answer "${ue2[@]}" --ring 500ms --tone 3s >/dev/null
+if wait_log ims-practice-ue2-metrics '"msg":"waiting for a call"'; then
+	if docker compose run --no-deps --rm ue call --tone 1s tel:+1-202-555-0102; then
+		echo "ok   UE 1 called UE 2 through the I-CSCF"
+	else
+		echo "FAIL the call"
+		fail=1
+	fi
+else
+	fail=1
+fi
+if [ "$(ended ims-practice-ue2-metrics)" = "0" ]; then
+	echo "ok   UE 2 answered and the call ended"
+else
+	echo "FAIL UE 2 did not answer the call"
+	fail=1
+fi
+attempts='ims_session_attempts_total{role="icscf",direction="terminating"}'
+if value="$(until_positive prometheus_values "$attempts")"; then
+	echo "ok   Prometheus has $attempts = $value"
+else
+	echo "FAIL Prometheus has no $attempts above 0: $value"
+	# Shown only to explain the failure, if the I-CSCF answers at all,
+	# hence "|| true".
+	docker compose exec -T icscf wget -qO- http://127.0.0.1:8085/metrics || true
+	fail=1
+fi
 
 echo "drain of the S-CSCF"
 # No transaction is in progress, so the shut down makes the S-CSCF
@@ -281,8 +325,44 @@ else
 	echo "FAIL UE registration after the unlock of the P-CSCF"
 	fail=1
 fi
-same_nodes
 await "the 200 OK to the registration after the unlock of the P-CSCF" "$registered" $((registrations + 1))
+
+echo "drain of the I-CSCF"
+# The I-CSCF serves no transaction between requests, so it is LOCKED at
+# once.
+answer="$(administrative_state icscf SHUTTINGDOWN || true)"
+state="$(node_state icscf || true)"
+if grep -Eq '"administrative_state":"(SHUTTINGDOWN|LOCKED)"' <<<"$state"; then
+	echo "ok   the maintenance API shut the I-CSCF down"
+else
+	echo "FAIL the shut down of the I-CSCF: $answer"
+	echo "     state of the node: $state"
+	fail=1
+fi
+if docker compose run --no-deps --rm ue register -deregister-after 2s 2>/dev/null; then
+	echo "FAIL UE registered with a shut down I-CSCF"
+	fail=1
+else
+	echo "ok   UE could not register while the I-CSCF is shut down"
+fi
+answer="$(administrative_state icscf UNLOCKED || true)"
+state="$(node_state icscf || true)"
+if grep -q '"administrative_state":"UNLOCKED"' <<<"$state"; then
+	echo "ok   the maintenance API unlocked the I-CSCF"
+else
+	echo "FAIL the unlock of the I-CSCF: $answer"
+	echo "     state of the node: $state"
+	fail=1
+fi
+registrations="$(count "$registered")"
+if docker compose run --no-deps --rm ue register -deregister-after 2s; then
+	echo "ok   UE registered after the unlock of the I-CSCF"
+else
+	echo "FAIL UE registration after the unlock of the I-CSCF"
+	fail=1
+fi
+same_nodes
+await "the 200 OK to the registration after the unlock of the I-CSCF" "$registered" $((registrations + 1))
 
 echo "reading $pcap"
 last=0
@@ -313,8 +393,21 @@ fi
 echo "the REGISTER after the unlock of the P-CSCF"
 expect "401 P-CSCF -> UE" "$register && sip.Status-Code == 401 && ip.src == $pcscf && ip.dst == $ue"
 expect "200 P-CSCF -> UE" "$register && sip.Status-Code == 200 && ip.src == $pcscf && ip.dst == $ue"
+echo "the REGISTER while the I-CSCF is shut down"
+# The I-CSCF answers 503 without asking the HSS. The P-CSCF has no other
+# I-CSCF to try, so it answers the UE 504 (TS 24.229 5.2.2.1 item 7).
+before="$last"
+expect "503 I-CSCF -> P-CSCF with Retry-After 30" "$register && sip.Status-Code == 503 && ip.src == $icscf && ip.dst == $pcscf && sip.Retry-After == 30"
+if [ "$last" != "$before" ]; then
+	refused="sip.Call-ID == \"$(field sip.Call-ID)\""
+	none "REGISTERs of that call that the I-CSCF sent on" "sip.Method == \"REGISTER\" && ip.src == $icscf && $refused"
+fi
+expect "504 P-CSCF -> UE without Retry-After" "$register && sip.Status-Code == 504 && ip.src == $pcscf && ip.dst == $ue && !sip.Retry-After"
+echo "the REGISTER after the unlock of the I-CSCF"
+expect "401 I-CSCF -> P-CSCF" "$register && sip.Status-Code == 401 && ip.src == $icscf && ip.dst == $pcscf"
+expect "200 I-CSCF -> P-CSCF" "$register && sip.Status-Code == 200 && ip.src == $icscf && ip.dst == $pcscf"
 
 if [ "$fail" -ne 0 ]; then
-	docker compose logs --no-color pcscf scscf prometheus grafana | tail -n 80
+	docker compose logs --no-color pcscf icscf scscf prometheus grafana | tail -n 80
 fi
 exit "$fail"
