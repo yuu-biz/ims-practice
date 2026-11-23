@@ -73,6 +73,12 @@ func (h *HSS) reportSMDeliveryStatus(ctx context.Context, r sgd.ReportSMDelivery
 			h.alertServiceCentres(stored)
 		}
 	case messageWaits:
+		if r.RDRFlags&sgd.RDRSingleAttemptDelivery != 0 {
+			// TS 29.338 5.2.3.4: one attempt is all this short message
+			// gets, so an alert would come too late to be of use.
+			log.Info("single attempt delivery; the SC address does not go into the message waiting data")
+			break
+		}
 		kept := false
 		_, _, fail := h.updateMessageWaiting(ctx, u, func(s *Subscriber) bool {
 			kept = s.addMessageWaiting(r.SCAddress, cause)
@@ -174,6 +180,11 @@ func (h *HSS) sendRoutingInfoForSM(ctx context.Context, r sgd.SendRoutingInfoFor
 	stored, _, fail := h.updateMessageWaiting(ctx, u, func(s *Subscriber) bool {
 		switch {
 		case servingNode(*s) != nil:
+			return false
+		case r.SRRFlags&sgd.SRRSingleAttemptDelivery != 0:
+			// TS 29.338 5.2.1.3: one attempt is all this short message
+			// gets, so an alert would come too late to be of use.
+			log.Info("single attempt delivery; the SC address does not go into the message waiting data")
 			return false
 		case !sgd.ValidE164(r.SCAddress):
 			return false

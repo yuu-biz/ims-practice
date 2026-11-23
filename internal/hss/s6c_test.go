@@ -113,6 +113,11 @@ func (n s6cNetwork) requestFromSC(t *testing.T, m *diam.Message) *diam.Message {
 // SMS-GMSC of the SC does.
 func (n s6cNetwork) rdr(t *testing.T, msisdn string, cause sgd.SMDeliveryCause) sgd.ReportSMDeliveryStatusAnswer {
 	t.Helper()
+	return n.rdrWithFlags(t, msisdn, cause, 0)
+}
+
+func (n s6cNetwork) rdrWithFlags(t *testing.T, msisdn string, cause sgd.SMDeliveryCause, flags sgd.RDRFlags) sgd.ReportSMDeliveryStatusAnswer {
+	t.Helper()
 	a, err := sgd.ParseReportSMDeliveryStatusAnswer(n.requestFromSC(t, sgd.ReportSMDeliveryStatusRequest{
 		Header:         diameter.NewHeader(n.scNode, "", realm),
 		UserIdentifier: sgd.UserIdentifier{MSISDN: msisdn},
@@ -120,6 +125,7 @@ func (n s6cNetwork) rdr(t *testing.T, msisdn string, cause sgd.SMDeliveryCause) 
 		SMDeliveryOutcome: sgd.SMDeliveryOutcome{
 			IPSMGWSMDeliveryOutcome: &sgd.NodeSMDeliveryOutcome{SMDeliveryCause: cause},
 		},
+		RDRFlags: flags,
 	}.Message()))
 	if err != nil {
 		t.Fatal(err)
@@ -464,6 +470,33 @@ func TestDeliveredShortMessageClearsTheMemoryFlag(t *testing.T) {
 	n.register(t)
 	if alr := n.alert(t); alr.SCAddress != scAddress {
 		t.Errorf("ALR = %+v", alr)
+	}
+}
+
+// TS 29.338 5.2.1.3 and 5.2.3.4: for a short message that gets one
+// delivery attempt the HSS does not keep the service centre address,
+// because an alert would come too late to be of use.
+func TestSingleAttemptDeliveryKeepsNoSCAddress(t *testing.T) {
+	n := newS6cNetwork(t)
+	a, err := sgd.ParseSendRoutingInfoForSMAnswer(n.requestFromSC(t, sgd.SendRoutingInfoForSMRequest{
+		Header: diameter.NewHeader(n.scNode, "", realm), MSISDN: msisdnA, SCAddress: scAddress,
+		SRRFlags: sgd.SRRSingleAttemptDelivery,
+	}.Message()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := diameter.Experimental(sgd.DiameterErrorAbsentUser); a.Result != want {
+		t.Fatalf("SRA = %v, want %v", a.Result, want)
+	}
+	if u := n.subscriber(t); len(u.MessageWaitingData) != 0 {
+		t.Errorf("after the query, message waiting data = %v", u.MessageWaitingData)
+	}
+
+	if a := n.rdrWithFlags(t, msisdnA, sgd.SMDeliveryCauseAbsentUser, sgd.RDRSingleAttemptDelivery); a.Result != success {
+		t.Fatalf("RDA = %v", a.Result)
+	}
+	if u := n.subscriber(t); len(u.MessageWaitingData) != 0 {
+		t.Errorf("after the report, message waiting data = %v", u.MessageWaitingData)
 	}
 }
 
