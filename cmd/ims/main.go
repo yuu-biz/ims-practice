@@ -997,11 +997,37 @@ type configurationView struct {
 	Maintenance struct {
 		Listen string `json:"listen"`
 	} `json:"maintenance"`
+	HSS   *hssView   `json:"hss,omitempty"`
 	PCSCF *pcscfView `json:"pcscf,omitempty"`
 	ICSCF *icscfView `json:"icscf,omitempty"`
 	SCSCF *scscfView `json:"scscf,omitempty"`
 	MMTel *mmtelView `json:"mmtel,omitempty"`
 	MRFC  *mrfcView  `json:"mrfc,omitempty"`
+}
+
+// hssView is the HSS of the configuration view: where its provisioning
+// API listens, and the service profiles of the network by name, each
+// with the features its criteria turn on. An operator reads the
+// features to see which profile to give a subscription.
+//
+// It holds no subscriber. The credentials of one are secrets, and the
+// subscribers are provisioning data that the provisioning API changes
+// one at a time, not configuration. Nor does it hold the settings that
+// the maintenance API changes while the HSS runs, the admission policy
+// and the two profile names: those are in the changeable settings of
+// the same answer, with the value in force, and this section is what
+// the file alone decides.
+type hssView struct {
+	ProvisioningListen string                        `json:"provisioning_listen,omitempty"`
+	ServiceProfiles    map[string]serviceProfileView `json:"service_profiles"`
+}
+
+// serviceProfileView is one service profile as the API shows it: its
+// features, and not its criteria. The criteria are long, and what an
+// operator decides is which profile a subscription gets, not what a
+// profile holds (hss.ServiceProfile).
+type serviceProfileView struct {
+	Features []string `json:"features"`
 }
 
 type pcscfView struct {
@@ -1089,6 +1115,19 @@ func newConfigurationView(cfg config.Config) configurationView {
 	v := configurationView{Node: cfg.Node, Roles: cfg.Roles, HomeDomain: cfg.HomeDomain}
 	if m := cfg.Maintenance; m != nil {
 		v.Maintenance.Listen = m.Listen
+	}
+	if c := cfg.HSS; c != nil {
+		v.HSS = &hssView{ProvisioningListen: c.ProvisioningListen, ServiceProfiles: map[string]serviceProfileView{}}
+		for name, p := range c.ServiceProfiles {
+			// A profile whose criteria name no feature answers with an
+			// empty list rather than null, so that every profile of the
+			// answer reads the same way.
+			features := p.Features
+			if features == nil {
+				features = []string{}
+			}
+			v.HSS.ServiceProfiles[name] = serviceProfileView{Features: features}
+		}
 	}
 	if c := cfg.PCSCF; c != nil {
 		v.PCSCF = &pcscfView{SIP: newSIPView(c.SIP), VisitedNetworkID: c.VisitedNetworkID, MediaRelays: c.MediaRelays}
