@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/yuu-biz/ims-practice/internal/ims"
+	"github.com/yuu-biz/ims-practice/internal/metrics"
 	"github.com/yuu-biz/ims-practice/internal/policy"
 	"github.com/yuu-biz/ims-practice/internal/sip"
 )
@@ -49,6 +50,9 @@ type Config struct {
 	// after which another instance may claim it; zero means
 	// ims.ExpiryLease. Tests shorten it.
 	ExpiryLease time.Duration
+	// Metrics is where the P-CSCF registers its counters (metrics.go).
+	// Nil gives it a registry of its own, which nothing serves.
+	Metrics *metrics.Registry
 }
 
 // Association is the IP association of TS 24.229 5.2.2.3 for SIP Digest
@@ -667,6 +671,8 @@ type PCSCF struct {
 	// admissions is what Screen knows of the IP associations in store.
 	admissions *admissions
 	log        *slog.Logger
+	// measurements counts the registration procedures (metrics.go).
+	measurements *measurements
 
 	// protectedStack listens on the protected server port.
 	protectedStack ims.StackRef
@@ -704,21 +710,30 @@ type PCSCF struct {
 // media relays it may use, the same in every instance; without any, RTP
 // goes between the UEs directly. Both stacks of the P-CSCF need its
 // Screen in their sip.Config, and the one on the unprotected port its
-// AdmitUnprotected as well.
-func New(cfg Config, locator Locator, store Store, relays []MediaRelay, log *slog.Logger) *PCSCF {
+// AdmitUnprotected as well. It fails only when the registry of
+// Config.Metrics holds a metric of the same name under another
+// definition.
+func New(cfg Config, locator Locator, store Store, relays []MediaRelay, log *slog.Logger) (*PCSCF, error) {
 	if cfg.SweepInterval == 0 {
 		cfg.SweepInterval = ims.SweepInterval
 	}
 	if cfg.ExpiryLease == 0 {
 		cfg.ExpiryLease = ims.ExpiryLease
 	}
+	if cfg.Metrics == nil {
+		cfg.Metrics = metrics.NewRegistry()
+	}
+	measured, err := newMeasurements(cfg.Metrics)
+	if err != nil {
+		return nil, err
+	}
 	admitted := newAdmissions()
 	p := &PCSCF{cfg: cfg, locator: locator, store: indexedStore{Store: store, admissions: admitted}, admissions: admitted,
-		relays: relays, log: log, setups: map[DialogKey]*setup{},
+		relays: relays, log: log, measurements: measured, setups: map[DialogKey]*setup{},
 		regEventRefresh: ims.RefreshAfter, notifyWait: 64 * sip.DefaultTimers().T1,
 		ackWait: 64 * sip.DefaultTimers().T1}
 	p.stopSweep = p.sweep()
-	return p
+	return p, nil
 }
 
 // Close stops the sweep of this instance and waits for the handlers it
@@ -781,11 +796,23 @@ func (p *PCSCF) SetStack(stack *sip.Stack) { p.stack.Set(stack) }
 // initial REGISTER of a private identity, the P-CSCF subscribes to the
 // reg event package (5.2.3).
 //
+// Once it has read the IP association of the UE, it knows the
+// registration procedure of the REGISTER, and counts every final
+// response to it (TS 32.409 4.1.1, metrics.go).
+//
 // SIMPLIFIED: TS 24.229 5.2.2.1 item 6. The P-CSCF does not store the
 // term-ioi of the P-Charging-Vector of the 200: that IOI names the home
 // network in the charging records of the P-CSCF, which no node of this
 // project writes, and no later message carries it.
+//
+// SIMPLIFIED: TS 32.409 4.1.1.1.1 and 4.1.1.1.3. A REGISTER that the
+// P-CSCF answers before it has read the IP association of the UE counts
+// in no registration measurement: one that it cannot read (400), one
+// that has used up Max-Forwards (483), and one whose association it
+// cannot read (500). Whether a REGISTER starts an initial registration
+// or a re-registration depends on that association.
 func (p *PCSCF) register(st *sip.ServerTransaction, protected bool) {
+	received := time.Now()
 	req := st.Request
 	publicID, err := ims.PublicIdentity(req.Get("To"))
 	if err != nil {
@@ -835,13 +862,18 @@ func (p *PCSCF) register(st *sip.ServerTransaction, protected bool) {
 		st.Respond(storeFailed(req, err, log))
 		return
 	}
+	procedure := p.measurements.registrationOf(req, creds, associated, received)
+	respond := func(resp *sip.Message) {
+		p.measurements.registrationAnswered(procedure, resp)
+		st.Respond(resp)
+	}
 	var integrity sip.IntegrityProtected
 	var agreement *secAgreement
 	switch {
 	case protected || asksSecAgree(req):
 		var refusal *sip.Message
 		if agreement, refusal = p.receiveSecAgree(st, out, privateID, creds, protected, log); refusal != nil {
-			st.Respond(refusal)
+			respond(refusal)
 			return
 		}
 		integrity = agreement.integrity
@@ -859,7 +891,7 @@ func (p *PCSCF) register(st *sip.ServerTransaction, protected bool) {
 
 	u, err := sip.ParseURI(req.RequestURI)
 	if err != nil {
-		st.Respond(sip.NewResponse(req, 400, sip.NewTag()))
+		respond(sip.NewResponse(req, 400, sip.NewTag()))
 		return
 	}
 	transport, _ := u.Params.Get("transport")
@@ -867,14 +899,14 @@ func (p *PCSCF) register(st *sip.ServerTransaction, protected bool) {
 	if err != nil || len(targets) == 0 {
 		// 5.2.2.1: if no I-CSCF can be reached, 504.
 		log.Warn("cannot locate the I-CSCF", "domain", u.Host, "error", fmt.Sprint(err))
-		st.Respond(sip.NewResponse(req, 504, sip.NewTag()))
+		respond(sip.NewResponse(req, 504, sip.NewTag()))
 		return
 	}
 
 	final := p.forward(st, out, targets, log)
 	if agreement != nil {
 		if final, err = p.answerSecAgree(st, final, agreement, log); err != nil {
-			st.Respond(storeFailed(req, err, log))
+			respond(storeFailed(req, err, log))
 			return
 		}
 	}
@@ -892,7 +924,7 @@ func (p *PCSCF) register(st *sip.ServerTransaction, protected bool) {
 		if err != nil {
 			// A 200 would stand for a registration that no P-CSCF
 			// instance can find.
-			st.Respond(storeFailed(req, err, log))
+			respond(storeFailed(req, err, log))
 			return
 		}
 		if ok {
@@ -906,7 +938,7 @@ func (p *PCSCF) register(st *sip.ServerTransaction, protected bool) {
 		}
 	}
 	crossBoundary(final, responseToUE)
-	st.Respond(final)
+	respond(final)
 	if registered != nil {
 		if !associated || assoc.SignallingLost {
 			// TS 29.214 A.4: on the initial registration, after its 200

@@ -19,6 +19,16 @@ const (
 
 func quiet() *slog.Logger { return slog.New(slog.NewTextHandler(io.Discard, nil)) }
 
+// newPCSCF is New for a test, which it ends when New fails.
+func newPCSCF(t testing.TB, cfg Config, locator Locator, store Store, relays []MediaRelay, log *slog.Logger) *PCSCF {
+	t.Helper()
+	p, err := New(cfg, locator, store, relays, log)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return p
+}
+
 type locatorFunc func(host string) []sip.Destination
 
 func (f locatorFunc) Locate(_ context.Context, host string, _ int, _ sip.Transport) ([]sip.Destination, error) {
@@ -114,7 +124,7 @@ func TestRegisterThroughThePCSCF(t *testing.T) {
 		}
 		return []sip.Destination{{Transport: sip.UDP, Addr: home.LocalAddr()}}
 	})
-	p := New(Config{Host: "pcscf." + domain, Port: 5060, VisitedNetworkID: domain}, locate, NewMemoryStore(), nil, quiet())
+	p := newPCSCF(t, Config{Host: "pcscf." + domain, Port: 5060, VisitedNetworkID: domain}, locate, NewMemoryStore(), nil, quiet())
 	pcscfStack := newPCSCFStack(t, p)
 	// Fast timers, so that a request that the P-CSCF discards times out
 	// soon.
@@ -252,7 +262,7 @@ func TestNextICSCFWhenTheFirstIsSilentOrTurnsAway(t *testing.T) {
 
 func registerVia(t *testing.T, targets []sip.Destination) int {
 	t.Helper()
-	p := New(Config{Host: "pcscf." + domain, Port: 5060, VisitedNetworkID: domain},
+	p := newPCSCF(t, Config{Host: "pcscf." + domain, Port: 5060, VisitedNetworkID: domain},
 		locatorFunc(func(string) []sip.Destination { return targets }), NewMemoryStore(), nil, quiet())
 	pcscfStack := newStackConfig(t, sip.Config{Timers: fast, Screen: p.Screen, Admit: p.AdmitUnprotected, OnRequest: p.OnRequest})
 	ue := newStack(t, func(*sip.ServerTransaction) {})

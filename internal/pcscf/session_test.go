@@ -90,7 +90,7 @@ func newSessionHarnessWith(t *testing.T, relays []MediaRelay) *sessionHarness {
 	locate := locatorFunc(func(host string) []sip.Destination {
 		return []sip.Destination{{Transport: sip.UDP, Addr: scscf.LocalAddr()}}
 	})
-	p := New(Config{Host: "pcscf." + domain, Port: 5060, VisitedNetworkID: domain}, locate, h.store, relays, quiet())
+	p := newPCSCF(t, Config{Host: "pcscf." + domain, Port: 5060, VisitedNetworkID: domain}, locate, h.store, relays, quiet())
 	h.p = p
 	h.pcscf = newPCSCFStack(t, p)
 	p.SetStack(h.pcscf)
@@ -394,7 +394,7 @@ func TestServiceUnavailableIsNotPassedOn(t *testing.T) {
 		return []sip.Destination{{Transport: sip.UDP, Addr: scscf.LocalAddr()}}
 	})
 	store := NewMemoryStore()
-	p := New(Config{Host: "pcscf." + domain, Port: 5060, VisitedNetworkID: domain}, locate, store, nil, quiet())
+	p := newPCSCF(t, Config{Host: "pcscf." + domain, Port: 5060, VisitedNetworkID: domain}, locate, store, nil, quiet())
 	pcscfStack := newPCSCFStack(t, p)
 	p.SetStack(pcscfStack)
 	ue := newStack(t, unavailable)
@@ -828,7 +828,7 @@ func TestACKIsForwardedWithMaxForwardsLessOne(t *testing.T) {
 	locate := locatorFunc(func(string) []sip.Destination {
 		return []sip.Destination{{Transport: sip.UDP, Addr: next.LocalAddr()}}
 	})
-	p := New(Config{Host: "pcscf." + domain, Port: 5060, VisitedNetworkID: domain}, locate, NewMemoryStore(), nil, quiet())
+	p := newPCSCF(t, Config{Host: "pcscf." + domain, Port: 5060, VisitedNetworkID: domain}, locate, NewMemoryStore(), nil, quiet())
 	p.SetStack(newPCSCFStack(t, p))
 
 	for _, maxForwards := range []string{"0", "70"} {

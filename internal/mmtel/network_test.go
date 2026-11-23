@@ -295,7 +295,10 @@ func startNetworkWith(t *testing.T, o netOptions) *network {
 		Host: "icscf." + domain, Port: 5060}, icscfPeer, icscfNode, dns, quiet())
 	dns.add(domain, stackOf("I-CSCF", i.OnRequest, nil).LocalAddr())
 
-	p := pcscf.New(pcscf.Config{Host: "pcscf." + domain, Port: 5060, VisitedNetworkID: domain}, dns, pcscf.NewMemoryStore(), nil, quiet())
+	p, err := pcscf.New(pcscf.Config{Host: "pcscf." + domain, Port: 5060, VisitedNetworkID: domain}, dns, pcscf.NewMemoryStore(), nil, quiet())
+	if err != nil {
+		t.Fatal(err)
+	}
 	t.Cleanup(p.Close)
 	pcscfStack := stackWith("P-CSCF", sip.Config{Screen: p.Screen, Admit: p.AdmitUnprotected, OnRequest: p.OnRequest, OnACK: p.OnACK})
 	p.SetStack(pcscfStack)

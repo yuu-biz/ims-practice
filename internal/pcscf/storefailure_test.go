@@ -144,7 +144,7 @@ func TestRegisterWhenTheStoreFails(t *testing.T) {
 		st.Respond(resp)
 	})
 	locate := locatorFunc(func(string) []sip.Destination { return []sip.Destination{{Transport: sip.UDP, Addr: home.LocalAddr()}} })
-	p := New(Config{Host: "pcscf." + domain, Port: 5060, VisitedNetworkID: domain}, locate, store, nil, quiet())
+	p := newPCSCF(t, Config{Host: "pcscf." + domain, Port: 5060, VisitedNetworkID: domain}, locate, store, nil, quiet())
 	pcscfStack := newPCSCFStack(t, p)
 	ue := newStack(t, func(*sip.ServerTransaction) {})
 	toPCSCF := sip.Destination{Transport: sip.UDP, Addr: pcscfStack.LocalAddr()}
@@ -363,7 +363,7 @@ func TestAnEndThatCannotBeWrittenKeepsTheSecurityAssociations(t *testing.T) {
 		t.Fatal(err)
 	}
 	locate := locatorFunc(func(string) []sip.Destination { return nil })
-	p := New(Config{Host: "pcscf." + domain, Port: 5060, VisitedNetworkID: domain}, locate, putFailsStore{memory}, nil, quiet())
+	p := newPCSCF(t, Config{Host: "pcscf." + domain, Port: 5060, VisitedNetworkID: domain}, locate, putFailsStore{memory}, nil, quiet())
 	a := Association{Source: sip.Destination{Transport: sip.UDP, Addr: ue}, Expires: time.Now().Add(time.Hour)}
 	if err := p.endAssociation(a, quiet()); err == nil {
 		t.Fatal("the end of the association was written to a store that is down")

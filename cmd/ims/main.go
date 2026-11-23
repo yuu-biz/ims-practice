@@ -245,7 +245,7 @@ func run(configPath string, log *slog.Logger, level *slog.LevelVar) error {
 	}
 	if c := cfg.PCSCF; c != nil {
 		pc := pcscf.Config{Host: c.SIP.Host, Port: int(c.SIP.Listen.Port()), ProtectedServerPort: int(c.ProtectedServerPort),
-			VisitedNetworkID: c.VisitedNetworkID}
+			VisitedNetworkID: c.VisitedNetworkID, Metrics: registry}
 		if h := c.HostAccess; h != nil {
 			pc.HostAccess = &pcscf.HostAccess{Gateway: h.Gateway, Address: h.Address}
 		}
@@ -262,7 +262,10 @@ func run(configPath string, log *slog.Logger, level *slog.LevelVar) error {
 		for _, u := range c.MediaRelays {
 			relays = append(relays, pcscf.MediaRelay{Name: u, Control: agw.NewClient(u)})
 		}
-		p := pcscf.New(pc, resolver, pcscfStore(stores, roleLog), relays, roleLog)
+		p, err := pcscf.New(pc, resolver, pcscfStore(stores, roleLog), relays, roleLog)
+		if err != nil {
+			return err
+		}
 		// The sweep that handles the expiries of the reg event
 		// subscriptions runs until the node stops.
 		defer p.Close()

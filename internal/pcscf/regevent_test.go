@@ -162,7 +162,7 @@ func TestPCSCFSubscribesToTheRegEventAndEndsTheAssociation(t *testing.T) {
 	associationGrace = 300 * time.Millisecond
 	t.Cleanup(func() { associationGrace = grace })
 	home := newFakeHome(t)
-	p := New(Config{Host: "pcscf." + domain, Port: 5060, VisitedNetworkID: domain},
+	p := newPCSCF(t, Config{Host: "pcscf." + domain, Port: 5060, VisitedNetworkID: domain},
 		locatorFunc(func(string) []sip.Destination {
 			return []sip.Destination{{Transport: sip.UDP, Addr: home.stack.LocalAddr()}}
 		}),
@@ -330,7 +330,7 @@ func TestARecreatedPCSCFKeepsTheRegEventSubscription(t *testing.T) {
 	// Contact of the SUBSCRIBE, where the NOTIFYs go.
 	newInstance := func() (*PCSCF, *sip.Stack) {
 		t.Helper()
-		p := New(Config{Host: "pcscf." + domain, Port: 5060, VisitedNetworkID: domain,
+		p := newPCSCF(t, Config{Host: "pcscf." + domain, Port: 5060, VisitedNetworkID: domain,
 			// The sweep comes round often, so that the test does not wait
 			// a second for the refresh that falls due.
 			SweepInterval: 20 * time.Millisecond},
@@ -449,7 +449,7 @@ type regEventFixture struct {
 func newRegEventFixture(t *testing.T, refresh func(time.Duration) time.Duration, notifyWait time.Duration) *regEventFixture {
 	t.Helper()
 	f := &regEventFixture{home: newFakeHome(t), store: NewMemoryStore()}
-	f.p = New(Config{Host: "pcscf." + domain, Port: 5060, VisitedNetworkID: domain,
+	f.p = newPCSCF(t, Config{Host: "pcscf." + domain, Port: 5060, VisitedNetworkID: domain,
 		// The sweep comes round often, so that the tests do not wait a
 		// second for each expiry they shorten.
 		SweepInterval: 20 * time.Millisecond},
@@ -756,7 +756,7 @@ func (s *confirmOnRead) RegSubscription(ctx context.Context, privateID string) (
 func TestTimerNKeepsASubscriptionThatANotifyConfirmed(t *testing.T) {
 	store := NewMemoryStore()
 	confirming := &confirmOnRead{Store: store}
-	p := New(Config{Host: "pcscf." + domain, Port: 5060, VisitedNetworkID: domain,
+	p := newPCSCF(t, Config{Host: "pcscf." + domain, Port: 5060, VisitedNetworkID: domain,
 		// The sweep of this instance must not claim the expiry: the test
 		// hands it to the handler itself.
 		SweepInterval: time.Hour},

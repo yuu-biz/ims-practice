@@ -305,7 +305,7 @@ func TestA2xxThatCrossesTheCancelIsAcknowledgedAndReleased(t *testing.T) {
 	locate := locatorFunc(func(string) []sip.Destination {
 		return []sip.Destination{{Transport: sip.UDP, Addr: far.LocalAddr()}}
 	})
-	p := New(Config{Host: "pcscf." + domain, Port: 5060, VisitedNetworkID: domain}, locate, store, only(relay), quiet())
+	p := newPCSCF(t, Config{Host: "pcscf." + domain, Port: 5060, VisitedNetworkID: domain}, locate, store, only(relay), quiet())
 	p.SetPolicyControl(pcrf)
 	store.PutAssociation(context.Background(), Association{
 		Source: sip.Destination{Transport: sip.UDP, Addr: ue.LocalAddr()}, SentBy: ue.LocalAddr().String(), Contact: ueContact,

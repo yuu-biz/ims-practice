@@ -72,12 +72,15 @@ func startInstancesOn(t *testing.T, kv kvstore.Store, n int, lease time.Duration
 		st.Respond(resp)
 	})
 	for i := range n {
-		p := pcscf.New(pcscf.Config{
+		p, err := pcscf.New(pcscf.Config{
 			Host: fmt.Sprintf("pcscf-%d.%s", i+1, domain), Port: 5060, VisitedNetworkID: domain,
 			// The sweep comes round often, so that the test does not wait
 			// a second for an expiry that is due.
 			SweepInterval: 20 * time.Millisecond, ExpiryLease: lease,
 		}, toHome{addr: home.LocalAddr()}, in.store(), nil, quiet())
+		if err != nil {
+			t.Fatal(err)
+		}
 		t.Cleanup(p.Close)
 		p.SetStack(listen(t, p.OnRequest))
 	}
