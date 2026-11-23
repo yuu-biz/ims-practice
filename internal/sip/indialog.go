@@ -59,8 +59,11 @@ type InDialogRequest struct {
 	// prevTarget is the remote target of the dialog before a target
 	// refresh request replaced it.
 	prevTarget string
-	// answered is guarded by the mu of the call.
+	// answered tells that the request has its final response, and ended
+	// that a BYE in the dialog is what answered it (endPending). Both are
+	// guarded by the mu of the call.
 	answered bool
+	ended    bool
 
 	// For a re-INVITE: cseq is its CSeq number, by which the ACK for
 	// its 2xx is found. settled is closed with its final response, and
@@ -87,6 +90,10 @@ func (r *InDialogRequest) Dialog() *CallDialog { return r.d }
 // re-INVITE without an offer asks for one: body is then the offer, and
 // the ACK carries the answer. For any other request the returned
 // message is nil.
+//
+// A BYE in the dialog, in either direction, answers the request with
+// 487 before the user of the call gets to it (RFC 3261 15.1.2). Accept
+// then sends nothing and returns ErrCallEnded.
 func (r *InDialogRequest) Accept(body Body, headers ...HeaderField) (*Message, error) {
 	if r.Request.Method == INVITE {
 		return r.acceptReInvite(body, headers)
@@ -115,7 +122,8 @@ var ErrNoAnswer = errors.New("sip: the 2xx to a request with an offer needs the 
 // Reject answers the request with a final response from 300 to 699,
 // such as 488 (Not Acceptable Here) for an offer that the user cannot
 // take. The session and the dialog stay as they were before the
-// request.
+// request. Like Accept, Reject sends nothing and returns ErrCallEnded
+// once a BYE has answered the request with 487.
 func (r *InDialogRequest) Reject(code int, headers ...HeaderField) error {
 	if code < 300 || code > 699 {
 		return fmt.Errorf("sip: %d is not a final response that Reject can send", code)
@@ -129,29 +137,51 @@ func (r *InDialogRequest) Reject(code int, headers ...HeaderField) error {
 // has its final response.
 var ErrRequestAnswered = errors.New("sip: the request has its final response already")
 
+// answerable reports why the user of the call can no longer answer the
+// request: it has its final response already, or a BYE in the dialog
+// answered it with 487 (endPending). c.mu is held.
+func (r *InDialogRequest) answerable() error {
+	switch {
+	case r.ended:
+		return ErrCallEnded
+	case r.answered:
+		return ErrRequestAnswered
+	}
+	return nil
+}
+
 // respond sends the one final response of the request, and makes the
 // changes of state that come with it.
 func (r *InDialogRequest) respond(resp *Message, accepted bool) error {
-	d := r.d
-	c := d.c
+	c := r.d.c
 	c.mu.Lock()
-	if r.answered {
+	if err := r.answerable(); err != nil {
 		c.mu.Unlock()
-		return ErrRequestAnswered
+		return err
 	}
+	r.settle(resp, accepted)
+	c.mu.Unlock()
+	return r.st.Respond(resp)
+}
+
+// settle marks the request answered by resp and makes the changes of
+// state that the response brings. accepted tells that resp is a 2xx.
+// c.mu is held.
+func (r *InDialogRequest) settle(resp *Message, accepted bool) {
+	d := r.d
 	r.answered = true
+	d.removePending(r)
 	if d.dialog != r.dialog {
 		// The dialog of the request is gone (EarlyDialogTerminated), so
 		// the response has no state left to change.
-		c.mu.Unlock()
-		return r.st.Respond(resp)
+		return
 	}
 	switch r.Request.Method {
 	case UPDATE:
 		d.updatePending = false
 	case INVITE:
-		// Only a rejected re-INVITE ends here; acceptReInvite has its
-		// own way.
+		// Only a re-INVITE that was refused or ended by a BYE comes here;
+		// acceptReInvite has its own way.
 		d.invite = noInvite
 		close(r.settled)
 	}
@@ -169,8 +199,6 @@ func (r *InDialogRequest) respond(resp *Message, accepted bool) error {
 		// RFC 3261 12.2.2: a rejected request changes no state.
 		d.dialog.RemoteTarget = r.prevTarget
 	}
-	c.mu.Unlock()
-	return r.st.Respond(resp)
 }
 
 // receiveOther takes a request of a method that the UA does not handle
@@ -451,6 +479,9 @@ func (d *CallDialog) receiveUpdate(st *ServerTransaction) {
 		c.mu.Unlock()
 		return
 	}
+	// The UA answers below, outside the lock, so a BYE can get there
+	// first (endPending).
+	d.addPending(r)
 	c.mu.Unlock()
 	switch {
 	case r.Offer:
@@ -700,24 +731,25 @@ func (r *InDialogRequest) acceptReInvite(body Body, headers []HeaderField) (*Mes
 	body.addTo(ok)
 
 	c.mu.Lock()
-	var err error
-	switch hasBody := len(body.Content) > 0; {
-	case r.answered:
-		err = ErrRequestAnswered
-	case r.Offer && !hasBody:
-		err = ErrNoAnswer
-	case r.Offer:
-		err = d.offerEvent(AnswerSent)
-	case !hasBody:
-		err = errNoOfferFor2xx
-	default:
-		err = d.offerEvent(OfferSent)
+	err := r.answerable()
+	if err == nil {
+		switch hasBody := len(body.Content) > 0; {
+		case r.Offer && !hasBody:
+			err = ErrNoAnswer
+		case r.Offer:
+			err = d.offerEvent(AnswerSent)
+		case !hasBody:
+			err = errNoOfferFor2xx
+		default:
+			err = d.offerEvent(OfferSent)
+		}
 	}
 	if err != nil {
 		c.mu.Unlock()
 		return nil, err
 	}
 	r.answered = true
+	d.removePending(r)
 	close(r.settled)
 	d.sent(body)
 	if r.session != nil {
