@@ -197,7 +197,9 @@ func network(t *testing.T, minExpires time.Duration) netip.AddrPort {
 
 // testNetwork is what networkWith started, for a test that looks inside.
 type testNetwork struct {
-	pcscf      netip.AddrPort
+	pcscf netip.AddrPort
+	// pcscfRole is the P-CSCF, for a test that takes it out of service.
+	pcscfRole  *pcscf.PCSCF
 	pcscfStore *pcscf.MemoryStore
 	pcscfLog   *regEventLog
 	scscf      *scscf.SCSCF
@@ -414,7 +416,7 @@ func startNetwork(t *testing.T, cfg networkConfig) testNetwork {
 			time.Sleep(20 * time.Millisecond)
 		}
 	}
-	return testNetwork{pcscf: pcscfStack.LocalAddr(), pcscfProtected: protectedStack.LocalAddr(), pcscfStore: pcscfStore, pcscfLog: pcscfLog, scscf: s, dns: dns,
+	return testNetwork{pcscf: pcscfStack.LocalAddr(), pcscfRole: p, pcscfProtected: protectedStack.LocalAddr(), pcscfStore: pcscfStore, pcscfLog: pcscfLog, scscf: s, dns: dns,
 		provisioning: hssRole.Provisioning(instances[0].server), epc: epcAPI, hss: instances}
 }
 
@@ -569,6 +571,32 @@ func TestRegistrationWhileTheSCSCFIsShutDown(t *testing.T) {
 	var failure *ue.RegisterFailure
 	if !errors.As(err, &failure) || failure.StatusCode != 500 || failure.RetryAfter != 0 {
 		t.Errorf("Register = %v, want 500 without Retry-After", err)
+	}
+}
+
+// TestRegistrationWhileThePCSCFIsShutDown: the operator has shut the
+// P-CSCF down, so it answers the REGISTER itself with 503 and a
+// Retry-After longer than Timer F, which tells the UE to register
+// through another P-CSCF (TS 24.229 5.1.1.2.1).
+func TestRegistrationWhileThePCSCFIsShutDown(t *testing.T) {
+	n := networkWith(t, time.Second, time.Hour)
+	node, err := maintenance.New(maintenance.Config{
+		Node:          "pcscf",
+		LogLevel:      new(slog.LevelVar),
+		Functions:     []maintenance.Function{n.pcscfRole.Function()},
+		Configuration: func() any { return map[string]string{"node": "pcscf"} },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	n.pcscfRole.Manage(node.ManagedFunction("pcscf"))
+	if f, err := node.SetAdministrativeState("pcscf", maintenance.AdministrativeStateRequest{AdministrativeState: maintenance.ShuttingDown}); err != nil || f.AdministrativeState != maintenance.Locked {
+		t.Fatalf("shut down gave %+v (%v), want LOCKED", f, err)
+	}
+	_, err = newUE(t, n.pcscf, password).Register(t.Context())
+	var failure *ue.RegisterFailure
+	if !errors.As(err, &failure) || failure.StatusCode != 503 || failure.RetryAfter <= 64*sip.DefaultTimers().T1 {
+		t.Errorf("Register = %v, want 503 with a Retry-After longer than Timer F", err)
 	}
 }
 

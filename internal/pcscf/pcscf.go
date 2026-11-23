@@ -15,9 +15,11 @@ import (
 	"net/netip"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/yuu-biz/ims-practice/internal/ims"
+	"github.com/yuu-biz/ims-practice/internal/maintenance"
 	"github.com/yuu-biz/ims-practice/internal/metrics"
 	"github.com/yuu-biz/ims-practice/internal/policy"
 	"github.com/yuu-biz/ims-practice/internal/sip"
@@ -671,8 +673,12 @@ type PCSCF struct {
 	// admissions is what Screen knows of the IP associations in store.
 	admissions *admissions
 	log        *slog.Logger
-	// measurements counts the registration procedures (metrics.go).
+	// measurements counts the registration procedures and the session
+	// establishments (metrics.go).
 	measurements *measurements
+	// managed is the administrative state that the maintenance API of
+	// the node keeps for the P-CSCF; nil without one (maintenance.go).
+	managed atomic.Pointer[maintenance.ManagedFunction]
 
 	// protectedStack listens on the protected server port.
 	protectedStack ims.StackRef
@@ -727,11 +733,11 @@ func New(cfg Config, locator Locator, store Store, relays []MediaRelay, log *slo
 	if err != nil {
 		return nil, err
 	}
-	admitted := newAdmissions()
-	p := &PCSCF{cfg: cfg, locator: locator, store: indexedStore{Store: store, admissions: admitted}, admissions: admitted,
-		relays: relays, log: log, measurements: measured, setups: map[DialogKey]*setup{},
+	p := &PCSCF{cfg: cfg, locator: locator, relays: relays, log: log, measurements: measured, setups: map[DialogKey]*setup{},
 		regEventRefresh: ims.RefreshAfter, notifyWait: 64 * sip.DefaultTimers().T1,
 		ackWait: 64 * sip.DefaultTimers().T1}
+	p.admissions = newAdmissions(p.associationGone)
+	p.store = indexedStore{Store: store, admissions: p.admissions}
 	p.stopSweep = p.sweep()
 	return p, nil
 }
@@ -798,7 +804,10 @@ func (p *PCSCF) SetStack(stack *sip.Stack) { p.stack.Set(stack) }
 //
 // Once it has read the IP association of the UE, it knows the
 // registration procedure of the REGISTER, and counts every final
-// response to it (TS 32.409 4.1.1, metrics.go).
+// response to it (TS 32.409 4.1.1, metrics.go). While the operator has
+// the P-CSCF shut down or locked, it refuses a REGISTER that would start
+// or refresh a registration, and lets a deregistration through
+// (maintenance.go).
 //
 // SIMPLIFIED: TS 24.229 5.2.2.1 item 6. The P-CSCF does not store the
 // term-ioi of the P-Charging-Vector of the 200: that IOI names the home
@@ -866,6 +875,10 @@ func (p *PCSCF) register(st *sip.ServerTransaction, protected bool) {
 	respond := func(resp *sip.Message) {
 		p.measurements.registrationAnswered(procedure, resp)
 		st.Respond(resp)
+	}
+	if !p.unlocked() && procedure.kind != ims.DeRegistration {
+		respond(p.refusal(req, log))
+		return
 	}
 	var integrity sip.IntegrityProtected
 	var agreement *secAgreement

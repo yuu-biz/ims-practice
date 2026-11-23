@@ -5,6 +5,7 @@ import (
 	"net/netip"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/yuu-biz/ims-practice/internal/sip"
@@ -107,11 +108,20 @@ func (p *PCSCF) lookUpAssociation(source sip.Destination, target string) {
 // association at its KeepUntil, as the Store does. Only the P-CSCF that
 // a UE registered through writes the UE's association, so a copy is not
 // changed behind its back.
+//
+// The associations in admissions are those of the UEs that use this
+// instance, which makes them the users of its maintenance function
+// (Function).
 type admissions struct {
 	mu        sync.Mutex
 	bySource  map[sip.Destination]admission
 	byContact map[contactKey]sip.Destination
 	lookingUp map[string]bool
+	// size is how many associations bySource holds, which users reads
+	// without mu.
+	size atomic.Int64
+	// gone is called, without mu, after an association has gone.
+	gone func()
 }
 
 type admission struct {
@@ -131,9 +141,13 @@ func contactKeyOf(u sip.URI) contactKey {
 	return contactKey{user: u.User, host: strings.ToLower(u.Host), port: u.Port}
 }
 
-func newAdmissions() *admissions {
-	return &admissions{bySource: map[sip.Destination]admission{}, byContact: map[contactKey]sip.Destination{}, lookingUp: map[string]bool{}}
+func newAdmissions(gone func()) *admissions {
+	return &admissions{bySource: map[sip.Destination]admission{}, byContact: map[contactKey]sip.Destination{}, lookingUp: map[string]bool{},
+		gone: gone}
 }
+
+// users is how many associations admissions holds.
+func (s *admissions) users() int { return int(s.size.Load()) }
 
 func (s *admissions) put(a Association) {
 	var contact contactKey
@@ -142,7 +156,9 @@ func (s *admissions) put(a Association) {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.removeLocked(a.Source)
+	if !s.removeLocked(a.Source) {
+		s.size.Add(1)
+	}
 	s.bySource[a.Source] = admission{sentBy: a.SentBy, expires: a.Expires, keepUntil: a.KeepUntil, contact: contact}
 	if a.Contact != "" {
 		s.byContact[contact] = a.Source
@@ -152,24 +168,40 @@ func (s *admissions) put(a Association) {
 	}
 	time.AfterFunc(time.Until(a.KeepUntil), func() {
 		s.mu.Lock()
-		defer s.mu.Unlock()
+		gone := false
 		if current, ok := s.bySource[a.Source]; ok && current.keepUntil.Equal(a.KeepUntil) {
-			s.removeLocked(a.Source)
+			gone = s.removeLocked(a.Source)
 		}
+		s.mu.Unlock()
+		s.counted(gone)
 	})
 }
 
 func (s *admissions) remove(source sip.Destination) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.removeLocked(source)
+	gone := s.removeLocked(source)
+	s.mu.Unlock()
+	s.counted(gone)
 }
 
-// removeLocked is remove with s.mu held.
-func (s *admissions) removeLocked(source sip.Destination) {
-	if old, ok := s.bySource[source]; ok {
+// removeLocked forgets the association of source, with s.mu held, and
+// reports whether there was one. It leaves size to the caller, so that
+// an association that put replaces is never missing from it.
+func (s *admissions) removeLocked(source sip.Destination) bool {
+	old, ok := s.bySource[source]
+	if ok {
 		delete(s.byContact, old.contact)
 		delete(s.bySource, source)
+	}
+	return ok
+}
+
+// counted takes an association that removeLocked reported gone out of
+// size, and tells gone, after s.mu has been released.
+func (s *admissions) counted(gone bool) {
+	if gone {
+		s.size.Add(-1)
+		s.gone()
 	}
 }
 
