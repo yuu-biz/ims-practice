@@ -223,7 +223,7 @@ To: <tel:+12025550151>
 Call-ID: FMZQJ3BZL2YI4ILP6CEIPAUT5Z
 CSeq: 1 INVITE
 Contact: <sip:ibcf.nni.mnc001.example.net:5060>
-Supported: 100rel, timer, 199, precondition
+Supported: 100rel, timer, 199, precondition, replaces
 ```
 
 - **Via**。IBCF-A の 1 つだけです。網 A のノードは、IBCF-A に届いた INVITE に自分の Via を入れました。その INVITE は IBCF-A で終わっています。
@@ -231,6 +231,7 @@ Supported: 100rel, timer, 199, precondition
 - **Contact**。IBCF-A の外側の名前です。網 B からの PRACK、ACK、BYE はここに届きます。
 - **Call-ID、From の tag、CSeq**。IBCF-A が作ったものです。網 A のキャプチャで S-CSCF から IBCF-A への INVITE と、網 B のキャプチャで IBCF-B から I-CSCF への INVITE と、Call-ID を比べてください。1 つの呼が、3 つのキャプチャでそれぞれ別の Call-ID を持っています。
 - **Max-Forwards**。IBCF-A は、プロキシと同じように 1 つ減らしています（RFC 3261 16.6 の手順 3）。2 つの網が呼を回し続けても、いずれ止まるようにするためです。
+- **Supported**。UE A1 のものを、プロファイルの規則を当てたあとで写しています。UE A1 の使えない拡張を網 B が使わないようにするためです。`replaces` もこの中にあります。どちらの IBCF も渡す Replaces にもう一方の側のダイアログを書くためです（「境界を越える会議」を見てください）。
 
 UE B1 に届く INVITE の Contact は、IBCF-B の内側の名前 `sip:ibcf.ims.mnc002.mcc001.3gppnetwork.org:5060` です。発信側がそこに付けていた機能タグも付いています（RFC 3840）。どちらの UE も、自網の IBCF としかやり取りしません。
 
@@ -262,7 +263,23 @@ Contact をいつも替えるわけではありません。TS 24.229 5.10.5 は�
 
 向きが逆でも同じです。フォーカスが 200 の Contact に `isfocus` を付けて応えると、各 IBCF は自分の 200 でその Contact を渡し、その Record-Route に自分を入れます。
 
-GSMA IR.92 2.3.3 の 3 者通話では、フォーカスの INVITE に Replaces も入ります。呼をまとめる UE と招かれる利用者との呼を指す Replaces で（TS 24.147 5.3.2.5.4）、招かれた利用者はその呼の代わりに新しい呼を受けます。このプロジェクトの IBCF は Replaces を届いたまま渡します。この Replaces が指すのは網 A のダイアログで、UE B1 の呼はその中にありません。そのため UE B1 は 481（Call/Transaction Does Not Exist）を返し（RFC 3891 3）、網 A の UE は UE B1 との呼を会議にまとめられません（[このプロジェクトで簡略化したこと](#このプロジェクトで簡略化したこと)）。それでも UE B1 は会議の URI に発信すれば会議に入れます。
+GSMA IR.92 2.3.3 の 3 者通話では、フォーカスの INVITE に Replaces も入ります。呼をまとめる UE と招かれる利用者との呼を指す Replaces で（TS 24.147 5.3.2.5.4）、招かれた利用者はその呼の代わりに新しい呼を受けます。Replaces はダイアログを Call-ID と両端の tag で指し、その値は INVITE を受ける UA から見たものです。to-tag はその UA 自身の tag です（RFC 3891 3）。途中の B2BUA はそれぞれの側に自分のダイアログを持ち、Call-ID も tag も側ごとに違います。そこで B2BUA はどれも、Replaces に書くダイアログを、もう一方の側のもの、つまり次の宛先が知っているものに替えます。UE A1 の呼では MMTel AS がこれをします（TS 24.229 5.7.5.1）。IBCF も、IMS-ALG として自分の 2 つのダイアログの識別子を対応づけるので（5.10.5）、同じことをします。IBCF は Replaces が指すダイアログから `Store` の中の呼を探し、呼を持つのが IBCF の別の台でも見つけます。見つけた呼のもう一方の側のダイアログを書いて、INVITE を送ります。UE B1 は自分のダイアログを見つけ、新しい呼を受けて、古い呼を BYE で終えます。
+
+```text
+UE A1     フォーカス（MMTel AS） S-CSCF-A   IBCF-A ║ IBCF-B    UE B1
+  | REFER: Refer-To は B1、ダイアログ 1 の Replaces  |          |
+  |-------------->|               |         |  ║   |          |  ダイアログ 1: UE A1 と AS
+  |               | INVITE、ダイアログ 2 の Replaces |          |
+  |               |-------------->|-------->|  ║   |          |  ダイアログ 2: AS と IBCF-A
+  |               |               |         | INVITE、ダイアログ 3 の Replaces
+  |               |               |         |=======>|          |  ダイアログ 3: 網のあいだの IBCF-A と IBCF-B
+  |               |               |         |  ║   | INVITE、ダイアログ 4 の Replaces
+  |               |               |         |  ║   |--------->|  ダイアログ 4: IBCF-B と UE B1
+  |               |               |         |  ║   |<---------|  200 OK: UE B1 が新しい呼を受ける
+  |               |               |         |  ║   |<---------|  ダイアログ 4 の BYE: 古い呼が終わる
+```
+
+ダイアログ 1 から 4 はどれも UE A1 と UE B1 の古い呼のもので、この呼は途中の UA と B2BUA の 2 つずつのあいだにダイアログを 1 つずつ持ちます。各網のプロキシは図から省いています。IBCF の呼を指さない Replaces は届いたまま渡します。TS 24.229 5.7.5.1 も、AS が自分のダイアログを指さない Replaces を届いたまま渡すとしています。IBCF の先の B2BUA がそのダイアログを持っているかもしれないためです。どのノードも持っていなければ、端の UA が 481（Call/Transaction Does Not Exist）を返します（RFC 3891 3）。IBCF が `Store` を読めないときは、どちらなのか分からないので、INVITE に 500（Server Internal Error）を返します。
 
 網 B の利用者は会議の URI に INVITE を送って会議に入ります（TS 24.147 5.3.1.4.1）。会議を抜けた参加者が戻るときも同じです。スクリプトでは、UE A1 が UE A2 との呼と UE A3 との呼を 1 つの会議にまとめ、UE B1 がその会議の URI に発信します。スクリプトは会議の URI を UE A1 から読み取り（`ue ctl conference`）、UE B1 に渡します。この INVITE はどのダイアログにも属さない要求で、新しい呼です。ほかの呼と同じく、網 B の P-CSCF と S-CSCF、IBCF-B を通って網のあいだに出て、IBCF-A から網 A に入ります。IBCF-A はこれを網 A の I-CSCF に渡します。URI が公開サービス識別子のサブドメインにあるので、I-CSCF は HSS に何も尋ねず、`conf.ims.mnc001.mcc001.3gppnetwork.org` の NAPTR と SRV のレコードを引いて（RFC 3263）、そこに書かれた MMTel AS へ INVITE を送ります（TS 24.229 5.3.2.1 step 3）。フォーカスは自分の網の利用者と同じように UE B1 を迎え入れ（[会議に戻る](mrf.md#会議に戻る)）、`isfocus` を付けた会議の URI を Contact に入れて応えます。
 
@@ -285,7 +302,7 @@ UE B1   P-CSCF-B  S-CSCF-B  IBCF-B ║ IBCF-A   I-CSCF-A   DNS    MMTel AS（フ
 
 IBCF は、その URI の中を何も隠しません。フォーカスが書いたものが、そのまま相手網に見えます。このプロジェクトの MMTel AS は、会議の URI をホームドメインのサブドメイン `conf.ims.mnc001.mcc001.3gppnetwork.org` に作り、ポート番号を付けません。このサブドメインはノードの名前ではないので、会議の URI が網 B に網 A のノードの名前を見せることはありません。スクリプトは網 B と網のあいだのキャプチャで `isfocus` 付きの Contact をすべて調べます。ノードの名前を含むものも、ポート番号を持つものもありません。
 
-参加者は、まずダイアログの外で、会議の URI に SUBSCRIBE を送ります（TS 24.147 5.3.1.2）。これは境界を越えません。参加者の網の IBCF が、自分で 403（Forbidden）を返します。5.10.1 は、局所的な方針で要求を断ることを IBCF に認めています（最後の節を見てください）。403 を受けた参加者は、TS 24.147 5.3.1.2 のとおり、会議のセッションのダイアログの中で SUBSCRIBE を送り直します。こちらは、取り決めが SUBSCRIBE と NOTIFY を許していれば、呼のほかの要求と同じく境界を越えます。取り決めに SUBSCRIBE が無ければ、IBCF はどちらにも 405（Method Not Allowed）を返します。取り決めの外のほかのメソッドと同じです。境界を越えるフォーカスの INVITE は、`internal/ibcf` の試験が 1 つのプロセスの中で両方の向きに動かします（`TestConferenceFocusAcrossTheBorder`、`TestConferenceFocusAnswersAcrossTheBorder`）。`internal/mmtel` の `TestConferenceInvitesAUserOfAnotherNetwork` は、このプロジェクトのフォーカスと網 A の S-CSCF を 1 つのプロセスで動かし、網 B の利用者には IBCF-A の代わりに UA を置きます。UE A1 がその利用者との通話と網 A の利用者との通話を 1 つの会議にまとめ、3 人が互いの声を聞きます。この UA は Replaces が指すダイアログを持っていますが、実際の IBCF-A は持っていません。
+参加者は、まずダイアログの外で、会議の URI に SUBSCRIBE を送ります（TS 24.147 5.3.1.2）。これは境界を越えません。参加者の網の IBCF が、自分で 403（Forbidden）を返します。5.10.1 は、局所的な方針で要求を断ることを IBCF に認めています（最後の節を見てください）。403 を受けた参加者は、TS 24.147 5.3.1.2 のとおり、会議のセッションのダイアログの中で SUBSCRIBE を送り直します。こちらは、取り決めが SUBSCRIBE と NOTIFY を許していれば、呼のほかの要求と同じく境界を越えます。取り決めに SUBSCRIBE が無ければ、IBCF はどちらにも 405（Method Not Allowed）を返します。取り決めの外のほかのメソッドと同じです。境界を越えるフォーカスの INVITE は、`internal/ibcf` の試験が 1 つのプロセスの中で両方の向きに動かします（`TestConferenceFocusAcrossTheBorder`、`TestConferenceFocusAnswersAcrossTheBorder`）。`internal/mmtel` の `TestConferenceInvitesAUserOfAnotherNetwork` は、このプロジェクトのフォーカスと網 A の S-CSCF を 1 つのプロセスで動かし、網 B の利用者には IBCF-A の代わりに UA を置きます。UE A1 がその利用者との通話と網 A の利用者との通話を 1 つの会議にまとめ、3 人が互いの声を聞きます。`internal/ibcf` の `TestReplacesNamesTheDialogOfTheNextHop` は、Replaces を入れた INVITE を、呼を持つ台とは別の IBCF-A の台を通して、両方の IBCF に通します。`TestAReplacesOfNoCallCrossesAsItCame` は、どの呼も指さない Replaces を通します。
 
 IBCF は会議の状態も読みません。会議の状態は NOTIFY の本文で運ばれます。TS 24.229 5.10.6.3 は、メディアのアドレスを変換するときに SDP を書き換えるよう IBCF に求め、ほかの本文の扱いは局所的な方針に任せています。例に挙がっているのは、そのまま渡すこと、本文を取り除くこと、要求を断ることです。このプロジェクトの IBCF は SDP 以外の本文をそのまま渡します。そのため、網 B に何が見えるかはフォーカスが決めます。RFC 4575 5.7 は `<endpoint>` ごとのキーをフォーカスが作るとし、例として Contact と GRUU を挙げています。網 A のフォーカスが参加者の Contact として持っているのは、網 A の UE のアドレスです。網 B の参加者では、参加者の Contact の代わりに IBCF-A が入れた、IBCF-A の内部の名前です。そこで、このプロジェクトの MMTel AS は `<endpoint>` を Contact ではなく `urn:uuid:` の URI で名付けます。会議の状態には、網 A のアドレスもノードの名前も載りません。`internal/ibcf` の `TestConferenceStateAcrossTheBorder` が、このプロジェクトの会議の AS を網 A のフォーカスにして、これを確かめます。
 
@@ -319,9 +336,9 @@ IBCF-A の SIP のスタックは、手持ちのどのトランザクション�
 
 IBCF の各台は、こうした記録を自分の呼ごとに `Store` に置きます。置き場所は自分の名前の下です。記録には、TrGW のコンテキストと、呼が応答されたあとは 2 つのダイアログが入ります。呼の中の要求のたびに、ダイアログを書き直します。TS 24.229 5.10.2.3 と 5.10.3.3 が、後続の要求ごとに Contact と CSeq を覚えるよう求めているためです。re-INVITE や UPDATE で、相手が別の Contact に移ることがあります（RFC 3261 12.2）。同じ名前で起動し直した台は、最初に自分の記録を読みます。記録ごとに TrGW のコンテキストを解放し、2 つのダイアログのそれぞれで BYE を送ります。BYE の CSeq は、記録の値より十分に大きくします。記録を書いたあとも、ダイアログが進んでいたかもしれないためです（RFC 3261 12.2.2）。IBCF は、記録ごとに `"msg":"ending a call that an earlier process of this instance left"` をログに出します。
 
-1 つの台の記録はその台の名前の下にあるので、各台は自分の記録だけを、起動したときに 1 回読みます。網の全部の呼を探すことはしません。
+1 つの台の記録はその台の名前の下にあるので、各台は自分の記録だけを、起動したときに 1 回読みます。網の全部の呼を探すことはしません。応答された呼の記録は 2 つのダイアログそれぞれの下にも置きます。Replaces を入れた INVITE を受けた台は、Replaces が指すダイアログから、その 1 件の記録を読みます。呼を持つのがどの台でも同じです（「境界を越える会議」を見てください）。
 
-記録が残るのは、記録を持つ `Store` が残るあいだだけです。ノードの設定に種類が `valkey` の `store` の節があると、ノードは IBCF に `ibcfstore.Store` を渡します。この `Store` は、記録をその Valkey のサーバーに置きます。記録は `ibcf:call:<台>:<ID>` に、台の呼の ID の一覧は `ibcf:calls-of:<台>` に置きます。どちらのキーも、節の `prefix` のあとに続きます。`<台>` は、自網での IBCF の URI のホストです。作り直した IBCF のコンテナは、自分の記録をサーバーから読み、止まったプロセスの呼を上のとおりに終わらせます。
+記録が残るのは、記録を持つ `Store` が残るあいだだけです。ノードの設定に種類が `valkey` の `store` の節があると、ノードは IBCF に `ibcfstore.Store` を渡します。この `Store` は、記録をその Valkey のサーバーに置きます。記録は `ibcf:call:<台>:<ID>` に、台の呼の ID の一覧は `ibcf:calls-of:<台>` に、ダイアログを持つ呼の台と ID は `ibcf:dialog:<Call-ID>:<自分の tag>:<相手の tag>` に置きます。どのキーも節の `prefix` のあとに続きます。`<台>` は、自網での IBCF の URI のホストです。作り直した IBCF のコンテナは、自分の記録をサーバーから読み、止まったプロセスの呼を上のとおりに終わらせます。
 
 新しいプロセスは、UA を動かす前に自分の記録を読みます。読めなければ、起動しません。記録を持たずに呼を受けた台は、前のプロセスの呼をいつまでも終わらせないためです。このときノードは `"msg":"node failed"` を、`ibcf: cannot read the calls that an earlier process of <台> left` で始まるエラーと一緒にログに出し、止まります。保存先が答えるようになってから、もう一度起動してください。IBCF の台がいくつもある網では、そのあいだ、ほかの台が新しい呼を受けます。
 
@@ -482,7 +499,8 @@ GSMA IR.95 は、IMS 網のあいだの SIP と SDP の GSMA のプロファイ�
 | --- | --- | --- |
 | IBCF、TS 24.229 5.10.2.4、5.10.3.4 | IBCF が自分から呼を終えるのは、2 つのダイアログの一方が失われたときと、同じ台の前のプロセスの代わりに起動したときだけです。TrGW からは何も知らされないので、TrGW のコンテキストを失った呼は、どちらかが切るまで音声の無いまま続きます。二度と起動しない台の記録は、TrGW のコンテキストと一緒に `Store` に残ります。 | このプロジェクトの TrGW は異常を IBCF に知らせず、このプロジェクトの台は同じ名前で起動し直すため。 |
 | IBCF、TS 24.229 5.10.5 | 3xx の Contact は境界を越えません。相手網からの転送の応答は、転送先を持たずに発信者に届きます。 | 3xx の Contact は次に試す宛先で、ダイアログのものではないため。このプロジェクトのノードは、どれも 3xx を返しません。 |
-| IBCF、RFC 3891、RFC 3515 | Replaces と、Replaces を入れた Refer-To を、もう一方の側のダイアログに対応づけません。`replaces` を必須にした INVITE には 420 を返します。そのため、相手網の利用者との呼は転送することも会議にまとめることもできません。その Replaces を入れた INVITE に、利用者は 481 を返します。相手網の利用者は代わりに会議の URI に発信して会議に入ります。 | Replaces を対応づけるには、Replaces が指すダイアログから IBCF が呼を探さなければなりません。その呼は別の台が持っているかもしれません。B2BUA のその部分は作っていません。 |
+| IBCF、RFC 3891 3 | early dialog を指す Replaces は、届いたまま渡します。そのため、向こう端の UA はそのダイアログを見つけられません。 | IBCF が呼の記録にダイアログを書くのは、2 つとも確定してからです。このプロジェクトには、early dialog を置き換えるノードがありません。 |
+| IBCF、RFC 3515 2.1 | Replaces を入れた Refer-To は、届いたまま渡します。相手網の利用者を相手網の別の利用者へ転送すると、その Replaces を入れた INVITE を受けた利用者は、自分のダイアログを見つけられません。 | このプロジェクトには呼の転送がありません（TS 24.629）。呼を会議にまとめる UE は自分の網のフォーカスに REFER を送ります。 |
 | IBCF、TS 24.229 5.10.2.2、5.10.3.2 | ダイアログの外の要求のうち、境界を越えるのは INVITE と MESSAGE だけです。OPTIONS には IBCF が自分で答え、SUBSCRIBE には 403 を、PUBLISH には 405 を返します。相手網の会議の参加者は、TS 24.147 5.3.1.2 が 403 のあとに求めるとおり、会議のセッションのダイアログの中で会議を購読します。MESSAGE への暫定応答は、その側にとどまります。 | ダイアログの外の SUBSCRIBE は、それ自身のダイアログを作ります。IBCF は、呼のダイアログと同じく、それを両側で持たなければなりません。B2BUA のその部分は作っていません。 |
 | IBCF、TS 29.238、TS 29.165 3.2 | IBCF は、Ix の H.248 ではなく、メディア中継ノードの HTTP の制御 API で TrGW を動かします。 | P-CSCF が同じ API で動かしている中継ノードを使うため。H.248 のメッセージは `internal/h248` で見られます。 |
 | IBCF、TS 24.229 5.10.2.1、5.10.3.1、TS 29.165 5.3.1 | non-roaming の II-NNI だけです。REGISTER は通しません（405）。Path、復旧の手順、`iotl` はありません。 | ローミングはこのプロジェクトの範囲の外のため。 |

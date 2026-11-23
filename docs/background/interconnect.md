@@ -592,7 +592,7 @@ B2BUA の IBCF の手順は次のとおりです。
 
 `interconnect.Border` の手続きは、受けたメッセージの写しに当てます。そのあとで `CrossingFields` が、1 つのダイアログに属さないヘッダだけを選びます。属するのは、Via、From、To、Call-ID、CSeq、Contact、Record-Route、Route、Max-Forwards、本文の枠（Content-Length、Content-Type）、RSeq、RAck、Allow、Supported、Session-Expires、Min-SE、Path、Service-Route と、Require の 100rel と timer です。MMTel AS の `carried` と同じ考え方ですが、境界の規則に属するので `internal/interconnect` に置きました。
 
-- 最初の INVITE だけは、Allow、Supported、Session-Expires、Min-SE を写します。着信側が、発信側の使えない拡張を使わないようにするためです。プロファイルの option tag の規則は、この Supported に当たります。Supported の `replaces` は外します。IBCF は Replaces をもう一方のダイアログに対応づけないためです。
+- 最初の INVITE だけは、Allow、Supported、Session-Expires、Min-SE を写します。着信側が、発信側の使えない拡張を使わないようにするためです。プロファイルの option tag の規則は、この Supported に当たります。Supported の `replaces` もそのまま写します。IBCF は、渡す Replaces にもう一方の側のダイアログを書くためです。
 - Max-Forwards は 1 つ減らして写します（RFC 3261 16.6 の step 3）。2 つの網が呼を回し続けても止まるようにするためです。
 - Contact の URI は IBCF の台のものにし、機能タグ（`+g.3gpp.icsi-ref` など）は写します。`isfocus` と `expires` は外します。ただし、GRUU（`gr` を持つ URI）か `isfocus` を持つ Contact は、5.10.5 のとおりそのまま通します。
 - プライバシーの `header` は、B2BUA なら何もしなくても満たされます（5.10.8 の item 1）。`user` の匿名の From は相手網の側のダイアログにだけ入り、自網の側は元の From のままです。
@@ -614,7 +614,7 @@ B2BUA の IBCF の手順は次のとおりです。
 冗長構成の設計（[docs/design/state-redundancy.md](../design/state-redundancy.md)）に合わせて、IBCF は、ダイアログの中の要求を最初に INVITE を受けた台に戻し、呼の記録を保存先に置きます。B2BUA は片方の脚の要求をもう片方の脚のトランザクションにするので、2 つのトランザクションが同じプロセスに要るためです。
 
 - 各台は、Contact に自分の台の名前（`Config.Internal`、`Config.External`）を書きます。組の名前（`Config.InternalPool`、`Config.ExternalPool`。設定の `sip.pool`）は、Route の先頭から自分の値として外すだけです。Compose の 2 つの網は 1 台ずつなので、台の名前と組の名前が同じです。
-- 呼の 2 つのダイアログと TrGW のコンテキストは、その台のプロセスの中にあります。要求ごとに保存先を引くことはしません。全部の呼を走査する処理も、役割全体のロックもありません。
+- 呼の 2 つのダイアログと TrGW のコンテキストは、その台のプロセスの中にあります。保存先を引く要求は、Replaces を持つ INVITE だけです。そのときも、Replaces が指すダイアログの索引から記録を 1 件だけ読みます。全部の呼を走査する処理も、役割全体のロックもありません。
 - 保存先に置くのは、台ごとの呼の記録だけです（次の項）。`sip.UA` にはまだ `ResumeCall` が無いので、作り直した台が呼を続けることはできません。
 
 #### TrGW のコンテキストの後始末
@@ -677,6 +677,7 @@ TS 24.229 の 5.10 には、IBCF がプリコンディションのしくみに�
 
 - GRUU（`gr` を持つ URI）か `isfocus` を持つ Contact は、そのまま通します（5.10.5）。INVITE を出す側では `Invitation.RecordRoute`、応答を返す側では `IncomingCall.SetContact` の `recordRoute` で、IBCF の台の URI を Record-Route に入れます。相手のダイアログの中の要求は、Request-URI が会議の URI で、Route に IBCF があります。IBCF はそのダイアログでそれを受け止め、もう一方のダイアログの remote target（届いたままの Contact）に自分の要求を送ります。B2BUA のままです。ほかの Contact は、IBCF の URI に相手の機能タグを付けたものです。応答ごとに設定します。
 - ダイアログの外の SUBSCRIBE は、IBCF が境界の検査（取り決めに SUBSCRIBE が無ければ 405）のあとで、局所的な方針として 403 を返します（5.10.1）。TS 24.147 5.3.1.2 の参加者は 403 のときだけダイアログの中に切り替えるので、405 では相手網の会議を購読できません。数えて、ログに出します。知らないダイアログの中の SUBSCRIBE は 481 です。ダイアログの外の購読そのものを境界の両側で持つ作りは作っていません（`SIMPLIFIED:`）。
+- Replaces を持つ INVITE では、Replaces が指すダイアログを自分の呼の片側として保存先から探します（`Store.CallOf`）。呼を持つのが別の台でも見つかります。見つかれば、もう一方の側のダイアログの Call-ID と tag に書き換えます。TS 24.229 5.10.5 は IMS-ALG の IBCF が 2 つのダイアログの識別子を対応づけるとし、5.7.5.1 は routeing B2BUA の AS が同じ書き換えをするよう定めています。見つからなければ、5.7.5.1 の AS と同じく届いたまま渡します。IBCF の先の B2BUA がそのダイアログを持っているかもしれないためです。保存先を読めなければ 500 を返します。early dialog は記録に無いので対応づけません（`SIMPLIFIED:`）。Refer-To の中の Replaces も対応づけません（`SIMPLIFIED:`）。
 
 ### フォークのときに発信側に見せるもの
 
@@ -816,7 +817,7 @@ B2BUA の IBCF の手順は次のとおりです。
 
 `interconnect.Border` の手続きは、受けたメッセージの写しに当てます。そのあとで `CrossingFields` が、1 つのダイアログに属さないヘッダだけを選びます。属するのは、Via、From、To、Call-ID、CSeq、Contact、Record-Route、Route、Max-Forwards、本文の枠（Content-Length、Content-Type）、RSeq、RAck、Allow、Supported、Session-Expires、Min-SE、Path、Service-Route と、Require の 100rel と timer です。MMTel AS の `carried` と同じ考え方ですが、境界の規則に属するので `internal/interconnect` に置きました。
 
-- 最初の INVITE だけは、Allow、Supported、Session-Expires、Min-SE を写します。着信側が、発信側の使えない拡張を使わないようにするためです。プロファイルの option tag の規則は、この Supported に当たります。Supported の `replaces` は外します。IBCF は Replaces をもう一方のダイアログに対応づけないためです。
+- 最初の INVITE だけは、Allow、Supported、Session-Expires、Min-SE を写します。着信側が、発信側の使えない拡張を使わないようにするためです。プロファイルの option tag の規則は、この Supported に当たります。Supported の `replaces` もそのまま写します。IBCF は、渡す Replaces にもう一方の側のダイアログを書くためです。
 - Max-Forwards は 1 つ減らして写します（RFC 3261 16.6 の step 3）。2 つの網が呼を回し続けても止まるようにするためです。
 - Contact の URI は IBCF の台のものにし、機能タグ（`+g.3gpp.icsi-ref` など）は写します。`isfocus` と `expires` は外します。ただし、GRUU（`gr` を持つ URI）か `isfocus` を持つ Contact は、5.10.5 のとおりそのまま通します。
 - プライバシーの `header` は、B2BUA なら何もしなくても満たされます（5.10.8 の item 1）。`user` の匿名の From は相手網の側のダイアログにだけ入り、自網の側は元の From のままです。
@@ -838,7 +839,7 @@ B2BUA の IBCF の手順は次のとおりです。
 冗長構成の設計（[docs/design/state-redundancy.md](../design/state-redundancy.md)）に合わせて、IBCF は、ダイアログの中の要求を最初に INVITE を受けた台に戻し、呼の記録を保存先に置きます。B2BUA は片方の脚の要求をもう片方の脚のトランザクションにするので、2 つのトランザクションが同じプロセスに要るためです。
 
 - 各台は、Contact に自分の台の名前（`Config.Internal`、`Config.External`）を書きます。組の名前（`Config.InternalPool`、`Config.ExternalPool`。設定の `sip.pool`）は、Route の先頭から自分の値として外すだけです。Compose の 2 つの網は 1 台ずつなので、台の名前と組の名前が同じです。
-- 呼の 2 つのダイアログと TrGW のコンテキストは、その台のプロセスの中にあります。要求ごとに保存先を引くことはしません。全部の呼を走査する処理も、役割全体のロックもありません。
+- 呼の 2 つのダイアログと TrGW のコンテキストは、その台のプロセスの中にあります。保存先を引く要求は、Replaces を持つ INVITE だけです。そのときも、Replaces が指すダイアログの索引から記録を 1 件だけ読みます。全部の呼を走査する処理も、役割全体のロックもありません。
 - 保存先に置くのは、台ごとの呼の記録だけです（次の項）。`sip.UA` にはまだ `ResumeCall` が無いので、作り直した台が呼を続けることはできません。
 
 #### TrGW のコンテキストの後始末
@@ -901,6 +902,7 @@ TS 24.229 の 5.10 には、IBCF がプリコンディションのしくみに�
 
 - GRUU（`gr` を持つ URI）か `isfocus` を持つ Contact は、そのまま通します（5.10.5）。INVITE を出す側では `Invitation.RecordRoute`、応答を返す側では `IncomingCall.SetContact` の `recordRoute` で、IBCF の台の URI を Record-Route に入れます。相手のダイアログの中の要求は、Request-URI が会議の URI で、Route に IBCF があります。IBCF はそのダイアログでそれを受け止め、もう一方のダイアログの remote target（届いたままの Contact）に自分の要求を送ります。B2BUA のままです。ほかの Contact は、IBCF の URI に相手の機能タグを付けたものです。応答ごとに設定します。
 - ダイアログの外の SUBSCRIBE は、IBCF が境界の検査（取り決めに SUBSCRIBE が無ければ 405）のあとで、局所的な方針として 403 を返します（5.10.1）。TS 24.147 5.3.1.2 の参加者は 403 のときだけダイアログの中に切り替えるので、405 では相手網の会議を購読できません。数えて、ログに出します。知らないダイアログの中の SUBSCRIBE は 481 です。ダイアログの外の購読そのものを境界の両側で持つ作りは作っていません（`SIMPLIFIED:`）。
+- Replaces を持つ INVITE では、Replaces が指すダイアログを自分の呼の片側として保存先から探します（`Store.CallOf`）。呼を持つのが別の台でも見つかります。見つかれば、もう一方の側のダイアログの Call-ID と tag に書き換えます。TS 24.229 5.10.5 は IMS-ALG の IBCF が 2 つのダイアログの識別子を対応づけるとし、5.7.5.1 は routeing B2BUA の AS が同じ書き換えをするよう定めています。見つからなければ、5.7.5.1 の AS と同じく届いたまま渡します。IBCF の先の B2BUA がそのダイアログを持っているかもしれないためです。保存先を読めなければ 500 を返します。early dialog は記録に無いので対応づけません（`SIMPLIFIED:`）。Refer-To の中の Replaces も対応づけません（`SIMPLIFIED:`）。
 
 ### フォークのときに発信側に見せるもの
 
@@ -1048,7 +1050,8 @@ tshark -r b-call.pcap -V
 | `ibcf/doc.go` | TS 24.229 5.10.2.1、5.10.3.1、TS 29.165 5.3.1 | non-roaming だけ。REGISTER は 405、Path と復旧の手順（5.10.3.2 の P-CSCF、5.10.3.5 の S-CSCF）は無い |
 | `ibcf/doc.go` | TS 24.229 5.10.2.2 step 5A、6、7、5.10.3.2 step 1A、1B、2C、2D、5 から 9 | 課金、私設網、緊急呼、発信者番号の検証が無いので、その手順を行わない |
 | `ibcf/doc.go` | TS 24.229 6.7.1.4.1 | IPv4 だけ。IPv4 と IPv6 の変換と `altc` は無い |
-| `ibcf/doc.go` | RFC 3891、RFC 3515 | Replaces と Refer-To の中の Replaces を、もう一方のダイアログに対応づけない。`replaces` を必須にした INVITE は 420 |
+| `ibcf/call.go` | RFC 3891 3 | early dialog を指す Replaces は、対応づけずに届いたまま渡す。記録にダイアログを書くのは 2 つとも確定してからで、early dialog を置き換えるノードは無い |
+| `ibcf/doc.go` | RFC 3515 2.1 | Refer-To の中の Replaces を、もう一方のダイアログに対応づけない。そうした REFER を境界の向こうへ送る呼の転送（TS 24.629）は無い |
 | `ibcf/call.go` | TS 24.229 5.10.5 | 3xx の Contact を写さない。3xx の Contact は次に試す宛先でダイアログのものではなく、このプロジェクトのノードは 3xx を返さない |
 | `ibcf/call.go` | TS 24.229 5.10.2.2、5.10.3.2、RFC 4028 8 | IBCF からセッションタイマーを求めない。発信者の Session-Expires と Min-SE を写し、ダイアログごとに両端が決める |
 | `b2bua/early.go` の `answerFrom` | RFC 3261 13.2.1、14.1 | 前の「フォーク」の項 |
