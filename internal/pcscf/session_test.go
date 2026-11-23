@@ -378,6 +378,58 @@ func TestMessageIsRelayedBothWaysWithoutRecordRoute(t *testing.T) {
 	}
 }
 
+// TestServiceUnavailableIsNotPassedOn: the next hop of a request
+// through the P-CSCF answers 503 with Retry-After, and the P-CSCF has no
+// other target for it. It answers 500 without Retry-After instead (RFC
+// 3261 16.7 step 6), both ways. The UE would read a 503 as said of its
+// P-CSCF (TS 24.229 5.1.2A.1.6).
+func TestServiceUnavailableIsNotPassedOn(t *testing.T) {
+	unavailable := func(st *sip.ServerTransaction) {
+		resp := sip.NewResponse(st.Request, 503, sip.NewTag())
+		resp.Add("Retry-After", "30")
+		st.Respond(resp)
+	}
+	scscf := newStack(t, unavailable)
+	locate := locatorFunc(func(string) []sip.Destination {
+		return []sip.Destination{{Transport: sip.UDP, Addr: scscf.LocalAddr()}}
+	})
+	store := NewMemoryStore()
+	p := New(Config{Host: "pcscf." + domain, Port: 5060, VisitedNetworkID: domain}, locate, store, nil, quiet())
+	pcscfStack := newPCSCFStack(t, p)
+	p.SetStack(pcscfStack)
+	ue := newStack(t, unavailable)
+	store.PutAssociation(context.Background(), Association{
+		Source:           sip.Destination{Transport: sip.UDP, Addr: ue.LocalAddr()},
+		SentBy:           ue.LocalAddr().String(),
+		Contact:          "sip:001010000000001@" + ue.LocalAddr().String(),
+		PrivateIdentity:  impi,
+		PublicIdentities: []string{impu},
+		ServiceRoute:     []string{"<sip:orig@scscf." + domain + ":5060;lr>"},
+		Expires:          time.Now().Add(time.Hour),
+	})
+	network := newStack(t, func(*sip.ServerTransaction) {})
+	for _, tt := range []struct {
+		name string
+		from *sip.Stack
+		m    *sip.Message
+	}{
+		{"MESSAGE from the UE", ue, message("sip:sc@"+domain, "<sip:pcscf."+domain+":5060;lr>")},
+		{"INVITE from the UE", ue, invite("sip:001010000000002@"+domain, "<sip:pcscf."+domain+":5060;lr>")},
+		{"MESSAGE to the UE", network, message("sip:001010000000001@"+ue.LocalAddr().String(), "<sip:term@pcscf."+domain+":5060;lr>")},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			ct, err := tt.from.SendRequest(tt.m, sip.Destination{Transport: sip.UDP, Addr: pcscfStack.LocalAddr()})
+			if err != nil {
+				t.Fatal(err)
+			}
+			r := final(t, ct.Responses(), 3*time.Second)
+			if r.StatusCode != 500 || r.Get("Retry-After") != "" {
+				t.Errorf("got %d with Retry-After %q, want 500 without one", r.StatusCode, r.Get("Retry-After"))
+			}
+		})
+	}
+}
+
 // testRelay is the name of the one media relay of a P-CSCF that only
 // lists.
 const testRelay = "http://agw.test:8080"

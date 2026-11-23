@@ -54,10 +54,23 @@ func CreatesDialog(m sip.Method) bool { return m == sip.INVITE || m == sip.SUBSC
 // Finish sends what Proxy left for the TU to send. After a 2xx to an
 // INVITE there is nothing; when the next hop never answered, TS 24.229
 // has the CSCFs answer 504 rather than the 408 of RFC 3261 16.8.
+//
+// A 503 (Service Unavailable) is not passed on: the proxy answers 500
+// (Server Internal Error) of its own instead (RFC 3261 16.7 step 6). A
+// 503 tells that the server that sent it takes no request now, and the
+// stack has already tried every other target of the next hop. Passed
+// on, it would tell the same of this proxy, which still serves other
+// requests. A UE reads it as said of its P-CSCF: a 503 without
+// Retry-After, or with one longer than Timer F, to a request after its
+// registration has the UE mark its P-CSCF unavailable and register
+// again (TS 24.229 5.1.2A.1.6). The Retry-After of the 503 is about the
+// server that sent it, so the 500 does not carry it.
 func Finish(st *sip.ServerTransaction, final *sip.Message, err error) {
 	switch {
 	case err != nil:
 		st.Respond(sip.NewResponse(st.Request, 504, sip.NewTag()))
+	case final != nil && final.StatusCode == 503:
+		st.Respond(sip.NewResponse(st.Request, 500, sip.NewTag()))
 	case final != nil:
 		st.Respond(final)
 	}

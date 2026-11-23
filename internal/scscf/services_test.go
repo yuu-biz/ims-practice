@@ -353,7 +353,8 @@ func TestRequestBackFromAProxyAS(t *testing.T) {
 // TestFailureAfterTheRequestCameBack: once the server has sent the
 // request back, a 5xx that it passes on is the answer of the session.
 // The S-CSCF gives it to the user instead of applying the default
-// handling of the server's criterion (TS 24.229 5.4.3.2).
+// handling of the server's criterion (TS 24.229 5.4.3.2). A 503 goes to
+// the user as 500 (RFC 3261 16.7 step 6).
 func TestFailureAfterTheRequestCameBack(t *testing.T) {
 	proxy := newProxyAS(t, "as1."+domain, "")
 	failing, failingGot := fakeAS(t, answers(503))
@@ -363,8 +364,8 @@ func TestFailureAfterTheRequestCameBack(t *testing.T) {
 	}, map[string]netip.AddrPort{"as1." + domain: proxy.stack.LocalAddr(), "as2." + domain: failing.LocalAddr()})
 	proxy.serve(h)
 	h.registerUser(sip.NewCallID())
-	if r := h.send(sms("sip:sc@"+domain, orig, impu)); r.StatusCode != 503 {
-		t.Fatalf("SMS got %d, want the 503 of the second server", r.StatusCode)
+	if r := h.send(sms("sip:sc@"+domain, orig, impu)); r.StatusCode != 500 {
+		t.Fatalf("SMS got %d, want 500 for the 503 of the second server", r.StatusCode)
 	}
 	received(t, proxy.got)
 	received(t, failingGot)
@@ -375,8 +376,8 @@ func TestFailureAfterTheRequestCameBack(t *testing.T) {
 // TestDefaultHandling is (d): the server of the first criterion cannot
 // be reached (DNS knows no address for it) or answers 503. With
 // SESSION_CONTINUED the SMS goes on to the destination; with
-// SESSION_TERMINATED the user gets the 503, or 504 when no answer came
-// (TS 24.229 5.4.3.2).
+// SESSION_TERMINATED the user gets 500 for the 503 (RFC 3261 16.7 step
+// 6), or 504 when no answer came (TS 24.229 5.4.3.2).
 func TestDefaultHandling(t *testing.T) {
 	failing, _ := fakeAS(t, answers(503))
 	for _, tt := range []struct {
@@ -388,7 +389,7 @@ func TestDefaultHandling(t *testing.T) {
 		{"unreachable, continued", "absent." + domain, ifc.SessionContinued, 486},
 		{"unreachable, terminated", "absent." + domain, ifc.SessionTerminated, 504},
 		{"503, continued", "failing." + domain, ifc.SessionContinued, 486},
-		{"503, terminated", "failing." + domain, ifc.SessionTerminated, 503},
+		{"503, terminated", "failing." + domain, ifc.SessionTerminated, 500},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			h := newServiceHarness(t, []ifc.InitialFilterCriteria{smsCriterion(0, "sip:"+tt.host+":5060", tt.handling)},

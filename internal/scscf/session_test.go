@@ -393,6 +393,28 @@ func TestTerminatingSMSMeetsTheCallerPreferences(t *testing.T) {
 	}
 }
 
+// TestServiceUnavailableIsNotPassedOn: the P-CSCF on the Path of the
+// callee answers a call 503 with Retry-After, and has no other target.
+// The S-CSCF answers 500 without Retry-After instead (RFC 3261 16.7
+// step 6): the 503 tells that the P-CSCF takes no request, not that the
+// S-CSCF takes none.
+func TestServiceUnavailableIsNotPassedOn(t *testing.T) {
+	pcscf := newStack(t, func(st *sip.ServerTransaction) {
+		resp := sip.NewResponse(st.Request, 503, sip.NewTag())
+		resp.Add("Retry-After", "30")
+		st.Respond(resp)
+	})
+	h := newHarnessWith(t, Config{}, fakeResolver{hosts: map[string]netip.AddrPort{"pcscf." + domain: pcscf.LocalAddr()}})
+	callID := sip.NewCallID()
+	auth, _ := answer(t, h.register(callID, 1, 600000, initial), password, "ip-assoc-pending")
+	if r := h.register(callID, 2, 600000, auth); r.StatusCode != 200 {
+		t.Fatalf("registration got %d", r.StatusCode)
+	}
+	if r := h.invite(impu, "<sip:scscf."+domain+":5060;lr>", ""); r.StatusCode != 500 || r.Get("Retry-After") != "" {
+		t.Errorf("got %d with Retry-After %q, want 500 without one", r.StatusCode, r.Get("Retry-After"))
+	}
+}
+
 // TestTerminatingCallToAnUnknownUserGets404: the HSS answers the SAR
 // for a user it does not know with DIAMETER_ERROR_USER_UNKNOWN.
 func TestTerminatingCallToAnUnknownUserGets404(t *testing.T) {
