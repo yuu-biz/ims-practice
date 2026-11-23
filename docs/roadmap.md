@@ -241,7 +241,7 @@
 - IP-SM-GW に、届ける経路の選択（ドメイン選択）と、IP で届かなかったときの NAS への切り替えを加える（TS 23.204 6.4、6.5a）。経路の選択には、IP-SM-GW が Sh で HSS に登録した情報を使う。
 - 手順書「SMS を NAS で届ける」を書く。
 
-今あるもの。NAS（`internal/nas`）、SGd（`internal/sgd`）、SC の本体（`internal/smsc`）の部品があります。役割にはつないでいません。調査は [sms-nas.md](background/sms-nas.md) にあります。
+今あるもの。NAS（`internal/nas`）、SGd（`internal/sgd`）、SC の本体（`internal/smsc`）の部品があります。SGd は役割にはつないでいません。HSS は S6c に答えます（`internal/hss/s6c.go`）。SRR に serving node を返し、RDR で message waiting data を書き換え、IP-SM-GW が登録したら ALR で SC に知らせます。調査は [sms-nas.md](background/sms-nas.md) にあります。
 
 **完了条件.** CI の試験で、SMS in MME の経路と 5GS の経路の両方で SMS が NAS で届く。IMS に登録していない UE に宛てた SMS で、IP-SM-GW が IP から NAS に切り替える。pcap で Wireshark が NAS と SGd のメッセージをデコードできる。
 
