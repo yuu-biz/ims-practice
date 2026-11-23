@@ -175,8 +175,16 @@ func (h *HSS) sendRoutingInfoForSM(ctx context.Context, r sgd.SendRoutingInfoFor
 // messages, or nil when none is registered (TS 29.338 5.2.1.3). Only an
 // IP-SM-GW whose Diameter identity the HSS keeps can be named to an
 // SMS-GMSC, which sends the TFR to that identity.
+//
+// 5.2.1.3 leaves out a node that is marked with the mobile not
+// reachable flag. For a delivery over IP that flag is UNRI, which TS
+// 23.040 3.2.6 sets while the message waiting data holds an address put
+// there because the UE was absent: sending the SMS-GMSC to the IP-SM-GW
+// again would only repeat the failure, and the alert of 3.2.6 item 2c is
+// what the SC waits for instead.
 func servingNode(u Subscriber) *sgd.ServingNode {
-	if u.IPSMGWNumber == "" || u.IPSMGW.OriginHost == "" {
+	if u.IPSMGWNumber == "" || u.IPSMGW.OriginHost == "" || u.UNRI {
+
 		return nil
 	}
 	return &sgd.ServingNode{
