@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"slices"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -769,7 +770,7 @@ func TestMediaNodeStoreIsTheSharedStoreOfTheNode(t *testing.T) {
 				RTPAddress: netip.MustParseAddr("127.0.0.1"),
 				MinPort:    minPort, MaxPort: maxPort,
 			}
-			stop, err := startMediaNode(relay, nil, store, quiet(), func() {})
+			_, stop, err := startMediaNode(relay, nil, store, quiet(), func() {})
 			if err == nil {
 				stop()
 			}
@@ -1237,6 +1238,114 @@ func TestMaintenanceAPIShutsTheMRFCDown(t *testing.T) {
 	if last == nil || last.StatusCode != 503 || last.Get("Retry-After") == "" {
 		t.Errorf("the INVITE to the shut down MRFC got %v, want 503 with Retry-After", last)
 	}
+}
+
+// TestMaintenanceAPIShutsTheMediaRelaysDown: on the maintenance
+// listener of a node with both media roles, the API shows a function
+// for each of them under the name of the role, with its configuration
+// and the contexts it holds, and a shut down reaches that relay alone.
+// A relay with a context stays SHUTTINGDOWN until its controller
+// subtracts it, and makes no new context meanwhile.
+func TestMaintenanceAPIShutsTheMediaRelaysDown(t *testing.T) {
+	agwPorts, agwMaxPort := rtptest.PortRange(t, 4)
+	mrfpPorts, mrfpMaxPort := rtptest.PortRange(t, 4)
+	cfg := config.Config{Node: "media-1", Roles: []config.Role{config.RoleAGW, config.RoleMRFP}, HomeDomain: domain,
+		AGW: &config.AGW{Control: netip.MustParseAddrPort("127.0.0.1:0"), RTPAddress: netip.MustParseAddr("127.0.0.1"),
+			MinPort: agwPorts, MaxPort: agwMaxPort},
+		MRFP: &config.MRFP{AGW: config.AGW{Control: netip.MustParseAddrPort("127.0.0.1:0"),
+			RTPAddress: netip.MustParseAddr("127.0.0.1"), MinPort: mrfpPorts, MaxPort: mrfpMaxPort},
+			Announcements: map[string]string{"notice": "../../deploy/announcements/notice.wav"}}}
+
+	announcements, err := agw.LoadAnnouncements(cfg.MRFP.Announcements)
+	if err != nil {
+		t.Fatal(err)
+	}
+	relay := startRelay(t, *cfg.AGW, nil)
+	processor := startRelay(t, cfg.MRFP.AGW, announcements)
+	roles := []managedRole{
+		{function: relay.Function(string(config.RoleAGW)), manage: relay.Manage},
+		{function: processor.Function(string(config.RoleMRFP)), manage: processor.Manage},
+	}
+	// One pass of a call through the P-CSCF, which the shut down below
+	// has to wait for.
+	if _, err := relay.Add(agw.TerminationRequest{ID: agw.Access}, agw.TerminationRequest{ID: agw.Core}); err != nil {
+		t.Fatal(err)
+	}
+
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { l.Close() })
+	cfg.Maintenance = &config.Maintenance{Listen: l.Addr().String()}
+	stop, err := startMaintenance(l, cfg, roles, metrics.NewRegistry(), new(slog.LevelVar), quiet(), func() {})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer stop()
+	ctx := t.Context()
+	oam := maintenance.NewClient("http://"+l.Addr().String(), http.DefaultClient)
+
+	state, err := oam.State(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Each relay answers from its own sockets, so both are ENABLED while
+	// the node runs. The agw role holds the one context of the test.
+	functions := state.Functions
+	if len(functions) != 2 ||
+		functions[0].Role != string(config.RoleAGW) || functions[0].OperationalState != maintenance.Enabled ||
+		functions[0].Users == nil || *functions[0].Users != 1 ||
+		functions[1].Role != string(config.RoleMRFP) || functions[1].Users == nil || *functions[1].Users != 0 {
+		t.Errorf("functions %+v, want the agw role with its one context and the mrfp role with none", functions)
+	}
+	conf, err := oam.Configuration(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		`"agw":{"control":"127.0.0.1:0","rtp_address":"127.0.0.1","rtp_ports":{"min":` + strconv.Itoa(int(agwPorts)),
+		`"mrfp":{"control":"127.0.0.1:0","rtp_address":"127.0.0.1","rtp_ports":{"min":` + strconv.Itoa(int(mrfpPorts)),
+		`"announcements":["notice"]}`,
+	} {
+		if !strings.Contains(string(conf.Configuration), want) {
+			t.Errorf("configuration %s, want %s in it", conf.Configuration, want)
+		}
+	}
+
+	// The shut down of the agw role waits for its context, and the mrfp
+	// role beside it is untouched.
+	shut, err := oam.SetAdministrativeState(ctx, string(config.RoleAGW),
+		maintenance.AdministrativeStateRequest{AdministrativeState: maintenance.ShuttingDown})
+	if err != nil || shut.AdministrativeState != maintenance.ShuttingDown {
+		t.Fatalf("shut down gave %+v (%v), want SHUTTINGDOWN with a context in use", shut, err)
+	}
+	state, err = oam.State(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if state.Functions[1].AdministrativeState != maintenance.Unlocked {
+		t.Errorf("the mrfp role is %s, want UNLOCKED after the shut down of the agw role beside it",
+			state.Functions[1].AdministrativeState)
+	}
+}
+
+// startRelay starts a media node as main starts one, with its contexts
+// in the memory of this process, and subtracts the contexts that the
+// test leaves, so that the next run finds its ports free.
+func startRelay(t *testing.T, c config.AGW, announcements agw.Announcements) *agw.Relay {
+	t.Helper()
+	relay, stop, err := startMediaNode(c, announcements, nil, quiet(), func() {})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		for _, c := range relay.Contexts() {
+			relay.Subtract(c.ID)
+		}
+		stop()
+	})
+	return relay
 }
 
 // hssMaintenanceNode starts an HSS on cfg with the maintenance listener
