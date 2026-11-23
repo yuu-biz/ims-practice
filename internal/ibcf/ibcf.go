@@ -200,8 +200,11 @@ func (b *IBCF) newUA(transport *sip.TransportLayer, s side, locate func(sip.URI)
 		Contact: sip.URI{Scheme: "sip", Host: s.own.Host, Port: s.own.Port}.String(),
 		// The IBCF carries the SDP of preconditions from leg to leg
 		// without reading it, so an INVITE that requires them is taken
-		// and the requirement goes on to the far end.
-		Supported:   []string{sip.OptionPrecondition},
+		// and the requirement goes on to the far end. It names the other
+		// side's dialog in a Replaces that it passes on
+		// (replacesOnTheOtherSide), so it supports Replaces too (RFC
+		// 3891 6.2).
+		Supported:   []string{sip.OptionPrecondition, sip.OptionReplaces},
 		OnCall:      func(in *sip.IncomingCall) { b.onCall(s, in) },
 		OnMessage:   func(st *sip.ServerTransaction) { b.onMessage(s, st) },
 		OnSubscribe: func(st *sip.ServerTransaction) { b.onSubscribe(s, st) },

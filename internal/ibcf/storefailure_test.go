@@ -31,6 +31,29 @@ func TestAnINVITEWhoseRecordCannotBeWrittenGets500(t *testing.T) {
 	}
 }
 
+// An INVITE with Replaces, whose call the IBCF cannot look up, gets 500
+// before anything is reserved: passed on as it came, the Replaces would
+// name a dialog of network A that network B's UE cannot have. The
+// INVITE has no offer, so that nothing else of it needs the Store.
+func TestAnINVITEWhoseReplacesCannotBeReadGets500(t *testing.T) {
+	p := newPair(t, nil)
+	p.a.store.down.Store(true)
+	replaces := sip.Replaces{CallID: "call-1", ToTag: "ibcf-tag", FromTag: "ue-tag"}
+	call := p.a.invite(t, p.b.sipURI(), sip.Body{}, nil, replaces.Header())
+	if resp := final(t, call); resp.StatusCode != 500 {
+		t.Fatalf("the INVITE got %d, want 500", resp.StatusCode)
+	}
+	if reservedA, _ := p.waitReleased(t); reservedA != 0 {
+		t.Errorf("network A's TrGW reserved %d contexts, want none", reservedA)
+	}
+	if got := p.b.rec.requests("ue", sip.INVITE); len(got) != 0 {
+		t.Errorf("network B's UE got %d INVITEs", len(got))
+	}
+	if got := p.a.counter(t, `ims_ibcf_requests_rejected_total{peer="peer-b",direction="exit",method="INVITE",status="500"}`); got != 1 {
+		t.Errorf("network A counted %v INVITEs it answered 500, want 1", got)
+	}
+}
+
 // After an INVITE without an offer and a reliable 183 without one, the
 // caller's PRACK has the offer (RFC 3262 5), which gets the call its
 // TrGW context. When the record cannot then be written, the PRACK gets

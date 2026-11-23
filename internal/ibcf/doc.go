@@ -34,7 +34,8 @@
 // answered, as they are after each request within the call (TS 24.229
 // 5.10.2.2 step 2, 5.10.2.3, 5.10.3.2 step 2, 5.10.3.3). An instance
 // that starts again under the same name ends the calls of its earlier
-// process from those records (ReleaseLeftovers). Only a Store outside
+// process from those records (ReleaseLeftovers), and any instance finds
+// there the call that a Replaces names. Only a Store outside
 // the process, such as the one of internal/kvstore/ibcfstore, outlives
 // the process; a MemoryStore goes with it.
 //
@@ -63,11 +64,24 @@
 // and it adds orig only where step 4 passes it on; the border removes
 // what may not cross.
 //
-// SIMPLIFIED: RFC 3891 and RFC 3515. A Replaces header field, or a
-// Refer-To that holds one, names a dialog of one leg; the IBCF does not
-// map it to the other leg's dialog. Its UA does not support replaces,
-// so an INVITE that requires it gets 420, and a REFER that an agreement
-// lets cross goes on as it came.
+// The Replaces of an INVITE (RFC 3891) names a dialog as the IBCF has
+// it on the side where the INVITE comes in. When that dialog is one
+// side of a call that crosses the border here, the IBCF passes the
+// Replaces on naming the dialog of the other side, the one that the
+// next hop knows, as an IMS-ALG that correlates the dialog identifiers
+// of its two dialogs (TS 24.229 5.10.5). The call may be one that
+// another instance holds: the Store finds it by the dialog
+// (Store.CallOf). Any other Replaces goes on as it came. That is how a
+// conference focus of one network takes over the call of a user of the
+// other (TS 24.147 5.3.2.5.4).
+//
+// SIMPLIFIED: RFC 3515 2.1. A Refer-To that holds a Replaces goes on as
+// it came. When the dialog that it names crosses this IBCF and the
+// referee's INVITE does not, the target finds no dialog of its own
+// there. Only a call transfer between two users of the other network
+// sends such a REFER, and this project has no call transfer (TS
+// 24.629); a UE that merges its calls refers the focus of its own
+// network.
 //
 // SIMPLIFIED: TS 24.229 6.7.1.4.1. IPv4 only: the TrGW
 // translates addresses and ports (NA(P)T) but not between IPv4 and IPv6

@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"strings"
 	"sync"
 
 	"github.com/yuu-biz/ims-practice/internal/b2bua"
@@ -83,6 +82,14 @@ func (b *IBCF) onCall(s side, in *sip.IncomingCall) {
 func (c *call) run() {
 	defer c.end()
 	req := c.req
+	if err := c.replacesOnTheOtherSide(req); err != nil {
+		// RFC 3261 21.5.1, as the IBCF answers when it cannot write the
+		// record of a call.
+		c.log.Warn("cannot read the call that the Replaces names", "error", err.Error())
+		c.legs.NoLeg()
+		c.reject(500)
+		return
+	}
 	ua, err := c.outSide.agent()
 	if err == nil {
 		err = c.throughTrGW(req, c.direction)
@@ -97,7 +104,7 @@ func (c *call) run() {
 	to, _ := sip.ParseNameAddr(req.Get("To"))
 	// The IBCF takes one hop away, as a proxy would (RFC 3261 16.6 step
 	// 3), so that a call that two networks send round in a loop ends.
-	headers := append(withoutReplaces(interconnect.CrossingFields(req, inviteFields...)), sip.HeaderField{Name: "Max-Forwards", Value: req.Get("Max-Forwards")})
+	headers := append(interconnect.CrossingFields(req, inviteFields...), sip.HeaderField{Name: "Max-Forwards", Value: req.Get("Max-Forwards")})
 	contact, transparent := contactFor(c.outSide, req)
 	out, err := c.legs.Attempt(ua, sip.Invitation{
 		RequestURI:      req.RequestURI,
@@ -146,23 +153,66 @@ func (c *call) run() {
 	}
 }
 
-// withoutReplaces takes replaces out of the Supported of fields: the
-// IBCF does not map a Replaces of one leg to the other (doc.go), so the
-// far end must not count on it.
-func withoutReplaces(fields []sip.HeaderField) []sip.HeaderField {
-	for i, h := range fields {
-		if !strings.EqualFold(h.Name, "Supported") {
-			continue
-		}
-		var kept []string
-		for _, tag := range strings.Split(h.Value, ",") {
-			if tag = strings.TrimSpace(tag); tag != "" && !strings.EqualFold(tag, sip.OptionReplaces) {
-				kept = append(kept, tag)
-			}
-		}
-		fields[i].Value = strings.Join(kept, ", ")
+// replacesOnTheOtherSide rewrites the Replaces of m, an INVITE that
+// crosses the border in c.direction (RFC 3891). The Replaces names a
+// dialog as the IBCF has it on the side where the INVITE came in: its
+// to-tag is the IBCF's own tag there (RFC 3891 3). When that dialog is
+// one side of a call that crosses the border here, the INVITE goes on
+// with the dialog of the other side instead, the one that the next hop
+// knows. As an IMS-ALG the IBCF correlates the dialog identifiers of
+// the two dialogs that it manages (TS 24.229 5.10.5), and 5.7.5.1 spells
+// this rule out for an AS that is a routeing B2BUA. The call may be one
+// that another instance of the IBCF holds; the Store finds it by the
+// dialog.
+//
+// A Replaces that names no call here goes on as it came, as 5.7.5.1 has
+// the AS pass it on. It may name a dialog of a B2BUA beyond the IBCF,
+// such as the MMTel AS of the other network, which maps it in turn; and
+// when no node has the dialog, the UA at the end answers 481 (RFC 3891
+// 3). The error is a failure of the Store, after which the IBCF cannot
+// tell which of the two the Replaces names.
+//
+// SIMPLIFIED: RFC 3891 3. A call has its dialogs in its record only
+// once both are confirmed, so a Replaces of an early dialog goes on as
+// it came. The IBCF would have to write each early dialog of a call as
+// it starts, and no node of this project replaces an early dialog.
+func (c *call) replacesOnTheOtherSide(m *sip.Message) error {
+	values := m.GetAll("Replaces")
+	if len(values) != 1 {
+		// None, or more than one, which the far end refuses with 400.
+		return nil
 	}
-	return fields
+	r, err := sip.ParseReplaces(values[0])
+	if err != nil {
+		return nil
+	}
+	// sip.IncomingCall carries no context; the Store bounds the read.
+	record, ok, err := c.b.store.CallOf(context.Background(), r.DialogID())
+	if err != nil || !ok {
+		return err
+	}
+	if record.Peer != c.peer.Profile.Name {
+		// A call with another peer network: its dialog on the link to
+		// that network is no business of this one, which the INVITE goes
+		// to or came from.
+		return nil
+	}
+	near, far := record.Home, record.PeerSide
+	if c.direction == interconnect.Entry {
+		near, far = far, near
+	}
+	if near == nil || far == nil || near.ID != r.DialogID() {
+		// It names the dialog on the side where the INVITE goes, which the
+		// next hop knows as it is.
+		return nil
+	}
+	// The next hop compares to-tag with its own tag, which is the IBCF's
+	// remote tag on that side.
+	other := sip.Replaces{CallID: far.ID.CallID, ToTag: far.ID.RemoteTag, FromTag: far.ID.LocalTag, EarlyOnly: r.EarlyOnly}
+	m.Set("Replaces", other.String())
+	c.log.Info("Replaces names the other side of a call", "replaces", r.String(), "now", other.String(),
+		"call_record", record.ID, "instance", record.Instance)
+	return nil
 }
 
 // end releases what the call held: its TrGW context and its record.
