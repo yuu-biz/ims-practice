@@ -13,6 +13,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/fiorix/go-diameter/v4/diam"
 	"github.com/fiorix/go-diameter/v4/diam/dict"
@@ -802,6 +803,40 @@ func TestProvisioningPutWithAnUpdateInBetween(t *testing.T) {
 	}
 	if d.SequenceNumber != 2 {
 		t.Errorf("sequence number = %d, want the 2 that follows the update in between", d.SequenceNumber)
+	}
+}
+
+// losesEverySwap lets no swap of the repository data through, as an
+// endless run of updates from elsewhere would.
+type losesEverySwap struct{ Store }
+
+func (losesEverySwap) CompareAndSwapRepositoryData(context.Context, string, *sh.TransparentData, sh.TransparentData) (bool, error) {
+	return false, nil
+}
+
+// TestProvisioningPutThatKeepsLosingTheSwap: a PUT whose repository
+// data others keep changing gives up and answers, rather than holding
+// the subscriber's lock and trying for good.
+func TestProvisioningPutThatKeepsLosingTheSwap(t *testing.T) {
+	memory, err := NewMemoryStore(Subscription{PrivateIdentity: impi, PublicIdentities: []string{impu}, Password: "test-password-1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	node := diameter.NewNode(diameter.Identity{OriginHost: "hss." + realm, OriginRealm: realm}, []uint32{diameter.ApplicationIDCx}, diameter.Timers{}, quiet())
+	h := mustHSS(Config{Realm: realm, VisitedNetworks: []string{realm}}, losesEverySwap{Store: memory}, node)
+	api := h.Provisioning(&fakeSCSCFs{})
+
+	body := `{"private_identity": "` + impi + `", "public_identities": ["` + impu + `"], "password": "test-password-1",
+		"repository_data": [{"service_indication": "MMTEL-Services", "service_data": "<MMTelServices/>"}]}`
+	answered := make(chan int, 1)
+	go func() { answered <- do(t, api, "PUT", "/subscriptions/"+impi, body).Code }()
+	select {
+	case code := <-answered:
+		if code != http.StatusInternalServerError {
+			t.Errorf("PUT whose swaps all lose: %d, want 500", code)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("no answer within 5 s to a PUT whose swaps all lose")
 	}
 }
 

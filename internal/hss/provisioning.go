@@ -632,6 +632,13 @@ func (h *HSS) setRepositoryData(ctx context.Context, privateID string, stored, w
 	return true, nil
 }
 
+// swapAttempts bounds how often a PUT reads one piece of the repository
+// data again after another update got to it first. A request that has
+// lost this many times is not winning the next one either, so the HSS
+// answers it rather than holding the subscriber's lock for good; the
+// operator sends the PUT again.
+const swapAttempts = 10
+
 // swapRepositoryData stores one piece of repository data, or removes
 // what is under its Service-Indication when it has no ServiceData. The
 // piece goes in with the next sequence number, as an update over Sh
@@ -642,7 +649,7 @@ func (h *HSS) setRepositoryData(ctx context.Context, privateID string, stored, w
 // (setCustomizedAlertingTone). It reports whether the subscription is
 // still there: once it is gone, no swap can ever win.
 func (h *HSS) swapRepositoryData(ctx context.Context, privateID string, data sh.TransparentData) (bool, error) {
-	for {
+	for range swapAttempts {
 		stored, found, err := h.store.RepositoryData(ctx, privateID, data.ServiceIndication)
 		if err != nil {
 			return false, err
@@ -665,6 +672,8 @@ func (h *HSS) swapRepositoryData(ctx context.Context, privateID string, data sh.
 			return false, err
 		}
 	}
+	return false, fmt.Errorf("the repository data of %s under %s was changed by others %d times",
+		privateID, data.ServiceIndication, swapAttempts)
 }
 
 // writePutAnswer answers a PUT with the subscription it leaves behind
