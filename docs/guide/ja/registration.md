@@ -611,7 +611,7 @@ I-CSCF のノードも同じ保守用の API をポート 8085 で出してい�
  |<-------------|              |               |              |
 ```
 
-- I-CSCF は、HSS に何も尋ねないまま **503 Service Unavailable** と **Retry-After: 30** を返します。UAR は出ず、S-CSCF は REGISTER を見ません。Retry-After の値を決めた仕様はありません。30 秒はこのプロジェクトが選んだ値です。
+- I-CSCF は HSS に何も尋ねないまま **503 Service Unavailable** と **Retry-After: 30** を返します。UAR は出ず、S-CSCF は REGISTER を見ません。Retry-After の値を決めた仕様はありません。30 秒はこのプロジェクトが選んだ値です。
 - 503 を受けたクライアントは、DNS が返した次のサーバーへ要求を送ります（RFC 3263 4.3）。REGISTER については、P-CSCF 自身も次の I-CSCF へ移ります（TS 24.229 5.2.2.1 の 7 番目の項目）。I-CSCF が複数台あれば、REGISTER は次の台へ行き、いつもどおり登録できます。この網の DNS のゾーンには I-CSCF が 1 つしかないので、次がありません。
 - P-CSCF は **504 Server Time-out** を返します。TS 24.229 5.2.2.1 の 7 番目の項目が、どの I-CSCF にも REGISTER を転送できなかったときに 504 を返すよう求めているためです。503 をそのまま返さない理由は、I-CSCF が S-CSCF の 503 をそのまま返さないのと同じです。
 - ほかの網や発信側の S-CSCF から、ホーム網に入ってくる最初の INVITE も同じ 503 を受け、送り手は次の I-CSCF を試します（RFC 3263 4.3）。次が残っていなければ、発信側の S-CSCF か IBCF が **500 Server Internal Error** を返します。プロキシは 503 をそのまま返さないためです（RFC 3261 16.7 の手順 6）。504 になるのは REGISTER だけです。I-CSCF は、断った INVITE を `ims_session_attempts_total{role="icscf",direction="terminating"}` に数えません。その INVITE を扱う次の I-CSCF が数えるので、台ごとの数を足すと網の中の試行の数になります。
