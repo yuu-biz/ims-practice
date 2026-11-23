@@ -49,6 +49,9 @@ import (
 //	                      owes a notification (TS 24.341 5.3.2.5)
 //	POST /sms-memory/notify  notify the network once more that the UE has
 //	                      memory, whatever it owes
+//	PUT  /sms-availability  {"available": bool}: have the UE take
+//	                      incoming short messages, or answer each one 480
+//	                      (Temporarily Unavailable)
 //	POST /hold            put the answered call in the foreground on
 //	                      hold (re-INVITE with sendonly)
 //	POST /resume          take the held call back (re-INVITE with
@@ -72,7 +75,7 @@ import (
 // precondition table, the media resources, hold, early media, the RTP
 // and RTCP counts and the DTMF digits sent and received (SessionStatus).
 //
-// The requests of the memory for short messages answer with the
+// The three requests of the reception of short messages answer with the
 // SMSReception that follows them. A UE that is not registered cannot
 // notify the network that it has memory again, so those requests answer
 // 409 (Conflict) after they have set the state.
@@ -123,6 +126,7 @@ func (p *Phone) Handler() http.Handler {
 		state, err := p.ue.NotifyMemoryAvailable(r.Context())
 		p.respondReception(w, state, err)
 	})
+	mux.HandleFunc("PUT /sms-availability", p.putSMSAvailability)
 	return mux
 }
 
@@ -140,6 +144,21 @@ func (p *Phone) putSMSMemory(w http.ResponseWriter, r *http.Request) {
 	}
 	state, err := p.ue.SetSMSMemoryFull(r.Context(), *req.Full)
 	p.respondReception(w, state, err)
+}
+
+func (p *Phone) putSMSAvailability(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Available *bool `json:"available"`
+	}
+	if err := decode(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	if req.Available == nil {
+		writeError(w, http.StatusBadRequest, errors.New(`the body needs "available": true or false`))
+		return
+	}
+	writeJSON(w, http.StatusOK, p.ue.SetSMSAvailable(*req.Available))
 }
 
 // respondReception answers a request that changed how the UE takes short

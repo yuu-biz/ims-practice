@@ -894,3 +894,31 @@ func TestTheUESimulatorWithoutMemory(t *testing.T) {
 		t.Errorf("UE-B received %+v, want nothing of the short message", got)
 	}
 }
+
+// TestTheUESimulatorThatTakesNoShortMessages runs the UE simulator of
+// package ue against the IP-SM-GW while it takes no short messages: the
+// 480 of the UE is what the IP-SM-GW reports to the SC as an absent
+// subscriber, the outcome of a user who is registered and out of reach
+// all the same.
+func TestTheUESimulatorThatTakesNoShortMessages(t *testing.T) {
+	net := startIMS(t, 1)
+	a, b := net.simulator(1), net.simulator(2)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	if got := b.SetSMSAvailable(false); got.Available {
+		t.Fatalf("UE-B is %+v, want it unavailable", got)
+	}
+	if _, err := a.SendSMS(ctx, ue.OutgoingSMS{To: "+12025550102", Text: "Are you there?"}); err != nil {
+		t.Fatal(err)
+	}
+	if got := net.nextHeard(); got.outcome != ipsmgw.AbsentSubscriber {
+		t.Errorf("SC heard %v, want an absent subscriber", got.outcome)
+	}
+	if got := b.SMS().Received; len(got) != 0 {
+		t.Errorf("UE-B received %+v, want nothing of the short message", got)
+	}
+	if got := b.SMSReception(); got.MemoryCapacityExceededNotification {
+		t.Errorf("UE-B is %+v, want no notification owed: its memory was never full", got)
+	}
+}

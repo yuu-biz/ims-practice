@@ -176,17 +176,18 @@ To try the failures, which need no other UE:
 
 The same can be done from the Lab: see "Drive the UE simulators" in [the Lab guide](lab.md). The UE cards send short messages and list what each UE sent and received, and the details of each MESSAGE show the decoded short message.
 
-### Take the memory of the UE away
+### Put the UE in the states where a delivery fails
 
-A short message to a user who is registered usually arrives. One state in which it does not is a UE with no memory left for it. `ue serve` sets that state over its HTTP control API, which "Drive a UE over HTTP" in [the call guide](call.md) introduces:
+A short message to a user who is registered usually arrives. The two states in which it does not are a UE with no memory left for it and a UE that takes no short messages at all. `ue serve` sets both over its HTTP control API, which "Drive a UE over HTTP" in [the call guide](call.md) introduces:
 
 | Request | What the UE does |
 | --- | --- |
 | `PUT /sms-memory` with `{"full": true}` | Has no memory for an incoming short message. It answers each one it would store with an RP-ERROR, RP-Cause 22 (memory capacity exceeded) and TP-FCS `0xd3`, and keeps nothing of it. A status report is not stored, so it still gets through. The first refusal leaves the UE owing the network a notification. |
 | `PUT /sms-memory` with `{"full": false}` | Has memory again. Where it owes a notification, it sends one at once: an RP-SMMA in a MESSAGE to the IP-SM-GW that brought the short message it could not store, or to the PSI of the SC when no IP-SM-GW has written to it (TS 24.341 5.3.2.5). The RP-ACK for that notification ends it, and the UE owes none. |
 | `POST /sms-memory/notify` | Sends one more notification, whatever it owes, with an RP-MR of its own (TS 24.011 6.3.3.1.3). That is how a phone repeats a notification that went unanswered, and it shows the network one it has answered already. |
+| `PUT /sms-availability` with `{"available": false}` | Takes no short messages: it answers each MESSAGE that brings one with 480 (Temporarily Unavailable, RFC 3261 21.4.18), the response for a user who is reached but in a state that precludes the request, and sends no delivery report. The IP-SM-GW reports such a delivery to the SC as an absent subscriber (TS 24.341 5.3.3.4.2, TS 29.311 6.1.4.4.1), as it does for subscriber 3 above, who never registers at all. `{"available": true}` takes short messages again. |
 
-Each of them answers with the state it leaves behind, such as `{"memory_full": false, "memory_capacity_exceeded_notification": true}`. The last field is the memory capacity exceeded notification flag that a phone keeps on its (U)SIM (TS 23.040 10.3): the UE sets it when it refuses a short message for want of memory, and clears it when the notification is answered. For a UE whose control API is on port 8091, as in the call guide:
+Each of them answers with the state it leaves behind, such as `{"available": true, "memory_full": false, "memory_capacity_exceeded_notification": true}`. The last field is the memory capacity exceeded notification flag that a phone keeps on its (U)SIM (TS 23.040 10.3): the UE sets it when it refuses a short message for want of memory, and clears it when the notification is answered. For a UE whose control API is on port 8091, as in the call guide:
 
 ```sh
 curl -X PUT localhost:8091/sms-memory -d '{"full": true}'
