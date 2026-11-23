@@ -106,6 +106,10 @@ func (n *Node) Handle(h Handler) { n.handler = h }
 // handler calls it for the request it is answering: an AF, for example,
 // must answer an ASR before it ends the session with an STR (TS 29.214
 // 4.4.6.1). f runs on the handler's goroutine and may wait for answers.
+// One f per request: a second call for the same request replaces the
+// first. f runs once the handler has given its answer to the
+// connection, and also when the connection closed before that, so a
+// counter that f brings down is never left standing.
 func (n *Node) AfterAnswer(request *diam.Message, f func()) { n.followUps.Store(request, f) }
 
 // Observe sets the observer of every message on every connection. Call

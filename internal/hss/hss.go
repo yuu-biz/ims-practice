@@ -15,6 +15,7 @@ import (
 	"encoding/hex"
 	"log/slog"
 	"slices"
+	"sync/atomic"
 	"time"
 
 	"github.com/fiorix/go-diameter/v4/diam"
@@ -24,6 +25,7 @@ import (
 	"github.com/yuu-biz/ims-practice/internal/diameter"
 	"github.com/yuu-biz/ims-practice/internal/ifc"
 	"github.com/yuu-biz/ims-practice/internal/ims"
+	"github.com/yuu-biz/ims-practice/internal/maintenance"
 	"github.com/yuu-biz/ims-practice/internal/metrics"
 	"github.com/yuu-biz/ims-practice/internal/sh"
 )
@@ -80,6 +82,15 @@ type HSS struct {
 	// a MAR and a SAR for the same user never overwrite each other, and
 	// the requests of other users are not held up.
 	users ims.UserLocker
+
+	// requests counts the Cx and Sh requests this instance is
+	// answering, the users of the maintenance API (maintenance.go). It
+	// counts, rather than holding the requests, so that a shut down
+	// never walks over anything the HSS keeps.
+	requests atomic.Int64
+	// managed is the administrative state of the HSS, or nil in a node
+	// without a maintenance API.
+	managed atomic.Pointer[maintenance.ManagedFunction]
 }
 
 // New returns an HSS on store. It fails when config.Metrics holds the
@@ -111,6 +122,11 @@ func New(config Config, store Store, node *diameter.Node, log *slog.Logger) (*HS
 
 // Handle is the diameter.Handler of the HSS.
 func (h *HSS) Handle(request *diam.Message) *diam.Message {
+	// The request counts as a user of the HSS until its answer is on
+	// its way, so that a shut down waits for it (maintenance.go). The
+	// count comes down only in the follow-up the node runs then.
+	h.requests.Add(1)
+	h.node.AfterAnswer(request, h.requestAnswered)
 	identity := h.node.Identity()
 	// diameter.Handler carries no context to bound the work for the
 	// request. The Store bounds each of its operations itself: an
