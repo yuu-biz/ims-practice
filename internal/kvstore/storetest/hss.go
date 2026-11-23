@@ -27,6 +27,8 @@ func HSS(t *testing.T, newPair func(t *testing.T) (hss.Store, hss.Store)) {
 		{"StoresTheProvisionedRepositoryData", hssStoresRepositoryData},
 		{"ReadsAllTheRepositoryDataOfASubscription", hssReadsAllRepositoryData},
 		{"KeepsSQNOutOfPut", hssKeepsSQNOutOfPut},
+		{"ReplaceWritesTheWholeSubscription", hssReplace},
+		{"ReplaceRefusesAnIdentityOfAnotherSubscription", hssReplaceRefusesTakenIdentity},
 		{"CompareAndSwapRepositoryData", hssCompareAndSwapRepositoryData},
 		{"ConcurrentSQN", hssConcurrentSQN},
 		{"ConcurrentAddsOfOneIdentity", hssConcurrentAdds},
@@ -88,6 +90,15 @@ func put(t *testing.T, s hss.Store, sub hss.Subscriber) {
 	if err := s.Put(context.Background(), sub); err != nil {
 		t.Errorf("Put(%s): %v", sub.PrivateIdentity, err)
 	}
+}
+
+func replace(t *testing.T, s hss.Store, sub hss.Subscriber) error {
+	t.Helper()
+	err := s.Replace(context.Background(), sub)
+	if err != nil && !errors.Is(err, hss.ErrIdentityTaken) {
+		t.Errorf("Replace(%s): %v", sub.PrivateIdentity, err)
+	}
+	return err
 }
 
 func compareAndSwapSQN(t *testing.T, s hss.Store, privateID string, old, new aka.SQN) bool {
@@ -379,6 +390,111 @@ func hssKeepsSQNOutOfPut(t *testing.T, a, b hss.Store) {
 	}
 	if compareAndSwapSQN(t, a, "nobody@"+realm, 0, 1) {
 		t.Error("CompareAndSwapSQN for an unknown subscriber succeeded")
+	}
+}
+
+// Replace writes a whole subscription, which the provisioning API does
+// for a user whose credentials or identities change: the caller reads
+// the subscriber, puts the new subscription in its place and leaves the
+// state of the running subscriber alone. The store keeps SQN_HE
+// whatever the call carries, keeps the repository data, and moves the
+// index with the public identities.
+func hssReplace(t *testing.T, a, b hss.Store) {
+	data := sh.TransparentData{ServiceIndication: "MMTEL-Services", ServiceData: &sh.ServiceData{XML: []byte("<a/>")}}
+	mustAdd(t, a, hss.Subscription{PrivateIdentity: impi, PublicIdentities: []string{impu, tel}, Password: "p",
+		AKA: &hss.AKACredentials{Secret: akaSecret}, RepositoryData: []sh.TransparentData{data}})
+	if !compareAndSwapSQN(t, a, impi, 0, 9) {
+		t.Fatal("CompareAndSwapSQN from the stored SQN failed")
+	}
+	registered, _ := subscriber(t, b, impi)
+	registered.State, registered.ServerName = hss.Registered, "sip:scscf."+realm
+	put(t, b, registered)
+
+	next, _ := subscriber(t, a, impi)
+	const moved = "tel:+12025550199"
+	next.Subscription = hss.Subscription{PrivateIdentity: impi, PublicIdentities: []string{impu, moved},
+		BarredIdentities: []string{impu}, Password: "q", TestUser: true, ServiceProfile: "trial",
+		AKA: &hss.AKACredentials{Secret: akaSecret, AMF: aka.AMF{0x80, 0x00}, SQN: 1}}
+	if err := replace(t, a, next); err != nil {
+		t.Fatalf("Replace: %v", err)
+	}
+
+	got, ok := subscriber(t, b, impi)
+	if !ok || got.Password != "q" || !got.TestUser || got.ServiceProfile != "trial" || got.AKA.AMF != (aka.AMF{0x80, 0x00}) {
+		t.Errorf("after Replace: %+v, %v", got.Subscription, ok)
+	}
+	if !got.Barred(impu) {
+		t.Errorf("the barred identities are %v", got.BarredIdentities)
+	}
+	if got.AKA.SQN != 9 {
+		t.Errorf("SQN_HE = %d after a Replace that carried 1, want the stored 9", got.AKA.SQN)
+	}
+	if got.State != hss.Registered || got.ServerName != "sip:scscf."+realm {
+		t.Errorf("the state of the running subscriber: %v, %q", got.State, got.ServerName)
+	}
+	if d := allRepositoryData(t, b, impi); len(d) != 1 || string(d[0].ServiceData.XML) != "<a/>" {
+		t.Errorf("the repository data after Replace: %+v", d)
+	}
+	if _, ok := subscriberOf(t, b, moved); !ok {
+		t.Errorf("SubscriberOf(%s) finds nothing", moved)
+	}
+	if _, ok := subscriberOf(t, b, tel); ok {
+		t.Errorf("the telephone number %s that the subscription let go still finds it", tel)
+	}
+	// The identity it let go is free for another subscription.
+	if err := add(t, b, hss.Subscription{PrivateIdentity: otherIMPI, PublicIdentities: []string{tel}, Password: "p"}); err != nil {
+		t.Errorf("Add of the identity that the Replace let go: %v", err)
+	}
+	if c, kept := counts(t, a); kept {
+		want := hss.Counts{Subscriptions: 2, SIPPublicIdentities: 1, TelPublicIdentities: 2, RegisteredPublicIdentities: 2, RegisteredPrivateIdentities: 1}
+		if c != want {
+			t.Errorf("Counts = %+v, want %+v", c, want)
+		}
+	}
+}
+
+// A Replace that would take a public identity of another subscription
+// writes nothing, and one of a subscriber that is gone brings it back no
+// more than a Put does.
+func hssReplaceRefusesTakenIdentity(t *testing.T, a, b hss.Store) {
+	mustAdd(t, a,
+		hss.Subscription{PrivateIdentity: impi, PublicIdentities: []string{impu}, Password: "p"},
+		hss.Subscription{PrivateIdentity: otherIMPI, PublicIdentities: []string{"sip:other@" + realm, tel}, Password: "p"},
+	)
+	// The new identity before the taken one is claimed first, so the
+	// refusal has something to take back.
+	free := "sip:new@" + realm
+	next, _ := subscriber(t, b, impi)
+	next.PublicIdentities = []string{impu, free, tel}
+	next.Password = "q"
+	if err := replace(t, b, next); !errors.Is(err, hss.ErrIdentityTaken) {
+		t.Fatalf("Replace with the telephone number of another subscription = %v, want ErrIdentityTaken", err)
+	}
+	if owner, _ := subscriberOf(t, a, tel); owner.PrivateIdentity != otherIMPI {
+		t.Errorf("%s now belongs to %q", tel, owner.PrivateIdentity)
+	}
+	if got, _ := subscriber(t, a, impi); got.Password != "p" || len(got.PublicIdentities) != 1 {
+		t.Errorf("the refused Replace wrote %+v", got.Subscription)
+	}
+	if _, ok := subscriberOf(t, a, free); ok {
+		t.Errorf("%s finds the subscription of the refused Replace", free)
+	}
+	if err := add(t, a, hss.Subscription{PrivateIdentity: "001010000000003@" + realm, PublicIdentities: []string{free}, Password: "p"}); err != nil {
+		t.Errorf("Add of the identity that the refused Replace named: %v", err)
+	}
+
+	if _, ok := deleteSubscriber(t, a, impi); !ok {
+		t.Fatal("Delete found no subscriber")
+	}
+	next.PublicIdentities = []string{impu}
+	if err := replace(t, b, next); err != nil {
+		t.Fatalf("Replace of a subscriber that is gone: %v", err)
+	}
+	if _, ok := subscriber(t, a, impi); ok {
+		t.Error("Replace brought back a deleted subscriber")
+	}
+	if _, ok := subscriberOf(t, a, impu); ok {
+		t.Error("Replace of a subscriber that is gone wrote the index of its public identity")
 	}
 }
 
