@@ -1039,6 +1039,18 @@ func waitDone(t *testing.T, what string, done <-chan struct{}) {
 	}
 }
 
+// waitAcknowledged waits until the one call of instance has its two
+// dialogs in the record. The IBCF writes them once the ACK of the 2xx
+// has reached it from the caller's side, which ends the INVITE
+// transaction of the leg that answered the caller.
+func (n *network) waitAcknowledged(t *testing.T, instance string) {
+	t.Helper()
+	waitFor(t, "the ACK of the 2xx at network "+n.name+"'s IBCF "+instance, func() bool {
+		records := n.callsOf(t, instance)
+		return len(records) == 1 && records[0].Home != nil && records[0].PeerSide != nil
+	})
+}
+
 // waitReleased waits until the TrGWs of both networks have released
 // every context, and reports how many each one reserved.
 func (p *pair) waitReleased(t *testing.T) (reservedA, reservedB int) {
