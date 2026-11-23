@@ -216,7 +216,11 @@ func (c *hssClient) export(ctx context.Context, after string, limit int, emit fu
 // subscription that went while the page was read, so the page that
 // follows starts where the HSS says and not after the last record read.
 func nextPage(resp *http.Response, after string) (string, error) {
-	for _, link := range resp.Header.Values("Link") {
+	var links []string
+	for _, field := range resp.Header.Values("Link") {
+		links = append(links, linkValues(field)...)
+	}
+	for _, link := range links {
 		target, params, ok := strings.Cut(link, ";")
 		if !ok || !relNext(params) {
 			continue
@@ -242,15 +246,43 @@ func nextPage(resp *http.Response, after string) (string, error) {
 	return "", nil
 }
 
+// linkValues splits one Link field into its links. A field may hold
+// several, separated by commas (RFC 8288 3), and a comma inside the
+// target or inside a quoted parameter value is not a separator.
+func linkValues(field string) []string {
+	var links []string
+	inTarget, inQuotes, start := false, false, 0
+	for i, c := range field {
+		switch {
+		case inQuotes && c == '"':
+			inQuotes = false
+		case inQuotes:
+		case c == '<':
+			inTarget = true
+		case c == '>':
+			inTarget = false
+		case c == '"' && !inTarget:
+			inQuotes = true
+		case c == ',' && !inTarget:
+			links = append(links, strings.TrimSpace(field[start:i]))
+			start = i + 1
+		}
+	}
+	links = append(links, strings.TrimSpace(field[start:]))
+	return slices.DeleteFunc(links, func(l string) bool { return l == "" })
+}
+
 // relNext reports whether the parameters of a link say that its target
 // is the next page. The value of rel is a token or a quoted string,
 // which are the same thing (RFC 8288 3), and holds one relation type or
-// several separated by spaces (RFC 8288 3.3).
+// several separated by spaces, compared without case (RFC 8288 2.1.1,
+// 3.3).
 func relNext(params string) bool {
 	for _, param := range strings.Split(params, ";") {
 		name, value, _ := strings.Cut(strings.TrimSpace(param), "=")
 		if strings.EqualFold(strings.TrimSpace(name), "rel") {
-			return slices.Contains(strings.Fields(strings.Trim(strings.TrimSpace(value), `"`)), "next")
+			return slices.ContainsFunc(strings.Fields(strings.Trim(strings.TrimSpace(value), `"`)),
+				func(t string) bool { return strings.EqualFold(t, "next") })
 		}
 	}
 	return false
