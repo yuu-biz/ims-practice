@@ -15,17 +15,24 @@
 # registration and of the call, the answers of the HSS to them and the
 # state of each Diameter connection are there as well, and the
 # connection of the I-CSCF reads as down while the HSS is out of service
-# and as up again after the unlock. A shut down through the
-# maintenance API then makes the S-CSCF answer a new REGISTER with 503
-# and Retry-After, which the capture shows hop by hop, and an unlock
-# lets the UE register again. A shut down of the P-CSCF makes the
-# P-CSCF answer the REGISTER itself with 503 and Retry-After, forwarding
-# nothing, and a shut down of the I-CSCF makes the I-CSCF answer 503,
-# after which the P-CSCF, with no other I-CSCF left, answers the UE 504.
-# A shut down of the HSS instead sends every Diameter peer a DPR with
-# Disconnect-Cause REBOOTING and stops the node listening on 3868, so
-# the I-CSCF reports itself DISABLED and no UE can register; after the
-# unlock the CSCFs open their connections again by themselves.
+# and as up again after the unlock. The MMTel AS serves its metrics on
+# the same listener and counts the Sh requests of each call. A shut
+# down through the maintenance API then makes the S-CSCF answer a new
+# REGISTER with 503 and Retry-After, which the capture shows hop by
+# hop, and an unlock lets the UE register again. A shut down of the
+# P-CSCF makes the P-CSCF answer the REGISTER itself with 503 and
+# Retry-After, forwarding nothing, and a shut down of the I-CSCF makes
+# the I-CSCF answer 503, after which the P-CSCF, with no other I-CSCF
+# left, answers the UE 504.
+# A shut down of the MMTel AS makes the AS answer 503 to the INVITE that
+# the filter criteria send it, which the S-CSCF turns into the 500 that
+# ends the call, since the criterion of the originating case says
+# SESSION_TERMINATED; after the unlock the call goes through the AS on
+# both legs again. A shut down of the HSS instead sends every Diameter
+# peer a DPR with Disconnect-Cause REBOOTING and stops the node
+# listening on 3868, so the I-CSCF reports itself DISABLED and no UE
+# can register; after the unlock the CSCFs open their connections again
+# by themselves.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 . scripts/e2e-lib.sh
@@ -381,6 +388,30 @@ else
 	echo
 	fail=1
 fi
+if value="$(until_positive prometheus_values 'up{job="ims",node="mmtel"}')"; then
+	echo "ok   Prometheus scrapes the MMTel AS: up = $value"
+else
+	echo "FAIL the mmtel target of Prometheus is not up: $value"
+	curl -fsS "$prometheus/api/v1/targets?state=active" || true
+	echo
+	fail=1
+fi
+# The MMTel AS reads the settings of the served user's services from the
+# HSS over Sh for every initial INVITE (UDR), so the call above left it
+# one request per leg and the answers that came back.
+for series in 'ims_diameter_requests_total{role="mmtel",command="UDR"}' \
+	'ims_diameter_answers_total{role="mmtel",command="UDR"}' \
+	'ims_diameter_peer_up{node="mmtel"}'; do
+	if value="$(until_positive prometheus_values "$series")"; then
+		echo "ok   Prometheus has $series = $value"
+	else
+		echo "FAIL Prometheus has no $series above 0: $value"
+		# Shown only to explain the failure, if the AS answers at all,
+		# hence "|| true".
+		docker compose exec -T mmtel wget -qO- http://127.0.0.1:8085/metrics || true
+		fail=1
+	fi
+done
 # The HSS counts what it holds, whether anyone is registered or not (TS
 # 32.409 4.2.1.1): the subscribers of deploy/compose/hss.yaml, each with
 # a SIP URI and most of them with a tel URI as well.
@@ -543,6 +574,77 @@ else
 fi
 await "the 200 OK to the registration after the unlock of the I-CSCF" "$registered" $((registrations + 1))
 
+echo "drain of the MMTel AS"
+# The AS answers the INVITE of each leg it serves, so a call through it
+# again after the unlock adds 2xx of its own to the capture. Count what
+# is there first.
+asAnswers='sip.CSeq.method == "INVITE" && sip.Status-Code == 200 && ip.src == 172.28.0.75'
+asAnswered="$(count "$asAnswers")"
+# The AS is serving no call, so the shut down makes it LOCKED at once;
+# SHUTTINGDOWN refuses a new INVITE just the same. The filter criterion
+# of the originating case says SESSION_TERMINATED, so the S-CSCF ends
+# the call rather than go on without the AS (TS 24.229 5.4.3.2).
+answer="$(administrative_state mmtel SHUTTINGDOWN || true)"
+state="$(node_state mmtel || true)"
+if grep -Eq '"administrative_state":"(SHUTTINGDOWN|LOCKED)"' <<<"$state"; then
+	echo "ok   the maintenance API shut the MMTel AS down"
+else
+	echo "FAIL the shut down of the MMTel AS: $answer"
+	echo "     state of the node: $state"
+	fail=1
+fi
+if docker compose run --no-deps --rm ue call --tone 1s tel:+1-202-555-0102 2>/dev/null; then
+	echo "FAIL UE 1 called with a shut down MMTel AS"
+	fail=1
+else
+	echo "ok   UE 1 could not call while the MMTel AS is shut down"
+fi
+# Ut goes out of service with the AS: the XCAP server answers 503
+# instead of the settings (RFC 9110 15.6.4). "ue xcap" needs no
+# registration, and ends by itself on the refusal.
+if docker compose run --no-deps --rm ue xcap get >/dev/null 2>&1; then
+	echo "FAIL Ut answered UE 1 while the MMTel AS is shut down"
+	fail=1
+else
+	echo "ok   Ut refused UE 1 while the MMTel AS is shut down"
+fi
+answer="$(administrative_state mmtel UNLOCKED || true)"
+state="$(node_state mmtel || true)"
+if grep -q '"administrative_state":"UNLOCKED"' <<<"$state"; then
+	echo "ok   the maintenance API unlocked the MMTel AS"
+else
+	echo "FAIL the unlock of the MMTel AS: $answer"
+	echo "     state of the node: $state"
+	fail=1
+fi
+if docker compose run --no-deps --rm ue xcap get >/dev/null; then
+	echo "ok   Ut served UE 1 after the unlock of the MMTel AS"
+else
+	echo "FAIL Ut after the unlock of the MMTel AS"
+	fail=1
+fi
+# A call after the unlock goes through the AS on both legs again. UE 2
+# waits in the background for it, as in the metrics scene above.
+docker compose run --no-deps -d --name ims-practice-ue2-mmtel ue2 answer "${ue2[@]}" --ring 500ms --tone 1s >/dev/null
+if wait_log ims-practice-ue2-mmtel '"msg":"waiting for a call"'; then
+	if docker compose run --no-deps --rm ue call --tone 1s tel:+1-202-555-0102; then
+		echo "ok   UE 1 called UE 2 after the unlock of the MMTel AS"
+	else
+		echo "FAIL the call after the unlock of the MMTel AS"
+		fail=1
+	fi
+else
+	fail=1
+fi
+if [ "$(ended ims-practice-ue2-mmtel)" = "0" ]; then
+	echo "ok   UE 2 answered the call after the unlock of the MMTel AS"
+else
+	echo "FAIL UE 2 did not answer the call after the unlock of the MMTel AS"
+	fail=1
+fi
+
+await "the 200 OK of the call after the unlock of the MMTel AS" "$asAnswers" $((asAnswered + 1))
+
 echo "drain of the HSS"
 # The HSS has no SIP to answer with: it ends each Diameter connection
 # with a DPR whose Disconnect-Cause is REBOOTING and stops listening on
@@ -630,7 +732,9 @@ ue=172.28.0.100
 pcscf=172.28.0.40
 icscf=172.28.0.20
 scscf=172.28.0.30
+mmtel=172.28.0.75
 register='sip.CSeq.method == "REGISTER"'
+invite='sip.CSeq.method == "INVITE"'
 
 echo "the REGISTER while the S-CSCF is shut down"
 expect "503 S-CSCF -> I-CSCF with Retry-After 30" "$register && sip.Status-Code == 503 && ip.src == $scscf && ip.dst == $icscf && sip.Retry-After == 30"
@@ -667,7 +771,38 @@ echo "the REGISTER after the unlock of the I-CSCF"
 expect "401 I-CSCF -> P-CSCF" "$register && sip.Status-Code == 401 && ip.src == $icscf && ip.dst == $pcscf"
 expect "200 I-CSCF -> P-CSCF" "$register && sip.Status-Code == 200 && ip.src == $icscf && ip.dst == $pcscf"
 
+echo "the INVITE while the MMTel AS is shut down"
+# The AS answers 503 and sends nothing on. The S-CSCF has no other
+# instance of the AS to try, and the filter criterion of the
+# originating case says SESSION_TERMINATED, so it ends the call with a
+# 500 of its own: a proxy does not pass a 503 on (RFC 3261 16.7 step 6).
+expect "INVITE S-CSCF -> MMTel AS" "sip.Method == \"INVITE\" && ip.src == $scscf && ip.dst == $mmtel"
+refusedInvite="$last"
+expect "503 MMTel AS -> S-CSCF with Retry-After 30" "$invite && sip.Status-Code == 503 && ip.src == $mmtel && ip.dst == $scscf && sip.Retry-After == 30"
+# The AS is a B2BUA, so the INVITE it would have sent on has a Call-ID
+# of its own: what shows that it sent none is that no INVITE left it
+# between the one it was given and its 503.
+none "INVITEs that the AS sent on while it was shut down" "sip.Method == \"INVITE\" && ip.src == $mmtel && frame.number > $refusedInvite && frame.number < $last"
+expect "500 S-CSCF -> P-CSCF without Retry-After" "$invite && sip.Status-Code == 500 && ip.src == $scscf && ip.dst == $pcscf && !sip.Retry-After"
+expect "500 P-CSCF -> UE without Retry-After" "$invite && sip.Status-Code == 500 && ip.src == $pcscf && ip.dst == $ue && !sip.Retry-After"
+echo "the Ut request while the MMTel AS is shut down"
+# Ut has the administrative state of the AS, so the XCAP server answers
+# 503 with Retry-After, without the challenge of HTTP Digest that it
+# would answer an unauthenticated GET with (RFC 9110 15.6.4).
+expect "GET UE 1 -> XCAP server" "http.request.method == \"GET\" && ip.src == $ue && ip.dst == $mmtel"
+expect "503 XCAP server -> UE 1 with Retry-After 30" "http.response.code == 503 && ip.src == $mmtel && ip.dst == $ue && http.response.line matches \"^retry-after: 30\""
+echo "the Ut request after the unlock of the MMTel AS"
+expect "401 XCAP server -> UE 1 with the challenge of HTTP Digest" "http.response.code == 401 && ip.src == $mmtel && ip.dst == $ue && http.www_authenticate"
+expect "200 XCAP server -> UE 1 with the settings" "http.response.code == 200 && ip.src == $mmtel && ip.dst == $ue"
+echo "the call after the unlock of the MMTel AS"
+# The AS is the B2BUA of the call again: it answers the INVITE of the
+# S-CSCF on one leg and sends a new INVITE back to the S-CSCF on the
+# other (TS 24.229 5.7.5).
+expect "INVITE S-CSCF -> MMTel AS" "sip.Method == \"INVITE\" && ip.src == $scscf && ip.dst == $mmtel"
+expect "INVITE MMTel AS -> S-CSCF of the second leg" "sip.Method == \"INVITE\" && ip.src == $mmtel && ip.dst == $scscf"
+expect "200 MMTel AS -> S-CSCF" "$invite && sip.Status-Code == 200 && ip.src == $mmtel && ip.dst == $scscf"
+
 if [ "$fail" -ne 0 ]; then
-	docker compose logs --no-color pcscf icscf scscf hss prometheus grafana | tail -n 80
+	docker compose logs --no-color pcscf icscf scscf hss mmtel prometheus grafana | tail -n 80
 fi
 exit "$fail"
