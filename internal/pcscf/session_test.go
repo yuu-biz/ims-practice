@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/yuu-biz/ims-practice/internal/agw"
+	"github.com/yuu-biz/ims-practice/internal/metrics"
 	"github.com/yuu-biz/ims-practice/internal/rtptest"
 	"github.com/yuu-biz/ims-practice/internal/sdp"
 	"github.com/yuu-biz/ims-practice/internal/sip"
@@ -26,6 +27,9 @@ type sessionHarness struct {
 	p     *PCSCF
 	scscf <-chan *sip.Message
 	toUE  <-chan *sip.Message
+	// metrics is where this P-CSCF counts, for a test that reads the
+	// session measurements of a call.
+	metrics *metrics.Registry
 	// release lets the next hops send their final 486, after the test
 	// has looked at the relay while the call is up.
 	release chan struct{}
@@ -63,7 +67,8 @@ func newSessionHarness(t *testing.T) *sessionHarness {
 // relays instead.
 func newSessionHarnessWith(t *testing.T, relays []MediaRelay) *sessionHarness {
 	t.Helper()
-	h := &sessionHarness{t: t, store: NewMemoryStore(), release: make(chan struct{}), byeAnswers: make(chan int, 4)}
+	h := &sessionHarness{t: t, store: NewMemoryStore(), metrics: metrics.NewRegistry(),
+		release: make(chan struct{}), byeAnswers: make(chan int, 4)}
 
 	scscfGot := make(chan *sip.Message, 4)
 	h.scscf = scscfGot
@@ -90,7 +95,8 @@ func newSessionHarnessWith(t *testing.T, relays []MediaRelay) *sessionHarness {
 	locate := locatorFunc(func(host string) []sip.Destination {
 		return []sip.Destination{{Transport: sip.UDP, Addr: scscf.LocalAddr()}}
 	})
-	p := newPCSCF(t, Config{Host: "pcscf." + domain, Port: 5060, VisitedNetworkID: domain}, locate, h.store, relays, quiet())
+	p := newPCSCF(t, Config{Host: "pcscf." + domain, Port: 5060, VisitedNetworkID: domain, Metrics: h.metrics},
+		locate, h.store, relays, quiet())
 	h.p = p
 	h.pcscf = newPCSCFStack(t, p)
 	p.SetStack(h.pcscf)

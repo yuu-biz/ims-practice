@@ -60,6 +60,24 @@ func newMeasurements(reg *metrics.Registry) (*measurements, error) {
 	return &measurements{registrations: registrations, registrationSetup: setup, sessions: sessions}, nil
 }
 
+// sessionSucceeded counts a successful session establishment when resp,
+// a response that the P-CSCF has just sent to the initial INVITE of a
+// call on l, is the one that tells of it: the first 180 (Ringing), or
+// the 2xx when the session was answered without ringing (TS 32.409
+// 4.1.2.2, sip.ServerTransaction.ClaimFirstSuccess). The response of
+// the originating leg goes to the UE, which is the successful
+// originating session establishment of 4.1.2.10; the response of the
+// terminating leg goes to the S-CSCF, which is the terminating one of
+// 4.1.2.12.
+//
+// The caller leaves it out for a response that Respond refused, which
+// is one the stack never sends because it is closed.
+func (p *PCSCF) sessionSucceeded(st *sip.ServerTransaction, resp *sip.Message, l leg) {
+	if st.ClaimFirstSuccess(resp) {
+		p.measurements.sessions.Succeeded(role, l.direction(), resp.StatusCode)
+	}
+}
+
 // registrationProcedure is one registration procedure at the P-CSCF: its
 // type, and when the REGISTER that started it arrived.
 type registrationProcedure struct {

@@ -7,8 +7,10 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/yuu-biz/ims-practice/internal/metrics"
+	"github.com/yuu-biz/ims-practice/internal/sdp"
 	"github.com/yuu-biz/ims-practice/internal/sip"
 )
 
@@ -43,6 +45,89 @@ func counted(t *testing.T, reg *metrics.Registry, want map[string]float64) {
 			t.Errorf("%s = %v, want %v", series, got, n)
 		}
 	}
+}
+
+// TS 32.409 4.1.2.2 counts a successful session establishment on the
+// first response that tells of one, under the type of that message, and
+// 4.1.2.12 has the P-CSCF count a terminating one on the response it
+// sends towards the S-CSCF. The UE here alerts its user and then
+// answers, so the 180 (Ringing) is that response and the 200 (OK) after
+// it adds nothing; the 200 is an answered session establishment of its
+// own (4.1.2.3).
+func TestTheFirst180OfATerminatingCallIsASuccessAtThePCSCF(t *testing.T) {
+	h := newCallHarness(t, harnessConfig{})
+	out, err := h.core.Invite(sip.Invitation{RequestURI: h.ueContact, From: "sip:001010000000002@" + domain, To: impu,
+		Route: []string{"<sip:term@pcscf." + domain + ":5060;lr>"},
+		Body:  sdpBody(sdp.Offer("1", coreMedia))})
+	if err != nil {
+		t.Fatal(err)
+	}
+	in := receiveCall(t, h.toUE)
+	if err := in.Progress(180, sip.Body{}); err != nil {
+		t.Fatal(err)
+	}
+	go in.Accept(answerTo(t, in.Request, ueMedia))
+	for range out.Responses() {
+	}
+	counted(t, h.metrics, map[string]float64{
+		`ims_session_attempts_total{role="pcscf",direction="terminating"}`:                 1,
+		`ims_session_successes_total{role="pcscf",direction="terminating",response="180"}`: 1,
+		`ims_session_successes_total{role="pcscf",direction="terminating",response="200"}`: 0,
+		`ims_session_answers_total{role="pcscf",direction="terminating"}`:                  1,
+		`ims_session_attempts_total{role="pcscf",direction="originating"}`:                 0,
+	})
+}
+
+// A callee that answers without alerting its user sends no 180, so the
+// first response that tells of the success is the 200 (OK), and TS
+// 32.409 4.1.2.2 counts the successful establishment under that message
+// type instead.
+func TestThe200OfACallAnsweredWithoutRingingIsASuccessAtThePCSCF(t *testing.T) {
+	h := newCallHarness(t, harnessConfig{})
+	out, err := h.core.Invite(sip.Invitation{RequestURI: h.ueContact, From: "sip:001010000000002@" + domain, To: impu,
+		Route: []string{"<sip:term@pcscf." + domain + ":5060;lr>"},
+		Body:  sdpBody(sdp.Offer("1", coreMedia))})
+	if err != nil {
+		t.Fatal(err)
+	}
+	in := receiveCall(t, h.toUE)
+	go in.Accept(answerTo(t, in.Request, ueMedia))
+	for range out.Responses() {
+	}
+	counted(t, h.metrics, map[string]float64{
+		`ims_session_attempts_total{role="pcscf",direction="terminating"}`:                 1,
+		`ims_session_successes_total{role="pcscf",direction="terminating",response="180"}`: 0,
+		`ims_session_successes_total{role="pcscf",direction="terminating",response="200"}`: 1,
+		`ims_session_answers_total{role="pcscf",direction="terminating"}`:                  1,
+	})
+}
+
+// A 183 (Session Progress) is none of the responses that TS 32.409
+// 4.1.2.2 names, so a session that got no further than one counts as a
+// failure and as no success. The fake S-CSCF of the harness answers 183
+// with the SDP answer and then 486 (Busy Here).
+func TestA183IsNoSuccessfulSessionEstablishment(t *testing.T) {
+	h := newSessionHarness(t)
+	responses := h.send(h.ue, invite("sip:001010000000002@"+domain, "<sip:pcscf."+domain+":5060;lr>"))
+	arrives(t, h.scscf, responses, "S-CSCF")
+	if ringing := next(t, responses); ringing.StatusCode != 183 {
+		t.Fatalf("UE got %d, want 183", ringing.StatusCode)
+	}
+	close(h.release)
+	if r := next(t, responses); r.StatusCode != 486 {
+		t.Fatalf("UE got %d, want 486", r.StatusCode)
+	}
+	// The failure is counted once the P-CSCF is through with the INVITE,
+	// just after the UE has the 486.
+	failed := `ims_session_failures_total{role="pcscf",direction="originating",status="486"}`
+	if !came(3*time.Second, func() bool { return scraped(t, h.metrics, failed) == 1 }) {
+		t.Errorf("%s = %v, want 1", failed, scraped(t, h.metrics, failed))
+	}
+	counted(t, h.metrics, map[string]float64{
+		`ims_session_attempts_total{role="pcscf",direction="originating"}`:                 1,
+		`ims_session_successes_total{role="pcscf",direction="originating",response="180"}`: 0,
+		`ims_session_successes_total{role="pcscf",direction="originating",response="200"}`: 0,
+	})
 }
 
 // digestRegistrar is a fake home network that challenges a REGISTER, accepts

@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/yuu-biz/ims-practice/internal/metrics"
 	"github.com/yuu-biz/ims-practice/internal/sdp"
 	"github.com/yuu-biz/ims-practice/internal/sip"
 )
@@ -28,6 +29,9 @@ type callHarness struct {
 	toUE, toCore chan *sip.IncomingCall
 	// ueGot and coreGot are the messages that each of them received.
 	ueGot, coreGot *received
+	// metrics is where this P-CSCF counts, for a test that reads the
+	// session measurements of a call.
+	metrics *metrics.Registry
 }
 
 // harnessConfig is what newCallHarness varies.
@@ -48,7 +52,7 @@ type harnessConfig struct {
 func newCallHarness(t *testing.T, cfg harnessConfig) *callHarness {
 	t.Helper()
 	h := &callHarness{t: t, store: NewMemoryStore(), toUE: make(chan *sip.IncomingCall, 1), toCore: make(chan *sip.IncomingCall, 1),
-		ueGot: &received{}, coreGot: &received{}}
+		ueGot: &received{}, coreGot: &received{}, metrics: metrics.NewRegistry()}
 	if cfg.ueIP == "" {
 		cfg.ueIP = "127.0.0.1"
 	}
@@ -81,7 +85,8 @@ func newCallHarness(t *testing.T, cfg harnessConfig) *callHarness {
 	if cfg.wrap != nil {
 		store = cfg.wrap(h.store)
 	}
-	h.p = newPCSCF(t, Config{Host: "pcscf." + domain, Port: 5060, VisitedNetworkID: domain}, locate, store, only(cfg.relay), quiet())
+	h.p = newPCSCF(t, Config{Host: "pcscf." + domain, Port: 5060, VisitedNetworkID: domain, Metrics: h.metrics},
+		locate, store, only(cfg.relay), quiet())
 	if cfg.configure != nil {
 		cfg.configure(h.p)
 	}

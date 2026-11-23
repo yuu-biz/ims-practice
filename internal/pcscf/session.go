@@ -82,9 +82,11 @@ func (p *PCSCF) ownURI() sip.URI {
 // P-CSCF's own reg event subscription is for the P-CSCF; any other
 // request it routes.
 //
-// An initial INVITE is a session establishment, which the P-CSCF
-// counts on receipt and with the final response that it sends to it
-// (TS 32.409 4.1.2, metrics.go).
+// An initial INVITE is a session establishment, which the P-CSCF counts
+// on receipt and with the final response that it sends to it, under the
+// direction that the leg gives (TS 32.409 4.1.2, metrics.go). The
+// response that tells of a success is counted as it goes out, in
+// proxyInvite.
 func (p *PCSCF) session(st *sip.ServerTransaction) {
 	if p.ownRegEventNotify(st.Request) {
 		p.receiveRegEvent(st)
