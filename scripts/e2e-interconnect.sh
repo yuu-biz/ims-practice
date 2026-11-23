@@ -5,11 +5,14 @@
 # registers; UE A1 calls UE B1 by number, and UE B1 calls UE A2; UE A1
 # sends UE B1 a short message, and UE B1 answers UE A1 with one. Then
 # the mismatch scenarios switch the interconnect profiles: a mismatch
-# fails with the status it should, and the adjusted profile passes. A
+# fails with the status it should, and the adjusted profile passes. UE
+# A1 merges its calls with UE A2 and UE A3 into a conference, and UE B1
+# joins it from network B with an INVITE to the conference URI. A
 # host on the link that belongs to no peer sends IBCF-A requests, which
 # get no answer and do not get into network A. Last, the captures of
 # the three bridges are read: each IBCF is a B2BUA, so the INVITEs on
-# either side of it have Call-IDs of their own; network B's capture
+# either side of it have Call-IDs of their own; the conference URI that
+# reaches network B names no node; network B's capture
 # and the link's hold no address, no node name and no identity made
 # from an IMSI of network A, and network A's capture holds no address
 # and no node name of network B. Every node of both networks and of the
@@ -62,7 +65,7 @@ fi
 # an image that is gone already, which is no error here, hence their
 # "|| true" in this script.
 cleanup() {
-	docker rm -f "${project}-ue-b1" "${project}-ue-a1" "${project}-ue-a2" >/dev/null 2>&1 || true
+	docker rm -f "${project}-ue-b1" "${project}-ue-a1" "${project}-ue-a2" "${project}-ue-a3" >/dev/null 2>&1 || true
 	if [ "${E2E_KEEP:-0}" != 1 ]; then
 		c --profile ue down -v --remove-orphans >/dev/null 2>&1 || true
 		for name in "${tagged[@]}"; do
@@ -120,6 +123,7 @@ gsm_text='Hello UE-B1, this is UE-A1 in another network.'
 gsm_text_back='Hello UE-A1, this is UE-B1 answering.'
 local_number='sip:2025550151;phone-context=+1@ims.mnc002.mcc001.3gppnetwork.org;user=phone'
 rm -f captures/interconnect-a1-sent.raw captures/interconnect-b1-received.raw
+mkdir -p e2e-out
 fail=0
 remember_nodes
 # Every node of the default profile must be among those remembered:
@@ -328,6 +332,139 @@ use_profile ibcf-a network-b.yaml
 
 docker rm -f "${project}-ue-b1" >/dev/null 2>&1 || true
 
+echo "a conference of network A that UE B1 joins from network B"
+# UE A1 calls UE A2, holds the call, calls UE A3 and merges the two
+# calls into a conference (GSMA IR.92 2.3.3). UE B1 then joins it with
+# an INVITE to the conference URI (TS 24.147 5.3.1.4.1): a request
+# outside a dialog, which crosses IBCF-B and IBCF-A and goes from the
+# I-CSCF of network A to the focus by DNS. Each UE runs "ue serve" and
+# takes each step from "ue ctl" in its container.
+ue_a3=(--impi 001010000000003@ims.mnc001.mcc001.3gppnetwork.org
+	--impu sip:+12025550103@ims.mnc001.mcc001.3gppnetwork.org --password test-password-3)
+a1="${project}-ue-a1" a2="${project}-ue-a2" a3="${project}-ue-a3" b1="${project}-ue-b1"
+# serve NAME SERVICE FLAGS... starts the UE of SERVICE as a phone that
+# stays up, with its control API on port 8090 of its container.
+serve() {
+	local name="$1" service="$2"
+	shift 2
+	docker rm -f "$name" >/dev/null 2>&1 || true
+	c run --no-deps -d --name "$name" "$service" serve -control 0.0.0.0:8090 "$@" >/dev/null
+}
+# ctl NAME ACTION... is "ue ctl" in the container of the phone NAME. It
+# prints the JSON answer of the control API, and fails on an answer
+# other than 2xx.
+ctl() {
+	local name="$1"
+	shift
+	docker exec "$name" ue ctl "$@"
+}
+# phone NAME prints "registered|unregistered CALLS USERS" for the phone:
+# CALLS is the state of each call on its line, joined by "+", with
+# "/held" for a call it holds, or "idle"; USERS is the number of users
+# of its conference that are connected. Until the control API answers,
+# it prints "unreachable".
+phone() {
+	ctl "$1" status 2>/dev/null | "$python" -c '
+import json, sys
+s = json.load(sys.stdin)
+calls = "+".join(c["state"] + ("/held" if (c.get("session") or {}).get("held") else "")
+                 for c in s.get("calls") or []) or "idle"
+users = sum(1 for u in (s.get("conference") or {}).get("users") or [] if u.get("status") == "connected")
+print("registered" if s["registered"] else "unregistered", calls, users)
+' 2>/dev/null | tr -d '\r' || echo unreachable
+}
+phone_is() { [ "$(phone "$1")" = "$2" ]; }
+# wait_phone NAME STATE waits up to 30 s for phone to print STATE, and
+# says what it printed when it does not.
+wait_phone() {
+	wait_for 30 phone_is "$1" "$2" && return 0
+	echo "FAIL ${1#"$project"-} is \"$(phone "$1")\" after 30 s, want \"$2\""
+	return 1
+}
+# json_field FIELD... prints a field of the JSON on its input, such as
+# "uri", or "call" "call_id"; nothing when it has none.
+json_field() {
+	"$python" -c '
+import json, sys
+v = json.load(sys.stdin)
+for k in sys.argv[1:]:
+    v = (v or {}).get(k)
+print(v or "")
+' "$@" 2>/dev/null | tr -d '\r'
+}
+serve "$a1" ue
+serve "$a2" ue2 "${ue_a2[@]}"
+serve "$a3" ue3 "${ue_a3[@]}"
+serve "$b1" ue-b1 "${ue_b1[@]}"
+registered=1
+for name in "$a1" "$a2" "$a3" "$b1"; do
+	wait_phone "$name" "registered idle 0" || registered=0
+done
+if [ "$registered" = 1 ]; then
+	echo "ok   UE A1, UE A2, UE A3 and UE B1 registered"
+else
+	fail=1
+fi
+if ctl "$a1" call tel:+12025550102 >/dev/null && wait_phone "$a1" "registered active 0" &&
+	wait_phone "$a2" "registered active 0"; then
+	echo "ok   UE A1 called UE A2, which answered"
+else
+	echo "FAIL UE A1's call to UE A2"
+	fail=1
+fi
+if ctl "$a1" hold >/dev/null && wait_phone "$a1" "registered active/held 0"; then
+	echo "ok   UE A1 held its call with UE A2"
+else
+	echo "FAIL UE A1 did not hold its call"
+	fail=1
+fi
+if ctl "$a1" call tel:+12025550103 >/dev/null && wait_phone "$a1" "registered active/held+active 0" &&
+	wait_phone "$a3" "registered active 0"; then
+	echo "ok   UE A1 called UE A3, which answered"
+else
+	echo "FAIL UE A1's call to UE A3"
+	fail=1
+fi
+# The merge answers once the focus has invited both peers.
+if ctl "$a1" merge >/dev/null && wait_phone "$a1" "registered active 3"; then
+	echo "ok   UE A1 merged its calls, and the conference has three users"
+else
+	echo "FAIL the merge: UE A1 is \"$(phone "$a1")\""
+	fail=1
+fi
+# A conference URI is a PSI of the subdomain of the conference URIs,
+# with no port (TS 23.003 13.5): it names no node of network A.
+conference_uri="$(ctl "$a1" conference 2>/dev/null | json_field uri)" || conference_uri=
+if [[ "$conference_uri" =~ ^sip:conf-[^@:]+@conf\.ims\.mnc001\.mcc001\.3gppnetwork\.org$ ]]; then
+	echo "ok   the conference URI is $conference_uri, in the subdomain of the conference URIs"
+else
+	echo "FAIL the conference URI is \"$conference_uri\""
+	fail=1
+fi
+if ctl "$b1" call "$conference_uri" >/dev/null && wait_phone "$b1" "registered active 0" &&
+	wait_phone "$a1" "registered active 4"; then
+	echo "ok   UE B1 called the conference URI from network B, and the conference has four users"
+else
+	echo "FAIL UE B1 did not join the conference: UE B1 is \"$(phone "$b1")\", UE A1 \"$(phone "$a1")\""
+	fail=1
+fi
+b1_call="$(ctl "$b1" status 2>/dev/null | json_field call call_id)" || b1_call=
+# The creator leaves, and the focus ends the call of every other user
+# (TS 24.147 5.3.2.7), UE B1's across the border too.
+if ctl "$a1" hangup >/dev/null && wait_phone "$a1" "registered idle 0" &&
+	wait_phone "$b1" "registered idle 0" && wait_phone "$a2" "registered idle 0" &&
+	wait_phone "$a3" "registered idle 0"; then
+	echo "ok   UE A1 left, and the conference ended for all four"
+else
+	echo "FAIL ending the conference"
+	fail=1
+fi
+for name in "$a1" "$a2" "$a3" "$b1"; do
+	docker stop "$name" >/dev/null 2>&1 || true
+	docker logs "$name" >"e2e-out/${name#"$project"-}-conference.log" 2>&1 || true
+	docker rm -f "$name" >/dev/null 2>&1 || true
+done
+
 echo "requests from an address of no peer network"
 # A host on the link that is neither IBCF-B nor a TrGW sends IBCF-A an
 # INVITE and a MESSAGE over UDP. IBCF-A finds no peer for the address
@@ -431,6 +568,7 @@ tshark_options=(-o rtp.heuristic_rtp:TRUE)
 icscf=172.28.0.20
 scscf=172.28.0.30
 ipsmgw=172.28.0.70
+mmtel=172.28.0.75
 ibcf_a=172.28.0.90
 ibcf_a_nni=172.28.2.10
 ibcf_b_nni=172.28.2.20
@@ -444,6 +582,13 @@ trgw_b=172.28.1.91
 ue_b1_ip=172.28.1.100
 ue_a1_ip=172.28.0.100
 invite='sip.Method == "INVITE"'
+ok200='sip.Status-Code == 200 && sip.CSeq.method == "INVITE"'
+home_domain=ims.mnc001.mcc001.3gppnetwork.org
+domain_b=ims.mnc002.mcc001.3gppnetwork.org
+# The nodes of each network, as host names in SIP and SDP. A name counts
+# only after a character that cannot be part of a host name, so that a
+# longer name that ends the same does not count.
+node_names='(pcscf|scscf|icscf|mmtel|xcap|agw|ipsmgw|hss|ibcf|trgw|epc|pcrf|dns|lab)'
 
 echo "network A (ims0)"
 pcap="$pcap_a"
@@ -508,7 +653,9 @@ expect "488 from IBCF-B when no codec is left" \
 expect "404 from IBCF-B for the local number" \
 	"sip.Status-Code == 404 && ip.src == $ibcf_b_nni && sip.CSeq.method == \"INVITE\""
 mismatched="$last"
-none "Record-Route on the link" 'sip.Record-Route'
+# Only a focus's Contact crosses as it came, with the IBCF that passes it
+# on in Record-Route (TS 24.229 5.10.5): that of the conference below.
+none "Record-Route on the link, other than with the Contact of a focus" 'sip.Record-Route && !(sip.Contact contains "isfocus")'
 none "P-Charging-Function-Addresses" 'sip.P-Charging-Function-Addresses'
 
 echo "network B (ims1)"
@@ -537,8 +684,6 @@ expect "MESSAGE IP-SM-GW -> IBCF-B from the SC's number" \
 echo "one icid-value in both networks, with the IOIs of each (TS 24.229 5.4.3.2 step 7, 5.4.3.3 step 7)"
 # The first call is UE A1's to UE B1. Network A's P-CSCF wrote its
 # icid-value, and each network writes its own domain in the IOIs.
-home_domain=ims.mnc001.mcc001.3gppnetwork.org
-domain_b=ims.mnc002.mcc001.3gppnetwork.org
 pcscf_b=172.28.1.40
 icid="$(pcap="$pcap_a" tshark_fields "$invite && ip.src == $scscf && ip.dst == $ibcf_a" sip.P-Charging-Vector | first_line |
 	sed -n 's/^icid-value=\([^;]*\);.*/\1/p')"
@@ -631,13 +776,55 @@ pcap="$pcap_nni" none "packets to the host of no peer network" "ip.dst == $stran
 pcap="$pcap_a" none "requests of the host of no peer network inside network A" \
 	'sip.From contains "+12025550198"'
 
+echo "UE B1 joins the conference of network A (TS 24.147 5.3.1.4.1, 5.3.2.4.1; TS 24.229 5.3.2.1 step 3, 5.10.5)"
+# Each capture is read from its first frame: the filters name the
+# conference URI, which no other scenario uses. The INVITE crosses from
+# network B, and the answer of the focus comes back with the conference
+# URI and isfocus in Contact.
+b1_dialog="sip.Call-ID == \"$b1_call\""
+# A Contact with isfocus that names a node or a port: a conference URI
+# names neither.
+focus_naming_a_node="sip.Contact contains \"isfocus\" && (sip.Contact matches \"@$node_names\\\\.\" || sip.Contact matches \"@[^>]*:[0-9]+>\")"
+pcap="$pcap_b"
+last=0
+expect "INVITE UE B1 -> P-CSCF of network B to the conference URI" \
+	"$invite && ip.src == $ue_b1_ip && sip.r-uri == \"$conference_uri\" && $b1_dialog"
+expect "INVITE S-CSCF -> IBCF-B: the conference URI is in network A's domain" \
+	"$invite && ip.src == $scscf_b && ip.dst == $ibcf_b && sip.r-uri == \"$conference_uri\""
+expect "200 OK reaches UE B1: the conference URI with isfocus in Contact, IBCF-B in Record-Route" \
+	"$ok200 && ip.dst == $ue_b1_ip && $b1_dialog && sip.Contact contains \"<$conference_uri>\" && sip.Contact contains \"isfocus\" && sip.Record-Route contains \"ibcf.ims.mnc002\""
+expect "BYE reaches UE B1: the conference ends when UE A1 leaves" \
+	"sip.Method == \"BYE\" && ip.dst == $ue_b1_ip && $b1_dialog"
+none "Contacts with isfocus in network B that name a node or a port" "$focus_naming_a_node"
+pcap="$pcap_nni"
+last=0
+expect "INVITE IBCF-B -> IBCF-A to the conference URI" \
+	"$invite && ip.src == $ibcf_b_nni && ip.dst == $ibcf_a_nni && sip.r-uri == \"$conference_uri\""
+link_conference="sip.Call-ID == \"$(field sip.Call-ID | first_line)\""
+expect "200 OK IBCF-A -> IBCF-B: the conference URI with isfocus in Contact, IBCF-A's external name alone in Record-Route" \
+	"$ok200 && ip.src == $ibcf_a_nni && $link_conference && sip.Contact contains \"<$conference_uri>\" && sip.Contact contains \"isfocus\" && sip.Record-Route contains \"ibcf.nni.mnc001.example.net\" && count(sip.Record-Route) == 1"
+expect "BYE IBCF-A -> IBCF-B: the focus ends UE B1's call" \
+	"sip.Method == \"BYE\" && ip.src == $ibcf_a_nni && $link_conference"
+none "Contacts with isfocus on the link that name a node or a port" "$focus_naming_a_node"
+pcap="$pcap_a"
+last=0
+expect "INVITE IBCF-A -> I-CSCF to the conference URI" \
+	"$invite && ip.src == $ibcf_a && ip.dst == $icscf && sip.r-uri == \"$conference_uri\""
+# TS 23.228 5.4.12.3: the I-CSCF finds the AS that hosts the PSI by the
+# NAPTR and SRV records of its subdomain (RFC 3263), not by the HSS.
+expect "NAPTR query of the I-CSCF for conf.$home_domain" \
+	"dns.flags.response == 0 && dns.qry.type == 35 && dns.qry.name == \"conf.$home_domain\" && ip.src == $icscf"
+expect "SRV answer to the I-CSCF: _sip._udp.conf.$home_domain is the MMTel AS" \
+	"dns.flags.response == 1 && dns.qry.type == 33 && dns.qry.name == \"_sip._udp.conf.$home_domain\" && dns.srv.target == \"mmtel.$home_domain\" && ip.dst == $icscf"
+expect "INVITE I-CSCF -> MMTel AS to the conference URI" \
+	"$invite && ip.src == $icscf && ip.dst == $mmtel && sip.r-uri == \"$conference_uri\""
+expect "200 OK MMTel AS -> I-CSCF: the conference URI with isfocus in Contact" \
+	"$ok200 && ip.src == $mmtel && ip.dst == $icscf && sip.Contact contains \"<$conference_uri>\" && sip.Contact contains \"isfocus\""
+none "LIRs for the conference URI" "diameter.cmd.code == 302 && diameter.Public-Identity contains \"@conf.\""
+
 echo "topology hiding"
 # Over the whole captures, so for the short messages of both directions
-# as much as for the calls.
-# The nodes of each network, as host names in SIP and SDP. A name counts
-# only after a character that cannot be part of a host name, so that a
-# longer name that ends the same does not count.
-node_names='(pcscf|scscf|icscf|mmtel|xcap|agw|ipsmgw|hss|ibcf|trgw|epc|pcrf|dns|lab)'
+# and the conference as much as for the calls.
 pcap="$pcap_b" none "addresses of network A in network B's capture" 'ip.addr == 172.28.0.0/24 || frame contains "172.28.0."'
 pcap="$pcap_nni" none "addresses of network A on the link" 'ip.addr == 172.28.0.0/24 || frame contains "172.28.0."'
 pcap="$pcap_b" none "node names of network A in network B's capture" \
