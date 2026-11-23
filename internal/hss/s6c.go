@@ -62,14 +62,15 @@ func (h *HSS) reportSMDeliveryStatus(ctx context.Context, r sgd.ReportSMDelivery
 	switch report, cause := reportedOutcome(r.SMDeliveryOutcome); report {
 	case messageDelivered:
 		// The short message got through after all, which TS 29.338 5.2.3.1
-		// also reports here: the SC that delivered it has nothing waiting
-		// any more.
-		_, _, fail := h.updateMessageWaiting(ctx, u, func(s *Subscriber) bool {
-			s.removeMessageWaiting(r.SCAddress)
-			return false
+		// also reports here.
+		stored, alert, fail := h.updateMessageWaiting(ctx, u, func(s *Subscriber) bool {
+			return s.shortMessageDelivered(r.SCAddress)
 		})
 		if fail != (diameter.Result{}) {
 			return sgd.ReportSMDeliveryStatusAnswer{Result: fail}
+		}
+		if alert {
+			h.alertServiceCentres(stored)
 		}
 	case messageWaits:
 		kept := false
@@ -311,9 +312,12 @@ func (h *HSS) alertServiceCentres(u Subscriber) {
 		ctx, cancel := context.WithTimeout(context.Background(), alertTimeout)
 		defer cancel()
 		for _, address := range addresses {
-			if !h.alertServiceCentre(ctx, u, address) {
+			if h.alertServiceCentre(ctx, u, address) == alertRefused {
 				continue
 			}
+			// The service centre took the alert and is now responsible for
+			// the short messages it holds; or no alert will ever reach it,
+			// which TS 29.338 5.2.2.2 has the HSS purge the address for.
 			_, _, fail := h.updateMessageWaiting(ctx, u, func(s *Subscriber) bool {
 				s.removeMessageWaiting(address)
 				return false
@@ -325,28 +329,44 @@ func (h *HSS) alertServiceCentres(u Subscriber) {
 	}()
 }
 
-// alertServiceCentre sends one ALR and reports whether the service
-// centre answered that it took the alert.
-func (h *HSS) alertServiceCentre(ctx context.Context, u Subscriber, address string) bool {
+// alertOutcome is how one alert ended.
+type alertOutcome int
+
+const (
+	// alertTaken is a service centre that answered that it took the
+	// alert.
+	alertTaken alertOutcome = iota
+	// alertRefused is one that did not, for a reason that may pass. Its
+	// address stays in the message waiting data.
+	alertRefused
+	// alertImpossible is one that no alert will ever reach.
+	alertImpossible
+)
+
+// alertServiceCentre sends one ALR and reports how it ended.
+func (h *HSS) alertServiceCentre(ctx context.Context, u Subscriber, address string) alertOutcome {
 	log := h.log.With("private_identity", u.PrivateIdentity, "sc_address", address)
 	centre, ok := h.serviceCentres[address]
 	if !ok {
 		// TS 29.338 5.3.1.2 routes the alert by the name of the service
-		// centre, which the configuration of this HSS gives.
-		log.Warn("no alert sent: the configuration names no Diameter identity for this service centre")
-		return false
+		// centre, which the configuration of this HSS gives. Without one
+		// no alert can ever reach it, so the address is purged rather than
+		// kept for an alert that will not happen (5.2.2.2).
+		log.Warn("the address is purged: the configuration names no Diameter identity for this service centre")
+		return alertImpossible
 	}
 	peers := h.peers.Load()
 	if peers == nil {
 		log.Warn("no alert sent: this node takes no Diameter connections")
-		return false
+		return alertRefused
 	}
+
 	// The MSISDN-Alert of TS 23.040 3.2.7, by which the service centre
 	// finds the short messages it holds for the user.
 	msisdn := u.MSISDN()
 	if msisdn == "" {
 		log.Warn("no alert sent: the user has no MSISDN")
-		return false
+		return alertRefused
 	}
 	request := sgd.AlertServiceCentreRequest{
 		Header:         diameter.NewHeader(h.node, centre.Host, centre.Realm),
@@ -356,17 +376,17 @@ func (h *HSS) alertServiceCentre(ctx context.Context, u Subscriber, address stri
 	answer, err := (*peers).Request(ctx, centre.Host, request.Message())
 	if err != nil {
 		log.Warn("the service centre did not answer the alert", "error", err.Error())
-		return false
+		return alertRefused
 	}
 	ala, err := sgd.ParseAlertServiceCentreAnswer(answer)
 	switch {
 	case err != nil:
 		log.Warn("cannot read the answer to the alert", "error", err.Error())
-		return false
+		return alertRefused
 	case !ala.Result.Success():
 		log.Warn("the service centre refused the alert", "result", ala.Result.String())
-		return false
+		return alertRefused
 	}
 	log.Info("the service centre is alerted that the user can take short messages again")
-	return true
+	return alertTaken
 }

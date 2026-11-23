@@ -257,6 +257,23 @@ func (s *Subscriber) addMessageWaiting(scAddress string, cause DeliveryFailure) 
 	return true
 }
 
+// shortMessageDelivered records that a short message from the service
+// centre at scAddress reached the user. The address leaves the message
+// waiting data, and the flags go with it: a UE that took a short message
+// is reachable and has memory. It reports whether the service centres
+// that are left are to be alerted, which TS 23.040 3.2.6 items 2g and 2h
+// ask for when the memory of the UE had been full.
+//
+// 3.2.6 has no item for a delivery through an IP-SM-GW, so the HSS
+// follows those two, which are the same procedure through an MSC and
+// through an SGSN.
+func (s *Subscriber) shortMessageDelivered(scAddress string) bool {
+	waiting := s.MCEF
+	s.removeMessageWaiting(scAddress)
+	s.MCEF, s.UNRI = false, false
+	return waiting && len(s.MessageWaitingData) > 0
+}
+
 // removeMessageWaiting takes the address of a service centre out of the
 // message waiting data, and reports whether it was there.
 func (s *Subscriber) removeMessageWaiting(scAddress string) bool {
