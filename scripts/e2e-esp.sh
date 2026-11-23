@@ -123,7 +123,7 @@ else
 	fail=1
 fi
 
-out="$(docker compose run --no-deps --rm volte10 call "${va[@]}" --tone 2s tel:+12025550112 2>&1 || true)"
+out="$(timeout 180 docker compose run --no-deps --rm volte10 call "${va[@]}" --tone 2s tel:+12025550112 2>&1 || true)"
 printf '%s\n' "$out" >e2e-out/esp-volte10-call.log
 if grep -q '"msg":"call answered"' <<<"$out" && [ "$(ended ims-practice-esp-volte12)" = 0 ]; then
 	echo "ok   volte10 called volte12 over ESP, and volte12 answered"
@@ -153,7 +153,12 @@ same_nodes
 # HMAC-SHA2-256-128, so this names the algorithm instead, for every SA
 # of the capture.
 esp_sa=(-o esp.enable_encryption_decode:TRUE
-	-o 'uat:esp_sa:"IPv4","*","*","*","NULL","","HMAC-SHA-256-128 [RFC4868]",""')
+	-o 'uat:esp_sa:"IPv4","*","*","*","NULL","","HMAC-SHA-256-128 [RFC4868]",""'
+	# SIP is registered on port 5060 and found on any other port by a
+	# heuristic. Inside ESP the protected ports are named here instead,
+	# so that a message over TCP between them is read as SIP whatever
+	# the heuristic makes of it.
+	-d "tcp.port==$port_us,sip" -d "tcp.port==$port_ps,sip")
 ue_to_pcscf="ip.addr == $pcscf_ip && (ip.addr == $volte10_ip || ip.addr == $volte12_ip)"
 protected="($ue_to_pcscf) && (udp.port == $port_ps || udp.port == $port_pc || udp.port == $port_us || udp.port == $port_uc || tcp.port == $port_ps || tcp.port == $port_pc || tcp.port == $port_us || tcp.port == $port_uc)"
 
@@ -189,6 +194,13 @@ expect_frames "INVITE inside ESP" "esp && sip.Method == \"INVITE\" && ($protecte
 expect_frames "the 200 (OK) of the call inside ESP" \
 	"esp && sip.Status-Code == 200 && sip.CSeq.method == \"INVITE\" && ($protected)" 1
 expect_frames "BYE inside ESP" "esp && sip.Method == \"BYE\" && ($protected)" 1
+# Each UE registers and deregisters over its associations, and the
+# P-CSCF answers both over them: it lets the associations go only once
+# the 200 (OK) of the deregistration has left (TS 33.203 7.4.2a). A 200
+# that went unprotected would be in the clear on a protected port, which
+# the check above forbids, and missing here.
+expect_frames "the 200 (OK) of a protected REGISTER, the deregistrations among them" \
+	"esp && sip.Status-Code == 200 && sip.CSeq.method == \"REGISTER\" && ($protected)" 4
 # Each pair of security associations carries the requests of one end
 # from its protected client port to the other end's protected server
 # port (TS 33.203 7.1 rule 1).
