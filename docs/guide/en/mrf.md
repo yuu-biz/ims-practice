@@ -68,7 +68,16 @@ docker compose up -d --build
 docker compose --profile phones up -d phone1 phone2 phone3
 ```
 
-Open http://localhost:8080. In the Subscribers panel choose `cat1` as the alerting tone of subscriber 2, then call `phone2` from `phone1`. For the waiting call and the conference, follow the steps in the Lab guide that take a second call and make a conference of the two. The ladder of a call draws the AS's dialog with the MRFC beside the dialogs of the call, because they share the icid-value of the P-Charging-Vector.
+Give subscriber 2 the alerting tone `cat1`. The operator provisions it through the OAM, whose port is on no address of the host, so the request goes from inside the OAM's container. BusyBox `wget` cannot send a `PUT`, hence the request written out to `nc`:
+
+```sh
+docker compose exec oam sh -c '
+body="{\"tone\":\"cat1\",\"active\":true}"
+printf "PUT /oam/v1/subscriptions/001010000000002@ims.mnc001.mcc001.3gppnetwork.org/customized-alerting-tone HTTP/1.0\r\nContent-Type: application/json\r\nContent-Length: ${#body}\r\n\r\n%s" "$body" |
+  nc -w 5 127.0.0.1 8080'
+```
+
+Then open http://localhost:8080 and call `phone2` from `phone1`. For the waiting call and the conference, follow the steps in the Lab guide that take a second call and make a conference of the two. The ladder of a call draws the AS's dialog with the MRFC beside the dialogs of the call, because they share the icid-value of the P-Charging-Vector.
 
 ## Open the capture
 
@@ -102,7 +111,7 @@ UE 1 bars its outgoing calls with `ue xcap set baoc on` and calls UE 2. UE 1's A
 
 ## CAT: the tone that the called user chooses
 
-The operator provisions the CAT of a user in the HSS (TS 24.182 4.5.2); here the Lab does it, with `PUT /api/subscribers/{impi}/customized-alerting-tone` and `{"tone": "cat1", "active": true}`. The terminating AS of UE 2 reads it over Sh for each call (UDR with Service-Indication `Customized-Alerting-Tone`), asks the MRFC for the tone before it sends the INVITE to UE 2, and gives it to UE 1 while UE 2 rings (TS 24.182 4.5.5.3.7):
+The operator provisions the CAT of a user in the HSS (TS 24.182 4.5.2); here the OAM does it, with `PUT /oam/v1/subscriptions/{private identity}/customized-alerting-tone` and `{"tone": "cat1", "active": true}`, which it passes on to the HSS. The user has no standard way to set it (4.8). The terminating AS of UE 2 reads it over Sh for each call (UDR with Service-Indication `Customized-Alerting-Tone`), asks the MRFC for the tone before it sends the INVITE to UE 2, and gives it to UE 1 while UE 2 rings (TS 24.182 4.5.5.3.7):
 
 ```text
 #1288 12.471 UE 1   -> P-CSCF C1 INVITE tel:+12025550102

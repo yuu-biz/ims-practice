@@ -335,3 +335,40 @@ answer_to() {
 	fi
 	echo "diameter.flags.request == 0 && diameter.cmd.code == $code && diameter.Session-Id == \"$sid\""
 }
+
+# oam_request METHOD PATH [BODY] sends one request to the OAM API of the
+# deployment and prints the whole answer, the HTTP headers included. The
+# API is on no address of the host, so the request goes from inside the
+# container of the OAM node, as the guides show. BusyBox wget sends no
+# method but GET and POST and no body of its own, hence the request
+# written out to nc. The answer of an operation that streams comes line
+# by line until the OAM closes the connection, which it does at the end
+# of an HTTP/1.0 answer.
+oam_request() {
+	docker compose exec -T oam sh -c '
+		if [ -n "$3" ]; then
+			printf "%s %s HTTP/1.0\r\nContent-Type: application/json\r\nContent-Length: ${#3}\r\n\r\n%s" "$1" "$2" "$3"
+		else
+			printf "%s %s HTTP/1.0\r\n\r\n" "$1" "$2"
+		fi | nc -w 30 127.0.0.1 8080' sh "$1" "$2" "${3:-}" | tr -d '\r'
+}
+
+# oam_status reads such an answer and prints its status code, such as
+# 200. It reads the answer to its end: a reader that stopped at the
+# first line would close the pipe under the request, which fails the
+# pipeline and, with "set -o pipefail", the whole scenario.
+oam_status() {
+	awk 'NR == 1 {status = $2} END {print status}'
+}
+
+# wait_for_oam waits up to a minute for the OAM to answer. Its inventory
+# comes from its configuration, so this only says that the role started.
+wait_for_oam() {
+	local i
+	for i in $(seq 1 60); do
+		grep -q '"nodes"' <<<"$(oam_request GET /oam/v1/inventory 2>/dev/null || true)" && return 0
+		sleep 1
+	done
+	echo "FAIL the OAM never answered" >&2
+	return 1
+}

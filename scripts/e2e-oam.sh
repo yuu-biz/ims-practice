@@ -55,20 +55,9 @@ wait_for_open() {
 wait_for_open icscf
 wait_for_open scscf
 
-# oam_request METHOD PATH [BODY] sends one request to the OAM API and
-# prints the whole answer, the HTTP headers included. BusyBox wget sends
-# no method but GET and POST and no body of its own, hence the request
-# written out to nc, as the guides do for the maintenance API. The
-# answer of an operation that streams comes line by line until the OAM
-# closes the connection, which it does at the end of an HTTP/1.0 answer.
-oam_request() {
-	docker compose exec -T oam sh -c '
-		if [ -n "$3" ]; then
-			printf "%s %s HTTP/1.0\r\nContent-Type: application/json\r\nContent-Length: ${#3}\r\n\r\n%s" "$1" "$2" "$3"
-		else
-			printf "%s %s HTTP/1.0\r\n\r\n" "$1" "$2"
-		fi | nc -w 30 127.0.0.1 8080' sh "$1" "$2" "${3:-}" | tr -d '\r'
-}
+# oam_request, which sends one request to the OAM API, is in
+# scripts/e2e-lib.sh: the scenarios of the Lab and of the MRF reach the
+# OAM the same way.
 
 # oam_provision sends a file of records to the bulk provisioning of the
 # OAM. The file goes into the container of the OAM node, since the API
@@ -125,12 +114,7 @@ print(" ".join(out))
 '
 }
 
-# The OAM answers once its listener is up. Its inventory comes from its
-# configuration, so this only says that the role started.
-for i in $(seq 1 60); do
-	grep -q '"nodes"' <<<"$(oam_request GET /oam/v1/inventory 2>/dev/null || true)" && break
-	sleep 1
-done
+wait_for_oam || exit 1
 
 mkdir -p e2e-out
 remember_nodes
