@@ -3,6 +3,9 @@ package ue_test
 import (
 	"bytes"
 	"fmt"
+	"io"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
@@ -141,4 +144,152 @@ func settles(t *testing.T, reg *metrics.Registry, want []string, forbidden strin
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
+}
+
+// TS 32.409 has the I-CSCF count the Cx requests of the registration
+// status query (4.1.1.5) and of the user location query (4.1.3), and
+// the S-CSCF those of the authentication (4.1.6) and of the
+// registration notification (4.1.1.6). A registration and a call bring
+// out all four, each under the role that sent the request, and the
+// handler that the maintenance listener of a node mounts at /metrics
+// serves them in the format that Prometheus scrapes.
+func TestTheCSCFsCountTheirCxRequestsAndAnswers(t *testing.T) {
+	reg := metrics.NewRegistry()
+	n := startNetwork(t, networkConfig{minExpires: time.Second, maxExpires: time.Hour, metrics: reg})
+	caller := newParty(t, n.pcscf, impi, impu, password)
+	callee := newParty(t, n.pcscf, impi2, impu2, password2)
+	ctx := t.Context()
+
+	answered := make(chan error, 1)
+	go func() {
+		ic := <-callee.calls
+		answered <- callee.ue.Answer(ctx, ic, callee.media, ue.Speech{}, ue.AnswerOptions{PickUp: time.After(100 * time.Millisecond)})
+	}()
+	if err := caller.ue.Call(ctx, caller.ua, caller.reg, impu2, caller.media, ue.Speech{}, ue.CallOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	if err := <-answered; err != nil {
+		t.Fatal(err)
+	}
+
+	// Each of the two UEs registers once, and the 401 of its first
+	// REGISTER brings a second REGISTER that the I-CSCF asks the HSS
+	// about again: two registration status queries per UE. The first
+	// answer is DIAMETER_FIRST_REGISTRATION, and the second
+	// DIAMETER_SUBSEQUENT_REGISTRATION, because the MAR in between has
+	// left the name of the S-CSCF at the HSS, which sends the user back
+	// to the S-CSCF that is already serving the procedure. The S-CSCF
+	// asks for each UE's authentication vector once and tells the HSS
+	// once that it serves the user. Of the three location queries, one
+	// per registration is for the SUBSCRIBE with which the P-CSCF
+	// subscribes to the reg event package of the user (TS 24.229 5.2.3),
+	// which enters the home network through the I-CSCF, and one is for
+	// the INVITE of the call.
+	served(t, reg,
+		`ims_diameter_requests_total{role="icscf",direction="sent",command="UAR"} 4`,
+		`ims_diameter_answers_total{role="icscf",direction="received",command="UAR",result="DIAMETER_FIRST_REGISTRATION"} 2`,
+		`ims_diameter_answers_total{role="icscf",direction="received",command="UAR",result="DIAMETER_SUBSEQUENT_REGISTRATION"} 2`,
+		`ims_diameter_requests_total{role="icscf",direction="sent",command="LIR"} 3`,
+		`ims_diameter_answers_total{role="icscf",direction="received",command="LIR",result="DIAMETER_SUCCESS"} 3`,
+		`ims_diameter_requests_total{role="scscf",direction="sent",command="MAR"} 2`,
+		`ims_diameter_answers_total{role="scscf",direction="received",command="MAR",result="DIAMETER_SUCCESS"} 2`,
+		`ims_diameter_requests_total{role="scscf",direction="sent",command="SAR"} 2`,
+		`ims_diameter_answers_total{role="scscf",direction="received",command="SAR",result="DIAMETER_SUCCESS"} 2`)
+}
+
+// served waits up to 3 seconds for every line of want to be in what the
+// /metrics of a node answers, which is what Prometheus reads.
+func served(t *testing.T, reg *metrics.Registry, want ...string) {
+	t.Helper()
+	server := httptest.NewServer(metrics.NewHandler(reg))
+	defer server.Close()
+	deadline := time.Now().Add(3 * time.Second)
+	for {
+		resp, err := http.Get(server.URL)
+		if err != nil {
+			t.Fatal(err)
+		}
+		body, err := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if resp.StatusCode != http.StatusOK || resp.Header.Get("Content-Type") != metrics.ContentType {
+			t.Fatalf("GET /metrics = %s with Content-Type %q, want 200 with %q",
+				resp.Status, resp.Header.Get("Content-Type"), metrics.ContentType)
+		}
+		missing := 0
+		for _, line := range want {
+			if !strings.Contains(string(body), "\n"+line+"\n") {
+				missing++
+			}
+		}
+		if missing == 0 {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("want the lines %q in what /metrics answers:\n%s", want, body)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+// TS 29.214 at the P-CSCF, which is the AF of Rx: the P-CSCF sends its
+// policy control through a peer group of the one PCRF, as it does the
+// Cx of the CSCFs through the group of the HSS, so those requests are
+// counted under the role pcscf as well.
+//
+// Each registration opens the Rx session of the UE's signalling path
+// with one AAR (TS 29.214 4.4.5), which the two UEs make two of. Each
+// leg of the call is then authorised twice: the P-CSCF sends no service
+// information for an offer alone, so an AAR follows each answer, the
+// one in the 183 and the one in the 200 to the UPDATE in which the
+// caller reports its reservation. The BYE ends the Rx session of each
+// leg with an STR (4.4.4). The sessions of the two signalling paths
+// stay, because both UEs stay registered.
+func TestThePCSCFCountsItsRxRequestsAndAnswers(t *testing.T) {
+	reg := metrics.NewRegistry()
+	n := startNetwork(t, networkConfig{minExpires: time.Second, maxExpires: time.Hour, epc: true, metrics: reg})
+	caller := newEPCParty(t, n, impi, impu, password)
+	callee := newEPCParty(t, n, impi2, impu2, password2)
+	ctx := t.Context()
+
+	speech := ue.ToneSpeech(300 * time.Millisecond)
+	answered := answerIn(t, callee, speech, ue.AnswerOptions{PickUp: time.After(0)})
+	if err := caller.ue.Call(ctx, caller.ua, caller.reg, impu2, caller.media, speech, ue.CallOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	if err := wait(t, "the answer", answered); err != nil {
+		t.Fatal(err)
+	}
+
+	served(t, reg,
+		`ims_diameter_requests_total{role="pcscf",direction="sent",command="AAR"} 6`,
+		`ims_diameter_answers_total{role="pcscf",direction="received",command="AAR",result="DIAMETER_SUCCESS"} 6`,
+		`ims_diameter_requests_total{role="pcscf",direction="sent",command="STR"} 2`,
+		`ims_diameter_answers_total{role="pcscf",direction="received",command="STR",result="DIAMETER_SUCCESS"} 2`)
+}
+
+// TS 29.328 at the MMTel AS: it reads and writes the user's data in the
+// HSS over Sh through a peer group of the instances of the HSS, which
+// counts those requests under the role mmtel.
+//
+// The shorter no reply timer takes three requests of the UE over Ut:
+// the client reads the document, writes the changed node back, and
+// reads the document again for the settings it returns. Each
+// authenticated request costs the AS a UDR for the Ut credential it
+// authenticates against (TS 24.623 5.3.2.3) and a UDR for the document
+// itself, and the challenge that the first request of the client is
+// answered with costs the credential alone: seven UDRs. The write goes
+// to the HSS in the one PUR.
+func TestTheMMTelASCountsItsShRequestsAndAnswers(t *testing.T) {
+	_, services, reg := utNetwork(t)
+	if _, err := services.SetNoReplyTimer(t.Context(), 5); err != nil {
+		t.Fatal(err)
+	}
+	served(t, reg,
+		`ims_diameter_requests_total{role="mmtel",direction="sent",command="UDR"} 7`,
+		`ims_diameter_answers_total{role="mmtel",direction="received",command="UDR",result="DIAMETER_SUCCESS"} 7`,
+		`ims_diameter_requests_total{role="mmtel",direction="sent",command="PUR"} 1`,
+		`ims_diameter_answers_total{role="mmtel",direction="received",command="PUR",result="DIAMETER_SUCCESS"} 1`)
 }

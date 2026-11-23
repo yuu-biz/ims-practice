@@ -13,6 +13,7 @@ import (
 	"github.com/yuu-biz/ims-practice/internal/config"
 	"github.com/yuu-biz/ims-practice/internal/diameter"
 	"github.com/yuu-biz/ims-practice/internal/hss"
+	"github.com/yuu-biz/ims-practice/internal/metrics"
 	"github.com/yuu-biz/ims-practice/internal/sh"
 	"github.com/yuu-biz/ims-practice/internal/simservs"
 	"github.com/yuu-biz/ims-practice/internal/ue"
@@ -30,8 +31,10 @@ const (
 )
 
 // utNetwork starts the HSS of deploy/compose/hss.yaml and the XCAP
-// server, and returns the AS's Sh client and the UE's services.
-func utNetwork(t *testing.T) (*sh.Client, *ue.SupplementaryServices, *httptest.Server) {
+// server, and returns the AS's Sh client, the UE's services and the
+// registry in which the AS counts the Sh messages it sends and
+// receives.
+func utNetwork(t *testing.T) (*sh.Client, *ue.SupplementaryServices, *metrics.Registry) {
 	t.Helper()
 	if err := diameter.LoadDictionary(); err != nil {
 		t.Fatal(err)
@@ -61,20 +64,27 @@ func utNetwork(t *testing.T) (*sh.Client, *ue.SupplementaryServices, *httptest.S
 	asNode := diameter.NewNode(diameter.Identity{OriginHost: "mmtel." + realm, OriginRealm: realm}, []uint32{diameter.ApplicationIDSh}, timers, quiet())
 	peer := asNode.Connect(diameter.PeerConfig{Address: listener.Addr(), OriginHost: "hss." + realm})
 	t.Cleanup(peer.Stop)
-	users := sh.NewClient(asNode, peer, realm)
-	for deadline := time.Now().Add(5 * time.Second); ; time.Sleep(10 * time.Millisecond) {
-		_, _, err := users.RepositoryData(context.Background(), utIMPU, simservs.ServiceIndication)
-		if err == nil {
-			break
-		}
-		if !errors.Is(err, diameter.ErrPeerUnavailable) || time.Now().After(deadline) {
-			t.Fatal(err)
+	// The AS reaches the HSS through a peer group, as it does in Compose,
+	// and the group counts the Sh messages of the role mmtel in the
+	// registry of the node.
+	reg := metrics.NewRegistry()
+	hssFarm, err := diameter.NewPeerGroup(reg, "mmtel", peer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	users := sh.NewClient(asNode, hssFarm, realm)
+	// The connection opens in the background. Waiting for it here rather
+	// than with a request of the client leaves the counters of the group
+	// holding what the AS sent for the UE and nothing else.
+	for deadline := time.Now().Add(5 * time.Second); !peer.Available(); time.Sleep(10 * time.Millisecond) {
+		if time.Now().After(deadline) {
+			t.Fatal("the Sh connection to the HSS never opened")
 		}
 	}
 	server := httptest.NewServer(xcap.NewHandler(users, "", []byte("test-nonce-key-of-the-xcap-servers"), quiet()))
 	t.Cleanup(server.Close)
 	client := &xcap.Client{Root: server.URL, XUI: utIMPU, Username: utIMPI, Password: "test-password-1", UserAgent: "ims-practice-ue"}
-	return users, ue.NewSupplementaryServices(client), server
+	return users, ue.NewSupplementaryServices(client), reg
 }
 
 func setting(t *testing.T, s ue.Settings, name ue.Service) ue.ServiceSetting {
