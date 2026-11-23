@@ -23,6 +23,7 @@ To begin: does UE 1 know the IP address of UE 2? It does not. It knows a telepho
 
 > Guide: [Follow a voice call through the IMS](../../../docs/guide/en/call.md) (`docs/guide/en/call.md`)
 > The editions are those of Release 18, TS 24.229 V18.11.0 and TS 29.228 V18.0.0, and the RFCs named in each step.
+> Transaction, dialog, SDP, PRACK and precondition are in the [glossary](../../../docs/glossary.md).
 
 ---
 
@@ -119,7 +120,7 @@ P-CSCF -> UE 2: INVITE (term) // 7
 ```
 
 - `orig` is the originating position, the caller's side; `term` the terminating position, the callee's side.
-- The AS is a routeing B2BUA (TS 24.229 5.7.5): its new INVITE has a Call-ID of its own, so one call has three dialogs.
+- The AS is a routeing B2BUA (TS 24.229 5.7.5): its new INVITE has a Call-ID of its own, so one call has three dialogs. Session 7 shows how the AS makes them.
 
 ---
 
@@ -151,7 +152,7 @@ P-CSCF -> UE 2: INVITE (term) // 7
 | The SDP after the P-CSCF | `c=` and `m=` name the media relay. |
 
 - The network trusts P-Asserted-Identity, not From. Whatever the UE writes in From does not matter.
-- UE 1 has no access network that reserves resources, so its offer says that they are there already. A UE started with `-epc` is a VoLTE UE and offers AMR-WB and AMR before PCMU; the VoLTE session follows that call.
+- UE 1 has no access network that reserves resources, so its offer says that they are there already. A UE started with `-epc` is a VoLTE UE and offers AMR-WB and AMR before PCMU. Session 9, on VoLTE, follows that call and how it reserves its resources before the phone rings.
 
 > Guide: [1](../../../docs/guide/en/call.md#1-ue-1-sends-the-invite) and [2](../../../docs/guide/en/call.md#2-the-p-cscf-sends-it-to-the-callers-s-cscf). TS 24.229 5.1.3.1, 5.1.2A.1.1, 6.1.2, 5.2.6.2, 5.2.6.3.3. RFC 3262 4. RFC 3312. RFC 3264 5.1.
 
