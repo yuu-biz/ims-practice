@@ -1,7 +1,8 @@
 // Package oam is the OAM server: it operates every node of the network
 // together through the maintenance API of each node (package
 // maintenance).
-// No node of this project runs it: no binary in cmd builds it in.
+// The oam role of cmd/ims runs it: it serves Handler under PathPrefix
+// and the OAM screen (UIHandler) on the same listener.
 //
 // The OAM is the element manager of TS 32.101 and TS 32.102: the
 // interface between it and the nodes is this project's own, as TS

@@ -14,6 +14,7 @@ import (
 	"net/netip"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
@@ -55,6 +56,7 @@ import (
 	"github.com/yuu-biz/ims-practice/internal/metrics"
 	"github.com/yuu-biz/ims-practice/internal/mmtel"
 	"github.com/yuu-biz/ims-practice/internal/mrfc"
+	"github.com/yuu-biz/ims-practice/internal/oam"
 	"github.com/yuu-biz/ims-practice/internal/pcscf"
 	"github.com/yuu-biz/ims-practice/internal/rx"
 	"github.com/yuu-biz/ims-practice/internal/sc"
@@ -570,6 +572,31 @@ func run(configPath string, log *slog.Logger, level *slog.LevelVar) error {
 		defer web.Close()
 		roleLog.Info("lab listening", "hep", c.HEPListen, "http", c.HTTPListen)
 	}
+	if c := cfg.OAM; c != nil {
+		roleLog := log.With("role", config.RoleOAM)
+		server, err := newOAM(*c, roleLog)
+		if err != nil {
+			return err
+		}
+		mux := http.NewServeMux()
+		mux.Handle(oam.PathPrefix, server.Handler())
+		// The screen calls the API at /oam/v1/..., so it is served
+		// beside it, from the same origin.
+		mux.Handle("/", oam.UIHandler())
+		// Close, not Shutdown, on the way out: a bulk provisioning or a
+		// backup streams its answer, and the node must not wait for one
+		// to finish. A backup cut short leaves no archive, since the
+		// store makes one readable only once it is whole.
+		api := &http.Server{Addr: c.HTTPListen, Handler: mux}
+		go func() {
+			if err := api.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+				roleLog.Error("oam HTTP server failed", "error", err.Error())
+				cancel()
+			}
+		}()
+		defer api.Close()
+		roleLog.Info("oam listening", "http", c.HTTPListen, "nodes", len(c.Nodes))
+	}
 	if c := cfg.Fault; c != nil {
 		roleLog := log.With("role", config.RoleFault)
 		api, err := net.Listen("tcp", c.HTTPListen)
@@ -936,6 +963,30 @@ func startFaultAgent(ctx context.Context, l net.Listener, c config.Fault, log *s
 	}()
 	log.Info("fault API listening", "address", l.Addr().String(), "project", c.ComposeProject, "tools_image", c.ToolsImage)
 	return func() { api.Close() }
+}
+
+// newOAM makes the OAM server of the oam role. The inventory becomes
+// the endpoints it operates, and the data directory the two stores it
+// keeps itself: the history of the configuration changes it made, in
+// one file, and the backups, each an archive and its manifest. Without
+// a directory it keeps neither, and refuses those operations with 503.
+func newOAM(c config.OAM, log *slog.Logger) (*oam.Server, error) {
+	cfg := oam.Config{HSSProvisioning: c.HSSProvisioning, Log: log}
+	for _, n := range c.Nodes {
+		cfg.Nodes = append(cfg.Nodes, oam.Endpoint{Name: n.Name, Roles: n.Roles, URL: n.Maintenance})
+	}
+	if c.DataDir != "" {
+		history, err := oam.NewFileChangeStore(filepath.Join(c.DataDir, "config-history.jsonl"))
+		if err != nil {
+			return nil, fmt.Errorf("oam: the configuration history: %w", err)
+		}
+		backups, err := oam.NewFileBackupStore(filepath.Join(c.DataDir, "backups"))
+		if err != nil {
+			return nil, fmt.Errorf("oam: the backups: %w", err)
+		}
+		cfg.History, cfg.Backups = history, backups
+	}
+	return oam.New(cfg)
 }
 
 // managedRole is a role that the maintenance API of the node serves:

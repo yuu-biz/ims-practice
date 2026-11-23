@@ -9,7 +9,9 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"net/http/httptest"
 	"net/netip"
+	"os"
 	"path/filepath"
 	"reflect"
 	"slices"
@@ -38,6 +40,7 @@ import (
 	"github.com/yuu-biz/ims-practice/internal/metrics"
 	"github.com/yuu-biz/ims-practice/internal/mmtel"
 	"github.com/yuu-biz/ims-practice/internal/mrfc"
+	"github.com/yuu-biz/ims-practice/internal/oam"
 	"github.com/yuu-biz/ims-practice/internal/pcscf"
 	"github.com/yuu-biz/ims-practice/internal/policy"
 	"github.com/yuu-biz/ims-practice/internal/rtptest"
@@ -1044,6 +1047,79 @@ func TestFaultAgentServesTheAPIOfTheRole(t *testing.T) {
 	var answer fault.ErrorBody
 	if err := json.Unmarshal(body, &answer); err != nil || answer.Fault == nil || answer.Fault.State != fault.Failed {
 		t.Errorf("the failed fault is not in the answer: %s", body)
+	}
+}
+
+// TestOAMRoleServesItsAPIAndScreen: a node whose only role is oam
+// serves the OAM API under /oam/v1/ and the OAM screen beside it, with
+// the inventory of its configuration. With a data directory it keeps
+// the backups and the history of the configuration changes it made;
+// without one it refuses those operations.
+func TestOAMRoleServesItsAPIAndScreen(t *testing.T) {
+	// No node needs to answer here: the inventory is what the
+	// configuration says, and the OAM asks a node only for an operation
+	// on that node.
+	c := config.OAM{
+		DataDir: t.TempDir(),
+		Nodes: []config.OAMNode{
+			{Name: "pcscf-1", Roles: []string{"pcscf"}, Maintenance: "http://127.0.0.1:1/"},
+		},
+	}
+	// serve mounts an OAM as the role does: the API under its prefix
+	// and the screen beside it, on one listener.
+	serve := func(c config.OAM) string {
+		t.Helper()
+		server, err := newOAM(c, quiet())
+		if err != nil {
+			t.Fatal(err)
+		}
+		mux := http.NewServeMux()
+		mux.Handle(oam.PathPrefix, server.Handler())
+		mux.Handle("/", oam.UIHandler())
+		listener := httptest.NewServer(mux)
+		t.Cleanup(listener.Close)
+		return listener.URL
+	}
+	withData := serve(c)
+	withoutData := serve(config.OAM{Nodes: c.Nodes})
+
+	get := func(url string) (int, string) {
+		t.Helper()
+		resp, err := http.Get(url)
+		if err != nil {
+			t.Fatal(err)
+		}
+		body, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		return resp.StatusCode, string(body)
+	}
+
+	status, body := get(withData + oam.PathPrefix + "inventory")
+	var inventory oam.Inventory
+	if err := json.Unmarshal([]byte(body), &inventory); err != nil {
+		t.Fatalf("the inventory is not JSON: %s", body)
+	}
+	want := []oam.Endpoint{{Name: "pcscf-1", Roles: []string{"pcscf"}, URL: "http://127.0.0.1:1/"}}
+	if status != http.StatusOK || !reflect.DeepEqual(inventory.Nodes, want) {
+		t.Errorf("the inventory is %d %+v, want 200 and %+v", status, inventory.Nodes, want)
+	}
+
+	if status, body = get(withData + oam.PathPrefix + "backups"); status != http.StatusOK ||
+		!strings.Contains(body, `"backups"`) {
+		t.Errorf("the backups of an OAM with a data directory are %d %s, want 200", status, body)
+	}
+	if status, body = get(withoutData + oam.PathPrefix + "backups"); status != http.StatusServiceUnavailable {
+		t.Errorf("the backups of an OAM without a data directory are %d %s, want 503", status, body)
+	}
+	// The history file is made when the role starts, so that a change
+	// is not the first thing to find out that the directory cannot be
+	// written to.
+	if _, err := os.Stat(filepath.Join(c.DataDir, "config-history.jsonl")); err != nil {
+		t.Errorf("the history file: %v", err)
+	}
+
+	if status, body = get(withData + "/"); status != http.StatusOK || !strings.Contains(strings.ToLower(body), "<html") {
+		t.Errorf("the OAM screen is %d %s, want 200 and a page", status, body)
 	}
 }
 
