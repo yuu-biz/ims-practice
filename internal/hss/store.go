@@ -564,11 +564,11 @@ func (s *MemoryStore) Put(_ context.Context, sub Subscriber) error {
 
 // Replace writes the whole subscription back: unlike Put, the index by
 // public identity and the numbers of the provisioned identities (Counts)
-// follow a change of the public identities. It writes the index of the
-// identities that the subscription now holds before the subscriber
-// itself, and drops the index of those it has let go after it, as Add
-// and Delete do, so that no identity finds a subscription that does not
-// hold it.
+// follow a change of the public identities. All of it happens under the
+// one lock of the store, so no reader sees the subscription between the
+// two, and the order of the writes is nobody's business; a store whose
+// items are written one at a time has an order to keep to, and keeps it
+// (internal/kvstore/hssstore).
 func (s *MemoryStore) Replace(_ context.Context, sub Subscriber) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
