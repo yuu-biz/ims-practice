@@ -23,11 +23,12 @@
 # guides say how (docs/guide/en/volte.md). The first REGISTER, the 401
 # and everything between other nodes stay as they were.
 #
-# ESP needs the xfrm of the Linux kernel, which a container shares with
-# the machine that runs the engine. Where that machine runs another
-# kernel, as it does on Windows and on macOS, the nodes may not be able
-# to set the associations up; they say so in their log and the
-# registration fails.
+# ESP needs the xfrm of the Linux kernel, with its ESP support, and a
+# container shares the kernel of whatever runs the engine: the host on
+# Linux, the Linux kernel of WSL2 for Docker Desktop on Windows. Where
+# that kernel lacks them, the nodes cannot set the associations up; the
+# P-CSCF logs "the store failed" with the error of ip xfrm and answers
+# the REGISTER 500, so the registration fails.
 
 services:
   pcscf:

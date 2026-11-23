@@ -112,6 +112,12 @@ SMS は SIP の MESSAGE の本文に入れて運びます。本文のメディ�
 
 `scripts/e2e-sms.sh` は、送った SMS のフレームの一覧を `e2e-out/sms-ladder.txt` に書き出します。
 
+## ESP の中の SIP を読む
+
+VoLTE の UE と P-CSCF のあいだの信号は、IPsec の ESP で保護できます。[VoLTE の呼の流れ](volte.md#esp-をかけた-sec-agree)の構成でこれを有効にします。中身は暗号化されていないので SIP はそのまま入っていますが、Wireshark に中を見させる設定が 1 つ要ります。設定を入れるまで、これらのパケットは `ESP (SPI=0x...)` としか表示されず、`sip` の表示フィルタにも当たりません。
+
+**Edit > Preferences > Protocols > ESP** で **Attempt to detect/decode NULL encrypted ESP payloads** にチェックを入れます。Wireshark はアルゴリズムが使う完全性チェック値の長さ（12、16、24、32 オクテット）を試してペイロードの終わりを割り出し、中にあるものを解読します。VoLTE の手順書には、もう 1 つの方法として、長さを Wireshark に割り出させる代わりに完全性のアルゴリズムを示す **ESP SAs** の行と、保護ポートを TCP の SIP として読ませるオプションがあります。
+
 ## ラボに送るコピー（HEP）
 
 ノードは送受信した SIP と Diameter のメッセージのコピーを、UDP の 9060 番ポートで待つラボにも送れます。コピーの形式は HEP（Homer Encapsulation Protocol）のバージョン 3 です。ノードの設定に `hep: {collector: lab:9060}` のような `hep` の項目があると、ノードはコピーを送ります。UE シミュレータは `-hep lab:9060` を指定すると送ります。どちらも無ければ、何も送りません。
