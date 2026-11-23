@@ -14,6 +14,7 @@ import (
 // design: the third-party REGISTER to the IP-SM-GW with the MSISDN, and
 // the SMS that the user sends.
 const smsCriteriaYAML = `  default_service_profile: default
+  test_user_service_profile: default
   service_profiles:
     default:
       - priority: 0
@@ -67,14 +68,38 @@ func TestParseServiceProfiles(t *testing.T) {
 	if !reflect.DeepEqual(cfg.HSS.ServiceProfiles, map[string][]ifc.InitialFilterCriteria{"default": want}) {
 		t.Errorf("profiles\n%+v\nwant default\n%+v", cfg.HSS.ServiceProfiles, want)
 	}
-	if cfg.HSS.DefaultServiceProfile != "default" {
-		t.Errorf("the profile of a subscription is %q", cfg.HSS.DefaultServiceProfile)
+	if cfg.HSS.DefaultServiceProfile != "default" || cfg.HSS.TestUserServiceProfile != "default" {
+		t.Errorf("the profiles of a subscription are %q and, for a test user, %q",
+			cfg.HSS.DefaultServiceProfile, cfg.HSS.TestUserServiceProfile)
 	}
 	// A node may answer for subscriptions without calling any
 	// application server, so service_profiles is not required.
 	if cfg, err := Parse(strings.NewReader(combinedYAML)); err != nil || cfg.HSS.ServiceProfiles != nil ||
-		cfg.HSS.DefaultServiceProfile != "" {
+		cfg.HSS.DefaultServiceProfile != "" || cfg.HSS.TestUserServiceProfile != "" {
 		t.Errorf("without service_profiles: %v, %+v", err, cfg.HSS.ServiceProfiles)
+	}
+}
+
+// TestParseReadsTheProfileOfASubscription: a subscription takes the
+// name of its own profile, and leaves it out to get the one of its kind
+// of user.
+func TestParseReadsTheProfileOfASubscription(t *testing.T) {
+	yaml := strings.Replace(withSMSCriteria(combinedYAML),
+		"      password: test-password\n",
+		"      password: test-password\n      test_user: true\n      service_profile: default\n", 1)
+	cfg, err := Parse(strings.NewReader(yaml))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sub := cfg.HSS.Subscriptions[0]; !sub.TestUser || sub.ServiceProfile != "default" {
+		t.Errorf("the subscription is %+v", sub)
+	}
+	plain, err := Parse(strings.NewReader(withSMSCriteria(combinedYAML)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sub := plain.HSS.Subscriptions[0]; sub.TestUser || sub.ServiceProfile != "" {
+		t.Errorf("a subscription that names neither is %+v", sub)
 	}
 }
 
@@ -93,6 +118,13 @@ func TestParseRejectsServiceProfileNames(t *testing.T) {
 			`default_service_profile: "trial" is not a profile of service_profiles, which has [default]`},
 		{"no default", "  default_service_profile: default\n", "",
 			"default_service_profile: required, one of [default]"},
+		{"unknown profile for test users", "test_user_service_profile: default", "test_user_service_profile: trial",
+			`test_user_service_profile: "trial" is not a profile of service_profiles, which has [default]`},
+		{"no profile for test users", "  test_user_service_profile: default\n", "",
+			"test_user_service_profile: required, one of [default]"},
+		{"unknown profile of a subscription", "      password: test-password\n",
+			"      password: test-password\n      service_profile: trial\n",
+			`subscriptions[0].service_profile: "trial" is not a profile of service_profiles, which has [default]`},
 		{"a profile without a name", "    default:", `    "":`,
 			"service_profiles: a profile without a name"},
 	}

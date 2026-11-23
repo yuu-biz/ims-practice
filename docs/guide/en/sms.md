@@ -62,6 +62,8 @@ service_profiles:
 
 The profile name is the operator's own. Cx carries the criteria of the profile and not its name, so the S-CSCF never learns it.
 
+Which profile a subscription gets is read off the subscription. One that names a profile in its own `service_profile` gets that one. One that names none gets the profile of `test_user_service_profile` if it is marked `test_user`, and the one of `default_service_profile` otherwise. So a feature goes to one user by naming a profile on that subscription, to the test users by naming the profile of the feature in `test_user_service_profile`, and to everyone by naming it in `default_service_profile`. The HSS reads the name from the subscription it is already answering for, so none of this costs more as the network grows.
+
 In the SAA they arrive in the User-Data AVP as XML of the schema of TS 29.228 Annex E. The second criterion looks like this:
 
 ```xml
@@ -553,7 +555,6 @@ Each item has a `SIMPLIFIED:` comment in the code; `grep -rn "SIMPLIFIED:" inter
 | HSS, TS 29.328 6.1.1.1 and 6.1.2.1 step 2a | The private identity in User-Name is not read or checked. | The IP-SM-GW does not send it. |
 | HSS, TS 29.328 7.6.9 | The MSISDN is the first tel URI among the public identities, not data of its own. | The configuration then states each number once, and the user is found by MSISDN through the tel URI. |
 | HSS, TS 29.328 7.6.2 | IMPLICIT_IDENTITIES and ALIAS_IDENTITIES return the same set as ALL_IDENTITIES, and are not refused when the user is named by MSISDN. | Each test subscription is one implicit registration set with one service profile. |
-| HSS, TS 29.228 B.2.2 | Every subscription gets the service profile that `default_service_profile` names; only the MSISDN in ServiceInfo differs. | The iFCs of SMS and of the MMTel AS are the same for every user. |
 | User profile, TS 29.228 Annex E | One ServiceProfile, with no optional element but BarringIndication, the `IdentityType` and `WildcardedPSI` of a public service identity, and the criteria, and without the schema's XML namespace. | The test subscriptions and PSI users need nothing more. |
 | iFC, TS 29.228 Annex E and B.2.3 | No SessionDescription SPT (refused), and ProfilePartIndicator, RegistrationType, IncludeRegisterRequest and IncludeRegisterResponse are skipped; a REGISTER SPT matches every REGISTER. | The iFCs of SMS and of the MMTel AS need none of them. RegistrationType is optional for the S-CSCF. |
 | S-CSCF, TS 24.229 5.4.0 | The S-CSCF looks the AS up in DNS for every request, rather than keeping the address that the first third-party REGISTER went to. | Each AS role keeps its state in a Store that all its nodes share, so any node can take the next request. |

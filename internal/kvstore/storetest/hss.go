@@ -19,6 +19,7 @@ import (
 func HSS(t *testing.T, newPair func(t *testing.T) (hss.Store, hss.Store)) {
 	run(t, newPair, []testCase[hss.Store]{
 		{"FindsASubscriberByEachIdentity", hssFindsByEachIdentity},
+		{"KeepsTheMarkAndTheProfileOfASubscription", hssKeepsTheMarkAndTheProfile},
 		{"RefusesAnIdentityOfAnotherSubscription", hssRefusesTakenIdentity},
 		{"DeleteDropsTheIndex", hssDeleteDropsTheIndex},
 		{"ListIsOrderedAndPaged", hssListIsOrderedAndPaged},
@@ -162,6 +163,34 @@ func hssFindsByEachIdentity(t *testing.T, a, b hss.Store) {
 	}
 	if got, ok := subscriber(t, b, "001010000000001@IMS.MNC001.MCC001.3GPPNETWORK.ORG"); !ok || got.PrivateIdentity != impi {
 		t.Errorf("Subscriber by the private identity in upper case = %+v, %v", got, ok)
+	}
+}
+
+// hssKeepsTheMarkAndTheProfile: the test user mark and the name of the
+// service profile are data of the subscription, so an instance that did
+// not add it reads both back, by either identity, and a write of the
+// registration state leaves them as they are. A subscription with
+// neither comes back with neither, which is the subscription that takes
+// the profile of its kind of user.
+func hssKeepsTheMarkAndTheProfile(t *testing.T, a, b hss.Store) {
+	mustAdd(t, a,
+		hss.Subscription{PrivateIdentity: impi, PublicIdentities: []string{impu, tel}, Password: "p", TestUser: true, ServiceProfile: "trial"},
+		hss.Subscription{PrivateIdentity: otherIMPI, PublicIdentities: []string{"sip:other@" + realm}, Password: "p"},
+	)
+	got, ok := subscriber(t, b, impi)
+	if !ok || !got.TestUser || got.ServiceProfile != "trial" {
+		t.Errorf("Subscriber = %+v, %v", got.Subscription, ok)
+	}
+	if byTel, ok := subscriberOf(t, b, tel); !ok || !byTel.TestUser || byTel.ServiceProfile != "trial" {
+		t.Errorf("SubscriberOf = %+v, %v", byTel.Subscription, ok)
+	}
+	got.State = hss.Registered
+	put(t, b, got)
+	if registered, ok := subscriber(t, a, impi); !ok || !registered.TestUser || registered.ServiceProfile != "trial" {
+		t.Errorf("after a Put of the registration state: %+v, %v", registered.Subscription, ok)
+	}
+	if plain, ok := subscriber(t, b, otherIMPI); !ok || plain.TestUser || plain.ServiceProfile != "" {
+		t.Errorf("a subscription that is neither marked nor named: %+v, %v", plain.Subscription, ok)
 	}
 }
 

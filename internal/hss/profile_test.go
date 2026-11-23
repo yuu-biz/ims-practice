@@ -9,13 +9,13 @@ import (
 	"github.com/yuu-biz/ims-practice/internal/ifc"
 )
 
-// TestEverySubscriptionGetsTheDefaultServiceProfile checks the profile
-// in the SAA: the criteria of the service profile that
+// TestASubscriptionWithoutAProfileNameGetsTheDefaultOne checks the
+// profile in the SAA: the criteria of the service profile that
 // DefaultServiceProfile names, and not those of another profile of the
 // configuration, with the MSISDN of each subscriber in ServiceInfo. A
 // subscriber added after the HSS started, as the provisioning API adds
 // them, gets the same profile.
-func TestEverySubscriptionGetsTheDefaultServiceProfile(t *testing.T) {
+func TestASubscriptionWithoutAProfileNameGetsTheDefaultOne(t *testing.T) {
 	register := ifc.InitialFilterCriteria{
 		TriggerPoint: &ifc.TriggerPoint{SPT: []ifc.SPT{{Group: []int{0}, Method: "REGISTER"}}},
 		ApplicationServer: ifc.ApplicationServer{ServerName: "sip:ipsmgw." + realm + ":5060",
@@ -69,5 +69,64 @@ func TestEverySubscriptionGetsTheDefaultServiceProfile(t *testing.T) {
 	}
 	if got := h.config.ServiceProfiles["default"][0].ApplicationServer.ServiceInfo; got != register.ApplicationServer.ServiceInfo {
 		t.Errorf("the configuration changed to %q", got)
+	}
+}
+
+// TestTheProfileOfASubscriptionIsChosenByItsOwnData: the SAA carries
+// the criteria of the profile that the subscription names; without a
+// name of its own, a test user gets the profile for test users and
+// every other user the default one. The HSS reads the choice from the
+// data of that one subscription, so an operator moves one user to
+// another profile without touching the rest of the network.
+func TestTheProfileOfASubscriptionIsChosenByItsOwnData(t *testing.T) {
+	// One criterion per profile, each naming an application server of
+	// its own, so that the SAA says which profile was chosen.
+	profile := func(server string) []ifc.InitialFilterCriteria {
+		return []ifc.InitialFilterCriteria{{
+			TriggerPoint:      &ifc.TriggerPoint{SPT: []ifc.SPT{{Group: []int{0}, Method: "INVITE"}}},
+			ApplicationServer: ifc.ApplicationServer{ServerName: "sip:" + server + "." + realm + ":5060"},
+		}}
+	}
+	const (
+		plain  = "001010000000011@" + realm
+		tester = "001010000000012@" + realm
+		named  = "001010000000013@" + realm
+	)
+	store, err := NewMemoryStore(
+		Subscription{PrivateIdentity: plain, PublicIdentities: []string{"sip:" + plain}, Password: "p"},
+		Subscription{PrivateIdentity: tester, PublicIdentities: []string{"sip:" + tester}, Password: "p", TestUser: true},
+		// A test user that names a profile: the name of the subscription
+		// is the one that counts.
+		Subscription{PrivateIdentity: named, PublicIdentities: []string{"sip:" + named}, Password: "p", TestUser: true, ServiceProfile: "cdiv"},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	node := diameter.NewNode(diameter.Identity{OriginHost: "hss." + realm, OriginRealm: realm}, []uint32{diameter.ApplicationIDCx}, diameter.Timers{}, quiet())
+	h := mustHSS(Config{Realm: realm, VisitedNetworks: []string{realm},
+		ServiceProfiles: map[string][]ifc.InitialFilterCriteria{
+			"default": profile("mmtel"), "trial": profile("trial"), "cdiv": profile("cdiv")},
+		DefaultServiceProfile:  "default",
+		TestUserServiceProfile: "trial"}, store, node)
+
+	for _, tt := range []struct{ private, server, why string }{
+		{plain, "sip:mmtel." + realm + ":5060", "the default profile"},
+		{tester, "sip:trial." + realm + ":5060", "the profile for test users"},
+		{named, "sip:cdiv." + realm + ":5060", "the profile that the subscription names"},
+	} {
+		saa, err := cx.ParseServerAssignmentAnswer(exchange(t, h, cx.ServerAssignmentRequest{Header: hdr,
+			UserName: tt.private, PublicIdentities: []string{"sip:" + tt.private}, ServerName: scscf,
+			ServerAssignmentType: cx.AssignRegistration}.Message()))
+		if err != nil || !saa.Result.Success() {
+			t.Fatalf("SAA for %s: %+v, %v", tt.private, saa, err)
+		}
+		got, err := cx.ParseUserProfile(saa.UserData)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(got.InitialFilterCriteria) != 1 || got.InitialFilterCriteria[0].ApplicationServer.ServerName != tt.server {
+			t.Errorf("%s got %+v, want the criterion of %s, which names %s",
+				tt.private, got.InitialFilterCriteria, tt.why, tt.server)
+		}
 	}
 }

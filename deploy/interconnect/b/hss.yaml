@@ -28,10 +28,16 @@ hss:
   # the S-CSCF which request goes to which application server (TS 29.228
   # B.2.2). The HSS holds its profiles by name and answers the SAA with
   # the criteria of the profile that the subscription gets; the name
-  # itself stays in the HSS. This setting names a profile of
+  # itself stays in the HSS. A subscription that names no profile of its
+  # own gets the one named here, or the one of test_user_service_profile
+  # when it is marked test_user. Both settings name a profile of
   # service_profiles below. Only one profile is defined here, so every
   # subscription gets the same criteria.
   default_service_profile: default
+  # Test users get the same criteria as every other user here. To try a
+  # feature out on the test users alone, define a second profile with
+  # the criteria of that feature and name it here.
+  test_user_service_profile: default
   # SMS over IP as in network A (deploy/compose/hss.yaml): the
   # third-party REGISTER and the short messages that a user sends go to
   # the IP-SM-GW.

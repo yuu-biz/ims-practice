@@ -46,6 +46,13 @@ type subscriptionRequest struct {
 	MMTelServices string `json:"mmtel_services,omitempty"`
 	// CustomizedAlertingTone provisions CAT (TS 24.182 4.5.2).
 	CustomizedAlertingTone *mmtel.CustomizedAlertingTone `json:"customized_alerting_tone,omitempty"`
+	// TestUser marks the subscription as one the operator keeps for
+	// trying features out (Subscription.TestUser).
+	TestUser bool `json:"test_user,omitempty"`
+	// ServiceProfile names the service profile of the subscription, one
+	// of those of the configuration. Without it the subscription takes
+	// the profile of its kind of user.
+	ServiceProfile string `json:"service_profile,omitempty"`
 }
 
 // akaRequest is the AKA credentials of a new subscription, in the form
@@ -58,7 +65,11 @@ type akaRequest struct {
 }
 
 func (r subscriptionRequest) subscription(config Config) (Subscription, error) {
-	s := Subscription{PrivateIdentity: r.PrivateIdentity, PublicIdentities: r.PublicIdentities, BarredIdentities: r.BarredIdentities, Password: r.Password}
+	s := Subscription{PrivateIdentity: r.PrivateIdentity, PublicIdentities: r.PublicIdentities, BarredIdentities: r.BarredIdentities, Password: r.Password,
+		TestUser: r.TestUser, ServiceProfile: r.ServiceProfile}
+	if err := config.CheckServiceProfile(r.ServiceProfile); err != nil {
+		return Subscription{}, err
+	}
 	data, err := config.RepositoryData(r.PrivateIdentity, r.MMTelServices, r.UtPassword, r.CustomizedAlertingTone)
 	if err != nil {
 		return Subscription{}, err
@@ -96,6 +107,10 @@ type subscriptionResponse struct {
 	// CustomizedAlertingTone is the CAT that the operator provisioned,
 	// absent without one.
 	CustomizedAlertingTone *mmtel.CustomizedAlertingTone `json:"customized_alerting_tone,omitempty"`
+	// TestUser and ServiceProfile are the mark and the profile name of
+	// the subscription, absent where it has neither.
+	TestUser       bool   `json:"test_user,omitempty"`
+	ServiceProfile string `json:"service_profile,omitempty"`
 }
 
 func response(s Subscriber) subscriptionResponse {
@@ -113,6 +128,8 @@ func response(s Subscriber) subscriptionResponse {
 		AuthenticationSchemes: schemes,
 		RegistrationState:     s.State.String(),
 		ServerName:            s.ServerName,
+		TestUser:              s.TestUser,
+		ServiceProfile:        s.ServiceProfile,
 	}
 }
 

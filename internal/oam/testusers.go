@@ -24,11 +24,11 @@ import (
 // HSS provisioning API and the maintenance API of the HSS nodes, and
 // keeps nothing.
 //
-// The HSS of internal/hss has none of it. The OAM uses the test_user
-// and service_profile attributes, PATCH /subscriptions/{impi}, the
-// service profiles in the configuration, and these changeable
-// settings; against an HSS without them it answers 502 and names what
-// is missing.
+// The HSS of internal/hss keeps the test_user and service_profile
+// attributes and the service profiles of its configuration, and picks
+// the profile of a subscription as above. It has no
+// PATCH /subscriptions/{impi} and no changeable settings; against an
+// HSS without them the OAM answers 502 and names what is missing.
 const (
 	SettingAdmission              = "hss.admission"
 	SettingDefaultServiceProfile  = "hss.default_service_profile"
