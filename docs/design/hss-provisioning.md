@@ -119,7 +119,7 @@ UNREGISTERED_USER を断るかどうかは、HSS が持つ登録の状態で決�
 | 加入者のプロファイルの決め方 | 加入者に `service_profile` があればそれ、無くて `test_user` なら `hss.test_user_service_profile`、ほかは `hss.default_service_profile` です。2 つの名前の設定も、動かしたまま変えられる項目にします。機能を全員に広げるときは `hss.default_service_profile` を変えます。 |
 | SAA | User-Data に、選んだプロファイルの iFC と、加入の識別子（barring を含む）を入れます（TS 29.228 6.1.2.1、Annex B.2）。S-CSCF が User-Data-Already-Available で持っていると言えば、プロファイルを返しません（6.6）。 |
 | 名前の扱い | プロファイルの名前は Cx に出ません。User-Data の XML の `ServiceProfile` は、公開の識別子、CoreNetworkServicesAuthorization、iFC、Extension だけを持ち、名前の要素がないためです（TS 29.228 Annex E の Table E.2、Annex B.2 の Figure B.2.1）。S-CSCF が見るのは iFC だけです。 |
-| 無い名前 | `POST` と `PUT` は、`hss.service_profiles` に無い名前を 400 で断ります。2 つの名前の設定の変更も、無い名前を断ります。 |
+| 無い名前 | `POST`、`PUT`、`PATCH` は、`hss.service_profiles` に無い名前を 400 で断ります。2 つの名前の設定の変更も、無い名前を断ります。 |
 | 加入者を変えたときの反映 | 1 件のプロビジョニングの要求が、登録中か未登録の状態の加入者に渡すプロファイルを変えたら、HSS が完全なユーザープロファイルを PPR で S-CSCF に送ります。きっかけが `service_profile` でも `test_user` でも同じです。次の登録を待ちません。 |
 | 設定を変えたときの反映 | `hss.default_service_profile` と `hss.test_user_service_profile` を変えても、PPR は送りません。この扱いは、加入者 1 人の変更ではないので、上の行とは別にこの記録で決めたものです。6.6.1 の「ただちに push する」からは外れます（「残っている課題」）。送るには、その時点の登録をすべてたどる必要があり、加入者の数に比例する処理を役割に入れないためです（[requirements.md](../requirements.md) の「商用網の規模に向けて水平に広げられる組み方」）。登録中の利用者には、次の登録で新しいプロファイルが届きます。この S-CSCF は SAR に User-Data-Already-Available を入れないので、登録のたびにプロファイルを受け取り直すためです（`internal/scscf/scscf.go` の `serverAssignment`）。この設定を保守用の API で変えられるようにする作業で、送らないことを `SIMPLIFIED:` に書きます。 |
 | 今のコード | `internal/hss/profile.go` の `SIMPLIFIED:`（すべての加入に同じ iFC を渡す）は外れます。ServiceInfo の MSISDN の置き換えは残ります。`internal/scscf/unregistered.go` の `UnregisteredProfileLifetime` のコメントにある「この HSS は S-CSCF に変更を push しない」という断りも外れます。 |
