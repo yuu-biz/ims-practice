@@ -56,6 +56,8 @@ the standard alone. `TestPackageIsComplete` reads that part instead.
 
 ## Licence
 
+The licences of this repository (the Apache License 2.0 and CC BY 4.0, see `NOTICE`) do not apply to these files; the terms below do.
+
 Ecma International gives its standards away free of charge, and its
 text copyright policy says that they may be copied and republished
 unchanged, under the copyright notice below, which Ecma has put in every
