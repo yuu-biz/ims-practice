@@ -44,7 +44,19 @@ func (h *HSS) handleS6c(ctx context.Context, request *diam.Message) *diam.Messag
 // reportSMDeliveryStatus is the HSS side of the delivery status report,
 // TS 29.338 5.2.3.4: the SMS-GMSC tells the HSS how a delivery ended,
 // and the HSS keeps or drops the service centre address accordingly (TS
-// 23.040 3.2.8 case 1).
+// 23.040 3.2.6).
+//
+// SIMPLIFIED: TS 23.204 6.5a step 19. The HSS acts on the report of the
+// SMS-GMSC, which the clause has it ignore because the IP-SM-GW has
+// already reported in step 17. The IP-SM-GW of this project does not
+// speak S6c, so the report of the SMS-GMSC is the only one the HSS
+// gets.
+//
+// SIMPLIFIED: TS 23.040 3.2.6 items 1a and 1b. An absent user sets
+// UNRI whichever node reported it, rather than MNRF for a report from
+// an MSC and MNRG for one from an SGSN. The HSS of this project names
+// no such serving node, so only a delivery through the IP-SM-GW can
+// fail.
 //
 // The answer never carries the MSISDN-Alert of Table 5.2.3.1-2: the HSS
 // of this project finds the user by the very MSISDN of the request, so
@@ -115,8 +127,7 @@ const (
 // reportedOutcome reads the outcomes of an RDR, and for a delivery that
 // failed the cause the HSS records. A memory that was full decides over
 // an absent user, whichever node reported which: the UE is reachable
-// then, so only free memory helps (TS 23.040 3.2.8 case 1 items 1e and
-// 2f).
+// then, so only free memory helps (TS 23.040 3.2.6 items 1e and 2f).
 func reportedOutcome(o sgd.SMDeliveryOutcome) (smDeliveryReport, DeliveryFailure) {
 	report, cause := noSuchCause, AbsentUser
 	for _, n := range []*sgd.NodeSMDeliveryOutcome{o.MMESMDeliveryOutcome, o.IPSMGWSMDeliveryOutcome, o.SMSF3GPPSMDeliveryOutcome} {
@@ -222,7 +233,6 @@ func (h *HSS) sendRoutingInfoForSM(ctx context.Context, r sgd.SendRoutingInfoFor
 // what the SC waits for instead.
 func servingNode(u Subscriber) *sgd.ServingNode {
 	if u.IPSMGWNumber == "" || u.IPSMGW.OriginHost == "" || u.UNRI {
-
 		return nil
 	}
 	return &sgd.ServingNode{
@@ -315,6 +325,16 @@ const alertTimeout = 30 * time.Second
 // The alerts go out in the background, because the answer to the
 // request that brought the user back must not wait for a service
 // centre.
+//
+// SIMPLIFIED: TS 23.204 6.5b step 2 and 6.6, TS 23.040 3.2.6 items 2c
+// and 2f. Of the two things that make a user ready for short messages
+// again, the HSS learns only of the registration of an IP-SM-GW. A UE
+// that becomes available without registering again, and one whose
+// memory becomes free, are notifications that the IP-SM-GW of this
+// project does not send: it subscribes to no reachability notification
+// and passes no memory available on. So UNRI is cleared by a
+// registration and by a short message that arrives, and MCEF only by a
+// short message that arrives.
 func (h *HSS) alertServiceCentres(u Subscriber) {
 	addresses := slices.Clone(u.MessageWaitingData)
 	h.alerts.Add(1)
@@ -355,6 +375,14 @@ const (
 )
 
 // alertServiceCentre sends one ALR and reports how it ended.
+//
+// SIMPLIFIED: TS 29.338 5.3.1.2. The alert goes out over the connection
+// that the service centre opened to this HSS instance, as the
+// Registration-Termination-Request to an S-CSCF does, instead of being
+// routed to the Destination-Host by a Diameter agent. An instance that
+// the service centre is not connected to therefore sends no alert; the
+// address stays in the message waiting data, so the next return of the
+// user alerts it from whichever instance answers that request.
 func (h *HSS) alertServiceCentre(ctx context.Context, u Subscriber, address string) alertOutcome {
 	log := h.log.With("private_identity", u.PrivateIdentity, "sc_address", address)
 	centre, ok := h.serviceCentres[address]
@@ -371,7 +399,6 @@ func (h *HSS) alertServiceCentre(ctx context.Context, u Subscriber, address stri
 		log.Warn("no alert sent: this node takes no Diameter connections")
 		return alertRefused
 	}
-
 	// The MSISDN-Alert of TS 23.040 3.2.7, by which the service centre
 	// finds the short messages it holds for the user.
 	msisdn := u.MSISDN()

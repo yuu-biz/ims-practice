@@ -544,6 +544,10 @@ octet 2: lowest 2 bits of 'l' (00), then rest of 'e' (110010) = 0011 0010 = 32
 | Sh、TS 29.328 7.1.3 | External-Identifier は無い。 | マシン型の通信のためのもので、このプロジェクトでは扱わない。 |
 | Sh、TS 29.328 Annex D | Sh-Data には PublicIdentifiers（IMSPublicIdentity、MSISDN）と RepositoryData、Sh-IMS-Data の SCSCFName と SMSRegistrationInfo だけがある。 | 残りは、使う役割ができたときに加える。 |
 | Sh、TS 29.328 7.6.16 | SMSRegistrationInfo に SCAddress と、SBI に対応しているかの表示が無い。 | HSS は IP-SM-GW にサービスセンタのアドレスを渡さず、IP-SM-GW は SC に Diameter だけで届く。 |
+| HSS、TS 29.338 5.3.1.2 | 通知は、サービスセンタがこの HSS のインスタンスに張った接続で返します。エージェントが Diameter 名で振り分ける形ではありません。サービスセンタがつながっていないインスタンスは通知を送りません。 | HSS は S-CSCF にも同じ方法で届き、このプロジェクトに Diameter のエージェントはありません。アドレスは message waiting data に残るので、次に利用者が戻ったとき、その要求に答えたインスタンスが通知します。 |
+| HSS、TS 23.204 6.5b step 2 と 6.6、TS 23.040 3.2.6 の 2c と 2f | 利用者がまたショートメッセージを受け取れるようになる 2 つのきっかけのうち、HSS が知るのは IP-SM-GW の登録だけです。登録し直さずに届くようになった UE と、メモリに空きができた UE の知らせは、どこからも来ません。 | IP-SM-GW は到達性の通知を購読せず、メモリに空きができた知らせも渡しません。メモリが一杯だったことを示すフラグは、ショートメッセージが届いたときに落ちます。 |
+| HSS、TS 23.204 6.5a step 19 | SMS-GMSC が送る配送状態の報告を HSS が処理します。条項では、IP-SM-GW が既に報告しているので無視するとあります。 | このプロジェクトの IP-SM-GW は S6c を話さないので、HSS に届く報告は SMS-GMSC のものだけです。 |
+| HSS、TS 23.040 3.2.6 の 1a と 1b | 利用者が不在だったとき、どのノードからの報告でも IP で届かないことを示すフラグを立てます。MSC からの報告と SGSN からの報告でフラグを分けません。 | HSS はそのような serving node を示さないので、失敗するのは IP-SM-GW を通る配送だけです。 |
 | HSS、TS 29.338 5.2.1.3 | 配送先の問い合わせに答えるとき、着信ショートメッセージのテレサービスに加入しているかと、着信を禁止されていないかを確かめない。そのため DIAMETER_ERROR_SERVICE_NOT_SUBSCRIBED と DIAMETER_ERROR_SERVICE_BARRED を返さない。 | この HSS の加入者はどれもショートメッセージを受け取れ、事業者が決める発着信規制を持たない。 |
 | HSS、TS 29.338 Table 5.2.1.1-2 | 非公開ユーザー識別子が IMSI から作られていない加入、たとえばソフトフォンが番号で登録する加入では、成功の応答に IMSI を入れない。 | HSS は IMSI を独立して持たず、TS 23.003 13.3 の IMSI を非公開ユーザー識別子から読む。 |
 | HSS、TS 23.204 6.4 step 3a から 3c | 配送先の問い合わせを IP-SM-GW に回さず、HSS が自分で答える。回した場合、IP-SM-GW は自分のアドレスと MT Correlation ID を返す。 | 問い合わせを回すのは、ほかの網から来たショートメッセージを宛先のホーム網を通して配送させるためで、このプロジェクトはそれを行わない。IP-SM-GW の Diameter 名は登録のときに HSS が覚えている。 |

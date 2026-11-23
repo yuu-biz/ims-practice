@@ -215,7 +215,7 @@ type Subscriber struct {
 const maxMessageWaitingData = 4
 
 // DeliveryFailure is why a service centre address goes into the message
-// waiting data of a user (TS 23.040 3.2.8 case 1).
+// waiting data of a user (TS 23.040 3.2.6 items 1a to 1e).
 type DeliveryFailure int
 
 const (
@@ -237,9 +237,9 @@ func (f DeliveryFailure) String() string {
 
 // addMessageWaiting records that the service centre at scAddress holds a
 // short message for the user, and sets the flags that cause asks for (TS
-// 23.040 3.2.8 case 1). It reports whether the address is in the data
-// afterwards: a full MWD takes no more, and the SC is left with its own
-// retries.
+// 23.040 3.2.6 items 1a to 1e). It reports whether the address is in the
+// data afterwards: a full MWD takes no more, and the SC is left with its
+// own retries.
 func (s *Subscriber) addMessageWaiting(scAddress string, cause DeliveryFailure) bool {
 	switch cause {
 	case MemoryCapacityExceeded:

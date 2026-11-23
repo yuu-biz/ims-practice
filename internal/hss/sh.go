@@ -231,7 +231,7 @@ func (h *HSS) profileUpdate(ctx context.Context, r sh.ProfileUpdateRequest) sh.P
 	if number != "" && data.ShIMSData.SMSRegistrationInfo.SupportsS6c() {
 		u.IPSMGW = origin(r.Header)
 	}
-	// TS 23.040 3.2.8 case 1 item 2c, TS 23.204 6.5b step 2: an IP-SM-GW
+	// TS 23.040 3.2.6 item 2c, TS 23.204 6.5b step 2: an IP-SM-GW
 	// that registers says that the UE is reachable for SMS over IP
 	// again, so UNRI goes. The service centres that hold a short message
 	// for the user are then alerted, unless the memory of the UE is the
