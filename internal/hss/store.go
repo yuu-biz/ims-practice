@@ -330,6 +330,22 @@ type Store interface {
 	// stored, and writes nothing for one that is not any more. The
 	// caller holds the subscriber's lock. It does not change SQN_HE.
 	Put(ctx context.Context, sub Subscriber) error
+	// Replace writes the whole of a subscriber that is stored, its
+	// credentials and public identities included, and writes nothing for
+	// one that is not any more. The caller holds the subscriber's lock,
+	// having read what it replaces. The private identity is the key, so
+	// a Replace never moves a subscriber to another one; only how it is
+	// spelled changes.
+	//
+	// It keeps the stored SQN_HE, as Put does: that changes by
+	// CompareAndSwapSQN alone. It leaves the repository data alone as
+	// well, which CompareAndSwapRepositoryData changes, so that an
+	// update over Sh is never overwritten unseen.
+	//
+	// It fails with ErrIdentityTaken, having written nothing, if one of
+	// the public identities belongs to another subscription. The
+	// identities that the subscription no longer holds stop finding it.
+	Replace(ctx context.Context, sub Subscriber) error
 	// CompareAndSwapSQN sets SQN_HE of the subscriber to new if it is
 	// still old, and reports whether it did. SQN_HE must never go back
 	// or be used twice, even when several HSS instances share the
@@ -543,6 +559,55 @@ func (s *MemoryStore) Put(_ context.Context, sub Subscriber) error {
 		s.countRegistered(sub, 1)
 	}
 	return nil
+}
+
+// Replace writes the whole subscription back: unlike Put, the index by
+// public identity and the numbers of the provisioned identities (Counts)
+// follow a change of the public identities. It writes the index of the
+// identities that the subscription now holds before the subscriber
+// itself, and drops the index of those it has let go after it, as Add
+// and Delete do, so that no identity finds a subscription that does not
+// hold it.
+func (s *MemoryStore) Replace(_ context.Context, sub Subscriber) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	k := privateKey(sub.PrivateIdentity)
+	stored, ok := s.byPrivate[k]
+	if !ok {
+		return nil
+	}
+	for _, id := range sub.PublicIdentities {
+		if owner, taken := s.byPublic[publicKey(id)]; taken && owner != k {
+			return fmt.Errorf("%w: %s", ErrIdentityTaken, id)
+		}
+	}
+	sub.PublicIdentities = slices.Clone(sub.PublicIdentities)
+	sub.BarredIdentities = slices.Clone(sub.BarredIdentities)
+	sub.MessageWaitingData = slices.Clone(sub.MessageWaitingData)
+	sub.AKA = cloneAKA(sub.AKA)
+	if sub.AKA != nil && stored.AKA != nil {
+		sub.AKA.SQN = stored.AKA.SQN
+	}
+	sub.RepositoryData = nil // the repository data is not the subscriber's item
+	for _, id := range sub.PublicIdentities {
+		s.byPublic[publicKey(id)] = k
+	}
+	s.byPrivate[k] = sub
+	for _, id := range stored.PublicIdentities {
+		if !holdsPublic(sub.Subscription, publicKey(id)) {
+			delete(s.byPublic, publicKey(id))
+		}
+	}
+	s.countIdentities(stored.Subscription, -1)
+	s.countRegistered(stored, -1)
+	s.countIdentities(sub.Subscription, 1)
+	s.countRegistered(sub, 1)
+	return nil
+}
+
+// holdsPublic reports whether sub has the public identity of key pk.
+func holdsPublic(sub Subscription, pk string) bool {
+	return slices.ContainsFunc(sub.PublicIdentities, func(id string) bool { return publicKey(id) == pk })
 }
 
 // countIdentities adds sign, 1 or -1, for each public user identity of

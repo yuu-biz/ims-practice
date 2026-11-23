@@ -106,9 +106,10 @@ func (s *Store) record(ctx context.Context, privateID string) (record, string, b
 	return r, version, true, nil
 }
 
-// holds reports whether r holds the public identity of key pk.
-func holds(r record, pk string) bool {
-	return slices.ContainsFunc(r.PublicIdentities, func(id string) bool { return publicKey(id) == pk })
+// holds reports whether ids, the public identities of a subscription,
+// hold the one of key pk.
+func holds(ids []string, pk string) bool {
+	return slices.ContainsFunc(ids, func(id string) bool { return publicKey(id) == pk })
 }
 
 func (s *Store) Subscriber(ctx context.Context, privateID string) (hss.Subscriber, bool, error) {
@@ -127,7 +128,7 @@ func (s *Store) SubscriberOf(ctx context.Context, publicID string) (hss.Subscrib
 		return hss.Subscriber{}, false, err
 	}
 	r, _, ok, err := s.record(ctx, target)
-	if err != nil || !ok || !holds(r, publicKey(publicID)) {
+	if err != nil || !ok || !holds(r.PublicIdentities, publicKey(publicID)) {
 		return hss.Subscriber{}, false, err
 	}
 	return r.Subscriber, true, nil
@@ -230,7 +231,7 @@ func (s *Store) claimPublic(ctx context.Context, publicID, k string) (claim, err
 		}
 		var other record
 		_, err = kvjson.Read(ctx, s.c, s.subscriberKey(target), &other)
-		if err == nil && holds(other, publicKey(publicID)) {
+		if err == nil && holds(other.PublicIdentities, publicKey(publicID)) {
 			return claim{}, fmt.Errorf("%w: %s", hss.ErrIdentityTaken, publicID)
 		}
 		if err != nil && !errors.Is(err, kvstore.ErrNotFound) {
@@ -259,6 +260,74 @@ func (s *Store) Put(ctx context.Context, sub hss.Subscriber) error {
 		return nil
 	}
 	return err
+}
+
+// Replace claims each public identity that the subscription did not
+// hold, the way Add does, writes the whole subscriber, and then drops
+// the index items of the identities it has let go: an identity never
+// finds a subscription that does not hold it, and one the claim loses
+// leaves nothing behind. The repository data of the item stays as it
+// is, and so does SQN_HE, which CompareAndSwapSQN alone changes.
+//
+// The write is a read, modify and write of the item, not a compare and
+// swap against what the caller read: an update of SQN_HE or of the
+// repository data runs without the subscriber's lock, so one that lands
+// in between is to be kept, not to fail the Replace.
+func (s *Store) Replace(ctx context.Context, sub hss.Subscriber) error {
+	k := privateKey(sub.PrivateIdentity)
+	stored, _, ok, err := s.record(ctx, k)
+	if err != nil || !ok {
+		return err
+	}
+	var claimed []claim
+	undo := func() {
+		// The caller's context may be what ended the Replace; the removals
+		// still get the Timeout of the Config.
+		ctx := context.WithoutCancel(ctx)
+		for _, c := range claimed {
+			s.c.RemoveIf(ctx, c.key, c.version)
+		}
+	}
+	for _, id := range sub.PublicIdentities {
+		if holds(stored.PublicIdentities, publicKey(id)) {
+			continue
+		}
+		c, err := s.claimPublic(ctx, id, k)
+		if err != nil {
+			undo()
+			return err
+		}
+		claimed = append(claimed, c)
+	}
+	sub.RepositoryData = nil // the repository data is the item's own field
+	_, err = kvjson.Modify(ctx, s.c, s.subscriberKey(k), noTTL, func(r *record) error {
+		if r.Provisional {
+			return errUnchanged
+		}
+		next := sub
+		if next.AKA != nil && r.AKA != nil {
+			credentials := *next.AKA
+			credentials.SQN = r.AKA.SQN
+			next.AKA = &credentials
+		}
+		r.Subscriber = next
+		return nil
+	})
+	switch {
+	case errors.Is(err, kvstore.ErrNotFound) || errors.Is(err, errUnchanged):
+		// The subscriber went, or an Add has not finished with it.
+		undo()
+		return nil
+	case err != nil:
+		undo()
+		return err
+	}
+	for _, id := range stored.PublicIdentities {
+		if !holds(sub.PublicIdentities, publicKey(id)) {
+			s.c.RemoveIndexIf(ctx, s.publicIndexKey(id), k)
+		}
+	}
+	return nil
 }
 
 // swapped is the result of a Modify that changes the item only if it is
