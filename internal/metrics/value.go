@@ -53,6 +53,8 @@ func (c *Counter) Add(delta float64, labelValues ...string) {
 
 func (c *Counter) metricName() string { return c.f.name }
 
+func (c *Counter) definition() string { return c.f.definition() }
+
 func (c *Counter) write(w *bufio.Writer) {
 	c.f.writeHeader(w)
 	c.f.each(func(pairs string, v *floatValue) {
@@ -83,6 +85,8 @@ func (g *Gauge) Inc(labelValues ...string) { g.Add(1, labelValues...) }
 func (g *Gauge) Dec(labelValues ...string) { g.Add(-1, labelValues...) }
 
 func (g *Gauge) metricName() string { return g.f.name }
+
+func (g *Gauge) definition() string { return g.f.definition() }
 
 func (g *Gauge) write(w *bufio.Writer) {
 	g.f.writeHeader(w)
@@ -142,6 +146,10 @@ func (h *Histogram) Observe(v float64, labelValues ...string) {
 }
 
 func (h *Histogram) metricName() string { return h.f.name }
+
+// definition adds the bucket bounds, which two registrations of a
+// histogram must agree on too.
+func (h *Histogram) definition() string { return fmt.Sprintf("%s\n%v", h.f.definition(), h.bounds) }
 
 // write writes the cumulative buckets, the sum and the count.
 //
