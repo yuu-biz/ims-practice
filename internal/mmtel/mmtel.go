@@ -29,6 +29,7 @@ import (
 	"time"
 
 	"github.com/yuu-biz/ims-practice/internal/ims"
+	"github.com/yuu-biz/ims-practice/internal/maintenance"
 	"github.com/yuu-biz/ims-practice/internal/sh"
 	"github.com/yuu-biz/ims-practice/internal/sip"
 )
@@ -97,6 +98,12 @@ type AS struct {
 	// conferences are the conferences that this instance hosts, by
 	// their ID (conference.go).
 	conferences sync.Map
+	// managed is the administrative state that the maintenance API of
+	// the node keeps for the AS, and users counts the work that a shut
+	// down waits for: the calls it is serving and the requests of Ut it
+	// is answering (maintenance.go).
+	managed atomic.Pointer[maintenance.ManagedFunction]
+	users   atomic.Int64
 }
 
 // New returns the AS. store keeps its calls and conferences its
@@ -121,7 +128,9 @@ func (as *AS) uri() string { return "sip:" + as.cfg.Host + ":" + strconv.Itoa(as
 
 // Listen starts the UA of the AS on transport: each INVITE outside a
 // dialog becomes a call of the AS, or joins the conference whose URI it
-// is addressed to (conference.go). A SUBSCRIBE outside a call goes to
+// is addressed to (conference.go); an INVITE that would start something
+// new is refused while the operator has the AS out of service
+// (maintenance.go). A SUBSCRIBE outside a call goes to
 // the conference it names (conferenceevent.go); the UA answers any
 // other request outside a dialog by itself: OPTIONS with 200, anything
 // else with 405 (Method Not Allowed). The filter criteria of the AS
@@ -140,10 +149,10 @@ func (as *AS) Listen(transport *sip.TransportLayer) error {
 		// REFER goes from leg to leg like any other request within a
 		// dialog (b2bua.Call).
 		Allow:  []sip.Method{sip.REFER},
-		OnCall: as.serve,
+		OnCall: as.onCall,
 		// The focus is the notifier of the conference event package (TS
 		// 24.147 5.3.3).
-		OnSubscribe: as.subscribe,
+		OnSubscribe: as.onSubscribe,
 		Locate: func(u sip.URI) ([]sip.Destination, error) {
 			return ims.Targets(context.Background(), as.locator, u)
 		},
