@@ -2,10 +2,13 @@ package mrfc_test
 
 import (
 	"context"
+	"log/slog"
 	"sync/atomic"
 	"testing"
 
 	"github.com/yuu-biz/ims-practice/internal/agw"
+	"github.com/yuu-biz/ims-practice/internal/config"
+	"github.com/yuu-biz/ims-practice/internal/maintenance"
 	"github.com/yuu-biz/ims-practice/internal/mrfc"
 )
 
@@ -106,6 +109,90 @@ func TestConferenceTakesTheNextMRFP(t *testing.T) {
 			first.relay.Contexts(), second.relay.Contexts(), media.Context)
 	}
 	out.Bye()
+}
+
+// outOfService gives the relay of media the maintenance API of its
+// node, as the node of an MRFP does, and shuts it down: the MRFP then
+// makes no context, and goes on with those it holds (internal/agw).
+func outOfService(t *testing.T, media testMRFP) {
+	t.Helper()
+	const role = string(config.RoleMRFP)
+	node, err := maintenance.New(maintenance.Config{
+		Node:          role,
+		LogLevel:      new(slog.LevelVar),
+		Functions:     []maintenance.Function{media.relay.Function(role)},
+		Configuration: func() any { return map[string]string{"node": role} },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	media.relay.Manage(node.ManagedFunction(role))
+	if _, err := node.SetAdministrativeState(role, maintenance.AdministrativeStateRequest{
+		AdministrativeState: maintenance.ShuttingDown, Operator: "test"}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestTheMRFCTakesTheNextMRFPThatIsInService: the operator takes out of
+// service the MRFP that a conference ID picks, and the mix of that
+// conference is made on the other MRFP. The first party finds which MRFP
+// the ID picks, so the test shuts down that one whichever it is.
+func TestTheMRFCTakesTheNextMRFPThatIsInService(t *testing.T) {
+	first, second := startMRFP(t), startMRFP(t)
+	store := mrfc.NewMemoryStore()
+	m := startMRFC(t, store, first.processor("a"), second.processor("b"))
+	as := newUA(t, "mmtel", nil)
+
+	out := invite(t, as, "sip:conf=x@"+m.host, offerFrom(t, addrOf(party(t)), "sendrecv"))
+	if ok := final(t, out); ok.StatusCode != 200 {
+		t.Fatalf("the first party got %d", ok.StatusCode)
+	}
+	picked, other := first, second
+	if len(second.relay.Contexts()) == 1 {
+		picked, other = second, first
+	}
+	out.Bye()
+	waitNoContexts(t, picked.relay)
+	waitFor(t, func() bool {
+		_, held, err := store.Conference(context.Background(), "x")
+		if err != nil {
+			t.Fatal(err)
+		}
+		return !held
+	}, "the Store to forget the conference")
+
+	outOfService(t, picked)
+	out = invite(t, as, "sip:conf=x@"+m.host, offerFrom(t, addrOf(party(t)), "sendrecv"))
+	if ok := final(t, out); ok.StatusCode != 200 {
+		t.Fatalf("the party of a conference whose MRFP is out of service got %d, want 200 from the other MRFP", ok.StatusCode)
+	}
+	if cs := picked.relay.Contexts(); len(cs) != 0 {
+		t.Errorf("the MRFP that is out of service holds %v, want no context", cs)
+	}
+	if cs := other.relay.Contexts(); len(cs) != 1 {
+		t.Errorf("the MRFP that is in service holds %v, want the mix of the conference", cs)
+	}
+	out.Bye()
+}
+
+// TestTheMRFCRefusesWhenEveryMRFPIsOutOfService: with no MRFP left in
+// service the MRFC answers 503, so the AS goes on without the MRF.
+func TestTheMRFCRefusesWhenEveryMRFPIsOutOfService(t *testing.T) {
+	first, second := startMRFP(t), startMRFP(t)
+	m := startMRFC(t, mrfc.NewMemoryStore(), first.processor("a"), second.processor("b"))
+	as := newUA(t, "mmtel", nil)
+	outOfService(t, first)
+	outOfService(t, second)
+
+	for _, requestURI := range []string{
+		"sip:annc@" + m.host + ";play=/provisioned/notice",
+		"sip:conf=x@" + m.host,
+	} {
+		resp := final(t, invite(t, as, requestURI, offerFrom(t, addrOf(party(t)), "sendrecv")))
+		if resp.StatusCode != 503 {
+			t.Errorf("%s got %d, want 503", requestURI, resp.StatusCode)
+		}
+	}
 }
 
 // TestTheMRFCRefusesWhenNoMRFPGivesAContext: the MRFC asks every MRFP
