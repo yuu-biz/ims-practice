@@ -28,6 +28,7 @@ func HSS(t *testing.T, newPair func(t *testing.T) (hss.Store, hss.Store)) {
 		{"CompareAndSwapRepositoryData", hssCompareAndSwapRepositoryData},
 		{"ConcurrentSQN", hssConcurrentSQN},
 		{"ConcurrentAddsOfOneIdentity", hssConcurrentAdds},
+		{"CountsFollowWhatIsStored", hssCountsFollowWhatIsStored},
 	})
 }
 
@@ -401,5 +402,66 @@ func hssConcurrentAdds(t *testing.T, a, b hss.Store) {
 		if _, ok := subscriberOf(t, a, shared); !ok {
 			t.Errorf("SubscriberOf(%s) finds nothing", shared)
 		}
+	}
+}
+
+// counts reads the numbers of TS 32.409 4.2.1 and reports whether the
+// store keeps them.
+func counts(t *testing.T, s hss.Store) (hss.Counts, bool) {
+	t.Helper()
+	c, kept, err := s.Counts(context.Background())
+	if err != nil {
+		t.Errorf("Counts: %v", err)
+	}
+	return c, kept
+}
+
+// A store that keeps the numbers of TS 32.409 4.2.1 follows what it
+// holds: Add raises the provisioned numbers, a Put that registers a
+// subscriber raises the registered ones, and Delete takes both away. A
+// store that keeps none says so and gives no numbers, which the HSS
+// reads as having no database usage measurement to serve.
+func hssCountsFollowWhatIsStored(t *testing.T, a, b hss.Store) {
+	if _, kept := counts(t, a); !kept {
+		if c, _ := counts(t, b); c != (hss.Counts{}) {
+			t.Errorf("Counts = %+v for a store that keeps none, want the zero value", c)
+		}
+		return
+	}
+	mustAdd(t, a, hss.Subscription{PrivateIdentity: impi, PublicIdentities: []string{impu, tel}, Password: "p"})
+	want := hss.Counts{Subscriptions: 1, SIPPublicIdentities: 1, TelPublicIdentities: 1}
+	if got, _ := counts(t, b); got != want {
+		t.Errorf("after Add, Counts = %+v, want %+v", got, want)
+	}
+
+	sub, _ := subscriber(t, a, impi)
+	sub.State = hss.Registered
+	put(t, a, sub)
+	want.RegisteredPublicIdentities, want.RegisteredPrivateIdentities = 2, 1
+	if got, _ := counts(t, b); got != want {
+		t.Errorf("after a registration, Counts = %+v, want %+v", got, want)
+	}
+	// A second Put of a subscriber that is registered already counts it
+	// once.
+	put(t, a, sub)
+	if got, _ := counts(t, b); got != want {
+		t.Errorf("after a second Put, Counts = %+v, want %+v", got, want)
+	}
+
+	sub.State = hss.NotRegistered
+	put(t, a, sub)
+	want.RegisteredPublicIdentities, want.RegisteredPrivateIdentities = 0, 0
+	if got, _ := counts(t, b); got != want {
+		t.Errorf("after a deregistration, Counts = %+v, want %+v", got, want)
+	}
+
+	// Deleting a registered subscription takes it out of both.
+	sub.State = hss.Registered
+	put(t, a, sub)
+	if _, ok := deleteSubscriber(t, b, impi); !ok {
+		t.Fatal("Delete found no subscriber")
+	}
+	if got, _ := counts(t, a); got != (hss.Counts{}) {
+		t.Errorf("after Delete, Counts = %+v, want the zero value", got)
 	}
 }

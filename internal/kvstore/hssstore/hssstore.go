@@ -353,6 +353,19 @@ func (s *Store) Delete(ctx context.Context, privateID string) (hss.Subscriber, b
 	return hss.Subscriber{}, false, fmt.Errorf("hssstore: delete %s: changed by others %d times: %w", privateID, deleteAttempts, kvjson.ErrGaveUp)
 }
 
+// Counts keeps none of the numbers of TS 32.409 4.2.1, so it reports
+// false and the HSS on this store serves no database usage
+// measurement. The subscribers belong to the store, which every
+// instance of the HSS shares, so the numbers are the store's to keep
+// and no instance can work them out from what it did itself: one that
+// starts and finds the subscribers of its configuration already there
+// has added none of them. Keeping them here would mean a counter item
+// per number, which every Add and Delete changes and which no step of
+// this store repairs when an instance stops between the two writes.
+func (s *Store) Counts(context.Context) (hss.Counts, bool, error) {
+	return hss.Counts{}, false, nil
+}
+
 // List reads one page of the sorted index of the private identities,
 // and then the subscriber of each: a page of limit subscribers costs
 // one range lookup and limit reads, however many subscribers the store

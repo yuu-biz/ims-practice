@@ -259,6 +259,44 @@ type Store interface {
 	// of a large network is as many pages as the operator asks for and
 	// no walk over the rest.
 	List(ctx context.Context, after string, limit int) (subs []Subscriber, next string, err error)
+	// Counts are the numbers of TS 32.409 4.2.1 that the store holds,
+	// and whether it keeps them. A store that does not keep them
+	// returns false, and the HSS on it serves no database usage
+	// measurement: working the numbers out would mean walking every
+	// subscriber, which no operation of a Store does.
+	Counts(ctx context.Context) (Counts, bool, error)
+}
+
+// Counts are the database usage measurements of TS 32.409 4.2.1: how
+// many subscriptions and public user identities the store holds, and
+// how many of them are registered. They are numbers, never a listing.
+// A store that keeps them changes them as it stores and removes
+// subscribers, so that reading them costs the same however many
+// subscribers it holds.
+type Counts struct {
+	// Subscriptions is the number of IMS subscriptions stored (TS
+	// 32.409 4.2.1.1.1, DBU.NbrImsSubscription).
+	Subscriptions int
+	// SIPPublicIdentities and TelPublicIdentities are the public user
+	// identities stored, by the format of the URI (4.2.1.1.3,
+	// DBU.NbrSipPubUserId, and 4.2.1.1.4, DBU.NbrTelPubUserId). Every
+	// public identity of a Subscription is one or the other
+	// (Subscription.Validate), barred ones included: a barred identity
+	// is a public user identity that may only register (TS 23.228
+	// 5.2.1 item 7).
+	SIPPublicIdentities int
+	TelPublicIdentities int
+	// RegisteredPublicIdentities is the number of public user
+	// identities whose registration state is registered (4.2.1.2.1,
+	// DBU.NbrRegPubUserId). TS 32.409 splits it by the visited network
+	// a registration came from; this one is not split.
+	RegisteredPublicIdentities int
+	// RegisteredPrivateIdentities is the number of private user
+	// identities that have a registered public user identity
+	// (4.2.1.2.3, DBU.NbrRegPriUsrId). Every public identity of a
+	// subscription here shares one registration state, so it is the
+	// number of registered subscriptions.
+	RegisteredPrivateIdentities int
 }
 
 // MemoryStore is a Store in the process. It indexes the subscribers by
@@ -275,6 +313,9 @@ type MemoryStore struct {
 	// repository holds the repository data by private key, then by
 	// Service-Indication.
 	repository map[string]map[string]sh.TransparentData
+	// counts are the numbers of TS 32.409 4.2.1, kept as Add, Put and
+	// Delete change what is stored.
+	counts Counts
 }
 
 // NewMemoryStore returns a store that holds subs.
@@ -354,6 +395,10 @@ func (s *MemoryStore) Add(_ context.Context, sub Subscription) error {
 	}
 	sub.RepositoryData = nil
 	s.byPrivate[k] = Subscriber{Subscription: sub}
+	// A new subscription is Not Registered, so only the provisioning
+	// numbers change (TS 32.409 4.2.1.1).
+	s.counts.Subscriptions++
+	s.countIdentities(sub, 1)
 	if i, found := slices.BinarySearch(s.order, k); !found {
 		s.order = slices.Insert(s.order, i, k)
 	}
@@ -363,6 +408,9 @@ func (s *MemoryStore) Add(_ context.Context, sub Subscription) error {
 	return nil
 }
 
+// Put stores sub with the public identities it was added with: neither
+// the index by public identity nor the numbers of the provisioned
+// identities (Counts) follow a change of them.
 func (s *MemoryStore) Put(_ context.Context, sub Subscriber) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -370,8 +418,40 @@ func (s *MemoryStore) Put(_ context.Context, sub Subscriber) error {
 	if stored, ok := s.byPrivate[k]; ok {
 		sub.AKA = stored.AKA
 		s.byPrivate[k] = sub
+		s.countRegistered(stored, -1)
+		s.countRegistered(sub, 1)
 	}
 	return nil
+}
+
+// countIdentities adds sign, 1 or -1, for each public user identity of
+// sub to the numbers of TS 32.409 4.2.1.1.3 and 4.2.1.1.4.
+func (s *MemoryStore) countIdentities(sub Subscription, sign int) {
+	for _, id := range sub.PublicIdentities {
+		if strings.HasPrefix(id, "tel:") {
+			s.counts.TelPublicIdentities += sign
+		} else {
+			s.counts.SIPPublicIdentities += sign
+		}
+	}
+}
+
+// countRegistered adds sign, 1 or -1, for sub to the numbers of TS
+// 32.409 4.2.1.2.1 and 4.2.1.2.3 when sub is registered, and nothing
+// otherwise. Its public identities are one implicit registration set,
+// so they enter and leave the registered state together.
+func (s *MemoryStore) countRegistered(sub Subscriber, sign int) {
+	if sub.State != Registered {
+		return
+	}
+	s.counts.RegisteredPublicIdentities += sign * len(sub.PublicIdentities)
+	s.counts.RegisteredPrivateIdentities += sign
+}
+
+func (s *MemoryStore) Counts(context.Context) (Counts, bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.counts, true, nil
 }
 
 func (s *MemoryStore) CompareAndSwapSQN(_ context.Context, privateID string, old, new aka.SQN) (bool, error) {
@@ -394,6 +474,9 @@ func (s *MemoryStore) Delete(_ context.Context, privateID string) (Subscriber, b
 		return Subscriber{}, false, nil
 	}
 	delete(s.byPrivate, k)
+	s.counts.Subscriptions--
+	s.countIdentities(sub.Subscription, -1)
+	s.countRegistered(sub, -1)
 	if i, found := slices.BinarySearch(s.order, k); found {
 		s.order = slices.Delete(s.order, i, i+1)
 	}
