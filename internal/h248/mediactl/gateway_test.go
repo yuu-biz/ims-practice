@@ -183,6 +183,13 @@ func TestRelayErrors(t *testing.T) {
 	if !errors.Is(err, agw.ErrNoPort) || !errors.As(err, &rejected) || rejected.ErrorDescriptor.ErrorCode != 510 {
 		t.Errorf("Add: %v", err)
 	}
+	// A media node that an operator has taken out of service is "Not
+	// ready", one of the codes an IMS-AGW sends (TS 29.334 5.7.10,
+	// Table 5.7.10.2).
+	b.relay.setFail(agw.ErrOutOfService)
+	if _, err := reserve(ctx, b.controller, agw.Media{}); !errors.As(err, &rejected) || rejected.ErrorDescriptor.ErrorCode != 502 {
+		t.Errorf("Add on a media node out of service: %v", err)
+	}
 	b.relay.setFail(errors.New("the relay broke"))
 	if _, err := reserve(ctx, b.controller, agw.Media{}); !errors.As(err, &rejected) || rejected.ErrorDescriptor.ErrorCode != 500 {
 		t.Errorf("Add: %v", err)

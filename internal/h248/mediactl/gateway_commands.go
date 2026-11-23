@@ -294,6 +294,12 @@ func relayErrorCode(err error) int {
 		return 411
 	case errors.Is(err, agw.ErrNoPort):
 		return 510
+	case errors.Is(err, agw.ErrOutOfService):
+		// "Not ready": an operator has taken the media node out of
+		// service, so it makes no context until it is unlocked
+		// (internal/agw maintenance.go). It is among the codes that an
+		// IMS-AGW sends (TS 29.334 5.7.10, Table 5.7.10.2).
+		return 502
 	}
 	return 500
 }

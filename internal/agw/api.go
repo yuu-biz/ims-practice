@@ -43,6 +43,7 @@ var errorCodes = map[string]error{
 	"no_port":              ErrNoPort,
 	"bad_request":          ErrBadRequest,
 	"unknown_announcement": ErrUnknownAnnouncement,
+	"out_of_service":       ErrOutOfService,
 }
 
 // errorStatus is the HTTP status of each error code.
@@ -52,6 +53,7 @@ var errorStatus = map[string]int{
 	"no_port":              http.StatusServiceUnavailable,
 	"bad_request":          http.StatusBadRequest,
 	"unknown_announcement": http.StatusNotFound,
+	"out_of_service":       http.StatusServiceUnavailable,
 }
 
 type addRequest struct {
