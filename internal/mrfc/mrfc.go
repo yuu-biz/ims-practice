@@ -41,6 +41,7 @@ import (
 
 	"github.com/yuu-biz/ims-practice/internal/agw"
 	"github.com/yuu-biz/ims-practice/internal/ims"
+	"github.com/yuu-biz/ims-practice/internal/maintenance"
 	"github.com/yuu-biz/ims-practice/internal/netann"
 	"github.com/yuu-biz/ims-practice/internal/sip"
 )
@@ -117,6 +118,12 @@ type MRFC struct {
 	// ua is set by Listen before any call can arrive.
 	ua atomic.Pointer[sip.UA]
 
+	// managed is the administrative state that the maintenance API of
+	// the node keeps for the MRFC, and users counts the dialogs that a
+	// shut down waits for (maintenance.go).
+	managed atomic.Pointer[maintenance.ManagedFunction]
+	users   atomic.Int64
+
 	// nextRequestID numbers the Events descriptors of this instance, so
 	// that a Notify finds the leg it is for.
 	nextRequestID atomic.Uint32
@@ -159,7 +166,7 @@ func (m *MRFC) Listen(transport *sip.TransportLayer) error {
 		SentBy:  m.cfg.Host + ":" + strconv.Itoa(m.cfg.Port),
 		Timers:  m.cfg.Timers,
 		Contact: contact,
-		OnCall:  m.serve,
+		OnCall:  m.onCall,
 		Locate: func(u sip.URI) ([]sip.Destination, error) {
 			return ims.Targets(context.Background(), m.locator, u)
 		},
@@ -222,7 +229,8 @@ func (m *MRFC) choose(key string) Processor {
 	return m.processors[h.Sum32()%uint32(len(m.processors))]
 }
 
-// serve answers an INVITE outside a dialog.
+// serve answers an INVITE outside a dialog whose Request-URI u is, for
+// an MRFC that the operator lets take it (onCall).
 //
 // SIMPLIFIED: TS 24.229 5.8.2.1.1.1 and RFC 4240 2 and 8. The MRFC keeps
 // no charging data: it neither stores the P-Charging-Vector and
@@ -231,13 +239,7 @@ func (m *MRFC) choose(key string) Processor {
 // sips: Request-URIs alike over the plain transports of the network
 // (nothing is encrypted, so that the capture shows the content), where RFC 4240 asks a media server to support sips: for
 // conferences, and it authenticates no AS, which RFC 4240 8 recommends.
-func (m *MRFC) serve(c *sip.IncomingCall) {
-	log := m.log.With("call_id", c.Request.Get("Call-ID"), "request_uri", c.Request.RequestURI)
-	u, err := sip.ParseURI(c.Request.RequestURI)
-	if err != nil {
-		m.refuse(c, sip.URI{}, &netann.Error{Status: 400, Reason: "Bad Request-URI"}, log)
-		return
-	}
+func (m *MRFC) serve(c *sip.IncomingCall, u sip.URI, log *slog.Logger) {
 	req, err := netann.Parse(u)
 	var refusal *netann.Error
 	switch {

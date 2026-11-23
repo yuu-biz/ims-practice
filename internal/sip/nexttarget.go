@@ -34,9 +34,9 @@ var errNoTarget = errors.New("sip: no target for the request")
 // operator has shut down or locked answers 503 with Retry-After. The
 // P-CSCF answers so only to a REGISTER, which comes from a UE that
 // knows no other P-CSCF and waits the time of Retry-After itself before
-// it registers again. A request that goes to such an I-CSCF, S-CSCF or
-// MMTel AS first all the same gets its 503 and goes on to the next
-// target, one round trip later.
+// it registers again. A request that goes to such an I-CSCF, S-CSCF,
+// MMTel AS or MRFC first all the same gets its 503 and goes on to the
+// next target, one round trip later.
 func (s *Stack) follow(ct *ClientTransaction, req *Message, next []Destination) {
 	defer s.wg.Done()
 	a := ct.attempt
