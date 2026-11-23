@@ -220,7 +220,7 @@ The e2e test checks that UE 2 received exactly the bytes UE 1 encoded. G.711 is 
 
 ### 13. UE 1 hangs up: BYE
 
-UE 1 sends **BYE** within the dialog (RFC 3261 15.1.1), along the route set. The BYE carries `Reason: RELEASE_CAUSE;cause=1;text="User ends call"`, which tells why the call ended (TS 24.229 5.1.5, IR.92 2.2.4). UE 2 answers 200 (RFC 3261 15.1.2). When the 200 passes the P-CSCF, the P-CSCF removes the relay contexts of the call. It waits for the answer because a BYE can be turned down, such as with 500 for a BYE out of order (RFC 3261 12.2.2), and then the dialog stays up. A 481, a 408 or no answer at all ends the dialog as well (RFC 3261 15.1.1), so they also remove the contexts.
+UE 1 sends **BYE** within the dialog (RFC 3261 15.1.1), along the route set. The BYE carries `Reason: RELEASE_CAUSE;cause=1;text="User ends call"`, which tells why the call ended (TS 24.229 5.1.5, IR.92 2.2.4). UE 2 answers 200 (RFC 3261 15.1.2). A request of UE 1 in the dialog that UE 2 has not answered yet, such as a re-INVITE, gets 487 (Request Terminated) then, and so does a request of UE 2 that UE 1 has not answered when it sends the BYE (RFC 3261 15.1.2). When the 200 passes the P-CSCF, the P-CSCF removes the relay contexts of the call. It waits for the answer because a BYE can be turned down, such as with 500 for a BYE out of order (RFC 3261 12.2.2), and then the dialog stays up. A 481, a 408 or no answer at all ends the dialog as well (RFC 3261 15.1.1), so they also remove the contexts.
 
 ## One charging identifier for the call
 
