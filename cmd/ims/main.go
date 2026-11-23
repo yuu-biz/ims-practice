@@ -146,6 +146,12 @@ func run(configPath string, log *slog.Logger, level *slog.LevelVar) error {
 				return err
 			}
 		}
+		if hssRole != nil && server != nil {
+			// What the operator takes out of service on an HSS is its
+			// Diameter listener and the connections on it, so a node
+			// that listens for none has nothing to drain.
+			managed = append(managed, managedRole{function: hssRole.Function(server), manage: hssRole.Manage})
+		}
 		if epcRole != nil {
 			epcRole.SetAFs(server)
 		}

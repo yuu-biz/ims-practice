@@ -16,6 +16,10 @@
 # P-CSCF answer the REGISTER itself with 503 and Retry-After, forwarding
 # nothing, and a shut down of the I-CSCF makes the I-CSCF answer 503,
 # after which the P-CSCF, with no other I-CSCF left, answers the UE 504.
+# A shut down of the HSS instead sends every Diameter peer a DPR with
+# Disconnect-Cause REBOOTING and stops the node listening on 3868, so
+# the I-CSCF reports itself DISABLED and no UE can register; after the
+# unlock the CSCFs open their connections again by themselves.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 . scripts/e2e-lib.sh
@@ -34,24 +38,50 @@ grafana=http://localhost:3000
 
 docker compose up -d --build
 
-# The CSCFs can only serve a REGISTER once their Diameter connections to
-# the HSS are open.
-wait_for_open() {
-	local service="$1" i
-	# Up to two minutes: a node that tried before the HSS listened
-	# tries again after Tc, 30 s (RFC 6733 2.1).
+# The nodes that ask the HSS can only serve their own requests once
+# their Diameter connections to it are open.
+#
+# diameter_opens prints how many times the service $1 has opened a
+# Diameter connection, from the state transitions in its log. Only a
+# move into I-Open counts: on a connection that is already open, the
+# watchdog goes to SUSPECT and back to I-Open (OKAY) without any new
+# connection (RFC 3539 3.4.1), and that must not be counted as one.
+diameter_opens() {
+	docker compose logs --no-color "$1" 2>/dev/null |
+		grep '"to":"I-Open' | grep -vc '"from":"I-Open' || true
+}
+
+# wait_for_opens waits up to two minutes until the service $1 has opened
+# a Diameter connection $2 times, which is how a connection that came
+# back is told from the one before it. Two minutes: a node that was
+# refused connects again after Tc, 30 s (RFC 6733 2.1).
+wait_for_opens() {
+	local i
 	for i in $(seq 1 120); do
-		if grep -q '"to":"I-Open (OKAY)"' <<<"$(docker compose logs --no-color "$service" 2>/dev/null)"; then
+		if [ "$(diameter_opens "$1")" -ge "$2" ]; then
 			return 0
 		fi
 		sleep 1
 	done
-	echo "FAIL $service never opened its Diameter connection" >&2
-	docker compose logs --no-color "$service" | tail -n 30 >&2
+	return 1
+}
+
+# wait_for_open waits for the first connection of the service $1, and
+# gives the whole run up when it never comes.
+wait_for_open() {
+	if wait_for_opens "$1" 1; then
+		return 0
+	fi
+	echo "FAIL $1 never opened its Diameter connection" >&2
+	docker compose logs --no-color "$1" | tail -n 30 >&2
 	exit 1
 }
 wait_for_open icscf
 wait_for_open scscf
+# The IP-SM-GW and the MMTel AS each hold an Sh connection to the HSS,
+# which the drain of the HSS ends as well.
+wait_for_open ipsmgw
+wait_for_open mmtel
 
 # wait_for_http waits up to a minute until url answers 2xx.
 wait_for_http() {
@@ -163,6 +193,19 @@ printf "PUT /maintenance/v1/functions/$1/administrative-state HTTP/1.0\r\nConten
 # maintenance API.
 node_state() {
 	docker compose exec -T "$1" wget -qO- http://127.0.0.1:8085/maintenance/v1/state | tr -d '\r'
+}
+
+# until_state waits up to 30 seconds until the state of the node of the
+# service $1 holds the text $2.
+until_state() {
+	local i
+	for i in $(seq 1 30); do
+		if grep -qF "$2" <<<"$(node_state "$1" || true)"; then
+			return 0
+		fi
+		sleep 1
+	done
+	return 1
 }
 
 remember_nodes
@@ -432,8 +475,73 @@ else
 	echo "FAIL UE registration after the unlock of the I-CSCF"
 	fail=1
 fi
-same_nodes
 await "the 200 OK to the registration after the unlock of the I-CSCF" "$registered" $((registrations + 1))
+
+echo "drain of the HSS"
+# The HSS has no SIP to answer with: it ends each Diameter connection
+# with a DPR whose Disconnect-Cause is REBOOTING and stops listening on
+# 3868, so the CSCFs have no HSS until the unlock. Count what is there
+# first: each node opens its connection again only after Tc, 30 s.
+hss_address=172.28.0.10
+dprs="$(count "diameter.cmd.code == 282 && diameter.flags.request == 1 && ip.src == $hss_address")"
+icscf_opens="$(diameter_opens icscf)"
+scscf_opens="$(diameter_opens scscf)"
+ipsmgw_opens="$(diameter_opens ipsmgw)"
+mmtel_opens="$(diameter_opens mmtel)"
+answer="$(administrative_state hss SHUTTINGDOWN || true)"
+state="$(node_state hss || true)"
+if grep -Eq '"administrative_state":"(SHUTTINGDOWN|LOCKED)"' <<<"$state"; then
+	echo "ok   the maintenance API shut the HSS down"
+else
+	echo "FAIL the shut down of the HSS: $answer"
+	echo "     state of the node: $state"
+	fail=1
+fi
+# With no instance of the HSS left, the I-CSCF cannot work, which it
+# says in its operational state (TS 28.622 5.3.3) without the operator
+# having taken it out of service.
+if until_state icscf '"operational_state":"DISABLED"'; then
+	echo "ok   the I-CSCF reports itself DISABLED without the HSS"
+else
+	echo "FAIL the I-CSCF stayed ENABLED without the HSS: $(node_state icscf || true)"
+	fail=1
+fi
+if docker compose run --no-deps --rm ue register -deregister-after 2s 2>/dev/null; then
+	echo "FAIL UE registered with a shut down HSS"
+	fail=1
+else
+	echo "ok   UE could not register while the HSS is shut down"
+fi
+answer="$(administrative_state hss UNLOCKED || true)"
+state="$(node_state hss || true)"
+if grep -q '"administrative_state":"UNLOCKED"' <<<"$state"; then
+	echo "ok   the maintenance API unlocked the HSS"
+else
+	echo "FAIL the unlock of the HSS: $answer"
+	echo "     state of the node: $state"
+	fail=1
+fi
+# REBOOTING lets the peer come back (RFC 6733 5.4.3), which it does at
+# its next attempt after Tc.
+if wait_for_opens icscf $((icscf_opens + 1)) && wait_for_opens scscf $((scscf_opens + 1)) &&
+	wait_for_opens ipsmgw $((ipsmgw_opens + 1)) && wait_for_opens mmtel $((mmtel_opens + 1)); then
+	echo "ok   every peer of the HSS opened its Diameter connection again"
+else
+	echo "FAIL a peer of the HSS did not open its Diameter connection again after the unlock"
+	echo "     opens so far: icscf $(diameter_opens icscf), scscf $(diameter_opens scscf), ipsmgw $(diameter_opens ipsmgw), mmtel $(diameter_opens mmtel)"
+	fail=1
+fi
+registrations="$(count "$registered")"
+if docker compose run --no-deps --rm ue register -deregister-after 2s; then
+	echo "ok   UE registered after the unlock of the HSS"
+else
+	echo "FAIL UE registration after the unlock of the HSS"
+	fail=1
+fi
+await "the 200 OK to the registration after the unlock of the HSS" "$registered" $((registrations + 1))
+# One DPR per peer: the two Cx connections and the two Sh connections.
+await "the DPRs of the drained HSS" "diameter.cmd.code == 282 && diameter.flags.request == 1 && ip.src == $hss_address" $((dprs + 4))
+same_nodes
 
 echo "reading $pcap"
 last=0
@@ -479,6 +587,6 @@ expect "401 I-CSCF -> P-CSCF" "$register && sip.Status-Code == 401 && ip.src == 
 expect "200 I-CSCF -> P-CSCF" "$register && sip.Status-Code == 200 && ip.src == $icscf && ip.dst == $pcscf"
 
 if [ "$fail" -ne 0 ]; then
-	docker compose logs --no-color pcscf icscf scscf prometheus grafana | tail -n 80
+	docker compose logs --no-color pcscf icscf scscf hss prometheus grafana | tail -n 80
 fi
 exit "$fail"
