@@ -41,7 +41,7 @@ func TestMediaNodeTakesItsCommandsOverH248(t *testing.T) {
 
 	// The relay keeps four ports, enough for the two terminations of one
 	// context, and the two above them carry the H.248 messages.
-	stopRelay, err := startMediaNode(config.AGW{
+	_, stopRelay, err := startMediaNode(config.AGW{
 		MediaGateway: &config.MediaGateway{
 			Listen:     gatewayAddr,
 			Host:       "agw." + domain,

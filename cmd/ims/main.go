@@ -496,10 +496,11 @@ func run(configPath string, log *slog.Logger, level *slog.LevelVar) error {
 		if err != nil {
 			return err
 		}
-		stop, err := startMediaNode(*c, nil, store, roleLog, cancel)
+		relay, stop, err := startMediaNode(*c, nil, store, roleLog, cancel)
 		if err != nil {
 			return err
 		}
+		managed = append(managed, managedRole{function: relay.Function(string(config.RoleAGW)), manage: relay.Manage})
 		defer stop()
 	}
 	if c := cfg.MRFP; c != nil {
@@ -512,10 +513,11 @@ func run(configPath string, log *slog.Logger, level *slog.LevelVar) error {
 		if err != nil {
 			return err
 		}
-		stop, err := startMediaNode(c.AGW, announcements, store, roleLog, cancel)
+		relay, stop, err := startMediaNode(c.AGW, announcements, store, roleLog, cancel)
 		if err != nil {
 			return err
 		}
+		managed = append(managed, managedRole{function: relay.Function(string(config.RoleMRFP)), manage: relay.Manage})
 		defer stop()
 	}
 	if epcRole != nil {
@@ -869,20 +871,22 @@ var roleApplications = map[config.Role][]uint32{
 // or the MRFP with its announcements. Both are the same relay. It opens
 // the ports of the contexts that an earlier process of this relay left
 // in store, so a store that cannot be read keeps the relay from
-// starting. The function it returns stops the control API and the
-// relay, and leaves its contexts in the store for the next process.
-func startMediaNode(c config.AGW, announcements agw.Announcements, store agw.ContextStore, log *slog.Logger, cancel context.CancelFunc) (func(), error) {
+// starting. It returns the relay, which the caller gives the
+// maintenance API of the node so that an operator can take it out of
+// service, and the function that stops the control API and the relay
+// and leaves its contexts in the store for the next process.
+func startMediaNode(c config.AGW, announcements agw.Announcements, store agw.ContextStore, log *slog.Logger, cancel context.CancelFunc) (*agw.Relay, func(), error) {
 	relay, err := agw.NewRelay(c.RTPAddress, c.MinPort, c.MaxPort, announcements, store, log)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	if g := c.MediaGateway; g != nil {
 		stop, err := startMediaGateway(*g, relay, log, cancel)
 		if err != nil {
 			relay.Close()
-			return nil, err
+			return nil, nil, err
 		}
-		return func() {
+		return relay, func() {
 			stop()
 			relay.Close()
 		}, nil
@@ -895,7 +899,7 @@ func startMediaNode(c config.AGW, announcements agw.Announcements, store agw.Con
 		}
 	}()
 	log.Info("control API listening", "address", c.Control.String(), "announcements", len(announcements))
-	return func() {
+	return relay, func() {
 		control.Close()
 		relay.Close()
 	}, nil
@@ -1013,6 +1017,8 @@ type configurationView struct {
 	MMTel  *mmtelView  `json:"mmtel,omitempty"`
 	MRFC   *mrfcView   `json:"mrfc,omitempty"`
 	IPSMGW *ipsmgwView `json:"ipsmgw,omitempty"`
+	AGW    *agwView    `json:"agw,omitempty"`
+	MRFP   *agwView    `json:"mrfp,omitempty"`
 }
 
 // hssView is the HSS of the configuration view: where its provisioning
@@ -1119,6 +1125,32 @@ type mrfcView struct {
 	MRFPs  []string `json:"mrfp,omitempty"`
 }
 
+// agwView is a media relay of the configuration view: where the
+// controller reaches it, the address its terminations have, the range of
+// RTP ports it hands out, and, for the mrfp role, the names of the
+// announcements it can play. The same type serves both media roles,
+// which the one relay carries out.
+type agwView struct {
+	// Control is where the HTTP control API listens, and H248 is set
+	// instead when the relay takes its commands over H.248.
+	Control       string            `json:"control,omitempty"`
+	H248          *mediaGatewayView `json:"h248,omitempty"`
+	RTPAddress    string            `json:"rtp_address"`
+	RTPPorts      rtpPortsView      `json:"rtp_ports"`
+	Announcements []string          `json:"announcements,omitempty"`
+}
+
+type mediaGatewayView struct {
+	Listen     string `json:"listen"`
+	Host       string `json:"host"`
+	Controller string `json:"controller"`
+}
+
+type rtpPortsView struct {
+	Min int `json:"min"`
+	Max int `json:"max"`
+}
+
 // xcapView is the XCAP server of Ut. The key that signs its nonces is a
 // secret, so the API shows only whether it is set.
 type xcapView struct {
@@ -1202,6 +1234,33 @@ func newConfigurationView(cfg config.Config) configurationView {
 		if c.IBCF.Host != "" {
 			v.IPSMGW.IBCF = c.IBCF.String()
 		}
+	}
+	if c := cfg.AGW; c != nil {
+		v.AGW = newAGWView(*c)
+	}
+	if c := cfg.MRFP; c != nil {
+		v.MRFP = newAGWView(c.AGW)
+		for name := range c.Announcements {
+			v.MRFP.Announcements = append(v.MRFP.Announcements, name)
+		}
+		slices.Sort(v.MRFP.Announcements)
+	}
+	return v
+}
+
+// newAGWView is the media relay of c as the maintenance API shows it.
+// The paths of the announcement files are left out: what an MRFC asks
+// for is the name of an announcement, which is what an operator reads
+// here (RFC 4240 3.3).
+func newAGWView(c config.AGW) *agwView {
+	v := &agwView{
+		RTPAddress: c.RTPAddress.String(),
+		RTPPorts:   rtpPortsView{Min: int(c.MinPort), Max: int(c.MaxPort)},
+	}
+	if g := c.MediaGateway; g != nil {
+		v.H248 = &mediaGatewayView{Listen: g.Listen.String(), Host: g.Host, Controller: g.Controller}
+	} else {
+		v.Control = c.Control.String()
 	}
 	return v
 }
