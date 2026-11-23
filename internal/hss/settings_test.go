@@ -313,3 +313,40 @@ func TestSettingsChangeWhileRequestsRun(t *testing.T) {
 			h.Admission(), h.DefaultServiceProfile(), h.TestUserServiceProfile())
 	}
 }
+
+// TestSettingsOfOneChangeGoInForceTogether: the settings that one
+// maintenance request names are published at its commit, so a request
+// of the HSS never sees the policy of the change beside the profile
+// name from before it. From test_users with the trial
+// profile to all with the default one, a SAR in between would admit an
+// ordinary subscriber and give it the trial criteria.
+func TestSettingsOfOneChangeGoInForceTogether(t *testing.T) {
+	h, api := settingsHSS(t)
+	change(t, api, "hss.admission", string(AdmitTestUsers))
+	change(t, api, "hss.default_service_profile", "trial")
+
+	h.beginSettings()
+	h.pending.admission = AdmitAll
+	if got := h.Admission(); got != AdmitTestUsers {
+		t.Errorf("before the commit the policy in force is %q, want %q", got, AdmitTestUsers)
+	}
+	h.pending.defaultServiceProfile = "default"
+	if got := h.DefaultServiceProfile(); got != "trial" {
+		t.Errorf("before the commit the default profile in force is %q, want trial", got)
+	}
+	h.commitSettings()
+	if h.Admission() != AdmitAll || h.DefaultServiceProfile() != "default" {
+		t.Errorf("after the commit: %q and %q, want all and default", h.Admission(), h.DefaultServiceProfile())
+	}
+
+	record, err := api.ChangeConfiguration(maintenance.ConfigurationChangeRequest{Settings: map[string]json.RawMessage{
+		"hss.admission":               json.RawMessage(`"test_users"`),
+		"hss.default_service_profile": json.RawMessage(`"trial"`),
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(record.Changes) != 2 || h.Admission() != AdmitTestUsers || h.DefaultServiceProfile() != "trial" {
+		t.Errorf("one change of both: record %+v, in force %q and %q", record.Changes, h.Admission(), h.DefaultServiceProfile())
+	}
+}

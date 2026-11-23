@@ -140,10 +140,14 @@ func ParseAdmission(s string) (Admission, error) {
 	return Admission(s), nil
 }
 
-// admits reports whether the admission policy lets u register and take
-// an S-CSCF of its own.
-func (h *HSS) admits(u Subscriber) bool {
-	return h.Admission() != AdmitTestUsers || u.TestUser
+// admits reports whether the admission policy in force lets u register
+// and take an S-CSCF of its own.
+func (h *HSS) admits(u Subscriber) bool { return h.settings.Load().admits(u) }
+
+// admits reports whether the admission policy of s lets u register and
+// take an S-CSCF of its own.
+func (s *settings) admits(u Subscriber) bool {
+	return s.admission != AdmitTestUsers || u.TestUser
 }
 
 // settings are the parts of the configuration that an operator changes
@@ -151,12 +155,13 @@ func (h *HSS) admits(u Subscriber) bool {
 // subscribers the network admits, and the service profiles of the
 // subscriptions that name none of their own.
 //
-// One value holds all three, and a change of a setting replaces it
-// whole, so a request reads the settings from before that change or
-// from after it, never a value written halfway. A maintenance request
-// that changes several settings puts each in force in turn
-// (maintenance.ChangeConfiguration), so a request that arrives between
-// two of them sees the first in force and not yet the second.
+// One value holds all three, and a change replaces it whole, the
+// settings of one maintenance request together (Settings), so a request
+// reads them all from before that change or all from after it. A
+// request that decides more than once on them, such as the SAR of a
+// user who is not registered, which asks whether the policy admits the
+// user and then which profile the user gets, loads them once and
+// decides each time on that one value.
 type settings struct {
 	admission              Admission
 	defaultServiceProfile  string
@@ -180,13 +185,26 @@ func (h *HSS) TestUserServiceProfile() string { return h.settings.Load().testUse
 // are never held up by one, and no request path takes a lock of the
 // whole role.
 func (h *HSS) changeSettings(change func(*settings)) {
-	// Held for the read and the store together, so that two changes of
-	// different settings cannot each write back what it read.
+	h.beginSettings()
+	change(h.pending)
+	h.commitSettings()
+}
+
+// beginSettings starts a change of the settings: the ones in force are
+// copied to pending, which the change writes to. settingsMu is held from
+// here to commitSettings, so that two changes cannot each write back
+// what it read.
+func (h *HSS) beginSettings() {
 	h.settingsMu.Lock()
-	defer h.settingsMu.Unlock()
 	next := *h.settings.Load()
-	change(&next)
-	h.settings.Store(&next)
+	h.pending = &next
+}
+
+// commitSettings puts pending in force, all of it at once.
+func (h *HSS) commitSettings() {
+	h.settings.Store(h.pending)
+	h.pending = nil
+	h.settingsMu.Unlock()
 }
 
 // ServiceCentre is how the HSS reaches one of the SMS central
@@ -231,6 +249,9 @@ type HSS struct {
 	// never on the path of a request.
 	settings   atomic.Pointer[settings]
 	settingsMu sync.Mutex
+	// pending is the settings a change is writing, between beginSettings
+	// and commitSettings, under settingsMu. No request reads it.
+	pending *settings
 
 	// requests counts the Cx and Sh requests this instance is
 	// answering, the users of the maintenance API (maintenance.go). It
@@ -663,6 +684,10 @@ func (h *HSS) serverAssignment(ctx context.Context, r cx.ServerAssignmentRequest
 	if len(r.PublicIdentities) > 0 {
 		publicID = r.PublicIdentities[0]
 	}
+	// One load of the settings for the whole request, so that the policy
+	// that admits the user and the profile the answer carries come from
+	// the same change of them.
+	set := h.settings.Load()
 	u, result, unlock, ok := h.lock(ctx, r.UserName, publicID)
 	if !ok {
 		if p, psi := h.psiUserOf(r.UserName, publicID); psi && result == diameter.Experimental(cx.DiameterErrorUserUnknown) {
@@ -682,7 +707,7 @@ func (h *HSS) serverAssignment(ctx context.Context, r cx.ServerAssignmentRequest
 		if err := h.setServer(ctx, u, r.ServerName, origin(r.Header), Registered, false); err != nil {
 			return cx.ServerAssignmentAnswer{Result: h.storeFailed(err)}
 		}
-		return h.withUserData(u, r)
+		return h.withUserData(set, u, r)
 	case cx.UnregisteredUser:
 		// A check that the procedure does not have: step 5 authorizes
 		// nothing on this branch. Refusing the registration alone would
@@ -695,7 +720,7 @@ func (h *HSS) serverAssignment(ctx context.Context, r cx.ServerAssignmentRequest
 		// the UAA's. A subscriber the HSS does not hold as registered has
 		// no valid registration, whether or not a server name is stored
 		// for it, as one is for a user whose S-CSCF kept its name.
-		if u.State != Registered && !h.admits(u) {
+		if u.State != Registered && !set.admits(u) {
 			return cx.ServerAssignmentAnswer{Result: diameter.Base(diameter.DiameterAuthorizationRejected)}
 		}
 		// The S-CSCF sends it for a request to, or on behalf of, a user it
@@ -708,7 +733,7 @@ func (h *HSS) serverAssignment(ctx context.Context, r cx.ServerAssignmentRequest
 		if err := h.setServer(ctx, u, r.ServerName, origin(r.Header), Unregistered, u.AuthenticationPending); err != nil {
 			return cx.ServerAssignmentAnswer{Result: h.storeFailed(err)}
 		}
-		return h.withUserData(u, r)
+		return h.withUserData(set, u, r)
 	case cx.TimeoutDeregistration, cx.UserDeregistration, cx.AdministrativeDeregistration:
 		if err := h.setServer(ctx, u, "", diameter.Identity{}, NotRegistered, false); err != nil {
 			return cx.ServerAssignmentAnswer{Result: h.storeFailed(err)}
@@ -727,7 +752,7 @@ func (h *HSS) serverAssignment(ctx context.Context, r cx.ServerAssignmentRequest
 		if u.ServerName != r.ServerName {
 			return cx.ServerAssignmentAnswer{Result: diameter.Base(diameter.DiameterUnableToComply)}
 		}
-		return h.withUserData(u, r)
+		return h.withUserData(set, u, r)
 	}
 	// SIMPLIFIED: TS 29.228 6.1.2.1. The *_STORE_SERVER_NAME and
 	// DEREGISTRATION_TOO_MUCH_DATA assignment types are not used by this
@@ -735,12 +760,12 @@ func (h *HSS) serverAssignment(ctx context.Context, r cx.ServerAssignmentRequest
 	return cx.ServerAssignmentAnswer{Result: diameter.Base(diameter.DiameterUnableToComply)}
 }
 
-func (h *HSS) withUserData(u Subscriber, r cx.ServerAssignmentRequest) cx.ServerAssignmentAnswer {
+func (h *HSS) withUserData(set *settings, u Subscriber, r cx.ServerAssignmentRequest) cx.ServerAssignmentAnswer {
 	a := cx.ServerAssignmentAnswer{Result: diameter.Base(diameter.DiameterSuccess), UserName: u.PrivateIdentity}
 	// TS 29.228 6.6: the HSS may skip the profile when the S-CSCF says it
 	// already has it.
 	if !r.UserDataAlreadyAvailable {
-		a.UserData = h.userProfile(u).Marshal()
+		a.UserData = h.userProfileIn(set, u).Marshal()
 	}
 	return a
 }
