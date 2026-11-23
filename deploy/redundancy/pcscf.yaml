@@ -54,6 +54,14 @@ diameter:
 # is down; the Lab is not on the call path.
 hep:
   collector: 172.28.0.60:9060
+# The maintenance listener: the metrics of the P-CSCF at /metrics for
+# Prometheus to scrape, and the maintenance API under /maintenance/v1/,
+# through which an operator takes the P-CSCF out of service. No
+# specification gives a port for it; 8085 is this project's choice. The
+# API asks for no password, so the port is not published outside the
+# network of the IMS nodes.
+maintenance:
+  listen: 0.0.0.0:8085
 
 # The P-CSCF keeps its state in the shared store: the IP association of
 # each registered UE, the dialogs of its calls, its security
