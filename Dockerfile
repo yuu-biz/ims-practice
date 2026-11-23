@@ -21,6 +21,10 @@ RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/ ./cmd/ims ./cmd/u
 # Alpine rather than scratch, so that learners have a shell inside the
 # container.
 FROM alpine:3.24
+# iproute2 for "ip xfrm", with which a P-CSCF or a UE that protects the
+# signalling of IMS AKA sets up IPsec ESP, and with which a learner
+# reads the result (TS 33.203 7.1). The ip of BusyBox has no xfrm.
+RUN apk add --no-cache iproute2
 COPY --from=build /out/ims /out/ue /usr/local/bin/
 # The announcements of the MRFP (deploy/announcements). compose.yaml
 # mounts the same directory over them, so that a changed WAV file plays

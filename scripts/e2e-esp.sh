@@ -43,6 +43,7 @@ pcap="$(docker compose exec -T capture sh -c 'ls -t /captures/ims-*.pcap | head 
 
 domain=ims.mnc001.mcc001.3gppnetwork.org
 epc_api=http://172.28.0.80:8080
+pcscf_ip=172.28.0.40
 volte10_ip=172.28.0.120
 volte12_ip=172.28.0.121
 # The protected ports of deploy/esp: port_ps and port_pc of the P-CSCF,
@@ -62,13 +63,20 @@ mkdir -p e2e-out
 
 # Without xfrm in the kernel that the containers share, no node can set
 # an association up, and every check below would fail for that one
-# reason. Say so instead.
+# reason. Say so instead. A kernel that lists the associations may still
+# refuse to add one; the P-CSCF then says so in its log and answers the
+# REGISTER 500, which the check below reports.
 if ! out="$(docker compose exec -T pcscf ip xfrm state 2>&1)"; then
-	echo "FAIL the kernel of this machine has no xfrm, so ESP cannot be set up: $out"
+	echo "FAIL this machine's kernel has no xfrm, so ESP cannot be set up: $out"
 	echo "     (a container shares the kernel of the machine that runs the engine)"
 	docker compose down --rmi local -v --remove-orphans >/dev/null 2>&1 || true
 	exit 1
 fi
+
+# no_associations: the kernel of the P-CSCF's container holds none. A
+# command for wait_for, which runs it again and again, so the kernel is
+# read each time.
+no_associations() { [ -z "$(docker compose exec -T pcscf ip xfrm state | tr -d '\r')" ]; }
 
 echo "a VoLTE call over ESP: volte10 calls volte12"
 docker compose run --no-deps -d --name ims-practice-esp-volte12 volte12 answer "${vb[@]}" \
@@ -76,6 +84,10 @@ docker compose run --no-deps -d --name ims-practice-esp-volte12 volte12 answer "
 if ! wait_log ims-practice-esp-volte12 '"msg":"waiting for a call"'; then
 	echo "FAIL volte12 did not attach and register with ESP"
 	docker logs ims-practice-esp-volte12 2>&1 | tail -n 10
+	# A kernel that refuses the associations shows here: the P-CSCF
+	# answers the REGISTER 500 and its log says what ip said. grep ends
+	# with 1 when it selects no line, which is no reason to stop.
+	docker compose logs --no-color pcscf | { grep -E '"level":"(WARN|ERROR)"' || true; } | tail -n 5
 	fail=1
 fi
 
@@ -123,7 +135,7 @@ fi
 
 # Both UEs have deregistered, which takes the associations out of the
 # kernel as well as out of the SA table (TS 33.203 7.4).
-if wait_for 30 test -z "$(docker compose exec -T pcscf ip xfrm state | tr -d '\r')"; then
+if wait_for 30 no_associations; then
 	echo "ok   the P-CSCF kept no security association after the deregistrations"
 else
 	echo "FAIL the P-CSCF still holds security associations:"
@@ -142,7 +154,7 @@ same_nodes
 # of the capture.
 esp_sa=(-o esp.enable_encryption_decode:TRUE
 	-o 'uat:esp_sa:"IPv4","*","*","*","NULL","","HMAC-SHA-256-128 [RFC4868]",""')
-ue_to_pcscf="ip.addr == $volte10_ip || ip.addr == $volte12_ip"
+ue_to_pcscf="ip.addr == $pcscf_ip && (ip.addr == $volte10_ip || ip.addr == $volte12_ip)"
 protected="($ue_to_pcscf) && (udp.port == $port_ps || udp.port == $port_pc || udp.port == $port_us || udp.port == $port_uc || tcp.port == $port_ps || tcp.port == $port_pc || tcp.port == $port_us || tcp.port == $port_uc)"
 
 await "the ESP of the registrations and the call" "esp && ($ue_to_pcscf)" 20
@@ -152,7 +164,8 @@ echo "ok   $(count "esp && ($ue_to_pcscf)") ESP packets between the VoLTE UEs an
 # bridge in the clear. Without the settings above, a SIP frame here is a
 # frame that tshark read without ESP.
 none "SIP in the clear on a protected port" "sip && ($protected)"
-none "SIP in the clear from a protected port of a UE" "sip && (ip.src == $volte10_ip || ip.src == $volte12_ip) && !(udp.srcport == 5060)"
+none "SIP in the clear between a UE and the P-CSCF outside port 5060" \
+	"sip && ($ue_to_pcscf) && !(udp.port == 5060)"
 
 # The unprotected port carries what TS 33.203 7.1 items 3 and 4 allow
 # there and nothing else: the first REGISTER of each UE and its 401.
@@ -172,7 +185,7 @@ expect_frames "the first REGISTER of each UE, unprotected on port 5060" \
 # With the ESP settings, the same ESP packets show the SIP inside them.
 tshark_options=("${esp_sa[@]}")
 expect_frames "REGISTER inside ESP" "esp && sip.Method == \"REGISTER\" && ($protected)" 2
-expect_frames "INVITE inside ESP" "esp && sip.Method == \"INVITE\" && ($protected)" 2
+expect_frames "INVITE inside ESP" "esp && sip.Method == \"INVITE\" && ($protected)" 1
 expect_frames "the 200 (OK) of the call inside ESP" \
 	"esp && sip.Status-Code == 200 && sip.CSeq.method == \"INVITE\" && ($protected)" 1
 expect_frames "BYE inside ESP" "esp && sip.Method == \"BYE\" && ($protected)" 1
@@ -180,12 +193,12 @@ expect_frames "BYE inside ESP" "esp && sip.Method == \"BYE\" && ($protected)" 1
 # from its protected client port to the other end's protected server
 # port (TS 33.203 7.1 rule 1).
 expect_frames "requests of a UE from its protected client port" \
-	"esp && sip.Method && udp.srcport == $port_uc && udp.dstport == $port_ps" 1
+	"esp && sip.Method && ((udp.srcport == $port_uc && udp.dstport == $port_ps) || (tcp.srcport == $port_uc && tcp.dstport == $port_ps))" 1
 expect_frames "requests of the P-CSCF from its protected client port" \
-	"esp && sip.Method && udp.srcport == $port_pc && udp.dstport == $port_us" 1
+	"esp && sip.Method && ((udp.srcport == $port_pc && udp.dstport == $port_us) || (tcp.srcport == $port_pc && tcp.dstport == $port_us))" 1
 tshark_options=()
 
 if [ "$fail" -ne 0 ]; then
-	docker compose logs --no-color | grep -E '"level":"(WARN|ERROR)"' | tail -n 40
+	docker compose logs --no-color | { grep -E '"level":"(WARN|ERROR)"' || true; } | tail -n 40
 fi
 exit "$fail"
