@@ -1,8 +1,11 @@
 package hss
 
 import (
+	"context"
 	"net/http"
+	"net/http/httptest"
 	"slices"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -341,5 +344,26 @@ func TestAChangeDuringASlowPushStillReachesTheSCSCF(t *testing.T) {
 	}
 	if got := last.InitialFilterCriteria[0].ApplicationServer.ServerName; got != defaultAS {
 		t.Errorf("the last PPR names %q, want the server of the second change, %q", got, defaultAS)
+	}
+}
+
+// TestAPushOutlivesTheClient: a client that closes its side of the
+// connection once the request is sent cancels the context of the
+// request. The change is stored, so its PPR still goes.
+func TestAPushOutlivesTheClient(t *testing.T) {
+	h := newProfileHSS(t, "default")
+	mar(t, h, scscf)
+	sar(t, h, scscf, cx.AssignRegistration)
+	scscfs := &fakeSCSCFs{}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	r := httptest.NewRequestWithContext(ctx, "PATCH", "/subscriptions/"+impi, strings.NewReader(`{"service_profile": "trial"}`))
+	w := httptest.NewRecorder()
+	h.Provisioning(scscfs).ServeHTTP(w, r)
+	if w.Code != http.StatusOK {
+		t.Fatalf("PATCH: %d %s", w.Code, w.Body)
+	}
+	if got := pushedServer(t, scscfs); got != trialAS {
+		t.Errorf("the pushed criterion names %q, want %q", got, trialAS)
 	}
 }
