@@ -217,6 +217,32 @@ func TestSilentSCSCFGives504(t *testing.T) {
 	}
 }
 
+// TestUnavailableSCSCFGives500: the S-CSCF, a shut down one, answers 503
+// with Retry-After, and DNS gives no other target for it. The 503 says
+// that the S-CSCF takes no request, not that the I-CSCF takes none, so
+// the I-CSCF answers 500 without Retry-After (RFC 3261 16.7 step 6).
+func TestUnavailableSCSCFGives500(t *testing.T) {
+	unavailable := func(st *sip.ServerTransaction) {
+		resp := sip.NewResponse(st.Request, 503, sip.NewTag())
+		resp.Add("Retry-After", "30")
+		st.Respond(resp)
+	}
+	for _, tt := range []struct {
+		name string
+		hss  hssFunc
+		send func(*testing.T, *sip.Stack, netip.AddrPort, string) *sip.Message
+	}{
+		{"INVITE", registeredAtHSS(t), invite},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			ue, icscf := setupWith(t, tt.hss, unavailable)
+			if r := tt.send(t, ue, icscf, impu); r.StatusCode != 500 || r.Get("Retry-After") != "" {
+				t.Errorf("got %d with Retry-After %q, want 500 without one", r.StatusCode, r.Get("Retry-After"))
+			}
+		})
+	}
+}
+
 func invite(t *testing.T, ue *sip.Stack, icscf netip.AddrPort, requestURI string) *sip.Message {
 	t.Helper()
 	m := &sip.Message{Method: sip.INVITE, RequestURI: requestURI}
