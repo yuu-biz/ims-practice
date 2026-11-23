@@ -182,6 +182,44 @@ func TestBackupAndRestoreRoundTrip(t *testing.T) {
 	}
 }
 
+// TestAnExportEndsAtTheLinkHeaderAlone: the end of the export is the
+// page that names no page after it. A page of exactly the limit always
+// names one, so the page after a whole number of full pages holds no
+// record and still ends the export; and a page can hold fewer records
+// than places, as the HSS leaves out a subscription that went while the
+// page was read, without the export ending there.
+func TestAnExportEndsAtTheLinkHeaderAlone(t *testing.T) {
+	store, err := NewFileBackupStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	hss := newFakeHSS(t)
+	ts := newProvisioningServer(t, hss, Config{Backups: store})
+	ts.oam.exportPageSize = 2
+	var lines []string
+	for n := 1; n <= 4; n++ {
+		lines = append(lines, digestLine(n, fmt.Sprintf("test-password-%d", n)))
+	}
+	if _, summary := ts.bulk(t, "", strings.Join(lines, "\n")); summary.Created != 4 {
+		t.Fatalf("provisioning: %+v", summary)
+	}
+	// The first subscription goes while the first page is read, so that
+	// page holds one record of its two places.
+	hss.mu.Lock()
+	hss.hidden[strings.ToLower(impiOf(1))] = true
+	hss.mu.Unlock()
+
+	status, backup := ts.streamCall(t, "/oam/v1/backups")
+	if status != http.StatusOK || len(backup.errors) > 0 || backup.manifest == nil {
+		t.Fatalf("backup: %d %+v", status, backup)
+	}
+	// Four places in three pages: two records, one record, and the empty
+	// page that ends it.
+	if m := *backup.manifest; m.State != JobCompleted || m.Records["hss.subscriptions"] != 3 {
+		t.Errorf("manifest: %+v", m)
+	}
+}
+
 func TestRestoreRefusesAnArchiveThatIsCutShort(t *testing.T) {
 	dir := t.TempDir()
 	store, _ := NewFileBackupStore(dir)
