@@ -48,7 +48,10 @@ func utNetwork(t *testing.T) (*sh.Client, *ue.SupplementaryServices, *httptest.S
 	timers := diameter.Timers{Watchdog: time.Minute, Reconnect: 50 * time.Millisecond, Answer: 2 * time.Second}
 	hssNode := diameter.NewNode(diameter.Identity{OriginHost: "hss." + realm, OriginRealm: realm},
 		[]uint32{diameter.ApplicationIDCx, diameter.ApplicationIDSh}, timers, quiet())
-	h := hss.New(*cfg.HSS, store, hssNode, quiet())
+	h, err := hss.New(*cfg.HSS, store, hssNode, quiet())
+	if err != nil {
+		t.Fatal(err)
+	}
 	hssNode.Handle(h.Handle)
 	listener, err := hssNode.Listen("127.0.0.1:0")
 	if err != nil {

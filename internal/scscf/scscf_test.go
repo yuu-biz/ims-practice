@@ -173,8 +173,12 @@ func newHarnessWithHSS(t *testing.T, cfg Config, resolver Resolver, hssCfg hss.C
 		t.Fatal(err)
 	}
 	hssCfg.Realm, hssCfg.VisitedNetworks = domain, []string{domain}
-	f := &fakeHSS{hss: hss.New(hssCfg, subscribers,
-		diameter.NewNode(identity, []uint32{diameter.ApplicationIDCx}, diameter.Timers{}, quiet()), quiet())}
+	h, err := hss.New(hssCfg, subscribers,
+		diameter.NewNode(identity, []uint32{diameter.ApplicationIDCx}, diameter.Timers{}, quiet()), quiet())
+	if err != nil {
+		t.Fatal(err)
+	}
+	f := &fakeHSS{hss: h}
 	node := diameter.NewNode(diameter.Identity{OriginHost: "scscf." + domain, OriginRealm: domain}, []uint32{diameter.ApplicationIDCx}, diameter.Timers{}, quiet())
 
 	cfg.HomeDomain = domain

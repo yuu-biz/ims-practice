@@ -61,8 +61,11 @@ func stubHSSWith(caps cx.ServerCapabilities, criteria []ifc.InitialFilterCriteri
 	if err != nil {
 		panic(err)
 	}
-	h := hss.New(hss.Config{Realm: domain, VisitedNetworks: []string{domain}, ServerCapabilities: caps, InitialFilterCriteria: criteria}, store,
+	h, err := hss.New(hss.Config{Realm: domain, VisitedNetworks: []string{domain}, ServerCapabilities: caps, InitialFilterCriteria: criteria}, store,
 		diameter.NewNode(diameter.Identity{OriginHost: "hss." + domain, OriginRealm: domain}, []uint32{diameter.ApplicationIDCx}, diameter.Timers{}, quiet()), quiet())
+	if err != nil {
+		panic(err)
+	}
 	return func(m *diam.Message) (*diam.Message, error) {
 		b, _ := m.Serialize()
 		req, err := diam.ReadMessage(bytes.NewReader(b), dict.Default)

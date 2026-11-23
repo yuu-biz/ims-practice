@@ -95,8 +95,12 @@ func newHSSWithLocks(t *testing.T, kv kvstore.Store, locks ims.UserLocker) *hss.
 	}
 	node := diameter.NewNode(diameter.Identity{OriginHost: "hss." + realm, OriginRealm: realm},
 		[]uint32{diameter.ApplicationIDCx, diameter.ApplicationIDSh}, diameter.Timers{}, quiet())
-	return hss.New(hss.Config{Realm: realm, VisitedNetworks: []string{realm}, UserLocks: locks},
+	h, err := hss.New(hss.Config{Realm: realm, VisitedNetworks: []string{realm}, UserLocks: locks},
 		hssstore.New(kv, kvjson.Config{}), node, quiet())
+	if err != nil {
+		t.Fatal(err)
+	}
+	return h
 }
 
 // failingLocks is a UserLocker that hands out no lock, as the lock in

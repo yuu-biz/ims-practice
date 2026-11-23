@@ -24,6 +24,7 @@ import (
 	"github.com/yuu-biz/ims-practice/internal/diameter"
 	"github.com/yuu-biz/ims-practice/internal/ifc"
 	"github.com/yuu-biz/ims-practice/internal/ims"
+	"github.com/yuu-biz/ims-practice/internal/metrics"
 	"github.com/yuu-biz/ims-practice/internal/sh"
 )
 
@@ -62,6 +63,10 @@ type Config struct {
 	// (internal/kvstore/kvlock), so that only one of them changes the
 	// subscriber at a time.
 	UserLocks ims.UserLocker
+	// Metrics is where the HSS registers its gauges, the database usage
+	// measurements (metrics.go). Nil gives it a registry of its own,
+	// which nothing serves.
+	Metrics *metrics.Registry
 }
 
 // HSS answers Cx requests from the subscribers in its Store.
@@ -77,11 +82,31 @@ type HSS struct {
 	users ims.UserLocker
 }
 
-func New(config Config, store Store, node *diameter.Node, log *slog.Logger) *HSS {
+// New returns an HSS on store. It fails when config.Metrics holds the
+// database usage measurements of another HSS already, or when the
+// store cannot be read.
+func New(config Config, store Store, node *diameter.Node, log *slog.Logger) (*HSS, error) {
 	if config.UserLocks == nil {
 		config.UserLocks = &ims.UserLocks{}
 	}
-	return &HSS{config: config, store: store, node: node, log: log, users: config.UserLocks}
+	if config.Metrics == nil {
+		config.Metrics = metrics.NewRegistry()
+	}
+	h := &HSS{config: config, store: store, node: node, log: log, users: config.UserLocks}
+	// A store that keeps none of the numbers of TS 32.409 4.2.1 gets no
+	// gauge at all: a gauge without labels stands in the output from
+	// the moment it is registered, so registering it would publish a
+	// zero for a store that holds subscribers (metrics.go).
+	_, kept, err := store.Counts(context.Background())
+	if err != nil {
+		return nil, err
+	}
+	if kept {
+		if err := h.registerDatabaseUsage(config.Metrics); err != nil {
+			return nil, err
+		}
+	}
+	return h, nil
 }
 
 // Handle is the diameter.Handler of the HSS.
