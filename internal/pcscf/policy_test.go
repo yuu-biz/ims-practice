@@ -133,7 +133,7 @@ func newRegistrar(t *testing.T) *registrar {
 		st.Respond(resp)
 	})
 	locate := locatorFunc(func(string) []sip.Destination { return []sip.Destination{{Transport: sip.UDP, Addr: home.LocalAddr()}} })
-	r.p = New(Config{Host: "pcscf." + domain, Port: 5060, VisitedNetworkID: domain}, locate, r.store, nil, quiet())
+	r.p = newPCSCF(t, Config{Host: "pcscf." + domain, Port: 5060, VisitedNetworkID: domain}, locate, r.store, nil, quiet())
 	r.p.SetPolicyControl(r.policy)
 	r.pcscf = newStackConfig(t, sip.Config{Timers: sip.DefaultTimers(), Screen: r.p.Screen, Admit: r.p.AdmitUnprotected,
 		OnRequest: func(st *sip.ServerTransaction) {

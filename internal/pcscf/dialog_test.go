@@ -81,7 +81,7 @@ func newCallHarness(t *testing.T, cfg harnessConfig) *callHarness {
 	if cfg.wrap != nil {
 		store = cfg.wrap(h.store)
 	}
-	h.p = New(Config{Host: "pcscf." + domain, Port: 5060, VisitedNetworkID: domain}, locate, store, only(cfg.relay), quiet())
+	h.p = newPCSCF(t, Config{Host: "pcscf." + domain, Port: 5060, VisitedNetworkID: domain}, locate, store, only(cfg.relay), quiet())
 	if cfg.configure != nil {
 		cfg.configure(h.p)
 	}
@@ -384,7 +384,7 @@ func TestTerminatingDialogKeepsTheRouteToTheCaller(t *testing.T) {
 		st.Respond(ok)
 	})
 	contact := "sip:001010000000001@" + ue.LocalAddr().String()
-	p := New(Config{Host: "pcscf." + domain, Port: 5060, VisitedNetworkID: domain}, locatorFunc(func(string) []sip.Destination { return nil }), store, nil, quiet())
+	p := newPCSCF(t, Config{Host: "pcscf." + domain, Port: 5060, VisitedNetworkID: domain}, locatorFunc(func(string) []sip.Destination { return nil }), store, nil, quiet())
 	p.store.PutAssociation(context.Background(), Association{Source: sip.Destination{Transport: sip.UDP, Addr: ue.LocalAddr()}, Contact: contact,
 		PrivateIdentity: impi, PublicIdentities: []string{impu}, Expires: time.Now().Add(time.Hour)})
 	pcscf := newPCSCFStack(t, p)

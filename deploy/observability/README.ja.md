@@ -64,6 +64,7 @@ go generate ./deploy/observability/...
 | --- | --- | --- |
 | `metrics.NewHandler`、prometheus/docs instrumenting/content_negotiation.md | Accept ヘッダの形式から選ぶことと、gzip。ハンドラはいつも、圧縮しないテキスト形式 0.0.4 で答えます。 | どの Prometheus もテキスト形式を求め、gzip は任意だからです。ほかの形式は、ここの指標が使うものを何も足しません。 |
 | `metrics.Histogram`、prometheus/docs instrumenting/exposition_formats.md | 観測が続くあいだに、バケット、合計、件数をそろえて写し取ること。"+Inf" のバケットはいつも `_count` と同じですが、`_sum` には、バケットにまだ入っていない観測が次の収集まで含まれることがあります。 | 写し取るには、もう 1 組のカウンタと入れ替えの仕組みが要るためです。平均のずれは観測 1 回分までで、続くのも 1 回の収集のあいだだけです。 |
+| P-CSCF。TS 32.409 4.1.1.1.1 と 4.1.1.1.3 | P-CSCF が UE の IP の対応付けを読む前に答えた REGISTER は、登録のどの測定にも数えません。読めない REGISTER（400 を返す）、Max-Forwards を使い切った REGISTER（483 を返す）、対応付けを読めなかった REGISTER（500 を返す）です。 | REGISTER が最初の登録を始めるか再登録を始めるかは、UE が P-CSCF と IP の対応付けを持っているかどうかで決まるためです。 |
 | S-CSCF。TS 32.409 4.1.1.1.1 と 4.1.1.1.3 | S-CSCF が利用者について持っているものを読む前に答えた REGISTER は、登録のどの測定にも数えません。読めない REGISTER（400 を返す）、利用者のロックを取れなかった REGISTER（500 を返す）、運用者が shut down か lock をしているあいだに断った REGISTER（503 を返す）です。 | REGISTER が最初の登録か再登録かは、S-CSCF がその利用者の登録を持っているかどうかで決まるためです。 |
 
 ## 知っておくこと

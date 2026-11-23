@@ -90,7 +90,7 @@ func newBorderHarness(t *testing.T) *borderHarness {
 	locate := locatorFunc(func(string) []sip.Destination {
 		return []sip.Destination{{Transport: sip.UDP, Addr: h.scscf.LocalAddr()}}
 	})
-	p := New(Config{Host: "pcscf." + domain, Port: 5060, VisitedNetworkID: domain}, locate, NewMemoryStore(), nil, quiet())
+	p := newPCSCF(t, Config{Host: "pcscf." + domain, Port: 5060, VisitedNetworkID: domain}, locate, NewMemoryStore(), nil, quiet())
 	h.pcscf = newPCSCFStack(t, p)
 	p.SetStack(h.pcscf)
 	h.contact = "sip:001010000000001@" + h.ue.LocalAddr().String()
@@ -283,7 +283,7 @@ func TestResponsesToREGISTERReachTheUEWithoutChargingInformation(t *testing.T) {
 	locate := locatorFunc(func(string) []sip.Destination {
 		return []sip.Destination{{Transport: sip.UDP, Addr: home.LocalAddr()}}
 	})
-	p := New(Config{Host: "pcscf." + domain, Port: 5060, VisitedNetworkID: domain}, locate, NewMemoryStore(), nil, quiet())
+	p := newPCSCF(t, Config{Host: "pcscf." + domain, Port: 5060, VisitedNetworkID: domain}, locate, NewMemoryStore(), nil, quiet())
 	pcscf := newPCSCFStack(t, p)
 	p.SetStack(pcscf)
 	ue := newStack(t, func(*sip.ServerTransaction) {})

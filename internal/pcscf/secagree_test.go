@@ -116,7 +116,7 @@ func newAKAHarnessWith(t *testing.T, protectedPort bool, log *slog.Logger, wrap 
 	if wrap != nil {
 		store = wrap(h.store)
 	}
-	h.p = New(cfg, locate, store, nil, log)
+	h.p = newPCSCF(t, cfg, locate, store, nil, log)
 	h.unprotected = newPCSCFStack(t, h.p)
 	h.p.SetStack(h.unprotected)
 	h.protected, err = sip.NewStack(tr, sip.Config{SentBy: tr.LocalAddr().String(), Screen: h.p.Screen, OnRequest: h.p.OnProtectedRequest}, quiet())

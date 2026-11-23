@@ -44,7 +44,7 @@ func TestCANCELThatMatchesNothingGoesOnStatelessly(t *testing.T) {
 	locate := locatorFunc(func(string) []sip.Destination {
 		return []sip.Destination{{Transport: sip.UDP, Addr: scscf.LocalAddr()}}
 	})
-	p := New(Config{Host: "pcscf." + domain, Port: 5060, VisitedNetworkID: domain}, locate, NewMemoryStore(), nil, quiet())
+	p := newPCSCF(t, Config{Host: "pcscf." + domain, Port: 5060, VisitedNetworkID: domain}, locate, NewMemoryStore(), nil, quiet())
 	p.SetStack(newPCSCFStack(t, p))
 	contact := "sip:001010000000001@" + ue.LocalAddr().String()
 	p.store.PutAssociation(context.Background(), Association{

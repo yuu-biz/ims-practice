@@ -498,7 +498,7 @@ func TestUnprotectedRequestFollowsTheSATableOfAllPCSCFs(t *testing.T) {
 	logs := newLogRecords()
 	h := newAKAHarnessWith(t, true, slog.New(logs), nil)
 	a := h.p
-	b := New(Config{Host: "pcscf-b." + domain, Port: 5060, VisitedNetworkID: domain}, nil, h.store, nil, quiet())
+	b := newPCSCF(t, Config{Host: "pcscf-b." + domain, Port: 5060, VisitedNetworkID: domain}, nil, h.store, nil, quiet())
 	ue := dialRawUE(t, sip.UDP, h.unprotected.LocalAddr())
 	association, sas := protectedUE(ue.addr())
 	a.store.PutAssociation(context.Background(), association)

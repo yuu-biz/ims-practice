@@ -33,6 +33,7 @@ import (
 	"github.com/yuu-biz/ims-practice/internal/kvstore/kvjson"
 	"github.com/yuu-biz/ims-practice/internal/kvstore/kvlock"
 	"github.com/yuu-biz/ims-practice/internal/maintenance"
+	"github.com/yuu-biz/ims-practice/internal/metrics"
 	"github.com/yuu-biz/ims-practice/internal/pcscf"
 	"github.com/yuu-biz/ims-practice/internal/rx"
 	"github.com/yuu-biz/ims-practice/internal/scscf"
@@ -246,6 +247,9 @@ type networkConfig struct {
 	// own Origin-Host and all of them on one shared store. Zero means
 	// one instance, with the store in its own process.
 	hssInstances int
+	// metrics is the registry in which the P-CSCF and the S-CSCF count,
+	// as the roles of one node do; nil gives each a registry of its own.
+	metrics *metrics.Registry
 }
 
 // The UEs of the EPC stub have loopback addresses of their own, as UEs
@@ -345,7 +349,7 @@ func startNetwork(t *testing.T, cfg networkConfig) testNetwork {
 	var scscfRole atomic.Pointer[scscf.SCSCF]
 	scscfNode, scscfPeer := connect("scscf."+domain, func(m *diam.Message) *diam.Message { return scscfRole.Load().Handle(m) })
 	s, err := scscf.New(scscf.Config{ServerName: "sip:scscf." + domain + ":5060", Host: "scscf." + domain, Port: 5060,
-		HomeDomain: domain, MinExpires: minExpires, MaxExpires: maxExpires}, scscfPeer, scscfNode, scscf.NewMemoryStore(), dns, quiet())
+		HomeDomain: domain, MinExpires: minExpires, MaxExpires: maxExpires, Metrics: cfg.metrics}, scscfPeer, scscfNode, scscf.NewMemoryStore(), dns, quiet())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -369,8 +373,12 @@ func startNetwork(t *testing.T, cfg networkConfig) testNetwork {
 		t.Fatal(err)
 	}
 	protectedPort := protectedTransport.LocalAddr().Port()
-	p := pcscf.New(pcscf.Config{Host: "pcscf." + domain, Port: 5060, ProtectedServerPort: int(protectedPort), VisitedNetworkID: domain},
+	p, err := pcscf.New(pcscf.Config{Host: "pcscf." + domain, Port: 5060, ProtectedServerPort: int(protectedPort), VisitedNetworkID: domain,
+		Metrics: cfg.metrics},
 		dns, pcscfStore, nil, slog.New(regEventHandler{log: pcscfLog}))
+	if err != nil {
+		t.Fatal(err)
+	}
 	t.Cleanup(p.Close)
 	pcscfStack := stackConfig(t, sip.Config{Screen: p.Screen, Admit: p.AdmitUnprotected, OnRequest: p.OnRequest, OnACK: p.OnACK, OnCANCEL: p.OnCANCEL})
 	var epcAPI string
