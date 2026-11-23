@@ -20,13 +20,17 @@ func (c *call) run() {
 }
 
 // originating serves a call that the served user makes. A call to the
-// conference factory URI creates a conference, whose focus the AS is
-// (conference.go).
+// conference factory URI becomes a conference, whose focus the AS is
+// (conference.go), once the originating services have run on it: the
+// S-CSCF matches an initial request against the filter criteria of the
+// served user before it routes the request on by its Request-URI (TS
+// 24.229 5.4.3.2 step 5 and NOTE 11), so a focus in an application
+// server of its own gets the INVITE as those services left it. OIR has
+// put "id" in the Privacy of a creator whose identity is restricted by
+// then, which is how the focus knows to keep that identity out of the
+// conference state (TS 24.605 4.6.5, TS 24.147 5.3.2.3.1 step 2 with
+// TS 24.229 5.7.1.4).
 func (c *call) originating() {
-	if c.as.isFactoryURI(c.in.Request.RequestURI) {
-		c.createConference()
-		return
-	}
 	inv, fields, err := c.newInvitation(c.in.Request.RequestURI)
 	if err != nil {
 		c.storeFailed(err)
@@ -41,6 +45,10 @@ func (c *call) originating() {
 	// responses.
 	c.restrictOriginatingIdentity(&inv, fields)
 	c.offerTerminatingIdentity(fields)
+	if c.as.isFactoryURI(inv.RequestURI) {
+		c.createConference(fields)
+		return
+	}
 	inv.Headers = fields.Headers
 	c.relay(inv)
 }
