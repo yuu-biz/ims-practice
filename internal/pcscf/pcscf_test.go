@@ -230,7 +230,8 @@ func TestRegisterThroughThePCSCF(t *testing.T) {
 // TestNextICSCFWhenTheFirstIsSilentOrTurnsAway walks the targets of
 // TS 24.229 5.2.2.1 item 7: a silent I-CSCF, one that answers 480 and
 // one that answers 503 (RFC 3263 4.3) are skipped, and the fourth
-// answers.
+// answers. With none left, the UE gets 504, never the 503 of the last
+// one.
 func TestNextICSCFWhenTheFirstIsSilentOrTurnsAway(t *testing.T) {
 	silent := newStack(t, func(*sip.ServerTransaction) {})
 	away := newStack(t, func(st *sip.ServerTransaction) { st.Respond(sip.NewResponse(st.Request, 480, sip.NewTag())) })
@@ -243,6 +244,9 @@ func TestNextICSCFWhenTheFirstIsSilentOrTurnsAway(t *testing.T) {
 	}
 	if got := registerVia(t, targets[:3]); got != 504 {
 		t.Errorf("with no I-CSCF left got %d, want 504", got)
+	}
+	if got := registerVia(t, targets[2:3]); got != 504 {
+		t.Errorf("with the one I-CSCF answering 503 got %d, want 504", got)
 	}
 }
 

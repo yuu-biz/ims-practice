@@ -32,6 +32,7 @@ import (
 	"github.com/yuu-biz/ims-practice/internal/kvstore/hssstore"
 	"github.com/yuu-biz/ims-practice/internal/kvstore/kvjson"
 	"github.com/yuu-biz/ims-practice/internal/kvstore/kvlock"
+	"github.com/yuu-biz/ims-practice/internal/maintenance"
 	"github.com/yuu-biz/ims-practice/internal/pcscf"
 	"github.com/yuu-biz/ims-practice/internal/rx"
 	"github.com/yuu-biz/ims-practice/internal/scscf"
@@ -535,6 +536,34 @@ func TestWrongPasswordIsRefused(t *testing.T) {
 	u := newUE(t, network(t, time.Second), "wrong-password")
 	if _, err := u.Register(context.Background()); !errors.Is(err, ue.ErrForbidden) {
 		t.Fatalf("err = %v, want ErrForbidden", err)
+	}
+}
+
+// TestRegistrationWhileTheSCSCFIsShutDown: the operator has shut the
+// S-CSCF down, so it answers the REGISTER 503 with Retry-After. The
+// I-CSCF has no other S-CSCF to send it to, and answers 500 without
+// Retry-After rather than pass the 503 on (RFC 3261 16.7 step 6), which
+// the P-CSCF passes to the UE. The UE would read a 503 as said of its
+// P-CSCF (TS 24.229 5.1.1.2.1).
+func TestRegistrationWhileTheSCSCFIsShutDown(t *testing.T) {
+	n := networkWith(t, time.Second, time.Hour)
+	node, err := maintenance.New(maintenance.Config{
+		Node:          "scscf",
+		LogLevel:      new(slog.LevelVar),
+		Functions:     []maintenance.Function{n.scscf.Function(func() bool { return true })},
+		Configuration: func() any { return map[string]string{"node": "scscf"} },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	n.scscf.Manage(node.ManagedFunction("scscf"))
+	if f, err := node.SetAdministrativeState("scscf", maintenance.AdministrativeStateRequest{AdministrativeState: maintenance.ShuttingDown}); err != nil || f.AdministrativeState != maintenance.Locked {
+		t.Fatalf("shut down gave %+v (%v), want LOCKED", f, err)
+	}
+	_, err = newUE(t, n.pcscf, password).Register(t.Context())
+	var failure *ue.RegisterFailure
+	if !errors.As(err, &failure) || failure.StatusCode != 500 || failure.RetryAfter != 0 {
+		t.Errorf("Register = %v, want 500 without Retry-After", err)
 	}
 }
 

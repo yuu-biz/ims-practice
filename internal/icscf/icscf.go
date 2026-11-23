@@ -175,7 +175,7 @@ func containsAll(have, want []uint32) bool {
 // SIMPLIFIED: TS 24.229 5.3.1.3. When the S-CSCF times out or answers
 // 3xx or 480, the I-CSCF should pick another S-CSCF. The configuration
 // of this network names one S-CSCF, so there is no other to pick, and
-// its answer goes back as it is. When that S-CSCF runs as several
+// its answer goes back through ims.Finish. When that S-CSCF runs as several
 // instances, a REGISTER that one of them leaves unanswered already goes
 // on to the next.
 func (i *ICSCF) forward(st *sip.ServerTransaction, server string, log *slog.Logger) {
@@ -203,9 +203,8 @@ func (i *ICSCF) forward(st *sip.ServerTransaction, server string, log *slog.Logg
 		// 5.3.1.3: an S-CSCF that does not answer, with no other to try,
 		// gives 504.
 		log.Warn("S-CSCF did not answer", "server_name", server, "error", err.Error())
-		final = sip.NewResponse(req, 504, sip.NewTag())
 	}
-	st.Respond(final)
+	ims.Finish(st, final, err)
 }
 
 func errString(err error) string {

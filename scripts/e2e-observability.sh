@@ -229,8 +229,10 @@ register='sip.CSeq.method == "REGISTER"'
 
 echo "the REGISTER while the S-CSCF is shut down"
 expect "503 S-CSCF -> I-CSCF with Retry-After 30" "$register && sip.Status-Code == 503 && ip.src == $scscf && ip.dst == $icscf && sip.Retry-After == 30"
-expect "503 I-CSCF -> P-CSCF" "$register && sip.Status-Code == 503 && ip.src == $icscf && ip.dst == $pcscf"
-expect "504 P-CSCF -> UE" "$register && sip.Status-Code == 504 && ip.src == $pcscf && ip.dst == $ue"
+# A proxy does not pass a 503 on (RFC 3261 16.7 step 6): the I-CSCF has
+# no other S-CSCF to try, so it answers 500 of its own.
+expect "500 I-CSCF -> P-CSCF without Retry-After" "$register && sip.Status-Code == 500 && ip.src == $icscf && ip.dst == $pcscf && !sip.Retry-After"
+expect "500 P-CSCF -> UE without Retry-After" "$register && sip.Status-Code == 500 && ip.src == $pcscf && ip.dst == $ue && !sip.Retry-After"
 echo "the REGISTER after the unlock"
 expect "401 S-CSCF -> I-CSCF" "$register && sip.Status-Code == 401 && ip.src == $scscf"
 expect "200 S-CSCF -> I-CSCF" "$register && sip.Status-Code == 200 && ip.src == $scscf"
