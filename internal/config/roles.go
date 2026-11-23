@@ -15,6 +15,7 @@ import (
 	"github.com/yuu-biz/ims-practice/internal/h248"
 	"github.com/yuu-biz/ims-practice/internal/hss"
 	"github.com/yuu-biz/ims-practice/internal/mmtel"
+	"github.com/yuu-biz/ims-practice/internal/sgd"
 	"github.com/yuu-biz/ims-practice/internal/sh"
 	"github.com/yuu-biz/ims-practice/internal/sip"
 	"github.com/yuu-biz/ims-practice/internal/sms"
@@ -475,6 +476,15 @@ type rawHSS struct {
 	MMTelServices string `yaml:"mmtel_services"`
 	// InitialFilterCriteria apply to every subscription (hss.Config).
 	InitialFilterCriteria []rawInitialFilterCriteria `yaml:"initial_filter_criteria"`
+	// ServiceCentres name the SMS central functions the HSS can alert
+	// (hss.ServiceCentre). TS 29.338 5.3.1.2 routes an alert by the
+	// Diameter identity of the service centre, which the HSS has no
+	// other way to learn from a Service Centre address.
+	ServiceCentres []struct {
+		Address string `yaml:"address"`
+		Host    string `yaml:"host"`
+		Realm   string `yaml:"realm"`
+	} `yaml:"service_centres"`
 }
 
 func (raw rawSIP) validate() (SIP, error) {
@@ -660,6 +670,19 @@ func (raw *rawHSS) validate(homeDomain string) (hss.Config, error) {
 			return hss.Config{}, err
 		}
 		c.MMTelServices = &d
+	}
+	for i, s := range raw.ServiceCentres {
+		switch {
+		case !sgd.ValidE164(s.Address):
+			return hss.Config{}, fmt.Errorf("service_centres[%d].address: want 1 to 15 decimal digits", i)
+		case s.Host == "":
+			return hss.Config{}, fmt.Errorf("service_centres[%d].host: required", i)
+		}
+		realm := s.Realm
+		if realm == "" {
+			realm = homeDomain
+		}
+		c.ServiceCentres = append(c.ServiceCentres, hss.ServiceCentre{Address: s.Address, Host: s.Host, Realm: realm})
 	}
 	if len(raw.Subscriptions) == 0 {
 		return hss.Config{}, errors.New("subscriptions: at least one is required")

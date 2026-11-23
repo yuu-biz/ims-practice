@@ -231,12 +231,26 @@ func (h *HSS) profileUpdate(ctx context.Context, r sh.ProfileUpdateRequest) sh.P
 	if number != "" && data.ShIMSData.SMSRegistrationInfo.SupportsS6c() {
 		u.IPSMGW = origin(r.Header)
 	}
+	// TS 23.040 3.2.8 case 1 item 2c, TS 23.204 6.5b step 2: an IP-SM-GW
+	// that registers says that the UE is reachable for SMS over IP
+	// again, so UNRI goes. The service centres that hold a short message
+	// for the user are then alerted, unless the memory of the UE is the
+	// reason they hold it: only a notification of free memory helps
+	// then.
+	alert := false
+	if number != "" {
+		u.UNRI = false
+		alert = len(u.MessageWaitingData) > 0 && !u.MCEF
+	}
 	if err := h.store.Put(ctx, u); err != nil {
 		return sh.ProfileUpdateAnswer{Result: h.storeFailed(err)}
 	}
 	if from != number {
 		h.log.Info("SMS registration", "private_identity", u.PrivateIdentity, "from", from, "to", number,
 			"ip_sm_gw", u.IPSMGW.OriginHost)
+	}
+	if alert {
+		h.alertServiceCentres(u)
 	}
 	return sh.ProfileUpdateAnswer{Result: diameter.Base(diameter.DiameterSuccess)}
 }

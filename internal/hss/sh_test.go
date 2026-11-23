@@ -51,7 +51,9 @@ func newShNetworkWith(t *testing.T, subscriptions ...Subscription) shNetwork {
 	timers := diameter.Timers{Watchdog: time.Minute, Reconnect: 50 * time.Millisecond, Answer: 2 * time.Second}
 	hssNode := diameter.NewNode(diameter.Identity{OriginHost: "hss." + realm, OriginRealm: realm},
 		[]uint32{diameter.ApplicationIDCx, diameter.ApplicationIDSh, sgd.ApplicationIDS6c}, timers, quiet())
-	h := mustHSS(Config{Realm: realm, VisitedNetworks: []string{realm}}, store, hssNode)
+	h := mustHSS(Config{Realm: realm, VisitedNetworks: []string{realm},
+		ServiceCentres: []ServiceCentre{{Address: scAddress, Host: scHost, Realm: realm}}}, store, hssNode)
+	t.Cleanup(h.Close)
 	hssNode.Handle(h.Handle)
 	server, err := hssNode.Listen("127.0.0.1:0")
 	if err != nil {
@@ -62,6 +64,7 @@ func newShNetworkWith(t *testing.T, subscriptions ...Subscription) shNetwork {
 		[]uint32{diameter.ApplicationIDSh}, timers, quiet())
 	peer := node.Connect(diameter.PeerConfig{Address: server.Addr(), OriginHost: "hss." + realm})
 	t.Cleanup(peer.Stop)
+	h.SetPeers(server)
 	return shNetwork{hss: h, node: node, peer: peer, server: server}
 }
 

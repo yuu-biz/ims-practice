@@ -28,6 +28,8 @@ type s6cNetwork struct {
 	shNetwork
 	scNode *diameter.Node
 	scPeer *diameter.Peer
+	// alerts carries the ALRs that reach the SC.
+	alerts chan sgd.AlertServiceCentreRequest
 }
 
 func newS6cNetwork(t *testing.T) s6cNetwork {
@@ -35,9 +37,42 @@ func newS6cNetwork(t *testing.T) s6cNetwork {
 	n := newShNetwork(t)
 	node := diameter.NewNode(diameter.Identity{OriginHost: scHost, OriginRealm: realm},
 		[]uint32{sgd.ApplicationIDS6c}, diameter.Timers{Watchdog: time.Minute, Reconnect: 50 * time.Millisecond, Answer: 2 * time.Second}, quiet())
-	peer := node.Connect(diameter.PeerConfig{Address: n.server.Addr(), OriginHost: "hss." + realm})
-	t.Cleanup(peer.Stop)
-	return s6cNetwork{shNetwork: n, scNode: node, scPeer: peer}
+	sc := s6cNetwork{shNetwork: n, scNode: node, alerts: make(chan sgd.AlertServiceCentreRequest, 8)}
+	// The SMS-IWMSC side of the SC: it takes the alerts of the HSS and
+	// answers them.
+	node.Handle(func(request *diam.Message) *diam.Message {
+		alr, err := sgd.ParseAlertServiceCentreRequest(request)
+		if err != nil {
+			return sgd.AlertServiceCentreAnswer{Result: diameter.Base(diameter.DiameterUnableToComply)}.Message(request, node.Identity())
+		}
+		sc.alerts <- alr
+		return sgd.AlertServiceCentreAnswer{Result: success}.Message(request, node.Identity())
+	})
+	sc.scPeer = node.Connect(diameter.PeerConfig{Address: n.server.Addr(), OriginHost: "hss." + realm})
+	t.Cleanup(sc.scPeer.Stop)
+	return sc
+}
+
+// alert waits for one ALR to reach the SC.
+func (n s6cNetwork) alert(t *testing.T) sgd.AlertServiceCentreRequest {
+	t.Helper()
+	select {
+	case alr := <-n.alerts:
+		return alr
+	case <-time.After(5 * time.Second):
+		t.Fatal("no ALR reached the service centre")
+		return sgd.AlertServiceCentreRequest{}
+	}
+}
+
+// noAlert reports that no ALR reaches the SC for a while.
+func (n s6cNetwork) noAlert(t *testing.T) {
+	t.Helper()
+	select {
+	case alr := <-n.alerts:
+		t.Fatalf("an ALR reached the service centre: %+v", alr)
+	case <-time.After(200 * time.Millisecond):
+	}
 }
 
 // srr sends a routing info query for msisdn, as the SMS-GMSC of the SC
@@ -254,6 +289,82 @@ func TestReportSMDeliveryStatusForAnUnknownNumber(t *testing.T) {
 	a := n.rdr(t, "12025550188", sgd.SMDeliveryCauseAbsentUser)
 	if want := diameter.Experimental(sgd.DiameterErrorUserUnknown); a.Result != want {
 		t.Errorf("RDA = %v, want %v", a.Result, want)
+	}
+}
+
+// The whole store and deliver round inside the home network, as far as
+// the HSS sees it: a delivery finds no node, the SC address stays, the
+// user registers again, and the HSS alerts the SC (TS 23.040 3.2.8 case
+// 1 item 2c, TS 23.204 6.5b step 2, TS 29.338 5.2.2).
+func TestRegistrationAlertsTheServiceCentre(t *testing.T) {
+	n := newS6cNetwork(t)
+	if a := n.srr(t, msisdnA); a.Result != diameter.Experimental(sgd.DiameterErrorAbsentUser) {
+		t.Fatalf("SRA = %v", a.Result)
+	}
+	// Waiting for the first answer opens the SC's connection, over which
+	// the alert then travels back.
+	n.noAlert(t)
+
+	if r := n.pur(t, sh.UserIdentity{PublicIdentity: impu}, []sh.DataReference{sh.SMSRegistrationInfo},
+		smsRegistrationOverS6c(ipsmgwNumber)); r != success {
+		t.Fatalf("PUR = %v", r)
+	}
+	alr := n.alert(t)
+	if alr.SCAddress != scAddress || alr.UserIdentifier.MSISDN != msisdnA {
+		t.Errorf("ALR = %+v, want SC-Address %s and MSISDN %s", alr, scAddress, msisdnA)
+	}
+	// The SC took the alert, so its address leaves the message waiting
+	// data, and UNRI goes with the registration.
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		u := n.subscriber(t)
+		if len(u.MessageWaitingData) == 0 && !u.UNRI {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("message waiting data = %v, UNRI = %v", u.MessageWaitingData, u.UNRI)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	// The SC now gets a serving node and delivers.
+	if a := n.srr(t, msisdnA); a.Result != success || a.ServingNode == nil {
+		t.Errorf("SRA = %v, %+v", a.Result, a.ServingNode)
+	}
+}
+
+// TS 23.040 3.2.8 case 1 item 2c: while MCEF is set, the return of the
+// user alerts nobody. Only free memory in the UE helps then, so the
+// message waiting data stays as it is.
+func TestRegistrationDoesNotAlertWhileTheMemoryIsFull(t *testing.T) {
+	n := newS6cNetwork(t)
+	if a := n.rdr(t, msisdnA, sgd.SMDeliveryCauseUEMemoryCapacityExceeded); a.Result != success {
+		t.Fatalf("RDA = %v", a.Result)
+	}
+	if r := n.pur(t, sh.UserIdentity{PublicIdentity: impu}, []sh.DataReference{sh.SMSRegistrationInfo},
+		smsRegistrationOverS6c(ipsmgwNumber)); r != success {
+		t.Fatalf("PUR = %v", r)
+	}
+	n.noAlert(t)
+	if u := n.subscriber(t); len(u.MessageWaitingData) != 1 || !u.MCEF {
+		t.Errorf("message waiting data = %v, MCEF = %v", u.MessageWaitingData, u.MCEF)
+	}
+}
+
+// A deregistration leaves the message waiting data alone: the user is
+// not reachable, so there is nothing to alert about.
+func TestDeregistrationSendsNoAlert(t *testing.T) {
+	n := newS6cNetwork(t)
+	if a := n.srr(t, msisdnA); a.Result != diameter.Experimental(sgd.DiameterErrorAbsentUser) {
+		t.Fatalf("SRA = %v", a.Result)
+	}
+	if r := n.pur(t, sh.UserIdentity{PublicIdentity: impu}, []sh.DataReference{sh.SMSRegistrationInfo},
+		smsRegistrationOverS6c("")); r != success {
+		t.Fatalf("PUR = %v", r)
+	}
+	n.noAlert(t)
+	if u := n.subscriber(t); len(u.MessageWaitingData) != 1 || !u.UNRI {
+		t.Errorf("message waiting data = %v, UNRI = %v", u.MessageWaitingData, u.UNRI)
 	}
 }
 

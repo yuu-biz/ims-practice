@@ -143,6 +143,9 @@ func run(configPath string, log *slog.Logger, level *slog.LevelVar) error {
 			if hssRole, err = hss.New(hssConfig, store, node, roleLog); err != nil {
 				return err
 			}
+			// The alerts to the service centres that are on their way
+			// finish before the node stops.
+			defer hssRole.Close()
 		}
 		if cfg.EPC != nil {
 			epcRole = epc.New(cfg.EPC.Config, epc.NewMemoryStore(), node, log.With("role", config.RoleEPC))
@@ -162,6 +165,11 @@ func run(configPath string, log *slog.Logger, level *slog.LevelVar) error {
 		}
 		if epcRole != nil {
 			epcRole.SetAFs(server)
+		}
+		if hssRole != nil {
+			// The S-CSCF and the service centres connect to the HSS, so
+			// the RTR and the ALR go back over the server's connections.
+			hssRole.SetPeers(server)
 		}
 		// One connection per entry of the diameter section, in its order,
 		// so that peersOfKind finds each peer at the entry's index.
