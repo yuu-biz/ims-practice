@@ -280,8 +280,20 @@ func TestPeersOfTheHSSAndThePCRF(t *testing.T) {
 				cfg.Diameter.Peers = append(cfg.Diameter.Peers, config.Peer{Kind: kind})
 			}
 		}
-		if got := pcrfPeer(cfg, tt.peers); got != tt.pcscf {
-			t.Errorf("%s: PCRF %p, want %p", tt.name, got, tt.pcscf)
+		pcrf, err := pcrfPeers(cfg, tt.peers, metrics.NewRegistry())
+		if err != nil {
+			t.Fatalf("%s: %v", tt.name, err)
+		}
+		var got []*diameter.Peer
+		if pcrf != nil {
+			got = pcrf.Peers()
+		}
+		var want []*diameter.Peer
+		if tt.pcscf != nil {
+			want = []*diameter.Peer{tt.pcscf}
+		}
+		if !slices.Equal(got, want) {
+			t.Errorf("%s: PCRF %v, want %v", tt.name, got, want)
 		}
 		group, err := hssPeers(cfg, tt.peers, metrics.NewRegistry(), config.RoleSCSCF)
 		if err != nil {

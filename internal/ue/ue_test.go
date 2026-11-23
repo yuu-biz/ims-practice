@@ -276,7 +276,7 @@ var stubCell = epc.SystemInformation{
 // startEPC starts the EPC stub with its PCRF, and gives p policy control
 // over Rx against it, as cmd/ims does for a pcscf with a PCRF. It
 // returns the stub's API.
-func startEPC(t *testing.T, p *pcscf.PCSCF, pcscfAddr netip.Addr) string {
+func startEPC(t *testing.T, p *pcscf.PCSCF, pcscfAddr netip.Addr, reg *metrics.Registry) string {
 	t.Helper()
 	pcrfID := diameter.Identity{OriginHost: "pcrf." + domain, OriginRealm: domain}
 	pcrfNode := diameter.NewNode(pcrfID, []uint32{diameter.ApplicationIDRx}, timers, quiet())
@@ -302,7 +302,13 @@ func startEPC(t *testing.T, p *pcscf.PCSCF, pcscfAddr netip.Addr) string {
 	afNode.Handle(func(m *diam.Message) *diam.Message { return client.Load().Handle(m) })
 	peer := afNode.Connect(diameter.PeerConfig{Address: server.Addr(), OriginHost: pcrfID.OriginHost})
 	t.Cleanup(peer.Stop)
-	client.Store(rx.NewClient(afNode, peer, domain, p.PolicyEvent, quiet()))
+	// The P-CSCF reaches the one PCRF through a group of one, as it does
+	// in Compose, and counts its Rx requests there.
+	pcrf, err := diameter.NewPeerGroup(reg, "pcscf", peer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	client.Store(rx.NewClient(afNode, pcrf, domain, p.PolicyEvent, quiet()))
 	p.SetPolicyControl(client.Load())
 	deadline := time.Now().Add(5 * time.Second)
 	for {
@@ -394,7 +400,7 @@ func startNetwork(t *testing.T, cfg networkConfig) testNetwork {
 	pcscfStack := stackConfig(t, sip.Config{Screen: p.Screen, Admit: p.AdmitUnprotected, OnRequest: p.OnRequest, OnACK: p.OnACK, OnCANCEL: p.OnCANCEL})
 	var epcAPI string
 	if cfg.epc {
-		epcAPI = startEPC(t, p, pcscfStack.LocalAddr().Addr())
+		epcAPI = startEPC(t, p, pcscfStack.LocalAddr().Addr(), cfg.metrics)
 	}
 	p.SetStack(pcscfStack)
 	dns.add("pcscf."+domain, pcscfStack.LocalAddr())

@@ -332,8 +332,12 @@ func run(configPath string, log *slog.Logger, level *slog.LevelVar) error {
 		// Without a PCRF in the diameter section the P-CSCF asks no
 		// policy control of the network. The PCRF serves
 		// the network the P-CSCF is in, so its realm is the node's own.
-		if peer := pcrfPeer(cfg, peers); peer != nil {
-			client := rx.NewClient(node, peer, cfg.Diameter.Identity.OriginRealm, p.PolicyEvent, roleLog)
+		pcrf, err := pcrfPeers(cfg, peers, registry)
+		if err != nil {
+			return err
+		}
+		if pcrf != nil {
+			client := rx.NewClient(node, pcrf, cfg.Diameter.Identity.OriginRealm, p.PolicyEvent, roleLog)
 			policyControl.Store(client)
 			p.SetPolicyControl(client)
 			roleLog.Info("policy control over Rx")
@@ -1221,17 +1225,22 @@ func hssPeers(cfg config.Config, peers []*diameter.Peer, registry *metrics.Regis
 	return diameter.NewPeerGroup(registry, string(role), peersOfKind(cfg, peers, config.PeerHSS)...)
 }
 
-// pcrfPeer is the Rx peer of the P-CSCF, or nil when the configuration
-// names none, which leaves the P-CSCF without policy control.
-func pcrfPeer(cfg config.Config, peers []*diameter.Peer) *diameter.Peer {
+// pcrfPeers is the Rx peer of the P-CSCF as a group of one, in which
+// the P-CSCF counts the requests and the answers of its policy control,
+// or nil when the configuration names no PCRF, which leaves the P-CSCF
+// without policy control. The group holds the first PCRF of the
+// configuration and no other: the P-CSCF sends to the one PCRF that
+// serves its network (internal/rx), so there is no second one to send
+// to when that one does not answer.
+func pcrfPeers(cfg config.Config, peers []*diameter.Peer, registry *metrics.Registry) (*diameter.PeerGroup, error) {
 	if !cfg.HasRole(config.RolePCSCF) {
-		return nil
+		return nil, nil
 	}
 	pcrfs := peersOfKind(cfg, peers, config.PeerPCRF)
 	if len(pcrfs) == 0 {
-		return nil
+		return nil, nil
 	}
-	return pcrfs[0]
+	return diameter.NewPeerGroup(registry, string(config.RolePCSCF), pcrfs[0])
 }
 
 // peersOfKind are the connections to the peers that the diameter
