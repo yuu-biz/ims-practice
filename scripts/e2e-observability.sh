@@ -28,7 +28,11 @@
 # the filter criteria send it, which the S-CSCF turns into the 500 that
 # ends the call, since the criterion of the originating case says
 # SESSION_TERMINATED; after the unlock the call goes through the AS on
-# both legs again. A shut down of the HSS instead sends every Diameter
+# both legs again. A shut down of the MRFC makes the MRFC answer 503
+# with Retry-After to the INVITE with which the AS asks it for an
+# announcement, so a barred call of UE 1 is rejected without the early
+# media of the MRFP; after the unlock the caller hears the announcement
+# again. A shut down of the HSS instead sends every Diameter
 # peer a DPR with Disconnect-Cause REBOOTING and stops the node
 # listening on 3868, so the I-CSCF reports itself DISABLED and no UE
 # can register; after the unlock the CSCFs open their connections again
@@ -645,6 +649,83 @@ fi
 
 await "the 200 OK of the call after the unlock of the MMTel AS" "$asAnswers" $((asAnswered + 1))
 
+echo "drain of the MRFC"
+# The MRFC takes its work from the AS, so the drain shows in a call
+# whose service needs the MRF: a barred call, before whose rejection the
+# AS has the MRFC play an announcement to the caller (TS 24.628 4.2.4).
+# The AS answers the INVITE of each leg it serves, and the MRFC answers
+# the one of each dialog of its own, so count the 2xx of the MRFC first.
+mrfcAnswers='sip.CSeq.method == "INVITE" && sip.Status-Code == 200 && ip.src == 172.28.0.85'
+mrfcAnswered="$(count "$mrfcAnswers")"
+# UE 1 bars its own outgoing calls over Ut, as the MRF guide has it.
+# Every scene after this one, and the checks of the capture, need UE 1's
+# calls to go through again, so the barring comes off on the way out of
+# this scene whatever happens in between, and the trap goes once the
+# scene has taken it off itself.
+trap 'docker compose run --no-deps --rm ue xcap set baoc off >/dev/null 2>&1 || true' EXIT
+# The drain only shows in a call that the AS rejects, so the two calls
+# below say nothing about it unless the barring took. Check that here,
+# before the MRFC is shut down. "ue xcap" prints every supplementary
+# service of the document, each as "name", "provisioned" and "active"
+# in that order, so the check reads the three lines of baoc itself: a
+# bare '"active": true' would match any other service.
+services="$(docker compose run --no-deps --rm ue xcap set baoc on 2>&1)"
+if grep -A 2 '"name": "baoc"' <<<"$services" | grep -q '"active": true'; then
+	echo "ok   UE 1 barred its outgoing calls over Ut"
+else
+	echo "FAIL UE 1 could not bar its outgoing calls, so the calls of this scene say nothing about the drain"
+	fail=1
+fi
+# The MRFC holds no dialog of its own, so the shut down makes it LOCKED
+# at once; SHUTTINGDOWN refuses a new INVITE just the same.
+answer="$(administrative_state mrfc SHUTTINGDOWN || true)"
+state="$(node_state mrfc || true)"
+if grep -Eq '"administrative_state":"(SHUTTINGDOWN|LOCKED)"' <<<"$state"; then
+	echo "ok   the maintenance API shut the MRFC down"
+else
+	echo "FAIL the shut down of the MRFC: $answer"
+	echo "     state of the node: $state"
+	fail=1
+fi
+# The call is barred either way, so "ue call" exits 1, hence "|| true".
+# What the drain changes is the announcement: the AS gets 503 from the
+# MRFC and rejects the call without the early media of the MRFP.
+out="$(docker compose run --no-deps --rm ue call --tone 1s tel:+1-202-555-0102 2>&1 || true)"
+if grep -q '"call failed: 603 ' <<<"$out" && ! grep -q '"msg":"early media authorization"' <<<"$out"; then
+	echo "ok   UE 1's barred call was rejected without an announcement while the MRFC is shut down"
+else
+	echo "FAIL the barred call while the MRFC is shut down: $(tail -n 2 <<<"$out")"
+	fail=1
+fi
+answer="$(administrative_state mrfc UNLOCKED || true)"
+state="$(node_state mrfc || true)"
+if grep -q '"administrative_state":"UNLOCKED"' <<<"$state"; then
+	echo "ok   the maintenance API unlocked the MRFC"
+else
+	echo "FAIL the unlock of the MRFC: $answer"
+	echo "     state of the node: $state"
+	fail=1
+fi
+out="$(docker compose run --no-deps --rm ue call --tone 1s tel:+1-202-555-0102 2>&1 || true)"
+if grep -q '"msg":"early media authorization"' <<<"$out" && grep -q '"call failed: 603 ' <<<"$out"; then
+	echo "ok   UE 1 heard the announcement before the rejection after the unlock of the MRFC"
+else
+	echo "FAIL the barred call after the unlock of the MRFC: $(tail -n 2 <<<"$out")"
+	fail=1
+fi
+services="$(docker compose run --no-deps --rm ue xcap set baoc off 2>&1)"
+if grep -A 2 '"name": "baoc"' <<<"$services" | grep -q '"active": false'; then
+	echo "ok   UE 1 let its outgoing calls through again"
+else
+	echo "FAIL UE 1 could not stop barring its outgoing calls"
+	fail=1
+fi
+# The barring is off, so the trap that would take it off has nothing
+# left to do.
+trap - EXIT
+
+await "the 200 OK of the MRFC after its unlock" "$mrfcAnswers" $((mrfcAnswered + 1))
+
 echo "drain of the HSS"
 # The HSS has no SIP to answer with: it ends each Diameter connection
 # with a DPR whose Disconnect-Cause is REBOOTING and stops listening on
@@ -733,6 +814,9 @@ pcscf=172.28.0.40
 icscf=172.28.0.20
 scscf=172.28.0.30
 mmtel=172.28.0.75
+mrfc=172.28.0.85
+mrfp=172.28.0.86
+agw=172.28.0.50
 register='sip.CSeq.method == "REGISTER"'
 invite='sip.CSeq.method == "INVITE"'
 
@@ -802,7 +886,27 @@ expect "INVITE S-CSCF -> MMTel AS" "sip.Method == \"INVITE\" && ip.src == $scscf
 expect "INVITE MMTel AS -> S-CSCF of the second leg" "sip.Method == \"INVITE\" && ip.src == $mmtel && ip.dst == $scscf"
 expect "200 MMTel AS -> S-CSCF" "$invite && sip.Status-Code == 200 && ip.src == $mmtel && ip.dst == $scscf"
 
+echo "the announcement of the barred call while the MRFC is shut down"
+# The AS asks the MRFC for the announcement of RFC 4240 3. The MRFC
+# answers 503 with Retry-After and sets up no media, so the AS rejects
+# the barred call without the early media it would have authorized, and
+# the 603 carries no Reason: the AS adds that only to a rejection the
+# caller has heard an announcement before (TS 24.628 4.2.4).
+expect "INVITE MMTel AS -> MRFC for the announcement notice" "sip.Method == \"INVITE\" && ip.src == $mmtel && ip.dst == $mrfc && sip.r-uri contains \"annc@\""
+refusedAnnouncement="$last"
+expect "503 MRFC -> MMTel AS with Retry-After 30" "$invite && sip.Status-Code == 503 && ip.src == $mrfc && ip.dst == $mmtel && sip.Retry-After == 30"
+none "2xx of the MRFC while it was shut down" "frame.number > $refusedAnnouncement && frame.number <= $last && $invite && sip.Status-Code == 200 && ip.src == $mrfc"
+expect "603 P-CSCF -> UE 1 for the barred call, without a Reason" "sip.Status-Code == 603 && ip.src == $pcscf && ip.dst == $ue && !sip.Reason"
+none "responses that authorize early media for UE 1 while the MRFC was shut down" "frame.number > $refusedAnnouncement && frame.number < $last && sip.P-Early-Media && ip.dst == $ue"
+echo "the announcement after the unlock of the MRFC"
+expect "INVITE MMTel AS -> MRFC for the announcement notice" "sip.Method == \"INVITE\" && ip.src == $mmtel && ip.dst == $mrfc && sip.r-uri contains \"annc@\""
+expect "200 MRFC -> MMTel AS with the SDP of the MRFP" "$invite && sip.Status-Code == 200 && ip.src == $mrfc && sdp.connection_info.address == \"$mrfp\""
+expect "183 P-CSCF -> UE 1 with P-Early-Media: sendonly" "sip.Status-Code == 183 && ip.dst == $ue && sip.P-Early-Media == \"sendonly\""
+expect "RTP of notice media relay -> UE 1" "rtp && ip.src == $agw && ip.dst == $ue"
+expect "BYE MRFC -> MMTel AS once notice has played" "sip.Method == \"BYE\" && ip.src == $mrfc && ip.dst == $mmtel"
+expect "603 P-CSCF -> UE 1 with Reason: SIP;cause=603" "sip.Status-Code == 603 && ip.src == $pcscf && ip.dst == $ue && sip.Reason contains \"cause=603\""
+
 if [ "$fail" -ne 0 ]; then
-	docker compose logs --no-color pcscf icscf scscf hss mmtel prometheus grafana | tail -n 80
+	docker compose logs --no-color pcscf icscf scscf hss mmtel mrfc prometheus grafana | tail -n 80
 fi
 exit "$fail"
