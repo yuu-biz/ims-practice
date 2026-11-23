@@ -113,7 +113,7 @@ func (g *IPSMGW) shortMessageFromPeer(req *sip.Message, user string, rp sms.RPDa
 		return
 	}
 	log.Info("short message from another network, delivering it to the user")
-	go g.Deliver(context.Background(), Delivery{
+	g.Deliver(Delivery{
 		Reference:     req.Get("Call-ID"),
 		Recipient:     user,
 		TPDU:          tpdu,

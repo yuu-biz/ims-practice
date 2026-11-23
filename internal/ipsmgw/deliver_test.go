@@ -1,7 +1,6 @@
 package ipsmgw_test
 
 import (
-	"context"
 	"reflect"
 	"testing"
 	"time"
@@ -32,7 +31,7 @@ func deliveryReport(t *testing.T, mt *sip.Message, rp sms.RPMessage) *sip.Messag
 // carries it, with its RP-DATA.
 func (h *harness) delivered(reference string) (*sip.Message, sms.RPDataNetworkToMS) {
 	h.t.Helper()
-	go h.g.Deliver(context.Background(), ipsmgw.Delivery{Reference: reference, Recipient: bobTel, TPDU: deliver})
+	h.g.Deliver(ipsmgw.Delivery{Reference: reference, Recipient: bobTel, TPDU: deliver})
 	mt := h.next()
 	data, ok := parseRP(h.t, mt).(sms.RPDataNetworkToMS)
 	if !ok {

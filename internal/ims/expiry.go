@@ -66,7 +66,9 @@ type Sweep[E Expiry] struct {
 	// Claim claims the expiries of kind that are due at now, at most
 	// limit of them, each until now plus lease. The store of the role
 	// gives them out, so that each of them goes to one instance at a
-	// time.
+	// time. Every expiry that it returns is given to exactly one
+	// Handle, so a role may count its claims here and give the count up
+	// there.
 	Claim func(ctx context.Context, kind string, now time.Time, lease time.Duration, limit int) ([]E, error)
 	// Handle does what the expiry calls for. It returns the failure of
 	// the store, or of a lock in it, that left the item as it was: no

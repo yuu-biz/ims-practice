@@ -122,7 +122,7 @@ func TestDeliveryReportWhenTheStoreFails(t *testing.T) {
 func TestDeliveryWhenTheStoreFails(t *testing.T) {
 	h, kv := newHarnessOnAStore(t)
 	kv.down.Store(true)
-	go h.g.Deliver(context.Background(), ipsmgw.Delivery{Reference: "ref-1", Recipient: bobTel, TPDU: deliver})
+	h.g.Deliver(ipsmgw.Delivery{Reference: "ref-1", Recipient: bobTel, TPDU: deliver})
 	if got := h.nextReport(); got != (reported{"ref-1", ipsmgw.SystemFailure}) {
 		t.Errorf("SC heard %+v", got)
 	}

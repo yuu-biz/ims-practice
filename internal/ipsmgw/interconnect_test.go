@@ -1,7 +1,6 @@
 package ipsmgw_test
 
 import (
-	"context"
 	"testing"
 	"time"
 
@@ -31,7 +30,7 @@ func withIBCF(t *testing.T) ipsmgw.Config {
 // accepts the MESSAGE.
 func TestDeliveryToAnotherNetworkLeavesThroughTheIBCF(t *testing.T) {
 	h := newHarnessWith(t, ipsmgw.NewMemoryStore(), time.Minute, func(*sip.Message) int { return 202 }, withIBCF(t))
-	go h.g.Deliver(context.Background(), ipsmgw.Delivery{Reference: "ref-peer", Recipient: peerUser, TPDU: deliver})
+	h.g.Deliver(ipsmgw.Delivery{Reference: "ref-peer", Recipient: peerUser, TPDU: deliver})
 	mt := h.next()
 	checkHeaders(t, mt, map[string]string{
 		"Route":               "<sip:" + ibcfHost + ":5060;lr>",
@@ -60,7 +59,7 @@ func TestDeliveryToAnotherNetworkLeavesThroughTheIBCF(t *testing.T) {
 // gets the MESSAGE through the entry point, as without an IBCF.
 func TestDeliveryInTheHomeNetworkWithAnIBCF(t *testing.T) {
 	h := newHarnessWith(t, ipsmgw.NewMemoryStore(), time.Minute, answerOK, withIBCF(t))
-	go h.g.Deliver(context.Background(), ipsmgw.Delivery{Reference: "ref", Recipient: bobTel, TPDU: deliver})
+	h.g.Deliver(ipsmgw.Delivery{Reference: "ref", Recipient: bobTel, TPDU: deliver})
 	checkHeaders(t, h.next(), map[string]string{"Route": "<sip:" + domain + ";lr>", "P-Asserted-Identity": "<" + ownURI + ">"})
 }
 

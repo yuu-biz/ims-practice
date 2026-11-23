@@ -51,7 +51,7 @@ func (failingUsers) PublicIdentities(context.Context, string) ([]string, error) 
 // fakeIPSMGW hands the test every delivery the SC asks for.
 type fakeIPSMGW chan ipsmgw.Delivery
 
-func (f fakeIPSMGW) Deliver(_ context.Context, d ipsmgw.Delivery) { f <- d }
+func (f fakeIPSMGW) Deliver(d ipsmgw.Delivery) { f <- d }
 
 func (f fakeIPSMGW) next(t *testing.T) ipsmgw.Delivery {
 	t.Helper()

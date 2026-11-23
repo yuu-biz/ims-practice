@@ -22,9 +22,11 @@ import (
 	"log/slog"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/yuu-biz/ims-practice/internal/ims"
+	"github.com/yuu-biz/ims-practice/internal/maintenance"
 	"github.com/yuu-biz/ims-practice/internal/sh"
 	"github.com/yuu-biz/ims-practice/internal/sip"
 	"github.com/yuu-biz/ims-practice/internal/sms"
@@ -106,6 +108,12 @@ type IPSMGW struct {
 	// stopSweep ends the sweep of this instance and waits for the
 	// handlers it started (deliver.go).
 	stopSweep func()
+	// managed is the administrative state that the maintenance API of
+	// the node keeps for the IP-SM-GW, and inHand counts the work this
+	// instance has taken on and not finished: the users of X.731 7.1.3
+	// (maintenance.go).
+	managed atomic.Pointer[maintenance.ManagedFunction]
+	inHand  atomic.Int64
 }
 
 // New returns the IP-SM-GW and starts its sweep, which ends the
@@ -128,10 +136,8 @@ func New(cfg Config, sc ServiceCentre, store Store, hss HSS, locator ims.Locator
 	g := &IPSMGW{cfg: cfg, sc: sc, store: store, hss: hss, locator: locator, users: cfg.UserLocks, log: log}
 	g.stopSweep = ims.Sweep[Expiry]{
 		Kinds: []string{ReportTimeout}, Interval: cfg.SweepInterval, Lease: cfg.ExpiryLease,
-		Claim: func(ctx context.Context, _ string, now time.Time, lease time.Duration, limit int) ([]Expiry, error) {
-			return store.ClaimDue(ctx, now, lease, limit)
-		},
-		Handle: func(ctx context.Context, e Expiry) error { return g.reportTimedOut(ctx, e.CallID) },
+		Claim:  g.claimDue,
+		Handle: g.handleExpiry,
 		Done:   store.Done,
 		Log:    log,
 	}.Start()
@@ -148,15 +154,18 @@ func (g *IPSMGW) Close() { g.stopSweep() }
 func (g *IPSMGW) SetStack(stack *sip.Stack) { g.stack.Set(stack) }
 
 // OnRequest is the IP-SM-GW as a SIP UAS: it answers every request
-// itself and forwards none (TS 24.229 5.7.2).
+// itself and forwards none (TS 24.229 5.7.2). Each request that the
+// IP-SM-GW does take goes through take, which refuses it while the
+// operator has the IP-SM-GW out of service and it would start something
+// new (maintenance.go).
 func (g *IPSMGW) OnRequest(st *sip.ServerTransaction) {
 	switch st.Request.Method {
 	case sip.REGISTER:
-		g.register(st)
+		g.take(st, g.register)
 	case sip.MESSAGE:
-		g.message(st)
+		g.take(st, g.message)
 	case sip.NOTIFY:
-		g.receiveRegEvent(st)
+		g.take(st, g.receiveRegEvent)
 	default:
 		g.respond(st, 405, func(resp *sip.Message) { resp.Add("Allow", "REGISTER, MESSAGE, NOTIFY") })
 	}
