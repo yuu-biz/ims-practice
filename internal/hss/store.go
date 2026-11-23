@@ -182,6 +182,13 @@ type Subscriber struct {
 	// IPSMGWNumber is the IP-SM-GW that an Sh PUR registered for the
 	// user's short messages, or "" (TS 29.328 6.1.2.1 step 4b).
 	IPSMGWNumber string
+	// IPSMGW is the Diameter identity of that IP-SM-GW: the Origin-Host
+	// and Origin-Realm of the PUR that registered it, which the HSS
+	// keeps only when the IP-SM-GW announced that S6c reaches it (TS
+	// 29.328 6.1.2.1 step 4b). The Serving-Node of an SRA names the
+	// IP-SM-GW by it (TS 29.338 Table 5.2.1.1-2), so an IP-SM-GW without
+	// one cannot be given to an SMS-GMSC.
+	IPSMGW diameter.Identity
 }
 
 // ErrIdentityTaken means that an identity of a new subscription already

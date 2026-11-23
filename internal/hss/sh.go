@@ -223,16 +223,20 @@ func (h *HSS) profileUpdate(ctx context.Context, r sh.ProfileUpdateRequest) sh.P
 	if !ok {
 		return sh.ProfileUpdateAnswer{Result: diameter.Experimental(cx.DiameterErrorUserUnknown)}
 	}
-	// Step 4b: an empty number removes the registration. The IP-SM-GW
-	// Diameter identity is stored only when the HSS and the IP-SM-GW
-	// support S6c, which neither does here.
+	// Step 4b: an empty number removes the registration, and with it the
+	// Diameter identity. A number that is there brings the identity of
+	// the IP-SM-GW that sent the PUR, if S6c reaches it.
 	from := u.IPSMGWNumber
-	u.IPSMGWNumber = number
+	u.IPSMGWNumber, u.IPSMGW = number, diameter.Identity{}
+	if number != "" && data.ShIMSData.SMSRegistrationInfo.SupportsS6c() {
+		u.IPSMGW = origin(r.Header)
+	}
 	if err := h.store.Put(ctx, u); err != nil {
 		return sh.ProfileUpdateAnswer{Result: h.storeFailed(err)}
 	}
 	if from != number {
-		h.log.Info("SMS registration", "private_identity", u.PrivateIdentity, "from", from, "to", number)
+		h.log.Info("SMS registration", "private_identity", u.PrivateIdentity, "from", from, "to", number,
+			"ip_sm_gw", u.IPSMGW.OriginHost)
 	}
 	return sh.ProfileUpdateAnswer{Result: diameter.Base(diameter.DiameterSuccess)}
 }

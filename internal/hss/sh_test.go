@@ -115,6 +115,15 @@ func smsRegistration(number string) []byte {
 	return sh.ShData{ShIMSData: &sh.ShIMSData{SMSRegistrationInfo: &sh.SMSRegistrationInfoData{IPSMGWNumber: number}}}.Marshal()
 }
 
+// smsRegistrationOverS6c is the registration of an IP-SM-GW that S6c
+// reaches, so that the HSS keeps its Diameter identity too.
+func smsRegistrationOverS6c(number string) []byte {
+	supported := sh.S6cSupported
+	return sh.ShData{ShIMSData: &sh.ShIMSData{SMSRegistrationInfo: &sh.SMSRegistrationInfoData{
+		IPSMGWNumber: number, S6cSupport: &supported,
+	}}}.Marshal()
+}
+
 var success = diameter.Base(diameter.DiameterSuccess)
 
 // The SC stub turns the TP-DA of a short message into the recipient's
@@ -284,6 +293,45 @@ func TestProfileUpdateRegistersTheIPSMGW(t *testing.T) {
 	}
 	if got := readBack(); got != "" {
 		t.Errorf("after removal, IP-SM-GW-Number = %q", got)
+	}
+}
+
+// TS 29.328 6.1.2.1 step 4b: the HSS keeps the Diameter identity of the
+// IP-SM-GW, from the Origin-Host and Origin-Realm of the PUR, only when
+// the IP-SM-GW announced that S6c reaches it.
+func TestProfileUpdateKeepsTheIPSMGWDiameterIdentity(t *testing.T) {
+	n := newShNetwork(t)
+	sms := []sh.DataReference{sh.SMSRegistrationInfo}
+	identity := func() diameter.Identity {
+		t.Helper()
+		u, ok, err := n.hss.store.SubscriberOf(context.Background(), impu)
+		if err != nil || !ok {
+			t.Fatalf("subscriber = %v, %v", ok, err)
+		}
+		return u.IPSMGW
+	}
+
+	if r := n.pur(t, sh.UserIdentity{PublicIdentity: impu}, sms, smsRegistration(ipsmgwNumber)); r != success {
+		t.Fatalf("PUR without the indication = %v", r)
+	}
+	if got := identity(); got != (diameter.Identity{}) {
+		t.Errorf("without the indication, IPSMGW = %+v, want none", got)
+	}
+
+	if r := n.pur(t, sh.UserIdentity{PublicIdentity: impu}, sms, smsRegistrationOverS6c(ipsmgwNumber)); r != success {
+		t.Fatalf("PUR with the indication = %v", r)
+	}
+	want := diameter.Identity{OriginHost: ipsmgwHost, OriginRealm: realm}
+	if got := identity(); got != want {
+		t.Errorf("IPSMGW = %+v, want %+v", got, want)
+	}
+
+	// An empty number takes the IP-SM-GW out, identity and all.
+	if r := n.pur(t, sh.UserIdentity{MSISDN: msisdnA}, sms, smsRegistrationOverS6c("")); r != success {
+		t.Fatalf("PUR with an empty number = %v", r)
+	}
+	if got := identity(); got != (diameter.Identity{}) {
+		t.Errorf("after removal, IPSMGW = %+v, want none", got)
 	}
 }
 
