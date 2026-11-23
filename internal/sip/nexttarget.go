@@ -30,13 +30,13 @@ var errNoTarget = errors.New("sip: no target for the request")
 // SIMPLIFIED: RFC 3261 21.5.4. A server that answers 503 with
 // Retry-After asks the client not to send it other requests for that
 // time. The stack remembers no server from one request to the next:
-// each request starts again at the first target. Only a P-CSCF or an
-// S-CSCF that the operator has shut down or locked answers 503 with
-// Retry-After. The P-CSCF answers so only to a REGISTER, which comes
-// from a UE that knows no other P-CSCF and waits the time of
-// Retry-After itself before it registers again. A request that goes to
-// such an S-CSCF first all the same gets its 503 and goes on to the
-// next target, one round trip later.
+// each request starts again at the first target. Only a CSCF that the
+// operator has shut down or locked answers 503 with Retry-After. The
+// P-CSCF answers so only to a REGISTER, which comes from a UE that
+// knows no other P-CSCF and waits the time of Retry-After itself before
+// it registers again. A request that goes to such an I-CSCF or S-CSCF
+// first all the same gets its 503 and goes on to the next target, one
+// round trip later.
 func (s *Stack) follow(ct *ClientTransaction, req *Message, next []Destination) {
 	defer s.wg.Done()
 	a := ct.attempt

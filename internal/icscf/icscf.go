@@ -21,7 +21,8 @@ import (
 )
 
 // role is the name of the role in the configuration file: the value of
-// the role label of what the I-CSCF counts.
+// the role label of what the I-CSCF counts, and the role of its
+// maintenance function.
 const role = "icscf"
 
 // HSS is how the I-CSCF reaches the HSS over Cx.
@@ -103,19 +104,20 @@ func (i *ICSCF) SetStack(stack *sip.Stack) { i.stack.Set(stack) }
 // network, from the IBCF: it is a terminating session establishment,
 // which TS 32.409 4.1.2.11 counts on receipt.
 //
-// TS 32.409 gives the I-CSCF two further session measurements that it
-// does not count here. The successful terminating session
-// establishments (4.1.2.12) are the first 180 or 200 that the I-CSCF
-// passes back; no panel of the dashboard reads them, as none reads the
-// successes of the P-CSCF and the S-CSCF (4.1.2.2) either. The dropped
-// sessions (4.1.2.8) are the sessions removed when they expire, and
-// the I-CSCF has none to remove: it does not record-route, so it sees
-// no request of a dialog after the first.
+// SIMPLIFIED: TS 32.409 4.1.2.12 and 4.1.2.8. The I-CSCF counts
+// neither the successful terminating session establishments, the first
+// 180 or 200 that it passes back to the originating S-CSCF (4.1.2.12),
+// nor the dropped sessions, those removed when they expire (4.1.2.8).
+// No panel of the dashboard reads the successes, as none reads those of
+// the P-CSCF and the S-CSCF (4.1.2.2), and the I-CSCF keeps no session
+// that could expire: it does not record-route, so it sees no request of
+// a dialog after the first.
 //
-// An initial INVITE that the I-CSCF refuses while it is not UNLOCKED
-// counts in no measurement. Its sender tries the next I-CSCF, which
-// counts it, so the instances add up to the attempts of the network,
-// as the refused REGISTERs of the P-CSCF and the S-CSCF do.
+// SIMPLIFIED: TS 32.409 4.1.2.11. An initial INVITE that the I-CSCF
+// refuses while it is not UNLOCKED counts in no measurement. Its sender
+// tries the next I-CSCF, which counts it, so the instances add up to
+// the attempts of the network, as the refused REGISTERs of the P-CSCF
+// and the S-CSCF do.
 func (i *ICSCF) OnRequest(st *sip.ServerTransaction) {
 	i.transactions.Add(1)
 	defer i.transactionEnded()

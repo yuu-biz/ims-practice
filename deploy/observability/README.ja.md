@@ -2,7 +2,7 @@
 
 [English](README.md)
 
-このディレクトリは、Docker Compose のプロジェクトに [Prometheus](https://github.com/prometheus/prometheus) と [Grafana](https://github.com/grafana/grafana) を足します。IMS のノードが数えた値を、広く使われている道具で、時間の推移として見るためです。IMS のノードのうち指標を出すのは P-CSCF と S-CSCF だけなので（[できないこと](#できないこと)）、ダッシュボードではほかのノードが落ちているように見えます。指標の名前は TS 32.409 の測定項目に合わせてあり、`internal/metrics` が書きます。
+このディレクトリは、Docker Compose のプロジェクトに [Prometheus](https://github.com/prometheus/prometheus) と [Grafana](https://github.com/grafana/grafana) を足します。IMS のノードが数えた値を、広く使われている道具で、時間の推移として見るためです。IMS のノードのうち指標を出すのは P-CSCF、I-CSCF、S-CSCF だけなので（[できないこと](#できないこと)）、ダッシュボードではほかのノードが落ちているように見えます。指標の名前は TS 32.409 の測定項目に合わせてあり、`internal/metrics` が書きます。
 
 | パス | 中身 |
 | --- | --- |
@@ -32,7 +32,7 @@ UE を登録すると、数えた値が見えます。
 docker compose run --rm ue register -deregister-after 5s
 ```
 
-Prometheus は 15 秒ごとに集めます。その時間のうちに、パネル **REGISTER attempts and successes** に P-CSCF と S-CSCF がそれぞれの `role` で数えた登録と登録の解除が出て、**Initial registration success ratio** に最初の登録のうち成功したものの割合が、**Initial registration set-up time** に P-CSCF での最初の登録にかかった時間が出ます。[音声通話の流れを追う](../../docs/guide/ja/call.md) のとおりに通話すると、P-CSCF が通話の発信側と着信側の両方の区間で数えた値が、パネル **Session attempts and answers** と **Answered sessions** に出ます。
+Prometheus は 15 秒ごとに集めます。その時間のうちに、パネル **REGISTER attempts and successes** に P-CSCF と S-CSCF がそれぞれの `role` で数えた登録と登録の解除が出て、**Initial registration success ratio** に最初の登録のうち成功したものの割合が、**Initial registration set-up time** に P-CSCF での最初の登録にかかった時間が出ます。[音声通話の流れを追う](../../docs/guide/ja/call.md) のとおりに通話すると、パネル **Session attempts and answers** と **Answered sessions** に値が出ます。P-CSCF は通話の発信側と着信側の両方の区間で数え、I-CSCF はホーム網に入る着信のセッションとして 1 回数えます。
 
 止めて、取ってきたイメージと Prometheus のデータも含めて消すには、次のコマンドを使います。
 
@@ -54,7 +54,7 @@ go generate ./deploy/observability/...
 
 ## できないこと
 
-`internal/metrics` で数える役割は P-CSCF、S-CSCF、IBCF です。Compose のプロジェクトの P-CSCF と S-CSCF は、`deploy/compose/pcscf.yaml` と `deploy/compose/scscf.yaml` の `maintenance` の節が決める待ち受けで、`http://pcscf:8085/metrics` と `http://scscf:8085/metrics` に数えた値を出します。パネル **Dropped sessions** は空のままです。P-CSCF はセッションを期限切れで消さないので、数えるものがありません。ほかのノードは指標を出しません。IBCF のノード（`deploy/interconnect`）にはこの待ち受けが無いので、IBCF が数えた値はプロセスの中にとどまります。`prometheus/prometheus.yml` は、各ノードが保守用の API の待ち受けで、`http://<サービス名>:8085/metrics` に指標を出す形に合わせて書いてあります。このポート番号を決めた仕様はありません。8085 はこのプロジェクトが選んだ番号で、`prometheus.go` の `MetricsPort` に置いています。ほかの番号にするときは、`MetricsPort` を直し、上のコマンドを実行します。
+`internal/metrics` で数える役割は P-CSCF、I-CSCF、S-CSCF、IBCF です。Compose のプロジェクトの 3 つの CSCF は、`deploy/compose/pcscf.yaml`、`deploy/compose/icscf.yaml`、`deploy/compose/scscf.yaml` の `maintenance` の節が決める待ち受けで、`http://pcscf:8085/metrics`、`http://icscf:8085/metrics`、`http://scscf:8085/metrics` に数えた値を出します。パネル **Dropped sessions** は空のままです。P-CSCF も I-CSCF もセッションを期限切れで消さないので、数えるものがありません。ほかのノードは指標を出しません。IBCF のノード（`deploy/interconnect`）にはこの待ち受けが無いので、IBCF が数えた値はプロセスの中にとどまります。`prometheus/prometheus.yml` は、各ノードが保守用の API の待ち受けで、`http://<サービス名>:8085/metrics` に指標を出す形に合わせて書いてあります。このポート番号を決めた仕様はありません。8085 はこのプロジェクトが選んだ番号で、`prometheus.go` の `MetricsPort` に置いています。ほかの番号にするときは、`MetricsPort` を直し、上のコマンドを実行します。
 
 指標は `internal/metrics` が Prometheus のテキスト形式（版 0.0.4）で書きます。ラベルの値は、決まった集合の中からしか取れません。そのため、加入者ごとの系列はできず、加入者が何人いても系列の数は変わりません。
 
@@ -65,6 +65,8 @@ go generate ./deploy/observability/...
 | `metrics.NewHandler`、prometheus/docs instrumenting/content_negotiation.md | Accept ヘッダの形式から選ぶことと、gzip。ハンドラはいつも、圧縮しないテキスト形式 0.0.4 で答えます。 | どの Prometheus もテキスト形式を求め、gzip は任意だからです。ほかの形式は、ここの指標が使うものを何も足しません。 |
 | `metrics.Histogram`、prometheus/docs instrumenting/exposition_formats.md | 観測が続くあいだに、バケット、合計、件数をそろえて写し取ること。"+Inf" のバケットはいつも `_count` と同じですが、`_sum` には、バケットにまだ入っていない観測が次の収集まで含まれることがあります。 | 写し取るには、もう 1 組のカウンタと入れ替えの仕組みが要るためです。平均のずれは観測 1 回分までで、続くのも 1 回の収集のあいだだけです。 |
 | P-CSCF。TS 32.409 4.1.1.1.1 と 4.1.1.1.3 | P-CSCF が UE の IP の対応付けを読む前に答えた REGISTER は、登録のどの測定にも数えません。読めない REGISTER（400 を返す）、Max-Forwards を使い切った REGISTER（483 を返す）、対応付けを読めなかった REGISTER（500 を返す）です。 | REGISTER が最初の登録を始めるか再登録を始めるかは、UE が P-CSCF と IP の対応付けを持っているかどうかで決まるためです。 |
+| I-CSCF。TS 32.409 4.1.2.12 と 4.1.2.8 | I-CSCF は、着信のセッションの確立に成功した数も、期限切れで消えたセッションの数も数えません。 | 成功の数を読むパネルがないためです。P-CSCF と S-CSCF の成功の数も読んでいません。I-CSCF は Record-Route に入らないので、ダイアログの 2 つ目以降の要求を見ず、期限切れになるセッションを持ちません。 |
+| I-CSCF。TS 32.409 4.1.2.11 | shut down か lock のあいだに I-CSCF が断った最初の INVITE は、どの測定にも数えません。 | 送り手が次の I-CSCF を試し、その台が数えるためです。台ごとの数を足すと、網の中の試行の数になります。 |
 | S-CSCF。TS 32.409 4.1.1.1.1 と 4.1.1.1.3 | S-CSCF が利用者について持っているものを読む前に答えた REGISTER は、登録のどの測定にも数えません。読めない REGISTER（400 を返す）、利用者のロックを取れなかった REGISTER（500 を返す）、運用者が shut down か lock をしているあいだに断った REGISTER（503 を返す）です。 | REGISTER が最初の登録か再登録かは、S-CSCF がその利用者の登録を持っているかどうかで決まるためです。 |
 
 ## 知っておくこと
