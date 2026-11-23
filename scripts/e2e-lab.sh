@@ -178,9 +178,11 @@ fi
 
 # Status codes are read from the end of the output, since curl on Windows
 # cannot write to /dev/null when MSYS_NO_PATHCONV is set.
-# Add a subscriber through the Lab, register it, then
-# remove it. The HSS tells the S-CSCF with an RTR, the S-CSCF tells the
-# UE with a reg-event NOTIFY, and the UE can no longer register.
+# Add a subscriber through the Lab, register it, give it another
+# service profile and then remove it. The profile reaches its S-CSCF in
+# a PPR (TS 29.228 6.6.1). The removal reaches it in an RTR, the S-CSCF
+# tells the UE with a reg-event NOTIFY, and the UE can no longer
+# register.
 impi5=001010000000005@ims.mnc001.mcc001.3gppnetwork.org
 ue5=(--impi "$impi5" --impu sip:$impi5 --password test-password-5)
 status="$(curl -s -w '
@@ -197,6 +199,19 @@ if grep -q '"registration_state":"Registered"' <<<"$(curl -fsS http://localhost:
 	echo "ok   the HSS reports the new subscriber as registered"
 else
 	echo "FAIL the new subscriber is not registered"
+	fail=1
+fi
+# The subscriber names no service profile, so it has the one that the
+# settings of the HSS name for any other subscription. The PATCH gives
+# it the profile that holds no criteria at all, which changes the user
+# profile its S-CSCF holds.
+status="$(curl -s -w '
+%{http_code}' -X PATCH -H 'Content-Type: application/json' -d '{"service_profile":"no-services"}' "http://localhost:8080/api/subscribers/$impi5" | tail -n 1)"
+subscribers="$(curl -fsS http://localhost:8080/api/subscribers)"
+if [ "$status" = 200 ] && grep -q '"service_profile":"no-services","effective_service_profile":"no-services"' <<<"$subscribers"; then
+	echo "ok   the Lab gave the registered subscriber another service profile"
+else
+	echo "FAIL the PATCH of the service profile answered $status: $subscribers"
 	fail=1
 fi
 status="$(curl -s -w '
@@ -227,6 +242,15 @@ if [ "$rtr" = "172.28.0.10,172.28.0.30172.28.0.30,172.28.0.10" ]; then
 	echo "ok   the capture holds the RTR from the HSS to the S-CSCF and its RTA"
 else
 	echo "FAIL no RTR and RTA in the capture: $rtr"
+	fail=1
+fi
+# The PPR of the service profile went out before that RTR, so the
+# capture holds it by now.
+ppr="$(docker compose exec -T capture tshark -r "$pcap" -Y 'diameter.cmd.code == 305' -T fields -E separator=, -e ip.src -e ip.dst | tr -d '\r\n')"
+if [ "$ppr" = "172.28.0.10,172.28.0.30172.28.0.30,172.28.0.10" ]; then
+	echo "ok   the capture holds the PPR from the HSS to the S-CSCF and its PPA"
+else
+	echo "FAIL no PPR and PPA in the capture: $ppr"
 	fail=1
 fi
 
