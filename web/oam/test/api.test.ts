@@ -17,6 +17,7 @@ import {
   provision,
   putAckState,
   putAdministrativeState,
+  putAlertingTone,
   putLogLevel,
   putSubscription,
   putTestUser,
@@ -281,6 +282,7 @@ describe("subscriptions", () => {
     const s = await fetchSubscription(impi1);
     expect(asked[0]?.url).toBe("/oam/v1/subscriptions/001010000000001%40ims.mnc001.mcc001.3gppnetwork.org");
     expect(s).toEqual({ ...subscription, server_name: "", service_profile: "" });
+    expect(s.customized_alerting_tone).toEqual({ tone: "cat1", active: false });
   });
 
   it("replaces a subscription on a dry run and reads the outcome", async () => {
@@ -304,6 +306,14 @@ describe("subscriptions", () => {
     serve(200, JSON.stringify(featureState));
     expect(await fetchFeature(impi1, "mmtel")).toEqual({ ...featureState, reason: "" });
     expect(asked[0]?.method).toBe("DELETE");
+  });
+
+  it("sets the alerting tone of a subscription and leaves the rest of it", async () => {
+    const asked = serve(200, JSON.stringify({ tone: "cat1", active: true }));
+    expect(await putAlertingTone(impi1, { tone: "cat1", active: true }, "op")).toEqual({ tone: "cat1", active: true });
+    expect(asked[0]?.method).toBe("PUT");
+    expect(asked[0]?.url).toBe("/oam/v1/subscriptions/001010000000001%40ims.mnc001.mcc001.3gppnetwork.org/customized-alerting-tone");
+    expect(JSON.parse(asked[0]?.body ?? "null")).toEqual({ tone: "cat1", active: true, operator: "op" });
   });
 
   it("reads the test users' profiles", async () => {

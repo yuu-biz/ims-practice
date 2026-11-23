@@ -170,6 +170,9 @@ export const subscription = {
   authentication_schemes: ["SIP Digest"],
   registration_state: "NOT_REGISTERED",
   test_user: true,
+  // Provisioned and off: the callers hear their own ringing tone until
+  // the operator turns this tone on.
+  customized_alerting_tone: { tone: "cat1", active: false },
 };
 
 // The answer to a bulk provisioning: an outcome per record in the order

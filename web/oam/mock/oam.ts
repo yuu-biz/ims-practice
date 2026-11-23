@@ -311,6 +311,7 @@ export function createMockOAM(): (req: IncomingMessage, res: ServerResponse, pat
       registration_state: "NOT_REGISTERED",
       ...(s["test_user"] ? { test_user: true } : {}),
       ...(s["service_profile"] ? { service_profile: s["service_profile"] } : {}),
+      ...(s["customized_alerting_tone"] ? { customized_alerting_tone: s["customized_alerting_tone"] } : {}),
     };
   }
 
@@ -535,7 +536,7 @@ export function createMockOAM(): (req: IncomingMessage, res: ServerResponse, pat
       }
 
       if (method === "POST" && route === "provisioning") return await bulk(req, res, dryRun);
-      m = /^subscriptions\/([^/]+)(\/test-user|\/features\/([^/]+))?$/.exec(route);
+      m = /^subscriptions\/([^/]+)(\/test-user|\/customized-alerting-tone|\/features\/([^/]+))?$/.exec(route);
       if (m) {
         const impi = decodeURIComponent(m[1]!);
         const sub = subscriptions.get(impi);
@@ -556,6 +557,16 @@ export function createMockOAM(): (req: IncomingMessage, res: ServerResponse, pat
           if (b["test_user"]) sub["test_user"] = true;
           else delete sub["test_user"];
           return json(res, 200, publicView(sub));
+        }
+        if (method === "PUT" && m[2] === "/customized-alerting-tone") {
+          const b = await body();
+          const name = String(b["tone"] ?? "");
+          if (name === "" || /[^a-zA-Z0-9]/.test(name)) {
+            return json(res, 400, { error: `invalid request: tone: ${name === "" ? "required" : `${JSON.stringify(name)} is no announcement of an MRFP: letters and digits only`}` });
+          }
+          const stored = { tone: name, active: b["active"] === true };
+          sub["customized_alerting_tone"] = stored;
+          return json(res, 200, stored);
         }
         if (method === "GET" && m[3]) {
           const feature = decodeURIComponent(m[3]);
