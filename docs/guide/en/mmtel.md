@@ -356,6 +356,91 @@ BOIC and BOIC-exHC compare the country code of the called number with that of th
 
 IR.92 asks for call waiting done by the UE, not by the network (2.3.4). The callee's UE tells that a call waits with a 180 that carries `Alert-Info: <urn:alert:service:call-waiting>` (TS 24.615 4.5.5.3.2, RFC 7462), and the callee's AS passes it on, or takes the Alert-Info out when the operator's setting says that the caller does not learn of it, as in hss.yaml (TS 24.615 4.5.5.2.3). `ue serve` takes a second call while it has one: it rings with that Alert-Info and does not answer by itself, and `POST /answer` puts the first call on hold and takes the waiting one (TS 24.615 4.5.5.3.3); a third call gets 486. `scripts/e2e-mrf.sh` shows CW in the capture, and [the MRF guide](mrf.md) follows it; `TestCommunicationWaiting` in `internal/mmtel/waiting_test.go` and `TestServeTwoCalls` in `internal/ue/phone_test.go` check it in one process. HOLD is a re-INVITE with `a=sendonly` that the AS passes on to the other leg as it came (TS 24.610 4.5.2.1); the in-process test `TestHoldThroughTheIMS` shows it.
 
+## Take the MMTel AS out of service
+
+An operator takes a node out of service without cutting what it serves: the node takes nothing new and goes on with what it has begun, until nothing is left. This is called a drain.
+
+The AS has to go on with what it has begun, because every call it serves lives in the instance that took the INVITE. Both legs of the call carry that instance in their Contact, so the requests within the dialogs come back to it, and DNS leads the URI of a conference to the instance that is its focus. A commercial network runs several instances of the AS behind one server name in the filter criteria, and DNS spreads the new calls over them.
+
+The node of the AS serves a maintenance API for this on port 8085, the listener of the `maintenance` section of `deploy/compose/mmtel.yaml`, next to the metrics that Prometheus scrapes there. The API asks for no password, so the port is not published on the host: send the requests from inside the container of the AS. The administrative state has the values of TS 28.622 5.3.1. `UNLOCKED` takes new work, `SHUTTINGDOWN` serves only what it has, and `LOCKED` takes nothing new.
+
+1. Shut the AS down:
+
+   ```sh
+   docker compose exec mmtel sh -c '
+   body="{\"administrative_state\":\"SHUTTINGDOWN\",\"operator\":\"learner\"}"
+   printf "PUT /maintenance/v1/functions/mmtel/administrative-state HTTP/1.0\r\nContent-Type: application/json\r\nContent-Length: ${#body}\r\n\r\n%s" "$body" |
+     nc -w 5 127.0.0.1 8085'
+   ```
+
+   The answer ends with the state of the AS. With no call in progress it is `LOCKED` at once:
+
+   ```json
+   {"role":"mmtel","administrative_state":"LOCKED","operational_state":"ENABLED","users":0}
+   ```
+
+   `users` counts the work the AS has taken on and not yet finished: one for every INVITE outside a dialog, and every request of Ut it is answering. A call between two users is one, with the two legs the AS relays between. A conference counts as the call of the user that created it, which lasts as long as the conference does: a conference ends when its creator leaves (TS 24.147 5.3.2.7 item 3). Every INVITE that joins a conference here counts as one more, for as long as that participant stays: the one that dials into the focus, and the call of the dialling user's originating services when this same instance runs them too. A participant that the focus invited counts for none of its own, since the focus invites it on a REFER that comes within the dialog of the participant that asked for it. A request of Ut is a user while the XCAP server is answering it, which is as long as it takes the HSS to read or write a document. With a call up, the shut down leaves the AS `SHUTTINGDOWN`, and it becomes `LOCKED` once the last call has ended. `operational_state` says whether the AS can work (TS 28.622 5.3.3): it is `DISABLED` while no instance of the HSS takes its Sh requests, since the AS reads the settings of the served user's services for every initial INVITE and serves no call without them. `docker compose exec mmtel wget -qO- http://127.0.0.1:8085/maintenance/v1/state` shows the whole node.
+
+2. Call UE 2 from UE 1:
+
+   ```sh
+   docker compose run --rm ue call tel:+12025550102
+   ```
+
+   The call ends with `500 Server Internal Error`.
+
+```text
+ UE 1         P-CSCF         S-CSCF         MMTel AS
+ |  INVITE      |              |               |
+ |------------->|  INVITE      |               |
+ |              |------------->|  INVITE       |
+ |              |              |-------------->|  P-Served-User: <UE 1>;sescase=orig
+ |              |              |  503 Retry-After: 30
+ |              |  500         |<--------------|
+ |  500         |<-------------|               |
+ |<-------------|              |               |
+```
+
+- The INVITE reaches the AS as in [A plain call through the AS](#a-plain-call-through-the-as): the S-CSCF matches the criteria of UE 1, the originating ones first, and sends the INVITE to the AS with `P-Served-User` and its original dialog identifier in the Route.
+- The AS answers **503 Service Unavailable** with **Retry-After: 30**, and sends no INVITE on. A request outside a dialog starts something new, which the AS does not take while it is not `UNLOCKED`. Retry-After asks the client to send this server no other request for that many seconds (RFC 3261 21.5.4). No specification gives the value; 30 seconds is this project's choice.
+- The AS asks the HSS for nothing: the refusal comes before the Sh read, so no UDR goes out for the refused call.
+- The S-CSCF reads the 503 as a failure of the application server and sends the INVITE to the next instance that DNS gave it for the server name (RFC 3263 4.3). This network has one instance, so there is no other to try. TS 24.229 5.4.3.2 NOTE 25A describes the case with several: the S-CSCF takes another AS for the user's new sessions, while the one that answered goes on serving the sessions it holds.
+- With no instance left, the S-CSCF applies the **default handling** of the criterion that sent the INVITE (TS 24.229 5.4.3.2, 5.4.3.3). `hss.yaml` gives the originating criteria **SESSION_TERMINATED**, so the call ends here: barring has to hold, and a call that went on without the AS would go through although the user barred it. The S-CSCF answers **500 Server Internal Error** of its own, since a proxy does not pass a 503 on (RFC 3261 16.7 step 6), and does not evaluate the criteria of lower priority.
+- The criterion of a call **to** the user is **SESSION_CONTINUED** instead, so a call that only the terminating criterion sends to the AS goes on to the callee without the services of this AS: the S-CSCF carries on with the criteria after it, and with none left sends the INVITE to the callee's contact. In this call the originating criterion matches first and ends it, so the terminating one is never reached.
+- The P-CSCF passes the 500 on to UE 1.
+
+While it is not `UNLOCKED`, the AS goes on with what it has begun and refuses what would start something new.
+
+It goes on with:
+
+- **Every request within the dialogs it holds**, so the calls it has, their diversions, their holds and the conferences it is the focus of end as they would have. A SUBSCRIBE within the dialog of a subscription the AS has is one of them, so a subscriber can still refresh or end what it has (RFC 6665 4.1.2.3).
+- **Every request that names a conference this instance hosts**: the INVITE of a user that dials in or comes back after leaving (TS 24.147 5.3.2.4.1), the INVITE to that same URI that the filter criteria give the AS for the dialling user's originating services, and a SUBSCRIBE that starts a subscription to the conference event package. That conference runs in this instance alone, since DNS leads its URI here and no other instance has its dialogs, so an AS that refused these would keep a conference in progress from its own participants.
+- **The INVITE of a call that an AS diverted**, which the S-CSCF hands to the AS again for the originating services of the diverting user, with `orig-cdiv` in P-Served-User (TS 24.229 5.4.3.3 step 3). The call began before the shut down, and the filter criterion of that session case ends the session when the AS fails, so a 503 would end a call in progress.
+- **An OPTIONS outside a dialog**, which it answers with 200 as ever (RFC 3261 11.2). The request asks what the node can do, and the node is alive.
+- **A request of Ut that the XCAP server has begun to answer.**
+
+It answers 503 to:
+
+- **The INVITE of a new call**, which the filter criteria of a served user send it, as the ladder above shows.
+- **The INVITE to the conference factory URI**, which would create a conference here (TS 24.147 5.3.2.3.1).
+- **An INVITE or an initial SUBSCRIBE to a conference URI that this instance does not host**, which is as new to it as any other session. A conference gives its URI up when it ends (5.3.2.7).
+- **A new request of Ut.** The XCAP server stands beside the AS on a listener of its own, and it takes the administrative state of the AS, so taking the AS out of service takes Ut with it. `docker compose run --no-deps --rm ue xcap get` then gets a 503 of HTTP, with a Retry-After of its own: the status says that the server cannot take the request now because of scheduled maintenance, and Retry-After how long the client should wait (RFC 9110 15.6.4, 10.2.3). The user loses nothing by it. The documents live in the HSS, which every instance reads and writes, so the same request reaches the same documents through any other instance of the AS, and a node that is `LOCKED` serves no one, as X.731 has it, which is what lets the operator stop it.
+
+3. Unlock the AS with the same request and `UNLOCKED`:
+
+   ```sh
+   docker compose exec mmtel sh -c '
+   body="{\"administrative_state\":\"UNLOCKED\",\"operator\":\"learner\"}"
+   printf "PUT /maintenance/v1/functions/mmtel/administrative-state HTTP/1.0\r\nContent-Type: application/json\r\nContent-Length: ${#body}\r\n\r\n%s" "$body" |
+     nc -w 5 127.0.0.1 8085'
+   ```
+
+   The next call goes through the AS on both legs again.
+
+In Wireshark, `sip.Status-Code == 503 && ip.src == 172.28.0.75` shows the 503 of the AS, and `sip.Status-Code == 500` the 500 after it. The PUT request travels over the loopback interface of the container, so the capture does not hold it.
+
+The administrative state belongs to the process of the node: a node that starts again is `UNLOCKED`. `scripts/e2e-observability.sh` runs these steps and checks the capture.
+
 ## Wireshark display filters
 
 | Filter | What it finds |
@@ -389,6 +474,7 @@ IR.92 asks for call waiting done by the UE, not by the network (2.3.4). The call
 | `internal/mmtel/barring.go` | OCB, ICB, ACR. |
 | `internal/mmtel/waiting.go` | CW. |
 | `internal/mmtel/services.go`, `store.go` | The Sh read for each call, and the call records in the Store. |
+| `internal/mmtel/maintenance.go` | What the AS tells the maintenance API of its node, and what it refuses while the operator has it out of service. |
 | `internal/simservs` | The simservs and MMTelServices documents, their rules (RFC 4745), the XCAP node selectors and how the rules are evaluated. |
 | `internal/xcap` | The XCAP server of Ut, HTTP Digest, and the client of the UE. |
 | `internal/ue/xcap.go`, `cmd/ue/xcap.go` | `ue xcap` and the UE's supplementary services. |
