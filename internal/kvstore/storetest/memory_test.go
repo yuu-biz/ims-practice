@@ -17,6 +17,7 @@ import (
 	"github.com/yuu-biz/ims-practice/internal/sc"
 	"github.com/yuu-biz/ims-practice/internal/scscf"
 	"github.com/yuu-biz/ims-practice/internal/sip"
+	"github.com/yuu-biz/ims-practice/internal/smsc"
 )
 
 // The suites run on the MemoryStores of the role packages too: what they
@@ -68,6 +69,13 @@ func TestMMTelMemoryStore(t *testing.T) {
 func TestSCMemoryStore(t *testing.T) {
 	storetest.SC(t, func(*testing.T) (sc.Store, sc.Store) {
 		s := sc.NewMemoryStore()
+		return s, s
+	})
+}
+
+func TestSMSCMemoryStore(t *testing.T) {
+	storetest.SMSC(t, func(*testing.T) (smsc.Store, smsc.Store) {
+		s := smsc.NewMemoryStore()
 		return s, s
 	})
 }
