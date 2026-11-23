@@ -38,6 +38,17 @@ func init() {
 
 func quiet() *slog.Logger { return slog.New(slog.NewTextHandler(io.Discard, nil)) }
 
+// newICSCF is New with a registry of the I-CSCF's own, which fails only
+// when that registry already holds the metrics of an I-CSCF.
+func newICSCF(t *testing.T, cfg Config, h HSS, node *diameter.Node, locator Locator) *ICSCF {
+	t.Helper()
+	i, err := New(cfg, h, node, locator, quiet())
+	if err != nil {
+		t.Fatal(err)
+	}
+	return i
+}
+
 type hssFunc func(*diam.Message) (*diam.Message, error)
 
 func (f hssFunc) Request(_ context.Context, m *diam.Message) (*diam.Message, error) { return f(m) }
@@ -111,6 +122,16 @@ func setupWith(t *testing.T, h HSS, scscfBehaviour func(*sip.ServerTransaction))
 // the S-CSCF before the fake one.
 func setupBehind(t *testing.T, h HSS, first []sip.Destination, scscfBehaviour func(*sip.ServerTransaction)) (*sip.Stack, netip.AddrPort) {
 	t.Helper()
+	_, ue, icscf := start(t, Config{HomeDomain: domain, SCSCFs: []SCSCF{{Name: scscf, Capabilities: []uint32{1, 2}}}},
+		h, first, scscfBehaviour)
+	return ue, icscf
+}
+
+// start runs an I-CSCF with cfg in front of a fake S-CSCF that
+// scscfBehaviour serves, which DNS gives after first. It returns the
+// I-CSCF, the UE's stack and the address of the I-CSCF.
+func start(t *testing.T, cfg Config, h HSS, first []sip.Destination, scscfBehaviour func(*sip.ServerTransaction)) (*ICSCF, *sip.Stack, netip.AddrPort) {
+	t.Helper()
 	s := newStack(t, scscfBehaviour)
 	locate := locatorFunc(func(host string, port int) ([]sip.Destination, error) {
 		if host != "scscf."+domain || port != 5060 {
@@ -119,11 +140,11 @@ func setupBehind(t *testing.T, h HSS, first []sip.Destination, scscfBehaviour fu
 		return append(slices.Clone(first), sip.Destination{Transport: sip.UDP, Addr: s.LocalAddr()}), nil
 	})
 	node := diameter.NewNode(diameter.Identity{OriginHost: "icscf." + domain, OriginRealm: domain}, []uint32{diameter.ApplicationIDCx}, diameter.Timers{}, quiet())
-	i := New(Config{HomeDomain: domain, SCSCFs: []SCSCF{{Name: scscf, Capabilities: []uint32{1, 2}}}}, h, node, locate, quiet())
+	i := newICSCF(t, cfg, h, node, locate)
 	stack := newStack(t, i.OnRequest)
 	// The UE keeps the default timers, so that it outlasts the I-CSCF's
 	// Timer F and sees the I-CSCF's answer.
-	return newStackWith(t, sip.DefaultTimers(), func(*sip.ServerTransaction) {}), stack.LocalAddr()
+	return i, newStackWith(t, sip.DefaultTimers(), func(*sip.ServerTransaction) {}), stack.LocalAddr()
 }
 
 func register(t *testing.T, ue *sip.Stack, icscf netip.AddrPort, to string) *sip.Message {
@@ -446,8 +467,8 @@ func TestUseProxyFromTheSCSCF(t *testing.T) {
 		return nil, errors.New("unexpected lookup")
 	})
 	node := diameter.NewNode(diameter.Identity{OriginHost: "icscf." + domain, OriginRealm: domain}, []uint32{diameter.ApplicationIDCx}, diameter.Timers{}, quiet())
-	i := New(Config{HomeDomain: domain, SCSCFs: []SCSCF{{Name: scscf, Capabilities: []uint32{1}}}},
-		stubHSSWith(cx.ServerCapabilities{MandatoryCapabilities: []uint32{1}}, unregisteredServices()), node, locate, quiet())
+	i := newICSCF(t, Config{HomeDomain: domain, SCSCFs: []SCSCF{{Name: scscf, Capabilities: []uint32{1}}}},
+		stubHSSWith(cx.ServerCapabilities{MandatoryCapabilities: []uint32{1}}, unregisteredServices()), node, locate)
 	icscf := newStack(t, i.OnRequest)
 	ue := newStackWith(t, sip.DefaultTimers(), func(*sip.ServerTransaction) {})
 
@@ -483,8 +504,8 @@ func TestPSISubdomainGoesToTheASByDNS(t *testing.T) {
 		return nil, errors.New("the HSS is not to be asked")
 	})
 	node := diameter.NewNode(diameter.Identity{OriginHost: "icscf." + domain, OriginRealm: domain}, []uint32{diameter.ApplicationIDCx}, diameter.Timers{}, quiet())
-	i := New(Config{HomeDomain: domain, SCSCFs: []SCSCF{{Name: scscf}}, Host: "icscf." + domain, Port: 5060,
-		PSISubdomains: []string{subdomain}}, h, node, locate, quiet())
+	i := newICSCF(t, Config{HomeDomain: domain, SCSCFs: []SCSCF{{Name: scscf}}, Host: "icscf." + domain, Port: 5060,
+		PSISubdomains: []string{subdomain}}, h, node, locate)
 	icscf := newStack(t, i.OnRequest)
 	ue := newStackWith(t, sip.DefaultTimers(), func(*sip.ServerTransaction) {})
 
@@ -543,7 +564,7 @@ func TestCANCELThatMatchesNothingGoesOnAlongItsRoute(t *testing.T) {
 		return nil, errors.New("no HSS")
 	})
 	node := diameter.NewNode(diameter.Identity{OriginHost: "icscf." + domain, OriginRealm: domain}, []uint32{diameter.ApplicationIDCx}, diameter.Timers{}, quiet())
-	i := New(Config{HomeDomain: domain, SCSCFs: []SCSCF{{Name: scscf}}, Host: "icscf." + domain, Port: 5060}, asked, node, locate, quiet())
+	i := newICSCF(t, Config{HomeDomain: domain, SCSCFs: []SCSCF{{Name: scscf}}, Host: "icscf." + domain, Port: 5060}, asked, node, locate)
 	i.SetStack(newStack(t, i.OnRequest))
 	cancel := func(routes ...string) *sip.Message {
 		m := &sip.Message{Method: sip.CANCEL, RequestURI: impu}

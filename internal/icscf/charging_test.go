@@ -70,8 +70,8 @@ func TestIOIsOfARequestToAPSI(t *testing.T) {
 			})
 			h := hssFunc(func(*diam.Message) (*diam.Message, error) { return nil, errors.New("the HSS is not to be asked") })
 			node := diameter.NewNode(diameter.Identity{OriginHost: "icscf." + domain, OriginRealm: domain}, []uint32{diameter.ApplicationIDCx}, diameter.Timers{}, quiet())
-			i := New(Config{HomeDomain: domain, SCSCFs: []SCSCF{{Name: scscf}}, Host: "icscf." + domain, Port: 5060,
-				PSISubdomains: []string{subdomain}}, h, node, locate, quiet())
+			i := newICSCF(t, Config{HomeDomain: domain, SCSCFs: []SCSCF{{Name: scscf}}, Host: "icscf." + domain, Port: 5060,
+				PSISubdomains: []string{subdomain}}, h, node, locate)
 			icscf := newStack(t, i.OnRequest)
 			ue := newStackWith(t, sip.DefaultTimers(), func(*sip.ServerTransaction) {})
 

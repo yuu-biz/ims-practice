@@ -362,9 +362,12 @@ func startNetwork(t *testing.T, cfg networkConfig) testNetwork {
 	dns.add("scscf."+domain, scscfStack.LocalAddr())
 
 	icscfNode, icscfPeer := connect("icscf."+domain, nil)
-	i := icscf.New(icscf.Config{HomeDomain: domain, SCSCFs: []icscf.SCSCF{{Name: "sip:scscf." + domain + ":5060", Capabilities: []uint32{1}}},
+	i, err := icscf.New(icscf.Config{HomeDomain: domain, SCSCFs: []icscf.SCSCF{{Name: "sip:scscf." + domain + ":5060", Capabilities: []uint32{1}}},
 		Host: "icscf." + domain, Port: 5060},
 		icscfPeer, icscfNode, dns, quiet())
+	if err != nil {
+		t.Fatal(err)
+	}
 	icscfStack := stackConfig(t, sip.Config{OnRequest: i.OnRequest, OnCANCEL: i.OnCANCEL})
 	i.SetStack(icscfStack)
 	dns.add(domain, icscfStack.LocalAddr())

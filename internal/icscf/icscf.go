@@ -14,8 +14,13 @@ import (
 	"github.com/yuu-biz/ims-practice/internal/cx"
 	"github.com/yuu-biz/ims-practice/internal/diameter"
 	"github.com/yuu-biz/ims-practice/internal/ims"
+	"github.com/yuu-biz/ims-practice/internal/metrics"
 	"github.com/yuu-biz/ims-practice/internal/sip"
 )
+
+// role is the name of the role in the configuration file: the value of
+// the role label of what the I-CSCF counts.
+const role = "icscf"
 
 // HSS is how the I-CSCF reaches the HSS over Cx.
 // *diameter.PeerGroup, the instances of the HSS, is one.
@@ -48,6 +53,10 @@ type Config struct {
 	// identities in it, so the I-CSCF does not ask the HSS for them (TS
 	// 24.229 5.3.2.1 step 3, TS 23.228 5.4.12.3).
 	PSISubdomains []string
+	// Metrics is where the I-CSCF registers its counters, the session
+	// measurements (ims.Sessions). Nil gives it a registry of its own,
+	// which nothing serves.
+	Metrics *metrics.Registry
 }
 
 type ICSCF struct {
@@ -57,10 +66,22 @@ type ICSCF struct {
 	locator Locator
 	stack   ims.StackRef
 	log     *slog.Logger
+
+	// sessions counts the session establishments.
+	sessions *ims.Sessions
 }
 
-func New(cfg Config, hss HSS, node *diameter.Node, locator Locator, log *slog.Logger) *ICSCF {
-	return &ICSCF{cfg: cfg, hss: hss, node: node, locator: locator, log: log}
+// New returns an I-CSCF. It fails when cfg.Metrics holds the metrics of
+// another I-CSCF already.
+func New(cfg Config, hss HSS, node *diameter.Node, locator Locator, log *slog.Logger) (*ICSCF, error) {
+	if cfg.Metrics == nil {
+		cfg.Metrics = metrics.NewRegistry()
+	}
+	sessions, err := ims.NewSessions(cfg.Metrics)
+	if err != nil {
+		return nil, err
+	}
+	return &ICSCF{cfg: cfg, hss: hss, node: node, locator: locator, log: log, sessions: sessions}, nil
 }
 
 // SetStack gives the I-CSCF the stack it runs on, which it needs to
@@ -68,7 +89,24 @@ func New(cfg Config, hss HSS, node *diameter.Node, locator Locator, log *slog.Lo
 func (i *ICSCF) SetStack(stack *sip.Stack) { i.stack.Set(stack) }
 
 // OnRequest is the sip.Config.OnRequest of the I-CSCF.
+//
+// An initial INVITE that arrives here enters the home network from
+// outside it, from the originating S-CSCF or, for a user of another
+// network, from the IBCF: it is a terminating session establishment,
+// which TS 32.409 4.1.2.11 counts on receipt.
+//
+// TS 32.409 gives the I-CSCF two further session measurements that it
+// does not count here. The successful terminating session
+// establishments (4.1.2.12) are the first 180 or 200 that the I-CSCF
+// passes back; no panel of the dashboard reads them, as none reads the
+// successes of the P-CSCF and the S-CSCF (4.1.2.2) either. The dropped
+// sessions (4.1.2.8) are the sessions removed when they expire, and
+// the I-CSCF has none to remove: it does not record-route, so it sees
+// no request of a dialog after the first.
 func (i *ICSCF) OnRequest(st *sip.ServerTransaction) {
+	if st.Request.Method == sip.INVITE && !ims.IsInDialog(st.Request) {
+		i.sessions.Started(role, ims.TerminatingSession)
+	}
 	if st.Request.Method != sip.REGISTER {
 		i.session(st)
 		return
