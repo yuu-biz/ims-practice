@@ -153,14 +153,22 @@ func (o *smDeliveryOutcomeAVP) smDeliveryOutcome() (SMDeliveryOutcome, error) {
 	return out, nil
 }
 
+// RDRFlags is the RDR-Flags AVP, TS 29.338 5.3.3.21: a bit mask that
+// tells the HSS how to treat the message waiting data.
+type RDRFlags uint32
+
+// RDRSingleAttemptDelivery is bit 0 of Table 5.3.3.21/1, the meaning
+// that SRRSingleAttemptDelivery has in SRR-Flags.
+const RDRSingleAttemptDelivery RDRFlags = 1 << 0
+
 // ReportSMDeliveryStatusRequest is the RDR of TS 29.338 5.3.2.7, from
 // the SMS-GMSC or the IP-SM-GW to the HSS (Table 5.2.3.1-1).
 //
 // SIMPLIFIED: TS 29.338 5.3.2.7. Supported-Features,
-// SMSMI-Correlation-ID, RDR-Flags and the serving nodes through which
-// the delivery failed are left out: S6c defines no feature for RDR, this
-// project has no SMS without MSISDN and no single attempt delivery, and
-// the HSS of this project keeps one serving node of each kind.
+// SMSMI-Correlation-ID and the serving nodes through which the delivery
+// failed are left out: S6c defines no feature for RDR, this project has
+// no SMS without MSISDN, and the HSS of this project keeps one serving
+// node of each kind.
 type ReportSMDeliveryStatusRequest struct {
 	diameter.Header
 	// UserIdentifier names the recipient, by MSISDN.
@@ -169,6 +177,8 @@ type ReportSMDeliveryStatusRequest struct {
 	// message, as digits only.
 	SCAddress         string
 	SMDeliveryOutcome SMDeliveryOutcome
+	// RDRFlags are the bits of 5.3.3.21. Zero writes no RDR-Flags AVP.
+	RDRFlags RDRFlags
 }
 
 // Message builds the RDR. SCAddress and the MSISDN, if set, must pass
@@ -180,6 +190,10 @@ func (r ReportSMDeliveryStatusRequest) Message() *diam.Message {
 	// M and V: TS 29.338 Table 6.3.3.1/1.
 	m.AddAVP(diameter.VendorAVP(avpSCAddress, mv, encodeTBCD(r.SCAddress)))
 	m.AddAVP(r.SMDeliveryOutcome.avp())
+	if r.RDRFlags != 0 {
+		// V without M: TS 29.338 Table 5.3.3.1/1.
+		m.AddAVP(diameter.VendorAVP(avpRDRFlags, v, datatype.Unsigned32(r.RDRFlags)))
+	}
 	return m
 }
 
@@ -192,6 +206,7 @@ func ParseReportSMDeliveryStatusRequest(m *diam.Message) (ReportSMDeliveryStatus
 		UserIdentifier    userIdentifierAVP     `avp:"User-Identifier"`
 		SCAddress         []byte                `avp:"SC-Address"`
 		SMDeliveryOutcome *smDeliveryOutcomeAVP `avp:"SM-Delivery-Outcome,omitempty"`
+		RDRFlags          uint32                `avp:"RDR-Flags,omitempty"`
 	}
 	if err := m.Unmarshal(&raw); err != nil {
 		return ReportSMDeliveryStatusRequest{}, fmt.Errorf("RDR: %w", err)
@@ -216,6 +231,7 @@ func ParseReportSMDeliveryStatusRequest(m *diam.Message) (ReportSMDeliveryStatus
 		UserIdentifier:    user,
 		SCAddress:         sc,
 		SMDeliveryOutcome: outcome,
+		RDRFlags:          RDRFlags(raw.RDRFlags),
 	}, nil
 }
 

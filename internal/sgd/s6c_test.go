@@ -37,6 +37,12 @@ func TestSendRoutingInfoForSMRoundTrip(t *testing.T) {
 			MSISDN:    msisdn,
 			SCAddress: scAddress,
 		},
+		{ // a short message that gets one delivery attempt
+			Header:    diameter.Header{SessionID: scHost + ";2;3", OriginHost: scHost, OriginRealm: realm, DestinationRealm: realm},
+			MSISDN:    msisdn,
+			SCAddress: scAddress,
+			SRRFlags:  SRRSingleAttemptDelivery,
+		},
 	} {
 		req := wire(t, srr.Message())
 		if h := req.Header; h.ApplicationID != ApplicationIDS6c || h.CommandCode != CommandSendRoutingInfoForSM ||

@@ -22,6 +22,15 @@ func TestReportSMDeliveryStatusRoundTrip(t *testing.T) {
 				MMESMDeliveryOutcome: &NodeSMDeliveryOutcome{SMDeliveryCause: SMDeliveryCauseAbsentUser},
 			},
 		},
+		{ // a short message that got one delivery attempt
+			Header:         diameter.Header{SessionID: scHost + ";4;3", OriginHost: scHost, OriginRealm: realm, DestinationRealm: realm},
+			UserIdentifier: UserIdentifier{MSISDN: msisdn},
+			SCAddress:      scAddress,
+			SMDeliveryOutcome: SMDeliveryOutcome{
+				IPSMGWSMDeliveryOutcome: &NodeSMDeliveryOutcome{SMDeliveryCause: SMDeliveryCauseAbsentUser},
+			},
+			RDRFlags: RDRSingleAttemptDelivery,
+		},
 		{ // the IP-SM-GW and the SMSF both failed
 			Header:         diameter.Header{SessionID: scHost + ";4;2", OriginHost: scHost, OriginRealm: realm, DestinationHost: hssHost, DestinationRealm: realm},
 			UserIdentifier: UserIdentifier{MSISDN: msisdn},

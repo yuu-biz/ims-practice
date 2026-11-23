@@ -24,6 +24,8 @@ const CommandSendRoutingInfoForSM uint32 = 8388647
 
 // AVP codes of S6c. All have Vendor-Id 10415.
 const (
+	avpSRRFlags          uint32 = 3310 // TS 29.338 5.3.3.4
+	avpRDRFlags          uint32 = 3323 // TS 29.338 5.3.3.21
 	avpSupportedFeatures uint32 = 628  // TS 29.229 6.3.29
 	avpFeatureListID     uint32 = 629  // TS 29.229 6.3.30
 	avpFeatureList       uint32 = 630  // TS 29.229 6.3.31
@@ -91,6 +93,23 @@ func featureList(avps []supportedFeaturesAVP) FeatureList {
 	return features
 }
 
+// SRRFlags is the SRR-Flags AVP, TS 29.338 5.3.3.4: a bit mask that
+// tells the HSS how the sender wants the query answered.
+//
+// SIMPLIFIED: TS 29.338 Table 5.3.3.4/1. Only
+// SingleAttemptDelivery is named. The GPRS-Indicator bit, with which an
+// SMS-GMSC asks for two serving nodes, and SM-RP-PRI, with which it
+// asks for a delivery although the message waiting data already holds
+// its address, are left out: the HSS of this project keeps one serving
+// node and does not read the priority.
+type SRRFlags uint32
+
+// SRRSingleAttemptDelivery is bit 2 of Table 5.3.3.4/1: only one
+// delivery attempt is made for this short message, so the HSS is not to
+// keep the SC address for a later alert (5.2.1.3). RDR-Flags carries
+// the same meaning in another bit, hence the two constants.
+const SRRSingleAttemptDelivery SRRFlags = 1 << 2
+
 // SendRoutingInfoForSMRequest is the SRR of TS 29.338 5.3.2.3. The SC
 // asks the HSS which node serves a user (5.2.1, Table 5.2.1.1-1). An
 // IP-SM-GW asks the same way before it delivers outside the IMS (TS
@@ -104,6 +123,8 @@ type SendRoutingInfoForSMRequest struct {
 	SupportedFeatures FeatureList
 	// SCAddress is the E.164 number of the SC, as digits only.
 	SCAddress string
+	// SRRFlags are the bits of 5.3.3.4. Zero writes no SRR-Flags AVP.
+	SRRFlags SRRFlags
 }
 
 // Message builds the SRR. MSISDN and SCAddress must pass ValidE164.
@@ -117,6 +138,10 @@ func (r SendRoutingInfoForSMRequest) Message() *diam.Message {
 	}
 	// M and V: TS 29.338 Table 6.3.3.1/1.
 	m.AddAVP(diameter.VendorAVP(avpSCAddress, mv, encodeTBCD(r.SCAddress)))
+	if r.SRRFlags != 0 {
+		// M and V: TS 29.338 Table 5.3.3.1/1.
+		m.AddAVP(diameter.VendorAVP(avpSRRFlags, mv, datatype.Unsigned32(r.SRRFlags)))
+	}
 	return m
 }
 
@@ -129,6 +154,7 @@ func ParseSendRoutingInfoForSMRequest(m *diam.Message) (SendRoutingInfoForSMRequ
 		MSISDN            []byte                 `avp:"MSISDN,omitempty"`
 		SupportedFeatures []supportedFeaturesAVP `avp:"Supported-Features,omitempty"`
 		SCAddress         []byte                 `avp:"SC-Address,omitempty"`
+		SRRFlags          uint32                 `avp:"SRR-Flags,omitempty"`
 	}
 	if err := m.Unmarshal(&raw); err != nil {
 		return SendRoutingInfoForSMRequest{}, fmt.Errorf("SRR: %w", err)
@@ -146,6 +172,7 @@ func ParseSendRoutingInfoForSMRequest(m *diam.Message) (SendRoutingInfoForSMRequ
 		MSISDN:            msisdn,
 		SupportedFeatures: featureList(raw.SupportedFeatures),
 		SCAddress:         sc,
+		SRRFlags:          SRRFlags(raw.SRRFlags),
 	}, nil
 }
 
