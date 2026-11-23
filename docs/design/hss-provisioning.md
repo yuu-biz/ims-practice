@@ -30,17 +30,21 @@
 | `GET /subscriptions/export?after={IMPI}&limit={n}` | なし | 1 行に 1 件の JSON（`application/x-ndjson`）。資格情報、SQN_HE、Repository Data を含む。続きがあれば `Link` | 200、400、500 |
 | `PUT /subscriptions/{IMPI}/customized-alerting-tone` | CAT | CAT | 200、400、404、500 |
 
-- `PUT` は置き換えです。項目ごとの更新ではありません。本文に書かれていない加入者のデータは消えます。`repository_data`、`mmtel_services`、`ut_password` を 3 つとも省いた `PUT` は、`POST` と同じく、設定の既定の MMTelServices だけを入れます。利用者が Ut で変えた付加サービスの設定は、そのような `PUT` で設定の既定に戻ります。書庫を戻す操作を「書いてあるとおりにする」にするためです。
-- `PUT` が残すのは、動いているあいだの状態です。登録の状態、S-CSCF の名前、認証の途中の印、IP-SM-GW の番号、SQN_HE は、置き換えても変わりません。`aka.sqn` を読むのは、新しい加入者を作るときだけです。
+- `PUT` は置き換えです。項目ごとの更新ではありません。本文に書かれていない加入者のデータは消えます。`repository_data`、`mmtel_services`、`ut_password` を 3 つとも省いた `PUT` は、`POST` と同じく、設定の既定の MMTelServices だけを入れます。利用者が Ut で変えた付加サービスの設定は、そのような `PUT` で設定の既定に戻ります。書庫を戻す操作を「書いてあるとおりにする」にするためです。`repository_data` に空の配列を書くのは、項目を省くこととは違い、Repository Data を 1 つも持たない加入を求めることです。
+- `repository_data` と、`mmtel_services`、`ut_password`、`customized_alerting_tone` のどれかを一緒に書いた要求は、400 で断ります。同じものを 2 通りに書いた要求なので、片方を黙って捨てません。
+- `repository_data` は、`POST` と `PUT` が共有する要求の型の項目です。検査と変換を 1 つの関数で共有するので、`POST` でも書けます。
+- `PUT` が残すのは、動いているあいだの状態です。登録の状態、S-CSCF の名前とその Diameter の識別子、認証の途中の印、IP-SM-GW の番号とその Diameter の識別子、届けられずに待っている短いメッセージの記録（MWD、UNRI、MCEF）、SQN_HE は、置き換えても変わりません。`aka.sqn` を読むのは、新しい加入者を作るときだけです。短いメッセージの記録は、この記録を書いたあとに S6c の作業が足した項目で、同じく動いているあいだの状態なので残します。
 - `unchanged` は、置き換えても加入者のデータが変わらないことです。資格情報と Repository Data も比べます。比べないのは、上の行で残すものです。OAM は資格情報を読み戻せないので、同じかどうかを言えるのは HSS だけです。
 - `PATCH` があるのは、資格情報を知らずに印とプロファイルの名前だけを変えるためです。HSS は資格情報を返しません（TS 29.228 Table 6.3.5、Table 6.3.7）。`PUT` で印だけを変えるには、持っていない資格情報を書く必要があります。
-- `dry_run` を付けた `PUT` は、何も変えずに同じ答えを返します。`DELETE` の試しは、OAM が `GET` で加入の有無を見るので、HSS は何もしません。
+- `dry_run` を付けた `PUT` は、何も変えずに同じ答えを返します。作る加入の状態コードだけは、作っていないので 201 ではなく 200 です。公開の識別子が別の加入のものかどうかは、自分で確かめて 409 を返します。本物の要求はこれを `Store` の書き込みから受け取りますが、何も書かない要求は、同じ問いを識別子ごとの索引に投げて答えを得ます。`DELETE` の試しは、OAM が `GET` で加入の有無を見るので、HSS は何もしません。
 
 ### `PUT` が `Store` に書く順
 
 1 件の操作は、どれもその加入者のロックの中で、その加入者のデータだけを書きます。`PUT` は、今の `Store` の操作では足りないので、`Store` に `Replace` を足します。`Put` は版を見ない書き込みで、呼ぶ側がロックを持つことを求め、保存されている AKA をそのまま残すので（`internal/hss/store.go` と `internal/kvstore/hssstore`）、資格情報と公開の識別子を書き換えられません。
 
-- `PUT` は、その加入者のロックを取り、加入者を読み直し、置き換えるかどうかを決めてから `Replace` を呼び、ロックを放します。`Add` と `Delete` と同じく、公開の識別子の索引は主の項目より先に書き、要らなくなったものは主の項目より後に消します（[state-redundancy.md](state-redundancy.md) の「索引」）。識別子が別の加入のものなら、何も書かずに 409 を返します。
+- `PUT` は、その加入者のロックを取り、加入者を読み直し、置き換えるかどうかを決めてから `Replace` を呼び、ロックを放します。`Add` と `Delete` と同じく、公開の識別子の索引は主の項目より先に書き、要らなくなったものは主の項目より後に消します（[state-redundancy.md](state-redundancy.md) の「索引」）。識別子が別の加入のものなら、何も書かずに 409 を返します。Repository Data は `Replace` のあと、同じロックの中で書きます。途中で保存先が落ちると、加入者のデータだけが変わって Repository Data が変わっていない状態になりますが、同じ `PUT` を送り直せば続きが終わります。
+- `Replace` は、その加入者のデータをまるごと書きますが、SQN_HE だけは保存されている値を残します。`Put` が保存されている AKA を残すのと同じ理由です。SQN_HE を動かすのは `CompareAndSwapSQN` だけ、という決まりを `Store` の全体で保てます。
+- 置き換えの前に今の Repository Data を読む必要があるので、`Store` に `AllRepositoryData` も足します。本文に無い Service-Indication を消すには、消す値の順序番号が要るためです。加入者の記録は Repository Data を一緒に持っているので、1 件分をまるごと読む手間は、1 つの Service-Indication を読む手間と同じです。書き出しの `GET` も、同じ操作で 1 件分を読みます。
 - Repository Data は、`CompareAndSwapRepositoryData` で Service-Indication ごとに書きます。`Replace` には入れません。Sh の PUR はロックを取ってから比べて入れ替え、CAT の `PUT` はロックを取らずに比べて入れ替えるので（`internal/hss/provisioning.go` の `setCustomizedAlertingTone`）、版を見ずに書くと、どちらの更新も黙って消えます。書く値には、Sh の更新と同じく次の順序番号を与えます（TS 29.328 6.1.2.1）。入れ替えが負けたら、CAT の `PUT` と同じく読み直してやり直します。
 - 加入者のロックを保存先に置く構成では、ロックの期限は 15 秒で、期限のあとに動き出した古い台の書き込みを止める仕組みがありません（[state-redundancy.md](state-redundancy.md)）。処理の途中で 15 秒より長く止まった台の `PUT` は、次の台の書き込みを上書きすることがあります。この制約は、その節が `SIMPLIFIED:` に書くとしたもので、`PUT` にもそのまま当てはまります。
 
