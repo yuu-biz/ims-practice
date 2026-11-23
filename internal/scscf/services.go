@@ -110,13 +110,13 @@ func (s *SCSCF) invoke(st *sip.ServerTransaction, out *sip.Message, d OriginalDi
 	log.Info("invoking the application server", "priority", d.Criteria[i].Priority, "session_case", d.SessionCase.String(), "served_user", d.ServedUser)
 
 	provisional := false
-	charge := s.chargeResponses(st.Request, !d.terminating())
+	relay := s.onResponses(st, d.direction())
 	targets, err := s.nextHop(toAS)
 	var final *sip.Message
 	if err == nil {
 		final, err = st.ProxyWith(toAS, func(r *sip.Message) {
 			provisional = provisional || r.StatusCode < 200
-			charge(r)
+			relay(r)
 		}, targets...)
 	}
 	if unreachable(final, err) && !provisional {
@@ -137,7 +137,7 @@ func (s *SCSCF) invoke(st *sip.ServerTransaction, out *sip.Message, d OriginalDi
 	// Any final response from the server goes to the user, without the
 	// criteria of lower priority (5.4.3.2, 5.4.3.3).
 	if final != nil {
-		charge(final)
+		relay(final)
 	}
 	ims.Finish(st, final, err)
 	return true

@@ -3,6 +3,7 @@ package scscf
 import (
 	"bytes"
 	"fmt"
+	"net/netip"
 	"strconv"
 	"strings"
 	"testing"
@@ -10,6 +11,7 @@ import (
 
 	"github.com/yuu-biz/ims-practice/internal/aka"
 	"github.com/yuu-biz/ims-practice/internal/hss"
+	"github.com/yuu-biz/ims-practice/internal/ifc"
 	"github.com/yuu-biz/ims-practice/internal/metrics"
 	"github.com/yuu-biz/ims-practice/internal/sip"
 )
@@ -184,5 +186,99 @@ func TestFailedRegistrationsAreCountedByStatus(t *testing.T) {
 		`ims_registration_failures_total{role="scscf",type="initial",status="403"}`: 1,
 		`ims_registration_failures_total{role="scscf",type="initial",status="423"}`: 1,
 		`ims_registration_failures_total{role="scscf",type="de",status="481"}`:      1,
+	})
+}
+
+// ringingHop alerts the caller with a 180 (Ringing) and then refuses
+// the call. No 2xx goes to an INVITE, so that the caller's transaction
+// ends at once instead of waiting out Timer M for retransmissions (RFC
+// 3261 13.2.2.4).
+func ringingHop(t *testing.T) *sip.Stack {
+	t.Helper()
+	return newStack(t, func(st *sip.ServerTransaction) {
+		callee := sip.NewTag()
+		st.Respond(sip.NewResponse(st.Request, 180, callee))
+		st.Respond(sip.NewResponse(st.Request, 486, callee))
+	})
+}
+
+// sessionSeries is the value of each session measurement of the S-CSCF
+// that a test reads.
+func sessionSeries(t *testing.T, reg *metrics.Registry, want map[string]float64) {
+	t.Helper()
+	for series, n := range want {
+		if got := scraped(t, reg, series); got != n {
+			t.Errorf("%s = %v, want %v", series, got, n)
+		}
+	}
+}
+
+// TS 32.409 4.1.2.1 counts an initial INVITE at the S-CSCF on receipt
+// and 4.1.2.2 the response that tells the session got through, under
+// the type of that message: the 180 (Ringing) of the callee here. A
+// call also visits the S-CSCF once more for every application server of
+// the criteria, each on a transaction of its own (TS 24.229 5.4.3.4),
+// and counts once all the same. The directions add up to the two
+// measurements, which name none: 4.1.2.9 to 4.1.2.12 split the
+// measurements of the P-CSCF and the I-CSCF, not those of the S-CSCF.
+func TestSessionEstablishmentsAreCountedOnceAtTheSCSCF(t *testing.T) {
+	reg := metrics.NewRegistry()
+	terminating := ifc.TerminatingRegistered
+	criterion := ifc.InitialFilterCriteria{
+		TriggerPoint: &ifc.TriggerPoint{ConditionTypeCNF: true, SPT: []ifc.SPT{
+			{Group: []int{0}, Method: "INVITE"},
+			{Group: []int{1}, SessionCase: &terminating},
+		}},
+		ApplicationServer: ifc.ApplicationServer{ServerName: "sip:as1." + domain + ":5060"},
+	}
+	proxy := newProxyAS(t, "as1."+domain, "")
+	h := newServiceHarnessWith(t, Config{Metrics: reg}, []ifc.InitialFilterCriteria{criterion},
+		map[string]netip.AddrPort{
+			"as1." + domain:   proxy.stack.LocalAddr(),
+			"pcscf." + domain: ringingHop(t).LocalAddr(),
+			domain:            ringingHop(t).LocalAddr(),
+		})
+	proxy.serve(h)
+	h.registerUser(sip.NewCallID())
+
+	if r := h.invite(impu, "<sip:scscf."+domain+":5060;lr>", ""); r.StatusCode != 486 {
+		t.Fatalf("the call to the user got %d, want 486", r.StatusCode)
+	}
+	// The server took the call and sent it back, so the S-CSCF served
+	// two transactions of this one session establishment.
+	received(t, proxy.got)
+	if r := h.invite("sip:001010000000002@"+domain, orig, impu); r.StatusCode != 486 {
+		t.Fatalf("the call from the user got %d, want 486", r.StatusCode)
+	}
+	sessionSeries(t, reg, map[string]float64{
+		`ims_session_attempts_total{role="scscf",direction="terminating"}`:                 1,
+		`ims_session_successes_total{role="scscf",direction="terminating",response="180"}`: 1,
+		`ims_session_successes_total{role="scscf",direction="terminating",response="200"}`: 0,
+		`ims_session_attempts_total{role="scscf",direction="originating"}`:                 1,
+		`ims_session_successes_total{role="scscf",direction="originating",response="180"}`: 1,
+	})
+}
+
+// Only an initial INVITE sets up a session. A REGISTER, a standalone
+// request such as the MESSAGE that carries an SMS, and a request within
+// a dialog are no session establishments.
+func TestOnlyAnInitialINVITEIsASessionEstablishmentAtTheSCSCF(t *testing.T) {
+	reg := metrics.NewRegistry()
+	h := newServiceHarnessWith(t, Config{Metrics: reg}, nil, nil)
+	h.registerUser(sip.NewCallID())
+	h.send(sms("sip:001010000000002@"+domain, orig, impu))
+	// The next hop keeps one request at a time, so this one is taken
+	// before the next request goes there.
+	received(t, h.icscf)
+
+	withinDialog := newRequest(sip.INVITE, impu, "<sip:scscf."+domain+":5060;lr>", "")
+	withinDialog.Set("To", "<"+impu+">;tag="+sip.NewTag())
+	withinDialog.Add("Contact", "<sip:001010000000001@192.0.2.10:5060>")
+	h.send(withinDialog)
+	received(t, h.icscf)
+
+	sessionSeries(t, reg, map[string]float64{
+		`ims_session_attempts_total{role="scscf",direction="terminating"}`: 0,
+		`ims_session_attempts_total{role="scscf",direction="originating"}`: 0,
 	})
 }
