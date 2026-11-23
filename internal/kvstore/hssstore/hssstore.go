@@ -270,14 +270,14 @@ func (s *Store) Put(ctx context.Context, sub hss.Subscriber) error {
 //
 // The item comes before the claims, because the item is what says which
 // identities a subscription holds. claimPublic takes over an index item
-// whose subscriber does not hold the identity, so of two Replaces that
-// claim one identity, each would otherwise read the other's item from
-// before it was written, find the identity not held, take the item over,
-// and leave both subscriptions holding it. Add is in no such race: its
-// provisional record names the identities from its first write. The
-// cost is that the item holds an identity for as long as the claim
-// takes, so another Replace of that stretch is told the identity is
-// taken even where this one goes on to give it back.
+// whose subscriber does not hold the identity, so of two Replaces
+// claiming one identity, each would otherwise read the other's item from
+// before its write, find the identity not held there, take the index
+// item over, and leave both subscriptions holding it. Add is in no such
+// race: its provisional record names the identities from its first
+// write. The cost is that the item names an identity while the claim is
+// under way, so another Replace that comes along in that window is told
+// the identity is taken even when this one goes on to give it back.
 //
 // The write is a read, modify and write of the item, not a compare and
 // swap against what the caller read: an update of SQN_HE or of the
