@@ -38,10 +38,13 @@
 //	    it. A browser that falls behind misses events and can reload the
 //	    lists.
 //	GET /api/subscribers, POST /api/subscribers,
-//	DELETE /api/subscribers/{impi}
+//	PATCH /api/subscribers/{impi}, DELETE /api/subscribers/{impi}
 //	    Forwarded with the same method, path and body to the HSS
-//	    provisioning API, whose answer comes back as it is. 503 when no
-//	    provisioning API is configured, 502 when it does not answer.
+//	    provisioning API, whose answer comes back as it is. The PATCH
+//	    carries the test-user mark and the name of the service profile of
+//	    one subscription, the two the HSS takes without the credentials
+//	    it hands out to nobody. 503 when no provisioning API is
+//	    configured, 502 when it does not answer.
 //	GET /api/epc/ues, GET /api/epc/ues/{imsi},
 //	DELETE /api/epc/network-initiated/ues/{imsi}/bearers/{ebi},
 //	POST /api/epc/network-initiated/ues/{imsi}/detach
@@ -178,6 +181,7 @@ func (l *Lab) Handler() http.Handler {
 	mux.HandleFunc("GET /api/events", l.streamEvents)
 	mux.Handle("GET /api/subscribers", l.subscribers)
 	mux.Handle("POST /api/subscribers", l.subscribers)
+	mux.Handle("PATCH /api/subscribers/{impi}", l.subscribers)
 	mux.Handle("DELETE /api/subscribers/{impi}", l.subscribers)
 	// The customized alerting tone that the callers of the user hear
 	// (TS 24.182), which the operator provisions in the HSS.
