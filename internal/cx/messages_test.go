@@ -454,3 +454,22 @@ func TestPushProfileRoundTrip(t *testing.T) {
 		t.Errorf("PPA = %+v, %v; want %+v", got, err, refused)
 	}
 }
+
+// TestDefaultIdentityIsTheFirstNotBarred: TS 29.228 6.5.1.1.
+func TestDefaultIdentityIsTheFirstNotBarred(t *testing.T) {
+	ids := []string{"sip:a@ims.example", "tel:+12025550101"}
+	tests := []struct {
+		name   string
+		barred []string
+		want   string
+	}{
+		{"none barred", nil, ids[0]},
+		{"the first barred", ids[:1], ids[1]},
+		{"all barred", ids, ""},
+	}
+	for _, tt := range tests {
+		if got := (UserProfile{PublicIdentities: ids, BarredIdentities: tt.barred}).DefaultIdentity(); got != tt.want {
+			t.Errorf("%s: %q, want %q", tt.name, got, tt.want)
+		}
+	}
+}
