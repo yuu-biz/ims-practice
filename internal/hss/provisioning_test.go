@@ -325,6 +325,9 @@ type fakeSCSCFs struct {
 	rtrs   []cx.RegistrationTerminationRequest
 	pprs   []cx.PushProfileRequest
 	result diameter.Result
+	// beforePPA, when set, runs before each PPA is sent, with the number
+	// of PPRs taken so far, so that a test can hold an answer back.
+	beforePPA func(n int)
 }
 
 func (f *fakeSCSCFs) Request(_ context.Context, originHost string, m *diam.Message) (*diam.Message, error) {
@@ -347,7 +350,11 @@ func (f *fakeSCSCFs) Request(_ context.Context, originHost string, m *diam.Messa
 		}
 		f.mu.Lock()
 		f.hosts, f.pprs = append(f.hosts, originHost), append(f.pprs, ppr)
+		n := len(f.pprs)
 		f.mu.Unlock()
+		if f.beforePPA != nil {
+			f.beforePPA(n)
+		}
 		return cx.PushProfileAnswer{Result: result}.Message(req, diameter.Identity{OriginHost: originHost, OriginRealm: realm}), nil
 	}
 	rtr, err := cx.ParseRegistrationTerminationRequest(req)
