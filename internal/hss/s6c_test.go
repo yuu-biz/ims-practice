@@ -175,10 +175,7 @@ func (n s6cNetwork) subscriber(t *testing.T) Subscriber {
 // behind, so that the SMS-GMSC can send it the TFR.
 func TestSendRoutingInfoNamesTheRegisteredIPSMGW(t *testing.T) {
 	n := newS6cNetwork(t)
-	if r := n.pur(t, sh.UserIdentity{PublicIdentity: impu}, []sh.DataReference{sh.SMSRegistrationInfo},
-		smsRegistrationOverS6c(ipsmgwNumber)); r != success {
-		t.Fatalf("PUR = %v", r)
-	}
+	n.register(t)
 
 	a := n.srr(t, msisdnA)
 	if a.Result != success {
@@ -247,7 +244,7 @@ func TestSendRoutingInfoForAnUnknownNumber(t *testing.T) {
 	}
 }
 
-// TS 23.040 3.2.8 case 1: a delivery that found the user absent puts
+// TS 23.040 3.2.6 items 1a to 1e: a delivery that found the user absent puts
 // the SC address into the message waiting data and sets UNRI; one that
 // the UE refused for want of memory sets MCEF and clears UNRI, because
 // the UE is reachable and only free memory helps.
@@ -327,8 +324,8 @@ func TestReportSMDeliveryStatusForAnUnknownNumber(t *testing.T) {
 
 // The whole store and deliver round inside the home network, as far as
 // the HSS sees it: a delivery finds no node, the SC address stays, the
-// user registers again, and the HSS alerts the SC (TS 23.040 3.2.8 case
-// 1 item 2c, TS 23.204 6.5b step 2, TS 29.338 5.2.2).
+// user registers again, and the HSS alerts the SC (TS 23.040 3.2.6 item
+// 2c, TS 23.204 6.5b step 2, TS 29.338 5.2.2).
 func TestRegistrationAlertsTheServiceCentre(t *testing.T) {
 	n := newS6cNetwork(t)
 	if a := n.srr(t, msisdnA); a.Result != diameter.Experimental(sgd.DiameterErrorAbsentUser) {
@@ -338,27 +335,16 @@ func TestRegistrationAlertsTheServiceCentre(t *testing.T) {
 	// the alert then travels back.
 	n.noAlert(t)
 
-	if r := n.pur(t, sh.UserIdentity{PublicIdentity: impu}, []sh.DataReference{sh.SMSRegistrationInfo},
-		smsRegistrationOverS6c(ipsmgwNumber)); r != success {
-		t.Fatalf("PUR = %v", r)
-	}
+	n.register(t)
 	alr := n.alert(t)
 	if alr.SCAddress != scAddress || alr.UserIdentifier.MSISDN != msisdnA {
 		t.Errorf("ALR = %+v, want SC-Address %s and MSISDN %s", alr, scAddress, msisdnA)
 	}
 	// The SC took the alert, so its address leaves the message waiting
 	// data, and UNRI goes with the registration.
-	deadline := time.Now().Add(5 * time.Second)
-	for {
-		u := n.subscriber(t)
-		if len(u.MessageWaitingData) == 0 && !u.UNRI {
-			break
-		}
-		if time.Now().After(deadline) {
-			t.Fatalf("message waiting data = %v, UNRI = %v", u.MessageWaitingData, u.UNRI)
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
+	n.waitForSubscriber(t, "after the alert", func(u Subscriber) bool {
+		return len(u.MessageWaitingData) == 0 && !u.UNRI
+	})
 
 	// The SC now gets a serving node and delivers.
 	if a := n.srr(t, msisdnA); a.Result != success || a.ServingNode == nil {
@@ -366,7 +352,7 @@ func TestRegistrationAlertsTheServiceCentre(t *testing.T) {
 	}
 }
 
-// TS 23.040 3.2.8 case 1 item 2c: while MCEF is set, the return of the
+// TS 23.040 3.2.6 item 2c: while MCEF is set, the return of the
 // user alerts nobody. Only free memory in the UE helps then, so the
 // message waiting data stays as it is.
 func TestRegistrationDoesNotAlertWhileTheMemoryIsFull(t *testing.T) {
@@ -374,10 +360,7 @@ func TestRegistrationDoesNotAlertWhileTheMemoryIsFull(t *testing.T) {
 	if a := n.rdr(t, msisdnA, sgd.SMDeliveryCauseUEMemoryCapacityExceeded); a.Result != success {
 		t.Fatalf("RDA = %v", a.Result)
 	}
-	if r := n.pur(t, sh.UserIdentity{PublicIdentity: impu}, []sh.DataReference{sh.SMSRegistrationInfo},
-		smsRegistrationOverS6c(ipsmgwNumber)); r != success {
-		t.Fatalf("PUR = %v", r)
-	}
+	n.register(t)
 	n.noAlert(t)
 	if u := n.subscriber(t); len(u.MessageWaitingData) != 1 || !u.MCEF {
 		t.Errorf("message waiting data = %v, MCEF = %v", u.MessageWaitingData, u.MCEF)
