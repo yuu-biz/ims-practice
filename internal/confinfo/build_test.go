@@ -64,6 +64,49 @@ func TestFullStateGroupsEndpointsOfOneUser(t *testing.T) {
 	}
 }
 
+// TestFullStateHidesTheIdentityOfAnAnonymousParticipant is RFC 4575
+// 8.2: the document reveals the identity of a participant that asked
+// for privacy in no URI, and names it by the anonymous URI of 5.6
+// instead, while the participant is still a user with a status of its
+// own.
+func TestFullStateHidesTheIdentityOfAnAnonymousParticipant(t *testing.T) {
+	first, firstText := AnonymousName(1)
+	second, secondText := AnonymousName(2)
+	c := Conference{URI: confURI, MaximumUserCount: 5, Participants: []Participant{
+		{User: alice, DisplayText: "Alice", Endpoint: "sip:phone@192.0.2.11", Status: Connected},
+		{User: bob, AnonymousURI: first, DisplayText: firstText, Endpoint: "urn:uuid:1", Status: Connected},
+		{User: bob, AnonymousURI: second, DisplayText: secondText, Endpoint: "urn:uuid:2", Status: OnHold},
+	}}
+	got := c.FullState(1)
+	want := &Users{Users: []User{
+		{Entity: alice, DisplayText: "Alice", Endpoints: []Endpoint{{Entity: "sip:phone@192.0.2.11", Status: Connected}}},
+		// Both endpoints are bob's, but each anonymous participant is a
+		// user of its own: the document does not say that they are one.
+		{Entity: first, DisplayText: firstText, Endpoints: []Endpoint{{Entity: "urn:uuid:1", Status: Connected}}},
+		{Entity: second, DisplayText: secondText, Endpoints: []Endpoint{{Entity: "urn:uuid:2", Status: OnHold}}},
+	}}
+	if !reflect.DeepEqual(got.Users, want) {
+		t.Errorf("got  %+v\nwant %+v", got.Users, want)
+	}
+	b, err := got.Marshal()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(b), bob) {
+		t.Errorf("the document tells bob's identity:\n%s", b)
+	}
+	// RFC 4575 5.6 and RFC 3323 4.1.1.3: an anonymous URI is in the
+	// .invalid top level domain of RFC 2606 2, which no DNS resolves.
+	for _, want := range []string{
+		`<user entity="sip:anonymous1@anonymous.invalid">`,
+		`<display-text>Anonymous1</display-text>`,
+	} {
+		if !strings.Contains(string(b), want) {
+			t.Errorf("document lacks %s:\n%s", want, b)
+		}
+	}
+}
+
 func TestFullStateOfAnEmptyConference(t *testing.T) {
 	b, err := Conference{URI: confURI, MaximumUserCount: 3}.FullState(0).Marshal()
 	if err != nil {
