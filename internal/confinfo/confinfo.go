@@ -139,8 +139,9 @@ type Users struct {
 // User is one participant (RFC 4575 5.6).
 type User struct {
 	// Entity is the participant's authenticated identity, in IMS its
-	// P-Asserted-Identity. It is the key of the user in partial
-	// documents (RFC 4575 4.5).
+	// P-Asserted-Identity, or an anonymous URI for a participant that
+	// asked for privacy (RFC 4575 5.6, AnonymousName). It is the key of
+	// the user in partial documents (RFC 4575 4.5).
 	Entity      string     `xml:"entity,attr"`
 	State       State      `xml:"state,attr,omitempty"`
 	DisplayText string     `xml:"display-text,omitempty"`
