@@ -12,6 +12,7 @@ import (
 
 	"github.com/yuu-biz/ims-practice/internal/aka"
 	"github.com/yuu-biz/ims-practice/internal/ims"
+	"github.com/yuu-biz/ims-practice/internal/ipsec"
 	"github.com/yuu-biz/ims-practice/internal/sip"
 )
 
@@ -29,13 +30,31 @@ type AKA struct {
 	// another port than the stack that New takes, which is the protected
 	// server port, the port of the UE's contact (TS 33.203 7.1).
 	Unprotected *sip.Stack
+	// ESP, when set, has the UE protect its signalling with IPsec ESP,
+	// as TS 33.203 6.3 asks. Nil leaves it unprotected on the protected
+	// ports, which keeps it readable in a capture.
+	ESP *ESP
 }
 
-// SIMPLIFIED: TS 33.203 7.1 and TS 24.229 5.1.1.5.1. The UE sets
-// up no IPsec ESP. It agrees on security associations with the P-CSCF,
-// derives IK and CK, and then sends every protected message from its
-// protected server port to the P-CSCF's; its protected client port is
-// agreed but never bound. internal/pcscf/secagree.go gives the reasons.
+// ESP is what the UE needs to protect its signalling with IPsec ESP.
+type ESP struct {
+	// ProtectedClientPort is port_uc, from which the UE sends its
+	// requests (TS 33.203 7.1 item 2). The stack that New takes binds
+	// it beside the protected server port.
+	ProtectedClientPort uint16
+	// Kernel is where the security associations go.
+	Kernel *ipsec.Kernel
+}
+
+// SIMPLIFIED: TS 33.203 7.1 and TS 24.229 5.1.1.5.1. IPsec ESP is an
+// option, and it is off unless AKA.ESP is set. Then the UE agrees on
+// security associations with the P-CSCF, derives IK and CK, and sends
+// every protected message from its protected server port to the
+// P-CSCF's; its protected client port is agreed but never bound. With
+// AKA.ESP it binds that port, sends its requests from it and puts the
+// four security associations of the agreement into the kernel
+// (internal/ipsec). internal/pcscf/secagree.go gives the reasons and
+// what is left out either way.
 
 // securityAssociations is the UE's side of the agreement with the
 // P-CSCF: an entry of its SA table (TS 33.203 7.1 rule 5).
@@ -51,6 +70,10 @@ type securityAssociations struct {
 	server []string
 	// pcscf is the P-CSCF at its protected server port.
 	pcscf netip.AddrPort
+	// ueMechanism and pcscfMechanism are the parameters of the
+	// associations: the SPIs and protected ports of each end, with the
+	// transform both chose (TS 33.203 7.2). ESP is set up from them.
+	ueMechanism, pcscfMechanism ims.IPsec3GPP
 	// ik and ck are the keys of the authentication, which ESP would use.
 	ik      aka.IK
 	ck      aka.CK
@@ -97,11 +120,60 @@ func (u *UE) pcscfURI() string {
 // lifetime is over (TS 33.203 7.4.1a).
 func (u *UE) securityAssociations() *securityAssociations {
 	u.mu.Lock()
-	defer u.mu.Unlock()
+	var expired *securityAssociations
 	if u.sa != nil && time.Now().After(u.sa.expires) {
-		u.sa = nil
+		expired, u.sa = u.sa, nil
 	}
-	return u.sa
+	sa := u.sa
+	u.mu.Unlock()
+	if expired != nil {
+		// TS 33.203 7.4: an SA that is deleted goes from the IPsec
+		// layer as well as from the application.
+		u.tearDownESP(expired)
+	}
+	return sa
+}
+
+// setUpESP puts the security associations of sa into the kernel, in
+// place of those of the set old that it replaces (TS 33.203 7.4.1a).
+// Without the option it does nothing.
+func (u *UE) setUpESP(sa, old *securityAssociations) error {
+	esp := u.esp()
+	if esp == nil {
+		return nil
+	}
+	if old != nil {
+		u.tearDownESP(old)
+	}
+	return esp.Kernel.Setup(context.Background(), u.agreement(sa), ipsec.UEEnd)
+}
+
+// tearDownESP takes them out again. Nothing can be done about a kernel
+// that refuses, and the associations go from the UE either way, so it
+// says so and carries on.
+func (u *UE) tearDownESP(sa *securityAssociations) {
+	esp := u.esp()
+	if esp == nil {
+		return
+	}
+	if err := esp.Kernel.Teardown(context.Background(), u.agreement(sa), ipsec.UEEnd); err != nil {
+		u.log.Warn("the ESP security associations stay in the kernel", "error", err.Error())
+	}
+}
+
+// esp is the ESP option, nil when it is off and for a UE that
+// registers with SIP Digest, which sets up no security associations.
+func (u *UE) esp() *ESP {
+	if u.cfg.AKA == nil {
+		return nil
+	}
+	return u.cfg.AKA.ESP
+}
+
+// agreement is the security agreement of sa, as the kernel needs it.
+func (u *UE) agreement(sa *securityAssociations) ipsec.Agreement {
+	return ipsec.Agreement{UE: u.contact.addr.Addr(), PCSCF: sa.pcscf.Addr(),
+		UEMechanism: sa.ueMechanism, PCSCFMechanism: sa.pcscfMechanism, IK: sa.ik, CK: sa.ck}
 }
 
 func (u *UE) setSecurityAssociations(sa *securityAssociations) {
@@ -129,7 +201,7 @@ func (u *UE) sendAKA(ctx context.Context, expires time.Duration) (*sip.Message, 
 		if challenges == maxChallenges {
 			return nil, fmt.Errorf("challenged %d times in a row", challenges)
 		}
-		ch, server, offer, err := readChallenge(resp, client)
+		ch, server, offer, mine, err := readChallenge(resp, client)
 		if err != nil {
 			return nil, err
 		}
@@ -161,8 +233,14 @@ func (u *UE) sendAKA(ctx context.Context, expires time.Duration) (*sip.Message, 
 			// 5.1.1.5.1: temporary associations, with the parameters of
 			// the Security-Server, for the answer.
 			sentOver = &securityAssociations{temporary: true, client: client, server: server,
-				pcscf: netip.AddrPortFrom(u.cfg.PCSCF.Addr(), offer.PortS), ik: result.IK, ck: result.CK,
-				expires: time.Now().Add(ims.RegAwaitAuth)}
+				pcscf: netip.AddrPortFrom(u.cfg.PCSCF.Addr(), offer.PortS), ueMechanism: mine, pcscfMechanism: offer,
+				ik: result.IK, ck: result.CK, expires: time.Now().Add(ims.RegAwaitAuth)}
+			// The answer to the challenge goes over the new
+			// associations, so they are in the kernel before it leaves
+			// (TS 33.203 7.4.1a).
+			if err := u.setUpESP(sentOver, over); err != nil {
+				return nil, err
+			}
 			u.answer = &akaAnswer{creds: u.answerCredentials(ch, result.RES), res: result.RES}
 			creds = u.answer.creds
 			u.log.Info("challenged", "realm", ch.Realm, "nonce", ch.Nonce, "alg", offer.Algorithm, "pcscf", sentOver.pcscf.String())
@@ -175,8 +253,14 @@ func (u *UE) sendAKA(ctx context.Context, expires time.Duration) (*sip.Message, 
 	if err != nil {
 		return nil, err
 	}
-	if resp.StatusCode == 200 && sentOver != nil {
+	switch {
+	case sentOver == nil:
+	case resp.StatusCode == 200:
 		u.registeredOver(sentOver, parseRegistration(resp).Expires)
+	case sentOver.temporary:
+		// TS 33.203 7.4.1a: after a failure the UE deletes the new
+		// associations.
+		u.tearDownESP(sentOver)
 	}
 	return resp, nil
 }
@@ -189,6 +273,7 @@ func (u *UE) sendAKA(ctx context.Context, expires time.Duration) (*sip.Message, 
 func (u *UE) registeredOver(sa *securityAssociations, interval time.Duration) {
 	if interval == 0 {
 		u.setSecurityAssociations(nil)
+		u.tearDownESP(sa)
 		return
 	}
 	established := *sa
@@ -239,6 +324,15 @@ func (u *UE) newSecurityClient(old *securityAssociations) []ims.IPsec3GPP {
 	spiC := ims.NewSPI(spis...)
 	spiS := ims.NewSPI(append(spis, spiC)...)
 	portC := ims.NewProtectedPort(ports...)
+	if esp := u.esp(); esp != nil {
+		// SIMPLIFIED: TS 33.203 7.4.0. The UE binds port_uc with ESP,
+		// and binds the one port of its configuration, where 7.4.0 has
+		// the protected client ports change with each authenticated
+		// re-registration. A port of its own for each agreement would
+		// mean a socket for each, and the P-CSCF has the same port from
+		// its own configuration (internal/pcscf/secagree.go).
+		portC = esp.ProtectedClientPort
+	}
 	var client []ims.IPsec3GPP
 	for _, t := range ims.SupportedTransforms {
 		client = append(client, ims.IPsec3GPP{Transform: t, SPIC: spiC, SPIS: spiS, PortC: portC, PortS: portS})
@@ -250,27 +344,27 @@ func (u *UE) newSecurityClient(old *securityAssociations) []ims.IPsec3GPP {
 // challenge with AKAv1-MD5, and a Security-Server with parameters for
 // the associations. It returns the challenge, the Security-Server to
 // mirror and the mechanism that the UE takes from it (TS 33.203 7.2).
-func readChallenge(resp *sip.Message, client []ims.IPsec3GPP) (sip.Challenge, []string, ims.IPsec3GPP, error) {
+func readChallenge(resp *sip.Message, client []ims.IPsec3GPP) (sip.Challenge, []string, ims.IPsec3GPP, ims.IPsec3GPP, error) {
 	i := slices.IndexFunc(resp.GetAll("WWW-Authenticate"), func(v string) bool {
 		ch, err := sip.ParseChallenge(v)
 		return err == nil && strings.EqualFold(ch.Algorithm, sip.AlgorithmAKAv1MD5)
 	})
 	if i < 0 {
-		return sip.Challenge{}, nil, ims.IPsec3GPP{}, errors.New("401 without an AKAv1-MD5 challenge")
+		return sip.Challenge{}, nil, ims.IPsec3GPP{}, ims.IPsec3GPP{}, errors.New("401 without an AKAv1-MD5 challenge")
 	}
 	ch, _ := sip.ParseChallenge(resp.GetAll("WWW-Authenticate")[i])
 	// Item 3. The UE gives up rather than send a REGISTER with a new
 	// Call-ID.
 	offers, err := ims.IPsec3GPPMechanisms(resp, "Security-Server")
 	if err != nil || len(offers) == 0 {
-		return sip.Challenge{}, nil, ims.IPsec3GPP{}, fmt.Errorf("401 without a usable Security-Server: %v", err)
+		return sip.Challenge{}, nil, ims.IPsec3GPP{}, ims.IPsec3GPP{}, fmt.Errorf("401 without a usable Security-Server: %v", err)
 	}
-	offer, _, ok := ims.ChooseTransform(offers, client)
+	offer, mine, ok := ims.ChooseTransform(offers, client)
 	if !ok {
 		// TS 33.203 7.3.2.2.
-		return sip.Challenge{}, nil, ims.IPsec3GPP{}, errors.New("Security-Server offers no algorithms of the UE")
+		return sip.Challenge{}, nil, ims.IPsec3GPP{}, ims.IPsec3GPP{}, errors.New("Security-Server offers no algorithms of the UE")
 	}
-	return ch, resp.GetAll("Security-Server"), offer, nil
+	return ch, resp.GetAll("Security-Server"), offer, mine, nil
 }
 
 // answerCredentials answer ch with RES as the password (RFC 3310 3.3),

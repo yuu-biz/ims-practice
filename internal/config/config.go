@@ -568,6 +568,12 @@ func (c Config) checkPorts() error {
 			return err
 		}
 	}
+	if c.PCSCF != nil && c.PCSCF.ProtectedClientPort != 0 {
+		protected := netip.AddrPortFrom(c.PCSCF.SIP.Listen.Addr(), c.PCSCF.ProtectedClientPort)
+		if err := listen("the protected client port of the pcscf", protected); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 

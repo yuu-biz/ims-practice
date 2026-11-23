@@ -36,6 +36,7 @@ import (
 	"github.com/yuu-biz/ims-practice/internal/ibcf"
 	"github.com/yuu-biz/ims-practice/internal/icscf"
 	"github.com/yuu-biz/ims-practice/internal/ims"
+	"github.com/yuu-biz/ims-practice/internal/ipsec"
 	"github.com/yuu-biz/ims-practice/internal/ipsmgw"
 	"github.com/yuu-biz/ims-practice/internal/kvstore"
 	"github.com/yuu-biz/ims-practice/internal/kvstore/agwstore"
@@ -173,12 +174,14 @@ func run(configPath string, log *slog.Logger, level *slog.LevelVar) error {
 			s.Close()
 		}
 	}()
-	// startSIPWith starts a stack on c with stack, a sip.Config that
-	// lacks only the sent-by, for the CSCFs, whose stacks forward
-	// CANCELs statelessly and, at the P-CSCF, screen requests.
-	startSIPWith := func(role config.Role, c config.SIP, stack sip.Config) (*sip.Stack, error) {
+	// startProtectedSIP starts a stack on c with stack, a sip.Config
+	// that lacks only the sent-by, for the CSCFs, whose stacks forward
+	// CANCELs statelessly and, at the P-CSCF, screen requests. With
+	// clientPort it binds the protected client port of TS 33.203 7.1
+	// beside the port it listens on, and the requests leave from there.
+	startProtectedSIP := func(role config.Role, c config.SIP, clientPort uint16, stack sip.Config) (*sip.Stack, error) {
 		roleLog := log.With("role", role)
-		transport, err := sip.ListenObserved(c.Listen.String(), roleLog, agent.SIP(string(role)))
+		transport, err := sip.ListenProtected(c.Listen.String(), clientPort, roleLog, agent.SIP(string(role)))
 		if err != nil {
 			return nil, err
 		}
@@ -191,6 +194,12 @@ func run(configPath string, log *slog.Logger, level *slog.LevelVar) error {
 		}
 		stacks = append(stacks, s)
 		return s, nil
+	}
+	// startSIPWith is startProtectedSIP for the stacks that send from
+	// the port they listen on, which is every stack but the protected
+	// one of a P-CSCF with ESP.
+	startSIPWith := func(role config.Role, c config.SIP, stack sip.Config) (*sip.Stack, error) {
+		return startProtectedSIP(role, c, 0, stack)
 	}
 	startSIP := func(role config.Role, c config.SIP, onRequest func(*sip.ServerTransaction), onACK func(*sip.Message)) (*sip.Stack, error) {
 		return startSIPWith(role, c, sip.Config{OnRequest: onRequest, OnACK: onACK})
@@ -254,6 +263,14 @@ func run(configPath string, log *slog.Logger, level *slog.LevelVar) error {
 	if c := cfg.PCSCF; c != nil {
 		pc := pcscf.Config{Host: c.SIP.Host, Port: int(c.SIP.Listen.Port()), ProtectedServerPort: int(c.ProtectedServerPort),
 			VisitedNetworkID: c.VisitedNetworkID, Metrics: registry}
+		if port := c.ProtectedClientPort; port != 0 {
+			// TS 33.203 6.3: IPsec ESP protects the signalling of the UEs
+			// that register with IMS AKA. config has made sure that
+			// sip.listen names this P-CSCF's own address, which the
+			// security associations are bound to.
+			pc.ESP = &pcscf.ESP{Address: c.SIP.Listen.Addr(), ProtectedClientPort: port,
+				Kernel: ipsec.NewKernel(log.With("role", config.RolePCSCF))}
+		}
 		if h := c.HostAccess; h != nil {
 			pc.HostAccess = &pcscf.HostAccess{Gateway: h.Gateway, Address: h.Address}
 		}
@@ -297,9 +314,11 @@ func run(configPath string, log *slog.Logger, level *slog.LevelVar) error {
 			// TS 33.203 7.1: the protected server port, on the same address.
 			// It sends only to UEs, each at the one address of its security
 			// associations, so its transaction timeout stays 64*T1: there
-			// is no other target to move on to.
+			// is no other target to move on to. With ESP its requests
+			// leave from the protected client port, which the security
+			// associations of each UE are bound to.
 			protected := config.SIP{Listen: netip.AddrPortFrom(c.SIP.Listen.Addr(), port), Host: c.SIP.Host}
-			stack, err := startSIPWith(config.RolePCSCF, protected,
+			stack, err := startProtectedSIP(config.RolePCSCF, protected, c.ProtectedClientPort,
 				sip.Config{Screen: p.Screen, OnRequest: p.OnProtectedRequest, OnACK: p.OnProtectedACK, OnCANCEL: p.OnProtectedCANCEL})
 			if err != nil {
 				return err
@@ -947,7 +966,12 @@ type hostAccessView struct {
 }
 
 type secAgreeView struct {
-	ProtectedServerPort int `json:"protected_server_port"`
+	ProtectedServerPort int      `json:"protected_server_port"`
+	ESP                 *espView `json:"esp,omitempty"`
+}
+
+type espView struct {
+	ProtectedClientPort int `json:"protected_client_port"`
 }
 
 type icscfView struct {
@@ -992,6 +1016,9 @@ func newConfigurationView(cfg config.Config) configurationView {
 		}
 		if c.ProtectedServerPort != 0 {
 			v.PCSCF.SecAgree = &secAgreeView{ProtectedServerPort: int(c.ProtectedServerPort)}
+			if c.ProtectedClientPort != 0 {
+				v.PCSCF.SecAgree.ESP = &espView{ProtectedClientPort: int(c.ProtectedClientPort)}
+			}
 		}
 	}
 	if c := cfg.ICSCF; c != nil {

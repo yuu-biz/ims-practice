@@ -68,6 +68,9 @@ type Agreement struct {
 type SecurityAssociation struct {
 	Source, Destination netip.AddrPort
 	SPI                 uint32
+	// From is the end that sends on it, where it is outbound; at the
+	// other end it is inbound.
+	From End
 }
 
 // SecurityAssociations are the four security associations of the
@@ -83,10 +86,10 @@ func (a Agreement) SecurityAssociations() []SecurityAssociation {
 	pc := netip.AddrPortFrom(a.PCSCF, pcscf.PortC)
 	ps := netip.AddrPortFrom(a.PCSCF, pcscf.PortS)
 	return []SecurityAssociation{
-		{Source: uc, Destination: ps, SPI: pcscf.SPIS},
-		{Source: ps, Destination: uc, SPI: ue.SPIC},
-		{Source: pc, Destination: us, SPI: ue.SPIS},
-		{Source: us, Destination: pc, SPI: pcscf.SPIC},
+		{Source: uc, Destination: ps, SPI: pcscf.SPIS, From: UEEnd},
+		{Source: ps, Destination: uc, SPI: ue.SPIC, From: PCSCFEnd},
+		{Source: pc, Destination: us, SPI: ue.SPIS, From: PCSCFEnd},
+		{Source: us, Destination: pc, SPI: pcscf.SPIC, From: UEEnd},
 	}
 }
 
@@ -193,7 +196,7 @@ func (a Agreement) Setup(end End) (string, error) {
 			" auth-trunc %s 0x%x %d enc %s 0x\n",
 			sa.Source.Addr(), sa.Destination.Addr(), spi(sa.SPI), reqid(sa.SPI),
 			k.integrity, key, k.truncation, k.encryption)
-		for _, p := range sa.policies(a.own(end), "update") {
+		for _, p := range sa.policies(end, "update") {
 			b.WriteString(p)
 		}
 	}
@@ -212,7 +215,7 @@ func (a Agreement) Teardown(end End) string {
 			// direction is enough.
 			fmt.Fprintf(&b, "state deleteall src %s dst %s proto esp\n", sa.Source.Addr(), sa.Destination.Addr())
 		}
-		for _, p := range sa.policies(a.own(end), "delete") {
+		for _, p := range sa.policies(end, "delete") {
 			b.WriteString(p)
 		}
 	}
@@ -220,12 +223,12 @@ func (a Agreement) Teardown(end End) string {
 }
 
 // policies are the policy commands of one security association, one for
-// UDP and one for TCP. own is the address of the end the commands are
-// for, which tells its outbound policies from its inbound ones. A
-// delete names the selector alone, which is what identifies a policy.
-func (sa SecurityAssociation) policies(own netip.Addr, verb string) []string {
+// UDP and one for TCP. The association is outbound at the end that
+// sends on it and inbound at the other. A delete names the selector
+// alone, which is what identifies a policy.
+func (sa SecurityAssociation) policies(end End, verb string) []string {
 	direction := "in"
-	if sa.Source.Addr() == own {
+	if sa.From == end {
 		direction = "out"
 	}
 	var out []string
@@ -240,14 +243,6 @@ func (sa SecurityAssociation) policies(own netip.Addr, verb string) []string {
 		out = append(out, line+"\n")
 	}
 	return out
-}
-
-// own is the address of end, this node's own in the commands it sets up.
-func (a Agreement) own(end End) netip.Addr {
-	if end == UEEnd {
-		return a.UE
-	}
-	return a.PCSCF
 }
 
 func spi(v uint32) string   { return "0x" + strconv.FormatUint(uint64(v), 16) }
