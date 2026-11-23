@@ -219,10 +219,7 @@ func TestAnInvitedUserThatCannotBeStored(t *testing.T) {
 	}
 	bob := receive(t, invited, "the focus's INVITE at bob")
 	kv.down.Store(true)
-	if _, err := bob.Accept(audio("41000", "sendrecv")); err != nil {
-		t.Fatalf("bob's 200 got no ACK: %v", err)
-	}
-	receive(t, bob.Done(), "BYE of the focus at bob")
+	acceptAndBeRemoved(t, bob, "bob")
 	if got := referStatuses(t, r); len(got) == 0 || got[len(got)-1] != 500 {
 		t.Errorf("REFER got NOTIFYs %v, want the last with 500", got)
 	}

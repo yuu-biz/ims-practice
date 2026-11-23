@@ -2,6 +2,7 @@ package mmtel_test
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"maps"
 	"net"
@@ -811,7 +812,10 @@ func TestMediaChangeAsTheConferenceEnds(t *testing.T) {
 // TestInvitedAsTheConferenceEnds: the creator leaves while the user
 // whom it referred to the focus is still to answer. The focus does not
 // take in the user who then answers: it ends the user's session with a
-// BYE, and no record of the conference is left.
+// BYE, releases the user's media at the MRFC, and leaves no record of
+// the conference. The creator, which asked for the invitation, is gone
+// with the dialog that carried the subscription of its REFER, so the
+// focus reports the refusal to no one.
 func TestInvitedAsTheConferenceEnds(t *testing.T) {
 	mrfc := startConferenceMRFC(t)
 	as := startAS(t, noServices{}, mmtel.Config{MRFC: "sip:" + contactOf(t, mrfc.ua)})
@@ -821,21 +825,45 @@ func TestInvitedAsTheConferenceEnds(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	receive(t, mrfc.calls, "the creator's INVITE at the MRFC")
 	if r, err := conf.Refer(sip.ReferTo{URI: "sip:bob@" + domain}); err != nil || r.Response.StatusCode != 200 {
 		t.Fatalf("REFER got %v, %v; want 200", r, err)
 	}
 	bob := receive(t, invited, "the focus's INVITE at bob")
+	bobMedia := receive(t, mrfc.calls, "bob's INVITE at the MRFC")
 	if err := conf.Bye(); err != nil {
 		t.Fatal(err)
 	}
 	awaitNoConference(t, as, uri.User)
 
-	if _, err := bob.Accept(audio("41000", "sendrecv")); err != nil {
-		t.Fatalf("bob's 200 got no ACK: %v", err)
-	}
-	receive(t, bob.Done(), "BYE of the focus at bob")
+	acceptAndBeRemoved(t, bob, "bob")
+	receive(t, bobMedia.Done(), "BYE of bob's media at the MRFC")
 	if r, ok := conferenceOf(t, as, uri.User); ok {
 		t.Errorf("the store has the conference again after it ended, with %d participants", len(r.Participants))
+	}
+}
+
+// acceptAndBeRemoved answers the focus's INVITE at an invited user whom
+// the focus does not take into the conference, and waits for the user's
+// session to end.
+//
+// The focus acknowledges the 200 (RFC 3261 13.2.2.4) and sends the BYE
+// right after, and the two reach the user in either order. A user that
+// takes the ACK first has a confirmed dialog that the BYE then ends. A
+// user that takes the BYE first ends the session there and then (RFC
+// 3261 15.1.2), as it may: the clause has the UAS end the session
+// whatever else is pending, and 15 says a UA can hang up before the ACK
+// has come. Its 2xx gets no ACK, and Accept reports that the call has
+// ended. Either way the user is out of the session and the focus did
+// not take it in, so the test takes both.
+func acceptAndBeRemoved(t *testing.T, c *sip.IncomingCall, user string) {
+	t.Helper()
+	if _, err := c.Accept(audio("41000", "sendrecv")); err != nil && !errors.Is(err, sip.ErrCallEnded) {
+		t.Fatalf("%s's 200 got neither an ACK nor a BYE: %v", user, err)
+	}
+	receive(t, c.Done(), "BYE of the focus at "+user)
+	if by := c.EndedBy(); by == nil || by.Method != sip.BYE {
+		t.Errorf("%s's session ended by %v, want the BYE of the focus", user, by)
 	}
 }
 
@@ -1044,15 +1072,8 @@ func TestInvitedWhenTheConferenceFills(t *testing.T) {
 		}
 	}
 
-	if _, err := bob.Accept(audio("41000", "sendrecv")); err != nil {
-		t.Fatalf("bob's 200 got no ACK: %v", err)
-	}
-	receive(t, bob.Done(), "BYE of the focus at bob")
-	var got []int
-	for s := range r.Statuses() {
-		got = append(got, s.StatusCode)
-	}
-	if len(got) == 0 || got[len(got)-1] != 403 {
+	acceptAndBeRemoved(t, bob, "bob")
+	if got := referStatuses(t, r); len(got) == 0 || got[len(got)-1] != 403 {
 		t.Errorf("REFER got NOTIFYs %v, want the last with 403", got)
 	}
 }
