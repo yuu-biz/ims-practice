@@ -113,7 +113,7 @@ ims-practice study session 2 (the nodes, the reference points between them, and 
 | Lab | 172.28.0.60 | Draws each registration and call as a ladder, from copies that the nodes send it (HEP). Not part of the IMS. |
 | capture | host network | tcpdump on the bridge. It writes the files that every session reads. |
 
-- The IBCF and the TrGW come with the second network, which `deploy/interconnect/compose.yaml` adds on top of `compose.yaml`.
+- The IBCF and the TrGW come with the second network, which `deploy/interconnect/compose.yaml` adds on top of `compose.yaml`. Session 10 reads the border in the captures of both networks and of the link between them.
 - The Lab and the capture are outside the IMS. No node waits for an answer from either: the copies go to the Lab over UDP, and tcpdump only listens.
 
 > Guides: [Connect two IMS networks, "The two networks"](../../../docs/guide/en/interconnect.md#the-two-networks) and [Watch the IMS in the Lab, "These APIs are this project's own"](../../../docs/guide/en/lab.md#these-apis-are-this-projects-own)
@@ -199,7 +199,7 @@ ims-practice study session 2 (the nodes, the reference points between them, and 
 | Ut and the MMTel AS | session 7, the supplementary services |
 | Rx, the EPC stub, IMS AKA | session 9, VoLTE |
 | Mr', Mp and the MRF | session 8, the MRF |
-| Mx, Ici, Izi and the border | the guide [Connect two IMS networks](../../../docs/guide/en/interconnect.md) |
+| Mx, Ici, Izi and the border | session 10, two networks joined at the border |
 | HEP and the Lab | session 3, captures and the Lab |
 
 > Guide: [Guides, "The order to read them in"](../../../docs/guide/en/README.md#the-order-to-read-them-in)

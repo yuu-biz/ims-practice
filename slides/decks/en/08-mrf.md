@@ -426,7 +426,7 @@ For 1, run `ue xcap` and `ue call` in the form of the slide "Run it".
 ## Next session
 
 - Next is the VoLTE session: the access network, IMS AKA, policy control over Rx, and the VoLTE call.
-- The border between two networks, and a conference whose parties are in both, are in [the interconnect guide](../../../docs/guide/en/interconnect.md).
+- The border between two networks, and a conference whose parties are in both, come in the last session, with [the interconnect guide](../../../docs/guide/en/interconnect.md).
 
 ```sh
 docker compose --profile ue --profile phones down -v --remove-orphans

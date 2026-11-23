@@ -712,9 +712,9 @@ docker compose run --rm volte10 call -epc http://172.28.0.80:8080 \
 
 ---
 
-## この先に読むもの
+## 次の回
 
-- [IMS 網どうしを相互接続する](../../../docs/guide/ja/interconnect.md)。境界の IBCF と TrGW、接続先の網ごとのプロファイルを扱います。
+- 次が最後の回です。境界でつながる 2 つの IMS 網を扱います。通話、ショートメッセージ、会議が、IBCF と TrGW を通ってほかの事業者の網へ出ていきます。
 - この回の 2 つの境界（UE の `AccessNetwork` と P-CSCF の `PolicyControl`）は、ほかのアクセス網をつなぐ場所です。前者の後ろには NAS を、後者の後ろには 5GC の N5 を置けます。
 
 ```sh
@@ -724,4 +724,4 @@ docker compose --profile ue --profile volte down --rmi all -v --remove-orphans
 - これは手順書の「後片付け」です。ラボの `phones` のプロファイルも使ったなら、`--profile phones` を足します。
 - 5GC では、SIP の信号は 5QI 5 の QoS フローを、音声は 5QI 1 を使います。EPS の QCI 5 と QCI 1 と同じ考え方です。
 
-> 手順書の一覧は [docs/guide/](../../../docs/guide/) にあります。
+> 次の回の手順書は [IMS 網どうしを相互接続する](../../../docs/guide/ja/interconnect.md) です。手順書の一覧は [docs/guide/](../../../docs/guide/) にあります。
