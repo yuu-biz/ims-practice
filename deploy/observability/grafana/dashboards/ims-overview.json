@@ -694,7 +694,7 @@
     {
       "type": "timeseries",
       "title": "Diameter answers by result",
-      "description": "Answers per second, by command and by Result-Code or Experimental-Result-Code. TS 32.409 UR.SuccUAA.ResultCode, UR.FailUAA.Cause, MA.FailMAA.Cause, UR.FailSAA.Cause and others.",
+      "description": "Answers per second, by command and by Result-Code or Experimental-Result-Code. The direction says which side of the exchange the role is on: received for the answers that come back to a request it sent, sent for the answers it gives to a request that reached it. TS 32.409 UR.SuccUAA.ResultCode, UR.FailUAA.Cause, MA.FailMAA.Cause, UR.FailSAA.Cause for the first, and UR.Answer of the HSS with UR.SuccDeRegHss and UP.SuccPPA of the S-CSCF for the second.",
       "id": 14,
       "datasource": {
         "type": "prometheus",

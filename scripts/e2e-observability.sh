@@ -405,6 +405,29 @@ else
 	echo
 	fail=1
 fi
+# The HSS counts the same four exchanges from its own side: each request
+# on its receipt and each answer as it hands it back (TS 32.409 4.2.12.1
+# and 4.2.12.2). They are the UAR and the LIR of the I-CSCF and the MAR
+# and the SAR of the S-CSCF above, under the other value of the
+# direction label. The result label is left open here too.
+for series in 'ims_diameter_requests_total{role="hss",direction="received",command="UAR"}' \
+	'ims_diameter_answers_total{role="hss",direction="sent",command="UAR"}' \
+	'ims_diameter_requests_total{role="hss",direction="received",command="LIR"}' \
+	'ims_diameter_answers_total{role="hss",direction="sent",command="LIR"}' \
+	'ims_diameter_requests_total{role="hss",direction="received",command="MAR"}' \
+	'ims_diameter_answers_total{role="hss",direction="sent",command="MAR"}' \
+	'ims_diameter_requests_total{role="hss",direction="received",command="SAR"}' \
+	'ims_diameter_answers_total{role="hss",direction="sent",command="SAR"}'; do
+	if value="$(until_positive prometheus_values "$series")"; then
+		echo "ok   Prometheus has $series = $value"
+	else
+		echo "FAIL Prometheus has no $series above 0: $value"
+		# Shown only to explain the failure, if the HSS answers at all,
+		# hence "|| true".
+		docker compose exec -T hss wget -qO- http://127.0.0.1:8085/metrics || true
+		fail=1
+	fi
+done
 if value="$(until_positive prometheus_values 'up{job="ims",node="mmtel"}')"; then
 	echo "ok   Prometheus scrapes the MMTel AS: up = $value"
 else

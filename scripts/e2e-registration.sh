@@ -174,6 +174,33 @@ else
 fi
 docker rm -f ims-practice-ue3-rtr >/dev/null
 
+# The S-CSCF counted the PPRs and the RTR of the scene above: each on
+# its receipt (TS 32.409 4.1.1.3.2.1, 4.1.7.1) and the answer it sent
+# back with the result that answer carried (4.1.1.3.2.2, 4.1.7.2). The
+# counters are on the maintenance listener of the node, which serves
+# /metrics whether or not a Prometheus scrapes it, so this scenario
+# reads them without one. How many PPRs there were depends on who was
+# registered when the setting changed, so each series is only asked to
+# have counted something.
+scscf_metrics="$(docker compose exec -T scscf wget -qO- http://127.0.0.1:8085/metrics | tr -d '\r')"
+for series in 'ims_diameter_requests_total{role="scscf",direction="received",command="PPR"}' \
+	'ims_diameter_answers_total{role="scscf",direction="sent",command="PPR",result="DIAMETER_SUCCESS"}' \
+	'ims_diameter_requests_total{role="scscf",direction="received",command="RTR"}' \
+	'ims_diameter_answers_total{role="scscf",direction="sent",command="RTR",result="DIAMETER_SUCCESS"}'; do
+	# The value is the last field of the sample line, and a counter that
+	# has counted nothing has no line at all.
+	line="$(grep -F "$series " <<<"$scscf_metrics" | tail -n 1)"
+	case "${line##* }" in
+	"" | 0)
+		echo "FAIL the S-CSCF counted no $series: ${line:-no sample line}"
+		fail=1
+		;;
+	*)
+		echo "ok   the S-CSCF has $series = ${line##* }"
+		;;
+	esac
+done
+
 # A UE on the host, which reaches the P-CSCF through Docker's NAT, as
 # "Register from your own machine through NAT" in the guide shows.
 host_registered=
