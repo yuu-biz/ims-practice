@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -481,4 +482,346 @@ func TestProvisioningSetsTheCustomizedAlertingTone(t *testing.T) {
 			t.Errorf("PUT %s %s: %d, want %d", bad.path, bad.body, w.Code, bad.code)
 		}
 	}
+}
+
+// putSubscription is a PUT of the subscription of impi, with the answer
+// decoded. A request that failed has no answer to decode.
+func putSubscription(t *testing.T, api http.Handler, impi, body string) (*httptest.ResponseRecorder, putAnswer) {
+	t.Helper()
+	w := do(t, api, "PUT", "/subscriptions/"+impi, body)
+	if w.Code >= http.StatusBadRequest {
+		return w, putAnswer{}
+	}
+	return w, decode[putAnswer](t, w)
+}
+
+// TestProvisioningPutCreatesASubscription: a PUT of a subscription that
+// the HSS does not have adds it, and the same body sent again leaves it
+// as it is, so that an operator can send a file of subscriptions as
+// often as they like. A dry run says what it would do and does nothing.
+func TestProvisioningPutCreatesASubscription(t *testing.T) {
+	h := newTestHSS()
+	api := h.Provisioning(&fakeSCSCFs{})
+	newIMPI := "001010000000009@" + realm
+
+	w, got := putSubscription(t, api, newIMPI, newSubscription)
+	if w.Code != http.StatusCreated || got.Result != resultCreated {
+		t.Fatalf("PUT: %d %s", w.Code, w.Body)
+	}
+	if got.Subscription.RegistrationState != "Not Registered" || len(got.Subscription.PublicIdentities) != 2 {
+		t.Errorf("the answer: %+v", got.Subscription)
+	}
+	if strings.Contains(w.Body.String(), "test-password-9") {
+		t.Errorf("the answer gives out the password: %s", w.Body)
+	}
+	// The new subscriber registers like one of the configuration file.
+	if a := uar(t, h, newIMPI, "tel:+12025550109", cx.Registration); a.Result != diameter.Experimental(cx.DiameterFirstRegistration) {
+		t.Errorf("UAR for the new subscriber: %+v", a)
+	}
+
+	// The same body again: nothing to do, and the answer says so.
+	w, got = putSubscription(t, api, newIMPI, newSubscription)
+	if w.Code != http.StatusOK || got.Result != resultUnchanged {
+		t.Errorf("the same PUT again: %d %s", w.Code, w.Body)
+	}
+
+	// A dry run of a subscription that is not there answers what it would
+	// do, with 200 rather than the 201 of a creation it did not make.
+	dryIMPI := "001010000000008@" + realm
+	dry := strings.NewReplacer("000009", "000008", "+12025550109", "+12025550108").Replace(newSubscription)
+	w, got = putSubscription(t, api, dryIMPI+"?dry_run=true", dry)
+	if w.Code != http.StatusOK || got.Result != resultCreated {
+		t.Fatalf("the dry run: %d %s", w.Code, w.Body)
+	}
+	if w := do(t, api, "GET", "/subscriptions/"+dryIMPI, ""); w.Code != http.StatusNotFound {
+		t.Errorf("the dry run stored the subscription: %d %s", w.Code, w.Body)
+	}
+}
+
+// TestProvisioningPutReplacesASubscription: a PUT over a subscription
+// that is there replaces the whole of it, credentials included, and
+// leaves what the running subscriber has: its registration, the S-CSCF
+// serving it and SQN_HE. The public identities it no longer names stop
+// finding it.
+func TestProvisioningPutReplacesASubscription(t *testing.T) {
+	h := newTestHSS()
+	api := h.Provisioning(&fakeSCSCFs{})
+	body := `{"private_identity": "` + akaImpi + `", "public_identities": ["` + akaImpu + `", "tel:+12025550110"],
+		"password": "test-password-10",
+		"aka": {"k": "465b5ce8b199b49faa5f0a2ee238a6bc", "opc": "cd63cb71954a9f4e48a5994e37a02baf", "amf": "8000", "sqn": "000000000020"}}`
+	if w, _ := putSubscription(t, api, akaImpi, body); w.Code != http.StatusCreated {
+		t.Fatalf("PUT: %d %s", w.Code, w.Body)
+	}
+	// The user takes a vector, which moves SQN_HE on, and registers.
+	if a := akaMAR(t, h, cx.SchemeDigestAKAv1MD5, scscf, nil); a.AuthenticationVector == nil {
+		t.Fatalf("MAA = %+v", a)
+	}
+	registered := subscriberOrFail(t, h, akaImpi)
+	registered.State, registered.ServerName = Registered, scscf
+	if err := h.store.Put(context.Background(), registered); err != nil {
+		t.Fatal(err)
+	}
+
+	// The operator takes the telephone number away, marks the
+	// subscription and drops the password. The sqn of the body is older
+	// than SQN_HE and is not read.
+	replaced := `{"private_identity": "` + akaImpi + `", "public_identities": ["` + akaImpu + `"], "test_user": true,
+		"aka": {"k": "465b5ce8b199b49faa5f0a2ee238a6bc", "opc": "cd63cb71954a9f4e48a5994e37a02baf", "amf": "8000", "sqn": "000000000000"}}`
+	w, got := putSubscription(t, api, akaImpi, replaced)
+	if w.Code != http.StatusOK || got.Result != resultUpdated {
+		t.Fatalf("the replacing PUT: %d %s", w.Code, w.Body)
+	}
+	if !got.Subscription.TestUser || got.Subscription.RegistrationState != "Registered" || got.Subscription.ServerName != scscf {
+		t.Errorf("the answer: %+v", got.Subscription)
+	}
+	if len(got.Subscription.AuthenticationSchemes) != 1 || got.Subscription.AuthenticationSchemes[0] != cx.SchemeDigestAKAv1MD5 {
+		t.Errorf("authentication_schemes = %v, want IMS-AKA alone", got.Subscription.AuthenticationSchemes)
+	}
+
+	stored := subscriberOrFail(t, h, akaImpi)
+	if stored.State != Registered || stored.ServerName != scscf {
+		t.Errorf("the running subscriber: %v %q", stored.State, stored.ServerName)
+	}
+	// SQN 0x20 is SEQ 1 with IND 0, so the vector that went out had SEQ 2
+	// with IND 1 (TestProvisioningAddsAnAKASubscription).
+	if want := aka.NewSQN(2, 1); stored.AKA.SQN != want {
+		t.Errorf("SQN_HE = %d, want the %d of the vector that went out", stored.AKA.SQN, want)
+	}
+	if stored.Password != "" || !stored.TestUser {
+		t.Errorf("the stored subscription: %+v", stored.Subscription)
+	}
+	// The number it let go reaches nobody; the identity it kept still
+	// reaches the subscription.
+	if a := lir(t, h, "tel:+12025550110"); a.Result != diameter.Experimental(cx.DiameterErrorUserUnknown) {
+		t.Errorf("LIR for the number the subscription let go: %+v", a)
+	}
+	if a := lir(t, h, akaImpu); !a.Result.Success() {
+		t.Errorf("LIR for the identity it kept: %+v", a)
+	}
+}
+
+// subscriberOrFail is the stored subscriber of privateID, for a test
+// that reads what the API does not hand out.
+func subscriberOrFail(t *testing.T, h *HSS, privateID string) Subscriber {
+	t.Helper()
+	s, ok, err := h.store.Subscriber(context.Background(), privateID)
+	if err != nil || !ok {
+		t.Fatalf("Subscriber(%s) = %v, %v", privateID, ok, err)
+	}
+	return s
+}
+
+// TestProvisioningPutRefusesWhatItCannotStore: the body says which
+// subscription it is for, the profile is one of the configuration, and
+// a public identity of another subscription is refused with nothing
+// written, on a dry run as on a real request.
+func TestProvisioningPutRefusesWhatItCannotStore(t *testing.T) {
+	h := newTestHSS()
+	h.config.ServiceProfiles = map[string][]ifc.InitialFilterCriteria{"default": nil}
+	h.config.DefaultServiceProfile = "default"
+	api := h.Provisioning(&fakeSCSCFs{})
+	newIMPI := "001010000000009@" + realm
+	for _, c := range []struct {
+		name, impi, body string
+		status           int
+	}{
+		{"another private identity than the path", otherImp, newSubscription, http.StatusBadRequest},
+		{"no private identity", newIMPI,
+			`{"public_identities": ["sip:001010000000009@` + realm + `"], "password": "p"}`, http.StatusBadRequest},
+		{"a profile that the configuration does not define", newIMPI,
+			`{"private_identity": "` + newIMPI + `", "public_identities": ["sip:001010000000009@` + realm + `"],
+				"password": "p", "service_profile": "gold"}`, http.StatusBadRequest},
+		{"repository data beside a document of its own", newIMPI,
+			`{"private_identity": "` + newIMPI + `", "public_identities": ["sip:001010000000009@` + realm + `"],
+				"password": "p", "mmtel_services": "<MMTelServices/>",
+				"repository_data": [{"service_indication": "MMTEL-Services", "service_data": "<MMTelServices/>"}]}`, http.StatusBadRequest},
+		{"a dry run that is neither true nor false", newIMPI + "?dry_run=maybe", newSubscription, http.StatusBadRequest},
+		{"a public identity of another subscription", newIMPI,
+			`{"private_identity": "` + newIMPI + `", "public_identities": ["` + impu + `"], "password": "p"}`, http.StatusConflict},
+		{"a public identity of another subscription, on a dry run", newIMPI + "?dry_run=true",
+			`{"private_identity": "` + newIMPI + `", "public_identities": ["` + impu + `"], "password": "p"}`, http.StatusConflict},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			if w, _ := putSubscription(t, api, c.impi, c.body); w.Code != c.status {
+				t.Errorf("PUT: %d %s, want %d", w.Code, w.Body, c.status)
+			}
+			if w := do(t, api, "GET", "/subscriptions/"+newIMPI, ""); w.Code != http.StatusNotFound {
+				t.Errorf("the refused subscription was stored: %d %s", w.Code, w.Body)
+			}
+			if owner := subscriberOf(t, h, impu); owner.PrivateIdentity != impi {
+				t.Errorf("%s now belongs to %q", impu, owner.PrivateIdentity)
+			}
+		})
+	}
+}
+
+// TestProvisioningPutReplacesTheRepositoryData: a PUT carries the
+// repository data of a subscription, which is how an archive of one
+// goes back in, and what it leaves out goes. A PUT that names no data
+// at all leaves the subscription with the MMTelServices document of the
+// configuration, so what the user set over Ut is back to the configured
+// default. Each piece that changes gets the next sequence number, as an
+// update over Sh would.
+func TestProvisioningPutReplacesTheRepositoryData(t *testing.T) {
+	h := newTestHSS()
+	doc := `<MMTelServices xmlns="http://uri.etsi.org/ngn/params/xml/simservs/xcap"><complete-communication-hold><operator-communication-hold authorized="true"/></complete-communication-hold></MMTelServices>`
+	configured, err := MMTelServicesData([]byte(doc))
+	if err != nil {
+		t.Fatal(err)
+	}
+	h.config.MMTelServices = &configured
+	api := h.Provisioning(&fakeSCSCFs{})
+	newIMPI := "001010000000009@" + realm
+	identities := `"private_identity": "` + newIMPI + `", "public_identities": ["sip:001010000000009@` + realm + `"], "password": "p"`
+
+	// A subscription with a Ut password and a tone of its own gets the
+	// configured document, the credential as H(A1) and the tone.
+	body := `{` + identities + `, "ut_password": "test-ut-password-9",
+		"customized_alerting_tone": {"tone": "cat1", "active": true}}`
+	w, got := putSubscription(t, api, newIMPI, body)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("PUT: %d %s", w.Code, w.Body)
+	}
+	if got.Subscription.CustomizedAlertingTone == nil || got.Subscription.CustomizedAlertingTone.Tone != "cat1" {
+		t.Errorf("the tone of the answer: %+v", got.Subscription.CustomizedAlertingTone)
+	}
+	if d := storedData(t, h, newIMPI, "MMTEL-Services"); !strings.Contains(string(d.ServiceData.XML), "operator-communication-hold") {
+		t.Errorf("MMTEL-Services = %s", d.ServiceData.XML)
+	}
+	if d := storedData(t, h, newIMPI, "Ut-Digest-Credential"); strings.Contains(string(d.ServiceData.XML), "test-ut-password-9") {
+		t.Errorf("the Ut credential holds the password: %s", d.ServiceData.XML)
+	}
+	storedData(t, h, newIMPI, mmtel.CATServiceIndication)
+
+	// The same body again leaves the data as it is: no piece is written
+	// again, so none has a new sequence number.
+	if w, got := putSubscription(t, api, newIMPI, body); w.Code != http.StatusOK || got.Result != resultUnchanged {
+		t.Errorf("the same PUT again: %d %s", w.Code, w.Body)
+	}
+	if d := storedData(t, h, newIMPI, "MMTEL-Services"); d.SequenceNumber != 0 {
+		t.Errorf("sequence number after an unchanged PUT = %d, want the 0 of new data", d.SequenceNumber)
+	}
+
+	// A PUT that changes the password alone leaves the data where it is,
+	// so an AS that read a sequence number over Sh can still update from
+	// it.
+	if w, got := putSubscription(t, api, newIMPI, strings.Replace(body, `"password": "p"`, `"password": "q"`, 1)); w.Code != http.StatusOK || got.Result != resultUpdated {
+		t.Fatalf("the PUT of a new password: %d %s", w.Code, w.Body)
+	}
+	if d := storedData(t, h, newIMPI, "MMTEL-Services"); d.SequenceNumber != 0 {
+		t.Errorf("sequence number after a PUT that only changed the password = %d, want 0", d.SequenceNumber)
+	}
+
+	// Repository data of its own replaces all of it: the credential and
+	// the tone go with the document they came with.
+	own := `<MMTelServices xmlns="http://uri.etsi.org/ngn/params/xml/simservs/xcap"><communication-waiting active="true"/></MMTelServices>`
+	if w, got := putSubscription(t, api, newIMPI, `{`+identities+`, "repository_data": [{"service_indication": "MMTEL-Services",
+		"service_data": `+strconv.Quote(own)+`}]}`); w.Code != http.StatusOK || got.Result != resultUpdated {
+		t.Fatalf("the PUT of repository data: %d %s", w.Code, w.Body)
+	}
+	if d := storedData(t, h, newIMPI, "MMTEL-Services"); string(d.ServiceData.XML) != own || d.SequenceNumber != 1 {
+		t.Errorf("MMTEL-Services = %s with sequence number %d", d.ServiceData.XML, d.SequenceNumber)
+	}
+	for _, gone := range []string{"Ut-Digest-Credential", mmtel.CATServiceIndication} {
+		if _, ok, err := h.store.RepositoryData(context.Background(), newIMPI, gone); ok || err != nil {
+			t.Errorf("%s is still there (%v)", gone, err)
+		}
+	}
+
+	// A PUT that names no data puts the configured document back.
+	if w, got := putSubscription(t, api, newIMPI, `{`+identities+`}`); w.Code != http.StatusOK || got.Result != resultUpdated {
+		t.Fatalf("the PUT without any data: %d %s", w.Code, w.Body)
+	}
+	if d := storedData(t, h, newIMPI, "MMTEL-Services"); !strings.Contains(string(d.ServiceData.XML), "operator-communication-hold") || d.SequenceNumber != 2 {
+		t.Errorf("MMTEL-Services = %s with sequence number %d", d.ServiceData.XML, d.SequenceNumber)
+	}
+	// An empty array is not the same as leaving the field out: it asks
+	// for a subscription with no repository data at all.
+	if w, got := putSubscription(t, api, newIMPI, `{`+identities+`, "repository_data": []}`); w.Code != http.StatusOK || got.Result != resultUpdated {
+		t.Fatalf("the PUT with an empty array: %d %s", w.Code, w.Body)
+	}
+	if d, err := h.store.AllRepositoryData(context.Background(), newIMPI); len(d) != 0 || err != nil {
+		t.Errorf("the repository data is %+v (%v)", d, err)
+	}
+}
+
+// updatedBeforeTheSwap makes an update of the repository data land
+// between the read of a PUT and its swap, which an Sh PUR at another
+// instance or a PUT of the tone can: both compare and swap the data
+// without the lock the provisioning request holds.
+type updatedBeforeTheSwap struct {
+	Store
+	update sh.TransparentData
+	done   bool
+}
+
+func (s *updatedBeforeTheSwap) CompareAndSwapRepositoryData(ctx context.Context, privateID string, old *sh.TransparentData, data sh.TransparentData) (bool, error) {
+	if !s.done && data.ServiceIndication == s.update.ServiceIndication {
+		s.done = true
+		if swapped, err := s.Store.CompareAndSwapRepositoryData(ctx, privateID, old, s.update); err != nil || !swapped {
+			return false, err
+		}
+	}
+	return s.Store.CompareAndSwapRepositoryData(ctx, privateID, old, data)
+}
+
+// TestProvisioningPutWithAnUpdateInBetween: a PUT whose repository data
+// another update changes between the read and the swap loses the swap,
+// reads again and writes over what that update left, rather than taking
+// the data back to the version it had read. The sequence number counts
+// both writes (TS 29.328 6.1.2.1).
+func TestProvisioningPutWithAnUpdateInBetween(t *testing.T) {
+	const (
+		v0 = `<MMTelServices xmlns="http://uri.etsi.org/ngn/params/xml/simservs/xcap"/>`
+		v1 = `<MMTelServices xmlns="http://uri.etsi.org/ngn/params/xml/simservs/xcap"><communication-waiting active="true"/></MMTelServices>`
+		v2 = `<MMTelServices xmlns="http://uri.etsi.org/ngn/params/xml/simservs/xcap"><communication-waiting active="false"/></MMTelServices>`
+	)
+	memory, err := NewMemoryStore(Subscription{PrivateIdentity: impi, PublicIdentities: []string{impu}, Password: "test-password-1",
+		RepositoryData: []sh.TransparentData{{ServiceIndication: "MMTEL-Services", ServiceData: &sh.ServiceData{XML: []byte(v0)}}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	store := &updatedBeforeTheSwap{Store: memory,
+		update: sh.TransparentData{ServiceIndication: "MMTEL-Services", SequenceNumber: 1, ServiceData: &sh.ServiceData{XML: []byte(v1)}}}
+	node := diameter.NewNode(diameter.Identity{OriginHost: "hss." + realm, OriginRealm: realm}, []uint32{diameter.ApplicationIDCx}, diameter.Timers{}, quiet())
+	h := mustHSS(Config{Realm: realm, VisitedNetworks: []string{realm}}, store, node)
+	api := h.Provisioning(&fakeSCSCFs{})
+
+	body := `{"private_identity": "` + impi + `", "public_identities": ["` + impu + `"], "password": "test-password-1",
+		"repository_data": [{"service_indication": "MMTEL-Services", "service_data": ` + strconv.Quote(v2) + `}]}`
+	w, got := putSubscription(t, api, impi, body)
+	if w.Code != http.StatusOK || got.Result != resultUpdated {
+		t.Fatalf("PUT: %d %s", w.Code, w.Body)
+	}
+	if !store.done {
+		t.Fatal("no update landed between the read and the swap")
+	}
+	d := storedData(t, h, impi, "MMTEL-Services")
+	if string(d.ServiceData.XML) != v2 {
+		t.Errorf("MMTEL-Services = %s, want the data of the PUT", d.ServiceData.XML)
+	}
+	if d.SequenceNumber != 2 {
+		t.Errorf("sequence number = %d, want the 2 that follows the update in between", d.SequenceNumber)
+	}
+}
+
+// storedData is the repository data stored under serviceIndication,
+// which has to be there.
+func storedData(t *testing.T, h *HSS, privateID, serviceIndication string) sh.TransparentData {
+	t.Helper()
+	d, ok, err := h.store.RepositoryData(context.Background(), privateID, serviceIndication)
+	if err != nil || !ok || d.ServiceData == nil {
+		t.Fatalf("RepositoryData(%s, %s) = %+v, %v, %v", privateID, serviceIndication, d, ok, err)
+	}
+	return d
+}
+
+// subscriberOf is the stored subscriber that has the public identity.
+func subscriberOf(t *testing.T, h *HSS, publicID string) Subscriber {
+	t.Helper()
+	s, ok, err := h.store.SubscriberOf(context.Background(), publicID)
+	if err != nil || !ok {
+		t.Fatalf("SubscriberOf(%s) = %v, %v", publicID, ok, err)
+	}
+	return s
 }
