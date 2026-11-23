@@ -7,7 +7,7 @@ These guides run the IMS on your machine and follow its messages in a capture, o
 ## The order to read them in
 
 1. [Capture signaling and open it in Wireshark](capture.md). Start the system, open the capture, and see the Diameter connections come up.
-2. [Follow a UE registering with the IMS](registration.md). REGISTER through the P-CSCF, the I-CSCF and the S-CSCF, with SIP Digest and Cx.
+2. [Follow a UE registering with the IMS](registration.md). REGISTER through the P-CSCF, the I-CSCF and the S-CSCF, with SIP Digest and Cx. It also provisions the subscriptions, pushes another service profile to a registered user, and holds the network to the test users.
 3. [Follow a voice call through the IMS](call.md). An INVITE from one UE to another by telephone number, ENUM, and the media relay.
 4. [Follow a short message through the IMS](sms.md). SMS over IP through the IP-SM-GW, with the reports.
 5. [Supplementary services with the MMTel AS](mmtel.md). Identity presentation, call forwarding and barring, set up over Ut. The industry also calls the MMTel AS the TAS (Telephony Application Server) or the T-AS.

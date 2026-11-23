@@ -6,7 +6,7 @@
 
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { Plugin } from "vite";
-import type { Subscriber } from "../src/api.ts";
+import type { Subscriber, SubscriberPatch } from "../src/api.ts";
 import { allMessages, calls, registrations, subscribers } from "../test/fixtures.ts";
 import { handleChaos } from "./chaos.ts";
 import { handleUE } from "./ues.ts";
@@ -18,6 +18,12 @@ import { handleUE } from "./ues.ts";
 // page must not draw twice.
 const lateHop = allMessages.slice(-2);
 const lateAfterMs = 5000;
+
+// The service profiles of the Compose project, and the one its HSS
+// gives a subscription that names none. A PATCH that names another
+// profile is refused as the HSS refuses it.
+const profiles = ["default", "no-services"];
+const defaultProfile = "default";
 
 export function mockApi(): Plugin {
   const provisioning = process.env["MOCK_PROVISIONING"] !== "off";
@@ -70,8 +76,31 @@ export function mockApi(): Plugin {
         if (hss.some((s) => s.private_identity === body.private_identity)) {
           return text(res, 409, `${body.private_identity} exists`);
         }
-        hss.push({ private_identity: body.private_identity, public_identities: body.public_identities, customized_alerting_tone: null });
+        hss.push({
+          private_identity: body.private_identity,
+          public_identities: body.public_identities,
+          barred_identities: [],
+          test_user: false,
+          service_profile: "",
+          effective_service_profile: defaultProfile,
+          customized_alerting_tone: null,
+        });
         return json(res, 201, body);
+      }
+      if (req.method === "PATCH") {
+        const impi = decodeURIComponent(path.slice("/subscribers/".length));
+        const s = hss.find((each) => each.private_identity === impi);
+        if (!s) return text(res, 404, `${impi} not found`);
+        const patch = JSON.parse(await readBody(req)) as SubscriberPatch;
+        // An empty name asks for the profile of the settings, as it does
+        // in a POST.
+        if (patch.service_profile !== undefined && patch.service_profile !== "" && !profiles.includes(patch.service_profile)) {
+          return text(res, 400, `"${patch.service_profile}" is not a profile of service_profiles`);
+        }
+        if (patch.test_user !== undefined) s.test_user = patch.test_user;
+        if (patch.service_profile !== undefined) s.service_profile = patch.service_profile;
+        s.effective_service_profile = s.service_profile === "" ? defaultProfile : s.service_profile;
+        return json(res, 200, s);
       }
       if (req.method === "DELETE") {
         const impi = decodeURIComponent(path.slice("/subscribers/".length));

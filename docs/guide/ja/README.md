@@ -7,7 +7,7 @@
 ## 読む順
 
 1. [信号をキャプチャして Wireshark で開く](capture.md)。システムを起動してキャプチャを開き、Diameter の接続ができるところを見ます。
-2. [UE が IMS に登録する流れを追う](registration.md)。P-CSCF、I-CSCF、S-CSCF を通る REGISTER と、SIP Digest、Cx。
+2. [UE が IMS に登録する流れを追う](registration.md)。P-CSCF、I-CSCF、S-CSCF を通る REGISTER と、SIP Digest、Cx。加入のプロビジョニング、登録中の利用者への新しいサービスプロファイルの push、試験用の利用者だけの収容もここにあります。
 3. [音声通話の流れを追う](call.md)。電話番号で別の UE にかける INVITE と、ENUM、メディア中継。
 4. [SMS の流れを追う](sms.md)。IP-SM-GW を通る SMS over IP と、その報告。
 5. [MMTel AS の付加サービス](mmtel.md)。番号通知、転送、規制と、Ut での設定。MMTel AS は業界では TAS（Telephony Application Server）や T-AS とも呼ばれます。

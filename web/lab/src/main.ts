@@ -18,13 +18,15 @@ import {
   HttpError,
   ladderCallIds,
   parseMessage,
+  patchSubscriber,
   putAlertingTone,
   type Call,
   type Message,
   type Registration,
   type Subscriber,
+  type SubscriberPatch,
 } from "./api.ts";
-import { byId, clock, el, fillTable } from "./dom.ts";
+import { byId, clock, el, fillTable, type Child } from "./dom.ts";
 import { mountEPCPanel } from "./epc-panel.ts";
 import { mountFaultPanel } from "./fault-panel.ts";
 import { buildLadder, type Ladder } from "./ladder.ts";
@@ -237,7 +239,69 @@ function setProvisioning(available: boolean): void {
 function subscriberRow(s: Subscriber): (string | Node)[] {
   const remove = el("button", { type: "button", className: "link danger", textContent: "Delete" });
   remove.addEventListener("click", () => void removeSubscriber(s.private_identity));
-  return [s.private_identity, s.public_identities.join("\n"), toneSelect(s), remove];
+  return [s.private_identity, identities(s), testUserBox(s), profileField(s), toneSelect(s), remove];
+}
+
+// The public identities of a subscription, the barred ones marked. The
+// S-CSCF lets a barred identity register and keeps it out of every
+// other IMS communication (TS 29.228 B.2.1).
+function identities(s: Subscriber): HTMLElement {
+  const lines: Child[] = [];
+  for (const id of s.public_identities) {
+    if (lines.length > 0) lines.push("\n");
+    lines.push(id);
+    if (s.barred_identities.includes(id)) lines.push(el("span", { className: "muted", textContent: " (barred)" }));
+  }
+  return el("div", {}, ...lines);
+}
+
+// The mark of a subscription that the operator keeps for trying a
+// feature out. It picks the service profile of a test user, and the
+// admission policy of the HSS can hold the network to the marked
+// subscriptions.
+function testUserBox(s: Subscriber): HTMLInputElement {
+  const box = el("input", { type: "checkbox", checked: s.test_user });
+  box.setAttribute("aria-label", `Test user mark of ${s.private_identity}`);
+  box.addEventListener("change", () => void changeSubscriber(s.private_identity, { test_user: box.checked }, box));
+  return box;
+}
+
+// The service profile that a subscription names, which decides the
+// filter criteria its S-CSCF gets. The names are those the HSS is
+// configured with. A subscription that names none gets the profile that
+// the settings of the HSS name for its kind of subscription, which the
+// cell shows below the field.
+function profileField(s: Subscriber): HTMLElement {
+  const input = el("input", { value: s.service_profile, size: 12 });
+  input.setAttribute("aria-label", `Service profile of ${s.private_identity}`);
+  input.addEventListener("change", () => {
+    const name = input.value.trim();
+    if (name === s.service_profile) return;
+    void changeSubscriber(s.private_identity, { service_profile: name }, input);
+  });
+  if (s.service_profile !== "") return el("div", {}, input);
+  return el("div", {}, input, el("span", { className: "muted", textContent: `\nfrom the settings: ${s.effective_service_profile}` }));
+}
+
+// The list is loaded again either way, so a field and a box that the
+// HSS refused go back to what it holds, and the profile it chose by its
+// settings appears. The reason comes after that load, which clears the
+// note of its own. The control that sent the change takes no other
+// until the list is back, so two changes cannot come back out of order.
+async function changeSubscriber(privateIdentity: string, patch: SubscriberPatch, control: HTMLInputElement): Promise<void> {
+  control.disabled = true;
+  let refused: string | null = null;
+  try {
+    await patchSubscriber(privateIdentity, patch);
+  } catch (error) {
+    refused = `Could not change ${privateIdentity}: ${describe(error)}`;
+  }
+  try {
+    await refreshSubscribers();
+  } finally {
+    control.disabled = false;
+  }
+  if (refused !== null) showNote("subscribers-note", refused);
 }
 
 // The customized alerting tone of a subscriber: what its callers hear
