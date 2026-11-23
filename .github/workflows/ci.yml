@@ -237,6 +237,30 @@ jobs:
         if: always()
         run: docker compose --profile ue --profile volte down --rmi all -v --remove-orphans
 
+  # IPsec ESP on the signalling of IMS AKA, which deploy/esp/esp.yaml
+  # turns on. It is not the default, so this job says whether the
+  # deployment with ESP works on the Linux of a runner.
+  e2e-esp:
+    runs-on: ubuntu-latest
+    needs: [changes, go]
+    if: needs.changes.outputs.code == 'true'
+    steps:
+      - uses: actions/checkout@v7
+      - run: scripts/e2e-esp.sh
+      - name: upload the capture, the kernel's security associations and the logs of the UEs
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: esp-capture
+          path: |
+            captures/*.pcap
+            e2e-out/esp-xfrm.txt
+            e2e-out/*.log
+          if-no-files-found: warn
+      - name: clean up
+        if: always()
+        run: docker compose -f compose.yaml -f deploy/esp/esp.yaml --profile volte down --rmi all -v --remove-orphans
+
   e2e-mmtel:
     runs-on: ubuntu-latest
     needs: [changes, go]
@@ -528,7 +552,7 @@ jobs:
   # skips count as passed.
   all-passed:
     runs-on: ubuntu-latest
-    needs: [changes, docs, go, web-lab, web-oam, e2e, e2e-registration, e2e-call, e2e-lab, e2e-sms, e2e-volte, e2e-mmtel, e2e-mrf, e2e-interconnect, e2e-h248, e2e-observability, e2e-redundancy, e2e-fault, cloud, kustomize]
+    needs: [changes, docs, go, web-lab, web-oam, e2e, e2e-registration, e2e-call, e2e-lab, e2e-sms, e2e-volte, e2e-esp, e2e-mmtel, e2e-mrf, e2e-interconnect, e2e-h248, e2e-observability, e2e-redundancy, e2e-fault, cloud, kustomize]
     if: always()
     steps:
       - name: no job failed or was cancelled

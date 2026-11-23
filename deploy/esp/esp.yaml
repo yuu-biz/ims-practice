@@ -1,0 +1,80 @@
+# IPsec ESP with null encryption protects the SIP between the VoLTE UEs
+# and the P-CSCF, which is what IMS AKA asks for (TS 33.203 6.3). This
+# file goes on top of compose.yaml, from the root of the repository:
+#
+#   docker compose -f compose.yaml -f deploy/esp/esp.yaml --profile volte up -d --build
+#
+# or, so that every later "docker compose" of the same shell takes both
+# files:
+#
+#   export COMPOSE_FILE=compose.yaml:deploy/esp/esp.yaml COMPOSE_PATH_SEPARATOR=:
+#
+# It changes three things. The P-CSCF takes its configuration from
+# deploy/esp/pcscf.yaml, the one of deploy/compose with a protected
+# client port and its own address in place of 0.0.0.0. The two VoLTE UEs
+# take -port-c, their own protected client port. And the P-CSCF and
+# those UEs get NET_ADMIN, without which they cannot put security
+# associations into the kernel. Every other node, address and port is
+# the one of compose.yaml.
+#
+# What changes in the capture: between a registered VoLTE UE and the
+# P-CSCF there is no more plain SIP. Wireshark shows ESP, and shows the
+# SIP inside it once its ESP settings name the integrity algorithm; the
+# guides say how (docs/guide/en/volte.md). The first REGISTER, the 401
+# and everything between other nodes stay as they were.
+#
+# ESP needs the xfrm of the Linux kernel, which a container shares with
+# the machine that runs the engine. Where that machine runs another
+# kernel, as it does on Windows and on macOS, the nodes may not be able
+# to set the associations up; they say so in their log and the
+# registration fails.
+
+services:
+  pcscf:
+    cap_add: [NET_ADMIN]
+    volumes:
+      - ./deploy/esp/pcscf.yaml:/etc/ims/node.yaml:ro
+
+  # The commands repeat those of compose.yaml with -port-c: Compose
+  # replaces a command rather than adding to it.
+  volte10:
+    cap_add: [NET_ADMIN]
+    command:
+      - serve
+      - -control
+      - "0.0.0.0:8090"
+      - -epc
+      - http://172.28.0.80:8080
+      - -impi
+      - 001010000000010@ims.mnc001.mcc001.3gppnetwork.org
+      - -impu
+      - sip:001010000000010@ims.mnc001.mcc001.3gppnetwork.org
+      - -k
+      - 465b5ce8b199b49faa5f0a2ee238a6bc
+      - -opc
+      - cd63cb71954a9f4e48a5994e37a02baf
+      - -ut-password
+      - test-password-10
+      - -port-c
+      - "5063"
+
+  volte12:
+    cap_add: [NET_ADMIN]
+    command:
+      - serve
+      - -control
+      - "0.0.0.0:8090"
+      - -epc
+      - http://172.28.0.80:8080
+      - -impi
+      - 001010000000012@ims.mnc001.mcc001.3gppnetwork.org
+      - -impu
+      - sip:001010000000012@ims.mnc001.mcc001.3gppnetwork.org
+      - -k
+      - fec86ba6eb707ed08905757b1bb44b8f
+      - -opc
+      - 1006020f0a478bf6b699f15c062e42b3
+      - -ut-password
+      - test-password-12
+      - -port-c
+      - "5063"
