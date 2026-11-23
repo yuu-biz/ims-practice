@@ -32,6 +32,7 @@ func HSS(t *testing.T, newPair func(t *testing.T) (hss.Store, hss.Store)) {
 		{"CompareAndSwapRepositoryData", hssCompareAndSwapRepositoryData},
 		{"ConcurrentSQN", hssConcurrentSQN},
 		{"ConcurrentAddsOfOneIdentity", hssConcurrentAdds},
+		{"ConcurrentReplacesOfOneIdentity", hssConcurrentReplaces},
 		{"CountsFollowWhatIsStored", hssCountsFollowWhatIsStored},
 	})
 }
@@ -600,6 +601,56 @@ func hssConcurrentAdds(t *testing.T, a, b hss.Store) {
 		}
 		if _, ok := subscriberOf(t, a, shared); !ok {
 			t.Errorf("SubscriberOf(%s) finds nothing", shared)
+		}
+	}
+}
+
+// hssConcurrentReplaces has the provisioning API of two instances give
+// the same new public identity to two subscriptions at once: one of them
+// gets it, the other is told that it is taken, and the one that lost
+// does not keep the identity among its own. A subscription that named
+// an identity the index gives to another would answer for an identity
+// that is not its, which is what ErrIdentityTaken is there to stop.
+func hssConcurrentReplaces(t *testing.T, a, b hss.Store) {
+	for round := range 5 {
+		shared := fmt.Sprintf("tel:+1202555012%d", round)
+		ids := [2]string{fmt.Sprintf("00101000001%d0@%s", round, realm), fmt.Sprintf("00101000001%d1@%s", round, realm)}
+		for _, id := range ids {
+			mustAdd(t, a, hss.Subscription{PrivateIdentity: id, PublicIdentities: []string{"sip:" + id}, Password: "p"})
+		}
+		var took atomic.Int32
+		parallel(2, func(i int) {
+			s := a
+			if i == 1 {
+				s = b
+			}
+			sub, ok := subscriber(t, s, ids[i])
+			if !ok {
+				t.Errorf("the subscriber %s is gone", ids[i])
+				return
+			}
+			sub.PublicIdentities = []string{"sip:" + ids[i], shared}
+			if replace(t, s, sub) == nil {
+				took.Add(1)
+			}
+		})
+		if got := took.Load(); got != 1 {
+			t.Fatalf("%d of the two subscriptions took %s, want 1", got, shared)
+		}
+		owner, ok := subscriberOf(t, a, shared)
+		if !ok {
+			t.Fatalf("SubscriberOf(%s) finds nothing", shared)
+		}
+		for _, id := range ids {
+			sub, ok := subscriber(t, a, id)
+			if !ok {
+				t.Fatalf("the subscriber %s is gone", id)
+			}
+			names := slices.Contains(sub.PublicIdentities, shared)
+			if names != (id == owner.PrivateIdentity) {
+				t.Fatalf("%s has the public identities %v, and the index gives %s to %s",
+					id, sub.PublicIdentities, shared, owner.PrivateIdentity)
+			}
 		}
 	}
 }
