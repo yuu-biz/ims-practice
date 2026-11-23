@@ -675,7 +675,7 @@ UE は e2e のスクリプトと同じく `docker compose run --rm ue register` 
 | 役割 | 新しい要求への応答 | 上流の動き | 根拠 |
 | --- | --- | --- | --- |
 | P-CSCF | 新しい REGISTER と、ダイアログの外の要求に 503 と Retry-After | UE は別の P-CSCF で登録する | RFC 3261 21.5.4、RFC 3263 4.3。UE の 503 と 305 の扱いは IR.92 2.2.1 が求めている（[profiles.md](profiles.md)） |
-| I-CSCF | 503 | P-CSCF は、DNS の次の I-CSCF へ送る。今の P-CSCF の `forward`（`internal/pcscf/pcscf.go`）は、REGISTER を時間切れ、3xx、480 で次へ回すので、503 を足す | RFC 3263 4.3。TS 24.229 の P-CSCF の転送の手順も根拠になるが、条項を確かめていない |
+| I-CSCF | 503 | P-CSCF は、DNS の次の I-CSCF へ送る。今の P-CSCF の `forward`（`internal/pcscf/pcscf.go`）は、REGISTER を時間切れ、3xx、480 で次へ回すので、503 を足す | RFC 3263 4.3。TS 24.229 5.2.2.1 の 7 は、応答が無いときと 3xx、480 のときに別の I-CSCF へ移ると書き、503 は挙げていない（V20.1.0 で確かめた） |
 | S-CSCF | REGISTER に 480 か 3xx | I-CSCF が別の S-CSCF を選ぶ | TS 24.229 5.3.1.3 |
 | S-CSCF | ダイアログの外の要求に 503 | 組の名前を使っていれば、上流が DNS の次の台へ送る | RFC 3263 4.3 |
 | メディア中継ノード | `Add` に 503 | P-CSCF が次の中継ノードを選ぶ | このプロジェクトの API（[メディア中継ノードの制御の設計](../design/media-control.md)） |
