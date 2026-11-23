@@ -198,7 +198,7 @@ ims-practice 勉強会 第 2 回（ノード、ノードの間の参照点、地
 | ISC と Sh、IP-SM-GW | 第 6 回。SMS |
 | Ut と MMTel AS | 第 7 回。補足サービス |
 | Rx、EPC スタブ、IMS-AKA | 第 9 回。VoLTE |
-| Mr'、Mp、MRF | 手順書 [MRF による音声ガイダンス、呼び出し音、会議](../../../docs/guide/ja/mrf.md) |
+| Mr'、Mp、MRF | 第 8 回。MRF |
 | Mx、Ici、Izi、境界 | 手順書 [IMS 網どうしを相互接続する](../../../docs/guide/ja/interconnect.md) |
 | HEP とラボ | 第 3 回。キャプチャとラボ |
 

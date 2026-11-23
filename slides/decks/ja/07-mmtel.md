@@ -524,8 +524,8 @@ docker compose --profile phones up -d --build
 
 ## 次の回
 
-- 次は VoLTE の回です。アクセス網、IMS-AKA、Rx、プリコンディションを扱います。VoLTE の通話も、この回の MMTel AS を通ります。
-- 音声ガイダンス、着信側が選ぶ呼び出し音、CW、会議は [MRF の手順書](../../../docs/guide/ja/mrf.md) で追います。MRFC と MRFP、それに `scripts/e2e-mrf.sh` を使います。
+- 次は MRF の回です。通話を断る前の音声ガイダンス、着信側が選ぶ呼び出し音、2 つ目の着信、3 人の会議を扱います。どれを頼むのもこの回の AS で、会議ではフォーカスにもなります。
+- その次が VoLTE の回です。VoLTE の通話も、この回の MMTel AS を通ります。
 
 ```sh
 docker compose --profile ue --profile phones down --rmi all -v --remove-orphans
