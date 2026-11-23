@@ -68,11 +68,11 @@ IR.92 のうち、このプロジェクトに関わる必須の要件です。�
 | SigComp を使わない | 2.2.6 | 使っていない | 対応済み |
 | SMS over IP | 6 | 対応している | 対応済み |
 | IPv4 と IPv6 の両方 | 5.1 | IPv4 だけ | 未対応 |
-| MMTel の補足サービスと Ut/XCAP | 2.3 | 対応している | 対応済み。網の任意の MWI と ECT は作らない（[docs/design/mmtel-mrf.md](../design/mmtel-mrf.md)） |
+| MMTel の付加サービスと Ut/XCAP | 2.3 | 対応している | 対応済み。網の任意の MWI と ECT は作らない（[docs/design/mmtel-mrf.md](../design/mmtel-mrf.md)） |
 
 NG.114 の規定の大半は IR.92 と同じ内容です。違いは、EVS が必須になることと、冗長なフレームの受信が必須になることです（3.2.3）。VoNR の構成は 5GC の側で扱います。
 
-IR.92 2.3 の補足サービスの一覧は、補足サービスと MRF の設計に使いました。調査は [mmtel-mrf.md](mmtel-mrf.md) にあります。
+IR.92 2.3 の付加サービスの一覧は、付加サービスと MRF の設計に使いました。調査は [mmtel-mrf.md](mmtel-mrf.md) にあります。
 
 ## 国内標準（TTC）
 

@@ -413,7 +413,7 @@ IMS の中心となる登録、通話、ショートメッセージの 6 回は�
 | 5 | 通話 | [docs/guide/ja/call.md](../../../docs/guide/ja/call.md) |
 | 6 | SMS | [docs/guide/ja/sms.md](../../../docs/guide/ja/sms.md) |
 
-- 次は MMTel AS の補足サービス（[mmtel.md](../../../docs/guide/ja/mmtel.md)）です。その次が、補足サービスの上に立つ VoLTE の通話（[volte.md](../../../docs/guide/ja/volte.md)）です。
+- 次は MMTel AS の付加サービス（[mmtel.md](../../../docs/guide/ja/mmtel.md)）です。その次が、付加サービスの上に立つ VoLTE の通話（[volte.md](../../../docs/guide/ja/volte.md)）です。
 
 ```sh
 docker compose --profile ue --profile phones down --rmi all -v --remove-orphans

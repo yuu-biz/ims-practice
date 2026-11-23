@@ -28,7 +28,7 @@
 | P-CSCF | 172.28.0.40 | 両方の UE を担当する。1 回の通話は P-CSCF を 2 回通る。1 回目は発信側、2 回目は着信側の通過である。 |
 | S-CSCF | 172.28.0.30 | これも両方の UE を担当するので、発信側（originating）と着信側（terminating）の S-CSCF を兼ねる。 |
 | I-CSCF | 172.28.0.20 | 着信者のホーム網の入口。着信者がどこにいるかを HSS に問い合わせる。 |
-| MMTel AS | 172.28.0.75 | 利用者ごとに 1 回ずつ、合わせて 2 回加わる（手順 3 と 6）。S-CSCF は iFC に従って、すべての INVITE をここへ送る。AS は利用者のサービスの設定を Sh で HSS から読む。既定の設定では何も変えない。ほかの設定での動きは [MMTel AS の補足サービス](mmtel.md) で見る。 |
+| MMTel AS | 172.28.0.75 | 利用者ごとに 1 回ずつ、合わせて 2 回加わる（手順 3 と 6）。S-CSCF は iFC に従って、すべての INVITE をここへ送る。AS は利用者のサービスの設定を Sh で HSS から読む。既定の設定では何も変えない。ほかの設定での動きは [MMTel AS の付加サービス](mmtel.md) で見る。 |
 | HSS | 172.28.0.10 | I-CSCF の所在の問い合わせに Cx で、MMTel AS のサービスの設定の問い合わせに Sh で答える。 |
 | DNS | 172.28.0.2 | 電話番号を SIP URI に変える ENUM のレコードを持つ。 |
 | メディア中継ノード（IMS-AGW） | 172.28.0.50 | RTP を中継する。P-CSCF が制御する。 |
@@ -164,7 +164,7 @@ I-CSCF はその S-CSCF を Route の一番上に入れて INVITE を転送し�
 
 UE 2 が未登録なら、HSS は DIAMETER_ERROR_IDENTITY_NOT_REGISTERED で答え、I-CSCF は 480 を返します。存在しない利用者なら DIAMETER_ERROR_USER_UNKNOWN になり、I-CSCF は 404 を返します。
 
-未登録でも、未登録の状態のサービスを持つ利用者には、HSS は代わりに能力（Server-Capabilities）を付けた DIAMETER_UNREGISTERED_SERVICE（2003）で答えます（TS 29.228 6.1.4.1）。未登録の状態のサービスとは、MMTel AS の着信転送（[MMTel AS の補足サービス](mmtel.md)）のように、session case が TERMINATING_UNREGISTERED の iFC です。I-CSCF は初回の登録と同じように S-CSCF を選び、その S-CSCF が UNREGISTERED_USER の SAR で利用者のプロファイルを取ってきて、そのサービスを動かします（TS 24.229 5.4.3.3）。どのサービスも呼を引き受けなければ、S-CSCF が 480 を返します。`deploy/compose/hss.yaml` の試験用の加入者には、どれもそのようなサービスがあります。TERMINATING_UNREGISTERED の場合に MMTel AS を呼ぶ iFC です。着信転送を設定していなければ、AS は INVITE をそのまま送り返し、S-CSCF が 480 を返します。
+未登録でも、未登録の状態のサービスを持つ利用者には、HSS は代わりに能力（Server-Capabilities）を付けた DIAMETER_UNREGISTERED_SERVICE（2003）で答えます（TS 29.228 6.1.4.1）。未登録の状態のサービスとは、MMTel AS の着信転送（[MMTel AS の付加サービス](mmtel.md)）のように、session case が TERMINATING_UNREGISTERED の iFC です。I-CSCF は初回の登録と同じように S-CSCF を選び、その S-CSCF が UNREGISTERED_USER の SAR で利用者のプロファイルを取ってきて、そのサービスを動かします（TS 24.229 5.4.3.3）。どのサービスも呼を引き受けなければ、S-CSCF が 480 を返します。`deploy/compose/hss.yaml` の試験用の加入者には、どれもそのようなサービスがあります。TERMINATING_UNREGISTERED の場合に MMTel AS を呼ぶ iFC です。着信転送を設定していなければ、AS は INVITE をそのまま送り返し、S-CSCF が 480 を返します。
 
 ### 6. 着信側の S-CSCF が Path に沿って INVITE を送る
 

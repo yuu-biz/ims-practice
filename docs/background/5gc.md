@@ -241,7 +241,7 @@ Rx と違う点が 3 つあります。
 | 最初に作る範囲 | 登録と通話に要る操作にしぼる。Authorize、generate-sip-auth-data、scscf-registration（登録と登録解除）、profile-data の取得、server-name の取得、DeregistrationNotification。Sh に当たる操作（repository-data、sms-registration-info）は 2 つ目の単位にする | 全部を一度に作る |
 | プロファイルの形 | S-CSCF の中の iFC の型（`internal/ifc`）は 1 つのままにし、XML と JSON の読み手を 2 つ持つ | XML を JSON の中に文字列として入れる。標準と違う |
 | 網からの通知 | S-CSCF に SBI の待ち受けを足し、`deregCallbackUri` に自分の URI を書く。HSS は、その URI を登録の情報と一緒に `Store` に置く（今の `Subscriber.SCSCF` の Diameter の識別子に当たる） | なし |
-| 変更の通知（PPR に当たるもの） | ImsSDM の Subscribe と Notification は、補足サービスの設定の変更で要るかを見てから決める | なし |
+| 変更の通知（PPR に当たるもの） | ImsSDM の Subscribe と Notification は、付加サービスの設定の変更で要るかを見てから決める | なし |
 
 Nhss を呼ぶ側まで作るかは、製品の方向に関わる未決の論点です（10 章）。
 
@@ -311,7 +311,7 @@ Go の標準ライブラリだけで、平文の HTTP/2（h2c）のサーバー�
 
 4.8 は、[profiles.md](profiles.md) に無かった必須の要件です。このプロジェクトは無線区間を対象外にしているので（[要件定義](../requirements.md) の「対象外」）、「IR.92 と NG.114 の必須の要件を満たす」という要件から 4.8 を外すかが、未決の論点です（10 章）。
 
-IR.92 v24.0 との 1 行ずつの突き合わせは、音声（3 章）と無線とコア（4 章）だけ行いました。2 章の SIP の要件（登録、呼の確立、補足サービス）は、節の見出しが IR.92 とほぼ同じ並びであることだけを確かめています。
+IR.92 v24.0 との 1 行ずつの突き合わせは、音声（3 章）と無線とコア（4 章）だけ行いました。2 章の SIP の要件（登録、呼の確立、付加サービス）は、節の見出しが IR.92 とほぼ同じ並びであることだけを確かめています。
 
 ## 7. EVS
 

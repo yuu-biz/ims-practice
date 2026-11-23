@@ -8,7 +8,7 @@
 
 ## 始める前に
 
-- [UE が IMS に登録する流れを追う](registration.md)、[音声通話の流れを追う](call.md)、[MMTel AS の補足サービス](mmtel.md) を読んでおくこと。この手順書はそこで説明したことをそのまま使います。I-CSCF と S-CSCF を通る REGISTER、通話の INVITE、PRACK、ACK、メディアの中継、MMTel AS が 1 つの通話から作る 3 つのダイアログです。
+- [UE が IMS に登録する流れを追う](registration.md)、[音声通話の流れを追う](call.md)、[MMTel AS の付加サービス](mmtel.md) を読んでおくこと。この手順書はそこで説明したことをそのまま使います。I-CSCF と S-CSCF を通る REGISTER、通話の INVITE、PRACK、ACK、メディアの中継、MMTel AS が 1 つの通話から作る 3 つのダイアログです。
 - 略語の説明は [用語集](../../glossary.md) にあります。
 
 ## VoLTE の端末とソフトフォンの違い
@@ -35,7 +35,7 @@
 | P-CSCF | 172.28.0.40 | SIP の 5060 番と、IMS-AKA の UE のための保護サーバーポート 5064 番。PCRF に対する Rx のクライアント。 |
 | S-CSCF | 172.28.0.30 | IMS-AKA で認証を求める。 |
 | HSS | 172.28.0.10 | 認証ベクトルを作る（MAR と MAA）。 |
-| MMTel AS | 172.28.0.75 | [MMTel AS の補足サービス](mmtel.md) と同じく、すべての通話を受け持つ。 |
+| MMTel AS | 172.28.0.75 | [MMTel AS の付加サービス](mmtel.md) と同じく、すべての通話を受け持つ。 |
 | メディアの中継ノード | 172.28.0.50 | RTP、RTCP、telephone-event を復号せずに中継する。 |
 | ラボ | 172.28.0.60 | volte10 と volte12 を操作し、ラダー図に Rx を出し、網の手順を始める EPC スタブのパスをホストに取り次ぐ。 |
 

@@ -119,7 +119,7 @@ home_domain: ims.mnc001.mcc001.3gppnetwork.org
 | --- | --- | --- |
 | `ipsmgw` | IP-SM-GW。SMS over IP のアプリケーションサーバー。 | TS 24.341、TS 23.204 |
 | `sc` | SC のスタブ。IP-SM-GW のプロセスの中にある。 | TS 23.204 |
-| `mmtel` | MMTel AS。補足サービス。 | TS 24.173、TS 24.604 から 24.611、TS 24.623 |
+| `mmtel` | MMTel AS。付加サービス。 | TS 24.173、TS 24.604 から 24.611、TS 24.623 |
 | `agw` | メディア中継ノード。IMS-AGW の役割。 | RFC 3550。制御の API はこのプロジェクト独自 |
 | `ue` | UE シミュレータ。 | TS 24.229、TS 24.341 |
 | `lab` | HEP の写しから登録と通話を組み立てる。 | このプロジェクト独自 |
