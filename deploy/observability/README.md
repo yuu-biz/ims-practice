@@ -2,7 +2,7 @@
 
 [日本語](README.ja.md)
 
-This directory adds [Prometheus](https://github.com/prometheus/prometheus) and [Grafana](https://github.com/grafana/grafana) to the Docker Compose project, so that the counts of the IMS nodes can be seen over time with widely used tools. Of the IMS nodes, only the S-CSCF serves its metrics (see [Limits](#limits)), so the dashboard shows the others as down. The metric names follow the measurements of TS 32.409, and `internal/metrics` writes them.
+This directory adds [Prometheus](https://github.com/prometheus/prometheus) and [Grafana](https://github.com/grafana/grafana) to the Docker Compose project, so that the counts of the IMS nodes can be seen over time with widely used tools. Of the IMS nodes, only the P-CSCF and the S-CSCF serve their metrics (see [Limits](#limits)), so the dashboard shows the others as down. The metric names follow the measurements of TS 32.409, and `internal/metrics` writes them.
 
 | Path | What it is |
 | --- | --- |
@@ -32,7 +32,7 @@ Register a UE to see a count:
 docker compose run --rm ue register -deregister-after 5s
 ```
 
-Prometheus scrapes every 15 seconds. Within that time the panel **REGISTER attempts and successes** shows the registration and the deregistration that the S-CSCF counted, and **Initial registration success ratio** the share of the initial registrations that succeeded.
+Prometheus scrapes every 15 seconds. Within that time the panel **REGISTER attempts and successes** shows the registration and the deregistration that the P-CSCF and the S-CSCF counted, each under its own `role`, **Initial registration success ratio** the share of the initial registrations that succeeded, and **Initial registration set-up time** how long the initial registration took at the P-CSCF. A call, as in [Follow a voice call through the IMS](../../docs/guide/en/call.md), shows in the panels **Session attempts and answers** and **Answered sessions**, which the P-CSCF counts on both legs of the call.
 
 To stop and remove everything, including the pulled images and Prometheus's data:
 
@@ -54,7 +54,7 @@ A service counts as a node when it runs the image built from the `Dockerfile` at
 
 ## Limits
 
-The S-CSCF and the IBCF count with `internal/metrics`. The S-CSCF of the Compose project serves its counts at `http://scscf:8085/metrics`, on the listener that the `maintenance` section of `deploy/compose/scscf.yaml` names. The other nodes serve no metrics, and the node of the IBCF, in `deploy/interconnect`, has no such listener, so its counts stay inside the process. `prometheus/prometheus.yml` is written for nodes that serve their metrics at `http://<service name>:8085/metrics`, on the listener of their maintenance API. No specification gives a port for this; 8085 is this project's choice, kept in `MetricsPort` in `prometheus.go`. To use another port, change `MetricsPort` and run the command above.
+The P-CSCF, the S-CSCF and the IBCF count with `internal/metrics`. The P-CSCF and the S-CSCF of the Compose project serve their counts at `http://pcscf:8085/metrics` and `http://scscf:8085/metrics`, on the listener that the `maintenance` section of `deploy/compose/pcscf.yaml` and of `deploy/compose/scscf.yaml` names. The panel **Dropped sessions** stays empty: the P-CSCF lets no session expire, so it has none to count. The other nodes serve no metrics, and the node of the IBCF, in `deploy/interconnect`, has no such listener, so its counts stay inside the process. `prometheus/prometheus.yml` is written for nodes that serve their metrics at `http://<service name>:8085/metrics`, on the listener of their maintenance API. No specification gives a port for this; 8085 is this project's choice, kept in `MetricsPort` in `prometheus.go`. To use another port, change `MetricsPort` and run the command above.
 
 The metrics are written by `internal/metrics` in the Prometheus text format, version 0.0.4. Its labels take values from a closed set only, so no series is ever made per subscriber, and the number of series stays the same however many subscribers the network has.
 

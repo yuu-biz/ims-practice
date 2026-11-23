@@ -511,6 +511,64 @@ Wireshark で `sip.Status-Code == 503` と入力すると S-CSCF の 503 が、`
 
 管理上の状態はノードのプロセスの中にあります。起動し直したノードは `UNLOCKED` です。`scripts/e2e-observability.sh` はこの手順を実行し、キャプチャを確かめます。
 
+## P-CSCF を運用から外す
+
+UE はすべての要求を、自分が登録に使った P-CSCF へ送ります。そのため、ある P-CSCF を使う UE がひとりでにほかの P-CSCF へ移ることはありません。運用者が運用から外した P-CSCF は、自分を通る登録を始める REGISTER と更新する REGISTER を断り、UE は代わりにほかの P-CSCF を通って最初の登録を行います。それまでのあいだ、P-CSCF は自分を通って登録した UE を扱い続けます。その UE の呼、ダイアログの中の要求、登録を終わらせる登録の解除です。
+
+P-CSCF のノードも同じ保守用の API をポート 8085 で出しています。`deploy/compose/pcscf.yaml` の `maintenance` の節の待ち受けです。P-CSCF の `users` はこの P-CSCF を使う UE の IP の対応付けの数です。shut down を送ると、P-CSCF は対応付けが残っているあいだは `SHUTTINGDOWN` になり、最後の 1 つを忘れると `LOCKED` になります。登録を解除した UE も、その UE へ送っている途中の要求が終わるまで、32 秒のあいだ利用者に数えます。503 を受けてほかの P-CSCF で登録し直した UE は、この P-CSCF に登録の解除を送らないので、この P-CSCF を通した登録の期限が切れるまで利用者に数えます。`operational_state` はいつも `ENABLED` です。P-CSCF は REGISTER ごとに DNS で I-CSCF を探すので、要求を受けるのに決まった相手が要らないからです。
+
+1. P-CSCF を shut down します。
+
+   ```sh
+   docker compose exec pcscf sh -c '
+   body="{\"administrative_state\":\"SHUTTINGDOWN\",\"operator\":\"learner\"}"
+   printf "PUT /maintenance/v1/functions/pcscf/administrative-state HTTP/1.0\r\nContent-Type: application/json\r\nContent-Length: ${#body}\r\n\r\n%s" "$body" |
+     nc -w 5 127.0.0.1 8085'
+   ```
+
+   応答の最後に P-CSCF の状態が出ます。登録している UE が無ければ、すぐに `LOCKED` になります。
+
+   ```json
+   {"role":"pcscf","administrative_state":"LOCKED","operational_state":"ENABLED","users":0}
+   ```
+
+   登録している UE があれば `SHUTTINGDOWN` になり、`users` にその UE が数えられます。
+
+2. UE を登録します。
+
+   ```sh
+   docker compose run --rm ue register -deregister-after 5s
+   ```
+
+   UE は `REGISTER answered 503 Service Unavailable, Retry-After 300` で終わります。
+
+```text
+ UE           P-CSCF         I-CSCF          S-CSCF          HSS
+ |  REGISTER    |              |               |              |
+ |------------->|              |               |              |
+ |  503 Retry-After: 300       |               |              |
+ |<-------------|              |               |              |
+```
+
+- P-CSCF は自分で **503 Service Unavailable** に **Retry-After: 300** を付けて答え、何も転送しません。ホームの網のどのノードにも REGISTER は届きません。
+- UE は REGISTER への 503 を、自分の P-CSCF のことと読みます。Retry-After がタイマー F より長ければ、UE はその時間のあいだ P-CSCF を使えないものとして扱い、知っているほかの P-CSCF を通って、または P-CSCF を探し直してから、最初の登録を行ってかまいません。それより短ければ、同じ P-CSCF を使い続けます（TS 24.229 5.1.1.2.1）。タイマー F は 64*T1 で、TS 24.229 の表 7.7.1 が UE に与える 2 秒の T1 なら 128 秒です。Retry-After の値を決めた仕様はありません。300 秒はこのプロジェクトが選んだ値です。
+- UE シミュレータが知っている P-CSCF のアドレスは 1 つなので、`ue serve` は 300 秒待ってから同じ P-CSCF を通って登録し直します（[このプロジェクトで簡略化していること](#このプロジェクトで簡略化していること)）。`ue register` は、ほかの登録の失敗と同じようにすぐ終わります。
+- 登録の更新も REGISTER なので、同じ 503 が返ります。登録済みの UE は遅くとも次の更新のときにほかの P-CSCF へ移ります。
+- P-CSCF は断った REGISTER を 503 で失敗した登録の手順に数えます。P-CSCF のコンテナの中の `http://127.0.0.1:8085/metrics` では、`ims_registration_failures_total{role="pcscf",type="initial",status="503"}` に出ます。
+
+Wireshark で `sip.Status-Code == 503 && ip.src == 172.28.0.40` と入力すると、P-CSCF の 503 が見えます。
+
+3. 同じ要求に `UNLOCKED` を入れて、P-CSCF を unlock します。
+
+   ```sh
+   docker compose exec pcscf sh -c '
+   body="{\"administrative_state\":\"UNLOCKED\",\"operator\":\"learner\"}"
+   printf "PUT /maintenance/v1/functions/pcscf/administrative-state HTTP/1.0\r\nContent-Type: application/json\r\nContent-Length: ${#body}\r\n\r\n%s" "$body" |
+     nc -w 5 127.0.0.1 8085'
+   ```
+
+   次の `ue register` は前と同じように登録します。
+
 ## IP の対応付けが無い要求
 
 P-CSCF が扱うのは、自分を通って登録した UE だけです。IP の対応付けに当たらない、REGISTER 以外の要求は捨てます。P-CSCF が登録の情報を失った UE からの要求も、これに当たります。P-CSCF は何も返さず、100 Trying も返しません。S-CSCF へも転送しません（TS 24.229 5.2.6.3.2A）。応答を返すと、知らない送り手に、このアドレスで P-CSCF が待ち受けていると教えてしまうからです。UE から見えるのは、応答が来ないことだけです。`ue serve` の要求でタイマー B かタイマー F が切れると、UE は自分の Contact がどの識別子にも結び付いていないとみなし、最初から登録し直します（TS 24.229 5.1.2A.1.6）。`ue call` と `ue sms` は時間切れを報告して終了します。

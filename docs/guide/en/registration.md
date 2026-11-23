@@ -475,6 +475,64 @@ While it is not `UNLOCKED`, the S-CSCF still serves the requests within a dialog
 
 The administrative state belongs to the process of the node: a node that starts again is `UNLOCKED`. `scripts/e2e-observability.sh` runs these steps and checks the capture.
 
+## Take the P-CSCF out of service
+
+A UE sends every request to the P-CSCF it registered through, so the UEs of a P-CSCF do not move to another one by themselves. A P-CSCF that the operator takes out of service refuses each REGISTER that would start or refresh a registration through it, and the UE makes its initial registration through another P-CSCF instead. Until then the P-CSCF goes on serving the UEs registered through it: their calls, the requests within a dialog, and the deregistration that ends a registration.
+
+The node of the P-CSCF serves the same maintenance API on port 8085, the listener of the `maintenance` section of `deploy/compose/pcscf.yaml`. Its `users` count the IP associations of the UEs that use this P-CSCF. A shut down makes the P-CSCF `SHUTTINGDOWN` while it still has one, and `LOCKED` once it has forgotten the last. A UE that has deregistered stays a user for another 32 seconds, while the requests to it that were under way end. A UE that has registered through another P-CSCF after the 503 stays a user until its registration through this one expires, as it sends no deregistration through this P-CSCF. `operational_state` is always `ENABLED`: the P-CSCF needs no peer to take requests, as it finds an I-CSCF through DNS for each REGISTER.
+
+1. Shut the P-CSCF down:
+
+   ```sh
+   docker compose exec pcscf sh -c '
+   body="{\"administrative_state\":\"SHUTTINGDOWN\",\"operator\":\"learner\"}"
+   printf "PUT /maintenance/v1/functions/pcscf/administrative-state HTTP/1.0\r\nContent-Type: application/json\r\nContent-Length: ${#body}\r\n\r\n%s" "$body" |
+     nc -w 5 127.0.0.1 8085'
+   ```
+
+   The answer ends with the state of the P-CSCF. With no UE registered, it is `LOCKED` at once:
+
+   ```json
+   {"role":"pcscf","administrative_state":"LOCKED","operational_state":"ENABLED","users":0}
+   ```
+
+   With a UE registered, it is `SHUTTINGDOWN`, and `users` counts that UE.
+
+2. Register the UE:
+
+   ```sh
+   docker compose run --rm ue register -deregister-after 5s
+   ```
+
+   The UE ends with `REGISTER answered 503 Service Unavailable, Retry-After 300`.
+
+```text
+ UE           P-CSCF         I-CSCF          S-CSCF          HSS
+ |  REGISTER    |              |               |              |
+ |------------->|              |               |              |
+ |  503 Retry-After: 300       |               |              |
+ |<-------------|              |               |              |
+```
+
+- The P-CSCF answers **503 Service Unavailable** with **Retry-After: 300** itself, and forwards nothing: no node of the home network sees the REGISTER.
+- The UE takes a 503 to a REGISTER as said of its P-CSCF. When its Retry-After is longer than Timer F, the UE marks the P-CSCF as unavailable for that time, and may make its initial registration through another P-CSCF that it knows, or find the P-CSCFs again; with a shorter one it goes on using the same P-CSCF (TS 24.229 5.1.1.2.1). Timer F is 64*T1: 128 seconds with the T1 of 2 seconds that TS 24.229 Table 7.7.1 gives the UE. No specification gives the value of Retry-After; 300 seconds is this project's choice.
+- The UE simulator knows one P-CSCF address, so `ue serve` waits the 300 seconds and registers through the same P-CSCF again (see [What this project simplifies](#what-this-project-simplifies)). `ue register` ends at once, as it does after any registration that fails.
+- A refresh of a registration is a REGISTER too, and gets the same 503: a registered UE moves to another P-CSCF at its next refresh at the latest.
+- The P-CSCF counts the REGISTER it refused as a registration procedure that failed with 503. The metrics at `http://127.0.0.1:8085/metrics` in the container of the P-CSCF show it as `ims_registration_failures_total{role="pcscf",type="initial",status="503"}`.
+
+In Wireshark, `sip.Status-Code == 503 && ip.src == 172.28.0.40` shows the 503 of the P-CSCF.
+
+3. Unlock the P-CSCF with the same request and `UNLOCKED`:
+
+   ```sh
+   docker compose exec pcscf sh -c '
+   body="{\"administrative_state\":\"UNLOCKED\",\"operator\":\"learner\"}"
+   printf "PUT /maintenance/v1/functions/pcscf/administrative-state HTTP/1.0\r\nContent-Type: application/json\r\nContent-Length: ${#body}\r\n\r\n%s" "$body" |
+     nc -w 5 127.0.0.1 8085'
+   ```
+
+   The next `ue register` registers as before.
+
 ## A request without an IP association
 
 The P-CSCF serves only the UEs that have registered through it. It discards a request other than REGISTER that does not map to an IP association, such as a request from a UE whose registration the P-CSCF has lost: it sends nothing back, not even a 100 Trying, and forwards nothing to the S-CSCF (TS 24.229 5.2.6.3.2A). A response would tell an unknown sender that a P-CSCF listens at this address. The UE only sees that no response comes. When Timer B or Timer F fires for a request of `ue serve`, the UE takes its contact as bound to no identity and registers again from the start (TS 24.229 5.1.2A.1.6). `ue call` and `ue sms` report the timeout and exit.
