@@ -201,10 +201,10 @@ func response(s Subscriber) subscriptionResponse {
 //	                               {"tone": "cat1", "active": true}
 //
 // Removing a subscription whose user is registered deregisters the user
-// at its S-CSCF, which peers reaches. A PUT or a PATCH that gives such a
-// user another service profile pushes the new profile there instead
-// (pushProfile). A request whose subscription the HSS cannot read or
-// write gets 500 (Internal Server Error).
+// at its S-CSCF, which peers reaches. A PUT or a PATCH that changes the
+// user profile of such a user pushes the new profile there instead
+// (profileChanged, pushProfile). A request whose subscription the HSS
+// cannot read or write gets 500 (Internal Server Error).
 func (h *HSS) Provisioning(peers Peers) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /subscriptions", h.listSubscriptions)
@@ -435,8 +435,9 @@ const (
 // dry_run it changes nothing and answers the same, except that a
 // creation it did not make answers 200 rather than 201.
 //
-// A replacement that gives a registered user another service profile
-// pushes the new profile to the S-CSCF before it answers (pushProfile).
+// A replacement that changes the user profile of a registered user
+// pushes the new profile to the S-CSCF before it answers
+// (profileChanged, pushProfile).
 func (h *HSS) putSubscription(w http.ResponseWriter, r *http.Request, peers Peers) {
 	impi := r.PathValue("impi")
 	dry, err := dryRun(r)
@@ -859,18 +860,29 @@ func served(u Subscriber) bool { return u.State != NotRegistered && u.SCSCF.Orig
 
 // profileChanged reports whether a provisioning request that turned
 // stored into next has to push the profile: an S-CSCF holds the user
-// profile of this user, and the service profile the HSS would now give
-// it is another one. The criteria of a profile are in the configuration,
-// so a request can only change which profile the subscription gets.
+// profile of this user, and the profile the HSS would now give it is
+// another one. A request changes the profile by giving the subscription
+// another service profile, by barring an identity or lifting a barring,
+// by adding a public identity to the implicit registration set or taking
+// one away (TS 29.228 6.5.2.1), or by a new MSISDN in the service
+// information of a criterion.
 //
-// SIMPLIFIED: TS 29.228 6.5.2.1. A PUT that adds a public identity to
-// the implicit registration set of a user who is registered or
-// unregistered, or takes one away, is not pushed; a change of the
-// default public identity of such a set, for which 6.5.2.1 asks for an
-// RTR, is not sent either. The S-CSCF gets the identities of the set at
-// the next registration.
+// SIMPLIFIED: TS 29.228 6.5.2.1. A change of the default public identity
+// of a set whose user is registered or unregistered, for which 6.5.2.1
+// asks for an RTR rather than a PPR, sends neither: the S-CSCF gets the
+// new default identity, and the rest of the changed profile, at the next
+// registration.
 func (h *HSS) profileChanged(stored, next Subscriber) bool {
-	return served(stored) && h.serviceProfile(stored.Subscription) != h.serviceProfile(next.Subscription)
+	if !served(stored) {
+		return false
+	}
+	before, after := h.userProfile(stored), h.userProfile(next)
+	if before.DefaultIdentity() != after.DefaultIdentity() {
+		h.log.Warn("default public identity changed: the profile reaches the S-CSCF at the next registration",
+			"private_identity", stored.PrivateIdentity)
+		return false
+	}
+	return !bytes.Equal(before.Marshal(), after.Marshal())
 }
 
 // pushChangedProfile sends the PPR of a provisioning request that

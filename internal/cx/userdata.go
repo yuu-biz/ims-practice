@@ -71,6 +71,18 @@ type publicIdentityExtension struct {
 	WildcardedPSI string `xml:"WildcardedPSI,omitempty"`
 }
 
+// DefaultIdentity is the default public identity of the profile: the
+// first of PublicIdentities that is not barred (TS 29.228 6.5.1.1), or
+// "" when every one of them is barred.
+func (p UserProfile) DefaultIdentity() string {
+	for _, id := range p.PublicIdentities {
+		if !slices.Contains(p.BarredIdentities, id) {
+			return id
+		}
+	}
+	return ""
+}
+
 // Marshal writes the profile as the XML document that User-Data holds.
 func (p UserProfile) Marshal() []byte {
 	s := imsSubscription{PrivateID: p.PrivateIdentity}

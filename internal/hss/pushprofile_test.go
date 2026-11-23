@@ -2,6 +2,7 @@ package hss
 
 import (
 	"net/http"
+	"slices"
 	"sync"
 	"testing"
 
@@ -142,6 +143,10 @@ func TestProvisioningThatPushesNothing(t *testing.T) {
 		// 6.6.1: nothing is pushed for a user that no S-CSCF serves.
 		{"a user who is not registered", "trial", false, "PATCH", "/subscriptions/" + impi, `{"test_user": true}`},
 		{"a PUT that leaves the profile", "default", true, "PUT", "/subscriptions/" + impi, sameProfile},
+		// The SIMPLIFIED of profileChanged: a new default public identity
+		// asks for an RTR (TS 29.228 6.5.2.1), which is not sent.
+		{"a PUT that moves the default identity", "default", true, "PUT", "/subscriptions/" + impi, `{"private_identity": "` + impi +
+			`", "public_identities": ["tel:+12025550101", "` + impu + `"], "password": "test-password-1"}`},
 		{"a dry run", "default", true, "PUT", "/subscriptions/" + impi + "?dry_run=true", `{"private_identity": "` + impi +
 			`", "public_identities": ["` + impu + `", "tel:+12025550101"], "password": "test-password-1", "service_profile": "trial"}`},
 	}
@@ -158,6 +163,50 @@ func TestProvisioningThatPushesNothing(t *testing.T) {
 			}
 			if len(scscfs.pprs) != 0 {
 				t.Errorf("%d PPRs, want none", len(scscfs.pprs))
+			}
+		})
+	}
+}
+
+// TestAPutThatChangesTheIdentitiesPushesThem: the service profile stays,
+// but the user profile changes, so the S-CSCF gets it at once. A barred
+// identity may only register (TS 29.228 B.2.1), so an S-CSCF left with
+// the old profile would still serve it; an identity added to the set is
+// pushed too (6.5.2.1).
+func TestAPutThatChangesTheIdentitiesPushesThem(t *testing.T) {
+	const added = "sip:+12025550101@" + realm
+	tests := []struct {
+		name       string
+		identities string
+		barred     string
+		want       cx.UserProfile
+	}{
+		{"a barred identity", `["` + impu + `", "tel:+12025550101"]`, `["tel:+12025550101"]`,
+			cx.UserProfile{PublicIdentities: []string{impu, "tel:+12025550101"}, BarredIdentities: []string{"tel:+12025550101"}}},
+		{"an identity added to the set", `["` + impu + `", "tel:+12025550101", "` + added + `"]`, `[]`,
+			cx.UserProfile{PublicIdentities: []string{impu, "tel:+12025550101", added}}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			h := newProfileHSS(t, "default")
+			mar(t, h, scscf)
+			sar(t, h, scscf, cx.AssignRegistration)
+			scscfs := &fakeSCSCFs{}
+			body := `{"private_identity": "` + impi + `", "public_identities": ` + tt.identities +
+				`, "barred_identities": ` + tt.barred + `, "password": "test-password-1"}`
+			if w := do(t, h.Provisioning(scscfs), "PUT", "/subscriptions/"+impi, body); w.Code != http.StatusOK {
+				t.Fatalf("PUT: %d %s", w.Code, w.Body)
+			}
+			if len(scscfs.pprs) != 1 {
+				t.Fatalf("%d PPRs, want 1", len(scscfs.pprs))
+			}
+			got, err := cx.ParseUserProfile(scscfs.pprs[0].UserData)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !slices.Equal(got.PublicIdentities, tt.want.PublicIdentities) || !slices.Equal(got.BarredIdentities, tt.want.BarredIdentities) {
+				t.Errorf("pushed identities %v, barred %v; want %v, barred %v",
+					got.PublicIdentities, got.BarredIdentities, tt.want.PublicIdentities, tt.want.BarredIdentities)
 			}
 		})
 	}
