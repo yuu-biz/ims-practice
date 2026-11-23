@@ -433,14 +433,18 @@ func run(configPath string, log *slog.Logger, level *slog.LevelVar) error {
 			ConferenceDomain: c.ConferenceDomain,
 			Timers:           c.SIP.Timers(),
 		}, users, store, store, resolver, roleLog)
+		managed = append(managed, managedRole{function: mmtelRole.Function(hss.Available), manage: mmtelRole.Manage})
 		if err := mmtelRole.Listen(transport); err != nil {
 			transport.Close()
 			return err
 		}
 		defer mmtelRole.Close()
 		// Ut: the users change the same documents over XCAP that the AS
-		// reads for each call, in the HSS over Sh.
-		ut := &http.Server{Addr: c.XCAP.Listen.String(), Handler: xcap.NewHandler(users, c.XCAP.RootPath, c.XCAP.NonceKey, roleLog.With("function", "xcap"))}
+		// reads for each call, in the HSS over Sh. AS.Ut puts it under the
+		// administrative state of the AS, so that taking the AS out of
+		// service takes Ut with it.
+		ut := &http.Server{Addr: c.XCAP.Listen.String(),
+			Handler: mmtelRole.Ut(xcap.NewHandler(users, c.XCAP.RootPath, c.XCAP.NonceKey, roleLog.With("function", "xcap")))}
 		go func() {
 			if err := ut.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 				roleLog.Error("XCAP server failed", "error", err.Error())
@@ -995,6 +999,7 @@ type configurationView struct {
 	PCSCF *pcscfView `json:"pcscf,omitempty"`
 	ICSCF *icscfView `json:"icscf,omitempty"`
 	SCSCF *scscfView `json:"scscf,omitempty"`
+	MMTel *mmtelView `json:"mmtel,omitempty"`
 }
 
 type pcscfView struct {
@@ -1044,6 +1049,25 @@ type scscfView struct {
 	IBCF       string  `json:"ibcf,omitempty"`
 }
 
+type mmtelView struct {
+	SIP             sipView  `json:"sip"`
+	HomeCountryCode string   `json:"home_country_code,omitempty"`
+	XCAP            xcapView `json:"xcap"`
+	MRFC            string   `json:"mrfc,omitempty"`
+	Announcement    string   `json:"announcement,omitempty"`
+	// ConferenceDomain is the subdomain whose public service identities
+	// are the conferences of this instance (TS 23.003 13.5).
+	ConferenceDomain string `json:"conference_domain,omitempty"`
+}
+
+// xcapView is the XCAP server of Ut. The key that signs its nonces is a
+// secret, so the API shows only whether it is set.
+type xcapView struct {
+	Listen   string             `json:"listen"`
+	RootPath string             `json:"root_path,omitempty"`
+	NonceKey maintenance.Secret `json:"nonce_key"`
+}
+
 type sipView struct {
 	Listen             string `json:"listen"`
 	Host               string `json:"host"`
@@ -1085,6 +1109,17 @@ func newConfigurationView(cfg config.Config) configurationView {
 		}
 		if c.IBCF.Host != "" {
 			v.SCSCF.IBCF = c.IBCF.String()
+		}
+	}
+	if c := cfg.MMTel; c != nil {
+		v.MMTel = &mmtelView{
+			SIP:             newSIPView(c.SIP),
+			HomeCountryCode: c.HomeCountryCode,
+			XCAP: xcapView{Listen: c.XCAP.Listen.String(), RootPath: c.XCAP.RootPath,
+				NonceKey: maintenance.Redacted(string(c.XCAP.NonceKey))},
+			MRFC:             c.MRFC,
+			Announcement:     c.Announcement,
+			ConferenceDomain: c.ConferenceDomain,
 		}
 	}
 	return v
