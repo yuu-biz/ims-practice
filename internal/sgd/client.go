@@ -148,6 +148,55 @@ func (c *SGdClient) MTForwardShortMessage(ctx context.Context, req MTForwardShor
 	return ParseMTForwardShortMessageAnswer(answer)
 }
 
+// ServiceCentre is how a serving node reaches the SC over SGd.
+// *diameter.PeerGroup, the instances of the SC, is one, and so is a
+// single *diameter.Peer.
+type ServiceCentre interface {
+	Request(ctx context.Context, request *diam.Message) (*diam.Message, error)
+}
+
+// MOClient sends the SGd request of a serving node, such as an
+// IP-SM-GW: a short message from a UE, to the SC (OFR).
+//
+// Whether the request names the SMS-IWMSC in Destination-Host, or only
+// its realm, is the caller's, as it is on S6c: TS 29.338 6.3.1.1 has a
+// serving node that can turn the SC address of the UE into the name of
+// an SMS-IWMSC give both AVPs, and one that cannot give
+// Destination-Realm alone.
+type MOClient struct {
+	node *diameter.Node
+	sc   ServiceCentre
+}
+
+// NewMOClient returns a client that sends from node to sc.
+func NewMOClient(node *diameter.Node, sc ServiceCentre) *MOClient {
+	return &MOClient{node: node, sc: sc}
+}
+
+// MOForwardShortMessage hands the SC a short message that a UE sent (TS
+// 29.338 6.2.1). The answer carries the SMS-SUBMIT-REPORT that the
+// serving node turns into the RP-ACK or RP-ERROR for the UE.
+func (c *MOClient) MOForwardShortMessage(ctx context.Context, req MOForwardShortMessageRequest) (MOForwardShortMessageAnswer, error) {
+	if err := requireRealm(req.Header); err != nil {
+		return MOForwardShortMessageAnswer{}, err
+	}
+	// 6.3.2.3: { SC-Address }, the RP-DA that the UE sent. The MSISDN is
+	// one of the identities of User-Identifier, which a serving node may
+	// not know (Table 6.2.1.1/1).
+	if err := requireE164("SC-Address", req.SCAddress); err != nil {
+		return MOForwardShortMessageAnswer{}, err
+	}
+	if err := checkE164("MSISDN", req.UserIdentifier.MSISDN); err != nil {
+		return MOForwardShortMessageAnswer{}, err
+	}
+	req.Header = routing(c.node, req.Header)
+	answer, err := c.sc.Request(ctx, req.Message())
+	if err != nil {
+		return MOForwardShortMessageAnswer{}, err
+	}
+	return ParseMOForwardShortMessageAnswer(answer)
+}
+
 // routing completes the routing AVPs of a request: the Session-Id and
 // the origin of the node that sends it, keeping the destination that the
 // caller named.

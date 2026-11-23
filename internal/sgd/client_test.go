@@ -391,6 +391,98 @@ func TestSGdClientReportsAServingNodeThatIsNotConnected(t *testing.T) {
 	}
 }
 
+// TestMOClientHandsTheShortMessageToTheServiceCentre: the serving node
+// brings a short message of a UE to the SC and reads the
+// SMS-SUBMIT-REPORT out of the answer.
+func TestMOClientHandsTheShortMessageToTheServiceCentre(t *testing.T) {
+	submitReport := mustHex(t, smsSubmitReport)
+	c := connect(t, sc, mme, ApplicationIDSGd, func(request *diam.Message) *diam.Message {
+		return MOForwardShortMessageAnswer{
+			Result: diameter.Base(diameter.DiameterSuccess),
+			SMRPUI: submitReport,
+		}.Message(request, sc)
+	})
+	client := NewMOClient(c.connecting, c.peer)
+
+	submit := mustHex(t, smsSubmit)
+	ofa, err := client.MOForwardShortMessage(t.Context(), MOForwardShortMessageRequest{
+		Header:         diameter.Header{DestinationHost: scHost, DestinationRealm: realm},
+		SCAddress:      scAddress,
+		UserIdentifier: UserIdentifier{UserName: imsi, MSISDN: msisdn},
+		SMRPUI:         submit,
+	})
+	if err != nil {
+		t.Fatalf("MOForwardShortMessage: %v", err)
+	}
+	if !ofa.Result.Success() || !bytes.Equal(ofa.SMRPUI, submitReport) {
+		t.Errorf("OFA = %+v, want the SMS-SUBMIT-REPORT", ofa)
+	}
+
+	ofr, err := ParseMOForwardShortMessageRequest(c.request(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ofr.OriginHost != mmeHost || ofr.DestinationHost != scHost || ofr.DestinationRealm != realm {
+		t.Errorf("the OFR was routed %+v", ofr.Header)
+	}
+	if ofr.SCAddress != scAddress || ofr.UserIdentifier.UserName != imsi || ofr.UserIdentifier.MSISDN != msisdn || !bytes.Equal(ofr.SMRPUI, submit) {
+		t.Errorf("the OFR carried %+v", ofr)
+	}
+}
+
+// TestMOClientReturnsTheRefusalOfTheServiceCentre: an SC that does not
+// take the short message answers with a result and an
+// SMS-SUBMIT-REPORT, which the serving node turns into the RP-ERROR for
+// the UE.
+func TestMOClientReturnsTheRefusalOfTheServiceCentre(t *testing.T) {
+	c := connect(t, sc, mme, ApplicationIDSGd, func(request *diam.Message) *diam.Message {
+		return MOForwardShortMessageAnswer{
+			Result:                 diameter.Experimental(DiameterErrorSMDeliveryFailure),
+			SMDeliveryFailureCause: &SMDeliveryFailureCause{SMEnumeratedDeliveryFailureCause: UnknownServiceCentre},
+			SMRPUI:                 mustHex(t, smsSubmitReport),
+		}.Message(request, sc)
+	})
+	client := NewMOClient(c.connecting, c.peer)
+
+	ofa, err := client.MOForwardShortMessage(t.Context(), MOForwardShortMessageRequest{
+		Header:         diameter.Header{DestinationRealm: realm},
+		SCAddress:      scAddress,
+		UserIdentifier: UserIdentifier{UserName: imsi, MSISDN: msisdn},
+		SMRPUI:         mustHex(t, smsSubmit),
+	})
+	if err != nil {
+		t.Fatalf("MOForwardShortMessage: %v", err)
+	}
+	if ofa.Result != diameter.Experimental(DiameterErrorSMDeliveryFailure) || ofa.SMDeliveryFailureCause == nil ||
+		ofa.SMDeliveryFailureCause.SMEnumeratedDeliveryFailureCause != UnknownServiceCentre {
+		t.Errorf("OFA = %+v, want the refusal of the SC", ofa)
+	}
+}
+
+// TestMOClientRefusesAnOFRTheFormatWouldNotCarry: the SC address the UE
+// sent is the RP-DA of the short message, which 6.3.2.3 marks mandatory,
+// and a serving node that names no realm has nowhere to send it.
+func TestMOClientRefusesAnOFRTheFormatWouldNotCarry(t *testing.T) {
+	c := connect(t, sc, mme, ApplicationIDSGd, func(request *diam.Message) *diam.Message {
+		return MOForwardShortMessageAnswer{Result: diameter.Base(diameter.DiameterSuccess)}.Message(request, sc)
+	})
+	client := NewMOClient(c.connecting, c.peer)
+	user := UserIdentifier{UserName: imsi, MSISDN: msisdn}
+	tpdu := mustHex(t, smsSubmit)
+
+	if _, err := client.MOForwardShortMessage(t.Context(), MOForwardShortMessageRequest{
+		Header: diameter.Header{DestinationRealm: realm}, UserIdentifier: user, SMRPUI: tpdu,
+	}); err == nil {
+		t.Error("MOForwardShortMessage sent an OFR that carries no SC-Address")
+	}
+	if _, err := client.MOForwardShortMessage(t.Context(), MOForwardShortMessageRequest{
+		SCAddress: scAddress, UserIdentifier: user, SMRPUI: tpdu,
+	}); err == nil {
+		t.Error("MOForwardShortMessage sent an OFR that names no realm")
+	}
+	c.noRequest(t)
+}
+
 // TestS6cClientReportsThatNoAnswerCame: the SC hears of a peer that does
 // not answer, and keeps the short message.
 func TestS6cClientReportsThatNoAnswerCame(t *testing.T) {
