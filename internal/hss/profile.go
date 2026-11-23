@@ -60,16 +60,19 @@ func (h *HSS) userProfile(u Subscriber) cx.UserProfile {
 // serviceProfile is the name of the service profile of s: the one the
 // subscription names, else the profile of its kind of user, a test user
 // or any other. The choice is made from the data of this one
-// subscription, so the HSS answers for it without reading anything
-// else.
+// subscription and the settings in force, so the HSS answers for it
+// without reading anything else.
 func (h *HSS) serviceProfile(s Subscription) string {
+	// One load of the settings, so that an operator who changes both
+	// names at once cannot leave a subscription with the name of neither.
+	set := h.settings.Load()
 	switch {
 	case s.ServiceProfile != "":
 		return s.ServiceProfile
 	case s.TestUser:
-		return h.config.TestUserServiceProfile
+		return set.testUserServiceProfile
 	default:
-		return h.config.DefaultServiceProfile
+		return set.defaultServiceProfile
 	}
 }
 

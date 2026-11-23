@@ -25,10 +25,11 @@ import (
 // keeps nothing.
 //
 // The HSS of internal/hss keeps the test_user and service_profile
-// attributes and the service profiles of its configuration, and picks
-// the profile of a subscription as above. It has no
-// PATCH /subscriptions/{impi} and no changeable settings; against an
-// HSS without them the OAM answers 502 and names what is missing.
+// attributes and the service profiles of its configuration, picks the
+// profile of a subscription as above, and takes the three settings
+// below on the maintenance API of its node. Against an HSS that has
+// neither PATCH /subscriptions/{impi} nor those settings, the OAM
+// answers 502 and names what is missing.
 const (
 	SettingAdmission              = "hss.admission"
 	SettingDefaultServiceProfile  = "hss.default_service_profile"
@@ -45,8 +46,8 @@ const (
 )
 
 // hssServiceView is the part of the configuration view of an HSS node
-// that the OAM reads, which internal/hss does not have: each service
-// profile by name, with the features that it has.
+// that the OAM reads: each service profile by name, with the features
+// that it has.
 //
 //	{"hss": {"service_profiles": {"default": {"features": ["sms"]}, "trial": {"features": ["sms", "mmtel"]}}}}
 type hssServiceView struct {

@@ -10,6 +10,7 @@
 package hss
 
 import (
+	"cmp"
 	"context"
 	"crypto/md5"
 	cryptorand "crypto/rand"
@@ -58,17 +59,21 @@ type Config struct {
 	// as a test user, those added through the provisioning API
 	// included. Operators give a feature to every user by naming here
 	// the profile whose criteria call the application server of that
-	// feature.
+	// feature. The maintenance API changes it while the HSS runs
+	// (Settings), so the name in force is HSS.DefaultServiceProfile.
 	DefaultServiceProfile string
 	// TestUserServiceProfile is the name of the service profile that a
 	// subscription marked Subscription.TestUser gets when it names none
 	// of its own. Operators try a feature out on the test users alone
 	// by naming here the profile whose criteria call the application
 	// server of that feature, and leaving DefaultServiceProfile as it
-	// is.
+	// is. The maintenance API changes it too, so the name in force is
+	// HSS.TestUserServiceProfile.
 	TestUserServiceProfile string
-	// Admission is which subscribers the network admits. The empty
-	// Admission is AdmitAll.
+	// Admission is which subscribers the network admits when the HSS
+	// starts. The empty Admission is AdmitAll. The maintenance API
+	// changes it while the HSS runs (Settings), so the policy in force
+	// is HSS.Admission and not this field.
 	Admission Admission
 	// ProvisioningListen is the address of the provisioning API, such as
 	// :8081. Empty means the node has none.
@@ -138,7 +143,50 @@ func ParseAdmission(s string) (Admission, error) {
 // admits reports whether the admission policy lets u register and take
 // an S-CSCF of its own.
 func (h *HSS) admits(u Subscriber) bool {
-	return h.config.Admission != AdmitTestUsers || u.TestUser
+	return h.Admission() != AdmitTestUsers || u.TestUser
+}
+
+// settings are the parts of the configuration that an operator changes
+// while the HSS runs, through the maintenance API (Settings): which
+// subscribers the network admits, and the service profiles of the
+// subscriptions that name none of their own.
+//
+// One value holds all three, and a change of a setting replaces it
+// whole, so a request reads the settings from before that change or
+// from after it, never a value written halfway. A maintenance request
+// that changes several settings puts each in force in turn
+// (maintenance.ChangeConfiguration), so a request that arrives between
+// two of them sees the first in force and not yet the second.
+type settings struct {
+	admission              Admission
+	defaultServiceProfile  string
+	testUserServiceProfile string
+}
+
+// Admission is the admission policy in force.
+func (h *HSS) Admission() Admission { return h.settings.Load().admission }
+
+// DefaultServiceProfile is the name of the service profile in force for
+// the subscriptions that name none of their own.
+func (h *HSS) DefaultServiceProfile() string { return h.settings.Load().defaultServiceProfile }
+
+// TestUserServiceProfile is the name of the service profile in force
+// for the test users that name none of their own.
+func (h *HSS) TestUserServiceProfile() string { return h.settings.Load().testUserServiceProfile }
+
+// changeSettings puts in force the settings that change makes of the
+// ones in force. The requests read the settings without a lock, so what
+// they see is the value before this change or the value after it; they
+// are never held up by one, and no request path takes a lock of the
+// whole role.
+func (h *HSS) changeSettings(change func(*settings)) {
+	// Held for the read and the store together, so that two changes of
+	// different settings cannot each write back what it read.
+	h.settingsMu.Lock()
+	defer h.settingsMu.Unlock()
+	next := *h.settings.Load()
+	change(&next)
+	h.settings.Store(&next)
 }
 
 // ServiceCentre is how the HSS reaches one of the SMS central
@@ -177,6 +225,13 @@ type HSS struct {
 	// way, for Close.
 	alerts sync.WaitGroup
 
+	// settings are the parts of the configuration that the maintenance
+	// API changes while the HSS runs (Settings). A request loads the
+	// whole set once; settingsMu is held only to put a change in force,
+	// never on the path of a request.
+	settings   atomic.Pointer[settings]
+	settingsMu sync.Mutex
+
 	// requests counts the Cx and Sh requests this instance is
 	// answering, the users of the maintenance API (maintenance.go). It
 	// counts, rather than holding the requests, so that a shut down
@@ -199,6 +254,14 @@ func New(config Config, store Store, node *diameter.Node, log *slog.Logger) (*HS
 	}
 	h := &HSS{config: config, store: store, node: node, log: log, users: config.UserLocks,
 		serviceCentres: map[string]ServiceCentre{}}
+	// A configuration that names no policy admits every subscriber, and
+	// the policy in force is written out, so that what the maintenance
+	// API answers with is a policy an operator can send back.
+	h.settings.Store(&settings{
+		admission:              cmp.Or(config.Admission, AdmitAll),
+		defaultServiceProfile:  config.DefaultServiceProfile,
+		testUserServiceProfile: config.TestUserServiceProfile,
+	})
 	for _, c := range config.ServiceCentres {
 		h.serviceCentres[c.Address] = c
 	}

@@ -1,7 +1,9 @@
 package hss
 
 import (
+	"fmt"
 	"log/slog"
+	"slices"
 	"sync/atomic"
 
 	"github.com/yuu-biz/ims-practice/internal/diameter"
@@ -75,6 +77,71 @@ func (h *HSS) Function(server *diameter.Server) maintenance.Function {
 // API of its node keeps for it. Until then, and in a node without the
 // API, the HSS is UNLOCKED.
 func (h *HSS) Manage(m *maintenance.ManagedFunction) { h.managed.Store(m) }
+
+// Settings are the parts of the HSS configuration that the maintenance
+// API of its node changes while the HSS runs: which subscribers the
+// network admits, and the service profiles of the subscriptions that
+// name none of their own. An operator narrows a network to the users a
+// feature is tried on, and gives a feature to the test users or to
+// everyone, without restarting an instance and without the instances of
+// the role disagreeing for as long as a restart takes.
+//
+// Each value is checked against what this HSS has, and the API sets
+// none of a request's settings unless every one of them is good, so a
+// request that names a policy or a profile the HSS does not have
+// changes nothing. The criteria of a profile are not here: what an
+// operator chooses is which profile a subscription gets, not what a
+// profile holds. Nor are the subscribers, which the provisioning API
+// changes one at a time.
+//
+// Narrowing the admission policy needs nothing else of the HSS: the
+// registrations that are valid then stay as they are, and the requests
+// that arrive from that moment on are refused (Admission).
+//
+// SIMPLIFIED: TS 29.228 6.6.1. A change of either profile name gives
+// every subscription that the name decides for another user profile,
+// and the HSS pushes none of them: each of those users gets its new
+// profile at its next registration, where the specification asks the
+// HSS to push the complete user profile to the S-CSCF of a registered
+// or unregistered identity as soon as its profile changes. A
+// provisioning request pushes only the change that it makes itself, as
+// it names the one subscription it changes; it compares that
+// subscription under the settings in force, so it does not bring the
+// S-CSCF the profile of a changed setting either. The HSS has no index of which registrations either name
+// decides for, and finding them means reading every subscriber, which
+// no procedure of this HSS does.
+func (h *HSS) Settings() []maintenance.Setting {
+	const (
+		admission   = role + ".admission"
+		defaultName = role + ".default_service_profile"
+		testUser    = role + ".test_user_service_profile"
+	)
+	return []maintenance.Setting{
+		maintenance.NewSetting(admission,
+			"which subscribers the network admits: all, or test_users for the subscriptions marked test_user",
+			h.Admission,
+			// Not ParseAdmission: that reads a configuration file, where
+			// an absent policy means all, and a request that names the
+			// setting means to name a policy.
+			func(a Admission) error {
+				if !slices.Contains(Admissions, a) {
+					return fmt.Errorf("%q is none of %v", a, Admissions)
+				}
+				return nil
+			},
+			func(a Admission) { h.changeSettings(func(s *settings) { s.admission = a }) }),
+		maintenance.NewSetting(defaultName,
+			"the service profile of a subscription that names none of its own",
+			h.DefaultServiceProfile,
+			func(name string) error { return h.config.CheckServiceProfileName(defaultName, name) },
+			func(name string) { h.changeSettings(func(s *settings) { s.defaultServiceProfile = name }) }),
+		maintenance.NewSetting(testUser,
+			"the service profile of a subscription marked test_user that names none of its own",
+			h.TestUserServiceProfile,
+			func(name string) error { return h.config.CheckServiceProfileName(testUser, name) },
+			func(name string) { h.changeSettings(func(s *settings) { s.testUserServiceProfile = name }) }),
+	}
+}
 
 // requestAnswered counts the end of a Cx or Sh request, which may be
 // the last that a shut down waits for. The node calls it once the

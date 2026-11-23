@@ -77,8 +77,7 @@ func everyKindOfSubscription(t *testing.T, h *HSS, api http.Handler) []string {
 		t.Fatal(err)
 	}
 	h.config.MMTelServices = &d
-	h.config.ServiceProfiles = map[string]ServiceProfile{"default": {}, "trial": {}}
-	h.config.DefaultServiceProfile, h.config.TestUserServiceProfile = "default", "trial"
+	withProfiles(h, map[string]ServiceProfile{"default": {}, "trial": {}}, "default", "trial")
 
 	// IMS-AKA, with a sequence number that the authentication moves on
 	// from the one the operator provisioned.

@@ -161,7 +161,8 @@ func run(configPath string, log *slog.Logger, level *slog.LevelVar) error {
 			// What the operator takes out of service on an HSS is its
 			// Diameter listener and the connections on it, so a node
 			// that listens for none has nothing to drain.
-			managed = append(managed, managedRole{function: hssRole.Function(server), manage: hssRole.Manage})
+			managed = append(managed, managedRole{function: hssRole.Function(server),
+				manage: hssRole.Manage, settings: hssRole.Settings()})
 		}
 		if epcRole != nil {
 			epcRole.SetAFs(server)
@@ -938,6 +939,10 @@ func startFaultAgent(ctx context.Context, l net.Listener, c config.Fault, log *s
 type managedRole struct {
 	function maintenance.Function
 	manage   func(*maintenance.ManagedFunction)
+	// settings are the parts of the node's configuration that this role
+	// changes while the node runs (maintenance.NewSetting). The rest of
+	// its configuration changes only with the file and a restart.
+	settings []maintenance.Setting
 }
 
 // startMaintenance serves the maintenance listener of the node on l: the
@@ -951,8 +956,10 @@ func startMaintenance(l net.Listener, cfg config.Config, roles []managedRole, re
 	mux.Handle("GET /metrics", metrics.NewHandler(registry))
 	if len(roles) > 0 {
 		var functions []maintenance.Function
+		var settings []maintenance.Setting
 		for _, r := range roles {
 			functions = append(functions, r.function)
+			settings = append(settings, r.settings...)
 		}
 		// The host name tells apart the processes that run the same
 		// configuration file.
@@ -964,6 +971,7 @@ func startMaintenance(l net.Listener, cfg config.Config, roles []managedRole, re
 			LogLevel:      level,
 			Functions:     functions,
 			Configuration: func() any { return newConfigurationView(cfg) },
+			Settings:      settings,
 			Log:           log,
 		})
 		if err != nil {
