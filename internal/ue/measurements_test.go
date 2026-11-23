@@ -56,6 +56,70 @@ func TestThePCSCFAndTheSCSCFCountTheSameRegistrations(t *testing.T) {
 	want = append(want, `ims_registration_setup_seconds_count{role="pcscf"} 2`)
 	// The S-CSCF counts a response just after it has left, so the
 	// series may still be settling when the UE has it.
+	settles(t, reg, want, "ims_registration_failures_total{")
+}
+
+// TS 32.409 4.1.2 at the P-CSCF: a call between two of its UEs passes it
+// twice, as an originating and as a terminating session establishment.
+// The rejected call fails on both legs with the status of the callee,
+// and the answered one is among the answered sessions from its 200 (OK)
+// to its BYE.
+func TestThePCSCFCountsTheSessionEstablishments(t *testing.T) {
+	reg := metrics.NewRegistry()
+	n := startNetwork(t, networkConfig{minExpires: time.Second, maxExpires: time.Hour, metrics: reg})
+	caller := newParty(t, n.pcscf, impi, impu, password)
+	callee := newParty(t, n.pcscf, impi2, impu2, password2)
+	ctx := t.Context()
+
+	go func() {
+		ic := <-callee.calls
+		callee.ue.Answer(ctx, ic, callee.media, ue.Speech{}, ue.AnswerOptions{Reject: 486})
+	}()
+	if err := caller.ue.Call(ctx, caller.ua, caller.reg, impu2, caller.media, ue.Speech{}, ue.CallOptions{}); err == nil {
+		t.Fatal("the rejected call went through")
+	}
+	settles(t, reg, []string{
+		`ims_session_attempts_total{role="pcscf",direction="originating"} 1`,
+		`ims_session_attempts_total{role="pcscf",direction="terminating"} 1`,
+		`ims_session_failures_total{role="pcscf",direction="originating",status="486"} 1`,
+		`ims_session_failures_total{role="pcscf",direction="terminating",status="486"} 1`,
+	}, "ims_session_answers_total{")
+
+	answered := make(chan error, 1)
+	go func() {
+		ic := <-callee.calls
+		answered <- callee.ue.Answer(ctx, ic, callee.media, ue.Speech{PCM: ue.Tone(880, time.Second)}, ue.AnswerOptions{PickUp: time.After(100 * time.Millisecond)})
+	}()
+	called := make(chan error, 1)
+	go func() {
+		called <- caller.ue.Call(ctx, caller.ua, caller.reg, impu2, caller.media, ue.Speech{PCM: ue.Tone(440, time.Second)}, ue.CallOptions{})
+	}()
+	// Both dialogs of the call are at the P-CSCF while the call lasts.
+	settles(t, reg, []string{`ims_answered_sessions{role="pcscf"} 2`}, "")
+	for _, ended := range []chan error{called, answered} {
+		select {
+		case err := <-ended:
+			if err != nil {
+				t.Fatal(err)
+			}
+		case <-time.After(10 * time.Second):
+			t.Fatal("the call did not end")
+		}
+	}
+	settles(t, reg, []string{
+		`ims_session_attempts_total{role="pcscf",direction="originating"} 2`,
+		`ims_session_attempts_total{role="pcscf",direction="terminating"} 2`,
+		`ims_session_answers_total{role="pcscf",direction="originating"} 1`,
+		`ims_session_answers_total{role="pcscf",direction="terminating"} 1`,
+		`ims_answered_sessions{role="pcscf"} 0`,
+	}, "")
+}
+
+// settles waits up to 3 seconds for every line of want to be in the
+// series of reg, and for none to start with forbidden, unless that is
+// empty.
+func settles(t *testing.T, reg *metrics.Registry, want []string, forbidden string) {
+	t.Helper()
 	var text bytes.Buffer
 	deadline := time.Now().Add(3 * time.Second)
 	for {
@@ -69,11 +133,11 @@ func TestThePCSCFAndTheSCSCFCountTheSameRegistrations(t *testing.T) {
 				missing++
 			}
 		}
-		if missing == 0 && !strings.Contains(text.String(), "ims_registration_failures_total{") {
+		if missing == 0 && (forbidden == "" || !strings.Contains(text.String(), "\n"+forbidden)) {
 			return
 		}
 		if time.Now().After(deadline) {
-			t.Fatalf("want the lines %q and no failure in:\n%s", want, text.String())
+			t.Fatalf("want the lines %q, and none that starts with %q, in:\n%s", want, forbidden, text.String())
 		}
 		time.Sleep(10 * time.Millisecond)
 	}

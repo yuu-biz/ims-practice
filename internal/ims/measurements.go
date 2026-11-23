@@ -112,3 +112,93 @@ func (m *Registrations) Answered(role string, t RegistrationType, status int) {
 		m.failures.Inc(role, string(t), strconv.Itoa(status))
 	}
 }
+
+// SessionDirection is the direction of a session establishment, the
+// direction label of the session measurements: originating for an
+// initial INVITE from the UE (TS 32.409 4.1.2.9), terminating for one
+// to the UE (4.1.2.11).
+type SessionDirection string
+
+const (
+	OriginatingSession SessionDirection = "originating"
+	TerminatingSession SessionDirection = "terminating"
+)
+
+var (
+	// sessionRoles are the functions that TS 32.409 4.1.2.1 to 4.1.2.11
+	// has count the session establishments.
+	sessionRoles      = metrics.Label{Name: "role", Values: []string{"pcscf", "icscf", "scscf"}}
+	sessionDirections = metrics.Label{Name: "direction", Values: []string{string(OriginatingSession), string(TerminatingSession)}}
+	// sessionStatuses are the status codes of a failed session
+	// establishment that are counted one by one; any other one counts
+	// under "other", so that the codes add up to all the failures (TS
+	// 32.409 4.1.2.4).
+	sessionStatuses = metrics.Label{Name: "status", Values: []string{
+		"400", "403", "404", "408", "410", "480", "484", "486", "487", "488", "500", "503", "504", "580", "600", "603",
+	}}
+)
+
+// Sessions are the session establishment measurements of TS 32.409
+// 4.1.2: the initial INVITEs, how they ended, and the sessions that
+// they set up and that have not ended yet.
+type Sessions struct {
+	attempts *metrics.Counter
+	answers  *metrics.Counter
+	failures *metrics.Counter
+	answered *metrics.Gauge
+}
+
+// NewSessions registers the session measurements in reg, or finds them
+// there when another role of the node has registered them.
+func NewSessions(reg *metrics.Registry) (*Sessions, error) {
+	m := &Sessions{}
+	var err error
+	if m.attempts, err = reg.NewCounter("ims_session_attempts_total",
+		"Initial INVITE requests received, by direction (TS 32.409 SC.AttSession, SC.AttSessionOrig, SC.AttSessionTerm).",
+		sessionRoles, sessionDirections); err != nil {
+		return nil, err
+	}
+	if m.answers, err = reg.NewCounter("ims_session_answers_total",
+		"First 200 (OK) responses sent to an initial INVITE, by direction (TS 32.409 SC.AnsSession).",
+		sessionRoles, sessionDirections); err != nil {
+		return nil, err
+	}
+	if m.failures, err = reg.NewCounter("ims_session_failures_total",
+		"Final responses other than 2xx sent to an initial INVITE, by direction and status code (TS 32.409 SC.FailSession.Cause).",
+		sessionRoles, sessionDirections, sessionStatuses); err != nil {
+		return nil, err
+	}
+	if m.answered, err = reg.NewGauge("ims_answered_sessions",
+		"Sessions that a 200 (OK) to the initial INVITE has set up and that have not ended; max_over_time and avg_over_time give TS 32.409 SC.NbrSimulAnsSessionMax and SC.NbrSimulAnsSessionMean.",
+		sessionRoles); err != nil {
+		return nil, err
+	}
+	return m, nil
+}
+
+// Started counts an initial INVITE that role received, on receipt (TS
+// 32.409 4.1.2.1, 4.1.2.9, 4.1.2.11).
+func (m *Sessions) Started(role string, d SessionDirection) {
+	m.attempts.Inc(role, string(d))
+}
+
+// Answered counts the 2xx that role sends to an initial INVITE (TS
+// 32.409 4.1.2.3): the first, not its retransmissions.
+func (m *Sessions) Answered(role string, d SessionDirection) {
+	m.answers.Inc(role, string(d))
+}
+
+// Failed counts the final response other than 2xx that role sends to an
+// initial INVITE, by its status code (TS 32.409 4.1.2.4).
+func (m *Sessions) Failed(role string, d SessionDirection, status int) {
+	m.failures.Inc(role, string(d), strconv.Itoa(status))
+}
+
+// SetUp and Ended count a session in and out of the answered sessions
+// that TS 32.409 4.1.2.5 and 4.1.2.7 sample: from the 200 (OK) to the
+// initial INVITE to the end of the session. They need not be called in
+// the same process: the gauges of a role's instances add up to the
+// sessions of the network.
+func (m *Sessions) SetUp(role string) { m.answered.Inc(role) }
+
+func (m *Sessions) Ended(role string) { m.answered.Dec(role) }

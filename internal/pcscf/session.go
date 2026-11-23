@@ -64,6 +64,15 @@ const (
 	terminating leg = "terminating" // to the UE
 )
 
+// direction is the direction of a session that an initial INVITE on l
+// sets up, in the session measurements (TS 32.409 4.1.2.9, 4.1.2.11).
+func (l leg) direction() ims.SessionDirection {
+	if l == terminating {
+		return ims.TerminatingSession
+	}
+	return ims.OriginatingSession
+}
+
 func (p *PCSCF) ownURI() sip.URI {
 	u, _ := ims.LooseRoute(fmt.Sprintf("sip:%s:%d", p.cfg.Host, p.cfg.Port))
 	return u
@@ -72,6 +81,10 @@ func (p *PCSCF) ownURI() sip.URI {
 // session handles every request but REGISTER. A NOTIFY of the
 // P-CSCF's own reg event subscription is for the P-CSCF; any other
 // request it routes.
+//
+// An initial INVITE is a session establishment, which the P-CSCF
+// counts on receipt and with the final response that it sends to it
+// (TS 32.409 4.1.2, metrics.go).
 func (p *PCSCF) session(st *sip.ServerTransaction) {
 	if p.ownRegEventNotify(st.Request) {
 		p.receiveRegEvent(st)
@@ -79,22 +92,32 @@ func (p *PCSCF) session(st *sip.ServerTransaction) {
 	}
 	req := st.Request
 	out := req.Clone()
+	top, popped := sip.PopOwnRoute(out, p.ownURIs()...)
+	// The Path URI that the P-CSCF put in the REGISTER marks requests to
+	// the UE (5.2.6.2).
+	l := originating
+	if popped && top.User == "term" {
+		l = terminating
+	}
+	inDialog := ims.IsInDialog(req)
+	if req.Method == sip.INVITE && !inDialog {
+		p.measurements.sessions.Started(role, l.direction())
+		defer func() {
+			if status := st.FinalStatus(); status >= 300 {
+				p.measurements.sessions.Failed(role, l.direction(), status)
+			}
+		}()
+	}
 	if err := sip.DecrementMaxForwards(out); err != nil {
 		st.Respond(sip.NewResponse(req, 483, sip.NewTag()))
 		return
 	}
-	top, popped := sip.PopOwnRoute(out, p.ownURIs()...)
 	log := p.log.With("method", string(req.Method), "call_id", req.Get("Call-ID"))
-	switch {
-	case ims.IsInDialog(req):
+	if inDialog {
 		p.subsequent(st, out, log)
-	case popped && top.User == "term":
-		// The Path URI that the P-CSCF put in the REGISTER marks requests
-		// to the UE (5.2.6.2).
-		p.initial(st, out, terminating, log)
-	default:
-		p.initial(st, out, originating, log)
+		return
 	}
+	p.initial(st, out, l, log)
 }
 
 // initial is TS 24.229 5.2.6.3.3 for an initial request from the UE,
@@ -560,9 +583,13 @@ const (
 // P-CSCF does.
 func (p *PCSCF) endDialog(key DialogKey, known Dialog, log *slog.Logger) {
 	d, ok, err := p.store.TakeDialog(context.Background(), key)
-	if err != nil {
+	switch {
+	case err != nil:
 		log.Warn("the dialog stays in the store: the store failed", "call_id", key.CallID, "error", err.Error())
 		d, ok = known, true
+	case ok && d.Confirmed:
+		// The session that the 2xx set up has ended (remember).
+		p.measurements.sessions.Ended(role)
 	}
 	if ok && !d.Released {
 		p.free(d, log)

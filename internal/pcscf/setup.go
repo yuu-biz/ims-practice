@@ -311,7 +311,12 @@ func (s *setup) remember(resp *sip.Message) error {
 		s.log.Warn("response without the Record-Route of the P-CSCF", "record_route", resp.GetAll("Record-Route"))
 		toCaller = s.invite.GetAll("Record-Route")
 	}
+	// confirmed is true when the 2xx confirms the dialog that was early,
+	// which sets up the session (TS 32.409 4.1.2.7); endDialog counts it
+	// out again.
+	confirmed := false
 	update := func(d *Dialog) {
+		confirmed = !d.Confirmed && resp.StatusCode >= 200
 		d.Confirmed = d.Confirmed || resp.StatusCode >= 200
 		d.PolicySession = s.session
 		d.Callee.NameAddr = resp.Get("To")
@@ -323,6 +328,9 @@ func (s *setup) remember(resp *sip.Message) error {
 	ctx := context.Background()
 	if s.stored {
 		_, _, err := s.p.store.UpdateDialog(ctx, s.key, update)
+		if err == nil && confirmed {
+			s.p.measurements.sessions.SetUp(role)
+		}
 		return err
 	}
 	d := Dialog{Originating: s.leg == originating, Relay: s.relay, ICID: s.icid}
@@ -337,6 +345,9 @@ func (s *setup) remember(resp *sip.Message) error {
 	update(&d)
 	if err := s.p.store.PutDialog(ctx, d); err != nil {
 		return err
+	}
+	if confirmed {
+		s.p.measurements.sessions.SetUp(role)
 	}
 	s.key, s.stored = d.Key, true
 	s.p.setupsMu.Lock()
