@@ -429,6 +429,98 @@ The IP-SM-GW and the SC decide what goes back to the sender. The cases you can t
 
 The UE simulator never runs out of memory, so the memory-full case is only in the tests: `TestShortMessagesThatFail` in `internal/ipsmgw/network_test.go` runs it, and the undecodable RP-DATA, through the whole IMS.
 
+## Take the IP-SM-GW out of service
+
+An operator takes a node out of service without cutting what it serves: the node takes nothing new and goes on with what it has begun, until nothing is left. This is called a drain.
+
+Everything the IP-SM-GW keeps past one SIP transaction is in its store: the deliveries that wait for a delivery report, each with the time at which it gives up on one, and its subscriptions to the registration states. A commercial network runs several instances of the IP-SM-GW behind the one name that the filter criteria give as the server, and DNS spreads the new requests over them. None of the stored state is tied to one instance, so a delivery report reaches whichever instance DNS leads it to, and so does a NOTIFY: the Contact of the SUBSCRIBE is that one name and not one node. An instance that the operator takes out of service therefore has only what is in its hands at that moment to finish.
+
+The node of the IP-SM-GW serves a maintenance API for this on port 8085, the listener of the `maintenance` section of `deploy/compose/ipsmgw.yaml`. The API asks for no password, so the port is not published on the host: send the requests from inside the container of the IP-SM-GW. The administrative state has the values of TS 28.622 5.3.1. `UNLOCKED` takes new work, `SHUTTINGDOWN` serves only what it has, and `LOCKED` takes nothing new.
+
+1. Shut the IP-SM-GW down:
+
+   ```sh
+   docker compose exec ipsmgw sh -c '
+   body="{\"administrative_state\":\"SHUTTINGDOWN\",\"operator\":\"learner\"}"
+   printf "PUT /maintenance/v1/functions/ipsmgw/administrative-state HTTP/1.0\r\nContent-Type: application/json\r\nContent-Length: ${#body}\r\n\r\n%s" "$body" |
+     nc -w 5 127.0.0.1 8085'
+   ```
+
+   The answer ends with the state of the IP-SM-GW. With nothing in its hands it is `LOCKED` at once (X.731 7.1.3.3), and the steps above leave it nothing in its hands:
+
+   ```json
+   {"role":"ipsmgw","administrative_state":"LOCKED","operational_state":"ENABLED","users":0}
+   ```
+
+   If `users` is above zero, the answer says `SHUTTINGDOWN` instead, and the IP-SM-GW becomes `LOCKED` when the last of that work ends. Either way it takes nothing new from here on.
+
+   `users` counts what this instance has in its hands and has not finished: each request it is answering, counted once it has decided to take the request; each SUBSCRIBE of its own, and each refresh of one, until it has its final response; each delivery that the SC handed it, until the MESSAGE that carries the short message has its final response; and each delivery whose wait for a report has run out and which this instance has taken on to end. The wait for a delivery report is none of them: the delivery and that wait are in the store, so the report is served by whichever instance it reaches and any instance ends the delivery when the wait runs out. Stopping this instance loses none of it. Everything that is counted ends in the time a few SIP transactions take, so a shut down reaches `LOCKED` quickly; `timeout_seconds` in the request bounds it where new work keeps arriving. `operational_state` says whether the IP-SM-GW can work (TS 28.622 5.3.3): it is `ENABLED` while an instance of the HSS takes its Sh requests, and `DISABLED` without one, since it could then neither register a user for short messages nor let the SC beside it find which user has the number a short message is for. `docker compose exec ipsmgw wget -qO- http://127.0.0.1:8085/maintenance/v1/state` shows the whole node.
+
+2. Send a short message from UE 1:
+
+   ```sh
+   docker compose run --rm ue sms +12025550102 "Is anyone on duty?"
+   ```
+
+   UE 1 registers, and `ue sms` then ends with `MESSAGE answered 404 Not Found`.
+
+```text
+ UE 1       P-CSCF    S-CSCF    IP-SM-GW
+ |  REGISTER  |         |          |
+ |----------->|-------->|          |  the registration itself is not refused
+ |  200       |  200    |          |
+ |<-----------|<--------|          |
+ |            |         | REGISTER (third party)
+ |            |         |--------->|
+ |            |         |  503 Retry-After: 30
+ |            |         |<---------|
+ |  MESSAGE   |         |          |
+ |----------->|-------->|          |  tel:+12025550100, the PSI of the SC
+ |            |         |--------->|  RP-DATA with the SMS-SUBMIT
+ |            |         |  503 Retry-After: 30
+ |            |         |<---------|
+ |  404       |  404    |          |  no node answers at the SC's number
+ |<-----------|<--------|          |
+```
+
+- **The IP-SM-GW answers 503 Service Unavailable** with **Retry-After: 30** to the third-party REGISTER and to the MESSAGE. Neither has begun here: the subscription that the third-party REGISTER would make, and the delivery that the short message would start, both live in the store, where every instance finds them. Retry-After asks the client to send this server no other request for that many seconds (RFC 3261 21.5.4). No specification gives the value; 30 seconds is this project's choice.
+- **The S-CSCF sends each request on to the next instance** that DNS gave it for the name of the IP-SM-GW (RFC 3263 4.3), so the 503 reaches the S-CSCF itself only once there is none left to try. This network runs one instance.
+- **The registration stands.** The filter criterion that sends the third-party REGISTER says SESSION_CONTINUED, so a server that fails leaves the S-CSCF to go on with the criteria of lower priority (TS 24.229 5.4.1.7). UE 1 is registered and can call and be called. What it loses is SMS: no IP-SM-GW has subscribed to its registration state, so none has told the HSS that it takes short messages. The third-party REGISTER of its next re-registration subscribes.
+- **The short message ends in 404 Not Found.** The criterion of the MESSAGE says SESSION_CONTINUED too, so the S-CSCF goes on with the criteria of lower priority, of which none matches, and then routes the MESSAGE to its Request-URI. That is the PSI of the SC, which the UE addressed its short message to (TS 24.341 5.3.1.2 item a). Here the SC sits inside the node of the IP-SM-GW rather than being a node with a name of its own, and no subscriber has its number either, so the S-CSCF finds no ENUM record for it and answers 404 (TS 24.229 5.4.3.2 step 10). TS 24.341 5.3.1.2 gives the UE no handling of a failure response to that MESSAGE: it takes the submit report that comes in a MESSAGE of its own, and nothing else. The UE simulator reports the status code and sends nothing again.
+
+While it is not `UNLOCKED`, the IP-SM-GW goes on with what has begun and refuses what would start something new.
+
+It goes on with:
+
+- **The MESSAGE that carries a delivery report**, which `In-Reply-To` tells from every other MESSAGE (TS 24.341 5.3.2.4 item d) although it arrives outside any dialog, as every MESSAGE does. It is the RP-ACK or RP-ERROR for a short message that this network has already delivered, and so the end of a delivery that has begun. A 503 to it would leave that delivery waiting until its timer ran out, and the SC would hear of a failure for a short message the UE did have. A delivery report whose `In-Reply-To` names no delivery of this network is taken too, and gets the 488 (Not Acceptable Here) of [When it fails](#when-it-fails): the header is what tells a report from a new short message, and another instance has no such delivery either.
+- **The NOTIFY of a subscription to a registration state**, which is within the dialog of a SUBSCRIBE that this network sent and carries it on: the first one completes that dialog, and each one says whether the user still has a contact that takes short messages (step R4 above). A 503 to it would lose what it says until the next one comes, and leave the HSS holding a registration that no longer holds.
+- **Every delivery that the SC hands it.** The SC in this node asks only the instance that began the work: the short message it took from a UE, the status report of a delivery it ended, and the short message of another IMS network that it took in a MESSAGE. A node that reached an SC of its own over SGd or MAP would refuse a new delivery instead, and that SC would ask another IP-SM-GW.
+- **The deliveries whose wait for a delivery report has run out**, its own and those of other instances. The SC hears the outcome of every delivery, and one whose report never came has no outcome until an instance ends it.
+
+It answers 503 to:
+
+- **the third-party REGISTER**, of a registration, a re-registration and a deregistration alike (step R2 above). For a registration or a re-registration, what the refusal costs is the subscription to the registration state that would have followed it; the third-party REGISTER of the next re-registration makes that subscription instead. For a deregistration it costs nothing at all: the IP-SM-GW answers that one and does no more, because the S-CSCF ends the subscription with a NOTIFY of its own ([Re-registration and deregistration](#re-registration-and-deregistration)). That NOTIFY reaches whichever instance the store leads it to, and is within a dialog, so even an instance that is shutting down takes it, removes the subscription and tells the HSS that the user takes short messages no longer;
+- **a short message from a UE**, and a notification that a UE has memory again. Each starts the transfer of a short message;
+- **a short message that the IP-SM-GW of another IMS network sends to a user of this one.** It has begun in that network, but nothing of it has reached this instance, so another instance can take it whole. Where none can, the S-CSCF routes the MESSAGE to the recipient's contact itself, and the UE gets the short message of that network with no IP-SM-GW of this one in between.
+
+A method that the IP-SM-GW does not take at all keeps its 405 (Method Not Allowed), out of service or not: the method is no more supported out of service than in it, and the next instance would answer the same.
+
+3. Unlock the IP-SM-GW with the same request and `UNLOCKED`, and send the short message again:
+
+   ```sh
+   docker compose exec ipsmgw sh -c '
+   body="{\"administrative_state\":\"UNLOCKED\",\"operator\":\"learner\"}"
+   printf "PUT /maintenance/v1/functions/ipsmgw/administrative-state HTTP/1.0\r\nContent-Type: application/json\r\nContent-Length: ${#body}\r\n\r\n%s" "$body" |
+     nc -w 5 127.0.0.1 8085'
+   docker compose run --rm ue sms +12025550102 "Back on duty?"
+   ```
+
+   The IP-SM-GW answers 202 again and the submit report comes back. UE 2 is not running here, so the delivery itself fails as in [When it fails](#when-it-fails).
+
+In Wireshark, `sip.Status-Code == 503 && ip.src == 172.28.0.70` shows the 503s of the IP-SM-GW. The PUT request travels over the loopback interface of the container, so the capture does not hold it.
+
+The administrative state belongs to the process of the node: a node that starts again is `UNLOCKED`. `scripts/e2e-observability.sh` runs these steps and checks the capture.
+
 ## Read the body
 
 The body of a MESSAGE is binary: TS 24.341 has the UE send the octets as they are. Here is the body of the MESSAGE of step 1, as the UE simulator built it with `internal/sms`. The Lab shows the same octets under "Body (hex)" in the details of the MESSAGE.
