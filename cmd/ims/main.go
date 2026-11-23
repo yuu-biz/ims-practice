@@ -386,6 +386,7 @@ func run(configPath string, log *slog.Logger, level *slog.LevelVar) error {
 		// The sweep that ends the deliveries whose TR1N has run out runs
 		// until the node stops.
 		defer g.Close()
+		managed = append(managed, managedRole{function: g.Function(hss.Available), manage: g.Manage})
 		centre.SetIPSMGW(g)
 		if c.IBCF.Host != "" {
 			// A short message for a user of another network leaves
@@ -1005,12 +1006,13 @@ type configurationView struct {
 	Maintenance struct {
 		Listen string `json:"listen"`
 	} `json:"maintenance"`
-	HSS   *hssView   `json:"hss,omitempty"`
-	PCSCF *pcscfView `json:"pcscf,omitempty"`
-	ICSCF *icscfView `json:"icscf,omitempty"`
-	SCSCF *scscfView `json:"scscf,omitempty"`
-	MMTel *mmtelView `json:"mmtel,omitempty"`
-	MRFC  *mrfcView  `json:"mrfc,omitempty"`
+	HSS    *hssView    `json:"hss,omitempty"`
+	PCSCF  *pcscfView  `json:"pcscf,omitempty"`
+	ICSCF  *icscfView  `json:"icscf,omitempty"`
+	SCSCF  *scscfView  `json:"scscf,omitempty"`
+	MMTel  *mmtelView  `json:"mmtel,omitempty"`
+	MRFC   *mrfcView   `json:"mrfc,omitempty"`
+	IPSMGW *ipsmgwView `json:"ipsmgw,omitempty"`
 }
 
 // hssView is the HSS of the configuration view: where its provisioning
@@ -1094,6 +1096,19 @@ type mmtelView struct {
 	// ConferenceDomain is the subdomain whose public service identities
 	// are the conferences of this instance (TS 23.003 13.5).
 	ConferenceDomain string `json:"conference_domain,omitempty"`
+}
+
+// ipsmgwView is the IP-SM-GW with the SC stub beside it. None of its
+// settings is a secret.
+type ipsmgwView struct {
+	SIP sipView `json:"sip"`
+	// Number is the E.164 number that the IP-SM-GW registers in the HSS
+	// for each user it serves, and ServiceCentre the address of the SC.
+	Number        string `json:"number"`
+	ServiceCentre string `json:"service_centre"`
+	// IBCF is the IBCF through which a short message for a user of
+	// another IMS network leaves.
+	IBCF string `json:"ibcf,omitempty"`
 }
 
 type mrfcView struct {
@@ -1181,6 +1196,12 @@ func newConfigurationView(cfg config.Config) configurationView {
 	}
 	if c := cfg.MRFC; c != nil {
 		v.MRFC = &mrfcView{SIP: newSIPView(c.SIP), Notify: c.Notify.String(), MRFPs: c.MRFPs}
+	}
+	if c := cfg.IPSMGW; c != nil {
+		v.IPSMGW = &ipsmgwView{SIP: newSIPView(c.SIP), Number: c.Number, ServiceCentre: c.ServiceCentre.String()}
+		if c.IBCF.Host != "" {
+			v.IPSMGW.IBCF = c.IBCF.String()
+		}
 	}
 	return v
 }

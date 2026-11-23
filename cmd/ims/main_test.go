@@ -31,6 +31,7 @@ import (
 	"github.com/yuu-biz/ims-practice/internal/ibcf"
 	"github.com/yuu-biz/ims-practice/internal/icscf"
 	"github.com/yuu-biz/ims-practice/internal/interconnect"
+	"github.com/yuu-biz/ims-practice/internal/ipsmgw"
 	"github.com/yuu-biz/ims-practice/internal/kvstore"
 	"github.com/yuu-biz/ims-practice/internal/maintenance"
 	"github.com/yuu-biz/ims-practice/internal/metrics"
@@ -44,6 +45,7 @@ import (
 	"github.com/yuu-biz/ims-practice/internal/sgd"
 	"github.com/yuu-biz/ims-practice/internal/sh"
 	"github.com/yuu-biz/ims-practice/internal/sip"
+	"github.com/yuu-biz/ims-practice/internal/sms"
 )
 
 const (
@@ -1321,4 +1323,146 @@ func TestMaintenanceAPIShowsTheProfilesAndSettingsOfTheHSS(t *testing.T) {
 			t.Errorf("the changeable setting %s is %q, want %s", name, changeable[name], value)
 		}
 	}
+}
+
+// TestMaintenanceAPIShutsTheIPSMGWDown: on the maintenance listener of
+// a node with the ipsmgw role, the API shows the IP-SM-GW and its
+// configuration, and a shut down reaches the IP-SM-GW, which then
+// refuses a short message from a UE with 503 and Retry-After. The SC
+// beside it is handed nothing: the refusal comes before the IP-SM-GW
+// would read the body.
+func TestMaintenanceAPIShutsTheIPSMGWDown(t *testing.T) {
+	gwCfg := &config.IPSMGW{SIP: config.SIP{Listen: netip.MustParseAddrPort("0.0.0.0:5060"), Host: "ipsmgw." + domain},
+		Number: "12025550199", ServiceCentre: sms.InternationalNumber("+12025550100")}
+	centre := &untouchedSC{}
+	g := ipsmgw.New(ipsmgw.Config{URI: gwCfg.SIP.URI(), HomeDomain: domain, Number: gwCfg.Number,
+		ServiceCentre: gwCfg.ServiceCentre}, centre, ipsmgw.NewMemoryStore(), noSMSRegistration{}, noNames{}, quiet())
+	t.Cleanup(g.Close)
+	transport, err := sip.Listen("127.0.0.1:0", quiet())
+	if err != nil {
+		t.Fatal(err)
+	}
+	stack, err := sip.NewStack(transport, sip.Config{SentBy: transport.LocalAddr().String(), OnRequest: g.OnRequest}, quiet())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(stack.Close)
+	g.SetStack(stack)
+
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := config.Config{Node: "ipsmgw", Roles: []config.Role{config.RoleIPSMGW}, HomeDomain: domain,
+		Maintenance: &config.Maintenance{Listen: l.Addr().String()}, IPSMGW: gwCfg}
+	hssUp := true
+	roles := []managedRole{{function: g.Function(func() bool { return hssUp }), manage: g.Manage}}
+	stop, err := startMaintenance(l, cfg, roles, metrics.NewRegistry(), new(slog.LevelVar), quiet(), func() {})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer stop()
+	ctx := t.Context()
+	oam := maintenance.NewClient("http://"+l.Addr().String(), http.DefaultClient)
+
+	state, err := oam.State(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The IP-SM-GW is ENABLED while an instance of the HSS takes its Sh
+	// requests, with nothing in its hands.
+	functions := state.Functions
+	if len(functions) != 1 || functions[0].Role != string(config.RoleIPSMGW) ||
+		functions[0].OperationalState != maintenance.Enabled ||
+		functions[0].Users == nil || *functions[0].Users != 0 {
+		t.Errorf("functions %+v, want the IP-SM-GW ENABLED with no user", functions)
+	}
+	hssUp = false
+	if state, err := oam.State(ctx); err != nil || state.Functions[0].OperationalState != maintenance.Disabled {
+		t.Errorf("the IP-SM-GW is %+v (%v) without an Sh peer, want DISABLED", state.Functions, err)
+	}
+	hssUp = true
+	conf, err := oam.Configuration(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := `"ipsmgw":{"sip":{"listen":"0.0.0.0:5060","host":"ipsmgw.` + domain +
+		`"},"number":"12025550199","service_centre":"+12025550100"}`
+	if !strings.Contains(string(conf.Configuration), want) {
+		t.Errorf("configuration %s, want %s in it", conf.Configuration, want)
+	}
+	shut, err := oam.SetAdministrativeState(ctx, string(config.RoleIPSMGW),
+		maintenance.AdministrativeStateRequest{AdministrativeState: maintenance.ShuttingDown})
+	if err != nil || shut.AdministrativeState != maintenance.Locked {
+		t.Fatalf("shut down gave %+v (%v), want LOCKED with nothing in hand", shut, err)
+	}
+
+	resp := sendShortMessage(t, transport.LocalAddr())
+	if resp == nil || resp.StatusCode != 503 || resp.Get("Retry-After") == "" {
+		t.Errorf("the short message to the shut down IP-SM-GW got %v, want 503 with Retry-After", resp)
+	}
+	if centre.asked.Load() {
+		t.Error("the SC was handed the short message of a refused MESSAGE")
+	}
+}
+
+// sendShortMessage sends the MESSAGE of a short message from a UE to
+// the IP-SM-GW at addr, as the S-CSCF does by the filter criteria, and
+// returns the final response.
+func sendShortMessage(t *testing.T, addr netip.AddrPort) *sip.Message {
+	t.Helper()
+	transport, err := sip.Listen("127.0.0.1:0", quiet())
+	if err != nil {
+		t.Fatal(err)
+	}
+	from, err := sip.NewStack(transport, sip.Config{SentBy: transport.LocalAddr().String(),
+		OnRequest: func(st *sip.ServerTransaction) { st.Respond(sip.NewResponse(st.Request, 405, sip.NewTag())) }}, quiet())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(from.Close)
+	m := &sip.Message{Method: sip.MESSAGE, RequestURI: "tel:+12025550100"}
+	m.Add("Max-Forwards", "69")
+	m.Add("From", "<sip:+12025550101@"+domain+">;tag="+sip.NewTag())
+	m.Add("To", "<tel:+12025550100>")
+	m.Add("Call-ID", sip.NewCallID())
+	m.Add("CSeq", "1 MESSAGE")
+	m.Add("P-Asserted-Identity", "<tel:+12025550101>")
+	m.Add("Content-Type", ipsmgw.ContentType)
+	body, err := sms.RPDataMSToNetwork{MessageReference: 1, DestinationAddress: sms.InternationalNumber("+12025550100"),
+		UserData: []byte{0x01, 0x00, 0x00, 0x00, 0x00}}.Marshal()
+	if err != nil {
+		t.Fatal(err)
+	}
+	m.Body = body
+	ct, err := from.SendRequest(m, sip.Destination{Transport: sip.UDP, Addr: addr})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var final *sip.Message
+	for r := range ct.Responses() {
+		if r.StatusCode >= 200 {
+			final = r
+		}
+	}
+	return final
+}
+
+// untouchedSC is an SC that records whether the IP-SM-GW handed it
+// anything. A drained IP-SM-GW never does.
+type untouchedSC struct{ asked atomic.Bool }
+
+func (c *untouchedSC) Submit(context.Context, sms.Address, sms.Submit) (sms.SubmitReport, error) {
+	c.asked.Store(true)
+	return sms.SubmitReport{}, nil
+}
+
+func (c *untouchedSC) Report(context.Context, string, ipsmgw.Outcome) { c.asked.Store(true) }
+
+// noSMSRegistration is an HSS that takes no Sh write, which a drained
+// IP-SM-GW never attempts.
+type noSMSRegistration struct{}
+
+func (noSMSRegistration) UpdateSMSRegistrationInfo(context.Context, sh.UserIdentity, string) error {
+	return errors.New("no HSS in this test")
 }
