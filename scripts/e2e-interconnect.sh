@@ -6,10 +6,12 @@
 # sends UE B1 a short message, and UE B1 answers UE A1 with one. Then
 # the mismatch scenarios switch the interconnect profiles: a mismatch
 # fails with the status it should, and the adjusted profile passes. UE
-# A1 merges its calls with UE A2 and UE A3 into a conference, and UE B1
-# joins it from network B with an INVITE to the conference URI. A
-# host on the link that belongs to no peer sends IBCF-A requests, which
-# get no answer and do not get into network A. Last, the captures of
+# A1 merges its calls with UE B1 and UE A2 into a conference, which
+# brings UE B1 in with a Replaces that each IBCF maps to the dialog of
+# its other side; UE B1 leaves and comes back with an INVITE to the
+# conference URI. A host on the link that belongs to no peer sends
+# IBCF-A requests, which get no answer and do not get into network A.
+# Last, the captures of
 # the three bridges are read: each IBCF is a B2BUA, so the INVITEs on
 # either side of it have Call-IDs of their own; the conference URI that
 # reaches network B names no node; network B's capture
@@ -65,7 +67,7 @@ fi
 # an image that is gone already, which is no error here, hence their
 # "|| true" in this script.
 cleanup() {
-	docker rm -f "${project}-ue-b1" "${project}-ue-a1" "${project}-ue-a2" "${project}-ue-a3" >/dev/null 2>&1 || true
+	docker rm -f "${project}-ue-b1" "${project}-ue-a1" "${project}-ue-a2" >/dev/null 2>&1 || true
 	if [ "${E2E_KEEP:-0}" != 1 ]; then
 		c --profile ue down -v --remove-orphans >/dev/null 2>&1 || true
 		for name in "${tagged[@]}"; do
@@ -332,16 +334,18 @@ use_profile ibcf-a network-b.yaml
 
 docker rm -f "${project}-ue-b1" >/dev/null 2>&1 || true
 
-echo "a conference of network A that UE B1 joins from network B"
-# UE A1 calls UE A2, holds the call, calls UE A3 and merges the two
-# calls into a conference (GSMA IR.92 2.3.3). UE B1 then joins it with
-# an INVITE to the conference URI (TS 24.147 5.3.1.4.1): a request
-# outside a dialog, which crosses IBCF-B and IBCF-A and goes from the
-# I-CSCF of network A to the focus by DNS. Each UE runs "ue serve" and
-# takes each step from "ue ctl" in its container.
-ue_a3=(--impi 001010000000003@ims.mnc001.mcc001.3gppnetwork.org
-	--impu sip:+12025550103@ims.mnc001.mcc001.3gppnetwork.org --password test-password-3)
-a1="${project}-ue-a1" a2="${project}-ue-a2" a3="${project}-ue-a3" b1="${project}-ue-b1"
+echo "a conference of network A with UE B1 of network B"
+# UE A1 calls UE B1, holds the call, calls UE A2 and merges the two
+# calls into a conference (GSMA IR.92 2.3.3). The focus's INVITE to UE
+# B1 carries a Replaces of UE B1's call with UE A1 (TS 24.147
+# 5.3.2.5.4), which each IBCF passes on naming the dialog of its other
+# side (TS 24.229 5.10.5), so UE B1 takes it in the place of that call.
+# UE B1 then leaves and comes back with an INVITE to the conference URI
+# (TS 24.147 5.3.1.4.1): a request outside a dialog, which crosses
+# IBCF-B and IBCF-A and goes from the I-CSCF of network A to the focus
+# by DNS. Each UE runs "ue serve" and takes each step from "ue ctl" in
+# its container.
+a1="${project}-ue-a1" a2="${project}-ue-a2" b1="${project}-ue-b1"
 # serve NAME SERVICE FLAGS... starts the UE of SERVICE as a phone that
 # stays up, with its control API on port 8090 of its container.
 serve() {
@@ -394,42 +398,47 @@ print(v or "")
 }
 serve "$a1" ue
 serve "$a2" ue2 "${ue_a2[@]}"
-serve "$a3" ue3 "${ue_a3[@]}"
 serve "$b1" ue-b1 "${ue_b1[@]}"
 registered=1
-for name in "$a1" "$a2" "$a3" "$b1"; do
+for name in "$a1" "$a2" "$b1"; do
 	wait_phone "$name" "registered idle 0" || registered=0
 done
 if [ "$registered" = 1 ]; then
-	echo "ok   UE A1, UE A2, UE A3 and UE B1 registered"
+	echo "ok   UE A1, UE A2 and UE B1 registered"
 else
 	fail=1
 fi
-if ctl "$a1" call tel:+12025550102 >/dev/null && wait_phone "$a1" "registered active 0" &&
+if ctl "$a1" call tel:+12025550151 >/dev/null && wait_phone "$a1" "registered active 0" &&
+	wait_phone "$b1" "registered active 0"; then
+	echo "ok   UE A1 called UE B1, which answered"
+else
+	echo "FAIL UE A1's call to UE B1"
+	fail=1
+fi
+if ctl "$a1" hold >/dev/null && wait_phone "$a1" "registered active/held 0"; then
+	echo "ok   UE A1 held its call with UE B1"
+else
+	echo "FAIL UE A1 did not hold its call"
+	fail=1
+fi
+if ctl "$a1" call tel:+12025550102 >/dev/null && wait_phone "$a1" "registered active/held+active 0" &&
 	wait_phone "$a2" "registered active 0"; then
 	echo "ok   UE A1 called UE A2, which answered"
 else
 	echo "FAIL UE A1's call to UE A2"
 	fail=1
 fi
-if ctl "$a1" hold >/dev/null && wait_phone "$a1" "registered active/held 0"; then
-	echo "ok   UE A1 held its call with UE A2"
+# The merge answers once the focus has invited both peers. Each peer
+# takes the focus's call in the place of its call with UE A1, so each
+# has one call again. UE A2 then subscribes to the conference URI of the
+# focus's Contact and sees its three users. UE B1 sees none: its
+# SUBSCRIBE outside the dialog gets 403 at IBCF-B, and the agreement
+# with network A does not let one within the dialog cross either.
+if ctl "$a1" merge >/dev/null && wait_phone "$a1" "registered active 3" &&
+	wait_phone "$b1" "registered active 0" && wait_phone "$a2" "registered active 3"; then
+	echo "ok   UE A1 merged its calls, and UE B1 of network B is in the conference with UE A2"
 else
-	echo "FAIL UE A1 did not hold its call"
-	fail=1
-fi
-if ctl "$a1" call tel:+12025550103 >/dev/null && wait_phone "$a1" "registered active/held+active 0" &&
-	wait_phone "$a3" "registered active 0"; then
-	echo "ok   UE A1 called UE A3, which answered"
-else
-	echo "FAIL UE A1's call to UE A3"
-	fail=1
-fi
-# The merge answers once the focus has invited both peers.
-if ctl "$a1" merge >/dev/null && wait_phone "$a1" "registered active 3"; then
-	echo "ok   UE A1 merged its calls, and the conference has three users"
-else
-	echo "FAIL the merge: UE A1 is \"$(phone "$a1")\""
+	echo "FAIL the merge: UE A1 is \"$(phone "$a1")\", UE B1 \"$(phone "$b1")\""
 	fail=1
 fi
 # A conference URI is a PSI of the subdomain of the conference URIs,
@@ -441,25 +450,30 @@ else
 	echo "FAIL the conference URI is \"$conference_uri\""
 	fail=1
 fi
-if ctl "$b1" call "$conference_uri" >/dev/null && wait_phone "$b1" "registered active 0" &&
-	wait_phone "$a1" "registered active 4"; then
-	echo "ok   UE B1 called the conference URI from network B, and the conference has four users"
+if ctl "$b1" hangup >/dev/null && wait_phone "$b1" "registered idle 0" && wait_phone "$a1" "registered active 2"; then
+	echo "ok   UE B1 left the conference"
 else
-	echo "FAIL UE B1 did not join the conference: UE B1 is \"$(phone "$b1")\", UE A1 \"$(phone "$a1")\""
+	echo "FAIL UE B1 did not leave the conference: UE B1 is \"$(phone "$b1")\", UE A1 \"$(phone "$a1")\""
+	fail=1
+fi
+if ctl "$b1" call "$conference_uri" >/dev/null && wait_phone "$b1" "registered active 0" &&
+	wait_phone "$a1" "registered active 3"; then
+	echo "ok   UE B1 called the conference URI from network B, and is in the conference again"
+else
+	echo "FAIL UE B1 did not come back to the conference: UE B1 is \"$(phone "$b1")\", UE A1 \"$(phone "$a1")\""
 	fail=1
 fi
 b1_call="$(ctl "$b1" status 2>/dev/null | json_field call call_id)" || b1_call=
 # The creator leaves, and the focus ends the call of every other user
 # (TS 24.147 5.3.2.7), UE B1's across the border too.
 if ctl "$a1" hangup >/dev/null && wait_phone "$a1" "registered idle 0" &&
-	wait_phone "$b1" "registered idle 0" && wait_phone "$a2" "registered idle 0" &&
-	wait_phone "$a3" "registered idle 0"; then
-	echo "ok   UE A1 left, and the conference ended for all four"
+	wait_phone "$b1" "registered idle 0" && wait_phone "$a2" "registered idle 0"; then
+	echo "ok   UE A1 left, and the conference ended for all three"
 else
 	echo "FAIL ending the conference"
 	fail=1
 fi
-for name in "$a1" "$a2" "$a3" "$b1"; do
+for name in "$a1" "$a2" "$b1"; do
 	docker stop "$name" >/dev/null 2>&1 || true
 	docker logs "$name" >"e2e-out/${name#"$project"-}-conference.log" 2>&1 || true
 	docker rm -f "$name" >/dev/null 2>&1 || true
@@ -655,7 +669,11 @@ expect "404 from IBCF-B for the local number" \
 mismatched="$last"
 # Only a focus's Contact crosses as it came, with the IBCF that passes it
 # on in Record-Route (TS 24.229 5.10.5): that of the conference below.
-none "Record-Route on the link, other than with the Contact of a focus" 'sip.Record-Route && !(sip.Contact contains "isfocus")'
+# The responses to the focus's INVITE to UE B1 carry that Record-Route
+# too (RFC 3261 12.1.1), with IBCF-B's own Contact.
+focus_to_b1="$(tshark_fields "$invite && ip.src == $ibcf_a_nni && ip.dst == $ibcf_b_nni && sip.Replaces" sip.Call-ID | first_line)"
+none "Record-Route on the link, other than with the Contact of a focus and in the dialog that its INVITE to UE B1 starts" \
+	"sip.Record-Route && !(sip.Contact contains \"isfocus\") && sip.Call-ID != \"$focus_to_b1\""
 none "P-Charging-Function-Addresses" 'sip.P-Charging-Function-Addresses'
 
 echo "network B (ims1)"
@@ -775,6 +793,52 @@ expect "MESSAGE from the host of no peer network on the link" \
 pcap="$pcap_nni" none "packets to the host of no peer network" "ip.dst == $stranger"
 pcap="$pcap_a" none "requests of the host of no peer network inside network A" \
 	'sip.From contains "+12025550198"'
+
+echo "the merge takes UE B1's call over (TS 24.147 5.3.2.5.4; RFC 3891 3; TS 24.229 5.7.5.1, 5.10.5)"
+# The focus's INVITE to UE B1 is the one INVITE with a Replaces in each
+# capture. Its Replaces names UE B1's call with UE A1 by the Call-ID of
+# the dialog on that side of each B2BUA: the MMTel AS and IBCF-A in
+# network A, the two IBCFs on the link, IBCF-B and UE B1 in network B.
+# replaced_call prints the Call-ID in the Replaces of frame $last: the
+# part before its first ";".
+replaced_call() {
+	local value
+	value="$(field sip.Replaces | first_line)"
+	printf '%s\n' "${value%%;*}"
+}
+pcap="$pcap_a"
+last=0
+expect "INVITE S-CSCF -> IBCF-A from the focus, isfocus in Contact and a Replaces" \
+	"$invite && ip.src == $scscf && ip.dst == $ibcf_a && sip.Replaces && sip.Contact contains \"isfocus\""
+replaced_a="$(replaced_call)"
+last=0
+expect "the Replaces names UE A1's call with UE B1 as it reached IBCF-A" \
+	"$invite && ip.src == $scscf && ip.dst == $ibcf_a && sip.Call-ID == \"$replaced_a\" && !sip.Replaces"
+pcap="$pcap_nni"
+last=0
+expect "INVITE IBCF-A -> IBCF-B from the focus, with a Replaces" \
+	"$invite && ip.src == $ibcf_a_nni && ip.dst == $ibcf_b_nni && sip.Replaces"
+replaced_nni="$(replaced_call)"
+last=0
+expect "the Replaces names that call on the link, IBCF-A's own dialog with IBCF-B" \
+	"$invite && ip.src == $ibcf_a_nni && ip.dst == $ibcf_b_nni && sip.Call-ID == \"$replaced_nni\" && !sip.Replaces"
+pcap="$pcap_b"
+last=0
+expect "INVITE to UE B1 from the focus, with a Replaces" "$invite && ip.dst == $ue_b1_ip && sip.Replaces"
+replaced_b="$(replaced_call)"
+taken_over="sip.Call-ID == \"$(field sip.Call-ID | first_line)\""
+expect "200 OK from UE B1: it takes the focus's call" "$ok200 && ip.src == $ue_b1_ip && $taken_over"
+last=0
+expect "the Replaces names UE B1's own call with UE A1" \
+	"$invite && ip.dst == $ue_b1_ip && sip.Call-ID == \"$replaced_b\" && !sip.Replaces"
+expect "a BYE ends that call" "sip.Method == \"BYE\" && sip.Call-ID == \"$replaced_b\""
+if [ -n "$replaced_a" ] && [ -n "$replaced_nni" ] && [ -n "$replaced_b" ] &&
+	[ "$replaced_a" != "$replaced_nni" ] && [ "$replaced_nni" != "$replaced_b" ] && [ "$replaced_a" != "$replaced_b" ]; then
+	echo "ok   each IBCF passed the Replaces on with the Call-ID of its other side"
+else
+	echo "FAIL the Replaces crossed an IBCF as it came: network A \"$replaced_a\", link \"$replaced_nni\", network B \"$replaced_b\""
+	fail=1
+fi
 
 echo "UE B1 joins the conference of network A (TS 24.147 5.3.1.4.1, 5.3.2.4.1; TS 24.229 5.3.2.1 step 3, 5.10.5)"
 # Each capture is read from its first frame: the filters name the

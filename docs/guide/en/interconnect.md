@@ -281,7 +281,13 @@ UE A1     MMTel AS (focus)   S-CSCF-A   IBCF-A ║ IBCF-B    UE B1
 
 Dialogs 1 to 4 all belong to the old call between UE A1 and UE B1, which has one dialog between each two of the UAs and B2BUAs on its way; the proxies of each network are left out of the picture. A Replaces that names no call of the IBCF goes on as it came, as TS 24.229 5.7.5.1 has an AS pass on one that names no dialog of its own: a B2BUA beyond the IBCF may hold that dialog. When no node does, the UA at the end answers 481 (Call/Transaction Does Not Exist) (RFC 3891 3). When the IBCF cannot read its `Store`, it cannot tell which, and answers the INVITE with 500 (Server Internal Error).
 
-A user of network B joins with an INVITE to the conference URI (TS 24.147 5.3.1.4.1), and a participant that has left comes back the same way. The script runs this: UE A1 merges its calls with UE A2 and UE A3 into a conference, and UE B1 calls the conference URI, which the script reads from UE A1 (`ue ctl conference`). The INVITE is a request outside any dialog, a new call, which crosses as any call does: the P-CSCF and the S-CSCF of network B, IBCF-B, the link, IBCF-A. IBCF-A passes it to the I-CSCF of network A. The URI is in a subdomain of public service identities, so the I-CSCF asks the HSS nothing: it looks up the NAPTR and SRV records of `conf.ims.mnc001.mcc001.3gppnetwork.org` (RFC 3263) and sends the INVITE to the MMTel AS that they name (TS 24.229 5.3.2.1 step 3). The focus takes UE B1 in as it takes a user of its own network ([Coming back to the conference](mrf.md#coming-back-to-the-conference)), and answers with the conference URI and `isfocus` in Contact.
+The script merges UE A1's calls with UE B1 and UE A2 this way. What you see:
+
+- **The capture of network A.** The focus's INVITE from the S-CSCF to IBCF-A, with `isfocus` in Contact and a Replaces whose Call-ID is that of UE A1's call to UE B1 from the S-CSCF to IBCF-A: dialog 2.
+- **The capture of the link.** The INVITE from IBCF-A to IBCF-B, whose Replaces has the Call-ID of the same call on the link instead: dialog 3.
+- **The capture of network B.** The INVITE that reaches UE B1, whose Replaces has the Call-ID of UE B1's own call: dialog 4. UE B1 answers it with 200, and a BYE ends the old call.
+
+A user of network B joins with an INVITE to the conference URI (TS 24.147 5.3.1.4.1), and a participant that has left comes back the same way. The script runs this after the merge: UE B1 leaves the conference and comes back by calling the conference URI, which the script reads from UE A1 (`ue ctl conference`). The INVITE is a request outside any dialog, a new call, which crosses as any call does: the P-CSCF and the S-CSCF of network B, IBCF-B, the link, IBCF-A. IBCF-A passes it to the I-CSCF of network A. The URI is in a subdomain of public service identities, so the I-CSCF asks the HSS nothing: it looks up the NAPTR and SRV records of `conf.ims.mnc001.mcc001.3gppnetwork.org` (RFC 3263) and sends the INVITE to the MMTel AS that they name (TS 24.229 5.3.2.1 step 3). The focus takes UE B1 in as it takes a user of its own network ([Coming back to the conference](mrf.md#coming-back-to-the-conference)), and answers with the conference URI and `isfocus` in Contact.
 
 ```text
 UE B1   P-CSCF-B  S-CSCF-B  IBCF-B ║ IBCF-A   I-CSCF-A   DNS    MMTel AS (focus)
@@ -453,6 +459,7 @@ This project carries short messages between the networks this way because it is 
 | `sdp.connection_info.address == 172.28.2.11` | SDP with the address of TrGW-A on the link. |
 | `rtp && ip.addr == 172.28.2.0/24` | RTP between the TrGWs (with `rtp.heuristic_rtp` on). |
 | `dns.qry.name contains "5.1.0.5.5.5.2.0.2.1.e164.arpa"` | ENUM for network B's numbers. |
+| `sip.Replaces` | The focus's INVITE that takes UE B1's call over, in each capture with the Call-ID of that call on its side. |
 | `sip.Status-Code in {404, 405, 420, 488}` | The rejections of the scenarios. |
 | `gsm_sms.sms_text` | The short messages, decoded, also on the link. |
 | `sip.Method == "MESSAGE" && sip.P-Served-User contains "sescase=term"` | A short message from the other network, on its way from the S-CSCF to the IP-SM-GW. |
