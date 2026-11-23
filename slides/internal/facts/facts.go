@@ -1,8 +1,11 @@
-// Package facts checks the commands that the decks tell a learner to
-// run against the repository: the services and profiles of the Compose
-// files, the subcommands and flags of the UE simulator, the HTTP routes
-// that a curl reaches, and the scripts. A command that the code no
-// longer takes fails the check, as a link to a renamed heading does.
+// Package facts checks what the decks say about the repository against
+// the repository itself: the commands they tell a learner to run (the
+// services and profiles of the Compose files, the subcommands and flags
+// of the UE simulator, the HTTP routes that a curl reaches, and the
+// scripts), and the nodes and addresses of their tables. A command that
+// the code no longer takes fails the check, as a link to a renamed
+// heading does, and so does a table that gives the address of a service
+// that no longer runs.
 //
 // Each fact is read from where the learner meets it: the Compose files
 // as they are, the subcommands and flags from "ue SUBCOMMAND -h", and the
@@ -28,6 +31,7 @@ type Repository struct {
 	compose map[string]*composeFile
 	ue      *ueCommand
 	routes  map[string][]route
+	network *network
 	failed  map[string]bool
 }
 
@@ -38,7 +42,8 @@ func NewRepository(root string) *Repository {
 
 // Check reports each command of a deck that names a service, a profile,
 // a subcommand, a flag, a route or a script that the repository does
-// not have.
+// not have, and each table of a deck that names an address or a service
+// that the Compose files do not have.
 func (r *Repository) Check(d *deck.Deck) []error {
 	var problems []error
 	for _, c := range commands(d) {
@@ -51,7 +56,7 @@ func (r *Repository) Check(d *deck.Deck) []error {
 			problems = append(problems, fmt.Errorf("%s: slide %d: %s", d.Path, s.slide, p))
 		}
 	}
-	return problems
+	return append(problems, r.checkTables(d)...)
 }
 
 // command is one simple command of a deck, split into words as a shell
