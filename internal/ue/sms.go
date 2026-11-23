@@ -25,11 +25,16 @@ import (
 // of a mobile station that sends and receives short messages over the
 // CS or PS domain (TS 24.011, TS 23.040); SIP only carries them.
 //
-// SIMPLIFIED: TS 24.341 5.3.2.5. The receiver sends RP-SMMA when it has
-// memory again after it refused a short message for want of it (RP-Cause
-// 22). The simulator keeps every short message it gets and never runs
-// out of memory, so it never refuses one that way and never sends
-// RP-SMMA.
+// SIMPLIFIED: TS 24.011 6.3.3.1.2 and 6.3.3.1.3. The UE sends the
+// notification that it has memory again (RP-SMMA) once. It runs neither
+// timer TR1M, which waits for the RP-ACK, nor timer TRAM, after which
+// the MS sends the notification again with a new RP-MR; a notification
+// that fails therefore leaves the flag set rather than being repeated
+// by the UE itself. Nor does it tell a permanent RP-Cause from a
+// temporary one: TS 23.040 10.3 operation 14 clears the flag on a
+// permanent failure too, but here only the RP-ACK clears it, and any
+// RP-ERROR leaves it set. The control API sends the next notification
+// instead, with the new RP-MR of 6.3.3.1.3.
 
 // SMSContentType is the media type of a short message in a MESSAGE
 // (TS 24.341 5.3.1.2 d).
@@ -122,8 +127,25 @@ type smsState struct {
 	// nextMR and nextTPMR are the RP-MR and the TP-MR of the next
 	// SMS-SUBMIT. The MS picks a new RP-MR for each RP-DATA (TS 24.011
 	// 8.2.3) and adds one to TP-MR for each SMS-SUBMIT (TS 23.040
-	// 9.2.3.6).
+	// 9.2.3.6). An RP-SMMA takes its RP-MR from nextMR too, which gives
+	// each notification one of its own (TS 24.011 6.3.3.1.3).
 	nextMR, nextTPMR uint8
+	// memoryFull is what the control API set: whether the UE has memory
+	// for an incoming short message.
+	memoryFull bool
+	// memoryCapacityExceeded is the memory capacity exceeded
+	// notification flag of TS 23.040 10.3 operation 14: the UE owes the
+	// network a notification once it has memory again. The UE sets it
+	// when it refuses a short message for want of memory and clears it
+	// when the RP-ACK for the notification comes.
+	memoryCapacityExceeded bool
+	// ipsmgw is the IP-SM-GW of the MESSAGE that brought the short
+	// message the UE could not store, where the notification goes (TS
+	// 24.341 5.3.2.5 NOTE 1).
+	ipsmgw string
+	// notifications is the RP-MR of each RP-SMMA that has no answer yet,
+	// by the Call-ID of the MESSAGE that carried it.
+	notifications map[string]uint8
 	// changed is closed, and replaced, on each change, which wakes
 	// WaitSMS.
 	changed chan struct{}
@@ -167,6 +189,137 @@ func (u *UE) WaitSMS(ctx context.Context, done func(SMSHistory) bool) (SMSHistor
 			return h, ctx.Err()
 		}
 	}
+}
+
+// SMSReception is how the UE takes short messages. Nothing of it goes
+// on the wire by itself; it is the state that the control API sets to
+// put the UE in a place where a delivery fails.
+type SMSReception struct {
+	// MemoryFull is true while the UE has no memory for an incoming
+	// short message and refuses each one with RP-Cause 22 (TS 24.011
+	// 8.2.5.4 table 8.4).
+	MemoryFull bool `json:"memory_full"`
+	// MemoryCapacityExceededNotification is the flag of TS 23.040 10.3
+	// operation 14: the UE refused a short message for want of memory
+	// and owes the network the notification that it has memory again.
+	MemoryCapacityExceededNotification bool `json:"memory_capacity_exceeded_notification"`
+}
+
+// SMSReception returns how the UE takes short messages.
+func (u *UE) SMSReception() SMSReception {
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	return u.receptionLocked()
+}
+
+func (u *UE) receptionLocked() SMSReception {
+	return SMSReception{MemoryFull: u.sms.memoryFull,
+		MemoryCapacityExceededNotification: u.sms.memoryCapacityExceeded}
+}
+
+// SetSMSMemoryFull takes the memory of the UE for short messages away,
+// or gives it back. TS 23.040 10.3 operation 14 has the MS read the
+// memory capacity exceeded notification flag once memory is free again
+// and, where it is set, notify the network; so does this, with the
+// RP-SMMA of TS 24.341 5.3.2.5. It returns once that MESSAGE has its
+// final response. The memory is set either way: the error says only
+// that the notification did not get through.
+func (u *UE) SetSMSMemoryFull(ctx context.Context, full bool) (SMSReception, error) {
+	u.mu.Lock()
+	u.sms.memoryFull = full
+	notify := !full && u.sms.memoryCapacityExceeded
+	u.mu.Unlock()
+	if !notify {
+		return u.SMSReception(), nil
+	}
+	err := u.notifyMemoryAvailable(ctx)
+	return u.SMSReception(), err
+}
+
+// NotifyMemoryAvailable sends one more notification that the UE has
+// memory again, whatever the flag says. It stands for the
+// retransmission that timer TRAM drives in TS 24.011 6.3.3.1.3, and
+// lets the network be shown a notification it has already seen.
+func (u *UE) NotifyMemoryAvailable(ctx context.Context) (SMSReception, error) {
+	err := u.notifyMemoryAvailable(ctx)
+	return u.SMSReception(), err
+}
+
+// notifyMemoryAvailable is TS 24.341 5.3.2.5: a MESSAGE with an RP-SMMA
+// in it, to the IP-SM-GW that brought the short message the UE could
+// not store, or to the PSI of the SC when the UE has learnt no IP-SM-GW
+// (item a and NOTE 1).
+func (u *UE) notifyMemoryAvailable(ctx context.Context) error {
+	u.mu.Lock()
+	target, mr := u.sms.ipsmgw, u.sms.nextMR
+	u.sms.nextMR++
+	u.mu.Unlock()
+	if target == "" {
+		if u.cfg.SCAddress == "" {
+			return ErrNoServiceCentre
+		}
+		target = serviceCentrePSI(u.cfg.SCAddress)
+	}
+	body, err := sms.RPSMMA{MessageReference: mr}.Marshal()
+	if err != nil {
+		return err
+	}
+	req, err := u.newSMSRequest(target, body)
+	if err != nil {
+		return err
+	}
+	// The RP-ACK may overtake the final response of the MESSAGE, so the
+	// UE knows what to match it against before it sends.
+	u.mu.Lock()
+	if u.sms.notifications == nil {
+		u.sms.notifications = map[string]uint8{}
+	}
+	u.sms.notifications[req.Get("Call-ID")] = mr
+	u.mu.Unlock()
+	log := u.log.With("call_id", req.Get("Call-ID"))
+	resp, err := u.request(ctx, req)
+	if err == nil && resp.StatusCode >= 300 {
+		err = &SMSRefused{StatusCode: resp.StatusCode, Reason: resp.Reason}
+	}
+	if err != nil {
+		u.mu.Lock()
+		delete(u.sms.notifications, req.Get("Call-ID"))
+		u.mu.Unlock()
+		log.Warn("memory available notification not sent", "to", target, "error", err.Error())
+		return err
+	}
+	log.Info("memory available notification sent", "to", target, "rp_mr", int(mr), "status", resp.StatusCode)
+	return nil
+}
+
+// notificationReport takes the RP-ACK or RP-ERROR for a notification
+// that the UE has memory again, which the IP-SM-GW sends as it sends a
+// submit report, and tells whether callID named one. TS 24.011
+// 6.3.3.1.2 ends the notification on an answer that carries the RP-MR of
+// the last RP-SMMA; the RP-ACK clears the memory capacity exceeded
+// notification flag (TS 23.040 10.3 operation 14).
+func (u *UE) notificationReport(st *sip.ServerTransaction, callID string, rp sms.RPMessage, log *slog.Logger) bool {
+	req := st.Request
+	mr := req.Body[1]
+	u.mu.Lock()
+	want, ours := u.sms.notifications[callID]
+	if ours && mr == want {
+		delete(u.sms.notifications, callID)
+		if rp.MTI() == sms.RPMTIAckNetworkToMS {
+			u.sms.memoryCapacityExceeded = false
+		}
+	}
+	u.mu.Unlock()
+	if !ours {
+		return false
+	}
+	st.Respond(sip.NewResponse(req, 200, sip.NewTag()))
+	if mr != want {
+		log.Warn("discarded a report for another RP-MR", "rp_mr", int(mr), "want", int(want))
+		return true
+	}
+	log.Info("memory available notification answered", "rp", rpName(rp.MTI()), "rp_mr", int(mr))
+	return true
 }
 
 // ReceiveSMS is the UAConfig.OnMessage of the UE: it takes each MESSAGE
@@ -268,6 +421,18 @@ func (u *UE) receiveRPData(st *sip.ServerTransaction, m sms.RPDataNetworkToMS, l
 		u.receiveStatusReport(req, m, report, log)
 		return
 	}
+	// A short message that the UE has no memory for is refused with
+	// RP-Cause 22 (TS 24.011 8.2.5.4 table 8.4, Annex E-3), and TS
+	// 23.040 9.2.2.1a with TP-FCS D3 in an SMS-DELIVER-REPORT besides.
+	// A status report is not stored, and the branch above has taken it
+	// already.
+	if u.noMemoryFor(req) {
+		log.Info("short message refused: the UE has no memory for it")
+		report, _ := sms.DeliverReport{FailureCause: sms.FCSMemoryCapacityExceeded}.Marshal()
+		u.sendDeliveryReport(req, sms.RPError{Direction: sms.MSToNetwork, MessageReference: m.MessageReference,
+			Cause: sms.RPCauseMemoryCapacityExceeded, UserData: report}, log)
+		return
+	}
 	var deliver sms.Deliver
 	var text string
 	fcs := sms.FCSTPDUNotSupported
@@ -298,6 +463,24 @@ func (u *UE) receiveRPData(st *sip.ServerTransaction, m sms.RPDataNetworkToMS, l
 		"service_centre_time_stamp", got.ServiceCentreTimeStamp.Format(time.RFC3339))
 	report, _ := sms.DeliverReport{}.Marshal()
 	u.sendDeliveryReport(req, sms.RPAck{Direction: sms.MSToNetwork, MessageReference: m.MessageReference, UserData: report}, log)
+}
+
+// noMemoryFor tells whether the UE has no memory for the short message
+// that req brought. Where it has none, the UE sets the memory capacity
+// exceeded notification flag (TS 23.040 10.3 operation 14) and keeps the
+// IP-SM-GW of the MESSAGE, where the notification goes once memory is
+// free again (TS 24.341 5.3.2.5 NOTE 1).
+func (u *UE) noMemoryFor(req *sip.Message) bool {
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	if !u.sms.memoryFull {
+		return false
+	}
+	u.sms.memoryCapacityExceeded = true
+	if ipsmgw, ok := ipsmgwOf(req); ok {
+		u.sms.ipsmgw = ipsmgw
+	}
+	return true
 }
 
 // textFailureCause is the TP-FCS for a text that DecodeText refused: an
@@ -518,6 +701,9 @@ func internationalNumber(number string) (string, error) {
 func (u *UE) receiveSubmitReport(st *sip.ServerTransaction, rp sms.RPMessage, log *slog.Logger) {
 	req := st.Request
 	callID := req.Get("In-Reply-To")
+	if u.notificationReport(st, callID, rp, log) {
+		return
+	}
 	u.mu.Lock()
 	i := slices.IndexFunc(u.sms.sent, func(s SentSMS) bool { return s.CallID == callID })
 	if callID == "" || i < 0 {

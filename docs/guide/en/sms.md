@@ -176,6 +176,22 @@ To try the failures, which need no other UE:
 
 The same can be done from the Lab: see "Drive the UE simulators" in [the Lab guide](lab.md). The UE cards send short messages and list what each UE sent and received, and the details of each MESSAGE show the decoded short message.
 
+### Take the memory of the UE away
+
+A short message to a user who is registered usually arrives. One state in which it does not is a UE with no memory left for it. `ue serve` sets that state over its HTTP control API, which "Drive a UE over HTTP" in [the call guide](call.md) introduces:
+
+| Request | What the UE does |
+| --- | --- |
+| `PUT /sms-memory` with `{"full": true}` | Has no memory for an incoming short message. It answers each one it would store with an RP-ERROR, RP-Cause 22 (memory capacity exceeded) and TP-FCS `0xd3`, and keeps nothing of it. A status report is not stored, so it still gets through. The first refusal leaves the UE owing the network a notification. |
+| `PUT /sms-memory` with `{"full": false}` | Has memory again. Where it owes a notification, it sends one at once: an RP-SMMA in a MESSAGE to the IP-SM-GW that brought the short message it could not store, or to the PSI of the SC when no IP-SM-GW has written to it (TS 24.341 5.3.2.5). The RP-ACK for that notification ends it, and the UE owes none. |
+| `POST /sms-memory/notify` | Sends one more notification, whatever it owes, with an RP-MR of its own (TS 24.011 6.3.3.1.3). That is how a phone repeats a notification that went unanswered, and it shows the network one it has answered already. |
+
+Each of them answers with the state it leaves behind, such as `{"memory_full": false, "memory_capacity_exceeded_notification": true}`. The last field is the memory capacity exceeded notification flag that a phone keeps on its (U)SIM (TS 23.040 10.3): the UE sets it when it refuses a short message for want of memory, and clears it when the notification is answered. For a UE whose control API is on port 8091, as in the call guide:
+
+```sh
+curl -X PUT localhost:8091/sms-memory -d '{"full": true}'
+```
+
 ## Open the capture
 
 Open the newest file in `captures/` in Wireshark with this display filter:
@@ -631,7 +647,7 @@ Each item has a `SIMPLIFIED:` comment in the code; `grep -rn "SIMPLIFIED:" inter
 | SMS, TS 23.040 9.2.3.12.2 and 9.2.3.12.3 | Only "no validity period" and the relative format are read and written; the absolute and enhanced formats are refused. | The SC stub stores nothing, so it has no use for the period. |
 | SMS, TS 23.040 9.2.3.24.1 | No concatenated short messages: a text longer than one short message is refused. | This project sends one short message at a time. |
 | SMS, TS 23.040 9.2.3.24 and TS 23.042 | A User-Data-Header, such as a national language table (TS 23.038 6.2.1.2), and compressed text are not decoded. | Nothing in this project sends them. |
-| UE, TS 24.341 5.3.2.5 | The UE never refuses a short message for want of memory, so it never sends RP-SMMA. | The simulator keeps every short message it gets. |
+| UE, TS 24.011 6.3.3.1 | The UE sends its notification that memory is available again (RP-SMMA) once. It runs neither timer TR1M, which waits for the RP-ACK, nor timer TRAM, after which a phone sends the notification again with a new RP-MR, so a notification that goes unanswered leaves the UE owing one. Only an RP-ACK clears what it owes: the UE does not tell a permanent cause in an RP-ERROR, which clears it on a phone (TS 23.040 10.3), from a temporary one, so any RP-ERROR leaves the UE owing a notification. | `POST /sms-memory/notify` on the control API sends the next notification, which is what the timer would have sent. |
 | UE, RFC 3428 7 | Only short messages are taken; a MESSAGE with any other body, text/plain included, gets 415 (Unsupported Media Type). | The simulator is an SMS over IP UE, not an instant messaging client. |
 | UE, TS 23.040 9.2.3.12 and 9.2.3.24 | The SMS-SUBMIT asks for no validity period and holds one short message, without a User-Data-Header. | The SC stub has no use for the period. |
 | UE, TS 24.011 9.3.2 | A report whose RP-MR is not that of the RP-DATA is discarded, without the RP-ERROR with cause 81 that a phone would send. | Over IP there is no connection to send it on. |

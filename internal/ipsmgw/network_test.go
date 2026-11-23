@@ -859,3 +859,38 @@ func TestUESimulatorsThroughTheIPSMGW(t *testing.T) {
 		t.Errorf("UE-A sent %+v, want RP-Cause 1 with TP-FCS C3", s)
 	}
 }
+
+// TestTheUESimulatorWithoutMemory runs the UE simulator of package ue
+// against the IP-SM-GW with no memory for the short message: the
+// IP-SM-GW reports the RP-Cause 22 of the UE to the SC, and answers the
+// notification of TS 24.341 5.3.2.5 that follows once the memory is
+// free again.
+func TestTheUESimulatorWithoutMemory(t *testing.T) {
+	net := startIMS(t, 1)
+	a, b := net.simulator(1), net.simulator(2)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	if _, err := b.SetSMSMemoryFull(ctx, true); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := a.SendSMS(ctx, ue.OutgoingSMS{To: "+12025550102", Text: "Is there room?"}); err != nil {
+		t.Fatal(err)
+	}
+	if got := net.nextHeard(); got.outcome != ipsmgw.MemoryCapacityExceeded {
+		t.Errorf("SC heard %v, want a memory capacity exceeded", got.outcome)
+	}
+
+	// The memory is free again: the RP-SMMA reaches the IP-SM-GW, whose
+	// RP-ACK ends the notification.
+	if _, err := b.SetSMSMemoryFull(ctx, false); err != nil {
+		t.Fatal(err)
+	}
+	if !came(5*time.Second, func() bool { return !b.SMSReception().MemoryCapacityExceededNotification }) {
+		t.Errorf("UE-B is %+v, want its notification answered", b.SMSReception())
+	}
+
+	if got := b.SMS().Received; len(got) != 0 {
+		t.Errorf("UE-B received %+v, want nothing of the short message", got)
+	}
+}
