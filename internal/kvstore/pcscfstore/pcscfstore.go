@@ -597,3 +597,27 @@ func (s *Store) PutSecurityAssociations(ctx context.Context, sas pcscf.SecurityA
 func (s *Store) DeleteSecurityAssociations(ctx context.Context, ue netip.AddrPort) error {
 	return s.c.Remove(ctx, s.saKey(ue))
 }
+
+// DeleteSecurityAssociationsOf is a read and a removal at the version
+// read, again from a fresh read when another instance wrote the entry in
+// between: a write of the same set, as at the refresh of a
+// registration, still lets it go, and a write of another set keeps it.
+func (s *Store) DeleteSecurityAssociationsOf(ctx context.Context, ue netip.AddrPort, spis pcscf.SPIs) error {
+	key := s.saKey(ue)
+	for range maxAttempts {
+		var sas pcscf.SecurityAssociations
+		version, err := kvjson.Read(ctx, s.c, key, &sas)
+		switch {
+		case errors.Is(err, kvstore.ErrNotFound):
+			return nil
+		case err != nil:
+			return err
+		case sas.SPIs() != spis:
+			return nil
+		}
+		if err := s.c.RemoveIf(ctx, key, version); !errors.Is(err, kvstore.ErrConflict) {
+			return err
+		}
+	}
+	return kvjson.ErrGaveUp
+}

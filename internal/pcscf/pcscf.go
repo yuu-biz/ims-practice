@@ -59,7 +59,13 @@ type Association struct {
 	Source sip.Destination
 	// Contact is the URI the UE registered. Requests to the UE carry it
 	// in the Request-URI, but go to Source.
-	Contact          string
+	Contact string
+	// SPIs name the set of security associations over which a UE with
+	// IMS AKA registered Contact, and are zero for SIP Digest. The set
+	// belongs to the contact (TS 24.229 5.2.2.2 NOTE 6): it goes when
+	// this association ends, and stays when the association of a contact
+	// that the UE registered before ends (endAssociation).
+	SPIs             SPIs
 	SentBy           string
 	PrivateIdentity  string
 	PublicIdentities []string // from P-Associated-URI, default first
@@ -82,6 +88,20 @@ type Association struct {
 	// refused, until the UE registers again (TS 24.229 5.2.6.4.3 item 1
 	// with NOTE 1).
 	SignallingLost bool
+}
+
+// SPIs name one set of security associations with a UE. They are SPI_P
+// of TS 33.203 7.2: spi_pc and spi_ps, the SPIs that the P-CSCF selects
+// for its two inbound SAs and sends as spi-c and spi-s in its
+// Security-Server. Each authentication selects a new pair (7.1), so the
+// set that replaces another has SPIs of its own. The zero value names
+// no set.
+type SPIs struct{ PC, PS uint32 }
+
+// SPIs names the set of security associations of an entry of the SA
+// table.
+func (sas SecurityAssociations) SPIs() SPIs {
+	return SPIs{PC: sas.PCSCFMechanism.SPIC, PS: sas.PCSCFMechanism.SPIS}
 }
 
 // RegSubscription is the P-CSCF's subscription to the reg event package
@@ -284,6 +304,11 @@ type Store interface {
 	SecurityAssociations(ctx context.Context, ue netip.AddrPort) (SecurityAssociations, bool, error)
 	PutSecurityAssociations(ctx context.Context, sas SecurityAssociations) error
 	DeleteSecurityAssociations(ctx context.Context, ue netip.AddrPort) error
+	// DeleteSecurityAssociationsOf removes the entry of the SA table for
+	// ue only while it holds the set of security associations that spis
+	// name. An entry that a later authentication has replaced holds
+	// another set, and stays.
+	DeleteSecurityAssociationsOf(ctx context.Context, ue netip.AddrPort, spis SPIs) error
 }
 
 // MemoryStore is a Store in the memory of one process. Two P-CSCFs
@@ -620,6 +645,18 @@ func (s *MemoryStore) Done(_ context.Context, e Expiry) error {
 	return nil
 }
 
+// DeleteSecurityAssociationsOf removes the entry of ue while it holds
+// the set that spis name. The lock of the SA table stands for the
+// compare and delete that a store outside the process needs.
+func (t *saTable) DeleteSecurityAssociationsOf(_ context.Context, ue netip.AddrPort, spis SPIs) error {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if sas, ok := t.m[ue]; ok && sas.SPIs() == spis {
+		delete(t.m, ue)
+	}
+	return nil
+}
+
 type PCSCF struct {
 	cfg     Config
 	locator Locator
@@ -845,7 +882,13 @@ func (p *PCSCF) register(st *sip.ServerTransaction, protected bool) {
 	var interval time.Duration
 	switch {
 	case final.StatusCode == 200:
-		a, d, ok, err := p.registered(st, final, privateID, assoc, log)
+		// The contact is registered over the security associations that
+		// protected the REGISTER, if any.
+		var over SPIs
+		if agreement != nil && agreement.over != nil {
+			over = agreement.over.SPIs()
+		}
+		a, d, ok, err := p.registered(st, final, privateID, assoc, over, log)
 		if err != nil {
 			// A 200 would stand for a registration that no P-CSCF
 			// instance can find.
@@ -958,8 +1001,9 @@ func (p *PCSCF) association(st *sip.ServerTransaction, privateID string) (Associ
 // 5.2.2.3): with a non-zero interval it creates or refreshes the IP
 // association and stores Service-Route and P-Associated-URI, and
 // returns the association with the interval; with zero it removes the
-// association.
-func (p *PCSCF) registered(st *sip.ServerTransaction, resp *sip.Message, privateID string, old Association, log *slog.Logger) (Association, time.Duration, bool, error) {
+// association. over names the security associations that the contact
+// is registered over.
+func (p *PCSCF) registered(st *sip.ServerTransaction, resp *sip.Message, privateID string, old Association, over SPIs, log *slog.Logger) (Association, time.Duration, bool, error) {
 	ctx := context.Background()
 	interval := grantedInterval(resp)
 	if interval == 0 {
@@ -978,6 +1022,7 @@ func (p *PCSCF) registered(st *sip.ServerTransaction, resp *sip.Message, private
 	a := Association{
 		Source:          ueSource(st),
 		Contact:         contactOf(st.Request),
+		SPIs:            over,
 		SentBy:          via.SentBy(),
 		PrivateIdentity: privateID,
 		ServiceRoute:    resp.GetAll("Service-Route"),
@@ -1035,8 +1080,12 @@ func (p *PCSCF) endAssociation(a Association, log *slog.Logger) error {
 		return err
 	}
 	// TS 33.203 7.4.2a: the security associations of the UE go with its
-	// last registered identity.
-	return p.store.DeleteSecurityAssociations(ctx, a.Source.Addr)
+	// last registered identity. Only the set that the contact was
+	// registered over goes. A UE that starts again registers another
+	// contact from the same address and port over a set of its own, which
+	// has replaced this one, and the NOTIFY that ends the old contact can
+	// come before the association names the new contact.
+	return p.store.DeleteSecurityAssociationsOf(ctx, a.Source.Addr, a.SPIs)
 }
 
 // associationOfContact is the association of a contact, for a request
