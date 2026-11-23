@@ -463,6 +463,79 @@ HSS が push するのは、登録中の利用者と、未登録の状態の利�
 
 PPR は、保守用の要求への答えのあとに続きます。設定が効き始めたことは、効いた時点で運用者に返るので、登録している利用者が多い網でも、答えはそれを待ちません。PPR は送る時点のプロファイルを運ぶので、続けて 2 回変えたときは、あとの変更のプロファイルが S-CSCF に残ります。失敗した PPR は、加入 1 件の変更のときと同じく HSS のログに書き、その S-CSCF には、利用者の次の登録でプロファイルが届きます。
 
+## OAM から網を運用する
+
+`oam` のサービスは OAM のサーバーです。ノード 1 台ずつはそのノードの保守用の API で、加入者は HSS のプロビジョニングの API で操作します。OAM の画面も同じ待ち受けで配ります。管理する側と管理されるノードのあいだのインタフェースは、製品ごとに決めてよいことになっています（TS 32.600 4.2.1.3）。ここでは、このプロジェクトが決めたものを `/oam/v1/` の下に置いています。
+
+このポートはホストのどのアドレスにもありません。この API はノードの設定を変え、どの加入の資格情報も入っている書庫を渡します。そのうえパスワードを求めません。そのため以下の要求は、ノードの保守用の API への要求と同じく、OAM のコンテナの中から送ります。
+
+`deploy/compose/oam.yaml` に書いた一覧には、保守用の API を出す 9 台が入っています。3 つの CSCF、HSS、MMTel AS、MRFC、IP-SM-GW と、2 つのメディア中継のノードです。1 回の要求で全台の状態を読めます。
+
+```sh
+docker compose exec oam wget -qO - http://127.0.0.1:8080/oam/v1/state
+```
+
+答えには一覧のノードごとに 1 件ずつ入ります。そのノードの状態か、答えなかった理由です。失敗したノードが落ちることはなく、その数は `succeeded` と `failed` にあります。ノードを 1 台ずつ運用から外す節で行うことは、OAM なら `/oam/v1/roles/{role}/administrative-state` で、ある役割の全台にまとめて行えます。
+
+### 加入者を一括で登録する
+
+運用者は、たくさんの加入をファイルで一度に登録します。1 行に JSON を 1 つ書きます。1 行は、プロビジョニングの API の `PUT` の本文です。私的識別子に `"delete": true` を添えた形だけは OAM 自身が読み、その加入を消します。行に書く識別子はすべて試験用のものでなければなりません。試験用の IMSI の番号か、架空の番号の範囲の番号です。そうでない行は、HSS に尋ねる前に OAM が断ります。
+
+```sh
+docker compose exec oam sh -c 'cat >/tmp/new-subscribers.jsonl <<"EOF"
+{"private_identity":"001010000000120@ims.mnc001.mcc001.3gppnetwork.org","public_identities":["sip:+12025550120@ims.mnc001.mcc001.3gppnetwork.org"],"tel":"tel:+12025550120","password":"test-password-0120","test_user":true}
+{"private_identity":"001010000000121@ims.mnc001.mcc001.3gppnetwork.org","public_identities":["sip:+12025550121@ims.mnc001.mcc001.3gppnetwork.org"],"tel":"tel:+12025550121","password":"test-password-0121","test_user":true}
+EOF
+length="$(wc -c </tmp/new-subscribers.jsonl | tr -d " ")"
+{ printf "POST /oam/v1/provisioning HTTP/1.0\r\nContent-Type: application/x-ndjson\r\nContent-Length: %s\r\n\r\n" "$length"
+  cat /tmp/new-subscribers.jsonl
+} | nc -w 30 127.0.0.1 8080'
+```
+
+BusyBox の `wget` は `GET` と `POST` のほかのメソッドを送れず、本文も自分では作れません。そのため要求を書き出して `nc` に渡しています。答えは、できたところから返ってきます。記録ごとに 1 行、最後にまとめです。
+
+```text
+{"outcome":{"line":1,"private_identity":"001010000000120@ims.mnc001.mcc001.3gppnetwork.org","result":"created"}}
+{"outcome":{"line":2,"private_identity":"001010000000121@ims.mnc001.mcc001.3gppnetwork.org","result":"created"}}
+{"summary":{"lines":2,"created":2,"updated":0,"unchanged":0,"deleted":0,"rejected":0,"failed":0}}
+```
+
+OAM は 1 件ずつ読み、送り、報告します。そのため、ファイルが何行でも使うメモリは変わりません。1 件の結果は `created`、`updated`、`unchanged`、`deleted`、`rejected`（行が誤っていて、理由にどう誤っているかが入ります）、`failed`（HSS が受け取らなかったもので、送り直せば通ることがあります）のどれかです。同じファイルをもう一度送ると、資格情報も含めてどの行も `unchanged` になるので、2 回送っても構いません。経路に `?dry_run=true` を付けると、何も変えずに、各行が何をするかだけを答えます。理由に資格情報が出ることはありません。HSS が理由の中に書き返してきたときも伏せます。
+
+この加入者の 1 人目は、行に書いたパスワードで、ほかの加入者と同じように登録します。
+
+```sh
+docker compose run --rm ue register \
+  --impi 001010000000120@ims.mnc001.mcc001.3gppnetwork.org \
+  --impu sip:+12025550120@ims.mnc001.mcc001.3gppnetwork.org \
+  --password test-password-0120 --deregister-after 5s
+```
+
+キャプチャには、この構成のどの設定ファイルにも書いていない加入者の UAR、MAR、SAR が入ります。`"delete": true` の行を並べたファイルを送れば、また消せます。
+
+### 加入を書き出して戻す
+
+バックアップは、網が持ち続けるデータを区分ごとに書き出します。ここにある区分は `hss.subscriptions` の 1 つで、OAM はこれをプロビジョニングの API のページ分けされた書き出しで読みます。書き出したものは、1 行に JSON を 1 つ並べた書庫 1 つと、各手順がどう進んだかを残す目録になります。
+
+```sh
+docker compose exec oam sh -c '
+body="{\"operator\":\"alice\",\"comment\":\"before the change\"}"
+printf "POST /oam/v1/backups HTTP/1.0\r\nContent-Type: application/json\r\nContent-Length: ${#body}\r\n\r\n%s" "$body" |
+  nc -w 30 127.0.0.1 8080'
+```
+
+答えには、始まった手順と終わった手順が順に流れ、最後に目録が来ます。目録にはこのバックアップの識別子が入っています。`GET /oam/v1/backups` は、新しいものから順にバックアップを並べます。戻すときは、まず書庫を最後まで読んで欠けが無いことを確かめ、そのうえで、各行が何をするかを答えるか、登録と同じ `PUT` で 1 件ずつ戻します。
+
+```sh
+docker compose exec oam sh -c '
+printf "POST /oam/v1/backups/$1/restore?dry_run=true HTTP/1.0\r\n\r\n" |
+  nc -w 60 127.0.0.1 8080' sh <識別子>
+```
+
+`?dry_run=true` を外すと実際に戻します。まだ網にあるものを戻すと、どの行も `unchanged` になります。同じ書庫を 2 回戻しても、2 回目は何も変わりません。戻した加入は Not Registered になり、その利用者は登録し直します。ノードが動いているあいだだけあるもの、つまり登録、ダイアログ、メディアのコンテキストは、どのバックアップにも入りません。
+
+**書庫の 1 行には、その加入の長期鍵、OPc、パスワードが入っています。** HSS に戻すのに要るからです。書庫は OAM 自身のボリュームの中のファイルで、ほかの誰にも読めません。一方で OAM は、この API で、待ち受けに届く相手には誰にでも渡します。待ち受けをホストのどのアドレスにも置いていないのはそのためです。
+
 ## 試験用の利用者だけを収容する
 
 機能を試しているあいだ、その機能を試す利用者だけを網に収容しておけます。どの加入者を収容するかは `admission` で決めます。
@@ -917,6 +990,8 @@ rm ue.exe
 | P-CSCF。TS 24.229 5.2.2.3 | IP の対応付けは、UDP の要求が届いたアドレスとポートで探す。1300 バイトより大きい要求を、UE は TCP で送る。TCP の要求は、Via の sent-by のアドレスが要求の届いたアドレスと同じなら、sent-by だけで照らし合わせ、接続のポートは確かめない。sent-by が別のアドレスを示す TCP の要求は見分けられない。sent-by のポートを認証するものは無いので、UE と同じ IP アドレスを持つホストなら、そのポートを書ける。 | IPsec を使わないと、TCP の接続はそのときどきのポートから来て、そのポートを持つ IP の対応付けが無いため。 |
 | SIP Digest。TS 24.229 5.4.1.2.1B、RFC 7616、RFC 8760 | S-CSCF は MD5 と qop=auth だけを提示する。仕様は SHA-256 を優先し、MD5 は後方互換のために残している。 | HSS のスタブが渡すのは MD5 の H(A1) だけで、SHA-256 には別の AVP が必要なため。 |
 | Diameter。RFC 3539 3.4.1 と Appendix A、RFC 6733 5.6.4 | `REOPEN` の状態が無く、つなぎ直した相手をすぐに使う。監視が疑った接続で答えを待つ要求は、自分の時間切れを待ってから HSS のほかの台へ移る。接続を始めるのは設定で決めた側だけなので、同じ相手への 2 本の接続のどちらを残すかを選ぶ手順（election）も無い。 | 答えなかった要求は HSS の次の台へ送り直すので、まだ安定しない台は要求を遅らせるだけで、失わせないため。どちらが接続を始めるかは、各ノードの設定で決まるため。 |
+| OAM。TS 32.600 4.2.1.1 | 網の設定を変えてよいのは、権限のある運用者だけとされているが、OAM の API には認証も認可も無い。要求の `operator` は名乗った名前で、確かめた身元ではない。 | この待ち受けは、ノードの保守用の API の待ち受けと同じく、ノードのネットワークにだけあり、ホストのどのアドレスにも置いていない。また、キャプチャで中身を読めるように、このプロジェクトのどのインタフェースも平文で動くため。 |
+| OAM。TS 33.102 6.3.1 | バックアップの書庫を暗号化しない。ファイルの許可だけが守りになる。 | 長期鍵を持ってよいのは USIM とホーム網の認証センターだけなので、HSS の外に置く写しは、その認証センターと同じだけ守る必要があり、製品はこうした書庫を暗号化する。この網にあるのは試験用の資格情報だけで、暗号化には鍵そのものとその扱いが要る。それはバックアップと復元で学ぶことではないため。 |
 
 ## 後片付け
 

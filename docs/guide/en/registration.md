@@ -431,6 +431,79 @@ A change of the two settings that name the service profile of a kind of subscrip
 
 The PPRs follow the answer to the maintenance request: the operator is told that the setting is in force as soon as it is, and a network with many registered users does not hold that answer up. Each PPR carries the profile as it stands when it is sent, so two changes close together leave the S-CSCFs with the profile of the later one. A PPR that fails is written to the log of the HSS, as for a change of one subscription, and that S-CSCF reads the profile at the next registration of its user.
 
+## Run the network from the OAM
+
+The `oam` service is the OAM server. It operates each node through the maintenance API of that node, and the subscribers through the provisioning API of the HSS, and it serves the OAM screen on the same listener. The interface between a manager and the nodes it manages is left to each product (TS 32.600 4.2.1.3), so this one is this project's own, under `/oam/v1/`.
+
+Its port is on no address of the host. The API changes the configuration of the nodes and hands out archives that hold the credentials of every subscription, and it asks for no password, so the requests below go from inside the container of the OAM, as those to the maintenance API of a node do.
+
+The inventory in `deploy/compose/oam.yaml` holds the nine nodes that serve the maintenance API: the three CSCFs, the HSS, the MMTel AS, the MRFC, the IP-SM-GW and the two media relays. One request reads the state of all of them:
+
+```sh
+docker compose exec oam wget -qO - http://127.0.0.1:8080/oam/v1/state
+```
+
+The answer has an entry for every node of the inventory, with that node's state or why it did not answer; a node that failed is never left out, and `succeeded` and `failed` count them. Everything the sections on taking a node out of service do one node at a time, the OAM does for every node of a role at once, at `/oam/v1/roles/{role}/administrative-state`.
+
+### Provision subscribers in bulk
+
+An operator provisions many subscriptions at once as a file, one JSON object per line. A line is the body of the `PUT` of the provisioning API, with `"delete": true` beside the private identity as the one field the OAM reads itself. Every identity of a line must be test data, a number of a test IMSI or of the fictional range, or the OAM refuses the line without asking the HSS.
+
+```sh
+docker compose exec oam sh -c 'cat >/tmp/new-subscribers.jsonl <<"EOF"
+{"private_identity":"001010000000120@ims.mnc001.mcc001.3gppnetwork.org","public_identities":["sip:+12025550120@ims.mnc001.mcc001.3gppnetwork.org"],"tel":"tel:+12025550120","password":"test-password-0120","test_user":true}
+{"private_identity":"001010000000121@ims.mnc001.mcc001.3gppnetwork.org","public_identities":["sip:+12025550121@ims.mnc001.mcc001.3gppnetwork.org"],"tel":"tel:+12025550121","password":"test-password-0121","test_user":true}
+EOF
+length="$(wc -c </tmp/new-subscribers.jsonl | tr -d " ")"
+{ printf "POST /oam/v1/provisioning HTTP/1.0\r\nContent-Type: application/x-ndjson\r\nContent-Length: %s\r\n\r\n" "$length"
+  cat /tmp/new-subscribers.jsonl
+} | nc -w 30 127.0.0.1 8080'
+```
+
+BusyBox `wget` sends no method but `GET` and `POST` and no body of its own, hence the request written out to `nc`. The answer comes back as it is made, one line for each record and the summary last:
+
+```text
+{"outcome":{"line":1,"private_identity":"001010000000120@ims.mnc001.mcc001.3gppnetwork.org","result":"created"}}
+{"outcome":{"line":2,"private_identity":"001010000000121@ims.mnc001.mcc001.3gppnetwork.org","result":"created"}}
+{"summary":{"lines":2,"created":2,"updated":0,"unchanged":0,"deleted":0,"rejected":0,"failed":0}}
+```
+
+The OAM reads, sends and reports one record at a time, so a file of any length costs it the same memory. A record is `created`, `updated`, `unchanged`, `deleted`, `rejected` (the line is wrong, and the reason says how) or `failed` (the HSS did not take it, and sending it again may succeed). The same file sent again leaves every record `unchanged`, credentials included, so a file is safe to send twice; `?dry_run=true` on the path changes nothing and answers what each line would do. A reason never shows a credential, even where the HSS quotes one back.
+
+The first of these subscribers registers like any other, with the password of its line:
+
+```sh
+docker compose run --rm ue register \
+  --impi 001010000000120@ims.mnc001.mcc001.3gppnetwork.org \
+  --impu sip:+12025550120@ims.mnc001.mcc001.3gppnetwork.org \
+  --password test-password-0120 --deregister-after 5s
+```
+
+The capture then holds the UAR, the MAR and the SAR of a subscriber that no configuration file of the deployment names. A file of lines with `"delete": true` removes them again.
+
+### Back the subscriptions up and put them back
+
+A backup writes the persistent data of the network out section by section. There is one section here, `hss.subscriptions`, which the OAM reads through the paged export of the provisioning API, and it writes it as one archive of JSON lines beside a manifest that records how each step went.
+
+```sh
+docker compose exec oam sh -c '
+body="{\"operator\":\"alice\",\"comment\":\"before the change\"}"
+printf "POST /oam/v1/backups HTTP/1.0\r\nContent-Type: application/json\r\nContent-Length: ${#body}\r\n\r\n%s" "$body" |
+  nc -w 30 127.0.0.1 8080'
+```
+
+The answer streams each step as it starts and ends, and the manifest last, with the identifier of the backup. `GET /oam/v1/backups` lists the backups, the newest first. A restore reads the archive to the end first, to see that it is whole, and then either says what each record would do or puts each one back through the same `PUT` as a provisioning:
+
+```sh
+docker compose exec oam sh -c '
+printf "POST /oam/v1/backups/$1/restore?dry_run=true HTTP/1.0\r\n\r\n" |
+  nc -w 60 127.0.0.1 8080' sh <identifier>
+```
+
+Leave `?dry_run=true` off to put them back. Restoring a network that is still there leaves every record `unchanged`, and restoring the same archive twice changes nothing the second time. A restored subscription is Not Registered and its user registers again: what lives only while a node runs, the registrations, the dialogs and the media contexts, is in no backup.
+
+**Each line of the archive holds the long-term key, OPc and the password of its subscription**, as the HSS needs them back. The archive is a file of the OAM's own volume, readable by nobody else, and the OAM hands it out over its API to whoever reaches that listener, which is why the listener is on no address of the host.
+
 ## Admit only the test users
 
 An operator who is trying a feature out can keep the network to the users it is tried on. The `admission` setting says which subscribers the HSS admits:
@@ -881,6 +954,8 @@ These parts of the specifications are left out or shortened. Each has a `SIMPLIF
 | P-CSCF, TS 24.229 5.2.2.3 | The IP association is looked up by the address and port that a request over UDP comes from. A request over TCP, which a UE sends when the request is larger than 1300 bytes, is matched by the sent-by of its Via alone, when that has the address the request came from; the port of the connection is not checked. A TCP request whose sent-by names another address is not recognized. Nothing authenticates the port in that sent-by, so a host that shares the UE's IP address could name it. | Without IPsec a TCP connection comes from a port of the moment, which no IP association holds. |
 | SIP Digest, TS 24.229 5.4.1.2.1B, RFC 7616 and RFC 8760 | The S-CSCF offers MD5 with qop=auth only, although the specifications prefer SHA-256 and keep MD5 for backward compatibility. | The HSS stub provides only the MD5 H(A1); SHA-256 needs the alternate digest AVPs. |
 | Diameter, RFC 3539 3.4.1 and Appendix A, RFC 6733 5.6.4 | No `REOPEN` state: a reconnected peer is in service at once. A request pending on a connection that the watchdog suspects waits for its own timeout before it goes to another instance of the HSS. Only the configured initiator connects, so there is no election between two connections to the same peer. | A request that an instance leaves unanswered goes on to the next instance of the HSS, so an instance that is not yet steady delays requests rather than losing them. Which side connects is part of the configuration of each node. |
+| OAM, TS 32.600 4.2.1.1 | The OAM API has no authentication and no authorisation, although only operators with the right authorisation may change the configuration of a network. The `operator` of a request is the name the caller gives, not a checked identity. | Its listener is on the network of the nodes alone and on no address of the host, as that of the maintenance API of a node is, and every interface of this project runs in the clear so that a capture can be read. |
+| OAM, TS 33.102 6.3.1 | The archive of a backup is not encrypted; the permissions of its file are its only protection. | The long-term key is available only to the USIM and to the authentication centre of the home network, so a copy of it outside the HSS must be as well kept as that centre, and a product encrypts such an archive. Only test credentials are in this network, and encryption would need a key of its own and the handling of that key, which is not what a backup and a restore teach. |
 
 ## Clean up
 
