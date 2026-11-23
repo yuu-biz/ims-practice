@@ -382,7 +382,7 @@ func (c *Call) fromCaller(r *sip.InDialogRequest) {
 			c.acknowledged()
 		}
 		if !answered {
-			r.Reject(481)
+			rejectEnded(r)
 		}
 		return
 	}
@@ -483,11 +483,19 @@ func (c *Call) fromCallee(r *sip.InDialogRequest, out *sip.OutgoingCall, t *turn
 		outDone = out.Done()
 	}
 	if !t.wait(r.Arrival, c.in.Done(), outDone) {
-		r.Reject(481)
+		rejectEnded(r)
 		return
 	}
 	c.forward(r, c.in, ToCaller, finish)
 }
+
+// rejectEnded answers a request that the call can no longer carry
+// because one of its legs has ended, with 487 (Request Terminated).
+// RFC 3261 15.1.2 recommends 487 for a request left pending in a dialog
+// that a BYE ends, which is what happens here: the role ends this
+// dialog with a BYE of its own. A 481 would say instead that the dialog
+// is gone, which would have the peer end it itself (RFC 3261 12.2.1.2).
+func rejectEnded(r *sip.InDialogRequest) { r.Reject(487) }
 
 // forward passes r, which crosses in direction d, on to the other leg,
 // and the final response back. Once the other leg has the final
@@ -566,7 +574,7 @@ func (c *Call) answerRequest(r *sip.InDialogRequest, sent sip.Body, resp *sip.Me
 		// other side.
 		r.Reject(491)
 	case errors.Is(err, sip.ErrCallEnded):
-		r.Reject(481)
+		rejectEnded(r)
 	case err != nil:
 		c.log.Info("request within the dialog not relayed", "method", string(r.Request.Method), "error", err.Error())
 		r.Reject(500)

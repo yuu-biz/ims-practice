@@ -238,8 +238,9 @@ func TestTheUPDATEAfterAReInviteWithoutAnOfferWaitsForTheACK(t *testing.T) {
 
 // The callee sends two INFOs back to back, and the caller does not
 // answer the first. The second waits for its turn; when the caller
-// hangs up, it gets 481 at once, and does not wait for the first to
-// time out (RFC 3261 17.1.2.2).
+// hangs up, it gets 487 at once, the response that a request pending
+// when a BYE ends the dialog gets (RFC 3261 15.1.2), and does not wait
+// for the first to time out (RFC 3261 17.1.2.2).
 func TestARequestWaitingForItsTurnEndsWithTheLeg(t *testing.T) {
 	slow := sip.Timers{T1: 100 * time.Millisecond, T2: 800 * time.Millisecond, T4: 500 * time.Millisecond}
 	rc := newRawCallee(t, slow)
@@ -267,11 +268,11 @@ func TestARequestWaitingForItsTurnEndsWithTheLeg(t *testing.T) {
 	}
 	hungUp := time.Now()
 	final := finalTo(second)
-	if final == nil || final.StatusCode != 481 {
-		t.Fatalf("the second INFO got %v: %v, want 481", final, second.Err())
+	if final == nil || final.StatusCode != 487 {
+		t.Fatalf("the second INFO got %v: %v, want 487", final, second.Err())
 	}
 	// The first INFO would time out after 64*T1.
 	if waited := time.Since(hungUp); waited > 16*slow.T1 {
-		t.Errorf("the second INFO got its 481 %v after the caller hung up, want it at once", waited)
+		t.Errorf("the second INFO got its 487 %v after the caller hung up, want it at once", waited)
 	}
 }
