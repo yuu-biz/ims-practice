@@ -81,13 +81,20 @@ jobs:
           --health-interval 2s
           --health-timeout 2s
           --health-retries 15
+    # The tests of the slide generator validate every part of the pptx
+    # it writes against the schemas of ECMA-376, with the xmllint that
+    # PPTX_XMLLINT names. With it set, a test that cannot run xmllint
+    # fails instead of being skipped.
     env:
       KVSTORE_VALKEY_ADDR: 127.0.0.1:6379
+      PPTX_XMLLINT: xmllint
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
+      - name: xmllint
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libxml2-utils
       - name: gofmt
         run: test -z "$(gofmt -l .)" || { gofmt -l .; exit 1; }
       # go vet and go test compile the test files too, so only a plain

@@ -226,6 +226,7 @@ pptx は、開くアプリケーションが文字を折り返します。ビル
 | デッキの表のノードとアドレス | `slides check`、`TestDecks` | すべての表のセルにある Compose のネットワークのアドレスとサブネットを、`compose.yaml` と `deploy/interconnect/compose.yaml` のサービスのアドレスとネットワークのサブネットに照らします。最初の 2 列がノードとアドレスである表では、ノードの列がコードで書いたサービスが、その行のアドレスのサービスであることも見ます | 図と文で書いたアドレス。表が挙げていないサービスがあること。「この構成では動かしていない」のような文 |
 | ハイパーリンク | `TestDecks` | pptx のすべての外部の関係の宛先が ASCII の URI で、戻すとソースのリンクになること | PowerPoint がそのリンクを開けること |
 | 要素の順番 | `internal/pptx` の `TestPartsFollowTheSchemas` | サンプルとすべてのデッキの部品で、生成器が書く要素の子の順番、なければならない子、なければならない属性 | 表に無い要素。属性の値の型 |
+| 発行元のスキーマ | `internal/pptx` の `TestPartsValidateAgainstTheSchemas`（`xmllint` が要る） | サンプルとすべてのデッキの部品を、ECMA-376 の移行用の XSD で検査します。要素の順番に加えて、属性の値の型と集合、要素の数、表に無い要素も見ます | `docProps/core.xml`。そのスキーマが Dublin Core のスキーマをアドレスで取り込むためです |
 | パッケージの形 | `internal/pptx` の `TestPackageIsComplete` | サンプルに加えて、すべてのデッキで、部品の型と関係の行き先 | |
 | 実際のフォントでのはみ出し | `slides/check-html.js`（Node と Playwright） | すべてのデッキの `?check`。はみ出した箱が 1 つでもあれば失敗。デッキが名前を挙げていないフォントが字形の 1% より多くを描いたときも失敗 | pptx を PowerPoint や LibreOffice で開いたときのはみ出し |
 
@@ -242,9 +243,19 @@ pptx は、開くアプリケーションが文字を折り返します。ビル
 
 ### XSD による検査
 
-要素の順番は、公開されている ECMA-376 の XSD で検査するのが確実です。この環境からは `ecma-international.org` も `www.ecma-international.org` もプロキシに断られ（CONNECT に 403）、XSD を発行元から取れませんでした。ライセンスも読めていないので、リポジトリに入れてよいかは分かりません。そこで、迂回はせずに、上の「要素の順番」の試験を作りました。
+要素の順番は、公開されている ECMA-376 の XSD で検査するのが確実です。発行元から XSD を取れるようになったので、そのとおりにしました。試験 `TestPartsValidateAgainstTheSchemas` が、サンプルとすべてのデッキの部品を `xmllint` に渡し、部品の種類ごとのスキーマで検査します。
 
-表の中身は、この環境にあった変換の道具の付属のスキーマ（ISO/IEC 29500-4:2016 の移行用の `pml.xsd`、`dml-main.xsd` と、ECMA-376 Part 2 の `opc-*.xsd`）から読みました。発行元から取ったものではありません。その写しと `xmllint` 20914 で、14 のデッキの部品を 1 回だけ検査し、`docProps/core.xml` のほかはすべて通りました。`core.xml` は Dublin Core のスキーマをネットワークから読むので、検査できませんでした。試験は、その写しも `xmllint` も使いません。
+取ってきたのは、Ecma International の ECMA-376 のページにある 2 つの配布物です。Part 4「Transitional Migration Features」第 5 版の `OfficeOpenXML-XMLSchema-Transitional.zip` と、Part 2「Open Packaging Conventions」第 5 版の `OpenPackagingConventions-XMLSchema.zip` です。移行用（Transitional）のほうを使うのは、生成器が書く名前空間がそちらだからです。Part 1 が出す Strict のスキーマは別の名前空間で、すべての部品を断ります。移行用のスキーマは Part 1 ではなく Part 4 にあります。
+
+リポジトリに入れたのは、検査に要る 13 のファイルだけです。部品が直に名指す `pml.xsd`（プレゼンテーション、マスタ、レイアウト、スライド）と `dml-main.xsd`（テーマ、表のスタイル）、`shared-documentPropertiesExtended.xsd`（`docProps/app.xml`）、Part 2 の `opc-contentTypes.xsd` と `opc-relationships.xsd`、そしてこれらが取り込むものです。WordprocessingML、SpreadsheetML、VML のスキーマは pptx では使わないので入れていません。
+
+ライセンスは Ecma の text copyright policy で読めました。既定の著作権表示のもとで、変えないかぎり複製も再配布もできます。この版の ECMA-376 には表示そのものが入っていませんが、ポリシーの FAQ が、2009 年以降の標準に入れた表示と同じ原則が古い標準にも当たると書いています。そこで、ファイルは 1 バイトも変えずに `slides/internal/pptx/testdata/ecma376/` に置き、隣の README に出どころと表示の全文を載せ、ルートの NOTICE にも書きました。毎回ダウンロードする案は採りませんでした。試験がネットワークに頼ると、手元でも CI でも、落ちる理由が増えるためです。
+
+検査には `xmllint`（libxml2 20914）を使いました。OOXML のスキーマは大きく、libxml2 の XSD の実装には知られた限界もありますが、`pml.xsd` と `dml-main.xsd` はどちらも読めました。22 のデッキとサンプルで、部品は 1524 あります。そのうち 1501 を検査し、すべて通りました。生成器の直しは要りませんでした。検査から外した 23 の部品は、各パッケージの `docProps/core.xml` です。スキーマ `opc-coreProperties.xsd` が Dublin Core のスキーマをアドレスで取り込み、発行元はそれを標準と一緒に出していないので、標準のファイルだけでは検査できません。この部品は `TestPackageIsComplete` が読みます。
+
+CI では、`ci` のワークフローの `go` のジョブに `libxml2-utils` を入れ、`PPTX_XMLLINT` を設定します。`slides` のジョブは Go の試験を動かさず、`go test ./...` がこのパッケージの試験を動かすためです。この変数があるときは、`xmllint` が無ければ飛ばさずに失敗します。手元に `xmllint` が無いマシンでは、この試験だけを飛ばします。
+
+手で書いた「要素の順番」の試験は残します。`xmllint` が無くても動き、どの要素がどの親の中で順番を破ったかを、スキーマの長い出力より短く出すためです。スキーマのほうは、その試験が見ないものを捕まえます。属性の値の型と集合（`prst="rectangle"` のような値）、要素の数、表に無い要素です。`TestTheSchemaCheckFindsMistakes` は、スライドの `p:extLst` を型が許さない位置に置き、スキーマがそれを断ることを確かめます。スキーマを読まない検査が、読む検査のふりをして通らないようにするためです。
 
 ### 実際のフォントで測った結果
 
@@ -325,8 +336,9 @@ Marp を使う案では、次のジョブを考えていました（記録とし
 
 ## 確かめられなかったこと
 
-- pptx を Microsoft PowerPoint と Keynote で開くこと。自作の生成器の pptx も、修復を求められないかは、パッケージの形の試験、python-pptx、LibreOffice で確かめただけです。要素の順番は ECMA-376 の順に合わせましたが、PowerPoint で開いて確かめてはいません。パーセント符号化したリンクを PowerPoint が開けるかも分かりません。LibreOffice 24.2.7.2 は ja/03-call と en/05-mmtel を PDF にでき、ページ数はスライドの数と同じで、PDF のリンクは符号化したまま残り、戻すと日本語のアンカーになりました。
-- 発行元の XSD による検査。ホストに断られました。ライセンスも読めていません。
+- pptx を Microsoft PowerPoint と Keynote で開くこと。自作の生成器の pptx も、修復を求められないかは、パッケージの形の試験、発行元のスキーマによる検査、python-pptx、LibreOffice で確かめただけです。スキーマは通りますが、PowerPoint で開いて確かめてはいません。パーセント符号化したリンクを PowerPoint が開けるかも分かりません。LibreOffice 24.2.7.2 は ja/03-call と en/05-mmtel を PDF にでき、ページ数はスライドの数と同じで、PDF のリンクは符号化したまま残り、戻すと日本語のアンカーになりました。
+- `docProps/core.xml` のスキーマによる検査。`opc-coreProperties.xsd` が Dublin Core のスキーマをアドレスで取り込み、発行元はそれを標準と一緒に出していません。`dublincore.org` もこの環境からは断られるので、そのスキーマの中身もライセンスも読めていません。
+- 発行元の XSD による検査を `xmllint` 以外の検証器で行うこと。libxml2 20914 でだけ確かめました。
 - `check-html.js` を CI で動かすこと。
 - 図と文で書いた事実。確認が見るのは、コマンドと、表に書いたノードとそのアドレスです。図と文のアドレスは読みません。どのノードのものでもないアドレスをわざと書くことがあるためです。表がサービスを挙げ落としていないかも見ません。どのデッキも、その回に出るノードだけを挙げるためです。「この構成では動かしていない」のような文も、今後も人が読んで確かめます。
 - Calibri、Yu Gothic、Consolas が入ったマシンでの見え方。このマシンには無く、LibreOffice は Carlito、Noto Sans CJK JP、DejaVu Sans Mono に置き換えて描きました。
