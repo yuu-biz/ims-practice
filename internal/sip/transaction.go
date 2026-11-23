@@ -176,11 +176,12 @@ type (
 	// TransportError reports that the transport failed to send (RFC
 	// 3261 17.1.4, 17.2.4).
 	TransportError struct{ Err error }
-	// CancelFromTU is the TU asking for its INVITE to be cancelled. It is
-	// not in Figure 5, but RFC 3261 9.1 ties the CANCEL to the INVITE
+	// CancelFromTU is the TU asking for its request to be cancelled. It
+	// is not in Figures 5 and 6, but RFC 3261 9.1 ties the CANCEL to the
 	// client transaction's state: it may only go out once a provisional
-	// response has arrived, it is pointless after a final one, and the
-	// transaction gives up if no final response follows it within 64*T1.
+	// response has arrived, it is pointless after a final one, and an
+	// INVITE client transaction gives up if no final response follows it
+	// within 64*T1.
 	CancelFromTU struct{}
 )
 
@@ -203,7 +204,7 @@ type (
 	// The stack builds it from the INVITE and the response (RFC 3261
 	// 17.1.1.3).
 	SendACK struct{ Response *Message }
-	// SendCancel starts a CANCEL for the INVITE, in a non-INVITE client
+	// SendCancel starts a CANCEL for the request, in a non-INVITE client
 	// transaction of its own (RFC 3261 9.1).
 	SendCancel struct{}
 	// SendResponse passes a response to the transport.
@@ -384,6 +385,8 @@ type NonInviteClientState struct {
 	// IntervalE is what Timer E was last set to, so that the next
 	// interval can double from it.
 	IntervalE time.Duration
+	// CancelSent is set once the CANCEL has gone out.
+	CancelSent bool
 }
 
 // StartNonInviteClient enters Trying: the request goes to the
@@ -417,6 +420,19 @@ func NonInviteClientTransition(s NonInviteClientState, e TransactionEvent) (NonI
 			return s, []TransactionAction{
 				PassToTU{Response: e.Response},
 				StartTimer{Timer: TimerK, Duration: waitT4(s.Timers, s.Reliable)},
+			}
+		case CancelFromTU:
+			// Only a proxy cancels a request other than INVITE, which
+			// clients SHOULD NOT do (RFC 3261 9.1): when a CANCEL for the
+			// request it forwarded arrives, it cancels a client
+			// transaction that is pending: one with a provisional response
+			// and no final one, in Proceeding (16.10, 16.7 step 10). One
+			// still in Trying is not pending, and gets no CANCEL. The
+			// CANCEL changes nothing of what the transaction waits for
+			// (9.2).
+			if s.State == Proceeding && !s.CancelSent {
+				s.CancelSent = true
+				return s, []TransactionAction{SendCancel{}}
 			}
 		case TimerFired:
 			switch e.Timer {

@@ -135,8 +135,8 @@ var ErrStackClosed = errors.New("sip: stack closed")
 //     Config.OnRequest.
 //
 // The stack answers a CANCEL that matches a server transaction of any
-// method but CANCEL itself, with 200 (RFC 3261 9.2, 16.10). The TU of
-// an INVITE that has no final response yet then sees Cancelled; the
+// method but CANCEL itself, with 200 (RFC 3261 9.2, 16.10). The TU of a
+// request that has no final response yet then sees Cancelled; the
 // CANCEL changes nothing else.
 type Stack struct {
 	transport *TransportLayer
@@ -320,27 +320,28 @@ func newAttempt(req *Message, destination Destination) *attempt {
 
 func (ct *ClientTransaction) Responses() <-chan *Message { return ct.responses }
 
-// Cancel asks for the INVITE to be cancelled (RFC 3261 9.1). The stack
-// sends the CANCEL, in a client transaction of its own, as soon as a
-// provisional response has arrived, and not at all once a final
-// response has. Either way the outcome is the INVITE's final response
-// on Responses, normally 487 (Request Terminated). A cancelled INVITE
+// Cancel asks for the request to be cancelled (RFC 3261 9.1). For an
+// INVITE the stack sends the CANCEL, in a client transaction of its
+// own, as soon as a provisional response has arrived, and not at all
+// once a final response has. Either way the outcome is the INVITE's
+// final response on Responses, normally 487 (Request Terminated).
+//
+// A request of another method is answered at once, so a client SHOULD
+// NOT cancel it (9.1). A proxy still cancels the one it forwarded when a
+// CANCEL for it arrives (16.10): the CANCEL goes out only if a
+// provisional response has arrived and no final one, and the final
+// response comes on Responses all the same (9.2). A cancelled request
 // goes to no further target.
 //
 // headers go into the CANCEL: a Reason that tells why (RFC 3326 2),
 // which a proxy also copies from the CANCEL it received.
 func (ct *ClientTransaction) Cancel(headers ...HeaderField) error {
-	if ct.Request.Method != INVITE {
-		// 9.1: a non-INVITE request is answered at once, so a CANCEL
-		// would always race with the answer.
-		return fmt.Errorf("sip: cannot cancel %s", ct.Request.Method)
-	}
 	ct.mu.Lock()
 	ct.cancelled = true
 	// RFC 3263 4: the CANCEL goes where the INVITE went.
 	a := ct.attempt
 	ct.mu.Unlock()
-	return ct.stack.post(cancelInvite{a: a, headers: headers})
+	return ct.stack.post(cancelRequest{a: a, headers: headers})
 }
 
 // Err is nil if a final response arrived. Otherwise it is ErrTimeout,
@@ -530,11 +531,11 @@ type ServerTransaction struct {
 	final atomic.Int32
 }
 
-// Cancelled is closed when a CANCEL for this INVITE arrives before its
+// Cancelled is closed when a CANCEL for this request arrives before its
 // final response. The stack has answered the CANCEL with 200 already. A
-// UAS then answers the INVITE with 487 (Request Terminated) (RFC 3261
-// 9.2), and a proxy cancels the branches it forwarded (16.10). For any
-// other method it is never closed.
+// UAS then answers an INVITE with 487 (Request Terminated), and does
+// nothing for a request of another method (RFC 3261 9.2). A proxy
+// cancels the branches it forwarded, whatever the method (16.10).
 func (st *ServerTransaction) Cancelled() <-chan struct{} { return st.cancelled }
 
 // CancelRequest returns the CANCEL, once Cancelled is closed. Its
@@ -588,8 +589,8 @@ type (
 	}
 	// startClient starts a client transaction that follow sends the
 	// request on in.
-	startClient  struct{ a *attempt }
-	cancelInvite struct {
+	startClient   struct{ a *attempt }
+	cancelRequest struct {
 		a       *attempt
 		headers []HeaderField
 	}
@@ -749,9 +750,9 @@ func (s *Stack) handle(in stackInput) {
 		go s.follow(in.ct, in.req, in.next)
 	case startClient:
 		s.startClient(in.a)
-	case cancelInvite:
+	case cancelRequest:
 		v, _ := ParseVia(in.a.request.Get("Via"))
-		if e, ok := s.clients[clientKey{branch: v.Branch(), method: INVITE}]; ok && e.attempt == in.a {
+		if e, ok := s.clients[clientKey{branch: v.Branch(), method: in.a.request.Method}]; ok && e.attempt == in.a {
 			e.cancelHeaders = in.headers
 			s.stepClient(e, CancelFromTU{})
 		}
@@ -897,15 +898,12 @@ func (s *Stack) receiveRequest(req *Message, source Destination, admitted bool) 
 // answerCancel is RFC 3261 9.2. The CANCEL has a server transaction of
 // its own, so that a retransmitted CANCEL gets the same answer. The
 // transaction it cancels has the same branch and sent-by, and may be of
-// any method but CANCEL. Only an INVITE that has no final response yet
-// is cancelled; for a transaction of another method the CANCEL gets 200
-// all the same, and changes nothing. A CANCEL that matches nothing gets
-// 481 here, at a UA; at a proxy it goes to Config.OnCANCEL instead.
-//
-// SIMPLIFIED: RFC 3261 16.10. A proxy MUST cancel the pending client
-// transactions of a request of any method when a CANCEL matches it. A
-// proxy on this stack cancels only INVITEs, as clients SHOULD NOT cancel
-// other requests (9.1).
+// any method but CANCEL. The TU of a request that has no final response
+// yet sees Cancelled: a UAS answers an INVITE with 487 and does nothing
+// for a request of another method, and a proxy cancels the pending
+// client transactions it started for the request (16.10). A CANCEL that
+// matches nothing gets 481 here, at a UA; at a proxy it goes to
+// Config.OnCANCEL instead.
 func (s *Stack) answerCancel(e *serverEntry) {
 	cancel := e.st.Request
 	target, ok := s.cancellable[e.key.cancelKey()]
@@ -914,19 +912,20 @@ func (s *Stack) answerCancel(e *serverEntry) {
 		return
 	}
 	var last *Message
+	var pending bool
 	switch m := target.machine.(type) {
 	case InviteServerState:
-		last = m.LastResponse
-		if m.State == Proceeding {
-			select {
-			case <-target.st.cancelled:
-			default:
-				target.st.cancel = cancel
-				close(target.st.cancelled)
-			}
-		}
+		last, pending = m.LastResponse, m.State == Proceeding
 	case NonInviteServerState:
-		last = m.LastResponse
+		last, pending = m.LastResponse, m.State == Trying || m.State == Proceeding
+	}
+	if pending {
+		select {
+		case <-target.st.cancelled:
+		default:
+			target.st.cancel = cancel
+			close(target.st.cancelled)
+		}
 	}
 	s.stepServer(e, ResponseFromTU{Response: NewResponse(cancel, 200, toTag(last))})
 }

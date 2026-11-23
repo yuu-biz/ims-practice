@@ -50,9 +50,11 @@ func (m *Message) RemoveFirst(name string) {
 // the second; the IMS roles answer as TS 24.229 says instead, which is
 // why the choice is left to the TU.
 //
-// While it waits for the final response to an INVITE, Proxy cancels the
-// branch when a CANCEL for st arrives (16.10), with the Reason of that
-// CANCEL (RFC 3326 2). It also runs Timer C
+// While it waits for the final response, Proxy cancels the branch when
+// a CANCEL for st arrives (16.10), with the Reason of that CANCEL (RFC
+// 3326 2). For a request other than INVITE, the CANCEL goes on only
+// while the branch is pending, with a provisional response and no final
+// one (16.7 step 10). For an INVITE, Proxy also runs Timer C
 // (16.6 step 11, 16.8): when Timer C fires, the branch is cancelled if
 // a provisional response has arrived, and otherwise Proxy returns a 408
 // as if the branch had sent one.

@@ -300,6 +300,69 @@ func TestProxyCancelsItsBranch(t *testing.T) {
 	send(t, peer, newMatchingRequest(invite, ACK, terminated.Get("To")), proxy)
 }
 
+// TestProxyCancelsAPendingNonInviteBranch is RFC 3261 16.10 for a
+// request other than INVITE: the proxy answers the CANCEL with 200 and
+// cancels its branch when that branch is pending, with a provisional
+// response and no final one (16.7 step 10), and not when it has had no
+// provisional response. Either way the request gets its final response
+// as it would without the CANCEL (9.2).
+func TestProxyCancelsAPendingNonInviteBranch(t *testing.T) {
+	for _, c := range []struct {
+		name        string
+		provisional bool
+	}{{"with a provisional response", true}, {"without one", false}} {
+		t.Run(c.name, func(t *testing.T) {
+			uasCancelled := make(chan bool, 1)
+			uas := newStack(t, testTimers, func(st *ServerTransaction) {
+				if c.provisional {
+					st.Respond(NewResponse(st.Request, 100, ""))
+				}
+				select {
+				case <-st.Cancelled():
+					uasCancelled <- true
+				case <-time.After(300 * time.Millisecond):
+					uasCancelled <- false
+				}
+				st.Respond(NewResponse(st.Request, 200, "server"))
+			})
+			proxy := newStack(t, testTimers, func(st *ServerTransaction) {
+				final, err := st.Proxy(st.Request.Clone(), udpTo(uas.LocalAddr()))
+				if err != nil {
+					t.Error(err)
+					return
+				}
+				st.Respond(final)
+			})
+			peer := rawSocket(t)
+			options := rawInvite(peer)
+			options.Method = OPTIONS
+			options.Set("CSeq", "1 OPTIONS")
+			send(t, peer, options, proxy)
+			// Give the branch time to reach the UAS, and its 100 time to
+			// come back.
+			time.Sleep(50 * time.Millisecond)
+
+			send(t, peer, newMatchingRequest(options, CANCEL, options.Get("To")), proxy)
+			byCSeq := map[string]*Message{}
+			for len(byCSeq) < 2 {
+				m := readDatagram(t, peer)
+				if m.StatusCode >= 200 {
+					byCSeq[m.Get("CSeq")] = m
+				}
+			}
+			if ok := byCSeq["1 CANCEL"]; ok.StatusCode != 200 {
+				t.Errorf("CANCEL got %s, want 200 from the proxy", startLine(ok))
+			}
+			if final := byCSeq["1 OPTIONS"]; final.StatusCode != 200 {
+				t.Errorf("OPTIONS got %s, want the UAS's 200", startLine(final))
+			}
+			if got := <-uasCancelled; got != c.provisional {
+				t.Errorf("the UAS saw a CANCEL: %v, want %v", got, c.provisional)
+			}
+		})
+	}
+}
+
 // TestProxyCopiesTheReasonOfTheCANCEL: RFC 3326 2 has a proxy copy the
 // Reason of the CANCEL it got into the CANCEL it sends, so that the
 // callee learns why the caller gave up, such as the end of a no reply

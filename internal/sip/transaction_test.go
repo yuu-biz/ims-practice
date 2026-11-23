@@ -65,6 +65,31 @@ func TestNonInviteClientReceivesResponses(t *testing.T) {
 	wantActions(t, "Timer K", actions, nil)
 }
 
+// TestNonInviteClientCancelsOnlyWhilePending is RFC 3261 16.7 step 10
+// for a request other than INVITE: the CANCEL goes out once for a
+// transaction in Proceeding, and not for one in Trying or Completed.
+func TestNonInviteClientCancelsOnlyWhilePending(t *testing.T) {
+	s, _ := StartNonInviteClient(DefaultTimers(), false)
+	s, actions := NonInviteClientTransition(s, CancelFromTU{})
+	wantActions(t, "CANCEL in Trying", actions, nil)
+
+	s, _ = NonInviteClientTransition(s, ResponseReceived{Response: response(100)})
+	s, actions = NonInviteClientTransition(s, CancelFromTU{})
+	wantState(t, "CANCEL in Proceeding", s.State, Proceeding)
+	wantActions(t, "CANCEL in Proceeding", actions, []TransactionAction{SendCancel{}})
+	s, actions = NonInviteClientTransition(s, CancelFromTU{})
+	wantActions(t, "second CANCEL in Proceeding", actions, nil)
+
+	ok := response(200)
+	s, actions = NonInviteClientTransition(s, ResponseReceived{Response: ok})
+	wantActions(t, "final after the CANCEL", actions, []TransactionAction{PassToTU{Response: ok}, StartTimer{Timer: TimerK, Duration: 5 * time.Second}})
+
+	completed, _ := StartNonInviteClient(DefaultTimers(), false)
+	completed, _ = NonInviteClientTransition(completed, ResponseReceived{Response: response(200)})
+	_, actions = NonInviteClientTransition(completed, CancelFromTU{})
+	wantActions(t, "CANCEL in Completed", actions, nil)
+}
+
 func TestNonInviteClientFinalResponseInTrying(t *testing.T) {
 	s, _ := StartNonInviteClient(DefaultTimers(), false)
 	unauthorized := response(401)
