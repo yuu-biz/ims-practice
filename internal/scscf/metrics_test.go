@@ -158,7 +158,10 @@ func TestRegistrationProceduresWithIMSAKAAreCounted(t *testing.T) {
 }
 
 // A failed procedure counts under the status code of its final
-// response, and a code outside the declared set under "other".
+// response. The 481 (Call/Transaction Does Not Exist) that a
+// deregistration gets when the user has no registration (TS 24.229
+// 5.4.1.4.1) has a series of its own, like every other code that this
+// network produces.
 func TestFailedRegistrationsAreCountedByStatus(t *testing.T) {
 	reg := metrics.NewRegistry()
 	h := newHarness(t, Config{Metrics: reg, MinExpires: time.Minute})
@@ -180,6 +183,6 @@ func TestFailedRegistrationsAreCountedByStatus(t *testing.T) {
 		attemptsDe:      1,
 		`ims_registration_failures_total{role="scscf",type="initial",status="403"}`: 1,
 		`ims_registration_failures_total{role="scscf",type="initial",status="423"}`: 1,
-		`ims_registration_failures_total{role="scscf",type="de",status="other"}`:    1,
+		`ims_registration_failures_total{role="scscf",type="de",status="481"}`:      1,
 	})
 }
