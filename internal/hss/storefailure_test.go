@@ -286,6 +286,7 @@ func TestProvisioningWhenTheStoreFails(t *testing.T) {
 		{"GET", "/subscriptions", ""},
 		{"GET", "/subscriptions/" + impi, ""},
 		{"POST", "/subscriptions", newSubscription},
+		{"PATCH", "/subscriptions/" + impi, `{"test_user": true}`},
 		{"DELETE", "/subscriptions/" + impi, ""},
 		{"PUT", cat, `{"tone": "cat1"}`},
 	}
@@ -332,10 +333,20 @@ func TestRequestsWhoseSubscriberCannotBeLocked(t *testing.T) {
 	} {
 		check(t, h, r)
 	}
-	if w := do(h.Provisioning(noSCSCFs{}), "DELETE", "/subscriptions/"+impi, ""); w.Code != http.StatusInternalServerError {
-		t.Errorf("DELETE of a subscription that cannot be locked: %d %s, want 500", w.Code, w.Body)
+	api := h.Provisioning(noSCSCFs{})
+	for _, r := range []struct{ method, body string }{
+		{"PATCH", `{"test_user": true}`},
+		{"DELETE", ""},
+	} {
+		if w := do(api, r.method, "/subscriptions/"+impi, r.body); w.Code != http.StatusInternalServerError {
+			t.Errorf("%s of a subscription that cannot be locked: %d %s, want 500", r.method, w.Code, w.Body)
+		}
 	}
-	if _, ok, err := hssstore.New(kv, kvjson.Config{}).Subscriber(context.Background(), impi); err != nil || !ok {
-		t.Errorf("the subscription after the DELETE that got no lock: %v, %v", ok, err)
+	s, ok, err := hssstore.New(kv, kvjson.Config{}).Subscriber(context.Background(), impi)
+	if err != nil || !ok {
+		t.Fatalf("the subscription after the requests that got no lock: %v, %v", ok, err)
+	}
+	if s.TestUser {
+		t.Error("the PATCH that got no lock marked the subscription")
 	}
 }
