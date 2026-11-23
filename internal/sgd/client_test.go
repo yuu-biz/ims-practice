@@ -1,6 +1,8 @@
 package sgd
 
 import (
+	"bytes"
+	"errors"
 	"io"
 	"log/slog"
 	"strings"
@@ -272,6 +274,120 @@ func TestS6cClientRefusesARequestTheFormatWouldNotCarry(t *testing.T) {
 	}
 	if srr, err := ParseSendRoutingInfoForSMRequest(c.request(t)); err != nil || srr.SCAddress != "" {
 		t.Errorf("the SRR carried SC-Address %q, %v", srr.SCAddress, err)
+	}
+}
+
+// TestSGdClientForwardsToTheServingNode: the SC forwards a short message
+// over the connection that the serving node opened, and reads the
+// acknowledgement of the UE out of the answer.
+func TestSGdClientForwardsToTheServingNode(t *testing.T) {
+	deliverReport := mustHex(t, smsDeliverReport)
+	c := connect(t, sc, mme, ApplicationIDSGd, func(request *diam.Message) *diam.Message {
+		return MTForwardShortMessageAnswer{
+			Result: diameter.Base(diameter.DiameterSuccess),
+			SMRPUI: deliverReport,
+		}.Message(request, mme)
+	})
+	client := NewSGdClient(c.listening, c.server, 0)
+
+	deliver := mustHex(t, smsDeliver)
+	tfa, err := client.MTForwardShortMessage(t.Context(), MTForwardShortMessageRequest{
+		Header:            diameter.Header{DestinationHost: mmeHost, DestinationRealm: realm},
+		UserName:          imsi,
+		SCAddress:         scAddress,
+		SMRPUI:            deliver,
+		MMENumberForMTSMS: mmeNumber,
+	})
+	if err != nil {
+		t.Fatalf("MTForwardShortMessage: %v", err)
+	}
+	if !tfa.Result.Success() || !bytes.Equal(tfa.SMRPUI, deliverReport) {
+		t.Errorf("TFA = %+v, want the SMS-DELIVER-REPORT", tfa)
+	}
+
+	tfr, err := ParseMTForwardShortMessageRequest(c.request(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if tfr.OriginHost != scHost || tfr.DestinationHost != mmeHost || tfr.DestinationRealm != realm {
+		t.Errorf("the TFR was routed %+v", tfr.Header)
+	}
+	if tfr.UserName != imsi || tfr.SCAddress != scAddress || !bytes.Equal(tfr.SMRPUI, deliver) || tfr.MMENumberForMTSMS != mmeNumber {
+		t.Errorf("the TFR carried %+v", tfr)
+	}
+}
+
+// TestSGdClientWaitsForTheDeliveryReport: the serving node answers the
+// TFR only once the UE has acknowledged the short message, which takes
+// longer than the Answer timer of the node. A client with a timeout of
+// its own waits for it.
+func TestSGdClientWaitsForTheDeliveryReport(t *testing.T) {
+	report := 2 * testTimers.Answer
+	c := connect(t, sc, mme, ApplicationIDSGd, func(request *diam.Message) *diam.Message {
+		time.Sleep(report)
+		return MTForwardShortMessageAnswer{Result: diameter.Base(diameter.DiameterSuccess)}.Message(request, mme)
+	})
+	tfr := MTForwardShortMessageRequest{
+		Header:    diameter.Header{DestinationHost: mmeHost, DestinationRealm: realm},
+		UserName:  imsi,
+		SCAddress: scAddress,
+		SMRPUI:    mustHex(t, smsDeliver),
+	}
+
+	patient := NewSGdClient(c.listening, c.server, 4*report)
+	if tfa, err := patient.MTForwardShortMessage(t.Context(), tfr); err != nil || !tfa.Result.Success() {
+		t.Errorf("the client that waits for the report: %+v, %v", tfa, err)
+	}
+	hasty := NewSGdClient(c.listening, c.server, 0)
+	if _, err := hasty.MTForwardShortMessage(t.Context(), tfr); err == nil {
+		t.Error("the client that waits the Answer timer of the node got an answer")
+	}
+}
+
+// TestSGdClientRefusesATFRTheFormatWouldNotCarry: a TFR is refused
+// before anything goes out when an AVP that 6.3.2.5 marks mandatory is
+// missing. TS 29.338 6.3.1.2 makes Destination-Host mandatory in a TFR
+// alone, and it is also where the client sends.
+func TestSGdClientRefusesATFRTheFormatWouldNotCarry(t *testing.T) {
+	c := connect(t, sc, mme, ApplicationIDSGd, func(request *diam.Message) *diam.Message {
+		return MTForwardShortMessageAnswer{Result: diameter.Base(diameter.DiameterSuccess)}.Message(request, mme)
+	})
+	client := NewSGdClient(c.listening, c.server, 0)
+	tpdu := mustHex(t, smsDeliver)
+
+	for _, missing := range []struct {
+		what string
+		tfr  MTForwardShortMessageRequest
+	}{
+		{"Destination-Host", MTForwardShortMessageRequest{
+			Header: diameter.Header{DestinationRealm: realm}, UserName: imsi, SCAddress: scAddress, SMRPUI: tpdu}},
+		{"Destination-Realm", MTForwardShortMessageRequest{
+			Header: diameter.Header{DestinationHost: mmeHost}, UserName: imsi, SCAddress: scAddress, SMRPUI: tpdu}},
+		{"SC-Address", MTForwardShortMessageRequest{
+			Header: diameter.Header{DestinationHost: mmeHost, DestinationRealm: realm}, UserName: imsi, SMRPUI: tpdu}},
+	} {
+		if _, err := client.MTForwardShortMessage(t.Context(), missing.tfr); err == nil {
+			t.Errorf("MTForwardShortMessage sent a TFR that carries no %s", missing.what)
+		}
+	}
+	c.noRequest(t)
+}
+
+// TestSGdClientReportsAServingNodeThatIsNotConnected: the HSS named a
+// node that holds no connection to this SC, which the SC hears of as a
+// failure of the attempt.
+func TestSGdClientReportsAServingNodeThatIsNotConnected(t *testing.T) {
+	c := connect(t, sc, mme, ApplicationIDSGd, func(request *diam.Message) *diam.Message {
+		return MTForwardShortMessageAnswer{Result: diameter.Base(diameter.DiameterSuccess)}.Message(request, mme)
+	})
+	client := NewSGdClient(c.listening, c.server, 0)
+
+	_, err := client.MTForwardShortMessage(t.Context(), MTForwardShortMessageRequest{
+		Header: diameter.Header{DestinationHost: smsfHost, DestinationRealm: realm}, UserName: imsi,
+		SCAddress: scAddress, SMRPUI: mustHex(t, smsDeliver),
+	})
+	if !errors.Is(err, diameter.ErrPeerUnavailable) {
+		t.Errorf("MTForwardShortMessage to a node that never connected: %v, want ErrPeerUnavailable", err)
 	}
 }
 
