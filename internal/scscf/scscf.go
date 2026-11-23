@@ -74,10 +74,16 @@ type Config struct {
 	// (internal/kvstore/kvlock), so that only one of them handles the
 	// user at a time.
 	UserLocks ims.UserLocker
-	// Metrics is where the S-CSCF registers its counters (metrics.go).
-	// Nil gives it a registry of its own, which nothing serves.
+	// Metrics is where the S-CSCF registers its counters, the
+	// registration measurements (ims.Registrations). Nil gives it a
+	// registry of its own, which nothing serves.
 	Metrics *metrics.Registry
 }
+
+// role is the name of the role in the configuration file: the value of
+// the role label of what the S-CSCF counts, and the role of its
+// maintenance function.
+const role = "scscf"
 
 // defaultExpires is used when a REGISTER asks for no interval. RFC 3261
 // 10.3 step 7 leaves the default to the registrar.
@@ -101,8 +107,8 @@ type SCSCF struct {
 	// stopSweep ends the sweep of this instance and waits for the
 	// handlers it started (expiry.go).
 	stopSweep func()
-	// registrations counts the registration procedures (metrics.go).
-	registrations *registrationMetrics
+	// registrations counts the registration procedures.
+	registrations *ims.Registrations
 	// transactions counts the requests that the S-CSCF is serving, the
 	// users of its maintenance function (maintenance.go).
 	transactions atomic.Int64
@@ -136,7 +142,7 @@ func New(cfg Config, hss HSS, node *diameter.Node, store Store, resolver Resolve
 	if cfg.Metrics == nil {
 		cfg.Metrics = metrics.NewRegistry()
 	}
-	registrations, err := newRegistrationMetrics(cfg.Metrics)
+	registrations, err := ims.NewRegistrations(cfg.Metrics)
 	if err != nil {
 		return nil, err
 	}
@@ -237,11 +243,11 @@ func (s *SCSCF) register(st *sip.ServerTransaction) {
 		s.storeFailed(st, err, log)
 		return
 	}
-	kind := registrationTypeOf(expires, registered)
+	kind := ims.RegistrationTypeOf(expires, registered)
 	if !answersChallenge(creds, ch, pending) {
-		s.registrations.started(kind)
+		s.registrations.Started(role, kind)
 	}
-	defer func() { s.registrations.answered(kind, st.FinalStatus()) }()
+	defer func() { s.registrations.Answered(role, kind, st.FinalStatus()) }()
 
 	if expires == 0 {
 		// TS 24.229 5.4.1.4.1: nothing to deregister gets 481 before any
