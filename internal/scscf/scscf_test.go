@@ -36,6 +36,23 @@ func init() {
 
 func quiet() *slog.Logger { return slog.New(slog.NewTextHandler(io.Discard, nil)) }
 
+// watch is how long a test watches for something the S-CSCF must not
+// do. Each test that watches this long has a twin that waits as long
+// for what the S-CSCF must do, and sees it come.
+const watch = time.Second
+
+// came tells whether cond held within d.
+func came(d time.Duration, cond func() bool) bool {
+	deadline := time.Now().Add(d)
+	for !cond() {
+		if time.Now().After(deadline) {
+			return false
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	return true
+}
+
 // fakeHSS hands each request to the HSS stub through the wire format,
 // and records the Server-Assignment-Type of every SAR.
 type fakeHSS struct {
@@ -384,26 +401,13 @@ func TestRegistrationExpires(t *testing.T) {
 	if r := h.register(callID, 2, 600000, auth); r.StatusCode != 200 {
 		t.Fatalf("got %d", r.StatusCode)
 	}
-	deadline := time.Now().Add(3 * time.Second)
-	want := []cx.ServerAssignmentType{cx.AssignRegistration, cx.TimeoutDeregistration}
-	for !slices.Equal(h.hss.assignments(), want) {
-		if time.Now().After(deadline) {
-			t.Fatalf("SARs = %v, want %v", h.hss.assignments(), want)
-		}
-		time.Sleep(20 * time.Millisecond)
-	}
+	waitForAssignments(t, h.hss, cx.AssignRegistration, cx.TimeoutDeregistration)
 }
 
 func TestRegAwaitAuthExpiry(t *testing.T) {
 	h := newHarness(t, Config{RegAwaitAuth: 100 * time.Millisecond})
 	h.register(sip.NewCallID(), 1, 600000, initial)
-	deadline := time.Now().Add(3 * time.Second)
-	for !slices.Equal(h.hss.assignments(), []cx.ServerAssignmentType{cx.AuthenticationTimeout}) {
-		if time.Now().After(deadline) {
-			t.Fatalf("SARs = %v, want AUTHENTICATION_TIMEOUT", h.hss.assignments())
-		}
-		time.Sleep(20 * time.Millisecond)
-	}
+	waitForAssignments(t, h.hss, cx.AuthenticationTimeout)
 }
 
 // TestASlowExpiryHoldsUpNeitherAnotherNorClose: the HSS does not answer
@@ -432,12 +436,8 @@ func TestASlowExpiryHoldsUpNeitherAnotherNorClose(t *testing.T) {
 		Expires: time.Now().Add(-time.Second), KeepUntil: time.Now().Add(time.Hour)}); err != nil {
 		t.Fatal(err)
 	}
-	deadline := time.Now().Add(3 * time.Second)
-	for !slices.Contains(h.hss.assignments(), cx.AuthenticationTimeout) {
-		if time.Now().After(deadline) {
-			t.Fatalf("SARs = %v, want AUTHENTICATION_TIMEOUT while the other expiry waits for the HSS", h.hss.assignments())
-		}
-		time.Sleep(10 * time.Millisecond)
+	if !came(3*time.Second, func() bool { return slices.Contains(h.hss.assignments(), cx.AuthenticationTimeout) }) {
+		t.Fatalf("SARs = %v, want AUTHENTICATION_TIMEOUT while the other expiry waits for the HSS", h.hss.assignments())
 	}
 	closed := make(chan struct{})
 	go func() {
@@ -466,14 +466,7 @@ func TestFailedReauthenticationKeepsTheRegistrationExpiry(t *testing.T) {
 	if r := h.register(callID, 4, 600000, auth); r.StatusCode != 403 {
 		t.Fatalf("wrong refresh got %d, want 403", r.StatusCode)
 	}
-	want := []cx.ServerAssignmentType{cx.AssignRegistration, cx.AuthenticationFailure, cx.TimeoutDeregistration}
-	deadline := time.Now().Add(3 * time.Second)
-	for !slices.Equal(h.hss.assignments(), want) {
-		if time.Now().After(deadline) {
-			t.Fatalf("SARs = %v, want %v", h.hss.assignments(), want)
-		}
-		time.Sleep(20 * time.Millisecond)
-	}
+	waitForAssignments(t, h.hss, cx.AssignRegistration, cx.AuthenticationFailure, cx.TimeoutDeregistration)
 }
 
 func TestOldNonceWithTheRightPasswordIsStale(t *testing.T) {
@@ -507,7 +500,10 @@ func TestUsersDoNotWaitForEachOther(t *testing.T) {
 	h.hss.stall(impi, stalled)
 	first := make(chan int, 1)
 	go func() { first <- h.register(sip.NewCallID(), 1, 600000, initial).StatusCode }()
-	time.Sleep(100 * time.Millisecond)
+	if !came(3*time.Second, func() bool { return len(h.hss.requestRouting()) == 1 }) {
+		close(stalled)
+		t.Fatal("the first user's MAR did not reach the HSS within 3 s")
+	}
 
 	// The HSS knows no such user, and answers its MAR at once.
 	other := strings.ReplaceAll(initial, impi, "001010000000009@"+domain)

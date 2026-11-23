@@ -426,12 +426,11 @@ func TestRegEventSubscriptionThatIsNotRefreshedExpires(t *testing.T) {
 	if subs, _ := h.role.store.SubscriptionsOf(context.Background(), impi); len(subs) != 1 {
 		t.Fatal("the S-CSCF holds no subscription")
 	}
-	deadline := time.Now().Add(3 * time.Second)
-	for subs, _ := h.role.store.SubscriptionsOf(context.Background(), impi); len(subs) != 0; subs, _ = h.role.store.SubscriptionsOf(context.Background(), impi) {
-		if time.Now().After(deadline) {
-			t.Fatal("the S-CSCF kept a subscription that expired")
-		}
-		time.Sleep(20 * time.Millisecond)
+	if !came(3*time.Second, func() bool {
+		subs, _ := h.role.store.SubscriptionsOf(context.Background(), impi)
+		return len(subs) == 0
+	}) {
+		t.Fatal("the S-CSCF kept a subscription that expired")
 	}
 	// The registration stays: a new subscription to it is active.
 	_, got = h.subscribe(pcscfPath, "")

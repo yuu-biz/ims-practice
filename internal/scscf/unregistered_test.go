@@ -32,12 +32,8 @@ func callCriterion(priority int, sc ifc.SessionCase, server string) ifc.InitialF
 // waitForAssignments waits until the SARs that hss got are want.
 func waitForAssignments(t *testing.T, hss *fakeHSS, want ...cx.ServerAssignmentType) {
 	t.Helper()
-	deadline := time.Now().Add(3 * time.Second)
-	for !slices.Equal(hss.assignments(), want) && time.Now().Before(deadline) {
-		time.Sleep(10 * time.Millisecond)
-	}
-	if got := hss.assignments(); !slices.Equal(got, want) {
-		t.Fatalf("SARs = %v, want %v", got, want)
+	if !came(3*time.Second, func() bool { return slices.Equal(hss.assignments(), want) }) {
+		t.Fatalf("SARs = %v, want %v", hss.assignments(), want)
 	}
 }
 
@@ -120,8 +116,14 @@ func TestUnregisteredProfileIsKeptForAWhile(t *testing.T) {
 	h = newServiceHarnessWith(t, lifetime, criteria, hosts)
 	h.invite(impu, termRoute, "")
 	h.registerUser(sip.NewCallID())
-	time.Sleep(700 * time.Millisecond)
-	waitForAssignments(t, h.hss, cx.UnregisteredUser, cx.AssignRegistration)
+	// The sweep marks the expiry done once its handler has returned, and
+	// a SAR of that handler would have reached the HSS by then.
+	if !came(3*time.Second, func() bool { return h.failing.handled(UnregisteredProfileExpiry) == 1 }) {
+		t.Fatalf("the profile was not let go within 3 s of a lifetime of %v", lifetime.UnregisteredProfileLifetime)
+	}
+	if got, want := h.hss.assignments(), []cx.ServerAssignmentType{cx.UnregisteredUser, cx.AssignRegistration}; !slices.Equal(got, want) {
+		t.Fatalf("SARs once the profile of the user who registered was let go = %v, want %v", got, want)
+	}
 	if r := h.invite(impu, termRoute, ""); r.StatusCode != 486 {
 		t.Fatalf("call to the registered user got %d, want the 486 of the P-CSCF", r.StatusCode)
 	}
