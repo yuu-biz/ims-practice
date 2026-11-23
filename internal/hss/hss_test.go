@@ -282,6 +282,193 @@ func TestLocationInfoForUnregisteredServices(t *testing.T) {
 	}
 }
 
+// The admission policy and the procedures it decides.
+
+const (
+	testIMPI = "001010000000009@" + realm
+	testIMPU = "sip:001010000000009@" + realm
+)
+
+// admissionHSS is an HSS on the given policy with two subscribers: impi,
+// an ordinary one, and testIMPI, one marked as a test user. Both have a
+// criterion for the terminating unregistered session case, so that a
+// call to either reaches the services of the unregistered state.
+func admissionHSS(t *testing.T, policy Admission) *HSS {
+	t.Helper()
+	store, err := NewMemoryStore(
+		Subscription{PrivateIdentity: impi, PublicIdentities: []string{impu}, Password: "test-password-1"},
+		Subscription{PrivateIdentity: testIMPI, PublicIdentities: []string{testIMPU}, Password: "test-password-9", TestUser: true},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	unregistered := ifc.TerminatingUnregistered
+	node := diameter.NewNode(diameter.Identity{OriginHost: "hss." + realm, OriginRealm: realm}, []uint32{diameter.ApplicationIDCx}, diameter.Timers{}, quiet())
+	return mustHSS(Config{
+		Realm:                  realm,
+		VisitedNetworks:        []string{realm},
+		ServerCapabilities:     cx.ServerCapabilities{MandatoryCapabilities: []uint32{1}},
+		Admission:              policy,
+		DefaultServiceProfile:  "default",
+		TestUserServiceProfile: "default",
+		ServiceProfiles: map[string][]ifc.InitialFilterCriteria{"default": {{
+			TriggerPoint:      &ifc.TriggerPoint{SPT: []ifc.SPT{{Group: []int{0}, SessionCase: &unregistered}}},
+			ApplicationServer: ifc.ApplicationServer{ServerName: "sip:mmtel." + realm + ":5060"},
+		}}},
+	}, store, node)
+}
+
+// TestAdmissionRefusesRegistration is TS 29.228 6.1.1.1 step 5 for a
+// subscriber that the policy does not admit: the registration and its
+// refresh are refused with DIAMETER_AUTHORIZATION_REJECTED, while the
+// branches that step 5 does not authorize go through. A UAR without a
+// User-Authorization-Type reads as REGISTRATION (cx.Registration is 0),
+// so that row of the procedure is this one.
+func TestAdmissionRefusesRegistration(t *testing.T) {
+	rejected := diameter.Base(diameter.DiameterAuthorizationRejected)
+	for _, policy := range Admissions {
+		for _, user := range []struct {
+			name            string
+			private, public string
+		}{
+			{"an ordinary subscriber", impi, impu},
+			{"a test user", testIMPI, testIMPU},
+		} {
+			admitted := policy == AdmitAll || user.private == testIMPI
+			t.Run(string(policy)+", "+user.name, func(t *testing.T) {
+				h := admissionHSS(t, policy)
+				want := diameter.Experimental(cx.DiameterFirstRegistration)
+				if !admitted {
+					want = rejected
+				}
+				if a := uar(t, h, user.private, user.public, cx.Registration); a.Result != want {
+					t.Errorf("UAA for REGISTRATION = %+v, want %+v", a.Result, want)
+				}
+				want = diameter.Base(diameter.DiameterSuccess)
+				if !admitted {
+					want = rejected
+				}
+				if a := uar(t, h, user.private, user.public, cx.RegistrationAndCapabilities); a.Result != want {
+					t.Errorf("UAA for REGISTRATION_AND_CAPABILITIES = %+v, want %+v", a.Result, want)
+				}
+				// Step 5 asks nothing of DE_REGISTRATION: refusing it would
+				// leave the user unable to end a registration that the S-CSCF
+				// and the P-CSCF still hold. This subscriber has no
+				// registration, so it gets the answer of step 6 either way.
+				if a := uar(t, h, user.private, user.public, cx.DeRegistration); a.Result != diameter.Experimental(cx.DiameterErrorIdentityNotRegistered) {
+					t.Errorf("UAA for DE_REGISTRATION = %+v, want IDENTITY_NOT_REGISTERED whatever the policy", a.Result)
+				}
+				// 6.1.4.1 step 3 answers for a subscriber whose profile has a
+				// criterion of the unregistered state, whatever the policy, so
+				// that a call to a user whose registration is still valid is
+				// not cut off by the policy. The SAR that follows is where a
+				// subscriber the policy does not admit is stopped.
+				if a := lir(t, h, user.public); a.Result != diameter.Experimental(cx.DiameterUnregisteredService) {
+					t.Errorf("LIA = %+v, want UNREGISTERED_SERVICE whatever the policy", a.Result)
+				}
+			})
+		}
+	}
+}
+
+// TestAdmissionRefusesTheUnregisteredState is the check that this
+// project adds to TS 29.228 6.1.2.1 step 5: a subscriber the policy does
+// not admit takes no S-CSCF for the services of the unregistered state,
+// while every other assignment type goes through, so that the HSS is
+// left with no half-finished registration.
+func TestAdmissionRefusesTheUnregisteredState(t *testing.T) {
+	rejected := diameter.Base(diameter.DiameterAuthorizationRejected)
+	success := diameter.Base(diameter.DiameterSuccess)
+	// Each type starts from a subscriber that is not registered, so each
+	// case gets an HSS of its own.
+	tests := []struct {
+		typ            cx.ServerAssignmentType
+		notAdmittedGet diameter.Result
+	}{
+		{cx.UnregisteredUser, rejected},
+		// The S-CSCF never sends these for a subscriber whose UAR was
+		// refused; they are here because refusing them would leave the
+		// registration state and the authentication mark behind.
+		{cx.AssignRegistration, success},
+		{cx.ReRegistration, success},
+		{cx.TimeoutDeregistration, success},
+		{cx.UserDeregistration, success},
+		{cx.AdministrativeDeregistration, success},
+		{cx.AuthenticationFailure, success},
+		{cx.AuthenticationTimeout, success},
+	}
+	for _, tt := range tests {
+		for _, policy := range Admissions {
+			t.Run(tt.typ.String()+", "+string(policy), func(t *testing.T) {
+				h := admissionHSS(t, policy)
+				// NO_ASSIGNMENT is left out: it answers the user profile only
+				// to the S-CSCF already assigned, and no S-CSCF is here.
+				want := success
+				if policy == AdmitTestUsers {
+					want = tt.notAdmittedGet
+				}
+				if a := sar(t, h, scscf, tt.typ); a.Result != want {
+					t.Errorf("SAA = %+v, want %+v", a.Result, want)
+				}
+				// A test user is admitted by either policy.
+				a, err := cx.ParseServerAssignmentAnswer(exchange(t, h, cx.ServerAssignmentRequest{Header: hdr,
+					UserName: testIMPI, PublicIdentities: []string{testIMPU}, ServerName: scscf, ServerAssignmentType: tt.typ}.Message()))
+				if err != nil {
+					t.Fatal(err)
+				}
+				if a.Result != success {
+					t.Errorf("SAA for the test user = %+v, want DIAMETER_SUCCESS", a.Result)
+				}
+			})
+		}
+	}
+}
+
+// TestAdmissionLeavesValidRegistrations: the policy of the moment
+// decides the requests that arrive from then on, and nothing more. A
+// registration that is valid when the policy narrows stays valid: the
+// HSS sends no Registration-Termination-Request, calls to the user
+// still find its S-CSCF, and the user drops out when the S-CSCF lets
+// the registration expire.
+func TestAdmissionLeavesValidRegistrations(t *testing.T) {
+	h := admissionHSS(t, AdmitAll)
+	mar(t, h, scscf)
+	if a := sar(t, h, scscf, cx.AssignRegistration); !a.Result.Success() {
+		t.Fatalf("SAA of the registration = %+v", a.Result)
+	}
+	h.config.Admission = AdmitTestUsers
+
+	u, _, ok := h.find(t.Context(), impi, "")
+	if !ok || u.State != Registered {
+		t.Fatalf("the subscriber is %+v, want it registered still", u)
+	}
+	// The refresh is refused, so the registration ends when its time is
+	// up. The S-CSCF holds the expiry; the HSS neither counts it down nor
+	// tells the S-CSCF to end it.
+	if a := uar(t, h, impi, impu, cx.Registration); a.Result != diameter.Base(diameter.DiameterAuthorizationRejected) {
+		t.Errorf("UAA for the refresh = %+v, want DIAMETER_AUTHORIZATION_REJECTED", a.Result)
+	}
+	if a := lir(t, h, impu); a.Result != diameter.Base(diameter.DiameterSuccess) || a.ServerName != scscf {
+		t.Errorf("LIA while the registration is valid = %+v, want %s", a, scscf)
+	}
+	// A terminating request for a subscriber the HSS holds as registered
+	// is answered, whatever the policy: it is that valid registration
+	// that the request belongs to (6.1.2.1 step 5 then has the HSS keep
+	// the profile and set the state to unregistered).
+	if a := sar(t, h, scscf, cx.UnregisteredUser); !a.Result.Success() {
+		t.Errorf("SAA for UNREGISTERED_USER of a registered subscriber = %+v, want DIAMETER_SUCCESS", a.Result)
+	}
+	// The deregistration goes through, and from then on the subscriber
+	// has no valid registration: the next UNREGISTERED_USER is refused,
+	// although a server name was stored for it until now.
+	if a := sar(t, h, scscf, cx.UserDeregistration); !a.Result.Success() {
+		t.Errorf("SAA of the deregistration = %+v", a.Result)
+	}
+	if a := sar(t, h, scscf, cx.UnregisteredUser); a.Result != diameter.Base(diameter.DiameterAuthorizationRejected) {
+		t.Errorf("SAA for UNREGISTERED_USER once the registration is gone = %+v, want DIAMETER_AUTHORIZATION_REJECTED", a.Result)
+	}
+}
+
 // TestBarredIdentity checks the barring of TS 29.228: a barred identity
 // registers when its implicit registration set has one that is not
 // barred, as the temporary public identity of a UE without an ISIM does

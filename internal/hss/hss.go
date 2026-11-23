@@ -14,6 +14,7 @@ import (
 	"crypto/md5"
 	cryptorand "crypto/rand"
 	"encoding/hex"
+	"fmt"
 	"log/slog"
 	"slices"
 	"sync"
@@ -69,6 +70,9 @@ type Config struct {
 	// server of that feature, and leaving DefaultServiceProfile as it
 	// is.
 	TestUserServiceProfile string
+	// Admission is which subscribers the network admits. The empty
+	// Admission is AdmitAll.
+	Admission Admission
 	// ProvisioningListen is the address of the provisioning API, such as
 	// :8081. Empty means the node has none.
 	ProvisioningListen string
@@ -93,6 +97,51 @@ type Config struct {
 	// measurements (metrics.go). Nil gives it a registry of its own,
 	// which nothing serves.
 	Metrics *metrics.Registry
+}
+
+// Admission is the operator's policy on which subscribers the network
+// admits. It decides whether a subscriber is authorized to register
+// (TS 29.228 6.1.1.1 step 5), and the HSS reads it from the subscriber
+// it already has in hand, so the policy costs nothing per subscriber
+// and needs no walk over them.
+//
+// Changing the policy, or taking the test user mark off a subscriber
+// while it is AdmitTestUsers, leaves the registrations that are valid
+// then as they are: the HSS sends no Registration-Termination-Request
+// and refuses the requests that arrive from that moment on. The S-CSCF
+// holds the expiry, so each of those users drops out when its
+// registration runs out.
+type Admission string
+
+const (
+	// AdmitAll admits every subscriber the HSS has.
+	AdmitAll Admission = "all"
+	// AdmitTestUsers admits only the subscribers marked
+	// Subscription.TestUser, which is how an operator keeps a network to
+	// the users it tries features out on.
+	AdmitTestUsers Admission = "test_users"
+)
+
+// Admissions are the policies in the order a configuration lists them.
+var Admissions = []Admission{AdmitAll, AdmitTestUsers}
+
+// ParseAdmission reads the admission policy of a configuration. The
+// empty string is AdmitAll, so a network that names no policy admits
+// every subscriber.
+func ParseAdmission(s string) (Admission, error) {
+	if s == "" {
+		return AdmitAll, nil
+	}
+	if !slices.Contains(Admissions, Admission(s)) {
+		return "", fmt.Errorf("admission: %q is not one of %v", s, Admissions)
+	}
+	return Admission(s), nil
+}
+
+// admits reports whether the admission policy lets u register and take
+// an S-CSCF of its own.
+func (h *HSS) admits(u Subscriber) bool {
+	return h.config.Admission != AdmitTestUsers || u.TestUser
 }
 
 // ServiceCentre is how the HSS reaches one of the SMS central
@@ -342,12 +391,20 @@ func (h *HSS) userAuthorization(ctx context.Context, r cx.UserAuthorizationReque
 	if u.Barred(r.PublicIdentity) && !slices.ContainsFunc(u.PublicIdentities, func(id string) bool { return !u.Barred(id) }) {
 		return cx.UserAuthorizationAnswer{Result: diameter.Base(diameter.DiameterAuthorizationRejected)}
 	}
-	// SIMPLIFIED: TS 29.228 6.1.1.1 step 5. The HSS should check whether
-	// the user may register at all, and answer
-	// DIAMETER_AUTHORIZATION_REJECTED otherwise. Every user of this stub
-	// may register, so only the roaming check is made.
-	if r.UserAuthorizationType != cx.DeRegistration && !slices.Contains(h.config.VisitedNetworks, r.VisitedNetworkIdentifier) {
-		return cx.UserAuthorizationAnswer{Result: diameter.Experimental(cx.DiameterErrorRoamingNotAllowed)}
+	// Step 5: REGISTRATION, a request without a User-Authorization-Type
+	// and REGISTRATION_AND_CAPABILITIES all ask that the identity be
+	// allowed to roam in the visited network and be authorized to
+	// register. A first registration and a refresh take this same
+	// branch, so one check refuses both. DE_REGISTRATION asks for
+	// neither: refusing it would leave the user unable to end a
+	// registration that the S-CSCF and the P-CSCF still hold.
+	if r.UserAuthorizationType != cx.DeRegistration {
+		if !slices.Contains(h.config.VisitedNetworks, r.VisitedNetworkIdentifier) {
+			return cx.UserAuthorizationAnswer{Result: diameter.Experimental(cx.DiameterErrorRoamingNotAllowed)}
+		}
+		if !h.admits(u) {
+			return cx.UserAuthorizationAnswer{Result: diameter.Base(diameter.DiameterAuthorizationRejected)}
+		}
 	}
 	if r.UserAuthorizationType == cx.RegistrationAndCapabilities {
 		caps := h.config.ServerCapabilities
@@ -567,6 +624,20 @@ func (h *HSS) serverAssignment(ctx context.Context, r cx.ServerAssignmentRequest
 		}
 		return h.withUserData(u, r)
 	case cx.UnregisteredUser:
+		// A check that the procedure does not have: step 5 authorizes
+		// nothing on this branch. Refusing the registration alone would
+		// leave a subscriber the admission policy does not admit with the
+		// services of the unregistered state, because the LIR of a
+		// terminating request is answered whatever the policy (6.1.4.1
+		// step 3) and the S-CSCF the I-CSCF then picks takes the profile
+		// here. DIAMETER_AUTHORIZATION_REJECTED is a base-protocol
+		// Result-Code (RFC 6733 7.1.5), so it fits this answer as well as
+		// the UAA's. A subscriber the HSS does not hold as registered has
+		// no valid registration, whether or not a server name is stored
+		// for it, as one is for a user whose S-CSCF kept its name.
+		if u.State != Registered && !h.admits(u) {
+			return cx.ServerAssignmentAnswer{Result: diameter.Base(diameter.DiameterAuthorizationRejected)}
+		}
 		// The S-CSCF sends it for a request to, or on behalf of, a user it
 		// has no registration of. Another S-CSCF may already serve the
 		// user: the S-CSCF then sends the request there (TS 24.229

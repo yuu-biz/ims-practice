@@ -427,6 +427,65 @@ With `no-services`, no criterion of subscriber 3 matches anything any more: its 
 
 The HSS pushes for a user it has as registered, and for a user in the unregistered state, where an S-CSCF keeps the profile for calls to a user who is not registered (6.6.1). For any other user it writes the subscription and nothing more: the next registration brings the profile. It also pushes only when the user profile it would send really changes, so a `test_user` mark that picks the same service profile as before sends nothing.
 
+## Admit only the test users
+
+An operator who is trying a feature out can keep the network to the users it is tried on. The `admission` setting of `deploy/compose/hss.yaml` says which subscribers the HSS admits:
+
+- `all`, the setting of this deployment, admits every subscriber the HSS has.
+- `test_users` admits only the subscribers marked `test_user`, the mark that `POST`, `PUT` and `PATCH` of the provisioning API set, and that also picks the service profile of a test user.
+
+With `test_users`, the HSS refuses the UAR of a subscriber that is not marked. Step 5 of the registration status query asks that the identity be authorized to register, and names **DIAMETER_AUTHORIZATION_REJECTED** (5003) for one that is not (TS 29.228 6.1.1.1). That value belongs to the base protocol, not to Cx (RFC 6733 7.1.5), so it arrives in **Result-Code** rather than in Experimental-Result-Code. Cx has a 5003 of its own, DIAMETER_ERROR_IDENTITY_NOT_REGISTERED (TS 29.229 6.2.2.3), which is always in Experimental-Result-Code, so the two are told apart by the AVP that carries them. The I-CSCF turns a negative UAA into **403 Forbidden** (TS 24.229 5.3.1.3).
+
+```text
+ UE             P-CSCF         I-CSCF          HSS
+ |  REGISTER (1) |              |              |
+ |-------------->|------------->|              |
+ |               |              |  UAR (2)     |
+ |               |              |------------->|
+ |               |              |  UAA (3)     |
+ |               |              |<-------------|
+ |  403 (4)      |              |              |
+ |<--------------|<-------------|              |
+```
+
+1. The UE sends the first REGISTER, which reaches the I-CSCF as in steps 1 and 2 of the sequence above.
+2. The I-CSCF asks the HSS whether the user may register here, with **User-Authorization-Type** `REGISTRATION`. A request without that AVP means the same.
+3. The subscriber is not marked `test_user`, so the HSS answers Result-Code DIAMETER_AUTHORIZATION_REJECTED, with no S-CSCF name and no capabilities. In Wireshark, `diameter.Result-Code == 5003` finds the answer.
+4. The I-CSCF answers 403, which the P-CSCF passes to the UE. The S-CSCF is never asked, so no MAR goes out and the UE is never challenged. `ue register` ends with an error, as it does for a subscription that was removed.
+
+A **REGISTRATION_AND_CAPABILITIES** UAR takes the same branch of step 5 and gets the same answer, so a refused user is stopped before the I-CSCF picks an S-CSCF. A **DE_REGISTRATION** UAR is not checked at all: step 5 asks nothing of it, and refusing it would leave the user unable to end a registration that the S-CSCF and the P-CSCF still hold.
+
+Refusing the registration is not enough on its own. A call to a user who is not registered reaches the HSS's location query, which answers for any identity whose profile has a criterion of the terminating unregistered case (TS 29.228 6.1.4.1), and the S-CSCF that the I-CSCF then picks asks for the profile with a SAR of **UNREGISTERED_USER**. So the HSS refuses that SAR with DIAMETER_AUTHORIZATION_REJECTED too, for a subscriber it does not admit and holds no valid registration of. The S-CSCF has no profile to serve the call with and answers **500 Server Internal Error**, as it does for any SAA that did not succeed; the caller learns nothing of the reason. Every other Server-Assignment-Type goes through, so that a registration that is ending is not left half finished in the HSS.
+
+Narrowing the policy, or taking the mark off a subscriber while the policy is `test_users`, leaves the registrations that are valid at that moment as they are. The HSS sends no RTR, and calls to those users still find their S-CSCF. Each of them drops out when its registration expires, because the refresh is refused: the S-CSCF holds the expiry, and the HSS neither counts it down nor asks for it to be ended.
+
+To see the refusal, change the setting and start the HSS again. Compose leaves a container that it has no new definition for as it is, so `--force-recreate` is needed for the HSS to read its file again:
+
+```sh
+sed -i 's/^  admission: all/  admission: test_users/' deploy/compose/hss.yaml
+docker compose up -d --no-deps --force-recreate hss
+```
+
+The new HSS answers on the new policy, and it starts from the subscriptions of its file: this deployment keeps them in the memory of the HSS, so a change made over the provisioning API before the restart is gone. Wait until the I-CSCF and the S-CSCF have their Diameter connections to it open again, which may take until they retry after Tc, 30 s (RFC 6733 2.1). Then mark subscriber 2 as a test user. The provisioning API is not published on the host, so the request goes from inside the container of the HSS, as above.
+
+```sh
+docker compose exec hss sh -c '
+body="{\"test_user\":true}"
+printf "PATCH /subscriptions/001010000000002@ims.mnc001.mcc001.3gppnetwork.org HTTP/1.0\r\nContent-Type: application/json\r\nContent-Length: ${#body}\r\n\r\n%s" "$body" |
+  nc -w 5 127.0.0.1 8081'
+```
+
+Subscriber 1 is now refused and subscriber 2 registers:
+
+```sh
+docker compose run --no-deps --rm ue register --deregister-after 2s
+docker compose run --no-deps --rm ue register --deregister-after 2s \
+  --impi 001010000000002@ims.mnc001.mcc001.3gppnetwork.org \
+  --impu sip:+12025550102@ims.mnc001.mcc001.3gppnetwork.org --password test-password-2
+```
+
+To leave the deployment as the rest of this guide describes it, put the file back with `git checkout deploy/compose/hss.yaml` and run `docker compose up -d --no-deps --force-recreate hss` again. `scripts/e2e-admission.sh` runs this scenario and reads the UAA and the 403 out of a capture of its own.
+
 ## A wrong password
 
 With a wrong password, steps 1 to 8 are the same. In step 9 the response does not match. The S-CSCF answers **403 Forbidden** (TS 24.229 5.4.1.2.3B) and sends a SAR with **AUTHENTICATION_FAILURE** (9). The HSS clears the S-CSCF it had stored (TS 29.228 6.1.2.1), so the next attempt starts again with FIRST_REGISTRATION.
@@ -779,7 +838,6 @@ These parts of the specifications are left out or shortened. Each has a `SIMPLIF
 | UE, TS 24.229 5.1.1.2.1 and 5.1.1.4.1 | When Timer F fires for a REGISTER, or a 503 comes with a Retry-After longer than Timer F, the UE waits and registers through the same P-CSCF. It does not mark the P-CSCF as unavailable or look for another one. After a failed refresh it always makes an initial registration, also where a short Retry-After of a 503 would let it refresh. | The UE knows one P-CSCF address, and finding the P-CSCFs again would give the same one. No 503 with a short Retry-After reaches the UE: a P-CSCF that the operator has shut down answers 503 with a Retry-After longer than Timer F, and when the S-CSCF answers 503 with one, the I-CSCF answers 500 without it. |
 | UE, TS 24.229 5.1.1.2.1 | max-time and base-time of the retry delay are always the defaults of RFC 5626 4.5. | The network can provide them only through a management object of TS 24.167, which the UE does not have. |
 | HSS, TS 29.228 6.1.1.1 and 6.1.2.1 | One registration state per subscription, not per public identity. Some Server-Assignment-Type values are not handled. | Each test subscription is one implicit registration set, and the S-CSCF never sends the other values. |
-| HSS, TS 29.228 6.1.1.1 step 5 | No check that the user may register at all. | Every test user may register. |
 | HSS, TS 29.228 6.2.2.1 | A PPA that reports an error leaves the registration state as it is: the HSS neither sets a user that the S-CSCF does not know to not registered nor deregisters the user with SERVER_CHANGE. | A push that failed does not take the user's registration away. The S-CSCF reads the profile again at the next registration, and asks the HSS anew for a user it does not know. |
 | HSS, TS 29.228 6.5.2.1 | When a `PUT` gives a registered user another default public identity, by changing the order of the set or by barring its first identity, the HSS sends no PPR, which the specification rules out, and not the RTR that it asks for instead: it sends nothing. | The S-CSCF gets the new default identity, with the rest of the changed profile, at the next registration or in the next PPR. |
 | HSS, TS 29.228 6.5.2.3, 6.5.2.4 and 6.5.2.5 | A PPR carries the user profile alone: no charging addresses, no changed SIP Digest password, and none of the other user information that a PPR may update. | The HSS holds no charging addresses, and between two registrations the S-CSCF keeps no password of the user for a new one to replace. |

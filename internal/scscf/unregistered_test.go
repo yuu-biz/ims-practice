@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/yuu-biz/ims-practice/internal/cx"
+	"github.com/yuu-biz/ims-practice/internal/hss"
 	"github.com/yuu-biz/ims-practice/internal/ifc"
 	"github.com/yuu-biz/ims-practice/internal/sip"
 )
@@ -128,6 +129,29 @@ func TestUnregisteredProfileIsKeptForAWhile(t *testing.T) {
 		t.Fatalf("call to the registered user got %d, want the 486 of the P-CSCF", r.StatusCode)
 	}
 	received(t, h.pcscf)
+}
+
+// TestUnregisteredCalleeOutsideTheAdmissionPolicy: the HSS admits only
+// its test users, so the SAR of UNREGISTERED_USER is refused with
+// DIAMETER_AUTHORIZATION_REJECTED. The S-CSCF has no profile to serve
+// the call with and answers 500, as it does for any SAA that did not
+// succeed; the caller learns nothing of the reason.
+func TestUnregisteredCalleeOutsideTheAdmissionPolicy(t *testing.T) {
+	criteria := []ifc.InitialFilterCriteria{callCriterion(0, ifc.TerminatingUnregistered, asURI)}
+	hssCfg := hssProfile(criteria...)
+	hssCfg.Admission = hss.AdmitTestUsers
+	h := newHarnessWithHSS(t, Config{}, nil, hssCfg,
+		hss.Subscription{PrivateIdentity: impi, PublicIdentities: []string{impu}, Password: password})
+	if r := h.invite(impu, termRoute, ""); r.StatusCode != 500 {
+		t.Fatalf("got %d, want 500", r.StatusCode)
+	}
+	waitForAssignments(t, h.hss, cx.UnregisteredUser)
+	// The S-CSCF kept no profile of the refused user, so a second call
+	// asks the HSS again instead of serving the call from nothing.
+	if r := h.invite(impu, termRoute, ""); r.StatusCode != 500 {
+		t.Fatalf("the second call got %d, want 500", r.StatusCode)
+	}
+	waitForAssignments(t, h.hss, cx.UnregisteredUser, cx.UnregisteredUser)
 }
 
 // TestUnregisteredCalleeServedElsewhere: another S-CSCF already holds

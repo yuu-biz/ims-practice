@@ -459,6 +459,65 @@ printf "PATCH /subscriptions/001010000000003@ims.mnc001.mcc001.3gppnetwork.org H
 
 HSS が push するのは、登録中の利用者と、未登録の状態の利用者です。未登録の状態は、登録していない利用者への呼のために S-CSCF がプロファイルを持っているあいだを指します（6.6.1）。ほかの利用者については、加入を書くだけです。プロファイルは次の登録で届きます。push するのは、送ることになるユーザープロファイルが実際に変わったときだけです。前と同じサービスプロファイルを選ぶ `test_user` の変更では、送るものがありません。
 
+## 試験用の利用者だけを収容する
+
+機能を試しているあいだ、その機能を試す利用者だけを網に収容しておけます。どの加入者を収容するかは、`deploy/compose/hss.yaml` の `admission` で決めます。
+
+- `all`。この構成の値です。HSS が持つ加入者を全員収容します。
+- `test_users`。`test_user` の印が付いた加入者だけを収容します。この印は、プロビジョニングの API の `POST`、`PUT`、`PATCH` で付けられます。試験用の利用者のサービスプロファイルを選ぶのも、同じ印です。
+
+`test_users` のとき、HSS は印の付いていない加入者の UAR を断ります。登録の状態の問い合わせの手順 5 は、識別子が登録を認可されていることを求め、認可されていないときの答えを **DIAMETER_AUTHORIZATION_REJECTED**（5003）としています（TS 29.228 6.1.1.1）。この値は Cx ではなく基本のプロトコルのものなので（RFC 6733 7.1.5）、Experimental-Result-Code ではなく **Result-Code** に入ります。Cx にも 5003 の DIAMETER_ERROR_IDENTITY_NOT_REGISTERED があり（TS 29.229 6.2.2.3）、こちらは必ず Experimental-Result-Code に入るので、どちらの AVP に入っているかで見分けます。I-CSCF は、失敗の UAA を **403 Forbidden** にして返します（TS 24.229 5.3.1.3）。
+
+```text
+ UE             P-CSCF         I-CSCF          HSS
+ |  REGISTER (1) |              |              |
+ |-------------->|------------->|              |
+ |               |              |  UAR (2)     |
+ |               |              |------------->|
+ |               |              |  UAA (3)     |
+ |               |              |<-------------|
+ |  403 (4)      |              |              |
+ |<--------------|<-------------|              |
+```
+
+1. UE が最初の REGISTER を送ります。I-CSCF に届くまでは、上の手順 1 と 2 のとおりです。
+2. I-CSCF は、この利用者がここで登録してよいかを HSS に尋ねます。**User-Authorization-Type** は `REGISTRATION` です。この AVP が無い要求も同じ意味になります。
+3. 加入者に `test_user` の印が無いので、HSS は Result-Code を DIAMETER_AUTHORIZATION_REJECTED にして答えます。S-CSCF の名前も能力も返しません。Wireshark では `diameter.Result-Code == 5003` でこの応答が見つかります。
+4. I-CSCF は 403 で答え、P-CSCF が UE に返します。S-CSCF には問い合わせが行かないので、MAR も出ず、UE は認証を求められません。`ue register` は、加入を削除されたときと同じように、エラーとして終了します。
+
+**REGISTRATION_AND_CAPABILITIES** の UAR も手順 5 の同じ枝を通るので、同じ答えになります。断られる利用者は、I-CSCF が S-CSCF を選ぶ前に止まります。**DE_REGISTRATION** の UAR は確かめません。手順 5 がこの枝で登録の認可を求めていないうえ、断ると、S-CSCF と P-CSCF に残っている登録を利用者が終えられなくなるからです。
+
+登録を断るだけでは足りません。登録していない利用者への呼は HSS の位置の問い合わせに届き、終端の未登録の枝の iFC を持つ識別子には答えが返ります（TS 29.228 6.1.4.1）。そのあと I-CSCF が選んだ S-CSCF が、**UNREGISTERED_USER** の SAR でプロファイルを取りに来ます。そこで HSS は、収容の対象外で、有効な登録を持たない加入者には、この SAR も DIAMETER_AUTHORIZATION_REJECTED で断ります。S-CSCF は呼を扱うプロファイルを持てず、**500 Server Internal Error** で終えます。成功しなかった SAA のときと同じ振る舞いで、発信側に理由は伝わりません。ほかの Server-Assignment-Type は通します。終わりかけの登録が HSS に中途半端に残らないようにするためです。
+
+収容の方針を狭めたときと、`test_users` のあいだに加入者の印を外したときは、そのときに有効な登録をそのままにします。HSS は RTR を送らず、その利用者への呼も S-CSCF に届き続けます。登録の更新は断られるので、利用者は期限が切れたときに落ちます。期限は S-CSCF が持っていて、HSS はそれを数えることも、終わらせるよう頼むこともしません。
+
+断られる様子を見るには、設定を変えて、HSS を起動し直します。Compose は、定義の変わらないコンテナをそのままにするので、HSS にファイルを読み直させるには `--force-recreate` が要ります。
+
+```sh
+sed -i 's/^  admission: all/  admission: test_users/' deploy/compose/hss.yaml
+docker compose up -d --no-deps --force-recreate hss
+```
+
+新しい HSS は、新しい方針で答えます。加入は、設定のファイルに書いたものから始まります。この構成では加入を HSS のメモリに置いているので、起動し直す前にプロビジョニングの API で変えたことは消えます。I-CSCF と S-CSCF が HSS との Diameter の接続を開き直すまで待ちます。Tc の 30 秒後の再試行まで待つことがあります（RFC 6733 2.1）。そのあとで、加入者 2 に試験用の印を付けます。プロビジョニングの API はホストに公開していないので、要求は上と同じく HSS のコンテナの中から送ります。
+
+```sh
+docker compose exec hss sh -c '
+body="{\"test_user\":true}"
+printf "PATCH /subscriptions/001010000000002@ims.mnc001.mcc001.3gppnetwork.org HTTP/1.0\r\nContent-Type: application/json\r\nContent-Length: ${#body}\r\n\r\n%s" "$body" |
+  nc -w 5 127.0.0.1 8081'
+```
+
+加入者 1 は断られ、加入者 2 は登録できます。
+
+```sh
+docker compose run --no-deps --rm ue register --deregister-after 2s
+docker compose run --no-deps --rm ue register --deregister-after 2s \
+  --impi 001010000000002@ims.mnc001.mcc001.3gppnetwork.org \
+  --impu sip:+12025550102@ims.mnc001.mcc001.3gppnetwork.org --password test-password-2
+```
+
+この手順書のほかの節と同じ構成に戻すには、`git checkout deploy/compose/hss.yaml` でファイルを元に戻し、もう一度 `docker compose up -d --no-deps --force-recreate hss` を実行します。`scripts/e2e-admission.sh` は、この流れを動かして、UAA と 403 を自分のキャプチャから読みます。
+
 ## パスワードが誤っているとき
 
 手順 1 から 8 までは同じです。手順 9 で response が一致しません。
@@ -815,7 +874,6 @@ rm ue.exe
 | UE。TS 24.229 5.1.1.2.1 と 5.1.1.4.1 | REGISTER でタイマー F が切れたときと、タイマー F より長い Retry-After の付いた 503 が返ったときは、待ってから同じ P-CSCF を通って登録する。その P-CSCF を使えないものとして扱ったり、別の P-CSCF を探したりはしない。更新に失敗したあとは、503 の短い Retry-After なら更新してよい場合でも、必ず最初の登録をやり直す。 | UE が知っている P-CSCF のアドレスは 1 つで、P-CSCF を探し直しても同じアドレスになるため。また、短い Retry-After の付いた 503 が UE に届くことは無いため。運用者が shut down した P-CSCF は、タイマー F より長い Retry-After を付けて 503 を返す。S-CSCF が Retry-After を付けた 503 で答えると、I-CSCF は Retry-After の無い 500 を返す。 |
 | UE。TS 24.229 5.1.1.2.1 | 再試行の間隔の max-time と base-time は、いつも RFC 5626 4.5 の既定値を使う。 | 網がこれらの値を渡せるのは TS 24.167 の管理オブジェクトを通してだけで、UE はそれを持たないため。 |
 | HSS。TS 29.228 6.1.1.1、6.1.2.1 | 登録の状態を、公開の識別子ごとではなく加入ごとに持つ。一部の Server-Assignment-Type に対応しない。 | 試験用の加入はそれぞれ 1 つの暗黙登録の組で、S-CSCF はほかの値を送らないため。 |
-| HSS。TS 29.228 6.1.1.1 の手順 5 | 登録してよい利用者かを確かめない。 | 試験用の加入は全員が登録してよいため。 |
 | HSS。TS 29.228 6.2.2.1 | 誤りを返す PPA を受けても、登録の状態をそのままにする。S-CSCF が知らない利用者を未登録にすることも、SERVER_CHANGE で登録を解除することもしない。 | 送れなかった push のために、利用者の登録を取り上げないため。S-CSCF は次の登録でプロファイルを読み直し、知らない利用者のことは HSS に問い合わせ直す。 |
 | HSS。TS 29.228 6.5.2.1 | 登録中の利用者の既定の公開の識別子を `PUT` で変えたとき（組の順番を変える、最初の識別子を禁止にする）、HSS は何も送らない。仕様がこの場合に使うことを禁じている PPR も、代わりに求めている RTR も送らない。 | 新しい既定の識別子は、変わったプロファイルのほかの部分と一緒に、次の登録か次の PPR で S-CSCF に届く。 |
 | HSS。TS 29.228 6.5.2.3、6.5.2.4、6.5.2.5 | PPR が運ぶのはユーザープロファイルだけ。課金のアドレスも、変わった SIP Digest のパスワードも、PPR が運べるほかのユーザー情報も送らない。 | HSS は課金のアドレスを持たない。パスワードは、登録と登録のあいだ S-CSCF が持っていないので、新しい値で置き換えるものが無いため。 |

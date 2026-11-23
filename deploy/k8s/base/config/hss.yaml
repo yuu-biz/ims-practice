@@ -281,6 +281,16 @@ hss:
   # feature out on the test users alone, define a second profile with
   # the criteria of that feature and name it here.
   test_user_service_profile: default
+  # Which subscribers the network admits. With all, every subscriber
+  # here may register. With test_users, the HSS answers the UAR of a
+  # subscriber that is not marked test_user with
+  # DIAMETER_AUTHORIZATION_REJECTED, and the I-CSCF turns that into 403
+  # (TS 29.228 6.1.1.1 step 5, TS 24.229 5.3.1.3). It also refuses to
+  # give such a subscriber an S-CSCF for the services it would get while
+  # it is not registered. No subscriber here is marked test_user, so
+  # test_users would leave the network to the subscribers that an
+  # operator marks through the provisioning API.
+  admission: all
   # The services of SMS over IP, for every subscription. The
   # S-CSCF sends the IP-SM-GW a third-party REGISTER for each
   # registration, with the MSISDN in the body (TS 24.229 5.4.1.7A), and
