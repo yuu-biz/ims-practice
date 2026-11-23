@@ -478,12 +478,13 @@ func TestJoinWithTheConferenceURI(t *testing.T) {
 // Where the S-CSCF would be for the INVITEs of the focus, bob answers
 // them with invited. It returns her conference session, the conference
 // URI with isfocus from the 200, and the NOTIFYs of her subscription.
-func aliceConference(t *testing.T, as testAS, invited func(*sip.IncomingCall)) (*sip.OutgoingCall, sip.NameAddr, <-chan sip.Notification) {
+func aliceConference(t *testing.T, as testAS, invited func(*sip.IncomingCall), headers ...sip.HeaderField) (*sip.OutgoingCall, sip.NameAddr, <-chan sip.Notification) {
 	t.Helper()
 	callee := newUA(t, "bob", invited)
 	alice := newParticipant(t, as, "alice", func(c *sip.IncomingCall) { c.Reject(480) })
 	inv := viaAS(t, as, callee, "orig", audio("42000", "sendrecv"))
 	inv.RequestURI, inv.To = ims.ConferenceFactoryURI(domain), ims.ConferenceFactoryURI(domain)
+	inv.Headers = append(inv.Headers, headers...)
 	conf, err := alice.Invite(inv)
 	if err != nil {
 		t.Fatal(err)
@@ -533,6 +534,110 @@ func joinWithoutACK(t *testing.T, as testAS, user, uri string) *sip.Message {
 		t.Fatal(err)
 	}
 	return readResponse(t, conn, 200)
+}
+
+// usersOf is each user of a conference document by its entity.
+func usersOf(d confinfo.Document) map[string]confinfo.User {
+	got := map[string]confinfo.User{}
+	for _, u := range d.Users.Users {
+		got[u.Entity] = u
+	}
+	return got
+}
+
+// TestPrivacyKeepsTheIdentityOutOfTheConferenceState is RFC 4575 8.2 on
+// each of the three ways into a conference: the focus takes a
+// participant's request for privacy and reveals its identity in no URI
+// of the conference state. Such a participant is a user of the document
+// under an anonymous URI of RFC 4575 5.6, with a status and a joining
+// method of its own; every other participant is named by its identity,
+// one that asked for "header" privacy included.
+func TestPrivacyKeepsTheIdentityOutOfTheConferenceState(t *testing.T) {
+	mrfc := startConferenceMRFC(t)
+	as := startAS(t, noServices{}, mmtel.Config{MRFC: "sip:" + contactOf(t, mrfc.ua)})
+	// The creator asks for privacy in its INVITE to the factory URI, as a
+	// user with OIR does (TS 24.605 4.6.5, TS 24.607 4.5.2.4). The user
+	// that the focus invites asks for it in its 2xx, as one with TIR does
+	// (TS 24.605 4.6.3, TS 24.608 4.5.2.9).
+	conf, focus, notifications := aliceConference(t, as, func(c *sip.IncomingCall) {
+		c.Accept(audio("41000", "sendrecv"),
+			sip.HeaderField{Name: "P-Asserted-Identity", Value: "<sip:bob@" + domain + ">"},
+			sip.HeaderField{Name: "Privacy", Value: sip.PrivacyID})
+	}, sip.HeaderField{Name: "Privacy", Value: sip.PrivacyID})
+	receive(t, mrfc.calls, "the creator's INVITE at the MRFC")
+	if r, err := conf.Refer(sip.ReferTo{URI: "sip:bob@" + domain}); err != nil || r.Response.StatusCode != 200 {
+		t.Fatalf("REFER got %v, %v; want 200", r, err)
+	}
+	// The focus names each participant whose identity it withholds in
+	// turn, so the invited user is in the conference before the next
+	// user dials in.
+	awaitNotification(t, notifications, "with the invited user connected", func(_ sip.Notification, d confinfo.Document) bool {
+		return len(d.Users.Users) == 2
+	})
+
+	// carol withholds its identity with "user", dave asks for nothing,
+	// and eve asks to hide how the network is built, not who it is.
+	for _, user := range []struct {
+		name    string
+		privacy string
+	}{{"carol", sip.PrivacyUser}, {"dave", ""}, {"eve", sip.PrivacyHeader}} {
+		ua := newParticipant(t, as, user.name, func(c *sip.IncomingCall) { c.Reject(480) })
+		inv := joining(user.name, focus.URI)
+		if user.privacy != "" {
+			inv.Headers = append(inv.Headers, sip.HeaderField{Name: "Privacy", Value: user.privacy})
+		}
+		out, err := ua.Invite(inv)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := statuses(readAll(t, out)); got[len(got)-1] != 200 {
+			t.Fatalf("%s got %v, want 200", user.name, got)
+		}
+	}
+
+	creator, _ := confinfo.AnonymousName(1)
+	invited, _ := confinfo.AnonymousName(2)
+	dialedIn, _ := confinfo.AnonymousName(3)
+	n := awaitNotification(t, notifications, "with all five participants", func(_ sip.Notification, d confinfo.Document) bool {
+		return len(d.Users.Users) == 5
+	})
+	got := usersOf(conferenceDocument(t, n.Body.Content))
+	for entity, want := range map[string]confinfo.User{
+		// The focus withheld these three identities, and names each
+		// participant by an anonymous URI of its own.
+		creator:  {Entity: creator, DisplayText: "Anonymous1"},
+		invited:  {Entity: invited, DisplayText: "Anonymous2"},
+		dialedIn: {Entity: dialedIn, DisplayText: "Anonymous3"},
+		// GSMA IR.92 2.3.3: without a display text of its own, a user's
+		// entity stands in for it.
+		"sip:dave@" + domain: {Entity: "sip:dave@" + domain, DisplayText: "sip:dave@" + domain},
+		"sip:eve@" + domain:  {Entity: "sip:eve@" + domain, DisplayText: "sip:eve@" + domain},
+	} {
+		u, ok := got[entity]
+		if !ok {
+			t.Errorf("no user %s in the conference state, which has %v", entity, slices.Sorted(maps.Keys(got)))
+			continue
+		}
+		if u.DisplayText != want.DisplayText || len(u.Endpoints) != 1 || u.Endpoints[0].Status != confinfo.Connected {
+			t.Errorf("user %s is %+v, want display text %q and one connected endpoint", entity, u, want.DisplayText)
+		}
+	}
+	// The identity behind each anonymous URI is nowhere in the document,
+	// and no participant is named twice.
+	for _, hidden := range []string{"alice", "bob", "carol"} {
+		if strings.Contains(string(n.Body.Content), hidden+"@"+domain) {
+			t.Errorf("the conference state tells the identity of %s:\n%s", hidden, n.Body.Content)
+		}
+	}
+	// RFC 4575 5.7.4: the creator and carol dialed in, and the focus
+	// dialed bob out, which the state says of them while saying no more.
+	for entity, want := range map[string]confinfo.JoiningMethod{
+		creator: confinfo.DialedIn, dialedIn: confinfo.DialedIn, invited: confinfo.DialedOut,
+	} {
+		if method := got[entity].Endpoints[0].JoiningMethod; method != want {
+			t.Errorf("user %s joined by %q, want %q", entity, method, want)
+		}
+	}
 }
 
 // TestJoinersBeforeTheirACKs: the focus takes a user who dials in as a
