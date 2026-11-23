@@ -20,7 +20,22 @@
 | IP-SM-GW の状態 | 配達の途中の状態を `Store` の後ろに置きます。どの台が delivery report を受けても処理できます。外部の保存先は [state-redundancy.md](state-redundancy.md) にあります。 |
 | 着信側の iFC | ほかの網から届いた短メッセージを、利用者を担当する IP-SM-GW に渡すため、着信側（SessionCase が 1）の MESSAGE を拾う iFC を 1 つ入れます（TS 23.204 6.4a）。P-Asserted-Identity が自網の IP-SM-GW の URI である MESSAGE は、否定の条件で除きます。この条件が無いと、IP-SM-GW が出した MESSAGE が IP-SM-GW に戻るためです（TS 23.218 5.2.3 NOTE 5）。 |
 | HSS への登録 | IP-SM-GW は第三者 REGISTER を受けると、Sh の PUR で HSS に自分のアドレスを登録します。MAP は使いません。 |
+| HSS の S6c | HSS は SMS の中心の機能（SMS-GMSC と SMS-IWMSC）と S6c で話します。SRR に答え、RDR で message waiting data を書き換え、利用者が受け取れるようになったら ALR で知らせます。 |
 | 文字の符号化 | GSM 7 ビットの既定アルファベットと UCS2 に対応します。連結 SMS（UDH）と有効期間は作らず、`SIMPLIFIED:` に書きます。 |
+
+## HSS の S6c の作り
+
+標準の道では、SC は配送のたびに HSS へ SRR を送り、届かなかったときは RDR を送ります。HSS は、宛先が受け取れるようになったら ALR で SC に知らせます。この 3 つを HSS に入れるにあたって決めたことです。
+
+| 主題 | 作り | 根拠 |
+| --- | --- | --- |
+| serving node の返し方 | HSS は SRA の Serving-Node に IP-SM-GW を入れて自分で答えます。SRR を IP-SM-GW に回して、IP-SM-GW が自分のアドレスと MT Correlation ID を返す形は採りません。回すのは、ほかの網から来た短メッセージを宛先のホーム網を通して配送させるためで、このプロジェクトはそれを行いません。 | TS 29.338 Table 5.2.1.1-2 は、Serving-Node に IP-SM-GW の Diameter 名、realm、ISDN 番号を入れられるとします。TS 29.338 5.2.1.1 は、回す形が宛先のホーム網を通す強制のためだとします。TS 23.204 6.4 step 3a から 3c が回す形です。 |
+| IP-SM-GW の Diameter 名の入手 | PUR の Origin-Host と Origin-Realm から覚えます。Sh-Data の中には Diameter 名の要素がありません。覚えるのは、IP-SM-GW が S6c に対応していると示したときだけです。 | TS 29.328 6.1.2.1 step 4b。Annex D の tSMSRegistrationInfo は IP-SM-GW-Number、SCAddress、SBI と S6c の対応の表示だけを持ちます。 |
+| ALR の宛先 | 設定で、Service Centre のアドレス（E.164）ごとに Diameter 名と realm を持ちます。DNS は使いません。このリポジトリのノードの解決は設定で統一されているためです。 | TS 29.338 5.3.1.2 は、HSS が message waiting data に SMS-SC の名前とドメイン名を持つなら、Destination-Host と Destination-Realm を入れるとします。 |
+| message waiting data の置き場所 | 加入者のレコードの中に、SC のアドレスの一覧と UNRI、MCEF を置きます。全加入者を走査する処理は入れません。 | TS 23.040 3.2.6 が MWD、UNRI、MCEF を定めます。 |
+| 知らせる引き金 | IP-SM-GW が PUR で登録したときです。これが「IMS に登録したので IP で受け取れる」という知らせにあたります。UNRI を落とし、MWD が空でなく MCEF も落ちていれば ALR を送ります。MCEF が立っている間は送りません。 | TS 23.040 3.2.8 case 1 の 2c。TS 23.204 6.5b step 2。 |
+| 知らせたあと | ALA が返った SC のアドレスを MWD から消します。返らなかったものは残し、次に利用者が戻ったときにもう一度知らせます。 | TS 23.040 3.2.8 case 1 の 2c。TS 29.338 5.2.2.2 は、繰り返しの回数と間隔を運用者に任せます。 |
+| ALR を送る経路 | SC は HSS に Diameter の接続を張る側なので、その接続を使って送り返します。HSS が S-CSCF へ RTR を送るのと同じ仕組みです。 | － |
 
 ## SC を境界の後ろに置く理由
 
