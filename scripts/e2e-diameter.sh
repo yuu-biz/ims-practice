@@ -90,10 +90,12 @@ for node in $icscf $scscf $pcscf; do
 	at_least "CER from $node" "diameter.cmd.code == 257 && diameter.flags.request == 1 && ip.src == $node" 1
 	at_least "CEA 2001 to $node" "$(cea_to "$node")" 1
 done
-# The HSS speaks Cx (16777216) with the CSCFs and Sh (16777217) with
-# application servers, and advertises nothing else. The two are
-# adjacent, so a range finds any other one.
-none "CEA of the HSS advertising an application other than Cx and Sh" "diameter.cmd.code == 257 && diameter.flags.request == 0 && ip.src == $hss && (diameter.Auth-Application-Id < 16777216 || diameter.Auth-Application-Id > 16777217)"
+# The HSS speaks Cx (16777216) with the CSCFs, Sh (16777217) with
+# application servers and S6c (16777312, TS 29.338) with a service
+# centre, and advertises nothing else. A CEA lists several
+# Auth-Application-Id: "all ... in" holds when every one of them is in
+# the set, so its negation finds a CEA with any other one.
+none "CEA of the HSS advertising an application other than Cx, Sh and S6c" "diameter.cmd.code == 257 && diameter.flags.request == 0 && ip.src == $hss && !(all diameter.Auth-Application-Id in {16777216, 16777217, 16777312})"
 at_least "CEA of the HSS advertising Sh" "$sh_cea" 1
 # The PCRF speaks Rx (16777236, TS 29.214 5.1) with the P-CSCF only.
 none "CEA of the PCRF advertising an application other than Rx" "diameter.cmd.code == 257 && diameter.flags.request == 0 && ip.src == $pcrf && diameter.Auth-Application-Id != 16777236"
