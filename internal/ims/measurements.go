@@ -52,9 +52,13 @@ var (
 	// registrationStatuses are the status codes of a failed registration
 	// that are counted one by one; any other one counts under "other",
 	// so that the codes add up to all the failures (TS 32.409
-	// 4.1.1.1.3).
+	// 4.1.1.1.3). Among them is the 481 (Call/Transaction Does Not
+	// Exist) that a deregistration gets when the user has no
+	// registration to remove (TS 24.229 5.4.1.4.1): the S-CSCF sends it
+	// and the P-CSCF passes it on, so it is a failure that this network
+	// produces by itself, and one worth telling from the rest.
 	registrationStatuses = metrics.Label{Name: "status", Values: []string{
-		"400", "403", "404", "408", "420", "423", "480", "500", "503", "504",
+		"400", "403", "404", "408", "420", "423", "480", "481", "500", "503", "504",
 	}}
 )
 
