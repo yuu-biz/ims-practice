@@ -1284,14 +1284,14 @@ func diameterHandler(node *diameter.Node, hssRole *hss.HSS, scscfRole *atomic.Po
 }
 
 // cxHandler answers the Cx and Sh requests that reach the node. The HSS
-// sends the S-CSCF the RTR (TS 29.228 6.1.3); every other request is
-// for the HSS. A node with both roles gets both. The S-CSCF is made
+// sends the S-CSCF the RTR (TS 29.228 6.1.3) and the PPR (6.2.2); every
+// other request is for the HSS. A node with both roles gets both. The S-CSCF is made
 // after its Cx peer, and the handler has to be set before that peer, so
 // the handler finds the S-CSCF in scscfRole once it exists. hssRole is
 // nil on a node without the hss role.
 func cxHandler(node *diameter.Node, hssRole *hss.HSS, scscfRole *atomic.Pointer[scscf.SCSCF]) diameter.Handler {
 	return func(request *diam.Message) *diam.Message {
-		if s := scscfRole.Load(); s != nil && request.Header.CommandCode == cx.CommandRegistrationTermination {
+		if s := scscfRole.Load(); s != nil && fromHSS(request) {
 			return s.Handle(request)
 		}
 		if hssRole != nil {
@@ -1299,4 +1299,13 @@ func cxHandler(node *diameter.Node, hssRole *hss.HSS, scscfRole *atomic.Pointer[
 		}
 		return diameter.CommandUnsupportedAnswer(node.Identity(), request)
 	}
+}
+
+// fromHSS reports whether request is one that the HSS sends an S-CSCF.
+func fromHSS(request *diam.Message) bool {
+	switch request.Header.CommandCode {
+	case cx.CommandRegistrationTermination, cx.CommandPushProfile:
+		return request.Header.ApplicationID == diameter.ApplicationIDCx
+	}
+	return false
 }
