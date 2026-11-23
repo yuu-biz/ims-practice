@@ -48,8 +48,11 @@ type SubscriptionRecord struct {
 	MMTelServices string `json:"mmtel_services,omitempty"`
 	// RepositoryData is the Sh repository data of the subscription as
 	// the HSS holds it now, which a backup has in place of
-	// MMTelServices and UtPassword.
-	RepositoryData []RepositoryDataRecord `json:"repository_data,omitempty"`
+	// MMTelServices and UtPassword. It carries no omitempty, as the
+	// field of the request does not (hssSubscriptionRequest): an empty
+	// array asks for a subscription with no repository data at all, and
+	// a line of an archive that holds one goes back in as one.
+	RepositoryData []RepositoryDataRecord `json:"repository_data"`
 	// TestUser marks a test user.
 	TestUser bool `json:"test_user,omitempty"`
 	// ServiceProfile names the service profile of the subscription;

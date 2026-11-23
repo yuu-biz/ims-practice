@@ -49,16 +49,21 @@ type Subscription struct {
 // hssSubscriptionRequest is the body of PUT /subscriptions/{impi}: the
 // subscriptionRequest of internal/hss with the fields the OAM adds.
 type hssSubscriptionRequest struct {
-	PrivateIdentity  string                 `json:"private_identity"`
-	PublicIdentities []string               `json:"public_identities"`
-	Password         SecretString           `json:"password,omitempty"`
-	AKA              *AKARecord             `json:"aka,omitempty"`
-	Tel              string                 `json:"tel,omitempty"`
-	UtPassword       SecretString           `json:"ut_password,omitempty"`
-	MMTelServices    string                 `json:"mmtel_services,omitempty"`
-	RepositoryData   []RepositoryDataRecord `json:"repository_data,omitempty"`
-	TestUser         bool                   `json:"test_user,omitempty"`
-	ServiceProfile   string                 `json:"service_profile,omitempty"`
+	PrivateIdentity  string       `json:"private_identity"`
+	PublicIdentities []string     `json:"public_identities"`
+	Password         SecretString `json:"password,omitempty"`
+	AKA              *AKARecord   `json:"aka,omitempty"`
+	Tel              string       `json:"tel,omitempty"`
+	UtPassword       SecretString `json:"ut_password,omitempty"`
+	MMTelServices    string       `json:"mmtel_services,omitempty"`
+	// RepositoryData carries no omitempty, so that the HSS is asked for
+	// what the record means: an empty array asks for a subscription with
+	// no repository data at all, where leaving the field out asks for the
+	// MMTelServices document of the HSS configuration. A nil slice goes
+	// out as null, which the HSS reads as the field left out.
+	RepositoryData []RepositoryDataRecord `json:"repository_data"`
+	TestUser       bool                   `json:"test_user,omitempty"`
+	ServiceProfile string                 `json:"service_profile,omitempty"`
 }
 
 func (r SubscriptionRecord) hssRequest() hssSubscriptionRequest {
