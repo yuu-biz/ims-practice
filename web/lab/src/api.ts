@@ -106,9 +106,33 @@ export interface Registration {
 export interface Subscriber {
   private_identity: string;
   public_identities: string[];
+  // Those of the public identities that are barred: the S-CSCF lets
+  // them register and keeps them out of every other IMS communication
+  // (TS 29.228 B.2.1).
+  barred_identities: string[];
+  // The mark of a subscription that the operator keeps for trying a
+  // feature out. It picks the service profile of a test user, and the
+  // admission policy of the HSS can hold the network to the marked
+  // subscriptions.
+  test_user: boolean;
+  // The service profile the subscription names, empty where it names
+  // none.
+  service_profile: string;
+  // The profile it gets: service_profile where it names one, and
+  // otherwise the one the settings of the HSS name for its kind of
+  // subscription. Only the HSS can say which that is.
+  effective_service_profile: string;
   // The customized alerting tone that the callers of the user hear
   // (TS 24.182), null when the operator provisioned none.
   customized_alerting_tone: AlertingTone | null;
+}
+
+// What a PATCH of a subscription carries: the two fields the HSS takes
+// without the credentials of the subscription, which it hands out to
+// nobody. A field left out stays as it is.
+export interface SubscriberPatch {
+  test_user?: boolean;
+  service_profile?: string;
 }
 
 export interface AlertingTone {
@@ -121,7 +145,7 @@ export interface AlertingTone {
 // announcement notice (deploy/compose/mrfp.yaml).
 export const alertingTones = ["cat1", "cat2"] as const;
 
-export interface NewSubscriber extends Omit<Subscriber, "customized_alerting_tone"> {
+export interface NewSubscriber extends Pick<Subscriber, "private_identity" | "public_identities"> {
   password: string;
 }
 
@@ -419,6 +443,16 @@ export async function addSubscriber(subscriber: NewSubscriber): Promise<void> {
   });
 }
 
+// The HSS pushes the user profile that follows from the change to the
+// S-CSCF of a registered user before it answers.
+export async function patchSubscriber(privateIdentity: string, patch: SubscriberPatch): Promise<void> {
+  await send(`/api/subscribers/${encodeURIComponent(privateIdentity)}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(patch),
+  });
+}
+
 export async function deleteSubscriber(privateIdentity: string): Promise<void> {
   // A private identity has the form user@domain, so it must be escaped.
   await send(`/api/subscribers/${encodeURIComponent(privateIdentity)}`, { method: "DELETE" });
@@ -673,10 +707,12 @@ function parseSubscriber(value: unknown): Subscriber {
   const o = object(value);
   return {
     private_identity: string(o, "private_identity"),
-    public_identities: array(o, "public_identities").map((v) => {
-      if (typeof v !== "string") throw new Error("public_identities: expected strings");
-      return v;
-    }),
+    public_identities: strings(o, "public_identities"),
+    barred_identities: strings(o, "barred_identities"),
+    // Go leaves out a mark that is not set (omitempty).
+    test_user: o["test_user"] === undefined ? false : boolean(o, "test_user"),
+    service_profile: optionalString(o, "service_profile") ?? "",
+    effective_service_profile: string(o, "effective_service_profile"),
     customized_alerting_tone:
       o["customized_alerting_tone"] === undefined || o["customized_alerting_tone"] === null
         ? null
@@ -930,6 +966,13 @@ function number(o: JsonObject, key: string): number {
   const v = o[key];
   if (typeof v !== "number") throw new Error(`${key}: expected a number`);
   return v;
+}
+
+function strings(o: JsonObject, key: string): string[] {
+  return array(o, key).map((v) => {
+    if (typeof v !== "string") throw new Error(`${key}: expected strings`);
+    return v;
+  });
 }
 
 // A missing or null list is empty, as Go encodes a nil slice.

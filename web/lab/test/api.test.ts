@@ -8,6 +8,7 @@ import {
   HttpError,
   ladderCallIds,
   parseMessage,
+  patchSubscriber,
   putAlertingTone,
 } from "../src/api.ts";
 
@@ -24,13 +25,52 @@ describe("API responses", () => {
     serve(
       200,
       JSON.stringify([
-        { private_identity: "a@example.test", public_identities: ["sip:a@example.test"], customized_alerting_tone: { tone: "cat2", active: true } },
-        { private_identity: "b@example.test", public_identities: ["sip:b@example.test"] },
+        {
+          private_identity: "a@example.test",
+          public_identities: ["sip:a@example.test"],
+          effective_service_profile: "default",
+          customized_alerting_tone: { tone: "cat2", active: true },
+        },
+        { private_identity: "b@example.test", public_identities: ["sip:b@example.test"], effective_service_profile: "default" },
       ]),
     );
     const [a, b] = await fetchSubscribers();
     expect(a?.customized_alerting_tone).toEqual({ tone: "cat2", active: true });
     expect(b?.customized_alerting_tone).toBeNull();
+  });
+
+  it("reads the mark, the service profile and the barred identities of a subscriber", async () => {
+    serve(
+      200,
+      JSON.stringify([
+        {
+          private_identity: "a@example.test",
+          public_identities: ["sip:a@example.test", "tel:+12025550101"],
+          barred_identities: ["sip:a@example.test"],
+          test_user: true,
+          service_profile: "trial",
+          effective_service_profile: "trial",
+        },
+        { private_identity: "b@example.test", public_identities: ["sip:b@example.test"], effective_service_profile: "default" },
+      ]),
+    );
+    const [a, b] = await fetchSubscribers();
+    expect(a).toMatchObject({ barred_identities: ["sip:a@example.test"], test_user: true, service_profile: "trial", effective_service_profile: "trial" });
+    // The HSS leaves out a mark that is not set, a profile that the
+    // subscription does not name and an empty list of barred
+    // identities, and names the profile the settings give it instead.
+    expect(b).toMatchObject({ barred_identities: [], test_user: false, service_profile: "", effective_service_profile: "default" });
+  });
+
+  it("patches the service profile of a subscriber", async () => {
+    const fetch = vi.fn(async () => new Response("{}", { status: 200 }));
+    vi.stubGlobal("fetch", fetch);
+    await patchSubscriber("a@example.test", { service_profile: "no-services" });
+    expect(fetch).toHaveBeenCalledWith("/api/subscribers/a%40example.test", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: '{"service_profile":"no-services"}',
+    });
   });
 
   it("puts the alerting tone of a subscriber to the HSS", async () => {

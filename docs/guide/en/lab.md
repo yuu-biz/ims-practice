@@ -38,7 +38,7 @@ Run `docker compose up -d` again, and open `http://<address of the host>:8080` o
 | Calls | One row per call, with its caller, callee, state and final status code, and the number of its dialogs. Select a Call-ID to draw the ladder of the whole call. |
 | Ladder diagram | The SIP and Cx messages of the selected call or registration, one column per node. Select an arrow to see the whole message and the clauses of the specifications that describe it. For a MESSAGE that carries a short message, the details also show its RP and TP fields, its text and its body in hex. **Copy as text** writes the whole ladder out as monospace text. |
 | Registrations | One row per public identity that the Lab saw register, with its contact, expiry and S-CSCF. Select an identity to draw the ladder of its last REGISTER. |
-| Subscribers (HSS) | The subscriptions that the HSS holds. You can add and delete test subscribers here. |
+| Subscribers (HSS) | The subscriptions that the HSS holds, each with its public identities and the barred ones among them, whether it is marked as a test user, the service profile it gets and its alerting tone. You can add and delete test subscribers here, and change the mark and the profile of one. |
 | Access network (EPC) | One row per UE that is attached to the EPC stub, with the address the stub gave it, its EPS bearers and the Rx sessions of its calls. The buttons start the procedures that the network initiates: deactivating a bearer and detaching the UE. |
 | Faults | The faults that the fault agent holds, and a form that injects one. The panel is off until that agent runs. |
 
@@ -71,6 +71,16 @@ Copying goes through the browser's clipboard, which a browser gives only to a pa
 ## Manage the subscribers
 
 The Subscribers panel lists, adds and deletes subscriptions in the HSS. The Lab passes each request to the HSS and keeps no copy. Use test identities only, such as the IMSI 001010000000005 in the form `001010000000005@ims.mnc001.mcc001.3gppnetwork.org`.
+
+Each row shows what the HSS holds for one subscription:
+
+- **Public identities**, with `(barred)` after each identity that is barred. The S-CSCF lets a barred identity register and keeps it out of every other IMS communication (TS 29.228 B.2.1). Every subscription of this network that authenticates with IMS AKA carries one, the temporary public identity that a card with a USIM and no ISIM derives from the IMSI and registers. [The identities of a phone without an ISIM](volte.md#the-identities-of-a-phone-without-an-isim) follows that identity.
+- **Test user**, the mark of a subscription that an operator keeps for trying a feature out. It picks the service profile of a test user, and while the network admits the test users alone it also decides who may register at all, as [Admit only the test users](registration.md#admit-only-the-test-users) shows.
+- **Service profile**, the profile that decides which filter criteria the S-CSCF gets for the user, and so which application server each of the user's requests reaches. The field holds the name that the subscription itself carries. A subscription that carries none gets the profile that the settings of the HSS name for its kind of subscription, and the cell says which under the field, as `from the settings: default`. An operator changes that setting while the HSS runs, with the same maintenance request that changes the admission policy ([Admit only the test users](registration.md#admit-only-the-test-users)).
+
+Tick **Test user**, or type a profile name and leave the field, and the Lab sends the HSS a `PATCH` of that subscription. The names are those that the HSS is configured with. This network has `default`, which holds every criterion, and `no-services`, which holds none. Any other name is refused, and the note over the table gives the reason the HSS sent.
+
+A change that leaves a registered user with another service profile reaches the S-CSCF at once, in a Push-Profile-Request (PPR). "Change the service profile of a registered user" in [the registration guide](registration.md#change-the-service-profile-of-a-registered-user) follows that sequence and says what the requests of the user then reach. The capture holds the PPR and its answer, and no ladder draws them, because the HSS sends them on its own and not for a SIP request. The RTR below is in no ladder for that same reason.
 
 Deleting a subscriber that is registered ends its registration. The HSS sends a Registration-Termination-Request (RTR) to the S-CSCF (TS 29.228 6.1.3), the S-CSCF answers with an RTA, and it tells the UE with a reg-event NOTIFY. The whole sequence is in "Remove a subscription: deregistration by the HSS" in [the registration guide](registration.md). The capture shows the RTR and the RTA, but no ladder draws them: the HSS sends the RTR on its own, not for a SIP request, so the Lab ties it to no call and no registration.
 

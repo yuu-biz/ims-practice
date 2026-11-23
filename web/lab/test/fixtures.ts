@@ -295,5 +295,9 @@ export const registrations: Registration[] = [
 export const subscribers: Subscriber[] = [1, 2, 3, 4].map((n) => ({
   private_identity: `00101000000000${n}@${domain}`,
   public_identities: [`sip:+120255501${String(n).padStart(2, "0")}@${domain}`, `tel:+120255501${String(n).padStart(2, "0")}`],
+  barred_identities: [],
+  test_user: false,
+  service_profile: "",
+  effective_service_profile: "default",
   customized_alerting_tone: n === 2 ? { tone: "cat1", active: false } : null,
 }));
