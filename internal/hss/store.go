@@ -342,9 +342,10 @@ type Store interface {
 	// well, which CompareAndSwapRepositoryData changes, so that an
 	// update over Sh is never overwritten unseen.
 	//
-	// It fails with ErrIdentityTaken, having written nothing, if one of
-	// the public identities belongs to another subscription. The
-	// identities that the subscription no longer holds stop finding it.
+	// It fails with ErrIdentityTaken, leaving the subscription as it
+	// was, if one of the public identities belongs to another
+	// subscription. The identities that the subscription no longer holds
+	// stop finding it.
 	Replace(ctx context.Context, sub Subscriber) error
 	// CompareAndSwapSQN sets SQN_HE of the subscriber to new if it is
 	// still old, and reports whether it did. SQN_HE must never go back

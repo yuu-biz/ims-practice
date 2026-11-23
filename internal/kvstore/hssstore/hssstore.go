@@ -262,12 +262,22 @@ func (s *Store) Put(ctx context.Context, sub hss.Subscriber) error {
 	return err
 }
 
-// Replace claims each public identity that the subscription did not
-// hold, the way Add does, writes the whole subscriber, and then drops
-// the index items of the identities it has let go: an identity never
-// finds a subscription that does not hold it, and one the claim loses
-// leaves nothing behind. The repository data of the item stays as it
-// is, and so does SQN_HE, which CompareAndSwapSQN alone changes.
+// Replace writes the whole subscriber, then claims each public identity
+// that the subscription did not hold, the way Add does, and then drops
+// the index items of the identities it has let go. The repository data
+// of the item stays as it is, and so does SQN_HE, which
+// CompareAndSwapSQN alone changes.
+//
+// The item comes before the claims, because the item is what says which
+// identities a subscription holds. claimPublic takes over an index item
+// whose subscriber does not hold the identity, so of two Replaces that
+// claim one identity, each would otherwise read the other's item from
+// before it was written, find the identity not held, take the item over,
+// and leave both subscriptions holding it. Add is in no such race: its
+// provisional record names the identities from its first write. The
+// cost is that the item holds an identity for as long as the claim
+// takes, so another Replace of that stretch is told the identity is
+// taken even where this one goes on to give it back.
 //
 // The write is a read, modify and write of the item, not a compare and
 // swap against what the caller read: an update of SQN_HE or of the
@@ -279,28 +289,48 @@ func (s *Store) Replace(ctx context.Context, sub hss.Subscriber) error {
 	if err != nil || !ok {
 		return err
 	}
-	var claimed []claim
-	undo := func() {
-		// The caller's context may be what ended the Replace; the removals
-		// still get the Timeout of the Config.
-		ctx := context.WithoutCancel(ctx)
-		for _, c := range claimed {
-			s.c.RemoveIf(ctx, c.key, c.version)
-		}
+	written, err := s.writeSubscriber(ctx, k, sub)
+	if err != nil || !written {
+		// The store failed, the subscriber went, or an Add has not
+		// finished with it.
+		return err
 	}
 	for _, id := range sub.PublicIdentities {
 		if holds(stored.PublicIdentities, publicKey(id)) {
 			continue
 		}
-		c, err := s.claimPublic(ctx, id, k)
-		if err != nil {
-			undo()
+		if _, err := s.claimPublic(ctx, id, k); err != nil {
+			// The identity is not this subscription's to take, so neither
+			// is the item that says it holds it. The caller's context may
+			// be what ended the Replace; the writes that put the
+			// subscription back still get the Timeout of the Config.
+			undo := context.WithoutCancel(ctx)
+			if _, undoErr := s.writeSubscriber(undo, k, stored.Subscriber); undoErr != nil {
+				return fmt.Errorf("hssstore: replace %s: %w: putting the subscription back: %w", sub.PrivateIdentity, err, undoErr)
+			}
+			for _, claimed := range sub.PublicIdentities {
+				if !holds(stored.PublicIdentities, publicKey(claimed)) {
+					s.c.RemoveIndexIf(undo, s.publicIndexKey(claimed), k)
+				}
+			}
 			return err
 		}
-		claimed = append(claimed, c)
 	}
+	for _, id := range stored.PublicIdentities {
+		if !holds(sub.PublicIdentities, publicKey(id)) {
+			s.c.RemoveIndexIf(ctx, s.publicIndexKey(id), k)
+		}
+	}
+	return nil
+}
+
+// writeSubscriber puts sub in the item of the private key k, keeping the
+// stored SQN_HE and the repository data of the item. It reports whether
+// it wrote: an item that is gone, or that an Add has not finished with,
+// takes nothing.
+func (s *Store) writeSubscriber(ctx context.Context, k string, sub hss.Subscriber) (bool, error) {
 	sub.RepositoryData = nil // the repository data is the item's own field
-	_, err = kvjson.Modify(ctx, s.c, s.subscriberKey(k), noTTL, func(r *record) error {
+	_, err := kvjson.Modify(ctx, s.c, s.subscriberKey(k), noTTL, func(r *record) error {
 		if r.Provisional {
 			return errUnchanged
 		}
@@ -313,21 +343,7 @@ func (s *Store) Replace(ctx context.Context, sub hss.Subscriber) error {
 		r.Subscriber = next
 		return nil
 	})
-	switch {
-	case errors.Is(err, kvstore.ErrNotFound) || errors.Is(err, errUnchanged):
-		// The subscriber went, or an Add has not finished with it.
-		undo()
-		return nil
-	case err != nil:
-		undo()
-		return err
-	}
-	for _, id := range stored.PublicIdentities {
-		if !holds(sub.PublicIdentities, publicKey(id)) {
-			s.c.RemoveIndexIf(ctx, s.publicIndexKey(id), k)
-		}
-	}
-	return nil
+	return swapped(err)
 }
 
 // swapped is the result of a Modify that changes the item only if it is
