@@ -772,7 +772,7 @@ func (p *PCSCF) OnRequest(st *sip.ServerTransaction) {
 }
 
 // SetStack gives the P-CSCF the stack it runs on, which it needs to
-// forward ACKs. Call it right after the stack is made.
+// forward ACKs and CANCELs. Call it right after the stack is made.
 func (p *PCSCF) SetStack(stack *sip.Stack) { p.stack.Set(stack) }
 
 // register is TS 24.229 5.2.2.1, with the rules of 5.2.2.2 for IMS AKA

@@ -2,6 +2,7 @@ package sip
 
 import (
 	"reflect"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -144,6 +145,72 @@ func TestCancelThatMatchesNothingGets481(t *testing.T) {
 	if resp := readDatagram(t, peer); resp.StatusCode != 481 {
 		t.Errorf("got %s, want 481", startLine(resp))
 	}
+}
+
+// TestProxyForwardsACancelThatMatchesNothingStatelessly is RFC 3261
+// 16.10 and 16.11: a proxy answers a CANCEL that matches no transaction
+// with nothing, not even a 100 (Trying), and forwards it with a Via of
+// its own whose branch is the same for each retransmission. The response
+// comes back without that Via.
+func TestProxyForwardsACancelThatMatchesNothingStatelessly(t *testing.T) {
+	cancels := make(chan *Message, 2)
+	proxy := newStackWith(t, Config{Timers: testTimers,
+		OnRequest: func(st *ServerTransaction) { t.Errorf("OnRequest got %s", st.Request.Method) },
+		OnCANCEL:  func(cancel *Message) { cancels <- cancel }})
+	upstream, downstream := rawSocket(t), rawSocket(t)
+	invite := rawInvite(upstream)
+	cancel := newMatchingRequest(invite, CANCEL, invite.Get("To"))
+	forward := func() *Message {
+		t.Helper()
+		send(t, upstream, cancel, proxy)
+		select {
+		case got := <-cancels:
+			if err := proxy.SendCANCEL(got, udpTo(addrOf(downstream))); err != nil {
+				t.Fatal(err)
+			}
+		case <-time.After(2 * time.Second):
+			t.Fatal("OnCANCEL never got the CANCEL")
+		}
+		m, ok := readWithin(downstream, 2*time.Second)
+		if !ok || m.Method != CANCEL {
+			t.Fatalf("downstream got %s, want the CANCEL", startLine(m))
+		}
+		return m
+	}
+	first, again := forward(), forward()
+
+	received, _ := ParseVia(cancel.Get("Via"))
+	vias := first.GetAll("Via")
+	if len(vias) != 2 {
+		t.Fatalf("forwarded CANCEL has Via %q, want the proxy's on top of the upstream's", vias)
+	}
+	if below, _ := ParseVia(vias[1]); below.Branch() != received.Branch() {
+		t.Errorf("second Via %q, want the upstream's", vias[1])
+	}
+	top, _ := ParseVia(vias[0])
+	if top.SentBy() != proxy.cfg.SentBy || top.Branch() == received.Branch() || !strings.HasPrefix(top.Branch(), BranchMagicCookie) {
+		t.Errorf("top Via %q, want the proxy's with a branch of its own", vias[0])
+	}
+	if got := again.Get("Via"); got != vias[0] {
+		t.Errorf("retransmission went out with Via %q, want %q again", got, vias[0])
+	}
+	expectSilence(t, upstream, 100*time.Millisecond, "RFC 3261 16.11: a stateless proxy sends no response of its own")
+
+	send(t, downstream, NewResponse(first, 481, "far"), proxy)
+	resp := readDatagram(t, upstream)
+	if resp.StatusCode != 481 || resp.Get("CSeq") != "1 CANCEL" {
+		t.Fatalf("upstream got %s %q, want the 481 for the CANCEL", startLine(resp), resp.Get("CSeq"))
+	}
+	if got := resp.GetAll("Via"); len(got) != 1 || got[0] != vias[1] {
+		t.Errorf("relayed response has Via %q, want only %q", got, vias[1])
+	}
+
+	// A response with the same Vias to another method is a stray one,
+	// though its top branch is the one the proxy computed (RFC 6026 8.2).
+	stray := NewResponse(first, 200, "far")
+	stray.Set("CSeq", "1 INVITE")
+	send(t, downstream, stray, proxy)
+	expectSilence(t, upstream, 200*time.Millisecond, "RFC 6026 8.2: a response to another method than CANCEL is not relayed")
 }
 
 // TestCancelOfANonInviteGets200 is RFC 3261 9.2: a CANCEL that matches a

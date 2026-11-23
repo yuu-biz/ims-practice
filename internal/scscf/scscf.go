@@ -161,7 +161,7 @@ func (s *SCSCF) lockFailed(st *sip.ServerTransaction, err error, log *slog.Logge
 }
 
 // SetStack gives the S-CSCF the stack it runs on, which it needs to
-// forward ACKs. Call it right after the stack is made.
+// forward ACKs and CANCELs. Call it right after the stack is made.
 func (s *SCSCF) SetStack(stack *sip.Stack) { s.stack.Set(stack) }
 
 // OnRequest is the sip.Config.OnRequest of the S-CSCF.

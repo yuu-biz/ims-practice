@@ -369,31 +369,59 @@ func (s *SCSCF) nextHop(m *sip.Message) ([]sip.Destination, error) {
 // OnACK forwards the ACK for a 2xx along the dialog's route
 // (RFC 3261 16.3 to 16.7 apply to it as to any request).
 func (s *SCSCF) OnACK(ack *sip.Message) {
-	forwardACK(&s.stack, s.ownURI(), s.resolver, ack, s.log)
+	forwardStateless(&s.stack, s.ownURI(), s.resolver, ack, s.log)
 }
 
-func forwardACK(ref *ims.StackRef, own sip.URI, loc ims.Locator, ack *sip.Message, log *slog.Logger) {
+// OnCANCEL forwards a CANCEL that matches no transaction statelessly
+// (RFC 3261 16.10), the way an ACK goes.
+//
+// SIMPLIFIED: RFC 3261 16.10. A CANCEL that the S-CSCF cannot forward
+// is dropped, with no response: one outside a dialog that has no Route
+// left once the S-CSCF has taken its own, one whose Max-Forwards is used
+// up (16.3 step 3), and one whose next hop DNS does not find. The INVITE
+// that the first would cancel went where the filter criteria and the
+// registration of the served user sent it (TS 24.229 5.4.3.2, 5.4.3.3),
+// which the CANCEL alone does not tell. The S-CSCF forwarded that INVITE
+// statefully, with a branch of its own, so no node further on would
+// match the CANCEL to it either.
+func (s *SCSCF) OnCANCEL(cancel *sip.Message) {
+	forwardStateless(&s.stack, s.ownURI(), s.resolver, cancel, s.log)
+}
+
+// forwardStateless forwards m, an ACK for a 2xx or a CANCEL, which no
+// transaction of the S-CSCF holds, to the top Route or else the
+// Request-URI.
+func forwardStateless(ref *ims.StackRef, own sip.URI, loc ims.Locator, m *sip.Message, log *slog.Logger) {
 	stack, err := ref.Get()
 	if err != nil {
 		return
 	}
-	out := ack.Clone()
+	out := m.Clone()
 	if err := sip.DecrementMaxForwards(out); err != nil {
 		// RFC 3261 16.3 step 3 answers such a request 483, but no
-		// response to an ACK is allowed (17), so it is only dropped.
-		log.Info("dropped ACK", "call_id", ack.Get("Call-ID"), "error", err.Error())
+		// response to an ACK is allowed (17), and the CANCEL has no
+		// transaction here to answer it in (see OnCANCEL).
+		log.Info("dropped request", "method", string(m.Method), "call_id", m.Get("Call-ID"), "error", err.Error())
 		return
 	}
 	sip.PopOwnRoute(out, own)
+	send := stack.SendACK
+	if m.Method == sip.CANCEL {
+		send = stack.SendCANCEL
+		if !ims.IsInDialog(out) && out.Get("Route") == "" {
+			log.Info("dropped CANCEL that matches no transaction and has no Route left", "call_id", m.Get("Call-ID"))
+			return
+		}
+	}
 	u, err := sip.NextHop(out)
 	if err == nil {
 		var targets []sip.Destination
 		if targets, err = ims.Targets(context.Background(), loc, u); err == nil {
-			err = stack.SendACK(out, targets...)
+			err = send(out, targets...)
 		}
 	}
 	if err != nil && !errors.Is(err, sip.ErrStackClosed) {
-		log.Warn("cannot forward ACK", "call_id", ack.Get("Call-ID"), "error", err.Error())
+		log.Warn("cannot forward request", "method", string(m.Method), "call_id", m.Get("Call-ID"), "error", err.Error())
 	}
 }
 
