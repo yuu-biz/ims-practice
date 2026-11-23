@@ -53,7 +53,7 @@
 | MMTel AS | `call:<Incoming のダイアログ>`、`conference:<ID>`（新規） | `call-of-leg:<Outgoing のダイアログ>` | なし |
 | MRFC | `conference:<ID>`（新規） | なし | なし |
 | IBCF（新規） | `call:<台の名前>:<呼の ID>` | `calls-of:<台の名前>`（その台の呼の ID の集合）、`dialog:<Call-ID>:<自分の tag>:<相手の tag>`（そのダイアログを持つ呼の台の名前と ID） | なし |
-| HSS | `subscriber:<IMPI>` | `public:<IMPU>`、並べ替えた索引 `subscribers`（`List` が 1 ページずつ引く） | なし |
+| HSS | `subscriber:<IMPI>` | `public:<IMPU>`、並べ替えた索引 `subscribers`（`List` が 1 ページずつ引く）、並べ替えた索引 `served:<プロファイルの名前の出どころ>`（S-CSCF がプロファイルを持っている加入者。`ListServed` が 1 ページずつ引く） | なし |
 | メディア中継ノード（新規） | `<台の名前>-<役割>:context:<ID>` | `<台の名前>-<役割>:contexts`（その台のコンテキストの ID の集合） | なし |
 
 P-CSCF の購読は利用者ごとに 1 つなので、主の項目は IMPI で引きます。NOTIFY はダイアログの Call-ID しか名乗らないため、Call-ID から IMPI を引く索引を添えます。IP-SM-GW の購読は逆に、主の項目を Call-ID で引き、公開の識別子の索引を添えます。どちらも、再登録のときに自分の購読を見つけ、NOTIFY のときにその購読を見つけられます。
