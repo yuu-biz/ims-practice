@@ -35,9 +35,14 @@ func (s SecretString) LogValue() slog.Value { return slog.StringValue(s.String()
 // configuration file.
 type SubscriptionRecord struct {
 	PrivateIdentity string `json:"private_identity"`
-	// PublicIdentities are SIP and tel URIs; the first is the default
-	// public identity.
-	PublicIdentities []string     `json:"public_identities,omitempty"`
+	// PublicIdentities are SIP and tel URIs; the first that is not
+	// barred is the default public identity.
+	PublicIdentities []string `json:"public_identities,omitempty"`
+	// BarredIdentities are those of the public identities that may
+	// register and do nothing else, such as the temporary public
+	// identity of a UE without an ISIM. The HSS refuses one that is not
+	// among the public identities.
+	BarredIdentities []string     `json:"barred_identities,omitempty"`
 	Password         SecretString `json:"password,omitempty"`
 	AKA              *AKARecord   `json:"aka,omitempty"`
 	// Tel joins the public identities after the others, as in the HSS
@@ -117,8 +122,8 @@ func (r SubscriptionRecord) validate() error {
 		return err
 	}
 	if r.Delete {
-		if r.PublicIdentities != nil || r.Password != "" || r.AKA != nil || r.Tel != "" || r.UtPassword != "" ||
-			r.MMTelServices != "" || r.RepositoryData != nil || r.TestUser || r.ServiceProfile != "" {
+		if r.PublicIdentities != nil || r.BarredIdentities != nil || r.Password != "" || r.AKA != nil || r.Tel != "" ||
+			r.UtPassword != "" || r.MMTelServices != "" || r.RepositoryData != nil || r.TestUser || r.ServiceProfile != "" {
 			return errors.New("delete: a line that deletes has no field but private_identity")
 		}
 		return nil
@@ -134,6 +139,14 @@ func (r SubscriptionRecord) validate() error {
 	for i, id := range r.PublicIdentities {
 		if err := checkPublicIdentity(id); err != nil {
 			return fmt.Errorf("public_identities[%d]: %w", i, err)
+		}
+	}
+	// Whether each barred identity is among the public ones is for the
+	// HSS to say; the OAM checks that it is test data, as it does for
+	// every identity of a record.
+	for i, id := range r.BarredIdentities {
+		if err := checkPublicIdentity(id); err != nil {
+			return fmt.Errorf("barred_identities[%d]: %w", i, err)
 		}
 	}
 	if r.Tel != "" {

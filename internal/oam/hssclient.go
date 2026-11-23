@@ -51,6 +51,7 @@ type Subscription struct {
 type hssSubscriptionRequest struct {
 	PrivateIdentity  string       `json:"private_identity"`
 	PublicIdentities []string     `json:"public_identities"`
+	BarredIdentities []string     `json:"barred_identities,omitempty"`
 	Password         SecretString `json:"password,omitempty"`
 	AKA              *AKARecord   `json:"aka,omitempty"`
 	Tel              string       `json:"tel,omitempty"`
@@ -70,6 +71,7 @@ func (r SubscriptionRecord) hssRequest() hssSubscriptionRequest {
 	return hssSubscriptionRequest{
 		PrivateIdentity:  r.PrivateIdentity,
 		PublicIdentities: r.PublicIdentities,
+		BarredIdentities: r.BarredIdentities,
 		Password:         r.Password,
 		AKA:              r.AKA,
 		Tel:              r.Tel,

@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -70,9 +71,10 @@ func newRealHSS(t *testing.T) *httptest.Server {
 // TestABackupOfTheHSSGoesBackUnchanged: every line of a backup is the
 // subscription as the HSS holds it, so a restore of a network that is
 // still there answers unchanged for every line, down to the repository
-// data. A subscription with no repository data at all keeps none: the
-// OAM carries the empty array of its line, which is not the same as a
-// line without the field, and the HSS reads it as the line means it.
+// data. The OAM has to carry every field that the HSS writes and mean
+// by it what the HSS means: a subscription with no repository data at
+// all goes out as an empty array, which is not a line without the
+// field, and one with a barred public identity goes out with it.
 func TestABackupOfTheHSSGoesBackUnchanged(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "backups")
 	backups, err := NewFileBackupStore(dir)
@@ -81,7 +83,7 @@ func TestABackupOfTheHSSGoesBackUnchanged(t *testing.T) {
 	}
 	ts := newTestServer(t, Config{HSSProvisioning: newRealHSS(t).URL, Backups: backups},
 		newFakeNode(t, "hss-1", []string{"hss"}))
-	ts.oam.exportPageSize = 2 // more than one page for the four lines
+	ts.oam.exportPageSize = 2 // more than one page of the export
 	lines := []string{
 		// The repository data of the configuration, which the HSS gives a
 		// record that leaves the field out.
@@ -92,6 +94,10 @@ func TestABackupOfTheHSSGoesBackUnchanged(t *testing.T) {
 		fmt.Sprintf(`{"private_identity": %q, "public_identities": ["sip:00101%010d@%s"], "password": "test-password-3", "ut_password": "test-password-3", "mmtel_services": %q, "test_user": true}`,
 			impiOf(3), 3, testRealm, emptyMMTelServices),
 		akaLine(10),
+		// A barred public identity, the temporary one that a UE without an
+		// ISIM registers with.
+		fmt.Sprintf(`{"private_identity": %q, "public_identities": ["sip:00101%010d@%s", "tel:+12025550104"], "barred_identities": ["sip:00101%010d@%s"], "password": "test-password-4"}`,
+			impiOf(4), 4, testRealm, 4, testRealm),
 	}
 	if _, summary := ts.bulk(t, "", strings.Join(lines, "\n")); summary.Created != len(lines) {
 		t.Fatalf("provisioning: %+v", summary)
@@ -101,14 +107,20 @@ func TestABackupOfTheHSSGoesBackUnchanged(t *testing.T) {
 	if backup.manifest == nil || backup.manifest.State != JobCompleted || len(backup.errors) > 0 {
 		t.Fatalf("backup: %+v", backup)
 	}
-	data := archivedRecords(t, filepath.Join(dir, backup.manifest.ID+".jsonl"))
-	if got, ok := data[impiOf(2)]; !ok || got == nil || len(got) != 0 {
+	archived := archivedRecords(t, filepath.Join(dir, backup.manifest.ID+".jsonl"))
+	if len(archived) != len(lines) {
+		t.Fatalf("the archive holds %d records, want %d", len(archived), len(lines))
+	}
+	if got := archived[impiOf(2)].RepositoryData; got == nil || len(got) != 0 {
 		t.Errorf("the line of a subscription with no repository data holds %v", got)
 	}
 	for _, impi := range []string{impiOf(1), impiOf(3)} {
-		if got := data[impi]; len(got) == 0 {
+		if got := archived[impi].RepositoryData; len(got) == 0 {
 			t.Errorf("the line of %s holds no repository data", impi)
 		}
+	}
+	if got, want := archived[impiOf(4)].BarredIdentities, []string{fmt.Sprintf("sip:00101%010d@%s", 4, testRealm)}; !slices.Equal(got, want) {
+		t.Errorf("the barred identities of %s = %v, want %v", impiOf(4), got, want)
 	}
 
 	// The whole archive goes back into the HSS it came from.
@@ -123,16 +135,17 @@ func TestABackupOfTheHSSGoesBackUnchanged(t *testing.T) {
 	}
 }
 
-// archivedRecords is the repository data of each subscription of the
-// archive, by private identity: nil where the line leaves the field out
-// and an empty slice where it carries an empty array.
-func archivedRecords(t *testing.T, path string) map[string][]RepositoryDataRecord {
+// archivedRecords is each subscription of the archive by its private
+// identity, read as the OAM reads a line that it restores: unknown
+// fields refused, so a line that the HSS writes and the OAM cannot read
+// fails here.
+func archivedRecords(t *testing.T, path string) map[string]SubscriptionRecord {
 	t.Helper()
 	b, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	data := map[string][]RepositoryDataRecord{}
+	records := map[string]SubscriptionRecord{}
 	for _, line := range strings.Split(strings.TrimSpace(string(b)), "\n") {
 		var entry archiveEntry
 		if err := json.Unmarshal([]byte(line), &entry); err != nil {
@@ -145,7 +158,7 @@ func archivedRecords(t *testing.T, path string) map[string][]RepositoryDataRecor
 		if err := decodeRecord(entry.Record, &rec); err != nil {
 			t.Fatalf("a line of the archive is no record the OAM reads: %v", err)
 		}
-		data[rec.PrivateIdentity] = rec.RepositoryData
+		records[rec.PrivateIdentity] = rec
 	}
-	return data
+	return records
 }
