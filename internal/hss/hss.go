@@ -288,14 +288,18 @@ type HSS struct {
 	// counts, rather than holding the requests, so that a shut down
 	// never walks over anything the HSS keeps.
 	requests atomic.Int64
+	// measured counts the requests that reach the HSS and the answers it
+	// hands back, the measurements of TS 32.409 4.2.12 (Handle).
+	measured *diameter.Answering
 	// managed is the administrative state of the HSS, or nil in a node
 	// without a maintenance API.
 	managed atomic.Pointer[maintenance.ManagedFunction]
 }
 
 // New returns an HSS on store. It fails when config.Metrics holds the
-// database usage measurements of another HSS already, or when the
-// store cannot be read.
+// database usage measurements of another HSS already, when it holds the
+// Diameter measurements under another definition, or when the store
+// cannot be read.
 func New(config Config, store Store, node *diameter.Node, log *slog.Logger) (*HSS, error) {
 	if config.UserLocks == nil {
 		config.UserLocks = &ims.UserLocks{}
@@ -303,8 +307,12 @@ func New(config Config, store Store, node *diameter.Node, log *slog.Logger) (*HS
 	if config.Metrics == nil {
 		config.Metrics = metrics.NewRegistry()
 	}
+	measured, err := diameter.NewAnswering(config.Metrics, role)
+	if err != nil {
+		return nil, err
+	}
 	h := &HSS{config: config, store: store, node: node, log: log, users: config.UserLocks,
-		serviceCentres: map[string]ServiceCentre{}}
+		serviceCentres: map[string]ServiceCentre{}, measured: measured}
 	h.life, h.endLife = context.WithCancel(context.Background())
 	// A configuration that names no policy admits every subscriber, and
 	// the policy in force is written out, so that what the maintenance
@@ -351,13 +359,27 @@ func (h *HSS) Close() {
 	h.pushes.Wait()
 }
 
-// Handle is the diameter.Handler of the HSS.
+// Handle is the diameter.Handler of the HSS. It counts the request on
+// its receipt and the answer as it hands it back, which is where TS
+// 32.409 4.2.12.1 and 4.2.12.2 count the requests an HSS receives and
+// the answers it sends. Every request the HSS answers passes here,
+// whichever of its interfaces carried it, and that is what those two
+// measurements count: 4.2.12.1 names the Update-Location-Request of
+// S6a as one example among the requests of all of them.
 func (h *HSS) Handle(request *diam.Message) *diam.Message {
 	// The request counts as a user of the HSS until its answer is on
 	// its way, so that a shut down waits for it (maintenance.go). The
 	// count comes down only in the follow-up the node runs then.
 	h.requests.Add(1)
 	h.node.AfterAnswer(request, h.requestAnswered)
+	h.measured.RequestReceived(request)
+	answer := h.answer(request)
+	h.measured.AnswerSent(request, answer)
+	return answer
+}
+
+// answer is the answer that Handle gives request.
+func (h *HSS) answer(request *diam.Message) *diam.Message {
 	identity := h.node.Identity()
 	// diameter.Handler carries no context to bound the work for the
 	// request. The Store bounds each of its operations itself: an
