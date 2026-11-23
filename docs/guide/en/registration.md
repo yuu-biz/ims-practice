@@ -183,6 +183,8 @@ The S-CSCF checks that the Call-ID matches the challenged REGISTER, that the rea
 
 It then sends a **Server-Assignment-Request** (SAR, Cx command 301) with `Server-Assignment-Type` **`REGISTRATION`** (1). The HSS records the user as registered at this S-CSCF and returns the user profile in **User-Data** (Wireshark: `Cx-User-Data`). The profile is an XML document (TS 29.228 Annex E) that lists the identities registered together. It also carries the initial filter criteria (iFCs), which tell the S-CSCF which application servers to involve in the user's requests. `deploy/compose/hss.yaml` gives every user the two iFCs of SMS over IP. Step 15 shows what the first one does with the REGISTER.
 
+The HSS counts that record. While the user is registered, its public identities are in `ims_hss_registered_public_identities` and its private identity in `ims_hss_registered_private_identities`; the deregistration takes them out again. The node of the HSS serves them at `http://127.0.0.1:8085/metrics` inside its container, beside `ims_hss_subscriptions` and `ims_hss_public_identities`, which count what the HSS holds whether anyone is registered or not. It serves no maintenance API there, since the HSS holds no administrative state that an operator sets.
+
 ### 10. The S-CSCF accepts: 200 OK
 
 The 200 OK carries what the UE and the P-CSCF need afterwards (TS 24.229 5.4.1.2.2F):
