@@ -62,6 +62,17 @@ func newTestHSS() *HSS {
 	}, store, node)
 }
 
+// withProfiles gives h the service profiles of a configuration file and
+// the names in force for the two kinds of subscription, which a test
+// does in one call because the HSS reads the names from the settings an
+// operator may change and not from the file it started on (Settings).
+func withProfiles(h *HSS, profiles map[string]ServiceProfile, defaultName, testUserName string) {
+	h.config.ServiceProfiles = profiles
+	h.changeSettings(func(s *settings) {
+		s.defaultServiceProfile, s.testUserServiceProfile = defaultName, testUserName
+	})
+}
+
 var hdr = diameter.Header{SessionID: "s;1;1", OriginHost: "icscf." + realm, OriginRealm: realm, DestinationRealm: realm}
 
 // exchange sends a request through the wire format and the handler, as
@@ -236,11 +247,10 @@ func TestLocationInfo(t *testing.T) {
 func TestLocationInfoForUnregisteredServices(t *testing.T) {
 	h := newTestHSS()
 	unregistered := ifc.TerminatingUnregistered
-	h.config.ServiceProfiles = map[string]ServiceProfile{"default": {Criteria: []ifc.InitialFilterCriteria{{
+	withProfiles(h, map[string]ServiceProfile{"default": {Criteria: []ifc.InitialFilterCriteria{{
 		TriggerPoint:      &ifc.TriggerPoint{SPT: []ifc.SPT{{Group: []int{0}, SessionCase: &unregistered}}},
 		ApplicationServer: ifc.ApplicationServer{ServerName: "sip:mmtel." + realm + ":5060"},
-	}}}}
-	h.config.DefaultServiceProfile = "default"
+	}}}}, "default", "")
 	unregisteredUser := func(server string) cx.ServerAssignmentAnswer {
 		t.Helper()
 		// No User-Name: the S-CSCF does not know the private identity of a
@@ -436,7 +446,7 @@ func TestAdmissionLeavesValidRegistrations(t *testing.T) {
 	if a := sar(t, h, scscf, cx.AssignRegistration); !a.Result.Success() {
 		t.Fatalf("SAA of the registration = %+v", a.Result)
 	}
-	h.config.Admission = AdmitTestUsers
+	h.changeSettings(func(s *settings) { s.admission = AdmitTestUsers })
 
 	u, _, ok := h.find(t.Context(), impi, "")
 	if !ok || u.State != Registered {

@@ -1267,7 +1267,7 @@ func hssMaintenanceNode(t *testing.T, cfg hss.Config) (*maintenance.Client, *hss
 	}
 	nodeConfig := config.Config{Node: "hss", Roles: []config.Role{config.RoleHSS}, HomeDomain: domain,
 		Maintenance: &config.Maintenance{Listen: l.Addr().String()}, HSS: &cfg}
-	roles := []managedRole{{function: h.Function(server), manage: h.Manage}}
+	roles := []managedRole{{function: h.Function(server), manage: h.Manage, settings: h.Settings()}}
 	stop, err := startMaintenance(l, nodeConfig, roles, metrics.NewRegistry(), new(slog.LevelVar), quiet(), func() {})
 	if err != nil {
 		t.Fatal(err)
@@ -1276,13 +1276,14 @@ func hssMaintenanceNode(t *testing.T, cfg hss.Config) (*maintenance.Client, *hss
 	return maintenance.NewClient("http://"+l.Addr().String(), http.DefaultClient), h
 }
 
-// TestMaintenanceAPIShowsTheServiceProfilesOfTheHSS: the configuration
-// that the maintenance API of an HSS node answers with names every
-// service profile of the network with the features its criteria turn
-// on, which is what an operator reads to choose a profile for a
-// subscription. It holds no subscriber: their credentials are secrets,
-// and the provisioning API is where the subscribers are.
-func TestMaintenanceAPIShowsTheServiceProfilesOfTheHSS(t *testing.T) {
+// TestMaintenanceAPIShowsTheProfilesAndSettingsOfTheHSS: the
+// configuration that the maintenance API of an HSS node answers with
+// names every service profile of the network with the features its
+// criteria turn on, which is what an operator reads to choose a profile
+// for a subscription, and lists the settings of the HSS that change
+// while the node runs. It holds no subscriber: their credentials are
+// secrets, and the provisioning API is where the subscribers are.
+func TestMaintenanceAPIShowsTheProfilesAndSettingsOfTheHSS(t *testing.T) {
 	oam, _ := hssMaintenanceNode(t, hss.Config{
 		Realm: domain, VisitedNetworks: []string{domain}, ProvisioningListen: "0.0.0.0:8081",
 		ServiceProfiles: map[string]hss.ServiceProfile{
@@ -1303,5 +1304,21 @@ func TestMaintenanceAPIShowsTheServiceProfilesOfTheHSS(t *testing.T) {
 	}
 	if strings.Contains(string(conf.Configuration), impi) {
 		t.Errorf("the configuration names a subscriber: %s", conf.Configuration)
+	}
+	// The admission policy and the two profile names are in the
+	// changeable settings of the same answer, with the value in force,
+	// and not in the hss section, so that one place has them.
+	changeable := map[string]string{}
+	for _, s := range conf.Changeable {
+		changeable[s.Name] = string(s.Value)
+	}
+	for name, value := range map[string]string{
+		"hss.admission":                 `"all"`,
+		"hss.default_service_profile":   `"default"`,
+		"hss.test_user_service_profile": `"default"`,
+	} {
+		if changeable[name] != value {
+			t.Errorf("the changeable setting %s is %q, want %s", name, changeable[name], value)
+		}
 	}
 }
