@@ -10,6 +10,7 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 )
 
@@ -281,6 +282,18 @@ func TestRegistrationRejects(t *testing.T) {
 				Label{Name: "a", Values: bigSet}, Label{Name: "b", Values: bigSet}, Label{Name: "c", Values: bigSet})
 			return err
 		}},
+		{"gauge func with _total", func(r *Registry) error {
+			return r.NewGaugeFunc("ims_sessions_total", "h", func(emit func(float64, ...string)) {})
+		}},
+		{"gauge func without help", func(r *Registry) error {
+			return r.NewGaugeFunc("ims_sessions", "", func(emit func(float64, ...string)) {})
+		}},
+		{"gauge func without a function", func(r *Registry) error {
+			return r.NewGaugeFunc("ims_sessions", "h", nil)
+		}},
+		{"gauge func with a label without values", func(r *Registry) error {
+			return r.NewGaugeFunc("ims_sessions", "h", func(emit func(float64, ...string)) {}, Label{Name: "role"})
+		}},
 		{"no buckets", func(r *Registry) error {
 			_, err := r.NewHistogram("ims_setup_seconds", "h", nil)
 			return err
@@ -305,6 +318,105 @@ func TestRegistrationRejects(t *testing.T) {
 				t.Fatal("registered, want an error")
 			}
 		})
+	}
+}
+
+// A gauge func is read at each scrape, so its samples follow the
+// number it reads without anything writing to the registry.
+func TestGaugeFuncIsReadAtEachScrape(t *testing.T) {
+	r := NewRegistry()
+	held := map[string]float64{"sip": 2}
+	format := Label{Name: "format", Values: []string{"sip", "tel"}}
+	if err := r.NewGaugeFunc("ims_hss_public_identities", "h", func(emit func(float64, ...string)) {
+		for _, f := range []string{"sip", "tel"} {
+			if v, ok := held[f]; ok {
+				emit(v, f)
+			}
+		}
+	}, format); err != nil {
+		t.Fatal(err)
+	}
+	// A series the function does not emit is left out rather than
+	// shown as a zero.
+	want := `# HELP ims_hss_public_identities h
+# TYPE ims_hss_public_identities gauge
+ims_hss_public_identities{format="sip"} 2
+`
+	if got := text(t, r); got != want {
+		t.Errorf("got:\n%s\nwant:\n%s", got, want)
+	}
+
+	held["sip"], held["tel"] = 3, 1
+	want = `# HELP ims_hss_public_identities h
+# TYPE ims_hss_public_identities gauge
+ims_hss_public_identities{format="sip"} 3
+ims_hss_public_identities{format="tel"} 1
+`
+	if got := text(t, r); got != want {
+		t.Errorf("after the number changed, got:\n%s\nwant:\n%s", got, want)
+	}
+
+	// A value outside the declared set is counted under "other", as it
+	// is for a counter or a gauge.
+	r = NewRegistry()
+	if err := r.NewGaugeFunc("ims_hss_public_identities", "h", func(emit func(float64, ...string)) {
+		emit(7, "sips")
+	}, format); err != nil {
+		t.Fatal(err)
+	}
+	if got := text(t, r); !strings.Contains(got, `ims_hss_public_identities{format="other"} 7`+"\n") {
+		t.Errorf("an undeclared format is not under %q:\n%s", OtherValue, got)
+	}
+}
+
+// A gauge func whose source cannot be read emits nothing, and the
+// scrape then holds the metric with no sample rather than a number the
+// role cannot vouch for.
+func TestGaugeFuncWithoutLabelsEmitsOneSample(t *testing.T) {
+	r := NewRegistry()
+	readable := false
+	if err := r.NewGaugeFunc("ims_hss_subscriptions", "h", func(emit func(float64, ...string)) {
+		if readable {
+			emit(4)
+		}
+	}); err != nil {
+		t.Fatal(err)
+	}
+	want := "# HELP ims_hss_subscriptions h\n# TYPE ims_hss_subscriptions gauge\n"
+	if got := text(t, r); got != want {
+		t.Errorf("got:\n%s\nwant:\n%s", got, want)
+	}
+	readable = true
+	if got := text(t, r); got != want+"ims_hss_subscriptions 4\n" {
+		t.Errorf("got:\n%s", got)
+	}
+}
+
+// A gauge and a gauge func of one name are two definitions: one is
+// written as it changes and the other read at the scrape, so the
+// registry keeps them apart rather than dropping one of the two.
+func TestGaugeFuncAndGaugeOfOneNameDoNotShare(t *testing.T) {
+	r := NewRegistry()
+	mustGauge(t, r, "ims_hss_subscriptions", "h")
+	if err := r.NewGaugeFunc("ims_hss_subscriptions", "h", func(emit func(float64, ...string)) { emit(1) }); err == nil {
+		t.Error("a gauge func shared the name of a gauge")
+	}
+
+	r = NewRegistry()
+	read := func(emit func(float64, ...string)) { emit(1) }
+	if err := r.NewGaugeFunc("ims_hss_subscriptions", "h", read); err != nil {
+		t.Fatal(err)
+	}
+	// The second registration of the same definition keeps the first
+	// function, as a second NewGauge keeps the first gauge.
+	if err := r.NewGaugeFunc("ims_hss_subscriptions", "h", func(emit func(float64, ...string)) { emit(2) }); err != nil {
+		t.Error(err)
+	}
+	if _, err := r.NewGauge("ims_hss_subscriptions", "h"); err == nil {
+		t.Error("a gauge shared the name of a gauge func")
+	}
+	if got := text(t, r); !strings.Contains(got, "ims_hss_subscriptions 1\n") || strings.Count(got, "# TYPE") != 1 {
+		t.Errorf("output:\n%s", got)
 	}
 }
 
@@ -452,6 +564,14 @@ func TestConcurrentUse(t *testing.T) {
 	c := mustCounter(t, r, "ims_sip_messages_total", "h", roles)
 	g := mustGauge(t, r, "ims_sessions", "h", roles)
 	h := mustHistogram(t, r, "ims_session_setup_seconds", "h", []float64{1}, roles)
+	// A number that the scrape reads from somewhere else while the
+	// workers change it.
+	var registrations atomic.Int64
+	if err := r.NewGaugeFunc("ims_hss_registered_public_identities", "h", func(emit func(float64, ...string)) {
+		emit(float64(registrations.Load()))
+	}); err != nil {
+		t.Fatal(err)
+	}
 
 	const workers, rounds = 8, 1000
 	var counting, scraping sync.WaitGroup
@@ -483,6 +603,7 @@ func TestConcurrentUse(t *testing.T) {
 				g.Dec("scscf")
 				g.Add(1, "pcscf")
 				h.Observe(0.5, "pcscf")
+				registrations.Add(1)
 			}
 		}()
 	}
@@ -498,6 +619,7 @@ func TestConcurrentUse(t *testing.T) {
 		`ims_session_setup_seconds_bucket{role="pcscf",le="1"} 8000`,
 		`ims_session_setup_seconds_sum{role="pcscf"} 4000`,
 		`ims_session_setup_seconds_count{role="pcscf"} 8000`,
+		`ims_hss_registered_public_identities 8000`,
 	} {
 		if !strings.Contains(out, line+"\n") {
 			t.Errorf("missing %q in:\n%s", line, out)

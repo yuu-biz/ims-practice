@@ -41,16 +41,27 @@ type series[V any] struct {
 	value *V
 }
 
-func newFamily[V any](name, help string, k kind, labels []Label, newValue func() *V) (*family[V], error) {
+// newDefinition checks what every metric is defined by, whether or not
+// it has slots of its own: the name for its kind, the help text and the
+// labels.
+func newDefinition(name, help string, k kind, labels []Label) (labelSpace, error) {
 	if err := validateMetricName(name, k); err != nil {
-		return nil, err
+		return labelSpace{}, err
 	}
 	if help == "" {
-		return nil, fmt.Errorf("metrics: %s has no help text", name)
+		return labelSpace{}, fmt.Errorf("metrics: %s has no help text", name)
 	}
 	space, err := newLabelSpace(labels)
 	if err != nil {
-		return nil, fmt.Errorf("%w (metric %s)", err, name)
+		return labelSpace{}, fmt.Errorf("%w (metric %s)", err, name)
+	}
+	return space, nil
+}
+
+func newFamily[V any](name, help string, k kind, labels []Label, newValue func() *V) (*family[V], error) {
+	space, err := newDefinition(name, help, k, labels)
+	if err != nil {
+		return nil, err
 	}
 	f := &family[V]{
 		name:     name,
@@ -90,11 +101,13 @@ func (f *family[V]) definition() string {
 	return fmt.Sprintf("%s\n%s\n%q\n%q", f.kind, f.help, f.space.names, f.space.values)
 }
 
-// writeHeader writes the HELP and TYPE lines.
-func (f *family[V]) writeHeader(w *bufio.Writer) {
-	fmt.Fprintf(w, "# HELP %s %s\n", f.name, escapeHelp(f.help))
-	fmt.Fprintf(w, "# TYPE %s %s\n", f.name, f.kind)
+// writeHeader writes the HELP and TYPE lines of a metric.
+func writeHeader(w *bufio.Writer, name string, k kind, help string) {
+	fmt.Fprintf(w, "# HELP %s %s\n", name, escapeHelp(help))
+	fmt.Fprintf(w, "# TYPE %s %s\n", name, k)
 }
+
+func (f *family[V]) writeHeader(w *bufio.Writer) { writeHeader(w, f.name, f.kind, f.help) }
 
 // each calls fn for the series in use, in the order of the declared
 // label values, so that the output is the same from one scrape to the
@@ -191,6 +204,38 @@ func (r *Registry) NewGauge(name, help string, labels ...Label) (*Gauge, error) 
 		return nil, err
 	}
 	return m.(*Gauge), nil
+}
+
+// NewGaugeFunc registers a gauge whose values are read when the
+// registry is scraped, rather than written as they change. WriteText
+// calls read, which gives the value of each series by calling emit with
+// the value and the label values of that series, in the declared order.
+// A series that read does not emit is left out of that scrape.
+//
+// Use it for a number that something else already holds, such as the
+// subscribers in the store of an HSS (internal/hss) or whether a
+// Diameter peer is up. Reading at the scrape cannot leave a series
+// holding an older number, which Gauge.Set can when two goroutines read
+// that number and then write it in turn.
+//
+// read runs on every scrape, outside the lock of the registry and
+// possibly in two scrapes at once, so it must be cheap and must not
+// wait on anything.
+//
+// There is nothing to return and count with: the function is the
+// metric. A second registration of the same name and definition keeps
+// the function registered first, as a second NewGauge keeps the gauge
+// registered first.
+func (r *Registry) NewGaugeFunc(name, help string, read func(emit func(value float64, labelValues ...string)), labels ...Label) error {
+	space, err := newDefinition(name, help, gaugeKind, labels)
+	if err != nil {
+		return err
+	}
+	if read == nil {
+		return fmt.Errorf("metrics: gauge %s has no function to read it", name)
+	}
+	_, err = r.register(&gaugeFunc{name: name, help: help, space: space, read: read})
+	return err
 }
 
 // NewHistogram registers a histogram with the given bucket upper

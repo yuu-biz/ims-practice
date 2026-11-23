@@ -6,7 +6,9 @@
 // It has three kinds of metric: Counter, Gauge and Histogram. They
 // correspond to the Cumulative Counter, the Gauge and the Discrete
 // Event Registration of TS 32.401 4.2.2. The measurements that the IMS
-// nodes count come from TS 32.409.
+// nodes count come from TS 32.409. A gauge over a number that a role
+// already holds elsewhere is registered with the function that reads
+// it, which the scrape calls (Registry.NewGaugeFunc).
 //
 // Every label is declared with the closed set of values it may take
 // (Label). A value outside the set is counted under the value "other"
