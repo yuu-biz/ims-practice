@@ -127,6 +127,33 @@ func (n s6cNetwork) rdr(t *testing.T, msisdn string, cause sgd.SMDeliveryCause) 
 	return a
 }
 
+// register puts the IP-SM-GW of the test network in the HSS for the
+// user, as the Sh update after an IMS registration does.
+func (n s6cNetwork) register(t *testing.T) {
+	t.Helper()
+	if r := n.pur(t, sh.UserIdentity{PublicIdentity: impu}, []sh.DataReference{sh.SMSRegistrationInfo},
+		smsRegistrationOverS6c(ipsmgwNumber)); r != success {
+		t.Fatalf("PUR = %v", r)
+	}
+}
+
+// waitForSubscriber waits until the HSS holds a subscriber that want
+// accepts, which the alerts in the background need.
+func (n s6cNetwork) waitForSubscriber(t *testing.T, what string, want func(Subscriber) bool) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		u := n.subscriber(t)
+		if want(u) {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("%s: message waiting data = %v, UNRI = %v, MCEF = %v", what, u.MessageWaitingData, u.UNRI, u.MCEF)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
 // subscriber reads what the HSS stored for the user of impi.
 func (n s6cNetwork) subscriber(t *testing.T) Subscriber {
 	t.Helper()
@@ -365,6 +392,41 @@ func TestDeregistrationSendsNoAlert(t *testing.T) {
 	n.noAlert(t)
 	if u := n.subscriber(t); len(u.MessageWaitingData) != 1 || !u.UNRI {
 		t.Errorf("message waiting data = %v, UNRI = %v", u.MessageWaitingData, u.UNRI)
+	}
+}
+
+// TS 29.338 5.2.1.3 leaves out a serving node that is marked with the
+// mobile not reachable flag. Over IP that flag is UNRI, so a user whose
+// last delivery found it absent gets no serving node, however the
+// IP-SM-GW is registered, until it is reachable again.
+func TestSendRoutingInfoLeavesOutANodeMarkedNotReachable(t *testing.T) {
+	n := newS6cNetwork(t)
+	n.register(t)
+	if a := n.srr(t, msisdnA); a.Result != success {
+		t.Fatalf("SRA = %v", a.Result)
+	}
+
+	// The delivery through that very IP-SM-GW found the user absent.
+	if a := n.rdr(t, msisdnA, sgd.SMDeliveryCauseAbsentUser); a.Result != success {
+		t.Fatalf("RDA = %v", a.Result)
+	}
+	if u := n.subscriber(t); !u.UNRI || u.IPSMGW.OriginHost != ipsmgwHost {
+		t.Fatalf("UNRI = %v, IP-SM-GW = %q", u.UNRI, u.IPSMGW.OriginHost)
+	}
+	a := n.srr(t, msisdnA)
+	if want := diameter.Experimental(sgd.DiameterErrorAbsentUser); a.Result != want {
+		t.Errorf("SRA = %v, want %v", a.Result, want)
+	}
+	if a.ServingNode != nil {
+		t.Errorf("Serving-Node = %+v, want none", a.ServingNode)
+	}
+
+	// The user is reachable again, so the flag goes and the node comes
+	// back.
+	n.register(t)
+	n.waitForSubscriber(t, "after the registration", func(u Subscriber) bool { return !u.UNRI })
+	if a := n.srr(t, msisdnA); a.Result != success || a.ServingNode == nil {
+		t.Errorf("SRA = %v, %+v", a.Result, a.ServingNode)
 	}
 }
 

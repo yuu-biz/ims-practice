@@ -196,7 +196,9 @@ type Subscriber struct {
 	MessageWaitingData []string
 	// UNRI is UE-Not-Reachable-for-IP: set while the MWD holds an entry
 	// put there because a delivery through the IP-SM-GW found the user
-	// absent (TS 23.040 3.2.6).
+	// absent (TS 23.040 3.2.6). While it is set the HSS names no serving
+	// node, as TS 29.338 5.2.1.3 has it leave out a node that is marked
+	// not reachable.
 	UNRI bool
 	// MCEF is the Mobile Station Memory Capacity Exceeded Flag: set
 	// while a delivery failed because the memory of the UE was full (TS
