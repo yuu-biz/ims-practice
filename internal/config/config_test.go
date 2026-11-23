@@ -11,6 +11,7 @@ import (
 	"github.com/yuu-biz/ims-practice/internal/aka"
 	"github.com/yuu-biz/ims-practice/internal/diameter"
 	"github.com/yuu-biz/ims-practice/internal/epc"
+	"github.com/yuu-biz/ims-practice/internal/hss"
 	"github.com/yuu-biz/ims-practice/internal/sip"
 	"github.com/yuu-biz/ims-practice/internal/sms"
 )
@@ -385,6 +386,15 @@ func TestParseCombinedRoles(t *testing.T) {
 		!cfg.HSS.PSIUsers[0].Matches("sip:conf-7f3a@conf.ims.mnc001.mcc001.3gppnetwork.org") {
 		t.Errorf("psi_users: %v, %+v", err, cfg.HSS.PSIUsers)
 	}
+	// TS 29.338 5.3.1.2: the HSS routes an alert by the Diameter
+	// identity of the service centre, which the configuration names. The
+	// realm defaults to the home domain.
+	centres := "  service_centres:\n    - address: \"12025550100\"\n      host: sc.ims.mnc001.mcc001.3gppnetwork.org\n"
+	if cfg, err := Parse(strings.NewReader(strings.Replace(combinedYAML, "hss:\n", "hss:\n"+centres, 1))); err != nil ||
+		len(cfg.HSS.ServiceCentres) != 1 || cfg.HSS.ServiceCentres[0] != (hss.ServiceCentre{
+		Address: "12025550100", Host: "sc.ims.mnc001.mcc001.3gppnetwork.org", Realm: "ims.mnc001.mcc001.3gppnetwork.org"}) {
+		t.Errorf("service_centres: %v, %+v", err, cfg.HSS.ServiceCentres)
+	}
 	if got := cfg.SCSCF.SIP.URI(); got != "sip:scscf.ims.mnc001.mcc001.3gppnetwork.org:5062" {
 		t.Errorf("S-CSCF URI = %s", got)
 	}
@@ -419,6 +429,8 @@ func TestParseRejectsHSS(t *testing.T) {
 		wantErr string
 	}{
 		{"provisioning_listen without a port", "hss:\n", "hss:\n  provisioning_listen: hss\n", "hss: provisioning_listen:"},
+		{"a service centre without a number", "hss:\n", "hss:\n  service_centres: [{host: sc.ims.mnc001.mcc001.3gppnetwork.org}]\n", "service_centres[0].address:"},
+		{"a service centre without a host", "hss:\n", "hss:\n  service_centres: [{address: \"12025550100\"}]\n", "service_centres[0].host:"},
 		{"a PSI user of a distinct PSI", "hss:\n", "hss:\n  psi_users: [{private_identity: conference@ims.mnc001.mcc001.3gppnetwork.org, wildcarded_psi: sip:conf-1@conf.ims.mnc001.mcc001.3gppnetwork.org}]\n", "psi_users[0].wildcarded_psi:"},
 		{"no password", "      password: test-password\n", "", "subscriptions[0].password or aka: at least one is required"},
 		{"not a SIP or tel URI", "[sip:001010000000001@", "[mailto:001010000000001@", "subscriptions[0].public_identities: \"mailto:"},

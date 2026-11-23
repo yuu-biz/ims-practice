@@ -16,6 +16,7 @@ import (
 	"encoding/hex"
 	"log/slog"
 	"slices"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -60,6 +61,11 @@ type Config struct {
 	// MMTelServicesData builds it. Empty gives such a subscription no
 	// supplementary services.
 	MMTelServices *sh.TransparentData
+	// ServiceCentres are the SMS central functions the HSS can alert,
+	// one entry per Service Centre address that appears in the message
+	// waiting data of a user. Without an entry for an address the HSS
+	// cannot alert it, and the SC is left with its own retries.
+	ServiceCentres []ServiceCentre
 	// UserLocks serialises the requests that change one subscriber. Nil
 	// means a lock per user in the memory of this process
 	// (ims.UserLocks), which serves an HSS that runs as one instance.
@@ -73,6 +79,21 @@ type Config struct {
 	Metrics *metrics.Registry
 }
 
+// ServiceCentre is how the HSS reaches one of the SMS central
+// functions over S6c. TS 29.338 5.3.1.2 has the Destination-Host and
+// Destination-Realm of an alert name the SMS-SC that the message
+// waiting data holds, which is why the HSS needs the Diameter identity
+// of each Service Centre address it may store.
+type ServiceCentre struct {
+	// Address is the E.164 number of the SC, digits only, as it arrives
+	// in the SC-Address of an SRR or an RDR.
+	Address string
+	// Host and Realm are the Diameter identity of the SMS-IWMSC that
+	// takes the alert for that SC.
+	Host  string
+	Realm string
+}
+
 // HSS answers Cx requests from the subscribers in its Store.
 type HSS struct {
 	config Config
@@ -84,6 +105,15 @@ type HSS struct {
 	// a MAR and a SAR for the same user never overwrite each other, and
 	// the requests of other users are not held up.
 	users ims.UserLocker
+	// serviceCentres are the ServiceCentres of the configuration by
+	// their Address, so that an alert finds one without a walk.
+	serviceCentres map[string]ServiceCentre
+	// peers reaches the nodes that connected to the HSS. SetPeers gives
+	// it the server once the node listens, which is after New.
+	peers atomic.Pointer[Peers]
+	// alerts counts the alerts to the service centres that are on their
+	// way, for Close.
+	alerts sync.WaitGroup
 
 	// requests counts the Cx and Sh requests this instance is
 	// answering, the users of the maintenance API (maintenance.go). It
@@ -105,7 +135,11 @@ func New(config Config, store Store, node *diameter.Node, log *slog.Logger) (*HS
 	if config.Metrics == nil {
 		config.Metrics = metrics.NewRegistry()
 	}
-	h := &HSS{config: config, store: store, node: node, log: log, users: config.UserLocks}
+	h := &HSS{config: config, store: store, node: node, log: log, users: config.UserLocks,
+		serviceCentres: map[string]ServiceCentre{}}
+	for _, c := range config.ServiceCentres {
+		h.serviceCentres[c.Address] = c
+	}
 	// A store that keeps none of the numbers of TS 32.409 4.2.1 gets no
 	// gauge at all: a gauge without labels stands in the output from
 	// the moment it is registered, so registering it would publish a
@@ -121,6 +155,14 @@ func New(config Config, store Store, node *diameter.Node, log *slog.Logger) (*HS
 	}
 	return h, nil
 }
+
+// SetPeers gives the HSS the nodes that connected to it, over which it
+// alerts a service centre. Without them it sends no alert.
+func (h *HSS) SetPeers(p Peers) { h.peers.Store(&p) }
+
+// Close waits for the alerts that are on their way to the service
+// centres. A node calls it once its Diameter server has stopped.
+func (h *HSS) Close() { h.alerts.Wait() }
 
 // Handle is the diameter.Handler of the HSS.
 func (h *HSS) Handle(request *diam.Message) *diam.Message {

@@ -2,6 +2,8 @@ package hss
 
 import (
 	"context"
+	"slices"
+	"time"
 
 	"github.com/fiorix/go-diameter/v4/diam"
 
@@ -258,4 +260,85 @@ func (h *HSS) forgetMessageWaiting(ctx context.Context, u Subscriber, scAddress 
 	}
 	h.log.Info("message waiting data", "private_identity", stored.PrivateIdentity, "sc_address", scAddress, "stored", false)
 	return diameter.Result{}
+}
+
+// alertTimeout bounds one alert, which the HSS sends outside the
+// request that set it off. It outlasts the time the Diameter client
+// waits for an answer, so that the peer, not this timeout, decides when
+// an alert has failed.
+const alertTimeout = 30 * time.Second
+
+// alertServiceCentres tells every service centre in the message waiting
+// data of u that the user can take short messages again, so that each
+// can try the short messages it holds (TS 29.338 5.2.2, TS 23.040
+// 3.2.7). An address leaves the data once its service centre has
+// answered; one whose service centre does not answer stays, and the next
+// return of the user alerts it again, which TS 29.338 5.2.2.2 leaves to
+// the operator.
+//
+// The alerts go out in the background, because the answer to the
+// request that brought the user back must not wait for a service
+// centre.
+func (h *HSS) alertServiceCentres(u Subscriber) {
+	addresses := slices.Clone(u.MessageWaitingData)
+	h.alerts.Add(1)
+	go func() {
+		defer h.alerts.Done()
+		ctx, cancel := context.WithTimeout(context.Background(), alertTimeout)
+		defer cancel()
+		for _, address := range addresses {
+			if !h.alertServiceCentre(ctx, u, address) {
+				continue
+			}
+			if fail := h.forgetMessageWaiting(ctx, u, address); fail != (diameter.Result{}) {
+				return
+			}
+		}
+	}()
+}
+
+// alertServiceCentre sends one ALR and reports whether the service
+// centre answered that it took the alert.
+func (h *HSS) alertServiceCentre(ctx context.Context, u Subscriber, address string) bool {
+	log := h.log.With("private_identity", u.PrivateIdentity, "sc_address", address)
+	centre, ok := h.serviceCentres[address]
+	if !ok {
+		// TS 29.338 5.3.1.2 routes the alert by the name of the service
+		// centre, which the configuration of this HSS gives.
+		log.Warn("no alert sent: the configuration names no Diameter identity for this service centre")
+		return false
+	}
+	peers := h.peers.Load()
+	if peers == nil {
+		log.Warn("no alert sent: this node takes no Diameter connections")
+		return false
+	}
+	// The MSISDN-Alert of TS 23.040 3.2.7, by which the service centre
+	// finds the short messages it holds for the user.
+	msisdn := u.MSISDN()
+	if msisdn == "" {
+		log.Warn("no alert sent: the user has no MSISDN")
+		return false
+	}
+	request := sgd.AlertServiceCentreRequest{
+		Header:         diameter.NewHeader(h.node, centre.Host, centre.Realm),
+		SCAddress:      address,
+		UserIdentifier: sgd.UserIdentifier{MSISDN: msisdn},
+	}
+	answer, err := (*peers).Request(ctx, centre.Host, request.Message())
+	if err != nil {
+		log.Warn("the service centre did not answer the alert", "error", err.Error())
+		return false
+	}
+	ala, err := sgd.ParseAlertServiceCentreAnswer(answer)
+	switch {
+	case err != nil:
+		log.Warn("cannot read the answer to the alert", "error", err.Error())
+		return false
+	case !ala.Result.Success():
+		log.Warn("the service centre refused the alert", "result", ala.Result.String())
+		return false
+	}
+	log.Info("the service centre is alerted that the user can take short messages again")
+	return true
 }

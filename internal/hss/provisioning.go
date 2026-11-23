@@ -131,15 +131,15 @@ func response(s Subscriber) subscriptionResponse {
 //	                               {"tone": "cat1", "active": true}
 //
 // Removing a subscription whose user is registered deregisters the user
-// at its S-CSCF, which scscfs reaches. A request whose subscription the
+// at its S-CSCF, which peers reaches. A request whose subscription the
 // HSS cannot read or write gets 500 (Internal Server Error).
-func (h *HSS) Provisioning(scscfs SCSCFs) http.Handler {
+func (h *HSS) Provisioning(peers Peers) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /subscriptions", h.listSubscriptions)
 	mux.HandleFunc("GET /subscriptions/{impi}", h.getSubscription)
 	mux.HandleFunc("POST /subscriptions", h.addSubscription)
 	mux.HandleFunc("DELETE /subscriptions/{impi}", func(w http.ResponseWriter, r *http.Request) {
-		removed, err := h.removeSubscription(r.Context(), scscfs, r.PathValue("impi"))
+		removed, err := h.removeSubscription(r.Context(), peers, r.PathValue("impi"))
 		switch {
 		case err != nil:
 			h.writeStoreFailure(w, err)
@@ -334,7 +334,7 @@ func (h *HSS) addSubscription(w http.ResponseWriter, r *http.Request) {
 // whether the subscription is gone. A lock that is not taken leaves the
 // subscription itself alone: another instance may be changing the
 // subscriber.
-func (h *HSS) removeSubscription(ctx context.Context, scscfs SCSCFs, privateID string) (bool, error) {
+func (h *HSS) removeSubscription(ctx context.Context, peers Peers, privateID string) (bool, error) {
 	unlock, err := h.lockSubscriber(privateID)
 	if err != nil {
 		return false, err
@@ -348,15 +348,17 @@ func (h *HSS) removeSubscription(ctx context.Context, scscfs SCSCFs, privateID s
 	}
 	log := h.log.With("private_identity", s.PrivateIdentity)
 	log.Info("subscription removed", "state", s.State.String())
-	if err := h.registrationTermination(ctx, scscfs, s); err != nil {
+	if err := h.registrationTermination(ctx, peers, s); err != nil {
 		log.Warn("RTR failed", "scscf", s.SCSCF.OriginHost, "error", err.Error())
 	}
 	return true, nil
 }
 
-// SCSCFs is how the HSS reaches an S-CSCF, by the Origin-Host the S-CSCF
-// sent in its MAR and SAR. *diameter.Server is one.
-type SCSCFs interface {
+// Peers is how the HSS reaches a node that connected to it, by the
+// Origin-Host of that node: an S-CSCF for a Registration-Termination-
+// Request, and an SMS-IWMSC for an Alert-Service-Centre-Request.
+// *diameter.Server is one.
+type Peers interface {
 	Request(ctx context.Context, originHost string, request *diam.Message) (*diam.Message, error)
 }
 
@@ -366,7 +368,7 @@ type SCSCFs interface {
 // PERMANENT_TERMINATION that it no longer serves the user, and that no
 // other S-CSCF will (6.1.3.1). The HSS has already forgotten the user,
 // which is the Not Registered state with no S-CSCF name.
-func (h *HSS) registrationTermination(ctx context.Context, scscfs SCSCFs, s Subscriber) error {
+func (h *HSS) registrationTermination(ctx context.Context, peers Peers, s Subscriber) error {
 	if s.State == NotRegistered || s.SCSCF.OriginHost == "" {
 		return nil
 	}
@@ -377,7 +379,7 @@ func (h *HSS) registrationTermination(ctx context.Context, scscfs SCSCFs, s Subs
 		// identities, no Public-Identity is sent.
 		DeregistrationReason: cx.DeregistrationReason{ReasonCode: cx.PermanentTermination},
 	}
-	answer, err := scscfs.Request(ctx, s.SCSCF.OriginHost, rtr.Message())
+	answer, err := peers.Request(ctx, s.SCSCF.OriginHost, rtr.Message())
 	if err != nil {
 		return err
 	}
