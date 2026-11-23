@@ -515,3 +515,68 @@ func TestPSISubdomainGoesToTheASByDNS(t *testing.T) {
 	default:
 	}
 }
+
+// TestCANCELThatMatchesNothingGoesOnAlongItsRoute is RFC 3261 16.10 at
+// the I-CSCF: a CANCEL that matches no transaction goes on statelessly
+// to the Route it has left once the I-CSCF has taken its own. One with no
+// Route left goes nowhere: the INVITE it would cancel went where the HSS
+// said, and the I-CSCF does not ask the HSS for a CANCEL.
+func TestCANCELThatMatchesNothingGoesOnAlongItsRoute(t *testing.T) {
+	cancels := make(chan *sip.Message, 2)
+	tr, err := sip.Listen("127.0.0.1:0", quiet())
+	if err != nil {
+		t.Fatal(err)
+	}
+	next, err := sip.NewStack(tr, sip.Config{SentBy: tr.LocalAddr().String(),
+		OnRequest: func(*sip.ServerTransaction) {}, OnCANCEL: func(m *sip.Message) { cancels <- m }}, quiet())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(next.Close)
+	// Every name leads to next, so that a CANCEL sent on by its
+	// Request-URI would show up there.
+	locate := locatorFunc(func(string, int) ([]sip.Destination, error) {
+		return []sip.Destination{{Transport: sip.UDP, Addr: next.LocalAddr()}}, nil
+	})
+	asked := hssFunc(func(m *diam.Message) (*diam.Message, error) {
+		t.Errorf("the I-CSCF asked the HSS: command %d", m.Header.CommandCode)
+		return nil, errors.New("no HSS")
+	})
+	node := diameter.NewNode(diameter.Identity{OriginHost: "icscf." + domain, OriginRealm: domain}, []uint32{diameter.ApplicationIDCx}, diameter.Timers{}, quiet())
+	i := New(Config{HomeDomain: domain, SCSCFs: []SCSCF{{Name: scscf}}, Host: "icscf." + domain, Port: 5060}, asked, node, locate, quiet())
+	i.SetStack(newStack(t, i.OnRequest))
+	cancel := func(routes ...string) *sip.Message {
+		m := &sip.Message{Method: sip.CANCEL, RequestURI: impu}
+		m.Add("Via", "SIP/2.0/UDP 192.0.2.20:5060;branch="+sip.NewBranch())
+		for _, r := range routes {
+			m.Add("Route", r)
+		}
+		m.Add("Max-Forwards", "70")
+		m.Add("From", "<sip:001010000000002@"+domain+">;tag=caller")
+		m.Add("To", "<"+impu+">")
+		m.Add("Call-ID", sip.NewCallID())
+		m.Add("CSeq", "1 CANCEL")
+		return m
+	}
+	own, onward := "<sip:icscf."+domain+":5060;lr>", "<sip:scscf."+domain+":5060;lr>"
+
+	i.OnCANCEL(cancel(own, onward))
+	select {
+	case got := <-cancels:
+		if routes := got.GetAll("Route"); len(routes) != 1 || routes[0] != onward {
+			t.Errorf("forwarded CANCEL has Route %q, want only %q", routes, onward)
+		}
+		if got.Get("Max-Forwards") != "69" {
+			t.Errorf("forwarded CANCEL has Max-Forwards %q, want 69", got.Get("Max-Forwards"))
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("the CANCEL with a Route left was not forwarded")
+	}
+
+	i.OnCANCEL(cancel(own))
+	select {
+	case got := <-cancels:
+		t.Errorf("forwarded a CANCEL with no Route left, to %s", got.RequestURI)
+	case <-time.After(200 * time.Millisecond):
+	}
+}

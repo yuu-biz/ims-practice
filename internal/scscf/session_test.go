@@ -424,6 +424,67 @@ func TestTerminatingCallToAnUnknownUserGets404(t *testing.T) {
 	}
 }
 
+// TestCANCELThatMatchesNothingGoesOnAlongItsRoute is RFC 3261 16.10 at
+// the S-CSCF: a CANCEL that matches no transaction goes on statelessly
+// to the Route it has left once the S-CSCF has taken its own. One for an
+// initial INVITE that has no Route left goes nowhere, since only the
+// routing of that INVITE knew its next hop.
+func TestCANCELThatMatchesNothingGoesOnAlongItsRoute(t *testing.T) {
+	cancels := make(chan *sip.Message, 2)
+	tr, err := sip.Listen("127.0.0.1:0", quiet())
+	if err != nil {
+		t.Fatal(err)
+	}
+	next, err := sip.NewStack(tr, sip.Config{SentBy: tr.LocalAddr().String(),
+		OnRequest: func(*sip.ServerTransaction) {}, OnCANCEL: func(m *sip.Message) { cancels <- m }}, quiet())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(next.Close)
+	// The home domain leads to next as well, so that a CANCEL sent on by
+	// its Request-URI would show up there.
+	h := newHarnessWith(t, Config{}, fakeResolver{hosts: map[string]netip.AddrPort{"pcscf." + domain: next.LocalAddr(), domain: next.LocalAddr()}})
+	cancel := func(uri, to string, routes ...string) *sip.Message {
+		m := &sip.Message{Method: sip.CANCEL, RequestURI: uri}
+		m.Add("Via", "SIP/2.0/UDP 192.0.2.20:5060;branch="+sip.NewBranch())
+		for _, r := range routes {
+			m.Add("Route", r)
+		}
+		m.Add("Max-Forwards", "70")
+		m.Add("From", "<sip:001010000000002@"+domain+">;tag=caller")
+		m.Add("To", to)
+		m.Add("Call-ID", sip.NewCallID())
+		m.Add("CSeq", "2 CANCEL")
+		return m
+	}
+	own, pcscf := "<sip:scscf."+domain+":5060;lr>", "<sip:term@pcscf."+domain+":5060;lr>"
+
+	// The CANCEL of a re-INVITE, along the route set of the dialog.
+	h.role.OnCANCEL(cancel("sip:001010000000001@192.0.2.10:5060", "<"+impu+">;tag=callee", own, pcscf))
+	select {
+	case got := <-cancels:
+		if routes := got.GetAll("Route"); len(routes) != 1 || routes[0] != pcscf {
+			t.Errorf("forwarded CANCEL has Route %q, want only %q", routes, pcscf)
+		}
+		if got.Get("Max-Forwards") != "69" {
+			t.Errorf("forwarded CANCEL has Max-Forwards %q, want 69", got.Get("Max-Forwards"))
+		}
+		if vias := got.GetAll("Via"); len(vias) != 2 {
+			t.Errorf("forwarded CANCEL has Via %q, want the S-CSCF's on top of the one it came with", vias)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("the CANCEL with a Route left was not forwarded")
+	}
+
+	// The CANCEL of an initial INVITE to the served user.
+	h.role.OnCANCEL(cancel(impu, "<"+impu+">", own))
+	select {
+	case got := <-cancels:
+		t.Errorf("forwarded a CANCEL with no Route left, to %s", got.RequestURI)
+	case <-time.After(200 * time.Millisecond):
+	}
+}
+
 // TestACKIsForwardedWithMaxForwardsLessOne is RFC 3261 16.6 step 3,
 // which holds for an ACK as for any other request: an ACK whose
 // Max-Forwards has reached 0 goes no further.

@@ -63,11 +63,6 @@ func quiet() *slog.Logger {
 
 var timers = diameter.Timers{Watchdog: time.Minute, Reconnect: time.Second, Answer: 2 * time.Second}
 
-func stackWithACK(t *testing.T, onRequest func(*sip.ServerTransaction), onACK func(*sip.Message)) *sip.Stack {
-	t.Helper()
-	return stackConfig(t, sip.Config{OnRequest: onRequest, OnACK: onACK})
-}
-
 func stackConfig(t *testing.T, cfg sip.Config) *sip.Stack {
 	t.Helper()
 	tr, err := sip.Listen("127.0.0.1:0", quiet())
@@ -356,7 +351,7 @@ func startNetwork(t *testing.T, cfg networkConfig) testNetwork {
 	}
 	t.Cleanup(s.Close)
 	scscfRole.Store(s)
-	scscfStack := stackWithACK(t, s.OnRequest, s.OnACK)
+	scscfStack := stackConfig(t, sip.Config{OnRequest: s.OnRequest, OnACK: s.OnACK, OnCANCEL: s.OnCANCEL})
 	s.SetStack(scscfStack)
 	dns.add("scscf."+domain, scscfStack.LocalAddr())
 
@@ -364,7 +359,9 @@ func startNetwork(t *testing.T, cfg networkConfig) testNetwork {
 	i := icscf.New(icscf.Config{HomeDomain: domain, SCSCFs: []icscf.SCSCF{{Name: "sip:scscf." + domain + ":5060", Capabilities: []uint32{1}}},
 		Host: "icscf." + domain, Port: 5060},
 		icscfPeer, icscfNode, dns, quiet())
-	dns.add(domain, stack(t, i.OnRequest).LocalAddr())
+	icscfStack := stackConfig(t, sip.Config{OnRequest: i.OnRequest, OnCANCEL: i.OnCANCEL})
+	i.SetStack(icscfStack)
+	dns.add(domain, icscfStack.LocalAddr())
 
 	pcscfStore, pcscfLog := pcscf.NewMemoryStore(), &regEventLog{}
 	protectedTransport, err := sip.Listen("127.0.0.1:0", quiet())
@@ -375,7 +372,7 @@ func startNetwork(t *testing.T, cfg networkConfig) testNetwork {
 	p := pcscf.New(pcscf.Config{Host: "pcscf." + domain, Port: 5060, ProtectedServerPort: int(protectedPort), VisitedNetworkID: domain},
 		dns, pcscfStore, nil, slog.New(regEventHandler{log: pcscfLog}))
 	t.Cleanup(p.Close)
-	pcscfStack := stackConfig(t, sip.Config{Screen: p.Screen, Admit: p.AdmitUnprotected, OnRequest: p.OnRequest, OnACK: p.OnACK})
+	pcscfStack := stackConfig(t, sip.Config{Screen: p.Screen, Admit: p.AdmitUnprotected, OnRequest: p.OnRequest, OnACK: p.OnACK, OnCANCEL: p.OnCANCEL})
 	var epcAPI string
 	if cfg.epc {
 		epcAPI = startEPC(t, p, pcscfStack.LocalAddr().Addr())
@@ -383,7 +380,7 @@ func startNetwork(t *testing.T, cfg networkConfig) testNetwork {
 	p.SetStack(pcscfStack)
 	dns.add("pcscf."+domain, pcscfStack.LocalAddr())
 	protectedStack, err := sip.NewStack(protectedTransport, sip.Config{SentBy: protectedTransport.LocalAddr().String(),
-		Screen: p.Screen, OnRequest: p.OnProtectedRequest, OnACK: p.OnProtectedACK}, quiet())
+		Screen: p.Screen, OnRequest: p.OnProtectedRequest, OnACK: p.OnProtectedACK, OnCANCEL: p.OnProtectedCANCEL}, quiet())
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -413,31 +413,64 @@ func isTargetRefresh(m sip.Method) bool {
 // OnACK forwards the ACK for a 2xx the same way.
 func (p *PCSCF) OnACK(ack *sip.Message) { p.forwardACK(&p.stack, ack) }
 
-// forwardACK forwards ack from the stack it came to. It notes in the
-// Dialog that the 2xx has its ACK, and sends the BYEs of a release that
-// waited for that ACK (release).
-func (p *PCSCF) forwardACK(ref *ims.StackRef, ack *sip.Message) {
-	stack, err := ref.Get()
-	if err != nil {
-		return
-	}
-	out := ack.Clone()
+// OnCANCEL forwards a CANCEL that matches no transaction statelessly
+// (RFC 3261 16.10), the way an ACK goes.
+func (p *PCSCF) OnCANCEL(cancel *sip.Message) { p.forwardCANCEL(&p.stack, cancel) }
+
+// withoutTransaction is m, an ACK for a 2xx or a CANCEL, which no
+// transaction of the P-CSCF holds, as it goes on to the top Route or
+// else the Request-URI, and where that is. toUE reports that it goes to
+// the UE.
+func (p *PCSCF) withoutTransaction(m *sip.Message) (out *sip.Message, targets []sip.Destination, toUE bool, err error) {
+	out = m.Clone()
 	if err := sip.DecrementMaxForwards(out); err != nil {
-		// RFC 3261 16.3 step 3 answers such a request 483, but no
-		// response to an ACK is allowed (17), so it is only dropped.
-		p.log.Info("dropped ACK", "call_id", ack.Get("Call-ID"), "error", err.Error())
-		return
+		return nil, nil, false, err
 	}
 	sip.PopOwnRoute(out, p.ownURIs()...)
-	targets, toUE, err := p.nextHop(out)
-	if err != nil {
-		p.log.Warn("cannot forward ACK", "call_id", ack.Get("Call-ID"), "error", err.Error())
-		return
+	if targets, toUE, err = p.nextHop(out); err != nil {
+		return nil, nil, false, err
 	}
 	if toUE {
 		crossBoundary(out, requestToUE)
 	} else {
 		crossBoundary(out, requestFromUE)
+	}
+	return out, targets, toUE, nil
+}
+
+// forwardCANCEL forwards cancel from the stack it came to.
+//
+// SIMPLIFIED: RFC 3261 16.10. A CANCEL that the P-CSCF cannot forward is
+// dropped, with no response: one whose Max-Forwards is used up (16.3
+// step 3), and one whose next hop DNS does not find.
+func (p *PCSCF) forwardCANCEL(ref *ims.StackRef, cancel *sip.Message) {
+	stack, err := ref.Get()
+	if err != nil {
+		return
+	}
+	out, targets, _, err := p.withoutTransaction(cancel)
+	if err == nil {
+		err = stack.SendCANCEL(out, targets...)
+	}
+	if err != nil && !errors.Is(err, sip.ErrStackClosed) {
+		p.log.Warn("cannot forward CANCEL", "call_id", cancel.Get("Call-ID"), "error", err.Error())
+	}
+}
+
+// forwardACK forwards ack from the stack it came to. It notes in the
+// Dialog that the 2xx has its ACK, and sends the BYEs of a release that
+// waited for that ACK (release). RFC 3261 16.3 step 3 answers 483 to a
+// request whose Max-Forwards is used up, but no response to an ACK is
+// allowed (17), so such an ACK is only dropped.
+func (p *PCSCF) forwardACK(ref *ims.StackRef, ack *sip.Message) {
+	stack, err := ref.Get()
+	if err != nil {
+		return
+	}
+	out, targets, toUE, err := p.withoutTransaction(ack)
+	if err != nil {
+		p.log.Warn("cannot forward ACK", "call_id", ack.Get("Call-ID"), "error", err.Error())
+		return
 	}
 	key := subsequentKey(ack, toUE)
 	d, known, err := p.store.UpdateDialog(context.Background(), key, func(d *Dialog) { d.Acknowledged = true })

@@ -1,6 +1,8 @@
 package sip
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -29,6 +31,14 @@ type Config struct {
 	// retransmitting its 2xx when it arrives; a proxy forwards it with
 	// SendACK. When OnACK is nil, such ACKs are discarded.
 	OnACK func(ack *Message)
+	// OnCANCEL, when set, makes the node a proxy for a CANCEL that
+	// matches no server transaction: the stack calls it, as it calls
+	// OnACK, instead of answering 481 as a UAS does (RFC 3261 9.2). The
+	// proxy has no knowledge of the request to cancel, so it forwards the
+	// CANCEL statelessly with SendCANCEL (16.10). Such a CANCEL gets no
+	// transaction and no 100 (Trying) (16.11), so a retransmission of it
+	// comes here again. A UA leaves OnCANCEL nil.
+	OnCANCEL func(cancel *Message)
 	// Ordered has the stack call OnRequest and OnACK one after the
 	// other, in the order the requests arrived, instead of each in a
 	// goroutine of its own; with Admit, that order holds for the requests
@@ -111,19 +121,23 @@ var ErrStackClosed = errors.New("sip: stack closed")
 // the state machines of transaction.go, and fires their timers.
 //
 // What the stack does with messages that match no transaction:
-//   - A response is logged and discarded. RFC 6026 8.2 and 8.9 ask this
-//     of every element but a stateless proxy, and a proxy built on this
-//     stack keeps transaction state. A retransmitted 2xx still reaches
-//     the TU while its INVITE client transaction waits in Accepted.
+//   - A response to a CANCEL that SendCANCEL forwarded statelessly goes
+//     on to the Via below this node's (RFC 3261 16.11). Any other
+//     response is logged and discarded. RFC 6026 8.2 and 8.9 ask this of
+//     every element but a stateless proxy, and a proxy built on this
+//     stack keeps transaction state for every other request. A
+//     retransmitted 2xx still reaches the TU while its INVITE client
+//     transaction waits in Accepted.
 //   - A request that Config.Screen or Config.Admit refuses is dropped.
 //   - An ACK goes to Config.OnACK.
+//   - A CANCEL goes to Config.OnCANCEL at a proxy, and gets 481 at a UA.
 //   - Any other request starts a server transaction and goes to
-//     Config.OnRequest, except a CANCEL.
+//     Config.OnRequest.
 //
-// The stack answers a CANCEL itself (RFC 3261 9.2): 200 when it matches
-// a server transaction of any method but CANCEL, and 481 otherwise. The
-// TU of an INVITE that has no final response yet then sees Cancelled;
-// the CANCEL changes nothing else.
+// The stack answers a CANCEL that matches a server transaction of any
+// method but CANCEL itself, with 200 (RFC 3261 9.2, 16.10). The TU of
+// an INVITE that has no final response yet then sees Cancelled; the
+// CANCEL changes nothing else.
 type Stack struct {
 	transport *TransportLayer
 	cfg       Config
@@ -390,11 +404,48 @@ func (s *Stack) SendACK(ack *Message, targets ...Destination) error {
 	if ack.Method != ACK {
 		return fmt.Errorf("sip: SendACK cannot send %s", ack.Method)
 	}
+	return s.sendWithoutTransaction(ack, NewBranch(), targets)
+}
+
+// SendCANCEL forwards a CANCEL that matched no server transaction
+// (Config.OnCANCEL) statelessly, as RFC 3261 16.10 asks of a proxy: to
+// the first of targets that the stack can send it to, without a client
+// transaction (16.11). The stack puts its own Via on top of a copy of
+// cancel, with the branch that 16.11 recommends for a stateless proxy:
+// a hash of the branch that cancel came with. Each retransmission thus
+// goes out with the same branch, and so would the request it cancels,
+// had this node forwarded that one statelessly too, since a CANCEL has
+// the branch of the request it cancels (9.1). The responses to it go on
+// to the Via below this node's (16.11).
+func (s *Stack) SendCANCEL(cancel *Message, targets ...Destination) error {
+	if cancel.Method != CANCEL {
+		return fmt.Errorf("sip: SendCANCEL cannot send %s", cancel.Method)
+	}
+	v, err := ParseVia(cancel.Get("Via"))
+	if err != nil {
+		return err
+	}
+	return s.sendWithoutTransaction(cancel, statelessBranch(v), targets)
+}
+
+// statelessBranch is the branch of the Via that this node puts on a
+// request it forwards statelessly, received being the top Via the
+// request came with: a hash of its branch (RFC 3261 16.11). The stack
+// takes only branches with the magic cookie (17.2.3), which are unique
+// already, so the hash is unique too.
+func statelessBranch(received Via) string {
+	sum := sha256.Sum256([]byte(received.Branch()))
+	return BranchMagicCookie + hex.EncodeToString(sum[:16])
+}
+
+// sendWithoutTransaction sends req, with this node's Via and branch on
+// top, to the first of targets that takes it.
+func (s *Stack) sendWithoutTransaction(req *Message, branch string, targets []Destination) error {
 	err := errNoTarget
 	for i, target := range targets {
 		var out *Message
 		var dst Destination
-		if out, dst, err = s.prepare(ack, target); err == nil {
+		if out, dst, err = s.prepare(req, branch, target); err == nil {
 			if err = s.transport.SendRequest(out, dst); err == nil {
 				return nil
 			}
@@ -402,7 +453,7 @@ func (s *Stack) SendACK(ack *Message, targets ...Destination) error {
 		if errors.Is(err, ErrStackClosed) {
 			return err
 		}
-		s.logNextTarget(ack, target, err.Error(), targets[i+1:])
+		s.logNextTarget(req, target, err.Error(), targets[i+1:])
 	}
 	return err
 }
@@ -415,17 +466,17 @@ const maxUDPRequestSize = 1300
 
 // prepare settles the transport of a request this node sends, and
 // returns a copy of req with this node's Via, which names that
-// transport, on top. A request for UDP that is larger than 1300 bytes
+// transport and has branch, on top. A request for UDP that is larger than 1300 bytes
 // goes over TCP instead (RFC 3261 18.1.1). The TCP connection is opened
 // here, in the caller's goroutine, so that the stack's loop does not
 // wait for it when it sends.
-func (s *Stack) prepare(req *Message, destination Destination) (*Message, Destination, error) {
+func (s *Stack) prepare(req *Message, branch string, destination Destination) (*Message, Destination, error) {
 	select {
 	case <-s.done:
 		return nil, Destination{}, ErrStackClosed
 	default:
 	}
-	out := s.withOwnVia(req, destination.Transport)
+	out := s.withOwnVia(req, branch, destination.Transport)
 	switch size := len(out.Bytes()); {
 	case destination.Transport == UDP && size > maxUDPRequestSize:
 		overTCP := Destination{Transport: TCP, Addr: destination.Addr}
@@ -439,7 +490,7 @@ func (s *Stack) prepare(req *Message, destination Destination) (*Message, Destin
 		}
 		s.log.Info("request larger than 1300 bytes sent over TCP",
 			"method", string(req.Method), "bytes", size, "dst", overTCP.String())
-		return s.withOwnVia(req, TCP), overTCP, nil
+		return s.withOwnVia(req, branch, TCP), overTCP, nil
 	case destination.Transport == TCP:
 		if _, err := s.transport.connectTCP(destination.Addr); err != nil {
 			return nil, Destination{}, err
@@ -448,14 +499,14 @@ func (s *Stack) prepare(req *Message, destination Destination) (*Message, Destin
 	return out, destination, nil
 }
 
-// withOwnVia returns a copy of req with this node's Via on top, with a
-// new branch (RFC 3261 8.1.1.7 and 16.6 step 8) and the transport the
-// request goes over (18.1.1). The Via asks for rport (RFC 3581 3),
+// withOwnVia returns a copy of req with this node's Via on top, with
+// branch (RFC 3261 8.1.1.7, 16.6 step 8 and 16.11) and the transport
+// the request goes over (18.1.1). The Via asks for rport (RFC 3581 3),
 // which RFC 3581 leaves optional; asking costs nothing where there is
 // no NAT.
-func (s *Stack) withOwnVia(req *Message, transport Transport) *Message {
+func (s *Stack) withOwnVia(req *Message, branch string, transport Transport) *Message {
 	host, port, _ := splitHostPort(s.cfg.SentBy)
-	via := Via{Transport: string(transport), Host: host, Port: port, Params: Params{{Name: "branch", Value: NewBranch()}, {Name: "rport"}}}
+	via := Via{Transport: string(transport), Host: host, Port: port, Params: Params{{Name: "branch", Value: branch}, {Name: "rport"}}}
 	req = req.Clone()
 	req.Prepend("Via", via.String())
 	return req
@@ -742,11 +793,54 @@ func (s *Stack) receiveResponse(resp *Message) {
 	}
 	e, ok := s.clients[clientKey{branch: v.Branch(), method: cseq.Method}]
 	if !ok {
+		if s.relayStateless(resp, v) {
+			return
+		}
 		s.log.Info("discarded response that matches no client transaction",
 			"status", resp.StatusCode, "branch", v.Branch(), "cseq", resp.Get("CSeq"))
 		return
 	}
 	s.stepClient(e, ResponseReceived{Response: resp})
+}
+
+// relayStateless is RFC 3261 16.11 for a response to a CANCEL that
+// SendCANCEL forwarded: own, the top Via, has the branch that the Via
+// below it gives, so this node put it there. The response goes on
+// without own, to where the Via below says (18.2.2). It reports whether
+// resp was such a response.
+func (s *Stack) relayStateless(resp *Message, own Via) bool {
+	// Only the CANCEL goes out statelessly, and the branch it carries is
+	// one that anyone can compute from the Via below it. Any other
+	// response is a stray one, which a stateful element discards (RFC
+	// 6026 8.2) rather than send on to the address that its Via names.
+	if cseq, err := ParseCSeq(resp.Get("CSeq")); err != nil || cseq.Method != CANCEL {
+		return false
+	}
+	out := resp.Clone()
+	out.RemoveFirst("Via")
+	next, err := ParseVia(out.Get("Via"))
+	if err != nil || own.Branch() != statelessBranch(next) {
+		return false
+	}
+	if err := s.transport.SendResponse(out, connectionOf(next)); err != nil {
+		s.log.Warn("cannot relay the response to a CANCEL forwarded statelessly",
+			"status", resp.StatusCode, "branch", next.Branch(), "error", err.Error())
+	}
+	return true
+}
+
+// connectionOf is where a request with v as its top Via came from:
+// received and rport, which this node wrote into v (RFC 3581 4), name
+// the far end of its connection over TCP. The transport sends a response
+// back on that connection while it is open (RFC 3261 18.2.2).
+func connectionOf(v Via) Destination {
+	d := Destination{Transport: Transport(v.Transport)}
+	received, _ := v.Params.Get("received")
+	rport, _ := v.Params.Get("rport")
+	if addr, err := netip.ParseAddrPort(joinHostPort(received, 0) + ":" + rport); err == nil {
+		d.Addr = addr
+	}
+	return d
 }
 
 func (s *Stack) receiveRequest(req *Message, source Destination, admitted bool) {
@@ -772,6 +866,10 @@ func (s *Stack) receiveRequest(req *Message, source Destination, admitted bool) 
 		return
 	}
 	if !admitted && !s.admits(req, source) {
+		return
+	}
+	if _, ok := s.cancellable[key.cancelKey()]; req.Method == CANCEL && !ok && s.cfg.OnCANCEL != nil {
+		s.passRequestToTU(func() { s.cfg.OnCANCEL(req) })
 		return
 	}
 	e := &serverEntry{key: key, timers: map[Timer]armedTimer{}}
@@ -801,15 +899,13 @@ func (s *Stack) receiveRequest(req *Message, source Destination, admitted bool) 
 // transaction it cancels has the same branch and sent-by, and may be of
 // any method but CANCEL. Only an INVITE that has no final response yet
 // is cancelled; for a transaction of another method the CANCEL gets 200
-// all the same, and changes nothing.
+// all the same, and changes nothing. A CANCEL that matches nothing gets
+// 481 here, at a UA; at a proxy it goes to Config.OnCANCEL instead.
 //
-// SIMPLIFIED: RFC 3261 16.10. A stateful proxy MUST forward statelessly
-// a CANCEL that matches nothing, in case it forwarded the request
-// statelessly, and MUST cancel the pending client transactions of a
-// request of any method. A proxy on this stack forwards every request
-// statefully and cancels only INVITEs, as clients SHOULD NOT cancel
-// other requests (9.1), so the stack leaves both out: a CANCEL that
-// matches nothing gets 481, as at a UAS.
+// SIMPLIFIED: RFC 3261 16.10. A proxy MUST cancel the pending client
+// transactions of a request of any method when a CANCEL matches it. A
+// proxy on this stack cancels only INVITEs, as clients SHOULD NOT cancel
+// other requests (9.1).
 func (s *Stack) answerCancel(e *serverEntry) {
 	cancel := e.st.Request
 	target, ok := s.cancellable[e.key.cancelKey()]

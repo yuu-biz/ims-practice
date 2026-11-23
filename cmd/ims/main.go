@@ -171,8 +171,8 @@ func run(configPath string, log *slog.Logger, level *slog.LevelVar) error {
 		}
 	}()
 	// startSIPWith starts a stack on c with stack, a sip.Config that
-	// lacks only the sent-by, for the P-CSCF, whose stacks screen
-	// requests.
+	// lacks only the sent-by, for the CSCFs, whose stacks forward
+	// CANCELs statelessly and, at the P-CSCF, screen requests.
 	startSIPWith := func(role config.Role, c config.SIP, stack sip.Config) (*sip.Stack, error) {
 		roleLog := log.With("role", role)
 		transport, err := sip.ListenObserved(c.Listen.String(), roleLog, agent.SIP(string(role)))
@@ -222,7 +222,7 @@ func run(configPath string, log *slog.Logger, level *slog.LevelVar) error {
 		defer s.Close()
 		scscfRole.Store(s)
 		managed = append(managed, managedRole{function: s.Function(hss.Available), manage: s.Manage})
-		stack, err := startSIP(config.RoleSCSCF, c.SIP, s.OnRequest, s.OnACK)
+		stack, err := startSIPWith(config.RoleSCSCF, c.SIP, sip.Config{OnRequest: s.OnRequest, OnACK: s.OnACK, OnCANCEL: s.OnCANCEL})
 		if err != nil {
 			return err
 		}
@@ -237,9 +237,11 @@ func run(configPath string, log *slog.Logger, level *slog.LevelVar) error {
 			PSISubdomains: c.PSISubdomains},
 			hssPeers(cfg, peers), node, resolver,
 			log.With("role", config.RoleICSCF))
-		if _, err := startSIP(config.RoleICSCF, c.SIP, i.OnRequest, nil); err != nil {
+		stack, err := startSIPWith(config.RoleICSCF, c.SIP, sip.Config{OnRequest: i.OnRequest, OnCANCEL: i.OnCANCEL})
+		if err != nil {
 			return err
 		}
+		i.SetStack(stack)
 	}
 	if c := cfg.PCSCF; c != nil {
 		pc := pcscf.Config{Host: c.SIP.Host, Port: int(c.SIP.Listen.Port()), ProtectedServerPort: int(c.ProtectedServerPort),
@@ -274,7 +276,7 @@ func run(configPath string, log *slog.Logger, level *slog.LevelVar) error {
 			roleLog.Info("policy control over Rx")
 		}
 		stack, err := startSIPWith(config.RolePCSCF, c.SIP,
-			sip.Config{Screen: p.Screen, Admit: p.AdmitUnprotected, OnRequest: p.OnRequest, OnACK: p.OnACK})
+			sip.Config{Screen: p.Screen, Admit: p.AdmitUnprotected, OnRequest: p.OnRequest, OnACK: p.OnACK, OnCANCEL: p.OnCANCEL})
 		if err != nil {
 			return err
 		}
@@ -286,7 +288,7 @@ func run(configPath string, log *slog.Logger, level *slog.LevelVar) error {
 			// is no other target to move on to.
 			protected := config.SIP{Listen: netip.AddrPortFrom(c.SIP.Listen.Addr(), port), Host: c.SIP.Host}
 			stack, err := startSIPWith(config.RolePCSCF, protected,
-				sip.Config{Screen: p.Screen, OnRequest: p.OnProtectedRequest, OnACK: p.OnProtectedACK})
+				sip.Config{Screen: p.Screen, OnRequest: p.OnProtectedRequest, OnACK: p.OnProtectedACK, OnCANCEL: p.OnProtectedCANCEL})
 			if err != nil {
 				return err
 			}

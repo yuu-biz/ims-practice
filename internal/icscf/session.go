@@ -2,6 +2,7 @@ package icscf
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"github.com/yuu-biz/ims-practice/internal/diameter"
 	"log/slog"
@@ -241,6 +242,46 @@ func telURIOf(uri string) (string, bool) {
 		return "", false
 	}
 	return "tel:" + n.Number + n.Params.String(), true
+}
+
+// OnCANCEL is the sip.Config.OnCANCEL of the I-CSCF: it forwards a
+// CANCEL that matches no transaction statelessly (RFC 3261 16.10), along
+// its Route.
+//
+// SIMPLIFIED: RFC 3261 16.10. A CANCEL that the I-CSCF cannot forward
+// is dropped, with no response: one that has no Route left once the
+// I-CSCF has taken its own, one whose Max-Forwards is used up (16.3 step
+// 3), and one whose next hop DNS does not find. The INVITE that the
+// first would cancel went to the S-CSCF that the HSS named (TS 24.229
+// 5.3.2.1), which the CANCEL alone does not tell. The I-CSCF forwarded
+// that INVITE statefully, with a branch of its own, so no node further
+// on would match the CANCEL to it either.
+func (i *ICSCF) OnCANCEL(cancel *sip.Message) {
+	stack, err := i.stack.Get()
+	if err != nil {
+		return
+	}
+	log := i.log.With("method", string(cancel.Method), "call_id", cancel.Get("Call-ID"))
+	out := cancel.Clone()
+	if err := sip.DecrementMaxForwards(out); err != nil {
+		log.Info("dropped CANCEL", "error", err.Error())
+		return
+	}
+	sip.PopOwnRoute(out, i.ownURI(), sip.URI{Scheme: "sip", Host: i.cfg.HomeDomain})
+	if out.Get("Route") == "" {
+		log.Info("dropped CANCEL that matches no transaction and has no Route left")
+		return
+	}
+	u, err := sip.NextHop(out)
+	if err == nil {
+		var targets []sip.Destination
+		if targets, err = ims.Targets(context.Background(), i.locator, u); err == nil {
+			err = stack.SendCANCEL(out, targets...)
+		}
+	}
+	if err != nil && !errors.Is(err, sip.ErrStackClosed) {
+		log.Warn("cannot forward CANCEL", "error", err.Error())
+	}
 }
 
 func (i *ICSCF) ownURI() sip.URI {

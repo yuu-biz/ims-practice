@@ -55,12 +55,17 @@ type ICSCF struct {
 	hss     HSS
 	node    *diameter.Node
 	locator Locator
+	stack   ims.StackRef
 	log     *slog.Logger
 }
 
 func New(cfg Config, hss HSS, node *diameter.Node, locator Locator, log *slog.Logger) *ICSCF {
 	return &ICSCF{cfg: cfg, hss: hss, node: node, locator: locator, log: log}
 }
+
+// SetStack gives the I-CSCF the stack it runs on, which it needs to
+// forward CANCELs. Call it right after the stack is made.
+func (i *ICSCF) SetStack(stack *sip.Stack) { i.stack.Set(stack) }
 
 // OnRequest is the sip.Config.OnRequest of the I-CSCF.
 func (i *ICSCF) OnRequest(st *sip.ServerTransaction) {

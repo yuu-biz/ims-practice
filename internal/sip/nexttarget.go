@@ -129,7 +129,7 @@ func (s *Stack) reach(req *Message, targets []Destination) (*attempt, []Destinat
 	for i, target := range targets {
 		var out *Message
 		var dst Destination
-		if out, dst, err = s.prepare(req, target); err == nil {
+		if out, dst, err = s.prepare(req, NewBranch(), target); err == nil {
 			return newAttempt(out, dst), targets[i+1:], nil
 		}
 		if errors.Is(err, ErrStackClosed) {

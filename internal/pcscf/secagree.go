@@ -137,6 +137,9 @@ func (p *PCSCF) OnProtectedRequest(st *sip.ServerTransaction) {
 // OnProtectedACK is the sip.Config.OnACK of that stack.
 func (p *PCSCF) OnProtectedACK(ack *sip.Message) { p.forwardACK(&p.protectedStack, ack) }
 
+// OnProtectedCANCEL is the sip.Config.OnCANCEL of that stack.
+func (p *PCSCF) OnProtectedCANCEL(cancel *sip.Message) { p.forwardCANCEL(&p.protectedStack, cancel) }
+
 // SetProtectedStack gives the P-CSCF the stack on its protected server
 // port. Call it right after the stack is made.
 func (p *PCSCF) SetProtectedStack(stack *sip.Stack) { p.protectedStack.Set(stack) }
