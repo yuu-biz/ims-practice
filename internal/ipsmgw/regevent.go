@@ -117,7 +117,12 @@ func (g *IPSMGW) subscribeRegEvent(publicID, msisdn string, expires time.Duratio
 		return
 	}
 	log.Info("reg event subscribing", "expires", int(expires/time.Second))
+	// The SUBSCRIBE is a user of the IP-SM-GW until it has its final
+	// response, so that a shut down does not leave a subscription
+	// without a dialog behind (maintenance.go).
+	g.userArrived()
 	go func() {
+		defer g.userQuit()
 		final, err := g.send(m, g.entryPoint())
 		if err == nil && final.StatusCode < 300 {
 			return
@@ -170,7 +175,11 @@ func (g *IPSMGW) refreshRegEvent(sub RegSubscription, expires time.Duration, log
 		return
 	}
 	log.Info("reg event refreshing", "expires", int(expires/time.Second))
+	// The refresh is a user of the IP-SM-GW until it has its final
+	// response, as the first SUBSCRIBE is.
+	g.userArrived()
 	go func() {
+		defer g.userQuit()
 		final, err := g.send(m, hop)
 		switch {
 		case err == nil && final.StatusCode < 300:

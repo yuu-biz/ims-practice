@@ -30,10 +30,34 @@ const defaultReportTimeout = 2 * 32 * time.Second
 // could still wait for a report with one of its values.
 const messageReferenceLifetime = 10 * time.Minute
 
-// Deliver sends the TPDU of d to the UE of d.Recipient in RP-DATA, and
-// waits for the final response to the MESSAGE. The SC learns how the
-// delivery ends from Report, once: when the MESSAGE fails, when the
-// delivery report comes, or when ReportTimeout passes without one.
+// Deliver takes on the delivery of the TPDU of d to the UE of
+// d.Recipient in RP-DATA and returns at once; the MESSAGE goes out in a
+// goroutine of its own, which waits for its final response. The SC
+// learns how the delivery ends from Report, once: when the MESSAGE
+// fails, when the delivery report comes, or when ReportTimeout passes
+// without one.
+//
+// A delivery is a user of the IP-SM-GW from here until the MESSAGE has
+// its final response, so that a shut down waits for it. It is counted
+// here, before the goroutine starts, rather than in the goroutine: a
+// shut down in between would otherwise find the IP-SM-GW with no user
+// and lock it while a delivery it had taken on was still to go out. It
+// is no user afterwards: the wait for the delivery report belongs to
+// the Store, and to whichever instance the report or the expiry of TR1N
+// reaches (maintenance.go). The SC of this node asks only the instance
+// that began the work, so the IP-SM-GW takes every delivery the SC
+// hands it, in service or not.
+func (g *IPSMGW) Deliver(d Delivery) {
+	g.userArrived()
+	go func() {
+		defer g.userQuit()
+		g.deliver(d)
+	}()
+}
+
+// deliver sends the MESSAGE of d and waits for its final response. It
+// runs in a goroutine of its own, which outlives the request that
+// brought the delivery about, so it works with the background context.
 //
 // The delivery is in the Store before the MESSAGE goes out, since the
 // report can reach another IP-SM-GW even before the 200 is back here.
@@ -45,7 +69,8 @@ const messageReferenceLifetime = 10 * time.Minute
 // When the Store fails before the MESSAGE goes out, the SC hears of a
 // system failure at once, and no MESSAGE goes out whose report no
 // IP-SM-GW could match with its delivery.
-func (g *IPSMGW) Deliver(ctx context.Context, d Delivery) {
+func (g *IPSMGW) deliver(d Delivery) {
+	ctx := context.Background()
 	log := g.log.With("reference", d.Reference, "recipient", d.Recipient)
 	now := time.Now()
 	mr, err := g.store.NextMessageReference(ctx, d.Recipient, now.Add(messageReferenceLifetime))
@@ -190,6 +215,39 @@ func (g *IPSMGW) endDeliveryNow(callID string, outcome Outcome, log *slog.Logger
 	if err := g.endDelivery(context.Background(), callID, outcome, log); err != nil {
 		log.Warn("delivery not ended: the store failed; TR1N ends it", "outcome", outcome.String(), "error", err.Error())
 	}
+}
+
+// claimDue claims the deliveries whose TR1N is due, for the sweep of
+// this instance (New), and counts each claim as a user of the IP-SM-GW
+// (maintenance.go).
+//
+// A claim is work in hand from the moment it is made, not from the
+// moment its handler runs: a shut down in between would otherwise find
+// the IP-SM-GW with no user and lock it while a delivery it had claimed
+// was still without an outcome. Every expiry that this returns goes to
+// exactly one Handle (internal/ims/expiry.go), which is handleExpiry,
+// and that is where the count ends. An expiry that the Store did not
+// give out is none of this instance's work, so a failure counts
+// nothing.
+func (g *IPSMGW) claimDue(ctx context.Context, _ string, now time.Time, lease time.Duration, limit int) ([]Expiry, error) {
+	due, err := g.store.ClaimDue(ctx, now, lease, limit)
+	if err != nil {
+		return nil, err
+	}
+	for range due {
+		g.userArrived()
+	}
+	return due, nil
+}
+
+// handleExpiry ends the delivery of a claimed expiry and gives up the
+// count that claimDue took for it. The sweep goes on while the
+// IP-SM-GW drains: ending a delivery that has no outcome yet is how the
+// network keeps its promise to the SC, as the expiries of a draining
+// S-CSCF are kept (maintenance.go).
+func (g *IPSMGW) handleExpiry(ctx context.Context, e Expiry) error {
+	defer g.userQuit()
+	return g.reportTimedOut(ctx, e.CallID)
 }
 
 // reportTimedOut is TR1N running out for a delivery (TS 24.011 6.2.2.2):

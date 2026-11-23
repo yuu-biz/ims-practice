@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/netip"
 	"reflect"
 	"slices"
@@ -22,6 +23,7 @@ import (
 	"github.com/yuu-biz/ims-practice/internal/hss"
 	"github.com/yuu-biz/ims-practice/internal/icscf"
 	"github.com/yuu-biz/ims-practice/internal/ipsmgw"
+	"github.com/yuu-biz/ims-practice/internal/maintenance"
 	"github.com/yuu-biz/ims-practice/internal/pcscf"
 	"github.com/yuu-biz/ims-practice/internal/sc"
 	"github.com/yuu-biz/ims-practice/internal/scscf"
@@ -91,8 +93,28 @@ type network struct {
 	hssStore *hss.MemoryStore
 	pcscf    netip.AddrPort
 	ipsmgws  []netip.AddrPort
-	heard    chan heard
-	gw       *config.IPSMGW
+	// roles are the IP-SM-GWs behind ipsmgws, so that a test can take
+	// one out of service through the maintenance API of its node.
+	roles []*ipsmgw.IPSMGW
+	heard chan heard
+	gw    *config.IPSMGW
+}
+
+// manage gives IP-SM-GW k the maintenance API of its node and returns
+// the node. The HSS is there, as every Sh peer of startIMS is.
+func (n *network) manage(k int) *maintenance.Node {
+	n.t.Helper()
+	node, err := maintenance.New(maintenance.Config{
+		Node:          gwRole,
+		LogLevel:      new(slog.LevelVar),
+		Functions:     []maintenance.Function{n.roles[k].Function(func() bool { return true })},
+		Configuration: func() any { return map[string]string{"node": gwRole} },
+	})
+	if err != nil {
+		n.t.Fatal(err)
+	}
+	n.roles[k].Manage(node.ManagedFunction(gwRole))
+	return node
 }
 
 func load(t *testing.T, name string) config.Config {
@@ -184,6 +206,7 @@ func startIMS(t *testing.T, n int) *network {
 		stack := newStack(t, sip.Timers{}, g.OnRequest)
 		g.SetStack(stack)
 		net.ipsmgws = append(net.ipsmgws, stack.LocalAddr())
+		net.roles = append(net.roles, g)
 	}
 	net.dns.add(gwCfg.IPSMGW.SIP.Host, net.ipsmgws[0])
 
@@ -692,6 +715,67 @@ func TestDeliveryReportThroughAnotherIPSMGW(t *testing.T) {
 	if _, _, tpdu := alicePhone.delivery(sc); tpdu.(sms.StatusReport).MessageReference != 7 {
 		t.Errorf("status report = %+v", tpdu)
 	}
+}
+
+// TestAShutDownIPSMGWLeavesAShortMessageUnrouted follows the 503 of
+// the one IP-SM-GW out through the S-CSCF. The criterion of
+// deploy/compose/hss.yaml says SESSION_CONTINUED, so the S-CSCF goes on
+// with the criteria of lower priority, of which none matches, and then
+// routes the MESSAGE to its Request-URI: the PSI of the SC that the UE
+// addressed (TS 24.341 5.3.1.2 item a). The SC is inside the node of
+// the IP-SM-GW rather than a node with a name of its own, so the
+// translation of that number fails and the S-CSCF answers 404 (TS
+// 24.229 5.4.3.2 step 10). That is what the UE sees of its short
+// message, and the SC never hears of it.
+func TestAShutDownIPSMGWLeavesAShortMessageUnrouted(t *testing.T) {
+	net := startIMS(t, 1)
+	sc := net.gw.ServiceCentre
+	alicePhone := net.phone(1, 200)
+	alicePhone.register(3600)
+	net.waitForIPSMGWNumber(alice, net.gw.Number)
+	node := net.manage(0)
+
+	setState(t, node, maintenance.ShuttingDown)
+	_, resp := alicePhone.send("tel:"+sc.String(),
+		marshal(t, sms.RPDataMSToNetwork{MessageReference: 1, DestinationAddress: sc,
+			UserData: marshal(t, textSubmit(t, 7, "+12025550102", "Anyone there?", false))}), "")
+	if resp.StatusCode != 404 {
+		t.Fatalf("the short message got %d, want the 404 of a number the S-CSCF cannot translate", resp.StatusCode)
+	}
+	select {
+	case got := <-net.heard:
+		t.Errorf("an SC heard %+v, want nothing of a short message no IP-SM-GW took", got)
+	case <-time.After(watch):
+	}
+
+	setState(t, node, maintenance.Unlocked)
+	if got, ok := alicePhone.submitReport(alicePhone.submit(sc, 2,
+		textSubmit(t, 8, "+12025550102", "Anyone there?", false))).(sms.RPAck); !ok {
+		t.Errorf("the short message after the unlock was answered %+v, want RP-ACK", got)
+	}
+}
+
+// TestAShutDownIPSMGWLeavesTheRegistrationAlone: the third-party
+// REGISTER that the only IP-SM-GW refuses leaves the registration as it
+// is, since the criterion says SESSION_CONTINUED (TS 24.229 5.4.1.7).
+// The user registers, and no IP-SM-GW holds a reg event subscription
+// for it, so the HSS is never told that the user takes short messages.
+// The third-party REGISTER of the next reregistration subscribes.
+func TestAShutDownIPSMGWLeavesTheRegistrationAlone(t *testing.T) {
+	net := startIMS(t, 1)
+	node := net.manage(0)
+	setState(t, node, maintenance.ShuttingDown)
+
+	alicePhone := net.phone(1, 200)
+	alicePhone.register(3600)
+	if came(watch, func() bool { return net.ipsmgwNumber(alice) != "" }) {
+		t.Errorf("the HSS has IP-SM-GW %q for %s, want none while the IP-SM-GW is shut down",
+			net.ipsmgwNumber(alice), alice)
+	}
+
+	setState(t, node, maintenance.Unlocked)
+	alicePhone.register(3600)
+	net.waitForIPSMGWNumber(alice, net.gw.Number)
 }
 
 // simulator is the UE simulator of package ue on a UA of its own, with

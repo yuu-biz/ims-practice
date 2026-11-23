@@ -39,9 +39,11 @@ type Users interface {
 }
 
 // IPSMGW is where the SC delivers short messages for users of the IMS.
-// *ipsmgw.IPSMGW is one.
+// *ipsmgw.IPSMGW is one. Deliver takes the delivery on and returns; the
+// IP-SM-GW sends the short message and reports the outcome to Report in
+// its own time.
 type IPSMGW interface {
-	Deliver(ctx context.Context, d ipsmgw.Delivery)
+	Deliver(d ipsmgw.Delivery)
 }
 
 // ENUM turns a number into a SIP URI (RFC 6116). *sipdns.Resolver is
@@ -160,8 +162,8 @@ func (c *ServiceCentre) Submit(ctx context.Context, originator sms.Address, subm
 		UserData:               submit.UserData,
 	}
 	// The sender gets the submit report first; the delivery goes on
-	// without it.
-	go c.ipsmgw.Deliver(context.Background(), ipsmgw.Delivery{Reference: reference, Recipient: recipient, TPDU: deliver})
+	// without it, in the IP-SM-GW that takes it on here.
+	c.ipsmgw.Deliver(ipsmgw.Delivery{Reference: reference, Recipient: recipient, TPDU: deliver})
 	return sms.SubmitReport{ServiceCentreTimeStamp: now}, nil
 }
 
@@ -197,7 +199,7 @@ func (c *ServiceCentre) Report(ctx context.Context, reference string, outcome ip
 		return
 	}
 	log.Info("delivery ended, sending the status report", "tp_st", int(report.Status))
-	go c.ipsmgw.Deliver(context.Background(), ipsmgw.Delivery{Reference: rand.Text(), Recipient: originator, TPDU: report})
+	c.ipsmgw.Deliver(ipsmgw.Delivery{Reference: rand.Text(), Recipient: originator, TPDU: report})
 }
 
 // statusOf is the TP-ST of TS 23.040 9.2.3.15 for an outcome. The stub
