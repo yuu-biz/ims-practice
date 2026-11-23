@@ -37,7 +37,14 @@
 # message, and the S-CSCF, whose criteria say SESSION_CONTINUED, leaves
 # the registration standing and sends the MESSAGE on to the PSI of the
 # SC, which this network cannot translate, so UE 1 sees 404; after the
-# unlock the short message reaches the SC again. A shut down of the HSS
+# unlock the short message reaches the SC again. A shut down of the media
+# relay makes it answer the Add of the P-CSCF with 503 over its control
+# API, and the P-CSCF, which has no other relay in this network, answers
+# the INVITE of UE 1 with 500 and forwards nothing; after the unlock the
+# call goes through the relay again and the relay lets go of its context.
+# A shut down of the MRFP does the same to the MRFC, which then has no
+# MRFP left and answers the AS 503, so a barred call of UE 1 is rejected
+# without an announcement again. A shut down of the HSS
 # instead sends every Diameter
 # peer a DPR with Disconnect-Cause REBOOTING and stops the node
 # listening on 3868, so the I-CSCF reports itself DISABLED and no UE
@@ -446,6 +453,20 @@ for series in 'ims_diameter_requests_total{role="ipsmgw",command="PUR"}' \
 		fail=1
 	fi
 done
+# The nodes of the media relay and the MRFP serve the same listener for
+# their maintenance API, through which an operator takes them out of
+# service, and neither counts a measurement of its own: their targets
+# are up with an empty page to scrape.
+for media in agw mrfp; do
+	if value="$(until_positive prometheus_values "up{job=\"ims\",node=\"$media\"}")"; then
+		echo "ok   Prometheus scrapes the $media node: up = $value"
+	else
+		echo "FAIL the $media target of Prometheus is not up: $value"
+		curl -fsS "$prometheus/api/v1/targets?state=active" || true
+		echo
+		fail=1
+	fi
+done
 # The HSS counts what it holds, whether anyone is registered or not (TS
 # 32.409 4.2.1.1): the subscribers of deploy/compose/hss.yaml, each with
 # a SIP URI and most of them with a tel URI as well.
@@ -817,6 +838,148 @@ fi
 
 await "the 202 of the IP-SM-GW after its unlock" "$gwAccepts" $((gwAccepted + 1))
 
+echo "drain of the media relay"
+# The P-CSCF puts the media of each call through a media relay, and the
+# Compose project has one (the media_relays of deploy/compose/pcscf.yaml),
+# so a drained relay leaves a new call with no node to carry its RTP.
+# A commercial network runs several, and the P-CSCF takes the next one of
+# its list; what the drain does to the relay itself is the same either
+# way.
+#
+# The scenes above left no call up, so the relay holds no context. Wait
+# until it says so, so that the shut down below is the shut down of a
+# function with no user, which X.731 7.1.3.3 makes LOCKED at once.
+if until_state agw '"users":0'; then
+	echo "ok   the media relay holds no context before the shut down"
+else
+	echo "FAIL the media relay still holds contexts: $(node_state agw || true)"
+	fail=1
+fi
+answer="$(administrative_state agw SHUTTINGDOWN || true)"
+state="$(node_state agw || true)"
+if grep -q '"administrative_state":"LOCKED"' <<<"$state"; then
+	echo "ok   the maintenance API shut the media relay down, which locked it at once"
+else
+	echo "FAIL the shut down of the media relay: $answer"
+	echo "     state of the node: $state"
+	fail=1
+fi
+# The relay answers the Add of the P-CSCF with 503 over its control API,
+# and the P-CSCF, with no other relay to take, answers the INVITE 500
+# and sends it nowhere. UE 2 is not started: the INVITE never leaves the
+# P-CSCF. "ue call" then exits 1, hence "|| true"; the registration
+# itself goes through, since no relay carries a REGISTER.
+out="$(docker compose run --no-deps --rm ue call --tone 1s tel:+1-202-555-0102 2>&1 || true)"
+if grep -q '"msg":"registered"' <<<"$out" && grep -q '"call failed: 500 ' <<<"$out"; then
+	echo "ok   UE 1 registered but could not call while the media relay is shut down"
+else
+	echo "FAIL the call while the media relay is shut down: $(tail -n 2 <<<"$out")"
+	fail=1
+fi
+answer="$(administrative_state agw UNLOCKED || true)"
+state="$(node_state agw || true)"
+if grep -q '"administrative_state":"UNLOCKED"' <<<"$state"; then
+	echo "ok   the maintenance API unlocked the media relay"
+else
+	echo "FAIL the unlock of the media relay: $answer"
+	echo "     state of the node: $state"
+	fail=1
+fi
+docker compose run --no-deps -d --name ims-practice-ue2-agw ue2 answer "${ue2[@]}" --ring 500ms --tone 1s >/dev/null
+if wait_log ims-practice-ue2-agw '"msg":"waiting for a call"'; then
+	out="$(docker compose run --no-deps --rm ue call --tone 1s tel:+1-202-555-0102 2>&1 || true)"
+	if grep -q '"msg":"call answered"' <<<"$out"; then
+		echo "ok   UE 1 called UE 2 through the media relay after its unlock"
+	else
+		echo "FAIL the call after the unlock of the media relay: $(tail -n 2 <<<"$out")"
+		fail=1
+	fi
+else
+	fail=1
+fi
+if [ "$(ended ims-practice-ue2-agw)" = "0" ]; then
+	echo "ok   UE 2 answered and the call ended"
+else
+	echo "FAIL UE 2 did not answer the call after the unlock of the media relay"
+	fail=1
+fi
+# The relay subtracts the context of the call that has ended, so it
+# counts no user again: a shut down now would lock it at once.
+if until_state agw '"users":0'; then
+	echo "ok   the media relay let go of the context of the call that ended"
+else
+	echo "FAIL the media relay still holds contexts: $(node_state agw || true)"
+	fail=1
+fi
+
+echo "drain of the MRFP"
+# The MRFC asks an MRFP for the media of each announcement, and the
+# Compose project has one (the mrfp of deploy/compose/mrfc.yaml). A
+# drained MRFP answers the Add of the MRFC with 503 over the same control
+# API, the MRFC asks the next MRFP of its list, and with none left it
+# answers the AS 503. The AS then serves the call without the MRF, which
+# shows in the barred call of UE 1, as it does while the MRFC itself is
+# out of service.
+mrfcAnswered="$(count "$mrfcAnswers")"
+trap 'docker compose run --no-deps --rm ue xcap set baoc off >/dev/null 2>&1 || true' EXIT
+services="$(docker compose run --no-deps --rm ue xcap set baoc on 2>&1)"
+if grep -A 2 '"name": "baoc"' <<<"$services" | grep -q '"active": true'; then
+	echo "ok   UE 1 barred its outgoing calls over Ut"
+else
+	echo "FAIL UE 1 could not bar its outgoing calls, so the call of this scene says nothing about the drain"
+	fail=1
+fi
+# The MRFP holds no context of its own here: the announcement of the
+# scene above has played and its dialog has ended.
+if until_state mrfp '"users":0'; then
+	echo "ok   the MRFP holds no context before the shut down"
+else
+	echo "FAIL the MRFP still holds contexts: $(node_state mrfp || true)"
+	fail=1
+fi
+answer="$(administrative_state mrfp SHUTTINGDOWN || true)"
+state="$(node_state mrfp || true)"
+if grep -q '"administrative_state":"LOCKED"' <<<"$state"; then
+	echo "ok   the maintenance API shut the MRFP down, which locked it at once"
+else
+	echo "FAIL the shut down of the MRFP: $answer"
+	echo "     state of the node: $state"
+	fail=1
+fi
+out="$(docker compose run --no-deps --rm ue call --tone 1s tel:+1-202-555-0102 2>&1 || true)"
+if grep -q '"call failed: 603 ' <<<"$out" && ! grep -q '"msg":"early media authorization"' <<<"$out"; then
+	echo "ok   UE 1's barred call was rejected without an announcement while the MRFP is shut down"
+else
+	echo "FAIL the barred call while the MRFP is shut down: $(tail -n 2 <<<"$out")"
+	fail=1
+fi
+answer="$(administrative_state mrfp UNLOCKED || true)"
+state="$(node_state mrfp || true)"
+if grep -q '"administrative_state":"UNLOCKED"' <<<"$state"; then
+	echo "ok   the maintenance API unlocked the MRFP"
+else
+	echo "FAIL the unlock of the MRFP: $answer"
+	echo "     state of the node: $state"
+	fail=1
+fi
+out="$(docker compose run --no-deps --rm ue call --tone 1s tel:+1-202-555-0102 2>&1 || true)"
+if grep -q '"msg":"early media authorization"' <<<"$out" && grep -q '"call failed: 603 ' <<<"$out"; then
+	echo "ok   UE 1 heard the announcement before the rejection after the unlock of the MRFP"
+else
+	echo "FAIL the barred call after the unlock of the MRFP: $(tail -n 2 <<<"$out")"
+	fail=1
+fi
+services="$(docker compose run --no-deps --rm ue xcap set baoc off 2>&1)"
+if grep -A 2 '"name": "baoc"' <<<"$services" | grep -q '"active": false'; then
+	echo "ok   UE 1 let its outgoing calls through again"
+else
+	echo "FAIL UE 1 could not stop barring its outgoing calls"
+	fail=1
+fi
+trap - EXIT
+
+await "the 200 OK of the MRFC after the unlock of the MRFP" "$mrfcAnswers" $((mrfcAnswered + 1))
+
 echo "drain of the HSS"
 # The HSS has no SIP to answer with: it ends each Diameter connection
 # with a DPR whose Disconnect-Cause is REBOOTING and stops listening on
@@ -1030,7 +1193,50 @@ expect "MESSAGE S-CSCF -> IP-SM-GW with the short message" "sip.Method == \"MESS
 expect "202 IP-SM-GW -> S-CSCF" "$message && sip.Status-Code == 202 && ip.src == $ipsmgw && ip.dst == $scscf"
 expect "submit report IP-SM-GW -> I-CSCF, in reply to the short message" "sip.Method == \"MESSAGE\" && ip.src == $ipsmgw && ip.dst == $icscf && sip.In-Reply-To"
 
+echo "the call while the media relay is shut down"
+# The P-CSCF asks the relay for the context of the call over the control
+# API (Reserve AGW Connection Point, TS 29.334 5.17.2.2), and the relay,
+# which the operator has taken out of service, answers 503 (Service
+# Unavailable). The P-CSCF has no other relay in its list, so it answers
+# the INVITE 500 itself and sends it nowhere. Retry-After is for the 503
+# of a node that answered it (RFC 3261 21.5.4), so the 500 carries none.
+expect "POST /contexts P-CSCF -> media relay" "http.request.method == \"POST\" && ip.src == $pcscf && ip.dst == $agw && http.request.uri == \"/contexts\""
+expect "503 media relay -> P-CSCF for the new context" "http.response.code == 503 && ip.src == $agw && ip.dst == $pcscf"
+before="$last"
+expect "500 P-CSCF -> UE 1 for the call, without Retry-After" "$invite && sip.Status-Code == 500 && ip.src == $pcscf && ip.dst == $ue && !sip.Retry-After"
+if [ "$last" != "$before" ]; then
+	refused="sip.Call-ID == \"$(field sip.Call-ID)\""
+	none "INVITEs of that call that the P-CSCF sent on" "sip.Method == \"INVITE\" && ip.src == $pcscf && $refused"
+fi
+echo "the call after the unlock of the media relay"
+expect "POST /contexts P-CSCF -> media relay" "http.request.method == \"POST\" && ip.src == $pcscf && ip.dst == $agw && http.request.uri == \"/contexts\""
+expect "200 P-CSCF -> UE 1 for the call" "$invite && sip.Status-Code == 200 && ip.src == $pcscf && ip.dst == $ue"
+expect "RTP UE 1 -> media relay" "rtp && ip.src == $ue && ip.dst == $agw"
+# The BYE of the call ends the dialog, and the P-CSCF subtracts the
+# context it holds in the relay (TS 29.334 5.17.2.5), so the relay
+# counts no user again.
+expect "DELETE of the context P-CSCF -> media relay" "http.request.method == \"DELETE\" && ip.src == $pcscf && ip.dst == $agw"
+
+echo "the announcement of the barred call while the MRFP is shut down"
+# The MRFC asks the MRFP for the context of the announcement over the
+# control API (Reserve IMS Resources, TS 29.333 5.17.2.2) and gets 503,
+# and with no other MRFP in its list it answers the AS 503. That 503
+# carries no Retry-After: the MRFC is in service, and Retry-After would
+# say that the AS should send the MRFC itself nothing for that long
+# (RFC 3261 21.5.4). The AS then rejects the barred call without the
+# early media of an announcement, and the 603 carries no Reason.
+expect "INVITE MMTel AS -> MRFC for the announcement notice" "sip.Method == \"INVITE\" && ip.src == $mmtel && ip.dst == $mrfc && sip.r-uri contains \"annc@\""
+expect "503 MRFP -> MRFC for the new context" "http.response.code == 503 && ip.src == $mrfp && ip.dst == $mrfc"
+refusedByMRFP="$last"
+expect "503 MRFC -> MMTel AS without Retry-After" "$invite && sip.Status-Code == 503 && ip.src == $mrfc && ip.dst == $mmtel && !sip.Retry-After"
+none "2xx of the MRFC while the MRFP was shut down" "frame.number > $refusedByMRFP && frame.number <= $last && $invite && sip.Status-Code == 200 && ip.src == $mrfc"
+expect "603 P-CSCF -> UE 1 for the barred call, without a Reason" "sip.Status-Code == 603 && ip.src == $pcscf && ip.dst == $ue && !sip.Reason"
+echo "the announcement after the unlock of the MRFP"
+expect "200 MRFC -> MMTel AS with the SDP of the MRFP" "$invite && sip.Status-Code == 200 && ip.src == $mrfc && sdp.connection_info.address == \"$mrfp\""
+expect "RTP of notice media relay -> UE 1" "rtp && ip.src == $agw && ip.dst == $ue"
+expect "603 P-CSCF -> UE 1 with Reason: SIP;cause=603" "sip.Status-Code == 603 && ip.src == $pcscf && ip.dst == $ue && sip.Reason contains \"cause=603\""
+
 if [ "$fail" -ne 0 ]; then
-	docker compose logs --no-color pcscf icscf scscf hss mmtel mrfc ipsmgw prometheus grafana | tail -n 80
+	docker compose logs --no-color pcscf icscf scscf hss mmtel mrfc ipsmgw agw mrfp prometheus grafana | tail -n 80
 fi
 exit "$fail"
