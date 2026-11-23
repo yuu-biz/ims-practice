@@ -38,7 +38,7 @@ ESP（暗号化は null）を上書きの構成で有効にする形を試しま
 | カーネルでの動作（この環境） | 確かめられません。`ip xfrm state add` が「Requested type not found」で失敗します。ESP の xfrm がこのカーネルに無いためです。`ecb(cipher_null)` は `/proc/crypto` にあり、`ip` も ESP には `enc` か `aead` が要ると言うので、コマンドの形だけは確かめました。 |
 | Wireshark での読み方 | ESP の設定で完全性のアルゴリズムを教えると、中の SIP を読めます。tshark 4.2.2 に ESP のパケットを与えて確かめました。`esp.enable_null_encryption_decode_heuristic` だけでは読めません。この推定は完全性チェック値を 12 オクテット（HMAC-SHA-1-96）と仮定するので、16 オクテットの HMAC-SHA2-256-128 では次ヘッダを読み違えます。ESP SAs の表に `IPv4,*,*,*,NULL,,HMAC-SHA-256-128 [RFC4868],` の 1 行を足すと読めます。鍵は要りません。 |
 | Compose と CI | `scripts/e2e-esp.sh` と CI の `e2e-esp` のジョブで確かめます。Docker の無い環境で作ったので、Compose での結果はありません。CI では、カーネルが 4 つのアソシエーションと 8 つの policy を持ち、REGISTER、INVITE、200 (OK)、BYE が ESP の中を通り、登録を解除したあとにアソシエーションが残らないことを確かめました。そこに至るまでに直したことは、下の「カーネルで分かったこと」にあります。 |
-| Windows の Docker Desktop | 確かめていません。メンテナーが手元で確かめ、その結果で既定を決めます。 |
+| Windows の Docker Desktop | 通ります。Windows 11 Pro 25H2、Docker Desktop 4.94.0（Engine 29.8.2、Compose v5.5.1）、バックエンドは WSL2 で、カーネルは 6.18.33.1-microsoft-standard-WSL2 です。`docker compose -f compose.yaml -f deploy/esp/esp.yaml up -d --build` のあとで `scripts/e2e-esp.sh` を流すと、17 項目がすべて通りました。ESP のパケットの数、ESP の中の REGISTER、INVITE、200 (OK)、BYE の数、state と policy の形は、CI と同じでした。登録を解除したあとには、state も policy も残りませんでした。このカーネルでは `CONFIG_XFRM_USER` と `CONFIG_INET_ESP` がモジュールですが、`NET_ADMIN` を付けたコンテナで `ip xfrm` を使うと、手で読み込まなくても読み込まれました。既定にするかは、ほかの環境（kind、クラウド、ほかの Docker の環境）での互換性と移植性を確かめてから、別に決めます。それまでは、上書きの構成で有効にする形のままにします。 |
 
 ## カーネルで分かったこと
 
