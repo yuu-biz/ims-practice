@@ -19,7 +19,15 @@
 | TS 32.423 | V20.1.0 | Subscriber and equipment trace; Trace data definition and management | 4 章の見出しと先頭 |
 | TS 32.111-1 | V19.0.0 | Fault Management; Part 1: 3G fault management requirements | 表題だけ |
 | TS 28.533 | V20.1.0 | Management and orchestration; Architecture framework | 4.1、4.2 |
-| TS 28.532 | V20.2.0 | Management and orchestration; Generic management services | 4 章、11.1.0、11.1.1 の見出し、11.2a |
+| TS 28.532 | V20.2.0 | Management and orchestration; Generic management services | 4 章、11.1.0、11.1.1 の見出し、11.2a。7 章の northbound の調査で、1 章、11.1、11.1.0、11.1.1.1 から 11.1.1.4a、12.1.1 と 12.1.3 の見出しを読み直しました。同じ書庫の OpenAPI の定義 `TS28532_ProvMnS.yaml`（中の版は 19.2.0）で、経路の形を確かめました |
+| TS 32.140 | V19.0.0 | Telecommunication management; Subscription Management (SuM) requirements | 冒頭の Introduction、1 章、4.4.1、4.4.2、4.4.3、4.5.1、6.1、6.2、6.2.1、6.2.1.3、6.2.1.4、6.3、Annex C の変更の履歴 |
+| TS 32.141 | V19.0.0 | Telecommunication management; Subscription Management (SuM) architecture | 全体（4.1、4.2.1、4.3、4.3.1、4.4.1 から 4.4.3、Annex B の変更の履歴） |
+| TS 28.752 | V19.0.0 | Telecommunication management; Subscription Management (SuM) Network Resource Model (NRM) Integration Reference Point (IRP); Information Service (IS) | 4.3 のクラスの一覧、4.3.4、4.3.8、4.3.13、4.3.17 から 4.3.20、4.3.22、4.3.23、4.4.1 のうち認証と GBA に関わる属性と `serviceIndicationList` の定義、Annex A の変更の履歴 |
+| TS 28.753 | V19.0.0 | Telecommunication management; Subscription Management (SuM) Network Resource Model (NRM) Integration Reference Point (IRP); Solution Sets (SS) definitions | 1 章、4 章、Annex A（A.2.1、A.2.2、A.3.1 から A.3.3 の schema の本文）、Annex B の変更の履歴 |
+| TS 29.505 | V20.0.0 | 5G System; Usage of the Unified Data Repository services for Subscription Data; Stage 3 | 1 章、4 章、5.2 の資源と方法の表、5.2.2.1、5.2.2.3.2、5.2.14.3、5.2.14B.3 |
+| TS 23.335 | V19.0.0 | User Data Convergence (UDC); Technical realization and information flows | 4.1 から 4.3、5.4、5.5、Annex B の変更の履歴 |
+| TS 32.181 | V19.0.0 | Telecommunication management; User Data Convergence (UDC); Framework for model handling and management | 1 章 |
+| TS 32.182 | V19.0.0 | Telecommunication management; User Data Convergence (UDC); Common Baseline Information Model (CBIM) | 1 章、4 章、5.3 のクラスの一覧、5.3.8 から 5.3.12 |
 | TS 28.622 | V20.4.0 | Generic Network Resource Model (NRM) Integration Reference Point (IRP); Information Service (IS) | 4.3 の見出し、5.3.1、5.3.3 の見出し。`internal/maintenance` を作るときに、4.3.4 の属性の表、4.4.1 の `administrativeState` と `operationalState` の説明、5.3.1 から 5.3.3 の表も読みました |
 | ITU-T X.731 | 01/92 | Information technology – Open Systems Interconnection – Systems Management: State management function | 7.1.3、7.1.3.1 から 7.1.3.4、8.1.1.3。`internal/maintenance` を作るときに読みました |
 | TS 28.705 | V19.0.0 | IP Multimedia Subsystem (IMS) Network Resource Model (NRM) Integration Reference Point (IRP); Information Service (IS) | 4.3 の見出し、4.3.4、4.3.12 |
@@ -797,6 +805,88 @@ err = node.ClearAlarm(hssDown)
 
 ## 7. プロビジョニング
 
+### 標準が決めていること
+
+商用の網では、契約を受けた業務システム（BSS）が加入者を網に入れます。その口（northbound）を標準がどう定めているかを、4 つの系統で調べました。読んだ版は「読んだ資料」の表にあります。
+
+#### 加入者の管理（SuM）
+
+3GPP には加入者の管理（Subscription Management、SuM）の仕様の族があります。要件が TS 32.140、構成が TS 32.141 で、どちらも冒頭の Introduction に族の一覧を持ちます。
+
+どちらも取り下げられてはいません。Release 19 の版があります。一方で、要件と構成の中身は止まっています。TS 32.140 の変更の履歴で最後の CR は 2013 年 6 月の会合のもの（SP-130304、CR 0008 rev 2、「SuM Reqs」、11.0.0 から 11.1.0）で、TS 32.141 も同じ会合の CR 0003 rev 2（「SuM Arch」）が最後です。それ以降の行はすべて「Update to Rel-NN version (MCC)」で、版を上げただけです。書庫にある最新の版はどちらも Release 19 のもので、Release 20 の版はありません。TS 28.532 と TS 29.505 には Release 20 の版があります。
+
+止まっているのは族の全部ではありません。情報モデル（TS 28.752）の最後の CR は 2014 年 6 月のもの（SP-140359、CR 001、feature support の記述の削除）ですが、Solution Set（TS 28.753）にはそのあとの CR があります。2017 年 6 月の会合で Solution Set と Information Service の版の結び付けを更新し（SP-170502、CR 0005）、同じ会合で、仮想化したネットワーク機能を含む網の設定管理に合わせて XML schema を更新しています（SP-170510、CR 0006 rev 1）。Release 18 ではその版の結び付けを外し（SP-240810、CR 0007）、XML の参照を直しています（SP-241165、CR 0009 rev 1）。
+
+何を求めているかは TS 32.140 の 6 章にあります。6.2.1 は、SuM が HSS と HLR の加入者のプロファイルのデータを作り、読み、変え、消せることと、TS 23.008 のデータを扱えることを求めています。6.2.1.3 は IMS（TS 23.228）のためのプロファイルの部品を HSS の中で扱うことを求めています。4.4.1 の 5 はプロファイルの情報を HSS に置くとしています。
+
+どの形のインタフェースかは TS 32.141 にあります。4.2.1 は SuM の Itf-N を IRP として実現するとしています。4.3 が挙げる interface IRP は Basic CM IRP だけです。データの模型と具体的な形は、4.4.2 と 4.4.3 が挙げる別の文書にあります。その族には 2 つの系統があり、converged でない TS 32.171、TS 32.172、TS 32.176 と、converged の TS 28.751、TS 28.752、TS 28.753 です。書庫では、前の系統は Release 11 か Release 12 で止まり、後の系統に Release 19 の版があります。
+
+TS 28.752 の情報モデルは IMS の加入者のデータを持ちます。
+
+| このプロジェクトが扱うもの | TS 28.752 のクラスと項目 | 条項 |
+| --- | --- | --- |
+| IMPI | `SuMCredentials` の `iMSPrivateUserIdentity` | 4.3.18 |
+| IMPU と barring の印 | `IMSPublicIdentification` の `publicUserIdentity` と `barringIndication` | 4.3.19 |
+| iFC、S-CSCF の名前、登録の状態、Service-Indication の一覧 | `IMSServiceProfile` の `initialFilterCriteriaList`、`sCSCFName`、`registrationStatus`、`serviceIndicationList` | 4.3.13 |
+| S-CSCF の選び方に使う能力 | `ServerCapabilities` の `serverCapabilities` | 4.3.23 |
+| IMSI と MSISDN | `MobileUserData` の `iMSI` と `mSISDN` | 4.3.20 |
+| 長期の鍵（K）、OPc、AMF、SIP Digest のパスワード | 当たる項目が無い | なし |
+| Repository Data の中身（MMTelServices、Ut の資格情報、CAT） | 当たる項目が無い。`serviceIndicationList` にあるのは記録の名前だけ | 4.3.13 |
+
+4.3.19 は、この模型の公開の識別子が TS 23.008 と TS 29.228 のものだと書いています。長期の鍵、OPc、SIP Digest のパスワードには、当たる項目がありません。`SuMCredentials`（4.3.18）が持つのは IMPI と、ほかのクラスへの関係だけです。この文書に authentication、password、OPc、AuC のどの語も出てきません。security に関わる項目は `IMSServiceProfile`（4.3.13）にある GBA と GAA の設定（`gAAServiceType`、`gBAUserSecuritySettings`、`userSecuritySetting`、`uICCSecurityType`、`keyLifetime`）だけで、これらは加入者の鍵そのものではありません。
+
+具体的な形は TS 28.753 にあります。4 章は、Solution Set が Annex A の XML の定義だけで、CORBA の Solution Set は無いと書いています。Annex A.3.1 はこの XML のファイルの形式を TS 32.616 の Bulk CM の設定データのファイルのものとしています。A.3.3 の schema `sumNrm.xsd` には、上の IMS のクラスを含むすべてのクラスの要素があります。つまり、標準になっているのは要求と応答の API ではなく、Itf-N に流す Bulk CM の XML のファイルです。
+
+この Solution Set は自身の書き方でも途中です。A.2.2 は、クラスの対応付けが「この版には無い」と書き、A.3.2 は図が無いと書いています。`sumNrm.xsd` では、共通のクラスに使う接頭辞 `xn` が `28_series/28.623#genericNrm` に結び付いているのに、`import` が挙げる名前空間は `28_series/28.753#genericNrm` で、取り込む名前空間が接頭辞の名前空間と一致しません。
+
+#### SA5 の management services
+
+TS 28.532 の 11.1 は「Generic provisioning management service」です。操作は createMOI（11.1.1.1）、getMOIAttributes（11.1.1.2）、modifyMOIAttributes（11.1.1.3）、deleteMOI（11.1.1.4）、まとめて書き換える changeMOIs（11.1.1.4a）と、変更の通知です。
+
+11.1.0 は、この CRUD の操作が MnS の種類 A で、情報モデル（種類 B）と組んで初めて 1 つの MnS になり、支えられているすべての情報モデルに共通のプロビジョニングを提供すると書いています。つまり、この MnS が運べるのは、組み合わせる情報モデルが決めた項目です。この文書そのものに加入者のデータはなく、Subscription Management、SuM、IMPU、IMPI のどの語も出てきません。具体的な形（12.1.1 の REST、12.1.3 の YANG と NETCONF）も同じく共通です。同じ書庫の OpenAPI の定義（`TS28532_ProvMnS.yaml`、中の版は 19.2.0）が持つ経路は 2 つで、`/{className}={id}` に PUT、GET、PATCH、DELETE があり、`/{URI-LDN-first-part}` に、作った資源の識別子を MnS の提供側が決める POST があります。
+
+したがって、この MnS で加入者を入れられるのは、SuM の情報モデルに REST か YANG の Solution Set があるときです。TS 28.753 の Solution Set は Bulk CM の XML のファイルだけなので、その道はありません。
+
+#### 5GC の UDM と UDR
+
+TS 29.505 の 4 章は、この文書が決める資源とデータの模型を、5GC のネットワーク機能（たとえば UDM）が Nudr を通して加入者のデータを読むためのものとしています。BSS に向けた口ではありません。
+
+5.2 の資源と方法の表で、`/subscription-data/{ueId}/{servingPlmnId}/provisioned-data` とその下の資源に許されている方法は GET だけです。PUT、PATCH、DELETE を許すのは、登録、認証の途中の状態、コンテキストなど、ネットワーク機能が動きながら書く資源です。書ける資源のうち `AuthenticationSubscription`（5.2.2）は長期の鍵を持ちます（5.2.2.1 の注記が `encPermanentKey` を挙げています）。ただし PATCH で変えられるのは `sequenceNumber` だけで、ほかの属性への PATCH は UDR が断ります（5.2 の表の説明）。`ProvisionedParamenterData`（5.2.14）に許されているのは GET と PATCH で（5.2.14.3.1、5.2.14.3.2）、PUT と DELETE があるのはその下の `ProvisionedParameterDataEntry`（5.2.14B.3）です。ここでいう provisioned parameters は AF と NEF が UDM を通して渡す指定で、加入そのものではありません。この文書は IMS に触れていません（IMSI の語が 2 か所にあるだけです）。Nudr の加入者のデータの模型は IMS の加入者のデータを持ちません。
+
+加入者のデータを 1 つの保存先に集める 3GPP の構成は、User Data Convergence（UDC）です。TS 23.335 4.2.2 は UDR に加入者を入れるための front end を定めたうえで、UDC とプロビジョニングの仕組みのあいだのやり取りをこの仕様の対象外と書いています。4.2.3 は運用者の OSS から一貫して加入者のデータを入れる 1 つの論理的な点として、UDR が OSS に向けたプロビジョニングのインタフェースを持つことを求め、続けてそのインタフェースを対象外と書いています。4.3 の Ud は front end と UDR のあいだの参照点で、そこを流れるデータの構造は TS 32.181 と TS 32.182 の模型に従います。
+
+TS 32.182 は共通の基礎の情報モデル（CBIM）です。4 章は、CBIM が管理のインタフェースに使われないので IRP ではないと書き、注記で、クラスの属性をこの仕様に入れる意図はないと書いています。クラスには `IMPI`（5.3.11）、`IMPU`（5.3.12）、`IMSI`（5.3.10）、`MSISDN`（5.3.9）、`UdcImsServiceProfile`（5.3.8）があります。5.3.8 は、属性を含む specialization の例が TS 32.181 にあるとしています。TS 32.181 の 1 章は CBIM と応用ごとの情報モデルから、運用者ごとの specialized な情報モデルを作る枠組みを決めています。つまり、標準にあるのは entity の型だけで、加入者を入れる先のデータの模型は運用者ごとに決まります。
+
+#### TM Forum の Open API
+
+www.tmforum.org の公式のページは読めませんでした。そのため、TM Forum が Apache-2.0 で公開している写しの OpenAPI の定義を読みました。各リポジトリの README は、これが公式の版の写しで、この API について正式な情報があるのは www.tmforum.org の Open API の一覧だと書いています。
+
+TMF641 Service Ordering の、写しにある最も新しい版は 4.2.0 です。この API の説明は顧客の注文を扱う仕組みからサービスの注文を扱う仕組みへ、あるいは事業者と提携先のあいだで、サービスの注文を出すためのものだとしています。資源は `/serviceOrder`、`/cancelServiceOrder`、`/serviceOrderSpecification` と、通知の hub です。
+
+標準になっているのは注文の外枠です。`ServiceOrderItem` は add、modify、delete、noChange、other のどれかの `action` と、acknowledged から completed までの状態を持ちます。何を設定するかは `Service` の `serviceCharacteristic` に入り、その要素 `Characteristic` は名前と値の組で対象の 1 つの特性を表すものです。名前の集合は id で指す `serviceSpecification`、つまり運用者のサービスの目録が決めます。
+
+網に面する API は TMF640 Service Activation and Configuration です。写しにある版は 4.0.0 で、形は同じです。`/service` の CRUD と、非同期の要求を見るための `/monitor` を持ち、中身はやはり `serviceCharacteristic` の名前と値の組です。
+
+どちらの定義にも、IMSI、IMPU、IMPI、HSS、MSISDN、subscriber のどの語もありません。TM Forum の API が届くのは、ある相手の名前の付いたサービスを変える注文までで、その名前が何を意味するかは運用者の目録の側にあります。
+
+#### 調べた結果
+
+| 問い | 答え |
+| --- | --- |
+| TS 32.140 と TS 32.141 は保守されているか | 取り下げられてはいない。Release 19 の版がある。最後の CR は 2013 年で、以降は版を上げただけ |
+| IMS の加入者のデータを運べるか | 識別子とサービスのプロファイルは運べる（TS 28.752）。長期の鍵、OPc、SIP Digest のパスワードと、Repository Data の中身は運べない |
+| どの形のインタフェースか | Itf-N に流す Bulk CM の XML のファイル（TS 28.753 4 章、Annex A.3.1）。要求と応答の API ではない |
+| SA5 の management services に加入者を入れる手段があるか | 操作は共通のものがある（TS 28.532 11.1）。組み合わせる相手の SuM の情報モデルに、REST と YANG の Solution Set が無い |
+| UDM と UDR の provisioning はどこまで標準か | Nudr は 5GC の中の口。加入のデータ（`provisioned-data` とその下）は GET だけで、IMS のデータは無い。UDC は OSS に向けた口を対象外と書いている |
+| TM Forum の注文の API はどこまで届くか | 注文と活性化の外枠まで。中身は運用者の目録が決める名前と値の組 |
+| 標準の northbound があるか | SuM に、OSS に面する標準の Itf-N がある（TS 32.141 4.2.1）。その形は Bulk CM の XML（TS 28.753）で、情報モデルが長期の鍵、OPc、SIP Digest のパスワードを運べない。UDC の構成では、OSS に面する口が対象外（TS 23.335 4.2.2、4.2.3） |
+
+要件の側はこの運べないデータを含んでいます。TS 32.140 の 1 章によれば、この文書が目指すのは HSS に向けた標準のインタフェースです。6.2.1.4 は、SuM が AuC のためのプロファイルの部品を HSS の中で扱えることを求めています。つまり、標準の口が足りないのは、要件がこのデータを外したからではなく、要件を具体化した情報モデルがそこまで届いていないからです。要件（TS 32.140）と構成（TS 32.141）の最後の CR は 2013 年、情報モデル（TS 28.752）は 2014 年で、この隔たりはそのまま残っています。
+
+採った方針は標準の口を作らず、今の独自の API のままにすることです。根拠と、採らなかった案は [provisioning-northbound.md](../design/provisioning-northbound.md) にあります。
+
+### 設計の候補
+
 今の API は `internal/hss/provisioning.go` にあり、1 件ずつの追加、表示、削除ができます。足すものは次のとおりです。
 
 | 決めること | 最初の案 | ほかの案 |
@@ -809,7 +899,7 @@ err = node.ClearAlarm(hssDown)
 | 画面 | OAM の加入者のページに、ファイルを選んで送る欄と、連番で作る欄を置く。連番は、試験用の IMSI の範囲と、555-0100 から 555-0199 の番号を使う | なし |
 | 複数台の HSS | 一括の要求は 1 台の HSS が受け、`Store` に書く。HSS が加入者ごとに分かれるとき（冗長構成の SLF）は、OAM が行を振り分ける | なし |
 
-HSS のプロビジョニングの API は、3GPP の標準にはありません。今のコードのコメントにも、製品の HSS はそれぞれのプロビジョニングの口を持つと書いてあります。TS 32.409 には、HSS のプロビジョニングに関わる測定があります（4.2.1.1）。
+HSS のプロビジョニングの要求と応答の API は、3GPP の標準にはありません。標準にあるのは、上で調べたとおり、データの模型（TS 28.752）と、それを Bulk CM の XML のファイルで運ぶ形（TS 28.753）です。今のコードのコメントにも、製品の HSS はそれぞれのプロビジョニングの口を持つと書いてあります。TS 32.409 には、HSS のプロビジョニングに関わる測定があります（4.2.1.1）。
 
 ## 8. バックアップとリストア
 
@@ -1034,7 +1124,14 @@ OAM とその画面、指標、警報は、ほかの部分に次のものを求�
 - TS 32.454 は 5.1.1 と 5.2.1 だけを読みました。ほかの KPI の式は読んでいません。
 - TS 32.111-1、TS 28.552、TS 28.554 は表題だけです。TS 28.545 は、テキストに直せず読めませんでした。
 - TS 28.532 のうち、REST の解決策（12 章）と、性能のデータのファイルの形式（12.3.2）は読んでいません。
-- 加入者の管理（Subscription Management）の 3GPP の仕様があるかは確かめていません。
+- 加入者の管理（SuM）の仕様の保守の状況は、仕様の本文の変更の履歴と、書庫にある版の一覧（`www.3gpp.org/ftp/Specs/archive/32_series/32.140/` など）から読み取ったものです。Release 20 の版が無いことも、この一覧で確かめました。3GPP の仕様の状態のページは読めませんでした。`www.3gpp.org` の dynareport のページは答えますが、仕様ごとの表を JavaScript で組み立てるので、本文には仕様の番号も表の中身も入っていません。`portal.3gpp.org` は、このプロキシに断られました（CONNECT に 403）。取り下げや凍結の印が公式の一覧にあるかは確かめていません。
+- TS 28.751（SuM の情報モデルの要件）は読んでいません。TS 32.171、TS 32.172、TS 32.176 の本文も読んでいません。確かめたのは、書庫にある版の一覧が Release 11 と Release 12 で止まっていることだけです。
+- TS 28.752 の 4.2 のクラスの図と継承の関係、4.3.24 から 4.3.31 の EPS と非 3GPP の接続のクラスは読んでいません。4.4.1 の属性の定義は、認証と GBA に関わるものと `serviceIndicationList` だけを読みました。長期の鍵、OPc、SIP Digest のパスワードの項目が無いことは、クラスの一覧と各クラスの属性の表、および authentication、password、OPc、AuC の語がこの文書に出てこないことから言っています。
+- TS 28.753 の `sumNrm.xsd` は XML の処理系で検査していません。取り込む名前空間と接頭辞の名前空間が合わないことは、schema の本文を読んだだけです。
+- TS 32.616 の Bulk CM の設定データのファイルの形式そのものは読んでいません。TS 28.753 Annex A.3.1 がそれを指していることだけを確かめました。
+- TS 23.335 の 5 章の情報の流れは、5.4 と 5.5 だけを読みました。TS 32.181 は 1 章だけです。
+- TS 29.505 の資源に許された方法は、5.2 の表で確かめました。本文を読んだのは `AuthenticationSubscription`（5.2.2）と `ProvisionedParamenterData`（5.2.14）、`ProvisionedParameterDataEntry`（5.2.14B）の節だけで、ほかの資源の節は読んでいません。
+- TM Forum の公式の文書（`www.tmforum.org` の Open API の一覧と TMF641 の利用の手引き）は読めませんでした。`www.tmforum.org` が自動の要求に challenge を返し、403 で断るためです。読んだのは、TM Forum が Apache-2.0 で公開している写しの OpenAPI の定義です。写しが公式の版と同じ中身であることは、リポジトリの README の記述に頼っています。写しにある最も新しい版（TMF641 は 4.2.0、TMF640 は 4.0.0）より新しい版があるかは確かめていません。
 - TS 32.422 の Service Level Tracing は、4.1.2.9 の先頭だけを読みました。SIP の信号でトレースの指示を運ぶ方法は読んでいません。
 - HSS を空から戻したあと、S-CSCF の再登録の SAR を今の HSS がどう扱うかは、試していません。
 - I-CSCF が否定の UAA に 403 を返す根拠（TS 24.229 5.3.1.3）と、登録を認可しないときの結果コード（TS 29.228 6.1.1.1 の step 5 の DIAMETER_AUTHORIZATION_REJECTED。基本のプロトコルの Result-Code で、RFC 6733 7.1.5）は、[hss-provisioning.md](../design/hss-provisioning.md) を書くときに本文で確かめました。読んだ版はその記録の「読んだ仕様」にあります。
