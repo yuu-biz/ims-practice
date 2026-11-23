@@ -10,6 +10,7 @@ import (
 	"net/netip"
 	"os"
 	"strconv"
+	"syscall"
 	"time"
 )
 
@@ -197,8 +198,25 @@ func (t *TransportLayer) connectTCP(remote netip.AddrPort) (*net.TCPConn, error)
 		// RFC 3261 18.1.1: should this connection close, the peer may
 		// open one to the address the request came from, at the port of
 		// the sent-by, so the connection comes from the address the
-		// transport listens on. The port stays one of the moment (18).
-		dialer.LocalAddr = &net.TCPAddr{IP: local.AsSlice()}
+		// transport listens on. The port stays one of the moment (18),
+		// except on a protected client port, from which TS 33.203 7.1
+		// has the connections to the other end's protected server port
+		// come.
+		addr := &net.TCPAddr{IP: local.AsSlice()}
+		if t.client != nil {
+			addr.Port = int(t.client.LocalAddr().Port())
+			// The protected client port of a P-CSCF carries a
+			// connection to each UE at once, which the systems that
+			// have it let one port do only with SO_REUSEADDR.
+			dialer.Control = func(_, _ string, c syscall.RawConn) error {
+				var set error
+				if err := c.Control(func(fd uintptr) { set = setReuseAddr(fd) }); err != nil {
+					return err
+				}
+				return set
+			}
+		}
+		dialer.LocalAddr = addr
 	}
 	nc, err := dialer.Dial("tcp", remote.String())
 	if err != nil {
