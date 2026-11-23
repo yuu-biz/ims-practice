@@ -194,17 +194,30 @@ func (h *HSS) changeSettings(change func(*settings)) {
 // copied to pending, which the change writes to. settingsMu is held from
 // here to commitSettings, so that two changes cannot each write back
 // what it read.
+//
+// Every beginSettings is answered by a commitSettings, so the lock is
+// always let go again: the maintenance API calls the begin of a group
+// of settings before the first of them is set and its commit after the
+// last, for one change of the configuration at a time, and the sets in
+// between only write fields of pending, so none of them can fail or
+// panic (maintenance.Together, maintenance.ChangeConfiguration).
 func (h *HSS) beginSettings() {
 	h.settingsMu.Lock()
 	next := *h.settings.Load()
 	h.pending = &next
 }
 
-// commitSettings puts pending in force, all of it at once.
+// commitSettings puts pending in force, all of it at once, and then
+// pushes the profiles that the change gives another name
+// (pushChangedSettings).
 func (h *HSS) commitSettings() {
-	h.settings.Store(h.pending)
+	before, after := h.settings.Load(), h.pending
+	h.settings.Store(after)
 	h.pending = nil
 	h.settingsMu.Unlock()
+	// Outside settingsMu: a push reads the settings in force, which are
+	// these, and sends to one subscriber after another.
+	h.pushChangedSettings(before, after)
 }
 
 // ServiceCentre is how the HSS reaches one of the SMS central
@@ -242,11 +255,28 @@ type HSS struct {
 	// alerts counts the alerts to the service centres that are on their
 	// way, for Close.
 	alerts sync.WaitGroup
+	// life is the context of the work that the HSS does of its own
+	// accord, outside any request: the pushes of a changed setting
+	// (pushChangedSettings). Close ends it and waits for that work to
+	// stop, so that no push outlives the node.
+	life    context.Context
+	endLife context.CancelFunc
+	// lifeMu is held over the end of life in Close and over the start of
+	// a push (pushChangedSettings), so that no push starts once Close
+	// waits for them.
+	lifeMu sync.Mutex
+	// pushes counts the pushes of a changed setting that are on their
+	// way, for Close, as alerts counts the alerts.
+	pushes sync.WaitGroup
 
 	// settings are the parts of the configuration that the maintenance
 	// API changes while the HSS runs (Settings). A request loads the
 	// whole set once; settingsMu is held only to put a change in force,
-	// never on the path of a request.
+	// never on the path of a request, and it guards pending as well.
+	// The maintenance API carries out one change of the configuration at
+	// a time under a lock of its own, so this one is not what holds two
+	// changes from that API apart; it holds this value and pending
+	// together for one change, wherever the change comes from.
 	settings   atomic.Pointer[settings]
 	settingsMu sync.Mutex
 	// pending is the settings a change is writing, between beginSettings
@@ -275,6 +305,7 @@ func New(config Config, store Store, node *diameter.Node, log *slog.Logger) (*HS
 	}
 	h := &HSS{config: config, store: store, node: node, log: log, users: config.UserLocks,
 		serviceCentres: map[string]ServiceCentre{}}
+	h.life, h.endLife = context.WithCancel(context.Background())
 	// A configuration that names no policy admits every subscriber, and
 	// the policy in force is written out, so that what the maintenance
 	// API answers with is a policy an operator can send back.
@@ -307,8 +338,18 @@ func New(config Config, store Store, node *diameter.Node, log *slog.Logger) (*HS
 func (h *HSS) SetPeers(p Peers) { h.peers.Store(&p) }
 
 // Close waits for the alerts that are on their way to the service
-// centres. A node calls it once its Diameter server has stopped.
-func (h *HSS) Close() { h.alerts.Wait() }
+// centres, and ends the pushes of a changed setting and waits for them:
+// one that is on its way sends no more profiles, and the S-CSCFs it did
+// not reach read the profile at the next registration or from the push
+// of a later change. A node calls it once its Diameter server has
+// stopped, when a push would reach nobody anyway.
+func (h *HSS) Close() {
+	h.lifeMu.Lock()
+	h.endLife()
+	h.lifeMu.Unlock()
+	h.alerts.Wait()
+	h.pushes.Wait()
+}
 
 // Handle is the diameter.Handler of the HSS.
 func (h *HSS) Handle(request *diam.Message) *diam.Message {

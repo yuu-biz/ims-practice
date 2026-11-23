@@ -98,18 +98,12 @@ func (h *HSS) Manage(m *maintenance.ManagedFunction) { h.managed.Store(m) }
 // registrations that are valid then stay as they are, and the requests
 // that arrive from that moment on are refused (Admission).
 //
-// SIMPLIFIED: TS 29.228 6.6.1. A change of either profile name gives
-// every subscription that the name decides for another user profile,
-// and the HSS pushes none of them: each of those users gets its new
-// profile at its next registration, where the specification asks the
-// HSS to push the complete user profile to the S-CSCF of a registered
-// or unregistered identity as soon as its profile changes. A
-// provisioning request pushes only the change that it makes itself, as
-// it names the one subscription it changes; it compares that
-// subscription under the settings in force, so it does not bring the
-// S-CSCF the profile of a changed setting either. The HSS has no index of which registrations either name
-// decides for, and finding them means reading every subscriber, which
-// no procedure of this HSS does.
+// A change of either profile name gives another user profile to every
+// subscription that the name decides for, so the HSS pushes the
+// complete profile to the S-CSCF of each of those users whose profile
+// an S-CSCF has, rather than leave it until the next registration (TS
+// 29.228 6.6.1, pushChangedSettings). The subscriptions that name a
+// profile of their own take neither name, and get no push from either.
 func (h *HSS) Settings() []maintenance.Setting {
 	const (
 		admission   = role + ".admission"
