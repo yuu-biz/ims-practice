@@ -39,6 +39,7 @@ import (
 	"github.com/yuu-biz/ims-practice/internal/rtptest"
 	"github.com/yuu-biz/ims-practice/internal/rx"
 	"github.com/yuu-biz/ims-practice/internal/scscf"
+	"github.com/yuu-biz/ims-practice/internal/sgd"
 	"github.com/yuu-biz/ims-practice/internal/sip"
 )
 
@@ -149,14 +150,17 @@ func TestCxHandlerSendsEachRequestToItsRole(t *testing.T) {
 func TestDiameterApplicationsFollowTheRoles(t *testing.T) {
 	cx := []uint32{diameter.ApplicationIDCx}
 	cxAndSh := []uint32{diameter.ApplicationIDCx, diameter.ApplicationIDSh}
+	// The HSS adds S6c, over which the SMS central functions ask it for
+	// routing information and it alerts them.
+	hss := []uint32{diameter.ApplicationIDCx, diameter.ApplicationIDSh, sgd.ApplicationIDS6c}
 	rx := []uint32{diameter.ApplicationIDRx}
 	tests := []struct {
 		roles []config.Role
 		want  []uint32
 	}{
-		{[]config.Role{config.RoleHSS}, cxAndSh},
+		{[]config.Role{config.RoleHSS}, hss},
 		{[]config.Role{config.RoleICSCF, config.RoleSCSCF}, cx},
-		{[]config.Role{config.RoleSCSCF, config.RoleHSS}, cxAndSh},
+		{[]config.Role{config.RoleSCSCF, config.RoleHSS}, hss},
 		{[]config.Role{config.RolePCSCF}, rx},
 		{[]config.Role{config.RoleEPC}, rx},
 		{[]config.Role{config.RoleAGW}, nil},

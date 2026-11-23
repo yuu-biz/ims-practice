@@ -189,6 +189,70 @@ type Subscriber struct {
 	// IP-SM-GW by it (TS 29.338 Table 5.2.1.1-2), so an IP-SM-GW without
 	// one cannot be given to an SMS-GMSC.
 	IPSMGW diameter.Identity
+	// MessageWaitingData are the E.164 numbers, digits only, of the
+	// service centres that hold a short message for the user because a
+	// delivery to it failed: the MWD of TS 23.040 3.2.6. The HSS alerts
+	// each of them once the user can take short messages again (3.2.7).
+	MessageWaitingData []string
+	// UNRI is UE-Not-Reachable-for-IP: set while the MWD holds an entry
+	// put there because a delivery through the IP-SM-GW found the user
+	// absent (TS 23.040 3.2.6).
+	UNRI bool
+	// MCEF is the Mobile Station Memory Capacity Exceeded Flag: set
+	// while a delivery failed because the memory of the UE was full (TS
+	// 23.040 3.2.6).
+	MCEF bool
+}
+
+// maxMessageWaitingData is how many service centre addresses the HSS
+// keeps for one user. TS 23.040 3.2.6 leaves the size of the MWD to the
+// HLR, and 3.2.8 has an SC whose address does not fit fall back on its
+// own retries. This project runs one SC, so one entry is already
+// enough; a few leave room for the networks of a lab that run their
+// own.
+const maxMessageWaitingData = 4
+
+// DeliveryFailure is why a service centre address goes into the message
+// waiting data of a user (TS 23.040 3.2.8 case 1).
+type DeliveryFailure int
+
+const (
+	// AbsentUser is a delivery that did not reach the user. It sets
+	// UNRI, so that the registration of an IP-SM-GW alerts the SC.
+	AbsentUser DeliveryFailure = iota
+	// MemoryCapacityExceeded is a delivery that the UE refused for want
+	// of memory. It sets MCEF and clears UNRI: the UE is reachable, so
+	// only a notification of free memory helps.
+	MemoryCapacityExceeded
+)
+
+func (f DeliveryFailure) String() string {
+	if f == MemoryCapacityExceeded {
+		return "UE memory capacity exceeded"
+	}
+	return "absent user"
+}
+
+// addMessageWaiting records that the service centre at scAddress holds a
+// short message for the user, and sets the flags that cause asks for (TS
+// 23.040 3.2.8 case 1). It reports whether the address is in the data
+// afterwards: a full MWD takes no more, and the SC is left with its own
+// retries.
+func (s *Subscriber) addMessageWaiting(scAddress string, cause DeliveryFailure) bool {
+	switch cause {
+	case MemoryCapacityExceeded:
+		s.MCEF, s.UNRI = true, false
+	default:
+		s.UNRI = true
+	}
+	if slices.Contains(s.MessageWaitingData, scAddress) {
+		return true
+	}
+	if len(s.MessageWaitingData) >= maxMessageWaitingData {
+		return false
+	}
+	s.MessageWaitingData = append(s.MessageWaitingData, scAddress)
+	return true
 }
 
 // ErrIdentityTaken means that an identity of a new subscription already

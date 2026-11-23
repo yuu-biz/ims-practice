@@ -1,8 +1,9 @@
 // Package hss is the HSS stub. It answers the Cx requests of the
 // I-CSCF and the S-CSCF from the subscribers in its Store, which the
 // configuration seeds, following the HSS behaviour of TS
-// 29.228, and the Sh requests of application servers, following TS
-// 29.328. Cx and Sh are the boundary where a full HSS can
+// 29.228, the Sh requests of application servers, following TS
+// 29.328, and the S6c requests of the SMS central functions, following
+// TS 29.338. Cx, Sh and S6c are the boundary where a full HSS can
 // replace it. Subscriptions are added and removed through an HTTP
 // provisioning API, which, unlike Cx, is not a 3GPP interface
 // but this project's own, as each product HSS has its own.
@@ -27,6 +28,7 @@ import (
 	"github.com/yuu-biz/ims-practice/internal/ims"
 	"github.com/yuu-biz/ims-practice/internal/maintenance"
 	"github.com/yuu-biz/ims-practice/internal/metrics"
+	"github.com/yuu-biz/ims-practice/internal/sgd"
 	"github.com/yuu-biz/ims-practice/internal/sh"
 )
 
@@ -135,6 +137,9 @@ func (h *HSS) Handle(request *diam.Message) *diam.Message {
 	ctx := context.Background()
 	if request.Header.ApplicationID == diameter.ApplicationIDSh {
 		return h.handleSh(ctx, request)
+	}
+	if request.Header.ApplicationID == sgd.ApplicationIDS6c {
+		return h.handleS6c(ctx, request)
 	}
 	if request.Header.ApplicationID != diameter.ApplicationIDCx {
 		return diameter.CommandUnsupportedAnswer(identity, request)

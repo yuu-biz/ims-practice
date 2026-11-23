@@ -544,6 +544,9 @@ octet 2: lowest 2 bits of 'l' (00), then rest of 'e' (110010) = 0011 0010 = 32
 | Sh、TS 29.328 7.1.3 | External-Identifier は無い。 | マシン型の通信のためのもので、このプロジェクトでは扱わない。 |
 | Sh、TS 29.328 Annex D | Sh-Data には PublicIdentifiers（IMSPublicIdentity、MSISDN）と RepositoryData、Sh-IMS-Data の SCSCFName と SMSRegistrationInfo だけがある。 | 残りは、使う役割ができたときに加える。 |
 | Sh、TS 29.328 7.6.16 | SMSRegistrationInfo に SCAddress と、SBI に対応しているかの表示が無い。 | HSS は IP-SM-GW にサービスセンタのアドレスを渡さず、IP-SM-GW は SC に Diameter だけで届く。 |
+| HSS、TS 29.338 5.2.1.3 | 配送先の問い合わせに答えるとき、着信ショートメッセージのテレサービスに加入しているかと、着信を禁止されていないかを確かめない。そのため DIAMETER_ERROR_SERVICE_NOT_SUBSCRIBED と DIAMETER_ERROR_SERVICE_BARRED を返さない。 | この HSS の加入者はどれもショートメッセージを受け取れ、事業者が決める発着信規制を持たない。 |
+| HSS、TS 29.338 Table 5.2.1.1-2 | 非公開ユーザー識別子が IMSI から作られていない加入、たとえばソフトフォンが番号で登録する加入では、成功の応答に IMSI を入れない。 | HSS は IMSI を独立して持たず、TS 23.003 13.3 の IMSI を非公開ユーザー識別子から読む。 |
+| HSS、TS 23.204 6.4 step 3a から 3c | 配送先の問い合わせを IP-SM-GW に回さず、HSS が自分で答える。回した場合、IP-SM-GW は自分のアドレスと MT Correlation ID を返す。 | 問い合わせを回すのは、ほかの網から来たショートメッセージを宛先のホーム網を通して配送させるためで、このプロジェクトはそれを行わない。IP-SM-GW の Diameter 名は登録のときに HSS が覚えている。 |
 | HSS、TS 29.329 7.1 | Supported-Features で機能を取り決めない。HSS は、省略できる機能にどれも対応しない AS と同じように扱うので、要求は Data-Reference を 1 つだけ指定し、Repository Data では Service-Indication か RepositoryData も 1 つだけにする。HSS にデータが無いときの応答には User-Data が無い。 | このプロジェクトの IP-SM-GW は、省略できる機能をどれも示さない。 |
 | HSS、TS 29.328 6.2 | AS ごとの権限が無く、接続したピアならどれでも Sh を使える。 | このプロジェクトの AS は IP-SM-GW だけである。 |
 | HSS、TS 29.328 6.1.1.1 と 6.1.2.1 step 2a | User-Name の非公開ユーザー識別子を読まず、確かめない。 | IP-SM-GW はそれを送らない。 |
