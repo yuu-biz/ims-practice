@@ -32,7 +32,13 @@
 # with Retry-After to the INVITE with which the AS asks it for an
 # announcement, so a barred call of UE 1 is rejected without the early
 # media of the MRFP; after the unlock the caller hears the announcement
-# again. A shut down of the HSS instead sends every Diameter
+# again. A shut down of the IP-SM-GW makes it answer 503 with
+# Retry-After to the third-party REGISTER and to the MESSAGE of a short
+# message, and the S-CSCF, whose criteria say SESSION_CONTINUED, leaves
+# the registration standing and sends the MESSAGE on to the PSI of the
+# SC, which this network cannot translate, so UE 1 sees 404; after the
+# unlock the short message reaches the SC again. A shut down of the HSS
+# instead sends every Diameter
 # peer a DPR with Disconnect-Cause REBOOTING and stops the node
 # listening on 3868, so the I-CSCF reports itself DISABLED and no UE
 # can register; after the unlock the CSCFs open their connections again
@@ -416,6 +422,30 @@ for series in 'ims_diameter_requests_total{role="mmtel",command="UDR"}' \
 		fail=1
 	fi
 done
+if value="$(until_positive prometheus_values 'up{job="ims",node="ipsmgw"}')"; then
+	echo "ok   Prometheus scrapes the IP-SM-GW: up = $value"
+else
+	echo "FAIL the ipsmgw target of Prometheus is not up: $value"
+	curl -fsS "$prometheus/api/v1/targets?state=active" || true
+	echo
+	fail=1
+fi
+# The IP-SM-GW writes SMSRegistrationInfo for a user whose registration
+# state says that a contact takes short messages (PUR), so the
+# registration above left it one request and the answer that came back.
+for series in 'ims_diameter_requests_total{role="ipsmgw",command="PUR"}' \
+	'ims_diameter_answers_total{role="ipsmgw",command="PUR"}' \
+	'ims_diameter_peer_up{node="ipsmgw"}'; do
+	if value="$(until_positive prometheus_values "$series")"; then
+		echo "ok   Prometheus has $series = $value"
+	else
+		echo "FAIL Prometheus has no $series above 0: $value"
+		# Shown only to explain the failure, if the IP-SM-GW answers at
+		# all, hence "|| true".
+		docker compose exec -T ipsmgw wget -qO- http://127.0.0.1:8085/metrics || true
+		fail=1
+	fi
+done
 # The HSS counts what it holds, whether anyone is registered or not (TS
 # 32.409 4.2.1.1): the subscribers of deploy/compose/hss.yaml, each with
 # a SIP URI and most of them with a tel URI as well.
@@ -726,6 +756,67 @@ trap - EXIT
 
 await "the 200 OK of the MRFC after its unlock" "$mrfcAnswers" $((mrfcAnswered + 1))
 
+echo "drain of the IP-SM-GW"
+# The IP-SM-GW takes its work from the S-CSCF by the filter criteria of
+# the served user, so the drain shows in a short message that UE 1
+# sends. The IP-SM-GW answers each MESSAGE it accepts with 202, so count
+# those first.
+gwAccepts='sip.CSeq.method == "MESSAGE" && sip.Status-Code == 202 && ip.src == 172.28.0.70'
+gwAccepted="$(count "$gwAccepts")"
+# The scenes above left the IP-SM-GW nothing to finish: the last UE
+# deregistered, and no short message has been sent, so no delivery
+# waits for a delivery report either. Wait until it says so, so that
+# the shut down below is the shut down of a function with no user,
+# which X.731 7.1.3.3 makes LOCKED at once.
+if until_state ipsmgw '"users":0'; then
+	echo "ok   the IP-SM-GW has nothing in its hands before the shut down"
+else
+	echo "FAIL the IP-SM-GW still counts users: $(node_state ipsmgw || true)"
+	fail=1
+fi
+answer="$(administrative_state ipsmgw SHUTTINGDOWN || true)"
+state="$(node_state ipsmgw || true)"
+if grep -q '"administrative_state":"LOCKED"' <<<"$state"; then
+	echo "ok   the maintenance API shut the IP-SM-GW down, which locked it at once"
+else
+	echo "FAIL the shut down of the IP-SM-GW: $answer"
+	echo "     state of the node: $state"
+	fail=1
+fi
+# "ue sms" registers, sends the short message and waits for the submit
+# report. The MESSAGE gets 404 here, so the command exits 1, hence
+# "|| true"; the registration itself goes through, since the criterion
+# of the third-party REGISTER says SESSION_CONTINUED.
+out="$(docker compose run --no-deps --rm ue sms +12025550102 'Is anyone on duty?' 2>&1 || true)"
+if grep -q '"msg":"registered"' <<<"$out" &&
+	grep -q '"msg":"sms not sent".*MESSAGE answered 404' <<<"$out"; then
+	echo "ok   UE 1 registered but could not send a short message while the IP-SM-GW is shut down"
+else
+	echo "FAIL the short message while the IP-SM-GW is shut down: $(tail -n 2 <<<"$out")"
+	fail=1
+fi
+answer="$(administrative_state ipsmgw UNLOCKED || true)"
+state="$(node_state ipsmgw || true)"
+if grep -q '"administrative_state":"UNLOCKED"' <<<"$state"; then
+	echo "ok   the maintenance API unlocked the IP-SM-GW"
+else
+	echo "FAIL the unlock of the IP-SM-GW: $answer"
+	echo "     state of the node: $state"
+	fail=1
+fi
+# UE 2 is not running, so the SC cannot deliver the short message; what
+# this checks is that the IP-SM-GW accepts it again and the submit
+# report comes back.
+out="$(docker compose run --no-deps --rm ue sms +12025550102 'Back on duty?' 2>&1 || true)"
+if grep -q '"msg":"submit report"' <<<"$out"; then
+	echo "ok   UE 1 sent a short message after the unlock of the IP-SM-GW"
+else
+	echo "FAIL the short message after the unlock of the IP-SM-GW: $(tail -n 2 <<<"$out")"
+	fail=1
+fi
+
+await "the 202 of the IP-SM-GW after its unlock" "$gwAccepts" $((gwAccepted + 1))
+
 echo "drain of the HSS"
 # The HSS has no SIP to answer with: it ends each Diameter connection
 # with a DPR whose Disconnect-Cause is REBOOTING and stops listening on
@@ -816,6 +907,7 @@ scscf=172.28.0.30
 mmtel=172.28.0.75
 mrfc=172.28.0.85
 mrfp=172.28.0.86
+ipsmgw=172.28.0.70
 agw=172.28.0.50
 register='sip.CSeq.method == "REGISTER"'
 invite='sip.CSeq.method == "INVITE"'
@@ -906,7 +998,39 @@ expect "RTP of notice media relay -> UE 1" "rtp && ip.src == $agw && ip.dst == $
 expect "BYE MRFC -> MMTel AS once notice has played" "sip.Method == \"BYE\" && ip.src == $mrfc && ip.dst == $mmtel"
 expect "603 P-CSCF -> UE 1 with Reason: SIP;cause=603" "sip.Status-Code == 603 && ip.src == $pcscf && ip.dst == $ue && sip.Reason contains \"cause=603\""
 
+echo "the short message while the IP-SM-GW is shut down"
+# The S-CSCF sends the third-party REGISTER of UE 1's registration and
+# the MESSAGE of its short message to the IP-SM-GW, which answers 503
+# with Retry-After to both. The criteria say SESSION_CONTINUED, so the
+# registration stands and the MESSAGE goes on to its Request-URI, the
+# PSI of the SC. No node of this network answers at that number and
+# ENUM has no record for it, so the S-CSCF answers 404 (TS 24.229
+# 5.4.3.2 step 10).
+#
+# The S-CSCF answers the UE before it registers the user anywhere else
+# (TS 24.229 5.4.1.7), so the 200 of the registration comes before the
+# third-party REGISTER that the IP-SM-GW refuses. The Service-Route
+# tells that 200 from the one of the deregistration that ended the
+# scene above, which carries none.
+message='sip.CSeq.method == "MESSAGE"'
+expect "200 S-CSCF -> I-CSCF for UE 1's registration, with Service-Route" "$register && sip.Status-Code == 200 && ip.src == $scscf && ip.dst == $icscf && sip.Service-Route && sip.To contains \"+12025550101\""
+expect "third-party REGISTER S-CSCF -> IP-SM-GW" "sip.Method == \"REGISTER\" && ip.src == $scscf && ip.dst == $ipsmgw"
+refusedRegister="$last"
+expect "503 IP-SM-GW -> S-CSCF for the third-party REGISTER, with Retry-After 30" "$register && sip.Status-Code == 503 && ip.src == $ipsmgw && ip.dst == $scscf && sip.Retry-After == 30"
+expect "MESSAGE S-CSCF -> IP-SM-GW with the short message" "sip.Method == \"MESSAGE\" && ip.src == $scscf && ip.dst == $ipsmgw && sip.Content-Type == \"application/vnd.3gpp.sms\""
+refusedMessage="$last"
+expect "503 IP-SM-GW -> S-CSCF with Retry-After 30" "$message && sip.Status-Code == 503 && ip.src == $ipsmgw && ip.dst == $scscf && sip.Retry-After == 30"
+expect "404 P-CSCF -> UE 1 for the short message" "$message && sip.Status-Code == 404 && ip.src == $pcscf && ip.dst == $ue"
+none "202 of the IP-SM-GW while it was shut down" "frame.number > $refusedMessage && frame.number <= $last && $message && sip.Status-Code == 202 && ip.src == $ipsmgw"
+# The refused third-party REGISTER leaves no subscription behind: the
+# IP-SM-GW subscribes to the registration state only for one it took.
+none "SUBSCRIBEs of the IP-SM-GW while it was shut down" "frame.number > $refusedRegister && frame.number <= $last && sip.Method == \"SUBSCRIBE\" && ip.src == $ipsmgw"
+echo "the short message after the unlock of the IP-SM-GW"
+expect "MESSAGE S-CSCF -> IP-SM-GW with the short message" "sip.Method == \"MESSAGE\" && ip.src == $scscf && ip.dst == $ipsmgw && sip.Content-Type == \"application/vnd.3gpp.sms\""
+expect "202 IP-SM-GW -> S-CSCF" "$message && sip.Status-Code == 202 && ip.src == $ipsmgw && ip.dst == $scscf"
+expect "submit report IP-SM-GW -> I-CSCF, in reply to the short message" "sip.Method == \"MESSAGE\" && ip.src == $ipsmgw && ip.dst == $icscf && sip.In-Reply-To"
+
 if [ "$fail" -ne 0 ]; then
-	docker compose logs --no-color pcscf icscf scscf hss mmtel mrfc prometheus grafana | tail -n 80
+	docker compose logs --no-color pcscf icscf scscf hss mmtel mrfc ipsmgw prometheus grafana | tail -n 80
 fi
 exit "$fail"
