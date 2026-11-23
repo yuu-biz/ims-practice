@@ -120,7 +120,11 @@ type UAConfig struct {
 // of its calls, so that the requests and ACKs within a dialog reach the
 // call they belong to.
 type UA struct {
-	stack      *Stack
+	stack *Stack
+	// started is closed once stack is set. The stack may hand the UA a
+	// request as soon as it runs, before NewUA has stored it, so the
+	// UA's callbacks wait for started before they read stack.
+	started    chan struct{}
 	cfg        UAConfig
 	log        *slog.Logger
 	subscriber *Subscriber
@@ -152,7 +156,8 @@ func NewUA(transport *TransportLayer, cfg UAConfig, log *slog.Logger) (*UA, erro
 		cfg.Locate = locateIPAddress
 	}
 	ua := &UA{cfg: cfg, log: log, subscriber: NewSubscriber(cfg.Contact, cfg.Locate, log),
-		calls: map[DialogID]*CallDialog{}, ended: map[DialogID]bool{}, open: map[*call]bool{}}
+		calls: map[DialogID]*CallDialog{}, ended: map[DialogID]bool{}, open: map[*call]bool{},
+		started: make(chan struct{})}
 	stack, err := NewStack(transport, Config{
 		SentBy:    cfg.SentBy,
 		Timers:    cfg.Timers,
@@ -165,6 +170,7 @@ func NewUA(transport *TransportLayer, cfg UAConfig, log *slog.Logger) (*UA, erro
 		return nil, err
 	}
 	ua.stack = stack
+	close(ua.started)
 	return ua, nil
 }
 
@@ -321,6 +327,7 @@ func (ua *UA) contact() string {
 // what the user of the UA does with a request runs in a goroutine of
 // its own.
 func (ua *UA) receiveRequest(st *ServerTransaction) {
+	<-ua.started
 	req := st.Request
 	if sub := ua.subscriber.find(req); sub != nil {
 		go sub.receiveNotify(st)
@@ -439,6 +446,7 @@ func (ua *UA) unsupportedExtensions(req *Message) []string {
 // receiveACK is Config.OnACK: the ACK for a 2xx, which goes to the call
 // whose dialog it names.
 func (ua *UA) receiveACK(ack *Message) {
+	<-ua.started
 	d, ok := ua.dialog(ReceivedDialogID(ack))
 	if !ok {
 		ua.log.Info("discarded ACK that matches no dialog", "call_id", ack.Get("Call-ID"))
