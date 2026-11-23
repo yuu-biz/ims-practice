@@ -10,7 +10,7 @@ These guides run the IMS on your machine and follow its messages in a capture, o
 2. [Follow a UE registering with the IMS](registration.md). REGISTER through the P-CSCF, the I-CSCF and the S-CSCF, with SIP Digest and Cx.
 3. [Follow a voice call through the IMS](call.md). An INVITE from one UE to another by telephone number, ENUM, and the media relay.
 4. [Follow a short message through the IMS](sms.md). SMS over IP through the IP-SM-GW, with the reports.
-5. [Supplementary services with the MMTel AS](mmtel.md). Identity presentation, call forwarding and barring, set up over Ut.
+5. [Supplementary services with the MMTel AS](mmtel.md). Identity presentation, call forwarding and barring, set up over Ut. The industry also calls the MMTel AS the TAS (Telephony Application Server) or the T-AS.
 6. [Announcements, alerting tones and conferences with the MRF](mrf.md). An announcement before a barred call, the customized alerting tone, call waiting and a conference of three.
 7. [The VoLTE call flow](volte.md). The EPC stub, IMS AKA, policy control over Rx, and a call in AMR-WB with preconditions.
 8. [Connect two IMS networks](interconnect.md). The IBCF and the TrGW at the border, topology hiding, and the interconnect profiles.

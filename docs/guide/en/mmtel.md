@@ -4,6 +4,8 @@
 
 This guide follows the supplementary services of multimedia telephony (MMTel) through the IMS: how the S-CSCF hands every call to the MMTel AS, what the AS does to the call as a B2BUA, how a user sets the services up over Ut with XCAP, and one call per service in the capture: identity presentation and restriction, call forwarding (CFU, CFB, CFNR, CFNL) and barring.
 
+The industry also calls the MMTel AS the TAS (Telephony Application Server) or the T-AS. This guide uses the name of the specifications, the MMTel AS.
+
 The guide follows these editions: TS 24.229 V20.1.0, TS 24.604 V19.0.0 (CDIV), TS 24.607 V19.1.0 (OIP, OIR), TS 24.608 V19.0.0 (TIP, TIR), TS 24.611 V19.0.0 (barring), TS 24.615 V19.0.0 (CW), TS 24.623 V19.0.0 (Ut), TS 29.364 V19.1.0 (the service data), TS 29.328 V20.0.0 (Sh), TS 29.228 (filter criteria) and GSMA IR.92 v24.0. Clause numbers below refer to those editions.
 
 ## Before you start

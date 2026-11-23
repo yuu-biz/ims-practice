@@ -10,7 +10,7 @@
 2. [UE が IMS に登録する流れを追う](registration.md)。P-CSCF、I-CSCF、S-CSCF を通る REGISTER と、SIP Digest、Cx。
 3. [音声通話の流れを追う](call.md)。電話番号で別の UE にかける INVITE と、ENUM、メディア中継。
 4. [SMS の流れを追う](sms.md)。IP-SM-GW を通る SMS over IP と、その報告。
-5. [MMTel AS の付加サービス](mmtel.md)。番号通知、転送、規制と、Ut での設定。
+5. [MMTel AS の付加サービス](mmtel.md)。番号通知、転送、規制と、Ut での設定。MMTel AS は業界では TAS（Telephony Application Server）や T-AS とも呼ばれます。
 6. [MRF による音声ガイダンス、呼び出し音、会議](mrf.md)。規制した通話の前の音声ガイダンス、CAT、割込通話、3 人の会議。
 7. [VoLTE の呼の流れ](volte.md)。EPC スタブ、IMS-AKA、Rx でのポリシー制御と、プリコンディションを使った AMR-WB の通話。
 8. [IMS 網どうしを相互接続する](interconnect.md)。境界の IBCF と TrGW、構成の秘匿、相互接続プロファイル。
