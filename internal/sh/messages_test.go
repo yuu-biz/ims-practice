@@ -191,6 +191,39 @@ func TestShDataSMSRegistrationInfoPath(t *testing.T) {
 	}
 }
 
+// The S6c support indication sits three Extension elements below
+// SMSRegistrationInfo, after the SCAddress and the SBI support
+// indication that the schema of TS 29.328 Annex D put there first.
+func TestShDataS6cSupportIndicationPath(t *testing.T) {
+	supported := S6cSupported
+	d := ShData{ShIMSData: &ShIMSData{SMSRegistrationInfo: &SMSRegistrationInfoData{IPSMGWNumber: "12025550199", S6cSupport: &supported}}}
+	b := d.Marshal()
+	want := "<SMSRegistrationInfo><IP-SM-GW-Number>12025550199</IP-SM-GW-Number>" +
+		"<Extension><Extension><Extension><IP-SM-GW-S6cSupportIndication>1</IP-SM-GW-S6cSupportIndication>" +
+		"</Extension></Extension></Extension></SMSRegistrationInfo>"
+	if !strings.Contains(string(b), want) {
+		t.Errorf("Sh-Data = %s\nwant %s", b, want)
+	}
+	got, err := ParseShData(b)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(got, d) {
+		t.Errorf("parsed %+v, want %+v", got, d)
+	}
+	if !got.ShIMSData.SMSRegistrationInfo.SupportsS6c() {
+		t.Error("SupportsS6c() = false, want true")
+	}
+	// An IP-SM-GW that does not support S6c writes no indication at all.
+	without := ShData{ShIMSData: &ShIMSData{SMSRegistrationInfo: &SMSRegistrationInfoData{IPSMGWNumber: "12025550199"}}}
+	if b := without.Marshal(); strings.Contains(string(b), "<Extension></Extension>") {
+		t.Errorf("Sh-Data = %s\nwant no empty Extension", b)
+	}
+	if without.ShIMSData.SMSRegistrationInfo.SupportsS6c() {
+		t.Error("SupportsS6c() = true, want false")
+	}
+}
+
 func TestShDataPublicIdentifiersAndSCSCFName(t *testing.T) {
 	d := ShData{
 		PublicIdentifiers: &PublicIdentifiers{IMSPublicIdentities: []string{impu, tel}, MSISDNs: []string{msisdn}},

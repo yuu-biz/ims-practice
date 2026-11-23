@@ -82,16 +82,38 @@ type ShIMSData struct {
 // the data of TS 29.328 7.6.16: the IP-SM-GW that delivers short
 // messages to the user over IMS.
 //
-// SIMPLIFIED: TS 29.328 7.6.16. The SCAddress, and the indications of
-// SBI and S6c support, are left out. The IP-SM-GW of this project has
-// its SC inside it and speaks neither SBI nor S6c.
+// SIMPLIFIED: TS 29.328 7.6.16. The SCAddress and the indication of SBI
+// support are left out. The HSS of this project hands no Service Centre
+// address to the IP-SM-GW, which reaches the SC over Diameter only.
 type SMSRegistrationInfoData struct {
 	// IPSMGWNumber is the E.164 number of the IP-SM-GW as digits only
 	// (Annex D, tIP-SM-GW-Number; TS 23.008 defines the number). An
 	// empty one in a PUR removes the registration (TS 29.328 6.1.2.1
 	// step 4b).
 	IPSMGWNumber string `xml:"IP-SM-GW-Number"`
+	// S6cSupport says whether the IP-SM-GW can be reached over S6c. The
+	// HSS keeps the IP-SM-GW's Diameter identity, and so can name it as
+	// the serving node of the user, only when both support S6c (TS
+	// 29.328 6.1.2.1 step 4b). Nil writes no element, which 7.6.16 has
+	// an IP-SM-GW without S6c do. Annex D puts the element three
+	// Extension elements deep, as it was added to tSMSRegistrationInfo
+	// after the SCAddress and the SBI support indication.
+	S6cSupport *S6cSupport `xml:"Extension>Extension>Extension>IP-SM-GW-S6cSupportIndication,omitempty"`
 }
+
+// SupportsS6c reports whether the IP-SM-GW announced that S6c reaches
+// it. A registration without the indication does not.
+func (d *SMSRegistrationInfoData) SupportsS6c() bool {
+	return d != nil && d.S6cSupport != nil && *d.S6cSupport == S6cSupported
+}
+
+// S6cSupport is the tIpSmGwS6cSupInd type of TS 29.328 Annex D.
+type S6cSupport int
+
+const (
+	S6cNotSupported S6cSupport = 0
+	S6cSupported    S6cSupport = 1
+)
 
 // shDataDocument names the root element. encoding/xml treats the
 // fields of an embedded struct as its own.
