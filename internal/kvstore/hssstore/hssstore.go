@@ -86,6 +86,14 @@ const subscriberIndex = "subscribers"
 // a subscriber the same when a setting names another profile, and lets
 // a change of one setting read its own subscribers alone
 // (hss.Store.ListServed).
+//
+// Nothing fills these indexes for the subscribers of a store that was
+// written before them: a store holds no version of its own, and an
+// instance that started would have to read every subscriber to fill
+// them, which is work that grows with the network and which no
+// operation here does. Those subscribers enter the index when their
+// state or their source next changes, and until then a change of a
+// setting pushes them no profile; they get it at the next registration.
 func servedIndex(source hss.ProfileSource) string { return "served:" + string(source) }
 
 // The writes that change what a subscriber's item says of the index
