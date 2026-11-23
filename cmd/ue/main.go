@@ -347,6 +347,10 @@ func main() {
 			os.Exit(2)
 		}
 		o.cfg.AKA = usim
+		if err := protectedPorts(o.portS, o.portC); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(2)
+		}
 		// The card of -k is a USIM without an ISIM, so -impu is the
 		// temporary public identity derived from the IMSI.
 		o.cfg.TemporaryPublicIdentity = true
@@ -499,11 +503,25 @@ func openUE(log *slog.Logger, o options, line *ue.Line) (u *opened, err error) {
 			return nil, err
 		}
 		o.cfg.AKA.Unprotected, closeUnprotected = unprotected, unprotected.Close
-		listen := netip.AddrPortFrom(transport.LocalAddr().Addr(), uint16(o.portS))
+		on := transport.LocalAddr().Addr()
+		if o.portC != 0 {
+			// The protected ports and the security associations are
+			// bound to the UE's own address (TS 33.203 7.1), which
+			// -listen need not name: the UE learns it from the route to
+			// the P-CSCF, as its contact does.
+			own, err := contactAddress(target, transport.LocalAddr())
+			if err != nil {
+				unprotected.Close()
+				return nil, fmt.Errorf("-port-c: %w", err)
+			}
+			on = own.Addr()
+		}
+		listen := netip.AddrPortFrom(on, uint16(o.portS))
 		// With ESP the UE sends its requests from the protected client
 		// port, which the security associations are bound to (TS
-		// 33.203 7.1 item 2).
-		if transport, err = sip.ListenProtected(listen.String(), uint16(o.portC), log, agent.SIP("ue")); err != nil {
+		// 33.203 7.1 item 2). It talks to its P-CSCF alone, so every
+		// peer of this transport layer is one that ESP protects.
+		if transport, err = sip.ListenProtected(listen.String(), uint16(o.portC), nil, log, agent.SIP("ue")); err != nil {
 			unprotected.Close()
 			return nil, fmt.Errorf("-port-s: %w", err)
 		}
@@ -587,6 +605,28 @@ func unprotectedStack(transport *sip.TransportLayer, pcscf netip.AddrPort, log *
 		transport.Close()
 	}
 	return stack, err
+}
+
+// protectedPorts checks -port-s and -port-c: a port number, and never
+// one of the standard SIP ports, which TS 33.203 7.1 keeps apart from
+// the protected ones. A -port-c of 0 leaves ESP off.
+func protectedPorts(portS, portC int) error {
+	for _, p := range []struct {
+		flag string
+		port int
+	}{{"-port-s", portS}, {"-port-c", portC}} {
+		switch {
+		case p.flag == "-port-c" && p.port == 0:
+		case p.port < 1 || p.port > 65535:
+			return fmt.Errorf("%s: %d is no port number", p.flag, p.port)
+		case p.port == 5060 || p.port == 5061:
+			return fmt.Errorf("%s: %d is a standard SIP port, and a protected port is one of its own (TS 33.203 7.1)", p.flag, p.port)
+		}
+	}
+	if portC == portS {
+		return fmt.Errorf("-port-c: %d is the protected server port, and the two are different ports (TS 33.203 7.1)", portC)
+	}
+	return nil
 }
 
 // usimConfig reads the flags of IMS AKA. OP gives OPc with MILENAGE

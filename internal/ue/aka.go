@@ -136,28 +136,44 @@ func (u *UE) securityAssociations() *securityAssociations {
 
 // setUpESP puts the security associations of sa into the kernel, in
 // place of those of the set old that it replaces (TS 33.203 7.4.1a).
-// Without the option it does nothing.
+// They live only as long as the authentication has to finish, which
+// registeredOver raises once it is over. Without the option it does
+// nothing.
 func (u *UE) setUpESP(sa, old *securityAssociations) error {
 	esp := u.esp()
 	if esp == nil {
 		return nil
 	}
 	if old != nil {
+		// The challenge was the last message over the old associations:
+		// the answer to it goes over the new ones. The protected client
+		// port of this UE is the one of its configuration, so the new
+		// associations are bound to the same ports as the old and
+		// replace them here.
 		u.tearDownESP(old)
 	}
-	return esp.Kernel.Setup(context.Background(), u.agreement(sa), ipsec.UEEnd)
+	return esp.Kernel.Setup(context.Background(), u.agreement(sa), ipsec.UEEnd, time.Until(sa.expires))
+}
+
+// refreshESP gives the associations of sa the lifetime of the
+// registration that was just granted (TS 33.203 7.4.1a: the UE raises
+// it so that it ends shortly after the registration timer).
+func (u *UE) refreshESP(sa *securityAssociations) {
+	esp := u.esp()
+	if esp == nil {
+		return
+	}
+	if err := esp.Kernel.Refresh(context.Background(), u.agreement(sa), ipsec.UEEnd, time.Until(sa.expires)); err != nil {
+		u.log.Warn("the ESP security associations keep the lifetime of the authentication", "error", err.Error())
+	}
 }
 
 // tearDownESP takes them out again. Nothing can be done about a kernel
 // that refuses, and the associations go from the UE either way, so it
 // says so and carries on.
 func (u *UE) tearDownESP(sa *securityAssociations) {
-	esp := u.esp()
-	if esp == nil {
-		return
-	}
-	if err := esp.Kernel.Teardown(context.Background(), u.agreement(sa), ipsec.UEEnd); err != nil {
-		u.log.Warn("the ESP security associations stay in the kernel", "error", err.Error())
+	if esp := u.esp(); esp != nil {
+		esp.Kernel.Teardown(context.Background(), u.agreement(sa), ipsec.UEEnd)
 	}
 }
 
@@ -260,7 +276,20 @@ func (u *UE) sendAKA(ctx context.Context, expires time.Duration) (*sip.Message, 
 	case sentOver.temporary:
 		// TS 33.203 7.4.1a: after a failure the UE deletes the new
 		// associations.
+		//
+		// SIMPLIFIED: TS 33.203 7.4.1a. The old associations, which
+		// 7.4.1a has the UE keep when the registration it started was
+		// protected, are gone: the protected client port is the one of
+		// the UE's configuration, so the new associations were bound to
+		// the same ports and replaced them in the kernel when the UE
+		// answered the challenge. The UE therefore forgets them as
+		// well, rather than keep a set the kernel no longer holds, and
+		// registers again unprotected, which 7.4.1a asks of a UE that
+		// takes its associations for no longer active.
 		u.tearDownESP(sentOver)
+		if u.esp() != nil && over != nil {
+			u.setSecurityAssociations(nil)
+		}
 	}
 	return resp, nil
 }
@@ -283,6 +312,7 @@ func (u *UE) registeredOver(sa *securityAssociations, interval time.Duration) {
 	}
 	established.temporary = false
 	u.setSecurityAssociations(&established)
+	u.refreshESP(&established)
 }
 
 // sendOver sends a REGISTER with the security agreement of RFC 3329 2.3.1

@@ -184,10 +184,11 @@ func run(configPath string, log *slog.Logger, level *slog.LevelVar) error {
 	// that lacks only the sent-by, for the CSCFs, whose stacks forward
 	// CANCELs statelessly and, at the P-CSCF, screen requests. With
 	// clientPort it binds the protected client port of TS 33.203 7.1
-	// beside the port it listens on, and the requests leave from there.
-	startProtectedSIP := func(role config.Role, c config.SIP, clientPort uint16, stack sip.Config) (*sip.Stack, error) {
+	// beside the port it listens on, and the requests to a peer that
+	// protected reports on leave from there.
+	startProtectedSIP := func(role config.Role, c config.SIP, clientPort uint16, protected func(netip.AddrPort) bool, stack sip.Config) (*sip.Stack, error) {
 		roleLog := log.With("role", role)
-		transport, err := sip.ListenProtected(c.Listen.String(), clientPort, roleLog, agent.SIP(string(role)))
+		transport, err := sip.ListenProtected(c.Listen.String(), clientPort, protected, roleLog, agent.SIP(string(role)))
 		if err != nil {
 			return nil, err
 		}
@@ -205,7 +206,7 @@ func run(configPath string, log *slog.Logger, level *slog.LevelVar) error {
 	// the port they listen on, which is every stack but the protected
 	// one of a P-CSCF with ESP.
 	startSIPWith := func(role config.Role, c config.SIP, stack sip.Config) (*sip.Stack, error) {
-		return startProtectedSIP(role, c, 0, stack)
+		return startProtectedSIP(role, c, 0, nil, stack)
 	}
 	startSIP := func(role config.Role, c config.SIP, onRequest func(*sip.ServerTransaction), onACK func(*sip.Message)) (*sip.Stack, error) {
 		return startSIPWith(role, c, sip.Config{OnRequest: onRequest, OnACK: onACK})
@@ -324,7 +325,7 @@ func run(configPath string, log *slog.Logger, level *slog.LevelVar) error {
 			// leave from the protected client port, which the security
 			// associations of each UE are bound to.
 			protected := config.SIP{Listen: netip.AddrPortFrom(c.SIP.Listen.Addr(), port), Host: c.SIP.Host}
-			stack, err := startProtectedSIP(config.RolePCSCF, protected, c.ProtectedClientPort,
+			stack, err := startProtectedSIP(config.RolePCSCF, protected, c.ProtectedClientPort, p.ProtectedPeer,
 				sip.Config{Screen: p.Screen, OnRequest: p.OnProtectedRequest, OnACK: p.OnProtectedACK, OnCANCEL: p.OnProtectedCANCEL})
 			if err != nil {
 				return err

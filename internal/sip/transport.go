@@ -64,8 +64,13 @@ type Observer func(Capture)
 type TransportLayer struct {
 	udp *UDPTransport
 	// client is the socket on the protected client port of TS 33.203
-	// 7.1, from which the requests leave; nil everywhere else.
-	client      *UDPTransport
+	// 7.1, from which the requests to a protected peer leave; nil
+	// everywhere else.
+	client *UDPTransport
+	// protected reports whether the far end is a peer with security
+	// associations, whose requests go from the client port; nil means
+	// every peer is one.
+	protected   func(netip.AddrPort) bool
 	listener    *net.TCPListener
 	log         *slog.Logger
 	observe     Observer // nil when nothing observes
@@ -99,19 +104,36 @@ func ListenObserved(address string, log *slog.Logger, observe Observer) (*Transp
 
 // ListenProtected is ListenObserved on the protected server port of TS
 // 33.203 7.1, with the protected client port of the same address bound
-// as well. The requests this transport layer sends leave from the
-// client port, over UDP and over TCP, and the responses to them come
-// back there; the responses to the requests that arrive on the server
-// port go back from the server port. That is how a UE and a P-CSCF
-// send to each other once IMS AKA has set up IPsec ESP: each pair of
-// security associations runs between one end's client port and the
-// other end's server port, so a message that left the wrong port would
-// match no security association. A zero client port is
-// ListenObserved, which sends everything from the port it listens on.
-func ListenProtected(address string, clientPort uint16, log *slog.Logger, observe Observer) (*TransportLayer, error) {
+// as well. The requests this transport layer sends to a peer that
+// protected reports on leave from the client port, over UDP and over
+// TCP, and the responses to them come back there; the responses to the
+// requests that arrive on the server port go back from the server port.
+// That is how a UE and a P-CSCF send to each other once IMS AKA has set
+// up IPsec ESP: each pair of security associations runs between one
+// end's client port and the other end's server port, so a message that
+// left the wrong port would match no security association.
+//
+// A nil protected takes every peer for one, which is what a UE needs,
+// since it talks to its P-CSCF alone. A P-CSCF passes the UEs it has
+// security associations with: 7.1 lets no unprotected message leave the
+// client port, and the P-CSCF reaches the core from the port it listens
+// on. A zero client port is ListenObserved, which sends everything from
+// the port it listens on.
+//
+// The address has to be the node's own: the client port is bound to it,
+// and the security associations are bound to it as well (7.1).
+func ListenProtected(address string, clientPort uint16, protected func(netip.AddrPort) bool, log *slog.Logger, observe Observer) (*TransportLayer, error) {
 	t, err := newTransportLayer(address, log, observe, tcpIdleTimeout)
 	if err != nil || clientPort == 0 {
 		return t, err
+	}
+	if addr := t.LocalAddr().Addr(); !addr.IsValid() || addr.IsUnspecified() {
+		// A connection from an unspecified address takes a port of the
+		// moment (connectTCP), so the protected client port would hold
+		// for UDP alone and the requests over TCP would leave
+		// unprotected.
+		t.Close()
+		return nil, fmt.Errorf("sip: a protected client port needs the node's own address, not %s", address)
 	}
 	client, err := ListenUDP(netip.AddrPortFrom(t.LocalAddr().Addr(), clientPort).String(), log)
 	if err != nil {
@@ -119,10 +141,20 @@ func ListenProtected(address string, clientPort uint16, log *slog.Logger, observ
 		return nil, err
 	}
 	client.observe = observe
-	t.client = client
+	t.client, t.protected = client, protected
 	t.wg.Add(1)
 	go t.readUDP(client)
 	return t, nil
+}
+
+// clientPort is the socket that a request to dst leaves from: the
+// protected client port for a peer with security associations, and nil
+// for every other peer and wherever no client port is bound.
+func (t *TransportLayer) clientPort(dst netip.AddrPort) *UDPTransport {
+	if t.client == nil || (t.protected != nil && !t.protected(dst)) {
+		return nil
+	}
+	return t.client
 }
 
 func newTransportLayer(address string, log *slog.Logger, observe Observer, idleTimeout time.Duration) (*TransportLayer, error) {
@@ -235,10 +267,10 @@ func (t *TransportLayer) readUDP(u *UDPTransport) {
 func (t *TransportLayer) SendRequest(req *Message, dst Destination) error {
 	switch dst.Transport {
 	case UDP:
-		if t.client != nil {
-			// TS 33.203 7.1: a request leaves from the protected client
-			// port.
-			return t.client.SendRequest(req, dst.Addr)
+		if client := t.clientPort(dst.Addr); client != nil {
+			// TS 33.203 7.1: a request to a protected peer leaves from
+			// the protected client port.
+			return client.SendRequest(req, dst.Addr)
 		}
 		return t.udp.SendRequest(req, dst.Addr)
 	case TCP:
