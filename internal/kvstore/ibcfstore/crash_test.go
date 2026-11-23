@@ -13,6 +13,7 @@ import (
 	"github.com/yuu-biz/ims-practice/internal/kvstore/ibcfstore"
 	"github.com/yuu-biz/ims-practice/internal/kvstore/kvjson"
 	"github.com/yuu-biz/ims-practice/internal/kvstore/storetest"
+	"github.com/yuu-biz/ims-practice/internal/sip"
 )
 
 // The tests in this file stop a process of an IBCF instance before one
@@ -175,6 +176,116 @@ func TestCallsOfReturnsTheRecordsWhenTheRepairFails(t *testing.T) {
 			}
 			if got := indexIDs(t, kv, cfg.Prefix); len(got) != 2 {
 				t.Errorf("the index after the failed repair = %v, want both entries", got)
+			}
+		})
+	}
+}
+
+// answeredRecord is record(id) once both dialogs of the call are
+// confirmed.
+func answeredRecord(id string) ibcf.CallRecord {
+	r := record(id)
+	r.Home = &sip.Dialog{ID: sip.DialogID{CallID: "home-" + id + "@192.0.2.20", LocalTag: "ibcf-in", RemoteTag: "scscf"},
+		State: sip.DialogConfirmed}
+	r.PeerSide = &sip.Dialog{ID: sip.DialogID{CallID: "peer-" + id + "@198.51.100.1", LocalTag: "ibcf-out", RemoteTag: "ibcf-b"},
+		State: sip.DialogConfirmed}
+	return r
+}
+
+// dialogEntries are the entries of the dialogs of r that are in the
+// store.
+func dialogEntries(t *testing.T, kv kvstore.Store, prefix string, r ibcf.CallRecord) []string {
+	t.Helper()
+	var keys []string
+	for _, id := range r.DialogIDs() {
+		key := prefix + "ibcf:dialog:" + kvjson.Member(id.CallID, id.LocalTag, id.RemoteTag)
+		_, err := kv.Get(context.Background(), key)
+		switch {
+		case err == nil:
+			keys = append(keys, key)
+		case !errors.Is(err, kvstore.ErrNotFound):
+			t.Fatal(err)
+		}
+	}
+	return keys
+}
+
+// findsNone checks that s finds the call by neither of the dialogs of
+// r.
+func findsNone(t *testing.T, s *ibcfstore.Store, r ibcf.CallRecord) {
+	t.Helper()
+	for _, id := range r.DialogIDs() {
+		if got, ok, err := s.CallOf(context.Background(), id); ok || err != nil {
+			t.Errorf("CallOf(%+v) = %+v, %v, %v; want a miss", id, got, ok, err)
+		}
+	}
+}
+
+// TestAPutCallThatStopsBeforeItsDialogsLeavesNoEntry: the record of an
+// answered call goes before the entries of its dialogs. A process that
+// stops between the two learns that the store failed, and no instance
+// finds the call by its dialogs yet. The next process finds the record,
+// with its dialogs, and once it has ended the call nothing is left.
+func TestAPutCallThatStopsBeforeItsDialogsLeavesNoEntry(t *testing.T) {
+	ctx := context.Background()
+	for _, backend := range storetest.Backends() {
+		t.Run(backend.Name, func(t *testing.T) {
+			kv, cfg := backend.New(t), kvjson.Config{Prefix: storetest.Prefix()}
+			// The call has its entry in the index since its TrGW context,
+			// so the record of the answer is the first write.
+			if err := ibcfstore.New(kv, cfg).PutCall(ctx, record("a")); err != nil {
+				t.Fatal(err)
+			}
+			r := answeredRecord("a")
+			if err := ibcfstore.New(storetest.StopAfter(kv, 1), cfg).PutCall(ctx, r); err == nil {
+				t.Fatal("PutCall that stops after the record returned no error")
+			}
+			findsNone(t, ibcfstore.New(kv, cfg), r)
+
+			next := ibcfstore.New(kv, cfg)
+			records, err := next.CallsOf(ctx, instance)
+			if err != nil || len(records) != 1 || len(records[0].DialogIDs()) != 2 {
+				t.Fatalf("CallsOf = %+v, %v; want the call with its dialogs", records, err)
+			}
+			if err := next.DeleteCall(ctx, instance, "a"); err != nil {
+				t.Fatal(err)
+			}
+			if got := dialogEntries(t, kv, cfg.Prefix, r); len(got) != 0 {
+				t.Errorf("entries left after the call ended: %v", got)
+			}
+		})
+	}
+}
+
+// TestADeleteCallThatStopsAfterItsDialogsLeavesTheCall: the entries of
+// the dialogs go before the record. A process that stops between the
+// two leaves the record in the index of the instance, and the next
+// process ends the call again and removes it.
+func TestADeleteCallThatStopsAfterItsDialogsLeavesTheCall(t *testing.T) {
+	ctx := context.Background()
+	for _, backend := range storetest.Backends() {
+		t.Run(backend.Name, func(t *testing.T) {
+			kv, cfg := backend.New(t), kvjson.Config{Prefix: storetest.Prefix()}
+			r := answeredRecord("a")
+			if err := ibcfstore.New(kv, cfg).PutCall(ctx, r); err != nil {
+				t.Fatal(err)
+			}
+			if got := dialogEntries(t, kv, cfg.Prefix, r); len(got) != 2 {
+				t.Fatalf("entries of the dialogs = %v, want both", got)
+			}
+			if err := ibcfstore.New(storetest.StopAfter(kv, 2), cfg).DeleteCall(ctx, instance, "a"); err == nil {
+				t.Fatal("DeleteCall that stops after the dialogs returned no error")
+			}
+			findsNone(t, ibcfstore.New(kv, cfg), r)
+			if got := ids(t, ibcfstore.New(kv, cfg)); len(got) != 1 || got[0] != "a" {
+				t.Fatalf("calls after the stopped DeleteCall = %v, want a", got)
+			}
+
+			if err := ibcfstore.New(kv, cfg).DeleteCall(ctx, instance, "a"); err != nil {
+				t.Fatal(err)
+			}
+			if got := ids(t, ibcfstore.New(kv, cfg)); len(got) != 0 {
+				t.Errorf("calls after the next DeleteCall = %v, want none", got)
 			}
 		})
 	}

@@ -52,7 +52,7 @@
 | IP-SM-GW と SC | `message-reference:<宛先>`、`delivery:<Call-ID>`、`reg-subscription:<Call-ID>`、`status-report-request:<参照>` | `reg-subscription-of:<公開 ID>` | RP-MR の数は TTL（10 分）。配達は TTL と時刻の索引 `report-timeout`（TR1N）。ほかは TTL |
 | MMTel AS | `call:<Incoming のダイアログ>`、`conference:<ID>`（新規） | `call-of-leg:<Outgoing のダイアログ>` | なし |
 | MRFC | `conference:<ID>`（新規） | なし | なし |
-| IBCF（新規） | `call:<台の名前>:<呼の ID>` | `calls-of:<台の名前>`（その台の呼の ID の集合） | なし |
+| IBCF（新規） | `call:<台の名前>:<呼の ID>` | `calls-of:<台の名前>`（その台の呼の ID の集合）、`dialog:<Call-ID>:<自分の tag>:<相手の tag>`（そのダイアログを持つ呼の台の名前と ID） | なし |
 | HSS | `subscriber:<IMPI>` | `public:<IMPU>`、並べ替えた索引 `subscribers`（`List` が 1 ページずつ引く） | なし |
 | メディア中継ノード（新規） | `<台の名前>-<役割>:context:<ID>` | `<台の名前>-<役割>:contexts`（その台のコンテキストの ID の集合） | なし |
 
@@ -60,7 +60,7 @@ P-CSCF の購読は利用者ごとに 1 つなので、主の項目は IMPI で�
 
 中継ノードの名前に役割を付けるのは、1 つのノードが `agw` と `mrfp` の両方の役割を持てるためです。このとき中継ノードは 2 つあり、RTP のポートの範囲もそれぞれ別です。片方がもう片方のコンテキストを読むと、自分の範囲の外のポートを開こうとして、そのコンテキストを捨ててしまいます。
 
-中継ノードの ID の集合は、その台のポートの範囲で数が決まるので、利用者の数では伸びません。IBCF の ID の集合も、その台が同時に持つ呼の数までしか伸びません。IBCF の台は、起動したときに自分の集合と記録を 1 回だけ読み、前のプロセスが残した呼を終わらせます。BYE を誰も見なかった呼の P-CSCF のダイアログと MMTel AS の呼の記録は、期限が無いので残ります。今の `MemoryStore` と同じで、`SIMPLIFIED:` に書きます。
+中継ノードの ID の集合は、その台のポートの範囲で数が決まるので、利用者の数では伸びません。IBCF の ID の集合も、その台が同時に持つ呼の数までしか伸びません。IBCF の台は、起動したときに自分の集合と記録を 1 回だけ読み、前のプロセスが残した呼を終わらせます。Replaces を持つ INVITE を受けたときは、ほかの台が持つ呼でも、Replaces が指すダイアログの索引からその呼の記録を 1 件だけ引きます。BYE を誰も見なかった呼の P-CSCF のダイアログと MMTel AS の呼の記録は、期限が無いので残ります。今の `MemoryStore` と同じで、`SIMPLIFIED:` に書きます。
 
 ## 期限切れを 1 台だけが処理する
 

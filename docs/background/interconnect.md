@@ -628,7 +628,7 @@ IBCF の台を作り直したときに残る TrGW のコンテキストは、メ
 | 読む時 | `Listen` が、UA を作る前に自分の台の名前の記録を `CallsOf` で 1 回読みます。UA ができたら、別の goroutine で `ReleaseLeftovers` を行います |
 | 片付け | 記録ごとに TrGW のコンテキストを解放し、2 つのダイアログのそれぞれで BYE を送り、記録を消します。BYE の CSeq は、記録の `LocalSeq` に 65536 を足した値の次です。記録は 2xx のときに書くので、そのあとの要求で CSeq が進んでいるかもしれないためです。受ける側は、前より大きな CSeq なら受け付けます（RFC 3261 12.2.2）。MMTel AS の `ResumeCall` と同じ考え方です |
 | 規模 | 1 つの台の記録は、その台が同時に持っていた呼の数までです。キーは台の名前と呼の ID で、全部の呼を走査しません |
-| 実装 | `MemoryStore` と、`internal/kvstore/ibcfstore` の `Store` の 2 つです。ノードの設定に種類が `valkey` の `store` の節があれば、`cmd/ims` は IBCF に `ibcfstore` を渡します。キーは `<prefix>ibcf:call:<台の名前>:<呼の ID>` と、台ごとの ID の集合 `<prefix>ibcf:calls-of:<台の名前>` で、メディア中継ノードの形に合わせました。`store` の節が無ければ `MemoryStore` を使い、記録はプロセスと一緒に消えます。Compose の網の IBCF には `store` の節が無いので、作り直した台は何も見つけません |
+| 実装 | `MemoryStore` と、`internal/kvstore/ibcfstore` の `Store` の 2 つです。ノードの設定に種類が `valkey` の `store` の節があれば、`cmd/ims` は IBCF に `ibcfstore` を渡します。キーは `<prefix>ibcf:call:<台の名前>:<呼の ID>` と、台ごとの ID の集合 `<prefix>ibcf:calls-of:<台の名前>` で、メディア中継ノードの形に合わせました。ダイアログから呼を引く索引 `<prefix>ibcf:dialog:<Call-ID>:<自分の tag>:<相手の tag>` は、記録のあとに書き、記録の前に消します。消すときに記録を読んで索引を見つけるので、途中で止まっても、記録から見つけられない索引は残りません。`store` の節が無ければ `MemoryStore` を使い、記録はプロセスと一緒に消えます。Compose の網の IBCF には `store` の節が無いので、作り直した台は何も見つけません |
 
 試験 `TestRestartedInstanceEndsTheCallsItLeft` は、網 A の 1 台目を `Close` して、同じアドレスで新しいプロセスを起動します。保存先は 2 通りで、同じ `MemoryStore` を渡す形と、共有の保存先の上にプロセスごとに `ibcfstore` を作り直す形です。発信者と着信者の呼が BYE で終わり、両方の網の TrGW のコンテキストが解放され、記録が消えることを確かめています。
 
@@ -852,7 +852,7 @@ IBCF の台を作り直したときに残る TrGW のコンテキストは、メ
 | 読む時 | `Listen` が、UA を作る前に自分の台の名前の記録を `CallsOf` で 1 回読みます。UA ができたら、別の goroutine で `ReleaseLeftovers` を行います |
 | 片付け | 記録ごとに TrGW のコンテキストを解放し、2 つのダイアログのそれぞれで BYE を送り、記録を消します。BYE の CSeq は、記録の `LocalSeq` に 65536 を足した値の次です。記録は 2xx のときに書くので、そのあとの要求で CSeq が進んでいるかもしれないためです。受ける側は、前より大きな CSeq なら受け付けます（RFC 3261 12.2.2）。MMTel AS の `ResumeCall` と同じ考え方です |
 | 規模 | 1 つの台の記録は、その台が同時に持っていた呼の数までです。キーは台の名前と呼の ID で、全部の呼を走査しません |
-| 実装 | `MemoryStore` と、`internal/kvstore/ibcfstore` の `Store` の 2 つです。ノードの設定に種類が `valkey` の `store` の節があれば、`cmd/ims` は IBCF に `ibcfstore` を渡します。キーは `<prefix>ibcf:call:<台の名前>:<呼の ID>` と、台ごとの ID の集合 `<prefix>ibcf:calls-of:<台の名前>` で、メディア中継ノードの形に合わせました。`store` の節が無ければ `MemoryStore` を使い、記録はプロセスと一緒に消えます。Compose の網の IBCF には `store` の節が無いので、作り直した台は何も見つけません |
+| 実装 | `MemoryStore` と、`internal/kvstore/ibcfstore` の `Store` の 2 つです。ノードの設定に種類が `valkey` の `store` の節があれば、`cmd/ims` は IBCF に `ibcfstore` を渡します。キーは `<prefix>ibcf:call:<台の名前>:<呼の ID>` と、台ごとの ID の集合 `<prefix>ibcf:calls-of:<台の名前>` で、メディア中継ノードの形に合わせました。ダイアログから呼を引く索引 `<prefix>ibcf:dialog:<Call-ID>:<自分の tag>:<相手の tag>` は、記録のあとに書き、記録の前に消します。消すときに記録を読んで索引を見つけるので、途中で止まっても、記録から見つけられない索引は残りません。`store` の節が無ければ `MemoryStore` を使い、記録はプロセスと一緒に消えます。Compose の網の IBCF には `store` の節が無いので、作り直した台は何も見つけません |
 
 試験 `TestRestartedInstanceEndsTheCallsItLeft` は、網 A の 1 台目を `Close` して、同じアドレスで新しいプロセスを起動します。保存先は 2 通りで、同じ `MemoryStore` を渡す形と、共有の保存先の上にプロセスごとに `ibcfstore` を作り直す形です。発信者と着信者の呼が BYE で終わり、両方の網の TrGW のコンテキストが解放され、記録が消えることを確かめています。
 

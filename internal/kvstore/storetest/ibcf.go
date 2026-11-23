@@ -23,6 +23,7 @@ func IBCF(t *testing.T, newPair func(t *testing.T) (ibcf.Store, ibcf.Store)) {
 		{"InstancesApart", ibcfInstancesApart},
 		{"ConcurrentPuts", ibcfConcurrentPuts},
 		{"ConcurrentPutsAndDeletes", ibcfConcurrentPutsAndDeletes},
+		{"CallOfADialog", ibcfCallOfADialog},
 	})
 }
 
@@ -52,6 +53,15 @@ func callsOf(t *testing.T, s ibcf.Store, instance string) []ibcf.CallRecord {
 		t.Errorf("CallsOf(%s): %v", instance, err)
 	}
 	return records
+}
+
+func borderCallOf(t *testing.T, s ibcf.Store, id sip.DialogID) (ibcf.CallRecord, bool) {
+	t.Helper()
+	r, ok, err := s.CallOf(context.Background(), id)
+	if err != nil {
+		t.Errorf("CallOf(%+v): %v", id, err)
+	}
+	return r, ok
 }
 
 func recordIDs(records []ibcf.CallRecord) []string {
@@ -170,6 +180,41 @@ func ibcfConcurrentPuts(t *testing.T, a, b ibcf.Store) {
 	}
 	if got := recordIDs(callsOf(t, b, "ibcf-1")); !slices.Equal(got, want) {
 		t.Fatalf("calls after %d concurrent puts = %v, want %v", n, got, want)
+	}
+}
+
+// ibcfCallOfADialog has ibcf-1 keep an answered call and one that is
+// not answered yet. Another instance finds the answered call by either
+// of its dialogs, as the IBCF finds the call that a Replaces names, and
+// by neither once it has ended. A dialog ID with its tags the other way
+// round is the dialog as the far end has it, which names no call here.
+func ibcfCallOfADialog(t *testing.T, owner, other ibcf.Store) {
+	putCallRecord(t, owner, borderCall("ibcf-1", "early"))
+	r := answered(borderCall("ibcf-1", "a"), 1)
+	putCallRecord(t, owner, r)
+	later := answered(borderCall("ibcf-1", "a"), 7)
+	putCallRecord(t, owner, later)
+	for _, id := range r.DialogIDs() {
+		if got, ok := borderCallOf(t, other, id); !ok || !sameJSON(t, got, later) {
+			t.Errorf("CallOf(%+v) = %+v, %v; want the call as written last", id, got, ok)
+		}
+		farEnd := sip.DialogID{CallID: id.CallID, LocalTag: id.RemoteTag, RemoteTag: id.LocalTag}
+		if got, ok := borderCallOf(t, other, farEnd); ok {
+			t.Errorf("CallOf(%+v), the far end's form, = %+v", farEnd, got)
+		}
+	}
+	if got, ok := borderCallOf(t, other, sip.DialogID{CallID: "early@192.0.2.20", LocalTag: "x", RemoteTag: "y"}); ok {
+		t.Errorf("CallOf of a dialog of no call = %+v", got)
+	}
+
+	deleteCallRecord(t, owner, "ibcf-1", "a")
+	for _, id := range r.DialogIDs() {
+		if got, ok := borderCallOf(t, other, id); ok {
+			t.Errorf("CallOf(%+v) after the call ended = %+v", id, got)
+		}
+	}
+	if got := recordIDs(callsOf(t, other, "ibcf-1")); !slices.Equal(got, []string{"early"}) {
+		t.Errorf("calls of ibcf-1 = %v, want the one not answered", got)
 	}
 }
 

@@ -196,6 +196,13 @@ func (s *reachableStore) CallsOf(ctx context.Context, instance string) ([]ibcf.C
 	return s.MemoryStore.CallsOf(ctx, instance)
 }
 
+func (s *reachableStore) CallOf(ctx context.Context, id sip.DialogID) (ibcf.CallRecord, bool, error) {
+	if s.down.Load() {
+		return ibcf.CallRecord{}, false, errUnreachable
+	}
+	return s.MemoryStore.CallOf(ctx, id)
+}
+
 // callsOf are the records of instance in the network's Store.
 func (n *network) callsOf(t *testing.T, instance string) []ibcf.CallRecord {
 	t.Helper()
