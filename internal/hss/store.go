@@ -343,6 +343,15 @@ type Store interface {
 	// 29.328 6.1.2.1 step 6), as every subscription of the stub is one
 	// implicit registration set with one service profile.
 	RepositoryData(ctx context.Context, privateID, serviceIndication string) (sh.TransparentData, bool, error)
+	// AllRepositoryData returns the repository data of the subscription
+	// of privateID under every Service-Indication it has, in the order
+	// the indications sort in, and none for a subscription that is not
+	// stored. It is for the provisioning API, which replaces the data of
+	// a subscription and writes it out; an Sh request names the
+	// Service-Indication it is after (RepositoryData). It reads what one
+	// subscription holds, so it costs the same however many
+	// subscriptions the store holds.
+	AllRepositoryData(ctx context.Context, privateID string) ([]sh.TransparentData, error)
 	// CompareAndSwapRepositoryData stores data under its
 	// ServiceIndication, or removes what is stored there when data has
 	// no ServiceData, if what is stored is still old: nil for nothing, or
@@ -604,6 +613,18 @@ func (s *MemoryStore) RepositoryData(_ context.Context, privateID, serviceIndica
 	defer s.mu.Unlock()
 	d, ok := s.repository[privateKey(privateID)][serviceIndication]
 	return cloneTransparentData(d), ok, nil
+}
+
+func (s *MemoryStore) AllRepositoryData(_ context.Context, privateID string) ([]sh.TransparentData, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	stored := s.repository[privateKey(privateID)]
+	data := make([]sh.TransparentData, 0, len(stored))
+	for _, d := range stored {
+		data = append(data, cloneTransparentData(d))
+	}
+	slices.SortFunc(data, func(a, b sh.TransparentData) int { return strings.Compare(a.ServiceIndication, b.ServiceIndication) })
+	return data, nil
 }
 
 func (s *MemoryStore) CompareAndSwapRepositoryData(_ context.Context, privateID string, old *sh.TransparentData, data sh.TransparentData) (bool, error) {

@@ -292,6 +292,22 @@ func (s *Store) RepositoryData(ctx context.Context, privateID, serviceIndication
 	return d, found, nil
 }
 
+// AllRepositoryData reads the repository data of the subscriber's item,
+// which holds every Service-Indication of the subscription: one read,
+// however many subscriptions the store holds.
+func (s *Store) AllRepositoryData(ctx context.Context, privateID string) ([]sh.TransparentData, error) {
+	r, _, ok, err := s.record(ctx, privateID)
+	if err != nil || !ok {
+		return nil, err
+	}
+	data := make([]sh.TransparentData, 0, len(r.Repository))
+	for _, d := range r.Repository {
+		data = append(data, d)
+	}
+	slices.SortFunc(data, func(a, b sh.TransparentData) int { return strings.Compare(a.ServiceIndication, b.ServiceIndication) })
+	return data, nil
+}
+
 // CompareAndSwapRepositoryData checks old against what is stored and
 // writes data in one compare and swap of the subscriber's item, so that
 // two instances that both read one Sequence Number cannot both write.
