@@ -6,6 +6,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/fiorix/go-diameter/v4/diam"
 	"github.com/fiorix/go-diameter/v4/diam/avp"
@@ -216,5 +217,62 @@ func TestTheRolesOfANodeShareTheDiameterCounters(t *testing.T) {
 func TestPeerGroupRefusesARoleThatCountsNothing(t *testing.T) {
 	if _, err := NewPeerGroup(metrics.NewRegistry(), "hss"); err == nil {
 		t.Error("a group of a role that counts no Diameter messages was built")
+	}
+}
+
+// ims_diameter_peer_up is read at the scrape from the state of each
+// peer: 1 for the open connection, 0 for the instance that is not
+// there, and 0 for the peer that has stopped.
+func TestPeerUpFollowsTheStateOfEachPeer(t *testing.T) {
+	node, logs := newTestNode(scscf, testTimers)
+	open := openFarmPeer(t, node, logs, farmHost(1), answeringResult(farmHost(1), Base(DiameterSuccess)))
+	dead := deadFarmPeer(t, node, farmHost(2))
+	reg := metrics.NewRegistry()
+	if err := RegisterPeerUp(reg, []*Peer{open, dead}); err != nil {
+		t.Fatal(err)
+	}
+
+	hasSeries(t, reg,
+		`ims_diameter_peer_up{peer="`+farmHost(1)+`"} 1`,
+		`ims_diameter_peer_up{peer="`+farmHost(2)+`"} 0`)
+	open.Stop()
+	// The gauge reads the peers at each scrape, so the series follows
+	// the peer that has gone without anything writing to it.
+	deadline := time.Now().Add(5 * time.Second)
+	for !strings.Contains(metricsText(t, reg), `ims_diameter_peer_up{peer="`+farmHost(1)+`"} 0`) {
+		if time.Now().After(deadline) {
+			t.Fatalf("the peer that stopped is still up:\n%s", metricsText(t, reg))
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+// Two entries of one Origin-Host share one series, whichever of them
+// the gauge reads first: a request for that host can go out while one
+// of the two connections takes requests, so the series is 1 then, and 0
+// only once neither does.
+func TestPeerUpOfTwoEntriesOfOneHost(t *testing.T) {
+	node, logs := newTestNode(scscf, testTimers)
+	open := openFarmPeer(t, node, logs, farmHost(1), answeringResult(farmHost(1), Base(DiameterSuccess)))
+	dead := deadFarmPeer(t, node, farmHost(1))
+	for _, peers := range [][]*Peer{{open, dead}, {dead, open}} {
+		reg := metrics.NewRegistry()
+		if err := RegisterPeerUp(reg, peers); err != nil {
+			t.Fatal(err)
+		}
+		hasSeries(t, reg, `ims_diameter_peer_up{peer="`+farmHost(1)+`"} 1`)
+	}
+}
+
+// A node that connects to no peer has no peer to report, and a label
+// needs at least one value, so it registers no gauge at all rather than
+// one that is always empty.
+func TestPeerUpOfANodeWithoutPeers(t *testing.T) {
+	reg := metrics.NewRegistry()
+	if err := RegisterPeerUp(reg, nil); err != nil {
+		t.Fatal(err)
+	}
+	if text := metricsText(t, reg); strings.Contains(text, "ims_diameter_peer_up") {
+		t.Errorf("a node without peers serves the gauge:\n%s", text)
 	}
 }

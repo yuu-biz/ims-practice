@@ -692,7 +692,7 @@
     {
       "type": "stat",
       "title": "Diameter peers",
-      "description": "1 while the Diameter connection to the configured peer is open, 0 otherwise.",
+      "description": "1 while a Diameter connection to the configured peer takes requests: it is open and the watchdog does not suspect it. 0 otherwise.",
       "id": 15,
       "datasource": {
         "type": "prometheus",
@@ -712,12 +712,12 @@
               "type": "value",
               "options": {
                 "0": {
-                  "text": "closed",
+                  "text": "down",
                   "color": "red",
                   "index": 0
                 },
                 "1": {
-                  "text": "open",
+                  "text": "up",
                   "color": "green",
                   "index": 1
                 }

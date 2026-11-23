@@ -1,6 +1,8 @@
 package diameter
 
 import (
+	"slices"
+
 	"github.com/fiorix/go-diameter/v4/diam"
 	"github.com/fiorix/go-diameter/v4/diam/avp"
 	"github.com/fiorix/go-diameter/v4/diam/datatype"
@@ -171,4 +173,50 @@ func resultOrExperimental(answer *diam.Message) Result {
 	// No result at all: Result{} is the result of no name, so it counts
 	// under "other".
 	return Result{}
+}
+
+// RegisterPeerUp registers ims_diameter_peer_up, which says of each
+// peer whether its connection takes requests now. The gauge is read
+// when the registry is scraped, from the state of each peer, so that no
+// part of the node has to keep the number up to date
+// (metrics.Registry.NewGaugeFunc).
+//
+// The label holds the Origin-Host of each peer, which comes from the
+// configuration of the node, so the series of the gauge are as many as
+// the peers the node is configured with. A node with no peer registers
+// nothing: a label needs at least one value, and a node that connects
+// to nobody has no peer to report.
+//
+// Two entries of one Origin-Host share one series, which is 1 while at
+// least one of their connections takes requests: a request for that
+// host can go out as long as one of them can carry it. The series is
+// the greatest of their values and not the last one read, which is
+// what a gauge func would otherwise keep.
+func RegisterPeerUp(reg *metrics.Registry, peers []*Peer) error {
+	if len(peers) == 0 {
+		return nil
+	}
+	var hosts []string
+	for _, p := range peers {
+		if !slices.Contains(hosts, p.host) {
+			hosts = append(hosts, p.host)
+		}
+	}
+	read := slices.Clone(peers)
+	return reg.NewGaugeFunc("ims_diameter_peer_up",
+		"1 while a Diameter connection to the peer takes requests: it is open and the watchdog does not suspect it (RFC 3539 3.4.1).",
+		func(emit func(value float64, labelValues ...string)) {
+			up := make(map[string]float64, len(hosts))
+			for _, p := range read {
+				if p.Available() {
+					up[p.host] = 1
+				}
+			}
+			// Every host of a peer is in hosts, and one that no peer of it
+			// reported up is 0.
+			for _, host := range hosts {
+				emit(up[host], host)
+			}
+		},
+		metrics.Label{Name: "peer", Values: hosts})
 }

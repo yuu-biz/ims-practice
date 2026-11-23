@@ -32,7 +32,7 @@ UE を登録すると、数えた値が見えます。
 docker compose run --rm ue register -deregister-after 5s
 ```
 
-Prometheus は 15 秒ごとに集めます。その時間のうちに、パネル **REGISTER attempts and successes** に P-CSCF と S-CSCF がそれぞれの `role` で数えた登録と登録の解除が出て、**Initial registration success ratio** に最初の登録のうち成功したものの割合が、**Initial registration set-up time** に P-CSCF での最初の登録にかかった時間が出ます。[音声通話の流れを追う](../../docs/guide/ja/call.md) のとおりに通話すると、パネル **Session attempts and answers** と **Answered sessions** に値が出ます。P-CSCF は通話の発信側と着信側の両方の区間で数え、I-CSCF はホーム網に入る着信のセッションとして 1 回数えます。パネル **Diameter answers by result** は、同じ登録を Cx の側から見たものです。I-CSCF は利用者が登録してよいかを HSS に問い合わせ（UAR）、S-CSCF は認証ベクトルを求め（MAR）、自分がその利用者を受け持つことを HSS に伝えます（SAR）。どれもそれぞれの `role` で、HSS が返した結果ごとに出ます。パネル **Registered identities** は、同じ登録を HSS の側から見たものです。加入者の SIP URI と tel URI がそろって登録済みになり、登録の解除でそろって外れます。パネル **Provisioned subscriptions and identities** は、登録している利用者がいるかどうかに関わらず、HSS が持っている加入者と公開識別子の数を出します。
+Prometheus は 15 秒ごとに集めます。その時間のうちに、パネル **REGISTER attempts and successes** に P-CSCF と S-CSCF がそれぞれの `role` で数えた登録と登録の解除が出て、**Initial registration success ratio** に最初の登録のうち成功したものの割合が、**Initial registration set-up time** に P-CSCF での最初の登録にかかった時間が出ます。[音声通話の流れを追う](../../docs/guide/ja/call.md) のとおりに通話すると、パネル **Session attempts and answers** と **Answered sessions** に値が出ます。P-CSCF は通話の発信側と着信側の両方の区間で数え、I-CSCF はホーム網に入る着信のセッションとして 1 回数えます。パネル **Diameter answers by result** は、同じ登録を Cx の側から見たものです。I-CSCF は利用者が登録してよいかを HSS に問い合わせ（UAR）、S-CSCF は認証ベクトルを求め（MAR）、自分がその利用者を受け持つことを HSS に伝えます（SAR）。どれもそれぞれの `role` で、HSS が返した結果ごとに出ます。パネル **Diameter peers** は、各ノードが設定に書いた相手へ開く接続を出します。その接続が要求を通せるあいだは 1 です。値は収集のときに各接続の状態から読むので、HSS を止めたノードは 0 に落ち、HSS が戻れば自分で 1 に戻ります。パネル **Registered identities** は、同じ登録を HSS の側から見たものです。加入者の SIP URI と tel URI がそろって登録済みになり、登録の解除でそろって外れます。パネル **Provisioned subscriptions and identities** は、登録している利用者がいるかどうかに関わらず、HSS が持っている加入者と公開識別子の数を出します。
 
 止めて、取ってきたイメージと Prometheus のデータも含めて消すには、次のコマンドを使います。
 
@@ -55,6 +55,8 @@ go generate ./deploy/observability/...
 ## できないこと
 
 `internal/metrics` で数える役割は P-CSCF、I-CSCF、S-CSCF、HSS、MMTel AS、IP-SM-GW、IBCF です。Compose のプロジェクトの 3 つの CSCF と HSS は、`deploy/compose/pcscf.yaml`、`deploy/compose/icscf.yaml`、`deploy/compose/scscf.yaml`、`deploy/compose/hss.yaml` の `maintenance` の節が決める待ち受けで、`http://pcscf:8085/metrics`、`http://icscf:8085/metrics`、`http://scscf:8085/metrics`、`http://hss:8085/metrics` に数えた値を出します。HSS のノードはこの待ち受けに指標だけを出し、保守用の API は出しません。HSS には、運用者が設定する管理状態がないためです。パネル **Dropped sessions** は空のままです。P-CSCF も I-CSCF もセッションを期限切れで消さないので、数えるものがありません。ほかのノードは指標を出しません。MMTel AS と IP-SM-GW は Sh でやり取りする Diameter を数え、IBCF のノード（`deploy/interconnect`）にはこの待ち受けが無いので、数えた値はプロセスの中にとどまります。`prometheus/prometheus.yml` は、各ノードが保守用の API の待ち受けで、`http://<サービス名>:8085/metrics` に指標を出す形に合わせて書いてあります。このポート番号を決めた仕様はありません。8085 はこのプロジェクトが選んだ番号で、`prometheus.go` の `MetricsPort` に置いています。ほかの番号にするときは、`MetricsPort` を直し、上のコマンドを実行します。
+
+`ims_diameter_peer_up` が出すのは、ノードが設定にしたがって自分から接続する相手です。HSS や PCRF のように、ノードが受け付けた接続の相手は入りません。相手が接続してきて初めて分かるので、ラベルに並べる決まった集合がなく、その接続は開いた側のノードが自分の側から出すためです。
 
 指標は `internal/metrics` が Prometheus のテキスト形式（版 0.0.4）で書きます。ラベルの値は、決まった集合の中からしか取れません。そのため、加入者ごとの系列はできず、加入者が何人いても系列の数は変わりません。
 
