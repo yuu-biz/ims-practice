@@ -47,7 +47,9 @@ type Subscription struct {
 }
 
 // hssSubscriptionRequest is the body of PUT /subscriptions/{impi}: the
-// subscriptionRequest of internal/hss with the fields the OAM adds.
+// subscriptionRequest of internal/hss, without the
+// customized_alerting_tone, which the OAM never provisions on its own
+// and carries in the repository data of an archive instead.
 type hssSubscriptionRequest struct {
 	PrivateIdentity  string       `json:"private_identity"`
 	PublicIdentities []string     `json:"public_identities"`
@@ -207,9 +209,9 @@ func (c *hssClient) export(ctx context.Context, after string, limit int, emit fu
 // The header is the only end of the export. A page of exactly the limit
 // always carries it, so the page that follows can hold no record at all;
 // that page is the end and not a failure. A page can also hold fewer
-// records than it names in the header, as the HSS leaves out a
-// subscription that went while the page was read, so the next page
-// starts where the HSS says and not after the last record read.
+// records than the limit it was asked for, as the HSS leaves out a
+// subscription that went while the page was read, so the page that
+// follows starts where the HSS says and not after the last record read.
 func nextPage(resp *http.Response, after string) (string, error) {
 	for _, link := range resp.Header.Values("Link") {
 		target, params, ok := strings.Cut(link, ";")
