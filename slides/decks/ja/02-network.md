@@ -200,7 +200,7 @@ ims-practice 勉強会 第 2 回（ノード、ノードの間の参照点、地
 | Rx、EPC スタブ、IMS-AKA | 第 8 回。VoLTE |
 | Mr'、Mp、MRF | 手順書 [MRF による音声ガイダンス、呼び出し音、会議](../../../docs/guide/ja/mrf.md) |
 | Mx、Ici、Izi、境界 | 手順書 [IMS 網どうしを相互接続する](../../../docs/guide/ja/interconnect.md) |
-| HEP とラボ | 手順書 [ラボで IMS を見る](../../../docs/guide/ja/lab.md) |
+| HEP とラボ | 第 3 回。キャプチャとラボ |
 
 > 手順書 [手順書の入口「読む順」](../../../docs/guide/ja/README.md#読む順)
 
@@ -249,7 +249,8 @@ ims-practice 勉強会 第 2 回（ノード、ノードの間の参照点、地
 
 ## 次回
 
-- 次は登録です。キャプチャで読む最初の流れで、Gm、Mw、Cx を渡り、最後には ISC と Sh も出てきます。
+- 次は、この地図が動くところを見る 2 つの方法です。Wireshark でキャプチャを読むことと、ラボです。
+- そのあとが登録です。Gm、Mw、Cx を渡り、最後には ISC と Sh も出てきます。
 - その前に、一度システムを起動して、Diameter の接続が開くところを見ておいてください。
 
 ```sh
@@ -257,4 +258,4 @@ docker compose up -d --build
 docker compose logs scscf | grep I-Open
 ```
 
-> 次回の手順書は [UE が IMS に登録する流れを追う](../../../docs/guide/ja/registration.md) です。システムの起動とキャプチャを開くコマンドは [信号をキャプチャして Wireshark で開く](../../../docs/guide/ja/capture.md) にあります。
+> 次回の手順書は [信号をキャプチャして Wireshark で開く](../../../docs/guide/ja/capture.md)（上のコマンドもここにあります）と [ラボで IMS を見る](../../../docs/guide/ja/lab.md) です。

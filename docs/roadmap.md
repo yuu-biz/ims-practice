@@ -301,7 +301,7 @@
 - 元データを Markdown などのテキストで管理し、HTML で表示し、pptx を出力する仕組みを選ぶ。自前の生成の道具にした（[implementation.md](design/implementation.md)）。
 - 各段階の手順書とラダー図をスライドから参照する。
 
-今あるもの。Go、パッケージ構成、網の地図、登録、通話、SMS、補足サービス、VoLTE のデッキが英語と日本語で `slides/decks/` にあり、CI の `slides` のジョブが HTML と pptx を作ります（[slides/README.ja.md](../slides/README.ja.md)）。調査は [slides.md](background/slides.md) にあります。
+今あるもの。Go、パッケージ構成、網の地図、キャプチャとラボ、登録、通話、SMS、補足サービス、VoLTE のデッキが英語と日本語で `slides/decks/` にあり、CI の `slides` のジョブが HTML と pptx を作ります（[slides/README.ja.md](../slides/README.ja.md)）。調査は [slides.md](background/slides.md) にあります。
 
 **完了条件.** CI でスライドの HTML と pptx が生成され、成果物として保存される。
 

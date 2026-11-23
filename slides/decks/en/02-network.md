@@ -200,7 +200,7 @@ ims-practice study session 2 (the nodes, the reference points between them, and 
 | Rx, the EPC stub, IMS AKA | session 8, VoLTE |
 | Mr', Mp and the MRF | the guide [Announcements, alerting tones and conferences with the MRF](../../../docs/guide/en/mrf.md) |
 | Mx, Ici, Izi and the border | the guide [Connect two IMS networks](../../../docs/guide/en/interconnect.md) |
-| HEP and the Lab | the guide [Watch the IMS in the Lab](../../../docs/guide/en/lab.md) |
+| HEP and the Lab | session 3, captures and the Lab |
 
 > Guide: [Guides, "The order to read them in"](../../../docs/guide/en/README.md#the-order-to-read-them-in)
 
@@ -249,7 +249,8 @@ ims-practice study session 2 (the nodes, the reference points between them, and 
 
 ## Next session
 
-- Next is registration: the first flow read in a capture. It crosses Gm, Mw and Cx, and at its end ISC and Sh as well.
+- Next are the two ways of watching this map at work: a capture in Wireshark, and the Lab.
+- Registration follows them. It crosses Gm, Mw and Cx, and at its end ISC and Sh as well.
 - Before then, start the system once and watch the Diameter connections come up.
 
 ```sh
@@ -257,4 +258,4 @@ docker compose up -d --build
 docker compose logs scscf | grep I-Open
 ```
 
-> The guide of the next session is [Follow a UE registering with the IMS](../../../docs/guide/en/registration.md). [Capture signaling and open it in Wireshark](../../../docs/guide/en/capture.md) has the commands for starting the system and opening a capture.
+> The guides of the next session are [Capture signaling and open it in Wireshark](../../../docs/guide/en/capture.md), which has the commands above, and [Watch the IMS in the Lab](../../../docs/guide/en/lab.md).
