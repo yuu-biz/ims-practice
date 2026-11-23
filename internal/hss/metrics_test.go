@@ -305,3 +305,35 @@ func TestTheGaugesFollowConcurrentRegistrations(t *testing.T) {
 		registeredPrivate: float64(held.RegisteredPrivateIdentities),
 	})
 }
+
+// TS 32.409 4.2.12.1 counts every request the HSS receives and 4.2.12.2
+// every answer it sends, under the other value of the direction label
+// from the request that a role sends the HSS and the answer that comes
+// back to it (internal/diameter). The Cx of one registration is a MAR
+// and a SAR, each answered once.
+func TestTheHSSCountsTheRequestsItAnswers(t *testing.T) {
+	h, reg := counting(t)
+	mar(t, h, scscf)
+	sar(t, h, scscf, cx.AssignRegistration)
+
+	want(t, reg, "after the Cx of one registration", map[string]float64{
+		`ims_diameter_requests_total{role="hss",direction="received",command="MAR"}`:                      1,
+		`ims_diameter_answers_total{role="hss",direction="sent",command="MAR",result="DIAMETER_SUCCESS"}`: 1,
+		`ims_diameter_requests_total{role="hss",direction="received",command="SAR"}`:                      1,
+		`ims_diameter_answers_total{role="hss",direction="sent",command="SAR",result="DIAMETER_SUCCESS"}`: 1,
+	})
+}
+
+// The result of each answer is in the result label, so that the answers
+// of one command divide into the requests of that command whatever the
+// HSS answered. A UAR for a subscriber the HSS does not hold is
+// answered DIAMETER_ERROR_USER_UNKNOWN (TS 29.229 6.2.2.1).
+func TestTheHSSCountsTheResultOfTheAnswersItSends(t *testing.T) {
+	h, reg := counting(t)
+	uar(t, h, "001010000000009@"+realm, "sip:001010000000009@"+realm, cx.Registration)
+
+	want(t, reg, "after a UAR for a user the HSS does not hold", map[string]float64{
+		`ims_diameter_requests_total{role="hss",direction="received",command="UAR"}`:                                 1,
+		`ims_diameter_answers_total{role="hss",direction="sent",command="UAR",result="DIAMETER_ERROR_USER_UNKNOWN"}`: 1,
+	})
+}

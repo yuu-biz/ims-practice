@@ -32,6 +32,22 @@ func countingGroup(t *testing.T, peers ...*Peer) (*PeerGroup, *metrics.Registry)
 	return group, reg
 }
 
+// answeringCounters counts the requests that reach role, with the
+// registry of its node to read the counts from. The requests of the
+// tests are MARs, as those of countingGroup are.
+func answeringCounters(t *testing.T, role string) (*Answering, *metrics.Registry) {
+	t.Helper()
+	if err := LoadDictionary(); err != nil {
+		t.Fatal(err)
+	}
+	reg := metrics.NewRegistry()
+	answering, err := NewAnswering(reg, role)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return answering, reg
+}
+
 func metricsText(t *testing.T, reg *metrics.Registry) string {
 	t.Helper()
 	var text bytes.Buffer
@@ -94,6 +110,9 @@ func TestPeerGroupCountsTheResultOfAnAnswer(t *testing.T) {
 		{Experimental(5001), "DIAMETER_ERROR_USER_UNKNOWN"},
 		{Experimental(2001), "DIAMETER_FIRST_REGISTRATION"},
 		{Base(DiameterUnableToComply), "DIAMETER_UNABLE_TO_COMPLY"},
+		// The failure that an S-CSCF answers a PPR with when it cannot
+		// take the user data, one cause of TS 32.409 4.1.7.3.
+		{Experimental(5009), "DIAMETER_ERROR_NOT_SUPPORTED_USER_DATA"},
 		// A result that the label does not name one by one, so that the
 		// causes still add up to all the answers (metrics.OtherValue).
 		{Experimental(5065), metrics.OtherValue},
@@ -213,11 +232,91 @@ func TestTheRolesOfANodeShareTheDiameterCounters(t *testing.T) {
 
 // A role whose name the role label does not know would count under
 // "other", which is a mistake in the node rather than a measurement, so
-// the group says so when it is built.
-func TestPeerGroupRefusesARoleThatCountsNothing(t *testing.T) {
-	if _, err := NewPeerGroup(metrics.NewRegistry(), "hss"); err == nil {
+// the group, and the counter of the requests a role answers, say so
+// when they are built. The MRFC speaks no Diameter at all.
+func TestTheDiameterCountersRefuseARoleThatCountsNothing(t *testing.T) {
+	if _, err := NewPeerGroup(metrics.NewRegistry(), "mrfc"); err == nil {
 		t.Error("a group of a role that counts no Diameter messages was built")
 	}
+	if _, err := NewAnswering(metrics.NewRegistry(), "mrfc"); err == nil {
+		t.Error("the answering counters of a role that counts no Diameter messages were built")
+	}
+}
+
+// TS 32.409 4.2.12.1 counts a request on its receipt by the HSS and
+// 4.2.12.2 the answer the HSS sends back, which is the other value of
+// the direction label from the request a role sends out and the answer
+// that comes back to it.
+func TestAnsweringCountsARequestThatArrivedAndItsAnswer(t *testing.T) {
+	node, _ := newTestNode(scscf, testTimers)
+	answering, reg := answeringCounters(t, "hss")
+	request := testRequest(node)
+
+	answering.RequestReceived(request)
+	answering.AnswerSent(request, answeringResult(farmHost(1), Base(DiameterSuccess))(request))
+
+	hasSeries(t, reg,
+		`ims_diameter_requests_total{role="hss",direction="received",command="MAR"} 1`,
+		`ims_diameter_answers_total{role="hss",direction="sent",command="MAR",result="DIAMETER_SUCCESS"} 1`)
+}
+
+// The failures that TS 32.409 4.1.1.3.2.3 and 4.1.7.3 split by Diameter
+// result code are the result label of the answer the S-CSCF sends,
+// named as the result of an answer that came back is named.
+func TestAnsweringCountsTheResultOfTheAnswerItSends(t *testing.T) {
+	node, _ := newTestNode(scscf, testTimers)
+	for _, tt := range []struct {
+		result Result
+		want   string
+	}{
+		{Base(DiameterSuccess), "DIAMETER_SUCCESS"},
+		{Experimental(5001), "DIAMETER_ERROR_USER_UNKNOWN"},
+		{Base(DiameterUnableToComply), "DIAMETER_UNABLE_TO_COMPLY"},
+		// The failure that an S-CSCF answers a PPR with when it cannot
+		// take the user data, one cause of TS 32.409 4.1.7.3.
+		{Experimental(5009), "DIAMETER_ERROR_NOT_SUPPORTED_USER_DATA"},
+		// A result that the label does not name one by one, so that the
+		// causes still add up to all the answers (metrics.OtherValue).
+		{Experimental(5065), metrics.OtherValue},
+	} {
+		answering, reg := answeringCounters(t, "scscf")
+		request := testRequest(node)
+
+		answering.RequestReceived(request)
+		answering.AnswerSent(request, answeringResult(farmHost(1), tt.result)(request))
+
+		hasSeries(t, reg,
+			`ims_diameter_answers_total{role="scscf",direction="sent",command="MAR",result="`+tt.want+`"} 1`)
+	}
+}
+
+// The two roles of a node that answer Diameter requests count in one
+// registry, each under its own role, and the group of a role that also
+// sends requests shares the same two metrics: the direction label tells
+// the two ways apart.
+func TestTheRolesOfANodeShareTheAnsweringCounters(t *testing.T) {
+	node, logs := newTestNode(scscf, testTimers)
+	peer := openFarmPeer(t, node, logs, farmHost(1), answeringResult(farmHost(1), Base(DiameterSuccess)))
+	reg := metrics.NewRegistry()
+	group, err := NewPeerGroup(reg, "scscf", peer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := group.Request(t.Context(), testRequest(node)); err != nil {
+		t.Fatal(err)
+	}
+	for _, role := range []string{"hss", "scscf"} {
+		answering, err := NewAnswering(reg, role)
+		if err != nil {
+			t.Fatal(err)
+		}
+		answering.RequestReceived(testRequest(node))
+	}
+
+	hasSeries(t, reg,
+		`ims_diameter_requests_total{role="scscf",direction="sent",command="MAR"} 1`,
+		`ims_diameter_requests_total{role="hss",direction="received",command="MAR"} 1`,
+		`ims_diameter_requests_total{role="scscf",direction="received",command="MAR"} 1`)
 }
 
 // ims_diameter_peer_up is read at the scrape from the state of each
