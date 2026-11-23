@@ -235,6 +235,83 @@ phone2     P-CSCF   S-CSCF   MMTel AS              MRFC
 
 スクリプトではこの場面を動かしません。`internal/mmtel/conference_network_test.go` の `TestRejoinWithTheConferenceURI` が、1 つのプロセスの中の IMS 全体でこの流れを動かします。B が A の会議を抜け、会議の URI で戻り、混ぜ合わせを通して A の声を聞きます。
 
+## MRFC を運用から外す
+
+運用者は、ノードが受け持っているものを切らずに、そのノードを運用から外せます。ノードは新しいものを受けず、始めたものは続け、それが無くなるのを待ちます。これをドレインと呼びます。
+
+MRFC が始めたものを続けなければならないのは、ダイアログがその INVITE を受けた台の中にあるからです。ダイアログの Contact はその台の名前を持ち、MRFP の termination、タイマー、音声ガイダンスが終わったという知らせを待つ処理も、その台にあります。商用の網は MRFC を複数台で動かし、AS の設定に書く 1 つの名前の後ろに並べて、新しい要求を DNS でその台に振り分けます。
+
+MRFC のノードはそのための保守用の API をポート 8085 で出しています。`deploy/compose/mrfc.yaml` の `maintenance` の節の待ち受けです。この API はパスワードを求めないので、ポートはホストに公開していません。要求は MRFC のコンテナの中から送ります。管理上の状態は TS 28.622 5.3.1 の値を取ります。`UNLOCKED` は新しい仕事を受け、`SHUTTINGDOWN` は持っているものだけを扱い、`LOCKED` は新しいものを何も受けません。
+
+1. MRFC を shut down します。
+
+   ```sh
+   docker compose exec mrfc sh -c '
+   body="{\"administrative_state\":\"SHUTTINGDOWN\",\"operator\":\"learner\"}"
+   printf "PUT /maintenance/v1/functions/mrfc/administrative-state HTTP/1.0\r\nContent-Type: application/json\r\nContent-Length: ${#body}\r\n\r\n%s" "$body" |
+     nc -w 5 127.0.0.1 8085'
+   ```
+
+   答えの最後に MRFC の状態が付きます。自分のダイアログが 1 つも無ければ、すぐに `LOCKED` になります。
+
+   ```json
+   {"role":"mrfc","administrative_state":"LOCKED","operational_state":"ENABLED","users":0}
+   ```
+
+   `users` は、この台が持っているダイアログの数です。ダイアログの外の INVITE のうち、受けてまだ終わっていないものが 1 つずつ数に入ります。音声ガイダンスは流し終わるか AS が止めるまで、会議の参加者はその参加者が混合にいるあいだです。Request-URI が指すサービスや SDP を見て断る INVITE も、答えるあいだは数に入ります。Request-URI そのものを読めない INVITE は、数に入る前に 400 Bad Request で返します。音声ガイダンスを流しているあいだに shut down をすると `SHUTTINGDOWN` にとどまり、最後のダイアログが終わったときに `LOCKED` になります。混合そのものは MRFP にあって、このノードより長く残ります。`operational_state` は MRFC が働けるかどうかを表します（TS 28.622 5.3.3）。ノードが動いているあいだは `ENABLED` です。MRFC は状態を知らせられるような結び付きを MRFP と持っていません。MRFP への操作は 1 つずつが別の要求で、答えない MRFP はその操作を必要とした INVITE の断りに現れます。ノード全体は `docker compose exec mrfc wget -qO- http://127.0.0.1:8085/maintenance/v1/state` で見られます。
+
+2. [通話を断る前の音声ガイダンス](#通話を断る前の音声ガイダンス)と同じように UE 1 の発信を禁止して、UE 2 に発信します。
+
+   ```sh
+   docker compose run --rm ue xcap set baoc on
+   docker compose run --rm ue call tel:+12025550102
+   ```
+
+   禁止した発信と同じように `603 Decline` で終わりますが、その前に UE 1 は音声ガイダンスを聞きません。
+
+```text
+ UE 1        P-CSCF      S-CSCF      MMTel AS      MRFC
+ |  INVITE     |           |            |            |
+ |------------>|---------->|----------->|            |  tel:+12025550102。OCB が禁止する発信
+ |             |           |            |----------->|  INVITE sip:annc@mrfc...;play=/provisioned/notice
+ |             |           |            |  503 Retry-After: 30
+ |             |           |            |<-----------|
+ |  603        |  603      |  603       |            |  早期メディアも Reason も無し
+ |<------------|<----------|<-----------|            |
+```
+
+- **AS は RFC 4240 3 の Request-URI で MRFC に音声ガイダンスを頼みます**。MRFC が運用に入っているときに通話を断る流れと同じです。
+- **MRFC は 503 Service Unavailable に Retry-After: 30 を付けて返し**、MRFP には何も用意させません。ダイアログの外の要求は新しいものを始めるので、`UNLOCKED` でないあいだ MRFC はこれを受けません。Retry-After は、クライアントがこのサーバーにほかの要求を送らずにいる秒数です（RFC 3261 21.5.4）。この値を決めた仕様はありません。30 秒はこのプロジェクトが選んだ値です。この応答は頼まれたサービスの P-Asserted-Identity を持ちます。MRFC が最初の INVITE に返す応答はどれもこれを持ちます（TS 24.229 5.8.2.1.1.1）。
+- **AS は、MRFC の名前について DNS が返した次の台へ INVITE を送ります**（RFC 3263 4.3）。503 が AS 自身に届くのは、試す台が残っていないときだけです。この網は MRFC を 1 台で動かしています。
+- **AS は音声ガイダンスなしで、禁止した発信を断ります**。UE 1 には 603 がすぐ届きます。MRFP の早期メディアを認める確実な 183 も、音声ガイダンスを聞かせてから断るときに AS が付ける `Reason` も付きません（TS 24.628 4.2.4）。サービスそのものは変わりません。発信はどちらでも禁止され、失われるのは音声ガイダンスだけです。着信側の利用者が選ぶ呼び出し音も同じで、発信者は着信者を呼び出すあいだ、自分の UE の呼び出し音を聞きます。
+- **会議を作る INVITE と、会議に入る INVITE は断られます**。混合する MRFP がなければ会議のメディアがないので、フォーカスはつなげない参加者を入れません。AS は MRFC が返した応答コード、つまり 503 で断りますが、参加者に届くのは 500 Server Internal Error です。503 はそれを返したサーバーについてのもので、途中のプロキシについてのものではないので、プロキシは 503 をそのまま渡さず、自分の 500 を返します（RFC 3261 16.7 の手順 6）。
+
+`UNLOCKED` でないあいだ、MRFC は始めたものを続け、新しく始めるものを断ります。
+
+続けるのは次のものです。
+
+- **持っているダイアログの中の要求**。音声ガイダンスは最後まで流れ、参加者は混合に残ります。保留の re-INVITE と、混合から離れて戻る参加者の re-INVITE（TS 24.229 5.8.4.1.1.1）、AS が流すのを止める BYE（5.8.3.1.1）、MRFP が流し終わったと知らせたときに MRFC 自身が送る BYE（5.8.3.2.1）です。
+- **ダイアログの外の OPTIONS**。これまでと同じように 200 を返します（RFC 3261 11.2）。ノードに何ができるかを尋ねる要求で、ノードは生きています。
+
+503 を返すのは **ダイアログの外の INVITE** です。RFC 4240 3 の音声ガイダンスと、RFC 4240 5 の会議の参加者で、その会議の参加者をすでに持っていても断ります。ほかの台がその参加者を受けられるなら、この最後の断りで参加者が失うものはなく、そこが AS との違いです。MRFC の会議がどの台にも結び付かないのは、台が 1 つの `Store` を共有しているあいだです。混合を持つ MRFP とコンテキストはそこにあり、どの台もすべての MRFP を知っているので、ほかの台が受けた参加者は同じ混合に入り、運用から外した台の参加者もその混合に残ります。`deploy/redundancy/redundancy.yaml` の構成がこれで、各ノードの `store` の節が 1 つの Valkey サーバーを指します。会議を自分のプロセスの記憶に置く台は、これを共有しません。断られた参加者を受けた台は、その会議のメディアを見つけられず、MRFP に別のコンテキストを作らせるので、混合が 2 つに分かれます。この手順書の Compose のプロジェクトは MRFC を 1 台で動かし、会議をその台の記憶に置いているので、運用から外しているあいだに、混合から離れた参加者が戻ろうとすると、そのまま断られ、混合はその参加者なしで続きます。会議のフォーカスは MMTel AS で、そのままの場所にあります（[3 人の会議](#3-人の会議)）。MRFC は SUBSCRIBE をまったく受けません。会議のイベントパッケージはフォーカスにあるので、MRFC に届いた SUBSCRIBE には、運用から外れているかどうかによらず 405 Method Not Allowed を返します。
+
+3. 同じ要求に `UNLOCKED` を入れて MRFC を戻し、UE 1 からもう一度発信します。
+
+   ```sh
+   docker compose exec mrfc sh -c '
+   body="{\"administrative_state\":\"UNLOCKED\",\"operator\":\"learner\"}"
+   printf "PUT /maintenance/v1/functions/mrfc/administrative-state HTTP/1.0\r\nContent-Type: application/json\r\nContent-Length: ${#body}\r\n\r\n%s" "$body" |
+     nc -w 5 127.0.0.1 8085'
+   docker compose run --rm ue call tel:+12025550102
+   docker compose run --rm ue xcap set baoc off
+   ```
+
+   UE 1 は 603 の前に音声ガイダンスをまた聞きます。このあとのシナリオのために、最後のコマンドで発信の禁止を解きます。
+
+Wireshark では、`sip.Status-Code == 503 && ip.src == 172.28.0.85` が MRFC の 503 を、`sip.r-uri contains "annc@"` が音声ガイダンスを頼んだ INVITE を見せます。PUT の要求はコンテナのループバックを通るので、キャプチャには入りません。
+
+管理上の状態はノードのプロセスの中にあります。起動し直したノードは `UNLOCKED` です。`scripts/e2e-observability.sh` はこの手順を実行し、キャプチャを確かめます。
+
 ## Wireshark の表示フィルタ
 
 | フィルタ | 見つかるもの |
@@ -264,6 +341,7 @@ phone2     P-CSCF   S-CSCF   MMTel AS              MRFC
 | `internal/mmtel/conference.go`、`internal/mmtel/conferenceevent.go` | フォーカスと会議イベントパッケージ。 |
 | `internal/scscf/session.go`、`internal/scscf/unregistered.go`、`internal/hss/psi.go` | 会議の URI の代わりに送る要求を担当する S-CSCF と、HSS の PSI ユーザー。 |
 | `internal/mrfc`、`internal/netann` | MRFC と、RFC 4240 の Request-URI。 |
+| `internal/mrfc/maintenance.go` | MRFC がノードの保守用の API に伝えるものと、運用者が運用から外しているあいだに断るもの。 |
 | `internal/agw` | MRFP。ターミネーション、音声ガイダンス、混ぜ合わせと、その制御の API。 |
 | `internal/ue/phone_conference.go`、`internal/ue/conference.go` | Swap、Merge と、会議の UE の側。 |
 | `internal/mmtel/mrf_network_test.go`、`internal/mmtel/conference_network_test.go`、`internal/mmtel/conference_border_test.go` | 同じ流れを、1 つのプロセスの中の IMS 全体で通す試験。最後のものは、ほかの網の相手と通す。 |
