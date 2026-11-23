@@ -33,6 +33,7 @@ func HSS(t *testing.T, newPair func(t *testing.T) (hss.Store, hss.Store)) {
 		{"ConcurrentSQN", hssConcurrentSQN},
 		{"ConcurrentAddsOfOneIdentity", hssConcurrentAdds},
 		{"ConcurrentReplacesOfOneIdentity", hssConcurrentReplaces},
+		{"ConcurrentReplaceAndSQN", hssConcurrentReplaceAndSQN},
 		{"CountsFollowWhatIsStored", hssCountsFollowWhatIsStored},
 	})
 }
@@ -602,6 +603,69 @@ func hssConcurrentAdds(t *testing.T, a, b hss.Store) {
 		if _, ok := subscriberOf(t, a, shared); !ok {
 			t.Errorf("SubscriberOf(%s) finds nothing", shared)
 		}
+	}
+}
+
+// hssConcurrentReplaceAndSQN has the provisioning API of one instance
+// replace a subscription over and over while another instance hands out
+// authentication vectors for it. Each Replace carries the credentials
+// with the sqn that the operator provisioned, the start condition of TS
+// 33.102 C.3.2, so a Replace that wrote it would take SQN_HE back and
+// let a vector be used twice. SQN_HE belongs to CompareAndSwapSQN
+// alone.
+func hssConcurrentReplaceAndSQN(t *testing.T, a, b hss.Store) {
+	mustAdd(t, a, hss.Subscription{PrivateIdentity: impi, PublicIdentities: []string{impu}, AKA: &hss.AKACredentials{Secret: akaSecret}})
+	const n = 20
+	var mu sync.Mutex
+	used := map[aka.SQN]bool{}
+	parallel(2, func(i int) {
+		if i == 0 {
+			for range n {
+				for {
+					sub, ok := subscriber(t, a, impi)
+					if !ok {
+						t.Error("the subscriber is gone")
+						return
+					}
+					next := sub.AKA.SQN.Next()
+					if !compareAndSwapSQN(t, a, impi, sub.AKA.SQN, next) {
+						continue
+					}
+					mu.Lock()
+					if used[next] {
+						t.Errorf("SQN %d used twice", next)
+					}
+					used[next] = true
+					mu.Unlock()
+					break
+				}
+			}
+			return
+		}
+		for j := range n {
+			sub, ok := subscriber(t, b, impi)
+			if !ok {
+				t.Error("the subscriber is gone")
+				return
+			}
+			sub.Password = fmt.Sprintf("test-password-%d", j)
+			sub.AKA = &hss.AKACredentials{Secret: akaSecret}
+			if err := replace(t, b, sub); err != nil {
+				t.Errorf("Replace: %v", err)
+				return
+			}
+		}
+	})
+	want := aka.SQN(0)
+	for range n {
+		want = want.Next()
+	}
+	got, _ := subscriber(t, a, impi)
+	if got.AKA.SQN != want {
+		t.Errorf("SQN_HE = %d after %d vectors and %d replacements, want %d", got.AKA.SQN, n, n, want)
+	}
+	if got.AKA.Secret != akaSecret || got.Password == "" {
+		t.Errorf("the credentials after the replacements: %+v", got.Subscription)
 	}
 }
 
