@@ -7,12 +7,13 @@
 # subscriber that the provisioning API marks registers as before. The
 # checks read the capture.
 #
-# The HSS reads the policy from its file when it starts, so this
-# scenario needs an HSS whose file says test_users. Rather than keep a
-# second copy of a long configuration in the repository, the script
-# writes the file and a Compose overlay that mounts it into e2e-out/,
-# which is not in Git, and starts the deployment with both files
-# (COMPOSE_FILE). Every other node is the one of compose.yaml.
+# The deployment is the one of compose.yaml, which starts on the policy
+# all, and the script narrows the policy on the maintenance API of the
+# HSS node, as an operator does through the OAM. That is also what the
+# registration guide shows, and it needs no second copy of the
+# configuration and no restart: an HSS that was recreated would have
+# lost its Diameter connections and the marks that the provisioning API
+# had set.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 . scripts/e2e-lib.sh
@@ -24,24 +25,6 @@ if docker buildx inspect ims-practice >/dev/null 2>&1; then
 fi
 
 domain=ims.mnc001.mcc001.3gppnetwork.org
-mkdir -p e2e-out
-# The HSS of compose.yaml with one setting changed. A failure here means
-# the setting was renamed or moved: the scenario would otherwise run on
-# the policy all and pass every check for the wrong reason.
-sed 's/^  admission: all/  admission: test_users/' deploy/compose/hss.yaml >e2e-out/hss-admission.yaml
-if ! grep -q '^  admission: test_users' e2e-out/hss-admission.yaml; then
-	echo "FAIL deploy/compose/hss.yaml has no \"admission: all\" line to change" >&2
-	exit 1
-fi
-cat >e2e-out/admission.yaml <<'YAML'
-# Written by scripts/e2e-admission.sh: the HSS on the admission policy
-# test_users, with every other node as compose.yaml has it.
-services:
-  hss:
-    volumes:
-      - ./e2e-out/hss-admission.yaml:/etc/ims/node.yaml:ro
-YAML
-export COMPOSE_FILE=compose.yaml:e2e-out/admission.yaml COMPOSE_PATH_SEPARATOR=:
 
 docker compose up -d --build
 
@@ -67,8 +50,26 @@ wait_for_open scscf
 remember_nodes
 fail=0
 
-# The HSS runs on test_users and no subscription of the file is marked,
-# so every subscriber is outside the policy to begin with.
+# The operator narrows the policy to the test users. The maintenance
+# API is not published on the host, so the request goes from inside the
+# container of the node, on the port of its maintenance listener. The
+# answer carries the record of the change, with the policy before and
+# after: a request that named a setting the HSS does not have would be
+# refused, and the scenario would otherwise run on the policy all and
+# pass every check below for the wrong reason.
+change="$(docker compose exec -T hss sh -c '
+	printf "PATCH /maintenance/v1/config HTTP/1.0\r\nContent-Type: application/json\r\nContent-Length: ${#1}\r\n\r\n%s" "$1" |
+		nc -w 5 127.0.0.1 8085' sh '{"settings": {"hss.admission": "test_users"}, "operator": "e2e"}')" || true
+if grep -q '"name":"hss.admission","previous":"all","value":"test_users"' <<<"$change"; then
+	echo "ok   the operator narrowed the policy to the test users"
+else
+	echo "FAIL narrowing the admission policy: $(first_line <<<"$change")"
+	docker compose logs --no-color hss | tail -n 20 >&2
+	exit 1
+fi
+
+# No subscription of the file is marked, so every subscriber is outside
+# the policy now.
 if docker compose run --no-deps --rm ue register --deregister-after 2s 2>/dev/null; then
 	echo "FAIL a subscriber that is not a test user registered"
 	fail=1
@@ -95,6 +96,21 @@ if docker compose run --no-deps --rm ue2 register "${ue2[@]}" --deregister-after
 	echo "ok   the test user registered and deregistered"
 else
 	echo "FAIL the test user did not register"
+	fail=1
+fi
+
+# Widen the policy again, before the checks that may stop the script, so
+# that a deployment left running here serves every subscriber as the rest
+# of the guides describe it. The mark on subscriber 2 stays: with the
+# policy all it decides nothing, since both subscriptions take the same
+# service profile.
+widened="$(docker compose exec -T hss sh -c '
+	printf "PATCH /maintenance/v1/config HTTP/1.0\r\nContent-Type: application/json\r\nContent-Length: ${#1}\r\n\r\n%s" "$1" |
+		nc -w 5 127.0.0.1 8085' sh '{"settings": {"hss.admission": "all"}, "operator": "e2e"}')" || true
+if grep -q '"name":"hss.admission","previous":"test_users","value":"all"' <<<"$widened"; then
+	echo "ok   the operator widened the policy again"
+else
+	echo "FAIL widening the admission policy again: $(first_line <<<"$widened")"
 	fail=1
 fi
 

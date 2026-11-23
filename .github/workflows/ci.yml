@@ -155,9 +155,8 @@ jobs:
         if: always()
         run: docker compose --profile ue down --rmi all -v --remove-orphans
 
-  # The admission policy of the HSS. The script writes the HSS's file
-  # and the Compose overlay that mounts it into e2e-out/, so the policy
-  # is in place before the HSS starts.
+  # The admission policy of the HSS, which the script narrows on the
+  # maintenance API of the HSS node once the deployment is up.
   e2e-admission:
     runs-on: ubuntu-latest
     needs: [changes, go]
@@ -165,14 +164,12 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - run: scripts/e2e-admission.sh
-      - name: upload the capture and the HSS's file
+      - name: upload the capture
         if: always()
         uses: actions/upload-artifact@v7
         with:
           name: admission-capture
-          path: |
-            captures/*.pcap
-            e2e-out/hss-admission.yaml
+          path: captures/*.pcap
           if-no-files-found: warn
       - name: clean up
         if: always()
