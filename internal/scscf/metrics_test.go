@@ -10,6 +10,8 @@ import (
 	"time"
 
 	"github.com/yuu-biz/ims-practice/internal/aka"
+	"github.com/yuu-biz/ims-practice/internal/cx"
+	"github.com/yuu-biz/ims-practice/internal/diameter"
 	"github.com/yuu-biz/ims-practice/internal/hss"
 	"github.com/yuu-biz/ims-practice/internal/ifc"
 	"github.com/yuu-biz/ims-practice/internal/metrics"
@@ -280,5 +282,38 @@ func TestOnlyAnInitialINVITEIsASessionEstablishmentAtTheSCSCF(t *testing.T) {
 	sessionSeries(t, reg, map[string]float64{
 		`ims_session_attempts_total{role="scscf",direction="terminating"}`: 0,
 		`ims_session_attempts_total{role="scscf",direction="originating"}`: 0,
+	})
+}
+
+// TS 32.409 4.1.1.3.2 counts the de-registrations that the HSS starts
+// at the S-CSCF and 4.1.7 the user profile updates it starts: the RTR
+// and the PPR on their receipt (4.1.1.3.2.1, 4.1.7.1), and the answer
+// to each as the S-CSCF hands it back, the successes apart from the
+// failures (4.1.1.3.2.2, 4.1.1.3.2.3, 4.1.7.2, 4.1.7.3). The Diameter
+// result code that those two failure clauses split by is the result
+// label: a PPR for a user this S-CSCF does not serve is answered
+// DIAMETER_ERROR_USER_UNKNOWN (TS 29.228 Table 6.2.2.1.1).
+func TestTheRTRAndThePPRThatTheHSSSendsAreCounted(t *testing.T) {
+	reg := metrics.NewRegistry()
+	criteria := []ifc.InitialFilterCriteria{smsCriterion(0, asURI, ifc.SessionContinued)}
+	h := newServiceHarnessWith(t, Config{Metrics: reg}, criteria, nil)
+	h.registerUser(sip.NewCallID())
+
+	if r := h.ppr(impi, userProfile(criteria...)); r != diameter.Base(diameter.DiameterSuccess) {
+		t.Fatalf("PPA = %s, want DIAMETER_SUCCESS", r)
+	}
+	if r := h.ppr("001010000000009@"+domain, userProfile(criteria...)); r != diameter.Experimental(cx.DiameterErrorUserUnknown) {
+		t.Fatalf("PPA for a user this S-CSCF does not serve = %s, want DIAMETER_ERROR_USER_UNKNOWN", r)
+	}
+	if r := rtaResult(t, h.rtr(impi, cx.PermanentTermination)); r != diameter.Base(diameter.DiameterSuccess) {
+		t.Fatalf("RTA = %s, want DIAMETER_SUCCESS", r)
+	}
+
+	counts(t, reg, map[string]float64{
+		`ims_diameter_requests_total{role="scscf",direction="received",command="PPR"}`:                                 2,
+		`ims_diameter_answers_total{role="scscf",direction="sent",command="PPR",result="DIAMETER_SUCCESS"}`:            1,
+		`ims_diameter_answers_total{role="scscf",direction="sent",command="PPR",result="DIAMETER_ERROR_USER_UNKNOWN"}`: 1,
+		`ims_diameter_requests_total{role="scscf",direction="received",command="RTR"}`:                                 1,
+		`ims_diameter_answers_total{role="scscf",direction="sent",command="RTR",result="DIAMETER_SUCCESS"}`:            1,
 	})
 }
