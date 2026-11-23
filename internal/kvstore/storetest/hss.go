@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/yuu-biz/ims-practice/internal/aka"
+	"github.com/yuu-biz/ims-practice/internal/diameter"
 	"github.com/yuu-biz/ims-practice/internal/hss"
 	"github.com/yuu-biz/ims-practice/internal/sh"
 )
@@ -24,6 +25,9 @@ func HSS(t *testing.T, newPair func(t *testing.T) (hss.Store, hss.Store)) {
 		{"DeleteDropsTheIndex", hssDeleteDropsTheIndex},
 		{"ListIsOrderedAndPaged", hssListIsOrderedAndPaged},
 		{"ListGoesOnFromASubscriberThatIsGone", hssListGoesOnFromASubscriberThatIsGone},
+		{"ServedIndexFollowsTheRegistrationState", hssServedIndexFollowsTheState},
+		{"ServedIndexFollowsTheProfileSource", hssServedIndexFollowsTheProfileSource},
+		{"ServedIndexIsOrderedAndPaged", hssServedIndexIsPaged},
 		{"StoresTheProvisionedRepositoryData", hssStoresRepositoryData},
 		{"ReadsAllTheRepositoryDataOfASubscription", hssReadsAllRepositoryData},
 		{"KeepsSQNOutOfPut", hssKeepsSQNOutOfPut},
@@ -307,6 +311,153 @@ func hssListGoesOnFromASubscriberThatIsGone(t *testing.T, a, b hss.Store) {
 	// been (TS 29.229 6.3.1 is a NAI, RFC 7542 2.4).
 	if got, _ := list(t, b, "B@"+strings.ToUpper(realm), 10); !slices.Equal(privateIdentities(got), []string{"c@" + realm}) {
 		t.Errorf("the page after the private identity in upper case = %v", privateIdentities(got))
+	}
+}
+
+// servedPage is one page of the private identities in the index of the
+// served subscribers of source.
+func servedPage(t *testing.T, s hss.Store, source hss.ProfileSource, after string, limit int) ([]string, string) {
+	t.Helper()
+	ids, next, err := s.ListServed(context.Background(), source, after, limit)
+	if err != nil {
+		t.Errorf("ListServed(%s, %q, %d): %v", source, after, limit, err)
+	}
+	return ids, next
+}
+
+// listServed is every private identity in the index of source, in one
+// page large enough for the subscribers of these tests.
+func listServed(t *testing.T, s hss.Store, source hss.ProfileSource) []string {
+	t.Helper()
+	ids, _ := servedPage(t, s, source, "", 100)
+	return ids
+}
+
+// servedSubscriber is sub in a state in which an S-CSCF has its user
+// profile: the state and the name and Diameter identity of that S-CSCF,
+// as a SAR stores them (hss.ServedSource).
+func servedSubscriber(sub hss.Subscriber, state hss.RegistrationState) hss.Subscriber {
+	sub.State, sub.ServerName = state, "sip:scscf."+realm
+	sub.SCSCF = diameter.Identity{OriginHost: "scscf." + realm, OriginRealm: realm}
+	return sub
+}
+
+// servedOnly checks that the index of source holds impi and that no
+// other index holds anything.
+func servedOnly(t *testing.T, s hss.Store, source hss.ProfileSource) {
+	t.Helper()
+	for _, each := range hss.ProfileSources {
+		got := listServed(t, s, each)
+		switch {
+		case each == source && !slices.Equal(got, []string{impi}):
+			t.Errorf("the served subscribers of %s = %v, want the subscriber", each, got)
+		case each != source && len(got) != 0:
+			t.Errorf("the served subscribers of %s = %v, want none", each, got)
+		}
+	}
+}
+
+// hssServedIndexFollowsTheState: the index of the served subscribers
+// holds a subscriber from the moment an S-CSCF has its user profile
+// until it has it no longer, and either instance reads what the other
+// wrote. Those are the subscribers whose profile the HSS pushes when a
+// setting names another one (TS 29.228 6.6.1).
+func hssServedIndexFollowsTheState(t *testing.T, a, b hss.Store) {
+	mustAdd(t, a, hss.Subscription{PrivateIdentity: impi, PublicIdentities: []string{impu}, Password: "p"})
+	if got := listServed(t, b, hss.ProfileOfOtherUsers); len(got) != 0 {
+		t.Errorf("a subscription that was only added is already served: %v", got)
+	}
+	plain, _ := subscriber(t, b, impi)
+	// Registered, and the unregistered state in which an S-CSCF keeps
+	// the profile of a user that is not registered, are the two states
+	// in which it has the profile.
+	for _, state := range []hss.RegistrationState{hss.Registered, hss.Unregistered} {
+		put(t, b, servedSubscriber(plain, state))
+		if got := listServed(t, a, hss.ProfileOfOtherUsers); !slices.Equal(got, []string{impi}) {
+			t.Errorf("the served subscribers of a user in the state %v = %v, want the subscriber", state, got)
+		}
+	}
+	// A state without an S-CSCF of its own: nothing holds the profile,
+	// so nothing is to be pushed either.
+	unregistered := plain
+	unregistered.State = hss.Unregistered
+	put(t, a, unregistered)
+	if got := listServed(t, b, hss.ProfileOfOtherUsers); len(got) != 0 {
+		t.Errorf("a subscriber in the unregistered state with no S-CSCF is served: %v", got)
+	}
+	put(t, b, servedSubscriber(plain, hss.Registered))
+	put(t, a, plain)
+	if got := listServed(t, b, hss.ProfileOfOtherUsers); len(got) != 0 {
+		t.Errorf("a subscriber that was deregistered is still served: %v", got)
+	}
+	// No subscription takes its profile name from nowhere.
+	if got := listServed(t, a, ""); len(got) != 0 {
+		t.Errorf("the empty source has %v", got)
+	}
+}
+
+// hssServedIndexFollowsTheProfileSource: the mark and the service
+// profile name of a subscription say which setting names its profile,
+// so a write that changes either moves the subscriber to the index of
+// its new source and leaves it in that one alone. The provisioning API
+// changes the mark with a Put and the whole subscription with a
+// Replace.
+func hssServedIndexFollowsTheProfileSource(t *testing.T, a, b hss.Store) {
+	mustAdd(t, a, hss.Subscription{PrivateIdentity: impi, PublicIdentities: []string{impu}, Password: "p"})
+	plain, _ := subscriber(t, b, impi)
+	put(t, a, servedSubscriber(plain, hss.Registered))
+	servedOnly(t, b, hss.ProfileOfOtherUsers)
+
+	marked, _ := subscriber(t, b, impi)
+	marked.TestUser = true
+	put(t, b, marked)
+	servedOnly(t, a, hss.ProfileOfTestUsers)
+
+	named, _ := subscriber(t, a, impi)
+	named.ServiceProfile = "trial"
+	if err := replace(t, a, named); err != nil {
+		t.Fatalf("Replace with a service profile name: %v", err)
+	}
+	servedOnly(t, b, hss.ProfileOfSubscription)
+
+	named.ServiceProfile = ""
+	if err := replace(t, b, named); err != nil {
+		t.Fatalf("Replace without a service profile name: %v", err)
+	}
+	servedOnly(t, a, hss.ProfileOfTestUsers)
+
+	deleteSubscriber(t, a, impi)
+	for _, source := range hss.ProfileSources {
+		if got := listServed(t, b, source); len(got) != 0 {
+			t.Errorf("the served subscribers of %s after the Delete = %v, want none", source, got)
+		}
+	}
+}
+
+// hssServedIndexIsPaged: the served subscribers come in the pages of a
+// listing, in the order of their private identities, each page after
+// the cursor of the one before it, so that a change of a setting reads
+// them a page at a time (hss.Store.ListServed).
+func hssServedIndexIsPaged(t *testing.T, a, b hss.Store) {
+	for _, name := range []string{"c", "a", "b"} {
+		id := name + "@" + realm
+		mustAdd(t, a, hss.Subscription{PrivateIdentity: id, PublicIdentities: []string{"sip:" + name + "@" + realm}, Password: "p"})
+		sub, _ := subscriber(t, a, id)
+		put(t, a, servedSubscriber(sub, hss.Registered))
+	}
+	got, next := servedPage(t, b, hss.ProfileOfOtherUsers, "", 2)
+	if want := []string{"a@" + realm, "b@" + realm}; !slices.Equal(got, want) {
+		t.Errorf("the first page of two = %v, want %v", got, want)
+	}
+	if next == "" {
+		t.Fatal("a full page has no next cursor")
+	}
+	got, next = servedPage(t, b, hss.ProfileOfOtherUsers, next, 2)
+	if want := []string{"c@" + realm}; !slices.Equal(got, want) {
+		t.Errorf("the second page = %v, want %v", got, want)
+	}
+	if next != "" {
+		t.Errorf("the last page has a next cursor %q", next)
 	}
 }
 

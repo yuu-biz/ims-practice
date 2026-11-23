@@ -7,8 +7,14 @@
 //	subscriber:<private identity>    the Subscriber and its repository data
 //	public:<public identity>         index: the private identity of the subscription
 //
-// and one sorted index, "subscribers", of the private identities, which
-// List reads one page at a time.
+// and these sorted indexes of private identities, which are read one
+// page at a time:
+//
+//	subscribers                      every subscriber, for List
+//	served:<profile source>          those whose user profile an S-CSCF
+//	                                 has, one index per source of the
+//	                                 service profile name, for
+//	                                 ListServed
 //
 // The identities are in the form in which hss.MemoryStore compares them:
 // a private identity in lower case, a public identity as hss's
@@ -73,6 +79,58 @@ const provisionalTime = time.Minute
 // form that privateKey writes them, so that List reads them in order
 // without gathering them all.
 const subscriberIndex = "subscribers"
+
+// servedIndex is the sorted index of the private identities of the
+// subscribers whose user profile an S-CSCF has and whose service
+// profile name comes from source. One index per source keeps the key of
+// a subscriber the same when a setting names another profile, and lets
+// a change of one setting read its own subscribers alone
+// (hss.Store.ListServed).
+func servedIndex(source hss.ProfileSource) string { return "served:" + string(source) }
+
+// The writes that change what a subscriber's item says of the index
+// put k in the index of its new source before they write the item
+// (addServed), and take it out of the others after (dropServed). An
+// instance that stops anywhere in between leaves k in an index too
+// many, which costs a push of the profile the S-CSCF has already
+// (pushProfile reads the subscriber before it sends), and never an item
+// that names a source whose index lacks k, which would miss the push of
+// a changed setting. The latter could not be put right by the request
+// being sent again: a PUT that finds the subscription as the body has
+// it answers unchanged and writes nothing.
+
+// addServed puts k in the index of source; the empty source asks for
+// none.
+func (s *Store) addServed(ctx context.Context, k string, source hss.ProfileSource) error {
+	if source == "" {
+		return nil
+	}
+	return s.c.AddToIndex(ctx, servedIndex(source), k)
+}
+
+// setServed makes the indexes of the served subscribers say what the
+// subscriber of the private key k says: k stands in the index of
+// source, and in none of the others; the empty source leaves it in
+// none at all.
+func (s *Store) setServed(ctx context.Context, k string, source hss.ProfileSource) error {
+	if err := s.addServed(ctx, k, source); err != nil {
+		return err
+	}
+	return s.dropServed(ctx, k, source)
+}
+
+// dropServed takes k out of the index of each source but source.
+func (s *Store) dropServed(ctx context.Context, k string, source hss.ProfileSource) error {
+	for _, other := range hss.ProfileSources {
+		if other == source {
+			continue
+		}
+		if err := s.c.RemoveFromIndex(ctx, servedIndex(other), k); err != nil {
+			return err
+		}
+	}
+	return nil
+}
 
 // privateKey is that of hss.MemoryStore (store.go), which does not
 // export it: a NAI compares without case. A public identity is keyed by
@@ -246,9 +304,19 @@ func (s *Store) claimPublic(ctx context.Context, publicID, k string) (claim, err
 var errUnchanged = errors.New("hssstore: unchanged")
 
 // Put writes back the registration state by compare and swap, keeping
-// the stored AKA credentials and SQN_HE, as hss.MemoryStore does.
+// the stored AKA credentials and SQN_HE, as hss.MemoryStore does. The
+// subscriber goes in the index of the served subscribers that the state
+// it writes asks for before the write, and out of the others after it
+// (addServed). An item that is not there, or that an Add has not
+// finished with, is not written, and the index entry that went in
+// before is one too many, which nothing misses.
 func (s *Store) Put(ctx context.Context, sub hss.Subscriber) error {
-	_, err := kvjson.Modify(ctx, s.c, s.subscriberKey(sub.PrivateIdentity), noTTL, func(r *record) error {
+	k := privateKey(sub.PrivateIdentity)
+	source := hss.ServedSource(sub)
+	if err := s.addServed(ctx, k, source); err != nil {
+		return err
+	}
+	_, err := kvjson.Modify(ctx, s.c, s.subscriberKey(k), noTTL, func(r *record) error {
 		if r.Provisional {
 			return errUnchanged
 		}
@@ -256,10 +324,11 @@ func (s *Store) Put(ctx context.Context, sub hss.Subscriber) error {
 		r.Subscriber = sub
 		return nil
 	})
-	if errors.Is(err, kvstore.ErrNotFound) || errors.Is(err, errUnchanged) {
-		return nil
+	written, err := swapped(err)
+	if err != nil || !written {
+		return err
 	}
-	return err
+	return s.dropServed(ctx, k, source)
 }
 
 // Replace writes the whole subscriber, then claims each public identity
@@ -287,6 +356,10 @@ func (s *Store) Replace(ctx context.Context, sub hss.Subscriber) error {
 	k := privateKey(sub.PrivateIdentity)
 	stored, _, ok, err := s.record(ctx, k)
 	if err != nil || !ok {
+		return err
+	}
+	source := hss.ServedSource(sub)
+	if err := s.addServed(ctx, k, source); err != nil {
 		return err
 	}
 	written, err := s.writeSubscriber(ctx, k, sub)
@@ -321,7 +394,11 @@ func (s *Store) Replace(ctx context.Context, sub hss.Subscriber) error {
 			s.c.RemoveIndexIf(ctx, s.publicIndexKey(id), k)
 		}
 	}
-	return nil
+	// The mark and the service profile name of the subscription are
+	// written here too, so the source of its profile name may be another
+	// one now. The old source's entry goes only for a Replace that stood:
+	// the undo above puts back the subscription that entry is for.
+	return s.dropServed(ctx, k, source)
 }
 
 // writeSubscriber puts sub in the item of the private key k, keeping the
@@ -423,7 +500,7 @@ func (s *Store) CompareAndSwapRepositoryData(ctx context.Context, privateID stri
 const deleteAttempts = 10
 
 // Delete removes the subscriber with a compare and delete, then its
-// index items and its entry in the sorted index. A reader in between
+// index items and its entries in the sorted indexes. A reader in between
 // finds an index item without its subscriber, which is a miss; an Add
 // takes it over.
 //
@@ -449,6 +526,7 @@ func (s *Store) Delete(ctx context.Context, privateID string) (hss.Subscriber, b
 			s.c.RemoveIndexIf(ctx, s.publicIndexKey(id), k)
 		}
 		s.c.RemoveFromIndex(ctx, subscriberIndex, k)
+		s.setServed(ctx, k, "")
 		return r.Subscriber, true, nil
 	}
 	return hss.Subscriber{}, false, fmt.Errorf("hssstore: delete %s: changed by others %d times: %w", privateID, deleteAttempts, kvjson.ErrGaveUp)
@@ -496,4 +574,24 @@ func (s *Store) List(ctx context.Context, after string, limit int) ([]hss.Subscr
 		next = ids[len(ids)-1]
 	}
 	return subs, next, nil
+}
+
+// ListServed reads one page of the sorted index of the served
+// subscribers of source: one range lookup, however many subscribers the
+// store holds. The subscribers themselves are not read here, as the
+// caller reads each one when it pushes its profile
+// (hss.Store.ListServed).
+func (s *Store) ListServed(ctx context.Context, source hss.ProfileSource, after string, limit int) ([]string, string, error) {
+	if limit < 1 || source == "" {
+		return nil, "", nil
+	}
+	ids, err := s.c.MembersAfter(ctx, servedIndex(source), privateKey(after), limit)
+	if err != nil {
+		return nil, "", err
+	}
+	next := ""
+	if len(ids) == limit {
+		next = ids[len(ids)-1]
+	}
+	return ids, next, nil
 }
