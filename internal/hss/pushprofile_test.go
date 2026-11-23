@@ -5,6 +5,7 @@ import (
 	"slices"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/yuu-biz/ims-practice/internal/cx"
 	"github.com/yuu-biz/ims-practice/internal/diameter"
@@ -276,5 +277,55 @@ func TestPushesOfOneSubscriberAreSerialised(t *testing.T) {
 	if got := last.InitialFilterCriteria[0].ApplicationServer.ServerName; got != want {
 		t.Errorf("the last of %d PPRs names %q, want the server of the stored profile %q, %q",
 			len(scscfs.pprs), got, stored, want)
+	}
+}
+
+// TestAChangeDuringASlowPushStillReachesTheSCSCF: the PPA of a first
+// change takes longer than a second change waits for the push lock. The
+// second request answers without a PPR of its own, and the push under
+// way reads the subscriber again after its PPA, so the S-CSCF ends up
+// with the second profile.
+func TestAChangeDuringASlowPushStillReachesTheSCSCF(t *testing.T) {
+	h := newProfileHSS(t, "default")
+	mar(t, h, scscf)
+	sar(t, h, scscf, cx.AssignRegistration)
+	release := make(chan struct{})
+	scscfs := &fakeSCSCFs{beforePPA: func(n int) {
+		if n == 1 {
+			<-release
+		}
+	}}
+	api := h.Provisioning(scscfs)
+	first := make(chan int, 1)
+	go func() {
+		first <- do(t, api, "PATCH", "/subscriptions/"+impi, `{"service_profile": "trial"}`).Code
+	}()
+	for deadline := time.Now().Add(5 * time.Second); ; time.Sleep(10 * time.Millisecond) {
+		scscfs.mu.Lock()
+		n := len(scscfs.pprs)
+		scscfs.mu.Unlock()
+		if n == 1 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("gave up waiting 5 s for the first PPR")
+		}
+	}
+	if w := do(t, api, "PATCH", "/subscriptions/"+impi, `{"service_profile": "default"}`); w.Code != http.StatusOK {
+		t.Fatalf("second PATCH: %d %s", w.Code, w.Body)
+	}
+	close(release)
+	if code := <-first; code != http.StatusOK {
+		t.Fatalf("first PATCH: %d", code)
+	}
+	if len(scscfs.pprs) != 2 {
+		t.Fatalf("%d PPRs, want 2: the first change, then the second", len(scscfs.pprs))
+	}
+	last, err := cx.ParseUserProfile(scscfs.pprs[1].UserData)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := last.InitialFilterCriteria[0].ApplicationServer.ServerName; got != defaultAS {
+		t.Errorf("the last PPR names %q, want the server of the second change, %q", got, defaultAS)
 	}
 }
