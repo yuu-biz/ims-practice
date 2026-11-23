@@ -533,6 +533,8 @@ In Wireshark, `sip.Status-Code == 503 && ip.src == 172.28.0.40` shows the 503 of
 
    The next `ue register` registers as before.
 
+`scripts/e2e-observability.sh` runs these steps as well, and checks the 503 in the capture.
+
 ## A request without an IP association
 
 The P-CSCF serves only the UEs that have registered through it. It discards a request other than REGISTER that does not map to an IP association, such as a request from a UE whose registration the P-CSCF has lost: it sends nothing back, not even a 100 Trying, and forwards nothing to the S-CSCF (TS 24.229 5.2.6.3.2A). A response would tell an unknown sender that a P-CSCF listens at this address. The UE only sees that no response comes. When Timer B or Timer F fires for a request of `ue serve`, the UE takes its contact as bound to no identity and registers again from the start (TS 24.229 5.1.2A.1.6). `ue call` and `ue sms` report the timeout and exit.
