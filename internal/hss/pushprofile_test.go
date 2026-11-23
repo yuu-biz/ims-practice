@@ -367,3 +367,23 @@ func TestAPushOutlivesTheClient(t *testing.T) {
 		t.Errorf("the pushed criterion names %q, want %q", got, trialAS)
 	}
 }
+
+// TestARemovalOutlivesTheClient: the RTR of a removal goes to the
+// S-CSCF even when the client has closed its side of the connection,
+// which cancels the context of the request (TS 29.228 6.1.3).
+func TestARemovalOutlivesTheClient(t *testing.T) {
+	h := newProfileHSS(t, "default")
+	mar(t, h, scscf)
+	sar(t, h, scscf, cx.AssignRegistration)
+	scscfs := &fakeSCSCFs{}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	w := httptest.NewRecorder()
+	h.Provisioning(scscfs).ServeHTTP(w, httptest.NewRequestWithContext(ctx, "DELETE", "/subscriptions/"+impi, nil))
+	if w.Code != http.StatusNoContent {
+		t.Fatalf("DELETE: %d %s", w.Code, w.Body)
+	}
+	if len(scscfs.rtrs) != 1 {
+		t.Errorf("%d RTRs, want 1 to the S-CSCF of the removed user", len(scscfs.rtrs))
+	}
+}
