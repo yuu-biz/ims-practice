@@ -330,7 +330,11 @@ type fakeSCSCFs struct {
 	beforePPA func(n int)
 }
 
-func (f *fakeSCSCFs) Request(_ context.Context, originHost string, m *diam.Message) (*diam.Message, error) {
+func (f *fakeSCSCFs) Request(ctx context.Context, originHost string, m *diam.Message) (*diam.Message, error) {
+	// A peer sends nothing for a context that has ended.
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	b, err := m.Serialize()
 	if err != nil {
 		return nil, err
