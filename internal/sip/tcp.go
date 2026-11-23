@@ -203,11 +203,16 @@ func (t *TransportLayer) connectTCP(remote netip.AddrPort) (*net.TCPConn, error)
 		// has the connections to the other end's protected server port
 		// come.
 		addr := &net.TCPAddr{IP: local.AsSlice()}
-		if t.client != nil {
-			addr.Port = int(t.client.LocalAddr().Port())
+		if client := t.clientPort(remote); client != nil {
+			addr.Port = int(client.LocalAddr().Port())
 			// The protected client port of a P-CSCF carries a
 			// connection to each UE at once, which the systems that
-			// have it let one port do only with SO_REUSEADDR.
+			// have it let one port do only with SO_REUSEADDR. A
+			// connection to a UE that this one had and closed less than
+			// a couple of minutes ago is refused all the same, since
+			// the pair of addresses and ports is the same one and is
+			// still in TIME_WAIT; the request fails, and the UE or the
+			// network sends it again.
 			dialer.Control = func(_, _ string, c syscall.RawConn) error {
 				var set error
 				if err := c.Control(func(fd uintptr) { set = setReuseAddr(fd) }); err != nil {

@@ -98,9 +98,25 @@ type SecurityAssociations struct {
 	// Security-Verify (5.2.2.2 item 3 a).
 	Client, Server []sip.SecurityMechanism
 	// IK and CK are the keys of the 401 (TS 33.203 6.1.1), which ESP
-	// would use.
-	IK              aka.IK
-	CK              aka.CK
+	// uses.
+	IK aka.IK
+	CK aka.CK
+	// PCSCF is the address of the P-CSCF that set these associations up
+	// in its kernel, and the address they are bound to (TS 33.203 7.1).
+	// It is unset without ESP.
+	//
+	// SIMPLIFIED: TS 33.203 7.1. The SA table is in the Store, which
+	// several P-CSCF instances may share, while the security
+	// associations of the kernel belong to the host that set them up:
+	// an instance takes nothing out of the kernel for an entry that is
+	// not its own, and a UE whose protected requests reach another
+	// instance is answered as though it had no associations, which has
+	// it register again (7.4.1a). 7.1 has the P-CSCF that holds the
+	// entry hold the associations too. Keeping a UE at the instance
+	// that authenticated it is what a real network does as well, and
+	// the network leaving them to another is P-CSCF restoration (TS
+	// 23.380), which this project does not have.
+	PCSCF           netip.Addr
 	PrivateIdentity string
 	// Expires ends the associations: reg-await-auth after the 401, and
 	// 30 s after the registration once they are established (5.2.2.2).
@@ -125,72 +141,108 @@ type ESP struct {
 	ProtectedClientPort uint16
 	// Kernel is where the security associations go.
 	Kernel *ipsec.Kernel
+	// TeardownDelay is how long the associations stay in the kernel
+	// after the SA table has let them go; zero means
+	// afterTheLastMessage. Tests shorten it.
+	TeardownDelay time.Duration
 }
+
+// afterTheLastMessage is how long the security associations of a UE
+// stay in the kernel after the SA table has let them go. TS 33.203
+// 7.4.2a has the P-CSCF delete them once the last message of the
+// registration has been processed, and the P-CSCF sends that message
+// over them: the 200 (OK) that answers a deregistration and the
+// response that refuses an authentication both leave after the set has
+// gone from the SA table, and the UE takes them only over the
+// associations it still holds.
+const afterTheLastMessage = 2 * time.Second
 
 // agreement is the security agreement of sas, as the kernel needs it.
 func (p *PCSCF) agreement(sas SecurityAssociations) ipsec.Agreement {
-	return ipsec.Agreement{UE: sas.UE.Addr(), PCSCF: p.cfg.ESP.Address,
+	return ipsec.Agreement{UE: sas.UE.Addr(), PCSCF: sas.PCSCF,
 		UEMechanism: sas.UEMechanism, PCSCFMechanism: sas.PCSCFMechanism, IK: sas.IK, CK: sas.CK}
+}
+
+// ours reports whether this P-CSCF holds the security associations of
+// sas in its own kernel, which only the instance that set them up does.
+func (p *PCSCF) ours(sas SecurityAssociations) bool {
+	return p.cfg.ESP != nil && sas.PCSCF == p.cfg.ESP.Address
 }
 
 // putSecurityAssociations keeps sas in the SA table. A new set, the one
 // of an authentication under way, replaces in the kernel the security
-// associations of the set it follows (TS 33.203 7.4.2a); the 200 (OK)
-// that establishes it only moves its lifetime, which the kernel leaves
-// to the SIP application (7.1 NOTE 4).
+// associations of the set it follows (TS 33.203 7.4.2a) and lives only
+// as long as the authentication has to finish; the 200 (OK) that
+// establishes it raises that lifetime to the registration's.
 func (p *PCSCF) putSecurityAssociations(ctx context.Context, sas SecurityAssociations) error {
-	if p.cfg.ESP == nil || !sas.Temporary {
+	if p.cfg.ESP == nil {
 		return p.store.PutSecurityAssociations(ctx, sas)
 	}
-	if old, ok, err := p.store.SecurityAssociations(ctx, sas.UE); err == nil && ok {
-		if err := p.cfg.ESP.Kernel.Teardown(ctx, p.agreement(old), ipsec.PCSCFEnd); err != nil {
-			return err
+	if sas.Temporary {
+		sas.PCSCF = p.cfg.ESP.Address
+		if old, ok, err := p.store.SecurityAssociations(ctx, sas.UE); err == nil && ok && p.ours(old) {
+			p.cfg.ESP.Kernel.Teardown(ctx, p.agreement(old), ipsec.PCSCFEnd)
 		}
 	}
 	if err := p.store.PutSecurityAssociations(ctx, sas); err != nil {
 		return err
 	}
-	// The UE answers the challenge over the new associations, so they
-	// are in the kernel before the 401 leaves.
-	return p.cfg.ESP.Kernel.Setup(ctx, p.agreement(sas), ipsec.PCSCFEnd)
+	if !p.ours(sas) {
+		return nil
+	}
+	if sas.Temporary {
+		// The UE answers the challenge over the new associations, so
+		// they are in the kernel before the 401 leaves.
+		return p.cfg.ESP.Kernel.Setup(ctx, p.agreement(sas), ipsec.PCSCFEnd, time.Until(sas.Expires))
+	}
+	// A registration that was refreshed moved the lifetime of the SA
+	// table entry, and the kernel follows (TS 33.203 7.4.2a).
+	return p.cfg.ESP.Kernel.Refresh(ctx, p.agreement(sas), ipsec.PCSCFEnd, time.Until(sas.Expires))
 }
 
 // deleteSecurityAssociations takes the set of the UE at ue out of the
-// SA table and out of the kernel (TS 33.203 7.4 : deleting an SA means
+// SA table and out of the kernel (TS 33.203 7.4: deleting an SA means
 // deleting it from both the application and the IPsec layer).
 func (p *PCSCF) deleteSecurityAssociations(ctx context.Context, ue netip.AddrPort) error {
-	if p.cfg.ESP != nil {
-		sas, ok, err := p.store.SecurityAssociations(ctx, ue)
-		if err != nil {
-			return err
-		}
-		if ok {
-			if err := p.cfg.ESP.Kernel.Teardown(ctx, p.agreement(sas), ipsec.PCSCFEnd); err != nil {
-				return err
-			}
-		}
+	if err := p.tearDown(ctx, ue, nil); err != nil {
+		return err
 	}
 	return p.store.DeleteSecurityAssociations(ctx, ue)
 }
 
 // deleteSecurityAssociationsOf is deleteSecurityAssociations for the
 // set that spis name, which is the one a contact was registered over.
-// The kernel keeps the set of the SA table: should a new set replace
-// this one between the read and the delete, the registration that
-// brought it sets it up again.
 func (p *PCSCF) deleteSecurityAssociationsOf(ctx context.Context, ue netip.AddrPort, spis SPIs) error {
-	if p.cfg.ESP != nil {
-		sas, ok, err := p.store.SecurityAssociations(ctx, ue)
-		if err != nil {
-			return err
-		}
-		if ok && sas.SPIs() == spis {
-			if err := p.cfg.ESP.Kernel.Teardown(ctx, p.agreement(sas), ipsec.PCSCFEnd); err != nil {
-				return err
-			}
-		}
+	if err := p.tearDown(ctx, ue, &spis); err != nil {
+		return err
 	}
 	return p.store.DeleteSecurityAssociationsOf(ctx, ue, spis)
+}
+
+// tearDown has the kernel let the security associations of the UE at ue
+// go, once the last message of the registration has had time to leave
+// over them. With spis it leaves another set alone, as the Store does.
+// It fails only when the SA table cannot be read.
+func (p *PCSCF) tearDown(ctx context.Context, ue netip.AddrPort, spis *SPIs) error {
+	if p.cfg.ESP == nil {
+		return nil
+	}
+	sas, ok, err := p.store.SecurityAssociations(ctx, ue)
+	switch {
+	case err != nil:
+		return err
+	case !ok || !p.ours(sas) || (spis != nil && sas.SPIs() != *spis):
+		return nil
+	}
+	delay := p.cfg.ESP.TeardownDelay
+	if delay == 0 {
+		delay = afterTheLastMessage
+	}
+	agreement := p.agreement(sas)
+	time.AfterFunc(delay, func() {
+		p.cfg.ESP.Kernel.Teardown(context.Background(), agreement, ipsec.PCSCFEnd)
+	})
+	return nil
 }
 
 // protectedClientPort is port_pc, the port the P-CSCF sends the
@@ -308,6 +360,23 @@ func (p *PCSCF) stackToward(dst sip.Destination) (*ims.StackRef, error) {
 		return &p.protectedStack, nil
 	}
 	return &p.stack, nil
+}
+
+// ProtectedPeer reports whether the UE at addr has established security
+// associations with this P-CSCF. The transport layer asks it before it
+// sends a request from the protected client port, which TS 33.203 7.1
+// keeps for the messages that ESP protects: everything else, the
+// requests to the core among it, leaves the port the P-CSCF listens on.
+// A UE whose entry cannot be read counts as unprotected, so that the
+// request goes out rather than not at all; the UE drops it, as it drops
+// anything unprotected on a protected port (7.1 item 4).
+func (p *PCSCF) ProtectedPeer(addr netip.AddrPort) bool {
+	established, err := p.established(addr)
+	if err != nil {
+		p.log.Warn("could not read the SA table for a request to a UE", "ue", addr.String(), "error", err.Error())
+		return false
+	}
+	return established
 }
 
 // established reports whether the UE at ue has established security

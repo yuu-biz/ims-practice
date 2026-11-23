@@ -23,12 +23,15 @@ import (
 	"context"
 	"crypto/hmac"
 	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"log/slog"
 	"net/netip"
 	"os/exec"
+	"regexp"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/yuu-biz/ims-practice/internal/aka"
 	"github.com/yuu-biz/ims-practice/internal/ims"
@@ -118,6 +121,21 @@ var transforms = map[ims.Transform]transform{
 	},
 }
 
+// mechanism is the kernel's transform for the mechanism that the two
+// ends agreed on. Only ESP in transport mode is set up here: TS 33.203
+// 6 allows no other protocol, and transport mode is the one of 7.1 for
+// a UE that is not behind a NAT. An absent prot or mod means esp and
+// trans (Annex H).
+func mechanism(m ims.IPsec3GPP) (transform, error) {
+	if p := strings.ToLower(m.Protocol); p != "" && p != "esp" {
+		return transform{}, fmt.Errorf("ipsec: no support for prot %q, only esp", m.Protocol)
+	}
+	if mode := strings.ToLower(m.Mode); mode != "" && mode != "trans" {
+		return transform{}, fmt.Errorf("ipsec: no support for mod %q, only trans", m.Mode)
+	}
+	return lookup(m.Transform)
+}
+
 // lookup is the kernel's transform for t, whose empty encryption
 // algorithm means null (TS 33.203 Annex H).
 func lookup(t ims.Transform) (transform, error) {
@@ -153,17 +171,38 @@ func IKESP(t ims.Transform, ik aka.IK, ck aka.CK) ([]byte, error) {
 	return mac.Sum(nil), nil
 }
 
-// Setup is the "ip xfrm" commands that set the agreement up at end, one
-// to a line, for "ip -batch".
+// Command is one "ip" command, its arguments without the program.
+type Command []string
+
+// String is the command as a shell needs it, which is how the log shows
+// it and how a learner types it: the words that a shell would take
+// apart or swallow are quoted.
+func (c Command) String() string {
+	words := make([]string, len(c))
+	for i, w := range c {
+		if w == "" || strings.ContainsAny(w, " \t'\"()$&|<>") {
+			words[i] = "'" + strings.ReplaceAll(w, "'", `'\''`) + "'"
+		} else {
+			words[i] = w
+		}
+	}
+	return "ip " + strings.Join(words, " ")
+}
+
+// Setup is the "ip xfrm" commands that set the agreement up at end.
+// lifetime is how long the associations may live at most.
 //
 // Each security association becomes one entry of the kernel's security
 // association database, in transport mode and with the anti-replay
-// service that TS 33.203 6.3 asks for. It carries no lifetime of its
-// own: TS 33.203 7.1 fixes the SA duration at 2^32-1 seconds and NOTE 4
-// leaves the lifetime to the SIP application, which deletes the
-// associations with Teardown.
+// service that TS 33.203 6.3 asks for. TS 33.203 7.1 fixes the SA
+// duration at 2^32-1 seconds and NOTE 4 leaves the lifetime to the SIP
+// application; the kernel gets a hard lifetime all the same, so that
+// the associations of a UE that stops answering go even though no
+// registration ends to take them out (7.4.2a: the P-CSCF deletes any SA
+// whose lifetime is exceeded). Refresh moves it when a registration is
+// refreshed without a new authentication.
 //
-// Each of them also becomes two policies, which bind it to the SIP
+// Each association also becomes two policies, which bind it to the SIP
 // between the two protected ports: one for UDP and one for TCP, since
 // the two share the association (TS 33.203 7.1) and "ip xfrm" names the
 // ports of a selector only under a transport protocol. The policy in
@@ -176,129 +215,208 @@ func IKESP(t ims.Transform, ik aka.IK, ck aka.CK) ([]byte, error) {
 // and differ only in their ports and SPIs, so without it the kernel
 // could protect a packet with either.
 //
-// The commands update rather than add, so that setting the same
-// agreement up twice, or setting a new one up over the ports of the one
-// it replaces, leaves the kernel in the same state as setting it up
-// once (TS 33.203 7.4.0: an authenticated re-registration replaces the
-// associations).
-func (a Agreement) Setup(end End) (string, error) {
-	k, err := lookup(a.UEMechanism.Transform)
+// Setting the same agreement up twice leaves the kernel as one set-up
+// would: each state is added after a deleteall of its own SPI between
+// the same two addresses, which succeeds whether or not one is there,
+// and a policy is updated, which the kernel takes as add or replace. A
+// state cannot be updated into being: the kernel answers ESRCH to an
+// update of an SPI it does not hold.
+func (a Agreement) Setup(end End, lifetime time.Duration) ([]Command, error) {
+	return a.states(end, "add", lifetime, true)
+}
+
+// Refresh is the commands that give the associations of the agreement a
+// new lifetime, for a registration that was refreshed without a new
+// authentication (TS 33.203 7.4.2a raises the lifetime so that it ends
+// shortly after the registration). It changes nothing else, and the
+// policies stay as Setup left them.
+func (a Agreement) Refresh(end End, lifetime time.Duration) ([]Command, error) {
+	return a.states(end, "update", lifetime, false)
+}
+
+// states are the commands for the four security associations, with
+// their policies when withPolicies.
+func (a Agreement) states(end End, verb string, lifetime time.Duration, withPolicies bool) ([]Command, error) {
+	k, err := mechanism(a.UEMechanism)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 	key, err := IKESP(a.UEMechanism.Transform, a.IK, a.CK)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
-	var b strings.Builder
+	seconds := int(lifetime.Round(time.Second) / time.Second)
+	if seconds < 1 {
+		return nil, fmt.Errorf("ipsec: the security associations have %s left to live", lifetime)
+	}
+	var out []Command
 	for _, sa := range a.SecurityAssociations() {
-		fmt.Fprintf(&b, "state update src %s dst %s proto esp spi %s reqid %s mode transport replay-window 32"+
-			" auth-trunc %s 0x%x %d enc %s 0x\n",
-			sa.Source.Addr(), sa.Destination.Addr(), spi(sa.SPI), reqid(sa.SPI),
-			k.integrity, key, k.truncation, k.encryption)
-		for _, p := range sa.policies(end, "update") {
-			b.WriteString(p)
+		if verb == "add" {
+			// A state of this SPI that an earlier set-up left behind
+			// would make the add fail. deleteall succeeds with nothing
+			// to delete, and names the SPI and both addresses, so it
+			// touches no other UE's associations.
+			out = append(out, sa.deleteState())
+		}
+		out = append(out, Command{"xfrm", "state", verb,
+			"src", sa.Source.Addr().String(), "dst", sa.Destination.Addr().String(),
+			"proto", "esp", "spi", spi(sa.SPI), "reqid", reqid(sa.SPI), "mode", "transport",
+			"replay-window", "32", "limit", "time-hard", strconv.Itoa(seconds),
+			// The key of null encryption is empty, which iproute2 reads
+			// from an empty argument; "0x" alone it reads as the two
+			// characters.
+			"auth-trunc", k.integrity, "0x" + hex.EncodeToString(key), strconv.Itoa(k.truncation),
+			"enc", k.encryption, ""})
+		if withPolicies {
+			out = append(out, sa.policies(end, "update", seconds)...)
 		}
 	}
-	return b.String(), nil
+	return out, nil
 }
 
-// Teardown is the "ip xfrm" commands that delete what Setup added. The
-// states go by address pair, since the four associations of one UE are
-// the only ESP between those two addresses.
-func (a Agreement) Teardown(end End) string {
-	var b strings.Builder
-	for i, sa := range a.SecurityAssociations() {
-		if i%2 == 0 {
-			// Both associations of a pair run between the same two
-			// addresses as the other pair's, so one deleteall for each
-			// direction is enough.
-			fmt.Fprintf(&b, "state deleteall src %s dst %s proto esp\n", sa.Source.Addr(), sa.Destination.Addr())
-		}
-		for _, p := range sa.policies(end, "delete") {
-			b.WriteString(p)
-		}
+// Teardown is the commands that delete what Setup added. Each of them
+// deletes what matches a selector of this agreement alone, and succeeds
+// when there is nothing left to delete, so a teardown that runs twice,
+// or one that follows a set-up that got only halfway, ends in the same
+// state.
+func (a Agreement) Teardown(end End) []Command {
+	var out []Command
+	for _, sa := range a.SecurityAssociations() {
+		out = append(out, sa.deleteState())
+		out = append(out, sa.policies(end, "deleteall", 0)...)
 	}
-	return b.String()
+	return out
+}
+
+// deleteState is the command that deletes this association alone: its
+// SPI between its two addresses. "ip xfrm state deleteall" with a
+// selector deletes what matches and is content with nothing, where
+// "delete" answers that there is no such file.
+func (sa SecurityAssociation) deleteState() Command {
+	return Command{"xfrm", "state", "deleteall", "src", sa.Source.Addr().String(),
+		"dst", sa.Destination.Addr().String(), "proto", "esp", "spi", spi(sa.SPI)}
 }
 
 // policies are the policy commands of one security association, one for
 // UDP and one for TCP. The association is outbound at the end that
-// sends on it and inbound at the other. A delete names the selector
+// sends on it and inbound at the other. A deleteall names the selector
 // alone, which is what identifies a policy.
-func (sa SecurityAssociation) policies(end End, verb string) []string {
+func (sa SecurityAssociation) policies(end End, verb string, seconds int) []Command {
 	direction := "in"
 	if sa.From == end {
 		direction = "out"
 	}
-	var out []string
+	var out []Command
 	for _, protocol := range []string{"udp", "tcp"} {
-		line := fmt.Sprintf("policy %s src %s/%d dst %s/%d proto %s sport %d dport %d dir %s",
-			verb, sa.Source.Addr(), sa.Source.Addr().BitLen(), sa.Destination.Addr(), sa.Destination.Addr().BitLen(),
-			protocol, sa.Source.Port(), sa.Destination.Port(), direction)
-		if verb != "delete" {
-			line += fmt.Sprintf(" tmpl src %s dst %s proto esp reqid %s mode transport",
-				sa.Source.Addr(), sa.Destination.Addr(), reqid(sa.SPI))
+		c := Command{"xfrm", "policy", verb,
+			"src", prefix(sa.Source.Addr()), "dst", prefix(sa.Destination.Addr()),
+			"proto", protocol, "sport", strconv.Itoa(int(sa.Source.Port())),
+			"dport", strconv.Itoa(int(sa.Destination.Port())), "dir", direction}
+		if verb != "deleteall" {
+			c = append(c, "limit", "time-hard", strconv.Itoa(seconds),
+				"tmpl", "src", sa.Source.Addr().String(), "dst", sa.Destination.Addr().String(),
+				"proto", "esp", "reqid", reqid(sa.SPI), "mode", "transport")
 		}
-		out = append(out, line+"\n")
+		out = append(out, c)
 	}
 	return out
 }
+
+// prefix is the address as a selector of one host.
+func prefix(a netip.Addr) string { return a.String() + "/" + strconv.Itoa(a.BitLen()) }
 
 func spi(v uint32) string   { return "0x" + strconv.FormatUint(uint64(v), 16) }
 func reqid(v uint32) string { return strconv.FormatUint(uint64(v), 10) }
 
 // Kernel is the kernel's security association and policy databases,
-// which it reaches by running "ip xfrm" in batch.
+// which it reaches by running "ip xfrm".
 type Kernel struct {
 	log *slog.Logger
-	// Run takes the place of running ip, for a test. force asks it to
-	// carry on past an error, as a teardown does.
-	Run func(ctx context.Context, force bool, batch string) error
+	// Run takes the place of running the commands, for a test.
+	Run func(ctx context.Context, cmds []Command) error
 }
 
 // NewKernel is the kernel of this host.
 func NewKernel(log *slog.Logger) *Kernel { return &Kernel{log: log} }
 
-// Setup sets the agreement's security associations up at end.
-func (k *Kernel) Setup(ctx context.Context, a Agreement, end End) error {
-	batch, err := a.Setup(end)
+// runFor bounds one run of ip, which talks to the kernel and to nothing
+// else.
+const runFor = 10 * time.Second
+
+// Setup sets the agreement's security associations up at end, to live
+// for at most lifetime.
+func (k *Kernel) Setup(ctx context.Context, a Agreement, end End, lifetime time.Duration) error {
+	cmds, err := a.Setup(end, lifetime)
 	if err != nil {
 		return err
 	}
-	if err := k.run(ctx, false, batch); err != nil {
+	if err := k.run(ctx, cmds, false); err != nil {
 		return err
 	}
 	k.log.Info("ESP security associations set up", "end", string(end), "ue", a.UE.String(),
 		"port_uc", a.UEMechanism.PortC, "port_us", a.UEMechanism.PortS,
-		"port_pc", a.PCSCFMechanism.PortC, "port_ps", a.PCSCFMechanism.PortS)
+		"port_pc", a.PCSCFMechanism.PortC, "port_ps", a.PCSCFMechanism.PortS,
+		"lifetime", lifetime.Round(time.Second).String())
 	return nil
 }
 
-// Teardown deletes them again. It carries on past the ones that are
-// gone already, so that the end state is the same however often it
-// runs.
-func (k *Kernel) Teardown(ctx context.Context, a Agreement, end End) error {
-	if err := k.run(ctx, true, a.Teardown(end)); err != nil {
+// Refresh gives them a new lifetime.
+func (k *Kernel) Refresh(ctx context.Context, a Agreement, end End, lifetime time.Duration) error {
+	cmds, err := a.Refresh(end, lifetime)
+	if err != nil {
 		return err
 	}
-	k.log.Info("ESP security associations torn down", "end", string(end), "ue", a.UE.String())
-	return nil
+	return k.run(ctx, cmds, false)
 }
 
-func (k *Kernel) run(ctx context.Context, force bool, batch string) error {
+// Teardown deletes them again. It gives the caller no error: the
+// associations are going either way, the SIP layer has nothing to put
+// in their place, and a response that waited for the kernel would reach
+// the UE late or not at all. It runs every command even after one has
+// failed, so that as little as possible is left behind, and what the
+// kernel refused is in the log.
+func (k *Kernel) Teardown(ctx context.Context, a Agreement, end End) {
+	if err := k.run(ctx, a.Teardown(end), true); err != nil {
+		k.log.Warn("ESP security associations may stay in the kernel", "end", string(end),
+			"ue", a.UE.String(), "error", err.Error())
+		return
+	}
+	k.log.Info("ESP security associations torn down", "end", string(end), "ue", a.UE.String())
+}
+
+// secret is a key in the text that ip wrote back, which the log is no
+// place for.
+var secret = regexp.MustCompile(`0x[0-9a-f]{32,}`)
+
+// run runs each command with an ip of its own, rather than one "ip
+// -batch": a batch stops at the first command that fails, and only the
+// first deleteall of a batch takes effect, since ip reuses one netlink
+// socket for the dump that deleteall walks. keepGoing runs the rest
+// after a command has failed and returns the first error.
+func (k *Kernel) run(ctx context.Context, cmds []Command, keepGoing bool) error {
 	if k.Run != nil {
-		return k.Run(ctx, force, batch)
+		return k.Run(ctx, cmds)
 	}
-	args := []string{"-batch", "-"}
-	if force {
-		args = append([]string{"-force"}, args...)
+	var first error
+	for _, c := range cmds {
+		if err := k.one(ctx, c); err != nil {
+			if first == nil {
+				first = err
+			}
+			if !keepGoing {
+				return first
+			}
+		}
 	}
-	cmd := exec.CommandContext(ctx, "ip", args...)
-	cmd.Stdin = strings.NewReader(batch)
-	out, err := cmd.CombinedOutput()
+	return first
+}
+
+func (k *Kernel) one(ctx context.Context, c Command) error {
+	ctx, cancel := context.WithTimeout(ctx, runFor)
+	defer cancel()
+	out, err := exec.CommandContext(ctx, "ip", c...).CombinedOutput()
 	if err != nil {
-		return fmt.Errorf("ip %s: %w: %s", strings.Join(args, " "), err, strings.TrimSpace(string(out)))
+		return fmt.Errorf("%s: %w: %s", c, err, secret.ReplaceAllString(strings.TrimSpace(string(out)), "0x..."))
 	}
 	return nil
 }

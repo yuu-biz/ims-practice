@@ -5,9 +5,14 @@ import (
 	"net/netip"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/yuu-biz/ims-practice/internal/ims"
 )
+
+// lifetime is the one of a registration of an hour, with the margin of
+// TS 24.229 5.2.2.2.
+const lifetime = 3630 * time.Second
 
 // agreement is the agreement of the scenarios: the UE and the P-CSCF of
 // the Compose deployment, with CK and IK of test set 1 of TS 35.208.
@@ -33,6 +38,44 @@ func decode(t *testing.T, s string) []byte {
 		t.Fatalf("%q: %v", s, err)
 	}
 	return b
+}
+
+// setup is the commands of Setup, as a shell would need them.
+func setup(t *testing.T, a Agreement, end End) []string {
+	t.Helper()
+	cmds, err := a.Setup(end, lifetime)
+	if err != nil {
+		t.Fatalf("Setup at the %s: %v", end, err)
+	}
+	return written(cmds)
+}
+
+func written(cmds []Command) []string {
+	out := make([]string, len(cmds))
+	for i, c := range cmds {
+		out[i] = c.String()
+	}
+	return out
+}
+
+// with are the commands that start with prefix.
+func with(cmds []string, prefix string) []string {
+	var out []string
+	for _, c := range cmds {
+		if strings.HasPrefix(c, prefix) {
+			out = append(out, c)
+		}
+	}
+	return out
+}
+
+func holds(cmds []string, want string) bool {
+	for _, c := range cmds {
+		if c == want {
+			return true
+		}
+	}
+	return false
 }
 
 // TestSecurityAssociationsAreTwoPairs: an agreement has the four
@@ -85,101 +128,162 @@ func TestIKESPRefusesAnotherTransform(t *testing.T) {
 	}
 }
 
+// TestSetupRefusesAnotherProtocolOrMode: TS 33.203 6 allows no protocol
+// but ESP, and 7.1 asks for transport mode, so a mechanism that names
+// anything else is not set up as though it had asked for ESP.
+func TestSetupRefusesAnotherProtocolOrMode(t *testing.T) {
+	for _, c := range []struct {
+		what  string
+		named func(*ims.IPsec3GPP)
+	}{
+		{"prot=ah", func(m *ims.IPsec3GPP) { m.Protocol = "ah" }},
+		{"mod=tun", func(m *ims.IPsec3GPP) { m.Mode = "tun" }},
+		{"mod=UDP-enc-tun", func(m *ims.IPsec3GPP) { m.Mode = "UDP-enc-tun" }},
+	} {
+		a := agreement(t)
+		c.named(&a.UEMechanism)
+		if _, err := a.Setup(UEEnd, lifetime); err == nil {
+			t.Errorf("Setup accepted %s", c.what)
+		}
+	}
+	// The values of this project's own mechanisms, which Annex H leaves
+	// out because they are the defaults.
+	a := agreement(t)
+	a.UEMechanism.Protocol, a.UEMechanism.Mode = "esp", "trans"
+	if _, err := a.Setup(UEEnd, lifetime); err != nil {
+		t.Errorf("Setup refused prot=esp with mod=trans: %v", err)
+	}
+}
+
+// TestEveryCommandNamesTheXfrmObject: a command is a whole "ip" command
+// without the program, so it names the object xfrm; without it ip
+// answers that the object "state" is unknown.
+func TestEveryCommandNamesTheXfrmObject(t *testing.T) {
+	a := agreement(t)
+	refresh, err := a.Refresh(PCSCFEnd, lifetime)
+	if err != nil {
+		t.Fatalf("Refresh: %v", err)
+	}
+	batches := [][]string{setup(t, a, UEEnd), setup(t, a, PCSCFEnd), written(a.Teardown(UEEnd)), written(refresh)}
+	for _, cmds := range batches {
+		for _, c := range cmds {
+			if !strings.HasPrefix(c, "ip xfrm state ") && !strings.HasPrefix(c, "ip xfrm policy ") {
+				t.Errorf("a command names no xfrm object: %q", c)
+			}
+		}
+	}
+}
+
 // TestSetupAtEachEnd: both ends set up the same four associations and
 // the same keys, and each one's policies are outbound where it sends
 // and inbound where it receives.
 func TestSetupAtEachEnd(t *testing.T) {
 	a := agreement(t)
-	ue, err := a.Setup(UEEnd)
-	if err != nil {
-		t.Fatalf("Setup at the UE: %v", err)
-	}
-	pcscf, err := a.Setup(PCSCFEnd)
-	if err != nil {
-		t.Fatalf("Setup at the P-CSCF: %v", err)
-	}
-	states := func(batch string) []string {
-		var out []string
-		for _, line := range strings.Split(strings.TrimSuffix(batch, "\n"), "\n") {
-			if strings.HasPrefix(line, "state ") {
-				out = append(out, line)
-			}
-		}
-		return out
-	}
-	if got, want := states(ue), states(pcscf); strings.Join(got, "\n") != strings.Join(want, "\n") {
+	ue, pcscf := setup(t, a, UEEnd), setup(t, a, PCSCFEnd)
+	got, want := with(ue, "ip xfrm state "), with(pcscf, "ip xfrm state ")
+	if strings.Join(got, "\n") != strings.Join(want, "\n") {
 		t.Errorf("the ends set up different security associations:\n%s\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
 	}
 	for _, want := range []string{
 		// The UE sends its requests from its protected client port.
-		"policy update src 172.28.0.120/32 dst 172.28.0.20/32 proto udp sport 5063 dport 5064 dir out",
-		"policy update src 172.28.0.120/32 dst 172.28.0.20/32 proto tcp sport 5063 dport 5064 dir out",
+		"ip xfrm policy update src 172.28.0.120/32 dst 172.28.0.20/32 proto udp sport 5063 dport 5064 dir out",
+		"ip xfrm policy update src 172.28.0.120/32 dst 172.28.0.20/32 proto tcp sport 5063 dport 5064 dir out",
 		// And receives the requests of the P-CSCF on its protected
 		// server port.
-		"policy update src 172.28.0.20/32 dst 172.28.0.120/32 proto udp sport 5065 dport 5062 dir in",
+		"ip xfrm policy update src 172.28.0.20/32 dst 172.28.0.120/32 proto udp sport 5065 dport 5062 dir in",
 	} {
-		if !strings.Contains(ue, want) {
-			t.Errorf("the UE sets up no policy %q in:\n%s", want, ue)
+		if len(with(ue, want)) != 1 {
+			t.Errorf("the UE sets up no policy %q in:\n%s", want, strings.Join(ue, "\n"))
 		}
 	}
 	for _, want := range []string{
-		"policy update src 172.28.0.20/32 dst 172.28.0.120/32 proto udp sport 5065 dport 5062 dir out",
-		"policy update src 172.28.0.120/32 dst 172.28.0.20/32 proto udp sport 5063 dport 5064 dir in",
+		"ip xfrm policy update src 172.28.0.20/32 dst 172.28.0.120/32 proto udp sport 5065 dport 5062 dir out",
+		"ip xfrm policy update src 172.28.0.120/32 dst 172.28.0.20/32 proto udp sport 5063 dport 5064 dir in",
 	} {
-		if !strings.Contains(pcscf, want) {
-			t.Errorf("the P-CSCF sets up no policy %q in:\n%s", want, pcscf)
+		if len(with(pcscf, want)) != 1 {
+			t.Errorf("the P-CSCF sets up no policy %q in:\n%s", want, strings.Join(pcscf, "\n"))
 		}
 	}
 }
 
-// TestSetupState: a state carries the SPI, the integrity algorithm with
-// IK_ESP and its 128-bit integrity check value, null encryption with an
-// empty key, transport mode and the anti-replay window of TS 33.203 6.3.
+// TestSetupState: a state is added, not updated, since the kernel
+// cannot update an SPI it does not hold; it carries the SPI, the
+// integrity algorithm with IK_ESP and its 128-bit integrity check
+// value, null encryption with an empty key, transport mode, the
+// anti-replay window of TS 33.203 6.3 and a lifetime. A shell needs the
+// name of an algorithm and the empty key quoted.
 func TestSetupState(t *testing.T) {
-	batch, err := agreement(t).Setup(UEEnd)
-	if err != nil {
-		t.Fatalf("Setup: %v", err)
-	}
-	const want = "state update src 172.28.0.120 dst 172.28.0.20 proto esp spi 0x138a reqid 5002 mode transport" +
-		" replay-window 32 auth-trunc hmac(sha256)" +
-		" 0x9e98fd635ce304d820de064bea152b645b2fa171ba99416e3a3e90f5f9687c9e 128 enc ecb(cipher_null) 0x"
-	if !strings.Contains(batch, want+"\n") {
-		t.Errorf("Setup has no line\n%s\nin:\n%s", want, batch)
+	cmds := setup(t, agreement(t), UEEnd)
+	const want = "ip xfrm state add src 172.28.0.120 dst 172.28.0.20 proto esp spi 0x138a reqid 5002" +
+		" mode transport replay-window 32 limit time-hard 3630 auth-trunc 'hmac(sha256)'" +
+		" 0x9e98fd635ce304d820de064bea152b645b2fa171ba99416e3a3e90f5f9687c9e 128 enc 'ecb(cipher_null)' ''"
+	if !holds(cmds, want) {
+		t.Errorf("Setup has no command\n%s\nin:\n%s", want, strings.Join(cmds, "\n"))
 	}
 	// Every policy points at its own association, so that the kernel
 	// protects a packet with the association of its ports.
 	for _, reqid := range []string{"reqid 5002 ", "reqid 4001 ", "reqid 4002 ", "reqid 5001 "} {
-		if n := strings.Count(batch, reqid); n != 3 {
+		if n := strings.Count(strings.Join(cmds, "\n"), reqid); n != 3 {
 			t.Errorf("%q is in %d commands, want the state and its two policies", reqid, n)
+		}
+	}
+	// An add of a state the kernel holds already fails, so each add
+	// follows the delete of its own SPI.
+	for i, c := range with(cmds, "ip xfrm state ") {
+		if i%2 == 0 && !strings.HasPrefix(c, "ip xfrm state deleteall ") {
+			t.Errorf("the state command before an add is %q", c)
 		}
 	}
 }
 
+// TestRefreshMovesTheLifetimeOnly: a registration refreshed without a
+// new authentication keeps its associations and moves their lifetime
+// (TS 33.203 7.4.2a), which the kernel takes as an update because the
+// states are there already.
+func TestRefreshMovesTheLifetimeOnly(t *testing.T) {
+	cmds, err := agreement(t).Refresh(UEEnd, 90*time.Second)
+	if err != nil {
+		t.Fatalf("Refresh: %v", err)
+	}
+	refresh := written(cmds)
+	if n := len(with(refresh, "ip xfrm state update ")); n != 4 {
+		t.Errorf("Refresh updates %d states, want the four of the agreement:\n%s", n, strings.Join(refresh, "\n"))
+	}
+	if n := len(with(refresh, "ip xfrm policy ")); n != 0 {
+		t.Errorf("Refresh touches %d policies, want none:\n%s", n, strings.Join(refresh, "\n"))
+	}
+	if n := strings.Count(strings.Join(refresh, "\n"), "limit time-hard 90 "); n != 4 {
+		t.Errorf("%d of the states get the new lifetime, want 4:\n%s", n, strings.Join(refresh, "\n"))
+	}
+	if _, err := agreement(t).Refresh(UEEnd, 0); err == nil {
+		t.Error("Refresh accepted associations with nothing left to live")
+	}
+}
+
 // TestTeardownMatchesSetup: a teardown deletes every policy that the
-// setup added, by the same selector, and the states of both directions.
+// setup added, by the same selector, and each state by its own SPI, so
+// that it leaves the associations of another registration of the same
+// UE alone. Every command of it succeeds with nothing to delete.
 func TestTeardownMatchesSetup(t *testing.T) {
 	a := agreement(t)
-	setup, err := a.Setup(PCSCFEnd)
-	if err != nil {
-		t.Fatalf("Setup: %v", err)
-	}
-	teardown := a.Teardown(PCSCFEnd)
-	for _, line := range strings.Split(strings.TrimSuffix(setup, "\n"), "\n") {
-		selector, ok := strings.CutPrefix(line, "policy update ")
-		if !ok {
-			continue
-		}
-		selector, _, _ = strings.Cut(selector, " tmpl ")
-		if !strings.Contains(teardown, "policy delete "+selector+"\n") {
-			t.Errorf("Teardown deletes no policy %q in:\n%s", selector, teardown)
+	teardown := written(a.Teardown(PCSCFEnd))
+	for _, c := range with(setup(t, a, PCSCFEnd), "ip xfrm policy update ") {
+		selector, _, _ := strings.Cut(strings.TrimPrefix(c, "ip xfrm policy update "), " limit ")
+		if !holds(teardown, "ip xfrm policy deleteall "+selector) {
+			t.Errorf("Teardown deletes no policy %q in:\n%s", selector, strings.Join(teardown, "\n"))
 		}
 	}
 	for _, want := range []string{
-		"state deleteall src 172.28.0.120 dst 172.28.0.20 proto esp\n",
-		"state deleteall src 172.28.0.20 dst 172.28.0.120 proto esp\n",
+		"ip xfrm state deleteall src 172.28.0.120 dst 172.28.0.20 proto esp spi 0x138a",
+		"ip xfrm state deleteall src 172.28.0.20 dst 172.28.0.120 proto esp spi 0xfa1",
+		"ip xfrm state deleteall src 172.28.0.20 dst 172.28.0.120 proto esp spi 0xfa2",
+		"ip xfrm state deleteall src 172.28.0.120 dst 172.28.0.20 proto esp spi 0x1389",
 	} {
-		if !strings.Contains(teardown, want) {
-			t.Errorf("Teardown has no %q in:\n%s", want, teardown)
+		if !holds(teardown, want) {
+			t.Errorf("Teardown has no %q in:\n%s", want, strings.Join(teardown, "\n"))
 		}
+	}
+	if n := len(with(teardown, "ip xfrm state ")); n != 4 {
+		t.Errorf("Teardown deletes %d states, want the four of the agreement", n)
 	}
 }

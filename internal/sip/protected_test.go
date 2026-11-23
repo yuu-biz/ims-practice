@@ -30,7 +30,7 @@ func freePort(t *testing.T) uint16 {
 func TestProtectedClientPortSendsRequests(t *testing.T) {
 	log := testLogger(t)
 	clientPort := freePort(t)
-	tr, err := ListenProtected("127.0.0.1:0", clientPort, log, nil)
+	tr, err := ListenProtected("127.0.0.1:0", clientPort, nil, log, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -85,7 +85,7 @@ func TestProtectedClientPortSendsRequests(t *testing.T) {
 // the other direction of the same pair of security associations.
 func TestProtectedServerPortAnswers(t *testing.T) {
 	log := testLogger(t)
-	tr, err := ListenProtected("127.0.0.1:0", freePort(t), log, nil)
+	tr, err := ListenProtected("127.0.0.1:0", freePort(t), nil, log, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -127,7 +127,7 @@ func TestProtectedServerPortAnswers(t *testing.T) {
 func TestProtectedClientPortOverTCP(t *testing.T) {
 	log := testLogger(t)
 	clientPort := freePort(t)
-	tr, err := ListenProtected("127.0.0.1:0", clientPort, log, nil)
+	tr, err := ListenProtected("127.0.0.1:0", clientPort, nil, log, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -163,5 +163,57 @@ func TestProtectedClientPortOverTCP(t *testing.T) {
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("no connection reached the peer")
+	}
+}
+
+// TestUnprotectedPeerKeepsTheServerPort: TS 33.203 7.1 lets no
+// unprotected message leave a protected client port, so a request to a
+// peer that has no security associations, as the core of a P-CSCF has
+// none, goes from the port the layer listens on.
+func TestUnprotectedPeerKeepsTheServerPort(t *testing.T) {
+	log := testLogger(t)
+	peer := rawSocket(t)
+	core := rawSocket(t)
+	protected := func(dst netip.AddrPort) bool { return dst == addrOf(peer) }
+	tr, err := ListenProtected("127.0.0.1:0", freePort(t), protected, log, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tr.Close()
+
+	for _, c := range []struct {
+		what string
+		to   *net.UDPConn
+		want uint16
+	}{
+		{"a peer with security associations", peer, tr.client.LocalAddr().Port()},
+		{"a peer without them", core, tr.LocalAddr().Port()},
+	} {
+		req := &Message{Method: OPTIONS, RequestURI: "sip:ims.example.net"}
+		req.Add("Via", "SIP/2.0/UDP 127.0.0.1:"+strconv.Itoa(int(tr.LocalAddr().Port()))+";branch=z9hG4bK4;rport")
+		if err := tr.SendRequest(req, Destination{Transport: UDP, Addr: addrOf(c.to)}); err != nil {
+			t.Fatal(err)
+		}
+		buf := make([]byte, 2048)
+		c.to.SetReadDeadline(time.Now().Add(2 * time.Second))
+		_, from, err := c.to.ReadFromUDPAddrPort(buf)
+		if err != nil {
+			t.Fatalf("%s: %v", c.what, err)
+		}
+		if from.Port() != c.want {
+			t.Errorf("the request to %s came from port %d, want %d", c.what, from.Port(), c.want)
+		}
+	}
+}
+
+// TestProtectedClientPortNeedsAnAddress: a connection from an
+// unspecified address takes a port of the moment, so a protected client
+// port there would hold for UDP alone and the requests over TCP would
+// leave it unprotected. The layer says so rather than bind it.
+func TestProtectedClientPortNeedsAnAddress(t *testing.T) {
+	tr, err := ListenProtected("0.0.0.0:0", freePort(t), nil, testLogger(t), nil)
+	if err == nil {
+		tr.Close()
+		t.Fatal("a protected client port was bound on every address")
 	}
 }
