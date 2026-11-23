@@ -397,6 +397,34 @@ type Store interface {
 	// of a large network is as many pages as the operator asks for and
 	// no walk over the rest.
 	List(ctx context.Context, after string, limit int) (subs []Subscriber, next string, err error)
+	// ListServed returns one page of the private identities of the
+	// subscribers whose user profile an S-CSCF has and whose service
+	// profile name comes from source (ServedSource): at most limit of
+	// them, after the private identity after, in the order the
+	// identities sort in, with the next cursor of List. The empty source
+	// names none of them.
+	//
+	// A change of the setting that names the profile of source gives
+	// every one of those subscribers another user profile, which the HSS
+	// pushes to its S-CSCF (TS 29.228 6.6.1, HSS.Settings). Reading them
+	// by the page costs the same however many subscribers the store
+	// holds, so a change costs one page per limit subscribers of that
+	// source and no walk over the rest.
+	//
+	// Put, Replace and Delete keep what this reads: they are the writes
+	// through which a subscriber's profile reaches an S-CSCF or stops
+	// being held there, and through which its source changes, and the
+	// caller of each holds the subscriber's lock. Add writes a
+	// subscription that no S-CSCF has yet, which belongs under no
+	// source. Each of those writes names the one source its subscriber
+	// belongs under and takes the subscriber out of the others, so
+	// writing it again puts the index right whatever an instance that
+	// stopped halfway left behind. What such an instance can leave is a
+	// subscriber under two sources, or one that no S-CSCF has any more:
+	// the caller reads each subscriber it is given and leaves out the
+	// ones that are gone, so an entry too many costs a push of the
+	// profile that the S-CSCF has already.
+	ListServed(ctx context.Context, source ProfileSource, after string, limit int) (privateIDs []string, next string, err error)
 	// Counts are the numbers of TS 32.409 4.2.1 that the store holds,
 	// and whether it keeps them. A store that does not keep them
 	// returns false, and the HSS on it serves no database usage
@@ -448,6 +476,11 @@ type MemoryStore struct {
 	// a binary search and a slice of it, as a range lookup in a store
 	// outside the process is.
 	order []string
+	// served holds the private keys of the subscribers whose user
+	// profile an S-CSCF has, in order, under the source of their
+	// service profile name, so that a page of ListServed is a binary
+	// search and a slice of it as a page of List is.
+	served map[ProfileSource][]string
 	// repository holds the repository data by private key, then by
 	// Service-Indication.
 	repository map[string]map[string]sh.TransparentData
@@ -458,7 +491,8 @@ type MemoryStore struct {
 
 // NewMemoryStore returns a store that holds subs.
 func NewMemoryStore(subs ...Subscription) (*MemoryStore, error) {
-	s := &MemoryStore{byPrivate: map[string]Subscriber{}, byPublic: map[string]string{}, repository: map[string]map[string]sh.TransparentData{}}
+	s := &MemoryStore{byPrivate: map[string]Subscriber{}, byPublic: map[string]string{}, repository: map[string]map[string]sh.TransparentData{},
+		served: map[ProfileSource][]string{}}
 	for _, sub := range subs {
 		if err := s.Add(context.Background(), sub); err != nil {
 			return nil, err
@@ -558,8 +592,25 @@ func (s *MemoryStore) Put(_ context.Context, sub Subscriber) error {
 		s.byPrivate[k] = sub
 		s.countRegistered(stored, -1)
 		s.countRegistered(sub, 1)
+		s.indexServed(k, ServedSource(sub))
 	}
 	return nil
+}
+
+// indexServed makes the index of the served subscribers hold k under
+// source and under no other, and under none at all for the empty
+// source (ListServed).
+func (s *MemoryStore) indexServed(k string, source ProfileSource) {
+	for _, each := range ProfileSources {
+		ids := s.served[each]
+		i, found := slices.BinarySearch(ids, k)
+		switch {
+		case each == source && !found:
+			s.served[each] = slices.Insert(ids, i, k)
+		case each != source && found:
+			s.served[each] = slices.Delete(ids, i, i+1)
+		}
+	}
 }
 
 // Replace writes the whole subscription back: unlike Put, the index by
@@ -603,6 +654,7 @@ func (s *MemoryStore) Replace(_ context.Context, sub Subscriber) error {
 	s.countRegistered(stored, -1)
 	s.countIdentities(sub.Subscription, 1)
 	s.countRegistered(sub, 1)
+	s.indexServed(k, ServedSource(sub))
 	return nil
 }
 
@@ -667,6 +719,7 @@ func (s *MemoryStore) Delete(_ context.Context, privateID string) (Subscriber, b
 	if i, found := slices.BinarySearch(s.order, k); found {
 		s.order = slices.Delete(s.order, i, i+1)
 	}
+	s.indexServed(k, "")
 	for _, id := range sub.PublicIdentities {
 		delete(s.byPublic, publicKey(id))
 	}
@@ -730,24 +783,43 @@ func (s *MemoryStore) List(_ context.Context, after string, limit int) ([]Subscr
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	keys, next := page(s.order, after, limit)
+	subs := make([]Subscriber, 0, len(keys))
+	for _, k := range keys {
+		subs = append(subs, copied(s.byPrivate[k]))
+	}
+	return subs, next, nil
+}
+
+func (s *MemoryStore) ListServed(_ context.Context, source ProfileSource, after string, limit int) ([]string, string, error) {
+	if limit < 1 {
+		return nil, "", nil
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	keys, next := page(s.served[source], after, limit)
+	// The caller gets a slice of its own: the index behind this one
+	// changes as subscribers are written.
+	return slices.Clone(keys), next, nil
+}
+
+// page is the part of the ordered private keys ids that one page of a
+// listing holds, at most limit of them, and the cursor of the page that
+// follows (Store.List).
+func page(ids []string, after string, limit int) (keys []string, next string) {
 	start := 0
 	if after != "" {
 		// after is not in the page, whether or not its subscriber is
 		// still there: a page goes on from where the one before it ended.
-		i, found := slices.BinarySearch(s.order, privateKey(after))
+		i, found := slices.BinarySearch(ids, privateKey(after))
 		start = i
 		if found {
 			start++
 		}
 	}
-	keys := s.order[start:min(start+limit, len(s.order))]
-	subs := make([]Subscriber, 0, len(keys))
-	for _, k := range keys {
-		subs = append(subs, copied(s.byPrivate[k]))
-	}
-	next := ""
+	keys = ids[start:min(start+limit, len(ids))]
 	if len(keys) == limit {
 		next = keys[len(keys)-1]
 	}
-	return subs, next, nil
+	return keys, next
 }

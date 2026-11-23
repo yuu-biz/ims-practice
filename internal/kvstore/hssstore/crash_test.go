@@ -3,9 +3,13 @@ package hssstore_test
 import (
 	"context"
 	"errors"
+	"fmt"
+	"slices"
+	"strings"
 	"testing"
 
 	"github.com/yuu-biz/ims-practice/internal/aka"
+	"github.com/yuu-biz/ims-practice/internal/diameter"
 	"github.com/yuu-biz/ims-practice/internal/hss"
 	"github.com/yuu-biz/ims-practice/internal/kvstore"
 	"github.com/yuu-biz/ims-practice/internal/kvstore/hssstore"
@@ -151,5 +155,54 @@ func TestADeleteThatStopsAfterTheSubscriber(t *testing.T) {
 				t.Errorf("SubscriberOf = %+v, %v, %v", got, ok, err)
 			}
 		})
+	}
+}
+
+// TestAStoppedWriteLeavesNoServedSubscriberOutOfItsIndex: an instance
+// that stops at any write of a Put or a Replace may leave the
+// subscriber in an index too many, never with an item that names a
+// source whose index lacks it. The latter would stay so: a request sent
+// again finds the subscription as it asks for and writes nothing.
+func TestAStoppedWriteLeavesNoServedSubscriberOutOfItsIndex(t *testing.T) {
+	ctx := context.Background()
+	registered := hss.Subscriber{Subscription: hss.Subscription{PrivateIdentity: impi, PublicIdentities: []string{impu, tel}, Password: "p",
+		AKA: &hss.AKACredentials{Secret: akaSecret}}, State: hss.Registered,
+		ServerName: "sip:scscf.ims.example:5060", SCSCF: diameter.Identity{OriginHost: "scscf.ims.example", OriginRealm: "ims.example"}}
+	ownProfile := registered
+	ownProfile.ServiceProfile = "trial"
+	writes := map[string]func(*hssstore.Store) error{
+		"Put":     func(s *hssstore.Store) error { return s.Put(ctx, registered) },
+		"Replace": func(s *hssstore.Store) error { return s.Replace(ctx, ownProfile) },
+	}
+	for _, backend := range storetest.Backends() {
+		for name, write := range writes {
+			for stop := 0; stop < 8; stop++ {
+				t.Run(fmt.Sprintf("%s/%s/after %d writes", backend.Name, name, stop), func(t *testing.T) {
+					kv, cfg := added(t, backend)
+					healthy := hssstore.New(kv, cfg)
+					if name == "Replace" {
+						if err := healthy.Put(ctx, registered); err != nil {
+							t.Fatal(err)
+						}
+					}
+					write(hssstore.New(storetest.StopAfter(kv, stop), cfg))
+					u, ok, err := healthy.Subscriber(ctx, impi)
+					if err != nil || !ok {
+						t.Fatalf("Subscriber: %v %v", ok, err)
+					}
+					source := hss.ServedSource(u)
+					if source == "" {
+						return
+					}
+					ids, _, err := healthy.ListServed(ctx, source, "", 10)
+					if err != nil {
+						t.Fatal(err)
+					}
+					if !slices.Contains(ids, strings.ToLower(impi)) {
+						t.Errorf("the item names the source %q, whose index holds %v", source, ids)
+					}
+				})
+			}
+		}
 	}
 }

@@ -39,6 +39,60 @@ type ServiceProfile struct {
 	Features []string
 }
 
+// ProfileSource is where the name of the service profile of a
+// subscription comes from: the subscription itself, or one of the two
+// settings that name the profile of a kind of subscription (Settings).
+// The data of the subscription alone decides it, never the settings, so
+// a change of a setting moves no subscriber from one source to another,
+// and two instances whose settings are a moment apart still agree on
+// the source of every subscriber.
+//
+// A Store holds the subscribers whose profile an S-CSCF has under their
+// source (Store.ListServed), so that a change of one of the two
+// settings reaches the subscribers it decides for without reading the
+// others.
+type ProfileSource string
+
+const (
+	// ProfileOfSubscription is a subscription that names a service
+	// profile of its own, which neither setting decides for.
+	ProfileOfSubscription ProfileSource = "subscription"
+	// ProfileOfTestUsers is one marked Subscription.TestUser that names
+	// none of its own, so TestUserServiceProfile names its profile.
+	ProfileOfTestUsers ProfileSource = "test_user"
+	// ProfileOfOtherUsers is every other subscription, so
+	// DefaultServiceProfile names its profile.
+	ProfileOfOtherUsers ProfileSource = "default"
+)
+
+// ProfileSources are the three sources, for a Store that keeps an index
+// of its own per source. The empty ProfileSource is none of them.
+var ProfileSources = []ProfileSource{ProfileOfSubscription, ProfileOfTestUsers, ProfileOfOtherUsers}
+
+// profileSourceOf is where the name of the service profile of s comes
+// from.
+func profileSourceOf(s Subscription) ProfileSource {
+	switch {
+	case s.ServiceProfile != "":
+		return ProfileOfSubscription
+	case s.TestUser:
+		return ProfileOfTestUsers
+	}
+	return ProfileOfOtherUsers
+}
+
+// ServedSource is the source under which a Store holds sub in its index
+// of the served subscribers, or the empty source for a subscriber it
+// holds under none, whose user profile no S-CSCF has. A Store asks it
+// of every subscriber it writes, so that the index says what the
+// subscribers say (Store.ListServed).
+func ServedSource(sub Subscriber) ProfileSource {
+	if !served(sub) {
+		return ""
+	}
+	return profileSourceOf(sub.Subscription)
+}
+
 // userProfile is the profile of u that the SAA carries in User-Data (TS
 // 29.228 6.1.2.1): the identities of the subscription and the criteria
 // of its service profile under the settings in force.
@@ -68,12 +122,12 @@ func (h *HSS) userProfileIn(set *settings, u Subscriber) cx.UserProfile {
 func (h *HSS) serviceProfile(s Subscription) string { return h.settings.Load().serviceProfile(s) }
 
 // serviceProfile is the name of the service profile of sub under the
-// settings set.
+// settings set: the one its source names (profileSourceOf).
 func (set *settings) serviceProfile(s Subscription) string {
-	switch {
-	case s.ServiceProfile != "":
+	switch profileSourceOf(s) {
+	case ProfileOfSubscription:
 		return s.ServiceProfile
-	case s.TestUser:
+	case ProfileOfTestUsers:
 		return set.testUserServiceProfile
 	default:
 		return set.defaultServiceProfile
