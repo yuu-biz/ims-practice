@@ -3,11 +3,14 @@ package diameter
 import (
 	"context"
 	"errors"
+	"fmt"
 	"slices"
 	"strings"
 	"time"
 
 	"github.com/fiorix/go-diameter/v4/diam"
+
+	"github.com/yuu-biz/ims-practice/internal/metrics"
 )
 
 // PeerGroup is a group of peers that can each serve the same requests,
@@ -17,12 +20,32 @@ import (
 // them names one instance.
 type PeerGroup struct {
 	peers []*Peer
+	// role is the value of the role label of what the group counts, the
+	// name of the role in the configuration file.
+	role     string
+	measured *measurements
 }
 
 // NewPeerGroup groups peers, in the order of the configuration. They
 // belong to one node, whose Answer timer bounds a request to the group.
-func NewPeerGroup(peers ...*Peer) *PeerGroup {
-	return &PeerGroup{peers: slices.Clone(peers)}
+//
+// role is the role that sends through the group, one of the roles that
+// count Diameter messages (measurements.go), and reg the registry of
+// its node, in which the group counts the requests and the answers of
+// that role. Nil gives it a registry of its own, which nothing serves.
+func NewPeerGroup(reg *metrics.Registry, role string, peers ...*Peer) (*PeerGroup, error) {
+	if !slices.Contains(countingRoles.Values, role) {
+		return nil, fmt.Errorf("diameter: %q is not a role that counts Diameter messages (%s)",
+			role, strings.Join(countingRoles.Values, ", "))
+	}
+	if reg == nil {
+		reg = metrics.NewRegistry()
+	}
+	measured, err := newMeasurements(reg)
+	if err != nil {
+		return nil, err
+	}
+	return &PeerGroup{peers: slices.Clone(peers), role: role, measured: measured}, nil
 }
 
 // Peers are the peers of the group, in the order Request tries them.
@@ -63,7 +86,8 @@ func (g *PeerGroup) Available() bool { return slices.ContainsFunc(g.peers, (*Pee
 // leaves unused goes to them.
 //
 // What comes back is the answer, or the error, of the last peer tried;
-// the log holds the attempts before it.
+// the log holds the attempts before it. Every attempt that went out is
+// counted, with the answer that came back to it (measurements.go).
 func (g *PeerGroup) Request(ctx context.Context, request *diam.Message) (*diam.Message, error) {
 	peers := g.serving(destinationHost(request))
 	var answer *diam.Message
@@ -83,12 +107,21 @@ func (g *PeerGroup) Request(ctx context.Context, request *diam.Message) (*diam.M
 			message = retransmission(request)
 		}
 		answer, err = attempt(ctx, p, message, time.Until(deadline)/time.Duration(len(peers)-i))
+		// A request that never reached the connection, because the peer
+		// refused it or never took it, has nothing transmitted to count,
+		// and the next peer gets a first attempt rather than a
+		// retransmission (errNotSent).
+		transmitted := !errors.Is(err, errNotSent)
+		if transmitted {
+			g.measured.sent(g.role, message)
+		}
+		if err == nil {
+			g.measured.received(g.role, message, answer)
+		}
 		if err == nil && resultCode(answer) != DiameterTooBusy {
 			return answer, nil
 		}
-		// A refused request never reached the connection, so the next
-		// peer gets a first attempt rather than a retransmission.
-		sent = sent || !errors.Is(err, ErrPeerUnavailable)
+		sent = sent || transmitted
 		reason := "DIAMETER_TOO_BUSY"
 		if err != nil {
 			reason = err.Error()

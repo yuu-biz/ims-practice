@@ -125,9 +125,17 @@ func (n *Node) NewSessionID() string {
 	return fmt.Sprintf("%s;%d;%d", n.identity.OriginHost, n.sessionHigh, n.sessionLow.Add(1))
 }
 
+// errNotSent is carried by every error of a request that never reached
+// a connection, whatever kept it from one. Nothing of such a request
+// went out, so there is no transmitted request to count
+// (measurements.go), and the next peer of a group gets a first attempt
+// rather than a retransmission. A new way for a request not to reach a
+// connection wraps this one too.
+var errNotSent = errors.New("the request did not reach the connection")
+
 // ErrPeerUnavailable means the connection to the peer is not open, or
 // is SUSPECT, so the request was not sent.
-var ErrPeerUnavailable = errors.New("diameter: peer is not available")
+var ErrPeerUnavailable = fmt.Errorf("diameter: peer is not available, so %w", errNotSent)
 
 // errConnectionClosed means the connection closed before the answer
 // arrived.
@@ -209,7 +217,9 @@ func (p *Peer) Request(ctx context.Context, request *diam.Message) (*diam.Messag
 	case <-p.done:
 		return nil, ErrPeerUnavailable
 	case <-ctx.Done():
-		return nil, ctx.Err()
+		// The loop never took the request, so it is still here and nothing
+		// of it went out on the connection.
+		return nil, fmt.Errorf("diameter: the peer did not take the %s, so %w: %w", commandName(request), errNotSent, ctx.Err())
 	}
 	select {
 	case r := <-out.answer:

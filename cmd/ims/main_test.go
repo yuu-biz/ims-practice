@@ -283,7 +283,11 @@ func TestPeersOfTheHSSAndThePCRF(t *testing.T) {
 		if got := pcrfPeer(cfg, tt.peers); got != tt.pcscf {
 			t.Errorf("%s: PCRF %p, want %p", tt.name, got, tt.pcscf)
 		}
-		if got := hssPeers(cfg, tt.peers).Peers(); !slices.Equal(got, tt.hss) {
+		group, err := hssPeers(cfg, tt.peers, metrics.NewRegistry(), config.RoleSCSCF)
+		if err != nil {
+			t.Fatalf("%s: %v", tt.name, err)
+		}
+		if got := group.Peers(); !slices.Equal(got, tt.hss) {
 			t.Errorf("%s: HSS %v, want %v", tt.name, got, tt.hss)
 		}
 	}

@@ -236,7 +236,10 @@ func run(configPath string, log *slog.Logger, level *slog.LevelVar) error {
 
 	if c := cfg.SCSCF; c != nil {
 		roleLog := log.With("role", config.RoleSCSCF)
-		hss := hssPeers(cfg, peers)
+		hss, err := hssPeers(cfg, peers, registry, config.RoleSCSCF)
+		if err != nil {
+			return err
+		}
 		s, err := scscf.New(scscf.Config{
 			ServerName: c.SIP.URI(),
 			Host:       c.SIP.Host,
@@ -267,7 +270,10 @@ func run(configPath string, log *slog.Logger, level *slog.LevelVar) error {
 		for _, e := range c.SCSCFs {
 			scscfs = append(scscfs, icscf.SCSCF{Name: e.Name, Capabilities: e.Capabilities})
 		}
-		hss := hssPeers(cfg, peers)
+		hss, err := hssPeers(cfg, peers, registry, config.RoleICSCF)
+		if err != nil {
+			return err
+		}
 		i, err := icscf.New(icscf.Config{HomeDomain: cfg.HomeDomain, SCSCFs: scscfs, Host: c.SIP.Host, Port: int(c.SIP.Listen.Port()),
 			PSISubdomains: c.PSISubdomains, Metrics: registry},
 			hss, node, resolver,
@@ -351,7 +357,11 @@ func run(configPath string, log *slog.Logger, level *slog.LevelVar) error {
 	}
 	if c := cfg.IPSMGW; c != nil {
 		roleLog := log.With("role", config.RoleIPSMGW)
-		users := sh.NewClient(node, hssPeers(cfg, peers), cfg.HomeDomain)
+		hss, err := hssPeers(cfg, peers, registry, config.RoleIPSMGW)
+		if err != nil {
+			return err
+		}
+		users := sh.NewClient(node, hss, cfg.HomeDomain)
 		centreLog := roleLog.With("function", "sc")
 		centre := sc.New(users, scStore(stores, centreLog), centreLog)
 		g := ipsmgw.New(ipsmgw.Config{
@@ -397,7 +407,11 @@ func run(configPath string, log *slog.Logger, level *slog.LevelVar) error {
 		if err != nil {
 			return err
 		}
-		users := sh.NewClient(node, hssPeers(cfg, peers), cfg.HomeDomain)
+		hss, err := hssPeers(cfg, peers, registry, config.RoleMMTel)
+		if err != nil {
+			return err
+		}
+		users := sh.NewClient(node, hss, cfg.HomeDomain)
 		store := mmtelStore(stores, roleLog)
 		mmtelRole = mmtel.New(mmtel.Config{
 			Host:             c.SIP.Host,
@@ -1192,8 +1206,13 @@ const labMessages = 10000
 // the configuration. Every instance holds every subscriber, so a
 // request that one of them does not answer goes to the next (TS 29.228
 // 6.4).
-func hssPeers(cfg config.Config, peers []*diameter.Peer) *diameter.PeerGroup {
-	return diameter.NewPeerGroup(peersOfKind(cfg, peers, config.PeerHSS)...)
+//
+// role is the role that sends through the group, which counts the
+// requests and the answers under it in the registry of the node. Each
+// role of the node has its own group, and they count in one pair of
+// counters.
+func hssPeers(cfg config.Config, peers []*diameter.Peer, registry *metrics.Registry, role config.Role) (*diameter.PeerGroup, error) {
+	return diameter.NewPeerGroup(registry, string(role), peersOfKind(cfg, peers, config.PeerHSS)...)
 }
 
 // pcrfPeer is the Rx peer of the P-CSCF, or nil when the configuration
