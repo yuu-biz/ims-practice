@@ -766,6 +766,151 @@
           "range": true
         }
       ]
+    },
+    {
+      "type": "row",
+      "title": "HSS database (TS 32.409 4.2.1)",
+      "id": 16,
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 46
+      },
+      "panels": []
+    },
+    {
+      "type": "timeseries",
+      "title": "Provisioned subscriptions and identities",
+      "description": "What the HSS holds: the IMS subscriptions and the Public User Identities provisioned in it, by the format of the URI. TS 32.409 DBU.NbrImsSubscription, DBU.NbrSipPubUserId and DBU.NbrTelPubUserId.",
+      "id": 17,
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 47
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "min": 0,
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "showPoints": "never",
+            "spanNulls": false
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "right",
+          "showLegend": true,
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum by (node) (ims_hss_subscriptions)",
+          "legendFormat": "{{node}} subscriptions",
+          "refId": "A",
+          "range": true
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum by (node, format) (ims_hss_public_identities)",
+          "legendFormat": "{{node}} {{format}} URIs",
+          "refId": "B",
+          "range": true
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Registered identities",
+      "description": "The Public User Identities of the HSS whose registration state is registered, and the Private User Identities that have one. TS 32.409 DBU.NbrRegPubUserId and DBU.NbrRegPriUsrId.",
+      "id": 18,
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 47
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "min": 0,
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "showPoints": "never",
+            "spanNulls": false
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "right",
+          "showLegend": true,
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum by (node) (ims_hss_registered_public_identities)",
+          "legendFormat": "{{node}} public",
+          "refId": "A",
+          "range": true
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum by (node) (ims_hss_registered_private_identities)",
+          "legendFormat": "{{node}} private",
+          "refId": "B",
+          "range": true
+        }
+      ]
     }
   ]
 }

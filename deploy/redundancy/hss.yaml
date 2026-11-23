@@ -333,6 +333,16 @@ diameter:
 # is down; the Lab is not on the call path.
 hep:
   collector: 172.28.0.60:9060
+# The maintenance listener: the metrics of the HSS at /metrics for
+# Prometheus to scrape. It serves no maintenance API, since the HSS
+# holds no administrative state that an operator sets. No specification
+# gives a port for this listener; 8085 is this project's choice. It
+# asks for no password, so the port is not published outside the
+# network of the IMS nodes. The subscribers of this deployment live in
+# the shared store below, which keeps none of the numbers of the
+# database usage measurements, so the HSS serves none of them here.
+maintenance:
+  listen: 0.0.0.0:8085
 
 # The HSS keeps its subscribers in the shared store: the credentials,
 # the user profile and the registration state of each one. Every
