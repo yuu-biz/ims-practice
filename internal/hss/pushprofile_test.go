@@ -281,10 +281,9 @@ func TestPushesOfOneSubscriberAreSerialised(t *testing.T) {
 }
 
 // TestAChangeDuringASlowPushStillReachesTheSCSCF: the PPA of a first
-// change takes longer than a second change waits for the push lock. The
-// second request answers without a PPR of its own, and the push under
-// way reads the subscriber again after its PPA, so the S-CSCF ends up
-// with the second profile.
+// change takes longer than lockWait. A second change made meanwhile
+// waits for that push rather than give up, and then sends the second
+// profile, so the S-CSCF ends up with it.
 func TestAChangeDuringASlowPushStillReachesTheSCSCF(t *testing.T) {
 	h := newProfileHSS(t, "default")
 	mar(t, h, scscf)
@@ -296,9 +295,9 @@ func TestAChangeDuringASlowPushStillReachesTheSCSCF(t *testing.T) {
 		}
 	}}
 	api := h.Provisioning(scscfs)
-	first := make(chan int, 1)
+	codes := make(chan int, 2)
 	go func() {
-		first <- do(t, api, "PATCH", "/subscriptions/"+impi, `{"service_profile": "trial"}`).Code
+		codes <- do(t, api, "PATCH", "/subscriptions/"+impi, `{"service_profile": "trial"}`).Code
 	}()
 	for deadline := time.Now().Add(5 * time.Second); ; time.Sleep(10 * time.Millisecond) {
 		scscfs.mu.Lock()
@@ -311,12 +310,17 @@ func TestAChangeDuringASlowPushStillReachesTheSCSCF(t *testing.T) {
 			t.Fatal("gave up waiting 5 s for the first PPR")
 		}
 	}
-	if w := do(t, api, "PATCH", "/subscriptions/"+impi, `{"service_profile": "default"}`); w.Code != http.StatusOK {
-		t.Fatalf("second PATCH: %d %s", w.Code, w.Body)
-	}
+	go func() {
+		codes <- do(t, api, "PATCH", "/subscriptions/"+impi, `{"service_profile": "default"}`).Code
+	}()
+	// Longer than lockWait, as a PPA may take up to the Diameter answer
+	// timer.
+	time.Sleep(lockWait + 500*time.Millisecond)
 	close(release)
-	if code := <-first; code != http.StatusOK {
-		t.Fatalf("first PATCH: %d", code)
+	for range 2 {
+		if code := <-codes; code != http.StatusOK {
+			t.Fatalf("PATCH: %d", code)
+		}
 	}
 	if len(scscfs.pprs) != 2 {
 		t.Fatalf("%d PPRs, want 2: the first change, then the second", len(scscfs.pprs))
