@@ -42,6 +42,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/yuu-biz/ims-practice/internal/maintenance"
 	"github.com/yuu-biz/ims-practice/internal/mixer"
 	"github.com/yuu-biz/ims-practice/internal/sdp"
 )
@@ -212,9 +213,17 @@ type Relay struct {
 	store         ContextStore
 	log           *slog.Logger
 
+	// managed is the administrative state that the maintenance API of
+	// the node keeps for this relay (maintenance.go).
+	managed atomic.Pointer[maintenance.ManagedFunction]
+
 	mu       sync.Mutex
 	contexts map[string]*relayContext
-	nextID   atomic.Uint64
+	// adding counts the Adds that have begun and whose context is not
+	// in contexts yet. It falls under mu when the context goes in, so
+	// that a count under mu sees each context once (countContexts).
+	adding atomic.Int64
+	nextID atomic.Uint64
 }
 
 // NewRelay relays on address, with RTP ports taken from [minPort,
@@ -331,7 +340,25 @@ var (
 // would be gone after a restart, with its ports open and nobody left to
 // subtract it. A controller whose Add fails takes the next relay of its
 // list instead.
-func (r *Relay) Add(terminations ...TerminationRequest) (Context, error) {
+//
+// A relay that the operator has taken out of service makes no context
+// (maintenance.go). It is refused here, before any port is reserved.
+// The Add is counted among the users of the relay before the state is
+// read, and until its context is in the list or it has failed: the write
+// to the store comes in between and may take a round trip to another
+// node, and a shut down that read no user in that time would report
+// the relay LOCKED with a call about to pass through it.
+func (r *Relay) Add(terminations ...TerminationRequest) (_ Context, err error) {
+	r.adding.Add(1)
+	defer func() {
+		if err != nil {
+			r.adding.Add(-1)
+			r.contextGone()
+		}
+	}()
+	if !r.unlocked() {
+		return Context{}, ErrOutOfService
+	}
 	if len(terminations) == 0 {
 		return Context{}, fmt.Errorf("%w: a context needs at least one termination", ErrBadRequest)
 	}
@@ -363,6 +390,7 @@ func (r *Relay) Add(terminations ...TerminationRequest) (Context, error) {
 	}
 	r.mu.Lock()
 	r.contexts[rc.id] = rc
+	r.adding.Add(-1)
 	r.mu.Unlock()
 	rc.tick()
 	r.log.Info("context added", "context", rc.id, "terminations", view.summary())
@@ -538,6 +566,7 @@ func (r *Relay) SubtractTermination(id string, tid TerminationID) (_ Termination
 		delete(r.contexts, id)
 		r.mu.Unlock()
 		r.forget(id)
+		r.contextGone()
 	} else {
 		r.keep(saved)
 	}
@@ -571,6 +600,7 @@ func (r *Relay) Subtract(id string) (Context, error) {
 	delete(r.contexts, id)
 	r.mu.Unlock()
 	r.forget(id)
+	r.contextGone()
 	r.log.Info("context subtracted", "context", id, "terminations", view.counts())
 	return view, nil
 }
