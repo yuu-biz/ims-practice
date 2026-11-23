@@ -79,6 +79,14 @@ else
 	fail=1
 fi
 
+# pushes_to_ue3 counts the user profiles that the HSS has pushed to an
+# S-CSCF for UE 3: it logs one line per PPR that was answered.
+pushes_to_ue3() {
+	grep -c "pushed the user profile.*001010000000003@$domain" \
+		<<<"$(docker compose logs --no-color hss 2>/dev/null)" || true
+}
+pushed_to_ue3() { [ "$(pushes_to_ue3)" -ge "$1" ]; }
+
 # Removing the subscription of a registered user deregisters the user as
 # well: the HSS sends an RTR, and the S-CSCF ends the registration with
 # a NOTIFY whose contact is rejected (TS 29.228 6.1.3). Subscriber 3 is
@@ -94,6 +102,37 @@ docker compose run --no-deps -d --name ims-practice-ue3-rtr ue3 register "${ue3[
 if ! wait_log ims-practice-ue3-rtr '"msg":"reg event"'; then
 	fail=1
 else
+	# A change of the setting that names the service profile of every
+	# subscription reaches the users registered at that moment, and not
+	# only the one subscription that a provisioning request names (TS
+	# 29.228 6.6.1). UE 3 is the only user registered now and names no
+	# service_profile of its own, so the default setting decides for it:
+	# these two changes give it the criteria of no-services and then the
+	# ones it had back, with one PPR each. The maintenance API is not
+	# published on the host either, so the requests go from inside the
+	# container of the HSS, on the port of its maintenance listener.
+	for profile in no-services default; do
+		record="$(docker compose exec -T hss sh -c '
+			printf "PATCH /maintenance/v1/config HTTP/1.0\r\nContent-Type: application/json\r\nContent-Length: ${#1}\r\n\r\n%s" "$1" |
+				nc -w 5 127.0.0.1 8085' sh "{\"settings\": {\"hss.default_service_profile\": \"$profile\"}, \"operator\": \"e2e\"}")" || true
+		if grep -q "\"name\":\"hss.default_service_profile\",\"previous\":\"[a-z-]*\",\"value\":\"$profile\"" <<<"$record"; then
+			echo "ok   the operator named the service profile $profile for every subscription"
+		else
+			echo "FAIL naming the service profile $profile for every subscription: $(first_line <<<"$record")"
+			fail=1
+		fi
+	done
+	# The pushes follow the answer to the maintenance request, so both of
+	# them are waited for here: the PPR of the one subscription below
+	# comes after them in the capture, which is the order the checks of
+	# the capture read.
+	if wait_for 30 pushed_to_ue3 2; then
+		echo "ok   the HSS pushed the profile of UE 3 for both changes of the setting"
+	else
+		echo "FAIL the HSS pushed the profile of UE 3 $(pushes_to_ue3) times within 30 s, want 2"
+		fail=1
+	fi
+
 	# Giving a registered user another service profile pushes the new
 	# profile to its S-CSCF with a PPR, instead of leaving the S-CSCF with
 	# the profile of the registration (TS 29.228 6.6.1). The HSS answers
@@ -275,6 +314,17 @@ expect "403 to the UE with the wrong password" "sip.Status-Code == 403 && ip.dst
 echo "a changed service profile, pushed to the S-CSCF"
 rejected="sip.msg_body contains \"event=\\\"rejected\\\"\""
 expect "200 OK to the REGISTER of UE 3" "sip.Status-Code == 200 && sip.CSeq.method == \"REGISTER\" && ip.dst == $ue3ip"
+# The two changes of the setting came first, each with a PPR of its own:
+# the HSS reads the users that the setting decides for from its index of
+# the users whose profile an S-CSCF holds, and pushes to each of them.
+# Which of the two sends first is not fixed, and each PPR carries the
+# profile in force when it is sent, so these read them as two pushes of
+# this user's profile and not as one profile each.
+for setting_change in first second; do
+	expect "PPR of the $setting_change change of the setting, HSS -> S-CSCF" \
+		"$ppr && $req && ip.src == $hss && diameter.Destination-Host == \"scscf.$domain\" && diameter.User-Name == \"001010000000003@$domain\" && diameter.Cx-User-Data"
+	expect "its PPA DIAMETER_SUCCESS" "$ppr && $ans && ip.src == $scscf && diameter.Result-Code == 2001"
+done
 # TS 29.228 Table 6.2.2.1: User-Name is the private identity,
 # Destination-Host the S-CSCF that stored the server name, and User-Data
 # the whole profile of the implicit registration set (6.5.2.1).
