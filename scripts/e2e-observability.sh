@@ -7,7 +7,9 @@
 # with the set-up time that the P-CSCF measures, and Grafana returns the
 # count of the S-CSCF through the Prometheus data source that the
 # dashboard uses (deploy/observability). A call adds the terminating
-# session establishment that the I-CSCF counts. A shut down through the
+# session establishment that the I-CSCF counts, and the HSS holds the
+# subscribers it was given and counts the identities of a registration
+# while it lasts. A shut down through the
 # maintenance API then makes the S-CSCF answer a new REGISTER with 503
 # and Retry-After, which the capture shows hop by hop, and an unlock
 # lets the UE register again. A shut down of the P-CSCF makes the
@@ -119,6 +121,22 @@ until_positive() {
 	for i in $(seq 1 90); do
 		value="$("$source" "$query" | largest)"
 		if [ -n "$value" ] && "$python" -c 'import sys; sys.exit(0 if float(sys.argv[1]) > 0 else 1)' "$value"; then
+			echo "$value"
+			return 0
+		fi
+		sleep 1
+	done
+	echo "${value:-none}"
+	return 1
+}
+
+# until_equal waits up to 90 seconds, six scrapes of Prometheus, until
+# the query returns the value $3. It prints the largest value it got.
+until_equal() {
+	local source="$1" query="$2" wanted="$3" value i
+	for i in $(seq 1 90); do
+		value="$("$source" "$query" | largest)"
+		if [ -n "$value" ] && "$python" -c 'import sys; sys.exit(0 if float(sys.argv[1]) == float(sys.argv[2]) else 1)' "$value" "$wanted"; then
 			echo "$value"
 			return 0
 		fi
@@ -244,6 +262,59 @@ else
 	# Shown only to explain the failure, if the I-CSCF answers at all,
 	# hence "|| true".
 	docker compose exec -T icscf wget -qO- http://127.0.0.1:8085/metrics || true
+	fail=1
+fi
+if value="$(until_positive prometheus_values 'up{job="ims",node="hss"}')"; then
+	echo "ok   Prometheus scrapes the HSS: up = $value"
+else
+	echo "FAIL the hss target of Prometheus is not up: $value"
+	curl -fsS "$prometheus/api/v1/targets?state=active" || true
+	echo
+	fail=1
+fi
+# The HSS counts what it holds, whether anyone is registered or not (TS
+# 32.409 4.2.1.1): the subscribers of deploy/compose/hss.yaml, each with
+# a SIP URI and most of them with a tel URI as well.
+for series in ims_hss_subscriptions 'ims_hss_public_identities{format="sip"}' 'ims_hss_public_identities{format="tel"}'; do
+	if value="$(until_positive prometheus_values "$series")"; then
+		echo "ok   Prometheus has $series = $value"
+	else
+		echo "FAIL Prometheus has no $series above 0: $value"
+		# Shown only to explain the failure, if the HSS answers at all,
+		# hence "|| true".
+		docker compose exec -T hss wget -qO- http://127.0.0.1:8085/metrics || true
+		fail=1
+	fi
+done
+# The identities in the registered state (TS 32.409 4.2.1.2) follow one
+# registration up and down. Every other UE of this run deregistered
+# before it stopped, so the numbers are those of this one registration:
+# the SIP URI and the tel URI of the subscriber, which are one implicit
+# registration set, and the one private identity behind them. The UE
+# stays registered for two scrapes of Prometheus.
+registered_identities=ims_hss_registered_public_identities
+docker compose run --no-deps -d --name ims-practice-ue-hss ue register -deregister-after 35s >/dev/null
+for wanted in "$registered_identities=2" ims_hss_registered_private_identities=1; do
+	series="${wanted%=*}"
+	count="${wanted##*=}"
+	if value="$(until_equal prometheus_values "$series" "$count")"; then
+		echo "ok   Prometheus has $series = $value while the UE is registered"
+	else
+		echo "FAIL Prometheus has no $series = $count while the UE is registered: $value"
+		docker compose exec -T hss wget -qO- http://127.0.0.1:8085/metrics || true
+		fail=1
+	fi
+done
+if [ "$(ended ims-practice-ue-hss)" = "0" ]; then
+	echo "ok   the UE deregistered"
+else
+	echo "FAIL the UE did not register and deregister again"
+	fail=1
+fi
+if value="$(until_equal prometheus_values "$registered_identities" 0)"; then
+	echo "ok   $registered_identities is $value again after the deregistration"
+else
+	echo "FAIL $registered_identities did not come back to 0 after the deregistration: $value"
 	fail=1
 fi
 
