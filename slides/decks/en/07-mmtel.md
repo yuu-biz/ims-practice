@@ -524,8 +524,8 @@ For 1 and 3, run `ue xcap` as UE 1 or UE 2, in the form of the slide "Run it".
 
 ## Next session
 
-- Next is the VoLTE session: the access network, IMS AKA, Rx and preconditions. VoLTE calls go through the MMTel AS of this session too.
-- The announcements, the alerting tone the callee chooses, CW and the conference are in [the MRF guide](../../../docs/guide/en/mrf.md): the MRFC and the MRFP, and `scripts/e2e-mrf.sh`.
+- Next is the MRF session: the announcement before a rejection, the alerting tone the callee chooses, the waiting call and a conference of three. The AS of this session is what asks for all of it, and it is the conference focus.
+- The VoLTE session follows. VoLTE calls go through the MMTel AS of this session too.
 
 ```sh
 docker compose --profile ue --profile phones down --rmi all -v --remove-orphans
