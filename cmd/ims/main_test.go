@@ -1236,3 +1236,72 @@ func TestMaintenanceAPIShutsTheMRFCDown(t *testing.T) {
 		t.Errorf("the INVITE to the shut down MRFC got %v, want 503 with Retry-After", last)
 	}
 }
+
+// hssMaintenanceNode starts an HSS on cfg with the maintenance listener
+// of its node in front of it, wired as main wires them, and returns the
+// client of that API and the HSS.
+func hssMaintenanceNode(t *testing.T, cfg hss.Config) (*maintenance.Client, *hss.HSS) {
+	t.Helper()
+	if err := diameter.LoadDictionary(); err != nil {
+		t.Fatal(err)
+	}
+	store, err := hss.NewMemoryStore(hss.Subscription{PrivateIdentity: impi, PublicIdentities: []string{impu}, Password: "p"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	node := diameter.NewNode(diameter.Identity{OriginHost: "hss." + domain, OriginRealm: domain},
+		[]uint32{diameter.ApplicationIDCx}, diameter.Timers{}, quiet())
+	h, err := hss.New(cfg, store, node, quiet())
+	if err != nil {
+		t.Fatal(err)
+	}
+	node.Handle(h.Handle)
+	server, err := node.Listen("127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(server.Stop)
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	nodeConfig := config.Config{Node: "hss", Roles: []config.Role{config.RoleHSS}, HomeDomain: domain,
+		Maintenance: &config.Maintenance{Listen: l.Addr().String()}, HSS: &cfg}
+	roles := []managedRole{{function: h.Function(server), manage: h.Manage}}
+	stop, err := startMaintenance(l, nodeConfig, roles, metrics.NewRegistry(), new(slog.LevelVar), quiet(), func() {})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(stop)
+	return maintenance.NewClient("http://"+l.Addr().String(), http.DefaultClient), h
+}
+
+// TestMaintenanceAPIShowsTheServiceProfilesOfTheHSS: the configuration
+// that the maintenance API of an HSS node answers with names every
+// service profile of the network with the features its criteria turn
+// on, which is what an operator reads to choose a profile for a
+// subscription. It holds no subscriber: their credentials are secrets,
+// and the provisioning API is where the subscribers are.
+func TestMaintenanceAPIShowsTheServiceProfilesOfTheHSS(t *testing.T) {
+	oam, _ := hssMaintenanceNode(t, hss.Config{
+		Realm: domain, VisitedNetworks: []string{domain}, ProvisioningListen: "0.0.0.0:8081",
+		ServiceProfiles: map[string]hss.ServiceProfile{
+			"default":     {Features: []string{"sms", "mmtel"}},
+			"no-services": {},
+		},
+		DefaultServiceProfile:  "default",
+		TestUserServiceProfile: "default",
+	})
+	conf, err := oam.Configuration(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := `"hss":{"provisioning_listen":"0.0.0.0:8081","service_profiles":` +
+		`{"default":{"features":["sms","mmtel"]},"no-services":{"features":[]}}}`
+	if !strings.Contains(string(conf.Configuration), want) {
+		t.Errorf("configuration %s, want %s in it", conf.Configuration, want)
+	}
+	if strings.Contains(string(conf.Configuration), impi) {
+		t.Errorf("the configuration names a subscriber: %s", conf.Configuration)
+	}
+}
