@@ -794,10 +794,23 @@ func (f *conference) refer(r *sip.InDialogRequest) {
 		f.log.Info("REFER not accepted", "error", err.Error())
 		return
 	}
-	status := f.inviteUser(rt, r.Request.Get("Referred-By"))
+	status := f.inviteUser(rt, referredBy(r.Request))
 	if err := sub.Notify(status); err != nil {
 		f.log.Info("final NOTIFY of the REFER failed", "error", err.Error())
 	}
+}
+
+// referredBy is the Referred-By that the INVITE to the referred user
+// carries (TS 24.605 4.6.5): the one of the REFER, which names the
+// participant that asked for the invitation, and none when that
+// participant asked for privacy with "user". The focus adds none of its
+// own, so a REFER that asks for privacy with "header" and carries no
+// Referred-By leads to an INVITE without one, as the clause asks.
+func referredBy(req *sip.Message) string {
+	if sip.ParsePrivacy(req.Get("Privacy")).Has(sip.PrivacyUser) {
+		return ""
+	}
+	return req.Get("Referred-By")
 }
 
 // referredMethod is the method URI parameter of a Refer-To URI, "" when

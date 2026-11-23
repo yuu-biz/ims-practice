@@ -803,6 +803,40 @@ func TestReferToANumber(t *testing.T) {
 	}
 }
 
+// TestReferredByOfAParticipantThatAsksForPrivacy is TS 24.605 4.6.5: a
+// REFER whose sender asks for privacy with "user" brings the invited
+// user an INVITE without the Referred-By that names the sender. With
+// "id", which keeps the identity within the trust domain, the clause
+// leaves the Referred-By there.
+func TestReferredByOfAParticipantThatAsksForPrivacy(t *testing.T) {
+	const referredBy = "<sip:alice@" + domain + ">"
+	for name, tc := range map[string]struct{ privacy, want string }{
+		"user privacy takes the Referred-By out": {sip.PrivacyUser, ""},
+		"id privacy leaves it":                   {sip.PrivacyID, referredBy},
+		"no privacy leaves it":                   {"", referredBy},
+	} {
+		t.Run(name, func(t *testing.T) {
+			mrfc := startConferenceMRFC(t)
+			as := startAS(t, noServices{}, mmtel.Config{MRFC: "sip:" + contactOf(t, mrfc.ua)})
+			invited := make(chan *sip.IncomingCall, 1)
+			conf, _, _ := aliceConference(t, as, func(c *sip.IncomingCall) {
+				invited <- c
+				c.Accept(audio("41000", "sendrecv"))
+			})
+			headers := []sip.HeaderField{{Name: "Referred-By", Value: referredBy}}
+			if tc.privacy != "" {
+				headers = append(headers, sip.HeaderField{Name: "Privacy", Value: tc.privacy})
+			}
+			if r, err := conf.Refer(sip.ReferTo{URI: "sip:bob@" + domain}, headers...); err != nil || r.Response.StatusCode != 200 {
+				t.Fatalf("REFER got %v, %v; want 200", r, err)
+			}
+			if got := receive(t, invited, "the focus's INVITE at the invited user").Request.Get("Referred-By"); got != tc.want {
+				t.Errorf("the INVITE has Referred-By %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
 // TestJoinTheLastPlaceAtOnce: two users dial in at the same time to a
 // conference that has room for one more. Both pass the check before the
 // focus asks the MRFC for their media; the one who joins second gets
