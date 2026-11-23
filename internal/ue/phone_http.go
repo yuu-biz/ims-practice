@@ -43,6 +43,12 @@ import (
 //	                      once the MESSAGE has its 202
 //	GET  /sms             the SMSHistory: {"sent": [SentSMS...],
 //	                      "received": [ReceivedSMS...]}, oldest first
+//	PUT  /sms-memory      {"full": bool}: take the memory of the UE for
+//	                      incoming short messages away, or give it back;
+//	                      giving it back notifies the network when the UE
+//	                      owes a notification (TS 24.341 5.3.2.5)
+//	POST /sms-memory/notify  notify the network once more that the UE has
+//	                      memory, whatever it owes
 //	POST /hold            put the answered call in the foreground on
 //	                      hold (re-INVITE with sendonly)
 //	POST /resume          take the held call back (re-INVITE with
@@ -65,6 +71,11 @@ import (
 // The status of a call has "session": the codec, the directions, the
 // precondition table, the media resources, hold, early media, the RTP
 // and RTCP counts and the DTMF digits sent and received (SessionStatus).
+//
+// The requests of the memory for short messages answer with the
+// SMSReception that follows them. A UE that is not registered cannot
+// notify the network that it has memory again, so those requests answer
+// 409 (Conflict) after they have set the state.
 //
 // The other POSTs answer with the Status. A request that the state of the
 // phone does not allow, such as a second call, gets 409 (Conflict); one
@@ -107,7 +118,42 @@ func (p *Phone) Handler() http.Handler {
 	mux.HandleFunc("GET /sms", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, p.ue.SMS())
 	})
+	mux.HandleFunc("PUT /sms-memory", p.putSMSMemory)
+	mux.HandleFunc("POST /sms-memory/notify", func(w http.ResponseWriter, r *http.Request) {
+		state, err := p.ue.NotifyMemoryAvailable(r.Context())
+		p.respondReception(w, state, err)
+	})
 	return mux
+}
+
+func (p *Phone) putSMSMemory(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Full *bool `json:"full"`
+	}
+	if err := decode(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	if req.Full == nil {
+		writeError(w, http.StatusBadRequest, errors.New(`the body needs "full": true or false`))
+		return
+	}
+	state, err := p.ue.SetSMSMemoryFull(r.Context(), *req.Full)
+	p.respondReception(w, state, err)
+}
+
+// respondReception answers a request that changed how the UE takes short
+// messages: the state it left behind, or the error of the notification
+// that the change set off.
+func (p *Phone) respondReception(w http.ResponseWriter, state SMSReception, err error) {
+	switch {
+	case err == nil:
+		writeJSON(w, http.StatusOK, state)
+	case errors.Is(err, ErrNoServiceCentre):
+		writeError(w, http.StatusConflict, err)
+	default:
+		p.respond(w, err)
+	}
 }
 
 func (p *Phone) postCall(w http.ResponseWriter, r *http.Request) {
