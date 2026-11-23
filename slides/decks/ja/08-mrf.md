@@ -426,7 +426,7 @@ grep -rn "SIMPLIFIED:" internal/mmtel internal/mrfc internal/netann internal/agw
 ## 次の回
 
 - 次は VoLTE の回です。アクセス網、IMS-AKA、Rx でのポリシー制御、VoLTE の通話を扱います。
-- 網どうしの境界と、参加者が両方の網にいる会議は、[網間接続の手順書](../../../docs/guide/ja/interconnect.md) にあります。
+- 網どうしの境界と、参加者が両方の網にいる会議は、最後の回で [網間接続の手順書](../../../docs/guide/ja/interconnect.md) と一緒に読みます。
 
 ```sh
 docker compose --profile ue --profile phones down -v --remove-orphans

@@ -712,9 +712,9 @@ For 1, use the commands of "Check the vector by hand" in the guide; the same sec
 
 ---
 
-## Where to go from here
+## Next session
 
-- [Connect two IMS networks](../../../docs/guide/en/interconnect.md): the IBCF and the TrGW at the border, and the profile of each peer network.
+- Next is the last session: two IMS networks joined at the border. The call, the short messages and a conference go to another operator's network through an IBCF and a TrGW.
 - The two boundaries of this session, the UE's `AccessNetwork` and the P-CSCF's `PolicyControl`, are where another access network would plug in: NAS behind the first, the N5 of the 5GC behind the second.
 
 ```sh
@@ -724,4 +724,4 @@ docker compose --profile ue --profile volte down --rmi all -v --remove-orphans
 - This is the "Clean up" of the guide. If the `phones` profile of the Lab was used too, add `--profile phones`.
 - In the 5GC, SIP signalling uses a QoS flow of 5QI 5 and the voice one of 5QI 1: the same idea as QCI 5 and QCI 1 in EPS.
 
-> The guides are listed in [docs/guide/](../../../docs/guide/).
+> The guide of the next session is [Connect two IMS networks](../../../docs/guide/en/interconnect.md). The guides are listed in [docs/guide/](../../../docs/guide/).

@@ -113,7 +113,7 @@ ims-practice 勉強会 第 2 回（ノード、ノードの間の参照点、地
 | ラボ | 172.28.0.60 | ノードが送る複製（HEP）から、登録と通話をラダー図にする。IMS の一部ではない。 |
 | capture | ホストのネットワーク | ブリッジ上の tcpdump。どの回でも読むキャプチャのファイルを書く。 |
 
-- IBCF と TrGW は、2 つめの網と一緒に現れます。`deploy/interconnect/compose.yaml` が `compose.yaml` の上に足します。
+- IBCF と TrGW は、2 つめの網と一緒に現れます。`deploy/interconnect/compose.yaml` が `compose.yaml` の上に足します。第 10 回は、この境界を両方の網と網のあいだのキャプチャで読みます。
 - ラボとキャプチャは IMS の外です。どちらからの応答も、どのノードも待ちません。ラボへの複製は UDP で送りっぱなしで、tcpdump は聞いているだけです。
 
 > 手順書 [IMS 網どうしを相互接続する「2 つの網」](../../../docs/guide/ja/interconnect.md#2-つの網)と [ラボで IMS を見る「このプロジェクト独自の API」](../../../docs/guide/ja/lab.md#このプロジェクト独自の-api)
@@ -199,7 +199,7 @@ ims-practice 勉強会 第 2 回（ノード、ノードの間の参照点、地
 | Ut と MMTel AS | 第 7 回。補足サービス |
 | Rx、EPC スタブ、IMS-AKA | 第 9 回。VoLTE |
 | Mr'、Mp、MRF | 第 8 回。MRF |
-| Mx、Ici、Izi、境界 | 手順書 [IMS 網どうしを相互接続する](../../../docs/guide/ja/interconnect.md) |
+| Mx、Ici、Izi、境界 | 第 10 回。境界でつながる 2 つの網 |
 | HEP とラボ | 第 3 回。キャプチャとラボ |
 
 > 手順書 [手順書の入口「読む順」](../../../docs/guide/ja/README.md#読む順)

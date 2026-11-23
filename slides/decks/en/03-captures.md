@@ -42,6 +42,7 @@ To begin: both tools show the same signaling. Why open a capture at all, when th
 - Every node talks over one Docker network, so one file holds the whole conversation between them.
 - The capture container starts first and the nodes after it, so their first messages are in the file.
 - Each start of that container writes a new file, named after its start time.
+- Session 10 adds a second network and the link between it and this one. Each of the three bridges then has a capture container and a file of its own.
 
 ```sh
 docker compose up -d --build
