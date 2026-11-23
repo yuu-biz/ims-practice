@@ -101,8 +101,8 @@ export interface Registration {
 }
 
 // The contract leaves the subscriber shape to the HSS provisioning API,
-// which does not exist yet. This mirrors the subscriptions in the HSS
-// config (deploy/compose/hss.yaml).
+// which the Lab server forwards these endpoints to. The fields here are
+// the ones the screen reads; the answer of the HSS holds more.
 export interface Subscriber {
   private_identity: string;
   public_identities: string[];
