@@ -233,13 +233,15 @@ func run(configPath string, log *slog.Logger, level *slog.LevelVar) error {
 		for _, e := range c.SCSCFs {
 			scscfs = append(scscfs, icscf.SCSCF{Name: e.Name, Capabilities: e.Capabilities})
 		}
+		hss := hssPeers(cfg, peers)
 		i, err := icscf.New(icscf.Config{HomeDomain: cfg.HomeDomain, SCSCFs: scscfs, Host: c.SIP.Host, Port: int(c.SIP.Listen.Port()),
 			PSISubdomains: c.PSISubdomains, Metrics: registry},
-			hssPeers(cfg, peers), node, resolver,
+			hss, node, resolver,
 			log.With("role", config.RoleICSCF))
 		if err != nil {
 			return err
 		}
+		managed = append(managed, managedRole{function: i.Function(hss.Available), manage: i.Manage})
 		stack, err := startSIPWith(config.RoleICSCF, c.SIP, sip.Config{OnRequest: i.OnRequest, OnCANCEL: i.OnCANCEL})
 		if err != nil {
 			return err
@@ -919,6 +921,7 @@ type configurationView struct {
 		Listen string `json:"listen"`
 	} `json:"maintenance"`
 	PCSCF *pcscfView `json:"pcscf,omitempty"`
+	ICSCF *icscfView `json:"icscf,omitempty"`
 	SCSCF *scscfView `json:"scscf,omitempty"`
 }
 
@@ -942,6 +945,19 @@ type hostAccessView struct {
 
 type secAgreeView struct {
 	ProtectedServerPort int `json:"protected_server_port"`
+}
+
+type icscfView struct {
+	SIP           sipView      `json:"sip"`
+	SCSCFs        []scscfEntry `json:"scscfs,omitempty"`
+	PSISubdomains []string     `json:"psi_subdomains,omitempty"`
+}
+
+// scscfEntry is one S-CSCF that the I-CSCF may choose, with the
+// capabilities it offers (TS 29.228 6.7).
+type scscfEntry struct {
+	Name         string   `json:"name"`
+	Capabilities []uint32 `json:"capabilities,omitempty"`
 }
 
 type scscfView struct {
@@ -973,6 +989,12 @@ func newConfigurationView(cfg config.Config) configurationView {
 		}
 		if c.ProtectedServerPort != 0 {
 			v.PCSCF.SecAgree = &secAgreeView{ProtectedServerPort: int(c.ProtectedServerPort)}
+		}
+	}
+	if c := cfg.ICSCF; c != nil {
+		v.ICSCF = &icscfView{SIP: newSIPView(c.SIP), PSISubdomains: c.PSISubdomains}
+		for _, e := range c.SCSCFs {
+			v.ICSCF.SCSCFs = append(v.ICSCF.SCSCFs, scscfEntry{Name: e.Name, Capabilities: e.Capabilities})
 		}
 	}
 	if c := cfg.SCSCF; c != nil {
