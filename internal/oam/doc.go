@@ -99,6 +99,14 @@
 //	       ackSystemId of records of one node -> 204.
 //	PUT    the same path: 403, the list cannot be replaced.
 //	DELETE the same path: 403, the list cannot be deleted.
+//	PUT    {MnSRoot}/ProvMnS/v19/SubNetwork={sn}/NtfSubscriptionControl={id}
+//	       createMOI (11.1.1.1): the NtfSubscriptionControl-Single
+//	       Resource of a subscription to the alarm notifications (TS
+//	       28.622 V20.4.0 4.3.22) -> 201 with Location for a new one, 200
+//	       for one that it replaces.
+//	GET    the same path: getMOIAttributes, the Resource.
+//	DELETE the same path: deleteMOI (11.1.1.4), which ends the
+//	       subscription -> 204.
 //
 // The errors have the bodies of TS 32.158 6.6.3, and the type and
 // reason of 6.6.4 and 6.6.5. A query of a GET is checked before any
@@ -106,7 +114,10 @@
 // a value that cannot be read 400 with QUERY_PARAM_VALUES_INVALID, and
 // one that asks for more than the OAM evaluates 500 with
 // QUERY_PARAMS_TOO_COMPLEX. A patch is checked whole before any node is
-// asked; its answers are listed at patchAlarmList. Of the ProvMnS
+// asked; its answers are listed at patchAlarmList. The subscriptions
+// are in their own store (Config.NtfSubscriptions), which several
+// instances share, at most Config.MaxNtfSubscriptions of them: their
+// number follows the number of OSSs. Of the ProvMnS
 // operations, createMOI and deleteMOI of other objects, the reading of
 // the SubNetwork and its ManagedElements, and scopes that reach below
 // the base object are not served: the nodes are no managed objects of an
@@ -240,5 +251,9 @@
 // API does. It relies on the OAM listener being reachable from the
 // internal network only, never published on the host or to the
 // internet; operator in a request is what the caller says, not a
-// checked identity.
+// checked identity. The same holds for the 3GPP management services
+// (MnSHandler): any client that reaches the listener reads and
+// acknowledges the alarms, and creates a subscription with any http or
+// https notificationRecipientAddress, to which the OAM then posts the
+// alarm notifications.
 package oam

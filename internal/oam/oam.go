@@ -95,6 +95,12 @@ type Config struct {
 	// and host are also those of the canonical URIs that name the
 	// alarmed objects.
 	MnSRoot string
+	// NtfSubscriptions keeps the subscriptions of the OSSs to the alarm
+	// notifications; nil for an OAM that takes none.
+	NtfSubscriptions NtfSubscriptionStore
+	// MaxNtfSubscriptions bounds the number of subscriptions; 0 for
+	// DefaultMaxNtfSubscriptions.
+	MaxNtfSubscriptions int
 }
 
 // Server is the OAM server. It keeps no state of its own about
@@ -119,7 +125,9 @@ type Server struct {
 	history ChangeStore
 
 	// mns is the 3GPP management services; nil without them.
-	mns *northbound
+	mns                 *northbound
+	ntfSubscriptions    NtfSubscriptionStore
+	maxNtfSubscriptions int
 	// started is when the server was made: the lastModification of an
 	// alarm list that no node answered for.
 	started time.Time
@@ -139,6 +147,8 @@ func New(c Config) (*Server, error) {
 		log:             c.Log,
 
 		provisioningConcurrency: c.ProvisioningConcurrency,
+		ntfSubscriptions:        c.NtfSubscriptions,
+		maxNtfSubscriptions:     c.MaxNtfSubscriptions,
 		backups:                 c.Backups,
 		history:                 c.History,
 		exportPageSize:          defaultExportPageSize,
@@ -155,7 +165,10 @@ func New(c Config) (*Server, error) {
 	if s.provisioningConcurrency == 0 {
 		s.provisioningConcurrency = DefaultProvisioningConcurrency
 	}
-	if s.nodeTimeout < 0 || s.nodeConcurrency < 0 || s.provisioningConcurrency < 0 {
+	if s.maxNtfSubscriptions == 0 {
+		s.maxNtfSubscriptions = DefaultMaxNtfSubscriptions
+	}
+	if s.nodeTimeout < 0 || s.nodeConcurrency < 0 || s.provisioningConcurrency < 0 || s.maxNtfSubscriptions < 0 {
 		return nil, errors.New("oam: negative timeout or concurrency")
 	}
 	if c.HSSProvisioning != "" {

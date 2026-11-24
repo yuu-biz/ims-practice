@@ -16,6 +16,7 @@ oam:
   data_dir: /var/lib/ims/oam
   subnetwork: ims
   mns_root: http://oam:8080/3GPPManagement
+  max_ntf_subscriptions: 4
   nodes:
     - {name: hss, roles: [hss], maintenance: "http://hss:8085"}
     - {name: pcscf-1, roles: [pcscf, agw], maintenance: "http://172.28.0.40:8085"}
@@ -27,11 +28,12 @@ func TestParseOAM(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := OAM{
-		HTTPListen:      ":8080",
-		HSSProvisioning: "http://hss:8081",
-		DataDir:         "/var/lib/ims/oam",
-		SubNetwork:      "ims",
-		MnSRoot:         "http://oam:8080/3GPPManagement",
+		HTTPListen:          ":8080",
+		HSSProvisioning:     "http://hss:8081",
+		DataDir:             "/var/lib/ims/oam",
+		SubNetwork:          "ims",
+		MnSRoot:             "http://oam:8080/3GPPManagement",
+		MaxNtfSubscriptions: 4,
 		Nodes: []OAMNode{
 			{Name: "hss", Roles: []string{"hss"}, Maintenance: "http://hss:8085"},
 			{Name: "pcscf-1", Roles: []string{"pcscf", "agw"}, Maintenance: "http://172.28.0.40:8085"},
@@ -45,7 +47,7 @@ func TestParseOAM(t *testing.T) {
 	// the role still starts: it then operates the nodes and leaves the
 	// subscriptions, the history, the backups and the northbound
 	// unavailable.
-	optional := strings.Replace(oamYAML, "  hss_provisioning: http://hss:8081\n  data_dir: /var/lib/ims/oam\n  subnetwork: ims\n  mns_root: http://oam:8080/3GPPManagement\n", "", 1)
+	optional := strings.Replace(oamYAML, "  hss_provisioning: http://hss:8081\n  data_dir: /var/lib/ims/oam\n  subnetwork: ims\n  mns_root: http://oam:8080/3GPPManagement\n  max_ntf_subscriptions: 4\n", "", 1)
 	cfg, err = Parse(strings.NewReader(optional))
 	if err != nil {
 		t.Fatal(err)
@@ -77,6 +79,7 @@ func TestParseOAM(t *testing.T) {
 		{"subnetwork with a comma", "subnetwork: ims", "subnetwork: ims,1", "subnetwork"},
 		{"mns_root with a query", "/3GPPManagement", "/3GPPManagement?x=1", "mns_root"},
 		{"mns_root over https", "http://oam:8080/3GPP", "https://oam:8080/3GPP", "mns_root"},
+		{"a negative bound of subscriptions", "max_ntf_subscriptions: 4", "max_ntf_subscriptions: -1", "max_ntf_subscriptions"},
 		{"section without its role", "roles: [oam]", "roles: [lab]\nlab: {hep_listen: \":9060\", http_listen: \":8080\"}", "oam: only the oam role"},
 	}
 	for _, tt := range tests {

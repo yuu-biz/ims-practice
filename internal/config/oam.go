@@ -31,7 +31,11 @@ type OAM struct {
 	// of the configuration changes it made, and the backups. Empty
 	// leaves the history and the backups unavailable. Several OAM
 	// instances that share one directory see the same history and the
-	// same backups.
+	// same backups. When the node has no shared store (Config.Store of
+	// kind valkey), the subscriptions of the OSSs to the alarm
+	// notifications are in this directory too, and that file serves one
+	// OAM instance only: several instances that take subscriptions
+	// share the store section instead.
 	DataDir string
 	// SubNetwork names the SubNetwork whose alarm list the OAM offers to
 	// an OSS through the 3GPP management services, such as ims: the
@@ -42,6 +46,9 @@ type OAM struct {
 	// the URL of the OAM listener as the OSS calls it, then the root
 	// path, such as http://oam:8080/3GPPManagement.
 	MnSRoot string
+	// MaxNtfSubscriptions bounds the subscriptions of the OSSs to the
+	// alarm notifications; 0 for the default of the OAM server.
+	MaxNtfSubscriptions int
 }
 
 // OAMNode is one node of the inventory. Several nodes may have the same
@@ -62,12 +69,13 @@ type OAMNode struct {
 }
 
 type rawOAM struct {
-	HTTPListen      string `yaml:"http_listen"`
-	HSSProvisioning string `yaml:"hss_provisioning"`
-	DataDir         string `yaml:"data_dir"`
-	SubNetwork      string `yaml:"subnetwork"`
-	MnSRoot         string `yaml:"mns_root"`
-	Nodes           []struct {
+	HTTPListen          string `yaml:"http_listen"`
+	HSSProvisioning     string `yaml:"hss_provisioning"`
+	DataDir             string `yaml:"data_dir"`
+	SubNetwork          string `yaml:"subnetwork"`
+	MnSRoot             string `yaml:"mns_root"`
+	MaxNtfSubscriptions int    `yaml:"max_ntf_subscriptions"`
+	Nodes               []struct {
 		Name        string   `yaml:"name"`
 		Roles       []string `yaml:"roles"`
 		Maintenance string   `yaml:"maintenance"`
@@ -86,7 +94,10 @@ func (raw *rawOAM) validate() (OAM, error) {
 	if len(raw.Nodes) == 0 {
 		return OAM{}, errors.New("nodes: at least one node is required")
 	}
-	c := OAM{HTTPListen: raw.HTTPListen, HSSProvisioning: raw.HSSProvisioning, DataDir: raw.DataDir, SubNetwork: raw.SubNetwork, MnSRoot: raw.MnSRoot}
+	c := OAM{HTTPListen: raw.HTTPListen, HSSProvisioning: raw.HSSProvisioning, DataDir: raw.DataDir, SubNetwork: raw.SubNetwork, MnSRoot: raw.MnSRoot, MaxNtfSubscriptions: raw.MaxNtfSubscriptions}
+	if raw.MaxNtfSubscriptions < 0 {
+		return OAM{}, fmt.Errorf("max_ntf_subscriptions: %d is negative", raw.MaxNtfSubscriptions)
+	}
 	if err := checkMnS(raw.SubNetwork, raw.MnSRoot); err != nil {
 		return OAM{}, err
 	}

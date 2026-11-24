@@ -36,6 +36,8 @@ import (
 	"github.com/yuu-biz/ims-practice/internal/interconnect"
 	"github.com/yuu-biz/ims-practice/internal/ipsmgw"
 	"github.com/yuu-biz/ims-practice/internal/kvstore"
+	"github.com/yuu-biz/ims-practice/internal/kvstore/kvjson"
+	"github.com/yuu-biz/ims-practice/internal/kvstore/oamstore"
 	"github.com/yuu-biz/ims-practice/internal/maintenance"
 	"github.com/yuu-biz/ims-practice/internal/metrics"
 	"github.com/yuu-biz/ims-practice/internal/mmtel"
@@ -1196,9 +1198,9 @@ func TestOAMRoleServesItsAPIAndScreen(t *testing.T) {
 	// serve mounts an OAM as the role does: the API under its prefix,
 	// the 3GPP management services under theirs and the screen beside
 	// them, on one listener.
-	serve := func(c config.OAM) string {
+	serve := func(c config.OAM, stores roleStores) string {
 		t.Helper()
-		server, err := newOAM(c, quiet())
+		server, err := newOAM(c, stores, quiet())
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -1206,8 +1208,11 @@ func TestOAMRoleServesItsAPIAndScreen(t *testing.T) {
 		t.Cleanup(listener.Close)
 		return listener.URL
 	}
-	withData := serve(c)
-	withoutData := serve(config.OAM{Nodes: c.Nodes})
+	withData := serve(c, roleStores{})
+	withoutData := serve(config.OAM{Nodes: c.Nodes}, roleStores{})
+	shared := kvstore.NewMemoryStore(nil)
+	withStore := serve(config.OAM{Nodes: c.Nodes, SubNetwork: c.SubNetwork, MnSRoot: c.MnSRoot},
+		roleStores{kv: shared, section: config.Store{Kind: config.StoreValkey}})
 
 	get := func(url string) (int, string) {
 		t.Helper()
@@ -1240,6 +1245,38 @@ func TestOAMRoleServesItsAPIAndScreen(t *testing.T) {
 	}
 	if status, _ = get(withoutData + alarmList); status == http.StatusOK {
 		t.Errorf("the alarm list of an OAM without a SubNetwork is %d", status)
+	}
+
+	// The subscriptions to the alarm notifications are in the file of
+	// the data directory for one instance, and in the shared store when
+	// the node has one.
+	subscription := "/3GPPManagement/ProvMnS/v19/SubNetwork=ims/NtfSubscriptionControl=oss-1"
+	put := func(url string) int {
+		t.Helper()
+		req, err := http.NewRequest(http.MethodPut, url, strings.NewReader(
+			`{"id": "oss-1", "objectClass": "NtfSubscriptionControl", "attributes": {"notificationRecipientAddress": "http://oss:8080/"}}`))
+		if err != nil {
+			t.Fatal(err)
+		}
+		req.Header.Set("Content-Type", "application/json")
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		return resp.StatusCode
+	}
+	if status := put(withData + subscription); status != http.StatusCreated {
+		t.Errorf("a subscription of an OAM with a data directory is %d, want 201", status)
+	}
+	if b, err := os.ReadFile(filepath.Join(c.DataDir, "ntf-subscriptions.json")); err != nil || !strings.Contains(string(b), `"oss-1"`) {
+		t.Errorf("the subscriptions file: %s, %v", b, err)
+	}
+	if status := put(withStore + subscription); status != http.StatusCreated {
+		t.Errorf("a subscription of an OAM with a shared store is %d, want 201", status)
+	}
+	if subs, err := oamstore.New(shared, kvjson.Config{}).NtfSubscriptions(t.Context()); err != nil || len(subs) != 1 {
+		t.Errorf("the subscriptions in the shared store: %+v, %v", subs, err)
 	}
 
 	if status, body = get(withData + oam.PathPrefix + "backups"); status != http.StatusOK ||

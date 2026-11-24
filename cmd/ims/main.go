@@ -48,6 +48,7 @@ import (
 	"github.com/yuu-biz/ims-practice/internal/kvstore/kvlock"
 	"github.com/yuu-biz/ims-practice/internal/kvstore/mmtelstore"
 	"github.com/yuu-biz/ims-practice/internal/kvstore/mrfcstore"
+	"github.com/yuu-biz/ims-practice/internal/kvstore/oamstore"
 	"github.com/yuu-biz/ims-practice/internal/kvstore/pcscfstore"
 	"github.com/yuu-biz/ims-practice/internal/kvstore/scscfstore"
 	"github.com/yuu-biz/ims-practice/internal/kvstore/scstore"
@@ -621,7 +622,7 @@ func run(configPath string, log *slog.Logger, level *slog.LevelVar) error {
 	}
 	if c := cfg.OAM; c != nil {
 		roleLog := log.With("role", config.RoleOAM)
-		server, err := newOAM(*c, roleLog)
+		server, err := newOAM(*c, stores, roleLog)
 		if err != nil {
 			return err
 		}
@@ -1042,8 +1043,14 @@ func oamHandler(server *oam.Server) http.Handler {
 // keeps itself: the history of the configuration changes it made, in
 // one file, and the backups, each an archive and its manifest. Without
 // a directory it keeps neither, and refuses those operations with 503.
-func newOAM(c config.OAM, log *slog.Logger) (*oam.Server, error) {
-	cfg := oam.Config{HSSProvisioning: c.HSSProvisioning, SubNetwork: c.SubNetwork, MnSRoot: c.MnSRoot, Log: log}
+//
+// The subscriptions of the OSSs to the alarm notifications are in the
+// shared store when the node has one, so that several OAM instances see
+// the same ones, and otherwise in a file of the data directory, for one
+// instance. Without either, the OAM takes no subscription.
+func newOAM(c config.OAM, stores roleStores, log *slog.Logger) (*oam.Server, error) {
+	cfg := oam.Config{HSSProvisioning: c.HSSProvisioning, SubNetwork: c.SubNetwork, MnSRoot: c.MnSRoot,
+		MaxNtfSubscriptions: c.MaxNtfSubscriptions, Log: log}
 	for _, n := range c.Nodes {
 		cfg.Nodes = append(cfg.Nodes, oam.Endpoint{Name: n.Name, Roles: n.Roles, URL: n.Maintenance})
 	}
@@ -1057,6 +1064,17 @@ func newOAM(c config.OAM, log *slog.Logger) (*oam.Server, error) {
 			return nil, fmt.Errorf("oam: the backups: %w", err)
 		}
 		cfg.History, cfg.Backups = history, backups
+	}
+	if c.SubNetwork != "" {
+		if kv, kvCfg, ok := stores.adapter(log); ok {
+			cfg.NtfSubscriptions = oamstore.New(kv, kvCfg)
+		} else if c.DataDir != "" {
+			subs, err := oam.NewFileNtfSubscriptionStore(filepath.Join(c.DataDir, "ntf-subscriptions.json"))
+			if err != nil {
+				return nil, fmt.Errorf("oam: the subscriptions to the alarm notifications: %w", err)
+			}
+			cfg.NtfSubscriptions = subs
+		}
 	}
 	return oam.New(cfg)
 }
