@@ -1,0 +1,705 @@
+openapi: 3.1.0
+info:
+  title: Control API of the UE simulator
+  version: 1.0.0
+  description: |
+    The control API of the phone that "ue serve" runs. It is this
+    project's own API, of the kind a test tool offers to drive it, and no
+    3GPP or IETF specification defines it; nothing of it goes between the
+    UE and the IMS.
+
+    The POSTs that act on the phone answer with the Status. A request
+    that the state of the phone does not allow, such as a second call,
+    gets 409; one that the UE fails to carry out, such as a REGISTER that
+    the network refuses or a re-INVITE that the peer turns down, gets
+    502; one while the UE stops, 503. Every error has the body Error. A
+    method that a path does not take answers 405 with Allow, as text.
+
+    The supplementary services over Ut (/xcap) are not part of this API:
+    they follow TS 24.623.
+paths:
+  /status:
+    get:
+      operationId: getStatus
+      responses:
+        '200':
+          $ref: '#/components/responses/Status'
+  /events:
+    get:
+      operationId: getEvents
+      summary: The Status on each change, short messages included, as server-sent events (HTML Living Standard).
+      responses:
+        '200':
+          description: One event per change, whose data is the Status as JSON.
+          content:
+            text/event-stream: {}
+  /register:
+    post:
+      operationId: register
+      summary: Register, or refresh the registration.
+      responses:
+        '200':
+          $ref: '#/components/responses/Status'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '502':
+          $ref: '#/components/responses/Failed'
+        '503':
+          $ref: '#/components/responses/Stopping'
+  /deregister:
+    post:
+      operationId: deregister
+      responses:
+        '200':
+          $ref: '#/components/responses/Status'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '502':
+          $ref: '#/components/responses/Failed'
+        '503':
+          $ref: '#/components/responses/Stopping'
+  /call:
+    post:
+      operationId: call
+      summary: Make a call.
+      description: A call goes out while another is on the line only once that one is on hold, and the line holds two calls at most (TS 24.615).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CallRequest'
+      responses:
+        '200':
+          $ref: '#/components/responses/Status'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '502':
+          $ref: '#/components/responses/Failed'
+        '503':
+          $ref: '#/components/responses/Stopping'
+  /answer:
+    post:
+      operationId: answer
+      summary: Answer the incoming call that rings.
+      description: A call that waits behind another is taken after the other goes on hold (TS 24.615 4.5.5.3.3).
+      responses:
+        '200':
+          $ref: '#/components/responses/Status'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '502':
+          $ref: '#/components/responses/Failed'
+        '503':
+          $ref: '#/components/responses/Stopping'
+  /hangup:
+    post:
+      operationId: hangUp
+      summary: End the call in the foreground, or the call with the Call-ID.
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/HangUpRequest'
+      responses:
+        '200':
+          $ref: '#/components/responses/Status'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '502':
+          $ref: '#/components/responses/Failed'
+        '503':
+          $ref: '#/components/responses/Stopping'
+  /answer-policy:
+    put:
+      operationId: setAnswerPolicy
+      summary: How the phone takes the next incoming call.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AnswerPolicy'
+      responses:
+        '200':
+          description: The policy, with the defaults filled in.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AnswerPolicy'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+  /hold:
+    post:
+      operationId: hold
+      summary: Put the answered call in the foreground on hold (re-INVITE with sendonly).
+      responses:
+        '200':
+          $ref: '#/components/responses/Status'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '502':
+          $ref: '#/components/responses/Failed'
+        '503':
+          $ref: '#/components/responses/Stopping'
+  /resume:
+    post:
+      operationId: resume
+      summary: Take the held call back (re-INVITE with sendrecv) once no other call is answered.
+      responses:
+        '200':
+          $ref: '#/components/responses/Status'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '502':
+          $ref: '#/components/responses/Failed'
+        '503':
+          $ref: '#/components/responses/Stopping'
+  /swap:
+    post:
+      operationId: swap
+      summary: Hold the call in the foreground and take the held one back.
+      responses:
+        '200':
+          $ref: '#/components/responses/Status'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '502':
+          $ref: '#/components/responses/Failed'
+        '503':
+          $ref: '#/components/responses/Stopping'
+  /merge:
+    post:
+      operationId: merge
+      summary: Make a three-way session of the two answered calls (TS 24.147 5.3.1.3.3, IR.92 2.3.3).
+      responses:
+        '200':
+          $ref: '#/components/responses/Status'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '502':
+          $ref: '#/components/responses/Failed'
+        '503':
+          $ref: '#/components/responses/Stopping'
+  /conference:
+    get:
+      operationId: getConference
+      summary: The conference that the UE takes part in.
+      responses:
+        '200':
+          description: The conference.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Conference'
+        '404':
+          description: The UE takes part in no conference.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /dtmf:
+    post:
+      operationId: sendDTMF
+      summary: Send DTMF digits as telephone events.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DTMFRequest'
+      responses:
+        '200':
+          $ref: '#/components/responses/Status'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '502':
+          $ref: '#/components/responses/Failed'
+        '503':
+          $ref: '#/components/responses/Stopping'
+  /sms:
+    get:
+      operationId: getSMS
+      summary: The short messages sent and received, oldest first.
+      responses:
+        '200':
+          description: The history.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SMSHistory'
+    post:
+      operationId: sendSMS
+      summary: Send a short message (TS 24.341 5.3.1.2).
+      description: Answers once the MESSAGE has its 202. A short message that cannot be sent, such as a text too long for one, gets 400.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SMSRequest'
+      responses:
+        '200':
+          description: The short message as it was sent.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SentSMS'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '502':
+          $ref: '#/components/responses/Failed'
+        '503':
+          $ref: '#/components/responses/Stopping'
+  /sms-memory:
+    put:
+      operationId: setSMSMemory
+      summary: Take the memory of the UE for incoming short messages away, or give it back.
+      description: |
+        Giving it back notifies the network when the UE owes a
+        notification (TS 24.341 5.3.2.5). A UE that is not registered
+        cannot notify the network, so the request answers 409 after it
+        has set the state.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [full]
+              properties:
+                full:
+                  type: boolean
+              additionalProperties: false
+      responses:
+        '200':
+          $ref: '#/components/responses/SMSReception'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '502':
+          $ref: '#/components/responses/Failed'
+        '503':
+          $ref: '#/components/responses/Stopping'
+  /sms-memory/notify:
+    post:
+      operationId: notifySMSMemory
+      summary: Notify the network once more that the UE has memory, whatever it owes.
+      responses:
+        '200':
+          $ref: '#/components/responses/SMSReception'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '502':
+          $ref: '#/components/responses/Failed'
+        '503':
+          $ref: '#/components/responses/Stopping'
+  /sms-availability:
+    put:
+      operationId: setSMSAvailability
+      summary: Have the UE take incoming short messages, or answer each one 480 (Temporarily Unavailable).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [available]
+              properties:
+                available:
+                  type: boolean
+              additionalProperties: false
+      responses:
+        '200':
+          $ref: '#/components/responses/SMSReception'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+components:
+  responses:
+    Status:
+      description: The Status after the request.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Status'
+    SMSReception:
+      description: How the UE takes short messages after the request.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/SMSReception'
+    BadRequest:
+      description: A body that does not parse, has an unknown field or a value that the request does not take.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    Conflict:
+      description: The state of the phone does not allow the request.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    Failed:
+      description: The UE failed to carry the request out, such as a REGISTER that the network refused.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    Stopping:
+      description: The UE is stopping.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+  schemas:
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: string
+      additionalProperties: false
+    Time:
+      type: string
+      format: date-time
+    CallRequest:
+      type: object
+      required: [target]
+      properties:
+        target:
+          description: A sip, sips or tel URI.
+          type: string
+        give_up_after_seconds:
+          description: Cancel the call when it has not been answered by then.
+          type: number
+          minimum: 0
+        codecs:
+          description: |
+            Offered in this call instead of those of the UE, the most
+            preferred first: the names of the speech codecs that the UE
+            has, such as AMR-WB, AMR and PCMU, in any case.
+          type: array
+          items:
+            type: string
+      additionalProperties: false
+    HangUpRequest:
+      type: object
+      properties:
+        reject_status:
+          description: The status that turns a ringing call down; 603 without it.
+          type: integer
+          minimum: 400
+          maximum: 699
+        call_id:
+          type: string
+      additionalProperties: false
+    AnswerPolicy:
+      type: object
+      required: [mode]
+      properties:
+        mode:
+          type: string
+          enum: [auto, reject, manual]
+        ring_seconds:
+          description: For auto, how long the call rings before the UE answers.
+          type: number
+          minimum: 0
+        reject_status:
+          description: For reject, the status that turns every call down; 486 without it.
+          type: integer
+          minimum: 400
+          maximum: 699
+      additionalProperties: false
+    DTMFRequest:
+      type: object
+      required: [digits]
+      properties:
+        digits:
+          type: string
+          pattern: '^[0-9*#A-D]+$'
+      additionalProperties: false
+    SMSRequest:
+      type: object
+      required: [to, text]
+      properties:
+        to:
+          description: The recipient, such as +12025550102.
+          type: string
+        text:
+          type: string
+        status_report:
+          description: Ask the SC for a status report.
+          type: boolean
+      additionalProperties: false
+    Status:
+      description: The state of the phone.
+      type: object
+      required: [impu, registered, call, calls, conference, answer_policy, sms]
+      properties:
+        impu:
+          description: The public identity the phone shows, or "" before a registration with a temporary one.
+          type: string
+        registered:
+          type: boolean
+        call:
+          description: The call in the foreground, null while the line is free.
+          oneOf:
+            - $ref: '#/components/schemas/Call'
+            - type: 'null'
+        calls:
+          description: All the calls on the line, oldest first.
+          type: array
+          items:
+            $ref: '#/components/schemas/Call'
+        conference:
+          description: The conference that the UE takes part in (TS 24.147 5.3.1), null without one.
+          oneOf:
+            - $ref: '#/components/schemas/Conference'
+            - type: 'null'
+        answer_policy:
+          $ref: '#/components/schemas/AnswerPolicy'
+        sms:
+          $ref: '#/components/schemas/SMSHistory'
+      additionalProperties: false
+    Call:
+      type: object
+      required: [call_id, direction, peer, state, started, session]
+      properties:
+        call_id:
+          type: string
+        direction:
+          type: string
+          enum: [outgoing, incoming]
+        peer:
+          description: The callee for an outgoing call, the caller's P-Asserted-Identity or From for an incoming one, the conference URI for a conference.
+          type: string
+        state:
+          type: string
+          enum: [calling, ringing, active]
+        started:
+          $ref: '#/components/schemas/Time'
+        waiting:
+          description: An incoming call that rings while another is on the line (TS 24.615 4.5.5.3.2).
+          type: boolean
+        session:
+          description: The media side of the call, null until it has a session.
+          oneOf:
+            - $ref: '#/components/schemas/Session'
+            - type: 'null'
+      additionalProperties: false
+    Session:
+      type: object
+      required: [media_resources, reservation_needed, held, media]
+      properties:
+        codec:
+          $ref: '#/components/schemas/Codec'
+        direction:
+          description: The direction of the audio stream in this UE's last SDP (RFC 3264 6.1).
+          type: string
+        peer_direction:
+          type: string
+        preconditions:
+          $ref: '#/components/schemas/Preconditions'
+        media_resources:
+          description: The access network carries the media (IR.92 2.4.3.1).
+          type: boolean
+        reservation_needed:
+          description: The access network reserves those resources, as the EPC sets up a dedicated bearer.
+          type: boolean
+        held:
+          type: boolean
+        early_media:
+          description: The early media authorization of the network on each early dialog, by To tag (RFC 5009 8).
+          type: object
+          additionalProperties:
+            type: string
+        local_ringback:
+          type: boolean
+        ringback:
+          type: string
+          enum: [local, network]
+        media:
+          $ref: '#/components/schemas/MediaStats'
+        dtmf_sent:
+          type: string
+        dtmf_received:
+          type: string
+      additionalProperties: false
+    Codec:
+      type: object
+      required: [name, payload_type, clock_rate]
+      properties:
+        name:
+          type: string
+        payload_type:
+          type: integer
+        clock_rate:
+          type: integer
+        payload_format:
+          description: bandwidth-efficient or octet-aligned for AMR and AMR-WB (RFC 4867 4.3, 4.4).
+          type: string
+        telephone_event:
+          description: The payload type of DTMF.
+          type: integer
+      additionalProperties: false
+    Preconditions:
+      description: The precondition table of the call (RFC 3312 5).
+      type: object
+      required: [met, rows]
+      properties:
+        met:
+          type: boolean
+        rows:
+          type: array
+          items:
+            type: object
+            required: [segment, direction, reserved, strength]
+            properties:
+              segment:
+                type: string
+                enum: [local, remote]
+              direction:
+                type: string
+                enum: [send, recv]
+              reserved:
+                type: boolean
+              strength:
+                type: string
+              confirm:
+                type: boolean
+            additionalProperties: false
+      additionalProperties: false
+    MediaStats:
+      type: object
+      required: [packets_sent, packets_received, rtcp_sent, rtcp_received]
+      properties:
+        packets_sent:
+          type: integer
+        packets_received:
+          type: integer
+        frames_sent:
+          type: integer
+        frames_received:
+          type: integer
+        rtcp_sent:
+          type: integer
+        rtcp_received:
+          type: integer
+      additionalProperties: false
+    Conference:
+      type: object
+      required: [uri, users]
+      properties:
+        uri:
+          type: string
+        users:
+          type: array
+          items:
+            type: object
+            required: [entity, status]
+            properties:
+              entity:
+                type: string
+              display_text:
+                type: string
+              status:
+                type: string
+            additionalProperties: false
+      additionalProperties: false
+    SMSHistory:
+      type: object
+      required: [sent, received]
+      properties:
+        sent:
+          type: array
+          items:
+            $ref: '#/components/schemas/SentSMS'
+        received:
+          type: array
+          items:
+            $ref: '#/components/schemas/ReceivedSMS'
+      additionalProperties: false
+    SentSMS:
+      type: object
+      required: [call_id, to, text, message_reference, rp_message_reference, status_report_requested, sent, state]
+      properties:
+        call_id:
+          type: string
+        to:
+          type: string
+        text:
+          type: string
+        message_reference:
+          description: TP-MR.
+          type: integer
+          minimum: 0
+          maximum: 255
+        rp_message_reference:
+          type: integer
+          minimum: 0
+          maximum: 255
+        status_report_requested:
+          type: boolean
+        sent:
+          $ref: '#/components/schemas/Time'
+        state:
+          description: submitted until the submit report, then accepted (RP-ACK) or failed (RP-ERROR).
+          type: string
+          enum: [submitted, accepted, failed]
+        service_centre_time_stamp:
+          $ref: '#/components/schemas/Time'
+        rp_cause:
+          type: integer
+        failure_cause:
+          type: integer
+        status_report:
+          type: object
+          required: [status, discharge_time, received]
+          properties:
+            status:
+              description: TP-ST.
+              type: integer
+            discharge_time:
+              $ref: '#/components/schemas/Time'
+            received:
+              $ref: '#/components/schemas/Time'
+          additionalProperties: false
+      additionalProperties: false
+    ReceivedSMS:
+      type: object
+      required: [call_id, from, text, service_centre_time_stamp, received]
+      properties:
+        call_id:
+          type: string
+        from:
+          type: string
+        text:
+          type: string
+        service_centre_time_stamp:
+          $ref: '#/components/schemas/Time'
+        received:
+          $ref: '#/components/schemas/Time'
+      additionalProperties: false
+    SMSReception:
+      type: object
+      required: [available, memory_full, memory_capacity_exceeded_notification]
+      properties:
+        available:
+          type: boolean
+        memory_full:
+          description: The UE refuses each incoming short message with RP-Cause 22.
+          type: boolean
+        memory_capacity_exceeded_notification:
+          description: The UE owes the network the notification that it has memory again (TS 23.040 10.3).
+          type: boolean
+      additionalProperties: false

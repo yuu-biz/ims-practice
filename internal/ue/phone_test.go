@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/yuu-biz/ims-practice/internal/openapitest"
 	"github.com/yuu-biz/ims-practice/internal/reginfo"
 	"github.com/yuu-biz/ims-practice/internal/sip"
 	"github.com/yuu-biz/ims-practice/internal/ue"
@@ -56,6 +57,11 @@ func (s statusJSON) callState() string {
 type phone struct {
 	t   *testing.T
 	url string
+	// api is openapi.yaml, which every exchange with the phone is
+	// checked against.
+	api     *openapitest.Document
+	handler http.Handler
+	server  *httptest.Server
 	// wire has the messages of the phone's SIP transport.
 	wire *wireLog
 }
@@ -92,7 +98,9 @@ func newPhone(t *testing.T, pcscfAddr netip.AddrPort, private, public, pass stri
 	ctx, stop := context.WithCancel(context.Background())
 	served := make(chan error, 1)
 	go func() { served <- p.Serve(ctx) }()
-	srv := httptest.NewServer(p.Handler())
+	api := openapitest.Load(t, "openapi.yaml")
+	handler := p.Handler()
+	srv := httptest.NewServer(api.Handler(t, handler))
 	t.Cleanup(func() {
 		stop()
 		select {
@@ -105,7 +113,7 @@ func newPhone(t *testing.T, pcscfAddr netip.AddrPort, private, public, pass stri
 		}
 		srv.Close()
 	})
-	ph := &phone{t: t, url: srv.URL, wire: wire}
+	ph := &phone{t: t, url: srv.URL, api: api, handler: handler, server: srv, wire: wire}
 	ph.waitFor("registered", func(s statusJSON) bool { return s.Registered })
 	return ph
 }
