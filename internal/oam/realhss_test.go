@@ -18,6 +18,7 @@ import (
 
 	"github.com/yuu-biz/ims-practice/internal/diameter"
 	"github.com/yuu-biz/ims-practice/internal/hss"
+	"github.com/yuu-biz/ims-practice/internal/openapitest"
 )
 
 // The tests here put the OAM in front of the provisioning API of
@@ -64,7 +65,7 @@ func newRealHSS(t *testing.T) *httptest.Server {
 		t.Fatal(err)
 	}
 	t.Cleanup(h.Close)
-	server := httptest.NewServer(h.Provisioning(noPeers{}))
+	server := httptest.NewServer(openapitest.Load(t, "../hss/openapi.yaml").Handler(t, h.Provisioning(noPeers{})))
 	t.Cleanup(server.Close)
 	return server
 }

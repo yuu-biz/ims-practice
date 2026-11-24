@@ -31,6 +31,9 @@
 //
 // The bodies are JSON, and every error is maintenance.ErrorBody,
 // {"error": "..."}, as in the maintenance API. Times are RFC 3339.
+// openapi.yaml, next to this file, describes each path with its bodies
+// and answers in OpenAPI 3.1, and the tests check the handler against
+// it.
 //
 //	GET  /oam/v1/inventory
 //	     Inventory: the nodes of the configuration.

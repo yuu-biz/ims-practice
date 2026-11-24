@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/yuu-biz/ims-practice/internal/maintenance"
+	"github.com/yuu-biz/ims-practice/internal/openapitest"
 )
 
 // fakeNode is a node that serves the real maintenance API with callbacks
@@ -107,7 +108,10 @@ func (n *fakeNode) setSetting(name string, v int) {
 
 // testServer is the OAM API over httptest, with the nodes it operates.
 type testServer struct {
-	oam    *Server
+	oam *Server
+	// api is openapi.yaml, which every exchange of server is checked
+	// against.
+	api    *openapitest.Document
 	server *httptest.Server
 	log    *syncBuffer
 }
@@ -149,7 +153,8 @@ func newTestServer(t *testing.T, c Config, nodes ...*fakeNode) *testServer {
 	}
 	ts.oam = s
 	mux := http.NewServeMux()
-	mux.Handle(PathPrefix, s.Handler())
+	ts.api = openapitest.Load(t, "openapi.yaml")
+	mux.Handle(PathPrefix, ts.api.Handler(t, s.Handler()))
 	ts.server = httptest.NewServer(mux)
 	t.Cleanup(ts.server.Close)
 	return ts
