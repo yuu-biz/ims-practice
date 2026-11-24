@@ -32,6 +32,21 @@ type ErrorResponseDefault struct {
 	BadAttributes []string `json:"badAttributes,omitempty"`
 }
 
+// ErrorResponse is the body of an error answer from the recipient of
+// a notification, the MnS consumer, to the POST that carried it (the
+// default answer of TS28111_FaultNotifications.yaml; the schema
+// ErrorResponse of TS28623_ComDefs.yaml). TS 32.158 5.5.4 lets the
+// consumer add such a body to the error code it answers with.
+type ErrorResponse struct {
+	Error ErrorResponseError `json:"error"`
+}
+
+// ErrorResponseError is the error property of ErrorResponse.
+type ErrorResponseError struct {
+	// ErrorInfo says in words what was wrong with the notification.
+	ErrorInfo string `json:"errorInfo,omitempty"`
+}
+
 // ErrorType is the high-level kind of an error (TS 32.158 6.6.4). The
 // OpenAPI types it as any string; the values are those of 6.6.4, each
 // with the status code it goes with.

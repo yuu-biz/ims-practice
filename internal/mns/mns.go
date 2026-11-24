@@ -47,7 +47,8 @@
 //	NotifyPotentialFaultyAlarmList,
 //	NotifyAlarmListRebuilt                           the types of the same names, with NotificationHeader
 //	NtfSubscriptionControl-Single, Scope             NtfSubscriptionControlSingle, NtfSubscriptionControlAttributes, Scope
-//	ErrorResponseGet, ErrorResponseDefault           the types of the same names
+//	ErrorResponseGet, ErrorResponseDefault,
+//	ErrorResponse                                    the types of the same names
 //	NotifyNewSecAlarm, NotifyChangedSecAlarmGeneral,
 //	NotifyComments,
 //	NotifyCorrelatedNotificationChanged,

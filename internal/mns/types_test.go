@@ -151,6 +151,14 @@ const errorPatch = `{
   "badAttributes": ["#/attributes/alarmRecords/scscf.9f3c2a7b1d4e6058/perceivedSeverity"]
 }`
 
+// errorNotification is the answer of a notification recipient to a
+// body it cannot read (TS 32.158 5.5.4).
+const errorNotification = `{
+  "error": {
+    "errorInfo": "notifyNewAlarm: unknown attribute reason"
+  }
+}`
+
 // roundTrip decodes body into a value of type T, refusing an attribute
 // that the type does not have, encodes it again and checks that the
 // JSON says the same.
@@ -238,6 +246,12 @@ func TestRoundTrips(t *testing.T) {
 	t.Run("error of a patch", func(t *testing.T) {
 		e := roundTrip[ErrorResponseDefault](t, errorPatch)
 		if e.Type != ModificationNotAllowed || e.Reason != AttributeNotWritable {
+			t.Errorf("error = %+v", e)
+		}
+	})
+	t.Run("error of a notification recipient", func(t *testing.T) {
+		e := roundTrip[ErrorResponse](t, errorNotification)
+		if e.Error.ErrorInfo == "" {
 			t.Errorf("error = %+v", e)
 		}
 	})

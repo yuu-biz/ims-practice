@@ -230,6 +230,14 @@ var schemas = []schemaNames{
 		required: []string{"type"},
 		leftOut:  map[string]string{"status": noMultiStatus, "badObjects": mergePatch3GP, "otherProblems": firstProblem},
 	},
+	{
+		v: ErrorResponse{}, file: comDefs, schema: "ErrorResponse",
+		names: []string{"error"},
+	},
+	{
+		v: ErrorResponseError{}, file: comDefs, schema: "ErrorResponse/error",
+		names: []string{"errorInfo"},
+	},
 }
 
 // TestAttributeNames checks that each type has, in the order of the
