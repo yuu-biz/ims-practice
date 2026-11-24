@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"flag"
+	"io"
 	"log/slog"
 	"strings"
 	"testing"
@@ -13,15 +14,15 @@ import (
 func TestRunRefusesABadCommandLine(t *testing.T) {
 	log := slog.New(slog.DiscardHandler)
 	for _, args := range [][]string{nil, {"listen"}, {"serve", "-port", "8080"}} {
-		if err := run(t.Context(), log, args); !errors.Is(err, errUsage) {
+		if err := run(t.Context(), log, args, io.Discard); !errors.Is(err, errUsage) {
 			t.Errorf("oss %q: %v, want the usage", args, err)
 		}
 	}
-	if err := run(t.Context(), log, []string{"serve", "0.0.0.0:8080"}); err == nil || !strings.Contains(err.Error(), "takes 0 arguments") {
+	if err := run(t.Context(), log, []string{"serve", "0.0.0.0:8080"}, io.Discard); err == nil || !strings.Contains(err.Error(), "takes 0 arguments") {
 		t.Errorf("oss serve with an argument: %v", err)
 	}
 	for _, args := range [][]string{{"-h"}, {"help"}, {"serve", "-h"}} {
-		if err := run(t.Context(), log, args); !errors.Is(err, flag.ErrHelp) {
+		if err := run(t.Context(), log, args, io.Discard); !errors.Is(err, flag.ErrHelp) {
 			t.Errorf("oss %q: %v, want flag.ErrHelp", args, err)
 		}
 	}
