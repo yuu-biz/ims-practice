@@ -27,6 +27,7 @@ func IPSMGW(t *testing.T, newPair func(t *testing.T) (ipsmgw.Store, ipsmgw.Store
 		{"TakenDeliveryLeavesNoExpiry", ipsmgwTakenDeliveryLeavesNoExpiry},
 		{"OutcomeReachesTheInstanceThatWaitsForIt", ipsmgwOutcome},
 		{"OnlyOneTakesAnOutcome", ipsmgwOnlyOneTakesAnOutcome},
+		{"NotReachableIsTakenOnce", ipsmgwNotReachable},
 		{"RegSubscription", ipsmgwRegSubscription},
 		{"RegSubscriptionOfIMSI", ipsmgwRegSubscriptionOfIMSI},
 		{"RegSubscriptionReplacesTheOldOne", ipsmgwRegSubscriptionReplaces},
@@ -479,6 +480,61 @@ func ipsmgwOnlyOneTakesAnOutcome(t *testing.T, a, b ipsmgw.Store) {
 		if got := takes.Load(); got != 1 {
 			t.Fatalf("%d instances took the outcome, want 1", got)
 		}
+	}
+}
+
+// ipsmgwNotReachable: the IP-SM-GW's own UNRI is set on the instance
+// whose delivery failed and found on every other one, and of several
+// instances that find the user reachable again only one takes it, so
+// that the HSS hears of the return once. The flag is that of the public
+// identity, however the user is written.
+func ipsmgwNotReachable(t *testing.T, a, b ipsmgw.Store) {
+	notReachable := func(s ipsmgw.Store, publicID string) bool {
+		t.Helper()
+		set, err := s.TakeNotReachable(context.Background(), publicID)
+		if err != nil {
+			t.Errorf("TakeNotReachable(%s): %v", publicID, err)
+		}
+		return set
+	}
+	putNotReachable := func(s ipsmgw.Store, publicID string, expires time.Time) {
+		t.Helper()
+		if err := s.PutNotReachable(context.Background(), publicID, expires); err != nil {
+			t.Errorf("PutNotReachable(%s): %v", publicID, err)
+		}
+	}
+	if notReachable(a, impu) {
+		t.Error("the flag of a user no delivery failed for is set")
+	}
+	putNotReachable(a, impu, hourHence())
+	if !notReachable(b, "sip:001010000000001@IMS.mnc001.mcc001.3gppnetwork.org") {
+		t.Error("the other instance does not find the flag, or compares the host with case")
+	}
+	if notReachable(a, impu) {
+		t.Error("the flag is still set after it was taken")
+	}
+
+	for range 10 {
+		putNotReachable(a, impu, hourHence())
+		var takes atomic.Int32
+		parallel(4, func(i int) {
+			s := a
+			if i%2 == 1 {
+				s = b
+			}
+			if notReachable(s, impu) {
+				takes.Add(1)
+			}
+		})
+		if got := takes.Load(); got != 1 {
+			t.Fatalf("%d instances took the flag, want 1", got)
+		}
+	}
+
+	putNotReachable(a, impu, time.Now().Add(short))
+	waitOut()
+	if notReachable(b, impu) {
+		t.Error("the flag is set after it expired")
 	}
 }
 

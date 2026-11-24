@@ -8,6 +8,7 @@
 //	message-reference:<recipient>      messageReferences, time to live until its Expires
 //	delivery:<Call-ID>                 PendingDelivery, time to live until its Expires
 //	outcome:<reference>                outcome, time to live until its Expires
+//	not-reachable:<identity>           notReachable, time to live until its Expires
 //	reg-subscription:<Call-ID>         RegSubscription, time to live until its Expires
 //	reg-subscription-of:<identity>     index: the Call-ID of the subscription
 //	reg-subscription-imsi:<IMSI>       index: the Call-ID of the subscription
@@ -152,6 +153,33 @@ func (s *Store) TakeOutcome(ctx context.Context, reference string) (ipsmgw.Outco
 	o, err := kvjson.ReadAndRemove[outcome](ctx, s.c, s.c.Key("outcome", reference))
 	got, ok, err := live(o, o.Expires, s.c.Now(), err)
 	return got.Outcome, ok, err
+}
+
+// notReachable is the item of the IP-SM-GW's own UNRI for one user. It
+// is an item rather than a field of the subscription, because it
+// outlives the registration it was set under: the user may have to
+// register again before this IP-SM-GW can reach them.
+type notReachable struct {
+	// Expires is when the flag goes, as PutNotReachable gave it.
+	Expires time.Time
+}
+
+func (s *Store) PutNotReachable(ctx context.Context, publicID string, expires time.Time) error {
+	return kvjson.Write(ctx, s.c, s.notReachableKey(publicID), notReachable{Expires: expires},
+		s.c.TTLUntil(expires))
+}
+
+// TakeNotReachable takes the flag (kvjson.ReadAndRemove), so that of
+// several instances that find the user reachable again only one gets
+// it.
+func (s *Store) TakeNotReachable(ctx context.Context, publicID string) (bool, error) {
+	n, err := kvjson.ReadAndRemove[notReachable](ctx, s.c, s.notReachableKey(publicID))
+	_, ok, err := live(n, n.Expires, s.c.Now(), err)
+	return ok, err
+}
+
+func (s *Store) notReachableKey(publicID string) string {
+	return s.c.Key("not-reachable", ims.PublicIdentityKey(publicID))
 }
 
 // live is the answer to a read of an item v that goes at expires: none
