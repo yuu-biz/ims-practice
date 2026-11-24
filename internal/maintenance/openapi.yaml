@@ -208,6 +208,44 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
+  /maintenance/v1/alarm-events:
+    get:
+      operationId: getAlarmEvents
+      summary: The changes of the alarm list after an event, from the journal of the node.
+      description: |
+        The events after the one numbered after, the oldest first. With
+        none yet, the node waits up to wait seconds for one and then
+        answers with what there is, which may be none. A reader that asks
+        again with last_number gets each event once. lost says that the
+        journal does not hold every event after after: the oldest have
+        left it, or after is no number of this journal.
+      parameters:
+        - name: after
+          in: query
+          description: The number of the last event that the reader has; 0, the default, for every event that the journal holds.
+          schema:
+            type: integer
+            minimum: 0
+        - name: wait
+          in: query
+          description: How many seconds to wait for an event when there is none; 0, the default, to answer at once.
+          schema:
+            type: integer
+            minimum: 0
+            maximum: 30
+      responses:
+        '200':
+          description: The events.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AlarmEvents'
+        '400':
+          description: An unknown query parameter, one given twice, or a value it does not take.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
   /maintenance/v1/alarms/{id}/ack-state:
     put:
       operationId: setAckState
@@ -545,6 +583,50 @@ components:
         ack_system_id:
           description: The system through which ack_state was last changed, as the request named it.
           type: string
+      additionalProperties: false
+    AlarmEvents:
+      type: object
+      required: [node, journal_id, last_number, lost, events]
+      properties:
+        node:
+          type: string
+        instance:
+          type: string
+        journal_id:
+          description: Random, chosen when the process of the node starts.
+          type: string
+        last_number:
+          description: The number of the newest event of the journal, 0 before the first.
+          type: integer
+          minimum: 0
+        lost:
+          description: The journal does not hold every event after the number that the request named.
+          type: boolean
+        events:
+          type: array
+          items:
+            $ref: '#/components/schemas/AlarmEvent'
+      additionalProperties: false
+    AlarmEvent:
+      type: object
+      required: [number, event_type, event_time, alarm_record]
+      properties:
+        number:
+          description: 1 for the first event of the journal, and one more for each after it.
+          type: integer
+          minimum: 1
+        event_type:
+          description: |
+            What changed. ADDED, CHANGED, CLEARED and ACK_STATE_CHANGED are
+            the changes of notifyNewAlarm, notifyChangedAlarmGeneral,
+            notifyClearedAlarm and notifyAckStateChanged of TS 28.111;
+            DROPPED is a record that the full list removed.
+          type: string
+          enum: [ADDED, CHANGED, CLEARED, ACK_STATE_CHANGED, DROPPED]
+        event_time:
+          $ref: '#/components/schemas/Time'
+        alarm_record:
+          $ref: '#/components/schemas/AlarmRecord'
       additionalProperties: false
     AckStatesRequest:
       type: object

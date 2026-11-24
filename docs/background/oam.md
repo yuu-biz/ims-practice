@@ -723,6 +723,7 @@ Prometheus と Grafana は別のコンテナとして動かすだけで、`ims` 
 | --- | --- | --- | --- |
 | `GET` | `/maintenance/v1/alarms` | なし。問い合わせで `cleared=true` か `cleared=false`、`min_severity=CRITICAL`（`MAJOR`、`MINOR`、`WARNING`）を付けられる | `AlarmList`。`node`、`instance`、`num_of_alarm_records`、`last_modification`、`dropped_records`、`alarm_records` |
 | `PUT` | `/maintenance/v1/alarms/{id}/ack-state` | `AckStateRequest`。`ack_state`（`ACKNOWLEDGED` か `UNACKNOWLEDGED`）、`operator`、`ack_system_id` | `AlarmRecord` |
+| `GET` | `/maintenance/v1/alarm-events` | なし。問い合わせで `after=N`、`wait=S`（0 から 30） | `AlarmEvents`。`after` より後の出来事を古い順に。無ければ `wait` 秒まで待つ（下の「出来事のジャーナル」） |
 | `PATCH` | `/maintenance/v1/alarms` | `AckStatesRequest`。`ack_states` に、`alarm_id` ごとの `AckStateRequest` | `AckStatesChange`。名指しした記録の、変えたあとの姿を `alarm_id` の順に。1 つでも一覧に無い id や知らない状態があれば、どれも変えずに 404 か 400 |
 
 状態コードは、400（知らない問い合わせの名前、範囲の外の値、本文の知らない欄）、404（一覧に無い `id`）、405（`Allow` を付ける）です。問い合わせの名前を間違えたときに、黙って全件を返さないように、知らない名前は 400 にしました。
@@ -776,7 +777,7 @@ err = node.ClearAlarm(hssDown)
 - 追加の文に秘密を入れさせません。設定の伏せ字と同じ秘密の名前（`password`、`k`、`opc` など）のあとに値が続く文（`password=…`、`k: …`）と、32 文字以上の 16 進の並び（K や OPc の長さ）を断ります。断ったときのエラーには、秘密の値を書きません。
 - 一覧のロックは、そのノードの警報だけを守ります。期限の過ぎた記録を探す走査は、上限の 256 件までです。加入者を走査することはありません。
 - 一覧はプロセスの中にあります。再起動すると空から始まり、役割がまだ見つけている障害をまた上げます。警報は今の状態を表すものなので、外に置かなくても作り直せます（上の表の最初の案のとおり）。
-- 通知（`notifyNewAlarm` など）は送りません。OAM がノードの一覧を読みます（上の表の最初の案のとおり）。
+- ノードは通知（`notifyNewAlarm` など）を送りません。OAM がノードの一覧を読みます（上の表の最初の案のとおり）。一覧の変わり目は、ノードが出来事のジャーナルに残し、OAM が長く待つ `GET` で読みます（下の「出来事のジャーナル」）。
 
 #### OAM の API
 
@@ -826,6 +827,22 @@ err = node.ClearAlarm(hssDown)
 | `pcscf`、`icscf`、`scscf` | 次の hop の DNS の名前が引けない（`internal/sipdns`） | `COMMUNICATIONS_ALARM` | `ROUTING_FAILURE`（B.3） | `DNS name does not resolve` | `MAJOR` | 引いた名前 | 引けなかったときに上げる。引けたら下げる |
 | すべて（冗長構成のあと） | 状態の保存先（`internal/kvstore`）に届かない | `PROCESSING_ERROR_ALARM` | `UNDERLYING_RESOURCE_UNAVAILABLE`（B.2） | `store unreachable` | `CRITICAL` | 保存先の `host:port` | 読み書きが接続の失敗か期限切れで終わったときに上げる。次に成功したら下げる |
 | ノード全体（`role` なし） | HEP の送り先に届かず、写しを取りこぼしている（`internal/hep` の `Dropped`） | `QUALITY_OF_SERVICE_ALARM` | `REDUCED_EVENT_REPORTING`（B.3） | `HEP copies dropped` | `WARNING` | HEP の送り先 | 一定の時間（たとえば 60 秒）に取りこぼしが増えたら上げる。増えない時間が続いたら下げる。追加の文に数を書く |
+
+#### 出来事のジャーナル
+
+故障管理の northbound で OAM が通知を送れるように、ノードは一覧の変わり目を出来事として残します（[fm-northbound.md](../design/fm-northbound.md) の「流れ」）。設計の記録が決めていなかった細部は、次のように決めました。
+
+| 決めたこと | 選んだもの | 理由 |
+| --- | --- | --- |
+| 経路と問い合わせ | `GET /maintenance/v1/alarm-events?after=N&wait=S`。`after` はリーダーが持っている最後の出来事の番号（既定は 0）、`wait` は待つ秒数で 0 から 30（既定は 0、すぐに答える） | ほかの経路と同じく、問い合わせの名前を間違えたら 400 にする。待つ長さは OAM が決める（記録の表では 5 秒）。ノードは上限だけを持つ |
+| 答え | `AlarmEvents`。`node`、`instance`、`journal_id`、`last_number`、`lost`、`events` | `journal_id` は起動ごとの乱数の識別。`last_number` があれば、OAM は `wait=0` の 1 回で今の位置を知れる |
+| 出来事 | `AlarmEvent`。`number`（1 から 1 ずつ増える）、`event_type`、`event_time`、`alarm_record`（変えたあとの記録。`notification_id` はその変わり目のもの） | 種類は `ADDED`、`CHANGED`、`CLEARED`、`ACK_STATE_CHANGED`、`DROPPED` の 5 つ。前の 4 つは TS 28.111 8.2、8.4、8.3、8.8 の通知に 1 つずつ当たる。`DROPPED` は捨てた記録を持つ。時刻は記録の時刻（上げた、変えた、cleared にした、確認した時刻）と同じ |
+| 上限 | `Config.MaxAlarmEvents`。既定は 1024（一覧の上限 256 件の 4 倍） | 満杯の一覧の記録が、上げる、変える、cleared、確認の 4 つの出来事を持てる。1 件は記録 1 つ分の数百バイトなので、ノードあたり 1 MB 前後に収まる |
+| 失った印 | `lost` が true のとき、`after` より後の出来事の一部がジャーナルに無い。古いものが消えたときのほか、`after` がこのジャーナルの最新より大きいとき（別のプロセスの番号）も true にし、待たずに、持っている最も古い出来事から答える | 再起動したノードに古い番号で聞いた OAM が、待たされずにすぐ気付ける |
+| 保持の時間の確認の順 | 保持の時間が同時に終わった記録は、終わった時刻の順に確認する | ジャーナルの出来事の時刻が、番号の順に並ぶようにするため |
+| 待つ仕組み | 出来事を足すたびに閉じて作り直すチャネルで起こす。待つ期限はノードの `Clock` で測る | 一覧のロックを持ったまま待たない。リーダーごとに goroutine 1 つと timer 1 つで、加入者の数には依らない |
+
+保持の時間の確認は、一覧に触れる呼び出し（ジャーナルの読み出しも含む）のたびに `expire` が行います。誰も呼ばないあいだは出来事になりません。長く待つ `GET` は、待ちが終わったときにもう一度一覧を読んでから答えます。OAM は少なくとも `wait` の長さごとに聞き直すので、その長さのうちに出来事になり、時刻は保持の時間が終わった時刻です。
 
 #### 役割が上げる警報
 

@@ -14,6 +14,7 @@ const (
 	ConfigurationPath = PathPrefix + "config"
 	LogLevelPath      = PathPrefix + "log-level"
 	AlarmsPath        = PathPrefix + "alarms"
+	AlarmEventsPath   = PathPrefix + "alarm-events"
 
 	administrativeStatePattern = PathPrefix + "functions/{role}/administrative-state"
 	ackStatePattern            = PathPrefix + "alarms/{id}/ack-state"

@@ -43,6 +43,9 @@ type Config struct {
 	// MaxAlarmRecords bounds the alarm list (RaiseAlarm); 0 for
 	// DefaultMaxAlarmRecords.
 	MaxAlarmRecords int
+	// MaxAlarmEvents bounds the journal of the changes of the alarm
+	// list (AlarmEvents); 0 for DefaultMaxAlarmEvents.
+	MaxAlarmEvents int
 	// ClearedAlarmRetention is how long a cleared alarm that no operator
 	// acknowledges stays in the alarm list before the node acknowledges
 	// it itself (ClearAlarm); 0 for DefaultClearedAlarmRetention.
@@ -94,10 +97,11 @@ func New(c Config) (*Node, error) {
 	if c.Configuration == nil {
 		return nil, errors.New("maintenance: no configuration view")
 	}
-	if c.MaxAlarmRecords < 0 || c.ClearedAlarmRetention < 0 {
-		return nil, errors.New("maintenance: negative alarm list bound or retention")
+	if c.MaxAlarmRecords < 0 || c.MaxAlarmEvents < 0 || c.ClearedAlarmRetention < 0 {
+		return nil, errors.New("maintenance: negative alarm list bound, journal bound or retention")
 	}
 	maxAlarms := cmp.Or(c.MaxAlarmRecords, DefaultMaxAlarmRecords)
+	maxEvents := cmp.Or(c.MaxAlarmEvents, DefaultMaxAlarmEvents)
 	retention := cmp.Or(c.ClearedAlarmRetention, DefaultClearedAlarmRetention)
 	clock := c.Clock
 	if clock == nil {
@@ -119,7 +123,7 @@ func New(c Config) (*Node, error) {
 		view:           c.Configuration,
 		settingsByName: map[string]Setting{},
 	}
-	n.alarms = newAlarmList(c.Node, maxAlarms, retention, n.start, log)
+	n.alarms = newAlarmList(c.Node, maxAlarms, maxEvents, retention, n.start, log)
 	for _, f := range c.Functions {
 		if !IsName(f.Role) {
 			return nil, fmt.Errorf("maintenance: role %q is not a name of lowercase letters, digits and hyphens", f.Role)
