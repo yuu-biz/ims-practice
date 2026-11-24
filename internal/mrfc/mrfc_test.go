@@ -23,6 +23,7 @@ import (
 	"github.com/yuu-biz/ims-practice/internal/kvstore/storetest"
 	"github.com/yuu-biz/ims-practice/internal/mixer"
 	"github.com/yuu-biz/ims-practice/internal/mrfc"
+	"github.com/yuu-biz/ims-practice/internal/openapitest"
 	"github.com/yuu-biz/ims-practice/internal/rtp"
 	"github.com/yuu-biz/ims-practice/internal/rtptest"
 	"github.com/yuu-biz/ims-practice/internal/sdp"
@@ -84,7 +85,7 @@ func startMRFP(t *testing.T) testMRFP {
 			relay.Subtract(c.ID)
 		}
 	})
-	api := httptest.NewServer(agw.Handler(relay))
+	api := httptest.NewServer(openapitest.Load(t, "../agw/openapi.yaml").Handler(t, agw.Handler(relay)))
 	t.Cleanup(api.Close)
 	return testMRFP{relay: relay, client: agw.NewClient(api.URL)}
 }

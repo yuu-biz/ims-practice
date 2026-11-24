@@ -33,7 +33,9 @@ import (
 // Context, Add and Modify of a termination with the Termination, and
 // Subtract of a termination with {"termination": ..., "context_deleted":
 // true or false}. An error is {"error": code, "message": text}, with
-// the codes of errorCodes.
+// the codes of errorCodes. openapi.yaml, next to this file, describes
+// each route with its bodies and answers in OpenAPI 3.1, and the tests
+// check the handler against it.
 
 // errorCodes name the errors of the API on the wire, so that a client
 // gets back the error that the relay returned.

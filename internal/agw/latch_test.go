@@ -31,7 +31,7 @@ type latchBed struct {
 func newLatchBed(t *testing.T, access TerminationRequest) *latchBed {
 	t.Helper()
 	b := &latchBed{t: t, relay: newRelay(t, 20), sdp: udp(t), ue: udp(t), ueRTCP: udp(t), other: udp(t), network: udp(t)}
-	api := httptest.NewServer(Handler(b.relay))
+	api := httptest.NewServer(checkedHandler(t, b.relay))
 	t.Cleanup(api.Close)
 	b.client = NewClient(api.URL)
 	access.ID, access.Remote = Access, addr(b.sdp)
