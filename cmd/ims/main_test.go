@@ -1655,3 +1655,7 @@ func (noSMSRegistration) IMSI(context.Context, string) (string, error) {
 func (noSMSRegistration) UpdateSMSRegistrationInfo(context.Context, sh.UserIdentity, string) error {
 	return errors.New("no HSS in this test")
 }
+
+func (noSMSRegistration) NotifyReadyForSM(context.Context, sh.UserIdentity, string, sh.ReadyForSM) error {
+	return errors.New("no HSS in this test")
+}

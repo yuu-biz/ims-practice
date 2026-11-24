@@ -391,10 +391,7 @@ func takesShortMessages(doc reginfo.Document, publicID string) bool {
 // the user by the public identity, which Sh accepts as well (TS 29.328
 // Table 7.6.1).
 func (g *IPSMGW) updateHSS(sub *RegSubscription, available bool, log *slog.Logger) bool {
-	id := sh.UserIdentity{PublicIdentity: sub.PublicIdentity}
-	if sub.MSISDN != "" {
-		id = sh.UserIdentity{MSISDN: sub.MSISDN}
-	}
+	id := shIdentity(sub.PublicIdentity, sub.MSISDN)
 	number := ""
 	if available {
 		number = g.cfg.Number
@@ -438,6 +435,17 @@ func (g *IPSMGW) updateHSS(sub *RegSubscription, available bool, log *slog.Logge
 		log.Info("SMS registration sent to the HSS", "ipsmgw_number", number)
 	}
 	return true
+}
+
+// shIdentity names a user in an Sh request: by the MSISDN that the
+// third-party REGISTER carried, which TS 24.341 B.3 step 9 uses, and by
+// the public identity where there is none, which Sh accepts as well (TS
+// 29.328 Table 7.6.1).
+func shIdentity(publicID, msisdn string) sh.UserIdentity {
+	if msisdn != "" {
+		return sh.UserIdentity{MSISDN: msisdn}
+	}
+	return sh.UserIdentity{PublicIdentity: publicID}
 }
 
 func statusOf(m *sip.Message) int {

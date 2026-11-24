@@ -95,6 +95,10 @@ type update struct {
 
 type fakeHSS struct {
 	updates chan update
+	// notifications are the ReadyForSM notifications of TS 23.204 6.5b
+	// and 6.6, and notifyFails makes each of them fail.
+	notifications chan notification
+	notifyFails   atomic.Pointer[error]
 	// imsi is what the Sh read of the IMSI answers, by public identity.
 	// A user that is not there has no IMSI, as the HSS answers for a
 	// private identity that is not derived from one.
@@ -118,6 +122,21 @@ func (f *fakeHSS) UpdateSMSRegistrationInfo(_ context.Context, id sh.UserIdentit
 		return *err
 	}
 	return nil
+}
+
+func (f *fakeHSS) NotifyReadyForSM(_ context.Context, id sh.UserIdentity, ipsmgwNumber string, reason sh.ReadyForSM) error {
+	if err := f.notifyFails.Load(); err != nil {
+		return *err
+	}
+	f.notifications <- notification{id, ipsmgwNumber, reason}
+	return nil
+}
+
+// notification is a ReadyForSM that the IP-SM-GW sent the HSS.
+type notification struct {
+	id           sh.UserIdentity
+	ipsmgwNumber string
+	reason       sh.ReadyForSM
 }
 
 // locator stands in for DNS. It is filled before any node looks a name
@@ -184,9 +203,10 @@ func newHarness(t *testing.T, store ipsmgw.Store, reportTimeout time.Duration, a
 func newHarnessWith(t *testing.T, store ipsmgw.Store, reportTimeout time.Duration, answer func(*sip.Message) int, extra ipsmgw.Config) *harness {
 	t.Helper()
 	h := &harness{
-		t:        t,
-		sc:       &fakeSC{submits: make(chan submitted, 10), reports: make(chan reported, 10)},
-		hss:      &fakeHSS{updates: make(chan update, 10), imsi: map[string]string{alice: aliceIMSI}},
+		t:  t,
+		sc: &fakeSC{submits: make(chan submitted, 10), reports: make(chan reported, 10)},
+		hss: &fakeHSS{updates: make(chan update, 10), notifications: make(chan notification, 10),
+			imsi: map[string]string{alice: aliceIMSI}},
 		received: make(chan *sip.Message, 10),
 		atSCSCF:  make(chan *sip.Message, 10),
 	}
@@ -251,6 +271,18 @@ func (h *harness) next() *sip.Message {
 	case <-time.After(5 * time.Second):
 		h.t.Fatal("no request reached the entry point")
 		return nil
+	}
+}
+
+// nextNotification is the next ReadyForSM that reached the HSS.
+func (h *harness) nextNotification() notification {
+	h.t.Helper()
+	select {
+	case n := <-h.hss.notifications:
+		return n
+	case <-time.After(5 * time.Second):
+		h.t.Fatal("the HSS heard of no notification")
+		return notification{}
 	}
 }
 
@@ -464,13 +496,21 @@ func TestShortMessageRefused(t *testing.T) {
 	}
 }
 
-// TestMemoryAvailableIsAcknowledged is the RP-SMMA of TS 24.341
-// 5.3.3.4.1: a 202, and an RP-ACK with the same reference.
-func TestMemoryAvailableIsAcknowledged(t *testing.T) {
+// TestMemoryAvailableGoesToTheHSS is the RP-SMMA of TS 24.341 5.3.3.4.1
+// steps d and e with TS 23.204 6.6: a 202, the notification to the HSS
+// by the MSISDN of the user, and then an RP-ACK with the same
+// reference. The HSS hears the IP-SM-GW's own number, which it compares
+// with the registration it holds.
+func TestMemoryAvailableGoesToTheHSS(t *testing.T) {
 	h := newHarness(t, ipsmgw.NewMemoryStore(), time.Minute, answerOK)
+	h.registered()
 	mo := message(marshal(t, sms.RPSMMA{MessageReference: 3}))
 	if resp := h.send(mo); resp.StatusCode != 202 {
 		t.Fatalf("MESSAGE answered %d, want 202", resp.StatusCode)
+	}
+	want := notification{sh.UserIdentity{MSISDN: "12025550101"}, number, sh.MemoryAvailable}
+	if got := h.nextNotification(); got != want {
+		t.Errorf("notification = %+v, want %+v", got, want)
 	}
 	ack := h.next()
 	if got := parseRP(t, ack); !reflect.DeepEqual(got, sms.RPAck{Direction: sms.NetworkToMS, MessageReference: 3}) {
@@ -478,6 +518,32 @@ func TestMemoryAvailableIsAcknowledged(t *testing.T) {
 	}
 	if ack.Get("In-Reply-To") != mo.Get("Call-ID") {
 		t.Errorf("In-Reply-To = %q", ack.Get("In-Reply-To"))
+	}
+}
+
+// TestMemoryAvailableWithoutARegistration: the IP-SM-GW holds no
+// subscription for the user, so it has no MSISDN and names the user by
+// the public identity, which Sh takes as well (TS 29.328 Table 7.6.1).
+func TestMemoryAvailableWithoutARegistration(t *testing.T) {
+	h := newHarness(t, ipsmgw.NewMemoryStore(), time.Minute, answerOK)
+	h.send(message(marshal(t, sms.RPSMMA{MessageReference: 1})))
+	want := notification{sh.UserIdentity{PublicIdentity: alice}, number, sh.MemoryAvailable}
+	if got := h.nextNotification(); got != want {
+		t.Errorf("notification = %+v, want %+v", got, want)
+	}
+}
+
+// TestMemoryAvailableThatTheHSSRefuses: the UE hears RP-Cause 41, a
+// temporary failure, rather than an RP-ACK for a notification that did
+// not get through (TS 24.011 Table 8.4 part 1).
+func TestMemoryAvailableThatTheHSSRefuses(t *testing.T) {
+	h := newHarness(t, ipsmgw.NewMemoryStore(), time.Minute, answerOK)
+	refused := errors.New("the HSS refused the notification")
+	h.hss.notifyFails.Store(&refused)
+	h.send(message(marshal(t, sms.RPSMMA{MessageReference: 4})))
+	want := sms.RPError{Direction: sms.NetworkToMS, MessageReference: 4, Cause: sms.RPCauseTemporaryFailure}
+	if got := parseRP(t, h.next()); !reflect.DeepEqual(got, want) {
+		t.Errorf("answer = %+v, want %+v", got, want)
 	}
 }
 
