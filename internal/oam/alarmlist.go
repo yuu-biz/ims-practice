@@ -76,8 +76,11 @@ func (nb *northbound) alarmRecord(node string, r maintenance.AlarmRecord) (mns.A
 //
 // A node that does not answer, or whose list the OAM cannot use, adds
 // none of its records: the OAM has no copy to show. The part of the list
-// that it would hold is unreliable (TS 28.111 6.11), and
-// unreliableAlarmScope names it: the DN of its ManagedElement for one
+// that it would hold is unreliable (TS 28.111 6.11). So is the part of a
+// node that answers this request, but that the instance that watches it
+// for the notifications has found not to answer (RunNotifications),
+// until the notification that it is back has been sent.
+// unreliableAlarmScope names those parts: the DN of its ManagedElement for one
 // such node, the SubNetwork for more.
 //
 // SIMPLIFIED: TS 28.111 V20.0.0 6.11 and 6.12. unreliableAlarmScope is
@@ -113,6 +116,9 @@ func (s *Server) AlarmList(ctx context.Context) (mns.AlarmListSingle, error) {
 			unreliable = append(unreliable, n.Node)
 			continue
 		}
+		if s.watchedUnreachable(ctx, n.Node) {
+			unreliable = append(unreliable, n.Node)
+		}
 		attrs.NumOfAlarmRecords += n.Result.info.NumOfAlarmRecords
 		if n.Result.info.LastModification.After(attrs.LastModification) {
 			attrs.LastModification = n.Result.info.LastModification
@@ -133,6 +139,20 @@ func (s *Server) AlarmList(ctx context.Context) (mns.AlarmListSingle, error) {
 		Top:        mns.Top{Id: alarmListID, ObjectClass: mns.ClassAlarmList, ObjectInstance: nb.alarmList.String()},
 		Attributes: attrs,
 	}, nil
+}
+
+// watchedUnreachable says whether the watch state of node says that it
+// does not answer. A state that cannot be read says nothing.
+func (s *Server) watchedUnreachable(ctx context.Context, node string) bool {
+	if s.watches == nil {
+		return false
+	}
+	st, err := s.watches.AlarmWatchState(ctx, node)
+	if err != nil {
+		s.log.Warn("the watch state of a node could not be read", "node", node, "error", err.Error())
+		return false
+	}
+	return st.Unreachable
 }
 
 func (s *Server) serveAlarmList(w http.ResponseWriter, r *http.Request) {

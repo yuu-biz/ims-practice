@@ -622,10 +622,23 @@ func run(configPath string, log *slog.Logger, level *slog.LevelVar) error {
 	}
 	if c := cfg.OAM; c != nil {
 		roleLog := log.With("role", config.RoleOAM)
-		server, err := newOAM(*c, stores, roleLog)
+		server, err := newOAM(*c, stores, registry, roleLog)
 		if err != nil {
 			return err
 		}
+		// The watchers of the nodes stop with the node, and the role
+		// waits for them, so that each has saved how far it sent.
+		notifications := make(chan struct{})
+		go func() {
+			defer close(notifications)
+			if err := server.RunNotifications(ctx); err != nil {
+				roleLog.Info("no alarm notifications", "reason", err.Error())
+			}
+		}()
+		defer func() {
+			cancel()
+			<-notifications
+		}()
 		// Close, not Shutdown, on the way out: a bulk provisioning or a
 		// backup streams its answer, and the node must not wait for one
 		// to finish. A backup cut short leaves no archive, since the
@@ -1047,10 +1060,13 @@ func oamHandler(server *oam.Server) http.Handler {
 // The subscriptions of the OSSs to the alarm notifications are in the
 // shared store when the node has one, so that several OAM instances see
 // the same ones, and otherwise in a file of the data directory, for one
-// instance. Without either, the OAM takes no subscription.
-func newOAM(c config.OAM, stores roleStores, log *slog.Logger) (*oam.Server, error) {
+// instance. Without either, the OAM takes no subscription. The state of
+// the watch of each node, how far its alarm notifications have been
+// sent, is in the data directory beside them; an OAM with a shared
+// store watches no node and sends no notification.
+func newOAM(c config.OAM, stores roleStores, registry *metrics.Registry, log *slog.Logger) (*oam.Server, error) {
 	cfg := oam.Config{HSSProvisioning: c.HSSProvisioning, SubNetwork: c.SubNetwork, MnSRoot: c.MnSRoot,
-		MaxNtfSubscriptions: c.MaxNtfSubscriptions, Log: log}
+		MaxNtfSubscriptions: c.MaxNtfSubscriptions, Metrics: registry, Log: log}
 	for _, n := range c.Nodes {
 		cfg.Nodes = append(cfg.Nodes, oam.Endpoint{Name: n.Name, Roles: n.Roles, URL: n.Maintenance})
 	}
@@ -1073,7 +1089,11 @@ func newOAM(c config.OAM, stores roleStores, log *slog.Logger) (*oam.Server, err
 			if err != nil {
 				return nil, fmt.Errorf("oam: the subscriptions to the alarm notifications: %w", err)
 			}
-			cfg.NtfSubscriptions = subs
+			watches, err := oam.NewFileAlarmWatchStore(filepath.Join(c.DataDir, "alarm-watch"), log)
+			if err != nil {
+				return nil, fmt.Errorf("oam: the watches of the nodes: %w", err)
+			}
+			cfg.NtfSubscriptions, cfg.AlarmWatches = subs, watches
 		}
 	}
 	return oam.New(cfg)

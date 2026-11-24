@@ -97,8 +97,24 @@ none "malformed H.248" 'megaco && _ws.malformed'
 # has been reserved.
 none "H.248 error descriptors" "$iq && megaco.error"
 # The relay takes its commands over H.248 only; this deployment gives
-# it no HTTP control API to serve.
-none "HTTP to the media relay" "http && ip.dst == $agw"
+# it no HTTP control API to serve. It still serves the maintenance API
+# on port 8085 (deploy/h248/agw.yaml), as every node does, and the OAM
+# reads the journal of its alarm list there to send the alarm
+# notifications: that HTTP carries no command, so the check leaves the
+# port out, and a check of its own sees that the OAM's requests reach
+# the relay there.
+oam=172.28.0.65
+maintenance_port=8085
+# The OAM asks again every few seconds, so the request may come after
+# the last frame of the calls, which the capture has already.
+alarm_events="http.request && ip.src == $oam && ip.dst == $agw && tcp.dstport == $maintenance_port && http.request.uri contains \"/maintenance/v1/alarm-events\""
+if wait_for 30 holds 1 "$alarm_events"; then
+	echo "ok   the OAM reads the alarm events of the media relay on its maintenance port"
+else
+	echo "FAIL no request of the OAM for the alarm events of the media relay within 30 s"
+	fail=1
+fi
+none "HTTP to the media relay other than its maintenance API" "http && ip.dst == $agw && !(tcp.dstport == $maintenance_port)"
 
 if [ "$calls" -ne 0 ]; then
 	echo "FAIL the voice call scenario failed on this deployment (exit $calls)"

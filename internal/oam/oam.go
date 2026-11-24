@@ -1,6 +1,7 @@
 package oam
 
 import (
+	"cmp"
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
@@ -11,9 +12,11 @@ import (
 	"net/url"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/yuu-biz/ims-practice/internal/maintenance"
+	"github.com/yuu-biz/ims-practice/internal/metrics"
 )
 
 // PathPrefix is where the OAM API lives. A role mounts Handler under
@@ -101,6 +104,33 @@ type Config struct {
 	// MaxNtfSubscriptions bounds the number of subscriptions; 0 for
 	// DefaultMaxNtfSubscriptions.
 	MaxNtfSubscriptions int
+	// AlarmWatches keeps which instance watches each node for the alarm
+	// notifications, and how far it has sent them (RunNotifications);
+	// nil for an OAM that sends none.
+	AlarmWatches AlarmWatchStore
+	// Instance names this OAM instance to the watch store; empty for a
+	// random name, chosen when the server is made.
+	Instance string
+	// AlarmEventsWait is how long a request for the alarm events of a
+	// node waits for one, in whole seconds; 0 for
+	// DefaultAlarmEventsWait. It is also the wait before a node that
+	// does not answer is asked again.
+	AlarmEventsWait time.Duration
+	// WatchRenewal is how often an instance renews its watches and
+	// tries to take the others; 0 for DefaultWatchRenewal.
+	WatchRenewal time.Duration
+	// NotificationTimeout bounds the POST of one notification; 0 for
+	// DefaultNotificationTimeout.
+	NotificationTimeout time.Duration
+	// NotificationConcurrency bounds how many recipients a notification
+	// goes to at once; 0 for DefaultNotificationConcurrency.
+	NotificationConcurrency int
+	// MissedRetryInterval is how often a recipient that missed a
+	// notification is tried again; 0 for DefaultMissedRetryInterval.
+	MissedRetryInterval time.Duration
+	// Metrics is where the OAM counts the notifications it sends; nil
+	// for a registry of its own, which nothing serves.
+	Metrics *metrics.Registry
 }
 
 // Server is the OAM server. It keeps no state of its own about
@@ -128,6 +158,18 @@ type Server struct {
 	mns                 *northbound
 	ntfSubscriptions    NtfSubscriptionStore
 	maxNtfSubscriptions int
+
+	watches                 AlarmWatchStore
+	instance                string
+	alarmEventsWait         time.Duration
+	watchRenewal            time.Duration
+	notificationTimeout     time.Duration
+	notificationConcurrency int
+	missedRetryInterval     time.Duration
+	notificationMetrics     notificationMetrics
+	// owed is the tries of the notifications that misses owe, which
+	// RunNotifications waits for before it returns.
+	owed sync.WaitGroup
 	// started is when the server was made: the lastModification of an
 	// alarm list that no node answered for.
 	started time.Time
@@ -149,6 +191,13 @@ func New(c Config) (*Server, error) {
 		provisioningConcurrency: c.ProvisioningConcurrency,
 		ntfSubscriptions:        c.NtfSubscriptions,
 		maxNtfSubscriptions:     c.MaxNtfSubscriptions,
+		watches:                 c.AlarmWatches,
+		instance:                cmp.Or(c.Instance, randomHex(8)),
+		alarmEventsWait:         cmp.Or(c.AlarmEventsWait, DefaultAlarmEventsWait),
+		watchRenewal:            cmp.Or(c.WatchRenewal, DefaultWatchRenewal),
+		notificationTimeout:     cmp.Or(c.NotificationTimeout, DefaultNotificationTimeout),
+		notificationConcurrency: cmp.Or(c.NotificationConcurrency, DefaultNotificationConcurrency),
+		missedRetryInterval:     cmp.Or(c.MissedRetryInterval, DefaultMissedRetryInterval),
 		backups:                 c.Backups,
 		history:                 c.History,
 		exportPageSize:          defaultExportPageSize,
@@ -168,8 +217,20 @@ func New(c Config) (*Server, error) {
 	if s.maxNtfSubscriptions == 0 {
 		s.maxNtfSubscriptions = DefaultMaxNtfSubscriptions
 	}
-	if s.nodeTimeout < 0 || s.nodeConcurrency < 0 || s.provisioningConcurrency < 0 || s.maxNtfSubscriptions < 0 {
+	if s.nodeTimeout < 0 || s.nodeConcurrency < 0 || s.provisioningConcurrency < 0 || s.maxNtfSubscriptions < 0 ||
+		s.watchRenewal <= 0 || s.notificationTimeout < 0 || s.notificationConcurrency < 0 || s.missedRetryInterval < 0 {
 		return nil, errors.New("oam: negative timeout or concurrency")
+	}
+	if s.alarmEventsWait < time.Second || s.alarmEventsWait%time.Second != 0 || s.alarmEventsWait > maintenance.MaxAlarmEventsWait {
+		return nil, fmt.Errorf("oam: the wait for alarm events, %v, is no whole number of seconds up to %v", s.alarmEventsWait, maintenance.MaxAlarmEventsWait)
+	}
+	reg := c.Metrics
+	if reg == nil {
+		reg = metrics.NewRegistry()
+	}
+	var err error
+	if s.notificationMetrics, err = newNotificationMetrics(reg); err != nil {
+		return nil, fmt.Errorf("oam: %w", err)
 	}
 	if c.HSSProvisioning != "" {
 		u, err := url.Parse(c.HSSProvisioning)
