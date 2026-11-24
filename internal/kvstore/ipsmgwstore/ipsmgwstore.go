@@ -7,6 +7,7 @@
 //
 //	message-reference:<recipient>      messageReferences, time to live until its Expires
 //	delivery:<Call-ID>                 PendingDelivery, time to live until its Expires
+//	outcome:<reference>                outcome, time to live until its Expires
 //	reg-subscription:<Call-ID>         RegSubscription, time to live until its Expires
 //	reg-subscription-of:<identity>     index: the Call-ID of the subscription
 //	reg-subscription-imsi:<IMSI>       index: the Call-ID of the subscription
@@ -130,6 +131,27 @@ func (s *Store) TakeDelivery(ctx context.Context, callID string) (ipsmgw.Pending
 		s.c.RemoveDue(ctx, ipsmgw.ReportTimeout, callID)
 	}
 	return live(d, d.Expires, s.c.Now(), err)
+}
+
+// outcome is the item that holds how a delivery ended, for the instance
+// that answers the request which brought it.
+type outcome struct {
+	Outcome ipsmgw.Outcome
+	// Expires is when the outcome goes, as PutOutcome gave it.
+	Expires time.Time
+}
+
+func (s *Store) PutOutcome(ctx context.Context, reference string, o ipsmgw.Outcome, expires time.Time) error {
+	return kvjson.Write(ctx, s.c, s.c.Key("outcome", reference), outcome{Outcome: o, Expires: expires},
+		s.c.TTLUntil(expires))
+}
+
+// TakeOutcome takes the outcome (kvjson.ReadAndRemove), so that of two
+// instances that read it only one gets it.
+func (s *Store) TakeOutcome(ctx context.Context, reference string) (ipsmgw.Outcome, bool, error) {
+	o, err := kvjson.ReadAndRemove[outcome](ctx, s.c, s.c.Key("outcome", reference))
+	got, ok, err := live(o, o.Expires, s.c.Now(), err)
+	return got.Outcome, ok, err
 }
 
 // live is the answer to a read of an item v that goes at expires: none
