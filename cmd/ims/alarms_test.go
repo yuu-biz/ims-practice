@@ -98,6 +98,7 @@ func TestRoleRaisesAnAlarmWhileItCannotReachAnHSS(t *testing.T) {
 		ObjectInstance:    "ManagedElement=scscf,ManagedFunction=scscf,Peer=" + hosts[1],
 		Role:              "scscf",
 		Peer:              maintenance.Peer(hosts[1]),
+		NotificationID:    got.NotificationID,
 		AlarmRaisedTime:   got.AlarmRaisedTime,
 		AlarmType:         "COMMUNICATIONS_ALARM",
 		ProbableCause:     "COMMUNICATIONS_SUBSYSTEM_FAILURE",

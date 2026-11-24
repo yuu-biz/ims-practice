@@ -1043,7 +1043,7 @@ components:
         An AlarmRecord of the maintenance API with the node whose list
         holds it. The fields after node are those of AlarmRecord.
       type: object
-      required: [node, alarm_id, object_instance, alarm_raised_time, alarm_type, probable_cause, perceived_severity, ack_state]
+      required: [node, alarm_id, object_instance, notification_id, alarm_raised_time, alarm_type, probable_cause, perceived_severity, ack_state]
       properties:
         node:
           type: string
@@ -1055,6 +1055,10 @@ components:
           type: string
         peer:
           type: string
+        notification_id:
+          type: integer
+          minimum: 1
+          maximum: 9007199254740991
         alarm_raised_time:
           $ref: '#/components/schemas/Time'
         alarm_changed_time:
@@ -1076,6 +1080,8 @@ components:
         ack_time:
           $ref: '#/components/schemas/Time'
         ack_user_id:
+          type: string
+        ack_system_id:
           type: string
       additionalProperties: false
     SubscriptionRecord:

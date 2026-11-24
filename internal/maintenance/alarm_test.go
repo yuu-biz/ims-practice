@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -294,19 +295,67 @@ func TestAlarmJSON(t *testing.T) {
 	mustRaise(t, tn.node, Alarm{AlarmIdentity: pcrfDown, PerceivedSeverity: Major, AdditionalText: "no answer to 3 DWR"})
 	id := tn.node.Alarms(AlarmFilter{}).AlarmRecords[0].AlarmID
 	tn.clock.Advance(time.Minute)
-	if _, err := tn.node.SetAckState(id, AckStateRequest{AckState: Acknowledged, Operator: "test-operator"}); err != nil {
+	acked, err := tn.node.SetAckState(id, AckStateRequest{AckState: Acknowledged, Operator: "test-operator", AckSystemID: "oam"})
+	if err != nil {
 		t.Fatal(err)
 	}
 	rec := httptest.NewRecorder()
 	tn.handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, AlarmsPath, nil))
 	want := `{"node":"pcscf-1","instance":"pcscf-1-7d9f","num_of_alarm_records":1,"last_modification":"2026-11-20T09:01:00Z","dropped_records":0,` +
 		`"alarm_records":[{"alarm_id":"` + id + `","object_instance":"ManagedElement=pcscf-1,ManagedFunction=pcscf,Peer=pcrf.ims.mnc001.mcc001.3gppnetwork.org",` +
-		`"role":"pcscf","peer":"pcrf.ims.mnc001.mcc001.3gppnetwork.org","alarm_raised_time":"2026-11-20T09:00:00Z",` +
+		`"role":"pcscf","peer":"pcrf.ims.mnc001.mcc001.3gppnetwork.org","notification_id":` + strconv.FormatInt(acked.NotificationID, 10) + `,"alarm_raised_time":"2026-11-20T09:00:00Z",` +
 		`"alarm_type":"COMMUNICATIONS_ALARM","probable_cause":"COMMUNICATIONS_SUBSYSTEM_FAILURE","specific_problem":"Diameter peer down",` +
-		`"perceived_severity":"MAJOR","additional_text":"no answer to 3 DWR","ack_state":"ACKNOWLEDGED","ack_time":"2026-11-20T09:01:00Z","ack_user_id":"test-operator"}]}`
+		`"perceived_severity":"MAJOR","additional_text":"no answer to 3 DWR","ack_state":"ACKNOWLEDGED","ack_time":"2026-11-20T09:01:00Z","ack_user_id":"test-operator","ack_system_id":"oam"}]}`
 	if got := strings.TrimSpace(rec.Body.String()); got != want {
 		t.Errorf("GET alarms =\n%s\nwant\n%s", got, want)
 	}
+}
+
+// Each change of a record gives it the id of a new notification (TS
+// 28.111 7.4.1), and a change that changes nothing keeps the one it
+// has. The acknowledgement keeps who changed it and through which system
+// (7.3.1.3).
+func TestEachChangeOfARecordHasANewNotificationID(t *testing.T) {
+	tn := newTestNode(t)
+	seen := map[int64]string{}
+	notification := func(step string) AlarmRecord {
+		t.Helper()
+		l := tn.node.Alarms(AlarmFilter{})
+		if len(l.AlarmRecords) != 1 {
+			t.Fatalf("%s: %+v", step, l)
+		}
+		r := l.AlarmRecords[0]
+		if r.NotificationID < 1 || r.NotificationID > maxNotificationID {
+			t.Errorf("%s: notification id %d is out of 1 to 2^53 - 1", step, r.NotificationID)
+		}
+		if earlier, ok := seen[r.NotificationID]; ok {
+			t.Errorf("%s: notification id %d again, first seen at %s", step, r.NotificationID, earlier)
+		}
+		seen[r.NotificationID] = step
+		return r
+	}
+	mustRaise(t, tn.node, Alarm{AlarmIdentity: pcrfDown, PerceivedSeverity: Major})
+	raised := notification("raised")
+	mustRaise(t, tn.node, Alarm{AlarmIdentity: pcrfDown, PerceivedSeverity: Major})
+	if r := tn.node.Alarms(AlarmFilter{}).AlarmRecords[0]; r.NotificationID != raised.NotificationID {
+		t.Errorf("raising the same alarm again changed the notification id")
+	}
+	mustRaise(t, tn.node, Alarm{AlarmIdentity: pcrfDown, PerceivedSeverity: Critical})
+	notification("changed")
+	if _, err := tn.node.SetAckState(raised.AlarmID, AckStateRequest{AckState: Acknowledged, Operator: "alice", AckSystemID: "oss-1"}); err != nil {
+		t.Fatal(err)
+	}
+	if r := notification("acknowledged"); r.AckUserID != "alice" || r.AckSystemID != "oss-1" {
+		t.Errorf("acknowledged: %+v", r)
+	}
+	if _, err := tn.node.SetAckState(raised.AlarmID, AckStateRequest{AckState: Unacknowledged, Operator: "bob"}); err != nil {
+		t.Fatal(err)
+	}
+	if r := notification("unacknowledged"); r.AckUserID != "bob" || r.AckSystemID != "" {
+		t.Errorf("the system is that of the last change, which named none: %+v", r)
+	}
+	mustClear(t, tn.node, pcrfDown)
+	notification("cleared")
 }
 
 func TestAckStateErrors(t *testing.T) {
@@ -318,8 +367,20 @@ func TestAckStateErrors(t *testing.T) {
 	wantAPIError(t, err, http.StatusNotFound, "no such alarm")
 	_, err = tn.client.SetAckState(ctx, id, AckStateRequest{AckState: "DONE"})
 	wantAPIError(t, err, http.StatusBadRequest, "ack_state")
+	// The names are bounded, in characters, not bytes.
+	long := strings.Repeat("ä", maxAckName)
+	if _, err := tn.client.SetAckState(ctx, id, AckStateRequest{AckState: Unacknowledged, Operator: long, AckSystemID: long}); err != nil {
+		t.Errorf("names of %d characters: %v", maxAckName, err)
+	}
+	_, err = tn.client.SetAckState(ctx, id, AckStateRequest{AckState: Acknowledged, Operator: long + "a"})
+	wantAPIError(t, err, http.StatusBadRequest, "operator")
+	_, err = tn.client.SetAckState(ctx, id, AckStateRequest{AckState: Acknowledged, AckSystemID: long + "a"})
+	wantAPIError(t, err, http.StatusBadRequest, "ack_system_id")
+	if r := tn.node.Alarms(AlarmFilter{}).AlarmRecords[0]; r.AckState != Unacknowledged {
+		t.Errorf("a refused name changed the record: %+v", r)
+	}
 	rec := httptest.NewRecorder()
-	tn.handler.ServeHTTP(rec, httptest.NewRequest(http.MethodPut, AckStatePath(id), strings.NewReader(`{"ack_state": "ACKNOWLEDGED", "ack_system_id": "oam"}`)))
+	tn.handler.ServeHTTP(rec, httptest.NewRequest(http.MethodPut, AckStatePath(id), strings.NewReader(`{"ack_state": "ACKNOWLEDGED", "ack_user_id": "alice"}`)))
 	if rec.Code != http.StatusBadRequest {
 		t.Errorf("an unknown field: %d %s", rec.Code, rec.Body)
 	}
