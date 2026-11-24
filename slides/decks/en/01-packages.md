@@ -84,12 +84,12 @@ home_domain: ims.mnc001.mcc001.3gppnetwork.org
 
 | Layer | Packages |
 | --- | --- |
-| Roles: how a node behaves | `pcscf` `icscf` `scscf` `hss` `ipsmgw` `sc` `agw` `lab` `ue` `epc` `mmtel` `mrfc` `ibcf` |
-| IMS rules and interfaces | `ims` `ifc` `reginfo` `cx` `sh` `rx` `policy` `simservs` `interconnect` `netann` `confinfo` |
-| Protocols | `sip` `sipdns` `diameter` `sdp` `rtp` `rtcp` `sms` `hep` `xcap` |
+| Roles: how a node behaves | `pcscf` `icscf` `scscf` `hss` `ipsmgw` `sc` `smsc` `agw` `lab` `ue` `epc` `mmtel` `mrfc` `ibcf` `oam` |
+| IMS rules and interfaces | `ims` `ifc` `reginfo` `cx` `sh` `rx` `sgd` `policy` `simservs` `interconnect` `netann` `confinfo` |
+| Protocols | `sip` `sipdns` `diameter` `sdp` `rtp` `rtcp` `sms` `hep` `xcap` `h248` |
 | Codecs and algorithms | `g711` `amr` `evs` `wav` `mixer` `milenage` `aka` `precondition` |
-| Start-up and observation | `config` `hepagent` `metrics` |
-| Not imported by `cmd/ims` or `cmd/ue` | `kvstore` `maintenance` `oam` `fault` `fivegc` `n5` `nhss` `sbi` `h248` `nas` `sgd` `smsc` `rtptest` |
+| Start-up, state and operation | `config` `hepagent` `metrics` `kvstore` `maintenance` `fault` |
+| Not imported by `cmd/ims` or `cmd/ue` | `fivegc` `n5` `nhss` `sbi` `nas` `rtptest` `openapitest` |
 
 - The role packages combine the layers below them. The role `mrfp` is the package `agw`, with `mixer` for the announcements and conferences.
 - The layers follow the documents: RFC 3261 is the package `sip`, TS 24.229 the role packages.
@@ -157,7 +157,7 @@ home_domain: ims.mnc001.mcc001.3gppnetwork.org
 | `hep`, `hepagent` | Send copies of the signaling to the Lab (HEP3). |
 | `g711`, `wav` | G.711 μ-law and WAV: the audio of the UE simulator. |
 | `epc`, `policy`, `rx`, `milenage`, `aka`, `amr`, `rtcp`, `precondition` | Parts of the VoLTE call. Not covered in this session. |
-| `h248`, `sgd`, `smsc`, `nas`, `fivegc` and more | Parts that no role starts. Only their own tests use them. |
+| `nas`, `fivegc`, `n5`, `nhss`, `sbi` and more | Parts that no role starts. Only their own tests use them. |
 
 - Neither `cmd/ims` nor `cmd/ue` imports the parts that no role starts: `go list -deps ./cmd/...` does not list them.
 
@@ -191,8 +191,8 @@ Only the places where a stub stands for a real node, or where one part has two w
 | Boundary | Its shape in the code | What could replace it |
 | --- | --- | --- |
 | HSS | Cx and Sh, the Diameter messages themselves | A full HSS |
-| Control of the media relay | `Relay` in `pcscf` | Control by H.248 (`h248` has the messages; no role uses it) |
-| SC | `ServiceCentre` in `ipsmgw` | A client of SGd (`sgd` has the messages; no role uses it) |
+| Control of the media relay | `Relay` in `pcscf` | Control by H.248 on Iq (`h248/mediactl`), which the configuration chooses |
+| SC | SGd, the Diameter messages themselves (`sgd`) | A full SC |
 | Combination of roles | `roles` in the configuration | Several roles in one node |
 
 - Nowhere else is there an abstraction for the sake of replacing something. An abstraction with a single use only adds a layer to read through.
