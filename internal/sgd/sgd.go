@@ -49,8 +49,9 @@
 // smsc, which uses this package, sends none of these AVPs and acts on
 // none of them, and so does the HSS of package hss on its side of S6c.
 //
-// The hss role speaks S6c with this package. SGd has no role yet: no
-// binary in cmd builds in the SC that would take an OFR or send a TFR.
+// Three roles speak these interfaces with this package: the sc role as
+// the SMS central functions on both of them, the hss role as the other
+// end of S6c, and the ipsmgw role as a serving node of SGd.
 package sgd
 
 import (

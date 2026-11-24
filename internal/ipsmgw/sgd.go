@@ -9,6 +9,7 @@ import (
 	"github.com/fiorix/go-diameter/v4/diam"
 
 	"github.com/yuu-biz/ims-practice/internal/diameter"
+	"github.com/yuu-biz/ims-practice/internal/ims"
 	"github.com/yuu-biz/ims-practice/internal/sgd"
 	"github.com/yuu-biz/ims-practice/internal/sip"
 	"github.com/yuu-biz/ims-practice/internal/sms"
@@ -177,6 +178,13 @@ func recipientOf(sub RegSubscription) string {
 	}
 	return sub.PublicIdentity
 }
+
+// DefaultOutcomeWait is outcomeWait with the default timers: how long
+// an IP-SM-GW of this project holds a TFR before it answers. The
+// SMS-GMSC has to wait longer than this for the TFA (TS 23.204 6.5a
+// NOTE 1), so the role that wires an SMS-GMSC reads it to set that
+// timer.
+const DefaultOutcomeWait = defaultReportTimeout + ims.SweepInterval + time.Second
 
 // outcomeWait is how long the instance that holds a TFR waits for the
 // outcome of its delivery: TR1N, after which the delivery ends without

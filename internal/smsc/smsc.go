@@ -1,9 +1,8 @@
 // Package smsc is the Service Centre (SC) of TS 23.040: it takes short
 // messages from UEs, holds them, and delivers them to their recipients,
 // trying again until they arrive or their validity period ends (TS
-// 23.040 6.1). No node of this project runs it: no binary in cmd
-// builds it in, and the SC that the IP-SM-GW reaches is the stub of
-// package sc. It speaks the Diameter interfaces of TS 29.338:
+// 23.040 6.1). The sc role of the ims command runs it. It speaks the
+// Diameter interfaces of TS 29.338:
 //
 //   - SGd, as the SMS-IWMSC: a serving node (an MME, an SMSF or an
 //     IP-SM-GW) brings a short message from a UE in an OFR, and the SC
@@ -84,7 +83,7 @@ type Config struct {
 	HSSHost  string
 	// RetrySchedule is how long the SC waits after an attempt that
 	// failed for a reason that may pass: the n-th failure in a row waits
-	// the n-th delay, and the last delay repeats. Nil means
+	// the n-th delay, and the last delay repeats. Empty means
 	// DefaultRetrySchedule.
 	RetrySchedule []time.Duration
 	// DefaultValidityPeriod is how long the SC keeps a short message
@@ -125,7 +124,7 @@ type SMSC struct {
 }
 
 func New(cfg Config, store Store, sgdClient SGdClient, s6cClient S6cClient, clock Clock, log *slog.Logger) *SMSC {
-	if cfg.RetrySchedule == nil {
+	if len(cfg.RetrySchedule) == 0 {
 		cfg.RetrySchedule = DefaultRetrySchedule
 	}
 	if cfg.DefaultValidityPeriod == 0 {
