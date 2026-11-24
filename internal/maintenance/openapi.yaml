@@ -181,6 +181,33 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
+    patch:
+      operationId: setAckStates
+      summary: Acknowledge several alarms of the list at once, or take the acknowledgements back (TS 28.111 6.7).
+      description: |
+        Each alarm as the PUT of its ack-state does. The node checks them
+        all before it changes any: every alarm changes, or none does.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AckStatesRequest'
+      responses:
+        '200':
+          description: Each record that the request named, after the change, in the order of alarm_id.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AckStatesChange'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          description: An alarm_id that is not in the list. Nothing changed.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
   /maintenance/v1/alarms/{id}/ack-state:
     put:
       operationId: setAckState
@@ -518,6 +545,26 @@ components:
         ack_system_id:
           description: The system through which ack_state was last changed, as the request named it.
           type: string
+      additionalProperties: false
+    AckStatesRequest:
+      type: object
+      required: [ack_states]
+      properties:
+        ack_states:
+          description: The acknowledgement of each alarm to change, by its alarm_id.
+          type: object
+          minProperties: 1
+          additionalProperties:
+            $ref: '#/components/schemas/AckStateRequest'
+      additionalProperties: false
+    AckStatesChange:
+      type: object
+      required: [alarm_records]
+      properties:
+        alarm_records:
+          type: array
+          items:
+            $ref: '#/components/schemas/AlarmRecord'
       additionalProperties: false
     AckStateRequest:
       type: object

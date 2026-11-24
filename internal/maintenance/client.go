@@ -87,6 +87,13 @@ func (c *Client) SetAckState(ctx context.Context, alarmID string, req AckStateRe
 	return a, err
 }
 
+// SetAckStates is PATCH /maintenance/v1/alarms.
+func (c *Client) SetAckStates(ctx context.Context, req AckStatesRequest) (AckStatesChange, error) {
+	var change AckStatesChange
+	err := c.do(ctx, http.MethodPatch, AlarmsPath, req, &change)
+	return change, err
+}
+
 func (c *Client) do(ctx context.Context, method, path string, body, answer any) error {
 	var reader io.Reader
 	if body != nil {

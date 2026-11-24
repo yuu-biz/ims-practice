@@ -79,6 +79,19 @@ func (n *Node) Handler() http.Handler {
 		}
 		writeJSON(w, http.StatusOK, n.Alarms(f))
 	})
+	mux.HandleFunc("PATCH "+AlarmsPath, func(w http.ResponseWriter, r *http.Request) {
+		var req AckStatesRequest
+		if err := readJSON(w, r, &req); err != nil {
+			writeError(w, err)
+			return
+		}
+		change, err := n.SetAckStates(req)
+		if err != nil {
+			writeError(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, change)
+	})
 	mux.HandleFunc("PUT "+ackStatePattern, func(w http.ResponseWriter, r *http.Request) {
 		var req AckStateRequest
 		if err := readJSON(w, r, &req); err != nil {
@@ -101,7 +114,7 @@ func (n *Node) Handler() http.Handler {
 		ConfigurationPath:          "GET, HEAD, PATCH",
 		administrativeStatePattern: "PUT",
 		LogLevelPath:               "GET, HEAD, PUT",
-		AlarmsPath:                 "GET, HEAD",
+		AlarmsPath:                 "GET, HEAD, PATCH",
 		ackStatePattern:            "PUT",
 	} {
 		mux.HandleFunc(path, func(w http.ResponseWriter, r *http.Request) {

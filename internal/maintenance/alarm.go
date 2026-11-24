@@ -271,6 +271,20 @@ func (req AckStateRequest) check() error {
 	return nil
 }
 
+// AckStatesRequest is the body of PATCH /maintenance/v1/alarms: the
+// acknowledgement of each alarm to change, by its alarm_id.
+type AckStatesRequest struct {
+	AckStates map[string]AckStateRequest `json:"ack_states"`
+}
+
+// AckStatesChange is the answer to PATCH /maintenance/v1/alarms: each
+// record that the request named, as it is after the change, in the
+// order of its alarm_id. A cleared record that the change acknowledged
+// has left the list, as it was when it left.
+type AckStatesChange struct {
+	AlarmRecords []AlarmRecord `json:"alarm_records"`
+}
+
 // AlarmFilter picks the records of an answer. The zero value keeps
 // every record.
 type AlarmFilter struct {

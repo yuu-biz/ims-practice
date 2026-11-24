@@ -8,7 +8,9 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"reflect"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -356,6 +358,75 @@ func TestEachChangeOfARecordHasANewNotificationID(t *testing.T) {
 	}
 	mustClear(t, tn.node, pcrfDown)
 	notification("cleared")
+}
+
+// One request acknowledges several alarms of the list: every one
+// changes, or none does when one of them cannot.
+func TestAcknowledgeSeveralAlarmsAtOnce(t *testing.T) {
+	tn := newTestNode(t)
+	ctx := context.Background()
+	peer := func(i int) AlarmIdentity {
+		id := pcrfDown
+		id.Peer = Peer(fmt.Sprintf("pcrf-%d.ims.mnc001.mcc001.3gppnetwork.org", i))
+		return id
+	}
+	ids := map[int]string{}
+	for i := range 3 {
+		mustRaise(t, tn.node, Alarm{AlarmIdentity: peer(i), PerceivedSeverity: Major})
+		for _, r := range tn.node.Alarms(AlarmFilter{}).AlarmRecords {
+			if r.Peer == peer(i).Peer {
+				ids[i] = r.AlarmID
+			}
+		}
+	}
+	mustClear(t, tn.node, peer(2))
+	before := tn.node.Alarms(AlarmFilter{})
+
+	for _, tc := range []struct {
+		name   string
+		req    AckStatesRequest
+		status int
+		text   string
+	}{
+		{"an unknown alarm", AckStatesRequest{AckStates: map[string]AckStateRequest{
+			ids[0]: {AckState: Acknowledged}, "0011223344556677": {AckState: Acknowledged}}}, http.StatusNotFound, "0011223344556677"},
+		{"a state that there is not", AckStatesRequest{AckStates: map[string]AckStateRequest{
+			ids[0]: {AckState: Acknowledged}, ids[1]: {AckState: "SEEN"}}}, http.StatusBadRequest, ids[1]},
+		{"no alarm", AckStatesRequest{AckStates: map[string]AckStateRequest{}}, http.StatusBadRequest, "no alarm"},
+	} {
+		_, err := tn.client.SetAckStates(ctx, tc.req)
+		wantAPIError(t, err, tc.status, tc.text)
+		if after := tn.node.Alarms(AlarmFilter{}); !reflect.DeepEqual(after, before) {
+			t.Errorf("%s changed the list:\n%+v\nwas\n%+v", tc.name, after, before)
+		}
+	}
+
+	tn.clock.Advance(time.Second)
+	change, err := tn.client.SetAckStates(ctx, AckStatesRequest{AckStates: map[string]AckStateRequest{
+		ids[0]: {AckState: Acknowledged, Operator: "noc-operator", AckSystemID: "oss-1"},
+		ids[2]: {AckState: Acknowledged, Operator: "noc-operator", AckSystemID: "oss-1"},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(change.AlarmRecords) != 2 || !slices.IsSortedFunc(change.AlarmRecords, func(a, b AlarmRecord) int { return strings.Compare(a.AlarmID, b.AlarmID) }) {
+		t.Fatalf("change: %+v", change)
+	}
+	for _, r := range change.AlarmRecords {
+		if r.AckState != Acknowledged || r.AckUserID != "noc-operator" || r.AckSystemID != "oss-1" || r.AckTime == nil || !r.AckTime.Equal(tn.clock.Now()) {
+			t.Errorf("acknowledged: %+v", r)
+		}
+	}
+	// The cleared one has left the list; the other two stay.
+	l := tn.node.Alarms(AlarmFilter{})
+	if l.NumOfAlarmRecords != 2 {
+		t.Fatalf("after the change: %+v", l)
+	}
+	for _, r := range l.AlarmRecords {
+		if want := map[bool]AckState{true: Acknowledged, false: Unacknowledged}[r.AlarmID == ids[0]]; r.AckState != want {
+			t.Errorf("%s: %s, want %s", r.Peer, r.AckState, want)
+		}
+	}
 }
 
 func TestAckStateErrors(t *testing.T) {
