@@ -80,8 +80,9 @@ import (
 // sends the request on to the next instance that DNS gave for the
 // server name (RFC 3263 4.3), and with none left applies the default
 // handling of the criterion: TS 24.229 5.4.1.7 for the third-party
-// REGISTER, 5.4.3.2 and 5.4.3.3 for the rest. Every criterion of the
-// IP-SM-GW in deploy/compose/hss.yaml says SESSION_CONTINUED, so:
+// REGISTER, 5.4.3.2 and 5.4.3.3 for the rest. In
+// deploy/compose/hss.yaml the criterion of the MESSAGE that a user
+// sends says SESSION_TERMINATED, and the others SESSION_CONTINUED, so:
 //
 //   - a third-party REGISTER that no instance answers leaves the
 //     registration as it is (5.4.1.7). For a registration or a
@@ -91,18 +92,19 @@ import (
 //     reregistration subscribes. For a deregistration nothing is left
 //     undone, since the NOTIFY that ends the subscription does that
 //     work;
-//   - a MESSAGE of the originating case goes on with the criteria of
-//     lower priority, which none of this profile matches, and then to
-//     its Request-URI: the PSI of the SC that the UE addressed (TS
-//     24.341 5.3.1.2 item a). Nothing in this network answers at that
-//     PSI, because the SC sits inside the node of the IP-SM-GW rather
-//     than being a node with a name of its own (servicecentre.go), so
-//     the S-CSCF translates the number with ENUM, finds no record, and
-//     answers 404 (Not Found) (TS 24.229 5.4.3.2 step 10). That 404 is
-//     what the UE sees of its short message. TS 24.341 5.3.1.2 gives
-//     the SM-over-IP sender no handling of a failure response to that
-//     MESSAGE: it takes the submit report that comes in a MESSAGE of
-//     its own, and nothing else;
+//   - a MESSAGE of the originating case ends there, since its
+//     criterion says SESSION_TERMINATED: no other node can take a short
+//     message that a user sends, and the PSI of the SC that the UE
+//     addressed (TS 24.341 5.3.1.2 item a) has no node of its own,
+//     because the SC sits inside the node of the IP-SM-GW
+//     (servicecentre.go). The S-CSCF answers with the response of the
+//     IP-SM-GW (TS 24.229 5.4.3.2), which as a proxy it turns from 503
+//     into 500 (RFC 3261 16.7 step 6), so the Retry-After stays between
+//     the IP-SM-GW and the S-CSCF. That 500 is what the UE sees of its
+//     short message. TS 24.341 5.3.1.2 gives the SM-over-IP sender no
+//     handling of a failure response to that MESSAGE: it takes the
+//     submit report that comes in a MESSAGE of its own, and nothing
+//     else;
 //   - a MESSAGE of the terminating case, the short message of another
 //     IMS network, goes on to the recipient's registered contact
 //     (5.4.3.3, then 5.4.3.2 step 10 onwards), so the UE gets the

@@ -59,7 +59,7 @@ service_profiles:
           - {group: [0], method: MESSAGE}
           - {group: [1], sip_header: {header: ^Content-Type$, content: '^[Aa][Pp][Pp][Ll][Ii][Cc][Aa][Tt][Ii][Oo][Nn]/[Vv][Nn][Dd]\.3[Gg][Pp][Pp]\.[Ss][Mm][Ss]([[:space:]]*;.*)?$'}}
           - {group: [2], session_case: ORIGINATING_REGISTERED}
-      application_server: {server_name: sip:ipsmgw.ims.mnc001.mcc001.3gppnetwork.org:5060}
+      application_server: {server_name: sip:ipsmgw.ims.mnc001.mcc001.3gppnetwork.org:5060, default_handling: SESSION_TERMINATED}
 ```
 
 The profile name is the operator's own. Cx carries the criteria of the profile and not its name, so the S-CSCF never learns it.
@@ -82,7 +82,7 @@ In the SAA they arrive in the User-Data AVP as XML of the schema of TS 29.228 An
   </TriggerPoint>
   <ApplicationServer>
     <ServerName>sip:ipsmgw.ims.mnc001.mcc001.3gppnetwork.org:5060</ServerName>
-    <DefaultHandling>0</DefaultHandling>
+    <DefaultHandling>1</DefaultHandling>
   </ApplicationServer>
 </InitialFilterCriteria>
 ```
@@ -99,7 +99,7 @@ Element by element:
 | `SPT` with `SessionCase` | `0`, ORIGINATING_REGISTERED | Matches only a request that a registered user sends. |
 | `ConditionNegated` | `false` | Each SPT can be negated. The criterion shown here negates none; the one for a MESSAGE to a user negates its last SPT, as described below. |
 | `ApplicationServer` / `ServerName` | `sip:ipsmgw...:5060` | The AS to send the request to. The S-CSCF finds its address in DNS. |
-| `DefaultHandling` | `0`, SESSION_CONTINUED | What the S-CSCF does when the AS does not answer: go on without it (SESSION_CONTINUED) or give up (SESSION_TERMINATED). |
+| `DefaultHandling` | `0`, SESSION_CONTINUED, for the REGISTER; `1`, SESSION_TERMINATED, for the MESSAGE | What the S-CSCF does when the AS does not answer: go on without it (SESSION_CONTINUED) or give up (SESSION_TERMINATED). No specification says which a criterion has; it is the operator's choice. A registration can stand without the IP-SM-GW, but no other node can take a short message that a user sends. |
 | `ServiceInfo` | the user's MSISDN, such as `12025550101` | Text that the S-CSCF passes on to the AS in the third-party REGISTER. The HSS stub puts the MSISDN of each user in place of `{msisdn}`. |
 
 So the first criterion reads "every REGISTER goes to the IP-SM-GW, with the MSISDN", and the second "a MESSAGE that a registered user sends with an SMS body goes to the IP-SM-GW".
@@ -136,7 +136,7 @@ P-Served-User: <sip:+12025550101@ims.mnc001.mcc001.3gppnetwork.org>;sescase=orig
 
 An AS that serves both callers and callees, such as the MMTel AS ([Supplementary services with the MMTel AS](mmtel.md)), tells the cases apart by it (5.7.1.3A). A request to a user's terminating services has `sescase=term`. The S-CSCF removes P-Served-User before a request leaves for its destination or the UE (5.4.3.2 step 14A, 5.4.3.3 step 13A). One that a UE put in never reaches it: the P-CSCF removes it at the edge of the trust domain (TS 24.229 4.4.9).
 
-If the IP-SM-GW does not answer the MESSAGE within Timer F (32 seconds), or answers 408 or 5xx, the default handling of the criterion applies (TS 24.229 5.4.3.2): with SESSION_CONTINUED the S-CSCF sends the MESSAGE on towards its Request-URI, the SC's tel URI. That number has no ENUM record, so the S-CSCF answers 404 (step 10), as for a call to such a number.
+If the IP-SM-GW does not answer the MESSAGE within Timer F (32 seconds), or answers 408 or 5xx, the default handling of the criterion applies (TS 24.229 5.4.3.2): with SESSION_TERMINATED the S-CSCF ends the MESSAGE there, with no criterion of lower priority, and the UE gets a failure response. A 503 of the IP-SM-GW reaches the UE as 500, since a proxy does not pass a 503 on (RFC 3261 16.7 step 6). With SESSION_CONTINUED the S-CSCF would send the MESSAGE on towards its Request-URI, the SC's tel URI. That number has no ENUM record, so the S-CSCF would answer 404 (step 10), as for a call to such a number: a short message that the network could not take would end as if the SC did not exist.
 
 ## Send a short message
 
@@ -479,7 +479,7 @@ The node of the IP-SM-GW serves a maintenance API for this on port 8085, the lis
    docker compose run --rm ue sms +12025550102 "Is anyone on duty?"
    ```
 
-   UE 1 registers, and `ue sms` then ends with `MESSAGE answered 404 Not Found`.
+   UE 1 registers, and `ue sms` then ends with `MESSAGE answered 500 Server Internal Error`.
 
 ```text
  UE 1       P-CSCF    S-CSCF    IP-SM-GW
@@ -496,14 +496,14 @@ The node of the IP-SM-GW serves a maintenance API for this on port 8085, the lis
  |            |         |--------->|  RP-DATA with the SMS-SUBMIT
  |            |         |  503 Retry-After: 30
  |            |         |<---------|
- |  404       |  404    |          |  no node answers at the SC's number
+ |  500       |  500    |          |  the 503 of the IP-SM-GW, as a proxy passes it on
  |<-----------|<--------|          |
 ```
 
 - **The IP-SM-GW answers 503 Service Unavailable** with **Retry-After: 30** to the third-party REGISTER and to the MESSAGE. Neither has begun here: the subscription that the third-party REGISTER would make, and the delivery that the short message would start, both live in the store, where every instance finds them. Retry-After asks the client to send this server no other request for that many seconds (RFC 3261 21.5.4). No specification gives the value; 30 seconds is this project's choice.
 - **The S-CSCF sends each request on to the next instance** that DNS gave it for the name of the IP-SM-GW (RFC 3263 4.3), so the 503 reaches the S-CSCF itself only once there is none left to try. This network runs one instance.
 - **The registration stands.** The filter criterion that sends the third-party REGISTER says SESSION_CONTINUED, so a server that fails leaves the S-CSCF to go on with the criteria of lower priority (TS 24.229 5.4.1.7). UE 1 is registered and can call and be called. What it loses is SMS: no IP-SM-GW has subscribed to its registration state, so none has told the HSS that it takes short messages. The third-party REGISTER of its next re-registration subscribes.
-- **The short message ends in 404 Not Found.** The criterion of the MESSAGE says SESSION_CONTINUED too, so the S-CSCF goes on with the criteria of lower priority, of which none matches, and then routes the MESSAGE to its Request-URI. That is the PSI of the SC, which the UE addressed its short message to (TS 24.341 5.3.1.2 item a). Here the SC sits inside the node of the IP-SM-GW rather than being a node with a name of its own, and no subscriber has its number either, so the S-CSCF finds no ENUM record for it and answers 404 (TS 24.229 5.4.3.2 step 10). TS 24.341 5.3.1.2 gives the UE no handling of a failure response to that MESSAGE: it takes the submit report that comes in a MESSAGE of its own, and nothing else. The UE simulator reports the status code and sends nothing again.
+- **The short message ends in 500 Server Internal Error.** The criterion of the MESSAGE says SESSION_TERMINATED, so the S-CSCF passes the response of the IP-SM-GW on instead of going on with the criteria of lower priority (TS 24.229 5.4.3.2). A proxy does not pass a 503 on, and turns it into 500 (RFC 3261 16.7 step 6), so the Retry-After stays between the IP-SM-GW and the S-CSCF. Going on without the IP-SM-GW would lead nowhere: the Request-URI is the PSI of the SC that the UE addressed (TS 24.341 5.3.1.2 item a), which here has no node of its own, since the SC sits inside the node of the IP-SM-GW. TS 24.341 5.3.1.2 gives the UE no handling of a failure response to that MESSAGE: it takes the submit report that comes in a MESSAGE of its own, and nothing else. The UE simulator reports the status code and sends nothing again.
 
 While it is not `UNLOCKED`, the IP-SM-GW goes on with what has begun and refuses what would start something new.
 

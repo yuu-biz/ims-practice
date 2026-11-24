@@ -66,7 +66,7 @@ service_profiles:
           - {group: [0], method: MESSAGE}
           - {group: [1], sip_header: {header: ^Content-Type$, content: '^[Aa][Pp][Pp][Ll][Ii][Cc][Aa][Tt][Ii][Oo][Nn]/[Vv][Nn][Dd]\.3[Gg][Pp][Pp]\.[Ss][Mm][Ss]([[:space:]]*;.*)?$'}}
           - {group: [2], session_case: ORIGINATING_REGISTERED}
-      application_server: {server_name: sip:ipsmgw.ims.mnc001.mcc001.3gppnetwork.org:5060}
+      application_server: {server_name: sip:ipsmgw.ims.mnc001.mcc001.3gppnetwork.org:5060, default_handling: SESSION_TERMINATED}
 ```
 
 プロファイルの名前は運用者が付けるものです。Cx が運ぶのはプロファイルの中の iFC だけなので、S-CSCF が名前を知ることはありません。
@@ -89,7 +89,7 @@ SAA では、これが User-Data の AVP に TS 29.228 Annex E のスキーマ�
   </TriggerPoint>
   <ApplicationServer>
     <ServerName>sip:ipsmgw.ims.mnc001.mcc001.3gppnetwork.org:5060</ServerName>
-    <DefaultHandling>0</DefaultHandling>
+    <DefaultHandling>1</DefaultHandling>
   </ApplicationServer>
 </InitialFilterCriteria>
 ```
@@ -106,7 +106,7 @@ SAA では、これが User-Data の AVP に TS 29.228 Annex E のスキーマ�
 | `SessionCase` の `SPT` | `0`（ORIGINATING_REGISTERED） | 登録済みの利用者が送る要求にだけ一致する。 |
 | `ConditionNegated` | `false` | SPT ごとに否定にできる。ここに示した条件では使わない。利用者に宛てた MESSAGE の条件は、あとで述べるように、最後の SPT を否定にしている。 |
 | `ApplicationServer` と `ServerName` | `sip:ipsmgw...:5060` | 要求を送る AS。S-CSCF はそのアドレスを DNS で引く。 |
-| `DefaultHandling` | `0`（SESSION_CONTINUED） | AS が応答しないときの扱い。AS を飛ばして続ける（SESSION_CONTINUED）か、あきらめる（SESSION_TERMINATED）。 |
+| `DefaultHandling` | REGISTER は `0`（SESSION_CONTINUED）、MESSAGE は `1`（SESSION_TERMINATED） | AS が応答しないときの扱い。AS を飛ばして続ける（SESSION_CONTINUED）か、あきらめる（SESSION_TERMINATED）。どちらにするかは仕様が決めておらず、運用者が選ぶ。登録は IP-SM-GW が無くても成り立つが、利用者が送るショートメッセージを扱えるノードはほかに無い。 |
 | `ServiceInfo` | 利用者の MSISDN（`12025550101` など） | S-CSCF が第三者 REGISTER で AS にそのまま渡す文字列。HSS のスタブは `{msisdn}` を各利用者の MSISDN に置き換える。 |
 
 つまり 1 つ目の条件は「REGISTER はすべて MSISDN を付けて IP-SM-GW へ送る」、2 つ目は「登録済みの利用者が SMS のボディで送る MESSAGE は IP-SM-GW へ送る」という意味です。
@@ -143,7 +143,7 @@ P-Served-User: <sip:+12025550101@ims.mnc001.mcc001.3gppnetwork.org>;sescase=orig
 
 MMTel AS（[MMTel AS の付加サービス](mmtel.md)）のように発信者と着信者の両方を担当する AS は、このヘッダで場合を見分けます（5.7.1.3A）。利用者の着信側のサービスへ送る要求では `sescase=term` になります。S-CSCF は要求を宛先や UE へ送る前に P-Served-User を取り除き（5.4.3.2 step 14A、5.4.3.3 step 13A）。UE が入れた P-Served-User は S-CSCF に届きません。P-CSCF が信頼のドメインの境界で取り除くからです（TS 24.229 4.4.9）。
 
-IP-SM-GW が Timer F（32 秒）のあいだに MESSAGE に応答しないか、408 や 5xx を返したときは、条件の DefaultHandling に従います（TS 24.229 5.4.3.2）。SESSION_CONTINUED なら、S-CSCF は MESSAGE を Request-URI、つまり SC の tel URI へ送ります。この番号には ENUM のレコードが無いので、その番号への通話と同じように、S-CSCF は 404 を返します（step 10）。
+IP-SM-GW が Timer F（32 秒）のあいだに MESSAGE に応答しないか、408 や 5xx を返したときは、条件の DefaultHandling に従います（TS 24.229 5.4.3.2）。SESSION_TERMINATED なので、S-CSCF は優先度の低い条件へ進まずに MESSAGE をそこで終わらせ、UE は失敗の応答を受けます。プロキシは 503 をそのまま転送しないので、IP-SM-GW の 503 は 500 になって UE に届きます（RFC 3261 16.7 の step 6）。SESSION_CONTINUED なら、S-CSCF は MESSAGE を Request-URI、つまり SC の tel URI へ送ることになります。この番号には ENUM のレコードが無いので、その番号への通話と同じように、S-CSCF は 404 を返します（step 10）。そうなると、網が受け取れなかったショートメッセージが、SC が存在しないかのような応答で終わってしまいます。
 
 ## ショートメッセージを送る
 
@@ -486,7 +486,7 @@ IP-SM-GW が 1 つの SIP トランザクションより長く持つものは、
    docker compose run --rm ue sms +12025550102 "Is anyone on duty?"
    ```
 
-   UE 1 は登録し、`ue sms` は `MESSAGE answered 404 Not Found` で終わります。
+   UE 1 は登録し、`ue sms` は `MESSAGE answered 500 Server Internal Error` で終わります。
 
 ```text
  UE 1       P-CSCF    S-CSCF    IP-SM-GW
@@ -503,14 +503,14 @@ IP-SM-GW が 1 つの SIP トランザクションより長く持つものは、
  |            |         |--------->|  SMS-SUBMIT を載せた RP-DATA
  |            |         |  503 Retry-After: 30
  |            |         |<---------|
- |  404       |  404    |          |  SC の番号で答えるノードが無い
+ |  500       |  500    |          |  IP-SM-GW の 503 を、プロキシが 500 にして返す
  |<-----------|<--------|          |
 ```
 
 - **IP-SM-GW は 503 Service Unavailable に Retry-After: 30 を付けて返します。** 第三者 REGISTER にも MESSAGE にもです。どちらもこの台では始まっていません。第三者 REGISTER が作る購読も、ショートメッセージが始める配達も保存先にあり、どの台からも見えるためです。Retry-After は、クライアントがこのサーバーにほかの要求を送らずにいる秒数です（RFC 3261 21.5.4）。値を決めた仕様はありません。30 秒はこのプロジェクトが選んだ値です。
 - **S-CSCF は次の台へ送ります。** IP-SM-GW の名前について DNS が返した次の台です（RFC 3263 4.3）。送る先が残っていないときに初めて、503 が S-CSCF に返ります。この網は 1 台で動かしています。
 - **登録はそのまま残ります。** 第三者 REGISTER を送るフィルタ条件は SESSION_CONTINUED なので、サーバーが失敗すると、S-CSCF は優先度の低い条件へ進みます（TS 24.229 5.4.1.7）。UE 1 は登録されていて、発信も着信もできます。できなくなるのは SMS です。どの IP-SM-GW も UE 1 の登録状態を購読していないので、ショートメッセージを受け取ることを HSS に伝えた台がありません。次の再登録の第三者 REGISTER が購読します。
-- **ショートメッセージは 404 Not Found で終わります。** MESSAGE の条件も SESSION_CONTINUED なので、S-CSCF は優先度の低い条件へ進み、当たるものが無いので Request-URI へ向かいます。Request-URI は、UE がショートメッセージを宛てた SC の PSI です（TS 24.341 5.3.1.2 の項目 a）。この構成では SC が IP-SM-GW のノードの中にあり、DNS 上の名前を持つノードではありません。その番号を持つ加入者もいないので、S-CSCF は ENUM の記録を見つけられず、404 を返します（TS 24.229 5.4.3.2 の手順 10）。TS 24.341 5.3.1.2 は、この MESSAGE に失敗の応答が返ったときの UE の扱いを決めていません。別の MESSAGE で来る submit report を受け取ることだけを決めています。UE シミュレータは応答コードを表示して終わり、送り直しません。
+- **ショートメッセージは 500 Server Internal Error で終わります。** MESSAGE の条件は SESSION_TERMINATED なので、S-CSCF は優先度の低い条件へ進まず、IP-SM-GW の応答を UE へ返します（TS 24.229 5.4.3.2）。プロキシは 503 を転送せずに 500 にするので（RFC 3261 16.7 の step 6）、Retry-After は IP-SM-GW と S-CSCF のあいだで止まります。IP-SM-GW を飛ばして先へ進んでも、届く先はありません。Request-URI は UE が宛てた SC の PSI ですが（TS 24.341 5.3.1.2 の項目 a）、この構成では SC が IP-SM-GW のノードの中にあり、その PSI で答えるノードが無いためです。TS 24.341 5.3.1.2 は、この MESSAGE に失敗の応答が返ったときの UE の扱いを決めていません。別の MESSAGE で来る submit report を受け取ることだけを決めています。UE シミュレータは応答コードを表示して終わり、送り直しません。
 
 `UNLOCKED` でないあいだ、IP-SM-GW は始まっているものを続け、新しく始まるものを断ります。
 
