@@ -42,7 +42,8 @@
 //     $ref to components/parameters.
 //   - Request bodies and answers, written in place or, for answers, as a
 //     $ref to components/responses, with the headers of an answer.
-//   - In a schema, the keywords in schemaKeywords. Every object schema
+//   - In a schema, the keywords in schemaKeywords, and a $ref into the
+//     same document or into another OpenAPI document beside it. Every object schema
 //     says what it does with the properties that it does not list
 //     (additionalProperties), so that a field the handler adds and the
 //     document lacks is a mismatch too.
@@ -59,6 +60,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"os"
+	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
@@ -264,9 +266,37 @@ func parameterName(segment string) (string, bool) {
 	return "", false
 }
 
-// documentURL is the name under which the schemas of a document are
-// compiled; every $ref in them is relative to it.
-const documentURL = "urn:openapitest:document"
+// fileURL is the URL of a document, under which its schemas are
+// compiled. A $ref to another file, such as
+// ../maintenance/openapi.yaml#/components/schemas/NodeState, is
+// relative to it, so that one API can use the schemas of another.
+func fileURL(file string) (string, error) {
+	abs, err := filepath.Abs(file)
+	if err != nil {
+		return "", err
+	}
+	return (&url.URL{Scheme: "file", Path: filepath.ToSlash(abs)}).String(), nil
+}
+
+// yamlFiles loads the document that a $ref names in another file. The
+// compiler reads only JSON by itself.
+type yamlFiles struct{}
+
+func (yamlFiles) Load(u string) (any, error) {
+	parsed, err := url.Parse(u)
+	if err != nil || parsed.Scheme != "file" {
+		return nil, fmt.Errorf("$ref to %q: only files are read", u)
+	}
+	raw, err := os.ReadFile(filepath.FromSlash(parsed.Path))
+	if err != nil {
+		return nil, err
+	}
+	var tree any
+	if err := yaml.Unmarshal(raw, &tree); err != nil {
+		return nil, fmt.Errorf("%s: %v", u, err)
+	}
+	return toJSON(tree)
+}
 
 // Load reads the OpenAPI 3.1 document in file and checks it. It fails t
 // for a document that does not parse, that has something this package
@@ -419,7 +449,12 @@ func (d *Document) compile(tree any) error {
 	c := jsonschema.NewCompiler()
 	c.DefaultDraft(jsonschema.Draft2020)
 	c.AssertFormat()
+	c.UseLoader(yamlFiles{})
 	doc, err := toJSON(tree)
+	if err != nil {
+		return err
+	}
+	documentURL, err := fileURL(d.file)
 	if err != nil {
 		return err
 	}
