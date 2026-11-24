@@ -78,6 +78,9 @@ type AlarmWatchStore interface {
 	// AlarmWatchState reads the state of node: the zero state when no
 	// instance has watched it yet.
 	AlarmWatchState(ctx context.Context, node string) (AlarmWatchState, error)
+	// Present says that the OAM instance named instance runs, for one
+	// lease, and counts the instances that do, itself included.
+	Present(ctx context.Context, instance string) (int, error)
 }
 
 // FileAlarmWatchStore keeps the state of each node in a file of its own
@@ -172,6 +175,9 @@ func (f *FileAlarmWatchStore) AlarmWatchState(_ context.Context, node string) (A
 	defer f.mu.Unlock()
 	return f.read(node)
 }
+
+// Present counts this instance only: the store serves one.
+func (f *FileAlarmWatchStore) Present(context.Context, string) (int, error) { return 1, nil }
 
 type fileAlarmWatch struct {
 	store *FileAlarmWatchStore

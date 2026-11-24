@@ -2,17 +2,19 @@
 // that several OAM instances share it: the subscriptions of the OSSs to
 // the alarm notifications (oam.NtfSubscriptionStore), which the OSS
 // creates through one instance and another instance may send the
-// notifications of.
+// notifications of, and the watches of the nodes
+// (oam.AlarmWatchStore), which decide which instance sends the
+// notifications of each node, and how far it has sent them.
 //
-// One item, after the prefix of the Config and "oam:":
+// The subscriptions are one item:
 //
 //	ntf-subscriptions   oam.NtfSubscriptionSet, every subscription by its id, no time to live
 //
-// The subscriptions are one item, since their number is bounded
-// (oam.Config.MaxNtfSubscriptions) and follows the number of OSSs: a
-// change reads the set and writes it back with a compare and swap, so
-// that the bound holds when two instances create subscriptions at once,
-// and a read of every subscription is one read.
+// since their number is bounded (oam.Config.MaxNtfSubscriptions) and
+// follows the number of OSSs: a change reads the set and writes it back
+// with a compare and swap, so that the bound holds when two instances
+// create subscriptions at once, and a read of every subscription is one
+// read. The items of the watches are listed in watch.go.
 package oamstore
 
 import (
@@ -28,14 +30,23 @@ import (
 // Store is the state of the OAM on a kvstore.Store.
 type Store struct {
 	c *kvjson.Client
+	// lease is how long a watch and a presence last unless renewed.
+	lease time.Duration
 }
 
 var _ oam.NtfSubscriptionStore = (*Store)(nil)
 
-// New returns a Store on kv. Instances with the same kv and Prefix share
-// their state.
+// New returns a Store on kv, whose watches last oam.DefaultWatchLease.
+// Instances with the same kv and Prefix share their state.
 func New(kv kvstore.Store, cfg kvjson.Config) *Store {
-	return &Store{c: kvjson.New(kv, cfg, "oam")}
+	return NewWithLease(kv, cfg, oam.DefaultWatchLease)
+}
+
+// NewWithLease is New with watches and presences that last lease. The
+// OAM instances that share a store renew them more often than that
+// (oam.Config.WatchRenewal).
+func NewWithLease(kv kvstore.Store, cfg kvjson.Config, lease time.Duration) *Store {
+	return &Store{c: kvjson.New(kv, cfg, "oam"), lease: lease}
 }
 
 func (s *Store) subscriptionsKey() string { return s.c.Key("ntf-subscriptions") }
