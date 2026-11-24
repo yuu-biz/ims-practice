@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 )
 
 // AlarmType says roughly in which area of the node an alarm arose (TS
@@ -161,17 +162,16 @@ type Alarm struct {
 // AlarmRecord is one alarm in the alarm list of the node (TS 28.111
 // 7.3.1), with the attributes of 7.4.1 that this API keeps.
 //
-// SIMPLIFIED: TS 28.111 V20.0.0 7.3.1.2. Of the mandatory attributes,
-// notificationId is left out: the node sends no notifications (6.12),
-// and the OAM server reads the list instead. Of the optional ones, only
-// alarmChangedTime, specificProblem and additionalText are kept, with
-// the acknowledgement attributes ackState, ackTime and ackUserId (6.7).
-// Left out are backedUpStatus, backUpObject, trendIndication,
-// thresholdInfo, stateChangeDefinition, monitoredAttributes,
-// proposedRepairActions, additionalInformation, comments (6.9), the
-// correlation attributes (6.10), ackSystemId, the ADMC attributes
-// clearUserId, clearSystemId and clearingType (every alarm here is
-// cleared by the node, 6.8), and the security alarm attributes.
+// SIMPLIFIED: TS 28.111 V20.0.0 7.3.1.2. Of the optional attributes,
+// only alarmChangedTime, specificProblem and additionalText are kept,
+// with the acknowledgement attributes ackState, ackTime, ackUserId and
+// ackSystemId, which the acknowledgement needs (6.7, 7.3.1.3). Left out
+// are backedUpStatus, backUpObject, trendIndication, thresholdInfo,
+// stateChangeDefinition, monitoredAttributes, proposedRepairActions,
+// additionalInformation, comments (6.9), the correlation attributes
+// (6.10), the ADMC attributes clearUserId, clearSystemId and
+// clearingType (every alarm here is cleared by the node, 6.8), and the
+// security alarm attributes.
 type AlarmRecord struct {
 	// AlarmID tells the record apart in the list. It is random, so that
 	// it differs across the lists of all nodes and over time (6.4).
@@ -181,8 +181,16 @@ type AlarmRecord struct {
 	ObjectInstance string `json:"object_instance"`
 	// Role and Peer are the parts of ObjectInstance, for a screen to
 	// show.
-	Role              string            `json:"role,omitempty"`
-	Peer              Peer              `json:"peer,omitempty"`
+	Role string `json:"role,omitempty"`
+	Peer Peer   `json:"peer,omitempty"`
+	// NotificationID is the id of the notification of the last change
+	// of the record (TS 28.111 7.3.1.2, 7.4.1). Each change, from the
+	// raise to a change of the acknowledgement, gets a new one, which the
+	// OAM server puts in the notification that it sends of the change.
+	// It is random, so that the notifications of one alarmed object do
+	// not share one (TS 28.532 11.0.2), and fits in the 53 bits that a
+	// JSON number holds without loss.
+	NotificationID    int64             `json:"notification_id"`
 	AlarmRaisedTime   time.Time         `json:"alarm_raised_time"`
 	AlarmChangedTime  *time.Time        `json:"alarm_changed_time,omitempty"`
 	AlarmClearedTime  *time.Time        `json:"alarm_cleared_time,omitempty"`
@@ -196,6 +204,10 @@ type AlarmRecord struct {
 	// AckUserID is the operator who last changed AckState, as the
 	// request named them.
 	AckUserID string `json:"ack_user_id,omitempty"`
+	// AckSystemID is the system through which the operator last changed
+	// AckState, such as the OAM server or an OSS, as the request named
+	// it (TS 28.111 7.4.1).
+	AckSystemID string `json:"ack_system_id,omitempty"`
 }
 
 // AlarmList is the answer to GET /maintenance/v1/alarms: the alarm list
@@ -234,6 +246,29 @@ type AckStateRequest struct {
 	// Operator names who acknowledges; the record keeps it as
 	// ackUserId.
 	Operator string `json:"operator,omitempty"`
+	// AckSystemID names the system that the operator acknowledges
+	// through; the record keeps it as ackSystemId.
+	AckSystemID string `json:"ack_system_id,omitempty"`
+}
+
+// maxAckName bounds Operator and AckSystemID, in characters. TS 28.111
+// gives the two names no length; a person or a system is named in far
+// fewer, and the bound keeps a record, which the node keeps in its list
+// and copies into each notification of it, small whatever a caller
+// sends.
+const maxAckName = 256
+
+// check says why the list cannot take req.
+func (req AckStateRequest) check() error {
+	if req.AckState != Acknowledged && req.AckState != Unacknowledged {
+		return fmt.Errorf("ack_state %q is neither %s nor %s", req.AckState, Acknowledged, Unacknowledged)
+	}
+	for name, v := range map[string]string{"operator": req.Operator, "ack_system_id": req.AckSystemID} {
+		if utf8.RuneCountInString(v) > maxAckName {
+			return fmt.Errorf("%s is longer than %d characters", name, maxAckName)
+		}
+	}
+	return nil
 }
 
 // AlarmFilter picks the records of an answer. The zero value keeps

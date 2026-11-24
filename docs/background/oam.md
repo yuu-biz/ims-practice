@@ -742,6 +742,8 @@ Prometheus と Grafana は別のコンテナとして動かすだけで、`ims` 
 | `perceived_severity` | perceivedSeverity | `CRITICAL`、`MAJOR`、`MINOR`、`WARNING`、`INDETERMINATE`、`CLEARED` |
 | `additional_text` | additionalText | 運用者向けの自由な文。512 文字まで |
 | `ack_state`、`ack_time`、`ack_user_id` | ackState、ackTime、ackUserId | 確認の状態、変えた時刻、変えた人（要求の `operator`） |
+| `ack_system_id` | ackSystemId | 確認の状態を変えた仕組み（要求の `ack_system_id`）。OAM の画面からなら OAM、OSS からならその OSS。`operator` と同じく 256 文字まで。長い名前は 400 で断る。記録は一覧に残り、通知にも写るので、呼び出し側が何を送っても小さく保つため |
+| `notification_id` | notificationId | 記録を最後に変えたときの通知の id。変えるたびに新しい乱数を、1 から 2^53 - 1 のあいだで選ぶ。OAM が northbound の通知に入れる |
 
 #### 役割が使う Go の API
 
@@ -801,7 +803,7 @@ err = node.ClearAlarm(hssDown)
 #### SIMPLIFIED
 
 - `internal/maintenance/alarm.go` の `AlarmType`。TS 28.111 V20.0.0 7.3.1.3、7.4.1。セキュリティの警報の種類を省きました。セキュリティの警報は serviceUser を持つ必要があり、それは加入者になるためです。
-- `internal/maintenance/alarm.go` の `AlarmRecord`。TS 28.111 V20.0.0 7.3.1.2。必須の notificationId を省きました。通知を送らないためです。任意の属性は、alarmChangedTime、specificProblem、additionalText と確認の 3 つだけを持ちます。ackSystemId、ADMC の属性（clearUserId、clearSystemId、clearingType）、コメント、相関、しきい値などは持ちません。
+- `internal/maintenance/alarm.go` の `AlarmRecord`。TS 28.111 V20.0.0 7.3.1.2。任意の属性は、alarmChangedTime、specificProblem、additionalText と確認の 4 つ（ackSystemId を含む）だけを持ちます。ADMC の属性（clearUserId、clearSystemId、clearingType）、コメント、相関、しきい値などは持ちません。必須の notificationId は、故障管理の northbound のために足しました（[fm-northbound.md](../design/fm-northbound.md) の「警報の記録の対応」）。
 - `internal/maintenance/alarm.go` の `AlarmList`。TS 28.111 V20.0.0 7.3.2.2、6.13。一覧の必須の operationalState を省きました。ノードが答える限り一覧は動くので、いつも ENABLED になるためです。任意の administrativeState と unreliableAlarmScope（6.11）も省きました。一覧が警報を捨てたことは `dropped_records` で示します。
 - `internal/maintenance/alarm.go` の `ObjectInstance`。TS 28.111 V20.0.0 6.3、7.4.1。objectInstance は DN ですが、DN に似せた文字列にしました。ノードは NRM の管理対象ではないためです。クラスは TS 28.622 の一般の ManagedElement と ManagedFunction を使い、TS 28.705 の IMS のクラスは使っていません。すべての役割にクラスがあるわけではないためです。`Peer` はどの NRM のクラスでもありません。値の escape もしていません。
 - `internal/maintenance/alarmlist.go` の `expire`。TS 28.111 V20.0.0 6.14。確認がある場合、cleared の警報は確認されるまで一覧に残ります。ここでは、保持の時間がたっても消します。誰も見ていない一覧が、終わった障害を持ち続けないようにするためです。

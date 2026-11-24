@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"log/slog"
+	mathrand "math/rand/v2"
 	"slices"
 	"sync"
 	"time"
@@ -107,8 +108,8 @@ func (n *Node) Alarms(f AlarmFilter) AlarmList {
 // (6.14); the answer is the record as it was when it left. Asking for
 // the present state changes nothing.
 func (n *Node) SetAckState(alarmID string, req AckStateRequest) (AlarmRecord, error) {
-	if req.AckState != Acknowledged && req.AckState != Unacknowledged {
-		return AlarmRecord{}, fmt.Errorf("%w: ack_state %q is neither %s nor %s", ErrInvalidRequest, req.AckState, Acknowledged, Unacknowledged)
+	if err := req.check(); err != nil {
+		return AlarmRecord{}, fmt.Errorf("%w: %v", ErrInvalidRequest, err)
 	}
 	return n.alarms.setAckState(alarmID, req, n.clock.Now())
 }
@@ -125,6 +126,7 @@ func (l *alarmList) raise(node string, a Alarm, now time.Time) {
 		r.AdditionalText = a.AdditionalText
 		r.AlarmChangedTime = &now
 		r.AlarmClearedTime = nil
+		r.NotificationID = newNotificationID()
 		l.lastModification = now
 		l.log.Warn("alarm changed", alarmAttrs(r)...)
 		return
@@ -137,6 +139,7 @@ func (l *alarmList) raise(node string, a Alarm, now time.Time) {
 		ObjectInstance:    ObjectInstance(node, a.AlarmIdentity),
 		Role:              a.Role,
 		Peer:              a.Peer,
+		NotificationID:    newNotificationID(),
 		AlarmRaisedTime:   now,
 		AlarmType:         a.AlarmType,
 		ProbableCause:     a.ProbableCause,
@@ -162,6 +165,7 @@ func (l *alarmList) clear(id AlarmIdentity, now time.Time) {
 	r.PerceivedSeverity = Cleared
 	r.AlarmChangedTime = &now
 	r.AlarmClearedTime = &now
+	r.NotificationID = newNotificationID()
 	l.lastModification = now
 	l.log.Info("alarm cleared", alarmAttrs(r)...)
 	if r.AckState == Acknowledged {
@@ -185,8 +189,10 @@ func (l *alarmList) setAckState(alarmID string, req AckStateRequest, now time.Ti
 	r.AckState = req.AckState
 	r.AckTime = &now
 	r.AckUserID = req.Operator
+	r.AckSystemID = req.AckSystemID
+	r.NotificationID = newNotificationID()
 	l.lastModification = now
-	l.log.Info("alarm acknowledgement changed", append(alarmAttrs(r), "operator", req.Operator)...)
+	l.log.Info("alarm acknowledgement changed", append(alarmAttrs(r), "operator", req.Operator, "ack_system_id", req.AckSystemID)...)
 	if r.AckState == Acknowledged && r.PerceivedSeverity == Cleared {
 		l.remove(r)
 	}
@@ -268,6 +274,16 @@ func alarmAttrs(r *AlarmRecord) []any {
 		"perceived_severity", string(r.PerceivedSeverity),
 	}
 }
+
+// maxNotificationID is the largest integer that a JSON number holds
+// without loss in every reader: 2^53 - 1, the largest safe integer of
+// ECMAScript, which the OAM screen is written in.
+const maxNotificationID = 1<<53 - 1
+
+// newNotificationID is a random id from 1 to maxNotificationID. A
+// random id needs no counter that would have to survive a restart of
+// the node to stay unique (TS 28.532 11.0.2).
+func newNotificationID() int64 { return mathrand.Int64N(maxNotificationID) + 1 }
 
 // newAlarmID is 64 random bits in hexadecimal: unique within the list
 // and, with no coordination, across the lists of the nodes and over time

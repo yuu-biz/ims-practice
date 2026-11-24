@@ -471,7 +471,7 @@ components:
     AlarmRecord:
       description: An alarm record with the attributes of TS 28.111 7.4.1.
       type: object
-      required: [alarm_id, object_instance, alarm_raised_time, alarm_type, probable_cause, perceived_severity, ack_state]
+      required: [alarm_id, object_instance, notification_id, alarm_raised_time, alarm_type, probable_cause, perceived_severity, ack_state]
       properties:
         alarm_id:
           type: string
@@ -483,6 +483,14 @@ components:
         peer:
           description: The far end of an alarm about a link.
           type: string
+        notification_id:
+          description: |
+            The id of the notification of the last change of the record
+            (the notificationId of TS 28.111 7.4.1): random, new at each
+            change, and at most 2^53 - 1.
+          type: integer
+          minimum: 1
+          maximum: 9007199254740991
         alarm_raised_time:
           $ref: '#/components/schemas/Time'
         alarm_changed_time:
@@ -507,6 +515,9 @@ components:
         ack_user_id:
           description: The operator who last changed ack_state, as the request named them.
           type: string
+        ack_system_id:
+          description: The system through which ack_state was last changed, as the request named it.
+          type: string
       additionalProperties: false
     AckStateRequest:
       type: object
@@ -515,5 +526,11 @@ components:
         ack_state:
           $ref: '#/components/schemas/AckState'
         operator:
+          description: Who changes the state; the record keeps it as ack_user_id.
           type: string
+          maxLength: 256
+        ack_system_id:
+          description: The system that the operator changes it through; the record keeps it as ack_system_id.
+          type: string
+          maxLength: 256
       additionalProperties: false

@@ -884,7 +884,7 @@ docker compose exec scscf wget -qO- 'http://127.0.0.1:8085/maintenance/v1/alarms
 ```json
 {"node":"scscf","instance":"3f1c0e2a9b7d","num_of_alarm_records":1,"last_modification":"2026-11-24T10:15:02Z","dropped_records":0,
  "alarm_records":[{"alarm_id":"9f3c2a7b1d4e6058","object_instance":"ManagedElement=scscf,ManagedFunction=scscf,Peer=hss.ims.mnc001.mcc001.3gppnetwork.org",
-  "role":"scscf","peer":"hss.ims.mnc001.mcc001.3gppnetwork.org","alarm_raised_time":"2026-11-24T10:15:02Z",
+  "role":"scscf","peer":"hss.ims.mnc001.mcc001.3gppnetwork.org","notification_id":4711093825561044,"alarm_raised_time":"2026-11-24T10:15:02Z",
   "alarm_type":"COMMUNICATIONS_ALARM","probable_cause":"COMMUNICATIONS_SUBSYSTEM_FAILURE","specific_problem":"Diameter peer down",
   "perceived_severity":"MAJOR","additional_text":"no transport connection to the peer","ack_state":"UNACKNOWLEDGED"}]}
 ```
