@@ -722,7 +722,8 @@ Prometheus と Grafana は別のコンテナとして動かすだけで、`ims` 
 | 方法 | 経路 | 要求 | 応答 |
 | --- | --- | --- | --- |
 | `GET` | `/maintenance/v1/alarms` | なし。問い合わせで `cleared=true` か `cleared=false`、`min_severity=CRITICAL`（`MAJOR`、`MINOR`、`WARNING`）を付けられる | `AlarmList`。`node`、`instance`、`num_of_alarm_records`、`last_modification`、`dropped_records`、`alarm_records` |
-| `PUT` | `/maintenance/v1/alarms/{id}/ack-state` | `AckStateRequest`。`ack_state`（`ACKNOWLEDGED` か `UNACKNOWLEDGED`）、`operator` | `AlarmRecord` |
+| `PUT` | `/maintenance/v1/alarms/{id}/ack-state` | `AckStateRequest`。`ack_state`（`ACKNOWLEDGED` か `UNACKNOWLEDGED`）、`operator`、`ack_system_id` | `AlarmRecord` |
+| `PATCH` | `/maintenance/v1/alarms` | `AckStatesRequest`。`ack_states` に、`alarm_id` ごとの `AckStateRequest` | `AckStatesChange`。名指しした記録の、変えたあとの姿を `alarm_id` の順に。1 つでも一覧に無い id や知らない状態があれば、どれも変えずに 404 か 400 |
 
 状態コードは、400（知らない問い合わせの名前、範囲の外の値、本文の知らない欄）、404（一覧に無い `id`）、405（`Allow` を付ける）です。問い合わせの名前を間違えたときに、黙って全件を返さないように、知らない名前は 400 にしました。
 

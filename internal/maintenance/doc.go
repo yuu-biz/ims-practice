@@ -59,6 +59,11 @@
 //	     records, cleared=true keeps only those; min_severity (CRITICAL,
 //	     MAJOR, MINOR or WARNING) keeps that severity and the more
 //	     severe ones, and INDETERMINATE. An unknown parameter is 400.
+//	PATCH /maintenance/v1/alarms
+//	     AckStatesRequest -> AckStatesChange. The acknowledgement of
+//	     several alarms of the list at once, each as in the PUT below:
+//	     all of them change, or none. 404 names an id that is not in
+//	     the list.
 //	PUT  /maintenance/v1/alarms/{id}/ack-state
 //	     AckStateRequest -> AlarmRecord. ACKNOWLEDGED or
 //	     UNACKNOWLEDGED, with the operator's name and the system the

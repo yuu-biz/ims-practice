@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"log/slog"
+	"maps"
 	mathrand "math/rand/v2"
 	"slices"
 	"sync"
@@ -108,10 +109,29 @@ func (n *Node) Alarms(f AlarmFilter) AlarmList {
 // (6.14); the answer is the record as it was when it left. Asking for
 // the present state changes nothing.
 func (n *Node) SetAckState(alarmID string, req AckStateRequest) (AlarmRecord, error) {
-	if err := req.check(); err != nil {
-		return AlarmRecord{}, fmt.Errorf("%w: %v", ErrInvalidRequest, err)
+	change, err := n.SetAckStates(AckStatesRequest{AckStates: map[string]AckStateRequest{alarmID: req}})
+	if err != nil {
+		return AlarmRecord{}, err
 	}
-	return n.alarms.setAckState(alarmID, req, n.clock.Now())
+	return change.AlarmRecords[0], nil
+}
+
+// SetAckStates changes the acknowledgement of several alarms of the
+// list at once, each as SetAckState does: all of them, or none when one
+// of them is not in the list or asks for no state that there is. The
+// list checks every one before it changes any, under one hold of its
+// lock, so that an OSS that acknowledges several alarms of the node in
+// one request sees the request done as a whole or not at all.
+func (n *Node) SetAckStates(req AckStatesRequest) (AckStatesChange, error) {
+	if len(req.AckStates) == 0 {
+		return AckStatesChange{}, fmt.Errorf("%w: ack_states names no alarm", ErrInvalidRequest)
+	}
+	for id, r := range req.AckStates {
+		if err := r.check(); err != nil {
+			return AckStatesChange{}, fmt.Errorf("%w: ack_states: %s: %v", ErrInvalidRequest, id, err)
+		}
+	}
+	return n.alarms.setAckStates(req.AckStates, n.clock.Now())
 }
 
 func (l *alarmList) raise(node string, a Alarm, now time.Time) {
@@ -173,16 +193,28 @@ func (l *alarmList) clear(id AlarmIdentity, now time.Time) {
 	}
 }
 
-func (l *alarmList) setAckState(alarmID string, req AckStateRequest, now time.Time) (AlarmRecord, error) {
+func (l *alarmList) setAckStates(reqs map[string]AckStateRequest, now time.Time) (AckStatesChange, error) {
+	ids := slices.Sorted(maps.Keys(reqs))
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	l.expire(now)
-	r := l.byID[alarmID]
-	if r == nil {
-		return AlarmRecord{}, fmt.Errorf("%w: %q", ErrUnknownAlarm, alarmID)
+	for _, id := range ids {
+		if l.byID[id] == nil {
+			return AckStatesChange{}, fmt.Errorf("%w: %q", ErrUnknownAlarm, id)
+		}
 	}
+	change := AckStatesChange{AlarmRecords: make([]AlarmRecord, 0, len(ids))}
+	for _, id := range ids {
+		change.AlarmRecords = append(change.AlarmRecords, l.setAckState(l.byID[id], reqs[id], now))
+	}
+	return change, nil
+}
+
+// setAckState changes the acknowledgement of r, with l.mu held, and
+// returns the record after the change.
+func (l *alarmList) setAckState(r *AlarmRecord, req AckStateRequest, now time.Time) AlarmRecord {
 	if r.AckState == req.AckState {
-		return *r, nil
+		return *r
 	}
 	// The operator's change sets ackTime but not alarmChangedTime, which
 	// only the alarmed resource changes (TS 28.111 7.4.1).
@@ -196,7 +228,7 @@ func (l *alarmList) setAckState(alarmID string, req AckStateRequest, now time.Ti
 	if r.AckState == Acknowledged && r.PerceivedSeverity == Cleared {
 		l.remove(r)
 	}
-	return *r, nil
+	return *r
 }
 
 func (l *alarmList) read(f AlarmFilter, now time.Time, into *AlarmList) {

@@ -311,7 +311,7 @@ func TestUnknownPathsAndMethodsAnswerJSON(t *testing.T) {
 		{http.MethodPut, ConfigurationPath, http.StatusMethodNotAllowed, "GET, HEAD, PATCH"},
 		{http.MethodDelete, LogLevelPath, http.StatusMethodNotAllowed, "GET, HEAD, PUT"},
 		{http.MethodGet, AdministrativeStatePath("pcscf"), http.StatusMethodNotAllowed, "PUT"},
-		{http.MethodDelete, AlarmsPath, http.StatusMethodNotAllowed, "GET, HEAD"},
+		{http.MethodDelete, AlarmsPath, http.StatusMethodNotAllowed, "GET, HEAD, PATCH"},
 		{http.MethodGet, AckStatePath("0011223344556677"), http.StatusMethodNotAllowed, "PUT"},
 	} {
 		rec := httptest.NewRecorder()
