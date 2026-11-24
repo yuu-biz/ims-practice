@@ -444,3 +444,49 @@ func TestADefaultAnswerTakesAnyStatus(t *testing.T) {
 		}
 	}
 }
+
+// TestAMediaTypeRange: an answer whose content is */* takes any
+// Content-Type, and none; text/* takes text/plain and not
+// application/json.
+func TestAMediaTypeRange(t *testing.T) {
+	doc := `openapi: 3.1.0
+info: {title: Ranges, version: 1.0.0}
+paths:
+  /any:
+    get:
+      operationId: getAny
+      responses:
+        '200': {description: Anything., content: {'*/*': {}}}
+  /text:
+    get:
+      operationId: getText
+      responses:
+        '200': {description: Some text., content: {'text/*': {}}}
+`
+	file := filepath.Join(t.TempDir(), "ranges.yaml")
+	if err := os.WriteFile(file, []byte(doc), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	d := Load(t, file)
+	for _, tc := range []struct {
+		path, contentType string
+		ok                bool
+	}{
+		{"/any", "", true},
+		{"/any", "application/xml", true},
+		{"/text", "text/plain; charset=utf-8", true},
+		{"/text", "application/json", false},
+	} {
+		rt := &recordingT{TB: t}
+		h := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if tc.contentType != "" {
+				w.Header().Set("Content-Type", tc.contentType)
+			}
+			w.WriteHeader(http.StatusOK)
+		})
+		d.Handler(rt, h).ServeHTTP(httptest.NewRecorder(), httptest.NewRequest("GET", tc.path, nil))
+		if got := len(rt.errors) == 0; got != tc.ok {
+			t.Errorf("%s with %q: errors %q", tc.path, tc.contentType, rt.errors)
+		}
+	}
+}
