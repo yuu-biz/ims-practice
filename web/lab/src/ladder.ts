@@ -20,6 +20,7 @@ const displayNames: Record<string, string> = {
   icscf: "I-CSCF",
   scscf: "S-CSCF",
   ipsmgw: "IP-SM-GW",
+  sc: "SC",
   mmtel: "MMTel AS",
   mrfc: "MRFC",
   // The epc node holds the EPC stub and the PCRF, and only the PCRF
@@ -57,8 +58,10 @@ export interface Ladder {
 // PCRF of the epc node, which only the P-CSCF talks to over Rx, stands
 // next to it. An application server stands next to the S-CSCF that
 // sends it requests by the iFCs, before the HSS that both of them ask,
-// and the MRFC next to the AS that drives it over Mr'. The media nodes,
-// the IMS-AGW and the MRFP, come last.
+// and the MRFC next to the AS that drives it over Mr'. The Service
+// Centre, which the IP-SM-GW reaches over SGd, stands between it and
+// the HSS that both of them ask. The media nodes, the IMS-AGW and the
+// MRFP, come last.
 const networkOrder: Record<string, number> = {
   pcscf: 1,
   epc: 2,
@@ -67,6 +70,7 @@ const networkOrder: Record<string, number> = {
   ipsmgw: 5,
   mmtel: 5,
   mrfc: 5.5,
+  sc: 5.5,
   hss: 6,
   agw: 7,
   mrfp: 7,

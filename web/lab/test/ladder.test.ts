@@ -212,6 +212,30 @@ describe("short message ladder", () => {
   });
 });
 
+describe("short message over SGd to the Service Centre", () => {
+  // The same short message where the IP-SM-GW hands it to the SC over
+  // SGd (TS 23.204 6.3), and the SC asks the HSS over S6c.
+  const hop = (node: string, src: string, dst: string, protocol: Message["protocol"], summary: string) =>
+    captured({ node, direction: "send", src, dst, protocol, summary, payload: summary, call_id: "sms-2" });
+  const ladder = buildLadder([
+    hop("ue", "172.28.0.100:5060", "172.28.0.40:5060", "sip", "MESSAGE tel:+12025550100"),
+    hop("pcscf", "172.28.0.40:5060", "172.28.0.30:5060", "sip", "MESSAGE tel:+12025550100 (S-CSCF)"),
+    hop("scscf", "172.28.0.30:5060", "172.28.0.70:5060", "sip", "MESSAGE tel:+12025550100 (IP-SM-GW)"),
+    hop("ipsmgw", "172.28.0.70:46000", "172.28.0.71:3868", "diameter", "OFR"),
+    hop("sc", "172.28.0.71:46002", "172.28.0.10:3868", "diameter", "SRR"),
+    hop("hss", "172.28.0.10:3868", "172.28.0.71:46002", "diameter", "SRA 2001"),
+    hop("sc", "172.28.0.71:3868", "172.28.0.70:46000", "diameter", "OFA 2001"),
+  ]);
+
+  it("puts the Service Centre between the IP-SM-GW and the HSS", () => {
+    expect(ladder.columns.map((c) => c.host)).toEqual(["172.28.0.100", "172.28.0.40", "172.28.0.30", "172.28.0.70", "172.28.0.71", "172.28.0.10"]);
+  });
+
+  it("labels the column SC", () => {
+    expect(ladder.columns.map(columnLabel)).toEqual(["UE", "P-CSCF", "S-CSCF", "IP-SM-GW", "SC", "HSS"]);
+  });
+});
+
 describe("call through the MMTel AS", () => {
   // The leg of UE 1's call between UE 1 and the caller's MMTel AS: the
   // S-CSCF sends the INVITE to the AS by the iFC, and the AS answers it
