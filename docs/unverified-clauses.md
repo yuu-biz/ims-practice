@@ -6,6 +6,7 @@
 | 場所 | 記述 | 仕様 | 確かめること |
 | --- | --- | --- | --- |
 | `deploy/announcements/announcements.go` のパッケージのコメント | notice は特殊情報音（SIT）の上がっていく 3 つの音で、網の音声ガイダンスの前に流す。 | ITU-T E.180 | SIT の周波数と長さを定める条項の番号。 |
+| `internal/ipsmgw/smsiwmsc.go` の `submitFailureCauses` と `refusalCause` | OFA の結果コードと SM-Enumerated-Delivery-Failure-Cause を、UE へ返す RP-ERROR の RP-Cause に写す対応。 | TS 29.338 6.2.1.1、TS 24.011 Table 8.4 part 1 | この 2 つの対応を定める条項。MAP ではエラーの対応が決まっているはずなので、その箇所も探す。 |
 | `internal/epc/api.go` の `SystemInformation` | UE はセルから網、トラッキングエリア、セルの識別子を知る。 | TS 36.331 の SystemInformationBlockType1 | SystemInformationBlockType1 を定める条項の番号。 |
 | `internal/fivegc/api.go` の `SystemInformation` | UE は NR のセルから網、トラッキングエリア、セルの識別子を知る。 | TS 38.331 の SIB1 | SIB1 を定める条項の番号。 |
 | `deploy/interconnect/profiles/example-ttc-jj-90.30.yaml` の `transports` | SIP は UDP の 5060 番が必須。長いメッセージを TCP で送るかどうかは書かれていない。 | TTC JJ-90.30 第 13 版 4.1 | 4.1 の本文と、TCP の扱いを定める箇所。 |

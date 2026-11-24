@@ -92,6 +92,7 @@
 - IP-SM-GW を AS として作る。
 - SIP MESSAGE に `application/vnd.3gpp.sms` で SMS を入れて送る。
 - HSS スタブに Sh を追加する。
+- SC を独立した役割にする。IP-SM-GW とは SGd（TS 29.338 6 章）で、HSS とは S6c（TS 29.338 5 章）でやり取りし、届かなかったショートメッセージを預かって、HSS の知らせで送り直す。
 - 手順書「SMS の流れ」を書く。
 
 手順書は [sms.md](guide/ja/sms.md)、スクリプトは `scripts/e2e-sms.sh` です。作りは [sms.md](design/sms.md) にあります。
@@ -234,14 +235,13 @@
 
 **できるようになること.** SMS が IMS を通らずに、EPC と 5GC の NAS で届く流れを追える。IP-SM-GW が IP と NAS のどちらで届けるかを選び、IP で届かないときに NAS へ切り替える様子を見られる。
 
-- SC を独立した役割にする。IP-SM-GW の SC との境界（[sms.md](design/sms.md)）の後ろにあるプロセスの中のスタブを、SGd（TS 29.338 6 章）で通信する実装に替える。宛先の問い合わせには S6c（TS 29.338 5 章）を使う。IP-SM-GW が SGd で受ける側はできている。
 - SMS in MME に対応する（TS 23.272 Annex C）。EPC のスタブの MME が NAS で SMS を運び、SC と SGd で通信する。
 - 5GS の SMS over NAS に対応する（TS 23.502 4.13.3）。5GC のスタブに AMF と SMSF を置き、SMSF が SC と SGd で通信する。
 - UE シミュレータと EPC、5GC のスタブの間の NAS を、SMS に要る範囲で作る（TS 24.301、TS 24.501）。CP 層（TS 24.011）は今の RP 層と TP 層の符号化（`internal/sms`）の下に加える。
 - IP-SM-GW に、届ける経路の選択（ドメイン選択）と、IP で届かなかったときの NAS への切り替えを加える（TS 23.204 6.4、6.5a）。経路の選択には、IP-SM-GW が Sh で HSS に登録した情報を使う。
 - 手順書「SMS を NAS で届ける」を書く。
 
-今あるもの。NAS（`internal/nas`）、SGd（`internal/sgd`）、SC の本体（`internal/smsc`）の部品があります。IP-SM-GW は SGd の受け側を話します。SC が持ち込むショートメッセージ（TFR）を受け、IMS に配達し、UE の delivery report を TFA で返します（[sms.md](design/sms.md) の「IP-SM-GW の SGd の作り」）。SC はまだ役割になっていないので、SGd で TFR を送るノードはありません。HSS は S6c に答えます（`internal/hss/s6c.go`）。SRR に serving node を返し、RDR で message waiting data を書き換え、IP-SM-GW が登録したら ALR で SC に知らせます。調査は [sms-nas.md](background/sms-nas.md) にあります。
+今あるもの。NAS（`internal/nas`）の部品があります。SC は役割 `sc` になっていて、IP-SM-GW と SGd で、HSS と S6c でやり取りします。IMS を通る SMS は、この SC がショートメッセージを預かり、配達し、届かなければ HSS の知らせを待って送り直します（[sms.md](design/sms.md) の「SC の役割の作り」）。NAS の側はまだありません。調査は [sms-nas.md](background/sms-nas.md) にあります。
 
 **完了条件.** CI の試験で、SMS in MME の経路と 5GS の経路の両方で SMS が NAS で届く。IMS に登録していない UE に宛てた SMS で、IP-SM-GW が IP から NAS に切り替える。pcap で Wireshark が NAS と SGd のメッセージをデコードできる。
 
