@@ -5,10 +5,18 @@
 // JSON document, such as an alarm notification or an alarm list, by
 // the rules of clause 6 that map JSON to the XPath data model.
 //
-// The notificationFilter of an NtfSubscriptionControl is such an
-// expression: the schema JexConditions of TS28623_ComDefs.yaml 19.6.0
-// (TS 28.623 V20.3.0). ParseCondition reads it and Condition.Matches
-// evaluates it against a notification.
+// It serves three places of the OpenAPI files. TS28623_ComDefs.yaml
+// 19.6.0 (TS 28.623 V20.3.0) types each of them as a Jex string; the
+// query parameters are those of TS28532_ProvMnS.yaml 19.2.0 (TS 28.532
+// V20.2.0):
+//
+//	notificationFilter of an NtfSubscriptionControl  ParseCondition, Condition.Matches
+//	filter and dataNodeSelector of a GET             ParseAlarmRecordSelector, AlarmRecordSelector.Select
+//	of the alarm list
+//	fields of a GET of the alarm list                ParseAlarmRecordFields
+//
+// The last two take the forms that TS 28.111 V20.0.0 A.1.4 shows for
+// the alarm list.
 //
 // What of the grammar is evaluated:
 //
