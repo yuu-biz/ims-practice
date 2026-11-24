@@ -202,6 +202,16 @@ func newHarness(t *testing.T, store ipsmgw.Store, reportTimeout time.Duration, a
 // the test sees it: a MESSAGE for it carries the IBCF in Route.
 func newHarnessWith(t *testing.T, store ipsmgw.Store, reportTimeout time.Duration, answer func(*sip.Message) int, extra ipsmgw.Config) *harness {
 	t.Helper()
+	return newHarnessParts(t, store, reportTimeout, answer, extra, nil, nil)
+}
+
+// newHarnessParts is newHarnessWith for an IP-SM-GW that reaches the SC
+// and the HSS through sc and hssClient rather than through the fakes of
+// the harness. A nil part leaves the fake in place; the fakes are made
+// either way, so the helpers that read them stay usable.
+func newHarnessParts(t *testing.T, store ipsmgw.Store, reportTimeout time.Duration, answer func(*sip.Message) int,
+	extra ipsmgw.Config, sc ipsmgw.ServiceCentre, hssClient ipsmgw.HSS) *harness {
+	t.Helper()
 	h := &harness{
 		t:  t,
 		sc: &fakeSC{submits: make(chan submitted, 10), reports: make(chan reported, 10)},
@@ -221,6 +231,14 @@ func newHarnessWith(t *testing.T, store ipsmgw.Store, reportTimeout time.Duratio
 		}
 	})
 	h.sc.answerWith(sms.SubmitReport{ServiceCentreTimeStamp: time.Date(2026, 11, 20, 9, 30, 0, 0, time.UTC)}, nil)
+	var centre ipsmgw.ServiceCentre = h.sc
+	if sc != nil {
+		centre = sc
+	}
+	var hssPart ipsmgw.HSS = h.hss
+	if hssClient != nil {
+		hssPart = hssClient
+	}
 	h.g = ipsmgw.New(ipsmgw.Config{URI: ownURI, HomeDomain: domain, Number: number, ServiceCentre: scAddress, ReportTimeout: reportTimeout,
 		Diameter: diameter.Identity{OriginHost: gwDiameterHost, OriginRealm: domain},
 		IBCF:     extra.IBCF, UserLocks: extra.UserLocks,
@@ -228,7 +246,7 @@ func newHarnessWith(t *testing.T, store ipsmgw.Store, reportTimeout time.Duratio
 		// TR1N does not wait a second for the delivery it ends, and ends
 		// it while the Store still keeps the delivery.
 		SweepInterval: 20 * time.Millisecond},
-		h.sc, store, h.hss, locator{domain: entry.LocalAddr(), scscfHost: h.scscf.LocalAddr(), ibcfHost: entry.LocalAddr()}, quiet())
+		centre, store, hssPart, locator{domain: entry.LocalAddr(), scscfHost: h.scscf.LocalAddr(), ibcfHost: entry.LocalAddr()}, quiet())
 	t.Cleanup(h.g.Close)
 	stack := newStack(t, fastTimers, h.g.OnRequest)
 	h.g.SetStack(stack)
