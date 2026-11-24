@@ -47,6 +47,7 @@ func TestUnreadKeepsTheStoreOfARoleThatReadsIt(t *testing.T) {
 		{RolePCSCF, Config{PCSCF: &PCSCF{}}},
 		{RoleHSS, Config{HSS: &hss.Config{}}},
 		{RoleIPSMGW, Config{IPSMGW: &IPSMGW{}}},
+		{RoleSC, Config{SC: &SC{}}},
 		{RoleMMTel, Config{MMTel: &MMTel{}}},
 		{RoleMRFC, Config{MRFC: &MRFC{}}},
 		{RoleAGW, Config{AGW: &AGW{}}},

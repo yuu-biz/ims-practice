@@ -232,7 +232,7 @@ func TestParseRejects(t *testing.T) {
 		{"unknown field", "  timers:", "  timer_tw: 10s\n  timers:", "timer_tw"},
 		{"Tw below the RFC 3539 floor", "tw: 10s", "tw: 5s", "below the RFC 3539 minimum"},
 		{"peer without port", "3gppnetwork.org:3868", "3gppnetwork.org", "peers[0].address"},
-		{"diameter without a Diameter role", "roles: [scscf]", "roles: [agw]", "diameter: only the hss, icscf, scscf, ipsmgw, mmtel, epc and pcscf roles"},
+		{"diameter without a Diameter role", "roles: [scscf]", "roles: [agw]", "diameter: only the hss, icscf, scscf, ipsmgw, sc, mmtel, epc and pcscf roles"},
 		{"hss without listen", "roles: [scscf]", "roles: [scscf, hss]", "listen: required"},
 		{"role without its section", "roles: [scscf]", "roles: [scscf, icscf]", "icscf: required for the icscf role"},
 		{"section without its role", "scscf:\n", "icscf:\n  sip: {}\nscscf:\n", "icscf: only the icscf role"},
@@ -658,6 +658,101 @@ diameter:
 	}
 }
 
+func TestParseSC(t *testing.T) {
+	yaml := `
+node: sc
+roles: [sc]
+home_domain: ims.mnc001.mcc001.3gppnetwork.org
+sc:
+  address: "+12025550100"
+  retry_delays: [30s, 2m]
+diameter:
+  origin_host: sc.ims.mnc001.mcc001.3gppnetwork.org
+  origin_realm: ims.mnc001.mcc001.3gppnetwork.org
+  listen: 0.0.0.0:3868
+  peers: [{address: hss.ims.mnc001.mcc001.3gppnetwork.org:3868, origin_host: hss.ims.mnc001.mcc001.3gppnetwork.org, kind: hss}]
+`
+	cfg, err := Parse(strings.NewReader(yaml))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := SC{Address: "12025550100", RetryDelays: []time.Duration{30 * time.Second, 2 * time.Minute}}
+	if cfg.SC == nil || !reflect.DeepEqual(*cfg.SC, want) {
+		t.Errorf("sc = %+v, want %+v", cfg.SC, want)
+	}
+	// Without retry_delays the SC takes the schedule of package smsc.
+	without := strings.Replace(yaml, "  retry_delays: [30s, 2m]\n", "", 1)
+	if cfg, err := Parse(strings.NewReader(without)); err != nil || cfg.SC.RetryDelays != nil {
+		t.Errorf("sc without retry_delays: %v, %+v", err, cfg.SC)
+	}
+	for _, bad := range []struct{ name, old, new, wantErr string }{
+		{"an address that is not international", `"+12025550100"`, `"12025550100"`, "sc: address"},
+		{"an address with a letter", `"+12025550100"`, `"+1202555010x"`, "sc: address"},
+		{"a retry delay of zero", "[30s, 2m]", "[30s, 0s]", "retry_delays[1]"},
+		{"a negative retry delay", "[30s, 2m]", "[-1s]", "retry_delays[0]"},
+		{"an empty retry schedule", "[30s, 2m]", "[]", "retry_delays: empty"},
+		{"no Diameter listener", "  listen: 0.0.0.0:3868\n", "", "listen: required for the hss, sc and epc roles"},
+		{"no HSS peer", "  peers: [{address: hss.ims.mnc001.mcc001.3gppnetwork.org:3868, origin_host: hss.ims.mnc001.mcc001.3gppnetwork.org, kind: hss}]\n", "", "need the HSS as a peer"},
+		{"the sc section without the role", "roles: [sc]", "roles: [sc, hss]", "hss: required"},
+	} {
+		t.Run(bad.name, func(t *testing.T) {
+			edited := strings.Replace(yaml, bad.old, bad.new, 1)
+			if edited == yaml {
+				t.Fatalf("test edit %q did not apply", bad.old)
+			}
+			if _, err := Parse(strings.NewReader(edited)); err == nil || !strings.Contains(err.Error(), bad.wantErr) {
+				t.Errorf("error = %v, want it to mention %q", err, bad.wantErr)
+			}
+		})
+	}
+}
+
+// The IP-SM-GW reaches the SC over SGd when, and only when, the
+// configuration gives it a peer of kind sc.
+func TestParseIPSMGWWithAServiceCentrePeer(t *testing.T) {
+	yaml := `
+node: ipsmgw
+roles: [ipsmgw]
+home_domain: ims.mnc001.mcc001.3gppnetwork.org
+ipsmgw:
+  sip: {listen: 0.0.0.0:5060, host: ipsmgw.ims.mnc001.mcc001.3gppnetwork.org}
+  number: "+12025550199"
+  service_centre: "+12025550100"
+diameter:
+  origin_host: ipsmgw.ims.mnc001.mcc001.3gppnetwork.org
+  origin_realm: ims.mnc001.mcc001.3gppnetwork.org
+  peers:
+    - {address: hss.ims.mnc001.mcc001.3gppnetwork.org:3868, origin_host: hss.ims.mnc001.mcc001.3gppnetwork.org, kind: hss}
+    - {address: sc.ims.mnc001.mcc001.3gppnetwork.org:3868, origin_host: sc.ims.mnc001.mcc001.3gppnetwork.org, kind: sc}
+`
+	cfg, err := Parse(strings.NewReader(yaml))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cfg.Diameter.Peers) != 2 || cfg.Diameter.Peers[1].Kind != PeerSC {
+		t.Fatalf("peers = %+v", cfg.Diameter.Peers)
+	}
+	// The IBCF is for the deliveries of the stub of the SC, which an
+	// IP-SM-GW with a Service Centre peer does not run.
+	withIBCF := strings.Replace(yaml, `service_centre: "+12025550100"`,
+		`service_centre: "+12025550100"
+  ibcf: sip:ibcf.ims.mnc001.mcc001.3gppnetwork.org:5060`, 1)
+	if _, err := Parse(strings.NewReader(withIBCF)); err == nil || !strings.Contains(err.Error(), "sends nothing through an IBCF") {
+		t.Errorf("error = %v, want it to refuse an IBCF beside a peer of kind sc", err)
+	}
+	// Only the ipsmgw role reaches the SC.
+	notGateway := strings.Replace(strings.Replace(yaml, "roles: [ipsmgw]", "roles: [scscf]", 1),
+		`ipsmgw:
+  sip: {listen: 0.0.0.0:5060, host: ipsmgw.ims.mnc001.mcc001.3gppnetwork.org}
+  number: "+12025550199"
+  service_centre: "+12025550100"`,
+		`scscf:
+  sip: {listen: 0.0.0.0:5060, host: scscf.ims.mnc001.mcc001.3gppnetwork.org}`, 1)
+	if _, err := Parse(strings.NewReader(notGateway)); err == nil || !strings.Contains(err.Error(), "only the ipsmgw role reaches the SC") {
+		t.Errorf("error = %v, want it to mention that only the ipsmgw role reaches the SC", err)
+	}
+}
+
 func TestParseMMTel(t *testing.T) {
 	yaml := `
 node: mmtel
@@ -847,7 +942,7 @@ func TestParseRejectsEPC(t *testing.T) {
 		{"MCC of two digits", `mcc: "001"`, `mcc: "01"`, "three digits"},
 		{"ECI beyond 28 bits", "eci: 257", "eci: 268435456", "28 bits"},
 		{"APN with a space", "apn: ims", "apn: i ms", "apn:"},
-		{"no Diameter listener", "  listen: 0.0.0.0:3868\n", "", "listen: required for the hss and epc roles"},
+		{"no Diameter listener", "  listen: 0.0.0.0:3868\n", "", "listen: required for the hss, sc and epc roles"},
 		{"a Diameter peer", "  listen: 0.0.0.0:3868\n", "  listen: 0.0.0.0:3868\n  peers: [{address: hss:3868, origin_host: hss}]\n", "peers: only"},
 	} {
 		t.Run(tt.name, func(t *testing.T) {

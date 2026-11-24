@@ -918,6 +918,43 @@ func (raw *rawIPSMGW) validate() (IPSMGW, error) {
 	return c, nil
 }
 
+// SC is the configuration of the sc role.
+type SC struct {
+	// Address is the E.164 number of the SC, digits only: the
+	// SC-Address of every request it sends, and the RP-Destination
+	// Address that a short message from a UE must carry (TS 29.338
+	// 6.3.3.2). The ipsmgw that hands short messages to this SC has the
+	// same number in its service_centre.
+	Address string
+	// RetryDelays is how long the SC waits before it tries a delivery
+	// that failed again: the n-th failure in a row waits the n-th delay,
+	// and the last delay repeats. TS 23.040 3.2.7 NOTE 5 leaves these
+	// autonomous retries to the operator. Nil takes the schedule of
+	// smsc.DefaultRetrySchedule.
+	RetryDelays []time.Duration
+}
+
+type rawSC struct {
+	Address     string          `yaml:"address"`
+	RetryDelays []time.Duration `yaml:"retry_delays"`
+}
+
+func (raw *rawSC) validate() (SC, error) {
+	address, err := e164Digits(raw.Address)
+	if err != nil {
+		return SC{}, fmt.Errorf("address: %w", err)
+	}
+	if raw.RetryDelays != nil && len(raw.RetryDelays) == 0 {
+		return SC{}, errors.New("retry_delays: empty; leave it out for the default schedule")
+	}
+	for i, d := range raw.RetryDelays {
+		if d <= 0 {
+			return SC{}, fmt.Errorf("retry_delays[%d]: %v is not a positive duration", i, d)
+		}
+	}
+	return SC{Address: address, RetryDelays: raw.RetryDelays}, nil
+}
+
 // e164Digits reads an international number such as +12025550199 and
 // returns its digits. An E.164 number has at most 15 digits.
 func e164Digits(s string) (string, error) {

@@ -53,10 +53,10 @@ func (c Config) Unread() []string {
 // store section: the IBCF the records of its calls, the S-CSCF its
 // registrar state, the P-CSCF its IP associations and dialogs, the HSS
 // its subscribers, the IP-SM-GW its deliveries and subscriptions, the
-// MMTel AS the records of its calls and conferences, the MRFC the media
-// of each conference, and a media relay in the agw or the mrfp role the
-// contexts whose ports it holds.
+// SC the short messages it holds, the MMTel AS the records of its calls
+// and conferences, the MRFC the media of each conference, and a media
+// relay in the agw or the mrfp role the contexts whose ports it holds.
 func (c Config) readsStore() bool {
 	return c.IBCF != nil || c.SCSCF != nil || c.PCSCF != nil || c.HSS != nil || c.IPSMGW != nil ||
-		c.MMTel != nil || c.MRFC != nil || c.AGW != nil || c.MRFP != nil
+		c.SC != nil || c.MMTel != nil || c.MRFC != nil || c.AGW != nil || c.MRFP != nil
 }

@@ -64,7 +64,7 @@ var (
 	// name in the configuration file: those that send requests through a
 	// peer group of their own, and the two that answer the requests that
 	// reach them, the HSS and the S-CSCF (Answering).
-	countingRoles = metrics.Label{Name: "role", Values: []string{"pcscf", "icscf", "scscf", "mmtel", "ipsmgw", "hss"}}
+	countingRoles = metrics.Label{Name: "role", Values: []string{"pcscf", "icscf", "scscf", "mmtel", "ipsmgw", "sc", "hss"}}
 	directions    = metrics.Label{Name: "direction", Values: []string{receivedDirection, sentDirection}}
 	// commandLabel holds the short name of the request (CommandShortName
 	// with R after it), which an answer is counted under as well: the
@@ -79,8 +79,12 @@ var (
 		// The two Cx requests that the HSS sends an S-CSCF and the
 		// S-CSCF answers (TS 29.229 Table 6.1.1).
 		"RTR", "PPR",
-		// S6c (package sgd), of which the HSS answers these two.
+		// S6c (package sgd), of which the HSS answers these two and the
+		// SC sends them.
 		"SRR", "RDR",
+		// SGd (package sgd): the short message of a UE, which the
+		// IP-SM-GW sends the SC.
+		"OFR",
 	}}
 	// resultLabel names the result of an answer one by one, so that a
 	// dashboard can tell DIAMETER_FIRST_REGISTRATION from the other
