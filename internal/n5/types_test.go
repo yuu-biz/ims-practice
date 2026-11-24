@@ -118,7 +118,8 @@ const terminationInfo = `{
 }`
 
 // problemDetails is the 500 of TS 29.514 4.2.2.2 when session binding
-// fails.
+// fails, which the client tests answer with. The attributes of
+// ProblemDetails are checked in package sbi.
 const problemDetails = `{
   "status": 500,
   "detail": "no PDU session for 192.0.2.10",
@@ -188,7 +189,6 @@ func TestRoundTrips(t *testing.T) {
 			t.Errorf("termCause %q", ti.TermCause)
 		}
 	})
-	t.Run("problem details", func(t *testing.T) { roundTrip[ProblemDetails](t, problemDetails) })
 }
 
 // TestRequiredAttributesAreSent checks that the attributes the OpenAPI
