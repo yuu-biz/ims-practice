@@ -43,7 +43,8 @@
 # DPR whose Disconnect-Cause is REBOOTING and stop listening on 3868, so
 # the IP-SM-GW, with no SC left to hand a short message to, answers UE 1
 # with an RP-ERROR of RP-Cause 41; after the unlock the IP-SM-GW
-# connects again and the SC takes the short message. A shut down of the media
+# connects again and the SC takes the short message, and Prometheus
+# holds the SRRs that the SC sent the HSS for it. A shut down of the media
 # relay makes it answer the Add of the P-CSCF with 503 over its control
 # API, and the P-CSCF, which has no other relay in this network, answers
 # the INVITE of UE 1 with 500 and forwards nothing; after the unlock the
@@ -940,6 +941,31 @@ fi
 
 await "the DPR of the drained SC" "$scDPRs" $((scDPRsSent + 1))
 await "the OFA of the SC after its unlock" "$scOFAs" $((scOFAsSent + 1))
+# The SC asks the HSS about the recipient of each short message it is
+# handed, and again for each delivery it attempts (SRR), so the short
+# messages above left it requests and the answers that came back, on
+# its connection to the HSS.
+if value="$(until_positive prometheus_values 'up{job="ims",node="sc"}')"; then
+	echo "ok   Prometheus scrapes the SC: up = $value"
+else
+	echo "FAIL the sc target of Prometheus is not up: $value"
+	curl -fsS "$prometheus/api/v1/targets?state=active" || true
+	echo
+	fail=1
+fi
+for series in 'ims_diameter_requests_total{role="sc",command="SRR"}' \
+	'ims_diameter_answers_total{role="sc",command="SRR"}' \
+	'ims_diameter_peer_up{node="sc"}'; do
+	if value="$(until_positive prometheus_values "$series")"; then
+		echo "ok   Prometheus has $series = $value"
+	else
+		echo "FAIL Prometheus has no $series above 0: $value"
+		# Shown only to explain the failure, if the SC answers at all,
+		# hence "|| true".
+		docker compose exec -T sc wget -qO- http://127.0.0.1:8085/metrics || true
+		fail=1
+	fi
+done
 
 echo "drain of the media relay"
 # The P-CSCF puts the media of each call through a media relay, and the
