@@ -102,6 +102,12 @@ type HSS interface {
 	// 6.2.2.1/1). It is empty for a user the HSS has none for.
 	IMSI(ctx context.Context, publicID string) (string, error)
 	UpdateSMSRegistrationInfo(ctx context.Context, id sh.UserIdentity, ipsmgwNumber string) error
+	// NotifyReadyForSM tells the HSS that the user can take short
+	// messages again, for the reason given, so that it alerts the
+	// Service Centres that hold short messages for the user (TS 23.204
+	// 6.5b step 2d and 6.6 step 3). ipsmgwNumber is this IP-SM-GW's own
+	// number, which the HSS compares with the registration it holds.
+	NotifyReadyForSM(ctx context.Context, id sh.UserIdentity, ipsmgwNumber string, reason sh.ReadyForSM) error
 }
 
 // IPSMGW is the IP-SM-GW role.

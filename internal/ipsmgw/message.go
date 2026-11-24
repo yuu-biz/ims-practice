@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/yuu-biz/ims-practice/internal/ims"
+	"github.com/yuu-biz/ims-practice/internal/sh"
 	"github.com/yuu-biz/ims-practice/internal/sip"
 	"github.com/yuu-biz/ims-practice/internal/sms"
 )
@@ -226,16 +227,40 @@ func errorWith(mr uint8, r *Refusal) (sms.RPMessage, error) {
 	return sms.RPError{Direction: sms.NetworkToMS, MessageReference: mr, Cause: r.Cause, UserData: tpdu}, err
 }
 
-// memoryAvailable is an RP-SMMA (TS 24.341 5.3.3.4.1, TS 24.011 7.3.2):
-// the UE can take short messages again.
+// memoryAvailable is an RP-SMMA (TS 24.341 5.3.3.4.1 steps d and e, TS
+// 24.011 7.3.2, TS 23.204 6.6): the UE can take short messages again.
+// The IP-SM-GW passes the notification to the HSS, which clears the
+// memory capacity exceeded flag of the user and alerts the Service
+// Centres that hold short messages for them (TS 23.040 3.2.6 item 2f).
 //
-// SIMPLIFIED: TS 24.341 5.3.3.4.1 steps d and e, TS 23.204 6.6. The
-// notification is not passed to the HSS, which would alert the SCs that
-// hold messages for the user. The SC stub stores no messages, so
-// there is nothing to alert; the IP-SM-GW acknowledges the notification
-// with RP-ACK at once.
+// Item d names the user by MSISDN where the IP-SM-GW has one, and by
+// the public identity otherwise, which is how its registration names the
+// user as well (regevent.go). The MSISDN is the one that the
+// third-party REGISTER carried, which the subscription to the user's
+// registration state holds; a Store that cannot be read leaves the
+// public identity, which Sh takes as well.
+//
+// The RP-ACK follows the notification, so that it never tells the UE
+// that a notification got through when it did not. A notification that
+// failed gets RP-Cause 41, a temporary failure that the UE may try
+// again soon (TS 24.011 Table 8.4 part 1), as a short message does when
+// the SC cannot be asked (submit).
 func (g *IPSMGW) memoryAvailable(req *sip.Message, sender string, rp sms.RPSMMA, log *slog.Logger) {
-	log.Info("memory available notification acknowledged")
+	ctx := context.Background()
+	msisdn := ""
+	if sub, ok, err := g.store.RegSubscriptionOf(ctx, sender); err != nil {
+		log.Warn("the MSISDN of the user was not read: the store failed", "error", err.Error())
+	} else if ok {
+		msisdn = sub.MSISDN
+	}
+	id := shIdentity(sender, msisdn)
+	if err := g.hss.NotifyReadyForSM(ctx, id, g.cfg.Number, sh.MemoryAvailable); err != nil {
+		log.Warn("memory available notification not passed to the HSS", "msisdn", msisdn, "error", err.Error())
+		g.answer(req, sender, sms.RPError{Direction: sms.NetworkToMS, MessageReference: rp.MessageReference,
+			Cause: sms.RPCauseTemporaryFailure}, log)
+		return
+	}
+	log.Info("memory available notification passed to the HSS", "msisdn", msisdn)
 	g.answer(req, sender, sms.RPAck{Direction: sms.NetworkToMS, MessageReference: rp.MessageReference}, log)
 }
 
