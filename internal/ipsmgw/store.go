@@ -142,6 +142,18 @@ type Store interface {
 	// that is the ordinary end of an expiry, not a failure.
 	Done(ctx context.Context, e Expiry) error
 
+	// PutOutcome keeps how the delivery of reference ended until
+	// expires, for whichever instance waits to answer the request that
+	// brought the delivery (sgd.go). The instance that ends the delivery
+	// and the one that waits are not the same: the delivery report may
+	// reach any IP-SM-GW of the network, and so may the sweep that ends
+	// a delivery whose TR1N has run out.
+	PutOutcome(ctx context.Context, reference string, outcome Outcome, expires time.Time) error
+	// TakeOutcome returns the outcome of reference and removes it, and
+	// whether there was one. It is taken rather than read so that the
+	// Store is left with nothing once the request has been answered.
+	TakeOutcome(ctx context.Context, reference string) (Outcome, bool, error)
+
 	// PutRegSubscription keeps sub until its Expires, in place of the
 	// one with the same Call-ID and of any other one to the same public
 	// identity.
@@ -167,6 +179,13 @@ type messageReferences struct {
 	expires time.Time
 }
 
+// storedOutcome is how one delivery ended, waiting for the instance
+// that answers the request which brought it.
+type storedOutcome struct {
+	outcome Outcome
+	expires time.Time
+}
+
 // MemoryStore is a Store in the memory of one process. Two IP-SM-GWs
 // share state only when they share one MemoryStore, as in a test; a
 // network of several nodes needs a store outside them. It never fails.
@@ -174,6 +193,9 @@ type MemoryStore struct {
 	mu                sync.Mutex
 	deliveries        map[string]PendingDelivery
 	messageReferences map[string]messageReferences
+	// outcomes are how deliveries ended, by the reference of the request
+	// that brought each one.
+	outcomes map[string]storedOutcome
 	// regSubscriptions are keyed by Call-ID, and regSubscriptionOf and
 	// regSubscriptionOfIMSI give the Call-ID for a public identity and
 	// for an IMSI, so that no lookup scans.
@@ -188,6 +210,7 @@ type MemoryStore struct {
 
 func NewMemoryStore() *MemoryStore {
 	return &MemoryStore{deliveries: map[string]PendingDelivery{}, messageReferences: map[string]messageReferences{},
+		outcomes:         map[string]storedOutcome{},
 		regSubscriptions: map[string]RegSubscription{}, regSubscriptionOf: map[string]string{},
 		regSubscriptionOfIMSI: map[string]string{},
 		reportTimeout:         ims.NewDueIndex[string]()}
@@ -280,6 +303,33 @@ func (s *MemoryStore) delivery(callID string) (PendingDelivery, bool) {
 		return PendingDelivery{}, false
 	}
 	return d, true
+}
+
+// PutOutcome keeps the outcome until expires, as an external store
+// would with a time to live.
+func (s *MemoryStore) PutOutcome(_ context.Context, reference string, outcome Outcome, expires time.Time) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.outcomes[reference] = storedOutcome{outcome: outcome, expires: expires}
+	time.AfterFunc(time.Until(expires), func() {
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		if stored, ok := s.outcomes[reference]; ok && !time.Now().Before(stored.expires) {
+			delete(s.outcomes, reference)
+		}
+	})
+	return nil
+}
+
+func (s *MemoryStore) TakeOutcome(_ context.Context, reference string) (Outcome, bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	stored, ok := s.outcomes[reference]
+	delete(s.outcomes, reference)
+	if !ok || !time.Now().Before(stored.expires) {
+		return 0, false, nil
+	}
+	return stored.outcome, true, nil
 }
 
 // PutRegSubscription keeps sub. The store removes it at its Expires.

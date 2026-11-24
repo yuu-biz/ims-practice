@@ -25,6 +25,8 @@ func IPSMGW(t *testing.T, newPair func(t *testing.T) (ipsmgw.Store, ipsmgw.Store
 		{"ReportTimeoutIsClaimedOnce", ipsmgwReportTimeoutClaimedOnce},
 		{"ClaimThatIsNotDoneRunsOut", ipsmgwClaimRunsOut},
 		{"TakenDeliveryLeavesNoExpiry", ipsmgwTakenDeliveryLeavesNoExpiry},
+		{"OutcomeReachesTheInstanceThatWaitsForIt", ipsmgwOutcome},
+		{"OnlyOneTakesAnOutcome", ipsmgwOnlyOneTakesAnOutcome},
 		{"RegSubscription", ipsmgwRegSubscription},
 		{"RegSubscriptionOfIMSI", ipsmgwRegSubscriptionOfIMSI},
 		{"RegSubscriptionReplacesTheOldOne", ipsmgwRegSubscriptionReplaces},
@@ -415,6 +417,70 @@ func ipsmgwRegSubscriptionOfIMSI(t *testing.T, a, b ipsmgw.Store) {
 // imsi is the IMSI of the user of impu, as the IP-SM-GW read it over Sh
 // (TS 23.003 2.2).
 const imsi = "001010000000001"
+
+func putOutcome(t *testing.T, s ipsmgw.Store, reference string, o ipsmgw.Outcome, expires time.Time) {
+	t.Helper()
+	if err := s.PutOutcome(context.Background(), reference, o, expires); err != nil {
+		t.Errorf("PutOutcome(%s): %v", reference, err)
+	}
+}
+
+func takeOutcome(t *testing.T, s ipsmgw.Store, reference string) (ipsmgw.Outcome, bool) {
+	t.Helper()
+	o, ok, err := s.TakeOutcome(context.Background(), reference)
+	if err != nil {
+		t.Errorf("TakeOutcome(%s): %v", reference, err)
+	}
+	return o, ok
+}
+
+// ipsmgwOutcome: the instance that ends a delivery puts its outcome in
+// the Store, and the instance that holds the request which brought the
+// delivery takes it there.
+func ipsmgwOutcome(t *testing.T, a, b ipsmgw.Store) {
+	putOutcome(t, a, "ref:1@sc", ipsmgw.MemoryCapacityExceeded, hourHence())
+	if got, ok := takeOutcome(t, b, "ref:1@sc"); !ok || got != ipsmgw.MemoryCapacityExceeded {
+		t.Errorf("TakeOutcome = %v, %v; want memory capacity exceeded", got, ok)
+	}
+	if _, ok := takeOutcome(t, a, "ref:1@sc"); ok {
+		t.Error("TakeOutcome of an outcome that was taken")
+	}
+	if _, ok := takeOutcome(t, b, "ref-none"); ok {
+		t.Error("TakeOutcome of a reference no delivery has")
+	}
+	// Delivered is the zero Outcome, which must still come back as an
+	// outcome that is there.
+	putOutcome(t, a, "ref-2", ipsmgw.Delivered, hourHence())
+	if got, ok := takeOutcome(t, b, "ref-2"); !ok || got != ipsmgw.Delivered {
+		t.Errorf("TakeOutcome of a delivered short message = %v, %v", got, ok)
+	}
+	putOutcome(t, a, "ref-3", ipsmgw.Delivered, time.Now().Add(short))
+	waitOut()
+	if _, ok := takeOutcome(t, b, "ref-3"); ok {
+		t.Error("TakeOutcome after the outcome expired")
+	}
+}
+
+// ipsmgwOnlyOneTakesAnOutcome: a request is answered once, so of
+// several instances that read one outcome only one gets it.
+func ipsmgwOnlyOneTakesAnOutcome(t *testing.T, a, b ipsmgw.Store) {
+	for range 10 {
+		putOutcome(t, a, "ref-1", ipsmgw.AbsentSubscriber, hourHence())
+		var takes atomic.Int32
+		parallel(4, func(i int) {
+			s := a
+			if i%2 == 1 {
+				s = b
+			}
+			if _, ok := takeOutcome(t, s, "ref-1"); ok {
+				takes.Add(1)
+			}
+		})
+		if got := takes.Load(); got != 1 {
+			t.Fatalf("%d instances took the outcome, want 1", got)
+		}
+	}
+}
 
 func regSubscription(callID string, lifetime time.Duration) ipsmgw.RegSubscription {
 	return ipsmgw.RegSubscription{PublicIdentity: impu, MSISDN: "12025550101", IMSI: imsi,
