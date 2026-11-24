@@ -224,6 +224,12 @@ func New(c Config) (*Server, error) {
 	if s.alarmEventsWait < time.Second || s.alarmEventsWait%time.Second != 0 || s.alarmEventsWait > maintenance.MaxAlarmEventsWait {
 		return nil, fmt.Errorf("oam: the wait for alarm events, %v, is no whole number of seconds up to %v", s.alarmEventsWait, maintenance.MaxAlarmEventsWait)
 	}
+	// A store whose watches run out unless renewed (internal/kvstore/
+	// oamstore) needs them renewed well within the lease: two renewals
+	// in a row may fail, and the watch still holds.
+	if l, ok := c.AlarmWatches.(interface{ WatchLease() time.Duration }); ok && 2*s.watchRenewal >= l.WatchLease() {
+		return nil, fmt.Errorf("oam: the watches are renewed every %v, which is not less than half their lease, %v", s.watchRenewal, l.WatchLease())
+	}
 	reg := c.Metrics
 	if reg == nil {
 		reg = metrics.NewRegistry()

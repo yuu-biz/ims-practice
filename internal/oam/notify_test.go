@@ -843,3 +843,53 @@ func TestANotificationThatTheStoreKeptFromGoingIsSentAgain(t *testing.T) {
 		})
 	}
 }
+
+func TestGiveUpCountsTheWatchesThatAreHeld(t *testing.T) {
+	gone := make(chan struct{})
+	close(gone)
+	watching := map[string]chan struct{}{"hss": gone, "icscf": make(chan struct{}), "scscf": make(chan struct{})}
+	var gave []string
+	// One watcher is giving its watch up already, so of the two others,
+	// one more goes for a share of one.
+	held := giveUp(watching, 1, func(node string) { gave = append(gave, node) })
+	open := 0
+	for _, release := range watching {
+		select {
+		case <-release:
+		default:
+			open++
+		}
+	}
+	if held != 1 || open != 1 || len(gave) != 1 || gave[0] == "hss" {
+		t.Errorf("held %d, %d open, gave %v; want one held, one open and one given up", held, open, gave)
+	}
+	// Within the share, nothing more goes.
+	if held := giveUp(watching, 1, func(node string) { t.Errorf("gave %s up within the share", node) }); held != 1 {
+		t.Errorf("held %d within the share", held)
+	}
+}
+
+// leasedWatches is a watch store whose watches last lease.
+type leasedWatches struct {
+	*FileAlarmWatchStore
+	lease time.Duration
+}
+
+func (l leasedWatches) WatchLease() time.Duration { return l.lease }
+
+func TestNewChecksTheRenewalAgainstTheLease(t *testing.T) {
+	watches, err := NewFileAlarmWatchStore(t.TempDir(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := mnsConfig()
+	c.Nodes = []Endpoint{{Name: "hss", Roles: []string{"hss"}, URL: "http://hss:8085"}}
+	c.AlarmWatches, c.WatchRenewal = leasedWatches{watches, 15 * time.Second}, 8*time.Second
+	if _, err := New(c); err == nil {
+		t.Error("New took a renewal of more than half the lease")
+	}
+	c.WatchRenewal = 5 * time.Second
+	if _, err := New(c); err != nil {
+		t.Errorf("New with a renewal of a third of the lease: %v", err)
+	}
+}

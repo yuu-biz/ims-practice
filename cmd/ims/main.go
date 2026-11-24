@@ -1057,13 +1057,13 @@ func oamHandler(server *oam.Server) http.Handler {
 // one file, and the backups, each an archive and its manifest. Without
 // a directory it keeps neither, and refuses those operations with 503.
 //
-// The subscriptions of the OSSs to the alarm notifications are in the
-// shared store when the node has one, so that several OAM instances see
-// the same ones, and otherwise in a file of the data directory, for one
-// instance. Without either, the OAM takes no subscription. The state of
-// the watch of each node, how far its alarm notifications have been
-// sent, is in the data directory beside them; an OAM with a shared
-// store watches no node and sends no notification.
+// The subscriptions of the OSSs to the alarm notifications, and the
+// watch of each node, which instance sends its alarm notifications and
+// how far it has sent them, are in the shared store when the node has
+// one, so that several OAM instances share the subscriptions and the
+// nodes, and otherwise in files of the data directory, for one
+// instance. Without either, the OAM takes no subscription and sends no
+// notification.
 func newOAM(c config.OAM, stores roleStores, registry *metrics.Registry, log *slog.Logger) (*oam.Server, error) {
 	cfg := oam.Config{HSSProvisioning: c.HSSProvisioning, SubNetwork: c.SubNetwork, MnSRoot: c.MnSRoot,
 		MaxNtfSubscriptions: c.MaxNtfSubscriptions, Metrics: registry, Log: log}
@@ -1083,7 +1083,8 @@ func newOAM(c config.OAM, stores roleStores, registry *metrics.Registry, log *sl
 	}
 	if c.SubNetwork != "" {
 		if kv, kvCfg, ok := stores.adapter(log); ok {
-			cfg.NtfSubscriptions = oamstore.New(kv, kvCfg)
+			store := oamstore.New(kv, kvCfg)
+			cfg.NtfSubscriptions, cfg.AlarmWatches = store, store
 		} else if c.DataDir != "" {
 			subs, err := oam.NewFileNtfSubscriptionStore(filepath.Join(c.DataDir, "ntf-subscriptions.json"))
 			if err != nil {

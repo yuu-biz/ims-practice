@@ -27,7 +27,12 @@
 // this package on one shared volume, or a shared database behind the
 // same interfaces. A drain, a configuration change and a restore that
 // two instances run at once are settled by the nodes and the HSS, which
-// check the generation, the administrative state and each record.
+// check the generation, the administrative state and each record. The
+// subscriptions of the OSSs and the watches of the nodes for the alarm
+// notifications are in a store too (NtfSubscriptionStore,
+// AlarmWatchStore), which several instances share on internal/kvstore:
+// each node is watched by one instance at a time, under a lease that the
+// instances share out among them (RunNotifications).
 //
 // The bodies are JSON, and every error is maintenance.ErrorBody,
 // {"error": "..."}, as in the maintenance API. Times are RFC 3339.
