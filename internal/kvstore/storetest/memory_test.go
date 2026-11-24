@@ -4,6 +4,7 @@ import (
 	"context"
 	"math"
 	"net/netip"
+	"path/filepath"
 	"strconv"
 	"testing"
 	"time"
@@ -13,6 +14,7 @@ import (
 	"github.com/yuu-biz/ims-practice/internal/ipsmgw"
 	"github.com/yuu-biz/ims-practice/internal/kvstore/storetest"
 	"github.com/yuu-biz/ims-practice/internal/mmtel"
+	"github.com/yuu-biz/ims-practice/internal/oam"
 	"github.com/yuu-biz/ims-practice/internal/pcscf"
 	"github.com/yuu-biz/ims-practice/internal/sc"
 	"github.com/yuu-biz/ims-practice/internal/scscf"
@@ -27,6 +29,18 @@ import (
 func TestSCSCFMemoryStore(t *testing.T) {
 	storetest.SCSCF(t, func(*testing.T) (scscf.Store, scscf.Store) {
 		s := scscf.NewMemoryStore()
+		return s, s
+	})
+}
+
+// The file store of one OAM instance is shared by sharing the one value,
+// as a MemoryStore is.
+func TestOAMFileNtfSubscriptionStore(t *testing.T) {
+	storetest.OAMNtfSubscriptions(t, func(t *testing.T) (oam.NtfSubscriptionStore, oam.NtfSubscriptionStore) {
+		s, err := oam.NewFileNtfSubscriptionStore(filepath.Join(t.TempDir(), "ntf-subscriptions.json"))
+		if err != nil {
+			t.Fatal(err)
+		}
 		return s, s
 	})
 }
