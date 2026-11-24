@@ -170,6 +170,9 @@ func TestDiameterApplicationsFollowTheRoles(t *testing.T) {
 	// The HSS adds S6c, over which the SMS central functions ask it for
 	// routing information and it alerts them.
 	hss := []uint32{diameter.ApplicationIDCx, diameter.ApplicationIDSh, sgd.ApplicationIDS6c}
+	// The IP-SM-GW adds SGd, over which a Service Centre brings it a
+	// short message for one of its users.
+	ipsmgw := []uint32{diameter.ApplicationIDSh, sgd.ApplicationIDSGd}
 	rx := []uint32{diameter.ApplicationIDRx}
 	tests := []struct {
 		roles []config.Role
@@ -181,8 +184,8 @@ func TestDiameterApplicationsFollowTheRoles(t *testing.T) {
 		{[]config.Role{config.RolePCSCF}, rx},
 		{[]config.Role{config.RoleEPC}, rx},
 		{[]config.Role{config.RoleAGW}, nil},
-		{[]config.Role{config.RoleIPSMGW}, []uint32{diameter.ApplicationIDSh}},
-		{[]config.Role{config.RoleSCSCF, config.RoleIPSMGW}, cxAndSh},
+		{[]config.Role{config.RoleIPSMGW}, ipsmgw},
+		{[]config.Role{config.RoleSCSCF, config.RoleIPSMGW}, append(cxAndSh, sgd.ApplicationIDSGd)},
 	}
 	for _, tt := range tests {
 		if got := diameterApplications(config.Config{Roles: tt.roles}); !reflect.DeepEqual(got, tt.want) {
@@ -214,6 +217,11 @@ func TestDiameterHandlerSendsRxToTheEPCRole(t *testing.T) {
 		Header: diameter.NewHeader(node, "", domain), UserName: impi, PublicIdentity: impu, VisitedNetworkIdentifier: domain,
 	}.Message()
 	asr := rx.AbortSessionRequest{Header: diameter.NewHeader(node, "ims."+domain, domain), AbortCause: rx.BearerReleased}.Message()
+	if err := sgd.LoadDictionary(); err != nil {
+		t.Fatal(err)
+	}
+	tfr := sgd.MTForwardShortMessageRequest{Header: diameter.NewHeader(node, "ims."+domain, domain),
+		UserName: "001010000000001", SCAddress: "12025550100", SMRPUI: []byte{0x00}}.Message()
 	events := make(chan policy.Event, 1)
 	client := rx.NewClient(node, nil, domain, func(e policy.Event) { events <- e }, quiet())
 	var noSCSCF atomic.Pointer[scscf.SCSCF]
@@ -234,13 +242,17 @@ func TestDiameterHandlerSendsRxToTheEPCRole(t *testing.T) {
 		{"ASR on a node with epc and pcscf", epcRole, client, asr, diameter.DiameterSuccess},
 		{"AAR on a node with epc and pcscf", epcRole, client, aar, rx.IPCANSessionNotAvailable},
 		{"ASR on a pcscf node without a PCRF", nil, nil, asr, diameter.DiameterCommandUnsupported},
+		// A short message over SGd needs the ipsmgw role; this node has
+		// none.
+		{"TFR on a node without ipsmgw", epcRole, nil, tfr, diameter.DiameterCommandUnsupported},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			var policyControl atomic.Pointer[rx.Client]
 			if tt.pcscf != nil {
 				policyControl.Store(tt.pcscf)
 			}
-			answer := diameterHandler(node, hssRole, &noSCSCF, tt.epc, &policyControl)(wire(t, tt.request))
+			var noIPSMGW atomic.Pointer[ipsmgw.IPSMGW]
+			answer := diameterHandler(node, hssRole, &noSCSCF, tt.epc, &noIPSMGW, &policyControl)(wire(t, tt.request))
 			if got := result(t, wire(t, answer)); got != tt.want {
 				t.Errorf("result %d, want %d", got, tt.want)
 			}
