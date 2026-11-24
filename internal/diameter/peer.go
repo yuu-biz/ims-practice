@@ -173,6 +173,10 @@ type Peer struct {
 	// available is what State.TakesRequests says of the state the loop
 	// is in, for Available.
 	available atomic.Bool
+	// reachMu guards reach and watchers, of this peer only.
+	reachMu  sync.Mutex
+	reach    Reachability
+	watchers []func(Reachability)
 }
 
 // input is what the dialer and reader goroutines hand to the loop. gen
@@ -231,6 +235,9 @@ func (p *Peer) Request(ctx context.Context, request *diam.Message) (*diam.Messag
 		return nil, fmt.Errorf("no answer to %s: %w", commandName(request), ctx.Err())
 	}
 }
+
+// Host is the Origin-Host of the peer.
+func (p *Peer) Host() string { return p.host }
 
 // Available says whether the connection to the peer takes requests
 // now: it is open, and the watchdog does not suspect it.
@@ -338,6 +345,7 @@ func (p *Peer) run(s State, first Event, conn net.Conn) {
 		if next.Phase != s.Phase || next.Watchdog != s.Watchdog {
 			p.log.Info("peer state", "event", ev.eventName(), "from", describe(s), "to", describe(next))
 		}
+		p.setReachability(s, ev, next)
 		s = next
 		for _, a := range actions {
 			if _, finish := a.(Finish); finish {
