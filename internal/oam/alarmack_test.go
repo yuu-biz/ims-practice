@@ -149,6 +149,27 @@ func TestPatchRefusesWhatItCannotApply(t *testing.T) {
 	}
 }
 
+// TestPatchWithANameThatTheNodeRefuses: the node bounds the names of an
+// acknowledgement, and the OAM, which leaves the bound to the node,
+// answers its refusal as an invalid value, with no list changed.
+func TestPatchWithANameThatTheNodeRefuses(t *testing.T) {
+	ts, _, keys := queryNodes(t)
+	long := strings.Repeat("x", 1000)
+	for _, record := range []string{
+		`{"ackState": "ACKNOWLEDGED", "ackUserId": "` + long + `"}`,
+		`{"ackState": "ACKNOWLEDGED", "ackUserId": "noc-operator", "ackSystemId": "` + long + `"}`,
+	} {
+		a := ts.mnsCall(t, "PATCH", alarmListPath, mergePatchJSON, ackPatch(map[string]string{keys["scscf"]: record}))
+		got := decodeAs[mns.ErrorResponseDefault](t, a.body)
+		if a.status != http.StatusBadRequest || got.Type != mns.ValidationError || got.Reason != mns.NewAttributeValueInvalid {
+			t.Errorf("a name of 1000 characters: %d %s", a.status, a.body)
+		}
+	}
+	if r := ts.alarmList(t, "").Attributes.AlarmRecords[keys["scscf"]]; r.AckState != mns.Unacknowledged {
+		t.Errorf("a refused patch changed %+v", r)
+	}
+}
+
 func TestPatchOfARecordThatIsGone(t *testing.T) {
 	ts, _, keys := queryNodes(t)
 	gone := "scscf.0123456789abcdef"
