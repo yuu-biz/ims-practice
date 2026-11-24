@@ -458,3 +458,13 @@ func TestLeaseTakenOver(t *testing.T) {
 		t.Errorf("%d TFRs after the lease ran out, want 2", got)
 	}
 }
+
+// An empty retry schedule is no schedule: the SC takes the default one
+// rather than having no delay to wait.
+func TestAnEmptyRetryScheduleIsTheDefault(t *testing.T) {
+	c := New(Config{Address: "12025550100", RetrySchedule: []time.Duration{}}, NewMemoryStore(), nil, nil,
+		SystemClock, quietLog)
+	if !reflect.DeepEqual(c.cfg.RetrySchedule, DefaultRetrySchedule) {
+		t.Errorf("schedule = %v, want %v", c.cfg.RetrySchedule, DefaultRetrySchedule)
+	}
+}

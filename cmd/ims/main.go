@@ -51,6 +51,7 @@ import (
 	"github.com/yuu-biz/ims-practice/internal/kvstore/pcscfstore"
 	"github.com/yuu-biz/ims-practice/internal/kvstore/scscfstore"
 	"github.com/yuu-biz/ims-practice/internal/kvstore/scstore"
+	"github.com/yuu-biz/ims-practice/internal/kvstore/smscstore"
 	"github.com/yuu-biz/ims-practice/internal/lab"
 	"github.com/yuu-biz/ims-practice/internal/maintenance"
 	"github.com/yuu-biz/ims-practice/internal/metrics"
@@ -65,6 +66,7 @@ import (
 	"github.com/yuu-biz/ims-practice/internal/sh"
 	"github.com/yuu-biz/ims-practice/internal/sip"
 	"github.com/yuu-biz/ims-practice/internal/sipdns"
+	"github.com/yuu-biz/ims-practice/internal/smsc"
 	"github.com/yuu-biz/ims-practice/internal/xcap"
 )
 
@@ -131,6 +133,10 @@ func run(configPath string, log *slog.Logger, level *slog.LevelVar) error {
 	// over SGd. Like the S-CSCF it is made after its peer, so the handler
 	// finds it here.
 	var ipsmgwRole atomic.Pointer[ipsmgw.IPSMGW]
+	// The Service Centre takes the short messages that a serving node
+	// brings over SGd and the alerts of the HSS over S6c. It is made
+	// after the server it sends on, so the handler finds it here.
+	var scRole atomic.Pointer[smsc.SMSC]
 	// The P-CSCF's Rx client takes the RARs and ASRs of the PCRF. Like
 	// the S-CSCF it is made after its peer, so the handler finds it here.
 	var policyControl atomic.Pointer[rx.Client]
@@ -156,7 +162,7 @@ func run(configPath string, log *slog.Logger, level *slog.LevelVar) error {
 		if cfg.EPC != nil {
 			epcRole = epc.New(cfg.EPC.Config, epc.NewMemoryStore(), node, log.With("role", config.RoleEPC))
 		}
-		node.Handle(diameterHandler(node, hssRole, &scscfRole, epcRole, &ipsmgwRole, &policyControl))
+		node.Handle(diameterHandler(node, hssRole, &scscfRole, epcRole, &ipsmgwRole, &scRole, &policyControl, log))
 		if d.Listen != "" {
 			server, err = node.Listen(d.Listen)
 			if err != nil {
@@ -379,8 +385,28 @@ func run(configPath string, log *slog.Logger, level *slog.LevelVar) error {
 			return err
 		}
 		users := sh.NewClient(node, hss, cfg.HomeDomain)
-		centreLog := roleLog.With("function", "sc")
-		centre := sc.New(users, scStore(stores, centreLog), centreLog)
+		// With a Service Centre among the Diameter peers the IP-SM-GW
+		// hands the short messages of its UEs to it over SGd; without one
+		// it uses the stub of the SC inside this process.
+		var centre ipsmgw.ServiceCentre
+		var stub *sc.ServiceCentre
+		if scPeers := peersOfKind(cfg, peers, config.PeerSC); len(scPeers) > 0 {
+			group, err := diameter.NewPeerGroup(registry, string(config.RoleIPSMGW), scPeers...)
+			if err != nil {
+				return err
+			}
+			// The SC is in the realm of this node, which is where an OFR
+			// goes; it names no instance of the SC, so whichever of them
+			// answers takes the short message.
+			centre = ipsmgw.NewSMSIWMSC(sgd.NewMOClient(node, group), c.ServiceCentre.Digits,
+				cfg.Diameter.Identity.OriginRealm, roleLog.With("function", "sgd"))
+			roleLog.Info("the short messages of the UEs go to the service centre over SGd",
+				"service_centre", c.ServiceCentre.String())
+		} else {
+			centreLog := roleLog.With("function", "sc")
+			stub = sc.New(users, scStore(stores, centreLog), centreLog)
+			centre = stub
+		}
 		g := ipsmgw.New(ipsmgw.Config{
 			URI:           c.SIP.URI(),
 			HomeDomain:    cfg.HomeDomain,
@@ -395,17 +421,31 @@ func run(configPath string, log *slog.Logger, level *slog.LevelVar) error {
 		// until the node stops.
 		defer g.Close()
 		managed = append(managed, managedRole{function: g.Function(hss.Available), manage: g.Manage})
-		centre.SetIPSMGW(g)
-		if c.IBCF.Host != "" {
-			// A short message for a user of another network leaves
-			// through the IBCF.
-			centre.SetPeerNetworks(resolver, cfg.HomeDomain)
+		if stub != nil {
+			stub.SetIPSMGW(g)
+			if c.IBCF.Host != "" {
+				// A short message for a user of another network leaves
+				// through the IBCF.
+				stub.SetPeerNetworks(resolver, cfg.HomeDomain)
+			}
 		}
 		stack, err := startSIP(config.RoleIPSMGW, c.SIP, g.OnRequest, nil)
 		if err != nil {
 			return err
 		}
 		g.SetStack(stack)
+	}
+	if c := cfg.SC; c != nil {
+		roleLog := log.With("role", config.RoleSC)
+		hss, err := hssPeers(cfg, peers, registry, config.RoleSC)
+		if err != nil {
+			return err
+		}
+		centre, stop := startSC(ctx, *c, cfg.HomeDomain, smscStore(stores, roleLog), node, server, hss, roleLog)
+		// The deliveries of this instance end after its Diameter server
+		// has stopped, so no request arrives while it finishes them.
+		defer stop()
+		scRole.Store(centre)
 	}
 	if c := cfg.IBCF; c != nil {
 		roleLog := log.With("role", config.RoleIBCF)
@@ -776,6 +816,17 @@ func scStore(stores roleStores, log *slog.Logger) sc.Store {
 	return sc.NewMemoryStore()
 }
 
+// smscStore is where the Service Centre of the sc role keeps the short
+// messages it holds and how far their delivery has got, so that any
+// instance may take a short message and any instance may deliver it (TS
+// 23.040 6.1).
+func smscStore(stores roleStores, log *slog.Logger) smsc.Store {
+	if kv, cfg, ok := stores.adapter(log); ok {
+		return smscstore.New(kv, cfg)
+	}
+	return smsc.NewMemoryStore()
+}
+
 // pcscfStore is where the P-CSCF keeps the IP association of each
 // registered UE, the dialogs of its calls and its table of security
 // associations (TS 24.229 5.2.2.1, 5.2.6.3, TS 33.203 7.1).
@@ -891,6 +942,10 @@ var roleApplications = map[config.Role][]uint32{
 	// The IP-SM-GW registers itself and finds users over Sh, and takes
 	// the short messages that a Service Centre brings over SGd.
 	config.RoleIPSMGW: {diameter.ApplicationIDSh, sgd.ApplicationIDSGd},
+	// The Service Centre asks the HSS where a user is and reports a
+	// delivery that failed over S6c, and carries the short messages
+	// themselves to and from the serving nodes over SGd.
+	config.RoleSC: {sgd.ApplicationIDS6c, sgd.ApplicationIDSGd},
 	// The MMTel AS reads the settings of the services over Sh.
 	config.RoleMMTel: {diameter.ApplicationIDSh},
 	// The P-CSCF has Diameter only to reach the PCRF, and the epc role's
@@ -1075,6 +1130,7 @@ type configurationView struct {
 	MMTel  *mmtelView  `json:"mmtel,omitempty"`
 	MRFC   *mrfcView   `json:"mrfc,omitempty"`
 	IPSMGW *ipsmgwView `json:"ipsmgw,omitempty"`
+	SC     *scView     `json:"sc,omitempty"`
 	AGW    *agwView    `json:"agw,omitempty"`
 	MRFP   *agwView    `json:"mrfp,omitempty"`
 }
@@ -1173,6 +1229,16 @@ type ipsmgwView struct {
 	// IBCF is the IBCF through which a short message for a user of
 	// another IMS network leaves.
 	IBCF string `json:"ibcf,omitempty"`
+}
+
+// scView is the Service Centre of the sc role: its own number and how
+// long it waits before it tries a delivery that failed again. Neither
+// is a secret.
+type scView struct {
+	Address string `json:"address"`
+	// RetryDelays are written out as "30s" and the like, the form the
+	// configuration file uses.
+	RetryDelays []string `json:"retry_delays,omitempty"`
 }
 
 type mrfcView struct {
@@ -1291,6 +1357,12 @@ func newConfigurationView(cfg config.Config) configurationView {
 		v.IPSMGW = &ipsmgwView{SIP: newSIPView(c.SIP), Number: c.Number, ServiceCentre: c.ServiceCentre.String()}
 		if c.IBCF.Host != "" {
 			v.IPSMGW.IBCF = c.IBCF.String()
+		}
+	}
+	if c := cfg.SC; c != nil {
+		v.SC = &scView{Address: c.Address}
+		for _, d := range c.RetryDelays {
+			v.SC.RetryDelays = append(v.SC.RetryDelays, d.String())
 		}
 	}
 	if c := cfg.AGW; c != nil {
@@ -1494,21 +1566,43 @@ func peersOfKind(cfg config.Config, peers []*diameter.Peer, kind config.PeerKind
 }
 
 // diameterHandler gives each request that reaches the node to the role
-// of its application: Cx and Sh as cxHandler does, SGd to the IP-SM-GW,
-// and Rx to the PCRF of the epc role, except the two requests that a
-// PCRF sends, RAR and ASR (TS 29.214 4.4.6), which are for the P-CSCF's
-// Rx client. epcRole is nil on a node without the epc role, ipsmgwRole
-// is empty on a node without the ipsmgw role, and policyControl is empty
-// on a node whose P-CSCF has no PCRF.
+// of its application: Cx and Sh as cxHandler does, Rx to the PCRF of the
+// epc role, except the two requests that a PCRF sends, RAR and ASR (TS
+// 29.214 4.4.6), which are for the P-CSCF's Rx client, and SGd and S6c
+// to the role that each command belongs to.
+//
+// Of SGd, the short message of a UE (OFR) is for the Service Centre and
+// the one for a UE (TFR) for the IP-SM-GW, which are the two ends of
+// that reference point (TS 29.338 6.2). Of S6c, the alert (ALR) is for
+// the Service Centre, which it tells that a user is reachable again, and
+// every other command is one that a Service Centre sends the HSS
+// (5.2). epcRole is nil on a node without the epc role, ipsmgwRole and
+// scRole are empty on a node without the ipsmgw and the sc role, and
+// policyControl is empty on a node whose P-CSCF has no PCRF.
 func diameterHandler(node *diameter.Node, hssRole *hss.HSS, scscfRole *atomic.Pointer[scscf.SCSCF], epcRole *epc.EPC,
-	ipsmgwRole *atomic.Pointer[ipsmgw.IPSMGW], policyControl *atomic.Pointer[rx.Client]) diameter.Handler {
+	ipsmgwRole *atomic.Pointer[ipsmgw.IPSMGW], scRole *atomic.Pointer[smsc.SMSC],
+	policyControl *atomic.Pointer[rx.Client], log *slog.Logger) diameter.Handler {
 	cx := cxHandler(node, hssRole, scscfRole)
+	// forServiceCentre answers request with the SC of this node, or says
+	// that the node does not serve the command when it has no sc role.
+	forServiceCentre := func(request *diam.Message) *diam.Message {
+		if centre := scRole.Load(); centre != nil {
+			return serviceCentreHandler(node.Identity(), centre, request, log.With("role", config.RoleSC))
+		}
+		return diameter.CommandUnsupportedAnswer(node.Identity(), request)
+	}
 	return func(request *diam.Message) *diam.Message {
 		if request.Header.ApplicationID == sgd.ApplicationIDSGd {
+			if request.Header.CommandCode == sgd.CommandMOForwardShortMessage {
+				return forServiceCentre(request)
+			}
 			if g := ipsmgwRole.Load(); g != nil {
 				return g.Handle(request)
 			}
 			return diameter.CommandUnsupportedAnswer(node.Identity(), request)
+		}
+		if request.Header.ApplicationID == sgd.ApplicationIDS6c && request.Header.CommandCode == sgd.CommandAlertServiceCentre {
+			return forServiceCentre(request)
 		}
 		if request.Header.ApplicationID != diameter.ApplicationIDRx {
 			return cx(request)

@@ -50,6 +50,7 @@ import (
 	"github.com/yuu-biz/ims-practice/internal/sh"
 	"github.com/yuu-biz/ims-practice/internal/sip"
 	"github.com/yuu-biz/ims-practice/internal/sms"
+	"github.com/yuu-biz/ims-practice/internal/smsc"
 )
 
 const (
@@ -173,6 +174,9 @@ func TestDiameterApplicationsFollowTheRoles(t *testing.T) {
 	// The IP-SM-GW adds SGd, over which a Service Centre brings it a
 	// short message for one of its users.
 	ipsmgw := []uint32{diameter.ApplicationIDSh, sgd.ApplicationIDSGd}
+	// The Service Centre speaks the two applications of TS 29.338 and
+	// nothing else.
+	sc := []uint32{sgd.ApplicationIDS6c, sgd.ApplicationIDSGd}
 	rx := []uint32{diameter.ApplicationIDRx}
 	tests := []struct {
 		roles []config.Role
@@ -185,7 +189,10 @@ func TestDiameterApplicationsFollowTheRoles(t *testing.T) {
 		{[]config.Role{config.RoleEPC}, rx},
 		{[]config.Role{config.RoleAGW}, nil},
 		{[]config.Role{config.RoleIPSMGW}, ipsmgw},
+		{[]config.Role{config.RoleSC}, sc},
 		{[]config.Role{config.RoleSCSCF, config.RoleIPSMGW}, append(cxAndSh, sgd.ApplicationIDSGd)},
+		// A node with both ends of SGd advertises it once.
+		{[]config.Role{config.RoleIPSMGW, config.RoleSC}, append(ipsmgw, sgd.ApplicationIDS6c)},
 	}
 	for _, tt := range tests {
 		if got := diameterApplications(config.Config{Roles: tt.roles}); !reflect.DeepEqual(got, tt.want) {
@@ -252,12 +259,106 @@ func TestDiameterHandlerSendsRxToTheEPCRole(t *testing.T) {
 				policyControl.Store(tt.pcscf)
 			}
 			var noIPSMGW atomic.Pointer[ipsmgw.IPSMGW]
-			answer := diameterHandler(node, hssRole, &noSCSCF, tt.epc, &noIPSMGW, &policyControl)(wire(t, tt.request))
+			var noSC atomic.Pointer[smsc.SMSC]
+			answer := diameterHandler(node, hssRole, &noSCSCF, tt.epc, &noIPSMGW, &noSC, &policyControl, quiet())(wire(t, tt.request))
 			if got := result(t, wire(t, answer)); got != tt.want {
 				t.Errorf("result %d, want %d", got, tt.want)
 			}
 		})
 	}
+}
+
+// Each command of SGd and S6c reaches the role that owns its end of the
+// reference point: the short message of a UE (OFR) and the alert (ALR)
+// the Service Centre, the short message for a UE (TFR) the IP-SM-GW, and
+// the routing info query (SRR) the HSS. A node without the role that a
+// command belongs to says that it does not serve it.
+func TestDiameterHandlerSendsTheSMSCommandsToTheirRole(t *testing.T) {
+	if err := diameter.LoadDictionary(); err != nil {
+		t.Fatal(err)
+	}
+	if err := sgd.LoadDictionary(); err != nil {
+		t.Fatal(err)
+	}
+	const scNumber = "12025550100"
+	node := diameter.NewNode(diameter.Identity{OriginHost: "sc." + domain, OriginRealm: domain},
+		[]uint32{sgd.ApplicationIDS6c, sgd.ApplicationIDSGd}, diameter.Timers{}, quiet())
+	// The SC answers out of its Store alone here: it refuses a short
+	// message for a number the HSS does not answer about, and an alert
+	// for a user it holds nothing for, without reaching either client.
+	centre := smsc.New(smsc.Config{Address: scNumber, HSSRealm: domain}, smsc.NewMemoryStore(),
+		nil, unreachableHSS{}, smsc.SystemClock, quiet())
+	ofr := sgd.MOForwardShortMessageRequest{Header: diameter.NewHeader(node, "", domain), SCAddress: scNumber,
+		UserIdentifier: sgd.UserIdentifier{MSISDN: "12025550101"},
+		SMRPUI:         submitTPDU(t)}.Message()
+	alr := sgd.AlertServiceCentreRequest{Header: diameter.NewHeader(node, "sc."+domain, domain), SCAddress: scNumber,
+		UserIdentifier: sgd.UserIdentifier{MSISDN: "12025550102"}}.Message()
+	tfr := sgd.MTForwardShortMessageRequest{Header: diameter.NewHeader(node, "ims."+domain, domain),
+		UserName: "001010000000001", SCAddress: scNumber, SMRPUI: []byte{0x00}}.Message()
+	srr := sgd.SendRoutingInfoForSMRequest{Header: diameter.NewHeader(node, "", domain),
+		MSISDN: "12025550102", SCAddress: scNumber}.Message()
+	store, err := hss.NewMemoryStore(hss.Subscription{PrivateIdentity: impi, PublicIdentities: []string{impu}, Password: "p"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	hssRole, err := hss.New(hss.Config{Realm: domain, VisitedNetworks: []string{domain}}, store, node, quiet())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var noSCSCF atomic.Pointer[scscf.SCSCF]
+	for _, tt := range []struct {
+		name    string
+		sc      *smsc.SMSC
+		hss     *hss.HSS
+		request *diam.Message
+		want    uint32
+	}{
+		// The HSS does not answer, so the SC cannot take the message.
+		{"OFR on an sc node", centre, nil, ofr, sgd.DiameterErrorSMDeliveryFailure},
+		{"OFR on a node without sc", nil, hssRole, ofr, diameter.DiameterCommandUnsupported},
+		{"ALR on an sc node", centre, nil, alr, diameter.DiameterSuccess},
+		{"ALR on a node without sc", nil, hssRole, alr, diameter.DiameterCommandUnsupported},
+		// The TFR is the IP-SM-GW's end, which this node does not have
+		// even with the sc role.
+		{"TFR on an sc node", centre, nil, tfr, diameter.DiameterCommandUnsupported},
+		// The SRR is for the HSS, also on a node that has both roles.
+		{"SRR on an hss node", nil, hssRole, srr, sgd.DiameterErrorUserUnknown},
+		{"SRR on a node with hss and sc", centre, hssRole, srr, sgd.DiameterErrorUserUnknown},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			var scRole atomic.Pointer[smsc.SMSC]
+			if tt.sc != nil {
+				scRole.Store(tt.sc)
+			}
+			var noIPSMGW atomic.Pointer[ipsmgw.IPSMGW]
+			var noPolicy atomic.Pointer[rx.Client]
+			answer := diameterHandler(node, tt.hss, &noSCSCF, nil, &noIPSMGW, &scRole, &noPolicy, quiet())(wire(t, tt.request))
+			if got := result(t, wire(t, answer)); got != tt.want {
+				t.Errorf("result %d, want %d", got, tt.want)
+			}
+		})
+	}
+}
+
+// unreachableHSS is an S6c client whose requests never arrive.
+type unreachableHSS struct{}
+
+func (unreachableHSS) SendRoutingInfoForSM(context.Context, sgd.SendRoutingInfoForSMRequest) (sgd.SendRoutingInfoForSMAnswer, error) {
+	return sgd.SendRoutingInfoForSMAnswer{}, errors.New("the HSS is not reachable in this test")
+}
+
+func (unreachableHSS) ReportSMDeliveryStatus(context.Context, sgd.ReportSMDeliveryStatusRequest) (sgd.ReportSMDeliveryStatusAnswer, error) {
+	return sgd.ReportSMDeliveryStatusAnswer{}, errors.New("the HSS is not reachable in this test")
+}
+
+// submitTPDU is an SMS-SUBMIT for a number in the test range.
+func submitTPDU(t *testing.T) []byte {
+	t.Helper()
+	tpdu, err := sms.Submit{MessageReference: 1, DestinationAddress: sms.InternationalNumber("+12025550102")}.Marshal()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return tpdu
 }
 
 // The P-CSCF's PCRF is the last peer, after the instances of the HSS,
@@ -270,7 +371,7 @@ func TestDiameterHandlerSendsRxToTheEPCRole(t *testing.T) {
 // so a node with two instances of the HSS and no PCRF leaves the
 // P-CSCF without policy control instead of sending Rx to an HSS.
 func TestPeersOfTheHSSAndThePCRF(t *testing.T) {
-	hss1, hss2, pcrf := &diameter.Peer{}, &diameter.Peer{}, &diameter.Peer{}
+	hss1, hss2, pcrf, sc := &diameter.Peer{}, &diameter.Peer{}, &diameter.Peer{}, &diameter.Peer{}
 	both := []config.Role{config.RolePCSCF, config.RoleSCSCF}
 	for _, tt := range []struct {
 		name  string
@@ -281,26 +382,36 @@ func TestPeersOfTheHSSAndThePCRF(t *testing.T) {
 		peers []*diameter.Peer
 		pcscf *diameter.Peer
 		hss   []*diameter.Peer
+		// sc are the connections to the Service Centre, which only the
+		// ipsmgw role has.
+		sc []*diameter.Peer
 	}{
 		{"pcscf with a PCRF", []config.Role{config.RolePCSCF},
-			[]config.PeerKind{config.PeerPCRF}, []*diameter.Peer{pcrf}, pcrf, nil},
-		{"pcscf without Diameter", []config.Role{config.RolePCSCF}, nil, nil, nil, nil},
+			[]config.PeerKind{config.PeerPCRF}, []*diameter.Peer{pcrf}, pcrf, nil, nil},
+		{"pcscf without Diameter", []config.Role{config.RolePCSCF}, nil, nil, nil, nil, nil},
 		{"pcscf and scscf with the HSS only", both,
-			[]config.PeerKind{config.PeerHSS}, []*diameter.Peer{hss1}, nil, []*diameter.Peer{hss1}},
+			[]config.PeerKind{config.PeerHSS}, []*diameter.Peer{hss1}, nil, []*diameter.Peer{hss1}, nil},
 		{"pcscf and scscf with both", both,
-			[]config.PeerKind{config.PeerHSS, config.PeerPCRF}, []*diameter.Peer{hss1, pcrf}, pcrf, []*diameter.Peer{hss1}},
+			[]config.PeerKind{config.PeerHSS, config.PeerPCRF}, []*diameter.Peer{hss1, pcrf}, pcrf, []*diameter.Peer{hss1}, nil},
 		{"pcscf and scscf with two instances of the HSS and a PCRF", both,
 			[]config.PeerKind{config.PeerHSS, config.PeerHSS, config.PeerPCRF},
-			[]*diameter.Peer{hss1, hss2, pcrf}, pcrf, []*diameter.Peer{hss1, hss2}},
+			[]*diameter.Peer{hss1, hss2, pcrf}, pcrf, []*diameter.Peer{hss1, hss2}, nil},
 		{"pcscf and scscf with two instances of the HSS and no PCRF", both,
 			[]config.PeerKind{config.PeerHSS, config.PeerHSS},
-			[]*diameter.Peer{hss1, hss2}, nil, []*diameter.Peer{hss1, hss2}},
+			[]*diameter.Peer{hss1, hss2}, nil, []*diameter.Peer{hss1, hss2}, nil},
 		{"pcscf and scscf with the PCRF before the HSS", both,
-			[]config.PeerKind{config.PeerPCRF, config.PeerHSS}, []*diameter.Peer{pcrf, hss1}, pcrf, []*diameter.Peer{hss1}},
+			[]config.PeerKind{config.PeerPCRF, config.PeerHSS}, []*diameter.Peer{pcrf, hss1}, pcrf, []*diameter.Peer{hss1}, nil},
 		{"scscf alone", []config.Role{config.RoleSCSCF},
-			[]config.PeerKind{config.PeerHSS}, []*diameter.Peer{hss1}, nil, []*diameter.Peer{hss1}},
+			[]config.PeerKind{config.PeerHSS}, []*diameter.Peer{hss1}, nil, []*diameter.Peer{hss1}, nil},
 		{"scscf with two instances of the HSS", []config.Role{config.RoleSCSCF},
-			[]config.PeerKind{config.PeerHSS, config.PeerHSS}, []*diameter.Peer{hss1, hss2}, nil, []*diameter.Peer{hss1, hss2}},
+			[]config.PeerKind{config.PeerHSS, config.PeerHSS}, []*diameter.Peer{hss1, hss2}, nil, []*diameter.Peer{hss1, hss2}, nil},
+		// The Service Centre of an IP-SM-GW is a peer of its own kind,
+		// and the HSS is still found beside it.
+		{"ipsmgw with the HSS and the SC", []config.Role{config.RoleIPSMGW},
+			[]config.PeerKind{config.PeerHSS, config.PeerSC}, []*diameter.Peer{hss1, sc}, nil, []*diameter.Peer{hss1},
+			[]*diameter.Peer{sc}},
+		{"ipsmgw with the HSS alone", []config.Role{config.RoleIPSMGW},
+			[]config.PeerKind{config.PeerHSS}, []*diameter.Peer{hss1}, nil, []*diameter.Peer{hss1}, nil},
 	} {
 		cfg := config.Config{Roles: tt.roles}
 		if tt.kinds != nil {
@@ -330,6 +441,9 @@ func TestPeersOfTheHSSAndThePCRF(t *testing.T) {
 		}
 		if got := group.Peers(); !slices.Equal(got, tt.hss) {
 			t.Errorf("%s: HSS %v, want %v", tt.name, got, tt.hss)
+		}
+		if got := peersOfKind(cfg, tt.peers, config.PeerSC); !slices.Equal(got, tt.sc) {
+			t.Errorf("%s: SC %v, want %v", tt.name, got, tt.sc)
 		}
 	}
 }
@@ -1670,4 +1784,40 @@ func (noSMSRegistration) UpdateSMSRegistrationInfo(context.Context, sh.UserIdent
 
 func (noSMSRegistration) NotifyReadyForSM(context.Context, sh.UserIdentity, string, sh.ReadyForSM) error {
 	return errors.New("no HSS in this test")
+}
+
+// The Service Centre ends when the node tells it to, even when no
+// signal to stop came: the start of the node can fail after the SC has
+// started, and the node then returns its error without waiting for a
+// signal.
+func TestTheServiceCentreEndsWhenTheNodeTellsIt(t *testing.T) {
+	if err := diameter.LoadDictionary(); err != nil {
+		t.Fatal(err)
+	}
+	if err := sgd.LoadDictionary(); err != nil {
+		t.Fatal(err)
+	}
+	node := diameter.NewNode(diameter.Identity{OriginHost: "sc." + domain, OriginRealm: domain},
+		[]uint32{sgd.ApplicationIDS6c, sgd.ApplicationIDSGd}, diameter.Timers{}, quiet())
+	server, err := node.Listen("127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer server.Stop()
+	hssGroup, err := diameter.NewPeerGroup(metrics.NewRegistry(), string(config.RoleSC))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, stop := startSC(context.Background(), config.SC{Address: "12025550100"}, domain, smsc.NewMemoryStore(),
+		node, server, hssGroup, quiet())
+	done := make(chan struct{})
+	go func() {
+		stop()
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the SC did not end within 5 s of the node telling it to")
+	}
 }

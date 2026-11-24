@@ -6,6 +6,11 @@
 // short message on at once: TS 24.341 B.5 assumes, for its example,
 // that the IP-SM-GW reaches the SC directly.
 //
+// An IP-SM-GW whose configuration names a Service Centre among its
+// Diameter peers reaches that node over SGd instead, which is package
+// smsc behind the same interface. The stub serves a deployment that
+// runs no such node.
+//
 // SIMPLIFIED: TS 23.204 6.3 and 6.4, TS 23.040 3.2.1 and 3.2.6. The stub
 // speaks neither SGd and S6c (TS 29.338) nor MAP, does no domain
 // selection between the IMS and the CS and PS domains (TS 23.204 6.4
