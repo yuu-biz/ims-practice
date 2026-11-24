@@ -717,17 +717,14 @@ func TestDeliveryReportThroughAnotherIPSMGW(t *testing.T) {
 	}
 }
 
-// TestAShutDownIPSMGWLeavesAShortMessageUnrouted follows the 503 of
-// the one IP-SM-GW out through the S-CSCF. The criterion of
-// deploy/compose/hss.yaml says SESSION_CONTINUED, so the S-CSCF goes on
-// with the criteria of lower priority, of which none matches, and then
-// routes the MESSAGE to its Request-URI: the PSI of the SC that the UE
-// addressed (TS 24.341 5.3.1.2 item a). The SC is inside the node of
-// the IP-SM-GW rather than a node with a name of its own, so the
-// translation of that number fails and the S-CSCF answers 404 (TS
-// 24.229 5.4.3.2 step 10). That is what the UE sees of its short
-// message, and the SC never hears of it.
-func TestAShutDownIPSMGWLeavesAShortMessageUnrouted(t *testing.T) {
+// TestAShutDownIPSMGWEndsAShortMessage follows the 503 of the one
+// IP-SM-GW out through the S-CSCF. The criterion of
+// deploy/compose/hss.yaml says SESSION_TERMINATED, so the S-CSCF ends
+// the MESSAGE with the response of the IP-SM-GW (TS 24.229 5.4.3.2),
+// which as a proxy it turns from 503 into 500 (RFC 3261 16.7 step 6).
+// That is what the UE sees of its short message, and the SC never hears
+// of it.
+func TestAShutDownIPSMGWEndsAShortMessage(t *testing.T) {
 	net := startIMS(t, 1)
 	sc := net.gw.ServiceCentre
 	alicePhone := net.phone(1, 200)
@@ -739,8 +736,11 @@ func TestAShutDownIPSMGWLeavesAShortMessageUnrouted(t *testing.T) {
 	_, resp := alicePhone.send("tel:"+sc.String(),
 		marshal(t, sms.RPDataMSToNetwork{MessageReference: 1, DestinationAddress: sc,
 			UserData: marshal(t, textSubmit(t, 7, "+12025550102", "Anyone there?", false))}), "")
-	if resp.StatusCode != 404 {
-		t.Fatalf("the short message got %d, want the 404 of a number the S-CSCF cannot translate", resp.StatusCode)
+	if resp.StatusCode != 500 {
+		t.Fatalf("the short message got %d, want the 500 into which the S-CSCF turns the 503 of the IP-SM-GW", resp.StatusCode)
+	}
+	if got := resp.Get("Retry-After"); got != "" {
+		t.Errorf("the 500 carries Retry-After %q, want none: it was the IP-SM-GW that asked for a pause", got)
 	}
 	select {
 	case got := <-net.heard:

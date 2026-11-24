@@ -263,10 +263,10 @@ IP-SM-GW が 1 つの SIP トランザクションより長く持つものは、
 
 IP-SM-GW が受けないメソッドは、administrative state に関わらず 405 を返します（`ipsmgw.go` の `OnRequest`）。運用から外しても、そのメソッドを扱えるようになるわけではなく、次の台も同じ答えを返すためです。OPTIONS もここに入ります。この IP-SM-GW は REGISTER、MESSAGE、NOTIFY だけを受け、UA に OPTIONS を答えさせていません。
 
-S-CSCF は利用者の iFC で IP-SM-GW に要求を届けるので、503 は S-CSCF に返ります。S-CSCF は、サーバー名について DNS が返した次の台へ送り（RFC 3263 4.3）、残っていなければ iFC の既定の処理に従います。第三者 REGISTER は TS 24.229 5.4.1.7、ほかは 5.4.3.2 と 5.4.3.3 です。`deploy/compose/hss.yaml` の IP-SM-GW の iFC はどれも SESSION_CONTINUED なので、次のようになります。
+S-CSCF は利用者の iFC で IP-SM-GW に要求を届けるので、503 は S-CSCF に返ります。S-CSCF は、サーバー名について DNS が返した次の台へ送り（RFC 3263 4.3）、残っていなければ iFC の既定の処理に従います。第三者 REGISTER は TS 24.229 5.4.1.7、ほかは 5.4.3.2 と 5.4.3.3 です。`deploy/compose/hss.yaml` の IP-SM-GW の iFC は、利用者が送る MESSAGE だけが SESSION_TERMINATED で、ほかは SESSION_CONTINUED です。そのため、次のようになります。
 
 - どの台も答えなかった第三者 REGISTER は、登録をそのまま残します（5.4.1.7）。登録と再登録では、利用者は登録され、どの IP-SM-GW も reg event の購読を持たないので、HSS はその利用者が短いメッセージを受け取ることを知りません。次の再登録の第三者 REGISTER が購読します。登録解除では、やり残しはありません。購読を終わらせるのは NOTIFY だからです。
-- 発信側の MESSAGE は優先度の低い iFC へ進みます。この service profile には当たるものがないので、そのまま Request-URI へ向かいます。Request-URI は UE が宛てた SC の PSI です（TS 24.341 5.3.1.2 の項目 a）。この網にはその PSI で答えるものがありません。SC は IP-SM-GW のノードの中にあり、DNS 上の名前を持つノードではないためです（`internal/ipsmgw/servicecentre.go`）。S-CSCF は ENUM で番号を変換しようとして記録を見つけられず、404 を返します（TS 24.229 5.4.3.2 の手順 10）。UE が短いメッセージについて見るのはこの 404 です。TS 24.341 5.3.1.2 は、SM-over-IP sender がこの MESSAGE の失敗の応答をどう扱うかを決めていません。別の MESSAGE で来る submit report を受け取ることだけを決めています。
+- 発信側の MESSAGE は、そこで終わります。S-CSCF は優先度の低い iFC へ進まず、IP-SM-GW の応答を UE へ返します（TS 24.229 5.4.3.2）。プロキシは 503 を転送しないので（RFC 3261 16.7 の step 6）、UE が短いメッセージについて見るのは 500 です。Retry-After は IP-SM-GW と S-CSCF のあいだで止まります。この iFC を SESSION_TERMINATED にしたのは、利用者が送る短いメッセージを扱えるノードが IP-SM-GW のほかに無いためです。SESSION_CONTINUED だと、S-CSCF は Request-URI、つまり UE が宛てた SC の PSI へ進みます（TS 24.341 5.3.1.2 の項目 a）。SC は IP-SM-GW のノードの中にあり、DNS 上の名前を持つノードではないので（`internal/ipsmgw/servicecentre.go`）、S-CSCF は ENUM で番号を変換できず、404 を返します（TS 24.229 5.4.3.2 の手順 10）。404 は宛先が存在しないことを示す応答で（RFC 3261 21.4.5）、SC はあるのに使えない、という状況とは意味が違います。DefaultHandling をどちらにするかは標準が決めていない、運用者の選択です。TS 24.341 5.3.1.2 は、SM-over-IP sender がこの MESSAGE の失敗の応答をどう扱うかを決めていません。別の MESSAGE で来る submit report を受け取ることだけを決めています。
 - 着信側の MESSAGE、つまりほかの IMS 網からの短いメッセージは、受け手の登録済みの contact へ進みます（5.4.3.3、そのあと 5.4.3.2 の手順 10 以降）。UE はこの網の IP-SM-GW を経ずに、向こうの網の RP-DATA を受け取ります。
 
 `Users` は、この台が手元に持っていて、まだ終わっていない仕事です。

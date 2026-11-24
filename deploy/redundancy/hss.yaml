@@ -296,7 +296,13 @@ hss:
   # every short message that a user sends (TS 24.341 5.3.3.4.1). A
   # short message to a user goes to the IP-SM-GW only when it comes from
   # another network (priority 2); the IP-SM-GW's own MESSAGE to a user
-  # would otherwise come back to it (TS 23.218 5.2.3 NOTE 5).
+  # would otherwise come back to it (TS 23.218 5.2.3 NOTE 5). A short
+  # message that a user sends ends with the failure of the IP-SM-GW
+  # (SESSION_TERMINATED, TS 24.229 5.4.3.2): no other node can take it,
+  # so going on to the SC's number would end in a 404 for a number that
+  # does exist. The registration goes on without the IP-SM-GW
+  # (SESSION_CONTINUED), since SESSION_TERMINATED there would deregister
+  # the user (5.4.1.7).
   # feature on a criterion is the operator's word for what that
   # criterion turns on. The features of a profile are those words
   # without repetition, and the maintenance API lists them, so an
@@ -319,7 +325,7 @@ hss:
             # case, and its regular expressions have no flag to fold it.
             - {group: [1], sip_header: {header: ^Content-Type$, content: '^[Aa][Pp][Pp][Ll][Ii][Cc][Aa][Tt][Ii][Oo][Nn]/[Vv][Nn][Dd]\.3[Gg][Pp][Pp]\.[Ss][Mm][Ss]([[:space:]]*;.*)?$'}}
             - {group: [2], session_case: ORIGINATING_REGISTERED}
-        application_server: {server_name: sip:ipsmgw.ims.mnc001.mcc001.3gppnetwork.org:5060}
+        application_server: {server_name: sip:ipsmgw.ims.mnc001.mcc001.3gppnetwork.org:5060, default_handling: SESSION_TERMINATED}
       # A short message for a user from another network reaches the
       # IP-SM-GW that serves the user (TS 23.204 6.4a step 2), as in
       # the peer network (deploy/interconnect/b/hss.yaml). The

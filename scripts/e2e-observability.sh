@@ -34,9 +34,10 @@
 # media of the MRFP; after the unlock the caller hears the announcement
 # again. A shut down of the IP-SM-GW makes it answer 503 with
 # Retry-After to the third-party REGISTER and to the MESSAGE of a short
-# message, and the S-CSCF, whose criteria say SESSION_CONTINUED, leaves
-# the registration standing and sends the MESSAGE on to the PSI of the
-# SC, which this network cannot translate, so UE 1 sees 404; after the
+# message. The S-CSCF leaves the registration standing, since the
+# criterion of the third-party REGISTER says SESSION_CONTINUED, and ends
+# the MESSAGE, since its criterion says SESSION_TERMINATED, so UE 1 sees
+# the 503 turned into 500; after the
 # unlock the short message reaches the SC again. A shut down of the media
 # relay makes it answer the Add of the P-CSCF with 503 over its control
 # API, and the P-CSCF, which has no other relay in this network, answers
@@ -828,12 +829,13 @@ else
 	fail=1
 fi
 # "ue sms" registers, sends the short message and waits for the submit
-# report. The MESSAGE gets 404 here, so the command exits 1, hence
-# "|| true"; the registration itself goes through, since the criterion
-# of the third-party REGISTER says SESSION_CONTINUED.
+# report. The MESSAGE gets 500 here, since the criterion of the MESSAGE
+# says SESSION_TERMINATED, so the command exits 1, hence "|| true"; the
+# registration itself goes through, since the criterion of the
+# third-party REGISTER says SESSION_CONTINUED.
 out="$(docker compose run --no-deps --rm ue sms +12025550102 'Is anyone on duty?' 2>&1 || true)"
 if grep -q '"msg":"registered"' <<<"$out" &&
-	grep -q '"msg":"sms not sent".*MESSAGE answered 404' <<<"$out"; then
+	grep -q '"msg":"sms not sent".*MESSAGE answered 500' <<<"$out"; then
 	echo "ok   UE 1 registered but could not send a short message while the IP-SM-GW is shut down"
 else
 	echo "FAIL the short message while the IP-SM-GW is shut down: $(tail -n 2 <<<"$out")"
@@ -1187,11 +1189,11 @@ expect "603 P-CSCF -> UE 1 with Reason: SIP;cause=603" "sip.Status-Code == 603 &
 echo "the short message while the IP-SM-GW is shut down"
 # The S-CSCF sends the third-party REGISTER of UE 1's registration and
 # the MESSAGE of its short message to the IP-SM-GW, which answers 503
-# with Retry-After to both. The criteria say SESSION_CONTINUED, so the
-# registration stands and the MESSAGE goes on to its Request-URI, the
-# PSI of the SC. No node of this network answers at that number and
-# ENUM has no record for it, so the S-CSCF answers 404 (TS 24.229
-# 5.4.3.2 step 10).
+# with Retry-After to both. The criterion of the third-party REGISTER
+# says SESSION_CONTINUED, so the registration stands (TS 24.229
+# 5.4.1.7). The criterion of the MESSAGE says SESSION_TERMINATED, so the
+# S-CSCF passes the failure on (5.4.3.2), and as a proxy turns the 503
+# into 500 (RFC 3261 16.7 step 6).
 #
 # The S-CSCF answers the UE before it registers the user anywhere else
 # (TS 24.229 5.4.1.7), so the 200 of the registration comes before the
@@ -1206,7 +1208,8 @@ expect "503 IP-SM-GW -> S-CSCF for the third-party REGISTER, with Retry-After 30
 expect "MESSAGE S-CSCF -> IP-SM-GW with the short message" "sip.Method == \"MESSAGE\" && ip.src == $scscf && ip.dst == $ipsmgw && sip.Content-Type == \"application/vnd.3gpp.sms\""
 refusedMessage="$last"
 expect "503 IP-SM-GW -> S-CSCF with Retry-After 30" "$message && sip.Status-Code == 503 && ip.src == $ipsmgw && ip.dst == $scscf && sip.Retry-After == 30"
-expect "404 P-CSCF -> UE 1 for the short message" "$message && sip.Status-Code == 404 && ip.src == $pcscf && ip.dst == $ue"
+expect "500 S-CSCF -> P-CSCF for the short message, without Retry-After" "$message && sip.Status-Code == 500 && ip.src == $scscf && ip.dst == $pcscf && !sip.Retry-After"
+expect "500 P-CSCF -> UE 1 for the short message, without Retry-After" "$message && sip.Status-Code == 500 && ip.src == $pcscf && ip.dst == $ue && !sip.Retry-After"
 none "202 of the IP-SM-GW while it was shut down" "frame.number > $refusedMessage && frame.number <= $last && $message && sip.Status-Code == 202 && ip.src == $ipsmgw"
 # The refused third-party REGISTER leaves no subscription behind: the
 # IP-SM-GW subscribes to the registration state only for one it took.
