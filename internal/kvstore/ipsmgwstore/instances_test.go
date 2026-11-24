@@ -41,8 +41,8 @@ type recordingSC struct {
 	outcomes []ipsmgw.Outcome
 }
 
-func (c *recordingSC) Submit(context.Context, sms.Address, sms.Submit) (sms.SubmitReport, error) {
-	return sms.SubmitReport{}, errors.New("no short message is submitted in this test")
+func (c *recordingSC) Submit(context.Context, sms.Address, sms.Submit) (*sms.SubmitReport, error) {
+	return nil, errors.New("no short message is submitted in this test")
 }
 
 func (c *recordingSC) Report(_ context.Context, _ string, outcome ipsmgw.Outcome) {

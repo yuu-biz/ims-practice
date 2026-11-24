@@ -325,9 +325,9 @@ func TestAShutDownWaitsForTheWorkOfTheIPSMGW(t *testing.T) {
 	// short message in its hands does not outlive the test.
 	t.Cleanup(letAnswer)
 	h.sc.mu.Lock()
-	h.sc.answer = func() (sms.SubmitReport, error) {
+	h.sc.answer = func() (*sms.SubmitReport, error) {
 		<-answered
-		return sms.SubmitReport{ServiceCentreTimeStamp: time.Now()}, nil
+		return &sms.SubmitReport{ServiceCentreTimeStamp: time.Now()}, nil
 	}
 	h.sc.mu.Unlock()
 	go h.send(message(submitBody(t, 9, scAddress, hello)))

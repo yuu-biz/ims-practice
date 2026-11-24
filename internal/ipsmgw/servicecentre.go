@@ -21,9 +21,12 @@ import (
 // ServiceCentre is the SC as the IP-SM-GW sees it.
 type ServiceCentre interface {
 	// Submit hands the SC a short message from the user whose E.164
-	// number is originator. The report goes to the sender in RP-ACK; an
-	// error that is a *Refusal goes in RP-ERROR.
-	Submit(ctx context.Context, originator sms.Address, submit sms.Submit) (sms.SubmitReport, error)
+	// number is originator. The report goes to the sender in RP-ACK, and
+	// nil gives an RP-ACK without one, which TS 24.011 table 7.7 allows:
+	// the SMS-SUBMIT-REPORT is an optional element of the RP-ACK, and the
+	// SM-RP-UI of an OFA is optional as well (TS 29.338 table
+	// 6.2.1.1/2). An error that is a *Refusal goes in RP-ERROR.
+	Submit(ctx context.Context, originator sms.Address, submit sms.Submit) (*sms.SubmitReport, error)
 	// Report tells the SC how the delivery it named reference ended.
 	Report(ctx context.Context, reference string, outcome Outcome)
 }
@@ -31,13 +34,17 @@ type ServiceCentre interface {
 // Refusal is a short message that the SC did not accept: the RP-Cause of
 // the RP-ERROR to the sender (TS 24.011 8.2.5.4, Table 8.4 part 1) and
 // the SMS-SUBMIT-REPORT, with its TP-FCS, that rides in it (TS 23.040
-// 9.2.2.2a).
+// 9.2.2.2a). Report is nil where the SC gave none, which TS 24.011
+// table 7.8 allows the RP-ERROR to go without.
 type Refusal struct {
 	Cause  sms.RPCause
-	Report sms.SubmitReport
+	Report *sms.SubmitReport
 }
 
 func (r *Refusal) Error() string {
+	if r.Report == nil {
+		return fmt.Sprintf("SC refused the short message: RP-Cause %d", r.Cause)
+	}
 	return fmt.Sprintf("SC refused the short message: RP-Cause %d, TP-FCS %#02x", r.Cause, uint8(r.Report.FailureCause))
 }
 
