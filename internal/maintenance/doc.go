@@ -64,6 +64,13 @@
 //	     several alarms of the list at once, each as in the PUT below:
 //	     all of them change, or none. 404 names an id that is not in
 //	     the list.
+//	GET  /maintenance/v1/alarm-events[?after=N][&wait=S]
+//	     AlarmEvents: the changes of the alarm list after the event
+//	     numbered N, the oldest first, from the journal of the node.
+//	     With none yet it waits up to S seconds (at most 30) for one.
+//	     lost says that some of them have left the journal, and
+//	     journal_id, chosen when the node starts, that the node has
+//	     started again when it differs from before.
 //	PUT  /maintenance/v1/alarms/{id}/ack-state
 //	     AckStateRequest -> AlarmRecord. ACKNOWLEDGED or
 //	     UNACKNOWLEDGED, with the operator's name and the system the
@@ -76,6 +83,10 @@
 // ClearAlarm); the operator only reads and acknowledges. A cleared
 // alarm stays until it is acknowledged, an acknowledged one leaves when
 // it clears (6.14), and the list is bounded (Config.MaxAlarmRecords).
+// Each change of the list is an event in a journal, a ring buffer
+// (Config.MaxAlarmEvents) with a random id for each process, so that
+// the OAM server can tell an OSS of each change in the order it came,
+// without the node knowing where the OAM server or the OSS is.
 // A cleared alarm that nobody acknowledges within
 // Config.ClearedAlarmRetention the node acknowledges itself, as
 // RetentionAckUserID.

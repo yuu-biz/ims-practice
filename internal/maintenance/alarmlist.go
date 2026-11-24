@@ -33,9 +33,10 @@ const (
 // acknowledgement from one of an operator.
 const RetentionAckUserID = "retention"
 
-// alarmList is the alarm list of a node (TS 28.111 7.3.2). Its lock
-// guards this node's alarms only, at most max of them, never the state
-// of a user.
+// alarmList is the alarm list of a node (TS 28.111 7.3.2), with the
+// journal of its changes. Its lock guards this node's alarms and events
+// only, at most max of the one and the bound of the journal of the
+// other, never the state of a user.
 type alarmList struct {
 	// node is the name of the node, which acknowledges a record at the
 	// end of its retention as its ackSystemId.
@@ -49,10 +50,12 @@ type alarmList struct {
 	byID             map[string]*AlarmRecord
 	lastModification time.Time
 	dropped          uint64
+	journal          *alarmJournal
 }
 
-func newAlarmList(node string, max int, retention time.Duration, start time.Time, log *slog.Logger) *alarmList {
+func newAlarmList(node string, max, maxEvents int, retention time.Duration, start time.Time, log *slog.Logger) *alarmList {
 	return &alarmList{
+		journal:          newAlarmJournal(maxEvents),
 		node:             node,
 		max:              max,
 		retention:        retention,
@@ -161,11 +164,12 @@ func (l *alarmList) raise(a Alarm, now time.Time) {
 		r.AlarmClearedTime = nil
 		r.NotificationID = newNotificationID()
 		l.lastModification = now
+		l.journal.add(AlarmChanged, now, *r)
 		l.log.Warn("alarm changed", alarmAttrs(r)...)
 		return
 	}
 	if len(l.byID) >= l.max {
-		l.drop()
+		l.drop(now)
 	}
 	r := &AlarmRecord{
 		AlarmID:           newAlarmID(),
@@ -184,6 +188,7 @@ func (l *alarmList) raise(a Alarm, now time.Time) {
 	l.byIdentity[a.AlarmIdentity] = r
 	l.byID[r.AlarmID] = r
 	l.lastModification = now
+	l.journal.add(AlarmAdded, now, *r)
 	l.log.Warn("alarm raised", alarmAttrs(r)...)
 }
 
@@ -200,6 +205,7 @@ func (l *alarmList) clear(id AlarmIdentity, now time.Time) {
 	r.AlarmClearedTime = &now
 	r.NotificationID = newNotificationID()
 	l.lastModification = now
+	l.journal.add(AlarmCleared, now, *r)
 	l.log.Info("alarm cleared", alarmAttrs(r)...)
 	if r.AckState == Acknowledged {
 		l.remove(r)
@@ -237,6 +243,7 @@ func (l *alarmList) setAckState(r *AlarmRecord, req AckStateRequest, now time.Ti
 	r.AckSystemID = req.AckSystemID
 	r.NotificationID = newNotificationID()
 	l.lastModification = now
+	l.journal.add(AckStateChanged, now, *r)
 	l.log.Info("alarm acknowledgement changed", append(alarmAttrs(r), "operator", req.Operator, "ack_system_id", req.AckSystemID)...)
 	if r.AckState == Acknowledged && r.PerceivedSeverity == Cleared {
 		l.remove(r)
@@ -279,24 +286,28 @@ func (l *alarmList) read(f AlarmFilter, now time.Time, into *AlarmList) {
 // consumers to acknowledge by itself (REQ-FM-MC-12 in clause 5), and
 // says nothing of one that does, as this one: the acknowledgement at
 // the end of the retention is this project's own.
+//
+// The records are acknowledged in the order their retention ended, so
+// that the journal holds the events in the order of their times.
 func (l *alarmList) expire(now time.Time) {
+	var due []*AlarmRecord
 	for _, r := range l.byID {
-		if r.AlarmClearedTime == nil {
-			continue
+		if r.AlarmClearedTime != nil && !now.Before(r.AlarmClearedTime.Add(l.retention)) {
+			due = append(due, r)
 		}
-		if at := r.AlarmClearedTime.Add(l.retention); !now.Before(at) {
-			l.setAckState(r, AckStateRequest{AckState: Acknowledged, Operator: RetentionAckUserID, AckSystemID: l.node}, at)
-			if at.After(l.lastModification) {
-				l.lastModification = at
-			}
-		}
+	}
+	slices.SortFunc(due, func(a, b *AlarmRecord) int {
+		return cmp.Or(a.AlarmClearedTime.Compare(*b.AlarmClearedTime), cmp.Compare(a.AlarmID, b.AlarmID))
+	})
+	for _, r := range due {
+		l.setAckState(r, AckStateRequest{AckState: Acknowledged, Operator: RetentionAckUserID, AckSystemID: l.node}, r.AlarmClearedTime.Add(l.retention))
 	}
 }
 
 // drop makes room for a new record in a full list, with l.mu held: the
 // oldest cleared record goes, or the oldest record when none is cleared
 // (TS 28.111 7.3.2.1).
-func (l *alarmList) drop() {
+func (l *alarmList) drop(now time.Time) {
 	var oldest *AlarmRecord
 	for _, r := range l.byID {
 		if oldest == nil || dropsBefore(r, oldest) {
@@ -305,6 +316,7 @@ func (l *alarmList) drop() {
 	}
 	l.remove(oldest)
 	l.dropped++
+	l.journal.add(AlarmDropped, now, *oldest)
 	l.log.Warn("alarm list full: record dropped", alarmAttrs(oldest)...)
 }
 

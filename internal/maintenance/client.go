@@ -87,6 +87,18 @@ func (c *Client) SetAckState(ctx context.Context, alarmID string, req AckStateRe
 	return a, err
 }
 
+// AlarmEvents is GET /maintenance/v1/alarm-events, with q as its
+// query. The http.Client of c must wait longer than q.Wait.
+func (c *Client) AlarmEvents(ctx context.Context, q AlarmEventsQuery) (AlarmEvents, error) {
+	path := AlarmEventsPath
+	if v := q.Query().Encode(); v != "" {
+		path += "?" + v
+	}
+	var e AlarmEvents
+	err := c.do(ctx, http.MethodGet, path, nil, &e)
+	return e, err
+}
+
 // SetAckStates is PATCH /maintenance/v1/alarms.
 func (c *Client) SetAckStates(ctx context.Context, req AckStatesRequest) (AckStatesChange, error) {
 	var change AckStatesChange
