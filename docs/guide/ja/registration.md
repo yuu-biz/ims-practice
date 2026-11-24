@@ -938,7 +938,7 @@ docker compose exec scscf wget -qO- 'http://127.0.0.1:8085/maintenance/v1/alarms
 
 アラームが上がる道は、もう 1 つあります。DPR です。相手が `Disconnect-Cause` に `BUSY` か `DO_NOT_WANT_TO_TALK_TO_YOU` を入れた DPR で接続を終えると、それは接続し直さないでほしいという意味です（RFC 6733 5.4.3）。ノードはもう接続を試みません。そのためアラームはすぐに上がり、`additional_text` は `the peer disconnected and asked not to be connected to again` になります。このアラームは解除されません。ノードが起動し直すまで、接続が開くことはないためです。この網の HSS はいつも `REBOOTING` を送るので、HSS のドレインでこの形のアラームが上がることはありません。
 
-次の接続の CEA でアラームは解除されます。`perceived_severity` が `CLEARED` になり、`alarm_cleared_time` に解除した時刻が入ります。記録は、運用者が `PUT /maintenance/v1/alarms/{alarm_id}/ack-state` で確認するまで、または 1 時間たつまで一覧に残ります。あとから一覧を見ても、何が起きたかがわかります。HSS が待ち受けを始める前に起動したノードは、最初の試行で上げて解除した記録を、すでに持っていることがあります。
+次の接続の CEA でアラームは解除されます。`perceived_severity` が `CLEARED` になり、`alarm_cleared_time` に解除した時刻が入ります。記録は、運用者が `PUT /maintenance/v1/alarms/{alarm_id}/ack-state` で確認するまで一覧に残ります。あとから一覧を見ても、何が起きたかがわかります。1 時間のうちに誰も確認しなければ、ノードが `ack_user_id` を `retention` にして自分で確認します（[HTTP の API](apis.md#保守の-api-で省いたこと)）。HSS が待ち受けを始める前に起動したノードは、最初の試行で上げて解除した記録を、すでに持っていることがあります。
 
 OAM は、インベントリのすべてのノードのアラームの一覧を集めます。
 

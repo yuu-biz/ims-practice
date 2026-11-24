@@ -21,14 +21,25 @@ const (
 	// new identities.
 	DefaultMaxAlarmRecords = 256
 	// DefaultClearedAlarmRetention is how long a cleared alarm that no
-	// operator acknowledges stays in the list.
+	// operator acknowledges stays in the list before the node
+	// acknowledges it itself.
 	DefaultClearedAlarmRetention = time.Hour
 )
+
+// RetentionAckUserID is the ackUserId with which the node acknowledges
+// a cleared alarm that nobody acknowledged within the retention
+// (Config.ClearedAlarmRetention). The name is this project's own, so
+// that a reader of the record or of its notification tells this
+// acknowledgement from one of an operator.
+const RetentionAckUserID = "retention"
 
 // alarmList is the alarm list of a node (TS 28.111 7.3.2). Its lock
 // guards this node's alarms only, at most max of them, never the state
 // of a user.
 type alarmList struct {
+	// node is the name of the node, which acknowledges a record at the
+	// end of its retention as its ackSystemId.
+	node      string
 	max       int
 	retention time.Duration
 	log       *slog.Logger
@@ -40,8 +51,9 @@ type alarmList struct {
 	dropped          uint64
 }
 
-func newAlarmList(max int, retention time.Duration, start time.Time, log *slog.Logger) *alarmList {
+func newAlarmList(node string, max int, retention time.Duration, start time.Time, log *slog.Logger) *alarmList {
 	return &alarmList{
+		node:             node,
 		max:              max,
 		retention:        retention,
 		log:              log,
@@ -77,14 +89,15 @@ func (n *Node) RaiseAlarm(a Alarm) error {
 	if err := checkAlarmText(a.AdditionalText); err != nil {
 		return fmt.Errorf("%w: %v", ErrInvalidAlarm, err)
 	}
-	n.alarms.raise(n.node, a, n.clock.Now())
+	n.alarms.raise(a, n.clock.Now())
 	return nil
 }
 
 // ClearAlarm clears the alarm of id, as the node does when the
 // condition is no longer present (TS 28.111 6.8: every alarm here is
 // cleared by the node that raised it). The record stays in the list,
-// CLEARED, until an operator acknowledges it (6.14) or for
+// CLEARED, until an operator acknowledges it (6.14) or, when nobody
+// does, until the node acknowledges it itself at the end of
 // Config.ClearedAlarmRetention; an acknowledged one leaves at once
 // (7.3.1.1). Clearing an alarm that the list does not have, or has
 // cleared already, changes nothing, so a role may clear it each time it
@@ -134,7 +147,7 @@ func (n *Node) SetAckStates(req AckStatesRequest) (AckStatesChange, error) {
 	return n.alarms.setAckStates(req.AckStates, n.clock.Now())
 }
 
-func (l *alarmList) raise(node string, a Alarm, now time.Time) {
+func (l *alarmList) raise(a Alarm, now time.Time) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	l.expire(now)
@@ -156,7 +169,7 @@ func (l *alarmList) raise(node string, a Alarm, now time.Time) {
 	}
 	r := &AlarmRecord{
 		AlarmID:           newAlarmID(),
-		ObjectInstance:    ObjectInstance(node, a.AlarmIdentity),
+		ObjectInstance:    ObjectInstance(l.node, a.AlarmIdentity),
 		Role:              a.Role,
 		Peer:              a.Peer,
 		NotificationID:    newNotificationID(),
@@ -248,21 +261,31 @@ func (l *alarmList) read(f AlarmFilter, now time.Time, into *AlarmList) {
 	})
 }
 
-// expire removes the cleared records that have stayed for the
-// retention, with l.mu held. It walks the list, which holds at most max
-// records.
+// expire acknowledges the cleared records that nobody acknowledged
+// within the retention, with l.mu held, which takes them out of the
+// list (7.3.1.1). It walks the list, which holds at most max records.
 //
-// SIMPLIFIED: TS 28.111 V20.0.0 6.14. With acknowledgement supported, a
-// cleared alarm stays in the list until it is acknowledged. Here it also
-// leaves after Config.ClearedAlarmRetention, so that a list that no
-// operator watches still forgets the faults that are over.
+// With acknowledgement supported, a cleared alarm stays in the list
+// until it is acknowledged (TS 28.111 6.14), and a record should not
+// leave the list without an acknowledgement of an operator or a machine
+// (6.7). A list that no operator watches would then keep the faults that
+// are over until it is full. The node is the machine here: at the end
+// of the retention it acknowledges the record itself, with
+// RetentionAckUserID as the user and itself as the system, at the time
+// the retention ended. The record then leaves as any acknowledged
+// cleared record does, and an OSS that follows the notifications learns
+// that from the clearance and the acknowledgement, as 6.12 has it.
+// TS 28.111 asks a producer that takes no acknowledgements from its
+// consumers to acknowledge by itself (REQ-FM-MC-12 in clause 5), and
+// says nothing of one that does, as this one: the acknowledgement at
+// the end of the retention is this project's own.
 func (l *alarmList) expire(now time.Time) {
 	for _, r := range l.byID {
 		if r.AlarmClearedTime == nil {
 			continue
 		}
 		if at := r.AlarmClearedTime.Add(l.retention); !now.Before(at) {
-			l.remove(r)
+			l.setAckState(r, AckStateRequest{AckState: Acknowledged, Operator: RetentionAckUserID, AckSystemID: l.node}, at)
 			if at.After(l.lastModification) {
 				l.lastModification = at
 			}

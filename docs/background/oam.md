@@ -771,7 +771,7 @@ err = node.ClearAlarm(hssDown)
 - cleared にした警報を同じ識別でまた上げると、同じ記録が戻ります。`alarm_id` と上げた時刻はそのままです。
 - 新しい記録は `UNACKNOWLEDGED` で始まります（6.7）。確認した記録が cleared になると、すぐに一覧から消えます。cleared の記録は、確認されると消えます（7.3.1.1）。
 - 一覧には上限（`Config.MaxAlarmRecords`、既定は 256 件）があります。いっぱいのときは、cleared の記録のうち一番古いものを、cleared が無ければ一番古いものを捨てます（7.3.2.1）。捨てた数は `dropped_records` に出ます。条件が入れ替わり続けても、識別が同じなら記録は 1 件のままです。上限に届くのは、新しい識別を作り続ける障害のときだけです。
-- 確認されない cleared の記録も、`Config.ClearedAlarmRetention`（既定は 1 時間）がたつと消えます（下の SIMPLIFIED）。
+- 確認されない cleared の記録は、`Config.ClearedAlarmRetention`（既定は 1 時間）がたつと、ノードが自分で確認します。`ack_user_id` は `retention`、`ack_system_id` はノードの名前です。確認した cleared の記録なので、一覧から消えます。TS 28.111 6.7 の、運用者か機械の確認なしに記録を消さないことを守るためで、仕様に無い振る舞いです（[fm-northbound.md](../design/fm-northbound.md) の「仕様に無い振る舞い」）。
 - 警報は加入者を名乗りません。識別には加入者の欄がありません。そのうえで `RaiseAlarm` は、相手、原因、specific problem、追加の文に、SIP や tel の URI、`user@realm`、`+` で始まる番号、6 桁以上の数字の並び（IMSI や MSISDN の長さ）があると断ります。相手はホスト名か IP アドレス（ポートは付けても付けなくてもよい）に限ります。数字だけの 4 文字以上のラベルも断ります。一覧が大きくなるのは、ノードのつながりが増えたときだけで、利用者が増えても大きくなりません。
 - 追加の文に秘密を入れさせません。設定の伏せ字と同じ秘密の名前（`password`、`k`、`opc` など）のあとに値が続く文（`password=…`、`k: …`）と、32 文字以上の 16 進の並び（K や OPc の長さ）を断ります。断ったときのエラーには、秘密の値を書きません。
 - 一覧のロックは、そのノードの警報だけを守ります。期限の過ぎた記録を探す走査は、上限の 256 件までです。加入者を走査することはありません。
@@ -807,7 +807,6 @@ err = node.ClearAlarm(hssDown)
 - `internal/maintenance/alarm.go` の `AlarmRecord`。TS 28.111 V20.0.0 7.3.1.2。任意の属性は、alarmChangedTime、specificProblem、additionalText と確認の 4 つ（ackSystemId を含む）だけを持ちます。ADMC の属性（clearUserId、clearSystemId、clearingType）、コメント、相関、しきい値などは持ちません。必須の notificationId は、故障管理の northbound のために足しました（[fm-northbound.md](../design/fm-northbound.md) の「警報の記録の対応」）。
 - `internal/maintenance/alarm.go` の `AlarmList`。TS 28.111 V20.0.0 7.3.2.2、6.13。一覧の必須の operationalState を省きました。ノードが答える限り一覧は動くので、いつも ENABLED になるためです。任意の administrativeState と unreliableAlarmScope（6.11）も省きました。一覧が警報を捨てたことは `dropped_records` で示します。
 - `internal/maintenance/alarm.go` の `ObjectInstance`。TS 28.111 V20.0.0 6.3、7.4.1。objectInstance は DN ですが、DN に似せた文字列にしました。ノードは NRM の管理対象ではないためです。クラスは TS 28.622 の一般の ManagedElement と ManagedFunction を使い、TS 28.705 の IMS のクラスは使っていません。すべての役割にクラスがあるわけではないためです。`Peer` はどの NRM のクラスでもありません。値の escape もしていません。
-- `internal/maintenance/alarmlist.go` の `expire`。TS 28.111 V20.0.0 6.14。確認がある場合、cleared の警報は確認されるまで一覧に残ります。ここでは、保持の時間がたっても消します。誰も見ていない一覧が、終わった障害を持ち続けないようにするためです。
 
 #### 確かめたこと
 

@@ -902,7 +902,7 @@ The alarm comes when an attempt to open the connection fails, not when a connect
 
 A DPR is the other way an alarm comes. A peer that ends the connection with a DPR whose `Disconnect-Cause` is `BUSY` or `DO_NOT_WANT_TO_TALK_TO_YOU` asks not to be connected to again (RFC 6733 5.4.3), so the node makes no further attempt. The alarm then comes at once, with `additional_text` `the peer disconnected and asked not to be connected to again`, and is never cleared: no connection opens again until the node starts anew. The HSS of this network always sends `REBOOTING`, so its drain never raises the alarm this way.
 
-The CEA of the next connection clears the alarm: `perceived_severity` becomes `CLEARED`, and `alarm_cleared_time` says when. The record stays in the list until an operator acknowledges it with `PUT /maintenance/v1/alarms/{alarm_id}/ack-state`, or for an hour, so the list still tells afterwards what happened. A node that starts before the HSS listens may already hold such a cleared record from its first attempt.
+The CEA of the next connection clears the alarm: `perceived_severity` becomes `CLEARED`, and `alarm_cleared_time` says when. The record stays in the list until an operator acknowledges it with `PUT /maintenance/v1/alarms/{alarm_id}/ack-state`, so the list still tells afterwards what happened. When nobody does within an hour, the node acknowledges it itself, with `ack_user_id` `retention` ([The HTTP APIs](apis.md#what-the-maintenance-api-leaves-out)). A node that starts before the HSS listens may already hold such a cleared record from its first attempt.
 
 The OAM gathers the alarm lists of every node of its inventory:
 
