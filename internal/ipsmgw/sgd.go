@@ -14,11 +14,11 @@ import (
 	"github.com/yuu-biz/ims-practice/internal/sms"
 )
 
-// This file is the IP-SM-GW as the serving node of SGd, the "IMS-based"
-// node of TS 23.204 5.2.4: an SMS-GMSC brings a short message for a user
-// of this network in a TFR, the IP-SM-GW delivers it to the UE over SIP
-// as it delivers any other (deliver.go), and the TFA says how that
-// ended (TS 29.338 6.2.2, TS 23.204 6.4 and 6.5a).
+// This file is the IP-SM-GW as a serving node of SGd, which TS 23.204
+// 5.2.4 has it appear to an SMS-GMSC as: the SMS-GMSC brings a short
+// message for a user of this network in a TFR, the IP-SM-GW delivers it
+// to the UE over SIP as it delivers any other (deliver.go), and the TFA
+// says how that ended (TS 29.338 6.2.2, TS 23.204 6.4 and 6.5a).
 //
 // The TFR names the recipient by IMSI, which the IP-SM-GW read over Sh
 // when it registered itself for the user (regevent.go). An SMS-GMSC
