@@ -52,6 +52,12 @@
 // Three roles speak these interfaces with this package: the sc role as
 // the SMS central functions on both of them, the hss role as the other
 // end of S6c, and the ipsmgw role as a serving node of SGd.
+//
+// SIMPLIFIED: TS 29.338 4.6. S6c and SGd run over TCP here, as every
+// Diameter connection of this project does, and not over the SCTP that
+// the clause requires of these two interfaces. RFC 6733 2.1 lets the
+// base protocol run over either, and TCP works on every machine that
+// runs the containers of this project, which SCTP does not.
 package sgd
 
 import (
