@@ -353,6 +353,8 @@ When two nodes or more do not answer, `unreliableAlarmScope` is the whole SubNet
 | `json.member_with_value == "notificationType:notifyPotentialFaultyAlarmList"` | A node that stopped answering. |
 | `json.member_with_value == "notificationType:notifyAlarmListRebuilt"` | A part of the list to read again. |
 
+`scripts/e2e-fm.sh` runs the steps of this guide, checks each exchange in the capture, and runs every filter of this table against that capture: a filter that finds no frame fails the run. It leaves the capture in `captures/` and the frames of the exchanges in `e2e-out/fm-ladder.txt`.
+
 ## What this project simplifies
 
 | Where | What is left out | Why |

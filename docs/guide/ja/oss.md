@@ -353,6 +353,8 @@ OAM は通知を送り直しません。届かなかった通知のあと、そ�
 | `json.member_with_value == "notificationType:notifyPotentialFaultyAlarmList"` | 答えなくなったノード。 |
 | `json.member_with_value == "notificationType:notifyAlarmListRebuilt"` | 読み直してほしい一覧の部分。 |
 
+`scripts/e2e-fm.sh` は、この手順書の手順を実行し、やり取りを 1 つずつキャプチャで確かめ、この表のフィルタをすべてそのキャプチャに当てます。フレームが 1 つも見つからないフィルタがあれば、試験は失敗します。キャプチャは `captures/` に、やり取りのフレームは `e2e-out/fm-ladder.txt` に残ります。
+
 ## このプロジェクトで簡略化していること
 
 | 場所 | 省いたこと | 理由 |
