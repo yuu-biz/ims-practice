@@ -18,19 +18,23 @@ import (
 // and a client that groups the instances of the role sends to the next
 // one (PeerGroup); REBOOTING lets it connect again after Tc (RFC 6733
 // 2.1, 5.4.3), so the role takes its peers back once it accepts again.
+//
+// A node that runs two such roles has one listener for both, so taking
+// either of them out of service takes the listener from both, and it
+// comes back once both are back (Server.SetAccepting).
 type ListenerDrain struct {
 	server *Server
+	role   string
 	log    *slog.Logger
-	// cannotListen is set when the node failed to listen for Diameter
-	// connections again when the role came back, so that no peer can
-	// reach the role although the operator means it to serve.
-	cannotListen atomic.Bool
+	// outOfService is set while the role has the server accept no
+	// connection.
+	outOfService atomic.Bool
 }
 
-// NewListenerDrain returns the drain of the role whose peers connect to
-// server.
-func NewListenerDrain(server *Server, log *slog.Logger) *ListenerDrain {
-	return &ListenerDrain{server: server, log: log}
+// NewListenerDrain returns the drain of role, the name of the role in
+// the configuration file, whose peers connect to server.
+func NewListenerDrain(server *Server, role string, log *slog.Logger) *ListenerDrain {
+	return &ListenerDrain{server: server, role: role, log: log}
 }
 
 // Change takes the role out of service or brings it back: accepting
@@ -42,13 +46,11 @@ func NewListenerDrain(server *Server, log *slog.Logger) *ListenerDrain {
 // its DPA or after the Answer timer (RFC 6733 5.4), so the operator
 // learns that the role serves no one only once that is so.
 func (d *ListenerDrain) Change(accepting, disconnect bool) {
-	err := d.server.SetAccepting(accepting)
-	d.cannotListen.Store(err != nil)
-	if err != nil {
+	d.outOfService.Store(!accepting)
+	if err := d.server.SetAccepting(d.role, accepting); err != nil {
 		// A bind that fails when the role comes back leaves it in service
-		// and unreachable, and nothing here tries it again: the operator
-		// takes the role out of service and back again, which comes
-		// through here once more.
+		// and unreachable, which Reachable says. The operator takes the
+		// role out of service and back again, which tries once more.
 		d.log.Error("cannot listen for Diameter connections again", "error", err.Error())
 	}
 	if disconnect {
@@ -56,7 +58,9 @@ func (d *ListenerDrain) Change(accepting, disconnect bool) {
 	}
 }
 
-// Reachable reports whether a peer can reach the role, as far as the
-// listener goes: false when the node failed to listen again when the
-// role came back.
-func (d *ListenerDrain) Reachable() bool { return !d.cannotListen.Load() }
+// Reachable reports whether a new peer can reach the role as far as the
+// operator means it to: a role in service is reachable while the server
+// accepts, and is not when the node failed to listen again or another
+// role of the node has the listener closed. A role out of service is
+// meant to be unreachable, which is no fault of the role.
+func (d *ListenerDrain) Reachable() bool { return d.outOfService.Load() || d.server.Accepting() }

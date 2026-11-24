@@ -157,7 +157,7 @@ func TestServerRefusesACERThatArrivesAfterItStoppedAccepting(t *testing.T) {
 	probe.Close()
 	waitForLog(t, logs, fields{"msg": "closed connection that sent no CER"})
 
-	if err := server.SetAccepting(false); err != nil {
+	if err := server.SetAccepting("hss", false); err != nil {
 		t.Fatal(err)
 	}
 	server.DisconnectPeers()
@@ -189,7 +189,7 @@ func TestServerStopsAcceptingAndListensAgain(t *testing.T) {
 	defer server.Stop()
 	address := server.Addr()
 
-	if err := server.SetAccepting(false); err != nil {
+	if err := server.SetAccepting("hss", false); err != nil {
 		t.Fatal(err)
 	}
 	if conn, err := net.DialTimeout("tcp", address, 5*time.Second); err == nil {
@@ -197,7 +197,7 @@ func TestServerStopsAcceptingAndListensAgain(t *testing.T) {
 		t.Fatal("the server accepted a connection while it was not accepting")
 	}
 
-	if err := server.SetAccepting(true); err != nil {
+	if err := server.SetAccepting("hss", true); err != nil {
 		t.Fatal(err)
 	}
 	if server.Addr() != address {
@@ -221,7 +221,7 @@ func TestStopAcceptingKeepsTheConnectionsTheServerHas(t *testing.T) {
 	defer server.Stop()
 	conn := rawPeer(t, server, scscf)
 
-	if err := server.SetAccepting(false); err != nil {
+	if err := server.SetAccepting("hss", false); err != nil {
 		t.Fatal(err)
 	}
 	request := diam.NewRequest(diam.DeviceWatchdog, 0, dict.Default)
@@ -238,4 +238,43 @@ func TestStopAcceptingKeepsTheConnectionsTheServerHas(t *testing.T) {
 	if answer.Header.HopByHopID != 7 {
 		t.Errorf("got %s with Hop-by-Hop 0x%x, want the answer to our DWR", commandName(answer), answer.Header.HopByHopID)
 	}
+}
+
+// The roles of one node share its listener, so a node that runs two
+// roles that its peers connect to, the HSS and the Service Centre,
+// accepts again only once neither holds the listener closed. The drain
+// of a role in service says that the role cannot be reached while the
+// other has the listener closed.
+func TestTheListenerAcceptsOnceNoRoleHoldsItClosed(t *testing.T) {
+	node, _ := newTestNode(hss, testTimers)
+	server, err := node.Listen("127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer server.Stop()
+	hssDrain := NewListenerDrain(server, "hss", node.log)
+	scDrain := NewListenerDrain(server, "sc", node.log)
+
+	hssDrain.Change(false, false)
+	scDrain.Change(false, false)
+	scDrain.Change(true, false)
+	if server.Accepting() {
+		t.Fatal("the server accepts while the HSS still holds its listener closed")
+	}
+	if conn, err := net.DialTimeout("tcp", server.Addr(), 5*time.Second); err == nil {
+		conn.Close()
+		t.Fatal("the transport took a connection while the HSS holds the listener closed")
+	}
+	if !hssDrain.Reachable() {
+		t.Error("the HSS out of service reads as unreachable, which is no fault of its own")
+	}
+	if scDrain.Reachable() {
+		t.Error("the SC in service reads as reachable, but no peer can connect to it")
+	}
+
+	hssDrain.Change(true, false)
+	if !server.Accepting() || !hssDrain.Reachable() || !scDrain.Reachable() {
+		t.Fatal("the server does not accept once both roles are back in service")
+	}
+	rawPeer(t, server, scscf)
 }

@@ -618,8 +618,11 @@ type Server struct {
 	mu sync.Mutex
 	// listener is nil while the server does not accept connections.
 	listener net.Listener
-	closed   bool
-	peers    map[string]*Peer // by lower-case Origin-Host
+	// refusedBy holds the roles of the node that have the server accept
+	// no connection (SetAccepting).
+	refusedBy map[string]bool
+	closed    bool
+	peers     map[string]*Peer // by lower-case Origin-Host
 }
 
 // Listen starts accepting connections on address, e.g. ":3868" (RFC
@@ -629,7 +632,7 @@ func (n *Node) Listen(address string) (*Server, error) {
 	if err != nil {
 		return nil, err
 	}
-	s := &Server{node: n, address: ln.Addr().String(), listener: ln, peers: map[string]*Peer{}}
+	s := &Server{node: n, address: ln.Addr().String(), listener: ln, refusedBy: map[string]bool{}, peers: map[string]*Peer{}}
 	n.log.Info("listening", "address", s.address)
 	s.wg.Add(1)
 	go s.accept(ln)
@@ -640,11 +643,15 @@ func (n *Node) Listen(address string) (*Server, error) {
 // on after it has stopped accepting.
 func (s *Server) Addr() string { return s.address }
 
-// SetAccepting says whether the server takes new connections from
-// peers. A server that does not accept has no listening socket at all,
-// so a peer that connects is refused by the transport and, if it is an
-// initiator, gives that attempt up and makes another after Tc (RFC 6733
-// 2.1; I-Rcv-Conn-Nack in Wait-Conn-Ack, 5.6). It is how a node that an
+// SetAccepting says whether role, a role of the node that its peers
+// reach on this server, lets the server take new connections. The
+// server accepts while no role refuses: the roles of one node share
+// its listener, so a node that runs two such roles, the HSS and the
+// Service Centre, accepts again only once both of them do. A server that
+// does not accept has no listening socket at all, so a peer that
+// connects is refused by the transport and, if it is an initiator,
+// gives that attempt up and makes another after Tc (RFC 6733 2.1;
+// I-Rcv-Conn-Nack in Wait-Conn-Ack, 5.6). It is how a node that an
 // operator has taken out of service turns peers away.
 //
 // Holding no socket departs from RFC 6733 2.1, which requires a node to
@@ -666,20 +673,27 @@ func (s *Server) Addr() string { return s.address }
 //
 // The connections the server already has are untouched; DisconnectPeers
 // ends those. Accepting again binds the address of Listen once more,
-// and fails when something else holds it by then. A server that Stop
-// has closed accepts nothing again.
-func (s *Server) SetAccepting(accepting bool) error {
+// and fails when something else holds it by then; the next call that
+// leaves no role refusing tries again. A server that Stop has closed
+// accepts nothing again.
+func (s *Server) SetAccepting(role string, accepting bool) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.closed || accepting == (s.listener != nil) {
+	if accepting {
+		delete(s.refusedBy, role)
+	} else {
+		s.refusedBy[role] = true
+	}
+	accept := len(s.refusedBy) == 0
+	if s.closed || accept == (s.listener != nil) {
 		return nil
 	}
-	if !accepting {
+	if !accept {
 		// The accept loop ends on net.ErrClosed; the connections it has
 		// handed on stay open.
 		s.listener.Close()
 		s.listener = nil
-		s.node.log.Info("stopped accepting connections", "address", s.address)
+		s.node.log.Info("stopped accepting connections", "address", s.address, "role", role)
 		return nil
 	}
 	ln, err := net.Listen("tcp", s.address)
@@ -691,6 +705,13 @@ func (s *Server) SetAccepting(accepting bool) error {
 	s.wg.Add(1)
 	go s.accept(ln)
 	return nil
+}
+
+// Accepting reports whether the server takes new connections now.
+func (s *Server) Accepting() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.listener != nil
 }
 
 // DisconnectPeers sends every peer of the server a DPR with
