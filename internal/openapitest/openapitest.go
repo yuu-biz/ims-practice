@@ -16,9 +16,10 @@
 //     match must be refused with a 4xx; the handler taking it, or
 //     failing on it with a 5xx, is a mismatch.
 //   - The answer: its status code must be one that the operation lists,
-//     and the handler must set a Content-Type that is one of that
-//     answer's media types whenever it writes a body. A JSON body must
-//     match the schema, and the headers marked required must be there.
+//     or the operation must have a default answer, and the handler must
+//     set a Content-Type that is one of that answer's media types
+//     whenever it writes a body. A JSON body must match the schema, and
+//     the headers marked required must be there.
 //
 // A body of application/x-ndjson, one JSON value per line, is checked
 // line by line: each line that is not empty must match the schema of
@@ -404,8 +405,8 @@ func (d *Document) check() error {
 				return fmt.Errorf("%s: no responses", where)
 			}
 			for code, r := range op.Responses {
-				if _, err := strconv.Atoi(code); err != nil || len(code) != 3 {
-					return fmt.Errorf("%s: response %q is not a status code", where, code)
+				if _, err := strconv.Atoi(code); (err != nil || len(code) != 3) && code != "default" {
+					return fmt.Errorf("%s: response %q is not a status code or default", where, code)
 				}
 				r, err := d.response(r)
 				if err != nil {
@@ -798,14 +799,22 @@ func (d *Document) exchange(r *http.Request, body []byte, rec *recorder) []strin
 			problems = append(problems, "the handler failed on a request that the document refuses, instead of refusing it with a 4xx: "+p)
 		}
 	}
-	resp, ok := op.Responses[strconv.Itoa(rec.status)]
+	// default stands for every status that the operation does not list,
+	// such as those of an API that a route forwards to (OpenAPI
+	// Specification 3.1.0, Responses Object).
+	code := strconv.Itoa(rec.status)
+	resp, ok := op.Responses[code]
+	if !ok {
+		code = "default"
+		resp, ok = op.Responses[code]
+	}
 	if !ok {
 		return append(problems, "the document lists no such status for "+method+" "+pt.path)
 	}
 	d.mu.Lock()
 	d.reached[method+" "+pt.path] = true
 	d.mu.Unlock()
-	pointer := base + "/responses/" + strconv.Itoa(rec.status)
+	pointer := base + "/responses/" + code
 	if resp.Ref != "" {
 		pointer = "/components/responses/" + strings.TrimPrefix(resp.Ref, "#/components/responses/")
 		resp, _ = d.response(resp)

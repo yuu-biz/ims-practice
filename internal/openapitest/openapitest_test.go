@@ -195,7 +195,7 @@ func TestLoadRefusesWhatItDoesNotRead(t *testing.T) {
 		{"a misspelt field", "operationId: getTotal", "operationID: getTotal", "field operationID not found"},
 		{"OpenAPI 3.0", "openapi: 3.1.0", "openapi: 3.0.3", `openapi is "3.0.3", not 3.1.x`},
 		{"an optional path parameter", "      in: path\n      required: true", "      in: path", `path parameter "name" must be required`},
-		{"a status that is not a code", "'204':", "'2XX':", `response "2XX" is not a status code`},
+		{"a status that is not a code", "'204':", "'2XX':", `response "2XX" is not a status code or default`},
 		{"a reference to nothing", "$ref: '#/components/schemas/Counter'\n        '404'", "$ref: '#/components/schemas/Count'\n        '404'", "Count"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -411,6 +411,34 @@ func TestAnOpenLineSchemaLeavesTheLines(t *testing.T) {
 		req := httptest.NewRequest("POST", "/lines", strings.NewReader("not json\n"))
 		req.Header.Set("Content-Type", "application/x-ndjson")
 		d.Handler(rt, h).ServeHTTP(httptest.NewRecorder(), req)
+		if got := len(rt.errors) > 0; got != tc.errors {
+			t.Errorf("%s: errors %q", tc.file, rt.errors)
+		}
+	}
+}
+
+// TestADefaultAnswerTakesAnyStatus: the document gives the PUT of
+// counters a default answer, which stands for the statuses it does not
+// list.
+func TestADefaultAnswerTakesAnyStatus(t *testing.T) {
+	raw, err := os.ReadFile("testdata/counters.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	withDefault := strings.Replace(string(raw), "        '204':\n          description: The counter is set.\n",
+		"        '204':\n          description: The counter is set.\n        default:\n          description: Any other answer.\n", 1)
+	file := filepath.Join(t.TempDir(), "counters.yaml")
+	if err := os.WriteFile(file, []byte(withDefault), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		file   string
+		errors bool
+	}{{"testdata/counters.yaml", true}, {file, false}} {
+		d := Load(t, tc.file)
+		rt := &recordingT{TB: t}
+		teapot := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusTeapot) })
+		d.Handler(rt, teapot).ServeHTTP(httptest.NewRecorder(), httptest.NewRequest("PUT", "/counters/calls", strings.NewReader(`{"value": 1}`)))
 		if got := len(rt.errors) > 0; got != tc.errors {
 			t.Errorf("%s: errors %q", tc.file, rt.errors)
 		}
