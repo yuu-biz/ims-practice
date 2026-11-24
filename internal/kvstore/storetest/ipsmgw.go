@@ -30,6 +30,7 @@ func IPSMGW(t *testing.T, newPair func(t *testing.T) (ipsmgw.Store, ipsmgw.Store
 		{"NotReachableIsTakenOnce", ipsmgwNotReachable},
 		{"RegSubscription", ipsmgwRegSubscription},
 		{"RegSubscriptionOfIMSI", ipsmgwRegSubscriptionOfIMSI},
+		{"RegSubscriptionOfMSISDN", ipsmgwRegSubscriptionOfMSISDN},
 		{"RegSubscriptionReplacesTheOldOne", ipsmgwRegSubscriptionReplaces},
 		{"PublicIdentitiesCompareTheUserPartWithCase", ipsmgwUserPartWithCase},
 	})
@@ -123,6 +124,15 @@ func regSubscriptionOfIMSI(t *testing.T, s ipsmgw.Store, imsi string) (ipsmgw.Re
 	sub, ok, err := s.RegSubscriptionOfIMSI(context.Background(), imsi)
 	if err != nil {
 		t.Errorf("RegSubscriptionOfIMSI(%s): %v", imsi, err)
+	}
+	return sub, ok
+}
+
+func regSubscriptionOfMSISDN(t *testing.T, s ipsmgw.Store, msisdn string) (ipsmgw.RegSubscription, bool) {
+	t.Helper()
+	sub, ok, err := s.RegSubscriptionOfMSISDN(context.Background(), msisdn)
+	if err != nil {
+		t.Errorf("RegSubscriptionOfMSISDN(%s): %v", msisdn, err)
 	}
 	return sub, ok
 }
@@ -412,6 +422,38 @@ func ipsmgwRegSubscriptionOfIMSI(t *testing.T, a, b ipsmgw.Store) {
 	waitOut()
 	if _, ok := regSubscriptionOfIMSI(t, b, imsi); ok {
 		t.Error("RegSubscriptionOfIMSI after the subscription expired")
+	}
+}
+
+func ipsmgwRegSubscriptionOfMSISDN(t *testing.T, a, b ipsmgw.Store) {
+	sub := regSubscription("sub-1", time.Hour)
+	putRegSubscription(t, a, sub)
+	if got, ok := regSubscriptionOfMSISDN(t, b, sub.MSISDN); !ok || got.Dialog.ID != sub.Dialog.ID {
+		t.Errorf("RegSubscriptionOfMSISDN = %+v, %v", got, ok)
+	}
+	if _, ok := regSubscriptionOfMSISDN(t, b, "12025550199"); ok {
+		t.Error("RegSubscriptionOfMSISDN found a subscription for a number no user has")
+	}
+	if _, ok := regSubscriptionOfMSISDN(t, b, ""); ok {
+		t.Error("RegSubscriptionOfMSISDN found a subscription for an empty MSISDN")
+	}
+
+	next := regSubscription("sub-2", time.Hour)
+	putRegSubscription(t, b, next)
+	if got, ok := regSubscriptionOfMSISDN(t, a, sub.MSISDN); !ok || got.Dialog.ID != next.Dialog.ID {
+		t.Errorf("RegSubscriptionOfMSISDN after a new subscription = %+v, %v; want the new one", got, ok)
+	}
+
+	deleteRegSubscription(t, a, next.Dialog.ID.CallID)
+	if _, ok := regSubscriptionOfMSISDN(t, b, sub.MSISDN); ok {
+		t.Error("RegSubscriptionOfMSISDN after DeleteRegSubscription")
+	}
+
+	brief := regSubscription("sub-3", short)
+	putRegSubscription(t, a, brief)
+	waitOut()
+	if _, ok := regSubscriptionOfMSISDN(t, b, sub.MSISDN); ok {
+		t.Error("RegSubscriptionOfMSISDN after the subscription expired")
 	}
 }
 

@@ -185,6 +185,12 @@ type Store interface {
 	// recipient by IMSI, finds the user (sgd.go). An empty imsi finds
 	// nothing: a subscription without an IMSI is in no such index.
 	RegSubscriptionOfIMSI(ctx context.Context, imsi string) (RegSubscription, bool, error)
+	// RegSubscriptionOfMSISDN returns the subscription whose MSISDN is
+	// msisdn, digits only, and whether there is one. It is how a request
+	// whose P-Asserted-Identity is a tel URI of the user, rather than the
+	// public identity the subscription is for, finds the user
+	// (subscriptionOfSender). An empty msisdn finds nothing.
+	RegSubscriptionOfMSISDN(ctx context.Context, msisdn string) (RegSubscription, bool, error)
 	// DeleteRegSubscription removes the subscription whose dialog has
 	// callID.
 	DeleteRegSubscription(ctx context.Context, callID string) error
@@ -215,12 +221,14 @@ type MemoryStore struct {
 	// notReachable holds the users this IP-SM-GW could not reach, by
 	// public identity, each until its time.
 	notReachable map[string]time.Time
-	// regSubscriptions are keyed by Call-ID, and regSubscriptionOf and
-	// regSubscriptionOfIMSI give the Call-ID for a public identity and
-	// for an IMSI, so that no lookup scans.
-	regSubscriptions      map[string]RegSubscription
-	regSubscriptionOf     map[string]string
-	regSubscriptionOfIMSI map[string]string
+	// regSubscriptions are keyed by Call-ID, and regSubscriptionOf,
+	// regSubscriptionOfIMSI and regSubscriptionOfMSISDN give the Call-ID
+	// for a public identity, an IMSI and an MSISDN, so that no lookup
+	// scans.
+	regSubscriptions        map[string]RegSubscription
+	regSubscriptionOf       map[string]string
+	regSubscriptionOfIMSI   map[string]string
+	regSubscriptionOfMSISDN map[string]string
 	// reportTimeout is the time index of TR1N, as a store outside the
 	// process holds one: the Call-ID of each delivery that waits for a
 	// report.
@@ -232,8 +240,8 @@ func NewMemoryStore() *MemoryStore {
 		outcomes:         map[string]storedOutcome{},
 		notReachable:     map[string]time.Time{},
 		regSubscriptions: map[string]RegSubscription{}, regSubscriptionOf: map[string]string{},
-		regSubscriptionOfIMSI: map[string]string{},
-		reportTimeout:         ims.NewDueIndex[string]()}
+		regSubscriptionOfIMSI: map[string]string{}, regSubscriptionOfMSISDN: map[string]string{},
+		reportTimeout: ims.NewDueIndex[string]()}
 }
 
 // NextMessageReference counts on from the last value given to the
@@ -393,6 +401,9 @@ func (s *MemoryStore) PutRegSubscription(_ context.Context, sub RegSubscription)
 	if sub.IMSI != "" {
 		s.regSubscriptionOfIMSI[sub.IMSI] = callID
 	}
+	if sub.MSISDN != "" {
+		s.regSubscriptionOfMSISDN[sub.MSISDN] = callID
+	}
 	time.AfterFunc(time.Until(sub.Expires), func() {
 		s.mu.Lock()
 		defer s.mu.Unlock()
@@ -437,6 +448,20 @@ func (s *MemoryStore) RegSubscriptionOfIMSI(_ context.Context, imsi string) (Reg
 	return sub, true, nil
 }
 
+func (s *MemoryStore) RegSubscriptionOfMSISDN(_ context.Context, msisdn string) (RegSubscription, bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	callID, ok := s.regSubscriptionOfMSISDN[msisdn]
+	if !ok || msisdn == "" {
+		return RegSubscription{}, false, nil
+	}
+	sub, ok := s.regSubscription(callID)
+	if !ok || sub.MSISDN != msisdn {
+		return RegSubscription{}, false, nil
+	}
+	return sub, true, nil
+}
+
 func (s *MemoryStore) DeleteRegSubscription(_ context.Context, callID string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -465,5 +490,8 @@ func (s *MemoryStore) deleteRegSubscription(callID string) {
 	}
 	if sub.IMSI != "" && s.regSubscriptionOfIMSI[sub.IMSI] == callID {
 		delete(s.regSubscriptionOfIMSI, sub.IMSI)
+	}
+	if sub.MSISDN != "" && s.regSubscriptionOfMSISDN[sub.MSISDN] == callID {
+		delete(s.regSubscriptionOfMSISDN, sub.MSISDN)
 	}
 }

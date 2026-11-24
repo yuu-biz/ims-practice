@@ -12,6 +12,7 @@
 //	reg-subscription:<Call-ID>         RegSubscription, time to live until its Expires
 //	reg-subscription-of:<identity>     index: the Call-ID of the subscription
 //	reg-subscription-imsi:<IMSI>       index: the Call-ID of the subscription
+//	reg-subscription-msisdn:<MSISDN>   index: the Call-ID of the subscription
 //
 // The timer of TR1N is a time index, named ipsmgw.ReportTimeout.
 package ipsmgwstore
@@ -209,6 +210,10 @@ func (s *Store) subscriptionIMSIKey(imsi string) string {
 	return s.c.Key("reg-subscription-imsi", imsi)
 }
 
+func (s *Store) subscriptionMSISDNKey(msisdn string) string {
+	return s.c.Key("reg-subscription-msisdn", msisdn)
+}
+
 func (s *Store) RegSubscription(ctx context.Context, callID string) (ipsmgw.RegSubscription, bool, error) {
 	var sub ipsmgw.RegSubscription
 	_, err := kvjson.Read(ctx, s.c, s.subscriptionKey(callID), &sub)
@@ -233,6 +238,17 @@ func (s *Store) RegSubscriptionOfIMSI(ctx context.Context, imsi string) (ipsmgw.
 	})
 }
 
+// RegSubscriptionOfMSISDN finds the subscription through the index item
+// of the MSISDN, as RegSubscriptionOfIMSI does through the IMSI.
+func (s *Store) RegSubscriptionOfMSISDN(ctx context.Context, msisdn string) (ipsmgw.RegSubscription, bool, error) {
+	if msisdn == "" {
+		return ipsmgw.RegSubscription{}, false, nil
+	}
+	return s.subscriptionByIndex(ctx, s.subscriptionMSISDNKey(msisdn), func(sub ipsmgw.RegSubscription) bool {
+		return sub.MSISDN == msisdn
+	})
+}
+
 // subscriptionByIndex reads the index item at key and then the
 // subscription whose Call-ID it holds. matches says whether that
 // subscription is still the one the index item is for: an item that an
@@ -253,8 +269,8 @@ func (s *Store) subscriptionByIndex(ctx context.Context, key string, matches fun
 	return sub, true, nil
 }
 
-// PutRegSubscription points the index items of the public identity and
-// of the IMSI to the new subscription, writes it, and then removes the
+// PutRegSubscription points the index items of the public identity, the
+// IMSI and the MSISDN to the new subscription, writes it, and then removes the
 // subscription that the index item of the public identity named before,
 // if it was another. Of two subscriptions to one identity that two
 // instances put at once, the index item names the one written last, and
@@ -276,11 +292,16 @@ func (s *Store) PutRegSubscription(ctx context.Context, sub ipsmgw.RegSubscripti
 			return err
 		}
 	}
+	if sub.MSISDN != "" {
+		if err := s.c.WriteIndex(ctx, s.subscriptionMSISDNKey(sub.MSISDN), callID, ttl); err != nil {
+			return err
+		}
+	}
 	if err := kvjson.Write(ctx, s.c, s.subscriptionKey(callID), sub, ttl); err != nil {
 		return err
 	}
 	if hadOld && old != callID {
-		// The old subscription goes with both of its index items, except
+		// The old subscription goes with its index items, except
 		// the ones that now name this subscription, which RemoveIndexIf
 		// leaves alone.
 		return s.DeleteRegSubscription(ctx, old)
@@ -289,7 +310,8 @@ func (s *Store) PutRegSubscription(ctx context.Context, sub ipsmgw.RegSubscripti
 }
 
 // DeleteRegSubscription removes the subscription, and then the index
-// items of its public identity and of its IMSI if those still name it.
+// items of its public identity, its IMSI and its MSISDN if those still
+// name it.
 func (s *Store) DeleteRegSubscription(ctx context.Context, callID string) error {
 	var sub ipsmgw.RegSubscription
 	_, err := kvjson.Read(ctx, s.c, s.subscriptionKey(callID), &sub)
@@ -304,6 +326,11 @@ func (s *Store) DeleteRegSubscription(ctx context.Context, callID string) error 
 	}
 	if sub.IMSI != "" {
 		if err := s.c.RemoveIndexIf(ctx, s.subscriptionIMSIKey(sub.IMSI), callID); err != nil {
+			return err
+		}
+	}
+	if sub.MSISDN != "" {
+		if err := s.c.RemoveIndexIf(ctx, s.subscriptionMSISDNKey(sub.MSISDN), callID); err != nil {
 			return err
 		}
 	}
