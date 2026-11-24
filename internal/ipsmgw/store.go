@@ -24,6 +24,11 @@ type PendingDelivery struct {
 	// MessageReference is the RP-MR of the RP-DATA, which the RP-ACK or
 	// RP-ERROR of the UE repeats (TS 24.011 8.2.3).
 	MessageReference uint8
+	// OverSGd marks a delivery that a TFR brought (Delivery.OverSGd): its
+	// outcome goes into the Store under Reference, for the instance that
+	// holds the TFR, and not to the ServiceCentre of this node. Whichever
+	// instance ends the delivery reads it here.
+	OverSGd bool
 	// ReportDeadline is when TR1N runs out (TS 24.011 6.2.2.2): the
 	// delivery ends then if no report has ended it before.
 	ReportDeadline time.Time

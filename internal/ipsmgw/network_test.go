@@ -27,6 +27,7 @@ import (
 	"github.com/yuu-biz/ims-practice/internal/pcscf"
 	"github.com/yuu-biz/ims-practice/internal/sc"
 	"github.com/yuu-biz/ims-practice/internal/scscf"
+	"github.com/yuu-biz/ims-practice/internal/sgd"
 	"github.com/yuu-biz/ims-practice/internal/sh"
 	"github.com/yuu-biz/ims-practice/internal/sip"
 	"github.com/yuu-biz/ims-practice/internal/sipdns"
@@ -98,6 +99,27 @@ type network struct {
 	roles []*ipsmgw.IPSMGW
 	heard chan heard
 	gw    *config.IPSMGW
+	// sgd is the SMS-GMSC side of SGd, and gwHosts the Diameter
+	// identity of each IP-SM-GW, which a TFR names in Destination-Host
+	// (TS 29.338 6.3.1.2).
+	sgd     *sgd.SGdClient
+	gwHosts []string
+	// deliveryReports counts the delivery reports that each IP-SM-GW has
+	// taken, which tells a test which instance one reached. A delivery
+	// report is the MESSAGE that names the MESSAGE it answers in
+	// In-Reply-To (TS 24.341 5.3.2.4 item d).
+	deliveryReports []*atomic.Int64
+}
+
+// forward sends a TFR for imsi to the IP-SM-GW of host, as an SMS-GMSC
+// does once the HSS has named the serving node (TS 29.338 6.2.2).
+func (n *network) forward(host, imsi string, tpdu []byte) (sgd.MTForwardShortMessageAnswer, error) {
+	return n.sgd.MTForwardShortMessage(context.Background(), sgd.MTForwardShortMessageRequest{
+		Header:    diameter.Header{DestinationHost: host, DestinationRealm: domain},
+		UserName:  imsi,
+		SCAddress: n.gw.ServiceCentre.Digits,
+		SMRPUI:    tpdu,
+	})
 }
 
 // manage gives IP-SM-GW k the maintenance API of its node and returns
@@ -133,6 +155,9 @@ func startIMS(t *testing.T, n int) *network {
 	if err := diameter.LoadDictionary(); err != nil {
 		t.Fatal(err)
 	}
+	if err := sgd.LoadDictionary(); err != nil {
+		t.Fatal(err)
+	}
 	hssCfg, gwCfg := load(t, "hss.yaml"), load(t, "ipsmgw.yaml")
 	net := &network{t: t, dns: &names{hosts: map[string]netip.AddrPort{}}, heard: make(chan heard, 20), gw: gwCfg.IPSMGW}
 
@@ -153,8 +178,8 @@ func startIMS(t *testing.T, n int) *network {
 		t.Fatal(err)
 	}
 	t.Cleanup(server.Stop)
-	connect := func(host string, app uint32, handle diameter.Handler) (*diameter.Node, *diameter.Peer) {
-		node := diameter.NewNode(diameter.Identity{OriginHost: host, OriginRealm: domain}, []uint32{app}, cxTimers, quiet())
+	connect := func(host string, handle diameter.Handler, apps ...uint32) (*diameter.Node, *diameter.Peer) {
+		node := diameter.NewNode(diameter.Identity{OriginHost: host, OriginRealm: domain}, apps, cxTimers, quiet())
 		node.Handle(handle)
 		peer := node.Connect(diameter.PeerConfig{Address: server.Addr(), OriginHost: hssID.OriginHost})
 		t.Cleanup(peer.Stop)
@@ -162,7 +187,8 @@ func startIMS(t *testing.T, n int) *network {
 	}
 
 	var scscfRole atomic.Pointer[scscf.SCSCF]
-	scscfNode, scscfPeer := connect("scscf."+domain, diameter.ApplicationIDCx, func(m *diam.Message) *diam.Message { return scscfRole.Load().Handle(m) })
+	scscfNode, scscfPeer := connect("scscf."+domain, func(m *diam.Message) *diam.Message { return scscfRole.Load().Handle(m) },
+		diameter.ApplicationIDCx)
 	s, err := scscf.New(scscf.Config{ServerName: "sip:scscf." + domain + ":5060", Host: "scscf." + domain, Port: 5060,
 		HomeDomain: domain, MinExpires: time.Second, MaxExpires: time.Hour}, scscfPeer, scscfNode, scscf.NewMemoryStore(), net.dns, quiet())
 	if err != nil {
@@ -174,7 +200,7 @@ func startIMS(t *testing.T, n int) *network {
 	s.SetStack(scscfStack)
 	net.dns.add("scscf."+domain, scscfStack.LocalAddr())
 
-	icscfNode, icscfPeer := connect("icscf."+domain, diameter.ApplicationIDCx, nil)
+	icscfNode, icscfPeer := connect("icscf."+domain, nil, diameter.ApplicationIDCx)
 	i, err := icscf.New(icscf.Config{HomeDomain: domain, SCSCFs: []icscf.SCSCF{{Name: "sip:scscf." + domain + ":5060", Capabilities: []uint32{1}}},
 		Host: "icscf." + domain, Port: 5060}, icscfPeer, icscfNode, net.dns, quiet())
 	if err != nil {
@@ -192,21 +218,53 @@ func startIMS(t *testing.T, n int) *network {
 	net.pcscf = pcscfStack.LocalAddr()
 	net.dns.add("pcscf."+domain, net.pcscf)
 
+	// The Diameter node of a Service Centre, which each IP-SM-GW opens
+	// an SGd connection to as a serving node does; the TFR of a short
+	// message comes back over that connection (TS 29.338 6.3.1).
+	scID := diameter.Identity{OriginHost: "sc." + domain, OriginRealm: domain}
+	scNode := diameter.NewNode(scID, []uint32{sgd.ApplicationIDSGd}, cxTimers, quiet())
+	scServer, err := scNode.Listen("127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(scServer.Stop)
+	net.sgd = sgd.NewSGdClient(scNode, scServer, 30*time.Second)
+
 	gwStore, scStore := ipsmgw.NewMemoryStore(), sc.NewMemoryStore()
 	var shPeers []*sh.Client
 	for k := range n {
-		node, peer := connect(fmt.Sprintf("ipsmgw%d.%s", k, domain), diameter.ApplicationIDSh, nil)
+		host := fmt.Sprintf("ipsmgw%d.%s", k, domain)
+		var role atomic.Pointer[ipsmgw.IPSMGW]
+		node, peer := connect(host, func(m *diam.Message) *diam.Message {
+			g := role.Load()
+			if g == nil {
+				return diameter.CommandUnsupportedAnswer(diameter.Identity{OriginHost: host, OriginRealm: domain}, m)
+			}
+			return g.Handle(m)
+		}, diameter.ApplicationIDSh, sgd.ApplicationIDSGd)
 		users := sh.NewClient(node, peer, domain)
 		shPeers = append(shPeers, users)
 		centre := sc.New(users, scStore, quiet())
 		g := ipsmgw.New(ipsmgw.Config{URI: gwCfg.IPSMGW.SIP.URI(), HomeDomain: domain, Number: gwCfg.IPSMGW.Number,
-			ServiceCentre: gwCfg.IPSMGW.ServiceCentre}, watchedSC{centre, k, net.heard}, gwStore, users, net.dns, quiet())
+			ServiceCentre: gwCfg.IPSMGW.ServiceCentre, Diameter: node.Identity()},
+			watchedSC{centre, k, net.heard}, gwStore, users, net.dns, quiet())
 		t.Cleanup(g.Close)
+		role.Store(g)
 		centre.SetIPSMGW(g)
-		stack := newStack(t, sip.Timers{}, g.OnRequest)
+		scPeer := node.Connect(diameter.PeerConfig{Address: scServer.Addr(), OriginHost: scID.OriginHost})
+		t.Cleanup(scPeer.Stop)
+		reports := new(atomic.Int64)
+		stack := newStack(t, sip.Timers{}, func(st *sip.ServerTransaction) {
+			if st.Request.Method == sip.MESSAGE && st.Request.Get("In-Reply-To") != "" {
+				reports.Add(1)
+			}
+			g.OnRequest(st)
+		})
 		g.SetStack(stack)
 		net.ipsmgws = append(net.ipsmgws, stack.LocalAddr())
 		net.roles = append(net.roles, g)
+		net.gwHosts = append(net.gwHosts, host)
+		net.deliveryReports = append(net.deliveryReports, reports)
 	}
 	net.dns.add(gwCfg.IPSMGW.SIP.Host, net.ipsmgws[0])
 
@@ -231,6 +289,11 @@ func startIMS(t *testing.T, n int) *network {
 	}
 	for _, c := range shPeers {
 		ready(func() error { _, err := c.PublicIdentities(context.Background(), "12025550101"); return err })
+	}
+	for _, host := range net.gwHosts {
+		// A TFR for an IMSI no user has is answered without any delivery,
+		// so it is a cheap way to wait until one would get through.
+		ready(func() error { _, err := net.forward(host, "000000000000000", []byte{0x00}); return err })
 	}
 	return net
 }
@@ -922,3 +985,55 @@ func TestTheUESimulatorThatTakesNoShortMessages(t *testing.T) {
 		t.Errorf("UE-B is %+v, want no notification owed: its memory was never full", got)
 	}
 }
+
+// TestMTForwardShortMessageThroughTheIMS is TS 29.338 6.2.2 through the
+// whole IMS: an SMS-GMSC brings a short message for Bob in a TFR to the
+// IP-SM-GW that the HSS named, the IP-SM-GW delivers it over SIP, and
+// the TFA carries Bob's delivery report back.
+//
+// The report reaches the other IP-SM-GW, because that is where DNS
+// sends it, so one instance answers the TFR with an outcome that
+// another one found. Nothing is tied to the instance that holds the
+// TFR but the TFA itself.
+func TestMTForwardShortMessageThroughTheIMS(t *testing.T) {
+	net := startIMS(t, 2)
+	sc := net.gw.ServiceCentre
+	bobPhone := net.phone(2, 200)
+	bobPhone.register(3600)
+	net.waitForIPSMGWNumber(bobTel, net.gw.Number)
+
+	done := make(chan answered, 1)
+	go func() {
+		tfa, err := net.forward(net.gwHosts[0], bobIMSI, marshal(t, sms.Deliver{
+			OriginatingAddress:     sms.InternationalNumber("+12025550101"),
+			ServiceCentreTimeStamp: time.Now(),
+			UserData:               hello.UserData,
+		}))
+		done <- answered{tfa, err}
+	}()
+
+	mt, data, tpdu := bobPhone.delivery(sc)
+	if deliver, ok := tpdu.(sms.Deliver); !ok || deliver.OriginatingAddress != sms.InternationalNumber("+12025550101") {
+		t.Fatalf("Bob got %+v, want the SMS-DELIVER of the TFR", tpdu)
+	}
+	net.dns.add(net.gw.SIP.Host, net.ipsmgws[1])
+	bobPhone.report(mt, ack(t, data.MessageReference))
+	tfa := nextTFA(t, done)
+	if want := diameter.Base(diameter.DiameterSuccess); tfa.Result != want {
+		t.Errorf("TFA result = %v, want %v", tfa.Result, want)
+	}
+	if first, second := net.deliveryReports[0].Load(), net.deliveryReports[1].Load(); first != 0 || second != 1 {
+		t.Errorf("the IP-SM-GWs took %d and %d delivery reports, want the second one to have taken it", first, second)
+	}
+	// The outcome of a short message that came over SGd goes to the TFA,
+	// not to the SC stub of either node.
+	select {
+	case got := <-net.heard:
+		t.Errorf("an SC stub heard %+v of a short message that came over SGd", got)
+	case <-time.After(watch):
+	}
+}
+
+// bobIMSI is the IMSI of subscriber 2 of deploy/compose/hss.yaml, which
+// the private identity of TS 23.003 13.3 carries before its at sign.
+const bobIMSI = "001010000000002"

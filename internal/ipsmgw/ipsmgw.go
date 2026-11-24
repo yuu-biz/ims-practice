@@ -25,6 +25,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/yuu-biz/ims-practice/internal/diameter"
 	"github.com/yuu-biz/ims-practice/internal/ims"
 	"github.com/yuu-biz/ims-practice/internal/maintenance"
 	"github.com/yuu-biz/ims-practice/internal/sh"
@@ -57,6 +58,13 @@ type Config struct {
 	// Number is the E.164 number of the IP-SM-GW, digits only, which it
 	// registers in the HSS for each user it serves (TS 29.328 7.6.16).
 	Number string
+	// Diameter is how the IP-SM-GW names itself on Diameter: the
+	// Origin-Host and Origin-Realm of the answers it sends over SGd (TS
+	// 29.338 6.3.2.6), and the identity that the HSS keeps from the
+	// registration and that an SMS-GMSC sends a TFR to. The zero value
+	// leaves them empty, which an IP-SM-GW whose node takes no SGd
+	// request never needs.
+	Diameter diameter.Identity
 	// ServiceCentre is the address of the SC: the RP-Destination Address
 	// that a short message from a UE must carry, and the
 	// RP-Originator Address of the RP-DATA to a UE (TS 24.011 8.2.5.1,

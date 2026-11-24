@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/yuu-biz/ims-practice/internal/diameter"
 	"github.com/yuu-biz/ims-practice/internal/ipsmgw"
 	"github.com/yuu-biz/ims-practice/internal/sh"
 	"github.com/yuu-biz/ims-practice/internal/sip"
@@ -34,6 +35,10 @@ const (
 	scscfHost = "scscf." + domain
 	// ibcfHost is the IBCF of the home network (interconnect_test.go).
 	ibcfHost = "ibcf." + domain
+	// gwDiameterHost and scDiameterHost are the Diameter identities of
+	// the IP-SM-GW and of the SC it speaks SGd with (sgd_test.go).
+	gwDiameterHost = "ipsmgw." + domain
+	scDiameterHost = "sc." + domain
 )
 
 var scAddress = sms.InternationalNumber("+12025550100")
@@ -197,7 +202,8 @@ func newHarnessWith(t *testing.T, store ipsmgw.Store, reportTimeout time.Duratio
 	})
 	h.sc.answerWith(sms.SubmitReport{ServiceCentreTimeStamp: time.Date(2026, 11, 20, 9, 30, 0, 0, time.UTC)}, nil)
 	h.g = ipsmgw.New(ipsmgw.Config{URI: ownURI, HomeDomain: domain, Number: number, ServiceCentre: scAddress, ReportTimeout: reportTimeout,
-		IBCF: extra.IBCF, UserLocks: extra.UserLocks,
+		Diameter: diameter.Identity{OriginHost: gwDiameterHost, OriginRealm: domain},
+		IBCF:     extra.IBCF, UserLocks: extra.UserLocks,
 		// The sweep comes round often, so that a test which shortens
 		// TR1N does not wait a second for the delivery it ends, and ends
 		// it while the Store still keeps the delivery.
