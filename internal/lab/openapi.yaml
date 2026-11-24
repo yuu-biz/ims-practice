@@ -1,0 +1,570 @@
+openapi: 3.1.0
+info:
+  title: Lab API
+  version: 1.0.0
+  description: |
+    The Lab collects the HEP copies that the nodes send of every SIP and
+    Diameter message, derives the calls and the registrations from the
+    SIP messages alone, and serves them to its web UI. It also forwards
+    the requests of the UI to the HSS provisioning API, the EPC stub, the
+    fault agent and the UE simulators. This API is this project's own.
+
+    The answers are JSON. Times are RFC 3339 with nanoseconds, in UTC.
+    A forwarded route answers with what the API behind it answered,
+    whatever the status, or with Error: 503 when no such API is
+    configured, 502 when it does not answer, 404 for a UE simulator that
+    is not configured.
+
+    GET / is the page of the web UI. The scripts and the styles that the
+    page loads are files below / as well, which the build of the UI puts
+    there; they are not described here.
+paths:
+  /:
+    get:
+      operationId: getUI
+      summary: The web UI.
+      responses:
+        '200':
+          description: The page of the UI.
+          content:
+            text/html: {}
+  /api/messages:
+    get:
+      operationId: getMessages
+      summary: The messages in capture order.
+      description: |
+        Capture order is the time in the HEP packet, with the id as
+        tie-breaker. A message seen by its sender and its receiver appears
+        twice, once per node. A Cx message has the call_id of the SIP
+        request it was sent for, so call_id returns a call or a
+        registration with its Cx messages.
+      parameters:
+        - name: call_id
+          in: query
+          description: Keep the messages of this Call-ID; may be given several times.
+          schema:
+            type: string
+        - name: correlation_id
+          in: query
+          description: Keep the messages of this HEP correlation ID.
+          schema:
+            type: string
+      responses:
+        '200':
+          description: The messages.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Message'
+        '400':
+          $ref: '#/components/responses/Error'
+  /api/calls:
+    get:
+      operationId: getCalls
+      summary: One entry per call, oldest first.
+      responses:
+        '200':
+          description: The calls.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Call'
+  /api/registrations:
+    get:
+      operationId: getRegistrations
+      summary: One entry per public user identity.
+      responses:
+        '200':
+          description: The registrations.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Registration'
+  /api/events:
+    get:
+      operationId: getEvents
+      summary: Each new message and each change of a call or a registration, as server-sent events.
+      description: |
+        "event: message" carries a Message. "event: state" carries
+        {"call": Call} or {"registration": Registration}. A browser that
+        falls behind misses events and can reload the lists.
+      responses:
+        '200':
+          description: The events.
+          content:
+            text/event-stream: {}
+  /api/subscribers:
+    get:
+      operationId: getSubscribers
+      summary: The subscriptions of the HSS, from GET /subscriptions of its provisioning API.
+      description: The answer is that of the HSS, as its provisioning API describes it.
+      responses:
+        default:
+          $ref: '#/components/responses/Forwarded'
+  /api/epc/ues:
+    get:
+      operationId: getEPCUEs
+      summary: The UEs attached to the EPC stub, from its GET /ues.
+      responses:
+        default:
+          $ref: '#/components/responses/Forwarded'
+  /api/epc/ues/{imsi}:
+    get:
+      operationId: getEPCUE
+      summary: The state of one UE in the EPC stub.
+      parameters:
+        - $ref: '#/components/parameters/imsi'
+      responses:
+        default:
+          $ref: '#/components/responses/Forwarded'
+  /api/epc/network-initiated/ues/{imsi}/bearers/{ebi}:
+    delete:
+      operationId: deactivateBearer
+      summary: The network deactivates a bearer of the UE.
+      parameters:
+        - $ref: '#/components/parameters/imsi'
+        - name: ebi
+          in: path
+          required: true
+          description: The EPS bearer identity.
+          schema:
+            type: string
+      responses:
+        default:
+          $ref: '#/components/responses/Forwarded'
+  /api/epc/network-initiated/ues/{imsi}/detach:
+    post:
+      operationId: detach
+      summary: The network detaches the UE.
+      parameters:
+        - $ref: '#/components/parameters/imsi'
+      requestBody:
+        $ref: '#/components/requestBodies/Forwarded'
+      responses:
+        default:
+          $ref: '#/components/responses/Forwarded'
+  /api/fault/faults:
+    get:
+      operationId: getFaults
+      summary: The faults that the fault agent holds.
+      responses:
+        default:
+          $ref: '#/components/responses/Forwarded'
+    post:
+      operationId: injectFault
+      summary: Inject a fault.
+      requestBody:
+        $ref: '#/components/requestBodies/Forwarded'
+      responses:
+        default:
+          $ref: '#/components/responses/Forwarded'
+  /api/fault/faults/{id}:
+    delete:
+      operationId: clearFault
+      summary: Clear a fault.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        default:
+          $ref: '#/components/responses/Forwarded'
+  /api/ues:
+    get:
+      operationId: getUEs
+      summary: The UE simulators that the Lab controls, in the order of its configuration.
+      description: The list answers 200 even when a UE does not answer.
+      responses:
+        '200':
+          description: The UE simulators.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/UESimulator'
+  /api/ues/{name}/register:
+    post:
+      operationId: registerUE
+      parameters:
+        - $ref: '#/components/parameters/name'
+      responses:
+        default:
+          $ref: '#/components/responses/UE'
+  /api/ues/{name}/deregister:
+    post:
+      operationId: deregisterUE
+      parameters:
+        - $ref: '#/components/parameters/name'
+      responses:
+        default:
+          $ref: '#/components/responses/UE'
+  /api/ues/{name}/call:
+    post:
+      operationId: callFromUE
+      parameters:
+        - $ref: '#/components/parameters/name'
+      requestBody:
+        $ref: '#/components/requestBodies/Forwarded'
+      responses:
+        default:
+          $ref: '#/components/responses/UE'
+  /api/ues/{name}/answer:
+    post:
+      operationId: answerOnUE
+      parameters:
+        - $ref: '#/components/parameters/name'
+      responses:
+        default:
+          $ref: '#/components/responses/UE'
+  /api/ues/{name}/hangup:
+    post:
+      operationId: hangUpOnUE
+      parameters:
+        - $ref: '#/components/parameters/name'
+      requestBody:
+        $ref: '#/components/requestBodies/Forwarded'
+      responses:
+        default:
+          $ref: '#/components/responses/UE'
+  /api/ues/{name}/hold:
+    post:
+      operationId: holdOnUE
+      parameters:
+        - $ref: '#/components/parameters/name'
+      responses:
+        default:
+          $ref: '#/components/responses/UE'
+  /api/ues/{name}/resume:
+    post:
+      operationId: resumeOnUE
+      parameters:
+        - $ref: '#/components/parameters/name'
+      responses:
+        default:
+          $ref: '#/components/responses/UE'
+  /api/ues/{name}/dtmf:
+    post:
+      operationId: sendDTMFFromUE
+      parameters:
+        - $ref: '#/components/parameters/name'
+      requestBody:
+        $ref: '#/components/requestBodies/Forwarded'
+      responses:
+        default:
+          $ref: '#/components/responses/UE'
+  /api/ues/{name}/swap:
+    post:
+      operationId: swapOnUE
+      parameters:
+        - $ref: '#/components/parameters/name'
+      responses:
+        default:
+          $ref: '#/components/responses/UE'
+  /api/ues/{name}/merge:
+    post:
+      operationId: mergeOnUE
+      parameters:
+        - $ref: '#/components/parameters/name'
+      responses:
+        default:
+          $ref: '#/components/responses/UE'
+  /api/ues/{name}/answer-policy:
+    put:
+      operationId: setAnswerPolicyOfUE
+      parameters:
+        - $ref: '#/components/parameters/name'
+      requestBody:
+        $ref: '#/components/requestBodies/Forwarded'
+      responses:
+        default:
+          $ref: '#/components/responses/UE'
+  /api/ues/{name}/sms:
+    post:
+      operationId: sendSMSFromUE
+      parameters:
+        - $ref: '#/components/parameters/name'
+      requestBody:
+        $ref: '#/components/requestBodies/Forwarded'
+      responses:
+        default:
+          $ref: '#/components/responses/UE'
+  /api/ues/{name}/sms-memory:
+    put:
+      operationId: setSMSMemoryOfUE
+      summary: Take the memory of the UE for short messages away, or give it back.
+      parameters:
+        - $ref: '#/components/parameters/name'
+      requestBody:
+        $ref: '#/components/requestBodies/Forwarded'
+      responses:
+        default:
+          $ref: '#/components/responses/UE'
+  /api/ues/{name}/sms-memory/notify:
+    post:
+      operationId: notifySMSMemoryOfUE
+      summary: Have the UE notify the network once more that it has memory.
+      parameters:
+        - $ref: '#/components/parameters/name'
+      responses:
+        default:
+          $ref: '#/components/responses/UE'
+  /api/ues/{name}/sms-availability:
+    put:
+      operationId: setSMSAvailabilityOfUE
+      summary: Have the UE take short messages, or answer each one 480.
+      parameters:
+        - $ref: '#/components/parameters/name'
+      requestBody:
+        $ref: '#/components/requestBodies/Forwarded'
+      responses:
+        default:
+          $ref: '#/components/responses/UE'
+  /api/ues/{name}/events:
+    get:
+      operationId: getEventsOfUE
+      summary: The events of the UE, which stream through as they come.
+      parameters:
+        - $ref: '#/components/parameters/name'
+      responses:
+        default:
+          $ref: '#/components/responses/UE'
+  /api/ues/{name}/xcap:
+    get:
+      operationId: getSupplementaryServices
+      summary: The supplementary services that the UE reads over Ut with XCAP.
+      parameters:
+        - $ref: '#/components/parameters/name'
+      responses:
+        default:
+          $ref: '#/components/responses/UE'
+  /api/ues/{name}/xcap/services/{service}:
+    put:
+      operationId: setSupplementaryService
+      parameters:
+        - $ref: '#/components/parameters/name'
+        - name: service
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        $ref: '#/components/requestBodies/Forwarded'
+      responses:
+        default:
+          $ref: '#/components/responses/UE'
+  /api/ues/{name}/xcap/oir:
+    put:
+      operationId: setOIR
+      parameters:
+        - $ref: '#/components/parameters/name'
+      requestBody:
+        $ref: '#/components/requestBodies/Forwarded'
+      responses:
+        default:
+          $ref: '#/components/responses/UE'
+components:
+  parameters:
+    name:
+      name: name
+      in: path
+      required: true
+      description: The name of a UE simulator of the Lab's configuration.
+      schema:
+        type: string
+    imsi:
+      name: imsi
+      in: path
+      required: true
+      schema:
+        type: string
+  requestBodies:
+    Forwarded:
+      description: Forwarded as it is.
+      content:
+        '*/*':
+          schema: true
+  responses:
+    Error:
+      description: The request failed.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    Forwarded:
+      description: What the API behind the route answered, or Error with 502 or 503.
+      content:
+        '*/*': {}
+    UE:
+      description: What the control API of the UE answered, as its own document describes it, or Error with 404 or 502.
+      content:
+        '*/*': {}
+  schemas:
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: string
+      additionalProperties: false
+    Time:
+      type: string
+      format: date-time
+    Message:
+      description: One captured copy of a SIP or Diameter message.
+      type: object
+      required: [id, time, protocol, transport, src, dst, node, direction, summary, correlation_id, payload, refs]
+      properties:
+        id:
+          description: Numbers the messages as they arrive.
+          type: integer
+          minimum: 0
+        time:
+          $ref: '#/components/schemas/Time'
+        protocol:
+          type: string
+          enum: [sip, diameter]
+        transport:
+          type: string
+          enum: [udp, tcp, sctp]
+        src:
+          type: string
+        dst:
+          type: string
+        node:
+          description: The node that captured the copy.
+          type: string
+        direction:
+          description: Whether the node sent or received it; empty when the Lab cannot tell.
+          type: string
+          enum: [send, recv, '']
+        summary:
+          type: string
+        correlation_id:
+          type: string
+        call_id:
+          description: The SIP Call-ID, or for a Cx or Rx message that of the SIP message its session was started for.
+          type: string
+        payload:
+          description: The SIP message as it went on the wire, or the JSON rendering of the Diameter message.
+          type: string
+        refs:
+          description: The parts of the specifications that describe the message.
+          type: array
+          items:
+            type: object
+            required: [spec, clause, title]
+            properties:
+              spec:
+                type: string
+              clause:
+                type: string
+              title:
+                type: string
+            additionalProperties: false
+        sms:
+          $ref: '#/components/schemas/ShortMessage'
+      additionalProperties: false
+    ShortMessage:
+      description: The body of a MESSAGE of SMS over IP, decoded.
+      type: object
+      required: [hex, fields]
+      properties:
+        hex:
+          type: string
+        fields:
+          description: The fields of the RP message (TS 24.011), then those of the TPDU inside it (TS 23.040), in the order of their octets.
+          type: array
+          items:
+            type: object
+            required: [name, value]
+            properties:
+              name:
+                type: string
+              value:
+                type: string
+            additionalProperties: false
+        text:
+          type: string
+        error:
+          description: Why the decoding stopped; the fields before it stay.
+          type: string
+      additionalProperties: false
+    Call:
+      description: An INVITE session, or the sessions that share the icid-value of P-Charging-Vector.
+      type: object
+      required: [call_id, legs, from, to, state, status, started, ended, messages]
+      properties:
+        call_id:
+          type: string
+        legs:
+          description: The Call-IDs of the sessions of the call, in the order they started; the first is call_id.
+          type: array
+          items:
+            type: string
+        from:
+          type: string
+        to:
+          type: string
+        state:
+          type: string
+          enum: [calling, early, confirmed, terminated, failed, cancelled]
+        status:
+          description: The latest response to the INVITE that moved the state; null before the first one.
+          type: [integer, 'null']
+        started:
+          $ref: '#/components/schemas/Time'
+        ended:
+          oneOf:
+            - $ref: '#/components/schemas/Time'
+            - type: 'null'
+        messages:
+          type: integer
+          minimum: 0
+      additionalProperties: false
+    Registration:
+      description: The state of one public user identity, as the 200 to a REGISTER and the NOTIFYs of the reg event package show it.
+      type: object
+      required: [impu, impi, contact, expires, state, scscf, call_id]
+      properties:
+        impu:
+          type: string
+        impi:
+          type: string
+        contact:
+          type: string
+        expires:
+          $ref: '#/components/schemas/Time'
+        state:
+          type: string
+          enum: [registered, unregistered]
+        scscf:
+          type: string
+        call_id:
+          description: The Call-ID of the last REGISTER whose 200 was read, or "" when only NOTIFYs showed the identity.
+          type: string
+      additionalProperties: false
+    UESimulator:
+      type: object
+      required: [name, reachable, status]
+      properties:
+        name:
+          type: string
+        reachable:
+          type: boolean
+        status:
+          description: |
+            What the UE answered to GET /status, as it is: the Status of
+            the control API of the UE. null when the UE did not answer, with
+            the reason in error.
+        error:
+          type: string
+      additionalProperties: false
