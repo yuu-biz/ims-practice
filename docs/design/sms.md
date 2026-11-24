@@ -11,7 +11,7 @@
 | 主題 | 作り |
 | --- | --- |
 | IP-SM-GW の置き場所 | `ims` コマンドの役割 `ipsmgw` にします。AS の URI は DNS で引くので、複数台で動かせます。 |
-| SC | IP-SM-GW と同じプロセスの中のスタブにします。TS 24.341 B.5 の例も、IP-SM-GW が SC に直接届くと仮定しています。SGd、S6c、蓄積と再送は作らず、`SIMPLIFIED:` に書きます。 |
+| SC | IP-SM-GW と同じプロセスの中のスタブにします。TS 24.341 B.5 の例も、IP-SM-GW が SC に直接届くと仮定しています。スタブには SGd、S6c、蓄積と再送を作らず、`SIMPLIFIED:` に書きます。IP-SM-GW が外の SC から SGd で受ける側は「IP-SM-GW の SGd の作り」にあります。 |
 | SC との境界 | IP-SM-GW は Go のインタフェースを通して SC を呼びます。SC は周辺ノードのスタブなので、インタフェースの境界で本格的な実装に差し替えられるようにします。SC を独立した役割にし、SGd と S6c で通信するときは、このインタフェースを Diameter のクライアントで実装します。境界の後ろの実装を替えるだけなので、IP-SM-GW の作りは変わりません。 |
 | MT の送り先 | IP-SM-GW は MESSAGE を網の入口の I-CSCF へ送ります。I-CSCF が LIR で S-CSCF を探すので、通話の着信と同じ流れになります。 |
 | 受信者の決め方 | SC のスタブが、TP-DA の番号から Sh の UDR で IMPU を引きます。SRI-for-SM の代わりであることを `SIMPLIFIED:` に書きます。 |
@@ -57,6 +57,42 @@ UE にまたショートメッセージが届くようになったことと、UE
 | 印の落とし方 | `msPresent` は UNRI を落とし、MWD が空でなく MCEF も落ちていれば ALR を送ります（2c）。`memoryAvailable` は MCEF と UNRI を落とし、MWD が空でなければ ALR を送ります。2f は UNRI を落とすとだけ書き、MCEF には触れていませんが、MSC 経由（2d）と SGSN 経由（2e）は同じ知らせで MCEF を落とすので、それに合わせます。 | TS 23.040 3.2.6 の 2c、2d、2e、2f。 |
 | 知らない値が来たとき | DIAMETER_UNABLE_TO_COMPLY で答えます。この HSS が扱える理由は 2 つだけで、ほかの値では何をすればよいか決まらないためです。 | － |
 | XSD を置かないこと | 3GPP の文書の再配布の条件を確かめられないので、`ShDataType_Rel20.xsd` の原本はリポジトリに置きません。代わりに、決まった文字列と比べる試験で、要素の位置と名前空間を確かめます。 | AGENTS.md の「仕様は公開資料だけを使う」。 |
+
+## IP-SM-GW の SGd の作り
+
+標準の道では、SC は SRA で得たノードに TFR を送り、ノードは配達が終わってから TFA を返します。この受け側を IP-SM-GW に入れるにあたって決めたことです。TS 23.204 5.2.4 は、IP-SM-GW がこの経路で SMS-GMSC から見て serving node に見えるとしています。
+
+| 主題 | 作り | 根拠 |
+| --- | --- | --- |
+| 宛先の見つけ方 | 登録のときに Sh の UDR（Data-Reference 32）で IMSI を読み、reg イベントの購読に入れます。IMSI から購読を引く索引を Store に置き、TFR の User-Name でそれを引きます。全加入者を走査する処理は入れません。 | TS 29.328 7.6.24。TS 29.338 Table 6.2.2.1/1 が SM RP DA を User-Name の IMSI とします。 |
+| 読む順 | IMSI を読み、IMSI と「短いメッセージを受け取る」ことを購読の記録に書いてから、PUR を送ります。HSS は PUR を受けると SC に通知するので、IP-SM-GW が PUR の答えを受け取る前に TFR が来ることがあります。そのときも、利用者を見つけて配達できるようにするためです。PUR が失敗したら、受け取ることを書き戻し、次の NOTIFY でもう一度 HSS に伝えます。 | TS 29.328 6.1.2.1 step 4b。 |
+| IMSI を索引にする理由 | 索引を購読に向けると、IMSI から MSISDN と公開識別子、受け取れるかどうかまで 1 回で引けます。登録が解けると購読と一緒に消えるので、落とし忘れもありません。 | － |
+| 配達の宛先 | IMSI に結び付いた tel URI を Request-URI にします。MSISDN が無ければ公開識別子を使います。 | TS 23.204 6.4 step 6。 |
+| 登録のない IMSI | DIAMETER_ERROR_USER_UNKNOWN で答えます。HSS がこの IP-SM-GW を教えるのは登録した利用者だけなので、知らない IMSI は解けた登録を意味します。 | TS 29.338 6.2.2.2 が、IMSI を知らない serving node にこれを返させます。 |
+| 受け取れない利用者 | 登録はあるが `+g.3gpp.smsip` の連絡先が無いときは、MESSAGE を送らずに DIAMETER_ERROR_ABSENT_USER で答え、自分の UNRI を立てます。 | TS 23.204 6.5b。 |
+| TFA を待たせる場所 | 配達の結果を Store に置き、TFR を持つ台が取りに行きます。鍵は、TFR の Session-Id に、その要求ごとの tag を足したものです。同じ session で TFR が送り直されても、それぞれが自分の配達の結果を待ち、前の結果を取りません。delivery report がどの台に届くかは分からないので、結果を出す台と TFA を返す台は別になります。結果を読めなかったときは、期限まで読み直します。 | RFC 6733 8.8 が Session-Id を 1 つの session の名前とします。TS 23.204 6.5 step 3 は同じ台に届くことを求めますが、DNS はそれを約束しません。送り直された TFR を重複として見分けないことは、`SIMPLIFIED:` に書いています（RFC 6733 3 の End-to-End Identifier と Appendix C）。 |
+| 待ち方 | Store を一定の間隔で見に行きます。結果を取れるのは 1 台だけなので、TFA は 1 回です。 | － |
+| 待つ時間 | TR1N に、期限切れを拾う掃除の間隔と 1 秒を足した長さです。報告が来なかった配達を終わらせるのは掃除の回なので、その回が来るまでを見込みます。SMS-GMSC のタイマーに合わせて短くはしません。 | TS 24.011 6.2.2.2。TS 23.204 6.5a NOTE 1 が、足りなければ SMS-GMSC のタイマーを延ばすとします。 |
+| System Failure の結果コード | TS 29.338 に当たるものが無いので、基本プロトコルの DIAMETER_UNABLE_TO_COMPLY を使います。要求を読めなかったときと、結果が分からないままになったときも同じです。 | TS 29.338 7.3.1 が、この文書の結果コードの横で基本プロトコルの permanent failure も使うとします。RFC 6733 7.1.5。 |
+| 運用から外した台 | TFR を DIAMETER_TOO_BUSY で断ります。配達はまだ何も始まっていないので、ほかの台が丸ごと引き取れます。 | RFC 6733 7.1.3 が、送り手に同じ realm のほかのノードへ持っていかせます。 |
+| UNRI の置き場所 | IP-SM-GW 自身の Store に、公開識別子ごとに置きます。登録より長く残るので、reg イベントの購読の中には入れません。期限は 72 時間で、SC がショートメッセージを抱えていられる長さに合わせました。期限を決めたのは、保存先が期限の無い項目を持たないためです。 | TS 23.040 2.1.1 が UNRI を IP-SM-GW と HSS の両方に置くものと定めます。3.2.6。 |
+| UNRI を落とす引き金 | 登録（PUR）のときは落とすだけで、知らせは送りません。PUR 自体が 2c の知らせだからです。利用者からの SIP 要求のときは落として `msPresent` を送ります。印を取れるのは 1 台だけなので、知らせも 1 回です。利用者が登録していなければ捨てます。知らせを HSS が受け取らなかったときは印を戻し、次の要求でもう一度試します。 | TS 23.040 3.2.6 の 2c。TS 23.204 6.5b step 2 と 2d。 |
+| メモリの知らせ | RP-SMMA を受けたら `memoryAvailable` を HSS に送り、そのあとで UE に RP-ACK を返します。送れなかったときは RP-Cause 41 を返すので、UE は知らせを送るべきものとして持ち続けます。 | TS 24.341 5.3.3.4.1 の手順 d と e。TS 23.204 6.6。TS 24.011 Table 8.4 part 1。 |
+| 配送の報告を送らないこと | IP-SM-GW は HSS に RDR を送らず、UE がまた届くようになる 1 回限りの通知も申し込みません。同じ失敗を SMS-GMSC が報告し、HSS はそれで MWD を書きます。UE が戻ったことは、もともと持っている reg イベントの購読で分かります。 | TS 23.204 6.5a step 17 と 18。`SIMPLIFIED:` にも書いています。 |
+| ドメイン選択 | IMS だけに配達します。ほかのドメインのノードがこのプロジェクトに無いためです。 | TS 23.204 6.4 step 5 と 6.5a。`SIMPLIFIED:` にも書いています。 |
+
+TFA の結果コードは次のとおりです。左の列は配達の結果で、SIP の応答コードから TS 29.311 Table 6.1.4.4.1.1 で写した MAP の user error か、UE の RP-ERROR の原因です。右の列は、同じことを表す TS 29.338 7.3 の結果コードです。
+
+| 配達の結果 | TFA |
+| --- | --- |
+| 届いた（RP-ACK） | DIAMETER_SUCCESS（2001） |
+| Absent Subscriber SM（480） | DIAMETER_ERROR_ABSENT_USER（5550）。自分の UNRI も立てます |
+| Unidentified subscriber（404、604） | DIAMETER_ERROR_USER_UNKNOWN（5001） |
+| Subscriber busy for MT SMS（486、600、603） | DIAMETER_ERROR_USER_BUSY_FOR_MT_SMS（5551） |
+| Illegal Subscriber（401、407） | DIAMETER_ERROR_ILLEGAL_USER（5553） |
+| メモリ不足（RP-Cause 22） | DIAMETER_ERROR_SM_DELIVERY_FAILURE（5555）と SM-Delivery-Failure-Cause の MEMORY_CAPACITY_EXCEEDED |
+| そのほかの RP-ERROR | DIAMETER_ERROR_SM_DELIVERY_FAILURE（5555）と EQUIPMENT_PROTOCOL_ERROR |
+| System Failure（そのほかの応答コード、応答が無い、報告が来ない） | DIAMETER_UNABLE_TO_COMPLY（5012） |
 
 ## 残っている限界
 
