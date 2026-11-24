@@ -672,6 +672,83 @@ Wireshark では `sip.Status-Code == 503 && ip.src == 172.28.0.70` で IP-SM-GW 
 
 administrative state はノードのプロセスにあります。起動し直したノードは `UNLOCKED` です。`scripts/e2e-observability.sh` がこの手順を実行し、キャプチャを確かめます。
 
+## サービスセンタを運用から外す
+
+サービスセンタは、預かっているショートメッセージを宛先ごとに保存先に置き、宛先ごとに次に試す時刻も置きます。どの台もショートメッセージを受け取れ、どの台も配達できます。商用の網は 1 つの保存先の上でサービスセンタを何台も動かし、serving node はそのすべてと Diameter の接続を持ちます。台が自分のものとして持つのは、配達を試しているあいだだけです。そのあいだ、台は宛先のリースを持ち、台が止まればリースは期限で切れます。そのため、運用者が外した台が終えるのは、始めた配達の試行だけです。ほかの仕事はすべて、保存先を通して運用中の台へ移ります。
+
+サービスセンタは、ショートメッセージを応答で断れません。IP-SM-GW の OFR はサービスセンタの realm だけを書き、Destination-Host を書きません（TS 29.338 6.3.1.1）。要求をほかのノードへ回させる答えの DIAMETER_TOO_BUSY は、1 つのサーバーを名指しした要求にしか使えません（RFC 6733 7.1.3）。TS 29.338 6.2.1.1 が応答に定める失敗の原因は、ショートメッセージそのものを断るものです。「Service Centre congestion」は UE に RP-Cause 42（congestion）として届き（TS 24.011 Table 8.4）、ショートメッセージはほかの台へ移りません。そこでサービスセンタは、HSS と同じく、Diameter の接続で運用から外れます（[HSS を運用から外す](registration.md#hss-を運用から外す)）。
+
+サービスセンタのノードも、ポート 8085 で同じ保守用の API を出します。`deploy/compose/sc.yaml` の `maintenance` の節が決める待ち受けで、Prometheus が指標を集めるのと同じ待ち受けです。要求はサービスセンタのコンテナの中から送ります。
+
+1. サービスセンタを shut down します。
+
+   ```sh
+   docker compose exec sc sh -c '
+   body="{\"administrative_state\":\"SHUTTINGDOWN\",\"operator\":\"learner\"}"
+   printf "PUT /maintenance/v1/functions/sc/administrative-state HTTP/1.0\r\nContent-Type: application/json\r\nContent-Length: ${#body}\r\n\r\n%s" "$body" |
+     nc -w 5 127.0.0.1 8085'
+   ```
+
+   手元に何もなければ、その場で `LOCKED` になります（X.731 7.1.3.3）。ここまでの手順が終わっていれば、手元には何もありません。
+
+   ```json
+   {"role":"sc","administrative_state":"LOCKED","operational_state":"ENABLED","users":0}
+   ```
+
+   `users` は、サービスセンタが答えている途中の OFR と知らせ（答えを送り出すまで）と、リースを持っている宛先（配達の試行が終わるまで）の数です。試行には、経路の問い合わせ、TFR、失敗したときの HSS への報告が入ります。IP-SM-GW は、UE が配達の報告を送るか、報告を待つ時間が切れるまで TFR に答えないので、1 回の試行が 1 分以上かかることもあります。預かっているショートメッセージは数えません。保存先にあり、どの台でも配達できるためです。`operational_state` は、サービスセンタの S6c の要求を受ける HSS があるあいだは `ENABLED` で、無ければ `DISABLED` です。HSS が無いと、ショートメッセージの宛先を確かめることも、宛先を受け持つノードを調べることもできないためです。運用中なのにノードが Diameter の接続を待ち受けていないときも `DISABLED` になります。
+
+2. UE 1 からショートメッセージを送ります。
+
+   ```sh
+   docker compose run --rm ue sms +12025550102 "Is the Service Centre in?"
+   ```
+
+   UE 1 は登録し、`ue sms` は `the SC refused the short message: RP-Cause 41, TP-FCS 0x0` で終わります。
+
+```text
+ UE 1      CSCF      IP-SM-GW     SC
+  |          |          |  DPR、Disconnect-Cause は REBOOTING
+  |          |          |<---------|  手元に何もない shut down
+  |          |          |  DPA     |
+  |          |          |--------->|  接続が閉じる
+  |          |          |  Tc ごとの新しい接続は断られる
+  |          |          |----x     |
+  |  MESSAGE |          |          |  SMS-SUBMIT を載せた RP-DATA
+  |--------->|--------->|          |
+  |  202     |  202     |          |
+  |<---------|<---------|          |  サービスセンタへの接続が無いので OFR は出ない
+  |  MESSAGE |          |          |  RP-Cause 41 の RP-ERROR
+  |<---------|<---------|          |
+```
+
+- **サービスセンタは、serving node が開いた接続をそれぞれ閉じます。** `Disconnect-Cause` を `REBOOTING` にした Disconnect-Peer-Request（DPR）を送り、Disconnect-Peer-Answer（DPA）が返ると接続が閉じます（RFC 6733 5.4）。shut down のあと、ノードは Diameter の待ち受けのソケットを持ちません。IP-SM-GW は Tc（30 秒、RFC 6733 2.1）ごとに接続し直そうとし、トランスポートの段階で断られます。`REBOOTING` は、IP-SM-GW が戻ってきてよいことを示す原因です（5.4.3）。
+- **IP-SM-GW は、接続を持っている次のサービスセンタの台へ OFR を送ります。** この網は 1 台なので送る先が残らず、IP-SM-GW は RP-Cause 41（temporary failure）の RP-ERROR を UE に返します（TS 24.011 Table 8.4）。サービスセンタに届かないときに、いつも返す原因です。これを受けた UE は、あとでショートメッセージを送り直してもかまいません。IP-SM-GW そのものは運用中なので、MESSAGE には 202 が返ります。
+- **HSS との接続は残ります。** サービスセンタが自分で開いた接続で、HSS はこの接続でサービスセンタに知らせを送ります。運用から外れたサービスセンタに知らせが届くと、その利用者の宛先が保存先で今すぐ試す状態になり、運用中の台が配達します。
+
+`SHUTTINGDOWN` のあいだ、サービスセンタは始めたものを続け、新しい試行は始めません。
+
+- **持っている接続は残します。** その接続で OFR が届けば、いつもどおり受け取ります。ショートメッセージを保存先に預け、submit report を付けて答え、配達は運用中の台に任せます。
+- **始めた試行は最後まで続けます。** そのあとは、同じ宛先の次のショートメッセージも、ほかの宛先も、自分のものにしません。再送、有効期間の終わり、知らせで試す状態になった宛先は、保存先で待ちます。
+
+手元に何もなくなると `LOCKED` になり、手順 2 のように接続を閉じます。lock をかけたときと、要求の `timeout_seconds` が切れたときは、すぐにそうします。そのとき答えを待っている TFR には答えが返りません。サービスセンタはこれを、時間が経てば直るかもしれない失敗と読み（TS 23.040 Table 1）、ショートメッセージを次の再送まで預かります。IP-SM-GW がもう配達していれば、受け手は同じショートメッセージを 2 回受け取ります。
+
+この網のサービスセンタは 1 台なので、運用から外れているあいだに預かったものは、戻すまで待ちます。
+
+3. 同じ要求に `UNLOCKED` を入れて戻します。
+
+   ```sh
+   docker compose exec sc sh -c '
+   body="{\"administrative_state\":\"UNLOCKED\",\"operator\":\"learner\"}"
+   printf "PUT /maintenance/v1/functions/sc/administrative-state HTTP/1.0\r\nContent-Type: application/json\r\nContent-Length: ${#body}\r\n\r\n%s" "$body" |
+     nc -w 5 127.0.0.1 8085'
+   ```
+
+   ノードは待ち受けを再開し、IP-SM-GW は 30 秒以内の次の試みで接続します。`docker compose logs ipsmgw` を見ると、`sc.ims.mnc001.mcc001.3gppnetwork.org` への接続がまた `I-Open` になっています。ショートメッセージをもう一度送ると、submit report は RP-ACK になります。ここでは UE 2 を動かしていないので、配達そのものは[失敗するとき](#失敗するとき)のとおりに終わります。
+
+Wireshark では `diameter.cmd.code == 282 && ip.src == 172.28.0.71` でサービスセンタの DPR が見られます。PUT の要求はコンテナのループバックを通るので、キャプチャには入りません。
+
+administrative state はノードのプロセスにあります。起動し直したノードは `UNLOCKED` です。`scripts/e2e-observability.sh` がこの手順を実行し、キャプチャを確かめます。
+
 ## ボディを読む
 
 MESSAGE のボディはバイナリです。TS 24.341 では、UE はオクテットをそのまま送ります。次は手順 1 の MESSAGE のボディで、UE シミュレータが `internal/sms` で作ったものです。ラボでは、MESSAGE の詳細の「Body (hex)」に同じオクテットが表示されます。
@@ -761,9 +838,9 @@ octet 2: lowest 2 bits of 'l' (00), then rest of 'e' (110010) = 0011 0010 = 32
 | `internal/scscf/thirdparty.go` | 第三者 REGISTER。 |
 | `internal/scscf/callerprefs.go` | Accept-Contact の照合（RFC 3841）。 |
 | `internal/ipsmgw` | IP-SM-GW。`ipsmgw.go`（第三者 REGISTER）、`regevent.go`（reg イベントの購読と PUR）、`message.go`（UE からの MESSAGE）、`deliver.go`（UE への MESSAGE）、`servicecentre.go`（SC との境界）、`sgd.go`（サービスセンタが SGd で持ち込むショートメッセージ）、`store.go`（配達の途中の状態）。 |
-| `internal/smsc` | サービスセンタ。`submit.go`（serving node から来たショートメッセージ）、`deliver.go`（経路の問い合わせ、配達、再送）、`alert.go`（HSS からの知らせ）、`store.go`（宛先ごとに預かっているショートメッセージ）。 |
+| `internal/smsc` | サービスセンタ。`submit.go`（serving node から来たショートメッセージ）、`deliver.go`（経路の問い合わせ、配達、再送）、`alert.go`（HSS からの知らせ）、`store.go`（宛先ごとに預かっているショートメッセージ）、`maintenance.go`（ノードの保守用の API に伝えることと、運用から外れているあいだにすること）。 |
 | `internal/sgd`、`internal/hss/s6c.go` | SGd と S6c のメッセージ、そのクライアント、HSS 側の S6c。 |
-| `cmd/ims/sc.go` | `sc` の役割がサービスセンタを Diameter のノードにつなぐところ。 |
+| `cmd/ims/sc.go` | `sc` の役割がサービスセンタを Diameter のノードにつなぐところと、運用から外れているあいだ、ノードの Diameter の待ち受けからサービスセンタを外すところ。 |
 | `internal/ipsmgw/smsiwmsc.go` | IP-SM-GW が SGd でサービスセンタにショートメッセージを渡すところ。 |
 | `internal/sc` | SC のスタブ。サービスセンタのノードを持たない IP-SM-GW が代わりに使う。 |
 | `internal/ue/sms.go` | SM-over-IP sender と receiver としての UE。 |

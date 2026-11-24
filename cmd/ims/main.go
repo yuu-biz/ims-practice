@@ -446,6 +446,7 @@ func run(configPath string, log *slog.Logger, level *slog.LevelVar) error {
 		// has stopped, so no request arrives while it finishes them.
 		defer stop()
 		scRole.Store(centre)
+		managed = append(managed, managedRole{function: scFunction(centre, server, hss.Available, roleLog), manage: centre.Manage})
 	}
 	if c := cfg.IBCF; c != nil {
 		roleLog := log.With("role", config.RoleIBCF)
@@ -1587,7 +1588,7 @@ func diameterHandler(node *diameter.Node, hssRole *hss.HSS, scscfRole *atomic.Po
 	// that the node does not serve the command when it has no sc role.
 	forServiceCentre := func(request *diam.Message) *diam.Message {
 		if centre := scRole.Load(); centre != nil {
-			return serviceCentreHandler(node.Identity(), centre, request, log.With("role", config.RoleSC))
+			return serviceCentreHandler(node, centre, request, log.With("role", config.RoleSC))
 		}
 		return diameter.CommandUnsupportedAnswer(node.Identity(), request)
 	}

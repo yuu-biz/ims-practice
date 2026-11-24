@@ -38,7 +38,12 @@
 # criterion of the third-party REGISTER says SESSION_CONTINUED, and ends
 # the MESSAGE, since its criterion says SESSION_TERMINATED, so UE 1 sees
 # the 503 turned into 500; after the
-# unlock the short message reaches the SC again. A shut down of the media
+# unlock the short message reaches the SC again. A shut down of the
+# Service Centre makes it end the SGd connection of the IP-SM-GW with a
+# DPR whose Disconnect-Cause is REBOOTING and stop listening on 3868, so
+# the IP-SM-GW, with no SC left to hand a short message to, answers UE 1
+# with an RP-ERROR of RP-Cause 41; after the unlock the IP-SM-GW
+# connects again and the SC takes the short message. A shut down of the media
 # relay makes it answer the Add of the P-CSCF with 503 over its control
 # API, and the P-CSCF, which has no other relay in this network, answers
 # the INVITE of UE 1 with 500 and forwards nothing; after the unlock the
@@ -863,6 +868,79 @@ fi
 
 await "the 202 of the IP-SM-GW after its unlock" "$gwAccepts" $((gwAccepted + 1))
 
+echo "drain of the Service Centre"
+# The IP-SM-GW opened the SGd connection, and the OFR it sends names no
+# Destination-Host, so the SC cannot turn a short message away in its
+# answer. It ends the connection with a DPR whose Disconnect-Cause is
+# REBOOTING and stops listening on 3868 instead, as the HSS does. Count
+# what is there first: the IP-SM-GW opens its connection again only
+# after Tc, 30 s.
+scDPRs='diameter.cmd.code == 282 && diameter.flags.request == 1 && ip.src == 172.28.0.71 && diameter.Disconnect-Cause == 0'
+scDPRsSent="$(count "$scDPRs")"
+scOFAs='diameter.cmd.code == 8388645 && diameter.flags.request == 0 && ip.src == 172.28.0.71 && diameter.Result-Code == 2001'
+sc_ipsmgw_opens="$(diameter_opens ipsmgw)"
+# The short message after the unlock of the IP-SM-GW is for UE 2, which
+# is not registered, so its first attempt ended at once and the SC holds
+# it. Wait until the SC says that it has nothing in its hands, so that
+# the shut down below locks it at once (X.731 7.1.3.3).
+if until_state sc '"users":0'; then
+	echo "ok   the SC has nothing in its hands before the shut down"
+else
+	echo "FAIL the SC still counts users: $(node_state sc || true)"
+	fail=1
+fi
+answer="$(administrative_state sc SHUTTINGDOWN || true)"
+state="$(node_state sc || true)"
+if grep -q '"administrative_state":"LOCKED"' <<<"$state"; then
+	echo "ok   the maintenance API shut the SC down, which locked it at once"
+else
+	echo "FAIL the shut down of the SC: $answer"
+	echo "     state of the node: $state"
+	fail=1
+fi
+# "ue sms" exits 1 when the submit report is an RP-ERROR, hence
+# "|| true". The IP-SM-GW is in service, so the MESSAGE gets its 202;
+# with no connection to an SC it answers with RP-Cause 41 (temporary
+# failure).
+out="$(docker compose run --no-deps --rm ue sms +12025550102 'Is the Service Centre in?' 2>&1 || true)"
+if grep -q '"msg":"submit report".*"state":"failed".*"rp_cause":41' <<<"$out"; then
+	echo "ok   UE 1 got RP-Cause 41 for its short message while the SC is shut down"
+else
+	echo "FAIL the short message while the SC is shut down: $(tail -n 2 <<<"$out")"
+	fail=1
+fi
+# The OFAs are counted while the SC is shut down, when no OFR reaches
+# it, so that the OFA of the short message before the shut down is
+# already among them.
+scOFAsSent="$(count "$scOFAs")"
+answer="$(administrative_state sc UNLOCKED || true)"
+state="$(node_state sc || true)"
+if grep -q '"administrative_state":"UNLOCKED"' <<<"$state"; then
+	echo "ok   the maintenance API unlocked the SC"
+else
+	echo "FAIL the unlock of the SC: $answer"
+	echo "     state of the node: $state"
+	fail=1
+fi
+# REBOOTING lets the IP-SM-GW come back (RFC 6733 5.4.3), which it does
+# at its next attempt after Tc.
+if wait_for_opens ipsmgw $((sc_ipsmgw_opens + 1)); then
+	echo "ok   the IP-SM-GW opened its connection to the SC again"
+else
+	echo "FAIL the IP-SM-GW did not open its connection to the SC again after the unlock"
+	fail=1
+fi
+out="$(docker compose run --no-deps --rm ue sms +12025550102 'Is the Service Centre back?' 2>&1 || true)"
+if grep -q '"msg":"submit report".*"state":"accepted"' <<<"$out"; then
+	echo "ok   UE 1 sent a short message after the unlock of the SC"
+else
+	echo "FAIL the short message after the unlock of the SC: $(tail -n 2 <<<"$out")"
+	fail=1
+fi
+
+await "the DPR of the drained SC" "$scDPRs" $((scDPRsSent + 1))
+await "the OFA of the SC after its unlock" "$scOFAs" $((scOFAsSent + 1))
+
 echo "drain of the media relay"
 # The P-CSCF puts the media of each call through a media relay, and the
 # Compose project has one (the media_relays of deploy/compose/pcscf.yaml),
@@ -1016,6 +1094,7 @@ icscf_opens="$(diameter_opens icscf)"
 scscf_opens="$(diameter_opens scscf)"
 ipsmgw_opens="$(diameter_opens ipsmgw)"
 mmtel_opens="$(diameter_opens mmtel)"
+sc_opens="$(diameter_opens sc)"
 answer="$(administrative_state hss SHUTTINGDOWN || true)"
 state="$(node_state hss || true)"
 if grep -Eq '"administrative_state":"(SHUTTINGDOWN|LOCKED)"' <<<"$state"; then
@@ -1061,11 +1140,12 @@ fi
 # REBOOTING lets the peer come back (RFC 6733 5.4.3), which it does at
 # its next attempt after Tc.
 if wait_for_opens icscf $((icscf_opens + 1)) && wait_for_opens scscf $((scscf_opens + 1)) &&
-	wait_for_opens ipsmgw $((ipsmgw_opens + 1)) && wait_for_opens mmtel $((mmtel_opens + 1)); then
+	wait_for_opens ipsmgw $((ipsmgw_opens + 1)) && wait_for_opens mmtel $((mmtel_opens + 1)) &&
+	wait_for_opens sc $((sc_opens + 1)); then
 	echo "ok   every peer of the HSS opened its Diameter connection again"
 else
 	echo "FAIL a peer of the HSS did not open its Diameter connection again after the unlock"
-	echo "     opens so far: icscf $(diameter_opens icscf), scscf $(diameter_opens scscf), ipsmgw $(diameter_opens ipsmgw), mmtel $(diameter_opens mmtel)"
+	echo "     opens so far: icscf $(diameter_opens icscf), scscf $(diameter_opens scscf), ipsmgw $(diameter_opens ipsmgw), mmtel $(diameter_opens mmtel), sc $(diameter_opens sc)"
 	fail=1
 fi
 if value="$(until_positive prometheus_values "$peer_up")"; then
@@ -1082,8 +1162,9 @@ else
 	fail=1
 fi
 await "the 200 OK to the registration after the unlock of the HSS" "$registered" $((registrations + 1))
-# One DPR per peer: the two Cx connections and the two Sh connections.
-await "the DPRs of the drained HSS" "diameter.cmd.code == 282 && diameter.flags.request == 1 && ip.src == $hss_address" $((dprs + 4))
+# One DPR per peer: the two Cx connections, the two Sh connections and
+# the S6c connection of the SC.
+await "the DPRs of the drained HSS" "diameter.cmd.code == 282 && diameter.flags.request == 1 && ip.src == $hss_address" $((dprs + 5))
 same_nodes
 
 echo "reading $pcap"
@@ -1096,6 +1177,7 @@ mmtel=172.28.0.75
 mrfc=172.28.0.85
 mrfp=172.28.0.86
 ipsmgw=172.28.0.70
+sc=172.28.0.71
 agw=172.28.0.50
 register='sip.CSeq.method == "REGISTER"'
 invite='sip.CSeq.method == "INVITE"'
@@ -1219,6 +1301,21 @@ expect "MESSAGE S-CSCF -> IP-SM-GW with the short message" "sip.Method == \"MESS
 expect "202 IP-SM-GW -> S-CSCF" "$message && sip.Status-Code == 202 && ip.src == $ipsmgw && ip.dst == $scscf"
 expect "submit report IP-SM-GW -> I-CSCF, in reply to the short message" "sip.Method == \"MESSAGE\" && ip.src == $ipsmgw && ip.dst == $icscf && sip.In-Reply-To"
 
+echo "the short message while the Service Centre is shut down"
+# The SC ends the connection that the IP-SM-GW opened (RFC 6733 5.4),
+# and the IP-SM-GW, with no SC left to send the OFR to, answers UE 1
+# with an RP-ERROR of RP-Cause 41 (TS 24.011 Table 8.4).
+expect "DPR SC -> IP-SM-GW with Disconnect-Cause REBOOTING" "diameter.cmd.code == 282 && diameter.flags.request == 1 && ip.src == $sc && ip.dst == $ipsmgw && diameter.Disconnect-Cause == 0"
+scDPR="$last"
+expect "DPA IP-SM-GW -> SC" "diameter.cmd.code == 282 && diameter.flags.request == 0 && ip.src == $ipsmgw && ip.dst == $sc"
+expect "MESSAGE S-CSCF -> IP-SM-GW with the short message" "sip.Method == \"MESSAGE\" && ip.src == $scscf && ip.dst == $ipsmgw && sip.Content-Type == \"application/vnd.3gpp.sms\""
+expect "202 IP-SM-GW -> S-CSCF" "$message && sip.Status-Code == 202 && ip.src == $ipsmgw && ip.dst == $scscf"
+expect "submit report P-CSCF -> UE 1: RP-ERROR, cause 41" "sip.Method == \"MESSAGE\" && ip.src == $pcscf && ip.dst == $ue && sip.In-Reply-To && gsm_a.rp.msg_type == 0x05 && gsm_a.rp.cause == 41"
+none "OFRs while the SC was shut down" "frame.number > $scDPR && frame.number <= $last && diameter.cmd.code == 8388645"
+echo "the short message after the unlock of the Service Centre"
+expect "OFR IP-SM-GW -> SC" "diameter.cmd.code == 8388645 && diameter.flags.request == 1 && ip.src == $ipsmgw && ip.dst == $sc"
+expect "OFA SC -> IP-SM-GW with DIAMETER_SUCCESS" "diameter.cmd.code == 8388645 && diameter.flags.request == 0 && ip.src == $sc && ip.dst == $ipsmgw && diameter.Result-Code == 2001"
+
 echo "the call while the media relay is shut down"
 # The P-CSCF asks the relay for the context of the call over the control
 # API (Reserve AGW Connection Point, TS 29.334 5.17.2.2), and the relay,
@@ -1263,6 +1360,6 @@ expect "RTP of notice media relay -> UE 1" "rtp && ip.src == $agw && ip.dst == $
 expect "603 P-CSCF -> UE 1 with Reason: SIP;cause=603" "sip.Status-Code == 603 && ip.src == $pcscf && ip.dst == $ue && sip.Reason contains \"cause=603\""
 
 if [ "$fail" -ne 0 ]; then
-	docker compose logs --no-color pcscf icscf scscf hss mmtel mrfc ipsmgw agw mrfp prometheus grafana | tail -n 80
+	docker compose logs --no-color pcscf icscf scscf hss mmtel mrfc ipsmgw sc agw mrfp prometheus grafana | tail -n 80
 fi
 exit "$fail"
