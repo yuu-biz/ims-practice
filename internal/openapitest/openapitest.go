@@ -911,6 +911,11 @@ func (d *Document) answer(rec *recorder, head bool, resp response, pointer strin
 	if head {
 		return problems
 	}
+	// */* takes any answer, one without a body too, such as the 204 of
+	// an API that a route forwards to.
+	if _, anything := resp.Content["*/*"]; anything && rec.body.Len() == 0 && rec.contentType == "" {
+		return problems
+	}
 	mt, err := mediaTypeOf(rec.contentType, resp.Content, false)
 	if err != nil {
 		return append(problems, "answer "+err.Error())
@@ -924,11 +929,12 @@ func (d *Document) answer(rec *recorder, head bool, resp response, pointer strin
 	return problems
 }
 
-// mediaTypeOf gives the media type of a Content-Type, which must be one
-// that content lists. When fill is set, a message without one is taken
-// to be of the only media type there is: a client often sends a body
-// without saying what it is, and the handlers here read it all the
-// same. An answer always says.
+// mediaTypeOf gives the key of content that a Content-Type falls
+// under: its media type, or a range such as text/* or */*, the more
+// specific first (OpenAPI Specification 3.1.0, Media Types). When fill
+// is set, a message without one is taken to be of the only media type
+// there is: a client often sends a body without saying what it is, and
+// the handlers here read it all the same. An answer always says.
 func mediaTypeOf(contentType string, content map[string]mediaType, fill bool) (string, error) {
 	if contentType == "" && fill && len(content) == 1 {
 		for mt := range content {
@@ -942,10 +948,13 @@ func mediaTypeOf(contentType string, content map[string]mediaType, fill bool) (s
 	if err != nil {
 		return "", fmt.Errorf("Content-Type %q: %v", contentType, err)
 	}
-	if _, ok := content[mt]; !ok {
-		return "", fmt.Errorf("Content-Type %s is not one of %v", mt, slices.Sorted(maps.Keys(content)))
+	major, _, _ := strings.Cut(mt, "/")
+	for _, key := range []string{mt, major + "/*", "*/*"} {
+		if _, ok := content[key]; ok {
+			return key, nil
+		}
 	}
-	return mt, nil
+	return "", fmt.Errorf("Content-Type %s is not one of %v", mt, slices.Sorted(maps.Keys(content)))
 }
 
 // ndjson is the media type of JSON text with one value per line.
