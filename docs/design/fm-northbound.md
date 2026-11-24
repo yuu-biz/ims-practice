@@ -126,6 +126,7 @@ OpenAPI の `unreliableAlarmScope` は DN 1 つの型（`DnRo`）です。TS 28.
 - `fields` は、`/attributes/alarmRecords/<id>` の形と、`(<id> | <id>)` で並べた形を受け付けます（A.1.4 の例）。
 - `scope` は、OpenAPI のとおり 1 つの問い合わせで、中身は JSON のオブジェクトです。受けるのは `{"scopeType":"BASE_ONLY"}` だけです。`AlarmList` には下のオブジェクトが無いためです。TS 32.158 6.1.2 が書く `scopeType` と `scopeLevel` の 2 つの問い合わせの形は受けず、知らない名前として扱います。
 - それ以外の形の `filter` と `dataNodeSelector`、`attributes`、`BASE_ONLY` 以外の `scope` は、500 で `type` を `SERVER_LIMITATION`、`reason` を `QUERY_PARAMS_TOO_COMPLEX` にします。TS 32.158 6.6.5.2 は、この理由を「正しいが、producer の限りを越えて処理できない」問い合わせに当てています。読めない式は 400 で、`reason` を `QUERY_PARAM_VALUES_INVALID` にします。
+- 4096 バイトより長い式と、括弧、`not()`、述語を 64 段より深く入れ子にした式も、500 の `QUERY_PARAMS_TOO_COMPLEX` にします。`fields` も 4096 バイトまでです。式を読む処理は入れ子の段ごとに自分を呼ぶので、限りが無いと、深い式 1 つでスタックを使い切り、OAM のプロセスが止まります。購読の `notificationFilter` にも同じ限りを当てます。
 - 知らない名前の問い合わせ（`scopeType`、`scopeLevel` を含む）は、400 で `type` を `VALIDATION_ERROR`、`reason` を `QUERY_PARAM_NAMES_INVALID` にし、`badQueryParams` に名前を書きます（6.6.5.2）。今の保守用の API と同じく、黙って全件を返しません。
 
 絞り込みは、すべてのノードの警報の記録を読んだあとに OAM が評価します。読む数は、ノードの数と、ノードごとの一覧の上限（256 件）で決まります。加入者の数には依りません。
@@ -182,7 +183,7 @@ OAM は、鍵の前のノードの名前で宛先を決め、そのノードの�
 | `notificationRecipientAddress` | 必須。`http` か `https` の URL |
 | `notificationTypes` | 下の「通知」の表の 6 つのうちのいくつか。無ければ 6 つすべて。ほかの名前は 400 で `NEW_ATTRIBUTE_VALUE_INVALID` |
 | `scope` | 無いか、`{"scopeType":"BASE_ALL"}` だけ。基点は購読を含む SubNetwork です（TS 28.622 4.3.22.1）。ノードで分けたいときは `notificationFilter` を使う |
-| `notificationFilter` | Jex の条件の式。通知の本文のどの値にも当てられる（4.3.22.1）。例は `contains(href,"ManagedElement=scscf") and perceivedSeverity="CRITICAL"` |
+| `notificationFilter` | Jex の条件の式。通知の本文のどの値にも当てられる（4.3.22.1）。例は `contains(href,"ManagedElement=scscf") and perceivedSeverity="CRITICAL"`。読めない式を書いた `PUT` には、400 の `NEW_ATTRIBUTE_VALUE_INVALID` を返す（TS 32.158 6.6.5.3.2） |
 
 TS 28.622 4.3.22.1 では、`notificationTypes` が無い購読は、producer が出せるすべての種類の通知を受けます。この口が出せるのは故障管理の 6 つの通知だけで、TS 28.532 の構成の通知（`notifyMOICreation`、`notifyMOIDeletion`、`notifyMOIAttributeValueChanges`、`notifyMOIChanges`）は出しません（`SIMPLIFIED:`）。そのため、4.3.22.1 の、購読の作成と削除を構成の通知で知らせる決まりも当たりません。
 
@@ -309,6 +310,11 @@ OAM は複数のインスタンスで動けます（`internal/oam/doc.go`）。�
 | `alarmListAlignmentRequirement` の値が、TS 28.111 8.5.2 では `alignmentRequired` と `alignmentNotRequired`、`TS28111_FaultNrm.yaml` では `ALIGNMENT_REQUIRED` と `ALIGNMENT_NOT_REQUIRED` | OpenAPI の綴り |
 | `TS28623_SubscriptionControlNrm.yaml` 19.4.0 に、TS 28.622 V20.4.0 4.3.22.2 の 4 つの属性が無い | OpenAPI の 4 つの属性だけ |
 | OpenAPI の `AlarmRecord` の `thresholdinfo` と、通知の `thresholdInfo` で綴りが違う | どちらも使わない |
+| TS 28.111 8.4.2 は notifyChangedAlarmGeneral の `perceivedSeverity` を必須とするが、`TS28111_FaultNrm.yaml` の `NotifyChangedAlarmGeneral` は必須としていない | いつも入れる |
+| TS 28.111 7.3.1.2 と 7.3.2.2 が必須とする `AlarmRecord` と `AlarmList` の属性を、OpenAPI はどれも `required` にしていない | 必須の属性はいつも入れる。ただし `alarmClearedTime` は、警報が消えるまで値が無いので入れない |
+| TS 28.111 7.3.1.2 が任意の属性として挙げる `comments` が、OpenAPI の `AlarmRecord` に無い | `comments` は作らない |
+| 読み出しの `fields` が、TS 32.158 6.2.2 ではコンマで区切った JSON Pointer、TS 28.111 A.1.4 では `(a \| b)` の形。後者の空白は TS 32.161 A.3 の文法に無い | どちらの形も受ける |
+| 誤りの本文の `status` が、OpenAPI では文字列、TS 32.158 の例では数 | `status` と `badObjects` は入れない。`status` は複数の結果をまとめる答えに、`badObjects` は 3GPP の Merge Patch（6.6.3.3）に限るため |
 | TS 28.111 V20.0.0 は警報の履歴（6.15、6.16、7.3.8 の `AlarmHistory`）を足したが、同じ書庫の `TS28111_FaultNrm.yaml` は 19.3.0 のままで、`AlarmHistory` が無い。3GPP Forge の `Tag_Rel20_SA113` の同じファイルも 19.3.0 | 履歴は作らない |
 
 ## 名前を OpenAPI で確かめる試験
@@ -321,7 +327,7 @@ OpenAPI のファイルは 3GPP の著作物なので、リポジトリに入れ
 - 列挙（`AlarmType`、`PerceivedSeverity`、`AckState`、`AlarmNotificationTypes`、`AlarmListAlignmentRequirement`、`ScopeType`）の値を、一覧と突き合わせます。
 - 経路と問い合わせの名前（`ProvMnS`、`v19`、`AlarmList=1`、`NtfSubscriptionControl=`、`scope`、`filter`、`dataNodeSelector`、`fields`）を、ルーティングの試験で確かめます。
 - 例の本文を OpenAPI のスキーマから書き、往復で中身が変わらないことを確かめます（`internal/n5` の `roundTrip`）。
-- 一覧を作り直すときのために、ダウンロードした OpenAPI のファイルを引数に取って、一覧と比べるスクリプトを置きます。CI では流しません。ファイルを取ってくる処理がネットワークに頼るためです。
+- 一覧を作り直すときのために、ダウンロードした OpenAPI のファイルと一覧を比べる試験 `TestOpenAPIFiles`（`internal/mns/openapi_test.go`）を置きます。環境変数 `MNS_OPENAPI_DIR` にファイルを置いたディレクトリを指したときだけ動き、CI では流しません。ファイルを取ってくる処理がネットワークに頼るためです。
 
 ## 作らないもの
 
