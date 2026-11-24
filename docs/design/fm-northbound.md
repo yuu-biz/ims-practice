@@ -189,16 +189,38 @@ OAM は、鍵の前のノードの名前で宛先を決め、そのノードの�
 
 | 属性 | 扱い |
 | --- | --- |
-| `notificationRecipientAddress` | 必須。`http` か `https` の URL |
-| `notificationTypes` | 下の「通知」の表の 6 つのうちのいくつか。無ければ 6 つすべて。ほかの名前は 400 で `NEW_ATTRIBUTE_VALUE_INVALID` |
-| `scope` | 無いか、`{"scopeType":"BASE_ALL"}` だけ。基点は購読を含む SubNetwork です（TS 28.622 4.3.22.1）。ノードで分けたいときは `notificationFilter` を使う |
-| `notificationFilter` | Jex の条件の式。通知の本文のどの値にも当てられる（4.3.22.1）。例は `contains(href,"ManagedElement=scscf") and perceivedSeverity="CRITICAL"`。読めない式を書いた `PUT` には、400 の `NEW_ATTRIBUTE_VALUE_INVALID` を返す（TS 32.158 6.6.5.3.2） |
+| `notificationRecipientAddress` | 必須。`http` か `https` の URL で、host を持ち、利用者の情報と fragment を持たない。無ければ 400 で `NEW_OBJECT_ATTRIBUTE_VALUE_MISSING`、ほかの形なら 400 で `NEW_ATTRIBUTE_VALUE_INVALID` |
+| `notificationTypes` | 下の「通知」の表の 6 つのうちのいくつか。無ければ 6 つすべて。ほかの名前、同じ名前の 2 回目、空の配列は 400 で `NEW_ATTRIBUTE_VALUE_INVALID`。空の配列は、何の通知も受けない購読になるので断る |
+| `scope` | 無いか、`{"scopeType":"BASE_ALL"}` だけ。基点は購読を含む SubNetwork です（TS 28.622 4.3.22.1）。ノードで分けたいときは `notificationFilter` を使う。OpenAPI の列挙にあるほかの値（`BASE_ONLY`、`BASE_NTH_LEVEL`、`BASE_SUBTREE`）と、`scopeType` の無い scope（`BASE_ONLY` に当たる）は 500 で `SERVER_LIMITATION`。列挙に無い値は 400 で `NEW_ATTRIBUTE_VALUE_INVALID` |
+| `notificationFilter` | Jex の条件の式。通知の本文のどの値にも当てられる（4.3.22.1）。例は `contains(href,"ManagedElement=scscf") and perceivedSeverity="CRITICAL"`。文法に合わない式を書いた `PUT` には、400 の `NEW_ATTRIBUTE_VALUE_INVALID` を返す（TS 32.158 6.6.5.3.2）。文法には合うが `internal/jex` が評価しない式（配列の位置を選ぶ式など）は、500 で `SERVER_LIMITATION`。読み出しの問い合わせの 400 と 500 の分け方と同じ |
+
+`PUT` の本文は、ほかに次のように確かめます。誤りの `reason` は TS 32.158 6.6.5.4 の値です。
+
+| 本文 | 答え |
+| --- | --- |
+| JSON として読めない、OpenAPI に無い名前（`lastSequenceNo` など）がある | 400。`VALIDATION_ERROR`、`reason` は `NEW_OBJECT_REPRESENTATION_INVALID`。`badAttributes` は付けない |
+| `id` が経路の id と違う | 400。`NEW_ATTRIBUTE_VALUE_INVALID`、`badAttributes` は `#/id` |
+| `objectClass` が無い | 400。`NEW_OBJECT_ATTRIBUTE_VALUE_MISSING`。TS 32.158 5.1.2 は、作るときの本文に id とクラスの名前を求めています |
+| `objectClass` が `NtfSubscriptionControl` でない | 400。`NEW_OBJECT_CLASS_NAME_INVALID` |
+| `objectInstance` があり、経路の DN と違う | 400。`NEW_ATTRIBUTE_VALUE_INVALID` |
+| `Content-Type` が `application/json` でない | 415。本文は付けない |
+| 経路に問い合わせを付ける | 400。`VALIDATION_ERROR`。5.1.2 は、作るときの宛先の URI に問い合わせを付けないとしています。`DELETE` も同じ（5.4） |
+
+購読の id は、64 文字までの英字、数字、`-`、`_`、`.` に限ります。この範囲なら、経路の 1 区切りにも DN の id にもそのまま書けます。ほかの id の `PUT` は 400 で `NEW_ATTRIBUTE_VALUE_INVALID`、`badAttributes` は `#/id` です。`GET` と `DELETE` は 404 です。
+
+購読の `GET` は 1 つのオブジェクトを読むので、問い合わせを受けません。ProvMnS の問い合わせの名前（`scope`、`filter`、`attributes`、`fields`、`dataNodeSelector`）は 500 で `QUERY_PARAMS_TOO_COMPLEX`、ほかの名前は 400 で `QUERY_PARAM_NAMES_INVALID` です。
 
 TS 28.622 4.3.22.1 では、`notificationTypes` が無い購読は、producer が出せるすべての種類の通知を受けます。この口が出せるのは故障管理の 6 つの通知だけで、TS 28.532 の構成の通知（`notifyMOICreation`、`notifyMOIDeletion`、`notifyMOIAttributeValueChanges`、`notifyMOIChanges`）は出しません（`SIMPLIFIED:`）。そのため、4.3.22.1 の、購読の作成と削除を構成の通知で知らせる決まりも当たりません。
 
 TS 28.622 4.3.22.2 には、ほかに `lastSequenceNo`、`administrativeState`、`operationalState`、`availabilityStatus` があります。この版の OpenAPI にはどれも無いので、出しません。
 
-購読は OAM の共有の保存先に置きます（下の「複数のインスタンス」）。購読の数は OSS の数で決まり、加入者の数には依りません。それでも上限を設定で持ち、超える `PUT` は 500 で `SERVER_LIMITATION` にします（TS 32.158 6.6.4）。
+購読は OAM の共有の保存先に置きます（下の「複数のインスタンス」）。購読の数は OSS の数で決まり、加入者の数には依りません。それでも上限を設定で持ち、超える `PUT` は 500 で `SERVER_LIMITATION` にします（TS 32.158 6.6.4）。設定の項目は `oam` の節の `max_ntf_subscriptions` で、既定は 16 です。今ある購読の置き換えは、上限のときも受けます。
+
+保存先は、すべての購読を 1 つの項目にまとめて持ちます。1 つのインスタンスなら `data_dir` の `ntf-subscriptions.json`、複数なら `internal/kvstore` の 1 つの鍵（`oam:ntf-subscriptions`）です。変えるときは、まとめて読み、変えて、読んだ版での `CompareAndSwap` で書き戻します。ファイルなら、プロセスのロックの中で書き、名前を変えて置き換えます。上限を確かめることと購読を足すことが 1 回の書き込みになるので、2 つのインスタンスが同時に作っても、合わせて上限を超えません。すべての購読を読むのも 1 回の読み出しです。上限があるので、項目は大きくなりません。
+
+保存先を持たない OAM（共有の保存先も `data_dir` も無い）の購読の経路は、503 で `SERVICE_DISABLED` を返します。6.6.4 の、producer が自分で止めていて要求を扱えないときの値です。保存先が失敗したときは 500 で、本文は付けません。どの `type` も、状態コードより多くは伝えないためです。失敗の中身はログに書きます。
+
+`internal/mns` の `ErrorType` と `ErrorReason` には、この作業で `SERVICE_DISABLED` と、6.6.5.4 の `NEW_OBJECT_REPRESENTATION_INVALID`、`NEW_OBJECT_CLASS_NAME_INVALID`、`NEW_OBJECT_ATTRIBUTE_VALUE_MISSING` を足しました。
 
 ## 通知
 
@@ -301,7 +323,7 @@ OAM は複数のインスタンスで動けます（`internal/oam/doc.go`）。�
 
 誤りの本文は TS 32.158 6.6.3 の形にし、型は OpenAPI の `ErrorResponseGet`（`GET`）、`ErrorResponseDefault`（`PUT`、`DELETE`、JSON Merge Patch）を使います。`type` と `reason` の値は 6.6.4 と 6.6.5 から選びます。上の各節に書いたもののほか、ノードに届かなかった確認は 502 にします。TS 32.158 6.6.2 の 502 は、ゲートウェイとして働く producer が、中継した先から正しい答えを得られなかったことを表します。OAM がノードに確認を渡す形に合い、今の `/oam/v1/` の API とも同じです。
 
-本文を付けるのは、6.6.4 が `type` を決めている状態コード（400、403、409、422、500、503）だけです。404（経路がここのオブジェクトを指さない）、405（`Allow` を付ける）、413（本文が 64 KiB を超える）、415（`Accept-Patch` を付ける）、502 には本文を付けません。6.6.4 はこれらに `type` を決めていません。404 については、状態コードのほかに足す情報が無いとも書いています。`ErrorResponseGet` と `ErrorResponseDefault` は `type` を必須にしているので、`type` の無い本文は書けません。独自の値を作るより、状態コードとヘッダだけで答えます。
+本文を付けるのは、6.6.4 が `type` を決めている状態コード（400、403、409、422、500、503）だけです。404（経路がここのオブジェクトを指さない）、405（`Allow` を付ける）、413（本文が 64 KiB を超える）、415（`PATCH` の答えには `Accept-Patch` を付ける）、502 には本文を付けません。6.6.4 はこれらに `type` を決めていません。404 については、状態コードのほかに足す情報が無いとも書いています。`ErrorResponseGet` と `ErrorResponseDefault` は `type` を必須にしているので、`type` の無い本文は書けません。独自の値を作るより、状態コードとヘッダだけで答えます。
 
 `title` は、問題の種類ごとに決めた短い英語の文です。値そのものは入れず、`badQueryParams` と `badAttributes` に書きます。6.6.3.1 は、`title` が出るたびに変わらないことを求めています。
 
@@ -404,7 +426,7 @@ e2e で通知を受け取るには、上がる警報が要ります。今は、�
 
 ### 購読
 
-`NtfSubscriptionControl` の `PUT`、`GET`、`DELETE`、検査、上限、保存先のインタフェースと `data_dir` のファイルの実装を作ります。約 500 行。
+`NtfSubscriptionControl` の `PUT`、`GET`、`DELETE`、検査、上限、保存先のインタフェースと `data_dir` のファイルの実装を作ります。約 500 行。作りました。保存先は、`internal/kvstore` の実装（`internal/kvstore/oamstore`）もこの作業で作りました。検査の細部と、すべての購読を 1 つの項目に置く形は、上の「購読」にあります。
 
 ### 通知（1 つのインスタンス）
 
