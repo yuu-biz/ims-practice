@@ -23,7 +23,9 @@
 // A body of application/x-ndjson, one JSON value per line, is checked
 // line by line: each line that is not empty must match the schema of
 // the media type. OpenAPI 3.1 has no schema for the items of a
-// sequence, so the documents here give that of a line.
+// sequence, so the documents here give that of a line. A line schema
+// that says nothing, true or one with annotations alone, leaves the
+// lines unchecked, for an API that takes any line and answers for each.
 //
 // Document.CheckRoutes asks the handler which methods each path of the
 // document takes, and Document.CheckCovered names each operation that
@@ -206,6 +208,9 @@ type Document struct {
 	doc     openAPI
 	paths   []pathTemplate
 	schemas map[string]*jsonschema.Schema
+	// open are the pointers of the schemas that say nothing of a value:
+	// true, or one with no keyword but annotations.
+	open map[string]bool
 
 	mu      sync.Mutex
 	reached map[string]bool
@@ -310,7 +315,7 @@ func Load(t testing.TB, file string) *Document {
 	if err != nil {
 		t.Fatalf("OpenAPI document: %v", err)
 	}
-	d := &Document{file: file, schemas: map[string]*jsonschema.Schema{}, reached: map[string]bool{}}
+	d := &Document{file: file, schemas: map[string]*jsonschema.Schema{}, open: map[string]bool{}, reached: map[string]bool{}}
 	dec := yaml.NewDecoder(bytes.NewReader(raw))
 	dec.KnownFields(true)
 	if err := dec.Decode(&d.doc); err != nil {
@@ -494,6 +499,7 @@ func (d *Document) compile(tree any) error {
 			return fmt.Errorf("%s: %v", pointer, err)
 		}
 		d.schemas[pointer] = s
+		d.open[pointer] = saysNothing(schema)
 		return nil
 	}
 	for name, s := range d.doc.Components.Schemas {
@@ -618,6 +624,23 @@ func checkKeywords(pointer string, schema any) error {
 		return fmt.Errorf("%s: no schema", pointer)
 	}
 	return fmt.Errorf("%s: a schema is a map or a boolean", pointer)
+}
+
+// saysNothing reports whether a schema holds every value: true, or a
+// schema whose keywords are all annotations.
+func saysNothing(schema any) bool {
+	switch s := schema.(type) {
+	case bool:
+		return s
+	case map[string]any:
+		for k := range s {
+			if k != "description" && k != "title" && k != "examples" {
+				return false
+			}
+		}
+		return true
+	}
+	return false
 }
 
 func isObject(s map[string]any) bool {
@@ -926,6 +949,10 @@ func (d *Document) validateBody(pointer, mt string, body []byte) error {
 	switch {
 	case mt == "application/json" || strings.HasSuffix(mt, "+json"):
 		return d.validateValue(pointer, body)
+	case mt == ndjson && d.open[pointer]:
+		// A line schema that says nothing leaves the lines as they are:
+		// the API takes any line and answers for each, as the bulk
+		// provisioning of the OAM reports a line that is no record.
 	case mt == ndjson:
 		for i, line := range bytes.Split(body, []byte("\n")) {
 			if len(bytes.TrimSpace(line)) == 0 {

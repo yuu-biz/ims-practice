@@ -382,3 +382,37 @@ func TestARefIntoAnotherDocument(t *testing.T) {
 		}
 	}
 }
+
+// TestAnOpenLineSchemaLeavesTheLines: a request whose lines have a
+// schema that says nothing may carry lines that are not even JSON, as
+// the bulk provisioning of the OAM takes them and reports each.
+func TestAnOpenLineSchemaLeavesTheLines(t *testing.T) {
+	raw, err := os.ReadFile("testdata/lines.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	open := strings.Replace(string(raw), "          application/x-ndjson:\n            schema:\n              type: string\n",
+		"          application/x-ndjson:\n            schema:\n              description: Any line.\n", 1)
+	file := filepath.Join(t.TempDir(), "lines.yaml")
+	if err := os.WriteFile(file, []byte(open), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		file   string
+		errors bool
+	}{{"testdata/lines.yaml", true}, {file, false}} {
+		d := Load(t, tc.file)
+		rt := &recordingT{TB: t}
+		h := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			io.Copy(io.Discard, r.Body)
+			w.Header().Set("Content-Type", "application/x-ndjson")
+			io.WriteString(w, "\"rejected\"\n")
+		})
+		req := httptest.NewRequest("POST", "/lines", strings.NewReader("not json\n"))
+		req.Header.Set("Content-Type", "application/x-ndjson")
+		d.Handler(rt, h).ServeHTTP(httptest.NewRecorder(), req)
+		if got := len(rt.errors) > 0; got != tc.errors {
+			t.Errorf("%s: errors %q", tc.file, rt.errors)
+		}
+	}
+}
