@@ -84,6 +84,17 @@ type Config struct {
 	Now func() time.Time
 	// Log is where the server logs the operations; nil for none.
 	Log *slog.Logger
+
+	// SubNetwork names the SubNetwork whose AlarmList the OAM offers to
+	// an OSS through the 3GPP management services (MnSHandler), such as
+	// ims. Empty, with MnSRoot empty too, for an OAM without them.
+	SubNetwork string
+	// MnSRoot is the {MnSRoot} of TS 32.158 4.4.2 at which an OSS
+	// reaches those services, such as http://oam:8080/3GPPManagement:
+	// the address of the OAM listener and the {root} path. Its scheme
+	// and host are also those of the canonical URIs that name the
+	// alarmed objects.
+	MnSRoot string
 }
 
 // Server is the OAM server. It keeps no state of its own about
@@ -106,6 +117,12 @@ type Server struct {
 	exportPageSize int
 
 	history ChangeStore
+
+	// mns is the 3GPP management services; nil without them.
+	mns *northbound
+	// started is when the server was made: the lastModification of an
+	// alarm list that no node answered for.
+	started time.Time
 }
 
 // New checks c and makes the OAM server.
@@ -175,6 +192,14 @@ func New(c Config) (*Server, error) {
 		s.nodes = append(s.nodes, e)
 		s.byName[e.Name] = e
 	}
+	if c.SubNetwork != "" || c.MnSRoot != "" {
+		nb, err := newNorthbound(c.SubNetwork, c.MnSRoot, s.nodes)
+		if err != nil {
+			return nil, err
+		}
+		s.mns = nb
+	}
+	s.started = s.now()
 	return s, nil
 }
 

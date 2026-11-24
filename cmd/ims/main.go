@@ -625,16 +625,11 @@ func run(configPath string, log *slog.Logger, level *slog.LevelVar) error {
 		if err != nil {
 			return err
 		}
-		mux := http.NewServeMux()
-		mux.Handle(oam.PathPrefix, server.Handler())
-		// The screen calls the API at /oam/v1/..., so it is served
-		// beside it, from the same origin.
-		mux.Handle("/", oam.UIHandler())
 		// Close, not Shutdown, on the way out: a bulk provisioning or a
 		// backup streams its answer, and the node must not wait for one
 		// to finish. A backup cut short leaves no archive, since the
 		// store makes one readable only once it is whole.
-		api := &http.Server{Addr: c.HTTPListen, Handler: mux}
+		api := &http.Server{Addr: c.HTTPListen, Handler: oamHandler(server)}
 		go func() {
 			if err := api.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 				roleLog.Error("oam HTTP server failed", "error", err.Error())
@@ -1028,13 +1023,27 @@ func startFaultAgent(ctx context.Context, l net.Listener, c config.Fault, log *s
 	return func() { api.Close() }
 }
 
+// oamHandler serves what the oam role serves on its listener: the OAM
+// API, the 3GPP management services when the configuration names a
+// SubNetwork, and the OAM screen. The screen calls the API at
+// /oam/v1/..., so it is served beside it, from the same origin.
+func oamHandler(server *oam.Server) http.Handler {
+	mux := http.NewServeMux()
+	mux.Handle(oam.PathPrefix, server.Handler())
+	if prefix := server.MnSPathPrefix(); prefix != "" {
+		mux.Handle(prefix, server.MnSHandler())
+	}
+	mux.Handle("/", oam.UIHandler())
+	return mux
+}
+
 // newOAM makes the OAM server of the oam role. The inventory becomes
 // the endpoints it operates, and the data directory the two stores it
 // keeps itself: the history of the configuration changes it made, in
 // one file, and the backups, each an archive and its manifest. Without
 // a directory it keeps neither, and refuses those operations with 503.
 func newOAM(c config.OAM, log *slog.Logger) (*oam.Server, error) {
-	cfg := oam.Config{HSSProvisioning: c.HSSProvisioning, Log: log}
+	cfg := oam.Config{HSSProvisioning: c.HSSProvisioning, SubNetwork: c.SubNetwork, MnSRoot: c.MnSRoot, Log: log}
 	for _, n := range c.Nodes {
 		cfg.Nodes = append(cfg.Nodes, oam.Endpoint{Name: n.Name, Roles: n.Roles, URL: n.Maintenance})
 	}

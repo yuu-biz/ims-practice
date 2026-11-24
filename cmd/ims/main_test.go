@@ -1186,23 +1186,23 @@ func TestOAMRoleServesItsAPIAndScreen(t *testing.T) {
 	// configuration says, and the OAM asks a node only for an operation
 	// on that node.
 	c := config.OAM{
-		DataDir: t.TempDir(),
+		DataDir:    t.TempDir(),
+		SubNetwork: "ims",
+		MnSRoot:    "http://oam:8080/3GPPManagement",
 		Nodes: []config.OAMNode{
 			{Name: "pcscf-1", Roles: []string{"pcscf"}, Maintenance: "http://127.0.0.1:1/"},
 		},
 	}
-	// serve mounts an OAM as the role does: the API under its prefix
-	// and the screen beside it, on one listener.
+	// serve mounts an OAM as the role does: the API under its prefix,
+	// the 3GPP management services under theirs and the screen beside
+	// them, on one listener.
 	serve := func(c config.OAM) string {
 		t.Helper()
 		server, err := newOAM(c, quiet())
 		if err != nil {
 			t.Fatal(err)
 		}
-		mux := http.NewServeMux()
-		mux.Handle(oam.PathPrefix, server.Handler())
-		mux.Handle("/", oam.UIHandler())
-		listener := httptest.NewServer(mux)
+		listener := httptest.NewServer(oamHandler(server))
 		t.Cleanup(listener.Close)
 		return listener.URL
 	}
@@ -1228,6 +1228,18 @@ func TestOAMRoleServesItsAPIAndScreen(t *testing.T) {
 	want := []oam.Endpoint{{Name: "pcscf-1", Roles: []string{"pcscf"}, URL: "http://127.0.0.1:1/"}}
 	if status != http.StatusOK || !reflect.DeepEqual(inventory.Nodes, want) {
 		t.Errorf("the inventory is %d %+v, want 200 and %+v", status, inventory.Nodes, want)
+	}
+
+	// The node does not answer, so the alarm list has none of its
+	// records and says that its part is unreliable. An OAM whose
+	// configuration names no SubNetwork has no such list.
+	alarmList := "/3GPPManagement/ProvMnS/v19/SubNetwork=ims/AlarmList=1"
+	if status, body = get(withData + alarmList); status != http.StatusOK ||
+		!strings.Contains(body, `"unreliableAlarmScope":"SubNetwork=ims,ManagedElement=pcscf-1"`) {
+		t.Errorf("the alarm list is %d %s, want 200 with the node unreliable", status, body)
+	}
+	if status, _ = get(withoutData + alarmList); status == http.StatusOK {
+		t.Errorf("the alarm list of an OAM without a SubNetwork is %d", status)
 	}
 
 	if status, body = get(withData + oam.PathPrefix + "backups"); status != http.StatusOK ||

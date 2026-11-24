@@ -14,6 +14,8 @@ oam:
   http_listen: ":8080"
   hss_provisioning: http://hss:8081
   data_dir: /var/lib/ims/oam
+  subnetwork: ims
+  mns_root: http://oam:8080/3GPPManagement
   nodes:
     - {name: hss, roles: [hss], maintenance: "http://hss:8085"}
     - {name: pcscf-1, roles: [pcscf, agw], maintenance: "http://172.28.0.40:8085"}
@@ -28,6 +30,8 @@ func TestParseOAM(t *testing.T) {
 		HTTPListen:      ":8080",
 		HSSProvisioning: "http://hss:8081",
 		DataDir:         "/var/lib/ims/oam",
+		SubNetwork:      "ims",
+		MnSRoot:         "http://oam:8080/3GPPManagement",
 		Nodes: []OAMNode{
 			{Name: "hss", Roles: []string{"hss"}, Maintenance: "http://hss:8085"},
 			{Name: "pcscf-1", Roles: []string{"pcscf", "agw"}, Maintenance: "http://172.28.0.40:8085"},
@@ -37,15 +41,16 @@ func TestParseOAM(t *testing.T) {
 		t.Errorf("oam = %+v, want %+v", cfg.OAM, want)
 	}
 
-	// Without the HSS and the directory the role still starts: it then
-	// operates the nodes and leaves the subscriptions, the history and
-	// the backups unavailable.
-	optional := strings.Replace(oamYAML, "  hss_provisioning: http://hss:8081\n  data_dir: /var/lib/ims/oam\n", "", 1)
+	// Without the HSS, the directory and the 3GPP management services
+	// the role still starts: it then operates the nodes and leaves the
+	// subscriptions, the history, the backups and the northbound
+	// unavailable.
+	optional := strings.Replace(oamYAML, "  hss_provisioning: http://hss:8081\n  data_dir: /var/lib/ims/oam\n  subnetwork: ims\n  mns_root: http://oam:8080/3GPPManagement\n", "", 1)
 	cfg, err = Parse(strings.NewReader(optional))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.OAM.HSSProvisioning != "" || cfg.OAM.DataDir != "" || len(cfg.OAM.Nodes) != 2 {
+	if cfg.OAM.HSSProvisioning != "" || cfg.OAM.DataDir != "" || cfg.OAM.SubNetwork != "" || cfg.OAM.MnSRoot != "" || len(cfg.OAM.Nodes) != 2 {
 		t.Errorf("oam = %+v without hss_provisioning and data_dir", cfg.OAM)
 	}
 
@@ -67,6 +72,11 @@ func TestParseOAM(t *testing.T) {
 		{"maintenance with no host", `maintenance: "http://hss:8085"`, `maintenance: "http://"`, "names no host"},
 		{"maintenance over https", `maintenance: "http://hss:8085"`, `maintenance: "https://hss:8085"`, "not an http:// URL"},
 		{"provisioning with a query", "http://hss:8081", `"http://hss:8081/?x=1"`, "more than a host"},
+		{"subnetwork without mns_root", "  mns_root: http://oam:8080/3GPPManagement\n", "", "mns_root: required"},
+		{"mns_root without subnetwork", "  subnetwork: ims\n", "", "subnetwork: required"},
+		{"subnetwork with a comma", "subnetwork: ims", "subnetwork: ims,1", "subnetwork"},
+		{"mns_root with a query", "/3GPPManagement", "/3GPPManagement?x=1", "mns_root"},
+		{"mns_root over https", "http://oam:8080/3GPP", "https://oam:8080/3GPP", "mns_root"},
 		{"section without its role", "roles: [oam]", "roles: [lab]\nlab: {hep_listen: \":9060\", http_listen: \":8080\"}", "oam: only the oam role"},
 	}
 	for _, tt := range tests {

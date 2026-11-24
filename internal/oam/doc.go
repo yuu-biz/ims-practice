@@ -75,6 +75,38 @@
 //	     takes the acknowledgement back. An id that the node does not
 //	     have is the node's 404 in the entry.
 //
+// The same alarms are offered to an OSS by the 3GPP management
+// services (package mns), when the configuration names a SubNetwork
+// and an {MnSRoot} (Config.SubNetwork, Config.MnSRoot). The OAM is the
+// MnS producer and the OSS the MnS consumer (TS 28.533). The SubNetwork
+// has one AlarmList (TS 28.111 V20.0.0 7.3.2), with the records of every
+// node, which the OSS reads with the generic
+// provisioning operations of TS 28.532 V20.2.0 over the REST rules of
+// TS 32.158 V20.1.0. The paths and the bodies are those of
+// TS28532_ProvMnS.yaml 19.2.0 and TS28111_FaultNrm.yaml 19.3.0, which
+// package mns names; MnSHandler serves them under MnSPathPrefix, such
+// as /3GPPManagement/ProvMnS/v19/:
+//
+//	GET    {MnSRoot}/ProvMnS/v19/SubNetwork={sn}/AlarmList=1[?filter=F][&dataNodeSelector=F][&fields=L][&scope=S]
+//	       getMOIAttributes (TS 28.532 11.1.1.2): the AlarmList-Single
+//	       Resource, its records keyed by <node>.<alarm_id> and its
+//	       objectInstance below SubNetwork={sn},ManagedElement=<node>.
+//	       A node that does not answer is the unreliableAlarmScope
+//	       (TS 28.111 6.11), and its records are left out (AlarmList).
+//	PUT    the same path: 403, the list cannot be replaced.
+//	DELETE the same path: 403, the list cannot be deleted.
+//
+// The errors have the bodies of TS 32.158 6.6.3, and the type and
+// reason of 6.6.4 and 6.6.5. A query of a GET is checked before any
+// node is asked: an unknown name is 400 with QUERY_PARAM_NAMES_INVALID,
+// a value that cannot be read 400 with QUERY_PARAM_VALUES_INVALID, and
+// one that asks for more than the OAM evaluates 500 with
+// QUERY_PARAMS_TOO_COMPLEX. Of the ProvMnS
+// operations, createMOI and deleteMOI of other objects, the reading of
+// the SubNetwork and its ManagedElements, and scopes that reach below
+// the base object are not served: the nodes are no managed objects of an
+// NRM, and fault supervision needs only the alarm list.
+//
 // A configuration change goes to one node or every node of a role, all
 // with one new generation above the highest that they have, so that
 // the nodes of a role keep one generation, and the OAM records what each

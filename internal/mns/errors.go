@@ -66,6 +66,7 @@ const (
 type ErrorReason string
 
 const (
+	QueryMalformed           ErrorReason = "QUERY_MALFORMED"             // VALIDATION_ERROR
 	QueryParamNamesInvalid   ErrorReason = "QUERY_PARAM_NAMES_INVALID"   // VALIDATION_ERROR
 	QueryParamValuesInvalid  ErrorReason = "QUERY_PARAM_VALUES_INVALID"  // VALIDATION_ERROR
 	QueryParamsTooComplex    ErrorReason = "QUERY_PARAMS_TOO_COMPLEX"    // SERVER_LIMITATION

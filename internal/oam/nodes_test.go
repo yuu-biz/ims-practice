@@ -155,6 +155,12 @@ func newTestServer(t *testing.T, c Config, nodes ...*fakeNode) *testServer {
 	mux := http.NewServeMux()
 	ts.api = openapitest.Load(t, "openapi.yaml")
 	mux.Handle(PathPrefix, ts.api.Handler(t, s.Handler()))
+	// The 3GPP management services follow the OpenAPI files of 3GPP,
+	// which are not in the repository and not checked here
+	// (alarmlist_test.go).
+	if prefix := s.MnSPathPrefix(); prefix != "" {
+		mux.Handle(prefix, s.MnSHandler())
+	}
 	ts.server = httptest.NewServer(mux)
 	t.Cleanup(ts.server.Close)
 	return ts
