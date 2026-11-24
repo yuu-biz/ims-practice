@@ -22,6 +22,11 @@ const diameterUnableToComply uint32 = 5012
 // SC holds nothing for: the messages may have expired, or another
 // instance may have delivered them on a retry.
 //
+// While the operator has the SC out of service it takes the alert all
+// the same: the alert is the end of the wait that an earlier delivery
+// began, and making the queue due is all it needs, which leaves the
+// delivery to an instance in service (maintenance.go).
+//
 // SIMPLIFIED: TS 23.040 3.2.7. The SC finds the queue by the MSISDN that
 // the alert carries, which TS 23.040 calls the MSISDN-Alert. A user with
 // several MSISDNs would be alerted by one of them only; the users of
@@ -45,6 +50,10 @@ func (c *SMSC) AlertServiceCentre(ctx context.Context, req sgd.AlertServiceCentr
 	}
 	if !found {
 		log.Info("alert for a user the SC holds nothing for")
+		return ok
+	}
+	if !c.unlocked() {
+		log.Info("alert: the short messages held for the user are due, for an instance in service to deliver")
 		return ok
 	}
 	log.Info("alert: delivering the short messages held for the user")

@@ -36,8 +36,10 @@ import (
 	"github.com/yuu-biz/ims-practice/internal/diameter"
 	"log/slog"
 	"sync"
+	"sync/atomic"
 	"time"
 
+	"github.com/yuu-biz/ims-practice/internal/maintenance"
 	"github.com/yuu-biz/ims-practice/internal/sgd"
 )
 
@@ -121,6 +123,13 @@ type SMSC struct {
 	// started counts the deliveries this instance began in the
 	// background, for Wait.
 	started sync.WaitGroup
+	// managed is the administrative state that the maintenance API of
+	// the node keeps for the SC, or nil in a node without the API
+	// (maintenance.go).
+	managed atomic.Pointer[maintenance.ManagedFunction]
+	// inHand counts the users of the SC: the requests it is answering
+	// and the destinations it holds a lease on.
+	inHand atomic.Int64
 }
 
 func New(cfg Config, store Store, sgdClient SGdClient, s6cClient S6cClient, clock Clock, log *slog.Logger) *SMSC {
