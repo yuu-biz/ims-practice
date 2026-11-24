@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/yuu-biz/ims-practice/internal/mns"
 	"github.com/yuu-biz/ims-practice/internal/oam"
@@ -19,6 +20,8 @@ func OAMNtfSubscriptions(t *testing.T, newPair func(t *testing.T) (oam.NtfSubscr
 		{"TheBoundHolds", oamTheBoundHolds},
 		{"TheBoundHoldsUnderConcurrentCreates", oamTheBoundHoldsConcurrently},
 		{"ConcurrentPutsLoseNone", oamConcurrentPutsLoseNone},
+		{"TheMissedMarkStaysWithAReplacement", oamMissedMark},
+		{"AMissInBetweenKeepsTheMark", oamAMissInBetweenKeepsTheMark},
 	})
 }
 
@@ -133,5 +136,72 @@ func oamConcurrentPutsLoseNone(t *testing.T, a, b oam.NtfSubscriptionStore) {
 	})
 	if subs := listNtf(t, b); len(subs) != 8 {
 		t.Errorf("%d subscriptions kept of 8", len(subs))
+	}
+}
+
+func oamMissedMark(t *testing.T, a, b oam.NtfSubscriptionStore) {
+	ctx := context.Background()
+	now := time.Now().Round(time.Millisecond)
+	putNtf(t, a, ntfSubscription("oss-1", "http://oss:8080/"), 4)
+	if err := b.MarkNtfSubscriptionMissed(ctx, "oss-1", now); err != nil {
+		t.Fatal(err)
+	}
+	// The OSS replaces its subscription, and is still owed a
+	// notifyAlarmListRebuilt.
+	putNtf(t, b, ntfSubscription("oss-1", "http://oss:8080/other"), 4)
+	got, err := a.NtfSubscription(ctx, "oss-1")
+	if err != nil || !got.Missed || got.MissedEpoch != 1 || !got.RetryAt.Equal(now) || got.Attributes.NotificationRecipientAddress != "http://oss:8080/other" {
+		t.Errorf("after the replacement: %+v, %v", got, err)
+	}
+	if cleared, err := a.ClearNtfSubscriptionMissed(ctx, "oss-1", got.MissedEpoch); err != nil || !cleared {
+		t.Fatalf("ClearNtfSubscriptionMissed = %v, %v", cleared, err)
+	}
+	if subs := listNtf(t, b); len(subs) != 1 || subs[0].Missed {
+		t.Errorf("after the mark is cleared: %+v", subs)
+	}
+	if err := a.MarkNtfSubscriptionMissed(ctx, "oss-2", now); !errors.Is(err, oam.ErrNotFound) {
+		t.Errorf("the mark of no subscription: %v, want ErrNotFound", err)
+	}
+}
+
+// oamAMissInBetweenKeepsTheMark: one watcher sends the owed
+// notifyAlarmListRebuilt for the miss it read, while another watcher
+// misses again. The second miss keeps the mark, and its own turn.
+func oamAMissInBetweenKeepsTheMark(t *testing.T, a, b oam.NtfSubscriptionStore) {
+	ctx := context.Background()
+	now := time.Now()
+	putNtf(t, a, ntfSubscription("oss-1", "http://oss:8080/"), 4)
+	if err := a.MarkNtfSubscriptionMissed(ctx, "oss-1", now); err != nil {
+		t.Fatal(err)
+	}
+	read, err := b.NtfSubscription(ctx, "oss-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if claimed, err := b.ClaimNtfSubscriptionRetry(ctx, "oss-1", read.MissedEpoch, now, now.Add(time.Minute)); err != nil || !claimed {
+		t.Fatalf("the first claim = %v, %v", claimed, err)
+	}
+	// Until next, no other watcher takes the turn of the same miss.
+	if claimed, _ := a.ClaimNtfSubscriptionRetry(ctx, "oss-1", read.MissedEpoch, now.Add(time.Second), now.Add(time.Minute)); claimed {
+		t.Error("a second watcher took the turn before its time")
+	}
+	if err := a.MarkNtfSubscriptionMissed(ctx, "oss-1", now); err != nil {
+		t.Fatal(err)
+	}
+	if cleared, err := b.ClearNtfSubscriptionMissed(ctx, "oss-1", read.MissedEpoch); err != nil || cleared {
+		t.Errorf("a clear at the epoch before the second miss = %v, %v; want the mark kept", cleared, err)
+	}
+	got, err := a.NtfSubscription(ctx, "oss-1")
+	if err != nil || !got.Missed || got.MissedEpoch != read.MissedEpoch+1 {
+		t.Fatalf("after the second miss: %+v, %v", got, err)
+	}
+	if claimed, err := a.ClaimNtfSubscriptionRetry(ctx, "oss-1", read.MissedEpoch, now, now); err != nil || claimed {
+		t.Errorf("a claim at the old epoch = %v, %v", claimed, err)
+	}
+	if claimed, err := a.ClaimNtfSubscriptionRetry(ctx, "oss-1", got.MissedEpoch, now, now.Add(time.Minute)); err != nil || !claimed {
+		t.Errorf("a claim at the new epoch = %v, %v", claimed, err)
+	}
+	if cleared, err := a.ClearNtfSubscriptionMissed(ctx, "oss-1", got.MissedEpoch); err != nil || !cleared {
+		t.Errorf("a clear at the new epoch = %v, %v", cleared, err)
 	}
 }

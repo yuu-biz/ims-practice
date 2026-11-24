@@ -106,3 +106,23 @@ func (s *Store) NtfSubscriptions(ctx context.Context) ([]oam.NtfSubscriptionCont
 	}
 	return set.Sorted(), nil
 }
+
+func (s *Store) MarkNtfSubscriptionMissed(ctx context.Context, id string, retryAt time.Time) error {
+	return s.changeSubscriptions(ctx, func(set oam.NtfSubscriptionSet) error { return set.MarkMissed(id, retryAt) })
+}
+
+func (s *Store) ClaimNtfSubscriptionRetry(ctx context.Context, id string, epoch uint64, now, next time.Time) (claimed bool, err error) {
+	err = s.changeSubscriptions(ctx, func(set oam.NtfSubscriptionSet) error {
+		claimed, err = set.ClaimRetry(id, epoch, now, next)
+		return err
+	})
+	return claimed, err
+}
+
+func (s *Store) ClearNtfSubscriptionMissed(ctx context.Context, id string, epoch uint64) (cleared bool, err error) {
+	err = s.changeSubscriptions(ctx, func(set oam.NtfSubscriptionSet) error {
+		cleared, err = set.ClearMissed(id, epoch)
+		return err
+	})
+	return cleared, err
+}

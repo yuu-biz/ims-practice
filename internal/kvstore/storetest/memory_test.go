@@ -45,6 +45,17 @@ func TestOAMFileNtfSubscriptionStore(t *testing.T) {
 	})
 }
 
+// So is the file store of the watches of one OAM instance.
+func TestOAMFileAlarmWatchStore(t *testing.T) {
+	storetest.OAMAlarmWatches(t, func(t *testing.T) (oam.AlarmWatchStore, oam.AlarmWatchStore) {
+		s, err := oam.NewFileAlarmWatchStore(filepath.Join(t.TempDir(), "alarm-watch"), nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return s, s
+	})
+}
+
 func TestPCSCFMemoryStore(t *testing.T) {
 	storetest.PCSCF(t, func(*testing.T) (pcscf.Store, pcscf.Store) {
 		s := pcscf.NewMemoryStore()
