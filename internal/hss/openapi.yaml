@@ -1,0 +1,444 @@
+openapi: 3.1.0
+info:
+  title: Provisioning API of the HSS
+  version: 1.0.0
+  description: |
+    Adds, shows, changes and removes the subscriptions of the HSS, which
+    the OAM server and the Lab call. This API is this project's own, not
+    one of 3GPP: a product HSS has a provisioning interface of its own
+    too.
+
+    Bodies and answers are JSON, except the export, which has one JSON
+    value per line. An error is the text of the reason, as text/plain.
+    A request whose subscription the HSS cannot read or write answers
+    500. A method that a path does not take answers 405 with Allow.
+
+    A request is carried out to its end once it is read, even when the
+    client closes its side of the connection.
+
+    GET /subscriptions/export is the one route that a private identity
+    could stand in the way of: a subscription whose private identity is
+    exactly "export" is the one that no GET of a single subscription
+    reaches. The PUT, PATCH and DELETE of /subscriptions/export still
+    reach it.
+paths:
+  /subscriptions:
+    get:
+      operationId: listSubscriptions
+      summary: One page of the subscriptions, in the order of their private identities.
+      description: The subscriptions as the API shows them, without their credentials.
+      parameters:
+        - $ref: '#/components/parameters/after'
+        - $ref: '#/components/parameters/limit'
+      responses:
+        '200':
+          description: The page.
+          headers:
+            Link:
+              description: |
+                While pages are left, the query of the request for the next
+                one, as a Link with rel="next" (RFC 8288 3), such as
+                <?after=...&limit=100>; rel="next".
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Subscription'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '500':
+          $ref: '#/components/responses/StoreFailure'
+    post:
+      operationId: addSubscription
+      summary: Add a subscription.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SubscriptionRequest'
+      responses:
+        '201':
+          description: The subscription that was added.
+          headers:
+            Location:
+              description: The path of the new subscription.
+              required: true
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Subscription'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '409':
+          $ref: '#/components/responses/IdentityTaken'
+        '500':
+          $ref: '#/components/responses/StoreFailure'
+  /subscriptions/export:
+    get:
+      operationId: exportSubscriptions
+      summary: One page of the subscriptions with their credentials, one per line.
+      description: |
+        Each line is one subscription as the body of the PUT that puts it
+        back (SubscriptionRequest), with the SIP Digest password, K, OPc,
+        the AMF, SQN_HE and the Sh repository data. The registration state
+        and the serving S-CSCF are left out. The pages are those of the
+        listing.
+      parameters:
+        - $ref: '#/components/parameters/after'
+        - $ref: '#/components/parameters/limit'
+      responses:
+        '200':
+          description: The page, one line per subscription.
+          headers:
+            Link:
+              description: |
+                While pages are left, the query of the request for the next
+                one, as a Link with rel="next" (RFC 8288 3), such as
+                <?after=...&limit=100>; rel="next".
+              schema:
+                type: string
+            Cache-Control:
+              description: no-store, as the lines carry secrets (RFC 9111 5.2.2.5).
+              required: true
+              schema:
+                type: string
+          content:
+            application/x-ndjson:
+              schema:
+                description: A line; the body is not checked by the tests, as it is not one JSON value.
+                $ref: '#/components/schemas/SubscriptionRequest'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '500':
+          $ref: '#/components/responses/StoreFailure'
+  /subscriptions/{impi}:
+    get:
+      operationId: getSubscription
+      summary: One subscription.
+      parameters:
+        - $ref: '#/components/parameters/impi'
+      responses:
+        '200':
+          description: The subscription.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Subscription'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/StoreFailure'
+    put:
+      operationId: putSubscription
+      summary: Add a subscription or replace the whole of it.
+      description: |
+        Sending the same body again leaves the same subscription. What the
+        request leaves out goes, except what the running subscriber has:
+        the registration state, its S-CSCF and SQN_HE, which aka.sqn sets
+        only where the subscription is new. A change of the user profile
+        of a registered user is pushed to its S-CSCF before the answer.
+      parameters:
+        - $ref: '#/components/parameters/impi'
+        - name: dry_run
+          in: query
+          description: true changes nothing and answers what the request would do, 200 for a creation.
+          schema:
+            type: boolean
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SubscriptionRequest'
+      responses:
+        '200':
+          description: The subscription was replaced or was the same already, or a dry run.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PutAnswer'
+        '201':
+          description: The subscription was added.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PutAnswer'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          description: The subscription was removed while the request replaced it.
+          content:
+            text/plain:
+              schema:
+                type: string
+        '409':
+          $ref: '#/components/responses/IdentityTaken'
+        '500':
+          $ref: '#/components/responses/StoreFailure'
+    patch:
+      operationId: patchSubscription
+      summary: Change the mark and the service profile name of a subscription, and nothing else.
+      parameters:
+        - $ref: '#/components/parameters/impi'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SubscriptionPatch'
+      responses:
+        '200':
+          description: The subscription after the change.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Subscription'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/StoreFailure'
+    delete:
+      operationId: removeSubscription
+      summary: Remove a subscription.
+      description: A registered user is deregistered at its S-CSCF.
+      parameters:
+        - $ref: '#/components/parameters/impi'
+      responses:
+        '204':
+          description: The subscription is gone.
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/StoreFailure'
+  /subscriptions/{impi}/customized-alerting-tone:
+    put:
+      operationId: setCustomizedAlertingTone
+      summary: Provision or change the customized alerting tone of a subscription (TS 24.182 4.5.2).
+      parameters:
+        - $ref: '#/components/parameters/impi'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CustomizedAlertingTone'
+      responses:
+        '200':
+          description: The tone as it is stored.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CustomizedAlertingTone'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/StoreFailure'
+components:
+  parameters:
+    impi:
+      name: impi
+      in: path
+      required: true
+      description: The private identity of the subscription, such as 001010000000001@ims.mnc001.mcc001.3gppnetwork.org.
+      schema:
+        type: string
+    after:
+      name: after
+      in: query
+      description: The private identity that the page before ended at.
+      schema:
+        type: string
+    limit:
+      name: limit
+      in: query
+      description: How many subscriptions to return; at most 1000, which is also the page without a limit.
+      schema:
+        type: integer
+        minimum: 1
+  responses:
+    BadRequest:
+      description: A body or a parameter that the HSS cannot take, with the reason.
+      content:
+        text/plain:
+          schema:
+            type: string
+    NotFound:
+      description: No such subscription.
+      content:
+        text/plain:
+          schema:
+            type: string
+    IdentityTaken:
+      description: A public identity of the request belongs to another subscription.
+      content:
+        text/plain:
+          schema:
+            type: string
+    StoreFailure:
+      description: The HSS could not read or write the subscription.
+      content:
+        text/plain:
+          schema:
+            type: string
+  schemas:
+    SubscriptionRequest:
+      description: |
+        A subscription as the provisioning API takes it. The fields have
+        the names of the configuration file, except tel. A request carries
+        repository_data, or mmtel_services, ut_password and
+        customized_alerting_tone, not both.
+      type: object
+      required: [private_identity]
+      properties:
+        private_identity:
+          type: string
+        public_identities:
+          description: SIP or tel URIs.
+          type: array
+          items:
+            type: string
+        barred_identities:
+          description: The public identities that are barred.
+          type: array
+          items:
+            type: string
+        password:
+          description: The SIP Digest password.
+          type: string
+        aka:
+          $ref: '#/components/schemas/AKACredentials'
+        tel:
+          description: A tel URI, which joins the public identities after the others.
+          type: string
+          pattern: '^tel:'
+        ut_password:
+          description: Lets the user change the supplementary services over Ut.
+          type: string
+        mmtel_services:
+          description: The first MMTelServices document, as XML text.
+          type: string
+        customized_alerting_tone:
+          $ref: '#/components/schemas/CustomizedAlertingTone'
+        test_user:
+          description: Marks a subscription that the operator keeps for trying features out.
+          type: boolean
+        service_profile:
+          description: The service profile, one of those of the configuration.
+          type: string
+        repository_data:
+          description: |
+            The Sh repository data as it is to be stored. An empty array
+            asks for a subscription with no repository data; leaving the
+            field out, or null, asks for the MMTelServices document of the
+            configuration.
+          type: [array, 'null']
+          items:
+            $ref: '#/components/schemas/RepositoryData'
+      additionalProperties: false
+    AKACredentials:
+      description: In hexadecimal.
+      type: object
+      required: [k, opc]
+      properties:
+        k:
+          type: string
+        opc:
+          type: string
+        amf:
+          type: string
+        sqn:
+          type: string
+      additionalProperties: false
+    RepositoryData:
+      description: One piece of the Sh repository data (TS 29.328 7.4).
+      type: object
+      required: [service_indication, service_data]
+      properties:
+        service_indication:
+          type: string
+        service_data:
+          description: The data as XML text.
+          type: string
+      additionalProperties: false
+    CustomizedAlertingTone:
+      description: The tone and whether the callers hear it; a request that leaves active out sets it false.
+      type: object
+      required: [tone]
+      properties:
+        tone:
+          type: string
+        active:
+          type: boolean
+      additionalProperties: false
+    Subscription:
+      description: |
+        A subscription as the API shows it, without the password and the
+        AKA keys, which the HSS never hands out.
+      type: object
+      required: [private_identity, public_identities, authentication_schemes, registration_state, effective_service_profile]
+      properties:
+        private_identity:
+          type: string
+        public_identities:
+          type: array
+          minItems: 1
+          items:
+            type: string
+        barred_identities:
+          type: array
+          items:
+            type: string
+        authentication_schemes:
+          description: The schemes that the credentials allow, as SIP-Authentication-Scheme spells them.
+          type: array
+          minItems: 1
+          items:
+            type: string
+            enum: [SIP Digest, Digest-AKAv1-MD5]
+        registration_state:
+          description: The registration state of TS 29.228 6.1.1.1.
+          type: string
+          enum: [Not Registered, Registered, Unregistered]
+        server_name:
+          description: The S-CSCF that serves the user.
+          type: string
+        customized_alerting_tone:
+          $ref: '#/components/schemas/CustomizedAlertingTone'
+        test_user:
+          type: boolean
+        service_profile:
+          type: string
+        effective_service_profile:
+          description: The profile that the subscription gets under the settings in force.
+          type: string
+      additionalProperties: false
+    PutAnswer:
+      type: object
+      required: [result, subscription]
+      properties:
+        result:
+          description: What the PUT did, or would do on a dry run.
+          type: string
+          enum: [created, updated, unchanged]
+        subscription:
+          $ref: '#/components/schemas/Subscription'
+      additionalProperties: false
+    SubscriptionPatch:
+      description: The fields that a PATCH can change. One that the body leaves out stays as it is.
+      type: object
+      properties:
+        test_user:
+          type: boolean
+        service_profile:
+          type: string
+      additionalProperties: false
