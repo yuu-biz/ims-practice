@@ -154,6 +154,17 @@ type Store interface {
 	// Store is left with nothing once the request has been answered.
 	TakeOutcome(ctx context.Context, reference string) (Outcome, bool, error)
 
+	// PutNotReachable sets the IP-SM-GW's own UE-Not-Reachable-for-IP
+	// flag for the user of publicID until expires: a delivery to that
+	// user has failed because the UE was absent (TS 23.204 6.5a, TS
+	// 23.040 3.2.6, which keeps UNRI in the IP-SM-GW as well as in the
+	// HSS).
+	PutNotReachable(ctx context.Context, publicID string, expires time.Time) error
+	// TakeNotReachable reports whether the flag was set for the user and
+	// clears it, in one step, so that of several instances which find
+	// the user reachable again only one tells the HSS (regevent.go).
+	TakeNotReachable(ctx context.Context, publicID string) (bool, error)
+
 	// PutRegSubscription keeps sub until its Expires, in place of the
 	// one with the same Call-ID and of any other one to the same public
 	// identity.
@@ -196,6 +207,9 @@ type MemoryStore struct {
 	// outcomes are how deliveries ended, by the reference of the request
 	// that brought each one.
 	outcomes map[string]storedOutcome
+	// notReachable holds the users this IP-SM-GW could not reach, by
+	// public identity, each until its time.
+	notReachable map[string]time.Time
 	// regSubscriptions are keyed by Call-ID, and regSubscriptionOf and
 	// regSubscriptionOfIMSI give the Call-ID for a public identity and
 	// for an IMSI, so that no lookup scans.
@@ -211,6 +225,7 @@ type MemoryStore struct {
 func NewMemoryStore() *MemoryStore {
 	return &MemoryStore{deliveries: map[string]PendingDelivery{}, messageReferences: map[string]messageReferences{},
 		outcomes:         map[string]storedOutcome{},
+		notReachable:     map[string]time.Time{},
 		regSubscriptions: map[string]RegSubscription{}, regSubscriptionOf: map[string]string{},
 		regSubscriptionOfIMSI: map[string]string{},
 		reportTimeout:         ims.NewDueIndex[string]()}
@@ -330,6 +345,33 @@ func (s *MemoryStore) TakeOutcome(_ context.Context, reference string) (Outcome,
 		return 0, false, nil
 	}
 	return stored.outcome, true, nil
+}
+
+// PutNotReachable keeps the flag until expires, as an external store
+// would with a time to live. The flag is that of the public identity,
+// so that two ways of writing one user share it.
+func (s *MemoryStore) PutNotReachable(_ context.Context, publicID string, expires time.Time) error {
+	key := ims.PublicIdentityKey(publicID)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.notReachable[key] = expires
+	time.AfterFunc(time.Until(expires), func() {
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		if stored, ok := s.notReachable[key]; ok && !time.Now().Before(stored) {
+			delete(s.notReachable, key)
+		}
+	})
+	return nil
+}
+
+func (s *MemoryStore) TakeNotReachable(_ context.Context, publicID string) (bool, error) {
+	key := ims.PublicIdentityKey(publicID)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	expires, ok := s.notReachable[key]
+	delete(s.notReachable, key)
+	return ok && time.Now().Before(expires), nil
 }
 
 // PutRegSubscription keeps sub. The store removes it at its Expires.
