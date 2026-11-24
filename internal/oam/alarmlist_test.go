@@ -436,7 +436,7 @@ func TestAlarmListPathsAndMethods(t *testing.T) {
 			t.Errorf("%s %s: %+v, want %+v", tt.method, tt.path, got, tt.want)
 		}
 	}
-	if a := ts.mnsCall(t, "POST", alarmListPath, "", ""); a.header.Get("Allow") != "DELETE, GET, HEAD, PUT" {
+	if a := ts.mnsCall(t, "POST", alarmListPath, "", ""); a.header.Get("Allow") != "DELETE, GET, HEAD, PATCH, PUT" {
 		t.Errorf("Allow: %q", a.header.Get("Allow"))
 	}
 	// The ids are percent-encoded as a URI-LDN may have them.

@@ -80,7 +80,7 @@
 // and an {MnSRoot} (Config.SubNetwork, Config.MnSRoot). The OAM is the
 // MnS producer and the OSS the MnS consumer (TS 28.533). The SubNetwork
 // has one AlarmList (TS 28.111 V20.0.0 7.3.2), with the records of every
-// node, which the OSS reads with the generic
+// node, which the OSS reads and acknowledges with the generic
 // provisioning operations of TS 28.532 V20.2.0 over the REST rules of
 // TS 32.158 V20.1.0. The paths and the bodies are those of
 // TS28532_ProvMnS.yaml 19.2.0 and TS28111_FaultNrm.yaml 19.3.0, which
@@ -93,6 +93,10 @@
 //	       objectInstance below SubNetwork={sn},ManagedElement=<node>.
 //	       A node that does not answer is the unreliableAlarmScope
 //	       (TS 28.111 6.11), and its records are left out (AlarmList).
+//	PATCH  {MnSRoot}/ProvMnS/v19/SubNetwork={sn}/AlarmList=1
+//	       modifyMOIAttributes (11.1.1.3) with a JSON Merge Patch
+//	       (application/merge-patch+json) of the ackState, ackUserId and
+//	       ackSystemId of records of one node -> 204.
 //	PUT    the same path: 403, the list cannot be replaced.
 //	DELETE the same path: 403, the list cannot be deleted.
 //
@@ -101,7 +105,8 @@
 // node is asked: an unknown name is 400 with QUERY_PARAM_NAMES_INVALID,
 // a value that cannot be read 400 with QUERY_PARAM_VALUES_INVALID, and
 // one that asks for more than the OAM evaluates 500 with
-// QUERY_PARAMS_TOO_COMPLEX. Of the ProvMnS
+// QUERY_PARAMS_TOO_COMPLEX. A patch is checked whole before any node is
+// asked; its answers are listed at patchAlarmList. Of the ProvMnS
 // operations, createMOI and deleteMOI of other objects, the reading of
 // the SubNetwork and its ManagedElements, and scopes that reach below
 // the base object are not served: the nodes are no managed objects of an
