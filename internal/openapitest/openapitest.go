@@ -34,6 +34,8 @@
 // Document.CheckRoutes asks the handler which methods each path of the
 // document takes, and Document.CheckCovered names each operation that
 // no exchange reached, so that a test cannot pass by leaving one out.
+// JSONNames lists the JSON attributes of a Go type, which the packages
+// that follow a 3GPP OpenAPI file compare with the names of its schemas.
 //
 // The schemas are JSON Schema 2020-12, on which the Schema Object of
 // the OpenAPI Specification 3.1.0 builds, and are checked by
@@ -68,6 +70,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strconv"
 	"strings"
@@ -1069,4 +1072,30 @@ func (d *Document) CheckCovered(t testing.TB) {
 	for _, m := range missing {
 		t.Errorf("%s: no exchange reached %s", d.file, m)
 	}
+}
+
+// JSONNames gives the names of the JSON attributes of the struct v, in
+// the order of its fields, as encoding/json writes them: the name of the
+// json tag of each field, and the names of a struct that is embedded
+// without one. A package whose types follow a 3GPP OpenAPI file
+// compares them with the names of the schemas of that file.
+func JSONNames(v any) []string {
+	return jsonNames(reflect.TypeOf(v))
+}
+
+func jsonNames(t reflect.Type) []string {
+	var names []string
+	for f := range t.Fields() {
+		name, _, _ := strings.Cut(f.Tag.Get("json"), ",")
+		switch {
+		case name == "-":
+		case name == "" && f.Anonymous && f.Type.Kind() == reflect.Struct:
+			names = append(names, jsonNames(f.Type)...)
+		case name == "" && f.IsExported():
+			names = append(names, f.Name)
+		case name != "":
+			names = append(names, name)
+		}
+	}
+	return names
 }
