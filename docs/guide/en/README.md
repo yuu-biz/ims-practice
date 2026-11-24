@@ -108,7 +108,7 @@ Some packages under `internal` are in the repository but in none of the nodes ab
 | Package | What it is |
 | --- | --- |
 | `fivegc`, `n5`, `nhss`, `sbi` | The 5GS side: a 5GC stub, the N5 policy API of the PCF, the service based interface of the HSS, and what those APIs share. |
-| `nas`, `sgd`, `smsc` | SMS without the IMS: the NAS messages that carry it, the SGd and S6c Diameter messages, and a Service Centre that speaks them. The SC that the IP-SM-GW reaches is the stub of package `sc`. |
+| `nas` | SMS without the IMS: the NAS messages that carry a short message between the UE and the MME, or the AMF in 5GS. |
 | `h248/h248test`, `kvstore/storetest`, `openapitest`, `rtptest` | Helpers that only the tests use. |
 
 ### The HTTP APIs
