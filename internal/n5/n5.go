@@ -10,9 +10,30 @@
 //
 // The JSON types carry the attribute names of the OpenAPI file of TS
 // 29.514 Annex A.2 (TS29514_Npcf_PolicyAuthorization.yaml) and of the
-// common data types of TS 29.571. A Go field is the attribute name with
-// its first letter in upper case, so that "ascReqData" in a capture is
-// AscReqData here.
+// common data types of TS 29.571 (TS29571_CommonData.yaml). A Go field
+// is the attribute name with its first letter in upper case, so that
+// "ascReqData" in a capture is AscReqData here. The names, the paths
+// and the enumerations follow the files in the archives of TS 29.514
+// V20.1.0 and TS 29.571 V20.1.0 on the 3GPP file server; the file of TS
+// 29.514 is the one of the tag TSG112-Rel20 of the 5G_APIs repository
+// of 3GPP Forge. The NF types that the two sides name in User-Agent are
+// those of TS 29.510. TestAttributeNames compares the attributes of
+// each type with a list of the names that the schema of the same name
+// has in that file (names_test.go), and the tests of types_test.go read
+// example bodies written with those names and write them back.
+//
+// The operations of the file, by operationId, and what of each is
+// built:
+//
+//	PostAppSessions     POST  /app-sessions                        Client.Create, NewHandler
+//	ModAppSession       PATCH /app-sessions/{appSessionId}         Client.Update, NewHandler
+//	DeleteAppSession    POST  /app-sessions/{appSessionId}/delete  Client.Delete, NewHandler
+//	eventNotification   POST  {notifUri}/notify (callback)         Notifier.Notify, NewNotificationHandler
+//	terminationRequest  POST  {notifUri}/terminate (callback)      Notifier.Terminate, NewNotificationHandler
+//	PcscfRestoration, GetAppSession, updateEventsSubsc,
+//	DeleteEventsSubsc, and the callbacks
+//	detected5GsBridgeForPduSession and
+//	eventNotificationPduSession                                    not built
 //
 // The package has three parts:
 //   - Client: what the AF calls (Create, Update, Delete).
@@ -33,7 +54,10 @@
 // monitoring, sponsored data, MPS, MCPTT and so on) are left out. The
 // P-CSCF uses none of them, and decoding ignores attributes it does not
 // know, as every SBI receiver must for an extensible API, so a fuller
-// peer can still talk to this one.
+// peer can still talk to this one. Of the operations, those that the
+// list above marks as not built are left out too: the P-CSCF here
+// creates, updates and deletes a context and takes the notifications of
+// its events, and uses none of the others.
 package n5
 
 import (
