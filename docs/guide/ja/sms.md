@@ -483,6 +483,8 @@ UE 1 は SMS-SUBMIT の TP-SRR で status report を頼んだので、delivery r
 
 この SC の再送の間隔は 1 時間です（`deploy/compose/sc.yaml` の `retry_delays`）。そのため、下の 2 つのどちらでも、ショートメッセージを届けるのは再送ではなく知らせのほうです。TS 23.040 3.2.7 の NOTE 5 は、この自発的な再送を運用者に任せています。ここでは、知らせが届かなかったときの備えです。
 
+どちらのラダー図も、S-CSCF と UE のあいだの P-CSCF と、I-CSCF が UE 2 の S-CSCF を見つける LIR を省いています。上の配達のラダー図にはどちらもあります。
+
 ### UE 2 がショートメッセージを受け取らない
 
 UE 2 の制御 API に `PUT /sms-availability` で `{"available": false}` を送ると、この状態になります。そこへ UE 1 がショートメッセージを送ります。
