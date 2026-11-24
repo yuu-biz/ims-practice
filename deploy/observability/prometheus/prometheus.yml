@@ -43,6 +43,8 @@ scrape_configs:
         labels: {node: agw}
       - targets: ["ipsmgw:8085"]
         labels: {node: ipsmgw}
+      - targets: ["sc:8085"]
+        labels: {node: sc}
       - targets: ["mmtel:8085"]
         labels: {node: mmtel}
       - targets: ["epc:8085"]

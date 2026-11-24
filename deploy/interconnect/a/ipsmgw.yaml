@@ -2,12 +2,13 @@
 # deploy/compose/ipsmgw.yaml and
 # deploy/interconnect/changes.go. Change those, not this file.
 
-# IP-SM-GW, the application server for SMS over IP (TS 24.341 5.3.3),
-# with the stub of the SC inside it. The S-CSCF sends it a
-# third-party REGISTER for each registration and every short message a
-# user sends, by the initial filter criteria in hss.yaml. After each
-# third-party REGISTER it subscribes to the user's registration state.
-# It reads and updates the HSS over Sh.
+# IP-SM-GW, the application server for SMS over IP (TS 24.341 5.3.3).
+# The S-CSCF sends it a third-party REGISTER for each registration and
+# every short message a user sends, by the initial filter criteria in
+# hss.yaml. After each third-party REGISTER it subscribes to the user's
+# registration state. It reads and updates the HSS over Sh, and hands
+# every short message a UE sends to the Service Centre that the diameter
+# section below names.
 node: ipsmgw
 roles: [ipsmgw]
 home_domain: ims.mnc001.mcc001.3gppnetwork.org
@@ -22,8 +23,9 @@ ipsmgw:
   # Numbering Plan, which no real line has. The IP-SM-GW registers its
   # number in the HSS for each user it serves (TS 29.328 7.6.16).
   number: "+12025550199"
-  # The address of the SC. A UE puts it in the RP-DA of a short message,
-  # and the IP-SM-GW in the RP-OA of a short message to a UE.
+  # The address of the SC, the same number as the address of sc.yaml. A
+  # UE puts it in the RP-DA of a short message, and the IP-SM-GW in the
+  # RP-OA of a short message to a UE.
   service_centre: "+12025550100"
   # With it, the SC finds the users of network B by ENUM, and the
   # IP-SM-GW sends their short messages out here, as the S-CSCF does
@@ -32,6 +34,12 @@ ipsmgw:
 diameter:
   origin_host: ipsmgw.ims.mnc001.mcc001.3gppnetwork.org
   origin_realm: ims.mnc001.mcc001.3gppnetwork.org
+  # The HSS alone. Neither network of this deployment runs a Service
+  # Centre of its own, so each IP-SM-GW uses the stub of the SC inside
+  # its own process. The stub is what finds a user of the other
+  # network by ENUM and sends the short message out through the IBCF;
+  # a Service Centre would ask the HSS of the recipient instead, which
+  # needs no interconnect of the IMS (TS 23.204 6.4 step 3).
   peers:
     - address: hss.ims.mnc001.mcc001.3gppnetwork.org:3868
       origin_host: hss.ims.mnc001.mcc001.3gppnetwork.org
@@ -48,10 +56,11 @@ diameter:
 hep:
   collector: 172.28.0.60:9060
 # The maintenance listener: the metrics of the IP-SM-GW at /metrics for
-# Prometheus to scrape, which are the Diameter it speaks over Sh, and
-# the maintenance API under /maintenance/v1/, through which an operator
-# takes the IP-SM-GW out of service. No specification gives a port for
-# it; 8085 is this project's choice. The API asks for no password, so
-# the port is not published outside the network of the IMS nodes.
+# Prometheus to scrape, which are the Diameter requests it sends and the
+# answers it gets back, and the maintenance API under /maintenance/v1/,
+# through which an operator takes the IP-SM-GW out of service. No
+# specification gives a port for it; 8085 is this project's choice. The
+# API asks for no password, so the port is not published outside the
+# network of the IMS nodes.
 maintenance:
   listen: 0.0.0.0:8085

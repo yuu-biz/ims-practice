@@ -232,6 +232,8 @@ var applications = map[[2]string]string{
 	{"icscf", "hss"}:  "Cx",
 	{"scscf", "hss"}:  "Cx",
 	{"ipsmgw", "hss"}: "Sh",
+	{"ipsmgw", "sc"}:  "SGd",
+	{"sc", "hss"}:     "S6c",
 	{"mmtel", "hss"}:  "Sh",
 	{"pcscf", "pcrf"}: "Rx",
 }

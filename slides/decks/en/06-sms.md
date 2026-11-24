@@ -195,16 +195,17 @@ The filter is `diameter.cmd.code == 307`.
 
 | Look at | What to see |
 | --- | --- |
-| UDR and UDA | The SC looks up, over Sh, the user who has the recipient's number. Data-Reference is 10. |
+| OFR and OFA | The IP-SM-GW hands the SMS-SUBMIT to the Service Centre over SGd, and the answer carries the submit report. |
+| SRR and SRA | The Service Centre asks the HSS over S6c whether anyone has the recipient's number. |
 | Request-URI of the IP-SM-GW's MESSAGE | UE 1's SIP URI. |
 | Accept-Contact | `*;+g.3gpp.smsip;require;explicit`. |
 | In-Reply-To | The Call-ID of the MESSAGE of step 1. |
 | Body | RP-ACK with an SMS-SUBMIT-REPORT inside. |
 | The way | In through the I-CSCF, which finds UE 1's S-CSCF with an LIR. |
 
-The filter is `diameter.cmd.code == 306 || sip.In-Reply-To`.
+The filter is `diameter.cmd.code in {8388645, 8388647} || sip.In-Reply-To`.
 
-> Guide: [5](../../../docs/guide/en/sms.md#5-the-sc-looks-the-recipient-up-udr-and-uda) to [7](../../../docs/guide/en/sms.md#7-ue-1-answers-200). TS 24.341 5.3.3.4.3, 5.3.1.2. TS 29.328 7.6.2. TS 24.229 5.7.3.
+> Guide: [5](../../../docs/guide/en/sms.md#5-the-ip-sm-gw-hands-the-short-message-to-the-sc-ofr-srr-and-ofa) to [7](../../../docs/guide/en/sms.md#7-ue-1-answers-200). TS 24.341 5.3.3.4.3, 5.3.1.2. TS 29.328 7.6.2. TS 24.229 5.7.3.
 
 ---
 
@@ -212,7 +213,8 @@ The filter is `diameter.cmd.code == 306 || sip.In-Reply-To`.
 
 | Look at | What to see |
 | --- | --- |
-| Request-URI | `tel:+12025550102`, the tel URI from the UDA. |
+| TFR | The Service Centre forwards the SMS-DELIVER to the IP-SM-GW over SGd, naming the recipient by IMSI. |
+| Request-URI | `tel:+12025550102`, the tel URI of that IMSI. |
 | Request-Disposition | `no-fork`. |
 | Body | RP-DATA from the network, with an SMS-DELIVER. TP-OA is the sender. |
 | iFC of priority 2 | No match: P-Asserted-Identity is the IP-SM-GW. |
@@ -222,7 +224,7 @@ The filter is `diameter.cmd.code == 306 || sip.In-Reply-To`.
 - A UE that did not register `+g.3gpp.smsip` does not get the MESSAGE: the S-CSCF answers 480. The feature tag of the registration is used here.
 - Compare the SMS-SUBMIT with the SMS-DELIVER: TP-DA became TP-OA, and TP-SCTS is new.
 
-> Guide: [8](../../../docs/guide/en/sms.md#8-the-sc-delivers-the-message-sms-deliver) to [10](../../../docs/guide/en/sms.md#10-ue-2-answers-200). TS 24.341 5.3.3.4.2, 5.3.2.3. TS 24.229 5.4.3.3. RFC 3841 7.2.4, 9.1.
+> Guide: [8](../../../docs/guide/en/sms.md#8-the-sc-forwards-the-message-and-the-ip-sm-gw-delivers-it-tfr-and-sms-deliver) to [10](../../../docs/guide/en/sms.md#10-ue-2-answers-200). TS 24.341 5.3.3.4.2, 5.3.2.3. TS 24.229 5.4.3.3. RFC 3841 7.2.4, 9.1.
 
 ---
 

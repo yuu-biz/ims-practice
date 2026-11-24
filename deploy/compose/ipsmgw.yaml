@@ -1,9 +1,10 @@
-# IP-SM-GW, the application server for SMS over IP (TS 24.341 5.3.3),
-# with the stub of the SC inside it. The S-CSCF sends it a
-# third-party REGISTER for each registration and every short message a
-# user sends, by the initial filter criteria in hss.yaml. After each
-# third-party REGISTER it subscribes to the user's registration state.
-# It reads and updates the HSS over Sh.
+# IP-SM-GW, the application server for SMS over IP (TS 24.341 5.3.3).
+# The S-CSCF sends it a third-party REGISTER for each registration and
+# every short message a user sends, by the initial filter criteria in
+# hss.yaml. After each third-party REGISTER it subscribes to the user's
+# registration state. It reads and updates the HSS over Sh, and hands
+# every short message a UE sends to the Service Centre that the diameter
+# section below names.
 node: ipsmgw
 roles: [ipsmgw]
 home_domain: ims.mnc001.mcc001.3gppnetwork.org
@@ -18,8 +19,9 @@ ipsmgw:
   # Numbering Plan, which no real line has. The IP-SM-GW registers its
   # number in the HSS for each user it serves (TS 29.328 7.6.16).
   number: "+12025550199"
-  # The address of the SC. A UE puts it in the RP-DA of a short message,
-  # and the IP-SM-GW in the RP-OA of a short message to a UE.
+  # The address of the SC, the same number as the address of sc.yaml. A
+  # UE puts it in the RP-DA of a short message, and the IP-SM-GW in the
+  # RP-OA of a short message to a UE.
   service_centre: "+12025550100"
 diameter:
   origin_host: ipsmgw.ims.mnc001.mcc001.3gppnetwork.org
@@ -28,6 +30,12 @@ diameter:
     - address: hss.ims.mnc001.mcc001.3gppnetwork.org:3868
       origin_host: hss.ims.mnc001.mcc001.3gppnetwork.org
       kind: hss
+    # The Service Centre. With it the IP-SM-GW hands the short messages
+    # of its UEs to that node over SGd; without it the IP-SM-GW uses the
+    # stub of the SC inside its own process.
+    - address: sc.ims.mnc001.mcc001.3gppnetwork.org:3868
+      origin_host: sc.ims.mnc001.mcc001.3gppnetwork.org
+      kind: sc
   # The RFC defaults, written out where an operator can change them:
   # Tw is the watchdog timer (RFC 3539 3.4.1 [1]), and Tc the time
   # between attempts to connect again (RFC 6733 2.1 and 12).
@@ -40,10 +48,11 @@ diameter:
 hep:
   collector: 172.28.0.60:9060
 # The maintenance listener: the metrics of the IP-SM-GW at /metrics for
-# Prometheus to scrape, which are the Diameter it speaks over Sh, and
-# the maintenance API under /maintenance/v1/, through which an operator
-# takes the IP-SM-GW out of service. No specification gives a port for
-# it; 8085 is this project's choice. The API asks for no password, so
-# the port is not published outside the network of the IMS nodes.
+# Prometheus to scrape, which are the Diameter requests it sends and the
+# answers it gets back, and the maintenance API under /maintenance/v1/,
+# through which an operator takes the IP-SM-GW out of service. No
+# specification gives a port for it; 8085 is this project's choice. The
+# API asks for no password, so the port is not published outside the
+# network of the IMS nodes.
 maintenance:
   listen: 0.0.0.0:8085

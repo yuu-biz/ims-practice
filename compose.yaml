@@ -104,17 +104,31 @@ services:
       ims:
         ipv4_address: 172.28.0.50
 
-  # The IP-SM-GW, with the stub of the SC. The S-CSCF finds it
-  # by the server_name of the filter criteria in hss.yaml, through DNS.
+  # The IP-SM-GW. The S-CSCF finds it by the server_name of the filter
+  # criteria in hss.yaml, through DNS, and it hands the short messages of
+  # the UEs to the Service Centre over SGd.
   ipsmgw:
     <<: *ims-node
     hostname: ipsmgw
-    depends_on: [dns, hss]
+    depends_on: [dns, hss, sc]
     volumes:
       - ./deploy/compose/ipsmgw.yaml:/etc/ims/node.yaml:ro
     networks:
       ims:
         ipv4_address: 172.28.0.70
+
+  # The Service Centre of SMS, which holds the short messages and
+  # delivers them. The IP-SM-GW connects to it over SGd, and it connects
+  # to the HSS over S6c.
+  sc:
+    <<: *ims-node
+    hostname: sc
+    depends_on: [dns, hss]
+    volumes:
+      - ./deploy/compose/sc.yaml:/etc/ims/node.yaml:ro
+    networks:
+      ims:
+        ipv4_address: 172.28.0.71
 
   # The MMTel AS. The S-CSCF sends it every INVITE by the
   # filter criteria in hss.yaml.

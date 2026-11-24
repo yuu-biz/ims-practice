@@ -26,6 +26,9 @@ scscf     IN CNAME scscf.ims.svc.cluster.local.
 pcscf     IN CNAME pcscf.ims.svc.cluster.local.
 agw       IN CNAME agw.ims.svc.cluster.local.
 ipsmgw    IN CNAME ipsmgw.ims.svc.cluster.local.
+; The Service Centre of SMS, which the IP-SM-GW reaches over SGd and
+; which the HSS alerts over S6c.
+sc        IN CNAME sc.ims.svc.cluster.local.
 mmtel     IN CNAME mmtel.ims.svc.cluster.local.
 ; The XCAP Root URI that a UE builds (TS 23.003 13.9.1.2) leads to the
 ; XCAP server of the MMTel AS.

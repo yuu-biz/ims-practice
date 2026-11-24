@@ -32,17 +32,21 @@
 | S-CSCF | 172.28.0.30 | 両方の UE を担当する。初期フィルタ条件（iFC）に従って、登録とショートメッセージを IP-SM-GW へ送る。 |
 | I-CSCF | 172.28.0.20 | IP-SM-GW が送る MESSAGE が入ってくるホーム網の入口。利用者がどこにいるかを HSS に問い合わせる（LIR）。 |
 | IP-SM-GW | 172.28.0.70 | SMS over IP のアプリケーションサーバー（AS）（TS 24.341 5.3.3）。MESSAGE を SC 向けのショートメッセージに変え、逆の向きにも変える。 |
-| SC（スタブ） | IP-SM-GW の中 | ショートメッセージを受け取って配達するサービスセンター。ここでは IP-SM-GW のプロセスの中にあるスタブで、Go のインタフェースの後ろにある。 |
-| HSS | 172.28.0.10 | iFC を持つ（Cx）。ほかの AS と同じく、IP-SM-GW の問い合わせにも Sh で答える。 |
+| SC | 172.28.0.71 | サービスセンタ。ショートメッセージを受け取り、配達できるか有効期間が切れるまで預かり、配達する（TS 23.040 6.1）。IP-SM-GW は UE が送ったショートメッセージを SGd で渡し、UE 宛のものは同じ経路で戻ってくる。 |
+| HSS | 172.28.0.10 | iFC を持つ（Cx）。ほかの AS と同じく、IP-SM-GW の問い合わせには Sh で答える。SC には S6c で答える。宛先をどのノードが担当しているか、どのサービスセンタがその利用者宛のショートメッセージを抱えているか、そしてその利用者がまた受け取れるようになったことを伝える。 |
 | DNS | 172.28.0.2 | iFC に書いた AS の名前 `ipsmgw.ims.mnc001.mcc001.3gppnetwork.org` のアドレスを返す。 |
 
 番号がほかに 2 つあります。SC のアドレス `+12025550100` は、各 UE がショートメッセージに自分の SC として書く番号で、UE シミュレータでは `-sc` で指定します。IP-SM-GW は `+12025550199` という番号を持ち、担当する利用者ごとにこの番号を HSS に登録します。番号はすべて、北米番号計画が架空の用途に取ってある 555-0100 から 555-0199 の範囲のものです。
 
 ### AS が要る理由と SC の役割
 
-CSCF は SIP を中継するだけです。ショートメッセージには、SIP と SMS の網の両方と話せるノードが要ります。SMS の網では、SC が各メッセージを蓄積して転送します（TS 23.040）。このノードが IP-SM-GW です。実際の網では、IP-SM-GW は SMS-IWMSC や SMS-GMSC を通して、MAP か Diameter で SC とやり取りします（TS 23.204 5.2.4）。このプロジェクトには SMS の網が無いので、SC を IP-SM-GW の中のスタブにしました。IP-SM-GW は `internal/ipsmgw/servicecentre.go` の `ServiceCentre` インタフェースを通して SC を呼びます。本物の SGd のクライアントはここに差し替えられます。スタブは何も蓄積しません。すぐに配達できないショートメッセージは捨て、そのことを status report で伝えます。
+CSCF は SIP を中継するだけです。ショートメッセージには、SIP と SMS の網の両方と話せるノードが要ります。SMS の網では、SC が各メッセージを蓄積して転送します（TS 23.040）。このノードが IP-SM-GW です。UE が送ったショートメッセージは SMS-IWMSC を通して SC に渡し、UE 宛のものは SMS-GMSC を通して受け取ります。その経路は MAP か Diameter です（TS 23.204 5.2.4）。ここでは Diameter で、TS 29.338 の SGd を使います。TS 23.040 4.1 は、SMS-SC、SMS-IWMSC、SMS-GMSC を 1 つのノードにまとめてよいとしており、`sc` のノードはこの 3 つを兼ねています。
 
-IP-SM-GW は Sh（TS 29.328、TS 29.329）で HSS とやり取りします。どの IP-SM-GW が利用者を担当するかを Profile-Update-Request（PUR）で書き込み、SC のスタブは番号を持つ公開ユーザー識別子を User-Data-Request（UDR）で読みます。いつ書き込むかを知るために、IP-SM-GW は P-CSCF と同じように、利用者ごとに登録の状態を購読します。
+IP-SM-GW は `internal/ipsmgw/servicecentre.go` の `ServiceCentre` インタフェースを通して SC を呼びます。このインタフェースの後ろにあるのは、この網では SGd のクライアントです。Diameter の相手にサービスセンタを書いていない IP-SM-GW では、代わりに `internal/sc` のスタブが入ります。スタブは何も預かりません。ショートメッセージをすぐに次へ渡し、そのとき配達できないものは捨てます。この構成は[2 つの IMS 網のあいだでショートメッセージを追う](interconnect.md)で見られます。
+
+IP-SM-GW は Sh（TS 29.328、TS 29.329）で HSS とやり取りします。どの IP-SM-GW が利用者を担当するかを Profile-Update-Request（PUR）で書き込み、利用者の IMSI を User-Data-Request（UDR）で読みます。いつ書き込むかを知るために、IP-SM-GW は P-CSCF と同じように、利用者ごとに登録の状態を購読します。
+
+SC は S6c（TS 29.338 5）で HSS とやり取りします。宛先をどのノードが担当しているかを Send-Routing-Info-for-SM（SRR）で尋ね、配達できなかったことを Report-SM-Delivery-Status（RDR）で伝えて、自分のアドレスを利用者の message waiting data（MWD）に残させ、その利用者がまたショートメッセージを受け取れるようになったことを Alert-Service-Centre（ALR）で知らされます。SGd では、IP-SM-GW からショートメッセージを MO-Forward-Short-Message（OFR）で受け取り、UE 宛のものを MT-Forward-Short-Message（TFR）で届けます。
 
 ## S-CSCF が IP-SM-GW を選ぶしくみ
 
@@ -147,7 +151,7 @@ IP-SM-GW が Timer F（32 秒）のあいだに MESSAGE に応答しないか、
 
 ## ショートメッセージを送る
 
-この節の操作は、すべて `scripts/e2e-sms.sh` が行います。スクリプトは、この手順書で説明するメッセージがキャプチャにあるかを 1 つずつ確かめ、1 つでも無ければエラーで終わります。キャプチャは `captures/` に、そのフレームの一覧は `e2e-out/sms-ladder.txt` に残ります。以下の本文と番号はスクリプトと同じなので、スクリプトのキャプチャはこの手順書のとおりになります。手で実行するときは次のようにします。
+この節と[UE が受け取れないとき（預かる、知らせる、送り直す）](#ue-が受け取れないとき預かる知らせる送り直す)の操作は、すべて `scripts/e2e-sms.sh` が行います。スクリプトは、この手順書で説明するメッセージがキャプチャにあるかを 1 つずつ確かめ、1 つでも無ければエラーで終わります。配達が失敗する状態は制御 API で作るので、スクリプトは `phones` プロファイルの `phone1` と `phone2` をその API で動かします。下の手順は、代わりに使い捨ての UE シミュレータでふつうの配達を行うものです。キャプチャは `captures/` に、そのフレームの一覧は `e2e-out/sms-ladder.txt` に残ります。以下の本文と番号はスクリプトと同じなので、スクリプトのキャプチャはこの手順書のとおりになります。手で実行するときは次のようにします。
 
 1. 登録の手順書と同じように、システムを起動して Diameter の接続を待ちます。
 
@@ -179,7 +183,7 @@ IP-SM-GW が Timer F（32 秒）のあいだに MESSAGE に応答しないか、
 失敗の場合も試せます。どちらも、ほかの UE は要りません。
 
 - **番号が無い。** `docker compose run --rm ue sms +12025550198 "Nobody has this number."`。この番号を持つ加入者はいません。submit report は RP-ERROR になり、`ue sms` は `the SC refused the short message: RP-Cause 1, TP-FCS 0xc3` で終わります。
-- **受信者が登録していない。** `docker compose run --rm ue sms -status-report +12025550103 "Are you there?"`。加入者 3 は存在しますが、登録しません。SC はメッセージを受け付けますが、配達は 480 で失敗します。UE 1 は `"status":98`（TP-ST の 0x62）を付けた `"msg":"status report"` をログに出します。
+- **受信者が登録していない。** `docker compose run --rm ue sms +12025550103 "Are you there?"`。加入者 3 は存在しますが、登録しません。SC はメッセージを受け取るので submit report は RP-ACK になり、そのあと預かります。加入者 3 を受け持つ IP-SM-GW が無いので、HSS は SC のアドレスを message waiting data に残し、ショートメッセージは、登録があれば送られる知らせを待ちます。
 
 同じことはラボでもできます。[ラボの手順書](lab.md) の「UE シミュレータを操作する」を見てください。UE のカードからショートメッセージを送れ、各 UE が送ったものと受けたものが一覧に出ます。MESSAGE の詳細には、デコードしたショートメッセージが表示されます。
 
@@ -205,7 +209,7 @@ curl -X PUT localhost:8091/sms-memory -d '{"full": true}'
 `captures/` の一番新しいファイルを Wireshark で開き、次の表示フィルタを使います。
 
 ```text
-sip.CSeq.method in {"MESSAGE", "REGISTER"} || (sip && ip.addr == 172.28.0.70) || diameter.cmd.code in {302, 306, 307}
+sip.CSeq.method in {"MESSAGE", "REGISTER"} || (sip && ip.addr == 172.28.0.70) || diameter.cmd.code in {302, 306, 307, 8388645, 8388646, 8388647, 8388648, 8388649}
 ```
 
 REGISTER（第三者 REGISTER を含む）、MESSAGE とその応答、IP-SM-GW の SUBSCRIBE と NOTIFY、LIR、UDR、PUR とその応答が表示されます。MESSAGE のボディは Wireshark が自分でデコードします。Info の列の最後に `(RP) RP-DATA (MS to Network)` のような RP のメッセージが表示され、パケットの詳細には`GSM A-I/F RP` の木と、その中の `GSM SMS TPDU` の木があります。**Statistics > Flow Graph** で **Limit to display filter** を選ぶと、ラダー図を描けます。
@@ -296,48 +300,52 @@ UE が登録を解除すると、S-CSCF は Subscription-State が `terminated;r
 ## 送信と配達（Hello UE-B, this is UE-A.）
 
 ```text
- UE 1     P-CSCF    S-CSCF    I-CSCF   IP-SM-GW+SC    HSS      UE 2
-  | MESSAGE |         |         |          |           |         |
-  |-------->| (1)     |         |          |           |         |
-  |         |-------->| (2)     |          |           |         |
-  |         |         |------------------->| (3)       |         |
-  |  202    |  202    |  202    |          |           |         |
-  |<--------|<--------|<-------------------| (4)       |         |
-  |         |         |         |          |  UDR (5)  |         |
-  |         |         |         |          |---------->|         |
-  |         |         |         |          |  UDA      |         |
-  |         |         |         |          |<----------|         |
-  |         |         |         | MESSAGE submit report (6)      |
-  |         |         |         |<---------|           |         |
-  |         |         |         |  LIR, LIA            |         |
-  |         |         |         |<-------------------->|         |
-  |         |         |<--------|          |           |         |
-  |<--------|<--------|         |          |           |         |
-  |  200 (7)|         |         |          |           |         |
-  |-------->|-------->|-------->|--------->|           |         |
-  |         |         |         | MESSAGE SMS-DELIVER (8)        |
-  |         |         |         |<---------|           |         |
-  |         |         |         |  LIR, LIA            |         |
-  |         |         |         |<-------------------->|         |
-  |         |         |<--------| (9)      |           |         |
-  |         |<--------|         |          |           |         |
-  |         |---------------------------------------------------->|
-  |         |  200 (10)         |          |           |         |
-  |         |<----------------------------------------------------|
-  |         |-------->|-------->|--------->|           |         |
-  |         | MESSAGE delivery report (11) |           |         |
-  |         |<----------------------------------------------------|
-  |         |-------->| (12)    |          |           |         |
-  |         |         |------------------->|           |         |
-  |         |  202    |  202    |          |           |         |
-  |         |         |<-------------------|           |         |
-  |         |<--------|         |          |           |         |
-  |         |---------------------------------------------------->|
+ UE 1      P-CSCF    S-CSCF    I-CSCF    IP-SM-GW  SC        HSS       UE 2
+  |-------->|         |         |         |         |         |         |  MESSAGE (1)
+  |         |-------->|         |         |         |         |         |  (2)
+  |         |         |------------------>|         |         |         |  (3)
+  |         |         |<------------------|         |         |         |  202 (4)
+  |         |<--------|         |         |         |         |         |
+  |<--------|         |         |         |         |         |         |
+  |         |         |         |         |-------->|         |         |  OFR (5)
+  |         |         |         |         |         |-------->|         |  SRR (5)
+  |         |         |         |         |         |<--------|         |  SRA
+  |         |         |         |         |<--------|         |         |  OFA
+  |         |         |         |<--------|         |         |         |  MESSAGE submit report (6)
+  |         |         |         |---------------------------->|         |  LIR
+  |         |         |         |<----------------------------|         |  LIA
+  |         |         |<--------|         |         |         |         |
+  |         |<--------|         |         |         |         |         |
+  |<--------|         |         |         |         |         |         |
+  |-------->|         |         |         |         |         |         |  200 (7)
+  |         |-------->|         |         |         |         |         |
+  |         |         |-------->|         |         |         |         |
+  |         |         |         |-------->|         |         |         |
+  |         |         |         |         |         |-------->|         |  SRR (8)
+  |         |         |         |         |         |<--------|         |  SRA
+  |         |         |         |         |<--------|         |         |  TFR (8)
+  |         |         |         |<--------|         |         |         |  MESSAGE SMS-DELIVER (8)
+  |         |         |         |---------------------------->|         |  LIR
+  |         |         |         |<----------------------------|         |  LIA
+  |         |         |<--------|         |         |         |         |  (9)
+  |         |<--------|         |         |         |         |         |
+  |         |---------------------------------------------------------->|
+  |         |<----------------------------------------------------------|  200 (10)
+  |         |-------->|         |         |         |         |         |
+  |         |         |-------->|         |         |         |         |
+  |         |         |         |-------->|         |         |         |
+  |         |<----------------------------------------------------------|  MESSAGE delivery report (11)
+  |         |-------->|         |         |         |         |         |  (12)
+  |         |         |------------------>|         |         |         |
+  |         |         |<------------------|         |         |         |  202
+  |         |         |         |         |-------->|         |         |  TFA (12)
+  |         |<--------|         |         |         |         |         |
+  |         |---------------------------------------------------------->|
 ```
 
 I-CSCF は Record-Route を付けず、MESSAGE はダイアログを作らないので、どの MESSAGE とその応答も 1 ホップずつ進みます。IP-SM-GW が送る MESSAGE は新しい要求で、それぞれが別の Call-ID を持ちます。ラボのラダー図は 1 つの Call-ID ずつ描きます。
 
-ラダー図は順に並べて描いていますが、同時に進むものもあります。IP-SM-GW は 202 を送るとすぐに SC へメッセージを渡すので、キャプチャでは手順 5 の UDR が 202 より先に来ることがあります。SC がメッセージを受け取ると、submit report（手順 6）と SMS-DELIVER（手順 8）は一緒に送られ、それぞれの LIR と応答は入り混じります。
+ラダー図は順に並べて描いていますが、同時に進むものもあります。IP-SM-GW は 202 を送るとすぐに SC へメッセージを渡すので、キャプチャでは手順 5 の OFR が 202 より先に来ることがあります。SC がメッセージを受け取ると、submit report（手順 6）と配達（手順 8）は一緒に送られ、それぞれの LIR と応答は入り混じります。
 
 UE 1 の `ue sms` は送る直前に登録するので、キャプチャには UE 1 についても前の節の流れがあります。その流れは手順 1 の MESSAGE を送るときにまだ続いていることがあります。
 
@@ -366,9 +374,18 @@ IP-SM-GW は **202 Accepted** を返します（TS 24.341 5.3.3.4.1）。要求�
 
 続いて IP-SM-GW は RP-DATA を確かめます。デコードできること、RP-DA が SC の番号であること、P-Asserted-Identity に tel URI があることです。どれかが満たされないと、submit report は RP-ERROR になります（「失敗するとき」を参照）。
 
-### 5. SC が受信者を調べる（UDR と UDA）
+### 5. IP-SM-GW が SC にショートメッセージを渡す（OFR、SRR、OFA）
 
-IP-SM-GW は SMS-SUBMIT と送信者の番号を SC のスタブに渡します。SC は TP-DA の番号 `+12025550102` を持つ利用者を UDR（コマンド 306）で調べます。利用者を MSISDN で指定し、Data-Reference は 10（IMSPublicIdentity、TS 29.328 7.6.2）です。UDA には `sip:+12025550102@...` と `tel:+12025550102` が入っています。実際の網では、SC の側は代わりに経路の情報を問い合わせます（TS 23.204 6.4 step 3）。ここでは Sh の読み出しがそれに代わります。
+IP-SM-GW は SMS-SUBMIT を **MO-Forward-Short-Message**（OFR、SGd のコマンド 8388645）で SC に送ります。TS 23.204 6.3 の step 6 と TS 29.338 6.2.1 の手順です。見どころは次のとおりです。
+
+- **SC-Address.** `12025550100` で、UE が RP-DA に書いた番号です。SMS-IWMSC はこの SC を知っているかを確かめます（TS 29.338 6.2.1.3）。
+- **User-Identifier.** 送信者の MSISDN `12025550101` が入ります。これが SMS-DELIVER の TP-OA になります。
+- **`SM-RP-UI`.** UE 1 が書いた SMS-SUBMIT が、そのままの並びで入ります。
+- **Destination-Realm.** `ims.mnc001.mcc001.3gppnetwork.org` です。Destination-Host は入れません。SC のどのインスタンスが答えても構わないからです（TS 29.338 6.3.1.1）。
+
+SC はメッセージを受け取る前に、その番号を持つ利用者がいるかを HSS に尋ねます。MSISDN `12025550102` を入れた **Send-Routing-Info-for-SM**（SRR、S6c のコマンド 8388647）で、TS 23.040 8.2.2 が SMS-IWMSC に認めている問い合わせです。SRA は、手順 R5 の登録から、UE 2 を担当する IP-SM-GW を返し、User-Name に UE 2 の IMSI を入れます。どの加入者も持たない番号には DIAMETER_ERROR_USER_UNKNOWN が返り、送信者は status report を待たずにその場で知ります（「失敗するとき」を参照）。
+
+SC はショートメッセージを受け取り、自分のタイムスタンプ（TP-SCTS）を付け、Result-Code 2001（DIAMETER_SUCCESS）と `SM-RP-UI` の SMS-SUBMIT-REPORT を入れた OFA を返します。ここから先、ショートメッセージは SC のものです。SC は配達できるか有効期間が切れるまで預かります（TS 23.040 6.1）。
 
 ### 6. submit report が UE 1 へ戻る
 
@@ -387,11 +404,20 @@ IP-SM-GW は S-CSCF の Route を使いません。利用者に要求を送る A
 
 UE 1 は In-Reply-To を自分のショートメッセージと照らし合わせ、**200** を返し（TS 24.341 5.3.1.2）、メッセージを受け付けられたものとして記録します。
 
-### 8. SC がメッセージを配達する（SMS-DELIVER）
+### 8. SC がメッセージを転送し、IP-SM-GW が配達する（TFR と SMS-DELIVER）
 
-SC は SMS-SUBMIT を SMS-DELIVER に作り変えます。送信者の番号を TP-OA に、メッセージを受け取った時刻を TP-SCTS に入れ、本文はそのままです。UE 1 が status report を頼んだので、TP-SRI を立てます。IP-SM-GW はこれを MESSAGE に入れて送ります（TS 24.341 5.3.3.4.2）。
+SC は SMS-SUBMIT を SMS-DELIVER に作り変えます。送信者の番号を TP-OA に、メッセージを受け取った時刻を TP-SCTS に入れ、本文はそのままです。UE 1 が status report を頼んだので、TP-SRI を立てます。
 
-- **Request-URI.** `tel:+12025550102` で、UDA が返した tel URI です（TS 23.204 6.4 step 6）。
+次に、SC はもう一度 HSS に尋ねます。これは SMS-GMSC としての SRR です（TS 23.040 8.1.1）。1 つ目はメッセージを受け取る SMS-IWMSC のもので、こちらは配達する SMS-GMSC のものです。そのあいだに利用者が移ったり、いなくなったりすることがあります。SRA はまた IP-SM-GW を返し、SC はそこへ **MT-Forward-Short-Message**（TFR、SGd のコマンド 8388646）でショートメッセージを送ります。TS 29.338 6.2.2 の手順です。
+
+- **Destination-Host.** SRA が返した IP-SM-GW の Diameter の名前です。TFR は必ず宛先のノードを書きます（TS 29.338 6.3.1.2）。
+- **User-Name.** UE 2 の IMSI です。TFR は受信者を IMSI で表します（TS 29.338 Table 6.2.2.1/1）。IP-SM-GW は手順 R5 で読んだ IMSI から利用者を見つけます。
+- **SC-Address.** `12025550100` で、UE へ送る RP-DATA の RP-OA になります。
+- **`SM-RP-UI`.** SMS-DELIVER です。
+
+IP-SM-GW は IMSI から UE 2 を見つけ、ショートメッセージを MESSAGE に入れて送ります（TS 24.341 5.3.3.4.2）。
+
+- **Request-URI.** `tel:+12025550102` で、IMSI に結び付いた tel URI です（TS 23.204 6.4 step 6）。
 - **Accept-Contact: \*;+g.3gpp.smsip;require;explicit** と **Request-Disposition: no-fork**。
 - **P-Asserted-Identity.** IP-SM-GW の SIP URI です。UE 2 は delivery report をここへ送ります。
 - **ボディ.** 網から送る RP-DATA で、RP-OA に SC のアドレスがあり、中に SMS-DELIVER が入っています。
@@ -416,7 +442,9 @@ UE 2 は新しい MESSAGE を送ります（TS 24.341 5.3.2.4）。
 
 ### 12. delivery report が UE 2 の条件で IP-SM-GW に届く
 
-delivery report は、UE 2 が発信する要求で、SMS のボディを持つ MESSAGE です。そのため、UE 2 自身の 2 つ目の条件によって、手順 3 とまったく同じように ODI 付きで IP-SM-GW へ送られます。IP-SM-GW は 202 Accepted を返し（TS 24.341 5.3.3.4.1）、In-Reply-To の Call-ID で配達を見つけ、メッセージが届いたことを SC に伝えます。
+delivery report は、UE 2 が発信する要求で、SMS のボディを持つ MESSAGE です。そのため、UE 2 自身の 2 つ目の条件によって、手順 3 とまったく同じように ODI 付きで IP-SM-GW へ送られます。IP-SM-GW は 202 Accepted を返し（TS 24.341 5.3.3.4.1）、In-Reply-To の Call-ID で配達を見つけます。
+
+手順 8 の TFR に答えが返るのは、ここです。Result-Code 2001 を入れた **TFA** が、ショートメッセージが届いたことを SC に伝えます（TS 23.204 6.4 NOTE 4）。SC はそのメッセージを待ち行列から外し、送信者が頼んでいれば status report を送ります。つまり TFR は配達が終わるまで、ここでは最長 66 秒のあいだ答えを待ちます。SC が TFA をそれより長く待つのはこのためです。TS 23.204 6.5a の NOTE 1 は、SMS-GMSC のタイマーが短くて serving node に時間が足りないなら、そのタイマーを延ばすとしています。
 
 TS 23.204 6.5 step 3 は、delivery report がショートメッセージを送った IP-SM-GW に届くことを求めています。ここでは DNS がほかの IP-SM-GW のノードを返すこともあります。そこで、IP-SM-GW のどのノードも配達の状態を共有の `Store` 1 つに置き、delivery report を受けたノードが配達を終わらせます（`internal/ipsmgw/network_test.go` の `TestDeliveryReportThroughAnotherIPSMGW`）。delivery report を待つ 64 秒も、配達と一緒に置きます。どのノードも 1 秒ごとに、待ち時間の過ぎた配達を探し、見つけたものを「確認できなかった」として SC に伝えます。そのため、メッセージを送ったノードが止まっても、配達の結果が分からないままにはなりません。
 
@@ -425,11 +453,12 @@ TS 23.204 6.5 step 3 は、delivery report がショートメッセージを送�
 UE 1 は SMS-SUBMIT の TP-SRR で status report を頼んだので、delivery report が届くと、SC は UE 1 に SMS-STATUS-REPORT を送ります。
 
 ```text
- UE 1     P-CSCF    S-CSCF    I-CSCF   IP-SM-GW+SC    HSS
-  |         |         |         |          | UDR (13)  |
-  |         |         |         |          |---------->|
-  |         |         |         |          |  UDA      |
-  |         |         |         |          |<----------|
+ UE 1     P-CSCF    S-CSCF    I-CSCF   IP-SM-GW   SC   HSS
+  |         |         |         |          |    SRR (13)    |
+  |         |         |         |          |    |---------->|
+  |         |         |         |          |    |  SRA      |
+  |         |         |         |          |    |<----------|
+  |         |         |         |          |<---| TFR (13)  |
   |         |         |         | MESSAGE status report (14)
   |         |         |         |<---------|           |
   |         |         |         |  LIR, LIA            |
@@ -444,9 +473,95 @@ UE 1 は SMS-SUBMIT の TP-SRR で status report を頼んだので、delivery r
   |<--------|<--------|<-------------------|           |
 ```
 
-13. 手順 12 の delivery report が届くとすぐに、SC は手順 5 と同じように、送信者の番号 `+12025550101` を UDR で調べます。キャプチャでは、この UDR が手順 12 の 202 より先に来ることがあります。
+13. 手順 12 の TFA が届くとすぐに、SC は `+12025550101` 宛の SMS-STATUS-REPORT をその番号の待ち行列に入れ、ふつうのショートメッセージと同じように配達します。送信者についての SRR を出し、その利用者を担当する IP-SM-GW へ TFR を送ります。キャプチャでは、この SRR が手順 12 の 202 より先に来ることがあります。
 14. IP-SM-GW は status report をショートメッセージと同じように送ります（TS 24.341 5.3.3.4.4）。宛先は UE 1 の tel URI で、Accept-Contact と `Request-Disposition: no-fork` を付け、中に SMS-STATUS-REPORT の入った RP-DATA を入れます。SMS-SUBMIT の TP-MR を繰り返すので、UE 1 はどのメッセージの報告かが分かります。TP-ST の 0x00 は、受信者がメッセージを受け取ったことを示します（TS 23.040 9.2.3.15）。
 15. UE 1 は 200 を返し、手順 11 の UE 2 と同じように、delivery report で status report を受け取ったことを伝えます（TS 24.341 5.3.1.3）。
+
+## UE が受け取れないとき（預かる、知らせる、送り直す）
+
+登録している UE でも、いつもショートメッセージを受け取れるとは限りません。今は届かないと答えることもあれば、入れるメモリが無いと答えることもあります。そのとき SC はショートメッセージを捨てずに預かります。HSS は SC のアドレスを利用者の message waiting data（MWD）に書き、利用者がまた受け取れるようになると SC に知らせます。SC は預かっていたものを配達します（TS 23.040 3.2.6、TS 23.204 6.5a、6.5b、6.6）。
+
+この SC の再送の間隔は 1 時間です（`deploy/compose/sc.yaml` の `retry_delays`）。そのため、下の 2 つのどちらでも、ショートメッセージを届けるのは再送ではなく知らせのほうです。TS 23.040 3.2.7 の NOTE 5 は、この自発的な再送を運用者に任せています。ここでは、知らせが届かなかったときの備えです。
+
+### UE 2 がショートメッセージを受け取らない
+
+UE 2 の制御 API に `PUT /sms-availability` で `{"available": false}` を送ると、この状態になります。そこへ UE 1 がショートメッセージを送ります。
+
+```text
+ S-CSCF    I-CSCF    IP-SM-GW  SC        HSS       UE 2
+  |         |         |<--------|         |         |  TFR (A1)
+  |         |<--------|         |         |         |  MESSAGE SMS-DELIVER
+  |<--------|         |         |         |         |
+  |------------------------------------------------>|
+  |<------------------------------------------------|  480 (A2)
+  |-------->|         |         |         |         |
+  |         |-------->|         |         |         |
+  |         |         |-------->|         |         |  TFA absent user (A3)
+  |         |         |         |-------->|         |  RDR (A4)
+  |         |         |         |<--------|         |  RDA
+  :         :         :         :         :         :  UE 2 takes short messages again
+  |<------------------------------------------------|  MESSAGE (A5)
+  |------------------>|         |         |         |
+  |<------------------|         |         |         |  202
+  |         |         |------------------>|         |  PUR ReadyForSM msPresent (A6)
+  |         |         |<------------------|         |  PUA
+  |         |         |         |<--------|         |  ALR (A7)
+  |         |         |         |-------->|         |  ALA
+  |         |         |         |-------->|         |  SRR (A8)
+  |         |         |         |<--------|         |  SRA
+  |         |         |<--------|         |         |  TFR (A8)
+  |         |<--------|         |         |         |  MESSAGE SMS-DELIVER
+  |<--------|         |         |         |         |
+  |------------------------------------------------>|
+  |<------------------------------------------------|  200, then MESSAGE delivery report (A9)
+  |------------------>|         |         |         |
+  |         |         |-------->|         |         |  TFA 2001 (A9)
+```
+
+- **A1 から A2.** 配達は上の手順 8 と同じで、UE 2 までは同じように進みます。UE 2 は **480（Temporarily Unavailable）** で答えます。相手には届いたが、その状態では要求を受けられないという意味です（TS 24.341 5.3.3.4.2）。delivery report は送りません。
+- **A3.** TS 29.311 6.1.4.4.1 は 480 を、不在の加入者を表す MAP のユーザーエラーに写します。TS 29.338 7.3.3 はそれを TFA の **DIAMETER_ERROR_ABSENT_USER（5550）** で運びます。IMS での配達が失敗したことを知っているのはこのノードだけなので、IP-SM-GW は自分の UE-Not-Reachable-for-IP（UNRI）も立てます（TS 23.040 2.1.1）。
+- **A4.** SC は **Report-SM-Delivery-Status**（RDR、S6c のコマンド 8388649）で HSS に伝えます。`SM-Delivery-Cause` は ABSENT_USER です（TS 29.338 5.2.3、TS 23.040 3.2.8）。HSS は SC のアドレスを MWD に入れ、自分の UNRI を立てます。UNRI が立っているあいだ、HSS は SRA に serving node を入れません。今問い合わせたサービスセンタを、また失敗する IP-SM-GW へ向かわせないためです（TS 29.338 5.2.1.3）。
+- **A5.** `{"available": true}` でまた受け取るようになります。そのあと UE 2 が出した要求が IP-SM-GW に届けば、中身が何であれ、UE がそこにいることが分かります（TS 23.204 6.5b の step 2）。ここでは UE 2 自身のショートメッセージを使います。その OFR はラダー図では省いています。
+- **A6.** IP-SM-GW は自分の UNRI を落とし、SMSRegistrationInfo に `<ReadyForSM xmlns="https://github.com/yuu-biz/ims-practice/ns/sh">msPresent</ReadyForSM>` を入れた PUR で HSS に伝えます。Sh にはこの知らせのための要素が無く、このプロジェクトは MAP を話さないので、この要素はプロジェクト独自のものです（[このプロジェクトで簡略化していること](#このプロジェクトで簡略化していること)を参照）。PUA は知らせを待たないので、キャプチャでは ALR より先に来ることがあります。
+- **A7.** HSS は UNRI を落とし、MWD にあるサービスセンタすべてに **Alert-Service-Centre**（ALR、S6c のコマンド 8388648）を送ります。送り先は、そのサービスセンタが開いた接続です（TS 29.338 5.2.2、TS 23.040 3.2.6 の 2c）。ALA が返ったアドレスは MWD から消えます。
+- **A8.** 知らせを受けた SC は、その番号の待ち行列を再送の間隔を待たずにすぐ配達に回します。UNRI が落ちた今、SRR にはまた IP-SM-GW が返り、預かっていたショートメッセージを TFR で送ります。
+- **A9.** 今度は UE 2 が受け取ります。delivery report が配達を終わらせ、TFA は 2001 になります。手順 11 と 12 と同じです。
+
+### UE 2 のメモリに空きが無い
+
+`PUT /sms-memory` で `{"full": true}` を送るとこの状態になります。そこへ UE 1 がショートメッセージを送ります。
+
+```text
+ S-CSCF    I-CSCF    IP-SM-GW  SC        HSS       UE 2
+  |         |         |<--------|         |         |  TFR (B1)
+  |         |<--------|         |         |         |  MESSAGE SMS-DELIVER
+  |<--------|         |         |         |         |
+  |------------------------------------------------>|
+  |<------------------------------------------------|  200, then MESSAGE delivery report: RP-ERROR 22 (B2)
+  |------------------>|         |         |         |
+  |<------------------|         |         |         |  202
+  |         |         |-------->|         |         |  TFA memory capacity exceeded (B3)
+  |         |         |         |-------->|         |  RDR (B4)
+  |         |         |         |<--------|         |  RDA
+  :         :         :         :         :         :  UE 2 has memory again
+  |<------------------------------------------------|  MESSAGE RP-SMMA (B5)
+  |------------------>|         |         |         |
+  |         |         |------------------>|         |  PUR ReadyForSM memoryAvailable (B6)
+  |         |         |<------------------|         |  PUA
+  |         |         |         |<--------|         |  ALR (B7)
+  |         |         |         |-------->|         |  ALA
+  |<------------------|         |         |         |  202, then MESSAGE RP-ACK (B8)
+  :         :         :         :         :         :  the resend of A8 and A9 follows
+```
+
+- **B1 から B2.** UE 2 は MESSAGE に **200** で答えます。ショートメッセージはそこまで届いています。そのあと delivery report を送り、その **RP-ERROR の RP-Cause は 22**（memory capacity exceeded）、中の SMS-DELIVER-REPORT の TP-FCS は `0xD3` です（TS 24.011 Table 8.4 part 2、TS 23.040 9.2.3.22）。ショートメッセージの中身は残さず、網へ知らせを送るべき状態になります。
+- **B3.** IP-SM-GW は TFA に **DIAMETER_ERROR_SM_DELIVERY_FAILURE（5555）** と、`SM-Enumerated-Delivery-Failure-Cause` の MEMORY_CAPACITY_EXCEEDED を入れて返します（TS 29.338 7.3.8、Table 6.2.2.1/2）。
+- **B4.** SC は `SM-Delivery-Cause` に UE_MEMORY_CAPACITY_EXCEEDED を入れた RDR で伝えます。HSS は SC のアドレスを MWD に入れ、利用者のメモリ不足の印（MCEF）を立てます（TS 23.040 3.2.6 の 1）。UNRI は立てません。UE には届いており、入れる場所が無いだけだからです。
+- **B5.** `{"full": false}` で、UE は送るべき知らせを送ります。IP-SM-GW 宛の MESSAGE に入れた **RP-SMMA** です（TS 24.011 7.3.2、TS 24.341 5.3.2.5）。
+- **B6 から B7.** IP-SM-GW はこの知らせを `<ReadyForSM xmlns="https://github.com/yuu-biz/ims-practice/ns/sh">memoryAvailable</ReadyForSM>` として HSS に渡します（TS 23.204 6.6）。HSS は MCEF と UNRI を落とし、MWD のサービスセンタに知らせます（TS 23.040 3.2.6 の 2f）。
+- **B8.** 知らせへの RP-ACK を UE に返すのは、HSS が受け取ったあとです。そのため、知らせが届いていないのに届いたと UE に伝えることはありません。HSS が断った知らせには RP-Cause 41 を返し、UE は知らせを送るべきものとして持ち続けます。
+
+送り直しは A8 と A9 と同じです。SRR、SC が預かっていたショートメッセージの TFR、そしてそれを終わらせる delivery report が続きます。
 
 ## 失敗するとき
 
@@ -454,12 +569,12 @@ UE 1 は SMS-SUBMIT の TP-SRR で status report を頼んだので、delivery r
 
 | 場合 | 起きること | UE 1 が受け取るもの |
 | --- | --- | --- |
-| 番号を持つ加入者がいない（`+12025550198`） | 手順 5 の UDA が DIAMETER_ERROR_USER_UNKNOWN（5001）になる。 | RP-Cause 1（unassigned number）の RP-ERROR で、中の SMS-SUBMIT-REPORT の TP-FCS は 0xC3（invalid SME address）である submit report（TS 24.011 Table 8.4、TS 23.040 9.2.3.22）。配達は試みない。 |
-| 受信者が登録していない（`+12025550103`） | SC はメッセージを受け付けるので、submit report は RP-ACK になる。受信者には未登録の状態のサービス（TERMINATING_UNREGISTERED の場合に MMTel AS を呼ぶ iFC）があるので、I-CSCF の LIR は DIAMETER_UNREGISTERED_SERVICE（2003）になり、I-CSCF が S-CSCF を選ぶ（TS 29.228 6.1.4.1）。その S-CSCF は UNREGISTERED_USER の SAR で利用者のプロファイルを取り、手順 8 の MESSAGE に合う iFC が無いので、480 を返す（TS 24.229 5.4.3.3）。IP-SM-GW はこれを不在の加入者（Absent Subscriber）として SC に伝える（TS 24.341 5.3.3.4.2、TS 29.311 6.1.4.4.1）。 | TP-ST が 0x62 の status report。一時的な誤りで、SC がもう配達を試みないことを示す。スタブはメッセージを蓄積して再送しない。 |
-| 受信者のメモリが一杯 | UE 2 が RP-DATA に RP-Cause 22（memory capacity exceeded）の RP-ERROR を返し、中の報告の TP-FCS は 0xD3 になる。 | TP-ST が 0x62 の status report。 |
+| 番号を持つ加入者がいない（`+12025550198`） | 手順 5 の SRA が DIAMETER_ERROR_USER_UNKNOWN（5001）になり、OFA は DIAMETER_ERROR_SM_DELIVERY_FAILURE と理由 INVALID_SME-ADDRESS でショートメッセージを断る。 | RP-Cause 1（unassigned number）の RP-ERROR で、中の SMS-SUBMIT-REPORT の TP-FCS は 0xC3（invalid SME address）である submit report（TS 24.011 Table 8.4、TS 23.040 9.2.3.22）。配達は試みない。 |
+| 受信者が登録していない（`+12025550103`） | 加入者 3 はいるので、SC はメッセージを受け取り、submit report は RP-ACK になる。この利用者には IP-SM-GW が登録されていないので、SC の SRR には毎回 DIAMETER_ERROR_ABSENT_USER（5550）が返り、HSS は SC のアドレスを MWD に残す（TS 29.338 5.2.1.3）。 | まだ何も返らない。SC がショートメッセージを預かり、加入者 3 が登録したときに HSS の知らせで配達する。UE 1 の `ue sms -status-report` は待つのをあきらめる。status report が来るのは、ショートメッセージが届いたとき、または 72 時間の有効期間が切れたときである。 |
+| 受信者に届かない、またはメモリに空きが無い | 上の[UE が受け取れないとき（預かる、知らせる、送り直す）](#ue-が受け取れないとき預かる知らせる送り直す)のとおり。 | まだ何も返らず、知らせで動いた配達が終わったあとに status report が返る。 |
 | RP-DATA をデコードできない | IP-SM-GW は 202 を返してから断る。 | RP-Cause 96（invalid mandatory information）の RP-ERROR（TS 24.341 5.3.3.4.1、TS 24.011 9.3.4）。 |
 
-UE シミュレータのメモリは一杯にならないので、メモリが一杯の場合は試験の中にしかありません。`internal/ipsmgw/network_test.go` の `TestShortMessagesThatFail` が、デコードできない RP-DATA の場合と一緒に、IMS 全体を通して確かめています。
+デコードできない RP-DATA は、`internal/ipsmgw/network_test.go` の `TestShortMessagesThatFail` が IMS 全体を通して確かめています。
 
 ## IP-SM-GW を運用から外す
 
@@ -518,7 +633,7 @@ IP-SM-GW が 1 つの SIP トランザクションより長く持つものは、
 - **IP-SM-GW は 503 Service Unavailable に Retry-After: 30 を付けて返します。** 第三者 REGISTER にも MESSAGE にもです。どちらもこの台では始まっていません。第三者 REGISTER が作る購読も、ショートメッセージが始める配達も保存先にあり、どの台からも見えるためです。Retry-After は、クライアントがこのサーバーにほかの要求を送らずにいる秒数です（RFC 3261 21.5.4）。値を決めた仕様はありません。30 秒はこのプロジェクトが選んだ値です。
 - **S-CSCF は次の台へ送ります。** IP-SM-GW の名前について DNS が返した次の台です（RFC 3263 4.3）。送る先が残っていないときに初めて、503 が S-CSCF に返ります。この網は 1 台で動かしています。
 - **登録はそのまま残ります。** 第三者 REGISTER を送るフィルタ条件は SESSION_CONTINUED なので、サーバーが失敗すると、S-CSCF は優先度の低い条件へ進みます（TS 24.229 5.4.1.7）。UE 1 は登録されていて、発信も着信もできます。できなくなるのは SMS です。どの IP-SM-GW も UE 1 の登録状態を購読していないので、ショートメッセージを受け取ることを HSS に伝えた台がありません。次の再登録の第三者 REGISTER が購読します。
-- **ショートメッセージは 500 Server Internal Error で終わります。** MESSAGE の条件は SESSION_TERMINATED なので、S-CSCF は優先度の低い条件へ進まず、IP-SM-GW の応答を UE へ返します（TS 24.229 5.4.3.2）。プロキシは 503 を転送せずに 500 にするので（RFC 3261 16.7 の step 6）、Retry-After は IP-SM-GW と S-CSCF のあいだで止まります。IP-SM-GW を飛ばして先へ進んでも、届く先はありません。Request-URI は UE が宛てた SC の PSI ですが（TS 24.341 5.3.1.2 の項目 a）、この構成では SC が IP-SM-GW のノードの中にあり、その PSI で答えるノードが無いためです。TS 24.341 5.3.1.2 は、この MESSAGE に失敗の応答が返ったときの UE の扱いを決めていません。別の MESSAGE で来る submit report を受け取ることだけを決めています。UE シミュレータは応答コードを表示して終わり、送り直しません。
+- **ショートメッセージは 500 Server Internal Error で終わります。** MESSAGE の条件は SESSION_TERMINATED なので、S-CSCF は優先度の低い条件へ進まず、IP-SM-GW の応答を UE へ返します（TS 24.229 5.4.3.2）。プロキシは 503 を転送せずに 500 にするので（RFC 3261 16.7 の step 6）、Retry-After は IP-SM-GW と S-CSCF のあいだで止まります。IP-SM-GW を飛ばして先へ進んでも、届く先はありません。Request-URI は UE が宛てた SC の PSI ですが（TS 24.341 5.3.1.2 の項目 a）、この網のサービスセンタは Diameter しか話さないので、その識別子で SIP に答えるノードが無いためです。TS 24.341 5.3.1.2 は、この MESSAGE に失敗の応答が返ったときの UE の扱いを決めていません。別の MESSAGE で来る submit report を受け取ることだけを決めています。UE シミュレータは応答コードを表示して終わり、送り直しません。
 
 `UNLOCKED` でないあいだ、IP-SM-GW は始まっているものを続け、新しく始まるものを断ります。
 
@@ -526,7 +641,7 @@ IP-SM-GW が 1 つの SIP トランザクションより長く持つものは、
 
 - **配達の報告を運ぶ MESSAGE。** MESSAGE はどれもダイアログの外から届きますが、この MESSAGE は `In-Reply-To` でほかと見分けられます（TS 24.341 5.3.2.4 の項目 d）。この網がすでに配達したショートメッセージに対する RP-ACK か RP-ERROR で、始まっている配達の終わりです。503 を返すと、その配達はタイマーが切れるまで待ち、SC は、UE が受け取っていたショートメッセージについて失敗を聞くことになります。`In-Reply-To` がこの網のどの配達も指していない報告も受け取り、[失敗するとき](#失敗するとき)の 488 Not Acceptable Here を返します。報告と新しいショートメッセージを見分けるのはこのヘッダで、ほかの台にもその配達は無いためです。
 - **登録状態への購読の NOTIFY。** この網が送った SUBSCRIBE のダイアログの中にあり、その続きです。最初の NOTIFY がそのダイアログを完成させ、どの NOTIFY も、利用者がショートメッセージを受け取る連絡先を今も持っているかを伝えます（上の R4）。503 を返すと、その内容は次の NOTIFY まで失われ、HSS には合わなくなった登録が残ります。
-- **SC から渡された配達。** このノードの SC は仕事を始めた台にだけ頼みます。UE から受けたショートメッセージ、自分が終わらせた配達の status report、MESSAGE で受けたほかの IMS 網からのショートメッセージの 3 つです。外のサービスセンタが SGd で持ち込むショートメッセージは断ります。そのサービスセンタは、ほかの台に頼めるためです。
+- **この台が引き受けたあとの、ほかの IMS 網の IP-SM-GW からこの網の利用者へのショートメッセージ。** サービスセンタを置かない構成では、ノードの中にある SC のスタブがこれを配達します。サービスセンタが SGd で持ち込むショートメッセージは断ります。そのサービスセンタは、ほかの台に頼めるためです。
 - **報告を待つ時間が切れた配達。** 自分が送ったものも、ほかの台が送ったものもです。SC はすべての配達の結果を聞きます。報告が来なかった配達は、どこかの台が終わらせるまで結果を持ちません。
 
 503 を返すものは次のとおりです。
@@ -627,6 +742,8 @@ octet 2: lowest 2 bits of 'l' (00), then rest of 'e' (110010) = 0011 0010 = 32
 | `gsm_sms.tp-fcs` | TP-Failure-Cause を持つ報告。 |
 | `sip.In-Reply-To` | submit report と delivery report。 |
 | `sip.Accept-Contact` | IP-SM-GW が送る MESSAGE。 |
+| `diameter.applicationId == 16777313` | IP-SM-GW とサービスセンタのあいだの SGd。ショートメッセージそのものが通る。`16777312` はサービスセンタと HSS のあいだの S6c（TS 29.338 4.8）。 |
+| `diameter.cmd.code == 8388646` | サービスセンタが serving node へ転送するショートメッセージ（TFR）と、配達の結果を伝える答え（TFA）。`8388645` は UE が送ったショートメッセージの組（OFR、OFA）、`8388647` は経路の問い合わせ（SRR、SRA）、`8388649` は配達の報告（RDR、RDA）、`8388648` は知らせ（ALR、ALA）。 |
 
 `scripts/e2e-sms.sh` は、この表のフィルタをすべて、このシナリオのキャプチャに当てます。フレームが 1 つも見つからないフィルタがあれば、試験は失敗します。
 
@@ -642,10 +759,15 @@ octet 2: lowest 2 bits of 'l' (00), then rest of 'e' (110010) = 0011 0010 = 32
 | `internal/scscf/thirdparty.go` | 第三者 REGISTER。 |
 | `internal/scscf/callerprefs.go` | Accept-Contact の照合（RFC 3841）。 |
 | `internal/ipsmgw` | IP-SM-GW。`ipsmgw.go`（第三者 REGISTER）、`regevent.go`（reg イベントの購読と PUR）、`message.go`（UE からの MESSAGE）、`deliver.go`（UE への MESSAGE）、`servicecentre.go`（SC との境界）、`sgd.go`（サービスセンタが SGd で持ち込むショートメッセージ）、`store.go`（配達の途中の状態）。 |
-| `internal/sc` | SC のスタブ。 |
+| `internal/smsc` | サービスセンタ。`submit.go`（serving node から来たショートメッセージ）、`deliver.go`（経路の問い合わせ、配達、再送）、`alert.go`（HSS からの知らせ）、`store.go`（宛先ごとに預かっているショートメッセージ）。 |
+| `internal/sgd`、`internal/hss/s6c.go` | SGd と S6c のメッセージ、そのクライアント、HSS 側の S6c。 |
+| `cmd/ims/sc.go` | `sc` の役割がサービスセンタを Diameter のノードにつなぐところ。 |
+| `internal/ipsmgw/smsiwmsc.go` | IP-SM-GW が SGd でサービスセンタにショートメッセージを渡すところ。 |
+| `internal/sc` | SC のスタブ。サービスセンタのノードを持たない IP-SM-GW が代わりに使う。 |
 | `internal/ue/sms.go` | SM-over-IP sender と receiver としての UE。 |
 | `internal/lab/sms.go` | ラボが詳細の表示のためにショートメッセージをデコードするところ。 |
 | `internal/ipsmgw/network_test.go`、`internal/ue/sms_ims_test.go` | 流れの全体を 1 つのプロセスで動かす試験。上の失敗の場合も含む。 |
+| `internal/ipsmgw/chain_test.go` | IP-SM-GW、サービスセンタ、HSS を 1 つのプロセスで、本物の Diameter の接続でつないで動かす試験。すぐに届く配達と、保留されて通知で届く 2 つの配達。 |
 
 ## このプロジェクトで簡略化していること
 
@@ -662,16 +784,18 @@ octet 2: lowest 2 bits of 'l' (00), then rest of 'e' (110010) = 0011 0010 = 32
 | IP-SM-GW、RFC 6733 3（End-to-End Identifier）と Appendix C | サービスセンタがフェイルオーバーのあとに SGd で送り直したショートメッセージを、重複として見分けない。送り直しで 2 度目の配達が始まるので、UE が同じショートメッセージを 2 度受け取ることがある。それぞれの要求には、それぞれの配達の結果で答える。 | 受け取った要求を覚えておく場所を、配達と同じく IP-SM-GW のすべてのインスタンスで共有しなければならないためである。 |
 | IP-SM-GW、TS 29.338 Table 6.2.2.1/2 | SGd で届いたショートメッセージへの答えに SMS-DELIVER-REPORT を入れない。 | IP-SM-GW が保存するのは配達の結果だけで、report そのものではない。report は答えを返す台とは別の台に届くことがあるためである。この要素は任意で、結果コードと失敗の理由が同じことを伝える。 |
 | IP-SM-GW、TS 29.338 Table 6.2.1.1/1 | IP-SM-GW が SGd でサービスセンタに渡すショートメッセージは、送り手を MSISDN だけで表す。登録のときに読んだ IMSI は入れない。 | サービスセンタとの境界は、送り手を E.164 の番号で運ぶ。SMS-DELIVER の発信元のアドレスに要るのがその番号だからである。この要求の IMSI を読むノードは、このプロジェクトには無い。 |
-| SC、TS 23.204 6.3 と 6.4、TS 23.040 3.2.1 と 3.2.6 | SGd、S6c、MAP を話さず、IMS と CS や PS のドメインを選ばず、蓄積と再送もしない。すぐに配達できないメッセージは捨て、そのことを status report で伝える。Message Waiting のデータは無く、有効期間は読まない。 | SC は IP-SM-GW の中のスタブである。 |
-| SC、TS 23.204 6.4 step 3 | 経路の情報の問い合わせ（SRI for SM や S6c）の代わりに、番号を持つ公開ユーザー識別子を Sh で読む。 | スタブは利用者を IMS の利用者としてだけ知っている。 |
-| SMS、TS 23.040 9.1.2.5 | 送信者の名前のような英数字のアドレス（番号の種別 101）は断る。 | SC のスタブは E.164 の番号しか使わない。 |
-| SMS、TS 23.040 9.2.2.4 | SMS-COMMAND は断る。 | SC が持っているメッセージについて問い合わせるもので、スタブは何も持っていない。 |
-| SMS、TS 23.040 9.2.3.12.2 と 9.2.3.12.3 | 「有効期間なし」と相対形式だけを読み書きし、絶対形式と拡張形式は断る。 | SC のスタブは何も蓄積しないので、有効期間を使わない。 |
+| SC、TS 23.204 6.3 と 6.4、TS 23.040 3.2.1 と 3.2.6 | SC のスタブは、SGd と S6c も MAP も話さず、IMS と CS や PS のドメインを選ばず、ショートメッセージを預かって送り直すこともしない。すぐに配達できないものは捨て、そのことを status report で伝える。message waiting data も持たず、有効期間も読まない。このスタブを使うのは、自分のサービスセンタを持たない IP-SM-GW である。 | サービスセンタを置かない構成で、スタブがその代わりをする。[網間接続の手順書](interconnect.md)がその構成である。この網の `sc` のノードは、ドメインの選択を除いてすべて行う。 |
+| SC、TS 23.204 6.4 step 3 | スタブでは、経路の情報の問い合わせ（SRI for SM や S6c）の代わりに、番号を持つ公開ユーザー識別子を Sh で読む。 | スタブは利用者を IMS の利用者としてだけ知っている。`sc` のノードは問い合わせ自体を行う。 |
+| SC、TS 29.338 5.3.3.5 | サービスセンタがショートメッセージを受け取る前に、その番号を持つ利用者がいるかを確かめる経路の問い合わせには、`SM-Delivery-Not-Intended` を入れない。そのため HSS は、配達のための問い合わせと同じように読む。 | この要素で動きを変えるノードはこのプロジェクトに無く、この確認は配達と同じ答えを求めている。 |
+| SC、TS 23.040 3.2.7 | 知らせを受けたサービスセンタは、知らせが運ぶ MSISDN（利用者の MSISDN-Alert）で、待っているショートメッセージを探す。 | このプロジェクトの利用者はそれぞれ番号を 1 つしか持たないので、別の待ち行列を持つ 2 つ目の番号は無い。 |
+| SMS、TS 23.040 9.1.2.5 | 送信者の名前のような英数字のアドレス（番号の種別 101）は断る。 | サービスセンタは E.164 の番号しか使わない。ほかの種別のアドレスを読むための番号計画を持たないためである。 |
+| SMS、TS 23.040 9.2.2.4 | SMS-COMMAND は断る。 | サービスセンタが預かっているメッセージについて問い合わせるもので、このプロジェクトの UE は送らない。 |
+| SMS、TS 23.040 9.2.3.12.2 と 9.2.3.12.3 | 「有効期間なし」と相対形式だけを読み書きし、絶対形式と拡張形式は断る。TS 23.040 9.2.3.3 はこれを認めている。 | このプロジェクトの UE は有効期間を求めないので、サービスセンタはどのショートメッセージも既定の 72 時間だけ預かる。 |
 | SMS、TS 23.040 9.2.3.24.1 | 連結 SMS は扱わない。1 通に収まらない本文は断る。 | このプロジェクトはショートメッセージを 1 通ずつ送る。 |
 | SMS、TS 23.040 9.2.3.24 と TS 23.042 | 各国語の文字表（TS 23.038 6.2.1.2）などの User-Data-Header と、圧縮した本文はデコードしない。 | このプロジェクトではどれも送らない。 |
 | UE、TS 24.011 6.3.3.1 | UE は、メモリに空きができたことの知らせ（RP-SMMA）を 1 度だけ送る。RP-ACK を待つタイマー TR1M も、満了すると携帯電話が新しい RP-MR で知らせを送り直すタイマー TRAM も動かさない。そのため、答えが返らなかった知らせは、UE が送るべきものとして残る。送るべきものを消すのは RP-ACK だけである。携帯電話は RP-ERROR の原因が恒久的なものでも消すが（TS 23.040 10.3）、UE は恒久的な原因と一時的な原因を見分けないので、どの RP-ERROR でも送るべきものが残る。 | 次の知らせは、制御 API の `POST /sms-memory/notify` が送る。これはタイマーが送るはずだったものに当たる。 |
 | UE、RFC 3428 7 | ショートメッセージだけを受け、text/plain を含むほかのボディの MESSAGE には 415（Unsupported Media Type）を返す。 | シミュレータは SMS over IP の UE で、インスタントメッセージのクライアントではない。 |
-| UE、TS 23.040 9.2.3.12 と 9.2.3.24 | SMS-SUBMIT は有効期間を求めず、User-Data-Header の無い 1 通のショートメッセージだけを持つ。 | SC のスタブは有効期間を使わない。 |
+| UE、TS 23.040 9.2.3.12 と 9.2.3.24 | SMS-SUBMIT は有効期間を求めず、User-Data-Header の無い 1 通のショートメッセージだけを持つ。 | サービスセンタは既定の有効期間である 72 時間だけ預かる。 |
 | UE、TS 24.011 9.3.2 | RP-MR が RP-DATA と違う報告は捨てる。端末なら送る cause 81 の RP-ERROR は送らない。 | IP では、それを送る接続が無い。 |
 | Sh、TS 29.328 6.1.3 と 6.1.4 | 通知の購読（SNR/SNA、PNR/PNA、コマンド 308 と 309）は無い。 | IP-SM-GW は自分を登録し、利用者を調べるだけである。MMTel AS は初期の要求ごとに Repository Data を読み、写しを持たない。TS 29.364 8.1 はそのような AS に購読を勧めている。 |
 | Sh、TS 29.328 7.1.3 | External-Identifier は無い。 | マシン型の通信のためのもので、このプロジェクトでは扱わない。 |

@@ -51,6 +51,7 @@ The nodes use these addresses. The Service column is the name in `compose.yaml`.
 | Lab | `lab` | 172.28.0.60 | |
 | OAM server | `oam` | 172.28.0.65 | |
 | IP-SM-GW | `ipsmgw` | 172.28.0.70 | |
+| Service Centre of SMS | `sc` | 172.28.0.71 | |
 | MMTel AS | `mmtel` | 172.28.0.75 | |
 | EPC stub, with the PCRF stub | `epc` | 172.28.0.80 | |
 | MRFC | `mrfc` | 172.28.0.85 | |
@@ -67,13 +68,15 @@ The nodes use these addresses. The Service column is the name in `compose.yaml`.
 
 The `capture` service has no address: it shares the network of the host and captures on the bridge `ims0`.
 
-Five nodes open a Diameter connection, each to the node in the Server column, on TCP:
+Six nodes open a Diameter connection, each to the node in the Server column, on TCP:
 
 | Client | Server | Application | Port |
 | --- | --- | --- | --- |
 | `icscf` | `hss` | Cx | 3868 |
 | `scscf` | `hss` | Cx | 3868 |
 | `ipsmgw` | `hss` | Sh | 3868 |
+| `ipsmgw` | `sc` | SGd | 3868 |
+| `sc` | `hss` | S6c | 3868 |
 | `mmtel` | `hss` | Sh | 3868 |
 | `pcscf` | `epc` | Rx | 3868 |
 

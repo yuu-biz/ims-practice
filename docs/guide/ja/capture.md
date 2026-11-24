@@ -51,6 +51,7 @@ docker compose up -d --build
 | ラボ | `lab` | 172.28.0.60 | |
 | OAM のサーバー | `oam` | 172.28.0.65 | |
 | IP-SM-GW | `ipsmgw` | 172.28.0.70 | |
+| SMS のサービスセンタ | `sc` | 172.28.0.71 | |
 | MMTel AS | `mmtel` | 172.28.0.75 | |
 | EPC スタブ（PCRF スタブを含む） | `epc` | 172.28.0.80 | |
 | MRFC | `mrfc` | 172.28.0.85 | |
@@ -67,13 +68,15 @@ docker compose up -d --build
 
 `capture` サービスにはアドレスがありません。ホストのネットワークをそのまま使い、ブリッジ `ims0` を捕らえます。
 
-次の 5 つのノードが、「サーバー」の列のノードの TCP ポートに Diameter の接続を開きます。
+次の 6 つのノードが、「サーバー」の列のノードの TCP ポートに Diameter の接続を開きます。
 
 | クライアント | サーバー | アプリケーション | ポート |
 | --- | --- | --- | --- |
 | `icscf` | `hss` | Cx | 3868 |
 | `scscf` | `hss` | Cx | 3868 |
 | `ipsmgw` | `hss` | Sh | 3868 |
+| `ipsmgw` | `sc` | SGd | 3868 |
+| `sc` | `hss` | S6c | 3868 |
 | `mmtel` | `hss` | Sh | 3868 |
 | `pcscf` | `epc` | Rx | 3868 |
 

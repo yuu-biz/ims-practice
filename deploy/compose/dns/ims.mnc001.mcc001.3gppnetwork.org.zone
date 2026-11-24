@@ -19,6 +19,9 @@ scscf     IN A     172.28.0.30
 pcscf     IN A     172.28.0.40
 agw       IN A     172.28.0.50
 ipsmgw    IN A     172.28.0.70
+; The Service Centre of SMS, which the IP-SM-GW reaches over SGd and
+; which the HSS alerts over S6c.
+sc        IN A     172.28.0.71
 mmtel     IN A     172.28.0.75
 ; The XCAP Root URI that a UE builds (TS 23.003 13.9.1.2) leads to the
 ; XCAP server of the MMTel AS.
