@@ -159,6 +159,9 @@ const retryAfter = 30
 //     its final response (regevent.go), so that a subscription is not
 //     left without a dialog by a node that stopped while its SUBSCRIBE
 //     was out;
+//   - what follows each MESSAGE from a user beside the answer to it:
+//     telling the HSS that a user this instance could not reach is back
+//     (reachableAgain in regevent.go), until the HSS has been told;
 //   - each delivery that the SC handed it, from the hand-over itself
 //     until the MESSAGE that carries the RP-DATA has its final response
 //     (Deliver);

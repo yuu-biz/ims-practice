@@ -336,6 +336,15 @@ func (g *IPSMGW) receiveRegEvent(st *sip.ServerTransaction) {
 		return
 	}
 	if g.updateHSS(&sub, available, log) && !ends {
+		if available {
+			// TS 23.040 3.2.6 item 2c: the registration that the PUR just
+			// made is itself the news that the user is reachable for short
+			// messages over IP, so the HSS clears its own UNRI and alerts
+			// the Service Centres that are waiting. The IP-SM-GW's own flag
+			// goes with it, and a notification beside the PUR would only ask
+			// for the same alerts a second time.
+			g.takeNotReachable(ctx, sub.PublicIdentity, log)
+		}
 		sub.Available = available
 		if err := g.store.PutRegSubscription(ctx, sub); err != nil {
 			// The NOTIFY has been answered and the HSS told. The Store
@@ -435,6 +444,61 @@ func (g *IPSMGW) updateHSS(sub *RegSubscription, available bool, log *slog.Logge
 		log.Info("SMS registration sent to the HSS", "ipsmgw_number", number)
 	}
 	return true
+}
+
+// takeNotReachable takes the IP-SM-GW's own UNRI for a user and reports
+// whether it was set: whether a short message of this network is waiting
+// for the user to come back (sgd.go). Only one instance gets it, so only
+// one acts on the user's return (store.go). A Store that fails reports
+// no flag, and the user's next sign of life tries again.
+func (g *IPSMGW) takeNotReachable(ctx context.Context, publicID string, log *slog.Logger) bool {
+	set, err := g.store.TakeNotReachable(ctx, publicID)
+	if err != nil {
+		log.Warn("the unreachable flag of the user was not read: the store failed", "error", err.Error())
+		return false
+	}
+	return set
+}
+
+// reachableAgain is TS 23.204 6.5b step 2 with TS 23.040 3.2.6 item 2c:
+// a request has come from a user whose short message this IP-SM-GW could
+// not deliver, so the UE is there again and the HSS hears that the user
+// can take short messages, which makes it alert the Service Centres that
+// are waiting.
+//
+// Step 2d has the IP-SM-GW discard the notification where the UE is not
+// registered in the IMS. The subscription to the user's registration
+// state is what tells it: without one that says the user has a contact
+// taking short messages, a short message would not get through now
+// either.
+//
+// A notification the HSS would not take puts the flag back, so that the
+// user's next sign of life tells it again. Nothing is lost if that never
+// comes: the HSS keeps UNRI of its own, which the next registration of
+// this IP-SM-GW for the user clears.
+func (g *IPSMGW) reachableAgain(publicID string, log *slog.Logger) {
+	ctx := context.Background()
+	sub, ok, err := g.store.RegSubscriptionOf(ctx, publicID)
+	switch {
+	case err != nil:
+		log.Warn("the registration state of the user was not read: the store failed", "error", err.Error())
+		return
+	case !ok || !sub.Available:
+		// The notification is discarded, as step 2d has it.
+		return
+	}
+	if !g.takeNotReachable(ctx, publicID, log) {
+		return
+	}
+	log = log.With("msisdn", sub.MSISDN)
+	if err := g.hss.NotifyReadyForSM(ctx, shIdentity(sub.PublicIdentity, sub.MSISDN), g.cfg.Number, sh.MSPresent); err != nil {
+		log.Warn("the return of the user was not passed to the HSS", "error", err.Error())
+		if err := g.store.PutNotReachable(ctx, publicID, time.Now().Add(notReachableLifetime)); err != nil {
+			log.Warn("the unreachable flag of the user was not put back", "error", err.Error())
+		}
+		return
+	}
+	log.Info("the user can take short messages again; the HSS is told")
 }
 
 // shIdentity names a user in an Sh request: by the MSISDN that the

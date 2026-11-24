@@ -260,6 +260,79 @@ func TestARegistrationThatFailsIsTakenBack(t *testing.T) {
 	}
 }
 
+// TestTheReturnOfAUserItCouldNotReach is TS 23.204 6.5b step 2 with TS
+// 23.040 3.2.6 item 2c: a short message did not reach Alice, so the
+// IP-SM-GW holds its own flag for her; her next MESSAGE tells the HSS
+// that she can take short messages again, and the one after it tells it
+// nothing, since the flag is gone.
+func TestTheReturnOfAUserItCouldNotReach(t *testing.T) {
+	store := ipsmgw.NewMemoryStore()
+	h := newHarness(t, store, time.Minute, answerOK)
+	h.registered()
+	if err := store.PutNotReachable(t.Context(), alice, time.Now().Add(time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+
+	h.send(message(submitBody(t, 1, scAddress, hello)))
+	want := notification{sh.UserIdentity{MSISDN: "12025550101"}, number, sh.MSPresent}
+	if got := h.nextNotification(); got != want {
+		t.Errorf("notification = %+v, want %+v", got, want)
+	}
+
+	h.send(message(submitBody(t, 2, scAddress, hello)))
+	select {
+	case got := <-h.hss.notifications:
+		t.Errorf("the HSS heard %+v of a user whose flag was gone", got)
+	case <-time.After(100 * time.Millisecond):
+	}
+}
+
+// TestTheReturnOfAUserWhoIsNotRegistered is TS 23.204 6.5b step 2d: the
+// IP-SM-GW discards the news where the UE is not registered for short
+// messages over IP, since a short message would not get through now
+// either. The flag stays, for a return that counts.
+func TestTheReturnOfAUserWhoIsNotRegistered(t *testing.T) {
+	store := ipsmgw.NewMemoryStore()
+	h := newHarness(t, store, time.Minute, answerOK)
+	if err := store.PutNotReachable(t.Context(), alice, time.Now().Add(time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+
+	h.send(message(submitBody(t, 1, scAddress, hello)))
+	select {
+	case got := <-h.hss.notifications:
+		t.Errorf("the HSS heard %+v of a user who is not registered", got)
+	case <-time.After(100 * time.Millisecond):
+	}
+	if set, err := store.TakeNotReachable(t.Context(), alice); err != nil || !set {
+		t.Errorf("the flag of the user = %v, %v; want it still set", set, err)
+	}
+}
+
+// TestTheRegistrationOfAUserItCouldNotReach is TS 23.040 3.2.6 item 2c:
+// the PUR that registers the IP-SM-GW for the user is itself the news
+// that the user is reachable, so it clears the IP-SM-GW's own flag and
+// no notification goes beside it. A later MESSAGE then tells the HSS
+// nothing.
+func TestTheRegistrationOfAUserItCouldNotReach(t *testing.T) {
+	store := ipsmgw.NewMemoryStore()
+	h := newHarness(t, store, time.Minute, answerOK)
+	if err := store.PutNotReachable(t.Context(), alice, time.Now().Add(time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	h.registered()
+
+	if set, err := store.TakeNotReachable(t.Context(), alice); err != nil || set {
+		t.Errorf("the flag of the user after the registration = %v, %v; want it clear", set, err)
+	}
+	h.send(message(submitBody(t, 1, scAddress, hello)))
+	select {
+	case got := <-h.hss.notifications:
+		t.Errorf("the HSS heard %+v beside the registration", got)
+	case <-time.After(100 * time.Millisecond):
+	}
+}
+
 // TestNotifyWithNoTimeLeftEndsTheSubscription is RFC 6665 4.1.3: the
 // expires of Subscription-State is the time left, so a NOTIFY that
 // says active;expires=0 ends the subscription as terminated does. The

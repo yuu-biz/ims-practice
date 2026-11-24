@@ -39,6 +39,18 @@ func (g *IPSMGW) message(st *sip.ServerTransaction) {
 		return
 	}
 	log = log.With("sender", sender)
+	// TS 23.204 6.5b step 2: a request from a user this IP-SM-GW serves
+	// is a sign that the UE is there again, whatever the request
+	// carries. An asserted identity that belongs to no such user, as the
+	// short message of another IMS network carries, has no subscription
+	// to find and leaves everything as it is. It runs beside the answer,
+	// so that the Sh exchange it may need does not hold the answer up,
+	// and counts as work in hand until it is done (maintenance.go).
+	g.userArrived()
+	go func() {
+		defer g.userQuit()
+		g.reachableAgain(sender, log)
+	}()
 	if callID := req.Get("In-Reply-To"); callID != "" {
 		g.deliveryReport(st, callID, log)
 		return
