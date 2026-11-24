@@ -454,8 +454,10 @@ none "SIP requests over 1300 bytes on UDP" 'sip.Method && udp && udp.length > 13
 guide_filters docs/guide/en/mmtel.md
 
 # The ladder of the calls, Ut and Sh, for the guide and the CI artifact.
+# Port 8085 is the maintenance API, which the OAM reads all the time for
+# the alarm notifications; it is no part of the flows.
 docker compose exec -T capture tshark -r "$pcap" -T fields -E separator=/t \
-	-Y '(sip && !(sip.CSeq.method == "REGISTER") && !(sip.CSeq.method == "SUBSCRIBE") && !(sip.CSeq.method == "NOTIFY") && !(sip.CSeq.method == "MESSAGE")) || (http && ip.addr == 172.28.0.75) || diameter.cmd.code == 306 || diameter.cmd.code == 307 || diameter.cmd.code == 302 || diameter.cmd.code == 301' \
+	-Y '(sip && !(sip.CSeq.method == "REGISTER") && !(sip.CSeq.method == "SUBSCRIBE") && !(sip.CSeq.method == "NOTIFY") && !(sip.CSeq.method == "MESSAGE")) || (http && ip.addr == 172.28.0.75 && !(tcp.port == 8085)) || diameter.cmd.code == 306 || diameter.cmd.code == 307 || diameter.cmd.code == 302 || diameter.cmd.code == 301' \
 	-e frame.number -e ip.src -e ip.dst -e _ws.col.Info -e sip.Call-ID | tr -d '\r' >e2e-out/mmtel-ladder.txt
 
 if [ "$fail" -ne 0 ]; then

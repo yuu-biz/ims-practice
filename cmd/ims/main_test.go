@@ -1200,7 +1200,7 @@ func TestOAMRoleServesItsAPIAndScreen(t *testing.T) {
 	// them, on one listener.
 	serve := func(c config.OAM, stores roleStores) string {
 		t.Helper()
-		server, err := newOAM(c, stores, quiet())
+		server, err := newOAM(c, stores, metrics.NewRegistry(), quiet())
 		if err != nil {
 			t.Fatal(err)
 		}

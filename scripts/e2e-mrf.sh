@@ -484,8 +484,10 @@ none "SIP requests over 1300 bytes on UDP" 'sip.Method && udp && udp.length > 13
 guide_filters docs/guide/en/mrf.md
 
 # The ladder of the calls and the MRF, for the guide and the CI artifact.
+# Port 8085 is the maintenance API, which the OAM reads all the time for
+# the alarm notifications; it is no part of the flows.
 docker compose exec -T capture tshark -r "$pcap" -T fields -E separator=/t \
-	-Y '(sip && !(sip.CSeq.method == "REGISTER") && !(sip.CSeq.method == "SUBSCRIBE" && !(sip.Event contains "conference")) && !(sip.CSeq.method == "NOTIFY" && !(sip.Event contains "conference") && !(sip.Event contains "refer")) && !(sip.CSeq.method == "MESSAGE")) || (http && (ip.addr == 172.28.0.85 || ip.addr == 172.28.0.86))' \
+	-Y '(sip && !(sip.CSeq.method == "REGISTER") && !(sip.CSeq.method == "SUBSCRIBE" && !(sip.Event contains "conference")) && !(sip.CSeq.method == "NOTIFY" && !(sip.Event contains "conference") && !(sip.Event contains "refer")) && !(sip.CSeq.method == "MESSAGE")) || (http && (ip.addr == 172.28.0.85 || ip.addr == 172.28.0.86) && !(tcp.port == 8085))' \
 	-e frame.number -e frame.time_relative -e ip.src -e ip.dst -e _ws.col.Info -e sip.Call-ID | tr -d '\r' >e2e-out/mrf-ladder.txt
 
 if [ "$fail" -ne 0 ]; then

@@ -635,8 +635,10 @@ guide_filters docs/guide/en/volte.md
 
 # The ladder of the registrations, the calls, Rx and the EPC stub's API,
 # for the guide and the CI artifact.
+# Port 8085 is the maintenance API, which the OAM reads all the time for
+# the alarm notifications; it is no part of the flows.
 docker compose exec -T capture tshark -r "$pcap" -T fields -E separator=/t \
-	-Y '(sip && !(sip.CSeq.method == "SUBSCRIBE") && !(sip.CSeq.method == "NOTIFY") && !(sip.CSeq.method == "MESSAGE")) || (diameter && !(diameter.cmd.code == 280) && !(diameter.cmd.code == 257)) || (http && ip.addr == 172.28.0.80)' \
+	-Y '(sip && !(sip.CSeq.method == "SUBSCRIBE") && !(sip.CSeq.method == "NOTIFY") && !(sip.CSeq.method == "MESSAGE")) || (diameter && !(diameter.cmd.code == 280) && !(diameter.cmd.code == 257)) || (http && ip.addr == 172.28.0.80 && !(tcp.port == 8085))' \
 	-e frame.number -e frame.time_relative -e ip.src -e ip.dst -e _ws.col.Info -e sip.Call-ID | tr -d '\r' >e2e-out/volte-ladder.txt
 
 if [ "$fail" -ne 0 ]; then

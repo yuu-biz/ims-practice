@@ -117,7 +117,28 @@
 // asked; its answers are listed at patchAlarmList. The subscriptions
 // are in their own store (Config.NtfSubscriptions), which several
 // instances share, at most Config.MaxNtfSubscriptions of them: their
-// number follows the number of OSSs. Of the ProvMnS
+// number follows the number of OSSs.
+//
+// The notifications go to the notificationRecipientAddress of each
+// subscription that selects them, as a POST of the bodies of
+// TS28111_FaultNotifications.yaml 19.3.0, which the OSS answers with 204
+// (TS 32.158 5.5.4). RunNotifications watches each node: it reads the
+// journal of the changes of the node's alarm list
+// (maintenance.AlarmEvents), and sends notifyNewAlarm,
+// notifyChangedAlarmGeneral, notifyClearedAlarm and
+// notifyAckStateChanged for its events, in their order.
+// notifyPotentialFaultyAlarmList says that a node stopped answering,
+// and notifyAlarmListRebuilt with ALIGNMENT_REQUIRED that it came back,
+// that it started again, that events left its journal before they were
+// sent, or that its full list dropped a record. How far the
+// notifications of each node have been sent is in a store
+// (Config.AlarmWatches), so that the instance that watches the node
+// next goes on from there. A recipient that does not take a
+// notification is not sent it again, nor any other until it has taken
+// a notifyAlarmListRebuilt of the whole list, which is tried once every
+// Config.MissedRetryInterval.
+//
+// Of the ProvMnS
 // operations, createMOI and deleteMOI of other objects, the reading of
 // the SubNetwork and its ManagedElements, and scopes that reach below
 // the base object are not served: the nodes are no managed objects of an

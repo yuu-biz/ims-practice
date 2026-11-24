@@ -33,9 +33,10 @@ type OAM struct {
 	// instances that share one directory see the same history and the
 	// same backups. When the node has no shared store (Config.Store of
 	// kind valkey), the subscriptions of the OSSs to the alarm
-	// notifications are in this directory too, and that file serves one
-	// OAM instance only: several instances that take subscriptions
-	// share the store section instead.
+	// notifications, and how far the alarm notifications of each node
+	// have been sent, are in this directory too. Those files serve one
+	// OAM instance only: several instances that take subscriptions and
+	// send notifications share the store section instead.
 	DataDir string
 	// SubNetwork names the SubNetwork whose alarm list the OAM offers to
 	// an OSS through the 3GPP management services, such as ims: the

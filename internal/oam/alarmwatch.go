@@ -52,7 +52,8 @@ var ErrWatchLost = errors.New("another instance has taken the watch of the node"
 
 // AlarmWatch is the watch of one node that an OAM instance holds: the
 // right to send the notifications of the node's alarm journal, and to
-// write how far it has sent them.
+// write how far it has sent them. Renew may run while Save does, as
+// the watcher renews on a goroutine of its own.
 type AlarmWatch interface {
 	// State is the state as the watch began, with the generation it
 	// raised.
