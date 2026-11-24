@@ -30,6 +30,13 @@
 // types_test.go read example bodies written with those names and write
 // them back.
 //
+// The objects are named by DNs that start at the SubNetwork, such as
+// SubNetwork=ims,ManagedElement=scscf, with no DN prefix (DN). MnSRoot
+// builds the URIs of TS 32.158 4.4.2 from them: the URI of a resource,
+// {MnSRoot}/ProvMnS/v19/SubNetwork=ims/AlarmList=1, and the canonical
+// URI that a notification names its object by,
+// http://oam:8080/SubNetwork=ims/ManagedElement=scscf.
+//
 // What of the files the types cover:
 //
 //	AlarmList-Single, AlarmRecord                    AlarmListSingle, AlarmListAttributes, AlarmRecord
