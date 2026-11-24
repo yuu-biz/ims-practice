@@ -225,6 +225,10 @@ func (h *HSS) response(s Subscriber) subscriptionResponse {
 //	                               provision or change its CAT, from
 //	                               {"tone": "cat1", "active": true}
 //
+// openapi.yaml, next to this file, describes each route with its bodies
+// and answers in OpenAPI 3.1, and the tests check the handler against
+// it. An error is the reason as text/plain, which the OAM shows.
+//
 // Removing a subscription whose user is registered deregisters the user
 // at its S-CSCF, which peers reaches. A PUT or a PATCH that changes the
 // user profile of such a user pushes the new profile there instead

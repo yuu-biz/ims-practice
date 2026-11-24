@@ -17,14 +17,14 @@
 
 ## API
 
-本文と答えは JSON です。誤りは `http.Error` の文のままで、OAM がそれを読んで理由にします。加入者を読み書きできなかった要求には 500 を返します（[state-redundancy.md](state-redundancy.md) の「Store の形と書き込みの決まり」）。経路にない方法には、`http.ServeMux` が `Allow` を付けた 405 を返します。
+本文と答えは JSON です。誤りは `http.Error` の文のままで、OAM がそれを読んで理由にします。加入者を読み書きできなかった要求には 500 を返します（[state-redundancy.md](state-redundancy.md) の「Store の形と書き込みの決まり」）。経路にない方法には、`http.ServeMux` が `Allow` を付けた 405 を返します。経路、本文、答えの形は `internal/hss/openapi.yaml` に OpenAPI 3.1 で書き、試験でハンドラーと突き合わせます（[openapi.md](openapi.md)）。下の表はその要約です。
 
 | メソッドと経路 | 本文 | 答え | 状態コード |
 | --- | --- | --- | --- |
 | `GET /subscriptions?after={IMPI}&limit={n}` | なし | 加入の配列（資格情報を含まない）。続きがあれば `Link` | 200、400（`limit` の形）、500 |
 | `GET /subscriptions/{IMPI}` | なし | 加入 1 件 | 200、404、500 |
 | `POST /subscriptions` | 加入の要求 | 加入 1 件と `Location` | 201、400、409（識別子が別の加入のもの）、500 |
-| `PUT /subscriptions/{IMPI}`（`?dry_run=true` を付けられる） | 加入の要求に `repository_data`、`test_user`、`service_profile` を足したもの | `{"result": "created" \| "updated" \| "unchanged", "subscription": {…}}` | 201（作ったとき）、200（置き換え、変化なし、`dry_run`）、400、409、500 |
+| `PUT /subscriptions/{IMPI}`（`?dry_run=true` を付けられる） | 加入の要求に `repository_data`、`test_user`、`service_profile` を足したもの | `{"result": "created" \| "updated" \| "unchanged", "subscription": {…}}` | 201（作ったとき）、200（置き換え、変化なし、`dry_run`）、400、404（置き換えのあいだに加入が消えた）、409、500 |
 | `PATCH /subscriptions/{IMPI}` | `{"test_user": true, "service_profile": "trial"}`。どちらも省ける | 加入 1 件 | 200、400、404、500 |
 | `DELETE /subscriptions/{IMPI}` | なし | なし | 204、404、500 |
 | `GET /subscriptions/export?after={IMPI}&limit={n}` | なし | 1 行に 1 件の JSON（`application/x-ndjson`）。資格情報、SQN_HE、Repository Data を含む。続きがあれば `Link` | 200、400、500 |

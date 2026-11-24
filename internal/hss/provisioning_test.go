@@ -26,6 +26,8 @@ import (
 	"github.com/yuu-biz/ims-practice/internal/sh"
 )
 
+// do sends a request to the provisioning API, checked against
+// openapi.yaml.
 func do(t *testing.T, api http.Handler, method, path, body string) *httptest.ResponseRecorder {
 	t.Helper()
 	var r io.Reader
@@ -33,7 +35,7 @@ func do(t *testing.T, api http.Handler, method, path, body string) *httptest.Res
 		r = strings.NewReader(body)
 	}
 	w := httptest.NewRecorder()
-	api.ServeHTTP(w, httptest.NewRequest(method, path, r))
+	provisioningDocument(t).Handler(t, api).ServeHTTP(w, httptest.NewRequest(method, path, r))
 	return w
 }
 
