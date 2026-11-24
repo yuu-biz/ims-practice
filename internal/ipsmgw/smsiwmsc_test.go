@@ -127,8 +127,8 @@ func TestShortMessageRefusedOverSGd(t *testing.T) {
 		{name: "no answer at all", err: errors.New("the SC did not answer"), want: sms.RPCauseTemporaryFailure},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
-			ofa, err := tt.ofa, tt.err
-			sc, _ := smsIWMSC(func() (sgd.MOForwardShortMessageAnswer, error) { return ofa, err })
+			ofa, failure := tt.ofa, tt.err
+			sc, _ := smsIWMSC(func() (sgd.MOForwardShortMessageAnswer, error) { return ofa, failure })
 			h := newHarnessParts(t, ipsmgw.NewMemoryStore(), time.Minute, answerOK, ipsmgw.Config{}, sc, nil)
 			if resp := h.send(message(submitBody(t, 3, scAddress, hello))); resp.StatusCode != 202 {
 				t.Fatalf("MESSAGE answered %d, want 202", resp.StatusCode)
