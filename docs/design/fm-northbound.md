@@ -2,7 +2,7 @@
 
 この記録は、OAM がノードから集めている警報を、網の管理の仕組み（OSS、TS 32.101 の Network Manager）に標準の形で渡す口を決めます。対象は、警報の一覧の読み出し、確認（acknowledge）、警報の通知の 3 つです。OAM とノードのあいだ（southbound）は、今の独自の保守用の API のままです。調べた結果は [oam.md](../background/oam.md) の 15 章にあります。
 
-「（案）」を付けたところは、まだ決めていません。「決めていないこと」の表に、論点の名前と勧める案があります。本文は、勧める案で書いています。
+製品の向きに関わる論点は、末尾の「製品の向きに関わる決定」の表に、決めたことと理由をまとめています。本文で「（「SubNetwork の名前」）」のように論点の名前を括弧に入れたところは、その表の行を指します。
 
 ## 選んだこと
 
@@ -27,12 +27,12 @@ TS 32.101 V19.0.0 5.1.1 は、管理のインタフェースを種類で分け�
 
 `{MnSVersion}` は `v19` です。TS 32.158 4.6.2 は、component A の定義のファイルの版の最初の数に `v` を付けたものとしています。FM の component A は ProvMnS で、`TS28532_ProvMnS.yaml` の版は 19.2.0 です。
 
-`{sn}` は設定で与える SubNetwork の名前です。例では `ims` と書きます（案。「SubNetwork の名前」）。設定の項目は、`oam` の節の `subnetwork` と `mns_root` です。`mns_root` には、OSS から見た OAM の待ち受けの URL に `{root}` を付けたもの、Compose なら `http://oam:8080/3GPPManagement` を書きます。2 つは両方を書くか、どちらも書かないかのどちらかです。どちらも無ければ、この口は出しません。どちらの名前も、役割が起動するときに 1 回だけ確かめます。`subnetwork` は DN の id に使えない文字（`,`、`=`、`/`）を持てず、`mns_root` は http の URL に限ります。要求のたびには確かめません。
+`{sn}` は設定で与える SubNetwork の名前です。例では `ims` と書きます（「SubNetwork の名前」）。設定の項目は、`oam` の節の `subnetwork` と `mns_root` です。`mns_root` には、OSS から見た OAM の待ち受けの URL に `{root}` を付けたもの、Compose なら `http://oam:8080/3GPPManagement` を書きます。2 つは両方を書くか、どちらも書かないかのどちらかです。どちらも無ければ、この口は出しません。どちらの名前も、役割が起動するときに 1 回だけ確かめます。`subnetwork` は DN の id に使えない文字（`,`、`=`、`/`）を持てず、`mns_root` は http の URL に限ります。要求のたびには確かめません。
 
 | 操作（TS 28.532） | 方法 | 経路 | 要求 | 応答 |
 | --- | --- | --- | --- | --- |
 | getMOIAttributes（11.1.1.2、12.1.1.1.3） | `GET` | `{MnSRoot}/ProvMnS/v19/SubNetwork={sn}/AlarmList=1` | 問い合わせ（下の「読み出しの問い合わせ」） | 200。`Resource`（中身は `AlarmList-Single`） |
-| modifyMOIAttributes（11.1.1.3、12.1.1.1.4.2） | `PATCH` | 同じ | `Content-Type: application/merge-patch+json` の `Resource`（案。「確認で受ける形」） | 204 |
+| modifyMOIAttributes（11.1.1.3、12.1.1.1.4.2） | `PATCH` | 同じ | `Content-Type: application/merge-patch+json` の `Resource`（「確認で受ける形」） | 204 |
 | createMOI（11.1.1.1、12.1.1.1.2.1） | `PUT` | `{MnSRoot}/ProvMnS/v19/SubNetwork={sn}/NtfSubscriptionControl={id}` | `Resource`（中身は `NtfSubscriptionControl-Single`） | 201（作った）か 200（置き換えた）。作ったものの `Resource` |
 | getMOIAttributes | `GET` | 同じ | なし | 200。`Resource` |
 | deleteMOI（11.1.1.4、12.1.1.1.5） | `DELETE` | 同じ | なし | 204 |
@@ -136,7 +136,7 @@ OpenAPI の `unreliableAlarmScope` は DN 1 つの型（`DnRo`）です。TS 28.
 
 ### 確認
 
-確認は JSON Merge Patch（RFC 7396、TS 32.158 6.3.2）で送ります。TS 28.111 A.1.4 が挙げる 3 つの形のうちの 1 つです（案。「確認で受ける形」）。
+確認は JSON Merge Patch（RFC 7396、TS 32.158 6.3.2）で送ります。TS 28.111 A.1.4 が挙げる 3 つの形のうちの 1 つです（「確認で受ける形」）。
 
 ```http
 PATCH /3GPPManagement/ProvMnS/v19/SubNetwork=ims/AlarmList=1 HTTP/1.1
@@ -238,7 +238,7 @@ TS 28.622 4.3.22.2 には、ほかに `lastSequenceNo`、`administrativeState`�
 - `href` は、objectClass と objectInstance を合わせて URI に写したもの（canonical URI）です（TS 28.111 A.1.2、TS 28.532 12.0.2.1、TS 32.158 4.2.4）。
   - 警報の通知では、警報の対象の DN です。例は `http://oam:8080/SubNetwork=ims/ManagedElement=scscf/ManagedFunction=scscf/Peer=hss.ims.mnc001.mcc001.3gppnetwork.org` です。
   - `notifyPotentialFaultyAlarmList` と `notifyAlarmListRebuilt` では、信頼できない部分の基点です（6.12、8.5.2、8.10.2）。1 台のノードならそのノードの DN（`.../SubNetwork=ims/ManagedElement=scscf`）、一覧全体なら `systemDN` です。
-  - DN の前置き（`DC=`）を持たないので、TS 32.158 4.2.3 の終わりのとおり、URI の host は producer の自分のもの（OAM の名前）にします（案。「DN の前置き」）。
+  - DN の前置き（`DC=`）を持たないので、TS 32.158 4.2.3 の終わりのとおり、URI の host は producer の自分のもの（OAM の名前）にします（「DN の前置き」）。
 - `systemDN` は `SubNetwork={sn}` です。MnsAgent の MOI を出さないので、11.0.2 のとおり根の MOI の DN にします。
 - `notificationId` は、警報の通知ならノードが決め、警報の記録の `notificationId` にも書きます。ノードの値は乱数です。一覧の通知（`notifyPotentialFaultyAlarmList` と `notifyAlarmListRebuilt`）なら OAM が決めます。OAM の値は乱数ではなく、通知が何についてのものかを表す値の hash です。ノードの再起動ならリングバッファの新しい識別、出来事の欠けならリングバッファの識別と欠けた位置、捨てた記録なら捨てた出来事の番号を使います。ノードが答えなくなったときと戻ったときは、見張りの状態に置いた乱数の種と、それまでに答えなくなって戻った回数を使います。同じ通知をどのインスタンスが送っても、同じ id になります（下の「届かなかった通知」）。どちらの値も、JSON の数として失われない 53 ビットに収めます。11.0.2 は、同じ MOI の通知のあいだで重ならないことを求めています。購読ごとに送る `notifyAlarmListRebuilt`（下の「届かなかった通知」）だけは、1 つのインスタンスしか送らないので、乱数にします。
 - `sequenceNo` と `subscriptionId` は入れません。11.0.2 は、この 2 つを、確実に届ける仕組み（reliable notification transport）を持つ producer に限って持つものとしています。この口はその仕組みを持ちません（下の「届かなかった通知」）。
@@ -271,7 +271,7 @@ TS 28.622 4.3.22.2 には、ほかに `lastSequenceNo`、`administrativeState`�
 
 | 振る舞い | 仕様との関係 |
 | --- | --- |
-| 確認されない cleared の警報が保持の時間を過ぎたら、ノードが自分で確認する。`ackUserId` は保持の時間で消したことを示す固定の名前（`retention`）、`ackSystemId` はノードの名前。`notifyAckStateChanged` が出るので、OSS は cleared と確認の 2 つの通知から、警報の記録が消えたと分かる（案。「保持の時間の消去」） | 作る前は黙って消していた。今は `internal/maintenance/alarmlist.go` の `expire` がノードの確認にしている。6.14 では、確認を持つ producer は、cleared の記録を確認されるまで残す。producer が自分で確認するという動きは仕様にあり、TS 28.111 5 章の REQ-FM-MC-12 は、確認の操作を持たない producer に、警報を自分で確認できることを求めている。確認の操作を持つ producer が保持の時間で自分で確認することは、仕様に書かれていない |
+| 確認されない cleared の警報が保持の時間を過ぎたら、ノードが自分で確認する。`ackUserId` は保持の時間で消したことを示す固定の名前（`retention`）、`ackSystemId` はノードの名前。`notifyAckStateChanged` が出るので、OSS は cleared と確認の 2 つの通知から、警報の記録が消えたと分かる（「保持の時間の消去」） | 作る前は黙って消していた。今は `internal/maintenance/alarmlist.go` の `expire` がノードの確認にしている。6.14 では、確認を持つ producer は、cleared の記録を確認されるまで残す。producer が自分で確認するという動きは仕様にあり、TS 28.111 5 章の REQ-FM-MC-12 は、確認の操作を持たない producer に、警報を自分で確認できることを求めている。確認の操作を持つ producer が保持の時間で自分で確認することは、仕様に書かれていない |
 | 一覧がいっぱいで警報の記録を捨てたら、そのノードを基点に `notifyAlarmListRebuilt` を `ALIGNMENT_REQUIRED` で送る | 7.3.2.1 は捨てることを許しているが、通知は求めていない。一覧は作り直していないが、通知を送れなかった警報があるという 8.5.2 の `alarmListAlignmentRequirement` の意味に合わせて使う。コードに `SIMPLIFIED:` を書き、手順書の「簡略化したこと」にも載せる |
 | 届かなかった通知のあと、その購読には `notifyAlarmListRebuilt` のほかを送らず、それをその購読だけに送る（上の「届かなかった通知」） | 8.5.1 の、一覧を作り直したときの通知ではない。購読ごとに送るのも、仕様に無い使い方。コードに `SIMPLIFIED:` を書き、手順書の「簡略化したこと」にも載せる |
 | 答えないノードの警報の記録を `GET` の答えに入れない | 6.11 は、その部分の記録が更新されなくなり信頼できないとしているが、記録を外すかどうかは書いていない。OAM は写しを持たないので、出せる記録が無い |
@@ -397,7 +397,7 @@ OpenAPI のファイルは 3GPP の著作物なので、リポジトリに入れ
 | 構成の通知（`notifyMOICreation` など） | 故障管理の要件に入っていない。購読の作成と削除は `PUT` と `DELETE` の答えで分かる（上の「購読」） |
 | 購読の一覧の読み出し | ProvMnS では SubNetwork を `scope` で読む形になり、SubNetwork の MOI が要る。OSS は自分で作った購読の id を知っている |
 | `POST` による購読の作成 | TS 28.532 12.1.1.1.2.1 のとおり、作るのは `PUT` が既定 |
-| JSON Patch と 3GPP の 2 つの Patch の形 | 確認には Merge Patch で足りる。3GPP の形は media type の綴りが揃っていない（案。「確認で受ける形」） |
+| JSON Patch と 3GPP の 2 つの Patch の形 | 確認には Merge Patch で足りる。3GPP の形は media type の綴りが揃っていない（「確認で受ける形」） |
 | 確実に届ける仕組み（`sequenceNo`、`subscriptionId`、送り直し） | TS 28.532 11.0.2 の条件付きの部品。OSS は一覧の読み直しで揃えられる |
 | heartbeat の通知（`HeartbeatControl`） | 購読の下の `HeartbeatControl` が別に制御するもので（TS 28.622 4.3.21）、TS 28.111 5 章の要件に入っていない |
 | `SupportedNotifications` の MOI | 送る通知の種類は、この記録と手順書に書く |
@@ -423,19 +423,19 @@ PR の単位で分けます。大きさは、試験を含めた行数の目安�
 
 ### 役割の警報
 
-e2e で通知を受け取るには、上がる警報が要ります。今は、どの役割も警報を上げていません。[oam.md](../background/oam.md) の 6 章の「役割ごとの警報の案」のうち、Diameter の相手との接続が切れたときの警報を、I-CSCF と S-CSCF から上げます。HSS を止めると上がり、戻すと下がります。この記録の範囲の外の作業として、先に入れます（案。「役割の警報を別の作業にするか」）。約 400 行。作りました。上げ下げの決まりは [oam.md](../background/oam.md) の 6 章の「役割が上げる警報」にあります。
+e2e で通知を受け取るには、上がる警報が要ります。[oam.md](../background/oam.md) の 6 章の「役割ごとの警報の案」のうち、Diameter の相手との接続が切れたときの警報を上げます。HSS を止めると上がり、戻すと下がります。この記録の範囲の外の作業として、先に入れました（「役割の警報を別の作業にするか」）。約 400 行。作りました。上げるのは、HSS に接続する I-CSCF、S-CSCF、IP-SM-GW、MMTel AS、Service Centre の 5 つの役割です。上げ下げの決まりは [oam.md](../background/oam.md) の 6 章の「役割が上げる警報」にあります。
 
 ### 保守用の API の出来事
 
-警報の記録に `notification_id` と `ack_system_id` を足します。確認を複数の警報の記録でまとめて受け、1 つのロックの中で確かめてから変えます。保持の時間の消去を、ノードの確認に変えます（案。「保持の時間の消去」）。出来事のリングバッファと、長く待つ `GET /maintenance/v1/alarm-events` を足します。`SIMPLIFIED:` を直し、[oam.md](../background/oam.md) の 6 章の表と手順書の「簡略化したこと」を合わせます。確かめ方は、出来事の番号と順、リングバッファの上限と失った印、リングバッファの識別、長く待つ答えの期限、`-race` の試験です。約 700 行。作りました。この記録が決めていなかった細部（問い合わせの名前、出来事の形、上限、失った印の決まり）は、[oam.md](../background/oam.md) の 6 章の「出来事のジャーナル」にあります。
+警報の記録に `notification_id` と `ack_system_id` を足します。確認を複数の警報の記録でまとめて受け、1 つのロックの中で確かめてから変えます。保持の時間の消去を、ノードの確認に変えます（「保持の時間の消去」）。出来事のリングバッファと、長く待つ `GET /maintenance/v1/alarm-events` を足します。`SIMPLIFIED:` を直し、[oam.md](../background/oam.md) の 6 章の表と手順書の「簡略化したこと」を合わせます。確かめ方は、出来事の番号と順、リングバッファの上限と失った印、リングバッファの識別、長く待つ答えの期限、`-race` の試験です。約 700 行。作りました。この記録が決めていなかった細部（問い合わせの名前、出来事の形、上限、失った印の決まり）は、[oam.md](../background/oam.md) の 6 章の「出来事のジャーナル」にあります。
 
 ### 3GPP の型
 
-新しいパッケージ `internal/mns` に、`AlarmRecord`、`AlarmList-Single` の `Resource`、6 つの通知と `NotificationHeader`、`NtfSubscriptionControl-Single`、`Scope`、`ErrorResponseGet` と `ErrorResponseDefault`、DN と canonical URI の組み立てを置きます。上の「名前を OpenAPI で確かめる試験」と、一覧を比べるスクリプトを入れます。OAM と、e2e の OSS の代わりの両方が使うので、`internal/oam` の外に置きます。約 600 行。
+新しいパッケージ `internal/mns` に、`AlarmRecord`、`AlarmList-Single` の `Resource`、6 つの通知と `NotificationHeader`、`NtfSubscriptionControl-Single`、`Scope`、`ErrorResponseGet` と `ErrorResponseDefault`、DN と canonical URI の組み立てを置きます。上の「名前を OpenAPI で確かめる試験」と、一覧を比べるスクリプトを入れます。OAM と、e2e の OSS の代わりの両方が使うので、`internal/oam` の外に置きます。約 600 行。作りました。
 
 ### Jex の条件の式
 
-新しいパッケージ `internal/jex` に、TS 32.161 A.4 の文法の字句解析、構文解析、JSON の値への評価を置きます。読み出しの `filter` と `dataNodeSelector`、購読の `notificationFilter` で使います。確かめ方は、文法の各規則、比べる式、`contains`、読めない式の誤りの試験です。試験の式は、TS 32.161 Annex B.3 の例を写さず、警報の属性で書き起こします。約 600 行。
+新しいパッケージ `internal/jex` に、TS 32.161 A.4 の文法の字句解析、構文解析、JSON の値への評価を置きます。読み出しの `filter` と `dataNodeSelector`、購読の `notificationFilter` で使います。確かめ方は、文法の各規則、比べる式、`contains`、読めない式の誤りの試験です。試験の式は、TS 32.161 Annex B.3 の例を写さず、警報の属性で書き起こします。約 600 行。作りました。
 
 ### 警報の一覧の読み出しと確認
 
@@ -455,7 +455,18 @@ e2e で通知を受け取るには、上がる警報が要ります。今は、�
 
 ### e2e と手順書
 
-Compose に OSS の代わり（通知を受けて残す小さなプログラム。案。「OSS の代わり」）を足し、HSS を止めて `notifyNewAlarm`、確認して `notifyAckStateChanged`、戻して `notifyClearedAlarm` が届くこと、一覧の `GET` の形を確かめます。pcap で、OAM と OSS のあいだの `GET`、`PATCH`、`POST` を確かめます。手順書（英語と日本語）に、OSS の代わりで警報を受け取る例、ラダー図、「簡略化したこと」を書き、用語集に MnS、NRM、MOI、DN、Itf-N、OSS、EM、NM、Jex などを足します。`internal/oam/doc.go` に経路を足します。約 600 行と文書。
+Compose に OSS の代わり（通知を受けて残す小さなプログラム。「OSS の代わり」）を足し、HSS を止めて `notifyNewAlarm`、確認して `notifyAckStateChanged`、戻して `notifyClearedAlarm` が届くこと、一覧の `GET` の形を確かめます。pcap で、OAM と OSS のあいだの `GET`、`PATCH`、`POST` を確かめます。手順書（英語と日本語）に、OSS の代わりで警報を受け取る例、ラダー図、「簡略化したこと」を書き、用語集に足りない略語を足します。`internal/oam/doc.go` に経路を足します。約 600 行と文書。作りました。
+
+- OSS の代わりは `cmd/oss` です。`oss serve` が通知を受けて `internal/mns` の型で確かめ、`oss subscribe`、`oss unsubscribe`、`oss alarms`、`oss ack` が OSS の要求を送ります。Compose では、プロファイル `oss` のサービス `oss`（172.28.0.66）です。
+- e2e は `scripts/e2e-fm.sh` で、CI のジョブ `e2e-fm` が流します。成果物は pcap と、OSS と OAM のあいだのやり取りと HSS の DPR と CEA を並べた `e2e-out/fm-ladder.txt` です。流れは次のとおりです。購読を作って読み返す。MRFP のコンテナを `docker compose pause` で止め、`notifyPotentialFaultyAlarmList`、`unreliableAlarmScope`、戻したあとの `notifyAlarmListRebuilt` を確かめる。HSS を保守用の API で止め、5 つの役割の `notifyNewAlarm` を `href` と識別の属性で確かめる。filter を付けた `GET` で 5 つの記録を読み、通知の `alarmId` と記録の鍵が同じことを確かめる。S-CSCF の警報を確認し、`notifyAckStateChanged` を確かめる。HSS を戻し、5 つの `notifyClearedAlarm` と、解除と確認が済んだ記録が一覧から消えることを確かめる。購読を消し、そのあとの確認に通知が来ないことを確かめる。`oss serve` が断った通知が無いことも確かめる。pcap では、HTTP の各やり取りを順に、表示フィルタで確かめます（OAM と OSS はどちらもポート 8080 で待ち受けるので、Wireshark が HTTP と JSON を解読します）。どの待ちにも期限を付けています。HSS を止めてから警報が上がるまでと、戻してから解除されるまでに、それぞれ Tc（30 秒）ほどかかります。
+- 手順書は `docs/guide/{en,ja}/oss.md` です。手順書の入口の読む順と、プロファイルの表に足しました。「簡略化したこと」の表のうち、この口の行は登録の手順書から移しました。HTTP の API の手順書（`apis.md`）の仕様に従う API の表に、経路と版を足しました。
+- 用語集には NE、EM、NM、ProvMnS、REST を足しました。MnS、NRM、DN、Itf-N、OSS、Jex は前の作業で入っています。MOI は、手順書では `createMOI` のような操作の名前の中にだけ出て、コードとして書くので、足していません。
+
+e2e を組むときに分かったことは次のとおりです。
+
+- HSS より先に起動したノードは、最初の接続の試行で警報を上げ、CEA で解除します。その記録は確認されるまで一覧に残るので（TS 28.111 6.14）、HSS を止めてまた上がる警報は、同じ記録の変化として `notifyChangedAlarmGeneral` になります（6.12）。`notifyNewAlarm` を確かめるために、e2e は購読の前に、解除済みの記録をノードごとに確認しておきます。手順書も同じ手順を踏み、理由を書いています。
+- 確認の `PATCH` への 204 と、その変化の `notifyAckStateChanged` は、別々の経路で OSS に届くので、順が決まりません。e2e は、どちらも `PATCH` のあとにあることだけを確かめます。
+- 答えないノードの経路は、ノードを止めると試せません。止めて起動し直すと、ノードのリングバッファの識別が変わり、`notifyAlarmListRebuilt` の `reason` が `System restarts` になるためです。コンテナを一時停止すると、接続は開いたまま答えだけが無くなり、`System-NE communication error` の経路になります。
 
 ### 作業のあいだの順
 
@@ -468,11 +479,11 @@ Compose に OSS の代わり（通知を受けて残す小さなプログラム�
 | 通知（複数のインスタンス） | 通知（1 つのインスタンス） |
 | e2e と手順書 | 役割の警報、警報の一覧の読み出しと確認、購読、通知（1 つのインスタンス） |
 
-## 決めていないこと
+## 製品の向きに関わる決定
 
-製品の向きに関わるので、ここでは決めずに、勧める案を書きます。本文で「（案）」を付けたところは、この表の論点の名前で指しています。
+製品の向きに関わる論点です。どれも、記録を書いたときに勧めた案のとおりに決めました。本文で論点の名前を括弧に入れたところは、この表の行を指します。
 
-| 論点 | 勧める案 | 理由 |
+| 論点 | 決めたこと | 理由 |
 | --- | --- | --- |
 | 役割の警報を別の作業にするか | 別の作業として先に入れる | 警報を上げる役割の作りは、northbound とは別の主題。e2e で通知を受け取るのに要る |
 | DN の前置き | 持たない。DN は `SubNetwork={sn}` から始め、`href` の host は OAM の名前 | `DC=ims.mnc001.mcc001.3gppnetwork.org` を前置きにすると、DN が世界で一意になる。一方で `href` の host が、名前を引けない名前になる（TS 32.158 4.2.3） |
@@ -489,6 +500,7 @@ OpenAPI は、各仕様書の書庫に入っているものを読みました。
 
 ## 残っている課題
 
+- e2e が確かめるのは、Compose の 1 つのインスタンスの OAM だけです。複数のインスタンスでの見張りの分け方と引き継ぎは、Valkey を使う CI の適合試験と、`internal/kvstore/oamstore` の、いくつかの OAM のサーバーを 1 つの保存先で動かす試験だけで確かめています。
 - 2 台以上が答えないときは、一覧全体を信頼できないと示します。OpenAPI の型が DN 1 つのためで、どのノードかは `notifyPotentialFaultyAlarmList` でしか分かりません（上の「答えないノード」）。
 - 通知を OSS に送り直しません。OSS が止まっていたあいだの通知は失われます。OSS は、次に届く `notifyAlarmListRebuilt` を受けて、一覧を読み直す必要があります。
 - OSS が自分の購読を忘れると、その id を知る方法がありません。購読の一覧の読み出しを作らないためです。
