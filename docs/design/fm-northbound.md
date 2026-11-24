@@ -23,9 +23,11 @@ TS 32.101 V19.0.0 5.1.1 は、管理のインタフェースを種類で分け�
 
 `{MnSRoot}` は、OAM の待ち受けの URL に `/3GPPManagement` を付けたものです。Compose では `http://oam:8080/3GPPManagement` になります。`/3GPPManagement` は、TS 32.158 V20.1.0 4.4.2 の `{root}` に当たり、OpenAPI の `MnSRoot` の既定値と同じ綴りです。`/oam/v1/` の独自の API と、同じ待ち受けで並びます。
 
+この口は、OAM の独自の API とは別のハンドラー（`internal/oam` の `MnSHandler`）が受けます。`oam` の役割は、`/oam/v1/` に独自の API を、`{root}/ProvMnS/v19/` にこのハンドラーを、同じ待ち受けに並べて置きます。独自の API の試験は、自分の `openapi.yaml` と突き合わせます（[openapi.md](openapi.md)）。このハンドラーを分けたので、そこに 3GPP の経路が混ざりません。3GPP の経路と問い合わせの名前は、OpenAPI のファイルの綴りを書き写した試験で確かめます（下の「名前を OpenAPI で確かめる試験」）。
+
 `{MnSVersion}` は `v19` です。TS 32.158 4.6.2 は、component A の定義のファイルの版の最初の数に `v` を付けたものとしています。FM の component A は ProvMnS で、`TS28532_ProvMnS.yaml` の版は 19.2.0 です。
 
-`{sn}` は設定で与える SubNetwork の名前です。例では `ims` と書きます（案。「SubNetwork の名前」）。
+`{sn}` は設定で与える SubNetwork の名前です。例では `ims` と書きます（案。「SubNetwork の名前」）。設定の項目は、`oam` の節の `subnetwork` と `mns_root` です。`mns_root` には、OSS から見た OAM の待ち受けの URL に `{root}` を付けたもの、Compose なら `http://oam:8080/3GPPManagement` を書きます。2 つは両方を書くか、どちらも書かないかのどちらかです。どちらも無ければ、この口は出しません。どちらの名前も、役割が起動するときに 1 回だけ確かめます。`subnetwork` は DN の id に使えない文字（`,`、`=`、`/`）を持てず、`mns_root` は http の URL に限ります。要求のたびには確かめません。
 
 | 操作（TS 28.532） | 方法 | 経路 | 要求 | 応答 |
 | --- | --- | --- | --- | --- |
@@ -123,9 +125,10 @@ OpenAPI の `unreliableAlarmScope` は DN 1 つの型（`DnRo`）です。TS 28.
 
 - `filter` は Jex の条件の式（TS 32.161 V19.0.0 7.6、A.4）です。OpenAPI の型は `JexConditions` です。TS 28.111 A.1.4 の例の形、`/AlarmList[id="1"]/attributes/alarmRecords/*[<条件>]` を受け付け、条件に合う警報の記録だけを返します。条件には、比べる式、`and`、`or`、`not`、括弧、`contains` を使えます。
 - `dataNodeSelector` も、同じ形の式を同じ意味で受け付けます。TS 32.158 6.7 は、警報の記録のように属性の要素を条件で選ぶのは `dataNodeSelector` で、`filter` はオブジェクトを選ぶものとしています。TS 28.111 A.1.4 は同じことを `filter` で書いています。FM の仕様である A.1.4 に従って `filter` を受け、6.7 に従う consumer のために `dataNodeSelector` も受けます（下の「仕様のあいだの食い違い」）。
-- `fields` は、`/attributes/alarmRecords/<id>` の形と、`(<id> | <id>)` で並べた形を受け付けます（A.1.4 の例）。
-- `scope` は、OpenAPI のとおり 1 つの問い合わせで、中身は JSON のオブジェクトです。受けるのは `{"scopeType":"BASE_ONLY"}` だけです。`AlarmList` には下のオブジェクトが無いためです。TS 32.158 6.1.2 が書く `scopeType` と `scopeLevel` の 2 つの問い合わせの形は受けず、知らない名前として扱います。
-- それ以外の形の `filter` と `dataNodeSelector`、`attributes`、`BASE_ONLY` 以外の `scope` は、500 で `type` を `SERVER_LIMITATION`、`reason` を `QUERY_PARAMS_TOO_COMPLEX` にします。TS 32.158 6.6.5.2 は、この理由を「正しいが、producer の限りを越えて処理できない」問い合わせに当てています。読めない式は 400 で、`reason` を `QUERY_PARAM_VALUES_INVALID` にします。
+- `fields` は、`/attributes/alarmRecords/<id>` の形と、`(<id> | <id>)` で並べた形を受け付けます（A.1.4 の例）。`fields` があると、答えは一覧の識別（`id`、`objectClass`、`objectInstance`）と、名指しされた警報の記録だけになります。TS 32.158 6.2.3 のとおり、名指しされないほかの属性（`numOfAlarmRecords` や `unreliableAlarmScope` など）は外します。`filter` も一緒にあれば、両方が選んだ記録だけを返します。
+- `fields` が一覧に無い記録だけを名指ししたときも、200 で、記録の無い一覧を返します。6.2.3 は、名指しした属性を持たない資源を外し、何も残らなければ 404 を返すとしています。一方 6.6.5.2 は、問い合わせが何も選ばないことは誤りではないとしています。一覧そのものはいつもあり、記録が消えたことも OSS が確かめたい答えなので、6.6.5.2 に従います（下の「仕様のあいだの食い違い」）。`filter` と `dataNodeSelector` が何も選ばないときも同じです。
+- `scope` は、OpenAPI のとおり 1 つの問い合わせで、中身は JSON のオブジェクトです。受けるのは `{"scopeType":"BASE_ONLY"}` と、`scopeType` の無い `{}` だけです。`AlarmList` には下のオブジェクトが無いためです。`{}` を受けるのは、6.1.2 が、`scopeType` が無ければ `BASE_ONLY` とするからです。TS 32.158 6.1.2 が書く `scopeType` と `scopeLevel` の 2 つの問い合わせの形は受けず、知らない名前として扱います。
+- それ以外の形の `filter` と `dataNodeSelector`、`attributes`、`BASE_ONLY` 以外の `scope` は、500 で `type` を `SERVER_LIMITATION`、`reason` を `QUERY_PARAMS_TOO_COMPLEX` にします。TS 32.158 6.6.5.2 は、この理由を「正しいが、producer の限りを越えて処理できない」問い合わせに当てています。読めない式、JSON として読めない `scope`、OpenAPI の列挙に無い `scopeType`、2 回書かれた問い合わせは 400 で、`reason` を `QUERY_PARAM_VALUES_INVALID` にします。問い合わせそのものを読めない（`%` の後ろが 16 進でないなど）ときは 400 で、`reason` は `QUERY_MALFORMED` です。400 に当たる問題と 500 に当たる問題が 1 つの要求にあれば、400 を答えます。6.6.5.1 は、いちばん根本の理由を答えるとしています。OSS が直せる誤りのほうが先です。
 - 4096 バイトより長い式と、括弧、`not()`、述語を 64 段より深く入れ子にした式も、500 の `QUERY_PARAMS_TOO_COMPLEX` にします。`fields` も 4096 バイトまでです。式を読む処理は入れ子の段ごとに自分を呼ぶので、限りが無いと、深い式 1 つでスタックを使い切り、OAM のプロセスが止まります。購読の `notificationFilter` にも同じ限りを当てます。
 - 知らない名前の問い合わせ（`scopeType`、`scopeLevel` を含む）は、400 で `type` を `VALIDATION_ERROR`、`reason` を `QUERY_PARAM_NAMES_INVALID` にし、`badQueryParams` に名前を書きます（6.6.5.2）。今の保守用の API と同じく、黙って全件を返しません。
 
@@ -158,19 +161,25 @@ Content-Type: application/merge-patch+json
 | 本文 | 答え |
 | --- | --- |
 | `id` が無い | 400。`VALIDATION_ERROR`。TS 32.158 6.3.2 は `id` を必須にしています |
-| `id` が経路の id と違う | 403。`MODIFICATION_NOT_ALLOWED`、`reason` は `ATTRIBUTE_INVARIANT`、`badAttributes` は `#/id`。6.3.2 は同じ値を求めています。違う値は、変えられない id を書き換える要求になります |
+| `id` が経路の id と違う（文字列でない、`null` を含む） | 403。`MODIFICATION_NOT_ALLOWED`、`reason` は `ATTRIBUTE_INVARIANT`、`badAttributes` は `#/id`。6.3.2 は同じ値を求めています。違う値は、変えられない id を書き換える要求になります |
+| `objectClass` か `objectInstance` を書く | 今の値と同じなら受け、何も変えない。違えば 403。`ATTRIBUTE_INVARIANT` |
 | `ackState`、`ackUserId`、`ackSystemId` を書く | 受ける。書き換えられるのはこの 3 つだけです（TS 28.111 7.3.1.2 の `isWritable`） |
-| `ackUserId` が無い | 400。`VALIDATION_ERROR`、`reason` は `NEW_ATTRIBUTE_VALUE_INVALID`。`notifyAckStateChanged` で必須の値だからです（8.8.2） |
-| `perceivedSeverity` か、ほかの読むだけの属性を書く | 403。`MODIFICATION_NOT_ALLOWED`、`reason` は `ATTRIBUTE_NOT_WRITABLE`、`badAttributes` に場所を書く。ここの警報はどれも、上げた役割が下げる ADAC の警報で、OSS は消せません（6.8） |
+| `ackUserId` が無いか空 | 400。`VALIDATION_ERROR`、`reason` は `NEW_ATTRIBUTE_VALUE_INVALID`。`notifyAckStateChanged` で必須の値だからです（8.8.2） |
+| `ackState` が無いか、`ACKNOWLEDGED` と `UNACKNOWLEDGED` のどちらでもない | 400。`NEW_ATTRIBUTE_VALUE_INVALID`。確認の状態はノードが変え、ほかの 2 つはそれと一緒に変わるので、状態の無い確認は当てられません |
+| 3 つの属性の値が文字列でない。警報の記録がオブジェクトでない | 400。`NEW_ATTRIBUTE_VALUE_INVALID` |
+| `perceivedSeverity` か、ほかの読むだけの属性を書く | 403。`MODIFICATION_NOT_ALLOWED`、`reason` は `ATTRIBUTE_NOT_WRITABLE`、`badAttributes` に場所を書く。ここの警報はどれも、上げた役割が下げる ADAC の警報で、OSS は消せません（6.8）。一覧の属性（`operationalState` など）、記録の 3 つのほかの属性、資源の知らない名前も、同じ答えにします。書き換えられるのは 3 つの属性だけなので、知らない名前も書き換えられないものとして扱います |
 | 値が `null`（RFC 7396 の削除） | 403。`ATTRIBUTE_NOT_WRITABLE`。警報の記録を消すのはシステムだけで（6.5）、確認の属性を空にする操作もありません。記録そのもの（`"<id>": null`）も同じです |
-| 一覧に無い警報の id を鍵にする | 400。`type` は `IE_NOT_FOUND`、`reason` は `ATTRIBUTE_NOT_FOUND`、`badAttributes` は `#/attributes/alarmRecords/<id>`。6.6.5.3.2 はこの理由を削除に当てていますが、`type` の意味（6.6.4）は変える対象が無いことで、6.6.5.1 は理由の一覧を閉じたものとしていません。確認の前に、その警報がほかの確認で一覧から消えたときも、この答えになります |
+| 一覧に無い警報の id を鍵にする | 400。`type` は `IE_NOT_FOUND`、`reason` は `ATTRIBUTE_NOT_FOUND`、`badAttributes` は `#/attributes/alarmRecords/<id>`。6.6.5.3.2 はこの理由を削除に当てていますが、`type` の意味（6.6.4）は変える対象が無いことで、6.6.5.1 は理由の一覧を閉じたものとしていません。確認の前に、その警報がほかの確認で一覧から消えたときも、この答えになります。鍵の前のノードの名前がインベントリに無いか、鍵に `.` が無ければ、どのノードにも聞かずにこの答えにします。ノードが 404 で断ったときは、ノードは最初の 1 つしか名前を挙げないので、OAM がそのノードの一覧をもう一度読み、無かった記録をすべて `badAttributes` に並べます。読めなかったか、どれもあったときは、その要求のノードの記録をすべて並べます |
+| ノードが 400 で断る | 400。`VALIDATION_ERROR`、`reason` は `NEW_ATTRIBUTE_VALUE_INVALID`。`badAttributes` は付けない。ノードは `operator` と `ack_system_id`、つまり `ackUserId` と `ackSystemId` を 256 文字までに限っていて（`internal/maintenance` の `maxAckName`）、超えると 400 を返します。上限はノードが決めるもので、OAM は同じ数を持ちません。どちらの属性かは、ノードの答えからは分かりません |
+| ノードが答えない、2xx・400・404 のほかで答える | 502。本文は付けない（下の「誤りの形」） |
+| 経路に問い合わせを付ける | 400。`VALIDATION_ERROR`。6.3.2 は、patch の宛先の URI に問い合わせを付けないとしています |
 | 2 台以上のノードの警報の記録を並べる | 500。`SERVER_LIMITATION`（下の段落） |
 
 1 つの `PATCH` に並べてよいのは、1 台のノードの警報の記録だけです。そのノードは、自分の一覧のロックの中で全部を確かめてから変えます。
 
 TS 32.158 6.3.1 は `PATCH` を不可分とし、一部だけを当てることを禁じています。ノードをまたぐ確認を不可分にするには、ノードのあいだの 2 相の確定が要ります。そこで、2 台以上にまたがる `PATCH` は 500 で断ります（`SIMPLIFIED:`）。OAM は、本文の形と、鍵がどのノードを指すかを、どのノードにも聞く前に確かめます。断るときは、どのノードの一覧も変わっていません。
 
-ほかの Patch の形（`application/json-patch+json` と 3GPP の 2 つの形）は 415 で、`Accept-Patch` に `application/merge-patch+json` を書きます（RFC 5789 2.2、3.1）。3GPP の 2 つの形は、仕様書のあいだで media type の綴りが揃っていません（下の「仕様のあいだの食い違い」）。
+ほかの Patch の形（`application/json-patch+json` と 3GPP の 2 つの形）と、`Content-Type` の無い要求は 415 で、`Accept-Patch` に `application/merge-patch+json` を書きます（RFC 5789 2.2、3.1）。`charset` などの引数は見ません。3GPP の 2 つの形は、仕様書のあいだで media type の綴りが揃っていません（下の「仕様のあいだの食い違い」）。
 
 OAM は、鍵の前のノードの名前で宛先を決め、そのノードの保守用の API で確認を渡します。保守用の `AckStateRequest` には、`ackSystemId` に当たる欄と、複数の警報の記録をまとめて確かめる形を足します。
 
@@ -292,6 +301,12 @@ OAM は複数のインスタンスで動けます（`internal/oam/doc.go`）。�
 
 誤りの本文は TS 32.158 6.6.3 の形にし、型は OpenAPI の `ErrorResponseGet`（`GET`）、`ErrorResponseDefault`（`PUT`、`DELETE`、JSON Merge Patch）を使います。`type` と `reason` の値は 6.6.4 と 6.6.5 から選びます。上の各節に書いたもののほか、ノードに届かなかった確認は 502 にします。TS 32.158 6.6.2 の 502 は、ゲートウェイとして働く producer が、中継した先から正しい答えを得られなかったことを表します。OAM がノードに確認を渡す形に合い、今の `/oam/v1/` の API とも同じです。
 
+本文を付けるのは、6.6.4 が `type` を決めている状態コード（400、403、409、422、500、503）だけです。404（経路がここのオブジェクトを指さない）、405（`Allow` を付ける）、413（本文が 64 KiB を超える）、415（`Accept-Patch` を付ける）、502 には本文を付けません。6.6.4 はこれらに `type` を決めていません。404 については、状態コードのほかに足す情報が無いとも書いています。`ErrorResponseGet` と `ErrorResponseDefault` は `type` を必須にしているので、`type` の無い本文は書けません。独自の値を作るより、状態コードとヘッダだけで答えます。
+
+`title` は、問題の種類ごとに決めた短い英語の文です。値そのものは入れず、`badQueryParams` と `badAttributes` に書きます。6.6.3.1 は、`title` が出るたびに変わらないことを求めています。
+
+`internal/mns` の `ErrorType` と `ErrorReason` には、使う値を定数として足します。この作業で足したのは、6.6.5.2 の `QUERY_MALFORMED` です。
+
 本文の `Content-Type` は `application/json` にします。TS 32.158 6.6.3.1 は誤りの本文の media type を `application/vnd.3gpp.error+json` としていますが、OpenAPI はどの誤りの答えも `application/json` で定義しています。OpenAPI から作った consumer が読めるように、OpenAPI に合わせます。
 
 ## 仕様のあいだの食い違い
@@ -304,6 +319,7 @@ OAM は複数のインスタンスで動けます（`internal/oam/doc.go`）。�
 | 読み出しの範囲の問い合わせが、TS 32.158 6.1.2 と 6.6.5.2 では `scopeType` と `scopeLevel` の 2 つ、`TS28532_ProvMnS.yaml` では中身が JSON のオブジェクトの `scope` 1 つ | OpenAPI の `scope` だけを受ける。`scopeType` と `scopeLevel` は知らない名前として 400 |
 | 警報の記録を条件で選ぶ問い合わせが、TS 32.158 6.7 では `dataNodeSelector`（`filter` はオブジェクトを選ぶもの）、TS 28.111 A.1.4 では `filter` | A.1.4 に従って `filter` で記録を選ぶ。同じ形の `dataNodeSelector` も受ける |
 | TS 28.532 12.1.1.1.3 は `dataNodeSelector` の詳しい説明を TS 32.158 の 6.2a に送っているが、TS 32.158 V20.1.0 に 6.2a は無く、説明は 6.7 にある | 6.7 を読む |
+| `fields` が何も選ばないとき、TS 32.158 6.2.3 では 404、6.6.5.2 では誤りではない | 6.6.5.2 に従い、200 で記録の無い一覧を返す（上の「読み出しの問い合わせ」） |
 | 3GPP の Merge Patch の media type が、TS 28.532 12.1.1.1.4.2 と TS 32.158 4.3.1 では `application/vnd.3gpp.merge-patch+json`、TS 28.532 12.1.1.3.2.1.3.3 と `TS28532_ProvMnS.yaml` では `application/3gpp-merge-patch+json` | 3GPP の形は受けず、RFC 7396 の形だけを受ける |
 | 誤りの本文の media type（上の「誤りの形」） | OpenAPI の `application/json` |
 | `unreliableAlarmScope` の多重度（上の「答えないノード」） | OpenAPI の 1 つの DN |
@@ -384,7 +400,7 @@ e2e で通知を受け取るには、上がる警報が要ります。今は、�
 
 ### 警報の一覧の読み出しと確認
 
-`{MnSRoot}/ProvMnS/v19/SubNetwork={sn}/AlarmList=1` の `GET` と `PATCH`、問い合わせ、`unreliableAlarmScope`、誤りの本文を作ります。OAM の設定に、SubNetwork の名前と `{MnSRoot}` を足します。この作業の `unreliableAlarmScope` は、その要求で答えなかったノードだけを数えます。見張りの状態を足すのは、通知（1 つのインスタンス）の作業です。確かめ方は、本物の `internal/maintenance` のノードと答えないノードを使った `internal/oam` の試験と、確認の本文の各行の誤りの試験です。約 800 行。
+`{MnSRoot}/ProvMnS/v19/SubNetwork={sn}/AlarmList=1` の `GET` と `PATCH`、問い合わせ、`unreliableAlarmScope`、誤りの本文を作ります。OAM の設定に、SubNetwork の名前と `{MnSRoot}` を足します。この作業の `unreliableAlarmScope` は、その要求で答えなかったノードだけを数えます。見張りの状態を足すのは、通知（1 つのインスタンス）の作業です。確かめ方は、本物の `internal/maintenance` のノードと答えないノードを使った `internal/oam` の試験と、確認の本文の各行の誤りの試験です。約 800 行。作りました。この記録が決めていなかった細部（置く場所と設定の項目、`fields` の答え、確認の本文の残りの決まり、本文の無い答え）は、上の「経路と操作」「読み出しの問い合わせ」「確認」「誤りの形」にあります。
 
 ### 購読
 
