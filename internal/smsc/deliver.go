@@ -27,27 +27,53 @@ const statusValidityPeriodExpired sms.Status = 0b100_0110 // permanent error
 // stopped. Each destination goes in a goroutine of its own, so that one
 // slow serving node holds up only its own users. It returns when all
 // are done.
+//
+// While the operator has the SC out of service it claims nothing, and
+// what is due waits for an instance in service (maintenance.go).
 func (c *SMSC) ProcessDue(ctx context.Context) {
 	var running sync.WaitGroup
 	for {
+		// The claim is counted before the administrative state is read,
+		// which narrows the window in which a shut down counts no user
+		// and the claim then follows. A claim that still slips through
+		// is an attempt that the drain cuts, as the maintenance API
+		// serves any session that comes in late.
+		c.userArrived()
+		if !c.unlocked() {
+			c.userQuit()
+			break
+		}
 		l, ok, err := c.store.ClaimDue(ctx, c.clock.Now(), c.cfg.Lease)
 		if err != nil {
+			c.userQuit()
 			c.log.Warn("cannot claim a destination", "error", err.Error())
 			break
 		}
 		if !ok {
+			c.userQuit()
 			break
 		}
-		running.Go(func() { c.serve(ctx, l) })
+		running.Go(func() {
+			defer c.userQuit()
+			c.serve(ctx, l)
+		})
 	}
 	running.Wait()
 }
 
 // deliverSoon tries the queue of destination in the background, if it
 // is due: a short message that has just come goes out at once rather
-// than at the next ProcessDue.
+// than at the next ProcessDue. While the operator has the SC out of
+// service it leaves the queue due, for an instance in service to claim.
 func (c *SMSC) deliverSoon(destination string) {
+	c.userArrived()
+	if !c.unlocked() {
+		c.userQuit()
+		c.log.Info("delivery left to an instance in service", "destination", destination)
+		return
+	}
 	c.started.Go(func() {
+		defer c.userQuit()
 		ctx := context.Background()
 		l, ok, err := c.store.Claim(ctx, destination, c.clock.Now(), c.cfg.Lease)
 		if err != nil {
@@ -63,8 +89,11 @@ func (c *SMSC) deliverSoon(destination string) {
 // time, as TS 23.040 6.2 allows only one outstanding SMS-DELIVER to an
 // MS. After each message it releases the lease and claims the
 // destination anew, so that a long queue does not outlast one lease.
+// Once the operator has taken the SC out of service it claims it no
+// more: the destination is due again, and an instance in service goes
+// on with the queue.
 func (c *SMSC) serve(ctx context.Context, l Lease) {
-	for c.attemptHead(ctx, l) {
+	for c.attemptHead(ctx, l) && c.unlocked() {
 		var ok bool
 		var err error
 		if l, ok, err = c.store.Claim(ctx, l.Destination, c.clock.Now(), c.cfg.Lease); err != nil || !ok {
