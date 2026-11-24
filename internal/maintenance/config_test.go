@@ -44,7 +44,7 @@ func TestConfigurationRefusesAViewWithASecret(t *testing.T) {
 		t.Fatal(err)
 	}
 	rec := httptest.NewRecorder()
-	node.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, ConfigurationPath, nil))
+	checkedHandler(t, node).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, ConfigurationPath, nil))
 	if rec.Code != http.StatusInternalServerError || !strings.Contains(rec.Body.String(), "$.hss.subscriptions[0].password") ||
 		strings.Contains(rec.Body.String(), "secret-test-password") {
 		t.Errorf("GET config = %d %s", rec.Code, rec.Body)
@@ -88,7 +88,7 @@ func TestConfigurationChangeJSON(t *testing.T) {
 	tn := newTestNode(t)
 	rec := httptest.NewRecorder()
 	body := `{"settings":{"pcscf.retry_after":60,"pcscf.max_sessions":100},"operator":"test-operator"}`
-	tn.node.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodPatch, ConfigurationPath, strings.NewReader(body)))
+	tn.handler.ServeHTTP(rec, httptest.NewRequest(http.MethodPatch, ConfigurationPath, strings.NewReader(body)))
 	want := `{"node":"pcscf-1","instance":"pcscf-1-7d9f","generation":1,"time":"2026-11-20T09:00:00Z",` +
 		`"operator":"test-operator","changes":[{"name":"pcscf.retry_after","previous":30,"value":60}]}` + "\n"
 	if rec.Code != http.StatusOK || rec.Body.String() != want {
@@ -146,7 +146,7 @@ func TestConfigurationChangeErrors(t *testing.T) {
 		})
 	}
 	rec := httptest.NewRecorder()
-	tn.node.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodPatch, ConfigurationPath, strings.NewReader(`{"settings":{},"force":true}`)))
+	tn.handler.ServeHTTP(rec, httptest.NewRequest(http.MethodPatch, ConfigurationPath, strings.NewReader(`{"settings":{},"force":true}`)))
 	if rec.Code != http.StatusBadRequest {
 		t.Errorf("PATCH with an unknown field = %d %s", rec.Code, rec.Body)
 	}
