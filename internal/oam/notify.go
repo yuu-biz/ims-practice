@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"hash/fnv"
+	mathrand "math/rand/v2"
 	"sync"
 	"time"
 
@@ -270,26 +271,55 @@ func (nb *northbound) planEvents(node string, st AlarmWatchState, ev maintenance
 // is ErrUnavailable for an OAM without the 3GPP management services, a
 // subscription store or a watch store (Config.AlarmWatches).
 //
-// The instance takes the watch of every node that it can
-// (AlarmWatchStore.Watch), and watches each node it holds on a goroutine
-// of its own (watchNode). Every WatchRenewal it tries again for the
-// nodes that it does not hold, as when a watch was lost, and sends the
-// notifications that misses owe (sendOwed).
+// Every WatchRenewal the instance says that it is present
+// (AlarmWatchStore.Present), and works out its share of the nodes: the
+// number of nodes divided by the number of instances present, rounded
+// up. It takes the watches of nodes that no instance holds, in a new
+// random order each time, until it holds its share, and watches each
+// node it holds on a goroutine of its own (watchNode). When it holds
+// more than its share, as when another instance has started, it gives
+// the extra watches up, each once the events in hand have been sent,
+// for the others to take. Each round costs a read of each instance's
+// presence and at most one attempt per node, so the work of all the
+// instances together grows with the product of their number and the
+// number of nodes, and with neither the subscribers nor the
+// subscriptions. Each round also sends the notifications that misses
+// owe (sendOwed).
 func (s *Server) RunNotifications(ctx context.Context) error {
 	if s.mns == nil || s.ntfSubscriptions == nil || s.watches == nil {
 		return fmt.Errorf("%w: the notifications need the 3GPP management services, a subscription store and a watch store", ErrUnavailable)
 	}
 	var (
-		mu       sync.Mutex
-		watching = map[string]bool{}
+		mu sync.Mutex
+		// watching holds, for each node watched, what tells its watcher
+		// to give the watch up.
+		watching = map[string]chan struct{}{}
 		wg       sync.WaitGroup
 	)
-	take := func() {
-		for _, e := range s.nodes {
+	round := func() {
+		present, err := s.watches.Present(ctx, s.instance)
+		if err != nil {
+			if ctx.Err() == nil {
+				s.log.Warn("the presence of the instance could not be written", "error", err.Error())
+			}
+			return
+		}
+		present = max(present, 1)
+		share := (len(s.nodes) + present - 1) / present
+		mu.Lock()
+		held := giveUp(watching, share, func(node string) {
+			s.log.Info("giving the watch of a node up for another instance", "node", node, "share", share)
+		})
+		mu.Unlock()
+		for _, k := range mathrand.Perm(len(s.nodes)) {
+			if held >= share || ctx.Err() != nil {
+				return
+			}
+			e := s.nodes[k]
 			mu.Lock()
-			held := watching[e.Name]
+			_, busy := watching[e.Name]
 			mu.Unlock()
-			if held {
+			if busy {
 				continue
 			}
 			w, ok, err := s.watches.Watch(ctx, e.Name, s.instance)
@@ -302,18 +332,20 @@ func (s *Server) RunNotifications(ctx context.Context) error {
 			if !ok {
 				continue
 			}
+			release := make(chan struct{})
 			mu.Lock()
-			watching[e.Name] = true
+			watching[e.Name] = release
 			mu.Unlock()
+			held++
 			wg.Go(func() {
-				s.watchNode(ctx, e, w)
+				s.watchNode(ctx, e, w, release)
 				mu.Lock()
 				delete(watching, e.Name)
 				mu.Unlock()
 			})
 		}
 	}
-	take()
+	round()
 	s.sendOwed(ctx)
 	t := time.NewTicker(s.watchRenewal)
 	defer t.Stop()
@@ -324,10 +356,34 @@ func (s *Server) RunNotifications(ctx context.Context) error {
 			s.owed.Wait()
 			return nil
 		case <-t.C:
-			take()
+			round()
 			s.sendOwed(ctx)
 		}
 	}
+}
+
+// giveUp tells the watchers beyond share to give their watches up, and
+// says how many watches are then held. A watch that its watcher is
+// giving up already, whose release is closed, is held no more: it
+// counts neither towards share nor as one to give up, so that a round
+// that comes while a watcher finishes its events does not give up a
+// second watch for the same one too many.
+func giveUp(watching map[string]chan struct{}, share int, gave func(node string)) (held int) {
+	var kept []string
+	for node, release := range watching {
+		select {
+		case <-release:
+		default:
+			kept = append(kept, node)
+		}
+	}
+	for len(kept) > share {
+		node := kept[len(kept)-1]
+		kept = kept[:len(kept)-1]
+		close(watching[node])
+		gave(node)
+	}
+	return len(kept)
 }
 
 // watchNode sends the notifications of the node e while it holds the
@@ -338,7 +394,8 @@ func (s *Server) RunNotifications(ctx context.Context) error {
 // notifyPotentialFaultyAlarmList, and asked again after a wait. The
 // watch is renewed on a goroutine of its own, so that a slow node or a
 // slow OSS does not let it run out; once it is lost, the watcher stops.
-func (s *Server) watchNode(ctx context.Context, e Endpoint, w AlarmWatch) {
+// So it does when release closes, before it asks the node again.
+func (s *Server) watchNode(ctx context.Context, e Endpoint, w AlarmWatch, release <-chan struct{}) {
 	ctx, cancel := context.WithCancel(ctx)
 	renewed := make(chan struct{})
 	// On the way out the renewals stop first, then the watch is given
@@ -389,11 +446,23 @@ func (s *Server) watchNode(ctx context.Context, e Endpoint, w AlarmWatch) {
 		st = next
 		return true
 	}
-	for ctx.Err() == nil {
-		callCtx, done := context.WithTimeout(ctx, s.alarmEventsWait+s.nodeTimeout)
+	// pollCtx also ends with release, so that a watch is given up
+	// without waiting out a request; what the request would have
+	// answered is asked again by the next holder.
+	pollCtx, stopPolling := context.WithCancel(ctx)
+	defer stopPolling()
+	go func() {
+		select {
+		case <-release:
+			stopPolling()
+		case <-pollCtx.Done():
+		}
+	}()
+	for pollCtx.Err() == nil {
+		callCtx, done := context.WithTimeout(pollCtx, s.alarmEventsWait+s.nodeTimeout)
 		ev, err := client.AlarmEvents(callCtx, maintenance.AlarmEventsQuery{After: st.LastNumber, Wait: s.alarmEventsWait})
 		done()
-		if ctx.Err() != nil {
+		if pollCtx.Err() != nil {
 			return
 		}
 		if err != nil {
@@ -404,18 +473,18 @@ func (s *Server) watchNode(ctx context.Context, e Endpoint, w AlarmWatch) {
 				next.Transitions++
 				n, nerr := s.mns.potentialFaultyAlarmList(s.mns.managedElement(e.Name),
 					alarmNotificationID(st.Seed, e.Name, "unreachable", fmt.Sprint(next.Transitions)), s.now())
-				if nerr == nil && !s.deliver(ctx, ctx, e.Name, n) {
+				if nerr == nil && !s.deliver(ctx, pollCtx, e.Name, n) {
 					return
 				}
 				if !save(next) {
 					return
 				}
 			}
-			s.sleep(ctx, s.alarmEventsWait)
+			s.sleep(pollCtx, s.alarmEventsWait)
 			continue
 		}
 		for _, step := range s.mns.planEvents(e.Name, st, ev, s.now()) {
-			if !s.deliver(ctx, ctx, e.Name, step.notifications...) {
+			if !s.deliver(ctx, pollCtx, e.Name, step.notifications...) {
 				return
 			}
 			// An answer without events, as when the wait ends, leaves the
