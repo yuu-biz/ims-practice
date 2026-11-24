@@ -57,19 +57,7 @@ type NodeAlarmRecord struct {
 // merges the records.
 func (s *Server) Alarms(ctx context.Context, targets []Endpoint, f maintenance.AlarmFilter) Alarms {
 	lists := fanOut(ctx, s, targets, func(ctx context.Context, c *maintenance.Client, _ Endpoint) (maintenance.AlarmList, error) {
-		l, err := c.Alarms(ctx, f)
-		if err != nil {
-			return l, err
-		}
-		// The node checks each alarm when it is raised; a node of
-		// another build might not, and the OAM passes on nothing that
-		// may hold a secret or name a subscriber.
-		for _, r := range l.AlarmRecords {
-			if err := maintenance.CheckAlarmRecord(r); err != nil {
-				return maintenance.AlarmList{}, fmt.Errorf("the node's alarm list: %w", err)
-			}
-		}
-		return l, nil
+		return readAlarmList(ctx, c, f)
 	})
 	a := Alarms{Succeeded: lists.Succeeded, Failed: lists.Failed, Nodes: make([]NodeResult[AlarmListInfo], len(lists.Nodes)), Alarms: []NodeAlarmRecord{}}
 	order := map[string]int{}
@@ -99,6 +87,23 @@ func (s *Server) Alarms(ctx context.Context, targets []Endpoint, f maintenance.A
 		)
 	})
 	return a
+}
+
+// readAlarmList reads the alarm list of a node with the filter.
+func readAlarmList(ctx context.Context, c *maintenance.Client, f maintenance.AlarmFilter) (maintenance.AlarmList, error) {
+	l, err := c.Alarms(ctx, f)
+	if err != nil {
+		return l, err
+	}
+	// The node checks each alarm when it is raised; a node of another
+	// build might not, and the OAM passes on nothing that may hold a
+	// secret or name a subscriber.
+	for _, r := range l.AlarmRecords {
+		if err := maintenance.CheckAlarmRecord(r); err != nil {
+			return maintenance.AlarmList{}, fmt.Errorf("the node's alarm list: %w", err)
+		}
+	}
+	return l, nil
 }
 
 // SetAckState acknowledges an alarm of one node, or takes the
