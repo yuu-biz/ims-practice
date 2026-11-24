@@ -139,7 +139,7 @@ for node in answer["nodes"]:
 print("%d/%d %s" % (answer["succeeded"], answer["succeeded"] + answer["failed"], " ".join(sorted(states))))
 '
 }
-want_states="9/9 agw=UNLOCKED hss=UNLOCKED icscf=UNLOCKED ipsmgw=UNLOCKED mmtel=UNLOCKED mrfc=UNLOCKED mrfp=UNLOCKED pcscf=UNLOCKED scscf=UNLOCKED"
+want_states="10/10 agw=UNLOCKED hss=UNLOCKED icscf=UNLOCKED ipsmgw=UNLOCKED mmtel=UNLOCKED mrfc=UNLOCKED mrfp=UNLOCKED pcscf=UNLOCKED sc=UNLOCKED scscf=UNLOCKED"
 # Up to a minute: a node whose listener was not up yet when the OAM
 # asked is a failed entry, and the OAM asks again at the next request.
 all_unlocked() { [ "$(node_states 2>/dev/null)" = "$want_states" ]; }

@@ -437,7 +437,7 @@ The `oam` service is the OAM server. It operates each node through the maintenan
 
 Its port is on no address of the host. The API changes the configuration of the nodes and hands out archives that hold the credentials of every subscription, and it asks for no password, so the requests below go from inside the container of the OAM, as those to the maintenance API of a node do.
 
-The inventory in `deploy/compose/oam.yaml` holds the nine nodes that serve the maintenance API: the three CSCFs, the HSS, the MMTel AS, the MRFC, the IP-SM-GW and the two media relays. One request reads the state of all of them:
+The inventory in `deploy/compose/oam.yaml` holds the ten nodes that serve the maintenance API: the three CSCFs, the HSS, the MMTel AS, the MRFC, the IP-SM-GW, the Service Centre and the two media relays. One request reads the state of all of them:
 
 ```sh
 docker compose exec oam wget -qO - http://127.0.0.1:8080/oam/v1/state
