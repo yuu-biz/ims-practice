@@ -2,9 +2,7 @@ package hss
 
 import (
 	"fmt"
-	"log/slog"
 	"slices"
-	"sync/atomic"
 
 	"github.com/yuu-biz/ims-practice/internal/diameter"
 	"github.com/yuu-biz/ims-practice/internal/maintenance"
@@ -64,12 +62,23 @@ const role = "hss"
 // it serves the subscribers from its Store; a Store it cannot read
 // fails the one request rather than the role.
 func (h *HSS) Function(server *diameter.Server) maintenance.Function {
-	d := &drain{server: server, log: h.log}
+	d := diameter.NewListenerDrain(server, h.log)
 	return maintenance.Function{
-		Role:                       role,
-		OperationalState:           d.operationalState,
-		Users:                      func() int { return int(h.requests.Load()) },
-		AdministrativeStateChanged: d.administrativeStateChanged,
+		Role: role,
+		OperationalState: func() maintenance.OperationalState {
+			if d.Reachable() {
+				return maintenance.Enabled
+			}
+			return maintenance.Disabled
+		},
+		Users: func() int { return int(h.requests.Load()) },
+		// SHUTTINGDOWN and LOCKED both stop the node taking on a new
+		// peer, which is the X.731 7.1.3 difference between them: a
+		// SHUTTINGDOWN function serves the users it has, and a LOCKED one
+		// serves no one, so LOCKED also ends the connections it holds.
+		AdministrativeStateChanged: func(_, to maintenance.AdministrativeState) {
+			d.Change(to == maintenance.Unlocked, to == maintenance.Locked)
+		},
 	}
 }
 
@@ -151,49 +160,4 @@ func (h *HSS) requestAnswered() {
 	if m := h.managed.Load(); m != nil {
 		m.UserQuit()
 	}
-}
-
-// drain is what the HSS does to the Diameter connections of its node
-// when the operator changes its administrative state.
-type drain struct {
-	server *diameter.Server
-	log    *slog.Logger
-	// cannotListen is set when the node failed to listen for Diameter
-	// connections again after an unlock, so that no peer can reach the
-	// HSS although the operator means it to serve.
-	cannotListen atomic.Bool
-}
-
-// administrativeStateChanged takes the HSS out of service and brings it
-// back. SHUTTINGDOWN and LOCKED both stop the node taking on a new
-// peer, which is the X.731 7.1.3 difference between them: a
-// SHUTTINGDOWN function serves the users it has, and a LOCKED one
-// serves no one, so LOCKED also ends the connections it holds.
-func (d *drain) administrativeStateChanged(from, to maintenance.AdministrativeState) {
-	accepting := to == maintenance.Unlocked
-	err := d.server.SetAccepting(accepting)
-	d.cannotListen.Store(err != nil)
-	if err != nil {
-		// A bind that fails on an unlock leaves the HSS UNLOCKED and
-		// DISABLED, and nothing here tries it again: the maintenance API
-		// tells the role of a change of state, and a second unlock of a
-		// function that is UNLOCKED already is no change. The operator
-		// locks the HSS and unlocks it again, which is one transition each
-		// and comes back through here.
-		d.log.Error("cannot listen for Diameter connections again", "error", err.Error())
-	}
-	if to == maintenance.Locked {
-		// Each peer gets a DPR with REBOOTING and the connection closes
-		// once its DPA comes back or the Answer timer passes (RFC 6733
-		// 5.4). This returns when the last one is closed, so the operator
-		// learns that the HSS is LOCKED only once it really is.
-		d.server.DisconnectPeers()
-	}
-}
-
-func (d *drain) operationalState() maintenance.OperationalState {
-	if d.cannotListen.Load() {
-		return maintenance.Disabled
-	}
-	return maintenance.Enabled
 }
