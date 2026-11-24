@@ -185,12 +185,12 @@ const (
 
 // NotificationHeader is what every notification carries (TS 28.532
 // 11.0.2, 12.0.2.1; the schema NotificationHeader of
-// TS28623_ComDefs.yaml). Href is the canonical URI (TS 32.158 4.2.4)
-// of the object the notification is about: it stands for the
-// objectClass and objectInstance of TS 28.532 11.0.2 (TS 28.111 A.1.2).
-// SystemDN is the DN of the producer: the DN of the root object when
-// there is no MnsAgent object. NotificationId tells the notifications
-// of one object apart.
+// TS28623_ComDefs.yaml). Href is the canonical URI (TS 32.158 4.2.4,
+// MnSRoot.CanonicalURI) of the object the notification is about: it
+// stands for the objectClass and objectInstance of TS 28.532 11.0.2
+// (TS 28.111 A.1.2). SystemDN is the DN of the producer: the DN of the
+// root object when there is no MnsAgent object. NotificationId tells
+// the notifications of one object apart.
 //
 // SIMPLIFIED: TS 28.532 V20.2.0 11.0.2. sequenceNo and subscriptionId
 // are left out: a producer carries them only when it supports the
