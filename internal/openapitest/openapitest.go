@@ -40,8 +40,9 @@
 //     /contexts/{id}, which is also how net/http.ServeMux writes them.
 //   - Parameters in the path and the query, written in place or as a
 //     $ref to components/parameters.
-//   - Request bodies and answers, written in place or, for answers, as a
-//     $ref to components/responses, with the headers of an answer.
+//   - Request bodies and answers, written in place or as a $ref to
+//     components/requestBodies and components/responses, with the
+//     headers of an answer.
 //   - In a schema, the keywords in schemaKeywords, and a $ref into the
 //     same document or into another OpenAPI document beside it. Every object schema
 //     says what it does with the properties that it does not list
@@ -87,9 +88,10 @@ type (
 		Description string `yaml:"description"`
 	}
 	components struct {
-		Schemas    map[string]any       `yaml:"schemas"`
-		Responses  map[string]response  `yaml:"responses"`
-		Parameters map[string]parameter `yaml:"parameters"`
+		Schemas       map[string]any         `yaml:"schemas"`
+		Responses     map[string]response    `yaml:"responses"`
+		Parameters    map[string]parameter   `yaml:"parameters"`
+		RequestBodies map[string]requestBody `yaml:"requestBodies"`
 	}
 	pathItem struct {
 		Summary     string     `yaml:"summary"`
@@ -118,6 +120,7 @@ type (
 		Schema      any    `yaml:"schema"`
 	}
 	requestBody struct {
+		Ref         string               `yaml:"$ref"`
 		Description string               `yaml:"description"`
 		Required    bool                 `yaml:"required"`
 		Content     map[string]mediaType `yaml:"content"`
@@ -387,7 +390,9 @@ func (d *Document) check() error {
 			if want := slices.Sorted(slices.Values(inPath)); !slices.Equal(declared, want) {
 				return fmt.Errorf("%s: declares the path parameters %v, the path has %v", where, declared, want)
 			}
-			if b := op.RequestBody; b != nil && len(b.Content) == 0 {
+			if b, _, err := d.requestBody(op, ""); err != nil {
+				return fmt.Errorf("%s: %v", where, err)
+			} else if b != nil && len(b.Content) == 0 {
 				return fmt.Errorf("%s: requestBody has no content", where)
 			}
 			if len(op.Responses) == 0 {
@@ -426,6 +431,25 @@ func (d *Document) parameter(p parameter) (parameter, error) {
 		return p, fmt.Errorf("$ref %q: no such parameter", p.Ref)
 	}
 	return q, nil
+}
+
+// requestBody gives the request body of op, which may be a $ref to
+// components/requestBodies, and the JSON pointer to it; base is the
+// pointer to op.
+func (d *Document) requestBody(op *operation, base string) (*requestBody, string, error) {
+	b := op.RequestBody
+	if b == nil || b.Ref == "" {
+		return b, base + "/requestBody", nil
+	}
+	name, ok := strings.CutPrefix(b.Ref, "#/components/requestBodies/")
+	if !ok {
+		return nil, "", fmt.Errorf("$ref %q is not to components/requestBodies", b.Ref)
+	}
+	q, ok := d.doc.Components.RequestBodies[name]
+	if !ok {
+		return nil, "", fmt.Errorf("$ref %q: no such request body", b.Ref)
+	}
+	return &q, "/components/requestBodies/" + escape(name), nil
 }
 
 func (d *Document) response(r response) (response, error) {
@@ -487,6 +511,13 @@ func (d *Document) compile(tree any) error {
 			return err
 		}
 	}
+	for name, b := range d.doc.Components.RequestBodies {
+		for mt, m := range b.Content {
+			if err := add("/components/requestBodies/"+escape(name)+"/content/"+escape(mt)+"/schema", m.Schema); err != nil {
+				return err
+			}
+		}
+	}
 	for path, item := range d.doc.Paths {
 		for _, method := range methods {
 			op := item.operation(method)
@@ -501,7 +532,7 @@ func (d *Document) compile(tree any) error {
 					}
 				}
 			}
-			if b := op.RequestBody; b != nil {
+			if b := op.RequestBody; b != nil && b.Ref == "" {
 				for mt, m := range b.Content {
 					if err := add(base+"/requestBody/content/"+escape(mt)+"/schema", m.Schema); err != nil {
 						return err
@@ -792,7 +823,7 @@ func (d *Document) request(r *http.Request, body []byte, op *operation, base str
 			problems = append(problems, "query parameter "+name+" is not in the document")
 		}
 	}
-	b := op.RequestBody
+	b, bodyPointer, _ := d.requestBody(op, base)
 	switch {
 	case b == nil && len(body) > 0:
 		problems = append(problems, "the operation takes no body")
@@ -806,7 +837,7 @@ func (d *Document) request(r *http.Request, body []byte, op *operation, base str
 		if err != nil {
 			return append(problems, "request "+err.Error())
 		}
-		if err := d.validateBody(base+"/requestBody/content/"+escape(mt)+"/schema", mt, body); err != nil {
+		if err := d.validateBody(bodyPointer+"/content/"+escape(mt)+"/schema", mt, body); err != nil {
 			problems = append(problems, "request body: "+err.Error())
 		}
 	}
