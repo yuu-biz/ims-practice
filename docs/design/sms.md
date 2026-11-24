@@ -4,17 +4,17 @@
 
 ## 選んだこと
 
-- SMS は `ims` コマンドの役割 `ipsmgw`（IP-SM-GW）と、その中の SC のスタブで運びます。
-- IP-SM-GW は Go のインタフェースを通して SC を呼びます。この境界の後ろの実装を差し替えられます。
+- SMS は `ims` コマンドの役割 `ipsmgw`（IP-SM-GW）と `sc`（SC）で運びます。
+- IP-SM-GW は Go のインタフェースを通して SC を呼びます。この境界の後ろの実装を差し替えられます。網では SGd の Diameter のクライアント、サービスセンタのノードを置かない構成ではプロセスの中のスタブです。
 - S-CSCF が iFC で IP-SM-GW を呼び出します。
 
 | 主題 | 作り |
 | --- | --- |
 | IP-SM-GW の置き場所 | `ims` コマンドの役割 `ipsmgw` にします。AS の URI は DNS で引くので、複数台で動かせます。 |
-| SC | IP-SM-GW と同じプロセスの中のスタブにします。TS 24.341 B.5 の例も、IP-SM-GW が SC に直接届くと仮定しています。スタブには SGd、S6c、蓄積と再送を作らず、`SIMPLIFIED:` に書きます。IP-SM-GW が外の SC から SGd で受ける側は「IP-SM-GW の SGd の作り」にあります。 |
-| SC との境界 | IP-SM-GW は Go のインタフェースを通して SC を呼びます。SC は周辺ノードのスタブなので、インタフェースの境界で本格的な実装に差し替えられるようにします。SC を独立した役割にし、SGd と S6c で通信するときは、このインタフェースを Diameter のクライアントで実装します。境界の後ろの実装を替えるだけなので、IP-SM-GW の作りは変わりません。 |
+| SC | `ims` コマンドの役割 `sc` にします。`internal/smsc` を動かし、S6c で HSS と、SGd で IP-SM-GW とやり取りします。TS 23.040 4.1 が SMS-SC、SMS-IWMSC、SMS-GMSC を 1 つのノードにまとめてよいとするので、この役割はその 3 つを兼ねます。プロセスの中のスタブ（`internal/sc`）は、サービスセンタのノードを置かない構成（`deploy/interconnect`）だけで使います。 |
+| SC との境界 | IP-SM-GW は Go のインタフェースを通して SC を呼びます。この境界の後ろに、SGd の Diameter のクライアント（`internal/ipsmgw/smsiwmsc.go`）か、プロセスの中のスタブ（`internal/sc`）を置きます。どちらにするかは、Diameter の相手に種別 `sc` があるかどうかで決めます。設定の項目を増やさず、相手が無ければスタブという形にしました。 |
 | MT の送り先 | IP-SM-GW は MESSAGE を網の入口の I-CSCF へ送ります。I-CSCF が LIR で S-CSCF を探すので、通話の着信と同じ流れになります。 |
-| 受信者の決め方 | SC のスタブが、TP-DA の番号から Sh の UDR で IMPU を引きます。SRI-for-SM の代わりであることを `SIMPLIFIED:` に書きます。 |
+| 受信者の決め方 | SC は TP-DA の番号について HSS に SRR を送ります。スタブは代わりに Sh の UDR で IMPU を引き、SRI-for-SM の代わりであることを `SIMPLIFIED:` に書きます。 |
 | iFC の範囲 | Priority、CNF と DNF、ConditionNegated、SPT の Method、SIPHeader、SessionCase、RequestURI、DefaultHandling、ServiceInfo、第三者 REGISTER に対応します。SessionCase は、未登録の利用者の場合を含めて扱います。SessionDescription と RegistrationType は作らず、`SIMPLIFIED:` に書きます。 |
 | ODI の状態 | ODI はランダムな ID にし、続きの評価に要る状態を S-CSCF の `Store` に期限付きで置きます。 |
 | IP-SM-GW の状態 | 配達の途中の状態を `Store` の後ろに置きます。どの台が delivery report を受けても処理できます。外部の保存先は [state-redundancy.md](state-redundancy.md) にあります。 |
@@ -22,6 +22,20 @@
 | HSS への登録 | IP-SM-GW は第三者 REGISTER を受けると、Sh の PUR で HSS に自分のアドレスを登録します。MAP は使いません。 |
 | HSS の S6c | HSS は SMS の中心の機能（SMS-GMSC と SMS-IWMSC）と S6c で話します。SRR に答え、RDR で message waiting data を書き換え、利用者が受け取れるようになったら ALR で知らせます。 |
 | 文字の符号化 | GSM 7 ビットの既定アルファベットと UCS2 に対応します。連結 SMS（UDH）と有効期間は作らず、`SIMPLIFIED:` に書きます。 |
+
+## SC の役割の作り
+
+SC を独立した役割にするにあたって決めたことです。
+
+| 主題 | 作り | 根拠 |
+| --- | --- | --- |
+| 接続を開く側 | SC が待ち受け、IP-SM-GW が開きます。serving node は、UE が出したショートメッセージを持ち込む側でもあるためです。SC は TFR を、その IP-SM-GW が開いた接続で返します。 | TS 29.338 6.3.1.1 と 6.3.1.2。 |
+| OFR の宛先 | Destination-Realm だけを入れ、Destination-Host は入れません。SC が複数台あるとき、どの台が答えてもよいためです。 | TS 29.338 6.3.1.1 が、SC のアドレスから SMS-IWMSC の名前を引けない serving node に realm だけを入れさせます。 |
+| OFA から UE への原因 | 結果コードと SM-Enumerated-Delivery-Failure-Cause を、同じことを表す TS 24.011 Table 8.4 part 1 の RP-Cause に写します。TP-FCS は OFA の SMS-SUBMIT-REPORT にあるので、そのまま UE へ渡します。この対応を決める条項は見つかっていません（[unverified-clauses.md](../unverified-clauses.md)）。 | TS 29.338 6.2.1.1、6.2.1.3。TS 24.011 Table 8.4 part 1。 |
+| TFA を待つ時間 | IP-SM-GW が TFA を返すまでの時間（`ipsmgw.DefaultOutcomeWait`、66 秒）より長くします。待つ時間の定数を IP-SM-GW の側に置き、SC の役割がそれを読みます。2 つの値がずれないようにするためです。 | TS 23.204 6.5a NOTE 1 が、足りなければ SMS-GMSC のタイマーを延ばすとします。 |
+| 再送の間隔 | 設定の `sc.retry_delays` で決めます。Compose の構成では 1 時間にしました。預かったショートメッセージを動かすのが HSS の知らせであることを、手順書とキャプチャで見せるためです。再送は、知らせが届かなかったときの備えです。 | TS 23.040 3.2.7 NOTE 5 が、この自発的な再送を運用者に任せます。 |
+| 状態の置き場所 | 預かったショートメッセージと配達の途中を `Store` の後ろに置きます（`internal/kvstore/smscstore`）。どの台でも受け取れ、どの台でも配達できます。止まった台が持っていた宛先は、その期限が切れたあとに別の台が引き取ります。 | － |
+| 保守用の API | 置きません。SC には運用の状態（administrative state）がまだ無いので、保守用の待ち受けは `/metrics` だけを出します。 | － |
 
 ## HSS の S6c の作り
 
