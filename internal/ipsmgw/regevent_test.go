@@ -1,6 +1,7 @@
 package ipsmgw_test
 
 import (
+	"errors"
 	"strconv"
 	"strings"
 	"testing"
@@ -175,6 +176,88 @@ func TestThirdPartyRegisterSubscribesToTheRegistrationState(t *testing.T) {
 		t.Errorf("NOTIFY after the end answered %d, want 481", resp.StatusCode)
 	}
 	h.noUpdate()
+}
+
+// TestRegistrationKeepsTheIMSI: before it registers itself for a user,
+// the IP-SM-GW reads the user's IMSI over Sh (TS 29.328 7.6.24) and
+// keeps it, so that a TFR, which names the recipient of a short message
+// by IMSI, finds the user (TS 29.338 Table 6.2.2.1/1). The
+// deregistration takes the subscription and the IMSI with it.
+func TestRegistrationKeepsTheIMSI(t *testing.T) {
+	store := ipsmgw.NewMemoryStore()
+	h := newHarness(t, store, time.Minute, answerOK)
+	// The HSS may name this IP-SM-GW to an SMS-GMSC as soon as it has the
+	// PUR, so the IMSI has to find a user who takes short messages by
+	// then: a TFR that crossed the answer would otherwise be told that
+	// the user is unknown, or absent.
+	foundAtPUR := make(chan bool, 2)
+	hook := func() {
+		sub, ok, err := store.RegSubscriptionOfIMSI(t.Context(), aliceIMSI)
+		foundAtPUR <- ok && err == nil && sub.Available
+	}
+	h.hss.onUpdate.Store(&hook)
+	h.thirdPartyRegister(3600)
+	subscribe := h.subscribed()
+	h.send(notify(subscribe, 1, "active;expires=3761", regDoc(reginfo.Active, reginfo.Active, "+g.3gpp.smsip")))
+	if got := h.nextUpdate(); got != registered {
+		t.Fatalf("PUR = %+v, want %+v", got, registered)
+	}
+	sub, ok, err := store.RegSubscriptionOfIMSI(t.Context(), aliceIMSI)
+	if err != nil || !ok {
+		t.Fatalf("RegSubscriptionOfIMSI(%s) = %v, %v", aliceIMSI, ok, err)
+	}
+	if sub.PublicIdentity != alice || sub.MSISDN != "12025550101" || !sub.Available {
+		t.Errorf("the subscription found by IMSI = %+v", sub)
+	}
+	if !<-foundAtPUR {
+		t.Error("the IMSI found no user who takes short messages while the PUR was with the HSS")
+	}
+	h.hss.onUpdate.Store(nil)
+
+	h.send(notify(subscribe, 2, "terminated;reason=noresource", regDoc(reginfo.Terminated, reginfo.Terminated)))
+	if got := h.nextUpdate(); got != unregistered {
+		t.Fatalf("PUR = %+v, want %+v", got, unregistered)
+	}
+	if _, ok, err := store.RegSubscriptionOfIMSI(t.Context(), aliceIMSI); err != nil || ok {
+		t.Errorf("RegSubscriptionOfIMSI after the deregistration = %v, %v", ok, err)
+	}
+}
+
+// A PUR that the HSS refuses takes back what the IP-SM-GW wrote before
+// it: the user takes no short messages through this IP-SM-GW, and the
+// next NOTIFY tells the HSS again.
+func TestARegistrationThatFailsIsTakenBack(t *testing.T) {
+	store := ipsmgw.NewMemoryStore()
+	h := newHarness(t, store, time.Minute, answerOK)
+	refused := errors.New("DIAMETER_UNABLE_TO_COMPLY")
+	h.hss.updateFails.Store(&refused)
+	h.thirdPartyRegister(3600)
+	subscribe := h.subscribed()
+	h.send(notify(subscribe, 1, "active;expires=3761", regDoc(reginfo.Active, reginfo.Active, "+g.3gpp.smsip")))
+	if got := h.nextUpdate(); got != registered {
+		t.Fatalf("PUR = %+v, want %+v", got, registered)
+	}
+	// The PUR has failed once its update is out; the take back follows.
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		sub, ok, err := store.RegSubscriptionOfIMSI(t.Context(), aliceIMSI)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if ok && !sub.Available {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("subscription found by IMSI = %+v, %v; want it kept, taking no short messages", sub, ok)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	h.hss.updateFails.Store(nil)
+	h.send(notify(subscribe, 2, "active;expires=3600", regDoc(reginfo.Active, reginfo.Active, "+g.3gpp.smsip")))
+	if got := h.nextUpdate(); got != registered {
+		t.Fatalf("PUR after the NOTIFY = %+v, want %+v", got, registered)
+	}
 }
 
 // TestNotifyWithNoTimeLeftEndsTheSubscription is RFC 6665 4.1.3: the

@@ -215,7 +215,7 @@ func (g *IPSMGW) refreshRegEvent(sub RegSubscription, expires time.Duration, log
 			log.Warn("ended reg event subscription not removed: the store failed", "error", err.Error())
 		}
 		if current.Available {
-			g.updateHSS(current, false, log)
+			g.updateHSS(&current, false, log)
 		}
 	}()
 }
@@ -335,7 +335,7 @@ func (g *IPSMGW) receiveRegEvent(st *sip.ServerTransaction) {
 	if available == sub.Available {
 		return
 	}
-	if g.updateHSS(sub, available, log) && !ends {
+	if g.updateHSS(&sub, available, log) && !ends {
 		sub.Available = available
 		if err := g.store.PutRegSubscription(ctx, sub); err != nil {
 			// The NOTIFY has been answered and the HSS told. The Store
@@ -375,13 +375,22 @@ func takesShortMessages(doc reginfo.Document, publicID string) bool {
 // without it when the user no longer can. The PUR names the user by the
 // MSISDN that TS 24.341 B.3 step 9 uses.
 //
+// A registration reads the IMSI of the user over Sh first (TS 29.328
+// 7.6.24) and stores it in sub, so that a TFR, which names the
+// recipient by IMSI, finds the user (sgd.go). Both come before the PUR
+// because the PUR is what makes the HSS name this IP-SM-GW to an
+// SMS-GMSC: a TFR could arrive before the IP-SM-GW has the answer. The HSS has no
+// IMSI for a subscription whose private identity is not derived from
+// one, and the IP-SM-GW registers itself for that user all the same;
+// only SGd cannot reach it (sgd.go).
+//
 // SIMPLIFIED: TS 24.341 5.3.3.2. Without an MSISDN in service-info, the
 // IP-SM-GW would take the IMSI from the private identity of the UE's
 // REGISTER, which a third-party REGISTER can carry in a message/sip
 // body. The S-CSCF of this project sends no such body, so the PUR names
 // the user by the public identity, which Sh accepts as well (TS 29.328
 // Table 7.6.1).
-func (g *IPSMGW) updateHSS(sub RegSubscription, available bool, log *slog.Logger) bool {
+func (g *IPSMGW) updateHSS(sub *RegSubscription, available bool, log *slog.Logger) bool {
 	id := sh.UserIdentity{PublicIdentity: sub.PublicIdentity}
 	if sub.MSISDN != "" {
 		id = sh.UserIdentity{MSISDN: sub.MSISDN}
@@ -391,8 +400,36 @@ func (g *IPSMGW) updateHSS(sub RegSubscription, available bool, log *slog.Logger
 		number = g.cfg.Number
 	}
 	log = log.With("msisdn", id.MSISDN)
-	if err := g.hss.UpdateSMSRegistrationInfo(context.Background(), id, number); err != nil {
+	ctx := context.Background()
+	if available {
+		imsi, err := g.hss.IMSI(ctx, sub.PublicIdentity)
+		if err != nil {
+			log.Warn("the IMSI of the user was not read", "error", err.Error())
+			return false
+		}
+		sub.IMSI = imsi
+		log = log.With("imsi", imsi)
+		// The subscription says that the user takes short messages, with
+		// the IMSI, before the PUR goes: a TFR that the HSS sets off from
+		// the PUR, through the alert of TS 23.040 3.2.6 item 2c, may come
+		// before the IP-SM-GW has the answer, and finds a user it can
+		// deliver to then. A PUR that fails takes that back, so that the
+		// next NOTIFY tells the HSS again.
+		sub.Available = true
+		if err := g.store.PutRegSubscription(ctx, *sub); err != nil {
+			log.Warn("the IMSI of the user was not stored: the store failed", "error", err.Error())
+			sub.Available = false
+			return false
+		}
+	}
+	if err := g.hss.UpdateSMSRegistrationInfo(ctx, id, number); err != nil {
 		log.Warn("SMS registration in the HSS failed", "error", err.Error())
+		if available {
+			sub.Available = false
+			if err := g.store.PutRegSubscription(ctx, *sub); err != nil {
+				log.Warn("the registration that failed was not taken back: the store failed", "error", err.Error())
+			}
+		}
 		return false
 	}
 	if number == "" {

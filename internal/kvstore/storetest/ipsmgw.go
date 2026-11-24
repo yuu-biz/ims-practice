@@ -26,6 +26,7 @@ func IPSMGW(t *testing.T, newPair func(t *testing.T) (ipsmgw.Store, ipsmgw.Store
 		{"ClaimThatIsNotDoneRunsOut", ipsmgwClaimRunsOut},
 		{"TakenDeliveryLeavesNoExpiry", ipsmgwTakenDeliveryLeavesNoExpiry},
 		{"RegSubscription", ipsmgwRegSubscription},
+		{"RegSubscriptionOfIMSI", ipsmgwRegSubscriptionOfIMSI},
 		{"RegSubscriptionReplacesTheOldOne", ipsmgwRegSubscriptionReplaces},
 		{"PublicIdentitiesCompareTheUserPartWithCase", ipsmgwUserPartWithCase},
 	})
@@ -110,6 +111,15 @@ func regSubscriptionOf(t *testing.T, s ipsmgw.Store, publicID string) (ipsmgw.Re
 	sub, ok, err := s.RegSubscriptionOf(context.Background(), publicID)
 	if err != nil {
 		t.Errorf("RegSubscriptionOf(%s): %v", publicID, err)
+	}
+	return sub, ok
+}
+
+func regSubscriptionOfIMSI(t *testing.T, s ipsmgw.Store, imsi string) (ipsmgw.RegSubscription, bool) {
+	t.Helper()
+	sub, ok, err := s.RegSubscriptionOfIMSI(context.Background(), imsi)
+	if err != nil {
+		t.Errorf("RegSubscriptionOfIMSI(%s): %v", imsi, err)
 	}
 	return sub, ok
 }
@@ -363,8 +373,51 @@ func ipsmgwOnlyOneTakes(t *testing.T, a, b ipsmgw.Store) {
 	}
 }
 
+// ipsmgwRegSubscriptionOfIMSI: a TFR names the recipient by IMSI, so
+// the Store finds the subscription by it (store.go). The index goes
+// with the subscription, and a new subscription of the same user takes
+// it over.
+func ipsmgwRegSubscriptionOfIMSI(t *testing.T, a, b ipsmgw.Store) {
+	sub := regSubscription("sub-1", time.Hour)
+	putRegSubscription(t, a, sub)
+	if got, ok := regSubscriptionOfIMSI(t, b, imsi); !ok || got.Dialog.ID != sub.Dialog.ID {
+		t.Errorf("RegSubscriptionOfIMSI = %+v, %v", got, ok)
+	}
+	if _, ok := regSubscriptionOfIMSI(t, b, "001010000000009"); ok {
+		t.Error("RegSubscriptionOfIMSI found a subscription for an IMSI no user has")
+	}
+	// A subscription without an IMSI is in no index item, so an empty
+	// IMSI must not find it.
+	if _, ok := regSubscriptionOfIMSI(t, b, ""); ok {
+		t.Error("RegSubscriptionOfIMSI found a subscription for an empty IMSI")
+	}
+
+	next := regSubscription("sub-2", time.Hour)
+	putRegSubscription(t, b, next)
+	if got, ok := regSubscriptionOfIMSI(t, a, imsi); !ok || got.Dialog.ID != next.Dialog.ID {
+		t.Errorf("RegSubscriptionOfIMSI after a new subscription = %+v, %v; want the new one", got, ok)
+	}
+
+	deleteRegSubscription(t, a, next.Dialog.ID.CallID)
+	if _, ok := regSubscriptionOfIMSI(t, b, imsi); ok {
+		t.Error("RegSubscriptionOfIMSI after DeleteRegSubscription")
+	}
+
+	// The subscription goes at its Expires, and the index item with it.
+	brief := regSubscription("sub-3", short)
+	putRegSubscription(t, a, brief)
+	waitOut()
+	if _, ok := regSubscriptionOfIMSI(t, b, imsi); ok {
+		t.Error("RegSubscriptionOfIMSI after the subscription expired")
+	}
+}
+
+// imsi is the IMSI of the user of impu, as the IP-SM-GW read it over Sh
+// (TS 23.003 2.2).
+const imsi = "001010000000001"
+
 func regSubscription(callID string, lifetime time.Duration) ipsmgw.RegSubscription {
-	return ipsmgw.RegSubscription{PublicIdentity: impu, MSISDN: "12025550101",
+	return ipsmgw.RegSubscription{PublicIdentity: impu, MSISDN: "12025550101", IMSI: imsi,
 		Dialog: sip.Dialog{ID: sip.DialogID{CallID: callID, LocalTag: "l"}, LocalSeq: 1, LocalURI: "sip:ipsmgw.ims.mnc001.mcc001.3gppnetwork.org",
 			RemoteURI: impu, RemoteTarget: "sip:scscf.ims.mnc001.mcc001.3gppnetwork.org", RouteSet: []string{"<sip:scscf;lr>"}},
 		ICID: "icid-" + callID, Available: true, Expires: time.Now().Add(lifetime).Round(time.Millisecond)}

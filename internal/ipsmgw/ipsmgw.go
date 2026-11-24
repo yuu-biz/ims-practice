@@ -89,6 +89,10 @@ type Config struct {
 
 // HSS is the part of Sh that the IP-SM-GW uses. *sh.Client is one.
 type HSS interface {
+	// IMSI reads the IMSI of a user (TS 29.328 7.6.24), which a TFR
+	// names the recipient of a short message by (TS 29.338 Table
+	// 6.2.2.1/1). It is empty for a user the HSS has none for.
+	IMSI(ctx context.Context, publicID string) (string, error)
 	UpdateSMSRegistrationInfo(ctx context.Context, id sh.UserIdentity, ipsmgwNumber string) error
 }
 

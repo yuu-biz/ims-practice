@@ -44,6 +44,12 @@ type RegSubscription struct {
 	// the user in the PUR; empty, the PUR names the user by
 	// PublicIdentity.
 	MSISDN string
+	// IMSI is the IMSI of the user, which the IP-SM-GW reads over Sh
+	// before it registers itself for the user's short messages (TS
+	// 29.328 7.6.24). A TFR names the recipient of a short message by it
+	// (TS 29.338 Table 6.2.2.1/1), so the Store finds the subscription
+	// by it as well. It is empty for a user whose HSS has none.
+	IMSI string
 	// Dialog is the dialog of the subscription. Until the first NOTIFY
 	// it is the half that sip.NewSubscriberDialog gives, without a remote
 	// tag.
@@ -146,6 +152,11 @@ type Store interface {
 	// RegSubscriptionOf returns the subscription to a public identity,
 	// and whether there is one.
 	RegSubscriptionOf(ctx context.Context, publicID string) (RegSubscription, bool, error)
+	// RegSubscriptionOfIMSI returns the subscription whose IMSI is imsi,
+	// and whether there is one. It is how a TFR, which names the
+	// recipient by IMSI, finds the user (sgd.go). An empty imsi finds
+	// nothing: a subscription without an IMSI is in no such index.
+	RegSubscriptionOfIMSI(ctx context.Context, imsi string) (RegSubscription, bool, error)
 	// DeleteRegSubscription removes the subscription whose dialog has
 	// callID.
 	DeleteRegSubscription(ctx context.Context, callID string) error
@@ -163,10 +174,12 @@ type MemoryStore struct {
 	mu                sync.Mutex
 	deliveries        map[string]PendingDelivery
 	messageReferences map[string]messageReferences
-	// regSubscriptions are keyed by Call-ID, and regSubscriptionOf gives
-	// the Call-ID for a public identity, so that neither lookup scans.
-	regSubscriptions  map[string]RegSubscription
-	regSubscriptionOf map[string]string
+	// regSubscriptions are keyed by Call-ID, and regSubscriptionOf and
+	// regSubscriptionOfIMSI give the Call-ID for a public identity and
+	// for an IMSI, so that no lookup scans.
+	regSubscriptions      map[string]RegSubscription
+	regSubscriptionOf     map[string]string
+	regSubscriptionOfIMSI map[string]string
 	// reportTimeout is the time index of TR1N, as a store outside the
 	// process holds one: the Call-ID of each delivery that waits for a
 	// report.
@@ -176,7 +189,8 @@ type MemoryStore struct {
 func NewMemoryStore() *MemoryStore {
 	return &MemoryStore{deliveries: map[string]PendingDelivery{}, messageReferences: map[string]messageReferences{},
 		regSubscriptions: map[string]RegSubscription{}, regSubscriptionOf: map[string]string{},
-		reportTimeout: ims.NewDueIndex[string]()}
+		regSubscriptionOfIMSI: map[string]string{},
+		reportTimeout:         ims.NewDueIndex[string]()}
 }
 
 // NextMessageReference counts on from the last value given to the
@@ -275,10 +289,13 @@ func (s *MemoryStore) PutRegSubscription(_ context.Context, sub RegSubscription)
 	callID, key := sub.Dialog.ID.CallID, ims.PublicIdentityKey(sub.PublicIdentity)
 	sub.Dialog.RouteSet = append([]string(nil), sub.Dialog.RouteSet...)
 	if old, ok := s.regSubscriptionOf[key]; ok && old != callID {
-		delete(s.regSubscriptions, old)
+		s.deleteRegSubscription(old)
 	}
 	s.regSubscriptions[callID] = sub
 	s.regSubscriptionOf[key] = callID
+	if sub.IMSI != "" {
+		s.regSubscriptionOfIMSI[sub.IMSI] = callID
+	}
 	time.AfterFunc(time.Until(sub.Expires), func() {
 		s.mu.Lock()
 		defer s.mu.Unlock()
@@ -307,6 +324,22 @@ func (s *MemoryStore) RegSubscriptionOf(_ context.Context, publicID string) (Reg
 	return sub, ok, nil
 }
 
+func (s *MemoryStore) RegSubscriptionOfIMSI(_ context.Context, imsi string) (RegSubscription, bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	callID, ok := s.regSubscriptionOfIMSI[imsi]
+	if !ok || imsi == "" {
+		return RegSubscription{}, false, nil
+	}
+	sub, ok := s.regSubscription(callID)
+	if !ok || sub.IMSI != imsi {
+		// The subscription is gone, or it no longer holds this IMSI and
+		// the index item has not caught up.
+		return RegSubscription{}, false, nil
+	}
+	return sub, true, nil
+}
+
 func (s *MemoryStore) DeleteRegSubscription(_ context.Context, callID string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -332,5 +365,8 @@ func (s *MemoryStore) deleteRegSubscription(callID string) {
 	delete(s.regSubscriptions, callID)
 	if key := ims.PublicIdentityKey(sub.PublicIdentity); s.regSubscriptionOf[key] == callID {
 		delete(s.regSubscriptionOf, key)
+	}
+	if sub.IMSI != "" && s.regSubscriptionOfIMSI[sub.IMSI] == callID {
+		delete(s.regSubscriptionOfIMSI, sub.IMSI)
 	}
 }

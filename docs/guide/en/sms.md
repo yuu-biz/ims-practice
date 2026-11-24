@@ -229,6 +229,10 @@ It shows the REGISTERs (with the third-party ones), the MESSAGEs and their respo
   |          |          |          |--------->|          |
   |          |          |          |  200 OK  |          |
   |          |          |          |<---------|          |
+  |          |          |          |          | UDR (R5) |
+  |          |          |          |          |--------->|
+  |          |          |          |          |  UDA     |
+  |          |          |          |          |<---------|
   |          |          |          |          | PUR (R5) |
   |          |          |          |          |--------->|
   |          |          |          |          |  PUA     |
@@ -266,9 +270,13 @@ The S-CSCF sends a NOTIFY straight to the IP-SM-GW at once. The 200 OK to the SU
 
 The IP-SM-GW answers 200 OK, and looks for an active contact of the user with `+g.3gpp.smsip` (TS 24.341 5.3.3.2).
 
-### R5. The IP-SM-GW registers itself in the HSS: PUR and PUA
+### R5. The IP-SM-GW registers itself in the HSS: UDR, UDA, PUR and PUA
 
-There is such a contact, so the IP-SM-GW tells the HSS that it now delivers the user's short messages. TS 24.341 5.3.3.2 and TS 23.204 6.1 do this with a MAP update (TS 29.002); this project uses the Sh update instead (TS 29.328 6.1.2). The PUR (command 307) names the user by the MSISDN of R2, uses Data-Reference 24, SMSRegistrationInfo (TS 29.328 7.6.16), and carries the IP-SM-GW's number, `12025550199`, in `<IP-SM-GW-Number>` of the Sh-Data. The HSS answers with a PUA with DIAMETER_SUCCESS (2001).
+There is such a contact, so the IP-SM-GW tells the HSS that it now delivers the user's short messages.
+
+First it reads the user's IMSI with a UDR (command 306) of Data-Reference 32, IMSI (TS 29.328 7.6.24), and keeps it with the subscription. A short message that reaches the IP-SM-GW over SGd names the recipient by IMSI, so this is how it will find the user again. The IP-SM-GW reads the IMSI, and stores it with the news that the user takes short messages, before the registration. The registration is what makes the HSS name this IP-SM-GW to a Service Centre, and the HSS alerts the waiting Service Centres as soon as it has it, so a short message may arrive before the IP-SM-GW has the answer. A registration that fails takes that news back, and the next NOTIFY tries again.
+
+Then comes the registration itself. TS 24.341 5.3.3.2 and TS 23.204 6.1 do it with a MAP update (TS 29.002); this project uses the Sh update instead (TS 29.328 6.1.2). The PUR (command 307) names the user by the MSISDN of R2, uses Data-Reference 24, SMSRegistrationInfo (TS 29.328 7.6.16), and carries the IP-SM-GW's number, `12025550199`, in `<IP-SM-GW-Number>` of the Sh-Data. The HSS answers with a PUA with DIAMETER_SUCCESS (2001).
 
 The IP-SM-GW sends a PUR only when a NOTIFY changes whether the user has such a contact. A UE that registers without `+g.3gpp.smsip` gets no PUR, so the HSS does not list the IP-SM-GW for it.
 
