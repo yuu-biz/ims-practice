@@ -58,6 +58,11 @@ type Delivery struct {
 	// the SC of this IP-SM-GW; a short message from another network
 	// keeps the SC of that network.
 	ServiceCentre sms.Address
+	// OverSGd marks a short message that came in a TFR (sgd.go), whose
+	// Reference names that one TFR. Its outcome goes into the
+	// Store, for whichever instance holds the TFR, instead of to the
+	// ServiceCentre of this node.
+	OverSGd bool
 }
 
 // Outcome is how a delivery ended: the answer to

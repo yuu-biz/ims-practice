@@ -76,19 +76,19 @@ func (g *IPSMGW) deliver(d Delivery) {
 	mr, err := g.store.NextMessageReference(ctx, d.Recipient, now.Add(messageReferenceLifetime))
 	if err != nil {
 		log.Warn("no RP-MR: the store failed", "error", err.Error())
-		g.sc.Report(ctx, d.Reference, SystemFailure)
+		g.reportNow(ctx, d.Reference, d.OverSGd, SystemFailure, log)
 		return
 	}
 	m, err := g.deliveryMessage(d, mr)
 	if err != nil {
 		log.Warn("cannot write the RP-DATA", "error", err.Error())
-		g.sc.Report(ctx, d.Reference, SystemFailure)
+		g.reportNow(ctx, d.Reference, d.OverSGd, SystemFailure, log)
 		return
 	}
 	callID := m.Get("Call-ID")
 	log = log.With("call_id", callID, "rp_mr", int(mr))
 	if err := g.store.PutDelivery(ctx, PendingDelivery{
-		CallID: callID, Reference: d.Reference, Recipient: d.Recipient, MessageReference: mr,
+		CallID: callID, Reference: d.Reference, Recipient: d.Recipient, MessageReference: mr, OverSGd: d.OverSGd,
 		ReportDeadline: now.Add(g.cfg.ReportTimeout),
 		// Longer than TR1N by TR1N itself, so that the round which claims
 		// the expiry still finds the delivery. After that the Store
@@ -96,7 +96,7 @@ func (g *IPSMGW) deliver(d Delivery) {
 		Expires: now.Add(2 * g.cfg.ReportTimeout),
 	}); err != nil {
 		log.Warn("delivery not stored, not delivering", "error", err.Error())
-		g.sc.Report(ctx, d.Reference, SystemFailure)
+		g.reportNow(ctx, d.Reference, d.OverSGd, SystemFailure, log)
 		return
 	}
 
@@ -202,8 +202,29 @@ func (g *IPSMGW) endDelivery(ctx context.Context, callID string, outcome Outcome
 		return nil
 	}
 	log.Info("delivery ended", "outcome", outcome.String())
-	g.sc.Report(ctx, d.Reference, outcome)
+	g.reportNow(ctx, d.Reference, d.OverSGd, outcome, log)
 	return nil
+}
+
+// reportNow hands the outcome of a delivery to whoever waits for it: the
+// SC of this node for a short message that the SC brought here, and the
+// Store for one that came in a TFR, where the instance which holds the
+// TFR takes it (sgd.go). The outcome of a TFR is kept as long as TR1N,
+// which outlasts the wait of that instance.
+//
+// A Store that will not take the outcome leaves the TFR without one.
+// The wait of that instance, not this failure, is then what answers the
+// TFR, so there is nothing to do here but say so: the delivery has been
+// taken already, and TR1N will not end it a second time.
+func (g *IPSMGW) reportNow(ctx context.Context, reference string, overSGd bool, outcome Outcome, log *slog.Logger) {
+	if !overSGd {
+		g.sc.Report(ctx, reference, outcome)
+		return
+	}
+	if err := g.store.PutOutcome(ctx, reference, outcome, time.Now().Add(g.cfg.ReportTimeout)); err != nil {
+		log.Warn("the outcome of the delivery was not stored for the node that waits for it",
+			"outcome", outcome.String(), "error", err.Error())
+	}
 }
 
 // endDeliveryNow ends a delivery whose outcome is known while no request

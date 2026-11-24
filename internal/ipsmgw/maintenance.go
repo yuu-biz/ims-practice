@@ -75,6 +75,14 @@ import (
 // method is no more supported out of service than in it, and the next
 // instance would answer the same.
 //
+// Over SGd it refuses the TFR of a short message for a user, with
+// DIAMETER_TOO_BUSY (sgd.go). That is the answer of a node that is up
+// but cannot serve this request, which RFC 6733 7.1.3 has the sender
+// take to another node of the realm; the other instances of the
+// IP-SM-GW are such nodes, and nothing of the delivery has begun. A
+// command that the IP-SM-GW does not take at all keeps its
+// DIAMETER_COMMAND_UNSUPPORTED, as a method does its 405.
+//
 // The S-CSCF brings the IP-SM-GW its requests by the initial filter
 // criteria of the served user, so each 503 goes back to the S-CSCF. It
 // sends the request on to the next instance that DNS gave for the
@@ -155,7 +163,12 @@ const retryAfter = 30
 //     until the MESSAGE that carries the RP-DATA has its final response
 //     (Deliver);
 //   - each expiry of TR1N that its sweep has claimed, from the claim
-//     itself until the delivery is ended and the SC told (claimDue).
+//     itself until the delivery is ended and the SC told (claimDue);
+//   - each TFR it has taken on, until the TFA goes back (sgd.go). That
+//     one waits for the UE's delivery report, because the TFA is what
+//     carries the report to the SMS-GMSC: an instance that stopped in
+//     between would leave the SMS-GMSC to its own timer, with the
+//     delivery it had begun reported to nobody.
 //
 // The wait for a delivery report is no user: the delivery and its TR1N
 // are in the Store, so the report is served by whichever instance it
@@ -164,13 +177,15 @@ const retryAfter = 30
 // waited for the reports would hold for TR1N, 64 seconds, over work
 // that no longer needs this node.
 //
-// Everything that is counted ends in the time a few SIP transactions
-// take, so a shut down reaches LOCKED quickly. What keeps it from
-// reaching it is a steady stream of new work: the sweep goes on
+// Everything that is counted but the TFR ends in the time a few SIP
+// transactions take, so a shut down with no TFR in hand reaches LOCKED
+// quickly. A TFR holds for as long as its delivery does, up to TR1N and
+// the round of the sweep that ends it. What else keeps a shut down from
+// reaching LOCKED is a steady stream of new work: the sweep goes on
 // claiming the expiries of deliveries that other instances sent, as the
 // S-CSCF goes on with its own expiries while it drains, and each claim
 // is a user for as long as it takes. The timeout_seconds of the shut
-// down bounds that, as it does for the HSS.
+// down bounds both, as it does for the HSS.
 func (g *IPSMGW) Function(hssAvailable func() bool) maintenance.Function {
 	return maintenance.Function{
 		Role: role,
