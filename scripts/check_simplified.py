@@ -122,6 +122,7 @@ def table_rows(path, headers):
 BESIDE_THE_CODE = [
     ("deploy/observability/README.md", "deploy/observability/README.ja.md"),
     ("internal/h248/README.md", "internal/h248/README.ja.md"),
+    ("internal/mns/README.md", "internal/mns/README.ja.md"),
     ("internal/nas/README.md", "internal/nas/README.ja.md"),
     ("internal/sgd/README.md", "internal/sgd/README.ja.md"),
 ]
