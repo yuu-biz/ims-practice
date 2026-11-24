@@ -15,6 +15,7 @@
 7. [VoLTE の呼の流れ](volte.md)。EPC スタブ、IMS-AKA、Rx でのポリシー制御と、プリコンディションを使った AMR-WB の通話。
 8. [IMS 網どうしを相互接続する](interconnect.md)。境界の IBCF と TrGW、構成の秘匿、相互接続プロファイル。
 9. [ラボで IMS を見る](lab.md)。HEP の写しから描くラダー図、加入者の一覧、ブラウザから操作する UE シミュレータ、アクセス網の bearer、わざと入れる障害。
+10. [アラームを OSS に渡す](oss.md)。運用者の網の管理に向けた OAM のインタフェース。3GPP が定める形での、網全体のアラームの一覧、その確認、アラームごとの通知。
 
 略語は[用語集](../../glossary.md)で説明しています。
 
@@ -46,7 +47,7 @@ docker compose --profile ue --profile phones --profile volte down -v --remove-or
 このコマンドはイメージを残すので、次の手順書をビルドし直さずに始められます。手順書をすべて終えたら、イメージも削除します。
 
 ```sh
-docker compose --profile ue --profile phones --profile volte down --rmi all -v --remove-orphans
+docker compose --profile ue --profile phones --profile volte --profile oss down --rmi all -v --remove-orphans
 ```
 
 キャプチャのファイルは、削除するまで `captures/` に残ります。
@@ -82,6 +83,7 @@ UE はプロファイルに入れてあるので、`docker compose up` では起
 | `ue` | `ue`、`ue2`、`ue3`、`softphone` | `docker compose run --rm ue register` のように、1 回のコマンドごとに動かします。`softphone` には、ほかの人が作ったソフトフォンの pjsua と SIPp が入っています。 |
 | `phones` | `phone1`、`phone2`、`phone3` | 起動したままになり、ラボの指示で動きます。`docker compose --profile phones up -d` で起動します。 |
 | `volte` | `volte10`、`volte12` | VoLTE の UE です。`phones` と同じく起動したままになります。`docker compose --profile volte up -d` で起動します。 |
+| `oss` | `oss` | OSS の代わりです。OAM からアラームの通知を受け、OSS の要求を送ります。`docker compose --profile oss up -d` で起動します。 |
 
 `ue` と `phones` は同じ加入者を使うので、一度にどちらか一方だけを動かします。
 
@@ -113,7 +115,7 @@ UE はプロファイルに入れてあるので、`docker compose up` では起
 
 ### HTTP の API
 
-ノードは、SIP と Diameter のほかに HTTP でも話します。各ノードの保守の API、OAM の API、HSS のプロビジョニングの API、ラボ、UE シミュレータ、メディア中継ノードの API です。どれが 3GPP の仕様に従い、どれがこのプロジェクト独自のものかを、それぞれの OpenAPI のファイルとともに [HTTP の API](apis.md) に並べています。
+ノードは、SIP と Diameter のほかに HTTP でも話します。各ノードの保守の API、OAM の API と OSS に向けた OAM のインタフェース、HSS のプロビジョニングの API、ラボ、UE シミュレータ、メディア中継ノードの API です。どれが 3GPP の仕様に従い、どれがこのプロジェクト独自のものかを、それぞれの OpenAPI のファイルとともに [HTTP の API](apis.md) に並べています。
 
 ## ほかの動かし方
 

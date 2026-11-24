@@ -15,6 +15,7 @@ These guides run the IMS on your machine and follow its messages in a capture, o
 7. [The VoLTE call flow](volte.md). The EPC stub, IMS AKA, policy control over Rx, and a call in AMR-WB with preconditions.
 8. [Connect two IMS networks](interconnect.md). The IBCF and the TrGW at the border, topology hiding, and the interconnect profiles.
 9. [Watch the IMS in the Lab](lab.md). The ladder diagrams of the HEP copies, the subscribers, UE simulators driven from the browser, the bearers of the access network, and faults on purpose.
+10. [Hand the alarms to an OSS](oss.md). The OAM towards the operator's network management: the alarm list of the whole network, its acknowledgement, and the notifications of each alarm, as 3GPP defines them.
 
 The [glossary](../../glossary.md) explains the abbreviations.
 
@@ -46,7 +47,7 @@ docker compose --profile ue --profile phones --profile volte down -v --remove-or
 This keeps the images, so the next guide starts without a new build. When you have finished with the guides, delete the images too:
 
 ```sh
-docker compose --profile ue --profile phones --profile volte down --rmi all -v --remove-orphans
+docker compose --profile ue --profile phones --profile volte --profile oss down --rmi all -v --remove-orphans
 ```
 
 The capture files stay in `captures/` until you delete them.
@@ -82,6 +83,7 @@ The UEs are in profiles, so `docker compose up` does not start them.
 | `ue` | `ue`, `ue2`, `ue3`, `softphone` | One command each, with `docker compose run --rm ue register` and the like. `softphone` holds pjsua and SIPp, softphones written by others. |
 | `phones` | `phone1`, `phone2`, `phone3` | They stay up and do what the Lab asks. `docker compose --profile phones up -d`. |
 | `volte` | `volte10`, `volte12` | VoLTE UEs that stay up, like those of `phones`. `docker compose --profile volte up -d`. |
+| `oss` | `oss` | A stand-in for the OSS, which takes the alarm notifications of the OAM and sends its requests. `docker compose --profile oss up -d`. |
 
 `ue` and `phones` use the same subscribers, so run one of the two at a time.
 
@@ -113,7 +115,7 @@ Some packages under `internal` are in the repository but in none of the nodes ab
 
 ### The HTTP APIs
 
-Besides SIP and Diameter, the nodes talk HTTP: the maintenance API of each node, the OAM API, the provisioning API of the HSS, the Lab, the UE simulators and the media relays. [The HTTP APIs](apis.md) tells which of them follow a 3GPP specification and which are this project's own, each with its OpenAPI file.
+Besides SIP and Diameter, the nodes talk HTTP: the maintenance API of each node, the OAM API and the interface of the OAM towards an OSS, the provisioning API of the HSS, the Lab, the UE simulators and the media relays. [The HTTP APIs](apis.md) tells which of them follow a 3GPP specification and which are this project's own, each with its OpenAPI file.
 
 ## Other ways to run it
 

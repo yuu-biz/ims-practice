@@ -145,7 +145,7 @@ The HEP encoding leaves out two parts of the specification:
 - When you have finished with the guides, delete the images that the build created as well:
 
   ```sh
-  docker compose --profile ue --profile phones --profile volte down --rmi all -v --remove-orphans
+  docker compose --profile ue --profile phones --profile volte --profile oss down --rmi all -v --remove-orphans
   ```
 
 The capture files stay in `captures/` until you delete them.
