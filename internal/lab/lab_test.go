@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/yuu-biz/ims-practice/internal/hep"
+	"github.com/yuu-biz/ims-practice/internal/openapitest"
 )
 
 const domain = "ims.mnc001.mcc001.3gppnetwork.org"
@@ -35,8 +36,11 @@ var start = time.Date(2026, 11, 19, 9, 0, 0, 0, time.UTC)
 
 // harness feeds HEP packets to a Lab and reads its API.
 type harness struct {
-	t      *testing.T
-	l      *Lab
+	t *testing.T
+	l *Lab
+	// api is openapi.yaml, which every exchange of server is checked
+	// against.
+	api    *openapitest.Document
 	server *httptest.Server
 	clock  time.Time
 }
@@ -50,9 +54,10 @@ func newHarness(t *testing.T, cfg Config) *harness {
 	if err != nil {
 		t.Fatal(err)
 	}
-	server := httptest.NewServer(l.Handler())
+	api := openapitest.Load(t, "openapi.yaml")
+	server := httptest.NewServer(api.Handler(t, l.Handler()))
 	t.Cleanup(server.Close)
-	return &harness{t: t, l: l, server: server, clock: start}
+	return &harness{t: t, l: l, api: api, server: server, clock: start}
 }
 
 // capture is one node's HEP copy of a message from src to dst.

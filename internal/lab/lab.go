@@ -4,7 +4,8 @@
 // and serves them to the web UI over HTTP.
 //
 // The HTTP API answers JSON. Times are RFC 3339 with nanoseconds, in
-// UTC.
+// UTC. openapi.yaml, next to this file, describes each route with its
+// answers in OpenAPI 3.1, and the tests check the handler against it.
 //
 //	GET /api/messages[?call_id=<id>...][&correlation_id=<id>]
 //	    The messages in capture order, which is the time in the HEP
