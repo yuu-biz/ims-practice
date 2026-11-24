@@ -2,6 +2,7 @@ package ue_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/netip"
 	"strings"
@@ -188,6 +189,21 @@ func checkDeliveryReport(t *testing.T, report, delivered *sip.Message) sms.RPMes
 		t.Fatalf("report body: %v", err)
 	}
 	return m
+}
+
+// TestAnEmptyHistoryIsTwoEmptyLists: a UE that has sent and received
+// nothing shows its short messages as two empty lists, as GET /sms
+// describes them, not as null.
+func TestAnEmptyHistoryIsTwoEmptyLists(t *testing.T) {
+	n := newFakeNetwork(t)
+	u, _ := smsUE(t, n)
+	b, err := json.Marshal(u.SMS())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := string(b), `{"sent":[],"received":[]}`; got != want {
+		t.Errorf("the history of a new UE is %s, want %s", got, want)
+	}
 }
 
 // TS 24.341 5.3.2.3 and 5.3.2.4: the UE answers 200, keeps the message,

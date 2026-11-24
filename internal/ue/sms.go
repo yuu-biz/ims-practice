@@ -167,8 +167,10 @@ func (u *UE) SMS() SMSHistory {
 	return u.smsLocked()
 }
 
+// smsLocked copies the history into lists that are never nil, so that
+// a UE without short messages shows two empty lists rather than null.
 func (u *UE) smsLocked() SMSHistory {
-	return SMSHistory{Sent: append([]SentSMS(nil), u.sms.sent...), Received: append([]ReceivedSMS(nil), u.sms.received...)}
+	return SMSHistory{Sent: append([]SentSMS{}, u.sms.sent...), Received: append([]ReceivedSMS{}, u.sms.received...)}
 }
 
 // WaitSMS waits until done holds for the history, and returns it.
