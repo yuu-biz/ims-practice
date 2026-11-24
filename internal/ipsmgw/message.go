@@ -49,7 +49,7 @@ func (g *IPSMGW) message(st *sip.ServerTransaction) {
 	g.userArrived()
 	go func() {
 		defer g.userQuit()
-		g.reachableAgain(sender, log)
+		g.reachableAgain(req, log)
 	}()
 	if callID := req.Get("In-Reply-To"); callID != "" {
 		g.deliveryReport(st, callID, log)
@@ -259,13 +259,13 @@ func errorWith(mr uint8, r *Refusal) (sms.RPMessage, error) {
 // the SC cannot be asked (submit).
 func (g *IPSMGW) memoryAvailable(req *sip.Message, sender string, rp sms.RPSMMA, log *slog.Logger) {
 	ctx := context.Background()
-	msisdn := ""
-	if sub, ok, err := g.store.RegSubscriptionOf(ctx, sender); err != nil {
+	publicID, msisdn := sender, ""
+	if sub, ok, err := g.subscriptionOfSender(ctx, req); err != nil {
 		log.Warn("the MSISDN of the user was not read: the store failed", "error", err.Error())
 	} else if ok {
-		msisdn = sub.MSISDN
+		publicID, msisdn = sub.PublicIdentity, sub.MSISDN
 	}
-	id := shIdentity(sender, msisdn)
+	id := shIdentity(publicID, msisdn)
 	if err := g.hss.NotifyReadyForSM(ctx, id, g.cfg.Number, sh.MemoryAvailable); err != nil {
 		log.Warn("memory available notification not passed to the HSS", "msisdn", msisdn, "error", err.Error())
 		g.answer(req, sender, sms.RPError{Direction: sms.NetworkToMS, MessageReference: rp.MessageReference,

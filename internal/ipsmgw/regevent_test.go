@@ -287,6 +287,33 @@ func TestTheReturnOfAUserItCouldNotReach(t *testing.T) {
 	}
 }
 
+// A UE may assert a tel URI it registered rather than the identity of
+// the third-party REGISTER (TS 24.229 5.2.6.3.1), and the S-CSCF adds
+// the SIP URI form of that number (5.4.3.2 step 9). Neither is the
+// public identity of the subscription, so the IP-SM-GW finds the user
+// by the number, and tells the HSS of the return all the same.
+func TestTheReturnOfAUserWhoAssertsATelURI(t *testing.T) {
+	store := ipsmgw.NewMemoryStore()
+	h := newHarness(t, store, time.Minute, answerOK)
+	h.registered()
+	if err := store.PutNotReachable(t.Context(), alice, time.Now().Add(time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+
+	m := message(submitBody(t, 1, scAddress, hello))
+	m.Remove("P-Asserted-Identity")
+	m.Add("P-Asserted-Identity", "<"+aliceTel+">")
+	m.Add("P-Asserted-Identity", "<sip:+12025550101@"+domain+";user=phone>")
+	h.send(m)
+	want := notification{sh.UserIdentity{MSISDN: "12025550101"}, number, sh.MSPresent}
+	if got := h.nextNotification(); got != want {
+		t.Errorf("notification = %+v, want %+v", got, want)
+	}
+	if set, err := store.TakeNotReachable(t.Context(), alice); err != nil || set {
+		t.Errorf("the flag of the user after the return = %v, %v; want it taken", set, err)
+	}
+}
+
 // TestTheReturnOfAUserWhoIsNotRegistered is TS 23.204 6.5b step 2d: the
 // IP-SM-GW discards the news where the UE is not registered for short
 // messages over IP, since a short message would not get through now

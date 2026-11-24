@@ -476,9 +476,9 @@ func (g *IPSMGW) takeNotReachable(ctx context.Context, publicID string, log *slo
 // user's next sign of life tells it again. Nothing is lost if that never
 // comes: the HSS keeps UNRI of its own, which the next registration of
 // this IP-SM-GW for the user clears.
-func (g *IPSMGW) reachableAgain(publicID string, log *slog.Logger) {
+func (g *IPSMGW) reachableAgain(req *sip.Message, log *slog.Logger) {
 	ctx := context.Background()
-	sub, ok, err := g.store.RegSubscriptionOf(ctx, publicID)
+	sub, ok, err := g.subscriptionOfSender(ctx, req)
 	switch {
 	case err != nil:
 		log.Warn("the registration state of the user was not read: the store failed", "error", err.Error())
@@ -487,6 +487,9 @@ func (g *IPSMGW) reachableAgain(publicID string, log *slog.Logger) {
 		// The notification is discarded, as step 2d has it.
 		return
 	}
+	// The flag is kept under the public identity of the subscription
+	// (sgd.go), whichever identity the request asserted.
+	publicID := sub.PublicIdentity
 	if !g.takeNotReachable(ctx, publicID, log) {
 		return
 	}
@@ -499,6 +502,42 @@ func (g *IPSMGW) reachableAgain(publicID string, log *slog.Logger) {
 		return
 	}
 	log.Info("the user can take short messages again; the HSS is told")
+}
+
+// subscriptionOfSender finds the subscription of the user who sent req,
+// by the identities in its P-Asserted-Identity. The UE may assert any
+// identity it registered (TS 24.229 5.2.6.3.1), and the S-CSCF adds the
+// alias of that one (5.4.3.2 step 9), while the subscription is to the
+// public identity of the third-party REGISTER. Each asserted identity
+// is looked for as that public identity first, and one that names a
+// telephone number as the MSISDN of the subscription after that.
+func (g *IPSMGW) subscriptionOfSender(ctx context.Context, req *sip.Message) (RegSubscription, bool, error) {
+	var ids []string
+	for _, v := range req.GetAll("P-Asserted-Identity") {
+		if na, err := sip.ParseNameAddr(v); err == nil {
+			ids = append(ids, na.URI)
+		}
+	}
+	for _, id := range ids {
+		if sub, ok, err := g.store.RegSubscriptionOf(ctx, id); err != nil || ok {
+			return sub, ok, err
+		}
+	}
+	for _, id := range ids {
+		n, ok := ims.ParseTelephoneNumber(id)
+		if !ok {
+			continue
+		}
+		canonical, err := ims.CanonicalURI("tel:" + n.Number)
+		msisdn, global := strings.CutPrefix(canonical, "tel:+")
+		if err != nil || !global {
+			continue
+		}
+		if sub, ok, err := g.store.RegSubscriptionOfMSISDN(ctx, msisdn); err != nil || ok {
+			return sub, ok, err
+		}
+	}
+	return RegSubscription{}, false, nil
 }
 
 // shIdentity names a user in an Sh request: by the MSISDN that the
