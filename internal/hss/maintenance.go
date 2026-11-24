@@ -62,7 +62,7 @@ const role = "hss"
 // it serves the subscribers from its Store; a Store it cannot read
 // fails the one request rather than the role.
 func (h *HSS) Function(server *diameter.Server) maintenance.Function {
-	d := diameter.NewListenerDrain(server, h.log)
+	d := diameter.NewListenerDrain(server, role, h.log)
 	return maintenance.Function{
 		Role: role,
 		OperationalState: func() maintenance.OperationalState {
