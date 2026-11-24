@@ -46,10 +46,11 @@ diameter:
 hep:
   collector: 172.28.0.60:9060
 # The maintenance listener: the metrics of the SC at /metrics for
-# Prometheus to scrape, which are the Diameter it speaks over S6c. No
-# specification gives a port for it; 8085 is this project's choice. The
-# listener serves no maintenance API: the SC has no administrative state
-# of its own, so there is nothing on it to take out of service.
+# Prometheus to scrape, which are the Diameter it speaks over S6c, and
+# the maintenance API under /maintenance/v1/, through which an operator
+# takes the SC out of service. No specification gives a port for it;
+# 8085 is this project's choice. The API asks for no password, so the
+# port is not published outside the network of the IMS nodes.
 maintenance:
   listen: 0.0.0.0:8085
 

@@ -10,6 +10,7 @@ import (
 	"github.com/yuu-biz/ims-practice/internal/config"
 	"github.com/yuu-biz/ims-practice/internal/diameter"
 	"github.com/yuu-biz/ims-practice/internal/ipsmgw"
+	"github.com/yuu-biz/ims-practice/internal/maintenance"
 	"github.com/yuu-biz/ims-practice/internal/sgd"
 	"github.com/yuu-biz/ims-practice/internal/smsc"
 )
@@ -70,6 +71,39 @@ func startSC(ctx context.Context, c config.SC, realm string, store smsc.Store,
 	}
 }
 
+// scFunction is what the sc role tells the maintenance API of its node:
+// what the SC tells of itself (smsc.SMSC.Function), and what the node
+// does to its Diameter listener when the operator takes the SC out of
+// service. The serving nodes reach the SC on that listener, and the OFR
+// they send names no Destination-Host, so the SC cannot turn one away in
+// its answer (RFC 6733 7.1.3). A shut down therefore stops the node
+// accepting connections, and a lock ends the connections it has with a
+// DPR whose Disconnect-Cause is REBOOTING (RFC 6733 5.4, 5.4.3), after
+// which a serving node sends its OFRs to another instance of the SC and
+// connects to this one again after Tc once it is back. The connection
+// to the HSS is the SC's own and stays open, so the HSS can still alert
+// it.
+//
+// The SC is DISABLED, besides while no instance of the HSS takes its
+// S6c requests, while it is in service and no serving node can connect
+// to it: the node failed to listen again after an unlock, or another
+// role of the node has the listener closed.
+func scFunction(centre *smsc.SMSC, server *diameter.Server, hssAvailable func() bool, log *slog.Logger) maintenance.Function {
+	f := centre.Function(hssAvailable)
+	drain := diameter.NewListenerDrain(server, string(config.RoleSC), log)
+	ownState := f.OperationalState
+	f.OperationalState = func() maintenance.OperationalState {
+		if !drain.Reachable() {
+			return maintenance.Disabled
+		}
+		return ownState()
+	}
+	f.AdministrativeStateChanged = func(_, to maintenance.AdministrativeState) {
+		drain.Change(to == maintenance.Unlocked, to == maintenance.Locked)
+	}
+	return f
+}
+
 // serviceCentreHandler answers the requests that reach the node of the
 // sc role: the OFR of a short message that a serving node brings over
 // SGd (TS 29.338 6.2.1), and the ALR with which the HSS says over S6c
@@ -78,7 +112,12 @@ func startSC(ctx context.Context, c config.SC, realm string, store smsc.Store,
 // DIAMETER_UNABLE_TO_COMPLY, as the other roles answer one they cannot
 // read: the SC cannot say which AVP the sender left out without reading
 // it.
-func serviceCentreHandler(identity diameter.Identity, centre *smsc.SMSC, request *diam.Message, log *slog.Logger) *diam.Message {
+//
+// Each request is a user of the SC until its answer is on its way, so
+// that the DPR of a shut down that ends with it goes behind the answer.
+func serviceCentreHandler(node *diameter.Node, centre *smsc.SMSC, request *diam.Message, log *slog.Logger) *diam.Message {
+	node.AfterAnswer(request, centre.Answering())
+	identity := node.Identity()
 	unreadable := func(err error) {
 		log.Warn("cannot read request", "command", request.Header.CommandCode, "error", err.Error())
 	}

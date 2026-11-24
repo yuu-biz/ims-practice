@@ -665,6 +665,83 @@ In Wireshark, `sip.Status-Code == 503 && ip.src == 172.28.0.70` shows the 503s o
 
 The administrative state belongs to the process of the node: a node that starts again is `UNLOCKED`. `scripts/e2e-observability.sh` runs these steps and checks the capture.
 
+## Take the Service Centre out of service
+
+The Service Centre keeps every short message it holds in its store, by recipient, with the time of the next attempt for each. Any instance takes a short message and any instance delivers it: a commercial network runs several instances of the SC on one store, and each serving node keeps a Diameter connection to every one of them. An instance holds a piece of that work for itself only while it attempts a delivery, under a lease on the recipient that runs out if the instance stops. An instance that the operator takes out of service therefore has only the attempts it has begun to finish, and everything else goes to an instance in service through the store.
+
+The SC cannot turn a short message away in its answer. The OFR of the IP-SM-GW names the realm of the SC and no Destination-Host (TS 29.338 6.3.1.1), and DIAMETER_TOO_BUSY, the answer that sends a request to another node, is only for a request that names one server (RFC 6733 7.1.3). The failure causes that TS 29.338 6.2.1.1 gives the answer refuse the short message itself: "Service Centre congestion" reaches the UE as RP-Cause 42 (congestion) (TS 24.011 Table 8.4), and the short message goes to no other instance. So the SC goes out of service on its Diameter connections, as the HSS does ([Take the HSS out of service](registration.md#take-the-hss-out-of-service)).
+
+The node of the SC serves the same maintenance API on port 8085, the listener of the `maintenance` section of `deploy/compose/sc.yaml`, next to the metrics that Prometheus scrapes there. Send the requests from inside the container of the SC.
+
+1. Shut the SC down:
+
+   ```sh
+   docker compose exec sc sh -c '
+   body="{\"administrative_state\":\"SHUTTINGDOWN\",\"operator\":\"learner\"}"
+   printf "PUT /maintenance/v1/functions/sc/administrative-state HTTP/1.0\r\nContent-Type: application/json\r\nContent-Length: ${#body}\r\n\r\n%s" "$body" |
+     nc -w 5 127.0.0.1 8085'
+   ```
+
+   With nothing in its hands it is `LOCKED` at once (X.731 7.1.3.3), and the steps above leave it nothing in its hands:
+
+   ```json
+   {"role":"sc","administrative_state":"LOCKED","operational_state":"ENABLED","users":0}
+   ```
+
+   `users` counts the OFRs and the alerts that the SC is answering, until the answer is on its way, and the recipients it holds a lease on, until the attempt has ended: the routing query, the TFR, and the report of a failure to the HSS. One attempt can last a minute or more, because the IP-SM-GW answers a TFR only once the UE has sent its delivery report or the wait for one has run out. The short messages that the SC holds are none of them: they are in the store, and any instance delivers them. `operational_state` is `ENABLED` while an instance of the HSS takes the S6c requests of the SC, and `DISABLED` without one, since the SC could then neither check the recipient of a short message nor find the node that serves it. It is also `DISABLED` while the SC is unlocked but its node does not listen for Diameter connections.
+
+2. Send a short message from UE 1:
+
+   ```sh
+   docker compose run --rm ue sms +12025550102 "Is the Service Centre in?"
+   ```
+
+   UE 1 registers, and `ue sms` then ends with `the SC refused the short message: RP-Cause 41, TP-FCS 0x0`.
+
+```text
+ UE 1      CSCFs     IP-SM-GW     SC
+  |          |          |  DPR, Disconnect-Cause REBOOTING
+  |          |          |<---------|  the shut down, with nothing in hand
+  |          |          |  DPA     |
+  |          |          |--------->|  the connection closes
+  |          |          |  a new connection every Tc, refused
+  |          |          |----x     |
+  |  MESSAGE |          |          |  RP-DATA with the SMS-SUBMIT
+  |--------->|--------->|          |
+  |  202     |  202     |          |
+  |<---------|<---------|          |  no OFR: no connection to an SC
+  |  MESSAGE |          |          |  RP-ERROR with RP-Cause 41
+  |<---------|<---------|          |
+```
+
+- **The SC ends each connection that a serving node opened** with a Disconnect-Peer-Request (DPR) whose `Disconnect-Cause` is `REBOOTING`, and the connection closes once the Disconnect-Peer-Answer (DPA) comes back (RFC 6733 5.4). From the shut down on, its node holds no listening socket for Diameter, so the IP-SM-GW, which tries to connect again every Tc (30 seconds, RFC 6733 2.1), is refused by the transport. `REBOOTING` is the cause that lets the IP-SM-GW come back (5.4.3).
+- **The IP-SM-GW sends the OFR to the next instance of the SC** that it has a connection to. This network runs one, so it has none left, and it answers the UE with an RP-ERROR whose RP-Cause is 41 (temporary failure) (TS 24.011 Table 8.4), the cause it gives whenever it cannot reach the SC. A UE that gets it may send the short message again later. The IP-SM-GW itself is in service, so the MESSAGE still gets its 202.
+- **The connection to the HSS stays.** The SC opened it itself, and the HSS alerts the SC over it. An alert that reaches an SC out of service makes the queue of the user due in the store, and an instance in service delivers it.
+
+While it is `SHUTTINGDOWN`, the SC goes on with what it has begun and starts no new attempt:
+
+- **It keeps the connections it has.** An OFR that arrives on one of them is taken as ever: the SC holds the short message in the store, answers with its submit report, and leaves the delivery to an instance in service.
+- **It finishes each attempt it has begun**, and then claims neither the next short message for that recipient nor any other recipient. The retries, the ends of the validity periods and the queues that an alert has made due wait in the store.
+
+Once nothing is left in its hands it is `LOCKED`, and ends the connections as in step 2. A lock does that at once, and so does the end of `timeout_seconds` in the request. A TFR that is still waiting for its answer then gets none: the SC takes that as a failure that may pass (TS 23.040 Table 1) and keeps the short message for its next retry, although the IP-SM-GW may have delivered it already, and the recipient then gets it twice.
+
+This network runs one instance of the SC, so whatever it holds while it is out of service waits for the unlock.
+
+3. Unlock the SC with the same request and `UNLOCKED`:
+
+   ```sh
+   docker compose exec sc sh -c '
+   body="{\"administrative_state\":\"UNLOCKED\",\"operator\":\"learner\"}"
+   printf "PUT /maintenance/v1/functions/sc/administrative-state HTTP/1.0\r\nContent-Type: application/json\r\nContent-Length: ${#body}\r\n\r\n%s" "$body" |
+     nc -w 5 127.0.0.1 8085'
+   ```
+
+   The node listens again, and the IP-SM-GW connects at its next attempt, within 30 seconds: `docker compose logs ipsmgw` then shows its connection to `sc.ims.mnc001.mcc001.3gppnetwork.org` in `I-Open` again. Send the short message once more, and the submit report is an RP-ACK. UE 2 is not running here, so the delivery itself fails as in [When it fails](#when-it-fails).
+
+In Wireshark, `diameter.cmd.code == 282 && ip.src == 172.28.0.71` shows the DPR of the SC. The PUT request travels over the loopback interface of the container, so the capture does not hold it.
+
+The administrative state belongs to the process of the node: a node that starts again is `UNLOCKED`. `scripts/e2e-observability.sh` runs these steps and checks the capture.
+
 ## Read the body
 
 The body of a MESSAGE is binary: TS 24.341 has the UE send the octets as they are. Here is the body of the MESSAGE of step 1, as the UE simulator built it with `internal/sms`. The Lab shows the same octets under "Body (hex)" in the details of the MESSAGE.
@@ -754,9 +831,9 @@ A text with a character outside the alphabet, such as Japanese, is sent in UCS2 
 | `internal/scscf/thirdparty.go` | The third-party REGISTER. |
 | `internal/scscf/callerprefs.go` | Accept-Contact matching (RFC 3841). |
 | `internal/ipsmgw` | The IP-SM-GW: `ipsmgw.go` (the third-party REGISTER), `regevent.go` (the reg event subscription and the PUR), `message.go` (MESSAGEs from UEs), `deliver.go` (MESSAGEs to UEs), `servicecentre.go` (the boundary to the SC), `sgd.go` (a short message that a Service Centre brings over SGd), `store.go` (the deliveries in progress). |
-| `internal/smsc` | The Service Centre: `submit.go` (a short message from a serving node), `deliver.go` (the routing info query, the delivery and the retries), `alert.go` (the alert of the HSS), `store.go` (the short messages it holds, by recipient). |
+| `internal/smsc` | The Service Centre: `submit.go` (a short message from a serving node), `deliver.go` (the routing info query, the delivery and the retries), `alert.go` (the alert of the HSS), `store.go` (the short messages it holds, by recipient), `maintenance.go` (what it tells the maintenance API of its node, and what it does out of service). |
 | `internal/sgd`, `internal/hss/s6c.go` | The SGd and S6c messages, their clients, and the HSS side of S6c. |
-| `cmd/ims/sc.go` | How the `sc` role wires the Service Centre to its Diameter node. |
+| `cmd/ims/sc.go` | How the `sc` role wires the Service Centre to its Diameter node, and takes it off the Diameter listener of the node while the operator has it out of service. |
 | `internal/ipsmgw/smsiwmsc.go` | The IP-SM-GW handing a short message to the Service Centre over SGd. |
 | `internal/sc` | The SC stub, which an IP-SM-GW without a Service Centre of its own uses instead. |
 | `internal/ue/sms.go` | The UE as SM-over-IP sender and receiver. |

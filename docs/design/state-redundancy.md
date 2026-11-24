@@ -148,6 +148,7 @@ H.248 で制御すると、中継ノードの作り直しは ServiceChange で�
 | MRFC | ダイアログの外の INVITE に 503 と Retry-After を返す。Retry-After は 30 秒。この台が参加者を持っている会議への INVITE も断る。混合は MRFP にあり、Store を共有する台はどれも同じ混合に参加者を足せるため。AS は DNS が返した次の台へ送り、残っていなければ MRF なしで続ける。SUBSCRIBE はこの MRFC が受けないので、UA が 405 を返す（下の「MRFC のドレインで何を返すか」） | ダイアログの中の要求。流している音声ガイダンスと、この台を通って混合にいる参加者。OPTIONS | この台が持っているダイアログ |
 | IP-SM-GW | 第三者 REGISTER と、UE が送った短いメッセージの MESSAGE に 503 と Retry-After を返す。Retry-After は 30 秒。ほかの IMS 網から来た短いメッセージの MESSAGE も断る。配達の報告を運ぶ MESSAGE（In-Reply-To の付いたもの）と reg event の NOTIFY は、ダイアログの外から届いても扱う。S-CSCF は DNS が返した次の台へ送り、残っていなければ iFC の既定の処理に従う（下の「IP-SM-GW のドレインで何を返すか」） | 配達の報告、reg event の NOTIFY、SC から渡された配達、TR1N の期限の処理 | この台が手元に持っている仕事。答えている途中の要求、最終応答を待っている自分の SUBSCRIBE、最終応答を待っている配達、claim した TR1N の期限 |
 | HSS | Disconnect-Peer-Request を送って接続を閉じる。Disconnect-Cause は REBOOTING。`UNLOCKED` でないあいだは 3868 で待ち受けないので、つなぎ直しに来た相手は TCP の段階で断られ、Tc ごとに試し続ける。`PeerGroup` は閉じた相手を飛ばして次の台へ送る（下の「HSS のドレインで何を返すか」） | 処理中の Cx と Sh の要求。その応答が送り出されてから DPR を送る | 処理中の Cx と Sh の要求 |
+| SC | shut down で Diameter の待ち受けを閉じ、新しい接続を受けない。`LOCKED` で、serving node が開いた接続に DPR を送って閉じる。Disconnect-Cause は REBOOTING。OFR は Destination-Host を持たないので、DIAMETER_TOO_BUSY では断らない。IP-SM-GW の `PeerGroup` は閉じた台を飛ばして次の台へ送り、残っていなければ UE に RP-Cause 41 の RP-ERROR を返す。HSS への接続は SC が開いたものなので残す（下の「SC のドレインで何を返すか」） | 持っている接続で届く OFR（保存先に預け、配達は運用中の台に任せる）、HSS の ALR（宛先を今すぐ試す状態にするだけ）、リースを持っている宛先の今の試行 | 答えている途中の OFR と ALR、リースを持っている宛先 |
 | メディア中継ノード、MRFP | 新しいコンテキストを作る `Add` に 503 を返す。Retry-After は付けない。P-CSCF と MRFC は一覧の次の台を選び、1 台も残らなければ上流に答える（下の「メディア中継ノードと MRFP のドレインで何を返すか」） | 今あるコンテキストへの `Modify` と `Subtract`、そのコンテキストにターミネーションを足す `Add`、Notify と Audit | この台が持っているコンテキスト |
 
 - 503 を受けて次の宛先が残っていないとき、プロキシ（P-CSCF、I-CSCF、S-CSCF）は 503 を上流へ返さず、自分で 500 を返します（RFC 3261 16.7 の手順 6、`internal/ims` の `Finish`）。503 は、送った台が今は要求を受けないことを示します。そのまま返すと、ほかの要求は受けているプロキシも要求を受けないと伝えることになります。UE は 503 を自分の P-CSCF のことと読み、Retry-After が無いかタイマー F より長ければ、その P-CSCF を使えないものとして扱います（TS 24.229 5.1.1.2.1、5.1.2A.1.6）。Retry-After は 503 を送った台についての値なので、500 には付けません。REGISTER を転送する P-CSCF だけは別で、I-CSCF から 503 が返ると次の I-CSCF へ移り、残っていなければ 504 を返します（TS 24.229 5.2.2.1 の 7、RFC 3263 4.3）。
@@ -280,7 +281,42 @@ S-CSCF は利用者の iFC で IP-SM-GW に要求を届けるので、503 は S-
 
 数えるものはどれも SIP のトランザクション数回で終わるので、shut down はすぐに `LOCKED` に移ります。移れないのは、新しい仕事が続けて来るときです。sweep はほかの台が送った配達の期限も claim し続け、claim 1 つが終わるまで 1 人として数えます。ドレイン中の S-CSCF が自分の期限の処理を続けるのと同じです。そこを区切るのが shut down の `timeout_seconds` で、HSS と同じ形です。
 
-operational state は Sh の相手に従います。IP-SM-GW は利用者の登録状態を聞いても SMSRegistrationInfo を書けなければ使えず（TS 24.341 5.3.3.2）、隣の SC も短いメッセージの宛先の番号を持つ利用者を HSS に聞けません。どちらも HSS が要るので、Sh の相手がいなければ DISABLED にします。SC は operational state に入れません。IP-SM-GW と同じプロセスで動き、`ServiceCentre` の境界の向こうにあるので、状態を報告できる結び付きがありません。SGd か MAP で本物の SC につなぐノードなら、その経路が切れているあいだ DISABLED にします。短いメッセージはどちらの向きもその SC を通るためです。
+operational state は Sh の相手に従います。IP-SM-GW は利用者の登録状態を聞いても SMSRegistrationInfo を書けなければ使えず（TS 24.341 5.3.3.2）、隣の SC も短いメッセージの宛先の番号を持つ利用者を HSS に聞けません。どちらも HSS が要るので、Sh の相手がいなければ DISABLED にします。IP-SM-GW と同じプロセスで動く SC のスタブは、operational state に入れません。`ServiceCentre` の境界の向こうにあり、状態を報告できる結び付きが無いためです。SGd でノードとしての SC（`sc` の役割）につなぐ IP-SM-GW も、operational state は Sh の相手だけで決めます。SC が届かないあいだも登録は続けられ、発信のショートメッセージには RP-Cause 41 を返して UE に送り直しを促せるためです。SC そのものの状態は、SC のノードが自分の保守用の API で報告します（次の節）。
+
+### SC のドレインで何を返すか
+
+ドレイン中の SC は、HSS と同じく Diameter の待ち受けで運用から外れます。shut down で新しい接続を受けなくなり、`LOCKED` で serving node が開いた接続に DPR を送って閉じます。`internal/smsc/maintenance.go` と `cmd/ims/sc.go` の `scFunction` で作りました。待ち受けを閉じて DPR を送る手順は、HSS と共通の `diameter.ListenerDrain` にまとめました。
+
+SC が 1 つの要求より長く持つものは、すべて保存先にあります（`internal/smsc/store.go`）。預かったショートメッセージと、宛先ごとに次に試す時刻です。どの台も受け取れ、どの台も配達できます。台に結び付くのは、配達を試しているあいだの宛先のリースだけです。そのため、運用から外した台が終えるのは、始めた試行だけです。
+
+応答で断る作りは採りません。理由は次のとおりです。
+
+- OFR は Destination-Host を持ちません。SC のアドレスから SMS-IWMSC の名前を引けない serving node は realm だけを入れる、と TS 29.338 V19.3.0 6.3.1.1 が決めていて、この IP-SM-GW はそうしています。RFC 6733 7.1.3 は DIAMETER_TOO_BUSY を特定のサーバーを指した要求にしか使わせないので、IP-SM-GW の TFR のようには断れません。HSS で TOO_BUSY を採らなかったのと同じ理由です。
+- TS 29.338 V19.3.0 6.2.1.1 の Table 6.2.1.1/2 が OFA に定める失敗の原因（unknown Service Centre address、Service Centre congestion、invalid Short Message Entity address、user not Service Centre user）は、どれもそのショートメッセージを断るものです。Service Centre congestion を返すと、UE には RP-Cause 42 の RP-ERROR が届きます。`PeerGroup` が別の台へ送り直すのは TOO_BUSY と答えが無いときだけなので、ほかの台へは移りません。設定の順で最初の台をドレインすると、その台が接続を持っているあいだ、UE が送るショートメッセージはすべて失敗します。これはドレインになりません。
+- DIAMETER_UNABLE_TO_DELIVER（3002）は、レルムの中に要求を扱えるホストが無いために要求を届けられなかったノードが返すものです（RFC 6733 7.1.3）。SC は要求の宛先そのものなので、自分について返すのは実際の網に無い動きです。
+
+続けるものは次のとおりです。
+
+- 持っている接続で届く OFR。`SHUTTINGDOWN` のあいだは接続が残るので、OFR が届きます。いつもどおり受け取って保存先に預け、OFA を返します。配達は始めず、運用中の台に任せます（`deliverSoon`）。HSS が `SHUTTINGDOWN` のあいだも新しい要求を扱うのと同じで、断る手段が無いためです。
+- HSS の ALR。保存先の `Alert` でその利用者の宛先を今すぐ試す状態にし、成功を返します。配達は運用中の台の `ProcessDue` が拾います。ALR は、以前の配達が始めた待ちの終わりです（TS 23.040 3.2.7）。断ると HSS は MWD に SC のアドレスを残し（再送するかどうかは運用者の選択です。TS 29.338 V19.3.0 5.2.2.2）、配達は利用者が次に戻るときか、再送の時刻（Compose では 1 時間）まで遅れます。
+- リースを持っている宛先の、今の試行。試行を終えてリースを放したあとは、同じ宛先の次のショートメッセージを取りにいきません（`serve`）。`ProcessDue` も宛先を claim しません。再送、有効期間の終わり、ALR で試す状態になった宛先は、保存先で運用中の台を待ちます。
+
+`Users` が数えるものは次のとおりです。
+
+- 答えている途中の OFR と ALR。答えを送り出してから減らします（`diameter.Node.AfterAnswer`）。最後の答えより先に DPR が出ないようにするためで、HSS と同じです。
+- リースを持っている宛先。claim の前に数え、リースを放したあとで減らします。claim のあとで数えると、そのあいだに shut down が数えたとき、リースを見落とすためです。
+
+保存先は走査しません。預かっているショートメッセージも数えません。どの台でも配達できるためです。1 回の試行は IP-SM-GW の TFA を待つので、最長で `scAnswerTimeout`（約 90 秒）かかります。shut down がそれより長く待たないよう区切るのは `timeout_seconds` で、ほかの役割と同じです。
+
+lock と期限切れは、試行を待ちません。接続が閉じると、TFA を待っている TFR には答えが返らず、SC はこれを時間が経てば直るかもしれない system failure と読み、ショートメッセージを次の再送まで預かります。IP-SM-GW がもう配達していれば、受け手は同じショートメッセージを 2 回受け取ります。HSS の lock が処理中の要求を待たないのと同じです。
+
+HSS との接続は閉じません。SC が自分で開いた接続で、HSS は ALR をこの接続で送るためです（`hss.SetPeers`）。
+
+operational state は、S6c の相手（HSS の `PeerGroup`）が使えるあいだ ENABLED です。HSS が無いと、宛先を確かめることも、宛先を受け持つノードを調べることもできないためです。加えて、運用中なのにノードが待ち受けていないときも DISABLED にします。待ち受けをやり直すバインドに失敗したときと、同じノードのほかの役割が待ち受けを閉じているときです。
+
+1 つのノードが HSS と SC の両方を持つときは、Diameter の待ち受けも 1 つです。どちらかを外すと待ち受けが閉じ、両方が戻ったときに開きます（`diameter.Server.SetAccepting` が、閉じている役割を数えます）。lock の DPR も、ノードのすべての接続に送ります。片方だけを外したい運用者は、2 つを別のノードにします。Compose、Kubernetes、冗長構成では、どちらも別のノードです。
+
+Compose の SC は 1 台なので、運用から外れているあいだに預かったものは、戻すまで待ちます。
 
 ### メディア中継ノードと MRFP のドレインで何を返すか
 
