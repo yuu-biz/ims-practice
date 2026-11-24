@@ -38,8 +38,14 @@ const (
 	// function and sends no signalling.
 	RoleOAM Role = "oam"
 	// RoleIPSMGW is the IP-SM-GW, the application server for SMS over
-	// IP, with the stub of the SC inside it.
+	// IP. It hands the short messages of the UEs to the SC, either over
+	// SGd or to the stub of the SC inside it.
 	RoleIPSMGW Role = "ipsmgw"
+	// RoleSC is the Service Centre of SMS: the SMS-SC that holds the
+	// short messages, with the SMS-IWMSC that takes them from the
+	// serving nodes and the SMS-GMSC that delivers them, which TS 23.040
+	// 4.1 lets one node be.
+	RoleSC Role = "sc"
 	// RoleEPC is the stub of the EPC, with the PCRF stub inside it.
 	RoleEPC Role = "epc"
 	// RoleMMTel is the MMTel AS, the application server of the MMTel
@@ -60,7 +66,7 @@ const (
 	RoleFault Role = "fault"
 )
 
-var knownRoles = []Role{RoleHSS, RoleICSCF, RoleSCSCF, RolePCSCF, RoleAGW, RoleLab, RoleOAM, RoleIPSMGW, RoleEPC, RoleMMTel, RoleMRFP, RoleMRFC, RoleIBCF, RoleFault}
+var knownRoles = []Role{RoleHSS, RoleICSCF, RoleSCSCF, RolePCSCF, RoleAGW, RoleLab, RoleOAM, RoleIPSMGW, RoleSC, RoleEPC, RoleMMTel, RoleMRFP, RoleMRFC, RoleIBCF, RoleFault}
 
 // Config is a node's validated configuration. Each role's section is
 // set exactly when the node has that role.
@@ -92,6 +98,7 @@ type Config struct {
 	SCSCF    *SCSCF
 	HSS      *hss.Config
 	IPSMGW   *IPSMGW
+	SC       *SC
 	EPC      *EPC
 	MMTel    *MMTel
 	IBCF     *IBCF
@@ -104,14 +111,15 @@ type Config struct {
 // Diameter is the node's Diameter identity and connections.
 type Diameter struct {
 	Identity diameter.Identity
-	// Listen is set only for the hss and epc roles, which accept
+	// Listen is set only for the hss, sc and epc roles, which accept
 	// connections.
 	Listen string
-	// Peers is set for the icscf, scscf, ipsmgw and mmtel roles, which
-	// connect to the HSS, and for a pcscf, which connects to the PCRF.
-	// Each peer says which of the two it is, so a node with both kinds
-	// of role has no doubt about it. Several peers of the HSS are its
-	// instances, which all serve the same subscribers.
+	// Peers is set for the icscf, scscf, ipsmgw, sc and mmtel roles,
+	// which connect to the HSS, for a pcscf, which connects to the PCRF,
+	// and for an ipsmgw that reaches the SC over SGd. Each peer says
+	// which of the kinds it is, so a node with several such roles has no
+	// doubt about it. Several peers of the HSS are its instances, which
+	// all serve the same subscribers.
 	Peers  []Peer
 	Timers diameter.Timers
 }
@@ -125,6 +133,13 @@ const (
 	PeerHSS PeerKind = "hss"
 	// PeerPCRF serves Rx, for the P-CSCF as an AF.
 	PeerPCRF PeerKind = "pcrf"
+	// PeerSC serves SGd, for the IP-SM-GW as a serving node: the
+	// SMS-IWMSC that takes the short messages of its UEs. A
+	// configuration may name several instances of one SC, which share
+	// the short messages they hold. An ipsmgw with such a peer reaches
+	// the SC over SGd; one without it uses the stub of the SC inside its
+	// own process.
+	PeerSC PeerKind = "sc"
 )
 
 // Peer is one Diameter peer: where to reach it, the Origin-Host it must
@@ -175,6 +190,7 @@ type rawConfig struct {
 	SCSCF       *rawSCSCF       `yaml:"scscf"`
 	HSS         *rawHSS         `yaml:"hss"`
 	IPSMGW      *rawIPSMGW      `yaml:"ipsmgw"`
+	SC          *rawSC          `yaml:"sc"`
 	EPC         *rawEPC         `yaml:"epc"`
 	MMTel       *rawMMTel       `yaml:"mmtel"`
 	IBCF        *rawIBCF        `yaml:"ibcf"`
@@ -286,12 +302,12 @@ func (raw rawConfig) validate(dir string) (Config, error) {
 	// The P-CSCF speaks Rx only once it is given a PCRF, so its Diameter
 	// is optional.
 	needsDiameter := cfg.HasRole(RoleHSS) || cfg.HasRole(RoleICSCF) || cfg.HasRole(RoleSCSCF) || cfg.HasRole(RoleIPSMGW) ||
-		cfg.HasRole(RoleMMTel) || cfg.HasRole(RoleEPC)
+		cfg.HasRole(RoleSC) || cfg.HasRole(RoleMMTel) || cfg.HasRole(RoleEPC)
 	switch {
 	case needsDiameter && raw.Diameter == nil:
-		return Config{}, errors.New("diameter: required for the hss, icscf, scscf, ipsmgw, mmtel and epc roles")
+		return Config{}, errors.New("diameter: required for the hss, icscf, scscf, ipsmgw, sc, mmtel and epc roles")
 	case !needsDiameter && !cfg.HasRole(RolePCSCF) && raw.Diameter != nil:
-		return Config{}, errors.New("diameter: only the hss, icscf, scscf, ipsmgw, mmtel, epc and pcscf roles use this section")
+		return Config{}, errors.New("diameter: only the hss, icscf, scscf, ipsmgw, sc, mmtel, epc and pcscf roles use this section")
 	}
 	if raw.Diameter != nil {
 		d, err := raw.Diameter.validate(cfg)
@@ -380,7 +396,25 @@ func (raw rawConfig) validate(dir string) (Config, error) {
 		if err != nil {
 			return Config{}, fmt.Errorf("ipsmgw: %w", err)
 		}
+		// With a Service Centre over SGd, a short message for a user of
+		// another network is the Service Centre's to deliver, so the
+		// IP-SM-GW would send nothing to its IBCF: only the stub of the
+		// SC hands the IP-SM-GW such deliveries.
+		if c.IBCF.Host != "" && slices.ContainsFunc(cfg.Diameter.Peers, func(p Peer) bool { return p.Kind == PeerSC }) {
+			return Config{}, errors.New("ipsmgw: ibcf: an IP-SM-GW with a Diameter peer of kind sc sends nothing through an IBCF")
+		}
 		cfg.IPSMGW = &c
+	}
+
+	if err := section("sc", raw.SC != nil, cfg.HasRole(RoleSC), "the sc role"); err != nil {
+		return Config{}, err
+	}
+	if raw.SC != nil {
+		c, err := raw.SC.validate()
+		if err != nil {
+			return Config{}, fmt.Errorf("sc: %w", err)
+		}
+		cfg.SC = &c
 	}
 
 	if err := section("mmtel", raw.MMTel != nil, cfg.HasRole(RoleMMTel), "the mmtel role"); err != nil {
@@ -654,12 +688,16 @@ func (raw rawDiameter) validate(cfg Config) (Diameter, error) {
 		Identity: diameter.Identity{OriginHost: raw.OriginHost, OriginRealm: raw.OriginRealm},
 	}
 
-	listens := cfg.HasRole(RoleHSS) || cfg.HasRole(RoleEPC)
+	// The SC listens because the serving node is the end that opens the
+	// SGd connection: it brings the mobile originated short messages,
+	// and the SC sends the mobile terminated ones back over the same
+	// connection (TS 29.338 6.3.1.1, 6.3.1.2).
+	listens := cfg.HasRole(RoleHSS) || cfg.HasRole(RoleSC) || cfg.HasRole(RoleEPC)
 	switch {
 	case listens && raw.Listen == "":
-		return Diameter{}, errors.New("listen: required for the hss and epc roles")
+		return Diameter{}, errors.New("listen: required for the hss, sc and epc roles")
 	case !listens && raw.Listen != "":
-		return Diameter{}, errors.New("listen: only the hss and epc roles listen")
+		return Diameter{}, errors.New("listen: only the hss, sc and epc roles listen")
 	case listens:
 		if err := checkHostPort(raw.Listen); err != nil {
 			return Diameter{}, fmt.Errorf("listen: %w", err)
@@ -667,15 +705,17 @@ func (raw rawDiameter) validate(cfg Config) (Diameter, error) {
 		d.Listen = raw.Listen
 	}
 
-	needsHSS := cfg.HasRole(RoleICSCF) || cfg.HasRole(RoleSCSCF) || cfg.HasRole(RoleIPSMGW) || cfg.HasRole(RoleMMTel)
+	needsHSS := cfg.HasRole(RoleICSCF) || cfg.HasRole(RoleSCSCF) || cfg.HasRole(RoleIPSMGW) ||
+		cfg.HasRole(RoleSC) || cfg.HasRole(RoleMMTel)
 	onlyRx := !needsHSS && !listens && cfg.HasRole(RolePCSCF)
+	kinds := fmt.Sprintf("%q, %q or %q", PeerHSS, PeerPCRF, PeerSC)
 	switch {
 	case needsHSS && len(raw.Peers) == 0:
-		return Diameter{}, errors.New("peers: the icscf, scscf, ipsmgw and mmtel roles need the HSS as a peer")
+		return Diameter{}, errors.New("peers: the icscf, scscf, ipsmgw, sc and mmtel roles need the HSS as a peer")
 	case onlyRx && len(raw.Peers) == 0:
 		return Diameter{}, errors.New("peers: the pcscf role needs the PCRF as a peer")
 	case !needsHSS && !cfg.HasRole(RolePCSCF) && len(raw.Peers) != 0:
-		return Diameter{}, errors.New("peers: only the icscf, scscf, ipsmgw, mmtel and pcscf roles connect to peers")
+		return Diameter{}, errors.New("peers: only the icscf, scscf, ipsmgw, sc, mmtel and pcscf roles connect to peers")
 	}
 	for i, p := range raw.Peers {
 		if err := checkHostPort(p.Address); err != nil {
@@ -687,18 +727,20 @@ func (raw rawDiameter) validate(cfg Config) (Diameter, error) {
 		kind := PeerKind(p.Kind)
 		switch {
 		case p.Kind == "":
-			return Diameter{}, fmt.Errorf("peers[%d].kind: required, %q or %q", i, PeerHSS, PeerPCRF)
-		case kind != PeerHSS && kind != PeerPCRF:
-			return Diameter{}, fmt.Errorf("peers[%d].kind: %q is not %q or %q", i, p.Kind, PeerHSS, PeerPCRF)
+			return Diameter{}, fmt.Errorf("peers[%d].kind: required, %s", i, kinds)
+		case kind != PeerHSS && kind != PeerPCRF && kind != PeerSC:
+			return Diameter{}, fmt.Errorf("peers[%d].kind: %q is not %s", i, p.Kind, kinds)
 		case kind == PeerHSS && !needsHSS:
-			return Diameter{}, fmt.Errorf("peers[%d].kind: only the icscf, scscf, ipsmgw and mmtel roles reach the HSS", i)
+			return Diameter{}, fmt.Errorf("peers[%d].kind: only the icscf, scscf, ipsmgw, sc and mmtel roles reach the HSS", i)
 		case kind == PeerPCRF && !cfg.HasRole(RolePCSCF):
 			return Diameter{}, fmt.Errorf("peers[%d].kind: only the pcscf role reaches the PCRF", i)
+		case kind == PeerSC && !cfg.HasRole(RoleIPSMGW):
+			return Diameter{}, fmt.Errorf("peers[%d].kind: only the ipsmgw role reaches the SC", i)
 		}
 		d.Peers = append(d.Peers, Peer{PeerConfig: diameter.PeerConfig{Address: p.Address, OriginHost: p.OriginHost}, Kind: kind})
 	}
 	if needsHSS && !slices.ContainsFunc(d.Peers, func(p Peer) bool { return p.Kind == PeerHSS }) {
-		return Diameter{}, errors.New("peers: the icscf, scscf, ipsmgw and mmtel roles need the HSS as a peer")
+		return Diameter{}, errors.New("peers: the icscf, scscf, ipsmgw, sc and mmtel roles need the HSS as a peer")
 	}
 	if onlyRx && !slices.ContainsFunc(d.Peers, func(p Peer) bool { return p.Kind == PeerPCRF }) {
 		return Diameter{}, errors.New("peers: the pcscf role needs the PCRF as a peer")
