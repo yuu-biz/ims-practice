@@ -16,4 +16,5 @@
 | [state-redundancy.md](state-redundancy.md) | 状態を `Store` の後ろに置き、冗長構成では外部の保存先に置くこと | 各役割を複数台で動かし、ノードを作り直しても登録と呼を保つため |
 | [hss-provisioning.md](hss-provisioning.md) | HSS の加入者のプロビジョニングの API。1 件ずつの操作、ページに分けた一覧と書き出し、一括の登録、試験用の利用者の印、サービスのプロファイルの選び方、収容の方針 | 加入者のデータを OAM からまとめて扱い、機能を試験用の利用者だけに有効にするため |
 | [provisioning-northbound.md](provisioning-northbound.md) | BSS から加入者を入れる口を、標準に寄せずに独自の API のままにすること | 標準にある形（SuM の Itf-N に流す Bulk CM の XML）が、この実装の運ぶ長期の鍵、OPc、SIP Digest のパスワードを持たないため |
+| [fm-northbound.md](fm-northbound.md) | OSS に警報を渡す口を、TS 28.111 の故障管理と TS 28.532 の ProvMnS の REST の形で作ること。警報の一覧の読み出し、確認、`NtfSubscriptionControl` による購読と通知。通知は、ノードごとのリースを持つ OAM のインスタンスが送ること | 標準の Itf-N の形で OSS につなぎ、OAM を複数のインスタンスで動かしても、1 台のノードの通知を 1 か所から順に送るため |
 | [b2bua.md](b2bua.md) | IBCF と MMTel AS が 2 つのレグを中継する部分を `internal/b2bua` にまとめ、ダイアログの中の要求を届いた順に中継すること | 同じ直しを 2 か所に入れ続けずに済み、オファーとアンサーの順を崩さないため |
