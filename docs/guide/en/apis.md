@@ -6,7 +6,7 @@ Besides SIP and Diameter, the nodes of this project talk HTTP. Some of these API
 
 ## The APIs that follow a specification
 
-Ut is XCAP, an XML API. For the APIs of the service based interface (SBI) below it, the OpenAPI file of the specification is the definition. The repository does not hold it: it comes in the archive of the specification on the 3GPP file server. The package comment of each package names the specification, its version, the OpenAPI file, and which operations of the file the package builds. The JSON types carry the attribute names of the file, and a test compares the names of each type with a list taken from the schema of the same name in the file.
+Ut is XCAP, an XML API. For the other APIs below it, the OpenAPI file of the specification is the definition. The repository does not hold it: it comes in the archive of the specification on the 3GPP file server. The package comment of each package names the specification, its version, the OpenAPI file, and which operations of the file the package builds. The JSON types carry the attribute names of the file, and a test compares the names of each type with a list taken from the schema of the same name in the file.
 
 | API | What uses it | Specification | Code |
 | --- | --- | --- | --- |
@@ -14,8 +14,22 @@ Ut is XCAP, an XML API. For the APIs of the service based interface (SBI) below 
 | Npcf_PolicyAuthorization, the N5 reference point | The P-CSCF asks the PCF for the media of a call in 5GS, the counterpart of Rx | TS 29.514, `TS29514_Npcf_PolicyAuthorization.yaml` | Package `n5` |
 | Nhss_imsUEContextManagement, Nhss_imsUEAuthentication, Nhss_imsSubscriberDataManagement, the N70 and N71 reference points | The I-CSCF and the S-CSCF ask the HSS over N70 instead of Cx, and an AS over N71 instead of Sh | TS 29.562, `TS29562_Nhss_imsUECM.yaml`, `TS29562_Nhss_imsUEAU.yaml`, `TS29562_Nhss_imsSDM.yaml` | Package `nhss` |
 | What every SBI shares: HTTP/2, JSON and the error answers | Packages `n5` and `nhss` | TS 29.500, and ProblemDetails of TS 29.571 (`TS29571_CommonData.yaml`) | Package `sbi` |
+| Fault supervision towards the OSS: the AlarmList of the SubNetwork, read and acknowledged with the generic provisioning operations (ProvMnS), and the subscriptions to its notifications (NtfSubscriptionControl) | The `oam` role serves it, and the OSS stand-in `oss` uses it ([Hand the alarms to an OSS](oss.md)) | TS 28.111 V20.0.0 and TS 28.532 V20.2.0, over the REST rules of TS 32.158 V20.1.0: `TS28111_FaultNrm.yaml` and `TS28111_FaultNotifications.yaml` 19.3.0, `TS28532_ProvMnS.yaml` 19.2.0, `TS28623_SubscriptionControlNrm.yaml` 19.4.0 | Package `mns`, and [`internal/oam`](../../../internal/oam/doc.go) |
 
-Of these, only Ut runs in the Compose project. The other three are [code that no node runs](README.md#code-that-no-node-runs), so they do not appear in the capture. Their packages are under `internal`.
+Of these, Ut and fault supervision run in the Compose project. The other three are [code that no node runs](README.md#code-that-no-node-runs), so they do not appear in the capture. Their packages are under `internal`.
+
+Fault supervision is the interface of the OAM towards the OSS, Itf-N. The OAM serves it beside its own API, under `{MnSRoot}`, which is `http://oam:8080/3GPPManagement` in the Compose project. The paths and the operations are these:
+
+| Method and path | Operation (TS 28.532) | Answer |
+| --- | --- | --- |
+| `GET {MnSRoot}/ProvMnS/v19/SubNetwork=ims/AlarmList=1`, with `filter`, `dataNodeSelector`, `fields` or `scope` in the query | `getMOIAttributes` (12.1.1.1.3) | 200, the AlarmList with its alarm records |
+| `PATCH {MnSRoot}/ProvMnS/v19/SubNetwork=ims/AlarmList=1`, `application/merge-patch+json` | `modifyMOIAttributes` (12.1.1.1.4): acknowledge, or take the acknowledgement back | 204 |
+| `PUT {MnSRoot}/ProvMnS/v19/SubNetwork=ims/NtfSubscriptionControl={id}` | `createMOI` (12.1.1.1.2.1): subscribe | 201 with `Location`, or 200 for a subscription it replaces |
+| `GET {MnSRoot}/ProvMnS/v19/SubNetwork=ims/NtfSubscriptionControl={id}` | `getMOIAttributes` | 200, the subscription |
+| `DELETE {MnSRoot}/ProvMnS/v19/SubNetwork=ims/NtfSubscriptionControl={id}` | `deleteMOI` (12.1.1.1.5): end the subscription | 204 |
+| `POST` to the `notificationRecipientAddress` of a subscription, from the OAM | One of the six alarm notifications of TS 28.111 | 204 from the OSS (TS 32.158 5.5.4) |
+
+An error has the body of TS 32.158 6.6, with its `type` and `reason`. Package `mns` holds the types, with the attribute names of the OpenAPI files, and the `oss` command uses the same types to check what the OAM sends.
 
 ## This project's own APIs
 

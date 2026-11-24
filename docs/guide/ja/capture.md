@@ -145,7 +145,7 @@ HEP の符号化では仕様の次の部分を省いています。
 - 手順書をすべて終えたら、ビルドで作ったイメージも削除します。
 
   ```sh
-  docker compose --profile ue --profile phones --profile volte down --rmi all -v --remove-orphans
+  docker compose --profile ue --profile phones --profile volte --profile oss down --rmi all -v --remove-orphans
   ```
 
 キャプチャのファイルは削除するまで `captures/` に残ります。

@@ -6,7 +6,7 @@
 
 ## 仕様に従う API
 
-Ut は XCAP で、XML の API です。その下に並べたサービスベースのインタフェース（SBI）の API は、仕様の OpenAPI のファイルで定義されています。リポジトリにはそのファイルを置いていません。3GPP のファイルサーバーにある仕様書の書庫に入っています。各パッケージの説明には、仕様の番号と版、OpenAPI のファイル名、そのファイルのどの操作を作ったかが書いてあります。JSON の型はファイルの属性の名前を使います。試験は、型ごとの名前を、ファイルの同じ名前のスキーマから写した一覧と比べます。
+Ut は XCAP で、XML の API です。その下に並べたほかの API は、仕様の OpenAPI のファイルで定義されています。リポジトリにはそのファイルを置いていません。3GPP のファイルサーバーにある仕様書の書庫に入っています。各パッケージの説明には、仕様の番号と版、OpenAPI のファイル名、そのファイルのどの操作を作ったかが書いてあります。JSON の型はファイルの属性の名前を使います。試験は、型ごとの名前を、ファイルの同じ名前のスキーマから写した一覧と比べます。
 
 | API | 使うもの | 仕様 | コード |
 | --- | --- | --- | --- |
@@ -14,8 +14,22 @@ Ut は XCAP で、XML の API です。その下に並べたサービスベー�
 | Npcf_PolicyAuthorization、N5 の参照点 | 5GS で、P-CSCF が通話のメディアを PCF に求める。Rx に当たる | TS 29.514、`TS29514_Npcf_PolicyAuthorization.yaml` | パッケージ `n5` |
 | Nhss_imsUEContextManagement、Nhss_imsUEAuthentication、Nhss_imsSubscriberDataManagement、N70 と N71 の参照点 | I-CSCF と S-CSCF が Cx の代わりに N70 で、AS が Sh の代わりに N71 で HSS に問い合わせる | TS 29.562、`TS29562_Nhss_imsUECM.yaml`、`TS29562_Nhss_imsUEAU.yaml`、`TS29562_Nhss_imsSDM.yaml` | パッケージ `nhss` |
 | どの SBI にも共通の部分。HTTP/2、JSON、誤りの答え | パッケージ `n5` と `nhss` | TS 29.500 と、TS 29.571 の ProblemDetails（`TS29571_CommonData.yaml`） | パッケージ `sbi` |
+| OSS に向けた故障の監視。SubNetwork の AlarmList を、汎用のプロビジョニングの操作（ProvMnS）で読み、確認する。その通知の購読（NtfSubscriptionControl） | `oam` の役割が応じ、OSS の代わりの `oss` が使う（[アラームを OSS に渡す](oss.md)） | TS 28.111 V20.0.0 と TS 28.532 V20.2.0 を、TS 32.158 V20.1.0 の REST の決まりで出す。`TS28111_FaultNrm.yaml` と `TS28111_FaultNotifications.yaml` の 19.3.0、`TS28532_ProvMnS.yaml` の 19.2.0、`TS28623_SubscriptionControlNrm.yaml` の 19.4.0 | パッケージ `mns` と [`internal/oam`](../../../internal/oam/doc.go) |
 
-このうち Compose のプロジェクトで動くのは Ut だけです。残りの 3 つは[どのノードも動かさないコード](README.md#どのノードも動かさないコード)なので、キャプチャには出ません。パッケージは `internal` の下にあります。
+このうち Compose のプロジェクトで動くのは Ut と故障の監視です。残りの 3 つは[どのノードも動かさないコード](README.md#どのノードも動かさないコード)なので、キャプチャには出ません。パッケージは `internal` の下にあります。
+
+故障の監視は、OSS に向けた OAM のインタフェース、Itf-N です。OAM は自分の API と並べて、`{MnSRoot}` の下でこれを出します。Compose のプロジェクトでは `{MnSRoot}` は `http://oam:8080/3GPPManagement` です。経路と操作は次のとおりです。
+
+| 方法と経路 | 操作（TS 28.532） | 答え |
+| --- | --- | --- |
+| `GET {MnSRoot}/ProvMnS/v19/SubNetwork=ims/AlarmList=1`。問い合わせに `filter`、`dataNodeSelector`、`fields`、`scope` を付けられる | `getMOIAttributes`（12.1.1.1.3） | 200。アラームの記録を持つ AlarmList |
+| `PATCH {MnSRoot}/ProvMnS/v19/SubNetwork=ims/AlarmList=1`。`application/merge-patch+json` | `modifyMOIAttributes`（12.1.1.1.4）。確認と、確認の取り消し | 204 |
+| `PUT {MnSRoot}/ProvMnS/v19/SubNetwork=ims/NtfSubscriptionControl={id}` | `createMOI`（12.1.1.1.2.1）。購読する | 201 と `Location`。購読を置き換えたときは 200 |
+| `GET {MnSRoot}/ProvMnS/v19/SubNetwork=ims/NtfSubscriptionControl={id}` | `getMOIAttributes` | 200。購読 |
+| `DELETE {MnSRoot}/ProvMnS/v19/SubNetwork=ims/NtfSubscriptionControl={id}` | `deleteMOI`（12.1.1.1.5）。購読をやめる | 204 |
+| OAM から、購読の `notificationRecipientAddress` への `POST` | TS 28.111 のアラームの 6 つの通知のどれか | OSS が 204 を返す（TS 32.158 5.5.4） |
+
+誤りの本文は TS 32.158 6.6 の形で、`type` と `reason` を持ちます。パッケージ `mns` が OpenAPI のファイルの属性の名前で型を持ち、`oss` のコマンドも同じ型で OAM が送るものを確かめます。
 
 ## このプロジェクト独自の API
 
