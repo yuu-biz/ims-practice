@@ -107,13 +107,13 @@ const statusReportLifetime = 10 * time.Minute
 // information (Send Routeing Info for SM, or S6c) is replaced by an Sh
 // read of the public identities that have the number. The stub
 // then knows the user only as a user of the IMS.
-func (c *ServiceCentre) Submit(ctx context.Context, originator sms.Address, submit sms.Submit) (sms.SubmitReport, error) {
+func (c *ServiceCentre) Submit(ctx context.Context, originator sms.Address, submit sms.Submit) (*sms.SubmitReport, error) {
 	now := time.Now()
 	da := submit.DestinationAddress
 	log := c.log.With("originator", originator.String(), "tp_da", da.String(), "tp_mr", int(submit.MessageReference))
 	if da.TypeOfNumber != sms.TONInternational || da.NumberingPlan != sms.NPIISDNTelephone || !sh.ValidMSISDN(da.Digits) {
 		log.Info("short message refused: TP-DA is not an international E.164 number")
-		return sms.SubmitReport{}, refusal(sms.RPCauseUnassignedNumber, sms.FCSInvalidSMEAddress, now)
+		return nil, refusal(sms.RPCauseUnassignedNumber, sms.FCSInvalidSMEAddress, now)
 	}
 	recipient, err := c.userOf(ctx, da)
 	if errors.Is(err, errNoSuchUser) {
@@ -125,12 +125,12 @@ func (c *ServiceCentre) Submit(ctx context.Context, originator sms.Address, subm
 	switch {
 	case errors.Is(err, errNoSuchUser):
 		log.Info("short message refused: no user has the number")
-		return sms.SubmitReport{}, refusal(sms.RPCauseUnassignedNumber, sms.FCSInvalidSMEAddress, now)
+		return nil, refusal(sms.RPCauseUnassignedNumber, sms.FCSInvalidSMEAddress, now)
 	case err != nil:
 		// TS 24.011 E-2: cause 41 is a failure that the sender may try
 		// again soon; TS 23.040 9.2.3.22: C2, "SC system failure".
 		log.Warn("short message refused: the HSS did not answer", "error", err.Error())
-		return sms.SubmitReport{}, refusal(sms.RPCauseTemporaryFailure, sms.FCSSCSystemFailure, now)
+		return nil, refusal(sms.RPCauseTemporaryFailure, sms.FCSSCSystemFailure, now)
 	}
 
 	reference := rand.Text()
@@ -147,7 +147,7 @@ func (c *ServiceCentre) Submit(ctx context.Context, originator sms.Address, subm
 			// asked for. It refuses the short message as it does when the
 			// HSS does not answer, so that the sender may try again.
 			log.Warn("short message refused: the status report request not stored", "error", err.Error())
-			return sms.SubmitReport{}, refusal(sms.RPCauseTemporaryFailure, sms.FCSSCSystemFailure, now)
+			return nil, refusal(sms.RPCauseTemporaryFailure, sms.FCSSCSystemFailure, now)
 		}
 	}
 	log.Info("short message accepted", "status_report_request", submit.StatusReportRequest)
@@ -164,7 +164,7 @@ func (c *ServiceCentre) Submit(ctx context.Context, originator sms.Address, subm
 	// The sender gets the submit report first; the delivery goes on
 	// without it, in the IP-SM-GW that takes it on here.
 	c.ipsmgw.Deliver(ipsmgw.Delivery{Reference: reference, Recipient: recipient, TPDU: deliver})
-	return sms.SubmitReport{ServiceCentreTimeStamp: now}, nil
+	return &sms.SubmitReport{ServiceCentreTimeStamp: now}, nil
 }
 
 // Report learns how a delivery ended. When the sender of the short
@@ -276,5 +276,5 @@ func (c *ServiceCentre) userOf(ctx context.Context, number sms.Address) (string,
 }
 
 func refusal(cause sms.RPCause, fcs sms.FailureCause, now time.Time) *ipsmgw.Refusal {
-	return &ipsmgw.Refusal{Cause: cause, Report: sms.SubmitReport{FailureCause: fcs, ServiceCentreTimeStamp: now}}
+	return &ipsmgw.Refusal{Cause: cause, Report: &sms.SubmitReport{FailureCause: fcs, ServiceCentreTimeStamp: now}}
 }

@@ -128,7 +128,7 @@ func TestSubmitRefused(t *testing.T) {
 			submit.DestinationAddress = tt.da
 			_, err := c.Submit(context.Background(), alice, submit)
 			var refusal *ipsmgw.Refusal
-			if !errors.As(err, &refusal) || refusal.Cause != tt.cause || refusal.Report.FailureCause != tt.fcs {
+			if !errors.As(err, &refusal) || refusal.Report == nil || refusal.Cause != tt.cause || refusal.Report.FailureCause != tt.fcs {
 				t.Fatalf("err = %v, want RP-Cause %d with TP-FCS %#x", err, tt.cause, tt.fcs)
 			}
 			if refusal.Report.ServiceCentreTimeStamp.IsZero() {

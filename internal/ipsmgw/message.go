@@ -214,7 +214,7 @@ func (g *IPSMGW) submit(req *sip.Message, sender string, rp sms.RPDataMSToNetwor
 		log.Info("SC accepted the short message")
 		answer, err = ackWith(rp.MessageReference, report)
 	case errors.As(err, &refusal):
-		log.Info("SC refused the short message", "rp_cause", int(refusal.Cause), "tp_fcs", int(refusal.Report.FailureCause))
+		log.Info("SC refused the short message", "reason", refusal.Error())
 		answer, err = errorWith(rp.MessageReference, refusal)
 	default:
 		// The SC could not be asked. TS 24.011 Table 8.4 part 1: cause 41
@@ -229,14 +229,30 @@ func (g *IPSMGW) submit(req *sip.Message, sender string, rp sms.RPDataMSToNetwor
 	g.answer(req, sender, answer, log)
 }
 
-func ackWith(mr uint8, report sms.SubmitReport) (sms.RPMessage, error) {
+// ackWith is the RP-ACK for a short message the SC took, with the
+// SMS-SUBMIT-REPORT it gave, or without one when it gave none (TS
+// 24.011 table 7.7).
+func ackWith(mr uint8, report *sms.SubmitReport) (sms.RPMessage, error) {
+	ack := sms.RPAck{Direction: sms.NetworkToMS, MessageReference: mr}
+	if report == nil {
+		return ack, nil
+	}
 	tpdu, err := report.Marshal()
-	return sms.RPAck{Direction: sms.NetworkToMS, MessageReference: mr, UserData: tpdu}, err
+	ack.UserData = tpdu
+	return ack, err
 }
 
+// errorWith is the RP-ERROR for a short message the SC refused, with the
+// SMS-SUBMIT-REPORT it gave, or without one when it gave none (TS
+// 24.011 table 7.8).
 func errorWith(mr uint8, r *Refusal) (sms.RPMessage, error) {
+	e := sms.RPError{Direction: sms.NetworkToMS, MessageReference: mr, Cause: r.Cause}
+	if r.Report == nil {
+		return e, nil
+	}
 	tpdu, err := r.Report.Marshal()
-	return sms.RPError{Direction: sms.NetworkToMS, MessageReference: mr, Cause: r.Cause, UserData: tpdu}, err
+	e.UserData = tpdu
+	return e, err
 }
 
 // memoryAvailable is an RP-SMMA (TS 24.341 5.3.3.4.1 steps d and e, TS

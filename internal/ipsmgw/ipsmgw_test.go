@@ -68,10 +68,10 @@ type fakeSC struct {
 	submits chan submitted
 	reports chan reported
 	mu      sync.Mutex
-	answer  func() (sms.SubmitReport, error)
+	answer  func() (*sms.SubmitReport, error)
 }
 
-func (f *fakeSC) Submit(_ context.Context, originator sms.Address, submit sms.Submit) (sms.SubmitReport, error) {
+func (f *fakeSC) Submit(_ context.Context, originator sms.Address, submit sms.Submit) (*sms.SubmitReport, error) {
 	f.submits <- submitted{originator, submit}
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -81,7 +81,7 @@ func (f *fakeSC) Submit(_ context.Context, originator sms.Address, submit sms.Su
 func (f *fakeSC) answerWith(report sms.SubmitReport, err error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.answer = func() (sms.SubmitReport, error) { return report, err }
+	f.answer = func() (*sms.SubmitReport, error) { return &report, err }
 }
 
 func (f *fakeSC) Report(_ context.Context, reference string, outcome ipsmgw.Outcome) {
@@ -390,6 +390,27 @@ func TestShortMessageGoesToTheSC(t *testing.T) {
 	}
 }
 
+// TestShortMessageAcceptedWithoutASubmitReport is TS 24.011 table 7.7:
+// the SMS-SUBMIT-REPORT is an optional element of the RP-ACK, so an SC
+// that gives none, as an OFA without SM-RP-UI does, still gets the
+// sender an RP-ACK.
+func TestShortMessageAcceptedWithoutASubmitReport(t *testing.T) {
+	h := newHarness(t, ipsmgw.NewMemoryStore(), time.Minute, answerOK)
+	h.sc.mu.Lock()
+	h.sc.answer = func() (*sms.SubmitReport, error) { return nil, nil }
+	h.sc.mu.Unlock()
+	mo := message(submitBody(t, 7, scAddress, hello))
+	if resp := h.send(mo); resp.StatusCode != 202 {
+		t.Fatalf("MESSAGE answered %d, want 202", resp.StatusCode)
+	}
+	<-h.sc.submits
+	report := h.next()
+	ack, ok := parseRP(t, report).(sms.RPAck)
+	if !ok || ack.MessageReference != 7 || ack.UserData != nil {
+		t.Fatalf("submit report body = %+v, want an RP-ACK with RP-MR 7 and no RP-User Data", parseRP(t, report))
+	}
+}
+
 // TestChargingVector is TS 24.229 5.7.2 and 5.7.3: the answer to a
 // request repeats its icid-value and orig-ioi and adds this network's
 // term-ioi; a MESSAGE of the IP-SM-GW's own starts a charging
@@ -415,7 +436,7 @@ func TestChargingVector(t *testing.T) {
 // SC when there is one.
 func TestShortMessageRefused(t *testing.T) {
 	refused := &ipsmgw.Refusal{Cause: sms.RPCauseUnassignedNumber,
-		Report: sms.SubmitReport{FailureCause: sms.FCSInvalidSMEAddress, ServiceCentreTimeStamp: time.Now()}}
+		Report: &sms.SubmitReport{FailureCause: sms.FCSInvalidSMEAddress, ServiceCentreTimeStamp: time.Now()}}
 	tests := []struct {
 		name     string
 		body     func(t *testing.T) []byte
@@ -428,6 +449,9 @@ func TestShortMessageRefused(t *testing.T) {
 	}{
 		{name: "SC refuses", body: func(t *testing.T) []byte { return submitBody(t, 1, scAddress, hello) },
 			scResult: refused, wantMR: 1, want: sms.RPCauseUnassignedNumber, wantFCS: sms.FCSInvalidSMEAddress, reachSC: true},
+		// TS 24.011 table 7.8: the RP-ERROR may go without a report.
+		{name: "SC refuses without a report", body: func(t *testing.T) []byte { return submitBody(t, 1, scAddress, hello) },
+			scResult: &ipsmgw.Refusal{Cause: sms.RPCauseCongestion}, wantMR: 1, want: sms.RPCauseCongestion, reachSC: true},
 		{name: "SC does not answer", body: func(t *testing.T) []byte { return submitBody(t, 2, scAddress, hello) },
 			scResult: errors.New("HSS down"), wantMR: 2, want: sms.RPCauseTemporaryFailure, reachSC: true},
 		{name: "another SC", body: func(t *testing.T) []byte { return submitBody(t, 3, sms.InternationalNumber("+12025550177"), hello) },

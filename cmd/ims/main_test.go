@@ -1649,9 +1649,9 @@ func sendShortMessage(t *testing.T, addr netip.AddrPort) *sip.Message {
 // anything. A drained IP-SM-GW never does.
 type untouchedSC struct{ asked atomic.Bool }
 
-func (c *untouchedSC) Submit(context.Context, sms.Address, sms.Submit) (sms.SubmitReport, error) {
+func (c *untouchedSC) Submit(context.Context, sms.Address, sms.Submit) (*sms.SubmitReport, error) {
 	c.asked.Store(true)
-	return sms.SubmitReport{}, nil
+	return &sms.SubmitReport{}, nil
 }
 
 func (c *untouchedSC) Report(context.Context, string, ipsmgw.Outcome) { c.asked.Store(true) }
