@@ -233,8 +233,8 @@ for workload in $(kims get statefulset,deployment -o name); do
 	kims rollout status "$workload" --timeout=180s
 done
 
-# The CSCFs and the IP-SM-GW serve requests only once their Diameter
-# connections to the HSS are open.
+# The CSCFs, the Service Centre and the IP-SM-GW serve requests only
+# once their Diameter connections are open.
 wait_for_open() {
 	local pod="$1" i
 	# Up to two minutes: a node that tried before the HSS listened
@@ -250,6 +250,7 @@ wait_for_open() {
 }
 wait_for_open icscf-0
 wait_for_open scscf-0
+wait_for_open sc-0
 wait_for_open ipsmgw-0
 
 pod_ip() { kims get pod "$@" -o jsonpath='{.items[0].status.podIP}'; }
@@ -261,7 +262,8 @@ scscf="$(pod_ip -l app.kubernetes.io/name=scscf)"
 hss="$(pod_ip -l app.kubernetes.io/name=hss)"
 agw="$(pod_ip -l app.kubernetes.io/name=agw)"
 ipsmgw="$(pod_ip -l app.kubernetes.io/name=ipsmgw)"
-echo "addresses: ue $ue1, ue2 $ue2ip, pcscf $pcscf, icscf $icscf, scscf $scscf, hss $hss, agw $agw, ipsmgw $ipsmgw, dns $dns"
+sc="$(pod_ip -l app.kubernetes.io/name=sc)"
+echo "addresses: ue $ue1, ue2 $ue2ip, pcscf $pcscf, icscf $icscf, scscf $scscf, hss $hss, agw $agw, ipsmgw $ipsmgw, sc $sc, dns $dns"
 
 # The UE simulators wait in their Pods; each command runs inside them.
 # Their -pcscf default is the address of Docker Compose.
@@ -505,8 +507,13 @@ expect "MESSAGE S-CSCF -> IP-SM-GW by the originating iFC" "$message && sip.Call
 mo_at_gw="$last"
 expect "202 Accepted reaches UE 1" "sip.Status-Code == 202 && sip.Call-ID == \"$mo\" && ip.dst == $ue1"
 last="$mo_at_gw"
-expect "UDR IP-SM-GW -> HSS for MSISDN 12025550102" "diameter.cmd.code == 306 && $req && ip.src == $ipsmgw && ip.dst == $hss && e164.msisdn == \"12025550102\""
-expect "UDA 2001" "$(answer) && diameter.Result-Code == 2001"
+# The short message crosses SGd to the Service Centre, which asks the
+# HSS over S6c which node serves the recipient and brings it back in a
+# TFR (TS 29.338 6.2.1, 5.2.1, 6.2.2).
+expect "OFR IP-SM-GW -> SC with the SMS-SUBMIT" "diameter.cmd.code == 8388645 && $req && ip.src == $ipsmgw && ip.dst == $sc && diameter.SM-RP-UI"
+expect "SRR SC -> HSS for UE 2's number" "diameter.cmd.code == 8388647 && $req && ip.src == $sc && ip.dst == $hss && e164.msisdn == \"12025550102\""
+expect "SRA 2001 with the IP-SM-GW as the serving node" "$(answer) && diameter.Result-Code == 2001 && diameter.IP-SM-GW-Name"
+expect "TFR SC -> IP-SM-GW naming UE 2 by IMSI" "diameter.cmd.code == 8388646 && $req && ip.src == $sc && ip.dst == $ipsmgw && diameter.User-Name == \"001010000000002\""
 expect "MT MESSAGE IP-SM-GW -> I-CSCF: SMS-DELIVER" "$message && $sms && ip.src == $ipsmgw && ip.dst == $icscf && sip.r-uri == \"tel:+12025550102\" && gsm_sms.tp-mti == 0 && gsm_sms.sms_text == \"$gsm_text\""
 mt="$(field sip.Call-ID)"
 expect "LIR for UE 2's tel URI" "$lir && $req && ip.src == $icscf && diameter.Public-Identity == \"tel:+12025550102\""
@@ -514,6 +521,7 @@ expect "MT MESSAGE I-CSCF -> S-CSCF" "$message && sip.Call-ID == \"$mt\" && ip.s
 expect "MT MESSAGE S-CSCF -> P-CSCF" "$message && sip.Call-ID == \"$mt\" && ip.src == $scscf && ip.dst == $pcscf && sip.r-uri.host == \"$ue2ip\""
 expect "MT MESSAGE reaches UE 2" "$message && sip.Call-ID == \"$mt\" && ip.dst == $ue2ip && gsm_sms.sms_text == \"$gsm_text\""
 expect "delivery report UE 2 -> P-CSCF in reply to the MT MESSAGE" "$message && $sms && ip.src == $ue2ip && sip.In-Reply-To == \"$mt\""
+expect "TFA 2001 IP-SM-GW -> SC once the delivery report is in" "diameter.cmd.code == 8388646 && $ans && ip.src == $ipsmgw && ip.dst == $sc && diameter.Result-Code == 2001"
 expect "status report IP-SM-GW -> I-CSCF: received by the SME" "$message && $sms && ip.src == $ipsmgw && sip.r-uri == \"tel:+12025550101\" && gsm_sms.tp-mti == 2 && gsm_sms.dis_field.st_error == 0"
 sr="$(field sip.Call-ID)"
 expect "status report reaches UE 1" "$message && sip.Call-ID == \"$sr\" && ip.dst == $ue1"
