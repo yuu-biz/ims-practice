@@ -868,7 +868,8 @@ HSS のノードも同じ保守用の API をポート 8085 で出していま�
 - HSS が DPR を送り、相手が DPA を返し、DPA を受け取った側が TCP の接続を閉じます（RFC 6733 5.4）。ラダー図にあるのは Cx の 2 本です。IP-SM-GW と MMTel AS も Sh の接続を 1 本ずつ持っていて、そちらにも DPR が出るので、このやり取りは全部で 4 回です。`docker compose logs hss` には、そのあとに `stopped accepting connections` が出ます。
 - Wireshark では、`diameter.cmd.code == 282` で DPR と DPA が見られます。どの DPR も `Disconnect-Cause` AVP は `REBOOTING (0)` です。
 - I-CSCF と S-CSCF には、要求を受ける HSS が 1 台も無くなりました。`docker compose exec icscf wget -qO- http://127.0.0.1:8085/maintenance/v1/state` を見ると、I-CSCF の `"operational_state":"DISABLED"` が出ます。運用者は I-CSCF を外していませんが、HSS が無ければ I-CSCF は動けないためです。
-- どちらも Tc ごと、つまり 30 秒ごとに接続し直そうとして、lock が解けるまで断られます。`docker compose logs icscf` には、試すたびに `connection failed` が出ます。
+- どちらも Tc ごと、つまり 30 秒ごとに接続し直そうとして、lock が解けるまで断られます。`docker compose logs icscf` には、試すたびに `connection failed` が出ます。Wireshark では、`tcp.flags.reset == 1 && tcp.srcport == 3868` で、HSS が接続を断るときのリセットが見られます。
+- 最初に断られた試行で、どちらも HSS についてのアラームを上げます。DPR から Tc たったころです。DPR だけではアラームは上がりません。DPR は相手に戻ってくるよう求めているためです。アラームの中身は [HSS についてのアラームを読む](#hss-についてのアラームを読む) にあります。
 
 2. UE を登録します。
 
@@ -902,11 +903,50 @@ HSS のノードも同じ保守用の API をポート 8085 で出していま�
      nc -w 5 127.0.0.1 8085'
    ```
 
-   ノードはまた待ち受けを始めます。I-CSCF と S-CSCF は遅くとも Tc 後の次の試行で戻ってきます。`docker compose logs icscf` には、新しい CER と CEA、それに `"to":"I-Open (OKAY)"` が出ます。次の `ue register` は前と同じように登録します。
+   ノードはまた待ち受けを始めます。I-CSCF と S-CSCF は遅くとも Tc 後の次の試行で戻ってきます。`docker compose logs icscf` には、新しい CER と CEA、それに `"to":"I-Open (OKAY)"` が出ます。次の `ue register` は前と同じように登録します。CEA を受けると、各ノードはアラームを解除します。
 
 lock を解くとき、ノードはポート 3868 をもう一度確保しますが、運用から外しているあいだにほかのものがそのポートを取っていれば失敗します。失敗しても HSS の管理状態は `UNLOCKED` で、`"operational_state":"DISABLED"` を返し、`docker compose logs hss` には `cannot listen for Diameter connections again` が出ます。HSS はすでに `UNLOCKED` なので、もう一度 lock を解いても何も起きません。ポートを取り直させるには、lock をかけて、もう一度解きます。
 
-管理状態はノードのプロセスのものです。起動し直したノードは `UNLOCKED` です。`scripts/e2e-observability.sh` はこの手順も実行し、キャプチャで DPR を確かめます。
+管理状態はノードのプロセスのものです。起動し直したノードは `UNLOCKED` です。`scripts/e2e-observability.sh` はこの手順も実行し、キャプチャで DPR を、保守用の API でノードのアラームを確かめます。
+
+### HSS についてのアラームを読む
+
+各ノードは、見つけた障害を一覧にして持っています。TS 28.111 のアラームの一覧です。アラームは、役割が障害を見つけたときに上げ、その状態が無くなったときに解除します。運用者は一覧を読んでアラームを確認できますが、解除はできません（TS 28.111 6.8）。I-CSCF、S-CSCF、IP-SM-GW、MMTel AS、Service Centre は、届かなくなった HSS のインスタンスごとに 1 つずつアラームを上げます。HSS を運用から外しているあいだに、S-CSCF の保守用の API で一覧を読みます。
+
+```sh
+docker compose exec scscf wget -qO- 'http://127.0.0.1:8085/maintenance/v1/alarms?cleared=false'
+```
+
+```json
+{"node":"scscf","instance":"3f1c0e2a9b7d","num_of_alarm_records":1,"last_modification":"2026-11-24T10:15:02Z","dropped_records":0,
+ "alarm_records":[{"alarm_id":"9f3c2a7b1d4e6058","object_instance":"ManagedElement=scscf,ManagedFunction=scscf,Peer=hss.ims.mnc001.mcc001.3gppnetwork.org",
+  "role":"scscf","peer":"hss.ims.mnc001.mcc001.3gppnetwork.org","alarm_raised_time":"2026-11-24T10:15:02Z",
+  "alarm_type":"COMMUNICATIONS_ALARM","probable_cause":"COMMUNICATIONS_SUBSYSTEM_FAILURE","specific_problem":"Diameter peer down",
+  "perceived_severity":"MAJOR","additional_text":"no transport connection to the peer","ack_state":"UNACKNOWLEDGED"}]}
+```
+
+| フィールド | 値 | 理由 |
+| --- | --- | --- |
+| `object_instance` | `ManagedElement=scscf,ManagedFunction=scscf,Peer=hss.ims.mnc001.mcc001.3gppnetwork.org` | アラームの対象は、HSS のインスタンス 1 つです。Origin-Host で示します。インスタンスが複数ある網では、届かなくなったインスタンスがそれぞれ自分のアラームを持ち、直すべきインスタンスがわかります。S-CSCF にまだ届くインスタンスが残っているかは、アラームではなく `operational_state` が示します。 |
+| `alarm_type` | `COMMUNICATIONS_ALARM` | ある地点から別の地点へ情報を運ぶところの障害です（ITU-T X.733 8.1.1）。 |
+| `probable_cause` | `COMMUNICATIONS_SUBSYSTEM_FAILURE` | リンクの上で通信を運ぶ部分の故障です（X.733 8.1.2.1）。TS 28.111 は表 B.2 にこの原因を通信のアラームの種類とともに挙げ、OpenAPI の定義でこの綴りにしています。 |
+| `specific_problem` | `Diameter peer down` | 原因が同じほかのアラーム、たとえばメディア中継ノードについてのアラームと区別します。 |
+| `perceived_severity` | `MAJOR` | サービスに影響があり、急いで対処が要ります（X.733 8.1.2.3）。ただし、ほかの HSS のインスタンスを持つノードはサービスを続けられます。 |
+| `additional_text` | `no transport connection to the peer` | 何が失敗したか。ここでは HSS が TCP の接続を断りました。`no capabilities exchange with the peer` は、接続はできたが CEA が返ってこなかったことを示します。 |
+
+アラームが上がるのは、接続を開く試行が失敗したときで、接続が閉じたときではありません。接続を失ったノードは Tc 後に接続し直します（RFC 6733 2.1）。それまでに相手が戻っていればアラームは上がらないので、短い再接続のたびにアラームが上がって消えることはありません。ウォッチドッグだけでもアラームは上がりません。ウォッチドッグが疑った接続（RFC 3539 3.4.1）は、Tw のあとで閉じ、Tc 後に接続し直します。アラームが上がるのは、それが失敗したときだけです。そうしないと、答えの遅い相手のせいで、Tw の数倍ごとにアラームが上がったり消えたりします。最初の失敗のあとの試行が失敗しても、一覧は何も変わりません。
+
+アラームが上がる道は、もう 1 つあります。DPR です。相手が `Disconnect-Cause` に `BUSY` か `DO_NOT_WANT_TO_TALK_TO_YOU` を入れた DPR で接続を終えると、それは接続し直さないでほしいという意味です（RFC 6733 5.4.3）。ノードはもう接続を試みません。そのためアラームはすぐに上がり、`additional_text` は `the peer disconnected and asked not to be connected to again` になります。このアラームは解除されません。ノードが起動し直すまで、接続が開くことはないためです。この網の HSS はいつも `REBOOTING` を送るので、HSS のドレインでこの形のアラームが上がることはありません。
+
+次の接続の CEA でアラームは解除されます。`perceived_severity` が `CLEARED` になり、`alarm_cleared_time` に解除した時刻が入ります。記録は、運用者が `PUT /maintenance/v1/alarms/{alarm_id}/ack-state` で確認するまで、または 1 時間たつまで一覧に残ります。あとから一覧を見ても、何が起きたかがわかります。HSS が待ち受けを始める前に起動したノードは、最初の試行で上げて解除した記録を、すでに持っていることがあります。
+
+OAM は、インベントリのすべてのノードのアラームの一覧を集めます。
+
+```sh
+docker compose exec oam wget -qO - 'http://127.0.0.1:8080/oam/v1/alarms?cleared=false'
+```
+
+`alarms` には 5 つのノードのアラームが、重いものから順に入り、記録ごとに `node` が付きます。OAM の画面のアラームの部分も、同じ一覧を見せます。答えなかったノードは、理由とともに `nodes` に入ります。そのノードのアラームは「無い」のではなく「わからない」のです。OAM は、読めないノードについてアラームを作りません。
 
 ## IP の対応付けが無い要求
 

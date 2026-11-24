@@ -715,7 +715,7 @@ Prometheus と Grafana は別のコンテナとして動かすだけで、`ims` 
 
 - 置き場所は、最初の案の新しいパッケージ `internal/alarm` ではなく、`internal/maintenance` の中にしました。標準でも、警報の一覧（AlarmList）は ManagedElement か SubNetwork に含まれます（TS 28.111 7.3.2.1）。ノードの保守用の API と同じ持ち主です。
 - 確認（ack）は、表では「作らないもの」に入れていましたが、作りました。確認を作らないと、cleared の警報はすぐに一覧から消えます。作ると、運用者が確認するまで残ります（6.14）。運用者が「何が起きて、もう戻ったか」を見られるのは後者です。足すものは、記録の 3 つの属性と経路 1 つで済みました。
-- ノードが見つける警報（Diameter、中継ノード、DNS、HEP）は、どの役割も上げていません。役割ごとの案を、この節の最後に書きました。
+- ノードが見つける警報のうち、Diameter の相手に届かなくなったときの警報だけを作りました。HSS を相手に持つ 5 つの役割が上げます（下の「役割が上げる警報」）。中継ノード、DNS、HEP の警報は、まだどの役割も上げていません。役割ごとの案を、この節の最後に書きました。
 
 #### 保守用の API
 
@@ -814,7 +814,7 @@ err = node.ClearAlarm(hssDown)
 
 #### 役割ごとの警報の案
 
-1 章と上の表をもとに、役割が上げる警報の案です。値は TS 28.111 7.4.1 と Annex B のものです。種類は、Annex B の表がその原因に付けている種類に合わせました。どの役割もまだ上げていないので、案として残します。
+1 章と上の表をもとに、役割が上げる警報の案です。値は TS 28.111 7.4.1 と Annex B のものです。種類は、Annex B の表がその原因に付けている種類に合わせました。1 行目の `Diameter peer down` は、HSS を相手に持つ役割の分を作りました（下の「役割が上げる警報」）。ほかの行は案として残します。
 
 | 役割 | 条件 | alarmType | probableCause | specificProblem | 重さ | 相手 | 上げる、下げる |
 | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -824,6 +824,21 @@ err = node.ClearAlarm(hssDown)
 | `pcscf`、`icscf`、`scscf` | 次の hop の DNS の名前が引けない（`internal/sipdns`） | `COMMUNICATIONS_ALARM` | `ROUTING_FAILURE`（B.3） | `DNS name does not resolve` | `MAJOR` | 引いた名前 | 引けなかったときに上げる。引けたら下げる |
 | すべて（冗長構成のあと） | 状態の保存先（`internal/kvstore`）に届かない | `PROCESSING_ERROR_ALARM` | `UNDERLYING_RESOURCE_UNAVAILABLE`（B.2） | `store unreachable` | `CRITICAL` | 保存先の `host:port` | 読み書きが接続の失敗か期限切れで終わったときに上げる。次に成功したら下げる |
 | ノード全体（`role` なし） | HEP の送り先に届かず、写しを取りこぼしている（`internal/hep` の `Dropped`） | `QUALITY_OF_SERVICE_ALARM` | `REDUCED_EVENT_REPORTING`（B.3） | `HEP copies dropped` | `WARNING` | HEP の送り先 | 一定の時間（たとえば 60 秒）に取りこぼしが増えたら上げる。増えない時間が続いたら下げる。追加の文に数を書く |
+
+#### 役割が上げる警報
+
+案の 1 行目のうち、HSS を相手に持つ役割の分を作りました。I-CSCF と S-CSCF（Cx）、IP-SM-GW と MMTel AS（Sh）、SC（S6c）が、HSS のインスタンスごとに上げます。P-CSCF の Rx（PCRF）と IP-SM-GW の SGd（SC）の相手は、まだ見ていません。同じ仕組みで、`cmd/ims` の `managedRole.diameterPeers` に相手を足せば上がります。
+
+| 決めたこと | 選んだもの | 理由 |
+| --- | --- | --- |
+| 値 | `COMMUNICATIONS_ALARM`、`COMMUNICATIONS_SUBSYSTEM_FAILURE`、`Diameter peer down`、`MAJOR`。追加の文は何が失敗したか（`no transport connection to the peer` など） | 種類は X.733 8.1.1 の「ある地点から別の地点へ情報を運ぶ」もの。原因は X.733 8.1.2.1 の communications subsystem failure で、TS 28.111 の表 B.2 が通信の種類を付けている。綴りは `TS28111_FaultNrm.yaml` の列挙のもの。重さは X.733 8.1.2.3 の major（サービスに響き、急いで直す）。ほかのインスタンスがあれば役割は動き続けるので、critical（すっかり止まった）にはしない |
+| 対象 | 相手ごと。objectInstance は `ManagedElement=<ノード>,ManagedFunction=<役割>,Peer=<Origin-Host>` | TS 28.111 6.4 の識別の属性の 1 つが対象なので、相手ごとに別の警報になり、直すインスタンスが分かる。グループに相手が 1 つも残らないことは、役割の operationalState（TS 28.622 5.3.3）の `DISABLED` がすでに示している。案の 2 行目の、相手が残らないときの警報は作っていない |
+| 上げるとき | 接続を開く試行が失敗したとき（TCP の接続ができない、CEA が返らない）と、相手が `BUSY` か `DO_NOT_WANT_TO_TALK_TO_YOU` の DPR で再接続を断ったとき | 接続が閉じただけでは上げない。ノードは Tc 後に接続し直し（RFC 6733 2.1）、そのときに相手が戻っていれば何も起きないので、短い再接続で警報が上がって消えることがない。ウォッチドッグの SUSPECT（RFC 3539 3.4.1）でも上げない。この実装は REOPEN の 3 回の DWA を省いているので、答えの遅い相手では SUSPECT と OKAY が Tw の数倍ごとに入れ替わりうる。SUSPECT の接続は 1 Tw 後に閉じ、Tc 後の試行が失敗すれば上がる |
+| 下げるとき | 接続が開いたとき（CEA） | 案のとおり、CER と CEA がまた通ったら下げる |
+| 時間の目安 | HSS のドレインでは、DPR から Tc（既定は 30 秒）たって、最初の試行が断られたとき。黙った相手では、SUSPECT（2 Tw）、閉じる（3 Tw）、Tc 後の試行の失敗のあと | 新しいタイマーを足さず、Diameter の層のタイマーだけで決まる |
+| 置き場所 | `internal/diameter` の `Peer.WatchReachability` が相手に届くかを知らせ、`cmd/ims` の `raiseDiameterPeerAlarms` が警報にする | `internal/diameter` は保守用の API を知らず、`internal/maintenance` は Diameter を知らないまま。知らせの順を守るため、相手ごとのロックの中で呼ぶ。ロックはその相手 1 つのもので、利用者の状態には関わらない |
+
+確かめ方は、`internal/diameter` の試験（上げ下げの決まりの表、短い再接続で何も起きないこと、断られたときに 1 回だけ知らせること、戻ったら知らせること）、`cmd/ims` の試験（2 台の HSS の 1 台だけを止めて、その 1 台の警報だけが TS 28.111 の綴りで上がり、戻すと `CLEARED` になること）、`scripts/e2e-observability.sh`（HSS のドレインで 5 つのノードに警報が上がり、OAM の `/oam/v1/alarms` に I-CSCF と S-CSCF の警報が並び、戻すと解除されること）です。
 
 気を付けることです。
 

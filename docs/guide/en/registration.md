@@ -832,7 +832,8 @@ An instance out of service could answer every new request `DIAMETER_TOO_BUSY` in
 - The HSS sends the DPR, the peer answers the DPA, and the peer that received the DPA closes the transport connection (RFC 6733 5.4). The ladder has the two Cx connections; the IP-SM-GW and the MMTel AS hold an Sh connection each and get a DPR too, so four of these exchanges go out. `docker compose logs hss` shows `stopped accepting connections` after them.
 - In Wireshark, `diameter.cmd.code == 282` shows the DPRs and the DPAs. The Disconnect-Cause AVP of each DPR reads `REBOOTING (0)`.
 - The I-CSCF and the S-CSCF now have no instance of the HSS to take their requests. `docker compose exec icscf wget -qO- http://127.0.0.1:8085/maintenance/v1/state` shows `"operational_state":"DISABLED"` for the I-CSCF: it cannot work without the HSS, although the operator has not taken it out of service.
-- Each of them tries to connect again every Tc, 30 seconds, and is refused until the unlock. `docker compose logs icscf` shows `connection failed` once per attempt.
+- Each of them tries to connect again every Tc, 30 seconds, and is refused until the unlock. `docker compose logs icscf` shows `connection failed` once per attempt. In Wireshark, `tcp.flags.reset == 1 && tcp.srcport == 3868` shows the resets with which the HSS refuses them.
+- The first attempt that is refused makes each of them raise an alarm about the HSS, Tc after the DPR. The DPR alone raises none, as it asks the peer to come back. [Read the alarms about the HSS](#read-the-alarms-about-the-hss) shows the alarm.
 
 2. Register the UE:
 
@@ -866,11 +867,50 @@ An instance out of service could answer every new request `DIAMETER_TOO_BUSY` in
      nc -w 5 127.0.0.1 8085'
    ```
 
-   The node listens again, and the I-CSCF and the S-CSCF come back at their next attempt, up to Tc later. `docker compose logs icscf` shows a new CER, CEA and `"to":"I-Open (OKAY)"`; the next `ue register` registers as before.
+   The node listens again, and the I-CSCF and the S-CSCF come back at their next attempt, up to Tc later. `docker compose logs icscf` shows a new CER, CEA and `"to":"I-Open (OKAY)"`; the next `ue register` registers as before. The CEA clears the alarm of each node.
 
 The node binds port 3868 again as part of the unlock, and that can fail, if something else took the port while the HSS was out of service. The HSS is then `UNLOCKED` and reports `"operational_state":"DISABLED"`, and `docker compose logs hss` holds `cannot listen for Diameter connections again`. A second unlock does nothing, since the HSS is `UNLOCKED` already: lock it and unlock it again to have it try the port once more.
 
-The administrative state belongs to the process of the node: a node that starts again is `UNLOCKED`. `scripts/e2e-observability.sh` runs these steps as well, and checks the DPRs in the capture.
+The administrative state belongs to the process of the node: a node that starts again is `UNLOCKED`. `scripts/e2e-observability.sh` runs these steps as well, and checks the DPRs in the capture and the alarms of the nodes.
+
+### Read the alarms about the HSS
+
+Each node keeps a list of the faults that it has found, the alarm list of TS 28.111. A role raises an alarm when it detects a fault and clears it when the condition is gone; an operator reads the list and acknowledges alarms, but cannot clear one (TS 28.111 6.8). The I-CSCF, the S-CSCF, the IP-SM-GW, the MMTel AS and the Service Centre each raise one alarm for each instance of the HSS that they cannot reach. While the HSS is out of service, read the list of the S-CSCF on its maintenance API:
+
+```sh
+docker compose exec scscf wget -qO- 'http://127.0.0.1:8085/maintenance/v1/alarms?cleared=false'
+```
+
+```json
+{"node":"scscf","instance":"3f1c0e2a9b7d","num_of_alarm_records":1,"last_modification":"2026-11-24T10:15:02Z","dropped_records":0,
+ "alarm_records":[{"alarm_id":"9f3c2a7b1d4e6058","object_instance":"ManagedElement=scscf,ManagedFunction=scscf,Peer=hss.ims.mnc001.mcc001.3gppnetwork.org",
+  "role":"scscf","peer":"hss.ims.mnc001.mcc001.3gppnetwork.org","alarm_raised_time":"2026-11-24T10:15:02Z",
+  "alarm_type":"COMMUNICATIONS_ALARM","probable_cause":"COMMUNICATIONS_SUBSYSTEM_FAILURE","specific_problem":"Diameter peer down",
+  "perceived_severity":"MAJOR","additional_text":"no transport connection to the peer","ack_state":"UNACKNOWLEDGED"}]}
+```
+
+| Field | Value | Why |
+| --- | --- | --- |
+| `object_instance` | `ManagedElement=scscf,ManagedFunction=scscf,Peer=hss.ims.mnc001.mcc001.3gppnetwork.org` | The alarmed object is one instance of the HSS, by its Origin-Host. In a network with several instances, each one that is gone has an alarm of its own, which names the instance to repair. Whether the S-CSCF has an instance left is its `operational_state`, not an alarm. |
+| `alarm_type` | `COMMUNICATIONS_ALARM` | A fault in conveying information from one point to another (ITU-T X.733 8.1.1). |
+| `probable_cause` | `COMMUNICATIONS_SUBSYSTEM_FAILURE` | A failure of what carries the communications over a link (X.733 8.1.2.1). TS 28.111 lists it in Table B.2 with the communications alarm type, and spells it this way in its OpenAPI definition. |
+| `specific_problem` | `Diameter peer down` | Tells the alarm apart from another of the same cause, such as one about a media relay. |
+| `perceived_severity` | `MAJOR` | Service is affected and needs urgent action (X.733 8.1.2.3), but a node with another instance of the HSS still serves. |
+| `additional_text` | `no transport connection to the peer` | What failed. Here the HSS refused the TCP connection. `no capabilities exchange with the peer` says that the connection opened and no CEA came back. |
+
+The alarm comes when an attempt to open the connection fails, not when a connection closes. A node that loses a connection connects again after Tc (RFC 6733 2.1), and a peer that is back by then raises no alarm, so a short reconnect does not raise and clear one each time. The watchdog alone raises none either. A connection that it suspects (RFC 3539 3.4.1) is closed one Tw later and opened again after Tc, and the alarm comes only if that fails. Otherwise a peer that answers late would make the alarm come and go every few Tw. The attempts that fail after the first change nothing in the list.
+
+A DPR is the other way an alarm comes. A peer that ends the connection with a DPR whose `Disconnect-Cause` is `BUSY` or `DO_NOT_WANT_TO_TALK_TO_YOU` asks not to be connected to again (RFC 6733 5.4.3), so the node makes no further attempt. The alarm then comes at once, with `additional_text` `the peer disconnected and asked not to be connected to again`, and is never cleared: no connection opens again until the node starts anew. The HSS of this network always sends `REBOOTING`, so its drain never raises the alarm this way.
+
+The CEA of the next connection clears the alarm: `perceived_severity` becomes `CLEARED`, and `alarm_cleared_time` says when. The record stays in the list until an operator acknowledges it with `PUT /maintenance/v1/alarms/{alarm_id}/ack-state`, or for an hour, so the list still tells afterwards what happened. A node that starts before the HSS listens may already hold such a cleared record from its first attempt.
+
+The OAM gathers the alarm lists of every node of its inventory:
+
+```sh
+docker compose exec oam wget -qO - 'http://127.0.0.1:8080/oam/v1/alarms?cleared=false'
+```
+
+`alarms` holds the alarm of each of the five nodes, with `node` beside each record, the most severe first. The OAM screen shows the same list in its alarm part. A node that does not answer is in `nodes` with the reason, and its alarms are unknown rather than absent: the OAM raises no alarm for a node that it cannot read.
 
 ## A request without an IP association
 
