@@ -8,8 +8,8 @@
 
 | 仕様 | 版 | 表題（表紙で確かめたもの） | 読んだ所 |
 | --- | --- | --- | --- |
-| TS 32.101 | V19.0.0 | Telecommunication management; Principles and high level requirements | 7.1 |
-| TS 32.102 | V19.0.0 | Telecommunication management; Architecture | 7.3.2 の Itf-N の説明 |
+| TS 32.101 | V19.0.0 | Telecommunication management; Principles and high level requirements | 7.1。15 章の故障管理の northbound の調査で、5.1.1、5.1.2.2 を読みました |
+| TS 32.102 | V19.0.0 | Telecommunication management; Architecture | 7.3.2 の Itf-N の説明。15 章の調査で 7.3.2 を読み直しました |
 | TS 32.600 | V19.0.0 | Configuration Management (CM); Concept and high-level requirements | 4.2.1、7.1。`internal/oam` を作るときに、4.2.1.1、4.2.1.3、5.1、7.1 を読み直しました |
 | TS 32.401 | V19.0.0 | Performance Management (PM); Concept and requirements | 4.2.2 |
 | TS 32.409 | V19.0.0 | Performance Management (PM); Performance measurements; IP Multimedia Subsystem (IMS) | 3.1、4.1.1.1、4.1.2.4、4.1.2.8。ほかは見出し。5 章の「役割ごとの指標の案」を足すときに、4.1.1 から 4.1.3、4.1.6 から 4.1.10、4.2.1、4.2.12、4.7.1 も読みました |
@@ -19,7 +19,7 @@
 | TS 32.423 | V20.1.0 | Subscriber and equipment trace; Trace data definition and management | 4 章の見出しと先頭 |
 | TS 32.111-1 | V19.0.0 | Fault Management; Part 1: 3G fault management requirements | 表題だけ |
 | TS 28.533 | V20.1.0 | Management and orchestration; Architecture framework | 4.1、4.2 |
-| TS 28.532 | V20.2.0 | Management and orchestration; Generic management services | 4 章、11.1.0、11.1.1 の見出し、11.2a。7 章の northbound の調査で、1 章、11.1、11.1.0、11.1.1.1 から 11.1.1.4a、12.1.1 と 12.1.3 の見出しを読み直しました。同じ書庫の OpenAPI の定義 `TS28532_ProvMnS.yaml`（中の版は 19.2.0）で、経路の形を確かめました |
+| TS 28.532 | V20.2.0 | Management and orchestration; Generic management services | 4 章、11.1.0、11.1.1 の見出し、11.2a。7 章の northbound の調査で、1 章、11.1、11.1.0、11.1.1.1 から 11.1.1.4a、12.1.1 と 12.1.3 の見出しを読み直しました。同じ書庫の OpenAPI の定義 `TS28532_ProvMnS.yaml`（中の版は 19.2.0）で、経路の形を確かめました。15 章の調査で、11.0.2、11.1.1.1 から 11.1.1.3、11.6.1.3、11.6.1.4、12.0.2.1、12.1.1.1、12.1.1.2.1、12.1.1.3、変更の履歴を読みました。比べるために、V17.12.0 の書庫の `TS28532_FaultMnS.yaml`（中の版は 17.3.0）の経路も読みました |
 | TS 32.140 | V19.0.0 | Telecommunication management; Subscription Management (SuM) requirements | 冒頭の Introduction、1 章、4.4.1、4.4.2、4.4.3、4.5.1、6.1、6.2、6.2.1、6.2.1.3、6.2.1.4、6.3、Annex C の変更の履歴 |
 | TS 32.141 | V19.0.0 | Telecommunication management; Subscription Management (SuM) architecture | 全体（4.1、4.2.1、4.3、4.3.1、4.4.1 から 4.4.3、Annex B の変更の履歴） |
 | TS 28.752 | V19.0.0 | Telecommunication management; Subscription Management (SuM) Network Resource Model (NRM) Integration Reference Point (IRP); Information Service (IS) | 4.3 のクラスの一覧、4.3.4、4.3.8、4.3.13、4.3.17 から 4.3.20、4.3.22、4.3.23、4.4.1 のうち認証と GBA に関わる属性と `serviceIndicationList` の定義、Annex A の変更の履歴 |
@@ -28,10 +28,13 @@
 | TS 23.335 | V19.0.0 | User Data Convergence (UDC); Technical realization and information flows | 4.1 から 4.3、5.4、5.5、Annex B の変更の履歴 |
 | TS 32.181 | V19.0.0 | Telecommunication management; User Data Convergence (UDC); Framework for model handling and management | 1 章 |
 | TS 32.182 | V19.0.0 | Telecommunication management; User Data Convergence (UDC); Common Baseline Information Model (CBIM) | 1 章、4 章、5.3 のクラスの一覧、5.3.8 から 5.3.12 |
-| TS 28.622 | V20.4.0 | Generic Network Resource Model (NRM) Integration Reference Point (IRP); Information Service (IS) | 4.3 の見出し、5.3.1、5.3.3 の見出し。`internal/maintenance` を作るときに、4.3.4 の属性の表、4.4.1 の `administrativeState` と `operationalState` の説明、5.3.1 から 5.3.3 の表も読みました |
+| TS 28.622 | V20.4.0 | Generic Network Resource Model (NRM) Integration Reference Point (IRP); Information Service (IS) | 4.3 の見出し、5.3.1、5.3.3 の見出し。`internal/maintenance` を作るときに、4.3.4 の属性の表、4.4.1 の `administrativeState` と `operationalState` の説明、5.3.1 から 5.3.3 の表も読みました。15 章の調査で、4.3.21 から 4.3.23 と、4.4.1 の購読の属性を読みました |
 | ITU-T X.731 | 01/92 | Information technology – Open Systems Interconnection – Systems Management: State management function | 7.1.3、7.1.3.1 から 7.1.3.4、8.1.1.3。`internal/maintenance` を作るときに読みました |
 | TS 28.705 | V19.0.0 | IP Multimedia Subsystem (IMS) Network Resource Model (NRM) Integration Reference Point (IRP); Information Service (IS) | 4.3 の見出し、4.3.4、4.3.12 |
-| TS 28.111 | V20.0.0 | Management and orchestration; Fault Management (FM) | 6.3、6.4、6.5、6.12、6.13、6.14、7.3.1 の先頭、8 章の見出し。警報を作るときに、6.1 から 6.14、7.3.1（7.3.1.1 から 7.3.1.3）、7.3.2（7.3.2.1、7.3.2.2）、7.4.1 の属性の説明、Annex B の表 B.1 から B.4 を読みました。同じ書庫の OpenAPI の定義 `TS28111_FaultNrm.yaml`（中の版は 19.3.0）で、値の綴りを確かめました |
+| TS 28.111 | V20.0.0 | Management and orchestration; Fault Management (FM) | 6.3、6.4、6.5、6.12、6.13、6.14、7.3.1 の先頭、8 章の見出し。警報を作るときに、6.1 から 6.14、7.3.1（7.3.1.1 から 7.3.1.3）、7.3.2（7.3.2.1、7.3.2.2）、7.4.1 の属性の説明、Annex B の表 B.1 から B.4 を読みました。同じ書庫の OpenAPI の定義 `TS28111_FaultNrm.yaml`（中の版は 19.3.0）で、値の綴りを確かめました。15 章の調査で、4 章、5 章、6.15、6.16、7.3.8 の一部、7.5、8 章の 8.9 のほか、A.1 を読み、同じ書庫の `TS28111_FaultNotifications.yaml`（19.3.0）も読みました |
+| TS 28.623 | V20.3.0 | Generic Network Resource Model (NRM) Integration Reference Point (IRP); Solution Set (SS) definitions | 4.3。同じ書庫の `TS28623_SubscriptionControlNrm.yaml`（19.4.0）、`TS28623_ComDefs.yaml`（19.6.0）、`TS28623_GenericNrm.yaml`（20.1.0）を読みました。15 章の調査のため |
+| TS 32.158 | V20.1.0 | Management and orchestration; Design rules for Representational State Transfer (REST) Solution Sets (SS) | 4.2、4.3.1、4.4、4.6、5.5、6.1.1 から 6.1.4、6.3.1、6.3.2、6.6、6.7。15 章の調査のため |
+| TS 32.161 | V19.0.0 | Management and orchestration; JSON expressions (Jex) | 7.6、A.4、B.3。15 章の調査のため |
 | ITU-T X.733 | 02/92 | Information technology – Open Systems Interconnection – Systems Management: Alarm reporting function | 8.1.1、8.1.2.1 の終わり、8.1.2.2、8.1.2.3、8.1.2.13。警報を作るときに読みました |
 | TS 28.550 | V20.0.0 | Management and orchestration; Performance assurance | 4.3 の表 |
 | TS 28.552、TS 28.554 | V20.4.0、V20.3.0 | 5G performance measurements、5G end to end Key Performance Indicators (KPI) | 表題だけ |
@@ -1139,11 +1142,60 @@ OAM とその画面、指標、警報は、ほかの部分に次のものを求�
 - 手順書「OAM で運用する」に、警報の項を足します。用語集には、12 章の一覧の「警報」と「perceived severity」に加えて、alarm list、probable cause、specific problem、ADAC、acknowledgement を足すとよいです。
 
 
+## 15. 故障管理の northbound
+
+OAM が上げている警報を、OSS に標準の形で渡す口の調査です。決めたことは [fm-northbound.md](../design/fm-northbound.md) にあります。
+
+### 標準の位置づけ
+
+- TS 32.101 5.1.1 は、NE と EM のあいだ（種類 1）、EM と NM のあいだ（種類 2）などの管理のインタフェースを挙げています。種類 2 が Itf-N で、標準にする主な対象です。5.1.2.2 は、種類 2 では、プロトコルから切り離した情報モデルを決め、いくつかのプロトコルに写せるようにするとしています。TS 32.102 7.3.2 は、Itf-N を開いたものとし、情報モデルを標準にするとしています。
+- EM と NE のあいだは製品に任されています（TS 32.600 4.2.1.3。この記録の 1 章）。この実装の OAM は EM で、保守用の API が種類 1、作る口が種類 2 に当たります。
+
+### 故障管理の今の形
+
+- TS 28.111 は Release 18 で作られた仕様で、Annex D の変更の履歴は 2023 年の骨組みから始まります。それまでの Fault Supervision MnS は TS 28.532 にありました。TS 28.532 の変更の履歴では、FM の購読の操作が 18.0.0 で非推奨になり、FM に関わる部分を削って改める変更が 18.2.0 に入り、`TS28532_FaultMnS.yaml` への参照が 18.3.0 で消えています。V20.2.0 の 11.2a は TS 28.111 を指すだけです。
+- Release 17 の `TS28532_FaultMnS.yaml`（V17.12.0 の書庫、中の版は 17.3.0）には、`/alarms`（問い合わせの `alarmAckState`、`baseObjectInstance`、`filter`）、`/alarms/alarmCount`、`/alarms/{alarmId}`、`/alarms/{alarmId}/comments`、`/subscriptions`、`/subscriptions/{subscriptionId}` の経路がありました。
+- 今の TS 28.111 は model driven です（6.2）。警報の一覧は NRM のクラス `AlarmList` で、SubNetwork か ManagedElement が 1 つまで含みます（7.3.2.1）。読み出しは TS 28.532 の getMOIAttributes（6.6）、確認は `ackState`、`ackUserId`、`ackSystemId` の書き換えです（6.7、A.1.4）。通知は TS 28.111 が専用のものを決め（6.12、8 章）、購読は TS 28.622 の `NtfSubscriptionControl` で行います（8.1）。
+- 必須の部品（FM basic）は `notifyNewAlarm`、`notifyChangedAlarmGeneral`、`notifyClearedAlarm` と `AlarmList` です。確認、コメント、相関、一覧の信頼性、履歴は任意の部品です（6.1 の表 6.1-1）。5 章の要件では、通知、購読、購読の取り消し、一覧の読み出し、一覧が作り直されたことの通知が shall で、絞り込みと確認は should です。
+- V20.0.0 は警報の履歴（6.15、6.16、`AlarmHistory`）を足しました。同じ書庫の OpenAPI（19.3.0）には、まだありません。
+
+### REST の形
+
+- 経路は `{MnSRoot}/ProvMnS/{MnSVersion}/{URI-LDN-first-part}/{className}={id}` です（TS 28.532 12.1.1.1.1、12.1.1.3.2.1）。`GET` が getMOIAttributes、`PATCH` が modifyMOIAttributes、`PUT` が createMOI（既定の作り方。12.1.1.1.2.1）、`DELETE` が deleteMOI です。`GET` の問い合わせは `scope`、`filter`、`attributes`、`fields`、`dataNodeSelector` です（12.1.1.1.3、OpenAPI）。OpenAPI の `scope` は 1 つの問い合わせで、中身は `scopeType` と `scopeLevel` を持つ JSON のオブジェクトです。TS 32.158 6.1.2 は、`scopeType` と `scopeLevel` を別々の問い合わせとして書いています。TS 32.158 6.7 は、属性の要素（警報の記録など）を条件で選ぶのは `dataNodeSelector` で、`filter` はオブジェクトを選ぶものとしています。
+- `{MnSVersion}` は、component A の定義のファイルの版の最初の数に `v` を付けたものです（TS 32.158 4.6.2）。`{MnSRoot}` は scheme、authority、任意の `{root}` です（4.4.2）。
+- DN は RDN を `,` でつないだもので、URI にするときは `/` でつなぎます。`DC=` の前置きがあれば URI の authority に写し、無ければ producer の自分の host を使います（TS 32.158 4.2.1、4.2.3）。通知の `href` には canonical URI を使います（4.2.4）。
+- 通知の共通の見出しは `href`、`notificationId`、`notificationType`、`eventTime`、`systemDN` で、`sequenceNo` と `subscriptionId` は確実に届ける仕組みを持つときだけです（TS 28.532 11.0.2、12.0.2.1）。objectClass と objectInstance は `href` に写します（TS 28.111 A.1.2）。
+- 通知は、購読の `notificationRecipientAddress` に `POST` で送り、受けた側は 204 を返します（TS 28.532 12.1.1.3.2.4、TS 32.158 5.5.4）。
+- 部分の書き換えは JSON Merge Patch（RFC 7396）か JSON Patch（RFC 6902）で、`PATCH` は不可分です（TS 32.158 6.3.1）。Merge Patch の本文は資源の `id` を持ちます（6.3.2）。
+- 誤りの本文は RFC 7807 の problem details を広げたもので、`type` が必須、`reason`、`title`、`status`、方法ごとの `badQueryParams`、`badAttributes`、`badObjects`、`badOp`、`otherProblems` があります（TS 32.158 6.6.3）。`type` と `reason` の値は 6.6.4、6.6.5 にあります。
+- 絞り込みの式は Jex です（TS 32.158 6.1.3、TS 32.161）。`filter` と `notificationFilter` の OpenAPI の型は、Jex の条件の式（TS 32.161 7.6、A.4）です。
+
+### OpenAPI のファイル
+
+| ファイル | `info.version` | 書庫 | 中身 |
+| --- | --- | --- | --- |
+| `TS28111_FaultNrm.yaml` | 19.3.0 | TS 28.111 V20.0.0、V19.5.0 | `AlarmRecord`、`AlarmList-Single`、列挙、通知の本文の型（`NotifyNewAlarm` など 10 個）、`Comment`。`paths` は空 |
+| `TS28111_FaultNotifications.yaml` | 19.3.0 | 同じ | `servers` が `{notificationRecipientAddress}`、`POST /` の本文が 10 個の通知の `oneOf`、答えは 204 |
+| `TS28532_ProvMnS.yaml` | 19.2.0 | TS 28.532 V20.2.0 | `/{className}={id}` の `PUT`、`GET`、`PATCH`、`DELETE`、`/{URI-LDN-first-part}` の `POST`、`Resource`、`PatchItem`、CM の通知 |
+| `TS28623_SubscriptionControlNrm.yaml` | 19.4.0 | TS 28.623 V20.3.0 | `NtfSubscriptionControl-Single`（`notificationRecipientAddress`、`notificationTypes`、`scope`、`notificationFilter`）、`HeartbeatControl-Single` |
+| `TS28623_ComDefs.yaml` | 19.6.0 | 同じ | `NotificationHeader`、`ErrorResponseGet`、`ErrorResponseDefault`、`ErrorResponsePatch`、`Dn`、`DateTime`、`JexConditions` など |
+| `TS28623_GenericNrm.yaml` | 20.1.0 | 同じ | `Top`、`SubNetwork-ncO`（`AlarmList` を 1 つ含む）、`ManagedElement-ncO` |
+
+3GPP Forge（`forge.3gpp.org/rep/sa5/MnS`）のタグ `Tag_Rel19_SA113` の同じ名前のファイルは、`TS28623_GenericNrm.yaml`（19.7.0）のほかは、書庫のものと中身が同じでした。書庫の `TS28623_GenericNrm.yaml` は、タグ `Tag_Rel20_SA113` のものと同じです。`Tag_Rel20_SA113` の `TS28111_FaultNrm.yaml` も 19.3.0 のままです。
+
+### TM Forum の Open API
+
+TMF642（Alarm Management API）は、TM Forum が Apache-2.0 で公開しているリポジトリのタグ `v5.0.0` の `TMF642_Alarm_v5.0.1.oas.yaml` を読みました。資源は `/alarm` と、作業を表す `/ackAlarm`、`/unAckAlarm`、`/clearAlarm`、`/commentAlarm`、`/groupAlarm`、`/unGroupAlarm` で、通知の購読は `/hub` です。種類と原因の説明は X.733 と TS 32.111-2 を指しています。業務システムのあいだの API で、3GPP の Itf-N ではありません。
+
+### 仕様のあいだの食い違い
+
+読んだ版のあいだで揃っていないことは、[fm-northbound.md](../design/fm-northbound.md) の「仕様のあいだの食い違い」の表にまとめました。経路の書き方（`FaultSupervisionMnS` と `ProvMnS`）、範囲の問い合わせの形（`scopeType` と `scopeLevel` か、JSON のオブジェクトの `scope` か）、警報の記録を条件で選ぶ問い合わせ（TS 32.158 6.7 の `dataNodeSelector` か、TS 28.111 A.1.4 の `filter` か）、TS 28.532 12.1.1.1.3 が指す TS 32.158 の 6.2a が無いこと、3GPP の Patch の media type、誤りの本文の media type、`unreliableAlarmScope` の多重度、`alarmListAlignmentRequirement` の値の綴り（`alignmentRequired` か `ALIGNMENT_REQUIRED` か）、購読の属性の数、`thresholdinfo` の綴り、警報の履歴の有無です。
+
 ## 確かめられなかったこと
 
 - イメージに入っている元のイメージのパッケージ（BusyBox、Alpine Linux、glibc など）のライセンスは、1 つずつは確かめていません。元のイメージが何かは、Docker Hub の層の一覧で確かめました（5 章）。
 - Docker のデーモンが動いていない環境だったので、Prometheus と Grafana のイメージを取ってきて動かすことはしていません。確かめたのは、`docker compose config` での構文、`promtool check config` での Prometheus の設定、`promtool check rules` でのダッシュボードの PromQL です。Prometheus が設定を読み込めるか、Grafana がデータソースを用意してダッシュボードの JSON を読めるかは、動かして確かめていません。
-- TS 28.111 は、6 章、7.3.1、7.3.2、7.4.1、Annex B を読みました。`ThresholdCrossing` の使い方、通知（8 章）の中身、警報の履歴（7.3.8）は読んでいません。
+- TS 28.111 は、4 章から 6 章、7.1、7.3.1、7.3.2、7.3.8 の一部、7.4.1、7.5、8 章（8.9 を除く）、A.1、Annex B を読みました。`ThresholdCrossing` の使い方、警報の履歴の記録の形（7.3.8.6 の表）、A.2 と A.3 は見出しと短い本文だけです。
 - TS 28.622 の `ManagedElement` の属性の意味（`ManagedFunction` は 4.3.4 の表だけを読みました）、`ThresholdMonitor`、`PerfMetricJob`、`TraceJob` の中身は読んでいません。警報の属性の元になっている X.733 は読んでいません。X.731 は `www.itu.int` から読みました（1 章）。X.733 も、警報を作るときに読みました（「読んだ資料」の表）。
 - TS 32.409 は、4.1.1.1、4.1.2.4、4.1.2.8 のほかは見出しだけです。5 章の表で条項だけを書いた行は、測定の名前と数える時点を確かめていません。測定の定義の書き方（a から i の項目）を決めている仕様は確かめていません。
 - TS 32.454 は 5.1.1 と 5.2.1 だけを読みました。ほかの KPI の式は読んでいません。
