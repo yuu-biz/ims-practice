@@ -1,0 +1,519 @@
+openapi: 3.1.0
+info:
+  title: Maintenance API of a node
+  version: 1.0.0
+  description: |
+    The part of the maintenance API that every role shares: the state of
+    the node and of each of its roles, the administrative state with the
+    drain, the configuration with the settings that change while the
+    node runs, the level of the log and the alarm list. The OAM server
+    calls it on the maintenance listener of each node.
+
+    This API is this project's own. 3GPP leaves the interface between
+    the element manager and the network element to each product (TS
+    32.600 4.2.1.3); the state attributes are those of TS 28.622 5.3 and
+    the alarm records those of TS 28.111 7.4.1.
+
+    Every error has the body Error. A path that the API does not have
+    answers 404, and a method that a path does not take 405 with Allow,
+    both with Error too. Times are RFC 3339 in UTC.
+paths:
+  /maintenance/v1/state:
+    get:
+      operationId: getNodeState
+      summary: The node and the state of each of its roles.
+      responses:
+        '200':
+          description: The node state.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NodeState'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /maintenance/v1/functions/{role}/administrative-state:
+    put:
+      operationId: setAdministrativeState
+      summary: Unlock, shut down or lock a role (ITU-T X.731 7.1.3).
+      description: |
+        UNLOCKED unlocks, SHUTTINGDOWN shuts down (the drain), LOCKED
+        locks. Asking for the present state changes nothing.
+      parameters:
+        - name: role
+          in: path
+          required: true
+          description: The role, as the node's configuration names it, such as pcscf.
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AdministrativeStateRequest'
+      responses:
+        '200':
+          description: The state of the role after the event.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FunctionState'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          description: The node runs no such role.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '409':
+          description: A shut down of a LOCKED role.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /maintenance/v1/config:
+    get:
+      operationId: getConfiguration
+      summary: The effective configuration, with every secret redacted.
+      responses:
+        '200':
+          description: The configuration and the settings that may change.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Configuration'
+        '500':
+          description: The node's view of its configuration holds a secret.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+    patch:
+      operationId: changeConfiguration
+      summary: Change settings while the node runs.
+      description: All the settings of the request change, or none.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ConfigurationChangeRequest'
+      responses:
+        '200':
+          description: The record of the change.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConfigurationChange'
+        '400':
+          description: |
+            The request is malformed, or a setting was refused; settings
+            then names each refused setting and why.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '409':
+          description: The generation is not above the node's.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /maintenance/v1/log-level:
+    get:
+      operationId: getLogLevel
+      summary: The level of the node's log.
+      responses:
+        '200':
+          description: The level.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LogLevel'
+    put:
+      operationId: setLogLevel
+      summary: Change the level of the node's log.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LogLevelRequest'
+      responses:
+        '200':
+          description: The new level and the one before.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LogLevelChange'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+  /maintenance/v1/alarms:
+    get:
+      operationId: getAlarmList
+      summary: The alarm list of the node (TS 28.111 7.3.2).
+      description: The most severe records first and, within a severity, the newest first.
+      parameters:
+        - name: cleared
+          in: query
+          description: false leaves out the cleared records, true keeps only those.
+          schema:
+            type: boolean
+        - name: min_severity
+          in: query
+          description: Keeps this severity, the more severe ones, and INDETERMINATE.
+          schema:
+            type: string
+            enum: [CRITICAL, MAJOR, MINOR, WARNING]
+      responses:
+        '200':
+          description: The records that the filter kept.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AlarmList'
+        '400':
+          description: An unknown query parameter, one given twice, or a value it does not take.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /maintenance/v1/alarms/{id}/ack-state:
+    put:
+      operationId: setAckState
+      summary: Acknowledge an alarm, or take the acknowledgement back (TS 28.111 6.7).
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: The alarm_id of the record.
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AckStateRequest'
+      responses:
+        '200':
+          description: The record after the change.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AlarmRecord'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          description: No record of the list has this id.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+components:
+  responses:
+    BadRequest:
+      description: A body that does not parse, with an unknown field, or with a value out of range.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    InternalError:
+      description: The node could not build the answer, such as a summary of a role that holds a secret.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+  schemas:
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: string
+        settings:
+          description: For a refused configuration change, why each setting was refused, by name.
+          type: object
+          additionalProperties:
+            type: string
+      additionalProperties: false
+    Time:
+      type: string
+      format: date-time
+    Level:
+      description: |
+        A level of log/slog: DEBUG, INFO, WARN or ERROR, or one of them
+        with an offset such as INFO+2. A request may write it in lower
+        case.
+      type: string
+    AdministrativeState:
+      description: The administrative state of TS 28.622 5.3.1.
+      type: string
+      enum: [UNLOCKED, SHUTTINGDOWN, LOCKED]
+    OperationalState:
+      description: The operational state of TS 28.622 5.3.3.
+      type: string
+      enum: [ENABLED, DISABLED]
+    NodeState:
+      description: The node, a ManagedElement of TS 28.622 4.3.3, with each of its roles.
+      type: object
+      required: [node, build, start_time, configuration_generation, log_level, functions]
+      properties:
+        node:
+          type: string
+        instance:
+          description: Tells apart the processes that run the same configuration, such as the host or pod name.
+          type: string
+        build:
+          $ref: '#/components/schemas/Build'
+        start_time:
+          $ref: '#/components/schemas/Time'
+        configuration_generation:
+          type: integer
+          minimum: 0
+        log_level:
+          $ref: '#/components/schemas/Level'
+        functions:
+          type: array
+          items:
+            $ref: '#/components/schemas/FunctionState'
+      additionalProperties: false
+    Build:
+      type: object
+      properties:
+        version:
+          type: string
+        revision:
+          type: string
+        go_version:
+          type: string
+      additionalProperties: false
+    FunctionState:
+      description: One role of the node, a ManagedFunction of TS 28.622 4.3.4.
+      type: object
+      required: [role, administrative_state, operational_state]
+      properties:
+        role:
+          type: string
+        administrative_state:
+          $ref: '#/components/schemas/AdministrativeState'
+        operational_state:
+          $ref: '#/components/schemas/OperationalState'
+        users:
+          description: How many users the role still serves; absent for a role that counts none.
+          type: integer
+          minimum: 0
+        shutdown_deadline:
+          description: When a SHUTTINGDOWN role becomes LOCKED even with users left.
+          $ref: '#/components/schemas/Time'
+        summary:
+          description: What the role says of itself, in a form of its own.
+      additionalProperties: false
+    AdministrativeStateRequest:
+      type: object
+      required: [administrative_state]
+      properties:
+        administrative_state:
+          $ref: '#/components/schemas/AdministrativeState'
+        timeout_seconds:
+          description: Bounds a shut down; 0 for none. Only SHUTTINGDOWN takes it.
+          type: integer
+          minimum: 0
+        operator:
+          description: Who asks, for the log.
+          type: string
+      additionalProperties: false
+    Configuration:
+      type: object
+      required: [generation, configuration, changeable]
+      properties:
+        generation:
+          type: integer
+          minimum: 0
+        configuration:
+          description: The effective configuration as the node shows it, every secret redacted.
+          type: object
+          additionalProperties: true
+        changeable:
+          description: The settings that a change may name. Everything else changes only with the file and a restart.
+          type: array
+          items:
+            $ref: '#/components/schemas/SettingValue'
+      additionalProperties: false
+    SettingValue:
+      type: object
+      required: [name, value]
+      properties:
+        name:
+          type: string
+        description:
+          type: string
+        value:
+          description: The present value, of the type of the setting.
+      additionalProperties: false
+    ConfigurationChangeRequest:
+      type: object
+      required: [settings]
+      properties:
+        settings:
+          description: The new values, by setting name. At least one.
+          type: object
+          minProperties: 1
+          additionalProperties: true
+        generation:
+          description: The generation that the OAM server gives this configuration; above the node's. 0 lets the node count one up.
+          type: integer
+          minimum: 0
+        operator:
+          type: string
+        comment:
+          type: string
+      additionalProperties: false
+    ConfigurationChange:
+      description: The record of one change, in the shape that the OAM server keeps in its history.
+      type: object
+      required: [node, generation, time, changes]
+      properties:
+        node:
+          type: string
+        instance:
+          type: string
+        generation:
+          type: integer
+          minimum: 0
+        time:
+          $ref: '#/components/schemas/Time'
+        operator:
+          type: string
+        comment:
+          type: string
+        changes:
+          description: The settings whose value changed; one sent with its present value is not among them.
+          type: array
+          items:
+            $ref: '#/components/schemas/SettingChange'
+      additionalProperties: false
+    SettingChange:
+      type: object
+      required: [name, previous, value]
+      properties:
+        name:
+          type: string
+        previous:
+          description: The value before, which a rollback sends back.
+        value:
+          description: The value after.
+      additionalProperties: false
+    LogLevel:
+      type: object
+      required: [level]
+      properties:
+        level:
+          $ref: '#/components/schemas/Level'
+      additionalProperties: false
+    LogLevelRequest:
+      type: object
+      required: [level]
+      properties:
+        level:
+          $ref: '#/components/schemas/Level'
+        operator:
+          type: string
+      additionalProperties: false
+    LogLevelChange:
+      type: object
+      required: [level, previous]
+      properties:
+        level:
+          $ref: '#/components/schemas/Level'
+        previous:
+          $ref: '#/components/schemas/Level'
+      additionalProperties: false
+    PerceivedSeverity:
+      description: The perceivedSeverity attribute of TS 28.111 7.4.1.
+      type: string
+      enum: [CRITICAL, MAJOR, MINOR, WARNING, INDETERMINATE, CLEARED]
+    AckState:
+      description: The ackState attribute of TS 28.111 7.4.1.
+      type: string
+      enum: [ACKNOWLEDGED, UNACKNOWLEDGED]
+    AlarmType:
+      description: The alarmType attribute of TS 28.111 7.4.1.
+      type: string
+      enum: [COMMUNICATIONS_ALARM, QUALITY_OF_SERVICE_ALARM, PROCESSING_ERROR_ALARM, EQUIPMENT_ALARM, ENVIRONMENTAL_ALARM, OTHER]
+    AlarmList:
+      description: The alarm list of the node, the AlarmList of TS 28.111 7.3.2.
+      type: object
+      required: [node, num_of_alarm_records, last_modification, dropped_records, alarm_records]
+      properties:
+        node:
+          type: string
+        instance:
+          type: string
+        num_of_alarm_records:
+          description: The records in the list, whether the filter kept them or not.
+          type: integer
+          minimum: 0
+        last_modification:
+          $ref: '#/components/schemas/Time'
+        dropped_records:
+          description: The records removed because the list was full, since the node started. Not an attribute of TS 28.111.
+          type: integer
+          minimum: 0
+        alarm_records:
+          type: array
+          items:
+            $ref: '#/components/schemas/AlarmRecord'
+      additionalProperties: false
+    AlarmRecord:
+      description: An alarm record with the attributes of TS 28.111 7.4.1.
+      type: object
+      required: [alarm_id, object_instance, alarm_raised_time, alarm_type, probable_cause, perceived_severity, ack_state]
+      properties:
+        alarm_id:
+          type: string
+        object_instance:
+          description: The alarmed object, written like a DN.
+          type: string
+        role:
+          type: string
+        peer:
+          description: The far end of an alarm about a link.
+          type: string
+        alarm_raised_time:
+          $ref: '#/components/schemas/Time'
+        alarm_changed_time:
+          $ref: '#/components/schemas/Time'
+        alarm_cleared_time:
+          $ref: '#/components/schemas/Time'
+        alarm_type:
+          $ref: '#/components/schemas/AlarmType'
+        probable_cause:
+          description: A probable cause of TS 28.111 Annex B, or one of the role's own.
+          type: string
+        specific_problem:
+          type: string
+        perceived_severity:
+          $ref: '#/components/schemas/PerceivedSeverity'
+        additional_text:
+          type: string
+        ack_state:
+          $ref: '#/components/schemas/AckState'
+        ack_time:
+          $ref: '#/components/schemas/Time'
+        ack_user_id:
+          description: The operator who last changed ack_state, as the request named them.
+          type: string
+      additionalProperties: false
+    AckStateRequest:
+      type: object
+      required: [ack_state]
+      properties:
+        ack_state:
+          $ref: '#/components/schemas/AckState'
+        operator:
+          type: string
+      additionalProperties: false

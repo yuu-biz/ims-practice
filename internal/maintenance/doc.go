@@ -26,7 +26,9 @@
 // registration or session.
 //
 // The bodies are JSON, and every error is ErrorBody,
-// {"error": "..."}. Times are RFC 3339 in UTC.
+// {"error": "..."}. Times are RFC 3339 in UTC. openapi.yaml, next to
+// this file, describes each path with its bodies and answers in OpenAPI
+// 3.1, and the tests check the handler against it.
 //
 //	GET  /maintenance/v1/state
 //	     NodeState: the node, its build, start time, configuration

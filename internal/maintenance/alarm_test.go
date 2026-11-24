@@ -276,7 +276,7 @@ func TestTheFiltersAndTheOrder(t *testing.T) {
 
 	for _, query := range []string{"min_severity=CLEARED", "min_severity=INDETERMINATE", "min_severity=major", "cleared=maybe", "severity=MAJOR", "cleared=true&cleared=false"} {
 		rec := httptest.NewRecorder()
-		tn.node.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, AlarmsPath+"?"+query, nil))
+		tn.handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, AlarmsPath+"?"+query, nil))
 		if rec.Code != http.StatusBadRequest {
 			t.Errorf("?%s = %d %s, want 400", query, rec.Code, rec.Body)
 		}
@@ -298,7 +298,7 @@ func TestAlarmJSON(t *testing.T) {
 		t.Fatal(err)
 	}
 	rec := httptest.NewRecorder()
-	tn.node.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, AlarmsPath, nil))
+	tn.handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, AlarmsPath, nil))
 	want := `{"node":"pcscf-1","instance":"pcscf-1-7d9f","num_of_alarm_records":1,"last_modification":"2026-11-20T09:01:00Z","dropped_records":0,` +
 		`"alarm_records":[{"alarm_id":"` + id + `","object_instance":"ManagedElement=pcscf-1,ManagedFunction=pcscf,Peer=pcrf.ims.mnc001.mcc001.3gppnetwork.org",` +
 		`"role":"pcscf","peer":"pcrf.ims.mnc001.mcc001.3gppnetwork.org","alarm_raised_time":"2026-11-20T09:00:00Z",` +
@@ -319,7 +319,7 @@ func TestAckStateErrors(t *testing.T) {
 	_, err = tn.client.SetAckState(ctx, id, AckStateRequest{AckState: "DONE"})
 	wantAPIError(t, err, http.StatusBadRequest, "ack_state")
 	rec := httptest.NewRecorder()
-	tn.node.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodPut, AckStatePath(id), strings.NewReader(`{"ack_state": "ACKNOWLEDGED", "ack_system_id": "oam"}`)))
+	tn.handler.ServeHTTP(rec, httptest.NewRequest(http.MethodPut, AckStatePath(id), strings.NewReader(`{"ack_state": "ACKNOWLEDGED", "ack_system_id": "oam"}`)))
 	if rec.Code != http.StatusBadRequest {
 		t.Errorf("an unknown field: %d %s", rec.Code, rec.Body)
 	}

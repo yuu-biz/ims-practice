@@ -19,6 +19,7 @@ import (
 // I-CSCF that has none, served over httptest.
 type testNode struct {
 	node     *Node
+	handler  http.Handler
 	client   *Client
 	clock    *fakeClock
 	level    *slog.LevelVar
@@ -113,7 +114,8 @@ func newTestNode(t *testing.T) *testNode {
 		t.Fatal(err)
 	}
 	tn.node = node
-	server := httptest.NewServer(node.Handler())
+	tn.handler = checkedHandler(t, node)
+	server := httptest.NewServer(tn.handler)
 	t.Cleanup(server.Close)
 	tn.client = NewClient(server.URL+"/", server.Client())
 	return tn
@@ -171,7 +173,7 @@ func TestStateJSON(t *testing.T) {
 		t.Fatal(err)
 	}
 	rec := httptest.NewRecorder()
-	tn.node.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, StatePath, nil))
+	tn.handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, StatePath, nil))
 	want := `{"node":"pcscf-1","instance":"pcscf-1-7d9f","build":{"version":"v0.13.0","revision":"8db954e"},` +
 		`"start_time":"2026-11-20T09:00:00Z","configuration_generation":0,"log_level":"INFO","functions":[` +
 		`{"role":"pcscf","administrative_state":"SHUTTINGDOWN","operational_state":"ENABLED","users":1,` +
@@ -260,7 +262,7 @@ func TestRequestBodiesAreStrict(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			rec := httptest.NewRecorder()
-			tn.node.Handler().ServeHTTP(rec, httptest.NewRequest(tc.method, tc.path, strings.NewReader(tc.body)))
+			tn.handler.ServeHTTP(rec, httptest.NewRequest(tc.method, tc.path, strings.NewReader(tc.body)))
 			var body ErrorBody
 			if rec.Code != http.StatusBadRequest || json.Unmarshal(rec.Body.Bytes(), &body) != nil || body.Error == "" {
 				t.Errorf("%s %s = %d %s, want 400 with a JSON error", tc.method, tc.path, rec.Code, rec.Body)
@@ -291,7 +293,7 @@ func TestLogLevelRoundTrip(t *testing.T) {
 	}
 	// log/slog reads the names in any case, and with an offset.
 	rec := httptest.NewRecorder()
-	tn.node.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodPut, LogLevelPath, strings.NewReader(`{"level":"warn+1"}`)))
+	tn.handler.ServeHTTP(rec, httptest.NewRequest(http.MethodPut, LogLevelPath, strings.NewReader(`{"level":"warn+1"}`)))
 	if rec.Code != http.StatusOK || rec.Body.String() != `{"level":"WARN+1","previous":"DEBUG"}`+"\n" {
 		t.Errorf("PUT warn+1 = %d %s", rec.Code, rec.Body)
 	}
@@ -313,7 +315,7 @@ func TestUnknownPathsAndMethodsAnswerJSON(t *testing.T) {
 		{http.MethodGet, AckStatePath("0011223344556677"), http.StatusMethodNotAllowed, "PUT"},
 	} {
 		rec := httptest.NewRecorder()
-		tn.node.Handler().ServeHTTP(rec, httptest.NewRequest(tc.method, tc.path, nil))
+		tn.handler.ServeHTTP(rec, httptest.NewRequest(tc.method, tc.path, nil))
 		var body ErrorBody
 		if rec.Code != tc.status || json.Unmarshal(rec.Body.Bytes(), &body) != nil || body.Error == "" ||
 			rec.Header().Get("Allow") != tc.allow {
@@ -339,7 +341,7 @@ func TestStateRefusesASummaryWithASecret(t *testing.T) {
 	var log bytes.Buffer
 	node.log = slog.New(slog.NewTextHandler(&log, nil))
 	rec := httptest.NewRecorder()
-	node.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, StatePath, nil))
+	checkedHandler(t, node).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, StatePath, nil))
 	if rec.Code != http.StatusInternalServerError || !strings.Contains(rec.Body.String(), "$.last_opc") {
 		t.Errorf("GET state = %d %s", rec.Code, rec.Body)
 	}
