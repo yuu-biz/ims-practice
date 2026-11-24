@@ -220,10 +220,10 @@ docker compose --profile phones up -d --build
 次の 3 つは、3GPP や IETF の仕様に無いもので、IMS の一部でもありません。
 
 - HEP によるコピー。HEP は信号を集めるための Homer プロジェクトのプロトコルです。キャプチャには、本来のメッセージとは別に、UDP の 9060 番ポートへのコピーのパケットが入ります。
-- ラボの HTTP API。`internal/lab/lab.go` のパッケージのコメントに一覧があります。
-- UE シミュレータ（`ue serve`）の制御用の API。`internal/ue/phone_http.go` の `Phone.Handler` のコメントに一覧があります。付加サービスの部分は、`internal/ue/xcap.go` の `SupplementaryServices.Handler` のコメントにあります。[通話の手順書](call.md) の「HTTP で UE を操作する」では、この API を直接使います。
+- ラボの HTTP API。`internal/lab/lab.go` のパッケージのコメントに一覧があり、[`internal/lab/openapi.yaml`](../../../internal/lab/openapi.yaml) に OpenAPI で記述しています。
+- UE シミュレータ（`ue serve`）の制御用の API。`internal/ue/phone_http.go` の `Phone.Handler` のコメントに一覧があり、[`internal/ue/openapi.yaml`](../../../internal/ue/openapi.yaml) に記述しています。付加サービスの部分は、`internal/ue/xcap.go` の `SupplementaryServices.Handler` のコメントにあります。[通話の手順書](call.md) の「HTTP で UE を操作する」では、この API を直接使います。
 
-一方で、ラダー図に描かれる信号は、仕様で定められたとおりの IMS の信号です。
+一方で、ラダー図に描かれる信号は、仕様で定められたとおりの IMS の信号です。このプロジェクトのすべての HTTP の API を、従う仕様か、記述した OpenAPI のファイルとともに、[HTTP の API](apis.md) に並べています。
 
 ## 後片付け
 

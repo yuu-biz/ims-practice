@@ -111,6 +111,10 @@ UE はプロファイルに入れてあるので、`docker compose up` では起
 | `nas`、`sgd`、`smsc` | IMS を通らない SMS です。SMS を運ぶ NAS のメッセージ、SGd と S6c の Diameter のメッセージ、それらを話す SC（Service Centre）です。IP-SM-GW が送る SC は、パッケージ `sc` のスタブです。 |
 | `h248/h248test`、`kvstore/storetest`、`openapitest`、`rtptest` | 試験だけが使う道具です。 |
 
+### HTTP の API
+
+ノードは、SIP と Diameter のほかに HTTP でも話します。各ノードの保守の API、OAM の API、HSS のプロビジョニングの API、ラボ、UE シミュレータ、メディア中継ノードの API です。どれが 3GPP の仕様に従い、どれがこのプロジェクト独自のものかを、それぞれの OpenAPI のファイルとともに [HTTP の API](apis.md) に並べています。
+
 ## ほかの動かし方
 
 | ディレクトリ | 何をするか |

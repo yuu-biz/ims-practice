@@ -220,10 +220,10 @@ The agent checks every request and the panel shows what it answers. Asking for a
 Three interfaces here come from no 3GPP or IETF specification, and none of them is part of the IMS:
 
 - The HEP copies. HEP is the protocol of the Homer project for collecting signaling. The capture holds the copies as UDP packets to port 9060 besides the real messages.
-- The HTTP API of the Lab, listed in the package comment of `internal/lab/lab.go`.
-- The control API of the UE simulator (`ue serve`), listed in the comment of `Phone.Handler` in `internal/ue/phone_http.go`, and for the supplementary services in that of `SupplementaryServices.Handler` in `internal/ue/xcap.go`. "Drive a UE over HTTP" in [the call guide](call.md) uses it directly.
+- The HTTP API of the Lab, listed in the package comment of `internal/lab/lab.go` and described in OpenAPI in [`internal/lab/openapi.yaml`](../../../internal/lab/openapi.yaml).
+- The control API of the UE simulator (`ue serve`), listed in the comment of `Phone.Handler` in `internal/ue/phone_http.go` and described in [`internal/ue/openapi.yaml`](../../../internal/ue/openapi.yaml), and for the supplementary services in the comment of `SupplementaryServices.Handler` in `internal/ue/xcap.go`. "Drive a UE over HTTP" in [the call guide](call.md) uses it directly.
 
-What you see in the ladder, though, is the signaling of the IMS as the specifications define it.
+What you see in the ladder, though, is the signaling of the IMS as the specifications define it. [The HTTP APIs](apis.md) lists every HTTP API of the project, with the specification each follows or the OpenAPI file of this project that describes it.
 
 ## Clean up
 
