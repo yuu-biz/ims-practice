@@ -87,6 +87,12 @@ type parser struct {
 	// depth counts the OrExprs being read, one per level of
 	// parentheses, not() and predicates.
 	depth int
+	// nodeSelection lets the parser recognise the two parts of Jex
+	// advanced (7.5) that a conditions expression lacks: a union of
+	// paths with " | " and a step in parentheses. Both are
+	// *UnsupportedError rather than *SyntaxError, since they are correct
+	// in a filter or a dataNodeSelector.
+	nodeSelection bool
 }
 
 // The limits on an expression. The parser calls itself once for each
@@ -147,6 +153,9 @@ func (p *parser) parseConditions() (orExpr, error) {
 		return orExpr{}, err
 	}
 	if p.pos < len(p.text) {
+		if p.nodeSelection && strings.HasPrefix(p.rest(), " | ") {
+			return orExpr{}, p.unsupported("a union of paths")
+		}
 		return orExpr{}, p.syntaxError("unexpected " + strconv.Quote(p.rest()))
 	}
 	return e, nil
@@ -293,6 +302,9 @@ func (p *parser) parsePath() (locationPath, error) {
 	if p.consume("/") {
 		path.absolute = true
 		if p.pos == len(p.text) || strings.ContainsRune(" ])|,=!<>", rune(p.text[p.pos])) {
+			if p.nodeSelection {
+				return locationPath{}, p.unsupported("the root node")
+			}
 			return locationPath{}, p.syntaxError("expected a step after /")
 		}
 	}
@@ -318,6 +330,9 @@ const (
 )
 
 func (p *parser) parseStep() (step, error) {
+	if p.nodeSelection && strings.HasPrefix(p.rest(), "(") {
+		return step{}, p.unsupported("a step that unites several paths")
+	}
 	start := p.pos
 	if p.pos == len(p.text) || strings.ContainsRune(firstNameExcluded, rune(p.text[p.pos])) {
 		return step{}, p.syntaxError("expected a data node name")
