@@ -362,3 +362,23 @@ func TestEachLineOfAnNDJSONBodyIsChecked(t *testing.T) {
 		})
 	}
 }
+
+// TestARefIntoAnotherDocument: sums.yaml answers with the Counter of
+// counters.yaml, which the check reads from that file.
+func TestARefIntoAnotherDocument(t *testing.T) {
+	d := Load(t, "testdata/sums.yaml")
+	for _, tc := range []struct {
+		value string
+		ok    bool
+	}{{`{"value": 2}`, true}, {`{"value": -2}`, false}} {
+		rt := &recordingT{TB: t}
+		h := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			io.WriteString(w, tc.value)
+		})
+		d.Handler(rt, h).ServeHTTP(httptest.NewRecorder(), httptest.NewRequest("GET", "/counters/total", nil))
+		if got := len(rt.errors) == 0; got != tc.ok {
+			t.Errorf("answer %s: errors %q", tc.value, rt.errors)
+		}
+	}
+}
