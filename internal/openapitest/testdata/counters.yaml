@@ -1,0 +1,88 @@
+openapi: 3.1.0
+info:
+  title: Counters
+  version: 1.0.0
+  description: A small API that the tests of the package check handlers against.
+paths:
+  /counters/{name}:
+    get:
+      operationId: getCounter
+      parameters:
+        - $ref: '#/components/parameters/name'
+        - name: verbose
+          in: query
+          schema:
+            type: boolean
+      responses:
+        '200':
+          description: The counter.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Counter'
+        '404':
+          $ref: '#/components/responses/Error'
+    put:
+      operationId: setCounter
+      parameters:
+        - $ref: '#/components/parameters/name'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Counter'
+      responses:
+        '204':
+          description: The counter is set.
+        '400':
+          $ref: '#/components/responses/Error'
+        '500':
+          $ref: '#/components/responses/Error'
+  /counters/total:
+    get:
+      operationId: getTotal
+      responses:
+        '200':
+          description: The sum of the counters.
+          headers:
+            Cache-Control:
+              required: true
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Counter'
+components:
+  parameters:
+    name:
+      name: name
+      in: path
+      required: true
+      schema:
+        type: string
+        pattern: '^[a-z]+$'
+  responses:
+    Error:
+      description: The request failed.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+  schemas:
+    Counter:
+      type: object
+      required: [value]
+      properties:
+        value:
+          type: integer
+          minimum: 0
+      additionalProperties: false
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: string
+      additionalProperties: false

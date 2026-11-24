@@ -109,7 +109,7 @@ UE はプロファイルに入れてあるので、`docker compose up` では起
 | --- | --- |
 | `fivegc`、`n5`、`nhss`、`sbi` | 5GS の側です。5GC のスタブ、PCF の N5 のポリシーの API、HSS のサービスベースのインタフェース、それらの API が共有する部分です。 |
 | `nas`、`sgd`、`smsc` | IMS を通らない SMS です。SMS を運ぶ NAS のメッセージ、SGd と S6c の Diameter のメッセージ、それらを話す SC（Service Centre）です。IP-SM-GW が送る SC は、パッケージ `sc` のスタブです。 |
-| `h248/h248test`、`kvstore/storetest`、`rtptest` | 試験だけが使う道具です。 |
+| `h248/h248test`、`kvstore/storetest`、`openapitest`、`rtptest` | 試験だけが使う道具です。 |
 
 ## ほかの動かし方
 
