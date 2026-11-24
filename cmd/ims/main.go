@@ -277,7 +277,7 @@ func run(configPath string, log *slog.Logger, level *slog.LevelVar) error {
 		// node stops.
 		defer s.Close()
 		scscfRole.Store(s)
-		managed = append(managed, managedRole{function: s.Function(hss.Available), manage: s.Manage})
+		managed = append(managed, managedRole{function: s.Function(hss.Available), manage: s.Manage, diameterPeers: hss.Peers()})
 		stack, err := startSIPWith(config.RoleSCSCF, c.SIP, sip.Config{OnRequest: s.OnRequest, OnACK: s.OnACK, OnCANCEL: s.OnCANCEL})
 		if err != nil {
 			return err
@@ -300,7 +300,7 @@ func run(configPath string, log *slog.Logger, level *slog.LevelVar) error {
 		if err != nil {
 			return err
 		}
-		managed = append(managed, managedRole{function: i.Function(hss.Available), manage: i.Manage})
+		managed = append(managed, managedRole{function: i.Function(hss.Available), manage: i.Manage, diameterPeers: hss.Peers()})
 		stack, err := startSIPWith(config.RoleICSCF, c.SIP, sip.Config{OnRequest: i.OnRequest, OnCANCEL: i.OnCANCEL})
 		if err != nil {
 			return err
@@ -420,7 +420,7 @@ func run(configPath string, log *slog.Logger, level *slog.LevelVar) error {
 		// The sweep that ends the deliveries whose TR1N has run out runs
 		// until the node stops.
 		defer g.Close()
-		managed = append(managed, managedRole{function: g.Function(hss.Available), manage: g.Manage})
+		managed = append(managed, managedRole{function: g.Function(hss.Available), manage: g.Manage, diameterPeers: hss.Peers()})
 		if stub != nil {
 			stub.SetIPSMGW(g)
 			if c.IBCF.Host != "" {
@@ -446,7 +446,7 @@ func run(configPath string, log *slog.Logger, level *slog.LevelVar) error {
 		// has stopped, so no request arrives while it finishes them.
 		defer stop()
 		scRole.Store(centre)
-		managed = append(managed, managedRole{function: scFunction(centre, server, hss.Available, roleLog), manage: centre.Manage})
+		managed = append(managed, managedRole{function: scFunction(centre, server, hss.Available, roleLog), manage: centre.Manage, diameterPeers: hss.Peers()})
 	}
 	if c := cfg.IBCF; c != nil {
 		roleLog := log.With("role", config.RoleIBCF)
@@ -484,7 +484,7 @@ func run(configPath string, log *slog.Logger, level *slog.LevelVar) error {
 			ConferenceDomain: c.ConferenceDomain,
 			Timers:           c.SIP.Timers(),
 		}, users, store, store, resolver, roleLog)
-		managed = append(managed, managedRole{function: mmtelRole.Function(hss.Available), manage: mmtelRole.Manage})
+		managed = append(managed, managedRole{function: mmtelRole.Function(hss.Available), manage: mmtelRole.Manage, diameterPeers: hss.Peers()})
 		if err := mmtelRole.Listen(transport); err != nil {
 			transport.Close()
 			return err
@@ -1062,13 +1062,18 @@ type managedRole struct {
 	// changes while the node runs (maintenance.NewSetting). The rest of
 	// its configuration changes only with the file and a restart.
 	settings []maintenance.Setting
+	// diameterPeers are the Diameter peers that the role sends its
+	// requests to, the instances of the HSS. The role raises an alarm
+	// while it cannot reach one of them (raiseDiameterPeerAlarms).
+	diameterPeers []*diameter.Peer
 }
 
 // startMaintenance serves the maintenance listener of the node on l: the
 // metrics of its roles at /metrics, in the text format that Prometheus
 // scrapes, and, when roles has any, the maintenance API of those roles
-// under maintenance.PathPrefix. The function it returns stops the
-// listener.
+// under maintenance.PathPrefix, whose alarm list holds the alarms that
+// the roles raise about their Diameter peers. The function it returns
+// stops the listener.
 func startMaintenance(l net.Listener, cfg config.Config, roles []managedRole, registry *metrics.Registry,
 	level *slog.LevelVar, log *slog.Logger, cancel context.CancelFunc) (func(), error) {
 	mux := http.NewServeMux()
@@ -1099,6 +1104,7 @@ func startMaintenance(l net.Listener, cfg config.Config, roles []managedRole, re
 		}
 		for _, r := range roles {
 			r.manage(api.ManagedFunction(r.function.Role))
+			raiseDiameterPeerAlarms(api, r.function.Role, r.diameterPeers, log)
 		}
 		mux.Handle(maintenance.PathPrefix, api.Handler())
 	}
