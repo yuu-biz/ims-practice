@@ -1,13 +1,21 @@
 #!/usr/bin/env bash
-# End-to-end check: SMS over IP. UE 2 registers, and the
-# capture shows the S-CSCF registering it at the IP-SM-GW too, the
-# IP-SM-GW's subscription to its registration state and the PUR to the
-# HSS. UE 1 then sends UE 2 a short message in the GSM 7 bit alphabet
-# with a status report request, and UE 2 sends UE 1 one in Japanese
-# (UCS2). Last, a short message to a number no one has gets RP-ERROR,
-# and one to a user who is not registered gets a status report that
-# says it was not delivered. Wireshark must decode the RP and TP layers
-# of every short message, with the text that was sent.
+# End-to-end check: SMS over IP with the Service Centre of SMS. Two UE
+# simulators stay up and take their orders on their control API, so that
+# the scenario can put UE 2 in the states where a delivery fails. The
+# capture must show three runs of one short message each:
+#
+#   a) UE 1 to UE 2 and back: the short message crosses SGd to the
+#      Service Centre and comes back over it, with a status report at the
+#      end;
+#   b) UE 2 takes no short message (480). The Service Centre holds it,
+#      the HSS keeps the Service Centre's address, and once UE 2 is back
+#      the HSS alerts the Service Centre, which delivers it;
+#   c) UE 2 has no memory (RP-ERROR, RP-Cause 22). The same, set off by
+#      the notification that it has memory again.
+#
+# A short message to a number no subscriber has is refused on the way in.
+# Wireshark must decode the RP and TP layers of every short message, with
+# the text that was sent.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 . scripts/e2e-lib.sh
@@ -20,102 +28,271 @@ fi
 
 docker compose up -d --build
 
-# The CSCFs and the IP-SM-GW serve requests only once their Diameter
-# connections to the HSS are open.
+# The CSCFs, the Service Centre and the IP-SM-GW serve requests only
+# once their Diameter connections are open. The IP-SM-GW opens two, so
+# each one is waited for by the peer it goes to.
+hss_host=hss.ims.mnc001.mcc001.3gppnetwork.org
+sc_host=sc.ims.mnc001.mcc001.3gppnetwork.org
 wait_for_open() {
-	local service="$1" i
-	# Up to two minutes: a node that tried before the HSS listened
+	local service="$1" peer="$2" i
+	# Up to two minutes: a node that tried before its peer listened
 	# tries again after Tc, 30 s (RFC 6733 2.1).
 	for i in $(seq 1 120); do
-		if grep -q '"to":"I-Open (OKAY)"' <<<"$(docker compose logs --no-color "$service" 2>/dev/null)"; then
+		if grep -q "\"peer\":\"$peer\".*\"to\":\"I-Open (OKAY)\"" <<<"$(docker compose logs --no-color "$service" 2>/dev/null)"; then
 			return 0
 		fi
 		sleep 1
 	done
-	echo "FAIL $service never opened its Diameter connection" >&2
+	echo "FAIL $service never opened its Diameter connection to $peer" >&2
 	exit 1
 }
-wait_for_open icscf
-wait_for_open scscf
-wait_for_open ipsmgw
+wait_for_open icscf "$hss_host"
+wait_for_open scscf "$hss_host"
+wait_for_open sc "$hss_host"
+wait_for_open ipsmgw "$hss_host"
+wait_for_open ipsmgw "$sc_host"
 
-ue2=(--impi 001010000000002@ims.mnc001.mcc001.3gppnetwork.org
-	--impu sip:+12025550102@ims.mnc001.mcc001.3gppnetwork.org --password test-password-2)
 gsm_text='Hello UE-B, this is UE-A.'
 ucs2_text='こんにちは、UE-A さん'
+away_text='Are you back yet?'
+room_text='Is there room now?'
 remember_nodes
 fail=0
 
-# stop_ue stops a UE that "ue register" keeps registered; it
-# deregisters on SIGTERM.
-stop_ue() {
-	docker stop "$1" >/dev/null
-	docker rm "$1" >/dev/null
+# phone_answer UE METHOD PATH [BODY] sends one request to the control
+# API of a UE simulator of the phones profile and prints the body of the
+# answer, then its status code on a line of its own. The API is on no
+# address of the host, so the request goes through the Lab, which
+# passes it on to the UE as it is, as the Lab's own screen does. A short
+# message is answered once its MESSAGE has a final response, so the
+# wait is longer than a SIP transaction.
+phone_answer() {
+	local data=()
+	if [ -n "${4:-}" ]; then
+		data=(-H 'Content-Type: application/json' --data-binary "$4")
+	fi
+	curl -s -m 75 -w '\n%{http_code}' -X "$2" "${data[@]}" "http://localhost:8080/api/ues/$1$3"
 }
+# phone UE METHOD PATH [BODY] prints the JSON body of that answer, or
+# nothing when the answer is not 200, and says on its error output what
+# the answer was. The control API answers each request with the state it
+# leaves behind, so the caller reads the body.
+phone() {
+	local answer status
+	answer="$(phone_answer "$@")"
+	status="$(tail -n 1 <<<"$answer")"
+	if [ "${status:-}" != "200" ]; then
+		echo "$1 answered ${2:-} ${3:-} with ${status:-no status}: $(sed '$d' <<<"$answer")" >&2
+		return 1
+	fi
+	sed '$d' <<<"$answer"
+}
+# ue_status UE prints what the UE answers to GET /status, which the
+# Lab's list of the UEs carries: whether it is registered, and the short
+# messages it sent and received. Nothing when the UE does not answer.
+ue_status() {
+	curl -fsS -m 10 http://localhost:8080/api/ues | "$python" -c '
+import json, sys
+for u in json.load(sys.stdin):
+    if u["name"] == sys.argv[1] and u["status"]:
+        print(json.dumps(u["status"], separators=(",", ":"), ensure_ascii=False))
+' "$1" | tr -d '\r'
+}
+# sms_history UE prints the short messages of the UE from its status.
+sms_history() {
+	"$python" -c '
+import json, sys
+print(json.dumps(json.load(sys.stdin).get("sms") or {}, ensure_ascii=False))
+' <<<"$(ue_status "$1")"
+}
+# set_state SERVICE METHOD PATH BODY changes a state of the UE's
+# reception of short messages, and fails the run when the control API
+# does not take it.
+set_state() {
+	if phone "$@" >/dev/null; then
+		echo "ok   $1 took $3"
+	else
+		echo "FAIL $1 did not take $3 $4"
+		fail=1
+	fi
+}
+# phone_registered SERVICE: the UE says that it is registered.
+phone_registered() { grep -q '"registered":true' <<<"$(ue_status "$1")"; }
+# received SERVICE TEXT: the UE has received a short message with that
+# text. The sent ones carry a text too, so the two lists are read apart.
+received() {
+	"$python" -c '
+import json, sys
+text = sys.argv[1]
+history = json.load(sys.stdin)
+sys.exit(0 if any(m.get("text") == text for m in history.get("received") or []) else 1)
+' "$2" <<<"$(sms_history "$1")"
+}
+# sent_state SERVICE TEXT prints how the short message with that text
+# that the UE sent stands: the state, the RP-Cause of an RP-ERROR and the
+# TP-FCS of the report in it, and the TP-ST of the status report where
+# one has come. Nothing when the UE sent no such message.
+sent_state() {
+	"$python" -c '
+import json, sys
+text = sys.argv[1]
+for m in json.load(sys.stdin).get("sent") or []:
+    if m.get("text") == text:
+        report = m.get("status_report") or {}
+        print(m["state"], m.get("rp_cause", 0), m.get("failure_cause", 0), report.get("status", "-"))
+' "$2" <<<"$(sms_history "$1")" | tr -d '\r'
+}
+# sent_is SERVICE TEXT STATE waits for sent_state to say STATE.
+sent_is() { [ "$(sent_state "$1" "$2")" = "$3" ]; }
+# accepted SERVICE TEXT: the submit report said that the Service Centre
+# took the short message. Only the state is read, since a status report
+# may have come since.
+accepted() { [ "$(sent_state "$1" "$2" | cut -d ' ' -f 1)" = accepted ]; }
 
-# UE 2 stays registered and takes short messages while UE 1 sends one.
-# ue and ue2 have fixed addresses, so each runs once at a time.
-docker compose run --no-deps -d --name ims-practice-ue2-sms ue2 register "${ue2[@]}" >/dev/null
-if wait_log ims-practice-ue2-sms '"msg":"registered"'; then
-	echo "ok   UE 2 registered"
+# The two UEs stay up and hold subscribers 1 and 2, so they must not
+# outlive the script.
+trap 'docker compose --profile phones rm -sf phone1 phone2 >/dev/null 2>&1' EXIT
+docker compose --profile phones up -d --no-deps phone1 phone2
+for ue in phone1 phone2; do
+	if wait_for 60 phone_registered "$ue"; then
+		echo "ok   $ue registered"
+	else
+		echo "FAIL $ue did not register"
+		exit 1
+	fi
+done
+
+echo "a) a short message from UE 1 to UE 2, with a status report"
+# POST /sms answers once the MESSAGE has its 202; the submit report
+# comes in a MESSAGE of its own, so the state is read afterwards.
+set_state phone1 POST /sms "{\"to\": \"+12025550102\", \"text\": \"$gsm_text\", \"status_report\": true}"
+if wait_for 30 accepted phone1 "$gsm_text"; then
+	echo "ok   the Service Centre took the short message of UE 1"
 else
-	echo "FAIL UE 2 did not register"
+	echo "FAIL the submit report of UE 1: $(sent_state phone1 "$gsm_text")"
 	fail=1
 fi
-if out="$(docker compose run --no-deps --rm ue sms --status-report +12025550102 "$gsm_text" 2>&1)" &&
-	grep -q '"msg":"status report".*"status":0,' <<<"$out"; then
-	echo "ok   UE 1 sent a short message to UE 2, and got a status report that it was delivered"
-else
-	echo "FAIL UE 1 to UE 2"
-	# grep finds nothing when the UE logged none of these lines.
-	grep -E '"msg":"(sms sent|submit report|status report|ue failed)"' <<<"$out" || true
-	fail=1
-fi
-if grep -q "\"msg\":\"sms received\",.*\"from\":\"+12025550101\",\"text\":\"$gsm_text\"" <<<"$(docker logs ims-practice-ue2-sms 2>&1)"; then
+if wait_for 30 received phone2 "$gsm_text"; then
 	echo "ok   UE 2 received the text from UE 1"
 else
 	echo "FAIL UE 2 did not receive the text"
 	fail=1
 fi
-stop_ue ims-practice-ue2-sms
-
-docker compose run --no-deps -d --name ims-practice-ue1-sms ue register >/dev/null
-wait_log ims-practice-ue1-sms '"msg":"registered"' || fail=1
-if docker compose run --no-deps --rm ue2 sms "${ue2[@]}" +12025550101 "$ucs2_text" >/dev/null 2>&1; then
-	echo "ok   UE 2 sent a short message in Japanese to UE 1"
+# TP-ST 0 is "short message received by the SME" (TS 23.040 9.2.3.15).
+if wait_for 30 sent_is phone1 "$gsm_text" "accepted 0 0 0"; then
+	echo "ok   UE 1 got a status report that the short message was delivered"
 else
-	echo "FAIL UE 2 to UE 1"
+	echo "FAIL UE 1 got no status report: $(sent_state phone1 "$gsm_text")"
 	fail=1
 fi
-# The UE sends its delivery report after it logs the short message.
-if wait_log ims-practice-ue1-sms "\"msg\":\"sms received\",.*\"from\":\"+12025550102\",\"text\":\"$ucs2_text\"" &&
-	wait_log ims-practice-ue1-sms '"msg":"delivery report sent"'; then
+
+echo "a number that no subscriber has"
+unknown_text='Nobody has this number.'
+set_state phone1 POST /sms "{\"to\": \"+12025550198\", \"text\": \"$unknown_text\"}"
+# RP-Cause 1 is "unassigned (unallocated) number" and TP-FCS 0xc3 (195)
+# "invalid SME address" (TS 24.011 table 8.4, TS 23.040 9.2.3.22).
+if wait_for 30 sent_is phone1 "$unknown_text" "failed 1 195 -"; then
+	echo "ok   a short message to an unknown number was refused with RP-Cause 1 and TP-FCS 0xc3"
+else
+	echo "FAIL a short message to an unknown number: $(sent_state phone1 "$unknown_text")"
+	fail=1
+fi
+
+echo "b) UE 2 takes no short message, and the alert of the HSS delivers it"
+set_state phone2 PUT /sms-availability '{"available": false}'
+set_state phone1 POST /sms "{\"to\": \"+12025550102\", \"text\": \"$away_text\"}"
+if wait_for 30 accepted phone1 "$away_text"; then
+	echo "ok   the Service Centre took the short message for the UE that takes none"
+else
+	echo "FAIL the submit report of UE 1: $(sent_state phone1 "$away_text")"
+	fail=1
+fi
+# The HSS logs the message waiting data of a user each time it changes.
+waiting() {
+	grep -q '"msg":"message waiting data".*"service_centres":\["12025550100"\].*"unri":true' \
+		<<<"$(docker compose logs --no-color hss 2>/dev/null)"
+}
+if wait_for 60 waiting; then
+	echo "ok   the HSS keeps the Service Centre's address for UE 2, with the unreachable flag"
+else
+	echo "FAIL the HSS did not keep the Service Centre's address"
+	fail=1
+fi
+if received phone2 "$away_text"; then
+	echo "FAIL UE 2 took the short message although it takes none"
+	fail=1
+else
+	echo "ok   UE 2 has not taken the short message"
+fi
+# UE 2 takes short messages again, and shows it by sending one of its
+# own: any request of the user tells the IP-SM-GW that the UE is there
+# (TS 23.204 6.5b step 2). This one is in UCS2.
+set_state phone2 PUT /sms-availability '{"available": true}'
+set_state phone2 POST /sms "{\"to\": \"+12025550101\", \"text\": \"$ucs2_text\"}"
+if wait_for 30 accepted phone2 "$ucs2_text"; then
+	echo "ok   UE 2 sent a short message of its own, in Japanese"
+else
+	echo "FAIL the submit report of UE 2: $(sent_state phone2 "$ucs2_text")"
+	fail=1
+fi
+if wait_for 60 received phone2 "$away_text"; then
+	echo "ok   the alert of the HSS delivered the short message that the Service Centre held"
+else
+	echo "FAIL the short message that the Service Centre held was not delivered"
+	fail=1
+fi
+if wait_for 30 received phone1 "$ucs2_text"; then
 	echo "ok   UE 1 received the Japanese text from UE 2"
 else
 	echo "FAIL UE 1 did not receive the Japanese text"
 	fail=1
 fi
-stop_ue ims-practice-ue1-sms
 
-# A number that no subscriber has (TS 24.011 E-2, cause 1). "ue sms"
-# ends with an error when the SC refuses the short message, as here, or
-# when no status report comes in time, which the short message after
-# this one may meet; the checks read its log, hence "|| true" in both.
-out="$(docker compose run --no-deps --rm ue sms +12025550198 'Nobody has this number.' 2>&1 || true)"
-if grep -q 'the SC refused the short message: RP-Cause 1, TP-FCS 0xc3' <<<"$out"; then
-	echo "ok   a short message to an unknown number was refused with RP-Cause 1"
+echo "c) UE 2 has no memory, and its notification sets off the alert"
+set_state phone2 PUT /sms-memory '{"full": true}'
+set_state phone1 POST /sms "{\"to\": \"+12025550102\", \"text\": \"$room_text\"}"
+if wait_for 30 accepted phone1 "$room_text"; then
+	echo "ok   the Service Centre took the short message for the UE without memory"
 else
-	echo "FAIL a short message to an unknown number: $(tail -n 1 <<<"$out")"
+	echo "FAIL the submit report of UE 1: $(sent_state phone1 "$room_text")"
 	fail=1
 fi
-# Subscriber 3 exists but is never registered. TP-ST 0x62 (98) is
-# "no response from SME", after which the SC tries no more (TS 23.040
-# 9.2.3.15).
-out="$(docker compose run --no-deps --rm ue sms --status-report +12025550103 'Are you there?' 2>&1 || true)"
-if grep -q '"msg":"status report".*"status":98,' <<<"$out"; then
-	echo "ok   a short message to a user who is not registered got a status report that it was not delivered"
+memory_exceeded() {
+	grep -q '"msg":"message waiting data".*"service_centres":\["12025550100"\].*"mcef":true' \
+		<<<"$(docker compose logs --no-color hss 2>/dev/null)"
+}
+if wait_for 60 memory_exceeded; then
+	echo "ok   the HSS keeps the Service Centre's address for UE 2, with the memory capacity exceeded flag"
 else
-	echo "FAIL a short message to a user who is not registered: $(tail -n 1 <<<"$out")"
+	echo "FAIL the HSS did not record that UE 2 has no memory"
+	fail=1
+fi
+# Giving the memory back sends the notification that the UE owes, which
+# the IP-SM-GW passes to the HSS before it answers the UE.
+# The UE answers once its RP-SMMA has had its 202 Accepted. The flag
+# stays set until the RP-ACK comes back in a MESSAGE of its own (TS
+# 23.040 10.3), which the capture shows below.
+reception="$(phone phone2 PUT /sms-memory '{"full": false}' || true)"
+if grep -q '"memory_full":false,"memory_capacity_exceeded_notification":true' <<<"$reception"; then
+	echo "ok   UE 2 has memory again and has sent the notification it owes"
+else
+	echo "FAIL UE 2 did not send the notification it owes: $reception"
+	fail=1
+fi
+if wait_for 60 received phone2 "$room_text"; then
+	echo "ok   the alert of the HSS delivered the short message that UE 2 had no memory for"
+else
+	echo "FAIL the short message that UE 2 had no memory for was not delivered"
+	fail=1
+fi
+
+echo "UE 2 deregisters, and the IP-SM-GW takes itself out of the HSS"
+set_state phone2 POST /deregister ""
+unregistered() { grep -q '"registered":false' <<<"$(ue_status phone2)"; }
+if wait_for 30 unregistered; then
+	echo "ok   UE 2 deregistered"
+else
+	echo "FAIL UE 2 did not deregister"
 	fail=1
 fi
 same_nodes
@@ -125,19 +302,29 @@ echo "reading $pcap"
 
 last=0
 
-ue1=172.28.0.100
-ue2ip=172.28.0.101
+ue1=172.28.0.110
+ue2ip=172.28.0.111
 pcscf=172.28.0.40
 icscf=172.28.0.20
 scscf=172.28.0.30
 hss=172.28.0.10
 ipsmgw=172.28.0.70
+sc=172.28.0.71
 ipsmgw_uri=sip:ipsmgw.ims.mnc001.mcc001.3gppnetwork.org:5060
 message='sip.Method == "MESSAGE"'
 sms='sip.Content-Type == "application/vnd.3gpp.sms"'
 smsip='sip.Accept-Contact == "*;+g.3gpp.smsip;require;explicit"'
 req='diameter.flags.request == 1'
 ans='diameter.flags.request == 0'
+# The commands of SGd and S6c (TS 29.338 Table 5.3.2.2/1, Table
+# 6.3.2.2/1).
+ofr="diameter.cmd.code == 8388645 && $req"
+ofa="diameter.cmd.code == 8388645 && $ans"
+tfr="diameter.cmd.code == 8388646 && $req"
+tfa="diameter.cmd.code == 8388646 && $ans"
+srr="diameter.cmd.code == 8388647 && $req"
+alr="diameter.cmd.code == 8388648 && $req"
+rdr="diameter.cmd.code == 8388649 && $req"
 # RP message types (TS 24.011 8.2.2) and TP message types (TS 23.040
 # 9.2.3.1). An RP-ACK from the network carries an SMS-SUBMIT-REPORT,
 # one from the MS an SMS-DELIVER-REPORT; both have TP-MTI 1 and 0, as
@@ -146,19 +333,32 @@ rp_data_mo='gsm_a.rp.msg_type == 0x00'
 rp_data_mt='gsm_a.rp.msg_type == 0x01'
 rp_ack_mo='gsm_a.rp.msg_type == 0x02'
 rp_ack_mt='gsm_a.rp.msg_type == 0x03'
+rp_error_mo='gsm_a.rp.msg_type == 0x04'
 rp_error_mt='gsm_a.rp.msg_type == 0x05'
+rp_smma='gsm_a.rp.msg_type == 0x06'
 
-# The checks read the capture up to the status report for the user who
-# is not registered.
-await "the status report to UE 1 for +12025550103" "$message && ip.dst == $ue1 && gsm_sms.tp-ra == \"12025550103\""
+# The checks read the capture up to the second delivery of the short
+# message that UE 2 had no memory for.
+await "both deliveries of the short message for the UE without memory" \
+	"$message && ip.dst == $ue2ip && gsm_sms.sms_text == \"$room_text\"" 2 60
 
 # The IP-SM-GW opens Diameter to the HSS with Sh, which they share, and
-# SGd, on which an SMS-GMSC brings it short messages, and with nothing
-# else (RFC 6733 5.3).
-cer="diameter.cmd.code == 257 && $req && ip.src == $ipsmgw"
+# SGd, on which a Service Centre brings it short messages, and with
+# nothing else (RFC 6733 5.3).
+cer="diameter.cmd.code == 257 && $req && ip.src == $ipsmgw && ip.dst == $hss"
 expect "CER IP-SM-GW -> HSS advertising Sh and SGd" "$cer && diameter.Auth-Application-Id == 16777217 && diameter.Auth-Application-Id == 16777313"
-none "CER of the IP-SM-GW advertising an application other than Sh and SGd" "$cer && diameter.Auth-Application-Id in {0..16777216, 16777218..16777312, 16777314..4294967295}"
-expect "CEA 2001 HSS -> IP-SM-GW" "diameter.cmd.code == 257 && $ans && ip.dst == $ipsmgw && diameter.Result-Code == 2001"
+none "CER of the IP-SM-GW to the HSS advertising an application other than Sh and SGd" "$cer && diameter.Auth-Application-Id in {0..16777216, 16777218..16777312, 16777314..4294967295}"
+expect "CEA 2001 HSS -> IP-SM-GW" "diameter.cmd.code == 257 && $ans && ip.src == $hss && ip.dst == $ipsmgw && diameter.Result-Code == 2001"
+
+echo "the Service Centre opens S6c to the HSS, and the IP-SM-GW SGd to it (TS 29.338 6.3.1.1)"
+last=0
+sc_cer="diameter.cmd.code == 257 && $req && ip.src == $sc && ip.dst == $hss"
+expect "CER SC -> HSS advertising S6c and SGd" "$sc_cer && diameter.Auth-Application-Id == 16777312 && diameter.Auth-Application-Id == 16777313"
+none "CER of the SC advertising an application other than S6c and SGd" "$sc_cer && diameter.Auth-Application-Id in {0..16777311, 16777314..4294967295}"
+expect "CEA 2001 HSS -> SC" "diameter.cmd.code == 257 && $ans && ip.src == $hss && ip.dst == $sc && diameter.Result-Code == 2001"
+last=0
+expect "CER IP-SM-GW -> SC advertising SGd" "diameter.cmd.code == 257 && $req && ip.src == $ipsmgw && ip.dst == $sc && diameter.Auth-Application-Id == 16777313"
+expect "CEA 2001 SC -> IP-SM-GW" "diameter.cmd.code == 257 && $ans && ip.src == $sc && ip.dst == $ipsmgw && diameter.Result-Code == 2001"
 
 echo "UE 2 registers at the IP-SM-GW too (TS 24.229 5.4.1.7, TS 24.341 5.3.3.2)"
 last=0
@@ -180,16 +380,16 @@ expect "PUR IP-SM-GW -> HSS: SMSRegistrationInfo with the IP-SM-GW's number, rea
 expect "PUA 2001" "$(answer_to) && diameter.Result-Code == 2001"
 # The 200 to the SUBSCRIBE comes back through the I-CSCF, and may come
 # after the NOTIFY, which the S-CSCF sends straight to the IP-SM-GW. The
-# IP-SM-GW answers the NOTIFY and sends the PUR together.
+# IP-SM-GW answers the NOTIFY and sends the Sh requests together.
 last="$subscribed"
 expect "200 OK to the SUBSCRIBE, I-CSCF -> IP-SM-GW" "sip.Status-Code == 200 && sip.CSeq.method == \"SUBSCRIBE\" && ip.src == $icscf && ip.dst == $ipsmgw"
 last="$notified"
 expect "200 OK to the NOTIFY, IP-SM-GW -> S-CSCF" "sip.Status-Code == 200 && sip.CSeq.method == \"NOTIFY\" && ip.src == $ipsmgw && ip.dst == $scscf"
 
-echo "a short message from UE 1 to UE 2, GSM 7 bit, with a status report (TS 24.341 B.5, B.6)"
+echo "a) a short message from UE 1 to UE 2, GSM 7 bit, with a status report (TS 24.341 B.5, B.6)"
 # UE 1 sends once UE 2 has said it is registered, which is after the
-# 200 to UE 2's REGISTER. The IP-SM-GW's PUR above runs on its own and
-# may come after.
+# 200 to UE 2's REGISTER. The Sh requests above run on their own and may
+# come after.
 last="$ue2_registered"
 expect "MESSAGE UE 1 -> P-CSCF to the SC: RP-DATA with SMS-SUBMIT" "$message && $sms && ip.src == $ue1 && ip.dst == $pcscf && sip.r-uri == \"tel:+12025550100\" && $rp_data_mo && gsm_sms.tp-mti == 1 && gsm_sms.tp-da == \"12025550102\" && gsm_sms.tp-srr == 1 && gsm_sms.tp-dcs == 0 && gsm_sms.sms_text == \"$gsm_text\""
 mo="$(field sip.Call-ID)"
@@ -208,16 +408,31 @@ mo_at_gw="$last"
 expect "202 Accepted IP-SM-GW -> S-CSCF" "sip.Status-Code == 202 && sip.Call-ID == \"$mo\" && ip.src == $ipsmgw"
 expect "202 Accepted reaches UE 1" "sip.Status-Code == 202 && sip.Call-ID == \"$mo\" && ip.dst == $ue1"
 last="$mo_at_gw"
-# The SC stub finds the recipient by number over Sh.
-expect "UDR IP-SM-GW -> HSS: IMSPublicIdentity of MSISDN 12025550102" "diameter.cmd.code == 306 && $req && ip.src == $ipsmgw && diameter.Data-Reference == 10 && e164.msisdn == \"12025550102\""
-expect "UDA 2001" "$(answer_to) && diameter.Result-Code == 2001"
-after_udr="$last"
+
+echo "the short message crosses SGd to the Service Centre (TS 23.204 6.3, TS 29.338 6.2.1)"
+expect "OFR IP-SM-GW -> SC with the sender's MSISDN and the SMS-SUBMIT" "$ofr && ip.src == $ipsmgw && ip.dst == $sc && e164.msisdn == \"12025550101\" && diameter.SM-RP-UI"
+# TS 29.338 6.3.1.1: a serving node that cannot name an SMS-IWMSC gives
+# the realm alone, so any instance of the Service Centre may answer.
+none "OFR of the IP-SM-GW naming a Destination-Host" "$ofr && ip.src == $ipsmgw && diameter.Destination-Host"
+expect "SRR SC -> HSS for UE 2's number (TS 23.040 8.2.2)" "$srr && ip.src == $sc && ip.dst == $hss && e164.msisdn == \"12025550102\""
+expect "SRA 2001 with the IP-SM-GW as the serving node and UE 2's IMSI" "$(answer_to) && diameter.Result-Code == 2001 && diameter.IP-SM-GW-Name && diameter.User-Name == \"001010000000002\""
+# The Service Centre starts delivering as soon as it has taken the short
+# message, so the query of the delivery may come before this answer; both
+# are therefore looked for from here.
+after_sra="$last"
+expect "OFA 2001 SC -> IP-SM-GW with the SMS-SUBMIT-REPORT" "$ofa && ip.src == $sc && ip.dst == $ipsmgw && diameter.Result-Code == 2001 && diameter.SM-RP-UI"
 # The submit report and the delivery go out together.
 expect "submit report IP-SM-GW -> I-CSCF: RP-ACK in reply to the short message" "$message && $sms && ip.src == $ipsmgw && ip.dst == $icscf && sip.In-Reply-To == \"$mo\" && $rp_ack_mt && $smsip && sip.Request-Disposition == \"fork\""
 report="$(field sip.Call-ID)"
 expect "submit report reaches UE 1" "$message && sip.Call-ID == \"$report\" && ip.src == $pcscf && ip.dst == $ue1"
 expect "200 OK UE 1 -> P-CSCF to the submit report" "sip.Status-Code == 200 && sip.Call-ID == \"$report\" && ip.src == $ue1"
-last="$after_udr"
+last="$after_sra"
+
+echo "the Service Centre delivers it (TS 23.040 8.1.1, TS 29.338 6.2.2)"
+expect "SRR SC -> HSS, the SMS-GMSC's own query before the delivery" "$srr && ip.src == $sc && ip.dst == $hss && e164.msisdn == \"12025550102\""
+expect "SRA 2001 with the IP-SM-GW" "$(answer_to) && diameter.Result-Code == 2001 && diameter.IP-SM-GW-Name"
+expect "TFR SC -> IP-SM-GW naming UE 2 by IMSI" "$tfr && ip.src == $sc && ip.dst == $ipsmgw && diameter.User-Name == \"001010000000002\" && diameter.SM-RP-UI"
+tfr_session="$(field diameter.Session-Id | cut -d, -f1)"
 expect "MT MESSAGE IP-SM-GW -> I-CSCF: RP-DATA with SMS-DELIVER, the entry point in Route" "$message && $sms && ip.src == $ipsmgw && ip.dst == $icscf && sip.Route contains \"<sip:ims.mnc001.mcc001.3gppnetwork.org;lr>\" && sip.r-uri == \"tel:+12025550102\" && $rp_data_mt && gsm_sms.tp-mti == 0 && gsm_sms.tp-oa == \"12025550101\" && gsm_sms.sms_text == \"$gsm_text\" && $smsip && sip.Request-Disposition == \"no-fork\""
 mt="$(field sip.Call-ID)"
 expect "LIR for UE 2's tel URI" "diameter.cmd.code == 302 && $req && ip.src == $icscf && diameter.Public-Identity == \"tel:+12025550102\""
@@ -230,69 +445,103 @@ expect "delivery report UE 2 -> P-CSCF: RP-ACK to the IP-SM-GW, in reply to the 
 dr="$(field sip.Call-ID)"
 expect "delivery report S-CSCF -> IP-SM-GW by UE 2's originating iFC" "$message && sip.Call-ID == \"$dr\" && ip.src == $scscf && ip.dst == $ipsmgw && count(sip.Route) == 2"
 expect "202 Accepted IP-SM-GW -> S-CSCF for the delivery report" "sip.Status-Code == 202 && sip.Call-ID == \"$dr\" && ip.src == $ipsmgw"
+# TS 23.204 6.4 NOTE 4: the answer to the TFR follows the delivery
+# report, not the 200 to the MESSAGE that carried the short message.
+expect "TFA 2001 IP-SM-GW -> SC for that TFR" "$tfa && ip.src == $ipsmgw && ip.dst == $sc && diameter.Session-Id == \"$tfr_session\" && diameter.Result-Code == 2001"
+delivered_frame="$last"
+
+echo "the status report of that short message"
+expect "SRR SC -> HSS for the sender" "$srr && ip.src == $sc && ip.dst == $hss && e164.msisdn == \"12025550101\""
+expect "TFR SC -> IP-SM-GW with the SMS-STATUS-REPORT" "$tfr && ip.src == $sc && ip.dst == $ipsmgw && diameter.User-Name == \"001010000000001\""
 expect "status report IP-SM-GW -> I-CSCF: SMS-STATUS-REPORT, received by the SME" "$message && $sms && ip.src == $ipsmgw && sip.r-uri == \"tel:+12025550101\" && $rp_data_mt && gsm_sms.tp-mti == 2 && gsm_sms.tp-ra == \"12025550102\" && gsm_sms.dis_field.st_error == 0 && gsm_sms.dis.field_st_reason == 0"
 sr="$(field sip.Call-ID)"
 expect "status report reaches UE 1" "$message && sip.Call-ID == \"$sr\" && ip.dst == $ue1"
-# UE 1 ends once it has the status report, and only then does the
-# script go on: what follows comes after this frame. UE 1's delivery
-# report below need not arrive before it.
-reported="$last"
 expect "delivery report UE 1 -> P-CSCF for the status report" "$message && $sms && ip.src == $ue1 && sip.In-Reply-To == \"$sr\" && $rp_ack_mo"
-expect "delivery report reaches the IP-SM-GW" "$message && sip.In-Reply-To == \"$sr\" && ip.dst == $ipsmgw"
-
-echo "UE 2 deregisters, and the IP-SM-GW takes itself out of the HSS"
-last="$reported"
-expect "NOTIFY S-CSCF -> IP-SM-GW: UE 2's subscription terminated" "sip.Method == \"NOTIFY\" && ip.src == $scscf && ip.dst == $ipsmgw && sip.Subscription-State contains \"terminated\" && sip.msg_body contains \"+12025550102\""
-expect "PUR IP-SM-GW -> HSS with an empty IP-SM-GW number" "diameter.cmd.code == 307 && $req && e164.msisdn == \"12025550102\" && diameter.Sh-User-Data contains \"<IP-SM-GW-Number></IP-SM-GW-Number>\""
-mark="$last"
-
-echo "a short message from UE 2 to UE 1 in Japanese, UCS2"
-# UE 2 registers again for this one, so the PUR above, which runs on its
-# own after the NOTIFY, need not come before.
-last="$reported"
-expect "MESSAGE UE 2 -> P-CSCF: SMS-SUBMIT in UCS2" "$message && $sms && ip.src == $ue2ip && $rp_data_mo && gsm_sms.tp-da == \"12025550101\" && gsm_sms.tp-dcs == 8 && gsm_sms.tp-srr == 0 && gsm_sms.sms_text == \"$ucs2_text\""
-mo="$(field sip.Call-ID)"
-mark="$last"
-# The 202 goes back along the MESSAGE's Via; the submit report and the
-# delivery are MESSAGEs of their own, through the I-CSCF. Nothing orders
-# them, and a busy P-CSCF has passed the 202 on last.
-expect "202 Accepted reaches UE 2" "sip.Status-Code == 202 && sip.Call-ID == \"$mo\" && ip.dst == $ue2ip"
-last="$mark"
-expect "submit report reaches UE 2" "$message && sip.In-Reply-To == \"$mo\" && ip.dst == $ue2ip && $rp_ack_mt"
-last="$mark"
-expect "MT MESSAGE reaches UE 1: SMS-DELIVER in UCS2, text decoded" "$message && $sms && ip.dst == $ue1 && $rp_data_mt && gsm_sms.tp-oa == \"12025550102\" && gsm_sms.tp-dcs == 8 && gsm_sms.sms_text == \"$ucs2_text\""
-mt="$(field sip.Call-ID)"
-received="$last"
-expect "delivery report from UE 1 reaches the IP-SM-GW" "$message && sip.In-Reply-To == \"$mt\" && ip.dst == $ipsmgw && $rp_ack_mo"
 
 echo "a short message to a number no one has"
-# The script goes on once UE 1 has logged the delivery report as sent,
-# not once it has arrived.
-last="$received"
+last="$delivered_frame"
 expect "MESSAGE UE 1 -> P-CSCF to +12025550198" "$message && $sms && ip.src == $ue1 && gsm_sms.tp-da == \"12025550198\""
 mo="$(field sip.Call-ID)"
-expect "UDR for 12025550198" "diameter.cmd.code == 306 && $req && e164.msisdn == \"12025550198\""
-expect "UDA DIAMETER_ERROR_USER_UNKNOWN" "$(answer_to) && diameter.Experimental-Result-Code == 5001"
+expect "OFR IP-SM-GW -> SC" "$ofr && ip.src == $ipsmgw && ip.dst == $sc"
+expect "SRR SC -> HSS for 12025550198" "$srr && ip.src == $sc && e164.msisdn == \"12025550198\""
+expect "SRA DIAMETER_ERROR_USER_UNKNOWN" "$(answer_to) && diameter.Experimental-Result-Code == 5001"
+# TS 29.338 6.2.1.1: the SMS-IWMSC refuses the short message with the
+# cause that says why, and the TP-FCS of its report tells the UE.
+expect "OFA DIAMETER_ERROR_SM_DELIVERY_FAILURE with INVALID_SME-ADDRESS" "$ofa && ip.src == $sc && diameter.Experimental-Result-Code == 5555 && diameter.SM-Enumerated-Delivery-Failure-Cause == 5"
 expect "submit report reaches UE 1: RP-ERROR, cause 1, TP-FCS C3" "$message && sip.In-Reply-To == \"$mo\" && ip.dst == $ue1 && $rp_error_mt && gsm_a.rp.cause == 1 && gsm_sms.tp-fcs == 0xc3"
+refused_frame="$last"
 
-echo "a short message to a user who is not registered"
-expect "MESSAGE UE 1 -> P-CSCF to +12025550103 with a status report request" "$message && $sms && ip.src == $ue1 && gsm_sms.tp-da == \"12025550103\" && gsm_sms.tp-srr == 1"
-mark="$last"
-expect "MT MESSAGE IP-SM-GW -> I-CSCF to tel:+12025550103" "$message && ip.src == $ipsmgw && sip.r-uri == \"tel:+12025550103\" && $rp_data_mt"
+echo "b) UE 2 takes no short message: the Service Centre holds it (TS 23.204 6.5a)"
+last="$refused_frame"
+expect "MESSAGE UE 1 -> P-CSCF for the UE that takes none" "$message && $sms && ip.src == $ue1 && gsm_sms.sms_text == \"$away_text\""
+expect "TFR SC -> IP-SM-GW" "$tfr && ip.src == $sc && ip.dst == $ipsmgw && diameter.User-Name == \"001010000000002\""
+tfr_session="$(field diameter.Session-Id | cut -d, -f1)"
+expect "MT MESSAGE IP-SM-GW -> I-CSCF" "$message && $sms && ip.src == $ipsmgw && ip.dst == $icscf && gsm_sms.sms_text == \"$away_text\""
 mt="$(field sip.Call-ID)"
-expect "LIR for tel:+12025550103" "diameter.cmd.code == 302 && $req && diameter.Public-Identity == \"tel:+12025550103\""
-# Every subscriber has a service for the unregistered state, the MMTel
-# AS's criterion for TERMINATING_UNREGISTERED, so the HSS has the I-CSCF
-# pick an S-CSCF (TS 29.228 6.1.4.1 step 3). That S-CSCF takes the
-# user's profile, finds no criterion for a MESSAGE to the user, and
-# answers 480 (TS 24.229 5.4.3.3).
-expect "LIA DIAMETER_UNREGISTERED_SERVICE with the capabilities of an S-CSCF" "$(answer_to) && diameter.Experimental-Result-Code == 2003 && diameter.Server-Capabilities"
-expect "MT MESSAGE I-CSCF -> S-CSCF" "$message && sip.Call-ID == \"$mt\" && ip.src == $icscf && ip.dst == $scscf"
-expect "SAR UNREGISTERED_USER for tel:+12025550103" "diameter.cmd.code == 301 && $req && diameter.Server-Assignment-Type == 3 && diameter.Public-Identity == \"tel:+12025550103\""
-expect "SAA 2001" "$(answer_to) && diameter.Result-Code == 2001"
-expect "480 S-CSCF -> I-CSCF" "sip.Status-Code == 480 && sip.Call-ID == \"$mt\" && ip.src == $scscf && ip.dst == $icscf"
-expect "480 I-CSCF -> IP-SM-GW" "sip.Status-Code == 480 && sip.Call-ID == \"$mt\" && ip.dst == $ipsmgw"
-expect "status report reaches UE 1: no response from the SME, no more attempts (TP-ST 0x62)" "$message && ip.dst == $ue1 && gsm_sms.tp-mti == 2 && gsm_sms.tp-ra == \"12025550103\" && gsm_sms.dis_field.st_error == 3 && gsm_sms.dis.field_st_reason == 2"
+expect "480 Temporarily Unavailable UE 2 -> P-CSCF" "sip.Status-Code == 480 && sip.Call-ID == \"$mt\" && ip.src == $ue2ip"
+expect "480 reaches the IP-SM-GW" "sip.Status-Code == 480 && sip.Call-ID == \"$mt\" && ip.dst == $ipsmgw"
+# TS 29.311 6.1.4.4.1 maps the 480 to an absent subscriber, which TS
+# 29.338 7.3.3 carries as DIAMETER_ERROR_ABSENT_USER.
+expect "TFA DIAMETER_ERROR_ABSENT_USER for that TFR" "$tfa && ip.src == $ipsmgw && ip.dst == $sc && diameter.Session-Id == \"$tfr_session\" && diameter.Experimental-Result-Code == 5550"
+expect "RDR SC -> HSS with SM-Delivery-Cause ABSENT_USER" "$rdr && ip.src == $sc && ip.dst == $hss && e164.msisdn == \"12025550102\" && diameter.SM-Delivery-Cause == 1"
+expect "RDA 2001" "$(answer_to) && diameter.Result-Code == 2001"
+
+echo "UE 2 is back, the HSS alerts the Service Centre and it delivers (TS 23.204 6.5b, TS 23.040 3.2.6 item 2c)"
+expect "MESSAGE UE 2 -> P-CSCF: the short message of its own, in UCS2" "$message && $sms && ip.src == $ue2ip && $rp_data_mo && gsm_sms.tp-da == \"12025550101\" && gsm_sms.tp-dcs == 8 && gsm_sms.sms_text == \"$ucs2_text\""
+back="$last"
+expect "PUR IP-SM-GW -> HSS: ReadyForSM msPresent" "diameter.cmd.code == 307 && $req && ip.src == $ipsmgw && diameter.Data-Reference == 24 && e164.msisdn == \"12025550102\" && diameter.Sh-User-Data contains \"<ReadyForSM xmlns=\\\"https://github.com/yuu-biz/ims-practice/ns/sh\\\">msPresent</ReadyForSM>\""
+# The alert does not wait for the answer to that update, so the PUA may
+# come after the ALR.
+last="$back"
+expect "ALR HSS -> SC for UE 2 (TS 29.338 5.2.2)" "$alr && ip.src == $hss && ip.dst == $sc && e164.msisdn == \"12025550102\""
+alerted="$last"
+expect "ALA 2001 SC -> HSS" "$(answer_to) && diameter.Result-Code == 2001"
+# The Service Centre starts the delivery as soon as it has the alert,
+# so its query may come before this answer.
+last="$alerted"
+expect "SRR SC -> HSS, now that the unreachable flag is clear" "$srr && ip.src == $sc && e164.msisdn == \"12025550102\""
+expect "SRA 2001 with the IP-SM-GW again" "$(answer_to) && diameter.Result-Code == 2001 && diameter.IP-SM-GW-Name"
+expect "TFR SC -> IP-SM-GW: the short message it held" "$tfr && ip.src == $sc && ip.dst == $ipsmgw && diameter.User-Name == \"001010000000002\""
+tfr_session="$(field diameter.Session-Id | cut -d, -f1)"
+expect "MT MESSAGE reaches UE 2, the text it did not take before" "$message && ip.dst == $ue2ip && gsm_sms.sms_text == \"$away_text\""
+mt="$(field sip.Call-ID)"
+expect "delivery report UE 2 -> P-CSCF: RP-ACK" "$message && $sms && ip.src == $ue2ip && sip.In-Reply-To == \"$mt\" && $rp_ack_mo"
+expect "TFA 2001 for that TFR" "$tfa && ip.src == $ipsmgw && ip.dst == $sc && diameter.Session-Id == \"$tfr_session\" && diameter.Result-Code == 2001"
+
+echo "c) UE 2 has no memory: the notification sets off the alert (TS 23.204 6.6, TS 23.040 3.2.6 item 2f)"
+expect "MESSAGE UE 1 -> P-CSCF for the UE without memory" "$message && $sms && ip.src == $ue1 && gsm_sms.sms_text == \"$room_text\""
+expect "TFR SC -> IP-SM-GW" "$tfr && ip.src == $sc && ip.dst == $ipsmgw && diameter.User-Name == \"001010000000002\""
+tfr_session="$(field diameter.Session-Id | cut -d, -f1)"
+expect "MT MESSAGE reaches UE 2" "$message && ip.dst == $ue2ip && gsm_sms.sms_text == \"$room_text\""
+mt="$(field sip.Call-ID)"
+expect "200 OK UE 2 -> P-CSCF: the MESSAGE arrived" "sip.Status-Code == 200 && sip.Call-ID == \"$mt\" && ip.src == $ue2ip"
+expect "delivery report UE 2 -> P-CSCF: RP-ERROR, cause 22, TP-FCS D3" "$message && $sms && ip.src == $ue2ip && sip.In-Reply-To == \"$mt\" && $rp_error_mo && gsm_a.rp.cause == 22 && gsm_sms.tp-fcs == 0xd3"
+expect "TFA DIAMETER_ERROR_SM_DELIVERY_FAILURE with MEMORY_CAPACITY_EXCEEDED" "$tfa && ip.src == $ipsmgw && ip.dst == $sc && diameter.Session-Id == \"$tfr_session\" && diameter.Experimental-Result-Code == 5555 && diameter.SM-Enumerated-Delivery-Failure-Cause == 0"
+expect "RDR SC -> HSS with SM-Delivery-Cause UE_MEMORY_CAPACITY_EXCEEDED" "$rdr && ip.src == $sc && ip.dst == $hss && e164.msisdn == \"12025550102\" && diameter.SM-Delivery-Cause == 0"
+expect "RDA 2001" "$(answer_to) && diameter.Result-Code == 2001"
+expect "MESSAGE UE 2 -> P-CSCF: RP-SMMA, the notification it owes (TS 24.011 7.3.2)" "$message && $sms && ip.src == $ue2ip && $rp_smma"
+smma="$(field sip.Call-ID)"
+expect "RP-SMMA reaches the IP-SM-GW" "$message && sip.Call-ID == \"$smma\" && ip.dst == $ipsmgw && $rp_smma"
+expect "PUR IP-SM-GW -> HSS: ReadyForSM memoryAvailable" "diameter.cmd.code == 307 && $req && ip.src == $ipsmgw && diameter.Data-Reference == 24 && e164.msisdn == \"12025550102\" && diameter.Sh-User-Data contains \"<ReadyForSM xmlns=\\\"https://github.com/yuu-biz/ims-practice/ns/sh\\\">memoryAvailable</ReadyForSM>\""
+notified="$last"
+expect "PUA 2001" "$(answer_to) && diameter.Result-Code == 2001"
+after_notify="$last"
+# As in b), the alert does not wait for the answer to the update, so the
+# ALR may come before the PUA.
+last="$notified"
+expect "ALR HSS -> SC for UE 2" "$alr && ip.src == $hss && ip.dst == $sc && e164.msisdn == \"12025550102\""
+alerted="$last"
+expect "ALA 2001 SC -> HSS" "$(answer_to) && diameter.Result-Code == 2001"
+last="$alerted"
+expect "TFR SC -> IP-SM-GW: the short message it held" "$tfr && ip.src == $sc && ip.dst == $ipsmgw && diameter.User-Name == \"001010000000002\""
+tfr_session="$(field diameter.Session-Id | cut -d, -f1)"
+expect "MT MESSAGE reaches UE 2 again, with the same text" "$message && ip.dst == $ue2ip && gsm_sms.sms_text == \"$room_text\""
+expect "TFA 2001 for that TFR" "$tfa && ip.src == $ipsmgw && ip.dst == $sc && diameter.Session-Id == \"$tfr_session\" && diameter.Result-Code == 2001"
+# The RP-ACK for the notification goes out only after the HSS has taken
+# it (TS 23.204 6.6), so it comes after the PUA and may come after the
+# alert.
+last="$after_notify"
+expect "RP-ACK for the notification reaches UE 2" "$message && $sms && ip.dst == $ue2ip && sip.In-Reply-To == \"$smma\" && $rp_ack_mt"
 
 # The charging information stays in the network (TS 24.229 5.2.1):
 # the P-CSCF sends none of it to a UE. Every UE of this setup has an
@@ -302,16 +551,20 @@ none "malformed SIP, Diameter, RP or TP packets" '(sip || diameter || gsm_a.rp |
 none "retransmitted MESSAGEs and their responses" 'sip.CSeq.method == "MESSAGE" && sip.resend == 1'
 # RFC 3261 18.1.1: a request over 1300 bytes does not go over UDP.
 none "SIP requests over 1300 bytes on UDP" 'sip.Method && udp && udp.length > 1308'
+# The Service Centre speaks Diameter with the IP-SM-GW and the HSS, and
+# with nobody else.
+none "Diameter between the Service Centre and a node other than the IP-SM-GW or the HSS" \
+	"diameter && (ip.src == $sc || ip.dst == $sc) && !(ip.addr == $ipsmgw) && !(ip.addr == $hss)"
 
 # Every display filter that the guide shows its readers finds something
 # in this capture.
 guide_filters docs/guide/en/sms.md
 
-# The ladder of the short messages and the Sh messages, for the guide
-# and the CI artifact.
+# The ladder of the short messages, the Sh messages and the SGd and S6c
+# messages, for the guide and the CI artifact.
 mkdir -p e2e-out
 docker compose exec -T capture tshark -r "$pcap" -T fields -E separator=/t \
-	-Y 'sip.CSeq.method == "MESSAGE" || (sip && ip.addr == 172.28.0.70) || diameter.cmd.code == 306 || diameter.cmd.code == 307' \
+	-Y 'sip.CSeq.method == "MESSAGE" || (sip && ip.addr == 172.28.0.70) || diameter.cmd.code in {306, 307, 8388645, 8388646, 8388647, 8388648, 8388649}' \
 	-e frame.number -e ip.src -e ip.dst -e _ws.col.Info -e gsm_sms.sms_text | tr -d '\r' >e2e-out/sms-ladder.txt
 
 if [ "$fail" -ne 0 ]; then
