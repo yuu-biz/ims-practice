@@ -25,6 +25,14 @@ oam:
   # cluster that keeps them past one Pod mounts a volume of its own here
   # instead.
   data_dir: /var/lib/ims/oam
+  # The alarm list of every node, offered to an OSS by the 3GPP
+  # management services: the network is the SubNetwork ims, whose
+  # AlarmList an OSS reads and acknowledges at
+  # http://oam:8080/3GPPManagement/ProvMnS/v19/SubNetwork=ims/AlarmList=1.
+  # mns_root is the OAM listener as an OSS reaches it, then the root
+  # path that TS 32.158 4.4.2 gives the management services.
+  subnetwork: ims
+  mns_root: http://oam:8080/3GPPManagement
   # The inventory: every node of this deployment that serves the
   # maintenance API, by the name it has in the home network domain. The
   # name of a node here is what the OAM API calls it, as in

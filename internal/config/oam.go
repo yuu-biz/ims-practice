@@ -7,6 +7,7 @@ import (
 	"slices"
 
 	"github.com/yuu-biz/ims-practice/internal/maintenance"
+	"github.com/yuu-biz/ims-practice/internal/mns"
 )
 
 // OAM is the configuration of the oam role: the OAM server, which
@@ -32,6 +33,15 @@ type OAM struct {
 	// instances that share one directory see the same history and the
 	// same backups.
 	DataDir string
+	// SubNetwork names the SubNetwork whose alarm list the OAM offers to
+	// an OSS through the 3GPP management services, such as ims: the
+	// network seen as one subnetwork of the operator. Empty, with
+	// MnSRoot, leaves those services out.
+	SubNetwork string
+	// MnSRoot is where an OSS reaches those services (TS 32.158 4.4.2):
+	// the URL of the OAM listener as the OSS calls it, then the root
+	// path, such as http://oam:8080/3GPPManagement.
+	MnSRoot string
 }
 
 // OAMNode is one node of the inventory. Several nodes may have the same
@@ -55,6 +65,8 @@ type rawOAM struct {
 	HTTPListen      string `yaml:"http_listen"`
 	HSSProvisioning string `yaml:"hss_provisioning"`
 	DataDir         string `yaml:"data_dir"`
+	SubNetwork      string `yaml:"subnetwork"`
+	MnSRoot         string `yaml:"mns_root"`
 	Nodes           []struct {
 		Name        string   `yaml:"name"`
 		Roles       []string `yaml:"roles"`
@@ -74,7 +86,10 @@ func (raw *rawOAM) validate() (OAM, error) {
 	if len(raw.Nodes) == 0 {
 		return OAM{}, errors.New("nodes: at least one node is required")
 	}
-	c := OAM{HTTPListen: raw.HTTPListen, HSSProvisioning: raw.HSSProvisioning, DataDir: raw.DataDir}
+	c := OAM{HTTPListen: raw.HTTPListen, HSSProvisioning: raw.HSSProvisioning, DataDir: raw.DataDir, SubNetwork: raw.SubNetwork, MnSRoot: raw.MnSRoot}
+	if err := checkMnS(raw.SubNetwork, raw.MnSRoot); err != nil {
+		return OAM{}, err
+	}
 	names := map[string]bool{}
 	for i, n := range raw.Nodes {
 		if !maintenance.IsName(n.Name) {
@@ -101,6 +116,30 @@ func (raw *rawOAM) validate() (OAM, error) {
 		c.Nodes = append(c.Nodes, OAMNode{Name: n.Name, Roles: slices.Clone(n.Roles), Maintenance: n.Maintenance})
 	}
 	return c, nil
+}
+
+// checkMnS checks the names of the 3GPP management services: both or
+// neither, a SubNetwork name that a DN can hold, and an MnSRoot that
+// is an http URL.
+func checkMnS(subNetwork, root string) error {
+	switch {
+	case subNetwork == "" && root == "":
+		return nil
+	case subNetwork == "":
+		return errors.New("subnetwork: required with mns_root")
+	case root == "":
+		return errors.New("mns_root: required with subnetwork")
+	}
+	if err := mns.SubNetworkDN(subNetwork).Check(); err != nil {
+		return fmt.Errorf("subnetwork: %w", err)
+	}
+	if _, err := mns.ParseMnSRoot(root); err != nil {
+		return fmt.Errorf("mns_root: %w", err)
+	}
+	if err := checkHTTPURL(root); err != nil {
+		return fmt.Errorf("mns_root: %w", err)
+	}
+	return nil
 }
 
 // checkHTTPURL checks the base URL of an API that the OAM calls: plain
