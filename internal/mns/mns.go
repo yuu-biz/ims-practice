@@ -28,7 +28,9 @@
 // the names that the schema has in that file, written out by hand,
 // and with the names that the type leaves out and why. The tests of
 // types_test.go read example bodies written with those names and write
-// them back.
+// them back. TestOpenAPIFiles (openapi_test.go) compares the lists with
+// the files themselves; it runs only when MNS_OPENAPI_DIR names a
+// directory that holds copies of them.
 //
 // The objects are named by DNs that start at the SubNetwork, such as
 // SubNetwork=ims,ManagedElement=scscf, with no DN prefix (DN). MnSRoot
