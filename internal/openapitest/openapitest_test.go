@@ -490,3 +490,24 @@ paths:
 		}
 	}
 }
+
+// TestAWideRouteMayRefuseWith405: a handler with a pattern as wide as
+// GET / answers 405 to a POST on a path that the document lacks, which
+// is a refusal as much as 404 is.
+func TestAWideRouteMayRefuseWith405(t *testing.T) {
+	d := Load(t, "testdata/counters.yaml")
+	mux := http.NewServeMux()
+	mux.Handle("GET /", http.NotFoundHandler())
+	rt := &recordingT{TB: t}
+	h := d.Handler(rt, mux)
+	for _, r := range []struct{ method, path string }{{"POST", "/gauges"}, {"GET", "/gauges"}, {"POST", "/counters/total"}} {
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, httptest.NewRequest(r.method, r.path, nil))
+		if rec.Code != http.StatusNotFound && rec.Code != http.StatusMethodNotAllowed {
+			t.Errorf("%s %s = %d, want a refusal", r.method, r.path, rec.Code)
+		}
+	}
+	if len(rt.errors) > 0 {
+		t.Errorf("errors %q", rt.errors)
+	}
+}

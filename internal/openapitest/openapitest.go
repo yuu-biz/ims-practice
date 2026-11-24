@@ -8,9 +8,12 @@
 // the handler behind Document.Handler, and sends its requests as it
 // would to the handler itself. Every exchange is then checked:
 //
-//   - The route: a path that the document does not have must answer 404
-//     and a method that a path does not take 405. Any other answer is a
-//     route that the handler serves and the document lacks.
+//   - The route: a request that the document has no operation for must
+//     be refused with 404 or 405. Which of the two depends on the other
+//     routes of the handler: a path that the handler serves with other
+//     methods, even through a pattern as wide as GET /, answers 405. Any
+//     other answer is a route that the handler serves and the document
+//     lacks.
 //   - The request: its path and query parameters, and its body, which
 //     must match the schema of the operation. A request that does not
 //     match must be refused with a 4xx; the handler taking it, or
@@ -773,11 +776,10 @@ func (r *recorder) Unwrap() http.ResponseWriter { return r.ResponseWriter }
 func (d *Document) exchange(r *http.Request, body []byte, rec *recorder) []string {
 	pt, pathValues, op, matched := d.find(r.Method, r.URL.EscapedPath())
 	switch {
-	case !matched && rec.status != http.StatusNotFound:
-		return []string{"the document has no such path"}
-	case !matched:
-		return nil
-	case op == nil && rec.status != http.StatusMethodNotAllowed:
+	case op == nil && rec.status != http.StatusNotFound && rec.status != http.StatusMethodNotAllowed:
+		if !matched {
+			return []string{"the document has no such path"}
+		}
 		return []string{"the document has no " + r.Method + " on this path"}
 	case op == nil:
 		return nil
