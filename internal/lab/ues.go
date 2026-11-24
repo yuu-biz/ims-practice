@@ -41,6 +41,13 @@ var ueRoutes = []string{
 	"POST /merge",
 	"PUT /answer-policy",
 	"POST /sms",
+	// How the UE takes short messages: without memory for them, or
+	// answering each one 480, so that the network has to hold them
+	// (TS 24.341 5.3.2.5, TS 23.204 6.5a), and the notification that
+	// the UE has memory again.
+	"PUT /sms-memory",
+	"POST /sms-memory/notify",
+	"PUT /sms-availability",
 	"GET /events",
 	// The supplementary services, which the UE sets over Ut with XCAP
 	// (ue.SupplementaryServices.Handler). The Lab asks the UE

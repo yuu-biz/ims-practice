@@ -68,7 +68,8 @@
 //	    reachable false and the reason in error when the UE does not
 //	    answer; the list itself still answers 200.
 //	POST /api/ues/{name}/{register|deregister|call|answer|hangup|hold|resume|dtmf|swap|merge|sms},
-//	PUT /api/ues/{name}/answer-policy, GET /api/ues/{name}/events
+//	PUT /api/ues/{name}/{answer-policy|sms-memory|sms-availability},
+//	POST /api/ues/{name}/sms-memory/notify, GET /api/ues/{name}/events
 //	    Forwarded with the same method, body and answer to the control
 //	    API of that UE (see ue.Phone.Handler), /api/ues/{name}/call to
 //	    /call and so on. The events stream through as they come. 404
