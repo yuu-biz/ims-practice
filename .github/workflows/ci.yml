@@ -40,7 +40,7 @@ jobs:
             grep -Ev '\.md$|^docs/|^LICENSE|^NOTICE$' | head -n 1 || true)
           if [ -z "$code" ]; then
             code=$(git diff --name-only "$BASE" HEAD |
-              grep -E '^docs/guide/(en|ja)/(capture|README)\.md$|^docs/guide/en/(mmtel|mrf|sms|volte)\.md$' | head -n 1 || true)
+              grep -E '^docs/guide/(en|ja)/(capture|README)\.md$|^docs/guide/en/(mmtel|mrf|oss|sms|volte)\.md$' | head -n 1 || true)
           fi
           echo "first file that is not a document: ${code:-none}"
           echo "code=$([ -n "$code" ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
@@ -178,6 +178,30 @@ jobs:
       - name: clean up
         if: always()
         run: docker compose --profile ue down --rmi all -v --remove-orphans
+
+  # Fault supervision towards an OSS: the OSS stand-in subscribes at the
+  # OAM, reads the AlarmList with a filter and acknowledges an alarm, and
+  # takes the notifications of a node that stops answering and of the
+  # alarms that a drain of the HSS raises and clears.
+  e2e-fm:
+    runs-on: ubuntu-latest
+    needs: [changes, go]
+    if: needs.changes.outputs.code == 'true'
+    steps:
+      - uses: actions/checkout@v7
+      - run: scripts/e2e-fm.sh
+      - name: upload the capture and the ladder of the OSS
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: fm-capture
+          path: |
+            captures/*.pcap
+            e2e-out/fm-ladder.txt
+          if-no-files-found: warn
+      - name: clean up
+        if: always()
+        run: docker compose --profile oss down --rmi all -v --remove-orphans
 
   # The admission policy of the HSS, which the script narrows on the
   # maintenance API of the HSS node once the deployment is up.
@@ -596,7 +620,7 @@ jobs:
   # skips count as passed.
   all-passed:
     runs-on: ubuntu-latest
-    needs: [changes, docs, go, web-lab, web-oam, e2e, e2e-registration, e2e-oam, e2e-admission, e2e-call, e2e-lab, e2e-sms, e2e-volte, e2e-esp, e2e-mmtel, e2e-mrf, e2e-interconnect, e2e-h248, e2e-observability, e2e-redundancy, e2e-fault, cloud, kustomize]
+    needs: [changes, docs, go, web-lab, web-oam, e2e, e2e-registration, e2e-oam, e2e-fm, e2e-admission, e2e-call, e2e-lab, e2e-sms, e2e-volte, e2e-esp, e2e-mmtel, e2e-mrf, e2e-interconnect, e2e-h248, e2e-observability, e2e-redundancy, e2e-fault, cloud, kustomize]
     if: always()
     steps:
       - name: no job failed or was cancelled
