@@ -511,3 +511,20 @@ func TestAWideRouteMayRefuseWith405(t *testing.T) {
 		t.Errorf("errors %q", rt.errors)
 	}
 }
+
+func TestJSONNames(t *testing.T) {
+	type inner struct {
+		Cause string `json:"cause,omitempty"`
+	}
+	type outer struct {
+		inner
+		Status  int    `json:"status"`
+		Secret  string `json:"-"`
+		Plain   string
+		private string
+	}
+	got := strings.Join(JSONNames(outer{}), " ")
+	if want := "cause status Plain"; got != want {
+		t.Errorf("JSONNames = %q, want %q", got, want)
+	}
+}
