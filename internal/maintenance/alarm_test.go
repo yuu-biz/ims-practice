@@ -160,19 +160,51 @@ func TestAClearedAlarmRaisedAgainIsTheSameRecord(t *testing.T) {
 	}
 }
 
-func TestAClearedAlarmLeavesAfterTheRetention(t *testing.T) {
+// A cleared alarm that nobody acknowledges is acknowledged by the node
+// at the end of the retention, and leaves the list as an acknowledged
+// cleared alarm does (TS 28.111 6.14, 7.3.1.1).
+func TestTheNodeAcknowledgesAClearedAlarmAtTheEndOfItsRetention(t *testing.T) {
 	tn := newTestNode(t)
 	mustRaise(t, tn.node, Alarm{AlarmIdentity: pcrfDown, PerceivedSeverity: Major})
 	mustClear(t, tn.node, pcrfDown)
 	cleared := tn.clock.Now()
 	tn.clock.Advance(DefaultClearedAlarmRetention - time.Second)
-	if l := alarms(t, tn, AlarmFilter{}); l.NumOfAlarmRecords != 1 {
-		t.Fatalf("before the retention: %+v", l)
+	l := alarms(t, tn, AlarmFilter{})
+	if l.NumOfAlarmRecords != 1 || l.AlarmRecords[0].AckState != Unacknowledged {
+		t.Fatalf("before the end of the retention: %+v", l)
 	}
 	tn.clock.Advance(time.Hour)
-	l := alarms(t, tn, AlarmFilter{})
+	l = alarms(t, tn, AlarmFilter{})
 	if l.NumOfAlarmRecords != 0 || !l.LastModification.Equal(cleared.Add(DefaultClearedAlarmRetention)) {
 		t.Errorf("after the retention: %+v", l)
+	}
+	for _, line := range strings.Split(tn.log.String(), "\n") {
+		if strings.Contains(line, `"msg":"alarm acknowledgement changed"`) {
+			if !strings.Contains(line, `"operator":"retention"`) || !strings.Contains(line, `"ack_system_id":"pcscf-1"`) {
+				t.Errorf("the acknowledgement at the end of the retention: %s", line)
+			}
+			return
+		}
+	}
+	t.Errorf("no acknowledgement in the log: %s", tn.log)
+}
+
+// A record whose acknowledgement an operator took back before it
+// cleared is left to the retention like one that nobody acknowledged.
+func TestTheRetentionAcknowledgesARecordTakenBackToUnacknowledged(t *testing.T) {
+	tn := newTestNode(t)
+	mustRaise(t, tn.node, Alarm{AlarmIdentity: pcrfDown, PerceivedSeverity: Major})
+	id := tn.node.Alarms(AlarmFilter{}).AlarmRecords[0].AlarmID
+	if _, err := tn.node.SetAckState(id, AckStateRequest{AckState: Acknowledged, Operator: "alice"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tn.node.SetAckState(id, AckStateRequest{AckState: Unacknowledged, Operator: "alice"}); err != nil {
+		t.Fatal(err)
+	}
+	mustClear(t, tn.node, pcrfDown)
+	tn.clock.Advance(DefaultClearedAlarmRetention)
+	if l := tn.node.Alarms(AlarmFilter{}); l.NumOfAlarmRecords != 0 {
+		t.Errorf("a cleared alarm taken back to UNACKNOWLEDGED outlived the retention: %+v", l)
 	}
 }
 

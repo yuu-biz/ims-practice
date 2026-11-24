@@ -44,8 +44,8 @@ type Config struct {
 	// DefaultMaxAlarmRecords.
 	MaxAlarmRecords int
 	// ClearedAlarmRetention is how long a cleared alarm that no operator
-	// acknowledges stays in the alarm list (ClearAlarm); 0 for
-	// DefaultClearedAlarmRetention.
+	// acknowledges stays in the alarm list before the node acknowledges
+	// it itself (ClearAlarm); 0 for DefaultClearedAlarmRetention.
 	ClearedAlarmRetention time.Duration
 	// Clock is the time for the start time, the shutdown deadlines, the
 	// change records and the alarms; nil for the system clock.
@@ -119,7 +119,7 @@ func New(c Config) (*Node, error) {
 		view:           c.Configuration,
 		settingsByName: map[string]Setting{},
 	}
-	n.alarms = newAlarmList(maxAlarms, retention, n.start, log)
+	n.alarms = newAlarmList(c.Node, maxAlarms, retention, n.start, log)
 	for _, f := range c.Functions {
 		if !IsName(f.Role) {
 			return nil, fmt.Errorf("maintenance: role %q is not a name of lowercase letters, digits and hyphens", f.Role)

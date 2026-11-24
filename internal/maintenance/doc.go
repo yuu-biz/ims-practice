@@ -76,6 +76,9 @@
 // ClearAlarm); the operator only reads and acknowledges. A cleared
 // alarm stays until it is acknowledged, an acknowledged one leaves when
 // it clears (6.14), and the list is bounded (Config.MaxAlarmRecords).
+// A cleared alarm that nobody acknowledges within
+// Config.ClearedAlarmRetention the node acknowledges itself, as
+// RetentionAckUserID.
 // An alarm never names a subscriber, so the list grows with the links
 // of the node and not with its users. The list lives in the
 // process, like the administrative state: a restarted node starts with

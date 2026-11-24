@@ -229,7 +229,7 @@ TS 28.622 4.3.22.2 には、ほかに `lastSequenceNo`、`administrativeState`�
 
 | 振る舞い | 仕様との関係 |
 | --- | --- |
-| 確認されない cleared の警報が保持の時間を過ぎたら、ノードが自分で確認する。`ackUserId` は保持の時間で消したことを示す固定の名前（`retention`）、`ackSystemId` はノードの名前。`notifyAckStateChanged` が出るので、OSS は cleared と確認の 2 つの通知から、警報の記録が消えたと分かる（案。「保持の時間の消去」） | 今は黙って消している（`internal/maintenance/alarmlist.go` の `expire` の `SIMPLIFIED:`）。6.14 では、確認を持つ producer は、cleared の記録を確認されるまで残す。producer が自分で確認するという動きは仕様にあり、TS 28.111 5 章の REQ-FM-MC-12 は、確認の操作を持たない producer に、警報を自分で確認できることを求めている。確認の操作を持つ producer が保持の時間で自分で確認することは、仕様に書かれていない |
+| 確認されない cleared の警報が保持の時間を過ぎたら、ノードが自分で確認する。`ackUserId` は保持の時間で消したことを示す固定の名前（`retention`）、`ackSystemId` はノードの名前。`notifyAckStateChanged` が出るので、OSS は cleared と確認の 2 つの通知から、警報の記録が消えたと分かる（案。「保持の時間の消去」） | 作る前は黙って消していた。今は `internal/maintenance/alarmlist.go` の `expire` がノードの確認にしている。6.14 では、確認を持つ producer は、cleared の記録を確認されるまで残す。producer が自分で確認するという動きは仕様にあり、TS 28.111 5 章の REQ-FM-MC-12 は、確認の操作を持たない producer に、警報を自分で確認できることを求めている。確認の操作を持つ producer が保持の時間で自分で確認することは、仕様に書かれていない |
 | 一覧がいっぱいで警報の記録を捨てたら、そのノードを基点に `notifyAlarmListRebuilt` を `ALIGNMENT_REQUIRED` で送る | 7.3.2.1 は捨てることを許しているが、通知は求めていない。一覧は作り直していないが、通知を送れなかった警報があるという 8.5.2 の `alarmListAlignmentRequirement` の意味に合わせて使う |
 | 届かなかった通知のあと、その購読だけに `notifyAlarmListRebuilt` を送る（上の「届かなかった通知」） | 8.5.1 の、一覧を作り直したときの通知ではない。購読ごとに送るのも、仕様に無い使い方 |
 | 答えないノードの警報の記録を `GET` の答えに入れない | 6.11 は、その部分の記録が更新されなくなり信頼できないとしているが、記録を外すかどうかは書いていない。OAM は写しを持たないので、出せる記録が無い |
