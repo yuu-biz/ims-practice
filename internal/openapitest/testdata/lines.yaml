@@ -1,0 +1,22 @@
+openapi: 3.1.0
+info:
+  title: Lines
+  version: 1.0.0
+  description: An API that answers each line of a stream as it reads it.
+paths:
+  /lines:
+    post:
+      operationId: echoLines
+      requestBody:
+        required: true
+        content:
+          application/x-ndjson:
+            schema:
+              type: string
+      responses:
+        '200':
+          description: Each line, as it was read.
+          content:
+            application/x-ndjson:
+              schema:
+                type: string
