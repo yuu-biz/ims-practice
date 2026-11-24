@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"slices"
 	"sync"
+	"time"
 
 	"github.com/yuu-biz/ims-practice/internal/mns"
 )
@@ -23,6 +24,18 @@ import (
 type NtfSubscriptionControl struct {
 	ID         string                               `json:"id"`
 	Attributes mns.NtfSubscriptionControlAttributes `json:"attributes"`
+	// Missed says that a notification to the subscription could not be
+	// sent. Until the recipient has taken a notifyAlarmListRebuilt that
+	// asks the OSS to read the list again, it is sent nothing else. The
+	// OSS neither sees nor writes the mark.
+	Missed bool `json:"missed,omitempty"`
+	// MissedEpoch counts the misses. A mark is cleared only at the epoch
+	// that the notifyAlarmListRebuilt was sent for, so that a miss that
+	// another watcher saw in between keeps it.
+	MissedEpoch uint64 `json:"missed_epoch,omitempty"`
+	// RetryAt is when a watcher may try the owed notifyAlarmListRebuilt
+	// next. It keeps the watchers of every node from trying it at once.
+	RetryAt time.Time `json:"retry_at,omitzero"`
 }
 
 // ErrTooManySubscriptions is the answer of an NtfSubscriptionStore to a
@@ -49,6 +62,19 @@ type NtfSubscriptionStore interface {
 	// NtfSubscriptions reads every subscription, in the order of their
 	// ids.
 	NtfSubscriptions(ctx context.Context) ([]NtfSubscriptionControl, error)
+	// MarkNtfSubscriptionMissed records a miss of the subscription of
+	// id: it sets Missed, raises MissedEpoch, and sets RetryAt to
+	// retryAt. ErrNotFound when there is no subscription. A
+	// PutNtfSubscription that replaces the subscription keeps the mark.
+	MarkNtfSubscriptionMissed(ctx context.Context, id string, retryAt time.Time) error
+	// ClaimNtfSubscriptionRetry takes the turn to send the
+	// notifyAlarmListRebuilt that the miss of epoch owes: true when the
+	// mark is still at epoch and RetryAt is not after now, and RetryAt
+	// is then next, so that no other watcher takes the turn before it.
+	ClaimNtfSubscriptionRetry(ctx context.Context, id string, epoch uint64, now, next time.Time) (bool, error)
+	// ClearNtfSubscriptionMissed clears the mark if it is still at
+	// epoch, and says whether it did.
+	ClearNtfSubscriptionMissed(ctx context.Context, id string, epoch uint64) (bool, error)
 }
 
 // NtfSubscriptionSet is every subscription by its id, as a store holds
@@ -59,10 +85,11 @@ type NtfSubscriptionSet map[string]NtfSubscriptionControl
 
 // Put is what PutNtfSubscription does to the set.
 func (set NtfSubscriptionSet) Put(s NtfSubscriptionControl, max int) (created bool, err error) {
-	_, exists := set[s.ID]
+	old, exists := set[s.ID]
 	if !exists && len(set) >= max {
 		return false, fmt.Errorf("%w: %d", ErrTooManySubscriptions, max)
 	}
+	s.Missed, s.MissedEpoch, s.RetryAt = old.Missed, old.MissedEpoch, old.RetryAt
 	set[s.ID] = s
 	return !exists, nil
 }
@@ -74,6 +101,40 @@ func (set NtfSubscriptionSet) Delete(id string) error {
 	}
 	delete(set, id)
 	return nil
+}
+
+// MarkMissed is what MarkNtfSubscriptionMissed does to the set.
+func (set NtfSubscriptionSet) MarkMissed(id string, retryAt time.Time) error {
+	s, err := set.Get(id)
+	if err != nil {
+		return err
+	}
+	s.Missed, s.RetryAt = true, retryAt
+	s.MissedEpoch++
+	set[id] = s
+	return nil
+}
+
+// ClaimRetry is what ClaimNtfSubscriptionRetry does to the set.
+func (set NtfSubscriptionSet) ClaimRetry(id string, epoch uint64, now, next time.Time) (bool, error) {
+	s, err := set.Get(id)
+	if err != nil || !s.Missed || s.MissedEpoch != epoch || s.RetryAt.After(now) {
+		return false, err
+	}
+	s.RetryAt = next
+	set[id] = s
+	return true, nil
+}
+
+// ClearMissed is what ClearNtfSubscriptionMissed does to the set.
+func (set NtfSubscriptionSet) ClearMissed(id string, epoch uint64) (bool, error) {
+	s, err := set.Get(id)
+	if err != nil || !s.Missed || s.MissedEpoch != epoch {
+		return false, err
+	}
+	s.Missed, s.RetryAt = false, time.Time{}
+	set[id] = s
+	return true, nil
 }
 
 // Get is what NtfSubscription answers from the set.
@@ -222,4 +283,24 @@ func (f *FileNtfSubscriptionStore) NtfSubscriptions(context.Context) ([]NtfSubsc
 		return nil, err
 	}
 	return set.Sorted(), nil
+}
+
+func (f *FileNtfSubscriptionStore) MarkNtfSubscriptionMissed(_ context.Context, id string, retryAt time.Time) error {
+	return f.change(func(set NtfSubscriptionSet) error { return set.MarkMissed(id, retryAt) })
+}
+
+func (f *FileNtfSubscriptionStore) ClaimNtfSubscriptionRetry(_ context.Context, id string, epoch uint64, now, next time.Time) (claimed bool, err error) {
+	err = f.change(func(set NtfSubscriptionSet) error {
+		claimed, err = set.ClaimRetry(id, epoch, now, next)
+		return err
+	})
+	return claimed, err
+}
+
+func (f *FileNtfSubscriptionStore) ClearNtfSubscriptionMissed(_ context.Context, id string, epoch uint64) (cleared bool, err error) {
+	err = f.change(func(set NtfSubscriptionSet) error {
+		cleared, err = set.ClearMissed(id, epoch)
+		return err
+	})
+	return cleared, err
 }
