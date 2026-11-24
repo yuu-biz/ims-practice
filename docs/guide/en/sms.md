@@ -476,6 +476,8 @@ A registered UE does not always take a short message. It may answer that it cann
 
 The retry schedule of this SC is one hour (`retry_delays` in `deploy/compose/sc.yaml`), so what delivers the short message in both runs below is the alert and not a retry. TS 23.040 3.2.7 NOTE 5 leaves those autonomous retries to the operator; here they are what covers an alert that never comes.
 
+Both ladders leave out the P-CSCF between the S-CSCF and the UE, and the LIR with which the I-CSCF finds UE 2's S-CSCF. The ladder of the delivery above shows both.
+
 ### UE 2 takes no short message
 
 `PUT /sms-availability` with `{"available": false}` on UE 2's control API puts it in that state. UE 1 then sends it a short message.
