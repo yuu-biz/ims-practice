@@ -10,6 +10,7 @@ import (
 	"reflect"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -26,6 +27,9 @@ const (
 	aliceTel = "tel:+12025550101"
 	bobTel   = "tel:+12025550102"
 	number   = "12025550199"
+	// aliceIMSI is the IMSI the HSS has for alice, which a TFR names her
+	// by (TS 29.338 Table 6.2.2.1/1).
+	aliceIMSI = "001010000000001"
 	// scscfHost is the host of the S-CSCF in the NOTIFYs of the tests.
 	scscfHost = "scscf." + domain
 	// ibcfHost is the IBCF of the home network (interconnect_test.go).
@@ -84,10 +88,30 @@ type update struct {
 	number string
 }
 
-type fakeHSS struct{ updates chan update }
+type fakeHSS struct {
+	updates chan update
+	// imsi is what the Sh read of the IMSI answers, by public identity.
+	// A user that is not there has no IMSI, as the HSS answers for a
+	// private identity that is not derived from one.
+	imsi map[string]string
+	// onUpdate, where set, runs as each PUR reaches the HSS, before it
+	// is answered, and updateFails makes each PUR fail after it.
+	onUpdate    atomic.Pointer[func()]
+	updateFails atomic.Pointer[error]
+}
+
+func (f *fakeHSS) IMSI(_ context.Context, publicID string) (string, error) {
+	return f.imsi[publicID], nil
+}
 
 func (f *fakeHSS) UpdateSMSRegistrationInfo(_ context.Context, id sh.UserIdentity, ipsmgwNumber string) error {
+	if hook := f.onUpdate.Load(); hook != nil {
+		(*hook)()
+	}
 	f.updates <- update{id, ipsmgwNumber}
+	if err := f.updateFails.Load(); err != nil {
+		return *err
+	}
 	return nil
 }
 
@@ -157,7 +181,7 @@ func newHarnessWith(t *testing.T, store ipsmgw.Store, reportTimeout time.Duratio
 	h := &harness{
 		t:        t,
 		sc:       &fakeSC{submits: make(chan submitted, 10), reports: make(chan reported, 10)},
-		hss:      &fakeHSS{updates: make(chan update, 10)},
+		hss:      &fakeHSS{updates: make(chan update, 10), imsi: map[string]string{alice: aliceIMSI}},
 		received: make(chan *sip.Message, 10),
 		atSCSCF:  make(chan *sip.Message, 10),
 	}

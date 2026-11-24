@@ -170,6 +170,10 @@ subscribed="$last"
 expect "SUBSCRIBE I-CSCF -> S-CSCF" "sip.Method == \"SUBSCRIBE\" && sip.Event == \"reg\" && ip.src == $icscf && ip.dst == $scscf && sip.P-Asserted-Identity contains \"ipsmgw\""
 expect "NOTIFY S-CSCF -> IP-SM-GW: a contact with +g.3gpp.smsip" "sip.Method == \"NOTIFY\" && ip.src == $scscf && ip.dst == $ipsmgw && sip.Subscription-State contains \"active\" && sip.msg_body contains \"+12025550102\" && sip.msg_body contains \"+g.3gpp.smsip\""
 notified="$last"
+# The IP-SM-GW reads UE 2's IMSI first (TS 29.328 7.6.24): a short
+# message over SGd names its recipient by IMSI.
+expect "UDR IP-SM-GW -> HSS: IMSI of UE 2" "diameter.cmd.code == 306 && $req && ip.src == $ipsmgw && diameter.Data-Reference == 32"
+expect "UDA 2001" "$(answer_to) && diameter.Result-Code == 2001"
 expect "PUR IP-SM-GW -> HSS: SMSRegistrationInfo with the IP-SM-GW's number" "diameter.cmd.code == 307 && $req && ip.src == $ipsmgw && diameter.Data-Reference == 24 && e164.msisdn == \"12025550102\" && diameter.Sh-User-Data contains \"<IP-SM-GW-Number>12025550199<\""
 expect "PUA 2001" "$(answer_to) && diameter.Result-Code == 2001"
 # The 200 to the SUBSCRIBE comes back through the I-CSCF, and may come

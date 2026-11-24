@@ -1644,9 +1644,13 @@ func (c *untouchedSC) Submit(context.Context, sms.Address, sms.Submit) (sms.Subm
 
 func (c *untouchedSC) Report(context.Context, string, ipsmgw.Outcome) { c.asked.Store(true) }
 
-// noSMSRegistration is an HSS that takes no Sh write, which a drained
+// noSMSRegistration is an HSS that takes no Sh request, which a drained
 // IP-SM-GW never attempts.
 type noSMSRegistration struct{}
+
+func (noSMSRegistration) IMSI(context.Context, string) (string, error) {
+	return "", errors.New("no HSS in this test")
+}
 
 func (noSMSRegistration) UpdateSMSRegistrationInfo(context.Context, sh.UserIdentity, string) error {
 	return errors.New("no HSS in this test")
