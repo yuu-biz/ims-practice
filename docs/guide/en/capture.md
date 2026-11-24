@@ -50,6 +50,7 @@ The nodes use these addresses. The Service column is the name in `compose.yaml`.
 | Media relay (IMS-AGW) | `agw` | 172.28.0.50 | |
 | Lab | `lab` | 172.28.0.60 | |
 | OAM server | `oam` | 172.28.0.65 | |
+| OSS stand-in | `oss` | 172.28.0.66 | `oss` |
 | IP-SM-GW | `ipsmgw` | 172.28.0.70 | |
 | Service Centre of SMS | `sc` | 172.28.0.71 | |
 | MMTel AS | `mmtel` | 172.28.0.75 | |
