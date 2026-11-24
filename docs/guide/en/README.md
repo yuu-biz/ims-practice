@@ -111,6 +111,10 @@ Some packages under `internal` are in the repository but in none of the nodes ab
 | `nas`, `sgd`, `smsc` | SMS without the IMS: the NAS messages that carry it, the SGd and S6c Diameter messages, and a Service Centre that speaks them. The SC that the IP-SM-GW reaches is the stub of package `sc`. |
 | `h248/h248test`, `kvstore/storetest`, `openapitest`, `rtptest` | Helpers that only the tests use. |
 
+### The HTTP APIs
+
+Besides SIP and Diameter, the nodes talk HTTP: the maintenance API of each node, the OAM API, the provisioning API of the HSS, the Lab, the UE simulators and the media relays. [The HTTP APIs](apis.md) tells which of them follow a 3GPP specification and which are this project's own, each with its OpenAPI file.
+
 ## Other ways to run it
 
 | Directory | What it does |

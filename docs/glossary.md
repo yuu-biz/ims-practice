@@ -334,6 +334,7 @@ This glossary lists the abbreviations used in this project. Each entry has an En
 | MTU | Maximum Transmission Unit | The largest packet that a link carries without splitting it. | リンクが分割せずに運べる、いちばん大きいパケットの大きさ。 |
 | VoIP | Voice over IP | Voice calls carried over IP. | IP で運ぶ音声通話。 |
 | API | Application Programming Interface | The interface with which one program uses another, such as the maintenance API of the nodes. | ノードの保守用の API のように、プログラムがほかのプログラムを使うためのインタフェース。 |
+| OpenAPI | OpenAPI Specification | A format in which an HTTP API is described: its paths, methods, parameters, bodies and answers, with JSON Schema for the bodies. 3GPP defines the APIs of the SBI in OpenAPI files. This project describes its own HTTP APIs in OpenAPI 3.1, one file next to the code of each. | HTTP の API を記述する形式。経路、方法、パラメーター、本文、答えを書き、本文の形は JSON Schema で書く。3GPP は SBI の API を OpenAPI のファイルで定める。このプロジェクトは、独自の HTTP の API を OpenAPI 3.1 で記述し、API ごとに 1 つのファイルをコードの隣に置いている。 |
 | ID | Identifier | A value that names one thing among others. | ほかと区別して 1 つのものを指す値。 |
 | ASCII | American Standard Code for Information Interchange | The 7-bit character set of English letters, digits and symbols. | 英字、数字、記号の 7 ビットの文字集合。 |
 | UTC | Coordinated Universal Time | The time standard that the world's clocks are set to. | 世界の時計の基準になる時刻。 |
