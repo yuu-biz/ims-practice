@@ -4,6 +4,12 @@
 // 5.2.4.1) and the application errors of TS 29.500 Table 5.2.7.2-1.
 // No node of this project runs it: no binary in cmd builds it in.
 //
+// TS 29.500 (V20.0.0) defines no API of its own. ProblemDetails and
+// InvalidParam carry the attribute names of the schemas of
+// TS29571_CommonData.yaml in the archive of TS 29.571 V20.1.0 on the
+// 3GPP file server. TestAttributeNames compares them with a list of the
+// names that the schemas have in that file (problem_test.go).
+//
 // The packages of the APIs (n5 for TS 29.514, nhss for TS 29.562) keep
 // what differs between them: their resources and JSON types, their
 // application errors and the status each is answered with, the NF type
