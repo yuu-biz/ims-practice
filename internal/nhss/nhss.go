@@ -24,7 +24,38 @@
 // The JSON types carry the attribute names of the OpenAPI files of TS
 // 29.562 Annex A (TS29562_Nhss_imsUECM.yaml, TS29562_Nhss_imsUEAU.yaml,
 // TS29562_Nhss_imsSDM.yaml). A Go field is the attribute name with its
-// first letter in upper case.
+// first letter in upper case. The names, the paths and the enumerations
+// follow the files in the archive of TS 29.562 V20.1.0 on the 3GPP file
+// server, which are the same as those of the tag TSG112-Rel20 of the
+// 5G_APIs repository of 3GPP Forge, and the common data types of TS
+// 29.571 V20.1.0; the NF types are those of TS 29.510.
+// TestAttributeNames compares the attributes of each type with a list
+// of the names that the schema of the same name has in those files
+// (names_test.go), and the RoundTrips tests of uecm_test.go, ueau_test.go
+// and sdm_test.go read example bodies written with those names and
+// write them back.
+//
+// The operations of the files that are built, by operationId:
+//
+//	UECM  Authorize                   POST {impu}/authorize                  Client.Authorize, NewImsUECMHandler
+//	UECM  SCSCF registration          PUT  {imsUeId}/scscf-registration      Client.Registration, Client.Deregistration, NewImsUECMHandler
+//	UECM  deregistrationNotification  POST {deregCallbackUri} (callback)     Notifier.DeregistrationNotification, NewDeregistrationNotificationHandler
+//	UEAU  GenerateSipAuthData         POST {impi}/security-information/generate-sip-auth-data
+//	                                                                          Client.GenerateSipAuthData, NewImsUEAUHandler
+//	SDM   GetProfileData              GET  {imsUeId}/ims-data/profile-data   Client.GetProfileData, NewImsSDMHandler
+//	SDM   GetServerName               GET  {imsUeId}/ims-data/location-data/server-name
+//	SDM   GetScscfCapabilities        GET  {imsUeId}/ims-data/location-data/scscf-capabilities
+//	SDM   GetImsAssocIds              GET  {imsUeId}/identities/ims-associated-identities
+//	SDM   GetMsisdns                  GET  {imsUeId}/identities/msisdns
+//	SDM   GetSmsRegistrationInfo, UpdateSmsRegistrationInfo, DeleteSmsRegistrationInfo
+//	                                  GET, PUT, DELETE {imsUeId}/service-data/sms-registration-info
+//
+// Each SDM operation has the method of Client with its name, and
+// NewImsSDMHandler serves them all. Of the operations of the files, the
+// others are not built: in UECM the S-CSCF restoration information and
+// the IMS AS registrations, in SDM every other resource and the
+// subscriptions to data changes, and the Nhss_imsEventExposure service
+// of TS29562_Nhss_imsEE.yaml.
 //
 // For each service the package has the client side (methods of Client)
 // and the skeleton of the HSS side (NewImsUECMHandler, NewImsUEAUHandler,
