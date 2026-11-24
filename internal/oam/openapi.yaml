@@ -1,0 +1,1429 @@
+openapi: 3.1.0
+info:
+  title: OAM API
+  version: 1.0.0
+  description: |
+    The OAM server operates every node of the network together through
+    the maintenance API of each node, and the subscriptions through the
+    provisioning API of the HSS. It keeps no state of the nodes and none
+    of the subscribers: every answer comes from them when it is asked
+    for. This API is this project's own: the OAM is the element manager
+    of TS 32.101 and TS 32.102, and TS 32.600 4.2.1.3 leaves the
+    interface between it and the nodes to each product.
+
+    An operation on a node or a role goes to every node of it, and its
+    answer is a fan-out: one entry for each node, with the node's answer
+    or why it failed. The answer is 200 even when some nodes failed.
+
+    Every error has the body Error of the maintenance API. A path that
+    the API does not have answers 404, and a method that a path does not
+    take 405 with Allow, both with Error too. 502 means that the HSS or
+    a node did not answer or failed; 503 that the OAM has no HSS
+    provisioning API, history, backup store or HSS node. Times are RFC
+    3339.
+
+    The answers that stream (application/x-ndjson) have one StreamLine
+    per line.
+paths:
+  /oam/v1/inventory:
+    get:
+      operationId: getInventory
+      summary: The nodes of the configuration.
+      responses:
+        '200':
+          description: The inventory.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Inventory'
+  /oam/v1/state:
+    get:
+      operationId: getState
+      summary: The state of every node.
+      responses:
+        '200':
+          $ref: '#/components/responses/NodeStates'
+  /oam/v1/nodes/{node}/state:
+    get:
+      operationId: getNodeState
+      summary: The state of one node.
+      parameters:
+        - $ref: '#/components/parameters/node'
+      responses:
+        '200':
+          $ref: '#/components/responses/NodeStates'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /oam/v1/roles/{role}/state:
+    get:
+      operationId: getRoleState
+      summary: The state of every node of a role.
+      parameters:
+        - $ref: '#/components/parameters/role'
+      responses:
+        '200':
+          $ref: '#/components/responses/NodeStates'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /oam/v1/nodes/{node}/functions/{role}/administrative-state:
+    put:
+      operationId: setNodeAdministrativeState
+      summary: Unlock, shut down (drain) or lock a role of one node.
+      parameters:
+        - $ref: '#/components/parameters/node'
+        - $ref: '#/components/parameters/role'
+      requestBody:
+        $ref: '#/components/requestBodies/AdministrativeState'
+      responses:
+        '200':
+          $ref: '#/components/responses/FunctionStates'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /oam/v1/roles/{role}/administrative-state:
+    put:
+      operationId: setRoleAdministrativeState
+      summary: Unlock, shut down (drain) or lock a role on every node of it.
+      parameters:
+        - $ref: '#/components/parameters/role'
+      requestBody:
+        $ref: '#/components/requestBodies/AdministrativeState'
+      responses:
+        '200':
+          $ref: '#/components/responses/FunctionStates'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /oam/v1/nodes/{node}/log-level:
+    get:
+      operationId: getNodeLogLevel
+      parameters:
+        - $ref: '#/components/parameters/node'
+      responses:
+        '200':
+          $ref: '#/components/responses/LogLevels'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    put:
+      operationId: setNodeLogLevel
+      summary: Change the level of the log of one node, for all of its roles.
+      parameters:
+        - $ref: '#/components/parameters/node'
+      requestBody:
+        $ref: '#/components/requestBodies/LogLevel'
+      responses:
+        '200':
+          $ref: '#/components/responses/LogLevelChanges'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /oam/v1/roles/{role}/log-level:
+    get:
+      operationId: getRoleLogLevel
+      parameters:
+        - $ref: '#/components/parameters/role'
+      responses:
+        '200':
+          $ref: '#/components/responses/LogLevels'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    put:
+      operationId: setRoleLogLevel
+      summary: Change the level of the log of every node of a role.
+      parameters:
+        - $ref: '#/components/parameters/role'
+      requestBody:
+        $ref: '#/components/requestBodies/LogLevel'
+      responses:
+        '200':
+          $ref: '#/components/responses/LogLevelChanges'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /oam/v1/nodes/{node}/config:
+    get:
+      operationId: getNodeConfiguration
+      summary: The configuration of one node, secrets redacted.
+      parameters:
+        - $ref: '#/components/parameters/node'
+      responses:
+        '200':
+          $ref: '#/components/responses/Configurations'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    patch:
+      operationId: changeNodeConfiguration
+      summary: Change settings of one node, recorded in the history.
+      parameters:
+        - $ref: '#/components/parameters/node'
+      requestBody:
+        $ref: '#/components/requestBodies/ConfigurationChange'
+      responses:
+        '200':
+          $ref: '#/components/responses/ChangeRecords'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '502':
+          $ref: '#/components/responses/Upstream'
+        '503':
+          $ref: '#/components/responses/Unavailable'
+  /oam/v1/roles/{role}/config:
+    get:
+      operationId: getRoleConfiguration
+      summary: The configuration of every node of a role, secrets redacted.
+      parameters:
+        - $ref: '#/components/parameters/role'
+      responses:
+        '200':
+          $ref: '#/components/responses/Configurations'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    patch:
+      operationId: changeRoleConfiguration
+      summary: Change settings of every node of a role, all with one new generation.
+      parameters:
+        - $ref: '#/components/parameters/role'
+      requestBody:
+        $ref: '#/components/requestBodies/ConfigurationChange'
+      responses:
+        '200':
+          $ref: '#/components/responses/ChangeRecords'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '502':
+          $ref: '#/components/responses/Upstream'
+        '503':
+          $ref: '#/components/responses/Unavailable'
+  /oam/v1/nodes/{node}/config/history:
+    get:
+      operationId: getNodeConfigurationHistory
+      summary: The configuration changes of a node, the newest first.
+      description: A node that has left the inventory keeps its history.
+      parameters:
+        - $ref: '#/components/parameters/node'
+        - name: limit
+          in: query
+          description: How many changes; 50 without it.
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 1000
+      responses:
+        '200':
+          description: The history.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/History'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '503':
+          $ref: '#/components/responses/Unavailable'
+  /oam/v1/config/history/{id}:
+    get:
+      operationId: getChangeRecord
+      parameters:
+        - $ref: '#/components/parameters/id'
+      responses:
+        '200':
+          description: The record.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ChangeRecord'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '503':
+          $ref: '#/components/responses/Unavailable'
+  /oam/v1/config/history/{id}/rollback:
+    post:
+      operationId: rollBackChange
+      summary: Put the values before a change back, as a new change with a new generation (TS 32.600 7.1 d).
+      description: |
+        Refused with 409, naming each setting, when a later change of the
+        same node touched one of the settings, or when the node no longer
+        has the value that the change set, unless the request forces it.
+      parameters:
+        - $ref: '#/components/parameters/id'
+      requestBody:
+        $ref: '#/components/requestBodies/Rollback'
+      responses:
+        '200':
+          description: The record of the rollback.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ChangeRecord'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '502':
+          $ref: '#/components/responses/Upstream'
+        '503':
+          $ref: '#/components/responses/Unavailable'
+  /oam/v1/config/change-sets/{id}/rollback:
+    post:
+      operationId: rollBackChangeSet
+      summary: Roll back each record of one change of a role.
+      parameters:
+        - $ref: '#/components/parameters/id'
+      requestBody:
+        $ref: '#/components/requestBodies/Rollback'
+      responses:
+        '200':
+          $ref: '#/components/responses/ChangeRecords'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '503':
+          $ref: '#/components/responses/Unavailable'
+  /oam/v1/alarms:
+    get:
+      operationId: getAlarms
+      summary: The alarm lists of every node (TS 28.111 6.5), merged.
+      description: |
+        The records of all the nodes, the most severe first, then the
+        newest first. A node that does not answer is a failed entry; the
+        OAM makes up no alarm for it. The filter goes to every node as it
+        is.
+      parameters:
+        - name: cleared
+          in: query
+          schema:
+            type: boolean
+        - name: min_severity
+          in: query
+          schema:
+            type: string
+            enum: [CRITICAL, MAJOR, MINOR, WARNING]
+      responses:
+        '200':
+          description: The alarms.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Alarms'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+  /oam/v1/nodes/{node}/alarms/{id}/ack-state:
+    put:
+      operationId: setAckState
+      summary: Acknowledge an alarm of a node, or take the acknowledgement back.
+      description: An id that the node does not have is the node's 404 in the entry.
+      parameters:
+        - $ref: '#/components/parameters/node'
+        - $ref: '#/components/parameters/id'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '../maintenance/openapi.yaml#/components/schemas/AckStateRequest'
+      responses:
+        '200':
+          description: The fan-out of the record after the change.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AlarmRecords'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /oam/v1/provisioning:
+    post:
+      operationId: provision
+      summary: Bulk provisioning from a stream of SubscriptionRecord, one per line.
+      description: |
+        The answer is a stream too: an outcome for each record, in the
+        order of the lines, then the summary. Sending the same file again
+        changes nothing.
+      parameters:
+        - $ref: '#/components/parameters/dry_run'
+      requestBody:
+        description: |
+          One SubscriptionRecord per line. A line that is not one gets a
+          rejected outcome, and the stream goes on; an empty body is an
+          empty file.
+        content:
+          application/x-ndjson:
+            schema:
+              description: Any line, which the outcome of the line judges.
+      responses:
+        '200':
+          $ref: '#/components/responses/Stream'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '503':
+          $ref: '#/components/responses/Unavailable'
+  /oam/v1/subscriptions/{impi}:
+    get:
+      operationId: getSubscription
+      summary: A subscription as the HSS shows it, without credentials.
+      parameters:
+        - $ref: '#/components/parameters/impi'
+      responses:
+        '200':
+          $ref: '#/components/responses/Subscription'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '502':
+          $ref: '#/components/responses/Upstream'
+        '503':
+          $ref: '#/components/responses/Unavailable'
+    put:
+      operationId: putSubscription
+      summary: Add a subscription or replace it, from one SubscriptionRecord.
+      parameters:
+        - $ref: '#/components/parameters/impi'
+        - $ref: '#/components/parameters/dry_run'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SubscriptionRecord'
+      responses:
+        '200':
+          $ref: '#/components/responses/Outcome'
+        '201':
+          $ref: '#/components/responses/Outcome'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '502':
+          $ref: '#/components/responses/Upstream'
+        '503':
+          $ref: '#/components/responses/Unavailable'
+    delete:
+      operationId: deleteSubscription
+      summary: Remove a subscription.
+      parameters:
+        - $ref: '#/components/parameters/impi'
+        - $ref: '#/components/parameters/dry_run'
+      responses:
+        '200':
+          $ref: '#/components/responses/Outcome'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '502':
+          $ref: '#/components/responses/Upstream'
+        '503':
+          $ref: '#/components/responses/Unavailable'
+  /oam/v1/subscriptions/{impi}/customized-alerting-tone:
+    put:
+      operationId: setAlertingTone
+      summary: Provision the tone that the callers of the user hear while it rings (CAT, TS 24.182 4.5.2).
+      description: The operator provisions it, as the user has no standard way to set it (TS 24.182 4.8). The rest of the subscription stays as it is.
+      parameters:
+        - $ref: '#/components/parameters/impi'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AlertingToneRequest'
+      responses:
+        '200':
+          description: The tone as the HSS stored it.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AlertingTone'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '502':
+          $ref: '#/components/responses/Upstream'
+        '503':
+          $ref: '#/components/responses/Unavailable'
+  /oam/v1/subscriptions/{impi}/test-user:
+    put:
+      operationId: setTestUser
+      summary: Mark a subscription as a test user's, or no longer.
+      parameters:
+        - $ref: '#/components/parameters/impi'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TestUserRequest'
+      responses:
+        '200':
+          $ref: '#/components/responses/Subscription'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '502':
+          $ref: '#/components/responses/Upstream'
+        '503':
+          $ref: '#/components/responses/Unavailable'
+  /oam/v1/subscriptions/{impi}/features/{feature}:
+    get:
+      operationId: getFeatureState
+      summary: Whether a feature is active for a subscriber, with the reason when it is not.
+      parameters:
+        - $ref: '#/components/parameters/impi'
+        - name: feature
+          in: path
+          required: true
+          description: A feature of a service profile, such as sms.
+          schema:
+            type: string
+      responses:
+        '200':
+          description: The state of the feature.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FeatureState'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '502':
+          $ref: '#/components/responses/Upstream'
+        '503':
+          $ref: '#/components/responses/Unavailable'
+  /oam/v1/test-users:
+    get:
+      operationId: getTestUsers
+      summary: How the HSS treats test users, as one HSS node shows it.
+      responses:
+        '200':
+          description: The admission, the two profiles and the features of each profile.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TestUsers'
+        '502':
+          $ref: '#/components/responses/Upstream'
+        '503':
+          $ref: '#/components/responses/Unavailable'
+  /oam/v1/test-users/service-profile:
+    put:
+      operationId: setTestUserServiceProfile
+      summary: Choose the service profile of the test users, on every HSS node.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ServiceProfileRequest'
+      responses:
+        '200':
+          $ref: '#/components/responses/ChangeRecords'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '502':
+          $ref: '#/components/responses/Upstream'
+        '503':
+          $ref: '#/components/responses/Unavailable'
+  /oam/v1/test-users/admission:
+    put:
+      operationId: setAdmission
+      summary: Choose which users the HSS lets register, on every HSS node.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AdmissionRequest'
+      responses:
+        '200':
+          $ref: '#/components/responses/ChangeRecords'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '502':
+          $ref: '#/components/responses/Upstream'
+        '503':
+          $ref: '#/components/responses/Unavailable'
+  /oam/v1/backups:
+    get:
+      operationId: listBackups
+      summary: The backups, the newest first.
+      responses:
+        '200':
+          description: The manifests.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Backups'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/Unavailable'
+    post:
+      operationId: backUp
+      summary: Back up the persistent data of the network, section by section.
+      description: The answer streams each step as it starts, goes on and ends, then the manifest.
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BackupRequest'
+      responses:
+        '200':
+          $ref: '#/components/responses/Stream'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '503':
+          $ref: '#/components/responses/Unavailable'
+  /oam/v1/backups/{id}:
+    get:
+      operationId: getBackup
+      summary: The manifest of a backup, with each restore from it.
+      parameters:
+        - $ref: '#/components/parameters/id'
+      responses:
+        '200':
+          description: The manifest.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Manifest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '503':
+          $ref: '#/components/responses/Unavailable'
+  /oam/v1/backups/{id}/restore:
+    post:
+      operationId: restore
+      summary: Put a backup back, or say what each record would do (dry_run).
+      description: |
+        The archive is checked whole first. The answer streams the steps,
+        an outcome per record, then the summary. Restoring twice changes
+        nothing the second time.
+      parameters:
+        - $ref: '#/components/parameters/id'
+        - $ref: '#/components/parameters/dry_run'
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RestoreRequest'
+      responses:
+        '200':
+          $ref: '#/components/responses/Stream'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: The backup did not complete.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '503':
+          $ref: '#/components/responses/Unavailable'
+components:
+  parameters:
+    node:
+      name: node
+      in: path
+      required: true
+      description: The name of a node of the inventory.
+      schema:
+        type: string
+    role:
+      name: role
+      in: path
+      required: true
+      description: A role, such as pcscf.
+      schema:
+        type: string
+    id:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: string
+    impi:
+      name: impi
+      in: path
+      required: true
+      description: The private identity of the subscription.
+      schema:
+        type: string
+    dry_run:
+      name: dry_run
+      in: query
+      description: true asks the HSS what the request would do and changes nothing.
+      schema:
+        type: boolean
+  requestBodies:
+    AdministrativeState:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '../maintenance/openapi.yaml#/components/schemas/AdministrativeStateRequest'
+    LogLevel:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '../maintenance/openapi.yaml#/components/schemas/LogLevelRequest'
+    ConfigurationChange:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '../maintenance/openapi.yaml#/components/schemas/ConfigurationChangeRequest'
+    Rollback:
+      description: May be left out.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/RollbackRequest'
+  responses:
+    NodeStates:
+      description: The fan-out of the node states.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/NodeStates'
+    FunctionStates:
+      description: The fan-out of the state of the role after the event.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/FunctionStates'
+    LogLevels:
+      description: The fan-out of the levels.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/LogLevels'
+    LogLevelChanges:
+      description: The fan-out of the new levels.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/LogLevelChanges'
+    Configurations:
+      description: The fan-out of the configurations.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Configurations'
+    ChangeRecords:
+      description: The fan-out of the record of each node's change.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ChangeRecords'
+    Subscription:
+      description: The subscription.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Subscription'
+    Outcome:
+      description: What the record did, or would do on a dry run; 201 when it created the subscription.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Outcome'
+    Stream:
+      description: One StreamLine per line.
+      content:
+        application/x-ndjson:
+          schema:
+            description: A line.
+            $ref: '#/components/schemas/StreamLine'
+    BadRequest:
+      description: A body that does not parse, has an unknown field or a value out of range.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    NotFound:
+      description: No such node, role, subscription, record, backup or feature.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    Conflict:
+      description: |
+        A record that the HSS refuses because one of its identities
+        belongs to another subscription, or a rollback in conflict, with
+        settings naming each setting in the way.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    InternalError:
+      description: The OAM could not read its own store.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    Upstream:
+      description: The HSS or a node did not answer or failed.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    Unavailable:
+      description: The OAM has no HSS provisioning API, history, backup store or HSS node.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+  schemas:
+    Error:
+      $ref: '../maintenance/openapi.yaml#/components/schemas/Error'
+    Time:
+      type: string
+      format: date-time
+    Inventory:
+      type: object
+      required: [nodes]
+      properties:
+        nodes:
+          type: array
+          items:
+            $ref: '#/components/schemas/Endpoint'
+      additionalProperties: false
+    Endpoint:
+      type: object
+      required: [name, roles, url]
+      properties:
+        name:
+          type: string
+        roles:
+          type: array
+          items:
+            type: string
+        url:
+          description: The URL of the node's maintenance listener.
+          type: string
+      additionalProperties: false
+    FanOut:
+      description: The answer of an operation on several nodes, one entry for each.
+      type: object
+      required: [succeeded, failed, nodes]
+      properties:
+        succeeded:
+          type: integer
+          minimum: 0
+        failed:
+          type: integer
+          minimum: 0
+        nodes:
+          type: array
+          items:
+            $ref: '#/components/schemas/NodeResult'
+      additionalProperties: false
+    NodeResult:
+      description: |
+        The answer of one node: result when it answered, error when it
+        did not. Each fan-out below says what result is.
+      type: object
+      required: [node, url]
+      properties:
+        node:
+          type: string
+        url:
+          type: string
+        result: true
+        error:
+          $ref: '#/components/schemas/NodeError'
+      additionalProperties: false
+    NodeError:
+      description: The status and Error of the maintenance API when the node answered, or why there was no answer.
+      type: object
+      required: [error]
+      properties:
+        status_code:
+          description: Absent when the node did not answer.
+          type: integer
+        error:
+          type: string
+        settings:
+          type: object
+          additionalProperties:
+            type: string
+      additionalProperties: false
+    NodeStates:
+      description: A FanOut whose result is a NodeState of the maintenance API.
+      allOf:
+        - $ref: '#/components/schemas/FanOut'
+      properties:
+        nodes:
+          items:
+            properties:
+              result:
+                $ref: '../maintenance/openapi.yaml#/components/schemas/NodeState'
+            additionalProperties: true
+      additionalProperties: true
+    FunctionStates:
+      description: A FanOut whose result is a FunctionState of the maintenance API.
+      allOf:
+        - $ref: '#/components/schemas/FanOut'
+      properties:
+        nodes:
+          items:
+            properties:
+              result:
+                $ref: '../maintenance/openapi.yaml#/components/schemas/FunctionState'
+            additionalProperties: true
+      additionalProperties: true
+    LogLevels:
+      description: A FanOut whose result is a LogLevel of the maintenance API.
+      allOf:
+        - $ref: '#/components/schemas/FanOut'
+      properties:
+        nodes:
+          items:
+            properties:
+              result:
+                $ref: '../maintenance/openapi.yaml#/components/schemas/LogLevel'
+            additionalProperties: true
+      additionalProperties: true
+    LogLevelChanges:
+      description: A FanOut whose result is a LogLevelChange of the maintenance API.
+      allOf:
+        - $ref: '#/components/schemas/FanOut'
+      properties:
+        nodes:
+          items:
+            properties:
+              result:
+                $ref: '../maintenance/openapi.yaml#/components/schemas/LogLevelChange'
+            additionalProperties: true
+      additionalProperties: true
+    Configurations:
+      description: A FanOut whose result is a Configuration of the maintenance API.
+      allOf:
+        - $ref: '#/components/schemas/FanOut'
+      properties:
+        nodes:
+          items:
+            properties:
+              result:
+                $ref: '../maintenance/openapi.yaml#/components/schemas/Configuration'
+            additionalProperties: true
+      additionalProperties: true
+    AlarmRecords:
+      description: A FanOut whose result is an AlarmRecord of the maintenance API.
+      allOf:
+        - $ref: '#/components/schemas/FanOut'
+      properties:
+        nodes:
+          items:
+            properties:
+              result:
+                $ref: '../maintenance/openapi.yaml#/components/schemas/AlarmRecord'
+            additionalProperties: true
+      additionalProperties: true
+    ChangeRecords:
+      description: A FanOut whose result is a ChangeRecord.
+      allOf:
+        - $ref: '#/components/schemas/FanOut'
+      properties:
+        nodes:
+          items:
+            properties:
+              result:
+                $ref: '#/components/schemas/ChangeRecord'
+            additionalProperties: true
+      additionalProperties: true
+    ChangeRecord:
+      description: One configuration change of one node, as the history keeps it.
+      type: object
+      required: [id, change_set, node, recorded_at, change]
+      properties:
+        id:
+          type: string
+        change_set:
+          description: The same for the records of one operation, such as one change of every node of a role.
+          type: string
+        node:
+          type: string
+        recorded_at:
+          $ref: '#/components/schemas/Time'
+        rollback_of:
+          description: The record that this change rolled back.
+          type: string
+        forced:
+          description: The rollback went ahead over the settings that a later change had touched.
+          type: boolean
+        change:
+          $ref: '../maintenance/openapi.yaml#/components/schemas/ConfigurationChange'
+      additionalProperties: false
+    History:
+      type: object
+      required: [changes]
+      properties:
+        changes:
+          type: array
+          items:
+            $ref: '#/components/schemas/ChangeRecord'
+      additionalProperties: false
+    RollbackRequest:
+      type: object
+      properties:
+        operator:
+          type: string
+        comment:
+          type: string
+        force:
+          description: Roll back even the settings that a later change, or one that the OAM did not make, has touched since.
+          type: boolean
+      additionalProperties: false
+    Alarms:
+      type: object
+      required: [succeeded, failed, nodes, alarms]
+      properties:
+        succeeded:
+          type: integer
+          minimum: 0
+        failed:
+          type: integer
+          minimum: 0
+        nodes:
+          description: What each node said about its alarm list, apart from the records.
+          type: array
+          items:
+            allOf:
+              - $ref: '#/components/schemas/NodeResult'
+            properties:
+              result:
+                $ref: '#/components/schemas/AlarmListInfo'
+            additionalProperties: true
+        alarms:
+          description: The records of every node, merged.
+          type: array
+          items:
+            $ref: '#/components/schemas/NodeAlarmRecord'
+      additionalProperties: false
+    AlarmListInfo:
+      type: object
+      required: [num_of_alarm_records, listed, last_modification, dropped_records]
+      properties:
+        instance:
+          type: string
+        num_of_alarm_records:
+          description: The records in the node's list, whether the filter kept them or not.
+          type: integer
+          minimum: 0
+        listed:
+          description: The records of the node that the filter kept.
+          type: integer
+          minimum: 0
+        last_modification:
+          $ref: '#/components/schemas/Time'
+        dropped_records:
+          type: integer
+          minimum: 0
+      additionalProperties: false
+    NodeAlarmRecord:
+      description: |
+        An AlarmRecord of the maintenance API with the node whose list
+        holds it. The fields after node are those of AlarmRecord.
+      type: object
+      required: [node, alarm_id, object_instance, alarm_raised_time, alarm_type, probable_cause, perceived_severity, ack_state]
+      properties:
+        node:
+          type: string
+        alarm_id:
+          type: string
+        object_instance:
+          type: string
+        role:
+          type: string
+        peer:
+          type: string
+        alarm_raised_time:
+          $ref: '#/components/schemas/Time'
+        alarm_changed_time:
+          $ref: '#/components/schemas/Time'
+        alarm_cleared_time:
+          $ref: '#/components/schemas/Time'
+        alarm_type:
+          $ref: '../maintenance/openapi.yaml#/components/schemas/AlarmType'
+        probable_cause:
+          type: string
+        specific_problem:
+          type: string
+        perceived_severity:
+          $ref: '../maintenance/openapi.yaml#/components/schemas/PerceivedSeverity'
+        additional_text:
+          type: string
+        ack_state:
+          $ref: '../maintenance/openapi.yaml#/components/schemas/AckState'
+        ack_time:
+          $ref: '#/components/schemas/Time'
+        ack_user_id:
+          type: string
+      additionalProperties: false
+    SubscriptionRecord:
+      description: |
+        One subscription, as a line of a bulk provisioning file or of a
+        backup: the request of the HSS provisioning API, with delete,
+        which the OAM reads itself. Every identity must be test data: a
+        test IMSI of PLMN 001/01 or a fictional NANP number of 555-0100 to
+        555-0199.
+      type: object
+      required: [private_identity]
+      properties:
+        private_identity:
+          type: string
+        public_identities:
+          type: array
+          items:
+            type: string
+        barred_identities:
+          type: array
+          items:
+            type: string
+        password:
+          type: string
+        aka:
+          $ref: '../hss/openapi.yaml#/components/schemas/AKACredentials'
+        tel:
+          type: string
+        ut_password:
+          type: string
+        mmtel_services:
+          type: string
+        repository_data:
+          description: As in the HSS provisioning API, an empty array asks for no repository data, and null for the default.
+          type: [array, 'null']
+          items:
+            $ref: '../hss/openapi.yaml#/components/schemas/RepositoryData'
+        test_user:
+          type: boolean
+        service_profile:
+          type: string
+        delete:
+          description: Removes the subscription; the line then has no other field.
+          type: boolean
+      additionalProperties: false
+    Subscription:
+      description: A subscription as the HSS shows it, without credentials.
+      type: object
+      required: [private_identity, public_identities, authentication_schemes, registration_state]
+      properties:
+        private_identity:
+          type: string
+        public_identities:
+          type: array
+          items:
+            type: string
+        authentication_schemes:
+          type: array
+          items:
+            type: string
+        registration_state:
+          type: string
+        server_name:
+          type: string
+        test_user:
+          type: boolean
+        service_profile:
+          type: string
+        customized_alerting_tone:
+          $ref: '#/components/schemas/AlertingTone'
+      additionalProperties: false
+    AlertingTone:
+      type: object
+      required: [tone, active]
+      properties:
+        tone:
+          type: string
+        active:
+          type: boolean
+      additionalProperties: false
+    AlertingToneRequest:
+      type: object
+      required: [tone]
+      properties:
+        tone:
+          description: An announcement of an MRFP, letters and digits (RFC 4240 3.3).
+          type: string
+          pattern: '^[A-Za-z0-9]+$'
+        active:
+          type: boolean
+        operator:
+          type: string
+      additionalProperties: false
+    Result:
+      description: What a record did. rejected is a record refused as it is; failed one that the HSS did not take for a reason of its own, which may succeed when sent again.
+      type: string
+      enum: [created, updated, unchanged, deleted, rejected, failed]
+    Outcome:
+      description: The report on one record. reason never holds a credential.
+      type: object
+      required: [result]
+      properties:
+        line:
+          description: The number of the line in the file, from 1.
+          type: integer
+          minimum: 1
+        private_identity:
+          type: string
+        result:
+          $ref: '#/components/schemas/Result'
+        reason:
+          type: string
+        dry_run:
+          type: boolean
+      additionalProperties: false
+    Summary:
+      type: object
+      required: [lines, created, updated, unchanged, deleted, rejected, failed]
+      properties:
+        lines:
+          description: The lines read, blank ones included; for a restore, the records.
+          type: integer
+          minimum: 0
+        created:
+          type: integer
+          minimum: 0
+        updated:
+          type: integer
+          minimum: 0
+        unchanged:
+          type: integer
+          minimum: 0
+        deleted:
+          type: integer
+          minimum: 0
+        rejected:
+          type: integer
+          minimum: 0
+        failed:
+          type: integer
+          minimum: 0
+        dry_run:
+          type: boolean
+      additionalProperties: false
+    StreamLine:
+      description: One line of an answer that streams, with one of these fields. error says why the operation stopped early.
+      type: object
+      properties:
+        step:
+          $ref: '#/components/schemas/Step'
+        outcome:
+          $ref: '#/components/schemas/Outcome'
+        summary:
+          $ref: '#/components/schemas/Summary'
+        manifest:
+          $ref: '#/components/schemas/Manifest'
+        error:
+          type: string
+      minProperties: 1
+      maxProperties: 1
+      additionalProperties: false
+    JobState:
+      type: string
+      enum: [running, completed, failed]
+    Step:
+      type: object
+      required: [name, state, started]
+      properties:
+        name:
+          type: string
+        section:
+          type: string
+        state:
+          $ref: '#/components/schemas/JobState'
+        started:
+          $ref: '#/components/schemas/Time'
+        finished:
+          $ref: '#/components/schemas/Time'
+        records:
+          type: integer
+          minimum: 0
+        error:
+          type: string
+      additionalProperties: false
+    Manifest:
+      description: What the OAM records about one backup.
+      type: object
+      required: [id, created, state, sections, steps]
+      properties:
+        id:
+          type: string
+        created:
+          $ref: '#/components/schemas/Time'
+        operator:
+          type: string
+        comment:
+          type: string
+        state:
+          description: completed only when the archive is whole and stored.
+          $ref: '#/components/schemas/JobState'
+        sections:
+          type: array
+          items:
+            type: string
+        steps:
+          type: array
+          items:
+            $ref: '#/components/schemas/Step'
+        records:
+          description: The records of each section in the archive.
+          type: object
+          additionalProperties:
+            type: integer
+            minimum: 0
+        bytes:
+          type: integer
+          minimum: 0
+        restores:
+          type: array
+          items:
+            $ref: '#/components/schemas/RestoreRun'
+      additionalProperties: false
+    RestoreRun:
+      type: object
+      required: [started, finished, state, steps, summary]
+      properties:
+        started:
+          $ref: '#/components/schemas/Time'
+        finished:
+          $ref: '#/components/schemas/Time'
+        dry_run:
+          type: boolean
+        operator:
+          type: string
+        state:
+          $ref: '#/components/schemas/JobState'
+        steps:
+          type: array
+          items:
+            $ref: '#/components/schemas/Step'
+        summary:
+          $ref: '#/components/schemas/Summary'
+      additionalProperties: false
+    Backups:
+      type: object
+      required: [backups]
+      properties:
+        backups:
+          type: array
+          items:
+            $ref: '#/components/schemas/Manifest'
+      additionalProperties: false
+    BackupRequest:
+      type: object
+      properties:
+        operator:
+          type: string
+        comment:
+          type: string
+      additionalProperties: false
+    RestoreRequest:
+      type: object
+      properties:
+        operator:
+          type: string
+      additionalProperties: false
+    Admission:
+      description: Which users the HSS lets register.
+      type: string
+      enum: [all, test_users]
+    TestUsers:
+      type: object
+      required: [hss_node, admission, default_service_profile, test_user_service_profile, service_profiles]
+      properties:
+        hss_node:
+          description: The HSS node of the inventory that answered.
+          type: string
+        admission:
+          $ref: '#/components/schemas/Admission'
+        default_service_profile:
+          type: string
+        test_user_service_profile:
+          type: string
+        service_profiles:
+          description: The features of each service profile, by name.
+          type: object
+          additionalProperties:
+            type: array
+            items:
+              type: string
+      additionalProperties: false
+    FeatureState:
+      type: object
+      required: [private_identity, feature, active, test_user, service_profile, profile_source, admission, admitted, hss_node]
+      properties:
+        private_identity:
+          type: string
+        feature:
+          type: string
+        active:
+          type: boolean
+        reason:
+          description: Why the feature is not active.
+          type: string
+        test_user:
+          type: boolean
+        service_profile:
+          description: The profile that the HSS gives the subscription.
+          type: string
+        profile_source:
+          description: Why the subscription has that profile.
+          type: string
+          enum: [subscription, test_users, default]
+        admission:
+          $ref: '#/components/schemas/Admission'
+        admitted:
+          type: boolean
+        hss_node:
+          type: string
+      additionalProperties: false
+    TestUserRequest:
+      type: object
+      required: [test_user]
+      properties:
+        test_user:
+          type: boolean
+        operator:
+          type: string
+      additionalProperties: false
+    ServiceProfileRequest:
+      type: object
+      required: [service_profile]
+      properties:
+        service_profile:
+          type: string
+        operator:
+          type: string
+        comment:
+          type: string
+      additionalProperties: false
+    AdmissionRequest:
+      type: object
+      required: [admission]
+      properties:
+        admission:
+          $ref: '#/components/schemas/Admission'
+        operator:
+          type: string
+        comment:
+          type: string
+      additionalProperties: false
