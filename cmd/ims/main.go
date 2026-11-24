@@ -127,6 +127,10 @@ func run(configPath string, log *slog.Logger, level *slog.LevelVar) error {
 	var hssRole *hss.HSS
 	var scscfRole atomic.Pointer[scscf.SCSCF]
 	var epcRole *epc.EPC
+	// The IP-SM-GW takes the short messages that a Service Centre brings
+	// over SGd. Like the S-CSCF it is made after its peer, so the handler
+	// finds it here.
+	var ipsmgwRole atomic.Pointer[ipsmgw.IPSMGW]
 	// The P-CSCF's Rx client takes the RARs and ASRs of the PCRF. Like
 	// the S-CSCF it is made after its peer, so the handler finds it here.
 	var policyControl atomic.Pointer[rx.Client]
@@ -152,7 +156,7 @@ func run(configPath string, log *slog.Logger, level *slog.LevelVar) error {
 		if cfg.EPC != nil {
 			epcRole = epc.New(cfg.EPC.Config, epc.NewMemoryStore(), node, log.With("role", config.RoleEPC))
 		}
-		node.Handle(diameterHandler(node, hssRole, &scscfRole, epcRole, &policyControl))
+		node.Handle(diameterHandler(node, hssRole, &scscfRole, epcRole, &ipsmgwRole, &policyControl))
 		if d.Listen != "" {
 			server, err = node.Listen(d.Listen)
 			if err != nil {
@@ -384,7 +388,9 @@ func run(configPath string, log *slog.Logger, level *slog.LevelVar) error {
 			ServiceCentre: c.ServiceCentre,
 			IBCF:          c.IBCF,
 			UserLocks:     stores.locks(config.RoleIPSMGW, roleLog),
+			Diameter:      diameterIdentity(node),
 		}, centre, ipsmgwStore(stores, roleLog), users, resolver, roleLog)
+		ipsmgwRole.Store(g)
 		// The sweep that ends the deliveries whose TR1N has run out runs
 		// until the node stops.
 		defer g.Close()
@@ -882,8 +888,9 @@ var roleApplications = map[config.Role][]uint32{
 	config.RoleHSS:   {diameter.ApplicationIDCx, diameter.ApplicationIDSh, sgd.ApplicationIDS6c},
 	config.RoleICSCF: {diameter.ApplicationIDCx},
 	config.RoleSCSCF: {diameter.ApplicationIDCx},
-	// The IP-SM-GW registers itself and finds users over Sh.
-	config.RoleIPSMGW: {diameter.ApplicationIDSh},
+	// The IP-SM-GW registers itself and finds users over Sh, and takes
+	// the short messages that a Service Centre brings over SGd.
+	config.RoleIPSMGW: {diameter.ApplicationIDSh, sgd.ApplicationIDSGd},
 	// The MMTel AS reads the settings of the services over Sh.
 	config.RoleMMTel: {diameter.ApplicationIDSh},
 	// The P-CSCF has Diameter only to reach the PCRF, and the epc role's
@@ -1487,14 +1494,22 @@ func peersOfKind(cfg config.Config, peers []*diameter.Peer, kind config.PeerKind
 }
 
 // diameterHandler gives each request that reaches the node to the role
-// of its application: Cx and Sh as cxHandler does, and Rx to the PCRF of
-// the epc role, except the two requests that a PCRF sends, RAR and ASR
-// (TS 29.214 4.4.6), which are for the P-CSCF's Rx client. epcRole is
-// nil on a node without the epc role, and policyControl is empty on a
-// node whose P-CSCF has no PCRF.
-func diameterHandler(node *diameter.Node, hssRole *hss.HSS, scscfRole *atomic.Pointer[scscf.SCSCF], epcRole *epc.EPC, policyControl *atomic.Pointer[rx.Client]) diameter.Handler {
+// of its application: Cx and Sh as cxHandler does, SGd to the IP-SM-GW,
+// and Rx to the PCRF of the epc role, except the two requests that a
+// PCRF sends, RAR and ASR (TS 29.214 4.4.6), which are for the P-CSCF's
+// Rx client. epcRole is nil on a node without the epc role, ipsmgwRole
+// is empty on a node without the ipsmgw role, and policyControl is empty
+// on a node whose P-CSCF has no PCRF.
+func diameterHandler(node *diameter.Node, hssRole *hss.HSS, scscfRole *atomic.Pointer[scscf.SCSCF], epcRole *epc.EPC,
+	ipsmgwRole *atomic.Pointer[ipsmgw.IPSMGW], policyControl *atomic.Pointer[rx.Client]) diameter.Handler {
 	cx := cxHandler(node, hssRole, scscfRole)
 	return func(request *diam.Message) *diam.Message {
+		if request.Header.ApplicationID == sgd.ApplicationIDSGd {
+			if g := ipsmgwRole.Load(); g != nil {
+				return g.Handle(request)
+			}
+			return diameter.CommandUnsupportedAnswer(node.Identity(), request)
+		}
 		if request.Header.ApplicationID != diameter.ApplicationIDRx {
 			return cx(request)
 		}
@@ -1507,6 +1522,16 @@ func diameterHandler(node *diameter.Node, hssRole *hss.HSS, scscfRole *atomic.Po
 		}
 		return diameter.CommandUnsupportedAnswer(node.Identity(), request)
 	}
+}
+
+// diameterIdentity is how the node names itself on Diameter, and the
+// zero identity on a node without a Diameter section, which answers no
+// Diameter request to put it in.
+func diameterIdentity(node *diameter.Node) diameter.Identity {
+	if node == nil {
+		return diameter.Identity{}
+	}
+	return node.Identity()
 }
 
 // cxHandler answers the Cx and Sh requests that reach the node. The HSS

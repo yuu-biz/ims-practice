@@ -152,10 +152,12 @@ rp_error_mt='gsm_a.rp.msg_type == 0x05'
 # is not registered.
 await "the status report to UE 1 for +12025550103" "$message && ip.dst == $ue1 && gsm_sms.tp-ra == \"12025550103\""
 
-# The IP-SM-GW opens Sh, and nothing else, to the HSS.
+# The IP-SM-GW opens Diameter to the HSS with Sh, which they share, and
+# SGd, on which an SMS-GMSC brings it short messages, and with nothing
+# else (RFC 6733 5.3).
 cer="diameter.cmd.code == 257 && $req && ip.src == $ipsmgw"
-expect "CER IP-SM-GW -> HSS advertising Sh" "$cer && diameter.Auth-Application-Id == 16777217"
-none "CER of the IP-SM-GW advertising an application other than Sh" "$cer && (diameter.Auth-Application-Id < 16777217 || diameter.Auth-Application-Id > 16777217)"
+expect "CER IP-SM-GW -> HSS advertising Sh and SGd" "$cer && diameter.Auth-Application-Id == 16777217 && diameter.Auth-Application-Id == 16777313"
+none "CER of the IP-SM-GW advertising an application other than Sh and SGd" "$cer && diameter.Auth-Application-Id in {0..16777216, 16777218..16777312, 16777314..4294967295}"
 expect "CEA 2001 HSS -> IP-SM-GW" "diameter.cmd.code == 257 && $ans && ip.dst == $ipsmgw && diameter.Result-Code == 2001"
 
 echo "UE 2 registers at the IP-SM-GW too (TS 24.229 5.4.1.7, TS 24.341 5.3.3.2)"
