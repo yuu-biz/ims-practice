@@ -17,7 +17,9 @@ import (
 // Handler is the control API of the phone. It is this project's own
 // API, of the kind a test tool offers to drive it, and no 3GPP or IETF
 // specification defines it; nothing of it goes between the UE and the
-// IMS. Bodies are JSON.
+// IMS. Bodies are JSON. openapi.yaml, next to this file, describes each
+// route with its bodies and answers in OpenAPI 3.1, and the tests check
+// the handler against it.
 //
 //	GET  /status          the Status
 //	POST /register        register, or refresh the registration
