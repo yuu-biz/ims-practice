@@ -1,12 +1,14 @@
 package oam
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"maps"
+	"mime"
 	"net/http"
 	"net/url"
 	"slices"
@@ -19,13 +21,14 @@ import (
 
 // The AlarmList of the SubNetwork (TS 28.111 7.3.2) holds the alarm
 // records of every node of the inventory. The OAM keeps no copy: a GET
-// reads the list of each node, as GET /oam/v1/alarms does.
+// reads the list of each node, as GET /oam/v1/alarms does, and a PATCH
+// hands the acknowledgement to the node whose record it is.
 //
 // A record is keyed by <node>.<alarm_id>: the name of the node in the
 // inventory, which holds no dot, then the alarm_id of the node's
 // maintenance API, which is random. The key thus differs across the
-// lists of all nodes and over time (TS 28.111 6.4), and it tells,
-// without asking anyone, which node holds the record.
+// lists of all nodes and over time (TS 28.111 6.4), and a PATCH tells
+// from it, without asking anyone, which node to hand each record to.
 
 // alarmRecordKey is the key of the record alarmID of node.
 func alarmRecordKey(node, alarmID string) string { return node + "." + alarmID }
@@ -136,6 +139,8 @@ func (s *Server) serveAlarmList(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet, http.MethodHead:
 		s.getAlarmList(w, r)
+	case http.MethodPatch:
+		s.patchAlarmList(w, r)
 	case http.MethodPut:
 		// AlarmList=1 always exists, so a PUT would replace it, and
 		// every attribute of the list is read-only (TS 32.158
@@ -148,7 +153,7 @@ func (s *Server) serveAlarmList(w http.ResponseWriter, r *http.Request) {
 		attributeError(mns.ModificationNotAllowed, mns.ObjectDeletionNotAllowed,
 			"The alarm list cannot be deleted").write(w)
 	default:
-		w.Header().Set("Allow", "DELETE, GET, HEAD, PUT")
+		w.Header().Set("Allow", "DELETE, GET, HEAD, PATCH, PUT")
 		w.WriteHeader(http.StatusMethodNotAllowed)
 	}
 }
@@ -372,4 +377,283 @@ func (s *Server) getAlarmList(w http.ResponseWriter, r *http.Request) {
 	}
 	s.log.Error("the alarm list could not be answered", "error", err.Error())
 	w.WriteHeader(http.StatusInternalServerError)
+}
+
+// The attributes of an alarm record that a consumer may write (the
+// isWritable of TS 28.111 7.3.1.2): the acknowledgement.
+const (
+	ackStateAttribute    = "ackState"
+	ackUserIdAttribute   = "ackUserId"
+	ackSystemIdAttribute = "ackSystemId"
+)
+
+// mergePatch is the media type of a JSON Merge Patch (RFC 7396 4, TS
+// 32.158 6.3.2).
+const mergePatch = "application/merge-patch+json"
+
+// patchAlarmList is modifyMOIAttributes of the alarm list with a JSON
+// Merge Patch (TS 28.532 11.1.1.3, 12.1.1.1.4.2; TS 32.158 6.3.2),
+// which acknowledges alarm records or takes their acknowledgement back
+// (TS 28.111 6.7). The OAM checks the whole body, and which node each
+// record is of, before it asks any node; the node then checks each of
+// its records under one hold of the lock of its list before it changes
+// any (maintenance.Node.SetAckStates). The patch is thus applied whole
+// or not at all, as TS 32.158 6.3.1 requires.
+//
+// SIMPLIFIED: TS 32.158 V20.1.0 6.3.1. A patch that names the records
+// of two or more nodes is refused with 500 and SERVER_LIMITATION, after
+// the whole body is checked and before any node is asked, so that no
+// list changes. Applying it as a whole would take a two-phase commit
+// between the nodes; the consumer sends one patch per node instead.
+//
+// SIMPLIFIED: TS 28.111 V20.0.0 A.1.4. Of the three forms of patch that
+// A.1.4 shows for an acknowledgement, only the JSON Merge Patch is
+// taken; JSON Patch and the two forms of 3GPP are answered with 415 and
+// Accept-Patch (RFC 5789 2.2). The media type of the 3GPP forms is
+// spelt differently in TS 28.532 and TS 32.158, and an acknowledgement
+// needs no more than the Merge Patch.
+func (s *Server) patchAlarmList(w http.ResponseWriter, r *http.Request) {
+	if r.URL.RawQuery != "" {
+		// TS 32.158 6.3.2: the target URI of a patch has no query.
+		attributeError(mns.ValidationError, "", "A patch has no query").write(w)
+		return
+	}
+	if t, _, err := mime.ParseMediaType(r.Header.Get("Content-Type")); err != nil || t != mergePatch {
+		w.Header().Set("Accept-Patch", mergePatch)
+		w.WriteHeader(http.StatusUnsupportedMediaType)
+		return
+	}
+	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxRequestBody))
+	if err != nil {
+		var tooLarge *http.MaxBytesError
+		if errors.As(err, &tooLarge) {
+			w.WriteHeader(http.StatusRequestEntityTooLarge)
+			return
+		}
+		attributeError(mns.ValidationError, "", "The body cannot be read").write(w)
+		return
+	}
+	nodes, problem := s.readAckPatch(body)
+	if problem != nil {
+		problem.write(w)
+		return
+	}
+	if len(nodes) > 1 {
+		attributeError(mns.ServerLimitation, "", "A patch of the records of more than one node").write(w)
+		return
+	}
+	for node, acks := range nodes {
+		if problem := s.ackAlarmRecords(r.Context(), node, acks); problem != nil {
+			problem.write(w)
+			return
+		}
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// readAckPatch checks a JSON Merge Patch of the alarm list, and returns
+// the acknowledgements it asks for, by the node of the inventory and
+// then the alarm_id of the node. It answers the first problem it finds,
+// in the order of the names; TS 32.158 6.6.3.1 lets a producer stop
+// there.
+//
+// The patch merges into the resource (RFC 7396 2): only the three
+// attributes of the acknowledgement of a record may be written. null
+// removes a member, and nothing here may be removed: the system alone
+// removes a record (TS 28.111 6.5), and an acknowledgement cannot be
+// emptied.
+func (s *Server) readAckPatch(body []byte) (map[string]map[string]maintenance.AckStateRequest, *mnsError) {
+	notWritable := func(tokens ...string) *mnsError {
+		return attributeError(mns.ModificationNotAllowed, mns.AttributeNotWritable, "Attributes that the consumer cannot write", pointer(tokens...))
+	}
+	invalidValue := func(tokens ...string) *mnsError {
+		return attributeError(mns.ValidationError, mns.NewAttributeValueInvalid, "Invalid values of attributes", pointer(tokens...))
+	}
+	invariant := func(token string) *mnsError {
+		return attributeError(mns.ModificationNotAllowed, mns.AttributeInvariant, "Attributes that never change", pointer(token))
+	}
+
+	dec := json.NewDecoder(bytes.NewReader(body))
+	dec.UseNumber()
+	var top map[string]any
+	if err := dec.Decode(&top); err != nil || top == nil {
+		return nil, attributeError(mns.ValidationError, "", "The body is no JSON object")
+	}
+	if _, err := dec.Token(); !errors.Is(err, io.EOF) {
+		return nil, attributeError(mns.ValidationError, "", "The body is no JSON object")
+	}
+	// TS 32.158 6.3.2: the id is present and that of the target, or the
+	// patch would change the id.
+	id, ok := top["id"]
+	if !ok {
+		return nil, attributeError(mns.ValidationError, "", "A patch without the id", pointer("id"))
+	}
+	if id != alarmListID {
+		return nil, invariant("id")
+	}
+	identifiers := map[string]string{"objectClass": mns.ClassAlarmList, "objectInstance": s.mns.alarmList.String()}
+	nodes := map[string]map[string]maintenance.AckStateRequest{}
+	for _, name := range slices.Sorted(maps.Keys(top)) {
+		v := top[name]
+		switch {
+		case name == "id":
+		case identifiers[name] != "":
+			if v != identifiers[name] {
+				return nil, invariant(name)
+			}
+		case name != "attributes":
+			return nil, notWritable(name)
+		case v == nil:
+			return nil, notWritable(name)
+		default:
+			attrs, ok := v.(map[string]any)
+			if !ok {
+				return nil, invalidValue(name)
+			}
+			if problem := s.readAckAttributes(attrs, nodes, notWritable, invalidValue); problem != nil {
+				return nil, problem
+			}
+		}
+	}
+	return nodes, nil
+}
+
+// readAckAttributes reads the attributes member of an acknowledgement
+// patch into nodes.
+func (s *Server) readAckAttributes(attrs map[string]any, nodes map[string]map[string]maintenance.AckStateRequest, notWritable, invalidValue func(...string) *mnsError) *mnsError {
+	for _, name := range slices.Sorted(maps.Keys(attrs)) {
+		if name != "alarmRecords" || attrs[name] == nil {
+			return notWritable("attributes", name)
+		}
+		records, ok := attrs[name].(map[string]any)
+		if !ok {
+			return invalidValue("attributes", name)
+		}
+		for _, key := range slices.Sorted(maps.Keys(records)) {
+			at := []string{"attributes", name, key}
+			node, alarmID, _ := strings.Cut(key, ".")
+			if _, known := s.byName[node]; !known || alarmID == "" {
+				// The type is that of a change whose target does not exist
+				// (TS 32.158 6.6.4); 6.6.5.3.2 gives the reason to a
+				// removal, and 6.6.5.1 leaves the list of reasons open.
+				return attributeError(mns.IENotFound, mns.AttributeNotFound, "Alarm records that are not in the list", pointer(at...))
+			}
+			if records[key] == nil {
+				return notWritable(at...)
+			}
+			record, ok := records[key].(map[string]any)
+			if !ok {
+				return invalidValue(at...)
+			}
+			req, problem := readAck(record, at, notWritable, invalidValue)
+			if problem != nil {
+				return problem
+			}
+			if nodes[node] == nil {
+				nodes[node] = map[string]maintenance.AckStateRequest{}
+			}
+			nodes[node][alarmID] = req
+		}
+	}
+	return nil
+}
+
+// readAck reads the acknowledgement of one record of a patch. ackUserId
+// is mandatory, as notifyAckStateChanged carries it (TS 28.111 8.8.2);
+// ackSystemId is not. ackState is mandatory too: the node changes the
+// state, and the two others with it.
+func readAck(record map[string]any, at []string, notWritable, invalidValue func(...string) *mnsError) (maintenance.AckStateRequest, *mnsError) {
+	in := func(name string) []string { return append(slices.Clone(at), name) }
+	var req maintenance.AckStateRequest
+	for _, name := range slices.Sorted(maps.Keys(record)) {
+		v := record[name]
+		switch name {
+		case ackStateAttribute, ackUserIdAttribute, ackSystemIdAttribute:
+		default:
+			return req, notWritable(in(name)...)
+		}
+		if v == nil {
+			return req, notWritable(in(name)...)
+		}
+		text, ok := v.(string)
+		if !ok {
+			return req, invalidValue(in(name)...)
+		}
+		switch name {
+		case ackStateAttribute:
+			req.AckState = maintenance.AckState(text)
+		case ackUserIdAttribute:
+			req.Operator = text
+		case ackSystemIdAttribute:
+			req.AckSystemID = text
+		}
+	}
+	if req.AckState != maintenance.Acknowledged && req.AckState != maintenance.Unacknowledged {
+		return req, invalidValue(in(ackStateAttribute)...)
+	}
+	if req.Operator == "" {
+		return req, invalidValue(in(ackUserIdAttribute)...)
+	}
+	return req, nil
+}
+
+// ackAlarmRecords hands the acknowledgements of one node to the node,
+// and answers the node's refusal as a problem of the patch: a record
+// that the node does not have is IE_NOT_FOUND, a value that it refuses
+// NEW_ATTRIBUTE_VALUE_INVALID. A node that does not answer, or fails,
+// is 502, without a body: the OAM is the gateway to the node, which
+// gave it no answer that it could use (TS 32.158 6.6.2).
+func (s *Server) ackAlarmRecords(ctx context.Context, node string, acks map[string]maintenance.AckStateRequest) *mnsError {
+	e := s.byName[node]
+	ids := slices.Sorted(maps.Keys(acks))
+	for _, id := range ids {
+		s.log.Info("alarm acknowledgement requested", "node", node, "alarm_id", id,
+			"ack_state", string(acks[id].AckState), "operator", acks[id].Operator, "ack_system_id", acks[id].AckSystemID)
+	}
+	f := fanOut(ctx, s, []Endpoint{e}, func(ctx context.Context, c *maintenance.Client, _ Endpoint) (maintenance.AckStatesChange, error) {
+		return c.SetAckStates(ctx, maintenance.AckStatesRequest{AckStates: acks})
+	})
+	failed := f.Nodes[0].Error
+	switch {
+	case failed == nil:
+		return nil
+	case failed.StatusCode == http.StatusNotFound:
+		var pointers []string
+		for _, id := range s.missingAlarms(ctx, e, ids) {
+			pointers = append(pointers, pointer("attributes", "alarmRecords", alarmRecordKey(node, id)))
+		}
+		return attributeError(mns.IENotFound, mns.AttributeNotFound, "Alarm records that are not in the list", pointers...)
+	case failed.StatusCode == http.StatusBadRequest:
+		return attributeError(mns.ValidationError, mns.NewAttributeValueInvalid, "Invalid values of attributes")
+	}
+	s.log.Warn("alarm acknowledgement failed", "node", node, "error", failed.Error)
+	return &mnsError{status: http.StatusBadGateway}
+}
+
+// missingAlarms is those of ids that the list of the node e does not
+// hold, which the node refused a patch for. The node names only the
+// first in its refusal, so the OAM reads the list again. Should that
+// fail, or find them all, as when another patch acknowledged a record
+// in between, every id is named.
+func (s *Server) missingAlarms(ctx context.Context, e Endpoint, ids []string) []string {
+	f := fanOut(ctx, s, []Endpoint{e}, func(ctx context.Context, c *maintenance.Client, _ Endpoint) (maintenance.AlarmList, error) {
+		return c.Alarms(ctx, maintenance.AlarmFilter{})
+	})
+	if f.Nodes[0].Result == nil {
+		return ids
+	}
+	held := map[string]bool{}
+	for _, r := range f.Nodes[0].Result.AlarmRecords {
+		held[r.AlarmID] = true
+	}
+	var missing []string
+	for _, id := range ids {
+		if !held[id] {
+			missing = append(missing, id)
+		}
+	}
+	if len(missing) == 0 {
+		return ids
+	}
+	return missing
 }
