@@ -89,6 +89,8 @@ func (s *Server) MnSHandler() http.Handler {
 		switch {
 		case err == nil && slices.Equal(d, s.mns.alarmList):
 			s.serveAlarmList(w, r)
+		case err == nil && len(d) == 2 && d[0] == s.mns.subNetwork[0] && d[1].ClassName == mns.ClassNtfSubscriptionControl:
+			s.serveNtfSubscription(w, r, d[1].Id)
 		default:
 			w.WriteHeader(http.StatusNotFound)
 		}
@@ -109,6 +111,7 @@ var statusOf = map[mns.ErrorType]int{
 	mns.IENotFound:             http.StatusBadRequest,
 	mns.ModificationNotAllowed: http.StatusForbidden,
 	mns.ServerLimitation:       http.StatusInternalServerError,
+	mns.ServiceDisabled:        http.StatusServiceUnavailable,
 }
 
 // queryError is the answer to a GET whose query parameters params are

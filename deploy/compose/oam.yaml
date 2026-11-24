@@ -17,7 +17,9 @@ oam:
   # changes, exports and removes subscriptions.
   hss_provisioning: http://hss.ims.mnc001.mcc001.3gppnetwork.org:8081
   # Where the OAM keeps what it holds itself: the history of the
-  # configuration changes it made, and the backups. compose.yaml gives
+  # configuration changes it made, the backups, and the subscriptions
+  # of the OSSs to the alarm notifications, which one OAM instance
+  # keeps here when the node has no shared store. compose.yaml gives
   # it a named volume, so a restarted container finds them again. A
   # backup holds the long-term key, OPc and the passwords of every
   # subscription, so the directory is the OAM's own, readable by
