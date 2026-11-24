@@ -84,12 +84,12 @@ home_domain: ims.mnc001.mcc001.3gppnetwork.org
 
 | 層 | パッケージ |
 | --- | --- |
-| 役割。ノードの振る舞い。 | `pcscf` `icscf` `scscf` `hss` `ipsmgw` `sc` `agw` `lab` `ue` `epc` `mmtel` `mrfc` `ibcf` |
-| IMS の決まりとインタフェース | `ims` `ifc` `reginfo` `cx` `sh` `rx` `policy` `simservs` `interconnect` `netann` `confinfo` |
-| プロトコル | `sip` `sipdns` `diameter` `sdp` `rtp` `rtcp` `sms` `hep` `xcap` |
+| 役割。ノードの振る舞い。 | `pcscf` `icscf` `scscf` `hss` `ipsmgw` `sc` `smsc` `agw` `lab` `ue` `epc` `mmtel` `mrfc` `ibcf` `oam` |
+| IMS の決まりとインタフェース | `ims` `ifc` `reginfo` `cx` `sh` `rx` `sgd` `policy` `simservs` `interconnect` `netann` `confinfo` |
+| プロトコル | `sip` `sipdns` `diameter` `sdp` `rtp` `rtcp` `sms` `hep` `xcap` `h248` |
 | 符号化と計算 | `g711` `amr` `evs` `wav` `mixer` `milenage` `aka` `precondition` |
-| 起動と観測 | `config` `hepagent` `metrics` |
-| `cmd/ims` も `cmd/ue` も読み込まないもの | `kvstore` `maintenance` `oam` `fault` `fivegc` `n5` `nhss` `sbi` `h248` `nas` `sgd` `smsc` `rtptest` |
+| 起動、状態、運用 | `config` `hepagent` `metrics` `kvstore` `maintenance` `fault` |
+| `cmd/ims` も `cmd/ue` も読み込まないもの | `fivegc` `n5` `nhss` `sbi` `nas` `rtptest` `openapitest` |
 
 - 役割のパッケージが、下の層を組み合わせて使います。役割 `mrfp` はパッケージ `agw` で、音声ガイダンスと会議に `mixer` を使います。
 - 層は仕様の文書で分かれます。RFC 3261 はパッケージ `sip`、TS 24.229 は役割のパッケージです。
@@ -157,7 +157,7 @@ home_domain: ims.mnc001.mcc001.3gppnetwork.org
 | `hep`、`hepagent` | 信号の写しをラボへ送る（HEP3）。 |
 | `g711`、`wav` | G.711 μ-law と WAV。UE シミュレータの音声。 |
 | `epc`、`policy`、`rx`、`milenage`、`aka`、`amr`、`rtcp`、`precondition` | VoLTE の通話で使う部品。この回では扱わない。 |
-| `h248`、`sgd`、`smsc`、`nas`、`fivegc` など | どの役割も起動しない部品。使うのはそれぞれの試験だけ。 |
+| `nas`、`fivegc`、`n5`、`nhss`、`sbi` など | どの役割も起動しない部品。使うのはそれぞれの試験だけ。 |
 
 - どの役割も起動しない部品は、`cmd/ims` からも `cmd/ue` からも import されていません。`go list -deps ./cmd/...` に出てこないことで確かめられます。
 
@@ -191,8 +191,8 @@ home_domain: ims.mnc001.mcc001.3gppnetwork.org
 | 境界 | コードでの形 | 差し替えられる相手 |
 | --- | --- | --- |
 | HSS | Cx と Sh。Diameter のメッセージそのもの。 | 本格的な HSS |
-| メディア中継ノードの制御 | `pcscf` の `Relay` | H.248 による制御（`h248` にメッセージがある。どの役割も使っていない） |
-| SC | `ipsmgw` の `ServiceCentre` | SGd のクライアント（`sgd` にメッセージがある。どの役割も使っていない） |
+| メディア中継ノードの制御 | `pcscf` の `Relay` | Iq の H.248 による制御（`h248/mediactl`）。設定で選ぶ。 |
+| SC | SGd。Diameter のメッセージそのもの（`sgd`）。 | 本格的な SC |
 | 役割の組み合わせ | 設定の `roles` | 1 台に複数の役割 |
 
 - これ以外の場所には、差し替えのための抽象化を置いていません。使う場所が 1 つしか無い抽象化は、読む層を増やすだけだからです。
