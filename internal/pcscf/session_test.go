@@ -13,6 +13,7 @@ import (
 
 	"github.com/yuu-biz/ims-practice/internal/agw"
 	"github.com/yuu-biz/ims-practice/internal/metrics"
+	"github.com/yuu-biz/ims-practice/internal/openapitest"
 	"github.com/yuu-biz/ims-practice/internal/rtptest"
 	"github.com/yuu-biz/ims-practice/internal/sdp"
 	"github.com/yuu-biz/ims-practice/internal/sip"
@@ -56,7 +57,7 @@ func newSessionHarness(t *testing.T) *sessionHarness {
 			relay.Subtract(c.ID)
 		}
 	})
-	api := httptest.NewServer(agw.Handler(relay))
+	api := httptest.NewServer(openapitest.Load(t, "../agw/openapi.yaml").Handler(t, agw.Handler(relay)))
 	t.Cleanup(api.Close)
 	h := newSessionHarnessWith(t, []MediaRelay{{Name: api.URL, Control: agw.NewClient(api.URL)}})
 	h.relay = relay
@@ -256,7 +257,7 @@ func TestCallIsRefusedWhenTheRelayHasNoFreePort(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	api := httptest.NewServer(agw.Handler(relay))
+	api := httptest.NewServer(openapitest.Load(t, "../agw/openapi.yaml").Handler(t, agw.Handler(relay)))
 	t.Cleanup(api.Close)
 	h := newSessionHarnessWith(t, []MediaRelay{{Name: api.URL, Control: agw.NewClient(api.URL)}})
 	close(h.release)

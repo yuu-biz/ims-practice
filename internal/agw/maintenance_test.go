@@ -164,7 +164,7 @@ func TestTheDrainWaitsForTheContextsOfTheRelay(t *testing.T) {
 func TestTheControlAPIRefusesANewContextWithServiceUnavailable(t *testing.T) {
 	r := newRelay(t, 4)
 	node := managed(t, r)
-	api := httptest.NewServer(Handler(r))
+	api := httptest.NewServer(checkedHandler(t, r))
 	defer api.Close()
 	client := NewClient(api.URL)
 	ctx := context.Background()

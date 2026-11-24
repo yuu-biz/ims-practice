@@ -95,7 +95,7 @@ func waitForPackets(t *testing.T, r *Relay, contextID string, tid TerminationID,
 // answer only reaches the UE once the relay latches onto the real source.
 func TestRelayLatchesAndForwards(t *testing.T) {
 	r := newRelay(t, 20)
-	api := httptest.NewServer(Handler(r))
+	api := httptest.NewServer(checkedHandler(t, r))
 	defer api.Close()
 	client := NewClient(api.URL)
 
@@ -292,7 +292,7 @@ func TestModeGatesMedia(t *testing.T) {
 // context of one termination, and IDs that the relay chooses.
 func TestSubtractingTheLastTerminationDeletesTheContext(t *testing.T) {
 	r := newRelay(t, 20)
-	api := httptest.NewServer(Handler(r))
+	api := httptest.NewServer(checkedHandler(t, r))
 	defer api.Close()
 	client := NewClient(api.URL)
 

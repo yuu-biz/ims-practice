@@ -68,7 +68,7 @@ func readRTP(t *testing.T, c interface {
 func TestPlayIsSentAsRTPAndNotified(t *testing.T) {
 	clip, frames := ramp(t, 4)
 	r := newMRFP(t, 20, Announcements{"ramp": clip})
-	api := httptest.NewServer(Handler(r))
+	api := httptest.NewServer(checkedHandler(t, r))
 	defer api.Close()
 	client := NewClient(api.URL)
 	url, notified := notifications(t)
@@ -203,7 +203,7 @@ func TestPlayTakesThePlaceOfRelayedMedia(t *testing.T) {
 func TestUnknownAnnouncement(t *testing.T) {
 	clip, _ := ramp(t, 1)
 	r := newMRFP(t, 4, Announcements{"ramp": clip})
-	api := httptest.NewServer(Handler(r))
+	api := httptest.NewServer(checkedHandler(t, r))
 	defer api.Close()
 	client := NewClient(api.URL)
 

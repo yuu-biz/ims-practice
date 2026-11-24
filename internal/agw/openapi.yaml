@@ -1,0 +1,369 @@
+openapi: 3.1.0
+info:
+  title: Control API of the media relay
+  version: 1.0.0
+  description: |
+    The HTTP control API of the media relay, which the P-CSCF uses as its
+    IMS-AGW, the IBCF as its TrGW and the MRFC as its MRFP. It is this
+    project's own API; each call stands for the H.248 command that a
+    controller sends over Iq, Ix or Mp, which the relay also takes
+    (H.248.1 (03/2013) 7):
+
+    - POST /contexts is Add to a new context.
+    - POST /contexts/{id}/terminations is Add to a context.
+    - PUT /contexts/{id}/terminations/{tid} is Modify.
+    - DELETE /contexts/{id}/terminations/{tid} is Subtract of one
+      termination, and DELETE /contexts/{id} of every termination.
+    - GET /contexts reads the contexts, as AuditValue would.
+    - GET /announcements/{name} reads a provisioned announcement, as
+      AuditCapabilities would.
+
+    When an event that a request asked for happens, the relay posts a
+    Notify (H.248.1 (03/2013) 7.2.7) to the URL in events.notify of the
+    termination, and the controller answers 200.
+
+    Every success answers 200. An error has the body Error, whose code
+    tells the client which error the relay returned. The relay ignores
+    a field of a request that it does not know. A method that a path does
+    not take answers 405 with Allow, as text.
+paths:
+  /contexts:
+    get:
+      operationId: getContexts
+      responses:
+        '200':
+          description: Every context of the relay.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Context'
+    post:
+      operationId: addContext
+      summary: Add terminations to a new context.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [terminations]
+              properties:
+                terminations:
+                  type: array
+                  items:
+                    $ref: '#/components/schemas/TerminationRequest'
+              additionalProperties: true
+      responses:
+        '200':
+          $ref: '#/components/responses/Context'
+        '400':
+          $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
+        '500':
+          $ref: '#/components/responses/Error'
+        '503':
+          $ref: '#/components/responses/Error'
+  /contexts/{id}:
+    delete:
+      operationId: subtractContext
+      summary: Subtract every termination of a context.
+      parameters:
+        - $ref: '#/components/parameters/id'
+      responses:
+        '200':
+          $ref: '#/components/responses/Context'
+        '404':
+          $ref: '#/components/responses/Error'
+        '500':
+          $ref: '#/components/responses/Error'
+  /contexts/{id}/terminations:
+    post:
+      operationId: addTermination
+      summary: Add a termination to a context.
+      parameters:
+        - $ref: '#/components/parameters/id'
+      requestBody:
+        $ref: '#/components/requestBodies/TerminationRequest'
+      responses:
+        '200':
+          $ref: '#/components/responses/Termination'
+        '400':
+          $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
+        '500':
+          $ref: '#/components/responses/Error'
+        '503':
+          $ref: '#/components/responses/Error'
+  /contexts/{id}/terminations/{tid}:
+    put:
+      operationId: modifyTermination
+      summary: Modify a termination; a field left out keeps what the termination has.
+      parameters:
+        - $ref: '#/components/parameters/id'
+        - $ref: '#/components/parameters/tid'
+      requestBody:
+        $ref: '#/components/requestBodies/TerminationRequest'
+      responses:
+        '200':
+          $ref: '#/components/responses/Termination'
+        '400':
+          $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
+        '500':
+          $ref: '#/components/responses/Error'
+        '503':
+          $ref: '#/components/responses/Error'
+    delete:
+      operationId: subtractTermination
+      summary: Subtract one termination; the context goes with its last one.
+      parameters:
+        - $ref: '#/components/parameters/id'
+        - $ref: '#/components/parameters/tid'
+      responses:
+        '200':
+          description: The termination with its counts, and whether the context went with it.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [termination, context_deleted]
+                properties:
+                  termination:
+                    $ref: '#/components/schemas/Termination'
+                  context_deleted:
+                    type: boolean
+                additionalProperties: false
+        '404':
+          $ref: '#/components/responses/Error'
+        '500':
+          $ref: '#/components/responses/Error'
+  /announcements/{name}:
+    get:
+      operationId: getAnnouncement
+      summary: A provisioned announcement, which an MRFC checks before it accepts a request to play it (TS 23.333 6.1.8.2).
+      parameters:
+        - name: name
+          in: path
+          required: true
+          description: The name, as the an parameter of the signal an/apf names it (TS 29.333 5.14.3.18).
+          schema:
+            type: string
+      responses:
+        '200':
+          description: The announcement.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Announcement'
+        '404':
+          $ref: '#/components/responses/Error'
+components:
+  parameters:
+    id:
+      name: id
+      in: path
+      required: true
+      description: The context.
+      schema:
+        type: string
+    tid:
+      name: tid
+      in: path
+      required: true
+      description: The termination.
+      schema:
+        type: string
+  requestBodies:
+    TerminationRequest:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/TerminationRequest'
+  responses:
+    Context:
+      description: The context.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Context'
+    Termination:
+      description: The termination as it is now.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Termination'
+    Error:
+      description: |
+        The error, by code: no_context and no_termination (404),
+        unknown_announcement (404), bad_request (400), no_port and
+        out_of_service (503), internal (500).
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+  schemas:
+    Error:
+      type: object
+      required: [error, message]
+      properties:
+        error:
+          type: string
+          enum: [no_context, no_termination, no_port, bad_request, unknown_announcement, out_of_service, internal]
+        message:
+          type: string
+      additionalProperties: false
+    Address:
+      description: An IP address and a UDP port, such as 192.0.2.10:4000.
+      type: string
+    Mode:
+      description: The StreamMode of the termination.
+      type: string
+      enum: [sendrecv, sendonly, recvonly, inactive]
+    TerminationRequest:
+      description: |
+        What Add and Modify set on one termination, a field for each
+        descriptor of the command (H.248.1 (03/2013) 7.1).
+      type: object
+      properties:
+        id:
+          description: Names the termination on Add; left out, the relay chooses, as the CHOOSE wildcard $ does.
+          type: string
+        mode:
+          description: An Add without one gives sendrecv.
+          $ref: '#/components/schemas/Mode'
+        remote:
+          description: Where the termination sends RTP, from the SDP of the party it faces; RTCP goes to the port above.
+          $ref: '#/components/schemas/Address'
+        latch:
+          description: The latching of H.248.37 (06/2008) 6.6. An Add without one gives latch; a Modify without one keeps it.
+          type: string
+          enum: [off, latch, relatch, stop]
+        signals:
+          $ref: '#/components/schemas/Signals'
+        events:
+          $ref: '#/components/schemas/Events'
+      additionalProperties: true
+    Termination:
+      description: One end of a context, a pair of local UDP ports for RTP and RTCP (RFC 3550 11).
+      type: object
+      required: [id, mode, local, latched, packets, packets_sent, rtcp_local, rtcp_latched, rtcp_packets]
+      properties:
+        id:
+          type: string
+        mode:
+          $ref: '#/components/schemas/Mode'
+        local:
+          $ref: '#/components/schemas/Address'
+        remote:
+          $ref: '#/components/schemas/Address'
+        latched:
+          description: remote is the source of a packet that arrived, rather than the address of the SDP.
+          type: boolean
+        packets:
+          description: RTP packets received, the statistics that H.248 returns on Subtract.
+          type: integer
+          minimum: 0
+        packets_sent:
+          type: integer
+          minimum: 0
+        rtcp_local:
+          $ref: '#/components/schemas/Address'
+        rtcp_remote:
+          $ref: '#/components/schemas/Address'
+        rtcp_latched:
+          type: boolean
+        rtcp_packets:
+          type: integer
+          minimum: 0
+        signals:
+          $ref: '#/components/schemas/Signals'
+        events:
+          $ref: '#/components/schemas/Events'
+      additionalProperties: false
+    Context:
+      description: An association of terminations, one call leg, announcement or conference.
+      type: object
+      required: [id, terminations]
+      properties:
+        id:
+          type: string
+        terminations:
+          description: The terminations, by id.
+          type: object
+          additionalProperties:
+            $ref: '#/components/schemas/Termination'
+      additionalProperties: false
+    Signals:
+      description: The Signals descriptor (H.248.1 (03/2013) 7.1.11). A new one replaces the one before, and an empty one stops what plays.
+      type: object
+      properties:
+        play:
+          description: Plays a provisioned announcement, the signal an/apf (TS 29.333 5.14.3.18).
+          type: object
+          required: [announcement]
+          properties:
+            announcement:
+              type: string
+            repeat:
+              description: The plays in all, the Announcement Cycles of TS 29.333 5.17.2.9; 0 plays once.
+              type: integer
+            delay_ms:
+              description: The silence between two plays.
+              type: integer
+              minimum: 0
+            duration_ms:
+              description: The most the announcement may last; 0 for no limit.
+              type: integer
+              minimum: 0
+          additionalProperties: true
+      additionalProperties: true
+    Events:
+      description: The Events descriptor (H.248.1 (03/2013) 7.1.9).
+      type: object
+      required: [request_id, detect, notify]
+      properties:
+        request_id:
+          type: integer
+          minimum: 0
+        detect:
+          type: array
+          items:
+            type: string
+            enum: [signal_completed]
+        notify:
+          description: The URL that the relay posts each Notify to.
+          type: string
+      additionalProperties: true
+    Notify:
+      description: What the relay posts to events.notify, the Notify command with its ObservedEvents descriptor (H.248.1 (03/2013) 7.2.7).
+      type: object
+      required: [context, termination, request_id, event]
+      properties:
+        context:
+          type: string
+        termination:
+          type: string
+        request_id:
+          type: integer
+          minimum: 0
+        event:
+          type: string
+          enum: [signal_completed]
+      additionalProperties: false
+    Announcement:
+      type: object
+      required: [name, duration_ms]
+      properties:
+        name:
+          type: string
+        duration_ms:
+          description: How long one play lasts.
+          type: integer
+          minimum: 0
+      additionalProperties: false

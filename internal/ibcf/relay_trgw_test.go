@@ -9,6 +9,7 @@ import (
 
 	"github.com/yuu-biz/ims-practice/internal/agw"
 	"github.com/yuu-biz/ims-practice/internal/interconnect"
+	"github.com/yuu-biz/ims-practice/internal/openapitest"
 	"github.com/yuu-biz/ims-practice/internal/rtptest"
 	"github.com/yuu-biz/ims-practice/internal/sdp"
 	"github.com/yuu-biz/ims-practice/internal/sip"
@@ -26,7 +27,7 @@ func TestTheMediaRelayAsTheTrGW(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	server := httptest.NewServer(agw.Handler(relay))
+	server := httptest.NewServer(openapitest.Load(t, "../agw/openapi.yaml").Handler(t, agw.Handler(relay)))
 	defer server.Close()
 	core, peer := netip.MustParseAddr("192.0.2.50"), netip.MustParseAddr("198.51.100.50")
 	b := &IBCF{cfg: Config{TrGWCoreAddress: core, TrGWPeerAddress: peer}, trgw: agw.NewClient(server.URL)}
