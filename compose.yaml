@@ -211,6 +211,29 @@ services:
       ims:
         ipv4_address: 172.28.0.65
 
+  # A stand-in for the OSS, the operator's network manager, which the
+  # OAM tells of the alarms of the nodes. "oss serve" takes the alarm
+  # notifications that the OAM posts to http://oss:8080/notifications
+  # and checks each against the names of the 3GPP OpenAPI files; the
+  # other commands of oss subscribe at the OAM, read its alarm list and
+  # acknowledge alarms. It does not start with "docker compose up":
+  # start it with "docker compose --profile oss up -d oss", and read what
+  # it took with
+  #   docker compose exec oss wget -qO - http://127.0.0.1:8080/received
+  oss:
+    image: ims-practice/ims:dev
+    pull_policy: never
+    profiles: [oss]
+    entrypoint: ["oss"]
+    command: [serve]
+    restart: unless-stopped
+    stop_grace_period: 5s
+    depends_on: [oam]
+    dns: [172.28.0.2]
+    networks:
+      ims:
+        ipv4_address: 172.28.0.66
+
   # The UE simulators. They do not start with "docker compose up"; run
   # them with "docker compose run --rm ue register" and the like. ue2 is
   # the second subscriber, to call, and ue3 the third, to divert calls

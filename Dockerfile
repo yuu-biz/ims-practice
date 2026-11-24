@@ -26,7 +26,7 @@ COPY . .
 RUN rm -rf internal/lab/web internal/oam/web
 COPY --from=web /web/dist/ internal/lab/web/
 COPY --from=web-oam /web/dist/ internal/oam/web/
-RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/ ./cmd/ims ./cmd/ue
+RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/ ./cmd/ims ./cmd/ue ./cmd/oss
 
 # Alpine rather than scratch, so that learners have a shell inside the
 # container.
@@ -35,7 +35,7 @@ FROM alpine:3.24
 # signalling of IMS AKA sets up IPsec ESP, and with which a learner
 # reads the result (TS 33.203 7.1). The ip of BusyBox has no xfrm.
 RUN apk add --no-cache iproute2
-COPY --from=build /out/ims /out/ue /usr/local/bin/
+COPY --from=build /out/ims /out/ue /out/oss /usr/local/bin/
 # The announcements of the MRFP (deploy/announcements). compose.yaml
 # mounts the same directory over them, so that a changed WAV file plays
 # without a new build.
