@@ -87,6 +87,13 @@ services:
     volumes:
       - ./deploy/redundancy/ipsmgw.yaml:/etc/ims/node.yaml:ro
 
+  sc:
+    depends_on:
+      valkey:
+        condition: service_healthy
+    volumes:
+      - ./deploy/redundancy/sc.yaml:/etc/ims/node.yaml:ro
+
   mmtel:
     depends_on:
       valkey:

@@ -30,7 +30,32 @@ IP-SM-GW sends their short messages out here, as the S-CSCF does
 with a request for another network.`,
 		Value: ibcf,
 	},
+	{
+		File: "ipsmgw.yaml",
+		Key:  "diameter.peers",
+		Comment: `The HSS alone. Neither network of this deployment runs a Service
+Centre of its own, so each IP-SM-GW uses the stub of the SC inside
+its own process. The stub is what finds a user of the other
+network by ENUM and sends the short message out through the IBCF;
+a Service Centre would ask the HSS of the recipient instead, which
+needs no interconnect of the IMS (TS 23.204 6.4 step 3).`,
+		Value: []peer{{Address: hssAddress, OriginHost: hssHost, Kind: "hss"}},
+	},
 }
+
+// peer is one entry of the diameter.peers sequence, with its keys in the
+// order the files of deploy/compose write them.
+type peer struct {
+	Address    string `yaml:"address"`
+	OriginHost string `yaml:"origin_host"`
+	Kind       string `yaml:"kind"`
+}
+
+// The HSS of network A, as deploy/compose names it.
+const (
+	hssHost    = "hss.ims.mnc001.mcc001.3gppnetwork.org"
+	hssAddress = hssHost + ":3868"
+)
 
 // ibcf is the IBCF of network A (a/ibcf.yaml).
 const ibcf = "sip:ibcf.ims.mnc001.mcc001.3gppnetwork.org:5060"

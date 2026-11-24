@@ -1,0 +1,61 @@
+# The Service Centre of SMS, which holds the short messages of the
+# network and delivers them. A StatefulSet with a headless Service for
+# the same reasons as the HSS (hss.yaml): the Service Centre is a
+# Diameter peer with its own Origin-Host, which the IP-SM-GW connects to
+# and the HSS sends its alerts back over, so the name has to resolve to
+# the Pod's own address.
+apiVersion: v1
+kind: Service
+metadata:
+  name: sc
+spec:
+  clusterIP: None
+  selector:
+    app.kubernetes.io/name: sc
+  ports:
+    # RFC 6733 2.1. Diameter over TCP, the transport every peer here uses.
+    - name: diameter
+      port: 3868
+      protocol: TCP
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: sc
+spec:
+  serviceName: sc
+  replicas: 1
+  podManagementPolicy: Parallel
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: sc
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: sc
+    spec:
+      # Enough for the DPR and DPA on SIGTERM; the answer timeout is 5 s
+      # (internal/config).
+      terminationGracePeriodSeconds: 10
+      # Names with a dot are asked as they are, without the search list
+      # first, so the capture holds only the queries the node means.
+      dnsConfig:
+        options:
+          - name: ndots
+            value: "1"
+      containers:
+        - name: ims
+          image: ims-practice/ims:dev
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: diameter
+              containerPort: 3868
+              protocol: TCP
+          volumeMounts:
+            - name: config
+              mountPath: /etc/ims
+              readOnly: true
+      volumes:
+        - name: config
+          configMap:
+            name: sc-config

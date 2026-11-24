@@ -195,16 +195,17 @@ sip.CSeq.method in {"MESSAGE", "REGISTER"} || (sip && ip.addr == 172.28.0.70) ||
 
 | 見るもの | 見どころ |
 | --- | --- |
-| UDR と UDA | SC が、受信者の番号を持つ利用者を Sh で調べる。Data-Reference は 10。 |
+| OFR と OFA | IP-SM-GW が SMS-SUBMIT を SGd でサービスセンタに渡し、その答えに submit report が入る。 |
+| SRR と SRA | サービスセンタが、受信者の番号を持つ利用者がいるかを S6c で HSS に尋ねる。 |
 | IP-SM-GW の MESSAGE の Request-URI | UE 1 の SIP URI。 |
 | Accept-Contact | `*;+g.3gpp.smsip;require;explicit`。 |
 | In-Reply-To | 手順 1 の MESSAGE の Call-ID。 |
 | ボディ | RP-ACK。中に SMS-SUBMIT-REPORT。 |
 | 経路 | I-CSCF から入る。I-CSCF は LIR で UE 1 の S-CSCF を探す。 |
 
-フィルタは `diameter.cmd.code == 306 || sip.In-Reply-To` です。
+フィルタは `diameter.cmd.code in {8388645, 8388647} || sip.In-Reply-To` です。
 
-> 手順書 [5](../../../docs/guide/ja/sms.md#5-sc-が受信者を調べるudr-と-uda) から [7](../../../docs/guide/ja/sms.md#7-ue-1-が-200-を返す)。TS 24.341 5.3.3.4.3、5.3.1.2。TS 29.328 7.6.2。TS 24.229 5.7.3。
+> 手順書 [5](../../../docs/guide/ja/sms.md#5-ip-sm-gw-が-sc-にショートメッセージを渡すofrsrrofa) から [7](../../../docs/guide/ja/sms.md#7-ue-1-が-200-を返す)。TS 24.341 5.3.3.4.3、5.3.1.2。TS 29.328 7.6.2。TS 24.229 5.7.3。
 
 ---
 
@@ -212,7 +213,8 @@ sip.CSeq.method in {"MESSAGE", "REGISTER"} || (sip && ip.addr == 172.28.0.70) ||
 
 | 見るもの | 見どころ |
 | --- | --- |
-| Request-URI | `tel:+12025550102`。UDA が返した tel URI。 |
+| TFR | サービスセンタが SMS-DELIVER を SGd で IP-SM-GW へ転送する。受信者は IMSI で表す。 |
+| Request-URI | `tel:+12025550102`。その IMSI に結び付いた tel URI。 |
 | Request-Disposition | `no-fork`。 |
 | ボディ | 網からの RP-DATA。中に SMS-DELIVER。TP-OA に送信者の番号。 |
 | 優先度 2 の条件 | 一致しない。P-Asserted-Identity が IP-SM-GW。 |
@@ -222,7 +224,7 @@ sip.CSeq.method in {"MESSAGE", "REGISTER"} || (sip && ip.addr == 172.28.0.70) ||
 - `+g.3gpp.smsip` を登録していない UE には届かず、S-CSCF が 480 を返します。登録した機能タグをここで使います。
 - SMS-SUBMIT と SMS-DELIVER を比べます。TP-DA が TP-OA になり、TP-SCTS が増えています。
 
-> 手順書 [8](../../../docs/guide/ja/sms.md#8-sc-がメッセージを配達するsms-deliver) から [10](../../../docs/guide/ja/sms.md#10-ue-2-が-200-を返す)。TS 24.341 5.3.3.4.2、5.3.2.3。TS 24.229 5.4.3.3。RFC 3841 7.2.4、9.1。
+> 手順書 [8](../../../docs/guide/ja/sms.md#8-sc-がメッセージを転送しip-sm-gw-が配達するtfr-と-sms-deliver) から [10](../../../docs/guide/ja/sms.md#10-ue-2-が-200-を返す)。TS 24.341 5.3.3.4.2、5.3.2.3。TS 24.229 5.4.3.3。RFC 3841 7.2.4、9.1。
 
 ---
 

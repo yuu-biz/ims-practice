@@ -26,15 +26,18 @@ A UE simulator registers with SIP Digest and calls another UE by its telephone n
       │    control
       ▼
    I-CSCF ──► S-CSCF ──► application servers (IP-SM-GW, MMTel AS)
-      │          │                  │
-      │          │                  ▼
-      │          │               MRF (MRFC, MRFP)
-      └── Cx ────┴──► HSS stub
+      │          │             │    │
+      │          │         SGd │    ▼
+      │          │             │  MRF (MRFC, MRFP)
+      │          │             ▼
+      │          │     Service Centre of SMS
+      │          │             │ S6c
+      └── Cx ────┴──► HSS stub ◄┘
 ```
 
 - One container image runs every CSCF role. Configuration selects the role, so a node can be a P-CSCF, an I-CSCF, an S-CSCF, or several at once.
 - The HSS and the access network, an EPC with a PCRF, are stubs. They present real interfaces to the IMS, such as Diameter Cx, Sh and Rx, so a full implementation can take the place of either without a change to the IMS.
-- The S-CSCF invokes application servers through iFCs: the IP-SM-GW for SMS, and the MMTel AS for supplementary services such as call forwarding and barring.
+- The S-CSCF invokes application servers through iFCs: the IP-SM-GW for SMS, and the MMTel AS for supplementary services such as call forwarding and barring. The IP-SM-GW hands each short message to the Service Centre, which holds it until it is delivered, over the Diameter interfaces of SMS (SGd and S6c).
 - At the border with another IMS network, the IBCF and the TrGW hide the topology and relay the media.
 - Signaling is not encrypted by default, so Wireshark decodes every message without extra setup.
 

@@ -16,6 +16,7 @@ resources:
   - pcscf.yaml
   - agw.yaml
   - ipsmgw.yaml
+  - sc.yaml
   - mmtel.yaml
   - mrfc.yaml
   - mrfp.yaml
@@ -40,6 +41,8 @@ configMapGenerator:
     files: [node.yaml=config/agw.yaml]
   - name: ipsmgw-config
     files: [node.yaml=config/ipsmgw.yaml]
+  - name: sc-config
+    files: [node.yaml=config/sc.yaml]
   - name: mmtel-config
     files: [node.yaml=config/mmtel.yaml]
   - name: mrfc-config

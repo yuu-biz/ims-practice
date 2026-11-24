@@ -370,6 +370,13 @@ hss:
     # registration guide moves one to it, which is a change the capture
     # shows reaching the S-CSCF.
     no-services: []
+  # The Service Centres this HSS can alert, by the SC address that the
+  # SC-Address of an S6c request carries (TS 29.338 5.3.1.2): the alert
+  # goes to the Diameter identity named here, over the connection that
+  # the Service Centre opened.
+  service_centres:
+    - address: "12025550100"
+      host: sc.ims.mnc001.mcc001.3gppnetwork.org
 diameter:
   origin_host: hss.ims.mnc001.mcc001.3gppnetwork.org
   origin_realm: ims.mnc001.mcc001.3gppnetwork.org
