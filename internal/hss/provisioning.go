@@ -633,7 +633,9 @@ const (
 //
 // A replacement that changes the user profile of a registered user
 // pushes the new profile to the S-CSCF before it answers
-// (profileChanged, pushProfile).
+// (profileChanged, pushProfile), and one that changes the default public
+// identity of a registered user deregisters the user instead
+// (defaultIdentityChanged).
 func (h *HSS) putSubscription(w http.ResponseWriter, r *http.Request, peers Peers) {
 	impi := r.PathValue("impi")
 	dry, err := dryRun(r)
@@ -721,6 +723,14 @@ func (h *HSS) putSubscription(w http.ResponseWriter, r *http.Request, peers Peer
 		h.writePutAnswer(w, http.StatusOK, resultUnchanged, stored, data)
 		return
 	}
+	deregister := !dry && h.defaultIdentityChanged(stored, next)
+	if deregister {
+		// The RTR follows the write. The HSS deregisters the user first
+		// (6.1.3.1), in the same write as the new subscription, so that a
+		// store that fails in between leaves no user registered with a
+		// default identity that the S-CSCF does not have.
+		next.State, next.ServerName, next.SCSCF, next.AuthenticationPending = NotRegistered, "", diameter.Identity{}, false
+	}
 	if !dry {
 		if err := h.store.Replace(ctx, next); err != nil {
 			h.writeAddFailure(w, err)
@@ -740,7 +750,16 @@ func (h *HSS) putSubscription(w http.ResponseWriter, r *http.Request, peers Peer
 		}
 		h.log.Info("subscription replaced", "private_identity", sub.PrivateIdentity, "public_identities", sub.PublicIdentities,
 			"state", stored.State.String())
-		if h.profileChanged(stored, next) {
+		switch {
+		case deregister:
+			// The lock is let go before the RTR, as before a PPR.
+			unlock()
+			h.log.Info("registration state", "private_identity", impi, "from", stored.State.String(), "to", NotRegistered.String(),
+				"reason", "a new default public identity")
+			if err := h.registrationTermination(ctx, peers, stored); err != nil {
+				h.log.Warn("RTR failed", "private_identity", impi, "scscf", stored.SCSCF.OriginHost, "error", err.Error())
+			}
+		case h.profileChanged(stored, next):
 			unlock()
 			h.pushChangedProfile(ctx, peers, impi)
 		}
@@ -1063,29 +1082,32 @@ func served(u Subscriber) bool { return u.State != NotRegistered && u.SCSCF.Orig
 // one away (TS 29.228 6.5.2.1), or by a new MSISDN in the service
 // information of a criterion.
 //
-// TS 29.228 6.5.2.1 keeps one change out of the PPR: a new default
-// public identity of a set in the Registered state, which is the first
-// identity of the set that is not barred (6.5.1.1). Barring the first
-// identity, or lifting the barring of one before it, is such a change
-// too.
-//
-// SIMPLIFIED: TS 29.228 6.5.2.1. For a new default public identity of a
-// registered user, the HSS sends no RTR to deregister the set, where the
-// specification asks for one; it sends nothing. The S-CSCF gets the new
-// default identity, with the rest of the changed profile, at the next
-// registration or with the next PPR.
+// A PATCH changes neither the identities nor their barring, so the
+// default public identity stays; a PUT that changes it deregisters the
+// user instead of pushing (defaultIdentityChanged).
 func (h *HSS) profileChanged(stored, next Subscriber) bool {
 	if !served(stored) {
 		return false
 	}
 	set := h.settings.Load()
-	before, after := h.userProfileIn(set, stored), h.userProfileIn(set, next)
-	if stored.State == Registered && before.DefaultIdentity() != after.DefaultIdentity() {
-		h.log.Info("not pushed: a new default public identity of a registered user",
-			"private_identity", stored.PrivateIdentity, "default_identity", after.DefaultIdentity())
+	return !bytes.Equal(h.userProfileIn(set, stored).Marshal(), h.userProfileIn(set, next).Marshal())
+}
+
+// defaultIdentityChanged reports whether a provisioning request gives a
+// registered user another default public identity: the first identity
+// of the set that is not barred (TS 29.228 6.5.1.1), or none when the
+// request bars them all. Moving another identity to the front of the
+// set, barring the first one, and lifting the barring of one before it
+// all do. TS 29.228 6.5.2.1 keeps such a change out of the PPR and has
+// the HSS deregister the set with an RTR instead, so that no PPR
+// changes the default identity that the S-CSCF holds (TS 24.229 5.4.1.8
+// NOTE 1).
+func (h *HSS) defaultIdentityChanged(stored, next Subscriber) bool {
+	if stored.State != Registered || !served(stored) {
 		return false
 	}
-	return !bytes.Equal(before.Marshal(), after.Marshal())
+	set := h.settings.Load()
+	return h.userProfileIn(set, stored).DefaultIdentity() != h.userProfileIn(set, next).DefaultIdentity()
 }
 
 // pushChangedProfile sends the PPR of a provisioning request that
@@ -1181,11 +1203,13 @@ const pushLockWait = 8 * time.Second
 func profilePushes(privateID string) string { return "profile-push:" + privateID }
 
 // registrationTermination is the network initiated de-registration by
-// the HSS, TS 29.228 6.1.3, for a removed subscription: the S-CSCF of a
-// user that is Registered or Unregistered learns with
-// PERMANENT_TERMINATION that it no longer serves the user, and that no
-// other S-CSCF will (6.1.3.1). The HSS has already forgotten the user,
-// which is the Not Registered state with no S-CSCF name.
+// the HSS, TS 29.228 6.1.3, for a removed subscription, or for one whose
+// default public identity changed (defaultIdentityChanged): the S-CSCF
+// of a user that is Registered or Unregistered learns with
+// PERMANENT_TERMINATION that it no longer serves the user (6.1.3.1),
+// which names a subscription that is cancelled or modified. s is the
+// subscriber as it was. The HSS has already forgotten the user or set it
+// Not Registered, which has no S-CSCF name either way.
 func (h *HSS) registrationTermination(ctx context.Context, peers Peers, s Subscriber) error {
 	if !served(s) {
 		return nil
