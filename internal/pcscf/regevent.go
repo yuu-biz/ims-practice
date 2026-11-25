@@ -57,10 +57,6 @@ func (p *PCSCF) locate(u sip.URI) ([]sip.Destination, error) {
 // When the Store fails, no SUBSCRIBE goes out and the next REGISTER
 // tries again.
 func (p *PCSCF) watchRegEvent(a Association, registered time.Duration, log *slog.Logger) {
-	if len(a.PublicIdentities) == 0 {
-		log.Warn("no public identity to subscribe to the reg event package of")
-		return
-	}
 	ctx := context.Background()
 	sub, ok, err := p.store.RegSubscription(ctx, a.PrivateIdentity)
 	if err != nil {
