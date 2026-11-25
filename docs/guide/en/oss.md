@@ -105,6 +105,8 @@ The OAM answers `201 Created`, with the URI of the subscription in `Location` an
 | `notificationFilter` | none | A Jex conditions expression (TS 32.161 7.6) that a notification must meet, such as `contains(href,"ManagedElement=scscf") and perceivedSeverity="CRITICAL"`. `oss subscribe -filter` sets it. |
 | `scope` | none | The objects whose notifications are sent; none means the whole SubNetwork. |
 
+The OAM takes these four attributes and nothing more. A subscription with a name that the OpenAPI file has but the OAM does not take is refused with 500 and `SERVER_LIMITATION`: `HeartbeatControl`, which asks for heartbeat notifications, `VsDataContainer`, or a `scope` that selects with `dataNodeSelector`. The OAM understands such a request, but cannot carry it out (TS 32.158 6.6.4). A body with a name that the file does not have, such as `lastSequenceNo`, or one that is no JSON, is refused with 400 and `NEW_OBJECT_REPRESENTATION_INVALID`. When a body has a problem of each kind, the answer is the 400, which the OSS can mend.
+
 A `PUT` of the same id again replaces the subscription and is answered `200 OK`. The subscription is kept by the OAM, not by the instance that took the request, so any instance of the OAM that watches a node sends its notifications. Read it back with `getMOIAttributes`, a `GET` of the same URI:
 
 ```sh

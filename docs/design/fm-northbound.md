@@ -197,7 +197,7 @@ OAM は、その確認の `ackSystemId` に自分の名前を入れて、ノー�
 | --- | --- |
 | `notificationRecipientAddress` | 必須。`http` か `https` の URL で、host を持ち、利用者の情報と fragment を持たない。無ければ 400 で `NEW_OBJECT_ATTRIBUTE_VALUE_MISSING`、ほかの形なら 400 で `NEW_ATTRIBUTE_VALUE_INVALID` |
 | `notificationTypes` | 下の「通知」の表の 6 つのうちのいくつか。無ければ 6 つすべて。ほかの名前、同じ名前の 2 回目、空の配列は 400 で `NEW_ATTRIBUTE_VALUE_INVALID`。空の配列は、何の通知も受けない購読になるので断る |
-| `scope` | 無いか、`{"scopeType":"BASE_ALL"}` だけ。基点は購読を含む SubNetwork です（TS 28.622 4.3.22.1）。ノードで分けたいときは `notificationFilter` を使う。OpenAPI の列挙にあるほかの値（`BASE_ONLY`、`BASE_NTH_LEVEL`、`BASE_SUBTREE`）と、`scopeType` の無い scope（`BASE_ONLY` に当たる）は 500 で `SERVER_LIMITATION`。列挙に無い値は 400 で `NEW_ATTRIBUTE_VALUE_INVALID` |
+| `scope` | 無いか、`{"scopeType":"BASE_ALL"}` だけ。基点は購読を含む SubNetwork です（TS 28.622 4.3.22.1）。ノードで分けたいときは `notificationFilter` を使う。OpenAPI の列挙にあるほかの値（`BASE_ONLY`、`BASE_NTH_LEVEL`、`BASE_SUBTREE`）と、`scopeType` の無い scope（`BASE_ONLY` に当たる）は 500 で `SERVER_LIMITATION`。OpenAPI のもう 1 つの形、`dataNodeSelector` で選ぶ scope も 500 で `SERVER_LIMITATION`、`badAttributes` は `#/attributes/scope/dataNodeSelector`。列挙に無い値は 400 で `NEW_ATTRIBUTE_VALUE_INVALID` |
 | `notificationFilter` | Jex の条件の式。通知の本文のどの値にも当てられる（4.3.22.1）。例は `contains(href,"ManagedElement=scscf") and perceivedSeverity="CRITICAL"`。文法に合わない式を書いた `PUT` には、400 の `NEW_ATTRIBUTE_VALUE_INVALID` を返す（TS 32.158 6.6.5.3.2）。文法には合うが `internal/jex` が評価しない式（配列の位置を選ぶ式など）は、500 で `SERVER_LIMITATION`。読み出しの問い合わせの 400 と 500 の分け方と同じ |
 
 `PUT` の本文は、ほかに次のように確かめます。誤りの `reason` は TS 32.158 6.6.5.4 の値です。
@@ -205,12 +205,15 @@ OAM は、その確認の `ackSystemId` に自分の名前を入れて、ノー�
 | 本文 | 答え |
 | --- | --- |
 | JSON として読めない、OpenAPI に無い名前（`lastSequenceNo` など）がある | 400。`VALIDATION_ERROR`、`reason` は `NEW_OBJECT_REPRESENTATION_INVALID`。`badAttributes` は付けない |
+| OpenAPI にはあるが、OAM が受けない名前がある。`HeartbeatControl`（TS 28.622 4.3.21）と `VsDataContainer`（4.3.9。`Top`（4.3.29）が含むので、どのオブジェクトも持てる） | 500。`SERVER_LIMITATION`、`badAttributes` は `#/HeartbeatControl` か `#/VsDataContainer`。本文は正しく、意味も分かるが、producer の限りを越える要求です（TS 32.158 6.6.4）。中身の形は確かめません。値が `null` なら、その名前は無いものとして扱います |
 | `id` が経路の id と違う | 400。`NEW_ATTRIBUTE_VALUE_INVALID`、`badAttributes` は `#/id` |
 | `objectClass` が無い | 400。`NEW_OBJECT_ATTRIBUTE_VALUE_MISSING`。TS 32.158 5.1.2 は、作るときの本文に id とクラスの名前を求めています |
 | `objectClass` が `NtfSubscriptionControl` でない | 400。`NEW_OBJECT_CLASS_NAME_INVALID` |
 | `objectInstance` があり、経路の DN と違う | 400。`NEW_ATTRIBUTE_VALUE_INVALID` |
 | `Content-Type` が `application/json` でない | 415。本文は付けない |
 | 経路に問い合わせを付ける | 400。`VALIDATION_ERROR`。5.1.2 は、作るときの宛先の URI に問い合わせを付けないとしています。`DELETE` も同じ（5.4） |
+
+400 に当たる問題と 500 に当たる問題が 1 つの本文にあれば、400 を答えます。読み出しの問い合わせと同じく、OSS が直せる誤りを先にします（6.6.5.1）。`SERVER_LIMITATION` は、正しく読めて意味も分かる要求に当てる型だからです（6.6.4）。
 
 購読の id は、64 文字までの英字、数字、`-`、`_`、`.` に限ります。この範囲なら、経路の 1 区切りにも DN の id にもそのまま書けます。ほかの id の `PUT` は 400 で `NEW_ATTRIBUTE_VALUE_INVALID`、`badAttributes` は `#/id` です。`GET` と `DELETE` は 404 です。
 
