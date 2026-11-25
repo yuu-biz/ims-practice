@@ -66,8 +66,9 @@
 //	POST   /fault/v1/faults
 //	       Request -> 201 Fault, in state active, or done for a fault
 //	       that happens once. 400 for a request
-//	       that the API cannot take, 409 when the target already has a
-//	       fault that this one would meet, 500 with the failed Fault in
+//	       that the API cannot take, 409 when the target's container
+//	       already has a fault that this one would meet, by any name
+//	       of it, 500 with the failed Fault in
 //	       ErrorBody.fault when the executor could not apply it.
 //	GET    /fault/v1/faults/{id}
 //	       Fault. 404 for an unknown id.
