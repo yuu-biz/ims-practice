@@ -2,6 +2,7 @@ package hss
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -249,6 +250,40 @@ func TestAPutThatChangesTheDefaultIdentityDeregisters(t *testing.T) {
 				t.Errorf("UAA of the next registration = %s, want %s", a.Result, tt.uaa)
 			}
 		})
+	}
+}
+
+// TestADryRunAnswersTheDeregistration: a dry run answers what the PUT
+// would do, so for a new default identity of a registered user it
+// answers the user Not Registered, as the PUT leaves it. It sends no RTR
+// and leaves the user as it is.
+func TestADryRunAnswersTheDeregistration(t *testing.T) {
+	h := newProfileHSS(t, "default")
+	mar(t, h, scscf)
+	sar(t, h, scscf, cx.AssignRegistration)
+	scscfs := &fakeSCSCFs{}
+	body := `{"private_identity": "` + impi + `", "public_identities": ["tel:+12025550101", "` + impu + `"], "password": "test-password-1"}`
+	w := do(t, h.Provisioning(scscfs), "PUT", "/subscriptions/"+impi+"?dry_run=true", body)
+	if w.Code != http.StatusOK {
+		t.Fatalf("PUT: %d %s", w.Code, w.Body)
+	}
+	var answer struct {
+		Subscription struct {
+			RegistrationState string `json:"registration_state"`
+			ServerName        string `json:"server_name"`
+		} `json:"subscription"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &answer); err != nil {
+		t.Fatal(err)
+	}
+	if answer.Subscription.RegistrationState != NotRegistered.String() || answer.Subscription.ServerName != "" {
+		t.Errorf("dry run answered %+v, want the user Not Registered with no server name", answer.Subscription)
+	}
+	if len(scscfs.rtrs) != 0 {
+		t.Errorf("%d RTRs on a dry run, want none", len(scscfs.rtrs))
+	}
+	if u, _, err := h.store.Subscriber(context.Background(), impi); err != nil || u.State != Registered {
+		t.Errorf("after the dry run the user is %s (%v), want Registered", u.State, err)
 	}
 }
 
