@@ -119,7 +119,16 @@ paths:
         '409':
           description: |
             The generation is below the node's, or is the node's own with
-            a value that is not in force.
+            a value that is not in force; or a role whose instances share
+            their settings found a later change where they keep them.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: |
+            A role whose instances share their settings could not write
+            them where they keep them. Nothing changed.
           content:
             application/json:
               schema:

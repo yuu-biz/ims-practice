@@ -40,26 +40,44 @@ type Setting struct {
 	prepare func(json.RawMessage) (value json.RawMessage, apply func(), err error)
 	// group, when not nil, is the settings that a change puts in force
 	// together (Together).
-	group *settingGroup
+	group *SettingsGroup
 }
 
-// settingGroup is how the settings of one group are put in force at
-// once: begin before the first of them is set, commit after the last.
-type settingGroup struct{ begin, commit func() }
+// SettingsGroup is how a role puts the settings of one group in force
+// at once (Together).
+type SettingsGroup struct {
+	// Begin comes before the first set of a change that names a setting
+	// of the group. It cannot fail, and every Begin is followed by one
+	// Commit.
+	Begin func()
+	// Commit comes after the last set, with the generation of the change,
+	// and puts in force all that the sets gave the role, or none of it.
+	// A role whose instances share their settings writes them where the
+	// others read them, which may fail, or may find a later change there
+	// already; Commit then returns an error, wrapping
+	// ErrStaleGeneration for the later change, and the node changes
+	// nothing of the request.
+	Commit func(generation uint64) error
+	// Generation is the generation of the settings the role has in
+	// force, or nil for a role whose settings change through this node
+	// alone. A role whose instances share their settings puts in force
+	// the changes that reach another instance too, and the node then
+	// shows their generation and takes only the changes above it.
+	Generation func() uint64
+}
 
 // Together makes settings one group. A change that names several of
-// them puts them in force at once: the API calls begin, then the set of
-// each setting the change names, then commit, so the role can gather
-// the values that set gives it and publish them in commit. A request of
+// them puts them in force at once: the API calls Begin, then the set of
+// each setting the change names, then Commit, so the role can gather
+// the values that set gives it and publish them in Commit. A request of
 // the role that reads its settings then sees them all from before the
-// change or all from after it, never a part of each. begin and commit
-// cannot fail; the API calls them once per change that names a setting
-// of the group, and never for one that names none.
-func Together(begin, commit func(), settings ...Setting) []Setting {
-	g := &settingGroup{begin: begin, commit: commit}
+// change or all from after it, never a part of each. The API calls
+// Begin and Commit once per change that names a setting of the group,
+// and never for one that names none.
+func Together(g SettingsGroup, settings ...Setting) []Setting {
 	grouped := make([]Setting, len(settings))
 	for i, s := range settings {
-		s.group = g
+		s.group = &g
 		grouped[i] = s
 	}
 	return grouped
@@ -180,6 +198,17 @@ func isSettingName(s string) bool {
 	return true
 }
 
+// configurationGeneration is the generation of the settings in force:
+// that of the last change of this node, or the generation that the
+// role holds its settings at, when that is later (SettingsGroup).
+func (n *Node) configurationGeneration() uint64 {
+	generation := n.generation.Load()
+	if n.group != nil && n.group.Generation != nil {
+		generation = max(generation, n.group.Generation())
+	}
+	return generation
+}
+
 // Configuration is the node's effective configuration and its
 // changeable settings. It fails when the view does not marshal to JSON
 // or holds a secret that is not redacted.
@@ -193,7 +222,7 @@ func (n *Node) Configuration() (Configuration, error) {
 	if err := checkRedactedJSON(view); err != nil {
 		return Configuration{}, fmt.Errorf("configuration view: %w", err)
 	}
-	c := Configuration{Generation: n.generation.Load(), Configuration: view, Changeable: []SettingValue{}}
+	c := Configuration{Generation: n.configurationGeneration(), Configuration: view, Changeable: []SettingValue{}}
 	for _, s := range n.settings {
 		v, err := s.current()
 		if err != nil {
@@ -221,7 +250,7 @@ func (n *Node) ChangeConfiguration(req ConfigurationChangeRequest) (Configuratio
 	}
 	n.changeMu.Lock()
 	defer n.changeMu.Unlock()
-	generation := n.generation.Load()
+	generation := n.configurationGeneration()
 	stale := fmt.Errorf("%w: %d is not above %d", ErrStaleGeneration, req.Generation, generation)
 	if req.Generation != 0 && req.Generation < generation {
 		return ConfigurationChange{}, stale
@@ -277,22 +306,26 @@ func (n *Node) ChangeConfiguration(req ConfigurationChangeRequest) (Configuratio
 	if req.Generation == 0 {
 		record.Generation = generation + 1
 	}
-	// The settings of a group go in force together (Together): its begin
-	// comes before the first of them, and its commit after the last.
-	var groups []*settingGroup
-	for _, c := range changes {
-		if g := c.setting.group; g != nil && !slices.Contains(groups, g) {
-			groups = append(groups, g)
+	// The settings of the group go in force together (Together): Begin
+	// comes before the first of them, and Commit after the last. The
+	// settings outside it are set once the group is in force, as Commit
+	// may fail, and a change is all or nothing.
+	grouped := slices.ContainsFunc(changes, func(c prepared) bool { return c.setting.group != nil })
+	if grouped {
+		n.group.Begin()
+		for _, c := range changes {
+			if c.setting.group != nil {
+				c.apply()
+			}
+		}
+		if err := n.group.Commit(record.Generation); err != nil {
+			return ConfigurationChange{}, fmt.Errorf("nothing changed: %w", err)
 		}
 	}
-	for _, g := range groups {
-		g.begin()
-	}
 	for _, c := range changes {
-		c.apply()
-	}
-	for _, g := range groups {
-		g.commit()
+		if c.setting.group == nil {
+			c.apply()
+		}
 	}
 	for _, c := range changes {
 		// The value in force is read back, so the record has it as the
