@@ -119,9 +119,12 @@ jobs:
       - run: npm test
       - run: npm run build
 
+  # The end-to-end jobs build their own images and take nothing from the
+  # go job, so they start beside it rather than after it. all-passed
+  # still needs every job.
   e2e:
     runs-on: ubuntu-latest
-    needs: [changes, go]
+    needs: changes
     if: needs.changes.outputs.code == 'true'
     steps:
       - uses: actions/checkout@v7
@@ -139,7 +142,7 @@ jobs:
 
   e2e-registration:
     runs-on: ubuntu-latest
-    needs: [changes, go]
+    needs: changes
     if: needs.changes.outputs.code == 'true'
     steps:
       - uses: actions/checkout@v7
@@ -161,7 +164,7 @@ jobs:
   # it created registers.
   e2e-oam:
     runs-on: ubuntu-latest
-    needs: [changes, go, web-oam]
+    needs: [changes, web-oam]
     if: needs.changes.outputs.code == 'true'
     steps:
       - uses: actions/checkout@v7
@@ -185,7 +188,7 @@ jobs:
   # alarms that a drain of the HSS raises and clears.
   e2e-fm:
     runs-on: ubuntu-latest
-    needs: [changes, go]
+    needs: changes
     if: needs.changes.outputs.code == 'true'
     steps:
       - uses: actions/checkout@v7
@@ -207,7 +210,7 @@ jobs:
   # maintenance API of the HSS node once the deployment is up.
   e2e-admission:
     runs-on: ubuntu-latest
-    needs: [changes, go]
+    needs: changes
     if: needs.changes.outputs.code == 'true'
     steps:
       - uses: actions/checkout@v7
@@ -225,7 +228,7 @@ jobs:
 
   e2e-call:
     runs-on: ubuntu-latest
-    needs: [changes, go]
+    needs: changes
     if: needs.changes.outputs.code == 'true'
     steps:
       - uses: actions/checkout@v7
@@ -245,7 +248,7 @@ jobs:
 
   e2e-lab:
     runs-on: ubuntu-latest
-    needs: [changes, go, web-lab]
+    needs: [changes, web-lab]
     if: needs.changes.outputs.code == 'true'
     steps:
       - uses: actions/checkout@v7
@@ -265,7 +268,7 @@ jobs:
 
   e2e-sms:
     runs-on: ubuntu-latest
-    needs: [changes, go]
+    needs: changes
     if: needs.changes.outputs.code == 'true'
     steps:
       - uses: actions/checkout@v7
@@ -285,7 +288,7 @@ jobs:
 
   e2e-volte:
     runs-on: ubuntu-latest
-    needs: [changes, go]
+    needs: changes
     if: needs.changes.outputs.code == 'true'
     steps:
       - uses: actions/checkout@v7
@@ -310,7 +313,7 @@ jobs:
   # deployment with ESP works on the Linux of a runner.
   e2e-esp:
     runs-on: ubuntu-latest
-    needs: [changes, go]
+    needs: changes
     if: needs.changes.outputs.code == 'true'
     steps:
       - uses: actions/checkout@v7
@@ -331,7 +334,7 @@ jobs:
 
   e2e-mmtel:
     runs-on: ubuntu-latest
-    needs: [changes, go]
+    needs: changes
     if: needs.changes.outputs.code == 'true'
     steps:
       - uses: actions/checkout@v7
@@ -352,7 +355,7 @@ jobs:
 
   e2e-mrf:
     runs-on: ubuntu-latest
-    needs: [changes, go]
+    needs: changes
     if: needs.changes.outputs.code == 'true'
     steps:
       - uses: actions/checkout@v7
@@ -375,7 +378,7 @@ jobs:
 
   e2e-interconnect:
     runs-on: ubuntu-latest
-    needs: [changes, go]
+    needs: changes
     if: needs.changes.outputs.code == 'true'
     steps:
       - uses: actions/checkout@v7
@@ -400,7 +403,7 @@ jobs:
   # that starts the fault role.
   e2e-fault:
     runs-on: ubuntu-latest
-    needs: [changes, go]
+    needs: changes
     if: needs.changes.outputs.code == 'true'
     steps:
       - uses: actions/checkout@v7
@@ -417,7 +420,7 @@ jobs:
   # the clean-up step needs the same files to find the containers.
   e2e-h248:
     runs-on: ubuntu-latest
-    needs: [changes, go]
+    needs: changes
     if: needs.changes.outputs.code == 'true'
     env:
       COMPOSE_FILE: compose.yaml:deploy/h248/h248.yaml
@@ -447,7 +450,7 @@ jobs:
   # needs the same files to find the containers.
   e2e-observability:
     runs-on: ubuntu-latest
-    needs: [changes, go]
+    needs: changes
     if: needs.changes.outputs.code == 'true'
     env:
       COMPOSE_FILE: compose.yaml:deploy/observability/compose.observability.yaml
@@ -474,7 +477,7 @@ jobs:
   # they do with the state in the memory of each process.
   e2e-redundancy:
     runs-on: ubuntu-latest
-    needs: [changes, go]
+    needs: changes
     if: needs.changes.outputs.code == 'true'
     env:
       COMPOSE_FILE: compose.yaml:deploy/redundancy/redundancy.yaml
