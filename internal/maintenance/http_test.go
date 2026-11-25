@@ -299,6 +299,23 @@ func TestLogLevelRoundTrip(t *testing.T) {
 	}
 }
 
+// The zero slog.Level is INFO, so a body without a level must not be
+// read as a request for INFO.
+func TestLogLevelRequestNeedsALevel(t *testing.T) {
+	tn := newTestNode(t)
+	tn.level.Set(slog.LevelDebug)
+	for _, body := range []string{`{"operator":"test-operator"}`, `{}`, `null`} {
+		rec := httptest.NewRecorder()
+		tn.handler.ServeHTTP(rec, httptest.NewRequest(http.MethodPut, LogLevelPath, strings.NewReader(body)))
+		if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "level") {
+			t.Errorf("PUT %s = %d %s, want 400 that names the level", body, rec.Code, rec.Body)
+		}
+	}
+	if got := tn.level.Level(); got != slog.LevelDebug {
+		t.Errorf("level = %v after the refused requests, want DEBUG", got)
+	}
+}
+
 func TestUnknownPathsAndMethodsAnswerJSON(t *testing.T) {
 	tn := newTestNode(t)
 	for _, tc := range []struct {

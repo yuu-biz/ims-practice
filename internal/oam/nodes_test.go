@@ -408,6 +408,8 @@ func TestErrorsOfTheNodeOperations(t *testing.T) {
 		{"PUT", "/oam/v1/roles/pcscf/administrative-state", `{"administrative_state": "SHUTTINGDOWN", "force": true}`, http.StatusBadRequest},
 		{"PUT", "/oam/v1/roles/pcscf/log-level", `{"level": "LOUD"}`, http.StatusBadRequest},
 		{"PUT", "/oam/v1/roles/pcscf/log-level", `{"level": "DEBUG"} {}`, http.StatusBadRequest},
+		{"PUT", "/oam/v1/roles/pcscf/log-level", `{"operator": "test-operator"}`, http.StatusBadRequest},
+		{"PUT", "/oam/v1/roles/pcscf/log-level", `null`, http.StatusBadRequest},
 	}
 	for _, tt := range tests {
 		status, body := ts.call(t, tt.method, tt.path, tt.body)

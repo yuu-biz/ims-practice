@@ -1,7 +1,9 @@
 package maintenance
 
 import (
+	"bytes"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"net/url"
 	"time"
@@ -92,10 +94,32 @@ type LogLevel struct {
 	Level slog.Level `json:"level"`
 }
 
-// LogLevelRequest is the body of PUT /maintenance/v1/log-level.
+// LogLevelRequest is the body of PUT /maintenance/v1/log-level. Level
+// is required.
 type LogLevelRequest struct {
 	Level    slog.Level `json:"level"`
 	Operator string     `json:"operator,omitempty"`
+}
+
+// UnmarshalJSON refuses a body without a level. The zero slog.Level is
+// INFO, so without this check {} would set the log to INFO. Unknown
+// fields are refused as the decoders of the API refuse them, since
+// their check does not reach into a type with its own UnmarshalJSON.
+func (r *LogLevelRequest) UnmarshalJSON(b []byte) error {
+	var body struct {
+		Level    *slog.Level `json:"level"`
+		Operator string      `json:"operator"`
+	}
+	dec := json.NewDecoder(bytes.NewReader(b))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&body); err != nil {
+		return err
+	}
+	if body.Level == nil {
+		return errors.New("level is required")
+	}
+	*r = LogLevelRequest{Level: *body.Level, Operator: body.Operator}
+	return nil
 }
 
 // LogLevelChange is the answer to PUT /maintenance/v1/log-level.
