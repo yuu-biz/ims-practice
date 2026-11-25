@@ -149,9 +149,9 @@ const retryAfter = 30
 //   - each request it is answering, counted from the moment it takes the
 //     request on, which is after the refusal of one it will not take
 //     (take): the third-party REGISTER until the 200 is written, the
-//     Store read and, for a reregistration of a user this instance could
-//     not reach, the HSS told that the user is back (tellReachable in
-//     regevent.go), each MESSAGE until the submit report or the delivery
+//     Store read and, for a reregistration of a user whom a short
+//     message of this network did not reach, the HSS told that the user
+//     is back (tellReachable in regevent.go), each MESSAGE until the submit report or the delivery
 //     report that answers it is done with, and each NOTIFY until the HSS
 //     has been told what it said. A request that the IP-SM-GW answers
 //     415, 403, 400, 481, 488, 489 or 500 is one user for the moment
