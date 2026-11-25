@@ -54,8 +54,10 @@ type Capture struct {
 }
 
 // Observer sees every message that the transport layer sends or
-// receives, for example to copy it to a HEP collector. It runs
-// on the goroutine that sends or receives, so it must not block.
+// receives, for example to copy it to a HEP collector. A message that
+// is sent is seen once it has gone out, and one that failed to go out
+// is not seen at all. It runs on the goroutine that sends or receives,
+// so it must not block.
 type Observer func(Capture)
 
 // TransportLayer is the transport layer of RFC 3261 18: UDP and TCP on
@@ -391,9 +393,11 @@ func (t *UDPTransport) SendResponse(resp *Message) error {
 
 func (t *UDPTransport) send(m *Message, dst netip.AddrPort) error {
 	wire := m.Bytes()
+	if _, err := t.conn.WriteToUDPAddrPort(wire, dst); err != nil {
+		return err
+	}
 	record(t.log, t.observe, Capture{Transport: UDP, Sent: true, Source: t.LocalAddr(), Destination: dst, Message: m, Wire: wire})
-	_, err := t.conn.WriteToUDPAddrPort(wire, dst)
-	return err
+	return nil
 }
 
 // Receive returns the next message and the address it came from. A
