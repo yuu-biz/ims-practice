@@ -51,6 +51,10 @@ func (p *PCSCF) proxyInvite(st *sip.ServerTransaction, out *sip.Message, targets
 	// The callee tags of the 2xx that crossed the CANCEL, whose dialogs
 	// the P-CSCF has sent its BYE in.
 	crossed := map[string]bool{}
+	// The reliable provisional responses that the caller has been sent,
+	// by reliableID. The callee sends each again until its PRACK comes
+	// (RFC 3262 3).
+	passed := map[string]bool{}
 	// giveUp gives the INVITE up for why: an error of call.response or the
 	// abortCause of call, which is nil when the network took the
 	// resources away.
@@ -104,9 +108,17 @@ func (p *PCSCF) proxyInvite(st *sip.ServerTransaction, out *sip.Message, targets
 				provisional = true
 				// 16.7 step 2.
 				timerC.Reset(sip.DefaultTimerC)
-				if err := call.response(resp); err != nil {
+				reliable := reliableID(resp)
+				switch err := call.response(resp); {
+				case errors.Is(err, errRelay) && reliable != "" && passed[reliable]:
+					// The caller has this reliable response, whose answer the
+					// relay took, so this one is a retransmission. It goes on
+					// as it came, as a retransmitted 2xx does.
+				case err != nil:
 					giveUp(err)
 					continue
+				case reliable != "":
+					passed[reliable] = true
 				}
 				if err := st.Respond(resp); err == nil {
 					p.sessionSucceeded(st, resp, call.leg)
@@ -179,4 +191,15 @@ func (p *PCSCF) proxyInvite(st *sip.ServerTransaction, out *sip.Message, targets
 			ct.Cancel()
 		}
 	}
+}
+
+// reliableID tells the retransmissions of a reliable provisional
+// response apart from the other responses of its dialog: they have the
+// same To tag and RSeq (RFC 3262 4). It is empty for a response that is
+// not reliable.
+func reliableID(resp *sip.Message) string {
+	if !resp.Requires(sip.Option100rel) {
+		return ""
+	}
+	return tagOf(resp.Get("To")) + " " + resp.Get("RSeq")
 }

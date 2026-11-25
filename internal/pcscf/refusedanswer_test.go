@@ -336,3 +336,41 @@ func TestNonSDPBodyOfAResponseGoesOn(t *testing.T) {
 	default:
 	}
 }
+
+// TestRefusedRetransmissionOfAReliable183KeepsTheCall: the relay took
+// the answer of a reliable 183, which the callee sends again until its
+// PRACK comes (RFC 3262 3). A retransmission that the relay does not
+// take changes nothing, as for a retransmitted 200: it goes on to the
+// caller, the INVITE is neither answered nor cancelled, and the call
+// keeps its relay context.
+func TestRefusedRetransmissionOfAReliable183KeepsTheCall(t *testing.T) {
+	c := newRawINVITE(t)
+	progress := c.response(183)
+	progress.Add("Require", sip.Option100rel)
+	progress.Add("RSeq", "1")
+	c.st.Respond(progress)
+	r := next(t, c.ct.Responses())
+	for r.StatusCode == 100 {
+		r = next(t, c.ct.Responses())
+	}
+	if r.StatusCode != 183 || audio(t, r.Body) != relayAccess {
+		t.Fatalf("the caller got %d, want the 183 naming the relay", r.StatusCode)
+	}
+
+	c.relay.refuseModify(agw.Core)
+	c.st.Respond(progress)
+	deadline := time.After(watch)
+	for done := false; !done; {
+		select {
+		case r := <-c.ct.Responses():
+			if r.StatusCode >= 200 {
+				t.Fatalf("the caller got %d after the retransmitted 183, want the INVITE to go on", r.StatusCode)
+			}
+		case <-c.st.Cancelled():
+			t.Fatal("the callee got a CANCEL for the retransmitted 183")
+		case <-deadline:
+			done = true
+		}
+	}
+	c.relay.waitHeld(t, 1, 0)
+}
