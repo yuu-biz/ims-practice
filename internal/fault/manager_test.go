@@ -326,6 +326,9 @@ func TestValidate(t *testing.T) {
 		{Target: "pcscf", Kind: Stop, LossPercent: 10},
 		{Target: "pcscf", Kind: Delay},
 		{Target: "pcscf", Kind: Delay, Delay: Duration(11 * time.Second)},
+		// tc counts in microseconds: these would be rules of 0us.
+		{Target: "pcscf", Kind: Delay, Delay: Duration(time.Nanosecond)},
+		{Target: "pcscf", Kind: Delay, Delay: ms(100), Jitter: Duration(999 * time.Nanosecond)},
 		{Target: "pcscf", Kind: Delay, Delay: ms(100), Jitter: ms(200)},
 		{Target: "pcscf", Kind: Loss},
 		{Target: "pcscf", Kind: Loss, LossPercent: 101},
@@ -356,6 +359,7 @@ func TestValidate(t *testing.T) {
 	}
 	for _, r := range []Request{
 		{Target: "pcscf", Kind: Delay, Delay: ms(200), Jitter: ms(20)},
+		{Target: "pcscf", Kind: Delay, Delay: Duration(time.Microsecond), Jitter: Duration(time.Microsecond)},
 		{Target: "pcscf", Kind: Loss, LossPercent: 100},
 		{Target: "pcscf", Kind: Partition},
 		{Target: "pcscf", Kind: Partition, Peers: []string{"icscf", "172.28.0.30"}},

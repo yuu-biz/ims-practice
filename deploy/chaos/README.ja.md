@@ -271,8 +271,8 @@ docker network rm ims-practice_chaos
 | `target` | 文字列 | すべて | Compose のサービス（`pcscf`、`ibcf-a` など）か、複数のコンテナを動かすサービスの 1 つのコンテナ（`agw:2` など）。使える文字は、英小文字、数字、`_`、`.`、`-` です |
 | `kind` | 文字列 | | `stop`、`kill`、`pause`、`crash`、`recreate`、`delay`、`loss`、`partition` のどれか。中身は[障害の種類](#障害の種類)のとおりです |
 | `network` | 文字列 | `delay`、`loss`、`partition` | 障害を入れるインタフェースの Compose のネットワーク（`nni` など）。書かなければ、対象のすべてのインタフェースに入れます |
-| `delay` | 時間の長さ | `delay` | 0 より長く、`10s` 以下 |
-| `jitter` | 時間の長さ | `delay` | 0 から `delay` まで |
+| `delay` | 時間の長さ | `delay` | `1µs` 以上、`10s` 以下。`tc` は遅延をマイクロ秒の単位で数えます |
+| `jitter` | 時間の長さ | `delay` | 0 か、`1µs` から `delay` まで |
 | `loss_percent` | 整数 | `loss` | 1 から 100。送るパケットと受けるパケットのそれぞれを捨てる確率です |
 | `peers` | 文字列の配列 | `partition` | 対象が届かなくなり、聞こえなくなる相手。サービス、コンテナ（`agw:2`）、パターン（`scscf-*`）、IPv4 のアドレスで書きます。書かなければ、すべての相手です。同じ相手を 2 回書くことと、対象自身を書くことはできません |
 | `duration` | 時間の長さ | 続く障害 | `1s` から `1h` まで。書かなければ `5m` です。`crash` と `recreate` は一度きりなので、期限を取りません |
