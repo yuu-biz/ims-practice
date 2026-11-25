@@ -51,7 +51,8 @@ var _ hss.Store = (*Store)(nil)
 // hss.NewMemoryStore takes the subscriptions of the configuration. A
 // Store on kvstore keeps them across restarts, so an HSS that starts
 // with it adds the configured ones with Add, and takes ErrIdentityTaken
-// for one that is there already.
+// for one that is there already, or that the Add of another instance
+// holds; WaitForAdd tells the two apart.
 func New(kv kvstore.Store, cfg kvjson.Config) *Store {
 	return &Store{c: kvjson.New(kv, cfg, "hss")}
 }
@@ -262,6 +263,47 @@ func (s *Store) Add(ctx context.Context, sub hss.Subscription) error {
 		return fmt.Errorf("hssstore: add %s: %w", sub.PrivateIdentity, err)
 	}
 	return nil
+}
+
+// addPoll is how often WaitForAdd reads a provisional record again.
+const addPoll = time.Second
+
+// WaitForAdd waits until no Add holds the private identity, and reports
+// whether a subscriber of it is stored then. An Add holds it with its
+// provisional record from its first write to its last, and lets it go
+// when it finishes or gives up; the Add of an instance that stopped lets
+// it go when the record runs out with its time to live. WaitForAdd reads
+// the record again every addPoll, for no longer than provisionalTime,
+// the most that the record lasts, and reports no subscriber if it is
+// still provisional then: that is the record of an Add that started
+// since.
+//
+// An HSS that starts with the subscribers of its configuration calls it
+// when the Add of one of them finds the private identity taken.
+func (s *Store) WaitForAdd(ctx context.Context, privateID string) (bool, error) {
+	longest := time.NewTimer(provisionalTime)
+	defer longest.Stop()
+	poll := time.NewTicker(addPoll)
+	defer poll.Stop()
+	for {
+		var r record
+		_, err := kvjson.Read(ctx, s.c, s.subscriberKey(privateID), &r)
+		switch {
+		case errors.Is(err, kvstore.ErrNotFound):
+			return false, nil
+		case err != nil:
+			return false, err
+		case !r.Provisional:
+			return true, nil
+		}
+		select {
+		case <-poll.C:
+		case <-longest.C:
+			return false, nil
+		case <-ctx.Done():
+			return false, ctx.Err()
+		}
+	}
 }
 
 // claim is an index item that Add wrote, and its version.

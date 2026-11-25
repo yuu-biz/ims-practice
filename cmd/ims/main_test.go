@@ -1055,6 +1055,79 @@ func TestTwoHSSInstancesStartAtOnce(t *testing.T) {
 	}
 }
 
+// recordRead is the store of an instance that reports when it has read
+// the item under key.
+type recordRead struct {
+	kvstore.Store
+	key  string
+	read chan struct{}
+	once sync.Once
+}
+
+func (s *recordRead) Get(ctx context.Context, key string) (kvstore.Item, error) {
+	item, err := s.Store.Get(ctx, key)
+	if key == s.key {
+		s.once.Do(func() { close(s.read) })
+	}
+	return item, err
+}
+
+// TestHSSStartsAfterAnAddThatStopped: an instance stopped while it was
+// adding a subscriber of its configuration, once the provisional record
+// of its Add held the private identity. Another instance that starts
+// with the same configuration before the record has run out waits for
+// it to go, and then adds the subscriber, rather than reading the
+// provisional record as no subscriber and failing to start.
+//
+// The store removes the record a minute after the Add wrote it; the
+// test removes it as soon as the instance that starts has read it.
+func TestHSSStartsAfterAnAddThatStopped(t *testing.T) {
+	ctx := context.Background()
+	alice := hss.Subscription{PrivateIdentity: impi, PublicIdentities: []string{impu}, Password: "p"}
+	c := hss.Config{Subscriptions: []hss.Subscription{alice}}
+	for _, backend := range storetest.Backends() {
+		t.Run(backend.Name, func(t *testing.T) {
+			kv := backend.New(t)
+			section := config.Store{Kind: config.StoreValkey, Prefix: storetest.Prefix(), Timeout: time.Second}
+			shared := roleStores{kv: kv, section: section}
+			stopped := roleStores{kv: storetest.StopAfter(kv, 1), section: section}
+			if _, err := hssStore(ctx, c, stopped, shared.locks(config.RoleHSS, quiet()), quiet()); err == nil {
+				t.Fatal("the instance that stopped in the middle of its Add started")
+			}
+			record := section.Prefix + "hss:subscriber:" + impi
+			if _, err := kv.Get(ctx, record); err != nil {
+				t.Fatalf("the provisional record of the Add that stopped: %v", err)
+			}
+
+			reading := &recordRead{Store: kv, key: record, read: make(chan struct{})}
+			var err error
+			started := make(chan struct{})
+			go func() {
+				defer close(started)
+				_, err = hssStore(ctx, c, roleStores{kv: reading, section: section}, shared.locks(config.RoleHSS, quiet()), quiet())
+			}()
+			select {
+			case <-reading.read:
+				if err := kv.Delete(ctx, record); err != nil {
+					t.Fatal(err)
+				}
+			case <-started:
+			}
+			<-started
+			if err != nil {
+				t.Fatalf("the instance that started after the one that stopped: %v", err)
+			}
+			store, err := hssStore(ctx, hss.Config{}, shared, nil, quiet())
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got, ok, err := store.SubscriberOf(ctx, impu); err != nil || !ok || got.PrivateIdentity != impi {
+				t.Errorf("the subscriber of %s: %+v, %v, %v", impu, got, ok, err)
+			}
+		})
+	}
+}
+
 // TestRoleStoresAreTheSharedStoreOfTheNode: with a store section of
 // kind valkey, each role takes its state from that server, so its first
 // operation on its Store fails when nothing listens there. Without a

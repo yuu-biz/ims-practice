@@ -763,22 +763,39 @@ func hssStore(ctx context.Context, c hss.Config, stores roleStores, locks ims.Us
 	}
 	store := hssstore.New(kv, cfg)
 	for _, sub := range c.Subscriptions {
-		err := addUnderLock(ctx, store, locks, sub)
-		if errors.Is(err, hss.ErrIdentityTaken) {
-			_, stored, lookup := store.Subscriber(ctx, sub.PrivateIdentity)
-			switch {
-			case lookup != nil:
-				err = lookup
-			case stored:
-				log.Info("subscriber of the configuration already stored; the stored one is kept", "private_identity", sub.PrivateIdentity)
-				continue
-			}
-		}
-		if err != nil {
+		if err := addConfigured(ctx, store, locks, sub, log); err != nil {
 			return nil, fmt.Errorf("hss: cannot store the subscriber %s of the configuration: %w", sub.PrivateIdentity, err)
 		}
 	}
 	return store, nil
+}
+
+// addConfigured adds sub, a subscriber of the configuration, or keeps
+// the stored subscriber of its private identity. An Add that finds the
+// private identity taken waits for the Add of another instance that may
+// hold it (hssstore.Store.WaitForAdd): one that stopped halfway leaves
+// a provisional record, which holds the identity until it runs out. If
+// no subscriber is stored once that Add has gone, the subscriber is
+// added once more, and a second refusal is that of a public identity
+// that another subscriber holds.
+func addConfigured(ctx context.Context, store *hssstore.Store, locks ims.UserLocker, sub hss.Subscription, log *slog.Logger) error {
+	var err error
+	for range 2 {
+		err = addUnderLock(ctx, store, locks, sub)
+		if !errors.Is(err, hss.ErrIdentityTaken) {
+			return err
+		}
+		// Outside the lock: the record may last longer than its lease.
+		stored, waitErr := store.WaitForAdd(ctx, sub.PrivateIdentity)
+		if waitErr != nil {
+			return waitErr
+		}
+		if stored {
+			log.Info("subscriber of the configuration already stored; the stored one is kept", "private_identity", sub.PrivateIdentity)
+			return nil
+		}
+	}
+	return err
 }
 
 // configuredLockWait is how long an instance that starts waits for the
