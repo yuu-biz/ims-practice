@@ -188,3 +188,53 @@ func TestASubscriberThatDoesNotAnswerLosesItsSubscription(t *testing.T) {
 			n.Get("CSeq"), n.Get("Subscription-State"))
 	}
 }
+
+// TestASubscriberThatDoesNotAnswerHoldsUpNoOneElse: while a NOTIFY to
+// one subscriber waits for its response, with Timer F at its default of
+// 32 seconds, a user who dials in gets the 200 at once, and the other
+// subscribers are told at once, both one that subscribed before and one
+// that subscribed after. The NOTIFYs of one subscription go one after
+// the other: the subscriber that has not answered gets the next only
+// once it answers the one before.
+func TestASubscriberThatDoesNotAnswerHoldsUpNoOneElse(t *testing.T) {
+	mrfc := startConferenceMRFC(t)
+	as := startAS(t, noServices{}, mmtel.Config{MRFC: "sip:" + contactOf(t, mrfc.ua)})
+	_, focus, notifications := aliceConference(t, as, func(c *sip.IncomingCall) { c.Reject(480) })
+	receive(t, notifications, "first NOTIFY to alice")
+	xavier := subscribeBare(t, as, "xavier", focus.URI)
+	first := xavier.awaitNotify("first NOTIFY to xavier")
+
+	carol := newParticipant(t, as, "carol", func(c *sip.IncomingCall) { c.Reject(480) })
+	in, err := carol.Invite(joining("carol", focus.URI))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { in.Bye() })
+	if got := statuses(readAll(t, in)); got[len(got)-1] != 200 {
+		t.Fatalf("carol got %v, want 200", got)
+	}
+	awaitNotification(t, notifications, "to alice with carol", func(_ sip.Notification, d confinfo.Document) bool {
+		return statusOf(d)["sip:carol@"+domain] == confinfo.Connected
+	})
+	carolNotifications := make(chan sip.Notification, 8)
+	if _, err := carol.Subscribe(sip.SubscribeRequest{RequestURI: focus.URI, From: "sip:carol@" + domain, Event: confinfo.EventPackage,
+		Accept: confinfo.ContentType, Expires: time.Hour,
+		Headers:  []sip.HeaderField{{Name: "P-Asserted-Identity", Value: "<sip:carol@" + domain + ">"}},
+		OnNotify: func(n sip.Notification, _ *sip.Message) { carolNotifications <- n }}); err != nil {
+		t.Fatal(err)
+	}
+	receive(t, carolNotifications, "first NOTIFY to carol")
+
+	if n := xavier.nextNotify(100 * time.Millisecond); n != nil {
+		t.Errorf("xavier got the NOTIFY with CSeq %q before he answered the one before", n.Get("CSeq"))
+	}
+	xavier.answer(first, 200)
+	next := xavier.awaitNotify("NOTIFY to xavier once he answered the first")
+	firstCSeq, _ := sip.ParseCSeq(first.Get("CSeq"))
+	if cseq, _ := sip.ParseCSeq(next.Get("CSeq")); cseq.Number != firstCSeq.Number+1 {
+		t.Errorf("xavier's next NOTIFY has CSeq %q after %q, want the one after it", next.Get("CSeq"), first.Get("CSeq"))
+	}
+	if got := statusOf(conferenceDocument(t, next.Body)); got["sip:carol@"+domain] != confinfo.Connected {
+		t.Errorf("xavier's next NOTIFY has users %v, want carol connected", got)
+	}
+}

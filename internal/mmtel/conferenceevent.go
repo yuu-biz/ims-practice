@@ -1,6 +1,7 @@
 package mmtel
 
 import (
+	"slices"
 	"strconv"
 	"time"
 
@@ -194,7 +195,9 @@ func (f *conference) subscribeInDialog(r *sip.InDialogRequest, p *party) {
 		sip.HeaderField{Name: "Expires", Value: strconv.Itoa(int(expires / time.Second))})
 	if expires == 0 {
 		// RFC 6665 4.2.1.4: an unsubscribe ends like an expiry.
+		f.mu.Lock()
 		f.notifyInDialog(p, &inDialogSubscription{event: req.Get("Event")}, sip.ReasonTimeout)
+		f.mu.Unlock()
 		return
 	}
 	f.notify(&p.dialog)
@@ -242,11 +245,10 @@ func (f *conference) expired(id sip.DialogID, at time.Time) {
 	}
 	for _, p := range f.parties {
 		if p.dialog == id && p.inDialog != nil && p.inDialog.expires.Equal(at) {
-			sub := p.inDialog
 			delete(f.expiry, id)
+			f.notifyInDialog(p, p.inDialog, sip.ReasonTimeout)
 			f.mu.Unlock()
 			f.log.Info("conference subscription within the dialog expired")
-			f.notifyInDialog(p, sub, sip.ReasonTimeout)
 			return
 		}
 	}
@@ -262,11 +264,14 @@ func (f *conference) expired(id sip.DialogID, at time.Time) {
 // with reason timeout (RFC 6665 4.2.1.4). A NOTIFY that times out, or
 // whose response says that the subscriber has lost the subscription,
 // removes it without a last NOTIFY (RFC 6665 4.2.2).
+//
+// notify builds the NOTIFYs and leaves them in the outbox of each
+// subscription: it returns before any is sent, and so holds up no
+// answer to a user who joins or leaves.
 func (f *conference) notify(only *sip.DialogID) {
-	f.sending.Lock()
-	defer f.sending.Unlock()
 	now := time.Now()
 	f.mu.Lock()
+	defer f.mu.Unlock()
 	info := f.record.info()
 	gone := map[string]bool{}
 	for _, p := range f.record.Participants {
@@ -277,13 +282,11 @@ func (f *conference) notify(only *sip.DialogID) {
 			gone[ims.PublicIdentityKey(p.User)] = true
 		}
 	}
-	type outgoing struct {
-		dialog sip.DialogID
-		req    *sip.Message
-		// last is a NOTIFY that ends the subscription.
-		last bool
-	}
-	var out []outgoing
+	ua := f.as.ua.Load()
+	// last are the subscriptions that this round ends. Each goes from the
+	// record with the NOTIFY that ends it, which is still to be sent,
+	// after the ones before it.
+	var last []sip.DialogID
 	for i := range f.record.Subscriptions {
 		s := &f.record.Subscriptions[i]
 		if only != nil && s.Dialog.ID != *only {
@@ -303,14 +306,17 @@ func (f *conference) notify(only *sip.DialogID) {
 			continue
 		}
 		req := s.NewNotify(sip.Body{Type: confinfo.ContentType, Content: body}, now)
-		out = append(out, outgoing{s.Dialog.ID, req, s.State == sip.SubscriptionTerminated})
+		f.post(f.outboxOf(s.Dialog.ID), f.sendOutside(ua, s.Dialog.ID, req))
+		if s.State == sip.SubscriptionTerminated {
+			last = append(last, s.Dialog.ID)
+		}
 	}
-	type inDialog struct {
-		p      *party
-		sub    *inDialogSubscription
-		reason string
+	f.record.Subscriptions = slices.DeleteFunc(f.record.Subscriptions, func(s ConferenceSubscription) bool {
+		return slices.Contains(last, s.Dialog.ID)
+	})
+	for _, id := range last {
+		delete(f.outboxes, id)
 	}
-	var within []inDialog
 	for _, p := range f.parties {
 		if p.inDialog == nil || (only != nil && p.dialog != *only) {
 			continue
@@ -319,39 +325,97 @@ func (f *conference) notify(only *sip.DialogID) {
 		if gone[ims.PublicIdentityKey(f.userOf(p))] {
 			continue
 		}
-		w := inDialog{p: p, sub: p.inDialog}
+		reason := ""
 		switch {
 		case f.ended:
-			w.reason = sip.ReasonNoResource
+			reason = sip.ReasonNoResource
 		case !now.Before(p.inDialog.expires):
-			w.reason = sip.ReasonTimeout
+			reason = sip.ReasonTimeout
 		}
-		within = append(within, w)
+		f.notifyInDialog(p, p.inDialog, reason)
 	}
 	f.writeRecord()
-	f.mu.Unlock()
+}
 
-	ua := f.as.ua.Load()
-	for _, o := range out {
-		final, err := f.send(ua, o.req)
-		failed := sip.NotifyEndsSubscription(final, err)
+// outbox holds NOTIFYs on their way within one dialog, in the order in
+// which the focus built them, each as a function that sends it and
+// waits for its final response. One goroutine at a time sends them,
+// each once the one before has its final response, so that the
+// subscriber gets them in the order of their CSeq numbers (RFC 3261
+// 12.2.2) and of their versions (RFC 4575 4.6). Each subscription
+// outside a dialog has an outbox of its own, and so has the dialog of
+// each participant, for the subscription within it: a subscriber that
+// does not answer holds up its own NOTIFYs only, until Timer F. The
+// fields are guarded by the mu of the conference.
+type outbox struct {
+	waiting []func() (ended bool)
+	sending bool
+}
+
+// outboxOf is the outbox of the subscription in dialog id outside any
+// call. f.mu is held.
+func (f *conference) outboxOf(id sip.DialogID) *outbox {
+	if f.outboxes == nil {
+		f.outboxes = map[sip.DialogID]*outbox{}
+	}
+	o, ok := f.outboxes[id]
+	if !ok {
+		o = &outbox{}
+		f.outboxes[id] = o
+	}
+	return o
+}
+
+// post puts send last in o, and starts the goroutine that sends what o
+// holds unless it runs already. f.mu is held.
+func (f *conference) post(o *outbox, send func() (ended bool)) {
+	o.waiting = append(o.waiting, send)
+	if !o.sending {
+		o.sending = true
+		go f.deliver(o)
+	}
+}
+
+// deliver sends the NOTIFYs of o until none is left. Once one has ended
+// its subscription, those behind it go nowhere.
+func (f *conference) deliver(o *outbox) {
+	for {
 		f.mu.Lock()
-		if i := f.subscriptionIndex(o.dialog); i >= 0 {
-			// The subscription goes with the NOTIFY that ended it, not
-			// with one that was on its way when it ended: that one
-			// still has to be sent.
-			if o.last || failed {
-				f.record.Subscriptions = append(f.record.Subscriptions[:i], f.record.Subscriptions[i+1:]...)
-				f.writeRecord()
-			}
+		if len(o.waiting) == 0 {
+			o.sending = false
+			f.mu.Unlock()
+			return
 		}
+		send := o.waiting[0]
+		o.waiting = o.waiting[1:]
 		f.mu.Unlock()
-		if failed {
-			f.log.Info("conference subscription removed after a failed NOTIFY", "status", statusCode(final), "error", errText(err))
+		if send() {
+			f.mu.Lock()
+			o.waiting = nil
+			f.mu.Unlock()
 		}
 	}
-	for _, w := range within {
-		f.notifyInDialog(w.p, w.sub, w.reason)
+}
+
+// sendOutside is the sending of req, a NOTIFY of the subscription in
+// dialog id outside any call. It reports whether the subscription ended
+// with it: a NOTIFY that times out, or whose response says that the
+// subscriber has lost the subscription, removes it (RFC 6665 4.2.2).
+func (f *conference) sendOutside(ua *sip.UA, id sip.DialogID, req *sip.Message) func() bool {
+	return func() bool {
+		final, err := f.send(ua, req)
+		if !sip.NotifyEndsSubscription(final, err) {
+			return false
+		}
+		f.mu.Lock()
+		if i := f.subscriptionIndex(id); i >= 0 {
+			f.record.Subscriptions = slices.Delete(f.record.Subscriptions, i, i+1)
+			f.writeRecord()
+		}
+		delete(f.outboxes, id)
+		f.mu.Unlock()
+		f.log.Info("conference subscription removed after a failed NOTIFY", "status", statusCode(final), "error", errText(err))
+		return true
 	}
 }
 
@@ -378,18 +442,20 @@ func (f *conference) send(ua *sip.UA, req *sip.Message) (*sip.Message, error) {
 	return final, nil
 }
 
-// notifyInDialog sends the full state in a NOTIFY within the dialog of
-// participant p, for its subscription sub. A reason ends the
-// subscription with that reason; empty keeps it active.
+// notifyInDialog leaves the full state in a NOTIFY within the dialog of
+// participant p, for its subscription sub, in the outbox of that
+// dialog. A reason ends the subscription with that reason; empty keeps
+// it active. f.mu is held.
+//
+// A NOTIFY that times out, or gets 408 or 481, ends the dialog
+// (RFC 3261 12.2.1.2), which takes the participant out of the
+// conference and the subscription with it.
 func (f *conference) notifyInDialog(p *party, sub *inDialogSubscription, reason string) {
-	f.mu.Lock()
 	v, err := confinfo.NextVersion(sub.version)
 	if err != nil && reason == "" {
 		reason = sip.ReasonNoResource
 	}
 	sub.version = v
-	info := f.record.info()
-	leg := p.leg
 	state := sip.SubscriptionState{State: sip.SubscriptionActive, Expires: max(time.Until(sub.expires).Round(time.Second), 0)}
 	if reason != "" {
 		state = sip.SubscriptionState{State: sip.SubscriptionTerminated, Reason: reason}
@@ -397,19 +463,22 @@ func (f *conference) notifyInDialog(p *party, sub *inDialogSubscription, reason 
 			p.inDialog = nil
 		}
 	}
-	f.mu.Unlock()
-	body, err := info.FullState(v).Marshal()
+	body, err := f.record.info().FullState(v).Marshal()
+	leg := p.leg
 	if err != nil || leg == nil {
 		return
 	}
-	_, err = leg.Send(sip.NOTIFY, sip.Body{Type: confinfo.ContentType, Content: body},
-		sip.HeaderField{Name: "Event", Value: sub.event},
-		sip.HeaderField{Name: "Subscription-State", Value: state.String()},
-		// NOTIFY is a target refresh request (RFC 6665 3.2).
-		sip.HeaderField{Name: "Contact", Value: f.contact.String()})
-	if err != nil {
-		f.log.Info("NOTIFY within the dialog failed", "error", err.Error())
-	}
+	f.post(&p.outbox, func() bool {
+		_, err := leg.Send(sip.NOTIFY, sip.Body{Type: confinfo.ContentType, Content: body},
+			sip.HeaderField{Name: "Event", Value: sub.event},
+			sip.HeaderField{Name: "Subscription-State", Value: state.String()},
+			// NOTIFY is a target refresh request (RFC 6665 3.2).
+			sip.HeaderField{Name: "Contact", Value: f.contact.String()})
+		if err != nil {
+			f.log.Info("NOTIFY within the dialog failed", "error", err.Error())
+		}
+		return false
+	})
 }
 
 // userOf is the user of party p in the record. f.mu is held.
