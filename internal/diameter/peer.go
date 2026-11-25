@@ -150,6 +150,9 @@ type outgoing struct {
 	message *diam.Message
 	answer  chan answerResult // requests only
 	gen     uint64            // answers only
+	// hopByHop is what the loop gave a request it sent. Only the loop
+	// reads and writes it.
+	hopByHop uint32
 }
 
 func (o *outgoing) isRequest() bool { return o.answer != nil }
@@ -170,6 +173,9 @@ type Peer struct {
 	stop     chan struct{}
 	stopOnce sync.Once
 	done     chan struct{}
+	// abandoned takes the requests whose caller stopped waiting, for the
+	// loop to forget.
+	abandoned chan *outgoing
 	// available is what State.TakesRequests says of the state the loop
 	// is in, for Available.
 	available atomic.Bool
@@ -201,13 +207,14 @@ func (n *Node) Connect(peer PeerConfig) *Peer {
 
 func (n *Node) newPeer(peerHost string) *Peer {
 	return &Peer{
-		node:   n,
-		host:   peerHost,
-		log:    n.log.With("peer", peerHost),
-		inbox:  make(chan input),
-		outbox: make(chan *outgoing),
-		stop:   make(chan struct{}),
-		done:   make(chan struct{}),
+		node:      n,
+		host:      peerHost,
+		log:       n.log.With("peer", peerHost),
+		inbox:     make(chan input),
+		outbox:    make(chan *outgoing),
+		abandoned: make(chan *outgoing),
+		stop:      make(chan struct{}),
+		done:      make(chan struct{}),
 	}
 }
 
@@ -232,6 +239,10 @@ func (p *Peer) Request(ctx context.Context, request *diam.Message) (*diam.Messag
 	case r := <-out.answer:
 		return r.message, r.err
 	case <-ctx.Done():
+		select {
+		case p.abandoned <- out:
+		case <-p.done:
+		}
 		return nil, fmt.Errorf("no answer to %s: %w", commandName(request), ctx.Err())
 	}
 }
@@ -379,6 +390,8 @@ func (l *loop) wait() Event {
 				continue
 			}
 			return SendMessage{Outgoing: out}
+		case out := <-l.peer.abandoned:
+			l.forget(out)
 		case in := <-l.peer.inbox:
 			if in.gen != l.gen {
 				if in.conn != nil {
@@ -461,6 +474,7 @@ func (l *loop) do(a Action) {
 			if a.Outgoing.message.Header.CommandFlags&diam.RetransmittedFlag == 0 {
 				a.Outgoing.message.Header.EndToEndID = ids.EndToEnd
 			}
+			a.Outgoing.hopByHop = ids.HopByHop
 			l.outstanding[ids.HopByHop] = pending{command: commandName(a.Outgoing.message), answer: a.Outgoing.answer}
 		}
 		l.send(a.Outgoing.message)
@@ -512,6 +526,17 @@ func (l *loop) process(m *diam.Message) {
 			f.(func())()
 		}
 	}()
+}
+
+// forget drops the request that out sent, once nothing waits for its
+// answer. An answer that comes later then has a Hop-by-Hop Identifier
+// that the peer does not know, and is discarded (RFC 6733 3). The
+// request may have had its answer already, or have gone with its
+// connection.
+func (l *loop) forget(out *outgoing) {
+	if p, ok := l.outstanding[out.hopByHop]; ok && p.answer == out.answer {
+		delete(l.outstanding, out.hopByHop)
+	}
 }
 
 func (l *loop) nextIDs() MessageIDs {
