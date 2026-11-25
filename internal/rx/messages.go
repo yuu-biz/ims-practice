@@ -26,8 +26,8 @@ type AARequest struct {
 	ServiceInfoStatus *ServiceInfoStatus
 	SpecificActions   []SpecificAction
 	// FramedIPAddress is the UE's address, by which the PCRF binds the Rx
-	// session to an IP-CAN session (TS 29.214 4.4.1). The zero Addr leaves
-	// it out.
+	// session to an IP-CAN session (TS 29.214 4.4.1). An IPv6 address goes
+	// in Framed-IPv6-Prefix. The zero Addr leaves it out.
 	FramedIPAddress netip.Addr
 	RxRequestType   *RxRequestType
 }
@@ -52,7 +52,7 @@ func (r AARequest) Message() *diam.Message {
 		m.AddAVP(diameter.VendorAVP(avpSpecificAction, mv, datatype.Enumerated(a)))
 	}
 	if r.FramedIPAddress.IsValid() {
-		m.AddAVP(framedIPAddress(r.FramedIPAddress))
+		m.AddAVP(ueAddressAVP(r.FramedIPAddress))
 	}
 	if r.RxRequestType != nil {
 		m.AddAVP(diameter.VendorAVP(avpRxRequestType, v, datatype.Enumerated(*r.RxRequestType)))
@@ -70,6 +70,7 @@ func ParseAARequest(m *diam.Message) (AARequest, error) {
 		ServiceInfoStatus       *int32  `avp:"Service-Info-Status,omitempty"`
 		SpecificActions         []int32 `avp:"Specific-Action,omitempty"`
 		FramedIPAddress         []byte  `avp:"Framed-IP-Address,omitempty"`
+		FramedIPv6Prefix        []byte  `avp:"Framed-IPv6-Prefix,omitempty"`
 		RxRequestType           *int32  `avp:"Rx-Request-Type,omitempty"`
 	}
 	if err := m.Unmarshal(&raw); err != nil {
@@ -95,6 +96,13 @@ func ParseAARequest(m *diam.Message) (AARequest, error) {
 	}
 	if raw.FramedIPAddress != nil {
 		addr, err := parseFramedIPAddress(raw.FramedIPAddress)
+		if err != nil {
+			return AARequest{}, fmt.Errorf("AAR: %w", err)
+		}
+		r.FramedIPAddress = addr
+	}
+	if raw.FramedIPv6Prefix != nil {
+		addr, err := parseFramedIPv6Prefix(raw.FramedIPv6Prefix)
 		if err != nil {
 			return AARequest{}, fmt.Errorf("AAR: %w", err)
 		}
