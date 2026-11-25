@@ -5,6 +5,7 @@ import (
 	"context"
 	"io"
 	"log/slog"
+	"reflect"
 	"slices"
 	"strconv"
 	"strings"
@@ -15,6 +16,7 @@ import (
 	"github.com/fiorix/go-diameter/v4/diam"
 	"github.com/fiorix/go-diameter/v4/diam/dict"
 
+	"github.com/yuu-biz/ims-practice/internal/aka"
 	"github.com/yuu-biz/ims-practice/internal/cx"
 	"github.com/yuu-biz/ims-practice/internal/diameter"
 	"github.com/yuu-biz/ims-practice/internal/hss"
@@ -424,7 +426,11 @@ func TestRegistrationExpires(t *testing.T) {
 // ends, by expiry or by the UE, the HSS answers the SAR with
 // DIAMETER_ERROR_IDENTITY_ALREADY_REGISTERED and keeps the user at the
 // other S-CSCF (8.1.2). The S-CSCF removes the registration all the
-// same, and the UE gets its 200.
+// same, and the UE gets its 200. A protected re-registration with IMS
+// AKA needs no new authentication here (TS 24.229 5.4.1.2.2 step 1), so
+// no MAR takes the user back and its SAR is refused too: the UE gets
+// 500, and the S-CSCF keeps the registration as it was until it expires
+// (8.1.1).
 func TestAnotherSCSCFTookTheUserOver(t *testing.T) {
 	const other = "sip:scscf2." + domain + ":5060"
 	hdr := diameter.Header{SessionID: "scscf2;1;1", OriginHost: "scscf2." + domain, OriginRealm: domain, DestinationRealm: domain}
@@ -440,10 +446,10 @@ func TestAnotherSCSCFTookTheUserOver(t *testing.T) {
 		}
 		return f.hss.Handle(req)
 	}
-	takeOver := func(t *testing.T, f *fakeHSS) {
+	takeOver := func(t *testing.T, f *fakeHSS, scheme string) {
 		t.Helper()
 		maa, err := cx.ParseMultimediaAuthAnswer(toHSS(t, f, cx.MultimediaAuthRequest{Header: hdr, UserName: impi, PublicIdentity: impu,
-			SIPAuthenticationScheme: cx.SchemeUnknown, SIPNumberAuthItems: 1, ServerName: other}.Message()))
+			SIPAuthenticationScheme: scheme, SIPNumberAuthItems: 1, ServerName: other}.Message()))
 		if err != nil || !maa.Result.Success() {
 			t.Fatalf("MAA to the other S-CSCF = %+v (%v)", maa, err)
 		}
@@ -482,7 +488,7 @@ func TestAnotherSCSCFTookTheUserOver(t *testing.T) {
 	t.Run("expiry", func(t *testing.T) {
 		h := newHarness(t, Config{MinExpires: time.Second, MaxExpires: time.Second})
 		register(t, h, sip.NewCallID())
-		takeOver(t, h.hss)
+		takeOver(t, h.hss, cx.SchemeUnknown)
 		waitForAssignments(t, h.hss, cx.AssignRegistration, cx.TimeoutDeregistration)
 		if registered(t, h) {
 			t.Error("the registration stays after its expiry")
@@ -493,7 +499,7 @@ func TestAnotherSCSCFTookTheUserOver(t *testing.T) {
 		h := newHarness(t, Config{})
 		callID := sip.NewCallID()
 		register(t, h, callID)
-		takeOver(t, h.hss)
+		takeOver(t, h.hss, cx.SchemeUnknown)
 		dereg := `Digest username="` + impi + `", realm="` + domain + `", nonce="", uri="sip:` + domain + `", response="", integrity-protected="ip-assoc-yes"`
 		if r := h.register(callID, 3, 0, dereg); r.StatusCode != 200 || !strings.HasSuffix(r.Get("Contact"), ";expires=0") {
 			t.Fatalf("deregistration got %d %q, want 200 with expires=0", r.StatusCode, r.Get("Contact"))
@@ -501,6 +507,32 @@ func TestAnotherSCSCFTookTheUserOver(t *testing.T) {
 		waitForAssignments(t, h.hss, cx.AssignRegistration, cx.UserDeregistration)
 		if registered(t, h) {
 			t.Error("the registration stays after the deregistration")
+		}
+		calledAtTheOther(t, h.hss)
+	})
+	t.Run("protected re-registration with IMS AKA", func(t *testing.T) {
+		h := newAKAHarness(t)
+		callID := sip.NewCallID()
+		ch := akaChallenge(t, h.register(callID, 1, 600000, akaInitial))
+		res, err := authenticate(t, aka.NewUSIM(testSet1, 0), ch)
+		if err != nil {
+			t.Fatal(err)
+		}
+		creds := akaAnswer(ch, aka.DigestPassword(res.RES), sip.IntegrityProtectedYes)
+		if r := h.register(callID, 2, 600000, creds.String()); r.StatusCode != 200 {
+			t.Fatalf("registration got %d, want 200", r.StatusCode)
+		}
+		before, _, err := h.store.Registration(t.Context(), impi)
+		if err != nil {
+			t.Fatal(err)
+		}
+		takeOver(t, h.hss, cx.SchemeDigestAKAv1MD5)
+		if r := h.register(callID, 3, 600000, creds.String()); r.StatusCode != 500 {
+			t.Fatalf("protected re-registration got %d, want 500", r.StatusCode)
+		}
+		waitForAssignments(t, h.hss, cx.AssignRegistration, cx.ReRegistration)
+		if after, ok, err := h.store.Registration(t.Context(), impi); err != nil || !ok || !reflect.DeepEqual(after, before) {
+			t.Errorf("the registration is %+v (%v, %v) after the refused re-registration, want it as it was, %+v", after, ok, err, before)
 		}
 		calledAtTheOther(t, h.hss)
 	})
