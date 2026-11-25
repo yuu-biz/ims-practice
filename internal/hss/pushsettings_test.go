@@ -9,6 +9,7 @@ import (
 
 	"github.com/yuu-biz/ims-practice/internal/cx"
 	"github.com/yuu-biz/ims-practice/internal/diameter"
+	"github.com/yuu-biz/ims-practice/internal/ims"
 	"github.com/yuu-biz/ims-practice/internal/maintenance"
 )
 
@@ -74,10 +75,11 @@ func serve(t *testing.T, h *HSS, private, public string, typ cx.ServerAssignment
 
 // pushedTo waits for the S-CSCFs to have taken n PPRs and then stops
 // the HSS, which lets no further push begin and waits for the one on
-// its way (HSS.Close), so that what came is all that comes. It returns
-// the private identity of each PPR with the application server its
-// criteria name, which says which service profile it carried.
-func pushedTo(t *testing.T, h *HSS, scscfs *fakeSCSCFs, n int) map[string]string {
+// its way (HSS.Close), so that what came is all that comes; stops are
+// the stops of the other instances that push to the same S-CSCFs. It
+// returns the private identity of each PPR with the application server
+// its criteria name, which says which service profile it carried.
+func pushedTo(t *testing.T, h *HSS, scscfs *fakeSCSCFs, n int, stops ...func()) map[string]string {
 	t.Helper()
 	// The pushes run behind the answer to the maintenance request, so
 	// they are waited for rather than found there already.
@@ -96,6 +98,9 @@ func pushedTo(t *testing.T, h *HSS, scscfs *fakeSCSCFs, n int) map[string]string
 	// before Close ends the pushes that have not sent one yet.
 	time.Sleep(50 * time.Millisecond)
 	h.Close()
+	for _, stop := range stops {
+		stop()
+	}
 	scscfs.mu.Lock()
 	defer scscfs.mu.Unlock()
 	pushed := map[string]string{}
@@ -138,6 +143,46 @@ func TestChangingAProfileNameSettingPushesItsSubscribers(t *testing.T) {
 				t.Errorf("the PPRs went to %v, want %v", pushed, want)
 			}
 		})
+	}
+}
+
+// TestAChangeSentToEveryInstancePushesEachSubscriberOnce: the OAM server
+// sends a change to every instance of the role, and the two instances
+// here share the store and the lock of each subscriber, as two instances
+// on the store of a deployment do. Each served subscriber of the
+// changed setting gets one PPR, whichever instance sends it.
+func TestAChangeSentToEveryInstancePushesEachSubscriberOnce(t *testing.T) {
+	store := settingsStore(t)
+	locks := &ims.UserLocks{}
+	first, firstAPI := settingsInstance(t, store, locks)
+	second, secondAPI := settingsInstance(t, store, locks)
+	want := []string{impi}
+	serve(t, first, impi, impu, cx.AssignRegistration)
+	for i := range 5 {
+		id := fmt.Sprintf("0010100002%05d@%s", i, realm)
+		addSubscription(t, first, Subscription{PrivateIdentity: id,
+			PublicIdentities: []string{"sip:" + id}, Password: "test-password-once"})
+		registerInStore(t, first, id)
+		want = append(want, id)
+	}
+	// One S-CSCF, which both instances reach, as every instance of the
+	// HSS has the connections of the S-CSCFs of the network.
+	scscfs := &fakeSCSCFs{}
+	first.SetPeers(scscfs)
+	second.SetPeers(scscfs)
+
+	for _, api := range []*maintenance.Node{firstAPI, secondAPI} {
+		if _, err := changeAt(api, 1, "hss.default_service_profile", "trial"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// pushedTo stops the first instance; the second stops here, so that
+	// no PPR of it comes after the count.
+	pushed := pushedTo(t, first, scscfs, len(want), second.Close)
+	got := slices.Sorted(maps.Keys(pushed))
+	slices.Sort(want)
+	if !slices.Equal(got, want) {
+		t.Errorf("the PPRs went to %v, want %v", got, want)
 	}
 }
 

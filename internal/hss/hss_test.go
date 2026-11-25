@@ -74,6 +74,17 @@ func withProfiles(h *HSS, profiles map[string]ServiceProfile, defaultName, testU
 	})
 }
 
+// changeSettings puts in force the settings that change makes of the
+// ones in force, as a change of the maintenance API does, at the
+// generation after theirs.
+func (h *HSS) changeSettings(change func(*settings)) {
+	h.beginSettings()
+	change(h.pending)
+	if err := h.commitSettings(h.settings.Load().generation + 1); err != nil {
+		panic(err)
+	}
+}
+
 var hdr = diameter.Header{SessionID: "s;1;1", OriginHost: "icscf." + realm, OriginRealm: realm, DestinationRealm: realm}
 
 // from is the header of a request of the S-CSCF named server. scscf2 is

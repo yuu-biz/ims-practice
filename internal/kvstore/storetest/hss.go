@@ -39,6 +39,8 @@ func HSS(t *testing.T, newPair func(t *testing.T) (hss.Store, hss.Store)) {
 		{"ConcurrentReplacesOfOneIdentity", hssConcurrentReplaces},
 		{"ConcurrentReplaceAndSQN", hssConcurrentReplaceAndSQN},
 		{"CountsFollowWhatIsStored", hssCountsFollowWhatIsStored},
+		{"Settings", hssSettings},
+		{"ConcurrentSettings", hssConcurrentSettings},
 	})
 }
 
@@ -688,6 +690,82 @@ func hssCompareAndSwapRepositoryData(t *testing.T, a, b hss.Store) {
 	}
 	if compareAndSwapRepositoryData(t, a, "nobody@"+realm, nil, v1) {
 		t.Error("CompareAndSwapRepositoryData for an unknown subscriber succeeded")
+	}
+}
+
+// hssSettings has one instance store the settings of its configuration
+// file in an empty store and a change replace them, and the other read
+// each: a swap from what is no longer there, or of a first setting where
+// one is there already, stores nothing.
+func hssSettings(t *testing.T, a, b hss.Store) {
+	ctx := context.Background()
+	if _, ok, err := b.Settings(ctx); err != nil || ok {
+		t.Fatalf("Settings of an empty store = %v, %v, want none", ok, err)
+	}
+	file := hss.StoredSettings{Admission: hss.AdmitAll, DefaultServiceProfile: "default", TestUserServiceProfile: "default"}
+	changed := file
+	changed.Generation, changed.Admission = 1, hss.AdmitTestUsers
+	for _, tc := range []struct {
+		name      string
+		store     hss.Store
+		old       *hss.StoredSettings
+		next      hss.StoredSettings
+		swapped   bool
+		afterward hss.StoredSettings
+	}{
+		{"those of the file into the empty store", a, nil, file, true, file},
+		{"another first setting", b, nil, changed, false, file},
+		{"a change", b, &file, changed, true, changed},
+		{"a change from what is gone", a, &file, file, false, changed},
+	} {
+		swapped, err := tc.store.CompareAndSwapSettings(ctx, tc.old, tc.next)
+		if err != nil || swapped != tc.swapped {
+			t.Errorf("%s: CompareAndSwapSettings = %v, %v, want %v", tc.name, swapped, err, tc.swapped)
+		}
+		for _, s := range []hss.Store{a, b} {
+			if got, ok, err := s.Settings(ctx); err != nil || !ok || got != tc.afterward {
+				t.Errorf("%s: Settings = %+v, %v, %v, want %+v", tc.name, got, ok, err, tc.afterward)
+			}
+		}
+	}
+}
+
+// hssConcurrentSettings has two instances change the settings at once,
+// each from what it read: every change is one step on top of the last,
+// so the generations they write follow each other with none lost.
+func hssConcurrentSettings(t *testing.T, a, b hss.Store) {
+	ctx := context.Background()
+	const n = 20
+	parallel(2, func(i int) {
+		s := a
+		if i == 1 {
+			s = b
+		}
+		for range n {
+			for {
+				stored, ok, err := s.Settings(ctx)
+				if err != nil {
+					t.Error(err)
+					return
+				}
+				var old *hss.StoredSettings
+				if ok {
+					old = &stored
+				}
+				next := hss.StoredSettings{Generation: stored.Generation + 1, Admission: hss.AdmitAll}
+				swapped, err := s.CompareAndSwapSettings(ctx, old, next)
+				if err != nil {
+					t.Error(err)
+					return
+				}
+				if swapped {
+					break
+				}
+			}
+		}
+	})
+	if got, _, err := a.Settings(ctx); err != nil || got.Generation != 2*n {
+		t.Errorf("the settings are at generation %d after %d changes, %v", got.Generation, 2*n, err)
 	}
 }
 

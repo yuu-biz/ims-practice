@@ -20,10 +20,11 @@ const profilePushPage = 100
 
 // pushChangedSettings pushes the user profile to the S-CSCF of every
 // served subscriber whose service profile name comes from a setting
-// that the change from before to after gives another value. A change of
-// the admission policy alone, and one that names the profile that was
-// in force already, push nothing: no subscription gets another profile
-// from either.
+// that the change from before to after gives another value. before are
+// the settings that the change replaced in the Store, so those of the
+// role (commitSettings). A change of the admission policy alone, and
+// one that names the profile that was in force already, push nothing:
+// no subscription gets another profile from either.
 //
 // The pushes run behind the change rather than in it: the maintenance
 // API answers the operator once the settings are in force, and must not
