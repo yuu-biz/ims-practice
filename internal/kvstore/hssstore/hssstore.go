@@ -510,7 +510,10 @@ const deleteAttempts = 10
 // Delete removes the subscriber with a compare and delete, then its
 // index items and its entries in the sorted indexes. A reader in between
 // finds an index item without its subscriber, which is a miss; an Add
-// takes it over.
+// of another subscription takes it over. An Add of the same private
+// identity would take it over too, and then lose it and its entry in
+// the sorted index to the rest of the Delete, which is why the caller
+// of either holds the lock of the subscriber (hss.Store.Add).
 //
 // Once the subscriber's item is gone, so is the subscriber, and Delete
 // returns it even when the store fails on what comes after: an entry in

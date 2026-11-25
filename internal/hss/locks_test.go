@@ -3,8 +3,11 @@ package hss_test
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"github.com/yuu-biz/ims-practice/internal/diameter"
+	"net/http"
+	"net/http/httptest"
 	"sync"
 	"testing"
 	"time"
@@ -15,7 +18,9 @@ import (
 	"github.com/yuu-biz/ims-practice/internal/cx"
 	"github.com/yuu-biz/ims-practice/internal/ims"
 	"github.com/yuu-biz/ims-practice/internal/kvstore"
+	"github.com/yuu-biz/ims-practice/internal/kvstore/kvjson"
 	"github.com/yuu-biz/ims-practice/internal/kvstore/kvlock"
+	"github.com/yuu-biz/ims-practice/internal/kvstore/storetest"
 )
 
 // This file runs two HSS instances on one store, as a network with two
@@ -136,6 +141,82 @@ func TestTwoInstancesSerialiseOneSubscriber(t *testing.T) {
 	}
 	if b.ServerName != scscf {
 		t.Errorf("the SAA of the instance that waited names %q as the S-CSCF of the user, want %q", b.ServerName, scscf)
+	}
+}
+
+// TestADeleteAndAnAddOfOneSubscriber: one instance removes a
+// subscription while another adds it again, with the same private and
+// public identities. The removal takes the subscriber's item away
+// first, and the index items of its public identities and its entry in
+// the listing after that, so an Add that lands in between takes over
+// the index items it finds there and the rest of the removal then takes
+// them away from it: the subscription is stored, but no request by a
+// public identity finds it and the listing leaves it out.
+//
+// The test starts the POST at the second instance at that moment, and
+// goes on as soon as the POST waits for the lock in the store, or, if
+// nothing holds it back, as soon as it has been answered.
+func TestADeleteAndAnAddOfOneSubscriber(t *testing.T) {
+	const tel = "tel:+12025550101"
+	body := `{"private_identity": "` + impi + `", "public_identities": ["` + impu + `", "` + tel + `"], "password": "test-password-1"}`
+	for _, backend := range storetest.Backends() {
+		t.Run(backend.Name, func(t *testing.T) {
+			kv := backend.New(t)
+			cfg := kvjson.Config{Prefix: storetest.Prefix()}
+			locker := func(store kvstore.Store) *kvlock.Locker {
+				return kvlock.New(store, kvlock.Config{Prefix: cfg.Prefix, Role: "hss", Timeout: time.Second, Log: quiet()})
+			}
+			if w := do(newHSSOn(t, kv, cfg, locker(kv)).Provisioning(noSCSCFs{}), "POST", "/subscriptions", body); w.Code != http.StatusCreated {
+				t.Fatalf("POST: %d %s", w.Code, w.Body)
+			}
+
+			waiting := &heldLock{Store: kv, found: make(chan struct{})}
+			adding := newHSSOn(t, kv, cfg, locker(waiting)).Provisioning(noSCSCFs{})
+			var added *httptest.ResponseRecorder
+			answered := make(chan struct{})
+			addMeanwhile := func() {
+				go func() {
+					defer close(answered)
+					added = do(adding, "POST", "/subscriptions", body)
+				}()
+				select {
+				case <-waiting.found:
+				case <-answered:
+				}
+			}
+			// The first write of the removal takes the subscriber's item
+			// away, the second the index item of a public identity.
+			removing := newHSSOn(t, storetest.BeforeWrite(kv, 2, addMeanwhile), cfg, locker(kv))
+			if w := do(removing.Provisioning(noSCSCFs{}), "DELETE", "/subscriptions/"+impi, ""); w.Code != http.StatusNoContent {
+				t.Fatalf("DELETE: %d %s", w.Code, w.Body)
+			}
+			<-answered
+			if added.Code != http.StatusCreated {
+				t.Fatalf("the POST that came during the DELETE: %d %s, want 201", added.Code, added.Body)
+			}
+
+			h := newHSSOn(t, kv, cfg, locker(kv))
+			for _, public := range []string{impu, tel} {
+				a, err := cx.ParseUserAuthorizationAnswer(exchange(t, h, cx.UserAuthorizationRequest{Header: header,
+					UserName: impi, PublicIdentity: public, VisitedNetworkIdentifier: realm, UserAuthorizationType: cx.Registration}.Message()))
+				if err != nil {
+					t.Fatal(err)
+				}
+				if a.Result != diameter.Experimental(cx.DiameterFirstRegistration) {
+					t.Errorf("UAR for %s after the DELETE and the POST: %v, want DIAMETER_FIRST_REGISTRATION", public, a.Result)
+				}
+			}
+			w := do(h.Provisioning(noSCSCFs{}), "GET", "/subscriptions", "")
+			var listed []struct {
+				PrivateIdentity string `json:"private_identity"`
+			}
+			if err := json.Unmarshal(w.Body.Bytes(), &listed); w.Code != http.StatusOK || err != nil {
+				t.Fatalf("GET /subscriptions: %d %s %v", w.Code, w.Body, err)
+			}
+			if len(listed) != 1 || listed[0].PrivateIdentity != impi {
+				t.Errorf("the listing after the DELETE and the POST: %+v, want %s alone", listed, impi)
+			}
+		})
 	}
 }
 

@@ -578,7 +578,16 @@ func (h *HSS) addSubscription(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	if err := h.store.Add(r.Context(), sub); err != nil {
+	// The lock keeps the Add out of a DELETE of the same subscription on
+	// another instance (Store.Add).
+	unlock, err := h.lockSubscriber(sub.PrivateIdentity)
+	if err != nil {
+		h.writeStoreFailure(w, err)
+		return
+	}
+	err = h.store.Add(r.Context(), sub)
+	unlock()
+	if err != nil {
 		h.writeAddFailure(w, err)
 		return
 	}

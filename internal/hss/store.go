@@ -353,7 +353,12 @@ type Store interface {
 	SubscriberOf(ctx context.Context, publicID string) (Subscriber, bool, error)
 	// Add stores a new subscription, Not Registered, with its
 	// repository data. It fails with ErrIdentityTaken if one of its
-	// identities is in another subscription.
+	// identities is in another subscription. The caller holds the
+	// subscriber's lock, as for Delete: in a store that several
+	// instances share, a Delete takes the subscriber away before its
+	// public identities and its entry in List, and an Add of the same
+	// private identity in between would lose those to the rest of that
+	// Delete.
 	Add(ctx context.Context, sub Subscription) error
 	// Put writes back the registration state of a subscriber that is
 	// stored, and writes nothing for one that is not any more. The
@@ -406,7 +411,7 @@ type Store interface {
 	// taking an update from the same version.
 	CompareAndSwapRepositoryData(ctx context.Context, privateID string, old *sh.TransparentData, data sh.TransparentData) (bool, error)
 	// Delete removes the subscriber of privateID, and returns it and
-	// whether there was one.
+	// whether there was one. The caller holds the subscriber's lock.
 	Delete(ctx context.Context, privateID string) (Subscriber, bool, error)
 	// List returns one page of the subscribers, in the order of their
 	// private identities: at most limit of them, starting after the
