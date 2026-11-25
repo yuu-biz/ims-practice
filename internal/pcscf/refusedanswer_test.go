@@ -308,3 +308,31 @@ func TestRefusedAnswerOfAnUPDATEInTheEarlyDialogEndsTheCall(t *testing.T) {
 		t.Errorf("%d requests to authorise media, want only the one of the 183", n)
 	}
 }
+
+// TestNonSDPBodyOfAResponseGoesOn: a 180 whose body is not SDP, such as
+// one that a service puts there, carries no answer for the relay. It
+// goes on to the caller as it came, and the call goes on to its 200.
+func TestNonSDPBodyOfAResponseGoesOn(t *testing.T) {
+	c := newRawINVITE(t)
+	ringing := c.response(180)
+	ringing.Set("Content-Type", "text/plain")
+	ringing.Body = []byte("ringing")
+	c.st.Respond(ringing)
+	r := next(t, c.ct.Responses())
+	for r.StatusCode == 100 {
+		r = next(t, c.ct.Responses())
+	}
+	if r.StatusCode != 180 || string(r.Body) != "ringing" {
+		t.Fatalf("the caller got %d with %q, want the 180 as it came", r.StatusCode, r.Body)
+	}
+
+	c.st.Respond(c.response(200))
+	if r := final(t, c.ct.Responses(), 3*time.Second); r.StatusCode != 200 || audio(t, r.Body) != relayAccess {
+		t.Fatalf("the caller got %d, want the 200 naming the relay", r.StatusCode)
+	}
+	select {
+	case <-c.st.Cancelled():
+		t.Error("the callee got a CANCEL")
+	default:
+	}
+}

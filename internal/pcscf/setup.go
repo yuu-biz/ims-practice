@@ -212,17 +212,20 @@ var errRelay = errors.New("pcscf: the answer is not pointed at the media relay")
 // authorise the media, and keeps the dialog. An error means that the
 // network has no resources for the session; with errRelay, that the
 // answer is not pointed at the relay, which leaves the PCRF without it
-// too; or, with errStore, that the P-CSCF cannot keep the dialog.
+// too; or, with errStore, that the P-CSCF cannot keep the dialog. A body
+// that is not SDP carries no answer, and goes on as it came.
 func (s *setup) response(resp *sip.Message) error {
 	s.p.ueResponse(s.leg, s.invite, resp)
-	received := resp.Body
-	if err := s.p.relaySDP(resp, s.relay, !s.toUE()); err != nil {
-		s.log.Warn("media relay refused the answer", "error", err.Error())
-		return fmt.Errorf("%w: %w", errRelay, err)
-	}
 	var refused error
-	if s.offered != nil && len(received) > 0 {
-		refused = s.authorize(ueSide(received, resp.Body, !s.toUE()))
+	if sip.HasSessionDescription(resp) {
+		received := resp.Body
+		if err := s.p.relaySDP(resp, s.relay, !s.toUE()); err != nil {
+			s.log.Warn("media relay refused the answer", "error", err.Error())
+			return fmt.Errorf("%w: %w", errRelay, err)
+		}
+		if s.offered != nil {
+			refused = s.authorize(ueSide(received, resp.Body, !s.toUE()))
+		}
 	}
 	if err := s.remember(resp); err != nil {
 		return storeError(err)
