@@ -117,7 +117,9 @@ paths:
               schema:
                 $ref: '#/components/schemas/Error'
         '409':
-          description: The generation is not above the node's.
+          description: |
+            The generation is below the node's, or is the node's own with
+            a value that is not in force.
           content:
             application/json:
               schema:
@@ -430,7 +432,11 @@ components:
           minProperties: 1
           additionalProperties: true
         generation:
-          description: The generation that the OAM server gives this configuration; above the node's. 0 lets the node count one up.
+          description: |
+            The generation that the OAM server gives this configuration;
+            above the node's, or the node's own for the change that the
+            node has in force already, which is answered with no change. 0
+            lets the node count one up.
           type: integer
           minimum: 0
         operator:
