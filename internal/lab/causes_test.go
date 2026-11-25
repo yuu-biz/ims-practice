@@ -314,3 +314,26 @@ func TestRxSessionsGetTheCallIDOfTheirCause(t *testing.T) {
 		}
 	}
 }
+
+// TestRxSessionOfAUEOnIPv6: a UE that registers over IPv6 is named in
+// the AAR by Framed-IPv6-Prefix, the full address as a prefix of 128
+// bits (TS 29.214 4.4.1), and its signalling path goes with its
+// REGISTER as for a UE on IPv4.
+func TestRxSessionOfAUEOnIPv6(t *testing.T) {
+	ue := node{"ue", netip.MustParseAddrPort("[2001:db8::100]:5060")}
+	pcscfV6 := node{"pcscf", netip.MustParseAddrPort("[2001:db8::40]:5060")}
+	h := newHarness(t, Config{NodeAddresses: map[string][]netip.Addr{"pcscf": {pcscfV6.addr.Addr()}}})
+	text := register(2, digest("0123"), 600000)
+	h.capture(ue, ue, pcscfV6, hep.ProtocolTypeSIP, regCallID, text)
+	h.capture(pcscf, ue, pcscfV6, hep.ProtocolTypeSIP, regCallID, text)
+	prefix := append([]byte{0, 128}, ue.addr.Addr().AsSlice()...)
+	h.rx(265, "pcscf;signalling", `{"name":"Framed-IPv6-Prefix","code":97,"vendor":0,"value":"`+base64.StdEncoding.EncodeToString(prefix)+`"}`)
+
+	var all []Message
+	h.get("/api/messages", &all)
+	for _, m := range all {
+		if m.Protocol == ProtocolDiameter && m.CallID != regCallID {
+			t.Errorf("%s copy %d has call_id %q, want the REGISTER's %q", m.Summary, m.ID, m.CallID, regCallID)
+		}
+	}
+}

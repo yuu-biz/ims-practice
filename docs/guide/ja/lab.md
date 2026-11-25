@@ -50,7 +50,7 @@ services:
 
 Cx のメッセージには、どの SIP のリクエストのために送ったかを示すものがありません。Diameter の Session-Id と SIP の Call-ID は無関係です。そこでラボは手順の決まりを使って両者を結び付けます。Cx のリクエストは、同じノードが 2 秒以内に最後に受け取った SIP のリクエストのうち、同じ利用者を指すものに属するとします。UAR、MAR、SAR では、Authorization のユーザー名が User-Name と同じか、To が Public-Identity と同じ REGISTER です。LIR では、Request-URI が Public-Identity と同じリクエストです。応答は Session-Id でリクエストに結び付きます。この決まりは `internal/lab/causes.go` にあります。
 
-P-CSCF の Rx のセッションも同じように結び付けます（TS 29.214 A.1、A.4）。最初の AAR が UE を示すのはアドレス（Framed-IP-Address）だけです。この AAR は、P-CSCF がそのアドレスから最後に受け取った SDP 付きの SIP のメッセージか、そのアドレスからの REGISTER のうち、あとに来たほうに属するとします。SDP 付きのメッセージは発信側の UE なら INVITE、着信側の UE なら 183 です。セッションのほかのメッセージ（STR、RAR、ASR と、その応答）は Session-Id で結び付きます。ラダー図では PCRF の列を P-CSCF の隣に描きます。メッセージの中身は [VoLTE の呼の流れ](volte.md) にあります。
+P-CSCF の Rx のセッションも同じように結び付けます（TS 29.214 A.1、A.4）。最初の AAR が UE を示すのはアドレスだけです。IPv4 の UE なら Framed-IP-Address、IPv6 の UE なら Framed-IPv6-Prefix に入ります（TS 29.214 4.4.1）。この AAR は、P-CSCF がそのアドレスから最後に受け取った SDP 付きの SIP のメッセージか、そのアドレスからの REGISTER のうち、あとに来たほうに属するとします。SDP 付きのメッセージは発信側の UE なら INVITE、着信側の UE なら 183 です。セッションのほかのメッセージ（STR、RAR、ASR と、その応答）は Session-Id で結び付きます。ラダー図では PCRF の列を P-CSCF の隣に描きます。メッセージの中身は [VoLTE の呼の流れ](volte.md) にあります。
 
 Cx と Rx の矢印を選ぶと、詳細の **Link to this ladder** の欄に、この結び付きはラボがこの決まりで推定したもので、メッセージには書かれていないことが表示されます。
 
