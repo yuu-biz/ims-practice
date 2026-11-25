@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net/netip"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -334,4 +335,79 @@ func openAKAUE(t *testing.T, pcscf netip.AddrPort, protected, unprotected string
 	t.Cleanup(stop)
 	u.Store(ue.New(cfg, ua.Stack(), contact, quiet()))
 	return akaUE{ue: u.Load(), protected: tr.LocalAddr(), unprotected: unprotectedTransport.LocalAddr(), wire: wire, close: stop}
+}
+
+// newAKAPhone is "ue serve" for the AKA subscriber. unprotected has the
+// messages of the stack that sends the REGISTERs that no security
+// association protects; the wire of the phone has those of its
+// protected server port.
+func newAKAPhone(t *testing.T, n testNetwork) (p *phone, unprotected *wireLog) {
+	t.Helper()
+	unprotected = &wireLog{}
+	tr, err := sip.ListenObserved("127.0.0.1:0", quiet(), unprotected.observe)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s, err := sip.NewStack(tr, sip.Config{SentBy: tr.LocalAddr().String(), OnRequest: func(*sip.ServerTransaction) {}}, quiet())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(s.Close)
+	cfg := ue.Config{PrivateIdentity: impiAKA, PublicIdentity: impuAKA, HomeDomain: domain, PCSCF: n.pcscf,
+		PCSCFURI: "sip:pcscf." + domain + ":5060", Features: ue.DefaultFeatures, SCAddress: scAddress,
+		AKA: &ue.AKA{Secret: testSet1, Unprotected: s}}
+	return servePhone(t, cfg, autoAnswer), unprotected
+}
+
+// TestServeWithIMSAKARegistersAgainUnprotectedWhenDeactivated is TS
+// 24.229 5.1.1.7 for a UE with IMS AKA. The NOTIFY that ends the
+// registration has the UE delete its security associations towards the
+// P-CSCF, as the P-CSCF ends its own (5.2.5.2). The initial
+// registration that deactivated asks for is therefore unprotected, with
+// an empty nonce and response (5.1.1.2.2), and the UE answers a new
+// challenge over a new security agreement (5.1.1.5.1).
+func TestServeWithIMSAKARegistersAgainUnprotectedWhenDeactivated(t *testing.T) {
+	n, _ := akaIMS(t)
+	p, unprotected := newAKAPhone(t, n)
+	events := p.events()
+	waitForUESubscription(t, p)
+	if err := n.scscf.Deregister(impiAKA, reginfo.Deactivated); err != nil {
+		t.Fatal(err)
+	}
+	nextEvent(t, events, "registered false", func(s statusJSON) bool { return !s.Registered })
+	// A UE that kept its associations would get 403 and wait 30 s or
+	// more before it tried unprotected (5.1.1.2.1).
+	if !p.within(5*time.Second, func(s statusJSON) bool { return s.Registered }) {
+		t.Error("not registered again within 5 s of the deactivation")
+	}
+	for _, w := range []*wireLog{p.wire, unprotected} {
+		if w.has("< 403 REGISTER") {
+			t.Errorf("a REGISTER was refused with 403; REGISTERs %v", w.registerLabels())
+		}
+	}
+
+	open := unprotected.registers()
+	if len(open) != 4 || open[2].label != "> REGISTER" || open[3].label != "< 401 REGISTER" {
+		t.Fatalf("the unprotected port carried %v, want a REGISTER and its 401 for each initial registration",
+			unprotected.registerLabels())
+	}
+	again := open[2].message
+	creds, err := sip.ParseCredentials(again.Get("Authorization"))
+	if err != nil || creds.Nonce != "" || creds.Response != "" {
+		t.Errorf("the REGISTER after the deactivation has Authorization %q, want an empty nonce and response",
+			again.Get("Authorization"))
+	}
+	if v := again.GetAll("Security-Verify"); len(v) != 0 {
+		t.Errorf("the REGISTER after the deactivation has Security-Verify %v, want none", v)
+	}
+
+	protected := p.wire.registers()
+	if len(protected) < 2 || protected[len(protected)-2].label != "> REGISTER" || protected[len(protected)-1].label != "< 200 REGISTER" {
+		t.Fatalf("the protected server port carried %v, want the answer to the new challenge and its 200 last",
+			p.wire.registerLabels())
+	}
+	answer := protected[len(protected)-2].message
+	if got, want := answer.GetAll("Security-Verify"), open[3].message.GetAll("Security-Server"); !slices.Equal(got, want) {
+		t.Errorf("the answer to the new challenge has Security-Verify %v, want the Security-Server of its 401, %v", got, want)
+	}
 }

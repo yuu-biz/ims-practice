@@ -159,6 +159,7 @@ func (p *Phone) Serve(ctx context.Context) error {
 			r.register(ctx)
 		case state := <-r.lost:
 			r.unregistered()
+			p.ue.Unbind()
 			// SIMPLIFIED: TS 24.229 5.1.1.7. With the event rejected, the
 			// UE should also release the dialogs of the identities it
 			// lost; here the call goes on until one side hangs up. Only

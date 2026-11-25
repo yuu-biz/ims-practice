@@ -148,6 +148,33 @@ K and OPc are those of MILENAGE test set 1. OPc is derived from the operator's O
 
 A refresh and the deregistration go over the associations without a new challenge (TS 24.229 5.1.1.4.2, 5.1.1.6.2).
 
+### When the network ends the registration
+
+The S-CSCF can end a registration itself, with a NOTIFY of the reg event in which the contact of the UE is `terminated`. That NOTIFY ends the security associations at both ends: the P-CSCF ends its own as the NOTIFY passes (TS 24.229 5.2.5.2), and the UE deletes its own once it has the NOTIFY (5.1.1.7). With `event="deactivated"` the UE is to register again (5.1.1.7). It has no associations left, so it registers as it did the first time, and steps 1 to 11 happen again:
+
+```text
+ UE                         P-CSCF                     S-CSCF
+ |                            |  NOTIFY                  |
+ |  NOTIFY (to 5062)          |  event="deactivated"     |
+ |<---------------------------|<-------------------------|
+ |  200 OK                    |                          |
+ |--------------------------->|------------------------->|
+ |                            |                          |
+ |  REGISTER from 5060 to 5060: empty nonce,             |
+ |  no Security-Verify        |                          |
+ |--------------------------->|------------------------->|
+ |  401, a new Security-Server|                          |
+ |<---------------------------|<-------------------------|
+ |  REGISTER from 5062 to 5064|                          |
+ |--------------------------->|------------------------->|
+ |  200 OK                    |                          |
+ |<---------------------------|<-------------------------|
+ |  SUBSCRIBE (reg event)     |                          |
+ |--------------------------->|------------------------->|
+```
+
+The first REGISTER is unprotected and carries an Authorization with an empty nonce and response, as every initial registration with IMS AKA does (5.1.1.2.2). The S-CSCF challenges it with a new vector, the P-CSCF offers new associations in Security-Server, and the UE answers over them with that Security-Server in Security-Verify. The REGISTERs go through the I-CSCF as in the ladder above. After the 200 OK the UE subscribes to its registration state again (5.1.1.3).
+
 ### Check the vector by hand
 
 Every value of the computation is in the capture. In the run above:
