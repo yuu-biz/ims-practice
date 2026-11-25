@@ -18,6 +18,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"syscall"
 	"time"
@@ -216,6 +217,15 @@ func run(configPath string, log *slog.Logger, level *slog.LevelVar) error {
 			s.Close()
 		}
 	}()
+	// work stops the work that the roles do of their own accord
+	// (stopNode). On an error that ends the start of the node it stops
+	// before the stacks, as it does when the node is told to stop.
+	var work []func()
+	defer func() {
+		for _, stop := range work {
+			stop()
+		}
+	}()
 	// startProtectedSIP starts a stack on c with stack, a sip.Config
 	// that lacks only the sent-by, for the CSCFs, whose stacks forward
 	// CANCELs statelessly and, at the P-CSCF, screen requests. With
@@ -276,8 +286,8 @@ func run(configPath string, log *slog.Logger, level *slog.LevelVar) error {
 			return err
 		}
 		// The sweep that handles the expiries of the users runs until the
-		// node stops.
-		defer s.Close()
+		// node stops its work.
+		work = append(work, s.Close)
 		scscfRole.Store(s)
 		managed = append(managed, managedRole{function: s.Function(hss.Available), manage: s.Manage, diameterPeers: hss.Peers()})
 		stack, err := startSIPWith(config.RoleSCSCF, c.SIP, sip.Config{OnRequest: s.OnRequest, OnACK: s.OnACK, OnCANCEL: s.OnCANCEL})
@@ -341,8 +351,8 @@ func run(configPath string, log *slog.Logger, level *slog.LevelVar) error {
 			return err
 		}
 		// The sweep that handles the expiries of the reg event
-		// subscriptions runs until the node stops.
-		defer p.Close()
+		// subscriptions runs until the node stops its work.
+		work = append(work, p.Close)
 		managed = append(managed, managedRole{function: p.Function(), manage: p.Manage})
 		// Without a PCRF in the diameter section the P-CSCF asks no
 		// policy control of the network. The PCRF serves
@@ -420,8 +430,8 @@ func run(configPath string, log *slog.Logger, level *slog.LevelVar) error {
 		}, centre, ipsmgwStore(stores, roleLog), users, resolver, roleLog)
 		ipsmgwRole.Store(g)
 		// The sweep that ends the deliveries whose TR1N has run out runs
-		// until the node stops.
-		defer g.Close()
+		// until the node stops its work.
+		work = append(work, g.Close)
 		managed = append(managed, managedRole{function: g.Function(hss.Available), manage: g.Manage, diameterPeers: hss.Peers()})
 		if stub != nil {
 			stub.SetIPSMGW(g)
@@ -444,9 +454,9 @@ func run(configPath string, log *slog.Logger, level *slog.LevelVar) error {
 			return err
 		}
 		centre, stop := startSC(ctx, *c, cfg.HomeDomain, smscStore(stores, roleLog), node, server, hss, roleLog)
-		// The deliveries of this instance end after its Diameter server
-		// has stopped, so no request arrives while it finishes them.
-		defer stop()
+		// The deliveries of this instance end with the work of the node,
+		// before its Diameter connections, which the attempts send on.
+		work = append(work, stop)
 		scRole.Store(centre)
 		managed = append(managed, managedRole{function: scFunction(centre, server, hss.Available, roleLog), manage: centre.Manage, diameterPeers: hss.Peers()})
 	}
@@ -678,19 +688,51 @@ func run(configPath string, log *slog.Logger, level *slog.LevelVar) error {
 
 	<-ctx.Done()
 	log.Info("node stopping")
+	var sipStops []func()
 	for _, s := range stacks {
-		s.Close()
+		sipStops = append(sipStops, s.Close)
 	}
-	stacks = nil
 	if mmtelRole != nil {
-		mmtelRole.Close()
+		sipStops = append(sipStops, mmtelRole.Close)
 	}
-	diameter.StopAll(peers)
-	if server != nil {
-		server.Stop()
-	}
+	stopNode(work, sipStops, func() {
+		diameter.StopAll(peers)
+		if server != nil {
+			server.Stop()
+		}
+	})
+	work, stacks = nil, nil
 	log.Info("node stopped")
 	return nil
+}
+
+// stopNode stops what the node runs, in the order that keeps intact the
+// state that it shares with the other instances of its roles.
+//
+// First the work that the roles do of their own accord: the sweeps of
+// the expiries and the deliveries of the SC. Each part stops at once
+// and the node waits for all of them, since none waits for another. A
+// sweep claims nothing more and finishes the expiries it has claimed,
+// whose NOTIFYs and SARs go out while the stacks and the connections
+// are still open; an expiry that falls due from then on is another
+// instance's. The SC cuts its attempts short and leaves their
+// recipients due at once for an instance in service.
+//
+// Then the SIP stacks. They end the transactions still running, which
+// the roles take for no answer of the peer, so they leave what they
+// share as it is (sip.ErrStackClosed). Then Diameter, which the requests
+// that came over SIP may still be using. The store closes last, as run
+// returns.
+func stopNode(work, stacks []func(), stopDiameter func()) {
+	var stopping sync.WaitGroup
+	for _, stop := range work {
+		stopping.Go(stop)
+	}
+	stopping.Wait()
+	for _, stop := range stacks {
+		stop()
+	}
+	stopDiameter()
 }
 
 // roleStores is where the roles of the node keep their state. With a

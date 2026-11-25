@@ -42,15 +42,17 @@ const scAnswerTimeout = ipsmgw.DefaultOutcomeWait + 24*time.Second
 // 5.3.1.1.3 allows a sender that knows only the realm: every instance of
 // the HSS of this project holds every subscriber.
 //
-// The function it returns ends the deliveries of this instance and
-// waits for those under way. The SC goes on while the node stops its
-// Diameter server, because it runs on a context of its own and not on
-// ctx, which ends at the signal to stop: the caller calls the function
-// after the server has stopped, so that no further OFR or ALR arrives
-// while the SC finishes what it has in hand, and on an error that ends
-// the start of the node, so that the node does not wait for an SC that
-// was never told to stop. A delivery it does not finish is taken over by
-// another instance once its lease runs out.
+// The function it returns stops the SC: it cuts the attempts under way
+// short, which leaves their recipients due at once for another
+// instance (smsc.SMSC.Run), and waits for them. The SC runs on a context
+// of its own and not on ctx, which ends at the signal to stop, so that
+// it stops when the node stops the work of its roles (stopNode): before
+// the Diameter connections that its attempts send on, so that no TFR
+// fails because its connection has closed. The caller also calls the
+// function on an error that ends the start of the node, so that the
+// node does not wait for an SC that was never told to stop. An OFR or
+// an ALR that arrives after the stop is answered as ever, and leaves its
+// delivery to an instance in service.
 func startSC(ctx context.Context, c config.SC, realm string, store smsc.Store,
 	node *diameter.Node, server *diameter.Server, hss *diameter.PeerGroup, log *slog.Logger) (*smsc.SMSC, func()) {
 	centre := smsc.New(smsc.Config{
