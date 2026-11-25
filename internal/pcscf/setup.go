@@ -117,7 +117,13 @@ func (s *setup) throughRelay(out *sip.Message) error {
 
 // addContext adds the context of one pass of a call through the P-CSCF
 // to a media relay: Reserve AGW Connection Point (TS 29.334 5.17.2.2),
-// with a termination towards the UE and one towards the network. The
+// with a termination towards the UE and one towards the network. Only
+// the termination towards the UE latches, since only a UE can be behind
+// a NAT that its SDP does not show. The one towards the network sends
+// where the SDP of the network side says (H.248.37 (06/2008) 6.6.1):
+// that party changes within a call, as when the MMTel AS ends a
+// customized alerting tone and gives the caller the SDP of the callee,
+// and a latched address would keep the media on the MRFP. The
 // relay comes from a hash of the Call-ID, as the MRFC picks an MRFP, so
 // that the calls spread over the relays of the list. When that relay
 // gives no context, because it does not answer or has no port left
@@ -147,7 +153,7 @@ func (p *PCSCF) addContext(callID string, log *slog.Logger) (MediaRelay, agw.Con
 	for i := range p.relays {
 		relay := p.relays[(first+i)%len(p.relays)]
 		ctx, cancel := relayContext()
-		c, err := relay.Control.Add(ctx, agw.TerminationRequest{ID: agw.Access}, agw.TerminationRequest{ID: agw.Core})
+		c, err := relay.Control.Add(ctx, agw.TerminationRequest{ID: agw.Access}, agw.TerminationRequest{ID: agw.Core, Latch: agw.NAPTOff})
 		cancel()
 		if err == nil {
 			return relay, c, nil

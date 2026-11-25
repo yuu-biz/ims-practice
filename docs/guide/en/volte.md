@@ -660,7 +660,7 @@ Each item has a `SIMPLIFIED:` comment in the code; `grep -rn "SIMPLIFIED:" inter
 | AMR, IR.92 3.2.5 | Frames that arrive before the first one received are dropped. | Only a reordered start of the stream brings them. |
 | RTCP, RFC 3550 6.2, 6.3.4 to 6.3.7, A.1 | No reduced minimum interval, no reconsideration, no probation of a new source. | A call has exactly two members, who never change. |
 | DTMF, RFC 4733 2.5.1.3 | A digit longer than 65535 timestamp units is refused. | A UE sends short digits. |
-| Relay, RFC 3605, RFC 5761, RFC 4961 | RTCP is on the port above RTP; a latched address is kept for the whole call, unless the controller asks the termination to re-latch. | No UE here sends a=rtcp or rtcp-mux, or moves in a call. |
+| Relay, RFC 3605, RFC 5761, RFC 4961 | RTCP is on the port above RTP; the termination towards the UE keeps the address it latched for the whole call, unless the controller asks it to re-latch. | No UE here sends a=rtcp or rtcp-mux, or moves in a call. |
 | Preconditions, RFC 4032 4.1, 4.2 | A stream that moves to a new address is not detected. | The UE keeps its address for the whole call. |
 | SDP, RFC 8866 5.7 | IPv4 unicast addresses only in c=. | Every node here uses IPv4. |
 | SDP, TS 26.114 5.2.1.1 | No EVS, and so no super-wideband speech, in the offer for NR access (`sdp.VoNRCodecs`): it is the offer for LTE. | The UE has no EVS codec. An EVS payload type would offer bit rates of EVS Primary that the UE cannot send. |

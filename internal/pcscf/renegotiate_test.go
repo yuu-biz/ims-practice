@@ -95,15 +95,25 @@ func newRawCall(t *testing.T) *rawCall {
 // farHoldsBYE is closed, unless it is nil.
 func newRawCallBeforeACK(t *testing.T, farHoldsBYE <-chan struct{}) *rawCall {
 	t.Helper()
-	c := &rawCall{t: t, pcrf: &fakePolicy{}, relay: newFakeRelay(), store: NewMemoryStore()}
-	c.far, c.toFar = answering(t, "callee", coreMedia, farHoldsBYE)
+	relay := newFakeRelay()
+	c := newRawCallThrough(t, only(relay), coreMedia, farHoldsBYE)
+	c.relay = relay
+	return c
+}
+
+// newRawCallThrough is newRawCallBeforeACK with the P-CSCF driving
+// relays, and the other party answering with its media at farMedia.
+func newRawCallThrough(t *testing.T, relays []MediaRelay, farMedia netip.AddrPort, farHoldsBYE <-chan struct{}) *rawCall {
+	t.Helper()
+	c := &rawCall{t: t, pcrf: &fakePolicy{}, store: NewMemoryStore()}
+	c.far, c.toFar = answering(t, "callee", farMedia, farHoldsBYE)
 	c.ue, c.toUE = answering(t, "ue", ueMedia, nil)
 	c.ueContact = "sip:001010000000001@" + c.ue.LocalAddr().String()
 	c.farContact = "sip:callee@" + c.far.LocalAddr().String()
 	locate := locatorFunc(func(string) []sip.Destination {
 		return []sip.Destination{{Transport: sip.UDP, Addr: c.far.LocalAddr()}}
 	})
-	c.p = newPCSCF(t, Config{Host: "pcscf." + domain, Port: 5060, VisitedNetworkID: domain}, locate, c.store, only(c.relay), quiet())
+	c.p = newPCSCF(t, Config{Host: "pcscf." + domain, Port: 5060, VisitedNetworkID: domain}, locate, c.store, relays, quiet())
 	c.p.SetPolicyControl(c.pcrf)
 	c.p.store.PutAssociation(context.Background(), Association{
 		Source: sip.Destination{Transport: sip.UDP, Addr: c.ue.LocalAddr()}, SentBy: c.ue.LocalAddr().String(), Contact: c.ueContact,
