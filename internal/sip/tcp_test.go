@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"net"
 	"net/netip"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -973,6 +974,37 @@ func TestResponseGoesToTheSentByWhenItsWriteFails(t *testing.T) {
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("the response whose write failed never reached the sent-by")
+	}
+}
+
+// A response that the TU passes over before it closes the stack still
+// goes out on the open connection of its request, as it did when the
+// loop wrote it itself. Close gives up only the connects it would have
+// to wait for.
+func TestCloseSendsWhatWasHandedOverToAnOpenConnection(t *testing.T) {
+	// With one P, the goroutine that writes the queue has most often not
+	// run yet when Close comes.
+	defer runtime.GOMAXPROCS(runtime.GOMAXPROCS(1))
+	for range 20 {
+		arrived := make(chan *ServerTransaction, 1)
+		uas := newStack(t, testTimers, func(st *ServerTransaction) { arrived <- st })
+		peer := dial(t, uas.LocalAddr())
+		peer.write(t, tcpRequest(peer, REGISTER))
+		var st *ServerTransaction
+		select {
+		case st = <-arrived:
+		case <-time.After(2 * time.Second):
+			t.Fatal("the REGISTER never reached the TU")
+		}
+		st.Respond(NewResponse(st.Request, 200, NewTag()))
+		uas.Close()
+		resp, err := peer.read(t, 2*time.Second)
+		if err != nil {
+			t.Fatalf("no response on the connection once the stack closed: %v", err)
+		}
+		if resp.StatusCode != 200 || resp.Get("Call-ID") != st.Request.Get("Call-ID") {
+			t.Fatalf("got %d for %s, want the 200 for the REGISTER", resp.StatusCode, resp.Get("Call-ID"))
+		}
 	}
 }
 

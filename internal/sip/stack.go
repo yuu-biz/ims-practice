@@ -265,7 +265,9 @@ func NewStack(transport *TransportLayer, cfg Config, log *slog.Logger) (*Stack, 
 func (s *Stack) LocalAddr() netip.AddrPort { return s.transport.LocalAddr() }
 
 // Close stops the stack and its transport. Client transactions still
-// running end with ErrStackClosed. Close returns once the calls of
+// running end with ErrStackClosed. The messages that the stack handed to
+// the transport before still go out on the TCP connections that are
+// open (TransportLayer.Close). Close returns once the calls of
 // Config.Admit under way have returned, so that the node may then close
 // what Admit reads, and drops the requests that wait for Admit.
 func (s *Stack) Close() {

@@ -295,7 +295,7 @@ func (t *TransportLayer) sendTCP(s tcpSend, remote netip.AddrPort) error {
 func (t *TransportLayer) queueTCP(s tcpSend, remote netip.AddrPort) error {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	if t.conns == nil {
+	if t.closing {
 		return net.ErrClosed
 	}
 	queue, writing := t.queues[remote]
@@ -304,7 +304,7 @@ func (t *TransportLayer) queueTCP(s tcpSend, remote netip.AddrPort) error {
 	}
 	t.queues[remote] = append(queue, s)
 	if !writing {
-		t.wg.Add(1)
+		t.writers.Add(1)
 		go t.writeQueued(remote)
 	}
 	return nil
@@ -314,7 +314,7 @@ func (t *TransportLayer) queueTCP(s tcpSend, remote netip.AddrPort) error {
 // and ends once the queue is empty, so that a far end has a goroutine
 // only while messages wait for it.
 func (t *TransportLayer) writeQueued(remote netip.AddrPort) {
-	defer t.wg.Done()
+	defer t.writers.Done()
 	for {
 		next, ok := t.nextTCP(remote)
 		if !ok {
