@@ -4,7 +4,7 @@
 
 import { fetchAlarms, minSeverities, putAckState, type AlarmRecord, type Alarms } from "./api.ts";
 import { confirmAction, describe, el, fillTable, showNote, type Child } from "./dom.ts";
-import { ackAction, alarmFilter, alarmViews, describeAck, describeAlarm, describeFanOutTotals, droppingNodes, fanOutLines, formatTime, severityCounts, unknownAlarmNodes, type AlarmView } from "./view.ts";
+import { ackAction, ackConfirmation, alarmFilter, alarmViews, describeAck, describeFanOutTotals, droppingNodes, fanOutLines, formatTime, severityCounts, unknownAlarmNodes, type AlarmView } from "./view.ts";
 
 // The same pace as the node state, so that the two agree.
 const refreshMs = 5000;
@@ -114,15 +114,13 @@ export function mountAlarmsPanel(root: HTMLElement, operator: () => string): Ala
 
   async function acknowledge(r: AlarmRecord, button: HTMLButtonElement): Promise<void> {
     const action = ackAction(r);
-    // The record keeps who changed its acknowledgement, so the OAM
-    // takes none without an operator.
     const who = operator();
-    if (who === "") {
-      result.replaceChildren(el("p", { className: "note error", textContent: `To ${action.label.toLowerCase()} an alarm, enter your name in Operator first: the alarm record keeps who changed its acknowledgement.` }));
+    const asked = ackConfirmation(r, who);
+    if ("refused" in asked) {
+      result.replaceChildren(el("p", { className: "note error", textContent: asked.refused }));
       return;
     }
-    const scope = [`Node ${r.node}`, `Alarm ${r.alarm_id}: ${describeAlarm(r)}`, `Object ${r.object_instance}`, `Operator ${who}`, action.effect];
-    if (!(await confirmAction(`${action.label} the alarm?`, scope, action.label))) return;
+    if (!(await confirmAction(`${action.label} the alarm?`, asked.scope, action.label))) return;
     button.disabled = true;
     try {
       const f = await putAckState(r.node, r.alarm_id, action.to, who);

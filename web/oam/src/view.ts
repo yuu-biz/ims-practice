@@ -388,6 +388,18 @@ export function ackAction(r: AlarmRecord): { to: AckState; label: string; effect
   return { to: "ACKNOWLEDGED", label: "Acknowledge", effect: "The alarm stays in the list, acknowledged, and leaves it when its condition clears." };
 }
 
+// ackConfirmation is what the alarm panel asks the operator to confirm
+// before it changes the acknowledgement of r, or why it asks nothing:
+// the record keeps who changed its acknowledgement, so the OAM takes no
+// change without an operator.
+export function ackConfirmation(r: AlarmRecord, operator: string): { scope: string[] } | { refused: string } {
+  const action = ackAction(r);
+  if (operator.trim() === "") {
+    return { refused: `To ${action.label.toLowerCase()} an alarm, enter your name in Operator first: the alarm record keeps who changed its acknowledgement.` };
+  }
+  return { scope: [`Node ${r.node}`, `Alarm ${r.alarm_id}: ${describeAlarm(r)}`, `Object ${r.object_instance}`, `Operator ${operator}`, action.effect] };
+}
+
 // The acknowledgement of a record, one line each: the state, who last
 // changed it and through which system, and when (TS 28.111 7.4.1). The
 // record keeps who took an acknowledgement back as well.

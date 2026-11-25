@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { parseAlarms, parseChangeRecord, parseFanOut, parseManifest, parseNodeState, parseOutcome, parseStreamLine, type Endpoint, type Outcome } from "../src/api.ts";
 import {
   ackAction,
+  ackConfirmation,
   alarmFilter,
   describeAck,
   describeAlarm,
@@ -281,6 +282,20 @@ describe("alarms", () => {
     expect(ackAction(cleared!).effect).toContain("it leaves the alarm list");
     expect(ackAction(acknowledged!)).toMatchObject({ to: "UNACKNOWLEDGED", label: "Unacknowledge" });
     expect(describeAlarm(acknowledged!)).toBe("MAJOR COMMUNICATIONS_ALARM COMMUNICATIONS_SUBSYSTEM_FAILURE: Diameter peer down");
+  });
+
+  it("asks for the operator before an acknowledgement", () => {
+    const [critical, acknowledged] = a.alarms;
+    for (const operator of ["", "  "]) {
+      expect(ackConfirmation(critical!, operator)).toEqual({
+        refused: "To acknowledge an alarm, enter your name in Operator first: the alarm record keeps who changed its acknowledgement.",
+      });
+    }
+    expect(ackConfirmation(acknowledged!, "")).toEqual({
+      refused: "To unacknowledge an alarm, enter your name in Operator first: the alarm record keeps who changed its acknowledgement.",
+    });
+    const asked = ackConfirmation(critical!, "test-operator");
+    expect("scope" in asked && asked.scope).toContain("Operator test-operator");
   });
 
   it("says who last changed an acknowledgement and through which system", () => {
