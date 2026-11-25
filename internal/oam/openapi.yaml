@@ -1173,9 +1173,10 @@ components:
         ack_state:
           $ref: '../maintenance/openapi.yaml#/components/schemas/AckState'
         operator:
-          description: Who changes the state; the record keeps it as ack_user_id.
+          description: Who changes the state; the record keeps it as ack_user_id. A name of white space alone is refused.
           type: string
           minLength: 1
+          maxLength: 256
       additionalProperties: false
     AlertingToneRequest:
       type: object

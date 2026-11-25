@@ -163,6 +163,11 @@ func TestAcknowledgeAnAlarmOfOneNode(t *testing.T) {
 	if got := decodeAs[FanOut[maintenance.AlarmRecord]](t, body); got.Failed != 1 || got.Nodes[0].Error.StatusCode != http.StatusNotFound {
 		t.Errorf("another node: %s", body)
 	}
+	// The operator is bounded in characters, as the node bounds it.
+	longest := strings.Repeat("ä", 256)
+	if status, body := ts.call(t, "PUT", "/oam/v1/nodes/hss-1/alarms/"+id+"/ack-state", `{"ack_state": "ACKNOWLEDGED", "operator": "`+longest+`"}`); status != http.StatusOK {
+		t.Errorf("an operator of 256 characters: %d %s", status, body)
+	}
 	before := asked.Load()
 	for _, tc := range []struct {
 		method, path, body string
@@ -172,6 +177,8 @@ func TestAcknowledgeAnAlarmOfOneNode(t *testing.T) {
 		{"PUT", "/oam/v1/nodes/hss-1/alarms/" + id + "/ack-state", `{"ack_state": "ACKNOWLEDGED", "operator": "test-operator", "force": true}`, http.StatusBadRequest},
 		{"PUT", "/oam/v1/nodes/hss-1/alarms/" + id + "/ack-state", `{"ack_state": "ACKNOWLEDGED"}`, http.StatusBadRequest},
 		{"PUT", "/oam/v1/nodes/hss-1/alarms/" + id + "/ack-state", `{"ack_state": "UNACKNOWLEDGED", "operator": ""}`, http.StatusBadRequest},
+		{"PUT", "/oam/v1/nodes/hss-1/alarms/" + id + "/ack-state", `{"ack_state": "UNACKNOWLEDGED", "operator": " \t\u3000"}`, http.StatusBadRequest},
+		{"PUT", "/oam/v1/nodes/hss-1/alarms/" + id + "/ack-state", `{"ack_state": "ACKNOWLEDGED", "operator": "` + longest + `a"}`, http.StatusBadRequest},
 		// The system is the OAM's, not the caller's to name.
 		{"PUT", "/oam/v1/nodes/hss-1/alarms/" + id + "/ack-state", `{"ack_state": "ACKNOWLEDGED", "operator": "test-operator", "ack_system_id": "oss-1"}`, http.StatusBadRequest},
 		{"DELETE", "/oam/v1/alarms", "", http.StatusMethodNotAllowed},

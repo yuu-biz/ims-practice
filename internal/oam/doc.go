@@ -78,9 +78,11 @@
 //	     AckStateRequest -> FanOut of maintenance.AlarmRecord:
 //	     acknowledges an alarm of the node, or takes the
 //	     acknowledgement back, for the operator of the request and with
-//	     the name of the OAM as the system. A request without an
-//	     operator is 400 before the node is asked. An id that the node
-//	     does not have is the node's 404 in the entry.
+//	     the name of the OAM as the system. A request that the node
+//	     would refuse, such as one without an operator, with one of
+//	     white space alone or with one longer than the node takes, is
+//	     400 before the node is asked. An id that the node does not
+//	     have is the node's 404 in the entry.
 //
 // The same alarms are offered to an OSS by the 3GPP management
 // services (package mns), when the configuration names a SubNetwork

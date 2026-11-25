@@ -119,11 +119,17 @@ type AckStateRequest struct {
 	Operator string               `json:"operator"`
 }
 
+// ackThroughOAM is the acknowledgement that the OAM asks the node for:
+// that of req, through the OAM.
+func (s *Server) ackThroughOAM(req AckStateRequest) maintenance.AckStateRequest {
+	return maintenance.AckStateRequest{AckState: req.AckState, Operator: req.Operator, AckSystemID: s.name}
+}
+
 // SetAckState acknowledges an alarm of one node, or takes the
 // acknowledgement back (TS 28.111 6.7), for the operator of req and
 // through the OAM.
 func (s *Server) SetAckState(ctx context.Context, target Endpoint, alarmID string, req AckStateRequest) FanOut[maintenance.AlarmRecord] {
-	ack := maintenance.AckStateRequest{AckState: req.AckState, Operator: req.Operator, AckSystemID: s.name}
+	ack := s.ackThroughOAM(req)
 	s.log.Info("alarm acknowledgement requested", "node", target.Name, "alarm_id", alarmID,
 		"ack_state", string(ack.AckState), "operator", ack.Operator, "ack_system_id", ack.AckSystemID)
 	return fanOut(ctx, s, []Endpoint{target}, func(ctx context.Context, c *maintenance.Client, _ Endpoint) (maintenance.AlarmRecord, error) {
@@ -148,8 +154,10 @@ func (s *Server) alarmRoutes(rt *routes) {
 			writeError(w, err)
 			return
 		}
-		if req.Operator == "" {
-			writeError(w, fmt.Errorf("%w: operator: required, as the ack_user_id of the record", ErrInvalidRequest))
+		// The node's own check, so that a request that the node would
+		// refuse is one 400 here and asks no node.
+		if err := s.ackThroughOAM(req).Check(); err != nil {
+			writeError(w, fmt.Errorf("%w: %v", ErrInvalidRequest, err))
 			return
 		}
 		writeJSON(w, http.StatusOK, s.SetAckState(r.Context(), ts[0], r.PathValue("id"), req))
