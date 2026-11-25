@@ -78,7 +78,7 @@ func (p *PCSCF) PolicyEvent(e policy.Event) {
 		}
 	}
 	log.Info("the network took the resources of the session", "call_id", d.Key.CallID)
-	p.release(d.Key, nil, log)
+	p.release(d.Key, nil, false, log)
 }
 
 // release ends the dialog of key from the P-CSCF, for why: nil when the
@@ -97,15 +97,16 @@ func (p *PCSCF) PolicyEvent(e policy.Event) {
 // and the caller, which has no dialog yet, answers it 481 and stays in
 // the call. So a dialog whose 2xx has had no ACK yet is only marked
 // ReleasePending: the BYEs go out when the ACK passes the P-CSCF
-// (forwardACK), or after ackWait without one. The mark is in the
-// Store, so that the instance which forwards the ACK may be another
-// one. This wait is one of the few that stay in the process rather than
-// going into a time index of the Store (ExpiryKind): it is short, it
-// belongs to a call that is not yet established, and the dialog it
-// releases is one this instance is holding anyway.
-func (p *PCSCF) release(key DialogKey, why error, log *slog.Logger) {
+// (forwardACK), or after ackWait without one. afterACK asks for the
+// same wait for the 2xx to a re-INVITE that is on its way (renegotiate).
+// The mark is in the Store, so that the instance which forwards the ACK
+// may be another one. This wait is one of the few that stay in the
+// process rather than going into a time index of the Store
+// (ExpiryKind): it is short, and the 2xx it waits for has just passed
+// this instance.
+func (p *PCSCF) release(key DialogKey, why error, afterACK bool, log *slog.Logger) {
 	d, ok, err := p.store.UpdateDialog(context.Background(), key, func(d *Dialog) {
-		if d.Confirmed && !d.Acknowledged {
+		if d.Confirmed && (afterACK || !d.Acknowledged) {
 			d.ReleasePending = true
 		}
 	})

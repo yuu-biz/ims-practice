@@ -171,7 +171,7 @@ func (p *PCSCF) proxyInvite(st *sip.ServerTransaction, out *sip.Message, targets
 				if refused != nil {
 					// The callee has answered, so the caller gets the 2xx,
 					// and the dialog is then released (5.2.8.1.2).
-					go p.release(call.key, nil, call.log)
+					go p.release(call.key, nil, false, call.log)
 				}
 			default:
 				final = resp
