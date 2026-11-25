@@ -368,7 +368,7 @@ func run(configPath string, log *slog.Logger, level *slog.LevelVar) error {
 			roleLog.Info("policy control over Rx")
 		}
 		stack, err := startSIPWith(config.RolePCSCF, c.SIP,
-			sip.Config{Screen: p.Screen, Admit: p.AdmitUnprotected, OnRequest: p.OnRequest, OnACK: p.OnACK, OnCANCEL: p.OnCANCEL})
+			sip.Config{Admit: p.AdmitUnprotected, OnRequest: p.OnRequest, OnACK: p.OnACK, OnCANCEL: p.OnCANCEL})
 		if err != nil {
 			return err
 		}
@@ -382,7 +382,7 @@ func run(configPath string, log *slog.Logger, level *slog.LevelVar) error {
 			// associations of each UE are bound to.
 			protected := config.SIP{Listen: netip.AddrPortFrom(c.SIP.Listen.Addr(), port), Host: c.SIP.Host}
 			stack, err := startProtectedSIP(config.RolePCSCF, protected, c.ProtectedClientPort, p.ProtectedPeer,
-				sip.Config{Screen: p.Screen, Admit: p.AdmitProtected, OnRequest: p.OnProtectedRequest,
+				sip.Config{Admit: p.AdmitProtected, OnRequest: p.OnProtectedRequest,
 					OnACK: p.OnProtectedACK, OnCANCEL: p.OnProtectedCANCEL})
 			if err != nil {
 				return err

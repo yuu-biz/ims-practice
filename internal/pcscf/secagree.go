@@ -507,14 +507,14 @@ func (p *PCSCF) pathURIOf(a Association) (string, error) {
 }
 
 // AdmitUnprotected is the sip.Config.Admit of the stack on the
-// P-CSCF's unprotected port. A request other than REGISTER that comes
-// there from a UE with established security associations is not
-// protected, and the P-CSCF discards an unprotected message outside the
-// registration and authentication procedures (TS 24.229 5.2.1 NOTE 8):
-// as Screen does with a request that has no IP association, it sends
-// nothing back, not even a 100 (Trying), and forwards nothing. TS
-// 33.203 7.1 lets it either discard or reject what does not arrive on a
-// protected port.
+// P-CSCF's unprotected port. A request other than REGISTER must map to
+// an IP association (screen). One that comes there from a UE with
+// established security associations is not protected, and the P-CSCF
+// discards an unprotected message outside the registration and
+// authentication procedures (TS 24.229 5.2.1 NOTE 8): as screen does
+// with a request that has no IP association, it sends nothing back,
+// not even a 100 (Trying), and forwards nothing. TS 33.203 7.1 lets it
+// either discard or reject what does not arrive on a protected port.
 //
 // The SA table is in the Store, which several P-CSCFs may share, and a
 // UE's entry changes with each registration, through whichever of them
@@ -526,10 +526,13 @@ func (p *PCSCF) AdmitUnprotected(req *sip.Message, source sip.Destination) bool 
 	if req.Method == sip.REGISTER {
 		return true
 	}
+	if !p.screen(req, source) {
+		return false
+	}
 	ue, _ := p.ueSourceOf(req, source)
 	established, err := p.established(ue.Addr)
 	if err != nil {
-		// Unlike Screen, which keeps out a request whose IP association
+		// Unlike screen, which keeps out a request whose IP association
 		// it cannot read, Admit lets the request in when it cannot read
 		// the SA table: the P-CSCF then reads the Store again to serve
 		// the request, and answers 500 when that fails too.
@@ -546,14 +549,15 @@ func (p *PCSCF) AdmitUnprotected(req *sip.Message, source sip.Destination) bool 
 }
 
 // AdmitProtected is the sip.Config.Admit of the stack on the P-CSCF's
-// protected server port, for a P-CSCF with ESP. The associations of a
-// protected message are the ones of the ports it crossed (TS 33.203 7.1
-// rule 4), so a request from a UE that has a set has to come from one
-// of that set's protected ports. The kernel lets a packet from any
-// other port of the UE's address through, since the policies it would
-// have to break cover the protected ports alone, and the sent-by of its
-// Via is enough to name the UE (ueSourceOf); this is what keeps such a
-// request out. It is discarded, as TS 24.229 5.2.1 NOTE 8 has the
+// protected server port. A request other than REGISTER must map to an
+// IP association (screen). With ESP, the associations of a protected
+// message are the ones of the ports it crossed (TS 33.203 7.1 rule 4),
+// so a request from a UE that has a set has to come from one of that
+// set's protected ports. The kernel lets a packet from any other port
+// of the UE's address through, since the policies it would have to
+// break cover the protected ports alone, and the sent-by of its Via is
+// enough to name the UE (ueSourceOf); this is what keeps such a request
+// out. It is discarded, as TS 24.229 5.2.1 NOTE 8 has the
 // P-CSCF discard an unprotected message and 7.1 item 3 allows: nothing
 // goes back, not even a 100 (Trying).
 //
@@ -565,7 +569,13 @@ func (p *PCSCF) AdmitUnprotected(req *sip.Message, source sip.Destination) bool 
 // Like AdmitUnprotected it reads the SA table for each request, off the
 // stack's loop.
 func (p *PCSCF) AdmitProtected(req *sip.Message, source sip.Destination) bool {
-	if p.cfg.ESP == nil || req.Method == sip.REGISTER {
+	if req.Method == sip.REGISTER {
+		return true
+	}
+	if !p.screen(req, source) {
+		return false
+	}
+	if p.cfg.ESP == nil {
 		return true
 	}
 	ue, _ := p.ueSourceOf(req, source)

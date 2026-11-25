@@ -11,21 +11,27 @@ import (
 	"github.com/yuu-biz/ims-practice/internal/sip"
 )
 
-// Screen is the sip.Config.Screen of both stacks of the P-CSCF. It is
-// TS 24.229 5.2.6.3.2A, and 5.2.1 for SIP Digest without TLS: a request
-// other than REGISTER from a UE that has no IP association with the
-// P-CSCF is discarded. The P-CSCF sends nothing back, not even a 100
-// (Trying), and forwards nothing to the S-CSCF. Such a request may come
-// from a UE whose registration the P-CSCF has lost; that UE notices
-// that no response comes and registers again (5.1.2A.1.6).
+// screen is TS 24.229 5.2.6.3.2A, and 5.2.1 for SIP Digest without TLS,
+// for a request other than REGISTER: one from a UE that has no IP
+// association with the P-CSCF is discarded. The P-CSCF sends nothing
+// back, not even a 100 (Trying), and forwards nothing to the S-CSCF.
+// Such a request may come from a UE whose registration the P-CSCF has
+// lost; that UE notices that no response comes and registers again
+// (5.1.2A.1.6).
 //
 // The 5.2.6.3.2A exceptions do not arise here: this P-CSCF gives no
 // emergency call support, which 5.2.1 makes optional, and has no UE
 // configured as an external attached network in static mode.
 //
-// The stack asks Screen in its own goroutine, so Screen decides from
-// what the P-CSCF holds in memory (admissions) and never waits for the
-// Store, which may be on another machine.
+// AdmitUnprotected and AdmitProtected ask screen first, so it runs off
+// the stack's loop and may wait for the Store, which may be on another
+// machine. It decides from what the P-CSCF holds in memory (admissions),
+// and reads the Store only for a request that this does not let in: the
+// association may be there all the same, written before this process
+// started, by a P-CSCF of the same name that this one replaces. The
+// request waits for that read rather than being discarded, since a
+// request over TCP comes only once (RFC 3261 17.1.1.2), as a VoLTE
+// INVITE does.
 //
 // SIMPLIFIED: TS 24.229 5.2.6.2 and TS 23.228. A P-CSCF has Gm towards
 // the UEs and Mw towards the network, which a real one usually serves
@@ -34,26 +40,23 @@ import (
 // the way only the network addresses the P-CSCF: to the URI that the
 // P-CSCF put in Path, to the P-CSCF's own contact, or to the contact of
 // a UE it serves.
-func (p *PCSCF) Screen(req *sip.Message, source sip.Destination) bool {
-	if req.Method == sip.REGISTER {
-		return true
-	}
+func (p *PCSCF) screen(req *sip.Message, source sip.Destination) bool {
 	ue, sentBy := p.ueSourceOf(req, source)
-	if p.admissions.admitsFrom(ue, sentBy, time.Now()) || p.fromNetwork(req) {
+	known := func() bool { return p.admissions.admitsFrom(ue, sentBy, time.Now()) || p.fromNetwork(req) }
+	if known() {
 		return true
 	}
-	// The association may be in the Store all the same, written before
-	// this process started. Once it is in memory, the next copy of the
-	// request gets through: a UE retransmits over UDP (RFC 3261 17.1.1.2,
-	// 17.1.2.2).
 	p.lookUpAssociation(ue, req.RequestURI)
+	if known() {
+		return true
+	}
 	p.log.Info("discarded a request that does not map to an IP association",
 		"method", string(req.Method), "source", source.String(), "call_id", req.Get("Call-ID"))
 	return false
 }
 
 // fromNetwork reports whether req is addressed as only the network
-// addresses the P-CSCF (Screen).
+// addresses the P-CSCF (screen).
 func (p *PCSCF) fromNetwork(req *sip.Message) bool {
 	if top, own := sip.PopOwnRoute(req.Clone(), p.ownURIs()...); own && top.User == "term" {
 		// The Path of a registration (5.2.6.2).
@@ -70,40 +73,32 @@ func (p *PCSCF) fromNetwork(req *sip.Message) bool {
 	return p.admissions.servesContact(target)
 }
 
-// lookUpAssociation reads the Store in the background for the
-// association of a UE at source, or of the contact target, and keeps
-// what it finds in admissions. One lookup at a time runs for a source or
-// a contact, so that retransmissions do not pile them up. A lookup that
-// fails leaves admissions as it was, and the next retransmission starts
-// another one.
+// lookUpAssociation reads the Store for the association of a UE at
+// source, and for that of the contact target, and keeps what it finds
+// in admissions. A lookup that fails leaves admissions as it was, so the
+// request is discarded, and the next request of the UE reads the Store
+// again.
 func (p *PCSCF) lookUpAssociation(source sip.Destination, target string) {
-	keep := func(a Association, ok bool, err error) {
-		switch {
-		case err != nil:
+	keep := func(err error) {
+		if err != nil {
 			p.log.Warn("could not look up an IP association: the store failed", "source", source.String(), "error", err.Error())
-		case ok:
-			p.admissions.put(a)
 		}
 	}
-	if p.admissions.startLookUp("source " + source.String()) {
-		go func() {
-			defer p.admissions.endLookUp("source " + source.String())
-			keep(p.store.Association(context.Background(), source))
-		}()
-	}
-	if _, err := sip.ParseURI(target); err == nil && p.admissions.startLookUp("contact "+target) {
-		go func() {
-			defer p.admissions.endLookUp("contact " + target)
-			keep(p.associationOfContact(target))
-		}()
+	keep(p.admissions.lookUp("source "+source.String(), func() (Association, bool, error) {
+		return p.store.Association(context.Background(), source)
+	}))
+	if _, err := sip.ParseURI(target); err == nil {
+		keep(p.admissions.lookUp("contact "+target, func() (Association, bool, error) {
+			return p.associationOfContact(target)
+		}))
 	}
 }
 
-// admissions is what Screen knows of the IP associations without asking
+// admissions is what screen knows of the IP associations without asking
 // the Store: the source, Via sent-by and expiry of each, and its
 // contact. It is a copy, in memory, of the associations in the Store,
 // and holds no state of its own: indexedStore keeps it in step with
-// every write of the P-CSCF, Screen fills it from the Store for an
+// every write of the P-CSCF, screen fills it from the Store for an
 // association written before the process started, and it forgets an
 // association at its KeepUntil, as the Store does. Only the P-CSCF that
 // a UE registered through writes the UE's association, so a copy is not
@@ -116,7 +111,9 @@ type admissions struct {
 	mu        sync.Mutex
 	bySource  map[sip.Destination]admission
 	byContact map[contactKey]sip.Destination
-	lookingUp map[string]bool
+	// lookingUp holds the lookup in the Store that runs for each key
+	// (lookUp).
+	lookingUp map[string]*pendingLookUp
 	// size is how many associations bySource holds, which users reads
 	// without mu.
 	size atomic.Int64
@@ -142,7 +139,7 @@ func contactKeyOf(u sip.URI) contactKey {
 }
 
 func newAdmissions(gone func()) *admissions {
-	return &admissions{bySource: map[sip.Destination]admission{}, byContact: map[contactKey]sip.Destination{}, lookingUp: map[string]bool{},
+	return &admissions{bySource: map[sip.Destination]admission{}, byContact: map[contactKey]sip.Destination{}, lookingUp: map[string]*pendingLookUp{},
 		gone: gone}
 }
 
@@ -225,20 +222,41 @@ func (s *admissions) servesContact(target sip.URI) bool {
 	return ok
 }
 
-func (s *admissions) startLookUp(key string) bool {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.lookingUp[key] {
-		return false
-	}
-	s.lookingUp[key] = true
-	return true
+// pendingLookUp is a read of the Store that runs for a key of lookingUp,
+// and what came of it once done is closed.
+type pendingLookUp struct {
+	done chan struct{}
+	err  error
 }
 
-func (s *admissions) endLookUp(key string) {
+// lookUp has read find the association that key names in the Store,
+// and keeps what it finds. The stack decides on the requests of other
+// Call-IDs side by side (sip.Config.Admit), so several of a source may
+// miss the copy at once. One read at a time runs for a key, and a call
+// that comes while it runs waits for it and returns its error, so that
+// a burst of requests from a source reads the Store once.
+func (s *admissions) lookUp(key string, read func() (Association, bool, error)) error {
 	s.mu.Lock()
-	defer s.mu.Unlock()
+	l, running := s.lookingUp[key]
+	if !running {
+		l = &pendingLookUp{done: make(chan struct{})}
+		s.lookingUp[key] = l
+	}
+	s.mu.Unlock()
+	if running {
+		<-l.done
+		return l.err
+	}
+	a, ok, err := read()
+	if err == nil && ok {
+		s.put(a)
+	}
+	l.err = err
+	s.mu.Lock()
 	delete(s.lookingUp, key)
+	s.mu.Unlock()
+	close(l.done)
+	return err
 }
 
 // indexedStore is the Store of the P-CSCF with admissions kept in step

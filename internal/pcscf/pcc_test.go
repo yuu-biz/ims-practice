@@ -155,7 +155,7 @@ func newPCC(t *testing.T) *pcc {
 		<-n.rx
 	}
 
-	stack, err := sip.NewStack(pcscfTransport, sip.Config{SentBy: n.pcscfAddr.String(), Screen: n.p.Screen, Admit: n.p.AdmitUnprotected, OnRequest: n.p.OnRequest, OnACK: n.p.OnACK}, quiet())
+	stack, err := sip.NewStack(pcscfTransport, sip.Config{SentBy: n.pcscfAddr.String(), Admit: n.p.AdmitUnprotected, OnRequest: n.p.OnRequest, OnACK: n.p.OnACK}, quiet())
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -139,9 +139,10 @@ func (p *PCSCF) initial(st *sip.ServerTransaction, out *sip.Message, l leg, log 
 			return
 		}
 		if !ok {
-			// Screen let the request in, so the association was there when
-			// the request arrived. It has ended since, or Screen is not the
-			// one of the stack; either way the P-CSCF cannot serve it.
+			// screen let the request in, so the association was there when
+			// the request arrived. It has ended since, or the Admit of the
+			// stack is not the P-CSCF's; either way the P-CSCF cannot serve
+			// it.
 			log.Warn("the IP association of the request is gone", "source", st.Source.String())
 			st.Respond(sip.NewResponse(req, 500, sip.NewTag()))
 			return

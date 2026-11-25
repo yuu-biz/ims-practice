@@ -411,7 +411,7 @@ func startNetwork(t *testing.T, cfg networkConfig) testNetwork {
 		t.Fatal(err)
 	}
 	t.Cleanup(p.Close)
-	pcscfStack := stackConfig(t, sip.Config{Screen: p.Screen, Admit: p.AdmitUnprotected, OnRequest: p.OnRequest, OnACK: p.OnACK, OnCANCEL: p.OnCANCEL})
+	pcscfStack := stackConfig(t, sip.Config{Admit: p.AdmitUnprotected, OnRequest: p.OnRequest, OnACK: p.OnACK, OnCANCEL: p.OnCANCEL})
 	var epcAPI string
 	if cfg.epc {
 		epcAPI = startEPC(t, p, pcscfStack.LocalAddr().Addr(), cfg.metrics)
@@ -419,7 +419,7 @@ func startNetwork(t *testing.T, cfg networkConfig) testNetwork {
 	p.SetStack(pcscfStack)
 	dns.add("pcscf."+domain, pcscfStack.LocalAddr())
 	protectedStack, err := sip.NewStack(protectedTransport, sip.Config{SentBy: protectedTransport.LocalAddr().String(),
-		Screen: p.Screen, OnRequest: p.OnProtectedRequest, OnACK: p.OnProtectedACK, OnCANCEL: p.OnProtectedCANCEL}, quiet())
+		Admit: p.AdmitProtected, OnRequest: p.OnProtectedRequest, OnACK: p.OnProtectedACK, OnCANCEL: p.OnProtectedCANCEL}, quiet())
 	if err != nil {
 		t.Fatal(err)
 	}
