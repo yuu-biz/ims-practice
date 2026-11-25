@@ -164,7 +164,7 @@ Content-Type: application/merge-patch+json
 | `id` が経路の id と違う（文字列でない、`null` を含む） | 403。`MODIFICATION_NOT_ALLOWED`、`reason` は `ATTRIBUTE_INVARIANT`、`badAttributes` は `#/id`。6.3.2 は同じ値を求めています。違う値は、変えられない id を書き換える要求になります |
 | `objectClass` か `objectInstance` を書く | 今の値と同じなら受け、何も変えない。違えば 403。`ATTRIBUTE_INVARIANT` |
 | `ackState`、`ackUserId`、`ackSystemId` を書く | 受ける。書き換えられるのはこの 3 つだけです（TS 28.111 7.3.1.2 の `isWritable`） |
-| `ackUserId` が無いか空 | 400。`VALIDATION_ERROR`、`reason` は `NEW_ATTRIBUTE_VALUE_INVALID`。`notifyAckStateChanged` で必須の値だからです（8.8.2） |
+| `ackUserId` が無いか空 | 400。`VALIDATION_ERROR`、`reason` は `NEW_ATTRIBUTE_VALUE_INVALID`。`TS28111_FaultNrm.yaml` の `NotifyAckStateChanged` が `ackUserId` を `required` にしているからです。8.8.2 の表は、記録の `ackUserId` に値があるときに入れるとし、6.7 は利用者を名乗らない確認も許しますが、名乗りを求めれば、どの通知もスキーマに合います |
 | `ackState` が無いか、`ACKNOWLEDGED` と `UNACKNOWLEDGED` のどちらでもない | 400。`NEW_ATTRIBUTE_VALUE_INVALID`。確認の状態はノードが変え、ほかの 2 つはそれと一緒に変わるので、状態の無い確認は当てられません |
 | 3 つの属性の値が文字列でない。警報の記録がオブジェクトでない | 400。`NEW_ATTRIBUTE_VALUE_INVALID` |
 | `perceivedSeverity` か、ほかの読むだけの属性を書く | 403。`MODIFICATION_NOT_ALLOWED`、`reason` は `ATTRIBUTE_NOT_WRITABLE`、`badAttributes` に場所を書く。ここの警報はどれも、上げた役割が下げる ADAC の警報で、OSS は消せません（6.8）。一覧の属性（`operationalState` など）、記録の 3 つのほかの属性、資源の知らない名前も、同じ答えにします。書き換えられるのは 3 つの属性だけなので、知らない名前も書き換えられないものとして扱います |

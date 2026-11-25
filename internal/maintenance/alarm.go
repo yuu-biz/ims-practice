@@ -245,8 +245,11 @@ type AckStateRequest struct {
 	AckState AckState `json:"ack_state"`
 	// Operator names who changes the state; the record keeps it as
 	// ackUserId, the user who last changed the acknowledgement (TS
-	// 28.111 7.4.1). It is required, either way: notifyAckStateChanged
-	// carries the user of each change (8.8.2).
+	// 28.111 7.4.1). It is required, either way. TS 28.111 6.7 lets a
+	// consumer leave its identity out, and 8.8.2 has the parameter only
+	// when the record has a value, but the schema NotifyAckStateChanged
+	// of TS28111_FaultNrm.yaml requires ackUserId: with an operator for
+	// every change, every notifyAckStateChanged has one.
 	Operator string `json:"operator,omitempty"`
 	// AckSystemID names the system that the operator acknowledges
 	// through; the record keeps it as ackSystemId.

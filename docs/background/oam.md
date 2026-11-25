@@ -743,7 +743,7 @@ Prometheus と Grafana は別のコンテナとして動かすだけで、`ims` 
 | `specific_problem` | specificProblem | 原因を細かくした短い句。`Diameter peer down` など |
 | `perceived_severity` | perceivedSeverity | `CRITICAL`、`MAJOR`、`MINOR`、`WARNING`、`INDETERMINATE`、`CLEARED` |
 | `additional_text` | additionalText | 運用者向けの自由な文。512 文字まで |
-| `ack_state`、`ack_time`、`ack_user_id` | ackState、ackTime、ackUserId | 確認の状態、変えた時刻、変えた人（要求の `operator`）。確認するときも取り消すときも `operator` は必須で、無ければ 400 で断る。`notifyAckStateChanged` は変えた人を必須の値として運ぶため（8.8.2） |
+| `ack_state`、`ack_time`、`ack_user_id` | ackState、ackTime、ackUserId | 確認の状態、変えた時刻、変えた人（要求の `operator`）。確認するときも取り消すときも `operator` は必須で、無ければ 400 で断る。`TS28111_FaultNrm.yaml` の `NotifyAckStateChanged` は `ackUserId` を必須（`required`）にしているため。6.7 は名乗らない確認も許し、8.8.2 は記録に値があるときに入れるとしているが、名乗りを求めれば、どの通知もスキーマに合う |
 | `ack_system_id` | ackSystemId | 確認の状態を変えた仕組み（要求の `ack_system_id`）。OAM の画面からなら OAM、OSS からならその OSS。`operator` と同じく 256 文字まで。長い名前は 400 で断る。記録は一覧に残り、通知にも写るので、呼び出し側が何を送っても小さく保つため |
 | `notification_id` | notificationId | 記録を最後に変えたときの通知の id。変えるたびに新しい乱数を、1 から 2^53 - 1 のあいだで選ぶ。OAM が northbound の通知に入れる |
 
