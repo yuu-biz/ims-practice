@@ -3,7 +3,6 @@ package mmtel_test
 import (
 	"context"
 	"fmt"
-	"io"
 	"log/slog"
 	"net/netip"
 	"reflect"
@@ -20,7 +19,11 @@ import (
 // that the S-CSCF would give it, and the AS's outgoing leg goes along
 // the rest of the Route straight to the callee's UA.
 
-func quiet() *slog.Logger { return slog.New(slog.NewTextHandler(io.Discard, nil)) }
+// quiet is the logger of the nodes of these tests. Its handler writes
+// nothing and takes no lock: the lock of a handler that writes orders
+// the goroutines that log one after another, which would hide from the
+// race detector a race between two of them.
+func quiet() *slog.Logger { return slog.New(slog.DiscardHandler) }
 
 // ipLocator finds a host that is an IP address, which is all these
 // tests use.
