@@ -36,7 +36,10 @@ type HSS interface {
 
 // Config is what the S-CSCF needs to know.
 type Config struct {
-	// ServerName is the S-CSCF's SIP URI, sent as Server-Name on Cx.
+	// ServerName is the SIP URI of this instance of the S-CSCF, the
+	// Server-Name on Cx of a user that it assigns. A user that the HSS
+	// holds under the name of another instance keeps that name
+	// (assignedName).
 	ServerName string
 	// Host and Port name the S-CSCF in Service-Route.
 	Host       string
@@ -249,7 +252,7 @@ func (s *SCSCF) register(st *sip.ServerTransaction) {
 	}
 	defer unlock()
 
-	_, registered, err := s.store.Registration(ctx, privateID)
+	current, registered, err := s.store.Registration(ctx, privateID)
 	if err != nil {
 		s.storeFailed(st, err, log)
 		return
@@ -288,7 +291,7 @@ func (s *SCSCF) register(st *sip.ServerTransaction) {
 	}
 	// 5.4.1.1 items 1 and 2.
 	if integrity == sip.IntegrityProtectedNo || integrity == sip.IntegrityProtectedYes {
-		s.registerAKA(st, privateID, publicID, *creds, integrity == sip.IntegrityProtectedYes, min(expires, s.cfg.MaxExpires), ch, pending, log)
+		s.registerAKA(st, privateID, publicID, current.ServerName, *creds, integrity == sip.IntegrityProtectedYes, min(expires, s.cfg.MaxExpires), ch, pending, log)
 		return
 	}
 
@@ -298,19 +301,19 @@ func (s *SCSCF) register(st *sip.ServerTransaction) {
 		// TS 24.229 5.4.1.2.2A step 1: a new challenge to a REGISTER that
 		// carried a digest response says stale=true.
 		stale := creds != nil && creds.Response != ""
-		s.challenge(st, privateID, publicID, integrity, stale, log)
+		s.challenge(st, privateID, publicID, current.ServerName, integrity, stale, log)
 		return
 	}
 	switch s.check(req, *creds, ch) {
 	case wrong:
 		// TS 24.229 5.4.1.2.3B: a wrong response or Call-ID gets 403.
-		s.authenticationFailed(st, privateID, publicID, ch.HSSHost, "authentication failed", log)
+		s.authenticationFailed(st, privateID, publicID, ch, "authentication failed", log)
 		return
 	case stale:
 		// TS 24.229 5.4.1.2.3B: the password was right but the nonce or
 		// the nonce count was not; challenge again with stale=true.
 		log.Info("stale nonce")
-		s.challenge(st, privateID, publicID, integrity, true, log)
+		s.challenge(st, privateID, publicID, current.ServerName, integrity, true, log)
 		return
 	}
 	if err := s.store.DeleteChallenge(ctx, privateID); err != nil {
@@ -333,21 +336,23 @@ func answersChallenge(creds *sip.Credentials, ch Challenge, pending bool) bool {
 }
 
 // challenge runs the MAR and answers 401 (TS 24.229 5.4.1.2.1 and
-// 5.4.1.2.1B).
-func (s *SCSCF) challenge(st *sip.ServerTransaction, privateID, publicID string, integrity sip.IntegrityProtected, stale bool, log *slog.Logger) {
+// 5.4.1.2.1B). serverName is the one that the registration of the user
+// holds, if the user has one (assignedName).
+func (s *SCSCF) challenge(st *sip.ServerTransaction, privateID, publicID, serverName string, integrity sip.IntegrityProtected, stale bool, log *slog.Logger) {
 	// TS 24.229 5.4.1.1 item 9: without "integrity-protected" the S-CSCF
 	// lets the HSS choose the scheme.
 	scheme := cx.SchemeSIPDigest
 	if integrity == "" {
 		scheme = cx.SchemeUnknown
 	}
+	serverName = s.assignedName(serverName)
 	answer, err := s.request(context.Background(), cx.MultimediaAuthRequest{
 		Header:                  diameter.NewHeader(s.node, "", s.cfg.HomeDomain),
 		UserName:                privateID,
 		PublicIdentity:          publicID,
 		SIPAuthenticationScheme: scheme,
 		SIPNumberAuthItems:      1,
-		ServerName:              s.cfg.ServerName,
+		ServerName:              serverName,
 	}.Message())
 	if err != nil {
 		log.Warn("MAR failed", "error", err.Error())
@@ -374,6 +379,7 @@ func (s *SCSCF) challenge(st *sip.ServerTransaction, privateID, publicID string,
 		Algorithm:       algorithm,
 		HA1:             d.DigestHA1,
 		HSSHost:         originHost(answer),
+		ServerName:      serverName,
 	}
 	if err := s.putChallenge(ch); err != nil {
 		s.storeFailed(st, err, log)
@@ -446,7 +452,7 @@ func (s *SCSCF) accept(st *sip.ServerTransaction, c sip.Credentials, ch Challeng
 	if registered {
 		assignment = cx.ReRegistration
 	}
-	saa, err := s.serverAssignment(ctx, ch.PrivateIdentity, ch.PublicIdentity, ch.HSSHost, assignment)
+	saa, err := s.serverAssignment(ctx, ch.PrivateIdentity, ch.PublicIdentity, ch.HSSHost, ch.ServerName, assignment)
 	if err != nil || !saa.Result.Success() {
 		log.Warn("SAR failed", "result", describe(saa.Result, err))
 		s.respond(st, 500, nil)
@@ -455,6 +461,7 @@ func (s *SCSCF) accept(st *sip.ServerTransaction, c sip.Credentials, ch Challeng
 	reg := Registration{
 		PrivateIdentity: ch.PrivateIdentity,
 		HSSHost:         ch.HSSHost,
+		ServerName:      s.assignedName(ch.ServerName),
 		Expires:         time.Now().Add(expires),
 		Path:            req.GetAll("Path"),
 	}
@@ -547,7 +554,7 @@ func (s *SCSCF) deregister(st *sip.ServerTransaction, privateID string, wildcard
 	log.Info("deregistered")
 	// TS 23.228 5.3.1 steps 7 to 9: the HSS has answered the SAR before
 	// the S-CSCF answers 200.
-	s.serverAssignment(ctx, privateID, reg.PublicIdentities[0], reg.HSSHost, cx.UserDeregistration)
+	s.serverAssignment(ctx, privateID, reg.PublicIdentities[0], reg.HSSHost, reg.ServerName, cx.UserDeregistration)
 	s.respond(st, 200, func(r *sip.Message) {
 		r.Add("Contact", fmt.Sprintf("<%s>;expires=0", reg.Contact))
 	})
@@ -588,7 +595,7 @@ func (s *SCSCF) Deregister(privateID string, event reginfo.Event) error {
 	if err := s.deregisterByNetwork(ctx, reg, event); err != nil {
 		return err
 	}
-	_, err = s.serverAssignment(ctx, privateID, reg.PublicIdentities[0], reg.HSSHost, cx.AdministrativeDeregistration)
+	_, err = s.serverAssignment(ctx, privateID, reg.PublicIdentities[0], reg.HSSHost, reg.ServerName, cx.AdministrativeDeregistration)
 	return err
 }
 
@@ -829,7 +836,7 @@ func (s *SCSCF) regAwaitAuthExpired(ctx context.Context, privateID, nonce string
 	if err := s.store.DeleteChallenge(ctx, privateID); err != nil {
 		return err
 	}
-	s.serverAssignment(ctx, privateID, ch.PublicIdentity, ch.HSSHost, cx.AuthenticationTimeout)
+	s.serverAssignment(ctx, privateID, ch.PublicIdentity, ch.HSSHost, ch.ServerName, cx.AuthenticationTimeout)
 	return nil
 }
 
@@ -873,16 +880,19 @@ func (s *SCSCF) registrationExpired(ctx context.Context, privateID string) error
 	// The registration is gone, so the expiry is handled: a NOTIFY or a
 	// SAR that does not get through is not sent again.
 	s.endRegistration(ctx, reg, reginfo.Expired, log)
-	s.serverAssignment(ctx, privateID, reg.PublicIdentities[0], reg.HSSHost, cx.TimeoutDeregistration)
+	s.serverAssignment(ctx, privateID, reg.PublicIdentities[0], reg.HSSHost, reg.ServerName, cx.TimeoutDeregistration)
 	return nil
 }
 
-func (s *SCSCF) serverAssignment(ctx context.Context, privateID, publicID, hssHost string, t cx.ServerAssignmentType) (cx.ServerAssignmentAnswer, error) {
+// serverAssignment sends a SAR of type t to hssHost, under the
+// serverName that the challenge, the registration or the profile of the
+// user holds (assignedName).
+func (s *SCSCF) serverAssignment(ctx context.Context, privateID, publicID, hssHost, serverName string, t cx.ServerAssignmentType) (cx.ServerAssignmentAnswer, error) {
 	answer, err := s.request(ctx, cx.ServerAssignmentRequest{
 		Header:               diameter.NewHeader(s.node, hssHost, s.cfg.HomeDomain),
 		UserName:             privateID,
 		PublicIdentities:     []string{publicID},
-		ServerName:           s.cfg.ServerName,
+		ServerName:           s.assignedName(serverName),
 		ServerAssignmentType: t,
 	}.Message())
 	if err != nil {
@@ -890,6 +900,21 @@ func (s *SCSCF) serverAssignment(ctx context.Context, privateID, publicID, hssHo
 		return cx.ServerAssignmentAnswer{}, err
 	}
 	return cx.ParseServerAssignmentAnswer(answer)
+}
+
+// assignedName is the Server-Name of a Cx request about a user whose
+// challenge, registration or profile holds stored. The instances of one
+// S-CSCF that share a store may each have a name of their own, and the
+// HSS holds the user under the name of the instance that assigned the
+// user (TS 29.228 8.1 and 8.1.2), whichever instance goes on with the
+// user. With no name stored, for a user that this S-CSCF does not hold
+// yet or in a record that an S-CSCF wrote without one, it is the name of
+// this instance.
+func (s *SCSCF) assignedName(stored string) string {
+	if stored == "" {
+		return s.cfg.ServerName
+	}
+	return stored
 }
 
 // request sends a Cx request and waits for its answer, until ctx ends: a

@@ -219,6 +219,7 @@ func registration() scscf.Registration {
 		Expires:          time.Now().Add(time.Hour).Round(time.Millisecond),
 		Path:             []string{"<sip:term@pcscf.ims.mnc001.mcc001.3gppnetwork.org:5060;lr>"},
 		HSSHost:          "hss.ims.mnc001.mcc001.3gppnetwork.org",
+		ServerName:       "sip:scscf-1.ims.mnc001.mcc001.3gppnetwork.org:5060",
 		ContactID:        "c1",
 		CallID:           "reg-1",
 		CSeq:             2,
@@ -233,7 +234,7 @@ func registration() scscf.Registration {
 func scscfChallenge(t *testing.T, a, b scscf.Store) {
 	expires := time.Now().Add(time.Minute).Round(time.Millisecond)
 	c := scscf.Challenge{PrivateIdentity: impi, PublicIdentity: impu, CallID: "reg-1", Realm: "ims.mnc001.mcc001.3gppnetwork.org",
-		Nonce: "n1", Algorithm: sip.AlgorithmAKAv1MD5, XRES: []byte{1, 2, 3, 4}, HSSHost: "hss", Expires: expires, KeepUntil: expires.Add(time.Minute)}
+		Nonce: "n1", Algorithm: sip.AlgorithmAKAv1MD5, XRES: []byte{1, 2, 3, 4}, HSSHost: "hss", ServerName: "sip:scscf-1", Expires: expires, KeepUntil: expires.Add(time.Minute)}
 	if _, ok := getChallenge(t, b, impi); ok {
 		t.Fatal("a challenge before PutChallenge")
 	}
@@ -467,7 +468,7 @@ func scscfOriginalDialog(t *testing.T, a, b scscf.Store) {
 
 func unregisteredProfile(lifetime time.Duration) scscf.UnregisteredProfile {
 	return scscf.UnregisteredProfile{PrivateIdentity: impi, PublicIdentities: []string{impu, tel},
-		InitialFilterCriteria: registration().InitialFilterCriteria, HSSHost: "hss",
+		InitialFilterCriteria: registration().InitialFilterCriteria, HSSHost: "hss", ServerName: "sip:scscf-1",
 		Expires: time.Now().Add(lifetime).Round(time.Millisecond)}
 }
 

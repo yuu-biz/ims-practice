@@ -17,8 +17,10 @@ import (
 // mechanism, for a REGISTER that the P-CSCF marked integrity-protected
 // "no" (5.4.1.2.1 and 5.4.1.2.1A) or "yes" (5.4.1.2.2). The lock of the
 // user is held, and a protected deregistration has been handled before.
-// ch is the challenge that the S-CSCF holds for the user, if pending.
-func (s *SCSCF) registerAKA(st *sip.ServerTransaction, privateID, publicID string, c sip.Credentials, protected bool, expires time.Duration,
+// serverName is the one that the registration of the user holds, if the
+// user has one, and ch is the challenge that the S-CSCF holds for the
+// user, if pending.
+func (s *SCSCF) registerAKA(st *sip.ServerTransaction, privateID, publicID, serverName string, c sip.Credentials, protected bool, expires time.Duration,
 	ch Challenge, pending bool, log *slog.Logger) {
 	ctx := context.Background()
 	pending = pending && ch.Algorithm == sip.AlgorithmAKAv1MD5
@@ -29,7 +31,7 @@ func (s *SCSCF) registerAKA(st *sip.ServerTransaction, privateID, publicID strin
 		// even while a challenge is pending (5.4.1.2.3). The response of an
 		// unprotected REGISTER does not count (5.4.1.2.1).
 		if !pending || c.Nonce != ch.Nonce {
-			s.challengeAKA(st, privateID, publicID, nil, false, log)
+			s.challengeAKA(st, privateID, publicID, serverName, nil, false, log)
 			return
 		}
 		if err := s.store.DeleteChallenge(ctx, privateID); err != nil {
@@ -42,7 +44,7 @@ func (s *SCSCF) registerAKA(st *sip.ServerTransaction, privateID, publicID strin
 		}
 		// TS 33.203 6.1.2.2: without auts, the UE could not authenticate
 		// the network, from the MAC of the AUTN (TS 24.229 5.1.1.5.3).
-		s.authenticationFailed(st, privateID, publicID, ch.HSSHost, "the UE found the challenge invalid", log)
+		s.authenticationFailed(st, privateID, publicID, ch, "the UE found the challenge invalid", log)
 		return
 	}
 	if !pending {
@@ -59,14 +61,14 @@ func (s *SCSCF) registerAKA(st *sip.ServerTransaction, privateID, publicID strin
 	switch verdict {
 	case wrong:
 		// 5.4.1.2.3A: a wrong response or Call-ID gets 403.
-		s.authenticationFailed(st, privateID, publicID, ch.HSSHost, "authentication failed", log)
+		s.authenticationFailed(st, privateID, publicID, ch, "authentication failed", log)
 	case stale:
 		// RES is good for one response; a later nonce count asks for a
 		// new challenge, as for SIP Digest (5.4.1.2.3B).
 		log.Info("stale nonce")
 		// The reg-await-auth of the challenge stands until the new
 		// challenge, once stored, takes its place.
-		s.challengeAKA(st, privateID, publicID, nil, true, log)
+		s.challengeAKA(st, privateID, publicID, serverName, nil, true, log)
 	default:
 		if err := s.store.DeleteChallenge(ctx, privateID); err != nil {
 			s.storeFailed(st, err, log)
@@ -102,18 +104,20 @@ func (s *SCSCF) reregister(st *sip.ServerTransaction, privateID, publicID string
 		return
 	}
 	// Steps 3 and 5 to 11.
-	s.accept(st, c, Challenge{PrivateIdentity: privateID, PublicIdentity: publicID, HSSHost: reg.HSSHost}, expires, log)
+	s.accept(st, c, Challenge{PrivateIdentity: privateID, PublicIdentity: publicID, HSSHost: reg.HSSHost, ServerName: reg.ServerName}, expires, log)
 }
 
 // challengeAKA fetches an authentication vector with a MAR and
 // challenges the UE with a 401 (TS 24.229 5.4.1.2.1 steps 3 to 7, and
-// 5.4.1.2.1A). resync carries the RAND and AUTS of a
-// re-synchronisation (5.4.1.2.3A).
+// 5.4.1.2.1A). serverName is the one that the registration of the user
+// holds, or for a re-synchronisation the one of the challenge whose
+// RAND and AUTS resync carries (5.4.1.2.3A).
 //
 // SIMPLIFIED: TS 33.203 6.1.1 and TS 24.229 5.4.1.2.1A. The S-CSCF
 // offers AKAv1-MD5 only, not AKAv2-SHA-256 first and AKAv1-MD5 after
 // it: SIPp, the independent test peer, speaks AKAv1-MD5 only.
-func (s *SCSCF) challengeAKA(st *sip.ServerTransaction, privateID, publicID string, resync *cx.Resynchronization, stale bool, log *slog.Logger) {
+func (s *SCSCF) challengeAKA(st *sip.ServerTransaction, privateID, publicID, serverName string, resync *cx.Resynchronization, stale bool, log *slog.Logger) {
+	serverName = s.assignedName(serverName)
 	answer, err := s.request(context.Background(), cx.MultimediaAuthRequest{
 		Header:                  diameter.NewHeader(s.node, "", s.cfg.HomeDomain),
 		UserName:                privateID,
@@ -121,9 +125,9 @@ func (s *SCSCF) challengeAKA(st *sip.ServerTransaction, privateID, publicID stri
 		SIPAuthenticationScheme: cx.SchemeDigestAKAv1MD5,
 		SIPAuthorization:        resync,
 		SIPNumberAuthItems:      1,
-		// The HSS takes an AUTS only from the S-CSCF it has stored (TS
-		// 29.228 6.3.1 step 4), which this one is.
-		ServerName: s.cfg.ServerName,
+		// The HSS takes an AUTS only under the name that it has stored (TS
+		// 29.228 6.3.1 step 4), the one of the challenge.
+		ServerName: serverName,
 	}.Message())
 	if err != nil {
 		log.Warn("MAR failed", "error", err.Error())
@@ -147,9 +151,10 @@ func (s *SCSCF) challengeAKA(st *sip.ServerTransaction, privateID, publicID stri
 		Algorithm: sip.AlgorithmAKAv1MD5,
 		// The RAND of the newest 401 replaces any stored before
 		// (5.4.1.2.1A).
-		RAND:    av.RAND,
-		XRES:    av.XRES,
-		HSSHost: originHost(answer),
+		RAND:       av.RAND,
+		XRES:       av.XRES,
+		HSSHost:    originHost(answer),
+		ServerName: serverName,
 	}
 	if err := s.putChallenge(ch); err != nil {
 		s.storeFailed(st, err, log)
@@ -168,24 +173,24 @@ func (s *SCSCF) challengeAKA(st *sip.ServerTransaction, privateID, publicID stri
 func (s *SCSCF) resynchronise(st *sip.ServerTransaction, ch Challenge, auts string, log *slog.Logger) {
 	a, err := aka.ParseAUTS(auts)
 	if err != nil {
-		s.authenticationFailed(st, ch.PrivateIdentity, ch.PublicIdentity, ch.HSSHost, "unreadable auts", log)
+		s.authenticationFailed(st, ch.PrivateIdentity, ch.PublicIdentity, ch, "unreadable auts", log)
 		return
 	}
 	log.Info("synchronisation failure")
-	s.challengeAKA(st, ch.PrivateIdentity, ch.PublicIdentity, &cx.Resynchronization{RAND: ch.RAND, AUTS: a}, false, log)
+	s.challengeAKA(st, ch.PrivateIdentity, ch.PublicIdentity, ch.ServerName, &cx.Resynchronization{RAND: ch.RAND, AUTS: a}, false, log)
 }
 
-// authenticationFailed ends an authentication with 403 (TS 24.229
+// authenticationFailed ends the authentication of ch with 403 (TS 24.229
 // 5.4.1.2.3A and 5.4.1.2.3B). The SAR clears the S-CSCF name in the HSS
 // of a user who is not registered (TS 33.203 6.1.2.2); a user who was
 // registered stays registered until the registration expires (TS
 // 33.203 6.1.1).
-func (s *SCSCF) authenticationFailed(st *sip.ServerTransaction, privateID, publicID, hssHost, why string, log *slog.Logger) {
+func (s *SCSCF) authenticationFailed(st *sip.ServerTransaction, privateID, publicID string, ch Challenge, why string, log *slog.Logger) {
 	log.Info(why)
 	if err := s.store.DeleteChallenge(context.Background(), privateID); err != nil {
 		s.storeFailed(st, err, log)
 		return
 	}
-	s.serverAssignment(context.Background(), privateID, publicID, hssHost, cx.AuthenticationFailure)
+	s.serverAssignment(context.Background(), privateID, publicID, ch.HSSHost, ch.ServerName, cx.AuthenticationFailure)
 	s.respond(st, 403, nil)
 }

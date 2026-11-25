@@ -91,6 +91,7 @@ func (s *SCSCF) unregisteredProfile(st *sip.ServerTransaction, user string, unkn
 		BarredIdentities:      profile.BarredIdentities,
 		InitialFilterCriteria: profile.InitialFilterCriteria,
 		HSSHost:               originHost(answer),
+		ServerName:            s.cfg.ServerName,
 		Expires:               time.Now().Add(s.cfg.UnregisteredProfileLifetime),
 	}
 	unlock, err := s.users.Lock(ctx, p.PrivateIdentity)
@@ -166,7 +167,7 @@ func (s *SCSCF) unregisteredProfileExpired(ctx context.Context, privateID string
 		return nil
 	}
 	log.Info("let the profile of an unregistered user go")
-	s.serverAssignment(ctx, p.PrivateIdentity, p.PublicIdentities[0], p.HSSHost, cx.TimeoutDeregistration)
+	s.serverAssignment(ctx, p.PrivateIdentity, p.PublicIdentities[0], p.HSSHost, p.ServerName, cx.TimeoutDeregistration)
 	return nil
 }
 
