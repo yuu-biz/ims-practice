@@ -719,6 +719,105 @@ func TestRequestWhoseTransactionEndedWhileQueuedStaysUnsent(t *testing.T) {
 	receiveCallID(t, atFar, marker.Get("Call-ID"))
 }
 
+// A request that its transaction has left by the time it comes to the
+// head of the queue opens no connection: it is dropped before the
+// connect, which could take tcpConnectTimeout.
+func TestAbandonedRequestOpensNoConnection(t *testing.T) {
+	far, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { far.Close() })
+	accepted := make(chan net.Conn, 4)
+	go func() {
+		for {
+			c, err := far.Accept()
+			if err != nil {
+				return
+			}
+			t.Cleanup(func() { c.Close() })
+			accepted <- c
+		}
+	}()
+	next := newStack(t, testTimers, func(st *ServerTransaction) {
+		st.Respond(NewResponse(st.Request, 200, NewTag()))
+	})
+	var mu sync.Mutex
+	var logs bytes.Buffer
+	log := slog.New(slog.NewJSONHandler(lockedWriter{&mu, &logs}, nil))
+	// The observer stands in for a write that takes long: once slow has
+	// gone out, it holds the writer of the queue until released.
+	slow := registerRequest()
+	slowCallID := slow.Get("Call-ID")
+	writing := make(chan struct{}, 1)
+	release := make(chan struct{})
+	tr, err := ListenObserved("127.0.0.1:0", log, func(c Capture) {
+		if c.Sent && c.Transport == TCP && c.Message.Get("Call-ID") == slowCallID {
+			writing <- struct{}{}
+			select {
+			case <-release:
+			case <-time.After(5 * time.Second):
+			}
+		}
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	timers := testTimers
+	timers.TransactionTimeout = 200 * time.Millisecond
+	uac, err := NewStack(tr, Config{Timers: timers, SentBy: tr.LocalAddr().String(), OnRequest: ignoreRequests}, log)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(uac.Close)
+	farEnd := unmapped(far.Addr())
+
+	if _, err := uac.SendRequest(slow, tcpTo(farEnd)); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-writing:
+	case <-time.After(2 * time.Second):
+		t.Fatal("the transport never wrote the first request")
+	}
+	ct, err := uac.SendRequest(registerRequest(), tcpTo(farEnd), udpTo(next.LocalAddr()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := collect(t, ct); len(got) != 1 || got[0].StatusCode != 200 {
+		t.Fatalf("the request that timed out in the queue got %v, err %v; want the 200 of the next target", got, ct.Err())
+	}
+	// The connection goes, so the request at the head of the queue would
+	// need a new one; the far end still takes connections.
+	select {
+	case c := <-accepted:
+		c.Close()
+	case <-time.After(2 * time.Second):
+		t.Fatal("the far end never accepted the connection")
+	}
+	for deadline := time.Now().Add(2 * time.Second); uac.transport.hasConnection(farEnd); {
+		if time.Now().After(deadline) {
+			t.Fatal("the stack kept the closed connection")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	close(release)
+	for deadline := time.Now().Add(2 * time.Second); ; time.Sleep(10 * time.Millisecond) {
+		mu.Lock()
+		dropped := strings.Contains(logs.String(), `"msg":"message not sent, after its transaction ended"`)
+		mu.Unlock()
+		if dropped {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the queue never dropped the request whose transaction ended")
+		}
+	}
+	if uac.transport.hasConnection(farEnd) {
+		t.Error("the queue opened a connection for a request that it then dropped")
+	}
+}
+
 // RFC 3261 18.2.2 has a response go back on the connection of its
 // request while that is open, and over a new connection to the sent-by
 // once it has closed. A response that waits behind another while the
