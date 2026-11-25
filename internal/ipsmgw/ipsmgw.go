@@ -216,6 +216,14 @@ func (g *IPSMGW) respond(st *sip.ServerTransaction, code int, fill func(*sip.Mes
 // only they say whether a contact has "+g.3gpp.smsip". A deregistration
 // needs nothing more, since the S-CSCF ends the subscription with a
 // NOTIFY too (TS 24.229 5.4.2.1.2).
+//
+// A reregistration also shows that the UE is there (TS 23.204 6.5b step
+// 2a), so the HSS hears that a user whom a short message of this network
+// did not reach can take short messages again (tellReachable). The
+// NOTIFY that follows it says nothing new and sends no PUR (TS 24.341
+// 5.3.3.2), so without this the HSS would keep its UNRI for as long as
+// the UE only registered again. A first registration needs none: the PUR
+// that the first NOTIFY sets off is that news already.
 func (g *IPSMGW) register(st *sip.ServerTransaction) {
 	req := st.Request
 	log := g.log.With("method", "REGISTER", "call_id", req.Get("Call-ID"))
@@ -246,7 +254,9 @@ func (g *IPSMGW) register(st *sip.ServerTransaction) {
 		log.Warn("third-party REGISTER without an MSISDN in service-info")
 		msisdn = ""
 	}
-	g.watchRegistration(publicID, msisdn, time.Duration(n)*time.Second, log.With("msisdn", msisdn))
+	if sub, refreshed := g.watchRegistration(publicID, msisdn, time.Duration(n)*time.Second, log.With("msisdn", msisdn)); refreshed {
+		g.tellReachable(context.Background(), sub, log)
+	}
 }
 
 // isShortMessage reports whether a MESSAGE carries a short message.

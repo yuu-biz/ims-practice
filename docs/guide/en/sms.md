@@ -286,7 +286,7 @@ The IP-SM-GW sends a PUR only when a NOTIFY changes whether the user has such a 
 
 ### Re-registration and deregistration
 
-Each re-registration brings another third-party REGISTER. The IP-SM-GW then refreshes its subscription with a SUBSCRIBE within the dialog, straight to the S-CSCF, so it needs no timer of its own. A NOTIFY that shows no change sends no PUR.
+Each re-registration brings another third-party REGISTER. The IP-SM-GW then refreshes its subscription with a SUBSCRIBE within the dialog, straight to the S-CSCF, so it needs no timer of its own. A NOTIFY that shows no change sends no PUR. The re-registration also shows that the UE is there, which matters when a short message did not reach it before: see [UE 2 only registers again](#ue-2-only-registers-again).
 
 When the UE deregisters, the S-CSCF ends the subscription with a NOTIFY whose Subscription-State is `terminated;reason=noresource` (TS 24.229 5.4.2.1.2). The IP-SM-GW answers 200 OK and sends a PUR, again with the MSISDN, whose `<IP-SM-GW-Number>` is empty: this takes the IP-SM-GW out of the HSS. The S-CSCF also sends a third-party REGISTER with Expires 0 and no body, which the IP-SM-GW answers with 200 OK and nothing more. In the capture of the script, the NOTIFY comes before that REGISTER.
 
@@ -474,9 +474,9 @@ UE 1 asked for one (TP-SRR in the SMS-SUBMIT), so once the delivery report is in
 
 A registered UE does not always take a short message. It may answer that it cannot be reached just now, or that it has no memory left for one. The SC keeps the short message instead of dropping it, the HSS writes the SC's address into the message waiting data (MWD) of the user, and once the user can take short messages again the HSS alerts the SC, which delivers what it held (TS 23.040 3.2.6, TS 23.204 6.5a, 6.5b and 6.6).
 
-The retry schedule of this SC is one hour (`retry_delays` in `deploy/compose/sc.yaml`), so what delivers the short message in both runs below is the alert and not a retry. TS 23.040 3.2.7 NOTE 5 leaves those autonomous retries to the operator; here they are what covers an alert that never comes.
+The retry schedule of this SC is one hour (`retry_delays` in `deploy/compose/sc.yaml`), so what delivers the short message in the runs below is the alert and not a retry. TS 23.040 3.2.7 NOTE 5 leaves those autonomous retries to the operator. Here they cover an alert that the HSS sent but that never reached the SC. They cannot stand in for the news that the UE is back: while the HSS holds the flag of A4 below, the SRA of each retry says DIAMETER_ERROR_ABSENT_USER, as the first one did.
 
-Both ladders leave out the P-CSCF between the S-CSCF and the UE, and the LIR with which the I-CSCF finds UE 2's S-CSCF. The ladder of the delivery above shows both.
+The ladders leave out the P-CSCF between the S-CSCF and the UE, and the LIR with which the I-CSCF finds UE 2's S-CSCF. The ladder of the delivery above shows both.
 
 ### UE 2 takes no short message
 
@@ -516,11 +516,35 @@ Both ladders leave out the P-CSCF between the S-CSCF and the UE, and the LIR wit
 - **A1 to A2.** The delivery is the one of step 8 above, as far as UE 2, which answers **480 (Temporarily Unavailable)**: it was reached, but its state does not allow the request (TS 24.341 5.3.3.4.2). No delivery report follows.
 - **A3.** TS 29.311 6.1.4.4.1 maps a 480 to the user error of MAP for an absent subscriber, which TS 29.338 7.3.3 carries as **DIAMETER_ERROR_ABSENT_USER (5550)** in the TFA. The IP-SM-GW also raises its own UE-Not-Reachable-for-IP flag (UNRI) for the user, since only it knows that the delivery over IMS failed (TS 23.040 2.1.1).
 - **A4.** The SC tells the HSS with a **Report-SM-Delivery-Status** (RDR, command 8388649 of S6c) whose `SM-Delivery-Cause` is ABSENT_USER (TS 29.338 5.2.3, TS 23.040 3.2.8). The HSS puts the SC's address in the MWD and sets UNRI of its own. While UNRI is set the HSS names no serving node in an SRA, so a Service Centre that asks now is not sent to an IP-SM-GW where the delivery would fail again (TS 29.338 5.2.1.3).
-- **A5.** `{"available": true}` takes short messages again, and the next request of UE 2 that reaches the IP-SM-GW says that the UE is there, whatever that request carries (TS 23.204 6.5b step 2). The run uses a short message of UE 2's own, whose own OFR the ladder leaves out.
+- **A5.** `{"available": true}` takes short messages again, and the next request of UE 2 that reaches the IP-SM-GW says that the UE is there, whatever that request carries (TS 23.204 6.5b step 2). The run uses a short message of UE 2's own, whose own OFR the ladder leaves out. A re-registration says the same, as the next run shows.
 - **A6.** The IP-SM-GW clears its own UNRI and tells the HSS in a PUR whose SMSRegistrationInfo carries `<ReadyForSM xmlns="https://github.com/yuu-biz/ims-practice/ns/sh">msPresent</ReadyForSM>`. Sh has no element for this notification and this project speaks no MAP, so this one is of the project's own namespace (see [What this project simplifies](#what-this-project-simplifies)). The PUA does not wait for the alert, so the capture may show it before the ALR.
 - **A7.** The HSS clears UNRI and sends every Service Centre in the MWD an **Alert-Service-Centre** (ALR, command 8388648 of S6c), over the connection that Service Centre opened (TS 29.338 5.2.2, TS 23.040 3.2.6 item 2c). An address whose Service Centre answers with an ALA leaves the MWD.
 - **A8.** The alert makes the queue of that number due at once, ahead of the retry schedule: an SRR, which names the IP-SM-GW again now that UNRI is clear, and the TFR of the short message the SC held.
 - **A9.** UE 2 takes it this time. Its delivery report ends the delivery, and the TFA says 2001, as in steps 11 and 12.
+
+### UE 2 only registers again
+
+A UE need not send anything to show that it is back. After A1 to A4 of the run above, `{"available": true}` and then `POST /register` on UE 2's control API make it register again, and it does nothing else.
+
+```text
+ UE 2      P-CSCF    S-CSCF    IP-SM-GW  SC        HSS
+  :         :         :         :         :         :  A1 to A4: the 480, and the SC holds the short message
+  |<=================>|         |         |         |  REGISTER ... 200 OK (C1)
+  |         |         |-------->|         |         |  third-party REGISTER (C2)
+  |         |         |<--------|         |         |  200 OK
+  |         |         |         |------------------>|  PUR ReadyForSM msPresent (C3)
+  |         |         |         |<------------------|  PUA
+  |         |         |         |         |<--------|  ALR (C4)
+  |         |         |         |         |-------->|  ALA
+  :         :         :         :         :         :  the resend of A8 and A9 follows
+```
+
+- **C1.** UE 2 registers again before its registration runs out, as a UE does on its own; `POST /register` does it at once. Its contact has `+g.3gpp.smsip`, as before.
+- **C2.** The S-CSCF sends the IP-SM-GW a third-party REGISTER, as for every re-registration. The ladder leaves out the SUBSCRIBE with which the IP-SM-GW refreshes its subscription, and the NOTIFYs of the S-CSCF ([Re-registration and deregistration](#re-registration-and-deregistration)). They show no change, so none of them sends a PUR (TS 24.341 5.3.3.2).
+- **C3.** The registration shows that the UE is there (TS 23.204 6.5b step 2a). The IP-SM-GW still holds its own UNRI for UE 2 from A3, so it clears it and sends the HSS the notification of A6.
+- **C4.** The HSS clears its own UNRI and alerts the SC, as in A7 (TS 23.040 3.2.6 item 2c). Without the notification of C3, nothing would clear UNRI while UE 2 only registered again: each SRR of the SC would be answered DIAMETER_ERROR_ABSENT_USER, as in A4, and so would the SRR of every new short message for UE 2.
+
+The resend is the one of A8 and A9.
 
 ### UE 2 has no memory left
 
@@ -839,7 +863,7 @@ A text with a character outside the alphabet, such as Japanese, is sent in UCS2 
 | `internal/ue/sms.go` | The UE as SM-over-IP sender and receiver. |
 | `internal/lab/sms.go` | How the Lab decodes a short message for the details view. |
 | `internal/ipsmgw/network_test.go`, `internal/ue/sms_ims_test.go` | The whole flow in one process, with the cases above. |
-| `internal/ipsmgw/chain_test.go` | The IP-SM-GW, the Service Centre and the HSS in one process, on real Diameter connections: a delivery, and the two that are held and alerted. |
+| `internal/ipsmgw/chain_test.go` | The IP-SM-GW, the Service Centre and the HSS in one process, on real Diameter connections: a delivery, and the ones that are held and alerted, with the UE back by a short message, by a re-registration or by the notification that it has memory again. |
 
 ## What this project simplifies
 

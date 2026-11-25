@@ -345,6 +345,59 @@ func TestAbsentUserIsAlertedThroughTheServiceCentre(t *testing.T) {
 	}
 }
 
+// TestAbsentUserWhoRegistersAgainIsAlertedThroughTheServiceCentre is TS
+// 23.204 6.5b step 2a with TS 23.040 3.2.6 item 2c: after the 480, the
+// UE sends nothing and only registers again. The third-party REGISTER of
+// that reregistration tells the HSS that the user is reachable, the HSS
+// clears UNRI and alerts the Service Centre, and the short message it
+// held is delivered.
+func TestAbsentUserWhoRegistersAgainIsAlertedThroughTheServiceCentre(t *testing.T) {
+	available := make(chan struct{})
+	answer := func(m *sip.Message) int {
+		if _, forUE := parseRPOf(m).(sms.RPDataNetworkToMS); !forUE {
+			return 200
+		}
+		select {
+		case <-available:
+			return 200
+		default:
+			return 480
+		}
+	}
+	c := newChain(t, answer)
+	subscribe := c.registerAlice()
+
+	if resp := c.send(message(submitBody(t, 6, scAddress, toAlice(6)))); resp.StatusCode != 202 {
+		t.Fatalf("MESSAGE answered %d, want 202", resp.StatusCode)
+	}
+	c.nextDelivery()
+	c.waitForSubscriber("the SC waits for Alice", func(u hss.Subscriber) bool {
+		return len(u.MessageWaitingData) == 1 && u.MessageWaitingData[0] == scNumber && u.UNRI
+	})
+
+	// The UE is back and registers again, which is all it does. The
+	// S-CSCF reports the same registration state after the refresh of the
+	// subscription, so the NOTIFY changes nothing.
+	close(available)
+	if resp := c.thirdPartyRegister(3600); resp.StatusCode != 200 {
+		t.Fatalf("reregistration answered %d", resp.StatusCode)
+	}
+	c.send(notify(subscribe, 2, "active;expires=3761", regDoc(reginfo.Active, reginfo.Active, "+g.3gpp.smsip")))
+	c.waitForSubscriber("no service centre waits for Alice anymore", func(u hss.Subscriber) bool {
+		return len(u.MessageWaitingData) == 0 && !u.UNRI
+	})
+	mt, data := c.nextDelivery()
+	if data.OriginatorAddress != scAddress {
+		t.Errorf("RP-OA = %v, want the SC", data.OriginatorAddress)
+	}
+	tpdu, err := sms.ParseTPDU(data)
+	if got, ok := tpdu.(sms.Deliver); err != nil || !ok || got.OriginatingAddress != sms.InternationalNumber("+12025550101") {
+		t.Fatalf("the UE got %+v, %v; want the SMS-DELIVER that the SC held", tpdu, err)
+	}
+	c.send(deliveryReport(t, mt, sms.RPAck{Direction: sms.MSToNetwork, MessageReference: data.MessageReference,
+		UserData: marshal(t, sms.DeliverReport{})}))
+}
+
 // TestMemoryFullIsAlertedThroughTheServiceCentre is TS 23.204 6.6 with
 // TS 23.040 3.2.6 item 2f: a UE whose memory is full answers the short
 // message with RP-ERROR, RP-Cause 22, so the Service Centre keeps it and

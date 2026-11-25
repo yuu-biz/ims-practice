@@ -9,7 +9,9 @@
 #      end;
 #   b) UE 2 takes no short message (480). The Service Centre holds it,
 #      the HSS keeps the Service Centre's address, and once UE 2 is back
-#      the HSS alerts the Service Centre, which delivers it;
+#      the HSS alerts the Service Centre, which delivers it. UE 2 shows
+#      that it is back first with a short message of its own, and the
+#      second time by registering again and nothing else;
 #   c) UE 2 has no memory (RP-ERROR, RP-Cause 22). The same, set off by
 #      the notification that it has memory again.
 #
@@ -55,6 +57,7 @@ wait_for_open ipsmgw "$sc_host"
 gsm_text='Hello UE-B, this is UE-A.'
 ucs2_text='こんにちは、UE-A さん'
 away_text='Are you back yet?'
+rereg_text='Away again, back by registering?'
 room_text='Is there room now?'
 remember_nodes
 fail=0
@@ -207,12 +210,16 @@ else
 	echo "FAIL the submit report of UE 1: $(sent_state phone1 "$away_text")"
 	fail=1
 fi
-# The HSS logs the message waiting data of a user each time it changes.
-waiting() {
-	grep -q '"msg":"message waiting data".*"service_centres":\["12025550100"\].*"unri":true' \
-		<<<"$(docker compose logs --no-color hss 2>/dev/null)"
+# The HSS logs the message waiting data of a user each time it changes,
+# so each delivery that the Service Centre holds for an absent UE 2 adds
+# one line with its address and the unreachable flag set.
+waiting_count() {
+	grep -c '"msg":"message waiting data".*"service_centres":\["12025550100"\].*"unri":true' \
+		<<<"$(docker compose logs --no-color hss 2>/dev/null)" || true
 }
-if wait_for 60 waiting; then
+# waiting_more_than N: the HSS has logged that more than N times.
+waiting_more_than() { [ "$(waiting_count)" -gt "$1" ]; }
+if wait_for 60 waiting_more_than 0; then
 	echo "ok   the HSS keeps the Service Centre's address for UE 2, with the unreachable flag"
 else
 	echo "FAIL the HSS did not keep the Service Centre's address"
@@ -245,6 +252,33 @@ if wait_for 30 received phone1 "$ucs2_text"; then
 	echo "ok   UE 1 received the Japanese text from UE 2"
 else
 	echo "FAIL UE 1 did not receive the Japanese text"
+	fail=1
+fi
+
+echo "b) again, and this time UE 2 only registers again"
+set_state phone2 PUT /sms-availability '{"available": false}'
+held_before="$(waiting_count)"
+set_state phone1 POST /sms "{\"to\": \"+12025550102\", \"text\": \"$rereg_text\"}"
+if wait_for 30 accepted phone1 "$rereg_text"; then
+	echo "ok   the Service Centre took the second short message for the UE that takes none"
+else
+	echo "FAIL the submit report of UE 1: $(sent_state phone1 "$rereg_text")"
+	fail=1
+fi
+if wait_for 60 waiting_more_than "$held_before"; then
+	echo "ok   the HSS keeps the Service Centre's address for UE 2 again, with the unreachable flag"
+else
+	echo "FAIL the HSS did not keep the Service Centre's address the second time"
+	fail=1
+fi
+# A re-registration and nothing else: UE 2 sends no MESSAGE that could
+# say it is back (TS 23.204 6.5b step 2a).
+set_state phone2 PUT /sms-availability '{"available": true}'
+set_state phone2 POST /register ""
+if wait_for 60 received phone2 "$rereg_text"; then
+	echo "ok   the alert of the HSS delivered the short message once UE 2 had only registered again"
+else
+	echo "FAIL the short message held for UE 2 was not delivered after its re-registration"
 	fail=1
 fi
 
@@ -505,10 +539,54 @@ expect "TFR SC -> IP-SM-GW: the short message it held" "$tfr && ip.src == $sc &&
 tfr_session="$(field diameter.Session-Id | cut -d, -f1)"
 expect "MT MESSAGE reaches UE 2, the text it did not take before" "$message && ip.dst == $ue2ip && gsm_sms.sms_text == \"$away_text\""
 mt="$(field sip.Call-ID)"
+# The script goes on as soon as UE 2 has the short message, so what UE 1
+# sends next may come before the TFA that ends this delivery.
+away_delivered="$last"
+expect "delivery report UE 2 -> P-CSCF: RP-ACK" "$message && $sms && ip.src == $ue2ip && sip.In-Reply-To == \"$mt\" && $rp_ack_mo"
+expect "TFA 2001 for that TFR" "$tfa && ip.src == $ipsmgw && ip.dst == $sc && diameter.Session-Id == \"$tfr_session\" && diameter.Result-Code == 2001"
+
+echo "b) again: UE 2 only registers again, and that alone sets off the alert (TS 23.204 6.5b step 2a)"
+last="$away_delivered"
+expect "MESSAGE UE 1 -> P-CSCF for the UE that will only register again" "$message && $sms && ip.src == $ue1 && gsm_sms.sms_text == \"$rereg_text\""
+expect "TFR SC -> IP-SM-GW" "$tfr && ip.src == $sc && ip.dst == $ipsmgw && diameter.User-Name == \"001010000000002\""
+tfr_session="$(field diameter.Session-Id | cut -d, -f1)"
+expect "MT MESSAGE reaches UE 2" "$message && ip.dst == $ue2ip && gsm_sms.sms_text == \"$rereg_text\""
+mt="$(field sip.Call-ID)"
+expect "480 Temporarily Unavailable UE 2 -> P-CSCF" "sip.Status-Code == 480 && sip.Call-ID == \"$mt\" && ip.src == $ue2ip"
+expect "TFA DIAMETER_ERROR_ABSENT_USER for that TFR" "$tfa && ip.src == $ipsmgw && ip.dst == $sc && diameter.Session-Id == \"$tfr_session\" && diameter.Experimental-Result-Code == 5550"
+expect "RDR SC -> HSS with SM-Delivery-Cause ABSENT_USER" "$rdr && ip.src == $sc && ip.dst == $hss && e164.msisdn == \"12025550102\" && diameter.SM-Delivery-Cause == 1"
+held="$last"
+expect "RDA 2001" "$(answer_to) && diameter.Result-Code == 2001"
+# UE 2 registers again once the HSS has logged the report, which it does
+# before it answers.
+last="$held"
+expect "REGISTER UE 2 -> P-CSCF: the re-registration" "sip.Method == \"REGISTER\" && ip.src == $ue2ip && ip.dst == $pcscf"
+expect "third-party REGISTER S-CSCF -> IP-SM-GW for the re-registration" "sip.Method == \"REGISTER\" && ip.src == $scscf && ip.dst == $ipsmgw && sip.msg_body contains \"<service-info>12025550102</service-info>\" && sip.Expires == 3600"
+reregistered="$last"
+expect "200 OK IP-SM-GW -> S-CSCF to that REGISTER" "sip.Status-Code == 200 && sip.CSeq.method == \"REGISTER\" && ip.src == $ipsmgw && ip.dst == $scscf"
+# The refresh of the subscription and the notification go out together.
+last="$reregistered"
+expect "SUBSCRIBE IP-SM-GW -> S-CSCF: the refresh within the dialog" "sip.Method == \"SUBSCRIBE\" && sip.Event == \"reg\" && ip.src == $ipsmgw && ip.dst == $scscf"
+last="$reregistered"
+expect "PUR IP-SM-GW -> HSS: ReadyForSM msPresent, set off by the re-registration" "diameter.cmd.code == 307 && $req && ip.src == $ipsmgw && diameter.Data-Reference == 24 && e164.msisdn == \"12025550102\" && diameter.Sh-User-Data contains \"<ReadyForSM xmlns=\\\"https://github.com/yuu-biz/ims-practice/ns/sh\\\">msPresent</ReadyForSM>\""
+told="$last"
+none "MESSAGE from UE 2 between the report of the absent user and that PUR" "$message && ip.src == $ue2ip && frame.number > $held && frame.number < $told"
+expect "ALR HSS -> SC for UE 2" "$alr && ip.src == $hss && ip.dst == $sc && e164.msisdn == \"12025550102\""
+alerted="$last"
+expect "ALA 2001 SC -> HSS" "$(answer_to) && diameter.Result-Code == 2001"
+last="$alerted"
+expect "SRR SC -> HSS, now that the unreachable flag is clear" "$srr && ip.src == $sc && e164.msisdn == \"12025550102\""
+expect "SRA 2001 with the IP-SM-GW again" "$(answer_to) && diameter.Result-Code == 2001 && diameter.IP-SM-GW-Name"
+expect "TFR SC -> IP-SM-GW: the short message it held" "$tfr && ip.src == $sc && ip.dst == $ipsmgw && diameter.User-Name == \"001010000000002\""
+tfr_session="$(field diameter.Session-Id | cut -d, -f1)"
+expect "MT MESSAGE reaches UE 2, the text it did not take before" "$message && ip.dst == $ue2ip && gsm_sms.sms_text == \"$rereg_text\""
+mt="$(field sip.Call-ID)"
+rereg_delivered="$last"
 expect "delivery report UE 2 -> P-CSCF: RP-ACK" "$message && $sms && ip.src == $ue2ip && sip.In-Reply-To == \"$mt\" && $rp_ack_mo"
 expect "TFA 2001 for that TFR" "$tfa && ip.src == $ipsmgw && ip.dst == $sc && diameter.Session-Id == \"$tfr_session\" && diameter.Result-Code == 2001"
 
 echo "c) UE 2 has no memory: the notification sets off the alert (TS 23.204 6.6, TS 23.040 3.2.6 item 2f)"
+last="$rereg_delivered"
 expect "MESSAGE UE 1 -> P-CSCF for the UE without memory" "$message && $sms && ip.src == $ue1 && gsm_sms.sms_text == \"$room_text\""
 expect "TFR SC -> IP-SM-GW" "$tfr && ip.src == $sc && ip.dst == $ipsmgw && diameter.User-Name == \"001010000000002\""
 tfr_session="$(field diameter.Session-Id | cut -d, -f1)"

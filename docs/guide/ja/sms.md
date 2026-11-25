@@ -293,7 +293,7 @@ IP-SM-GW が PUR を送るのは、そのような連絡先があるかどうか
 
 ### 再登録と登録の解除
 
-再登録のたびに、第三者 REGISTER がまた届きます。IP-SM-GW はそのたびに、購読のダイアログの中で S-CSCF へ直接 SUBSCRIBE を送って購読を更新するので、自分のタイマーは要りません。状態が変わらない NOTIFY では PUR を送りません。
+再登録のたびに、第三者 REGISTER がまた届きます。IP-SM-GW はそのたびに、購読のダイアログの中で S-CSCF へ直接 SUBSCRIBE を送って購読を更新するので、自分のタイマーは要りません。状態が変わらない NOTIFY では PUR を送りません。再登録は、UE がそこにいることも示します。前にショートメッセージが届かなかったときは、これが意味を持ちます。[UE 2 が登録し直すだけのとき](#ue-2-が登録し直すだけのとき)を見てください。
 
 UE が登録を解除すると、S-CSCF は Subscription-State が `terminated;reason=noresource` の NOTIFY で購読を終わらせます（TS 24.229 5.4.2.1.2）。IP-SM-GW は 200 OK を返し、`<IP-SM-GW-Number>` を空にした PUR を送ります。利用者を示すのは、ここでも MSISDN です。これで HSS から IP-SM-GW の登録が消えます。S-CSCF は Expires が 0 でボディの無い第三者 REGISTER も送り、IP-SM-GW は 200 OK を返すだけです。スクリプトのキャプチャでは、NOTIFY がこの REGISTER より先に来ています。
 
@@ -481,9 +481,9 @@ UE 1 は SMS-SUBMIT の TP-SRR で status report を頼んだので、delivery r
 
 登録している UE でも、いつもショートメッセージを受け取れるとは限りません。今は届かないと答えることもあれば、入れるメモリが無いと答えることもあります。そのとき SC はショートメッセージを捨てずに預かります。HSS は SC のアドレスを利用者の message waiting data（MWD）に書き、利用者がまた受け取れるようになると SC に知らせます。SC は預かっていたものを配達します（TS 23.040 3.2.6、TS 23.204 6.5a、6.5b、6.6）。
 
-この SC の再送の間隔は 1 時間です（`deploy/compose/sc.yaml` の `retry_delays`）。そのため、下の 2 つのどちらでも、ショートメッセージを届けるのは再送ではなく知らせのほうです。TS 23.040 3.2.7 の NOTE 5 は、この自発的な再送を運用者に任せています。ここでは、知らせが届かなかったときの備えです。
+この SC の再送の間隔は 1 時間です（`deploy/compose/sc.yaml` の `retry_delays`）。そのため、下のどの場合も、ショートメッセージを届けるのは再送ではなく知らせのほうです。TS 23.040 3.2.7 の NOTE 5 は、この自発的な再送を運用者に任せています。ここでの再送は、HSS が送った知らせが SC に届かなかったときの備えです。UE が戻ったという知らせの代わりにはなりません。下の A4 の印を HSS が持っているあいだは、再送の SRA にも、最初と同じく DIAMETER_ERROR_ABSENT_USER が返るためです。
 
-どちらのラダー図も、S-CSCF と UE のあいだの P-CSCF と、I-CSCF が UE 2 の S-CSCF を見つける LIR を省いています。上の配達のラダー図にはどちらもあります。
+ラダー図はどれも、S-CSCF と UE のあいだの P-CSCF と、I-CSCF が UE 2 の S-CSCF を見つける LIR を省いています。上の配達のラダー図にはどちらもあります。
 
 ### UE 2 がショートメッセージを受け取らない
 
@@ -523,11 +523,35 @@ UE 2 の制御 API に `PUT /sms-availability` で `{"available": false}` を送
 - **A1 から A2.** 配達は上の手順 8 と同じで、UE 2 までは同じように進みます。UE 2 は **480（Temporarily Unavailable）** で答えます。相手には届いたが、その状態では要求を受けられないという意味です（TS 24.341 5.3.3.4.2）。delivery report は送りません。
 - **A3.** TS 29.311 6.1.4.4.1 は 480 を、不在の加入者を表す MAP のユーザーエラーに写します。TS 29.338 7.3.3 はそれを TFA の **DIAMETER_ERROR_ABSENT_USER（5550）** で運びます。IMS での配達が失敗したことを知っているのはこのノードだけなので、IP-SM-GW は自分の UE-Not-Reachable-for-IP（UNRI）も立てます（TS 23.040 2.1.1）。
 - **A4.** SC は **Report-SM-Delivery-Status**（RDR、S6c のコマンド 8388649）で HSS に伝えます。`SM-Delivery-Cause` は ABSENT_USER です（TS 29.338 5.2.3、TS 23.040 3.2.8）。HSS は SC のアドレスを MWD に入れ、自分の UNRI を立てます。UNRI が立っているあいだ、HSS は SRA に serving node を入れません。今問い合わせたサービスセンタを、また失敗する IP-SM-GW へ向かわせないためです（TS 29.338 5.2.1.3）。
-- **A5.** `{"available": true}` でまた受け取るようになります。そのあと UE 2 が出した要求が IP-SM-GW に届けば、中身が何であれ、UE がそこにいることが分かります（TS 23.204 6.5b の step 2）。ここでは UE 2 自身のショートメッセージを使います。その OFR はラダー図では省いています。
+- **A5.** `{"available": true}` でまた受け取るようになります。そのあと UE 2 が出した要求が IP-SM-GW に届けば、中身が何であれ、UE がそこにいることが分かります（TS 23.204 6.5b の step 2）。ここでは UE 2 自身のショートメッセージを使います。その OFR はラダー図では省いています。再登録でも同じことが分かります。次の場合で示します。
 - **A6.** IP-SM-GW は自分の UNRI を落とし、SMSRegistrationInfo に `<ReadyForSM xmlns="https://github.com/yuu-biz/ims-practice/ns/sh">msPresent</ReadyForSM>` を入れた PUR で HSS に伝えます。Sh にはこの知らせのための要素が無く、このプロジェクトは MAP を話さないので、この要素はプロジェクト独自のものです（[このプロジェクトで簡略化していること](#このプロジェクトで簡略化していること)を参照）。PUA は知らせを待たないので、キャプチャでは ALR より先に来ることがあります。
 - **A7.** HSS は UNRI を落とし、MWD にあるサービスセンタすべてに **Alert-Service-Centre**（ALR、S6c のコマンド 8388648）を送ります。送り先は、そのサービスセンタが開いた接続です（TS 29.338 5.2.2、TS 23.040 3.2.6 の 2c）。ALA が返ったアドレスは MWD から消えます。
 - **A8.** 知らせを受けた SC は、その番号の待ち行列を再送の間隔を待たずにすぐ配達に回します。UNRI が落ちた今、SRR にはまた IP-SM-GW が返り、預かっていたショートメッセージを TFR で送ります。
 - **A9.** 今度は UE 2 が受け取ります。delivery report が配達を終わらせ、TFA は 2001 になります。手順 11 と 12 と同じです。
+
+### UE 2 が登録し直すだけのとき
+
+戻ったことを示すために、UE が何かを送る必要はありません。上の A1 から A4 のあと、UE 2 の制御 API に `{"available": true}` を送り、続けて `POST /register` を送ると、UE 2 は登録し直し、ほかには何もしません。
+
+```text
+ UE 2      P-CSCF    S-CSCF    IP-SM-GW  SC        HSS
+  :         :         :         :         :         :  A1 to A4: the 480, and the SC holds the short message
+  |<=================>|         |         |         |  REGISTER ... 200 OK (C1)
+  |         |         |-------->|         |         |  third-party REGISTER (C2)
+  |         |         |<--------|         |         |  200 OK
+  |         |         |         |------------------>|  PUR ReadyForSM msPresent (C3)
+  |         |         |         |<------------------|  PUA
+  |         |         |         |         |<--------|  ALR (C4)
+  |         |         |         |         |-------->|  ALA
+  :         :         :         :         :         :  the resend of A8 and A9 follows
+```
+
+- **C1.** UE 2 は、登録の期限が切れる前に登録し直します。UE は本来これを自分で行い、`POST /register` はそれをすぐに行わせます。連絡先には、前と同じく `+g.3gpp.smsip` が付いています。
+- **C2.** S-CSCF は、ほかの再登録と同じく、IP-SM-GW に第三者 REGISTER を送ります。IP-SM-GW が購読を更新する SUBSCRIBE と、S-CSCF の NOTIFY は、ラダー図では省いています（[再登録と登録の解除](#再登録と登録の解除)）。どれも状態が変わらないので、PUR は送られません（TS 24.341 5.3.3.2）。
+- **C3.** 登録は、UE がそこにいることを示します（TS 23.204 6.5b の step 2a）。IP-SM-GW は、A3 で立てた UE 2 の UNRI をまだ持っているので、それを落として、A6 と同じ知らせを HSS に送ります。
+- **C4.** HSS は自分の UNRI を落とし、A7 と同じく SC に知らせます（TS 23.040 3.2.6 の 2c）。C3 の知らせが無ければ、UE 2 が登録し直すだけのあいだ、UNRI を落とすものはありません。SC の SRR には A4 と同じく毎回 DIAMETER_ERROR_ABSENT_USER が返り、UE 2 宛の新しいショートメッセージの SRR にも同じものが返ります。
+
+送り直しは A8 と A9 と同じです。
 
 ### UE 2 のメモリに空きが無い
 
@@ -846,7 +870,7 @@ octet 2: lowest 2 bits of 'l' (00), then rest of 'e' (110010) = 0011 0010 = 32
 | `internal/ue/sms.go` | SM-over-IP sender と receiver としての UE。 |
 | `internal/lab/sms.go` | ラボが詳細の表示のためにショートメッセージをデコードするところ。 |
 | `internal/ipsmgw/network_test.go`、`internal/ue/sms_ims_test.go` | 流れの全体を 1 つのプロセスで動かす試験。上の失敗の場合も含む。 |
-| `internal/ipsmgw/chain_test.go` | IP-SM-GW、サービスセンタ、HSS を 1 つのプロセスで、本物の Diameter の接続でつないで動かす試験。すぐに届く配達と、保留されて通知で届く 2 つの配達。 |
+| `internal/ipsmgw/chain_test.go` | IP-SM-GW、サービスセンタ、HSS を 1 つのプロセスで、本物の Diameter の接続でつないで動かす試験。すぐに届く配達と、保留されて通知で届く配達。UE が戻ったことは、ショートメッセージ、再登録、メモリに空きができた知らせのそれぞれで示す。 |
 
 ## このプロジェクトで簡略化していること
 
