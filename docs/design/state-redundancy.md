@@ -289,6 +289,8 @@ IP-SM-GW が 1 つの SIP トランザクションより長く持つものは、
 
 IP-SM-GW が受けないメソッドは、administrative state に関わらず 405 を返します（`ipsmgw.go` の `OnRequest`）。運用から外しても、そのメソッドを扱えるようになるわけではなく、次の台も同じ答えを返すためです。OPTIONS もここに入ります。この IP-SM-GW は REGISTER、MESSAGE、NOTIFY だけを受け、UA に OPTIONS を答えさせていません。
 
+SGd の TFR は DIAMETER_TOO_BUSY で断ります（`sgd.go`）。TFR は Destination-Host でこの台を名指しした要求なので、この答えを特定のサーバーを指した要求にだけ使わせる RFC 6733 7.1.3 の MUST に合います。SC は、同じ realm の IP-SM-GW のうち SGd でつながっているほかの台へ、同じ TFR を送ります。SC がこの台への接続を持たないときも同じです（[sms.md](sms.md) の「名指しした台が使えないとき」）。
+
 S-CSCF は利用者の iFC で IP-SM-GW に要求を届けるので、503 は S-CSCF に返ります。S-CSCF は、サーバー名について DNS が返した次の台へ送り（RFC 3263 4.3）、残っていなければ iFC の既定の処理に従います。第三者 REGISTER は TS 24.229 5.4.1.7、ほかは 5.4.3.2 と 5.4.3.3 です。`deploy/compose/hss.yaml` の IP-SM-GW の iFC は、利用者が送る MESSAGE だけが SESSION_TERMINATED で、ほかは SESSION_CONTINUED です。そのため、次のようになります。
 
 - どの台も答えなかった第三者 REGISTER は、登録をそのまま残します（5.4.1.7）。登録と再登録では、利用者は登録され、どの IP-SM-GW も reg event の購読を持たないので、HSS はその利用者が短いメッセージを受け取ることを知りません。次の再登録の第三者 REGISTER が購読します。登録解除では、やり残しはありません。購読を終わらせるのは NOTIFY だからです。

@@ -77,11 +77,13 @@ import (
 //
 // Over SGd it refuses the TFR of a short message for a user, with
 // DIAMETER_TOO_BUSY (sgd.go). That is the answer of a node that is up
-// but cannot serve this request, which RFC 6733 7.1.3 has the sender
-// take to another node of the realm; the other instances of the
-// IP-SM-GW are such nodes, and nothing of the delivery has begun. A
-// command that the IP-SM-GW does not take at all keeps its
-// DIAMETER_COMMAND_UNSUPPORTED, as a method does its 405.
+// but cannot serve a request that names it, after which RFC 6733 7.1.3
+// has the sender try an alternate peer. Nothing of the delivery has
+// begun, and the Service Centre sends the TFR to another instance of
+// the IP-SM-GW in the realm (internal/smsc), which finds the user in
+// the store that the instances share. A command that the IP-SM-GW does
+// not take at all keeps its DIAMETER_COMMAND_UNSUPPORTED, as a method
+// does its 405.
 //
 // The S-CSCF brings the IP-SM-GW its requests by the initial filter
 // criteria of the served user, so each 503 goes back to the S-CSCF. It

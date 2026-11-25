@@ -84,6 +84,15 @@ func (n *diameterNode) MTForwardShortMessage(_ context.Context, req sgd.MTForwar
 	return sgd.ParseMTForwardShortMessageAnswer(overTheWire(tfa))
 }
 
+// ServingNodes are the serving nodes of realm that this node is
+// connected to: the stand-in MME of the realm of the example.
+func (n *diameterNode) ServingNodes(r string) []string {
+	if r != realm {
+		return nil
+	}
+	return []string{mme}
+}
+
 // standInMME takes the TFR and tells what it would send the UE.
 type standInMME struct {
 	mu  sync.Mutex

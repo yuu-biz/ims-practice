@@ -99,9 +99,10 @@ func (g *IPSMGW) Handle(request *diam.Message) *diam.Message {
 func (g *IPSMGW) mtForwardShortMessage(ctx context.Context, r sgd.MTForwardShortMessageRequest) sgd.MTForwardShortMessageAnswer {
 	log := g.log.With("command", "TFR", "session_id", r.SessionID, "imsi", r.UserName)
 	if !g.unlocked() {
-		// RFC 6733 7.1.3: the SMS-GMSC should try another node of the
-		// realm, which is what the IP-SM-GW's other instances are. The
-		// delivery has not begun, so nothing is lost by refusing it.
+		// RFC 6733 7.1.3: the SMS-GMSC should try an alternate peer,
+		// and the Service Centre tries the other instances of the
+		// IP-SM-GW in the realm. The delivery has not begun, so nothing
+		// is lost by refusing it.
 		log.Info("short message refused while not unlocked")
 		return answer(diameter.Base(diameter.DiameterTooBusy))
 	}

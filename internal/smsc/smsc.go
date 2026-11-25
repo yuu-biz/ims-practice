@@ -47,9 +47,16 @@ import (
 // fills each request except Session-Id, Origin-Host and Origin-Realm,
 // which the client writes as its Diameter node names itself;
 // DestinationHost and DestinationRealm name the serving node that the
-// HSS gave. An error means that no answer came.
+// HSS gave, or another instance of it (forward). An error means that no
+// answer came; diameter.ErrPeerUnavailable among them means that the
+// request did not go out, because the client has no open connection to
+// that node.
+//
+// ServingNodes are the Diameter identities of the serving nodes of a
+// realm that the client can send a TFR to now.
 type SGdClient interface {
 	MTForwardShortMessage(ctx context.Context, req sgd.MTForwardShortMessageRequest) (sgd.MTForwardShortMessageAnswer, error)
+	ServingNodes(realm string) []string
 }
 
 // S6cClient sends the requests of S6c that the SC originates, filled in

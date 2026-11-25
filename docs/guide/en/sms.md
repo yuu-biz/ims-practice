@@ -671,7 +671,28 @@ It answers 503 to:
 
 A method that the IP-SM-GW does not take at all keeps its 405 (Method Not Allowed), out of service or not: the method is no more supported out of service than in it, and the next instance would answer the same.
 
-On its Diameter side the IP-SM-GW refuses a short message that a Service Centre brings over SGd, with DIAMETER_TOO_BUSY (3004). That is the answer of a node that is up but cannot serve this request, and RFC 6733 7.1.3 has the sender take it to another node of the realm; the other instances of the IP-SM-GW are such nodes, and nothing of the delivery has begun. A command the IP-SM-GW does not take at all keeps its DIAMETER_COMMAND_UNSUPPORTED (3001), as a method keeps its 405.
+On its Diameter side the IP-SM-GW refuses a short message that a Service Centre brings over SGd, with DIAMETER_TOO_BUSY (3004). That is the answer of a node that is up but cannot serve a request that names it, and RFC 6733 7.1.3 has the node that gets it try an alternate peer. Nothing of the delivery has begun, so the Service Centre sends the TFR again to another instance of the IP-SM-GW: one of the same realm that is connected to it over SGd. Any instance finds the user by the IMSI, since the instances keep their users in one store. A command the IP-SM-GW does not take at all keeps its DIAMETER_COMMAND_UNSUPPORTED (3001), as a method keeps its 405.
+
+```text
+ SC          IP-SM-GW 1     IP-SM-GW 2     UE 2
+  |  TFR        |              |              |  Destination-Host: the instance the HSS named
+  |------------>|              |              |
+  |  TFA 3004   |              |              |  DIAMETER_TOO_BUSY: nothing has begun
+  |<------------|              |              |
+  |  TFR        |              |              |  Destination-Host: another instance of the realm
+  |--------------------------->|              |
+  |             |              |  MESSAGE     |  through the CSCFs, as in step 8
+  |             |              |------------->|
+  |  TFA 2001   |              |              |  once the delivery report has come
+  |<---------------------------|              |
+```
+
+- **The SC makes the switch, not the Diameter routing.** A TFR names its node in Destination-Host (TS 29.338 6.3.1.2), which makes its destination fixed: a Diameter agent cannot send such a request to another server, and answers DIAMETER_UNABLE_TO_DELIVER when its destination is gone (RFC 6733 5.5.4). The sender is the one that can choose another node.
+- **An instance that the SC has no connection to**, because it has stopped, is passed over in the same way, before any TFR goes out to it.
+- **A TFR that went out and got no answer stays with its instance.** That instance may have delivered the short message already, and the UE would get it twice. The SC keeps the short message for its next retry instead.
+- **The HSS goes on naming the instance that registered the user**, until the user's ability to take short messages changes (TS 24.341 5.3.3.2), so each short message for that user goes to it first.
+
+This network runs one instance of the IP-SM-GW, so the Service Centre has no other to try, and a short message for a user waits for its next retry while the IP-SM-GW is out of service. `TestShortMessageForAShutDownIPSMGWGoesThroughAnother` in `internal/ipsmgw/chain_test.go` runs it with two.
 
 3. Unlock the IP-SM-GW with the same request and `UNLOCKED`, and send the short message again:
 

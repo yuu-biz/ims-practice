@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/netip"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -14,6 +15,7 @@ import (
 	"github.com/yuu-biz/ims-practice/internal/diameter"
 	"github.com/yuu-biz/ims-practice/internal/hss"
 	"github.com/yuu-biz/ims-practice/internal/ipsmgw"
+	"github.com/yuu-biz/ims-practice/internal/maintenance"
 	"github.com/yuu-biz/ims-practice/internal/reginfo"
 	"github.com/yuu-biz/ims-practice/internal/sgd"
 	"github.com/yuu-biz/ims-practice/internal/sh"
@@ -540,4 +542,67 @@ func parseRPOf(m *sip.Message) sms.RPMessage {
 		return nil
 	}
 	return rp
+}
+
+// sendTo sends req to instance k of the IP-SM-GW, as the S-CSCF does
+// when DNS gives it that instance, and returns the final response.
+func (c *chain) sendTo(k int, req *sip.Message) *sip.Message {
+	c.t.Helper()
+	return sendTo(c.t, c.scscf, c.gateways[k].sip, req)
+}
+
+// deliveredBy checks that the MESSAGE mt, which carries a short message
+// for the UE, left instance k of the IP-SM-GW: its Via names the
+// address that instance sends from.
+func (c *chain) deliveredBy(mt *sip.Message, k int) {
+	c.t.Helper()
+	if via := mt.Get("Via"); !strings.Contains(via, c.gateways[k].sip.String()) {
+		c.t.Errorf("the short message came with Via %q, want it from %s at %s", via, c.gateways[k].host, c.gateways[k].sip)
+	}
+}
+
+// TestShortMessageForAShutDownIPSMGWGoesThroughAnother: the HSS names
+// the instance of the IP-SM-GW that registered Alice, and the operator
+// has shut that instance down since. It refuses the TFR with
+// DIAMETER_TOO_BUSY, and the Service Centre sends the short message to
+// the other instance of the realm, which finds Alice in the store the
+// two share (RFC 6733 7.1.3).
+func TestShortMessageForAShutDownIPSMGWGoesThroughAnother(t *testing.T) {
+	c := newChainOf(t, answerOK, 2, 1)
+	c.registerAlice()
+	setState(t, c.manage(), maintenance.ShuttingDown)
+
+	// The instance that is shut down takes no short message from a UE
+	// either, so the S-CSCF brings Alice's to the other one.
+	if resp := c.sendTo(1, message(submitBody(t, 5, scAddress, toAlice(5)))); resp.StatusCode != 202 {
+		t.Fatalf("MESSAGE answered %d, want 202", resp.StatusCode)
+	}
+	mt, data := c.nextDelivery()
+	c.deliveredBy(mt, 1)
+	// The instance that is shut down goes on with the delivery reports.
+	if resp := c.send(deliveryReport(t, mt, sms.RPAck{Direction: sms.MSToNetwork, MessageReference: data.MessageReference,
+		UserData: marshal(t, sms.DeliverReport{})})); resp.StatusCode != 202 {
+		t.Fatalf("delivery report answered %d, want 202", resp.StatusCode)
+	}
+}
+
+// TestShortMessageForAnIPSMGWWithoutAConnectionGoesThroughAnother: the
+// instance of the IP-SM-GW that the HSS names has lost its connection to
+// the Service Centre, as an instance that stops does. The Service Centre
+// has nothing to send that TFR on, and sends the short message to the
+// other instance of the realm.
+func TestShortMessageForAnIPSMGWWithoutAConnectionGoesThroughAnother(t *testing.T) {
+	c := newChainOf(t, answerOK, 2, 1)
+	c.registerAlice()
+	c.gateways[0].toSC[0].Stop()
+
+	if resp := c.sendTo(1, message(submitBody(t, 5, scAddress, toAlice(5)))); resp.StatusCode != 202 {
+		t.Fatalf("MESSAGE answered %d, want 202", resp.StatusCode)
+	}
+	mt, data := c.nextDelivery()
+	c.deliveredBy(mt, 1)
+	if resp := c.sendTo(1, deliveryReport(t, mt, sms.RPAck{Direction: sms.MSToNetwork, MessageReference: data.MessageReference,
+		UserData: marshal(t, sms.DeliverReport{})})); resp.StatusCode != 202 {
+		t.Fatalf("delivery report answered %d, want 202", resp.StatusCode)
+	}
 }
