@@ -544,7 +544,7 @@ func section(name string, present, needed bool, who string) error {
 }
 
 // checkPorts makes sure that roles combined in one node do not
-// bind the same SIP port. Two listeners clash when they have the same
+// bind the same port. Two listeners clash when they have the same
 // port and the same address, or when either takes every address: the
 // two stacks of the ibcf role share port 5060 on two addresses.
 func (c Config) checkPorts() error {
@@ -597,6 +597,37 @@ func (c Config) checkPorts() error {
 			return err
 		}
 	}
+	// Diameter and the other HTTP servers are carried over TCP too. A
+	// listener whose host is a name rather than an address is left out:
+	// the address it binds is the resolver's to say, so only the start
+	// of the node finds out whether it clashes.
+	for _, l := range []struct {
+		name    string
+		set     bool
+		address func() string
+	}{
+		{"the Diameter listener", c.Diameter != nil && c.Diameter.Listen != "", func() string { return c.Diameter.Listen }},
+		{"the provisioning API of the hss role", c.HSS != nil && c.HSS.ProvisioningListen != "", func() string { return c.HSS.ProvisioningListen }},
+		{"the API of the epc role", c.EPC != nil, func() string { return c.EPC.API.String() }},
+		// A relay that takes its commands over H.248 serves no control
+		// API; its H.248 endpoint is below.
+		{"agw", c.AGW != nil && c.AGW.MediaGateway == nil, func() string { return c.AGW.Control.String() }},
+		{"mrfp", c.MRFP != nil, func() string { return c.MRFP.Control.String() }},
+		{"the notify server of mrfc", c.MRFC != nil, func() string { return c.MRFC.Notify.String() }},
+		{"the HTTP server of the lab role", c.Lab != nil, func() string { return c.Lab.HTTPListen }},
+		{"the HTTP server of the oam role", c.OAM != nil, func() string { return c.OAM.HTTPListen }},
+		{"the API of the fault role", c.Fault != nil, func() string { return c.Fault.HTTPListen }},
+		{"the maintenance listener", c.Maintenance != nil, func() string { return c.Maintenance.Listen }},
+	} {
+		if !l.set {
+			continue
+		}
+		if addr, ok := listenAddress(l.address()); ok {
+			if err := listen(l.name, addr); err != nil {
+				return err
+			}
+		}
+	}
 	// H.248 is carried over UDP, whose port numbers SIP shares, so the
 	// endpoints of media control go in the same list. A node that both
 	// controls media and relays it holds two of them.
@@ -628,31 +659,9 @@ func (c Config) checkPorts() error {
 	return nil
 }
 
-// checkMediaNodes makes sure that the HTTP servers of the media
-// control, the control API of agw and mrfp and the Notify server of
-// mrfc, take ports of their own in one node, and that agw and mrfp do
-// not share RTP ports. A relay that takes its commands over H.248
-// serves no control API, so it brings no port here; checkPorts has its
-// H.248 endpoint instead.
+// checkMediaNodes makes sure that agw and mrfp in one node do not share
+// RTP ports.
 func (c Config) checkMediaNodes() error {
-	used := map[uint16]string{}
-	for _, l := range []struct {
-		name string
-		set  bool
-		port func() uint16
-	}{
-		{"agw", c.AGW != nil && c.AGW.MediaGateway == nil, func() uint16 { return c.AGW.Control.Port() }},
-		{"mrfp", c.MRFP != nil, func() uint16 { return c.MRFP.Control.Port() }},
-		{"the notify server of mrfc", c.MRFC != nil, func() uint16 { return c.MRFC.Notify.Port() }},
-	} {
-		if !l.set {
-			continue
-		}
-		if other, ok := used[l.port()]; ok {
-			return fmt.Errorf("%s and %s both listen on port %d", other, l.name, l.port())
-		}
-		used[l.port()] = l.name
-	}
 	if c.AGW != nil && c.MRFP != nil && c.AGW.MinPort <= c.MRFP.MaxPort && c.MRFP.MinPort <= c.AGW.MaxPort {
 		return fmt.Errorf("the rtp_ports of agw (%d-%d) and mrfp (%d-%d) overlap", c.AGW.MinPort, c.AGW.MaxPort, c.MRFP.MinPort, c.MRFP.MaxPort)
 	}
@@ -774,6 +783,27 @@ func (raw rawTimers) validate() (diameter.Timers, error) {
 		Reconnect:      tc,
 		Answer:         answerTimeout,
 	}, nil
+}
+
+// listenAddress is the address that a listener written as host:port
+// binds, for checkPorts: every address when the host is empty, as
+// net.Listen takes it. ok is false when the host is a name.
+func listenAddress(hostPort string) (addr netip.AddrPort, ok bool) {
+	host, port, err := net.SplitHostPort(hostPort)
+	if err != nil {
+		return netip.AddrPort{}, false
+	}
+	n, err := strconv.ParseUint(port, 10, 16)
+	if err != nil {
+		return netip.AddrPort{}, false
+	}
+	ip := netip.IPv6Unspecified()
+	if host != "" {
+		if ip, err = netip.ParseAddr(host); err != nil {
+			return netip.AddrPort{}, false
+		}
+	}
+	return netip.AddrPortFrom(ip, uint16(n)), true
 }
 
 func checkHostPort(address string) error {
