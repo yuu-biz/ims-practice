@@ -3,6 +3,7 @@ package pcscf
 import (
 	"context"
 	"net/netip"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -112,13 +113,19 @@ type rawINVITE struct {
 	p     *PCSCF
 	store *MemoryStore
 	relay *fakeRelay
+	// ue sends to the P-CSCF at pcscf.
+	ue, pcscf *sip.Stack
 	// ct is the INVITE as the UE sent it, and st as the far end got it.
 	ct *sip.ClientTransaction
 	st *sip.ServerTransaction
 	// farGot are the ACKs and the other requests that reach the far end,
-	// and ueGot the requests that reach the UE.
+	// which answers each request but the INVITE 200, and ueGot the
+	// requests that reach the UE.
 	farGot, ueGot chan *sip.Message
 	farContact    string
+	// failLocate makes the next lookup of a next hop fail, as when DNS
+	// does not answer for a moment.
+	failLocate atomic.Bool
 }
 
 func newRawINVITE(t *testing.T) *rawINVITE {
@@ -134,10 +141,14 @@ func newRawINVITE(t *testing.T) *rawINVITE {
 				return
 			}
 			c.farGot <- st.Request
+			st.Respond(sip.NewResponse(st.Request, 200, ""))
 		}})
 	c.farContact = "sip:callee@" + far.LocalAddr().String()
 	ue := newStack(t, func(st *sip.ServerTransaction) { c.ueGot <- st.Request })
 	locate := locatorFunc(func(string) []sip.Destination {
+		if c.failLocate.CompareAndSwap(true, false) {
+			return nil
+		}
 		return []sip.Destination{{Transport: sip.UDP, Addr: far.LocalAddr()}}
 	})
 	c.p = newPCSCF(t, Config{Host: "pcscf." + domain, Port: 5060, VisitedNetworkID: domain}, locate, c.store, only(c.relay), quiet())
@@ -149,6 +160,7 @@ func newRawINVITE(t *testing.T) *rawINVITE {
 	})
 	pcscf := newPCSCFStack(t, c.p)
 	c.p.SetStack(pcscf)
+	c.ue, c.pcscf = ue, pcscf
 
 	inv := invite("sip:001010000000002@"+domain, "<sip:pcscf."+domain+":5060;lr>")
 	inv.Set("Contact", "<"+ueContact+">")
@@ -373,4 +385,80 @@ func TestRefusedRetransmissionOfAReliable183KeepsTheCall(t *testing.T) {
 		}
 	}
 	c.relay.waitHeld(t, 1, 0)
+}
+
+// TestBYEAfterALostACKTakesTheNumberAfterThePRACK: the caller has sent a
+// PRACK in the early dialog, and the relay does not take the answer of
+// the 200. The ACK that the P-CSCF sends in the caller's name cannot go
+// out the first time, and the call gives up what it holds meanwhile. The
+// retransmission of the 200 gets the ACK and the BYE, whose CSeq is
+// above that of the PRACK (RFC 3261 12.2.1.1): the callee would answer
+// a lower one 500 (RFC 3261 12.2.2) and stay in the call.
+func TestBYEAfterALostACKTakesTheNumberAfterThePRACK(t *testing.T) {
+	c := newRawINVITE(t)
+	progress := c.response(183)
+	progress.Add("Require", sip.Option100rel)
+	progress.Add("RSeq", "1")
+	c.st.Respond(progress)
+	r := next(t, c.ct.Responses())
+	for r.StatusCode == 100 {
+		r = next(t, c.ct.Responses())
+	}
+	if r.StatusCode != 183 {
+		t.Fatalf("the caller got %d, want the 183", r.StatusCode)
+	}
+	prack := &sip.Message{Method: sip.PRACK, RequestURI: c.farContact}
+	prack.Add("Route", "<sip:pcscf."+domain+":5060;lr>")
+	prack.Add("Max-Forwards", "70")
+	prack.Add("From", c.st.Request.Get("From"))
+	prack.Add("To", progress.Get("To"))
+	prack.Add("Call-ID", c.st.Request.Get("Call-ID"))
+	prack.Add("CSeq", "2 PRACK")
+	prack.Add("RAck", "1 1 INVITE")
+	pracked, err := c.ue.SendRequest(prack, sip.Destination{Transport: sip.UDP, Addr: c.pcscf.LocalAddr()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r := final(t, pracked.Responses(), 3*time.Second); r.StatusCode != 200 {
+		t.Fatalf("the PRACK got %d, want 200", r.StatusCode)
+	}
+	if m := nextRequest(t, "the callee", c.farGot); m.Method != sip.PRACK {
+		t.Fatalf("the callee got %s, want the PRACK", m.Method)
+	}
+
+	c.relay.refuseModify(agw.Core)
+	c.failLocate.Store(true)
+	ok := c.response(200)
+	c.st.Respond(ok)
+	if r := final(t, c.ct.Responses(), 3*time.Second); r.StatusCode != 500 {
+		t.Fatalf("the caller got %d, want 500", r.StatusCode)
+	}
+	c.relay.waitHeld(t, 0, time.Second)
+	key := DialogKey{CallID: c.st.Request.Get("Call-ID"), UETag: tagOf(c.st.Request.Get("From"))}
+	if !came(3*time.Second, func() bool {
+		_, ok, _ := c.store.UpdateDialog(context.Background(), key, func(*Dialog) {})
+		return !ok
+	}) {
+		t.Fatal("the dialog is still in the store")
+	}
+	noRequest(t, "the callee before the retransmission", c.farGot)
+
+	// The callee sends its 200 again, as a UAS does until the ACK comes
+	// (RFC 6026 8.1).
+	c.st.Respond(ok)
+	// The far end takes the ACK and the BYE on goroutines of their own,
+	// so they reach farGot in either order.
+	got := map[sip.Method]*sip.Message{}
+	for range 2 {
+		m := nextRequest(t, "the callee", c.farGot)
+		got[m.Method] = m
+	}
+	if got[sip.ACK] == nil {
+		t.Error("the callee got no ACK for the retransmission of its 200")
+	}
+	if bye := got[sip.BYE]; bye == nil {
+		t.Error("the callee got no BYE")
+	} else if cseq := bye.Get("CSeq"); cseq != "3 BYE" {
+		t.Errorf("the BYE to the callee has CSeq %q, want 3 BYE, one above the PRACK", cseq)
+	}
 }

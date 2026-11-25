@@ -56,7 +56,8 @@ type setup struct {
 	abortCause error
 	// callerSeq is the CSeq of the last request that the caller sent in
 	// the early dialog, as the Dialog had it when an abort took it out
-	// of the Store (abortSetup).
+	// of the Store (abortSetup), or before the P-CSCF gave the INVITE up
+	// for a 2xx and freed what the call holds (proxyInvite).
 	callerSeq uint32
 }
 

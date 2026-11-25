@@ -149,8 +149,12 @@ func (p *PCSCF) proxyInvite(st *sip.ServerTransaction, out *sip.Message, targets
 					// once, and the callee gets a BYE, as for a 2xx that
 					// crossed the CANCEL. Only retransmissions of the 2xx
 					// come after it, so what the call holds goes now, not
-					// when the client transaction ends.
+					// when the client transaction ends. The BYE goes with
+					// the ACK of a retransmission when this ACK cannot go
+					// out, and the CSeq of the caller is read before the
+					// dialog goes.
 					giveUp(refused)
+					call.callerSeq = call.lastCallerSeq()
 					acknowledge(resp)
 					go call.end()
 					continue
