@@ -670,6 +670,15 @@ func (h *HSS) multimediaAuth(ctx context.Context, r cx.MultimediaAuthRequest) cx
 		answer.AuthenticationVector = &av
 	}
 	// Step 5.
+	//
+	// SIMPLIFIED: TS 29.228 8.1.1. When the MAR of another S-CSCF takes
+	// over a registered user, the HSS sends the old S-CSCF no
+	// Registration-Termination-Request. The I-CSCF of this project gives
+	// every user the same S-CSCF and picks no other when that one does
+	// not answer (TS 24.229 5.3.1.3), so no user moves to another S-CSCF
+	// in its network. The old S-CSCF ends the registration when it
+	// expires, which 8.1.1 also provides for, and its SAR then changes
+	// nothing (8.1.2).
 	if u.State != Registered || u.ServerName != r.ServerName {
 		if err := h.setServer(ctx, u, r.ServerName, origin(r.Header), u.State, true); err != nil {
 			return cx.MultimediaAuthAnswer{Result: h.storeFailed(err)}
