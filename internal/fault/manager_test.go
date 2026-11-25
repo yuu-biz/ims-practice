@@ -41,6 +41,15 @@ type fakeExecutor struct {
 	started  chan struct{}
 }
 
+// Resolve takes a target without a number for the first container of
+// its service, as Docker does for a service with one container.
+func (e *fakeExecutor) Resolve(ctx context.Context, target string) (string, error) {
+	if service, number := splitTarget(target); number == "" {
+		return service + ":1", nil
+	}
+	return target, nil
+}
+
 func (e *fakeExecutor) Apply(ctx context.Context, f Fault) error {
 	e.mu.Lock()
 	e.calls = append(e.calls, "apply "+string(f.Kind)+" "+f.Target)
@@ -204,6 +213,32 @@ func TestConflicts(t *testing.T) {
 		{Request{Target: "pcscf", Kind: Loss, LossPercent: 50}, ErrConflict},
 		// Another target is free.
 		{Request{Target: "scscf", Kind: Pause}, nil},
+	} {
+		_, err := m.Inject(ctx, tc.r)
+		if !errors.Is(err, tc.want) && !(err == nil && tc.want == nil) {
+			t.Errorf("Inject(%+v) = %v, want %v", tc.r, err, tc.want)
+		}
+	}
+}
+
+// TestConflictsMeetOnTheContainer: "pcscf" and "pcscf:1" are two ways
+// to name the one container of the service, so a fault by one spelling
+// meets a fault by the other, while two containers of one service are
+// free of each other.
+func TestConflictsMeetOnTheContainer(t *testing.T) {
+	d, _ := newTestDocker(t)
+	m := NewManager(Config{Executor: d, Clock: newFakeClock()})
+	ctx := context.Background()
+	for _, tc := range []struct {
+		r    Request
+		want error
+	}{
+		{Request{Target: "pcscf", Kind: Pause}, nil},
+		{Request{Target: "pcscf:1", Kind: Stop}, ErrConflict},
+		{Request{Target: "scscf-1:1", Kind: Loss, LossPercent: 10}, nil},
+		{Request{Target: "scscf-1", Kind: Loss, LossPercent: 20}, ErrConflict},
+		{Request{Target: "agw:1", Kind: Kill}, nil},
+		{Request{Target: "agw:2", Kind: Kill}, nil},
 	} {
 		_, err := m.Inject(ctx, tc.r)
 		if !errors.Is(err, tc.want) && !(err == nil && tc.want == nil) {

@@ -137,6 +137,9 @@ type Fault struct {
 	// once has none.
 	ExpiresAt time.Time `json:"expires_at,omitzero"`
 	EndedAt   time.Time `json:"ended_at,omitzero"`
+
+	// container is what Executor.Resolve named for Target.
+	container string
 }
 
 // ErrInvalidRequest is the answer to a request that the API cannot
@@ -234,22 +237,23 @@ func (r *Request) validate() error {
 	return nil
 }
 
-// slot names what a fault occupies on its target; two faults in the
-// same slot would undo each other. The node faults that last share one
-// slot, since a stopped node can be neither killed nor paused. Delay
-// owns the root qdisc of the interface. Loss and partition each have
-// their own nftables table, but two of one kind would make clearing one
-// look like it did nothing.
+// slot names what a fault occupies on its container; two faults in the
+// same slot would undo each other. It goes by the container and not by
+// the target, since "pcscf" and "pcscf:1" may be one container. The
+// node faults that last share one slot, since a stopped node can be
+// neither killed nor paused. Delay owns the root qdisc of the
+// interface. Loss and partition each have their own nftables table, but
+// two of one kind would make clearing one look like it did nothing.
 //
 // A fault that happens once occupies nothing, and takes no slot: it is
 // over before the next request can meet it.
-func (r Request) slot() string {
+func (f Fault) slot() string {
 	switch {
-	case !r.Kind.lasting():
+	case !f.Kind.lasting():
 		return ""
-	case r.Kind == Stop || r.Kind == Kill || r.Kind == Pause:
-		return r.Target + "/node"
+	case f.Kind == Stop || f.Kind == Kill || f.Kind == Pause:
+		return f.container + "/node"
 	default:
-		return r.Target + "/" + string(r.Kind)
+		return f.container + "/" + string(f.Kind)
 	}
 }

@@ -84,6 +84,16 @@ func newDocker(c *http.Client, base, project, toolsImage string, log *slog.Logge
 	}
 }
 
+// Resolve names the target's container by the name that Compose gave
+// it, which a recreate keeps.
+func (d *Docker) Resolve(ctx context.Context, target string) (string, error) {
+	c, err := d.container(ctx, target)
+	if err != nil {
+		return "", err
+	}
+	return c.Name, nil
+}
+
 func (d *Docker) Apply(ctx context.Context, f Fault) error {
 	c, err := d.container(ctx, f.Target)
 	if err != nil {

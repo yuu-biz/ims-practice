@@ -21,6 +21,11 @@ import (
 // another one: there the runtime is the API server, and a pod's
 // namespace is reached through an ephemeral container.
 type Executor interface {
+	// Resolve names the one container that a target means, with the
+	// same name for every way of writing the target: "pcscf" and
+	// "pcscf:1" are one container when the service has one. Manager
+	// tells by it whether two faults meet.
+	Resolve(ctx context.Context, target string) (string, error)
 	Apply(ctx context.Context, f Fault) error
 	// Clear undoes Apply. A fault that is already gone, because the
 	// target restarted with a new network namespace, counts as
@@ -88,33 +93,42 @@ func (m *Manager) Inject(ctx context.Context, r Request) (Fault, error) {
 	if err := r.validate(); err != nil {
 		return Fault{}, err
 	}
+	// Outside the lock: the executor asks the container runtime. A
+	// target that names no container fails the fault like an Apply.
+	container, err := m.exec.Resolve(ctx, r.Target)
+
 	m.mu.Lock()
-	for _, f := range m.faults {
-		if slot := r.slot(); slot != "" && !f.State.ended() && f.slot() == slot {
-			m.mu.Unlock()
-			return Fault{}, fmt.Errorf("%w: fault %s (%s) on %s is not over", ErrConflict, f.ID, f.Kind, f.Target)
-		}
-	}
 	now := m.clock.Now()
 	f := &Fault{
 		ID:        m.newID(),
 		Request:   r,
 		State:     Applying,
 		CreatedAt: now,
+		container: container,
 	}
 	if r.Kind.lasting() {
 		f.ExpiresAt = now.Add(time.Duration(r.Duration))
+	}
+	if err == nil {
+		for _, other := range m.faults {
+			if slot := f.slot(); slot != "" && !other.State.ended() && other.slot() == slot {
+				m.mu.Unlock()
+				return Fault{}, fmt.Errorf("%w: fault %s (%s) on %s is not over", ErrConflict, other.ID, other.Kind, other.Target)
+			}
+		}
 	}
 	m.faults[f.ID] = f
 	applying := *f
 	m.mu.Unlock()
 
-	args := []any{"id", f.ID, "target", r.Target, "kind", r.Kind, "event", "apply"}
-	if r.Kind.lasting() {
-		args = append(args, "expires_at", applying.ExpiresAt)
+	if err == nil {
+		args := []any{"id", f.ID, "target", r.Target, "kind", r.Kind, "event", "apply"}
+		if r.Kind.lasting() {
+			args = append(args, "expires_at", applying.ExpiresAt)
+		}
+		m.log.Info("fault", args...)
+		err = m.exec.Apply(ctx, applying)
 	}
-	m.log.Info("fault", args...)
-	err := m.exec.Apply(ctx, applying)
 
 	m.mu.Lock()
 	defer m.mu.Unlock()
