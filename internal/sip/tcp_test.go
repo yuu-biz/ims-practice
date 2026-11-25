@@ -424,6 +424,70 @@ func TestLargeRequestFallsBackToUDP(t *testing.T) {
 	}
 }
 
+// The messages that the stack sends to one far end over TCP arrive in
+// the order the TU handed them over, as they would over the one
+// connection that RFC 3261 18 has them share: a peer sees, say, the 180
+// (Ringing) of a call before its 200.
+func TestMessagesToOneTCPFarEndKeepTheirOrder(t *testing.T) {
+	const messages = 50
+	t.Run("requests", func(t *testing.T) {
+		addr, received := rawTCPServer(t)
+		uac := newStack(t, testTimers, ignoreRequests)
+		var sent []string
+		for range messages {
+			req := registerRequest()
+			if _, err := uac.SendRequest(req, tcpTo(addr)); err != nil {
+				t.Fatal(err)
+			}
+			sent = append(sent, req.Get("Call-ID"))
+		}
+		for i, want := range sent {
+			select {
+			case m := <-received:
+				if got := m.Get("Call-ID"); got != want {
+					t.Fatalf("request %d arrived with Call-ID %s, want %s", i, got, want)
+				}
+			case <-time.After(2 * time.Second):
+				t.Fatalf("%d of %d requests arrived", i, messages)
+			}
+		}
+	})
+	t.Run("responses", func(t *testing.T) {
+		// The reason phrase is free text (RFC 3261 21), so it numbers
+		// the provisional responses.
+		uas := newStack(t, testTimers, func(st *ServerTransaction) {
+			tag := NewTag()
+			for i := range messages {
+				resp := NewResponse(st.Request, 183, tag)
+				resp.Reason = "Session Progress " + strconv.Itoa(i)
+				st.Respond(resp)
+			}
+			st.Respond(NewResponse(st.Request, 200, tag))
+		})
+		peer := dial(t, uas.LocalAddr())
+		peer.write(t, tcpRequest(peer, INVITE))
+		next := 0
+		for next <= messages {
+			resp, err := peer.read(t, 2*time.Second)
+			if err != nil {
+				t.Fatalf("%d of %d responses arrived: %v", next, messages+1, err)
+			}
+			want := "Session Progress " + strconv.Itoa(next)
+			switch {
+			case resp.StatusCode == 100:
+				// The INVITE server transaction sends it itself when the
+				// TU is slow (RFC 3261 17.2.1).
+				continue
+			case next == messages && resp.StatusCode != 200:
+				t.Fatalf("got %d %s last, want the 200", resp.StatusCode, resp.Reason)
+			case next < messages && resp.Reason != want:
+				t.Fatalf("got %d %s, want %s", resp.StatusCode, resp.Reason, want)
+			}
+			next++
+		}
+	})
+}
+
 func TestIdleConnectionCloses(t *testing.T) {
 	tr, err := newTransportLayer("127.0.0.1:0", testLogger(t), nil, 100*time.Millisecond)
 	if err != nil {
