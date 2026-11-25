@@ -266,6 +266,77 @@ func TestServerAssignmentFromAnotherSCSCF(t *testing.T) {
 	}
 }
 
+// TestOnePublicIdentityPerAssignment is TS 29.228 6.1.2.1 step 3 with
+// Table 6.1.2.1: a SAR names one and only one Public-Identity unless it
+// deregisters, and one that names more gets
+// DIAMETER_AVP_OCCURS_TOO_MANY_TIMES with no user information. The step
+// comes before the check of the S-CSCF name (8.1.2), so the answer is
+// the same when the SAR comes from an S-CSCF other than the one the HSS
+// holds.
+func TestOnePublicIdentityPerAssignment(t *testing.T) {
+	const tel = "tel:+12025550101"
+	newHSS := func(t *testing.T) *HSS {
+		t.Helper()
+		store, err := NewMemoryStore(Subscription{PrivateIdentity: impi, PublicIdentities: []string{impu, tel}, Password: "test-password-1"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		node := diameter.NewNode(diameter.Identity{OriginHost: "hss." + realm, OriginRealm: realm}, []uint32{diameter.ApplicationIDCx}, diameter.Timers{}, quiet())
+		h := mustHSS(Config{Realm: realm, VisitedNetworks: []string{realm}}, store, node)
+		mar(t, h, scscf)
+		sar(t, h, scscf, cx.AssignRegistration)
+		return h
+	}
+	both := func(t *testing.T, h *HSS, server string, typ cx.ServerAssignmentType) cx.ServerAssignmentAnswer {
+		t.Helper()
+		a, err := cx.ParseServerAssignmentAnswer(exchange(t, h, cx.ServerAssignmentRequest{Header: from(server),
+			UserName: impi, PublicIdentities: []string{impu, tel}, ServerName: server, ServerAssignmentType: typ}.Message()))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return a
+	}
+	stored := func(t *testing.T, h *HSS) Subscriber {
+		t.Helper()
+		u, ok, err := h.store.Subscriber(t.Context(), impi)
+		if err != nil || !ok {
+			t.Fatalf("the subscriber is not in the store: %v", err)
+		}
+		return u
+	}
+	tooMany := diameter.Base(diameter.DiameterAVPOccursTooManyTimes)
+	for _, typ := range []cx.ServerAssignmentType{cx.NoAssignment, cx.AssignRegistration, cx.ReRegistration,
+		cx.UnregisteredUser, cx.AuthenticationFailure, cx.AuthenticationTimeout} {
+		for _, server := range []string{scscf, scscf2} {
+			t.Run(typ.String()+" from "+server, func(t *testing.T) {
+				h := newHSS(t)
+				before := stored(t, h)
+				if a := both(t, h, server, typ); a.Result != tooMany || a.UserName != "" || len(a.UserData) != 0 || a.ServerName != "" {
+					t.Errorf("SAA = %+v, want %v and nothing else", a, tooMany)
+				}
+				if after := stored(t, h); !reflect.DeepEqual(after, before) {
+					t.Errorf("the subscriber is %+v after the SAR, want it as it was, %+v", after, before)
+				}
+			})
+		}
+	}
+	for _, typ := range []cx.ServerAssignmentType{cx.TimeoutDeregistration, cx.UserDeregistration, cx.AdministrativeDeregistration} {
+		t.Run(typ.String(), func(t *testing.T) {
+			if a := both(t, newHSS(t), scscf, typ); a.Result != diameter.Base(diameter.DiameterSuccess) {
+				t.Errorf("SAA = %+v, want DIAMETER_SUCCESS for a deregistration of two identities", a)
+			}
+		})
+	}
+	t.Run("PSI", func(t *testing.T) {
+		h := newHSSWithPSIUser(t)
+		a, err := cx.ParseServerAssignmentAnswer(exchange(t, h, cx.ServerAssignmentRequest{Header: hdr, PublicIdentities: []string{conferenceURI, conferenceURI},
+			ServerName: scscf, ServerAssignmentType: cx.UnregisteredUser}.Message()))
+		if err != nil || a.Result != tooMany || len(a.UserData) != 0 {
+			t.Errorf("SAA for a PSI named twice = %+v (%v), want %v with no profile", a, err, tooMany)
+		}
+	})
+}
+
 func TestIdentityChecks(t *testing.T) {
 	h := newTestHSS()
 	if a := uar(t, h, impi, "sip:unknown@"+realm, cx.Registration); a.Result != diameter.Experimental(cx.DiameterErrorUserUnknown) {

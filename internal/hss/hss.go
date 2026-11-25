@@ -772,7 +772,7 @@ func (h *HSS) serverAssignment(ctx context.Context, r cx.ServerAssignmentRequest
 	}
 	defer unlock()
 	// Step 3.
-	if (r.ServerAssignmentType == cx.AssignRegistration || r.ServerAssignmentType == cx.ReRegistration) && len(r.PublicIdentities) > 1 {
+	if tooManyIdentities(r) {
 		return cx.ServerAssignmentAnswer{Result: diameter.Base(diameter.DiameterAVPOccursTooManyTimes)}
 	}
 	// 8.1.2: the HSS holds another S-CSCF for the user, one whose MAR
@@ -841,6 +841,20 @@ func (h *HSS) serverAssignment(ctx context.Context, r cx.ServerAssignmentRequest
 	// DEREGISTRATION_TOO_MUCH_DATA assignment types are not used by this
 	// project's S-CSCF.
 	return cx.ServerAssignmentAnswer{Result: diameter.Base(diameter.DiameterUnableToComply)}
+}
+
+// tooManyIdentities is the check of TS 29.228 6.1.2.1 step 3: whether r
+// names more than one Public-Identity for a Server-Assignment-Type that
+// applies to one only. Table 6.1.2.1 lets only the deregistrations name
+// several. The types listed are the others that the HSS serves; it
+// answers every type that it does not serve with
+// DIAMETER_UNABLE_TO_COMPLY.
+func tooManyIdentities(r cx.ServerAssignmentRequest) bool {
+	switch r.ServerAssignmentType {
+	case cx.NoAssignment, cx.AssignRegistration, cx.ReRegistration, cx.UnregisteredUser, cx.AuthenticationFailure, cx.AuthenticationTimeout:
+		return len(r.PublicIdentities) > 1
+	}
+	return false
 }
 
 func (h *HSS) withUserData(set *settings, u Subscriber, r cx.ServerAssignmentRequest) cx.ServerAssignmentAnswer {

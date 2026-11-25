@@ -94,6 +94,10 @@ func (h *HSS) psiUserOf(userName, publicID string) (PSIUser, bool) {
 // a PSI finds the AS by DNS (TS 24.229 5.3.2.1 step 3), so no node asks
 // the HSS where a PSI is served.
 func psiServerAssignment(p PSIUser, publicID string, r cx.ServerAssignmentRequest) cx.ServerAssignmentAnswer {
+	// Step 3.
+	if tooManyIdentities(r) {
+		return cx.ServerAssignmentAnswer{Result: diameter.Base(diameter.DiameterAVPOccursTooManyTimes)}
+	}
 	switch r.ServerAssignmentType {
 	case cx.AssignRegistration, cx.ReRegistration, cx.UserDeregistration, cx.AuthenticationFailure, cx.AuthenticationTimeout:
 		return cx.ServerAssignmentAnswer{Result: diameter.Experimental(cx.DiameterErrorInAssignmentType)}
