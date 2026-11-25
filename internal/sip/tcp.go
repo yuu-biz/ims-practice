@@ -274,6 +274,8 @@ func (t *TransportLayer) hasConnection(remote netip.AddrPort) bool {
 	return ok
 }
 
+func (s tcpSend) isAbandoned() bool { return s.abandoned != nil && s.abandoned() }
+
 // sendTCP puts s in the queue of remote (queueTCP). With s.done nil, it
 // then waits for the write and returns its outcome. Otherwise it returns
 // at once, and s.done gets the outcome from the goroutine that writes.
@@ -321,6 +323,10 @@ func (t *TransportLayer) writeQueued(remote netip.AddrPort) {
 		if !ok {
 			return
 		}
+		if next.isAbandoned() {
+			next.done(errAbandoned)
+			continue
+		}
 		if next.orElse.IsValid() && !t.hasConnection(remote) {
 			t.redirect(next)
 			continue
@@ -344,7 +350,8 @@ func (t *TransportLayer) writeQueued(remote netip.AddrPort) {
 			}
 			continue
 		}
-		if next.abandoned != nil && next.abandoned() {
+		// The transaction may have ended while the connect waited.
+		if next.isAbandoned() {
 			next.done(errAbandoned)
 			continue
 		}
