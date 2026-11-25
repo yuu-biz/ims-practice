@@ -624,7 +624,7 @@ func run(configPath string, log *slog.Logger, level *slog.LevelVar) error {
 	}
 	if c := cfg.OAM; c != nil {
 		roleLog := log.With("role", config.RoleOAM)
-		server, err := newOAM(*c, stores, registry, roleLog)
+		server, err := newOAM(cfg.Node, *c, stores, registry, roleLog)
 		if err != nil {
 			return err
 		}
@@ -1128,11 +1128,13 @@ func oamHandler(server *oam.Server) http.Handler {
 	return mux
 }
 
-// newOAM makes the OAM server of the oam role. The inventory becomes
-// the endpoints it operates, and the data directory the two stores it
-// keeps itself: the history of the configuration changes it made, in
-// one file, and the backups, each an archive and its manifest. Without
-// a directory it keeps neither, and refuses those operations with 503.
+// newOAM makes the OAM server of the oam role. node, the node name of
+// the configuration file, names the OAM as the system through which its
+// operators acknowledge alarms. The inventory becomes the endpoints it
+// operates, and the data directory the two stores it keeps itself: the
+// history of the configuration changes it made, in one file, and the
+// backups, each an archive and its manifest. Without a directory it
+// keeps neither, and refuses those operations with 503.
 //
 // The subscriptions of the OSSs to the alarm notifications, and the
 // watch of each node, which instance sends its alarm notifications and
@@ -1141,8 +1143,8 @@ func oamHandler(server *oam.Server) http.Handler {
 // nodes, and otherwise in files of the data directory, for one
 // instance. Without either, the OAM takes no subscription and sends no
 // notification.
-func newOAM(c config.OAM, stores roleStores, registry *metrics.Registry, log *slog.Logger) (*oam.Server, error) {
-	cfg := oam.Config{HSSProvisioning: c.HSSProvisioning, SubNetwork: c.SubNetwork, MnSRoot: c.MnSRoot,
+func newOAM(node string, c config.OAM, stores roleStores, registry *metrics.Registry, log *slog.Logger) (*oam.Server, error) {
+	cfg := oam.Config{Name: node, HSSProvisioning: c.HSSProvisioning, SubNetwork: c.SubNetwork, MnSRoot: c.MnSRoot,
 		MaxNtfSubscriptions: c.MaxNtfSubscriptions, Metrics: registry, Log: log}
 	for _, n := range c.Nodes {
 		cfg.Nodes = append(cfg.Nodes, oam.Endpoint{Name: n.Name, Roles: n.Roles, URL: n.Maintenance})

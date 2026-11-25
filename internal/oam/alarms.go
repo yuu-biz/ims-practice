@@ -106,13 +106,27 @@ func readAlarmList(ctx context.Context, c *maintenance.Client, f maintenance.Ala
 	return l, nil
 }
 
+// AckStateRequest is the body of PUT
+// /oam/v1/nodes/{node}/alarms/{id}/ack-state. The record keeps the
+// operator as its ackUserId, the user who last changed its
+// acknowledgement (TS 28.111 7.4.1), which every notifyAckStateChanged
+// carries (8.8.2), so an operator is required. The system through
+// which they change it is the OAM (Config.Name), so the body names
+// none.
+type AckStateRequest struct {
+	AckState maintenance.AckState `json:"ack_state"`
+	Operator string               `json:"operator"`
+}
+
 // SetAckState acknowledges an alarm of one node, or takes the
-// acknowledgement back (TS 28.111 6.7).
-func (s *Server) SetAckState(ctx context.Context, target Endpoint, alarmID string, req maintenance.AckStateRequest) FanOut[maintenance.AlarmRecord] {
+// acknowledgement back (TS 28.111 6.7), for the operator of req and
+// through the OAM.
+func (s *Server) SetAckState(ctx context.Context, target Endpoint, alarmID string, req AckStateRequest) FanOut[maintenance.AlarmRecord] {
+	ack := maintenance.AckStateRequest{AckState: req.AckState, Operator: req.Operator, AckSystemID: s.name}
 	s.log.Info("alarm acknowledgement requested", "node", target.Name, "alarm_id", alarmID,
-		"ack_state", string(req.AckState), "operator", req.Operator)
+		"ack_state", string(ack.AckState), "operator", ack.Operator, "ack_system_id", ack.AckSystemID)
 	return fanOut(ctx, s, []Endpoint{target}, func(ctx context.Context, c *maintenance.Client, _ Endpoint) (maintenance.AlarmRecord, error) {
-		return c.SetAckState(ctx, alarmID, req)
+		return c.SetAckState(ctx, alarmID, ack)
 	})
 }
 
@@ -128,9 +142,13 @@ func (s *Server) alarmRoutes(rt *routes) {
 		writeJSON(w, http.StatusOK, s.Alarms(r.Context(), s.nodes, f))
 	})
 	rt.handle(http.MethodPut, PathPrefix+"nodes/{node}/alarms/{id}/ack-state", s.withNode(func(w http.ResponseWriter, r *http.Request, ts []Endpoint) {
-		var req maintenance.AckStateRequest
+		var req AckStateRequest
 		if err := readJSON(w, r, &req, false); err != nil {
 			writeError(w, err)
+			return
+		}
+		if req.Operator == "" {
+			writeError(w, fmt.Errorf("%w: operator: required, as the ack_user_id of the record", ErrInvalidRequest))
 			return
 		}
 		writeJSON(w, http.StatusOK, s.SetAckState(r.Context(), ts[0], r.PathValue("id"), req))

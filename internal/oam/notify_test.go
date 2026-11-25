@@ -366,6 +366,32 @@ func TestTheAlarmsOfANodeAreNotified(t *testing.T) {
 		`oam_alarm_notifications_total{notification_type="notifyClearedAlarm",result="delivered"} 1`)
 }
 
+// TestAnAcknowledgementThroughTheOAMNamesItsUserAndSystem: an operator
+// who acknowledges an alarm through the OAM API, as the OAM screen
+// does, is the ackUserId of the record and of its notification, and the
+// OAM is their ackSystemId.
+func TestAnAcknowledgementThroughTheOAMNamesItsUserAndSystem(t *testing.T) {
+	scscf := newJournalNode(t, "scscf", maintenance.Config{})
+	oss := newOSSStandIn(t)
+	n := newNotifier(t, nil, scscf)
+	n.subscribe(t, oss, "oss-1", "")
+	n.watching(t, "scscf")
+	scscf.raise(t, hssPeer, maintenance.Major)
+	oss.next(t, "notifyNewAlarm")
+	id := scscf.current().Alarms(maintenance.AlarmFilter{}).AlarmRecords[0].AlarmID
+
+	if status, body := n.call(t, "PUT", "/oam/v1/nodes/scscf/alarms/"+id+"/ack-state", `{"ack_state": "ACKNOWLEDGED", "operator": "test-operator"}`); status != http.StatusOK {
+		t.Fatalf("PUT ack-state: %d %s", status, body)
+	}
+	acked := strictly[mns.NotifyAckStateChanged](t, oss.next(t, "notifyAckStateChanged"))
+	if acked.AckState != mns.Acknowledged || acked.AckUserId != "test-operator" || acked.AckSystemId != "oam" {
+		t.Errorf("notifyAckStateChanged: %+v", acked)
+	}
+	if r := n.alarmList(t, "").Attributes.AlarmRecords["scscf."+id]; r.AckUserId != "test-operator" || r.AckSystemId != "oam" {
+		t.Errorf("the record of the list: %+v", r)
+	}
+}
+
 // counted waits until the metrics have each line. The OAM counts a
 // notification once the recipient has answered, which may be after the
 // recipient has passed the notification on.

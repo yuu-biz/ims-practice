@@ -49,6 +49,13 @@ type Endpoint struct {
 
 // Config is what the OAM server is given.
 type Config struct {
+	// Name names the OAM as the system through which an operator
+	// acknowledges an alarm: the OAM passes it to the node as the
+	// ackSystemId of each acknowledgement of its API (TS 28.111 7.4.1).
+	// The oam role gives the node name of its configuration file, as a
+	// node names itself when it acknowledges an alarm of its own.
+	// Required.
+	Name string
 	// Nodes is the inventory: every node that the OAM operates. At
 	// least one.
 	Nodes []Endpoint
@@ -137,6 +144,7 @@ type Config struct {
 // the nodes or the subscribers: every answer comes from the nodes and
 // the HSS when it is asked for. It is safe for concurrent use.
 type Server struct {
+	name            string
 	nodes           []Endpoint
 	byName          map[string]Endpoint
 	httpClient      *http.Client
@@ -180,7 +188,11 @@ func New(c Config) (*Server, error) {
 	if len(c.Nodes) == 0 {
 		return nil, errors.New("oam: no nodes in the inventory")
 	}
+	if c.Name == "" {
+		return nil, errors.New("oam: no name, which each acknowledgement names as its system")
+	}
 	s := &Server{
+		name:            c.Name,
 		byName:          map[string]Endpoint{},
 		httpClient:      c.HTTPClient,
 		nodeTimeout:     c.NodeTimeout,
