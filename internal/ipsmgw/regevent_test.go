@@ -349,6 +349,13 @@ func TestTheRegistrationOfAUserItCouldNotReach(t *testing.T) {
 		t.Fatal(err)
 	}
 	h.registered()
+	// The IP-SM-GW answers the NOTIFY and sends the PUR before it takes
+	// its flag, and notes the registration once it has: the flag is read
+	// after that, since reading it takes it.
+	waitFor(t, func() bool {
+		sub, ok, err := store.RegSubscriptionOf(t.Context(), alice)
+		return err == nil && ok && sub.Available
+	}, "the IP-SM-GW to note the registration")
 
 	if set, err := store.TakeNotReachable(t.Context(), alice); err != nil || set {
 		t.Errorf("the flag of the user after the registration = %v, %v; want it clear", set, err)
