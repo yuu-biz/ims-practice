@@ -133,7 +133,8 @@ type AlarmRecord struct {
 // vendor-specific data below an object, is left out: no object here has
 // any.
 type Top struct {
-	Id          string `json:"id"`
+	// The schema Top requires id, and lets it be null.
+	Id          string `json:"id" schema:"required,nullable"`
 	ObjectClass string `json:"objectClass,omitempty"`
 	// ObjectInstance is the DN of the object.
 	ObjectInstance string `json:"objectInstance,omitempty"`
