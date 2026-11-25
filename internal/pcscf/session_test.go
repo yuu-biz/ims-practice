@@ -81,6 +81,7 @@ func newSessionHarnessWith(t *testing.T, relays []MediaRelay) *sessionHarness {
 			return
 		}
 		ringing := sip.NewResponse(st.Request, 183, "callee")
+		ringing.Add("Content-Type", "application/sdp")
 		ringing.Body = answer.Bytes()
 		st.Respond(ringing)
 		<-h.release
