@@ -411,7 +411,10 @@ func (s *SCSCF) sendNotify(n notification, log *slog.Logger) {
 
 // readNotifyAnswer removes the subscription when its NOTIFY fails the
 // way RFC 6665 4.2.2 lists: no answer within Timer F, or a response
-// that says the subscriber has lost it.
+// that says the subscriber has lost it. A NOTIFY that the stop of this
+// instance's stack cut short is neither: the subscriber may have
+// answered it, and the subscription stays for the instance that sends
+// the next NOTIFY.
 //
 // SIMPLIFIED: TS 24.229 5.4.2.1.2. The term-ioi of the response is not
 // stored: it is for the charging records of the S-CSCF, which no node
@@ -422,6 +425,10 @@ func (s *SCSCF) readNotifyAnswer(ct *sip.ClientTransaction, id sip.DialogID, log
 		final = resp
 	}
 	if final != nil && !sip.EndsSubscription(final.StatusCode) {
+		return
+	}
+	if final == nil && errors.Is(ct.Err(), sip.ErrStackClosed) {
+		log.Info("reg event NOTIFY cut short by the stop of the stack; the subscription stays")
 		return
 	}
 	status := 0

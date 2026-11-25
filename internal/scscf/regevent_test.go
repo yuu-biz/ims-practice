@@ -542,3 +542,53 @@ func TestSubscribeInAnEndedSubscriptionGets481(t *testing.T) {
 		t.Fatalf("got %v, want 481 (RFC 3261 12.2.2)", final)
 	}
 }
+
+// TestARegEventSubscriptionOutlivesTheStackThatStops: the S-CSCF stops
+// while the NOTIFY that follows the 200 to a SUBSCRIBE waits for its
+// answer. The end of the stack ends the client transaction of the
+// NOTIFY, which says nothing of the subscriber, so the subscription stays
+// in the store for the instance that sends the next NOTIFY.
+func TestARegEventSubscriptionOutlivesTheStackThatStops(t *testing.T) {
+	notifies := make(chan *sip.Message, 4)
+	// The subscriber takes each NOTIFY and answers none.
+	subscriber := newStack(t, func(st *sip.ServerTransaction) { notifies <- st.Request })
+	h := newHarnessWith(t, Config{}, fakeResolver{hosts: map[string]netip.AddrPort{"pcscf." + domain: subscriber.LocalAddr()}})
+	h.registerUser(sip.NewCallID())
+
+	m := &sip.Message{Method: sip.SUBSCRIBE, RequestURI: impu}
+	m.Add("Max-Forwards", "70")
+	m.Add("From", "<"+pcscfURI+">;tag="+sip.NewTag())
+	m.Add("To", "<"+impu+">")
+	m.Add("Call-ID", sip.NewCallID())
+	m.Add("CSeq", "1 SUBSCRIBE")
+	m.Add("Contact", "<"+pcscfURI+">")
+	m.Add("Event", "reg")
+	m.Add("Expires", "7200")
+	m.Add("P-Asserted-Identity", pcscfPath)
+	ct, err := subscriber.SendRequest(m, sip.Destination{Transport: sip.UDP, Addr: h.scscf.LocalAddr()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var final *sip.Message
+	for r := range ct.Responses() {
+		final = r
+	}
+	if final == nil || final.StatusCode != 200 {
+		t.Fatalf("the SUBSCRIBE got %v, %v; want 200", final, ct.Err())
+	}
+	select {
+	case <-notifies:
+	case <-time.After(5 * time.Second):
+		t.Fatal("no NOTIFY within 5 s of the 200 to the SUBSCRIBE")
+	}
+
+	h.scscf.Close()
+	ctx := context.Background()
+	gone := came(watch, func() bool {
+		subs, err := h.store.SubscriptionsOf(ctx, impi)
+		return err == nil && len(subs) == 0
+	})
+	if gone {
+		t.Errorf("the subscription left the store within %v of the stop of the stack", watch)
+	}
+}
