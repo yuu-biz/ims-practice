@@ -27,6 +27,9 @@ type Executor interface {
 	// "pcscf:1" are one container when the service has one. Manager
 	// tells by it whether two faults meet.
 	Resolve(ctx context.Context, target string) (string, error)
+	// Apply puts the fault in place. When it fails part way, it takes
+	// back what of the fault may be there, and says in its error when
+	// it could not.
 	Apply(ctx context.Context, f Fault) error
 	// Clear undoes Apply. A fault that is already gone, because the
 	// target restarted with a new network namespace, counts as
