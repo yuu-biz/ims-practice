@@ -81,7 +81,8 @@ type FunctionState struct {
 type AdministrativeStateRequest struct {
 	AdministrativeState AdministrativeState `json:"administrative_state"`
 	// TimeoutSeconds bounds a shut down (ManagedFunction.ShutDown); 0
-	// for none. Only SHUTTINGDOWN takes it.
+	// for none, and at most MaxTimeoutSeconds. Only SHUTTINGDOWN takes
+	// it.
 	TimeoutSeconds int `json:"timeout_seconds,omitempty"`
 	// Operator names who asks, for the log.
 	Operator string `json:"operator,omitempty"`

@@ -33,7 +33,7 @@ An error has the body of TS 32.158 6.6, with its `type` and `reason`. Package `m
 
 ## This project's own APIs
 
-3GPP leaves some interfaces to each product, such as the one between an element manager and a network element (TS 32.600 4.2.1.3), and the provisioning interface of an HSS. Others exist only because this is a lab: the control API of a test UE, or the Lab itself. For each of these APIs the repository has an OpenAPI 3.1 file next to the code, and the tests of the package send every request through a checker that compares the request and the answer with the file. A route, a field or a status code that the handler and the file do not share fails the tests, so the file says what the code does.
+3GPP leaves some interfaces to each product, such as the one between an element manager and a network element (TS 32.600 4.2.1.3), and the provisioning interface of an HSS. Others exist only because this is a lab: the control API of a test UE, or the Lab itself. For each of these APIs the repository has an OpenAPI 3.1 file next to the code, and the tests of the package send every request through a checker that compares the request and the answer with the file. A route, a field or a status code that the handler and the file do not share fails the tests, so the file says what the code does. The tests also send requests that the file refuses, such as a body without a field that the file requires, or a number above the bound that the file sets, like a drain of more than a day (`timeout_seconds` above 86400 in the maintenance API). The checker fails the tests when the handler takes such a request instead of refusing it with a 4xx.
 
 | API | Who serves it | OpenAPI file |
 | --- | --- | --- |
