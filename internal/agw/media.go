@@ -50,8 +50,8 @@ type relayTermination struct {
 	rtp, rtcp *channel
 	// Guarded by ctx.mu.
 	mode Mode
-	// latchOff tells that the termination sends to the address of the
-	// SDP and never latches: it was added or modified with NAPTOff.
+	// latchOff tells that the termination latches no more: it was
+	// added or modified with NAPTOff or StopLatching.
 	latchOff bool
 	signals  *Signals
 	events   *Events
@@ -102,9 +102,11 @@ func (rc *relayContext) add(req TerminationRequest) (*relayTermination, error) {
 	if latch == "" {
 		// SIMPLIFIED: RFC 4961. A termination added without a latching
 		// latches once, and keeps the address for the whole call.
-		// Re-latching only matters when a UE changes address in the
-		// middle of a call, and takes a controller that asks for
-		// NAPTRelatch.
+		// Such a termination faces a UE, and re-latching only matters
+		// when the UE changes address in the middle of a call, which
+		// takes a controller that asks for NAPTRelatch. A termination
+		// whose party changes within a call, as on the network side of
+		// the P-CSCF, is added with NAPTOff.
 		latch = NAPTLatch
 	}
 	if !latch.valid() {
@@ -227,7 +229,9 @@ func (t *relayTermination) modify(req TerminationRequest) error {
 	t.setRemote(req.Remote)
 	t.setLatch(req.Latch)
 	switch req.Latch {
-	case NAPTOff:
+	case NAPTOff, StopLatching:
+		// After StopLatching the termination sends where it does now,
+		// and a relay created again sends there too.
 		t.latchOff = true
 	case NAPTLatch, NAPTRelatch:
 		t.latchOff = false
@@ -274,9 +278,9 @@ func (t *relayTermination) setLatch(l Latch) {
 //
 // SIMPLIFIED: H.248.37 (06/2008) 6.6.7.1. After a latch, the packets of
 // other sources pass as well, where H.248.37 has them discarded (6.6.2,
-// 6.6.3). Terminations latch by default, and the P-CSCF gives a
-// termination the remote address of each new SDP without asking it to
-// latch again: the filter would drop what a party sends from a new
+// 6.6.3). The P-CSCF's termination towards the UE latches, and the
+// P-CSCF gives it the remote address of each new SDP without asking it
+// to latch again: the filter would drop what a party sends from a new
 // address.
 func (t *relayTermination) read(kind string, in *channel) {
 	log := t.ctx.relay.log

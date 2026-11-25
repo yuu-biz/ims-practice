@@ -317,6 +317,27 @@ func TestARecreatedRelayKeepsLatchingOff(t *testing.T) {
 	}
 }
 
+// TestStopLatchingIsStoredAsLatchingOff: a termination told to stop
+// latching before it has latched is opened again without latching
+// after a restart, rather than latching onto the first source.
+func TestStopLatchingIsStoredAsLatchingOff(t *testing.T) {
+	store := NewMemoryContextStore()
+	minPort, maxPort := rtptest.PortRange(t, 4)
+	r := relayOn(t, minPort, maxPort, store)
+	sdpAddr := netip.MustParseAddrPort("192.0.2.10:4000")
+	c, err := r.Add(TerminationRequest{ID: Access, Remote: sdpAddr}, TerminationRequest{ID: Core})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.Modify(c.ID, Access, TerminationRequest{Latch: StopLatching}); err != nil {
+		t.Fatal(err)
+	}
+	want := SavedTermination{ID: Access, LocalRTP: c.Terminations[Access].Local.Port(), Remote: sdpAddr, Mode: SendReceive, Latch: NAPTOff}
+	if got := contextsOf(t, store); len(got) != 1 || got[0].Terminations[0] != want {
+		t.Errorf("the store holds %+v, want the access termination as %+v", got, want)
+	}
+}
+
 // TestARecreatedRelayGivesUpAContextWhosePortsAreTaken: a relay that
 // cannot open the ports of a stored context starts without it and
 // removes it from the store, rather than not starting at all.
