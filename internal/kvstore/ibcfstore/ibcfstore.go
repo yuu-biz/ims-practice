@@ -7,15 +7,22 @@
 // items and their keys, after the prefix of the Config and "ibcf:":
 //
 //	call:<instance>:<ID>                       the CallRecord, as JSON
-//	calls-of:<instance>                        index: the IDs of the calls of the instance
 //	dialog:<Call-ID>:<local tag>:<remote tag>  index: <instance>:<ID> of the call that has the dialog
 //
-// An instance that starts reads its index and then each record in it,
-// and never walks the keys of the store, which other instances and
-// roles share. The index holds at most as many IDs as the instance has
-// calls at once, so it does not grow with the number of users or of
-// instances. Any instance reads one record by one of its dialogs, two
-// keys, for the Replaces of an INVITE (ibcf.Store.CallOf).
+// and the sorted index of the IDs of the calls of each instance:
+//
+//	call-ids:<instance>
+//
+// A call that starts adds its ID to the sorted index, and one that ends
+// takes it out: one member each, whatever else the index holds, so the
+// calls of an instance neither read the list of its calls nor wait for
+// each other to change it. An instance that starts reads its index one
+// page at a time, and then each record in it, and never walks the keys
+// of the store, which other instances and roles share. The index holds
+// at most as many IDs as the instance has calls at once, so it does not
+// grow with the number of users or of instances. Any instance reads one
+// record by one of its dialogs, two keys, for the Replaces of an INVITE
+// (ibcf.Store.CallOf).
 //
 // No item has a time to live. A call lasts until its BYE, however long
 // that is, as in ibcf.MemoryStore; the records of an instance that
@@ -37,9 +44,10 @@ import (
 
 // Store is an ibcf.Store on a kvstore.Store.
 //
-// The calls of one instance write their records at once, and all of
-// them change the index of the instance: it is changed by compare and
-// swap, so that none of them loses another's entry.
+// The calls of one instance write their records at once. Each adds or
+// removes only its own member of the index of the instance, which the
+// store changes in one step, so that none of them loses another's entry
+// or has to try again.
 type Store struct {
 	c   *kvjson.Client
 	log *slog.Logger
@@ -59,31 +67,25 @@ func New(kv kvstore.Store, cfg kvjson.Config) *Store {
 
 func (s *Store) callKey(instance, id string) string { return s.c.Key("call", instance, id) }
 
-func (s *Store) indexKey(instance string) string { return s.c.Key("calls-of", instance) }
+// callIndex is the name of the sorted index of the IDs of the calls of
+// instance.
+func callIndex(instance string) string { return "call-ids:" + kvjson.Member(instance) }
 
 func (s *Store) dialogKey(id sip.DialogID) string {
 	return s.c.Key("dialog", id.CallID, id.LocalTag, id.RemoteTag)
 }
 
-// callsOf is the value of the index of an instance: the IDs of its
-// calls, in order.
-type callsOf struct {
-	IDs []string
-}
+// page is how many IDs one read of the index of an instance returns.
+const page = 100
 
-// maxAttempts bounds the rounds of a change of the index that other
-// writers keep overtaking, as in kvjson.
-const maxAttempts = 100
-
-var errGaveUp = errors.New("ibcfstore: the index of the instance could not be changed")
-
-// PutCall writes the ID of r in the index of its instance, then r, and
-// then the entry of each of its dialogs. The index comes first so that
-// an instance that stops between the two writes leaves at worst an
+// PutCall adds the ID of r to the index of its instance, then writes r,
+// and then the entry of each of its dialogs. The index comes first so
+// that an instance that stops between the two writes leaves at worst an
 // entry without a record, which CallsOf skips: never a record that
 // CallsOf cannot find, whose TrGW context a later process would not
 // release. The IBCF writes a record again after each request within its
-// call; the index is then read but not written.
+// call; its ID is then in the index already, and adding it again
+// changes nothing.
 //
 // The entries of the dialogs come after the record, unlike the other
 // index items of the adapters (kvjson.WriteIndex), because the record
@@ -93,15 +95,7 @@ var errGaveUp = errors.New("ibcfstore: the index of the instance could not be ch
 // with the record each time, so the next write that gets through puts
 // them back.
 func (s *Store) PutCall(ctx context.Context, r ibcf.CallRecord) error {
-	err := s.changeIndex(ctx, r.Instance, func(ix *callsOf) bool {
-		i, found := slices.BinarySearch(ix.IDs, r.ID)
-		if found {
-			return false
-		}
-		ix.IDs = slices.Insert(ix.IDs, i, r.ID)
-		return true
-	})
-	if err != nil {
+	if err := s.c.AddToIndex(ctx, callIndex(r.Instance), r.ID); err != nil {
 		return fmt.Errorf("ibcfstore: put call %s of %s: %w", r.ID, r.Instance, err)
 	}
 	if err := kvjson.Write(ctx, s.c, s.callKey(r.Instance, r.ID), r, 0); err != nil {
@@ -133,7 +127,7 @@ func (s *Store) DeleteCall(ctx context.Context, instance, id string) error {
 	if err := s.c.Remove(ctx, s.callKey(instance, id)); err != nil {
 		return err
 	}
-	if err := s.removeFromIndex(ctx, instance, []string{id}); err != nil {
+	if err := s.c.RemoveFromIndex(ctx, callIndex(instance), id); err != nil {
 		return fmt.Errorf("ibcfstore: delete call %s of %s: %w", id, instance, err)
 	}
 	return nil
@@ -167,9 +161,10 @@ func (s *Store) CallOf(ctx context.Context, id sip.DialogID) (ibcf.CallRecord, b
 	return r, true, nil
 }
 
-// CallsOf reads the index of the instance, and then each record in it.
-// A failure of the store is returned, not taken for an instance without
-// calls: the IBCF would leave the calls of its earlier process up.
+// CallsOf reads the index of the instance one page at a time, and the
+// record of each ID in it. A failure of the store is returned, not taken
+// for an instance without calls: the IBCF would leave the calls of its
+// earlier process up.
 //
 // An entry without a record was left by a process that stopped between
 // the two writes of PutCall or of DeleteCall. The IBCF reads its records
@@ -177,77 +172,41 @@ func (s *Store) CallOf(ctx context.Context, id sip.DialogID) (ibcf.CallRecord, b
 // them. This assumes one live process per instance name: with a second
 // one, a PutCall of the old process could be under way, and its record
 // would be left out of the index until that call is written again.
-// CallsOf skips such an entry, and
-// removes it from the index. A failed removal changes nothing that
-// CallsOf returns, so it is only logged; the next CallsOf tries again.
+// CallsOf skips such an entry, and removes it from the index once it has
+// read every page, so that a store that fails then has given every
+// record already. A failed removal changes nothing that CallsOf returns,
+// so it is only logged; the next CallsOf tries again.
 func (s *Store) CallsOf(ctx context.Context, instance string) ([]ibcf.CallRecord, error) {
-	var ix callsOf
-	_, err := kvjson.Read(ctx, s.c, s.indexKey(instance), &ix)
-	if errors.Is(err, kvstore.ErrNotFound) {
-		return nil, nil
-	}
-	if err != nil {
-		return nil, err
-	}
-	records := make([]ibcf.CallRecord, 0, len(ix.IDs))
+	index := callIndex(instance)
+	var records []ibcf.CallRecord
 	var leftovers []string
-	for _, id := range ix.IDs {
-		var r ibcf.CallRecord
-		_, err := kvjson.Read(ctx, s.c, s.callKey(instance, id), &r)
-		switch {
-		case errors.Is(err, kvstore.ErrNotFound):
-			leftovers = append(leftovers, id)
-		case err != nil:
+	for after := ""; ; {
+		ids, err := s.c.MembersAfter(ctx, index, after, page)
+		if err != nil {
 			return nil, err
-		default:
-			records = append(records, r)
 		}
+		for _, id := range ids {
+			var r ibcf.CallRecord
+			_, err := kvjson.Read(ctx, s.c, s.callKey(instance, id), &r)
+			switch {
+			case errors.Is(err, kvstore.ErrNotFound):
+				leftovers = append(leftovers, id)
+			case err != nil:
+				return nil, err
+			default:
+				records = append(records, r)
+			}
+		}
+		if len(ids) < page {
+			break
+		}
+		after = ids[len(ids)-1]
 	}
-	if len(leftovers) > 0 {
-		if err := s.removeFromIndex(ctx, instance, leftovers); err != nil {
-			s.log.Warn("cannot remove index entries without a record", "key", s.indexKey(instance), "calls", leftovers, "error", err.Error())
+	for i, id := range leftovers {
+		if err := s.c.RemoveFromIndex(ctx, index, id); err != nil {
+			s.log.Warn("cannot remove index entries without a record", "index", s.c.Index(index), "calls", leftovers[i:], "error", err.Error())
+			break
 		}
 	}
 	return records, nil
-}
-
-// removeFromIndex takes ids out of the index of the instance.
-func (s *Store) removeFromIndex(ctx context.Context, instance string, ids []string) error {
-	return s.changeIndex(ctx, instance, func(ix *callsOf) bool {
-		n := len(ix.IDs)
-		ix.IDs = slices.DeleteFunc(ix.IDs, func(id string) bool { return slices.Contains(ids, id) })
-		return len(ix.IDs) < n
-	})
-}
-
-// changeIndex reads the index of the instance, lets change change it,
-// and writes it back if no one else wrote it in between; otherwise it
-// starts again from the new value, so change may run more than once.
-// change reports whether it changed anything; when it did not, nothing
-// is written. An index left empty is removed, so that an instance
-// without calls leaves no key behind.
-func (s *Store) changeIndex(ctx context.Context, instance string, change func(*callsOf) bool) error {
-	key := s.indexKey(instance)
-	for range maxAttempts {
-		var ix callsOf
-		version, err := kvjson.Read(ctx, s.c, key, &ix)
-		if err != nil && !errors.Is(err, kvstore.ErrNotFound) {
-			return err
-		}
-		if !change(&ix) {
-			return nil
-		}
-		switch {
-		case len(ix.IDs) > 0:
-			_, err = kvjson.CompareAndSwap(ctx, s.c, key, version, ix, 0)
-		case version != "":
-			err = s.c.RemoveIf(ctx, key, version)
-		default:
-			return nil
-		}
-		if !errors.Is(err, kvstore.ErrConflict) {
-			return err
-		}
-	}
-	return errGaveUp
 }

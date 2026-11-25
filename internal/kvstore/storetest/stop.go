@@ -28,6 +28,14 @@ func BeforeWrite(kv kvstore.Store, n int, f func()) kvstore.Store {
 	return &stopping{Store: kv, left: math.MaxInt, before: n, hook: f}
 }
 
+// BeforeEachWrite is BeforeWrite for every write: f runs just before
+// each one. The tests use it to have another instance overtake each
+// write of an operation, the most that any number of instances writing
+// at once can do to it.
+func BeforeEachWrite(kv kvstore.Store, f func()) kvstore.Store {
+	return &stopping{Store: kv, left: math.MaxInt, every: true, hook: f}
+}
+
 type stopping struct {
 	kvstore.Store
 	mu   sync.Mutex
@@ -35,7 +43,9 @@ type stopping struct {
 	// writes counts the writes so far, for before.
 	writes int
 	before int
-	hook   func()
+	// every runs hook before each write, whatever before says.
+	every bool
+	hook  func()
 }
 
 var errStopped = errors.New("storetest: the instance has stopped")
@@ -47,7 +57,7 @@ func (s *stopping) write() bool {
 	s.mu.Lock()
 	s.writes++
 	hook := s.hook
-	if s.writes != s.before {
+	if !s.every && s.writes != s.before {
 		hook = nil
 	}
 	s.left--
