@@ -99,6 +99,11 @@ type Config struct {
 	// measurements (metrics.go). Nil gives it a registry of its own,
 	// which nothing serves.
 	Metrics *metrics.Registry
+	// SweepInterval is how often this instance reads the settings that
+	// the instances on its Store share (Settings), so how late a change
+	// that reached another instance alone is in force here; zero means
+	// ims.SweepInterval. Tests shorten it.
+	SweepInterval time.Duration
 }
 
 // Admission is the operator's policy on which subscribers the network
@@ -162,10 +167,28 @@ func (s *settings) admits(u Subscriber) bool {
 // user who is not registered, which asks whether the policy admits the
 // user and then which profile the user gets, loads them once and
 // decides each time on that one value.
+//
+// The instances on one Store share them there, with the generation of
+// the change that put them in force (StoredSettings), and each instance
+// holds a copy for its requests, which it reads again from the Store
+// every SweepInterval (loadSettings).
 type settings struct {
+	generation             uint64
 	admission              Admission
 	defaultServiceProfile  string
 	testUserServiceProfile string
+}
+
+// stored is s as a Store keeps it.
+func (s *settings) stored() StoredSettings {
+	return StoredSettings{Generation: s.generation, Admission: s.admission,
+		DefaultServiceProfile: s.defaultServiceProfile, TestUserServiceProfile: s.testUserServiceProfile}
+}
+
+// settingsOf is the settings that a Store keeps as s.
+func settingsOf(s StoredSettings) *settings {
+	return &settings{generation: s.Generation, admission: s.Admission,
+		defaultServiceProfile: s.DefaultServiceProfile, testUserServiceProfile: s.TestUserServiceProfile}
 }
 
 // Admission is the admission policy in force.
@@ -179,17 +202,6 @@ func (h *HSS) DefaultServiceProfile() string { return h.settings.Load().defaultS
 // for the test users that name none of their own.
 func (h *HSS) TestUserServiceProfile() string { return h.settings.Load().testUserServiceProfile }
 
-// changeSettings puts in force the settings that change makes of the
-// ones in force. The requests read the settings without a lock, so what
-// they see is the value before this change or the value after it; they
-// are never held up by one, and no request path takes a lock of the
-// whole role.
-func (h *HSS) changeSettings(change func(*settings)) {
-	h.beginSettings()
-	change(h.pending)
-	h.commitSettings()
-}
-
 // beginSettings starts a change of the settings: the ones in force are
 // copied to pending, which the change writes to. settingsMu is held from
 // here to commitSettings, so that two changes cannot each write back
@@ -200,24 +212,151 @@ func (h *HSS) changeSettings(change func(*settings)) {
 // of settings before the first of them is set and its commit after the
 // last, for one change of the configuration at a time, and the sets in
 // between only write fields of pending, so none of them can fail or
-// panic (maintenance.Together, maintenance.ChangeConfiguration).
+// panic (maintenance.Together, maintenance.ChangeConfiguration). The
+// lock belongs to the changes of this instance alone, and no request
+// takes it.
 func (h *HSS) beginSettings() {
 	h.settingsMu.Lock()
 	next := *h.settings.Load()
 	h.pending = &next
 }
 
-// commitSettings puts pending in force, all of it at once, and then
-// pushes the profiles that the change gives another name
-// (pushChangedSettings).
-func (h *HSS) commitSettings() {
-	before, after := h.settings.Load(), h.pending
-	h.settings.Store(after)
+// commitSettings puts pending in force at generation, all of it at
+// once: it writes the settings to the Store, where the other instances
+// read them (storeSettings), and then holds them for the requests of
+// this instance. It changes nothing when the Store cannot be written or
+// has a later change, and returns why.
+//
+// The instance whose write changed the settings of the Store pushes the
+// profiles that the change gives another name (pushChangedSettings).
+// The OAM server sends the change to every instance of the role, and
+// the others find it in force there and push nothing, so each user gets
+// the push of a change once.
+func (h *HSS) commitSettings(generation uint64) error {
+	next := h.pending
+	next.generation = generation
 	h.pending = nil
+	before, wrote, err := h.storeSettings(h.life, next)
+	if err == nil {
+		h.takeOn(next)
+	}
 	h.settingsMu.Unlock()
+	if err != nil {
+		return err
+	}
 	// Outside settingsMu: a push reads the settings in force, which are
 	// these, and sends to one subscriber after another.
-	h.pushChangedSettings(before, after)
+	if wrote {
+		h.pushChangedSettings(before, next)
+	}
+	return nil
+}
+
+// settingsWrites bounds the rounds of storeSettings that the changes of
+// other instances overtake. The changes come from operators, so two
+// rounds are already rare.
+const settingsWrites = 10
+
+// storeSettings writes next, the settings of a change, to the Store. It
+// returns the settings that it replaced there, and whether it wrote at
+// all: it writes nothing when the Store has next already, which is the
+// change of the role that the OAM server sent another instance first.
+// The settings of a later change in the Store, or other settings of the
+// same generation, are a change that overtook next, which it refuses
+// with maintenance.ErrStaleGeneration.
+func (h *HSS) storeSettings(ctx context.Context, next *settings) (before *settings, wrote bool, err error) {
+	for range settingsWrites {
+		stored, ok, err := h.store.Settings(ctx)
+		if err != nil {
+			return nil, false, err
+		}
+		// A Store with no settings yet is one that this instance could
+		// not read since it started, so the settings in force are those
+		// of its configuration file.
+		var old *StoredSettings
+		before := h.settings.Load()
+		if ok {
+			switch {
+			case stored == next.stored():
+				return nil, false, nil
+			case stored.Generation >= next.generation:
+				return nil, false, fmt.Errorf("%w: the settings of generation %d are in force on the instances of the role",
+					maintenance.ErrStaleGeneration, stored.Generation)
+			}
+			old, before = &stored, settingsOf(stored)
+		}
+		swapped, err := h.store.CompareAndSwapSettings(ctx, old, next.stored())
+		if err != nil {
+			return nil, false, err
+		}
+		if swapped {
+			return before, true, nil
+		}
+	}
+	return nil, false, fmt.Errorf("the settings of the store were changed by other instances %d times", settingsWrites)
+}
+
+// takeOn puts next in force for the requests of this instance, unless
+// the settings in force are of a later change, and reports whether it
+// changed them. At the generation in force the settings of the Store
+// win: those of two configuration files are both generation 0, and the
+// ones that an instance stored first are those of the role.
+func (h *HSS) takeOn(next *settings) bool {
+	for {
+		in := h.settings.Load()
+		if next.generation < in.generation || *next == *in {
+			return false
+		}
+		if h.settings.CompareAndSwap(in, next) {
+			return true
+		}
+	}
+}
+
+// loadSettings reads the settings that the instances on the Store share
+// and takes them on (takeOn). A Store that has none yet gets the ones in
+// force here, which are those of the configuration file: this instance
+// is the first on the Store, or the first since the Store lost them.
+func (h *HSS) loadSettings(ctx context.Context) error {
+	for range 2 {
+		stored, ok, err := h.store.Settings(ctx)
+		if err != nil {
+			return err
+		}
+		if ok {
+			if next := settingsOf(stored); h.takeOn(next) {
+				h.log.Info("took on the settings in force on the instances of the role", "generation", next.generation,
+					"admission", string(next.admission), "default_service_profile", next.defaultServiceProfile,
+					"test_user_service_profile", next.testUserServiceProfile)
+			}
+			return nil
+		}
+		swapped, err := h.store.CompareAndSwapSettings(ctx, nil, h.settings.Load().stored())
+		if err != nil || swapped {
+			return err
+		}
+		// Another instance stored its settings first, which are those of
+		// the role: read them.
+	}
+	return nil
+}
+
+// sweep reads the settings of the Store every SweepInterval, until the
+// node stops (Close), so that a change that reached another instance
+// alone is in force here within an interval.
+func (h *HSS) sweep() {
+	tick := time.NewTicker(cmp.Or(h.config.SweepInterval, ims.SweepInterval))
+	defer tick.Stop()
+	for {
+		select {
+		case <-h.life.Done():
+			return
+		case <-tick.C:
+		}
+		if err := h.loadSettings(h.life); err != nil && h.life.Err() == nil {
+			h.log.Warn("the settings of the instances of the role were not read; the next round reads them", "error", err.Error())
+		}
+	}
 }
 
 // ServiceCentre is how the HSS reaches one of the SMS central
@@ -259,11 +398,14 @@ type HSS struct {
 	// way, for Close.
 	alerts sync.WaitGroup
 	// life is the context of the work that the HSS does of its own
-	// accord, outside any request: the pushes of a changed setting
+	// accord, outside any request: the reading of the settings that the
+	// instances share (sweep) and the pushes of a changed setting
 	// (pushChangedSettings). Close ends it and waits for that work to
 	// stop, so that no push outlives the node.
 	life    context.Context
 	endLife context.CancelFunc
+	// sweeping counts the sweep, for Close.
+	sweeping sync.WaitGroup
 	// lifeMu is held over the end of life in Close and over the start of
 	// a push (pushChangedSettings), so that no push starts once Close
 	// waits for them.
@@ -273,9 +415,10 @@ type HSS struct {
 	pushes sync.WaitGroup
 
 	// settings are the parts of the configuration that the maintenance
-	// API changes while the HSS runs (Settings). A request loads the
-	// whole set once; settingsMu is held only to put a change in force,
-	// never on the path of a request, and it guards pending as well.
+	// API changes while the HSS runs (Settings), as this instance has
+	// them from the Store. A request loads the whole set once;
+	// settingsMu is held only to put a change in force, never on the
+	// path of a request, and it guards pending as well.
 	// The maintenance API carries out one change of the configuration at
 	// a time under a lock of its own, so this one is not what holds two
 	// changes from that API apart; it holds this value and pending
@@ -341,6 +484,16 @@ func New(config Config, store Store, node *diameter.Node, log *slog.Logger) (*HS
 			return nil, err
 		}
 	}
+	// The settings in force on the instances of the role, before the
+	// first request, so that an instance made in place of another does
+	// not answer with those of its file. A Store that does not answer
+	// leaves those in force until the sweep reads it; until then it
+	// fails the requests of every subscriber anyway.
+	if err := h.loadSettings(h.life); err != nil {
+		log.Warn("the settings of the instances of the role were not read; those of the configuration file are in force until they are",
+			"error", err.Error())
+	}
+	h.sweeping.Go(h.sweep)
 	return h, nil
 }
 
@@ -349,15 +502,17 @@ func New(config Config, store Store, node *diameter.Node, log *slog.Logger) (*HS
 func (h *HSS) SetPeers(p Peers) { h.peers.Store(&p) }
 
 // Close waits for the alerts that are on their way to the service
-// centres, and ends the pushes of a changed setting and waits for them:
-// one that is on its way sends no more profiles, and the S-CSCFs it did
-// not reach read the profile at the next registration or from the push
-// of a later change. A node calls it once its Diameter server has
-// stopped, when a push would reach nobody anyway.
+// centres, stops reading the settings of the Store, and ends the pushes
+// of a changed setting and waits for them: one that is on its way sends
+// no more profiles, and the S-CSCFs it did not reach read the profile at
+// the next registration or from the push of a later change. A node
+// calls it once its Diameter server has stopped, when a push would
+// reach nobody anyway.
 func (h *HSS) Close() {
 	h.lifeMu.Lock()
 	h.endLife()
 	h.lifeMu.Unlock()
+	h.sweeping.Wait()
 	h.alerts.Wait()
 	h.pushes.Wait()
 }

@@ -7,10 +7,12 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/yuu-biz/ims-practice/internal/cx"
 	"github.com/yuu-biz/ims-practice/internal/diameter"
 	"github.com/yuu-biz/ims-practice/internal/ifc"
+	"github.com/yuu-biz/ims-practice/internal/ims"
 	"github.com/yuu-biz/ims-practice/internal/maintenance"
 )
 
@@ -34,9 +36,13 @@ const (
 // subscription got.
 func settingsHSS(t *testing.T) (*HSS, *maintenance.Node) {
 	t.Helper()
-	if err := diameter.LoadDictionary(); err != nil {
-		t.Fatal(err)
-	}
+	return settingsInstance(t, settingsStore(t), nil)
+}
+
+// settingsStore is the store of settingsHSS: the ordinary subscriber
+// and the test user.
+func settingsStore(t *testing.T) *MemoryStore {
+	t.Helper()
 	store, err := NewMemoryStore(
 		Subscription{PrivateIdentity: impi, PublicIdentities: []string{impu}, Password: "test-password-1"},
 		Subscription{PrivateIdentity: testIMPI, PublicIdentities: []string{testIMPU}, Password: "test-password-9", TestUser: true},
@@ -44,9 +50,32 @@ func settingsHSS(t *testing.T) (*HSS, *maintenance.Node) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	return store
+}
+
+// settingsInstance is one instance of the HSS of settingsHSS on store,
+// which other instances may share, with the lock per subscriber of
+// locks; nil gives it a lock of its own process. It reads the settings
+// that the instances share every few milliseconds, so that a test sees
+// in moments what the network sees within a second, and stops with the
+// test.
+func settingsInstance(t *testing.T, store Store, locks ims.UserLocker) (*HSS, *maintenance.Node) {
+	t.Helper()
+	return settingsInstanceReading(t, store, locks, 5*time.Millisecond)
+}
+
+// settingsInstanceReading is settingsInstance reading the store every
+// interval.
+func settingsInstanceReading(t *testing.T, store Store, locks ims.UserLocker, interval time.Duration) (*HSS, *maintenance.Node) {
+	t.Helper()
+	if err := diameter.LoadDictionary(); err != nil {
+		t.Fatal(err)
+	}
 	node := diameter.NewNode(diameter.Identity{OriginHost: "hss." + realm, OriginRealm: realm},
 		[]uint32{diameter.ApplicationIDCx}, diameter.Timers{}, quiet())
 	h := mustHSS(Config{
+		UserLocks:          locks,
+		SweepInterval:      interval,
 		Realm:              realm,
 		VisitedNetworks:    []string{realm},
 		ServerCapabilities: cx.ServerCapabilities{MandatoryCapabilities: []uint32{1}},
@@ -58,6 +87,7 @@ func settingsHSS(t *testing.T) (*HSS, *maintenance.Node) {
 		DefaultServiceProfile:  "default",
 		TestUserServiceProfile: "default",
 	}, store, node)
+	t.Cleanup(h.Close)
 	node.Handle(h.Handle)
 	server, err := node.Listen("127.0.0.1:0")
 	if err != nil {
@@ -334,7 +364,9 @@ func TestSettingsOfOneChangeGoInForceTogether(t *testing.T) {
 	if got := h.DefaultServiceProfile(); got != "trial" {
 		t.Errorf("before the commit the default profile in force is %q, want trial", got)
 	}
-	h.commitSettings()
+	if err := h.commitSettings(3); err != nil {
+		t.Fatal(err)
+	}
 	if h.Admission() != AdmitAll || h.DefaultServiceProfile() != "default" {
 		t.Errorf("after the commit: %q and %q, want all and default", h.Admission(), h.DefaultServiceProfile())
 	}
