@@ -68,14 +68,20 @@ type phone struct {
 
 func newPhone(t *testing.T, pcscfAddr netip.AddrPort, private, public, pass string, policy ue.AnswerPolicy) *phone {
 	t.Helper()
+	cfg := ue.Config{PrivateIdentity: private, PublicIdentity: public, Password: pass, HomeDomain: domain,
+		PCSCF: pcscfAddr, PCSCFURI: "sip:pcscf." + domain + ":5060", Features: ue.DefaultFeatures, SCAddress: scAddress}
+	return servePhone(t, cfg, policy)
+}
+
+// servePhone is newPhone for the UE of cfg.
+func servePhone(t *testing.T, cfg ue.Config, policy ue.AnswerPolicy) *phone {
+	t.Helper()
 	wire := &wireLog{}
 	tr, err := sip.ListenObserved("127.0.0.1:0", quiet(), wire.observe)
 	if err != nil {
 		t.Fatal(err)
 	}
 	addr := tr.LocalAddr()
-	cfg := ue.Config{PrivateIdentity: private, PublicIdentity: public, Password: pass, HomeDomain: domain,
-		PCSCF: pcscfAddr, PCSCFURI: "sip:pcscf." + domain + ":5060", Features: ue.DefaultFeatures, SCAddress: scAddress}
 	contact := ue.NewContact(cfg, addr)
 	line := ue.NewLine(true)
 	var receiver atomic.Pointer[ue.UE]
@@ -85,7 +91,7 @@ func newPhone(t *testing.T, pcscfAddr netip.AddrPort, private, public, pass stri
 		OnCall:    line.Ring,
 		OnMessage: func(st *sip.ServerTransaction) { receiver.Load().ReceiveSMS(st) },
 		Locate: func(sip.URI) ([]sip.Destination, error) {
-			return []sip.Destination{{Transport: sip.UDP, Addr: pcscfAddr}}, nil
+			return []sip.Destination{receiver.Load().Outbound()}, nil
 		},
 	}, ue.CallConfig{}), quiet())
 	if err != nil {
