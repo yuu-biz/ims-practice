@@ -368,6 +368,64 @@ func TestTheRegistrationOfAUserItCouldNotReach(t *testing.T) {
 	}
 }
 
+// TestTheReregistrationOfAUserItCouldNotReach is TS 23.204 6.5b step 2a
+// with TS 23.040 3.2.6 item 2c: a short message did not reach Alice, and
+// she registers again without sending anything. The third-party
+// REGISTER of the reregistration is the news that she is reachable, so
+// the IP-SM-GW clears its flag and tells the HSS. The NOTIFY after it
+// shows no change and sends no PUR, and the next reregistration tells
+// the HSS nothing, since the flag is gone.
+func TestTheReregistrationOfAUserItCouldNotReach(t *testing.T) {
+	store := ipsmgw.NewMemoryStore()
+	h := newHarness(t, store, time.Minute, answerOK)
+	subscribe := h.registered()
+	if err := store.PutNotReachable(t.Context(), alice, time.Now().Add(time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+
+	if resp := h.thirdPartyRegister(3600); resp.StatusCode != 200 {
+		t.Fatalf("reregistration answered %d", resp.StatusCode)
+	}
+	want := notification{sh.UserIdentity{MSISDN: "12025550101"}, number, sh.MSPresent}
+	if got := h.nextNotification(); got != want {
+		t.Errorf("notification = %+v, want %+v", got, want)
+	}
+	h.send(notify(subscribe, 2, "active;expires=3761", regDoc(reginfo.Active, reginfo.Active, "+g.3gpp.smsip")))
+	h.noUpdate()
+
+	h.thirdPartyRegister(3600)
+	select {
+	case got := <-h.hss.notifications:
+		t.Errorf("the HSS heard %+v of a user whose flag was gone", got)
+	case <-time.After(100 * time.Millisecond):
+	}
+}
+
+// TestTheReregistrationOfAUserWhoTakesNone is TS 23.204 6.5b step 2d
+// for a reregistration: Alice is registered, but without a contact that
+// takes short messages over IP, so her reregistration says nothing to
+// the HSS and the flag stays.
+func TestTheReregistrationOfAUserWhoTakesNone(t *testing.T) {
+	store := ipsmgw.NewMemoryStore()
+	h := newHarness(t, store, time.Minute, answerOK)
+	h.thirdPartyRegister(3600)
+	subscribe := h.subscribed()
+	h.send(notify(subscribe, 1, "active;expires=3761", regDoc(reginfo.Active, reginfo.Active)))
+	if err := store.PutNotReachable(t.Context(), alice, time.Now().Add(time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+
+	h.thirdPartyRegister(3600)
+	select {
+	case got := <-h.hss.notifications:
+		t.Errorf("the HSS heard %+v of a user who takes no short messages over IP", got)
+	case <-time.After(100 * time.Millisecond):
+	}
+	if set, err := store.TakeNotReachable(t.Context(), alice); err != nil || !set {
+		t.Errorf("the flag of the user = %v, %v; want it still set", set, err)
+	}
+}
+
 // TestNotifyWithNoTimeLeftEndsTheSubscription is RFC 6665 4.1.3: the
 // expires of Subscription-State is the time left, so a NOTIFY that
 // says active;expires=0 ends the subscription as terminated does. The

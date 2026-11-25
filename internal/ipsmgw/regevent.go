@@ -54,32 +54,37 @@ const featureSMSOverIP = "+g.3gpp.smsip"
 // The REGISTER has been answered when this runs. When the Store fails,
 // the IP-SM-GW sends no SUBSCRIBE and logs the failure; the third-party
 // REGISTER of the next reregistration tries again.
-func (g *IPSMGW) watchRegistration(publicID, msisdn string, registered time.Duration, log *slog.Logger) {
+//
+// It returns the subscription that it refreshed, and whether there was
+// one: the REGISTER was then a reregistration of a user whose state the
+// IP-SM-GW already hears of.
+func (g *IPSMGW) watchRegistration(publicID, msisdn string, registered time.Duration, log *slog.Logger) (RegSubscription, bool) {
 	ctx := context.Background()
 	unlock, err := g.users.Lock(ctx, publicID)
 	if err != nil {
 		log.Warn("reg event subscription not read: the lock of the user was not taken", "error", err.Error())
-		return
+		return RegSubscription{}, false
 	}
 	defer unlock()
 	expires := registered + ims.RegEventMargin
 	sub, ok, err := g.store.RegSubscriptionOf(ctx, publicID)
 	if err != nil {
 		log.Warn("reg event subscription not read: the store failed", "error", err.Error())
-		return
+		return RegSubscription{}, false
 	}
 	if ok && sub.Dialog.ID.RemoteTag != "" {
 		sub.MSISDN = msisdn
 		g.refreshRegEvent(sub, expires, log)
-		return
+		return sub, true
 	}
 	if ok {
 		if err := g.store.DeleteRegSubscription(ctx, sub.Dialog.ID.CallID); err != nil {
 			log.Warn("reg event subscription without a dialog not removed: the store failed", "error", err.Error())
-			return
+			return RegSubscription{}, false
 		}
 	}
 	g.subscribeRegEvent(publicID, msisdn, expires, log)
+	return RegSubscription{}, false
 }
 
 // subscribeRegEvent sends the SUBSCRIBE of TS 24.229 5.7.1.1 items a to
@@ -467,11 +472,29 @@ func (g *IPSMGW) takeNotReachable(ctx context.Context, publicID string, log *slo
 	return set
 }
 
-// reachableAgain is TS 23.204 6.5b step 2 with TS 23.040 3.2.6 item 2c:
-// a request has come from a user whose short message this IP-SM-GW could
-// not deliver, so the UE is there again and the HSS hears that the user
-// can take short messages, which makes it alert the Service Centres that
-// are waiting.
+// reachableAgain is TS 23.204 6.5b step 2 for a request that has come
+// from a user: whatever it carries, it shows that the UE is there
+// (tellReachable). Without a subscription to the sender's registration
+// state, the sender is no user this IP-SM-GW serves.
+func (g *IPSMGW) reachableAgain(req *sip.Message, log *slog.Logger) {
+	ctx := context.Background()
+	sub, ok, err := g.subscriptionOfSender(ctx, req)
+	switch {
+	case err != nil:
+		log.Warn("the registration state of the user was not read: the store failed", "error", err.Error())
+		return
+	case !ok:
+		return
+	}
+	g.tellReachable(ctx, sub, log)
+}
+
+// tellReachable is TS 23.204 6.5b step 2 with TS 23.040 3.2.6 item 2c:
+// the UE of sub has shown that it is there, by a request of its own or
+// by registering again (step 2a). Where this IP-SM-GW could not deliver
+// a short message to the user, the HSS hears that the user can take
+// short messages again, which makes it clear its own UNRI and alert the
+// Service Centres that are waiting.
 //
 // Step 2d has the IP-SM-GW discard the notification where the UE is not
 // registered in the IMS. The subscription to the user's registration
@@ -480,17 +503,12 @@ func (g *IPSMGW) takeNotReachable(ctx context.Context, publicID string, log *slo
 // either.
 //
 // A notification the HSS would not take puts the flag back, so that the
-// user's next sign of life tells it again. Nothing is lost if that never
-// comes: the HSS keeps UNRI of its own, which the next registration of
-// this IP-SM-GW for the user clears.
-func (g *IPSMGW) reachableAgain(req *sip.Message, log *slog.Logger) {
-	ctx := context.Background()
-	sub, ok, err := g.subscriptionOfSender(ctx, req)
-	switch {
-	case err != nil:
-		log.Warn("the registration state of the user was not read: the store failed", "error", err.Error())
-		return
-	case !ok || !sub.Available:
+// user's next request or reregistration tells it again. A flag that the
+// Store loses leaves the HSS with its UNRI until this IP-SM-GW registers
+// itself for the user anew, which the next registration after a
+// deregistration does.
+func (g *IPSMGW) tellReachable(ctx context.Context, sub RegSubscription, log *slog.Logger) {
+	if !sub.Available {
 		// The notification is discarded, as step 2d has it.
 		return
 	}
