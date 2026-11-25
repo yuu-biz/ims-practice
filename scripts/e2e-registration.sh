@@ -143,11 +143,11 @@ else
 	# on no change of a subscription at all.
 	reply="$(docker compose exec -T hss sh -c '
 		printf "PATCH /subscriptions/$1 HTTP/1.0\r\nContent-Type: application/json\r\nContent-Length: ${#2}\r\n\r\n%s" "$2" |
-			nc -w 5 127.0.0.1 8081' sh "001010000000003@$domain" '{"service_profile": "no-services"}')"
+			nc -w 5 127.0.0.1 8081' sh "001010000000003@$domain" '{"service_profile": "no-services"}')" || true
 	if grep -qi '^HTTP/1\.[01] 200' <<<"$reply"; then
 		echo "ok   the HSS took the new service profile of UE 3"
 	else
-		echo "FAIL changing the service profile of UE 3: $(head -n 1 <<<"$reply")"
+		echo "FAIL changing the service profile of UE 3: $(head -n 1 <<<"${reply:-no answer}")"
 		fail=1
 	fi
 	# The HSS answers the DELETE only once the RTR is over, so there is
@@ -155,11 +155,11 @@ else
 	# either, hence this request written out to nc as well.
 	reply="$(docker compose exec -T hss sh -c '
 		printf "DELETE /subscriptions/$1 HTTP/1.0\r\n\r\n" |
-			nc -w 5 127.0.0.1 8081' sh "001010000000003@$domain")"
+			nc -w 5 127.0.0.1 8081' sh "001010000000003@$domain")" || true
 	if grep -qi '^HTTP/1\.[01] 204' <<<"$reply"; then
 		echo "ok   the HSS removed the subscription of UE 3"
 	else
-		echo "FAIL removing the subscription of UE 3: $(head -n 1 <<<"$reply")"
+		echo "FAIL removing the subscription of UE 3: $(head -n 1 <<<"${reply:-no answer}")"
 		fail=1
 	fi
 fi
@@ -181,15 +181,18 @@ docker rm -f ims-practice-ue3-rtr >/dev/null
 # /metrics whether or not a Prometheus scrapes it, so this scenario
 # reads them without one. How many PPRs there were depends on who was
 # registered when the setting changed, so each series is only asked to
-# have counted something.
-scscf_metrics="$(docker compose exec -T scscf wget -qO- http://127.0.0.1:8085/metrics | tr -d '\r')"
+# have counted something. Under "set -e" and pipefail, a command
+# substitution that fails ends the script on the spot, before any FAIL
+# line says why; hence the "|| true" on the reads here and above, whose
+# checks then report what is missing.
+scscf_metrics="$(docker compose exec -T scscf wget -qO- http://127.0.0.1:8085/metrics | tr -d '\r')" || true
 for series in 'ims_diameter_requests_total{role="scscf",direction="received",command="PPR"}' \
 	'ims_diameter_answers_total{role="scscf",direction="sent",command="PPR",result="DIAMETER_SUCCESS"}' \
 	'ims_diameter_requests_total{role="scscf",direction="received",command="RTR"}' \
 	'ims_diameter_answers_total{role="scscf",direction="sent",command="RTR",result="DIAMETER_SUCCESS"}'; do
 	# The value is the last field of the sample line, and a counter that
 	# has counted nothing has no line at all.
-	line="$(grep -F "$series " <<<"$scscf_metrics" | tail -n 1)"
+	line="$(grep -F "$series " <<<"$scscf_metrics" | tail -n 1)" || true
 	case "${line##* }" in
 	"" | 0)
 		echo "FAIL the S-CSCF counted no $series: ${line:-no sample line}"
@@ -216,7 +219,12 @@ fi
 
 same_nodes
 
-pcap="$(docker compose exec -T capture sh -c 'ls -t /captures/ims-*.pcap | head -n 1' | tr -d '\r')"
+pcap="$(docker compose exec -T capture sh -c 'ls -t /captures/ims-*.pcap | head -n 1' | tr -d '\r')" || true
+if [ -z "$pcap" ]; then
+	echo "FAIL the capture service holds no capture file to read"
+	docker compose logs --no-color capture | tail -n 20
+	exit 1
+fi
 echo "reading $pcap"
 
 # expect finds the first frame after the previous match that passes the
