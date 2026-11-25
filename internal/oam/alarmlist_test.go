@@ -436,8 +436,9 @@ func TestAlarmListPathsAndMethods(t *testing.T) {
 			t.Errorf("%s %s: %+v, want %+v", tt.method, tt.path, got, tt.want)
 		}
 	}
-	if a := ts.mnsCall(t, "POST", alarmListPath, "", ""); a.header.Get("Allow") != "DELETE, GET, HEAD, PATCH, PUT" {
-		t.Errorf("Allow: %q", a.header.Get("Allow"))
+	// PUT and DELETE are always refused, so Allow does not list them.
+	if a := ts.mnsCall(t, "POST", alarmListPath, "", ""); a.status != http.StatusMethodNotAllowed || a.header.Get("Allow") != "GET, HEAD, PATCH" {
+		t.Errorf("POST: %d, Allow: %q", a.status, a.header.Get("Allow"))
 	}
 	// The ids are percent-encoded as a URI-LDN may have them.
 	if a := ts.mnsCall(t, "GET", "/3GPPManagement/ProvMnS/v19/SubNetwork=%69ms/AlarmList=1", "", ""); a.status != http.StatusOK {

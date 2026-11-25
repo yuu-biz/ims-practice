@@ -173,7 +173,9 @@ func (s *Server) serveAlarmList(w http.ResponseWriter, r *http.Request) {
 		attributeError(mns.ModificationNotAllowed, mns.ObjectDeletionNotAllowed,
 			"The alarm list cannot be deleted").write(w)
 	default:
-		w.Header().Set("Allow", "DELETE, GET, HEAD, PATCH, PUT")
+		// Allow lists the methods that the list supports (RFC 9110
+		// 10.2.1), and so not PUT and DELETE, which it always refuses.
+		w.Header().Set("Allow", "GET, HEAD, PATCH")
 		w.WriteHeader(http.StatusMethodNotAllowed)
 	}
 }
