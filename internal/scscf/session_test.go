@@ -51,12 +51,13 @@ func nextHop(t *testing.T) (*sip.Stack, <-chan *sip.Message) {
 // Path of a P-CSCF, and returns the harness with the two next hops.
 func registeredHarness(t *testing.T) (h *harness, icscf, pcscf <-chan *sip.Message) {
 	t.Helper()
-	return registeredHarnessWith(t, "")
+	return registeredHarnessWith(t, Config{}, "")
 }
 
-// registeredHarnessWith is registeredHarness with contactParams after
-// the registered contact, such as ";+g.3gpp.smsip".
-func registeredHarnessWith(t *testing.T, contactParams string) (h *harness, icscf, pcscf <-chan *sip.Message) {
+// registeredHarnessWith is registeredHarness with the S-CSCF configured
+// as cfg says, and with contactParams after the registered contact, such
+// as ";+g.3gpp.smsip".
+func registeredHarnessWith(t *testing.T, cfg Config, contactParams string) (h *harness, icscf, pcscf <-chan *sip.Message) {
 	t.Helper()
 	icscfStack, icscfGot := nextHop(t)
 	pcscfStack, pcscfGot := nextHop(t)
@@ -64,7 +65,7 @@ func registeredHarnessWith(t *testing.T, contactParams string) (h *harness, icsc
 		hosts: map[string]netip.AddrPort{domain: icscfStack.LocalAddr(), "pcscf." + domain: pcscfStack.LocalAddr()},
 		enum:  map[string]string{"+12025550102": "sip:001010000000002@" + domain},
 	}
-	h = newHarnessWith(t, Config{}, resolver)
+	h = newHarnessWith(t, cfg, resolver)
 	h.contactParams = contactParams
 	callID := sip.NewCallID()
 	r := h.register(callID, 1, 600000, initial)
@@ -297,6 +298,31 @@ func TestTerminatingCallFollowsThePath(t *testing.T) {
 	}
 }
 
+// TestTerminatingCallAfterTheExpiryDoesNotGoToTheContact: the
+// registration has expired, and no sweep has come round to end it yet.
+// From its Expires on the callee is not registered, so the call does
+// not go to the contact that the UE no longer refreshes. With no
+// application server for the unregistered state, it gets 480 (5.4.3.3).
+func TestTerminatingCallAfterTheExpiryDoesNotGoToTheContact(t *testing.T) {
+	h, _, pcscf := registeredHarnessWith(t, Config{MinExpires: time.Second, MaxExpires: time.Second, SweepInterval: time.Hour}, "")
+	reg, ok, err := h.store.Registration(context.Background(), impi)
+	if err != nil || !ok {
+		t.Fatalf("Registration = %v, %v", ok, err)
+	}
+	time.Sleep(time.Until(reg.Expires))
+	if _, ok, _ := h.store.Registration(context.Background(), impi); !ok {
+		t.Fatal("the registration is gone before the call; the test needs one that no sweep has ended")
+	}
+	if r := h.invite(impu, "<sip:scscf."+domain+":5060;lr>", ""); r.StatusCode != 480 {
+		t.Errorf("got %d, want 480 for a callee who is not registered", r.StatusCode)
+	}
+	select {
+	case got := <-pcscf:
+		t.Errorf("the contact of the expired registration got %s %s", got.Method, got.RequestURI)
+	default:
+	}
+}
+
 // TestTerminatingCallKeepsAWithheldIdentityFromTheUE is TS 24.229
 // 5.4.3.3 step 12: the caller asked for "id" privacy (OIR), so its
 // P-Asserted-Identity does not leave the trust domain toward the UE,
@@ -371,7 +397,7 @@ func TestTerminatingSMSMeetsTheCallerPreferences(t *testing.T) {
 		{";+g.3gpp.smsip", 486}, // the P-CSCF stub answers 486
 		{";" + mmtelICSI, 480},
 	} {
-		h, _, pcscf := registeredHarnessWith(t, tt.contactParams)
+		h, _, pcscf := registeredHarnessWith(t, Config{}, tt.contactParams)
 		m := sms(impu, "<sip:scscf."+domain+":5060;lr>", "sip:ipsmgw."+domain+":5060")
 		m.Add("Accept-Contact", smsAcceptContact)
 		m.Add("Request-Disposition", "no-fork")

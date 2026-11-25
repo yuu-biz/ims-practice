@@ -33,6 +33,7 @@ func SCSCF(t *testing.T, newPair func(t *testing.T) (scscf.Store, scscf.Store)) 
 		{"PublicIdentitiesCompareTheUserPartWithCase", scscfUserPartWithCase},
 		{"RegistrationLosesAPublicIdentity", scscfRegistrationLosesIdentity},
 		{"DeleteRegistration", scscfDeleteRegistration},
+		{"RegistrationByPublicIdentityUntilItsExpires", scscfRegistrationOfUntilExpires},
 		{"Subscriptions", scscfSubscriptions},
 		{"SubscriptionMovesToAnotherRegistration", scscfSubscriptionMoves},
 		{"ConcurrentSubscriptionsOfOneUser", scscfConcurrentSubscriptions},
@@ -337,6 +338,26 @@ func scscfDeleteRegistration(t *testing.T, a, b scscf.Store) {
 	putRegistration(t, a, registration())
 	if _, ok := registrationOf(t, b, tel); !ok {
 		t.Error("RegistrationOf after a new registration")
+	}
+}
+
+// scscfRegistrationOfUntilExpires: a lookup by public identity finds a
+// registration until its Expires, and not after it, although no
+// instance has handled its expiry yet. The instance that claims the
+// expiry still reads it by its private identity.
+func scscfRegistrationOfUntilExpires(t *testing.T, a, b scscf.Store) {
+	r := registration()
+	r.Expires = time.Now().Add(short)
+	putRegistration(t, a, r)
+	if _, ok := registrationOf(t, b, impu); !ok {
+		t.Fatal("RegistrationOf before its Expires found nothing")
+	}
+	waitOut()
+	if got, ok := registrationOf(t, b, impu); ok {
+		t.Errorf("RegistrationOf after its Expires found the registration of %s, expired at %v", got.PrivateIdentity, got.Expires)
+	}
+	if _, ok := getRegistration(t, a, impi); !ok {
+		t.Error("Registration after its Expires found nothing, which the instance that claims its expiry reads")
 	}
 }
 

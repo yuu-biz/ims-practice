@@ -107,8 +107,10 @@ func (s *SCSCF) unregisteredProfile(st *sip.ServerTransaction, user string, unkn
 		return UnregisteredProfile{}, false
 	}
 	if registered {
-		// The user registered while the SAR was on its way. This request
-		// uses the profile, and the registration keeps the HSS state.
+		// The user registered while the SAR was on its way, or has a
+		// registration that has expired and that no instance has ended
+		// yet, whose expiry then tells the HSS. This request uses the
+		// profile, and the registration keeps the HSS state.
 		return p, true
 	}
 	if err := s.store.PutUnregisteredProfile(ctx, p); err != nil {

@@ -248,6 +248,8 @@ func (s *Store) Registration(ctx context.Context, privateID string) (scscf.Regis
 // registration it names. A registration that does not hold the
 // identity is a miss: the index item is one that a writer has not
 // finished with, or one that a stopped instance left (kvjson.WriteIndex).
+// So is one whose Expires has passed by the clock of the Store, as
+// scscf.MemoryStore compares it.
 func (s *Store) RegistrationOf(ctx context.Context, publicID string) (scscf.Registration, bool, error) {
 	k := ims.PublicIdentityKey(publicID)
 	target, ok, err := s.indexTarget(ctx, s.c.Key("impu", k))
@@ -255,7 +257,7 @@ func (s *Store) RegistrationOf(ctx context.Context, publicID string) (scscf.Regi
 		return scscf.Registration{}, false, err
 	}
 	r, ok, err := s.Registration(ctx, target)
-	if err != nil || !ok || !slices.Contains(publicKeys(r.PublicIdentities), k) {
+	if err != nil || !ok || !s.c.Now().Before(r.Expires) || !slices.Contains(publicKeys(r.PublicIdentities), k) {
 		return scscf.Registration{}, false, err
 	}
 	return r, true, nil
