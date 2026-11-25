@@ -156,3 +156,35 @@ func TestASubscriptionExpiresWhileAnotherIsRemoved(t *testing.T) {
 		t.Errorf("NOTIFY at the expiry has\n%s\nwant the state of the conference", body)
 	}
 }
+
+// TestASubscriberThatDoesNotAnswerLosesItsSubscription: a NOTIFY that
+// has no response when Timer F fires ends its subscription (RFC 6665
+// 4.2.2), and the focus sends that subscriber nothing after it. Timer F
+// is short here, so that the test need not wait 32 seconds for it.
+func TestASubscriberThatDoesNotAnswerLosesItsSubscription(t *testing.T) {
+	mrfc := startConferenceMRFC(t)
+	timers := sip.DefaultTimers()
+	timers.TransactionTimeout = 500 * time.Millisecond
+	as := startAS(t, noServices{}, mmtel.Config{MRFC: "sip:" + contactOf(t, mrfc.ua), Timers: timers})
+	_, focus, notifications := aliceConference(t, as, func(c *sip.IncomingCall) { c.Reject(480) })
+	receive(t, notifications, "first NOTIFY to alice")
+	xavier := subscribeBare(t, as, "xavier", focus.URI)
+	xavier.awaitNotify("first NOTIFY to xavier")
+
+	carol := newParticipant(t, as, "carol", func(c *sip.IncomingCall) { c.Reject(480) })
+	in, err := carol.Invite(joining("carol", focus.URI))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { in.Bye() })
+	if got := statuses(readAll(t, in)); got[len(got)-1] != 200 {
+		t.Fatalf("carol got %v, want 200", got)
+	}
+	awaitNotification(t, notifications, "to alice with carol", func(_ sip.Notification, d confinfo.Document) bool {
+		return statusOf(d)["sip:carol@"+domain] == confinfo.Connected
+	})
+	if n := xavier.nextNotify(3 * timers.TransactionTimeout); n != nil {
+		t.Errorf("xavier got a NOTIFY with CSeq %q and Subscription-State %q after one that timed out",
+			n.Get("CSeq"), n.Get("Subscription-State"))
+	}
+}
