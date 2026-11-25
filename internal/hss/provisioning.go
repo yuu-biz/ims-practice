@@ -20,6 +20,7 @@ import (
 
 	"github.com/yuu-biz/ims-practice/internal/cx"
 	"github.com/yuu-biz/ims-practice/internal/diameter"
+	"github.com/yuu-biz/ims-practice/internal/ims"
 	"github.com/yuu-biz/ims-practice/internal/mmtel"
 	"github.com/yuu-biz/ims-practice/internal/sh"
 )
@@ -1107,7 +1108,9 @@ func (h *HSS) defaultIdentityChanged(stored, next Subscriber) bool {
 		return false
 	}
 	set := h.settings.Load()
-	return h.userProfileIn(set, stored).DefaultIdentity() != h.userProfileIn(set, next).DefaultIdentity()
+	before, after := h.userProfileIn(set, stored).DefaultIdentity(), h.userProfileIn(set, next).DefaultIdentity()
+	// Another form of the same URI is the same identity.
+	return before != after && !ims.SamePublicIdentity(before, after)
 }
 
 // pushChangedProfile sends the PPR of a provisioning request that
