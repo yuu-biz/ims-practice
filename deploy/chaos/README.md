@@ -307,7 +307,7 @@ A fault that happens once is answered in the state `done`: there is nothing to c
  "created_at":"2026-11-20T23:59:02.117Z","ended_at":"2026-11-20T23:59:02.265Z"}
 ```
 
-The agent answers `POST` and `DELETE` once the change is done. `stop` waits until the node has exited, at most its `stop_grace_period` of `compose.yaml` (5 s). A network fault runs a few throw-away containers in the node's namespace, which takes about a second. Keep the request open until the answer comes. The agent looks for faults whose time is up once a second, so a fault ends up to a second after its `expires_at`; `ended_at` says when.
+The agent answers `POST` and `DELETE` once the change is done. `stop` waits until the node has exited, at most its `stop_grace_period` of `compose.yaml` (5 s). A network fault runs a few throw-away containers in the node's namespace, which takes about a second. A request that ends before the answer, because the page was closed or `curl` stopped, does not stop the change: the agent carries it on, for 30 s at most, and `GET` lists the fault in the state it reached. An `active` one ends at its `expires_at` like any other. The agent looks for faults whose time is up once a second, so a fault ends up to a second after its `expires_at`; `ended_at` says when.
 
 Every error has the body `{"error": "..."}`:
 

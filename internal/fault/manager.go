@@ -15,7 +15,8 @@ import (
 
 // Executor does what a fault asks for on the container runtime. Apply
 // and Clear may take seconds (docker stop waits for the node); Manager
-// does not hold its lock while they run.
+// does not hold its lock while they run, and gives each call a context
+// of its own (detach).
 //
 // Docker is the executor for Compose. Kubernetes needs
 // another one: there the runtime is the API server, and a pod's
@@ -53,6 +54,21 @@ var ErrConflict = errors.New("conflict")
 // ErrExecutor wraps what the executor said when it could not apply or
 // clear a fault.
 var ErrExecutor = errors.New("executor failed")
+
+// executorTimeout bounds each call to the executor. docker stop waits
+// at most the stop_grace_period of compose.yaml (5 s), and a network
+// fault runs a few helper containers of about a second each.
+const executorTimeout = 30 * time.Second
+
+// detach gives the executor a context that the end of the request does
+// not cancel, with a deadline of its own. A learner who closes the Lab
+// page, reloads it or stops curl ends the request while the executor is
+// at work; cut off there, the executor would leave half of the change
+// on the target, and a fault that failed holds nothing for the expiry
+// or a DELETE to clear.
+func detach(ctx context.Context) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(context.WithoutCancel(ctx), executorTimeout)
+}
 
 // endedRetention is how long an ended fault stays in the list, so that
 // the Lab can still show what happened.
@@ -93,6 +109,8 @@ func (m *Manager) Inject(ctx context.Context, r Request) (Fault, error) {
 	if err := r.validate(); err != nil {
 		return Fault{}, err
 	}
+	ctx, cancel := detach(ctx)
+	defer cancel()
 	// Outside the lock: the executor asks the container runtime. A
 	// target that names no container fails the fault like an Apply.
 	container, err := m.exec.Resolve(ctx, r.Target)
@@ -176,6 +194,8 @@ func (m *Manager) clear(ctx context.Context, id string, end State) (Fault, error
 	m.mu.Unlock()
 
 	m.log.Info("fault", "id", id, "target", f.Target, "kind", f.Kind, "event", "clear", "reason", string(end))
+	ctx, cancel := detach(ctx)
+	defer cancel()
 	err := m.exec.Clear(ctx, clearing)
 
 	m.mu.Lock()
