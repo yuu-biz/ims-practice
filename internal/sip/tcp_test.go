@@ -654,6 +654,68 @@ func TestRequestThatCannotGoOutOverTCPGoesToTheNextTarget(t *testing.T) {
 	}
 }
 
+// A request whose client transaction ends while it waits in the queue,
+// as when Timer F fires and the request goes on to the next target (RFC
+// 3263 4.3), no longer goes to its first target once the queue moves
+// on: that target would get it after the next one has.
+func TestRequestWhoseTransactionEndedWhileQueuedStaysUnsent(t *testing.T) {
+	far, atFar := rawTCPServer(t)
+	answered := make(chan string, 1)
+	next := newStack(t, testTimers, func(st *ServerTransaction) {
+		answered <- st.Request.Get("Call-ID")
+		st.Respond(NewResponse(st.Request, 200, NewTag()))
+	})
+	// The observer stands in for a write that takes long: once slow has
+	// gone out, it holds the writer of the queue until released.
+	slow, late, marker := registerRequest(), registerRequest(), registerRequest()
+	slowCallID := slow.Get("Call-ID")
+	writing := make(chan struct{}, 1)
+	release := make(chan struct{})
+	tr, err := ListenObserved("127.0.0.1:0", testLogger(t), func(c Capture) {
+		if c.Sent && c.Transport == TCP && c.Message.Get("Call-ID") == slowCallID {
+			writing <- struct{}{}
+			select {
+			case <-release:
+			case <-time.After(5 * time.Second):
+			}
+		}
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	timers := testTimers
+	timers.TransactionTimeout = 200 * time.Millisecond
+	uac, err := NewStack(tr, Config{Timers: timers, SentBy: tr.LocalAddr().String(), OnRequest: ignoreRequests}, testLogger(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(uac.Close)
+
+	if _, err := uac.SendRequest(slow, tcpTo(far)); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-writing:
+	case <-time.After(2 * time.Second):
+		t.Fatal("the transport never wrote the first request")
+	}
+	receiveCallID(t, atFar, slowCallID)
+	ct, err := uac.SendRequest(late, tcpTo(far), udpTo(next.LocalAddr()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := collect(t, ct); len(got) != 1 || got[0].StatusCode != 200 || <-answered != late.Get("Call-ID") {
+		t.Fatalf("the request that timed out in the queue got %v, err %v; want the 200 of the next target", got, ct.Err())
+	}
+	close(release)
+	if _, err := uac.SendRequest(marker, tcpTo(far)); err != nil {
+		t.Fatal(err)
+	}
+	// The queue keeps the order, so the request that timed out would come
+	// before the one sent after it.
+	receiveCallID(t, atFar, marker.Get("Call-ID"))
+}
+
 // RFC 3261 18.2.2 has a response go back on the connection of its
 // request while that is open, and over a new connection to the sent-by
 // once it has closed. A response that waits behind another while the
