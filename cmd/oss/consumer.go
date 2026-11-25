@@ -205,7 +205,7 @@ func decodeAnswer(resp *http.Response, answer []byte, v any) error {
 	if mediaType, _, err := mime.ParseMediaType(resp.Header.Get("Content-Type")); err != nil || mediaType != "application/json" {
 		return fmt.Errorf("%s: %s with the Content-Type %q, not application/json", where, resp.Status, resp.Header.Get("Content-Type"))
 	}
-	if err := decodeStrictly(answer, v); err != nil {
+	if err := mns.DecodeStrictly(answer, v); err != nil {
 		return fmt.Errorf("%s: %s: %v: %s", where, resp.Status, err, excerpt(answer))
 	}
 	return nil
@@ -221,7 +221,7 @@ func failed[T any](resp *http.Response, answer []byte) error {
 	if mediaType != "application/json" {
 		return fmt.Errorf("%w (the Content-Type is %q, not application/json)", err, resp.Header.Get("Content-Type"))
 	}
-	if problemErr := decodeStrictly(answer, &problem); problemErr != nil {
+	if problemErr := mns.DecodeStrictly(answer, &problem); problemErr != nil {
 		return fmt.Errorf("%w (the body is no %T: %v)", err, problem, problemErr)
 	}
 	return err

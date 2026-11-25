@@ -111,12 +111,12 @@ func TestRecipientRefusesWhatItCannotTake(t *testing.T) {
 	} {
 		status, answer := post(t, server, c.contentType, c.body)
 		var e mns.ErrorResponse
-		if err := decodeStrictly([]byte(answer), &e); status != c.status || err != nil || e.Error.ErrorInfo == "" {
+		if err := mns.DecodeStrictly([]byte(answer), &e); status != c.status || err != nil || e.Error.ErrorInfo == "" {
 			t.Errorf("%.40s as %s: answer %d %s, want %d with an ErrorResponse", c.body, c.contentType, status, answer, c.status)
 		}
 	}
 	refused := get[[]refused](t, server.URL+"/refused")
-	if len(refused) != 4 || refused[0].Status != http.StatusBadRequest || !strings.Contains(refused[0].Reason, `"reason" at / is not an attribute that oss takes`) || !strings.Contains(refused[0].Body, `"reason"`) {
+	if len(refused) != 4 || refused[0].Status != http.StatusBadRequest || !strings.Contains(refused[0].Reason, `"reason" at / is not an attribute of`) || !strings.Contains(refused[0].Body, `"reason"`) {
 		t.Errorf("refused %+v", refused)
 	}
 	if got := get[[]received](t, server.URL+"/received"); len(got) != 0 {
@@ -154,7 +154,7 @@ func TestRecipientRoutes(t *testing.T) {
 			t.Fatal(err)
 		}
 		var e mns.ErrorResponse
-		if resp.StatusCode != c.status || resp.Header.Get("Content-Type") != "application/json" || decodeStrictly(body, &e) != nil || e.Error.ErrorInfo == "" {
+		if resp.StatusCode != c.status || resp.Header.Get("Content-Type") != "application/json" || mns.DecodeStrictly(body, &e) != nil || e.Error.ErrorInfo == "" {
 			t.Errorf("%s %s: %s, %s %s; want %d with an ErrorResponse", c.method, c.path, resp.Status, resp.Header.Get("Content-Type"), body, c.status)
 		}
 		if c.status == http.StatusMethodNotAllowed && resp.Header.Get("Allow") == "" {
