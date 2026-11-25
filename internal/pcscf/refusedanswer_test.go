@@ -105,76 +105,104 @@ func TestRefusedAnswerOfThe200EndsTheCall(t *testing.T) {
 	}
 }
 
+// rawINVITE is an INVITE from a registered UE through the P-CSCF to a
+// far end whose responses a test sends by hand, retransmissions
+// included.
+type rawINVITE struct {
+	p     *PCSCF
+	store *MemoryStore
+	relay *fakeRelay
+	// ct is the INVITE as the UE sent it, and st as the far end got it.
+	ct *sip.ClientTransaction
+	st *sip.ServerTransaction
+	// farGot are the ACKs and the other requests that reach the far end,
+	// and ueGot the requests that reach the UE.
+	farGot, ueGot chan *sip.Message
+	farContact    string
+}
+
+func newRawINVITE(t *testing.T) *rawINVITE {
+	t.Helper()
+	c := &rawINVITE{relay: newFakeRelay(), store: NewMemoryStore(),
+		farGot: make(chan *sip.Message, 4), ueGot: make(chan *sip.Message, 4)}
+	invites := make(chan *sip.ServerTransaction, 1)
+	far := newStackConfig(t, sip.Config{Timers: sip.DefaultTimers(),
+		OnACK: func(ack *sip.Message) { c.farGot <- ack },
+		OnRequest: func(st *sip.ServerTransaction) {
+			if st.Request.Method == sip.INVITE {
+				invites <- st
+				return
+			}
+			c.farGot <- st.Request
+		}})
+	c.farContact = "sip:callee@" + far.LocalAddr().String()
+	ue := newStack(t, func(st *sip.ServerTransaction) { c.ueGot <- st.Request })
+	locate := locatorFunc(func(string) []sip.Destination {
+		return []sip.Destination{{Transport: sip.UDP, Addr: far.LocalAddr()}}
+	})
+	c.p = newPCSCF(t, Config{Host: "pcscf." + domain, Port: 5060, VisitedNetworkID: domain}, locate, c.store, only(c.relay), quiet())
+	ueContact := "sip:001010000000001@" + ue.LocalAddr().String()
+	c.store.PutAssociation(context.Background(), Association{
+		Source: sip.Destination{Transport: sip.UDP, Addr: ue.LocalAddr()}, SentBy: ue.LocalAddr().String(), Contact: ueContact,
+		PrivateIdentity: impi, PublicIdentities: []string{impu}, ServiceRoute: []string{"<sip:orig@scscf." + domain + ":5060;lr>"},
+		Expires: time.Now().Add(time.Hour),
+	})
+	pcscf := newPCSCFStack(t, c.p)
+	c.p.SetStack(pcscf)
+
+	inv := invite("sip:001010000000002@"+domain, "<sip:pcscf."+domain+":5060;lr>")
+	inv.Set("Contact", "<"+ueContact+">")
+	var err error
+	if c.ct, err = ue.SendRequest(inv, sip.Destination{Transport: sip.UDP, Addr: pcscf.LocalAddr()}); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case c.st = <-invites:
+	case <-time.After(3 * time.Second):
+		t.Fatal("the callee got no INVITE")
+	}
+	return c
+}
+
+// response is a response of the far end to the INVITE, with the answer
+// of a party whose media is at coreMedia.
+func (c *rawINVITE) response(code int) *sip.Message {
+	resp := sip.NewResponse(c.st.Request, code, "callee")
+	for _, r := range c.st.Request.GetAll("Record-Route") {
+		resp.Add("Record-Route", r)
+	}
+	resp.Add("Contact", "<"+c.farContact+">")
+	resp.Add("Content-Type", "application/sdp")
+	resp.Body = sdp.Offer("2", coreMedia).Bytes()
+	return resp
+}
+
 // TestRefusedRetransmissionOfThe200KeepsTheCall: the relay took the
 // answer of the 200, and the caller has it. A retransmission of that 200
 // (RFC 6026 8.1) that the relay does not take changes nothing: it goes
 // on to the caller, nobody gets an ACK or a BYE from the P-CSCF, and the
 // call keeps its relay context.
 func TestRefusedRetransmissionOfThe200KeepsTheCall(t *testing.T) {
-	relay := newFakeRelay()
-	invites := make(chan *sip.ServerTransaction, 1)
-	farGot, ueGot := make(chan *sip.Message, 4), make(chan *sip.Message, 4)
-	far := newStackConfig(t, sip.Config{Timers: sip.DefaultTimers(),
-		OnACK: func(ack *sip.Message) { farGot <- ack },
-		OnRequest: func(st *sip.ServerTransaction) {
-			if st.Request.Method == sip.INVITE {
-				invites <- st
-				return
-			}
-			farGot <- st.Request
-		}})
-	ue := newStack(t, func(st *sip.ServerTransaction) { ueGot <- st.Request })
-	locate := locatorFunc(func(string) []sip.Destination {
-		return []sip.Destination{{Transport: sip.UDP, Addr: far.LocalAddr()}}
-	})
-	store := NewMemoryStore()
-	p := newPCSCF(t, Config{Host: "pcscf." + domain, Port: 5060, VisitedNetworkID: domain}, locate, store, only(relay), quiet())
-	ueContact := "sip:001010000000001@" + ue.LocalAddr().String()
-	store.PutAssociation(context.Background(), Association{
-		Source: sip.Destination{Transport: sip.UDP, Addr: ue.LocalAddr()}, SentBy: ue.LocalAddr().String(), Contact: ueContact,
-		PrivateIdentity: impi, PublicIdentities: []string{impu}, ServiceRoute: []string{"<sip:orig@scscf." + domain + ":5060;lr>"},
-		Expires: time.Now().Add(time.Hour),
-	})
-	pcscf := newPCSCFStack(t, p)
-	p.SetStack(pcscf)
-
-	inv := invite("sip:001010000000002@"+domain, "<sip:pcscf."+domain+":5060;lr>")
-	inv.Set("Contact", "<"+ueContact+">")
-	ct, err := ue.SendRequest(inv, sip.Destination{Transport: sip.UDP, Addr: pcscf.LocalAddr()})
-	if err != nil {
-		t.Fatal(err)
-	}
-	var st *sip.ServerTransaction
-	select {
-	case st = <-invites:
-	case <-time.After(3 * time.Second):
-		t.Fatal("the callee got no INVITE")
-	}
-	ok := sip.NewResponse(st.Request, 200, "callee")
-	for _, r := range st.Request.GetAll("Record-Route") {
-		ok.Add("Record-Route", r)
-	}
-	ok.Add("Contact", "<sip:callee@"+far.LocalAddr().String()+">")
-	ok.Add("Content-Type", "application/sdp")
-	ok.Body = sdp.Offer("2", coreMedia).Bytes()
-	st.Respond(ok)
-	if r := final(t, ct.Responses(), 3*time.Second); r.StatusCode != 200 || audio(t, r.Body) != relayAccess {
+	c := newRawINVITE(t)
+	ok := c.response(200)
+	c.st.Respond(ok)
+	if r := final(t, c.ct.Responses(), 3*time.Second); r.StatusCode != 200 || audio(t, r.Body) != relayAccess {
 		t.Fatalf("the caller got %d naming %v, want the 200 naming the relay", r.StatusCode, audio(t, r.Body))
 	}
 
-	relay.refuseModify(agw.Core)
-	st.Respond(ok)
+	c.relay.refuseModify(agw.Core)
+	c.st.Respond(ok)
 	select {
-	case r := <-ct.Responses():
+	case r := <-c.ct.Responses():
 		if r.StatusCode != 200 {
 			t.Errorf("the caller got %d after its 200, want the retransmission of the 200", r.StatusCode)
 		}
 	case <-time.After(3 * time.Second):
 		t.Error("the retransmission of the 200 did not reach the caller")
 	}
-	noRequest(t, "the callee", farGot)
-	noRequest(t, "the caller", ueGot)
-	relay.waitHeld(t, 1, 0)
+	noRequest(t, "the callee", c.farGot)
+	noRequest(t, "the caller", c.ueGot)
+	c.relay.waitHeld(t, 1, 0)
 }
 
 // answerOffers has the far end answer each offer within the dialog of
