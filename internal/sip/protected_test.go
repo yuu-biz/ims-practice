@@ -2,9 +2,11 @@ package sip
 
 import (
 	"bytes"
+	"errors"
 	"net"
 	"net/netip"
 	"strconv"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -126,12 +128,6 @@ func TestProtectedServerPortAnswers(t *testing.T) {
 // connection from.
 func TestProtectedClientPortOverTCP(t *testing.T) {
 	log := testLogger(t)
-	clientPort := freePort(t)
-	tr, err := ListenProtected("127.0.0.1:0", clientPort, nil, log, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer tr.Close()
 	peer, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
@@ -151,10 +147,28 @@ func TestProtectedClientPortOverTCP(t *testing.T) {
 		c.SetReadDeadline(time.Now().Add(2 * time.Second))
 		c.Read(io)
 	}()
-	req := &Message{Method: REGISTER, RequestURI: "sip:ims.example.net"}
-	req.Add("Via", "SIP/2.0/TCP 127.0.0.1:"+strconv.Itoa(int(tr.LocalAddr().Port()))+";branch=z9hG4bK3;rport")
-	if err := tr.SendRequest(req, Destination{Transport: TCP, Addr: remote}); err != nil {
-		t.Fatal(err)
+	// freePort finds the port free for UDP only, and the connection
+	// leaves from the same number over TCP, which another program may
+	// hold. Such a port is given up for another.
+	const attempts = 5
+	var clientPort uint16
+	for attempt := 1; ; attempt++ {
+		clientPort = freePort(t)
+		tr, err := ListenProtected("127.0.0.1:0", clientPort, nil, log, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer tr.Close()
+		req := &Message{Method: REGISTER, RequestURI: "sip:ims.example.net"}
+		req.Add("Via", "SIP/2.0/TCP 127.0.0.1:"+strconv.Itoa(int(tr.LocalAddr().Port()))+";branch=z9hG4bK3;rport")
+		err = tr.SendRequest(req, Destination{Transport: TCP, Addr: remote})
+		if err == nil {
+			break
+		}
+		if !errors.Is(err, syscall.EADDRINUSE) || attempt == attempts {
+			t.Fatalf("sending from the protected client port %d: %v", clientPort, err)
+		}
+		tr.Close()
 	}
 	select {
 	case from := <-accepted:
