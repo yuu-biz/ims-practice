@@ -268,8 +268,9 @@ func (req AckStateRequest) check() error {
 	if req.AckState != Acknowledged && req.AckState != Unacknowledged {
 		return fmt.Errorf("ack_state %q is neither %s nor %s", req.AckState, Acknowledged, Unacknowledged)
 	}
-	if req.Operator == "" {
-		return errors.New("operator: required, as the ack_user_id of the record")
+	if strings.TrimSpace(req.Operator) == "" {
+		// White space alone names nobody.
+		return errors.New("operator: required, as the ack_user_id of the record, and more than white space")
 	}
 	for name, v := range map[string]string{"operator": req.Operator, "ack_system_id": req.AckSystemID} {
 		if utf8.RuneCountInString(v) > maxAckName {

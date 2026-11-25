@@ -479,6 +479,9 @@ func TestAckStateErrors(t *testing.T) {
 	}
 	_, err = tn.client.SetAckStates(ctx, AckStatesRequest{AckStates: map[string]AckStateRequest{id: {AckState: Acknowledged}}})
 	wantAPIError(t, err, http.StatusBadRequest, "operator")
+	// A name of white space alone names nobody.
+	_, err = tn.client.SetAckState(ctx, id, AckStateRequest{AckState: Acknowledged, Operator: " \t\u3000"})
+	wantAPIError(t, err, http.StatusBadRequest, "operator")
 	// The names are bounded, in characters, not bytes.
 	long := strings.Repeat("ä", maxAckName)
 	if _, err := tn.client.SetAckState(ctx, id, AckStateRequest{AckState: Unacknowledged, Operator: long, AckSystemID: long}); err != nil {
