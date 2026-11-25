@@ -232,8 +232,11 @@ func (f *conference) expired(id sip.DialogID, at time.Time) {
 		}
 		s.Terminate(sip.ReasonTimeout)
 		delete(f.expiry, id)
+		// s points into the record, whose subscriptions move up when one
+		// before them is removed: past f.mu, s may be another one.
+		subscriber := s.Subscriber
 		f.mu.Unlock()
-		f.log.Info("conference subscription expired", "subscriber", s.Subscriber)
+		f.log.Info("conference subscription expired", "subscriber", subscriber)
 		f.notify(&id)
 		return
 	}
