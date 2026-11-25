@@ -47,8 +47,10 @@
 //	PATCH /maintenance/v1/config
 //	     ConfigurationChangeRequest -> ConfigurationChange.
 //	     All the settings change, or none; 400 names each refused
-//	     setting in ErrorBody.settings. 409 for a generation that is
-//	     not above the node's.
+//	     setting in ErrorBody.settings. 409 for a generation below the
+//	     node's, or the node's own with a value that is not in force; the
+//	     node's own generation with the values in force is the change
+//	     that the node has already, answered with no change.
 //	GET  /maintenance/v1/log-level
 //	     LogLevel.
 //	PUT  /maintenance/v1/log-level

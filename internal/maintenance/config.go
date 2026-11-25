@@ -34,9 +34,10 @@ func (e *SettingsRefusedError) Error() string {
 type Setting struct {
 	name, description string
 	current           func() (json.RawMessage, error)
-	// prepare checks a new value and returns the function that sets
-	// it, which cannot fail. prepare changes nothing.
-	prepare func(json.RawMessage) (apply func(), err error)
+	// prepare checks a new value and returns it as current would give
+	// it once in force, with the function that sets it, which cannot
+	// fail. prepare changes nothing.
+	prepare func(json.RawMessage) (value json.RawMessage, apply func(), err error)
 	// group, when not nil, is the settings that a change puts in force
 	// together (Together).
 	group *settingGroup
@@ -80,22 +81,26 @@ func NewSetting[T any](name, description string, get func() T, validate func(T) 
 		name:        name,
 		description: description,
 		current:     func() (json.RawMessage, error) { return json.Marshal(get()) },
-		prepare: func(raw json.RawMessage) (func(), error) {
+		prepare: func(raw json.RawMessage) (json.RawMessage, func(), error) {
 			var v T
 			dec := json.NewDecoder(bytes.NewReader(raw))
 			dec.DisallowUnknownFields()
 			if err := dec.Decode(&v); err != nil {
-				return nil, err
+				return nil, nil, err
 			}
 			if _, err := dec.Token(); !errors.Is(err, io.EOF) {
-				return nil, errors.New("more than one JSON value")
+				return nil, nil, errors.New("more than one JSON value")
 			}
 			if validate != nil {
 				if err := validate(v); err != nil {
-					return nil, err
+					return nil, nil, err
 				}
 			}
-			return func() { set(v) }, nil
+			value, err := json.Marshal(v)
+			if err != nil {
+				return nil, nil, err
+			}
+			return value, func() { set(v) }, nil
 		},
 	}
 }
@@ -126,8 +131,9 @@ type ConfigurationChangeRequest struct {
 	Settings map[string]json.RawMessage `json:"settings"`
 	// Generation is the number that the OAM server gives this
 	// configuration, so that it can record each change and go back to an
-	// earlier one; it must be above the node's. 0 lets the
-	// node count one up.
+	// earlier one; it must be above the node's, or the node's own for a
+	// change that the node has in force already. 0 lets the node count
+	// one up.
 	Generation uint64 `json:"generation,omitempty"`
 	// Operator and Comment are who asks and why, for the record.
 	Operator string `json:"operator,omitempty"`
@@ -202,6 +208,13 @@ func (n *Node) Configuration() (Configuration, error) {
 // It validates every value first; when one is refused it changes
 // nothing and returns a SettingsRefusedError. Changes run one at a
 // time, and a read of the configuration waits for one to finish.
+//
+// A request with the node's own generation is the change that gave the
+// node that generation, sent again: an OAM server that lost the answer
+// sends it so, and so does one whose change reached the node by another
+// way first. When every value of the request is the one in force, it is
+// answered with the record of that generation, which changes nothing;
+// otherwise it is a change that another one overtook.
 func (n *Node) ChangeConfiguration(req ConfigurationChangeRequest) (ConfigurationChange, error) {
 	if len(req.Settings) == 0 {
 		return ConfigurationChange{}, fmt.Errorf("%w: no settings", ErrInvalidRequest)
@@ -209,13 +222,14 @@ func (n *Node) ChangeConfiguration(req ConfigurationChangeRequest) (Configuratio
 	n.changeMu.Lock()
 	defer n.changeMu.Unlock()
 	generation := n.generation.Load()
-	if req.Generation != 0 && req.Generation <= generation {
-		return ConfigurationChange{}, fmt.Errorf("%w: %d is not above %d", ErrStaleGeneration, req.Generation, generation)
+	stale := fmt.Errorf("%w: %d is not above %d", ErrStaleGeneration, req.Generation, generation)
+	if req.Generation != 0 && req.Generation < generation {
+		return ConfigurationChange{}, stale
 	}
 	type prepared struct {
-		setting  Setting
-		previous json.RawMessage
-		apply    func()
+		setting         Setting
+		previous, value json.RawMessage
+		apply           func()
 	}
 	var changes []prepared
 	refused := map[string]string{}
@@ -230,20 +244,17 @@ func (n *Node) ChangeConfiguration(req ConfigurationChangeRequest) (Configuratio
 			refused[name] = "present value: " + err.Error()
 			continue
 		}
-		apply, err := s.prepare(req.Settings[name])
+		value, apply, err := s.prepare(req.Settings[name])
 		if err != nil {
 			refused[name] = err.Error()
 			continue
 		}
-		changes = append(changes, prepared{s, previous, apply})
+		changes = append(changes, prepared{s, previous, value, apply})
 	}
 	if len(refused) > 0 {
 		return ConfigurationChange{}, &SettingsRefusedError{Settings: refused}
 	}
 
-	if req.Generation == 0 {
-		req.Generation = generation + 1
-	}
 	record := ConfigurationChange{
 		Node:       n.node,
 		Instance:   n.instance,
@@ -252,6 +263,19 @@ func (n *Node) ChangeConfiguration(req ConfigurationChangeRequest) (Configuratio
 		Operator:   req.Operator,
 		Comment:    req.Comment,
 		Changes:    []SettingChange{},
+	}
+	if req.Generation != 0 && req.Generation == generation {
+		for _, c := range changes {
+			if !bytes.Equal(c.value, c.previous) {
+				return ConfigurationChange{}, stale
+			}
+		}
+		n.log.Info("configuration change in force already", "generation", record.Generation,
+			"operator", record.Operator, "comment", record.Comment)
+		return record, nil
+	}
+	if req.Generation == 0 {
+		record.Generation = generation + 1
 	}
 	// The settings of a group go in force together (Together): its begin
 	// comes before the first of them, and its commit after the last.
@@ -281,7 +305,7 @@ func (n *Node) ChangeConfiguration(req ConfigurationChangeRequest) (Configuratio
 			record.Changes = append(record.Changes, SettingChange{Name: c.setting.name, Previous: c.previous, Value: value})
 		}
 	}
-	n.generation.Store(req.Generation)
+	n.generation.Store(record.Generation)
 	n.log.Info("configuration changed", "generation", record.Generation, "operator", record.Operator,
 		"comment", record.Comment, "changes", record.Changes)
 	return record, nil
