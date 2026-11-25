@@ -645,7 +645,7 @@ func TestMaintenanceAPIShutsThePCSCFDown(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	stack, err := sip.NewStack(transport, sip.Config{SentBy: transport.LocalAddr().String(), Screen: p.Screen,
+	stack, err := sip.NewStack(transport, sip.Config{SentBy: transport.LocalAddr().String(),
 		Admit: p.AdmitUnprotected, OnRequest: p.OnRequest}, quiet())
 	if err != nil {
 		t.Fatal(err)

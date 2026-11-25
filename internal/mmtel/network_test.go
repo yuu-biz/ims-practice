@@ -306,7 +306,7 @@ func startNetworkWith(t *testing.T, o netOptions) *network {
 		t.Fatal(err)
 	}
 	t.Cleanup(p.Close)
-	pcscfStack := stackWith("P-CSCF", sip.Config{Screen: p.Screen, Admit: p.AdmitUnprotected, OnRequest: p.OnRequest, OnACK: p.OnACK})
+	pcscfStack := stackWith("P-CSCF", sip.Config{Admit: p.AdmitUnprotected, OnRequest: p.OnRequest, OnACK: p.OnACK})
 	p.SetStack(pcscfStack)
 	dns.add("pcscf."+domain, pcscfStack.LocalAddr())
 

@@ -13,6 +13,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -124,10 +125,12 @@ func readStream(r *bufio.Reader) (*sip.Message, error) {
 
 // barrier sends a REGISTER that the P-CSCF refuses at once with 400, as
 // its To is no public user identity, and returns what came before the 400. The
-// P-CSCF's stack reads one socket, or one connection, in order, and
-// screens each request before it reads the next, so a message it sent
-// for a request before the REGISTER, a 100 (Trying) or a response of
-// the stack, comes before the 400.
+// P-CSCF's stack reads one socket, or one connection, in order, so a
+// message it sent for a request that the P-CSCF let in before the
+// REGISTER, a 100 (Trying) or a response of the stack, comes before
+// the 400. The P-CSCF decides on each request off the loop of its stack
+// (sip.Config.Admit), so a test that looks for what a request got back
+// waits first until the P-CSCF has decided on it.
 func (u *rawUE) barrier() []*sip.Message {
 	u.t.Helper()
 	register := u.request(&sip.Message{Method: sip.REGISTER, RequestURI: "sip:" + domain})
@@ -175,73 +178,73 @@ func strangerRequests() []*sip.Message {
 
 // TestRequestWithoutAnIPAssociationGetsNoAnswer is TS 24.229 5.2.6.3.2A:
 // the P-CSCF sends nothing back to a UE that has no IP association, not
-// even a 100 (Trying), and forwards nothing to the S-CSCF. A UE
-// retransmits over UDP, and a retransmission gets nothing either.
+// even a 100 (Trying), and forwards nothing to the home network. The
+// Store has no association for the UE either. A UE retransmits over
+// UDP, and a retransmission gets nothing either; the P-CSCF logs each
+// copy.
 func TestRequestWithoutAnIPAssociationGetsNoAnswer(t *testing.T) {
 	for _, transport := range []sip.Transport{sip.UDP, sip.TCP} {
 		t.Run(string(transport), func(t *testing.T) {
-			h := newSessionHarness(t)
-			close(h.release)
-			stranger := dialRawUE(t, transport, h.pcscf.LocalAddr())
-			for _, m := range strangerRequests() {
+			logs := newLogRecords()
+			h := newAKAHarnessWith(t, false, slog.New(logs), nil)
+			stranger := dialRawUE(t, transport, h.unprotected.LocalAddr())
+			requests := strangerRequests()
+			for _, m := range requests {
 				m = stranger.request(m)
 				stranger.send(m)
 				stranger.send(m)
 			}
+			// The P-CSCF decides off the loop of its stack, so the barrier
+			// shows what came back only once every copy has been decided
+			// on.
+			logs.waitFor(t, 2*len(requests), discardedWithoutAssociation)
 			if got := stranger.barrier(); len(got) != 0 {
 				t.Errorf("the P-CSCF sent %d messages for the requests, want none; first: %d %s", len(got), got[0].StatusCode, got[0].Method)
 			}
+			if got, want := logs.count(discardedWithoutAssociation), 2*len(requests); got != want {
+				t.Errorf("%d discards logged, want one for each of the %d copies", got, want)
+			}
 			select {
-			case m := <-h.scscf:
-				t.Errorf("the S-CSCF got %s, want nothing", m.Method)
+			case m := <-h.received:
+				t.Errorf("the home network got %s, want nothing", m.Method)
 			default:
 			}
 		})
 	}
 }
 
-// TestRegisteredUEGetsThroughAfterARestart: the association was written
+// TestFirstRequestAfterARestartGetsThrough: the association was written
 // to the Store before this P-CSCF started, as by a P-CSCF of the same
-// name and address before it restarted. The first copy of a request is
-// discarded, since the P-CSCF does not wait for the Store when it
-// screens; once it has read the association, the UE's retransmission
-// gets through.
-func TestRegisteredUEGetsThroughAfterARestart(t *testing.T) {
-	h := newSessionHarness(t)
-	close(h.release)
-	ue := dialRawUE(t, sip.UDP, h.pcscf.LocalAddr())
-	h.store.PutAssociation(context.Background(), Association{
-		Source:           sip.Destination{Transport: sip.UDP, Addr: ue.addr()},
-		SentBy:           ue.addr().String(),
-		Contact:          "sip:001010000000003@" + ue.addr().String(),
-		PrivateIdentity:  "001010000000003@" + domain,
-		PublicIdentities: []string{"sip:001010000000003@" + domain},
-		ServiceRoute:     []string{"<sip:orig@scscf." + domain + ":5060;lr>"},
-		Expires:          time.Now().Add(time.Hour),
-	})
-	m := invite("sip:001010000000002@"+domain, "<sip:pcscf."+domain+":5060;lr>")
-	m.Method = sip.MESSAGE
-	m.Set("CSeq", "1 MESSAGE")
-	m = ue.request(m)
-	ue.send(m)
-	if got := ue.barrier(); len(got) != 0 {
-		t.Errorf("the first copy got %d %s, want nothing", got[0].StatusCode, got[0].Method)
-	}
-	deadline := time.Now().Add(5 * time.Second)
-	for retransmissions := 1; ; retransmissions++ {
-		ue.send(m)
-		select {
-		case got := <-h.scscf:
-			if got.Get("P-Asserted-Identity") != "<sip:001010000000003@"+domain+">" {
-				t.Errorf("P-Asserted-Identity = %q, want the UE's", got.Get("P-Asserted-Identity"))
+// name and address before it was made again. The P-CSCF reads the
+// association from the Store before it decides on the UE's first
+// INVITE, which gets through. Over TCP that one copy is all the UE
+// sends: a client transaction over a reliable transport does not
+// retransmit (RFC 3261 17.1.1.2).
+func TestFirstRequestAfterARestartGetsThrough(t *testing.T) {
+	for _, transport := range []sip.Transport{sip.UDP, sip.TCP} {
+		t.Run(string(transport), func(t *testing.T) {
+			h := newSessionHarness(t)
+			close(h.release)
+			ue := dialRawUE(t, transport, h.pcscf.LocalAddr())
+			h.store.PutAssociation(context.Background(), Association{
+				Source:           sip.Destination{Transport: sip.UDP, Addr: ue.addr()},
+				SentBy:           ue.addr().String(),
+				Contact:          "sip:001010000000003@" + ue.addr().String(),
+				PrivateIdentity:  "001010000000003@" + domain,
+				PublicIdentities: []string{"sip:001010000000003@" + domain},
+				ServiceRoute:     []string{"<sip:orig@scscf." + domain + ":5060;lr>"},
+				Expires:          time.Now().Add(time.Hour),
+			})
+			ue.send(ue.request(invite("sip:001010000000002@"+domain, "<sip:pcscf."+domain+":5060;lr>")))
+			select {
+			case got := <-h.scscf:
+				if got.Get("P-Asserted-Identity") != "<sip:001010000000003@"+domain+">" {
+					t.Errorf("P-Asserted-Identity = %q, want the UE's", got.Get("P-Asserted-Identity"))
+				}
+			case <-time.After(5 * time.Second):
+				t.Fatal("the first INVITE did not reach the S-CSCF")
 			}
-			t.Logf("through after %d retransmissions", retransmissions)
-			return
-		case <-time.After(sip.DefaultTimers().T1):
-		}
-		if time.Now().After(deadline) {
-			t.Fatal("no retransmission got through")
-		}
+		})
 	}
 }
 
@@ -407,9 +410,14 @@ type heldStore struct {
 	*MemoryStore
 	release <-chan struct{}
 	ended   <-chan struct{}
+	// reads, when not nil, counts the reads of an association by source.
+	reads *atomic.Int32
 }
 
 func (s heldStore) Association(ctx context.Context, source sip.Destination) (Association, bool, error) {
+	if s.reads != nil {
+		s.reads.Add(1)
+	}
 	select {
 	case <-s.release:
 	case <-s.ended:
@@ -419,12 +427,13 @@ func (s heldStore) Association(ctx context.Context, source sip.Destination) (Ass
 
 // TestUnprotectedRequestFromAUEWithSecurityAssociationsAfterARestart:
 // the association and the security associations were written to the
-// Store before this P-CSCF started. Screen knows of the association
-// only once it has read it from the Store, which here waits until the
-// test lets it go on; until then each copy of the UE's unprotected
-// request is discarded for want of an IP association. After that the
-// P-CSCF reads the SA table for the next copy and discards it as
-// unprotected. No copy gets through at any point.
+// Store before this P-CSCF started. The P-CSCF reads the association
+// from the Store before it decides on the UE's unprotected request, and
+// here that read waits until the test lets it go on. Meanwhile the
+// P-CSCF discards no copy, and answers the REGISTER of the barrier,
+// which has a Call-ID of its own. Once it has the association, it
+// reads the SA table and discards each copy as unprotected, none for
+// want of an IP association. No copy gets through at any point.
 func TestUnprotectedRequestFromAUEWithSecurityAssociationsAfterARestart(t *testing.T) {
 	logs := newLogRecords()
 	release := make(chan struct{})
@@ -438,19 +447,17 @@ func TestUnprotectedRequestFromAUEWithSecurityAssociationsAfterARestart(t *testi
 
 	m := ue.request(strangerRequests()[2])
 	ue.send(m)
-	logs.waitFor(t, 1, discardedWithoutAssociation)
 	ue.send(m)
-	logs.waitFor(t, 2, discardedWithoutAssociation)
+	if got := ue.barrier(); len(got) != 0 {
+		t.Errorf("while the Store was read, the P-CSCF sent %d %s, want nothing", got[0].StatusCode, got[0].Method)
+	}
+	if n := logs.count(discardedWithoutAssociation) + logs.count(discardedUnprotected); n != 0 {
+		t.Errorf("%d discards logged while the Store was read, want none", n)
+	}
 	close(release)
-	deadline := time.Now().Add(5 * time.Second)
-	for copies := 2; logs.count(discardedUnprotected) == 0; {
-		if time.Now().After(deadline) {
-			t.Fatal("the P-CSCF did not read the association from the Store")
-		}
-		ue.send(m)
-		copies++
-		// Each copy is discarded, for one reason or the other.
-		logs.waitFor(t, copies, discardedWithoutAssociation, discardedUnprotected)
+	logs.waitFor(t, 2, discardedUnprotected)
+	if n := logs.count(discardedWithoutAssociation); n != 0 {
+		t.Errorf("%d copies discarded for want of an IP association, want none", n)
 	}
 	if got := ue.barrier(); len(got) != 0 {
 		t.Errorf("the P-CSCF sent %d %s, want nothing", got[0].StatusCode, got[0].Method)
@@ -459,6 +466,42 @@ func TestUnprotectedRequestFromAUEWithSecurityAssociationsAfterARestart(t *testi
 	case got := <-h.received:
 		t.Errorf("the home network got %s, want nothing", got.Method)
 	default:
+	}
+}
+
+// TestRequestsThatMissTogetherReadTheStoreOnce: the association of a UE
+// is only in the Store, whose read here waits until the test lets it go
+// on. Two requests of the UE with different Call-IDs are decided on
+// side by side, and both miss what the P-CSCF holds in memory: one
+// reads the Store, and the other waits for that read rather than read
+// the Store too. Once the read is done, both get through.
+func TestRequestsThatMissTogetherReadTheStoreOnce(t *testing.T) {
+	release := make(chan struct{})
+	var reads atomic.Int32
+	h := newAKAHarnessWith(t, false, quiet(), func(s *MemoryStore) Store {
+		return heldStore{MemoryStore: s, release: release, ended: t.Context().Done(), reads: &reads}
+	})
+	ue := dialRawUE(t, sip.UDP, h.unprotected.LocalAddr())
+	a, _ := protectedUE(ue.addr())
+	h.store.PutAssociation(context.Background(), a)
+
+	ue.send(ue.request(strangerRequests()[2]))
+	ue.send(ue.request(strangerRequests()[2]))
+	if !came(5*time.Second, func() bool { return reads.Load() > 0 }) {
+		t.Fatal("the P-CSCF did not read the Store")
+	}
+	if came(watch, func() bool { return reads.Load() > 1 }) {
+		t.Errorf("%d reads of the association began, want one", reads.Load())
+	}
+	close(release)
+	got := map[string]bool{}
+	for len(got) < 2 {
+		select {
+		case m := <-h.received:
+			got[m.Get("Call-ID")] = true
+		case <-time.After(5 * time.Second):
+			t.Fatalf("%d of the 2 requests reached the home network", len(got))
+		}
 	}
 }
 

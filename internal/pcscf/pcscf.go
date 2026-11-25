@@ -675,7 +675,7 @@ type PCSCF struct {
 	relays  []MediaRelay         // none passes media end to end
 	policy  policy.PolicyControl // nil asks nothing of a PCRF
 	stack   ims.StackRef
-	// admissions is what Screen knows of the IP associations in store.
+	// admissions is what screen knows of the IP associations in store.
 	admissions *admissions
 	log        *slog.Logger
 	// measurements counts the registration procedures and the session
@@ -722,11 +722,11 @@ type PCSCF struct {
 // New makes a P-CSCF and starts its sweep, which handles the expiries of
 // the reg event subscriptions that are due until Close. relays are the
 // media relays it may use, the same in every instance; without any, RTP
-// goes between the UEs directly. Both stacks of the P-CSCF need its
-// Screen in their sip.Config, and the one on the unprotected port its
-// AdmitUnprotected as well. It fails only when the registry of
-// Config.Metrics holds a metric of the same name under another
-// definition.
+// goes between the UEs directly. The stack on the unprotected port needs
+// its AdmitUnprotected as the sip.Config.Admit, and the one on the
+// protected server port its AdmitProtected. It fails only when the
+// registry of Config.Metrics holds a metric of the same name under
+// another definition.
 func New(cfg Config, locator Locator, store Store, relays []MediaRelay, log *slog.Logger) (*PCSCF, error) {
 	if cfg.SweepInterval == 0 {
 		cfg.SweepInterval = ims.SweepInterval

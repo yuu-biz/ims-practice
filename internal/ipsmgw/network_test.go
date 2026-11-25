@@ -213,7 +213,7 @@ func startIMS(t *testing.T, n int) *network {
 		t.Fatal(err)
 	}
 	t.Cleanup(p.Close)
-	pcscfStack := newStackConfig(t, sip.Config{Screen: p.Screen, Admit: p.AdmitUnprotected, OnRequest: p.OnRequest})
+	pcscfStack := newStackConfig(t, sip.Config{Admit: p.AdmitUnprotected, OnRequest: p.OnRequest})
 	p.SetStack(pcscfStack)
 	net.pcscf = pcscfStack.LocalAddr()
 	net.dns.add("pcscf."+domain, net.pcscf)

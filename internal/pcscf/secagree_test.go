@@ -156,7 +156,7 @@ func newAKAHarnessOf(t *testing.T, o akaOptions) *akaHarness {
 	h.p = newPCSCF(t, cfg, locate, store, nil, log)
 	h.unprotected = newPCSCFStack(t, h.p)
 	h.p.SetStack(h.unprotected)
-	h.protected, err = sip.NewStack(tr, sip.Config{SentBy: tr.LocalAddr().String(), Screen: h.p.Screen, OnRequest: h.p.OnProtectedRequest}, quiet())
+	h.protected, err = sip.NewStack(tr, sip.Config{SentBy: tr.LocalAddr().String(), Admit: h.p.AdmitProtected, OnRequest: h.p.OnProtectedRequest}, quiet())
 	if err != nil {
 		t.Fatal(err)
 	}

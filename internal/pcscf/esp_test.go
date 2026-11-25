@@ -445,12 +445,18 @@ func TestESPReRegistrationWithinTheTeardownDelay(t *testing.T) {
 // from a UE that has a set is taken on the protected server port only
 // when it comes from one of that set's protected ports. The kernel
 // lets a packet from another port of the UE's address through, since
-// no policy covers that port.
+// no policy covers that port. A request that maps to no IP association
+// is not taken from any port.
 func TestAdmitProtected(t *testing.T) {
 	h := newESPHarness(t)
 	sas := h.associations(1111, 2222)
 	if err := h.p.putSecurityAssociations(context.Background(), sas); err != nil {
 		t.Fatal(err)
+	}
+	other := sip.Destination{Transport: sip.UDP, Addr: netip.MustParseAddrPort("127.0.0.2:50002")}
+	for _, ue := range []netip.AddrPort{sas.UE, netip.MustParseAddrPort("127.0.0.2:5062")} {
+		h.p.store.PutAssociation(context.Background(), Association{Source: sip.Destination{Transport: sip.UDP, Addr: ue},
+			SentBy: ue.String(), PrivateIdentity: impi, Expires: time.Now().Add(time.Hour)})
 	}
 	// An in-dialog request of the UE, whose Via names the UE's
 	// protected server port however it was sent.
@@ -481,11 +487,14 @@ func TestAdmitProtected(t *testing.T) {
 		t.Error("a REGISTER was not admitted")
 	}
 	// A UE with no set of its own is nothing to this rule.
-	other := sip.Destination{Transport: sip.UDP, Addr: netip.MustParseAddrPort("127.0.0.2:50002")}
 	m, _ = request(50002)
 	m.Remove("Via")
 	m.Add("Via", "SIP/2.0/UDP 127.0.0.2:5062;branch="+sip.NewBranch())
 	if !h.p.AdmitProtected(m, other) {
 		t.Error("a request of a UE without security associations was not admitted")
+	}
+	h.p.store.DeleteAssociation(context.Background(), sip.Destination{Transport: sip.UDP, Addr: sas.UE})
+	if h.p.AdmitProtected(request(sas.UEMechanism.PortC)) {
+		t.Error("a request without an IP association was admitted from the protected client port")
 	}
 }
