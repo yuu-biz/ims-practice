@@ -361,11 +361,16 @@ func (p *PCSCF) subsequent(st *sip.ServerTransaction, out *sip.Message, log *slo
 // When the relay does not take the answer, the response goes on as it
 // came, since it is the final response of the request and the party
 // that answered has taken the offer already. The PCRF does not get that
-// answer, and the P-CSCF then releases the dialog (TS 24.229 5.2.8.1),
-// as TS 24.229 6.2 has it do after it has passed on a 200 whose SDP it
-// does not allow. A failure after the relay took an answer of the
-// request is that of a retransmitted 2xx to a re-INVITE, and changes
-// nothing.
+// answer, and the P-CSCF then releases the dialog (TS 24.229 5.2.8.1).
+// TS 24.229 names no procedure for this. The nearest is that of 6.2 for
+// a 200 whose SDP offer has media that the local policy does not allow:
+// the P-CSCF passes it on and, once the ACK with the answer has come,
+// releases the session with the BYEs of 5.2.8.1.2. Those carry the
+// Reason 488 (5.2.8.1.2 items 1 d, 2, 3 c and 4), as the parties asked
+// for media that the network does not allow. Here they asked for
+// nothing wrong, and the BYEs carry the 503 of lost resources. A
+// failure after the relay took an answer of the request is that of a
+// retransmitted 2xx to a re-INVITE, and changes nothing.
 //
 // SIMPLIFIED: TS 29.214 4.4.2. When the PCRF refuses the changed
 // service information, the P-CSCF only logs it, and the session stays
