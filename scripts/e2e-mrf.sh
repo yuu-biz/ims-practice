@@ -54,7 +54,7 @@ domain=ims.mnc001.mcc001.3gppnetwork.org
 ue2=(--impi "001010000000002@$domain" --impu "sip:+12025550102@$domain" --password test-password-2)
 fail=0
 mkdir -p e2e-out
-rm -f captures/mrf-cat-received.raw
+rm -f captures/mrf-cat-received.raw captures/mrf-cat-sent.raw captures/mrf-cat-ue2-received.raw
 
 # call ARGS... is UE 1's "ue call", whose log it prints, and xcap ARGS...
 # is UE 1's "ue xcap". Each exits 1 when it fails, as the barred call
@@ -94,9 +94,10 @@ else
 	echo "FAIL provisioning cat1 for UE 2: HTTP $status"
 	fail=1
 fi
-docker compose run -d --no-deps --name ims-practice-ue2-cat ue2 answer "${ue2[@]}" --ring 3s --tone 1s >/dev/null
+docker compose run -d --no-deps --name ims-practice-ue2-cat ue2 answer "${ue2[@]}" --ring 3s --tone 1s \
+	--received-out /captures/mrf-cat-ue2-received.raw >/dev/null
 wait_log ims-practice-ue2-cat '"msg":"waiting for a call"' || fail=1
-out="$(call --received-out /captures/mrf-cat-received.raw tel:+12025550102)"
+out="$(call --received-out /captures/mrf-cat-received.raw --sent-out /captures/mrf-cat-sent.raw tel:+12025550102)"
 printf '%s\n' "$out" >e2e-out/mrf-cat.log
 if grep -Eq '"msg":"ringback before the answer".*"ringback":"network"' <<<"$out" && grep -q '"msg":"call answered"' <<<"$out" &&
 	[ "$(ended ims-practice-ue2-cat)" = 0 ]; then
@@ -134,6 +135,23 @@ EOF
 	echo "ok   the first second UE 1 received is cat1.wav as the MRFP encodes it"
 else
 	echo "FAIL the audio UE 1 received is not cat1.wav ($(wc -c <captures/mrf-cat-received.raw 2>/dev/null || echo 0) bytes)"
+	fail=1
+fi
+# Once UE 2 has answered, the core side of UE 1's relay context sends
+# to UE 2, whose SDP came in the UPDATE, and no longer to the MRFP whose
+# tone it received: what UE 2 received is what UE 1 sent, to its end.
+# UE 2 wrote its file when its call ended, which "ended" waited for.
+if "$python" - captures/mrf-cat-sent.raw captures/mrf-cat-ue2-received.raw <<'EOF'; then
+import sys
+
+sent = open(sys.argv[1], "rb").read()
+received = open(sys.argv[2], "rb").read()
+# Half a second of PCMU at 8000 bytes per second.
+sys.exit(0 if len(received) >= 4000 and sent.endswith(received) else 1)
+EOF
+	echo "ok   after the answer UE 2 received the PCMU that UE 1 sent ($(wc -c <captures/mrf-cat-ue2-received.raw) bytes)"
+else
+	echo "FAIL UE 2 did not receive what UE 1 sent after the answer: sent $(wc -c <captures/mrf-cat-sent.raw 2>/dev/null || echo 0), received $(wc -c <captures/mrf-cat-ue2-received.raw 2>/dev/null || echo 0) bytes"
 	fail=1
 fi
 status="$(alerting_tone cat1 false)"
@@ -351,6 +369,8 @@ expect "200 OK UE 2 -> P-CSCF: UE 2 answers" "$ok200 && ip.src == $ue2ip"
 expect "BYE MMTel AS -> MRFC: the tone stops at the answer" "sip.Method == \"BYE\" && ip.src == $mmtel && ip.dst == $mrfc && sip.Call-ID == \"$mrfc_leg\""
 expect "UPDATE reaches UE 1: its media goes to UE 2, without the content attribute" "sip.Method == \"UPDATE\" && sip.Call-ID == \"$a\" && ip.dst == $ue1 && sdp && !(sdp.media_attr == \"content:g.3gpp.cat\")"
 expect "200 OK (INVITE) reaches UE 1" "$ok200 && sip.Call-ID == \"$a\" && ip.dst == $ue1"
+cat_answer="$last"
+expect "RTP of UE 1 reaches UE 2 after the answer" "rtp && ip.src == $agw && ip.dst == $ue2ip"
 # The Lab groups the dialogs of a call by their icid-value, so
 # the AS's dialog with the MRFC is a leg of the call that UE 1 made.
 legs="$(curl -fsS http://localhost:8080/api/calls | "$python" -c '
@@ -372,6 +392,7 @@ expect "180 reaches UE 1, without P-Early-Media" "sip.Status-Code == 180 && sip.
 expect "200 OK (INVITE) reaches UE 1" "$ok200 && sip.Call-ID == \"$a\" && ip.dst == $ue1"
 none "INVITEs to the MRFC in that call" "frame.number > $local_start && frame.number < $last && $invite && ip.dst == $mrfc"
 none "RTP from the MRFP in that call" "frame.number > $local_start && frame.number < $last && rtp && ip.src == $mrfp"
+none "RTP from the media relay to the MRFP after the CAT call was answered" "frame.number > $cat_answer && frame.number < $local_start && rtp && ip.src == $agw && ip.dst == $mrfp"
 
 echo "call waiting (TS 24.615 4.5.5.3.2, 4.5.5.2.3) and hold (TS 24.610)"
 c1="${first%% *}"

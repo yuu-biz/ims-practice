@@ -131,7 +131,7 @@ The operator provisions the CAT of a user in the HSS (TS 24.182 4.5.2); here the
 
 - **UE 1 uses preconditions**, so UE 2's 183 goes to UE 1 as it came, and the tone comes in an UPDATE once UE 2 alerts (TS 24.182 4.5.5.3.7 b 1). A caller without preconditions gets the tone in the 18x itself.
 - **`a=content:g.3gpp.cat`** (RFC 4796) marks the SDP of the tone, and `P-Early-Media: sendonly` authorizes it (TS 24.182 4.5.5.3.7 b 2).
-- **At the answer** the AS ends its dialog with the MRFC and moves UE 1's media to UE 2 with an UPDATE before the 200, in the gateway model of TS 24.628 Annex G.
+- **At the answer** the AS ends its dialog with the MRFC and moves UE 1's media to UE 2 with an UPDATE before the 200, in the gateway model of TS 24.628 Annex G. The P-CSCF gives the network side of UE 1's relay context the address in that UPDATE. That termination does not latch, so UE 1's voice goes to UE 2 from then on, and no longer to the MRFP whose tone it received ([Follow a voice call through the IMS](call.md)). The script checks that what UE 2 received is what UE 1 sent.
 - **UE 1 logs** `"msg":"ringback before the answer","ringback":"network"`. The script compares the first second of what UE 1 received with `deploy/announcements/cat1.wav` as G.711 μ-law encodes it: they are equal byte for byte.
 
 Then the script switches the tone off (`"active": false`) and calls again. UE 2's 180 reaches UE 1 without P-Early-Media, no INVITE goes to the MRFC and no RTP comes from the MRFP; UE 1 logs `"ringback":"local"` and plays its own ringing tone (TS 24.628 4.7.2.1).
