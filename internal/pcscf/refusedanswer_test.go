@@ -17,20 +17,55 @@ import (
 // The P-CSCF then has no answer that names the relay to pass on, and
 // ends the call.
 
-// callLegs are the two ways a call passes the P-CSCF. The answer of a
-// call from the UE comes from the network and tells the core
+// callLeg is one of the two ways a call passes the P-CSCF. The answer
+// of a call from the UE comes from the network and tells the core
 // termination where to send; the answer of a call to the UE tells the
 // access termination.
-var callLegs = []struct {
+type callLeg struct {
 	name string
 	call func(*callHarness) (*sip.OutgoingCall, *sip.IncomingCall)
+	// fromUE is true when the served UE is the caller.
+	fromUE bool
 	// answered is the termination that the answer is for.
 	answered agw.TerminationID
 	// media is where the callee takes its media.
 	media netip.AddrPort
-}{
-	{"from the UE", (*callHarness).call, agw.Core, coreMedia},
-	{"to the UE", (*callHarness).callUE, agw.Access, ueMedia},
+}
+
+var callLegs = []callLeg{
+	{"from the UE", (*callHarness).call, true, agw.Core, coreMedia},
+	{"to the UE", (*callHarness).callUE, false, agw.Access, ueMedia},
+}
+
+// received are the messages that the caller and the callee of a call
+// on l have received.
+func (l callLeg) received(h *callHarness) (caller, callee *received) {
+	if l.fromUE {
+		return h.ueGot, h.coreGot
+	}
+	return h.coreGot, h.ueGot
+}
+
+// key is the key of the Dialog that the P-CSCF keeps for the served UE
+// of the call, once its early dialog is there.
+func (l callLeg) key(t *testing.T, out *sip.OutgoingCall, in *sip.IncomingCall) DialogKey {
+	t.Helper()
+	d, ok := in.Dialog()
+	if l.fromUE {
+		d, ok = out.Dialog()
+	}
+	return keyOf(t, d, ok)
+}
+
+// wantNo183 checks that no 183 has reached the caller of a call on l.
+func (l callLeg) wantNo183(t *testing.T, h *callHarness) {
+	t.Helper()
+	caller, _ := l.received(h)
+	for _, m := range caller.all() {
+		if m.StatusCode == 183 {
+			t.Error("the caller got the 183 whose answer the relay did not take")
+		}
+	}
 }
 
 // wantNoFailureCause checks the 500 with which the P-CSCF ends a call
@@ -65,6 +100,7 @@ func TestRefusedAnswerOfA183EndsTheCall(t *testing.T) {
 				t.Fatalf("the callee's call ended with %v, want a CANCEL", in.Err())
 			}
 			wantCancelReason(t, in.EndedBy())
+			leg.wantNo183(t, h)
 			relay.waitHeld(t, 0, time.Second)
 			if n := len(pcrf.mediaRequests()); n != 0 {
 				t.Errorf("%d requests to authorise media, want none for an answer that the relay did not take", n)
@@ -187,6 +223,53 @@ func (c *rawINVITE) response(code int) *sip.Message {
 	resp.Add("Content-Type", "application/sdp")
 	resp.Body = sdp.Offer("2", coreMedia).Bytes()
 	return resp
+}
+
+// TestRefusedAnswerOfThe200AfterA183EndsTheCall: the relay took the
+// answer of a reliable 183, so the P-CSCF keeps the early dialog and
+// the PCRF has authorised the media, and the caller has sent its PRACK.
+// The relay then does not take the answer of the 200. The call ends as
+// for a 200 without the 183 before it, and the policy session and the
+// Dialog go too. The BYE to the callee takes the number after the PRACK
+// (RFC 3261 12.2.1.1).
+func TestRefusedAnswerOfThe200AfterA183EndsTheCall(t *testing.T) {
+	for _, leg := range callLegs {
+		t.Run(leg.name, func(t *testing.T) {
+			h, pcrf, relay := newPolicyHarness(t)
+			out, in := leg.call(h)
+			if err := in.Progress(183, answerTo(t, in.Request, leg.media)); err != nil {
+				t.Fatal(err)
+			}
+			key := leg.key(t, out, in)
+			if _, ok := h.dialog(key); !ok {
+				t.Fatal("no dialog after the 183")
+			}
+			if n := len(pcrf.mediaRequests()); n != 1 {
+				t.Fatalf("%d requests to authorise media after the 183, want 1", n)
+			}
+			_, callee := leg.received(h)
+			prack, err := sip.ParseCSeq(callee.request(t, sip.PRACK).Get("CSeq"))
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			relay.refuseModify(leg.answered)
+			acked := accept(in, answerTo(t, in.Request, leg.media))
+			wantNoFailureCause(t, answered(t, out, 500))
+			waitACK(t, acked)
+			ended(t, "the callee's call", in.Done())
+			bye := in.EndedBy()
+			if bye == nil || bye.Method != sip.BYE {
+				t.Fatalf("the callee's call ended by %v, want a BYE", bye)
+			}
+			if got, want := bye.Get("CSeq"), (sip.CSeq{Number: prack.Number + 1, Method: sip.BYE}).String(); got != want {
+				t.Errorf("CSeq of the BYE = %q, want %q, one above the PRACK", got, want)
+			}
+			pcrf.waitReleased(t, "session-1")
+			relay.waitHeld(t, 0, time.Second)
+			h.waitNoDialog(key)
+		})
+	}
 }
 
 // TestRefusedRetransmissionOfThe200KeepsTheCall: the relay took the
