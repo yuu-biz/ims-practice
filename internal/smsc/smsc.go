@@ -11,7 +11,8 @@
 //   - S6c, as the SMS-GMSC: the SC asks the HSS which node serves the
 //     recipient (SRR), and, when the recipient is absent or its memory
 //     is full, has the HSS keep the SC address in the message waiting
-//     data (RDR);
+//     data (RDR). A delivery that succeeds while the HSS holds a flag
+//     for the recipient it reports as well (RDR);
 //   - SGd, as the SMS-GMSC: the SC forwards the SMS-DELIVER or the
 //     SMS-STATUS-REPORT to the serving node in a TFR, and learns from
 //     the TFA whether it arrived;

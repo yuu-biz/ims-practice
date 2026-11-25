@@ -8,7 +8,8 @@
 //   - S6c: Send-Routing-Info-for-SM (SRR/SRA), with which the SC asks
 //     the HSS which node serves a user, Report-SM-Delivery-Status
 //     (RDR/RDA), with which the SC has the HSS keep its address in the
-//     message waiting data of a user it could not reach, and
+//     message waiting data of a user it could not reach, or tells it of
+//     a delivery that got through, and
 //     Alert-Service-Centre (ALR/ALA), with which the HSS tells the SC
 //     that such a user is reachable again (TS 29.338 5).
 //
