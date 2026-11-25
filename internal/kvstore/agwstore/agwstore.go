@@ -148,11 +148,10 @@ func (s *Store) DeleteContext(ctx context.Context, id string) error {
 // index is read before any port is opened. With a second process, a
 // PutContext of the first could be under way, and its context would be
 // left out of the index for good. Contexts skips such an entry, and
-// removes it from the
-// index once it has read every page, so that a store that fails then
-// has given every context already. A failed removal changes nothing
-// that Contexts returns, so it is only logged; the next Contexts tries
-// again.
+// removes it from the index once it has read every page, so that a
+// store that fails then has given every context already. A failed
+// removal changes nothing that Contexts returns, so it is only logged;
+// the next Contexts tries again.
 func (s *Store) Contexts(ctx context.Context) ([]agw.SavedContext, error) {
 	var saved []agw.SavedContext
 	var leftovers []string
