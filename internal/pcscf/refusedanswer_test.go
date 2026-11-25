@@ -3,6 +3,7 @@ package pcscf
 import (
 	"context"
 	"net/netip"
+	"strconv"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -430,6 +431,92 @@ func TestRefusedAnswerOfAnUPDATEInTheEarlyDialogEndsTheCall(t *testing.T) {
 	relay.waitHeld(t, 0, time.Second)
 	if n := len(pcrf.mediaRequests()); n != 1 {
 		t.Errorf("%d requests to authorise media, want only the one of the 183", n)
+	}
+}
+
+// TestRefusedAnswerOfAnUPDATEAtAnotherInstanceEndsTheCall: two
+// instances of the P-CSCF share one Store, as the instances of a role
+// do. The INVITE passes the first, and the UPDATE in its early dialog
+// the second, whose relay does not take the answer of the 200 to the
+// UPDATE. The second instance cannot end an INVITE that it does not
+// forward; the first ends it at the next response to the INVITE, as for
+// a 183 or a 200 whose answer the relay did not take (TS 24.229
+// 5.2.8.1.1). That response goes no further, and the Rx session, the
+// relay context and the Dialog go.
+func TestRefusedAnswerOfAnUPDATEAtAnotherInstanceEndsTheCall(t *testing.T) {
+	for _, then := range []struct {
+		response string
+		// send has the callee send the response, and ended checks how the
+		// call of the callee ends.
+		send  func(*sip.IncomingCall) <-chan error
+		ended func(*testing.T, *sip.IncomingCall, <-chan error)
+	}{
+		{"180",
+			func(in *sip.IncomingCall) <-chan error {
+				// The 180 is reliable, and Progress waits for a PRACK that
+				// the caller never sends: the CANCEL ends the call first.
+				go in.Progress(180, sip.Body{})
+				return nil
+			},
+			func(t *testing.T, in *sip.IncomingCall, _ <-chan error) {
+				ended(t, "the callee's call", in.Done())
+				if in.Err() != sip.ErrCancelled {
+					t.Fatalf("the callee's call ended with %v, want a CANCEL", in.Err())
+				}
+				wantCancelReason(t, in.EndedBy())
+			}},
+		{"200",
+			func(in *sip.IncomingCall) <-chan error { return accept(in, sip.Body{}) },
+			func(t *testing.T, in *sip.IncomingCall, acked <-chan error) {
+				waitACK(t, acked)
+				endedByBYE(t, "the callee's call", in)
+			}},
+	} {
+		t.Run(then.response, func(t *testing.T) {
+			h, pcrf, relay := newPolicyHarness(t)
+			out, in := h.call()
+			answerOffers(in)
+			if err := in.Progress(183, answerTo(t, in.Request, coreMedia)); err != nil {
+				t.Fatal(err)
+			}
+			d, ok := out.Dialog()
+			key := keyOf(t, d, ok)
+
+			h.sendTo(h.instance())
+			relay.refuseModify(agw.Core)
+			resp, err := out.Update(sdpBody(sdp.Offer("2", netip.MustParseAddrPort("192.0.2.10:4002"))))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if resp.StatusCode != 200 {
+				t.Fatalf("the UPDATE got %d, want the 200 of the far end", resp.StatusCode)
+			}
+			// The second instance has no INVITE to end, so the INVITE goes
+			// on until its next response.
+			for deadline := time.After(watch); deadline != nil; {
+				select {
+				case r := <-out.Responses():
+					if r.StatusCode >= 200 {
+						t.Fatalf("the INVITE got %d before its next response, want it to go on", r.StatusCode)
+					}
+				case <-deadline:
+					deadline = nil
+				}
+			}
+
+			sent := then.send(in)
+			wantNoFailureCause(t, answered(t, out, 500))
+			then.ended(t, in, sent)
+			for _, m := range h.ueGot.all() {
+				cseq, _ := sip.ParseCSeq(m.Get("CSeq"))
+				if cseq.Method == sip.INVITE && strconv.Itoa(m.StatusCode) == then.response {
+					t.Errorf("the caller got the %s to an INVITE whose dialog the P-CSCF released", then.response)
+				}
+			}
+			pcrf.waitReleased(t, "session-1")
+			relay.waitHeld(t, 0, time.Second)
+			h.waitNoDialog(key)
+		})
 	}
 }
 

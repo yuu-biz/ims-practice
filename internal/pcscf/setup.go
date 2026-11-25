@@ -207,16 +207,37 @@ func (s *setup) forward(st *sip.ServerTransaction, out *sip.Message, targets []s
 // relay.
 var errRelay = errors.New("pcscf: the answer is not pointed at the media relay")
 
+// errReleased marks a response to an INVITE whose early dialog the
+// P-CSCF has released, or that has gone from the Store, while the
+// INVITE was on its way. Another instance of the P-CSCF releases it so
+// when a request within the early dialog passes that instance, and it
+// leaves the INVITE to the instance that forwards it (releaseNow).
+var errReleased = errors.New("pcscf: the dialog of the INVITE has been released")
+
 // response sees every response to the INVITE that the P-CSCF passes on,
 // the provisional ones and the 2xx, before it leaves: it sets the
 // identities in it, points the answer at the relay, has the PCRF
 // authorise the media, and keeps the dialog. An error means that the
 // network has no resources for the session; with errRelay, that the
 // answer is not pointed at the relay, which leaves the PCRF without it
-// too; or, with errStore, that the P-CSCF cannot keep the dialog. A body
-// that is not SDP carries no answer, and goes on as it came.
+// too; with errReleased, that the dialog has been released; or, with
+// errStore, that the P-CSCF cannot keep the dialog. A body that is not
+// SDP carries no answer, and goes on as it came.
+//
+// What a released dialog held is freed, so its answer goes neither to
+// the relay nor to the PCRF. remember checks once more, as one step with
+// its change of the dialog, since the release may come in between.
 func (s *setup) response(resp *sip.Message) error {
 	s.p.ueResponse(s.leg, s.invite, resp)
+	if s.stored {
+		d, ok, err := s.p.store.UpdateDialog(context.Background(), s.key, func(*Dialog) {})
+		switch {
+		case err != nil:
+			return storeError(err)
+		case !ok || d.Released:
+			return errReleased
+		}
+	}
 	var refused error
 	if sip.HasSessionDescription(resp) {
 		received := resp.Body
@@ -228,7 +249,10 @@ func (s *setup) response(resp *sip.Message) error {
 			refused = s.authorize(ueSide(received, resp.Body, !s.toUE()))
 		}
 	}
-	if err := s.remember(resp); err != nil {
+	switch err := s.remember(resp); {
+	case errors.Is(err, errReleased):
+		return err
+	case err != nil:
 		return storeError(err)
 	}
 	return refused
@@ -321,7 +345,9 @@ func (s *setup) unavailable() *sip.Message {
 
 // remember stores the dialog with the first response that creates one,
 // and brings it up to date with each later one (TS 24.229 5.2.6.3.4,
-// 5.2.6.4.4). It returns the failure of the Store.
+// 5.2.6.4.4). It returns errReleased for a dialog that has been released
+// or is gone, which it leaves as it is, and otherwise the failure of the
+// Store.
 func (s *setup) remember(resp *sip.Message) error {
 	calleeTag := tagOf(resp.Get("To"))
 	if calleeTag == "" {
@@ -339,8 +365,12 @@ func (s *setup) remember(resp *sip.Message) error {
 	// confirmed is true when the 2xx confirms the dialog that was early,
 	// which sets up the session (TS 32.409 4.1.2.7); endDialog counts it
 	// out again.
-	confirmed := false
+	confirmed, released := false, false
 	update := func(d *Dialog) {
+		confirmed, released = false, d.Released
+		if released {
+			return
+		}
 		confirmed = !d.Confirmed && resp.StatusCode >= 200
 		d.Confirmed = d.Confirmed || resp.StatusCode >= 200
 		d.PolicySession = s.session
@@ -352,11 +382,16 @@ func (s *setup) remember(resp *sip.Message) error {
 	}
 	ctx := context.Background()
 	if s.stored {
-		_, _, err := s.p.store.UpdateDialog(ctx, s.key, update)
-		if err == nil && confirmed {
+		_, ok, err := s.p.store.UpdateDialog(ctx, s.key, update)
+		switch {
+		case err != nil:
+			return err
+		case !ok || released:
+			return errReleased
+		case confirmed:
 			s.p.measurements.sessions.SetUp(role)
 		}
-		return err
+		return nil
 	}
 	d := Dialog{Originating: s.leg == originating, Relay: s.relay, ICID: s.icid}
 	d.Key = DialogKey{CallID: s.invite.Get("Call-ID"), UETag: calleeTag}

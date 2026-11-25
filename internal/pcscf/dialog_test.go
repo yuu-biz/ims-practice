@@ -5,6 +5,7 @@ import (
 	"net/netip"
 	"reflect"
 	"slices"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -32,6 +33,19 @@ type callHarness struct {
 	// metrics is where this P-CSCF counts, for a test that reads the
 	// session measurements of a call.
 	metrics *metrics.Registry
+	// at is where both user agents send everything: the P-CSCF, or
+	// another instance of it that a test has them send to (sendTo).
+	at atomic.Pointer[netip.AddrPort]
+	// instance starts another instance of the P-CSCF, set up as the
+	// first, on the same Store, as the instances of a role share one.
+	instance func() *sip.Stack
+}
+
+// sendTo has both user agents send their requests to the P-CSCF
+// instance whose stack is stack from now on.
+func (h *callHarness) sendTo(stack *sip.Stack) {
+	addr := stack.LocalAddr()
+	h.at.Store(&addr)
 }
 
 // harnessConfig is what newCallHarness varies.
@@ -58,9 +72,8 @@ func newCallHarness(t *testing.T, cfg harnessConfig) *callHarness {
 	}
 	// Both user agents send everything to the P-CSCF, which they know
 	// once it listens.
-	var pcscfAddr netip.AddrPort
 	toPCSCF := func(sip.URI) ([]sip.Destination, error) {
-		return []sip.Destination{{Transport: sip.UDP, Addr: pcscfAddr}}, nil
+		return []sip.Destination{{Transport: sip.UDP, Addr: *h.at.Load()}}, nil
 	}
 	newUA := func(ip, user string, calls chan *sip.IncomingCall, got *received) (*sip.UA, string) {
 		tr, err := sip.ListenObserved(ip+":0", quiet(), got.observe)
@@ -85,22 +98,30 @@ func newCallHarness(t *testing.T, cfg harnessConfig) *callHarness {
 	if cfg.wrap != nil {
 		store = cfg.wrap(h.store)
 	}
-	h.p = newPCSCF(t, Config{Host: "pcscf." + domain, Port: 5060, VisitedNetworkID: domain, Metrics: h.metrics},
-		locate, store, only(cfg.relay), quiet())
-	if cfg.configure != nil {
-		cfg.configure(h.p)
+	newInstance := func(counted *metrics.Registry) (*PCSCF, *sip.Stack) {
+		p := newPCSCF(t, Config{Host: "pcscf." + domain, Port: 5060, VisitedNetworkID: domain, Metrics: counted},
+			locate, store, only(cfg.relay), quiet())
+		if cfg.configure != nil {
+			cfg.configure(p)
+		}
+		tr, err := sip.Listen("127.0.0.1:0", quiet())
+		if err != nil {
+			t.Fatal(err)
+		}
+		stack, err := sip.NewStack(tr, sip.Config{SentBy: tr.LocalAddr().String(), Admit: p.AdmitUnprotected, OnRequest: p.OnRequest, OnACK: p.OnACK}, quiet())
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(stack.Close)
+		p.SetStack(stack)
+		return p, stack
 	}
-	tr, err := sip.Listen("127.0.0.1:0", quiet())
-	if err != nil {
-		t.Fatal(err)
+	h.p, h.pcscf = newInstance(h.metrics)
+	h.sendTo(h.pcscf)
+	h.instance = func() *sip.Stack {
+		_, stack := newInstance(nil)
+		return stack
 	}
-	h.pcscf, err = sip.NewStack(tr, sip.Config{SentBy: tr.LocalAddr().String(), Admit: h.p.AdmitUnprotected, OnRequest: h.p.OnRequest, OnACK: h.p.OnACK}, quiet())
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(h.pcscf.Close)
-	h.p.SetStack(h.pcscf)
-	pcscfAddr = h.pcscf.LocalAddr()
 
 	ueAddr := h.ue.Stack().LocalAddr()
 	a := Association{

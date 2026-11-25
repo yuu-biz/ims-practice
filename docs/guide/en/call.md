@@ -462,9 +462,28 @@ An answer within the dialog, in the 200 to an UPDATE or to a re-INVITE such as t
 ```
 
 - **In an early dialog**, such as that of the UPDATE with which a VoLTE UE tells that its resources are reserved ([Preconditions](volte.md#preconditions)), the INVITE has no final response yet. UE 1 gets 500 for its INVITE, and the INVITE towards the network is cancelled, as for a 183.
+- **When the UPDATE passed another instance of the P-CSCF than the INVITE**, that instance cannot end the INVITE: only the one that forwards the INVITE can answer and cancel it. It frees what the dialog holds and marks the dialog released in the store that the instances share. The instance that forwards the INVITE finds the mark with the next response to the INVITE, and ends the call there, as for a 183 whose answer the relay did not take. When that response is the 200, the network gets the ACK and the BYE instead of the CANCEL.
+
+```text
+ UE 1          P-CSCF a        P-CSCF b         network
+ | UPDATE        |                |                 |
+ |------------------------------->| UPDATE          |
+ |               |                |---------------->|
+ |               |                |    200 (UPDATE) |  the relay does not take its answer
+ |               |                |<----------------|
+ | 200 (UPDATE)  |                |                 |  b marks the dialog released
+ |<-------------------------------|                 |
+ |               |                     180 (INVITE) |  a finds the mark
+ |               |<---------------------------------|
+ | 500           |                |                 |  the 180 goes no further
+ |<--------------|                |                 |
+ |               | CANCEL  Reason: SIP;cause=503    |
+ |               |--------------------------------->|
+```
+
 - **The PCRF never gets the answer.** The P-CSCF ends the Rx session of the call (TS 29.214 4.4.4) and removes the relay context.
 
-The tests of `internal/pcscf` run these flows in one process, with a relay that refuses the `Modify` of the answer: `TestRefusedAnswerOfA183EndsTheCall`, `TestRefusedAnswerOfThe200EndsTheCall`, `TestRefusedRetransmissionOfThe200KeepsTheCall`, `TestRefusedRetransmissionOfAReliable183KeepsTheCall`, `TestRefusedAnswerWithinTheDialogReleasesTheCall` and `TestRefusedAnswerOfAnUPDATEInTheEarlyDialogEndsTheCall`.
+The tests of `internal/pcscf` run these flows in one process, with a relay that refuses the `Modify` of the answer: `TestRefusedAnswerOfA183EndsTheCall`, `TestRefusedAnswerOfThe200EndsTheCall`, `TestRefusedRetransmissionOfThe200KeepsTheCall`, `TestRefusedRetransmissionOfAReliable183KeepsTheCall`, `TestRefusedAnswerWithinTheDialogReleasesTheCall`, `TestRefusedAnswerOfAnUPDATEInTheEarlyDialogEndsTheCall` and, with two instances of the P-CSCF on one store, `TestRefusedAnswerOfAnUPDATEAtAnotherInstanceEndsTheCall`.
 
 ## What this project simplifies
 
@@ -484,7 +503,7 @@ Each item has a `SIMPLIFIED:` comment in the code; `grep -rn "SIMPLIFIED:" inter
 | P-CSCF, TS 24.229 5.2.6.3.5 step 7 and 5.2.6.3.9 step 3 | A request that the UE sends in a dialog other than that of an INVITE, such as the refresh of its subscription, carries no P-Charging-Vector. A response of the UE in such a dialog takes the icid-value of the request that it answers. | The P-CSCF keeps only the dialogs of INVITEs, and with them the icid-value of the INVITE. |
 | P-CSCF, RFC 3264 and RFC 3262 | An INVITE without an offer gets no relay context: the offer that then comes in a reliable 1xx or in the 2xx, and the answer in the PRACK or the ACK, are left as they are. An offer in an UPDATE or a re-INVITE goes through the relay like the one in the INVITE. | The UE simulator always puts its offer in the INVITE. |
 | P-CSCF, RFC 3264 6 | Only the first audio stream with a port goes through the relay. Another stream gets no termination; without an address of its own it points at the relay, where nothing listens on its port. | The UE simulator offers a single stream. |
-| P-CSCF, TS 24.229 5.2.8.1.1 | When the relay does not take the answer of an UPDATE in an early dialog, and the UPDATE passed another instance of the P-CSCF than its INVITE, the INVITE is neither answered 500 nor cancelled. That instance frees the relay context and the Rx session, and the INVITE goes on without media through the relay. | Only the instance that forwards an INVITE can answer and cancel it, and the instances share one store but have no way to ask one another. The PCRF sends the events of a session to the instance that opened it, so a lost bearer always reaches the instance that holds the INVITE. |
+| P-CSCF, TS 24.229 5.2.8.1.1 | When a request within an early dialog, such as an UPDATE whose answer the relay does not take, passes another instance of the P-CSCF than its INVITE, the INVITE is answered 500 and cancelled only when its next response reaches the instance that forwards it, at the latest its 200. Until then the INVITE goes on, without media through the relay. | Only the instance that forwards an INVITE can answer and cancel it. The instances share one store and do not ask one another: the instance that releases the dialog marks it in the store, and the other finds the mark with the next response. In the preconditions of a VoLTE call, the 180 comes right after the 200 to the UPDATE. The PCRF sends the events of a session to the instance that opened it, so a lost bearer always reaches the instance that forwards the INVITE. |
 | P-CSCF, TS 23.334 6.1.2 and 6.1.3 | The P-CSCF does not keep track of the media relays that are unavailable, and does not audit them. Each new call tries the relay that its Call-ID picks, and goes on to the next one only when that one gives no context. The calls on a relay that never comes back keep their signalling, without media, until a UE hangs up: the P-CSCF neither ends them nor moves them to another relay. | A relay that comes back at its own address opens its contexts again, and the media of their calls goes on, so ending the calls would cut ones that recover. Moving a call to another relay would take a new offer from the P-CSCF to each party, which a proxy does not send. |
 | UE, TS 24.229 5.1.3.1 b) and 5.1.4A.1 | The UE lists precondition in the Supported of every request within the dialog, also when the peer does not use preconditions. | The UA has one Supported for all its calls; a peer that does not use the mechanism ignores the option tag in Supported. |
 | Media relay, RFC 4961 | The termination towards the UE keeps the address it latched for the whole call, unless the controller asks it to re-latch. RTP and RTCP latch separately. | Re-latching only matters when a UE moves in the middle of a call. A new party on the network side needs none, as the termination towards the network does not latch. |

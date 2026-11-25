@@ -481,9 +481,28 @@ UE 2 の P-CSCF では、同じことが逆の向きに起きます。183 や 20
 ```
 
 - **early dialog では、INVITE にまだ最終応答がありません。** VoLTE の UE が資源を確保したことを伝える UPDATE が、この場合に当たります（[プリコンディション](volte.md#プリコンディション)）。UE 1 は INVITE への 500 を受け取り、網へ向けた INVITE は取り消されます。183 のときと同じです。
+- **UPDATE が INVITE とは別の P-CSCF のインスタンスを通ったときは、** そのインスタンスは INVITE を終わらせられません。INVITE に答えて取り消せるのは、その INVITE を転送しているインスタンスだけです。UPDATE を通したインスタンスは、ダイアログが持つものを解放し、インスタンスどうしが共有する保存先で、ダイアログに解放の印を付けます。INVITE を転送しているインスタンスは、INVITE への次の応答でその印を見つけ、そこで呼を終わらせます。中継ノードがアンサーを受け取らなかった 183 のときと同じです。その応答が 200 のときは、網には CANCEL の代わりに ACK と BYE を送ります。
+
+```text
+ UE 1          P-CSCF a        P-CSCF b         網
+ | UPDATE        |                |                 |
+ |------------------------------->| UPDATE          |
+ |               |                |---------------->|
+ |               |                |    200 (UPDATE) |  中継ノードがアンサーを受け取らない
+ |               |                |<----------------|
+ | 200 (UPDATE)  |                |                 |  b がダイアログに解放の印を付ける
+ |<-------------------------------|                 |
+ |               |                     180 (INVITE) |  a が印を見つける
+ |               |<---------------------------------|
+ | 500           |                |                 |  180 は先へ進まない
+ |<--------------|                |                 |
+ |               | CANCEL  Reason: SIP;cause=503    |
+ |               |--------------------------------->|
+```
+
 - **PCRF はこのアンサーを受け取りません。** P-CSCF は呼の Rx のセッションを終わらせ（TS 29.214 4.4.4）、中継ノードのコンテキストを解放します。
 
-`internal/pcscf` の試験は、アンサーの `Modify` を断る中継ノードを使って、これらの流れを 1 つのプロセスの中で動かします。`TestRefusedAnswerOfA183EndsTheCall`、`TestRefusedAnswerOfThe200EndsTheCall`、`TestRefusedRetransmissionOfThe200KeepsTheCall`、`TestRefusedRetransmissionOfAReliable183KeepsTheCall`、`TestRefusedAnswerWithinTheDialogReleasesTheCall`、`TestRefusedAnswerOfAnUPDATEInTheEarlyDialogEndsTheCall` です。
+`internal/pcscf` の試験は、アンサーの `Modify` を断る中継ノードを使って、これらの流れを 1 つのプロセスの中で動かします。`TestRefusedAnswerOfA183EndsTheCall`、`TestRefusedAnswerOfThe200EndsTheCall`、`TestRefusedRetransmissionOfThe200KeepsTheCall`、`TestRefusedRetransmissionOfAReliable183KeepsTheCall`、`TestRefusedAnswerWithinTheDialogReleasesTheCall`、`TestRefusedAnswerOfAnUPDATEInTheEarlyDialogEndsTheCall`、2 つの P-CSCF のインスタンスが 1 つの保存先を共有する `TestRefusedAnswerOfAnUPDATEAtAnotherInstanceEndsTheCall` です。
 
 ## このプロジェクトで簡略化していること
 
@@ -503,7 +522,7 @@ UE 2 の P-CSCF では、同じことが逆の向きに起きます。183 や 20
 | P-CSCF。TS 24.229 5.2.6.3.5 の手順 7、5.2.6.3.9 の手順 3 | INVITE のダイアログ以外で UE が送る要求（購読の更新など）には、P-Charging-Vector を付けない。そのようなダイアログでの UE の応答には、応答する要求の icid-value を使う。 | P-CSCF が持つのは INVITE のダイアログだけで、INVITE の icid-value もそこに持つため。 |
 | P-CSCF。RFC 3264、RFC 3262 | オファーの無い INVITE には中継のコンテキストを作らない。このときオファーは 2xx か信頼性のある 1xx に、アンサーは PRACK か ACK に入るが、どちらも書き換えない。UPDATE と re-INVITE に入ったオファーは、INVITE のオファーと同じく中継ノードを通す。 | UE シミュレータはオファーを必ず INVITE に入れるため。 |
 | P-CSCF。RFC 3264 6 | 中継ノードを通すのは、ポートのある最初の音声ストリームだけ。ほかのストリームには終端を作らない。自分のアドレスを持たないストリームは中継ノードを指すことになるが、そのポートでは何も待ち受けていない。 | UE シミュレータがオファーするストリームは 1 つだけのため。 |
-| P-CSCF。TS 24.229 5.2.8.1.1 | early dialog の UPDATE のアンサーを中継ノードが受け取らず、その UPDATE が INVITE とは別の P-CSCF のインスタンスを通ったときは、INVITE に 500 を返さず、取り消しもしない。そのインスタンスが中継ノードのコンテキストと Rx のセッションを解放し、INVITE は中継ノードを通る音声の無いまま進む。 | INVITE に答えて取り消せるのは、その INVITE を転送しているインスタンスだけで、インスタンスどうしは保存先を共有しても、互いに頼む手段を持たないため。PCRF はセッションのイベントをそのセッションを開いたインスタンスに送るので、bearer を失ったという知らせは、いつも INVITE を持つインスタンスに届く。 |
+| P-CSCF。TS 24.229 5.2.8.1.1 | early dialog の中の要求（中継ノードがアンサーを受け取らなかった UPDATE など）が、INVITE とは別の P-CSCF のインスタンスを通ったときは、INVITE への次の応答が、その INVITE を転送しているインスタンスに届いたときに、はじめて INVITE に 500 を返して取り消す。遅くとも 200 が届いたときである。それまで INVITE は、中継ノードを通る音声の無いまま進む。 | INVITE に答えて取り消せるのは、その INVITE を転送しているインスタンスだけのため。インスタンスどうしは保存先を共有し、互いに頼むことはしない。ダイアログを解放したインスタンスが保存先のダイアログに印を付け、もう一方のインスタンスが次の応答でその印を見つける。VoLTE の呼のプリコンディションでは、UPDATE への 200 のすぐあとに 180 が届く。PCRF はセッションのイベントをそのセッションを開いたインスタンスに送るので、bearer を失ったという知らせは、いつも INVITE を転送しているインスタンスに届く。 |
 | P-CSCF。TS 23.334 6.1.2、6.1.3 | 使えないメディア中継ノードを覚えず、監査もしない。P-CSCF は新しい呼ごとに、Call-ID で選んだ中継ノードをまず試し、そこがコンテキストを作れないときにだけ次の中継ノードへ進む。戻らない中継ノードを通る呼では、UE が切るまで信号だけが続き、音声は流れない。P-CSCF はその呼を切ることも、ほかの中継ノードへ移すこともしない。 | 同じアドレスで戻った中継ノードはコンテキストを開き直し、その呼の音声は続く。呼を切ると、戻るはずの呼まで切ってしまうため。ほかの中継ノードへ移すには P-CSCF が両側に新しいオファーを送ることになるが、プロキシはそれを送らないため。 |
 | UE。TS 24.229 5.1.3.1 b)、5.1.4A.1 | プリコンディションを使わない相手との通話でも、ダイアログの中のすべての要求の Supported に precondition を入れる。 | UA の Supported はすべての通話で共通のため。プリコンディションを使わない相手は、Supported にあるこのオプションタグを無視する。 |
 | メディア中継ノード。RFC 4961 | UE 側のターミネーションは、制御する側がラッチし直しを求めない限り、ラッチしたアドレスを通話の間ずっと使う。RTP と RTCP は別々にラッチする。 | ラッチし直しは、通話の途中で UE が移動したときにしか要らないため。網の側のターミネーションはラッチしないので、網の側の相手が替わってもラッチし直しは要らない。 |
