@@ -290,8 +290,12 @@ func (s *Server) sendOwed(ctx context.Context) {
 // and TS28111_FaultNotifications.yaml have the recipient answer 204 to
 // the POST at its address, and give no other success, so any other
 // answer is a failure, another 2xx too. So is a redirect, which is not
-// followed: a client that follows a 301 or a 302 may send a GET in place
-// of the POST (RFC 9110 15.4.2, 15.4.3), without the notification.
+// followed. A client that follows a 301 or a 302 may send a GET in place
+// of the POST (RFC 9110 15.4.2, 15.4.3), without the notification. A 307
+// or a 308 keeps the POST (15.4.8, 15.4.9), but sends the notification
+// to an address that the subscription does not name, while TS 32.158
+// 5.5.4 sends it to the sink that the subscriber gave (5.5.2); a
+// recipient that moves replaces its subscription.
 func (s *Server) post(ctx context.Context, sub NtfSubscriptionControl, n alarmNotification) bool {
 	result := notificationFailed
 	defer func() { s.notificationMetrics.sent.Inc(string(n.notificationType), result) }()
