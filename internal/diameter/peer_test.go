@@ -455,6 +455,59 @@ func TestTimedOutRequestIsForgotten(t *testing.T) {
 		"hop_by_hop": fmt.Sprintf("0x%08x", <-hopByHop)})
 }
 
+// TestTimedOutRequestReturnsWhileTheLoopIsWriting: a peer that has
+// stopped reading leaves the loop stuck in the write of a large request.
+// The caller of that request still gets its timeout at once: handing
+// the request back to the loop to forget it does not wait for the loop.
+func TestTimedOutRequestReturnsWhileTheLoopIsWriting(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+	timers := testTimers
+	timers.Watchdog = time.Minute // no DWR while the test runs
+	scscfNode, logs := newTestNode(scscf, timers)
+	peer := scscfNode.Connect(PeerConfig{Address: listener.Addr().String(), OriginHost: hss})
+	conn, err := listener.Accept()
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The connection closes before the peer stops, which ends the write
+	// that is stuck.
+	defer peer.Stop()
+	defer conn.Close()
+	cer, err := diam.ReadMessage(conn, dict.Default)
+	if err != nil {
+		t.Fatal(err)
+	}
+	local := Identity{OriginHost: hss, OriginRealm: realm}
+	if _, err := capabilitiesExchangeAnswer(local, []uint32{ApplicationIDCx}, net.IPv4(127, 0, 0, 1), messageIDs(cer), DiameterSuccess).WriteTo(conn); err != nil {
+		t.Fatal(err)
+	}
+	waitForLog(t, logs, fields{"msg": "peer state", "to": "I-Open (OKAY)"})
+
+	// Far more than the socket buffers of both ends hold, so the write
+	// does not finish while nothing reads.
+	request := testRequest(scscfNode)
+	request.NewAVP(avp.UserData, avp.Mbit, 0, datatype.OctetString(make([]byte, 8<<20)))
+	ctx, cancel := context.WithTimeout(t.Context(), 200*time.Millisecond)
+	defer cancel()
+	done := make(chan error, 1)
+	go func() {
+		_, err := peer.Request(ctx, request)
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.DeadlineExceeded) {
+			t.Errorf("err = %v, want the deadline", err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("Request did not return within 3 s of its 200 ms timeout while the loop was writing")
+	}
+}
+
 func TestSessionIDFollowsRFC6733Format(t *testing.T) {
 	node, _ := newTestNode(scscf, testTimers)
 	a, b := node.NewSessionID(), node.NewSessionID()

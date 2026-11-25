@@ -173,9 +173,13 @@ type Peer struct {
 	stop     chan struct{}
 	stopOnce sync.Once
 	done     chan struct{}
-	// abandoned takes the requests whose caller stopped waiting, for the
-	// loop to forget.
-	abandoned chan *outgoing
+	// abandoned holds the requests whose caller stopped waiting, for the
+	// loop to forget, and abandonedReady tells the loop that it holds
+	// some. A caller adds to it without waiting for the loop, which may
+	// be stuck in a write to a peer that stopped reading.
+	abandonedMu    sync.Mutex
+	abandoned      []*outgoing
+	abandonedReady chan struct{}
 	// available is what State.TakesRequests says of the state the loop
 	// is in, for Available.
 	available atomic.Bool
@@ -207,14 +211,14 @@ func (n *Node) Connect(peer PeerConfig) *Peer {
 
 func (n *Node) newPeer(peerHost string) *Peer {
 	return &Peer{
-		node:      n,
-		host:      peerHost,
-		log:       n.log.With("peer", peerHost),
-		inbox:     make(chan input),
-		outbox:    make(chan *outgoing),
-		abandoned: make(chan *outgoing),
-		stop:      make(chan struct{}),
-		done:      make(chan struct{}),
+		node:           n,
+		host:           peerHost,
+		log:            n.log.With("peer", peerHost),
+		inbox:          make(chan input),
+		outbox:         make(chan *outgoing),
+		abandonedReady: make(chan struct{}, 1),
+		stop:           make(chan struct{}),
+		done:           make(chan struct{}),
 	}
 }
 
@@ -239,12 +243,31 @@ func (p *Peer) Request(ctx context.Context, request *diam.Message) (*diam.Messag
 	case r := <-out.answer:
 		return r.message, r.err
 	case <-ctx.Done():
-		select {
-		case p.abandoned <- out:
-		case <-p.done:
-		}
+		p.abandon(out)
 		return nil, fmt.Errorf("no answer to %s: %w", commandName(request), ctx.Err())
 	}
+}
+
+// abandon hands the loop a request whose caller stopped waiting, so that
+// the loop forgets it. It never waits for the loop.
+func (p *Peer) abandon(out *outgoing) {
+	p.abandonedMu.Lock()
+	p.abandoned = append(p.abandoned, out)
+	p.abandonedMu.Unlock()
+	select {
+	case p.abandonedReady <- struct{}{}:
+	default: // the loop has been told already
+	}
+}
+
+// takeAbandoned returns the requests that abandon handed over since the
+// last call.
+func (p *Peer) takeAbandoned() []*outgoing {
+	p.abandonedMu.Lock()
+	defer p.abandonedMu.Unlock()
+	out := p.abandoned
+	p.abandoned = nil
+	return out
 }
 
 // Host is the Origin-Host of the peer.
@@ -390,8 +413,10 @@ func (l *loop) wait() Event {
 				continue
 			}
 			return SendMessage{Outgoing: out}
-		case out := <-l.peer.abandoned:
-			l.forget(out)
+		case <-l.peer.abandonedReady:
+			for _, out := range l.peer.takeAbandoned() {
+				l.forget(out)
+			}
 		case in := <-l.peer.inbox:
 			if in.gen != l.gen {
 				if in.conn != nil {
