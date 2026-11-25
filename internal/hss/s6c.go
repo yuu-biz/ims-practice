@@ -47,11 +47,12 @@ func (h *HSS) handleS6c(ctx context.Context, request *diam.Message) *diam.Messag
 // and the HSS keeps or drops the service centre address accordingly (TS
 // 23.040 3.2.6).
 //
-// SIMPLIFIED: TS 23.204 6.5a step 19. The HSS acts on the report of the
-// SMS-GMSC, which the clause has it ignore because the IP-SM-GW has
-// already reported in step 17. The IP-SM-GW of this project does not
-// speak S6c, so the report of the SMS-GMSC is the only one the HSS
-// gets.
+// SIMPLIFIED: TS 23.204 6.5 step 8 and 6.5a step 19. The HSS acts on
+// the report of the SMS-GMSC, of a delivery that failed and of one that
+// got through, which these steps have it ignore because the IP-SM-GW
+// reports to it itself (6.5 step 7, 6.5a step 17). The IP-SM-GW of this
+// project does not speak S6c, so the report of the SMS-GMSC is the only
+// one the HSS gets.
 //
 // SIMPLIFIED: TS 23.040 3.2.6 items 1a and 1b. An absent user sets
 // UNRI whichever node reported it, rather than MNRF for a report from

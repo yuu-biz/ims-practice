@@ -48,14 +48,16 @@ import (
 // reach, and the TFA reports the failure of the one domain there is.
 //
 // SIMPLIFIED: TS 23.204 6.5a steps 17 and 18, TS 23.204 6.5 step 7. The
-// IP-SM-GW sends the HSS no Report SM Delivery Status of its own, and
+// IP-SM-GW sends the HSS no Report SM Delivery Status of its own,
+// neither of a delivery that failed nor of one that got through, and
 // subscribes to no one-time notification that the UE is reachable
-// again. The SMS-GMSC reports the same failure over S6c, which is what
-// writes the message waiting data in the HSS of this project, and the
-// IP-SM-GW hears of the UE's return from the reg event subscription it
-// holds anyway (TS 24.341 5.3.3.2). It keeps UNRI of its own (store.go)
-// all the same, since only this node knows that the delivery over IMS
-// failed.
+// again. The SMS-GMSC reports the same over S6c: the failure, which is
+// what writes the message waiting data in the HSS of this project, and
+// the delivery that got through while the HSS held a flag for the UE,
+// which clears it. The IP-SM-GW hears of the UE's return from the reg
+// event subscription it holds anyway (TS 24.341 5.3.3.2). It keeps UNRI
+// of its own (store.go) all the same, since only this node knows that
+// the delivery over IMS failed.
 
 // outcomePoll is how often the instance that holds a TFR looks in the
 // Store for the outcome of its delivery. It is the delay that a
