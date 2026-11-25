@@ -313,9 +313,11 @@ func sameMessageWaiting(a, b Subscriber) bool {
 }
 
 // alertTimeout bounds one alert, which the HSS sends outside the
-// request that set it off. It outlasts the time the Diameter client
-// waits for an answer, so that the peer, not this timeout, decides when
-// an alert has failed.
+// request that set it off, to every instance of an address in turn. It
+// outlasts the time the Diameter client waits for one answer several
+// times over, so that the peers, not this timeout, decide when an alert
+// has failed; an instance behind as many silent ones as fill it is not
+// tried.
 const alertTimeout = 30 * time.Second
 
 // alertServiceCentres tells every service centre in the message waiting
