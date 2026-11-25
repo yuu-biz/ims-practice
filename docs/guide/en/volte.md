@@ -150,7 +150,7 @@ A refresh and the deregistration go over the associations without a new challeng
 
 ### When the network ends the registration
 
-The S-CSCF can end a registration itself, with a NOTIFY of the reg event in which the contact of the UE is `terminated`. That NOTIFY ends the security associations at both ends: the P-CSCF ends its own as the NOTIFY passes (TS 24.229 5.2.5.2), and the UE deletes its own once it has the NOTIFY (5.1.1.7). With `event="deactivated"` the UE is to register again (5.1.1.7). It has no associations left, so it registers as it did the first time, and steps 1 to 11 happen again:
+The S-CSCF can end a registration itself, with a NOTIFY of the reg event in which the contact of the UE is `terminated`. The S-CSCF sends the same news to the P-CSCF too, in a NOTIFY of the P-CSCF's own subscription. On that NOTIFY the P-CSCF ends its associations with the UE, keeping them just long enough for the UE's NOTIFY to get through (TS 24.229 5.2.5.2), and releases the Rx session of the signalling path. The UE deletes its own associations once it has its NOTIFY (5.1.1.7). With `event="deactivated"` the UE is to register again (5.1.1.7). It has no associations left, so it registers as it did the first time: steps 1 to 12 happen again, with a new AAR. The ladder leaves out the NOTIFY to the P-CSCF and the Rx messages:
 
 ```text
  UE                         P-CSCF                     S-CSCF

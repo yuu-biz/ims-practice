@@ -289,7 +289,10 @@ func (u *UE) Register(ctx context.Context) (Registration, error) {
 // It is also what the UE does when a NOTIFY of the reg event takes its
 // registration away (RegEvent.Lost): it removes the registration and
 // deletes its security associations towards the P-CSCF (5.1.1.7), as the
-// P-CSCF ends its own on the same NOTIFY (5.2.5.2). The response to that
+// P-CSCF ends its own on the NOTIFY of its own subscription (5.2.5.2).
+// Unbind forgets them; the ESP states in the kernel are left for the
+// next Setup to replace, as on the other paths that drop them without
+// a deregistration. The response to that
 // NOTIFY, and to any retransmission of it, is the server transaction's,
 // which does not need them.
 //
