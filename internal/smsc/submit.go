@@ -61,6 +61,15 @@ const (
 // (9.2.3.9): each SMS-SUBMIT is a short message of its own. A repeat
 // after a lost RP-ACK may therefore arrive twice. No UE of this project
 // sets TP-RD or a replace type.
+//
+// SIMPLIFIED: RFC 6733 3 (End-to-End Identifier) and Appendix C. The SC
+// detects no duplicate OFR. A serving node whose OFR got no answer in
+// time sends it again to another instance of the SC, with the T flag
+// set, and if the first instance took it all the same, both hold the
+// short message and the recipient gets it twice. The cache of requests
+// already seen would have to be shared by every instance, as the short
+// messages are, and find the first copy also when it arrives after the
+// repeat.
 func (c *SMSC) MOForwardShortMessage(ctx context.Context, req sgd.MOForwardShortMessageRequest) sgd.MOForwardShortMessageAnswer {
 	now := c.clock.Now()
 	log := c.log.With("session_id", req.SessionID, "sc_address", req.SCAddress,
