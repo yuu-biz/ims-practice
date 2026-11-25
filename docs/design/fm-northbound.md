@@ -42,7 +42,7 @@ TS 32.101 V19.0.0 5.1.1 は、管理のインタフェースを種類で分け�
 
 - `AlarmList` の id は `1` に固定します。OSS は作れず、消せません（TS 28.111 7.3.2.1）。`PUT` と `DELETE` は 403 で、`type` は `MODIFICATION_NOT_ALLOWED` です。`AlarmList=1` はいつもあるので、`PUT` は作成ではなく置き換えになり、読むだけの属性を書き換えようとすることになります。`reason` は `ATTRIBUTE_NOT_WRITABLE` です（TS 32.158 6.6.5.3.2 は PUT にもこの理由を当てています）。`DELETE` の `reason` は `OBJECT_DELETION_NOT_ALLOWED` です（6.6.5.4）。
 - 購読を作るのは `PUT` だけにします。TS 28.532 12.1.1.1.2.1 は、特に断りが無い限り、作るときは `PUT` を使うとしています。購読をやめるときは、その `NtfSubscriptionControl` を消します（TS 28.622 V20.4.0 4.3.22.1）。TS 28.532 のファイルの報告のサービスも、購読を同じ形の createMOI と deleteMOI で行うとしています（11.6.1.3、11.6.1.4）。
-- これ以外の経路と方法は 404 か 405 です。SubNetwork そのもの、ManagedElement、`scope` で木をたどる読み出しは出しません（「作らないもの」）。
+- これ以外の経路と方法は 404 か 405 です。SubNetwork そのもの、ManagedElement、`scope` で木をたどる読み出しは出しません（「作らないもの」）。`AlarmList=1` の 405 の `Allow` には、受ける方法の `GET`、`HEAD`、`PATCH` だけを書きます。`Allow` は資源が受ける方法を並べるもので（RFC 9110 10.2.1）、いつも 403 で断る `PUT` と `DELETE` は入りません。
 
 ### `AlarmList` の中身
 
