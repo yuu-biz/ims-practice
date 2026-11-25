@@ -128,8 +128,10 @@
 // NEW_OBJECT_REPRESENTATION_INVALID (putNtfSubscription): a name that
 // the schema does not have, or one that differs from it in case alone,
 // a name given twice, a null where the schema allows none, or a part of
-// another form. A subscription with a part of its schema that the OAM
-// does not take, such as HeartbeatControl, is 500 with
+// another form. A subscription with a HeartbeatControl, an object
+// that a consumer cannot create here, is 403 with
+// OBJECT_CREATION_NOT_ALLOWED, and one with another part of its schema
+// that the OAM does not take, such as VsDataContainer, 500 with
 // SERVER_LIMITATION (checkNtfSubscription). The subscriptions are in
 // their own store (Config.NtfSubscriptions), which several instances
 // share, at most Config.MaxNtfSubscriptions of them: their number

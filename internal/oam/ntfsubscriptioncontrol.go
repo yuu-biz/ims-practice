@@ -287,10 +287,22 @@ type heartbeatControl struct {
 // of which notificationRecipientAddress is mandatory (TS 28.622
 // 4.3.22.2).
 //
-// It answers the first problem that the consumer can mend, and only
-// then the first part of the body that the OAM does not take: TS 32.158
-// 6.6.4 gives SERVER_LIMITATION only to a request that is well formed
-// and understood, which a body with such a problem is not.
+// It answers the first problem that the consumer can mend, then a
+// HeartbeatControl, and only then the first part of the body that the
+// OAM does not take. TS 32.158 6.6.4 gives MODIFICATION_NOT_ALLOWED
+// only to a request that is correct and understood, and
+// SERVER_LIMITATION only to one that is well formed and understood,
+// which a body with a 400 problem is not. Of the two, the 403 is taken
+// as the more fundamental reason, which 6.6.5.1 puts first: it refuses
+// the request whatever its other parts ask for.
+//
+// A HeartbeatControl is 403 with OBJECT_CREATION_NOT_ALLOWED (TS 32.158
+// 6.6.5.4): TS 28.622 4.3.21.1 lets a producer leave the creation of
+// HeartbeatControl instances by consumers unsupported, which the OAM
+// does. VsDataContainer and dataNodeSelector are 500 with
+// SERVER_LIMITATION: nothing says that a consumer may not give them,
+// and this producer does not keep vendor-specific data or select by
+// data nodes.
 func (s *Server) checkNtfSubscription(id string, body ntfSubscriptionBody) (NtfSubscriptionControl, *mnsError) {
 	invalid := func(tokens ...string) *mnsError {
 		return attributeError(mns.ValidationError, mns.NewAttributeValueInvalid, "Invalid values of attributes", pointer(tokens...))
@@ -298,17 +310,18 @@ func (s *Server) checkNtfSubscription(id string, body ntfSubscriptionBody) (NtfS
 	missing := func(tokens ...string) *mnsError {
 		return attributeError(mns.ValidationError, mns.NewObjectAttributeValueMissing, "Attributes that a new object needs", pointer(tokens...))
 	}
-	var limit *mnsError
+	var forbidden, limit *mnsError
 	beyond := func(title string, tokens ...string) {
 		if limit == nil {
 			limit = attributeError(mns.ServerLimitation, "", title, pointer(tokens...))
 		}
 	}
+	if body.HeartbeatControl != nil {
+		forbidden = attributeError(mns.ModificationNotAllowed, mns.ObjectCreationNotAllowed,
+			"HeartbeatControl objects, which consumers cannot create here", pointer("HeartbeatControl"))
+	}
 	if body.VsDataContainer != nil {
 		beyond("Vendor-specific data, which the producer does not keep", "VsDataContainer")
-	}
-	if body.HeartbeatControl != nil {
-		beyond("Heartbeat notifications, which the producer does not send", "HeartbeatControl")
 	}
 	switch {
 	case !isNtfSubscriptionID(id) || body.Id != id:
@@ -363,7 +376,10 @@ func (s *Server) checkNtfSubscription(id string, body ntfSubscriptionBody) (NtfS
 			beyond("Filters beyond what the producer evaluates", "attributes", "notificationFilter")
 		}
 	}
-	if limit != nil {
+	switch {
+	case forbidden != nil:
+		return NtfSubscriptionControl{}, forbidden
+	case limit != nil:
 		return NtfSubscriptionControl{}, limit
 	}
 	return NtfSubscriptionControl{ID: id, Attributes: attrs}, nil

@@ -76,8 +76,10 @@ const (
 	AttributeInvariant       ErrorReason = "ATTRIBUTE_INVARIANT"         // MODIFICATION_NOT_ALLOWED
 	AttributeNotFound        ErrorReason = "ATTRIBUTE_NOT_FOUND"         // IE_NOT_FOUND
 	ObjectDeletionNotAllowed ErrorReason = "OBJECT_DELETION_NOT_ALLOWED" // MODIFICATION_NOT_ALLOWED
-	// The reasons of 6.6.5.4 for creating an object whose
-	// representation is wrong.
+	// The reasons of 6.6.5.4 for creating an object of a class that a
+	// consumer may not create, and an object whose representation is
+	// wrong.
+	ObjectCreationNotAllowed       ErrorReason = "OBJECT_CREATION_NOT_ALLOWED"        // MODIFICATION_NOT_ALLOWED
 	NewObjectRepresentationInvalid ErrorReason = "NEW_OBJECT_REPRESENTATION_INVALID"  // VALIDATION_ERROR
 	NewObjectClassNameInvalid      ErrorReason = "NEW_OBJECT_CLASS_NAME_INVALID"      // VALIDATION_ERROR
 	NewObjectAttributeValueMissing ErrorReason = "NEW_OBJECT_ATTRIBUTE_VALUE_MISSING" // VALIDATION_ERROR
