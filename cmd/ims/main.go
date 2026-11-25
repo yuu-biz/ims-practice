@@ -142,6 +142,29 @@ func run(configPath string, log *slog.Logger, level *slog.LevelVar) error {
 	// The P-CSCF's Rx client takes the RARs and ASRs of the PCRF. Like
 	// the S-CSCF it is made after its peer, so the handler finds it here.
 	var policyControl atomic.Pointer[rx.Client]
+	var stacks []*sip.Stack
+	var mmtelRole *mmtel.AS
+	// work is the work that the roles do of their own accord (stopNode).
+	var work []func()
+	// shutdown stops the node in the order of stopNode, once: when the
+	// node is told to stop, and as run returns on an error that ends the
+	// start of the node, for what of it has started by then.
+	shutdown := sync.OnceFunc(func() {
+		var sipStops []func()
+		for _, s := range stacks {
+			sipStops = append(sipStops, s.Close)
+		}
+		if mmtelRole != nil {
+			sipStops = append(sipStops, mmtelRole.Close)
+		}
+		stopNode(work, sipStops, func() {
+			diameter.StopAll(peers)
+			if server != nil {
+				server.Stop()
+			}
+		})
+	})
+	defer shutdown()
 	if d := cfg.Diameter; d != nil {
 		node = diameter.NewNode(d.Identity, applications, d.Timers, log)
 		node.Observe(agent.Diameter(diameterNodeName(cfg)))
@@ -211,21 +234,6 @@ func run(configPath string, log *slog.Logger, level *slog.LevelVar) error {
 		log.Info("hss provisioning API listening", "address", cfg.HSS.ProvisioningListen)
 	}
 
-	var stacks []*sip.Stack
-	defer func() {
-		for _, s := range stacks {
-			s.Close()
-		}
-	}()
-	// work stops the work that the roles do of their own accord
-	// (stopNode). On an error that ends the start of the node it stops
-	// before the stacks, as it does when the node is told to stop.
-	var work []func()
-	defer func() {
-		for _, stop := range work {
-			stop()
-		}
-	}()
 	// startProtectedSIP starts a stack on c with stack, a sip.Config
 	// that lacks only the sent-by, for the CSCFs, whose stacks forward
 	// CANCELs statelessly and, at the P-CSCF, screen requests. With
@@ -471,7 +479,6 @@ func run(configPath string, log *slog.Logger, level *slog.LevelVar) error {
 		}
 		defer b.Close()
 	}
-	var mmtelRole *mmtel.AS
 	if c := cfg.MMTel; c != nil {
 		roleLog := log.With("role", config.RoleMMTel)
 		// The AS is a UA on both legs of each call (TS 24.229 5.7.5), so
@@ -501,7 +508,6 @@ func run(configPath string, log *slog.Logger, level *slog.LevelVar) error {
 			transport.Close()
 			return err
 		}
-		defer mmtelRole.Close()
 		// Ut: the users change the same documents over XCAP that the AS
 		// reads for each call, in the HSS over Sh. AS.Ut puts it under the
 		// administrative state of the AS, so that taking the AS out of
@@ -688,20 +694,7 @@ func run(configPath string, log *slog.Logger, level *slog.LevelVar) error {
 
 	<-ctx.Done()
 	log.Info("node stopping")
-	var sipStops []func()
-	for _, s := range stacks {
-		sipStops = append(sipStops, s.Close)
-	}
-	if mmtelRole != nil {
-		sipStops = append(sipStops, mmtelRole.Close)
-	}
-	stopNode(work, sipStops, func() {
-		diameter.StopAll(peers)
-		if server != nil {
-			server.Stop()
-		}
-	})
-	work, stacks = nil, nil
+	shutdown()
 	log.Info("node stopped")
 	return nil
 }
