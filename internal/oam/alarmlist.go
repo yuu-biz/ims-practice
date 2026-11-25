@@ -581,9 +581,11 @@ func (s *Server) readAckAttributes(attrs map[string]any, nodes map[string]map[st
 }
 
 // readAck reads the acknowledgement of one record of a patch. ackUserId
-// is mandatory, as notifyAckStateChanged carries it (TS 28.111 8.8.2);
-// ackSystemId is not. ackState is mandatory too: the node changes the
-// state, and the two others with it.
+// is mandatory, as the schema NotifyAckStateChanged of
+// TS28111_FaultNrm.yaml requires it, although TS 28.111 6.7 lets a
+// consumer leave its identity out; ackSystemId is not. ackState is
+// mandatory too: the node changes the state, and the two others with
+// it.
 func readAck(record map[string]any, at []string, notWritable, invalidValue func(...string) *mnsError) (maintenance.AckStateRequest, *mnsError) {
 	in := func(name string) []string { return append(slices.Clone(at), name) }
 	var req maintenance.AckStateRequest

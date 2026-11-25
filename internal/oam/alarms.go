@@ -109,10 +109,11 @@ func readAlarmList(ctx context.Context, c *maintenance.Client, f maintenance.Ala
 // AckStateRequest is the body of PUT
 // /oam/v1/nodes/{node}/alarms/{id}/ack-state. The record keeps the
 // operator as its ackUserId, the user who last changed its
-// acknowledgement (TS 28.111 7.4.1), which every notifyAckStateChanged
-// carries (8.8.2), so an operator is required. The system through
-// which they change it is the OAM (Config.Name), so the body names
-// none.
+// acknowledgement (TS 28.111 7.4.1). An operator is required, as the
+// node requires one: the schema NotifyAckStateChanged of
+// TS28111_FaultNrm.yaml requires ackUserId, although TS 28.111 6.7 lets
+// a consumer leave its identity out. The system through which they
+// change it is the OAM (Config.Name), so the body names none.
 type AckStateRequest struct {
 	AckState maintenance.AckState `json:"ack_state"`
 	Operator string               `json:"operator"`
