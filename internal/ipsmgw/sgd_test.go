@@ -427,9 +427,16 @@ func TestSGdCommandThatIsNotATFR(t *testing.T) {
 type flagStore struct {
 	*ipsmgw.MemoryStore
 	until chan time.Time
+	// beforePut, when set, runs once, before the first flag goes in.
+	beforePut *func()
 }
 
 func (s flagStore) PutNotReachable(ctx context.Context, publicID string, expires time.Time) error {
+	if s.beforePut != nil && *s.beforePut != nil {
+		f := *s.beforePut
+		*s.beforePut = nil
+		f()
+	}
 	err := s.MemoryStore.PutNotReachable(ctx, publicID, expires)
 	s.until <- expires
 	return err
@@ -455,6 +462,45 @@ func (s flagStore) subscriptionExpires(t *testing.T) time.Time {
 		t.Fatalf("RegSubscriptionOf(%s) = %v, %v", alice, ok, err)
 	}
 	return sub.Expires
+}
+
+// TestTheUnreachableFlagOutlastsARefreshThatCameBeforeIt: a
+// reregistration refreshes the subscription after the delivery read it
+// and before the 480 puts the flag. That reregistration found no flag,
+// so the flag lasts as long as the refreshed subscription, for the
+// reregistration after it.
+func TestTheUnreachableFlagOutlastsARefreshThatCameBeforeIt(t *testing.T) {
+	var beforePut func()
+	store := flagStore{MemoryStore: ipsmgw.NewMemoryStore(), until: make(chan time.Time, 4), beforePut: &beforePut}
+	h := newHarness(t, store, time.Minute, func(m *sip.Message) int {
+		if m.Method == sip.MESSAGE {
+			return 480
+		}
+		return 200
+	})
+	h.registered()
+	sc := h.overSGd()
+	refreshed := time.Now().Add(100 * time.Hour).Round(time.Second)
+	beforePut = func() {
+		sub, ok, err := store.RegSubscriptionOf(context.Background(), alice)
+		if err != nil || !ok {
+			t.Errorf("RegSubscriptionOf(%s) = %v, %v", alice, ok, err)
+			return
+		}
+		sub.Expires = refreshed
+		if err := store.PutRegSubscription(context.Background(), sub); err != nil {
+			t.Error(err)
+		}
+	}
+	if tfa := nextTFA(t, sc.forwarding(t, deliver)); tfa.Result != diameter.Experimental(sgd.DiameterErrorAbsentUser) {
+		t.Fatalf("TFA result = %v, want DIAMETER_ERROR_ABSENT_USER", tfa.Result)
+	}
+	if first := store.nextFlag(t); !first.Before(refreshed) {
+		t.Fatalf("the first flag goes at %v, want the expiry of the subscription before its refresh", first)
+	}
+	if again := store.nextFlag(t); !again.Equal(refreshed) {
+		t.Errorf("the flag goes at %v, want %v, when the refreshed subscription goes", again, refreshed)
+	}
 }
 
 // TestTheUnreachableFlagLastsAsLongAsTheSubscription: the flag that a
