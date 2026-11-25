@@ -18,7 +18,7 @@ import (
 // This file wires the sc role: the Service Centre of SMS, which holds
 // the short messages of the network and delivers them (TS 23.040 4.1).
 // Its Diameter node speaks S6c with the HSS, as the SMS-GMSC asking
-// where a user is and reporting a delivery that failed, and SGd with the
+// where a user is and reporting how a delivery ended, and SGd with the
 // serving nodes, as the SMS-IWMSC taking the short messages of their
 // UEs and as the SMS-GMSC forwarding the ones for them (TS 29.338 5, 6).
 //

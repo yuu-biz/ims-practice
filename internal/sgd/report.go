@@ -13,7 +13,9 @@ import (
 // 29.338 5.2.3). After a delivery failed because the user was absent or
 // its memory was full, the SMS-GMSC asks the HSS to put the SC address
 // into the message waiting data (MWD), so that the HSS alerts the SC
-// once the user is back (TS 23.040 3.2.6, 8.1.1).
+// once the user is back (TS 23.040 3.2.6, 8.1.1). After a delivery that
+// succeeded while the HSS held a flag for the user, it reports that
+// too, so that the HSS clears the flag (TS 23.040 10.1 operation 3).
 
 // CommandReportSMDeliveryStatus is the command code of RDR and RDA, TS
 // 29.338 Table 5.3.2.2/1.

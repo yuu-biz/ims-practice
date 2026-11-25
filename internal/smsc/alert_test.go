@@ -133,6 +133,60 @@ func TestDeliveryStatusPerNode(t *testing.T) {
 	}
 }
 
+// TestASuccessfulDeliveryIsReportedWhileTheHSSHoldsAFlag: a delivery that
+// succeeds while the MWD-Status of the SRA shows MNRF, MCEF or MNRG set
+// is reported to the HSS, with SUCCESSFUL_TRANSFER for the node that
+// delivered it, so that the HSS clears the flag (TS 23.040 10.1
+// operation 3, 3.2.6 items 2g and 2h). Any other delivery that succeeds
+// goes unreported.
+func TestASuccessfulDeliveryIsReportedWhileTheHSSHoldsAFlag(t *testing.T) {
+	servedByIPSMGW := sgd.SendRoutingInfoForSMAnswer{Result: diameter.Base(diameter.DiameterSuccess), UserName: imsiOf[bob],
+		ServingNode: &sgd.ServingNode{IPSMGWNumber: "12025550192", IPSMGWName: ipsmgw, IPSMGWRealm: imsRealm}}
+	success := &sgd.NodeSMDeliveryOutcome{SMDeliveryCause: sgd.SMDeliveryCauseSuccessfulTransfer}
+	for _, tc := range []struct {
+		name   string
+		sra    sgd.SendRoutingInfoForSMAnswer
+		status *sgd.MWDStatus
+		want   *sgd.SMDeliveryOutcome
+	}{
+		{"no MWD-Status", servedByMME(bob), nil, nil},
+		{"the SC address and no flag", servedByMME(bob), new(sgd.MWDStatus(0)), nil},
+		{"MCEF", servedByMME(bob), new(sgd.MWDMCEFSet), &sgd.SMDeliveryOutcome{MMESMDeliveryOutcome: success}},
+		{"MCEF, for another SC", servedByMME(bob), new(sgd.MWDSCAddressNotIncluded | sgd.MWDMCEFSet),
+			&sgd.SMDeliveryOutcome{MMESMDeliveryOutcome: success}},
+		{"MNRF", servedByMME(bob), new(sgd.MWDMNRFSet), &sgd.SMDeliveryOutcome{MMESMDeliveryOutcome: success}},
+		{"MNRG", servedByMME(bob), new(sgd.MWDMNRGSet), &sgd.SMDeliveryOutcome{MMESMDeliveryOutcome: success}},
+		{"MCEF, through the IP-SM-GW", servedByIPSMGW, new(sgd.MWDMCEFSet), &sgd.SMDeliveryOutcome{IPSMGWSMDeliveryOutcome: success}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			n := newNetwork(t)
+			n.nodes.set(ipsmgw, accepts)
+			tc.sra.MWDStatus = tc.status
+			n.hss.set(bob, tc.sra)
+			n.submit(bob, hello(t, bob, 1))
+			if got := n.sentTo(bob); got != 1 {
+				t.Fatalf("%d TFRs, want the one that delivered", got)
+			}
+			reports := n.hss.reports()
+			if tc.want == nil {
+				if len(reports) != 0 {
+					t.Errorf("RDRs = %+v, want none", reports)
+				}
+				return
+			}
+			want := sgd.ReportSMDeliveryStatusRequest{
+				Header:            diameter.Header{DestinationRealm: epcRealm},
+				UserIdentifier:    sgd.UserIdentifier{MSISDN: bob},
+				SCAddress:         scAddress,
+				SMDeliveryOutcome: *tc.want,
+			}
+			if len(reports) != 1 || !reflect.DeepEqual(reports[0], want) {
+				t.Errorf("RDRs = %+v, want one: %+v", reports, want)
+			}
+		})
+	}
+}
+
 // TestMWDListFull has the HSS refuse to keep the SC address. The SC
 // still retries on its own (TS 23.040 3.2.8).
 func TestMWDListFull(t *testing.T) {

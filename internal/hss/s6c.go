@@ -17,8 +17,8 @@ import (
 // functions (TS 29.338 5). The SMS-GMSC asks which node serves a user
 // before it forwards a short message (SRR, 5.2.1), and tells the HSS
 // that a short message stays at the service centre when the delivery
-// failed (RDR, 5.2.3); the HSS alerts the SMS-IWMSC once the user can
-// take short messages again (ALR, 5.2.2).
+// failed, or that one got through (RDR, 5.2.3); the HSS alerts the
+// SMS-IWMSC once the user can take short messages again (ALR, 5.2.2).
 
 // handleS6c answers the S6c requests that reach the HSS.
 func (h *HSS) handleS6c(ctx context.Context, request *diam.Message) *diam.Message {

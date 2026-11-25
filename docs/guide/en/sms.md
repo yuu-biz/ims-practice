@@ -474,7 +474,7 @@ UE 1 asked for one (TP-SRR in the SMS-SUBMIT), so once the delivery report is in
 
 A registered UE does not always take a short message. It may answer that it cannot be reached just now, or that it has no memory left for one. The SC keeps the short message instead of dropping it, the HSS writes the SC's address into the message waiting data (MWD) of the user, and once the user can take short messages again the HSS alerts the SC, which delivers what it held (TS 23.040 3.2.6, TS 23.204 6.5a, 6.5b and 6.6).
 
-The retry schedule of this SC is one hour (`retry_delays` in `deploy/compose/sc.yaml`), so what delivers the short message in the runs below is the alert and not a retry. TS 23.040 3.2.7 NOTE 5 leaves those autonomous retries to the operator. Here they cover an alert that the HSS sent but that never reached the SC. They cannot stand in for the news that the UE is back: while the HSS holds the flag of A4 below, the SRA of each retry says DIAMETER_ERROR_ABSENT_USER.
+The retry schedule of this SC is one hour (`retry_delays` in `deploy/compose/sc.yaml`), so what delivers the short message in the runs below is the alert and not a retry. TS 23.040 3.2.7 NOTE 5 leaves those autonomous retries to the operator. Here they cover an alert that the HSS sent but that never reached the SC, and a notification of free memory that never reached the HSS ([The notification of free memory is lost](#the-notification-of-free-memory-is-lost)). They cannot stand in for the news that the UE is back: while the HSS holds the flag of A4 below, the SRA of each retry says DIAMETER_ERROR_ABSENT_USER.
 
 The ladders leave out the P-CSCF between the S-CSCF and the UE, and the LIR with which the I-CSCF finds UE 2's S-CSCF. The ladder of the delivery above shows both. The ladder of a re-registration below shows the P-CSCF, which the REGISTER passes, and leaves out the I-CSCF.
 
@@ -519,7 +519,7 @@ The ladders leave out the P-CSCF between the S-CSCF and the UE, and the LIR with
 - **A5.** `{"available": true}` takes short messages again, and the next request of UE 2 that reaches the IP-SM-GW says that the UE is there, whatever that request carries (TS 23.204 6.5b step 2). The run uses a short message of UE 2's own, whose own OFR the ladder leaves out. A re-registration says the same, as the next run shows.
 - **A6.** The IP-SM-GW clears its own UNRI and tells the HSS in a PUR whose SMSRegistrationInfo carries `<ReadyForSM xmlns="https://github.com/yuu-biz/ims-practice/ns/sh">msPresent</ReadyForSM>`. Sh has no element for this notification and this project speaks no MAP, so this one is of the project's own namespace (see [What this project simplifies](#what-this-project-simplifies)). The PUA does not wait for the alert, so the capture may show it before the ALR.
 - **A7.** The HSS clears UNRI and sends every Service Centre in the MWD an **Alert-Service-Centre** (ALR, command 8388648 of S6c), over the connection that Service Centre opened (TS 29.338 5.2.2, TS 23.040 3.2.6 item 2c). An address whose Service Centre answers with an ALA leaves the MWD. The HSS finds the Diameter identity of the Service Centre by its address, in `service_centres` of `deploy/compose/hss.yaml`, and names it in Destination-Host (TS 29.338 5.3.1.2). A Service Centre that runs as several instances is listed there with one identity for each, under `hosts`, and the HSS alerts them in that order until one answers with a successful ALA: the instances hold the same short messages, so any one of them delivers.
-- **A8.** The alert makes the queue of that number due at once, ahead of the retry schedule: an SRR, which names the IP-SM-GW again now that UNRI is clear, and the TFR of the short message the SC held. The SC starts the delivery before it answers the alert, and the HSS takes the SC's address out of the MWD only once the ALA is back, so the SRA usually still carries **MWD-Status** 0: the SC's address is in the MWD, and no flag is set (TS 29.338 5.3.3.8). The SC does not act on it.
+- **A8.** The alert makes the queue of that number due at once, ahead of the retry schedule: an SRR, which names the IP-SM-GW again now that UNRI is clear, and the TFR of the short message the SC held. The SC starts the delivery before it answers the alert, and the HSS takes the SC's address out of the MWD only once the ALA is back, so the SRA usually still carries **MWD-Status** 0: the SC's address is in the MWD, and no flag is set (TS 29.338 5.3.3.8). With no flag set, the SC does not report the delivery that follows ([The notification of free memory is lost](#the-notification-of-free-memory-is-lost)).
 - **A9.** UE 2 takes it this time. Its delivery report ends the delivery, and the TFA says 2001, as in steps 11 and 12.
 
 ### UE 2 only registers again
@@ -581,6 +581,35 @@ The resend is the one of A8 and A9.
 - **B8.** The RP-ACK for the notification goes to the UE only after the HSS has taken it, so an RP-ACK never tells the UE that a notification got through when it did not. A notification the HSS refuses gets RP-Cause 41 instead, and the UE still owes one.
 
 The resend is the one of A8 and A9: an SRR, the TFR of the short message the SC held, and the delivery report that ends it.
+
+### The notification of free memory is lost
+
+An RP-SMMA can be lost on its way. UE 2 then has memory again while MCEF is still set in the HSS, and while MCEF is set no registration of UE 2 alerts the SC (TS 23.040 3.2.6 item 2c). The short message goes out again only at the retry of the SC.
+
+```text
+ S-CSCF    I-CSCF    IP-SM-GW  SC        HSS       UE 2
+  :         :         :         :         :         :  B1 to B4: the memory is full, and the SC holds the short message
+  :         :         :         :         :         :  UE 2 has memory again, and its RP-SMMA is lost
+  |         |         |         |-------->|         |  SRR at the retry (D1)
+  |         |         |         |<--------|         |  SRA with MWD-Status MCEF-Set
+  |         |         |<--------|         |         |  TFR (D2)
+  |         |<--------|         |         |         |  MESSAGE SMS-DELIVER
+  |<--------|         |         |         |         |
+  |------------------------------------------------>|
+  |<------------------------------------------------|  200, then MESSAGE delivery report (D2)
+  |------------------>|         |         |         |
+  |         |         |-------->|         |         |  TFA 2001 (D2)
+  |         |         |         |-------->|         |  RDR SUCCESSFUL_TRANSFER (D3)
+  |         |         |         |<--------|         |  RDA
+```
+
+- **D1.** The retry comes after the delay of `retry_delays`. A full memory left UNRI clear, so the SRA names the IP-SM-GW. It also carries **MWD-Status** with bit 2, MCEF-Set: the HSS has MCEF set for the user. Bit 0, SC-Address Not included, is clear, as the SC's address is in the MWD (TS 29.338 5.3.3.8).
+- **D2.** The delivery of A8 and A9. UE 2 takes the short message this time, and the TFA says 2001.
+- **D3.** A delivery that succeeds while the HSS has MCEF, MNRF or MNRG set for the user is one that the SMS-GMSC reports (TS 23.040 10.1 operation 3, 3.2.6 items 2g and 2h). The SC sends an RDR whose `SM-Delivery-Cause` is SUCCESSFUL_TRANSFER, for the IP-SM-GW that delivered it (TS 29.338 5.2.3.1, 5.3.3.19). The HSS clears MCEF, takes the SC's address out of the MWD, and alerts the other Service Centres that are still in it.
+
+Without D3, MCEF would stay set. When UE 2 was away and back again later, its registration would alert nobody, and a short message held for it then would wait for the next retry.
+
+`TestARetryAfterAFullMemoryClearsTheFlag` in `internal/ipsmgw/chain_test.go` runs these steps with a retry after one second; in this network the retry is an hour away. The SRA of a resend that an alert set off carries no MCEF-Set, since the notification has cleared MCEF before the alert, so A8 is followed by no such RDR.
 
 ## When it fails
 
@@ -886,7 +915,7 @@ A text with a character outside the alphabet, such as Japanese, is sent in UCS2 
 | `internal/ue/sms.go` | The UE as SM-over-IP sender and receiver. |
 | `internal/lab/sms.go` | How the Lab decodes a short message for the details view. |
 | `internal/ipsmgw/network_test.go`, `internal/ue/sms_ims_test.go` | The whole flow in one process, with the cases above. |
-| `internal/ipsmgw/chain_test.go` | The IP-SM-GW, the Service Centre and the HSS in one process, on real Diameter connections: a delivery, and the ones that are held and alerted, with the UE back by a short message, by a re-registration or by the notification that it has memory again. |
+| `internal/ipsmgw/chain_test.go` | The IP-SM-GW, the Service Centre and the HSS in one process, on real Diameter connections: a delivery, and the ones that are held and alerted, with the UE back by a short message, by a re-registration or by the notification that it has memory again, and the retry that delivers when that notification is lost. |
 
 ## What this project simplifies
 
@@ -907,6 +936,8 @@ Each item has a `SIMPLIFIED:` comment in the code; `grep -rn "SIMPLIFIED:" inter
 | SC, TS 23.204 6.4 step 3 | In the stub, the routeing information query (SRI for SM, or S6c) is replaced by an Sh read of the public identities that have the number. | The stub knows the user only as a user of the IMS. The `sc` node sends the query itself. |
 | SGd and S6c, TS 29.338 4.6 | The two interfaces run over TCP, as every Diameter connection of this project does, and not over the SCTP that the clause requires of them. | RFC 6733 2.1 lets the base protocol run over either, and TCP works on every machine that runs the containers of this project, which SCTP does not. |
 | SC, TS 29.338 5.3.3.5 | The routing info query with which the Service Centre checks, before it takes a short message, that someone has the number does not carry `SM-Delivery-Not-Intended`, so the HSS reads it like the query of a delivery. | No node of this project acts on that element, and the check wants the same answer as a delivery would get. |
+| SC, TS 29.338 5.2.3.2 | The Service Centre reports every delivery that failed because the recipient was absent or had no memory, also when the routing info answer showed that the HSS holds its address and the flag of that failure already. | Such a report changes nothing in the HSS, and the flag of a failure through the IP-SM-GW, UNRI, has no bit in that answer. |
+| SC, TS 23.040 8.1.1 | After a delivery that failed through the first serving node and succeeded through the second, the report to the HSS carries the success alone, without the absent subscriber of the first node. | The HSS of this project names one serving node, so a delivery that it routes has no second one. |
 | SC, TS 23.040 3.2.7 | An alert finds the short messages that wait by the MSISDN it carries, the MSISDN-Alert of the user. | Each user of this project has one number, so there is no second one to hold a queue of its own. |
 | SMS, TS 23.040 9.1.2.5 | An alphanumeric address (type of number 101), such as a sender name, is refused. | The Service Centre uses E.164 numbers only: it has no numbering plan to read any other kind of address with. |
 | SMS, TS 23.040 9.2.2.4 | SMS-COMMAND is refused. | It asks the Service Centre about a message it holds, which no UE of this project does. |

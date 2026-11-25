@@ -101,17 +101,22 @@ func aliceSubscription() hss.Subscription {
 // the SC to the HSS, so that the alert comes back over it (TS 29.338
 // 5.2.2), and the IP-SM-GW to both, as the end that brings the mobile
 // originated short messages (6.3.1.1).
+//
+// The Service Centre tries a short message it holds again an hour after
+// each failure, so that one goes out again only because the HSS alerted
+// it.
 func newChain(t *testing.T, answer func(*sip.Message) int) *chain {
 	t.Helper()
-	return newChainOf(t, answer, 1, 1)
+	return newChainOf(t, answer, 1, 1, time.Hour)
 }
 
 // newChainOf is newChain with gateways instances of the IP-SM-GW and
-// centres instances of the Service Centre. Each IP-SM-GW connects to
+// centres instances of the Service Centre, which tries a short message
+// it holds again retry after each failure. Each IP-SM-GW connects to
 // every instance of the Service Centre, as a serving node does to reach
 // any of them, and sends its short messages to the first one whose
 // connection is open.
-func newChainOf(t *testing.T, answer func(*sip.Message) int, gateways, centres int) *chain {
+func newChainOf(t *testing.T, answer func(*sip.Message) int, gateways, centres int, retry time.Duration) *chain {
 	t.Helper()
 	if err := diameter.LoadDictionary(); err != nil {
 		t.Fatal(err)
@@ -149,7 +154,7 @@ func newChainOf(t *testing.T, answer func(*sip.Message) int, gateways, centres i
 	scStore := smsc.NewMemoryStore()
 	var scServers []*diameter.Server
 	for _, host := range scHosts {
-		centre, server, toHSS := startCentre(t, host, scStore, hssServer.Addr())
+		centre, server, toHSS := startCentre(t, host, scStore, hssServer.Addr(), retry)
 		c.centres = append(c.centres, centre)
 		scServers = append(scServers, server)
 		opening = append(opening, toHSS)
@@ -191,10 +196,11 @@ func newChainOf(t *testing.T, answer func(*sip.Message) int, gateways, centres i
 }
 
 // startCentre starts an instance of the Service Centre with the
-// Diameter identity host on store, connected to the HSS at hssAddr. It
+// Diameter identity host on store, connected to the HSS at hssAddr,
+// which tries a short message again retry after each failure. It
 // returns the instance, the listener that the IP-SM-GWs connect to, and
 // its connection to the HSS.
-func startCentre(t *testing.T, host string, store smsc.Store, hssAddr string) (*chainCentre, *diameter.Server, *diameter.Peer) {
+func startCentre(t *testing.T, host string, store smsc.Store, hssAddr string, retry time.Duration) (*chainCentre, *diameter.Server, *diameter.Peer) {
 	t.Helper()
 	id := diameter.Identity{OriginHost: host, OriginRealm: domain}
 	node := diameter.NewNode(id, []uint32{sgd.ApplicationIDS6c, sgd.ApplicationIDSGd}, sgdTimers, quiet())
@@ -203,10 +209,8 @@ func startCentre(t *testing.T, host string, store smsc.Store, hssAddr string) (*
 		t.Fatal(err)
 	}
 	toHSS := node.Connect(diameter.PeerConfig{Address: hssAddr, OriginHost: hssDiameterHost})
-	// One retry an hour from now, so that a short message the SC holds
-	// goes out again only because the HSS alerted it.
 	centre := smsc.New(smsc.Config{Address: scNumber, HSSRealm: domain,
-		RetrySchedule: []time.Duration{time.Hour}, PollInterval: 20 * time.Millisecond},
+		RetrySchedule: []time.Duration{retry}, PollInterval: 20 * time.Millisecond},
 		store, sgd.NewSGdClient(node, server, 30*time.Second),
 		sgd.NewS6cClient(node, toHSS), smsc.SystemClock, quiet())
 	node.Handle(func(request *diam.Message) *diam.Message { return serviceCentreAnswer(t, id, centre, request) })
@@ -533,6 +537,38 @@ func TestMemoryFullIsAlertedThroughTheServiceCentre(t *testing.T) {
 		UserData: marshal(t, sms.DeliverReport{})}))
 }
 
+// TestARetryAfterAFullMemoryClearsTheFlag is TS 23.040 10.1 operation 3
+// with 3.2.6 item 2g: a UE whose memory was full owes the network an
+// RP-SMMA, and here it never arrives, so MCEF stays set in the HSS. The
+// retry of the Service Centre delivers the short message all the same.
+// The routing info answer of that retry showed MCEF, so the Service
+// Centre reports the delivery, and the HSS clears MCEF and the address.
+func TestARetryAfterAFullMemoryClearsTheFlag(t *testing.T) {
+	c := newChainOf(t, answerOK, 1, 1, time.Second)
+	c.registerAlice()
+
+	if resp := c.send(message(submitBody(t, 8, scAddress, toAlice(8)))); resp.StatusCode != 202 {
+		t.Fatalf("MESSAGE answered %d, want 202", resp.StatusCode)
+	}
+	mt, data := c.nextDelivery()
+	c.send(deliveryReport(t, mt, sms.RPError{Direction: sms.MSToNetwork, MessageReference: data.MessageReference,
+		Cause: sms.RPCauseMemoryCapacityExceeded, UserData: marshal(t, sms.DeliverReport{FailureCause: sms.FCSMemoryCapacityExceeded})}))
+	c.waitForSubscriber("the SC waits for Alice and her memory is full", func(u hss.Subscriber) bool {
+		return len(u.MessageWaitingData) == 1 && u.MessageWaitingData[0] == scNumber && u.MCEF
+	})
+
+	// The memory is free again, and the RP-SMMA that says so is lost. The
+	// retry a second later brings the short message, and the UE takes it.
+	mt, data = c.nextDelivery()
+	if resp := c.send(deliveryReport(t, mt, sms.RPAck{Direction: sms.MSToNetwork, MessageReference: data.MessageReference,
+		UserData: marshal(t, sms.DeliverReport{})})); resp.StatusCode != 202 {
+		t.Fatalf("delivery report answered %d, want 202", resp.StatusCode)
+	}
+	c.waitForSubscriber("the reported delivery cleared MCEF and the address of the SC", func(u hss.Subscriber) bool {
+		return len(u.MessageWaitingData) == 0 && !u.MCEF && !u.UNRI
+	})
+}
+
 // parseRPOf reads the RP message of a MESSAGE, or nil where there is
 // none. The entry point of a chain reads it to tell a short message for
 // the UE from the reports that go to it.
@@ -568,7 +604,7 @@ func (c *chain) deliveredBy(mt *sip.Message, k int) {
 // the other instance of the realm, which finds Alice in the store the
 // two share (RFC 6733 7.1.3).
 func TestShortMessageForAShutDownIPSMGWGoesThroughAnother(t *testing.T) {
-	c := newChainOf(t, answerOK, 2, 1)
+	c := newChainOf(t, answerOK, 2, 1, time.Hour)
 	c.registerAlice()
 	setState(t, c.manage(), maintenance.ShuttingDown)
 
@@ -592,7 +628,7 @@ func TestShortMessageForAShutDownIPSMGWGoesThroughAnother(t *testing.T) {
 // has nothing to send that TFR on, and sends the short message to the
 // other instance of the realm.
 func TestShortMessageForAnIPSMGWWithoutAConnectionGoesThroughAnother(t *testing.T) {
-	c := newChainOf(t, answerOK, 2, 1)
+	c := newChainOf(t, answerOK, 2, 1, time.Hour)
 	c.registerAlice()
 	c.gateways[0].toSC[0].Stop()
 
@@ -627,7 +663,7 @@ func TestAnotherSCDeliversWhatItHoldsWhenTheHSSAlertsIt(t *testing.T) {
 			return 480
 		}
 	}
-	c := newChainOf(t, answer, 1, 2)
+	c := newChainOf(t, answer, 1, 2, time.Hour)
 	c.centres[0].stop()
 	subscribe := c.registerAlice()
 

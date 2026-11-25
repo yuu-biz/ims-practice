@@ -277,6 +277,7 @@ func (c *SMSC) attempt(ctx context.Context, m Message, more bool, log *slog.Logg
 	for _, node := range nodes {
 		f := c.forward(ctx, node, sra.UserName, tpdu, log)
 		if f == nil {
+			c.reportDelivered(ctx, m.Destination, node.kind, sra.MWDStatus, log)
 			return outcome{kind: delivered}
 		}
 		failures = append(failures, *f)
@@ -512,36 +513,23 @@ func deliveryFailure(tfa sgd.MTForwardShortMessageAnswer) failure {
 // 23.040 3.2.8 case 1 and 8.1.1, TS 29.338 5.2.3.2). The HSS then alerts
 // the SC when the recipient can take short messages again.
 //
-// SIMPLIFIED: TS 29.338 5.2.3.2 and TS 23.040 10.1 operation 3. The SC
-// does not read the MWD-Status of the SRA, so it reports after each such
-// failure, whether or not its address is in the MWD already, and does
-// not report a successful delivery after which the HSS would clear MNRF.
-// The HSS of this project clears it when the user is reachable again.
+// SIMPLIFIED: TS 29.338 5.2.3.2. The SC reports each such failure, also
+// where the MWD-Status of the SRA shows that the HSS holds its address
+// and the flag of that failure already, which the clause leaves out.
+// Such a report changes nothing in the HSS (TS 23.040 3.2.6 items 1a to
+// 1e), and the flag of a failure through the IP-SM-GW, UNRI, has no bit
+// in the MWD-Status (TS 29.338 Table 5.3.3.8/1).
 func (c *SMSC) reportDeliveryStatus(ctx context.Context, msisdn string, failures []failure, log *slog.Logger) {
 	var outcome sgd.SMDeliveryOutcome
 	for _, f := range failures {
-		if f.waiting == nil {
-			continue
-		}
-		o := &sgd.NodeSMDeliveryOutcome{SMDeliveryCause: *f.waiting}
-		switch f.node.kind {
-		case nodeMME:
-			outcome.MMESMDeliveryOutcome = o
-		case nodeIPSMGW:
-			outcome.IPSMGWSMDeliveryOutcome = o
-		case nodeSMSF:
-			outcome.SMSF3GPPSMDeliveryOutcome = o
+		if f.waiting != nil {
+			setOutcome(&outcome, f.node.kind, *f.waiting)
 		}
 	}
 	if outcome == (sgd.SMDeliveryOutcome{}) {
 		return
 	}
-	rda, err := c.s6c.ReportSMDeliveryStatus(ctx, sgd.ReportSMDeliveryStatusRequest{
-		Header:            c.s6cHeader(),
-		UserIdentifier:    sgd.UserIdentifier{MSISDN: msisdn},
-		SCAddress:         c.cfg.Address,
-		SMDeliveryOutcome: outcome,
-	})
+	rda, err := c.sendDeliveryStatus(ctx, msisdn, outcome)
 	switch {
 	case err != nil:
 		log.Warn("the HSS did not answer the delivery status report; only the retries are left", "error", err.Error())
@@ -552,4 +540,66 @@ func (c *SMSC) reportDeliveryStatus(ctx context.Context, msisdn string, failures
 	default:
 		log.Info("the HSS keeps the SC address in the MWD")
 	}
+}
+
+// reportDelivered tells the HSS that the short message reached the
+// recipient through a node of kind, when the MWD-Status of the SRA
+// shows that the HSS has MNRF, MCEF or MNRG set for the recipient (TS
+// 23.040 10.1 operation 3, TS 29.338 5.2.3.1). The HSS then clears the
+// flags, takes the SC address out of the MWD, and alerts the service
+// centres that still wait for the recipient (TS 23.040 3.2.6 items 2g
+// and 2h). Without the report, an MCEF that the UE's notification of
+// free memory never cleared would stay set: a later return of the UE
+// would alert no service centre, and what it held then would wait for
+// its retry.
+//
+// The address of the SC in the MWD with no flag set asks for no report:
+// the HSS takes the address out itself once the SC has answered its
+// alert.
+//
+// SIMPLIFIED: TS 23.040 8.1.1. After a delivery that failed through the
+// first node and succeeded through the second, the report carries the
+// success alone, and not the absent subscriber of the first node too.
+// The HSS of this project names one serving node, so a delivery it
+// routes has no second one.
+func (c *SMSC) reportDelivered(ctx context.Context, msisdn string, kind nodeKind, status *sgd.MWDStatus, log *slog.Logger) {
+	if status == nil || *status&(sgd.MWDMNRFSet|sgd.MWDMCEFSet|sgd.MWDMNRGSet) == 0 {
+		return
+	}
+	var outcome sgd.SMDeliveryOutcome
+	setOutcome(&outcome, kind, sgd.SMDeliveryCauseSuccessfulTransfer)
+	rda, err := c.sendDeliveryStatus(ctx, msisdn, outcome)
+	switch {
+	case err != nil:
+		log.Warn("the HSS did not answer the report of the delivery; its flags for the recipient stay set", "error", err.Error())
+	case !rda.Result.Success():
+		log.Info("the HSS refused the report of the delivery; its flags for the recipient stay set", "result", rda.Result.String())
+	default:
+		log.Info("the HSS heard of the delivery and clears its flags for the recipient", "mwd_status", uint32(*status))
+	}
+}
+
+// setOutcome puts cause into o as the outcome of the delivery through
+// a node of kind (TS 29.338 5.3.3.14).
+func setOutcome(o *sgd.SMDeliveryOutcome, kind nodeKind, cause sgd.SMDeliveryCause) {
+	n := &sgd.NodeSMDeliveryOutcome{SMDeliveryCause: cause}
+	switch kind {
+	case nodeMME:
+		o.MMESMDeliveryOutcome = n
+	case nodeIPSMGW:
+		o.IPSMGWSMDeliveryOutcome = n
+	case nodeSMSF:
+		o.SMSF3GPPSMDeliveryOutcome = n
+	}
+}
+
+// sendDeliveryStatus sends the HSS the RDR of TS 29.338 5.2.3 for
+// msisdn with outcome.
+func (c *SMSC) sendDeliveryStatus(ctx context.Context, msisdn string, outcome sgd.SMDeliveryOutcome) (sgd.ReportSMDeliveryStatusAnswer, error) {
+	return c.s6c.ReportSMDeliveryStatus(ctx, sgd.ReportSMDeliveryStatusRequest{
+		Header:            c.s6cHeader(),
+		UserIdentifier:    sgd.UserIdentifier{MSISDN: msisdn},
+		SCAddress:         c.cfg.Address,
+		SMDeliveryOutcome: outcome,
+	})
 }

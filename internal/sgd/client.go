@@ -28,7 +28,7 @@ type HSS interface {
 }
 
 // S6cClient sends the S6c requests of the SMS-GMSC: the routing query
-// before a delivery (SRR) and the report of a delivery that failed
+// before a delivery (SRR) and the report of how a delivery ended
 // (RDR). An IP-SM-GW sends the same two (TS 23.204 6.4 step 3b, 6.5 step
 // 7).
 //
