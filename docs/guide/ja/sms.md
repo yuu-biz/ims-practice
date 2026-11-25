@@ -966,6 +966,7 @@ octet 2: lowest 2 bits of 'l' (00), then rest of 'e' (110010) = 0011 0010 = 32
 | HSS、TS 23.040 3.2.6 の 1a と 1b | 利用者が不在だったとき、どのノードからの報告でも IP で届かないことを示すフラグを立てます。MSC からの報告と SGSN からの報告でフラグを分けません。 | HSS はそのような serving node を示さないので、失敗するのは IP-SM-GW を通る配送だけです。 |
 | HSS、TS 29.338 5.2.1.3 | 配送先の問い合わせに答えるとき、着信ショートメッセージのテレサービスに加入しているかと、着信を禁止されていないかを確かめない。そのため DIAMETER_ERROR_SERVICE_NOT_SUBSCRIBED と DIAMETER_ERROR_SERVICE_BARRED を返さない。 | この HSS の加入者はどれもショートメッセージを受け取れ、事業者が決める発着信規制を持たない。 |
 | HSS、TS 29.338 Table 5.2.1.1-2 | 非公開ユーザー識別子が IMSI から作られていない加入、たとえばソフトフォンが番号で登録する加入では、成功の応答に IMSI を入れない。Sh で IMSI を読んだときも、そのような加入には利用者のデータを返さない。 | HSS は IMSI を独立して持たず、TS 23.003 13.3 の IMSI を非公開ユーザー識別子から読む。 |
+| HSS、TS 29.338 Table 5.2.1.1-2 と TS 23.040 10.1 の operation 7 | 経路の問い合わせへの答えで、利用者を待っているもの（`MWD-Status`）をサービスセンタに伝えるのは、serving node を返すときだけである。DIAMETER_ERROR_ABSENT_USER のときは伝えない。 | サービスセンタがこれを読むのは成功した配達のあとだけで、その配達は serving node を返した答えのあとに行われている。 |
 | HSS、TS 23.204 6.4 step 3a から 3c | 配送先の問い合わせを IP-SM-GW に回さず、HSS が自分で答える。回した場合、IP-SM-GW は自分のアドレスと MT Correlation ID を返す。 | 問い合わせを回すのは、ほかの網から来たショートメッセージを宛先のホーム網を通して配送させるためで、このプロジェクトはそれを行わない。IP-SM-GW の Diameter 名は登録のときに HSS が覚えている。 |
 | HSS、TS 29.329 7.1 | Supported-Features で機能を取り決めない。HSS は、省略できる機能にどれも対応しない AS と同じように扱うので、要求は Data-Reference を 1 つだけ指定し、Repository Data では Service-Indication か RepositoryData も 1 つだけにする。HSS にデータが無いときの応答には User-Data が無い。 | このプロジェクトの IP-SM-GW は、省略できる機能をどれも示さない。 |
 | HSS、TS 29.328 6.2 | AS ごとの権限が無く、接続したピアならどれでも Sh を使える。 | このプロジェクトの AS は IP-SM-GW だけである。 |
