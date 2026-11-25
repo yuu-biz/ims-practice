@@ -737,6 +737,22 @@ func (h *HSS) putSubscription(w http.ResponseWriter, r *http.Request, peers Peer
 			h.writeAddFailure(w, err)
 			return
 		}
+		if deregister {
+			// From here the RTR goes, whatever the rest of the request
+			// meets: the HSS holds the user Not Registered, so the same PUT
+			// sent again would find nothing to deregister. It goes once the
+			// lock is let go, as a PPR does. The context outlives the client
+			// (Provisioning), and the Answer timer of the peer bounds the
+			// wait for the RTA.
+			defer func() {
+				unlock()
+				h.log.Info("registration state", "private_identity", impi, "from", stored.State.String(), "to", NotRegistered.String(),
+					"reason", "a new default public identity")
+				if err := h.registrationTermination(ctx, peers, stored); err != nil {
+					h.log.Warn("RTR failed", "private_identity", impi, "scscf", stored.SCSCF.OriginHost, "error", err.Error())
+				}
+			}()
+		}
 		// The repository data follows the subscription. A store that fails
 		// in between leaves the subscription written and its data not,
 		// which the same PUT sent again finishes.
@@ -751,16 +767,7 @@ func (h *HSS) putSubscription(w http.ResponseWriter, r *http.Request, peers Peer
 		}
 		h.log.Info("subscription replaced", "private_identity", sub.PrivateIdentity, "public_identities", sub.PublicIdentities,
 			"state", stored.State.String())
-		switch {
-		case deregister:
-			// The lock is let go before the RTR, as before a PPR.
-			unlock()
-			h.log.Info("registration state", "private_identity", impi, "from", stored.State.String(), "to", NotRegistered.String(),
-				"reason", "a new default public identity")
-			if err := h.registrationTermination(ctx, peers, stored); err != nil {
-				h.log.Warn("RTR failed", "private_identity", impi, "scscf", stored.SCSCF.OriginHost, "error", err.Error())
-			}
-		case h.profileChanged(stored, next):
+		if !deregister && h.profileChanged(stored, next) {
 			unlock()
 			h.pushChangedProfile(ctx, peers, impi)
 		}

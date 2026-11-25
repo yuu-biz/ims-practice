@@ -2,6 +2,7 @@ package hss
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"slices"
@@ -13,6 +14,7 @@ import (
 	"github.com/yuu-biz/ims-practice/internal/cx"
 	"github.com/yuu-biz/ims-practice/internal/diameter"
 	"github.com/yuu-biz/ims-practice/internal/ifc"
+	"github.com/yuu-biz/ims-practice/internal/sh"
 )
 
 // The tests of this file are TS 29.228 6.6.1: a provisioning request
@@ -251,6 +253,62 @@ func TestAPutThatRespellsTheDefaultIdentityKeepsTheRegistration(t *testing.T) {
 	}
 	if u, _, err := h.store.Subscriber(context.Background(), impi); err != nil || u.State != Registered {
 		t.Errorf("after the PUT the user is %s (%v), want Registered", u.State, err)
+	}
+}
+
+// repositoryDataFails is a store whose writes of repository data fail.
+type repositoryDataFails struct{ *MemoryStore }
+
+func (repositoryDataFails) CompareAndSwapRepositoryData(context.Context, string, *sh.TransparentData, sh.TransparentData) (bool, error) {
+	return false, errors.New("the store failed")
+}
+
+// TestTheRTRFollowsTheWriteWhateverComesAfter: once the HSS has written
+// the user Not Registered with the new default identity, the RTR goes,
+// as a PUT sent again would find the user Not Registered and send none.
+// Neither a failure of the rest of the request nor a client that has
+// gone away keeps it back.
+func TestTheRTRFollowsTheWriteWhateverComesAfter(t *testing.T) {
+	moved := `{"private_identity": "` + impi + `", "public_identities": ["tel:+12025550101", "` + impu + `"], "password": "test-password-1"`
+	tests := []struct {
+		name   string
+		failed bool
+		body   string
+		code   int
+	}{
+		{"the repository data cannot be written", true, moved + `, "ut_password": "ut"}`, http.StatusInternalServerError},
+		{"the client has gone", false, moved + `}`, http.StatusOK},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			memory, err := NewMemoryStore(Subscription{PrivateIdentity: impi, PublicIdentities: []string{impu, "tel:+12025550101"}, Password: "test-password-1"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			var store Store = memory
+			if tt.failed {
+				store = repositoryDataFails{memory}
+			}
+			node := diameter.NewNode(diameter.Identity{OriginHost: "hss." + realm, OriginRealm: realm}, []uint32{diameter.ApplicationIDCx}, diameter.Timers{}, quiet())
+			h := mustHSS(Config{Realm: realm, VisitedNetworks: []string{realm}}, store, node)
+			mar(t, h, scscf)
+			sar(t, h, scscf, cx.AssignRegistration)
+			scscfs := &fakeSCSCFs{}
+			ctx, cancel := context.WithCancel(context.Background())
+			if !tt.failed {
+				cancel()
+			}
+			defer cancel()
+			r := httptest.NewRequest("PUT", "/subscriptions/"+impi, strings.NewReader(tt.body)).WithContext(ctx)
+			w := httptest.NewRecorder()
+			h.Provisioning(scscfs).ServeHTTP(w, r)
+			if w.Code != tt.code {
+				t.Fatalf("PUT: %d %s, want %d", w.Code, w.Body, tt.code)
+			}
+			if len(scscfs.rtrs) != 1 {
+				t.Errorf("%d RTRs, want the one of the new default identity", len(scscfs.rtrs))
+			}
+		})
 	}
 }
 
