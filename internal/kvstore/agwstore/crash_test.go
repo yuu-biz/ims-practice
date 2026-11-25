@@ -2,13 +2,11 @@ package agwstore_test
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"net/netip"
 	"slices"
 	"testing"
-	"time"
 
 	"github.com/yuu-biz/ims-practice/internal/agw"
 	"github.com/yuu-biz/ims-practice/internal/kvstore"
@@ -31,10 +29,10 @@ func call(id string, port uint16) agw.SavedContext {
 	}}
 }
 
-// relayOn is the Store of relay on kv, with the clock now.
-func relayOn(t *testing.T, kv kvstore.Store, prefix string, now func() time.Time) *agwstore.Store {
+// relayOn is the Store of relay on kv.
+func relayOn(t *testing.T, kv kvstore.Store, prefix string) *agwstore.Store {
 	t.Helper()
-	s, err := agwstore.New(kv, agwstore.Config{Config: kvjson.Config{Prefix: prefix, Now: now}, Relay: relay})
+	s, err := agwstore.New(kv, agwstore.Config{Config: kvjson.Config{Prefix: prefix}, Relay: relay})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -54,25 +52,15 @@ func ids(t *testing.T, s *agwstore.Store) []string {
 	return got
 }
 
-// indexIDs reads the index item as it is in the store.
+// indexIDs reads the index as it is in the store. The tests leave far
+// fewer entries than the limit of the read.
 func indexIDs(t *testing.T, kv kvstore.Store, prefix string) []string {
 	t.Helper()
-	item, err := kv.Get(context.Background(), prefix+"agw:"+relay+":contexts")
-	if errors.Is(err, kvstore.ErrNotFound) {
-		return nil
-	}
+	ids, err := kv.MembersAfter(context.Background(), prefix+"agw:"+relay+":context-ids", "", 1000)
 	if err != nil {
 		t.Fatal(err)
 	}
-	var ix struct{ Contexts []struct{ ID string } }
-	if err := json.Unmarshal(item.Value, &ix); err != nil {
-		t.Fatal(err)
-	}
-	var got []string
-	for _, e := range ix.Contexts {
-		got = append(got, e.ID)
-	}
-	return got
+	return ids
 }
 
 func hasItem(t *testing.T, kv kvstore.Store, prefix, id string) bool {
@@ -86,35 +74,25 @@ func hasItem(t *testing.T, kv kvstore.Store, prefix, id string) bool {
 
 // TestAPutThatStopsLeavesOnlyASkippedEntry stops a relay after it wrote
 // the index entry of a new context, before the context. The relay
-// created again restores the other context only, and once the entry is
-// older than any PutContext under way could be, removes it.
+// created again restores the other context only, and removes the entry
+// at once: while a relay starts, no PutContext of it is under way.
 func TestAPutThatStopsLeavesOnlyASkippedEntry(t *testing.T) {
 	for _, backend := range storetest.Backends() {
 		t.Run(backend.Name, func(t *testing.T) {
 			ctx := context.Background()
 			kv, prefix := backend.New(t), storetest.Prefix()
-			now := time.UnixMilli(1_790_000_000_000)
-			clock := func() time.Time { return now }
-			if err := relayOn(t, kv, prefix, clock).PutContext(ctx, call("c1", 20000)); err != nil {
+			if err := relayOn(t, kv, prefix).PutContext(ctx, call("c1", 20000)); err != nil {
 				t.Fatal(err)
 			}
-			if err := relayOn(t, storetest.StopAfter(kv, 1), prefix, clock).PutContext(ctx, call("c2", 20004)); err == nil {
+			if err := relayOn(t, storetest.StopAfter(kv, 1), prefix).PutContext(ctx, call("c2", 20004)); err == nil {
 				t.Fatal("PutContext of a relay that stopped half way reported no error")
 			}
-
-			recreated := relayOn(t, kv, prefix, clock)
-			if got := ids(t, recreated); !slices.Equal(got, []string{"c1"}) {
-				t.Fatalf("Contexts after the stop = %v, want [c1]", got)
-			}
-			// A PutContext under way looks the same, so the entry stays
-			// for now.
 			if got := indexIDs(t, kv, prefix); !slices.Equal(got, []string{"c1", "c2"}) {
 				t.Fatalf("index right after the stop = %v, want [c1 c2]", got)
 			}
 
-			now = now.Add(2 * time.Minute)
-			if got := ids(t, recreated); !slices.Equal(got, []string{"c1"}) {
-				t.Fatalf("Contexts later = %v, want [c1]", got)
+			if got := ids(t, relayOn(t, kv, prefix)); !slices.Equal(got, []string{"c1"}) {
+				t.Fatalf("Contexts after the stop = %v, want [c1]", got)
 			}
 			if got := indexIDs(t, kv, prefix); !slices.Equal(got, []string{"c1"}) {
 				t.Fatalf("index after the repair = %v, want [c1]", got)
@@ -146,12 +124,12 @@ func TestNoContextThatContextsCannotFind(t *testing.T) {
 			for writes := range 3 {
 				t.Run(fmt.Sprintf("%s/%s/%d", backend.Name, op.name, writes), func(t *testing.T) {
 					kv, prefix := backend.New(t), storetest.Prefix()
-					if err := relayOn(t, kv, prefix, nil).PutContext(context.Background(), call("c1", 20000)); err != nil {
+					if err := relayOn(t, kv, prefix).PutContext(context.Background(), call("c1", 20000)); err != nil {
 						t.Fatal(err)
 					}
-					op.do(relayOn(t, storetest.StopAfter(kv, writes), prefix, nil))
+					op.do(relayOn(t, storetest.StopAfter(kv, writes), prefix))
 
-					restored := ids(t, relayOn(t, kv, prefix, nil))
+					restored := ids(t, relayOn(t, kv, prefix))
 					for _, id := range []string{"c1", "c2"} {
 						if hasItem(t, kv, prefix, id) && !slices.Contains(restored, id) {
 							t.Errorf("context %s is in the store, and Contexts (%v) does not find it", id, restored)
@@ -168,10 +146,10 @@ func TestNoContextThatContextsCannotFind(t *testing.T) {
 func TestContextsReportsAFailingStore(t *testing.T) {
 	ctx := context.Background()
 	kv, prefix := kvstore.NewMemoryStore(nil), storetest.Prefix()
-	if err := relayOn(t, kv, prefix, nil).PutContext(ctx, call("c1", 20000)); err != nil {
+	if err := relayOn(t, kv, prefix).PutContext(ctx, call("c1", 20000)); err != nil {
 		t.Fatal(err)
 	}
-	stopped := relayOn(t, storetest.StopAfter(kv, 0), prefix, nil)
+	stopped := relayOn(t, storetest.StopAfter(kv, 0), prefix)
 	if err := stopped.DeleteContext(ctx, "c1"); err == nil {
 		t.Fatal("DeleteContext on a stopped instance reported no error")
 	}
