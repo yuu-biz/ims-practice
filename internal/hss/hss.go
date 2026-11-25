@@ -762,14 +762,29 @@ func (h *HSS) serverAssignment(ctx context.Context, r cx.ServerAssignmentRequest
 		return cx.ServerAssignmentAnswer{Result: result}
 	}
 	defer unlock()
+	// Step 3.
+	if (r.ServerAssignmentType == cx.AssignRegistration || r.ServerAssignmentType == cx.ReRegistration) && len(r.PublicIdentities) > 1 {
+		return cx.ServerAssignmentAnswer{Result: diameter.Base(diameter.DiameterAVPOccursTooManyTimes)}
+	}
+	// 8.1.2: the HSS holds another S-CSCF for the user, one whose MAR
+	// took the user over (8.1.1) or one that serves the user in the
+	// unregistered state. A registration that this S-CSCF ends, or an
+	// authentication that fails at it, is not the one the HSS holds, so
+	// no Server-Assignment-Type changes anything here. The answer names
+	// the S-CSCF that the HSS holds (Table 6.1.2.2), so that an S-CSCF
+	// with no registration of the user can send its request there (TS
+	// 24.229 5.4.3.3). Only the S-CSCF reassignment pending flag of IMS
+	// restoration lets the name be overwritten, and this HSS has no IMS
+	// restoration.
+	if u.ServerName != "" && u.ServerName != r.ServerName {
+		result := diameter.Experimental(cx.DiameterErrorIdentityAlreadyRegistered)
+		if r.ServerAssignmentType == cx.NoAssignment {
+			result = diameter.Base(diameter.DiameterUnableToComply)
+		}
+		return cx.ServerAssignmentAnswer{Result: result, ServerName: u.ServerName}
+	}
 	switch r.ServerAssignmentType {
 	case cx.AssignRegistration, cx.ReRegistration:
-		if len(r.PublicIdentities) > 1 {
-			return cx.ServerAssignmentAnswer{Result: diameter.Base(diameter.DiameterAVPOccursTooManyTimes)}
-		}
-		if u.State == Registered && u.ServerName != "" && u.ServerName != r.ServerName {
-			return cx.ServerAssignmentAnswer{Result: diameter.Experimental(cx.DiameterErrorIdentityAlreadyRegistered), ServerName: u.ServerName}
-		}
 		if err := h.setServer(ctx, u, r.ServerName, origin(r.Header), Registered, false); err != nil {
 			return cx.ServerAssignmentAnswer{Result: h.storeFailed(err)}
 		}
@@ -788,13 +803,6 @@ func (h *HSS) serverAssignment(ctx context.Context, r cx.ServerAssignmentRequest
 		// for it, as one is for a user whose S-CSCF kept its name.
 		if u.State != Registered && !set.admits(u) {
 			return cx.ServerAssignmentAnswer{Result: diameter.Base(diameter.DiameterAuthorizationRejected)}
-		}
-		// The S-CSCF sends it for a request to, or on behalf of, a user it
-		// has no registration of. Another S-CSCF may already serve the
-		// user: the S-CSCF then sends the request there (TS 24.229
-		// 5.4.3.3).
-		if u.ServerName != "" && u.ServerName != r.ServerName {
-			return cx.ServerAssignmentAnswer{Result: diameter.Experimental(cx.DiameterErrorIdentityAlreadyRegistered), ServerName: u.ServerName}
 		}
 		if err := h.setServer(ctx, u, r.ServerName, origin(r.Header), Unregistered, u.AuthenticationPending); err != nil {
 			return cx.ServerAssignmentAnswer{Result: h.storeFailed(err)}

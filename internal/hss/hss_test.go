@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"io"
 	"log/slog"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -179,6 +180,77 @@ func TestAuthenticationFailureForgetsTheServer(t *testing.T) {
 	sar(t, h, scscf, cx.AuthenticationFailure)
 	if a := uar(t, h, impi, impu, cx.Registration); a.Result != diameter.Experimental(cx.DiameterFirstRegistration) {
 		t.Errorf("UAA after a failed authentication = %+v, want FIRST_REGISTRATION", a)
+	}
+}
+
+// TestServerAssignmentFromAnotherSCSCF is TS 29.228 8.1.2: a SAR from
+// an S-CSCF other than the one whose name the HSS holds changes nothing,
+// whatever its Server-Assignment-Type, and the answer names the S-CSCF
+// that the HSS holds (Table 6.1.2.2). The first state is the case of
+// 8.1.1: the user registered again at scscf2, whose MAR took the user
+// over, and scscf still has the registration that it then ends.
+func TestServerAssignmentFromAnotherSCSCF(t *testing.T) {
+	alreadyRegistered := diameter.Experimental(cx.DiameterErrorIdentityAlreadyRegistered)
+	types := []struct {
+		typ  cx.ServerAssignmentType
+		want diameter.Result
+	}{
+		{cx.AssignRegistration, alreadyRegistered},
+		{cx.ReRegistration, alreadyRegistered},
+		{cx.UnregisteredUser, alreadyRegistered},
+		{cx.TimeoutDeregistration, alreadyRegistered},
+		{cx.UserDeregistration, alreadyRegistered},
+		{cx.AdministrativeDeregistration, alreadyRegistered},
+		{cx.AuthenticationFailure, alreadyRegistered},
+		{cx.AuthenticationTimeout, alreadyRegistered},
+		{cx.NoAssignment, diameter.Base(diameter.DiameterUnableToComply)},
+	}
+	// Each state leaves the HSS with the name of scscf2.
+	states := []struct {
+		name  string
+		enter func(t *testing.T, h *HSS)
+	}{
+		{"registered at scscf2 after scscf", func(t *testing.T, h *HSS) {
+			mar(t, h, scscf)
+			sar(t, h, scscf, cx.AssignRegistration)
+			mar(t, h, scscf2)
+			sar(t, h, scscf2, cx.AssignRegistration)
+		}},
+		{"authentication pending at scscf2", func(t *testing.T, h *HSS) {
+			mar(t, h, scscf2)
+		}},
+		{"unregistered at scscf2", func(t *testing.T, h *HSS) {
+			sar(t, h, scscf2, cx.UnregisteredUser)
+		}},
+	}
+	stored := func(t *testing.T, h *HSS) Subscriber {
+		t.Helper()
+		u, ok, err := h.store.Subscriber(t.Context(), impi)
+		if err != nil || !ok {
+			t.Fatalf("the subscriber is not in the store: %v", err)
+		}
+		return u
+	}
+	for _, state := range states {
+		for _, tt := range types {
+			t.Run(state.name+", "+tt.typ.String(), func(t *testing.T) {
+				h := newTestHSS()
+				state.enter(t, h)
+				before, located := stored(t, h), lir(t, h, impu)
+				if before.ServerName != scscf2 {
+					t.Fatalf("the HSS holds %q, want %q", before.ServerName, scscf2)
+				}
+				if a := sar(t, h, scscf, tt.typ); a.Result != tt.want || a.ServerName != scscf2 {
+					t.Errorf("SAA = %+v, want %v with %s", a, tt.want, scscf2)
+				}
+				if after := stored(t, h); !reflect.DeepEqual(after, before) {
+					t.Errorf("the subscriber is %+v after the SAR, want it as it was, %+v", after, before)
+				}
+				if a := lir(t, h, impu); !reflect.DeepEqual(a, located) {
+					t.Errorf("LIA after the SAR = %+v, want %+v as before it", a, located)
+				}
+			})
+		}
 	}
 }
 
