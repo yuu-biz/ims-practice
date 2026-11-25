@@ -2,11 +2,14 @@ package sip
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
+	"log/slog"
 	"net"
 	"net/netip"
 	"slices"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -466,6 +469,39 @@ func TestNewStackRefusesANegativeTransactionTimeout(t *testing.T) {
 	if _, err := NewStack(tr, Config{SentBy: tr.LocalAddr().String(), Timers: timers, OnRequest: ignoreRequests}, testLogger(t)); err == nil {
 		t.Error("NewStack took a negative TransactionTimeout")
 	}
+}
+
+// A client transaction whose request the transport could not send logs
+// why, as a server transaction does for its response: the TU sees only
+// the error, and may not log it.
+func TestClientTransactionLogsWhyItsRequestDidNotGoOut(t *testing.T) {
+	var mu sync.Mutex
+	var logs bytes.Buffer
+	log := slog.New(slog.NewJSONHandler(lockedWriter{&mu, &logs}, nil))
+	tr := listenLayer(t, log)
+	uac, err := NewStack(tr, Config{Timers: testTimers, SentBy: tr.LocalAddr().String(), OnRequest: ignoreRequests}, log)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(uac.Close)
+	// The socket is bound to an IPv4 address, so it cannot send to an
+	// IPv6 one.
+	ct, err := uac.SendRequest(registerRequest(), udpTo(netip.MustParseAddrPort("[::1]:5060")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if collect(t, ct); ct.Err() == nil || errors.Is(ct.Err(), ErrTimeout) {
+		t.Fatalf("err = %v, want the error of the send", ct.Err())
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	for _, line := range strings.Split(strings.TrimSpace(logs.String()), "\n") {
+		var entry map[string]any
+		if json.Unmarshal([]byte(line), &entry) == nil && entry["msg"] == "client transaction failed" && entry["error"] == ct.Err().Error() {
+			return
+		}
+	}
+	t.Errorf("no log of the failure %q", ct.Err())
 }
 
 func TestCloseEndsRunningClientTransactions(t *testing.T) {

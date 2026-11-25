@@ -1167,6 +1167,11 @@ func (s *Stack) carryOutClient(e *clientEntry, actions []TransactionAction) {
 		case PassToTU:
 			s.passToTU(e, a.Response)
 		case InformTU:
+			if !errors.Is(a.Err, ErrTimeout) {
+				// A transport error, which reaches the TU only as the error
+				// of its request; the state log names no cause.
+				s.log.Warn("client transaction failed", "branch", e.key.branch, "error", a.Err.Error())
+			}
 			s.closeTU(e, a.Err)
 		case StartTimer:
 			s.startTimer(e, e.timers, a)
