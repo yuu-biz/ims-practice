@@ -2,11 +2,13 @@ package pcscf
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"log/slog"
 	"net"
 	"net/netip"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -268,6 +270,98 @@ func TestRegisterThroughThePCSCF(t *testing.T) {
 	case m := <-messages:
 		t.Errorf("%s reached the home network after the deregistration", m.Method)
 	default:
+	}
+}
+
+// TestRegistrationWithoutAssociatedIdentities: a 200 to a REGISTER
+// without P-Associated-URI gives the P-CSCF no identity to bind to the
+// UE and no default one to assert (TS 24.229 5.2.2.1 items 3 and 4).
+// It passes the 200 on, as a proxy does, and the UE treats the identity
+// it registered as barred (5.1.1.2.1 item c). The P-CSCF keeps no IP
+// association, so a request of the UE is discarded as one from a UE
+// that is not registered (5.2.1), and a refresh without the header ends
+// the association that an earlier 200 made.
+func TestRegistrationWithoutAssociatedIdentities(t *testing.T) {
+	for _, refresh := range []bool{false, true} {
+		var withIdentities atomic.Bool
+		withIdentities.Store(refresh)
+		messages := make(chan *sip.Message, 2)
+		home := newStack(t, func(st *sip.ServerTransaction) {
+			if st.Request.Method == sip.MESSAGE {
+				messages <- st.Request
+				st.Respond(sip.NewResponse(st.Request, 200, sip.NewTag()))
+				return
+			}
+			resp := sip.NewResponse(st.Request, 200, sip.NewTag())
+			resp.Add("Service-Route", "<sip:orig@scscf."+domain+":5060;lr>")
+			if withIdentities.Load() {
+				resp.Add("P-Associated-URI", "<"+impu+">")
+			}
+			resp.Add("Contact", "<sip:ue@127.0.0.1>;expires=3600")
+			st.Respond(resp)
+		})
+		locate := locatorFunc(func(string) []sip.Destination {
+			return []sip.Destination{{Transport: sip.UDP, Addr: home.LocalAddr()}}
+		})
+		p := newPCSCF(t, Config{Host: "pcscf." + domain, Port: 5060, VisitedNetworkID: domain}, locate, NewMemoryStore(), nil, quiet())
+		pcscfStack := newPCSCFStack(t, p)
+		ue := newStackWith(t, fast, func(*sip.ServerTransaction) {})
+		final := func(m *sip.Message) *sip.Message {
+			t.Helper()
+			ct, err := ue.SendRequest(m, sip.Destination{Transport: sip.UDP, Addr: pcscfStack.LocalAddr()})
+			if err != nil {
+				t.Fatal(err)
+			}
+			var final *sip.Message
+			for r := range ct.Responses() {
+				final = r
+			}
+			return final
+		}
+		register := func(cseq int) *sip.Message {
+			t.Helper()
+			m := &sip.Message{Method: sip.REGISTER, RequestURI: "sip:" + domain}
+			m.Add("Max-Forwards", "70")
+			m.Add("From", "<"+impu+">;tag="+sip.NewTag())
+			m.Add("To", "<"+impu+">")
+			m.Add("Call-ID", "call-1")
+			m.Add("CSeq", fmt.Sprintf("%d REGISTER", cseq))
+			m.Add("Contact", "<sip:ue@127.0.0.1>;expires=3600")
+			m.Add("Supported", "path")
+			m.Add("Authorization", `Digest username="`+impi+`", realm="`+domain+`", nonce="n", uri="sip:`+domain+`", response="r"`)
+			return final(m)
+		}
+		message := func() *sip.Message {
+			t.Helper()
+			m := &sip.Message{Method: sip.MESSAGE, RequestURI: "sip:001010000000002@" + domain}
+			m.Add("Max-Forwards", "70")
+			m.Add("From", "<"+impu+">;tag="+sip.NewTag())
+			m.Add("To", "<sip:001010000000002@"+domain+">")
+			m.Add("Call-ID", sip.NewCallID())
+			m.Add("CSeq", "1 MESSAGE")
+			return final(m)
+		}
+		if refresh {
+			if r := register(1); r == nil || r.StatusCode != 200 {
+				t.Fatalf("registration got %v, want 200", r)
+			}
+			if r := message(); r == nil || r.StatusCode != 200 {
+				t.Fatalf("MESSAGE of the registered UE got %v, want 200", r)
+			}
+			<-messages
+			withIdentities.Store(false)
+		}
+		if r := register(2); r == nil || r.StatusCode != 200 || r.Get("P-Associated-URI") != "" {
+			t.Fatalf("refresh %v: REGISTER got %v, want the 200 of the home network as it is", refresh, r)
+		}
+		if r := message(); r != nil {
+			t.Errorf("refresh %v: MESSAGE got %d, want nothing from a UE with no IP association", refresh, r.StatusCode)
+		}
+		select {
+		case m := <-messages:
+			t.Errorf("refresh %v: %s reached the home network", refresh, m.Method)
+		default:
+		}
 	}
 }
 

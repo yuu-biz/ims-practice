@@ -79,7 +79,7 @@ type Association struct {
 	SPIs             SPIs
 	SentBy           string
 	PrivateIdentity  string
-	PublicIdentities []string // from P-Associated-URI, default first
+	PublicIdentities []string // from P-Associated-URI, default first; never empty
 	ServiceRoute     []string
 	Expires          time.Time
 	// KeepUntil is when the Store forgets the association:
@@ -1079,36 +1079,54 @@ func (p *PCSCF) association(st *sip.ServerTransaction, privateID string) (Associ
 // is registered over.
 func (p *PCSCF) registered(st *sip.ServerTransaction, resp *sip.Message, privateID string, old Association, over SPIs, log *slog.Logger) (Association, time.Duration, bool, error) {
 	ctx := context.Background()
-	interval := grantedInterval(resp)
-	if interval == 0 {
+	end := func() error {
 		a, ok, err := p.store.Association(ctx, p.ueSource(st))
 		if err == nil && ok {
 			err = p.endAssociation(a, log)
 		}
-		if err != nil {
+		return err
+	}
+	interval := grantedInterval(resp)
+	if interval == 0 {
+		if err := end(); err != nil {
 			return Association{}, 0, false, err
 		}
 		log.Info("deregistered")
 		return Association{}, 0, false, nil
 	}
+	var identities []string
+	for _, v := range resp.GetAll("P-Associated-URI") {
+		if na, err := sip.ParseNameAddr(v); err == nil {
+			identities = append(identities, na.URI)
+		}
+	}
+	if len(identities) == 0 {
+		// Items 3 and 4 of 5.2.2.1 bind the identities of P-Associated-URI
+		// to the UE and take the first as the default one to assert. A 200
+		// without them gives the P-CSCF neither, so it keeps no IP
+		// association, and ends the one of an earlier registration. The
+		// 200 goes on to the UE, which treats the identity it registered
+		// as barred (5.1.1.2.1 item c).
+		if err := end(); err != nil {
+			return Association{}, 0, false, err
+		}
+		log.Warn("200 to the REGISTER has no P-Associated-URI: no IP association")
+		return Association{}, 0, false, nil
+	}
 	via, _ := sip.ParseVia(st.Request.Get("Via"))
 	expires := time.Now().Add(interval)
 	a := Association{
-		Source:          p.ueSource(st),
-		Contact:         contactOf(st.Request),
-		SPIs:            over,
-		SentBy:          via.SentBy(),
-		PrivateIdentity: privateID,
-		ServiceRoute:    resp.GetAll("Service-Route"),
-		Expires:         expires,
-		KeepUntil:       expires.Add(associationGrace),
+		Source:           p.ueSource(st),
+		Contact:          contactOf(st.Request),
+		SPIs:             over,
+		SentBy:           via.SentBy(),
+		PrivateIdentity:  privateID,
+		PublicIdentities: identities,
+		ServiceRoute:     resp.GetAll("Service-Route"),
+		Expires:          expires,
+		KeepUntil:        expires.Add(associationGrace),
 		// A refresh keeps the watch on the signalling path.
 		SignallingSession: old.SignallingSession,
-	}
-	for _, v := range resp.GetAll("P-Associated-URI") {
-		if na, err := sip.ParseNameAddr(v); err == nil {
-			a.PublicIdentities = append(a.PublicIdentities, na.URI)
-		}
 	}
 	if err := p.store.PutAssociation(ctx, a); err != nil {
 		return Association{}, 0, false, err
