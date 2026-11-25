@@ -427,6 +427,11 @@ func (c *SMSC) forward(ctx context.Context, node servingNode, userName string, t
 	if f == nil || !f.notBegun || node.kind != nodeIPSMGW {
 		return f
 	}
+	// The other instances are the peers of the realm that took SGd in
+	// their CER. That holds while the IP-SM-GWs are the only nodes of
+	// their realm with SGd that connect to the SC, as in every network
+	// of this project; an MME or another SC of the same realm would be
+	// tried too, and would refuse or fail the TFR.
 	for _, host := range c.sgd.ServingNodes(node.realm) {
 		if strings.EqualFold(host, node.host) {
 			continue
