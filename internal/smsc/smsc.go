@@ -263,11 +263,13 @@ func (c *SMSC) takeDelivery() bool {
 	}
 }
 
-// unreserve gives back what reserve took.
+// unreserve gives back what reserve took. The user quits first, so that
+// a shut down which this delivery ends has taken effect once Wait
+// returns.
 func (c *SMSC) unreserve() {
+	c.userQuit()
 	<-c.deliveries
 	c.started.Done()
-	c.userQuit()
 }
 
 // Wait blocks until the deliveries this instance began, in a sweep

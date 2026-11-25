@@ -3,6 +3,7 @@ package smsc
 import (
 	"log/slog"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -229,6 +230,57 @@ func TestALockedSCLeavesEveryDeliveryToAnInstanceInService(t *testing.T) {
 	n.submit(bob, hello(t, bob, 2))
 	if sent := n.nodes.sent(); len(sent) != 6 || sent[5].UserName != imsiOf[bob] {
 		t.Errorf("%d TFRs after the unlock, want a sixth to Bob", len(sent))
+	}
+}
+
+// Once Wait returns, a shut down that the last delivery ended has taken
+// effect: the node has been told that the SC is LOCKED, and has ended
+// the connections that the deliveries sent on. A node that stops waits
+// for the SC in the same way (Run).
+func TestWaitReturnsOnceTheShutDownHasTakenEffect(t *testing.T) {
+	n := newNetwork(t)
+	n.nodes.set(mmeHost, absent)
+	n.submit(bob, hello(t, bob, 1))
+	var told atomic.Bool
+	f := n.sc.Function(hssUp)
+	f.AdministrativeStateChanged = func(_, to maintenance.AdministrativeState) {
+		if to == maintenance.Locked {
+			// The node takes a while to end its connections.
+			time.Sleep(100 * time.Millisecond)
+			told.Store(true)
+		}
+	}
+	node, err := maintenance.New(maintenance.Config{
+		Node:          role,
+		LogLevel:      new(slog.LevelVar),
+		Functions:     []maintenance.Function{f},
+		Configuration: func() any { return map[string]string{"node": role} },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	n.sc.Manage(node.ManagedFunction(role))
+	letGo := n.holdTFRsTo(bob)
+
+	n.clock.Advance(DefaultRetrySchedule[0])
+	n.sc.ProcessDue()
+	waitFor(t, func() bool { return n.sentTo(bob) == 2 }, "the retry to Bob")
+	if f := setState(t, node, maintenance.ShuttingDown); f.AdministrativeState != maintenance.ShuttingDown {
+		t.Fatalf("shut down gave %+v, want SHUTTINGDOWN while the attempt is in hand", f)
+	}
+	letGo()
+	done := make(chan struct{})
+	go func() {
+		n.sc.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(10 * time.Second):
+		t.Fatal("the delivery did not end within 10 s of its TFA")
+	}
+	if !told.Load() {
+		t.Error("Wait returned before the node was told that the SC is LOCKED")
 	}
 }
 
