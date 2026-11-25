@@ -29,11 +29,14 @@ type NtfSubscriptionControl struct {
 	// asks the OSS to read the list again, it is sent nothing else. The
 	// OSS neither sees nor writes the mark.
 	Missed bool `json:"missed,omitempty"`
-	// MissedEpoch counts the misses, and the skips that a mark has to
-	// outlast (MarkNtfSubscriptionSkipped). A mark is cleared only at the
-	// epoch that the notifyAlarmListRebuilt was sent for, so that a miss
-	// that another watcher saw in between, or an alarm that changed after
-	// the OSS may have read the list, keeps it.
+	// MissedEpoch counts the misses, and the skips and replacements that
+	// a mark has to outlast (MarkNtfSubscriptionSkipped,
+	// PutNtfSubscription). A mark is cleared only at the epoch that the
+	// notifyAlarmListRebuilt was sent for, so that a miss that another
+	// watcher saw in between, an alarm that changed after the OSS may
+	// have read the list, or another recipient that the OSS put in, keeps
+	// it. The attributes of a marked subscription stay the same within
+	// an epoch, so the copy that a turn is taken at is the one to send to.
 	MissedEpoch uint64 `json:"missed_epoch,omitempty"`
 	// RetryAt is when a watcher may try the owed notifyAlarmListRebuilt
 	// next. It keeps the watchers of every node from trying it at once.
@@ -71,7 +74,11 @@ type NtfSubscriptionStore interface {
 	// MarkNtfSubscriptionMissed records a miss of the subscription of
 	// id: it sets Missed, raises MissedEpoch, and sets RetryAt to
 	// retryAt. ErrNotFound when there is no subscription. A
-	// PutNtfSubscription that replaces the subscription keeps the mark.
+	// PutNtfSubscription that replaces the subscription keeps the mark,
+	// and its RetryAt, at a new epoch whose turn is not taken: the
+	// notifyAlarmListRebuilt of a turn taken before goes to the
+	// recipient that the turn read, so its answer must not clear the
+	// mark.
 	MarkNtfSubscriptionMissed(ctx context.Context, id string, retryAt time.Time) error
 	// MarkNtfSubscriptionSkipped records that a watcher passed the
 	// subscription of id over for a notification, as it was marked, with
@@ -105,7 +112,10 @@ func (set NtfSubscriptionSet) Put(s NtfSubscriptionControl, max int) (created bo
 	if !exists && len(set) >= max {
 		return false, fmt.Errorf("%w: %d", ErrTooManySubscriptions, max)
 	}
-	s.Missed, s.MissedEpoch, s.RetryAt, s.Claimed = old.Missed, old.MissedEpoch, old.RetryAt, old.Claimed
+	s.Missed, s.MissedEpoch, s.RetryAt = old.Missed, old.MissedEpoch, old.RetryAt
+	if s.Missed {
+		s.MissedEpoch++
+	}
 	set[s.ID] = s
 	return !exists, nil
 }

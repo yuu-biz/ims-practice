@@ -234,10 +234,13 @@ func (s *Server) markSkipped(ctx context.Context, r *recipient) error {
 // at most once every MissedRetryInterval over every watcher and
 // instance: the one that takes the turn (ClaimNtfSubscriptionRetry)
 // sends it, on a goroutine of its own, so that a recipient that still
-// does not answer holds up nothing. Once the recipient has taken it,
-// the mark is cleared, if no miss or skip has raised its epoch since;
-// the next notifications then go to the recipient again. Otherwise the
-// mark stays, and the next turn sends another.
+// does not answer holds up nothing. It goes to the recipient of the
+// copy read before the turn: the turn is taken at the epoch of that
+// copy, and a PutNtfSubscription of a marked subscription raises the
+// epoch. Once the recipient has taken it, the mark is cleared, if no
+// miss, skip or replacement has raised its epoch since; the next
+// notifications then go to the recipient again. Otherwise the mark
+// stays, and the next turn sends another.
 func (s *Server) sendOwed(ctx context.Context) {
 	subs, err := s.ntfSubscriptions.NtfSubscriptions(ctx)
 	if err != nil {

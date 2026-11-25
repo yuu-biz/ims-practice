@@ -24,6 +24,7 @@ func OAMNtfSubscriptions(t *testing.T, newPair func(t *testing.T) (oam.NtfSubscr
 		{"AMissInBetweenKeepsTheMark", oamAMissInBetweenKeepsTheMark},
 		{"ASkipAfterTheTurnKeepsTheMark", oamASkipAfterTheTurnKeepsTheMark},
 		{"ASkipAfterTheClearMarksAgain", oamASkipAfterTheClearMarksAgain},
+		{"AReplacementOutdatesTheTurn", oamAReplacementOutdatesTheTurn},
 	})
 }
 
@@ -110,6 +111,44 @@ func oamASkipAfterTheClearMarksAgain(t *testing.T, a, b oam.NtfSubscriptionStore
 	}
 	if claimed, err := b.ClaimNtfSubscriptionRetry(ctx, "oss-1", got.MissedEpoch, now, now.Add(time.Minute)); err != nil || !claimed {
 		t.Errorf("a claim of the new epoch at once = %v, %v", claimed, err)
+	}
+}
+
+// oamAReplacementOutdatesTheTurn: the OSS replaces a marked subscription
+// with one to another recipient. A watcher that read the old one before
+// the replacement cannot take the turn with it, and the answer of the
+// old recipient to a turn taken before the replacement does not clear
+// the mark: the new recipient is sent the notifyAlarmListRebuilt at the
+// next turn, when the first turn said.
+func oamAReplacementOutdatesTheTurn(t *testing.T, a, b oam.NtfSubscriptionStore) {
+	ctx := context.Background()
+	now := time.Now().Round(time.Millisecond)
+	next := now.Add(time.Minute)
+
+	putNtf(t, a, ntfSubscription("oss-1", "http://oss:8080/old"), 4)
+	if err := a.MarkNtfSubscriptionMissed(ctx, "oss-1", now); err != nil {
+		t.Fatal(err)
+	}
+	before, err := b.NtfSubscription(ctx, "oss-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	putNtf(t, a, ntfSubscription("oss-1", "http://oss:8080/new"), 4)
+	if claimed, err := b.ClaimNtfSubscriptionRetry(ctx, "oss-1", before.MissedEpoch, now, next); err != nil || claimed {
+		t.Errorf("a claim with the copy read before the replacement = %v, %v", claimed, err)
+	}
+
+	read := claimTurn(t, a, b, "oss-2", now, next)
+	putNtf(t, b, ntfSubscription("oss-2", "http://oss:8080/new"), 4)
+	if cleared, err := a.ClearNtfSubscriptionMissed(ctx, "oss-2", read.MissedEpoch); err != nil || cleared {
+		t.Errorf("the answer of the recipient before the replacement: cleared %v, %v; want the mark kept", cleared, err)
+	}
+	got, err := a.NtfSubscription(ctx, "oss-2")
+	if err != nil || !got.Missed || got.MissedEpoch != read.MissedEpoch+1 || got.Claimed || !got.RetryAt.Equal(next) || got.Attributes.NotificationRecipientAddress != "http://oss:8080/new" {
+		t.Fatalf("after the replacement: %+v, %v; want the new recipient marked at epoch %d, its turn not taken, at %v", got, err, read.MissedEpoch+1, next)
+	}
+	if claimed, err := b.ClaimNtfSubscriptionRetry(ctx, "oss-2", got.MissedEpoch, next, next.Add(time.Minute)); err != nil || !claimed {
+		t.Errorf("a claim of the new epoch at the time of the first turn = %v, %v", claimed, err)
 	}
 }
 
@@ -235,10 +274,10 @@ func oamMissedMark(t *testing.T, a, b oam.NtfSubscriptionStore) {
 		t.Fatal(err)
 	}
 	// The OSS replaces its subscription, and is still owed a
-	// notifyAlarmListRebuilt.
+	// notifyAlarmListRebuilt, at a new epoch.
 	putNtf(t, b, ntfSubscription("oss-1", "http://oss:8080/other"), 4)
 	got, err := a.NtfSubscription(ctx, "oss-1")
-	if err != nil || !got.Missed || got.MissedEpoch != 1 || !got.RetryAt.Equal(now) || got.Attributes.NotificationRecipientAddress != "http://oss:8080/other" {
+	if err != nil || !got.Missed || got.MissedEpoch != 2 || !got.RetryAt.Equal(now) || got.Attributes.NotificationRecipientAddress != "http://oss:8080/other" {
 		t.Errorf("after the replacement: %+v, %v", got, err)
 	}
 	if cleared, err := a.ClearNtfSubscriptionMissed(ctx, "oss-1", got.MissedEpoch); err != nil || !cleared {
