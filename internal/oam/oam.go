@@ -80,9 +80,10 @@ type Config struct {
 	// while a node runs (registrations, dialogs, media contexts) is not
 	// backed up: the UEs and the restoration procedures rebuild it.
 	Sections []Section
-	// HTTPClient calls the nodes and the HSS; nil for
-	// http.DefaultClient. Its own
-	// Timeout, if any, applies on top of NodeTimeout.
+	// HTTPClient calls the nodes and the HSS, and posts the
+	// notifications, for which the OAM follows no redirect; nil for
+	// http.DefaultClient. Its own Timeout, if any, applies on top of
+	// NodeTimeout.
 	HTTPClient *http.Client
 	// NodeTimeout bounds each call to one node or to the HSS; 0 for
 	// DefaultNodeTimeout.
@@ -175,6 +176,9 @@ type Server struct {
 	notificationConcurrency int
 	missedRetryInterval     time.Duration
 	notificationMetrics     notificationMetrics
+	// notificationClient is httpClient for the POST of a notification,
+	// which follows no redirect (post).
+	notificationClient *http.Client
 	// owed is the tries of the notifications that misses owe, which
 	// RunNotifications waits for before it returns.
 	owed sync.WaitGroup
@@ -217,6 +221,9 @@ func New(c Config) (*Server, error) {
 	if s.httpClient == nil {
 		s.httpClient = http.DefaultClient
 	}
+	notificationClient := *s.httpClient
+	notificationClient.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+	s.notificationClient = &notificationClient
 	if s.nodeTimeout == 0 {
 		s.nodeTimeout = DefaultNodeTimeout
 	}

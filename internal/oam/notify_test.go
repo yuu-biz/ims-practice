@@ -650,6 +650,49 @@ func TestARecipientThatMissedANotification(t *testing.T) {
 	n.counted(t, `oam_alarm_notifications_total{notification_type="notifyNewAlarm",result="failed"} 2`)
 }
 
+// TestARedirectIsNoDelivery: a recipient that answers a notification
+// with a redirect has not taken it (TS 32.158 5.5.4), and the OAM does
+// not follow the redirect, which would turn the POST into a GET without
+// the notification.
+func TestARedirectIsNoDelivery(t *testing.T) {
+	var redirected atomic.Int64
+	recipient := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/moved" {
+			redirected.Add(1)
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		http.Redirect(w, r, "/moved", http.StatusFound)
+	}))
+	t.Cleanup(recipient.Close)
+	scscf := newJournalNode(t, "scscf", maintenance.Config{})
+	n := newNotifier(t, nil, scscf)
+	body := `{"id": "oss-1", "objectClass": "NtfSubscriptionControl", "attributes": {"notificationRecipientAddress": "` + recipient.URL + `/notifications"}}`
+	if a := n.mnsCall(t, "PUT", ntfSubscriptionPath+"oss-1", "application/json", body); a.status != http.StatusCreated {
+		t.Fatalf("PUT: %d %s", a.status, a.body)
+	}
+	n.watching(t, "scscf")
+
+	scscf.raise(t, hssPeer, maintenance.Major)
+	n.counted(t, `oam_alarm_notifications_total{notification_type="notifyNewAlarm",result="failed"} 1`)
+	// The miss is counted before it is marked.
+	for deadline := time.Now().Add(waitFor); ; time.Sleep(10 * time.Millisecond) {
+		subs, err := n.oam.ntfSubscriptions.NtfSubscriptions(context.Background())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(subs) == 1 && subs[0].Missed {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("the subscription is not marked after the redirect within %v: %+v", waitFor, subs)
+		}
+	}
+	if k := redirected.Load(); k != 0 {
+		t.Errorf("the OAM followed the redirect %d times", k)
+	}
+}
+
 // unmarked waits until no subscription is marked Missed.
 func (n *notifier) unmarked(t *testing.T) {
 	t.Helper()
