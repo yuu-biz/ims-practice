@@ -44,6 +44,7 @@ func testConformance(t *testing.T, newHarness func(t *testing.T) harness) {
 		{"TimeIndex", testTimeIndex},
 		{"ClaimRunsOut", testClaimRunsOut},
 		{"ScheduleEndsAClaim", testScheduleEndsAClaim},
+		{"DueNoSoonerThanItsTime", testDueNoSoonerThanItsTime},
 		{"CompetingClaims", testCompetingClaims},
 		{"SortedIndex", testSortedIndex},
 		{"SortedIndexPagesGoOn", testSortedIndexPagesGoOn},
@@ -378,6 +379,38 @@ func testScheduleEndsAClaim(t *testing.T, h harness) {
 	}
 	if got, _ := h.a.ClaimDue(ctx, ix, base.Add(time.Hour), time.Minute, 1); len(got) != 1 {
 		t.Fatalf("ClaimDue at the new time = %v, want impi", got)
+	}
+}
+
+// testDueNoSoonerThanItsTime: a registration that ends within a
+// millisecond is not due until that millisecond has passed. Claimed
+// sooner, its handler would find it not yet expired and do nothing, and
+// the Done after that would take the expiry out for good.
+func testDueNoSoonerThanItsTime(t *testing.T, h harness) {
+	ctx := context.Background()
+	ix := h.key("registration-expiry")
+	at := base.Add(900 * time.Microsecond)
+	if err := h.a.Schedule(ctx, ix, "impi", at); err != nil {
+		t.Fatal(err)
+	}
+	if claims, err := h.b.ClaimDue(ctx, ix, base.Add(100*time.Microsecond), time.Minute, 1); err != nil || len(claims) != 0 {
+		t.Fatalf("ClaimDue 800µs before the member's time = %v, %v; want nothing", claims, err)
+	}
+	claims, err := h.b.ClaimDue(ctx, ix, base.Add(time.Millisecond), time.Minute, 1)
+	if err != nil || len(claims) != 1 || claims[0].Due.Before(at) {
+		t.Fatalf("ClaimDue once the member's time has passed = %v, %v; want impi, due no sooner than %v", claims, err, at)
+	}
+
+	// Done with a time that Schedule was given takes out the member that
+	// is still there, as a claim that ended at that time would.
+	if err := h.a.Schedule(ctx, ix, "impi", at); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.b.Done(ctx, kvstore.Claim{Index: ix, Member: "impi", Until: at}); err != nil {
+		t.Fatalf("Done at the time of the Schedule: %v", err)
+	}
+	if got, _ := h.a.ClaimDue(ctx, ix, base.Add(time.Hour), time.Minute, 1); len(got) != 0 {
+		t.Errorf("ClaimDue after Done = %v, want nothing", got)
 	}
 }
 

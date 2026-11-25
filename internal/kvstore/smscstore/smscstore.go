@@ -283,11 +283,12 @@ func (s *Store) Claim(ctx context.Context, destination string, now time.Time, le
 var errNotDue = errors.New("smscstore: the destination is not due")
 
 // due reports whether a queue that is due at at has come due at now, to
-// the millisecond that the time index counts in. A finer comparison
-// would have ClaimDue hand out an entry, which holds the millisecond the
-// queue is due in, that take then refuses, round after round, until it
-// gives up; the SC would wait for its next sweep for a destination that
-// is a fraction of a millisecond from due.
+// the millisecond that the time index counts in. A claim moves the entry
+// to the millisecond in which its lease ends, while take puts the end of
+// the lease itself in the queue. A finer comparison would have take
+// refuse the entry that ClaimDue hands out once the lease has run out,
+// and the SC would wait for its next sweep for a destination that is a
+// fraction of a millisecond from due.
 func due(at, now time.Time) bool {
 	return !at.Truncate(time.Millisecond).After(now.Truncate(time.Millisecond))
 }

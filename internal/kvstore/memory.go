@@ -130,7 +130,7 @@ func newVersion() string { return rand.Text() }
 func (s *MemoryStore) Schedule(_ context.Context, index, member string, at time.Time) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.index(index).set(member, indexTime(at))
+	s.index(index).set(member, scheduledTime(at))
 	return nil
 }
 
@@ -165,7 +165,7 @@ func (s *MemoryStore) Done(_ context.Context, c Claim) error {
 	defer s.mu.Unlock()
 	ix := s.index(c.Index)
 	e, ok := ix.byMember[c.Member]
-	if !ok || e.at != indexTime(c.Until) {
+	if !ok || e.at != scheduledTime(c.Until) {
 		return ErrClaimLost
 	}
 	ix.remove(c.Member)

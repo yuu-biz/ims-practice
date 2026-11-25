@@ -34,8 +34,10 @@ func TestReportTimeoutOfAStoppedSender(t *testing.T) {
 			// The clock of the adapter decides what has passed its
 			// Expires, and ClaimDue goes by the time it is given; the
 			// times to live, which the clock of the store counts, are
-			// minutes long and do not run out during the test.
-			now := time.Now()
+			// minutes long and do not run out during the test. A whole
+			// millisecond, which is what a time index counts in, has TR1N
+			// due at the ReportDeadline itself.
+			now := time.Now().Round(time.Millisecond)
 			cfg := kvjson.Config{Prefix: storetest.Prefix(), Now: func() time.Time { return now }}
 			kv := backend.New(t)
 			sender, other := ipsmgwstore.New(kv, cfg), ipsmgwstore.New(kv, cfg)
