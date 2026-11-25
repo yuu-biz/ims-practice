@@ -459,6 +459,76 @@ func TestLeaseTakenOver(t *testing.T) {
 	}
 }
 
+// TestAStoppingInstanceLeavesItsAttemptToAnother: an instance stops while
+// it waits for the TFA of an attempt. The stop cuts the attempt short,
+// which tells nothing of the recipient, so the attempt does not count and
+// the destination is due at once: an instance in service delivers the
+// message without waiting for the next retry or for the lease to run
+// out. The store of the instance that stops fails a call whose context
+// has ended, as one outside the process does. The attempt of a short
+// message that has just come and that of a retry end the same way.
+func TestAStoppingInstanceLeavesItsAttemptToAnother(t *testing.T) {
+	for _, tt := range []struct {
+		name string
+		// attempts is how many attempts failed before the one that the
+		// stop cuts.
+		attempts int
+	}{
+		{"a short message that has just come", 0},
+		{"a retry", 1},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			n := newNetwork(t)
+			if tt.attempts > 0 {
+				n.nodes.set(mmeHost, absent)
+				n.submit(bob, hello(t, bob, 1))
+				n.clock.Advance(DefaultRetrySchedule[0])
+			}
+			n.nodes.silence(mmeHost, true)
+			stopping := New(Config{Address: scAddress, HSSRealm: epcRealm}, cutStore{n.store}, n.nodes, n.hss, n.clock, quietLog)
+			ctx, stop := context.WithCancel(context.Background())
+			defer stop()
+			ran := make(chan struct{})
+			go func() {
+				stopping.Run(ctx)
+				close(ran)
+			}()
+			if tt.attempts == 0 {
+				n.submitTo(stopping, hello(t, bob, 1))
+			}
+			waitFor(t, func() bool { return len(n.nodes.sent()) == tt.attempts+1 }, "the TFR of the instance that stops")
+
+			stop()
+			select {
+			case <-ran:
+			case <-time.After(5 * time.Second):
+				t.Fatal("the SC did not stop within 5 s of its context ending")
+			}
+			ctx = context.Background()
+			l, ok, err := n.store.Claim(ctx, bob, n.clock.Now(), defaultLease)
+			if err != nil || !ok {
+				t.Fatalf("Bob is not due once the instance has stopped: %v, %v", ok, err)
+			}
+			if l.Attempts != tt.attempts {
+				t.Errorf("%d attempts after the stop, want the %d before the one that the stop cut", l.Attempts, tt.attempts)
+			}
+			if err := n.store.Release(ctx, l, n.clock.Now(), l.Attempts); err != nil {
+				t.Fatal(err)
+			}
+
+			n.nodes.silence(mmeHost, false)
+			n.nodes.set(mmeHost, accepts)
+			n.newSC().ProcessDue(ctx)
+			if got := len(n.nodes.sent()); got != tt.attempts+2 {
+				t.Errorf("%d TFRs, want the one that the stop cut and one from the instance in service", got)
+			}
+			if _, ok, err := n.store.Claim(ctx, bob, n.clock.Now(), defaultLease); err != nil || ok {
+				t.Errorf("Bob still has a queue after the instance in service delivered: %v, %v", ok, err)
+			}
+		})
+	}
+}
+
 // An empty retry schedule is no schedule: the SC takes the default one
 // rather than having no delay to wait.
 func TestAnEmptyRetryScheduleIsTheDefault(t *testing.T) {

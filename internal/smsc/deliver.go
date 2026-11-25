@@ -29,7 +29,11 @@ const statusValidityPeriodExpired sms.Status = 0b100_0110 // permanent error
 // are done.
 //
 // While the operator has the SC out of service it claims nothing, and
-// what is due waits for an instance in service (maintenance.go).
+// what is due waits for an instance in service (maintenance.go). Once
+// this instance has stopped (Run), it claims nothing either.
+//
+// ctx is for the calls to the Store. The attempts run until they end
+// or this instance stops.
 func (c *SMSC) ProcessDue(ctx context.Context) {
 	var running sync.WaitGroup
 	for {
@@ -39,7 +43,7 @@ func (c *SMSC) ProcessDue(ctx context.Context) {
 		// is an attempt that the drain cuts, as the maintenance API
 		// serves any session that comes in late.
 		c.userArrived()
-		if !c.unlocked() {
+		if !c.unlocked() || c.stopped() {
 			c.userQuit()
 			break
 		}
@@ -64,15 +68,11 @@ func (c *SMSC) ProcessDue(ctx context.Context) {
 // deliverSoon tries the queue of destination in the background, if it
 // is due: a short message that has just come goes out at once rather
 // than at the next ProcessDue. While the operator has the SC out of
-// service it leaves the queue due, for an instance in service to claim.
+// service, and once this instance has stopped, it leaves the queue
+// due, for an instance in service to claim.
 func (c *SMSC) deliverSoon(destination string) {
 	c.userArrived()
-	if !c.unlocked() {
-		c.userQuit()
-		c.log.Info("delivery left to an instance in service", "destination", destination)
-		return
-	}
-	c.started.Go(func() {
+	if c.unlocked() && c.begin(func() {
 		defer c.userQuit()
 		ctx := context.Background()
 		l, ok, err := c.store.Claim(ctx, destination, c.clock.Now(), c.cfg.Lease)
@@ -82,18 +82,22 @@ func (c *SMSC) deliverSoon(destination string) {
 		if ok {
 			c.serve(ctx, l)
 		}
-	})
+	}) {
+		return
+	}
+	c.userQuit()
+	c.log.Info("delivery left to an instance in service", "destination", destination)
 }
 
 // serve delivers the queue of the leased destination, one message at a
 // time, as TS 23.040 6.2 allows only one outstanding SMS-DELIVER to an
 // MS. After each message it releases the lease and claims the
 // destination anew, so that a long queue does not outlast one lease.
-// Once the operator has taken the SC out of service it claims it no
-// more: the destination is due again, and an instance in service goes
-// on with the queue.
+// Once the operator has taken the SC out of service, or this instance
+// has stopped, it claims it no more: the destination is due again, and
+// an instance in service goes on with the queue.
 func (c *SMSC) serve(ctx context.Context, l Lease) {
-	for c.attemptHead(ctx, l) && c.unlocked() {
+	for c.attemptHead(ctx, l) && c.unlocked() && !c.stopped() {
 		var ok bool
 		var err error
 		if l, ok, err = c.store.Claim(ctx, l.Destination, c.clock.Now(), c.cfg.Lease); err != nil || !ok {
@@ -105,7 +109,8 @@ func (c *SMSC) serve(ctx context.Context, l Lease) {
 // attemptHead discards the messages of the leased destination whose
 // validity period has ended, tries to deliver the first of the others,
 // and releases the lease with the time of the next attempt. It reports
-// whether the queue can go on at once.
+// whether the queue can go on at once. ctx is for the calls to the
+// Store; the attempt runs until it ends or this instance stops.
 func (c *SMSC) attemptHead(ctx context.Context, l Lease) bool {
 	log := c.log.With("destination", l.Destination)
 	queue, err := c.store.Queue(ctx, l)
@@ -140,11 +145,20 @@ func (c *SMSC) attemptHead(ctx context.Context, l Lease) bool {
 	log = log.With("message_id", head.ID)
 	// TP-MMS tells the MS that more messages wait for it (TS 23.040
 	// 3.2.4).
-	o := c.attempt(ctx, head, len(live) > 1, log)
+	o := c.attempt(c.life, head, len(live) > 1, log)
 	after := c.clock.Now()
 	next, attempts := after, 0
-	switch o.kind {
-	case delivered, permanentFailure:
+	switch {
+	case o.kind == temporaryFailure && c.stopped():
+		// The stop of this instance cut the attempt short, or came as it
+		// failed. Neither tells when the recipient can take the message,
+		// so the attempt is not counted, and the destination is due at
+		// once for an instance in service rather than at the next retry.
+		// The serving node may have delivered a TFR that the stop cut, and
+		// the recipient then gets the message twice.
+		attempts = l.Attempts
+		log.Info("delivery attempt cut short by the stop of the SC; an instance in service takes it at once", "reason", o.reason)
+	case o.kind == delivered, o.kind == permanentFailure:
 		if err := c.store.Remove(ctx, l, head.ID); err != nil {
 			log.Warn("cannot remove the message", "error", err.Error())
 			return false
@@ -157,7 +171,7 @@ func (c *SMSC) attemptHead(ctx context.Context, l Lease) bool {
 			log.Info("short message discarded: it cannot be delivered", "reason", o.reason)
 			c.reportStatus(ctx, head, sms.StatusNotObtainable, after)
 		}
-	case temporaryFailure:
+	case o.kind == temporaryFailure:
 		attempts = l.Attempts + 1
 		next = after.Add(c.retryDelay(attempts))
 		log.Info("short message not delivered, trying again later", "reason", o.reason, "attempts", attempts, "next_attempt", next)

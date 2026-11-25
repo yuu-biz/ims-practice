@@ -118,14 +118,22 @@ func servedByMME(msisdn string) sgd.SendRoutingInfoForSMAnswer {
 type fakeNodes struct {
 	mu     sync.Mutex
 	answer map[string]func(sgd.MTForwardShortMessageRequest) (sgd.MTForwardShortMessageAnswer, error)
+	// silent are the nodes that answer no TFR: the SC waits for the TFA
+	// until it gives the attempt up.
+	silent map[string]bool
 	tfr    []sgd.MTForwardShortMessageRequest
 }
 
-func (n *fakeNodes) MTForwardShortMessage(_ context.Context, req sgd.MTForwardShortMessageRequest) (sgd.MTForwardShortMessageAnswer, error) {
+func (n *fakeNodes) MTForwardShortMessage(ctx context.Context, req sgd.MTForwardShortMessageRequest) (sgd.MTForwardShortMessageAnswer, error) {
 	n.mu.Lock()
 	n.tfr = append(n.tfr, req)
 	f := n.answer[req.DestinationHost]
+	silent := n.silent[req.DestinationHost]
 	n.mu.Unlock()
+	if silent {
+		<-ctx.Done()
+		return sgd.MTForwardShortMessageAnswer{}, ctx.Err()
+	}
 	if f == nil {
 		return sgd.MTForwardShortMessageAnswer{}, errors.New("no route to " + req.DestinationHost)
 	}
@@ -136,6 +144,14 @@ func (n *fakeNodes) set(host string, f func(sgd.MTForwardShortMessageRequest) (s
 	n.mu.Lock()
 	defer n.mu.Unlock()
 	n.answer[host] = f
+}
+
+// silence has host answer no TFR while on holds, and answer as set says
+// once it does not.
+func (n *fakeNodes) silence(host string, on bool) {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	n.silent[host] = on
 }
 
 func (n *fakeNodes) sent() []sgd.MTForwardShortMessageRequest {
@@ -172,7 +188,8 @@ func newNetwork(t *testing.T) *network {
 		t:     t,
 		clock: &fakeClock{now: t0},
 		hss:   &fakeHSS{answers: map[string]sgd.SendRoutingInfoForSMAnswer{}},
-		nodes: &fakeNodes{answer: map[string]func(sgd.MTForwardShortMessageRequest) (sgd.MTForwardShortMessageAnswer, error){}},
+		nodes: &fakeNodes{answer: map[string]func(sgd.MTForwardShortMessageRequest) (sgd.MTForwardShortMessageAnswer, error){},
+			silent: map[string]bool{}},
 		store: NewMemoryStore(),
 	}
 	for _, user := range []string{alice, bob, carol} {
@@ -194,18 +211,86 @@ var quietLog = slog.New(slog.NewTextHandler(io.Discard, nil))
 // waits for the deliveries that it starts.
 func (n *network) submit(to string, s sms.Submit) sgd.MOForwardShortMessageAnswer {
 	n.t.Helper()
+	ofa := n.submitTo(n.sc, s)
+	n.sc.Wait()
+	return ofa
+}
+
+// submitTo sends sc Alice's OFR with the SMS-SUBMIT s, and returns its
+// answer without waiting for the delivery that it starts.
+func (n *network) submitTo(sc *SMSC, s sms.Submit) sgd.MOForwardShortMessageAnswer {
+	n.t.Helper()
 	tpdu, err := s.Marshal()
 	if err != nil {
 		n.t.Fatal(err)
 	}
-	ofa := n.sc.MOForwardShortMessage(context.Background(), sgd.MOForwardShortMessageRequest{
+	return sc.MOForwardShortMessage(context.Background(), sgd.MOForwardShortMessageRequest{
 		Header:         diameter.Header{SessionID: mmeHost + ";1;1", OriginHost: mmeHost, OriginRealm: epcRealm, DestinationRealm: epcRealm},
 		SCAddress:      scAddress,
 		UserIdentifier: sgd.UserIdentifier{UserName: imsiOf[alice], MSISDN: alice},
 		SMRPUI:         tpdu,
 	})
-	n.sc.Wait()
-	return ofa
+}
+
+// cutStore is a Store that fails a call whose context has ended before
+// it is made, as a store outside the process does: the client of
+// internal/kvstore gives the call up when its context ends.
+type cutStore struct{ *MemoryStore }
+
+func (s cutStore) Enqueue(ctx context.Context, m Message, now time.Time) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	return s.MemoryStore.Enqueue(ctx, m, now)
+}
+
+func (s cutStore) ServiceCentreTimeStamp(ctx context.Context, destination string, now time.Time) (time.Time, error) {
+	if err := ctx.Err(); err != nil {
+		return time.Time{}, err
+	}
+	return s.MemoryStore.ServiceCentreTimeStamp(ctx, destination, now)
+}
+
+func (s cutStore) ClaimDue(ctx context.Context, now time.Time, lease time.Duration) (Lease, bool, error) {
+	if err := ctx.Err(); err != nil {
+		return Lease{}, false, err
+	}
+	return s.MemoryStore.ClaimDue(ctx, now, lease)
+}
+
+func (s cutStore) Claim(ctx context.Context, destination string, now time.Time, lease time.Duration) (Lease, bool, error) {
+	if err := ctx.Err(); err != nil {
+		return Lease{}, false, err
+	}
+	return s.MemoryStore.Claim(ctx, destination, now, lease)
+}
+
+func (s cutStore) Queue(ctx context.Context, l Lease) ([]Message, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	return s.MemoryStore.Queue(ctx, l)
+}
+
+func (s cutStore) Remove(ctx context.Context, l Lease, id string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	return s.MemoryStore.Remove(ctx, l, id)
+}
+
+func (s cutStore) Release(ctx context.Context, l Lease, next time.Time, attempts int) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	return s.MemoryStore.Release(ctx, l, next, attempts)
+}
+
+func (s cutStore) Alert(ctx context.Context, destination string, now time.Time) (bool, error) {
+	if err := ctx.Err(); err != nil {
+		return false, err
+	}
+	return s.MemoryStore.Alert(ctx, destination, now)
 }
 
 // hello is an SMS-SUBMIT of "hello" to number.

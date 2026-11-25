@@ -123,6 +123,13 @@ type SMSC struct {
 	// started counts the deliveries this instance began in the
 	// background, for Wait.
 	started sync.WaitGroup
+	// life ends when this instance stops (Run). The attempts under way
+	// run on it, so that the stop cuts them short, and no delivery
+	// begins after it. mu keeps a delivery from beginning while the
+	// instance stops, so that Wait sees every one that began.
+	life context.Context
+	end  context.CancelFunc
+	mu   sync.Mutex
 	// managed is the administrative state that the maintenance API of
 	// the node keeps for the SC, or nil in a node without the API
 	// (maintenance.go).
@@ -145,20 +152,39 @@ func New(cfg Config, store Store, sgdClient SGdClient, s6cClient S6cClient, cloc
 	if cfg.PollInterval == 0 {
 		cfg.PollInterval = defaultPollInterval
 	}
-	return &SMSC{cfg: cfg, store: store, sgd: sgdClient, s6c: s6cClient, clock: clock, log: log}
+	c := &SMSC{cfg: cfg, store: store, sgd: sgdClient, s6c: s6cClient, clock: clock, log: log}
+	c.life, c.end = context.WithCancel(context.Background())
+	return c
 }
 
 // Run delivers what is due, every PollInterval, until ctx ends: the
 // retries of messages that could not be delivered, and the messages
 // whose validity period ended. Every instance that shares the Store may
 // run it; the leases keep them from delivering the same message.
+//
+// The end of ctx stops this instance, and Run returns once the
+// deliveries it has in hand have released their leases. An attempt
+// under way, whether Run or an OFR or an ALR began it, is cut short:
+// it is not counted, and its destination is due at once for an
+// instance in service (attemptHead). A node therefore stops the SC
+// before it closes the Diameter connections that the attempts send on.
+// A TFR that the end of its connection cut would count as an attempt
+// that failed, and its short message would wait for the next retry.
+//
+// The calls to the Store run on a context that the stop does not end:
+// a claim or a release that the store made and this instance never
+// heard of would leave the destination leased until the lease ran out.
 func (c *SMSC) Run(ctx context.Context) {
+	// The stop cuts the attempts short at once, while ProcessDue still
+	// waits for them.
+	context.AfterFunc(ctx, c.stop)
 	tick := time.NewTicker(c.cfg.PollInterval)
 	defer tick.Stop()
 	for {
-		c.ProcessDue(ctx)
+		c.ProcessDue(context.Background())
 		select {
 		case <-ctx.Done():
+			c.stop()
 			c.Wait()
 			return
 		case <-tick.C:
@@ -166,9 +192,31 @@ func (c *SMSC) Run(ctx context.Context) {
 	}
 }
 
+// stop ends the life of this instance: the attempts under way are cut
+// short, and no delivery begins after it.
+func (c *SMSC) stop() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.end()
+}
+
+// stopped reports whether this instance has stopped.
+func (c *SMSC) stopped() bool { return c.life.Err() != nil }
+
+// begin starts deliver in the background, unless this instance has
+// stopped, and reports whether it did. Wait waits for it.
+func (c *SMSC) begin(deliver func()) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.stopped() {
+		return false
+	}
+	c.started.Go(deliver)
+	return true
+}
+
 // Wait blocks until the deliveries this instance began in the
-// background, after an OFR or an ALR, have ended. A role calls it once
-// its Diameter server has stopped passing requests in.
+// background, after an OFR or an ALR, have ended.
 func (c *SMSC) Wait() { c.started.Wait() }
 
 // s6cHeader is the routing part of a request to the HSS.
