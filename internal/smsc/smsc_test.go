@@ -698,6 +698,25 @@ func TestAStopCutsTheSweepShort(t *testing.T) {
 	}
 }
 
+// TestWaitWhileTheSweepsGoOn: Wait may be called at any time, also from
+// several goroutines while Run sweeps for what is due over and over.
+func TestWaitWhileTheSweepsGoOn(t *testing.T) {
+	n := newNetwork(t)
+	sc := New(Config{Address: scAddress, HSSRealm: epcRealm, PollInterval: time.Microsecond},
+		n.store, n.nodes, n.hss, n.clock, quietLog)
+	run(t, sc)
+	deadline := time.Now().Add(300 * time.Millisecond)
+	var waiting sync.WaitGroup
+	for range 4 {
+		waiting.Go(func() {
+			for time.Now().Before(deadline) {
+				sc.Wait()
+			}
+		})
+	}
+	waiting.Wait()
+}
+
 // An empty retry schedule is no schedule: the SC takes the default one
 // rather than having no delay to wait.
 func TestAnEmptyRetryScheduleIsTheDefault(t *testing.T) {
