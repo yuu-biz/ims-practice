@@ -176,6 +176,13 @@ type watch struct {
 
 func (w *watch) State() oam.AlarmWatchState { return w.state }
 
+// A write of the holder may reach the store while its answer does not
+// reach the holder, as when the request runs out of time on its way
+// back. The store then has a version that the holder never got, and the
+// next compare and swap at the version the holder has fails. So one that
+// fails reads the item again, and goes on at the version it finds if the
+// holder wrote what is there (ownState, ownLease).
+
 func (w *watch) Save(ctx context.Context, st oam.AlarmWatchState) error {
 	w.mu.Lock()
 	defer w.mu.Unlock()
@@ -183,6 +190,17 @@ func (w *watch) Save(ctx context.Context, st oam.AlarmWatchState) error {
 		return oam.ErrWatchLost
 	}
 	version, err := kvjson.CompareAndSwap(ctx, w.s.c, w.s.stateKey(w.node), w.stateVersion, st, 0)
+	if errors.Is(err, kvstore.ErrConflict) {
+		found, own, rerr := w.ownState(ctx)
+		if rerr != nil {
+			return rerr
+		}
+		if !own {
+			return oam.ErrWatchLost
+		}
+		w.stateVersion = found
+		version, err = kvjson.CompareAndSwap(ctx, w.s.c, w.s.stateKey(w.node), w.stateVersion, st, 0)
+	}
 	if errors.Is(err, kvstore.ErrConflict) {
 		return oam.ErrWatchLost
 	}
@@ -193,6 +211,19 @@ func (w *watch) Save(ctx context.Context, st oam.AlarmWatchState) error {
 	return nil
 }
 
+// ownState reads the version of the state, and says whether this
+// holder wrote it: whether it is of the generation that this holder
+// raised. Another holder writes a state only after it has raised the
+// generation, so no other writes this one.
+func (w *watch) ownState(ctx context.Context) (version string, own bool, err error) {
+	var st oam.AlarmWatchState
+	version, err = kvjson.Read(ctx, w.s.c, w.s.stateKey(w.node), &st)
+	if errors.Is(err, kvstore.ErrNotFound) {
+		return "", false, nil
+	}
+	return version, err == nil && st.Generation == w.state.Generation, err
+}
+
 // Renew writes the lease again at the version it has, with a new time
 // to live. A lease that has run out, or that another instance holds,
 // is no longer at that version.
@@ -200,6 +231,17 @@ func (w *watch) Renew(ctx context.Context) error {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	version, err := kvjson.CompareAndSwap(ctx, w.s.c, w.s.leaseKey(w.node), w.leaseVersion, w.instance, w.s.lease)
+	if errors.Is(err, kvstore.ErrConflict) {
+		found, own, rerr := w.ownLease(ctx)
+		if rerr != nil {
+			return rerr
+		}
+		if !own {
+			return oam.ErrWatchLost
+		}
+		w.leaseVersion = found
+		version, err = kvjson.CompareAndSwap(ctx, w.s.c, w.s.leaseKey(w.node), w.leaseVersion, w.instance, w.s.lease)
+	}
 	if errors.Is(err, kvstore.ErrConflict) {
 		return oam.ErrWatchLost
 	}
@@ -210,11 +252,33 @@ func (w *watch) Renew(ctx context.Context) error {
 	return nil
 }
 
+// ownLease reads the version of the lease, and says whether this holder
+// wrote it: whether it names this instance. An instance takes a lease
+// only where there is none, and holds one watch of a node at a time, so
+// a lease that names it is the one this holder took and renewed without
+// a break. One that ran out is gone, and no compare and swap at its
+// version writes it again.
+func (w *watch) ownLease(ctx context.Context) (version string, own bool, err error) {
+	var holder string
+	version, err = kvjson.Read(ctx, w.s.c, w.s.leaseKey(w.node), &holder)
+	if errors.Is(err, kvstore.ErrNotFound) {
+		return "", false, nil
+	}
+	return version, err == nil && holder == w.instance, err
+}
+
 // Release removes the lease if it is still the one this holder wrote.
 func (w *watch) Release(ctx context.Context) error {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	err := w.s.c.RemoveIf(ctx, w.s.leaseKey(w.node), w.leaseVersion)
+	if errors.Is(err, kvstore.ErrConflict) {
+		found, own, rerr := w.ownLease(ctx)
+		if rerr != nil || !own {
+			return rerr
+		}
+		err = w.s.c.RemoveIf(ctx, w.s.leaseKey(w.node), found)
+	}
 	if errors.Is(err, kvstore.ErrConflict) || errors.Is(err, kvstore.ErrNotFound) {
 		return nil
 	}
