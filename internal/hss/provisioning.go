@@ -620,7 +620,9 @@ const (
 // network. What it does not touch is what the running subscriber has:
 // the registration state and its S-CSCF, the mark of an authentication
 // under way, the IP-SM-GW of the user with the short messages waiting
-// for it, and SQN_HE. The aka.sqn of the request is therefore read only
+// for it, and SQN_HE. The one exception is a new default public identity
+// of a registered user, which deregisters the user
+// (defaultIdentityChanged). The aka.sqn of the request is therefore read only
 // where the subscription is new; replacing one never takes SQN_HE back,
 // which would let an authentication vector be used twice.
 //
@@ -724,8 +726,9 @@ func (h *HSS) putSubscription(w http.ResponseWriter, r *http.Request, peers Peer
 		h.writePutAnswer(w, http.StatusOK, resultUnchanged, stored, data)
 		return
 	}
+	// A dry run answers the deregistration too, as the PUT would leave the
+	// user.
 	reason, deregister := h.defaultIdentityChanged(stored, next)
-	deregister = deregister && !dry
 	if deregister {
 		// The RTR follows the write. The HSS deregisters the user first
 		// (6.1.3.1), in the same write as the new subscription, so that a

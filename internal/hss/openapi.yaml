@@ -142,7 +142,10 @@ paths:
         request leaves out goes, except what the running subscriber has:
         the registration state, its S-CSCF and SQN_HE, which aka.sqn sets
         only where the subscription is new. A change of the user profile
-        of a registered user is pushed to its S-CSCF before the answer.
+        of a registered user is pushed to its S-CSCF before the answer,
+        except a new default public identity, which deregisters the user
+        with an RTR (TS 29.228 6.5.2.1); the answer, a dry run's too, then
+        shows the user Not Registered.
       parameters:
         - $ref: '#/components/parameters/impi'
         - name: dry_run
