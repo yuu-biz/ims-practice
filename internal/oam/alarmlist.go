@@ -207,8 +207,9 @@ type alarmListQuery struct {
 
 // parseAlarmListQuery reads the query of a GET of the alarm list before
 // any node is asked. A problem that the consumer can mend (400) is
-// answered before one that the producer cannot handle (500), as TS
-// 32.158 6.6.5.1 puts the more fundamental reason first.
+// answered before one that the producer cannot handle (500): TS 32.158
+// 6.6.4 gives SERVER_LIMITATION only to a request that is well formed
+// and understood, which a query with a 400 problem is not.
 //
 // filter and dataNodeSelector take the same form, that of TS 28.111
 // A.1.4, which picks alarm records. TS 32.158 6.7 names
