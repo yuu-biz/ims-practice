@@ -748,6 +748,22 @@ func (h *HSS) putSubscription(w http.ResponseWriter, r *http.Request, peers Peer
 			// lock is let go, as a PPR does. The context outlives the client
 			// (Provisioning), and the Answer timer of the peer bounds the
 			// wait for the RTA.
+			//
+			// SIMPLIFIED: TS 29.228 6.1.2.1 and 6.1.3.1. The HSS does not
+			// hold the SARs of the user back between this write and the
+			// RTA. A re-registration whose SAR it answers in between has
+			// the user Registered again, as 6.1.2.1 asks for a SAR of the
+			// S-CSCF that served the user, and the RTR then ends that
+			// registration at the S-CSCF: the HSS has the user Registered,
+			// and the S-CSCF has no registration. With SERVER_CHANGE the UE
+			// registers again at once, and that registration makes the two
+			// agree. With PERMANENT_TERMINATION, every identity barred, the
+			// UAR of the user is refused either way, and the HSS keeps the
+			// state until a SAR of a terminating request, a PUT that gives
+			// the set a default identity again, or a DELETE changes it.
+			// Holding the lock over the RTR would close the window, but the
+			// S-CSCF may be waiting for the answer to that very SAR before
+			// it takes the RTR up.
 			defer func() {
 				unlock()
 				h.log.Info("registration state", "private_identity", impi, "from", stored.State.String(), "to", NotRegistered.String(),
