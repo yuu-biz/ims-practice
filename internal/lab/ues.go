@@ -62,6 +62,9 @@ var ueRoutes = []string{
 // UE that is down does not hold up the others.
 const ueStatusTimeout = 2 * time.Second
 
+// ueStatusLimit bounds how much of a status the list reads from one UE.
+const ueStatusLimit = 1 << 16
+
 // ueSimulators forwards to the control APIs of the UE simulators. The UEs
 // own their state; the Lab keeps none of it, as it keeps none of
 // the HSS's subscriptions.
@@ -152,12 +155,14 @@ func (s *ueSimulators) fetchStatus(ctx context.Context, sim ueSimulator) ueEntry
 		return entry
 	}
 	defer resp.Body.Close()
-	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<16))
+	body, err := io.ReadAll(io.LimitReader(resp.Body, ueStatusLimit+1))
 	switch {
 	case err != nil:
 		entry.Error = err.Error()
 	case resp.StatusCode != http.StatusOK:
 		entry.Error = "GET /status answered " + resp.Status
+	case len(body) > ueStatusLimit:
+		entry.Error = fmt.Sprintf("GET /status answered a status longer than the %d bytes the Lab reads", ueStatusLimit)
 	case !json.Valid(body):
 		entry.Error = "GET /status answered no JSON"
 	default:

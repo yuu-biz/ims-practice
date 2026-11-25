@@ -226,7 +226,7 @@ paths:
   /sms:
     get:
       operationId: getSMS
-      summary: The short messages sent and received, oldest first.
+      summary: The latest 50 short messages sent and the latest 50 received, oldest first.
       responses:
         '200':
           description: The history.
