@@ -122,6 +122,10 @@ func (s *Store) MarkNtfSubscriptionMissed(ctx context.Context, id string, retryA
 	return s.changeSubscriptions(ctx, func(set oam.NtfSubscriptionSet) error { return set.MarkMissed(id, retryAt) })
 }
 
+func (s *Store) MarkNtfSubscriptionSkipped(ctx context.Context, id string, epoch uint64) error {
+	return s.changeSubscriptions(ctx, func(set oam.NtfSubscriptionSet) error { return set.MarkSkipped(id, epoch) })
+}
+
 func (s *Store) ClaimNtfSubscriptionRetry(ctx context.Context, id string, epoch uint64, now, next time.Time) (claimed bool, err error) {
 	err = s.changeSubscriptions(ctx, func(set oam.NtfSubscriptionSet) error {
 		claimed, err = set.ClaimRetry(id, epoch, now, next)

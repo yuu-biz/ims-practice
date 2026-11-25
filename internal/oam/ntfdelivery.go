@@ -94,11 +94,16 @@ func (r *recipient) selects(n alarmNotification) bool {
 // each notification: the others are not held up behind it, and the
 // journals of the nodes do not run past their watchers. The mark is in
 // the subscription store, so the watchers of every node and every
-// instance skip the recipient alike.
+// instance skip the recipient alike. A skip while the turn of the mark
+// is taken is recorded (markSkipped), so that the notifyAlarmListRebuilt
+// on its way, which the OSS may have read the list for already, does
+// not clear the mark when the OSS takes it, and the OSS is sent
+// another.
 //
 // notify fails when it could not read the subscriptions, or could not
-// write the mark of a miss: then some recipient has neither the
-// notifications nor the mark that would have it read the list again.
+// write the mark of a miss or a skip: then some recipient has neither
+// the notifications nor the mark that would have it read the list
+// again.
 // The watcher sends the notifications again, and saves nothing until
 // they have gone (deliver); the recipients that took them get them
 // twice, with the same notificationIds.
@@ -142,10 +147,18 @@ func (s *Server) notify(ctx context.Context, notifications ...alarmNotification)
 	for _, n := range notifications {
 		var wg sync.WaitGroup
 		for _, r := range recipients {
+			if !r.selects(n) {
+				continue
+			}
 			r.mu.Lock()
 			missed := r.sub.Missed
 			r.mu.Unlock()
-			if missed || !r.selects(n) {
+			if missed {
+				if err := s.markSkipped(ctx, r); err != nil {
+					mu.Lock()
+					failed = err
+					mu.Unlock()
+				}
 				continue
 			}
 			wg.Go(func() {
@@ -179,7 +192,7 @@ func (s *Server) notify(ctx context.Context, notifications ...alarmNotification)
 func (s *Server) markMissed(ctx context.Context, r *recipient) error {
 	retryAt := s.now().Add(s.missedRetryInterval)
 	r.mu.Lock()
-	r.sub.Missed, r.sub.RetryAt = true, retryAt
+	r.sub.Missed, r.sub.RetryAt, r.sub.Claimed = true, retryAt, false
 	r.sub.MissedEpoch++
 	id := r.sub.ID
 	r.mu.Unlock()
@@ -190,6 +203,31 @@ func (s *Server) markMissed(ctx context.Context, r *recipient) error {
 	return nil
 }
 
+// markSkipped records, if need be, that the recipient was passed over
+// for a notification as it is marked. The alarm of the notification
+// changed before the round read the subscriptions, so a
+// notifyAlarmListRebuilt whose turn is taken after that read reaches
+// the OSS after the change: the skip needs no record. One whose turn
+// the read found taken may have reached the OSS before it, and the OSS
+// read the list without it; then the store raises the epoch of the
+// mark, so that the answer to that notification does not clear it
+// (MarkNtfSubscriptionSkipped). Once that is written, the turn of the
+// new epoch is to come, and the rest of the round records no more
+// skips.
+func (s *Server) markSkipped(ctx context.Context, r *recipient) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if !r.sub.Claimed {
+		return nil
+	}
+	err := s.ntfSubscriptions.MarkNtfSubscriptionSkipped(ctx, r.sub.ID, r.sub.MissedEpoch)
+	if err != nil && !errors.Is(err, ErrNotFound) {
+		return fmt.Errorf("the skip of a marked subscription %s could not be written: %w", r.sub.ID, err)
+	}
+	r.sub.Claimed = false
+	return nil
+}
+
 // sendOwed sends the notifyAlarmListRebuilt that a miss owes each
 // recipient whose turn has come, whether or not the alarms change. It
 // runs at every round of RunNotifications, and for each subscription
@@ -197,8 +235,9 @@ func (s *Server) markMissed(ctx context.Context, r *recipient) error {
 // instance: the one that takes the turn (ClaimNtfSubscriptionRetry)
 // sends it, on a goroutine of its own, so that a recipient that still
 // does not answer holds up nothing. Once the recipient has taken it,
-// the mark is cleared, if no other miss has raised it since; the next
-// notifications then go to the recipient again.
+// the mark is cleared, if no miss or skip has raised its epoch since;
+// the next notifications then go to the recipient again. Otherwise the
+// mark stays, and the next turn sends another.
 func (s *Server) sendOwed(ctx context.Context) {
 	subs, err := s.ntfSubscriptions.NtfSubscriptions(ctx)
 	if err != nil {
