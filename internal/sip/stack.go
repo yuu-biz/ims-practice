@@ -112,7 +112,11 @@ type Config struct {
 const DefaultTimerC = 3*time.Minute + 30*time.Second
 
 // ErrStackClosed is reported to client transactions still running when
-// the stack closes, and by calls made after Close.
+// the stack closes, and by calls made after Close. It tells that this
+// node stopped, not how the peer answered: the request may have reached
+// the peer, and its answer may be on the way. A role that changes the
+// state it shares with other instances on the failure of a request
+// leaves that state as it is on this error.
 var ErrStackClosed = errors.New("sip: stack closed")
 
 // Stack is the transaction layer of RFC 3261 17 on top of a
