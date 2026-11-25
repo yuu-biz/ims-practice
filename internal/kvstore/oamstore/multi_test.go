@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -64,14 +65,15 @@ func (n *node) raise(t *testing.T, peer maintenance.Peer) {
 }
 
 // recipient keeps every notification it is sent, as it arrives, and
-// answers each with what hold says: at once, or only when the request
-// ends.
+// answers each as answer says: with the status, at once when wait is
+// nil, or once wait is closed. A request that ends before then gets no
+// answer.
 type recipient struct {
 	server   *httptest.Server
 	received chan map[string]any
 
-	mu   sync.Mutex
-	hold func(body map[string]any) bool
+	mu     sync.Mutex
+	answer func(body map[string]any) (status int, wait <-chan struct{})
 }
 
 func newRecipient(t *testing.T) *recipient {
@@ -85,22 +87,29 @@ func newRecipient(t *testing.T) *recipient {
 		}
 		r.received <- body
 		r.mu.Lock()
-		hold := r.hold
+		answer := r.answer
 		r.mu.Unlock()
-		if hold != nil && hold(body) {
-			<-req.Context().Done()
-			return
+		status, wait := http.StatusNoContent, (<-chan struct{})(nil)
+		if answer != nil {
+			status, wait = answer(body)
 		}
-		w.WriteHeader(http.StatusNoContent)
+		if wait != nil {
+			select {
+			case <-wait:
+			case <-req.Context().Done():
+				return
+			}
+		}
+		w.WriteHeader(status)
 	}))
 	t.Cleanup(r.server.Close)
 	return r
 }
 
-func (r *recipient) setHold(hold func(map[string]any) bool) {
+func (r *recipient) setAnswer(answer func(map[string]any) (int, <-chan struct{})) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	r.hold = hold
+	r.answer = answer
 }
 
 func (r *recipient) next(t *testing.T, waitingFor string) map[string]any {
@@ -132,12 +141,16 @@ type cluster struct {
 func (c *cluster) start(t *testing.T, name string) *instance {
 	t.Helper()
 	// The instances renew every 100 ms a lease of 2 s, so that a loaded
-	// machine does not let a watch run out by itself.
+	// machine does not let a watch run out by itself. A recipient that
+	// missed a notification is sent the notifyAlarmListRebuilt it is owed
+	// a second after, longer than the tests take to answer one that they
+	// hold.
 	store := oamstore.NewWithLease(c.kv, c.cfg, 2*time.Second)
 	cfg := oam.Config{
 		SubNetwork: "ims", MnSRoot: "http://oam:8080/3GPPManagement",
 		NtfSubscriptions: store, AlarmWatches: store, Instance: name,
 		AlarmEventsWait: time.Second, WatchRenewal: 100 * time.Millisecond, NotificationTimeout: 2 * time.Second,
+		MissedRetryInterval: time.Second,
 	}
 	for _, n := range c.nodes {
 		cfg.Nodes = append(cfg.Nodes, oam.Endpoint{Name: n.name, Roles: []string{n.name}, URL: n.server.URL})
@@ -168,8 +181,10 @@ func (in *instance) halt(t *testing.T) {
 	}
 }
 
-// subscribe creates a subscription through the instance.
-func (in *instance) subscribe(t *testing.T, r *recipient) {
+// subscribe puts the subscription oss-1 to r through the instance, and
+// checks that it is answered want: 201 when it creates the
+// subscription, 200 when it replaces it.
+func (in *instance) subscribe(t *testing.T, r *recipient, want int) {
 	t.Helper()
 	h := in.server.MnSHandler()
 	req := httptest.NewRequest(http.MethodPut, "/3GPPManagement/ProvMnS/v19/SubNetwork=ims/NtfSubscriptionControl=oss-1",
@@ -177,8 +192,8 @@ func (in *instance) subscribe(t *testing.T, r *recipient) {
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 	h.ServeHTTP(w, req)
-	if w.Code != http.StatusCreated {
-		t.Fatalf("PUT: %d %s", w.Code, w.Body)
+	if w.Code != want {
+		t.Fatalf("PUT: %d %s, want %d", w.Code, w.Body, want)
 	}
 }
 
@@ -245,6 +260,55 @@ func (c *cluster) watched(t *testing.T) {
 	}
 }
 
+// saved is the number of the last event of node that its watcher has
+// saved it is done with.
+func (c *cluster) saved(t *testing.T, node string) uint64 {
+	t.Helper()
+	st, err := oamstore.New(c.kv, c.cfg).AlarmWatchState(context.Background(), node)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return st.LastNumber
+}
+
+// passed waits until the watcher of node has saved that it is done with
+// an event after the number after: it has sent the notifications of
+// the event, or passed over the recipients that are marked.
+func (c *cluster) passed(t *testing.T, node string, after uint64) {
+	t.Helper()
+	deadline := time.Now().Add(waitFor)
+	for c.saved(t, node) <= after {
+		if time.Now().After(deadline) {
+			t.Fatalf("the watcher of %s saved no event after %d within %v", node, after, waitFor)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+// unmarked waits until no subscription is marked Missed.
+func (c *cluster) unmarked(t *testing.T) {
+	t.Helper()
+	store := oamstore.New(c.kv, c.cfg)
+	deadline := time.Now().Add(waitFor)
+	for {
+		subs, err := store.NtfSubscriptions(context.Background())
+		if err != nil {
+			t.Fatal(err)
+		}
+		marked := false
+		for _, s := range subs {
+			marked = marked || s.Missed
+		}
+		if !marked {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("the subscriptions are still marked after %v: %+v", waitFor, subs)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
 func newCluster(t *testing.T, backend storetest.Backend, nodes ...string) *cluster {
 	c := &cluster{kv: backend.New(t), cfg: kvjson.Config{Prefix: storetest.Prefix()}}
 	for _, name := range nodes {
@@ -276,7 +340,7 @@ func TestNoEventIsLostWhenAnInstanceStops(t *testing.T) {
 			c := newCluster(t, backend, "icscf", "scscf")
 			r := newRecipient(t)
 			first := c.start(t, "oam-1")
-			first.subscribe(t, r)
+			first.subscribe(t, r, http.StatusCreated)
 			second := c.start(t, "oam-2")
 			holders := c.until(t, map[string]int{"oam-1": 1, "oam-2": 1})
 			c.watched(t)
@@ -287,12 +351,16 @@ func TestNoEventIsLostWhenAnInstanceStops(t *testing.T) {
 			if holders["scscf"] == "oam-2" {
 				stopping, other = second, first
 			}
-			r.setHold(func(body map[string]any) bool {
-				return strings.Contains(body["href"].(string), "/ManagedElement=scscf/")
+			unanswered := make(chan struct{})
+			r.setAnswer(func(body map[string]any) (int, <-chan struct{}) {
+				if strings.Contains(body["href"].(string), "/ManagedElement=scscf/") {
+					return http.StatusNoContent, unanswered
+				}
+				return http.StatusNoContent, nil
 			})
 			c.nodes[1].raise(t, "hss-1")
 			sent := r.next(t, "the new alarm of scscf from its first holder")
-			r.setHold(nil)
+			r.setAnswer(nil)
 			stopping.halt(t)
 
 			// The other instance takes the watch and sends the event
@@ -318,6 +386,80 @@ func TestNoEventIsLostWhenAnInstanceStops(t *testing.T) {
 				if !got[href] {
 					t.Errorf("no notification of %s in %v", href, got)
 				}
+			}
+		})
+	}
+}
+
+// owedOnItsWay has the OSS r miss a notification, and then have the
+// notifyAlarmListRebuilt that the miss owes it on its way: r holds its
+// answer to it until release is closed, as an OSS that reads the alarm
+// list before it answers. Two instances run, so that the one that sends
+// the notifyAlarmListRebuilt need not be the one that watches the node.
+func owedOnItsWay(t *testing.T, backend storetest.Backend, r *recipient) (c *cluster, release chan struct{}) {
+	t.Helper()
+	c = newCluster(t, backend, "scscf")
+	c.start(t, "oam-1").subscribe(t, r, http.StatusCreated)
+	c.start(t, "oam-2")
+	c.until(t, nil)
+	c.watched(t)
+
+	release = make(chan struct{})
+	var refused, held atomic.Bool
+	r.setAnswer(func(body map[string]any) (int, <-chan struct{}) {
+		switch body["notificationType"] {
+		case "notifyNewAlarm":
+			if refused.CompareAndSwap(false, true) {
+				return http.StatusInternalServerError, nil
+			}
+		case "notifyAlarmListRebuilt":
+			if held.CompareAndSwap(false, true) {
+				return http.StatusNoContent, release
+			}
+		}
+		return http.StatusNoContent, nil
+	})
+	before := c.saved(t, "scscf")
+	c.nodes[0].raise(t, "hss-1")
+	if n := r.next(t, "the alarm that the OSS refuses"); n["notificationType"] != "notifyNewAlarm" {
+		t.Fatalf("got %v, want the alarm of hss-1", n)
+	}
+	c.passed(t, "scscf", before)
+	if n := r.next(t, "the notifyAlarmListRebuilt that the miss owes"); n["notificationType"] != "notifyAlarmListRebuilt" {
+		t.Fatalf("got %v, want the notifyAlarmListRebuilt that the miss owes", n)
+	}
+	return c, release
+}
+
+// TestAnAlarmRaisedWhileTheOwedNotificationIsOnItsWay: an alarm is
+// raised after the OSS has read the list for the notifyAlarmListRebuilt
+// that a miss owes it, and before the OSS answers it. The watcher passes
+// the subscription over, as it is still marked; the alarm reaches the
+// OSS all the same, by its notification or by another
+// notifyAlarmListRebuilt.
+func TestAnAlarmRaisedWhileTheOwedNotificationIsOnItsWay(t *testing.T) {
+	for _, backend := range storetest.Backends() {
+		t.Run(backend.Name, func(t *testing.T) {
+			r := newRecipient(t)
+			c, release := owedOnItsWay(t, backend, r)
+			before := c.saved(t, "scscf")
+			c.nodes[0].raise(t, "hss-2")
+			c.passed(t, "scscf", before)
+			close(release)
+
+			n := r.next(t, "the alarm of hss-2, or a notifyAlarmListRebuilt sent after it")
+			switch {
+			case n["notificationType"] == "notifyAlarmListRebuilt":
+			case n["notificationType"] == "notifyNewAlarm" && strings.HasSuffix(n["href"].(string), "/Peer=hss-2"):
+			default:
+				t.Fatalf("got %v, want the alarm of hss-2 or a notifyAlarmListRebuilt", n)
+			}
+			// Once the OSS has taken that, the notifications go to it
+			// again.
+			c.unmarked(t)
+			c.nodes[0].raise(t, "hss-3")
+			if n := r.next(t, "the alarm after the owed notification"); n["notificationType"] != "notifyNewAlarm" || !strings.HasSuffix(n["href"].(string), "/Peer=hss-3") {
+				t.Errorf("got %v, want the alarm of hss-3", n)
 			}
 		})
 	}

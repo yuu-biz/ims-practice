@@ -332,7 +332,7 @@ The OAM sends `notifyAlarmListRebuilt` with `ALIGNMENT_REQUIRED` in three more c
 | Changes of the node left its journal before the OAM read them, or its full list dropped a record | The node | `indeterminate` |
 | A notification did not reach this OSS: no connection, no answer within five seconds, or an answer other than 2xx | The whole SubNetwork, `http://oam:8080/SubNetwork=ims`, sent to that subscription only | `indeterminate` |
 
-The OAM does not send a notification again. From the notification that did not reach it, the OSS is sent nothing but that `notifyAlarmListRebuilt`, which the OAM tries every 30 seconds, whether the alarms change or not, until the OSS takes it. Then the notifications go to it again, and it reads the list again. An OSS that does not answer thus costs the OAM one wait of five seconds, not one for each notification, and holds up no other OSS.
+The OAM does not send a notification again. From the notification that did not reach it, the OSS is sent nothing but that `notifyAlarmListRebuilt`, which the OAM tries every 30 seconds, whether the alarms change or not, until the OSS takes it. Then the notifications go to it again, and it reads the list again. If an alarm changes while that notification is on its way, though, the OSS may have read the list before the change, so the OAM sends it once more at its next try. An OSS that does not answer thus costs the OAM one wait of five seconds, not one for each notification, and holds up no other OSS.
 
 When two nodes or more do not answer, `unreliableAlarmScope` is the whole SubNetwork, `SubNetwork=ims`, while each node still gets its own two notifications.
 

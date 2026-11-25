@@ -22,7 +22,95 @@ func OAMNtfSubscriptions(t *testing.T, newPair func(t *testing.T) (oam.NtfSubscr
 		{"ConcurrentPutsLoseNone", oamConcurrentPutsLoseNone},
 		{"TheMissedMarkStaysWithAReplacement", oamMissedMark},
 		{"AMissInBetweenKeepsTheMark", oamAMissInBetweenKeepsTheMark},
+		{"ASkipAfterTheTurnKeepsTheMark", oamASkipAfterTheTurnKeepsTheMark},
+		{"ASkipAfterTheClearMarksAgain", oamASkipAfterTheClearMarksAgain},
 	})
+}
+
+// claimTurn marks the subscription id missed, and takes the turn of the
+// miss until next, as the watcher that sends the notifyAlarmListRebuilt
+// does. It returns the copy that another watcher reads then.
+func claimTurn(t *testing.T, a, b oam.NtfSubscriptionStore, id string, now, next time.Time) oam.NtfSubscriptionControl {
+	t.Helper()
+	ctx := context.Background()
+	putNtf(t, a, ntfSubscription(id, "http://oss:8080/"), 4)
+	if err := a.MarkNtfSubscriptionMissed(ctx, id, now); err != nil {
+		t.Fatal(err)
+	}
+	marked, err := b.NtfSubscription(ctx, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if claimed, err := b.ClaimNtfSubscriptionRetry(ctx, id, marked.MissedEpoch, now, next); err != nil || !claimed {
+		t.Fatalf("the claim = %v, %v", claimed, err)
+	}
+	read, err := a.NtfSubscription(ctx, id)
+	if err != nil || !read.Missed || read.MissedEpoch != marked.MissedEpoch || !read.Claimed {
+		t.Fatalf("after the claim: %+v, %v; want the turn of epoch %d taken", read, err, marked.MissedEpoch)
+	}
+	return read
+}
+
+// oamASkipAfterTheTurnKeepsTheMark: one watcher sends the owed
+// notifyAlarmListRebuilt, and another passes the subscription over for
+// an alarm that changed meanwhile, before the OSS answers. The answer
+// leaves the mark, at a new epoch whose turn comes when the first turn
+// said.
+func oamASkipAfterTheTurnKeepsTheMark(t *testing.T, a, b oam.NtfSubscriptionStore) {
+	ctx := context.Background()
+	now := time.Now().Round(time.Millisecond)
+	next := now.Add(time.Minute)
+	read := claimTurn(t, a, b, "oss-1", now, next)
+	if err := a.MarkNtfSubscriptionSkipped(ctx, "oss-1", read.MissedEpoch); err != nil {
+		t.Fatal(err)
+	}
+	// A second watcher with the same copy changes nothing more.
+	if err := a.MarkNtfSubscriptionSkipped(ctx, "oss-1", read.MissedEpoch); err != nil {
+		t.Fatal(err)
+	}
+	if cleared, err := b.ClearNtfSubscriptionMissed(ctx, "oss-1", read.MissedEpoch); err != nil || cleared {
+		t.Errorf("the answer to the notification sent before the skip: cleared %v, %v; want the mark kept", cleared, err)
+	}
+	got, err := b.NtfSubscription(ctx, "oss-1")
+	if err != nil || !got.Missed || got.MissedEpoch != read.MissedEpoch+1 || got.Claimed || !got.RetryAt.Equal(next) {
+		t.Fatalf("after the skip: %+v, %v; want marked at epoch %d, its turn not taken, at %v", got, err, read.MissedEpoch+1, next)
+	}
+	if claimed, err := a.ClaimNtfSubscriptionRetry(ctx, "oss-1", got.MissedEpoch, now, next); err != nil || claimed {
+		t.Errorf("a claim of the new epoch before the time of the first turn = %v, %v", claimed, err)
+	}
+	if claimed, err := a.ClaimNtfSubscriptionRetry(ctx, "oss-1", got.MissedEpoch, next, next.Add(time.Minute)); err != nil || !claimed {
+		t.Errorf("a claim of the new epoch at the time of the first turn = %v, %v", claimed, err)
+	}
+	if cleared, err := b.ClearNtfSubscriptionMissed(ctx, "oss-1", got.MissedEpoch); err != nil || !cleared {
+		t.Errorf("a clear at the new epoch = %v, %v", cleared, err)
+	}
+	if err := a.MarkNtfSubscriptionSkipped(ctx, "oss-2", 1); !errors.Is(err, oam.ErrNotFound) {
+		t.Errorf("the skip of no subscription: %v, want ErrNotFound", err)
+	}
+}
+
+// oamASkipAfterTheClearMarksAgain: the OSS answers the owed
+// notifyAlarmListRebuilt, and the mark is cleared, before the watcher
+// that passed the subscription over writes the skip. The skip marks the
+// subscription again, with a turn that is due at once: the OSS answered
+// a moment ago.
+func oamASkipAfterTheClearMarksAgain(t *testing.T, a, b oam.NtfSubscriptionStore) {
+	ctx := context.Background()
+	now := time.Now().Round(time.Millisecond)
+	read := claimTurn(t, a, b, "oss-1", now, now.Add(time.Minute))
+	if cleared, err := b.ClearNtfSubscriptionMissed(ctx, "oss-1", read.MissedEpoch); err != nil || !cleared {
+		t.Fatalf("the clear = %v, %v", cleared, err)
+	}
+	if err := a.MarkNtfSubscriptionSkipped(ctx, "oss-1", read.MissedEpoch); err != nil {
+		t.Fatal(err)
+	}
+	got, err := b.NtfSubscription(ctx, "oss-1")
+	if err != nil || !got.Missed || got.MissedEpoch != read.MissedEpoch+1 || got.Claimed {
+		t.Fatalf("after the skip: %+v, %v; want marked again at epoch %d", got, err, read.MissedEpoch+1)
+	}
+	if claimed, err := b.ClaimNtfSubscriptionRetry(ctx, "oss-1", got.MissedEpoch, now, now.Add(time.Minute)); err != nil || !claimed {
+		t.Errorf("a claim of the new epoch at once = %v, %v", claimed, err)
+	}
 }
 
 func ntfSubscription(id, recipient string) oam.NtfSubscriptionControl {
