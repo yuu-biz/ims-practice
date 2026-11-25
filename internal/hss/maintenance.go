@@ -107,6 +107,14 @@ func (h *HSS) Manage(m *maintenance.ManagedFunction) { h.managed.Store(m) }
 // registrations that are valid then stay as they are, and the requests
 // that arrive from that moment on are refused (Admission).
 //
+// The instances on one Store share the settings there, with the
+// generation of the change that put them in force (StoredSettings). A
+// change through any instance is in force on the others within their
+// SweepInterval, and an instance that starts takes on the settings in
+// force before it answers a request, so no instance of the role answers
+// with the settings of its configuration file once an operator has
+// changed them.
+//
 // A change of either profile name gives another user profile to every
 // subscription that the name decides for, so the HSS pushes the
 // complete profile to the S-CSCF of each of those users whose profile
@@ -123,9 +131,13 @@ func (h *HSS) Settings() []maintenance.Setting {
 	// at once, so no request sees the policy of one change beside the
 	// profile names of the one before it. Each set writes the pending
 	// settings, which commitSettings publishes.
+	// The instances of the role share the settings in the Store, so the
+	// generation of the settings in force is that of the Store, which a
+	// change through another instance raises.
 	group := maintenance.SettingsGroup{
-		Begin:  h.beginSettings,
-		Commit: func(uint64) error { h.commitSettings(); return nil },
+		Begin:      h.beginSettings,
+		Commit:     h.commitSettings,
+		Generation: func() uint64 { return h.settings.Load().generation },
 	}
 	return maintenance.Together(group,
 		maintenance.NewSetting(admission,

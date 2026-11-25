@@ -6,6 +6,7 @@
 //
 //	subscriber:<private identity>    the Subscriber and its repository data
 //	public:<public identity>         index: the private identity of the subscription
+//	settings:                        the hss.StoredSettings of the instances
 //
 // and these sorted indexes of private identities, which are read one
 // page at a time:
@@ -627,6 +628,46 @@ func (s *Store) List(ctx context.Context, after string, limit int) ([]hss.Subscr
 		next = ids[len(ids)-1]
 	}
 	return subs, next, nil
+}
+
+// settingsKey is the item of the settings that the instances share: one
+// item, which every instance reads once per sweep, whatever the number
+// of subscribers.
+func (s *Store) settingsKey() string { return s.c.Key("settings") }
+
+func (s *Store) Settings(ctx context.Context) (hss.StoredSettings, bool, error) {
+	var stored hss.StoredSettings
+	_, err := kvjson.Read(ctx, s.c, s.settingsKey(), &stored)
+	if errors.Is(err, kvstore.ErrNotFound) {
+		return hss.StoredSettings{}, false, nil
+	}
+	if err != nil {
+		return hss.StoredSettings{}, false, err
+	}
+	return stored, true, nil
+}
+
+// CompareAndSwapSettings reads the item and writes next at the version
+// read, if the item still holds old: a write of another instance in
+// between changes the version, and the swap does not happen.
+func (s *Store) CompareAndSwapSettings(ctx context.Context, old *hss.StoredSettings, next hss.StoredSettings) (bool, error) {
+	var stored hss.StoredSettings
+	version, err := kvjson.Read(ctx, s.c, s.settingsKey(), &stored)
+	switch {
+	case errors.Is(err, kvstore.ErrNotFound):
+		if old != nil {
+			return false, nil
+		}
+	case err != nil:
+		return false, err
+	case old == nil || stored != *old:
+		return false, nil
+	}
+	_, err = kvjson.CompareAndSwap(ctx, s.c, s.settingsKey(), version, next, 0)
+	if errors.Is(err, kvstore.ErrConflict) {
+		return false, nil
+	}
+	return err == nil, err
 }
 
 // ListServed reads one page of the sorted index of the served

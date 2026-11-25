@@ -459,12 +459,36 @@ type Store interface {
 	// ones that are gone, so an entry too many costs a push of the
 	// profile that the S-CSCF has already.
 	ListServed(ctx context.Context, source ProfileSource, after string, limit int) (privateIDs []string, next string, err error)
+	// Settings returns the settings that the instances of the HSS on the
+	// store share (StoredSettings), and whether any are stored.
+	Settings(ctx context.Context) (StoredSettings, bool, error)
+	// CompareAndSwapSettings stores next if the settings stored are
+	// still old, or, for a nil old, if none are stored yet, and reports
+	// whether it did. Every instance reads the settings and any of them
+	// changes them, so they change by this one atomic step, and no
+	// instance writes over a change it has not seen.
+	CompareAndSwapSettings(ctx context.Context, old *StoredSettings, next StoredSettings) (bool, error)
 	// Counts are the numbers of TS 32.409 4.2.1 that the store holds,
 	// and whether it keeps them. A store that does not keep them
 	// returns false, and the HSS on it serves no database usage
 	// measurement: working the numbers out would mean walking every
 	// subscriber, which no operation of a Store does.
 	Counts(ctx context.Context) (Counts, bool, error)
+}
+
+// StoredSettings are the settings that an operator changes while the
+// HSS runs (HSS.Settings), as the instances of the HSS on one Store
+// share them, with the configuration generation of the change that put
+// them in force. The first instance on a Store stores those of its
+// configuration file, at generation 0; from then on the maintenance API
+// changes them, and every instance on the Store answers with them, so
+// that an instance made in place of another answers as the role does
+// and not as its file says.
+type StoredSettings struct {
+	Generation             uint64
+	Admission              Admission
+	DefaultServiceProfile  string
+	TestUserServiceProfile string
 }
 
 // Counts are the database usage measurements of TS 32.409 4.2.1: how
@@ -521,6 +545,9 @@ type MemoryStore struct {
 	// counts are the numbers of TS 32.409 4.2.1, kept as Add, Put and
 	// Delete change what is stored.
 	counts Counts
+	// settings are the settings of the instances on the store, or nil
+	// before the first of them stores its own.
+	settings *StoredSettings
 }
 
 // NewMemoryStore returns a store that holds subs.
@@ -835,6 +862,25 @@ func (s *MemoryStore) ListServed(_ context.Context, source ProfileSource, after 
 	// The caller gets a slice of its own: the index behind this one
 	// changes as subscribers are written.
 	return slices.Clone(keys), next, nil
+}
+
+func (s *MemoryStore) Settings(context.Context) (StoredSettings, bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.settings == nil {
+		return StoredSettings{}, false, nil
+	}
+	return *s.settings, true, nil
+}
+
+func (s *MemoryStore) CompareAndSwapSettings(_ context.Context, old *StoredSettings, next StoredSettings) (bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if (old == nil) != (s.settings == nil) || old != nil && *old != *s.settings {
+		return false, nil
+	}
+	s.settings = &next
+	return true, nil
 }
 
 // page is the part of the ordered private keys ids that one page of a
