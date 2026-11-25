@@ -466,6 +466,10 @@ type fakeRelay struct {
 	next int
 	// failAdd, when set, is what every Add returns.
 	failAdd error
+	// refusing is the termination whose every Modify fails from the
+	// moment a test names it (refuseModify), as with a relay that
+	// restarts while a call is up.
+	refusing agw.TerminationID
 	// failSubtracts is how many Subtracts fail before one succeeds.
 	failSubtracts int
 	contexts      map[string]bool
@@ -515,11 +519,11 @@ func (f *fakeRelay) Add(ctx context.Context, _ ...agw.TerminationRequest) (agw.C
 }
 
 func (f *fakeRelay) Modify(ctx context.Context, id string, side agw.TerminationID, change agw.TerminationRequest) error {
-	if f.failModify {
-		return errors.New("the relay refused the Modify")
-	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if f.failModify || side == f.refusing {
+		return errors.New("the relay refused the Modify")
+	}
 	if !f.contexts[id] {
 		f.strays = append(f.strays, id)
 	}
@@ -539,6 +543,13 @@ func (f *fakeRelay) Subtract(ctx context.Context, id string) error {
 	}
 	delete(f.contexts, id)
 	return nil
+}
+
+// refuseModify makes every later Modify of the termination side fail.
+func (f *fakeRelay) refuseModify(side agw.TerminationID) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.refusing = side
 }
 
 // added is how many contexts the relay has added, and the ID of the

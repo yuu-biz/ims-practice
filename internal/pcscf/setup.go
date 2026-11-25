@@ -3,8 +3,11 @@ package pcscf
 import (
 	"bytes"
 	"context"
+	"errors"
+	"fmt"
 	"hash/fnv"
 	"log/slog"
+	"sync"
 
 	"github.com/yuu-biz/ims-practice/internal/agw"
 	"github.com/yuu-biz/ims-practice/internal/ims"
@@ -43,6 +46,8 @@ type setup struct {
 	stored bool
 	// givenUp is true once the P-CSCF has ended the INVITE itself.
 	givenUp bool
+	// ended makes end free what the call holds once.
+	ended sync.Once
 	// abort is closed, and aborted set under setupsMu, when the network
 	// takes the resources of the session away while the INVITE is still
 	// on its way (TS 24.229 5.2.8.1.1).
@@ -193,17 +198,26 @@ func (s *setup) forward(st *sip.ServerTransaction, out *sip.Message, targets []s
 	}
 }
 
+// errRelay marks an SDP answer that the P-CSCF could not point at the
+// media relay, because the relay did not take it or its SDP could not
+// be read. The IMS-ALG has no answer of its own to pass on then (TS
+// 24.229 6.7.2.1), and the one that came would lead its party past the
+// relay.
+var errRelay = errors.New("pcscf: the answer is not pointed at the media relay")
+
 // response sees every response to the INVITE that the P-CSCF passes on,
 // the provisional ones and the 2xx, before it leaves: it sets the
 // identities in it, points the answer at the relay, has the PCRF
 // authorise the media, and keeps the dialog. An error means that the
-// network has no resources for the session, or, with errStore, that the
-// P-CSCF cannot keep the dialog.
+// network has no resources for the session; with errRelay, that the
+// answer is not pointed at the relay, which leaves the PCRF without it
+// too; or, with errStore, that the P-CSCF cannot keep the dialog.
 func (s *setup) response(resp *sip.Message) error {
 	s.p.ueResponse(s.leg, s.invite, resp)
 	received := resp.Body
 	if err := s.p.relaySDP(resp, s.relay, !s.toUE()); err != nil {
 		s.log.Warn("media relay refused the answer", "error", err.Error())
+		return fmt.Errorf("%w: %w", errRelay, err)
 	}
 	var refused error
 	if s.offered != nil && len(received) > 0 {
@@ -394,21 +408,23 @@ func (p *PCSCF) abortSetup(d Dialog) bool {
 
 // end frees what the call holds when its INVITE fails: the dialog, if
 // a response has created one, and otherwise the relay context and the
-// policy session alone.
+// policy session alone. Only the first call frees them.
 //
 // A call whose dialog the network released has freed them already; the
 // closed abort says so, in case the Store fails and endDialog has only
 // holds to go by.
 func (s *setup) end() {
-	holds := Dialog{Relay: s.relay, PolicySession: s.session}
-	select {
-	case <-s.abort:
-		holds.Released = true
-	default:
-	}
-	if s.stored {
-		s.p.endDialog(s.key, holds, s.log)
-		return
-	}
-	s.p.free(holds, s.log)
+	s.ended.Do(func() {
+		holds := Dialog{Relay: s.relay, PolicySession: s.session}
+		select {
+		case <-s.abort:
+			holds.Released = true
+		default:
+		}
+		if s.stored {
+			s.p.endDialog(s.key, holds, s.log)
+			return
+		}
+		s.p.free(holds, s.log)
+	})
 }

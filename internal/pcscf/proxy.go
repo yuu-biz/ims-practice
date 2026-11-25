@@ -18,7 +18,12 @@ import (
 // 5.2.7.2, 5.2.8.1.1). It gives the INVITE up in the same way, with a
 // plain 500 (RFC 3261 21.5.1) and a CANCEL without a Reason, when it
 // cannot keep the dialog: it could not release the session later, nor
-// free what the session holds.
+// free what the session holds. TS 24.229 names no procedure for a media
+// relay that does not take the answer of a response, and the P-CSCF
+// gives the INVITE up then too, as for lost resources but with a plain
+// 500: FAILURE_CAUSE tells of radio or bearer resources (7.2A.18.12.2).
+// That response goes no further, since its SDP would lead its party
+// past the relay.
 //
 // Like ProxyWith it returns the final response that is still to be
 // sent, or nil after a 2xx. It also returns nil once the P-CSCF has
@@ -49,13 +54,25 @@ func (p *PCSCF) proxyInvite(st *sip.ServerTransaction, out *sip.Message, targets
 	// nil when the network took the resources away.
 	giveUp := func(why error) {
 		call.givenUp = true
-		if errors.Is(why, errStore) {
+		switch {
+		case errors.Is(why, errStore):
 			st.Respond(storeFailed(st.Request, why, call.log))
 			ct.Cancel()
 			return
+		case errors.Is(why, errRelay):
+			st.Respond(sip.NewResponse(st.Request, 500, sip.NewTag()))
+		default:
+			st.Respond(call.unavailable())
 		}
-		st.Respond(call.unavailable())
 		ct.Cancel(sip.HeaderField{Name: "Reason", Value: reasonServiceUnavailable})
+	}
+	// acknowledge is crossedCancel for a 2xx that the caller does not get,
+	// the first one of its dialog and each retransmission.
+	acknowledge := func(resp *sip.Message) {
+		tag := tagOf(resp.Get("To"))
+		if call.crossedCancel(resp, !crossed[tag]) {
+			crossed[tag] = true
+		}
 	}
 	for {
 		select {
@@ -79,10 +96,7 @@ func (p *PCSCF) proxyInvite(st *sip.ServerTransaction, out *sip.Message, targets
 				// The caller has its 500; what the callee still sends, in
 				// the end the 487 to the CANCEL, goes no further.
 				if code/100 == 2 {
-					tag := tagOf(resp.Get("To"))
-					if call.crossedCancel(resp, !crossed[tag]) {
-						crossed[tag] = true
-					}
+					acknowledge(resp)
 				}
 			case code < 200:
 				provisional = true
@@ -102,12 +116,29 @@ func (p *PCSCF) proxyInvite(st *sip.ServerTransaction, out *sip.Message, targets
 					giveUp(nil)
 					continue
 				}
-				if errors.Is(refused, errStore) {
+				switch {
+				case errors.Is(refused, errStore):
 					// The callee has answered, but the caller gets no 2xx
 					// for a dialog that the P-CSCF cannot release. Its
 					// next retransmission is acknowledged, and the callee
 					// gets a BYE, as for a 2xx that crossed the CANCEL.
 					giveUp(refused)
+					continue
+				case errors.Is(refused, errRelay) && answered:
+					// The caller has the 2xx whose answer the relay took,
+					// so this one is a retransmission (RFC 6026 7.2). It
+					// goes on as it came, and the call stays up.
+					refused = nil
+				case errors.Is(refused, errRelay):
+					// The callee has answered, but the caller gets 500 in
+					// the place of the 2xx. The 2xx is acknowledged at
+					// once, and the callee gets a BYE, as for a 2xx that
+					// crossed the CANCEL. Only retransmissions of the 2xx
+					// come after it, so what the call holds goes now, not
+					// when the client transaction ends.
+					giveUp(refused)
+					acknowledge(resp)
+					go call.end()
 					continue
 				}
 				if !answered {
