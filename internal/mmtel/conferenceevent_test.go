@@ -191,6 +191,54 @@ func TestASubscriptionExpiresWhileAnotherIsRemoved(t *testing.T) {
 	}
 }
 
+// TestAFailedLastNOTIFYRemovesNothing: the focus logs that a failed
+// NOTIFY has removed a subscription only when the subscription was
+// still there. A 481 to the NOTIFY of a hold removes xavier's (RFC 6665
+// 4.2.2). A 481 to the last NOTIFY of yvonne's, which left the record
+// as it expired (4.2.1.4), removes nothing.
+func TestAFailedLastNOTIFYRemovesNothing(t *testing.T) {
+	removals := make(chan struct{}, 4)
+	log := slog.New(hookHandler(func(r slog.Record) {
+		if r.Message == "conference subscription removed after a failed NOTIFY" {
+			removals <- struct{}{}
+		}
+	}))
+	mrfc := startConferenceMRFC(t)
+	timer := newHandTimer()
+	as := startASOn(t, noServices{}, mmtel.Config{MRFC: "sip:" + contactOf(t, mrfc.ua), AfterFunc: timer.afterFunc},
+		mmtel.NewMemoryStore(), log)
+	conf, focus, _ := aliceConference(t, as, func(c *sip.IncomingCall) { c.Reject(480) })
+	// expiry is the expiry of the subscription that came last, which the
+	// test fires by hand.
+	expiry := func(what string) func() {
+		t.Helper()
+		receive(t, timer.set, what)
+		return receive(t, timer.fire, what)
+	}
+	expiry("expiry timer of alice's subscription")
+	xavier := subscribeBare(t, as, "xavier", focus.URI)
+	expiry("expiry timer of xavier's subscription")
+	xavier.answer(xavier.awaitNotify("first NOTIFY to xavier"), 200)
+	yvonne := subscribeBare(t, as, "yvonne", focus.URI)
+	expire := expiry("expiry timer of yvonne's subscription")
+	yvonne.answer(yvonne.awaitNotify("first NOTIFY to yvonne"), 200)
+
+	if resp, err := conf.ReInvite(audio("42000", "sendonly")); err != nil || resp.StatusCode != 200 {
+		t.Fatalf("hold got %v, %v", resp, err)
+	}
+	xavier.answer(xavier.awaitNotify("NOTIFY of the hold to xavier"), 481)
+	receive(t, removals, "removal of xavier's subscription")
+	yvonne.answer(yvonne.awaitNotify("NOTIFY of the hold to yvonne"), 200)
+
+	expire()
+	yvonne.answer(yvonne.awaitNotify("NOTIFY at the expiry of yvonne's subscription"), 481)
+	select {
+	case <-removals:
+		t.Error("the focus logged a removal after the 481 to the last NOTIFY of a subscription that had expired")
+	case <-time.After(500 * time.Millisecond):
+	}
+}
+
 // TestASubscriberThatDoesNotAnswerLosesItsSubscription: a NOTIFY that
 // has no response when Timer F fires ends its subscription (RFC 6665
 // 4.2.2): the focus sends that subscriber nothing after it, and takes
