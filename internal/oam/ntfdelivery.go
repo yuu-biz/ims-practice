@@ -36,7 +36,7 @@ func newNotificationMetrics(reg *metrics.Registry) (notificationMetrics, error) 
 		types[i] = string(t)
 	}
 	sent, err := reg.NewCounter("oam_alarm_notifications_total",
-		"Alarm notifications that the OAM sent to the recipient of a subscription, by type and by whether the recipient answered with 2xx.",
+		"Alarm notifications that the OAM sent to the recipient of a subscription, by type and by whether the recipient answered with 204.",
 		metrics.Label{Name: "notification_type", Values: types},
 		metrics.Label{Name: "result", Values: []string{notificationDelivered, notificationFailed}})
 	return notificationMetrics{sent: sent}, err
@@ -286,9 +286,10 @@ func (s *Server) sendOwed(ctx context.Context) {
 }
 
 // post sends n to the recipient of sub, and says whether the recipient
-// took it: an answer of 2xx within NotificationTimeout. TS 32.158 5.5.4
-// has the recipient answer 204 to the POST at its address, and any
-// other answer is a failure. A redirect is one too, and is not
+// took it: an answer of 204 within NotificationTimeout. TS 32.158 5.5.4
+// and TS28111_FaultNotifications.yaml have the recipient answer 204 to
+// the POST at its address, and give no other success, so any other
+// answer is a failure, another 2xx too. So is a redirect, which is not
 // followed: a client that follows a 301 or a 302 may send a GET in place
 // of the POST (RFC 9110 15.4.2, 15.4.3), without the notification.
 func (s *Server) post(ctx context.Context, sub NtfSubscriptionControl, n alarmNotification) bool {
@@ -312,7 +313,7 @@ func (s *Server) post(ctx context.Context, sub NtfSubscriptionControl, n alarmNo
 	}
 	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, maxRequestBody))
 	resp.Body.Close()
-	if resp.StatusCode < 200 || resp.StatusCode > 299 {
+	if resp.StatusCode != http.StatusNoContent {
 		s.log.Warn("a notification was refused", "id", sub.ID, "notification_type", string(n.notificationType), "status", resp.StatusCode)
 		return false
 	}

@@ -650,6 +650,30 @@ func TestARecipientThatMissedANotification(t *testing.T) {
 	n.counted(t, `oam_alarm_notifications_total{notification_type="notifyNewAlarm",result="failed"} 2`)
 }
 
+// TestOnly204IsDelivery: the recipient of a notification answers 204
+// No Content when it takes one (TS 32.158 5.5.4), so another success
+// such as 200 is a notification that it did not take, and it is owed
+// notifyAlarmListRebuilt.
+func TestOnly204IsDelivery(t *testing.T) {
+	scscf := newJournalNode(t, "scscf", maintenance.Config{})
+	oss := newOSSStandIn(t)
+	n := newNotifier(t, nil, scscf)
+	n.subscribe(t, oss, "oss-1", "")
+	n.watching(t, "scscf")
+	oss.setAnswer(func(_ string, k int) (int, time.Duration) {
+		if k == 1 {
+			return http.StatusOK, 0
+		}
+		return http.StatusNoContent, 0
+	})
+
+	scscf.raise(t, hssPeer, maintenance.Major)
+	if r := oss.next(t, "the notification that the 200 owes"); r.field("notificationType") != "notifyAlarmListRebuilt" {
+		t.Errorf("after a 200 the OSS got %s, want notifyAlarmListRebuilt", r.raw)
+	}
+	n.counted(t, `oam_alarm_notifications_total{notification_type="notifyNewAlarm",result="failed"} 1`)
+}
+
 // TestARedirectIsNoDelivery: a recipient that answers a notification
 // with a redirect has not taken it (TS 32.158 5.5.4), and the OAM does
 // not follow the redirect, which would turn the POST into a GET without

@@ -115,7 +115,7 @@ docker compose exec oss wget -qO- http://oam:8080/3GPPManagement/ProvMnS/v19/Sub
 
 ## The notifications and when each comes
 
-The OAM watches each node: it asks the node's maintenance API for the changes of its alarm list, a request that waits up to five seconds for one, and turns each change into a notification. It posts the notification to every subscription that selects it, and the OSS answers `204 No Content` (TS 32.158 5.5.4). Any answer but a 2xx means that the OSS did not take the notification, a redirect too: the OAM does not follow one, as a client that follows a 301 or a 302 may send a GET in place of the POST, without the notification (RFC 9110 15.4.2, 15.4.3).
+The OAM watches each node: it asks the node's maintenance API for the changes of its alarm list, a request that waits up to five seconds for one, and turns each change into a notification. It posts the notification to every subscription that selects it, and the OSS answers `204 No Content` (TS 32.158 5.5.4). Any other answer means that the OSS did not take the notification, a `200 OK` too, as 204 is the only success that TS 32.158 5.5.4 and the OpenAPI file of the notifications give. A redirect is no delivery either: the OAM does not follow one, as a client that follows a 301 or a 302 may send a GET in place of the POST, without the notification (RFC 9110 15.4.2, 15.4.3).
 
 | Notification (TS 28.111) | When |
 | --- | --- |
@@ -334,7 +334,7 @@ The OAM sends `notifyAlarmListRebuilt` with `ALIGNMENT_REQUIRED` in three more c
 | --- | --- | --- |
 | The node started again, with a new alarm list | The node | `System restarts` |
 | Changes of the node left its journal before the OAM read them, or its full list dropped a record | The node | `indeterminate` |
-| A notification did not reach this OSS: no connection, no answer within five seconds, or an answer other than 2xx | The whole SubNetwork, `http://oam:8080/SubNetwork=ims`, sent to that subscription only | `indeterminate` |
+| A notification did not reach this OSS: no connection, no answer within five seconds, or an answer other than 204 | The whole SubNetwork, `http://oam:8080/SubNetwork=ims`, sent to that subscription only | `indeterminate` |
 
 The OAM does not send a notification again. From the notification that did not reach it, the OSS is sent nothing but that `notifyAlarmListRebuilt`, which the OAM tries every 30 seconds, whether the alarms change or not, until the OSS takes it. Then the notifications go to it again, and it reads the list again. If an alarm changes while that notification is on its way, though, the OSS may have read the list before the change, so the OAM sends it once more at its next try. An OSS that does not answer thus costs the OAM one wait of five seconds, not one for each notification, and holds up no other OSS.
 
