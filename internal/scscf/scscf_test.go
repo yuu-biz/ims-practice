@@ -418,6 +418,94 @@ func TestRegistrationExpires(t *testing.T) {
 	waitForAssignments(t, h.hss, cx.AssignRegistration, cx.TimeoutDeregistration)
 }
 
+// TestAnotherSCSCFTookTheUserOver: the user registered again at another
+// S-CSCF, whose MAR took the user over at the HSS (TS 29.228 8.1.1),
+// while this S-CSCF still has the registration. When the registration
+// ends, by expiry or by the UE, the HSS answers the SAR with
+// DIAMETER_ERROR_IDENTITY_ALREADY_REGISTERED and keeps the user at the
+// other S-CSCF (8.1.2). The S-CSCF removes the registration all the
+// same, and the UE gets its 200.
+func TestAnotherSCSCFTookTheUserOver(t *testing.T) {
+	const other = "sip:scscf2." + domain + ":5060"
+	hdr := diameter.Header{SessionID: "scscf2;1;1", OriginHost: "scscf2." + domain, OriginRealm: domain, DestinationRealm: domain}
+	toHSS := func(t *testing.T, f *fakeHSS, m *diam.Message) *diam.Message {
+		t.Helper()
+		b, err := m.Serialize()
+		if err != nil {
+			t.Fatal(err)
+		}
+		req, err := diam.ReadMessage(bytes.NewReader(b), dict.Default)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return f.hss.Handle(req)
+	}
+	takeOver := func(t *testing.T, f *fakeHSS) {
+		t.Helper()
+		maa, err := cx.ParseMultimediaAuthAnswer(toHSS(t, f, cx.MultimediaAuthRequest{Header: hdr, UserName: impi, PublicIdentity: impu,
+			SIPAuthenticationScheme: cx.SchemeUnknown, SIPNumberAuthItems: 1, ServerName: other}.Message()))
+		if err != nil || !maa.Result.Success() {
+			t.Fatalf("MAA to the other S-CSCF = %+v (%v)", maa, err)
+		}
+		saa, err := cx.ParseServerAssignmentAnswer(toHSS(t, f, cx.ServerAssignmentRequest{Header: hdr, UserName: impi,
+			PublicIdentities: []string{impu}, ServerName: other, ServerAssignmentType: cx.AssignRegistration}.Message()))
+		if err != nil || !saa.Result.Success() {
+			t.Fatalf("SAA to the other S-CSCF = %+v (%v)", saa, err)
+		}
+	}
+	// calledAtTheOther fails the test unless the HSS still sends a call
+	// to the user to the other S-CSCF.
+	calledAtTheOther := func(t *testing.T, f *fakeHSS) {
+		t.Helper()
+		lia, err := cx.ParseLocationInfoAnswer(toHSS(t, f, cx.LocationInfoRequest{Header: hdr, PublicIdentity: impu}.Message()))
+		if err != nil || !lia.Result.Success() || lia.ServerName != other {
+			t.Errorf("LIA = %+v (%v), want DIAMETER_SUCCESS with %s", lia, err, other)
+		}
+	}
+	registered := func(t *testing.T, h *harness) bool {
+		t.Helper()
+		_, ok, err := h.store.Registration(t.Context(), impi)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return ok
+	}
+	register := func(t *testing.T, h *harness, callID string) {
+		t.Helper()
+		r := h.register(callID, 1, 600000, initial)
+		auth, _ := answer(t, r, password, "ip-assoc-pending")
+		if r := h.register(callID, 2, 600000, auth); r.StatusCode != 200 {
+			t.Fatalf("registration got %d, want 200", r.StatusCode)
+		}
+	}
+
+	t.Run("expiry", func(t *testing.T) {
+		h := newHarness(t, Config{MinExpires: time.Second, MaxExpires: time.Second})
+		register(t, h, sip.NewCallID())
+		takeOver(t, h.hss)
+		waitForAssignments(t, h.hss, cx.AssignRegistration, cx.TimeoutDeregistration)
+		if registered(t, h) {
+			t.Error("the registration stays after its expiry")
+		}
+		calledAtTheOther(t, h.hss)
+	})
+	t.Run("deregistration by the UE", func(t *testing.T) {
+		h := newHarness(t, Config{})
+		callID := sip.NewCallID()
+		register(t, h, callID)
+		takeOver(t, h.hss)
+		dereg := `Digest username="` + impi + `", realm="` + domain + `", nonce="", uri="sip:` + domain + `", response="", integrity-protected="ip-assoc-yes"`
+		if r := h.register(callID, 3, 0, dereg); r.StatusCode != 200 || !strings.HasSuffix(r.Get("Contact"), ";expires=0") {
+			t.Fatalf("deregistration got %d %q, want 200 with expires=0", r.StatusCode, r.Get("Contact"))
+		}
+		waitForAssignments(t, h.hss, cx.AssignRegistration, cx.UserDeregistration)
+		if registered(t, h) {
+			t.Error("the registration stays after the deregistration")
+		}
+		calledAtTheOther(t, h.hss)
+	})
+}
+
 func TestRegAwaitAuthExpiry(t *testing.T) {
 	h := newHarness(t, Config{RegAwaitAuth: 100 * time.Millisecond})
 	h.register(sip.NewCallID(), 1, 600000, initial)

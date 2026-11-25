@@ -419,8 +419,8 @@ type ServerAssignmentAnswer struct {
 	Result   diameter.Result
 	UserName string
 	UserData []byte
-	// ServerName is the S-CSCF already assigned, returned with
-	// DIAMETER_ERROR_IDENTITY_ALREADY_REGISTERED (TS 29.228 6.1.2.1).
+	// ServerName is the S-CSCF already assigned, returned when the SAR
+	// came from another S-CSCF (TS 29.228 Table 6.1.2.2 and 8.1.2).
 	ServerName string
 }
 
