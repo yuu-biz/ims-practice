@@ -135,12 +135,6 @@ type SMSC struct {
 	s6c   S6cClient
 	clock Clock
 	log   *slog.Logger
-	// started counts the deliveries of this instance, from the
-	// reservation before the claim to the end of the delivery, for
-	// Wait. deliveries holds a token for each of them, up to
-	// Config.Deliveries.
-	started    sync.WaitGroup
-	deliveries chan struct{}
 	// life ends when this instance stops (Run). The attempts under way
 	// run on it, so that the stop cuts them short, and no delivery
 	// begins after it. mu keeps a delivery from beginning while the
@@ -148,6 +142,12 @@ type SMSC struct {
 	life context.Context
 	end  context.CancelFunc
 	mu   sync.Mutex
+	// running counts the deliveries of this instance, from the
+	// reservation before the claim to the end of the delivery, up to
+	// Config.Deliveries. idle wakes Wait when it falls to zero. Both are
+	// under mu.
+	running int
+	idle    sync.Cond
 	// managed is the administrative state that the maintenance API of
 	// the node keeps for the SC, or nil in a node without the API
 	// (maintenance.go).
@@ -173,9 +173,9 @@ func New(cfg Config, store Store, sgdClient SGdClient, s6cClient S6cClient, cloc
 	if cfg.Deliveries == 0 {
 		cfg.Deliveries = defaultDeliveries
 	}
-	c := &SMSC{cfg: cfg, store: store, sgd: sgdClient, s6c: s6cClient, clock: clock, log: log,
-		deliveries: make(chan struct{}, cfg.Deliveries)}
+	c := &SMSC{cfg: cfg, store: store, sgd: sgdClient, s6c: s6cClient, clock: clock, log: log}
 	c.life, c.end = context.WithCancel(context.Background())
+	c.idle.L = &c.mu
 	return c
 }
 
@@ -246,21 +246,17 @@ func (c *SMSC) reserve() bool {
 	return false
 }
 
-// takeDelivery takes a token of deliveries for Wait to wait for, unless
-// this instance has stopped or has none left.
+// takeDelivery counts one more delivery, for Wait to wait for, unless
+// this instance has stopped or runs as many as Config.Deliveries
+// allows.
 func (c *SMSC) takeDelivery() bool {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if c.stopped() {
+	if c.stopped() || c.running >= c.cfg.Deliveries {
 		return false
 	}
-	select {
-	case c.deliveries <- struct{}{}:
-		c.started.Add(1)
-		return true
-	default:
-		return false
-	}
+	c.running++
+	return true
 }
 
 // unreserve gives back what reserve took. The user quits first, so that
@@ -268,13 +264,26 @@ func (c *SMSC) takeDelivery() bool {
 // returns.
 func (c *SMSC) unreserve() {
 	c.userQuit()
-	<-c.deliveries
-	c.started.Done()
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.running--
+	if c.running == 0 {
+		c.idle.Broadcast()
+	}
 }
 
-// Wait blocks until the deliveries this instance began, in a sweep
-// (ProcessDue) or after an OFR or an ALR, have ended.
-func (c *SMSC) Wait() { c.started.Wait() }
+// Wait blocks until no delivery of this instance is under way: none
+// that a sweep (ProcessDue) began, nor one after an OFR or an ALR. It
+// may be called at any time, also while Run sweeps; on an instance that
+// has stopped it waits for the last of them, as no delivery begins
+// after the stop.
+func (c *SMSC) Wait() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	for c.running > 0 {
+		c.idle.Wait()
+	}
+}
 
 // s6cHeader is the routing part of a request to the HSS.
 func (c *SMSC) s6cHeader() diameter.Header {
