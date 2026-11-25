@@ -51,6 +51,12 @@ type Capture struct {
 	// received request it differs from Message.Bytes(), whose top Via
 	// has received and rport already (RFC 3261 18.2.1, RFC 3581 4).
 	Wire []byte
+	// Time is when the message crossed the wire: for a sent message the
+	// moment its write began, for a received one the moment it was read.
+	// A sent message is recorded only once its write has returned, by
+	// which time its response may have been recorded already, so Time,
+	// and not the order of the records, is the order of the wire.
+	Time time.Time
 }
 
 // Observer sees every message that the transport layer sends or
@@ -403,10 +409,11 @@ func (t *UDPTransport) SendResponse(resp *Message) error {
 
 func (t *UDPTransport) send(m *Message, dst netip.AddrPort) error {
 	wire := m.Bytes()
+	at := time.Now()
 	if _, err := t.conn.WriteToUDPAddrPort(wire, dst); err != nil {
 		return err
 	}
-	record(t.log, t.observe, Capture{Transport: UDP, Sent: true, Source: t.LocalAddr(), Destination: dst, Message: m, Wire: wire})
+	record(t.log, t.observe, Capture{Transport: UDP, Sent: true, Source: t.LocalAddr(), Destination: dst, Message: m, Wire: wire, Time: at})
 	return nil
 }
 
@@ -421,6 +428,7 @@ func (t *UDPTransport) Receive() (*Message, netip.AddrPort, error) {
 		if err != nil {
 			return nil, netip.AddrPort{}, err
 		}
+		at := time.Now()
 		// A dual-stack socket reports an IPv4 peer as ::ffff:a.b.c.d.
 		src = netip.AddrPortFrom(src.Addr().Unmap(), src.Port())
 		if len(bytes.TrimSpace(t.buf[:n])) == 0 {
@@ -447,7 +455,7 @@ func (t *UDPTransport) Receive() (*Message, netip.AddrPort, error) {
 				continue
 			}
 		}
-		record(t.log, t.observe, Capture{Transport: UDP, Source: src, Destination: t.LocalAddr(), Message: m, Wire: bytes.Clone(t.buf[:n])})
+		record(t.log, t.observe, Capture{Transport: UDP, Source: src, Destination: t.LocalAddr(), Message: m, Wire: bytes.Clone(t.buf[:n]), Time: at})
 		return m, src, nil
 	}
 }
@@ -519,13 +527,15 @@ func record(log *slog.Logger, observe Observer, c Capture) {
 	if c.Sent {
 		direction = "send"
 	}
-	logMessage(log, c.Transport, direction, c.Message, c.Source, c.Destination)
+	logMessage(log, c.Transport, direction, c.Message, c.Source, c.Destination, c.Time)
 	if observe != nil {
 		observe(c)
 	}
 }
 
-func logMessage(log *slog.Logger, transport Transport, direction string, m *Message, src, dst netip.AddrPort) {
+// logMessage logs m with wire_time, Capture.Time, besides the time of
+// the log line itself.
+func logMessage(log *slog.Logger, transport Transport, direction string, m *Message, src, dst netip.AddrPort, at time.Time) {
 	attrs := []any{"direction", direction, "transport", string(transport)}
 	if m.IsRequest() {
 		attrs = append(attrs, "method", string(m.Method))
@@ -542,6 +552,7 @@ func logMessage(log *slog.Logger, transport Transport, direction string, m *Mess
 		"branch", branch,
 		"src", src.String(),
 		"dst", dst.String(),
+		"wire_time", at,
 	)
 	log.Info("sip message", attrs...)
 }

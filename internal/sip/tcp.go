@@ -192,6 +192,7 @@ func (t *TransportLayer) readTCP(c *net.TCPConn, remote netip.AddrPort) {
 	for {
 		c.SetReadDeadline(time.Now().Add(t.idleTimeout))
 		m, wire, err := readStreamMessage(r)
+		at := time.Now()
 		if err != nil {
 			t.dropConnection(c, remote, closeReason(err))
 			return
@@ -202,7 +203,7 @@ func (t *TransportLayer) readTCP(c *net.TCPConn, remote netip.AddrPort) {
 				continue
 			}
 		}
-		record(t.log, t.observe, Capture{Transport: TCP, Source: remote, Destination: unmapped(c.LocalAddr()), Message: m, Wire: wire})
+		record(t.log, t.observe, Capture{Transport: TCP, Source: remote, Destination: unmapped(c.LocalAddr()), Message: m, Wire: wire, Time: at})
 		if !t.deliver(incoming{msg: m, source: Destination{Transport: TCP, Addr: remote}}) {
 			return
 		}
@@ -384,7 +385,8 @@ func (t *TransportLayer) nextTCP(remote netip.AddrPort) (tcpSend, bool) {
 // writeTCP writes m to c, the connection to remote.
 func (t *TransportLayer) writeTCP(c *net.TCPConn, m *Message, remote netip.AddrPort) error {
 	wire := m.Bytes()
-	c.SetWriteDeadline(time.Now().Add(tcpConnectTimeout))
+	at := time.Now()
+	c.SetWriteDeadline(at.Add(tcpConnectTimeout))
 	if _, err := c.Write(wire); err != nil {
 		// The connection is of no more use. It leaves the table at once,
 		// so that the next message to remote opens a new one; the reader
@@ -397,7 +399,7 @@ func (t *TransportLayer) writeTCP(c *net.TCPConn, m *Message, remote netip.AddrP
 		c.Close()
 		return err
 	}
-	record(t.log, t.observe, Capture{Transport: TCP, Sent: true, Source: unmapped(c.LocalAddr()), Destination: remote, Message: m, Wire: wire})
+	record(t.log, t.observe, Capture{Transport: TCP, Sent: true, Source: unmapped(c.LocalAddr()), Destination: remote, Message: m, Wire: wire, Time: at})
 	c.SetReadDeadline(time.Now().Add(t.idleTimeout))
 	return nil
 }
