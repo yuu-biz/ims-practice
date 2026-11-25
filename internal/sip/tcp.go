@@ -62,7 +62,8 @@ type tcpSend struct {
 	done func(error)
 	// orElse is set for a response that goes back on the connection of
 	// its request: where it goes instead, should that connection close
-	// before the response is written (RFC 3261 18.2.2).
+	// before the response is written, or the write fail (RFC 3261
+	// 18.2.2).
 	orElse netip.AddrPort
 }
 
@@ -337,12 +338,19 @@ func (t *TransportLayer) writeQueued(remote netip.AddrPort) {
 			}
 			continue
 		}
-		next.done(t.writeTCP(c, next.m, remote))
+		err = t.writeTCP(c, next.m, remote)
+		if err != nil && next.orElse.IsValid() {
+			// The connection of the request went with the failed write.
+			t.redirect(next)
+			continue
+		}
+		next.done(err)
 	}
 }
 
 // redirect sends s, a response whose request came over a connection that
-// has closed, over a new connection to s.orElse (RFC 3261 18.2.2).
+// has closed or failed, over a new connection to s.orElse (RFC 3261
+// 18.2.2).
 func (t *TransportLayer) redirect(s tcpSend) {
 	if err := t.queueTCP(tcpSend{m: s.m, done: s.done}, s.orElse); err != nil {
 		s.done(err)

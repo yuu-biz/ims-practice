@@ -885,6 +885,35 @@ func TestMessageThatFailedToGoOutIsNotObserved(t *testing.T) {
 	})
 }
 
+// A response whose write on the connection of its request fails goes
+// over a new connection to the sent-by (RFC 3261 18.2.2), as one does
+// whose connection has closed.
+func TestResponseGoesToTheSentByWhenItsWriteFails(t *testing.T) {
+	sentBy, atSentBy := rawTCPServer(t)
+	arrived := make(chan *ServerTransaction, 1)
+	uas := newStack(t, testTimers, func(st *ServerTransaction) { arrived <- st })
+	peer := dial(t, uas.LocalAddr())
+	req := tcpRequest(peer, REGISTER)
+	req.SetFirst("Via", "SIP/2.0/TCP "+sentBy.String()+";branch="+NewBranch())
+	peer.write(t, req)
+	var st *ServerTransaction
+	select {
+	case st = <-arrived:
+	case <-time.After(2 * time.Second):
+		t.Fatal("the REGISTER never reached the TU")
+	}
+	breakWrites(t, uas.transport, st.Source.Addr)
+	st.Respond(NewResponse(st.Request, 200, NewTag()))
+	select {
+	case resp := <-atSentBy:
+		if resp.StatusCode != 200 || resp.Get("Call-ID") != req.Get("Call-ID") {
+			t.Errorf("the sent-by got %d for %s, want the 200 for the REGISTER", resp.StatusCode, resp.Get("Call-ID"))
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("the response whose write failed never reached the sent-by")
+	}
+}
+
 // A connect that gets no answer fails every message that waits for it,
 // rather than one after the other, a connect for each.
 func TestMessagesThatWaitForAConnectFailWithIt(t *testing.T) {
