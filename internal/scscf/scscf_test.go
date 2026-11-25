@@ -426,42 +426,66 @@ func TestRegAwaitAuthExpiry(t *testing.T) {
 
 // TestASlowExpiryHoldsUpNeitherAnotherNorClose: the HSS does not answer
 // the SAR of one user's expiry, so that handler waits. The expiry of
-// another user is handled all the same, and Close does not wait for the
-// one that hangs: it ends its Cx request and returns.
+// another user is handled all the same. Close lets the handler that
+// waits finish, since the registration it ended has left the store and
+// its SAR would go unsent otherwise, but waits for it no longer than its
+// claim: after that the expiry is any instance's.
 func TestASlowExpiryHoldsUpNeitherAnotherNorClose(t *testing.T) {
 	const otherIMPI = "001010000000002@" + domain
-	h := newHarnessWithHSS(t, Config{ExpiryLease: 10 * time.Second}, nil, hss.Config{},
-		hss.Subscription{PrivateIdentity: impi, PublicIdentities: []string{impu}, Password: password})
-	stalled := make(chan struct{})
-	defer close(stalled)
-	h.hss.stall(impi, stalled)
-	ctx := context.Background()
-	// A registration of impi whose time is up: its handler sends the SAR
-	// that the HSS leaves unanswered, and waits there.
-	if err := h.store.PutRegistration(ctx, Registration{PrivateIdentity: impi, PublicIdentities: []string{impu},
-		Contact: ueContact, Expires: time.Now().Add(-time.Second)}); err != nil {
-		t.Fatal(err)
-	}
-	waitForAssignments(t, h.hss, cx.TimeoutDeregistration)
+	const lease = 2 * time.Second
+	for _, tt := range []struct {
+		name     string
+		answered bool
+	}{
+		{"the HSS answers once Close has begun", true},
+		{"the HSS never answers", false},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			h := newHarnessWithHSS(t, Config{ExpiryLease: lease}, nil, hss.Config{},
+				hss.Subscription{PrivateIdentity: impi, PublicIdentities: []string{impu}, Password: password})
+			stalled := make(chan struct{})
+			var once sync.Once
+			answer := func() { once.Do(func() { close(stalled) }) }
+			defer answer()
+			h.hss.stall(impi, stalled)
+			ctx := context.Background()
+			// A registration of impi whose time is up: its handler sends the
+			// SAR that the HSS leaves unanswered, and waits there.
+			if err := h.store.PutRegistration(ctx, Registration{PrivateIdentity: impi, PublicIdentities: []string{impu},
+				Contact: ueContact, Expires: time.Now().Add(-time.Second)}); err != nil {
+				t.Fatal(err)
+			}
+			waitForAssignments(t, h.hss, cx.TimeoutDeregistration)
 
-	// The rounds that follow go on claiming: the reg-await-auth of
-	// another user, which runs out while that handler waits, is handled.
-	if err := h.store.PutChallenge(ctx, Challenge{PrivateIdentity: otherIMPI, PublicIdentity: impu, Nonce: "n1",
-		Expires: time.Now().Add(-time.Second), KeepUntil: time.Now().Add(time.Hour)}); err != nil {
-		t.Fatal(err)
-	}
-	if !came(3*time.Second, func() bool { return slices.Contains(h.hss.assignments(), cx.AuthenticationTimeout) }) {
-		t.Fatalf("SARs = %v, want AUTHENTICATION_TIMEOUT while the other expiry waits for the HSS", h.hss.assignments())
-	}
-	closed := make(chan struct{})
-	go func() {
-		h.role.Close()
-		close(closed)
-	}()
-	select {
-	case <-closed:
-	case <-time.After(3 * time.Second):
-		t.Error("Close waited for the handler that the HSS keeps waiting")
+			// The rounds that follow go on claiming: the reg-await-auth of
+			// another user, which runs out while that handler waits, is
+			// handled.
+			if err := h.store.PutChallenge(ctx, Challenge{PrivateIdentity: otherIMPI, PublicIdentity: impu, Nonce: "n1",
+				Expires: time.Now().Add(-time.Second), KeepUntil: time.Now().Add(time.Hour)}); err != nil {
+				t.Fatal(err)
+			}
+			if !came(3*time.Second, func() bool { return slices.Contains(h.hss.assignments(), cx.AuthenticationTimeout) }) {
+				t.Fatalf("SARs = %v, want AUTHENTICATION_TIMEOUT while the other expiry waits for the HSS", h.hss.assignments())
+			}
+			closed := make(chan struct{})
+			go func() {
+				h.role.Close()
+				close(closed)
+			}()
+			select {
+			case <-closed:
+				t.Fatal("Close cut short the handler that waits for the HSS")
+			case <-time.After(lease / 4):
+			}
+			if tt.answered {
+				answer()
+			}
+			select {
+			case <-closed:
+			case <-time.After(lease + 3*time.Second):
+				t.Errorf("Close waited past the claim of the handler that waits for the HSS")
+			}
+		})
 	}
 }
 
