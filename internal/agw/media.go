@@ -49,9 +49,12 @@ type relayTermination struct {
 	ctx       *relayContext
 	rtp, rtcp *channel
 	// Guarded by ctx.mu.
-	mode    Mode
-	signals *Signals
-	events  *Events
+	mode Mode
+	// latchOff tells that the termination sends to the address of the
+	// SDP and never latches: it was added or modified with NAPTOff.
+	latchOff bool
+	signals  *Signals
+	events   *Events
 	// playback is the announcement that plays, or nil.
 	playback *mixer.Playback
 	// own is the RTP source of what the node sends itself.
@@ -124,6 +127,7 @@ func (rc *relayContext) add(req TerminationRequest) (*relayTermination, error) {
 	t.setSignals(req.Signals, playback)
 	t.setRemote(req.Remote)
 	t.setLatch(latch)
+	t.latchOff = latch == NAPTOff || latch == StopLatching
 	rc.terms[id] = t
 	rc.mix.Join(string(id))
 	go t.read(rtpChannel, t.rtp)
@@ -134,10 +138,12 @@ func (rc *relayContext) add(req TerminationRequest) (*relayTermination, error) {
 // reopen makes a termination of a stored context again, on the port it
 // had, and starts reading its sockets. It sends where the stored
 // address says, which is the address the earlier process latched onto
-// only if a change of the context was stored after the latch, and it
-// latches as a termination added without a latching does: the first
-// packet that arrives is answered where it comes from, so a party
-// behind NAT is found again whatever was stored. rc.mu is held.
+// only if a change of the context was stored after the latch. A
+// termination that latched latches again as one added without a
+// latching does: the first packet that arrives is answered where it
+// comes from, so a party behind NAT is found again whatever was stored.
+// One that had latching off keeps it off, and goes on following the
+// SDP that its controller gives. rc.mu is held.
 func (rc *relayContext) reopen(saved SavedTermination) error {
 	if !saved.Mode.valid() {
 		return fmt.Errorf("%w: mode %q", ErrBadRequest, saved.Mode)
@@ -146,9 +152,13 @@ func (rc *relayContext) reopen(saved SavedTermination) error {
 	if err != nil {
 		return err
 	}
-	t := &relayTermination{id: saved.ID, ctx: rc, rtp: rtp, rtcp: rtcp, mode: saved.Mode, own: newSource()}
+	t := &relayTermination{id: saved.ID, ctx: rc, rtp: rtp, rtcp: rtcp, mode: saved.Mode, own: newSource(), latchOff: saved.Latch == NAPTOff}
 	t.setRemote(saved.Remote)
-	t.setLatch(NAPTLatch)
+	if t.latchOff {
+		t.setLatch(NAPTOff)
+	} else {
+		t.setLatch(NAPTLatch)
+	}
 	rc.terms[saved.ID] = t
 	rc.mix.Join(string(saved.ID))
 	go t.read(rtpChannel, t.rtp)
@@ -216,6 +226,12 @@ func (t *relayTermination) modify(req TerminationRequest) error {
 	}
 	t.setRemote(req.Remote)
 	t.setLatch(req.Latch)
+	switch req.Latch {
+	case NAPTOff:
+		t.latchOff = true
+	case NAPTLatch, NAPTRelatch:
+		t.latchOff = false
+	}
 	return nil
 }
 
@@ -573,13 +589,18 @@ func (rc *relayContext) view() Context {
 // termination IDs. Of each termination it holds what a relay created
 // again under the same name needs to carry the media on: its ports, its
 // mode, and the address it sends to now, which is the one it latched
-// onto once it has. What a termination plays is not kept (see restore).
+// onto once it has, and whether it latches. What a termination plays is
+// not kept (see restore).
 // rc.mu is held.
 func (rc *relayContext) saved() SavedContext {
 	c := SavedContext{ID: rc.id, Terminations: make([]SavedTermination, 0, len(rc.terms))}
 	for id, t := range rc.terms {
 		_, remote, _, _, _ := t.rtp.view()
-		c.Terminations = append(c.Terminations, SavedTermination{ID: id, LocalRTP: t.rtp.local.Port(), Remote: remote, Mode: t.mode})
+		saved := SavedTermination{ID: id, LocalRTP: t.rtp.local.Port(), Remote: remote, Mode: t.mode}
+		if t.latchOff {
+			saved.Latch = NAPTOff
+		}
+		c.Terminations = append(c.Terminations, saved)
 	}
 	slices.SortFunc(c.Terminations, func(a, b SavedTermination) int { return strings.Compare(string(a.ID), string(b.ID)) })
 	return c

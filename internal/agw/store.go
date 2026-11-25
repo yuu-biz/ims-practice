@@ -23,6 +23,9 @@ type SavedTermination struct {
 	LocalRTP uint16         // the RTCP port is LocalRTP+1
 	Remote   netip.AddrPort // zero until known
 	Mode     Mode
+	// Latch is NAPTOff for a termination that sends to Remote whatever
+	// source its packets come from, and empty for one that latches.
+	Latch Latch `json:",omitempty"`
 }
 
 // ContextStore keeps the contexts of one relay. The relay's name is in

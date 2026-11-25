@@ -43,11 +43,12 @@ func AGW(t *testing.T, newStore func(t *testing.T, relay string) agw.ContextStor
 }
 
 // relayCall is a context of one pass of a call through the IMS-AGW:
-// the access side has learned the UE's address, the core side not yet.
+// the access side has learned the UE's address, the core side not yet,
+// and the core side does not latch.
 func relayCall(id string, port uint16) agw.SavedContext {
 	return agw.SavedContext{ID: id, Terminations: []agw.SavedTermination{
 		{ID: agw.Access, LocalRTP: port, Remote: netip.MustParseAddrPort("192.0.2.10:49170"), Mode: agw.SendReceive},
-		{ID: agw.Core, LocalRTP: port + 2, Mode: agw.SendReceive},
+		{ID: agw.Core, LocalRTP: port + 2, Mode: agw.SendReceive, Latch: agw.NAPTOff},
 	}}
 }
 

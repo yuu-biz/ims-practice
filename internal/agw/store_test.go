@@ -279,6 +279,44 @@ func TestARecreatedRelayOpensThePortsOfItsContexts(t *testing.T) {
 	}
 }
 
+// TestARecreatedRelayKeepsLatchingOff: a termination added with
+// latching off goes on following the SDP of its controller once the
+// relay has been created again, rather than latching onto the first
+// source it hears, so a new party on that side is reached after a
+// restart as before it.
+func TestARecreatedRelayKeepsLatchingOff(t *testing.T) {
+	store := NewMemoryContextStore()
+	minPort, maxPort := rtptest.PortRange(t, 8)
+	first := relayOn(t, minPort, maxPort, store)
+	ue, before, after := udp(t), udp(t), udp(t)
+	c, err := first.Add(TerminationRequest{ID: Access}, TerminationRequest{ID: Core, Remote: addr(before), Latch: NAPTOff})
+	if err != nil {
+		t.Fatal(err)
+	}
+	access, core := c.Terminations[Access].Local, c.Terminations[Core].Local
+	first.Close()
+	if got := contextsOf(t, store); len(got) != 1 || got[0].Terminations[1] != (SavedTermination{ID: Core, LocalRTP: core.Port(), Remote: addr(before), Mode: SendReceive, Latch: NAPTOff}) {
+		t.Fatalf("the store holds %+v, want the core termination with latching off", got)
+	}
+
+	again := relayOn(t, minPort, maxPort, store)
+	ue.WriteToUDPAddrPort([]byte("latches the access side"), access)
+	if got, _ := read(t, before); !bytes.Equal(got, []byte("latches the access side")) {
+		t.Fatalf("the party before got %q", got)
+	}
+	before.WriteToUDPAddrPort([]byte("from the party before"), core)
+	if got, _ := read(t, ue); !bytes.Equal(got, []byte("from the party before")) {
+		t.Fatalf("the UE got %q", got)
+	}
+	if _, err := again.Modify(c.ID, Core, TerminationRequest{Remote: addr(after)}); err != nil {
+		t.Fatal(err)
+	}
+	ue.WriteToUDPAddrPort([]byte("to the new party"), access)
+	if got, _ := read(t, after); !bytes.Equal(got, []byte("to the new party")) {
+		t.Errorf("the new party got %q", got)
+	}
+}
+
 // TestARecreatedRelayGivesUpAContextWhosePortsAreTaken: a relay that
 // cannot open the ports of a stored context starts without it and
 // removes it from the store, rather than not starting at all.
