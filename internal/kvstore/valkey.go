@@ -166,7 +166,7 @@ func (v *Valkey) CompareAndDelete(ctx context.Context, key, version string) erro
 }
 
 func (v *Valkey) Schedule(ctx context.Context, index, member string, at time.Time) error {
-	_, err := v.c.do(ctx, "ZADD", index, strconv.FormatInt(indexTime(at), 10), member)
+	_, err := v.c.do(ctx, "ZADD", index, strconv.FormatInt(scheduledTime(at), 10), member)
 	return err
 }
 
@@ -206,7 +206,7 @@ func (v *Valkey) ClaimDue(ctx context.Context, index string, now time.Time, leas
 }
 
 func (v *Valkey) Done(ctx context.Context, c Claim) error {
-	removed, err := v.eval(ctx, doneScript, c.Index, c.Member, strconv.FormatInt(indexTime(c.Until), 10))
+	removed, err := v.eval(ctx, doneScript, c.Index, c.Member, strconv.FormatInt(scheduledTime(c.Until), 10))
 	if err != nil {
 		return err
 	}

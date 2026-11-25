@@ -83,8 +83,9 @@ type Store interface {
 	// CompareAndDelete.
 	CompareAndDelete(ctx context.Context, key, version string) error
 
-	// Schedule puts member into the time index named index, due at at.
-	// If member is there already it moves, and a claim on it ends.
+	// Schedule puts member into the time index named index, due at at,
+	// to the millisecond after it when at falls within one. If member is
+	// there already it moves, and a claim on it ends.
 	Schedule(ctx context.Context, index, member string, at time.Time) error
 	// Unschedule removes member from the index, claimed or not.
 	Unschedule(ctx context.Context, index, member string) error
@@ -95,7 +96,9 @@ type Store interface {
 	// instance that asks.
 	ClaimDue(ctx context.Context, index string, now time.Time, lease time.Duration, limit int) ([]Claim, error)
 	// Done removes the member of a claim from its index, if the claim is
-	// still in force, or returns ErrClaimLost.
+	// still in force, or returns ErrClaimLost. It compares c.Until as
+	// Schedule would put it, so that a Claim whose Until is a time once
+	// given to Schedule takes out the member while it is still there.
 	Done(ctx context.Context, c Claim) error
 
 	// AddToIndex puts member into the sorted index named index, which
@@ -127,6 +130,20 @@ type Claim struct {
 // Times in a time index count whole milliseconds since the Unix epoch.
 // That is the resolution of the score of a sorted set that holds them
 // exactly (a double has 53 bits), and the same in every Store.
+//
+// The time of a Schedule rounds up and the now of a ClaimDue rounds
+// down, so that no member is due before its time: an expiry claimed a
+// fraction of a millisecond early finds its item not yet expired, and
+// the Done after that would take the expiry out for good.
 func indexTime(t time.Time) int64 { return t.UnixMilli() }
+
+// scheduledTime is at as Schedule puts it in a time index: rounded up.
+func scheduledTime(at time.Time) int64 {
+	ms := at.UnixMilli()
+	if fromIndexTime(ms).Before(at) {
+		ms++
+	}
+	return ms
+}
 
 func fromIndexTime(ms int64) time.Time { return time.UnixMilli(ms) }

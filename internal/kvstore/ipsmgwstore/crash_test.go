@@ -22,8 +22,11 @@ const (
 	alice     = "sip:001010000000001@ims.mnc001.mcc001.3gppnetwork.org"
 )
 
+// pending is a delivery whose times are whole milliseconds, which is
+// what a time index counts in, so that TR1N is due at its ReportDeadline
+// itself.
 func pending(callID string) ipsmgw.PendingDelivery {
-	now := time.Now()
+	now := time.Now().Round(time.Millisecond)
 	return ipsmgw.PendingDelivery{CallID: callID, Reference: "ref-" + callID, Recipient: recipient, MessageReference: 3,
 		ReportDeadline: now.Add(time.Minute), Expires: now.Add(2 * time.Minute)}
 }
