@@ -60,6 +60,10 @@ var errTCPQueueFull = errors.New("sip: too many messages wait for the TCP connec
 type tcpSend struct {
 	m    *Message
 	done func(error)
+	// orElse is set for a response that goes back on the connection of
+	// its request: where it goes instead, should that connection close
+	// before the response is written (RFC 3261 18.2.2).
+	orElse netip.AddrPort
 }
 
 // maxStreamMessageSize bounds one message on a stream. RFC 3261 18.1.1
@@ -263,25 +267,26 @@ func (t *TransportLayer) hasConnection(remote netip.AddrPort) bool {
 	return ok
 }
 
-// sendTCP puts m in the queue of remote (queueTCP). With written nil, it
+// sendTCP puts s in the queue of remote (queueTCP). With s.done nil, it
 // then waits for the write and returns its outcome. Otherwise it returns
-// at once, and written gets the outcome from the goroutine that writes.
-func (t *TransportLayer) sendTCP(m *Message, remote netip.AddrPort, written func(error)) error {
-	if written != nil {
-		return t.queueTCP(m, remote, written)
+// at once, and s.done gets the outcome from the goroutine that writes.
+func (t *TransportLayer) sendTCP(s tcpSend, remote netip.AddrPort) error {
+	if s.done != nil {
+		return t.queueTCP(s, remote)
 	}
 	outcome := make(chan error, 1)
-	if err := t.queueTCP(m, remote, func(err error) { outcome <- err }); err != nil {
+	s.done = func(err error) { outcome <- err }
+	if err := t.queueTCP(s, remote); err != nil {
 		return err
 	}
 	return <-outcome
 }
 
-// queueTCP puts m at the end of the queue of remote, and starts the
-// goroutine that writes the queue when there is none. done gets the
-// outcome from that goroutine: nil once m has been written. When queueTCP
-// returns an error, m is not queued and done is not called.
-func (t *TransportLayer) queueTCP(m *Message, remote netip.AddrPort, done func(error)) error {
+// queueTCP puts s at the end of the queue of remote, and starts the
+// goroutine that writes the queue when there is none. s.done gets the
+// outcome from that goroutine: nil once s.m has been written. When
+// queueTCP returns an error, s is not queued and s.done is not called.
+func (t *TransportLayer) queueTCP(s tcpSend, remote netip.AddrPort) error {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	if t.conns == nil {
@@ -291,7 +296,7 @@ func (t *TransportLayer) queueTCP(m *Message, remote netip.AddrPort, done func(e
 	if len(queue) >= maxTCPQueue {
 		return errTCPQueueFull
 	}
-	t.queues[remote] = append(queue, tcpSend{m: m, done: done})
+	t.queues[remote] = append(queue, s)
 	if !writing {
 		t.wg.Add(1)
 		go t.writeQueued(remote)
@@ -309,22 +314,38 @@ func (t *TransportLayer) writeQueued(remote netip.AddrPort) {
 		if !ok {
 			return
 		}
+		if next.orElse.IsValid() && !t.hasConnection(remote) {
+			t.redirect(next)
+			continue
+		}
 		c, err := t.connectTCP(remote)
 		if err != nil {
 			// Every message in the queue waits for this connection, and
 			// each would wait as long again for a connect of its own, so
-			// they all fail with this one.
+			// they all fail with this one. A response that was to go back
+			// on the connection of its request goes elsewhere instead.
 			t.mu.Lock()
-			waiting := t.queues[remote]
+			waiting := append([]tcpSend{next}, t.queues[remote]...)
 			t.queues[remote] = nil
 			t.mu.Unlock()
-			next.done(err)
 			for _, s := range waiting {
-				s.done(err)
+				if s.orElse.IsValid() {
+					t.redirect(s)
+				} else {
+					s.done(err)
+				}
 			}
 			continue
 		}
 		next.done(t.writeTCP(c, next.m, remote))
+	}
+}
+
+// redirect sends s, a response whose request came over a connection that
+// has closed, over a new connection to s.orElse (RFC 3261 18.2.2).
+func (t *TransportLayer) redirect(s tcpSend) {
+	if err := t.queueTCP(tcpSend{m: s.m, done: s.done}, s.orElse); err != nil {
+		s.done(err)
 	}
 }
 
