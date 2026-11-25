@@ -295,9 +295,15 @@ type Store interface {
 	// until its KeepUntil.
 	PutChallenge(ctx context.Context, c Challenge) error
 	DeleteChallenge(ctx context.Context, privateID string) error
+	// Registration returns the registration of a private identity,
+	// whether or not it has expired: the instance that claims its
+	// RegistrationExpiry reads it to find whom to tell.
 	Registration(ctx context.Context, privateID string) (Registration, bool, error)
-	// RegistrationOf finds the registration that holds a public
-	// identity, in the canonical form of ims.CanonicalURI.
+	// RegistrationOf finds, until its Expires, the registration that
+	// holds a public identity, in the canonical form of
+	// ims.CanonicalURI. A registration whose Expires has passed is no
+	// binding any more, although no instance may have handled its expiry
+	// yet, so a request is not routed to its contact.
 	//
 	// SIMPLIFIED: TS 23.228 4.3.3.4 and 4.2.7.2. A public identity has
 	// at most one registration, of one private identity with one
@@ -451,7 +457,10 @@ func (s *MemoryStore) RegistrationOf(_ context.Context, publicID string) (Regist
 		return Registration{}, false, nil
 	}
 	r, ok := s.registrations[k]
-	return r, ok, nil
+	if !ok || !time.Now().Before(r.Expires) {
+		return Registration{}, false, nil
+	}
+	return r, true, nil
 }
 
 func (s *MemoryStore) PutRegistration(_ context.Context, r Registration) error {

@@ -129,9 +129,10 @@ func TestMemoryStoreLookupsDoNotGrow(t *testing.T) {
 	}{
 		{"S-CSCF RegistrationOf", func(t *testing.T, n int) func() {
 			s := scscf.NewMemoryStore()
+			expires := time.Now().Add(time.Hour)
 			for i := range n {
 				if err := s.PutRegistration(context.Background(), scscf.Registration{PrivateIdentity: user(i) + "@" + domain,
-					PublicIdentities: []string{"sip:" + user(i) + "@" + domain}}); err != nil {
+					PublicIdentities: []string{"sip:" + user(i) + "@" + domain}, Expires: expires}); err != nil {
 					t.Fatal(err)
 				}
 			}
