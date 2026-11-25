@@ -232,6 +232,28 @@ func TestAPutThatChangesTheDefaultIdentityDeregisters(t *testing.T) {
 	}
 }
 
+// TestAPutThatRespellsTheDefaultIdentityKeepsTheRegistration: another
+// form of the same URI is the same public identity, so a PUT that
+// writes the default identity so leaves it the default and deregisters
+// nobody.
+func TestAPutThatRespellsTheDefaultIdentityKeepsTheRegistration(t *testing.T) {
+	h := newProfileHSS(t, "default")
+	mar(t, h, scscf)
+	sar(t, h, scscf, cx.AssignRegistration)
+	scscfs := &fakeSCSCFs{}
+	respelled := strings.Replace(impu, realm, strings.ToUpper(realm), 1)
+	body := `{"private_identity": "` + impi + `", "public_identities": ["` + respelled + `", "tel:+12025550101"], "password": "test-password-1"}`
+	if w := do(t, h.Provisioning(scscfs), "PUT", "/subscriptions/"+impi, body); w.Code != http.StatusOK {
+		t.Fatalf("PUT: %d %s", w.Code, w.Body)
+	}
+	if len(scscfs.rtrs) != 0 {
+		t.Errorf("%d RTRs for a default identity written in another form, want none", len(scscfs.rtrs))
+	}
+	if u, _, err := h.store.Subscriber(context.Background(), impi); err != nil || u.State != Registered {
+		t.Errorf("after the PUT the user is %s (%v), want Registered", u.State, err)
+	}
+}
+
 // TestAPutThatChangesTheIdentitiesPushesThem: the service profile stays,
 // but the user profile changes, so the S-CSCF gets it at once. A barred
 // identity may only register (TS 29.228 B.2.1), so an S-CSCF left with

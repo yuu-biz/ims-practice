@@ -7,6 +7,7 @@ import (
 	"slices"
 
 	"github.com/yuu-biz/ims-practice/internal/ifc"
+	"github.com/yuu-biz/ims-practice/internal/ims"
 )
 
 // UserProfile is the part of the User-Data AVP that this project uses:
@@ -77,7 +78,7 @@ type publicIdentityExtension struct {
 // "" when every one of them is barred.
 func (p UserProfile) DefaultIdentity() string {
 	for _, id := range p.PublicIdentities {
-		if !slices.Contains(p.BarredIdentities, id) {
+		if !p.barred(id) {
 			return id
 		}
 	}
@@ -102,6 +103,12 @@ func (p UserProfile) Registrable() error {
 	return nil
 }
 
+// barred reports whether id is one of BarredIdentities, in any form of
+// the same URI (ims.SamePublicIdentity).
+func (p UserProfile) barred(id string) bool {
+	return slices.ContainsFunc(p.BarredIdentities, func(b string) bool { return b == id || ims.SamePublicIdentity(b, id) })
+}
+
 // Marshal writes the profile as the XML document that User-Data holds.
 func (p UserProfile) Marshal() []byte {
 	s := imsSubscription{PrivateID: p.PrivateIdentity}
@@ -111,7 +118,7 @@ func (p UserProfile) Marshal() []byte {
 		if p.WildcardedPSI != "" {
 			pi.Extension = &publicIdentityExtension{IdentityType: identityTypeWildcardedPSI, WildcardedPSI: p.WildcardedPSI}
 		}
-		if slices.Contains(p.BarredIdentities, id) {
+		if p.barred(id) {
 			barred := true
 			pi.BarringIndication = &barred
 		}
