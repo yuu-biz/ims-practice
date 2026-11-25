@@ -243,8 +243,10 @@ type AlarmList struct {
 // /maintenance/v1/alarms/{id}/ack-state.
 type AckStateRequest struct {
 	AckState AckState `json:"ack_state"`
-	// Operator names who acknowledges; the record keeps it as
-	// ackUserId.
+	// Operator names who changes the state; the record keeps it as
+	// ackUserId, the user who last changed the acknowledgement (TS
+	// 28.111 7.4.1). It is required, either way: notifyAckStateChanged
+	// carries the user of each change (8.8.2).
 	Operator string `json:"operator,omitempty"`
 	// AckSystemID names the system that the operator acknowledges
 	// through; the record keeps it as ackSystemId.
@@ -262,6 +264,9 @@ const maxAckName = 256
 func (req AckStateRequest) check() error {
 	if req.AckState != Acknowledged && req.AckState != Unacknowledged {
 		return fmt.Errorf("ack_state %q is neither %s nor %s", req.AckState, Acknowledged, Unacknowledged)
+	}
+	if req.Operator == "" {
+		return errors.New("operator: required, as the ack_user_id of the record")
 	}
 	for name, v := range map[string]string{"operator": req.Operator, "ack_system_id": req.AckSystemID} {
 		if utf8.RuneCountInString(v) > maxAckName {

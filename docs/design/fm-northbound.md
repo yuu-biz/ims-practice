@@ -185,7 +185,7 @@ OAM は、鍵の前のノードの名前で宛先を決め、そのノードの�
 
 #### OAM の画面からの確認
 
-OAM の画面は、`/oam/v1/` の独自の API（`PUT /oam/v1/nodes/{node}/alarms/{id}/ack-state`）で確認します。この要求にも、OSS の `PATCH` と同じく運用者の名前（`operator`）を必ず求めます。TS 28.111 7.4.1 の `ackUserId` は、確認の状態を最後に変えた利用者です。`notifyAckStateChanged` は、これを必須（M）の値として運びます（8.8.2）。`TS28111_FaultNrm.yaml` の `NotifyAckStateChanged` も、`ackUserId` を `required` にしています。名前の無い確認を通すと、OSS には `"ackUserId":""` の通知が届きます。確認の取り消しも同じです。TS 28.111 6.7 は、consumer が自分の名前を渡すかどうかを任意（may）にしています。それでも、どの入口でも名前を求めることにしました。通知が必須の値を欠かないようにするためです。名前の無い要求は、どのノードにも聞かずに 400 で断ります。
+OAM の画面は、`/oam/v1/` の独自の API（`PUT /oam/v1/nodes/{node}/alarms/{id}/ack-state`）で確認します。この要求にも、OSS の `PATCH` と同じく運用者の名前（`operator`）を必ず求めます。TS 28.111 7.4.1 の `ackUserId` は、確認の状態を最後に変えた利用者です。`notifyAckStateChanged` は、これを必須（M）の値として運びます（8.8.2）。`TS28111_FaultNrm.yaml` の `NotifyAckStateChanged` も、`ackUserId` を `required` にしています。名前の無い確認を通すと、OSS には `"ackUserId":""` の通知が届きます。確認の取り消しも同じです。TS 28.111 6.7 は、consumer が自分の名前を渡すかどうかを任意（may）にしています。それでも、どの入口でも名前を求めることにしました。通知が必須の値を欠かないようにするためです。名前の無い要求は、どのノードにも聞かずに 400 で断ります。ノードの保守用の API も、`operator` の無い確認を 400 で断ります。これで、OSS の `PATCH`、`/oam/v1/`、保守用の API のどの入口から確認しても、記録と通知は変えた人の名前を持ちます。
 
 OAM は、その確認の `ackSystemId` に自分の名前を入れて、ノードに渡します。運用者は OAM を通して確認の状態を変えるので、7.4.1 の「確認の状態を最後に変えたシステム」は OAM です。名前は、`oam` の役割の設定のファイルの `node` です。Compose では `oam` です。ノードが保持の時間を過ぎた警報を自分で確認するときも、自分の `node` を `ackSystemId` にしています。それと同じ形です。SubNetwork の DN（通知の `systemDN`）は使いません。3GPP の口を出さない OAM でも、画面から確認できるためです。要求の本文には `ack_system_id` を書けず、書けば 400 です。システムの名前を決めるのは OAM で、呼び出し側ではないためです。
 
