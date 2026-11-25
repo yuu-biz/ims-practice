@@ -239,10 +239,23 @@ func (g *IPSMGW) awaitOutcome(ctx context.Context, reference string, deadline ti
 // (notReachableUntil). A Store that will not take it loses that
 // notification, and the HSS keeps its UNRI until the PUR of the user's
 // next registration after a deregistration.
+//
+// A reregistration may refresh sub after it was read and before the flag
+// is put, and then finds no flag; the flag would go with the old expiry,
+// before the reregistration after that. The subscription is read again
+// once the flag is in, and a flag older than it is put again for as long
+// as the refreshed subscription. At worst the reregistration took the
+// flag in between, and the next one tells the HSS once more.
 func (g *IPSMGW) setNotReachable(ctx context.Context, sub RegSubscription, log *slog.Logger) {
-	if err := g.store.PutNotReachable(ctx, sub.PublicIdentity, notReachableUntil(sub)); err != nil {
+	until := notReachableUntil(sub)
+	if err := g.store.PutNotReachable(ctx, sub.PublicIdentity, until); err != nil {
 		log.Warn("the user was not marked unreachable for short messages", "error", err.Error())
 		return
+	}
+	if fresh, ok, err := g.store.RegSubscriptionOf(ctx, sub.PublicIdentity); err == nil && ok && notReachableUntil(fresh).After(until) {
+		if err := g.store.PutNotReachable(ctx, sub.PublicIdentity, notReachableUntil(fresh)); err != nil {
+			log.Warn("the unreachable flag keeps the expiry of the subscription before its refresh: the store failed", "error", err.Error())
+		}
 	}
 	log.Info("the user is marked unreachable for short messages over IP")
 }
