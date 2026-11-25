@@ -775,14 +775,16 @@ func (h *HSS) serverAssignment(ctx context.Context, r cx.ServerAssignmentRequest
 	if tooManyIdentities(r) {
 		return cx.ServerAssignmentAnswer{Result: diameter.Base(diameter.DiameterAVPOccursTooManyTimes)}
 	}
-	// 8.1.2: the HSS holds another S-CSCF for the user, one whose MAR
-	// took the user over (8.1.1) or one that serves the user in the
-	// unregistered state. A registration that this S-CSCF ends, or an
-	// authentication that fails at it, is not the one the HSS holds, so
-	// no Server-Assignment-Type changes anything here. The answer names
-	// the S-CSCF that the HSS holds (Table 6.1.2.2), so that an S-CSCF
-	// with no registration of the user can send its request there (TS
-	// 24.229 5.4.3.3). Only the S-CSCF reassignment pending flag of IMS
+	// 8.1.2: the HSS holds another S-CSCF for the user: one that has the
+	// user registered, whose MAR may have taken the user over from this
+	// one (8.1.1); one whose MAR is pending for a user who is not
+	// registered; or one that serves the user in the unregistered state.
+	// A registration that this S-CSCF ends, or an authentication that
+	// fails at it, is not the one the HSS holds, so no
+	// Server-Assignment-Type changes anything here. The answer names the
+	// S-CSCF that the HSS holds (Table 6.1.2.2), so that an S-CSCF with
+	// no registration of the user can send its request there (TS 24.229
+	// 5.4.3.3). Only the S-CSCF reassignment pending flag of IMS
 	// restoration lets the name be overwritten, and this HSS has no IMS
 	// restoration.
 	if u.ServerName != "" && u.ServerName != r.ServerName {
