@@ -145,6 +145,23 @@ func TestNtfSubscriptionRefusesWhatItCannotTake(t *testing.T) {
 			mns.ErrorResponseDefault{Type: mns.ValidationError, Reason: mns.NewAttributeValueInvalid, BadAttributes: []string{"#/attributes/notificationFilter"}}},
 		{"a filter that the OAM does not evaluate", "oss-1", body(`perceivedSeverity=\"CRITICAL\"`, `alarmIds[0]=\"x\"`), 500,
 			mns.ErrorResponseDefault{Type: mns.ServerLimitation, BadAttributes: []string{"#/attributes/notificationFilter"}}},
+		// The names of TS28623_SubscriptionControlNrm.yaml that the OAM
+		// does not take are understood, and beyond what it does.
+		{"a heartbeat", "oss-1", body(`"attributes"`, `"HeartbeatControl": {"id": "1", "attributes": {"heartbeatNtfPeriod": 60}}, "attributes"`), 500,
+			mns.ErrorResponseDefault{Type: mns.ServerLimitation, BadAttributes: []string{"#/HeartbeatControl"}}},
+		{"vendor-specific data", "oss-1", body(`"attributes"`, `"VsDataContainer": [{"id": "1"}], "attributes"`), 500,
+			mns.ErrorResponseDefault{Type: mns.ServerLimitation, BadAttributes: []string{"#/VsDataContainer"}}},
+		{"a scope that selects data nodes", "oss-1", body(`{"scopeType": "BASE_ALL"}`, `{"dataNodeSelector": "/SubNetwork/ManagedElement[id=\"scscf\"]"}`), 500,
+			mns.ErrorResponseDefault{Type: mns.ServerLimitation, BadAttributes: []string{"#/attributes/scope/dataNodeSelector"}}},
+		// A problem that the consumer can mend comes first (TS 32.158
+		// 6.6.5.1).
+		{"a heartbeat and an unknown attribute", "oss-1", body(`"attributes"`, `"HeartbeatControl": {"id": "1"}, "lastSequenceNo": 3, "attributes"`), 400,
+			mns.ErrorResponseDefault{Type: mns.ValidationError, Reason: mns.NewObjectRepresentationInvalid}},
+		{"a heartbeat and another id", "oss-2", body(`"attributes"`, `"HeartbeatControl": {"id": "1"}, "attributes"`), 400,
+			mns.ErrorResponseDefault{Type: mns.ValidationError, Reason: mns.NewAttributeValueInvalid, BadAttributes: []string{"#/id"}}},
+		{"a narrow scope and a filter that breaks the grammar", "oss-1",
+			strings.Replace(body(`"BASE_ALL"`, `"BASE_ONLY"`), `perceivedSeverity=\"CRITICAL\"`, `perceivedSeverity=`, 1), 400,
+			mns.ErrorResponseDefault{Type: mns.ValidationError, Reason: mns.NewAttributeValueInvalid, BadAttributes: []string{"#/attributes/notificationFilter"}}},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			a := ts.mnsCall(t, "PUT", ntfSubscriptionPath+tt.id, "application/json", tt.body)

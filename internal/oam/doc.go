@@ -121,10 +121,14 @@
 // a value that cannot be read 400 with QUERY_PARAM_VALUES_INVALID, and
 // one that asks for more than the OAM evaluates 500 with
 // QUERY_PARAMS_TOO_COMPLEX. A patch is checked whole before any node is
-// asked; its answers are listed at patchAlarmList. The subscriptions
-// are in their own store (Config.NtfSubscriptions), which several
-// instances share, at most Config.MaxNtfSubscriptions of them: their
-// number follows the number of OSSs.
+// asked; its answers are listed at patchAlarmList. A subscription with
+// a name of its schema that the OAM does not take, such as
+// HeartbeatControl, is 500 with SERVER_LIMITATION, and one with a name
+// that the schema does not have 400 with
+// NEW_OBJECT_REPRESENTATION_INVALID (checkNtfSubscription). The
+// subscriptions are in their own store (Config.NtfSubscriptions), which
+// several instances share, at most Config.MaxNtfSubscriptions of them:
+// their number follows the number of OSSs.
 //
 // The notifications go to the notificationRecipientAddress of each
 // subscription that selects them, as a POST of the bodies of

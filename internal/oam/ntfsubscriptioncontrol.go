@@ -189,7 +189,7 @@ func (s *Server) putNtfSubscription(w http.ResponseWriter, r *http.Request, id s
 		w.WriteHeader(http.StatusUnsupportedMediaType)
 		return
 	}
-	var body mns.NtfSubscriptionControlSingle
+	var body ntfSubscriptionBody
 	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxRequestBody))
 	dec.DisallowUnknownFields()
 	err := dec.Decode(&body)
@@ -233,17 +233,54 @@ func (s *Server) putNtfSubscription(w http.ResponseWriter, r *http.Request, id s
 	writeJSON(w, http.StatusCreated, resource)
 }
 
-// checkNtfSubscription checks the body of a PUT of the subscription id,
-// and answers the first problem it finds. The representation names the
-// object's id and class (TS 32.158 5.1.2), and has the attributes of
-// the schema NtfSubscriptionControl-Single, of which
-// notificationRecipientAddress is mandatory (TS 28.622 4.3.22.2).
-func (s *Server) checkNtfSubscription(id string, body mns.NtfSubscriptionControlSingle) (NtfSubscriptionControl, *mnsError) {
+// ntfSubscriptionBody is the body of a PUT of a subscription, with
+// every name of the schema NtfSubscriptionControl-Single of
+// TS28623_SubscriptionControlNrm.yaml. Those that
+// mns.NtfSubscriptionControlSingle leaves out are kept as they came, so
+// that a body with one, which is a subscription that the OAM does not
+// take, is told from a body with a name that the schema does not have,
+// which is no subscription at all. JSON null leaves a name out.
+type ntfSubscriptionBody struct {
+	mns.Top
+	VsDataContainer  any `json:"VsDataContainer"`
+	HeartbeatControl any `json:"HeartbeatControl"`
+	Attributes       *struct {
+		mns.NtfSubscriptionControlAttributes
+		Scope *struct {
+			mns.Scope
+			DataNodeSelector any `json:"dataNodeSelector"`
+		} `json:"scope"`
+	} `json:"attributes"`
+}
+
+// checkNtfSubscription checks the body of a PUT of the subscription id.
+// The representation names the object's id and class (TS 32.158 5.1.2),
+// and has the attributes of the schema NtfSubscriptionControl-Single,
+// of which notificationRecipientAddress is mandatory (TS 28.622
+// 4.3.22.2).
+//
+// It answers the first problem that the consumer can mend, and only
+// then the first part of the body that the OAM does not take: TS 32.158
+// 6.6.4 gives SERVER_LIMITATION to a request that is well formed and
+// understood, and 6.6.5.1 puts the more fundamental reason first.
+func (s *Server) checkNtfSubscription(id string, body ntfSubscriptionBody) (NtfSubscriptionControl, *mnsError) {
 	invalid := func(tokens ...string) *mnsError {
 		return attributeError(mns.ValidationError, mns.NewAttributeValueInvalid, "Invalid values of attributes", pointer(tokens...))
 	}
 	missing := func(tokens ...string) *mnsError {
 		return attributeError(mns.ValidationError, mns.NewObjectAttributeValueMissing, "Attributes that a new object needs", pointer(tokens...))
+	}
+	var limit *mnsError
+	beyond := func(title string, tokens ...string) {
+		if limit == nil {
+			limit = attributeError(mns.ServerLimitation, "", title, pointer(tokens...))
+		}
+	}
+	if body.VsDataContainer != nil {
+		beyond("Vendor-specific data, which the producer does not keep", "VsDataContainer")
+	}
+	if body.HeartbeatControl != nil {
+		beyond("Heartbeat notifications, which the producer does not send", "HeartbeatControl")
 	}
 	switch {
 	case !isNtfSubscriptionID(id) || body.Id != id:
@@ -257,7 +294,7 @@ func (s *Server) checkNtfSubscription(id string, body mns.NtfSubscriptionControl
 	case body.Attributes == nil || body.Attributes.NotificationRecipientAddress == "":
 		return NtfSubscriptionControl{}, missing("attributes", "notificationRecipientAddress")
 	}
-	attrs := *body.Attributes
+	attrs := body.Attributes.NtfSubscriptionControlAttributes
 	u, err := url.Parse(attrs.NotificationRecipientAddress)
 	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" || u.User != nil || u.Fragment != "" {
 		return NtfSubscriptionControl{}, invalid("attributes", "notificationRecipientAddress")
@@ -274,15 +311,17 @@ func (s *Server) checkNtfSubscription(id string, body mns.NtfSubscriptionControl
 			return NtfSubscriptionControl{}, invalid("attributes", "notificationTypes")
 		}
 	}
-	if attrs.Scope != nil {
-		switch t := attrs.Scope.ScopeType; {
-		case t == mns.BaseAll:
-		case t == "" || slices.Contains(narrowScopeTypes, t):
-			// No scopeType is BASE_ONLY (TS 32.158 6.1.2).
-			return NtfSubscriptionControl{}, attributeError(mns.ServerLimitation, "", "Scopes narrower than the SubNetwork", pointer("attributes", "scope"))
-		default:
+	if scope := body.Attributes.Scope; scope != nil {
+		switch t := scope.ScopeType; {
+		case t != "" && t != mns.BaseAll && !slices.Contains(narrowScopeTypes, t):
 			return NtfSubscriptionControl{}, invalid("attributes", "scope")
+		case scope.DataNodeSelector != nil:
+			beyond("Scopes that select data nodes", "attributes", "scope", "dataNodeSelector")
+		case t != mns.BaseAll:
+			// No scopeType is BASE_ONLY (TS 32.158 6.1.2).
+			beyond("Scopes narrower than the SubNetwork", "attributes", "scope")
 		}
+		attrs.Scope = &scope.Scope
 	}
 	if attrs.NotificationFilter != "" {
 		if _, err := jex.ParseCondition(attrs.NotificationFilter); err != nil {
@@ -290,8 +329,11 @@ func (s *Server) checkNtfSubscription(id string, body mns.NtfSubscriptionControl
 			if errors.As(err, &syntax) {
 				return NtfSubscriptionControl{}, invalid("attributes", "notificationFilter")
 			}
-			return NtfSubscriptionControl{}, attributeError(mns.ServerLimitation, "", "Filters beyond what the producer evaluates", pointer("attributes", "notificationFilter"))
+			beyond("Filters beyond what the producer evaluates", "attributes", "notificationFilter")
 		}
+	}
+	if limit != nil {
+		return NtfSubscriptionControl{}, limit
 	}
 	return NtfSubscriptionControl{ID: id, Attributes: attrs}, nil
 }
