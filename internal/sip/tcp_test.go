@@ -633,7 +633,12 @@ func TestRequestThatCannotGoOutOverTCPGoesToTheNextTarget(t *testing.T) {
 	// The far end goes, and with it the connection that both requests
 	// wait for.
 	far.Close()
-	(<-accepted).Close()
+	select {
+	case c := <-accepted:
+		c.Close()
+	case <-time.After(2 * time.Second):
+		t.Fatal("the far end never accepted the connection")
+	}
 	for deadline := time.Now().Add(2 * time.Second); uac.transport.hasConnection(farEnd); {
 		if time.Now().After(deadline) {
 			t.Fatal("the stack kept the closed connection")
@@ -677,7 +682,8 @@ func TestQueuedResponseGoesToTheSentByOnceItsConnectionCloses(t *testing.T) {
 		t.Fatal(err)
 	}
 	arrived := make(chan *ServerTransaction, 2)
-	uas, err := NewStack(tr, Config{Timers: testTimers, SentBy: tr.LocalAddr().String(), OnRequest: func(st *ServerTransaction) { arrived <- st }}, testLogger(t))
+	onRequest := answerOptions(func(st *ServerTransaction) { arrived <- st })
+	uas, err := NewStack(tr, Config{Timers: testTimers, SentBy: tr.LocalAddr().String(), OnRequest: onRequest}, testLogger(t))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -703,6 +709,10 @@ func TestQueuedResponseGoesToTheSentByOnceItsConnectionCloses(t *testing.T) {
 		t.Fatal("the transport never wrote the first response")
 	}
 	second.Respond(NewResponse(second.Request, 200, NewTag()))
+	// The stack takes what comes to it in order, so once it has answered
+	// this OPTIONS it has handed the response over, while the connection
+	// was still open.
+	newUDPPeer(t, uas.LocalAddr()).sync()
 	peer.conn.Close()
 	for deadline := time.Now().Add(2 * time.Second); uas.transport.hasConnection(second.Source.Addr); {
 		if time.Now().After(deadline) {
