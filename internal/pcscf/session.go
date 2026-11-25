@@ -308,13 +308,13 @@ func (p *PCSCF) subsequent(st *sip.ServerTransaction, out *sip.Message, log *slo
 			p.chargeRequest(out, d.ICID)
 		}
 	}
-	answer := func(*sip.Message) {}
+	answer, answered := func(*sip.Message) {}, func() {}
 	if known && sip.HasSessionDescription(out) {
 		ue := st.Source.Addr.Addr()
 		if toUE {
 			ue = targets[0].Addr.Addr()
 		}
-		answer = p.renegotiate(out, d, toUE, ue, log)
+		answer, answered = p.renegotiate(out, d, toUE, ue, log)
 	}
 	if known && isTargetRefresh(out.Method) {
 		renegotiated := answer
@@ -344,6 +344,7 @@ func (p *PCSCF) subsequent(st *sip.ServerTransaction, out *sip.Message, log *slo
 		relay(final)
 	}
 	ims.Finish(st, final, err)
+	answered()
 	if out.Method == sip.BYE && byeEndsDialog(final, err) {
 		p.endDialog(key, d, log)
 	}
@@ -353,10 +354,11 @@ func (p *PCSCF) subsequent(st *sip.ServerTransaction, out *sip.Message, log *slo
 // dialog d on its way to the next hop, such as an UPDATE that tells of
 // reserved resources (RFC 3311, RFC 3312) or a re-INVITE that puts the
 // call on hold (RFC 3261 14). The offer goes through the relay context
-// of the dialog like the first one. The function it returns takes each
-// response on its way back: with the answer the PCRF gets the changed
-// service information in the policy session of the dialog (TS 29.214
-// A.1, 4.4.2). ue is the address of the served UE.
+// of the dialog like the first one. The first function it returns takes
+// each response on its way back: with the answer the PCRF gets the
+// changed service information in the policy session of the dialog (TS
+// 29.214 A.1, 4.4.2). The second one is for subsequent to call once the
+// final response has gone. ue is the address of the served UE.
 //
 // When the relay does not take the answer, the response goes on as it
 // came, since it is the final response of the request and the party
@@ -368,38 +370,52 @@ func (p *PCSCF) subsequent(st *sip.ServerTransaction, out *sip.Message, log *slo
 // releases the session with the BYEs of 5.2.8.1.2. Those carry the
 // Reason 488 (5.2.8.1.2 items 1 d, 2, 3 c and 4), as the parties asked
 // for media that the network does not allow. Here they asked for
-// nothing wrong, and the BYEs carry the 503 of lost resources. A
-// failure after the relay took an answer of the request is that of a
-// retransmitted 2xx to a re-INVITE, and changes nothing.
+// nothing wrong, and the BYEs carry the 503 of lost resources. As in
+// 6.2, the release of a re-INVITE waits for the ACK of its 2xx; that of
+// an UPDATE, which has no ACK, starts once the 2xx has gone. Either way
+// no BYE can overtake the 2xx. A failure after the relay took an answer
+// of the request is that of a retransmitted 2xx to a re-INVITE, and
+// changes nothing; once the release is under way, the P-CSCF leaves the
+// responses alone.
 //
 // SIMPLIFIED: TS 29.214 4.4.2. When the PCRF refuses the changed
 // service information, the P-CSCF only logs it, and the session stays
 // authorised as it was: the far end has given its answer by then. TS
 // 24.229 V20.1.0 has a procedure for refused resources only for the
 // initial INVITE (5.2.7.2).
-func (p *PCSCF) renegotiate(out *sip.Message, d Dialog, toUE bool, ue netip.Addr, log *slog.Logger) func(*sip.Message) {
+func (p *PCSCF) renegotiate(out *sip.Message, d Dialog, toUE bool, ue netip.Addr, log *slog.Logger) (answer func(*sip.Message), answered func()) {
 	received := out.Body
 	if err := p.relaySDP(out, d.Relay, toUE); err != nil {
 		log.Warn("media relay refused the offer", "error", err.Error())
 	}
 	offer := ueSide(received, out.Body, toUE)
-	// settled is true once the relay has taken an answer to the offer, or
-	// the P-CSCF has set out to release the dialog for one it did not.
-	authorized, settled := false, false
-	return func(resp *sip.Message) {
-		if resp.StatusCode >= 300 || !sip.HasSessionDescription(resp) {
+	// taken is true once the relay has taken an answer to the offer, and
+	// refused once the P-CSCF has set out to release the dialog for one
+	// that it did not take.
+	authorized, taken, refused := false, false, false
+	answered = func() {
+		if refused && out.Method != sip.INVITE {
+			p.release(d.Key, errRelay, false, log)
+		}
+	}
+	answer = func(resp *sip.Message) {
+		if refused || resp.StatusCode >= 300 || !sip.HasSessionDescription(resp) {
 			return
 		}
 		received := resp.Body
 		if err := p.relaySDP(resp, d.Relay, !toUE); err != nil {
 			log.Warn("media relay refused the answer", "error", err.Error())
-			if !settled {
-				settled = true
-				go p.release(d.Key, errRelay, log)
+			if !taken {
+				refused = true
+				if out.Method == sip.INVITE {
+					// The mark is in the Store before the 2xx goes on, so
+					// the ACK cannot pass the P-CSCF first.
+					p.release(d.Key, errRelay, true, log)
+				}
 			}
 			return
 		}
-		settled = true
+		taken = true
 		// A 2xx to a re-INVITE comes again until its ACK arrives.
 		if authorized || d.PolicySession == "" || p.policy == nil {
 			return
@@ -417,6 +433,7 @@ func (p *PCSCF) renegotiate(out *sip.Message, d Dialog, toUE bool, ue netip.Addr
 		}
 		log.Info("changed media authorised", "policy_session", string(d.PolicySession))
 	}
+	return answer, answered
 }
 
 // byeEndsDialog is RFC 3261 15.1.1 as a proxy sees it: the dialog ends
@@ -535,7 +552,7 @@ func (p *PCSCF) forwardACK(ref *ims.StackRef, ack *sip.Message) {
 		p.log.Warn("cannot forward ACK", "call_id", ack.Get("Call-ID"), "error", err.Error())
 	}
 	// The ACK goes on first, so that the callee has it before the BYE.
-	// Only a confirmed dialog waits for its ACK, and its BYEs are the
+	// Only a confirmed dialog waits for an ACK, and its BYEs are the
 	// same whatever the release is for.
 	if known && d.ReleasePending {
 		go p.releaseNow(key, nil, p.log.With("method", string(sip.ACK), "call_id", key.CallID))

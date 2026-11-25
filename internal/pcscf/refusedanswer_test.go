@@ -312,6 +312,17 @@ func answerOffers(in *sip.IncomingCall) {
 	})
 }
 
+// index is where, in what got has received, the first message that
+// match takes came, or -1.
+func index(got *received, match func(*sip.Message) bool) int {
+	for i, m := range got.all() {
+		if match(m) {
+			return i
+		}
+	}
+	return -1
+}
+
 // endedByBYE checks that a call has ended with a BYE of the P-CSCF.
 func endedByBYE(t *testing.T, what string, call interface {
 	Done() <-chan struct{}
@@ -359,6 +370,24 @@ func TestRefusedAnswerWithinTheDialogReleasesTheCall(t *testing.T) {
 			}
 			endedByBYE(t, "the UE's call", out)
 			endedByBYE(t, "the far end's call", in)
+			// The release starts once the 200 has gone to the UE, and the
+			// one of a re-INVITE once the ACK of its 200 has gone to the
+			// far end.
+			cseq, _ := sip.ParseCSeq(resp.Get("CSeq"))
+			isBYE := func(m *sip.Message) bool { return m.Method == sip.BYE }
+			ok := index(h.ueGot, func(m *sip.Message) bool { return m.StatusCode == 200 && m.Get("CSeq") == resp.Get("CSeq") })
+			if bye := index(h.ueGot, isBYE); ok < 0 || bye < ok {
+				t.Errorf("the UE got its BYE at %d and the 200 to the %s at %d, want the BYE after the 200", bye, offer.request, ok)
+			}
+			if offer.request == "re-INVITE" {
+				ack := index(h.coreGot, func(m *sip.Message) bool {
+					c, _ := sip.ParseCSeq(m.Get("CSeq"))
+					return m.Method == sip.ACK && c.Number == cseq.Number
+				})
+				if bye := index(h.coreGot, isBYE); ack < 0 || bye < ack {
+					t.Errorf("the far end got its BYE at %d and the ACK of the re-INVITE at %d, want the BYE after the ACK", bye, ack)
+				}
+			}
 			pcrf.waitReleased(t, "session-1")
 			relay.waitHeld(t, 0, time.Second)
 			if n := len(pcrf.mediaRequests()); n != 1 {

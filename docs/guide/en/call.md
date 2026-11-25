@@ -440,6 +440,27 @@ An answer within the dialog, in the 200 to an UPDATE or to a re-INVITE such as t
 ```
 
 - **In a confirmed dialog, each party gets a BYE** (TS 24.229 5.2.8.1.2), the same two BYEs as when [the network takes the bearer](volte.md#the-network-takes-the-bearer).
+- **No BYE overtakes the 200.** After an UPDATE the BYEs go once the P-CSCF has passed the 200 on. The 200 to a re-INVITE waits for its ACK, and so does the release, as in TS 24.229 6.2: the BYEs go once the ACK of UE 1 has passed the P-CSCF.
+
+```text
+ UE 1          P-CSCF          media relay      network
+ |               |  200 (INVITE) with the SDP answer|  to the re-INVITE
+ |               |<---------------------------------|
+ |               | PUT .../terminations/core        |  Modify
+ |               |--------------->|                 |
+ |               | error, or no answer in time      |
+ |               |<---------------|                 |
+ |  200 (INVITE) |                |                 |  as it came
+ |<--------------|                |                 |
+ |  ACK          |                |                 |
+ |-------------->| ACK                              |
+ |               |--------------------------------->|
+ |               | BYE  Reason: SIP;cause=503       |  in the name of UE 1
+ |               |--------------------------------->|
+ |  BYE  Reason: SIP;cause=503    |                 |  in the name of the other party
+ |<--------------|                |                 |
+```
+
 - **In an early dialog**, such as that of the UPDATE with which a VoLTE UE tells that its resources are reserved ([Preconditions](volte.md#preconditions)), the INVITE has no final response yet. UE 1 gets 500 for its INVITE, and the INVITE towards the network is cancelled, as for a 183.
 - **The PCRF never gets the answer.** The P-CSCF ends the Rx session of the call (TS 29.214 4.4.4) and removes the relay context.
 
