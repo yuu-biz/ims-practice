@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net"
 	"net/netip"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -236,5 +237,81 @@ func TestASubscriberThatDoesNotAnswerHoldsUpNoOneElse(t *testing.T) {
 	}
 	if got := statusOf(conferenceDocument(t, next.Body)); got["sip:carol@"+domain] != confinfo.Connected {
 		t.Errorf("xavier's next NOTIFY has users %v, want carol connected", got)
+	}
+}
+
+// TestTheLastNOTIFYWithinADialogComesBeforeTheBYE: when the conference
+// ends, a participant that subscribed within the dialog of its
+// conference session gets the NOTIFY that ends the subscription, with
+// reason noresource (TS 24.147 5.3.3.4), before the BYE that removes it
+// from the conference (5.3.2.7) and ends the dialog. So it does when
+// the NOTIFY before that one still waits for the participant's response
+// as the conference ends. Of the participants, the focus sends that
+// NOTIFY only to one that it cannot tell has left: this one asked for
+// privacy and came in without an asserted identity (TS 24.229 5.7.1.4
+// a).
+func TestTheLastNOTIFYWithinADialogComesBeforeTheBYE(t *testing.T) {
+	mrfc := startConferenceMRFC(t)
+	as := startAS(t, noServices{}, mmtel.Config{MRFC: "sip:" + contactOf(t, mrfc.ua)})
+	conf, focus, notifications := aliceConference(t, as, func(c *sip.IncomingCall) { c.Reject(480) })
+	receive(t, notifications, "first NOTIFY to alice")
+
+	// within takes the requests of the focus within carol's dialog, which
+	// the test answers when it wants.
+	within := make(chan *sip.InDialogRequest, 4)
+	carol := newParticipant(t, as, "carol", func(c *sip.IncomingCall) { c.Reject(480) })
+	inv := joining("carol", focus.URI)
+	inv.Headers = slices.DeleteFunc(inv.Headers, func(h sip.HeaderField) bool { return h.Name == "P-Asserted-Identity" })
+	inv.Headers = append(inv.Headers, sip.HeaderField{Name: "Privacy", Value: sip.PrivacyID})
+	inv.OnRequest = func(r *sip.InDialogRequest) { within <- r }
+	in, err := carol.Invite(inv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { in.Bye() })
+	if got := statuses(readAll(t, in)); got[len(got)-1] != 200 {
+		t.Fatalf("carol got %v, want 200", got)
+	}
+	if resp, err := in.Send(sip.SUBSCRIBE, sip.Body{}, sip.HeaderField{Name: "Event", Value: confinfo.EventPackage},
+		sip.HeaderField{Name: "Expires", Value: "600"}); err != nil || resp.StatusCode != 200 {
+		t.Fatalf("SUBSCRIBE within carol's dialog got %v, %v", resp, err)
+	}
+	first := receive(t, within, "first NOTIFY within carol's dialog")
+
+	// Alice leaves, which ends the conference. Her subscription ends in
+	// the same round of NOTIFYs as carol's, so once alice has her last
+	// NOTIFY, carol's waits behind the first, which carol has not
+	// answered.
+	if err := conf.Bye(); err != nil {
+		t.Fatal(err)
+	}
+	awaitNotification(t, notifications, "that ends alice's subscription", func(n sip.Notification, _ confinfo.Document) bool {
+		return n.State.State == sip.SubscriptionTerminated
+	})
+	// A BYE that came first has answered the NOTIFY with 487 already
+	// (RFC 3261 15.1.2), and ended the dialog, which the select finds.
+	first.Accept(sip.Body{})
+	var last *sip.InDialogRequest
+	select {
+	case last = <-within:
+	case <-in.Done():
+		t.Fatal("the focus ended carol's dialog before the NOTIFY that ends her subscription")
+	case <-time.After(10 * time.Second):
+		t.Fatal("no NOTIFY that ends carol's subscription")
+	}
+	if state, err := sip.ParseSubscriptionState(last.Request.Get("Subscription-State")); last.Request.Method != sip.NOTIFY ||
+		err != nil || state.State != sip.SubscriptionTerminated || state.Reason != sip.ReasonNoResource {
+		t.Errorf("carol got %s with Subscription-State %q, want a NOTIFY that says terminated with reason noresource",
+			last.Request.Method, last.Request.Get("Subscription-State"))
+	}
+	select {
+	case <-in.Done():
+		t.Error("the focus ended carol's dialog before she answered the NOTIFY that ends her subscription")
+	default:
+	}
+	last.Accept(sip.Body{})
+	receive(t, in.Done(), "BYE to carol")
+	if bye := in.EndedBy(); bye == nil || bye.Method != sip.BYE {
+		t.Errorf("carol's dialog ended with %v, want the BYE of the focus", bye)
 	}
 }

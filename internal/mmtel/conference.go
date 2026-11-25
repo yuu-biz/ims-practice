@@ -190,7 +190,8 @@ type party struct {
 	// a subscription within that dialog goes by (conferenceevent.go).
 	dialog sip.DialogID
 	// inDialog is a subscription within that dialog, and outbox holds
-	// the NOTIFYs on their way in it (conferenceevent.go).
+	// the NOTIFYs on their way in it (conferenceevent.go), and the BYE
+	// that ends it at the end of the conference (end).
 	inDialog *inDialogSubscription
 	outbox   outbox
 }
@@ -595,6 +596,12 @@ func (f *conference) left(p *party) {
 // still there with a BYE (5.3.2.6.2.3), ends every subscription to the
 // conference event package (5.3.3.4, RFC 4575 3.3), and gives the
 // conference URI up.
+//
+// The BYE of each participant goes into the outbox of its dialog,
+// behind the NOTIFYs that notify left there: the last of them ends the
+// subscription within the dialog, which the BYE would end without it.
+// end waits for every BYE, each behind the NOTIFYs of its own dialog
+// only, so that a participant that does not answer holds up no other.
 func (f *conference) end(parties []*party) {
 	f.mu.Lock()
 	for _, p := range parties {
@@ -602,13 +609,23 @@ func (f *conference) end(parties []*party) {
 	}
 	f.mu.Unlock()
 	f.notify(nil)
+	var byes sync.WaitGroup
+	f.mu.Lock()
 	for _, p := range parties {
-		// The BYE ends the dialog, after which left releases the
-		// participant's resources at the MRFC.
-		if err := p.leg.Bye(); err != nil && !errors.Is(err, sip.ErrCallEnded) {
-			f.log.Warn("BYE to a participant failed", "error", err.Error())
-		}
+		leg := p.leg
+		byes.Add(1)
+		f.post(&p.outbox, func() bool {
+			defer byes.Done()
+			// The BYE ends the dialog, after which left releases the
+			// participant's resources at the MRFC.
+			if err := leg.Bye(); err != nil && !errors.Is(err, sip.ErrCallEnded) {
+				f.log.Warn("BYE to a participant failed", "error", err.Error())
+			}
+			return true
+		})
 	}
+	f.mu.Unlock()
+	byes.Wait()
 	f.deallocate()
 	f.log.Info("conference ended")
 }
