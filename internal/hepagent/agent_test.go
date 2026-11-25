@@ -115,6 +115,25 @@ func TestSIPCopiesWhatCrossesTheWire(t *testing.T) {
 	checkHeader(t, p, want)
 }
 
+// The HEP packet carries the time at which the message crossed the wire,
+// which the transport keeps in the capture, and not the time at which
+// the observer ran: a sent message is observed only once its write has
+// returned, and the collector orders the copies by this time.
+func TestSIPCarriesTheTimeOfTheWire(t *testing.T) {
+	collector := udpSocket(t)
+	agent := newAgent(t, collector)
+	req, err := sip.Parse([]byte(options))
+	if err != nil {
+		t.Fatal(err)
+	}
+	crossed := time.Date(2026, 1, 2, 3, 4, 5, 123456000, time.UTC)
+	agent.SIP("pcscf")(sip.Capture{Transport: sip.UDP, Sent: true, Source: addrOf(collector), Destination: addrOf(collector),
+		Message: req, Wire: []byte(options), Time: crossed})
+	if p := readHEP(t, collector); !p.Time.Equal(crossed) {
+		t.Errorf("time %v, want %v, when the message crossed the wire", p.Time, crossed)
+	}
+}
+
 func checkHeader(t *testing.T, got, want hep.Packet) {
 	t.Helper()
 	if time.Since(got.Time) > time.Minute {

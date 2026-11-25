@@ -55,7 +55,7 @@ func (a *Agent) SIP(node string) sip.Observer {
 			IPProtocol:     hep.IPProtocolUDP,
 			Source:         unmap(c.Source),
 			Destination:    unmap(c.Destination),
-			Time:           time.Now(),
+			Time:           c.Time,
 			ProtocolType:   hep.ProtocolTypeSIP,
 			CaptureAgentID: a.id,
 			CorrelationID:  c.Message.Get("Call-ID"),
