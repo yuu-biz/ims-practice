@@ -261,8 +261,8 @@ type ntfSubscriptionBody struct {
 //
 // It answers the first problem that the consumer can mend, and only
 // then the first part of the body that the OAM does not take: TS 32.158
-// 6.6.4 gives SERVER_LIMITATION to a request that is well formed and
-// understood, and 6.6.5.1 puts the more fundamental reason first.
+// 6.6.4 gives SERVER_LIMITATION only to a request that is well formed
+// and understood, which a body with such a problem is not.
 func (s *Server) checkNtfSubscription(id string, body ntfSubscriptionBody) (NtfSubscriptionControl, *mnsError) {
 	invalid := func(tokens ...string) *mnsError {
 		return attributeError(mns.ValidationError, mns.NewAttributeValueInvalid, "Invalid values of attributes", pointer(tokens...))
