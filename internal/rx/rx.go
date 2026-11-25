@@ -16,6 +16,7 @@ package rx
 import (
 	"errors"
 	"fmt"
+	"net"
 	"net/netip"
 
 	"github.com/fiorix/go-diameter/v4/diam"
@@ -135,9 +136,13 @@ const (
 	avpRxRequestType             uint32 = 533
 )
 
-// Framed-IP-Address comes from NASREQ (TS 29.214 Table 5.4.0.1); it
-// has no vendor and must set M.
-const avpFramedIPAddress uint32 = 8
+// Framed-IP-Address and Framed-IPv6-Prefix come from NASREQ (TS 29.214
+// Table 5.4.0.1); they have no vendor and must set M (RFC 7155
+// 4.4.10.5.1, 4.4.10.5.6).
+const (
+	avpFramedIPAddress  uint32 = 8
+	avpFramedIPv6Prefix uint32 = 97
+)
 
 // The flags of TS 29.214 Table 5.3.0.1: most Rx AVPs must set M and V;
 // Rx-Request-Type must set V and must not set M.
@@ -194,11 +199,20 @@ func SessionID(m *diam.Message) string {
 	return string(s)
 }
 
-// framedIPAddress is the Framed-IP-Address of an IPv4 address: its four
-// octets (RFC 7155 4.4.10.5.1, which TS 29.214 takes from NASREQ).
-func framedIPAddress(a netip.Addr) *diam.AVP {
-	b := a.As4()
-	return diam.NewAVP(avpFramedIPAddress, avp.Mbit, 0, datatype.OctetString(b[:]))
+// ueAddressAVP names the UE by its full address, as TS 29.214 4.4.1
+// asks: an IPv4 address in Framed-IP-Address, its four octets (RFC 7155
+// 4.4.10.5.1), and an IPv6 address in Framed-IPv6-Prefix as a prefix of
+// 128 bits. Framed-IPv6-Prefix keeps the layout of the RADIUS attribute
+// after its type and length (RFC 7155 4.4.10.5.6, RFC 3162 2.3): a
+// reserved octet of zero, the prefix length in bits, and the prefix.
+func ueAddressAVP(a netip.Addr) *diam.AVP {
+	a = a.Unmap()
+	if a.Is4() {
+		b := a.As4()
+		return diam.NewAVP(avpFramedIPAddress, avp.Mbit, 0, datatype.OctetString(b[:]))
+	}
+	b := a.As16()
+	return diam.NewAVP(avpFramedIPv6Prefix, avp.Mbit, 0, datatype.OctetString(append([]byte{0, 128}, b[:]...)))
 }
 
 func parseFramedIPAddress(b []byte) (netip.Addr, error) {
@@ -207,4 +221,13 @@ func parseFramedIPAddress(b []byte) (netip.Addr, error) {
 		return netip.Addr{}, fmt.Errorf("Framed-IP-Address % x is not an IPv4 address", b)
 	}
 	return a, nil
+}
+
+// parseFramedIPv6Prefix reads the full IPv6 address that an AF puts in
+// Framed-IPv6-Prefix (TS 29.214 Table 5.4.0.1): a prefix of 128 bits.
+func parseFramedIPv6Prefix(b []byte) (netip.Addr, error) {
+	if len(b) != 2+net.IPv6len || b[1] != 128 {
+		return netip.Addr{}, fmt.Errorf("Framed-IPv6-Prefix % x is not a full IPv6 address", b)
+	}
+	return netip.AddrFrom16([16]byte(b[2:])), nil
 }

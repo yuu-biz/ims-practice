@@ -13,12 +13,14 @@ var (
 	cxDictionaryXML []byte
 	//go:embed sh.xml
 	shDictionaryXML []byte
+	//go:embed rx.xml
+	rxDictionaryXML []byte
 )
 
 // Dictionary is a set of application dictionaries that go into
 // go-diameter's default dictionary. This package keeps the set of Cx
-// and Sh, and package sgd the set of SGd and S6c, because a node loads
-// only the applications its roles speak.
+// and Sh, with what Rx lacks, and package sgd the set of SGd and S6c,
+// because a node loads only the applications its roles speak.
 type Dictionary struct {
 	documents [][]byte
 	once      sync.Once
@@ -44,8 +46,8 @@ func (d *Dictionary) Load() error {
 	return d.err
 }
 
-var imsDictionary = NewDictionary(cxDictionaryXML, shDictionaryXML)
+var imsDictionary = NewDictionary(cxDictionaryXML, shDictionaryXML, rxDictionaryXML)
 
 // LoadDictionary adds the Cx and Sh applications to go-diameter's
-// default dictionary.
+// default dictionary, and the AVPs its Rx application leaves out.
 func LoadDictionary() error { return imsDictionary.Load() }

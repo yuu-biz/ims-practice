@@ -114,7 +114,7 @@ Diameter の辞書について確かめたことがあります。go-diameter v4
 | 決めること | 調べた時点の案 | ほかの案 |
 | --- | --- | --- |
 | P-CSCF の側の境界（差し替えられる境界） | `pcscf.PolicyControl` のインタフェースを置く。登録の申し込み、呼の承認、更新、終わりと、網からの通知を受ける関数を持たせる。型はアクセス網に依らない名前（MediaComponent、Flow など）にし、Rx の実装を `internal/rx` に置く。5GC の作業で N5 の実装を足す | Rx を P-CSCF に直接書く。5GC を足すときに P-CSCF を書き直すことになる |
-| Rx の辞書 | go-diameter に同梱の TGPP_Rx を使う。使う AVP のコードと旗（M、V）を TS 29.214 と照らす試験を書く。型と Parse と Message は Cx と同じ形で `internal/rx` に書く | 自分で rx.xml を書く。同梱の辞書と重なるので、読み込み方を変える必要がある |
+| Rx の辞書 | go-diameter に同梱の TGPP_Rx を使う。使う AVP のコードと旗（M、V）を TS 29.214 と照らす試験を書く。型と Parse と Message は Cx と同じ形で `internal/rx` に書く。同梱の Rx に無い Framed-IPv6-Prefix だけは、`internal/diameter/rx.xml` で Rx に足す | 自分で rx.xml を書く。同梱の辞書と重なるので、読み込み方を変える必要がある |
 | AAR を送るとき | SDP answer を見たときに FINAL で送る。UPDATE などで offer と answer をやり直すたびに、同じ Rx のセッションで送り直す | offer のときにも PRELIMINARY を送る。Rx の往復が増える |
 | 登録のとき | 200 の後で、信号の経路の状態の通知を申し込む AAR（Flow-Number 0）を送る。結果が IP-CAN_SESSION_NOT_AVAILABLE なら、その UE の呼では Rx を使わない。ホストのソフトフォンのように EPC を通らない UE のため | Rx を使えない UE の登録を 403 で断る |
 | 網からの通知 | RAR（INDICATION_OF_LOSS_OF_BEARER、INDICATION_OF_RELEASE_OF_BEARER）と ASR を受けたら、TS 24.229 5.2.8.1.1 と 5.2.8.1.2 のとおりに CANCEL、500、BYE を出す。登録の Rx のセッションに ASR が来たら、その UE の呼と IP の対応付けをすべて終える | なし |

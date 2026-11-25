@@ -269,13 +269,44 @@ func TestRxDictionaryMatchesTS29214(t *testing.T) {
 			t.Errorf("%s = code %d, must %q, type %v; want %d, %q, %v", want.name, a.Code, a.Must, a.Data.Type, want.code, want.must, want.typ)
 		}
 	}
-	// Framed-IP-Address and Termination-Cause have no vendor (TS 29.214
-	// Table 5.4.0.1, RFC 6733 8.15).
-	for name, code := range map[string]uint32{"Framed-IP-Address": 8, "Termination-Cause": 295} {
+	// Framed-IP-Address, Framed-IPv6-Prefix and Termination-Cause have no
+	// vendor (TS 29.214 Table 5.4.0.1, RFC 7155 4.4.10.5, RFC 6733 8.15).
+	for name, code := range map[string]uint32{"Framed-IP-Address": 8, "Framed-IPv6-Prefix": 97, "Termination-Cause": 295} {
 		a, err := dict.Default.FindAVP(diameter.ApplicationIDRx, name)
 		if err != nil || a.Code != code || a.VendorID != 0 || a.Must != "M" {
 			t.Errorf("%s = %+v, %v; want code %d, no vendor, M", name, a, err, code)
 		}
+	}
+}
+
+// TestAARequestCarriesAnIPv6UEInFramedIPv6Prefix checks the UE that
+// registers over IPv6: Framed-IP-Address holds only IPv4, so the AF names
+// the UE in Framed-IPv6-Prefix (TS 29.214 4.4.1), code 97 with M and no
+// vendor (RFC 7155 4.4.10.5.6), laid out as RFC 3162 2.3 without the
+// RADIUS type and length: a reserved octet, the prefix length in bits,
+// and the prefix. The full address is a prefix of 128 bits.
+func TestAARequestCarriesAnIPv6UEInFramedIPv6Prefix(t *testing.T) {
+	ue := netip.MustParseAddr("2001:db8::110")
+	m := AARequest{Header: toPCRF, MediaComponents: []policy.MediaComponent{policy.SignallingComponent()},
+		SpecificActions: []SpecificAction{IndicationOfReleaseOfBearer}, FramedIPAddress: ue, RxRequestType: &initial}.Message()
+	b, err := m.Serialize()
+	if err != nil {
+		t.Fatal(err)
+	}
+	avps := topLevel(b)
+	if _, ok := avps[8]; ok {
+		t.Errorf("Framed-IP-Address = % x, want none for an IPv6 UE", avps[8])
+	}
+	want := append([]byte{0, 0, 0, 97, 0x40, 0, 0, 26, 0, 128}, ue.AsSlice()...)
+	if !bytes.Equal(avps[97], want) {
+		t.Errorf("Framed-IPv6-Prefix = % x, want % x", avps[97], want)
+	}
+	got, err := ParseAARequest(wire(t, m))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.FramedIPAddress != ue {
+		t.Errorf("parsed UE address = %v, want %v", got.FramedIPAddress, ue)
 	}
 }
 

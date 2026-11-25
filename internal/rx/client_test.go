@@ -235,6 +235,10 @@ func TestErrorsThePCSCFActsOn(t *testing.T) {
 	if _, err := s.client.SubscribeSignallingPath(t.Context(), netip.MustParseAddr("172.28.0.1")); !errors.Is(err, policy.ErrIPCANSessionNotAvailable) {
 		t.Errorf("unknown UE: %v, want ErrIPCANSessionNotAvailable", err)
 	}
+	// A UE on IPv6, for which the EPC stub opens no IP-CAN session.
+	if _, err := s.client.SubscribeSignallingPath(t.Context(), netip.MustParseAddr("2001:db8::1")); !errors.Is(err, policy.ErrIPCANSessionNotAvailable) {
+		t.Errorf("IPv6 UE: %v, want ErrIPCANSessionNotAvailable", err)
+	}
 	if _, err := s.client.AuthorizeMedia(t.Context(), policy.MediaRequest{UE: ueAddr, SDP: call("video")}); !errors.Is(err, policy.ErrRequestedServiceNotAuthorized) {
 		t.Errorf("video: %v, want ErrRequestedServiceNotAuthorized", err)
 	}
