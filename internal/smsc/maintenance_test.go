@@ -1,7 +1,6 @@
 package smsc
 
 import (
-	"context"
 	"log/slog"
 	"sync"
 	"testing"
@@ -127,11 +126,9 @@ func TestAShutDownSCFinishesTheAttemptInHandAndLeavesTheQueue(t *testing.T) {
 		return sgd.MTForwardShortMessageAnswer{Result: diameter.Base(diameter.DiameterSuccess)}, nil
 	})
 	n.clock.Advance(DefaultRetrySchedule[0])
-	done := make(chan struct{})
-	go func() {
-		n.sc.ProcessDue(context.Background())
-		close(done)
-	}()
+	// The sweep returns once it has started the attempt, and has found
+	// nothing else due.
+	n.sc.ProcessDue()
 	select {
 	case <-arrived:
 	case <-time.After(5 * time.Second):
@@ -145,6 +142,11 @@ func TestAShutDownSCFinishesTheAttemptInHandAndLeavesTheQueue(t *testing.T) {
 	}
 
 	letGo()
+	done := make(chan struct{})
+	go func() {
+		n.sc.Wait()
+		close(done)
+	}()
 	select {
 	case <-done:
 	case <-time.After(5 * time.Second):
@@ -163,7 +165,7 @@ func TestAShutDownSCFinishesTheAttemptInHandAndLeavesTheQueue(t *testing.T) {
 	// service takes it.
 	other := n.newSC()
 	n.nodes.set(mmeHost, accepts)
-	other.ProcessDue(context.Background())
+	sweep(other)
 	sent := n.nodes.sent()
 	if len(sent) != 3 {
 		t.Fatalf("%d TFRs, want the other instance to deliver the second message", len(sent))
@@ -206,7 +208,7 @@ func TestALockedSCLeavesEveryDeliveryToAnInstanceInService(t *testing.T) {
 	}
 	// Bob's short message and Carol's alerted queue are due now; Alice's
 	// retry is not.
-	other.ProcessDue(context.Background())
+	sweep(other)
 	if got := deliveredTo(); len(got) != 2 || !got[imsiOf[bob]] || !got[imsiOf[carol]] {
 		t.Errorf("the other instance sent TFRs to %v, want Bob and Carol", got)
 	}
@@ -217,7 +219,7 @@ func TestALockedSCLeavesEveryDeliveryToAnInstanceInService(t *testing.T) {
 	if got := inHand(t, node); got != 0 {
 		t.Errorf("the locked SC counts %d users, want none", got)
 	}
-	other.ProcessDue(context.Background())
+	sweep(other)
 	if got := deliveredTo(); !got[imsiOf[alice]] {
 		t.Error("the other instance did not take the retry of Alice's short message")
 	}

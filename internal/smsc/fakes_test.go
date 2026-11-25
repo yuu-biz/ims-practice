@@ -358,6 +358,12 @@ func (n *network) alert(scAddress, msisdn string) sgd.AlertServiceCentreAnswer {
 // advance moves the clock and runs what is due.
 func (n *network) advance(d time.Duration) {
 	n.clock.Advance(d)
-	n.sc.ProcessDue(context.Background())
-	n.sc.Wait()
+	sweep(n.sc)
+}
+
+// sweep runs what is due on sc, and waits for the deliveries that it
+// starts.
+func sweep(sc *SMSC) {
+	sc.ProcessDue()
+	sc.Wait()
 }

@@ -493,12 +493,14 @@ func TestTwoInstancesDeliverOnce(t *testing.T) {
 	n.clock.Advance(DefaultRetrySchedule[0])
 	var wg sync.WaitGroup
 	for _, sc := range []*SMSC{n.sc, other} {
-		wg.Go(func() { sc.ProcessDue(context.Background()) })
+		wg.Go(sc.ProcessDue)
 	}
 	<-arrived
-	other.ProcessDue(context.Background()) // the destination is leased
+	other.ProcessDue() // the destination is leased
 	close(release)
 	wg.Wait()
+	n.sc.Wait()
+	other.Wait()
 	if got := len(n.nodes.sent()); got != 2 {
 		t.Errorf("%d TFRs, want the first attempt and one retry", got)
 	}
@@ -517,12 +519,12 @@ func TestLeaseTakenOver(t *testing.T) {
 	}
 	n.nodes.set(mmeHost, accepts)
 	other := n.newSC()
-	other.ProcessDue(context.Background())
+	sweep(other)
 	if got := len(n.nodes.sent()); got != 1 {
 		t.Fatalf("%d TFRs during the lease, want 1", got)
 	}
 	n.clock.Advance(defaultLease)
-	other.ProcessDue(context.Background())
+	sweep(other)
 	if got := len(n.nodes.sent()); got != 2 {
 		t.Errorf("%d TFRs after the lease ran out, want 2", got)
 	}
@@ -587,7 +589,7 @@ func TestAStoppingInstanceLeavesItsAttemptToAnother(t *testing.T) {
 
 			n.nodes.silence(mmeHost, false)
 			n.nodes.set(mmeHost, accepts)
-			n.newSC().ProcessDue(ctx)
+			sweep(n.newSC())
 			if got := len(n.nodes.sent()); got != tt.attempts+2 {
 				t.Errorf("%d TFRs, want the one that the stop cut and one from the instance in service", got)
 			}
@@ -606,4 +608,98 @@ func TestAnEmptyRetryScheduleIsTheDefault(t *testing.T) {
 	if !reflect.DeepEqual(c.cfg.RetrySchedule, DefaultRetrySchedule) {
 		t.Errorf("schedule = %v, want %v", c.cfg.RetrySchedule, DefaultRetrySchedule)
 	}
+}
+
+// sentTo counts the TFRs that went to user.
+func (n *network) sentTo(user string) int {
+	count := 0
+	for _, tfr := range n.nodes.sent() {
+		if tfr.UserName == imsiOf[user] {
+			count++
+		}
+	}
+	return count
+}
+
+// holdTFRsTo has the MME accept every TFR, and hold those to user until
+// the test ends or calls the function it returns, as an IP-SM-GW holds a
+// TFR until the UE has sent its delivery report.
+func (n *network) holdTFRsTo(user string) (letGo func()) {
+	n.t.Helper()
+	release := make(chan struct{})
+	var once sync.Once
+	letGo = func() { once.Do(func() { close(release) }) }
+	n.t.Cleanup(letGo)
+	n.nodes.set(mmeHost, func(r sgd.MTForwardShortMessageRequest) (sgd.MTForwardShortMessageAnswer, error) {
+		if r.UserName == imsiOf[user] {
+			<-release
+		}
+		return sgd.MTForwardShortMessageAnswer{Result: diameter.Base(diameter.DiameterSuccess)}, nil
+	})
+	return letGo
+}
+
+// TestTheSweepGoesOnWhileADeliveryWaits: while the TFR of one delivery
+// waits for its answer, the instance goes on with the destinations that
+// become due, here the retry of Carol's short message.
+func TestTheSweepGoesOnWhileADeliveryWaits(t *testing.T) {
+	n := newNetwork(t)
+	n.nodes.set(mmeHost, absent)
+	n.submit(bob, hello(t, bob, 1))
+	n.clock.Advance(10 * time.Second)
+	n.submit(carol, hello(t, carol, 1))
+	// The retry to Bob is due 30 s after t0, the one to Carol 10 s
+	// later.
+	sc := New(Config{Address: scAddress, HSSRealm: epcRealm, PollInterval: 10 * time.Millisecond},
+		n.store, n.nodes, n.hss, n.clock, quietLog)
+	ctx, stop := context.WithCancel(context.Background())
+	ran := make(chan struct{})
+	go func() {
+		sc.Run(ctx)
+		close(ran)
+	}()
+	t.Cleanup(func() {
+		stop()
+		<-ran
+	})
+	// The cleanups run last in first, so the held TFR goes before the SC
+	// stops.
+	n.holdTFRsTo(bob)
+
+	n.clock.Advance(20 * time.Second)
+	waitFor(t, func() bool { return n.sentTo(bob) == 2 }, "the retry to Bob")
+	n.clock.Advance(10 * time.Second)
+	waitFor(t, func() bool { return n.sentTo(carol) == 2 }, "the retry to Carol while the one to Bob waits for its TFA")
+}
+
+// TestAnInstanceDeliversToAsManyDestinationsAsItMay: an instance whose
+// one delivery waits for its TFA claims no other destination, neither in
+// a sweep nor for a short message that has just come. Both stay due in
+// the store, and another instance delivers them.
+func TestAnInstanceDeliversToAsManyDestinationsAsItMay(t *testing.T) {
+	n := newNetwork(t)
+	n.nodes.set(mmeHost, absent)
+	n.submit(bob, hello(t, bob, 1))
+	n.clock.Advance(time.Second)
+	n.submit(carol, hello(t, carol, 1))
+	letGo := n.holdTFRsTo(bob)
+	one := New(Config{Address: scAddress, HSSRealm: epcRealm, Deliveries: 1}, n.store, n.nodes, n.hss, n.clock, quietLog)
+
+	// Bob has been due the longest, so the sweep claims him first.
+	n.clock.Advance(DefaultRetrySchedule[0])
+	one.ProcessDue()
+	waitFor(t, func() bool { return n.sentTo(bob) == 2 }, "the retry to Bob")
+	if ofa := n.submitTo(one, hello(t, alice, 2)); ofa.Result != diameter.Base(diameter.DiameterSuccess) {
+		t.Fatalf("OFA = %+v, want the short message taken", ofa)
+	}
+	if toCarol, toAlice := n.sentTo(carol), n.sentTo(alice); toCarol != 1 || toAlice != 0 {
+		t.Errorf("%d TFRs to Carol and %d to Alice while the instance is busy, want only the first one to Carol", toCarol, toAlice)
+	}
+
+	sweep(n.newSC())
+	if toCarol, toAlice := n.sentTo(carol), n.sentTo(alice); toCarol != 2 || toAlice != 1 {
+		t.Errorf("%d TFRs to Carol and %d to Alice, want the retry and the new short message from the other instance", toCarol, toAlice)
+	}
+	letGo()
+	one.Wait()
 }

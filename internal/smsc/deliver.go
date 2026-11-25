@@ -6,7 +6,6 @@ import (
 	"github.com/yuu-biz/ims-practice/internal/diameter"
 	"log/slog"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/yuu-biz/ims-practice/internal/sgd"
@@ -22,72 +21,70 @@ import (
 // TP-ST values of TS 23.040 9.2.3.15 that package sms has no name for.
 const statusValidityPeriodExpired sms.Status = 0b100_0110 // permanent error
 
-// ProcessDue delivers to every destination that is due: a retry whose
-// time has come, a message whose validity period has ended, or a
+// ProcessDue starts a delivery to each destination that is due: a retry
+// whose time has come, a message whose validity period has ended, or a
 // destination whose lease ran out because the instance that held it
-// stopped. Each destination goes in a goroutine of its own, so that one
-// slow serving node holds up only its own users. It returns when all
-// are done.
+// stopped. Each delivery runs in a goroutine of its own, and ProcessDue
+// returns once it has started them, without waiting for them: one
+// attempt can wait a minute or more for its TFA, and neither the other
+// destinations nor the next sweep are to wait with it. Wait waits for
+// them.
+//
+// It starts no more deliveries than Config.Deliveries allows at once.
+// What is due beyond that stays due in the Store, for another instance,
+// or for a later sweep of this one once a delivery has ended.
 //
 // While the operator has the SC out of service it claims nothing, and
 // what is due waits for an instance in service (maintenance.go). Once
 // this instance has stopped (Run), it claims nothing either.
-//
-// ctx is for the calls to the Store. The attempts run until they end
-// or this instance stops.
-func (c *SMSC) ProcessDue(ctx context.Context) {
-	var running sync.WaitGroup
-	for {
-		// The claim is counted before the administrative state is read,
-		// which narrows the window in which a shut down counts no user
-		// and the claim then follows. A claim that still slips through
-		// is an attempt that the drain cuts, as the maintenance API
-		// serves any session that comes in late.
-		c.userArrived()
-		if !c.unlocked() || c.stopped() {
-			c.userQuit()
-			break
-		}
+func (c *SMSC) ProcessDue() {
+	ctx := context.Background()
+	for c.reserve() {
 		l, ok, err := c.store.ClaimDue(ctx, c.clock.Now(), c.cfg.Lease)
 		if err != nil {
-			c.userQuit()
 			c.log.Warn("cannot claim a destination", "error", err.Error())
-			break
 		}
 		if !ok {
-			c.userQuit()
-			break
+			c.unreserve()
+			return
 		}
-		running.Go(func() {
-			defer c.userQuit()
+		go func() {
+			defer c.unreserve()
 			c.serve(ctx, l)
-		})
+		}()
 	}
-	running.Wait()
 }
 
 // deliverSoon tries the queue of destination in the background, if it
 // is due: a short message that has just come goes out at once rather
 // than at the next ProcessDue. While the operator has the SC out of
 // service, and once this instance has stopped, it leaves the queue
-// due, for an instance in service to claim.
+// due, for an instance in service to claim. So it does while this
+// instance runs as many deliveries as it may, for another instance or
+// for a later sweep.
 func (c *SMSC) deliverSoon(destination string) {
-	c.userArrived()
-	if c.unlocked() && c.begin(func() {
-		defer c.userQuit()
-		ctx := context.Background()
-		l, ok, err := c.store.Claim(ctx, destination, c.clock.Now(), c.cfg.Lease)
-		if err != nil {
-			c.log.Warn("cannot claim a destination", "destination", destination, "error", err.Error())
+	if !c.reserve() {
+		if c.unlocked() && !c.stopped() {
+			c.log.Info("delivery left to a later sweep: this instance runs as many deliveries as it may",
+				"destination", destination, "deliveries", c.cfg.Deliveries)
+			return
 		}
-		if ok {
-			c.serve(ctx, l)
-		}
-	}) {
+		c.log.Info("delivery left to an instance in service", "destination", destination)
 		return
 	}
-	c.userQuit()
-	c.log.Info("delivery left to an instance in service", "destination", destination)
+	ctx := context.Background()
+	l, ok, err := c.store.Claim(ctx, destination, c.clock.Now(), c.cfg.Lease)
+	if err != nil {
+		c.log.Warn("cannot claim a destination", "destination", destination, "error", err.Error())
+	}
+	if !ok {
+		c.unreserve()
+		return
+	}
+	go func() {
+		defer c.unreserve()
+		c.serve(ctx, l)
+	}()
 }
 
 // serve delivers the queue of the leased destination, one message at a
