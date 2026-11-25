@@ -563,9 +563,15 @@ func (c *SMSC) reportDeliveryStatus(ctx context.Context, msisdn string, failures
 // the HSS takes the address out itself once the SC has answered its
 // alert.
 //
+// The report goes out once. The short message has reached the
+// recipient and leaves the store whether or not the HSS answers, so an
+// HSS that did not hear of the delivery keeps its flags until the UE's
+// next notification, or the report of a later delivery, clears them.
+//
 // SIMPLIFIED: TS 23.040 8.1.1. After a delivery that failed through the
-// first node and succeeded through the second, the report carries the
-// success alone, and not the absent subscriber of the first node too.
+// first node and succeeded through the second, the HSS does not hear of
+// the absent subscriber of the first node: the SC reports the success
+// alone where the MWD-Status asks for a report, and nothing otherwise.
 // The HSS of this project names one serving node, so a delivery it
 // routes has no second one.
 func (c *SMSC) reportDelivered(ctx context.Context, msisdn string, kind nodeKind, status *sgd.MWDStatus, log *slog.Logger) {
