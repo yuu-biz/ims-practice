@@ -153,8 +153,9 @@ func TestNtfSubscriptionRefusesWhatItCannotTake(t *testing.T) {
 			mns.ErrorResponseDefault{Type: mns.ServerLimitation, BadAttributes: []string{"#/VsDataContainer"}}},
 		{"a scope that selects data nodes", "oss-1", body(`{"scopeType": "BASE_ALL"}`, `{"dataNodeSelector": "/SubNetwork/ManagedElement[id=\"scscf\"]"}`), 500,
 			mns.ErrorResponseDefault{Type: mns.ServerLimitation, BadAttributes: []string{"#/attributes/scope/dataNodeSelector"}}},
-		// A problem that the consumer can mend comes first (TS 32.158
-		// 6.6.5.1).
+		// A problem that the consumer can mend comes first: TS 32.158
+		// 6.6.4 gives SERVER_LIMITATION only to a request that is well
+		// formed and understood.
 		{"a heartbeat and an unknown attribute", "oss-1", body(`"attributes"`, `"HeartbeatControl": {"id": "1"}, "lastSequenceNo": 3, "attributes"`), 400,
 			mns.ErrorResponseDefault{Type: mns.ValidationError, Reason: mns.NewObjectRepresentationInvalid}},
 		{"a heartbeat and another id", "oss-2", body(`"attributes"`, `"HeartbeatControl": {"id": "1"}, "attributes"`), 400,
