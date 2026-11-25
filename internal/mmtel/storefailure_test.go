@@ -72,7 +72,7 @@ func (s *reachableStore) CompareAndDelete(ctx context.Context, key, version stri
 func startASOnAStore(t *testing.T, cfg mmtel.Config) (testAS, *reachableStore) {
 	t.Helper()
 	kv := &reachableStore{Store: kvstore.NewMemoryStore(nil)}
-	return startASOn(t, noServices{}, cfg, mmtelstore.New(kv, kvjson.Config{})), kv
+	return startASOn(t, noServices{}, cfg, mmtelstore.New(kv, kvjson.Config{}), quiet()), kv
 }
 
 // referStatuses are the status codes of the NOTIFYs of the REFER r,

@@ -1,7 +1,9 @@
 package mmtel_test
 
 import (
+	"context"
 	"fmt"
+	"log/slog"
 	"net"
 	"net/netip"
 	"slices"
@@ -102,6 +104,18 @@ func (b *bareSubscriber) answer(notify *sip.Message, code int) {
 	}
 }
 
+// hookHandler hands each record to the function, and takes no lock of
+// its own, as quiet takes none.
+type hookHandler func(slog.Record)
+
+func (h hookHandler) Enabled(context.Context, slog.Level) bool { return true }
+func (h hookHandler) Handle(_ context.Context, r slog.Record) error {
+	h(r)
+	return nil
+}
+func (h hookHandler) WithAttrs([]slog.Attr) slog.Handler { return h }
+func (h hookHandler) WithGroup(string) slog.Handler      { return h }
+
 // TestASubscriptionExpiresWhileAnotherIsRemoved: a subscription expires
 // while a NOTIFY to another is on its way, and that NOTIFY gets a 481,
 // which removes the other subscription (RFC 6665 4.2.2). The one that
@@ -110,13 +124,32 @@ func (b *bareSubscriber) answer(notify *sip.Message, code int) {
 // The focus keeps the subscriptions in a list, and the removal moves up
 // those that come after the one removed. Under -race, this tries that
 // the expiry reads its subscription only while it holds the lock of the
-// conference. The test gives the expiry a moment to get past the lock
-// before the 481 goes; on a machine too slow for that, the test passes
-// without trying the race, and never fails for it.
+// conference. The logger holds the expiry up where it logs, between the
+// lock that it lets go and the one that it takes to notify, until the
+// 481 has removed the other subscription. The 481 goes over a socket,
+// which gives the race detector no order between the test and the
+// focus, so the removal stays unordered with what the expiry reads
+// past the lock.
 func TestASubscriptionExpiresWhileAnotherIsRemoved(t *testing.T) {
+	// expiring is closed once the expiry logs, and removed once the 481
+	// has removed xavier's subscription.
+	expiring, removed := make(chan struct{}), make(chan struct{})
+	log := slog.New(hookHandler(func(r slog.Record) {
+		switch r.Message {
+		case "conference subscription expired":
+			close(expiring)
+			select {
+			case <-removed:
+			case <-time.After(10 * time.Second):
+			}
+		case "conference subscription removed after a failed NOTIFY":
+			close(removed)
+		}
+	}))
 	mrfc := startConferenceMRFC(t)
 	timer := newHandTimer()
-	as := startAS(t, noServices{}, mmtel.Config{MRFC: "sip:" + contactOf(t, mrfc.ua), AfterFunc: timer.afterFunc})
+	as := startASOn(t, noServices{}, mmtel.Config{MRFC: "sip:" + contactOf(t, mrfc.ua), AfterFunc: timer.afterFunc},
+		mmtel.NewMemoryStore(), log)
 	conf, focus, _ := aliceConference(t, as, func(c *sip.IncomingCall) { c.Reject(480) })
 	// expiry is the expiry of the subscription that came last, which the
 	// test fires by hand.
@@ -142,7 +175,7 @@ func TestASubscriptionExpiresWhileAnotherIsRemoved(t *testing.T) {
 	}
 	held := xavier.awaitNotify("NOTIFY of the hold to xavier")
 	go expire()
-	time.Sleep(100 * time.Millisecond)
+	receive(t, expiring, "expiry of yvonne's subscription")
 	xavier.answer(held, 481)
 
 	yvonne.answer(yvonne.awaitNotify("NOTIFY of the hold to yvonne"), 200)
