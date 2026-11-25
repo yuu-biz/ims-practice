@@ -130,7 +130,7 @@ func newChainOf(t *testing.T, answer func(*sip.Message) int, gateways, centres i
 		scHosts = append(scHosts, instance("sc", k))
 	}
 	hssRole, err := hss.New(hss.Config{Realm: domain, VisitedNetworks: []string{domain},
-		ServiceCentres: []hss.ServiceCentre{{Address: scNumber, Host: scHosts[0], Realm: domain}}},
+		ServiceCentres: []hss.ServiceCentre{{Address: scNumber, Hosts: scHosts, Realm: domain}}},
 		store, hssNode, quiet())
 	if err != nil {
 		t.Fatal(err)
@@ -605,4 +605,53 @@ func TestShortMessageForAnIPSMGWWithoutAConnectionGoesThroughAnother(t *testing.
 		UserData: marshal(t, sms.DeliverReport{})})); resp.StatusCode != 202 {
 		t.Fatalf("delivery report answered %d, want 202", resp.StatusCode)
 	}
+}
+
+// TestAnotherSCDeliversWhatItHoldsWhenTheHSSAlertsIt: the Service Centre
+// runs as two instances on one store, and the instance that the HSS
+// names first for the SC address has stopped. The short message that
+// Alice sends herself goes through the other instance, which keeps it
+// when she does not take it. When she registers again, the HSS finds no
+// connection to the first instance and alerts the second, which
+// delivers what it holds (TS 23.040 3.2.6 item 2c, TS 29.338 5.2.2).
+func TestAnotherSCDeliversWhatItHoldsWhenTheHSSAlertsIt(t *testing.T) {
+	available := make(chan struct{})
+	answer := func(m *sip.Message) int {
+		if _, forUE := parseRPOf(m).(sms.RPDataNetworkToMS); !forUE {
+			return 200
+		}
+		select {
+		case <-available:
+			return 200
+		default:
+			return 480
+		}
+	}
+	c := newChainOf(t, answer, 1, 2)
+	c.centres[0].stop()
+	subscribe := c.registerAlice()
+
+	if resp := c.send(message(submitBody(t, 6, scAddress, toAlice(6)))); resp.StatusCode != 202 {
+		t.Fatalf("MESSAGE answered %d, want 202", resp.StatusCode)
+	}
+	c.nextDelivery()
+	c.waitForSubscriber("the SC waits for Alice", func(u hss.Subscriber) bool {
+		return len(u.MessageWaitingData) == 1 && u.MessageWaitingData[0] == scNumber && u.UNRI
+	})
+
+	close(available)
+	if resp := c.thirdPartyRegister(3600); resp.StatusCode != 200 {
+		t.Fatalf("reregistration answered %d", resp.StatusCode)
+	}
+	c.send(notify(subscribe, 2, "active;expires=3761", regDoc(reginfo.Active, reginfo.Active, "+g.3gpp.smsip")))
+	c.waitForSubscriber("no service centre waits for Alice anymore", func(u hss.Subscriber) bool {
+		return len(u.MessageWaitingData) == 0 && !u.UNRI
+	})
+	mt, data := c.nextDelivery()
+	tpdu, err := sms.ParseTPDU(data)
+	if got, ok := tpdu.(sms.Deliver); err != nil || !ok || got.OriginatingAddress != sms.InternationalNumber("+12025550101") {
+		t.Fatalf("the UE got %+v, %v; want the SMS-DELIVER that the SC held", tpdu, err)
+	}
+	c.send(deliveryReport(t, mt, sms.RPAck{Direction: sms.MSToNetwork, MessageReference: data.MessageReference,
+		UserData: marshal(t, sms.DeliverReport{})}))
 }

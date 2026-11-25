@@ -229,9 +229,12 @@ type ServiceCentre struct {
 	// Address is the E.164 number of the SC, digits only, as it arrives
 	// in the SC-Address of an SRR or an RDR.
 	Address string
-	// Host and Realm are the Diameter identity of the SMS-IWMSC that
-	// takes the alert for that SC.
-	Host  string
+	// Hosts are the Diameter identities of the instances of the
+	// SMS-IWMSC that take the alert for that SC, in the order the HSS
+	// tries them, and Realm is their realm. The instances share the
+	// short messages that the SC holds, so any one of them that takes
+	// the alert will do.
+	Hosts []string
 	Realm string
 }
 

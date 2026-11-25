@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net"
 	"net/netip"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -495,13 +496,15 @@ type rawHSS struct {
 	// hss.Admissions. Empty admits every subscriber (hss.Admission).
 	Admission string `yaml:"admission"`
 	// ServiceCentres name the SMS central functions the HSS can alert
-	// (hss.ServiceCentre). TS 29.338 5.3.1.2 routes an alert by the
-	// Diameter identity of the service centre, which the HSS has no
-	// other way to learn from a Service Centre address.
+	// (hss.ServiceCentre): each Service Centre address with the
+	// Diameter identities of the instances that serve it. TS 29.338
+	// 5.3.1.2 routes an alert by the Diameter identity of the service
+	// centre, which the HSS has no other way to learn from a Service
+	// Centre address.
 	ServiceCentres []struct {
-		Address string `yaml:"address"`
-		Host    string `yaml:"host"`
-		Realm   string `yaml:"realm"`
+		Address string   `yaml:"address"`
+		Hosts   []string `yaml:"hosts"`
+		Realm   string   `yaml:"realm"`
 	} `yaml:"service_centres"`
 }
 
@@ -694,8 +697,10 @@ func (raw *rawHSS) validate(homeDomain string) (hss.Config, error) {
 		switch {
 		case !sgd.ValidE164(s.Address):
 			return hss.Config{}, fmt.Errorf("service_centres[%d].address: want 1 to 15 decimal digits", i)
-		case s.Host == "":
-			return hss.Config{}, fmt.Errorf("service_centres[%d].host: required", i)
+		case len(s.Hosts) == 0:
+			return hss.Config{}, fmt.Errorf("service_centres[%d].hosts: required", i)
+		case slices.Contains(s.Hosts, ""):
+			return hss.Config{}, fmt.Errorf("service_centres[%d].hosts: an empty name", i)
 		case addresses[s.Address]:
 			// The HSS finds a service centre by its address, so a second
 			// entry for one address would decide nothing but which host is
@@ -707,7 +712,7 @@ func (raw *rawHSS) validate(homeDomain string) (hss.Config, error) {
 		if realm == "" {
 			realm = homeDomain
 		}
-		c.ServiceCentres = append(c.ServiceCentres, hss.ServiceCentre{Address: s.Address, Host: s.Host, Realm: realm})
+		c.ServiceCentres = append(c.ServiceCentres, hss.ServiceCentre{Address: s.Address, Hosts: s.Hosts, Realm: realm})
 	}
 	// The profiles come before the subscriptions, which name them.
 	profiles, err := parseServiceProfiles(raw.ServiceProfiles)

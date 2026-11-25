@@ -36,13 +36,25 @@ type shNetwork struct {
 
 func newShNetwork(t *testing.T) shNetwork {
 	t.Helper()
-	return newShNetworkWith(t,
+	return newShNetworkOf(t, []string{scHost})
+}
+
+// newShNetworkOf is newShNetwork with an HSS that knows scHosts as the
+// instances of the service centre of scAddress.
+func newShNetworkOf(t *testing.T, scHosts []string) shNetwork {
+	t.Helper()
+	return newShNetworkFor(t, scHosts,
 		Subscription{PrivateIdentity: impi, PublicIdentities: []string{impu, tel}, Password: "test-password-1"},
 		Subscription{PrivateIdentity: otherImp, PublicIdentities: []string{"sip:001010000000002@" + realm}, Password: "test-password-2"},
 	)
 }
 
 func newShNetworkWith(t *testing.T, subscriptions ...Subscription) shNetwork {
+	t.Helper()
+	return newShNetworkFor(t, []string{scHost}, subscriptions...)
+}
+
+func newShNetworkFor(t *testing.T, scHosts []string, subscriptions ...Subscription) shNetwork {
 	t.Helper()
 	store, err := NewMemoryStore(subscriptions...)
 	if err != nil {
@@ -52,7 +64,7 @@ func newShNetworkWith(t *testing.T, subscriptions ...Subscription) shNetwork {
 	hssNode := diameter.NewNode(diameter.Identity{OriginHost: "hss." + realm, OriginRealm: realm},
 		[]uint32{diameter.ApplicationIDCx, diameter.ApplicationIDSh, sgd.ApplicationIDS6c}, timers, quiet())
 	h := mustHSS(Config{Realm: realm, VisitedNetworks: []string{realm},
-		ServiceCentres: []ServiceCentre{{Address: scAddress, Host: scHost, Realm: realm}}}, store, hssNode)
+		ServiceCentres: []ServiceCentre{{Address: scAddress, Hosts: scHosts, Realm: realm}}}, store, hssNode)
 	t.Cleanup(h.Close)
 	hssNode.Handle(h.Handle)
 	server, err := hssNode.Listen("127.0.0.1:0")
