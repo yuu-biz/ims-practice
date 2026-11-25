@@ -90,13 +90,20 @@ func newHSS(t *testing.T, kv kvstore.Store) *hss.HSS {
 // names; nil gives the HSS the lock in its own process.
 func newHSSWithLocks(t *testing.T, kv kvstore.Store, locks ims.UserLocker) *hss.HSS {
 	t.Helper()
+	return newHSSOn(t, kv, kvjson.Config{}, locks)
+}
+
+// newHSSOn is newHSSWithLocks on the store of kv as cfg sees it: under
+// a prefix of its own, for a test that shares a server with others.
+func newHSSOn(t *testing.T, kv kvstore.Store, cfg kvjson.Config, locks ims.UserLocker) *hss.HSS {
+	t.Helper()
 	if err := diameter.LoadDictionary(); err != nil {
 		t.Fatal(err)
 	}
 	node := diameter.NewNode(diameter.Identity{OriginHost: "hss." + realm, OriginRealm: realm},
 		[]uint32{diameter.ApplicationIDCx, diameter.ApplicationIDSh}, diameter.Timers{}, quiet())
 	h, err := hss.New(hss.Config{Realm: realm, VisitedNetworks: []string{realm}, UserLocks: locks},
-		hssstore.New(kv, kvjson.Config{}), node, quiet())
+		hssstore.New(kv, cfg), node, quiet())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -320,8 +327,8 @@ func TestProvisioningWhenTheStoreFails(t *testing.T) {
 // the subscriber of a request that would change it. Another instance
 // may be changing that subscriber, so this one answers
 // DIAMETER_UNABLE_TO_COMPLY rather than read and write without the
-// lock, and the provisioning API answers 500 and leaves the
-// subscription where it is.
+// lock, and the provisioning API answers 500, leaves the subscription
+// where it is and adds none.
 func TestRequestsWhoseSubscriberCannotBeLocked(t *testing.T) {
 	kv := provisioned(t)
 	h := newHSSWithLocks(t, kv, failingLocks{})
@@ -342,11 +349,19 @@ func TestRequestsWhoseSubscriberCannotBeLocked(t *testing.T) {
 			t.Errorf("%s of a subscription that cannot be locked: %d %s, want 500", r.method, w.Code, w.Body)
 		}
 	}
-	s, ok, err := hssstore.New(kv, kvjson.Config{}).Subscriber(context.Background(), impi)
+	const other = "001010000000009@" + realm
+	if w := do(api, "POST", "/subscriptions", `{"private_identity": "`+other+`", "public_identities": ["sip:`+other+`"], "password": "p"}`); w.Code != http.StatusInternalServerError {
+		t.Errorf("POST of a subscription that cannot be locked: %d %s, want 500", w.Code, w.Body)
+	}
+	store := hssstore.New(kv, kvjson.Config{})
+	s, ok, err := store.Subscriber(context.Background(), impi)
 	if err != nil || !ok {
 		t.Fatalf("the subscription after the requests that got no lock: %v, %v", ok, err)
 	}
 	if s.TestUser {
 		t.Error("the PATCH that got no lock marked the subscription")
+	}
+	if _, ok, err := store.Subscriber(context.Background(), other); err != nil || ok {
+		t.Errorf("the POST that got no lock added the subscription: %v, %v", ok, err)
 	}
 }
