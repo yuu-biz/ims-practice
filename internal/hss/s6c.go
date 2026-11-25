@@ -235,8 +235,14 @@ func (h *HSS) sendRoutingInfoForSM(ctx context.Context, r sgd.SendRoutingInfoFor
 // or MNRG, and while UNRI is set it names no serving node, so no
 // successful SRA meets that flag; Table 5.3.3.8/1 has no bit for it
 // either. The status is nil when neither the address nor MCEF is there:
-// an SRA without MWD-Status tells the SC the same, and the answer for a
-// user that nothing waits for stays as it was.
+// an SRA without MWD-Status tells the SC the same, so the answer for a
+// user that nothing waits for carries none.
+//
+// SIMPLIFIED: TS 29.338 Table 5.2.1.1-2 and TS 23.040 10.1 operation 7.
+// The HSS sends MWD-Status only in a successful SRA, and not with
+// DIAMETER_ERROR_ABSENT_USER, after which operation 7 informs the
+// SMS-GMSC as well. The SC of this project reads it only after a
+// delivery that succeeded, which a successful SRA came before.
 func messageWaitingStatus(u Subscriber, scAddress string) *sgd.MWDStatus {
 	included := slices.Contains(u.MessageWaitingData, scAddress)
 	if !included && !u.MCEF {

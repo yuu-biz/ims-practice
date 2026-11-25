@@ -317,9 +317,12 @@ func (a *smsf3GPPAddressAVP) smsf3GPPAddress() (*SMSF3GPPAddress, error) {
 // whether a delivery that succeeds clears something in the HSS, which it
 // then reports (TS 23.040 10.1 operation 3).
 //
-// Bits 4 and 5 of Table 5.3.3.8/1, with which the HSS waits for a
-// serving node of 5G, have no name here: the HSS of this project sets
-// neither, and the SC acts on neither.
+// SIMPLIFIED: TS 29.338 Table 5.3.3.8/1. Bits 4 and 5, with which the
+// HSS waits for a serving node of 5G, have no name here, and the HSS of
+// this project sends the AVP only in a successful SRA. That HSS names no
+// serving node of 5G, so it sets neither bit, and the SC reads the AVP
+// only after a delivery that succeeded, which a successful SRA came
+// before.
 type MWDStatus uint32
 
 // The bits of TS 29.338 Table 5.3.3.8/1.
