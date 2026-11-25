@@ -183,6 +183,15 @@ func originHost(m *diam.Message) string {
 	return string(host)
 }
 
+func originRealm(m *diam.Message) string {
+	a, err := m.FindAVP(avp.OriginRealm, 0)
+	if err != nil {
+		return ""
+	}
+	realm, _ := a.Data.(datatype.DiameterIdentity)
+	return string(realm)
+}
+
 // destinationHost is the Destination-Host of a request, or "" for a
 // request that names none and is for any node of its realm that serves
 // the application (RFC 6733 6.1).

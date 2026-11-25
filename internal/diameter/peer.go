@@ -630,7 +630,18 @@ type Server struct {
 	// no connection (SetAccepting).
 	refusedBy map[string]bool
 	closed    bool
-	peers     map[string]*Peer // by lower-case Origin-Host
+	peers     map[string]connected // by lower-case Origin-Host
+}
+
+// connected is a peer that has connected to a server, with what the CER
+// of its connection said of it.
+type connected struct {
+	peer *Peer
+	// realm and applications are the Origin-Realm and the Application-Ids
+	// of the CER, which tell the peers of a realm that serve an
+	// application from the others (Server.Hosts).
+	realm        string
+	applications []uint32
 }
 
 // Listen starts accepting connections on address, e.g. ":3868" (RFC
@@ -640,7 +651,7 @@ func (n *Node) Listen(address string) (*Server, error) {
 	if err != nil {
 		return nil, err
 	}
-	s := &Server{node: n, address: ln.Addr().String(), listener: ln, refusedBy: map[string]bool{}, peers: map[string]*Peer{}}
+	s := &Server{node: n, address: ln.Addr().String(), listener: ln, refusedBy: map[string]bool{}, peers: map[string]connected{}}
 	n.log.Info("listening", "address", s.address)
 	s.wg.Add(1)
 	go s.accept(ln)
@@ -736,8 +747,8 @@ func (s *Server) Accepting() bool {
 func (s *Server) DisconnectPeers() {
 	s.mu.Lock()
 	peers := make([]*Peer, 0, len(s.peers))
-	for _, p := range s.peers {
-		peers = append(peers, p)
+	for _, c := range s.peers {
+		peers = append(peers, c.peer)
 	}
 	s.mu.Unlock()
 	StopAll(peers)
@@ -807,7 +818,7 @@ func (s *Server) handshake(conn net.Conn) {
 		return
 	}
 	p := s.node.newPeer(cer.OriginHost)
-	s.peers[key] = p
+	s.peers[key] = connected{peer: p, realm: originRealm(m), applications: cer.ApplicationIDs}
 	go func() {
 		p.run(NewResponderState(s.node.applications), cer, conn)
 		s.mu.Lock()
