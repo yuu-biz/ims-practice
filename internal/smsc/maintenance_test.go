@@ -166,7 +166,7 @@ func TestAShutDownSCFinishesTheAttemptInHandAndLeavesTheQueue(t *testing.T) {
 	// service takes it.
 	other := n.newSC()
 	n.nodes.set(mmeHost, accepts)
-	sweep(other)
+	sweep(t, other)
 	sent := n.nodes.sent()
 	if len(sent) != 3 {
 		t.Fatalf("%d TFRs, want the other instance to deliver the second message", len(sent))
@@ -209,7 +209,7 @@ func TestALockedSCLeavesEveryDeliveryToAnInstanceInService(t *testing.T) {
 	}
 	// Bob's short message and Carol's alerted queue are due now; Alice's
 	// retry is not.
-	sweep(other)
+	sweep(t, other)
 	if got := deliveredTo(); len(got) != 2 || !got[imsiOf[bob]] || !got[imsiOf[carol]] {
 		t.Errorf("the other instance sent TFRs to %v, want Bob and Carol", got)
 	}
@@ -220,7 +220,7 @@ func TestALockedSCLeavesEveryDeliveryToAnInstanceInService(t *testing.T) {
 	if got := inHand(t, node); got != 0 {
 		t.Errorf("the locked SC counts %d users, want none", got)
 	}
-	sweep(other)
+	sweep(t, other)
 	if got := deliveredTo(); !got[imsiOf[alice]] {
 		t.Error("the other instance did not take the retry of Alice's short message")
 	}

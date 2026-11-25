@@ -242,7 +242,7 @@ var quietLog = slog.New(slog.NewTextHandler(io.Discard, nil))
 func (n *network) submit(to string, s sms.Submit) sgd.MOForwardShortMessageAnswer {
 	n.t.Helper()
 	ofa := n.submitTo(n.sc, s)
-	n.sc.Wait()
+	waitDeliveries(n.t, n.sc)
 	return ofa
 }
 
@@ -351,19 +351,36 @@ func (n *network) alert(scAddress, msisdn string) sgd.AlertServiceCentreAnswer {
 		SCAddress:      scAddress,
 		UserIdentifier: sgd.UserIdentifier{MSISDN: msisdn},
 	})
-	n.sc.Wait()
+	waitDeliveries(n.t, n.sc)
 	return ala
 }
 
 // advance moves the clock and runs what is due.
 func (n *network) advance(d time.Duration) {
 	n.clock.Advance(d)
-	sweep(n.sc)
+	sweep(n.t, n.sc)
 }
 
-// sweep runs what is due on sc, and waits for the deliveries that it
-// starts.
-func sweep(sc *SMSC) {
+// sweep runs what is due on sc, and waits up to ten seconds for the
+// deliveries that it starts.
+func sweep(t *testing.T, sc *SMSC) {
+	t.Helper()
 	sc.ProcessDue()
-	sc.Wait()
+	waitDeliveries(t, sc)
+}
+
+// waitDeliveries waits up to ten seconds for the deliveries of sc to
+// end.
+func waitDeliveries(t *testing.T, sc *SMSC) {
+	t.Helper()
+	done := make(chan struct{})
+	go func() {
+		sc.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(10 * time.Second):
+		t.Fatal("the deliveries of the SC did not end within 10 s")
+	}
 }

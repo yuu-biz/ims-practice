@@ -139,7 +139,7 @@ func TestRefusals(t *testing.T) {
 			}
 			tc.change(n, &req)
 			ofa := n.sc.MOForwardShortMessage(context.Background(), req)
-			n.sc.Wait()
+			waitDeliveries(t, n.sc)
 			if ofa.Result != tc.result {
 				t.Errorf("result = %v, want %v", ofa.Result, tc.result)
 			}
@@ -500,8 +500,8 @@ func TestTwoInstancesDeliverOnce(t *testing.T) {
 	other.ProcessDue() // the destination is leased
 	close(release)
 	wg.Wait()
-	n.sc.Wait()
-	other.Wait()
+	waitDeliveries(t, n.sc)
+	waitDeliveries(t, other)
 	if got := len(n.nodes.sent()); got != 2 {
 		t.Errorf("%d TFRs, want the first attempt and one retry", got)
 	}
@@ -520,12 +520,12 @@ func TestLeaseTakenOver(t *testing.T) {
 	}
 	n.nodes.set(mmeHost, accepts)
 	other := n.newSC()
-	sweep(other)
+	sweep(t, other)
 	if got := len(n.nodes.sent()); got != 1 {
 		t.Fatalf("%d TFRs during the lease, want 1", got)
 	}
 	n.clock.Advance(defaultLease)
-	sweep(other)
+	sweep(t, other)
 	if got := len(n.nodes.sent()); got != 2 {
 		t.Errorf("%d TFRs after the lease ran out, want 2", got)
 	}
@@ -590,7 +590,7 @@ func TestAStoppingInstanceLeavesItsAttemptToAnother(t *testing.T) {
 
 			n.nodes.silence(mmeHost, false)
 			n.nodes.set(mmeHost, accepts)
-			sweep(n.newSC())
+			sweep(t, n.newSC())
 			if got := len(n.nodes.sent()); got != tt.attempts+2 {
 				t.Errorf("%d TFRs, want the one that the stop cut and one from the instance in service", got)
 			}
@@ -769,16 +769,7 @@ func TestTheSweepGoesOnWhileADeliveryWaits(t *testing.T) {
 	// later.
 	sc := New(Config{Address: scAddress, HSSRealm: epcRealm, PollInterval: 10 * time.Millisecond},
 		n.store, n.nodes, n.hss, n.clock, quietLog)
-	ctx, stop := context.WithCancel(context.Background())
-	ran := make(chan struct{})
-	go func() {
-		sc.Run(ctx)
-		close(ran)
-	}()
-	t.Cleanup(func() {
-		stop()
-		<-ran
-	})
+	run(t, sc)
 	// The cleanups run last in first, so the held TFR goes before the SC
 	// stops.
 	n.holdTFRsTo(bob)
@@ -813,10 +804,10 @@ func TestAnInstanceDeliversToAsManyDestinationsAsItMay(t *testing.T) {
 		t.Errorf("%d TFRs to Carol and %d to Alice while the instance is busy, want only the first one to Carol", toCarol, toAlice)
 	}
 
-	sweep(n.newSC())
+	sweep(t, n.newSC())
 	if toCarol, toAlice := n.sentTo(carol), n.sentTo(alice); toCarol != 2 || toAlice != 1 {
 		t.Errorf("%d TFRs to Carol and %d to Alice, want the retry and the new short message from the other instance", toCarol, toAlice)
 	}
 	letGo()
-	one.Wait()
+	waitDeliveries(t, one)
 }
