@@ -71,6 +71,10 @@ services:
   ipsmgw:
     volumes:
       - ./deploy/interconnect/a/ipsmgw.yaml:/etc/ims/node.yaml:ro
+  # The Lab knows the address of IBCF-A on the link.
+  lab:
+    volumes:
+      - ./deploy/interconnect/a/lab.yaml:/etc/ims/node.yaml:ro
 
   ibcf-a:
     image: ims-practice/ims:dev

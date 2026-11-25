@@ -805,6 +805,10 @@ type Lab struct {
 	// UEs are the UE simulators ("ue serve") that the web UI drives, in
 	// the order it shows them.
 	UEs []UESimulator
+	// NodeAddresses are the addresses of a node, by its name, besides the
+	// one it sends its HEP copies from, such as those of an IBCF on two
+	// networks. The Lab tells by them which end of a message is the node.
+	NodeAddresses map[string][]netip.Addr
 }
 
 // UESimulator is one UE simulator that the Lab controls.
@@ -826,6 +830,7 @@ type rawLab struct {
 		Name    string `yaml:"name"`
 		Control string `yaml:"control"`
 	} `yaml:"ues"`
+	NodeAddresses map[string][]string `yaml:"node_addresses"`
 }
 
 func (raw *rawLab) validate() (Lab, error) {
@@ -858,6 +863,18 @@ func (raw *rawLab) validate() (Lab, error) {
 			return Lab{}, fmt.Errorf("ues[%d].control: %q is not an http:// URL", i, u.Control)
 		}
 		d.UEs = append(d.UEs, UESimulator{Name: u.Name, Control: u.Control})
+	}
+	for node, addresses := range raw.NodeAddresses {
+		for i, a := range addresses {
+			addr, err := netip.ParseAddr(a)
+			if err != nil {
+				return Lab{}, fmt.Errorf("node_addresses.%s[%d]: %q is not an IP address", node, i, a)
+			}
+			if d.NodeAddresses == nil {
+				d.NodeAddresses = map[string][]netip.Addr{}
+			}
+			d.NodeAddresses[node] = append(d.NodeAddresses[node], addr)
+		}
 	}
 	return d, nil
 }

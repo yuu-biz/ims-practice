@@ -4,7 +4,8 @@ import "github.com/yuu-biz/ims-practice/internal/yamledit"
 
 // changes is every difference between a role file of deploy/compose and
 // its copy in a: the IBCF through which network A's S-CSCF and
-// IP-SM-GW send what is for another network. The S-CSCF does so in
+// IP-SM-GW send what is for another network, and the address of that
+// IBCF on the link, which the Lab needs. The S-CSCF does so in
 // steps 11 and 12 of TS 24.229 5.4.3.2; the IP-SM-GW does the same for
 // a short message to a user of network B.
 //
@@ -40,6 +41,15 @@ network by ENUM and sends the short message out through the IBCF;
 a Service Centre would ask the HSS of the recipient instead, which
 needs no interconnect of the IMS (TS 23.204 6.4 step 3).`,
 		Value: []peer{{Address: hssAddress, OriginHost: hssHost, Kind: "hss"}},
+	},
+	{
+		File: "lab.yaml",
+		Key:  "lab.node_addresses",
+		Add:  true,
+		Comment: `IBCF-A sends its HEP copies from its address on ims0. Its address
+on nni0 is its own end of the messages with network B, which tells
+the Lab whether IBCF-A sent or received each of them (a/ibcf.yaml).`,
+		Value: map[string][]string{"ibcf-a": {"172.28.2.10"}},
 	},
 }
 

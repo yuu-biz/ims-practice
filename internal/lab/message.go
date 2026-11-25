@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"net/netip"
+	"slices"
 	"time"
 
 	"github.com/yuu-biz/ims-practice/internal/hep"
@@ -24,7 +25,8 @@ const (
 	DirectionSend Direction = "send"
 	DirectionRecv Direction = "recv"
 	// DirectionUnknown is left when both ends of the message are on the
-	// capturing node, as when one node runs several roles.
+	// capturing node, as when one node runs several roles, and when
+	// neither end is an address the Lab knows of the node.
 	DirectionUnknown Direction = ""
 )
 
@@ -74,8 +76,9 @@ type capture struct {
 }
 
 // newMessage turns a HEP packet that came from the address from into a
-// capture.
-func newMessage(p hep.Packet, from netip.Addr) (capture, error) {
+// capture. others are the other addresses of the capturing node
+// (Config.NodeAddresses).
+func newMessage(p hep.Packet, from netip.Addr, others []netip.Addr) (capture, error) {
 	src, dst := ownAddress(p.Source, from), ownAddress(p.Destination, from)
 	m := Message{
 		Time:          p.Time,
@@ -83,7 +86,7 @@ func newMessage(p hep.Packet, from netip.Addr) (capture, error) {
 		Src:           src.String(),
 		Dst:           dst.String(),
 		Node:          p.NodeName,
-		Direction:     direction(src.Addr(), dst.Addr(), from),
+		Direction:     direction(src.Addr(), dst.Addr(), append([]netip.Addr{from}, others...)),
 		CorrelationID: p.CorrelationID,
 		Payload:       string(p.Payload),
 	}
@@ -125,13 +128,15 @@ func ownAddress(a netip.AddrPort, from netip.Addr) netip.AddrPort {
 }
 
 // direction finds which end of the message is the capturing node. HEP
-// has no direction chunk, so it compares the addresses with the one the
-// HEP packet came from.
-func direction(src, dst, from netip.Addr) Direction {
+// has no direction chunk, so it compares the ends with the addresses of
+// the node: the one the HEP packet came from, and the others that the
+// configuration names, as a node on two networks has.
+func direction(src, dst netip.Addr, own []netip.Addr) Direction {
+	fromNode, toNode := slices.Contains(own, src), slices.Contains(own, dst)
 	switch {
-	case src == from && dst != from:
+	case fromNode && !toNode:
 		return DirectionSend
-	case dst == from && src != from:
+	case toNode && !fromNode:
 		return DirectionRecv
 	}
 	return DirectionUnknown

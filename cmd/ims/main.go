@@ -594,7 +594,8 @@ func run(configPath string, log *slog.Logger, level *slog.LevelVar) error {
 		for _, u := range c.UEs {
 			ues = append(ues, lab.UESimulator{Name: u.Name, Control: u.Control})
 		}
-		l, err := lab.New(lab.Config{MaxMessages: labMessages, HSSProvisioning: c.HSSProvisioning, EPC: c.EPC, FaultAgent: c.FaultAgent, UEs: ues}, roleLog)
+		l, err := lab.New(lab.Config{MaxMessages: labMessages, HSSProvisioning: c.HSSProvisioning, EPC: c.EPC, FaultAgent: c.FaultAgent, UEs: ues,
+			NodeAddresses: c.NodeAddresses}, roleLog)
 		if err != nil {
 			return err
 		}

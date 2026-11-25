@@ -831,6 +831,8 @@ lab:
   ues:
     - {name: phone1, control: "http://phone1:8090"}
     - {name: phone2, control: "http://172.28.0.111:8090"}
+  node_addresses:
+    ibcf-a: [172.28.2.10]
 `
 
 func TestParseLab(t *testing.T) {
@@ -842,7 +844,8 @@ func TestParseLab(t *testing.T) {
 		FaultAgent: "http://fault-agent:8080", UEs: []UESimulator{
 			{Name: "phone1", Control: "http://phone1:8090"},
 			{Name: "phone2", Control: "http://172.28.0.111:8090"},
-		}}
+		},
+		NodeAddresses: map[string][]netip.Addr{"ibcf-a": {netip.MustParseAddr("172.28.2.10")}}}
 	if cfg.Lab == nil || !reflect.DeepEqual(*cfg.Lab, want) || cfg.Diameter != nil {
 		t.Errorf("lab = %+v, want %+v", cfg.Lab, want)
 	}
@@ -852,8 +855,8 @@ func TestParseLab(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.Lab.HSSProvisioning != "" || cfg.Lab.EPC != "" || cfg.Lab.FaultAgent != "" || cfg.Lab.UEs != nil {
-		t.Errorf("lab = %+v without hss_provisioning, epc, fault_agent and ues", cfg.Lab)
+	if cfg.Lab.HSSProvisioning != "" || cfg.Lab.EPC != "" || cfg.Lab.FaultAgent != "" || cfg.Lab.UEs != nil || cfg.Lab.NodeAddresses != nil {
+		t.Errorf("lab = %+v without hss_provisioning, epc, fault_agent, ues and node_addresses", cfg.Lab)
 	}
 
 	tests := []struct {
@@ -871,6 +874,7 @@ func TestParseLab(t *testing.T) {
 		{"UE name with a slash", "name: phone1", "name: ue/a", "ues[0].name"},
 		{"UE name used twice", "name: phone2", "name: phone1", `ues[1].name: "phone1" is used twice`},
 		{"UE control not a URL", `control: "http://phone1:8090"`, "control: phone1:8090", "ues[0].control"},
+		{"node address not an address", "[172.28.2.10]", "[ibcf.example.net]", "node_addresses.ibcf-a[0]"},
 		{"section without its role", "roles: [lab]", "roles: [agw]\nagw: {control: 0.0.0.0:8080, rtp_address: 172.28.0.50, rtp_ports: {min: 40000, max: 40099}}", "lab: only the lab role"},
 	}
 	for _, tt := range tests {

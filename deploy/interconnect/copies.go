@@ -1,7 +1,8 @@
 // Package interconnect holds the files of the two joined networks
 // (compose.yaml). The S-CSCF and the IP-SM-GW of network A, the home
 // network, are copies of those in deploy/compose, made by go generate,
-// that name the IBCF through which a request for network B leaves. A
+// that name the IBCF through which a request for network B leaves; the
+// Lab is a copy that knows the address of that IBCF on the link. A
 // copy differs from its original only by the table in changes.go.
 package interconnect
 
