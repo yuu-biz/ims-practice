@@ -268,7 +268,7 @@ UE 1 -> relay access (context 1) -> relay core (context 1)
 | Ports for sending and receiving | The same port: symmetric RTP. |
 | RTCP | The port above the RTP port. At least every 5 seconds. |
 
-- The relay sends to where the first packet came from. This is called latching.
+- Towards the UE, the relay sends to where the first packet came from. This is called latching. Towards the network, it sends where the latest SDP says.
 
 The filter is `rtp || rtcp`. **Play Streams** plays the voice.
 

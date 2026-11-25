@@ -54,7 +54,7 @@ domain=ims.mnc001.mcc001.3gppnetwork.org
 ue2=(--impi "001010000000002@$domain" --impu "sip:+12025550102@$domain" --password test-password-2)
 fail=0
 mkdir -p e2e-out
-rm -f captures/mrf-cat-received.raw captures/mrf-cat-sent.raw captures/mrf-cat-ue2-received.raw
+rm -f captures/mrf-cat-received.raw captures/mrf-cat-sent.raw captures/mrf-cat-ue2-received.raw captures/mrf-cat-ue2-sent.raw
 
 # call ARGS... is UE 1's "ue call", whose log it prints, and xcap ARGS...
 # is UE 1's "ue xcap". Each exits 1 when it fails, as the barred call
@@ -95,7 +95,7 @@ else
 	fail=1
 fi
 docker compose run -d --no-deps --name ims-practice-ue2-cat ue2 answer "${ue2[@]}" --ring 3s --tone 1s \
-	--received-out /captures/mrf-cat-ue2-received.raw >/dev/null
+	--received-out /captures/mrf-cat-ue2-received.raw --sent-out /captures/mrf-cat-ue2-sent.raw >/dev/null
 wait_log ims-practice-ue2-cat '"msg":"waiting for a call"' || fail=1
 out="$(call --received-out /captures/mrf-cat-received.raw --sent-out /captures/mrf-cat-sent.raw tel:+12025550102)"
 printf '%s\n' "$out" >e2e-out/mrf-cat.log
@@ -152,6 +152,23 @@ EOF
 	echo "ok   after the answer UE 2 received the PCMU that UE 1 sent ($(wc -c <captures/mrf-cat-ue2-received.raw) bytes)"
 else
 	echo "FAIL UE 2 did not receive what UE 1 sent after the answer: sent $(wc -c <captures/mrf-cat-sent.raw 2>/dev/null || echo 0), received $(wc -c <captures/mrf-cat-ue2-received.raw 2>/dev/null || echo 0) bytes"
+	fail=1
+fi
+# The other way, UE 2's voice follows the tone in what UE 1 received.
+# The last packets of the tone may still come in among the first of UE
+# 2, so a stretch from the middle of what UE 2 sent is looked for.
+if "$python" - captures/mrf-cat-ue2-sent.raw captures/mrf-cat-received.raw <<'EOF'; then
+import sys
+
+sent = open(sys.argv[1], "rb").read()
+received = open(sys.argv[2], "rb").read()
+# From 0.3 s to 0.7 s of PCMU at 8000 bytes per second.
+stretch = sent[2400:5600]
+sys.exit(0 if len(stretch) == 3200 and stretch in received else 1)
+EOF
+	echo "ok   after the answer UE 1 received the PCMU that UE 2 sent"
+else
+	echo "FAIL UE 1 did not receive what UE 2 sent after the answer: sent $(wc -c <captures/mrf-cat-ue2-sent.raw 2>/dev/null || echo 0), received $(wc -c <captures/mrf-cat-received.raw 2>/dev/null || echo 0) bytes"
 	fail=1
 fi
 status="$(alerting_tone cat1 false)"
