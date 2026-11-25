@@ -2,6 +2,7 @@ package ue_test
 
 import (
 	"fmt"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -12,7 +13,8 @@ import (
 )
 
 // wireLog keeps the SIP messages that a UE sent and received, so that a
-// test can check the sequence of a call as a capture would show it.
+// test can check the sequence of a call as a capture would show it: in
+// the order in which they crossed the wire (sip.Capture.Time).
 type wireLog struct {
 	mu       sync.Mutex
 	messages []wired
@@ -23,6 +25,7 @@ type wireLog struct {
 type wired struct {
 	label   string
 	message *sip.Message
+	at      time.Time
 }
 
 func (w *wireLog) observe(c sip.Capture) {
@@ -46,7 +49,14 @@ func (w *wireLog) observe(c sip.Capture) {
 			return
 		}
 	}
-	w.messages = append(w.messages, wired{label, m})
+	// The transport records a sent message once its write has
+	// returned, after the response to it, maybe, so the log goes by the
+	// time on the wire and not by the order of the records.
+	i := len(w.messages)
+	for i > 0 && w.messages[i-1].at.After(c.Time) {
+		i--
+	}
+	w.messages = slices.Insert(w.messages, i, wired{label, m, c.Time})
 }
 
 // calls is the log of the messages of calls, without REGISTER and the
@@ -174,4 +184,21 @@ func sdpHas(m *sip.Message, lines ...string) error {
 		}
 	}
 	return nil
+}
+
+// The wire log puts each message where it crossed the wire. A request
+// is recorded only once its write has returned, so its response can be
+// recorded first; the log still has the request first.
+func TestWireLogKeepsTheOrderOfTheWire(t *testing.T) {
+	var w wireLog
+	invite := &sip.Message{Method: sip.INVITE, RequestURI: "sip:callee@ims.example.net"}
+	invite.Add("Call-ID", "wire-order")
+	invite.Add("CSeq", "1 INVITE")
+	ringing := sip.NewResponse(invite, 180, "callee")
+	sent := time.Now()
+	w.observe(sip.Capture{Message: ringing, Time: sent.Add(time.Millisecond)})
+	w.observe(sip.Capture{Sent: true, Message: invite, Time: sent})
+	if got := w.labels(); len(got) != 2 || got[0] != "> INVITE" || got[1] != "< 180 INVITE" {
+		t.Errorf("the log has %q, want the INVITE and then its 180", got)
+	}
 }
