@@ -182,6 +182,7 @@ func (m *ManagedFunction) ShutDown(timeout time.Duration) error {
 	// The users are counted before mu is taken, so that Users may take
 	// the role's locks. A session that the role lets in between the
 	// count and the transition is served as one that the deadline cut.
+	// A user that quits in between is counted again below.
 	users := 0
 	if m.callbacks.Users != nil {
 		users = m.callbacks.Users()
@@ -198,15 +199,22 @@ func (m *ManagedFunction) ShutDown(timeout time.Duration) error {
 	m.shutdowns++
 	if users == 0 {
 		m.enter(Locked)
-	} else {
-		m.enter(ShuttingDown)
-		if timeout > 0 {
-			m.deadline = m.clock.Now().Add(timeout)
-			shutdown := m.shutdowns
-			m.timer = m.clock.AfterFunc(timeout, func() { m.deadlinePassed(shutdown) })
-		}
+		m.dispatchAndUnlock()
+		return nil
+	}
+	m.enter(ShuttingDown)
+	if timeout > 0 {
+		m.deadline = m.clock.Now().Add(timeout)
+		shutdown := m.shutdowns
+		m.timer = m.clock.AfterFunc(timeout, func() { m.deadlinePassed(shutdown) })
 	}
 	m.dispatchAndUnlock()
+	// The last user may have quit after the count and before the
+	// function was SHUTTINGDOWN. Its UserQuit found the function
+	// UNLOCKED and changed nothing, and no user is left to quit again,
+	// so the user quit of X.731 7.1.3.4 is made here. A user that quits
+	// from now on finds the function SHUTTINGDOWN.
+	m.UserQuit()
 	return nil
 }
 
