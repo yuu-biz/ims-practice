@@ -696,6 +696,11 @@ type clientEntry struct {
 	// cancelHeaders are the header fields that the TU gave for the
 	// CANCEL, which may go out later than the TU asked for it.
 	cancelHeaders []HeaderField
+	// ended is set once the transaction is Terminated. A request of it
+	// that still waits to go out over TCP then stays unsent: no response
+	// can have come, so Timer B or F has fired, and the request may have
+	// gone on to the next target already (RFC 3263 4.3).
+	ended atomic.Bool
 }
 
 type serverEntry struct {
@@ -1139,14 +1144,16 @@ func (s *Stack) carryOutClient(e *clientEntry, actions []TransactionAction) {
 	for _, a := range actions {
 		switch a := a.(type) {
 		case SendRequest:
-			if err := s.transport.sendRequest(e.attempt.request, e.attempt.destination, s.reportFailure(e)); err != nil {
+			if err := s.transport.sendRequest(e.attempt.request, e.attempt.destination, s.reportFailure(e), e.ended.Load); err != nil {
 				sendErr = err
 			}
 		case SendACK:
 			// RFC 3261 17.1.1.2 and RFC 3263 4: the same destination as
 			// the INVITE.
+			// The transaction ends with the ACK over TCP (Timer D is zero),
+			// so the ACK goes out whatever becomes of it.
 			ack := newMatchingRequest(e.attempt.request, ACK, a.Response.Get("To"))
-			if err := s.transport.sendRequest(ack, e.attempt.destination, s.reportFailure(e)); err != nil {
+			if err := s.transport.sendRequest(ack, e.attempt.destination, s.reportFailure(e), nil); err != nil {
 				sendErr = err
 			}
 		case SendCancel:
@@ -1165,6 +1172,7 @@ func (s *Stack) carryOutClient(e *clientEntry, actions []TransactionAction) {
 		}
 	}
 	if e.machine.current() == Terminated {
+		e.ended.Store(true)
 		stopTimers(e.timers)
 		delete(s.clients, e.key)
 		s.closeTU(e, nil)

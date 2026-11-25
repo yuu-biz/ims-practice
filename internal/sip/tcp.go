@@ -55,11 +55,16 @@ var maxTCPQueue = 512
 
 var errTCPQueueFull = errors.New("sip: too many messages wait for the TCP connection to this far end")
 
+var errAbandoned = errors.New("sip: the transaction ended before its request went out")
+
 // tcpSend is a message in the queue of a far end, and what to call with
 // the outcome once it has been written or has failed.
 type tcpSend struct {
 	m    *Message
 	done func(error)
+	// abandoned, when set, reports whether m is to go out no more: the
+	// request of a client transaction that has ended while m waited.
+	abandoned func() bool
 	// orElse is set for a response that goes back on the connection of
 	// its request: where it goes instead, should that connection close
 	// before the response is written, or the write fail (RFC 3261
@@ -336,6 +341,10 @@ func (t *TransportLayer) writeQueued(remote netip.AddrPort) {
 					s.done(err)
 				}
 			}
+			continue
+		}
+		if next.abandoned != nil && next.abandoned() {
+			next.done(errAbandoned)
 			continue
 		}
 		err = t.writeTCP(c, next.m, remote)

@@ -280,14 +280,15 @@ func (t *TransportLayer) readUDP(u *UDPTransport) {
 // one. The caller picks dst from the Route set or the Request-URI; the
 // transport does not look up DNS.
 func (t *TransportLayer) SendRequest(req *Message, dst Destination) error {
-	return t.sendRequest(req, dst, nil)
+	return t.sendRequest(req, dst, nil, nil)
 }
 
 // sendRequest is SendRequest. With written set, it does not wait for a
 // TCP peer: req joins the queue of dst (queueTCP), and written gets the
 // outcome later. Over UDP, and for an error that sendRequest returns,
-// written is not called.
-func (t *TransportLayer) sendRequest(req *Message, dst Destination, written func(error)) error {
+// written is not called. abandoned, when set, tells the queue that req
+// is to go out no more (tcpSend).
+func (t *TransportLayer) sendRequest(req *Message, dst Destination, written func(error), abandoned func() bool) error {
 	switch dst.Transport {
 	case UDP:
 		if client := t.clientPort(dst.Addr); client != nil {
@@ -297,7 +298,7 @@ func (t *TransportLayer) sendRequest(req *Message, dst Destination, written func
 		}
 		return t.udp.SendRequest(req, dst.Addr)
 	case TCP:
-		return t.sendTCP(tcpSend{m: req, done: written}, dst.Addr)
+		return t.sendTCP(tcpSend{m: req, done: written, abandoned: abandoned}, dst.Addr)
 	}
 	return fmt.Errorf("sip: transport %s is not supported", dst.Transport)
 }
