@@ -1,13 +1,20 @@
 package main
 
 import (
+	"bufio"
+	"bytes"
+	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 // takenAddress holds a TCP port on the loopback address until the test
@@ -76,4 +83,66 @@ maintenance: {listen: %[3]s}
 		t.Fatalf("the Diameter server of the node that failed to start still listens: %v", err)
 	}
 	l.Close()
+}
+
+// nodeConfigEnv names the configuration file that the test binary runs
+// main with, when a test starts it again as the node under test.
+const nodeConfigEnv = "IMS_TEST_NODE_CONFIG"
+
+// TestANodeWhoseListenerCannotOpenFails: the HTTP listener of an OAM
+// cannot open, because the port is taken. The process ends with a
+// non-zero exit code, and its log says that the node failed
+// and which listener on which address could not open, rather than that
+// it started and stopped.
+func TestANodeWhoseListenerCannotOpenFails(t *testing.T) {
+	if path := os.Getenv(nodeConfigEnv); path != "" {
+		os.Args = []string{"ims", "-config", path}
+		main()
+		return
+	}
+	taken := takenAddress(t)
+	path := writeConfig(t, fmt.Sprintf(`
+node: oam
+roles: [oam]
+home_domain: %s
+oam:
+  http_listen: %s
+  nodes:
+    - {name: pcscf-1, roles: [pcscf], maintenance: "http://127.0.0.1:1/"}
+`, domain, taken))
+
+	const deadline = 30 * time.Second
+	ctx, cancel := context.WithTimeout(context.Background(), deadline)
+	defer cancel()
+	node := exec.CommandContext(ctx, os.Args[0], "-test.run=^TestANodeWhoseListenerCannotOpenFails$", "-test.timeout="+deadline.String())
+	node.Env = append(os.Environ(), nodeConfigEnv+"="+path)
+	out, err := node.Output()
+	if ctx.Err() != nil {
+		t.Fatalf("the node did not end within %v:\n%s", deadline, out)
+	}
+	var exit *exec.ExitError
+	if !errors.As(err, &exit) {
+		t.Fatalf("the node ended with %v, want a non-zero exit code:\n%s", err, out)
+	}
+
+	var failed string
+	lines := bufio.NewScanner(bytes.NewReader(out))
+	for lines.Scan() {
+		var line struct {
+			Msg   string `json:"msg"`
+			Error string `json:"error"`
+		}
+		if json.Unmarshal(lines.Bytes(), &line) != nil {
+			continue
+		}
+		if line.Msg == "node started" {
+			t.Errorf("the node said it started:\n%s", out)
+		}
+		if line.Msg == "node failed" {
+			failed = line.Error
+		}
+	}
+	if !strings.Contains(failed, "oam") || !strings.Contains(failed, taken) {
+		t.Errorf("node failed with %q, want it to name the oam listener on %s:\n%s", failed, taken, out)
+	}
 }

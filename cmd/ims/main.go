@@ -224,12 +224,9 @@ func run(configPath string, log *slog.Logger, level *slog.LevelVar) error {
 	}
 	if hssRole != nil && cfg.HSS.ProvisioningListen != "" {
 		api := &http.Server{Addr: cfg.HSS.ProvisioningListen, Handler: hssRole.Provisioning(server)}
-		go func() {
-			if err := api.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-				log.Error("hss provisioning API failed", "error", err.Error())
-				cancel()
-			}
-		}()
+		if err := serveHTTP(api, "hss provisioning API", log, cancel); err != nil {
+			return err
+		}
 		defer api.Close()
 		log.Info("hss provisioning API listening", "address", cfg.HSS.ProvisioningListen)
 	}
@@ -514,12 +511,9 @@ func run(configPath string, log *slog.Logger, level *slog.LevelVar) error {
 		// service takes Ut with it.
 		ut := &http.Server{Addr: c.XCAP.Listen.String(),
 			Handler: mmtelRole.Ut(xcap.NewHandler(users, c.XCAP.RootPath, c.XCAP.NonceKey, roleLog.With("function", "xcap")))}
-		go func() {
-			if err := ut.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-				roleLog.Error("XCAP server failed", "error", err.Error())
-				cancel()
-			}
-		}()
+		if err := serveHTTP(ut, "XCAP server", roleLog, cancel); err != nil {
+			return err
+		}
 		defer ut.Close()
 		roleLog.Info("XCAP server listening", "address", c.XCAP.Listen.String())
 	}
@@ -548,12 +542,9 @@ func run(configPath string, log *slog.Logger, level *slog.LevelVar) error {
 		defer m.Close()
 		// Mp: the MRFPs report the end of each announcement here.
 		notify := &http.Server{Addr: c.Notify.String(), Handler: m.NotifyHandler()}
-		go func() {
-			if err := notify.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-				roleLog.Error("Notify server failed", "error", err.Error())
-				cancel()
-			}
-		}()
+		if err := serveHTTP(notify, "Notify server", roleLog, cancel); err != nil {
+			return err
+		}
 		defer notify.Close()
 		roleLog.Info("Notify server listening", "address", c.Notify.String(), "mrfp", c.MRFPs)
 	}
@@ -591,12 +582,9 @@ func run(configPath string, log *slog.Logger, level *slog.LevelVar) error {
 		// Close, not Shutdown, on the way out: a UE's event stream never
 		// finishes by itself.
 		api := &http.Server{Addr: cfg.EPC.API.String(), Handler: epcRole.Handler()}
-		go func() {
-			if err := api.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-				log.Error("epc API failed", "error", err.Error())
-				cancel()
-			}
-		}()
+		if err := serveHTTP(api, "epc API", log, cancel); err != nil {
+			return err
+		}
 		defer api.Close()
 		log.Info("epc API listening", "address", cfg.EPC.API.String())
 	}
@@ -628,12 +616,9 @@ func run(configPath string, log *slog.Logger, level *slog.LevelVar) error {
 		// Close, not Shutdown, on the way out: an open /api/events stream
 		// never finishes by itself.
 		web := &http.Server{Addr: c.HTTPListen, Handler: l.Handler()}
-		go func() {
-			if err := web.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-				roleLog.Error("lab HTTP server failed", "error", err.Error())
-				cancel()
-			}
-		}()
+		if err := serveHTTP(web, "lab HTTP server", roleLog, cancel); err != nil {
+			return err
+		}
 		defer web.Close()
 		roleLog.Info("lab listening", "hep", c.HEPListen, "http", c.HTTPListen)
 	}
@@ -661,12 +646,9 @@ func run(configPath string, log *slog.Logger, level *slog.LevelVar) error {
 		// to finish. A backup cut short leaves no archive, since the
 		// store makes one readable only once it is whole.
 		api := &http.Server{Addr: c.HTTPListen, Handler: oamHandler(server)}
-		go func() {
-			if err := api.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-				roleLog.Error("oam HTTP server failed", "error", err.Error())
-				cancel()
-			}
-		}()
+		if err := serveHTTP(api, "oam HTTP server", roleLog, cancel); err != nil {
+			return err
+		}
 		defer api.Close()
 		roleLog.Info("oam listening", "http", c.HTTPListen, "nodes", len(c.Nodes))
 	}
@@ -674,7 +656,7 @@ func run(configPath string, log *slog.Logger, level *slog.LevelVar) error {
 		roleLog := log.With("role", config.RoleFault)
 		api, err := net.Listen("tcp", c.HTTPListen)
 		if err != nil {
-			return err
+			return fmt.Errorf("fault API: %w", err)
 		}
 		stop := startFaultAgent(ctx, api, *c, roleLog, cancel)
 		defer stop()
@@ -682,7 +664,7 @@ func run(configPath string, log *slog.Logger, level *slog.LevelVar) error {
 	if c := cfg.Maintenance; c != nil {
 		l, err := net.Listen("tcp", c.Listen)
 		if err != nil {
-			return err
+			return fmt.Errorf("maintenance listener: %w", err)
 		}
 		stop, err := startMaintenance(l, cfg, managed, registry, level, log, cancel)
 		if err != nil {
@@ -1069,17 +1051,34 @@ func startMediaNode(c config.AGW, announcements agw.Announcements, store agw.Con
 		}, nil
 	}
 	control := &http.Server{Addr: c.Control.String(), Handler: agw.Handler(relay)}
-	go func() {
-		if err := control.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			log.Error("control API failed", "error", err.Error())
-			cancel()
-		}
-	}()
+	if err := serveHTTP(control, "control API", log, cancel); err != nil {
+		relay.Close()
+		return nil, nil, err
+	}
 	log.Info("control API listening", "address", c.Control.String(), "announcements", len(announcements))
 	return relay, func() {
 		control.Close()
 		relay.Close()
 	}, nil
+}
+
+// serveHTTP opens the listener of server at its Addr and serves server
+// on it. The listener opens before serveHTTP returns, so that a node
+// whose listener cannot open fails to start and says which one, rather
+// than starting and stopping at once. A listener that fails after it
+// opened stops the node, as a signal does.
+func serveHTTP(server *http.Server, name string, log *slog.Logger, cancel context.CancelFunc) error {
+	l, err := net.Listen("tcp", server.Addr)
+	if err != nil {
+		return fmt.Errorf("%s: %w", name, err)
+	}
+	go func() {
+		if err := server.Serve(l); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			log.Error(name+" failed", "error", err.Error())
+			cancel()
+		}
+	}()
+	return nil
 }
 
 // faultExpiryInterval is how often the agent looks for the faults whose
