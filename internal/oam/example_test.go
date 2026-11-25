@@ -34,8 +34,10 @@ func Example() {
 	p1, p2 := pcscfNode("pcscf-1"), pcscfNode("pcscf-2")
 	defer p1.Close()
 	defer p2.Close()
-	// The inventory comes from the configuration of the oam role.
+	// The name and the inventory come from the configuration of the oam
+	// role.
 	server, err := oam.New(oam.Config{
+		Name: "oam",
 		Nodes: []oam.Endpoint{
 			{Name: "pcscf-1", Roles: []string{"pcscf"}, URL: p1.URL},
 			{Name: "pcscf-2", Roles: []string{"pcscf"}, URL: p2.URL},

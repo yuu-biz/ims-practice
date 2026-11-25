@@ -97,7 +97,7 @@ TS 32.101 V19.0.0 5.1.1 は、管理のインタフェースを種類で分け�
 | `alarm_raised_time`、`alarm_changed_time`、`alarm_cleared_time` | `alarmRaisedTime`、`alarmChangedTime`、`alarmClearedTime` | なし |
 | `alarm_type`、`probable_cause`、`specific_problem`、`perceived_severity`、`additional_text` | `alarmType`、`probableCause`、`specificProblem`、`perceivedSeverity`、`additionalText` | 値の綴りはすでに OpenAPI と同じ |
 | `ack_state`、`ack_time`、`ack_user_id` | `ackState`、`ackTime`、`ackUserId` | なし |
-| なし | `ackSystemId` | 確認を作るなら持つ属性（7.3.1.3）。ノードが持つように足す。OSS の `PATCH` が書いた値か、OAM の画面からの確認なら OAM の名前 |
+| なし | `ackSystemId` | 確認を作るなら持つ属性（7.3.1.3）。ノードが持つように足す。OSS の `PATCH` が書いた値か、OAM の画面と `/oam/v1/` からの確認なら OAM の名前（下の「OAM の画面からの確認」） |
 | `role`、`peer` | なし | `objectInstance` の部分なので出さない |
 | `dropped_records` | なし | 一覧の属性に当たるものが無い。捨てたことは通知で伝える（下の「仕様に無い振る舞い」） |
 
@@ -182,6 +182,12 @@ TS 32.158 6.3.1 は `PATCH` を不可分とし、一部だけを当てること�
 ほかの Patch の形（`application/json-patch+json` と 3GPP の 2 つの形）と、`Content-Type` の無い要求は 415 で、`Accept-Patch` に `application/merge-patch+json` を書きます（RFC 5789 2.2、3.1）。`charset` などの引数は見ません。3GPP の 2 つの形は、仕様書のあいだで media type の綴りが揃っていません（下の「仕様のあいだの食い違い」）。
 
 OAM は、鍵の前のノードの名前で宛先を決め、そのノードの保守用の API で確認を渡します。保守用の `AckStateRequest` には、`ackSystemId` に当たる欄と、複数の警報の記録をまとめて確かめる形を足します。
+
+#### OAM の画面からの確認
+
+OAM の画面は、`/oam/v1/` の独自の API（`PUT /oam/v1/nodes/{node}/alarms/{id}/ack-state`）で確認します。この要求にも、OSS の `PATCH` と同じく運用者の名前（`operator`）を必ず求めます。TS 28.111 7.4.1 の `ackUserId` は、確認の状態を最後に変えた利用者です。`notifyAckStateChanged` は、これを必須（M）の値として運びます（8.8.2）。`TS28111_FaultNrm.yaml` の `NotifyAckStateChanged` も、`ackUserId` を `required` にしています。名前の無い確認を通すと、OSS には `"ackUserId":""` の通知が届きます。確認の取り消しも同じです。TS 28.111 6.7 は、consumer が自分の名前を渡すかどうかを任意（may）にしています。それでも、どの入口でも名前を求めることにしました。通知が必須の値を欠かないようにするためです。名前の無い要求は、どのノードにも聞かずに 400 で断ります。
+
+OAM は、その確認の `ackSystemId` に自分の名前を入れて、ノードに渡します。運用者は OAM を通して確認の状態を変えるので、7.4.1 の「確認の状態を最後に変えたシステム」は OAM です。名前は、`oam` の役割の設定のファイルの `node` です。Compose では `oam` です。ノードが保持の時間を過ぎた警報を自分で確認するときも、自分の `node` を `ackSystemId` にしています。それと同じ形です。SubNetwork の DN（通知の `systemDN`）は使いません。3GPP の口を出さない OAM でも、画面から確認できるためです。要求の本文には `ack_system_id` を書けず、書けば 400 です。システムの名前を決めるのは OAM で、呼び出し側ではないためです。
 
 ### 購読
 

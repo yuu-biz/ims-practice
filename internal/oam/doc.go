@@ -75,10 +75,12 @@
 //	     Alarms. The filter is that of the maintenance API; a bad one
 //	     is 400 before any node is asked.
 //	PUT  /oam/v1/nodes/{node}/alarms/{id}/ack-state
-//	     maintenance.AckStateRequest -> FanOut of
-//	     maintenance.AlarmRecord: acknowledges an alarm of the node, or
-//	     takes the acknowledgement back. An id that the node does not
-//	     have is the node's 404 in the entry.
+//	     AckStateRequest -> FanOut of maintenance.AlarmRecord:
+//	     acknowledges an alarm of the node, or takes the
+//	     acknowledgement back, for the operator of the request and with
+//	     the name of the OAM as the system. A request without an
+//	     operator is 400 before the node is asked. An id that the node
+//	     does not have is the node's 404 in the entry.
 //
 // The same alarms are offered to an OSS by the 3GPP management
 // services (package mns), when the configuration names a SubNetwork

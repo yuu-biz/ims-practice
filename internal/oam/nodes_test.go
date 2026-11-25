@@ -141,6 +141,9 @@ func newTestServer(t *testing.T, c Config, nodes ...*fakeNode) *testServer {
 		c.Nodes = append(c.Nodes, n.endpoint())
 	}
 	ts := &testServer{log: &syncBuffer{}}
+	if c.Name == "" {
+		c.Name = "oam"
+	}
 	if c.Log == nil {
 		c.Log = slog.New(slog.NewJSONHandler(ts.log, &slog.HandlerOptions{Level: slog.LevelDebug}))
 	}
@@ -439,9 +442,19 @@ func TestNewRefusesABadInventory(t *testing.T) {
 		{{Name: "pcscf-1", Roles: []string{"pcscf"}, URL: "pcscf:8085"}},
 		{{Name: "pcscf-1", Roles: []string{"pcscf"}, URL: "http://a"}, {Name: "pcscf-1", Roles: []string{"pcscf"}, URL: "http://b"}},
 	} {
-		if _, err := New(Config{Nodes: nodes}); err == nil {
+		if _, err := New(Config{Name: "oam", Nodes: nodes}); err == nil {
 			t.Errorf("New took %+v", nodes)
 		}
+	}
+}
+
+func TestNewNeedsTheNameOfTheOAM(t *testing.T) {
+	nodes := []Endpoint{{Name: "pcscf-1", Roles: []string{"pcscf"}, URL: "http://pcscf:8085"}}
+	if _, err := New(Config{Nodes: nodes}); err == nil {
+		t.Error("New took an OAM without a name")
+	}
+	if _, err := New(Config{Name: "oam", Nodes: nodes}); err != nil {
+		t.Errorf("New with a name: %v", err)
 	}
 }
 

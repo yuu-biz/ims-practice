@@ -147,7 +147,7 @@ func (c *cluster) start(t *testing.T, name string) *instance {
 	// hold.
 	store := oamstore.NewWithLease(c.kv, c.cfg, 2*time.Second)
 	cfg := oam.Config{
-		SubNetwork: "ims", MnSRoot: "http://oam:8080/3GPPManagement",
+		Name: "oam", SubNetwork: "ims", MnSRoot: "http://oam:8080/3GPPManagement",
 		NtfSubscriptions: store, AlarmWatches: store, Instance: name,
 		AlarmEventsWait: time.Second, WatchRenewal: 100 * time.Millisecond, NotificationTimeout: 2 * time.Second,
 		MissedRetryInterval: time.Second,

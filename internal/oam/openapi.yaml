@@ -323,7 +323,11 @@ paths:
     put:
       operationId: setAckState
       summary: Acknowledge an alarm of a node, or take the acknowledgement back.
-      description: An id that the node does not have is the node's 404 in the entry.
+      description: |
+        The OAM passes the acknowledgement to the node with its own name as
+        ack_system_id: the operator changes the state through the OAM. A
+        request without an operator is refused before any node is asked. An
+        id that the node does not have is the node's 404 in the entry.
       parameters:
         - $ref: '#/components/parameters/node'
         - $ref: '#/components/parameters/id'
@@ -332,7 +336,7 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '../maintenance/openapi.yaml#/components/schemas/AckStateRequest'
+              $ref: '#/components/schemas/AckStateRequest'
       responses:
         '200':
           description: The fan-out of the record after the change.
@@ -1161,6 +1165,17 @@ components:
           type: string
         active:
           type: boolean
+      additionalProperties: false
+    AckStateRequest:
+      type: object
+      required: [ack_state, operator]
+      properties:
+        ack_state:
+          $ref: '../maintenance/openapi.yaml#/components/schemas/AckState'
+        operator:
+          description: Who changes the state; the record keeps it as ack_user_id.
+          type: string
+          minLength: 1
       additionalProperties: false
     AlertingToneRequest:
       type: object

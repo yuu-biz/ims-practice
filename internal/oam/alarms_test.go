@@ -125,38 +125,63 @@ func TestTheAlarmFilterGoesToEveryNode(t *testing.T) {
 func TestAcknowledgeAnAlarmOfOneNode(t *testing.T) {
 	n := newFakeNode(t, "hss-1", []string{"hss"})
 	other := newFakeNode(t, "hss-2", []string{"hss"})
+	var asked atomic.Int64
+	n.wrap = func(h http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			asked.Add(1)
+			h.ServeHTTP(w, r)
+		})
+	}
 	raise(t, n, "hss", "scscf-1", maintenance.Major)
-	ts := newTestServer(t, Config{}, n, other)
+	ts := newTestServer(t, Config{Name: "oam-east"}, n, other)
 	id := n.node.Alarms(maintenance.AlarmFilter{}).AlarmRecords[0].AlarmID
 
-	status, body := ts.call(t, "PUT", "/oam/v1/nodes/hss-1/alarms/"+id+"/ack-state", `{"ack_state": "ACKNOWLEDGED", "operator": "test-operator"}`)
-	got := decodeAs[FanOut[maintenance.AlarmRecord]](t, body)
-	if status != http.StatusOK || got.Succeeded != 1 || len(got.Nodes) != 1 || got.Nodes[0].Result.AckState != maintenance.Acknowledged || got.Nodes[0].Result.AckUserID != "test-operator" {
-		t.Fatalf("acknowledge: %d %s", status, body)
+	// The operator changes the state through the OAM, which the record
+	// names as the system.
+	for _, tc := range []struct {
+		state    maintenance.AckState
+		operator string
+	}{
+		{maintenance.Acknowledged, "test-operator"},
+		{maintenance.Unacknowledged, "night-operator"},
+	} {
+		status, body := ts.call(t, "PUT", "/oam/v1/nodes/hss-1/alarms/"+id+"/ack-state", `{"ack_state": "`+string(tc.state)+`", "operator": "`+tc.operator+`"}`)
+		got := decodeAs[FanOut[maintenance.AlarmRecord]](t, body)
+		if status != http.StatusOK || got.Succeeded != 1 || len(got.Nodes) != 1 {
+			t.Fatalf("%s: %d %s", tc.state, status, body)
+		}
+		if r := n.node.Alarms(maintenance.AlarmFilter{}).AlarmRecords[0]; r.AckState != tc.state || r.AckUserID != tc.operator || r.AckSystemID != "oam-east" {
+			t.Errorf("the node's record after %s: %+v", tc.state, r)
+		}
 	}
-	if r := n.node.Alarms(maintenance.AlarmFilter{}).AlarmRecords[0]; r.AckState != maintenance.Acknowledged {
-		t.Errorf("the node's record: %+v", r)
-	}
-	if !strings.Contains(ts.log.String(), `"operator":"test-operator"`) {
-		t.Errorf("the log does not name the operator: %s", ts.log)
+	if !strings.Contains(ts.log.String(), `"operator":"test-operator","ack_system_id":"oam-east"`) {
+		t.Errorf("the log does not name the operator and the system: %s", ts.log)
 	}
 
 	// The alarm is hss-1's: on hss-2 the id is the node's 404.
-	_, body = ts.call(t, "PUT", "/oam/v1/nodes/hss-2/alarms/"+id+"/ack-state", `{"ack_state": "ACKNOWLEDGED"}`)
+	_, body := ts.call(t, "PUT", "/oam/v1/nodes/hss-2/alarms/"+id+"/ack-state", `{"ack_state": "ACKNOWLEDGED", "operator": "test-operator"}`)
 	if got := decodeAs[FanOut[maintenance.AlarmRecord]](t, body); got.Failed != 1 || got.Nodes[0].Error.StatusCode != http.StatusNotFound {
 		t.Errorf("another node: %s", body)
 	}
+	before := asked.Load()
 	for _, tc := range []struct {
 		method, path, body string
 		want               int
 	}{
-		{"PUT", "/oam/v1/nodes/hss-9/alarms/" + id + "/ack-state", `{"ack_state": "ACKNOWLEDGED"}`, http.StatusNotFound},
-		{"PUT", "/oam/v1/nodes/hss-1/alarms/" + id + "/ack-state", `{"ack_state": "ACKNOWLEDGED", "force": true}`, http.StatusBadRequest},
+		{"PUT", "/oam/v1/nodes/hss-9/alarms/" + id + "/ack-state", `{"ack_state": "ACKNOWLEDGED", "operator": "test-operator"}`, http.StatusNotFound},
+		{"PUT", "/oam/v1/nodes/hss-1/alarms/" + id + "/ack-state", `{"ack_state": "ACKNOWLEDGED", "operator": "test-operator", "force": true}`, http.StatusBadRequest},
+		{"PUT", "/oam/v1/nodes/hss-1/alarms/" + id + "/ack-state", `{"ack_state": "ACKNOWLEDGED"}`, http.StatusBadRequest},
+		{"PUT", "/oam/v1/nodes/hss-1/alarms/" + id + "/ack-state", `{"ack_state": "UNACKNOWLEDGED", "operator": ""}`, http.StatusBadRequest},
+		// The system is the OAM's, not the caller's to name.
+		{"PUT", "/oam/v1/nodes/hss-1/alarms/" + id + "/ack-state", `{"ack_state": "ACKNOWLEDGED", "operator": "test-operator", "ack_system_id": "oss-1"}`, http.StatusBadRequest},
 		{"DELETE", "/oam/v1/alarms", "", http.StatusMethodNotAllowed},
 	} {
 		if status, body := ts.call(t, tc.method, tc.path, tc.body); status != tc.want {
-			t.Errorf("%s %s: %d %s, want %d", tc.method, tc.path, status, body, tc.want)
+			t.Errorf("%s %s %s: %d %s, want %d", tc.method, tc.path, tc.body, status, body, tc.want)
 		}
+	}
+	if asked.Load() != before {
+		t.Error("a request that the OAM refused went to the node")
 	}
 }
 

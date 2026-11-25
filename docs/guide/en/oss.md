@@ -221,6 +221,8 @@ A body it refused, with the reason, is at `/refused`.
 
    `oss ack -unacknowledge` takes the acknowledgement back. A patch that names records of two nodes is refused with 500 and `SERVER_LIMITATION` before any node is asked, and an id that the list does not hold with 400 and `IE_NOT_FOUND`; the body of an error has the `type` and the `reason` of TS 32.158 6.6.
 
+   Every change of the acknowledgement names who made it, as `notifyAckStateChanged` always carries `ackUserId` (TS 28.111 8.8.2): a patch without `ackUserId` is refused with 400 and `NEW_ATTRIBUTE_VALUE_INVALID`. The OAM screen acknowledges through the OAM's own API, which asks for the name of the operator in the same way. The OAM hands that acknowledgement on with the name as `ackUserId` and its own name as `ackSystemId`: the `node` of its configuration file, `oam` here. The OSS gets the same `notifyAckStateChanged`.
+
 5. Unlock the HSS, with the same request and `UNLOCKED`. Each node connects again at its next attempt, up to Tc later, and the CEA clears its alarm: the OSS gets `notifyClearedAlarm` from each. The record of the S-CSCF, cleared and acknowledged, leaves the list (TS 28.111 6.14), and the OSS knows it from its two notifications. The four others stay, `CLEARED` and `UNACKNOWLEDGED`, until someone acknowledges them.
 
 6. End the subscription:

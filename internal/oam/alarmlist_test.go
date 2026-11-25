@@ -27,7 +27,7 @@ const (
 
 // mnsConfig is a Config with the 3GPP management services of the
 // SubNetwork ims.
-func mnsConfig() Config { return Config{SubNetwork: "ims", MnSRoot: testMnSRoot} }
+func mnsConfig() Config { return Config{Name: "oam", SubNetwork: "ims", MnSRoot: testMnSRoot} }
 
 // mnsAnswer is an answer of the 3GPP management services.
 type mnsAnswer struct {
@@ -455,16 +455,16 @@ func TestNewChecksTheNamesOfTheManagementServices(t *testing.T) {
 		{SubNetwork: "ims", MnSRoot: "oam:8080/3GPPManagement"},
 		{SubNetwork: "ims", MnSRoot: testMnSRoot + "?x=1"},
 	} {
-		c.Nodes = nodes
+		c.Name, c.Nodes = "oam", nodes
 		if _, err := New(c); err == nil {
 			t.Errorf("New(%q, %q) took them", c.SubNetwork, c.MnSRoot)
 		}
 	}
-	s, err := New(Config{Nodes: nodes})
+	s, err := New(Config{Name: "oam", Nodes: nodes})
 	if err != nil || s.MnSHandler() != nil || s.MnSPathPrefix() != "" {
 		t.Errorf("an OAM without the services: %v", err)
 	}
-	s, err = New(Config{Nodes: nodes, SubNetwork: "ims", MnSRoot: "http://oam:8080/mns/"})
+	s, err = New(Config{Name: "oam", Nodes: nodes, SubNetwork: "ims", MnSRoot: "http://oam:8080/mns/"})
 	if err != nil || s.MnSPathPrefix() != "/mns/ProvMnS/v19/" {
 		t.Errorf("the prefix of another root: %q, %v", s.MnSPathPrefix(), err)
 	}

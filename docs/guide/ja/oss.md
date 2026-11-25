@@ -221,6 +221,8 @@ docker compose exec oss wget -qO- 'http://127.0.0.1:8080/received?notification_t
 
    `oss ack -unacknowledge` で確認を取り消せます。2 台のノードの記録を並べた patch は、どのノードにも聞く前に 500 と `SERVER_LIMITATION` で断られます。一覧に無い id は 400 と `IE_NOT_FOUND` です。誤りの本文には、TS 32.158 6.6 の `type` と `reason` が入ります。
 
+   確認の状態を変えるときは、いつも誰が変えたかを名乗ります。`notifyAckStateChanged` が必ず `ackUserId` を運ぶからです（TS 28.111 8.8.2）。`ackUserId` の無い patch は、400 と `NEW_ATTRIBUTE_VALUE_INVALID` で断られます。OAM の画面は OAM 独自の API で確認し、同じように運用者の名前を求めます。OAM はその確認を、運用者の名前を `ackUserId` に、自分の名前を `ackSystemId` に入れてノードに渡します。自分の名前は設定のファイルの `node` で、ここでは `oam` です。OSS には同じ `notifyAckStateChanged` が届きます。
+
 5. 同じ要求に `UNLOCKED` を入れて、HSS の lock を解きます。各ノードは、遅くとも Tc 後の次の試行で接続し直し、CEA を受けてアラームを解除します。OSS には各ノードの `notifyClearedAlarm` が届きます。S-CSCF の記録は、解除されて確認も済んだので、一覧から消えます（TS 28.111 6.14）。OSS は、それを 2 つの通知から知ります。ほかの 4 つは、誰かが確認するまで、`CLEARED` かつ `UNACKNOWLEDGED` のまま残ります。
 
 6. 購読をやめます。
