@@ -162,6 +162,10 @@ func Example() {
 	}
 	fmt.Println("MME: OFA", answer.Result)
 
+	// The delivery that the OFR began goes on in the background. The
+	// example waits for it, as a stop would cut it short and leave the
+	// short message due for another instance.
+	sc.Wait()
 	// When the role stops, it stops the server first, then the SC.
 	stop()
 	<-running
