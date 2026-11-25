@@ -1,4 +1,4 @@
-package main
+package mns
 
 import (
 	"bytes"
@@ -10,19 +10,21 @@ import (
 	"time"
 )
 
-// decodeStrictly decodes the JSON text body into v, a pointer, more
-// strictly than encoding/json does, at any depth:
+// DecodeStrictly decodes the JSON text body into v, a pointer to a type
+// of this package, more strictly than encoding/json does, at any depth.
+// The bodies are then read as a consumer or producer built from the
+// OpenAPI files reads them:
 //
 //   - Every attribute must be, spelt exactly so, the JSON name of a
 //     field of v. encoding/json alone would take "ackSystemID" for the
 //     field "ackSystemId", since it matches names without regard to
-//     case; an MnS consumer built from the OpenAPI files would not.
+//     case.
 //   - No attribute, entry of a map or item of a list may be null: no
 //     schema of the files makes one nullable. encoding/json would take
 //     null as the zero value.
 //   - No object may have the same name twice. encoding/json would keep
 //     the last.
-func decodeStrictly(body []byte, v any) error {
+func DecodeStrictly(body []byte, v any) error {
 	if err := checkValue(body, reflect.TypeOf(v).Elem(), ""); err != nil {
 		return err
 	}
@@ -49,7 +51,7 @@ func checkValue(raw []byte, t reflect.Type, at string) error {
 		for _, m := range members {
 			field, ok := fields[m.name]
 			if !ok {
-				return fmt.Errorf("%q at %s/ is not an attribute that oss takes: it takes only the attributes of the internal/mns types, which are those the OAM of this project writes", m.name, at)
+				return fmt.Errorf("%q at %s/ is not an attribute of %s", m.name, at, t)
 			}
 			if err := checkValue(m.value, field, at+"/"+m.name); err != nil {
 				return err

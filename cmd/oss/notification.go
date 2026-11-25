@@ -47,7 +47,7 @@ var (
 // checkNotification reads the body of a POST as one of the bodies of
 // TS28111_FaultNotifications.yaml and says what is wrong with it, if
 // anything. The notificationType picks the body, which then decodes
-// into its internal/mns type by decodeStrictly, with no attribute the
+// into its internal/mns type by mns.DecodeStrictly, with no attribute the
 // type does not have: an attribute of another body, such as the reason
 // of notifyAlarmListRebuilt in a notifyNewAlarm, is refused, and so is
 // null. Each attribute the schema requires must be there, each
@@ -88,13 +88,13 @@ func decodeBody(notificationType mns.NotificationType, body []byte) (mns.Notific
 	switch notificationType {
 	case mns.NotifyNewAlarmType:
 		var n mns.NotifyNewAlarm
-		if err := decodeStrictly(body, &n); err != nil {
+		if err := mns.DecodeStrictly(body, &n); err != nil {
 			return n.NotificationHeader, err
 		}
 		return n.NotificationHeader, checkAlarm(n.AlarmId, n.AlarmType, n.PerceivedSeverity)
 	case mns.NotifyClearedAlarmType:
 		var n mns.NotifyClearedAlarm
-		if err := decodeStrictly(body, &n); err != nil {
+		if err := mns.DecodeStrictly(body, &n); err != nil {
 			return n.NotificationHeader, err
 		}
 		// TS 28.111 8.3.2.
@@ -104,7 +104,7 @@ func decodeBody(notificationType mns.NotificationType, body []byte) (mns.Notific
 		return n.NotificationHeader, checkAlarm(n.AlarmId, n.AlarmType, n.PerceivedSeverity)
 	case mns.NotifyChangedAlarmGeneralType:
 		var n mns.NotifyChangedAlarmGeneral
-		if err := decodeStrictly(body, &n); err != nil {
+		if err := mns.DecodeStrictly(body, &n); err != nil {
 			return n.NotificationHeader, err
 		}
 		// TS 28.111 8.4.2: a change to CLEARED is a notifyClearedAlarm.
@@ -114,7 +114,7 @@ func decodeBody(notificationType mns.NotificationType, body []byte) (mns.Notific
 		return n.NotificationHeader, checkAlarm(n.AlarmId, n.AlarmType, n.PerceivedSeverity)
 	case mns.NotifyAckStateChangedType:
 		var n mns.NotifyAckStateChanged
-		if err := decodeStrictly(body, &n); err != nil {
+		if err := mns.DecodeStrictly(body, &n); err != nil {
 			return n.NotificationHeader, err
 		}
 		if err := oneOf("ackState", n.AckState, ackStates); err != nil {
@@ -123,11 +123,11 @@ func decodeBody(notificationType mns.NotificationType, body []byte) (mns.Notific
 		return n.NotificationHeader, checkAlarm(n.AlarmId, n.AlarmType, n.PerceivedSeverity)
 	case mns.NotifyPotentialFaultyAlarmListType:
 		var n mns.NotifyPotentialFaultyAlarmList
-		err := decodeStrictly(body, &n)
+		err := mns.DecodeStrictly(body, &n)
 		return n.NotificationHeader, err
 	case mns.NotifyAlarmListRebuiltType:
 		var n mns.NotifyAlarmListRebuilt
-		if err := decodeStrictly(body, &n); err != nil {
+		if err := mns.DecodeStrictly(body, &n); err != nil {
 			return n.NotificationHeader, err
 		}
 		// alarmListAlignmentRequirement is optional (TS 28.111 8.5.2).

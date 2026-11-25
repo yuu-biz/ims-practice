@@ -132,7 +132,7 @@ func (f *fakeOAM) patchAlarmList(w http.ResponseWriter, r *http.Request, body []
 		return
 	}
 	var patch ackPatch
-	if err := decodeStrictly(body, &patch); err != nil || patch.Id != "1" {
+	if err := mns.DecodeStrictly(body, &patch); err != nil || patch.Id != "1" {
 		writeJSON(w, http.StatusBadRequest, mns.ErrorResponseDefault{Type: mns.ValidationError})
 		return
 	}
@@ -162,7 +162,7 @@ func (f *fakeOAM) patchAlarmList(w http.ResponseWriter, r *http.Request, body []
 
 func (f *fakeOAM) putSubscription(w http.ResponseWriter, dn mns.DN, body []byte) {
 	var s mns.NtfSubscriptionControlSingle
-	if err := decodeStrictly(body, &s); err != nil || s.Id != dn[1].Id || s.ObjectClass != mns.ClassNtfSubscriptionControl || s.Attributes == nil {
+	if err := mns.DecodeStrictly(body, &s); err != nil || s.Id != dn[1].Id || s.ObjectClass != mns.ClassNtfSubscriptionControl || s.Attributes == nil {
 		writeJSON(w, http.StatusBadRequest, mns.ErrorResponseDefault{Type: mns.ValidationError})
 		return
 	}
@@ -292,8 +292,8 @@ func TestReadAlarmListRefusesAnUnknownAttribute(t *testing.T) {
 		rewrite func([]byte) []byte
 		want    string
 	}{
-		{withAttribute(`"administrativeState":"UNLOCKED"`), `"administrativeState" at / is not an attribute that oss takes`},
-		{withAttribute(`"ObjectClass":"AlarmList"`), `"ObjectClass" at / is not an attribute that oss takes`},
+		{withAttribute(`"administrativeState":"UNLOCKED"`), `"administrativeState" at / is not an attribute of`},
+		{withAttribute(`"ObjectClass":"AlarmList"`), `"ObjectClass" at / is not an attribute of`},
 		{withAttribute(`"id":"1"`), `"id" comes twice`},
 		{func(b []byte) []byte {
 			return regexp.MustCompile(`"alarmRecords":\{.*\}\}\}`).ReplaceAll(b, []byte(`"alarmRecords":{"scscf.1":null}}}`))
@@ -404,7 +404,7 @@ func TestCommandsAgainstTheOAM(t *testing.T) {
 		t.Fatal(err)
 	}
 	var s mns.NtfSubscriptionControlSingle
-	if err := decodeStrictly(out.Bytes(), &s); err != nil || s.Id != "oss-a" || !slices.Equal(s.Attributes.NotificationTypes, []mns.NotificationType{mns.NotifyNewAlarmType, mns.NotifyAckStateChangedType}) {
+	if err := mns.DecodeStrictly(out.Bytes(), &s); err != nil || s.Id != "oss-a" || !slices.Equal(s.Attributes.NotificationTypes, []mns.NotificationType{mns.NotifyNewAlarmType, mns.NotifyAckStateChangedType}) {
 		t.Errorf("subscribe printed %s (%v)", out.Bytes(), err)
 	}
 	if s.Attributes.NotificationRecipientAddress != "http://oss:8080/notifications" {
@@ -419,7 +419,7 @@ func TestCommandsAgainstTheOAM(t *testing.T) {
 		t.Fatal(err)
 	}
 	var list mns.AlarmListSingle
-	if err := decodeStrictly(out.Bytes(), &list); err != nil || list.Attributes.NumOfAlarmRecords != 1 {
+	if err := mns.DecodeStrictly(out.Bytes(), &list); err != nil || list.Attributes.NumOfAlarmRecords != 1 {
 		t.Errorf("alarms printed %s (%v)", out.Bytes(), err)
 	}
 
