@@ -709,7 +709,9 @@ func TestRequestWhoseTransactionEndedWhileQueuedStaysUnsent(t *testing.T) {
 		t.Fatalf("the request that timed out in the queue got %v, err %v; want the 200 of the next target", got, ct.Err())
 	}
 	close(release)
-	if _, err := uac.SendRequest(marker, tcpTo(far)); err != nil {
+	// The marker goes through the transport alone, with no transaction
+	// whose short timeout could leave it unsent too.
+	if err := tr.SendRequest(marker, tcpTo(far)); err != nil {
 		t.Fatal(err)
 	}
 	// The queue keeps the order, so the request that timed out would come
