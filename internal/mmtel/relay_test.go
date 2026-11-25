@@ -64,11 +64,12 @@ type stores interface {
 
 func startAS(t *testing.T, hss mmtel.HSS, cfg mmtel.Config) testAS {
 	t.Helper()
-	return startASOn(t, hss, cfg, mmtel.NewMemoryStore())
+	return startASOn(t, hss, cfg, mmtel.NewMemoryStore(), quiet())
 }
 
-// startASOn is startAS with store in place of a MemoryStore.
-func startASOn(t *testing.T, hss mmtel.HSS, cfg mmtel.Config, store stores) testAS {
+// startASOn is startAS with store in place of a MemoryStore, and log in
+// place of quiet.
+func startASOn(t *testing.T, hss mmtel.HSS, cfg mmtel.Config, store stores, log *slog.Logger) testAS {
 	t.Helper()
 	tr, err := sip.Listen("127.0.0.1:0", quiet())
 	if err != nil {
@@ -81,7 +82,7 @@ func startASOn(t *testing.T, hss mmtel.HSS, cfg mmtel.Config, store stores) test
 	if cfg.MRFC != "" && cfg.ConferenceDomain == "" {
 		cfg.ConferenceDomain = conferenceDomain
 	}
-	as := mmtel.New(cfg, hss, store, store, ipLocator{}, quiet())
+	as := mmtel.New(cfg, hss, store, store, ipLocator{}, log)
 	if err := as.Listen(tr); err != nil {
 		t.Fatal(err)
 	}
@@ -397,7 +398,7 @@ func (s watchedStore) PutCall(ctx context.Context, r mmtel.CallRecord) error {
 // the AS has deleted the record.
 func TestNoRecordAfterTheCall(t *testing.T) {
 	store := watchedStore{stores: mmtel.NewMemoryStore(), put: make(chan mmtel.CallRecord, 16)}
-	as := startASOn(t, noServices{}, mmtel.Config{}, store)
+	as := startASOn(t, noServices{}, mmtel.Config{}, store, quiet())
 	calls := make(chan *sip.IncomingCall, 1)
 	reinvites := make(chan *sip.InDialogRequest, 1)
 	callee := newUA(t, "bob", func(c *sip.IncomingCall) {
