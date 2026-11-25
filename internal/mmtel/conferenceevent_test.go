@@ -193,7 +193,8 @@ func TestASubscriptionExpiresWhileAnotherIsRemoved(t *testing.T) {
 
 // TestASubscriberThatDoesNotAnswerLosesItsSubscription: a NOTIFY that
 // has no response when Timer F fires ends its subscription (RFC 6665
-// 4.2.2), and the focus sends that subscriber nothing after it. Timer F
+// 4.2.2): the focus sends that subscriber nothing after it, and takes
+// the subscription out of the record of the conference. Timer F
 // is short here, so that the test need not wait 32 seconds for it.
 func TestASubscriberThatDoesNotAnswerLosesItsSubscription(t *testing.T) {
 	mrfc := startConferenceMRFC(t)
@@ -220,6 +221,32 @@ func TestASubscriberThatDoesNotAnswerLosesItsSubscription(t *testing.T) {
 	if n := xavier.nextNotify(3 * timers.TransactionTimeout); n != nil {
 		t.Errorf("xavier got a NOTIFY with CSeq %q and Subscription-State %q after one that timed out",
 			n.Get("CSeq"), n.Get("Subscription-State"))
+	}
+
+	// The record in the store, which the other instances read, has the
+	// subscription no more, and still has alice's. No message on the
+	// wire tells when the focus writes it.
+	id, err := sip.ParseURI(focus.URI)
+	if err != nil {
+		t.Fatal(err)
+	}
+	subscribed := func(r mmtel.ConferenceRecord, user string) bool {
+		return slices.ContainsFunc(r.Subscriptions, func(s mmtel.ConferenceSubscription) bool { return s.Subscriber == "sip:"+user+"@"+domain })
+	}
+	for deadline := time.Now().Add(10 * time.Second); ; time.Sleep(10 * time.Millisecond) {
+		r, ok := conferenceOf(t, as, id.User)
+		if !ok {
+			t.Fatal("the store has no record of the conference")
+		}
+		if !subscribed(r, "alice") {
+			t.Fatal("the record has no subscription of alice")
+		}
+		if !subscribed(r, "xavier") {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the record still has xavier's subscription after Timer F")
+		}
 	}
 }
 
