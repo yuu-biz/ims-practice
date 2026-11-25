@@ -197,6 +197,10 @@ func New(cfg Config, store Store, sgdClient SGdClient, s6cClient S6cClient, cloc
 // a claim or a release that the store made and this instance never
 // heard of would leave the destination leased until the lease ran out.
 func (c *SMSC) Run(ctx context.Context) {
+	// The stop does not wait for the sweep: a sweep that is still
+	// claiming would keep the attempts under way going, and begin new
+	// ones, until it returned.
+	context.AfterFunc(ctx, c.stop)
 	tick := time.NewTicker(c.cfg.PollInterval)
 	defer tick.Stop()
 	for {

@@ -93,8 +93,14 @@ func (c *SMSC) deliverSoon(destination string) {
 // destination anew, so that a long queue does not outlast one lease.
 // Once the operator has taken the SC out of service, or this instance
 // has stopped, it claims it no more: the destination is due again, and
-// an instance in service goes on with the queue.
+// an instance in service goes on with the queue. A destination whose
+// claim came back after the stop goes back at once, without an attempt
+// and with its count of attempts as it was.
 func (c *SMSC) serve(ctx context.Context, l Lease) {
+	if c.stopped() {
+		c.release(ctx, l, c.clock.Now(), l.Attempts, c.log.With("destination", l.Destination))
+		return
+	}
 	for c.attemptHead(ctx, l) && c.unlocked() && !c.stopped() {
 		var ok bool
 		var err error

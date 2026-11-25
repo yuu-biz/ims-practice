@@ -6,6 +6,7 @@ import (
 	"github.com/yuu-biz/ims-practice/internal/diameter"
 	"reflect"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -597,6 +598,103 @@ func TestAStoppingInstanceLeavesItsAttemptToAnother(t *testing.T) {
 				t.Errorf("Bob still has a queue after the instance in service delivered: %v, %v", ok, err)
 			}
 		})
+	}
+}
+
+// run starts Run on sc. The function it returns ends the context of
+// Run, and the channel is closed once Run has returned. At the end of
+// the test it ends the context and waits up to ten seconds for Run.
+func run(t *testing.T, sc *SMSC) (context.CancelFunc, <-chan struct{}) {
+	t.Helper()
+	ctx, stop := context.WithCancel(context.Background())
+	ran := make(chan struct{})
+	go func() {
+		sc.Run(ctx)
+		close(ran)
+	}()
+	t.Cleanup(func() {
+		stop()
+		select {
+		case <-ran:
+		case <-time.After(10 * time.Second):
+			t.Error("Run did not return within 10 s of its context ending")
+		}
+	})
+	return stop, ran
+}
+
+// gatedStore is a Store whose second ClaimDue waits until the test opens
+// the gate, as a claim does that the store is slow to answer. reached
+// is closed once that claim has begun.
+type gatedStore struct {
+	*MemoryStore
+	claims  atomic.Int32
+	reached chan struct{}
+	gate    chan struct{}
+}
+
+func (s *gatedStore) ClaimDue(ctx context.Context, now time.Time, lease time.Duration) (Lease, bool, error) {
+	if s.claims.Add(1) == 2 {
+		close(s.reached)
+		<-s.gate
+	}
+	return s.MemoryStore.ClaimDue(ctx, now, lease)
+}
+
+// TestAStopCutsTheSweepShort: the end of the context of Run stops the
+// instance at once, also while its sweep is still claiming. The attempt
+// under way is cut short and its destination is due again, and the
+// destination that the sweep claimed as the instance stopped goes back
+// without an attempt. Neither attempt counts, and an instance in service
+// takes both at once.
+func TestAStopCutsTheSweepShort(t *testing.T) {
+	n := newNetwork(t)
+	n.nodes.set(mmeHost, absent)
+	n.submit(bob, hello(t, bob, 1))
+	n.clock.Advance(time.Second)
+	n.submit(carol, hello(t, carol, 1))
+	n.clock.Advance(DefaultRetrySchedule[0])
+	n.nodes.set(mmeHost, accepts)
+	n.nodes.silence(mmeHost, true)
+	store := &gatedStore{MemoryStore: n.store, reached: make(chan struct{}), gate: make(chan struct{})}
+	// One sweep, as Run starts: it claims Bob, who has been due the
+	// longest, and then Carol.
+	sc := New(Config{Address: scAddress, HSSRealm: epcRealm, PollInterval: time.Hour}, store, n.nodes, n.hss, n.clock, quietLog)
+	stop, ran := run(t, sc)
+	var once sync.Once
+	letGo := func() { once.Do(func() { close(store.gate) }) }
+	// The cleanups run last in first, so the gate opens before Run is
+	// waited for.
+	t.Cleanup(letGo)
+
+	waitFor(t, func() bool { return n.sentTo(bob) == 2 }, "the retry to Bob")
+	select {
+	case <-store.reached:
+	case <-time.After(10 * time.Second):
+		t.Fatal("the sweep made no second claim within 10 s")
+	}
+	stop()
+	var l Lease
+	waitFor(t, func() bool {
+		var ok bool
+		l, ok, _ = n.store.Claim(context.Background(), bob, n.clock.Now(), defaultLease)
+		return ok
+	}, "Bob to be due again once the stop has cut his attempt short")
+	if l.Attempts != 1 {
+		t.Errorf("Bob has %d attempts, want the one before the stop", l.Attempts)
+	}
+
+	letGo()
+	select {
+	case <-ran:
+	case <-time.After(10 * time.Second):
+		t.Fatal("Run did not return within 10 s of its last claim")
+	}
+	if got := n.sentTo(carol); got != 1 {
+		t.Errorf("%d TFRs to Carol, want only the first: the instance had stopped when its claim came back", got)
+	}
+	if l, ok, err := n.store.Claim(context.Background(), carol, n.clock.Now(), defaultLease); err != nil || !ok || l.Attempts != 1 {
+		t.Errorf("Carol is %+v, %v, %v; want her due at once, with the one attempt before the stop", l, ok, err)
 	}
 }
 
