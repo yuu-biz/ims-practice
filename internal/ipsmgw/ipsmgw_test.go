@@ -191,6 +191,9 @@ type harness struct {
 	// with 200: the IP-SM-GW sends it only the requests within a dialog
 	// that a NOTIFY from it set up.
 	atSCSCF chan *sip.Message
+	// names leads the IP-SM-GWs of the harness to the entry point and the
+	// S-CSCF.
+	names locator
 }
 
 func newHarness(t *testing.T, store ipsmgw.Store, reportTimeout time.Duration, answer func(*sip.Message) int) *harness {
@@ -240,19 +243,31 @@ func newHarnessParts(t *testing.T, store ipsmgw.Store, reportTimeout time.Durati
 	if hssClient != nil {
 		hssPart = hssClient
 	}
-	h.g = ipsmgw.New(ipsmgw.Config{URI: ownURI, HomeDomain: domain, Number: number, ServiceCentre: scAddress, ReportTimeout: reportTimeout,
-		Diameter: diameter.Identity{OriginHost: gwDiameterHost, OriginRealm: domain},
+	h.names = locator{domain: entry.LocalAddr(), scscfHost: h.scscf.LocalAddr(), ibcfHost: entry.LocalAddr()}
+	h.g, h.stack = h.start(gwDiameterHost, store, reportTimeout, extra, centre, hssPart)
+	h.gw = h.stack.LocalAddr()
+	return h
+}
+
+// start makes an IP-SM-GW with the Diameter identity host, which sends
+// its MESSAGEs to the entry point and the S-CSCF of h, and gives it a
+// SIP stack of its own. newHarnessParts makes the IP-SM-GW of h with it,
+// and a chain the other instances beside that one.
+func (h *harness) start(host string, store ipsmgw.Store, reportTimeout time.Duration, extra ipsmgw.Config,
+	sc ipsmgw.ServiceCentre, hssClient ipsmgw.HSS) (*ipsmgw.IPSMGW, *sip.Stack) {
+	h.t.Helper()
+	g := ipsmgw.New(ipsmgw.Config{URI: ownURI, HomeDomain: domain, Number: number, ServiceCentre: scAddress, ReportTimeout: reportTimeout,
+		Diameter: diameter.Identity{OriginHost: host, OriginRealm: domain},
 		IBCF:     extra.IBCF, UserLocks: extra.UserLocks,
 		// The sweep comes round often, so that a test which shortens
 		// TR1N does not wait a second for the delivery it ends, and ends
 		// it while the Store still keeps the delivery.
 		SweepInterval: 20 * time.Millisecond},
-		centre, store, hssPart, locator{domain: entry.LocalAddr(), scscfHost: h.scscf.LocalAddr(), ibcfHost: entry.LocalAddr()}, quiet())
-	t.Cleanup(h.g.Close)
-	h.stack = newStack(t, fastTimers, h.g.OnRequest)
-	h.g.SetStack(h.stack)
-	h.gw = h.stack.LocalAddr()
-	return h
+		sc, store, hssClient, h.names, quiet())
+	h.t.Cleanup(g.Close)
+	stack := newStack(h.t, fastTimers, g.OnRequest)
+	g.SetStack(stack)
+	return g, stack
 }
 
 func answerOK(*sip.Message) int { return 200 }
