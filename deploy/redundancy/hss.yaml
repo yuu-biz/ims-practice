@@ -371,11 +371,14 @@ hss:
     no-services: []
   # The Service Centres this HSS can alert, by the SC address that the
   # SC-Address of an S6c request carries (TS 29.338 5.3.1.2): the alert
-  # goes to the Diameter identity named here, over the connection that
-  # the Service Centre opened.
+  # goes to a Diameter identity named here, over the connection that
+  # the Service Centre opened. A Service Centre that runs as several
+  # instances names each of them under hosts, and the HSS alerts them in
+  # that order until one takes the alert: they share the short messages
+  # they hold, so any one of them delivers.
   service_centres:
     - address: "12025550100"
-      host: sc.ims.mnc001.mcc001.3gppnetwork.org
+      hosts: [sc.ims.mnc001.mcc001.3gppnetwork.org]
 diameter:
   origin_host: hss.ims.mnc001.mcc001.3gppnetwork.org
   origin_realm: ims.mnc001.mcc001.3gppnetwork.org

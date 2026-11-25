@@ -2,6 +2,7 @@ package hss
 
 import (
 	"context"
+	"log/slog"
 	"slices"
 	"time"
 
@@ -372,7 +373,15 @@ const (
 	alertImpossible
 )
 
-// alertServiceCentre sends one ALR and reports how it ended.
+// alertServiceCentre alerts the service centre of address and reports
+// how it ended. It sends the ALR to the instances of that service centre
+// in the order of the configuration, until one of them takes it. The
+// instances hold the same short messages, so any one of them delivers
+// them. Each has a Diameter identity of its own, which the alert names
+// in Destination-Host (TS 29.338 5.3.1.2), and a Diameter agent does not
+// take a request with a fixed destination to another server (RFC 6733
+// 5.5.4), so it is the HSS that turns to the next instance. TS 29.338
+// 5.2.2.2 leaves sending the alert again to the operator.
 //
 // SIMPLIFIED: TS 29.338 5.3.1.2. The alert goes out over the connection
 // that the service centre opened to this HSS instance, as the
@@ -404,25 +413,37 @@ func (h *HSS) alertServiceCentre(ctx context.Context, u Subscriber, address stri
 		log.Warn("no alert sent: the user has no MSISDN")
 		return alertRefused
 	}
+	for _, host := range centre.Hosts {
+		if h.alertInstance(ctx, *peers, host, centre.Realm, address, msisdn, log) {
+			return alertTaken
+		}
+	}
+	return alertRefused
+}
+
+// alertInstance sends one ALR to host, an instance of the service
+// centre of address, and reports whether it took the alert.
+func (h *HSS) alertInstance(ctx context.Context, peers Peers, host, realm, address, msisdn string, log *slog.Logger) bool {
+	log = log.With("sc_host", host)
 	request := sgd.AlertServiceCentreRequest{
-		Header:         diameter.NewHeader(h.node, centre.Host, centre.Realm),
+		Header:         diameter.NewHeader(h.node, host, realm),
 		SCAddress:      address,
 		UserIdentifier: sgd.UserIdentifier{MSISDN: msisdn},
 	}
-	answer, err := (*peers).Request(ctx, centre.Host, request.Message())
+	answer, err := peers.Request(ctx, host, request.Message())
 	if err != nil {
 		log.Warn("the service centre did not answer the alert", "error", err.Error())
-		return alertRefused
+		return false
 	}
 	ala, err := sgd.ParseAlertServiceCentreAnswer(answer)
 	switch {
 	case err != nil:
 		log.Warn("cannot read the answer to the alert", "error", err.Error())
-		return alertRefused
+		return false
 	case !ala.Result.Success():
 		log.Warn("the service centre refused the alert", "result", ala.Result.String())
-		return alertRefused
+		return false
 	}
 	log.Info("the service centre is alerted that the user can take short messages again")
-	return alertTaken
+	return true
 }

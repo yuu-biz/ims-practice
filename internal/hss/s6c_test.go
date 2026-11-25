@@ -38,7 +38,14 @@ type s6cNetwork struct {
 
 func newS6cNetwork(t *testing.T) s6cNetwork {
 	t.Helper()
-	n := newShNetwork(t)
+	return newS6cNetworkOf(t, []string{scHost})
+}
+
+// newS6cNetworkOf is newS6cNetwork with an HSS that knows scHosts as
+// the instances of the service centre, of which only scHost runs.
+func newS6cNetworkOf(t *testing.T, scHosts []string) s6cNetwork {
+	t.Helper()
+	n := newShNetworkOf(t, scHosts)
 	node := diameter.NewNode(diameter.Identity{OriginHost: scHost, OriginRealm: realm},
 		[]uint32{sgd.ApplicationIDS6c}, diameter.Timers{Watchdog: time.Minute, Reconnect: 50 * time.Millisecond, Answer: 2 * time.Second}, quiet())
 	sc := s6cNetwork{shNetwork: n, scNode: node, alerts: make(chan sgd.AlertServiceCentreRequest, 8), refuse: new(atomic.Bool)}
@@ -357,6 +364,26 @@ func TestRegistrationAlertsTheServiceCentre(t *testing.T) {
 	if a := n.srr(t, msisdnA); a.Result != success || a.ServingNode == nil {
 		t.Errorf("SRA = %v, %+v", a.Result, a.ServingNode)
 	}
+}
+
+// TestAlertGoesToTheNextInstanceOfTheServiceCentre: the service centre
+// runs as two instances, and the one that the configuration names first
+// is gone, so that it has no connection to the HSS. The alert goes to
+// the other, which holds the same short messages, and the address
+// leaves the message waiting data (TS 29.338 5.2.2.2).
+func TestAlertGoesToTheNextInstanceOfTheServiceCentre(t *testing.T) {
+	n := newS6cNetworkOf(t, []string{"sc-2." + realm, scHost})
+	if a := n.srr(t, msisdnA); a.Result != diameter.Experimental(sgd.DiameterErrorAbsentUser) {
+		t.Fatalf("SRA = %v", a.Result)
+	}
+
+	n.register(t)
+	if alr := n.alert(t); alr.SCAddress != scAddress || alr.UserIdentifier.MSISDN != msisdnA {
+		t.Errorf("ALR = %+v, want SC-Address %s and MSISDN %s", alr, scAddress, msisdnA)
+	}
+	n.waitForSubscriber(t, "after the alert", func(u Subscriber) bool {
+		return len(u.MessageWaitingData) == 0 && !u.UNRI
+	})
 }
 
 // TS 23.040 3.2.6 item 2c: while MCEF is set, the return of the
