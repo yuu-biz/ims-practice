@@ -271,8 +271,8 @@ The request of `POST`:
 | `target` | string | all | A Compose service, such as `pcscf` or `ibcf-a`, or one container of a service that runs several, such as `agw:2`. Lower-case letters, digits, `_`, `.` and `-` |
 | `kind` | string | | `stop`, `kill`, `pause`, `crash`, `recreate`, `delay`, `loss` or `partition`, as in [The faults](#the-faults) |
 | `network` | string | `delay`, `loss`, `partition` | The Compose network, such as `nni`, on whose interface the fault sits. Left out, every interface of the target |
-| `delay` | duration | `delay` | Above 0 and at most `10s` |
-| `jitter` | duration | `delay` | From 0 to `delay` |
+| `delay` | duration | `delay` | From `1µs` to `10s`. `tc` counts a delay in microseconds |
+| `jitter` | duration | `delay` | 0, or from `1µs` to `delay` |
 | `loss_percent` | integer | `loss` | From 1 to 100: the chance that each packet sent or received is dropped |
 | `peers` | array of strings | `partition` | Services, containers (`agw:2`), patterns (`scscf-*`) or IPv4 addresses that the target can no longer reach nor hear. Left out, everything. No peer twice, and not the target itself |
 | `duration` | duration | the faults that last | From `1s` to `1h`. Left out, `5m`. A `crash` and a `recreate` happen once and take none |

@@ -62,6 +62,10 @@ const (
 	DefaultDuration = 5 * time.Minute
 	MinDuration     = time.Second
 	MaxDuration     = time.Hour
+	// MinDelay is the step of tc, which counts a delay and a jitter in
+	// microseconds: a shorter one would be a rule of 0us, a fault that
+	// does nothing.
+	MinDelay = time.Microsecond
 	// MaxDelay keeps the delay well below the SIP timers B and F
 	// (64*T1, 32 s, RFC 3261 17.1.1.2 and 17.1.2.2) so that a delayed
 	// call can still be set up.
@@ -186,11 +190,11 @@ func (r *Request) validate() error {
 	}
 	switch r.Kind {
 	case Delay:
-		if r.Delay <= 0 || time.Duration(r.Delay) > MaxDelay {
-			return bad("delay must be above 0 and at most %v", MaxDelay)
+		if d := time.Duration(r.Delay); d < MinDelay || d > MaxDelay {
+			return bad("delay must be from %v to %v", MinDelay, MaxDelay)
 		}
-		if r.Jitter < 0 || r.Jitter > r.Delay {
-			return bad("jitter must be from 0 to the delay")
+		if j := time.Duration(r.Jitter); j < 0 || (j > 0 && j < MinDelay) || r.Jitter > r.Delay {
+			return bad("jitter must be 0, or from %v to the delay", MinDelay)
 		}
 	case Loss:
 		if r.LossPercent < 1 || r.LossPercent > 100 {
