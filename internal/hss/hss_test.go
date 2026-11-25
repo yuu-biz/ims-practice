@@ -76,6 +76,18 @@ func withProfiles(h *HSS, profiles map[string]ServiceProfile, defaultName, testU
 
 var hdr = diameter.Header{SessionID: "s;1;1", OriginHost: "icscf." + realm, OriginRealm: realm, DestinationRealm: realm}
 
+// from is the header of a request of the S-CSCF named server. scscf2 is
+// another Diameter node than scscf, so that a test sees which S-CSCF the
+// HSS holds by the Diameter identity it stored as well as by the name.
+func from(server string) diameter.Header {
+	if server != scscf2 {
+		return hdr
+	}
+	h := hdr
+	h.SessionID, h.OriginHost = "scscf2;1;1", "scscf2."+realm
+	return h
+}
+
 // exchange sends a request through the wire format and the handler, as
 // the Diameter peer would.
 func exchange(t *testing.T, h *HSS, m *diam.Message) *diam.Message {
@@ -106,7 +118,7 @@ func uar(t *testing.T, h *HSS, private, public string, typ cx.UserAuthorizationT
 
 func mar(t *testing.T, h *HSS, server string) cx.MultimediaAuthAnswer {
 	t.Helper()
-	a, err := cx.ParseMultimediaAuthAnswer(exchange(t, h, cx.MultimediaAuthRequest{Header: hdr,
+	a, err := cx.ParseMultimediaAuthAnswer(exchange(t, h, cx.MultimediaAuthRequest{Header: from(server),
 		UserName: impi, PublicIdentity: impu, SIPAuthenticationScheme: cx.SchemeUnknown, SIPNumberAuthItems: 1, ServerName: server}.Message()))
 	if err != nil {
 		t.Fatal(err)
@@ -116,7 +128,7 @@ func mar(t *testing.T, h *HSS, server string) cx.MultimediaAuthAnswer {
 
 func sar(t *testing.T, h *HSS, server string, typ cx.ServerAssignmentType) cx.ServerAssignmentAnswer {
 	t.Helper()
-	a, err := cx.ParseServerAssignmentAnswer(exchange(t, h, cx.ServerAssignmentRequest{Header: hdr,
+	a, err := cx.ParseServerAssignmentAnswer(exchange(t, h, cx.ServerAssignmentRequest{Header: from(server),
 		UserName: impi, PublicIdentities: []string{impu}, ServerName: server, ServerAssignmentType: typ}.Message()))
 	if err != nil {
 		t.Fatal(err)
