@@ -62,10 +62,15 @@ func TestBackoffKeepsToRetryAfter(t *testing.T) {
 // A refresh whose 500 carries Retry-After is followed by an initial
 // registration only after that time. Every REGISTER has the same
 // contact (5.1.1.4.1 item c). The test records the waits that the phone
-// asks for and lets each end at once.
+// asks for and lets each end at once. It tells whether the phone waited
+// between two REGISTERs by the waits asked for when each one arrived,
+// since the phone asks for the next wait as soon as the answer to the
+// later REGISTER comes, which can be before the test looks.
 func TestPhoneRetriesAFailedReregistration(t *testing.T) {
 	waits := make(chan time.Duration, 8)
+	var asked atomic.Int32
 	ue.SetRetryTimer(t, func(d time.Duration) *time.Timer {
+		asked.Add(1)
 		waits <- d
 		return time.NewTimer(0)
 	})
@@ -77,7 +82,13 @@ func TestPhoneRetriesAFailedReregistration(t *testing.T) {
 	expires := []string{"1", "", "", "", "", "1", "", "", "1", "", "3600"}
 	// RFC 3261 20.33: delta-seconds, a comment and a parameter.
 	retryAfter := []string{"", "", "", "", "", "", "", "", "", "120 (maintenance);duration=60", ""}
-	registers := make(chan *sip.Message, 2*len(script)+1)
+	// arrival is a REGISTER, with the number of waits that the phone had
+	// asked for when it came.
+	type arrival struct {
+		m     *sip.Message
+		waits int32
+	}
+	registers := make(chan arrival, 2*len(script)+1)
 	var answered atomic.Int32
 	pcscf := stackConfig(t, sip.Config{
 		OnRequest: func(st *sip.ServerTransaction) {
@@ -85,7 +96,7 @@ func TestPhoneRetriesAFailedReregistration(t *testing.T) {
 				st.Respond(sip.NewResponse(st.Request, 403, sip.NewTag()))
 				return
 			}
-			registers <- st.Request
+			registers <- arrival{st.Request, asked.Load()}
 			if !answersChallenge(st.Request) {
 				resp := sip.NewResponse(st.Request, 401, sip.NewTag())
 				resp.Add("WWW-Authenticate", `Digest realm="`+domain+`", nonce="bm9uY2U=", algorithm=MD5, qop="auth"`)
@@ -150,34 +161,44 @@ func TestPhoneRetriesAFailedReregistration(t *testing.T) {
 			t.Fatalf("the phone did not wait after %d failures in a row", failures)
 		}
 	}
-	nextRegister := func(what string) *sip.Message {
+	nextRegister := func(what string) arrival {
 		t.Helper()
 		select {
-		case m := <-registers:
-			if !strings.Contains(m.Get("Contact"), contact.URI()) {
-				t.Errorf("%s has the contact %q, want %q", what, m.Get("Contact"), contact.URI())
+		case a := <-registers:
+			if !strings.Contains(a.m.Get("Contact"), contact.URI()) {
+				t.Errorf("%s has the contact %q, want %q", what, a.m.Get("Contact"), contact.URI())
 			}
-			return m
+			return a
 		case <-time.After(5 * time.Second):
 			t.Fatalf("no %s", what)
-			return nil
+			return arrival{}
 		}
 	}
 
 	// An initial registration starts without the answer to an earlier
 	// challenge, and gets challenged (TS 24.229 5.1.1.2.3, 5.1.1.5.4); a
 	// refresh answers the challenge it had.
-	initial := func(what string) {
+	initial := func(what string) arrival {
 		t.Helper()
-		if m := nextRegister(what); answersChallenge(m) {
-			t.Errorf("%s is no initial registration: Authorization %q", what, m.Get("Authorization"))
+		a := nextRegister(what)
+		if answersChallenge(a.m) {
+			t.Errorf("%s is no initial registration: Authorization %q", what, a.m.Get("Authorization"))
 		}
 		nextRegister("answer to the challenge of the " + what)
+		return a
 	}
-	refresh := func(what string) {
+	refresh := func(what string) arrival {
 		t.Helper()
-		if m := nextRegister(what); !answersChallenge(m) {
-			t.Errorf("%s carries no answer to the challenge: Authorization %q", what, m.Get("Authorization"))
+		a := nextRegister(what)
+		if !answersChallenge(a.m) {
+			t.Errorf("%s carries no answer to the challenge: Authorization %q", what, a.m.Get("Authorization"))
+		}
+		return a
+	}
+	noWaitBetween := func(before, after arrival, what string) {
+		t.Helper()
+		if n := after.waits - before.waits; n != 0 {
+			t.Errorf("the phone asked for %d waits %s", n, what)
 		}
 	}
 
@@ -191,16 +212,14 @@ func TestPhoneRetriesAFailedReregistration(t *testing.T) {
 	}
 
 	initial("first REGISTER")
-	refresh("refresh")
-	initial("REGISTER after the failed refresh")
-	noWait("between the failed refresh and the initial registration")
+	failed := refresh("refresh")
+	noWaitBetween(failed, initial("REGISTER after the failed refresh"), "between the failed refresh and the initial registration")
 	for failures := 1; failures <= 3; failures++ {
 		nextWait(failures)
 		initial("REGISTER after the wait")
 	}
-	refresh("refresh of the new registration")
-	initial("REGISTER after the second failed refresh")
-	noWait("between the second failed refresh and the initial registration")
+	failed = refresh("refresh of the new registration")
+	noWaitBetween(failed, initial("REGISTER after the second failed refresh"), "between the second failed refresh and the initial registration")
 	nextWait(1)
 	initial("REGISTER after the wait")
 	refresh("refresh that gets Retry-After")
