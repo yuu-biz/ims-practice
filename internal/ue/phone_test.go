@@ -315,6 +315,29 @@ func TestServeRegistersAgainWhenDeactivated(t *testing.T) {
 	}
 }
 
+// TestServeRegistersAgainForANewDefaultIdentity: an operator's PUT puts
+// another identity first in the set of a registered user. A PPR must not
+// change the default identity of a registered set, so the HSS
+// deregisters the user with SERVER_CHANGE (TS 29.228 6.5.2.1, 6.1.3.1),
+// the S-CSCF tells the UE with the event deactivated (TS 24.229
+// 5.4.1.5), and the UE registers again (5.1.1.7).
+func TestServeRegistersAgainForANewDefaultIdentity(t *testing.T) {
+	n := networkWith(t, time.Second, time.Hour)
+	p := newPhone(t, n.pcscf, impi, impu, password, autoAnswer)
+	events := p.events()
+	waitForUESubscription(t, p)
+	body := `{"private_identity": "` + impi + `", "public_identities": ["tel:+12025550191", "` + impu + `"], "password": "` + password + `"}`
+	w := httptest.NewRecorder()
+	n.provisioning.ServeHTTP(w, httptest.NewRequest(http.MethodPut, "/subscriptions/"+impi, strings.NewReader(body)))
+	if w.Code != http.StatusOK {
+		t.Fatalf("PUT: %d %s", w.Code, w.Body)
+	}
+	nextEvent(t, events, "registered false", func(s statusJSON) bool { return !s.Registered })
+	if !p.within(watch, func(s statusJSON) bool { return s.Registered }) {
+		t.Errorf("not registered again within %v of the new default identity", watch)
+	}
+}
+
 func TestServeStaysDeregisteredWhenRejected(t *testing.T) {
 	n := networkWith(t, time.Second, time.Hour)
 	p := newPhone(t, n.pcscf, impi, impu, password, autoAnswer)
