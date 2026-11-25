@@ -388,6 +388,7 @@ When the answer comes in a 183, the call is still being set up:
 - **UE 1 gets 500** for its INVITE, and never sees the 183.
 - **The INVITE towards the network is cancelled**, and the callee answers it 487 (RFC 3261 9.2).
 - **The P-CSCF removes the relay context**, trying again a few times when the relay does not answer. The PCRF never gets the answer that the relay did not take. When an earlier response of the call carried an answer that the relay did take, the PCRF has that one, and the P-CSCF ends the Rx session of the call (TS 29.214 4.4.4).
+- **A retransmission of a reliable 183 whose answer the relay did take changes nothing.** The callee sends a reliable 183 again until its PRACK comes (RFC 3262 3). UE 1 has that 183 already, so the retransmission goes on as it came, and the call goes on.
 
 When the answer comes in the 200, the callee has answered already:
 
@@ -442,7 +443,7 @@ An answer within the dialog, in the 200 to an UPDATE or to a re-INVITE such as t
 - **In an early dialog**, such as that of the UPDATE with which a VoLTE UE tells that its resources are reserved ([Preconditions](volte.md#preconditions)), the INVITE has no final response yet. UE 1 gets 500 for its INVITE, and the INVITE towards the network is cancelled, as for a 183.
 - **The PCRF never gets the answer.** The P-CSCF ends the Rx session of the call (TS 29.214 4.4.4) and removes the relay context.
 
-The tests of `internal/pcscf` run these flows in one process, with a relay that refuses the `Modify` of the answer: `TestRefusedAnswerOfA183EndsTheCall`, `TestRefusedAnswerOfThe200EndsTheCall`, `TestRefusedRetransmissionOfThe200KeepsTheCall`, `TestRefusedAnswerWithinTheDialogReleasesTheCall` and `TestRefusedAnswerOfAnUPDATEInTheEarlyDialogEndsTheCall`.
+The tests of `internal/pcscf` run these flows in one process, with a relay that refuses the `Modify` of the answer: `TestRefusedAnswerOfA183EndsTheCall`, `TestRefusedAnswerOfThe200EndsTheCall`, `TestRefusedRetransmissionOfThe200KeepsTheCall`, `TestRefusedRetransmissionOfAReliable183KeepsTheCall`, `TestRefusedAnswerWithinTheDialogReleasesTheCall` and `TestRefusedAnswerOfAnUPDATEInTheEarlyDialogEndsTheCall`.
 
 ## What this project simplifies
 

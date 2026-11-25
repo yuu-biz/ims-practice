@@ -407,6 +407,7 @@ TS 24.229 には、メディア中継ノードが働かないときの手順が�
 - **UE 1 は INVITE への 500 を受け取ります。** 183 は UE 1 に届きません。
 - **網へ向けた INVITE を取り消します。** 着信側は INVITE に 487 を返します（RFC 3261 9.2）。
 - **P-CSCF は中継ノードのコンテキストを解放します。** 中継ノードが答えないときは、何度か試し直します。中継ノードが受け取らなかったアンサーは、PCRF に渡しません。中継ノードが受け取ったアンサーが前の応答にあったときは、PCRF はそのアンサーを持っています。そこで P-CSCF は、呼の Rx のセッションを終わらせます（TS 29.214 4.4.4）。
+- **中継ノードがアンサーを受け取った、信頼性のある 183 の送り直しでは、何も変わりません。** 着信側は、PRACK が届くまで信頼性のある 183 を送り直します（RFC 3262 3）。UE 1 はその 183 をもう持っているので、送り直しは届いたまま先へ進み、呼は続きます。
 
 アンサーが 200 で届いたときは、着信側はもう応答しています。
 
@@ -461,7 +462,7 @@ UE 2 の P-CSCF では、同じことが逆の向きに起きます。183 や 20
 - **early dialog では、INVITE にまだ最終応答がありません。** VoLTE の UE が資源を確保したことを伝える UPDATE が、この場合に当たります（[プリコンディション](volte.md#プリコンディション)）。UE 1 は INVITE への 500 を受け取り、網へ向けた INVITE は取り消されます。183 のときと同じです。
 - **PCRF はこのアンサーを受け取りません。** P-CSCF は呼の Rx のセッションを終わらせ（TS 29.214 4.4.4）、中継ノードのコンテキストを解放します。
 
-`internal/pcscf` の試験は、アンサーの `Modify` を断る中継ノードを使って、これらの流れを 1 つのプロセスの中で動かします。`TestRefusedAnswerOfA183EndsTheCall`、`TestRefusedAnswerOfThe200EndsTheCall`、`TestRefusedRetransmissionOfThe200KeepsTheCall`、`TestRefusedAnswerWithinTheDialogReleasesTheCall`、`TestRefusedAnswerOfAnUPDATEInTheEarlyDialogEndsTheCall` です。
+`internal/pcscf` の試験は、アンサーの `Modify` を断る中継ノードを使って、これらの流れを 1 つのプロセスの中で動かします。`TestRefusedAnswerOfA183EndsTheCall`、`TestRefusedAnswerOfThe200EndsTheCall`、`TestRefusedRetransmissionOfThe200KeepsTheCall`、`TestRefusedRetransmissionOfAReliable183KeepsTheCall`、`TestRefusedAnswerWithinTheDialogReleasesTheCall`、`TestRefusedAnswerOfAnUPDATEInTheEarlyDialogEndsTheCall` です。
 
 ## このプロジェクトで簡略化していること
 
