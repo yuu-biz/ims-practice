@@ -143,7 +143,7 @@ func (n *Node) SetAckStates(req AckStatesRequest) (AckStatesChange, error) {
 		return AckStatesChange{}, fmt.Errorf("%w: ack_states names no alarm", ErrInvalidRequest)
 	}
 	for id, r := range req.AckStates {
-		if err := r.check(); err != nil {
+		if err := r.Check(); err != nil {
 			return AckStatesChange{}, fmt.Errorf("%w: ack_states: %s: %v", ErrInvalidRequest, id, err)
 		}
 	}
