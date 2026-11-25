@@ -127,6 +127,13 @@ func (g *IPSMGW) subscribeRegEvent(publicID, msisdn string, expires time.Duratio
 		if err == nil && final.StatusCode < 300 {
 			return
 		}
+		if errors.Is(err, sip.ErrStackClosed) {
+			// The stop of this instance's stack is no answer of the home
+			// network, which may have made the subscription and send its
+			// NOTIFY to another IP-SM-GW.
+			log.Info("reg event SUBSCRIBE cut short by the stop of the stack; the subscription stays")
+			return
+		}
 		// RFC 6665 4.1.2.1: the SUBSCRIBE failed, and no subscription was
 		// made. One that a NOTIFY has already confirmed stays.
 		log.Warn("reg event SUBSCRIBE failed", "status", statusOf(final), "error", errorText(err))
