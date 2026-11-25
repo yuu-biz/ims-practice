@@ -25,6 +25,7 @@ func OAMNtfSubscriptions(t *testing.T, newPair func(t *testing.T) (oam.NtfSubscr
 		{"ASkipAfterTheTurnKeepsTheMark", oamASkipAfterTheTurnKeepsTheMark},
 		{"ASkipAfterTheClearMarksAgain", oamASkipAfterTheClearMarksAgain},
 		{"AReplacementOutdatesTheTurn", oamAReplacementOutdatesTheTurn},
+		{"AReplacementThatChangesNothingKeepsTheTurn", oamAReplacementThatChangesNothingKeepsTheTurn},
 	})
 }
 
@@ -111,6 +112,25 @@ func oamASkipAfterTheClearMarksAgain(t *testing.T, a, b oam.NtfSubscriptionStore
 	}
 	if claimed, err := b.ClaimNtfSubscriptionRetry(ctx, "oss-1", got.MissedEpoch, now, now.Add(time.Minute)); err != nil || !claimed {
 		t.Errorf("a claim of the new epoch at once = %v, %v", claimed, err)
+	}
+}
+
+// oamAReplacementThatChangesNothingKeepsTheTurn: the OSS puts a marked
+// subscription again as it is, while the owed notifyAlarmListRebuilt is
+// on its way. The recipient is the one the turn read, so the epoch and
+// the turn stay, and the answer clears the mark.
+func oamAReplacementThatChangesNothingKeepsTheTurn(t *testing.T, a, b oam.NtfSubscriptionStore) {
+	ctx := context.Background()
+	now := time.Now().Round(time.Millisecond)
+	next := now.Add(time.Minute)
+	read := claimTurn(t, a, b, "oss-1", now, next)
+	putNtf(t, b, ntfSubscription("oss-1", "http://oss:8080/"), 4)
+	got, err := a.NtfSubscription(ctx, "oss-1")
+	if err != nil || !got.Missed || got.MissedEpoch != read.MissedEpoch || !got.Claimed || !got.RetryAt.Equal(next) {
+		t.Fatalf("after the same subscription was put again: %+v, %v; want epoch %d with its turn taken, at %v", got, err, read.MissedEpoch, next)
+	}
+	if cleared, err := a.ClearNtfSubscriptionMissed(ctx, "oss-1", read.MissedEpoch); err != nil || !cleared {
+		t.Errorf("the answer to the turn: cleared %v, %v; want the mark cleared", cleared, err)
 	}
 }
 

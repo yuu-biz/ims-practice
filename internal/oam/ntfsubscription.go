@@ -9,6 +9,7 @@ import (
 	"maps"
 	"os"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"sync"
 	"time"
@@ -60,7 +61,12 @@ type NtfSubscriptionStore interface {
 	// of its id, and says whether it created it. A new subscription
 	// when there are max already is ErrTooManySubscriptions. Two
 	// instances that put at once do not lose a subscription, nor pass
-	// max together.
+	// max together. A replacement keeps the mark of a miss, and its
+	// RetryAt. One that changes the attributes of a marked subscription
+	// raises MissedEpoch, to an epoch whose turn is not taken: the
+	// notifyAlarmListRebuilt of a turn taken before goes to the
+	// recipient that the turn read, so its answer must not clear the
+	// mark. One that changes nothing keeps the epoch and its turn.
 	PutNtfSubscription(ctx context.Context, s NtfSubscriptionControl, max int) (created bool, err error)
 	// NtfSubscription reads the subscription of id; ErrNotFound when
 	// there is none.
@@ -73,12 +79,7 @@ type NtfSubscriptionStore interface {
 	NtfSubscriptions(ctx context.Context) ([]NtfSubscriptionControl, error)
 	// MarkNtfSubscriptionMissed records a miss of the subscription of
 	// id: it sets Missed, raises MissedEpoch, and sets RetryAt to
-	// retryAt. ErrNotFound when there is no subscription. A
-	// PutNtfSubscription that replaces the subscription keeps the mark,
-	// and its RetryAt, at a new epoch whose turn is not taken: the
-	// notifyAlarmListRebuilt of a turn taken before goes to the
-	// recipient that the turn read, so its answer must not clear the
-	// mark.
+	// retryAt. ErrNotFound when there is no subscription.
 	MarkNtfSubscriptionMissed(ctx context.Context, id string, retryAt time.Time) error
 	// MarkNtfSubscriptionSkipped records that a watcher passed the
 	// subscription of id over for a notification, as it was marked, with
@@ -112,9 +113,10 @@ func (set NtfSubscriptionSet) Put(s NtfSubscriptionControl, max int) (created bo
 	if !exists && len(set) >= max {
 		return false, fmt.Errorf("%w: %d", ErrTooManySubscriptions, max)
 	}
-	s.Missed, s.MissedEpoch, s.RetryAt = old.Missed, old.MissedEpoch, old.RetryAt
-	if s.Missed {
+	s.Missed, s.MissedEpoch, s.RetryAt, s.Claimed = old.Missed, old.MissedEpoch, old.RetryAt, old.Claimed
+	if s.Missed && !reflect.DeepEqual(s.Attributes, old.Attributes) {
 		s.MissedEpoch++
+		s.Claimed = false
 	}
 	set[s.ID] = s
 	return !exists, nil
