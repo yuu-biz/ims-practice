@@ -429,6 +429,33 @@ func TestEndsSubscription(t *testing.T) {
 	}
 }
 
+// A NOTIFY that times out ends its subscription at the notifier, as do
+// the responses of EndsSubscription (RFC 6665 4.2.2). A 408 has the
+// effect of a timeout (RFC 5057 5.1).
+func TestNotifyEndsSubscription(t *testing.T) {
+	answered := func(code int) *Message { return &Message{StatusCode: code} }
+	for _, c := range []struct {
+		name  string
+		final *Message
+		err   error
+		ends  bool
+	}{
+		{"200", answered(200), nil, false},
+		{"481", answered(481), nil, true},
+		{"489", answered(489), nil, true},
+		{"408", answered(408), nil, true},
+		{"486", answered(486), nil, false},
+		{"503", answered(503), nil, false},
+		{"no answer before Timer F", nil, ErrTimeout, true},
+		{"transport error", nil, errors.New("connection refused"), false},
+		{"stack stopped", nil, ErrStackClosed, false},
+	} {
+		if got := NotifyEndsSubscription(c.final, c.err); got != c.ends {
+			t.Errorf("%s: NotifyEndsSubscription = %v, want %v", c.name, got, c.ends)
+		}
+	}
+}
+
 // A NOTIFY that says active with expires 0 ends the subscription: the
 // expires is the time left (RFC 6665 4.1.3), not a missing value that
 // the 2xx would fill in.

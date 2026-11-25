@@ -132,11 +132,29 @@ func (n *NotifierSubscription) NewNotify(body Body, now time.Time) *Message {
 
 // EndsSubscription reports whether a final response to a NOTIFY, or to a
 // SUBSCRIBE that refreshes a subscription, ends the subscription (RFC
-// 6665 4.1.2.2, 4.2.2). Any other failure leaves it to expire.
+// 6665 4.1.2.2, 4.2.2). Any other failure of a refresh leaves it to
+// expire. A NOTIFY ends it on a timeout too (NotifyEndsSubscription).
 func EndsSubscription(statusCode int) bool {
 	switch statusCode {
 	case 404, 405, 410, 416, 489, 501, 604:
 		return true
 	}
 	return statusCode >= 480 && statusCode <= 485
+}
+
+// NotifyEndsSubscription reports whether a NOTIFY ends its subscription
+// at the notifier (RFC 6665 4.2.2). final is its final response, nil
+// when none came, and err then says why. A response that
+// EndsSubscription lists ends it, and so does a timeout: no final
+// response before Timer F, or a 408 (Request Timeout), which has the
+// effect of a timeout (RFC 5057 5.1). The notifier takes a subscriber
+// that does not answer for gone, rather than send it every change and
+// retransmit each until Timer F. Any other failure, such as a transport
+// error, which counts as a 503 (RFC 3261 8.1.3.1), or the stop of the
+// stack, leaves the subscription as it is.
+func NotifyEndsSubscription(final *Message, err error) bool {
+	if final == nil {
+		return errors.Is(err, ErrTimeout)
+	}
+	return final.StatusCode == 408 || EndsSubscription(final.StatusCode)
 }
