@@ -25,8 +25,14 @@ import (
 // address of each termination, as the SDP of its side shows it, is the
 // TrGW's address in that network (Config), with the port that the TrGW
 // chose.
+//
+// The termination of the home network sends where the SDP of that side
+// says, and does not latch (H.248.37 (06/2008) 6.6.1). The party there
+// changes within a call, as when the MMTel AS ends a customized
+// alerting tone and gives the peer the SDP of the callee, and a latched
+// address would keep the media on the MRFP.
 func (b *IBCF) reserveMedia(ctx context.Context) (MediaContext, error) {
-	c, err := b.trgw.Add(ctx, agw.TerminationRequest{ID: terminations[PeerSide]}, agw.TerminationRequest{ID: terminations[CoreSide]})
+	c, err := b.trgw.Add(ctx, agw.TerminationRequest{ID: terminations[PeerSide]}, agw.TerminationRequest{ID: terminations[CoreSide], Latch: agw.NAPTOff})
 	if err != nil {
 		return MediaContext{}, err
 	}
