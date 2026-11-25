@@ -1044,3 +1044,55 @@ func TestParsePCSCFMediaRelays(t *testing.T) {
 		}
 	}
 }
+
+// TestParseRefusesTwoListenersOnOneAddress: the HTTP and Diameter
+// listeners of the roles combined in one node take addresses of their
+// own, as their SIP listeners do, so that such a node does not fail to
+// start on the second of two listeners on one address.
+func TestParseRefusesTwoListenersOnOneAddress(t *testing.T) {
+	const labAndOAM = `
+node: tools
+roles: [lab, oam]
+home_domain: ims.mnc001.mcc001.3gppnetwork.org
+lab:
+  hep_listen: ":9060"
+  http_listen: 127.0.0.1:8080
+oam:
+  http_listen: 0.0.0.0:8081
+  nodes:
+    - {name: hss, roles: [hss], maintenance: "http://hss:8085"}
+maintenance: {listen: 0.0.0.0:8085}
+`
+	if _, err := Parse(strings.NewReader(labAndOAM)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Parse(strings.NewReader(strings.Replace(labAndOAM, "0.0.0.0:8081", "127.0.0.2:8080", 1))); err != nil {
+		t.Errorf("the lab and the oam on one port and two addresses: %v", err)
+	}
+	withAPI := strings.Replace(combinedYAML, "hss:\n", "hss:\n  provisioning_listen: 127.0.0.1:8081\n", 1)
+	tests := []struct {
+		name, yaml, old, new, wantErr string
+	}{
+		{"the oam on the address of the lab", labAndOAM, "0.0.0.0:8081", "127.0.0.1:8080",
+			"the HTTP server of the lab role and the HTTP server of the oam role both listen on port 8080"},
+		{"the oam on every address", labAndOAM, "0.0.0.0:8081", `":8080"`,
+			"the HTTP server of the lab role and the HTTP server of the oam role both listen on port 8080"},
+		{"the maintenance listener on the port of the oam", labAndOAM, "{listen: 0.0.0.0:8085}", "{listen: 0.0.0.0:8081}",
+			"the HTTP server of the oam role and the maintenance listener both listen on port 8081"},
+		{"the provisioning API on the Diameter port", withAPI, "provisioning_listen: 127.0.0.1:8081", "provisioning_listen: 127.0.0.1:3868",
+			"the Diameter listener and the provisioning API of the hss role both listen on port 3868"},
+		{"the Diameter listener on the port of a CSCF", combinedYAML, "listen: 127.0.0.1:3868", "listen: 127.0.0.1:5062",
+			"scscf and the Diameter listener both listen on port 5062"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			edited := strings.Replace(tt.yaml, tt.old, tt.new, 1)
+			if edited == tt.yaml {
+				t.Fatalf("test edit %q did not apply", tt.old)
+			}
+			if _, err := Parse(strings.NewReader(edited)); err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+				t.Errorf("error = %v, want it to mention %q", err, tt.wantErr)
+			}
+		})
+	}
+}
