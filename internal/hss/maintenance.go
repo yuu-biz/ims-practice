@@ -123,7 +123,11 @@ func (h *HSS) Settings() []maintenance.Setting {
 	// at once, so no request sees the policy of one change beside the
 	// profile names of the one before it. Each set writes the pending
 	// settings, which commitSettings publishes.
-	return maintenance.Together(h.beginSettings, h.commitSettings,
+	group := maintenance.SettingsGroup{
+		Begin:  h.beginSettings,
+		Commit: func(uint64) error { h.commitSettings(); return nil },
+	}
+	return maintenance.Together(group,
 		maintenance.NewSetting(admission,
 			"which subscribers the network admits: all, or test_users for the subscriptions marked test_user",
 			h.Admission,
