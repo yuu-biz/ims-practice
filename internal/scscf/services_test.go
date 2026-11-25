@@ -209,6 +209,31 @@ func TestThirdPartyRegisterThatFails(t *testing.T) {
 	}
 }
 
+// TestAThirdPartyRegisterThatTheStopCutsIsNoFailure: the S-CSCF stops
+// while the server of a SESSION_TERMINATED criterion has not answered
+// the third-party REGISTER yet. The end of the stack tells nothing of
+// the server, so the default handling of TS 24.229 5.4.1.7 does not
+// apply: the user stays registered, and the HSS hears of no
+// deregistration. TestThirdPartyRegisterThatFails sees the same
+// criterion deregister the user within watch when the server does fail.
+func TestAThirdPartyRegisterThatTheStopCutsIsNoFailure(t *testing.T) {
+	got := make(chan *sip.Message, 8)
+	// The server takes the REGISTER and answers nothing.
+	as := newStack(t, func(st *sip.ServerTransaction) { got <- st.Request })
+	h := newServiceHarness(t, []ifc.InitialFilterCriteria{registerCriterion(0, asURI, ifc.SessionTerminated)},
+		map[string]netip.AddrPort{asHost: as.LocalAddr()})
+	h.registerUser(sip.NewCallID())
+	received(t, got)
+
+	h.scscf.Close()
+	if came(watch, func() bool { return len(h.hss.assignments()) > 1 }) {
+		t.Errorf("SARs = %v after the stop of the stack, want only the one of the registration", h.hss.assignments())
+	}
+	if _, ok, err := h.store.Registration(context.Background(), impi); err != nil || !ok {
+		t.Errorf("the registration after the stop of the stack: %v, %v; want it in the store", ok, err)
+	}
+}
+
 // proxyAS is an application server that acts as a SIP proxy (TS 24.229
 // 5.7.4): it removes its own Route and sends the request back to the
 // S-CSCF that the next Route names, with the Request-URI changed to
