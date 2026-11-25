@@ -146,12 +146,13 @@ func run(configPath string, log *slog.Logger, level *slog.LevelVar) error {
 		node.Observe(agent.Diameter(diameterNodeName(cfg)))
 		if cfg.HSS != nil {
 			roleLog := log.With("role", config.RoleHSS)
-			store, err := hssStore(ctx, *cfg.HSS, stores, roleLog)
+			locks := stores.locks(config.RoleHSS, roleLog)
+			store, err := hssStore(ctx, *cfg.HSS, stores, locks, roleLog)
 			if err != nil {
 				return err
 			}
 			hssConfig := *cfg.HSS
-			hssConfig.UserLocks = stores.locks(config.RoleHSS, roleLog)
+			hssConfig.UserLocks = locks
 			hssConfig.Metrics = registry
 			if hssRole, err = hss.New(hssConfig, store, node, roleLog); err != nil {
 				return err
@@ -749,14 +750,20 @@ func (r roleStores) locks(role config.Role, log *slog.Logger) ims.UserLocker {
 // subscriber in the configuration does not reach the store. A public
 // identity of the configuration that another subscriber holds in the
 // store keeps the HSS from starting.
-func hssStore(ctx context.Context, c hss.Config, stores roleStores, log *slog.Logger) (hss.Store, error) {
+//
+// Each Add runs under the lock of its subscriber in locks, which the
+// HSS takes for every change of a subscriber (hss.Store.Add). Another
+// instance that starts at the same moment with the same configuration
+// then waits for the lock, and finds the subscriber stored once it has
+// it.
+func hssStore(ctx context.Context, c hss.Config, stores roleStores, locks ims.UserLocker, log *slog.Logger) (hss.Store, error) {
 	kv, cfg, ok := stores.adapter(log)
 	if !ok {
 		return hss.NewMemoryStore(c.Subscriptions...)
 	}
 	store := hssstore.New(kv, cfg)
 	for _, sub := range c.Subscriptions {
-		err := store.Add(ctx, sub)
+		err := addUnderLock(ctx, store, locks, sub)
 		if errors.Is(err, hss.ErrIdentityTaken) {
 			_, stored, lookup := store.Subscriber(ctx, sub.PrivateIdentity)
 			switch {
@@ -772,6 +779,25 @@ func hssStore(ctx context.Context, c hss.Config, stores roleStores, log *slog.Lo
 		}
 	}
 	return store, nil
+}
+
+// configuredLockWait is how long an instance that starts waits for the
+// lock of a subscriber of its configuration. The instance that holds it
+// may have stopped, and then the lock stays taken until its lease runs
+// out (ims.UserLockLease); the second more covers the pause before the
+// last try.
+const configuredLockWait = ims.UserLockLease + time.Second
+
+// addUnderLock adds sub to store under the lock of its subscriber.
+func addUnderLock(ctx context.Context, store *hssstore.Store, locks ims.UserLocker, sub hss.Subscription) error {
+	wait, cancel := context.WithTimeout(ctx, configuredLockWait)
+	defer cancel()
+	unlock, err := locks.Lock(wait, sub.PrivateIdentity)
+	if err != nil {
+		return err
+	}
+	defer unlock()
+	return store.Add(ctx, sub)
 }
 
 // mmtelStores is what the MMTel AS keeps outside the dialogs of its

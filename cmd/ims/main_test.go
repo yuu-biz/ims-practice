@@ -17,6 +17,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -38,6 +39,7 @@ import (
 	"github.com/yuu-biz/ims-practice/internal/kvstore"
 	"github.com/yuu-biz/ims-practice/internal/kvstore/kvjson"
 	"github.com/yuu-biz/ims-practice/internal/kvstore/oamstore"
+	"github.com/yuu-biz/ims-practice/internal/kvstore/storetest"
 	"github.com/yuu-biz/ims-practice/internal/maintenance"
 	"github.com/yuu-biz/ims-practice/internal/metrics"
 	"github.com/yuu-biz/ims-practice/internal/mmtel"
@@ -957,11 +959,11 @@ func TestHSSStartsAgainOnItsStore(t *testing.T) {
 	ctx := context.Background()
 	stores := roleStores{kv: kvstore.NewMemoryStore(nil), section: config.Store{Kind: config.StoreValkey, Timeout: time.Second}}
 	alice := hss.Subscription{PrivateIdentity: impi, PublicIdentities: []string{impu}, Password: "p"}
-	if _, err := hssStore(ctx, hss.Config{Subscriptions: []hss.Subscription{alice}}, stores, quiet()); err != nil {
+	if _, err := hssStore(ctx, hss.Config{Subscriptions: []hss.Subscription{alice}}, stores, stores.locks(config.RoleHSS, quiet()), quiet()); err != nil {
 		t.Fatal(err)
 	}
 	bob := hss.Subscription{PrivateIdentity: "bob@" + domain, PublicIdentities: []string{"sip:bob@" + domain}, Password: "q"}
-	store, err := hssStore(ctx, hss.Config{Subscriptions: []hss.Subscription{alice, bob}}, stores, quiet())
+	store, err := hssStore(ctx, hss.Config{Subscriptions: []hss.Subscription{alice, bob}}, stores, stores.locks(config.RoleHSS, quiet()), quiet())
 	if err != nil {
 		t.Fatalf("the HSS did not start again on its store: %v", err)
 	}
@@ -971,8 +973,85 @@ func TestHSSStartsAgainOnItsStore(t *testing.T) {
 		}
 	}
 	carol := hss.Subscription{PrivateIdentity: "carol@" + domain, PublicIdentities: []string{impu}, Password: "r"}
-	if _, err := hssStore(ctx, hss.Config{Subscriptions: []hss.Subscription{carol}}, stores, quiet()); !errors.Is(err, hss.ErrIdentityTaken) {
+	if _, err := hssStore(ctx, hss.Config{Subscriptions: []hss.Subscription{carol}}, stores, stores.locks(config.RoleHSS, quiet()), quiet()); !errors.Is(err, hss.ErrIdentityTaken) {
 		t.Errorf("an HSS whose configuration gives a stored public identity to another subscriber started: %v", err)
+	}
+}
+
+// lockTaken is the store of a lock that reports when it finds the lock
+// of a user already taken, which is how an instance waits for another.
+type lockTaken struct {
+	kvstore.Store
+	found chan struct{}
+	once  sync.Once
+}
+
+func (s *lockTaken) CompareAndSwap(ctx context.Context, key, version string, value []byte, ttl time.Duration) (string, error) {
+	v, err := s.Store.CompareAndSwap(ctx, key, version, value, ttl)
+	if errors.Is(err, kvstore.ErrConflict) {
+		s.once.Do(func() { close(s.found) })
+	}
+	return v, err
+}
+
+// TestTwoHSSInstancesStartAtOnce: two instances of the HSS start on one
+// store with the same configuration. The second starts while the first
+// is adding a subscriber of it: the provisional record of the Add holds
+// the private identity, and the public identity is not claimed yet.
+// The second waits for the lock of the subscriber, which the first
+// holds over its Add, and then finds the subscriber stored, rather
+// than reading the provisional record as no subscriber and failing to
+// start for a private identity that no other subscriber holds.
+//
+// The test goes on with the first instance as soon as the second
+// waits for the lock in the store, or, if nothing holds the second
+// back, as soon as it has started or failed to.
+func TestTwoHSSInstancesStartAtOnce(t *testing.T) {
+	ctx := context.Background()
+	alice := hss.Subscription{PrivateIdentity: impi, PublicIdentities: []string{impu}, Password: "p"}
+	bob := hss.Subscription{PrivateIdentity: "bob@" + domain, PublicIdentities: []string{"sip:bob@" + domain}, Password: "q"}
+	c := hss.Config{Subscriptions: []hss.Subscription{alice, bob}}
+	for _, backend := range storetest.Backends() {
+		t.Run(backend.Name, func(t *testing.T) {
+			kv := backend.New(t)
+			section := config.Store{Kind: config.StoreValkey, Prefix: storetest.Prefix(), Timeout: time.Second}
+			shared := roleStores{kv: kv, section: section}
+
+			waiting := &lockTaken{Store: kv, found: make(chan struct{})}
+			second := roleStores{kv: waiting, section: section}
+			var secondErr error
+			started := make(chan struct{})
+			startSecond := func() {
+				go func() {
+					defer close(started)
+					_, secondErr = hssStore(ctx, c, shared, second.locks(config.RoleHSS, quiet()), quiet())
+				}()
+				select {
+				case <-waiting.found:
+				case <-started:
+				}
+			}
+			// The first write of the first instance is the provisional
+			// record of alice, the second the index item of her public
+			// identity.
+			first := roleStores{kv: storetest.BeforeWrite(kv, 2, startSecond), section: section}
+			if _, err := hssStore(ctx, c, first, shared.locks(config.RoleHSS, quiet()), quiet()); err != nil {
+				t.Fatalf("the first instance did not start: %v", err)
+			}
+			<-started
+			if secondErr != nil {
+				t.Fatalf("the second instance did not start: %v", secondErr)
+			}
+			store, err := hssStore(ctx, hss.Config{}, shared, nil, quiet())
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, sub := range c.Subscriptions {
+				if got, ok, err := store.SubscriberOf(ctx, sub.PublicIdentities[0]); err != nil || !ok || got.PrivateIdentity != sub.PrivateIdentity {
+					t.Errorf("the subscriber of %s after both started: %+v, %v, %v", sub.PublicIdentities[0], got, ok, err)
+				}
+			}
+		})
 	}
 }
 
@@ -1001,7 +1080,7 @@ func TestRoleStoresAreTheSharedStoreOfTheNode(t *testing.T) {
 		}},
 		{string(config.RoleHSS), func(s roleStores) error {
 			subscriber := hss.Subscription{PrivateIdentity: impi, PublicIdentities: []string{impu}, Password: "p"}
-			_, err := hssStore(ctx, hss.Config{Subscriptions: []hss.Subscription{subscriber}}, s, quiet())
+			_, err := hssStore(ctx, hss.Config{Subscriptions: []hss.Subscription{subscriber}}, s, s.locks(config.RoleHSS, quiet()), quiet())
 			return err
 		}},
 		{string(config.RolePCSCF), func(s roleStores) error {
