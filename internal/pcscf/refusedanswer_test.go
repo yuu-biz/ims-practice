@@ -47,6 +47,15 @@ func (l callLeg) received(h *callHarness) (caller, callee *received) {
 	return h.coreGot, h.ueGot
 }
 
+// side is how Response-Source names the side of the served UE (TS
+// 24.229 5.2.1).
+func (l callLeg) side() string {
+	if l.fromUE {
+		return "orig"
+	}
+	return "term"
+}
+
 // key is the key of the Dialog that the P-CSCF keeps for the served UE
 // of the call, once its early dialog is there.
 func (l callLeg) key(t *testing.T, out *sip.OutgoingCall, in *sip.IncomingCall) DialogKey {
@@ -70,13 +79,18 @@ func (l callLeg) wantNo183(t *testing.T, h *callHarness) {
 }
 
 // wantNoFailureCause checks the 500 with which the P-CSCF ends a call
-// whose answer the relay did not take. FAILURE_CAUSE tells of radio or
+// whose answer the relay did not take, on the side of the served UE
+// that side names (orig or term). FAILURE_CAUSE tells of radio or
 // bearer resources that are gone (TS 24.229 7.2A.18.12.2), and those
-// are still there.
-func wantNoFailureCause(t *testing.T, resp *sip.Message) {
+// are still there. Who answered is there, as in every 500 with which
+// the P-CSCF ends an INVITE (TS 24.229 5.2.1).
+func wantNoFailureCause(t *testing.T, resp *sip.Message, side string) {
 	t.Helper()
 	if got := resp.Get("Reason"); got != "" {
 		t.Errorf("Reason of the 500 = %q, want none", got)
+	}
+	if got, want := resp.Get("Response-Source"), "fe=<urn:3gpp:fe:p-cscf."+side+">"; got != want {
+		t.Errorf("Response-Source of the 500 = %q, want %q", got, want)
 	}
 }
 
@@ -95,7 +109,7 @@ func TestRefusedAnswerOfA183EndsTheCall(t *testing.T) {
 			// caller never sends: the CANCEL ends the call first.
 			go in.Progress(183, answerTo(t, in.Request, leg.media))
 
-			wantNoFailureCause(t, answered(t, out, 500))
+			wantNoFailureCause(t, answered(t, out, 500), leg.side())
 			ended(t, "the callee's call", in.Done())
 			if in.Err() != sip.ErrCancelled {
 				t.Fatalf("the callee's call ended with %v, want a CANCEL", in.Err())
@@ -125,7 +139,7 @@ func TestRefusedAnswerOfThe200EndsTheCall(t *testing.T) {
 			relay.refuseModify(leg.answered)
 			acked := accept(in, answerTo(t, in.Request, leg.media))
 
-			wantNoFailureCause(t, answered(t, out, 500))
+			wantNoFailureCause(t, answered(t, out, 500), leg.side())
 			waitACK(t, acked)
 			ended(t, "the callee's call", in.Done())
 			bye := in.EndedBy()
@@ -256,7 +270,7 @@ func TestRefusedAnswerOfThe200AfterA183EndsTheCall(t *testing.T) {
 
 			relay.refuseModify(leg.answered)
 			acked := accept(in, answerTo(t, in.Request, leg.media))
-			wantNoFailureCause(t, answered(t, out, 500))
+			wantNoFailureCause(t, answered(t, out, 500), leg.side())
 			waitACK(t, acked)
 			ended(t, "the callee's call", in.Done())
 			bye := in.EndedBy()
@@ -421,7 +435,7 @@ func TestRefusedAnswerOfAnUPDATEInTheEarlyDialogEndsTheCall(t *testing.T) {
 	if resp.StatusCode != 200 {
 		t.Fatalf("the UPDATE got %d, want the 200 of the far end", resp.StatusCode)
 	}
-	wantNoFailureCause(t, answered(t, out, 500))
+	wantNoFailureCause(t, answered(t, out, 500), "orig")
 	ended(t, "the callee's call", in.Done())
 	if in.Err() != sip.ErrCancelled {
 		t.Fatalf("the callee's call ended with %v, want a CANCEL", in.Err())
@@ -505,7 +519,7 @@ func TestRefusedAnswerOfAnUPDATEAtAnotherInstanceEndsTheCall(t *testing.T) {
 			}
 
 			sent := then.send(in)
-			wantNoFailureCause(t, answered(t, out, 500))
+			wantNoFailureCause(t, answered(t, out, 500), "orig")
 			then.ended(t, in, sent)
 			for _, m := range h.ueGot.all() {
 				cseq, _ := sip.ParseCSeq(m.Get("CSeq"))

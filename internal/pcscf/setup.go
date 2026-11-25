@@ -326,20 +326,30 @@ func (s *setup) communicationService() string {
 	return ""
 }
 
-// unavailable is the response with which the P-CSCF ends an INVITE whose
-// session the network has no resources for: 500 (TS 24.229 5.2.7.2,
-// 5.2.8.1.1). Operator policy may add who answered (5.2.1,
-// Response-Source) and, towards the calling UE, why (5.2.7.2, Reason):
-// both are added here, for the learner who reads the capture.
-func (s *setup) unavailable() *sip.Message {
+// failed is the 500 with which the P-CSCF ends an INVITE itself. Operator
+// policy may add who answered to any failure response of the P-CSCF
+// (TS 24.229 5.2.1, Response-Source): it is added here, for the learner
+// who reads the capture.
+func (s *setup) failed() *sip.Message {
 	resp := sip.NewResponse(s.invite, 500, sip.NewTag())
 	side := "term"
 	if s.leg == originating {
 		side = "orig"
+	}
+	resp.Set("Response-Source", "fe=<urn:3gpp:fe:p-cscf."+side+">")
+	return resp
+}
+
+// unavailable is the response with which the P-CSCF ends an INVITE whose
+// session the network has no resources for: 500 (TS 24.229 5.2.7.2,
+// 5.2.8.1.1). Operator policy may add, towards the calling UE, why
+// (5.2.7.2, Reason): it is added here too.
+func (s *setup) unavailable() *sip.Message {
+	resp := s.failed()
+	if s.leg == originating {
 		// TS 24.229 7.2A.18.12.2, Table 7.2A.18.12-2.
 		resp.Set("Reason", `FAILURE_CAUSE;cause=1;text="Media bearer or QoS lost"`)
 	}
-	resp.Set("Response-Source", "fe=<urn:3gpp:fe:p-cscf."+side+">")
 	return resp
 }
 

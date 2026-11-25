@@ -68,7 +68,7 @@ func (p *PCSCF) proxyInvite(st *sip.ServerTransaction, out *sip.Message, targets
 			ct.Cancel()
 			return
 		case errors.Is(why, errRelay), errors.Is(why, errReleased):
-			st.Respond(sip.NewResponse(st.Request, 500, sip.NewTag()))
+			st.Respond(call.failed())
 		default:
 			st.Respond(call.unavailable())
 		}
