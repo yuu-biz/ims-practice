@@ -387,3 +387,13 @@ export function ackAction(r: AlarmRecord): { to: AckState; label: string; effect
   }
   return { to: "ACKNOWLEDGED", label: "Acknowledge", effect: "The alarm stays in the list, acknowledged, and leaves it when its condition clears." };
 }
+
+// The acknowledgement of a record, one line each: the state, who last
+// changed it and through which system, and when (TS 28.111 7.4.1). The
+// record keeps who took an acknowledgement back as well.
+export function describeAck(r: AlarmRecord): string {
+  const changed = r.ack_time !== null;
+  const who = [r.ack_user_id === "" ? "" : `by ${r.ack_user_id}`, r.ack_system_id === "" ? "" : `via ${r.ack_system_id}`].filter((s) => s !== "").join(" ");
+  const state = r.ack_state === "ACKNOWLEDGED" ? "yes" : changed ? "no, taken back" : "no";
+  return [state, who, changed ? formatTime(r.ack_time!) : ""].filter((s) => s !== "").join("\n");
+}

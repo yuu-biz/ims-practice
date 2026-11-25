@@ -153,8 +153,8 @@ describe("alarms", () => {
     ]);
     // Go leaves out what is empty: no role for an alarm of the node, no
     // times that have not happened.
-    expect(a.alarms[3]).toMatchObject({ role: "", peer: "lab:9060", alarm_changed_time: null, alarm_cleared_time: null, ack_time: null, ack_user_id: "" });
-    expect(a.alarms[1]).toMatchObject({ ack_state: "ACKNOWLEDGED", ack_time: "2026-11-20T09:05:00Z", ack_user_id: "test-operator" });
+    expect(a.alarms[3]).toMatchObject({ role: "", peer: "lab:9060", alarm_changed_time: null, alarm_cleared_time: null, ack_time: null, ack_user_id: "", ack_system_id: "" });
+    expect(a.alarms[1]).toMatchObject({ ack_state: "ACKNOWLEDGED", ack_time: "2026-11-20T09:05:00Z", ack_user_id: "test-operator", ack_system_id: "oam" });
     expect(a.alarms[4]).toMatchObject({ specific_problem: "store unreachable", additional_text: "", alarm_cleared_time: "2026-11-20T09:04:30Z" });
   });
 
@@ -185,7 +185,7 @@ describe("alarms", () => {
 
   it("reports the node's 404 for an alarm that left its list", async () => {
     serve(200, JSON.stringify({ succeeded: 0, failed: 1, nodes: [{ node: "hss-1", url: "u", error: { status_code: 404, error: 'no such alarm in the list: "599ee120c58fc287"' } }] }));
-    const f = await putAckState("hss-1", "599ee120c58fc287", "ACKNOWLEDGED", "");
+    const f = await putAckState("hss-1", "599ee120c58fc287", "ACKNOWLEDGED", "test-operator");
     expect(f.nodes[0]?.error).toEqual({ status_code: 404, error: 'no such alarm in the list: "599ee120c58fc287"', settings: {} });
   });
 });
