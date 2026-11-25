@@ -395,11 +395,13 @@ func TestNoEventIsLostWhenAnInstanceStops(t *testing.T) {
 // notifyAlarmListRebuilt that the miss owes it on its way: r holds its
 // answer to it until release is closed, as an OSS that reads the alarm
 // list before it answers. Two instances run, so that the one that sends
-// the notifyAlarmListRebuilt need not be the one that watches the node.
-func owedOnItsWay(t *testing.T, backend storetest.Backend, r *recipient) (c *cluster, release chan struct{}) {
+// the notifyAlarmListRebuilt need not be the one that watches the node;
+// in is the one that the subscription was created through.
+func owedOnItsWay(t *testing.T, backend storetest.Backend, r *recipient) (c *cluster, in *instance, release chan struct{}) {
 	t.Helper()
 	c = newCluster(t, backend, "scscf")
-	c.start(t, "oam-1").subscribe(t, r, http.StatusCreated)
+	in = c.start(t, "oam-1")
+	in.subscribe(t, r, http.StatusCreated)
 	c.start(t, "oam-2")
 	c.until(t, nil)
 	c.watched(t)
@@ -428,7 +430,7 @@ func owedOnItsWay(t *testing.T, backend storetest.Backend, r *recipient) (c *clu
 	if n := r.next(t, "the notifyAlarmListRebuilt that the miss owes"); n["notificationType"] != "notifyAlarmListRebuilt" {
 		t.Fatalf("got %v, want the notifyAlarmListRebuilt that the miss owes", n)
 	}
-	return c, release
+	return c, in, release
 }
 
 // TestAnAlarmRaisedWhileTheOwedNotificationIsOnItsWay: an alarm is
@@ -441,7 +443,7 @@ func TestAnAlarmRaisedWhileTheOwedNotificationIsOnItsWay(t *testing.T) {
 	for _, backend := range storetest.Backends() {
 		t.Run(backend.Name, func(t *testing.T) {
 			r := newRecipient(t)
-			c, release := owedOnItsWay(t, backend, r)
+			c, _, release := owedOnItsWay(t, backend, r)
 			before := c.saved(t, "scscf")
 			c.nodes[0].raise(t, "hss-2")
 			c.passed(t, "scscf", before)
@@ -460,6 +462,31 @@ func TestAnAlarmRaisedWhileTheOwedNotificationIsOnItsWay(t *testing.T) {
 			c.nodes[0].raise(t, "hss-3")
 			if n := r.next(t, "the alarm after the owed notification"); n["notificationType"] != "notifyNewAlarm" || !strings.HasSuffix(n["href"].(string), "/Peer=hss-3") {
 				t.Errorf("got %v, want the alarm of hss-3", n)
+			}
+		})
+	}
+}
+
+// TestTheOwedNotificationGoesToTheNewRecipient: the OSS replaces its
+// subscription with one to another address while the
+// notifyAlarmListRebuilt that a miss owes is on its way to the old one.
+// The answer of the old address does not clear the mark: the new one
+// is sent the notifyAlarmListRebuilt too, and then the notifications.
+func TestTheOwedNotificationGoesToTheNewRecipient(t *testing.T) {
+	for _, backend := range storetest.Backends() {
+		t.Run(backend.Name, func(t *testing.T) {
+			old, replacement := newRecipient(t), newRecipient(t)
+			c, in, release := owedOnItsWay(t, backend, old)
+			in.subscribe(t, replacement, http.StatusOK)
+			close(release)
+
+			if n := replacement.next(t, "the notifyAlarmListRebuilt that the miss owes, at the new address"); n["notificationType"] != "notifyAlarmListRebuilt" {
+				t.Fatalf("got %v, want the notifyAlarmListRebuilt that the miss owes", n)
+			}
+			c.unmarked(t)
+			c.nodes[0].raise(t, "hss-2")
+			if n := replacement.next(t, "the alarm after the owed notification"); n["notificationType"] != "notifyNewAlarm" || !strings.HasSuffix(n["href"].(string), "/Peer=hss-2") {
+				t.Errorf("got %v, want the alarm of hss-2", n)
 			}
 		})
 	}
