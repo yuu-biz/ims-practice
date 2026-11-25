@@ -237,6 +237,11 @@ func TestAdministrativeStateErrors(t *testing.T) {
 		{"no value", "pcscf", AdministrativeStateRequest{}, http.StatusBadRequest, "administrative state"},
 		{"timeout without shut down", "pcscf", AdministrativeStateRequest{AdministrativeState: Locked, TimeoutSeconds: 5}, http.StatusBadRequest, "timeout_seconds"},
 		{"negative timeout", "pcscf", AdministrativeStateRequest{AdministrativeState: ShuttingDown, TimeoutSeconds: -5}, http.StatusBadRequest, "negative"},
+		// time.Duration counts nanoseconds in an int64: these seconds
+		// would wrap to a deadline 0.29 s away, and to a negative one.
+		{"timeout that wraps", "pcscf", AdministrativeStateRequest{AdministrativeState: ShuttingDown, TimeoutSeconds: 18446744074}, http.StatusBadRequest, "86400"},
+		{"timeout that wraps to negative", "pcscf", AdministrativeStateRequest{AdministrativeState: ShuttingDown, TimeoutSeconds: 9223372037}, http.StatusBadRequest, "86400"},
+		{"timeout over a day", "pcscf", AdministrativeStateRequest{AdministrativeState: ShuttingDown, TimeoutSeconds: 86401}, http.StatusBadRequest, "86400"},
 		{"shut down of LOCKED", "icscf", AdministrativeStateRequest{AdministrativeState: ShuttingDown}, http.StatusConflict, "X.731 7.1.3.3"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

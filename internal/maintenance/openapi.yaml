@@ -384,9 +384,10 @@ components:
         administrative_state:
           $ref: '#/components/schemas/AdministrativeState'
         timeout_seconds:
-          description: Bounds a shut down; 0 for none. Only SHUTTINGDOWN takes it.
+          description: Bounds a shut down; 0 for none, and at most a day. Only SHUTTINGDOWN takes it.
           type: integer
           minimum: 0
+          maximum: 86400
         operator:
           description: Who asks, for the log.
           type: string

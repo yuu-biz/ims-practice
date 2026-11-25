@@ -36,9 +36,10 @@
 //	PUT  /maintenance/v1/functions/{role}/administrative-state
 //	     AdministrativeStateRequest -> FunctionState.
 //	     UNLOCKED unlocks, SHUTTINGDOWN shuts down (the drain, with an
-//	     optional timeout_seconds), LOCKED locks. Asking for the
-//	     present state changes nothing. 404 for a role that the node
-//	     does not run, 409 for a shut down of a LOCKED role.
+//	     optional timeout_seconds of at most a day), LOCKED locks.
+//	     Asking for the present state changes nothing. 404 for a role
+//	     that the node does not run, 409 for a shut down of a LOCKED
+//	     role.
 //	GET  /maintenance/v1/config
 //	     Configuration: the effective configuration as the node's view
 //	     shows it, secrets redacted, and the settings that may change

@@ -223,6 +223,12 @@ func (n *Node) functionState(m *ManagedFunction) (FunctionState, error) {
 	return s, nil
 }
 
+// MaxTimeoutSeconds bounds the timeout_seconds of a shut down: a day,
+// far longer than any session or registration transaction of a role
+// takes. Without a bound, the seconds could overflow the nanoseconds of
+// a time.Duration and give a deadline that has already passed.
+const MaxTimeoutSeconds = 24 * 60 * 60
+
 // SetAdministrativeState makes the event of X.731 7.1.3 that the
 // request asks for on a role, and returns the role's state after it.
 func (n *Node) SetAdministrativeState(role string, req AdministrativeStateRequest) (FunctionState, error) {
@@ -232,6 +238,9 @@ func (n *Node) SetAdministrativeState(role string, req AdministrativeStateReques
 	}
 	if req.TimeoutSeconds != 0 && req.AdministrativeState != ShuttingDown {
 		return FunctionState{}, fmt.Errorf("%w: timeout_seconds goes only with %s", ErrInvalidRequest, ShuttingDown)
+	}
+	if req.TimeoutSeconds > MaxTimeoutSeconds {
+		return FunctionState{}, fmt.Errorf("%w: timeout_seconds %d is more than %d", ErrInvalidRequest, req.TimeoutSeconds, MaxTimeoutSeconds)
 	}
 	log := n.log.With("role", role, "operator", req.Operator)
 	switch req.AdministrativeState {
