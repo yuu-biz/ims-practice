@@ -488,6 +488,197 @@ func TestMessagesToOneTCPFarEndKeepTheirOrder(t *testing.T) {
 	})
 }
 
+// A peer whose host has gone answers no TCP connect, and a connect to
+// it waits tcpConnectTimeout before it fails. Meanwhile the stack goes
+// on with its other peers, and its timers fire on time.
+func TestTCPPeerThatAnswersNoConnectHoldsUpNothingElse(t *testing.T) {
+	silent := silentTCPAddress(t)
+	const requests = 3
+	held := make(chan *ServerTransaction, requests)
+	uas := newStack(t, testTimers, answerOptions(func(st *ServerTransaction) { held <- st }))
+	// The peer sends its REGISTERs over a connection of its own and then
+	// goes. Once that connection has closed, the responses go over a new
+	// one to the sent-by (RFC 3261 18.2.2), where no connect is answered.
+	peer := dial(t, uas.LocalAddr())
+	var pending []*ServerTransaction
+	for range requests {
+		req := tcpRequest(peer, REGISTER)
+		req.SetFirst("Via", "SIP/2.0/TCP "+silent.String()+";branch="+NewBranch())
+		peer.write(t, req)
+		select {
+		case st := <-held:
+			pending = append(pending, st)
+		case <-time.After(2 * time.Second):
+			t.Fatal("the REGISTER never reached the TU")
+		}
+	}
+	peer.conn.Close()
+	for deadline := time.Now().Add(2 * time.Second); uas.transport.hasConnection(pending[0].Source.Addr); {
+		if time.Now().After(deadline) {
+			t.Fatal("the stack kept the closed connection")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	start := time.Now()
+	within := start.Add(tcpConnectTimeout / 2)
+	for _, st := range pending {
+		st.Respond(NewResponse(st.Request, 200, NewTag()))
+	}
+	other := newUDPPeer(t, uas.LocalAddr())
+	options := other.request(OPTIONS)
+	other.send(options)
+	buf := make([]byte, 65535)
+	other.conn.SetReadDeadline(within)
+	if n, err := other.conn.Read(buf); err != nil {
+		t.Fatalf("another peer got no answer to its OPTIONS within %v: %v", within.Sub(start), err)
+	} else if resp, err := Parse(buf[:n]); err != nil || resp.StatusCode != 200 || resp.Get("Call-ID") != options.Get("Call-ID") {
+		t.Fatalf("another peer got %q, want the 200 for its OPTIONS", buf[:n])
+	}
+	// Timer E sends the stack's own request again T1 after it went out.
+	quiet := rawSocket(t)
+	if _, err := uas.SendRequest(registerRequest(), udpTo(addrOf(quiet))); err != nil {
+		t.Fatal(err)
+	}
+	quiet.SetReadDeadline(within)
+	for _, what := range []string{"request", "retransmission of the request"} {
+		if _, err := quiet.Read(buf); err != nil {
+			t.Fatalf("the %s to a peer over UDP did not come within %v: %v", what, within.Sub(start), err)
+		}
+	}
+}
+
+// A request that the stack's loop hands to the transport without
+// waiting has still failed at its target when it cannot go out over
+// TCP, as a transport error (RFC 3261 17.1.4), and goes on to the next
+// target (RFC 3263 4.3): when the queue to the far end is full, at
+// once, and when its connection fails while it waits, once it has.
+func TestRequestThatCannotGoOutOverTCPGoesToTheNextTarget(t *testing.T) {
+	// Registered before the stack's own cleanup, it runs after the stack
+	// has closed.
+	bound := maxTCPQueue
+	t.Cleanup(func() { maxTCPQueue = bound })
+	maxTCPQueue = 1
+
+	far, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { far.Close() })
+	accepted := make(chan net.Conn, 1)
+	go func() {
+		if c, err := far.Accept(); err == nil {
+			accepted <- c
+		}
+	}()
+	answered := make(chan string, 2)
+	next := newStack(t, testTimers, func(st *ServerTransaction) {
+		answered <- st.Request.Get("Call-ID")
+		st.Respond(NewResponse(st.Request, 200, NewTag()))
+	})
+
+	// The observer stands in for a write that takes long, as one to a
+	// peer that has stopped reading does: it holds the write of slow
+	// until released.
+	slow := registerRequest()
+	writing := make(chan struct{}, 1)
+	release := make(chan struct{})
+	tr, err := ListenObserved("127.0.0.1:0", testLogger(t), func(c Capture) {
+		if c.Sent && c.Transport == TCP && c.Message.Get("Call-ID") == slow.Get("Call-ID") {
+			writing <- struct{}{}
+			select {
+			case <-release:
+			case <-time.After(5 * time.Second):
+			}
+		}
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Timer F fires 32 s after a request goes out, far later than this
+	// test waits, so no request goes to the next target by timing out.
+	uac, err := NewStack(tr, Config{SentBy: tr.LocalAddr().String(), OnRequest: ignoreRequests}, testLogger(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(uac.Close)
+	farEnd := unmapped(far.Addr())
+	targets := []Destination{tcpTo(farEnd), udpTo(next.LocalAddr())}
+
+	stalled, err := uac.SendRequest(slow, tcpTo(farEnd))
+	if err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-writing:
+	case <-time.After(2 * time.Second):
+		t.Fatal("the transport never wrote the first request")
+	}
+	waiting, err := uac.SendRequest(registerRequest(), targets...)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Behind the request being written, the queue has room for one.
+	refused, err := uac.SendRequest(registerRequest(), targets...)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := collect(t, refused); len(got) != 1 || got[0].StatusCode != 200 {
+		t.Fatalf("the request that found the queue full got %v, err %v; want the 200 of the next target", got, refused.Err())
+	}
+	if callID := <-answered; callID != refused.Request.Get("Call-ID") {
+		t.Fatalf("the next target answered %s, want the request that found the queue full", callID)
+	}
+
+	// The far end goes, and with it the connection that both requests
+	// wait for.
+	far.Close()
+	(<-accepted).Close()
+	for deadline := time.Now().Add(2 * time.Second); uac.transport.hasConnection(farEnd); {
+		if time.Now().After(deadline) {
+			t.Fatal("the stack kept the closed connection")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	close(release)
+	if collect(t, stalled); stalled.Err() == nil || errors.Is(stalled.Err(), ErrTimeout) {
+		t.Errorf("the request whose write failed ended with %v, want the transport error", stalled.Err())
+	}
+	if got := collect(t, waiting); len(got) != 1 || got[0].StatusCode != 200 {
+		t.Fatalf("the request that waited for the connection got %v, err %v; want the 200 of the next target", got, waiting.Err())
+	}
+	if callID := <-answered; callID != waiting.Request.Get("Call-ID") {
+		t.Fatalf("the next target answered %s, want the request that waited for the connection", callID)
+	}
+}
+
+// A connect that gets no answer fails every message that waits for it,
+// rather than one after the other, a connect for each.
+func TestMessagesThatWaitForAConnectFailWithIt(t *testing.T) {
+	silent := silentTCPAddress(t)
+	tr := listenLayer(t, testLogger(t))
+	const messages = 3
+	failed := make(chan error, messages)
+	start := time.Now()
+	for range messages {
+		req := mustParse(t, initialRegister)
+		go func() { failed <- tr.SendRequest(req, tcpTo(silent)) }()
+	}
+	for range messages {
+		select {
+		case err := <-failed:
+			if err == nil {
+				t.Fatal("a message to an address that answers no connect went out")
+			}
+		case <-time.After(messages * tcpConnectTimeout):
+			t.Fatal("a message to an address that answers no connect never failed")
+		}
+	}
+	if elapsed := time.Since(start); elapsed > tcpConnectTimeout+tcpConnectTimeout/2 {
+		t.Errorf("the last of %d messages failed after %v, want about one connect timeout, %v", messages, elapsed, tcpConnectTimeout)
+	}
+}
+
 func TestIdleConnectionCloses(t *testing.T) {
 	tr, err := newTransportLayer("127.0.0.1:0", testLogger(t), nil, 100*time.Millisecond)
 	if err != nil {

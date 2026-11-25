@@ -22,6 +22,14 @@ import (
 // the responses to the requests that came over it. Since every entry
 // is a TCP connection, the transport is left out of the key that RFC
 // 3261 18 describes.
+//
+// Each far end also has a queue of the messages that wait to go to it,
+// and, while any wait, a goroutine of its own that opens the
+// connection when there is none and writes them in the order they came.
+// A connect to a host that has gone takes tcpConnectTimeout to fail, and
+// so may a write to a peer that has stopped reading; only the messages
+// to that far end wait for it. The stack's loop hands its messages over
+// and goes on, and hears of a failure later (RFC 3261 18.4).
 
 // tcpIdleTimeout is how long a connection stays open after the last
 // message sent or received on it. RFC 3261 18 asks for at least the
@@ -35,6 +43,24 @@ const tcpIdleTimeout = 5 * time.Minute
 // to it. A peer that has gone away then shows up as a transport error
 // (RFC 3261 18.4) within a few seconds, well before Timer B or F.
 const tcpConnectTimeout = 2 * time.Second
+
+// maxTCPQueue bounds the messages that wait to go to one far end over
+// TCP, behind the one being written. They leave at once while the
+// connection is open, and pile up only while a connect or a write
+// waits. A node of the network is one far end for the messages of all
+// its users, so the bound leaves room for a burst of them, as
+// maxAdmitQueue does for the requests from one source. A message that
+// finds the queue full fails at once, as a transport error.
+var maxTCPQueue = 512
+
+var errTCPQueueFull = errors.New("sip: too many messages wait for the TCP connection to this far end")
+
+// tcpSend is a message in the queue of a far end, and what to call with
+// the outcome once it has been written or has failed.
+type tcpSend struct {
+	m    *Message
+	done func(error)
+}
 
 // maxStreamMessageSize bounds one message on a stream. RFC 3261 18.1.1
 // has every element handle messages up to 65,535 bytes, the UDP
@@ -223,7 +249,7 @@ func (t *TransportLayer) connectTCP(remote netip.AddrPort) (*net.TCPConn, error)
 		}
 		dialer.LocalAddr = addr
 	}
-	nc, err := dialer.Dial("tcp", remote.String())
+	nc, err := dialer.DialContext(t.ctx, "tcp", remote.String())
 	if err != nil {
 		return nil, err
 	}
@@ -237,14 +263,88 @@ func (t *TransportLayer) hasConnection(remote netip.AddrPort) bool {
 	return ok
 }
 
-// sendTCP writes m to the connection to remote, which it opens if
-// there is none. net.Conn serializes concurrent writes, so two messages
-// never interleave on the stream.
-func (t *TransportLayer) sendTCP(m *Message, remote netip.AddrPort) error {
-	c, err := t.connectTCP(remote)
-	if err != nil {
+// sendTCP puts m in the queue of remote (queueTCP). With written nil, it
+// then waits for the write and returns its outcome. Otherwise it returns
+// at once, and written gets the outcome from the goroutine that writes.
+func (t *TransportLayer) sendTCP(m *Message, remote netip.AddrPort, written func(error)) error {
+	if written != nil {
+		return t.queueTCP(m, remote, written)
+	}
+	outcome := make(chan error, 1)
+	if err := t.queueTCP(m, remote, func(err error) { outcome <- err }); err != nil {
 		return err
 	}
+	return <-outcome
+}
+
+// queueTCP puts m at the end of the queue of remote, and starts the
+// goroutine that writes the queue when there is none. done gets the
+// outcome from that goroutine: nil once m has been written. When queueTCP
+// returns an error, m is not queued and done is not called.
+func (t *TransportLayer) queueTCP(m *Message, remote netip.AddrPort, done func(error)) error {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.conns == nil {
+		return net.ErrClosed
+	}
+	queue, writing := t.queues[remote]
+	if len(queue) >= maxTCPQueue {
+		return errTCPQueueFull
+	}
+	t.queues[remote] = append(queue, tcpSend{m: m, done: done})
+	if !writing {
+		t.wg.Add(1)
+		go t.writeQueued(remote)
+	}
+	return nil
+}
+
+// writeQueued writes the messages in the queue of remote, oldest first,
+// and ends once the queue is empty, so that a far end has a goroutine
+// only while messages wait for it.
+func (t *TransportLayer) writeQueued(remote netip.AddrPort) {
+	defer t.wg.Done()
+	for {
+		next, ok := t.nextTCP(remote)
+		if !ok {
+			return
+		}
+		c, err := t.connectTCP(remote)
+		if err != nil {
+			// Every message in the queue waits for this connection, and
+			// each would wait as long again for a connect of its own, so
+			// they all fail with this one.
+			t.mu.Lock()
+			waiting := t.queues[remote]
+			t.queues[remote] = nil
+			t.mu.Unlock()
+			next.done(err)
+			for _, s := range waiting {
+				s.done(err)
+			}
+			continue
+		}
+		next.done(t.writeTCP(c, next.m, remote))
+	}
+}
+
+// nextTCP takes the oldest message out of the queue of remote. Once the
+// queue is empty, it takes remote out of t.queues and reports false, so
+// that the next message for remote starts a goroutine again.
+func (t *TransportLayer) nextTCP(remote netip.AddrPort) (tcpSend, bool) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	queue := t.queues[remote]
+	if len(queue) == 0 {
+		delete(t.queues, remote)
+		return tcpSend{}, false
+	}
+	t.queues[remote] = queue[1:]
+	return queue[0], true
+}
+
+// writeTCP writes m to c, the connection to remote.
+func (t *TransportLayer) writeTCP(c *net.TCPConn, m *Message, remote netip.AddrPort) error {
 	wire := m.Bytes()
 	record(t.log, t.observe, Capture{Transport: TCP, Sent: true, Source: unmapped(c.LocalAddr()), Destination: remote, Message: m, Wire: wire})
 	c.SetWriteDeadline(time.Now().Add(tcpConnectTimeout))

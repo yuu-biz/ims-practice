@@ -4,7 +4,7 @@
 
 | 記録 | 決めていること | 大事な理由 |
 | --- | --- | --- |
-| [implementation.md](implementation.md) | Go で書くこと。SIP の解析、トランザクション層、ダイアログ層を自作し、Diameter の符号化には go-diameter を使うこと | IMS の手順が SIP のどの層の動きなのかを読めるようにするため |
+| [implementation.md](implementation.md) | Go で書くこと。SIP の解析、トランザクション層、ダイアログ層を自作し、Diameter の符号化には go-diameter を使うこと。SIP のスタックのループで TCP の送信を待たないこと | IMS の手順が SIP のどの層の動きなのかを読めるようにするため。1 つの相手を待つあいだに、役割全体を止めないため |
 | [ue-simulator.md](ue-simulator.md) | UE シミュレータを自作し、SIPp と pjsua を独立した試験相手にすること | sec-agree を含む IMS-AKA の全体を見せ、UE と CSCF に同じ誤解が入るのを防ぐため |
 | [media-control.md](media-control.md) | メディア中継ノードを独自の API と H.248 で制御すること。P-CSCF の通過ごとのコンテキスト。網の境界の装置の振る舞い | 通話の基本を先に学べるようにし、実際の網と同じ形で中継を見せるため |
 | [environment-capture.md](environment-capture.md) | ホストとコンテナのあいだを NAT 越しとして扱うこと。ブリッジ全体を 1 つのコンテナでキャプチャすること | ホストのソフトフォンとつなぎ、すべての信号を 1 つの pcap で見るため |
