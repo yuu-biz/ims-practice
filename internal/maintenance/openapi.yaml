@@ -651,13 +651,14 @@ components:
       additionalProperties: false
     AckStateRequest:
       type: object
-      required: [ack_state]
+      required: [ack_state, operator]
       properties:
         ack_state:
           $ref: '#/components/schemas/AckState'
         operator:
-          description: Who changes the state; the record keeps it as ack_user_id.
+          description: Who changes the state, either way; the record keeps it as ack_user_id.
           type: string
+          minLength: 1
           maxLength: 256
         ack_system_id:
           description: The system that the operator changes it through; the record keeps it as ack_system_id.

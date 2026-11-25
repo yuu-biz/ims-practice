@@ -74,8 +74,9 @@
 //	     started again when it differs from before.
 //	PUT  /maintenance/v1/alarms/{id}/ack-state
 //	     AckStateRequest -> AlarmRecord. ACKNOWLEDGED or
-//	     UNACKNOWLEDGED, with the operator's name and the system the
-//	     operator works through. 404 for an id that is not in the list.
+//	     UNACKNOWLEDGED, with the operator's name, which is required,
+//	     and the system the operator works through. 404 for an id that
+//	     is not in the list.
 //
 // The alarm list follows TS 28.111 6 and 7.3: an alarm is a record of
 // the attributes of 7.4.1, the node, its role and a peer as the object

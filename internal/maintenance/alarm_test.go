@@ -127,7 +127,7 @@ func TestAnAcknowledgedAlarmLeavesWhenItClears(t *testing.T) {
 	id := alarms(t, tn, AlarmFilter{}).AlarmRecords[0].AlarmID
 	ctx := context.Background()
 	for _, s := range []AckState{Acknowledged, Acknowledged, Unacknowledged, Acknowledged} {
-		r, err := tn.client.SetAckState(ctx, id, AckStateRequest{AckState: s})
+		r, err := tn.client.SetAckState(ctx, id, AckStateRequest{AckState: s, Operator: "alice"})
 		if err != nil || r.AckState != s {
 			t.Fatalf("set %s: %+v %v", s, r, err)
 		}
@@ -421,9 +421,11 @@ func TestAcknowledgeSeveralAlarmsAtOnce(t *testing.T) {
 		text   string
 	}{
 		{"an unknown alarm", AckStatesRequest{AckStates: map[string]AckStateRequest{
-			ids[0]: {AckState: Acknowledged}, "0011223344556677": {AckState: Acknowledged}}}, http.StatusNotFound, "0011223344556677"},
+			ids[0]: {AckState: Acknowledged, Operator: "alice"}, "0011223344556677": {AckState: Acknowledged, Operator: "alice"}}}, http.StatusNotFound, "0011223344556677"},
 		{"a state that there is not", AckStatesRequest{AckStates: map[string]AckStateRequest{
-			ids[0]: {AckState: Acknowledged}, ids[1]: {AckState: "SEEN"}}}, http.StatusBadRequest, ids[1]},
+			ids[0]: {AckState: Acknowledged, Operator: "alice"}, ids[1]: {AckState: "SEEN", Operator: "alice"}}}, http.StatusBadRequest, ids[1]},
+		{"an alarm without an operator", AckStatesRequest{AckStates: map[string]AckStateRequest{
+			ids[0]: {AckState: Acknowledged, Operator: "alice"}, ids[1]: {AckState: Acknowledged}}}, http.StatusBadRequest, ids[1]},
 		{"no alarm", AckStatesRequest{AckStates: map[string]AckStateRequest{}}, http.StatusBadRequest, "no alarm"},
 	} {
 		_, err := tn.client.SetAckStates(ctx, tc.req)
@@ -466,10 +468,17 @@ func TestAckStateErrors(t *testing.T) {
 	mustRaise(t, tn.node, Alarm{AlarmIdentity: pcrfDown, PerceivedSeverity: Major})
 	id := tn.node.Alarms(AlarmFilter{}).AlarmRecords[0].AlarmID
 	ctx := context.Background()
-	_, err := tn.client.SetAckState(ctx, "0011223344556677", AckStateRequest{AckState: Acknowledged})
+	_, err := tn.client.SetAckState(ctx, "0011223344556677", AckStateRequest{AckState: Acknowledged, Operator: "alice"})
 	wantAPIError(t, err, http.StatusNotFound, "no such alarm")
-	_, err = tn.client.SetAckState(ctx, id, AckStateRequest{AckState: "DONE"})
+	_, err = tn.client.SetAckState(ctx, id, AckStateRequest{AckState: "DONE", Operator: "alice"})
 	wantAPIError(t, err, http.StatusBadRequest, "ack_state")
+	// Each change names who made it, either way.
+	for _, s := range []AckState{Acknowledged, Unacknowledged} {
+		_, err = tn.client.SetAckState(ctx, id, AckStateRequest{AckState: s, AckSystemID: "oss-1"})
+		wantAPIError(t, err, http.StatusBadRequest, "operator")
+	}
+	_, err = tn.client.SetAckStates(ctx, AckStatesRequest{AckStates: map[string]AckStateRequest{id: {AckState: Acknowledged}}})
+	wantAPIError(t, err, http.StatusBadRequest, "operator")
 	// The names are bounded, in characters, not bytes.
 	long := strings.Repeat("ä", maxAckName)
 	if _, err := tn.client.SetAckState(ctx, id, AckStateRequest{AckState: Unacknowledged, Operator: long, AckSystemID: long}); err != nil {
@@ -477,7 +486,7 @@ func TestAckStateErrors(t *testing.T) {
 	}
 	_, err = tn.client.SetAckState(ctx, id, AckStateRequest{AckState: Acknowledged, Operator: long + "a"})
 	wantAPIError(t, err, http.StatusBadRequest, "operator")
-	_, err = tn.client.SetAckState(ctx, id, AckStateRequest{AckState: Acknowledged, AckSystemID: long + "a"})
+	_, err = tn.client.SetAckState(ctx, id, AckStateRequest{AckState: Acknowledged, Operator: "alice", AckSystemID: long + "a"})
 	wantAPIError(t, err, http.StatusBadRequest, "ack_system_id")
 	if r := tn.node.Alarms(AlarmFilter{}).AlarmRecords[0]; r.AckState != Unacknowledged {
 		t.Errorf("a refused name changed the record: %+v", r)
@@ -589,7 +598,7 @@ func TestAlarmsUnderConcurrentUse(t *testing.T) {
 				_ = tn.node.RaiseAlarm(Alarm{AlarmIdentity: id, PerceivedSeverity: Major})
 				l := tn.node.Alarms(AlarmFilter{})
 				for _, r := range l.AlarmRecords {
-					_, _ = tn.node.SetAckState(r.AlarmID, AckStateRequest{AckState: Acknowledged})
+					_, _ = tn.node.SetAckState(r.AlarmID, AckStateRequest{AckState: Acknowledged, Operator: "alice"})
 				}
 				_ = tn.node.ClearAlarm(id)
 			}
