@@ -2,7 +2,6 @@ package ibcfstore_test
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"testing"
@@ -45,21 +44,15 @@ func ids(t *testing.T, s *ibcfstore.Store) []string {
 	return got
 }
 
-// indexIDs reads the index of the instance as it is in the store.
+// indexIDs reads the index of the instance as it is in the store. The
+// tests leave far fewer entries than the limit of the read.
 func indexIDs(t *testing.T, kv kvstore.Store, prefix string) []string {
 	t.Helper()
-	item, err := kv.Get(context.Background(), prefix+"ibcf:calls-of:"+instance)
-	if errors.Is(err, kvstore.ErrNotFound) {
-		return nil
-	}
+	ids, err := kv.MembersAfter(context.Background(), prefix+"ibcf:call-ids:"+instance, "", 1000)
 	if err != nil {
 		t.Fatal(err)
 	}
-	var ix struct{ IDs []string }
-	if err := json.Unmarshal(item.Value, &ix); err != nil {
-		t.Fatal(err)
-	}
-	return ix.IDs
+	return ids
 }
 
 // TestAPutCallThatStopsLeavesNoCall: a process that stops before either
@@ -94,8 +87,9 @@ func TestAPutCallThatStopsLeavesNoCall(t *testing.T) {
 }
 
 // TestARewriteThatStopsLeavesTheRecordAsItWas: the entry of a call that
-// is written again is in the index already, so its one write is the
-// record, which is one item: a process that stops before it leaves the
+// is written again is in the index already, and adding it again changes
+// nothing, so what is left to change is the record, which is one item:
+// a process that stops before it, or before the entry, leaves the
 // record that it wrote last, in full.
 func TestARewriteThatStopsLeavesTheRecordAsItWas(t *testing.T) {
 	ctx := context.Background()
@@ -107,12 +101,14 @@ func TestARewriteThatStopsLeavesTheRecordAsItWas(t *testing.T) {
 			}
 			changed := record("a")
 			changed.Media = &ibcf.MediaContext{ID: "c-other"}
-			if err := ibcfstore.New(storetest.StopAfter(kv, 0), cfg).PutCall(ctx, changed); err == nil {
-				t.Fatal("PutCall on a stopped process returned no error")
-			}
-			got, err := ibcfstore.New(kv, cfg).CallsOf(ctx, instance)
-			if err != nil || len(got) != 1 || got[0].Media.ID != "ca" {
-				t.Errorf("CallsOf after the stopped rewrite = %+v, %v; want the record as it was", got, err)
+			for _, writes := range []int{0, 1} {
+				if err := ibcfstore.New(storetest.StopAfter(kv, writes), cfg).PutCall(ctx, changed); err == nil {
+					t.Fatalf("PutCall that stops after %d writes returned no error", writes)
+				}
+				got, err := ibcfstore.New(kv, cfg).CallsOf(ctx, instance)
+				if err != nil || len(got) != 1 || got[0].Media.ID != "ca" {
+					t.Errorf("CallsOf after a rewrite that stopped after %d writes = %+v, %v; want the record as it was", writes, got, err)
+				}
 			}
 		})
 	}
@@ -232,12 +228,13 @@ func TestAPutCallThatStopsBeforeItsDialogsLeavesNoEntry(t *testing.T) {
 		t.Run(backend.Name, func(t *testing.T) {
 			kv, cfg := backend.New(t), kvjson.Config{Prefix: storetest.Prefix()}
 			// The call has its entry in the index since its TrGW context,
-			// so the record of the answer is the first write.
+			// so the write of the answer that comes after the entry is the
+			// record.
 			if err := ibcfstore.New(kv, cfg).PutCall(ctx, record("a")); err != nil {
 				t.Fatal(err)
 			}
 			r := answeredRecord("a")
-			if err := ibcfstore.New(storetest.StopAfter(kv, 1), cfg).PutCall(ctx, r); err == nil {
+			if err := ibcfstore.New(storetest.StopAfter(kv, 2), cfg).PutCall(ctx, r); err == nil {
 				t.Fatal("PutCall that stops after the record returned no error")
 			}
 			findsNone(t, ibcfstore.New(kv, cfg), r)
