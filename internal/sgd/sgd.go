@@ -44,8 +44,8 @@
 // nothing), Additional-Serving-Node and
 // SMSF-Non-3GPP-Address (a second serving node, non-3GPP access), LMSI
 // (the VLR), the User-Identifier of the SRA (the MSISDN that the HSS
-// stores), and MWD-Status and the absent user diagnostics (what the HSS
-// has stored about earlier deliveries that failed). The SC of package
+// stores), and the absent user diagnostics of the SRA (why the HSS has
+// stored the user as absent). The SC of package
 // smsc, which uses this package, sends none of these AVPs and acts on
 // none of them, and so does the HSS of package hss on its side of S6c.
 //

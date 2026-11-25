@@ -25,6 +25,7 @@ const CommandSendRoutingInfoForSM uint32 = 8388647
 // AVP codes of S6c. All have Vendor-Id 10415.
 const (
 	avpSRRFlags          uint32 = 3310 // TS 29.338 5.3.3.4
+	avpMWDStatus         uint32 = 3312 // TS 29.338 5.3.3.8
 	avpRDRFlags          uint32 = 3323 // TS 29.338 5.3.3.21
 	avpSupportedFeatures uint32 = 628  // TS 29.229 6.3.29
 	avpFeatureListID     uint32 = 629  // TS 29.229 6.3.30
@@ -310,6 +311,29 @@ func (a *smsf3GPPAddressAVP) smsf3GPPAddress() (*SMSF3GPPAddress, error) {
 	return &SMSF3GPPAddress{SMSF3GPPNumber: number, SMSF3GPPName: a.Name, SMSF3GPPRealm: a.Realm}, nil
 }
 
+// MWDStatus is the MWD-Status AVP, TS 29.338 5.3.3.8: a bit mask of what
+// the HSS holds for the user in the message waiting data of TS 23.040
+// 3.2.6, as seen from the SC that asked. The SMS-GMSC learns from it
+// whether a delivery that succeeds clears something in the HSS, which it
+// then reports (TS 23.040 10.1 operation 3).
+//
+// Bits 4 and 5 of Table 5.3.3.8/1, with which the HSS waits for a
+// serving node of 5G, have no name here: the HSS of this project sets
+// neither, and the SC acts on neither.
+type MWDStatus uint32
+
+// The bits of TS 29.338 Table 5.3.3.8/1.
+const (
+	// MWDSCAddressNotIncluded says that the SC address of the request is
+	// not in the message waiting data.
+	MWDSCAddressNotIncluded MWDStatus = 1 << 0
+	// MWDMNRFSet, MWDMCEFSet and MWDMNRGSet say that the HSS has MNRF,
+	// MCEF or MNRG set (TS 23.040 3.2.6).
+	MWDMNRFSet MWDStatus = 1 << 1
+	MWDMCEFSet MWDStatus = 1 << 2
+	MWDMNRGSet MWDStatus = 1 << 3
+)
+
 // SendRoutingInfoForSMAnswer is the SRA of TS 29.338 5.3.2.4 (Table
 // 5.2.1.1-2).
 type SendRoutingInfoForSMAnswer struct {
@@ -333,6 +357,10 @@ type SendRoutingInfoForSMAnswer struct {
 	// sends it only to a requester that announced SMSFSupport (Table
 	// 5.2.1.1-2, NOTE).
 	SMSF3GPPAddress *SMSF3GPPAddress
+	// MWDStatus is what the HSS holds for the user in the message
+	// waiting data, or nil when the answer carries no MWD-Status, which
+	// Table 5.2.1.1-2 has the HSS send when appropriate.
+	MWDStatus *MWDStatus
 }
 
 // Message builds the SRA that answers request. The numbers in
@@ -351,6 +379,10 @@ func (a SendRoutingInfoForSMAnswer) Message(request *diam.Message, local diamete
 	if a.SMSF3GPPAddress != nil {
 		m.AddAVP(a.SMSF3GPPAddress.avp())
 	}
+	if a.MWDStatus != nil {
+		// M and V: TS 29.338 Table 5.3.3.1/1.
+		m.AddAVP(diameter.VendorAVP(avpMWDStatus, mv, datatype.Unsigned32(*a.MWDStatus)))
+	}
 	return m
 }
 
@@ -361,6 +393,7 @@ func ParseSendRoutingInfoForSMAnswer(m *diam.Message) (SendRoutingInfoForSMAnswe
 		SupportedFeatures []supportedFeaturesAVP `avp:"Supported-Features,omitempty"`
 		ServingNode       *servingNodeAVP        `avp:"Serving-Node,omitempty"`
 		SMSF3GPPAddress   *smsf3GPPAddressAVP    `avp:"SMSF-3GPP-Address,omitempty"`
+		MWDStatus         *uint32                `avp:"MWD-Status,omitempty"`
 	}
 	if err := m.Unmarshal(&raw); err != nil {
 		return SendRoutingInfoForSMAnswer{}, fmt.Errorf("SRA: %w", err)
@@ -377,11 +410,16 @@ func ParseSendRoutingInfoForSMAnswer(m *diam.Message) (SendRoutingInfoForSMAnswe
 	if err != nil {
 		return SendRoutingInfoForSMAnswer{}, fmt.Errorf("SRA: SMSF-3GPP-Address: %w", err)
 	}
+	var status *MWDStatus
+	if raw.MWDStatus != nil {
+		status = new(MWDStatus(*raw.MWDStatus))
+	}
 	return SendRoutingInfoForSMAnswer{
 		Result:            result,
 		UserName:          raw.UserName,
 		SupportedFeatures: featureList(raw.SupportedFeatures),
 		ServingNode:       node,
 		SMSF3GPPAddress:   smsf,
+		MWDStatus:         status,
 	}, nil
 }

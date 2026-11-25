@@ -17,7 +17,7 @@ go doc ./internal/sgd
 
 | 場所 | 省いたこと | 理由 |
 | --- | --- | --- |
-| パッケージ `sgd`、TS 29.338 5.3.2、6.3.2 | どの構造体にも無い任意の AVP。SGd では、優先のサービス、MSISDN の無い SMS、UE のセル、SGSN、マシン型の通信、メッセージを預かるか SC に送り直しを求めるノードのための AVP です。S6c では、優先のサービス、MSISDN の無い利用者、RP のメッセージの種類と発信元の SME のアドレス、2 つ目のノード、3GPP でないアクセス、VLR、届かなかった配送について HSS が覚えていることのための AVP です。AVP の名前は、パッケージのコメントにあります。 | このパッケージを使うノードは、どの AVP も送らず、受けても使いません。 |
+| パッケージ `sgd`、TS 29.338 5.3.2、6.3.2 | どの構造体にも無い任意の AVP。SGd では、優先のサービス、MSISDN の無い SMS、UE のセル、SGSN、マシン型の通信、メッセージを預かるか SC に送り直しを求めるノードのための AVP です。S6c では、優先のサービス、MSISDN の無い利用者、RP のメッセージの種類と発信元の SME のアドレス、2 つ目のノード、3GPP でないアクセス、VLR、HSS が利用者を不在と覚えた理由のための AVP です。AVP の名前は、パッケージのコメントにあります。 | このパッケージを使うノードは、どの AVP も送らず、受けても使いません。 |
 | `AlertServiceCentreRequest`、TS 29.338 5.3.2.5、6.2.3 | HSS のほかのノードからの通知と、AVP の SMSMI-Correlation-ID、Maximum-UE-Availability-Time、Serving-Node を伴う SMS-GMSC-Alert-Event。 | MSISDN の無い SMS と、省電力のモードの UE のためのものです。そういう UE には、MME が SGd で直接知らせます。このプロジェクトには、そういう UE がありません。 |
 | `SRRFlags`、TS 29.338 Table 5.3.3.4/1 | GPRS-Indicator のビット（SMS-GMSC が serving node を 2 つ求める）と SM-RP-PRI（message waiting data に自分のアドレスが既にあっても配送を求める）。読むのは Single-Attempt-Delivery だけです。 | このプロジェクトの HSS は serving node を 1 つだけ持ち、優先度を読みません。 |
 | `SMDeliveryOutcome`、TS 29.338 5.3.3.14 | MSC、SGSN、3GPP でないアクセスの SMSF を通した配送の結果。 | このプロジェクトには、どのノードもありません。 |
