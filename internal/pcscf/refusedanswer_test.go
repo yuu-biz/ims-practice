@@ -1,0 +1,178 @@
+package pcscf
+
+import (
+	"context"
+	"net/netip"
+	"testing"
+	"time"
+
+	"github.com/yuu-biz/ims-practice/internal/agw"
+	"github.com/yuu-biz/ims-practice/internal/sdp"
+	"github.com/yuu-biz/ims-practice/internal/sip"
+)
+
+// The tests of this file have a media relay that does not take the SDP
+// answer of a response, as one that restarts while the call is set up.
+// The P-CSCF then has no answer that names the relay to pass on, and
+// ends the call.
+
+// callLegs are the two ways a call passes the P-CSCF. The answer of a
+// call from the UE comes from the network and tells the core
+// termination where to send; the answer of a call to the UE tells the
+// access termination.
+var callLegs = []struct {
+	name string
+	call func(*callHarness) (*sip.OutgoingCall, *sip.IncomingCall)
+	// answered is the termination that the answer is for.
+	answered agw.TerminationID
+	// media is where the callee takes its media.
+	media netip.AddrPort
+}{
+	{"from the UE", (*callHarness).call, agw.Core, coreMedia},
+	{"to the UE", (*callHarness).callUE, agw.Access, ueMedia},
+}
+
+// wantNoFailureCause checks the 500 with which the P-CSCF ends a call
+// whose answer the relay did not take. FAILURE_CAUSE tells of radio or
+// bearer resources that are gone (TS 24.229 7.2A.18.12.2), and those
+// are still there.
+func wantNoFailureCause(t *testing.T, resp *sip.Message) {
+	t.Helper()
+	if got := resp.Get("Reason"); got != "" {
+		t.Errorf("Reason of the 500 = %q, want none", got)
+	}
+}
+
+// TestRefusedAnswerOfA183EndsTheCall: the relay does not take the answer
+// of the 183. The P-CSCF ends the call being set up as TS 24.229
+// 5.2.8.1.1 does: the caller gets 500, and the callee a CANCEL with the
+// Reason of 503. The PCRF never gets the answer, and the relay context
+// goes.
+func TestRefusedAnswerOfA183EndsTheCall(t *testing.T) {
+	for _, leg := range callLegs {
+		t.Run(leg.name, func(t *testing.T) {
+			h, pcrf, relay := newPolicyHarness(t)
+			relay.refuseModify(leg.answered)
+			out, in := leg.call(h)
+			// The 183 is reliable, and Progress waits for a PRACK that the
+			// caller never sends: the CANCEL ends the call first.
+			go in.Progress(183, answerTo(t, in.Request, leg.media))
+
+			wantNoFailureCause(t, answered(t, out, 500))
+			ended(t, "the callee's call", in.Done())
+			if in.Err() != sip.ErrCancelled {
+				t.Fatalf("the callee's call ended with %v, want a CANCEL", in.Err())
+			}
+			wantCancelReason(t, in.EndedBy())
+			relay.waitHeld(t, 0, time.Second)
+			if n := len(pcrf.mediaRequests()); n != 0 {
+				t.Errorf("%d requests to authorise media, want none for an answer that the relay did not take", n)
+			}
+		})
+	}
+}
+
+// TestRefusedAnswerOfThe200EndsTheCall: the answer comes with the 200,
+// and the relay does not take it. The callee has answered, but its 200
+// would lead the caller past the relay, so the caller gets 500 in its
+// place, as for an INVITE that the P-CSCF gives up (TS 24.229
+// 5.2.8.1.1). The P-CSCF acknowledges the 200 in the caller's name (RFC
+// 3261 13.2.2.4) and ends the callee's session with a BYE (RFC 3261 15),
+// and the relay context goes at once.
+func TestRefusedAnswerOfThe200EndsTheCall(t *testing.T) {
+	for _, leg := range callLegs {
+		t.Run(leg.name, func(t *testing.T) {
+			h, pcrf, relay := newPolicyHarness(t)
+			out, in := leg.call(h)
+			relay.refuseModify(leg.answered)
+			acked := accept(in, answerTo(t, in.Request, leg.media))
+
+			wantNoFailureCause(t, answered(t, out, 500))
+			waitACK(t, acked)
+			ended(t, "the callee's call", in.Done())
+			bye := in.EndedBy()
+			if bye == nil || bye.Method != sip.BYE {
+				t.Fatalf("the callee's call ended by %v, want a BYE", bye)
+			}
+			if got := bye.Get("Reason"); got != reasonServiceUnavailable {
+				t.Errorf("Reason of the BYE = %q, want %q", got, reasonServiceUnavailable)
+			}
+			relay.waitHeld(t, 0, time.Second)
+			if n := len(pcrf.mediaRequests()); n != 0 {
+				t.Errorf("%d requests to authorise media, want none for an answer that the relay did not take", n)
+			}
+		})
+	}
+}
+
+// TestRefusedRetransmissionOfThe200KeepsTheCall: the relay took the
+// answer of the 200, and the caller has it. A retransmission of that 200
+// (RFC 6026 8.1) that the relay does not take changes nothing: it goes
+// on to the caller, nobody gets an ACK or a BYE from the P-CSCF, and the
+// call keeps its relay context.
+func TestRefusedRetransmissionOfThe200KeepsTheCall(t *testing.T) {
+	relay := newFakeRelay()
+	invites := make(chan *sip.ServerTransaction, 1)
+	farGot, ueGot := make(chan *sip.Message, 4), make(chan *sip.Message, 4)
+	far := newStackConfig(t, sip.Config{Timers: sip.DefaultTimers(),
+		OnACK: func(ack *sip.Message) { farGot <- ack },
+		OnRequest: func(st *sip.ServerTransaction) {
+			if st.Request.Method == sip.INVITE {
+				invites <- st
+				return
+			}
+			farGot <- st.Request
+		}})
+	ue := newStack(t, func(st *sip.ServerTransaction) { ueGot <- st.Request })
+	locate := locatorFunc(func(string) []sip.Destination {
+		return []sip.Destination{{Transport: sip.UDP, Addr: far.LocalAddr()}}
+	})
+	store := NewMemoryStore()
+	p := newPCSCF(t, Config{Host: "pcscf." + domain, Port: 5060, VisitedNetworkID: domain}, locate, store, only(relay), quiet())
+	ueContact := "sip:001010000000001@" + ue.LocalAddr().String()
+	store.PutAssociation(context.Background(), Association{
+		Source: sip.Destination{Transport: sip.UDP, Addr: ue.LocalAddr()}, SentBy: ue.LocalAddr().String(), Contact: ueContact,
+		PrivateIdentity: impi, PublicIdentities: []string{impu}, ServiceRoute: []string{"<sip:orig@scscf." + domain + ":5060;lr>"},
+		Expires: time.Now().Add(time.Hour),
+	})
+	pcscf := newPCSCFStack(t, p)
+	p.SetStack(pcscf)
+
+	inv := invite("sip:001010000000002@"+domain, "<sip:pcscf."+domain+":5060;lr>")
+	inv.Set("Contact", "<"+ueContact+">")
+	ct, err := ue.SendRequest(inv, sip.Destination{Transport: sip.UDP, Addr: pcscf.LocalAddr()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var st *sip.ServerTransaction
+	select {
+	case st = <-invites:
+	case <-time.After(3 * time.Second):
+		t.Fatal("the callee got no INVITE")
+	}
+	ok := sip.NewResponse(st.Request, 200, "callee")
+	for _, r := range st.Request.GetAll("Record-Route") {
+		ok.Add("Record-Route", r)
+	}
+	ok.Add("Contact", "<sip:callee@"+far.LocalAddr().String()+">")
+	ok.Add("Content-Type", "application/sdp")
+	ok.Body = sdp.Offer("2", coreMedia).Bytes()
+	st.Respond(ok)
+	if r := final(t, ct.Responses(), 3*time.Second); r.StatusCode != 200 || audio(t, r.Body) != relayAccess {
+		t.Fatalf("the caller got %d naming %v, want the 200 naming the relay", r.StatusCode, audio(t, r.Body))
+	}
+
+	relay.refuseModify(agw.Core)
+	st.Respond(ok)
+	select {
+	case r := <-ct.Responses():
+		if r.StatusCode != 200 {
+			t.Errorf("the caller got %d after its 200, want the retransmission of the 200", r.StatusCode)
+		}
+	case <-time.After(3 * time.Second):
+		t.Error("the retransmission of the 200 did not reach the caller")
+	}
+	noRequest(t, "the callee", farGot)
+	noRequest(t, "the caller", ueGot)
+	relay.waitHeld(t, 1, 0)
+}

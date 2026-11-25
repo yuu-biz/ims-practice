@@ -359,6 +359,66 @@ In Wireshark, `http.request.uri == "/contexts" && http.request.method == "POST"`
 
 The administrative state belongs to the process of the node: a node that starts again is `UNLOCKED`. `scripts/e2e-observability.sh` runs these steps and checks the capture.
 
+## When the relay does not take an answer
+
+The P-CSCF points every SDP answer at the relay before it passes the answer on (steps 8 and 10). It first tells the termination that faces the answering party where that party receives, with a `Modify` (TS 29.334 5.17.2.3), and only then writes the address of its other termination into the SDP (TS 24.229 6.7.2.1). A relay that is restarting, or that has lost the context, refuses the `Modify` or does not answer it in time. The P-CSCF then has no answer of its own to pass on, and the answer that came names the address of the far party. A UE that got it would send its RTP past the relay, and the PCRF would authorise media on a path that the call does not take. So the P-CSCF ends the call.
+
+TS 24.229 names no procedure for a media relay that fails. The P-CSCF ends the call with the steps it takes when the network takes away the resources of a session that is being set up (TS 24.229 5.2.8.1.1), with one difference: its 500 carries no `Reason: FAILURE_CAUSE`, which tells of lost radio or bearer resources (TS 24.229 7.2A.18.12.2). The CANCEL and the BYE carry `Reason: SIP;cause=503` (RFC 3326 2), the cause that TS 24.229 5.2.8.1.1 and 5.2.8.1.2 give when the resources of a session are gone and the node that controls them gave no cause of its own. The relay gives none.
+
+When the answer comes in a 183, the call is still being set up:
+
+```text
+ UE 1          P-CSCF          media relay      network
+ |               |  183 with the SDP answer         |
+ |               |<---------------------------------|
+ |               | PUT .../terminations/core        |  Modify: where the callee receives
+ |               |--------------->|                 |
+ |               | error, or no answer in time      |
+ |               |<---------------|                 |
+ |   500         |                |                 |  the 183 goes no further
+ |<--------------|                |                 |
+ |               | CANCEL  Reason: SIP;cause=503    |
+ |               |--------------------------------->|
+ |               |      200 (CANCEL), 487 (INVITE)  |
+ |               |<---------------------------------|
+ |               | DELETE /contexts/{id}            |  Subtract
+ |               |--------------->|                 |
+```
+
+- **UE 1 gets 500** for its INVITE, and never sees the 183.
+- **The INVITE towards the network is cancelled**, and the callee answers it 487 (RFC 3261 9.2).
+- **The P-CSCF removes the relay context**, trying again a few times when the relay does not answer. It gives the PCRF nothing: no answer that names the relay ever passed.
+
+When the answer comes in the 200, the callee has answered already:
+
+```text
+ UE 1          P-CSCF          media relay      network
+ |               |  200 (INVITE) with the SDP answer|
+ |               |<---------------------------------|
+ |               | PUT .../terminations/core        |  Modify
+ |               |--------------->|                 |
+ |               | error, or no answer in time      |
+ |               |<---------------|                 |
+ |   500         |                |                 |  in the place of the 200
+ |<--------------|                |                 |
+ |               | ACK, in the name of UE 1         |
+ |               |--------------------------------->|
+ |               | BYE  Reason: SIP;cause=503       |
+ |               |--------------------------------->|
+ |               |                      200 (BYE)   |
+ |               |<---------------------------------|
+ |               | DELETE /contexts/{id}            |  Subtract
+ |               |--------------->|                 |
+```
+
+- **UE 1 gets 500 in the place of the 200.** The INVITE of UE 1 has no final response yet, so the P-CSCF can still end the call there, and the 200 with an SDP that leads past the relay never reaches UE 1.
+- **The callee's dialog is confirmed**, so the P-CSCF acknowledges the 200 in the name of UE 1 (RFC 3261 13.2.2.4) and ends the session with a BYE (RFC 3261 15), as for a 200 that crossed its CANCEL. The callee sends the 200 again until the ACK comes, and each retransmission gets the ACK again.
+- **A retransmission of a 200 whose answer the relay did take is different.** UE 1 has that 200 already, so the retransmission goes on as it came, and the call stays up.
+
+At the P-CSCF of UE 2 the same happens the other way round. The 183 or the 200 comes from UE 2, the `Modify` is for the access termination, the 500 goes to the network, and the CANCEL, or the ACK and the BYE, go to UE 2.
+
+The tests of `internal/pcscf` run these flows in one process, with a relay that refuses the `Modify` of the answer: `TestRefusedAnswerOfA183EndsTheCall`, `TestRefusedAnswerOfThe200EndsTheCall` and `TestRefusedRetransmissionOfThe200KeepsTheCall`.
+
 ## What this project simplifies
 
 Each item has a `SIMPLIFIED:` comment in the code; `grep -rn "SIMPLIFIED:" internal cmd` lists them all.
