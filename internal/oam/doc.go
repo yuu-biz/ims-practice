@@ -133,10 +133,11 @@
 // The notifications go to the notificationRecipientAddress of each
 // subscription that selects them, as a POST of the bodies of
 // TS28111_FaultNotifications.yaml 19.3.0, which the OSS answers with 204
-// (TS 32.158 5.5.4). RunNotifications watches each node: it reads the
-// journal of the changes of the node's alarm list
-// (maintenance.AlarmEvents), and sends notifyNewAlarm,
-// notifyChangedAlarmGeneral, notifyClearedAlarm and
+// (TS 32.158 5.5.4). Any other answer, a redirect too, which the OAM
+// does not follow, is a notification that the OSS did not take.
+// RunNotifications watches each node: it reads the journal of the
+// changes of the node's alarm list (maintenance.AlarmEvents), and sends
+// notifyNewAlarm, notifyChangedAlarmGeneral, notifyClearedAlarm and
 // notifyAckStateChanged for its events, in their order.
 // notifyPotentialFaultyAlarmList says that a node stopped answering,
 // and notifyAlarmListRebuilt with ALIGNMENT_REQUIRED that it came back,

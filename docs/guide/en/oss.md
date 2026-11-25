@@ -115,7 +115,7 @@ docker compose exec oss wget -qO- http://oam:8080/3GPPManagement/ProvMnS/v19/Sub
 
 ## The notifications and when each comes
 
-The OAM watches each node: it asks the node's maintenance API for the changes of its alarm list, a request that waits up to five seconds for one, and turns each change into a notification. It posts the notification to every subscription that selects it, and the OSS answers `204 No Content` (TS 32.158 5.5.4).
+The OAM watches each node: it asks the node's maintenance API for the changes of its alarm list, a request that waits up to five seconds for one, and turns each change into a notification. It posts the notification to every subscription that selects it, and the OSS answers `204 No Content` (TS 32.158 5.5.4). Any answer but a 2xx means that the OSS did not take the notification, a redirect too: the OAM does not follow one, as a client that follows a 301 or a 302 may send a GET in place of the POST, without the notification (RFC 9110 15.4.2, 15.4.3).
 
 | Notification (TS 28.111) | When |
 | --- | --- |

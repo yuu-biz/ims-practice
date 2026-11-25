@@ -287,7 +287,10 @@ func (s *Server) sendOwed(ctx context.Context) {
 
 // post sends n to the recipient of sub, and says whether the recipient
 // took it: an answer of 2xx within NotificationTimeout. TS 32.158 5.5.4
-// has the recipient answer 204.
+// has the recipient answer 204 to the POST at its address, and any
+// other answer is a failure. A redirect is one too, and is not
+// followed: a client that follows a 301 or a 302 may send a GET in place
+// of the POST (RFC 9110 15.4.2, 15.4.3), without the notification.
 func (s *Server) post(ctx context.Context, sub NtfSubscriptionControl, n alarmNotification) bool {
 	result := notificationFailed
 	defer func() { s.notificationMetrics.sent.Inc(string(n.notificationType), result) }()
@@ -302,7 +305,7 @@ func (s *Server) post(ctx context.Context, sub NtfSubscriptionControl, n alarmNo
 		return false
 	}
 	req.Header.Set("Content-Type", "application/json")
-	resp, err := s.httpClient.Do(req)
+	resp, err := s.notificationClient.Do(req)
 	if err != nil {
 		s.log.Warn("a notification was not delivered", "id", sub.ID, "notification_type", string(n.notificationType), "error", err.Error())
 		return false
