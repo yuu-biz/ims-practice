@@ -96,7 +96,10 @@ func (s *SCSCF) thirdPartyRegister(req *sip.Message, reg Registration, as ifc.Ap
 }
 
 // sendThirdPartyRegister sends m and applies the default handling of
-// the criterion when the server fails (TS 24.229 5.4.1.7).
+// the criterion when the server fails (TS 24.229 5.4.1.7). A REGISTER
+// that the stop of this instance's stack cut short is no failure of the
+// server, which may have answered it, so the registration stays as it
+// is.
 //
 // SIMPLIFIED: TS 24.229 5.4.1.7. The term-ioi of the response is not
 // stored: it is for the charging records of the S-CSCF, which no node
@@ -104,6 +107,10 @@ func (s *SCSCF) thirdPartyRegister(req *sip.Message, reg Registration, as ifc.Ap
 func (s *SCSCF) sendThirdPartyRegister(m *sip.Message, reg Registration, as ifc.ApplicationServer, expires time.Duration, log *slog.Logger) {
 	log = log.With("application_server", as.ServerName, "expires", int(expires/time.Second))
 	final, err := s.sendRequest(m)
+	if errors.Is(err, sip.ErrStackClosed) {
+		log.Info("third-party REGISTER cut short by the stop of the stack; no default handling")
+		return
+	}
 	if !unreachable(final, err) {
 		log.Info("third-party REGISTER answered", "status", final.StatusCode)
 		return
