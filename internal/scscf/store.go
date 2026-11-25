@@ -127,9 +127,9 @@ func (r Registration) NonBarredIdentities() []string {
 }
 
 // DefaultIdentity is the default public identity: the first identity of
-// the profile that is not barred (TS 29.228 6.5.1.1). The HSS bars no
-// identity of a set without leaving one that is not barred (6.1.1.1
-// step 4), so a registration always has one.
+// the profile that is not barred (TS 29.228 6.5.1.1). The S-CSCF takes
+// no profile without one for a registration (cx.UserProfile.Registrable),
+// so a registration always has one.
 func (r Registration) DefaultIdentity() string { return r.NonBarredIdentities()[0] }
 
 func barred(barredIDs []string, id string) bool {

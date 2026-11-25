@@ -465,7 +465,7 @@ func (s *SCSCF) accept(st *sip.ServerTransaction, c sip.Credentials, ch Challeng
 		Expires:         time.Now().Add(expires),
 		Path:            req.GetAll("Path"),
 	}
-	if profile, err := cx.ParseUserProfile(saa.UserData); err == nil {
+	if profile, err := registrableProfile(saa.UserData); err == nil {
 		reg.PublicIdentities, reg.BarredIdentities = profile.PublicIdentities, profile.BarredIdentities
 		reg.InitialFilterCriteria = profile.InitialFilterCriteria
 	} else if registered {
@@ -661,6 +661,16 @@ func (s *SCSCF) answer(request *diam.Message) *diam.Message {
 	return diameter.CommandUnsupportedAnswer(identity, request)
 }
 
+// registrableProfile reads the User-Data of the SAA of a registration:
+// a profile with a default public identity (cx.UserProfile.Registrable).
+func registrableProfile(data []byte) (cx.UserProfile, error) {
+	profile, err := cx.ParseUserProfile(data)
+	if err != nil {
+		return cx.UserProfile{}, err
+	}
+	return profile, profile.Registrable()
+}
+
 // deregistrationEvents is the event that the NOTIFY gives for each
 // Reason-Code of an RTR (TS 24.229 5.4.1.5): rejected when registering
 // again would not help, deactivated when the UE is to register again.
@@ -761,6 +771,12 @@ func (s *SCSCF) pushProfile(r cx.PushProfileRequest) cx.PushProfileAnswer {
 		return s.pushProfileFailed(r, err)
 	}
 	if registered {
+		if err := profile.Registrable(); err != nil {
+			// Table 6.2.2.1.1: user information that the S-CSCF cannot take
+			// for a registered user.
+			log.Warn("PPR has no usable User-Data", "error", err.Error())
+			return cx.PushProfileAnswer{Result: diameter.Experimental(cx.DiameterErrorNotSupportedUserData)}
+		}
 		reg.PublicIdentities, reg.BarredIdentities = profile.PublicIdentities, profile.BarredIdentities
 		reg.InitialFilterCriteria = profile.InitialFilterCriteria
 		if err := s.store.PutRegistration(ctx, reg); err != nil {

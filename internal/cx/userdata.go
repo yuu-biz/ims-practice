@@ -2,6 +2,7 @@ package cx
 
 import (
 	"encoding/xml"
+	"errors"
 	"fmt"
 	"slices"
 
@@ -81,6 +82,24 @@ func (p UserProfile) DefaultIdentity() string {
 		}
 	}
 	return ""
+}
+
+// ErrNoDefaultIdentity is the error of a profile that bars every one of
+// its public identities, and so has no default public identity.
+var ErrNoDefaultIdentity = errors.New("User-Data: every public identity is barred, so none is the default public identity")
+
+// Registrable checks that the profile can be that of a registered user,
+// whose default public identity the S-CSCF takes from it (TS 29.228
+// 6.5.1.1) and keeps, as a PPR does not change it (6.5.2.1). A profile
+// that bars every identity has none. The HSS refuses to register such a
+// set (6.1.1.1 step 4), but the profile of a user who is not registered
+// may be one, and its barred identities are what keep it out of every
+// session.
+func (p UserProfile) Registrable() error {
+	if p.DefaultIdentity() == "" {
+		return ErrNoDefaultIdentity
+	}
+	return nil
 }
 
 // Marshal writes the profile as the XML document that User-Data holds.
