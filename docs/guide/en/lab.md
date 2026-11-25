@@ -46,7 +46,7 @@ The Lab knows only what the nodes tell it. Each node, and each UE simulator, sen
 
 ## How the ladder is built
 
-A message that goes from one node to another is reported twice, once by its sender and once by its receiver. The ladder pairs a sent copy and a received copy with the same source, destination and content into one arrow, so each arrow is one message on the wire; a retransmission that is identical still gets its own arrow.
+A message that goes from one node to another is reported twice, once by its sender and once by its receiver. The ladder pairs a sent copy and a received copy with the same source, destination and content into one arrow, so each arrow is one message on the wire; a retransmission that is identical still gets its own arrow. HEP does not say whether a node sent or received a copy, so the Lab tells it by the address the copy came from, which is the node's own end of the message. A node on two networks, such as the IBCF of [the interconnect guide](interconnect.md), sends its copies from its address on the network of the Lab, so the configuration of the Lab names its other address under `node_addresses`.
 
 A Cx message carries nothing that names the SIP request it was sent for: the Session-Id of Diameter and the Call-ID of SIP are unrelated. The Lab therefore links them by the rule of the procedures. A Cx request belongs to the SIP request that the same node received last, at most 2 seconds before, and that names the same user: for a UAR, MAR or SAR, a REGISTER whose Authorization username is the User-Name or whose To is the Public-Identity; for an LIR, a request whose Request-URI is the Public-Identity. The answer follows its request through the Session-Id. The rule is in `internal/lab/causes.go`.
 

@@ -126,6 +126,26 @@ func TestWildcardAddressBecomesTheNodes(t *testing.T) {
 	}
 }
 
+// TestDirectionOfANodeOnTwoNetworks: an IBCF on two networks sends its
+// HEP copies from its address on the network of the Lab, and the
+// messages on the other side neither come from nor go to that address.
+// The addresses that the configuration gives the node tell its own end
+// of those messages too.
+func TestDirectionOfANodeOnTwoNetworks(t *testing.T) {
+	ibcf := node{"ibcf-a", netip.MustParseAddrPort("172.28.0.90:5060")}
+	external := node{"ibcf-a", netip.MustParseAddrPort("172.28.2.10:5060")}
+	peer := node{"ibcf-b", netip.MustParseAddrPort("172.28.2.20:5060")}
+	h := newHarness(t, Config{NodeAddresses: map[string][]netip.Addr{"ibcf-a": {external.addr.Addr()}}})
+	const id = "call-nni@172.28.2.10"
+	h.capture(ibcf, external, peer, hep.ProtocolTypeSIP, id, invite(id))
+	h.capture(ibcf, peer, external, hep.ProtocolTypeSIP, id, response(id, 180, "Ringing", 1, "INVITE", "callee2"))
+	var all []Message
+	h.get("/api/messages", &all)
+	if len(all) != 2 || all[0].Direction != DirectionSend || all[1].Direction != DirectionRecv {
+		t.Fatalf("messages = %+v, want the INVITE sent and the 180 received", all)
+	}
+}
+
 func TestMessageJSON(t *testing.T) {
 	h := newHarness(t, Config{})
 	h.capture(hss, icscf, hss, hep.ProtocolTypeDiameterJSON, "", `{"command":"Unknown","code":999,"request":true,"avps":[]}`)

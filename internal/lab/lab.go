@@ -119,6 +119,11 @@ type Config struct {
 	FaultAgent string
 	// UEs are the UE simulators that the web UI drives.
 	UEs []UESimulator
+	// NodeAddresses are the addresses of a node, by its name, besides the
+	// one it sends its HEP copies from: those of a node on more than one
+	// network, such as an IBCF. A copy of a message on another network
+	// names one of them as its own end.
+	NodeAddresses map[string][]netip.Addr
 }
 
 type Lab struct {
@@ -128,7 +133,9 @@ type Lab struct {
 	epc         http.Handler
 	faults      http.Handler
 	ues         *ueSimulators
-	log         *slog.Logger
+	// nodeAddresses is Config.NodeAddresses.
+	nodeAddresses map[string][]netip.Addr
+	log           *slog.Logger
 }
 
 func New(cfg Config, log *slog.Logger) (*Lab, error) {
@@ -152,13 +159,14 @@ func New(cfg Config, log *slog.Logger) (*Lab, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Lab{store: newStore(cfg.MaxMessages), events: newBroker(), subscribers: subscribers, epc: epc, faults: faults, ues: ues, log: log}, nil
+	return &Lab{store: newStore(cfg.MaxMessages), events: newBroker(), subscribers: subscribers, epc: epc, faults: faults, ues: ues,
+		nodeAddresses: cfg.NodeAddresses, log: log}, nil
 }
 
 // ingest keeps one HEP packet that came from the address from, and tells
 // the open event streams.
 func (l *Lab) ingest(p hep.Packet, from netip.Addr) {
-	c, err := newMessage(p, from)
+	c, err := newMessage(p, from, l.nodeAddresses[p.NodeName])
 	if err != nil {
 		l.log.Warn("HEP packet skipped", "from", from.String(), "node", p.NodeName, "error", err.Error())
 		return
