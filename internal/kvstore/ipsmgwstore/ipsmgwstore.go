@@ -157,9 +157,10 @@ func (s *Store) TakeOutcome(ctx context.Context, reference string) (ipsmgw.Outco
 }
 
 // notReachable is the item of the IP-SM-GW's own UNRI for one user. It
-// is an item rather than a field of the subscription, because it
-// outlives the registration it was set under: the user may have to
-// register again before this IP-SM-GW can reach them.
+// is an item rather than a field of the subscription, so that taking it
+// is one step that only one instance wins (TakeNotReachable), whatever
+// writes the subscription at the same time. The IP-SM-GW gives it the
+// expiry of the subscription.
 type notReachable struct {
 	// Expires is when the flag goes, as PutNotReachable gave it.
 	Expires time.Time
