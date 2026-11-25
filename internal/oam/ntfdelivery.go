@@ -103,10 +103,11 @@ func (r *recipient) selects(n alarmNotification) bool {
 // notify fails when it could not read the subscriptions, or could not
 // write the mark of a miss or a skip: then some recipient has neither
 // the notifications nor the mark that would have it read the list
-// again.
-// The watcher sends the notifications again, and saves nothing until
-// they have gone (deliver); the recipients that took them get them
-// twice, with the same notificationIds.
+// again. The watcher sends the notifications again, and saves nothing
+// until they have gone (deliver). A recipient that took a notification
+// is put in taken, and passed over for it when it is sent again, so
+// that while the store cannot be written, the recipients that answer
+// are not sent it at every try.
 //
 // The OSS that is sent a notification again after it missed one gets no
 // copy of the ones it missed: TS 28.111 8.5.2 lets the producer say,
@@ -122,7 +123,7 @@ func (r *recipient) selects(n alarmNotification) bool {
 // notification transport of TS 28.532, and the OSS is told instead to
 // read the list, which 8.5.2 has the notification ask for when
 // notifications were not sent.
-func (s *Server) notify(ctx context.Context, notifications ...alarmNotification) error {
+func (s *Server) notify(ctx context.Context, taken deliveries, notifications ...alarmNotification) error {
 	if len(notifications) == 0 {
 		return nil
 	}
@@ -144,10 +145,17 @@ func (s *Server) notify(ctx context.Context, notifications ...alarmNotification)
 		failed error
 	)
 	sem := make(chan struct{}, s.notificationConcurrency)
-	for _, n := range notifications {
+	for i, n := range notifications {
 		var wg sync.WaitGroup
 		for _, r := range recipients {
 			if !r.selects(n) {
+				continue
+			}
+			d := delivery{notification: i, subscription: r.sub.ID, address: r.sub.Attributes.NotificationRecipientAddress}
+			mu.Lock()
+			done := taken[d]
+			mu.Unlock()
+			if done {
 				continue
 			}
 			r.mu.Lock()
@@ -168,7 +176,13 @@ func (s *Server) notify(ctx context.Context, notifications ...alarmNotification)
 				// not the recipient's miss: the watcher saves nothing
 				// then, and the next holder of the watch sends the
 				// notification again.
-				if s.post(ctx, r.sub, n) || ctx.Err() != nil {
+				if s.post(ctx, r.sub, n) {
+					mu.Lock()
+					taken[d] = true
+					mu.Unlock()
+					return
+				}
+				if ctx.Err() != nil {
 					return
 				}
 				if err := s.markMissed(ctx, r); err != nil {
@@ -184,6 +198,20 @@ func (s *Server) notify(ctx context.Context, notifications ...alarmNotification)
 		}
 	}
 	return nil
+}
+
+// deliveries are the notifications of one call of deliver that each
+// recipient took.
+type deliveries map[delivery]bool
+
+// delivery is a notification, by its place among the notifications of
+// a call of deliver, that the subscription took at the address. A
+// subscription that a PUT has moved to another address since has not
+// taken it there.
+type delivery struct {
+	notification int
+	subscription string
+	address      string
 }
 
 // markMissed records a miss of the recipient, in the store for every

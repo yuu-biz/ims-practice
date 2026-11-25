@@ -945,6 +945,45 @@ func TestANotificationThatTheStoreKeptFromGoingIsSentAgain(t *testing.T) {
 	}
 }
 
+// TestARecipientThatTookANotificationIsNotSentItAgain: one OSS refuses
+// every notification, and the store cannot write the mark of its miss
+// for a while. The watcher sends the notification again until the mark
+// is written, but not to the OSS that took it the first time.
+func TestARecipientThatTookANotificationIsNotSentItAgain(t *testing.T) {
+	scscf := newJournalNode(t, "scscf", maintenance.Config{})
+	oss := newOSSStandIn(t)
+	store := &failingSubscriptions{}
+	n := startNotifierWith(t, t.TempDir(), func(c *Config) {
+		store.NtfSubscriptionStore = c.NtfSubscriptions
+		c.NtfSubscriptions = store
+		c.MissedRetryInterval = time.Hour
+	}, nil, scscf)
+	n.subscribe(t, oss, "healthy", "")
+	n.subscribe(t, oss, "refusing", "")
+	n.watching(t, "scscf")
+	oss.setAnswer(func(recipient string, _ int) (int, time.Duration) {
+		if recipient == "/refusing" {
+			return http.StatusInternalServerError, 0
+		}
+		return http.StatusNoContent, 0
+	})
+	store.marks.Store(3)
+
+	scscf.raise(t, "hss-1", maintenance.Major)
+	if got := oss.next(t, "the alarm of hss-1"); got.recipient != "/healthy" || !strings.HasSuffix(got.field("href"), "Peer=hss-1") {
+		t.Errorf("got %s at %s, want the alarm of hss-1", got.raw, got.recipient)
+	}
+	// The journal moves on once the mark is written: the next
+	// notification that the OSS takes is the next alarm, not the first
+	// one again.
+	scscf.raise(t, "hss-2", maintenance.Major)
+	if got := oss.next(t, "the alarm of hss-2"); got.recipient != "/healthy" || !strings.HasSuffix(got.field("href"), "Peer=hss-2") {
+		t.Errorf("got %s at %s, want the alarm of hss-2", got.raw, got.recipient)
+	}
+	oss.none(t)
+	n.counted(t, `oam_alarm_notifications_total{notification_type="notifyNewAlarm",result="failed"} 4`)
+}
+
 func TestGiveUpCountsTheWatchesThatAreHeld(t *testing.T) {
 	gone := make(chan struct{})
 	close(gone)
