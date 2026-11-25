@@ -263,8 +263,9 @@ type AckStateRequest struct {
 // sends.
 const maxAckName = 256
 
-// check says why the list cannot take req.
-func (req AckStateRequest) check() error {
+// Check says why the alarm list of a node cannot take req, so that a
+// caller can refuse req before it asks the node.
+func (req AckStateRequest) Check() error {
 	if req.AckState != Acknowledged && req.AckState != Unacknowledged {
 		return fmt.Errorf("ack_state %q is neither %s nor %s", req.AckState, Acknowledged, Unacknowledged)
 	}
