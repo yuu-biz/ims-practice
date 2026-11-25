@@ -2,6 +2,10 @@ package ipsmgw_test
 
 import (
 	"context"
+	"fmt"
+	"net/netip"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -33,14 +37,53 @@ import (
 const hssDiameterHost = "hss." + domain
 
 // chain is the IP-SM-GW of a harness with a real Service Centre and a
-// real HSS behind it.
+// real HSS behind it. A chain may run more instances of the IP-SM-GW
+// and of the Service Centre, each with a Diameter identity of its own,
+// as the instances of a role in deploy/redundancy have.
 type chain struct {
 	*harness
-	store  hss.Store
-	centre *smsc.SMSC
+	store hss.Store
+	// gateways are the instances of the IP-SM-GW, the first of them the
+	// one of the harness. They share one store.
+	gateways []*chainGateway
+	// centres are the instances of the Service Centre, which share one
+	// store as well.
+	centres []*chainCentre
 	// reports are the submit reports and status reports that reached the
 	// entry point while the tests waited for a delivery.
 	reports []*sip.Message
+}
+
+// chainGateway is one instance of the IP-SM-GW of a chain.
+type chainGateway struct {
+	// host is its Diameter identity.
+	host string
+	g    atomic.Pointer[ipsmgw.IPSMGW]
+	// sip is where it takes SIP requests.
+	sip netip.AddrPort
+	// toSC are its connections to the instances of the Service Centre, in
+	// the order of chain.centres.
+	toSC []*diameter.Peer
+}
+
+// chainCentre is one instance of the Service Centre of a chain.
+type chainCentre struct {
+	host string
+	sc   *smsc.SMSC
+	// stop stops the instance as a node that goes away does: its
+	// deliveries end, and then its Diameter connections close.
+	stop func()
+}
+
+// instance is the Diameter identity of instance k of a role: the name
+// of the role in the home domain for the first, and the name with the
+// number of the instance after it for the others, as in
+// ipsmgw-2.<domain>.
+func instance(role string, k int) string {
+	if k == 0 {
+		return role + "." + domain
+	}
+	return fmt.Sprintf("%s-%d.%s", role, k+1, domain)
 }
 
 // aliceSubscription is Alice as the HSS holds her: the private identity
@@ -58,6 +101,16 @@ func aliceSubscription() hss.Subscription {
 // originated short messages (6.3.1.1).
 func newChain(t *testing.T, answer func(*sip.Message) int) *chain {
 	t.Helper()
+	return newChainOf(t, answer, 1, 1)
+}
+
+// newChainOf is newChain with gateways instances of the IP-SM-GW and
+// centres instances of the Service Centre. Each IP-SM-GW connects to
+// every instance of the Service Centre, as a serving node does to reach
+// any of them, and sends its short messages to the first one whose
+// connection is open.
+func newChainOf(t *testing.T, answer func(*sip.Message) int, gateways, centres int) *chain {
+	t.Helper()
 	if err := diameter.LoadDictionary(); err != nil {
 		t.Fatal(err)
 	}
@@ -70,8 +123,12 @@ func newChain(t *testing.T, answer func(*sip.Message) int) *chain {
 	if err != nil {
 		t.Fatal(err)
 	}
+	var scHosts []string
+	for k := range centres {
+		scHosts = append(scHosts, instance("sc", k))
+	}
 	hssRole, err := hss.New(hss.Config{Realm: domain, VisitedNetworks: []string{domain},
-		ServiceCentres: []hss.ServiceCentre{{Address: scNumber, Host: scDiameterHost, Realm: domain}}},
+		ServiceCentres: []hss.ServiceCentre{{Address: scNumber, Host: scHosts[0], Realm: domain}}},
 		store, hssNode, quiet())
 	if err != nil {
 		t.Fatal(err)
@@ -85,47 +142,89 @@ func newChain(t *testing.T, answer func(*sip.Message) int) *chain {
 	t.Cleanup(hssServer.Stop)
 	hssRole.SetPeers(hssServer)
 
-	scID := diameter.Identity{OriginHost: scDiameterHost, OriginRealm: domain}
-	scNode := diameter.NewNode(scID, []uint32{sgd.ApplicationIDS6c, sgd.ApplicationIDSGd}, sgdTimers, quiet())
-	scServer, err := scNode.Listen("127.0.0.1:0")
+	c := &chain{store: store}
+	var opening []*diameter.Peer
+	scStore := smsc.NewMemoryStore()
+	var scServers []*diameter.Server
+	for _, host := range scHosts {
+		centre, server, toHSS := startCentre(t, host, scStore, hssServer.Addr())
+		c.centres = append(c.centres, centre)
+		scServers = append(scServers, server)
+		opening = append(opening, toHSS)
+	}
+
+	gwStore := ipsmgw.NewMemoryStore()
+	for k := range gateways {
+		gw := &chainGateway{host: instance("ipsmgw", k)}
+		node := diameter.NewNode(diameter.Identity{OriginHost: gw.host, OriginRealm: domain},
+			[]uint32{diameter.ApplicationIDSh, sgd.ApplicationIDSGd}, sgdTimers, quiet())
+		node.Handle(func(request *diam.Message) *diam.Message { return gw.g.Load().Handle(request) })
+		for i, server := range scServers {
+			toSC := node.Connect(diameter.PeerConfig{Address: server.Addr(), OriginHost: scHosts[i]})
+			t.Cleanup(toSC.Stop)
+			gw.toSC = append(gw.toSC, toSC)
+		}
+		toHSS := node.Connect(diameter.PeerConfig{Address: hssServer.Addr(), OriginHost: hssID.OriginHost})
+		t.Cleanup(toHSS.Stop)
+		opening = append(append(opening, gw.toSC...), toHSS)
+		group, err := diameter.NewPeerGroup(nil, gwRole, gw.toSC...)
+		if err != nil {
+			t.Fatal(err)
+		}
+		sc := ipsmgw.NewSMSIWMSC(sgd.NewMOClient(node, group), scNumber, domain, quiet())
+		users := sh.NewClient(node, toHSS, domain)
+		if k == 0 {
+			c.harness = newHarnessParts(t, gwStore, time.Minute, answer, ipsmgw.Config{}, sc, users)
+			gw.g.Store(c.harness.g)
+			gw.sip = c.harness.gw
+		} else {
+			g, stack := c.harness.start(gw.host, gwStore, time.Minute, ipsmgw.Config{}, sc, users)
+			gw.g.Store(g)
+			gw.sip = stack.LocalAddr()
+		}
+		c.gateways = append(c.gateways, gw)
+	}
+	waitForPeers(t, opening...)
+	return c
+}
+
+// startCentre starts an instance of the Service Centre with the
+// Diameter identity host on store, connected to the HSS at hssAddr. It
+// returns the instance, the listener that the IP-SM-GWs connect to, and
+// its connection to the HSS.
+func startCentre(t *testing.T, host string, store smsc.Store, hssAddr string) (*chainCentre, *diameter.Server, *diameter.Peer) {
+	t.Helper()
+	id := diameter.Identity{OriginHost: host, OriginRealm: domain}
+	node := diameter.NewNode(id, []uint32{sgd.ApplicationIDS6c, sgd.ApplicationIDSGd}, sgdTimers, quiet())
+	server, err := node.Listen("127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(scServer.Stop)
-	scToHSS := scNode.Connect(diameter.PeerConfig{Address: hssServer.Addr(), OriginHost: hssID.OriginHost})
-	t.Cleanup(scToHSS.Stop)
+	toHSS := node.Connect(diameter.PeerConfig{Address: hssAddr, OriginHost: hssDiameterHost})
 	// One retry an hour from now, so that a short message the SC holds
 	// goes out again only because the HSS alerted it.
 	centre := smsc.New(smsc.Config{Address: scNumber, HSSRealm: domain,
 		RetrySchedule: []time.Duration{time.Hour}, PollInterval: 20 * time.Millisecond},
-		smsc.NewMemoryStore(), sgd.NewSGdClient(scNode, scServer, 30*time.Second),
-		sgd.NewS6cClient(scNode, scToHSS), smsc.SystemClock, quiet())
-	scNode.Handle(func(request *diam.Message) *diam.Message { return serviceCentreAnswer(t, scID, centre, request) })
-	ctx, stop := context.WithCancel(context.Background())
+		store, sgd.NewSGdClient(node, server, 30*time.Second),
+		sgd.NewS6cClient(node, toHSS), smsc.SystemClock, quiet())
+	node.Handle(func(request *diam.Message) *diam.Message { return serviceCentreAnswer(t, id, centre, request) })
+	ctx, end := context.WithCancel(context.Background())
 	running := make(chan struct{})
 	go func() {
 		centre.Run(ctx)
 		close(running)
 	}()
-	t.Cleanup(func() {
-		stop()
-		<-running
-	})
-
-	gwNode := diameter.NewNode(diameter.Identity{OriginHost: gwDiameterHost, OriginRealm: domain},
-		[]uint32{diameter.ApplicationIDSh, sgd.ApplicationIDSGd}, sgdTimers, quiet())
-	c := &chain{store: store, centre: centre}
-	gwNode.Handle(func(request *diam.Message) *diam.Message { return c.harness.g.Handle(request) })
-	gwToSC := gwNode.Connect(diameter.PeerConfig{Address: scServer.Addr(), OriginHost: scID.OriginHost})
-	t.Cleanup(gwToSC.Stop)
-	gwToHSS := gwNode.Connect(diameter.PeerConfig{Address: hssServer.Addr(), OriginHost: hssID.OriginHost})
-	t.Cleanup(gwToHSS.Stop)
-
-	c.harness = newHarnessParts(t, ipsmgw.NewMemoryStore(), time.Minute, answer, ipsmgw.Config{},
-		ipsmgw.NewSMSIWMSC(sgd.NewMOClient(gwNode, gwToSC), scNumber, domain, quiet()),
-		sh.NewClient(gwNode, gwToHSS, domain))
-	waitForPeers(t, gwToSC, gwToHSS, scToHSS)
-	return c
+	var once sync.Once
+	stop := func() {
+		once.Do(func() {
+			end()
+			<-running
+			toHSS.Stop()
+			server.Stop()
+		})
+	}
+	t.Cleanup(stop)
+	return &chainCentre{host: host, sc: centre, stop: stop}, server, toHSS
 }
 
 // serviceCentreAnswer hands an OFR or an ALR to the SC and writes its
