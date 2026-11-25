@@ -33,6 +33,8 @@ type fakeHome struct {
 	// refuseRefresh, when set, is the status the home answers a SUBSCRIBE
 	// within a dialog with, in place of the 200.
 	refuseRefresh int
+	// silent, when set, has the home take each SUBSCRIBE and answer none.
+	silent bool
 }
 
 func newFakeHome(t *testing.T) *fakeHome {
@@ -51,7 +53,12 @@ func newFakeHome(t *testing.T) *fakeHome {
 			st.Respond(sip.NewResponse(req, 200, sip.NewTag()))
 		case sip.SUBSCRIBE:
 			h.subscribes <- req
-			h.subscribe(t, st)
+			h.mu.Lock()
+			silent := h.silent
+			h.mu.Unlock()
+			if !silent {
+				h.subscribe(t, st)
+			}
 		}
 	})
 	return h
@@ -609,6 +616,32 @@ func TestTimerNEndsARegEventSubscriptionWithoutANotify(t *testing.T) {
 	second := f.nextSubscribe(t, "SUBSCRIBE after Timer N")
 	if second.Get("Call-ID") == first.Get("Call-ID") || sip.ReceivedDialogID(second).LocalTag != "" {
 		t.Errorf("the SUBSCRIBE after Timer N is no new subscription:\n%s", second)
+	}
+}
+
+// TestARegEventSubscriptionOutlivesTheStackThatStops: the P-CSCF stops
+// while its first SUBSCRIBE waits for the answer of the home network.
+// The end of the stack says nothing of the S-CSCF, which may have taken
+// the SUBSCRIBE and send its NOTIFY to another instance at the same
+// address, so the subscription stays in the Store. If no NOTIFY comes,
+// Timer N ends it on whichever instance claims it
+// (TestTimerNEndsARegEventSubscriptionWithoutANotify).
+func TestARegEventSubscriptionOutlivesTheStackThatStops(t *testing.T) {
+	f := newRegEventFixture(t, nil, 0)
+	f.home.mu.Lock()
+	f.home.silent = true
+	f.home.mu.Unlock()
+
+	f.register(t, "1")
+	f.nextSubscribe(t, "initial SUBSCRIBE")
+	f.stack.Close()
+	ctx := context.Background()
+	gone := came(watch, func() bool {
+		_, ok, err := f.store.RegSubscription(ctx, impi)
+		return err == nil && !ok
+	})
+	if gone {
+		t.Errorf("the subscription left the Store within %v of the stop of the stack", watch)
 	}
 }
 

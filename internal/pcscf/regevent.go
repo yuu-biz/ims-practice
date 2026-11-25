@@ -155,6 +155,13 @@ func (p *PCSCF) subscribeRegEvent(a Association, expires time.Duration, log *slo
 			p.grantRegEvent(privateID, d.ID, final, log)
 			return
 		}
+		if errors.Is(err, sip.ErrStackClosed) {
+			// The stop of this instance's stack is no answer of the home
+			// network, which may have made the subscription and send its
+			// NOTIFY to another instance. Timer N ends it if none comes.
+			log.Info("reg event SUBSCRIBE cut short by the stop of the stack; the subscription stays")
+			return
+		}
 		// RFC 6665 4.1.2.1: the SUBSCRIBE failed, and no subscription was
 		// made. One that a NOTIFY has already confirmed stays, as does one
 		// the Store could not be told about; the next REGISTER replaces
