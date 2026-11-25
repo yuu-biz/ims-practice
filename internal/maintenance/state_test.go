@@ -74,6 +74,34 @@ func TestShutDownWaitsForTheLastUserToQuit(t *testing.T) {
 	}
 }
 
+// X.731 7.1.3.4: the last user may quit while the shut down is counting
+// the users, before the function is SHUTTINGDOWN. Its UserQuit then
+// finds the function UNLOCKED and changes nothing, and no user is left
+// to quit later, so the shut down itself has to see that none is left.
+func TestShutDownLocksWhenTheLastUserQuitsDuringTheCount(t *testing.T) {
+	clock := newFakeClock()
+	var users atomic.Int64
+	users.Store(1)
+	var fn *ManagedFunction
+	var quitDuringCount atomic.Bool
+	quitDuringCount.Store(true)
+	fn = newManagedFunction(Function{
+		Role: "mrfc",
+		Users: func() int {
+			n := int(users.Load())
+			if quitDuringCount.Swap(false) {
+				users.Add(-1)
+				fn.UserQuit()
+			}
+			return n
+		},
+	}, clock, discardLog())
+	if err := fn.ShutDown(0); err != nil {
+		t.Fatal(err)
+	}
+	wantState(t, fn, Locked)
+}
+
 // X.731 7.1.3.3: a shut down of a resource with no users locks it.
 func TestShutDownWithoutUsersLocksAtOnce(t *testing.T) {
 	d := newDrainFixture(t, 0)
