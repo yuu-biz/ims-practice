@@ -445,9 +445,10 @@ jobs:
   # (deploy/observability): the counts of registrations of the S-CSCF
   # and of the P-CSCF reach Prometheus, that of the S-CSCF Grafana too,
   # a call gives the I-CSCF its terminating session establishment to
-  # count, and the maintenance API of each CSCF takes it out of service
-  # and back. The script sets COMPOSE_FILE itself; the clean-up step
-  # needs the same files to find the containers.
+  # count, and the HSS counts what it holds and who is registered. The
+  # scripts of this job and of the three e2e-maintenance jobs below set
+  # COMPOSE_FILE themselves; the clean-up step needs the same files to
+  # find the containers.
   e2e-observability:
     runs-on: ubuntu-latest
     needs: changes
@@ -463,6 +464,77 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: observability-capture
+          path: captures/*.pcap
+          if-no-files-found: warn
+      - name: clean up
+        if: always()
+        run: docker compose --profile ue down --rmi all -v --remove-orphans
+
+  # The maintenance API on the same deployment takes a node out of
+  # service and back. The nodes are split over three jobs that do not
+  # depend on one another, so that their waits run side by side: those
+  # of registrations and calls (the CSCFs, the MMTel AS, the MRFC, the
+  # media relay and the MRFP), those of short messages (the IP-SM-GW and
+  # the SC, to which the IP-SM-GW connects again only after Tc, 30 s),
+  # and the HSS, whose peers raise their alarms only after Tc and connect
+  # again after another.
+  e2e-maintenance-sip:
+    runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
+    env:
+      COMPOSE_FILE: compose.yaml:deploy/observability/compose.observability.yaml
+      COMPOSE_PATH_SEPARATOR: ":"
+    steps:
+      - uses: actions/checkout@v7
+      - run: scripts/e2e-maintenance-sip.sh
+      - name: upload the capture
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: maintenance-sip-capture
+          path: captures/*.pcap
+          if-no-files-found: warn
+      - name: clean up
+        if: always()
+        run: docker compose --profile ue down --rmi all -v --remove-orphans
+
+  e2e-maintenance-sms:
+    runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
+    env:
+      COMPOSE_FILE: compose.yaml:deploy/observability/compose.observability.yaml
+      COMPOSE_PATH_SEPARATOR: ":"
+    steps:
+      - uses: actions/checkout@v7
+      - run: scripts/e2e-maintenance-sms.sh
+      - name: upload the capture
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: maintenance-sms-capture
+          path: captures/*.pcap
+          if-no-files-found: warn
+      - name: clean up
+        if: always()
+        run: docker compose --profile ue down --rmi all -v --remove-orphans
+
+  e2e-maintenance-hss:
+    runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
+    env:
+      COMPOSE_FILE: compose.yaml:deploy/observability/compose.observability.yaml
+      COMPOSE_PATH_SEPARATOR: ":"
+    steps:
+      - uses: actions/checkout@v7
+      - run: scripts/e2e-maintenance-hss.sh
+      - name: upload the capture
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: maintenance-hss-capture
           path: captures/*.pcap
           if-no-files-found: warn
       - name: clean up
@@ -623,7 +695,7 @@ jobs:
   # skips count as passed.
   all-passed:
     runs-on: ubuntu-latest
-    needs: [changes, docs, go, web-lab, web-oam, e2e, e2e-registration, e2e-oam, e2e-fm, e2e-admission, e2e-call, e2e-lab, e2e-sms, e2e-volte, e2e-esp, e2e-mmtel, e2e-mrf, e2e-interconnect, e2e-h248, e2e-observability, e2e-redundancy, e2e-fault, cloud, kustomize]
+    needs: [changes, docs, go, web-lab, web-oam, e2e, e2e-registration, e2e-oam, e2e-fm, e2e-admission, e2e-call, e2e-lab, e2e-sms, e2e-volte, e2e-esp, e2e-mmtel, e2e-mrf, e2e-interconnect, e2e-h248, e2e-observability, e2e-maintenance-sip, e2e-maintenance-sms, e2e-maintenance-hss, e2e-redundancy, e2e-fault, cloud, kustomize]
     if: always()
     steps:
       - name: no job failed or was cancelled

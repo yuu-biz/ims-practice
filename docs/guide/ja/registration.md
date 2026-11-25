@@ -701,7 +701,7 @@ Wireshark で `sip.Status-Code == 503` と入力すると S-CSCF の 503 が、`
 
    次の `ue register` は前と同じように登録します。
 
-管理上の状態はノードのプロセスの中にあります。起動し直したノードは `UNLOCKED` です。`scripts/e2e-observability.sh` はこの手順を実行し、キャプチャを確かめます。
+管理上の状態はノードのプロセスの中にあります。起動し直したノードは `UNLOCKED` です。`scripts/e2e-maintenance-sip.sh` はこの手順を実行し、キャプチャを確かめます。
 
 ## P-CSCF を運用から外す
 
@@ -761,7 +761,7 @@ Wireshark で `sip.Status-Code == 503 && ip.src == 172.28.0.40` と入力する�
 
    次の `ue register` は前と同じように登録します。
 
-`scripts/e2e-observability.sh` はこの手順も実行し、キャプチャで 503 を確かめます。
+`scripts/e2e-maintenance-sip.sh` はこの手順も実行し、キャプチャで 503 を確かめます。
 
 ## I-CSCF を運用から外す
 
@@ -822,7 +822,7 @@ Wireshark では、`sip.Status-Code == 503 && ip.src == 172.28.0.20` で I-CSCF 
 
    次の `ue register` は前と同じように登録します。
 
-`scripts/e2e-observability.sh` はこの手順も実行し、キャプチャで 503 と 504 を確かめます。
+`scripts/e2e-maintenance-sip.sh` はこの手順も実行し、キャプチャで 503 と 504 を確かめます。
 
 ## HSS を運用から外す
 
@@ -907,7 +907,7 @@ HSS のノードも同じ保守用の API をポート 8085 で出していま�
 
 lock を解くとき、ノードはポート 3868 をもう一度確保しますが、運用から外しているあいだにほかのものがそのポートを取っていれば失敗します。失敗しても HSS の管理状態は `UNLOCKED` で、`"operational_state":"DISABLED"` を返し、`docker compose logs hss` には `cannot listen for Diameter connections again` が出ます。HSS はすでに `UNLOCKED` なので、もう一度 lock を解いても何も起きません。ポートを取り直させるには、lock をかけて、もう一度解きます。
 
-管理状態はノードのプロセスのものです。起動し直したノードは `UNLOCKED` です。`scripts/e2e-observability.sh` はこの手順も実行し、キャプチャで DPR を、保守用の API でノードのアラームを確かめます。
+管理状態はノードのプロセスのものです。起動し直したノードは `UNLOCKED` です。`scripts/e2e-maintenance-hss.sh` はこの手順も実行し、キャプチャで DPR を、保守用の API でノードのアラームを確かめます。
 
 ### HSS についてのアラームを読む
 

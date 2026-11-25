@@ -40,13 +40,13 @@ wait_for_opens() {
 	return 1
 }
 
-# wait_for_open waits for the first connection of the service $1, and
-# gives the whole run up when it never comes.
+# wait_for_open waits for the first $2 connections of the service $1, 1
+# by default, and gives the whole run up when they never come.
 wait_for_open() {
-	if wait_for_opens "$1" 1; then
+	if wait_for_opens "$1" "${2:-1}"; then
 		return 0
 	fi
-	echo "FAIL $1 never opened its Diameter connection" >&2
+	echo "FAIL $1 did not open ${2:-1} Diameter connections within two minutes" >&2
 	docker compose logs --no-color "$1" | tail -n 30 >&2
 	exit 1
 }
@@ -172,4 +172,39 @@ until_state() {
 		sleep 1
 	done
 	return 1
+}
+
+# start_network starts the network and waits until its scenes can begin.
+# Each script that sources this file starts its first scene at once, so
+# every Diameter connection that a scene counts or ends must be open by
+# then: a node that tried before its peer listened tries again only
+# after Tc, 30 s. The I-CSCF, the S-CSCF and the MMTel AS each hold one
+# connection to the HSS, Cx or Sh, and the SC one over S6c; the
+# IP-SM-GW holds two, Sh to the HSS and SGd to the SC.
+start_network() {
+	docker compose up -d --build
+	wait_for_open icscf
+	wait_for_open scscf
+	wait_for_open ipsmgw 2
+	wait_for_open mmtel
+	wait_for_open sc
+	wait_for_http Prometheus "$prometheus/-/ready"
+	wait_for_http Grafana "$grafana/api/health"
+	# ended keeps the log of each UE that ran in the background here.
+	mkdir -p e2e-out
+}
+
+# ue2 is the identity of UE 2, which answers the calls of UE 1. Flags go
+# before the URI of "ue call", as the flag package stops at the first
+# argument.
+ue2=(--impi 001010000000002@ims.mnc001.mcc001.3gppnetwork.org
+	--impu sip:+12025550102@ims.mnc001.mcc001.3gppnetwork.org --password test-password-2)
+
+# finish shows the last lines of the logs of the nodes when a check
+# failed, and ends the script with the result of its checks.
+finish() {
+	if [ "$fail" -ne 0 ]; then
+		docker compose logs --no-color pcscf icscf scscf hss mmtel mrfc ipsmgw sc agw mrfp prometheus grafana | tail -n 80
+	fi
+	exit "$fail"
 }

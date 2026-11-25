@@ -319,7 +319,7 @@ It answers 503 to **every INVITE outside a dialog**: the announcement of RFC 424
 
 In Wireshark, `sip.Status-Code == 503 && ip.src == 172.28.0.85` shows the 503 of the MRFC, and `sip.r-uri contains "annc@"` the INVITEs that asked for the announcement. The PUT request travels over the loopback interface of the container, so the capture does not hold it.
 
-The administrative state belongs to the process of the node: a node that starts again is `UNLOCKED`. `scripts/e2e-observability.sh` runs these steps and checks the capture.
+The administrative state belongs to the process of the node: a node that starts again is `UNLOCKED`. `scripts/e2e-maintenance-sip.sh` runs these steps and checks the capture.
 
 ## Take the MRFP out of service
 
