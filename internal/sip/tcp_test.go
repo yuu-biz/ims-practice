@@ -652,6 +652,75 @@ func TestRequestThatCannotGoOutOverTCPGoesToTheNextTarget(t *testing.T) {
 	}
 }
 
+// RFC 3261 18.2.2 has a response go back on the connection of its
+// request while that is open, and over a new connection to the sent-by
+// once it has closed. A response that waits behind another while the
+// connection closes goes to the sent-by too.
+func TestQueuedResponseGoesToTheSentByOnceItsConnectionCloses(t *testing.T) {
+	sentBy, atSentBy := rawTCPServer(t)
+	// The observer stands in for a write that takes long: it holds the
+	// write of the response to slow until released.
+	slow, waiting := registerRequest(), registerRequest()
+	slowCallID := slow.Get("Call-ID")
+	writing := make(chan struct{}, 1)
+	release := make(chan struct{})
+	tr, err := ListenObserved("127.0.0.1:0", testLogger(t), func(c Capture) {
+		if c.Sent && c.Transport == TCP && !c.Message.IsRequest() && c.Message.Get("Call-ID") == slowCallID {
+			writing <- struct{}{}
+			select {
+			case <-release:
+			case <-time.After(5 * time.Second):
+			}
+		}
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	arrived := make(chan *ServerTransaction, 2)
+	uas, err := NewStack(tr, Config{Timers: testTimers, SentBy: tr.LocalAddr().String(), OnRequest: func(st *ServerTransaction) { arrived <- st }}, testLogger(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(uas.Close)
+
+	peer := dial(t, uas.LocalAddr())
+	byCallID := map[string]*ServerTransaction{}
+	for _, req := range []*Message{slow, waiting} {
+		req.Prepend("Via", "SIP/2.0/TCP "+sentBy.String()+";branch="+NewBranch())
+		peer.write(t, req)
+		select {
+		case st := <-arrived:
+			byCallID[st.Request.Get("Call-ID")] = st
+		case <-time.After(2 * time.Second):
+			t.Fatal("the REGISTER never reached the TU")
+		}
+	}
+	first, second := byCallID[slowCallID], byCallID[waiting.Get("Call-ID")]
+	first.Respond(NewResponse(first.Request, 200, NewTag()))
+	select {
+	case <-writing:
+	case <-time.After(2 * time.Second):
+		t.Fatal("the transport never wrote the first response")
+	}
+	second.Respond(NewResponse(second.Request, 200, NewTag()))
+	peer.conn.Close()
+	for deadline := time.Now().Add(2 * time.Second); uas.transport.hasConnection(second.Source.Addr); {
+		if time.Now().After(deadline) {
+			t.Fatal("the stack kept the closed connection")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	close(release)
+	select {
+	case resp := <-atSentBy:
+		if resp.StatusCode != 200 || resp.Get("Call-ID") != waiting.Get("Call-ID") {
+			t.Errorf("the sent-by got %d for %s, want the 200 for the response that waited", resp.StatusCode, resp.Get("Call-ID"))
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("the response that waited never reached the sent-by")
+	}
+}
+
 // A connect that gets no answer fails every message that waits for it,
 // rather than one after the other, a connect for each.
 func TestMessagesThatWaitForAConnectFailWithIt(t *testing.T) {

@@ -295,7 +295,7 @@ func (t *TransportLayer) sendRequest(req *Message, dst Destination, written func
 		}
 		return t.udp.SendRequest(req, dst.Addr)
 	case TCP:
-		return t.sendTCP(req, dst.Addr, written)
+		return t.sendTCP(tcpSend{m: req, done: written}, dst.Addr)
 	}
 	return fmt.Errorf("sip: transport %s is not supported", dst.Transport)
 }
@@ -319,13 +319,21 @@ func (t *TransportLayer) sendResponse(resp *Message, source Destination, written
 	case UDP:
 		return t.udp.SendResponse(resp)
 	case TCP:
-		remote := source.Addr
-		if source.Transport != TCP || !t.hasConnection(remote) {
-			if remote, err = tcpResponseAddress(v); err != nil {
-				return err
+		elsewhere, err := tcpResponseAddress(v)
+		if source.Transport == TCP && t.hasConnection(source.Addr) {
+			s := tcpSend{m: resp, done: written}
+			// Should the connection close while the response waits, the
+			// response goes elsewhere, unless that is where it goes
+			// already, or the Via names no address.
+			if err == nil && elsewhere != source.Addr {
+				s.orElse = elsewhere
 			}
+			return t.sendTCP(s, source.Addr)
 		}
-		return t.sendTCP(resp, remote, written)
+		if err != nil {
+			return err
+		}
+		return t.sendTCP(tcpSend{m: resp, done: written}, elsewhere)
 	}
 	return fmt.Errorf("sip: response over %s is not supported", v.Transport)
 }
