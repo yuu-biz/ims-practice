@@ -357,7 +357,7 @@ It answers 503 to the `Add` of a new context, the one operation that would start
 
 In Wireshark, `http.request.uri == "/contexts" && http.request.method == "POST"` shows each request for a context, and `http.response.code == 503 && ip.src == 172.28.0.50` the refusals of the drained relay. The PUT request travels over the loopback interface of the container, so the capture does not hold it.
 
-The administrative state belongs to the process of the node: a node that starts again is `UNLOCKED`. `scripts/e2e-observability.sh` runs these steps and checks the capture.
+The administrative state belongs to the process of the node: a node that starts again is `UNLOCKED`. `scripts/e2e-maintenance-sip.sh` runs these steps and checks the capture.
 
 ## What this project simplifies
 

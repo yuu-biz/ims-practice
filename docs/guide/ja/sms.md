@@ -694,7 +694,7 @@ Diameter の側では、サービスセンタが SGd で持ち込むショート
 
 Wireshark では `sip.Status-Code == 503 && ip.src == 172.28.0.70` で IP-SM-GW の 503 が見られます。PUT の要求はコンテナのループバックを通るので、キャプチャには入りません。
 
-administrative state はノードのプロセスにあります。起動し直したノードは `UNLOCKED` です。`scripts/e2e-observability.sh` がこの手順を実行し、キャプチャを確かめます。
+administrative state はノードのプロセスにあります。起動し直したノードは `UNLOCKED` です。`scripts/e2e-maintenance-sms.sh` がこの手順を実行し、キャプチャを確かめます。
 
 ## サービスセンタを運用から外す
 
@@ -771,7 +771,7 @@ administrative state はノードのプロセスにあります。起動し直�
 
 Wireshark では `diameter.cmd.code == 282 && ip.src == 172.28.0.71` でサービスセンタの DPR が見られます。PUT の要求はコンテナのループバックを通るので、キャプチャには入りません。
 
-administrative state はノードのプロセスにあります。起動し直したノードは `UNLOCKED` です。`scripts/e2e-observability.sh` がこの手順を実行し、キャプチャを確かめます。
+administrative state はノードのプロセスにあります。起動し直したノードは `UNLOCKED` です。`scripts/e2e-maintenance-sms.sh` がこの手順を実行し、キャプチャを確かめます。
 
 ## ボディを読む
 

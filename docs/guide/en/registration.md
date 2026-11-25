@@ -665,7 +665,7 @@ While it is not `UNLOCKED`, the S-CSCF still serves the requests within a dialog
 
    The next `ue register` registers as before.
 
-The administrative state belongs to the process of the node: a node that starts again is `UNLOCKED`. `scripts/e2e-observability.sh` runs these steps and checks the capture.
+The administrative state belongs to the process of the node: a node that starts again is `UNLOCKED`. `scripts/e2e-maintenance-sip.sh` runs these steps and checks the capture.
 
 ## Take the P-CSCF out of service
 
@@ -725,7 +725,7 @@ In Wireshark, `sip.Status-Code == 503 && ip.src == 172.28.0.40` shows the 503 of
 
    The next `ue register` registers as before.
 
-`scripts/e2e-observability.sh` runs these steps as well, and checks the 503 in the capture.
+`scripts/e2e-maintenance-sip.sh` runs these steps as well, and checks the 503 in the capture.
 
 ## Take the I-CSCF out of service
 
@@ -786,7 +786,7 @@ In Wireshark, `sip.Status-Code == 503 && ip.src == 172.28.0.20` shows the 503 of
 
    The next `ue register` registers as before.
 
-`scripts/e2e-observability.sh` runs these steps as well, and checks the 503 and the 504 in the capture.
+`scripts/e2e-maintenance-sip.sh` runs these steps as well, and checks the 503 and the 504 in the capture.
 
 ## Take the HSS out of service
 
@@ -871,7 +871,7 @@ An instance out of service could answer every new request `DIAMETER_TOO_BUSY` in
 
 The node binds port 3868 again as part of the unlock, and that can fail, if something else took the port while the HSS was out of service. The HSS is then `UNLOCKED` and reports `"operational_state":"DISABLED"`, and `docker compose logs hss` holds `cannot listen for Diameter connections again`. A second unlock does nothing, since the HSS is `UNLOCKED` already: lock it and unlock it again to have it try the port once more.
 
-The administrative state belongs to the process of the node: a node that starts again is `UNLOCKED`. `scripts/e2e-observability.sh` runs these steps as well, and checks the DPRs in the capture and the alarms of the nodes.
+The administrative state belongs to the process of the node: a node that starts again is `UNLOCKED`. `scripts/e2e-maintenance-hss.sh` runs these steps as well, and checks the DPRs in the capture and the alarms of the nodes.
 
 ### Read the alarms about the HSS
 

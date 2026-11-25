@@ -445,7 +445,7 @@ It answers 503 to:
 
 In Wireshark, `sip.Status-Code == 503 && ip.src == 172.28.0.75` shows the 503 of the AS, and `sip.Status-Code == 500` the 500 after it. The PUT request travels over the loopback interface of the container, so the capture does not hold it.
 
-The administrative state belongs to the process of the node: a node that starts again is `UNLOCKED`. `scripts/e2e-observability.sh` runs these steps and checks the capture.
+The administrative state belongs to the process of the node: a node that starts again is `UNLOCKED`. `scripts/e2e-maintenance-sip.sh` runs these steps and checks the capture.
 
 ## Wireshark display filters
 

@@ -687,7 +687,7 @@ On its Diameter side the IP-SM-GW refuses a short message that a Service Centre 
 
 In Wireshark, `sip.Status-Code == 503 && ip.src == 172.28.0.70` shows the 503s of the IP-SM-GW. The PUT request travels over the loopback interface of the container, so the capture does not hold it.
 
-The administrative state belongs to the process of the node: a node that starts again is `UNLOCKED`. `scripts/e2e-observability.sh` runs these steps and checks the capture.
+The administrative state belongs to the process of the node: a node that starts again is `UNLOCKED`. `scripts/e2e-maintenance-sms.sh` runs these steps and checks the capture.
 
 ## Take the Service Centre out of service
 
@@ -764,7 +764,7 @@ This network runs one instance of the SC, so whatever it holds while it is out o
 
 In Wireshark, `diameter.cmd.code == 282 && ip.src == 172.28.0.71` shows the DPR of the SC. The PUT request travels over the loopback interface of the container, so the capture does not hold it.
 
-The administrative state belongs to the process of the node: a node that starts again is `UNLOCKED`. `scripts/e2e-observability.sh` runs these steps and checks the capture.
+The administrative state belongs to the process of the node: a node that starts again is `UNLOCKED`. `scripts/e2e-maintenance-sms.sh` runs these steps and checks the capture.
 
 ## Read the body
 

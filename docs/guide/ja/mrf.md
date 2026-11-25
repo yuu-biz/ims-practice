@@ -319,7 +319,7 @@ MRFC のノードはそのための保守用の API をポート 8085 で出し�
 
 Wireshark では、`sip.Status-Code == 503 && ip.src == 172.28.0.85` が MRFC の 503 を、`sip.r-uri contains "annc@"` が音声ガイダンスを頼んだ INVITE を見せます。PUT の要求はコンテナのループバックを通るので、キャプチャには入りません。
 
-管理上の状態はノードのプロセスの中にあります。起動し直したノードは `UNLOCKED` です。`scripts/e2e-observability.sh` はこの手順を実行し、キャプチャを確かめます。
+管理上の状態はノードのプロセスの中にあります。起動し直したノードは `UNLOCKED` です。`scripts/e2e-maintenance-sip.sh` はこの手順を実行し、キャプチャを確かめます。
 
 ## MRFP を運用から外す
 

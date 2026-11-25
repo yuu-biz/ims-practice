@@ -376,7 +376,7 @@ UE 1 はトーンを 1 回流したあと、どちらかが切断するまで通
 
 Wireshark では `http.request.uri == "/contexts" && http.request.method == "POST"` でコンテキストを求める要求が、`http.response.code == 503 && ip.src == 172.28.0.50` でドレイン中の中継ノードの断りが見られます。PUT の要求はコンテナのループバックを通るので、キャプチャには入りません。
 
-administrative state はノードのプロセスの中にあります。起動し直したノードは `UNLOCKED` です。`scripts/e2e-observability.sh` は、この手順を実行してキャプチャを確かめます。
+administrative state はノードのプロセスの中にあります。起動し直したノードは `UNLOCKED` です。`scripts/e2e-maintenance-sip.sh` は、この手順を実行してキャプチャを確かめます。
 
 ## このプロジェクトで簡略化していること
 

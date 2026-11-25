@@ -857,7 +857,7 @@ err = node.ClearAlarm(hssDown)
 | 時間の目安 | HSS のドレインでは、DPR から Tc（既定は 30 秒）たって、最初の試行が断られたとき。黙った相手では、SUSPECT（2 Tw）、閉じる（3 Tw）、Tc 後の試行の失敗のあと | 新しいタイマーを足さず、Diameter の層のタイマーだけで決まる |
 | 置き場所 | `internal/diameter` の `Peer.WatchReachability` が相手に届くかを知らせ、`cmd/ims` の `raiseDiameterPeerAlarms` が警報にする | `internal/diameter` は保守用の API を知らず、`internal/maintenance` は Diameter を知らないまま。知らせの順を守るため、相手ごとのロックの中で呼ぶ。ロックはその相手 1 つのもので、利用者の状態には関わらない |
 
-確かめ方は、`internal/diameter` の試験（上げ下げの決まりの表、短い再接続で何も起きないこと、断られたときに 1 回だけ知らせること、戻ったら知らせること）、`cmd/ims` の試験（2 台の HSS の 1 台だけを止めて、その 1 台の警報だけが TS 28.111 の綴りで上がり、戻すと `CLEARED` になること）、`scripts/e2e-observability.sh`（HSS のドレインで 5 つのノードに警報が上がり、OAM の `/oam/v1/alarms` に I-CSCF と S-CSCF の警報が並び、戻すと解除されること）です。
+確かめ方は、`internal/diameter` の試験（上げ下げの決まりの表、短い再接続で何も起きないこと、断られたときに 1 回だけ知らせること、戻ったら知らせること）、`cmd/ims` の試験（2 台の HSS の 1 台だけを止めて、その 1 台の警報だけが TS 28.111 の綴りで上がり、戻すと `CLEARED` になること）、`scripts/e2e-maintenance-hss.sh`（HSS のドレインで 5 つのノードに警報が上がり、OAM の `/oam/v1/alarms` に I-CSCF と S-CSCF の警報が並び、戻すと解除されること）です。
 
 気を付けることです。
 
