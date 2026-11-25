@@ -1,8 +1,10 @@
 package fault
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -115,5 +117,67 @@ func TestHTTPErrors(t *testing.T) {
 	body := decode[ErrorBody](t, w)
 	if w.Code != http.StatusInternalServerError || body.Fault == nil || body.Fault.State != Failed || body.Fault.ID == "" {
 		t.Fatalf("failed apply = %d %s, want 500 with the failed fault", w.Code, w.Body)
+	}
+}
+
+// TestTheChangeIsMadeAfterTheRequestHasEnded: closing the Lab page,
+// reloading it or stopping curl ends the request while the executor is
+// at work. The executor still finishes: the fault becomes active and
+// its expiry clears it, and a clear is carried out too, so that no
+// rule stays on the target with no fault to end it.
+func TestTheChangeIsMadeAfterTheRequestHasEnded(t *testing.T) {
+	e := &fakeExecutor{block: make(chan struct{}), started: make(chan struct{})}
+	c := newFakeClock()
+	m := NewManager(Config{Executor: e, Clock: c})
+	h := m.Handler()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	req := httptest.NewRequest("POST", FaultsPath, strings.NewReader(`{"target":"pcscf","kind":"loss","loss_percent":10,"duration":"1m"}`)).WithContext(ctx)
+	w := httptest.NewRecorder()
+	served := make(chan struct{})
+	go func() {
+		defer close(served)
+		h.ServeHTTP(w, req)
+	}()
+	select {
+	case <-e.started:
+	case <-time.After(10 * time.Second):
+		t.Fatal("Apply did not start within 10 s")
+	}
+	cancel()
+	close(e.block)
+	select {
+	case <-served:
+	case <-time.After(10 * time.Second):
+		t.Fatal("POST was not answered within 10 s of Apply returning")
+	}
+	if w.Code != http.StatusCreated {
+		t.Fatalf("POST whose request ended while applying = %d %s, want 201", w.Code, w.Body)
+	}
+	f := decode[Fault](t, w)
+	c.Advance(time.Minute)
+	m.ExpireDue(context.Background())
+	if got, _ := m.Get(f.ID); got.State != Expired {
+		t.Fatalf("after its duration: %+v, want expired", got)
+	}
+
+	e.mu.Lock()
+	e.block = nil
+	e.mu.Unlock()
+	g, err := m.Inject(context.Background(), Request{Target: "scscf", Kind: Pause})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ended, end := context.WithCancel(context.Background())
+	end()
+	req = httptest.NewRequest("DELETE", FaultPath(g.ID), nil).WithContext(ended)
+	w = httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+	if w.Code != http.StatusOK || decode[Fault](t, w).State != Cleared {
+		t.Fatalf("DELETE whose request had ended = %d %s, want 200 and cleared", w.Code, w.Body)
+	}
+	want := []string{"apply loss pcscf", "clear loss pcscf", "apply pause scscf", "clear pause scscf"}
+	if fmt.Sprint(e.Calls()) != fmt.Sprint(want) {
+		t.Fatalf("calls = %v, want %v", e.Calls(), want)
 	}
 }

@@ -1,6 +1,7 @@
 package fault
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -31,7 +32,9 @@ func (c *fakeClock) Advance(d time.Duration) {
 }
 
 // fakeExecutor records what it is asked to do. applyErr and clearErr
-// make it fail; block, when set, holds Apply until it is closed.
+// make it fail; block, when set, holds Apply until it is closed. Like
+// a call to the container runtime, Apply and Clear fail when their
+// context has ended by the time they are done.
 type fakeExecutor struct {
 	mu       sync.Mutex
 	calls    []string
@@ -59,14 +62,14 @@ func (e *fakeExecutor) Apply(ctx context.Context, f Fault) error {
 		close(started)
 		<-block
 	}
-	return err
+	return cmp.Or(err, ctx.Err())
 }
 
 func (e *fakeExecutor) Clear(ctx context.Context, f Fault) error {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	e.calls = append(e.calls, "clear "+string(f.Kind)+" "+f.Target)
-	return e.clearErr
+	return cmp.Or(e.clearErr, ctx.Err())
 }
 
 func (e *fakeExecutor) Calls() []string {

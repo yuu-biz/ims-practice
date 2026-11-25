@@ -55,7 +55,10 @@
 //
 // Every fault expires: the request gives a duration, or DefaultDuration
 // applies, and Manager clears the fault when the time is up, so that a
-// forgotten fault does not stay. Restarting the target also clears its
+// forgotten fault does not stay. A request that ends before its answer,
+// because the Lab page was closed or curl stopped, does not cut the
+// change short: the agent finishes applying or clearing the fault, and
+// the list shows it. Restarting the target also clears its
 // network faults, because the container gets a new network namespace.
 //
 // The bodies are JSON, and every error is ErrorBody, {"error": "..."}.
