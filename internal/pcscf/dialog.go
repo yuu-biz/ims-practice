@@ -48,7 +48,9 @@ type Dialog struct {
 	ReleasePending bool
 	// Released is true once the P-CSCF has started to release the
 	// dialog itself (TS 24.229 5.2.8.1.1, 5.2.8.1.2) and has freed what
-	// it held. A request within the dialog then gets 481 (5.2.8.1.3).
+	// it held. A request within the dialog then gets 481 (5.2.8.1.3). An
+	// early dialog that another instance released tells the instance that
+	// forwards its INVITE to end the INVITE.
 	Released bool
 	Caller   Party
 	Callee   Party

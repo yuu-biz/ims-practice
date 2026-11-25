@@ -24,7 +24,9 @@ import (
 // 500: FAILURE_CAUSE tells of radio or bearer resources (7.2A.18.12.2).
 // That response goes no further, since its SDP would lead its party
 // past the relay. When the answer is that of an UPDATE within the early
-// dialog, the release comes through call.abort instead.
+// dialog, the release comes through call.abort instead, or, when the
+// UPDATE passed another instance of the P-CSCF, as errReleased with the
+// next response to the INVITE; that response goes no further either.
 //
 // Like ProxyWith it returns the final response that is still to be
 // sent, or nil after a 2xx. It also returns nil once the P-CSCF has
@@ -65,7 +67,7 @@ func (p *PCSCF) proxyInvite(st *sip.ServerTransaction, out *sip.Message, targets
 			st.Respond(storeFailed(st.Request, why, call.log))
 			ct.Cancel()
 			return
-		case errors.Is(why, errRelay):
+		case errors.Is(why, errRelay), errors.Is(why, errReleased):
 			st.Respond(sip.NewResponse(st.Request, 500, sip.NewTag()))
 		default:
 			st.Respond(call.unavailable())
@@ -138,12 +140,13 @@ func (p *PCSCF) proxyInvite(st *sip.ServerTransaction, out *sip.Message, targets
 					// gets a BYE, as for a 2xx that crossed the CANCEL.
 					giveUp(refused)
 					continue
-				case errors.Is(refused, errRelay) && answered:
+				case (errors.Is(refused, errRelay) || errors.Is(refused, errReleased)) && answered:
 					// The caller has the 2xx whose answer the relay took,
 					// so this one is a retransmission (RFC 6026 7.2). It
-					// goes on as it came, and the call stays up.
+					// goes on as it came, also after the P-CSCF has
+					// released the dialog that the 2xx confirmed.
 					refused = nil
-				case errors.Is(refused, errRelay):
+				case errors.Is(refused, errRelay) || errors.Is(refused, errReleased):
 					// The callee has answered, but the caller gets 500 in
 					// the place of the 2xx. The 2xx is acknowledged at
 					// once, and the callee gets a BYE, as for a 2xx that

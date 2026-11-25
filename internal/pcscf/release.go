@@ -152,19 +152,22 @@ func (p *PCSCF) releaseNow(key DialogKey, why error, log *slog.Logger) {
 	case d.Confirmed:
 		p.sendBYEs(d, log)
 	default:
-		// SIMPLIFIED: TS 24.229 5.2.8.1.1. Only the P-CSCF instance that
-		// forwards an INVITE can answer it 500 and cancel it, and the
-		// instances share the Store but have no way to ask one another.
-		// The early dialog of an INVITE that another instance forwards
-		// ends here with what it holds, and the INVITE goes on, without
-		// media through the relay. The PCRF sends the events of a
-		// session to the instance that opened it, so the one release
-		// that comes here is that of an UPDATE whose answer the relay
-		// did not take, when the UPDATE passed another instance than its
-		// INVITE. That INVITE goes on, so its dialog must not stay
-		// released.
-		log.Warn("cannot cancel an INVITE that this P-CSCF instance does not hold")
-		p.endDialog(key, d, log)
+		// An early dialog whose INVITE another instance forwards. Only
+		// that instance can answer the INVITE 500 and cancel it. The
+		// dialog stays in the Store, Released, and that instance ends the
+		// INVITE with the next response to it (setup.response).
+		//
+		// SIMPLIFIED: TS 24.229 5.2.8.1.1. The instances share the Store
+		// and do not ask one another, so the INVITE is cancelled only
+		// when its next response reaches the instance that forwards it,
+		// at the latest its 2xx, and goes on until then without media
+		// through the relay. The PCRF sends the events of a session to
+		// the instance that opened it, so the release that comes here is
+		// that of a request within the early dialog that passed another
+		// instance, such as an UPDATE whose answer the relay did not take.
+		// In the preconditions of a VoLTE call, the 180 comes right after
+		// the 200 to that UPDATE.
+		log.Info("the P-CSCF instance that forwards the INVITE cancels it with its next response")
 	}
 	p.free(d, log)
 }
