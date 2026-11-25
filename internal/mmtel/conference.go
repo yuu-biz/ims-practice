@@ -175,9 +175,9 @@ type conference struct {
 	// expiry stops the expiry timer of each subscription, by its dialog
 	// (conferenceevent.go).
 	expiry map[sip.DialogID]func() bool
-	// sending lets one round of NOTIFYs out at a time, so that each
-	// round tells a state no older than the one before.
-	sending sync.Mutex
+	// outboxes hold the NOTIFYs on their way to each subscription
+	// outside a dialog, by its dialog (conferenceevent.go).
+	outboxes map[sip.DialogID]*outbox
 }
 
 // party is a participant of a conference in this instance. Its fields
@@ -189,8 +189,10 @@ type party struct {
 	// dialog is the ID of the participant's dialog with the focus, which
 	// a subscription within that dialog goes by (conferenceevent.go).
 	dialog sip.DialogID
-	// inDialog is a subscription within that dialog (conferenceevent.go).
+	// inDialog is a subscription within that dialog, and outbox holds
+	// the NOTIFYs on their way in it (conferenceevent.go).
 	inDialog *inDialogSubscription
+	outbox   outbox
 }
 
 // leg is what the dialogs of both sides have in common: both an
