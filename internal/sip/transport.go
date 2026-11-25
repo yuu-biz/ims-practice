@@ -82,7 +82,8 @@ type TransportLayer struct {
 	received  chan incoming
 	closed    chan struct{}
 	closeOnce sync.Once
-	wg        sync.WaitGroup
+	wg        sync.WaitGroup // the readers
+	writers   sync.WaitGroup // the goroutines of writeQueued
 	// ctx ends with Close, and with it any connect under way.
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -93,6 +94,8 @@ type TransportLayer struct {
 	// over TCP, oldest first. A far end is in the map while a goroutine
 	// writes to it (writeQueued).
 	queues map[netip.AddrPort][]tcpSend
+	// closing is set by Close: no message joins a queue any more.
+	closing bool
 }
 
 type incoming struct {
@@ -207,22 +210,28 @@ func newTransportLayer(address string, log *slog.Logger, observe Observer, idleT
 func (t *TransportLayer) LocalAddr() netip.AddrPort { return t.udp.LocalAddr() }
 
 // Close closes the UDP socket, the TCP listener and every connection,
-// and waits for their readers and writers to end. A Receive in progress
-// returns an error, and so does every message that waits to go out over
-// TCP.
+// and waits for their readers to end. A Receive in progress returns an
+// error. The messages handed over before Close that wait for a TCP
+// connection that is open still go out on it first, each within the
+// write deadline, as they would have before; a message that needs a new
+// connection fails, since Close gives up every connect.
 func (t *TransportLayer) Close() error {
 	t.closeOnce.Do(func() {
 		close(t.closed)
 		t.cancel()
 		t.mu.Lock()
-		conns := t.conns
-		t.conns = nil
+		t.closing = true
 		t.mu.Unlock()
 		t.listener.Close()
 		t.udp.Close()
 		if t.client != nil {
 			t.client.Close()
 		}
+		t.writers.Wait()
+		t.mu.Lock()
+		conns := t.conns
+		t.conns = nil
+		t.mu.Unlock()
 		for _, c := range conns {
 			c.Close()
 		}
