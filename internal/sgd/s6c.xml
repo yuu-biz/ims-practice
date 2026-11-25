@@ -48,6 +48,7 @@
                 <rule avp="Supported-Features" required="false"/>
                 <rule avp="Serving-Node" required="false" max="1"/>
                 <rule avp="SMSF-3GPP-Address" required="false" max="1"/>
+                <rule avp="MWD-Status" required="false" max="1"/>
             </answer>
         </command>
 
@@ -142,6 +143,11 @@
             <data type="Unsigned32"/>
         </avp>
         <avp name="RDR-Flags" code="3323" must="V" must-not="M" may-encrypt="N" vendor-id="10415">
+            <data type="Unsigned32"/>
+        </avp>
+        <!-- TS 29.338 Table 5.3.3.8/1: what the HSS holds of the message
+             waiting data of the user. -->
+        <avp name="MWD-Status" code="3312" must="M,V" may-encrypt="N" vendor-id="10415">
             <data type="Unsigned32"/>
         </avp>
 

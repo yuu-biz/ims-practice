@@ -81,6 +81,18 @@ func TestSendRoutingInfoForSMRoundTrip(t *testing.T) {
 				UserName:    "001019876543210",
 				ServingNode: &ServingNode{IPSMGWNumber: ipsmgwNumber, IPSMGWName: ipsmgwHost, IPSMGWRealm: ipsmgwRealm},
 			},
+			{ // the HSS holds the SC address, and MCEF, for the user
+				Result:      diameter.Base(diameter.DiameterSuccess),
+				UserName:    imsi,
+				ServingNode: &ServingNode{IPSMGWNumber: ipsmgwNumber, IPSMGWName: ipsmgwHost, IPSMGWRealm: ipsmgwRealm},
+				MWDStatus:   new(MWDMCEFSet),
+			},
+			{ // the HSS holds the SC address and no flag: an MWD-Status of 0
+				Result:      diameter.Base(diameter.DiameterSuccess),
+				UserName:    imsi,
+				ServingNode: &ServingNode{MMEName: mmeHost, MMERealm: realm, MMENumberForMTSMS: mmeNumber},
+				MWDStatus:   new(MWDStatus(0)),
+			},
 			{Result: diameter.Experimental(DiameterErrorUserUnknown)},
 			{Result: diameter.Experimental(DiameterErrorAbsentUser), SupportedFeatures: SMSFSupport},
 		} {
@@ -104,8 +116,8 @@ func TestSendRoutingInfoForSMRoundTrip(t *testing.T) {
 // of the specifications rather than against this package's own decoder:
 // the header of TS 29.338 5.3.2.3 and 5.3.2.4, the Supported-Features of
 // TS 29.229 6.3.29, the Serving-Node of TS 29.338 5.3.3.6 with the flags
-// of Table 5.3.3.1/2, and the SMSF-3GPP-Address of 5.3.3.35 with the
-// flags of Table 5.3.3.1/1.
+// of Table 5.3.3.1/2, and the SMSF-3GPP-Address of 5.3.3.35 and the
+// MWD-Status of 5.3.3.8 with the flags of Table 5.3.3.1/1.
 func TestSendRoutingInfoForSMBytes(t *testing.T) {
 	srr := SendRoutingInfoForSMRequest{
 		Header:            diameter.Header{SessionID: scHost + ";2;1", OriginHost: scHost, OriginRealm: realm, DestinationRealm: realm},
@@ -155,6 +167,7 @@ func TestSendRoutingInfoForSMBytes(t *testing.T) {
 		SupportedFeatures: SMSFSupport,
 		ServingNode:       &ServingNode{MMEName: mmeHost, MMERealm: realm, MMENumberForMTSMS: mmeNumber},
 		SMSF3GPPAddress:   &SMSF3GPPAddress{SMSF3GPPNumber: smsfNumber, SMSF3GPPName: smsfHost, SMSF3GPPRealm: realm},
+		MWDStatus:         new(MWDSCAddressNotIncluded | MWDMCEFSet),
 	}.Message(wire(t, srr), hss).Serialize()
 	if err != nil {
 		t.Fatal(err)
@@ -169,9 +182,14 @@ func TestSendRoutingInfoForSMBytes(t *testing.T) {
 	}
 	// Session-Id, Result-Code, Auth-Session-State, Origin-Host,
 	// Origin-Realm, User-Name, Supported-Features, Serving-Node,
-	// SMSF-3GPP-Address.
-	if want := []uint32{263, 268, 277, 264, 296, 1, 628, 2401, 3344}; !reflect.DeepEqual(order, want) {
+	// SMSF-3GPP-Address, MWD-Status.
+	if want := []uint32{263, 268, 277, 264, 296, 1, 628, 2401, 3344, 3312}; !reflect.DeepEqual(order, want) {
 		t.Errorf("SRA AVP codes = %v, want %v", order, want)
+	}
+	// Bits 0 and 2 of Table 5.3.3.8/1: SC-Address Not included and
+	// MCEF-Set.
+	if a := find(t, avps, 3312, 10415); a.flags != 0xc0 || binary.BigEndian.Uint32(a.data) != 0b101 {
+		t.Errorf("MWD-Status: flags %#x, data % X", a.flags, a.data)
 	}
 	if a := find(t, avps, 268, 0); binary.BigEndian.Uint32(a.data) != 2001 {
 		t.Errorf("Result-Code = % X", a.data)
