@@ -27,7 +27,8 @@ import (
 //
 // An Rx session links the same way (TS 29.214 A.1, A.4). The P-CSCF
 // sends its first AAR for the media of a call when it has the SDP
-// answer, and its Framed-IP-Address is the address of the UE: the cause
+// answer, and its Framed-IP-Address, or Framed-IPv6-Prefix for a UE on
+// IPv6 (TS 29.214 4.4.1), is the address of the UE: the cause
 // is the SIP message with SDP that the P-CSCF received from that address
 // last, the INVITE of a calling UE or the 183 of a called one. The AAR
 // for the signalling path follows a REGISTER from that address. The
@@ -65,7 +66,8 @@ var (
 	avpUserName       = avpID{1, 0}       // RFC 6733 8.14
 	avpPublicIdentity = avpID{601, 10415} // TS 29.229 6.3.2
 	// From NASREQ, in Rx (TS 29.214 Table 5.4.0.1).
-	avpFramedIPAddress = avpID{8, 0}
+	avpFramedIPAddress  = avpID{8, 0}
+	avpFramedIPv6Prefix = avpID{97, 0}
 )
 
 // diameterCauses is, for each Cx and Rx request, the AVPs that name the
@@ -75,11 +77,12 @@ var diameterCauses = map[uint32][]struct {
 	avp   avpID
 	field identityField
 }{
-	300: {{avpUserName, registerUsername}, {avpPublicIdentity, registerTo}},  // UAR
-	303: {{avpUserName, registerUsername}, {avpPublicIdentity, registerTo}},  // MAR
-	301: {{avpUserName, registerUsername}, {avpPublicIdentity, registerTo}},  // SAR
-	302: {{avpPublicIdentity, requestURI}},                                   // LIR
-	265: {{avpFramedIPAddress, sdpFrom}, {avpFramedIPAddress, registerFrom}}, // AAR
+	300: {{avpUserName, registerUsername}, {avpPublicIdentity, registerTo}}, // UAR
+	303: {{avpUserName, registerUsername}, {avpPublicIdentity, registerTo}}, // MAR
+	301: {{avpUserName, registerUsername}, {avpPublicIdentity, registerTo}}, // SAR
+	302: {{avpPublicIdentity, requestURI}},                                  // LIR
+	265: {{avpFramedIPAddress, sdpFrom}, {avpFramedIPAddress, registerFrom}, // AAR
+		{avpFramedIPv6Prefix, sdpFrom}, {avpFramedIPv6Prefix, registerFrom}},
 }
 
 // causeKey is one identity of a SIP request, as one node received it.
@@ -190,8 +193,8 @@ func (ix causeIndex) callIDOf(d *diameterMessage, from netip.Addr, t time.Time) 
 }
 
 // identities are the values of the top-level AVPs a, in the form the
-// SIP side has them: text as it is, and a Framed-IP-Address, four octets
-// of an IPv4 address, as the address.
+// SIP side has them: text as it is, and a Framed-IP-Address or a
+// Framed-IPv6-Prefix as the address it holds.
 func (d *diameterMessage) identities(a avpID) []string {
 	var out []string
 	for _, avp := range d.AVPs {
@@ -199,8 +202,11 @@ func (d *diameterMessage) identities(a avpID) []string {
 		if avp.Code != a.code || avp.Vendor != a.vendor || json.Unmarshal(avp.Value, &s) != nil {
 			continue
 		}
-		if a == avpFramedIPAddress {
+		switch a {
+		case avpFramedIPAddress:
 			s = framedIPAddress(s)
+		case avpFramedIPv6Prefix:
+			s = framedIPv6Prefix(s)
 		}
 		out = append(out, s)
 	}
@@ -219,4 +225,16 @@ func framedIPAddress(v string) string {
 		return a.String()
 	}
 	return ""
+}
+
+// framedIPv6Prefix reads the full IPv6 address of a UE in a
+// Framed-IPv6-Prefix, an OctetString in base64: a reserved octet, the
+// prefix length, 128, and the 16 octets of the address (RFC 3162 2.3,
+// which RFC 7155 4.4.10.5.6 keeps).
+func framedIPv6Prefix(v string) string {
+	b, err := base64.StdEncoding.DecodeString(v)
+	if err != nil || len(b) != 2+16 || b[1] != 128 {
+		return ""
+	}
+	return netip.AddrFrom16([16]byte(b[2:])).String()
 }
