@@ -2,6 +2,7 @@ package smsc
 
 import (
 	"context"
+	"errors"
 	"github.com/yuu-biz/ims-practice/internal/diameter"
 	"reflect"
 	"sync"
@@ -374,6 +375,74 @@ func TestServingNodes(t *testing.T) {
 	}
 	if got := servingNodes(sra); !reflect.DeepEqual(got, want) {
 		t.Errorf("servingNodes = %+v, want %+v", got, want)
+	}
+}
+
+// TestAnotherInstanceOfTheIPSMGW: an IP-SM-GW that answers the TFR
+// DIAMETER_TOO_BUSY, or that the SC has no connection to, has not begun
+// the delivery, so the SC sends the TFR to the other IP-SM-GWs of the
+// realm until one takes it (RFC 6733 7.1.3). An IP-SM-GW that took the
+// TFR and gave no answer may have delivered it, and an MME is reached
+// with a number of its own in the TFR, so after either the short
+// message waits for the retry instead.
+func TestAnotherInstanceOfTheIPSMGW(t *testing.T) {
+	const (
+		second = "ipsmgw-2." + imsRealm
+		third  = "ipsmgw-3." + imsRealm
+		mme2   = "mme-2." + epcRealm
+	)
+	tooBusy := answerWith(diameter.Base(diameter.DiameterTooBusy))
+	noAnswer := func(sgd.MTForwardShortMessageRequest) (sgd.MTForwardShortMessageAnswer, error) {
+		return sgd.MTForwardShortMessageAnswer{}, errors.New("no answer to the TFR")
+	}
+	servedByIPSMGW := sgd.SendRoutingInfoForSMAnswer{Result: diameter.Base(diameter.DiameterSuccess), UserName: imsiOf[bob],
+		ServingNode: &sgd.ServingNode{IPSMGWNumber: "12025550192", IPSMGWName: ipsmgw, IPSMGWRealm: imsRealm}}
+	for _, tc := range []struct {
+		name  string
+		nodes func(*fakeNodes)
+		mme   bool
+		// tried are the nodes that the TFRs went to, and kept whether the
+		// short message waits for a retry.
+		tried []string
+		kept  bool
+	}{
+		{"too busy", func(n *fakeNodes) { n.set(ipsmgw, tooBusy) }, false, []string{ipsmgw, second}, false},
+		{"no connection", func(n *fakeNodes) { n.disconnect(ipsmgw) }, false, []string{second}, false},
+		{"every instance too busy", func(n *fakeNodes) {
+			n.set(ipsmgw, tooBusy)
+			n.set(second, tooBusy)
+			n.set(third, tooBusy)
+		}, false, []string{ipsmgw, second, third}, true},
+		{"no answer", func(n *fakeNodes) { n.set(ipsmgw, noAnswer) }, false, []string{ipsmgw}, true},
+		{"an MME too busy", func(n *fakeNodes) { n.set(mmeHost, tooBusy) }, true, []string{mmeHost}, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			n := newNetwork(t)
+			if !tc.mme {
+				n.hss.set(bob, servedByIPSMGW)
+			}
+			n.nodes.set(ipsmgw, accepts)
+			n.nodes.set(second, accepts)
+			n.nodes.set(mme2, accepts)
+			tc.nodes(n.nodes)
+			n.submit(bob, hello(t, bob, 3))
+
+			var hosts []string
+			for _, tfr := range n.nodes.sent() {
+				hosts = append(hosts, tfr.DestinationHost)
+				if want := realmOf(tfr.DestinationHost, ""); tfr.DestinationRealm != want || tfr.UserName != imsiOf[bob] {
+					t.Errorf("TFR to %s for %s in realm %s, want %s and realm %s",
+						tfr.DestinationHost, tfr.UserName, tfr.DestinationRealm, imsiOf[bob], want)
+				}
+			}
+			if !reflect.DeepEqual(hosts, tc.tried) {
+				t.Fatalf("TFRs went to %v, want %v", hosts, tc.tried)
+			}
+			n.advance(DefaultRetrySchedule[0])
+			if retried := len(n.nodes.sent()) > len(hosts); retried != tc.kept {
+				t.Errorf("retried = %v, want %v", retried, tc.kept)
+			}
+		})
 	}
 }
 

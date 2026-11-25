@@ -86,12 +86,14 @@ func (c *S6cClient) ReportSMDeliveryStatus(ctx context.Context, req ReportSMDeli
 }
 
 // Peers is how the SC reaches one serving node over SGd, by the
-// Origin-Host that the node sent in its CER. Of the two ends, the
-// serving node is the one that opens the connection here, since it is
-// also the one that brings the mobile originated short messages.
+// Origin-Host that the node sent in its CER, and finds the serving
+// nodes of a realm among the nodes connected to it. Of the two ends,
+// the serving node is the one that opens the connection here, since it
+// is also the one that brings the mobile originated short messages.
 // *diameter.Server is one.
 type Peers interface {
 	Request(ctx context.Context, originHost string, request *diam.Message) (*diam.Message, error)
+	Hosts(realm string, application uint32) []string
 }
 
 // SGdClient sends the SGd requests of the SMS-GMSC: a short message for
@@ -146,6 +148,13 @@ func (c *SGdClient) MTForwardShortMessage(ctx context.Context, req MTForwardShor
 		return MTForwardShortMessageAnswer{}, err
 	}
 	return ParseMTForwardShortMessageAnswer(answer)
+}
+
+// ServingNodes are the Diameter identities of the nodes of realm that
+// are connected to the client over SGd, sorted: the nodes that a TFR for
+// that realm can be sent to now.
+func (c *SGdClient) ServingNodes(realm string) []string {
+	return c.peers.Hosts(realm, ApplicationIDSGd)
 }
 
 // ServiceCentre is how a serving node reaches the SC over SGd.

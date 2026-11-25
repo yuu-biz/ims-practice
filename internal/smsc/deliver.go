@@ -2,6 +2,7 @@ package smsc
 
 import (
 	"context"
+	"errors"
 	"github.com/yuu-biz/ims-practice/internal/diameter"
 	"log/slog"
 	"strings"
@@ -393,14 +394,57 @@ type failure struct {
 	// waiting is the cause with which the SC address goes into the MWD
 	// of the HSS, for the errors after which 8.1.1 asks for it, or nil.
 	waiting *sgd.SMDeliveryCause
-	reason  string
+	// notBegun is set when the node has not begun the delivery: it
+	// answered DIAMETER_TOO_BUSY, or the TFR never went out because the
+	// SC has no connection to it.
+	notBegun bool
+	reason   string
 }
 
 func waitingFor(c sgd.SMDeliveryCause) *sgd.SMDeliveryCause { return &c }
 
 // forward sends the TPDU to one node in a TFR (TS 29.338 6.2.2.3), and
 // returns nil when the node delivered it.
+//
+// An IP-SM-GW that answers DIAMETER_TOO_BUSY, or that the SC has no
+// connection to, has not begun the delivery. The SC then sends the TFR
+// to the other IP-SM-GWs of the same realm that are connected to it,
+// one after another, until one of them has begun it: the instances of
+// the IP-SM-GW share the state of their users, so any of them finds the
+// recipient by the IMSI. The TFR names its node in Destination-Host (TS
+// 29.338 6.3.1.2), so no Diameter agent could take it to another node
+// in place of the SC: the destination of such a request is fixed, and
+// an agent answers DIAMETER_UNABLE_TO_DELIVER when that node is gone
+// (RFC 6733 5.5.4). DIAMETER_TOO_BUSY is the answer after which the
+// node that gets it tries an alternate peer (7.1.3).
+//
+// A TFR that went out and got no answer stays with its node: the
+// IP-SM-GW may have delivered it, and the short message waits for the
+// next attempt rather than reach the UE twice. Nor does a TFR to an MME
+// go to another MME, as it carries the number of that MME for MT SMS.
 func (c *SMSC) forward(ctx context.Context, node servingNode, userName string, tpdu []byte, log *slog.Logger) *failure {
+	f := c.forwardTo(ctx, node, userName, tpdu, log)
+	if f == nil || !f.notBegun || node.kind != nodeIPSMGW {
+		return f
+	}
+	for _, host := range c.sgd.ServingNodes(node.realm) {
+		if strings.EqualFold(host, node.host) {
+			continue
+		}
+		log.Info("the IP-SM-GW has not begun the delivery; trying another of its realm",
+			"node", f.node.host, "reason", f.reason, "next_node", host)
+		other := node
+		other.host = host
+		if f = c.forwardTo(ctx, other, userName, tpdu, log); f == nil || !f.notBegun {
+			return f
+		}
+	}
+	return f
+}
+
+// forwardTo sends the TPDU to node in a TFR, and returns nil when the
+// node delivered it.
+func (c *SMSC) forwardTo(ctx context.Context, node servingNode, userName string, tpdu []byte, log *slog.Logger) *failure {
 	log = log.With("node", node.host)
 	log.Info("forwarding the short message", "node_kind", node.kind.String())
 	tfa, err := c.sgd.MTForwardShortMessage(ctx, sgd.MTForwardShortMessageRequest{
@@ -413,13 +457,15 @@ func (c *SMSC) forward(ctx context.Context, node servingNode, userName string, t
 		MMENumberForMTSMS: node.mmeNumber,
 	})
 	if err != nil {
-		return &failure{node: node, tryNextNode: true, reason: "system failure: no answer: " + err.Error()}
+		return &failure{node: node, tryNextNode: true, notBegun: errors.Is(err, diameter.ErrPeerUnavailable),
+			reason: "system failure: no answer: " + err.Error()}
 	}
 	if tfa.Result.Success() {
 		return nil
 	}
 	f := deliveryFailure(tfa)
 	f.node = node
+	f.notBegun = tfa.Result == diameter.Base(diameter.DiameterTooBusy)
 	return &f
 }
 

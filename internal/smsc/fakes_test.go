@@ -6,6 +6,7 @@ import (
 	"github.com/yuu-biz/ims-practice/internal/diameter"
 	"io"
 	"log/slog"
+	"slices"
 	"sync"
 	"testing"
 	"time"
@@ -121,11 +122,18 @@ type fakeNodes struct {
 	// silent are the nodes that answer no TFR: the SC waits for the TFA
 	// until it gives the attempt up.
 	silent map[string]bool
-	tfr    []sgd.MTForwardShortMessageRequest
+	// gone are the nodes that the SC has no connection to. A TFR for one
+	// does not go out, so it is not recorded.
+	gone map[string]bool
+	tfr  []sgd.MTForwardShortMessageRequest
 }
 
 func (n *fakeNodes) MTForwardShortMessage(ctx context.Context, req sgd.MTForwardShortMessageRequest) (sgd.MTForwardShortMessageAnswer, error) {
 	n.mu.Lock()
+	if n.gone[req.DestinationHost] {
+		n.mu.Unlock()
+		return sgd.MTForwardShortMessageAnswer{}, diameter.ErrPeerUnavailable
+	}
 	n.tfr = append(n.tfr, req)
 	f := n.answer[req.DestinationHost]
 	silent := n.silent[req.DestinationHost]
@@ -144,6 +152,28 @@ func (n *fakeNodes) set(host string, f func(sgd.MTForwardShortMessageRequest) (s
 	n.mu.Lock()
 	defer n.mu.Unlock()
 	n.answer[host] = f
+}
+
+// ServingNodes are the nodes of realm that set gave an answer, less
+// those that are gone. A node is named inside its realm.
+func (n *fakeNodes) ServingNodes(realm string) []string {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	var hosts []string
+	for host := range n.answer {
+		if realmOf(host, "") == realm && !n.gone[host] {
+			hosts = append(hosts, host)
+		}
+	}
+	slices.Sort(hosts)
+	return hosts
+}
+
+// disconnect takes away the connection of the SC to host.
+func (n *fakeNodes) disconnect(host string) {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	n.gone[host] = true
 }
 
 // silence has host answer no TFR while on holds, and answer as set says
@@ -189,7 +219,7 @@ func newNetwork(t *testing.T) *network {
 		clock: &fakeClock{now: t0},
 		hss:   &fakeHSS{answers: map[string]sgd.SendRoutingInfoForSMAnswer{}},
 		nodes: &fakeNodes{answer: map[string]func(sgd.MTForwardShortMessageRequest) (sgd.MTForwardShortMessageAnswer, error){},
-			silent: map[string]bool{}},
+			silent: map[string]bool{}, gone: map[string]bool{}},
 		store: NewMemoryStore(),
 	}
 	for _, user := range []string{alice, bob, carol} {
