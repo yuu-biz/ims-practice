@@ -36,6 +36,12 @@ type Challenge struct {
 	// HSSHost is the Origin-Host of the MAA, the Destination-Host of the
 	// SAR that follows (TS 29.228 6.1.2).
 	HSSHost string
+	// ServerName is the Server-Name of the MAR, under which the HSS holds
+	// the user now. The Cx requests that go on with the challenge name
+	// it, whichever instance of the S-CSCF sends them: the SAR that
+	// follows, which the HSS takes under no other name (TS 29.228
+	// 8.1.2), and the MAR of a re-synchronisation (6.3.1 step 4).
+	ServerName string
 	// Expires is when reg-await-auth runs out (TS 24.229 5.4.1.2.1):
 	// the authentication fails then if no REGISTER has answered the
 	// challenge.
@@ -84,6 +90,13 @@ type Registration struct {
 	// for terminating requests (RFC 3327).
 	Path    []string
 	HSSHost string
+	// ServerName is the Server-Name under which the HSS assigned the
+	// user: the one of the challenge that the registration answered,
+	// which every re-registration keeps. Each Cx request about the
+	// registration names it, whichever instance of the S-CSCF sends it:
+	// the HSS takes a SAR under no other name (TS 29.228 8.1.2), and a
+	// MAR under another name would take the user from this S-CSCF (8.1).
+	ServerName string
 	// The contact as the reg event package reports it (RFC 3680 5.1, TS
 	// 24.229 5.4.2.1.2). ContactID is new with each new binding, and
 	// ContactEvent is the event that last changed it: registered or
@@ -151,6 +164,11 @@ type UnregisteredProfile struct {
 	// HSSHost is the Origin-Host of the SAA, the Destination-Host of the
 	// SAR that lets the user go.
 	HSSHost string
+	// ServerName is the Server-Name of the SAR that took the profile,
+	// under which the HSS holds the user. The SAR that lets the user go
+	// names it, whichever instance of the S-CSCF sends it (TS 29.228
+	// 8.1.2).
+	ServerName string
 	// Expires is when the S-CSCF lets the profile go.
 	Expires time.Time
 }

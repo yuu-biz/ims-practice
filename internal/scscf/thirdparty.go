@@ -143,7 +143,7 @@ func (s *SCSCF) sendThirdPartyRegister(m *sip.Message, reg Registration, as ifc.
 		log.Warn("the registration stays: the store failed", "error", err.Error())
 		return
 	}
-	s.serverAssignment(ctx, current.PrivateIdentity, current.PublicIdentities[0], current.HSSHost, cx.AdministrativeDeregistration)
+	s.serverAssignment(ctx, current.PrivateIdentity, current.PublicIdentities[0], current.HSSHost, current.ServerName, cx.AdministrativeDeregistration)
 }
 
 // equivalentRegister is the REGISTER that would have had the effect of
