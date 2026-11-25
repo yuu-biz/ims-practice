@@ -358,6 +358,15 @@ func (p *PCSCF) subsequent(st *sip.ServerTransaction, out *sip.Message, log *slo
 // service information in the policy session of the dialog (TS 29.214
 // A.1, 4.4.2). ue is the address of the served UE.
 //
+// When the relay does not take the answer, the response goes on as it
+// came, since it is the final response of the request and the party
+// that answered has taken the offer already. The PCRF does not get that
+// answer, and the P-CSCF then releases the dialog (TS 24.229 5.2.8.1),
+// as TS 24.229 6.2 has it do after it has passed on a 200 whose SDP it
+// does not allow. A failure after the relay took an answer of the
+// request is that of a retransmitted 2xx to a re-INVITE, and changes
+// nothing.
+//
 // SIMPLIFIED: TS 29.214 4.4.2. When the PCRF refuses the changed
 // service information, the P-CSCF only logs it, and the session stays
 // authorised as it was: the far end has given its answer by then. TS
@@ -369,7 +378,9 @@ func (p *PCSCF) renegotiate(out *sip.Message, d Dialog, toUE bool, ue netip.Addr
 		log.Warn("media relay refused the offer", "error", err.Error())
 	}
 	offer := ueSide(received, out.Body, toUE)
-	authorized := false
+	// settled is true once the relay has taken an answer to the offer, or
+	// the P-CSCF has set out to release the dialog for one it did not.
+	authorized, settled := false, false
 	return func(resp *sip.Message) {
 		if resp.StatusCode >= 300 || !sip.HasSessionDescription(resp) {
 			return
@@ -377,7 +388,13 @@ func (p *PCSCF) renegotiate(out *sip.Message, d Dialog, toUE bool, ue netip.Addr
 		received := resp.Body
 		if err := p.relaySDP(resp, d.Relay, !toUE); err != nil {
 			log.Warn("media relay refused the answer", "error", err.Error())
+			if !settled {
+				settled = true
+				go p.release(d.Key, errRelay, log)
+			}
+			return
 		}
+		settled = true
 		// A 2xx to a re-INVITE comes again until its ACK arrives.
 		if authorized || d.PolicySession == "" || p.policy == nil {
 			return
@@ -513,8 +530,10 @@ func (p *PCSCF) forwardACK(ref *ims.StackRef, ack *sip.Message) {
 		p.log.Warn("cannot forward ACK", "call_id", ack.Get("Call-ID"), "error", err.Error())
 	}
 	// The ACK goes on first, so that the callee has it before the BYE.
+	// Only a confirmed dialog waits for its ACK, and its BYEs are the
+	// same whatever the release is for.
 	if known && d.ReleasePending {
-		go p.releaseNow(key, p.log.With("method", string(sip.ACK), "call_id", key.CallID))
+		go p.releaseNow(key, nil, p.log.With("method", string(sip.ACK), "call_id", key.CallID))
 	}
 }
 

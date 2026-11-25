@@ -23,7 +23,8 @@ import (
 // gives the INVITE up then too, as for lost resources but with a plain
 // 500: FAILURE_CAUSE tells of radio or bearer resources (7.2A.18.12.2).
 // That response goes no further, since its SDP would lead its party
-// past the relay.
+// past the relay. When the answer is that of an UPDATE within the early
+// dialog, the release comes through call.abort instead.
 //
 // Like ProxyWith it returns the final response that is still to be
 // sent, or nil after a 2xx. It also returns nil once the P-CSCF has
@@ -50,8 +51,9 @@ func (p *PCSCF) proxyInvite(st *sip.ServerTransaction, out *sip.Message, targets
 	// The callee tags of the 2xx that crossed the CANCEL, whose dialogs
 	// the P-CSCF has sent its BYE in.
 	crossed := map[string]bool{}
-	// giveUp gives the INVITE up for why, an error of call.response, or
-	// nil when the network took the resources away.
+	// giveUp gives the INVITE up for why: an error of call.response or the
+	// abortCause of call, which is nil when the network took the
+	// resources away.
 	giveUp := func(why error) {
 		call.givenUp = true
 		switch {
@@ -113,7 +115,7 @@ func (p *PCSCF) proxyInvite(st *sip.ServerTransaction, out *sip.Message, targets
 				refused := call.response(resp)
 				if !call.settle() {
 					// The session was aborted just before its 2xx came.
-					giveUp(nil)
+					giveUp(call.abortCause)
 					continue
 				}
 				switch {
@@ -153,7 +155,7 @@ func (p *PCSCF) proxyInvite(st *sip.ServerTransaction, out *sip.Message, targets
 				if refused != nil {
 					// The callee has answered, so the caller gets the 2xx,
 					// and the dialog is then released (5.2.8.1.2).
-					go p.release(call.key, call.log)
+					go p.release(call.key, nil, call.log)
 				}
 			default:
 				final = resp
@@ -165,7 +167,7 @@ func (p *PCSCF) proxyInvite(st *sip.ServerTransaction, out *sip.Message, targets
 		case <-abort:
 			abort = nil
 			if !call.givenUp {
-				giveUp(nil)
+				giveUp(call.abortCause)
 			}
 		case <-timerCFired:
 			timerCFired = nil

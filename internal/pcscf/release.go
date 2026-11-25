@@ -78,15 +78,18 @@ func (p *PCSCF) PolicyEvent(e policy.Event) {
 		}
 	}
 	log.Info("the network took the resources of the session", "call_id", d.Key.CallID)
-	p.release(d.Key, log)
+	p.release(d.Key, nil, log)
 }
 
-// release ends the dialog of key from the P-CSCF. A dialog that is gone
-// has been ended already, and a Released one is being ended.
+// release ends the dialog of key from the P-CSCF, for why: nil when the
+// network took the resources of the session away, or errRelay when the
+// media relay did not take an answer. A dialog that is gone has been
+// ended already, and a Released one is being ended.
 //
 // While the INVITE is still on its way, the P-CSCF answers it 500 and
-// cancels it towards the callee (TS 24.229 5.2.8.1.1). Once the dialog
-// is confirmed, it sends a BYE (5.2.8.1.2).
+// cancels it towards the callee (TS 24.229 5.2.8.1.1), as proxyInvite
+// does for why. Once the dialog is confirmed, it sends a BYE
+// (5.2.8.1.2), the same for every why.
 //
 // One of the BYEs speaks for the callee, and a callee must not send a
 // BYE before the ACK for its 2xx has come, or the server transaction
@@ -100,7 +103,7 @@ func (p *PCSCF) PolicyEvent(e policy.Event) {
 // going into a time index of the Store (ExpiryKind): it is short, it
 // belongs to a call that is not yet established, and the dialog it
 // releases is one this instance is holding anyway.
-func (p *PCSCF) release(key DialogKey, log *slog.Logger) {
+func (p *PCSCF) release(key DialogKey, why error, log *slog.Logger) {
 	d, ok, err := p.store.UpdateDialog(context.Background(), key, func(d *Dialog) {
 		if d.Confirmed && !d.Acknowledged {
 			d.ReleasePending = true
@@ -115,10 +118,10 @@ func (p *PCSCF) release(key DialogKey, log *slog.Logger) {
 	}
 	if d.ReleasePending {
 		log.Info("the dialog is released once the ACK for its 2xx has passed", "call_id", key.CallID)
-		time.AfterFunc(p.ackWait, func() { p.releaseNow(key, log) })
+		time.AfterFunc(p.ackWait, func() { p.releaseNow(key, why, log) })
 		return
 	}
-	p.releaseNow(key, log)
+	p.releaseNow(key, why, log)
 }
 
 // releaseNow is release once the BYEs may go out. It marks the dialog
@@ -127,8 +130,8 @@ func (p *PCSCF) release(key DialogKey, log *slog.Logger) {
 // so that the P-CSCF answers a request within it 481 meanwhile (TS
 // 24.229 5.2.8.1.3, subsequent): until the BYEs are answered for a
 // confirmed dialog (sendBYEs), and until its INVITE has ended for an
-// early one (setup.end).
-func (p *PCSCF) releaseNow(key DialogKey, log *slog.Logger) {
+// early one (setup.end). why is that of release.
+func (p *PCSCF) releaseNow(key DialogKey, why error, log *slog.Logger) {
 	first := false
 	d, ok, err := p.store.UpdateDialog(context.Background(), key, func(d *Dialog) {
 		first = !d.Released
@@ -143,15 +146,22 @@ func (p *PCSCF) releaseNow(key DialogKey, log *slog.Logger) {
 	}
 	log = log.With("call_id", key.CallID)
 	switch {
-	case p.abortSetup(d):
+	case p.abortSetup(d, why):
 		log.Info("cancelling the session that is being set up")
 	case d.Confirmed:
 		p.sendBYEs(d, log)
 	default:
-		// An early dialog whose INVITE another P-CSCF instance forwards.
-		// The PCRF sends the events of a session to the instance that
-		// opened it, so this does not happen in practice. That INVITE
-		// goes on, so its dialog must not stay released.
+		// SIMPLIFIED: TS 24.229 5.2.8.1.1. Only the P-CSCF instance that
+		// forwards an INVITE can answer it 500 and cancel it, and the
+		// instances share the Store but have no way to ask one another.
+		// The early dialog of an INVITE that another instance forwards
+		// ends here with what it holds, and the INVITE goes on, without
+		// media through the relay. The PCRF sends the events of a
+		// session to the instance that opened it, so the one release
+		// that comes here is that of an UPDATE whose answer the relay
+		// did not take, when the UPDATE passed another instance than its
+		// INVITE. That INVITE goes on, so its dialog must not stay
+		// released.
 		log.Warn("cannot cancel an INVITE that this P-CSCF instance does not hold")
 		p.endDialog(key, d, log)
 	}

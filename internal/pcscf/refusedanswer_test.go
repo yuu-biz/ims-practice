@@ -176,3 +176,106 @@ func TestRefusedRetransmissionOfThe200KeepsTheCall(t *testing.T) {
 	noRequest(t, "the caller", ueGot)
 	relay.waitHeld(t, 1, 0)
 }
+
+// answerOffers has the far end answer each offer within the dialog of
+// in, as a UA does, with its media at coreMedia.
+func answerOffers(in *sip.IncomingCall) {
+	in.Handle(func(r *sip.InDialogRequest) {
+		var body sip.Body
+		if r.Offer {
+			body = sdpBody(sdp.Offer("3", coreMedia))
+		}
+		r.Accept(body)
+	})
+}
+
+// endedByBYE checks that a call has ended with a BYE of the P-CSCF.
+func endedByBYE(t *testing.T, what string, call interface {
+	Done() <-chan struct{}
+	EndedBy() *sip.Message
+}) {
+	t.Helper()
+	ended(t, what, call.Done())
+	bye := call.EndedBy()
+	if bye == nil || bye.Method != sip.BYE || bye.Get("Reason") != reasonServiceUnavailable {
+		t.Errorf("%s ended by %v, want a BYE with Reason %q", what, bye, reasonServiceUnavailable)
+	}
+}
+
+// TestRefusedAnswerWithinTheDialogReleasesTheCall: the relay does not
+// take the answer in the 200 to an UPDATE, or to a re-INVITE such as the
+// one of a hold, of a call that is up. The 200 goes on as it came; the
+// P-CSCF then releases the dialog with a BYE to each party (TS 24.229
+// 5.2.8.1.2), as TS 24.229 6.2 has it do after a 200 whose SDP it does
+// not allow. The PCRF never gets that answer, and the policy session and
+// the relay context go.
+func TestRefusedAnswerWithinTheDialogReleasesTheCall(t *testing.T) {
+	for _, offer := range []struct {
+		request string
+		send    func(*sip.OutgoingCall, sip.Body, ...sip.HeaderField) (*sip.Message, error)
+	}{
+		{"UPDATE", (*sip.OutgoingCall).Update},
+		{"re-INVITE", (*sip.OutgoingCall).ReInvite},
+	} {
+		t.Run(offer.request, func(t *testing.T) {
+			h, pcrf, relay := newPolicyHarness(t)
+			out, in := h.call()
+			answerOffers(in)
+			acked := accept(in, answerTo(t, in.Request, coreMedia))
+			answered(t, out, 200)
+			waitACK(t, acked)
+
+			relay.refuseModify(agw.Core)
+			resp, err := offer.send(out, sdpBody(sdp.Offer("2", netip.MustParseAddrPort("192.0.2.10:4002"))))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if resp.StatusCode != 200 {
+				t.Fatalf("the %s got %d, want the 200 of the far end", offer.request, resp.StatusCode)
+			}
+			endedByBYE(t, "the UE's call", out)
+			endedByBYE(t, "the far end's call", in)
+			pcrf.waitReleased(t, "session-1")
+			relay.waitHeld(t, 0, time.Second)
+			if n := len(pcrf.mediaRequests()); n != 1 {
+				t.Errorf("%d requests to authorise media, want only the one of the INVITE", n)
+			}
+		})
+	}
+}
+
+// TestRefusedAnswerOfAnUPDATEInTheEarlyDialogEndsTheCall: the UPDATE
+// comes before the 200 to the INVITE, as when a VoLTE UE tells that its
+// resources are reserved, and the relay does not take its answer. The
+// 200 to the UPDATE goes on, and the P-CSCF ends the call being set up
+// as for a 183 whose answer the relay did not take (TS 24.229
+// 5.2.8.1.1): the caller gets 500, without FAILURE_CAUSE, and the callee
+// a CANCEL with the Reason of 503.
+func TestRefusedAnswerOfAnUPDATEInTheEarlyDialogEndsTheCall(t *testing.T) {
+	h, pcrf, relay := newPolicyHarness(t)
+	out, in := h.call()
+	answerOffers(in)
+	if err := in.Progress(183, answerTo(t, in.Request, coreMedia)); err != nil {
+		t.Fatal(err)
+	}
+
+	relay.refuseModify(agw.Core)
+	resp, err := out.Update(sdpBody(sdp.Offer("2", netip.MustParseAddrPort("192.0.2.10:4002"))))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.StatusCode != 200 {
+		t.Fatalf("the UPDATE got %d, want the 200 of the far end", resp.StatusCode)
+	}
+	wantNoFailureCause(t, answered(t, out, 500))
+	ended(t, "the callee's call", in.Done())
+	if in.Err() != sip.ErrCancelled {
+		t.Fatalf("the callee's call ended with %v, want a CANCEL", in.Err())
+	}
+	wantCancelReason(t, in.EndedBy())
+	pcrf.waitReleased(t, "session-1")
+	relay.waitHeld(t, 0, time.Second)
+	if n := len(pcrf.mediaRequests()); n != 1 {
+		t.Errorf("%d requests to authorise media, want only the one of the 183", n)
+	}
+}

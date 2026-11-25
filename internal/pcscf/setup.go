@@ -48,11 +48,12 @@ type setup struct {
 	givenUp bool
 	// ended makes end free what the call holds once.
 	ended sync.Once
-	// abort is closed, and aborted set under setupsMu, when the network
-	// takes the resources of the session away while the INVITE is still
-	// on its way (TS 24.229 5.2.8.1.1).
-	abort   chan struct{}
-	aborted bool
+	// abort is closed, and aborted and abortCause set under setupsMu,
+	// when the P-CSCF releases the early dialog while the INVITE is still
+	// on its way (TS 24.229 5.2.8.1.1). abortCause is the why of release.
+	abort      chan struct{}
+	aborted    bool
+	abortCause error
 	// callerSeq is the CSeq of the last request that the caller sent in
 	// the early dialog, as the Dialog had it when an abort took it out
 	// of the Store (abortSetup).
@@ -391,8 +392,9 @@ func (s *setup) settle() bool {
 
 // abortSetup ends the INVITE that created d, the early dialog taken out
 // of the Store, if this P-CSCF instance still forwards it: its loop then
-// answers the caller and cancels the INVITE towards the callee.
-func (p *PCSCF) abortSetup(d Dialog) bool {
+// answers the caller and cancels the INVITE towards the callee, as
+// giveUp does for why.
+func (p *PCSCF) abortSetup(d Dialog, why error) bool {
 	p.setupsMu.Lock()
 	defer p.setupsMu.Unlock()
 	s, ok := p.setups[d.Key]
@@ -401,6 +403,7 @@ func (p *PCSCF) abortSetup(d Dialog) bool {
 	}
 	delete(p.setups, d.Key)
 	s.aborted = true
+	s.abortCause = why
 	s.callerSeq = d.Caller.CSeq
 	close(s.abort)
 	return true
