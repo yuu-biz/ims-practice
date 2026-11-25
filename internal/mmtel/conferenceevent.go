@@ -344,9 +344,10 @@ func (f *conference) notify(only *sip.DialogID) {
 // subscriber gets them in the order of their CSeq numbers (RFC 3261
 // 12.2.2) and of their versions (RFC 4575 4.6). Each subscription
 // outside a dialog has an outbox of its own, and so has the dialog of
-// each participant, for the subscription within it: a subscriber that
-// does not answer holds up its own NOTIFYs only, until Timer F. The
-// fields are guarded by the mu of the conference.
+// each participant, for the subscription within it, which also takes the
+// BYE that ends the dialog at the end of the conference (end): a
+// subscriber that does not answer holds up its own NOTIFYs only, until
+// Timer F. The fields are guarded by the mu of the conference.
 type outbox struct {
 	waiting []func() (ended bool)
 	sending bool
@@ -477,6 +478,8 @@ func (f *conference) notifyInDialog(p *party, sub *inDialogSubscription, reason 
 		if err != nil {
 			f.log.Info("NOTIFY within the dialog failed", "error", err.Error())
 		}
+		// The BYE of end may wait behind this NOTIFY, and must go: a
+		// NOTIFY that fails drops nothing from the outbox of the dialog.
 		return false
 	})
 }
