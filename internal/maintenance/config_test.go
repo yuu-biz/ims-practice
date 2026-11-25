@@ -172,6 +172,19 @@ func TestConfigurationGeneration(t *testing.T) {
 	if got := tn.retryAfter.Load(); got != 40 {
 		t.Errorf("retry_after = %d after a stale change", got)
 	}
+	_, err = set(9, "40")
+	wantAPIError(t, err, http.StatusConflict, "9 is not above 10")
+	// The change that the node has already, sent again with its
+	// generation, as an OAM server does whose answer was lost, or whose
+	// change reached the node by another way first: it is answered as
+	// the change it is, which changes nothing.
+	change, err = set(10, "40")
+	if err != nil || change.Generation != 10 || len(change.Changes) != 0 {
+		t.Errorf("the change in force again: %+v, %v", change, err)
+	}
+	if got := tn.node.generation.Load(); got != 10 {
+		t.Errorf("generation = %d after the change in force again, want 10", got)
+	}
 	// The present value again: nothing changes, but the generation is
 	// taken, as when the OAM server sends a restarted node the whole
 	// configuration.
