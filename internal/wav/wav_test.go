@@ -2,9 +2,32 @@ package wav
 
 import (
 	"bytes"
+	"runtime"
 	"slices"
 	"testing"
 )
+
+// FuzzRead checks that a file cannot make Read reserve more memory than
+// the file holds, whatever its chunk sizes claim: the MRFP reads its
+// announcements and the UE simulator the file it plays with Read.
+func FuzzRead(f *testing.F) {
+	var b bytes.Buffer
+	if err := Write(&b, []int16{0, 1000, -1000}); err != nil {
+		f.Fatal(err)
+	}
+	f.Add(b.Bytes())
+	f.Fuzz(func(t *testing.T, file []byte) {
+		var before, after runtime.MemStats
+		runtime.ReadMemStats(&before)
+		_, _ = Read(bytes.NewReader(file))
+		runtime.ReadMemStats(&after)
+		// The slack covers the reader's own buffers and what the fuzzing
+		// engine allocates meanwhile.
+		if grew, limit := after.TotalAlloc-before.TotalAlloc, uint64(1<<20+8*len(file)); grew > limit {
+			t.Errorf("Read of %d bytes allocated %d bytes, want at most %d", len(file), grew, limit)
+		}
+	})
+}
 
 func TestRoundTrip(t *testing.T) {
 	samples := []int16{0, 1000, -1000, 32767, -32768}

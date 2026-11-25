@@ -13,33 +13,35 @@ import (
 // SampleRate is the G.711 sampling rate (RFC 3551 4.5.14).
 const SampleRate = 8000
 
-// Read reads a RIFF WAVE file of 16-bit PCM, mono, 8 kHz.
+// Read reads a RIFF WAVE file of 16-bit PCM, mono, 8 kHz. It refuses a
+// chunk whose size claims more bytes than the file has left, so that a
+// broken file cannot make it reserve memory the file does not hold.
 func Read(r io.Reader) ([]int16, error) {
-	var riff [12]byte
-	if _, err := io.ReadFull(r, riff[:]); err != nil {
+	file, err := io.ReadAll(r)
+	if err != nil {
 		return nil, err
 	}
-	if string(riff[0:4]) != "RIFF" || string(riff[8:12]) != "WAVE" {
+	if len(file) < 12 || string(file[0:4]) != "RIFF" || string(file[8:12]) != "WAVE" {
 		return nil, errors.New("wav: not a RIFF WAVE file")
 	}
 	formatSeen := false
-	for {
-		var hdr [8]byte
-		if _, err := io.ReadFull(r, hdr[:]); err != nil {
+	for rest := file[12:]; ; {
+		if len(rest) < 8 {
 			return nil, errors.New("wav: no data chunk")
 		}
-		size := binary.LittleEndian.Uint32(hdr[4:])
-		switch string(hdr[0:4]) {
+		id, size := string(rest[0:4]), binary.LittleEndian.Uint32(rest[4:])
+		rest = rest[8:]
+		if uint64(size) > uint64(len(rest)) {
+			return nil, fmt.Errorf("wav: %q chunk of %d bytes with %d bytes left in the file", id, size, len(rest))
+		}
+		body := rest[:size]
+		switch id {
 		case "fmt ":
-			f := make([]byte, size)
-			if _, err := io.ReadFull(r, f); err != nil {
-				return nil, err
-			}
-			if len(f) < 16 {
+			if len(body) < 16 {
 				return nil, errors.New("wav: short fmt chunk")
 			}
-			format, channels := binary.LittleEndian.Uint16(f[0:]), binary.LittleEndian.Uint16(f[2:])
-			rate, bits := binary.LittleEndian.Uint32(f[4:]), binary.LittleEndian.Uint16(f[14:])
+			format, channels := binary.LittleEndian.Uint16(body[0:]), binary.LittleEndian.Uint16(body[2:])
+			rate, bits := binary.LittleEndian.Uint32(body[4:]), binary.LittleEndian.Uint16(body[14:])
 			if format != 1 || channels != 1 || rate != SampleRate || bits != 16 {
 				return nil, fmt.Errorf("wav: format %d, %d channels, %d Hz, %d bits; want PCM, 1, %d, 16",
 					format, channels, rate, bits, SampleRate)
@@ -49,17 +51,15 @@ func Read(r io.Reader) ([]int16, error) {
 			if !formatSeen {
 				return nil, errors.New("wav: data before fmt")
 			}
-			samples := make([]int16, size/2)
-			if err := binary.Read(r, binary.LittleEndian, samples); err != nil {
-				return nil, err
+			samples := make([]int16, len(body)/2)
+			for i := range samples {
+				samples[i] = int16(binary.LittleEndian.Uint16(body[2*i:]))
 			}
 			return samples, nil
-		default:
-			// Chunks are padded to an even size.
-			if _, err := io.CopyN(io.Discard, r, int64(size+size%2)); err != nil {
-				return nil, err
-			}
 		}
+		// Chunks are padded to an even size; the last one may end without
+		// its pad byte.
+		rest = rest[min(uint64(size)+uint64(size%2), uint64(len(rest))):]
 	}
 }
 
