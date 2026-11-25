@@ -474,9 +474,9 @@ UE 1 asked for one (TP-SRR in the SMS-SUBMIT), so once the delivery report is in
 
 A registered UE does not always take a short message. It may answer that it cannot be reached just now, or that it has no memory left for one. The SC keeps the short message instead of dropping it, the HSS writes the SC's address into the message waiting data (MWD) of the user, and once the user can take short messages again the HSS alerts the SC, which delivers what it held (TS 23.040 3.2.6, TS 23.204 6.5a, 6.5b and 6.6).
 
-The retry schedule of this SC is one hour (`retry_delays` in `deploy/compose/sc.yaml`), so what delivers the short message in the runs below is the alert and not a retry. TS 23.040 3.2.7 NOTE 5 leaves those autonomous retries to the operator. Here they cover an alert that the HSS sent but that never reached the SC. They cannot stand in for the news that the UE is back: while the HSS holds the flag of A4 below, the SRA of each retry says DIAMETER_ERROR_ABSENT_USER, as the first one did.
+The retry schedule of this SC is one hour (`retry_delays` in `deploy/compose/sc.yaml`), so what delivers the short message in the runs below is the alert and not a retry. TS 23.040 3.2.7 NOTE 5 leaves those autonomous retries to the operator. Here they cover an alert that the HSS sent but that never reached the SC. They cannot stand in for the news that the UE is back: while the HSS holds the flag of A4 below, the SRA of each retry says DIAMETER_ERROR_ABSENT_USER.
 
-The ladders leave out the P-CSCF between the S-CSCF and the UE, and the LIR with which the I-CSCF finds UE 2's S-CSCF. The ladder of the delivery above shows both.
+The ladders leave out the P-CSCF between the S-CSCF and the UE, and the LIR with which the I-CSCF finds UE 2's S-CSCF. The ladder of the delivery above shows both. The ladder of a re-registration below shows the P-CSCF, which the REGISTER passes, and leaves out the I-CSCF.
 
 ### UE 2 takes no short message
 
@@ -542,7 +542,7 @@ A UE need not send anything to show that it is back. After A1 to A4 of the run a
 - **C1.** UE 2 registers again before its registration runs out, as a UE does on its own; `POST /register` does it at once. Its contact has `+g.3gpp.smsip`, as before.
 - **C2.** The S-CSCF sends the IP-SM-GW a third-party REGISTER, as for every re-registration. The ladder leaves out the SUBSCRIBE with which the IP-SM-GW refreshes its subscription, and the NOTIFYs of the S-CSCF ([Re-registration and deregistration](#re-registration-and-deregistration)). They show no change, so none of them sends a PUR (TS 24.341 5.3.3.2).
 - **C3.** The registration shows that the UE is there (TS 23.204 6.5b step 2a). The IP-SM-GW still holds its own UNRI for UE 2 from A3, so it clears it and sends the HSS the notification of A6.
-- **C4.** The HSS clears its own UNRI and alerts the SC, as in A7 (TS 23.040 3.2.6 item 2c). Without the notification of C3, nothing would clear UNRI while UE 2 only registered again: each SRR of the SC would be answered DIAMETER_ERROR_ABSENT_USER, as in A4, and so would the SRR of every new short message for UE 2.
+- **C4.** The HSS clears its own UNRI and alerts the SC, as in A7 (TS 23.040 3.2.6 item 2c). Without the notification of C3, nothing would clear UNRI while UE 2 only registered again: each SRR of the SC would be answered DIAMETER_ERROR_ABSENT_USER, and so would the SRR of every new short message for UE 2.
 
 The resend is the one of A8 and A9.
 
@@ -665,7 +665,7 @@ It goes on with:
 
 It answers 503 to:
 
-- **the third-party REGISTER**, of a registration, a re-registration and a deregistration alike (step R2 above). For a registration or a re-registration, what the refusal costs is the subscription to the registration state that would have followed it; the third-party REGISTER of the next re-registration makes that subscription instead. For a deregistration it costs nothing at all: the IP-SM-GW answers that one and does no more, because the S-CSCF ends the subscription with a NOTIFY of its own ([Re-registration and deregistration](#re-registration-and-deregistration)). That NOTIFY reaches whichever instance the store leads it to, and is within a dialog, so even an instance that is shutting down takes it, removes the subscription and tells the HSS that the user takes short messages no longer;
+- **the third-party REGISTER**, of a registration, a re-registration and a deregistration alike (step R2 above). For a registration or a re-registration, what the refusal costs is the subscription to the registration state that would have followed it; the third-party REGISTER of the next re-registration makes that subscription instead. A refused re-registration also holds back the news that a UE whose short message was not delivered is back (C3 above), until the next one. For a deregistration it costs nothing at all: the IP-SM-GW answers that one and does no more, because the S-CSCF ends the subscription with a NOTIFY of its own ([Re-registration and deregistration](#re-registration-and-deregistration)). That NOTIFY reaches whichever instance the store leads it to, and is within a dialog, so even an instance that is shutting down takes it, removes the subscription and tells the HSS that the user takes short messages no longer;
 - **a short message from a UE**, and a notification that a UE has memory again. Each starts the transfer of a short message;
 - **a short message that the IP-SM-GW of another IMS network sends to a user of this one.** It has begun in that network, but nothing of it has reached this instance, so another instance can take it whole. Where none can, the S-CSCF routes the MESSAGE to the recipient's contact itself, and the UE gets the short message of that network with no IP-SM-GW of this one in between.
 

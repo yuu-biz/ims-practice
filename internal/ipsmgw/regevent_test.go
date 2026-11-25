@@ -401,8 +401,9 @@ func TestTheReregistrationOfAUserItCouldNotReach(t *testing.T) {
 	}
 }
 
-// TestTheReregistrationOfAUserWhoTakesNone is TS 23.204 6.5b step 2d
-// for a reregistration: Alice is registered, but without a contact that
+// TestTheReregistrationOfAUserWhoTakesNone is TS 23.204 6.5b, whose
+// notification is for a UE that can take short messages over IP, for a
+// reregistration: Alice is registered, but without a contact that
 // takes short messages over IP, so her reregistration says nothing to
 // the HSS and the flag stays.
 func TestTheReregistrationOfAUserWhoTakesNone(t *testing.T) {
