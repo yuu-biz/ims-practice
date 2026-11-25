@@ -105,7 +105,7 @@ OAM は `201 Created` で答えます。`Location` に購読の URI が、本文
 | `notificationFilter` | 無し | 通知が満たすべき Jex の条件の式（TS 32.161 7.6）。たとえば `contains(href,"ManagedElement=scscf") and perceivedSeverity="CRITICAL"` です。`oss subscribe -filter` で書きます。 |
 | `scope` | 無し | どのオブジェクトの通知を送るか。無ければ SubNetwork 全体です。 |
 
-OAM が受けるのは、この 4 つの属性だけです。OpenAPI のファイルにはあるが OAM が受けない名前を持つ購読は、500 と `SERVER_LIMITATION` で断られます。heartbeat の通知を求める `HeartbeatControl`、`VsDataContainer`、`dataNodeSelector` で選ぶ `scope` がそうです。OAM は要求の意味を理解できても、それを実行できないからです（TS 32.158 6.6.4）。ファイルに無い名前（`lastSequenceNo` など）を持つ本文と、JSON として読めない本文は、400 と `NEW_OBJECT_REPRESENTATION_INVALID` で断られます。1 つの本文に両方の問題があれば、OSS が直せる 400 のほうを答えます。
+OAM が受けるのは、この 4 つの属性だけです。OpenAPI のファイルにはあるが OAM が受けない名前を持つ購読は、500 と `SERVER_LIMITATION` で断られます。heartbeat の通知を求める `HeartbeatControl`、`VsDataContainer`、`dataNodeSelector` で選ぶ `scope` がそうです。OAM は要求の意味を理解できても、それを実行できないからです（TS 32.158 6.6.4）。ファイルのスキーマに合わない本文は、400 と `NEW_OBJECT_REPRESENTATION_INVALID` で断られます（6.6.4、6.6.5.4）。JSON として読めない本文、ファイルに無い名前（`lastSequenceNo` など）や、ファイルの名前と大文字と小文字だけが違う名前（`heartbeatControl` など）を持つ本文がそうです。スキーマが許さないところに `null` を書いた本文も同じです。`null` を許すのは `id` と `vsData` だけです。`HeartbeatControl`、`VsDataContainer`、`dataNodeSelector` の形がスキーマに合わない本文（`id` の無い `HeartbeatControl` など）も、400 になります。1 つの本文に両方の問題があれば、OSS が直せる 400 のほうを答えます。`SERVER_LIMITATION` は、正しく書かれ、意味も分かる要求に当てる型だからです（6.6.4）。
 
 同じ id でもう一度 `PUT` すると購読を置き換え、答えは `200 OK` になります。購読は、要求を受けたインスタンスではなく OAM が持つので、ノードを見張るのがどの OAM のインスタンスでも、通知は届きます。読み返すのは `getMOIAttributes` で、同じ URI への `GET` です。
 

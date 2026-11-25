@@ -1,6 +1,7 @@
 package mns
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 )
@@ -47,5 +48,31 @@ func TestDecodeStrictlyChecksEveryName(t *testing.T) {
 	}
 	if err := DecodeStrictly([]byte(`{"id": 1}`), &s); err == nil {
 		t.Error("an id that is a number decoded")
+	}
+}
+
+// The schema tag of a field says what the schema says of its attribute:
+// the id of Top is required and may be null, and a json.RawMessage
+// takes any value.
+func TestDecodeStrictlyFollowsTheSchemaTag(t *testing.T) {
+	var top Top
+	if err := DecodeStrictly([]byte(`{"id": null, "objectClass": "AlarmList"}`), &top); err != nil || top.ObjectClass != "AlarmList" {
+		t.Errorf("a null id: %v, %+v", err, top)
+	}
+	if err := DecodeStrictly([]byte(`{"objectClass": "AlarmList"}`), &top); err == nil || !strings.Contains(err.Error(), `no "id" at /`) {
+		t.Errorf("no id: %v", err)
+	}
+	var s NtfSubscriptionControlSingle
+	if err := DecodeStrictly([]byte(`{"id": "1", "attributes": null}`), &s); err == nil || !strings.Contains(err.Error(), "null at /attributes") {
+		t.Errorf("null attributes: %v", err)
+	}
+	if err := DecodeStrictly([]byte(`null`), &s); err == nil {
+		t.Error("a null body decoded")
+	}
+	var raw struct {
+		Data json.RawMessage `json:"data"`
+	}
+	if err := DecodeStrictly([]byte(`{"data": [null, {"Any": null}]}`), &raw); err != nil || string(raw.Data) != `[null, {"Any": null}]` {
+		t.Errorf("a json.RawMessage: %v, %s", err, raw.Data)
 	}
 }

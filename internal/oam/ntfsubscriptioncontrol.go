@@ -189,14 +189,17 @@ func (s *Server) putNtfSubscription(w http.ResponseWriter, r *http.Request, id s
 		w.WriteHeader(http.StatusUnsupportedMediaType)
 		return
 	}
+	var raw json.RawMessage
 	var body ntfSubscriptionBody
 	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxRequestBody))
-	dec.DisallowUnknownFields()
-	err := dec.Decode(&body)
+	err := dec.Decode(&raw)
 	if err == nil {
 		if _, trailing := dec.Token(); !errors.Is(trailing, io.EOF) {
 			err = errors.New("more than one JSON value")
 		}
+	}
+	if err == nil {
+		err = mns.DecodeStrictly(raw, &body)
 	}
 	if err != nil {
 		var tooLarge *http.MaxBytesError
@@ -204,7 +207,8 @@ func (s *Server) putNtfSubscription(w http.ResponseWriter, r *http.Request, id s
 			w.WriteHeader(http.StatusRequestEntityTooLarge)
 			return
 		}
-		// TS 32.158 6.6.5.4: the body is no representation of the object.
+		// TS 32.158 6.6.4, 6.6.5.4: the body does not validate against
+		// the schema of the object.
 		attributeError(mns.ValidationError, mns.NewObjectRepresentationInvalid, "The body is no NtfSubscriptionControl").write(w)
 		return
 	}
@@ -236,20 +240,44 @@ func (s *Server) putNtfSubscription(w http.ResponseWriter, r *http.Request, id s
 // ntfSubscriptionBody is the body of a PUT of a subscription, with
 // every name of the schema NtfSubscriptionControl-Single of
 // TS28623_SubscriptionControlNrm.yaml. Those that
-// mns.NtfSubscriptionControlSingle leaves out are kept as they came, so
-// that a body with one, which is a subscription that the OAM does not
-// take, is told from a body with a name that the schema does not have,
-// which is no subscription at all. JSON null leaves a name out.
+// mns.NtfSubscriptionControlSingle leaves out have the form of their
+// schemas here, so that a body with one, which is a subscription that
+// the OAM does not take, is told from a body that does not validate,
+// which is no subscription at all.
 type ntfSubscriptionBody struct {
 	mns.Top
-	VsDataContainer  any `json:"VsDataContainer"`
-	HeartbeatControl any `json:"HeartbeatControl"`
+	VsDataContainer  []vsDataContainer `json:"VsDataContainer"`
+	HeartbeatControl *heartbeatControl `json:"HeartbeatControl"`
 	Attributes       *struct {
 		mns.NtfSubscriptionControlAttributes
 		Scope *struct {
 			mns.Scope
-			DataNodeSelector any `json:"dataNodeSelector"`
+			DataNodeSelector *string `json:"dataNodeSelector"`
 		} `json:"scope"`
+	} `json:"attributes"`
+}
+
+// vsDataContainer is the schema VsDataContainer-Single of
+// TS28623_GenericNrm.yaml (TS 28.622 4.3.9), which any object may
+// contain.
+type vsDataContainer struct {
+	Id         string `json:"id"`
+	Attributes *struct {
+		VsDataType          string          `json:"vsDataType"`
+		VsDataFormatVersion string          `json:"vsDataFormatVersion"`
+		VsData              json.RawMessage `json:"vsData" schema:"nullable"`
+	} `json:"attributes"`
+	VsDataContainer []vsDataContainer `json:"VsDataContainer"`
+}
+
+// heartbeatControl is the schema HeartbeatControl-Single of
+// TS28623_SubscriptionControlNrm.yaml (TS 28.622 4.3.21).
+type heartbeatControl struct {
+	mns.Top
+	Attributes *struct {
+		// HeartbeatNtfPeriod has the minimum 0.
+		HeartbeatNtfPeriod  *uint `json:"heartbeatNtfPeriod"`
+		TriggerHeartbeatNtf *bool `json:"triggerHeartbeatNtf"`
 	} `json:"attributes"`
 }
 
@@ -314,6 +342,9 @@ func (s *Server) checkNtfSubscription(id string, body ntfSubscriptionBody) (NtfS
 	if scope := body.Attributes.Scope; scope != nil {
 		switch t := scope.ScopeType; {
 		case t != "" && t != mns.BaseAll && !slices.Contains(narrowScopeTypes, t):
+			return NtfSubscriptionControl{}, invalid("attributes", "scope")
+		case scope.DataNodeSelector != nil && (t != "" || scope.ScopeLevel != nil):
+			// The two forms of the schema Scope are alternatives.
 			return NtfSubscriptionControl{}, invalid("attributes", "scope")
 		case scope.DataNodeSelector != nil:
 			beyond("Scopes that select data nodes", "attributes", "scope", "dataNodeSelector")
