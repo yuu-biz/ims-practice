@@ -79,8 +79,19 @@ type AlarmWatchStore interface {
 	// instance has watched it yet.
 	AlarmWatchState(ctx context.Context, node string) (AlarmWatchState, error)
 	// Present says that the OAM instance named instance runs, for one
-	// lease, and counts the instances that do, itself included.
-	Present(ctx context.Context, instance string) (int, error)
+	// lease, and that it cannot reach the nodes unreachable; and reads
+	// what the instances that run say, itself included.
+	Present(ctx context.Context, instance string, unreachable []string) (Presence, error)
+}
+
+// Presence is what the OAM instances that run say, as one of them reads
+// it (AlarmWatchStore.Present).
+type Presence struct {
+	// Instances counts the instances.
+	Instances int
+	// Unreachable counts, for each node, the instances that cannot
+	// reach it.
+	Unreachable map[string]int
 }
 
 // FileAlarmWatchStore keeps the state of each node in a file of its own
@@ -176,8 +187,14 @@ func (f *FileAlarmWatchStore) AlarmWatchState(_ context.Context, node string) (A
 	return f.read(node)
 }
 
-// Present counts this instance only: the store serves one.
-func (f *FileAlarmWatchStore) Present(context.Context, string) (int, error) { return 1, nil }
+// Present reads this instance only: the store serves one.
+func (f *FileAlarmWatchStore) Present(_ context.Context, _ string, unreachable []string) (Presence, error) {
+	p := Presence{Instances: 1, Unreachable: map[string]int{}}
+	for _, node := range unreachable {
+		p.Unreachable[node]++
+	}
+	return p, nil
+}
 
 type fileAlarmWatch struct {
 	store *FileAlarmWatchStore

@@ -991,7 +991,8 @@ func TestGiveUpCountsTheWatchesThatAreHeld(t *testing.T) {
 	var gave []string
 	// One watcher is giving its watch up already, so of the two others,
 	// one more goes for a share of one.
-	held := giveUp(watching, 1, func(node string) { gave = append(gave, node) })
+	none := func(string) bool { return false }
+	held := giveUp(watching, 1, none, func(node string) { gave = append(gave, node) })
 	open := 0
 	for _, release := range watching {
 		select {
@@ -1004,8 +1005,21 @@ func TestGiveUpCountsTheWatchesThatAreHeld(t *testing.T) {
 		t.Errorf("held %d, %d open, gave %v; want one held, one open and one given up", held, open, gave)
 	}
 	// Within the share, nothing more goes.
-	if held := giveUp(watching, 1, func(node string) { t.Errorf("gave %s up within the share", node) }); held != 1 {
+	if held := giveUp(watching, 1, none, func(node string) { t.Errorf("gave %s up within the share", node) }); held != 1 {
 		t.Errorf("held %d within the share", held)
+	}
+}
+
+// TestGiveUpKeepsTheWatchesOfNodesThatOthersCannotReach: the watch of a
+// node that another instance cannot reach stays, and counts towards the
+// share, so that another watch goes in its place, or none.
+func TestGiveUpKeepsTheWatchesOfNodesThatOthersCannotReach(t *testing.T) {
+	watching := map[string]chan struct{}{"hss": make(chan struct{}), "icscf": make(chan struct{}), "scscf": make(chan struct{})}
+	unreachable := func(node string) bool { return node != "hss" }
+	var gave []string
+	held := giveUp(watching, 1, unreachable, func(node string) { gave = append(gave, node) })
+	if held != 2 || len(gave) != 1 || gave[0] != "hss" {
+		t.Errorf("held %d, gave %v; want two held and hss given up", held, gave)
 	}
 }
 

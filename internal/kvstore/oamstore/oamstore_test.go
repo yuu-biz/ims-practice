@@ -3,6 +3,7 @@ package oamstore_test
 import (
 	"context"
 	"errors"
+	"maps"
 	"testing"
 	"time"
 
@@ -99,27 +100,28 @@ func TestPresenceCountsTheInstancesThatRun(t *testing.T) {
 	for _, backend := range storetest.Backends() {
 		t.Run(backend.Name, func(t *testing.T) {
 			a, b := pair(t, backend.New(t))
-			present := func(s *oamstore.Store, instance string) int {
+			present := func(s *oamstore.Store, instance string, unreachable ...string) oam.Presence {
 				t.Helper()
-				n, err := s.Present(ctx, instance)
+				p, err := s.Present(ctx, instance, unreachable)
 				if err != nil {
 					t.Fatal(err)
 				}
-				return n
+				return p
 			}
-			if n := present(a, "a"); n != 1 {
-				t.Errorf("one instance counts %d", n)
+			if p := present(a, "a", "scscf"); p.Instances != 1 || !maps.Equal(p.Unreachable, map[string]int{"scscf": 1}) {
+				t.Errorf("one instance reads %+v", p)
 			}
-			if n := present(b, "b"); n != 2 {
-				t.Errorf("two instances count %d", n)
+			if p := present(b, "b", "scscf", "hss"); p.Instances != 2 || !maps.Equal(p.Unreachable, map[string]int{"scscf": 2, "hss": 1}) {
+				t.Errorf("two instances read %+v", p)
 			}
-			// b stops saying it runs; a soon counts itself alone.
+			// a reaches scscf again; b stops saying it runs, and a soon
+			// reads itself alone.
 			for range 8 {
 				time.Sleep(lease / 4)
 				present(a, "a")
 			}
-			if n := present(a, "a"); n != 1 {
-				t.Errorf("after b stopped, a counts %d", n)
+			if p := present(a, "a"); p.Instances != 1 || len(p.Unreachable) != 0 {
+				t.Errorf("after b stopped, a reads %+v", p)
 			}
 		})
 	}

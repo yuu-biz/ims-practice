@@ -32,7 +32,8 @@
 // notifications are in a store too (NtfSubscriptionStore,
 // AlarmWatchStore), which several instances share on internal/kvstore:
 // each node is watched by one instance at a time, under a lease that the
-// instances share out among them (RunNotifications).
+// instances share out among them, and that an instance that cannot
+// reach the node leaves to one that may (RunNotifications).
 //
 // The bodies are JSON, and every error is maintenance.ErrorBody,
 // {"error": "..."}, as in the maintenance API. Times are RFC 3339.

@@ -17,7 +17,7 @@ import (
 //
 //	watch-lease:<node>    the instance that holds the watch of the node, time to live of a lease
 //	watch-state:<node>    oam.AlarmWatchState, no time to live
-//	presence:<instance>   that the OAM instance runs, time to live of a lease
+//	presence:<instance>   that the OAM instance runs, with the nodes it cannot reach (presence), time to live of a lease
 //
 // and the sorted index presence of the instances that have said they
 // run.
@@ -122,42 +122,53 @@ const presencePage = 100
 // they run.
 const presenceIndex = "presence"
 
+// presence is the value of the presence of an instance.
+type presence struct {
+	// Unreachable are the nodes that the instance cannot reach.
+	Unreachable []string `json:"unreachable,omitempty"`
+}
+
 // Present writes the presence of the instance for one lease, puts it in
-// the index, and counts the members of the index whose presence has
-// not run out. A member whose presence has gone, an instance that
-// stopped, leaves the index. Counting reads the presence of every
-// member, as only its item says whether it has run out: a call costs
-// one read per instance, and the calls of all the instances, one each,
-// the square of their number.
-func (s *Store) Present(ctx context.Context, instance string) (int, error) {
-	if err := kvjson.Write(ctx, s.c, s.presenceKey(instance), true, s.lease); err != nil {
-		return 0, err
+// the index, and reads the members of the index whose presence has not
+// run out. A member whose presence has gone, an instance that stopped,
+// leaves the index. It reads the presence of every member, as only its
+// item says whether it has run out: a call costs one read per instance,
+// and the calls of all the instances, one each, the square of their
+// number. The nodes that an instance cannot reach are in its presence,
+// so that each instance writes its own item, and they cost no more
+// reads.
+func (s *Store) Present(ctx context.Context, instance string, unreachable []string) (oam.Presence, error) {
+	if err := kvjson.Write(ctx, s.c, s.presenceKey(instance), presence{Unreachable: unreachable}, s.lease); err != nil {
+		return oam.Presence{}, err
 	}
 	if err := s.c.AddToIndex(ctx, presenceIndex, instance); err != nil {
-		return 0, err
+		return oam.Presence{}, err
 	}
-	present := 0
+	p := oam.Presence{Unreachable: map[string]int{}}
 	for after := ""; ; {
 		members, err := s.c.MembersAfter(ctx, presenceIndex, after, presencePage)
 		if err != nil {
-			return 0, err
+			return oam.Presence{}, err
 		}
 		for _, m := range members {
-			var alive bool
-			_, err := kvjson.Read(ctx, s.c, s.presenceKey(m), &alive)
+			var v presence
+			_, err := kvjson.Read(ctx, s.c, s.presenceKey(m), &v)
 			switch {
 			case errors.Is(err, kvstore.ErrNotFound):
 				if err := s.c.RemoveFromIndex(ctx, presenceIndex, m); err != nil {
-					return 0, err
+					return oam.Presence{}, err
 				}
 			case err != nil:
-				return 0, err
+				return oam.Presence{}, err
 			default:
-				present++
+				p.Instances++
+				for _, node := range v.Unreachable {
+					p.Unreachable[node]++
+				}
 			}
 		}
 		if len(members) < presencePage {
-			return present, nil
+			return p, nil
 		}
 		after = members[len(members)-1]
 	}
