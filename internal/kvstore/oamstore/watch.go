@@ -125,7 +125,10 @@ const presenceIndex = "presence"
 // Present writes the presence of the instance for one lease, puts it in
 // the index, and counts the members of the index whose presence has
 // not run out. A member whose presence has gone, an instance that
-// stopped, leaves the index.
+// stopped, leaves the index. Counting reads the presence of every
+// member, as only its item says whether it has run out: a call costs
+// one read per instance, and the calls of all the instances, one each,
+// the square of their number.
 func (s *Store) Present(ctx context.Context, instance string) (int, error) {
 	if err := kvjson.Write(ctx, s.c, s.presenceKey(instance), true, s.lease); err != nil {
 		return 0, err

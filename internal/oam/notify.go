@@ -279,12 +279,12 @@ func (nb *northbound) planEvents(node string, st AlarmWatchState, ev maintenance
 // node it holds on a goroutine of its own (watchNode). When it holds
 // more than its share, as when another instance has started, it gives
 // the extra watches up, each once the events in hand have been sent,
-// for the others to take. Each round costs a read of each instance's
-// presence and at most one attempt per node, so the work of all the
-// instances together grows with the product of their number and the
-// number of nodes, and with neither the subscribers nor the
-// subscriptions. Each round also sends the notifications that misses
-// owe (sendOwed).
+// for the others to take. Each round of an instance reads the presence
+// of every instance, and makes at most one attempt per node, so the work
+// of all the instances together grows with the square of their number
+// and with the product of their number and the number of nodes, and
+// with neither the subscribers nor the subscriptions. Each round also
+// sends the notifications that misses owe (sendOwed).
 func (s *Server) RunNotifications(ctx context.Context) error {
 	if s.mns == nil || s.ntfSubscriptions == nil || s.watches == nil {
 		return fmt.Errorf("%w: the notifications need the 3GPP management services, a subscription store and a watch store", ErrUnavailable)
