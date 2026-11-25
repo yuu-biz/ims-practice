@@ -409,13 +409,18 @@ func (f *conference) sendOutside(ua *sip.UA, id sip.DialogID, req *sip.Message) 
 			return false
 		}
 		f.mu.Lock()
-		if i := f.subscriptionIndex(id); i >= 0 {
+		// A NOTIFY that ended the subscription took it from the record
+		// as it was built, which leaves nothing to remove here.
+		i := f.subscriptionIndex(id)
+		if i >= 0 {
 			f.record.Subscriptions = slices.Delete(f.record.Subscriptions, i, i+1)
 			f.writeRecord()
 		}
 		delete(f.outboxes, id)
 		f.mu.Unlock()
-		f.log.Info("conference subscription removed after a failed NOTIFY", "status", statusCode(final), "error", errText(err))
+		if i >= 0 {
+			f.log.Info("conference subscription removed after a failed NOTIFY", "status", statusCode(final), "error", errText(err))
+		}
 		return true
 	}
 }
