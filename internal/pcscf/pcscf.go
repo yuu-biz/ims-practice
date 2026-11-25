@@ -750,11 +750,13 @@ func New(cfg Config, locator Locator, store Store, relays []MediaRelay, log *slo
 	return p, nil
 }
 
-// Close stops the sweep of this instance and waits for the handlers it
-// started, whose requests to the Store it ends. An expiry that this
-// instance had claimed and not handled is handled by another instance of
-// the P-CSCF once the claim runs out. It also stops the timers that end
-// the security associations of ESP, which leaves them in the kernel
+// Close stops the sweep of this instance: it claims no more expiries,
+// and lets each handler it started finish within its claim, so that a
+// refresh that the Store holds as sent goes out. A node calls it before
+// it closes the stacks of the P-CSCF. An expiry that this instance had
+// claimed and not handled is handled by another instance of the P-CSCF
+// once the claim runs out. Close also stops the timers that end the
+// security associations of ESP, which leaves them in the kernel
 // (stopESP).
 func (p *PCSCF) Close() {
 	p.stopSweep()

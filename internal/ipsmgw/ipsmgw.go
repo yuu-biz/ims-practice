@@ -162,10 +162,12 @@ func New(cfg Config, sc ServiceCentre, store Store, hss HSS, locator ims.Locator
 	return g
 }
 
-// Close stops the sweep of this instance and waits for the deliveries it
-// was ending, whose report to the SC it ends. A delivery that this
-// instance had claimed and not ended is ended by another instance of the
-// IP-SM-GW once the claim runs out.
+// Close stops the sweep of this instance: it claims no more deliveries
+// whose TR1N has run out, and lets each that it was ending finish within
+// its claim, so that the SC hears of its outcome. A node calls it before
+// it closes the stack and the Diameter connections of the IP-SM-GW. A
+// delivery that this instance had claimed and not ended is ended by
+// another instance of the IP-SM-GW once the claim runs out.
 func (g *IPSMGW) Close() { g.stopSweep() }
 
 // SetStack hands the IP-SM-GW the stack that calls OnRequest.

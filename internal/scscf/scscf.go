@@ -166,10 +166,12 @@ func New(cfg Config, hss HSS, node *diameter.Node, store Store, resolver Resolve
 	return s, nil
 }
 
-// Close stops the sweep of this instance and waits for the handlers it
-// started, whose lock and Cx requests it ends. An expiry that this
-// instance had claimed and not handled is handled by another instance of
-// the S-CSCF once the claim runs out.
+// Close stops the sweep of this instance: it claims no more expiries,
+// and lets each handler it started finish within its claim, so that the
+// NOTIFYs and the SARs of the expiries it claimed go out. A node calls
+// it before it closes the stack and the Cx connections of the S-CSCF.
+// An expiry that this instance had claimed and not handled is handled
+// by another instance of the S-CSCF once the claim runs out.
 func (s *SCSCF) Close() { s.stopSweep() }
 
 // lockFailed answers a request whose user the S-CSCF could not lock

@@ -81,34 +81,39 @@ type Sweep[E Expiry] struct {
 }
 
 // Start runs the sweep of this instance and returns the function that
-// stops it. That function ends the context of the handlers still at work
-// and waits for them, so that nothing of this instance is left running
-// when it returns. An expiry that this instance had claimed and not
-// handled is handled by another instance once the claim runs out.
+// stops it. That function ends the claiming and waits for the handlers
+// still at work, which it lets finish: a handler removes its item before
+// it sends what the expiry calls for, so one cut short would leave the
+// item gone and its NOTIFY or SAR unsent, and no instance would send
+// them again. Each handler has until its claim runs out, as ever. A
+// node therefore stops its sweeps before its stacks and its
+// connections. An instance that ends without the function leaves its
+// claims to run out, after which another instance handles them.
 //
 // The first round comes after one Interval, by when the role has its
 // stack and its connections and can send what an expiry calls for.
 func (s Sweep[E]) Start() (stop func()) {
-	ctx, cancel := context.WithCancel(context.Background())
+	claiming, stopClaiming := context.WithCancel(context.Background())
 	var running sync.WaitGroup
-	running.Go(func() { s.run(ctx, &running) })
+	running.Go(func() { s.run(claiming, &running) })
 	return func() {
-		cancel()
+		stopClaiming()
 		running.Wait()
 	}
 }
 
-// run claims what is due every Interval, until ctx ends.
-func (s Sweep[E]) run(ctx context.Context, running *sync.WaitGroup) {
+// run claims what is due every Interval, until claiming ends. A round
+// that has begun goes to its end.
+func (s Sweep[E]) run(claiming context.Context, running *sync.WaitGroup) {
 	tick := time.NewTicker(s.Interval)
 	defer tick.Stop()
 	for {
 		select {
-		case <-ctx.Done():
+		case <-claiming.Done():
 			return
 		case <-tick.C:
 		}
-		s.round(ctx, running)
+		s.round(running)
 	}
 }
 
@@ -119,7 +124,12 @@ func (s Sweep[E]) run(ctx context.Context, running *sync.WaitGroup) {
 // answer from another node, and one user holds up neither another user
 // nor the claiming. A handler keeps its claim while it works, so the
 // rounds that follow do not claim the same expiry again.
-func (s Sweep[E]) round(ctx context.Context, running *sync.WaitGroup) {
+//
+// The stop of the sweep ends none of the calls to the store: a claim
+// that the store made and this instance never heard of would wait for
+// its lease to run out.
+func (s Sweep[E]) round(running *sync.WaitGroup) {
+	ctx := context.Background()
 	for _, kind := range s.Kinds {
 		due, err := s.Claim(ctx, kind, time.Now(), s.Lease, expiryBatch)
 		if err != nil {
