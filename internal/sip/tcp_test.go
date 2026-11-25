@@ -578,8 +578,9 @@ func TestRequestThatCannotGoOutOverTCPGoesToTheNextTarget(t *testing.T) {
 	})
 
 	// The observer stands in for a write that takes long, as one to a
-	// peer that has stopped reading does: it holds the write of slow
-	// until released.
+	// peer that has stopped reading does: once slow has gone out, it
+	// holds the writer of the queue, and with it every message behind
+	// slow, until released.
 	slow := registerRequest()
 	writing := make(chan struct{}, 1)
 	release := make(chan struct{})
@@ -605,8 +606,7 @@ func TestRequestThatCannotGoOutOverTCPGoesToTheNextTarget(t *testing.T) {
 	farEnd := unmapped(far.Addr())
 	targets := []Destination{tcpTo(farEnd), udpTo(next.LocalAddr())}
 
-	stalled, err := uac.SendRequest(slow, tcpTo(farEnd))
-	if err != nil {
+	if _, err := uac.SendRequest(slow, tcpTo(farEnd)); err != nil {
 		t.Fatal(err)
 	}
 	select {
@@ -646,9 +646,6 @@ func TestRequestThatCannotGoOutOverTCPGoesToTheNextTarget(t *testing.T) {
 		time.Sleep(10 * time.Millisecond)
 	}
 	close(release)
-	if collect(t, stalled); stalled.Err() == nil || errors.Is(stalled.Err(), ErrTimeout) {
-		t.Errorf("the request whose write failed ended with %v, want the transport error", stalled.Err())
-	}
 	if got := collect(t, waiting); len(got) != 1 || got[0].StatusCode != 200 {
 		t.Fatalf("the request that waited for the connection got %v, err %v; want the 200 of the next target", got, waiting.Err())
 	}
@@ -663,8 +660,9 @@ func TestRequestThatCannotGoOutOverTCPGoesToTheNextTarget(t *testing.T) {
 // connection closes goes to the sent-by too.
 func TestQueuedResponseGoesToTheSentByOnceItsConnectionCloses(t *testing.T) {
 	sentBy, atSentBy := rawTCPServer(t)
-	// The observer stands in for a write that takes long: it holds the
-	// write of the response to slow until released.
+	// The observer stands in for a write that takes long: once the
+	// response to slow has gone out, it holds the writer of the queue,
+	// and with it the response behind, until released.
 	slow, waiting := registerRequest(), registerRequest()
 	slowCallID := slow.Get("Call-ID")
 	writing := make(chan struct{}, 1)
@@ -800,31 +798,91 @@ func breakWrites(t *testing.T, tr *TransportLayer, remote netip.AddrPort) {
 	}
 }
 
-// A write that fails leaves its connection of no more use, so the next
-// message to the far end goes over a new connection, rather than fail
-// on the broken one too.
-func TestMessageAfterAFailedWriteOpensANewConnection(t *testing.T) {
-	far, received := talkingTCPServer(t)
-	tr, captures := listenObserved(t)
-	first, second, third := mustParse(t, initialRegister), registerRequest(), registerRequest()
-	first.SetFirst("Call-ID", NewCallID())
+// brokenConnection opens a connection from tr to a far end, and breaks
+// it for writing (breakWrites). The reader of the connection has read
+// the OPTIONS of the far end and waits for a Receive that never comes,
+// so it does not see the connection close.
+func brokenConnection(t *testing.T) (tr *TransportLayer, far netip.AddrPort, received <-chan *Message, captures <-chan Capture) {
+	t.Helper()
+	far, received = talkingTCPServer(t)
+	tr, captures = listenObserved(t)
+	first := registerRequest()
 	if err := tr.SendRequest(first, tcpTo(far)); err != nil {
 		t.Fatal(err)
 	}
 	receiveCallID(t, received, first.Get("Call-ID"))
-	// The reader of the connection has read the OPTIONS of the far end
-	// once it is observed, and then waits for a Receive that never comes,
-	// so it does not see the connection close.
-	for c := nextCapture(t, captures); c.Sent; c = nextCapture(t, captures) {
+	// The OPTIONS may be observed before the request it answers, which
+	// is observed once its write has returned.
+	for sent, read := false, false; !sent || !read; {
+		if c := nextCapture(t, captures); c.Sent {
+			sent = true
+		} else {
+			read = true
+		}
 	}
 	breakWrites(t, tr, far)
-	if err := tr.SendRequest(second, tcpTo(far)); err == nil {
+	return tr, far, received, captures
+}
+
+// nextSent returns the next capture of a message that tr sent, skipping
+// those of the messages it received.
+func nextSent(t *testing.T, captures <-chan Capture) Capture {
+	t.Helper()
+	for {
+		if c := nextCapture(t, captures); c.Sent {
+			return c
+		}
+	}
+}
+
+// A write that fails leaves its connection of no more use, so the next
+// message to the far end goes over a new connection, rather than fail
+// on the broken one too.
+func TestMessageAfterAFailedWriteOpensANewConnection(t *testing.T) {
+	tr, far, received, _ := brokenConnection(t)
+	if err := tr.SendRequest(registerRequest(), tcpTo(far)); err == nil {
 		t.Fatal("a write on a connection shut for writing went out")
 	}
-	if err := tr.SendRequest(third, tcpTo(far)); err != nil {
+	next := registerRequest()
+	if err := tr.SendRequest(next, tcpTo(far)); err != nil {
 		t.Fatalf("the request after the failed write failed too: %v", err)
 	}
-	receiveCallID(t, received, third.Get("Call-ID"))
+	receiveCallID(t, received, next.Get("Call-ID"))
+}
+
+// The Observer, which feeds the capture of the lab, sees a message only
+// once it has gone out, and the log tells of it only then: a message
+// whose write failed was never on the wire.
+func TestMessageThatFailedToGoOutIsNotObserved(t *testing.T) {
+	t.Run("TCP", func(t *testing.T) {
+		tr, far, _, captures := brokenConnection(t)
+		if err := tr.SendRequest(registerRequest(), tcpTo(far)); err == nil {
+			t.Fatal("a write on a connection shut for writing went out")
+		}
+		next := registerRequest()
+		if err := tr.SendRequest(next, tcpTo(far)); err != nil {
+			t.Fatal(err)
+		}
+		if c := nextSent(t, captures); c.Message.Get("Call-ID") != next.Get("Call-ID") {
+			t.Errorf("observed %s as sent before the request that went out", c.Message.Get("Call-ID"))
+		}
+	})
+	t.Run("UDP", func(t *testing.T) {
+		tr, captures := listenObserved(t)
+		// The socket is bound to an IPv4 address, so it cannot send to an
+		// IPv6 one.
+		if err := tr.SendRequest(registerRequest(), udpTo(netip.MustParseAddrPort("[::1]:5060"))); err == nil {
+			t.Fatal("a datagram to an address of the other family went out")
+		}
+		peer := rawSocket(t)
+		next := registerRequest()
+		if err := tr.SendRequest(next, udpTo(addrOf(peer))); err != nil {
+			t.Fatal(err)
+		}
+		if c := nextSent(t, captures); c.Message.Get("Call-ID") != next.Get("Call-ID") {
+			t.Errorf("observed %s as sent before the request that went out", c.Message.Get("Call-ID"))
+		}
+	})
 }
 
 // A connect that gets no answer fails every message that waits for it,

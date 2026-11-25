@@ -367,7 +367,6 @@ func (t *TransportLayer) nextTCP(remote netip.AddrPort) (tcpSend, bool) {
 // writeTCP writes m to c, the connection to remote.
 func (t *TransportLayer) writeTCP(c *net.TCPConn, m *Message, remote netip.AddrPort) error {
 	wire := m.Bytes()
-	record(t.log, t.observe, Capture{Transport: TCP, Sent: true, Source: unmapped(c.LocalAddr()), Destination: remote, Message: m, Wire: wire})
 	c.SetWriteDeadline(time.Now().Add(tcpConnectTimeout))
 	if _, err := c.Write(wire); err != nil {
 		// The connection is of no more use. It leaves the table at once,
@@ -381,6 +380,7 @@ func (t *TransportLayer) writeTCP(c *net.TCPConn, m *Message, remote netip.AddrP
 		c.Close()
 		return err
 	}
+	record(t.log, t.observe, Capture{Transport: TCP, Sent: true, Source: unmapped(c.LocalAddr()), Destination: remote, Message: m, Wire: wire})
 	c.SetReadDeadline(time.Now().Add(t.idleTimeout))
 	return nil
 }
