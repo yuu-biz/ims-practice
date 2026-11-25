@@ -178,7 +178,7 @@ To try the failures, which need no other UE:
 - **Unknown number.** `docker compose run --rm ue sms +12025550198 "Nobody has this number."`. No subscriber has the number. The submit report is an RP-ERROR, and `ue sms` exits with `the SC refused the short message: RP-Cause 1, TP-FCS 0xc3`.
 - **Recipient not registered.** `docker compose run --rm ue sms +12025550103 "Are you there?"`. Subscriber 3 exists but never registers. The SC takes the message, so the submit report is an RP-ACK, and then holds it: no IP-SM-GW serves subscriber 3, so the HSS keeps the SC's address in the message waiting data and the short message waits for the alert that a registration would set off.
 
-The same can be done from the Lab: see "Drive the UE simulators" in [the Lab guide](lab.md). The UE cards send short messages and list what each UE sent and received, and the details of each MESSAGE show the decoded short message.
+The same can be done from the Lab: see "Drive the UE simulators" in [the Lab guide](lab.md). The UE cards send short messages and list the latest 50 short messages each UE sent and the latest 50 it received, and the details of each MESSAGE show the decoded short message.
 
 ### Put the UE in the states where a delivery fails
 

@@ -81,6 +81,23 @@ func TestUEListShowsEachUEOrWhyNot(t *testing.T) {
 	}
 }
 
+// TestUEListNamesAStatusTooLongToRead: a status longer than the Lab reads
+// is cut, and the cut JSON is no JSON; the reason says it was too long,
+// not that the UE answered something else.
+func TestUEListNamesAStatusTooLongToRead(t *testing.T) {
+	long := `{"impu":"` + strings.Repeat("a", 1<<16) + `"}`
+	ue := newFakeUE(t, answerJSON(http.StatusOK, long))
+	h := newHarness(t, Config{UEs: []UESimulator{{"phone1", ue.server.URL}}})
+	var list []struct {
+		Reachable bool   `json:"reachable"`
+		Error     string `json:"error"`
+	}
+	h.get("/api/ues", &list)
+	if len(list) != 1 || list[0].Reachable || !strings.Contains(list[0].Error, "longer than") {
+		t.Errorf("list = %+v, want phone1 unreachable for a status longer than the Lab reads", list)
+	}
+}
+
 func TestUEListWithoutUEsIsEmpty(t *testing.T) {
 	h := newHarness(t, Config{})
 	var list []any

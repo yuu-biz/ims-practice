@@ -4,7 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/netip"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -413,6 +415,44 @@ func TestTheUESendsAShortMessage(t *testing.T) {
 	got = waitSent(t, u, sent.CallID, func(s ue.SentSMS) bool { return s.StatusReport != nil })
 	if got.StatusReport.Status != sms.StatusReceivedBySME || !got.StatusReport.DischargeTime.Equal(scts.Add(time.Second)) {
 		t.Errorf("status report %+v", got.StatusReport)
+	}
+}
+
+// TestTheHistoryKeepsTheLatestShortMessages: a UE that runs for long
+// keeps the latest 50 short messages of each direction, as a phone with
+// a store of its own does, so that its status does not grow with every
+// message.
+func TestTheHistoryKeepsTheLatestShortMessages(t *testing.T) {
+	const kept = 50
+	n := newFakeNetwork(t)
+	u, ua := smsUE(t, n)
+	for i := range kept + 2 {
+		text := fmt.Sprintf("message %d", i)
+		if _, err := u.SendSMS(context.Background(), ue.OutgoingSMS{To: "+12025550102", Text: text}); err != nil {
+			t.Fatal(err)
+		}
+		n.next()
+		if _, code := n.mtMessage(ua, ue.SMSContentType, rpDataWith(t, uint8(i), deliverOf(t, text, time.Now()))); code != 200 {
+			t.Fatalf("MT MESSAGE %d got %d, want 200", i, code)
+		}
+		n.next() // the delivery report
+	}
+	var want, sent, received []string
+	for i := 2; i < kept+2; i++ {
+		want = append(want, fmt.Sprintf("message %d", i))
+	}
+	h := u.SMS()
+	for _, m := range h.Sent {
+		sent = append(sent, m.Text)
+	}
+	for _, m := range h.Received {
+		received = append(received, m.Text)
+	}
+	if !slices.Equal(sent, want) {
+		t.Errorf("sent %q, want %q", sent, want)
+	}
+	if !slices.Equal(received, want) {
+		t.Errorf("received %q, want %q", received, want)
 	}
 }
 

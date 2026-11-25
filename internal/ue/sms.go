@@ -120,6 +120,21 @@ type SMSHistory struct {
 	Received []ReceivedSMS `json:"received"`
 }
 
+// smsHistoryLength is how many short messages of each direction the UE
+// keeps: the latest ones, as a phone keeps what fits its store, so that
+// a UE that runs for long does not grow its history and its status with
+// every message. It stays below the 256 values of TP-MR, which then name
+// one sent message each (TS 23.040 9.2.3.6).
+const smsHistoryLength = 50
+
+// latest drops the oldest entries of a history beyond smsHistoryLength.
+func latest[T any](history []T) []T {
+	if over := len(history) - smsHistoryLength; over > 0 {
+		return slices.Delete(history, 0, over)
+	}
+	return history
+}
+
 // smsState is the SMS side of the UE, under UE.mu.
 type smsState struct {
 	sent     []SentSMS
@@ -482,7 +497,7 @@ func (u *UE) receiveRPData(st *sip.ServerTransaction, m sms.RPDataNetworkToMS, l
 	got := ReceivedSMS{CallID: req.Get("Call-ID"), From: deliver.OriginatingAddress.String(), Text: text,
 		ServiceCentreTimeStamp: deliver.ServiceCentreTimeStamp, Received: time.Now()}
 	u.mu.Lock()
-	u.sms.received = append(u.sms.received, got)
+	u.sms.received = latest(append(u.sms.received, got))
 	u.changedLocked()
 	u.mu.Unlock()
 	log.Info("sms received", "from", got.From, "text", got.Text,
@@ -690,7 +705,7 @@ func (u *UE) SendSMS(ctx context.Context, out OutgoingSMS) (SentSMS, error) {
 	// The submit report may overtake the 202, so the UE knows the Call-ID
 	// before it sends.
 	u.mu.Lock()
-	u.sms.sent = append(u.sms.sent, sent)
+	u.sms.sent = latest(append(u.sms.sent, sent))
 	u.changedLocked()
 	u.mu.Unlock()
 	resp, err := u.request(ctx, req)

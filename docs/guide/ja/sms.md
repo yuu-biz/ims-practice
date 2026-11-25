@@ -185,7 +185,7 @@ IP-SM-GW が Timer F（32 秒）のあいだに MESSAGE に応答しないか、
 - **番号が無い。** `docker compose run --rm ue sms +12025550198 "Nobody has this number."`。この番号を持つ加入者はいません。submit report は RP-ERROR になり、`ue sms` は `the SC refused the short message: RP-Cause 1, TP-FCS 0xc3` で終わります。
 - **受信者が登録していない。** `docker compose run --rm ue sms +12025550103 "Are you there?"`。加入者 3 は存在しますが、登録しません。SC はメッセージを受け取るので submit report は RP-ACK になり、そのあと預かります。加入者 3 を受け持つ IP-SM-GW が無いので、HSS は SC のアドレスを message waiting data に残し、ショートメッセージは、登録があれば送られる知らせを待ちます。
 
-同じことはラボでもできます。[ラボの手順書](lab.md) の「UE シミュレータを操作する」を見てください。UE のカードからショートメッセージを送れ、各 UE が送ったものと受けたものが一覧に出ます。MESSAGE の詳細には、デコードしたショートメッセージが表示されます。
+同じことはラボでもできます。[ラボの手順書](lab.md) の「UE シミュレータを操作する」を見てください。UE のカードからショートメッセージを送れ、各 UE が送ったものと受けたものが、それぞれ新しいものから 50 通までが一覧に出ます。MESSAGE の詳細には、デコードしたショートメッセージが表示されます。
 
 ### 配達が失敗する状態に UE を置く
 
