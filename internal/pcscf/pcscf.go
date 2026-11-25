@@ -934,6 +934,15 @@ func (p *PCSCF) register(st *sip.ServerTransaction, protected bool) {
 	}
 
 	final := p.forward(st, out, targets, log)
+	if final == nil {
+		// The stop of this instance's stack cut the REGISTER short. That
+		// is no failure of the network (5.2.2.3), which may have taken
+		// it, so the IP association and the agreement stay as they are
+		// for the instance that the UE comes to next, and no stack is
+		// left to answer the UE on.
+		log.Info("REGISTER cut short by the stop of the stack; the IP association stays")
+		return
+	}
 	if agreement != nil {
 		if final, err = p.answerSecAgree(st, final, agreement, log); err != nil {
 			respond(storeFailed(req, err, log))
@@ -1018,11 +1027,14 @@ func (p *PCSCF) pathURI() string { return fmt.Sprintf("<sip:term@%s:%d;lr>", p.c
 // and answers 504 when none is left. A 503 and a transport error are
 // failures of the I-CSCF too, as for any request (RFC 3263 4.3). Only
 // this loop knows that a 3xx or a 480 sends the REGISTER on, so it
-// hands the stack one I-CSCF at a time.
+// hands the stack one I-CSCF at a time. It returns nil when the stop of
+// this instance's stack ends the REGISTER (sip.ErrStackClosed).
 func (p *PCSCF) forward(st *sip.ServerTransaction, out *sip.Message, targets []sip.Destination, log *slog.Logger) *sip.Message {
 	for _, target := range targets {
 		final, err := st.ProxyWith(out, func(resp *sip.Message) { crossBoundary(resp, responseToUE) }, target)
 		switch {
+		case errors.Is(err, sip.ErrStackClosed):
+			return nil
 		case err != nil:
 			log.Warn("I-CSCF did not answer", "target", target.String(), "error", err.Error())
 		case final.StatusCode/100 == 3 || final.StatusCode == 480 || final.StatusCode == 503:

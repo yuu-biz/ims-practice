@@ -35,15 +35,26 @@ type fakeHome struct {
 	refuseRefresh int
 	// silent, when set, has the home take each SUBSCRIBE and answer none.
 	silent bool
+	// holdRegister, when set, has the home take each REGISTER, hand it
+	// to registers and answer none.
+	holdRegister bool
+	registers    chan *sip.Message
 }
 
 func newFakeHome(t *testing.T) *fakeHome {
 	h := &fakeHome{subscribes: make(chan *sip.Message, 4), accepted: make(chan *sip.NotifierSubscription, 4),
-		subs: map[string]*sip.NotifierSubscription{}}
+		subs: map[string]*sip.NotifierSubscription{}, registers: make(chan *sip.Message, 4)}
 	h.stack = newStack(t, func(st *sip.ServerTransaction) {
 		req := st.Request
 		switch req.Method {
 		case sip.REGISTER:
+			h.mu.Lock()
+			hold := h.holdRegister
+			h.mu.Unlock()
+			if hold {
+				h.registers <- req
+				return
+			}
 			resp := sip.NewResponse(req, 200, sip.NewTag())
 			resp.Add("Service-Route", "<sip:orig@scscf."+domain+":5060;lr>")
 			resp.Add("P-Associated-URI", "<"+impu+">")
@@ -481,6 +492,14 @@ func newRegEventFixture(t *testing.T, refresh func(time.Duration) time.Duration,
 // its final response.
 func (f *regEventFixture) register(t *testing.T, cseq string) {
 	t.Helper()
+	if err := f.sendRegister(cseq); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// sendRegister sends a REGISTER of the UE through the P-CSCF and waits
+// for its final response, or for the end of its transaction.
+func (f *regEventFixture) sendRegister(cseq string) error {
 	m := &sip.Message{Method: sip.REGISTER, RequestURI: "sip:" + domain}
 	m.Add("From", "<"+impu+">;tag="+sip.NewTag())
 	m.Add("To", "<"+impu+">")
@@ -490,10 +509,11 @@ func (f *regEventFixture) register(t *testing.T, cseq string) {
 	m.Add("Authorization", `Digest username="`+impi+`", realm="`+domain+`", nonce="n", uri="sip:`+domain+`", response="r"`)
 	ct, err := f.ue.SendRequest(m, sip.Destination{Transport: sip.UDP, Addr: f.stack.LocalAddr()})
 	if err != nil {
-		t.Fatal(err)
+		return err
 	}
 	for range ct.Responses() {
 	}
+	return nil
 }
 
 // awaitGranted waits until the Store holds granted as the duration the
@@ -642,6 +662,43 @@ func TestARegEventSubscriptionOutlivesTheStackThatStops(t *testing.T) {
 	})
 	if gone {
 		t.Errorf("the subscription left the Store within %v of the stop of the stack", watch)
+	}
+}
+
+// TestAnIPAssociationOutlivesTheStackThatStops: the P-CSCF stops while
+// a REGISTER of a registered UE waits for the answer of the home
+// network. The end of the stack is no failure of the network (TS 24.229
+// 5.2.2.3), which may have taken the REGISTER, so the IP association of
+// the UE stays in the Store for the other instances.
+func TestAnIPAssociationOutlivesTheStackThatStops(t *testing.T) {
+	f := newRegEventFixture(t, nil, 0)
+	f.register(t, "1")
+	source := sip.Destination{Transport: sip.UDP, Addr: f.ue.LocalAddr()}
+	ctx := context.Background()
+	if _, ok, err := f.store.Association(ctx, source); err != nil || !ok {
+		t.Fatalf("no IP association after the registration: %v, %v", ok, err)
+	}
+
+	f.home.mu.Lock()
+	f.home.holdRegister = true
+	f.home.mu.Unlock()
+	go func() {
+		if err := f.sendRegister("2"); err != nil {
+			t.Error(err)
+		}
+	}()
+	select {
+	case <-f.home.registers:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the REGISTER that refreshes the registration did not reach the home network within 5 s")
+	}
+	f.stack.Close()
+	gone := came(watch, func() bool {
+		_, ok, err := f.store.Association(ctx, source)
+		return err == nil && !ok
+	})
+	if gone {
+		t.Errorf("the IP association left the Store within %v of the stop of the stack", watch)
 	}
 }
 
