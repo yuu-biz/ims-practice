@@ -187,7 +187,7 @@ func (p *Phone) Serve(ctx context.Context) error {
 			// registers through the same P-CSCF at once.
 			p.log.Info("a request got no response; registering again")
 			r.unregistered()
-			p.ue.unbind()
+			p.ue.Unbind()
 			r.register(ctx)
 		case req := <-p.requests:
 			if req.register {

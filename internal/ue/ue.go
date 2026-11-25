@@ -276,16 +276,16 @@ func (u *UE) Register(ctx context.Context) (Registration, error) {
 		reg, err = u.send(ctx, u.cfg.Expires)
 	}
 	if err != nil && ctx.Err() == nil {
-		u.unbind()
+		u.Unbind()
 	}
 	return reg, err
 }
 
-// unbind is item 1 A of TS 24.229 5.1.2A.1.6: the UE no longer takes
+// Unbind is item 1 A of TS 24.229 5.1.2A.1.6: the UE no longer takes
 // its contact as bound to any public user identity. The next Register
 // is then an initial registration, sent unprotected and without the
 // answer to an earlier challenge.
-func (u *UE) unbind() {
+func (u *UE) Unbind() {
 	u.mu.Lock()
 	defer u.mu.Unlock()
 	u.reg, u.sa = nil, nil
