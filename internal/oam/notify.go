@@ -503,11 +503,14 @@ func (s *Server) watchNode(ctx context.Context, e Endpoint, w AlarmWatch, releas
 // says whether they have: false when ctx or stop ends first. A failure is tried
 // again after a wait that doubles each time, from an eighth of
 // AlarmEventsWait up to the whole of it, so that a store that has
-// stopped answering is asked a few times a wait and no more.
+// stopped answering is asked a few times a wait and no more. A try
+// sends nothing to a recipient that took the notification at an
+// earlier one.
 func (s *Server) deliver(ctx, stop context.Context, node string, notifications ...alarmNotification) bool {
 	backoff := s.alarmEventsWait / 8
+	taken := deliveries{}
 	for {
-		err := s.notify(ctx, notifications...)
+		err := s.notify(ctx, taken, notifications...)
 		if err == nil {
 			return true
 		}
