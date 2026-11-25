@@ -145,18 +145,22 @@ func TestNtfSubscriptionRefusesWhatItCannotTake(t *testing.T) {
 			mns.ErrorResponseDefault{Type: mns.ValidationError, Reason: mns.NewAttributeValueInvalid, BadAttributes: []string{"#/attributes/notificationFilter"}}},
 		{"a filter that the OAM does not evaluate", "oss-1", body(`perceivedSeverity=\"CRITICAL\"`, `alarmIds[0]=\"x\"`), 500,
 			mns.ErrorResponseDefault{Type: mns.ServerLimitation, BadAttributes: []string{"#/attributes/notificationFilter"}}},
-		// The names of TS28623_SubscriptionControlNrm.yaml that the OAM
-		// does not take are understood, and beyond what it does.
-		{"a heartbeat", "oss-1", body(`"attributes"`, `"HeartbeatControl": {"id": "1", "attributes": {"heartbeatNtfPeriod": 60}}, "attributes"`), 500,
-			mns.ErrorResponseDefault{Type: mns.ServerLimitation, BadAttributes: []string{"#/HeartbeatControl"}}},
+		// A HeartbeatControl is an object that a consumer may not create
+		// here (TS 28.622 4.3.21.1).
+		{"a heartbeat", "oss-1", body(`"attributes"`, `"HeartbeatControl": {"id": "1", "attributes": {"heartbeatNtfPeriod": 60}}, "attributes"`), 403,
+			mns.ErrorResponseDefault{Type: mns.ModificationNotAllowed, Reason: mns.ObjectCreationNotAllowed, BadAttributes: []string{"#/HeartbeatControl"}}},
+		{"a heartbeat and a narrow scope", "oss-1", strings.Replace(body(`"BASE_ALL"`, `"BASE_ONLY"`), `"attributes"`, `"HeartbeatControl": {"id": "1"}, "attributes"`, 1), 403,
+			mns.ErrorResponseDefault{Type: mns.ModificationNotAllowed, Reason: mns.ObjectCreationNotAllowed, BadAttributes: []string{"#/HeartbeatControl"}}},
+		// The other names of TS28623_SubscriptionControlNrm.yaml that the
+		// OAM does not take are understood, and beyond what it does.
 		{"vendor-specific data", "oss-1", body(`"attributes"`, `"VsDataContainer": [{"id": "1"}], "attributes"`), 500,
 			mns.ErrorResponseDefault{Type: mns.ServerLimitation, BadAttributes: []string{"#/VsDataContainer"}}},
 		{"a scope that selects data nodes", "oss-1", body(`{"scopeType": "BASE_ALL"}`, `{"dataNodeSelector": "/SubNetwork/ManagedElement[id=\"scscf\"]"}`), 500,
 			mns.ErrorResponseDefault{Type: mns.ServerLimitation, BadAttributes: []string{"#/attributes/scope/dataNodeSelector"}}},
 		{"vendor-specific data with a null vsData", "oss-1", body(`"attributes"`, `"VsDataContainer": [{"id": "1", "attributes": {"vsDataType": "t", "vsData": null}}], "attributes"`), 500,
 			mns.ErrorResponseDefault{Type: mns.ServerLimitation, BadAttributes: []string{"#/VsDataContainer"}}},
-		{"a heartbeat with a null id", "oss-1", body(`"attributes"`, `"HeartbeatControl": {"id": null}, "attributes"`), 500,
-			mns.ErrorResponseDefault{Type: mns.ServerLimitation, BadAttributes: []string{"#/HeartbeatControl"}}},
+		{"a heartbeat with a null id", "oss-1", body(`"attributes"`, `"HeartbeatControl": {"id": null}, "attributes"`), 403,
+			mns.ErrorResponseDefault{Type: mns.ModificationNotAllowed, Reason: mns.ObjectCreationNotAllowed, BadAttributes: []string{"#/HeartbeatControl"}}},
 		// The names of the schema are matched exactly: one that differs
 		// in case alone is a name that the schema does not have.
 		{"HeartbeatControl in lower case", "oss-1", body(`"attributes"`, `"heartbeatControl": {"id": "1"}, "attributes"`), 400,

@@ -205,7 +205,8 @@ OAM は、その確認の `ackSystemId` に自分の名前を入れて、ノー�
 | 本文 | 答え |
 | --- | --- |
 | JSON として読めない。OpenAPI に無い名前（`lastSequenceNo` など）か、OpenAPI の名前と大文字と小文字だけが違う名前（`heartbeatControl` など）がある。OpenAPI が許さないところに `null` がある（許すのは `Top` の `id` と `vsData` だけ）。`HeartbeatControl`、`VsDataContainer`、`dataNodeSelector` の形が OpenAPI に合わない（`id` の無い `HeartbeatControl`、配列でない `VsDataContainer` など） | 400。`VALIDATION_ERROR`、`reason` は `NEW_OBJECT_REPRESENTATION_INVALID`。`badAttributes` は付けない。6.6.4 の `VALIDATION_ERROR` は、要求が JSON のスキーマに合わないときの型です |
-| OpenAPI にはあるが、OAM が受けない名前がある。`HeartbeatControl`（TS 28.622 4.3.21）と `VsDataContainer`（4.3.9。`Top`（4.3.29）が含むので、どのオブジェクトも持てる） | 500。`SERVER_LIMITATION`、`badAttributes` は `#/HeartbeatControl` か `#/VsDataContainer`。本文は正しく、意味も分かるが、producer の限りを越える要求です（TS 32.158 6.6.4）。中身も OpenAPI の形を確かめ、合わなければ上の 400 にします |
+| `HeartbeatControl`（TS 28.622 4.3.21）がある | 403。`MODIFICATION_NOT_ALLOWED`、`reason` は `OBJECT_CREATION_NOT_ALLOWED`、`badAttributes` は `#/HeartbeatControl`。4.3.21.1 は、consumer が `HeartbeatControl` を作ることへの対応を任意にしていて、対応しない producer では、system が作るか、前もって置くとしています。この OAM は対応しません。6.6.5.4 の `OBJECT_CREATION_NOT_ALLOWED` は、そのクラスのオブジェクトを consumer が作れないときの理由です。中身も OpenAPI の形を確かめ、合わなければ上の 400 にします |
+| OpenAPI にはあるが、OAM が受けない名前がある。`VsDataContainer`（4.3.9。`Top`（4.3.29）が含むので、どのオブジェクトも持てる） | 500。`SERVER_LIMITATION`、`badAttributes` は `#/VsDataContainer`。本文は正しく、意味も分かるが、producer の限りを越える要求です（TS 32.158 6.6.4）。4.3.9 は、consumer が作れないとはしていません。この producer が、ベンダー固有のデータを持たないだけです。`scope` の `dataNodeSelector` も同じ理由で 500 です（上の表）。中身も OpenAPI の形を確かめ、合わなければ上の 400 にします |
 | `id` が経路の id と違う | 400。`NEW_ATTRIBUTE_VALUE_INVALID`、`badAttributes` は `#/id` |
 | `objectClass` が無い | 400。`NEW_OBJECT_ATTRIBUTE_VALUE_MISSING`。TS 32.158 5.1.2 は、作るときの本文に id とクラスの名前を求めています |
 | `objectClass` が `NtfSubscriptionControl` でない | 400。`NEW_OBJECT_CLASS_NAME_INVALID` |
@@ -215,7 +216,7 @@ OAM は、その確認の `ackSystemId` に自分の名前を入れて、ノー�
 
 名前の照合を Go の `encoding/json` には任せません。`encoding/json` は、大文字と小文字だけが違う名前も同じ名前として受け、`null` を、その名前が無いものとして受けるためです。OAM は、本文を受ける Go の型の json タグと本文の名前をそのまま比べます。`null` は、`schema` タグで `nullable` としたところでだけ受け、`required` としたところの名前が無ければ断ります。同じ名前が 2 回あっても断ります。値の型は、そのあとの `encoding/json` の読み込みが確かめます。この読み方は、OSS の代わり（`cmd/oss`）が OAM の本文を読むのと同じ `mns.DecodeStrictly` です。JSON のスキーマの検査器を実行時に使わないのは、Go の型と別にスキーマを持つと、2 つが食い違いうるためです。型の名前は `internal/mns` の試験が OpenAPI のファイルと突き合わせています。
 
-400 に当たる問題と 500 に当たる問題が 1 つの本文にあれば、400 を答えます。読み出しの問い合わせと同じく、OSS が直せる誤りを先にします。6.6.4 は `SERVER_LIMITATION` を、正しく読めて意味も分かる要求にだけ当てています。400 に当たる問題のある本文は、それに当たりません。
+400 に当たる問題と、403 か 500 に当たる問題が 1 つの本文にあれば、400 を答えます。読み出しの問い合わせと同じく、OSS が直せる誤りを先にします。6.6.4 は `MODIFICATION_NOT_ALLOWED` を正しく意味も分かる要求に、`SERVER_LIMITATION` を正しく読めて意味も分かる要求に、それぞれ当てています。400 に当たる問題のある本文は、どちらにも当たりません。403 と 500 の両方に当たる本文には、403 を答えます。6.6.5.1 は、いちばん根本の理由を答えるとしています。`HeartbeatControl` を作れないことは、本文のほかの部分に関わらず要求を断る理由なので、こちらを根本とみます。
 
 購読の id は、64 文字までの英字、数字、`-`、`_`、`.` に限ります。この範囲なら、経路の 1 区切りにも DN の id にもそのまま書けます。ほかの id の `PUT` は 400 で `NEW_ATTRIBUTE_VALUE_INVALID`、`badAttributes` は `#/id` です。`GET` と `DELETE` は 404 です。
 
