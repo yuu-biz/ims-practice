@@ -605,12 +605,20 @@ func TestARecipientThatMissedANotification(t *testing.T) {
 		}
 	}
 	n.unmarked(t)
-	// Once it is taken, the next ones go to them again.
+	// Once it is taken, the next ones go to them again. With the retry
+	// interval of this test far below the time to send and answer, a
+	// second turn may have sent another notifyAlarmListRebuilt before
+	// the first answer cleared the mark; it asks the OSS to read the
+	// list once more, which loses nothing, and is passed over here.
 	scscf.raise(t, "hss-3", maintenance.Major)
-	for range 2 {
+	for heard := map[string]bool{}; len(heard) < 2; {
 		r := oss.next(t, "the notification after the owed one")
-		if r.field("notificationType") != "notifyNewAlarm" || !strings.HasSuffix(r.field("href"), "Peer=hss-3") {
-			t.Errorf("%s got %s", r.recipient, r.raw)
+		switch {
+		case r.field("notificationType") == "notifyAlarmListRebuilt" && !heard[r.recipient]:
+		case r.field("notificationType") != "notifyNewAlarm" || !strings.HasSuffix(r.field("href"), "Peer=hss-3") || heard[r.recipient]:
+			t.Fatalf("%s got %s", r.recipient, r.raw)
+		default:
+			heard[r.recipient] = true
 		}
 	}
 	n.counted(t, `oam_alarm_notifications_total{notification_type="notifyNewAlarm",result="failed"} 2`)
