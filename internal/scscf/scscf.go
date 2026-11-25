@@ -672,9 +672,10 @@ var deregistrationEvents = map[cx.ReasonCode]reginfo.Event{
 //
 // SIMPLIFIED: TS 29.228 6.1.3.1. NEW_SERVER_ASSIGNED and REMOVE_S-CSCF
 // get DIAMETER_UNABLE_TO_COMPLY. The HSS stub never sends them: it
-// assigns no second S-CSCF while one serves the user, and it takes no
-// user who is not registered away from the S-CSCF, which lets the
-// profile of such a user go by itself (UnregisteredProfileLifetime).
+// sends no RTR when the MAR of another S-CSCF takes a user over (TS
+// 29.228 8.1.1), and it takes no user who is not registered away from
+// the S-CSCF, which lets the profile of such a user go by itself
+// (UnregisteredProfileLifetime).
 func (s *SCSCF) registrationTermination(r cx.RegistrationTerminationRequest) cx.RegistrationTerminationAnswer {
 	event, ok := deregistrationEvents[r.DeregistrationReason.ReasonCode]
 	if !ok {
