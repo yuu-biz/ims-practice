@@ -259,7 +259,9 @@ func (f *conference) expired(id sip.DialogID, at time.Time) {
 // last NOTIFY with Subscription-State terminated (TS 24.147 5.3.3.3),
 // and so does everyone when the conference has ended (5.3.3.4), with
 // reason noresource (RFC 4575 3.3). A subscription past its expiry ends
-// with reason timeout (RFC 6665 4.2.1.4).
+// with reason timeout (RFC 6665 4.2.1.4). A NOTIFY that times out, or
+// whose response says that the subscriber has lost the subscription,
+// removes it without a last NOTIFY (RFC 6665 4.2.2).
 func (f *conference) notify(only *sip.DialogID) {
 	f.sending.Lock()
 	defer f.sending.Unlock()
@@ -331,18 +333,22 @@ func (f *conference) notify(only *sip.DialogID) {
 
 	ua := f.as.ua.Load()
 	for _, o := range out {
-		final := f.send(ua, o.req)
+		final, err := f.send(ua, o.req)
+		failed := sip.NotifyEndsSubscription(final, err)
 		f.mu.Lock()
 		if i := f.subscriptionIndex(o.dialog); i >= 0 {
 			// The subscription goes with the NOTIFY that ended it, not
 			// with one that was on its way when it ended: that one
 			// still has to be sent.
-			if o.last || final != nil && sip.EndsSubscription(final.StatusCode) {
+			if o.last || failed {
 				f.record.Subscriptions = append(f.record.Subscriptions[:i], f.record.Subscriptions[i+1:]...)
 				f.writeRecord()
 			}
 		}
 		f.mu.Unlock()
+		if failed {
+			f.log.Info("conference subscription removed after a failed NOTIFY", "status", statusCode(final), "error", errText(err))
+		}
 	}
 	for _, w := range within {
 		f.notifyInDialog(w.p, w.sub, w.reason)
@@ -350,15 +356,15 @@ func (f *conference) notify(only *sip.DialogID) {
 }
 
 // send sends a NOTIFY outside any call and returns its final response,
-// nil when none came.
-func (f *conference) send(ua *sip.UA, req *sip.Message) *sip.Message {
+// or nil and why none came.
+func (f *conference) send(ua *sip.UA, req *sip.Message) (*sip.Message, error) {
 	if ua == nil {
-		return nil
+		return nil, errNotListening
 	}
 	ct, err := ua.SendRequest(req)
 	if err != nil {
 		f.log.Warn("NOTIFY not sent", "error", err.Error())
-		return nil
+		return nil, err
 	}
 	var final *sip.Message
 	for resp := range ct.Responses() {
@@ -366,7 +372,10 @@ func (f *conference) send(ua *sip.UA, req *sip.Message) *sip.Message {
 			final = resp
 		}
 	}
-	return final
+	if final == nil {
+		return nil, ct.Err()
+	}
+	return final, nil
 }
 
 // notifyInDialog sends the full state in a NOTIFY within the dialog of
