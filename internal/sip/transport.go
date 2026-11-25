@@ -100,8 +100,10 @@ type TransportLayer struct {
 	// over TCP, oldest first. A far end is in the map while a goroutine
 	// writes to it (writeQueued).
 	queues map[netip.AddrPort][]tcpSend
-	// closing is set by Close: no message joins a queue any more.
+	// closing is set by Close: no message joins a queue any more, and
+	// every write ends by flushBy, one write deadline after Close began.
 	closing bool
+	flushBy time.Time
 }
 
 type incoming struct {
@@ -218,15 +220,18 @@ func (t *TransportLayer) LocalAddr() netip.AddrPort { return t.udp.LocalAddr() }
 // Close closes the UDP socket, the TCP listener and every connection,
 // and waits for their readers to end. A Receive in progress returns an
 // error. The messages handed over before Close that wait for a TCP
-// connection that is open still go out on it first, each within the
-// write deadline, as they would have before; a message that needs a new
-// connection fails, since Close gives up every connect.
+// connection that is open still go out on it first, as they would have
+// before, but within one write deadline, tcpConnectTimeout, for all of
+// them: a write that has not ended by then fails, and so does every
+// message after it. A message that needs a new connection fails, since
+// Close gives up every connect.
 func (t *TransportLayer) Close() error {
 	t.closeOnce.Do(func() {
 		close(t.closed)
 		t.cancel()
 		t.mu.Lock()
 		t.closing = true
+		t.flushBy = time.Now().Add(tcpConnectTimeout)
 		t.mu.Unlock()
 		t.listener.Close()
 		t.udp.Close()

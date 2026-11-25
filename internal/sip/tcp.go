@@ -386,7 +386,7 @@ func (t *TransportLayer) nextTCP(remote netip.AddrPort) (tcpSend, bool) {
 func (t *TransportLayer) writeTCP(c *net.TCPConn, m *Message, remote netip.AddrPort) error {
 	wire := m.Bytes()
 	at := time.Now()
-	c.SetWriteDeadline(at.Add(tcpConnectTimeout))
+	c.SetWriteDeadline(t.writeDeadline(at))
 	if _, err := c.Write(wire); err != nil {
 		// The connection is of no more use. It leaves the table at once,
 		// so that the next message to remote opens a new one; the reader
@@ -402,6 +402,19 @@ func (t *TransportLayer) writeTCP(c *net.TCPConn, m *Message, remote netip.AddrP
 	record(t.log, t.observe, Capture{Transport: TCP, Sent: true, Source: unmapped(c.LocalAddr()), Destination: remote, Message: m, Wire: wire, Time: at})
 	c.SetReadDeadline(time.Now().Add(t.idleTimeout))
 	return nil
+}
+
+// writeDeadline is when a write that begins at fails if it has not
+// ended: tcpConnectTimeout later, or when the flush of Close ends, if
+// that comes first.
+func (t *TransportLayer) writeDeadline(at time.Time) time.Time {
+	deadline := at.Add(tcpConnectTimeout)
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.closing && t.flushBy.Before(deadline) {
+		return t.flushBy
+	}
+	return deadline
 }
 
 // tcpResponseAddress is where RFC 3261 18.2.2 opens a new connection
