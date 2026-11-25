@@ -6,7 +6,9 @@ import (
 	"errors"
 	"fmt"
 	"hash/fnv"
+	"maps"
 	mathrand "math/rand/v2"
+	"slices"
 	"sync"
 	"time"
 
@@ -279,12 +281,28 @@ func (nb *northbound) planEvents(node string, st AlarmWatchState, ev maintenance
 // node it holds on a goroutine of its own (watchNode). When it holds
 // more than its share, as when another instance has started, it gives
 // the extra watches up, each once the events in hand have been sent,
-// for the others to take. Each round of an instance reads the presence
-// of every instance, and makes at most one attempt per node, so the work
-// of all the instances together grows with the square of their number
-// and with the product of their number and the number of nodes, and
-// with neither the subscribers nor the subscriptions. Each round also
-// sends the notifications that misses owe (sendOwed).
+// for the others to take.
+//
+// An instance may be unable to reach a node that the others reach, as
+// when the link between the two breaks. Its watcher finds that the node
+// has left handOverAfter requests in a row unanswered, and the instance
+// says so in its presence. While some instance present has not said
+// that it cannot reach the node, the instance gives the watch up, and
+// the instances that have not said so take it, beyond their share if
+// need be, and keep it when they give watches up for their share. At
+// each round the instance asks each node that it cannot reach and does
+// not watch for its events, as a watcher would but without the wait
+// (probe), and once the node answers it no longer says that it cannot
+// reach it. When every instance present says that it cannot reach the
+// node, as when the node is down, the watcher keeps the watch, so that
+// it does not go round the instances.
+//
+// Each round of an instance reads the presence of every instance, makes
+// at most one attempt per node, and asks the nodes that it cannot reach,
+// so the work of all the instances together grows with the square of
+// their number and with the product of their number and the number of
+// nodes, and with neither the subscribers nor the subscriptions. Each
+// round also sends the notifications that misses owe (sendOwed).
 func (s *Server) RunNotifications(ctx context.Context) error {
 	if s.mns == nil || s.ntfSubscriptions == nil || s.watches == nil {
 		return fmt.Errorf("%w: the notifications need the 3GPP management services, a subscription store and a watch store", ErrUnavailable)
@@ -294,32 +312,68 @@ func (s *Server) RunNotifications(ctx context.Context) error {
 		// watching holds, for each node watched, what tells its watcher
 		// to give the watch up.
 		watching = map[string]chan struct{}{}
-		wg       sync.WaitGroup
+		// unreachable holds the nodes that this instance cannot reach:
+		// each left handOverAfter requests of its watcher in a row
+		// unanswered, and has answered no request of this instance since.
+		unreachable = map[string]bool{}
+		// probing holds a token while the probe of a round runs, on a
+		// goroutine of its own, so that a probe that waits out the time
+		// limit of a node holds up no round; a round that comes before it
+		// ends sends no probe.
+		probing = make(chan struct{}, 1)
+		wg      sync.WaitGroup
 	)
+	reached := func(node string, answered bool) {
+		mu.Lock()
+		defer mu.Unlock()
+		if answered {
+			delete(unreachable, node)
+		} else {
+			unreachable[node] = true
+		}
+	}
 	round := func() {
-		present, err := s.watches.Present(ctx, s.instance)
+		mu.Lock()
+		said := maps.Clone(unreachable)
+		mu.Unlock()
+		p, err := s.watches.Present(ctx, s.instance, slices.Sorted(maps.Keys(said)))
 		if err != nil {
 			if ctx.Err() == nil {
 				s.log.Warn("the presence of the instance could not be written", "error", err.Error())
 			}
 			return
 		}
-		present = max(present, 1)
-		share := (len(s.nodes) + present - 1) / present
+		instances := max(p.Instances, 1)
+		share := (len(s.nodes) + instances - 1) / instances
+		// handOver: this instance cannot reach the node, and another may.
+		handOver := func(node string) bool { return said[node] && p.Unreachable[node] < instances }
+		// wanted: another instance cannot reach the node, and this one
+		// has not found that it cannot.
+		wanted := func(node string) bool { return !said[node] && p.Unreachable[node] > 0 }
 		mu.Lock()
-		held := giveUp(watching, share, func(node string) {
+		for node, release := range watching {
+			select {
+			case <-release:
+			default:
+				if handOver(node) {
+					close(release)
+					s.log.Info("giving the watch of a node that this instance cannot reach up for another instance", "node", node)
+				}
+			}
+		}
+		held := giveUp(watching, share, wanted, func(node string) {
 			s.log.Info("giving the watch of a node up for another instance", "node", node, "share", share)
 		})
 		mu.Unlock()
 		for _, k := range mathrand.Perm(len(s.nodes)) {
-			if held >= share || ctx.Err() != nil {
+			if ctx.Err() != nil {
 				return
 			}
 			e := s.nodes[k]
 			mu.Lock()
 			_, busy := watching[e.Name]
 			mu.Unlock()
-			if busy {
+			if busy || handOver(e.Name) || (held >= share && !wanted(e.Name)) {
 				continue
 			}
 			w, ok, err := s.watches.Watch(ctx, e.Name, s.instance)
@@ -338,11 +392,32 @@ func (s *Server) RunNotifications(ctx context.Context) error {
 			mu.Unlock()
 			held++
 			wg.Go(func() {
-				s.watchNode(ctx, e, w, release)
+				s.watchNode(ctx, e, w, release, func(answered bool) { reached(e.Name, answered) })
 				mu.Lock()
 				delete(watching, e.Name)
 				mu.Unlock()
 			})
+		}
+		var probe []Endpoint
+		mu.Lock()
+		for _, e := range s.nodes {
+			if _, busy := watching[e.Name]; said[e.Name] && !busy {
+				probe = append(probe, e)
+			}
+		}
+		mu.Unlock()
+		if len(probe) == 0 {
+			return
+		}
+		select {
+		case probing <- struct{}{}:
+			wg.Go(func() {
+				defer func() { <-probing }()
+				for _, node := range s.probe(ctx, probe) {
+					reached(node, true)
+				}
+			})
+		default:
 		}
 	}
 	round()
@@ -367,23 +442,55 @@ func (s *Server) RunNotifications(ctx context.Context) error {
 // giving up already, whose release is closed, is held no more: it
 // counts neither towards share nor as one to give up, so that a round
 // that comes while a watcher finishes its events does not give up a
-// second watch for the same one too many.
-func giveUp(watching map[string]chan struct{}, share int, gave func(node string)) (held int) {
-	var kept []string
+// second watch for the same one too many. A watch of a node that keep
+// names is not given up, as the instances that would take it may be
+// unable to reach the node; it counts towards share all the same.
+func giveUp(watching map[string]chan struct{}, share int, keep func(node string) bool, gave func(node string)) (held int) {
+	var spare []string
 	for node, release := range watching {
 		select {
 		case <-release:
 		default:
-			kept = append(kept, node)
+			held++
+			if !keep(node) {
+				spare = append(spare, node)
+			}
 		}
 	}
-	for len(kept) > share {
-		node := kept[len(kept)-1]
-		kept = kept[:len(kept)-1]
+	for ; held > share && len(spare) > 0; held-- {
+		node := spare[len(spare)-1]
+		spare = spare[:len(spare)-1]
 		close(watching[node])
 		gave(node)
 	}
-	return len(kept)
+	return held
+}
+
+// handOverAfter is how many requests in a row a node leaves unanswered
+// before its watcher finds that this instance cannot reach it, and the
+// watch may go to an instance that can (RunNotifications). A node that
+// is away for a moment does not move its watch.
+const handOverAfter = 3
+
+// probe asks each node of nodes for its events after the last one that
+// its state says was sent, with no wait, as a watcher would ask it, and
+// returns the names of the nodes that answered.
+func (s *Server) probe(ctx context.Context, nodes []Endpoint) []string {
+	f := fanOut(ctx, s, nodes, func(ctx context.Context, c *maintenance.Client, e Endpoint) (struct{}, error) {
+		st, err := s.watches.AlarmWatchState(ctx, e.Name)
+		if err != nil {
+			return struct{}{}, err
+		}
+		_, err = c.AlarmEvents(ctx, maintenance.AlarmEventsQuery{After: st.LastNumber})
+		return struct{}{}, err
+	})
+	var answered []string
+	for _, r := range f.Nodes {
+		if r.Error == nil {
+			answered = append(answered, r.Node)
+		}
+	}
+	return answered
 }
 
 // watchNode sends the notifications of the node e while it holds the
@@ -392,10 +499,12 @@ func giveUp(watching map[string]chan struct{}, share int, gave func(node string)
 // answer gives (planEvents) and saves the state after each event. A node
 // that does not answer is told to the OSSs once, with
 // notifyPotentialFaultyAlarmList, and asked again after a wait. The
-// watch is renewed on a goroutine of its own, so that a slow node or a
-// slow OSS does not let it run out; once it is lost, the watcher stops.
-// So it does when release closes, before it asks the node again.
-func (s *Server) watchNode(ctx context.Context, e Endpoint, w AlarmWatch, release <-chan struct{}) {
+// watcher tells reached when the node has left handOverAfter requests
+// in a row unanswered, and whenever it answers. The watch is renewed on
+// a goroutine of its own, so that a slow node or a slow OSS does not
+// let it run out; once it is lost, the watcher stops. So it does when
+// release closes, before it asks the node again.
+func (s *Server) watchNode(ctx context.Context, e Endpoint, w AlarmWatch, release <-chan struct{}, reached func(answered bool)) {
 	ctx, cancel := context.WithCancel(ctx)
 	renewed := make(chan struct{})
 	// On the way out the renewals stop first, then the watch is given
@@ -458,12 +567,24 @@ func (s *Server) watchNode(ctx context.Context, e Endpoint, w AlarmWatch, releas
 		case <-pollCtx.Done():
 		}
 	}()
-	for pollCtx.Err() == nil {
+	for unanswered := 0; pollCtx.Err() == nil; {
 		callCtx, done := context.WithTimeout(pollCtx, s.alarmEventsWait+s.nodeTimeout)
 		ev, err := client.AlarmEvents(callCtx, maintenance.AlarmEventsQuery{After: st.LastNumber, Wait: s.alarmEventsWait})
 		done()
 		if pollCtx.Err() != nil {
 			return
+		}
+		// Each unanswered request past handOverAfter says so again: the
+		// answer to a probe sent before this watcher began may come after
+		// it.
+		if err == nil {
+			unanswered = 0
+			reached(true)
+		} else if unanswered++; unanswered >= handOverAfter {
+			if unanswered == handOverAfter {
+				s.log.Warn("this instance cannot reach a node", "node", e.Name, "requests", unanswered)
+			}
+			reached(false)
 		}
 		if err != nil {
 			if !st.Unreachable {

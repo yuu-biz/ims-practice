@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"io"
 	"log/slog"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -123,12 +124,39 @@ func (r *recipient) next(t *testing.T, waitingFor string) map[string]any {
 	}
 }
 
+// link carries the requests of one instance to one node. A test can
+// break it while the node and the links of the other instances work.
+type link struct {
+	server *httptest.Server
+	broken atomic.Bool
+}
+
+func newLink(t *testing.T, n *node) *link {
+	t.Helper()
+	l := &link{}
+	h := n.node.Handler()
+	l.server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		if !l.broken.Load() {
+			h.ServeHTTP(w, req)
+			return
+		}
+		// The connection closes with no answer.
+		if conn, _, err := http.NewResponseController(w).Hijack(); err == nil {
+			conn.Close()
+		}
+	}))
+	t.Cleanup(l.server.Close)
+	return l
+}
+
 // instance is one OAM instance on the shared store.
 type instance struct {
 	name   string
 	server *oam.Server
 	stop   context.CancelFunc
 	done   chan struct{}
+	// links are the links of the instance to each node, by its name.
+	links map[string]*link
 }
 
 // cluster is the OAM instances on one store, and the nodes they watch.
@@ -152,15 +180,17 @@ func (c *cluster) start(t *testing.T, name string) *instance {
 		AlarmEventsWait: time.Second, WatchRenewal: 100 * time.Millisecond, NotificationTimeout: 2 * time.Second,
 		MissedRetryInterval: time.Second,
 	}
+	links := map[string]*link{}
 	for _, n := range c.nodes {
-		cfg.Nodes = append(cfg.Nodes, oam.Endpoint{Name: n.name, Roles: []string{n.name}, URL: n.server.URL})
+		links[n.name] = newLink(t, n)
+		cfg.Nodes = append(cfg.Nodes, oam.Endpoint{Name: n.name, Roles: []string{n.name}, URL: links[n.name].server.URL})
 	}
 	s, err := oam.New(cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	in := &instance{name: name, server: s, stop: cancel, done: make(chan struct{})}
+	in := &instance{name: name, server: s, stop: cancel, done: make(chan struct{}), links: links}
 	go func() {
 		defer close(in.done)
 		if err := s.RunNotifications(ctx); err != nil {
@@ -197,6 +227,24 @@ func (in *instance) subscribe(t *testing.T, r *recipient, want int) {
 	}
 }
 
+// unreliableScope is the unreliableAlarmScope of the alarm list that an
+// OSS reads through the instance.
+func (in *instance) unreliableScope(t *testing.T) string {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodGet, "/3GPPManagement/ProvMnS/v19/SubNetwork=ims/AlarmList=1", nil)
+	w := httptest.NewRecorder()
+	in.server.MnSHandler().ServeHTTP(w, req)
+	var list struct {
+		Attributes struct {
+			UnreliableAlarmScope string `json:"unreliableAlarmScope"`
+		} `json:"attributes"`
+	}
+	if w.Code != http.StatusOK || json.Unmarshal(w.Body.Bytes(), &list) != nil {
+		t.Fatalf("GET of the alarm list: %d %s", w.Code, w.Body)
+	}
+	return list.Attributes.UnreliableAlarmScope
+}
+
 // holders is the instance that holds the watch of each node.
 func (c *cluster) holders(t *testing.T) map[string]string {
 	t.Helper()
@@ -229,6 +277,23 @@ func (c *cluster) until(t *testing.T, want map[string]int) map[string]string {
 		}
 		if ok {
 			return holders
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("the watches are held by %v within %v, want %v", holders, waitFor, want)
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+}
+
+// held waits until the instances hold the watches of the nodes as want
+// says, by the name of each node.
+func (c *cluster) held(t *testing.T, want map[string]string) {
+	t.Helper()
+	deadline := time.Now().Add(waitFor)
+	for {
+		holders := c.holders(t)
+		if maps.Equal(holders, want) {
+			return
 		}
 		if time.Now().After(deadline) {
 			t.Fatalf("the watches are held by %v within %v, want %v", holders, waitFor, want)
@@ -487,6 +552,112 @@ func TestTheOwedNotificationGoesToTheNewRecipient(t *testing.T) {
 			c.nodes[0].raise(t, "hss-2")
 			if n := replacement.next(t, "the alarm after the owed notification"); n["notificationType"] != "notifyNewAlarm" || !strings.HasSuffix(n["href"].(string), "/Peer=hss-2") {
 				t.Errorf("got %v, want the alarm of hss-2", n)
+			}
+		})
+	}
+}
+
+// TestAnInstanceThatCannotReachANodeHandsItsWatchOver: the link of the
+// instance that watches a node to the node breaks, while the other
+// instance still reaches it. The OSS hears that the node's part of the
+// list may be faulty; then the other instance takes the watch, and the
+// OSS hears that the part can be trusted again. The instance that
+// cannot reach the node takes the watch of the other node in its
+// place, and the OSS is sent the alarms of both nodes again.
+func TestAnInstanceThatCannotReachANodeHandsItsWatchOver(t *testing.T) {
+	for _, backend := range storetest.Backends() {
+		t.Run(backend.Name, func(t *testing.T) {
+			c := newCluster(t, backend, "icscf", "scscf")
+			r := newRecipient(t)
+			first := c.start(t, "oam-1")
+			first.subscribe(t, r, http.StatusCreated)
+			second := c.start(t, "oam-2")
+			holders := c.until(t, map[string]int{"oam-1": 1, "oam-2": 1})
+			c.watched(t)
+			cut, other := first, second
+			if holders["scscf"] == "oam-2" {
+				cut, other = second, first
+			}
+
+			cut.links["scscf"].broken.Store(true)
+			if n := r.next(t, "notifyPotentialFaultyAlarmList"); n["notificationType"] != "notifyPotentialFaultyAlarmList" ||
+				!strings.HasSuffix(n["href"].(string), "/ManagedElement=scscf") {
+				t.Fatalf("got %v, want notifyPotentialFaultyAlarmList about scscf", n)
+			}
+			if n := r.next(t, "notifyAlarmListRebuilt from the instance that reaches scscf"); n["notificationType"] != "notifyAlarmListRebuilt" ||
+				n["reason"] != "System-NE communication error" || !strings.HasSuffix(n["href"].(string), "/ManagedElement=scscf") {
+				t.Fatalf("got %v, want notifyAlarmListRebuilt about scscf", n)
+			}
+			c.held(t, map[string]string{"scscf": other.name, "icscf": cut.name})
+			deadline := time.Now().Add(waitFor)
+			for scope := other.unreliableScope(t); scope != ""; scope = other.unreliableScope(t) {
+				if time.Now().After(deadline) {
+					t.Fatalf("the alarm list is still unreliable at %q %v after the watch was handed over", scope, waitFor)
+				}
+				time.Sleep(10 * time.Millisecond)
+			}
+
+			c.nodes[0].raise(t, "hss-1")
+			c.nodes[1].raise(t, "hss-1")
+			got := map[string]bool{}
+			for range 2 {
+				n := r.next(t, "the alarms after the watch was handed over")
+				got[n["href"].(string)] = true
+			}
+			for _, href := range []string{
+				"http://oam:8080/SubNetwork=ims/ManagedElement=icscf/ManagedFunction=icscf/Peer=hss-1",
+				"http://oam:8080/SubNetwork=ims/ManagedElement=scscf/ManagedFunction=scscf/Peer=hss-1",
+			} {
+				if !got[href] {
+					t.Errorf("no notification of %s in %v", href, got)
+				}
+			}
+		})
+	}
+}
+
+// TestTheWatchOfANodeThatNoInstanceReachesStays: no instance reaches the
+// node. Each may try it, and then the last one to take the watch keeps
+// it, rather than hand it round the instances while the node is away.
+func TestTheWatchOfANodeThatNoInstanceReachesStays(t *testing.T) {
+	for _, backend := range storetest.Backends() {
+		t.Run(backend.Name, func(t *testing.T) {
+			c := newCluster(t, backend, "scscf")
+			first := c.start(t, "oam-1")
+			second := c.start(t, "oam-2")
+			c.until(t, nil)
+			c.watched(t)
+			first.links["scscf"].broken.Store(true)
+			second.links["scscf"].broken.Store(true)
+
+			// A watch that went round would raise the generation at each
+			// take. The node misses three requests, a second apart, before
+			// its watcher hands it over, so the generation stays for twice
+			// that once the watch has stopped moving.
+			store := oamstore.New(c.kv, c.cfg)
+			generation := func() uint64 {
+				st, err := store.AlarmWatchState(context.Background(), "scscf")
+				if err != nil {
+					t.Fatal(err)
+				}
+				return st.Generation
+			}
+			// Both instances find that they cannot reach the node within a
+			// few seconds; the deadline leaves twice waitFor for it, for a
+			// loaded machine.
+			const still = 6 * time.Second
+			deadline := time.Now().Add(2*waitFor + still)
+			for last, since := generation(), time.Now(); time.Since(since) < still; {
+				if time.Now().After(deadline) {
+					t.Fatalf("the generation of the watch still moved after %v, up to %d", 2*waitFor, last)
+				}
+				time.Sleep(100 * time.Millisecond)
+				if g := generation(); g != last {
+					last, since = g, time.Now()
+				}
+			}
+			if holders := c.holders(t); holders["scscf"] == "" {
+				t.Errorf("no instance holds the watch of scscf: %v", holders)
 			}
 		})
 	}
