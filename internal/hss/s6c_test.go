@@ -3,6 +3,8 @@ package hss
 import (
 	"context"
 	"errors"
+	"fmt"
+	"reflect"
 	"slices"
 	"sync/atomic"
 	"testing"
@@ -208,6 +210,51 @@ func TestSendRoutingInfoNamesTheRegisteredIPSMGW(t *testing.T) {
 	if u := n.subscriber(t); len(u.MessageWaitingData) != 0 || u.UNRI {
 		t.Errorf("message waiting data = %v, UNRI = %v", u.MessageWaitingData, u.UNRI)
 	}
+}
+
+// TS 29.338 5.3.3.8: a successful SRA tells the SC what the HSS holds
+// for the user in the message waiting data, as that SC sees it: whether
+// its address is there, and whether MCEF is set. The answer for a user
+// that nothing waits for, and one where only another service centre
+// waits without MCEF, carry no MWD-Status, which says the same as its
+// SC-Address Not included bit alone.
+func TestSendRoutingInfoTellsTheMessageWaitingStatus(t *testing.T) {
+	n := newS6cNetwork(t)
+	n.register(t)
+	other := "12025550200"
+	for _, tc := range []struct {
+		name    string
+		waiting []string
+		mcef    bool
+		want    *sgd.MWDStatus
+	}{
+		{"nothing waits", nil, false, nil},
+		{"the SC waits", []string{scAddress}, false, new(sgd.MWDStatus(0))},
+		{"the SC waits for memory", []string{scAddress}, true, new(sgd.MWDMCEFSet)},
+		{"another SC waits for memory", []string{other}, true, new(sgd.MWDSCAddressNotIncluded | sgd.MWDMCEFSet)},
+		{"another SC waits", []string{other}, false, nil},
+	} {
+		u := n.subscriber(t)
+		u.MessageWaitingData, u.MCEF = tc.waiting, tc.mcef
+		if err := n.hss.store.Put(context.Background(), u); err != nil {
+			t.Fatal(err)
+		}
+		a := n.srr(t, msisdnA)
+		if a.Result != success || a.ServingNode == nil {
+			t.Fatalf("%s: SRA = %v with %+v, want success with the IP-SM-GW", tc.name, a.Result, a.ServingNode)
+		}
+		if !reflect.DeepEqual(a.MWDStatus, tc.want) {
+			t.Errorf("%s: MWD-Status = %v, want %v", tc.name, mwdStatus(a.MWDStatus), mwdStatus(tc.want))
+		}
+	}
+}
+
+// mwdStatus shows an MWD-Status that may be absent.
+func mwdStatus(s *sgd.MWDStatus) string {
+	if s == nil {
+		return "none"
+	}
+	return fmt.Sprintf("%#b", *s)
 }
 
 // TS 29.338 5.2.1.3: with no node registered for MT SMS the HSS answers
