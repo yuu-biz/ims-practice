@@ -456,7 +456,7 @@ printf "PATCH /subscriptions/001010000000003@ims.mnc001.mcc001.3gppnetwork.org H
 ```
 
 1. HSS は、その利用者について名前を覚えている S-CSCF に PPR を送ります。宛先は、その S-CSCF が送った SAR の Origin-Host で、RTR と同じです（TS 29.228 Table 6.2.2.1）。User-Name は秘密の識別子です。**User-Data** にはユーザープロファイル全体、つまり暗黙登録の組のすべての公開の識別子と、新しいサービスプロファイルの iFC が入ります。変わっていない識別子も入れます（6.5.2.1）。
-2. S-CSCF は、要求に入っている識別子について、持っているものを受け取ったもので置き換え、DIAMETER_SUCCESS（2001）の **Push-Profile-Answer**（PPA）で答えます（6.2.2.1）。登録そのものは、期限も Contact の対応付けもそのまま残ります。UE はこの変更を知らされず、その利用者の次の要求から新しい iFC で判定されます。S-CSCF がプロファイルを持っていない利用者の PPR には DIAMETER_ERROR_USER_UNKNOWN（5001）、読めないユーザー情報には DIAMETER_ERROR_NOT_SUPPORTED_USER_DATA（5009）を返し、持っているものはそのままにします（Table 6.2.2.1.1）。
+2. S-CSCF は、要求に入っている識別子について、持っているものを受け取ったもので置き換え、DIAMETER_SUCCESS（2001）の **Push-Profile-Answer**（PPA）で答えます（6.2.2.1）。登録そのものは、期限も Contact の対応付けもそのまま残ります。UE はこの変更を知らされず、その利用者の次の要求から新しい iFC で判定されます。S-CSCF がプロファイルを持っていない利用者の PPR には DIAMETER_ERROR_USER_UNKNOWN（5001）、読めないユーザー情報には DIAMETER_ERROR_NOT_SUPPORTED_USER_DATA（5009）を返し、持っているものはそのままにします（Table 6.2.2.1.1）。登録中の利用者のすべての識別子を禁止にしたプロファイルも、受け取れないものです。既定の公開の識別子は禁止されていない最初の識別子で（6.5.1.1）、このプロファイルにはそれがありません。
 3. HSS は PPA を受け取ってから、プロビジョニングの要求に答えます。PPR に答えが無かったときと、PPA が誤りを返したときは、HSS のログに書きます。それでも要求には 200 と新しい加入を返します。加入はどちらの場合も書き込まれていて、新しいプロファイルは次の登録で S-CSCF に届きます。
 
 `no-services` にすると、加入者 3 の iFC はどれも一致しなくなります。この利用者の短いメッセージは IP-SM-GW に届かず、呼も MMTel AS に届きません。同じ `PATCH` を `"service_profile":"default"` で送れば、元の iFC が push されて戻ります。

@@ -7,6 +7,7 @@ import (
 
 	"github.com/yuu-biz/ims-practice/internal/cx"
 	"github.com/yuu-biz/ims-practice/internal/diameter"
+	"github.com/yuu-biz/ims-practice/internal/hss"
 	"github.com/yuu-biz/ims-practice/internal/ifc"
 	"github.com/yuu-biz/ims-practice/internal/sip"
 )
@@ -118,6 +119,13 @@ func TestPushedProfileThatTheSCSCFRefuses(t *testing.T) {
 			diameter.Experimental(cx.DiameterErrorNotSupportedUserData)},
 		{"a profile without a public identity", impi, []byte("<IMSSubscription><PrivateID>" + impi + "</PrivateID></IMSSubscription>"),
 			diameter.Experimental(cx.DiameterErrorNotSupportedUserData)},
+		// 6.5.1.1: the default public identity of a registered user is
+		// the first one that is not barred, and 6.5.2.1 keeps a PPR from
+		// changing it. A profile that bars them all has none.
+		{"a profile that bars every identity of a registered user", impi,
+			cx.UserProfile{PrivateIdentity: impi, PublicIdentities: []string{impu, telURI}, BarredIdentities: []string{impu, telURI},
+				InitialFilterCriteria: []ifc.InitialFilterCriteria{smsCriterion(0, "sip:"+secondAS+":5060", ifc.SessionContinued)}}.Marshal(),
+			diameter.Experimental(cx.DiameterErrorNotSupportedUserData)},
 		// 6.2.2.1: a PPR carries at least one piece of user information.
 		{"nothing to update", impi, nil, diameter.Base(diameter.DiameterUnableToComply)},
 	}
@@ -155,5 +163,29 @@ func TestCxCommandThatTheSCSCFDoesNotServe(t *testing.T) {
 	}
 	if answer.Result != diameter.Base(diameter.DiameterCommandUnsupported) {
 		t.Errorf("result = %s, want DIAMETER_COMMAND_UNSUPPORTED", answer.Result)
+	}
+}
+
+// TestDeregistrationAfterAPushThatBarsEveryIdentity: the HSS deregisters
+// a user after it pushed a profile that bars every identity. The
+// S-CSCF refused that profile, so the third-party REGISTER of the
+// deregistration still names the default public identity (TS 24.229
+// 5.4.1.7 item c).
+func TestDeregistrationAfterAPushThatBarsEveryIdentity(t *testing.T) {
+	as, got := fakeAS(t, answers(200))
+	criterion := registerCriterion(0, asURI, ifc.SessionContinued)
+	h := newHarnessWithHSS(t, Config{}, fakeResolver{hosts: map[string]netip.AddrPort{asHost: as.LocalAddr()}},
+		hssProfile(criterion), hss.Subscription{PrivateIdentity: impi, PublicIdentities: []string{impu, telURI}, Password: password})
+	h.registerUser(sip.NewCallID())
+	received(t, got)
+
+	h.ppr(impi, cx.UserProfile{PrivateIdentity: impi, PublicIdentities: []string{impu, telURI}, BarredIdentities: []string{impu, telURI},
+		InitialFilterCriteria: []ifc.InitialFilterCriteria{criterion}}.Marshal())
+	rta, err := cx.ParseRegistrationTerminationAnswer(h.rtr(impi, cx.PermanentTermination))
+	if err != nil || !rta.Result.Success() {
+		t.Fatalf("RTA = %+v, %v; want DIAMETER_SUCCESS", rta, err)
+	}
+	if m := received(t, got); m.Get("To") != "<"+impu+">" {
+		t.Errorf("third-party REGISTER To = %q, want the default public identity", m.Get("To"))
 	}
 }
