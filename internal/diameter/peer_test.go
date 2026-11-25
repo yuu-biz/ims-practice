@@ -3,8 +3,10 @@ package diameter
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net"
@@ -428,6 +430,29 @@ func TestPendingRequestFailsWhenConnectionCloses(t *testing.T) {
 	if err := <-errs; !errors.Is(err, errConnectionClosed) {
 		t.Errorf("err = %v, want errConnectionClosed", err)
 	}
+}
+
+// TestTimedOutRequestIsForgotten: a request whose answer does not come
+// in time stops waiting, and the peer forgets it, so that a peer that
+// answers its DWRs but not some requests does not pile them up. The
+// answer that comes after all names a Hop-by-Hop Identifier the peer no
+// longer knows, which RFC 6733 3 has it discard.
+func TestTimedOutRequestIsForgotten(t *testing.T) {
+	release := make(chan struct{})
+	hopByHop := make(chan uint32, 1)
+	peer, logs := openPair(t, func(req *diam.Message) *diam.Message {
+		hopByHop <- req.Header.HopByHopID
+		<-release
+		return req.Answer(DiameterSuccess)
+	})
+	ctx, cancel := context.WithTimeout(t.Context(), 100*time.Millisecond)
+	defer cancel()
+	if _, err := peer.Request(ctx, testRequest(peer.node)); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("err = %v, want the deadline", err)
+	}
+	close(release)
+	waitForLog(t, logs, fields{"msg": "discarded answer with unknown Hop-by-Hop Identifier",
+		"hop_by_hop": fmt.Sprintf("0x%08x", <-hopByHop)})
 }
 
 func TestSessionIDFollowsRFC6733Format(t *testing.T) {
