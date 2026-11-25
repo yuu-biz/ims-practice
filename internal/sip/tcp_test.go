@@ -731,6 +731,102 @@ func TestQueuedResponseGoesToTheSentByOnceItsConnectionCloses(t *testing.T) {
 	}
 }
 
+// talkingTCPServer accepts connections, hands every message it reads to
+// the returned channel, and answers the first message on a connection
+// with an OPTIONS of its own over that connection.
+func talkingTCPServer(t *testing.T) (netip.AddrPort, <-chan *Message) {
+	t.Helper()
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { l.Close() })
+	received := make(chan *Message, 16)
+	go func() {
+		for {
+			c, err := l.Accept()
+			if err != nil {
+				return
+			}
+			t.Cleanup(func() { c.Close() })
+			go func() {
+				r := bufio.NewReaderSize(c, maxStreamMessageSize)
+				for first := true; ; first = false {
+					m, _, err := readStreamMessage(r)
+					if err != nil {
+						return
+					}
+					received <- m
+					if first {
+						options := registerRequest()
+						options.Method = OPTIONS
+						options.SetFirst("CSeq", "1 OPTIONS")
+						options.Prepend("Via", "SIP/2.0/TCP "+unmapped(c.LocalAddr()).String()+";branch="+NewBranch())
+						c.Write(options.Bytes())
+					}
+				}
+			}()
+		}
+	}()
+	return unmapped(l.Addr()), received
+}
+
+func receiveCallID(t *testing.T, received <-chan *Message, callID string) {
+	t.Helper()
+	select {
+	case m := <-received:
+		if got := m.Get("Call-ID"); got != callID {
+			t.Fatalf("the far end got %s, want %s", got, callID)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatalf("the far end never got %s", callID)
+	}
+}
+
+// breakWrites shuts the transport's own connection to remote for
+// writing, so that the next write on it fails, as one does on a
+// connection that the peer has reset. The connection stays open for
+// reading.
+func breakWrites(t *testing.T, tr *TransportLayer, remote netip.AddrPort) {
+	t.Helper()
+	tr.mu.Lock()
+	c := tr.conns[remote]
+	tr.mu.Unlock()
+	if c == nil {
+		t.Fatalf("no connection to %v", remote)
+	}
+	if err := c.CloseWrite(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// A write that fails leaves its connection of no more use, so the next
+// message to the far end goes over a new connection, rather than fail
+// on the broken one too.
+func TestMessageAfterAFailedWriteOpensANewConnection(t *testing.T) {
+	far, received := talkingTCPServer(t)
+	tr, captures := listenObserved(t)
+	first, second, third := mustParse(t, initialRegister), registerRequest(), registerRequest()
+	first.SetFirst("Call-ID", NewCallID())
+	if err := tr.SendRequest(first, tcpTo(far)); err != nil {
+		t.Fatal(err)
+	}
+	receiveCallID(t, received, first.Get("Call-ID"))
+	// The reader of the connection has read the OPTIONS of the far end
+	// once it is observed, and then waits for a Receive that never comes,
+	// so it does not see the connection close.
+	for c := nextCapture(t, captures); c.Sent; c = nextCapture(t, captures) {
+	}
+	breakWrites(t, tr, far)
+	if err := tr.SendRequest(second, tcpTo(far)); err == nil {
+		t.Fatal("a write on a connection shut for writing went out")
+	}
+	if err := tr.SendRequest(third, tcpTo(far)); err != nil {
+		t.Fatalf("the request after the failed write failed too: %v", err)
+	}
+	receiveCallID(t, received, third.Get("Call-ID"))
+}
+
 // A connect that gets no answer fails every message that waits for it,
 // rather than one after the other, a connect for each.
 func TestMessagesThatWaitForAConnectFailWithIt(t *testing.T) {

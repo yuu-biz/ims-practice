@@ -370,7 +370,14 @@ func (t *TransportLayer) writeTCP(c *net.TCPConn, m *Message, remote netip.AddrP
 	record(t.log, t.observe, Capture{Transport: TCP, Sent: true, Source: unmapped(c.LocalAddr()), Destination: remote, Message: m, Wire: wire})
 	c.SetWriteDeadline(time.Now().Add(tcpConnectTimeout))
 	if _, err := c.Write(wire); err != nil {
-		// The reader sees the closed connection and drops it.
+		// The connection is of no more use. It leaves the table at once,
+		// so that the next message to remote opens a new one; the reader
+		// sees it closed, and logs that, once it reads again.
+		t.mu.Lock()
+		if t.conns[remote] == c {
+			delete(t.conns, remote)
+		}
+		t.mu.Unlock()
 		c.Close()
 		return err
 	}
