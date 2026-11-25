@@ -1,0 +1,158 @@
+package mmtel_test
+
+import (
+	"fmt"
+	"net"
+	"net/netip"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/yuu-biz/ims-practice/internal/confinfo"
+	"github.com/yuu-biz/ims-practice/internal/mmtel"
+	"github.com/yuu-biz/ims-practice/internal/sip"
+)
+
+// This file tries the conference event package at the focus with
+// subscribers on bare sockets, which answer each NOTIFY only when the
+// test says so, or never.
+
+// bareSubscriber is a subscriber to a conference on a bare socket.
+type bareSubscriber struct {
+	t    *testing.T
+	conn *net.UDPConn
+	// focus is where the NOTIFYs come from, and their responses go.
+	focus netip.AddrPort
+	// cseq is the CSeq number of the last NOTIFY that awaitNotify read.
+	cseq uint32
+}
+
+// subscribeBare sends the SUBSCRIBE of user to the conference URI uri
+// from a bare socket, as the S-CSCF passes it on, with the identity
+// that the network asserts.
+func subscribeBare(t *testing.T, as testAS, user, uri string) *bareSubscriber {
+	t.Helper()
+	conn, err := net.ListenUDP("udp", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { conn.Close() })
+	self := conn.LocalAddr().String()
+	subscribe := fmt.Sprintf("SUBSCRIBE %[1]s SIP/2.0\r\n"+
+		"Via: SIP/2.0/UDP %[2]s;branch=z9hG4bK-%[3]s-1\r\n"+
+		"Max-Forwards: 70\r\n"+
+		"From: <sip:%[3]s@%[4]s>;tag=%[3]s\r\n"+
+		"To: <%[1]s>\r\n"+
+		"Call-ID: %[3]s-1@127.0.0.1\r\n"+
+		"CSeq: 1 SUBSCRIBE\r\n"+
+		"Contact: <sip:%[3]s@%[2]s>\r\n"+
+		"Event: %[5]s\r\n"+
+		"Accept: %[6]s\r\n"+
+		"Expires: 3600\r\n"+
+		"P-Asserted-Identity: <sip:%[3]s@%[4]s>\r\n"+
+		"Content-Length: 0\r\n\r\n",
+		uri, self, user, domain, confinfo.EventPackage, confinfo.ContentType)
+	if _, err := conn.WriteToUDPAddrPort([]byte(subscribe), as.addr); err != nil {
+		t.Fatal(err)
+	}
+	return &bareSubscriber{t: t, conn: conn, focus: as.addr}
+}
+
+// nextNotify reads up to the next NOTIFY, one with a CSeq number above
+// that of the last one: it passes over the responses to the SUBSCRIBE
+// and the retransmissions of a NOTIFY that it read before. It returns
+// nil when none comes within d.
+func (b *bareSubscriber) nextNotify(d time.Duration) *sip.Message {
+	b.conn.SetReadDeadline(time.Now().Add(d))
+	buf := make([]byte, 65535)
+	for {
+		n, err := b.conn.Read(buf)
+		if err != nil {
+			return nil
+		}
+		m, err := sip.Parse(buf[:n])
+		if err != nil || m.Method != sip.NOTIFY {
+			continue
+		}
+		cseq, err := sip.ParseCSeq(m.Get("CSeq"))
+		if err != nil || cseq.Number <= b.cseq {
+			continue
+		}
+		b.cseq = cseq.Number
+		return m
+	}
+}
+
+// awaitNotify is nextNotify, which fails the test when no NOTIFY comes.
+func (b *bareSubscriber) awaitNotify(what string) *sip.Message {
+	b.t.Helper()
+	n := b.nextNotify(10 * time.Second)
+	if n == nil {
+		b.t.Fatalf("no %s", what)
+	}
+	return n
+}
+
+// answer sends the response with code to notify.
+func (b *bareSubscriber) answer(notify *sip.Message, code int) {
+	b.t.Helper()
+	if _, err := b.conn.WriteToUDPAddrPort(sip.NewResponse(notify, code, "").Bytes(), b.focus); err != nil {
+		b.t.Fatal(err)
+	}
+}
+
+// TestASubscriptionExpiresWhileAnotherIsRemoved: a subscription expires
+// while a NOTIFY to another is on its way, and that NOTIFY gets a 481,
+// which removes the other subscription (RFC 6665 4.2.2). The one that
+// expired still gets its last NOTIFY, with reason timeout (4.2.1.4).
+//
+// The focus keeps the subscriptions in a list, and the removal moves up
+// those that come after the one removed. Under -race, this tries that
+// the expiry reads its subscription only while it holds the lock of the
+// conference. The test gives the expiry a moment to get past the lock
+// before the 481 goes; on a machine too slow for that, the test passes
+// without trying the race, and never fails for it.
+func TestASubscriptionExpiresWhileAnotherIsRemoved(t *testing.T) {
+	mrfc := startConferenceMRFC(t)
+	timer := newHandTimer()
+	as := startAS(t, noServices{}, mmtel.Config{MRFC: "sip:" + contactOf(t, mrfc.ua), AfterFunc: timer.afterFunc})
+	conf, focus, _ := aliceConference(t, as, func(c *sip.IncomingCall) { c.Reject(480) })
+	// expiry is the expiry of the subscription that came last, which the
+	// test fires by hand.
+	expiry := func(what string) func() {
+		t.Helper()
+		receive(t, timer.set, what)
+		return receive(t, timer.fire, what)
+	}
+	expiry("expiry timer of alice's subscription")
+	xavier := subscribeBare(t, as, "xavier", focus.URI)
+	expiry("expiry timer of xavier's subscription")
+	xavier.answer(xavier.awaitNotify("first NOTIFY to xavier"), 200)
+	yvonne := subscribeBare(t, as, "yvonne", focus.URI)
+	expire := expiry("expiry timer of yvonne's subscription")
+	yvonne.answer(yvonne.awaitNotify("first NOTIFY to yvonne"), 200)
+	zoe := subscribeBare(t, as, "zoe", focus.URI)
+	expiry("expiry timer of zoe's subscription")
+	zoe.answer(zoe.awaitNotify("first NOTIFY to zoe"), 200)
+
+	// Alice holds the conference, which each subscriber is told of.
+	if resp, err := conf.ReInvite(audio("42000", "sendonly")); err != nil || resp.StatusCode != 200 {
+		t.Fatalf("hold got %v, %v", resp, err)
+	}
+	held := xavier.awaitNotify("NOTIFY of the hold to xavier")
+	go expire()
+	time.Sleep(100 * time.Millisecond)
+	xavier.answer(held, 481)
+
+	yvonne.answer(yvonne.awaitNotify("NOTIFY of the hold to yvonne"), 200)
+	zoe.answer(zoe.awaitNotify("NOTIFY of the hold to zoe"), 200)
+	last := yvonne.awaitNotify("NOTIFY at the expiry of yvonne's subscription")
+	yvonne.answer(last, 200)
+	if state, err := sip.ParseSubscriptionState(last.Get("Subscription-State")); err != nil ||
+		state.State != sip.SubscriptionTerminated || state.Reason != sip.ReasonTimeout {
+		t.Errorf("NOTIFY at the expiry has Subscription-State %q, want terminated with reason timeout", last.Get("Subscription-State"))
+	}
+	if body := string(last.Body); !strings.Contains(body, "sip:alice@"+domain) {
+		t.Errorf("NOTIFY at the expiry has\n%s\nwant the state of the conference", body)
+	}
+}
