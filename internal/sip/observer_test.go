@@ -5,6 +5,7 @@ import (
 	"net"
 	"net/netip"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -117,4 +118,67 @@ func TestObserverSeesTCPBytesBothWays(t *testing.T) {
 		t.Fatal(err)
 	}
 	checkCapture(t, nextCapture(t, captures), TCP, true, tr.LocalAddr(), local, resp.Bytes())
+}
+
+// Capture.Time is when the message crossed the wire, which keeps a
+// request before its response even when the Observer sees them the
+// other way round: a send is observed once its write has returned, by
+// which time the response may have come and been observed.
+func TestCaptureTimeKeepsTheOrderOfTheWire(t *testing.T) {
+	uas := newStack(t, testTimers, func(st *ServerTransaction) {
+		st.Respond(NewResponse(st.Request, 200, NewTag()))
+	})
+	var mu sync.Mutex
+	var order []Capture
+	responseSeen := make(chan struct{})
+	tr, err := ListenObserved("127.0.0.1:0", testLogger(t), func(c Capture) {
+		if c.Transport != TCP {
+			return
+		}
+		if c.Sent {
+			// The writer is slow to report the request, as a busy machine
+			// may be: the response comes in meanwhile.
+			select {
+			case <-responseSeen:
+			case <-time.After(2 * time.Second):
+			}
+		}
+		mu.Lock()
+		order = append(order, c)
+		mu.Unlock()
+		if !c.Sent {
+			close(responseSeen)
+		}
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	uac, err := NewStack(tr, Config{Timers: testTimers, SentBy: tr.LocalAddr().String(), OnRequest: ignoreRequests}, testLogger(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(uac.Close)
+	ct, err := uac.SendRequest(registerRequest(), tcpTo(uas.LocalAddr()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	collect(t, ct)
+	for deadline := time.Now().Add(2 * time.Second); ; time.Sleep(10 * time.Millisecond) {
+		mu.Lock()
+		n := len(order)
+		mu.Unlock()
+		if n == 2 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("observed %d messages over TCP, want the request and its response", n)
+		}
+	}
+	response, request := order[0], order[1]
+	if request.Sent == response.Sent || !request.Sent {
+		t.Fatalf("observed sent=%v and then sent=%v, want the response observed before the request", response.Sent, request.Sent)
+	}
+	if !request.Time.Before(response.Time) {
+		t.Errorf("the request crossed the wire at %v, its response at %v; want the request first", request.Time, response.Time)
+	}
 }
