@@ -234,9 +234,10 @@ func endedByBYE(t *testing.T, what string, call interface {
 // take the answer in the 200 to an UPDATE, or to a re-INVITE such as the
 // one of a hold, of a call that is up. The 200 goes on as it came; the
 // P-CSCF then releases the dialog with a BYE to each party (TS 24.229
-// 5.2.8.1.2), as TS 24.229 6.2 has it do after a 200 whose SDP it does
-// not allow. The PCRF never gets that answer, and the policy session and
-// the relay context go.
+// 5.2.8.1.2), much as TS 24.229 6.2 has it release after a 200 whose
+// SDP offer the local policy does not allow, but with the Reason 503 of
+// lost resources rather than 488. The PCRF never gets that answer, and
+// the policy session and the relay context go.
 func TestRefusedAnswerWithinTheDialogReleasesTheCall(t *testing.T) {
 	for _, offer := range []struct {
 		request string

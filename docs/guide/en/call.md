@@ -363,7 +363,7 @@ The administrative state belongs to the process of the node: a node that starts 
 
 The P-CSCF points every SDP answer at the relay before it passes the answer on (steps 8 and 10). It first tells the termination that faces the answering party where that party receives, with a `Modify` (TS 29.334 5.17.2.3), and only then writes the address of its other termination into the SDP (TS 24.229 6.7.2.1). A relay that is restarting, or that has lost the context, refuses the `Modify` or does not answer it in time. The P-CSCF then has no answer of its own to pass on, and the answer that came names the address of the far party. A UE that got it would send its RTP past the relay, and the PCRF would authorise media on a path that the call does not take. So the P-CSCF ends the call.
 
-TS 24.229 names no procedure for a media relay that fails. The P-CSCF ends the call with the steps it takes when the network takes away the resources of a session that is being set up (TS 24.229 5.2.8.1.1), with one difference: its 500 carries no `Reason: FAILURE_CAUSE`, which tells of lost radio or bearer resources (TS 24.229 7.2A.18.12.2). The CANCEL and the BYE carry `Reason: SIP;cause=503` (RFC 3326 2), the cause that TS 24.229 5.2.8.1.1 and 5.2.8.1.2 give when the resources of a session are gone and the node that controls them gave no cause of its own. The relay gives none.
+TS 24.229 names no procedure for a media relay that fails. The P-CSCF ends the call with the steps it takes when the network takes away the resources of a session that is being set up (TS 24.229 5.2.8.1.1), with one difference: its 500 carries no `Reason: FAILURE_CAUSE`, which tells of lost radio or bearer resources (TS 24.229 7.2A.18.12.2). The CANCEL and the BYE carry `Reason: SIP;cause=503` (RFC 3326 2). TS 24.229 5.2.8.1.1 and 5.2.8.1.2 use this value when the resources of a session are gone and the entity that controls the radio or bearer resources gave no cause of its own. The relay is not that entity, and the radio and bearer resources are still there, so the P-CSCF has no cause to pass on and uses the same 503.
 
 When the answer comes in a 183, the call is still being set up:
 
@@ -387,7 +387,7 @@ When the answer comes in a 183, the call is still being set up:
 
 - **UE 1 gets 500** for its INVITE, and never sees the 183.
 - **The INVITE towards the network is cancelled**, and the callee answers it 487 (RFC 3261 9.2).
-- **The P-CSCF removes the relay context**, trying again a few times when the relay does not answer. It gives the PCRF nothing: no answer that names the relay ever passed.
+- **The P-CSCF removes the relay context**, trying again a few times when the relay does not answer. The PCRF never gets the answer that the relay did not take. When an earlier response of the call carried an answer that the relay did take, the PCRF has that one, and the P-CSCF ends the Rx session of the call (TS 29.214 4.4.4).
 
 When the answer comes in the 200, the callee has answered already:
 
@@ -413,11 +413,12 @@ When the answer comes in the 200, the callee has answered already:
 
 - **UE 1 gets 500 in the place of the 200.** The INVITE of UE 1 has no final response yet, so the P-CSCF can still end the call there, and the 200 with an SDP that leads past the relay never reaches UE 1.
 - **The callee's dialog is confirmed**, so the P-CSCF acknowledges the 200 in the name of UE 1 (RFC 3261 13.2.2.4) and ends the session with a BYE (RFC 3261 15), as for a 200 that crossed its CANCEL. The callee sends the 200 again until the ACK comes, and each retransmission gets the ACK again.
+- **What the call holds goes as for a 183:** the relay context, and the Rx session of an answer that an earlier response carried.
 - **A retransmission of a 200 whose answer the relay did take is different.** UE 1 has that 200 already, so the retransmission goes on as it came, and the call stays up.
 
 At the P-CSCF of UE 2 the same happens the other way round. The 183 or the 200 comes from UE 2, the `Modify` is for the access termination, the 500 goes to the network, and the CANCEL, or the ACK and the BYE, go to UE 2.
 
-An answer within the dialog, in the 200 to an UPDATE or to a re-INVITE such as the one of a hold, goes another way. That 200 is the final response of its request, and the party that answered has taken the offer already, so the P-CSCF lets the 200 go on as it came. It then releases the dialog, as TS 24.229 6.2 has it do after it has passed on a 200 whose SDP it does not allow:
+An answer within the dialog, in the 200 to an UPDATE or to a re-INVITE such as the one of a hold, goes another way. That 200 is the final response of its request, and the party that answered has taken the offer already, so the P-CSCF lets the 200 go on as it came. It then releases the dialog. TS 24.229 names no procedure for this either. The nearest is TS 24.229 6.2, for a 200 that carries an SDP offer with media that the local policy does not allow: the P-CSCF passes that 200 on, and once the ACK with the answer has come, it releases the session with BYEs (TS 24.229 5.2.8.1.2). Those BYEs carry `Reason: SIP;cause=488` (Not Acceptable Here), since the parties asked for media that the network does not allow. Here they asked for nothing wrong, and the BYEs carry the 503 of lost resources instead:
 
 ```text
  UE 1          P-CSCF          media relay      network
