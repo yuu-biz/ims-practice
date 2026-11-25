@@ -2,6 +2,8 @@ package ipsmgw_test
 
 import (
 	"context"
+	"errors"
+	"strconv"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -13,6 +15,7 @@ import (
 	"github.com/yuu-biz/ims-practice/internal/maintenance"
 	"github.com/yuu-biz/ims-practice/internal/reginfo"
 	"github.com/yuu-biz/ims-practice/internal/sgd"
+	"github.com/yuu-biz/ims-practice/internal/sh"
 	"github.com/yuu-biz/ims-practice/internal/sip"
 	"github.com/yuu-biz/ims-practice/internal/sms"
 )
@@ -416,5 +419,89 @@ func TestSGdCommandThatIsNotATFR(t *testing.T) {
 	}
 	if raw.ResultCode != diameter.DiameterCommandUnsupported || ofa.Header.CommandFlags&diam.ErrorFlag == 0 {
 		t.Errorf("answer to an OFR = Result-Code %d, flags %#02x", raw.ResultCode, ofa.Header.CommandFlags)
+	}
+}
+
+// flagStore is a MemoryStore that hands the test, after each
+// PutNotReachable, the time until which it was asked to keep the flag.
+type flagStore struct {
+	*ipsmgw.MemoryStore
+	until chan time.Time
+}
+
+func (s flagStore) PutNotReachable(ctx context.Context, publicID string, expires time.Time) error {
+	err := s.MemoryStore.PutNotReachable(ctx, publicID, expires)
+	s.until <- expires
+	return err
+}
+
+// nextFlag is the expiry of the next flag that the IP-SM-GW put.
+func (s flagStore) nextFlag(t *testing.T) time.Time {
+	t.Helper()
+	select {
+	case until := <-s.until:
+		return until
+	case <-time.After(5 * time.Second):
+		t.Fatal("the IP-SM-GW put no unreachable flag")
+		return time.Time{}
+	}
+}
+
+// subscriptionExpires is when the store forgets Alice's subscription.
+func (s flagStore) subscriptionExpires(t *testing.T) time.Time {
+	t.Helper()
+	sub, ok, err := s.RegSubscriptionOf(t.Context(), alice)
+	if err != nil || !ok {
+		t.Fatalf("RegSubscriptionOf(%s) = %v, %v", alice, ok, err)
+	}
+	return sub.Expires
+}
+
+// TestTheUnreachableFlagLastsAsLongAsTheSubscription: the flag that a
+// 480 sets is what makes a reregistration of the user tell the HSS that
+// the user is back (regevent.go), and the HSS keeps its own UNRI until
+// it hears so, however long that takes (TS 23.040 3.2.6). A flag that
+// went before the reregistration came would leave the HSS with UNRI for
+// good, so the flag stays for as long as the subscription to the user's
+// registration state, whose refresh that reregistration is. The
+// registration here is one of 600000 seconds, longer than three days.
+func TestTheUnreachableFlagLastsAsLongAsTheSubscription(t *testing.T) {
+	store := flagStore{MemoryStore: ipsmgw.NewMemoryStore(), until: make(chan time.Time, 4)}
+	h := newHarness(t, store, time.Minute, func(m *sip.Message) int {
+		if m.Method == sip.MESSAGE {
+			return 480
+		}
+		return 200
+	})
+	const registration = 600000
+	h.thirdPartyRegister(registration)
+	subscribe := h.subscribed()
+	h.send(notify(subscribe, 1, "active;expires="+strconv.Itoa(registration+161), regDoc(reginfo.Active, reginfo.Active, "+g.3gpp.smsip")))
+	if got := h.nextUpdate(); got != registered {
+		t.Fatalf("PUR = %+v, want %+v", got, registered)
+	}
+	sc := h.overSGd()
+
+	if tfa := nextTFA(t, sc.forwarding(t, deliver)); tfa.Result != diameter.Experimental(sgd.DiameterErrorAbsentUser) {
+		t.Fatalf("TFA result = %v, want DIAMETER_ERROR_ABSENT_USER", tfa.Result)
+	}
+	if until, subscription := store.nextFlag(t), store.subscriptionExpires(t); until.Before(subscription) {
+		t.Errorf("the flag of the 480 goes at %v, before the subscription at %v", until, subscription)
+	}
+
+	// The HSS refuses the notification of the reregistration, so the flag
+	// goes back, for as long as the subscription that the reregistration
+	// refreshed.
+	refused := errors.New("DIAMETER_UNABLE_TO_COMPLY")
+	h.hss.notifyFails.Store(&refused)
+	h.thirdPartyRegister(registration)
+	if until, subscription := store.nextFlag(t), store.subscriptionExpires(t); until.Before(subscription) {
+		t.Errorf("the flag put back goes at %v, before the refreshed subscription at %v", until, subscription)
+	}
+	h.hss.notifyFails.Store(nil)
+	h.thirdPartyRegister(registration)
+	want := notification{sh.UserIdentity{MSISDN: "12025550101"}, number, sh.MSPresent}
+	if got := h.nextNotification(); got != want {
+		t.Errorf("notification = %+v, want %+v", got, want)
 	}
 }

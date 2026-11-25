@@ -74,6 +74,7 @@ func (g *IPSMGW) watchRegistration(publicID, msisdn string, registered time.Dura
 	}
 	if ok && sub.Dialog.ID.RemoteTag != "" {
 		sub.MSISDN = msisdn
+		sub.Expires = time.Now().Add(expires)
 		g.refreshRegEvent(sub, expires, log)
 		return sub, true
 	}
@@ -162,7 +163,8 @@ func (g *IPSMGW) subscribeRegEvent(publicID, msisdn string, expires time.Duratio
 
 // refreshRegEvent sends a SUBSCRIBE within the dialog of sub (RFC 6665
 // 4.1.2.2), with the icid-value of the first one (TS 24.229 5.7.3). It
-// goes to the S-CSCF, the remote target. The lock of the user is held.
+// goes to the S-CSCF, the remote target. sub has the Expires that the
+// refresh asks for, expires from now. The lock of the user is held.
 func (g *IPSMGW) refreshRegEvent(sub RegSubscription, expires time.Duration, log *slog.Logger) {
 	m := sub.Dialog.NewRequest(sip.SUBSCRIBE)
 	m.Add("Event", regEventPackage)
@@ -174,7 +176,6 @@ func (g *IPSMGW) refreshRegEvent(sub RegSubscription, expires time.Duration, log
 		log.Warn("reg event refresh not sent", "error", err.Error())
 		return
 	}
-	sub.Expires = time.Now().Add(expires)
 	callID := sub.Dialog.ID.CallID
 	log = log.With("subscription_call_id", callID)
 	// The CSeq of the refresh is in the Store before the refresh goes
@@ -521,7 +522,7 @@ func (g *IPSMGW) tellReachable(ctx context.Context, sub RegSubscription, log *sl
 	log = log.With("msisdn", sub.MSISDN)
 	if err := g.hss.NotifyReadyForSM(ctx, shIdentity(sub.PublicIdentity, sub.MSISDN), g.cfg.Number, sh.MSPresent); err != nil {
 		log.Warn("the return of the user was not passed to the HSS", "error", err.Error())
-		if err := g.store.PutNotReachable(ctx, publicID, time.Now().Add(notReachableLifetime)); err != nil {
+		if err := g.store.PutNotReachable(ctx, publicID, notReachableUntil(sub)); err != nil {
 			log.Warn("the unreachable flag of the user was not put back", "error", err.Error())
 		}
 		return

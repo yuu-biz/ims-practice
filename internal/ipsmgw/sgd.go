@@ -125,7 +125,7 @@ func (g *IPSMGW) mtForwardShortMessage(ctx context.Context, r sgd.MTForwardShort
 		// registered without the SMS over IP capability, takes no short
 		// message, and the SC hears that the user is absent.
 		log.Info("short message for a user who takes none over IP", "public_identity", sub.PublicIdentity)
-		g.setNotReachable(ctx, sub.PublicIdentity, log)
+		g.setNotReachable(ctx, sub, log)
 		return answer(diameter.Experimental(sgd.DiameterErrorAbsentUser))
 	}
 	tpdu, err := sms.ParseTPDU(sms.RPDataNetworkToMS{UserData: r.SMRPUI})
@@ -159,7 +159,7 @@ func (g *IPSMGW) mtForwardShortMessage(ctx context.Context, r sgd.MTForwardShort
 		return answer(diameter.Base(diameter.DiameterUnableToComply))
 	}
 	if outcome == AbsentSubscriber {
-		g.setNotReachable(ctx, sub.PublicIdentity, log)
+		g.setNotReachable(ctx, sub, log)
 	}
 	a := answerOf(outcome)
 	log.Info("short message answered", "outcome", outcome.String(), "result", a.Result.String())
@@ -228,27 +228,35 @@ func (g *IPSMGW) awaitOutcome(ctx context.Context, reference string, deadline ti
 	}
 }
 
-// setNotReachable raises the IP-SM-GW's own UNRI for a user that a short
-// message did not reach because the UE was absent (TS 23.204 6.5a, TS
-// 23.040 3.2.6). The next sign of life from the user clears it and tells
-// the HSS (regevent.go). A Store that will not take it loses only that
-// notification: the HSS holds UNRI of its own, which the SMS-GMSC's
-// report over S6c sets.
-func (g *IPSMGW) setNotReachable(ctx context.Context, publicID string, log *slog.Logger) {
-	if err := g.store.PutNotReachable(ctx, publicID, time.Now().Add(notReachableLifetime)); err != nil {
+// setNotReachable raises the IP-SM-GW's own UNRI for the user of sub,
+// whom a short message did not reach because the UE was absent (TS
+// 23.204 6.5a, TS 23.040 3.2.6). The next sign of life from the user
+// clears it and tells the HSS (regevent.go).
+//
+// TS 23.040 3.2.6 has UNRI cleared by an event and by no timer, in the
+// HSS as here, while the Store keeps nothing for ever. The flag stays
+// for as long as the subscription to the user's registration state
+// (notReachableUntil). A Store that will not take it loses that
+// notification, and the HSS keeps its UNRI until the PUR of the user's
+// next registration after a deregistration.
+func (g *IPSMGW) setNotReachable(ctx context.Context, sub RegSubscription, log *slog.Logger) {
+	if err := g.store.PutNotReachable(ctx, sub.PublicIdentity, notReachableUntil(sub)); err != nil {
 		log.Warn("the user was not marked unreachable for short messages", "error", err.Error())
 		return
 	}
 	log.Info("the user is marked unreachable for short messages over IP")
 }
 
-// notReachableLifetime is how long the IP-SM-GW keeps its own UNRI for a
-// user. No specification bounds it: TS 23.040 3.2.6 has the flag
-// cleared by an event, not by a timer. It is long enough to outlast a
-// short message waiting at a Service Centre, since once no Service
-// Centre holds one any longer there is nothing left for a notification
-// to set off.
-const notReachableLifetime = 72 * time.Hour
+// notReachableUntil is when the Store may forget the IP-SM-GW's own UNRI
+// for the user of sub: when it forgets sub. Until then, each
+// reregistration of the user refreshes sub and finds the flag, and tells
+// the HSS (IPSMGW.register). After it, the user has to register anew,
+// which starts a new subscription, and the PUR that its first NOTIFY
+// sets off is the news for the HSS itself (TS 23.040 3.2.6 item 2c).
+// The HSS keeps its UNRI with no limit either, so a flag that went
+// sooner would leave a user who only registered again absent for every
+// short message.
+func notReachableUntil(sub RegSubscription) time.Time { return sub.Expires }
 
 // answer is a TFA that carries a result and nothing else.
 func answer(result diameter.Result) sgd.MTForwardShortMessageAnswer {
