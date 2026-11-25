@@ -184,6 +184,7 @@ type harness struct {
 	sc       *fakeSC
 	hss      *fakeHSS
 	gw       netip.AddrPort
+	stack    *sip.Stack
 	scscf    *sip.Stack
 	received chan *sip.Message
 	// atSCSCF gets the requests that reach the S-CSCF, which answers each
@@ -248,9 +249,9 @@ func newHarnessParts(t *testing.T, store ipsmgw.Store, reportTimeout time.Durati
 		SweepInterval: 20 * time.Millisecond},
 		centre, store, hssPart, locator{domain: entry.LocalAddr(), scscfHost: h.scscf.LocalAddr(), ibcfHost: entry.LocalAddr()}, quiet())
 	t.Cleanup(h.g.Close)
-	stack := newStack(t, fastTimers, h.g.OnRequest)
-	h.g.SetStack(stack)
-	h.gw = stack.LocalAddr()
+	h.stack = newStack(t, fastTimers, h.g.OnRequest)
+	h.g.SetStack(h.stack)
+	h.gw = h.stack.LocalAddr()
 	return h
 }
 

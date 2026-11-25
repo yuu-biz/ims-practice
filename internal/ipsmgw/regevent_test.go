@@ -1,6 +1,7 @@
 package ipsmgw_test
 
 import (
+	"context"
 	"errors"
 	"strconv"
 	"strings"
@@ -481,5 +482,33 @@ func TestNotifyForNoSubscription(t *testing.T) {
 	stranger.Add("Contact", "<"+ownURI+">")
 	if resp := h.send(notify(stranger, 1, "active;expires=60", regDoc(reginfo.Active, reginfo.Active))); resp.StatusCode != 481 {
 		t.Errorf("answered %d, want 481", resp.StatusCode)
+	}
+}
+
+// TestARegEventSubscriptionOutlivesTheStackThatStops: the IP-SM-GW stops
+// while its SUBSCRIBE waits for the answer of the home network. The end
+// of the stack says nothing of the S-CSCF, which may have made the
+// subscription and send its NOTIFY to another IP-SM-GW, so the
+// subscription stays in the Store until it expires or the next
+// third-party REGISTER replaces it.
+func TestARegEventSubscriptionOutlivesTheStackThatStops(t *testing.T) {
+	store := ipsmgw.NewMemoryStore()
+	h := newHarness(t, store, time.Minute, func(m *sip.Message) int {
+		if m.Method == sip.SUBSCRIBE {
+			return 0
+		}
+		return 200
+	})
+	h.thirdPartyRegister(3600)
+	callID := h.subscribed().Get("Call-ID")
+
+	h.stack.Close()
+	ctx := context.Background()
+	gone := came(watch, func() bool {
+		_, ok, err := store.RegSubscription(ctx, callID)
+		return err == nil && !ok
+	})
+	if gone {
+		t.Errorf("the subscription left the Store within %v of the stop of the stack", watch)
 	}
 }
