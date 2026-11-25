@@ -120,6 +120,27 @@ func (w *wireLog) labels() []string {
 	return labels
 }
 
+// registers is the log of the REGISTERs and their responses.
+func (w *wireLog) registers() []wired {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	var out []wired
+	for _, m := range w.messages {
+		if strings.HasSuffix(m.label, "REGISTER") {
+			out = append(out, m)
+		}
+	}
+	return out
+}
+
+func (w *wireLog) registerLabels() []string {
+	var labels []string
+	for _, m := range w.registers() {
+		labels = append(labels, m.label)
+	}
+	return labels
+}
+
 // inOrder checks that the labels come in this order, with others in
 // between allowed.
 func (w *wireLog) inOrder(t *testing.T, labels ...string) {

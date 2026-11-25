@@ -829,8 +829,12 @@ func registerOnly(ctx context.Context, s *session) error {
 				return &errDeregistered{state}
 			}
 			// TS 24.229 5.1.1.7: deactivated asks for a new initial
-			// registration, after which the UE subscribes again.
+			// registration, after which the UE subscribes again. The
+			// security associations went with the registration, so it
+			// is unprotected.
 			s.log.Info("registering again after a network-initiated deregistration")
+			s.registered = false
+			s.ue.Unbind()
 			initial = true
 		case <-ctx.Done():
 			return nil

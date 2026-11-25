@@ -285,6 +285,16 @@ func (u *UE) Register(ctx context.Context) (Registration, error) {
 // its contact as bound to any public user identity. The next Register
 // is then an initial registration, sent unprotected and without the
 // answer to an earlier challenge.
+//
+// It is also what the UE does when a NOTIFY of the reg event takes its
+// registration away (RegEvent.Lost): it removes the registration and
+// deletes its security associations towards the P-CSCF (5.1.1.7), as the
+// P-CSCF ends its own on the same NOTIFY (5.2.5.2). The response to that
+// NOTIFY, and to any retransmission of it, is the server transaction's,
+// which does not need them.
+//
+// Only the goroutine that calls Register may call Unbind, since the
+// answer to the last challenge is that goroutine's alone.
 func (u *UE) Unbind() {
 	u.mu.Lock()
 	defer u.mu.Unlock()
