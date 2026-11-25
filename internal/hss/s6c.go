@@ -180,6 +180,7 @@ func (h *HSS) sendRoutingInfoForSM(ctx context.Context, r sgd.SendRoutingInfoFor
 			Result:      diameter.Base(diameter.DiameterSuccess),
 			UserName:    imsi(u.PrivateIdentity),
 			ServingNode: node,
+			MWDStatus:   messageWaitingStatus(u, r.SCAddress),
 		}
 	}
 	// No node is registered for MT SMS. The SC address goes into the
@@ -215,10 +216,39 @@ func (h *HSS) sendRoutingInfoForSM(ctx context.Context, r sgd.SendRoutingInfoFor
 			Result:      diameter.Base(diameter.DiameterSuccess),
 			UserName:    imsi(stored.PrivateIdentity),
 			ServingNode: node,
+			MWDStatus:   messageWaitingStatus(stored, r.SCAddress),
 		}
 	}
 	log.Info("routing info for a short message: no node is registered for MT SMS")
 	return sgd.SendRoutingInfoForSMAnswer{Result: diameter.Experimental(sgd.DiameterErrorAbsentUser)}
+}
+
+// messageWaitingStatus is the MWD-Status of a successful SRA to the
+// service centre at scAddress (TS 29.338 5.3.3.8): whether its address
+// is in the message waiting data of u, and whether MCEF is set. From it
+// the SC learns that a delivery which succeeds is to be reported, so
+// that the HSS clears MCEF and alerts the service centres that wait (TS
+// 23.040 3.2.6 items 2g and 2h).
+//
+// MCEF is the only flag it carries. This HSS keeps UNRI rather than MNRF
+// or MNRG, and while UNRI is set it names no serving node, so no
+// successful SRA meets that flag; Table 5.3.3.8/1 has no bit for it
+// either. The status is nil when neither the address nor MCEF is there:
+// an SRA without MWD-Status tells the SC the same, and the answer for a
+// user that nothing waits for stays as it was.
+func messageWaitingStatus(u Subscriber, scAddress string) *sgd.MWDStatus {
+	included := slices.Contains(u.MessageWaitingData, scAddress)
+	if !included && !u.MCEF {
+		return nil
+	}
+	var status sgd.MWDStatus
+	if !included {
+		status |= sgd.MWDSCAddressNotIncluded
+	}
+	if u.MCEF {
+		status |= sgd.MWDMCEFSet
+	}
+	return &status
 }
 
 // servingNode is the node that serves u for mobile terminated short
