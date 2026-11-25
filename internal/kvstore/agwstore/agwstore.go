@@ -144,8 +144,11 @@ func (s *Store) DeleteContext(ctx context.Context, id string) error {
 // the two writes of a PutContext or of a DeleteContext. The relay reads
 // its contexts when it starts, before it serves anything, and no other
 // process writes them. This assumes one live process per relay name,
-// which the relay's address makes so: a second process could not open
-// the same ports. Contexts skips such an entry, and removes it from the
+// which the deployment has to keep: nothing here enforces it, and the
+// index is read before any port is opened. With a second process, a
+// PutContext of the first could be under way, and its context would be
+// left out of the index for good. Contexts skips such an entry, and
+// removes it from the
 // index once it has read every page, so that a store that fails then
 // has given every context already. A failed removal changes nothing
 // that Contexts returns, so it is only logged; the next Contexts tries
