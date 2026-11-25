@@ -1010,6 +1010,41 @@ func TestCloseSendsWhatWasHandedOverToAnOpenConnection(t *testing.T) {
 	}
 }
 
+// Close writes what waits for an open connection, but waits no longer
+// for all of it than one write deadline, tcpConnectTimeout, however
+// many messages a peer that drains them just fast enough leaves in the
+// queue.
+func TestCloseWaitsForTheQueuesAtMostOneWriteDeadline(t *testing.T) {
+	far, _ := rawTCPServer(t)
+	// The observer stands in for a peer that takes in each message just
+	// within the write deadline: the writer of the queue goes on to the
+	// next message 200 ms after each.
+	const messages, each = 25, 200 * time.Millisecond
+	tr, err := ListenObserved("127.0.0.1:0", testLogger(t), func(c Capture) {
+		if c.Sent && c.Transport == TCP {
+			time.Sleep(each)
+		}
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	uac, err := NewStack(tr, Config{SentBy: tr.LocalAddr().String(), OnRequest: ignoreRequests}, testLogger(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(uac.Close)
+	for range messages {
+		if _, err := uac.SendRequest(registerRequest(), tcpTo(far)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	start := time.Now()
+	uac.Close()
+	if took := time.Since(start); took > tcpConnectTimeout+tcpConnectTimeout/2 {
+		t.Errorf("Close took %v with %d messages of %v each in the queue, want about %v at most", took, messages, each, tcpConnectTimeout)
+	}
+}
+
 // A connect that gets no answer fails every message that waits for it,
 // rather than one after the other, a connect for each.
 func TestMessagesThatWaitForAConnectFailWithIt(t *testing.T) {
