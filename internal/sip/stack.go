@@ -1151,9 +1151,8 @@ func (s *Stack) carryOutClient(e *clientEntry, actions []TransactionAction) {
 			}
 		case SendACK:
 			// RFC 3261 17.1.1.2 and RFC 3263 4: the same destination as
-			// the INVITE.
-			// The transaction ends with the ACK over TCP (Timer D is zero),
-			// so the ACK goes out whatever becomes of it.
+			// the INVITE. Over TCP the transaction ends with the ACK, Timer
+			// D being zero, so the ACK goes out whatever becomes of it.
 			ack := newMatchingRequest(e.attempt.request, ACK, a.Response.Get("To"))
 			if err := s.transport.sendRequest(ack, e.attempt.destination, s.reportFailure(e), nil); err != nil {
 				sendErr = err
