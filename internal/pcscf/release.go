@@ -274,7 +274,7 @@ func (s *setup) crossedCancel(resp *sip.Message, first bool) bool {
 
 // lastCallerSeq is the CSeq of the last request that the caller sent in
 // the early dialog: from the Dialog when it is still in the Store, or
-// else as the abort left it (abortSetup).
+// else as callerSeq keeps it.
 func (s *setup) lastCallerSeq() uint32 {
 	if !s.stored {
 		return s.callerSeq
