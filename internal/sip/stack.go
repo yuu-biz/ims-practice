@@ -122,7 +122,10 @@ var ErrStackClosed = errors.New("sip: stack closed")
 // Stack is the transaction layer of RFC 3261 17 on top of a
 // TransportLayer. One goroutine owns every transaction: it reads the
 // transport, matches messages to transactions (17.1.3, 17.2.3), runs
-// the state machines of transaction.go, and fires their timers.
+// the state machines of transaction.go, and fires their timers. It
+// waits for no peer: the transport writes the messages over TCP from
+// goroutines of its own, and a failure to send one comes back to the
+// loop as a transport error of its transaction (17.1.4, 17.2.4).
 //
 // What the stack does with messages that match no transaction:
 //   - A response to a CANCEL that SendCANCEL forwarded statelessly goes
@@ -473,8 +476,11 @@ const maxUDPRequestSize = 1300
 // returns a copy of req with this node's Via, which names that
 // transport and has branch, on top. A request for UDP that is larger than 1300 bytes
 // goes over TCP instead (RFC 3261 18.1.1). The TCP connection is opened
-// here, in the caller's goroutine, so that the stack's loop does not
-// wait for it when it sends.
+// here, in the caller's goroutine, so that a target that refuses it is
+// passed over before a client transaction starts for it (RFC 3263 4.3),
+// and so that a large request knows which transport its Via names.
+// Should the connection close before the request goes out, the
+// transport opens another, off the stack's loop.
 func (s *Stack) prepare(req *Message, branch string, destination Destination) (*Message, Destination, error) {
 	select {
 	case <-s.done:
@@ -632,6 +638,13 @@ type (
 	respond struct {
 		entry    *serverEntry
 		response *Message
+	}
+	// sendFailed is a message of owner that the transport could not send
+	// after the loop had handed it over: over TCP the loop only queues a
+	// message, and the goroutine that writes it reports here.
+	sendFailed struct {
+		owner any // *clientEntry or *serverEntry
+		err   error
 	}
 	timerExpired struct {
 		owner any // *clientEntry or *serverEntry
@@ -798,6 +811,8 @@ func (s *Stack) handle(in stackInput) {
 			return
 		}
 		s.stepServer(in.entry, ResponseFromTU{Response: in.response})
+	case sendFailed:
+		s.receiveSendFailure(in)
 	case timerExpired:
 		switch e := in.owner.(type) {
 		case *clientEntry:
@@ -858,10 +873,13 @@ func (s *Stack) relayStateless(resp *Message, own Via) bool {
 	if err != nil || own.Branch() != statelessBranch(next) {
 		return false
 	}
-	if err := s.transport.SendResponse(out, connectionOf(next)); err != nil {
-		s.log.Warn("cannot relay the response to a CANCEL forwarded statelessly",
-			"status", resp.StatusCode, "branch", next.Branch(), "error", err.Error())
+	report := func(err error) {
+		if err != nil {
+			s.log.Warn("cannot relay the response to a CANCEL forwarded statelessly",
+				"status", resp.StatusCode, "branch", next.Branch(), "error", err.Error())
+		}
 	}
+	report(s.transport.sendResponse(out, connectionOf(next), report))
 	return true
 }
 
@@ -1121,14 +1139,14 @@ func (s *Stack) carryOutClient(e *clientEntry, actions []TransactionAction) {
 	for _, a := range actions {
 		switch a := a.(type) {
 		case SendRequest:
-			if err := s.transport.SendRequest(e.attempt.request, e.attempt.destination); err != nil {
+			if err := s.transport.sendRequest(e.attempt.request, e.attempt.destination, s.reportFailure(e)); err != nil {
 				sendErr = err
 			}
 		case SendACK:
 			// RFC 3261 17.1.1.2 and RFC 3263 4: the same destination as
 			// the INVITE.
 			ack := newMatchingRequest(e.attempt.request, ACK, a.Response.Get("To"))
-			if err := s.transport.SendRequest(ack, e.attempt.destination); err != nil {
+			if err := s.transport.sendRequest(ack, e.attempt.destination, s.reportFailure(e)); err != nil {
 				sendErr = err
 			}
 		case SendCancel:
@@ -1190,7 +1208,7 @@ func (s *Stack) carryOutServer(e *serverEntry, actions []TransactionAction) {
 	for _, a := range actions {
 		switch a := a.(type) {
 		case SendResponse:
-			if err := s.transport.SendResponse(a.Response, e.st.Source); err != nil {
+			if err := s.transport.sendResponse(a.Response, e.st.Source, s.reportFailure(e)); err != nil {
 				sendErr = err
 			}
 		case PassACKToTU:
@@ -1214,6 +1232,41 @@ func (s *Stack) carryOutServer(e *serverEntry, actions []TransactionAction) {
 	if sendErr != nil {
 		s.stepServer(e, TransportError{Err: sendErr})
 	}
+}
+
+// reportFailure is what the transport calls with the outcome of a
+// message of owner, a *clientEntry or *serverEntry, that it writes over
+// TCP after the loop has gone on: a failure goes back to the loop.
+func (s *Stack) reportFailure(owner any) func(error) {
+	return func(err error) {
+		if err != nil {
+			s.post(sendFailed{owner: owner, err: err})
+		}
+	}
+}
+
+// receiveSendFailure is a transport error for the transaction whose
+// message the transport could not send (RFC 3261 17.1.4, 17.2.4). A
+// transaction that has ended since, as a non-INVITE server transaction
+// over TCP does as soon as its final response has gone to the transport,
+// takes no more events, so the failure is only logged.
+func (s *Stack) receiveSendFailure(in sendFailed) {
+	var branch string
+	switch e := in.owner.(type) {
+	case *clientEntry:
+		if s.clients[e.key] == e {
+			s.stepClient(e, TransportError{Err: in.err})
+			return
+		}
+		branch = e.key.branch
+	case *serverEntry:
+		if s.servers[e.key] == e {
+			s.stepServer(e, TransportError{Err: in.err})
+			return
+		}
+		branch = e.key.branch
+	}
+	s.log.Warn("message not sent, after its transaction ended", "branch", branch, "error", in.err.Error())
 }
 
 // newMatchingRequest builds, from an INVITE, a request that the next

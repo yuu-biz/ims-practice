@@ -2,6 +2,7 @@ package sip
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -80,9 +81,16 @@ type TransportLayer struct {
 	closed    chan struct{}
 	closeOnce sync.Once
 	wg        sync.WaitGroup
+	// ctx ends with Close, and with it any connect under way.
+	ctx    context.Context
+	cancel context.CancelFunc
 
 	mu    sync.Mutex
 	conns map[netip.AddrPort]*net.TCPConn // nil once closed
+	// queues holds, for each far end, the messages that wait to go to it
+	// over TCP, oldest first. A far end is in the map while a goroutine
+	// writes to it (writeQueued).
+	queues map[netip.AddrPort][]tcpSend
 }
 
 type incoming struct {
@@ -183,7 +191,9 @@ func newTransportLayer(address string, log *slog.Logger, observe Observer, idleT
 			received:    make(chan incoming),
 			closed:      make(chan struct{}),
 			conns:       map[netip.AddrPort]*net.TCPConn{},
+			queues:      map[netip.AddrPort][]tcpSend{},
 		}
+		t.ctx, t.cancel = context.WithCancel(context.Background())
 		log.Info("sip listening", "transport", string(TCP), "address", unmapped(listener.Addr()).String())
 		t.wg.Add(2)
 		go t.readUDP(udp)
@@ -195,11 +205,13 @@ func newTransportLayer(address string, log *slog.Logger, observe Observer, idleT
 func (t *TransportLayer) LocalAddr() netip.AddrPort { return t.udp.LocalAddr() }
 
 // Close closes the UDP socket, the TCP listener and every connection,
-// and waits for their readers to end. A Receive in progress returns an
-// error.
+// and waits for their readers and writers to end. A Receive in progress
+// returns an error, and so does every message that waits to go out over
+// TCP.
 func (t *TransportLayer) Close() error {
 	t.closeOnce.Do(func() {
 		close(t.closed)
+		t.cancel()
 		t.mu.Lock()
 		conns := t.conns
 		t.conns = nil
@@ -261,10 +273,19 @@ func (t *TransportLayer) readUDP(u *UDPTransport) {
 	}
 }
 
-// SendRequest sends req to dst (RFC 3261 18.1.1). Over TCP it uses the
-// open connection to dst, or opens one. The caller picks dst from the
-// Route set or the Request-URI; the transport does not look up DNS.
+// SendRequest sends req to dst (RFC 3261 18.1.1), and returns once it
+// has gone out. Over TCP it uses the open connection to dst, or opens
+// one. The caller picks dst from the Route set or the Request-URI; the
+// transport does not look up DNS.
 func (t *TransportLayer) SendRequest(req *Message, dst Destination) error {
+	return t.sendRequest(req, dst, nil)
+}
+
+// sendRequest is SendRequest. With written set, it does not wait for a
+// TCP peer: req joins the queue of dst (queueTCP), and written gets the
+// outcome later. Over UDP, and for an error that sendRequest returns,
+// written is not called.
+func (t *TransportLayer) sendRequest(req *Message, dst Destination, written func(error)) error {
 	switch dst.Transport {
 	case UDP:
 		if client := t.clientPort(dst.Addr); client != nil {
@@ -274,16 +295,22 @@ func (t *TransportLayer) SendRequest(req *Message, dst Destination) error {
 		}
 		return t.udp.SendRequest(req, dst.Addr)
 	case TCP:
-		return t.sendTCP(req, dst.Addr)
+		return t.sendTCP(req, dst.Addr, written)
 	}
 	return fmt.Errorf("sip: transport %s is not supported", dst.Transport)
 }
 
-// SendResponse sends resp the way its top Via says (RFC 3261 18.2.2).
-// Over TCP the response goes back on the connection that source, where
-// the request came from, names; if that connection has closed, on a
-// new one to the address that tcpResponseAddress gives.
+// SendResponse sends resp the way its top Via says (RFC 3261 18.2.2),
+// and returns once it has gone out. Over TCP the response goes back on
+// the connection that source, where the request came from, names; if
+// that connection has closed, on a new one to the address that
+// tcpResponseAddress gives.
 func (t *TransportLayer) SendResponse(resp *Message, source Destination) error {
+	return t.sendResponse(resp, source, nil)
+}
+
+// sendResponse is SendResponse, with written as for sendRequest.
+func (t *TransportLayer) sendResponse(resp *Message, source Destination, written func(error)) error {
 	v, err := ParseVia(resp.Get("Via"))
 	if err != nil {
 		return err
@@ -298,7 +325,7 @@ func (t *TransportLayer) SendResponse(resp *Message, source Destination) error {
 				return err
 			}
 		}
-		return t.sendTCP(resp, remote)
+		return t.sendTCP(resp, remote, written)
 	}
 	return fmt.Errorf("sip: response over %s is not supported", v.Transport)
 }
