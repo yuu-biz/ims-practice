@@ -1,6 +1,7 @@
 package sip
 
 import (
+	"errors"
 	"net"
 	"net/netip"
 	"syscall"
@@ -36,9 +37,13 @@ func silentTCPAddress(t *testing.T) netip.AddrPort {
 	if c, err := net.DialTimeout("tcp", addr.String(), 200*time.Millisecond); err == nil {
 		t.Cleanup(func() { c.Close() })
 	}
-	if c, err := net.DialTimeout("tcp", addr.String(), 200*time.Millisecond); err == nil {
+	c, err := net.DialTimeout("tcp", addr.String(), 200*time.Millisecond)
+	if err == nil {
 		c.Close()
-		t.Skip("this kernel answers a connect beyond the backlog")
+	}
+	var ne net.Error
+	if !errors.As(err, &ne) || !ne.Timeout() {
+		t.Skipf("a connect beyond the backlog did not wait until it timed out: %v", err)
 	}
 	return addr
 }
