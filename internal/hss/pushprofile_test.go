@@ -179,43 +179,61 @@ func TestProvisioningThatPushesNothing(t *testing.T) {
 
 // TestAPutThatChangesTheDefaultIdentityDeregisters: TS 29.228 6.5.2.1
 // keeps a new default public identity of a registered set out of the
-// PPR and has the HSS deregister the set with an RTR instead. The HSS
-// deregisters the user with PERMANENT_TERMINATION, as for any change to
-// the subscription that the S-CSCF cannot take (6.1.3.1), and has the
-// user Not Registered, so a later change pushes nothing. The user who
-// registers again gets the new default identity, and one whose every
-// identity is barred is refused (6.1.1.1 step 4).
+// PPR and has the HSS deregister the set with an RTR instead, and has
+// the user Not Registered, so a later change pushes nothing. While an
+// identity of the set is not barred, the subscription stays valid and
+// the RTR carries SERVER_CHANGE, with which the S-CSCF asks the user to
+// register again (6.1.3.1); the next UAR is a first registration. When
+// every identity is barred it carries PERMANENT_TERMINATION, and the
+// next UAR is refused (6.1.1.1 step 4).
 func TestAPutThatChangesTheDefaultIdentityDeregisters(t *testing.T) {
-	identities := `"public_identities": ["` + impu + `", "tel:+12025550101"]`
+	const tel = "tel:+12025550101"
+	identities := `"public_identities": ["` + impu + `", "` + tel + `"]`
 	tests := []struct {
 		name string
-		body string
-		uaa  diameter.Result
+		// before is the body of a PUT before the user registers, if any.
+		before string
+		body   string
+		reason cx.ReasonCode
+		// registers is the identity of the next UAR, and uaa its answer.
+		registers string
+		uaa       diameter.Result
 	}{
-		{"a PUT that moves the default identity",
-			`"public_identities": ["tel:+12025550101", "` + impu + `"]`, diameter.Experimental(cx.DiameterFirstRegistration)},
-		{"a PUT that bars the default identity",
-			identities + `, "barred_identities": ["` + impu + `"], "service_profile": "trial"`, diameter.Experimental(cx.DiameterFirstRegistration)},
-		{"a PUT that bars every identity",
-			identities + `, "barred_identities": ["` + impu + `", "tel:+12025550101"]`, diameter.Base(diameter.DiameterAuthorizationRejected)},
+		{"a PUT that moves the default identity", "",
+			`"public_identities": ["` + tel + `", "` + impu + `"]`, cx.ServerChange, impu, diameter.Experimental(cx.DiameterFirstRegistration)},
+		{"a PUT that bars the default identity", "",
+			identities + `, "barred_identities": ["` + impu + `"], "service_profile": "trial"`, cx.ServerChange, impu, diameter.Experimental(cx.DiameterFirstRegistration)},
+		{"a PUT that lifts the barring of an identity before the default one", identities + `, "barred_identities": ["` + impu + `"]`,
+			identities, cx.ServerChange, impu, diameter.Experimental(cx.DiameterFirstRegistration)},
+		{"a PUT that takes the default identity away", "",
+			`"public_identities": ["` + tel + `"]`, cx.ServerChange, tel, diameter.Experimental(cx.DiameterFirstRegistration)},
+		{"a PUT that bars every identity", "",
+			identities + `, "barred_identities": ["` + impu + `", "` + tel + `"]`, cx.PermanentTermination, impu, diameter.Base(diameter.DiameterAuthorizationRejected)},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			h := newProfileHSS(t, "default")
-			mar(t, h, scscf)
-			sar(t, h, scscf, cx.AssignRegistration)
 			scscfs := &fakeSCSCFs{}
 			api := h.Provisioning(scscfs)
-			body := `{"private_identity": "` + impi + `", ` + tt.body + `, "password": "test-password-1"}`
-			if w := do(t, api, "PUT", "/subscriptions/"+impi, body); w.Code != http.StatusOK {
-				t.Fatalf("PUT: %d %s", w.Code, w.Body)
+			put := func(fields string) {
+				t.Helper()
+				body := `{"private_identity": "` + impi + `", ` + fields + `, "password": "test-password-1"}`
+				if w := do(t, api, "PUT", "/subscriptions/"+impi, body); w.Code != http.StatusOK {
+					t.Fatalf("PUT: %d %s", w.Code, w.Body)
+				}
 			}
+			if tt.before != "" {
+				put(tt.before)
+			}
+			mar(t, h, scscf)
+			sar(t, h, scscf, cx.AssignRegistration)
+			put(tt.body)
 			if len(scscfs.pprs) != 0 || len(scscfs.rtrs) != 1 {
 				t.Fatalf("%d PPRs and %d RTRs, want an RTR alone", len(scscfs.pprs), len(scscfs.rtrs))
 			}
 			if rtr := scscfs.rtrs[0]; rtr.UserName != impi || len(rtr.PublicIdentities) != 0 ||
-				rtr.DeregistrationReason.ReasonCode != cx.PermanentTermination || rtr.DestinationHost != hdr.OriginHost {
-				t.Errorf("RTR = %+v, want PERMANENT_TERMINATION of the private identity to the S-CSCF of the SAR", rtr)
+				rtr.DeregistrationReason.ReasonCode != tt.reason || rtr.DestinationHost != hdr.OriginHost {
+				t.Errorf("RTR = %+v, want %s of the private identity to the S-CSCF of the SAR", rtr, tt.reason)
 			}
 			u, _, err := h.store.Subscriber(context.Background(), impi)
 			if err != nil || u.State != NotRegistered || u.ServerName != "" {
@@ -227,7 +245,7 @@ func TestAPutThatChangesTheDefaultIdentityDeregisters(t *testing.T) {
 			if len(scscfs.pprs) != 0 {
 				t.Errorf("%d PPRs after the deregistration, want none", len(scscfs.pprs))
 			}
-			if a := uar(t, h, impi, impu, cx.Registration); a.Result != tt.uaa {
+			if a := uar(t, h, impi, tt.registers, cx.Registration); a.Result != tt.uaa {
 				t.Errorf("UAA of the next registration = %s, want %s", a.Result, tt.uaa)
 			}
 		})

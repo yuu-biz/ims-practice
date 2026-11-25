@@ -724,7 +724,8 @@ func (h *HSS) putSubscription(w http.ResponseWriter, r *http.Request, peers Peer
 		h.writePutAnswer(w, http.StatusOK, resultUnchanged, stored, data)
 		return
 	}
-	deregister := !dry && h.defaultIdentityChanged(stored, next)
+	reason, deregister := h.defaultIdentityChanged(stored, next)
+	deregister = deregister && !dry
 	if deregister {
 		// The RTR follows the write. The HSS deregisters the user first
 		// (6.1.3.1), in the same write as the new subscription, so that a
@@ -748,7 +749,7 @@ func (h *HSS) putSubscription(w http.ResponseWriter, r *http.Request, peers Peer
 				unlock()
 				h.log.Info("registration state", "private_identity", impi, "from", stored.State.String(), "to", NotRegistered.String(),
 					"reason", "a new default public identity")
-				if err := h.registrationTermination(ctx, peers, stored); err != nil {
+				if err := h.registrationTermination(ctx, peers, stored, reason); err != nil {
 					h.log.Warn("RTR failed", "private_identity", impi, "scscf", stored.SCSCF.OriginHost, "error", err.Error())
 				}
 			}()
@@ -1059,7 +1060,7 @@ func (h *HSS) removeSubscription(ctx context.Context, peers Peers, privateID str
 	}
 	log := h.log.With("private_identity", s.PrivateIdentity)
 	log.Info("subscription removed", "state", s.State.String())
-	if err := h.registrationTermination(ctx, peers, s); err != nil {
+	if err := h.registrationTermination(ctx, peers, s, cx.PermanentTermination); err != nil {
 		log.Warn("RTR failed", "scscf", s.SCSCF.OriginHost, "error", err.Error())
 	}
 	return true, nil
@@ -1105,19 +1106,33 @@ func (h *HSS) profileChanged(stored, next Subscriber) bool {
 // registered user another default public identity: the first identity
 // of the set that is not barred (TS 29.228 6.5.1.1), or none when the
 // request bars them all. Moving another identity to the front of the
-// set, barring the first one, and lifting the barring of one before it
-// all do. TS 29.228 6.5.2.1 keeps such a change out of the PPR and has
-// the HSS deregister the set with an RTR instead, so that no PPR
-// changes the default identity that the S-CSCF holds (TS 24.229 5.4.1.8
-// NOTE 1).
-func (h *HSS) defaultIdentityChanged(stored, next Subscriber) bool {
+// set, barring the first one, lifting the barring of one before it, and
+// taking the first one out of the set all do. TS 29.228 6.5.2.1 keeps
+// such a change out of the PPR and has the HSS deregister the set with
+// an RTR instead, so that no PPR changes the default identity that the
+// S-CSCF holds (TS 24.229 5.4.1.8 NOTE 1).
+//
+// The reason is that of the RTR (6.1.3.1). While an identity is not
+// barred, the subscription stays valid and the user has only to
+// register again: SERVER_CHANGE asks the S-CSCF to have the user
+// register again, which it does with the event deactivated (TS 24.229
+// 5.4.1.5, 5.1.1.7). With every identity barred, registering again would
+// not help, as the UAR is refused (TS 29.228 6.1.1.1 step 4):
+// PERMANENT_TERMINATION says that no S-CSCF is to serve the user.
+func (h *HSS) defaultIdentityChanged(stored, next Subscriber) (cx.ReasonCode, bool) {
 	if stored.State != Registered || !served(stored) {
-		return false
+		return 0, false
 	}
 	set := h.settings.Load()
 	before, after := h.userProfileIn(set, stored).DefaultIdentity(), h.userProfileIn(set, next).DefaultIdentity()
 	// Another form of the same URI is the same identity.
-	return before != after && !ims.SamePublicIdentity(before, after)
+	if before == after || ims.SamePublicIdentity(before, after) {
+		return 0, false
+	}
+	if after == "" {
+		return cx.PermanentTermination, true
+	}
+	return cx.ServerChange, true
 }
 
 // pushChangedProfile sends the PPR of a provisioning request that
@@ -1213,14 +1228,14 @@ const pushLockWait = 8 * time.Second
 func profilePushes(privateID string) string { return "profile-push:" + privateID }
 
 // registrationTermination is the network initiated de-registration by
-// the HSS, TS 29.228 6.1.3, for a removed subscription, or for one whose
-// default public identity changed (defaultIdentityChanged): the S-CSCF
-// of a user that is Registered or Unregistered learns with
-// PERMANENT_TERMINATION that it no longer serves the user (6.1.3.1),
-// which names a subscription that is cancelled or modified. s is the
-// subscriber as it was. The HSS has already forgotten the user or set it
-// Not Registered, which has no S-CSCF name either way.
-func (h *HSS) registrationTermination(ctx context.Context, peers Peers, s Subscriber) error {
+// the HSS, TS 29.228 6.1.3, with reason: for a removed subscription,
+// PERMANENT_TERMINATION tells the S-CSCF of a user that is Registered
+// or Unregistered that no S-CSCF is to serve the user any more
+// (6.1.3.1); for a new default public identity, the reason of
+// defaultIdentityChanged. s is the subscriber as it was. The HSS has
+// already forgotten the user or set it Not Registered, which has no
+// S-CSCF name either way.
+func (h *HSS) registrationTermination(ctx context.Context, peers Peers, s Subscriber, reason cx.ReasonCode) error {
 	if !served(s) {
 		return nil
 	}
@@ -1229,7 +1244,7 @@ func (h *HSS) registrationTermination(ctx context.Context, peers Peers, s Subscr
 		UserName: s.PrivateIdentity,
 		// 6.1.3.1: when a private identity goes with all of its public
 		// identities, no Public-Identity is sent.
-		DeregistrationReason: cx.DeregistrationReason{ReasonCode: cx.PermanentTermination},
+		DeregistrationReason: cx.DeregistrationReason{ReasonCode: reason},
 	}
 	answer, err := peers.Request(ctx, s.SCSCF.OriginHost, rtr.Message())
 	if err != nil {
