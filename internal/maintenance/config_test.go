@@ -3,12 +3,15 @@ package maintenance
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 )
 
@@ -232,8 +235,9 @@ func TestConcurrentConfigurationChanges(t *testing.T) {
 
 // TestSettingsOfAGroupGoInForceTogether: a change that names several
 // settings of one group calls begin once, then the set of each, then
-// commit once, and the record reads each value back after the commit.
-// A change that names no setting of the group calls neither.
+// commit once with the generation of the change, and the record reads
+// each value back after the commit. A change that names no setting of
+// the group calls neither.
 func TestSettingsOfAGroupGoInForceTogether(t *testing.T) {
 	var calls []string
 	published := map[string]string{}
@@ -242,15 +246,16 @@ func TestSettingsOfAGroupGoInForceTogether(t *testing.T) {
 		return NewSetting(name, "", func() string { return published[name] }, nil,
 			func(v string) { calls = append(calls, "set "+name); pending[name] = v })
 	}
-	settings := Together(
-		func() { calls = append(calls, "begin") },
-		func() {
-			calls = append(calls, "commit")
+	settings := Together(SettingsGroup{
+		Begin: func() { calls = append(calls, "begin") },
+		Commit: func(generation uint64) error {
+			calls = append(calls, fmt.Sprintf("commit %d", generation))
 			for k, v := range pending {
 				published[k] = v
 			}
+			return nil
 		},
-		setting("hss.a"), setting("hss.b"))
+	}, setting("hss.a"), setting("hss.b"))
 	settings = append(settings, NewSetting("hss.c", "", func() string { return "" }, nil, func(string) { calls = append(calls, "set hss.c") }))
 	node, err := New(Config{Node: "hss-1", LogLevel: new(slog.LevelVar), Functions: []Function{{Role: "hss"}},
 		Configuration: func() any { return map[string]any{} }, Settings: settings})
@@ -263,7 +268,7 @@ func TestSettingsOfAGroupGoInForceTogether(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if want := []string{"begin", "set hss.a", "set hss.b", "commit"}; !slices.Equal(calls, want) {
+	if want := []string{"begin", "set hss.a", "set hss.b", "commit 1"}; !slices.Equal(calls, want) {
 		t.Errorf("calls = %v, want %v", calls, want)
 	}
 	if len(change.Changes) != 2 || string(change.Changes[0].Value) != `"1"` || string(change.Changes[1].Value) != `"2"` {
@@ -277,5 +282,128 @@ func TestSettingsOfAGroupGoInForceTogether(t *testing.T) {
 	}
 	if want := []string{"set hss.c"}; !slices.Equal(calls, want) {
 		t.Errorf("calls for a setting outside the group = %v, want %v", calls, want)
+	}
+}
+
+// groupNode is a node whose role keeps the setting hss.a in a group
+// that commits as commit says and whose settings are at the generation
+// that generation holds, as a role does that shares its settings with
+// its other instances, and the setting hss.c outside the group.
+type groupNode struct {
+	node       *Node
+	handler    http.Handler
+	generation atomic.Uint64
+	commit     func(generation uint64) error
+	a, c       atomic.Pointer[string]
+	pending    string
+}
+
+func newGroupNode(t *testing.T) *groupNode {
+	t.Helper()
+	g := &groupNode{commit: func(uint64) error { return nil }}
+	empty := ""
+	g.a.Store(&empty)
+	g.c.Store(&empty)
+	settings := Together(SettingsGroup{
+		Begin: func() { g.pending = *g.a.Load() },
+		Commit: func(generation uint64) error {
+			if err := g.commit(generation); err != nil {
+				return err
+			}
+			v := g.pending
+			g.a.Store(&v)
+			g.generation.Store(generation)
+			return nil
+		},
+		Generation: g.generation.Load,
+	}, NewSetting("hss.a", "", func() string { return *g.a.Load() }, nil, func(v string) { g.pending = v }))
+	settings = append(settings, NewSetting("hss.c", "", func() string { return *g.c.Load() }, nil, func(v string) { g.c.Store(&v) }))
+	node, err := New(Config{Node: "hss-1", LogLevel: new(slog.LevelVar), Functions: []Function{{Role: "hss"}},
+		Configuration: func() any { return map[string]any{} }, Settings: settings})
+	if err != nil {
+		t.Fatal(err)
+	}
+	g.node, g.handler = node, checkedHandler(t, node)
+	return g
+}
+
+// patch sends a configuration change through the HTTP API.
+func (g *groupNode) patch(t *testing.T, body string) *httptest.ResponseRecorder {
+	t.Helper()
+	rec := httptest.NewRecorder()
+	g.handler.ServeHTTP(rec, httptest.NewRequest(http.MethodPatch, ConfigurationPath, strings.NewReader(body)))
+	return rec
+}
+
+// TestAGroupThatCannotPutItsSettingsInForceChangesNothing: a role that
+// keeps its settings where it cannot write them, or finds a later change
+// there, refuses the change. Nothing of the request is in force then,
+// the setting outside the group included, and the generation stays.
+func TestAGroupThatCannotPutItsSettingsInForceChangesNothing(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		err    error
+		status int
+	}{
+		{"the store fails", errors.New("the store cannot be reached"), http.StatusInternalServerError},
+		{"a later change is there", fmt.Errorf("%w: another instance is at 7", ErrStaleGeneration), http.StatusConflict},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			g := newGroupNode(t)
+			g.commit = func(uint64) error { return tc.err }
+			rec := g.patch(t, `{"settings":{"hss.a":"1","hss.c":"3"}}`)
+			if rec.Code != tc.status || !strings.Contains(rec.Body.String(), tc.err.Error()) {
+				t.Errorf("PATCH = %d %s, want %d with %q", rec.Code, rec.Body, tc.status, tc.err)
+			}
+			if a, c := *g.a.Load(), *g.c.Load(); a != "" || c != "" {
+				t.Errorf("in force after the refused change: hss.a %q, hss.c %q", a, c)
+			}
+			if conf, err := g.node.Configuration(); err != nil || conf.Generation != 0 {
+				t.Errorf("generation after the refused change = %d, %v", conf.Generation, err)
+			}
+		})
+	}
+}
+
+// TestTheNodeShowsTheGenerationOfTheSettingsOfItsRole: a role whose
+// settings another instance changed has them at the generation of that
+// change, and the node shows that generation and takes the changes
+// above it.
+func TestTheNodeShowsTheGenerationOfTheSettingsOfItsRole(t *testing.T) {
+	g := newGroupNode(t)
+	one := "1"
+	g.a.Store(&one)
+	g.generation.Store(7)
+	state, err := g.node.State()
+	if err != nil || state.ConfigurationGeneration != 7 {
+		t.Errorf("state generation = %d, %v, want 7", state.ConfigurationGeneration, err)
+	}
+	if conf, err := g.node.Configuration(); err != nil || conf.Generation != 7 {
+		t.Errorf("configuration generation = %d, %v, want 7", conf.Generation, err)
+	}
+	if rec := g.patch(t, `{"settings":{"hss.a":"2"},"generation":7}`); rec.Code != http.StatusConflict {
+		t.Errorf("another value at generation 7 = %d %s, want 409", rec.Code, rec.Body)
+	}
+	if rec := g.patch(t, `{"settings":{"hss.a":"1"},"generation":7}`); rec.Code != http.StatusOK {
+		t.Errorf("the value in force at generation 7 = %d %s, want 200", rec.Code, rec.Body)
+	}
+	change, err := g.node.ChangeConfiguration(ConfigurationChangeRequest{Settings: map[string]json.RawMessage{"hss.a": json.RawMessage(`"2"`)}})
+	if err != nil || change.Generation != 8 || g.generation.Load() != 8 {
+		t.Errorf("a change after generation 7: %+v, %v; the role at %d", change, err, g.generation.Load())
+	}
+}
+
+// TestSettingsOfTwoGroupsAreRefused: a change that named the settings of
+// two groups could put the one in force and fail on the other, so a node
+// takes one group at most.
+func TestSettingsOfTwoGroupsAreRefused(t *testing.T) {
+	group := func(name string) []Setting {
+		return Together(SettingsGroup{Begin: func() {}, Commit: func(uint64) error { return nil }},
+			NewSetting(name, "", func() string { return "" }, nil, func(string) {}))
+	}
+	_, err := New(Config{Node: "hss-1", LogLevel: new(slog.LevelVar), Functions: []Function{{Role: "hss"}},
+		Configuration: func() any { return map[string]any{} }, Settings: append(group("hss.a"), group("hss.b")...)})
+	if err == nil || !strings.Contains(err.Error(), "two groups") {
+		t.Errorf("New with two groups: %v", err)
 	}
 }

@@ -73,6 +73,11 @@ type Node struct {
 	view           func() any
 	settings       []Setting
 	settingsByName map[string]Setting
+	// group is the group of settings that the node's settings belong
+	// to, or nil when none of them is in a group (Together). A node has
+	// one group at most: a change that named the settings of two could
+	// put the one in force and then fail on the other.
+	group *SettingsGroup
 
 	// changeMu makes the configuration changes one at a time. It guards
 	// the settings of this node only, not any user's state.
@@ -147,6 +152,12 @@ func New(c Config) (*Node, error) {
 		if _, dup := n.settingsByName[s.name]; dup {
 			return nil, fmt.Errorf("maintenance: setting %q twice", s.name)
 		}
+		if s.group != nil {
+			if n.group != nil && n.group != s.group {
+				return nil, fmt.Errorf("maintenance: setting %q is in another group than the settings before it, and a node takes no two groups", s.name)
+			}
+			n.group = s.group
+		}
 		n.settings = append(n.settings, s)
 		n.settingsByName[s.name] = s
 	}
@@ -180,7 +191,7 @@ func (n *Node) State() (NodeState, error) {
 		Instance:                n.instance,
 		Build:                   n.build,
 		StartTime:               n.start,
-		ConfigurationGeneration: n.generation.Load(),
+		ConfigurationGeneration: n.configurationGeneration(),
 		LogLevel:                n.logLevel.Level(),
 		Functions:               []FunctionState{},
 	}
