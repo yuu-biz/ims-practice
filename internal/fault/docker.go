@@ -118,29 +118,39 @@ func (d *Docker) Apply(ctx context.Context, f Fault) error {
 	if err != nil {
 		return err
 	}
+	var commands [][]string
 	switch f.Kind {
 	case Delay:
-		for i, dev := range devices {
-			if err := d.inNamespace(ctx, c, netemCommand(dev, time.Duration(f.Delay), time.Duration(f.Jitter))); err != nil {
-				// A failed fault leaves nothing behind: take back the
-				// interfaces that were delayed already.
-				for _, done := range devices[:i] {
-					d.clearInNamespace(ctx, c, netemDeleteCommand(done))
-				}
-				return err
-			}
+		for _, dev := range devices {
+			commands = append(commands, netemCommand(dev, time.Duration(f.Delay), time.Duration(f.Jitter)))
 		}
-		return nil
 	case Loss:
-		return d.inNamespace(ctx, c, lossCommand(tableName(f.ID), devices, f.LossPercent))
+		commands = [][]string{lossCommand(tableName(f.ID), devices, f.LossPercent)}
 	case Partition:
 		peers, err := d.addresses(ctx, f.Peers)
 		if err != nil {
 			return err
 		}
-		return d.inNamespace(ctx, c, partitionCommand(tableName(f.ID), devices, peers))
+		commands = [][]string{partitionCommand(tableName(f.ID), devices, peers)}
+	default:
+		return fmt.Errorf("unknown kind %q", f.Kind)
 	}
-	return fmt.Errorf("unknown kind %q", f.Kind)
+	for _, cmd := range commands {
+		if err := d.inNamespace(ctx, c, cmd); err != nil {
+			// Part of the fault may be in place: a delay on the
+			// interfaces before this one, or the rules of a helper that
+			// ran though its answer was lost. A failed fault holds
+			// nothing for the expiry to clear, so it is taken back here,
+			// in time of its own, since ctx may be what ran out.
+			ctx, cancel := detach(ctx)
+			defer cancel()
+			if cerr := d.takeOff(ctx, c, f, devices); cerr != nil {
+				return fmt.Errorf("%w; clean-up: %w", err, cerr)
+			}
+			return err
+		}
+	}
+	return nil
 }
 
 func (d *Docker) Clear(ctx context.Context, f Fault) error {
@@ -158,17 +168,27 @@ func (d *Docker) Clear(ctx context.Context, f Fault) error {
 		if err != nil {
 			return err
 		}
-		var errs []error
-		for _, dev := range devices {
-			errs = append(errs, d.clearInNamespace(ctx, c, netemDeleteCommand(dev)))
-		}
-		return errors.Join(errs...)
+		return d.takeOff(ctx, c, f, devices)
 	case Loss, Partition:
-		return d.clearInNamespace(ctx, c, nftDeleteCommand(tableName(f.ID)))
+		return d.takeOff(ctx, c, f, nil)
 	case Crash, Recreate:
 		return fmt.Errorf("a %s is over as soon as it has happened; there is nothing to clear", f.Kind)
 	}
 	return fmt.Errorf("unknown kind %q", f.Kind)
+}
+
+// takeOff removes a network fault from the target's namespace: the
+// delay from the devices, or the table of a loss or a partition. What
+// is not there counts as gone.
+func (d *Docker) takeOff(ctx context.Context, c container, f Fault, devices []string) error {
+	if f.Kind != Delay {
+		return d.clearInNamespace(ctx, c, nftDeleteCommand(tableName(f.ID)))
+	}
+	var errs []error
+	for _, dev := range devices {
+		errs = append(errs, d.clearInNamespace(ctx, c, netemDeleteCommand(dev)))
+	}
+	return errors.Join(errs...)
 }
 
 // exec runs cmd inside the container, as docker exec does: the Engine

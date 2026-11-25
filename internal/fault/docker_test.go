@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/binary"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -66,10 +67,14 @@ type fakeEngine struct {
 	hostname string
 	// helper is the container that the last helper joined.
 	helper fakeContainer
-	// failCmd, when set, makes the helpers that run it exit with 1 and
-	// print output.
+	// failCmd, when set, makes the helpers whose command, joined with
+	// "|", starts with it exit with 1 and print output.
 	failCmd string
 	output  string
+	// failWait, when set, picks the helpers whose wait the Engine
+	// fails, after the command has run: the answer is lost, not the
+	// change.
+	failWait func(cmd []string) bool
 }
 
 func (e *fakeEngine) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -216,15 +221,20 @@ func (e *fakeEngine) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusCreated)
 		fmt.Fprint(w, `{"Id":"helper"}`)
 	case path == "/containers/helper/wait":
+		if e.failWait != nil && e.failWait(e.lastCmd()) {
+			w.WriteHeader(http.StatusInternalServerError)
+			fmt.Fprint(w, `{"message":"the answer was lost"}`)
+			return
+		}
 		code := 0
-		if e.failCmd != "" && e.lastCmd()[0] == e.failCmd {
+		if e.failCmd != "" && strings.HasPrefix(strings.Join(e.lastCmd(), "|"), e.failCmd) {
 			code = 1
 		}
 		fmt.Fprintf(w, `{"StatusCode":%d}`, code)
 	case path == "/containers/helper/logs":
 		out := ""
 		switch {
-		case e.failCmd != "" && e.lastCmd()[0] == e.failCmd:
+		case e.failCmd != "" && strings.HasPrefix(strings.Join(e.lastCmd(), "|"), e.failCmd):
 			out = e.output
 		case e.lastCmd()[0] == "ip":
 			out = e.helper.ipOutput()
@@ -641,9 +651,58 @@ func TestDockerDelayOnEveryInterface(t *testing.T) {
 	}
 }
 
+// TestDockerTakesBackANetworkFaultThatFailedPartWay: a network fault
+// whose apply fails once a helper may have changed the namespace leaves
+// nothing behind. A delay comes off every interface it may have
+// reached, and the table of a loss whose helper ran is deleted, though
+// the answer that it had run was lost.
+func TestDockerTakesBackANetworkFaultThatFailedPartWay(t *testing.T) {
+	d, e := newTestDocker(t)
+	ctx := context.Background()
+
+	e.failWait = func(cmd []string) bool {
+		return strings.Join(cmd, " ") == "tc qdisc add dev eth1 root netem delay 200ms"
+	}
+	f := Fault{ID: "0a0b0c0d", Request: Request{Target: "ibcf-a", Kind: Delay, Delay: Duration(200 * time.Millisecond)}}
+	if err := d.Apply(ctx, f); err == nil {
+		t.Fatal("Apply succeeded with the answer of a helper lost")
+	}
+	want := "[ip|-o|-4|addr|show tc|qdisc|add|dev|eth0|root|netem|delay|200ms tc|qdisc|add|dev|eth1|root|netem|delay|200ms tc|qdisc|del|dev|eth0|root tc|qdisc|del|dev|eth1|root]"
+	if got := e.Commands(); fmt.Sprint(got) != want {
+		t.Errorf("delay: commands = %v, want %v", got, want)
+	}
+
+	e.failWait = func(cmd []string) bool { return cmd[0] == "nft" && strings.HasPrefix(cmd[1], "add table") }
+	f = Fault{ID: "0a0b0c0d", Request: Request{Target: "pcscf", Kind: Loss, LossPercent: 5}}
+	if err := d.Apply(ctx, f); err == nil {
+		t.Fatal("Apply succeeded with the answer of a helper lost")
+	}
+	if got := e.Commands(); len(got) != 3 || got[2] != "nft|delete table netdev ims_fault_0a0b0c0d" {
+		t.Errorf("loss: commands = %v, want the table deleted after the one that failed", got)
+	}
+}
+
+// TestAFailedCleanUpIsListed: when the clean-up of a failed fault fails
+// too, the rules may still be in place, and the error of the fault in
+// the list says so.
+func TestAFailedCleanUpIsListed(t *testing.T) {
+	d, e := newTestDocker(t)
+	m := NewManager(Config{Executor: d, Clock: newFakeClock()})
+	e.failWait = func(cmd []string) bool { return cmd[0] == "nft" }
+	if _, err := m.Inject(context.Background(), Request{Target: "pcscf", Kind: Loss, LossPercent: 5}); !errors.Is(err, ErrExecutor) {
+		t.Fatalf("Inject = %v, want ErrExecutor", err)
+	}
+	l := m.List()
+	if len(l) != 1 || l[0].State != Failed || !strings.Contains(l[0].Error, "; clean-up: ") {
+		t.Fatalf("List = %+v, want the fault failed with its clean-up", l)
+	}
+}
+
 func TestDockerHelperFailure(t *testing.T) {
 	d, e := newTestDocker(t)
-	e.failCmd = "tc"
+	// Without netem, tc cannot add the qdisc, and its clean-up finds
+	// the default one.
+	e.failCmd = "tc|qdisc|add"
 	e.output = "Error: Specified qdisc kind is unknown."
 	f := Fault{ID: "0a0b0c0d", Request: Request{Target: "pcscf", Kind: Delay, Delay: Duration(200 * time.Millisecond)}}
 	err := d.Apply(context.Background(), f)
