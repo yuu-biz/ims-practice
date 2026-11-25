@@ -3,6 +3,7 @@ import { parseAlarms, parseChangeRecord, parseFanOut, parseManifest, parseNodeSt
 import {
   ackAction,
   alarmFilter,
+  describeAck,
   describeAlarm,
   droppingNodes,
   severityCounts,
@@ -280,5 +281,13 @@ describe("alarms", () => {
     expect(ackAction(cleared!).effect).toContain("it leaves the alarm list");
     expect(ackAction(acknowledged!)).toMatchObject({ to: "UNACKNOWLEDGED", label: "Unacknowledge" });
     expect(describeAlarm(acknowledged!)).toBe("MAJOR COMMUNICATIONS_ALARM COMMUNICATIONS_SUBSYSTEM_FAILURE: Diameter peer down");
+  });
+
+  it("says who last changed an acknowledgement and through which system", () => {
+    const [critical, acknowledged] = a.alarms;
+    expect(describeAck(critical!)).toBe("no");
+    expect(describeAck(acknowledged!)).toBe("yes\nby test-operator via oam\n2026-11-20 09:05:00 UTC");
+    const takenBack = { ...acknowledged!, ack_state: "UNACKNOWLEDGED" as const, ack_user_id: "night-operator", ack_system_id: "oss-1", ack_time: "2026-11-20T09:07:00Z" };
+    expect(describeAck(takenBack)).toBe("no, taken back\nby night-operator via oss-1\n2026-11-20 09:07:00 UTC");
   });
 });

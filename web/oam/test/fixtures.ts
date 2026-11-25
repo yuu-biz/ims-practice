@@ -302,6 +302,7 @@ export const alarms = {
       ack_state: "ACKNOWLEDGED",
       ack_time: "2026-11-20T09:05:00Z",
       ack_user_id: "test-operator",
+      ack_system_id: "oam",
     },
     {
       node: "cscf-1",

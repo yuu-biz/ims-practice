@@ -312,7 +312,10 @@ export interface AlarmRecord {
   additional_text: string;
   ack_state: AckState;
   ack_time: string | null;
+  // Who last changed ack_state, and through which system: the OAM for
+  // a change on this screen, or an OSS (TS 28.111 7.4.1).
   ack_user_id: string;
+  ack_system_id: string;
 }
 
 // oam.AlarmListInfo: what a node said about its alarm list.
@@ -637,9 +640,11 @@ export async function fetchAlarms(filter: AlarmFilter): Promise<Alarms> {
 
 // Acknowledges an alarm of one node, or takes the acknowledgement back
 // (TS 28.111 6.7). A cleared alarm leaves the list once acknowledged.
+// The operator is required either way: the record keeps who changed it,
+// and the OAM names itself as the system.
 export async function putAckState(node: string, alarmID: string, state: AckState, operator: string): Promise<FanOut<AlarmRecord>> {
   const path = `nodes/${encodeURIComponent(node)}/alarms/${encodeURIComponent(alarmID)}/ack-state`;
-  return parseFanOut(await sendJSON("PUT", path, withOperator({ ack_state: state }, operator)), (v) => parseAlarmRecord(v, node));
+  return parseFanOut(await sendJSON("PUT", path, { ack_state: state, operator }), (v) => parseAlarmRecord(v, node));
 }
 
 // --- Streams ---
@@ -832,6 +837,7 @@ function parseAlarmRecord(value: unknown, node: string): AlarmRecord {
     ack_state: oneOf(o, "ack_state", ackStates),
     ack_time: optionalString(o, "ack_time"),
     ack_user_id: optionalString(o, "ack_user_id") ?? "",
+    ack_system_id: optionalString(o, "ack_system_id") ?? "",
   };
 }
 

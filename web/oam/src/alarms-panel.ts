@@ -4,7 +4,7 @@
 
 import { fetchAlarms, minSeverities, putAckState, type AlarmRecord, type Alarms } from "./api.ts";
 import { confirmAction, describe, el, fillTable, showNote, type Child } from "./dom.ts";
-import { ackAction, alarmFilter, alarmViews, describeAlarm, describeFanOutTotals, droppingNodes, fanOutLines, formatTime, severityCounts, unknownAlarmNodes, type AlarmView } from "./view.ts";
+import { ackAction, alarmFilter, alarmViews, describeAck, describeAlarm, describeFanOutTotals, droppingNodes, fanOutLines, formatTime, severityCounts, unknownAlarmNodes, type AlarmView } from "./view.ts";
 
 // The same pace as the node state, so that the two agree.
 const refreshMs = 5000;
@@ -91,7 +91,6 @@ export function mountAlarmsPanel(root: HTMLElement, operator: () => string): Ala
     const action = ackAction(r);
     const button = el("button", { type: "button", textContent: `${action.label}…` });
     button.addEventListener("click", () => void acknowledge(r, button));
-    const ack = r.ack_state === "ACKNOWLEDGED" ? `yes${r.ack_user_id === "" ? "" : ` by ${r.ack_user_id}`}${r.ack_time === null ? "" : `\n${formatTime(r.ack_time)}`}` : "no";
     const sev = el("span", { className: `severity-${r.perceived_severity}`, textContent: r.perceived_severity });
     sev.title = r.object_instance;
     return [
@@ -107,7 +106,7 @@ export function mountAlarmsPanel(root: HTMLElement, operator: () => string): Ala
       formatTime(r.alarm_raised_time) +
         (r.alarm_changed_time === null || r.alarm_changed_time === r.alarm_cleared_time ? "" : `\nchanged ${formatTime(r.alarm_changed_time)}`),
       r.alarm_cleared_time === null ? "" : formatTime(r.alarm_cleared_time),
-      ack,
+      describeAck(r),
       r.additional_text,
       button,
     ];
@@ -115,11 +114,18 @@ export function mountAlarmsPanel(root: HTMLElement, operator: () => string): Ala
 
   async function acknowledge(r: AlarmRecord, button: HTMLButtonElement): Promise<void> {
     const action = ackAction(r);
-    const scope = [`Node ${r.node}`, `Alarm ${r.alarm_id}: ${describeAlarm(r)}`, `Object ${r.object_instance}`, action.effect];
+    // The record keeps who changed its acknowledgement, so the OAM
+    // takes none without an operator.
+    const who = operator();
+    if (who === "") {
+      result.replaceChildren(el("p", { className: "note error", textContent: `To ${action.label.toLowerCase()} an alarm, enter your name in Operator first: the alarm record keeps who changed its acknowledgement.` }));
+      return;
+    }
+    const scope = [`Node ${r.node}`, `Alarm ${r.alarm_id}: ${describeAlarm(r)}`, `Object ${r.object_instance}`, `Operator ${who}`, action.effect];
     if (!(await confirmAction(`${action.label} the alarm?`, scope, action.label))) return;
     button.disabled = true;
     try {
-      const f = await putAckState(r.node, r.alarm_id, action.to, operator());
+      const f = await putAckState(r.node, r.alarm_id, action.to, who);
       result.replaceChildren(
         el("p", { className: "note", textContent: describeFanOutTotals(f) }),
         el(

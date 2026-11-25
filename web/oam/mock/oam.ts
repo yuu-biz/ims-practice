@@ -142,8 +142,9 @@ export function createMockOAM(): (req: IncomingMessage, res: ServerResponse, pat
     return { ...f, alarms: merged };
   }
 
-  // setAckState is the node's PUT /maintenance/v1/alarms/{id}/ack-state:
-  // a cleared alarm leaves the list once acknowledged (TS 28.111 6.14).
+  // setAckState is the node's PUT /maintenance/v1/alarms/{id}/ack-state,
+  // as the OAM passes it on, with its own name as the system: a cleared
+  // alarm leaves the list once acknowledged (TS 28.111 6.14).
   function setAckState(n: MockNode, id: string, body: Json): Json {
     const list = alarmLists.get(n.name) ?? [];
     const r = list.find((x) => x["alarm_id"] === id);
@@ -151,8 +152,7 @@ export function createMockOAM(): (req: IncomingMessage, res: ServerResponse, pat
     const to = body["ack_state"];
     if (to !== "ACKNOWLEDGED" && to !== "UNACKNOWLEDGED") throw { status_code: 400, error: `invalid request: ack_state ${JSON.stringify(to)} is neither ACKNOWLEDGED nor UNACKNOWLEDGED` };
     if (r["ack_state"] !== to) {
-      Object.assign(r, { ack_state: to, ack_time: new Date().toISOString(), ack_user_id: body["operator"] ?? "" });
-      if (!r["ack_user_id"]) delete r["ack_user_id"];
+      Object.assign(r, { ack_state: to, ack_time: new Date().toISOString(), ack_user_id: body["operator"], ack_system_id: "oam" });
       if (to === "ACKNOWLEDGED" && r["perceived_severity"] === "CLEARED") list.splice(list.indexOf(r), 1);
     }
     return structuredClone(r);
@@ -504,6 +504,7 @@ export function createMockOAM(): (req: IncomingMessage, res: ServerResponse, pat
         const ack = /^alarms\/([^/]+)\/ack-state$/.exec(tail);
         if (method === "PUT" && ack && route.startsWith("nodes/")) {
           const b = await body();
+          if (typeof b["operator"] !== "string" || b["operator"] === "") return json(res, 400, { error: "invalid request: operator: required, as the ack_user_id of the record" });
           return json(res, 200, fanOut(ts, (n) => setAckState(n, decodeURIComponent(ack[1]!), b)));
         }
         const fn = /^functions\/([^/]+)\/administrative-state$/.exec(tail);
