@@ -174,3 +174,45 @@ func TestALostAnswerDoesNotKeepAWatchThatAnotherTook(t *testing.T) {
 		})
 	}
 }
+
+// TestAHolderDoesNotTakeAStateWrittenAfterTheStoreWasEmptied: the store
+// is emptied while instance a holds a watch. Instance b takes the watch
+// anew, and writes a state of the first generation, the one that a has.
+// a's next save finds that state, which is not its own: the watch is
+// lost, and b's state stays.
+func TestAHolderDoesNotTakeAStateWrittenAfterTheStoreWasEmptied(t *testing.T) {
+	for _, backend := range storetest.Backends() {
+		t.Run(backend.Name, func(t *testing.T) {
+			ctx := context.Background()
+			kv := backend.New(t)
+			cfg := kvjson.Config{Prefix: storetest.Prefix()}
+			a := oamstore.NewWithLease(kv, cfg, lease)
+			b := oamstore.NewWithLease(kv, cfg, lease)
+			old, ok, err := a.Watch(ctx, "scscf", "a")
+			if err != nil || !ok {
+				t.Fatalf("Watch: %v, %v", ok, err)
+			}
+			client := kvjson.New(kv, cfg, "oam")
+			for _, key := range []string{client.Key("watch-lease", "scscf"), client.Key("watch-state", "scscf")} {
+				if err := client.Remove(ctx, key); err != nil {
+					t.Fatal(err)
+				}
+			}
+			next, ok, err := b.Watch(ctx, "scscf", "b")
+			if err != nil || !ok {
+				t.Fatalf("Watch after the store was emptied: %v, %v", ok, err)
+			}
+			if next.State().Generation != old.State().Generation {
+				t.Fatalf("the generations %d and %d", old.State().Generation, next.State().Generation)
+			}
+			st := old.State()
+			st.JournalID, st.LastNumber = "journal-1", 9
+			if err := old.Save(ctx, st); !errors.Is(err, oam.ErrWatchLost) {
+				t.Errorf("Save by the holder before the store was emptied: %v, want ErrWatchLost", err)
+			}
+			if got, err := b.AlarmWatchState(ctx, "scscf"); err != nil || got != next.State() {
+				t.Errorf("the state is %+v, %v; want b's %+v", got, err, next.State())
+			}
+		})
+	}
+}
