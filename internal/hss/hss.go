@@ -183,18 +183,24 @@ type settings struct {
 	admission              Admission
 	defaultServiceProfile  string
 	testUserServiceProfile string
+	// defaultNameGeneration and testUserNameGeneration are those of
+	// StoredSettings.
+	defaultNameGeneration  uint64
+	testUserNameGeneration uint64
 }
 
 // stored is s as a Store keeps it.
 func (s *settings) stored() StoredSettings {
 	return StoredSettings{Generation: s.generation, Admission: s.admission,
-		DefaultServiceProfile: s.defaultServiceProfile, TestUserServiceProfile: s.testUserServiceProfile}
+		DefaultServiceProfile: s.defaultServiceProfile, TestUserServiceProfile: s.testUserServiceProfile,
+		DefaultServiceProfileGeneration: s.defaultNameGeneration, TestUserServiceProfileGeneration: s.testUserNameGeneration}
 }
 
 // settingsOf is the settings that a Store keeps as s.
 func settingsOf(s StoredSettings) *settings {
 	return &settings{generation: s.Generation, admission: s.Admission,
-		defaultServiceProfile: s.DefaultServiceProfile, testUserServiceProfile: s.TestUserServiceProfile}
+		defaultServiceProfile: s.DefaultServiceProfile, testUserServiceProfile: s.TestUserServiceProfile,
+		defaultNameGeneration: s.DefaultServiceProfileGeneration, testUserNameGeneration: s.TestUserServiceProfileGeneration}
 }
 
 // Admission is the admission policy in force.
@@ -295,6 +301,14 @@ func (h *HSS) storeSettings(ctx context.Context, sets []func(*settings), generat
 			set(&next)
 		}
 		next.generation = generation
+		// A name that the change gives another value is pushed for this
+		// generation (startRound).
+		if next.defaultServiceProfile != base.defaultServiceProfile {
+			next.defaultNameGeneration = generation
+		}
+		if next.testUserServiceProfile != base.testUserServiceProfile {
+			next.testUserNameGeneration = generation
+		}
 		if ok {
 			switch {
 			case stored == next.stored():

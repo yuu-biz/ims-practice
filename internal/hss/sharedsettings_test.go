@@ -112,7 +112,7 @@ func TestAChangeOnAnInstanceBehindTheStoreChangesWhatItNames(t *testing.T) {
 		t.Fatal(err)
 	}
 	if want := (StoredSettings{Generation: 2, Admission: AdmitTestUsers, DefaultServiceProfile: "trial",
-		TestUserServiceProfile: "default"}); stored != want {
+		TestUserServiceProfile: "default", DefaultServiceProfileGeneration: 2}); stored != want {
 		t.Errorf("the store has %+v, want %+v", stored, want)
 	}
 	if behind.Admission() != AdmitTestUsers || behind.DefaultServiceProfile() != "trial" {
@@ -145,6 +145,7 @@ func TestAnInstanceKeepsSettingsItCannotServe(t *testing.T) {
 	// a profile that the instances here do not define.
 	unknown := stored
 	unknown.Generation, unknown.Admission, unknown.DefaultServiceProfile = 1, AdmitTestUsers, "video"
+	unknown.DefaultServiceProfileGeneration = 1
 	if swapped, err := store.CompareAndSwapSettings(t.Context(), &stored, unknown); err != nil || !swapped {
 		t.Fatalf("CompareAndSwapSettings: %v, %v", swapped, err)
 	}
