@@ -453,6 +453,7 @@ func (rc *relayContext) step() bool {
 		rc.mu.Unlock()
 		return false
 	}
+	now := time.Now()
 	var packets []outgoing
 	var notifies []func()
 	for _, t := range rc.terms {
@@ -469,10 +470,13 @@ func (rc *relayContext) step() bool {
 			continue
 		}
 		if t.mode.sends() {
-			packets = append(packets, outgoing{t.rtp, t.own.packet(payload)})
+			packets = append(packets, outgoing{t.rtp, t.own.packet(payload, now)})
 		}
 	}
-	packets = append(packets, rc.mixTick()...)
+	packets = append(packets, rc.mixTick(now)...)
+	for _, t := range rc.terms {
+		t.own.idle(now)
+	}
 	more := !rc.closed && rc.needsClock()
 	rc.ticking = more
 	for _, p := range packets {
@@ -546,7 +550,7 @@ func (c *channel) send(b []byte) {
 // mixTick mixes one tick of a conference: each termination that sends
 // and plays nothing gets the sum of the others that receive, never its
 // own voice (mixer.Conference.Mix). rc.mu is held.
-func (rc *relayContext) mixTick() []outgoing {
+func (rc *relayContext) mixTick(now time.Time) []outgoing {
 	if !rc.conference() {
 		for _, t := range rc.terms {
 			t.heard = nil
@@ -567,7 +571,7 @@ func (rc *relayContext) mixTick() []outgoing {
 	var packets []outgoing
 	for id, t := range rc.terms {
 		if t.playback == nil && t.mode.sends() {
-			packets = append(packets, outgoing{t.rtp, t.own.packet(mixed[string(id)])})
+			packets = append(packets, outgoing{t.rtp, t.own.packet(mixed[string(id)], now)})
 		}
 	}
 	return packets

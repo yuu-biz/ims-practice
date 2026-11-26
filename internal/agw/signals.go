@@ -224,10 +224,16 @@ func NotifyHandler(f func(Notify)) http.Handler {
 // simulator uses a sender report only for the statistics of its
 // receiver reports, and its call goes on without one.
 type source struct {
-	ssrc      uint32
-	seq       uint16
+	ssrc uint32
+	seq  uint16
+	// timestamp is that of the next packet, if it follows the last one
+	// without a gap.
 	timestamp uint32
-	// talkspurt marks the first packet after silence (RFC 3551 4.1).
+	// sent is the tick at which the last packet went out, or zero
+	// before the first.
+	sent time.Time
+	// talkspurt marks the first packet after silence (RFC 3551 4.1): a
+	// tick in which the source sent nothing, or the start of a signal.
 	talkspurt bool
 }
 
@@ -235,11 +241,31 @@ func newSource() *source {
 	return &source{ssrc: rand.Uint32(), seq: uint16(rand.Uint32()), timestamp: rand.Uint32(), talkspurt: true}
 }
 
-// packet carries one 20 ms PCMU payload.
-func (s *source) packet(payload []byte) []byte {
+// packet carries one 20 ms PCMU payload, sent at the tick now.
+//
+// The timestamp counts the frames of the sampling clock, whether the
+// source sent them or not (RFC 3550 5.1). After silence it goes on by
+// the frames that the silence lasted, counted in whole ticks, since the
+// packets are made on a clock of 20 ms and the nominal sampling instant
+// is what counts.
+func (s *source) packet(payload []byte, now time.Time) []byte {
+	if s.talkspurt && !s.sent.IsZero() {
+		if frames := (now.Sub(s.sent) + tick/2) / tick; frames > 1 {
+			s.timestamp += uint32(frames-1) * mixer.FrameSize
+		}
+	}
 	p := rtp.Packet{Marker: s.talkspurt, PayloadType: sdp.PCMU, SequenceNumber: s.seq, Timestamp: s.timestamp, SSRC: s.ssrc, Payload: payload}
 	s.seq++
 	s.timestamp += uint32(len(payload))
+	s.sent = now
 	s.talkspurt = false
 	return p.Marshal()
+}
+
+// idle tells the source of the tick now. If it sent no packet in that
+// tick, its next packet starts a talkspurt.
+func (s *source) idle(now time.Time) {
+	if !s.sent.Equal(now) {
+		s.talkspurt = true
+	}
 }
