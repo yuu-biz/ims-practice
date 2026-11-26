@@ -222,3 +222,53 @@ func TestDeclinedAckReleasesTheCall(t *testing.T) {
 		t.Errorf("the callee got ACKs with %q, want one without the declined answer", bodies)
 	}
 }
+
+// A release that comes after the callee's 2xx, while the Call prepares
+// that 2xx for the caller: the caller has no final response yet, so it
+// gets 500 and not the 2xx, and the callee gets a BYE.
+func TestReleaseBeforeTheCallerHasThe2xx(t *testing.T) {
+	h := &hooks{request: releaseINFO}
+	calls := make(chan *sip.IncomingCall, 1)
+	callee := newUA(t, "callee", func(in *sip.IncomingCall) {
+		calls <- in
+		in.Progress(180, sip.Body{})
+		in.Accept(answer)
+	})
+	b2b := newB2BUA(t, h, contactOf(t, callee))
+	caller := newUA(t, "caller", func(in *sip.IncomingCall) { in.Reject(480) })
+	outs := make(chan *sip.OutgoingCall, 1)
+	finals := make(chan *sip.Message, 1)
+	h.answer = func() {
+		// The caller's INFO in its early dialog crosses the callee's 2xx,
+		// and the role releases the call for it. The 2xx waits here until
+		// the caller's INVITE has its final response, or for a while if it
+		// gets none.
+		out := <-outs
+		if resp, err := out.Send("INFO", sip.Body{}); err != nil || resp.StatusCode != 500 {
+			t.Errorf("the caller's INFO got %v %v, want the role's 500", resp, err)
+		}
+		select {
+		case f := <-finals:
+			finals <- f
+		case <-time.After(2 * time.Second):
+		}
+	}
+	out, err := caller.Invite(invitation(t, b2b, nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	outs <- out
+	go func() {
+		for resp := range out.Responses() {
+			if resp.StatusCode >= 200 {
+				finals <- resp
+				return
+			}
+		}
+	}()
+	in := within(t, "call at the callee", calls)
+	if final := within(t, "final response at the caller", finals); final.StatusCode != 500 {
+		t.Errorf("the INVITE got %d, want 500", final.StatusCode)
+	}
+	endedByBYE(t, "the callee's call", in.Done(), in.EndedBy)
+}
