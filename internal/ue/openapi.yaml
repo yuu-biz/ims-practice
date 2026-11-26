@@ -15,6 +15,12 @@ info:
     502; one while the UE stops, 503. Every error has the body Error. A
     method that a path does not take answers 405 with Allow, as text.
 
+    A POST or a PUT must have the Content-Type application/json, one
+    without a body too, and is refused with 415 otherwise. A page of
+    another site can have the browser send a POST of text/plain, a form
+    or multipart without asking the UE first, and one of JSON only after
+    a preflight that the UE does not answer.
+
     The supplementary services over Ut (/xcap) are not part of this API:
     they follow TS 24.623.
 paths:
@@ -42,6 +48,8 @@ paths:
           $ref: '#/components/responses/Status'
         '409':
           $ref: '#/components/responses/Conflict'
+        '415':
+          $ref: '#/components/responses/NotJSON'
         '502':
           $ref: '#/components/responses/Failed'
         '503':
@@ -54,6 +62,8 @@ paths:
           $ref: '#/components/responses/Status'
         '409':
           $ref: '#/components/responses/Conflict'
+        '415':
+          $ref: '#/components/responses/NotJSON'
         '502':
           $ref: '#/components/responses/Failed'
         '503':
@@ -76,6 +86,8 @@ paths:
           $ref: '#/components/responses/BadRequest'
         '409':
           $ref: '#/components/responses/Conflict'
+        '415':
+          $ref: '#/components/responses/NotJSON'
         '502':
           $ref: '#/components/responses/Failed'
         '503':
@@ -90,6 +102,8 @@ paths:
           $ref: '#/components/responses/Status'
         '409':
           $ref: '#/components/responses/Conflict'
+        '415':
+          $ref: '#/components/responses/NotJSON'
         '502':
           $ref: '#/components/responses/Failed'
         '503':
@@ -110,6 +124,8 @@ paths:
           $ref: '#/components/responses/BadRequest'
         '409':
           $ref: '#/components/responses/Conflict'
+        '415':
+          $ref: '#/components/responses/NotJSON'
         '502':
           $ref: '#/components/responses/Failed'
         '503':
@@ -133,6 +149,8 @@ paths:
                 $ref: '#/components/schemas/AnswerPolicy'
         '400':
           $ref: '#/components/responses/BadRequest'
+        '415':
+          $ref: '#/components/responses/NotJSON'
   /hold:
     post:
       operationId: hold
@@ -142,6 +160,8 @@ paths:
           $ref: '#/components/responses/Status'
         '409':
           $ref: '#/components/responses/Conflict'
+        '415':
+          $ref: '#/components/responses/NotJSON'
         '502':
           $ref: '#/components/responses/Failed'
         '503':
@@ -155,6 +175,8 @@ paths:
           $ref: '#/components/responses/Status'
         '409':
           $ref: '#/components/responses/Conflict'
+        '415':
+          $ref: '#/components/responses/NotJSON'
         '502':
           $ref: '#/components/responses/Failed'
         '503':
@@ -168,6 +190,8 @@ paths:
           $ref: '#/components/responses/Status'
         '409':
           $ref: '#/components/responses/Conflict'
+        '415':
+          $ref: '#/components/responses/NotJSON'
         '502':
           $ref: '#/components/responses/Failed'
         '503':
@@ -181,6 +205,8 @@ paths:
           $ref: '#/components/responses/Status'
         '409':
           $ref: '#/components/responses/Conflict'
+        '415':
+          $ref: '#/components/responses/NotJSON'
         '502':
           $ref: '#/components/responses/Failed'
         '503':
@@ -219,6 +245,8 @@ paths:
           $ref: '#/components/responses/BadRequest'
         '409':
           $ref: '#/components/responses/Conflict'
+        '415':
+          $ref: '#/components/responses/NotJSON'
         '502':
           $ref: '#/components/responses/Failed'
         '503':
@@ -255,6 +283,8 @@ paths:
           $ref: '#/components/responses/BadRequest'
         '409':
           $ref: '#/components/responses/Conflict'
+        '415':
+          $ref: '#/components/responses/NotJSON'
         '502':
           $ref: '#/components/responses/Failed'
         '503':
@@ -286,6 +316,8 @@ paths:
           $ref: '#/components/responses/BadRequest'
         '409':
           $ref: '#/components/responses/Conflict'
+        '415':
+          $ref: '#/components/responses/NotJSON'
         '502':
           $ref: '#/components/responses/Failed'
         '503':
@@ -299,6 +331,8 @@ paths:
           $ref: '#/components/responses/SMSReception'
         '409':
           $ref: '#/components/responses/Conflict'
+        '415':
+          $ref: '#/components/responses/NotJSON'
         '502':
           $ref: '#/components/responses/Failed'
         '503':
@@ -323,6 +357,8 @@ paths:
           $ref: '#/components/responses/SMSReception'
         '400':
           $ref: '#/components/responses/BadRequest'
+        '415':
+          $ref: '#/components/responses/NotJSON'
 components:
   responses:
     Status:
@@ -339,6 +375,12 @@ components:
             $ref: '#/components/schemas/SMSReception'
     BadRequest:
       description: A body that does not parse, has an unknown field or a value that the request does not take.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    NotJSON:
+      description: A POST or a PUT whose Content-Type is not application/json, or that has none, one without a body too.
       content:
         application/json:
           schema:

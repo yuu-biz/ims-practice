@@ -144,9 +144,19 @@ func (p *phone) status() statusJSON {
 // the body.
 func (p *phone) do(method, path, body string) (int, string) {
 	p.t.Helper()
+	return p.doAs(method, path, "application/json", body)
+}
+
+// doAs is do with the Content-Type contentType, or none when it is
+// empty.
+func (p *phone) doAs(method, path, contentType, body string) (int, string) {
+	p.t.Helper()
 	req, err := http.NewRequest(method, p.url+path, strings.NewReader(body))
 	if err != nil {
 		p.t.Fatal(err)
+	}
+	if contentType != "" {
+		req.Header.Set("Content-Type", contentType)
 	}
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {

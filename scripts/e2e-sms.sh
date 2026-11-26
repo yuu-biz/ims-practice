@@ -70,9 +70,13 @@ fail=0
 # message is answered once its MESSAGE has a final response, so the
 # wait is longer than a SIP transaction.
 phone_answer() {
+	# A POST or a PUT goes as JSON, one without a body too.
 	local data=()
+	if [ "$2" != GET ]; then
+		data=(-H 'Content-Type: application/json')
+	fi
 	if [ -n "${4:-}" ]; then
-		data=(-H 'Content-Type: application/json' --data-binary "$4")
+		data+=(--data-binary "$4")
 	fi
 	curl -s -m 75 -w '\n%{http_code}' -X "$2" "${data[@]}" "http://localhost:8080/api/ues/$1$3"
 }

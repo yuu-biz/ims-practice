@@ -194,7 +194,7 @@ A short message to a user who is registered usually arrives. The two states in w
 Each of them answers with the state it leaves behind, such as `{"available": true, "memory_full": false, "memory_capacity_exceeded_notification": true}`. The last field is the memory capacity exceeded notification flag that a phone keeps on its (U)SIM (TS 23.040 10.3): the UE sets it when it refuses a short message for want of memory, and clears it when the notification is answered. For a UE whose control API is on port 8091, as in the call guide:
 
 ```sh
-curl -X PUT localhost:8091/sms-memory -d '{"full": true}'
+curl -X PUT -H 'Content-Type: application/json' localhost:8091/sms-memory -d '{"full": true}'
 ```
 
 ## Open the capture

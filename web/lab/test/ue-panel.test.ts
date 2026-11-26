@@ -92,7 +92,10 @@ describe("UE simulator responses", () => {
     const fetch = vi.fn(async () => new Response(JSON.stringify(idle)));
     vi.stubGlobal("fetch", fetch);
     await postUEAction("ue a", "register");
-    expect(fetch).toHaveBeenCalledWith("/api/ues/ue%20a/register", { method: "POST" });
+    expect(fetch).toHaveBeenCalledWith("/api/ues/ue%20a/register", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+    });
   });
 });
 

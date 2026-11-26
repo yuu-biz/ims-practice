@@ -57,6 +57,20 @@ func TestOpenAPI(t *testing.T) {
 	caller.wantCode(http.MethodPut, "/sms-availability", `{"available": false}`, http.StatusOK)
 	caller.wantCode(http.MethodPut, "/sms-availability", `{}`, http.StatusBadRequest)
 
+	// A change whose Content-Type a page of another site can have the
+	// browser send without asking the UE first changes nothing.
+	for _, contentType := range []string{"", "text/plain", "application/x-www-form-urlencoded", "multipart/form-data; boundary=x"} {
+		if code, text := caller.doAs(http.MethodPost, "/deregister", contentType, ""); code != http.StatusUnsupportedMediaType {
+			t.Errorf("POST /deregister with Content-Type %q: %d %s, want 415", contentType, code, text)
+		}
+		if code, text := caller.doAs(http.MethodPut, "/answer-policy", contentType, `{"mode": "reject"}`); code != http.StatusUnsupportedMediaType {
+			t.Errorf("PUT /answer-policy with Content-Type %q: %d %s, want 415", contentType, code, text)
+		}
+	}
+	if s := caller.status(); !s.Registered {
+		t.Error("a POST /deregister that is not application/json deregistered the UE")
+	}
+
 	caller.must(http.MethodPost, "/deregister", "")
 	caller.must(http.MethodPost, "/register", "")
 	caller.wantCode(http.MethodGet, "/contacts", "", http.StatusNotFound)

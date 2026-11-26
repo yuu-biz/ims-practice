@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/yuu-biz/ims-practice/internal/controlapi"
 	"github.com/yuu-biz/ims-practice/internal/simservs"
 	"github.com/yuu-biz/ims-practice/internal/xcap"
 )
@@ -386,7 +387,8 @@ func (s *SupplementaryServices) retry(ctx context.Context, change func(doc simse
 // names no service, or a diversion without a target, gets 400; a service
 // the operator did not provision gets 409; a refusal from the XCAP
 // server, or no answer, gets 502 with the server's status and text in
-// the error.
+// the error. A PUT whose Content-Type is not application/json gets 415,
+// as on the phone's own API.
 func (s *SupplementaryServices) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /xcap", func(w http.ResponseWriter, r *http.Request) {
@@ -417,7 +419,7 @@ func (s *SupplementaryServices) Handler() http.Handler {
 		settings, err := s.SetOIRDefault(r.Context(), req.DefaultBehaviour)
 		s.respond(w, settings, err)
 	})
-	return mux
+	return controlapi.RequireJSON(mux)
 }
 
 func (s *SupplementaryServices) respond(w http.ResponseWriter, settings Settings, err error) {

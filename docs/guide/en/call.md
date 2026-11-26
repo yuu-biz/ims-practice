@@ -262,8 +262,8 @@ The call test of `scripts/e2e-call.sh` ends with a call over this path, wherever
 2. Have UE 2 ring until you answer, call it from UE 1, and look at UE 2:
 
    ```sh
-   curl -X PUT localhost:8091/answer-policy -d '{"mode": "manual"}'
-   curl -X POST localhost:8090/call -d '{"target": "tel:+1-202-555-0102"}'
+   curl -X PUT -H 'Content-Type: application/json' localhost:8091/answer-policy -d '{"mode": "manual"}'
+   curl -X POST -H 'Content-Type: application/json' localhost:8090/call -d '{"target": "tel:+1-202-555-0102"}'
    curl localhost:8091/status
    ```
 
@@ -272,15 +272,15 @@ The call test of `scripts/e2e-call.sh` ends with a call over this path, wherever
 3. Answer on UE 2, then hang up on UE 1:
 
    ```sh
-   curl -X POST localhost:8091/answer
-   curl -X POST localhost:8090/hangup
+   curl -X POST -H 'Content-Type: application/json' localhost:8091/answer
+   curl -X POST -H 'Content-Type: application/json' localhost:8090/hangup
    ```
 
    A hang-up sends a BYE once the call is answered, and a CANCEL while it rings. On the callee's side, a hang-up while the call rings turns it down with 603 (Decline), or with the `reject_status` in the body.
 
    A call that rings for more than a minute gets a 180 (Ringing) every minute, so that no proxy gives up on the INVITE (RFC 3261 13.3.1.1). A UE that stops while a call rings turns it down with 480 (Temporarily Unavailable).
 
-During the call, `curl -X POST localhost:8090/hold` puts it on hold with a re-INVITE that offers `a=sendonly`, `/resume` takes it back, and `curl -X POST localhost:8090/dtmf -d '{"digits": "123"}'` sends DTMF as telephone events. The `session` in the status shows the codec, the directions, the preconditions and the digits that came.
+During the call, `curl -X POST -H 'Content-Type: application/json' localhost:8090/hold` puts it on hold with a re-INVITE that offers `a=sendonly`, `/resume` takes it back, and `curl -X POST -H 'Content-Type: application/json' localhost:8090/dtmf -d '{"digits": "123"}'` sends DTMF as telephone events. The `session` in the status shows the codec, the directions, the preconditions and the digits that came. Every `POST` and `PUT` carries `Content-Type: application/json`, one without a body too: the API answers any other with 415, so that a page of another site in your browser cannot drive the UE ([Open the Lab](lab.md#open-the-lab) explains this).
 
 UE 1 plays its tone once and stays on the line until one side hangs up. `curl -N localhost:8091/events` follows the status as it changes. The answer policy can also be `{"mode": "auto", "ring_seconds": 2}`, which answers after two seconds, or `{"mode": "reject", "reject_status": 486}`, which turns every call down. Each UE has one line, which holds two calls at most. A second call goes out only once the first is on hold (`POST /hold`); until then the API answers 409 (Conflict). An INVITE that comes during a call waits: the UE rings with `Alert-Info: <urn:alert:service:call-waiting>` and does not answer by itself, and `POST /answer` puts the first call on hold and takes the waiting one (TS 24.615 4.5.5.3). A third INVITE gets 486 (Busy Here). `ue ctl` sends these requests from a shell. All the requests are listed in the comment of `Phone.Handler` in `internal/ue/phone_http.go`.
 

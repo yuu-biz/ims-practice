@@ -216,6 +216,7 @@ docker network connect --ip 172.28.0.20 ims-practice_ims ims-practice-icscf-1
 - ソケットを渡すのは `agent.yaml` だけで、渡す先はエージェントだけです。`compose.yaml` は `agent.yaml` を読み込みません。IMS のノードには、ソケットを渡しません。`compose.yaml` か `deploy/` の上書きのファイルで、ほかのサービスがソケットをつなぐと、`go test ./internal/fault` が失敗します。
 - エージェントは、専用のネットワーク `chaos`（172.28.9.0/24）だけにつなぎます。このネットワークにいるのは、エージェントのほかはラボだけです。IMS のノードからは届きません。エージェントの HTTP は、`ims0` のキャプチャにも入りません。
 - API にはパスワードがありません。API に届く者は、プロジェクトのどのコンテナでも止められます。そのため、ホストに公開するポートは、`curl` のための `127.0.0.1:8070` だけです。ホストの外からは届きません。
+- ブラウザで開いたほかのサイトのページは、JSON でなければ、先に尋ねずに `127.0.0.1` へ POST を送れます。エージェントは `POST` を `Content-Type: application/json` のときだけ受け付け、それ以外には 415 を返すので、そうしたページから障害は入れられません。ブラウザに対してはこれで足りる理由は、[ラボの手順書](../../docs/guide/ja/lab.md#ラボを開く)にあります。
 - エージェントは、Docker のソケットを持つコンテナへの障害を断ります。エージェント自身も含みます。止まったり凍ったりしたエージェントは、入れた障害を期限で戻せなくなるためです。`fault.sh` と同じく、キャプチャのコンテナへのネットワークの障害も断ります。
 
 ### 起動と停止
@@ -280,9 +281,9 @@ docker network rm ims-practice_chaos
 ほかの種類のフィールドと、表に無いフィールドは断ります。例を示します。
 
 ```sh
-curl -X POST -d '{"target":"pcscf","kind":"pause","duration":"20s"}' http://127.0.0.1:8070/fault/v1/faults
-curl -X POST -d '{"target":"agw","kind":"loss","loss_percent":10,"duration":"2m"}' http://127.0.0.1:8070/fault/v1/faults
-curl -X POST -d '{"target":"ibcf-a","kind":"partition","network":"nni","duration":"1m"}' http://127.0.0.1:8070/fault/v1/faults
+curl -X POST -H 'Content-Type: application/json' -d '{"target":"pcscf","kind":"pause","duration":"20s"}' http://127.0.0.1:8070/fault/v1/faults
+curl -X POST -H 'Content-Type: application/json' -d '{"target":"agw","kind":"loss","loss_percent":10,"duration":"2m"}' http://127.0.0.1:8070/fault/v1/faults
+curl -X POST -H 'Content-Type: application/json' -d '{"target":"ibcf-a","kind":"partition","network":"nni","duration":"1m"}' http://127.0.0.1:8070/fault/v1/faults
 ```
 
 障害は、要求（`duration` を補ったもの）に次のフィールドを足したものです。

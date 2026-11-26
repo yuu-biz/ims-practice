@@ -201,7 +201,7 @@ IP-SM-GW が Timer F（32 秒）のあいだに MESSAGE に応答しないか、
 どの要求も、そのあとの状態を返します。たとえば `{"available": true, "memory_full": false, "memory_capacity_exceeded_notification": true}` です。最後の項目は、携帯電話が (U)SIM に持つ、メモリの容量を超えたことを知らせるためのフラグです（TS 23.040 10.3）。UE は、メモリ不足でショートメッセージを断ったときにこれを立て、知らせに答えが返ったときに下ろします。制御 API をポート 8091 に置いた UE なら、通話の手順書と同じ形で次のように送ります。
 
 ```sh
-curl -X PUT localhost:8091/sms-memory -d '{"full": true}'
+curl -X PUT -H 'Content-Type: application/json' localhost:8091/sms-memory -d '{"full": true}'
 ```
 
 ## キャプチャを開く

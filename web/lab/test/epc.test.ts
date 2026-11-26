@@ -42,9 +42,11 @@ describe("the UEs of the EPC stub", () => {
     vi.stubGlobal("fetch", fetch);
     await releaseBearer("001010000000010", 6);
     await detachUE("001010000000010");
-    expect(fetch.mock.calls.map(([path, init]) => [path, init?.method])).toEqual([
-      ["/api/epc/network-initiated/ues/001010000000010/bearers/6", "DELETE"],
-      ["/api/epc/network-initiated/ues/001010000000010/detach", "POST"],
+    // A POST goes as JSON, which a page of another site cannot have the
+    // browser send without a preflight that the Lab does not answer.
+    expect(fetch.mock.calls.map(([path, init]) => [path, init?.method, init?.headers])).toEqual([
+      ["/api/epc/network-initiated/ues/001010000000010/bearers/6", "DELETE", undefined],
+      ["/api/epc/network-initiated/ues/001010000000010/detach", "POST", { "Content-Type": "application/json" }],
     ]);
   });
 

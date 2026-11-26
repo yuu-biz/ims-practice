@@ -133,6 +133,9 @@ func TestUERequestsReachTheUE(t *testing.T) {
 	}
 	for _, tt := range tests {
 		req, _ := http.NewRequest(tt.method, h.server.URL+tt.path, strings.NewReader(tt.body))
+		if tt.method != http.MethodGet {
+			req.Header.Set("Content-Type", "application/json")
+		}
 		resp, err := http.DefaultClient.Do(req)
 		if err != nil {
 			t.Fatal(err)
@@ -165,6 +168,7 @@ func TestUERequestsOutsideTheControlAPI(t *testing.T) {
 	}
 	for _, tt := range tests {
 		req, _ := http.NewRequest(tt.method, h.server.URL+tt.path, nil)
+		req.Header.Set("Content-Type", "application/json")
 		resp, err := http.DefaultClient.Do(req)
 		if err != nil {
 			t.Fatal(err)

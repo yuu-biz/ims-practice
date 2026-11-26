@@ -62,7 +62,7 @@ inject() {
 	local body
 	# The messages go to the error output, because the caller reads the
 	# id from this function.
-	body="$(curl -sS -X POST -d "$2" "$1")" || { echo "FAIL $1 did not answer $2" >&2; exit 1; }
+	body="$(curl -sS -X POST -H 'Content-Type: application/json' -d "$2" "$1")" || { echo "FAIL $1 did not answer $2" >&2; exit 1; }
 	case $body in
 	*'"state":"active"'* | *'"state":"done"'*) ;;
 	*)

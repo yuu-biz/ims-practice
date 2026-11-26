@@ -15,6 +15,13 @@ info:
     configured, 502 when it does not answer, 404 for a UE simulator that
     is not configured.
 
+    A POST or a PUT must have the Content-Type application/json, one
+    without a body too. Any other, or none, is refused with Error: 415,
+    and the request goes to no API behind the route. A page of another
+    site can have the browser send a POST of text/plain, a form or
+    multipart without asking the Lab first, and one of JSON only after a
+    preflight that the Lab does not answer.
+
     GET / is the page of the web UI. The scripts and the styles that the
     page loads are files below / as well, which the build of the UI puts
     there; they are not described here.
@@ -388,9 +395,9 @@ components:
         type: string
   requestBodies:
     Forwarded:
-      description: Forwarded as it is.
+      description: Forwarded as it is. The Lab refuses any but application/json with 415.
       content:
-        '*/*':
+        application/json:
           schema: true
   responses:
     Error:
@@ -400,11 +407,11 @@ components:
           schema:
             $ref: '#/components/schemas/Error'
     Forwarded:
-      description: What the API behind the route answered, or Error with 502 or 503.
+      description: What the API behind the route answered, or Error with 415, 502 or 503.
       content:
         '*/*': {}
     UE:
-      description: What the control API of the UE answered, as its own document describes it, or Error with 404 or 502.
+      description: What the control API of the UE answered, as its own document describes it, or Error with 404, 415 or 502.
       content:
         '*/*': {}
   schemas:

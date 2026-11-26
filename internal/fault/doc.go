@@ -62,6 +62,9 @@
 // network faults, because the container gets a new network namespace.
 //
 // The bodies are JSON, and every error is ErrorBody, {"error": "..."}.
+// A POST must say so in its Content-Type (controlapi.RequireJSON), so
+// that a page of another site open in the learner's browser cannot
+// inject a fault through it.
 // Times are RFC 3339 in UTC, durations Go durations such as "200ms".
 //
 //	GET    /fault/v1/faults
@@ -69,7 +72,8 @@
 //	POST   /fault/v1/faults
 //	       Request -> 201 Fault, in state active, or done for a fault
 //	       that happens once. 400 for a request
-//	       that the API cannot take, 409 when the target's container
+//	       that the API cannot take, 415 for one whose Content-Type is
+//	       not application/json, 409 when the target's container
 //	       already has a fault that this one would meet, by any name
 //	       of it, 500 with the failed Fault in
 //	       ErrorBody.fault when the executor could not apply it. A

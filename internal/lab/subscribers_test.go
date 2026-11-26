@@ -15,6 +15,10 @@ func send(t *testing.T, method, url, body string) (int, string) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// The Lab takes a POST or a PUT as JSON only.
+	if method == http.MethodPost || method == http.MethodPut {
+		req.Header.Set("Content-Type", "application/json")
+	}
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatal(err)

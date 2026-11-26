@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/yuu-biz/ims-practice/internal/controlapi"
 	"github.com/yuu-biz/ims-practice/internal/rtp"
 	"github.com/yuu-biz/ims-practice/internal/sdp"
 	"github.com/yuu-biz/ims-practice/internal/sip"
@@ -87,8 +88,9 @@ import (
 // that the UE fails to carry out, such as a REGISTER that the network
 // refuses or a re-INVITE that the peer turns down, gets 502 (Bad
 // Gateway). A short message that cannot be sent,
-// such as a text too long for one, gets 400. Errors come as {"error":
-// text}.
+// such as a text too long for one, gets 400. A POST or a PUT whose
+// Content-Type is not application/json, one without a body too, gets
+// 415 (controlapi.RequireJSON). Errors come as {"error": text}.
 func (p *Phone) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /status", func(w http.ResponseWriter, r *http.Request) {
@@ -129,7 +131,7 @@ func (p *Phone) Handler() http.Handler {
 		p.respondReception(w, state, err)
 	})
 	mux.HandleFunc("PUT /sms-availability", p.putSMSAvailability)
-	return mux
+	return controlapi.RequireJSON(mux)
 }
 
 func (p *Phone) putSMSMemory(w http.ResponseWriter, r *http.Request) {
