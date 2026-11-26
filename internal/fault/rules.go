@@ -90,10 +90,22 @@ func lossCommand(table string, devices []string, percent int) []string {
 	s := nftTable(table, devices)
 	for _, d := range devices {
 		for _, hook := range []string{"egress", "ingress"} {
-			s = append(s, fmt.Sprintf("add rule netdev %s %s_%s meta protocol ip numgen random mod 100 < %d counter drop", table, hook, d, percent))
+			s = append(s, fmt.Sprintf("add rule netdev %s %s_%s %s counter drop", table, hook, d, lossMatch(percent)))
 		}
 	}
 	return nftCommand(s)
+}
+
+// lossMatch matches percent of the IP packets, from 1 to 100: numgen
+// gives each packet a number from 0 to 99, and the rule takes those
+// below percent. nft refuses to compare that number with 100, a value
+// outside its range, so a loss of every packet matches every IP packet
+// instead.
+func lossMatch(percent int) string {
+	if percent >= 100 {
+		return "meta protocol ip"
+	}
+	return fmt.Sprintf("meta protocol ip numgen random mod 100 < %d", percent)
 }
 
 // partitionCommand drops the IP packets to and from the peers, or all
