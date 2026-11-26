@@ -895,6 +895,18 @@ func (s *SCSCF) registrationExpired(ctx context.Context, privateID string) error
 	}
 	// The registration is gone, so the expiry is handled: a NOTIFY or a
 	// SAR that does not get through is not sent again.
+	//
+	// SIMPLIFIED: TS 24.229 5.4.2.1.2 and TS 29.228 6.1.2. The expiry
+	// is an event of the user's registration state, which the NOTIFYs
+	// tell the subscribers, and the SAR tells the HSS that the S-CSCF no
+	// longer serves the user. Both go out only after the registration is
+	// deleted from the store. An instance that stops after the delete
+	// sends neither, and the instance that claims the expiry again finds
+	// no registration: no subscriber gets a NOTIFY of the expiry, and the
+	// HSS keeps the user registered until a later SAR for the user
+	// changes that. Sending first and deleting afterwards would send the
+	// NOTIFYs and the SAR again whenever the delete fails or the instance
+	// stops before it, since the expiry is then handled once more.
 	s.endRegistration(ctx, reg, reginfo.Expired, log)
 	s.serverAssignment(ctx, privateID, reg.PublicIdentities[0], reg.HSSHost, reg.ServerName, cx.TimeoutDeregistration)
 	return nil
