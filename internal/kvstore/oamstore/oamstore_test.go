@@ -95,6 +95,31 @@ func TestAWatchThatIsNotRenewedRunsOut(t *testing.T) {
 	}
 }
 
+// TestAPresenceOfAnEarlierVersionCounts: an instance of an earlier
+// version, which wrote true as its presence, runs on the same store. It
+// counts as an instance that reaches every node, and the presence of
+// the others is read all the same.
+func TestAPresenceOfAnEarlierVersionCounts(t *testing.T) {
+	ctx := context.Background()
+	for _, backend := range storetest.Backends() {
+		t.Run(backend.Name, func(t *testing.T) {
+			kv := backend.New(t)
+			cfg := kvjson.Config{Prefix: storetest.Prefix()}
+			client := kvjson.New(kv, cfg, "oam")
+			if err := kvjson.Write(ctx, client, client.Key("presence", "earlier"), true, lease); err != nil {
+				t.Fatal(err)
+			}
+			if err := client.AddToIndex(ctx, "presence", "earlier"); err != nil {
+				t.Fatal(err)
+			}
+			p, err := oamstore.NewWithLease(kv, cfg, lease).Present(ctx, "a", []string{"scscf"})
+			if err != nil || p.Instances != 2 || !maps.Equal(p.Unreachable, map[string]int{"scscf": 1}) {
+				t.Errorf("Present beside an earlier version: %+v, %v", p, err)
+			}
+		})
+	}
+}
+
 func TestPresenceCountsTheInstancesThatRun(t *testing.T) {
 	ctx := context.Background()
 	for _, backend := range storetest.Backends() {
