@@ -1,6 +1,9 @@
 package pcscf
 
 import (
+	"errors"
+	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -93,6 +96,39 @@ func TestUPDATEWhoseSDPTheP_CSCFCannotReadGoesNoFurther(t *testing.T) {
 	}
 }
 
+// withBody is resp with body in place of its own.
+func withBody(resp *sip.Message, body sip.Body) *sip.Message {
+	resp.Remove("Content-Type")
+	if body.Type != "" {
+		resp.Add("Content-Type", body.Type)
+	}
+	resp.Body = body.Content
+	return resp
+}
+
+// finalOnly is the final response on responses, and fails the test when
+// a provisional response other than 100 comes first.
+func finalOnly(t *testing.T, responses <-chan *sip.Message) *sip.Message {
+	t.Helper()
+	deadline := time.After(3 * time.Second)
+	for {
+		select {
+		case r, ok := <-responses:
+			if !ok {
+				t.Fatal("the transaction ended without a final response")
+			}
+			if r.StatusCode >= 200 {
+				return r
+			}
+			if r.StatusCode != 100 {
+				t.Errorf("the caller got a %d, want nothing before the final response", r.StatusCode)
+			}
+		case <-deadline:
+			t.Fatal("no final response within 3s")
+		}
+	}
+}
+
 // TestResponseWhoseSDPTheP_CSCFCannotReadEndsTheCall: a 183 whose answer
 // has no Content-Type, or is a part of a multipart body, goes no
 // further, and the call ends as for a 183 whose answer the relay did not
@@ -107,14 +143,8 @@ func TestResponseWhoseSDPTheP_CSCFCannotReadEndsTheCall(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			c := newRawINVITE(t)
-			progress := c.response(183)
-			progress.Remove("Content-Type")
-			if tc.body.Type != "" {
-				progress.Add("Content-Type", tc.body.Type)
-			}
-			progress.Body = tc.body.Content
-			c.st.Respond(progress)
-			if r := final(t, c.ct.Responses(), 3*time.Second); r.StatusCode != 500 {
+			c.st.Respond(withBody(c.response(183), tc.body))
+			if r := finalOnly(t, c.ct.Responses()); r.StatusCode != 500 {
 				t.Fatalf("the caller got %d, want 500", r.StatusCode)
 			}
 			select {
@@ -126,5 +156,86 @@ func TestResponseWhoseSDPTheP_CSCFCannotReadEndsTheCall(t *testing.T) {
 			c.st.Respond(sip.NewResponse(c.st.Request, 487, "callee"))
 			c.relay.waitHeld(t, 0, time.Second)
 		})
+	}
+}
+
+// TestThe200WhoseSDPTheP_CSCFCannotReadEndsTheCall: the 200 has an
+// answer without Content-Type. The caller gets 500 in its place, and the
+// P-CSCF acknowledges the 200 in the caller's name and ends its dialog
+// with a BYE, as for a 200 whose answer the relay did not take.
+func TestThe200WhoseSDPTheP_CSCFCannotReadEndsTheCall(t *testing.T) {
+	c := newRawINVITE(t)
+	c.st.Respond(withBody(c.response(200), untyped(sdp.Offer("2", coreMedia))))
+	if r := finalOnly(t, c.ct.Responses()); r.StatusCode != 500 {
+		t.Fatalf("the caller got %d, want 500", r.StatusCode)
+	}
+	got := map[sip.Method]bool{}
+	for range 2 {
+		got[nextRequest(t, "the callee", c.farGot).Method] = true
+	}
+	if !got[sip.ACK] || !got[sip.BYE] {
+		t.Errorf("the callee got %v, want the ACK and the BYE of the P-CSCF", got)
+	}
+	c.relay.waitHeld(t, 0, time.Second)
+}
+
+// TestINVITEWhoseBodyCarriesNoSDPGoesOn: a body of another type than SDP,
+// and a multipart body without an SDP part, carry no offer. The INVITE
+// goes on with its body as it came, as one without an offer.
+func TestINVITEWhoseBodyCarriesNoSDPGoesOn(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		body sip.Body
+	}{
+		{"text", sip.Body{Type: "text/plain", Content: []byte("hello")}},
+		{"multipart", sip.Body{Type: "multipart/mixed;boundary=part",
+			Content: []byte("--part\r\nContent-Type: application/pidf+xml\r\n\r\n<presence/>\r\n--part--\r\n")}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h, _, _ := newPolicyHarness(t)
+			if _, err := h.ue.Invite(sip.Invitation{RequestURI: "sip:001010000000002@" + domain, From: impu,
+				Route: []string{"<sip:pcscf." + domain + ":5060;lr>"}, Body: tc.body}); err != nil {
+				t.Fatal(err)
+			}
+			in := receiveCall(t, h.toCore)
+			if string(in.Request.Body) != string(tc.body.Content) {
+				t.Errorf("the callee got the body %q, want it as it came", in.Request.Body)
+			}
+		})
+	}
+}
+
+// TestBodyOfARequestThatCarriesNoOfferGoesOn: only the requests that
+// carry an offer or an answer have their body read for SDP (RFC 3261
+// 13.2.1, RFC 3311, RFC 3262). An INFO within a call that is up goes on
+// with a multipart body as it came.
+func TestBodyOfARequestThatCarriesNoOfferGoesOn(t *testing.T) {
+	h, pcrf, relay := newPolicyHarness(t)
+	c := newUpCall(t, h)
+	resp, err := c.out.Send(sip.Method("INFO"), inMultipart(sdp.Offer("2", moved)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.StatusCode != 200 {
+		t.Fatalf("the INFO got %d, want the 200 of the far end", resp.StatusCode)
+	}
+	hangUp(t, h, c.out, pcrf, relay, c.key)
+}
+
+// TestDeeplyNestedMultipartIsUnreadable: a multipart body nested deeper
+// than the P-CSCF looks is one that it cannot read, so that no body can
+// make it recurse without end.
+func TestDeeplyNestedMultipartIsUnreadable(t *testing.T) {
+	part := "Content-Type: application/sdp\r\n\r\n" + string(sdp.Offer("1", ueMedia).Bytes())
+	for level := range maxMultipartDepth + 1 {
+		boundary := fmt.Sprintf("b%d", level)
+		part = "Content-Type: multipart/mixed;boundary=" + boundary + "\r\n\r\n--" + boundary + "\r\n" + part + "\r\n--" + boundary + "--\r\n"
+	}
+	header, body, _ := strings.Cut(part, "\r\n\r\n")
+	m := &sip.Message{Method: sip.INVITE}
+	m.Add("Content-Type", strings.TrimPrefix(header, "Content-Type: "))
+	m.Body = []byte(body)
+	if err := sdpBodyError(m); !errors.Is(err, errUnreadableBody) {
+		t.Errorf("sdpBodyError = %v, want errUnreadableBody", err)
 	}
 }
