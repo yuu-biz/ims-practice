@@ -165,6 +165,35 @@ func TestRollbackOfAChangeSetRollsBackEveryNode(t *testing.T) {
 	}
 }
 
+// TestRollbackOfAChangeSetWhoseNodesShareTheirSettings: the instances of
+// a role that keep their settings in one store, as those of the HSS do,
+// take on a change that reached another of them. The rollback of the
+// first node of the set reaches the second through the store, and the
+// rollback of the second finds the previous value there already: it is
+// done, not a conflict.
+func TestRollbackOfAChangeSetWhoseNodesShareTheirSettings(t *testing.T) {
+	a := newFakeNode(t, "hss-1", []string{"hss"}, retryAfter)
+	b := newFakeNode(t, "hss-2", []string{"hss"}, retryAfter)
+	ts, _ := newHistoryServer(t, a, b)
+	change := ts.change(t, "/oam/v1/roles/hss/config", 30)
+	r1 := change.Nodes[0].Result
+	if status, body := ts.call(t, "POST", "/oam/v1/config/history/"+r1.ID+"/rollback", ""); status != http.StatusOK {
+		t.Fatalf("rollback of the first node: %d %s", status, body)
+	}
+	// The second node took the rollback on from the store.
+	b.setSetting(retryAfter, 1)
+
+	r2 := change.Nodes[1].Result
+	status, body := ts.call(t, "POST", "/oam/v1/config/history/"+r2.ID+"/rollback", "")
+	got := decodeAs[ChangeRecord](t, body)
+	if status != http.StatusOK || got.RollbackOf != r2.ID || got.Forced || len(got.Change.Changes) != 0 {
+		t.Fatalf("rollback of the second node: %d %s", status, body)
+	}
+	if a.setting(retryAfter) != 1 || b.setting(retryAfter) != 1 {
+		t.Errorf("values: %d %d", a.setting(retryAfter), b.setting(retryAfter))
+	}
+}
+
 func TestConfigurationChangeErrors(t *testing.T) {
 	a := newFakeNode(t, "pcscf-1", []string{"pcscf"}, retryAfter)
 	down := newFakeNode(t, "pcscf-2", []string{"pcscf"}, retryAfter)

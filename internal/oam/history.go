@@ -257,6 +257,12 @@ type RollbackRequest struct {
 // a SettingsConflictError that names each setting, when a later change
 // recorded for the node touched one of the settings, or when the node
 // no longer has the value that the change set, unless req.Force.
+//
+// A setting that the node has at its previous value already is rolled
+// back, and no conflict: the instances of a role that share their
+// settings, as those of the HSS do, take on the rollback that reached
+// another of them. A node that has every previous value already answers
+// the rollback with a record of no change, at its own generation.
 func (s *Server) Rollback(ctx context.Context, id string, req RollbackRequest) (ChangeRecord, error) {
 	if s.history == nil {
 		return ChangeRecord{}, fmt.Errorf("%w: no configuration history", ErrUnavailable)
@@ -289,17 +295,25 @@ func (s *Server) Rollback(ctx context.Context, id string, req RollbackRequest) (
 		}
 	}
 	settings := map[string]json.RawMessage{}
+	// rolledBack: the node has the previous value of every setting
+	// already.
+	rolledBack := true
 	for _, c := range target.Change.Changes {
 		settings[c.Name] = c.Previous
 		if _, ok := conflicts[c.Name]; ok {
+			rolledBack = false
 			continue
 		}
 		now := changeableValue(conf, c.Name)
-		if now == nil {
+		switch {
+		case now == nil:
 			conflicts[c.Name] = "the node no longer has this setting"
-		} else if !sameJSON(now, c.Value) {
+		case sameJSON(now, c.Previous):
+			continue
+		case !sameJSON(now, c.Value):
 			conflicts[c.Name] = fmt.Sprintf("the node has %s, not the %s that the change set", now, c.Value)
 		}
+		rolledBack = false
 	}
 	if len(conflicts) > 0 && !req.Force {
 		return ChangeRecord{}, &SettingsConflictError{
@@ -311,8 +325,14 @@ func (s *Server) Rollback(ctx context.Context, id string, req RollbackRequest) (
 		req.Comment = "rollback of " + id
 	}
 	s.log.Info("rollback requested", "change", id, "node", e.Name, "operator", req.Operator, "force", req.Force)
+	// A node that has every previous value already is sent them with
+	// its own generation, which it answers as the change it has.
+	generation := conf.Generation + 1
+	if rolledBack {
+		generation = conf.Generation
+	}
 	change, err := client.ChangeConfiguration(ctx, maintenance.ConfigurationChangeRequest{
-		Settings: settings, Generation: conf.Generation + 1, Operator: req.Operator, Comment: req.Comment,
+		Settings: settings, Generation: generation, Operator: req.Operator, Comment: req.Comment,
 	})
 	if err != nil {
 		return ChangeRecord{}, s.rollbackNodeError(e, err)

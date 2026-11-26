@@ -251,6 +251,8 @@ paths:
         Refused with 409, naming each setting, when a later change of the
         same node touched one of the settings, or when the node no longer
         has the value that the change set, unless the request forces it.
+        A setting that the node has at its previous value already is
+        rolled back; a node that has all of them answers with no change.
       parameters:
         - $ref: '#/components/parameters/id'
       requestBody:
