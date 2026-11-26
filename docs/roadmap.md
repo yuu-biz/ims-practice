@@ -109,7 +109,7 @@
 - 異常系として、音声の dedicated bearer を EPC スタブの操作で落としたとき、PCRF が RAR か ASR で知らせ、P-CSCF が BYE で呼を切る（IR.92 2.4.2.3、TS 24.229 5.2.8.1.2）。P-CSCF は BYE を作るためにダイアログの情報を `Store` に置く。
 - UE が P-Access-Network-Info を付ける（TS 24.229 L.3.1.1、7.2A.4.3）。IR.92 v24.0 には記述が見つからなかった。
 - プリコンディション（RFC 3312）を使った呼の確立に対応する。
-- IMS-AKA（Milenage、AKAv1-MD5）で認証する。sec-agree と保護ポートの手順は行い、ESP はかけない。ESP をかける設定は試さず、拡張の候補に残した。
+- IMS-AKA（Milenage、AKAv1-MD5）で認証する。既定では sec-agree と保護ポートの手順を行い、ESP はかけない。ESP（暗号化は null）は上書きの構成で有効にする。
 - SIPp を独立した試験相手にして、AKA の登録を確かめる。
 - GSMA IR.92 の必須の要件を満たす。今の実装との差は [profiles.md](background/profiles.md) の表にまとめてある。
   - AMR と AMR-WB と、その RTP ペイロードの形式（RFC 4867）に対応する。符号化済みのフレームを送り、製品は cgo を使わない。UE の offer には PCMU も残す。
