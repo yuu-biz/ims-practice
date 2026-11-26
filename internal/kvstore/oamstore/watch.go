@@ -61,15 +61,23 @@ const maxAttempts = 100
 // left, so that once another instance has raised the generation, the
 // earlier holder can no longer write.
 func (s *Store) Watch(ctx context.Context, node, instance string) (oam.AlarmWatch, bool, error) {
-	holder := lease{Instance: instance, Token: randomHex(8)}
-	leaseVersion, err := kvjson.CompareAndSwap(ctx, s.c, s.leaseKey(node), "", holder, s.lease)
+	w := &watch{s: s, node: node, holder: lease{Instance: instance, Token: randomHex(8)}}
+	leaseVersion, err := kvjson.CompareAndSwap(ctx, s.c, s.leaseKey(node), "", w.holder, s.lease)
+	if err != nil && !errors.Is(err, kvstore.ErrConflict) {
+		// The take may have reached the store without its answer; then
+		// the lease is this watch's, and no other watcher would renew it
+		// until it ran out.
+		if found, own, rerr := w.ownLease(ctx); rerr == nil && own {
+			leaseVersion, err = found, nil
+		}
+	}
 	if errors.Is(err, kvstore.ErrConflict) {
 		return nil, false, nil
 	}
 	if err != nil {
 		return nil, false, err
 	}
-	w := &watch{s: s, node: node, holder: holder, leaseVersion: leaseVersion}
+	w.leaseVersion = leaseVersion
 	for range maxAttempts {
 		var st oam.AlarmWatchState
 		version, err := kvjson.Read(ctx, s.c, s.stateKey(node), &st)

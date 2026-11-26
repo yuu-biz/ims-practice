@@ -256,3 +256,35 @@ func TestAProcessOfTheSameNameDoesNotTakeTheLeaseOfAnother(t *testing.T) {
 		})
 	}
 }
+
+// TestATakeWhoseAnswerWasLostTakesTheWatch: the write that takes the
+// lease of a node reaches the store, but its answer does not reach the
+// instance. The instance holds the watch all the same, rather than
+// leave the node with a lease that no watcher renews until it runs
+// out.
+func TestATakeWhoseAnswerWasLostTakesTheWatch(t *testing.T) {
+	for _, backend := range storetest.Backends() {
+		t.Run(backend.Name, func(t *testing.T) {
+			ctx := context.Background()
+			kv := backend.New(t)
+			cfg := kvjson.Config{Prefix: storetest.Prefix()}
+			lossy := &losingAnswers{Store: kv}
+			a := oamstore.NewWithLease(lossy, cfg, lease)
+			b := oamstore.NewWithLease(kv, cfg, lease)
+			lossy.loseNext("watch-lease")
+			w, ok, err := a.Watch(ctx, "scscf", "a")
+			if err != nil || !ok {
+				t.Fatalf("Watch whose take lost its answer: %v, %v", ok, err)
+			}
+			if st := w.State(); st.Generation != 1 {
+				t.Errorf("the state of the watch: %+v", st)
+			}
+			if err := w.Renew(ctx); err != nil {
+				t.Errorf("Renew: %v", err)
+			}
+			if _, ok, err := b.Watch(ctx, "scscf", "b"); err != nil || ok {
+				t.Errorf("another instance's Watch of the watch held: %v, %v", ok, err)
+			}
+		})
+	}
+}
