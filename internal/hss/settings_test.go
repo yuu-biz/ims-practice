@@ -61,21 +61,28 @@ func settingsStore(t *testing.T) *MemoryStore {
 // test.
 func settingsInstance(t *testing.T, store Store, locks ims.UserLocker) (*HSS, *maintenance.Node) {
 	t.Helper()
-	return settingsInstanceReading(t, store, locks, 5*time.Millisecond)
+	return newSettingsInstance(t, store, locks, nil)
 }
 
 // settingsInstanceReading is settingsInstance reading the store every
 // interval.
 func settingsInstanceReading(t *testing.T, store Store, locks ims.UserLocker, interval time.Duration) (*HSS, *maintenance.Node) {
 	t.Helper()
+	return newSettingsInstance(t, store, locks, func(c *Config) { c.SweepInterval = interval })
+}
+
+// newSettingsInstance is settingsInstance with what configure changes of
+// its configuration, which may be nil.
+func newSettingsInstance(t *testing.T, store Store, locks ims.UserLocker, configure func(*Config)) (*HSS, *maintenance.Node) {
+	t.Helper()
 	if err := diameter.LoadDictionary(); err != nil {
 		t.Fatal(err)
 	}
 	node := diameter.NewNode(diameter.Identity{OriginHost: "hss." + realm, OriginRealm: realm},
 		[]uint32{diameter.ApplicationIDCx}, diameter.Timers{}, quiet())
-	h := mustHSS(Config{
+	cfg := Config{
 		UserLocks:          locks,
-		SweepInterval:      interval,
+		SweepInterval:      5 * time.Millisecond,
 		Realm:              realm,
 		VisitedNetworks:    []string{realm},
 		ServerCapabilities: cx.ServerCapabilities{MandatoryCapabilities: []uint32{1}},
@@ -86,7 +93,11 @@ func settingsInstanceReading(t *testing.T, store Store, locks ims.UserLocker, in
 		},
 		DefaultServiceProfile:  "default",
 		TestUserServiceProfile: "default",
-	}, store, node)
+	}
+	if configure != nil {
+		configure(&cfg)
+	}
+	h := mustHSS(cfg, store, node)
 	t.Cleanup(h.Close)
 	node.Handle(h.Handle)
 	server, err := node.Listen("127.0.0.1:0")

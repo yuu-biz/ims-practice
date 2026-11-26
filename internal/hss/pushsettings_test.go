@@ -1,11 +1,14 @@
 package hss
 
 import (
+	"context"
 	"fmt"
 	"maps"
 	"slices"
 	"testing"
 	"time"
+
+	"github.com/fiorix/go-diameter/v4/diam"
 
 	"github.com/yuu-biz/ims-practice/internal/cx"
 	"github.com/yuu-biz/ims-practice/internal/diameter"
@@ -183,6 +186,98 @@ func TestAChangeSentToEveryInstancePushesEachSubscriberOnce(t *testing.T) {
 	slices.Sort(want)
 	if !slices.Equal(got, want) {
 		t.Errorf("the PPRs went to %v, want %v", got, want)
+	}
+}
+
+// stoppingSCSCFs is an S-CSCF that answers the first answered PPRs and
+// none after them: the next PPR waits until its sender gives it up, as
+// the PPR does that an instance had on its way when it stopped. stuck is
+// closed once that PPR has come.
+type stoppingSCSCFs struct {
+	fakeSCSCFs
+	answered int
+	stuck    chan struct{}
+}
+
+func (s *stoppingSCSCFs) Request(ctx context.Context, originHost string, m *diam.Message) (*diam.Message, error) {
+	s.mu.Lock()
+	n := len(s.pprs)
+	s.mu.Unlock()
+	if n < s.answered {
+		return s.fakeSCSCFs.Request(ctx, originHost, m)
+	}
+	close(s.stuck)
+	<-ctx.Done()
+	return nil, ctx.Err()
+}
+
+// TestAPushGoesOnWhenItsInstanceStops: an instance that stops in the
+// middle of the push of a changed setting leaves the rest of the push in
+// the store. Another instance on the store goes on with it once the
+// claim of the stopped one has run out, from the first subscriber whose
+// PPR was not answered, and each subscriber that the stopped instance
+// did not reach gets one PPR.
+func TestAPushGoesOnWhenItsInstanceStops(t *testing.T) {
+	store := settingsStore(t)
+	locks := &ims.UserLocks{}
+	shortLease := func(c *Config) { c.PushLease = 300 * time.Millisecond }
+	first, api := newSettingsInstance(t, store, locks, shortLease)
+	serve(t, first, impi, impu, cx.AssignRegistration)
+	var rest []string
+	for i := range 4 {
+		id := fmt.Sprintf("0010100003%05d@%s", i, realm)
+		addSubscription(t, first, Subscription{PrivateIdentity: id,
+			PublicIdentities: []string{"sip:" + id}, Password: "test-password-stop"})
+		registerInStore(t, first, id)
+		rest = append(rest, id)
+	}
+	stopping := &stoppingSCSCFs{answered: 1, stuck: make(chan struct{})}
+	first.SetPeers(stopping)
+	change(t, api, "hss.default_service_profile", "trial")
+	select {
+	case <-stopping.stuck:
+	case <-time.After(5 * time.Second):
+		t.Fatal("gave up waiting 5 s for the second PPR of the first instance")
+	}
+	first.Close()
+
+	second, _ := newSettingsInstance(t, store, locks, shortLease)
+	scscfs := &fakeSCSCFs{}
+	second.SetPeers(scscfs)
+	pushed := pushedTo(t, second, scscfs, len(rest))
+	if got := slices.Sorted(maps.Keys(pushed)); !slices.Equal(got, rest) {
+		t.Errorf("the second instance pushed to %v, want %v, the subscribers after the one the first instance reached", got, rest)
+	}
+	for id, as := range pushed {
+		if as != settingsTrialAS {
+			t.Errorf("the PPR for %s carried the criteria of %q, want %q", id, as, settingsTrialAS)
+		}
+	}
+}
+
+// TestAChangeWhoseInstanceStoppedBeforeItPushedIsPushed: an instance
+// that changed the settings in the store and stopped before it began the
+// push leaves the store with settings that no push has gone out for. An
+// instance on the store finds that and pushes them.
+func TestAChangeWhoseInstanceStoppedBeforeItPushedIsPushed(t *testing.T) {
+	store := settingsStore(t)
+	h, _ := settingsInstance(t, store, nil)
+	serve(t, h, impi, impu, cx.AssignRegistration)
+	scscfs := &fakeSCSCFs{}
+	h.SetPeers(scscfs)
+	// All that the stopped instance wrote: the change.
+	stored, _, err := store.Settings(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	next := stored
+	next.Generation++
+	next.DefaultServiceProfile = "trial"
+	if swapped, err := store.CompareAndSwapSettings(t.Context(), &stored, next); err != nil || !swapped {
+		t.Fatalf("CompareAndSwapSettings: %v, %v", swapped, err)
+	}
+	if pushed := pushedTo(t, h, scscfs, 1); len(pushed) != 1 || pushed[impi] != settingsTrialAS {
+		t.Errorf("the PPRs went to %v, want the ordinary subscriber with the trial criteria", pushed)
 	}
 }
 
