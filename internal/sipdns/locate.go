@@ -213,6 +213,12 @@ func orderSRV(records []*dns.SRV) []*dns.SRV {
 	return out
 }
 
+// addresses gives a target for each address of host at port (RFC 3263
+// 4.2).
+//
+// SIMPLIFIED: RFC 3263 4.2. The client looks up A or AAAA records; this
+// one asks for A records only, so a server that has only an IPv6
+// address is not found. Every node of this project has an IPv4 address.
 func (r *Resolver) addresses(ctx context.Context, host string, transport sip.Transport, port int) ([]sip.Destination, error) {
 	answers, err := r.query(ctx, host, dns.TypeA)
 	if err != nil {
@@ -231,6 +237,16 @@ func (r *Resolver) addresses(ctx context.Context, host string, transport sip.Tra
 	return targets, nil
 }
 
+// query sends one query of qtype for name to the server, and returns
+// the records of the answer section.
+//
+// SIMPLIFIED: RFC 7766 4 and 5 and RFC 1035 4.2.1. A resolver must
+// support TCP as well as UDP, and a server that cannot fit its response
+// into a UDP message truncates it and sets the TC bit, which tells the
+// resolver to ask again over TCP. This one asks over UDP only and reads
+// a truncated response as it came, so the records that did not fit are
+// lost without a word. The zones of this project answer each query
+// with a few records, far below the 512 octets of a UDP message.
 func (r *Resolver) query(ctx context.Context, name string, qtype uint16) ([]dns.RR, error) {
 	m := new(dns.Msg)
 	m.SetQuestion(dns.Fqdn(name), qtype)

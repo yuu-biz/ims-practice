@@ -193,6 +193,8 @@ This glossary lists the abbreviations used in this project. Each entry has an En
 | Trust domain | Trust domain | The nodes that trust one another with header fields such as P-Asserted-Identity. A peer network is in it only by agreement; at the boundary the header fields are removed (TS 24.229 4.4). | P-Asserted-Identity などのヘッダを互いに信頼するノードの範囲。相手網は取り決めがあるときだけ入る。境界ではそのヘッダを消す（TS 24.229 4.4）。 |
 | Interconnect profile | Interconnect profile | This project's name for the agreement with a peer network: trust, topology hiding, transports, methods, option tags, header rules, number format and codecs. TS 29.165 Annex C lists such choices as option items. | 相手網との取り決めを表す、このプロジェクトの呼び方。信頼、構成の秘匿、トランスポート、メソッド、option tag、ヘッダの規則、番号の形式、コーデックを決める。TS 29.165 の Annex C は、こうした選択を選択項目として並べている。 |
 | NAPTR / SRV | DNS NAPTR and SRV records | DNS records that tell a SIP node which transport, host, and port to use for a domain (RFC 3263). | ドメインに対して使うトランスポート、ホスト、ポートを SIP のノードに教える DNS のレコード（RFC 3263）。 |
+| AAAA | DNS AAAA record | The DNS record that holds one IPv6 address of a host (RFC 3596 2.1). The A record holds an IPv4 address. | ホストの IPv6 のアドレスを 1 つ持つ DNS のレコード（RFC 3596 2.1）。IPv4 のアドレスは A レコードが持つ。 |
+| TC | Truncation bit | The bit in the header of a DNS message that says the message was cut short to fit its transport (RFC 1035 4.1.1). A resolver that sees it asks again over TCP. | DNS のメッセージのヘッダーにあるビットで、メッセージが運ぶ手段に収まるよう切り詰められたことを示す（RFC 1035 4.1.1）。これを見たリゾルバーは TCP で問い合わせ直す。 |
 
 ## Security / セキュリティ
 
