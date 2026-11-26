@@ -374,9 +374,8 @@ func TestTheNodeShowsTheGenerationOfTheSettingsOfItsRole(t *testing.T) {
 	one := "1"
 	g.a.Store(&one)
 	g.generation.Store(7)
-	state, err := g.node.State()
-	if err != nil || state.ConfigurationGeneration != 7 {
-		t.Errorf("state generation = %d, %v, want 7", state.ConfigurationGeneration, err)
+	if state := g.node.State(); state.ConfigurationGeneration != 7 {
+		t.Errorf("state generation = %d, want 7", state.ConfigurationGeneration)
 	}
 	if conf, err := g.node.Configuration(); err != nil || conf.Generation != 7 {
 		t.Errorf("configuration generation = %d, %v, want 7", conf.Generation, err)

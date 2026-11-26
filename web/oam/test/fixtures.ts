@@ -41,7 +41,7 @@ export const state = {
       node: "pcscf-1",
       url: "http://pcscf-1:8085",
       result: nodeState("pcscf", "pcscf-1", [
-        { role: "pcscf", administrative_state: "UNLOCKED", operational_state: "ENABLED", users: 3, summary: { registrations: 3, dialogs: 1 } },
+        { role: "pcscf", administrative_state: "UNLOCKED", operational_state: "ENABLED", users: 3 },
       ]),
     },
     {

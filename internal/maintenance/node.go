@@ -2,7 +2,6 @@ package maintenance
 
 import (
 	"cmp"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -183,9 +182,8 @@ func IsName(s string) bool {
 func (n *Node) ManagedFunction(role string) *ManagedFunction { return n.roles[role] }
 
 // State is the state of the node and its roles. It calls the callbacks
-// of each role, and fails when a summary does not marshal to JSON or
-// holds a secret.
-func (n *Node) State() (NodeState, error) {
+// of each role.
+func (n *Node) State() NodeState {
 	s := NodeState{
 		Node:                    n.node,
 		Instance:                n.instance,
@@ -196,16 +194,12 @@ func (n *Node) State() (NodeState, error) {
 		Functions:               []FunctionState{},
 	}
 	for _, m := range n.functions {
-		f, err := n.functionState(m)
-		if err != nil {
-			return NodeState{}, err
-		}
-		s.Functions = append(s.Functions, f)
+		s.Functions = append(s.Functions, n.functionState(m))
 	}
-	return s, nil
+	return s
 }
 
-func (n *Node) functionState(m *ManagedFunction) (FunctionState, error) {
+func (n *Node) functionState(m *ManagedFunction) FunctionState {
 	callbacks := m.callbacks
 	s := FunctionState{
 		Role:                m.role,
@@ -221,17 +215,7 @@ func (n *Node) functionState(m *ManagedFunction) (FunctionState, error) {
 	if d := m.ShutdownDeadline(); !d.IsZero() {
 		s.ShutdownDeadline = &d
 	}
-	if callbacks.Summary != nil {
-		b, err := json.Marshal(callbacks.Summary())
-		if err != nil {
-			return FunctionState{}, fmt.Errorf("summary of %s: %w", m.role, err)
-		}
-		if err := checkRedactedJSON(b); err != nil {
-			return FunctionState{}, fmt.Errorf("summary of %s: %w", m.role, err)
-		}
-		s.Summary = b
-	}
-	return s, nil
+	return s
 }
 
 // MaxTimeoutSeconds bounds the timeout_seconds of a shut down: a day,
@@ -271,7 +255,7 @@ func (n *Node) SetAdministrativeState(role string, req AdministrativeStateReques
 		return FunctionState{}, fmt.Errorf("%w: administrative state %q is none of %s, %s, %s",
 			ErrInvalidRequest, req.AdministrativeState, Unlocked, ShuttingDown, Locked)
 	}
-	return n.functionState(m)
+	return n.functionState(m), nil
 }
 
 // SetLogLevel sets the level of the node's log.

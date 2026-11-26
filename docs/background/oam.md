@@ -196,7 +196,7 @@ API の形の案です。経路は確定ではありません。
 
 | 方法 | 経路 | 要求 | 応答 |
 | --- | --- | --- | --- |
-| `GET` | `/maintenance/v1/state` | なし | `NodeState`。ノードの名前、`instance`、ビルドの版、起動した時刻、設定の世代、ログの詳しさと、役割ごとの `FunctionState`（`administrative_state`、`operational_state`、残っている利用者の数、ドレインの期限、役割の `summary`） |
+| `GET` | `/maintenance/v1/state` | なし | `NodeState`。ノードの名前、`instance`、ビルドの版、起動した時刻、設定の世代、ログの詳しさと、役割ごとの `FunctionState`（`administrative_state`、`operational_state`、残っている利用者の数、ドレインの期限） |
 | `PUT` | `/maintenance/v1/functions/{role}/administrative-state` | `AdministrativeStateRequest`。`administrative_state`、`timeout_seconds`（`SHUTTINGDOWN` のときだけ）、`operator` | その役割の `FunctionState` |
 | `GET` | `/maintenance/v1/config` | なし | `Configuration`。`generation`、秘密の値を伏せた `configuration`、変えられる項目の一覧 `changeable` |
 | `PATCH` | `/maintenance/v1/config` | `ConfigurationChangeRequest`。`settings`（項目の名前と新しい値）、`generation`、`operator`、`comment` | `ConfigurationChange`。ノード、世代、時刻、操作した人、理由、変わった項目ごとの前の値と後の値 |
@@ -209,13 +209,14 @@ API の形の案です。経路は確定ではありません。
 - 404。ノードが持たない役割か、知らない経路。
 - 405。経路が受けない方法。`Allow` を付けます。
 - 409。X.731 が許さない移り方（`LOCKED` の役割の shut down）か、ノードの世代より大きくない世代の変更。
-- 500。設定の見え方や `summary` に、伏せていない秘密の値があった。
+- 500。設定の見え方に、伏せていない秘密の値があった。
 
 案から変えたこと、決めたことは次のとおりです。
 
 - 管理上の状態は X.731 の 4 つの出来事に合わせました。`PUT` の値は、その状態に向かう出来事を表します。`UNLOCKED` が unlock、`SHUTTINGDOWN` が shut down、`LOCKED` が lock です。今の状態と同じ値を送っても何も変えず、成功を返します。OAM が同じ役割のすべてのノードに同じ要求を送れるようにするためです。
 - X.731 には期限がありません。ドレインの期限（`timeout_seconds`）が過ぎたら、運用者が lock を送ったのと同じに扱い、`LOCKED` にします。残っている呼をどうするかは、役割が決めます。
-- 役割が渡すものは、動作の状態、残っている利用者の数、`summary`、状態が変わったことの知らせの 4 つのコールバックです。役割は、新しい登録や呼を受ける前に `ManagedFunction.AdministrativeState` を読み、呼が終わるたびに `UserQuit` を呼びます。管理上の状態はプロセスの中にあり、再起動すると `UNLOCKED` から始まります。
+- 役割が渡すものは、動作の状態、残っている利用者の数、状態が変わったことの知らせの 3 つのコールバックです。役割は、新しい登録や呼を受ける前に `ManagedFunction.AdministrativeState` を読み、呼が終わるたびに `UserQuit` を呼びます。管理上の状態はプロセスの中にあり、再起動すると `UNLOCKED` から始まります。
+  - 役割が自分について書く `summary` のコールバックは消しました。渡す役割が 1 つも無かったためです。状態の応答の `summary` と、OAM の画面の Summary の列も、一緒に消しました。
 - 設定の見え方は、ノードが `any` で渡します。秘密の値は `maintenance.Secret` にします。`Secret` は値を持たず、設定されているかどうかだけを持ちます。ハンドラは答える前に、秘密の名前（`password`、`k`、`opc`、`nonce_key` など）の欄に値が無いことを確かめます。役割の試験は `maintenancetest.AssertRedacted` で同じことを確かめます。
   - `maintenancetest` は消しました。どこからも import されず、`maintenance.CheckRedacted` を呼ぶだけだったためです。役割の試験は `CheckRedacted` を直接呼べます。
 - 動かしたまま変えられる項目は、役割が `NewSetting` で宣言します。値の確かめと、失敗しない設定の関数を分けて受け、すべての項目を確かめてから設定します。1 つでも断れば何も変えません。秘密の値は項目にできません。
@@ -385,7 +386,7 @@ OAM が import するのは `internal/maintenance` と標準ライブラリだ�
 
 | 部分 | 使う API | 見せるもの、できること |
 | --- | --- | --- |
-| Nodes | `inventory`、`state` | 役割ごとのまとめ（ノードの数、失敗したノード、管理上の状態と動作の状態の数、利用者の数、設定の世代）と、ノードごと、役割ごとの行（管理上の状態、動作の状態、利用者の数、ドレインの期限、`summary`、ノードの名前と `instance`、世代、ログの詳しさ、ビルド、起動した時刻）。5 秒ごとに読み直す |
+| Nodes | `inventory`、`state` | 役割ごとのまとめ（ノードの数、失敗したノード、管理上の状態と動作の状態の数、利用者の数、設定の世代）と、ノードごと、役割ごとの行（管理上の状態、動作の状態、利用者の数、ドレインの期限、ノードの名前と `instance`、世代、ログの詳しさ、ビルド、起動した時刻）。5 秒ごとに読み直す |
 | Alarms | `alarms`、`alarms/{id}/ack-state` | すべてのノードの警報をまとめた一覧（重さ、ノード、役割、相手、種類、原因、specific problem、時刻、確認）。cleared と重さの下限で絞る。5 秒ごとに読み直す。答えなかったノードの名前と理由を出す。確認と、確認の取り消し |
 | Operations | `administrative-state`、`log-level` | 1 台か役割のすべてのノードに、ドレインの開始（`SHUTTINGDOWN` と期限）、取り消し（`UNLOCKED`）、lock を送る。ログの詳しさを変える。ノードごとの結果を出す |
 | Configuration | `config`、`PATCH config`、`config/history`、`rollback` | ノードが伏せたままの設定を見る。変えられる項目を JSON で打って変える。ノードの履歴を見て、1 件か `change_set` ごとに戻す |

@@ -41,11 +41,7 @@ func managed(t *testing.T, hssAvailable func() bool) (*maintenance.Node, *sip.St
 // node.
 func functionState(t *testing.T, node *maintenance.Node) maintenance.FunctionState {
 	t.Helper()
-	state, err := node.State()
-	if err != nil {
-		t.Fatal(err)
-	}
-	return state.Functions[0]
+	return node.State().Functions[0]
 }
 
 // A shut down I-CSCF refuses every request with 503 and Retry-After and

@@ -29,8 +29,6 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/NodeState'
-        '500':
-          $ref: '#/components/responses/InternalError'
   /maintenance/v1/functions/{role}/administrative-state:
     put:
       operationId: setAdministrativeState
@@ -385,8 +383,6 @@ components:
         shutdown_deadline:
           description: When a SHUTTINGDOWN role becomes LOCKED even with users left.
           $ref: '#/components/schemas/Time'
-        summary:
-          description: What the role says of itself, in a form of its own.
       additionalProperties: false
     AdministrativeStateRequest:
       type: object

@@ -93,9 +93,8 @@ func Example() {
 		LogLevel: level,
 		Log:      log,
 		Functions: []maintenance.Function{{
-			Role:    "pcscf",
-			Users:   p.users,
-			Summary: func() any { return map[string]int{"sessions": p.users()} },
+			Role:  "pcscf",
+			Users: p.users,
 		}},
 		Configuration: func() any {
 			var v view
@@ -148,7 +147,7 @@ func Example() {
 	p.bye()
 	p.bye()
 	state, _ := oam.State(ctx)
-	fmt.Println("after the last BYE:", state.Functions[0].AdministrativeState, string(state.Functions[0].Summary))
+	fmt.Println("after the last BYE:", state.Functions[0].AdministrativeState, *state.Functions[0].Users, "users")
 
 	change, err := oam.ChangeConfiguration(ctx, maintenance.ConfigurationChangeRequest{
 		Settings: map[string]json.RawMessage{"pcscf.retry_after": json.RawMessage(`120`)},
@@ -176,7 +175,7 @@ func Example() {
 	// Output:
 	// after shut down: SHUTTINGDOWN 2 users
 	// new INVITE taken: false
-	// after the last BYE: LOCKED {"sessions":0}
+	// after the last BYE: LOCKED 0 users
 	// generation 1: pcscf.retry_after 30 -> 120
 	// {"node":"pcscf-1","pcscf":{"listen":"0.0.0.0:5060","retry_after":120},"xcap":{"nonce_key":"REDACTED"}}
 	// log level: DEBUG
