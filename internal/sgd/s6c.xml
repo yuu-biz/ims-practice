@@ -9,15 +9,17 @@
         Only what this project sends is defined: the command that asks
         for routing information (SRR/SRA), the report with which the SC
         has the HSS keep its address in the message waiting data
-        (RDR/RDA), and the alert of the HSS to the SC (ALR/ALA). The
-        commands carry no
+        (RDR/RDA), the alert of the HSS to the SC (ALR/ALA), and the
+        experimental command of this project's own with which the
+        IP-SM-GW tells the HSS that a user can take short messages
+        again (Ready-For-SM). The commands carry no
         Vendor-Specific-Application-Id: TS 29.338 5.3.2.2 forbids a
         sender to include it.
 
         Most AVPs come from other applications: MSISDN from TS 29.329
         (Sh), SC-Address from SGd, Supported-Features from TS 29.229
         (Cx), Serving-Node, MME-Name and MME-Realm from TS 29.173 (SLh),
-        MME-Number-for-MT-SMS from TS 29.272 (S6a) and the IP-SM-GW ones
+        MME-Number-for-MT-SMS and Alert-Reason from TS 29.272 (S6a) and the IP-SM-GW ones
         from TS 29.336 (S6m). go-diameter looks AVPs up per application,
         so they are defined here again.
     -->
@@ -100,6 +102,41 @@
                 <rule avp="User-Identifier" required="false" max="1"/>
             </answer>
         </command>
+
+        <!-- Not a command of TS 29.338, but this project's own, which
+             stands in for MAP-READY-FOR-SM (TS 29.002 12.4): the
+             IP-SM-GW tells the HSS that a user can take short messages
+             again. 16777214 is the first of the two codes that RFC 6733
+             11.2.1 keeps for experimental commands. -->
+        <command code="16777214" short="RF" name="Ready-For-SM">
+            <request>
+                <rule avp="Session-Id" required="true" max="1"/>
+                <rule avp="Auth-Session-State" required="true" max="1"/>
+                <rule avp="Origin-Host" required="true" max="1"/>
+                <rule avp="Origin-Realm" required="true" max="1"/>
+                <rule avp="Destination-Host" required="false" max="1"/>
+                <rule avp="Destination-Realm" required="true" max="1"/>
+                <rule avp="User-Identifier" required="true" max="1"/>
+                <rule avp="IP-SM-GW-Number" required="true" max="1"/>
+                <rule avp="Alert-Reason" required="true" max="1"/>
+            </request>
+            <answer>
+                <rule avp="Session-Id" required="true" max="1"/>
+                <rule avp="Result-Code" required="false" max="1"/>
+                <rule avp="Experimental-Result" required="false" max="1"/>
+                <rule avp="Auth-Session-State" required="true" max="1"/>
+                <rule avp="Origin-Host" required="true" max="1"/>
+                <rule avp="Origin-Realm" required="true" max="1"/>
+            </answer>
+        </command>
+        <!-- TS 29.272 7.3.83, from S6a: the reason that the user can
+             take short messages again. -->
+        <avp name="Alert-Reason" code="1434" must="M,V" may-encrypt="N" vendor-id="10415">
+            <data type="Enumerated">
+                <item code="0" name="UE_PRESENT"/>
+                <item code="1" name="UE_MEMORY_AVAILABLE"/>
+            </data>
+        </avp>
 
         <!-- TS 29.338 5.3.3.14 to 5.3.3.20 and 5.3.3.27. The outcomes
              through an MSC, an SGSN and an SMSF for non-3GPP access are

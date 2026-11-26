@@ -11,7 +11,10 @@
 //     message waiting data of a user it could not reach, or tells it of
 //     a delivery that got through, and
 //     Alert-Service-Centre (ALR/ALA), with which the HSS tells the SC
-//     that such a user is reachable again (TS 29.338 5).
+//     that such a user is reachable again (TS 29.338 5), and
+//     Ready-For-SM, a command of this project's own, with which the
+//     IP-SM-GW tells the HSS that a user can take short messages again
+//     (readyforsm.go).
 //
 // "SC" stands here for the SMS-SC together with the SMS-IWMSC and the
 // SMS-GMSC, which TS 23.040 keeps apart and which this project runs as

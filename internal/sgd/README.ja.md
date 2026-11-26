@@ -2,7 +2,7 @@
 
 [English](README.md)
 
-このパッケージは、TS 29.338 の Diameter のメッセージを組み立てて読みます。短いメッセージを、SC と、UE に仕える網のノードのあいだで運ぶメッセージです。SGd では MO-Forward-Short-Message（OFR/OFA）と MT-Forward-Short-Message（TFR/TFA）、S6c では Send-Routing-Info-for-SM（SRR/SRA）、Report-SM-Delivery-Status（RDR/RDA）、Alert-Service-Centre（ALR/ALA）です。
+このパッケージは、TS 29.338 の Diameter のメッセージを組み立てて読みます。短いメッセージを、SC と、UE に仕える網のノードのあいだで運ぶメッセージです。SGd では MO-Forward-Short-Message（OFR/OFA）と MT-Forward-Short-Message（TFR/TFA）、S6c では Send-Routing-Info-for-SM（SRR/SRA）、Report-SM-Delivery-Status（RDR/RDA）、Alert-Service-Centre（ALR/ALA）です。S6c では、このプロジェクトが独自に決めた Ready-For-SM も運びます。IP-SM-GW が、利用者がまたショートメッセージを受け取れるようになったことを HSS に知らせるコマンドです。実際の網では、この知らせを MAP-READY-FOR-SM（TS 29.002 12.4.1）で送ります。このプロジェクトは MAP を作っていません。
 
 パッケージ `smsc` の SC は、このパッケージの構造体を使って動きます。このプロジェクトのノードは、どちらも動かしていません。試験と例は、メッセージごとに組み立てて、読み直します。
 
@@ -26,4 +26,5 @@ go doc ./internal/sgd
 | `ReportSMDeliveryStatusAnswer`、TS 29.338 5.3.2.8 | Supported-Features と、通知のノード（Serving-Node、Additional-Serving-Node、SMSF のアドレス）。HSS はこれで、SMS-GMSC が知らなかったノードを通して、すぐに送り直すよう伝えます。 | このプロジェクトの HSS は、代わりに ALR で SC に知らせます。 |
 | `ServingNode`、TS 29.338 5.3.3.6 | SGSN と MSC、IP-SM-GW-SBI-Support-Indicator。 | このプロジェクトには SGSN も MSC もありません。IP-SM-GW には Diameter だけでつなぎます。 |
 | `SMSF3GPPAddress`、TS 29.338 5.3.3.35、5.3.3.36 | SMSF-3GPP-SBI-Support-Indicator と、SMSF-Non-3GPP-Address の全体。 | このプロジェクトは、SMSF に Diameter だけでつなぎます。3GPP でないアクセスもありません。 |
+| `ReadyForSMRequest`、TS 23.204 6.5b step 2d と 6.6 step 3、TS 29.002 12.4.1 | MAP-READY-FOR-SM。IP-SM-GW はこれで、利用者にまたショートメッセージが届くようになったことと、利用者のメモリに空きができたことを HLR に知らせます。代わりに、このプロジェクトが独自に決めた S6c のコマンド Ready-For-SM が、2 つの知らせを運びます。コマンドコードは実験用の 16777214 です（RFC 6733 11.2.1）。利用者は IMSI ではなく MSISDN で名指しし、知らせの理由は TS 29.272 7.3.83 の Alert-Reason で、IP-SM-GW は IP-SM-GW-Number で示します。Additional Alert Reason Indicator と Maximum UE Availability Time は省きます。 | このプロジェクトは MAP を作っていません。S6c にも Sh にも、この知らせのコマンドはありません。実験用のコードにしたので、TS 29.338 のコマンドと取り違えられません。Wireshark は知らないコマンドとして表示し、このコマンドを持たない HSS は DIAMETER_COMMAND_UNSUPPORTED で答えます。 |
 | `UserIdentifier`、TS 29.336 6.4.2 | External-Identifier と LMSI。 | マシン型の通信と VLR のためのものです。このプロジェクトには、どちらもありません。 |
