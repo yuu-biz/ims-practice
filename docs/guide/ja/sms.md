@@ -11,7 +11,7 @@
 
 最後に、MESSAGE のボディを 1 オクテットずつ読みます。
 
-この手順書は次の版に沿っています。TS 24.341 V19.0.0 と TS 23.204 V19.1.0（SMS over IP）、TS 24.011 V20.0.0（中継層）、TS 23.040 V20.0.0（転送層）、TS 23.038 V20.0.0（文字の符号化）、TS 24.229 V20.1.0、TS 29.228 V20.0.0（フィルタ条件）、TS 29.328 V20.0.0 と TS 29.329 V19.1.0（Sh）、TS 29.338 V19.3.0（S6c）です。以下の条項番号はこれらの版のものです。
+この手順書は次の版に沿っています。TS 24.341 V19.0.0 と TS 23.204 V19.1.0（SMS over IP）、TS 24.011 V20.0.0（中継層）、TS 23.040 V20.0.0（転送層）、TS 23.038 V20.0.0（文字の符号化）、TS 24.229 V20.1.0、TS 29.228 V20.0.0（フィルタ条件）、TS 29.328 V20.0.0 と TS 29.329 V19.1.0（Sh）、TS 29.338 V19.3.0（S6c）、TS 29.002 V19.1.0（MAP）と TS 29.272 V19.6.0（S6a）です。最後の 2 つは、このプロジェクトの Ready-For-SM が代わりを務めるものと、借りている AVP を定めています。以下の条項番号はこれらの版のものです。
 
 ## 始める前に
 
@@ -505,7 +505,7 @@ UE 2 の制御 API に `PUT /sms-availability` で `{"available": false}` を送
   |<------------------------------------------------|  MESSAGE (A5)
   |------------------>|         |         |         |
   |<------------------|         |         |         |  202
-  |         |         |------------------>|         |  Ready-For-SM UE_PRESENT (A6)
+  |         |         |------------------>|         |  Ready-For-SM UE_PRESENT, this project's own (A6)
   |         |         |<------------------|         |  Ready-For-SM answer
   |         |         |         |<--------|         |  ALR (A7)
   |         |         |         |-------->|         |  ALA
@@ -524,7 +524,7 @@ UE 2 の制御 API に `PUT /sms-availability` で `{"available": false}` を送
 - **A3.** TS 29.311 6.1.4.4.1 は 480 を、不在の加入者を表す MAP のユーザーエラーに写します。TS 29.338 7.3.3 はそれを TFA の **DIAMETER_ERROR_ABSENT_USER（5550）** で運びます。IMS での配達が失敗したことを知っているのはこのノードだけなので、IP-SM-GW は自分の UE-Not-Reachable-for-IP（UNRI）も立てます（TS 23.040 2.1.1）。
 - **A4.** SC は **Report-SM-Delivery-Status**（RDR、S6c のコマンド 8388649）で HSS に伝えます。`SM-Delivery-Cause` は ABSENT_USER です（TS 29.338 5.2.3、TS 23.040 3.2.8）。HSS は SC のアドレスを MWD に入れ、自分の UNRI を立てます。UNRI が立っているあいだ、HSS は SRA に serving node を入れません。今問い合わせたサービスセンタを、また失敗する IP-SM-GW へ向かわせないためです（TS 29.338 5.2.1.3）。
 - **A5.** `{"available": true}` でまた受け取るようになります。そのあと UE 2 が出した要求が IP-SM-GW に届けば、中身が何であれ、UE がそこにいることが分かります（TS 23.204 6.5b の step 2）。ここでは UE 2 自身のショートメッセージを使います。その OFR はラダー図では省いています。再登録でも同じことが分かります。次の場合で示します。
-- **A6.** IP-SM-GW は自分の UNRI を落とし、`Alert-Reason` が UE_PRESENT の **Ready-For-SM** を S6c で HSS に送ります。実際の網は、この知らせを MAP の READY_FOR_SM で送ります（TS 23.204 6.5b の step 2d、TS 29.002 12.4.1）。S6c にも Sh にもこの知らせのコマンドは無く、このプロジェクトは MAP を話しません。そこで Ready-For-SM は、このプロジェクトが独自に決めたコマンドにしてあります。コマンドコードは、RFC 6733 11.2.1 が実験用に取ってある 16777214 です（[このプロジェクトで簡略化していること](#このプロジェクトで簡略化していること)）。Wireshark はこれを知らないコマンドとして表示し、辞書に無いという警告を付けます。中の AVP は標準のもので、Wireshark はそれをデコードします。`User-Identifier` は RDR と同じく UE 2 を MSISDN で示し、`IP-SM-GW-Number` は IP-SM-GW を示します。`Alert-Reason` は、MME が S6a で同じことを HSS に伝えるときの AVP です（TS 29.272 7.3.83）。HSS が動くのは、その番号が UE 2 の登録している IP-SM-GW の番号のときだけです。HSS の答えは知らせを待たないので、キャプチャでは ALR より先に来ることがあります。
+- **A6.** IP-SM-GW は自分の UNRI を落とし、`Alert-Reason` が UE_PRESENT の **Ready-For-SM** を S6c で HSS に送ります。実際の網は、この知らせを MAP の READY_FOR_SM で送ります（TS 23.204 6.5b の step 2d、TS 29.002 12.4.1）。S6c にも Sh にもこの知らせのコマンドは無く、このプロジェクトは MAP を話しません。そこで Ready-For-SM は、このプロジェクトが独自に決めたコマンドにしてあります。コマンドコードは、RFC 6733 11.2.1 が実験用に取ってある 16777214 です（[このプロジェクトで簡略化していること](#このプロジェクトで簡略化していること)）。Wireshark はこれを知らないコマンドとして表示し、辞書に無いという警告を付けます。中の AVP は標準のもので、Wireshark はそれをデコードします。`User-Identifier` は RDR と同じく UE 2 を MSISDN で示し、`IP-SM-GW-Number` は IP-SM-GW を示します。`Alert-Reason` は、MME が S6a で同じことを HSS に伝えるときの AVP です（TS 29.272 7.3.83）。HSS が動くのは、その番号が UE 2 の登録している IP-SM-GW の番号のときだけです。HSS は ALR を送り終えるのを待たずに Ready-For-SM に答えるので、キャプチャでは、その答えが ALR より先に来ることがあります。
 - **A7.** HSS は UNRI を落とし、MWD にあるサービスセンタすべてに **Alert-Service-Centre**（ALR、S6c のコマンド 8388648）を送ります。送り先は、そのサービスセンタが開いた接続です（TS 29.338 5.2.2、TS 23.040 3.2.6 の 2c）。ALA が返ったアドレスは MWD から消えます。HSS は、サービスセンタの Diameter の名前を `deploy/compose/hss.yaml` の `service_centres` でアドレスから引き、Destination-Host に入れます（TS 29.338 5.3.1.2）。複数台で動かすサービスセンタは、`hosts` に台ごとの名前を並べます。HSS はその順に知らせを送り、成功の ALA を返した台で止めます。どの台も同じショートメッセージを預かっているので、どの台が配達してもかまいません。
 - **A8.** 知らせを受けた SC は、その番号の待ち行列を再送の間隔を待たずにすぐ配達に回します。UNRI が落ちた今、SRR にはまた IP-SM-GW が返り、預かっていたショートメッセージを TFR で送ります。SC は知らせに答える前に配達を始め、HSS が SC のアドレスを MWD から消すのは ALA が返ってからです。そのため SRA は、たいてい **MWD-Status** 0 を運びます。SC のアドレスが MWD にあり、どの印も立っていないという意味です（TS 29.338 5.3.3.8）。印が立っていないので、SC はこのあとの配達を HSS に報告しません（[メモリに空きができた知らせが失われたとき](#メモリに空きができた知らせが失われたとき)）。
 - **A9.** 今度は UE 2 が受け取ります。delivery report が配達を終わらせ、TFA は 2001 になります。手順 11 と 12 と同じです。
@@ -539,7 +539,7 @@ UE 2 の制御 API に `PUT /sms-availability` で `{"available": false}` を送
   |<=================>|         |         |         |  REGISTER ... 200 OK (C1)
   |         |         |-------->|         |         |  third-party REGISTER (C2)
   |         |         |<--------|         |         |  200 OK
-  |         |         |         |------------------>|  Ready-For-SM UE_PRESENT (C3)
+  |         |         |         |------------------>|  Ready-For-SM UE_PRESENT, this project's own (C3)
   |         |         |         |<------------------|  Ready-For-SM answer
   |         |         |         |         |<--------|  ALR (C4)
   |         |         |         |         |-------->|  ALA
@@ -548,7 +548,7 @@ UE 2 の制御 API に `PUT /sms-availability` で `{"available": false}` を送
 
 - **C1.** UE 2 は、登録の期限が切れる前に登録し直します。UE は本来これを自分で行い、`POST /register` はそれをすぐに行わせます。連絡先には、前と同じく `+g.3gpp.smsip` が付いています。
 - **C2.** S-CSCF は、ほかの再登録と同じく、IP-SM-GW に第三者 REGISTER を送ります。IP-SM-GW が購読を更新する SUBSCRIBE と、S-CSCF の NOTIFY は、ラダー図では省いています（[再登録と登録の解除](#再登録と登録の解除)）。どれも状態が変わらないので、PUR は送られません（TS 24.341 5.3.3.2）。
-- **C3.** 登録は、UE がそこにいることを示します（TS 23.204 6.5b の step 2a）。IP-SM-GW は、A3 で立てた UE 2 の UNRI をまだ持っているので、それを落として、A6 と同じ知らせを HSS に送ります。
+- **C3.** 登録は、UE がそこにいることを示します（TS 23.204 6.5b の step 2a）。IP-SM-GW は、A3 で立てた UE 2 の UNRI をまだ持っているので、それを落として、A6 と同じ知らせを HSS に送ります。MAP の READY_FOR_SM の代わりにこのプロジェクトが決めたコマンド、Ready-For-SM です。
 - **C4.** HSS は自分の UNRI を落とし、A7 と同じく SC に知らせます（TS 23.040 3.2.6 の 2c）。C3 の知らせが無ければ、UE 2 が登録し直すだけのあいだ、UNRI を落とすものはありません。SC の SRR には毎回 DIAMETER_ERROR_ABSENT_USER が返り、UE 2 宛の新しいショートメッセージの SRR にも同じものが返ります。
 
 送り直しは A8 と A9 と同じです。
@@ -572,7 +572,7 @@ UE 2 の制御 API に `PUT /sms-availability` で `{"available": false}` を送
   :         :         :         :         :         :  UE 2 has memory again
   |<------------------------------------------------|  MESSAGE RP-SMMA (B5)
   |------------------>|         |         |         |
-  |         |         |------------------>|         |  Ready-For-SM UE_MEMORY_AVAILABLE (B6)
+  |         |         |------------------>|         |  Ready-For-SM UE_MEMORY_AVAILABLE, this project's own (B6)
   |         |         |<------------------|         |  Ready-For-SM answer
   |         |         |         |<--------|         |  ALR (B7)
   |         |         |         |-------->|         |  ALA
@@ -584,7 +584,7 @@ UE 2 の制御 API に `PUT /sms-availability` で `{"available": false}` を送
 - **B3.** IP-SM-GW は TFA に **DIAMETER_ERROR_SM_DELIVERY_FAILURE（5555）** と、`SM-Enumerated-Delivery-Failure-Cause` の MEMORY_CAPACITY_EXCEEDED を入れて返します（TS 29.338 7.3.8、Table 6.2.2.1/2）。
 - **B4.** SC は `SM-Delivery-Cause` に UE_MEMORY_CAPACITY_EXCEEDED を入れた RDR で伝えます。HSS は SC のアドレスを MWD に入れ、利用者のメモリ不足の印（MCEF）を立てます（TS 23.040 3.2.6 の 1）。UNRI は立てません。UE には届いており、入れる場所が無いだけだからです。
 - **B5.** `{"full": false}` で、UE は送るべき知らせを送ります。IP-SM-GW 宛の MESSAGE に入れた **RP-SMMA** です（TS 24.011 7.3.2、TS 24.341 5.3.2.5）。
-- **B6 から B7.** IP-SM-GW はこの知らせを、A6 と同じく Ready-For-SM で HSS に渡します。`Alert-Reason` は UE_MEMORY_AVAILABLE です（TS 23.204 6.6 の step 3、TS 24.341 5.3.3.4.1）。HSS は MCEF と UNRI を落とし、MWD のサービスセンタに知らせます（TS 23.040 3.2.6 の 2f）。
+- **B6 から B7.** IP-SM-GW はこの知らせを、A6 と同じく、このプロジェクト独自のコマンド Ready-For-SM で HSS に渡します。MAP なら alert reason が memoryAvailable の READY_FOR_SM にあたるもので、`Alert-Reason` は UE_MEMORY_AVAILABLE です（TS 23.204 6.6 の step 3、TS 24.341 5.3.3.4.1）。HSS は MCEF と UNRI を落とし、MWD のサービスセンタに知らせます（TS 23.040 3.2.6 の 2f）。
 - **B8.** 知らせへの RP-ACK を UE に返すのは、HSS が受け取ったあとです。そのため、知らせが届いていないのに届いたと UE に伝えることはありません。届かなかった知らせには、RP-ACK の代わりに RP-ERROR を返します。原因は、HSS の誤りごとに TS 23.040 11.2 が決める値です。HSS の知らない番号には RP-Cause 30（unknown subscriber）、Ready-For-SM を持たない HSS には 69（requested facility not implemented）、答えなかった HSS と、知らせを受け取れなかった HSS には 38（network out of order）を返します。どの場合も、UE は知らせを送るべきものとして持ち続けます。
 
 送り直しは A8 と A9 と同じです。SRR、SC が預かっていたショートメッセージの TFR、そしてそれを終わらせる delivery report が続きます。
@@ -897,7 +897,7 @@ octet 2: lowest 2 bits of 'l' (00), then rest of 'e' (110010) = 0011 0010 = 32
 | `gsm_sms.tp-fcs` | TP-Failure-Cause を持つ報告。 |
 | `sip.In-Reply-To` | submit report と delivery report。 |
 | `sip.Accept-Contact` | IP-SM-GW が送る MESSAGE。 |
-| `diameter.applicationId == 16777313` | IP-SM-GW とサービスセンタのあいだの SGd。ショートメッセージそのものが通る。`16777312` はサービスセンタと HSS のあいだの S6c（TS 29.338 4.8）。 |
+| `diameter.applicationId == 16777313` | IP-SM-GW とサービスセンタのあいだの SGd。ショートメッセージそのものが通る。`16777312` はサービスセンタと HSS のあいだの S6c（TS 29.338 4.8）。IP-SM-GW から HSS への Ready-For-SM もここを通る。 |
 | `diameter.cmd.code == 16777214` | IP-SM-GW が、利用者がまたショートメッセージを受け取れるようになったことを HSS に伝える Ready-For-SM と、その答え。このプロジェクト独自のコマンドなので、Wireshark は `Unknown` と表示し、`diameter.cmd.code.unknown` の警告を付ける。`diameter.Alert-Reason == 1` で、メモリに空きができたという知らせだけが見つかる。 |
 | `diameter.cmd.code == 8388646` | サービスセンタが serving node へ転送するショートメッセージ（TFR）と、配達の結果を伝える答え（TFA）。`8388645` は UE が送ったショートメッセージの組（OFR、OFA）、`8388647` は経路の問い合わせ（SRR、SRA）、`8388649` は配達の報告（RDR、RDA）、`8388648` は知らせ（ALR、ALA）。 |
 
