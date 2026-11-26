@@ -179,7 +179,7 @@ H.248 で制御すると、中継ノードの作り直しは ServiceChange で�
 | S-CSCF（組の中の 1 台） | ダイアログの外の要求のうち、ODI を載せていないものに 503 を返す。上流は組の次の台へ送る。組のどの台も 503 を返せば、上流は 500 を返す。組のほかの台が同じ状態を持つので、利用者は動かさない | ダイアログの中の要求、ODI の続き、期限の処理 | 処理中のトランザクション |
 | MMTel AS | ダイアログの外の INVITE と、購読を始める SUBSCRIBE に 503 と Retry-After を返す。Retry-After は 30 秒。ただし、この台が持っている会議の URI 宛てのものと、AS が転送した呼の INVITE（orig-cdiv）は断らずに扱う。S-CSCF は SRV の次の台へ送り、残っていなければ iFC の既定の処理に従う。Ut の新しい要求にも 503 と Retry-After を返す（下の「MMTel AS のドレインで何を返すか」） | ダイアログの中の要求、この台が持っている会議（ダイヤルインと、その会議への購読を含む）、OPTIONS、答え始めている Ut の要求 | この台の呼と、答えている途中の Ut の要求。会議は作った利用者の呼として 1 つ、ダイヤルインした利用者はそれぞれもう 1 つ |
 | MRFC | ダイアログの外の INVITE に 503 と Retry-After を返す。Retry-After は 30 秒。この台が参加者を持っている会議への INVITE も断る。混合は MRFP にあり、Store を共有する台はどれも同じ混合に参加者を足せるため。AS は DNS が返した次の台へ送り、残っていなければ MRF なしで続ける。SUBSCRIBE はこの MRFC が受けないので、UA が 405 を返す（下の「MRFC のドレインで何を返すか」） | ダイアログの中の要求。流している音声ガイダンスと、この台を通って混合にいる参加者。OPTIONS | この台が持っているダイアログ |
-| IP-SM-GW | 第三者 REGISTER と、UE が送った短いメッセージの MESSAGE に 503 と Retry-After を返す。Retry-After は 30 秒。ほかの IMS 網から来た短いメッセージの MESSAGE も断る。配達の報告を運ぶ MESSAGE（In-Reply-To の付いたもの）と reg event の NOTIFY は、ダイアログの外から届いても扱う。S-CSCF は DNS が返した次の台へ送り、残っていなければ iFC の既定の処理に従う（下の「IP-SM-GW のドレインで何を返すか」） | 配達の報告、reg event の NOTIFY、SC から渡された配達、TR1N の期限の処理 | この台が手元に持っている仕事。答えている途中の要求、最終応答を待っている自分の SUBSCRIBE、最終応答を待っている配達、claim した TR1N の期限 |
+| IP-SM-GW | 第三者 REGISTER と、UE が送った短いメッセージの MESSAGE に 503 と Retry-After を返す。Retry-After は 30 秒。ほかの IMS 網から来た短いメッセージの MESSAGE も断る。配達の報告を運ぶ MESSAGE（In-Reply-To の付いたもの）と reg event の NOTIFY は、ダイアログの外から届いても扱う。S-CSCF は DNS が返した次の台へ送り、残っていなければ iFC の既定の処理に従う。SGd の TFR には DIAMETER_TOO_BUSY を返し、SC は同じ realm のほかの台へ送る（下の「IP-SM-GW のドレインで何を返すか」） | 配達の報告、reg event の NOTIFY、SC から渡された配達、答えている途中の TFR、TR1N の期限の処理 | この台が手元に持っている仕事。答えている途中の要求、最終応答を待っている自分の SUBSCRIBE、最終応答を待っている配達、TFA を返していない TFR、claim した TR1N の期限 |
 | HSS | Disconnect-Peer-Request を送って接続を閉じる。Disconnect-Cause は REBOOTING。`UNLOCKED` でないあいだは 3868 で待ち受けないので、つなぎ直しに来た相手は TCP の段階で断られ、Tc ごとに試し続ける。`PeerGroup` は閉じた相手を飛ばして次の台へ送る（下の「HSS のドレインで何を返すか」） | 処理中の Cx と Sh の要求。その応答が送り出されてから DPR を送る | 処理中の Cx と Sh の要求 |
 | SC | shut down で Diameter の待ち受けを閉じ、新しい接続を受けない。`LOCKED` で、serving node が開いた接続に DPR を送って閉じる。Disconnect-Cause は REBOOTING。OFR は Destination-Host を持たないので、DIAMETER_TOO_BUSY では断らない。IP-SM-GW の `PeerGroup` は閉じた台を飛ばして次の台へ送り、残っていなければ UE に RP-Cause 41 の RP-ERROR を返す。HSS への接続は SC が開いたものなので残す（下の「SC のドレインで何を返すか」） | 持っている接続で届く OFR（保存先に預け、配達は運用中の台に任せる）、HSS の ALR（宛先を今すぐ試す状態にするだけ）、リースを持っている宛先の今の試行 | 答えている途中の OFR と ALR、リースを持っている宛先 |
 | メディア中継ノード、MRFP | 新しいコンテキストを作る `Add` に 503 を返す。Retry-After は付けない。P-CSCF と MRFC は一覧の次の台を選び、1 台も残らなければ上流に答える（下の「メディア中継ノードと MRFP のドレインで何を返すか」） | 今あるコンテキストへの `Modify` と `Subtract`、そのコンテキストにターミネーションを足す `Add`、Notify と Audit | この台が持っているコンテキスト |
@@ -297,7 +297,7 @@ IP-SM-GW が 1 つの SIP トランザクションより長く持つものは、
 
 IP-SM-GW が受けないメソッドは、administrative state に関わらず 405 を返します（`ipsmgw.go` の `OnRequest`）。運用から外しても、そのメソッドを扱えるようになるわけではなく、次の台も同じ答えを返すためです。OPTIONS もここに入ります。この IP-SM-GW は REGISTER、MESSAGE、NOTIFY だけを受け、UA に OPTIONS を答えさせていません。
 
-SGd の TFR は DIAMETER_TOO_BUSY で断ります（`sgd.go`）。TFR は Destination-Host でこの台を名指しした要求なので、この答えを特定のサーバーを指した要求にだけ使わせる RFC 6733 7.1.3 の MUST に合います。SC は、同じ realm の IP-SM-GW のうち SGd でつながっているほかの台へ、同じ TFR を送ります。SC がこの台への接続を持たないときも同じです（[sms.md](sms.md) の「名指しした台が使えないとき」）。
+`UNLOCKED` でないあいだに届いた SGd の TFR は、DIAMETER_TOO_BUSY で断ります（`sgd.go`）。断る前に受けた TFR は、上のとおり TFA を返すまで扱います。TFR は Destination-Host でこの台を名指しした要求なので、この答えを特定のサーバーを指した要求にだけ使わせる RFC 6733 7.1.3 の MUST に合います。SC は、同じ realm の IP-SM-GW のうち SGd でつながっているほかの台へ、同じ TFR を送ります。SC がこの台への接続を持たないときも同じです（[sms.md](sms.md) の「名指しした台が使えないとき」）。
 
 S-CSCF は利用者の iFC で IP-SM-GW に要求を届けるので、503 は S-CSCF に返ります。S-CSCF は、サーバー名について DNS が返した次の台へ送り（RFC 3263 4.3）、残っていなければ iFC の既定の処理に従います。第三者 REGISTER は TS 24.229 5.4.1.7、ほかは 5.4.3.2 と 5.4.3.3 です。`deploy/compose/hss.yaml` の IP-SM-GW の iFC は、利用者が送る MESSAGE だけが SESSION_TERMINATED で、ほかは SESSION_CONTINUED です。そのため、次のようになります。
 
@@ -307,14 +307,16 @@ S-CSCF は利用者の iFC で IP-SM-GW に要求を届けるので、503 は S-
 
 `Users` は、この台が手元に持っていて、まだ終わっていない仕事です。
 
-- 答えている途中の要求 1 つずつ。数え始めるのは、受けないと決めた要求を断ったあとです（`take`）。第三者 REGISTER は 200 を書いて Store を読み終えるまで、MESSAGE はそれに答える submit report か配達の報告の処理が終わるまで、NOTIFY はその内容を HSS に伝え終わるまで数えます。415、403、400、481、488、489、500 で断る要求も、答えるあいだは 1 人です。受けないメソッドは数える前に 405 で返します。
+- 答えている途中の要求 1 つずつ。数え始めるのは、受けないと決めた要求を断ったあとです（`take`）。第三者 REGISTER は 200 を書いて Store を読み終えるまで（この網の短いメッセージが届かなかった利用者の再登録では、利用者が戻ったことを HSS に伝え終わるまで。`regevent.go` の `tellReachable`）、MESSAGE はそれに答える submit report か配達の報告の処理が終わるまで、NOTIFY はその内容を HSS に伝え終わるまで数えます。415、403、400、481、488、489、500 で断る要求も、答えるあいだは 1 人です。受けないメソッドは数える前に 405 で返します。
 - 自分の SUBSCRIBE と、その更新。最終応答が返るまで数えます（`regevent.go`）。SUBSCRIBE を出したまま止まった台が、ダイアログの無い購読を残さないためです。
+- 利用者が送った MESSAGE のあとの仕事。この台が届けられなかった利用者が戻ったことを、HSS に伝え終わるまでです（`regevent.go` の `reachableAgain`）。
 - SC から渡された配達。RP-DATA を運ぶ MESSAGE に最終応答が返るまでです（`Deliver`）。
+- 受けた TFR。TFA を返すまでです（`sgd.go`）。TFA は UE の配達の報告を SC に運ぶので、この 1 つは配達の報告を待ちます。途中で止まった台は、始めた配達の結果を誰にも伝えず、SC は自分のタイマーが切れるまで答えを待つことになります。
 - 自分の sweep が claim した TR1N の期限。配達を終わらせて SC に伝えるまでです（`reportTimedOut`）。
 
-配達の報告を待っている時間は数えません。配達とその TR1N は Store にあるので、報告は届いた台が扱い、TR1N が切れればどの台の sweep でも配達を終わらせられます。この台を止めても何も失われません。報告を待って shut down を止めると、このノードを必要としなくなった仕事のために TR1N の 64 秒を待つことになります。
+配達の報告を待っている時間は、TFR に答えるものを除いて数えません。配達とその TR1N は Store にあるので、報告は届いた台が扱い、TR1N が切れればどの台の sweep でも配達を終わらせられます。この台を止めても何も失われません。報告を待って shut down を止めると、このノードを必要としなくなった仕事のために TR1N の 64 秒を待つことになります。
 
-数えるものはどれも SIP のトランザクション数回で終わるので、shut down はすぐに `LOCKED` に移ります。移れないのは、新しい仕事が続けて来るときです。sweep はほかの台が送った配達の期限も claim し続け、claim 1 つが終わるまで 1 人として数えます。ドレイン中の S-CSCF が自分の期限の処理を続けるのと同じです。そこを区切るのが shut down の `timeout_seconds` で、HSS と同じ形です。
+数えるもののうち TFR を除くものは、SIP のトランザクション数回で終わります。手元に TFR が無ければ、shut down はすぐに `LOCKED` に移ります。TFR はその配達が終わるまで、つまり TR1N と、それを終わらせる sweep の 1 回分まで続きます。ほかに移れないのは、新しい仕事が続けて来るときです。sweep はほかの台が送った配達の期限も claim し続け、claim 1 つが終わるまで 1 人として数えます。ドレイン中の S-CSCF が自分の期限の処理を続けるのと同じです。そこを区切るのが shut down の `timeout_seconds` で、HSS と同じ形です。
 
 operational state は Sh の相手に従います。IP-SM-GW は利用者の登録状態を聞いても SMSRegistrationInfo を書けなければ使えず（TS 24.341 5.3.3.2）、隣の SC も短いメッセージの宛先の番号を持つ利用者を HSS に聞けません。どちらも HSS が要るので、Sh の相手がいなければ DISABLED にします。IP-SM-GW と同じプロセスで動く SC のスタブは、operational state に入れません。`ServiceCentre` の境界の向こうにあり、状態を報告できる結び付きが無いためです。SGd でノードとしての SC（`sc` の役割）につなぐ IP-SM-GW も、operational state は Sh の相手だけで決めます。SC が届かないあいだも登録は続けられ、発信のショートメッセージには RP-Cause 41 を返して UE に送り直しを促せるためです。SC そのものの状態は、SC のノードが自分の保守用の API で報告します（次の節）。
 
