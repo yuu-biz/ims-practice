@@ -238,14 +238,16 @@ type Store interface {
 	// SignallingSession is session, for an event that the PCRF reports
 	// about that session.
 	AssociationOfPolicySession(ctx context.Context, session policy.SessionID) (Association, bool, error)
-	// PutDialog stores a new dialog under its key.
+	// PutDialog stores a new dialog under its key, until its KeepUntil
+	// when it has one.
 	PutDialog(ctx context.Context, d Dialog) error
 	// UpdateDialog changes the dialog of key with change, as one step
 	// that no other change of that dialog comes between, and returns the
 	// dialog as it is afterwards. It reports false, and does not call
 	// change, when there is no such dialog: a dialog that has ended does
 	// not come back. change must not block, and may run more than once,
-	// each time on a fresh copy.
+	// each time on a fresh copy. The dialog is kept until the KeepUntil
+	// that change leaves in it, when it has one.
 	UpdateDialog(ctx context.Context, key DialogKey, change func(*Dialog)) (Dialog, bool, error)
 	// TakeDialog removes and returns the dialog of key. Only one caller
 	// gets it, and that one ends what the dialog holds; this is what
@@ -389,15 +391,31 @@ func (s *MemoryStore) PutDialog(_ context.Context, d Dialog) error {
 	return nil
 }
 
-// putDialog stores d and keeps the index by policy session in step.
+// putDialog stores d and keeps the index by policy session in step. A
+// dialog with a KeepUntil goes at that time, unless a later write has
+// given it another one by then.
 func (s *MemoryStore) putDialog(d Dialog) {
-	if old, ok := s.dialogs[d.Key]; ok && old.PolicySession != d.PolicySession {
+	old, existed := s.dialogs[d.Key]
+	if existed && old.PolicySession != d.PolicySession {
 		delete(s.dialogOfSession, old.PolicySession)
 	}
 	s.dialogs[d.Key] = d
 	if d.PolicySession != "" {
 		s.dialogOfSession[d.PolicySession] = d.Key
 	}
+	if d.KeepUntil.IsZero() || existed && old.KeepUntil.Equal(d.KeepUntil) {
+		return
+	}
+	time.AfterFunc(time.Until(d.KeepUntil), func() {
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		if current, ok := s.dialogs[d.Key]; ok && current.KeepUntil.Equal(d.KeepUntil) {
+			delete(s.dialogs, d.Key)
+			if s.dialogOfSession[current.PolicySession] == d.Key {
+				delete(s.dialogOfSession, current.PolicySession)
+			}
+		}
+	})
 }
 
 func (s *MemoryStore) UpdateDialog(_ context.Context, key DialogKey, change func(*Dialog)) (Dialog, bool, error) {
@@ -417,7 +435,9 @@ func (s *MemoryStore) TakeDialog(_ context.Context, key DialogKey) (Dialog, bool
 	defer s.mu.Unlock()
 	d, ok := s.dialogs[key]
 	delete(s.dialogs, key)
-	delete(s.dialogOfSession, d.PolicySession)
+	if ok && s.dialogOfSession[d.PolicySession] == key {
+		delete(s.dialogOfSession, d.PolicySession)
+	}
 	return d, ok, nil
 }
 
@@ -717,6 +737,9 @@ type PCSCF struct {
 	// 64*T1, after which the callee itself gives up waiting for the ACK
 	// (RFC 3261 13.3.1.4).
 	ackWait time.Duration
+	// releasedKeep is how long the Store keeps a dialog that the P-CSCF
+	// has released (Dialog.KeepUntil).
+	releasedKeep time.Duration
 }
 
 // New makes a P-CSCF and starts its sweep, which handles the expiries of
@@ -743,7 +766,7 @@ func New(cfg Config, locator Locator, store Store, relays []MediaRelay, log *slo
 	}
 	p := &PCSCF{cfg: cfg, locator: locator, relays: relays, log: log, measurements: measured, setups: map[DialogKey]*setup{},
 		regEventRefresh: ims.RefreshAfter, notifyWait: 64 * sip.DefaultTimers().T1,
-		ackWait: 64 * sip.DefaultTimers().T1}
+		ackWait: 64 * sip.DefaultTimers().T1, releasedKeep: sip.DefaultTimerC}
 	p.admissions = newAdmissions(p.associationGone)
 	p.store = indexedStore{Store: store, admissions: p.admissions}
 	p.stopSweep = p.sweep()

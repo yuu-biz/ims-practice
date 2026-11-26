@@ -2,6 +2,7 @@ package pcscf
 
 import (
 	"net/netip"
+	"time"
 
 	"github.com/yuu-biz/ims-practice/internal/policy"
 	"github.com/yuu-biz/ims-practice/internal/sip"
@@ -65,6 +66,11 @@ type Dialog struct {
 	// PolicySession is the policy session in which the PCRF authorised
 	// the media of the dialog (TS 29.214 4.4.1), or empty.
 	PolicySession policy.SessionID
+	// KeepUntil is when the Store forgets the dialog, or zero to keep it
+	// until the P-CSCF takes it (TakeDialog). A dialog that the P-CSCF
+	// releases gets one (releasedKeep), so that it goes also when the
+	// instance that is to end it stops first.
+	KeepUntil time.Time
 	// ICID is the icid-value of the INVITE: the one that the P-CSCF
 	// wrote in it for the calling UE (TS 24.229 5.2.6.3.3 step 7), or
 	// the one that it stored from it for the called UE (5.2.6.4.3 item
