@@ -88,7 +88,7 @@ func TestVoLTEContactCarriesNoIMSI(t *testing.T) {
 	defer cancel()
 	a := newVoLTEParty(t, n.pcscf, impiAKA, impuAKA, "", &ue.AKA{Secret: testSet1, SQN: aka.NewSQN(5000, 1)})
 	b := newVoLTEParty(t, n.pcscf, impi2, impu2, password2, nil)
-	answered := answerIn(t, b, ue.Speech{}, ue.AnswerOptions{PickUp: time.After(0)})
+	answered := answerIn(t, b, ue.ToneSpeech(time.Second), ue.AnswerOptions{PickUp: time.After(0)})
 	if err := a.ue.Call(ctx, a.ua, a.reg, impu2, a.media, ue.ToneSpeech(100*time.Millisecond), ue.CallOptions{}); err != nil {
 		t.Fatal(err)
 	}

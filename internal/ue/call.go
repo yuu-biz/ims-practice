@@ -295,7 +295,7 @@ func (u *UE) Call(ctx context.Context, ua *sip.UA, reg Registration, target stri
 			return err
 		}
 		logEndedBy(u.log, call.EndedBy())
-		return nil
+		return s.noMedia()
 	default:
 	}
 	if err := s.ended(); err != nil {
@@ -310,7 +310,7 @@ func (u *UE) Call(ctx context.Context, ua *sip.UA, reg Registration, target stri
 		return fmt.Errorf("BYE: %w", err)
 	}
 	u.log.Info("call ended")
-	return sendErr
+	return errors.Join(sendErr, s.noMedia())
 }
 
 // updated reads the final response to an UPDATE of this UE: its 2xx
@@ -638,7 +638,7 @@ func (u *UE) Answer(ctx context.Context, ic *sip.IncomingCall, media *Media, spe
 	if err := ic.Err(); err != nil && !errors.Is(err, sip.ErrCallEnded) {
 		return err
 	}
-	return nil
+	return s.noMedia()
 }
 
 // logEndedBy logs the BYE with which the peer, or the network, ended

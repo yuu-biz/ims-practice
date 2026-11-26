@@ -59,6 +59,7 @@ To try the failures:
 - **Busy.** Start UE 2 with `-reject 486`. The call ends with `486 Busy Here`.
 - **Not registered.** Call `tel:+12025550103`, a subscriber that never registers. The call ends with `480 Temporarily Unavailable`.
 - **Unknown number.** Call `tel:+12025550198`, which has no ENUM record. The call ends with `404 Not Found`.
+- **One-way audio.** Start UE 2 with `-tone 0s`, so that it sends no RTP. UE 1 still hangs up with a BYE, but `ue call` ends with the error `no RTP received`: UE 2's SDP answer said `sendrecv`, so its RTP should have come after the answer. UE 2 heard UE 1, so its call ends without an error. A call is not one-way when, at its end, the peer's SDP says `sendonly`, `recvonly` or `inactive`, or the UE itself holds it: a UE that holds a call sends nothing (IR.92 2.3.10). Early media before the answer does not count as RTP of the call.
 
 ## Open the capture
 
