@@ -30,7 +30,7 @@ services:
 
 もう一度 `docker compose up -d` を実行し、別のマシンで `http://<ホストのアドレス>:8080` を開きます。要らなくなったら、このファイルを削除します。
 
-ラボがパスワードを求めないのは、`127.0.0.1` で自分だけが届く学習用の網のための割り切りです。ただし、同じブラウザで開いたほかのサイトのページも、`127.0.0.1` に要求を送れます。ブラウザは、Content-Type が `text/plain`、フォーム、マルチパートの POST と、Content-Type の無い POST を、サーバーに先に尋ねずにそのページから送らせます。隠すのは、そのページへの応答だけです（Fetch Standard の CORS-safelisted method と request-header）。そこで、ラボ、UE シミュレータ、障害注入のエージェントは、POST と PUT を `Content-Type: application/json` のときだけ受け付けます。本文の無い要求でも同じです。それ以外には 415（Unsupported Media Type）を返します。その Content-Type の要求をほかのサイトへ送る前に、ブラウザは preflight の `OPTIONS` 要求でサーバーに尋ねます。これらの API は `Access-Control-Allow-*` のヘッダで答えないので、ブラウザが要求そのものを送ることはありません。自分で `curl` を使うときは `-H 'Content-Type: application/json'` を付けます。これで防げるのはブラウザの中のページで、ポートに届く人ではありません。API はパスワードを求めないままです。運用者の網なら、パスワードを求めます。
+ラボがパスワードを求めないのは、`127.0.0.1` で自分だけが届く学習用の網のための割り切りです。ただし、同じブラウザで開いたほかのサイトのページも、`127.0.0.1` に要求を送れます。ブラウザは、Content-Type が `text/plain`、フォーム、マルチパートの POST と、Content-Type の無い POST を、サーバーに先に尋ねずにそのページから送らせます。隠すのは、そのページへの応答だけです（Fetch Standard の CORS-safelisted method と request-header）。そこで、ラボ、UE シミュレータ、障害注入のエージェントは、POST と PUT を `Content-Type: application/json` のときだけ受け付けます。本文の無い要求でも同じです。それ以外には 415（Unsupported Media Type）を返します。その Content-Type の要求をほかのサイトへ送る前に、ブラウザは preflight の `OPTIONS` 要求でサーバーに尋ねます。これらの API は `Access-Control-Allow-*` のヘッダで答えないので、ブラウザが要求そのものを送ることはありません。自分で `curl` を使うときは `-H 'Content-Type: application/json'` を付けます。これで防げるのは、ほかのサイトのページが preflight なしで送る要求だけです。ブラウザが API と同じオリジンだとみなすページは、preflight なしで JSON を送れます。持ち主があとで名前を `127.0.0.1` に向けたドメインのページがそれで、DNS rebinding と呼びます。ポートに届く人も防げません。API はパスワードを求めず、`Host` ヘッダも見ません。運用者の網なら、どちらも確かめます。
 
 ## 各パネルの内容
 
