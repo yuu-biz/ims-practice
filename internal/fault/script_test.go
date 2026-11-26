@@ -223,6 +223,8 @@ func TestFaultScriptRunsTheCommandsOfThePackage(t *testing.T) {
 		{"unpause", []string{"unpause", "pcscf"}, Request{Target: "pcscf", Kind: Pause}, true},
 		{"crash", []string{"crash", "scscf"}, Request{Target: "scscf", Kind: Crash}, false},
 		{"loss", []string{"loss", "scscf", "10"}, Request{Target: "scscf", Kind: Loss, LossPercent: 10}, false},
+		{"loss of every packet", []string{"loss", "scscf", "100"}, Request{Target: "scscf", Kind: Loss, LossPercent: 100}, false},
+		{"loss of one packet in a hundred", []string{"loss", "scscf", "1"}, Request{Target: "scscf", Kind: Loss, LossPercent: 1}, false},
 		{"delay", []string{"delay", "pcscf", "200"}, Request{Target: "pcscf", Kind: Delay, Delay: Duration(200 * time.Millisecond)}, false},
 		{"delay with jitter", []string{"delay", "pcscf", "200", "20"},
 			Request{Target: "pcscf", Kind: Delay, Delay: Duration(200 * time.Millisecond), Jitter: Duration(20 * time.Millisecond)}, false},

@@ -296,9 +296,17 @@ loss)
 	[ $# -eq 2 ] || usage
 	name=$(container_of "$1")
 	t=ims_fault_loss
+	# numgen gives each packet a number from 0 to 99, and nft refuses to
+	# compare it with 100, so a loss of every packet drops every IP
+	# packet instead.
+	case $2 in
+	100) match="meta protocol ip" ;;
+	[1-9] | [1-9][0-9]) match="meta protocol ip numgen random mod 100 < $2" ;;
+	*) fail "the loss is a percentage from 1 to 100, not $2" ;;
+	esac
 	devs=$(devices "$name" "$network")
 	# shellcheck disable=SC2086 # one word per interface
-	helper "$name" nft "$(table $t $devs)$(drop $t "meta protocol ip numgen random mod 100 < $2" "meta protocol ip numgen random mod 100 < $2" $devs)"
+	helper "$name" nft "$(table $t $devs)$(drop $t "$match" "$match" $devs)"
 	;;
 delay)
 	[ $# -eq 2 ] || [ $# -eq 3 ] || usage

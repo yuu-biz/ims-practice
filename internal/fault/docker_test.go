@@ -794,6 +794,13 @@ func TestRules(t *testing.T) {
 			`add rule netdev ims_fault_1 egress_eth0 udp dport 9060 accept; ` +
 			`add rule netdev ims_fault_1 egress_eth0 meta protocol ip numgen random mod 100 < 20 counter drop; ` +
 			`add rule netdev ims_fault_1 ingress_eth0 meta protocol ip numgen random mod 100 < 20 counter drop`},
+		// nft refuses "< 100": numgen gives no number above 99.
+		{lossCommand("ims_fault_1", eth0, 100), `nft|add table netdev ims_fault_1; ` +
+			`add chain netdev ims_fault_1 egress_eth0 { type filter hook egress device "eth0" priority filter; policy accept; }; ` +
+			`add chain netdev ims_fault_1 ingress_eth0 { type filter hook ingress device "eth0" priority filter; policy accept; }; ` +
+			`add rule netdev ims_fault_1 egress_eth0 udp dport 9060 accept; ` +
+			`add rule netdev ims_fault_1 egress_eth0 meta protocol ip counter drop; ` +
+			`add rule netdev ims_fault_1 ingress_eth0 meta protocol ip counter drop`},
 		{partitionCommand("ims_fault_1", eth0, nil), `nft|add table netdev ims_fault_1; ` +
 			`add chain netdev ims_fault_1 egress_eth0 { type filter hook egress device "eth0" priority filter; policy accept; }; ` +
 			`add chain netdev ims_fault_1 ingress_eth0 { type filter hook ingress device "eth0" priority filter; policy accept; }; ` +
