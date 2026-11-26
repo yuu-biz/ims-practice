@@ -54,7 +54,7 @@
 | MMTel AS | `call:<Incoming のダイアログ>`、`conference:<ID>`（新規） | `call-of-leg:<Outgoing のダイアログ>` | なし |
 | MRFC | `conference:<ID>`（新規） | なし | なし |
 | IBCF（新規） | `call:<台の名前>:<呼の ID>` | 並べ替えた索引 `call-ids:<台の名前>`（その台の呼の ID。作り直した台が 1 ページずつ引く）、`dialog:<Call-ID>:<自分の tag>:<相手の tag>`（そのダイアログを持つ呼の台の名前と ID） | なし |
-| HSS | `subscriber:<IMPI>`、`settings`（保守用の API で変える設定と、その世代）、`profile-push:<プロファイルの名前の出どころ>`（設定を変えたときの push の進み） | `public:<IMPU>`、並べ替えた索引 `subscribers`（`List` が 1 ページずつ引く）、並べ替えた索引 `served:<プロファイルの名前の出どころ>`（S-CSCF がプロファイルを持っている加入者。`ListServed` が 1 ページずつ引く） | 時刻の索引 `profile-pushes`（出どころごとの push。借りた台が 1 ページ分の PPR を送る。[hss-provisioning.md](hss-provisioning.md) の「設定を台のあいだで分ける」） |
+| HSS | `subscriber:<IMPI>`、`settings`（保守用の API で変える設定と、その世代）、`profile-push:<プロファイルの名前の出どころ>`（設定を変えたときの push の進み） | `public:<IMPU>`、並べ替えた索引 `subscribers`（`List` が 1 ページずつ引く）、並べ替えた索引 `served:<プロファイルの名前の出どころ>`（S-CSCF がプロファイルを持っている加入者。`ListServed` が 1 ページずつ引く） | 時刻の索引 `profile-pushes`（出どころごとの push の回。借りた台が 1 ページ分の PPR を送る）と `profile-push-retries`（回を借りた台が S-CSCF の接続を持たずに送れなかった PPR。接続を持つ台が送る）。[hss-provisioning.md](hss-provisioning.md) の「設定を台のあいだで分ける」 |
 | メディア中継ノード（新規） | `<台の名前>-<役割>:context:<ID>` | 並べ替えた索引 `<台の名前>-<役割>:context-ids`（その台のコンテキストの ID。作り直した台が 1 ページずつ引く） | なし |
 
 P-CSCF の購読は利用者ごとに 1 つなので、主の項目は IMPI で引きます。NOTIFY はダイアログの Call-ID しか名乗らないため、Call-ID から IMPI を引く索引を添えます。IP-SM-GW の購読は逆に、主の項目を Call-ID で引き、公開の識別子の索引を添えます。どちらも、再登録のときに自分の購読を見つけ、NOTIFY のときにその購読を見つけられます。
