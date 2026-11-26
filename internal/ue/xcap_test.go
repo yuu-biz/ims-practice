@@ -81,7 +81,7 @@ func utNetwork(t *testing.T) (*sh.Client, *ue.SupplementaryServices, *metrics.Re
 			t.Fatal("the Sh connection to the HSS never opened")
 		}
 	}
-	server := httptest.NewServer(xcap.NewHandler(users, "", []byte("test-nonce-key-of-the-xcap-servers"), quiet()))
+	server := httptest.NewServer(xcap.NewHandler(users, "", realm, []byte("test-nonce-key-of-the-xcap-servers"), quiet()))
 	t.Cleanup(server.Close)
 	client := &xcap.Client{Root: server.URL, XUI: utIMPU, Username: utIMPI, Password: "test-password-1", UserAgent: "ims-practice-ue"}
 	return users, ue.NewSupplementaryServices(client), reg

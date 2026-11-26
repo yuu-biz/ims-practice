@@ -4,9 +4,11 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"regexp"
 	"strings"
 	"sync"
 	"testing"
@@ -189,7 +191,7 @@ func TestWriterBetweenReadAndWrite(t *testing.T) {
 				t.Error(err)
 			}
 		}}
-		server := httptest.NewServer(xcap.NewHandler(repo, "", []byte(nonceKey), quiet()))
+		server := httptest.NewServer(xcap.NewHandler(repo, "", realm, []byte(nonceKey), quiet()))
 		c := n.client(impuA)
 		c.Root = server.URL
 		_, err := c.Put(ctx, ruleSelector("communication-diversion", "cfu"), forwardRule("cfu", "tel:+12025550153", nil), tc.ifMatch)
@@ -255,18 +257,46 @@ func TestAuthentication(t *testing.T) {
 	if _, err := wrong.Get(ctx, xcap.Selector{}); status(err) != http.StatusUnauthorized {
 		t.Errorf("wrong password: %v", err)
 	}
-	// A authenticates fine, but the document is B's (TS 24.623 6.2).
-	if _, err := n.client(impuB).Get(ctx, xcap.Selector{}); status(err) != http.StatusForbidden {
-		t.Errorf("the document of another user: %v", err)
+	// The server cannot check the credentials of A against the
+	// document of B, of C, who has no Ut credential, or of a user it
+	// does not know: none of them is authenticated (TS 24.623 5.3.2.2),
+	// as with a wrong password.
+	for what, xui := range map[string]string{
+		"the document of another user":                   impuB,
+		"the document of a user without a Ut credential": impuC,
+		"an unknown XUI":                                 "sip:001010000000099@" + realm,
+	} {
+		if _, err := n.client(xui).Get(ctx, xcap.Selector{}); status(err) != http.StatusUnauthorized {
+			t.Errorf("%s: %v", what, err)
+		}
 	}
-	// C has no Ut credential, so is not allowed to use Ut (TS 24.623
-	// 5.3.2.3).
-	if _, err := n.client(impuC).Get(ctx, xcap.Selector{}); status(err) != http.StatusForbidden {
-		t.Errorf("a user without a Ut credential: %v", err)
+}
+
+// TestTheChallengeTellsNothingOfTheUser: a request without credentials
+// is challenged before the server reads anything of the user (TS
+// 24.623 5.2.3.2.1), so the answer is the same for a user with a Ut
+// credential, a user without one and a user that does not exist, but
+// for the nonce. It does not let anyone find out which users there are.
+func TestTheChallengeTellsNothingOfTheUser(t *testing.T) {
+	n := newNetwork(t)
+	nonce := regexp.MustCompile(`nonce="[^"]*"`)
+	answer := func(xui string) string {
+		resp, err := http.Get(n.server.URL + "/simservs.ngn.etsi.org/users/" + xui + "/simservs.xml")
+		if err != nil {
+			t.Fatal(err)
+		}
+		body, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		return fmt.Sprintf("%d %q %s", resp.StatusCode, nonce.ReplaceAllString(strings.Join(resp.Header.Values("WWW-Authenticate"), "\n"), `nonce="..."`), body)
 	}
-	// RFC 4825 8: an XUI the server does not know.
-	if _, err := n.client("sip:001010000000099@"+realm).Get(ctx, xcap.Selector{}); status(err) != http.StatusNotFound {
-		t.Errorf("an unknown XUI: %v", err)
+	want := answer(impuA)
+	if !strings.HasPrefix(want, "401 ") {
+		t.Fatalf("a user with a Ut credential: %s, want 401", want)
+	}
+	for what, xui := range map[string]string{"a user without a Ut credential": impuC, "an unknown XUI": "sip:001010000000099@" + realm} {
+		if got := answer(xui); got != want {
+			t.Errorf("%s: %s\nwant the answer to a user with a Ut credential: %s", what, got, want)
+		}
 	}
 }
 
@@ -352,7 +382,7 @@ func TestRequestErrors(t *testing.T) {
 }
 
 func TestCapabilities(t *testing.T) {
-	server := httptest.NewServer(xcap.NewHandler(nil, "/xcap", []byte(nonceKey), quiet()))
+	server := httptest.NewServer(xcap.NewHandler(nil, "/xcap", realm, []byte(nonceKey), quiet()))
 	defer server.Close()
 	resp, err := http.Get(server.URL + "/xcap/xcap-caps/global/index")
 	if err != nil {

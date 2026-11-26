@@ -334,18 +334,19 @@ func TestThePCSCFCountsItsRxRequestsAndAnswers(t *testing.T) {
 // the client reads the document, writes the changed node back, and
 // reads the document again for the settings it returns. Each
 // authenticated request costs the AS a UDR for the Ut credential it
-// authenticates against (TS 24.623 5.3.2.3) and a UDR for the document
-// itself, and the challenge that the first request of the client is
-// answered with costs the credential alone: seven UDRs. The write goes
-// to the HSS in the one PUR.
+// authenticates against and a UDR for the document itself, and the
+// challenge that the first request of the client is answered with
+// costs none, since the AS challenges before it reads anything of the
+// user (TS 24.623 5.2.3.2.1): six UDRs. The write goes to the HSS in
+// the one PUR.
 func TestTheMMTelASCountsItsShRequestsAndAnswers(t *testing.T) {
 	_, services, reg := utNetwork(t)
 	if _, err := services.SetNoReplyTimer(t.Context(), 5); err != nil {
 		t.Fatal(err)
 	}
 	served(t, reg,
-		`ims_diameter_requests_total{role="mmtel",direction="sent",command="UDR"} 7`,
-		`ims_diameter_answers_total{role="mmtel",direction="received",command="UDR",result="DIAMETER_SUCCESS"} 7`,
+		`ims_diameter_requests_total{role="mmtel",direction="sent",command="UDR"} 6`,
+		`ims_diameter_answers_total{role="mmtel",direction="received",command="UDR",result="DIAMETER_SUCCESS"} 6`,
 		`ims_diameter_requests_total{role="mmtel",direction="sent",command="PUR"} 1`,
 		`ims_diameter_answers_total{role="mmtel",direction="received",command="PUR",result="DIAMETER_SUCCESS"} 1`)
 }

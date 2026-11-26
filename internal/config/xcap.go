@@ -10,9 +10,9 @@ import (
 // XCAP is the configuration of the XCAP server of the Ut reference
 // point (TS 24.623), which the mmtel role runs (xcap.NewHandler).
 //
-// There is no realm: the server challenges with the realm of the user's
-// Ut credential, which the HSS derived it with (hss.UtCredentialData),
-// so the two cannot disagree.
+// There is no realm: the server challenges with the home domain, in
+// which the HSS derives the Ut credential of every user
+// (hss.UtCredentialData), so the two cannot disagree.
 type XCAP struct {
 	// Listen is the TCP address of the HTTP server, such as 0.0.0.0:80.
 	// XCAP is plain HTTP on the standard port 80 here.

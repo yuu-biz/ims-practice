@@ -152,7 +152,7 @@ func newNetwork(t *testing.T) network {
 	provision(impuB, simservs.ServiceIndication, []byte(mmtelServices))
 	provision(impuB, xcap.CredentialServiceIndication, xcap.NewCredential(impiB, realm, passwordB).Marshal())
 
-	n.server = httptest.NewServer(xcap.NewHandler(n.sh, "", []byte(nonceKey), quiet()))
+	n.server = httptest.NewServer(xcap.NewHandler(n.sh, "", realm, []byte(nonceKey), quiet()))
 	t.Cleanup(n.server.Close)
 	return n
 }

@@ -189,8 +189,8 @@ Route: <sip:mmtel.…:5060;lr>,<sip:scscf.…:5060;lr;odi=...>
 
 | 順 | 要求 | 応答と、その間の Sh |
 | --- | --- | --- |
-| 1 | GET。資格情報なし | UDR で Ut のパスワード。401 とチャレンジ 2 つ（SHA-256、MD5）。 |
-| 2 | GET。`Authorization: Digest` | UDR が 2 つ。200 と `ETag: "0"`。 |
+| 1 | GET。資格情報なし | UDR は無し。401 とチャレンジ 2 つ（SHA-256、MD5）。どの利用者でも同じ。 |
+| 2 | GET。`Authorization: Digest` | UDR が 2 つ。Ut のパスワードと文書。200 と `ETag: "0"`。 |
 | 3 | 規則 1 つの PUT。`~~` のノードセレクタ、`If-Match: "0"` | PUR に `<SequenceNumber>1</SequenceNumber>`。PUA のあと 200 と `ETag: "1"`。 |
 | 4 | GET | 設定として表示する文書。 |
 
@@ -206,20 +206,18 @@ Route: <sip:mmtel.…:5060;lr>,<sip:scscf.…:5060;lr;odi=...>
 [internal/xcap/digest.go](../../../internal/xcap/digest.go)
 
 ```go
-func (n nonces) challenge(h http.Header, c Credential, stale bool) {
+func (n nonces) challenge(h http.Header, realm string, stale bool) {
 	nonce := n.issue()
 	for _, a := range algorithms {
-		if _, ok := c.ha1(a); !ok {
-			continue
-		}
 		h.Add("WWW-Authenticate", sip.Challenge{
-			Realm: c.Realm, Nonce: nonce, Stale: stale, Algorithm: string(a), QOP: []string{qopAuth},
+			Realm: realm, Nonce: nonce, Stale: stale, Algorithm: string(a), QOP: []string{qopAuth},
 		}.String())
 	}
 }
 ```
 
 - `algorithms` は SHA-256、MD5 の順です。どのチャレンジも同じ nonce を使います。
+- `realm` はホームドメインです。チャレンジは利用者によらないので、AS は利用者について何も読まずに送り、どの XUI でも同じになります。
 - 資格情報は HSS の repository data です。Service-Indication は `Ut-Digest-Credential` です。入っているのはパスワードではなく HA1 の値です（`internal/xcap/credential.go` のコメント）。
 - WWW-Authenticate は SIP Digest と同じ形なので、コードは `internal/sip` の `Challenge` をそのまま使います。登録の回の 401 と比べてみます。
 

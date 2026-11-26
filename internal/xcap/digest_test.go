@@ -90,7 +90,7 @@ func TestVerify(t *testing.T) {
 	if v, _ := n.verify(signedRequest(t, n, cred, cred.Username, "wrong", SHA256), cred); v != unauthenticated {
 		t.Errorf("wrong password: verdict %d", v)
 	}
-	if v, _ := n.verify(signedRequest(t, n, cred, "001010000000002@ims.example", "test-password-2", SHA256), cred); v != notOwner {
+	if v, _ := n.verify(signedRequest(t, n, cred, "001010000000002@ims.example", "test-password-2", SHA256), cred); v != unauthenticated {
 		t.Errorf("another user: verdict %d", v)
 	}
 	if v, _ := n.verify(httptest.NewRequest(http.MethodGet, "/", nil), cred); v != unauthenticated {
@@ -124,7 +124,7 @@ func TestVerify(t *testing.T) {
 func TestChallengeOrder(t *testing.T) {
 	n := nonces{key: []byte("k"), now: time.Now}
 	h := http.Header{}
-	n.challenge(h, NewCredential("u", "ims.example", "p"), true)
+	n.challenge(h, "ims.example", true)
 	values := h.Values("WWW-Authenticate")
 	if len(values) != 2 {
 		t.Fatalf("challenges %q", values)

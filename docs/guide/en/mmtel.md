@@ -142,8 +142,8 @@ http://xcap.ims.mnc001.mcc001.3gppnetwork.org/simservs.ngn.etsi.org/users/sip:+1
 
 `ue xcap set cfu on tel:+12025550103` sends:
 
-1. **GET** of the whole document, without credentials. The AS reads the user's Ut password over Sh, as repository data with Service-Indication `Ut-Digest-Credential` (a UDR), and answers **401** with two `WWW-Authenticate: Digest` challenges, SHA-256 first and MD5 second (RFC 7616 3.3, TS 24.623 5.2.3.2.1).
-2. **GET** again, with `Authorization: Digest` for the first challenge. The AS reads the credential and the document (two UDRs) and answers **200** with the document and `ETag: "0"`.
+1. **GET** of the whole document, without credentials. The AS answers **401** at once, with two `WWW-Authenticate: Digest` challenges, SHA-256 first and MD5 second (RFC 7616 3.3, TS 24.623 5.2.3.2.1). It sends no UDR first: the server authenticates the request before anything else (TS 24.623 5.3.2.2), and the realm of the challenge is the home domain, the same for every user. So the 401 is the same whether the XUI names a user or not, and it tells no one which users exist.
+2. **GET** again, with `Authorization: Digest` for the first challenge. The AS now reads the user's Ut password over Sh, as repository data with Service-Indication `Ut-Digest-Credential`, checks the response against it, reads the document, and answers **200** with the document and `ETag: "0"`. That is two UDRs. Credentials that the AS cannot check get the same 401 as a wrong password: those for an XUI that names no user, for a user without a Ut password, or with the username of another user than the one the XUI names.
 3. **PUT** of one rule, with a node selector after `~~` and `If-Match: "0"` (RFC 4825 6, 7.11; GSMA IR.92 2.3.2):
 
    ```text

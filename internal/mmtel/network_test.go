@@ -338,7 +338,7 @@ func startNetworkWith(t *testing.T, o netOptions) *network {
 	// The subdomain of the conference URIs leads to the AS, as its NAPTR
 	// and SRV records do in deploy/compose/dns.
 	dns.add(asCfg.MMTel.ConferenceDomain, tr.LocalAddr())
-	ut := httptest.NewServer(xcap.NewHandler(users, asCfg.MMTel.XCAP.RootPath, asCfg.MMTel.XCAP.NonceKey, quiet()))
+	ut := httptest.NewServer(xcap.NewHandler(users, asCfg.MMTel.XCAP.RootPath, domain, asCfg.MMTel.XCAP.NonceKey, quiet()))
 	t.Cleanup(ut.Close)
 
 	// The Diameter connections open in the background.
