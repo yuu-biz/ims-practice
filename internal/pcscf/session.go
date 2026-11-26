@@ -308,7 +308,7 @@ func (p *PCSCF) subsequent(st *sip.ServerTransaction, out *sip.Message, log *slo
 			p.chargeRequest(out, d.ICID)
 		}
 	}
-	answer, answered := func(*sip.Message) {}, func() {}
+	answer, answered := func(*sip.Message) {}, func(*sip.Message, error) {}
 	if known && carriesSDP(out, d.Relay) {
 		ue := st.Source.Addr.Addr()
 		if toUE {
@@ -348,7 +348,7 @@ func (p *PCSCF) subsequent(st *sip.ServerTransaction, out *sip.Message, log *slo
 		relay(final)
 	}
 	ims.Finish(st, final, err)
-	answered()
+	answered(final, err)
 	if out.Method == sip.BYE && byeEndsDialog(final, err) {
 		p.endDialog(key, d, log)
 	}
@@ -366,7 +366,8 @@ func (p *PCSCF) subsequent(st *sip.ServerTransaction, out *sip.Message, log *slo
 // way back: with the answer the PCRF gets the changed service
 // information in the policy session of the dialog (TS 29.214 A.1,
 // 4.4.2). The second one is for subsequent to call once the final
-// response has gone. ue is the address of the served UE.
+// response has gone, with what ProxyWith returned. ue is the address of
+// the served UE.
 //
 // When the SDP is not pointed at the relay, renegotiate returns the
 // error, and the request goes no further: the P-CSCF, as an IMS-ALG, is
@@ -384,19 +385,23 @@ func (p *PCSCF) subsequent(st *sip.ServerTransaction, out *sip.Message, log *slo
 // Reason 488 (5.2.8.1.2 items 1 d, 2, 3 c and 4), as the parties asked
 // for media that the network does not allow. Here they asked for
 // nothing wrong, and the BYEs carry the 503 of lost resources. As in
-// 6.2, the release of a re-INVITE waits for the ACK of its 2xx; that of
-// an UPDATE, which has no ACK, starts once the 2xx has gone. Either way
-// no BYE can overtake the 2xx. A failure after the relay took an answer
-// of the request is that of a retransmitted 2xx to a re-INVITE, and
-// changes nothing; once the release is under way, the P-CSCF leaves the
-// responses alone.
+// 6.2, the release of a re-INVITE waits for the ACK of its 2xx, at most
+// ackWait; that of an UPDATE, which has no ACK, starts once the 2xx has
+// gone. Either way no BYE can overtake the 2xx. When the answer that the
+// relay did not take came in a 1xx and the re-INVITE then ends with a
+// final response other than 2xx, or with none, no ACK passes the P-CSCF
+// (RFC 3261 17.1.1.3: the ACK of such a response goes hop by hop), and
+// the release goes on once that response has gone. A failure after the
+// relay took an answer of the request is that of a retransmitted 2xx to
+// a re-INVITE, and changes nothing; once the release is under way, the
+// P-CSCF leaves the responses alone.
 //
 // SIMPLIFIED: TS 29.214 4.4.2. When the PCRF refuses the changed
 // service information, the P-CSCF only logs it, and the session stays
 // authorised as it was: the far end has given its answer by then. TS
 // 24.229 V20.1.0 has a procedure for refused resources only for the
 // initial INVITE (5.2.7.2).
-func (p *PCSCF) renegotiate(out *sip.Message, d Dialog, toUE bool, ue netip.Addr, log *slog.Logger) (answer func(*sip.Message), answered func(), err error) {
+func (p *PCSCF) renegotiate(out *sip.Message, d Dialog, toUE bool, ue netip.Addr, log *slog.Logger) (answer func(*sip.Message), answered func(final *sip.Message, err error), err error) {
 	received := out.Body
 	if err := p.relaySDP(out, d.Relay, toUE); err != nil {
 		return nil, nil, err
@@ -406,9 +411,15 @@ func (p *PCSCF) renegotiate(out *sip.Message, d Dialog, toUE bool, ue netip.Addr
 	// refused once the P-CSCF has set out to release the dialog for one
 	// that it did not take.
 	authorized, taken, refused := false, false, false
-	answered = func() {
-		if refused && out.Method != sip.INVITE {
+	answered = func(final *sip.Message, err error) {
+		switch {
+		case !refused:
+		case out.Method != sip.INVITE:
 			p.release(d.Key, SDPNotRelayed, false, log)
+		case final != nil || err != nil:
+			// The 2xx of a re-INVITE goes through Proxy, and so does not
+			// come back as final.
+			p.releaseNow(d.Key, log)
 		}
 	}
 	answer = func(resp *sip.Message) {
