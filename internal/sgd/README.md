@@ -4,7 +4,7 @@
 
 This package builds and reads the Diameter messages of TS 29.338 that move a short message between the SC and the nodes that serve a UE. On SGd these are MO-Forward-Short-Message (OFR/OFA) and MT-Forward-Short-Message (TFR/TFA). On S6c they are Send-Routing-Info-for-SM (SRR/SRA), Report-SM-Delivery-Status (RDR/RDA) and Alert-Service-Centre (ALR/ALA). S6c also carries Ready-For-SM, a command of this project's own with which the IP-SM-GW tells the HSS that a user can take short messages again; a network sends that notice in MAP-READY-FOR-SM (TS 29.002 12.4.1), which this project does not implement.
 
-The Service Centre of package `smsc` works on the structs of this package. No node of this project runs either of them. The tests and the example build each message and read it back:
+This package also holds the clients that send these requests and wait for their answers. The sc role uses it as the SMS-GMSC and the SMS-IWMSC, through the Service Centre of package `smsc`; the IP-SM-GW uses it as a serving node, which sends OFR and answers TFR on SGd and sends Ready-For-SM on S6c; and the HSS uses it to answer SRR, RDR and Ready-For-SM and to send ALR on S6c. The tests and the example build each message and read it back:
 
 ```sh
 go test ./internal/sgd

@@ -4,7 +4,7 @@
 
 このパッケージは、TS 29.338 の Diameter のメッセージを組み立てて読みます。短いメッセージを、SC と、UE に仕える網のノードのあいだで運ぶメッセージです。SGd では MO-Forward-Short-Message（OFR/OFA）と MT-Forward-Short-Message（TFR/TFA）、S6c では Send-Routing-Info-for-SM（SRR/SRA）、Report-SM-Delivery-Status（RDR/RDA）、Alert-Service-Centre（ALR/ALA）です。S6c では、このプロジェクトが独自に決めた Ready-For-SM も運びます。IP-SM-GW が、利用者がまたショートメッセージを受け取れるようになったことを HSS に知らせるコマンドです。実際の網では、この知らせを MAP-READY-FOR-SM（TS 29.002 12.4.1）で送ります。このプロジェクトは MAP を作っていません。
 
-パッケージ `smsc` の SC は、このパッケージの構造体を使って動きます。このプロジェクトのノードは、どちらも動かしていません。試験と例は、メッセージごとに組み立てて、読み直します。
+このパッケージには、これらの要求を送って応答を待つクライアントもあります。sc の役割は、パッケージ `smsc` の SC を通して、このパッケージを SMS-GMSC と SMS-IWMSC の機能に使います。IP-SM-GW は serving node として使います。SGd で OFR を送って TFR に応答し、S6c で Ready-For-SM を送ります。HSS は、S6c で SRR、RDR、Ready-For-SM に応答し、ALR を送るために使います。試験と例は、メッセージごとに組み立てて、読み直します。
 
 ```sh
 go test ./internal/sgd
