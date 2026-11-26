@@ -7,12 +7,13 @@
 #
 # ASSUMPTION: every IMS node serves internal/metrics at /metrics, on
 # the listener of its maintenance API, on the port MetricsPort in
-# deploy/observability/prometheus.go. Only the P-CSCF, the I-CSCF, the
-# S-CSCF, the HSS, the MMTel AS and the IP-SM-GW serve it: a node that
-# does not shows as down, here and in the "Up" panel of the Grafana
-# dashboard. The nodes of the MRFC, the media relay and the MRFP have
-# that listener for their maintenance API and count no measurement, so
-# they are up with nothing to scrape.
+# deploy/observability/prometheus.go. The P-CSCF, the I-CSCF, the
+# S-CSCF, the HSS, the MMTel AS, the IP-SM-GW, the Service Centre and
+# the OAM serve it. The nodes of the MRFC, the media relay and the MRFP
+# have that listener for their maintenance API and count no
+# measurement, so they are up with nothing to scrape. The EPC and the
+# Lab have no such listener and show as down, here and in the "Up"
+# panel of the Grafana dashboard.
 
 global:
   scrape_interval: 15s

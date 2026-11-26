@@ -370,7 +370,7 @@ OAM は複数のインスタンスで動けます（`internal/oam/doc.go`）。�
 
 見張る側は、リースを延ばす goroutine を止めてから、リースを手放します。手放したあとで延ばす書き込みが届くと、ほかのインスタンスが取ったリースを上書きしてしまうためです。
 
-届かなかった通知はログに書き、指標で数えます。指標は `oam_alarm_notifications_total` で、ラベルは `notification_type`（6 つの通知の名前）と `result`（204 を受けた `delivered` と、受けなかった `failed`）です。インスタンスが止まるときに途中で切れた `POST` も、`failed` に数えます。遅い OSS は、そのノードの出来事の流れを送る期限の分だけ遅らせますが、ほかのノードの流れは止めません。
+届かなかった通知はログに書き、指標で数えます。指標は `oam_alarm_notifications_total` で、ラベルは `notification_type`（6 つの通知の名前）と `result`（204 を受けた `delivered` と、受けなかった `failed`）です。OAM のノードは、ほかのノードと同じく `maintenance.listen` の待ち受けの `/metrics` でこれを出します。OAM の役割には保守用の API が無いので、この待ち受けが出すのは指標だけです。Compose では `deploy/compose/oam.yaml` が 8085 番で待ち受け、Prometheus が `oam:8085` を集めます。インスタンスが止まるときに途中で切れた `POST` も、`failed` に数えます。遅い OSS は、そのノードの出来事の流れを送る期限の分だけ遅らせますが、ほかのノードの流れは止めません。
 
 ## 誤りの形
 
