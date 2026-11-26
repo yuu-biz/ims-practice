@@ -79,8 +79,9 @@ type AlarmEvents struct {
 
 // The bounds of the event journal.
 const (
-	// DefaultMaxAlarmEvents bounds the journal: four events for each
-	// record of a full list, its raise, a change, its clearance and its
+	// DefaultMaxAlarmEvents bounds the journal, unless
+	// Config.MaxAlarmEvents lowers it: four events for each record of a
+	// full list, its raise, a change, its clearance and its
 	// acknowledgement, so that a reader that is a little behind loses
 	// none.
 	DefaultMaxAlarmEvents = 4 * DefaultMaxAlarmRecords
