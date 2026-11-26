@@ -46,26 +46,39 @@ type Message struct {
 }
 
 // Refusal is the response with which a role refuses a request instead of
-// relaying it.
+// relaying it. Release has the Call end the call after it.
 type Refusal struct {
 	Status  int
 	Headers []sip.HeaderField
+	Release bool
 }
 
 type Hooks interface {
 	Request(req *sip.Message, d Direction) (Message, *Refusal)
-	Response(resp, req *sip.Message, d Direction) Message
+	// ok false: the role cannot pass resp on, and the Call releases
+	// the call.
+	Response(resp, req *sip.Message, d Direction) (m Message, ok bool)
 	// Answer is the callee's 2xx. session is the last SDP of the early
 	// dialog that answered, when the caller holds that of another one.
-	Answer(resp, session *sip.Message) Message
-	Ack(ack *sip.Message, d Direction) sip.Body
+	Answer(resp, session *sip.Message) (m Message, ok bool)
+	Ack(ack *sip.Message, d Direction) (body sip.Body, ok bool)
 	Contact(resp *sip.Message) (c sip.NameAddr, recordRoute, ok bool)
 	Reasons(ended *sip.Message, d Direction) []sip.HeaderField
 	KeepDialogs(in, out sip.Dialog)
+	// Unanswered: req got no 2xx on the other leg. ok false: the role
+	// cannot put back what it changed for req, and the Call releases
+	// the call.
+	Unanswered(req *sip.Message, d Direction) (ok bool)
+	// Refused: the Call answered req with status itself, for the role.
+	Refused(req *sip.Message, d Direction, status int)
 }
 ```
 
-- `Request` と `Response` で、IBCF は境界の検査と TrGW の書き換えを、MMTel AS はサービスごとのヘッダを足します。IBCF は、境界の検査で断るときに `Request` が `Refusal` を返し、断った数もそこで数えます。MMTel AS の `Request` は断りません。
+- `Request` と `Response` で、IBCF は境界の検査と TrGW の書き換えを、MMTel AS はサービスごとのヘッダを足します。IBCF は、境界の検査で断るときと、SDP を TrGW に通せないときに、`Request` が `Refusal` を返します。MMTel AS の `Request` は断りません。
+- 応答と ACK は断れません。役割が SDP を書き換えられないなど、先へ渡せないときは、`Response`、`Answer`、`Ack` が `ok` を false で返します。`Refusal` の `Release` も同じく、呼を続けられないことを知らせます。そのとき `Call` は `release` で呼を終わらせます。発信側の INVITE に最終応答がまだ無ければ、500 を返します（RFC 3261 21.5.1）。着信側の 2xx が届いたあと、発信側に渡す前でも同じで、`Answer` は INVITE に答えが出ていると知って、着信側に BYE を送ります。応答の前なら、着信側への INVITE を取り消します（RFC 3261 9.1）。発信側の INVITE に最終応答が出ていれば、発信側に BYE を送り、`Answer` が着信側にも BYE を送ります。先へ渡せない 2xx の代わりに、その要求には 500 を返します。役割が断った PRACK は、着信側の信頼できる 1xx に PRACK が届かなくなるので、いつも INVITE を終わらせます。
+- `Unanswered` は、ダイアログの中の要求に、もう一方のレグで 2xx が返らなかったときに呼びます。セッションは要求の前のままなので（RFC 3261 14.1、RFC 3311 5.3）、IBCF は offer を受けて TrGW に伝えた宛先を、最後の offer と answer のものに戻します。戻せなければ `ok` を false で返し、`Call` が呼を終わらせます。
+- `Refused` は、`Call` が役割のために自分の応答（`Refusal` の応答、先へ渡せない 2xx の代わりの 500、解放のときの INVITE への 500）を送ったあとで呼びます。IBCF は、自分で断った数をここで数えます。送らなかった応答を数えないためです。
+- この 3 つの結果と 2 つの差し込み口を意味のある形で実装するのは、メディアを中継させる IBCF だけです。MMTel AS は、どれも「先へ渡す」「戻すものは無い」「数えるものは無い」と答えます。それでも中核に置くのは、どの応答をどちらのレグに送るか、呼をどう終わらせるかが、2 つのレグを持つ中核の受け持ちだからです。役割の側で同じことをすると、レグの状態を役割が読むことになります。
 - `KeepDialogs` は、応答したとき、そのあとはダイアログの中の要求を中継するたびに呼びます。両方の役割が、ここで呼の記録を書き直します。
 - `EarlyDialogs` が、着信側の early dialog ごとの SDP と、発信側がどの SDP を持っているかを覚えます。
 - `Call` が 2 つのレグを持ちます。`Attempt` で着信側へ INVITE を送り、その応答の扱いを役割に返します。MMTel AS は転送のときに `Attempt` を 2 回呼びます。`NoLeg` は、レグを作らないことを知らせます。`Progress` は、役割が自分で送る 1xx（CAT、音声ガイダンス、181）です。

@@ -405,11 +405,14 @@ func (c *call) goBack(d interconnect.Direction) error {
 // has taken the session that its SDP describes. The IBCF still does not
 // pass that SDP on, for the reason of notThroughTrGW: it names the
 // address of the side that sent it, past the TrGW. So the call cannot go
-// on, whatever the TrGW answered, and the IBCF releases it (b2bua.Hooks),
-// as TS 24.229 5.10.2.4 and 5.10.3.4 let it for an error of the transport
-// plane. The request that a response answers gets 500 in its place, as
-// does the caller's INVITE while it has no final response, and that 500
-// counts among the IBCF's refusals.
+// on, whatever the TrGW answered, and the IBCF releases it (b2bua.Hooks).
+// Once the call is answered, that is a BYE to each side, as TS 24.229
+// 5.10.2.4 and 5.10.3.4 let the IBCF send for an error of the transport
+// plane. The request that a response answers gets 500 (RFC 3261 21.5.1)
+// in its place, as does the caller's INVITE while it has no final
+// response, whose INVITE towards the callee is then cancelled (RFC 3261
+// 9.1); those clauses speak of the BYEs only. Each 500 counts among the
+// IBCF's refusals (Refused).
 //
 // With errNotKept the SDP did go through the TrGW, and only the record
 // of the call was not written, which the next write mends; the message
@@ -454,10 +457,11 @@ func (c *call) Request(req *sip.Message, d b2bua.Direction) (b2bua.Message, *b2b
 //
 // As an IMS-ALG the IBCF passes on an SDP of its own, with the address
 // of the TrGW towards the side where it goes (TS 24.229 6.7.1.4.1 and
-// 6.7.2.1, TS 29.162 9.1.1.1 and 9.1.3), and it has none. The SDP that
-// came names the address of the side that sent it, which TS 24.229
-// 5.10.6.3 does not let cross: the other side would send its media
-// there, past the TrGW. So the request goes no further. The IBCF answers
+// 6.7.2.1, TS 29.162 9.1.1.1 and 9.1.3), and it has none. TS 24.229
+// 5.10.6.3 has the IBCF modify the SDP according to 6.7.1 when the TrGW
+// translates the addresses, which it cannot do here. The SDP that came
+// names the address of the side that sent it, and the other side would
+// send its media there, past the TrGW. So the request goes no further. The IBCF answers
 // it 500 (Server Internal Error, RFC 3261 21.5.1), or 488 (Not
 // Acceptable Here, 21.4.26) for an SDP that it cannot read, as the
 // border answers one (interconnect.Border); either counts among its
@@ -466,10 +470,12 @@ func (c *call) Request(req *sip.Message, d b2bua.Direction) (b2bua.Message, *b2b
 // A final response other than 2xx leaves the session as it was before
 // the request (RFC 3261 14.1, RFC 3311 5.3), and only a 481 or a 408 ends
 // the dialog (RFC 3261 12.2.1.2). The call stays when it can go on as it
-// was (callStays). Otherwise the IBCF releases it, as TS 24.229 5.10.2.4
-// and 5.10.3.4 let it for an error of the transport plane: a BYE to each
-// side once the call is answered, and before that a 500 to the caller's
-// INVITE and a CANCEL of the INVITE towards the callee. That is so for:
+// was (callStays). Otherwise the IBCF releases it: once the call is
+// answered with a BYE to each side, as TS 24.229 5.10.2.4 and 5.10.3.4
+// let it for an error of the transport plane, and before that with a 500
+// to the caller's INVITE (RFC 3261 21.5.1) and a CANCEL of the INVITE
+// towards the callee (RFC 3261 9.1), of which those clauses do not speak.
+// That is so for:
 //   - A TrGW that has lost the context or its termination, as one that
 //     restarted without them. The media of the call are gone already,
 //     and every later offer would fail the same way.
@@ -565,6 +571,13 @@ func (c *call) Answer(resp, session *sip.Message) (b2bua.Message, bool) {
 
 // Ack puts the answer in ack through the TrGW, or holds it back
 // (notPassedOn).
+//
+// SIMPLIFIED: RFC 3261 13.2.2.4. When the TrGW does not take the answer
+// in an ACK, the 2xx with the offer of the other side gets an ACK
+// without a body, and a BYE right after it (b2bua.Call). A UAC that does
+// not take the offer of a 2xx is to put a valid answer in the ACK before
+// its BYE; the IBCF has no SDP of its own to answer with, and the call
+// ends at once, so no media flows on that answer.
 func (c *call) Ack(ack *sip.Message, d b2bua.Direction) (sip.Body, bool) {
 	m := ack.Clone()
 	if err := c.throughTrGW(m, c.across(d)); err != nil && c.notPassedOn("the ACK", err) {
