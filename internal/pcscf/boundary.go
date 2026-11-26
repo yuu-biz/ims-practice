@@ -69,6 +69,20 @@ type boundaryRule struct {
 // lets have its own boundary, takes in the UE here (4.4.7). Path and
 // Service-Route have no rule at the P-CSCF: the UE gets both in the 200
 // to its REGISTER (5.2.1 NOTE 2, 5.2.2.1).
+//
+// SIMPLIFIED: TS 24.229 4.4.2 and RFC 3325 5. A proxy at the edge of
+// the trust domain removes or replaces the P-Asserted-Identity of what
+// it receives from a node that it does not trust. The P-CSCF tells a
+// request of a UE from one of the network only by how the request is
+// addressed, as both reach it at the same address and port (screen). So
+// any host that reaches that port can send a request in the form that
+// the network uses, with the URI that the P-CSCF put in Path as its top
+// Route and the contact of a UE that the P-CSCF serves as its
+// Request-URI. The P-CSCF takes such a request as one to the UE: it
+// asks for no IP association, applies the rules of requestToUE, and the
+// P-Asserted-Identity that the host wrote reaches the UE as an identity
+// that the network asserts. A real P-CSCF takes Mw on an interface of
+// its own, which only the nodes of the network reach.
 var ueBoundary = []boundaryRule{
 	// The charging information stays in the network; the P-CSCF ignores
 	// what a UE sends.
