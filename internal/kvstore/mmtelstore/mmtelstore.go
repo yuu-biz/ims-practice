@@ -1,6 +1,8 @@
 // Package mmtelstore is an mmtel.Store on a kvstore.Store, so that any
-// MMTel AS instance knows a call that another one set up, and can end
-// both of its dialogs.
+// MMTel AS instance knows a call that another one set up: which dialog
+// is the other leg of a dialog that a Replaces names. Only the instance
+// that set the call up acts on it, and one created again under the same
+// name does not carry the calls of the earlier process on (mmtel.AS).
 //
 // The items and their keys, after the prefix of the Config and
 // "mmtel:":
