@@ -89,16 +89,18 @@ ims-practice study session 2 (the nodes, the reference points between them, and 
 
 ---
 
-## The application servers and the MRF
+## The application servers, the SC and the MRF
 
 | Node | Address | What it is for |
 | --- | --- | --- |
-| IP-SM-GW | 172.28.0.70 | SMS over IP. It speaks SIP on one side and the language of the SMS network on the other. The SC stub is inside it. |
+| IP-SM-GW | 172.28.0.70 | SMS over IP. It speaks SIP on one side and the language of the SMS network on the other. |
+| SC | 172.28.0.71 | The Service Centre of SMS. It holds each short message until it is delivered or its validity period ends, and delivers it. |
 | MMTel AS | 172.28.0.75 | The supplementary services, and the settings that a UE makes itself over Ut. |
 | MRFC | 172.28.0.85 | The SIP side of the MRF. An AS asks it for an announcement, a tone or a conference. |
 | MRFP | 172.28.0.86 | The media side of the MRF. It plays and it mixes, and the MRFC drives it. |
 
 - The CSCFs only route. What changes a call is an application server, and what makes media of its own is the MRF (TS 23.228 4.7).
+- The SC is not part of the IMS but of the SMS network. The IP-SM-GW reaches it over Diameter.
 
 > Guides: [Follow a short message through the IMS, "Why an application server, and what the SC is"](../../../docs/guide/en/sms.md#why-an-application-server-and-what-the-sc-is) and [Announcements, alerting tones and conferences with the MRF, "What an MRF is"](../../../docs/guide/en/mrf.md#what-an-mrf-is)
 
@@ -111,10 +113,11 @@ ims-practice study session 2 (the nodes, the reference points between them, and 
 | IBCF | 172.28.0.90 | The exit point of a request that leaves the network and the entry point of one that comes in. It hides the topology. |
 | TrGW | 172.28.0.91 | The media relay at the border. The IBCF controls it. |
 | Lab | 172.28.0.60 | Draws each registration and call as a ladder, from copies that the nodes send it (HEP). Not part of the IMS. |
+| OAM server | 172.28.0.65 | Operates every node through its maintenance API, and serves the OAM screen. Not part of the IMS, and it sends no signaling. |
 | capture | host network | tcpdump on the bridge. It writes the files that every session reads. |
 
 - The IBCF and the TrGW come with the second network, which `deploy/interconnect/compose.yaml` adds on top of `compose.yaml`. Session 10 reads the border in the captures of both networks and of the link between them.
-- The Lab and the capture are outside the IMS. No node waits for an answer from either: the copies go to the Lab over UDP, and tcpdump only listens.
+- The Lab, the OAM server and the capture are outside the IMS. No call waits for an answer from any of them: the copies go to the Lab over UDP, and tcpdump only listens.
 
 > Guides: [Connect two IMS networks, "The two networks"](../../../docs/guide/en/interconnect.md#the-two-networks) and [Watch the IMS in the Lab, "These APIs are this project's own"](../../../docs/guide/en/lab.md#these-apis-are-this-projects-own)
 
@@ -141,18 +144,21 @@ ims-practice study session 2 (the nodes, the reference points between them, and 
 ## The reference points that carry Diameter
 
 ```text
-  I-CSCF  --- Cx ---> HSS <--- Cx ---  S-CSCF
-  IP-SM-GW --- Sh ---> HSS <--- Sh --- MMTel AS
-  P-CSCF  --- Rx ---> PCRF (inside the EPC stub)
+  I-CSCF   --- Cx  ---> HSS <--- Cx  --- S-CSCF
+  IP-SM-GW --- Sh  ---> HSS <--- Sh  --- MMTel AS
+  IP-SM-GW --- SGd ---> SC  --- S6c ---> HSS
+  P-CSCF   --- Rx  ---> PCRF (inside the EPC stub)
 ```
 
 | Reference point | Between | What is asked for |
 | --- | --- | --- |
 | Cx | a CSCF and the HSS | which S-CSCF serves the user, the authentication data, the user profile |
 | Sh | an AS and the HSS | the settings of a user, its number, the password it uses on Ut |
+| SGd | the IP-SM-GW and the SC | the short message itself, from a UE and to one |
+| S6c | the SC and the HSS | which node serves the recipient, and which SCs hold short messages for a user who can take them again |
 | Rx | the P-CSCF and the PCRF | authorisation for the media of a call, and word when that media is lost |
 
-- Five connections, all to port 3868, and each one opens with a CER and a CEA before its first question. The capture guide's table lists them.
+- Seven connections, all to port 3868, and each one opens with a CER and a CEA before its first question. The capture guide's table lists them.
 - SIP carries a request on its way; Diameter asks a question and waits for the answer. That is the division between the two.
 
 > Guide: [Capture signaling and open it in Wireshark, "What you see when the nodes start"](../../../docs/guide/en/capture.md#what-you-see-when-the-nodes-start)
@@ -195,7 +201,7 @@ ims-practice study session 2 (the nodes, the reference points between them, and 
 | --- | --- |
 | Gm, Mw, Cx, and the CSCFs with the HSS | session 4, registration |
 | ENUM, the media relay, both sides of one call | session 5, the call |
-| ISC and Sh, the IP-SM-GW | session 6, SMS |
+| ISC, Sh, SGd and S6c, the IP-SM-GW and the SC | session 6, SMS |
 | Ut and the MMTel AS | session 7, the supplementary services |
 | Rx, the EPC stub, IMS AKA | session 9, VoLTE |
 | Mr', Mp and the MRF | session 8, the MRF |
