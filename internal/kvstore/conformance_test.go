@@ -46,6 +46,7 @@ func testConformance(t *testing.T, newHarness func(t *testing.T) harness) {
 		{"ScheduleEndsAClaim", testScheduleEndsAClaim},
 		{"DueNoSoonerThanItsTime", testDueNoSoonerThanItsTime},
 		{"CompetingClaims", testCompetingClaims},
+		{"ClaimBelowOne", testClaimBelowOne},
 		{"SortedIndex", testSortedIndex},
 		{"SortedIndexPagesGoOn", testSortedIndexPagesGoOn},
 	}
@@ -542,6 +543,26 @@ func testSortedIndexPagesGoOn(t *testing.T, h harness) {
 	}
 	if !slices.Equal(got, want) {
 		t.Errorf("the pages held %v, want %v", got, want)
+	}
+}
+
+// testClaimBelowOne: a limit below one claims nothing, so that a
+// caller's mistake cannot claim a whole index at once.
+func testClaimBelowOne(t *testing.T, h harness) {
+	ctx := context.Background()
+	ix := h.key("registration-expiry")
+	for _, member := range []string{"a", "b"} {
+		if err := h.a.Schedule(ctx, ix, member, base); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, limit := range []int{0, -1} {
+		if claims, err := h.b.ClaimDue(ctx, ix, base, time.Minute, limit); err != nil || len(claims) != 0 {
+			t.Errorf("ClaimDue with limit %d = %v, %v; want nothing", limit, claims, err)
+		}
+	}
+	if claims, err := h.a.ClaimDue(ctx, ix, base, time.Minute, 10); err != nil || len(claims) != 2 {
+		t.Errorf("ClaimDue after those = %v, %v; want a and b, which they left due", claims, err)
 	}
 }
 
