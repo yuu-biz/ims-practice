@@ -201,7 +201,7 @@
 今あるもの。保守用の API の共通部分（`internal/maintenance`）、障害注入の部品（`internal/fault`、`deploy/chaos/`）、保存先のクライアント（`internal/kvstore`）があります。
 
 - 保存先。状態を持つ役割ごとに、`internal/kvstore` の上の `Store` の実装があります（`internal/kvstore/` の `agwstore`、`hssstore`、`ibcfstore`、`ipsmgwstore`、`mmtelstore`、`mrfcstore`、`oamstore`、`pcscfstore`、`scscfstore`、`scstore`、`smscstore`）。設定の `store` の節が `kind: valkey` のノードはこれを使い、節が無いノードはプロセスの中の `MemoryStore` を使います。S-CSCF、HSS、IP-SM-GW の利用者ごとのロックも、保存先に置けます（`internal/kvstore/kvlock`）。切れたときに動作が要る期限は、保存先の時刻の索引から 1 台だけが借りて処理します。
-- 冗長構成の上書きのファイル（`deploy/redundancy/`）。Valkey を足し、P-CSCF、S-CSCF、HSS、IP-SM-GW、サービスセンタ、MMTel AS、MRFC、メディア中継ノード、MRFP の状態をそこに置きます。台の数と信号は `compose.yaml` と同じです。CI の `e2e-redundancy` のジョブが、この構成で登録、通話、SMS のスクリプトを流し、S-CSCF の登録が保存先にあることを読みます。
+- 冗長構成の上書きのファイル（`deploy/redundancy/`）。Valkey を足し、P-CSCF、S-CSCF、HSS、IP-SM-GW、サービスセンタ、MMTel AS、MRFC、メディア中継ノード、MRFP の状態をそこに置きます。台の数と信号は `compose.yaml` と同じです。CI の `e2e-redundancy` のジョブが、この構成で登録、通話、SMS、MRF のスクリプトを流し、S-CSCF の登録が保存先にあることと、MRFC と MRFP が会議とコンテキストを保存先に書いたことを読みます。
 - Diameter の接続の切り替え（`internal/diameter` の `PeerGroup`）。I-CSCF、S-CSCF、MMTel AS、IP-SM-GW は HSS の台を、IP-SM-GW はサービスセンタの台を 1 つの組として持ち、答えない台、接続の閉じた台、DIAMETER_TOO_BUSY を返した台から、次の台へ送り直します。
 - SIP の送り直し。プロキシと UA は、503、トランスポートの異常、時間切れのときに、DNS が返した次の宛先へ送り直します（RFC 3263 4.3、`sip.Stack.SendRequest`）。
 - 障害注入のエージェント。`scripts/e2e-fault.sh` は、エージェントの API で、ノードを止めて動かし直すこと、プロセスを落としてコンテナの実行環境に起こし直させること、同じ名前とアドレスのコンテナに作り直すことを確かめます。

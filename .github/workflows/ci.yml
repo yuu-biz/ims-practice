@@ -577,9 +577,9 @@ jobs:
         if: always()
         run: docker compose --profile ue down --rmi all -v --remove-orphans
 
-  # The scenarios of e2e-registration, e2e-call and e2e-sms on the
-  # deployment whose roles keep the state of their users in the shared
-  # store (deploy/redundancy). The scripts are the same: Compose reads
+  # The scenarios of e2e-registration, e2e-call, e2e-sms and e2e-mrf on
+  # the deployment whose roles keep the state of their users in the
+  # shared store (deploy/redundancy). The scripts are the same: Compose reads
   # the files of the project from COMPOSE_FILE, so the overlay needs no
   # scenario of its own, and the flows must come out of the capture as
   # they do with the state in the memory of each process.
@@ -631,7 +631,30 @@ jobs:
       - name: down again
         run: docker compose --profile ue down -v --remove-orphans
       - run: scripts/e2e-sms.sh
-      - name: upload the captures and the ladder of the short messages
+      - name: down before the MRF
+        run: docker compose --profile ue down -v --remove-orphans
+      # The announcement, the CAT and the conference, through the MRFC
+      # and the MRFP of deploy/redundancy.
+      - run: scripts/e2e-mrf.sh
+      # Without this step e2e-mrf would also pass with the MRFC and the
+      # MRFP on the memory of their own processes. The capture holds what
+      # the nodes ask of the store (172.28.0.5): the MRFC writes the media
+      # of each conference under ims:mrfc:conference:, and the MRFP each
+      # context of an announcement or a conference under
+      # ims:agw:<relay>:context:.
+      - name: the MRFC and the MRFP keep their state in the store
+        run: |
+          pcap="$(docker compose exec -T capture sh -c 'ls -t /captures/ims-*.pcap | head -n 1' | tr -d '\r')"
+          asked() {
+            docker compose exec -T capture tshark -r "$pcap" \
+              -Y "ip.src == $1 && ip.dst == 172.28.0.5 && tcp.dstport == 6379 && frame contains \"$2\"" | tr -d '\r' | grep -c . || true
+          }
+          mrfc="$(asked 172.28.0.85 ims:mrfc:conference:)"
+          mrfp="$(asked 172.28.0.86 :context:)"
+          echo "segments to the store about a conference from the MRFC: $mrfc, about a context from the MRFP: $mrfp"
+          [ "$mrfc" -gt 0 ] || { echo "the MRFC never asked the store about a conference"; exit 1; }
+          [ "$mrfp" -gt 0 ] || { echo "the MRFP never asked the store about a context"; exit 1; }
+      - name: upload the captures and the ladders
         if: always()
         uses: actions/upload-artifact@v7
         with:
@@ -640,10 +663,11 @@ jobs:
             captures/*.pcap
             captures/*.wav
             e2e-out/sms-ladder.txt
+            e2e-out/mrf-ladder.txt
           if-no-files-found: warn
       - name: clean up
         if: always()
-        run: docker compose --profile ue down --rmi all -v --remove-orphans
+        run: docker compose --profile ue --profile phones down --rmi all -v --remove-orphans
 
   cloud:
     runs-on: ubuntu-latest
