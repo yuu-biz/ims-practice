@@ -102,7 +102,14 @@ func (p *PCSCF) PolicyEvent(e policy.Event) {
 // may be another one. This wait is one of the few that stay in the
 // process rather than going into a time index of the Store
 // (ExpiryKind): it is short, and the 2xx it waits for has just passed
-// this instance.
+// this instance. It lasts ackWait, 64*T1, after which the callee gives
+// up waiting for the ACK and ends the session itself (RFC 3261 13.3.1.4).
+//
+// SIMPLIFIED: RFC 3261 13.3.1.4 and 15. The wait for the ACK is a timer
+// of the instance that marked the dialog ReleasePending. When that
+// instance stops before the timer fires, and no ACK passes any instance,
+// the dialog stays ReleasePending in the Store, with its relay context
+// and its policy session, until a party ends the call with a BYE.
 //
 // Whether to wait or to release at once is decided in the one step that
 // writes the mark, ReleasePending or Released. Another instance may

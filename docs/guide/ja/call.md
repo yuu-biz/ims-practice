@@ -461,7 +461,7 @@ UE 2 の P-CSCF では、同じことが逆の向きに起きます。183 や 20
 ```
 
 - **確立したダイアログでは、双方に BYE を送ります**（TS 24.229 5.2.8.1.2）。[網が bearer を落とす](volte.md#網が-bearer-を落とす)ときと同じ 2 つの BYE です。
-- **BYE が 200 を追い越すことはありません。** UPDATE のときは、P-CSCF が 200 を先へ渡してから BYE を送ります。re-INVITE への 200 は ACK を待つので、解放も ACK を待ちます。TS 24.229 6.2 と同じです。BYE を送るのは、UE 1 の ACK が P-CSCF を通ったあとです。
+- **BYE が 200 を追い越すことはありません。** UPDATE のときは、P-CSCF が 200 を先へ渡してから BYE を送ります。re-INVITE への 200 は ACK を待つので、解放も ACK を待ちます。TS 24.229 6.2 と同じです。BYE を送るのは、UE 1 の ACK が P-CSCF を通ったあとです。ACK が来ないときは、64*T1、つまり 32 秒たってから BYE を送ります。着信側も、そこで ACK を待つのをやめます（RFC 3261 13.3.1.4）。アンサーが re-INVITE への 183 で届き、その re-INVITE が失敗したときは、ACK は P-CSCF を通りません。2xx 以外の最終応答への ACK は、1 区間ごとに返るためです（RFC 3261 17.1.1.3）。そのときは、その応答を先へ渡したところで BYE を送ります。
 
 ```text
  UE 1          P-CSCF          メディア中継ノード  網
@@ -504,7 +504,7 @@ UE 2 の P-CSCF では、同じことが逆の向きに起きます。183 や 20
 
 - **PCRF はこのアンサーを受け取りません。** P-CSCF は呼の Rx のセッションを終わらせ（TS 29.214 4.4.4）、中継ノードのコンテキストを解放します。
 
-`internal/pcscf` の試験は、アンサーの `Modify` を断る中継ノードを使って、これらの流れを 1 つのプロセスの中で動かします。`TestRefusedAnswerOfA183EndsTheCall`、`TestRefusedAnswerOfThe200EndsTheCall`、`TestRefusedRetransmissionOfThe200KeepsTheCall`、`TestRefusedAnswerOfAnotherForkIsAcknowledgedAndReleased`、`TestRefusedRetransmissionOfAReliable183KeepsTheCall`、`TestResponseWhoseSDPTheP_CSCFCannotReadEndsTheCall`、`TestRefusedAnswerWithinTheDialogReleasesTheCall`、`TestRefusedAnswerOfAnUPDATEInTheEarlyDialogEndsTheCall`、2 つの P-CSCF のインスタンスが 1 つの保存先を共有する `TestRefusedAnswerOfAnUPDATEAtAnotherInstanceEndsTheCall` です。
+`internal/pcscf` の試験は、アンサーの `Modify` を断る中継ノードを使って、これらの流れを 1 つのプロセスの中で動かします。`TestRefusedAnswerOfA183EndsTheCall`、`TestRefusedAnswerOfThe200EndsTheCall`、`TestRefusedRetransmissionOfThe200KeepsTheCall`、`TestRefusedAnswerOfAnotherForkIsAcknowledgedAndReleased`、`TestRefusedRetransmissionOfAReliable183KeepsTheCall`、`TestResponseWhoseSDPTheP_CSCFCannotReadEndsTheCall`、`TestRefusedAnswerWithinTheDialogReleasesTheCall`、`TestRefusedAnswerOfAReINVITEThatFailsIsReleasedAtOnce`、`TestRefusedAnswerOfAnUPDATEInTheEarlyDialogEndsTheCall`、2 つの P-CSCF のインスタンスが 1 つの保存先を共有する `TestRefusedAnswerOfAnUPDATEAtAnotherInstanceEndsTheCall` です。
 
 ## 中継ノードがオファーを受け取らないとき
 
@@ -588,6 +588,7 @@ TS 24.229 がオファーのためにダイアログを解放するのは、オ�
 | P-CSCF。RFC 3264 6 | 中継ノードを通すのは、ポートのある最初の音声ストリームだけ。ほかのストリームには終端を作らない。自分のアドレスを持たないストリームは中継ノードを指すことになるが、そのポートでは何も待ち受けていない。 | UE シミュレータがオファーするストリームは 1 つだけのため。 |
 | P-CSCF。RFC 5621 4.2 と TS 24.229 6.7.2.1 | マルチパートの本文の一部に入った SDP は、中継ノードを通さない。その本文の入った要求には 415 を返し、応答なら、中継ノードがアンサーを受け取らないときと同じく呼を終わらせる。 | UA はマルチパートの本文を読まなければならず、緊急呼の SDP は UE の位置といっしょにマルチパートで届く。このプロジェクトには、INVITE のダイアログでマルチパートの本文を送るノードが無い。 |
 | P-CSCF。TS 24.229 5.2.8.1.1 | early dialog の中の要求（中継ノードがアンサーを受け取らなかった UPDATE など）が、INVITE とは別の P-CSCF のインスタンスを通ったときは、INVITE への次の応答が、その INVITE を転送しているインスタンスに届いたときに、はじめて INVITE に 500 を返して取り消す。遅くとも 200 が届いたときである。それまで INVITE は、中継ノードを通る音声の無いまま進む。 | INVITE に答えて取り消せるのは、その INVITE を転送しているインスタンスだけのため。インスタンスどうしは保存先を共有し、互いに頼むことはしない。ダイアログを解放したインスタンスが保存先のダイアログに印を付け、もう一方のインスタンスが次の応答でその印を見つける。VoLTE の呼のプリコンディションでは、UPDATE への 200 のすぐあとに 180 が届く。PCRF はセッションのイベントをそのセッションを開いたインスタンスに送るので、bearer を失ったという知らせは、いつも INVITE を転送しているインスタンスに届く。 |
+| P-CSCF。RFC 3261 13.3.1.4 と 15 | 200 への ACK を待つ解放は、その解放を始めた P-CSCF のインスタンスのタイマーで待つ。タイマーが切れる前にそのインスタンスが止まり、ACK も来ないときは、呼は中継ノードのコンテキストと Rx のセッションを持ったまま、当事者が BYE で終わらせるまで残る。 | 待つのは長くても 32 秒で、待っている 200 はそのインスタンスを通ったばかりである。ACK が来れば、どのインスタンスを通っても呼は解放される。 |
 | P-CSCF。TS 23.334 6.1.2、6.1.3 | 使えないメディア中継ノードを覚えず、監査もしない。P-CSCF は新しい呼ごとに、Call-ID で選んだ中継ノードをまず試し、そこがコンテキストを作れないときにだけ次の中継ノードへ進む。戻らない中継ノードを通る呼では、UE が切るまで信号だけが続き、音声は流れない。P-CSCF はその呼を切ることも、ほかの中継ノードへ移すこともしない。 | 同じアドレスで戻った中継ノードはコンテキストを開き直し、その呼の音声は続く。呼を切ると、戻るはずの呼まで切ってしまうため。ほかの中継ノードへ移すには P-CSCF が両側に新しいオファーを送ることになるが、プロキシはそれを送らないため。 |
 | UE。TS 24.229 5.1.3.1 b)、5.1.4A.1 | プリコンディションを使わない相手との通話でも、ダイアログの中のすべての要求の Supported に precondition を入れる。 | UA の Supported はすべての通話で共通のため。プリコンディションを使わない相手は、Supported にあるこのオプションタグを無視する。 |
 | メディア中継ノード。RFC 4961 | UE 側のターミネーションは、制御する側がラッチし直しを求めない限り、ラッチしたアドレスを通話の間ずっと使う。RTP と RTCP は別々にラッチする。 | ラッチし直しは、通話の途中で UE が移動したときにしか要らないため。網の側のターミネーションはラッチしないので、網の側の相手が替わってもラッチし直しは要らない。 |

@@ -169,6 +169,9 @@ type rawINVITE struct {
 	// ct is the INVITE as the UE sent it, and st as the far end got it.
 	ct *sip.ClientTransaction
 	st *sip.ServerTransaction
+	// invites are the INVITEs that reach the far end after the first,
+	// such as a re-INVITE.
+	invites chan *sip.ServerTransaction
 	// farGot are the ACKs and the other requests that reach the far end,
 	// which answers each request but the INVITE 200, and ueGot the
 	// requests that reach the UE.
@@ -183,7 +186,8 @@ func newRawINVITE(t *testing.T) *rawINVITE {
 	t.Helper()
 	c := &rawINVITE{relay: newFakeRelay(), store: NewMemoryStore(),
 		farGot: make(chan *sip.Message, 4), ueGot: make(chan *sip.Message, 4)}
-	invites := make(chan *sip.ServerTransaction, 1)
+	invites := make(chan *sip.ServerTransaction, 2)
+	c.invites = invites
 	far := newStackConfig(t, sip.Config{Timers: sip.DefaultTimers(),
 		OnACK: func(ack *sip.Message) { c.farGot <- ack },
 		OnRequest: func(st *sip.ServerTransaction) {
@@ -355,6 +359,59 @@ func TestRefusedAnswerOfAnotherForkIsAcknowledgedAndReleased(t *testing.T) {
 	case <-time.After(watch):
 	}
 	c.relay.waitHeld(t, 1, 0)
+}
+
+// TestRefusedAnswerOfAReINVITEThatFailsIsReleasedAtOnce: the far end
+// answers a re-INVITE first with a 183 whose answer the relay does not
+// take, and then with 486. The release would wait for the ACK of a 2xx
+// to the re-INVITE, but a final response other than 2xx gets its ACK hop
+// by hop (RFC 3261 17.1.1.3), and none passes the P-CSCF. So the BYEs go
+// out once the 486 has gone, not after the wait for the ACK.
+func TestRefusedAnswerOfAReINVITEThatFailsIsReleasedAtOnce(t *testing.T) {
+	c := newRawINVITE(t)
+	c.p.ackWait = time.Minute
+	ok := c.response(200)
+	c.st.Respond(ok)
+	if r := final(t, c.ct.Responses(), 3*time.Second); r.StatusCode != 200 {
+		t.Fatalf("the caller got %d, want the 200", r.StatusCode)
+	}
+
+	reinvite := &sip.Message{Method: sip.INVITE, RequestURI: c.farContact}
+	reinvite.Add("Route", "<sip:pcscf."+domain+":5060;lr>")
+	reinvite.Add("Max-Forwards", "70")
+	reinvite.Add("From", c.st.Request.Get("From"))
+	reinvite.Add("To", ok.Get("To"))
+	reinvite.Add("Call-ID", c.st.Request.Get("Call-ID"))
+	reinvite.Add("CSeq", "2 INVITE")
+	reinvite.Add("Contact", c.st.Request.Get("Contact"))
+	reinvite.Add("Content-Type", "application/sdp")
+	reinvite.Body = sdp.Offer("2", moved).Bytes()
+	ct, err := c.ue.SendRequest(reinvite, sip.Destination{Transport: sip.UDP, Addr: c.pcscf.LocalAddr()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var st *sip.ServerTransaction
+	select {
+	case st = <-c.invites:
+	case <-time.After(3 * time.Second):
+		t.Fatal("the far end got no re-INVITE")
+	}
+	c.relay.refuseModify(agw.Core)
+	progress := sip.NewResponse(st.Request, 183, "")
+	progress.Add("Contact", "<"+c.farContact+">")
+	progress.Add("Content-Type", "application/sdp")
+	progress.Body = sdp.Offer("3", coreMedia).Bytes()
+	st.Respond(progress)
+	st.Respond(sip.NewResponse(st.Request, 486, ""))
+	if r := final(t, ct.Responses(), 3*time.Second); r.StatusCode != 486 {
+		t.Fatalf("the re-INVITE got %d, want the 486 of the far end", r.StatusCode)
+	}
+	for m := nextRequest(t, "the far end", c.farGot); m.Method != sip.BYE; m = nextRequest(t, "the far end", c.farGot) {
+	}
+	if m := nextRequest(t, "the caller", c.ueGot); m.Method != sip.BYE {
+		t.Errorf("the caller got %s, want the BYE of the release", m.Method)
+	}
+	c.relay.waitHeld(t, 0, time.Second)
 }
 
 // answerOffers has the far end answer each offer within the dialog of
