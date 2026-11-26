@@ -168,6 +168,7 @@ IP-SM-GW は、UE がまたショートメッセージを受け取れるよう�
 | TS 23.204 V19.1.0 6.5b | IP-SM-GW は、UE に SMS over IP で届くと分かったら、自分の UNRI を落として HLR/HSS に知らせます。step 2a は IMS への登録で、HLR/HSS の UNRI は TS 23.040 のとおりに更新されます。step 2d では、IP-SM-GW が Ready for SM を HLR/HSS に送ります。 |
 | TS 23.204 V19.1.0 6.6 step 3 | IP-SM-GW は、UE のメモリに空きができたことを HLR/HSS に知らせます。メッセージの名前は書いていません。 |
 | TS 23.040 V20.0.0 3.2.6 の 2c と 2f | HLR/HSS が 2 つの知らせを受けたときの動きです。2c は IMS への登録か、UE がまた使えるようになったことで、UNRI を落として SC に知らせます。2f はメモリの空きで、SC に知らせて UNRI を落とします。 |
+| TS 23.040 V20.0.0 3.2.8 の Case 1 | HLR は MS Memory Capacity Available の知らせを受けたら、SC に知らせ、MWD を更新し、MCEF を落とします。IP-SM-GW 経由で届く UE なら UNRI も落とします。2f が触れていない MCEF を落とす根拠です。 |
 | TS 23.040 V20.0.0 10.3 | ReadyForSM（operation 11）を TS 29.002 の手順とし、VLR、SGSN、MME から HLR への知らせとして説明します。IP-SM-GW には触れていません。 |
 | TS 24.341 V19.0.0 5.3.3.4.1 | RP-SMMA を受けた IP-SM-GW は、受信者の MSISDN を RP の IMSI の欄に入れ、それを適切なメッセージで HSS に渡します。どのメッセージかは書いていません。 |
 | TS 29.002 V19.1.0 12.4.1 | MAP-READY-FOR-SM は、IP-SM-GW と HLR のあいだでも使います。IP-SM-GW は、利用者がメモリの空きを示したときと、message waiting flag が立っている利用者に IMS で届くようになったときに、このサービスを始めます。 |
@@ -199,5 +200,6 @@ Wireshark 4.6.9（CI のキャプチャのイメージの版）のソースも�
 - IR.92 Annex C.3 の SMS_Over_IP_Networks_Indication の既定値。
 - IP-SM-GW が HSS への登録に MAP と Sh のどちらをよく使うか。仕様からは決められません。
 - Diameter だけで HSS とつながる商用の IP-SM-GW が、UE にまた届くようになったこととメモリの空きを、HSS にどう知らせているか。公開の仕様には、MAP の READY_FOR_SM のほかに手順がありません。
+- Rel-17 以降の SBI で、IP-SM-GW が UDM に同じことを知らせられるか。TS 29.503 の UECM に、これにあたる表示があるかもしれませんが、読んでいません。このプロジェクトの HSS は Diameter だけを話すので、調べていません。
 - Sh-Data の XML で SMSRegistrationInfo の要素がどういう形か。
 - 今の P-CSCF と I-CSCF が MESSAGE を正しく中継するか。

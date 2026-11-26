@@ -306,9 +306,9 @@ func (s *Subscriber) readyForShortMessages(reason sgd.AlertReason) bool {
 	case sgd.AlertReasonUEMemoryAvailable:
 		// Item 2f alerts the service centres when the UE has memory
 		// again, and clears UNRI, since a UE that says so is reachable.
-		// It leaves MCEF set, which items 2d and 2e clear for the same
-		// notification through an MSC and through an SGSN; this HSS
-		// clears it, as the memory is no longer full.
+		// MCEF goes too: TS 23.040 3.2.8 Case 1 has the HLR clear it on
+		// the MS Memory Capacity Available message, together with UNRI
+		// for a UE reachable via the IP-SM-GW.
 		s.MCEF, s.UNRI = false, false
 		return len(s.MessageWaitingData) > 0
 	}
