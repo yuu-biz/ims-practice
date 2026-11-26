@@ -354,11 +354,17 @@ func TestASubscriberThatDoesNotAnswerHoldsUpNoOneElse(t *testing.T) {
 // reason noresource (TS 24.147 5.3.3.4), before the BYE that removes it
 // from the conference (5.3.2.7) and ends the dialog. So it does when
 // the NOTIFY before that one still waits for the participant's response
-// as the conference ends. Of the participants, the focus sends that
-// NOTIFY only to one that it cannot tell has left: this one asked for
-// privacy and came in without an asserted identity (TS 24.229 5.7.1.4
-// a).
+// as the conference ends. A BYE alone would not end the subscription,
+// which shares the dialog with the session (RFC 5057 5.5). So it goes
+// for a participant whose identity the network asserts, and for one
+// that asked for privacy and came in without an asserted identity (TS
+// 24.229 5.7.1.4 a).
 func TestTheLastNOTIFYWithinADialogComesBeforeTheBYE(t *testing.T) {
+	t.Run("identified", func(t *testing.T) { lastNOTIFYWithinADialogBeforeTheBYE(t, false) })
+	t.Run("anonymous", func(t *testing.T) { lastNOTIFYWithinADialogBeforeTheBYE(t, true) })
+}
+
+func lastNOTIFYWithinADialogBeforeTheBYE(t *testing.T, anonymous bool) {
 	mrfc := startConferenceMRFC(t)
 	as := startAS(t, noServices{}, mmtel.Config{MRFC: "sip:" + contactOf(t, mrfc.ua)})
 	conf, focus, notifications := aliceConference(t, as, func(c *sip.IncomingCall) { c.Reject(480) })
@@ -369,8 +375,10 @@ func TestTheLastNOTIFYWithinADialogComesBeforeTheBYE(t *testing.T) {
 	within := make(chan *sip.InDialogRequest, 4)
 	carol := newParticipant(t, as, "carol", func(c *sip.IncomingCall) { c.Reject(480) })
 	inv := joining("carol", focus.URI)
-	inv.Headers = slices.DeleteFunc(inv.Headers, func(h sip.HeaderField) bool { return h.Name == "P-Asserted-Identity" })
-	inv.Headers = append(inv.Headers, sip.HeaderField{Name: "Privacy", Value: sip.PrivacyID})
+	if anonymous {
+		inv.Headers = slices.DeleteFunc(inv.Headers, func(h sip.HeaderField) bool { return h.Name == "P-Asserted-Identity" })
+		inv.Headers = append(inv.Headers, sip.HeaderField{Name: "Privacy", Value: sip.PrivacyID})
+	}
 	inv.OnRequest = func(r *sip.InDialogRequest) { within <- r }
 	in, err := carol.Invite(inv)
 	if err != nil {

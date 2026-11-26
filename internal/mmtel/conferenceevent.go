@@ -321,10 +321,6 @@ func (f *conference) notify(only *sip.DialogID) {
 		if p.inDialog == nil || (only != nil && p.dialog != *only) {
 			continue
 		}
-		// A participant who has left has no dialog to send in.
-		if gone[ims.PublicIdentityKey(f.userOf(p))] {
-			continue
-		}
 		reason := ""
 		switch {
 		case f.ended:
@@ -487,12 +483,4 @@ func (f *conference) notifyInDialog(p *party, sub *inDialogSubscription, reason 
 		// NOTIFY that fails drops nothing from the outbox of the dialog.
 		return false
 	})
-}
-
-// userOf is the user of party p in the record. f.mu is held.
-func (f *conference) userOf(p *party) string {
-	if e := f.entry(p); e != nil {
-		return e.User
-	}
-	return ""
 }
