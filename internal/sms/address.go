@@ -88,7 +88,8 @@ const filler = 0b1111
 //
 // SIMPLIFIED: TS 23.040 9.1.2.5. An address with type of number 101
 // holds GSM 7 bit characters, such as a sender name, instead of digits.
-// The SC stub only uses E.164 numbers, so such an address is refused.
+// The Service Centre uses E.164 numbers only, so such an address is
+// refused.
 var errAlphanumeric = errors.New("alphanumeric address is not supported")
 
 // encodeSemiOctets packs digits two to an octet, the first digit in bits
