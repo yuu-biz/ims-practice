@@ -262,26 +262,34 @@ func (s *stoppingSCSCFs) Request(ctx context.Context, originHost string, m *diam
 }
 
 // TestARoundThatIsClaimedLateIsNotTakenOver: a round that no instance
-// could claim for longer than a lease, as when every instance was
-// without its connections, is claimed at last, and its first PPR takes
-// a while. The round is being sent, though nothing has recorded a PPR of
-// it for two leases, and no other instance takes it over and sends the
-// same subscriber.
+// could claim for an hour, as when every instance was without its
+// connections, is claimed at last, and its first PPR takes a while.
+// Nothing has recorded a PPR of the round for far longer than two
+// leases, but it is being sent, and the other instance, which sweeps
+// many times while that PPR waits for its answer, does not make it due
+// again and send the same subscriber.
 func TestARoundThatIsClaimedLateIsNotTakenOver(t *testing.T) {
 	store := settingsStore(t)
 	locks := &ims.UserLocks{}
-	lease := func(c *Config) { c.PushLease = time.Second }
-	first, api := newSettingsInstance(t, store, locks, lease)
-	other, _ := newSettingsInstance(t, store, locks, lease)
+	first, api := settingsInstance(t, store, locks)
+	other, _ := settingsInstance(t, store, locks)
 	serve(t, first, impi, impu, cx.AssignRegistration)
 	change(t, api, "hss.default_service_profile", "trial")
-	time.Sleep(1500 * time.Millisecond)
+	p, _, err := store.ProfilePush(t.Context(), ProfileOfOtherUsers)
+	if err != nil {
+		t.Fatal(err)
+	}
+	waited := p
+	waited.Updated = p.Updated.Add(-time.Hour)
+	if swapped, err := store.CompareAndSwapProfilePush(t.Context(), &p, waited); err != nil || !swapped {
+		t.Fatalf("CompareAndSwapProfilePush: %v, %v", swapped, err)
+	}
 
-	sending := make(chan struct{})
+	sending, release := make(chan struct{}), make(chan struct{})
 	slow := &fakeSCSCFs{beforePPA: func(n int) {
 		if n == 1 {
 			close(sending)
-			time.Sleep(800 * time.Millisecond)
+			<-release
 		}
 	}}
 	first.SetPeers(slow)
@@ -291,6 +299,10 @@ func TestARoundThatIsClaimedLateIsNotTakenOver(t *testing.T) {
 		t.Fatal("gave up waiting 5 s for the first instance to send")
 	}
 	other.SetPeers(slow)
+	// The other instance sweeps every few milliseconds, some forty times
+	// in this; the claim of the first lasts far longer.
+	time.Sleep(200 * time.Millisecond)
+	close(release)
 	if pushed := pushedTo(t, first, slow, 1, other.Close); len(pushed) != 1 || pushed[impi] != settingsTrialAS {
 		t.Errorf("the PPRs went to %v, want the ordinary subscriber once", pushed)
 	}
@@ -611,16 +623,20 @@ func overtake(t *testing.T, store Store, round uint64) {
 // another instance, of a round that a later one has followed, is not
 // sent: the later round pushed every subscriber of the source.
 func TestALeftPPRThatALaterRoundCoversIsNotSent(t *testing.T) {
-	store := settingsStore(t)
+	store := &droppingStore{MemoryStore: settingsStore(t), dropped: make(chan ProfilePushRetry, 1)}
 	h, _ := settingsInstance(t, store, nil)
 	serve(t, h, impi, impu, cx.AssignRegistration)
 	leftPPR(t, store, 1)
 	overtake(t, store, 1)
 	scscfs := &fakeSCSCFs{}
 	h.SetPeers(scscfs)
-	// The retry is claimed at the next sweep; a second sweep after it has
-	// had it, and Close waits for the one under way.
-	time.Sleep(50 * time.Millisecond)
+	// The instance takes the left PPR out of the store once it has sent
+	// it, or found that it is not to be sent.
+	select {
+	case <-store.dropped:
+	case <-time.After(5 * time.Second):
+		t.Fatal("gave up waiting 5 s for the left PPR to leave the store")
+	}
 	h.Close()
 	scscfs.mu.Lock()
 	defer scscfs.mu.Unlock()
