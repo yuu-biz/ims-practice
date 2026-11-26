@@ -194,6 +194,34 @@ func TestRollbackOfAChangeSetWhoseNodesShareTheirSettings(t *testing.T) {
 	}
 }
 
+// TestRollbackOfAChangeSetWithANodeItChangedNothingOn: a node that had
+// the value of the change already, as an instance of a role that shares
+// its settings has once another instance took the change, recorded no
+// change. The rollback of the set has nothing to undo there, and does
+// not count that node as failed.
+func TestRollbackOfAChangeSetWithANodeItChangedNothingOn(t *testing.T) {
+	a := newFakeNode(t, "hss-1", []string{"hss"}, retryAfter)
+	b := newFakeNode(t, "hss-2", []string{"hss"}, retryAfter)
+	b.setSetting(retryAfter, 30)
+	ts, _ := newHistoryServer(t, a, b)
+	change := ts.change(t, "/oam/v1/roles/hss/config", 30)
+	if n := len(change.Nodes[1].Result.Change.Changes); n != 0 {
+		t.Fatalf("the second node recorded %d changes, want none", n)
+	}
+
+	status, body := ts.call(t, "POST", "/oam/v1/config/change-sets/"+change.Nodes[0].Result.ChangeSet+"/rollback", "")
+	got := decodeAs[FanOut[ChangeRecord]](t, body)
+	if status != http.StatusOK || got.Succeeded != 2 || got.Failed != 0 {
+		t.Fatalf("rollback of the set: %d %s", status, body)
+	}
+	if got.Nodes[1].Result != nil {
+		t.Errorf("the second node has the rollback %+v, want none: there was nothing to undo", got.Nodes[1].Result)
+	}
+	if a.setting(retryAfter) != 1 || b.setting(retryAfter) != 30 {
+		t.Errorf("values: %d %d", a.setting(retryAfter), b.setting(retryAfter))
+	}
+}
+
 func TestConfigurationChangeErrors(t *testing.T) {
 	a := newFakeNode(t, "pcscf-1", []string{"pcscf"}, retryAfter)
 	down := newFakeNode(t, "pcscf-2", []string{"pcscf"}, retryAfter)
