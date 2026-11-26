@@ -64,6 +64,14 @@ type SettingsGroup struct {
 	// the changes that reach another instance too, and the node then
 	// shows their generation and takes only the changes above it.
 	Generation func() uint64
+	// Previous, when not nil, gives the value of a setting of the group
+	// that the last Commit replaced, as current would give it, for the
+	// record of the change in place of the value in force before it. A
+	// role whose instances share their settings replaces what they hold,
+	// which may be a change through another instance that this node has
+	// not taken on; and when it finds the change of the request there
+	// already, it has replaced nothing, and the record has no change.
+	Previous func(name string) (json.RawMessage, error)
 }
 
 // Together makes settings one group. A change that names several of
@@ -328,6 +336,11 @@ func (n *Node) ChangeConfiguration(req ConfigurationChangeRequest) (Configuratio
 		}
 	}
 	for _, c := range changes {
+		if c.setting.group != nil && n.group.Previous != nil {
+			if previous, err := n.group.Previous(c.setting.name); err == nil {
+				c.previous = previous
+			}
+		}
 		// The value in force is read back, so the record has it as the
 		// configuration shows it, not as the request spelled it.
 		value, err := c.setting.current()

@@ -189,9 +189,10 @@ func TestAnInstanceKeepsSettingsItCannotServe(t *testing.T) {
 // TestTheChangeOfARoleReachesEveryInstanceOnce: the OAM server sends
 // one change, with one generation, to every instance of the role. The
 // instance it reaches second finds the change in force in the store,
-// takes it on and answers it as done. A change of another OAM server
-// with the same generation and another value is one that the first
-// overtook, and changes nothing.
+// takes it on and answers it as done, with a record of no change: the
+// change of the store was the first instance's, and the history has it
+// there. A change of another OAM server with the same generation and
+// another value is one that the first overtook, and changes nothing.
 func TestTheChangeOfARoleReachesEveryInstanceOnce(t *testing.T) {
 	store := settingsStore(t)
 	_, first := settingsInstance(t, store, nil)
@@ -215,10 +216,34 @@ func TestTheChangeOfARoleReachesEveryInstanceOnce(t *testing.T) {
 	if err != nil {
 		t.Fatalf("the second instance: %v", err)
 	}
-	if len(record.Changes) != 1 || string(record.Changes[0].Value) != `"test_users"` {
-		t.Errorf("the second instance recorded %+v, want hss.admission from all to test_users", record.Changes)
+	if len(record.Changes) != 0 {
+		t.Errorf("the second instance recorded %+v, want no change of its own", record.Changes)
 	}
 	if other.Admission() != AdmitTestUsers || generationOf(t, second) != 1 {
 		t.Errorf("the second instance has %q at generation %d", other.Admission(), generationOf(t, second))
+	}
+}
+
+// TestTheRecordOfAChangeHasWhatTheStoreHad: an instance that has not
+// yet taken on the change of the admission policy that another instance
+// made records, for a change of its own, the policy that its change
+// replaced in the store, not the one of its copy. A rollback of the
+// record puts that one back.
+func TestTheRecordOfAChangeHasWhatTheStoreHad(t *testing.T) {
+	store := settingsStore(t)
+	_, first := settingsInstance(t, store, nil)
+	behind, behindAPI := settingsInstanceReading(t, store, nil, time.Hour)
+	if _, err := changeAt(first, 1, "hss.admission", string(AdmitTestUsers)); err != nil {
+		t.Fatal(err)
+	}
+	if behind.Admission() != AdmitAll {
+		t.Fatal("the instance behind has taken on the policy already; the test needs it behind")
+	}
+	record, err := changeAt(behindAPI, 2, "hss.admission", string(AdmitAll))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(record.Changes) != 1 || string(record.Changes[0].Previous) != `"test_users"` || string(record.Changes[0].Value) != `"all"` {
+		t.Errorf("the record is %+v, want hss.admission from test_users to all", record.Changes)
 	}
 }

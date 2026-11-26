@@ -243,8 +243,9 @@ func (h *HSS) setting(set func(*settings)) { h.pending = append(h.pending, set) 
 func (h *HSS) commitSettings(generation uint64) error {
 	sets := h.pending
 	h.pending = nil
-	next, wrote, err := h.storeSettings(h.life, sets, generation)
+	next, replaced, wrote, err := h.storeSettings(h.life, sets, generation)
 	if err == nil {
+		h.replaced.Store(replaced)
 		// The settings of the Store that the change did not name may hold
 		// what this instance cannot serve.
 		h.takeOnStored(next)
@@ -265,7 +266,9 @@ func (h *HSS) commitSettings(generation uint64) error {
 const settingsWrites = 10
 
 // storeSettings writes the settings of a change to the Store: the
-// settings of the Store with what sets does to them, at generation. The
+// settings of the Store with what sets does to them, at generation. It
+// returns them with the settings they replaced there, for the record of
+// the change (previousSetting). The
 // change names only the settings it sets, so the others keep the values
 // of the Store, which may be those of a change through another instance
 // that this one has not taken on yet. It returns the settings of the
@@ -274,19 +277,20 @@ const settingsWrites = 10
 // sent another instance first. The settings of a later change in the
 // Store, or other settings of the same generation, are a change that
 // overtook this one, which it refuses with maintenance.ErrStaleGeneration.
-func (h *HSS) storeSettings(ctx context.Context, sets []func(*settings), generation uint64) (*settings, bool, error) {
+func (h *HSS) storeSettings(ctx context.Context, sets []func(*settings), generation uint64) (next, replaced *settings, wrote bool, err error) {
 	for range settingsWrites {
 		stored, ok, err := h.store.Settings(ctx)
 		if err != nil {
-			return nil, false, err
+			return nil, nil, false, err
 		}
 		// A Store with no settings yet is one that this instance could
 		// not read since it started, so those in force are of its file.
-		next := *h.settings.Load()
+		base := *h.settings.Load()
 		var old *StoredSettings
 		if ok {
-			next, old = *settingsOf(stored), &stored
+			base, old = *settingsOf(stored), &stored
 		}
+		next := base
 		for _, set := range sets {
 			set(&next)
 		}
@@ -294,21 +298,23 @@ func (h *HSS) storeSettings(ctx context.Context, sets []func(*settings), generat
 		if ok {
 			switch {
 			case stored == next.stored():
-				return &next, false, nil
+				// The change of another instance, which this one takes on:
+				// it replaces nothing.
+				return &next, &next, false, nil
 			case stored.Generation >= generation:
-				return nil, false, fmt.Errorf("%w: the settings of generation %d are in force on the instances of the role",
+				return nil, nil, false, fmt.Errorf("%w: the settings of generation %d are in force on the instances of the role",
 					maintenance.ErrStaleGeneration, stored.Generation)
 			}
 		}
 		swapped, err := h.store.CompareAndSwapSettings(ctx, old, next.stored())
 		if err != nil {
-			return nil, false, err
+			return nil, nil, false, err
 		}
 		if swapped {
-			return &next, true, nil
+			return &next, &base, true, nil
 		}
 	}
-	return nil, false, fmt.Errorf("the settings of the store were changed by other instances %d times", settingsWrites)
+	return nil, nil, false, fmt.Errorf("the settings of the store were changed by other instances %d times", settingsWrites)
 }
 
 // takeOn puts next in force for the requests of this instance, unless
@@ -530,6 +536,9 @@ type HSS struct {
 	// together for one change, wherever the change comes from.
 	settings   atomic.Pointer[settings]
 	settingsMu sync.Mutex
+	// replaced is what the last change of this instance replaced in the
+	// Store (storeSettings), for the record of that change.
+	replaced atomic.Pointer[settings]
 	// unservable is one above the generation of the last settings of the
 	// Store that this instance could not take on (takeOnStored), so that
 	// it logs them once.
