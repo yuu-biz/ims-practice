@@ -269,3 +269,96 @@ func TestRefusedOfferOfAnUPDATEInTheEarlyDialogKeepsTheCall(t *testing.T) {
 	hangUp(t, h, out, pcrf, relay, key)
 }
 
+// reliable has the far end of c send a reliable 183 with rseq and the
+// SDP of a party at media, and returns it once the caller has it.
+func (c *rawINVITE) reliable(t *testing.T, rseq int, media netip.AddrPort) *sip.Message {
+	t.Helper()
+	progress := c.response(183)
+	progress.Body = sdp.Offer(fmt.Sprint(rseq+1), media).Bytes()
+	progress.Add("Require", sip.Option100rel)
+	progress.Add("RSeq", fmt.Sprint(rseq))
+	c.st.Respond(progress)
+	for {
+		r := next(t, c.ct.Responses())
+		if r.StatusCode == 183 && r.Get("RSeq") == fmt.Sprint(rseq) {
+			return progress
+		}
+	}
+}
+
+// prack has the caller of c acknowledge the reliable response progress
+// with a PRACK whose CSeq is seq, carrying body as its SDP when it is not
+// nil (RFC 3262 4, 5), and returns the final response to the PRACK.
+func (c *rawINVITE) prack(t *testing.T, progress *sip.Message, seq int, body []byte) *sip.Message {
+	t.Helper()
+	m := &sip.Message{Method: sip.PRACK, RequestURI: c.farContact}
+	m.Add("Route", "<sip:pcscf."+domain+":5060;lr>")
+	m.Add("Max-Forwards", "70")
+	m.Add("From", c.st.Request.Get("From"))
+	m.Add("To", progress.Get("To"))
+	m.Add("Call-ID", c.st.Request.Get("Call-ID"))
+	m.Add("CSeq", fmt.Sprintf("%d PRACK", seq))
+	m.Add("RAck", progress.Get("RSeq")+" 1 INVITE")
+	if body != nil {
+		m.Add("Content-Type", "application/sdp")
+		m.Body = body
+	}
+	ct, err := c.ue.SendRequest(m, sip.Destination{Transport: sip.UDP, Addr: c.pcscf.LocalAddr()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return final(t, ct.Responses(), 3*time.Second)
+}
+
+// wantINVITEGivenUp checks that the P-CSCF has ended the INVITE of c:
+// the caller has 500, the callee a CANCEL, and the relay context is gone.
+func (c *rawINVITE) wantINVITEGivenUp(t *testing.T) {
+	t.Helper()
+	if r := final(t, c.ct.Responses(), 3*time.Second); r.StatusCode != 500 {
+		t.Fatalf("the INVITE got %d, want 500", r.StatusCode)
+	}
+	select {
+	case <-c.st.Cancelled():
+	case <-time.After(3 * time.Second):
+		t.Fatal("the callee got no CANCEL")
+	}
+	c.relay.waitHeld(t, 0, time.Second)
+}
+
+// TestRefusedSDPOfAPRACKEndsTheCall: the SDP of a PRACK in the early
+// dialog does not go through the relay, whether it is a new offer after
+// the answer of the reliable 183 or the answer to an offer that a later
+// reliable 183 made (RFC 3262 5), and even when the relay changed
+// nothing. A PRACK that fails is not sent again (RFC 3262 4), so the
+// callee would end the INVITE with a 5xx once its 183 had gone
+// unacknowledged for 64*T1 (RFC 3262 3). The P-CSCF answers the PRACK
+// 500 and ends the INVITE at once, as for an answer that the relay did
+// not take in the early dialog (TS 24.229 5.2.8.1.1): the caller gets
+// 500 and the callee a CANCEL.
+func TestRefusedSDPOfAPRACKEndsTheCall(t *testing.T) {
+	t.Run("offer", func(t *testing.T) {
+		c := newRawINVITE(t)
+		progress := c.reliable(t, 1, coreMedia)
+		c.relay.refuseModify(agw.Access)
+		if r := c.prack(t, progress, 2, sdp.Offer("2", moved).Bytes()); r.StatusCode != 500 {
+			t.Fatalf("the PRACK got %d, want 500 from the P-CSCF", r.StatusCode)
+		}
+		c.wantINVITEGivenUp(t)
+	})
+	t.Run("answer", func(t *testing.T) {
+		c := newRawINVITE(t)
+		first := c.reliable(t, 1, coreMedia)
+		if r := c.prack(t, first, 2, nil); r.StatusCode != 200 {
+			t.Fatalf("the first PRACK got %d, want 200", r.StatusCode)
+		}
+		if m := nextRequest(t, "the callee", c.farGot); m.Method != sip.PRACK {
+			t.Fatalf("the callee got %s, want the PRACK", m.Method)
+		}
+		offer := c.reliable(t, 2, netip.MustParseAddrPort("192.0.2.99:6002"))
+		c.relay.refuseModify(agw.Access)
+		if r := c.prack(t, offer, 3, sdp.Offer("2", moved).Bytes()); r.StatusCode != 500 {
+			t.Fatalf("the PRACK got %d, want 500 from the P-CSCF", r.StatusCode)
+		}
+		c.wantINVITEGivenUp(t)
+	})
+}

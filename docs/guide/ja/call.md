@@ -507,7 +507,7 @@ UE 2 の P-CSCF では、同じことが逆の向きに起きます。183 や 20
 
 ## 中継ノードがオファーを受け取らないとき
 
-ダイアログの中の新しい SDP も、INVITE のオファーと同じく中継ノードを通ります。UPDATE のオファーや、保留のときの re-INVITE のオファーです。P-CSCF は、SDP を送った側に面したターミネーションに、その側がこれからどこで受けるかを `Modify` で伝えます。そのあとで、もう一方のターミネーションのアドレスを SDP に書きます（TS 24.229 6.7.2.1）。この `Modify` が失敗すると、P-CSCF は先へ渡す自分の SDP を作れません。届いた SDP には、送った側のアドレスが書いてあります。相手はそこへ、中継ノードを通らずに RTP を送ることになります。PCRF も、呼が通らない経路のメディアを許可することになります。
+ダイアログの中の新しい SDP も、INVITE のオファーと同じく中継ノードを通ります。UPDATE のオファーや、保留のときの re-INVITE のオファーです。PRACK の SDP もあります。PRACK の SDP は、新しいオファーか、PRACK が確認する信頼性のある応答に入ったオファーへのアンサーです（RFC 3262 5）。P-CSCF は、SDP を送った側に面したターミネーションに、その側がこれからどこで受けるかを `Modify` で伝えます。そのあとで、もう一方のターミネーションのアドレスを SDP に書きます（TS 24.229 6.7.2.1）。この `Modify` が失敗すると、P-CSCF は先へ渡す自分の SDP を作れません。届いた SDP には、送った側のアドレスが書いてあります。相手はそこへ、中継ノードを通らずに RTP を送ることになります。PCRF も、呼が通らない経路のメディアを許可することになります。
 
 そのため、P-CSCF は要求を先へ送らず、自分で答えます。TS 24.229 6.2 も、P-CSCF が通せないオファーの入った要求を、同じように扱います。P-CSCF はその要求に答え、先へは送りません。ローカルポリシーが許さないメディアのオファーには、6.2 は 488（Not Acceptable Here）を返し、ポリシーが許すメディアをそこに入れます。ここではメディアは許されていて、原因は中継ノードにあるので、500（Server Internal Error、RFC 3261 21.5.1）を返します。P-CSCF が SDP をまったく読めないときは、400（Bad Request、RFC 3261 21.4.1）を返し、中継ノードには何も頼みません。
 
@@ -558,9 +558,11 @@ UE 2 の P-CSCF では、同じことが逆の向きに起きます。183 や 20
 - **P-CSCF は呼の Rx のセッションを終わらせ**（TS 29.214 4.4.4）、中継ノードのコンテキストを解放します。ほかの解放と同じです。
 - **early dialog では、** INVITE にまだ最終応答がありません。UE 1 は INVITE への 500 も受け取り、網へ向けた INVITE は取り消されます。中継ノードがアンサーを受け取らなかった 183 のときと同じです。
 
-TS 24.229 がオファーのためにダイアログを解放するのは、オファーが応答で届いたときだけです（5.2.8.1.2）。6.2 は、そのようなオファーの入った 200 を P-CSCF に先へ渡させ、ACK が届いたらセッションを解放させます。200 は誰も断れないためです。応答に入ったアンサーも断れないので、中継ノードが応答のアンサーを受け取らないときは、P-CSCF は呼を解放します。
+**要求が PRACK のとき。** 中継ノードの答えにかかわらず、P-CSCF は 500 を返し、INVITE を終わらせます。UAC は PRACK を送り直しません（RFC 3262 4）。信頼性のある応答は確認されないまま残り、着信側は、応答が PRACK を 64*T1、つまり 32 秒待ったところで、INVITE を 5xx で終わらせます（RFC 3262 3）。P-CSCF はそれを待たずに INVITE を終わらせます。UE 1 は INVITE への 500 を受け取り、網には CANCEL が届きます。
 
-`internal/pcscf` の試験は、SDP の `Modify` を失敗させる中継ノードを使って、これらの流れを 1 つのプロセスの中で動かします。`TestRefusedOfferWithinTheDialogIsRejected`、`TestRefusedOfferOfAnUPDATEInTheEarlyDialogKeepsTheCall`、`TestOfferWithinTheDialogEndsTheCallWhenTheRelayMayHaveTakenIt`、`TestMalformedOfferWithinTheDialogGets400` です。
+TS 24.229 がオファーのためにダイアログを解放するのは、オファーが応答で届いたときだけです（5.2.8.1.2）。6.2 は、そのようなオファーの入った 200 を P-CSCF に先へ渡させ、ACK が届いたらセッションを解放させます。200 は誰も断れないためです。応答に入ったアンサーも断れないので、中継ノードが応答のアンサーを受け取らないときは、P-CSCF は呼を解放します。要求に入ったアンサーは違います。暫定応答に入ったオファーへのアンサーを運ぶ要求には、6.2 は P-CSCF に 488 を返させます。ここではその要求は PRACK なので、上のとおり呼を終わらせます。
+
+`internal/pcscf` の試験は、SDP の `Modify` を失敗させる中継ノードを使って、これらの流れを 1 つのプロセスの中で動かします。`TestRefusedOfferWithinTheDialogIsRejected`、`TestRefusedOfferOfAnUPDATEInTheEarlyDialogKeepsTheCall`、`TestOfferWithinTheDialogEndsTheCallWhenTheRelayMayHaveTakenIt`、`TestMalformedOfferWithinTheDialogGets400`、`TestRefusedSDPOfAPRACKEndsTheCall` です。
 
 ## このプロジェクトで簡略化していること
 
