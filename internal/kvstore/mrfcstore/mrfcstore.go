@@ -21,7 +21,10 @@
 // parties stay, however long that is; the instance whose party is the
 // last to leave removes it. If that removal fails, the item stays until
 // a party of the conference finds that the MRFP holds its context no
-// more, and the MRFC that the party reached removes it.
+// more, and the MRFC that the party reached removes it. An instance that
+// stops while a party of the conference is in the mix releases nothing
+// at the MRFP (package mrfc says why, at leg.release), so that context
+// never empties, and the item stays as long as the MRFP keeps it.
 package mrfcstore
 
 import (
