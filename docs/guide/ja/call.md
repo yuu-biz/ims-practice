@@ -408,7 +408,7 @@ TS 24.229 には、メディア中継ノードが働かないときの手順が�
 - **UE 1 は INVITE への 500 を受け取ります。** 183 は UE 1 に届きません。
 - **網へ向けた INVITE を取り消します。** 着信側は INVITE に 487 を返します（RFC 3261 9.2）。
 - **P-CSCF は中継ノードのコンテキストを解放します。** 中継ノードが答えないときは、何度か試し直します。中継ノードが受け取らなかったアンサーは、PCRF に渡しません。中継ノードが受け取ったアンサーが前の応答にあったときは、PCRF はそのアンサーを持っています。そこで P-CSCF は、呼の Rx のセッションを終わらせます（TS 29.214 4.4.4）。
-- **中継ノードがアンサーを受け取った、信頼性のある 183 の送り直しでは、何も変わりません。** 着信側は、PRACK が届くまで信頼性のある 183 を送り直します（RFC 3262 3）。UE 1 はその 183 をもう持っているので、送り直しは届いたまま先へ進み、呼は続きます。
+- **中継ノードがアンサーを受け取った、信頼性のある 183 の送り直しでは、何も変わりません。** 着信側は、PRACK が届くまで信頼性のある 183 を送り直します（RFC 3262 3）。UE 1 はその 183 をもう持っているので、P-CSCF は最初の 183 と同じものを送り直します。中継ノードを示す SDP が入ったもので、呼は続きます。版の変わらない SDP は同じ SDP でなければならず（RFC 3264 8）、中継ノードにはもう尋ねません。
 
 アンサーが 200 で届いたときは、着信側はもう応答しています。
 
@@ -435,7 +435,8 @@ TS 24.229 には、メディア中継ノードが働かないときの手順が�
 - **UE 1 は 200 の代わりに 500 を受け取ります。** UE 1 の INVITE にはまだ最終応答が無いので、P-CSCF はそこで呼を終わらせられます。中継ノードを通らない経路を示す SDP の入った 200 は、UE 1 に届きません。
 - **着信側のダイアログは確立しています。** そこで P-CSCF は、UE 1 の名前で 200 に ACK を返し（RFC 3261 13.2.2.4）、BYE でセッションを終わらせます（RFC 3261 15）。CANCEL と行き違った 200 と同じ扱いです。着信側は ACK が届くまで 200 を送り直し、P-CSCF は送り直しのたびに ACK を返します。
 - **呼が持つものは、183 のときと同じく解放します。** 中継ノードのコンテキストと、前の応答のアンサーで開いた Rx のセッションです。
-- **中継ノードがアンサーを受け取った 200 の送り直しは別です。** UE 1 はその 200 をもう持っているので、送り直しは届いたまま先へ進み、呼は続きます。
+- **中継ノードがアンサーを受け取った 200 の送り直しは別です。** UE 1 はその 200 をもう持っているので、P-CSCF は最初の 200 と同じものを送り直し、呼は続きます。
+- **To タグの違う 200 は、送り直しではありません。** フォークした INVITE の、別のダイアログの 200 です（RFC 3261 13.2.2.4）。中継ノードがそのアンサーを受け取らないときは、もう 200 を持っている UE 1 には届けません。P-CSCF は UE 1 の名前でその 200 に ACK を返し、BYE でそのダイアログを終わらせます。CANCEL と行き違った 200 と同じ扱いです。
 
 UE 2 の P-CSCF では、同じことが逆の向きに起きます。183 や 200 は UE 2 から届き、`Modify` はアクセス側のターミネーションに向けたものになります。500 は網へ、CANCEL、または ACK と BYE は UE 2 へ送ります。
 
@@ -503,7 +504,7 @@ UE 2 の P-CSCF では、同じことが逆の向きに起きます。183 や 20
 
 - **PCRF はこのアンサーを受け取りません。** P-CSCF は呼の Rx のセッションを終わらせ（TS 29.214 4.4.4）、中継ノードのコンテキストを解放します。
 
-`internal/pcscf` の試験は、アンサーの `Modify` を断る中継ノードを使って、これらの流れを 1 つのプロセスの中で動かします。`TestRefusedAnswerOfA183EndsTheCall`、`TestRefusedAnswerOfThe200EndsTheCall`、`TestRefusedRetransmissionOfThe200KeepsTheCall`、`TestRefusedRetransmissionOfAReliable183KeepsTheCall`、`TestRefusedAnswerWithinTheDialogReleasesTheCall`、`TestRefusedAnswerOfAnUPDATEInTheEarlyDialogEndsTheCall`、2 つの P-CSCF のインスタンスが 1 つの保存先を共有する `TestRefusedAnswerOfAnUPDATEAtAnotherInstanceEndsTheCall` です。
+`internal/pcscf` の試験は、アンサーの `Modify` を断る中継ノードを使って、これらの流れを 1 つのプロセスの中で動かします。`TestRefusedAnswerOfA183EndsTheCall`、`TestRefusedAnswerOfThe200EndsTheCall`、`TestRefusedRetransmissionOfThe200KeepsTheCall`、`TestRefusedAnswerOfAnotherForkIsAcknowledgedAndReleased`、`TestRefusedRetransmissionOfAReliable183KeepsTheCall`、`TestRefusedAnswerWithinTheDialogReleasesTheCall`、`TestRefusedAnswerOfAnUPDATEInTheEarlyDialogEndsTheCall`、2 つの P-CSCF のインスタンスが 1 つの保存先を共有する `TestRefusedAnswerOfAnUPDATEAtAnotherInstanceEndsTheCall` です。
 
 ## 中継ノードがオファーを受け取らないとき
 

@@ -53,10 +53,15 @@ func (p *PCSCF) proxyInvite(st *sip.ServerTransaction, out *sip.Message, targets
 	// The callee tags of the 2xx that crossed the CANCEL, whose dialogs
 	// the P-CSCF has sent its BYE in.
 	crossed := map[string]bool{}
-	// The reliable provisional responses that the caller has been sent,
-	// by reliableID. The callee sends each again until its PRACK comes
-	// (RFC 3262 3).
-	passed := map[string]bool{}
+	// sent are the responses that the caller has been sent, as they went:
+	// the reliable provisional ones by reliableID, and the 2xx by To tag.
+	// The callee sends each again until its PRACK or its ACK comes (RFC
+	// 3262 3, RFC 6026 8.1), and the caller gets each retransmission as
+	// the first one went. An SDP whose version has not changed has to be
+	// the same SDP (RFC 3264 8), and the relay need not be asked again:
+	// a relay that does not take the answer this time would otherwise
+	// leave the SDP that names the far party.
+	sentReliable, sent2xx := map[string]*sip.Message{}, map[string]*sip.Message{}
 	// giveUp gives the INVITE up for why: an error of call.response or the
 	// abortCause of call. Only a session that the network has no
 	// resources for gets the 500 that says so; a dialog released for a
@@ -112,21 +117,39 @@ func (p *PCSCF) proxyInvite(st *sip.ServerTransaction, out *sip.Message, targets
 				// 16.7 step 2.
 				timerC.Reset(sip.DefaultTimerC)
 				reliable := reliableID(resp)
-				switch err := call.response(resp); {
-				case errors.Is(err, errRelay) && reliable != "" && passed[reliable]:
-					// The caller has this reliable response, whose answer the
-					// relay took, so this one is a retransmission. It goes on
-					// as it came, as a retransmitted 2xx does.
-				case err != nil:
+				if first, ok := sentReliable[reliable]; ok && reliable != "" {
+					// A retransmission. The release of the early dialog
+					// still ends the INVITE here, as with any response.
+					if err := call.released(); err != nil {
+						giveUp(err)
+						continue
+					}
+					st.Respond(first.Clone())
+					continue
+				}
+				if err := call.response(resp); err != nil {
 					giveUp(err)
 					continue
-				case reliable != "":
-					passed[reliable] = true
+				}
+				if reliable != "" {
+					sentReliable[reliable] = resp.Clone()
 				}
 				if err := st.Respond(resp); err == nil {
 					p.sessionSucceeded(st, resp, call.leg)
 				}
 			case code < 300:
+				tag := tagOf(resp.Get("To"))
+				if first, ok := sent2xx[tag]; ok {
+					// A retransmission (RFC 6026 7.2). It goes on as the
+					// first one went, also after the P-CSCF has released the
+					// dialog that the 2xx confirmed.
+					st.Respond(first.Clone())
+					continue
+				}
+				if crossed[tag] {
+					acknowledge(resp)
+					continue
+				}
 				refused := call.response(resp)
 				if !call.settle() {
 					// The session was aborted just before its 2xx came.
@@ -134,19 +157,23 @@ func (p *PCSCF) proxyInvite(st *sip.ServerTransaction, out *sip.Message, targets
 					continue
 				}
 				switch {
-				case errors.Is(refused, errStore):
+				case !answered && errors.Is(refused, errStore):
 					// The callee has answered, but the caller gets no 2xx
 					// for a dialog that the P-CSCF cannot release. Its
 					// next retransmission is acknowledged, and the callee
 					// gets a BYE, as for a 2xx that crossed the CANCEL.
 					giveUp(refused)
 					continue
-				case (errors.Is(refused, errRelay) || errors.Is(refused, errReleased)) && answered:
-					// The caller has the 2xx whose answer the relay took,
-					// so this one is a retransmission (RFC 6026 7.2). It
-					// goes on as it came, also after the P-CSCF has
-					// released the dialog that the 2xx confirmed.
-					refused = nil
+				case answered && (errors.Is(refused, errStore) || errors.Is(refused, errRelay) || errors.Is(refused, errReleased)):
+					// The 2xx of another dialog of a forked INVITE, after the
+					// caller has the 2xx of the first (RFC 3261 13.2.2.4).
+					// The caller has a final response, so this 2xx can only
+					// go on or go no further, and its SDP would lead the
+					// caller past the relay. It is acknowledged in the
+					// caller's name and its dialog ended with a BYE, as for
+					// a 2xx that crossed the CANCEL.
+					acknowledge(resp)
+					continue
 				case errors.Is(refused, errRelay) || errors.Is(refused, errReleased):
 					// The callee has answered, but the caller gets 500 in
 					// the place of the 2xx. The 2xx is acknowledged at
@@ -167,6 +194,7 @@ func (p *PCSCF) proxyInvite(st *sip.ServerTransaction, out *sip.Message, targets
 					p.measurements.sessions.Answered(role, call.leg.direction())
 				}
 				answered = true
+				sent2xx[tag] = resp.Clone()
 				timerC.Stop()
 				timerCFired = nil
 				if err := st.Respond(resp); err == nil {
