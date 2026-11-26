@@ -16,6 +16,10 @@
 | TS 23.218 | V19.0.0 |
 | TS 29.328、TS 29.329（Sh） | V20.0.0、V19.1.0 |
 | TS 29.338（SGd、S6c） | V19.3.0 |
+| TS 29.002（MAP。7.6.8、12.4、ReadyForSM-Arg の ASN.1 だけ） | V19.1.0 |
+| TS 29.272（S6a と S6d。NOR と Alert-Reason だけ） | V19.6.0 |
+| TS 29.311（サービス層の相互接続） | V19.0.0 |
+| RFC 6733（Diameter の基本。2.4 と 11.2.1 だけ） | － |
 | GSMA IR.92 | v24.0 |
 
 Wireshark はソース（master、release-4.2、release-3.6）を読みました。実行はしていません。
@@ -154,11 +158,43 @@ IP-SM-GW と SC のスタブを作るときに、仕様の読み方を次のよ�
 
 実装のときに、TS 29.311 V19.0.0、RFC 3428 の 7 章、RFC 3841 の 9.1 と 9.2、RFC 3261 の 8.2.3 と 20.21 も読みました。
 
+## UE がまた受け取れることを、IP-SM-GW が HSS に知らせる経路
+
+IP-SM-GW は、UE がまたショートメッセージを受け取れるようになったことを HSS に知らせます。知らせは 2 つです。UE にまた届くようになったこと（UE が要求を送った、登録し直した）と、UE のメモリに空きができたこと（RP-SMMA）です。HSS はこれを受けて、MWD にある SC に ALR を送ります。実際の網がこの 2 つをどのインタフェースのどの手順で運ぶかを、次のとおり調べました。
+
+| 仕様と条項 | 書いてあること |
+| --- | --- |
+| TS 23.204 V19.1.0 5.2.3 | IP-SM-GW と HLR/HSS のあいだのインタフェースの用途に、メモリ不足が解けたことを HLR/HSS に知らせることを挙げます。置けるインタフェースは Sh と、J か S6c のどちらかです。どの用途をどのインタフェースで運ぶかは書いていません。 |
+| TS 23.204 V19.1.0 6.5b | IP-SM-GW は、UE に SMS over IP で届くと分かったら、自分の UNRI を落として HLR/HSS に知らせます。step 2a は IMS への登録で、HLR/HSS の UNRI は TS 23.040 のとおりに更新されます。step 2d では、IP-SM-GW が Ready for SM を HLR/HSS に送ります。 |
+| TS 23.204 V19.1.0 6.6 step 3 | IP-SM-GW は、UE のメモリに空きができたことを HLR/HSS に知らせます。メッセージの名前は書いていません。 |
+| TS 23.040 V20.0.0 3.2.6 の 2c と 2f | HLR/HSS が 2 つの知らせを受けたときの動きです。2c は IMS への登録か、UE がまた使えるようになったことで、UNRI を落として SC に知らせます。2f はメモリの空きで、SC に知らせて UNRI を落とします。 |
+| TS 23.040 V20.0.0 10.3 | ReadyForSM（operation 11）を TS 29.002 の手順とし、VLR、SGSN、MME から HLR への知らせとして説明します。IP-SM-GW には触れていません。 |
+| TS 24.341 V19.0.0 5.3.3.4.1 | RP-SMMA を受けた IP-SM-GW は、受信者の MSISDN を RP の IMSI の欄に入れ、それを適切なメッセージで HSS に渡します。どのメッセージかは書いていません。 |
+| TS 29.002 V19.1.0 12.4.1 | MAP-READY-FOR-SM は、IP-SM-GW と HLR のあいだでも使います。IP-SM-GW は、利用者がメモリの空きを示したときと、message waiting flag が立っている利用者に IMS で届くようになったときに、このサービスを始めます。 |
+| TS 29.002 V19.1.0 7.6.8.8、7.6.8.10A、ReadyForSM-Arg | Alert Reason の値は ms-Present と memoryAvailable です。Additional Alert Reason Indicator は、IMS での動きによる知らせであることを示します。ASN.1 の注釈は、IP-SM-GW からの知らせにだけこの印を付けるとしています。利用者は IMSI で名指しします。 |
+| TS 29.338 V19.3.0 Table 5.3.2.2/1 | S6c のコマンドは SRR/SRA、ALR/ALA、RDR/RDA の 3 組だけです。IP-SM-GW は SRR（5.2.1.1、SMS Router の機能として）と RDR（5.2.3.1）を送る側に入ります。ALR は HSS から SMS-IWMSC への知らせで、IP-SM-GW から HSS へ「また受け取れる」と知らせるコマンドはありません。 |
+| TS 29.328 V20.0.0 6.1.2.1 step 4b、7.6.16、7.6.17 | SMSRegistrationInfo の Sh-Update は、IP-SM-GW の番号を登録するか消すかだけです。SMSRegistrationInfo に知らせの要素はありません。UE reachability for IP は、HSS から AS へ知らせる向きのデータです（TS 23.204 6.5b step 2c）。 |
+| TS 29.329 V19.1.0 6.3.4 | Data-Reference の値に、AS から HSS へ知らせるためのものはありません。SMSRegistrationInfo（24）と UEReachabilityForIP（25）は上のとおりです。 |
+| TS 29.311 V19.0.0 | サービス層の相互接続の仕様で、この知らせには触れていません。 |
+| TS 29.272 V19.6.0 5.2.5.1、7.3.49、7.3.83 | MME と SGSN は、同じ知らせを S6a と S6d の Notify-Request（NOR）で運びます。NOR-Flags の Ready for SM from MME と Ready for SM from SGSN、それに Alert-Reason（AVP コード 1434、UE_PRESENT（0）と UE_MEMORY_AVAILABLE（1））です。5.2.5.1.3 は、Alert-Reason のある NOR を受けた HSS に、MAP の Ready for SM を受けたときと同じ動きをさせます。つまり MAP-READY-FOR-SM の Diameter 版ですが、MME と SGSN のための手順で、IP-SM-GW はこのインタフェースに入りません。 |
+| TS 24.011 V20.0.0 Table 8.4（part 3）と E4 | メモリの知らせへの RP-ERROR に使える原因は 30、38、41、42、47、69、95 から 99、111 です。30（Unknown Subscriber）は、HLR に登録されていない加入者、つまり IMSI か番号が割り当てられていない加入者を示します。 |
+| RFC 6733 2.4 と 11.2.1 | Diameter のアプリケーションには、IANA が割り当てた Application-Id が要ります。コマンドコードの 16777214 と 16777215 は実験用で、相互接続は保証されません。 |
+
+Wireshark 4.6.9（CI のキャプチャのイメージの版）のソースも読みました。`dictionary.xml` は 16777214 を実験用のコードとして、名前を付けていません。`packet-diameter.c` は、辞書に無いコマンドに expert の警告 `diameter.cmd.code.unknown`（PI_UNDECODED、PI_WARN）を付けます。Alert-Reason（`diameter.Alert-Reason`）と User-Identifier は辞書にあります。
+
+分かったことをまとめます。
+
+- 標準でこの 2 つの知らせを IP-SM-GW から運ぶのは、J インタフェースの MAP-READY-FOR-SM だけです。
+- Diameter で IP-SM-GW から HSS へ送る標準の手順は、S6c にも Sh にもありません。S6a と S6d には同じ知らせがありますが、MME と SGSN のものです。
+- IMS への登録で届くようになった場合だけは、Diameter の標準の道があります。IP-SM-GW が SMSRegistrationInfo の Sh-Update で自分を登録すれば、HSS は 2c のとおりに UNRI を落として SC に知らせます。
+- これまでの作りは、SMSRegistrationInfo の Sh-Update にこのプロジェクトの名前空間の要素を足して、2 つの知らせを運んでいました。標準の HSS はこの PUR を step 4b の登録として扱います。S6c に対応している印も無いので、HSS が覚えている IP-SM-GW の Diameter 名がどうなるかも定まりません。標準のメッセージの意味を変えているので、この形はやめます。
+
 ## 確かめられなかったこと
 
-- TS 29.002（MAP）、RFC 3840、TS 24.229 5.7.1.3A は読んでいません。RFC 3428 と RFC 3841 は、上の「実装で決めたこと」に書いた章だけを読みました。
+- TS 29.002（MAP）は、7.6.8、12.4、ReadyForSM-Arg の ASN.1 だけを読みました。RFC 3840 と TS 24.229 5.7.1.3A は読んでいません。RFC 3428 と RFC 3841 は、上の「実装で決めたこと」に書いた章だけを読みました。
 - UCS2 のバイト順と、BMP の外の文字の扱い。
 - IR.92 Annex C.3 の SMS_Over_IP_Networks_Indication の既定値。
 - IP-SM-GW が HSS への登録に MAP と Sh のどちらをよく使うか。仕様からは決められません。
+- Diameter だけで HSS とつながる商用の IP-SM-GW が、UE にまた届くようになったこととメモリの空きを、HSS にどう知らせているか。公開の仕様には、MAP の READY_FOR_SM のほかに手順がありません。
 - Sh-Data の XML で SMSRegistrationInfo の要素がどういう形か。
 - 今の P-CSCF と I-CSCF が MESSAGE を正しく中継するか。
