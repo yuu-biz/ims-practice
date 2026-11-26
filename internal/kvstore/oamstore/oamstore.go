@@ -20,6 +20,7 @@ package oamstore
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"time"
 
 	"github.com/yuu-biz/ims-practice/internal/kvstore"
@@ -32,6 +33,7 @@ type Store struct {
 	c *kvjson.Client
 	// lease is how long a watch and a presence last unless renewed.
 	lease time.Duration
+	log   *slog.Logger
 }
 
 var _ oam.NtfSubscriptionStore = (*Store)(nil)
@@ -46,7 +48,11 @@ func New(kv kvstore.Store, cfg kvjson.Config) *Store {
 // OAM instances that share a store renew them more often than that
 // (oam.Config.WatchRenewal).
 func NewWithLease(kv kvstore.Store, cfg kvjson.Config, lease time.Duration) *Store {
-	return &Store{c: kvjson.New(kv, cfg, "oam"), lease: lease}
+	log := cfg.Log
+	if log == nil {
+		log = slog.New(slog.DiscardHandler)
+	}
+	return &Store{c: kvjson.New(kv, cfg, "oam"), lease: lease, log: log}
 }
 
 func (s *Store) subscriptionsKey() string { return s.c.Key("ntf-subscriptions") }

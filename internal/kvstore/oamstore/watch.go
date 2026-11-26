@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"sync"
 	"time"
@@ -137,6 +138,11 @@ type presence struct {
 // number. The nodes that an instance cannot reach are in its presence,
 // so that each instance writes its own item, and they cost no more
 // reads.
+//
+// An instance of an earlier version wrote true as its presence, which
+// does not say which nodes it cannot reach. Its presence counts as one
+// that reaches every node, so that the instances of the two versions
+// share the watches while they run side by side.
 func (s *Store) Present(ctx context.Context, instance string, unreachable []string) (oam.Presence, error) {
 	if err := kvjson.Write(ctx, s.c, s.presenceKey(instance), presence{Unreachable: unreachable}, s.lease); err != nil {
 		return oam.Presence{}, err
@@ -158,6 +164,10 @@ func (s *Store) Present(ctx context.Context, instance string, unreachable []stri
 				if err := s.c.RemoveFromIndex(ctx, presenceIndex, m); err != nil {
 					return oam.Presence{}, err
 				}
+			case undecodable(err):
+				s.log.Warn("the presence of an OAM instance cannot be read, as one of an earlier version; it counts as one that reaches every node",
+					"instance", m, "error", err.Error())
+				p.Instances++
 			case err != nil:
 				return oam.Presence{}, err
 			default:
@@ -172,6 +182,14 @@ func (s *Store) Present(ctx context.Context, instance string, unreachable []stri
 		}
 		after = members[len(members)-1]
 	}
+}
+
+// undecodable says whether err is the failure to decode a value that the
+// store gave, rather than a failure of the store.
+func undecodable(err error) bool {
+	var typeErr *json.UnmarshalTypeError
+	var syntaxErr *json.SyntaxError
+	return errors.As(err, &typeErr) || errors.As(err, &syntaxErr)
 }
 
 // watch is the watch of one node that this instance holds.
