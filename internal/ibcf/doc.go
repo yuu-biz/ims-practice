@@ -43,10 +43,12 @@
 // peer, in the Registry of Config.Metrics (metrics.go).
 //
 // SIMPLIFIED: TS 24.229 5.10.2.4 and 5.10.3.4. The IBCF ends a call by
-// itself only when a leg fails, and when it takes the place of its
-// earlier process (ReleaseLeftovers). It does not hear of a failure of
-// the TrGW, so a call whose TrGW context is lost goes on without media
-// until a party ends it.
+// itself only when a leg fails, when the TrGW does not take the SDP of a
+// request within the call (notThroughTrGW), and when it takes the place
+// of its earlier process (ReleaseLeftovers). The TrGW reports nothing by
+// itself, so a call whose TrGW context is lost goes on without media
+// until a party ends it, or until the next SDP of the call finds the
+// context gone.
 //
 // SIMPLIFIED: TS 24.229 5.10.2.1, 5.10.3.1 and TS 29.165 5.3.1. Only the
 // non-roaming II-NNI is handled. A REGISTER does not cross (the border

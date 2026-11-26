@@ -234,6 +234,20 @@ type fakeTrGW struct {
 	// held are the remote addresses for which Modify waits until the
 	// channel is closed: a test holds back what the IBCF does after it.
 	held map[netip.AddrPort]chan struct{}
+	// refused, when set, is the error with which Modify turns down a
+	// change of the termination that faces a side, changing nothing.
+	refused map[ibcf.Side]error
+}
+
+// refuse has Modify fail with err, and change nothing, for the
+// termination that faces side; a nil err lets the changes pass again.
+func (f *fakeTrGW) refuse(side ibcf.Side, err error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.refused == nil {
+		f.refused = map[ibcf.Side]error{}
+	}
+	f.refused[side] = err
 }
 
 // relayAddress is the address that a fakeTrGW with one address writes.
@@ -313,6 +327,9 @@ func (f *fakeTrGW) Modify(_ context.Context, id string, termination agw.Terminat
 	side, ok := fakeSides[termination]
 	if !ok {
 		return agw.ErrNoTermination
+	}
+	if err := f.refused[side]; err != nil {
+		return err
 	}
 	c.remote[side] = change.Remote
 	return nil
