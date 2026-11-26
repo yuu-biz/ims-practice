@@ -86,6 +86,7 @@ func TestInviteReplacesAConfirmedDialog(t *testing.T) {
 func TestInviteReplacesAnEndedDialog(t *testing.T) {
 	u := newReplacingUAs(t)
 	ended := u.replacesTo().String()
+	d, _ := u.in.Dialog()
 	if err := u.in.Bye(); err != nil {
 		t.Fatal(err)
 	}
@@ -98,8 +99,12 @@ func TestInviteReplacesAnEndedDialog(t *testing.T) {
 	c.Reject(603)
 
 	// The UA forgets the dialog 64*T1 after it ended, on a timer of its
-	// own; one T1 more leaves that timer room to run.
-	time.Sleep(65 * testTimers.T1)
+	// own.
+	for deadline := time.Now().Add(5 * time.Second); u.calleeUA.hasEnded(d.ID); time.Sleep(testTimers.T1) {
+		if time.Now().After(deadline) {
+			t.Fatal("the UA still knows 5 s later that the dialog has ended")
+		}
+	}
 	c = u.inviteWith(t, ended)
 	if d, refusal := c.ReplacedDialog(); d != nil || refusal != 481 {
 		t.Errorf("64*T1 later: ReplacedDialog = %p, %d; want 481", d, refusal)
