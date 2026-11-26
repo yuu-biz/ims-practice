@@ -489,18 +489,16 @@ func (g *IPSMGW) reachableAgain(req *sip.Message, log *slog.Logger) {
 	case !ok:
 		return
 	}
-	g.tellReachable(ctx, sub, log)
+	g.tellReachable(ctx, sub, req, log)
 }
 
 // tellReachable is TS 23.204 6.5b step 2 with TS 23.040 3.2.6 item 2c:
-// the UE of sub has shown that it is there, by a request of its own or
-// by registering again (step 2a). Where this IP-SM-GW could not deliver
-// a short message to the user, the HSS hears in a Ready-For-SM with
-// UE_PRESENT that the user can take short messages again, which makes
-// it clear its own UNRI and alert the Service Centres that are waiting.
-// Ready-For-SM names the user by MSISDN, which the subscription holds;
-// a subscription without one has no number for the HSS to keep short
-// messages under, so its UE has nothing to be alerted for.
+// the UE of sub has shown that it is there, by req, a request of its
+// own, or by registering again (step 2a), where req is nil. Where this
+// IP-SM-GW could not deliver a short message to the user, the HSS hears
+// in a Ready-For-SM with UE_PRESENT that the user can take short
+// messages again, which makes it clear its own UNRI and alert the
+// Service Centres that are waiting.
 //
 // Step 2d has the IP-SM-GW discard the notification where the UE is not
 // registered in the IMS. The subscription to the user's registration
@@ -508,14 +506,25 @@ func (g *IPSMGW) reachableAgain(req *sip.Message, log *slog.Logger) {
 // taking short messages, a short message would not get through now
 // either.
 //
-// A notification the HSS would not take puts the flag back, so that the
-// user's next request or reregistration tells it again. A flag that the
-// Store loses leaves the HSS with its UNRI until this IP-SM-GW registers
-// itself for the user anew, which the next registration after a
-// deregistration does.
-func (g *IPSMGW) tellReachable(ctx context.Context, sub RegSubscription, log *slog.Logger) {
+// The flag is taken only once the notification can go: Ready-For-SM
+// names the user by MSISDN (numberOf), and a user for whom no number is
+// found keeps the flag, so that a later request or reregistration tells
+// the HSS. A notification the HSS would not take puts the flag back for
+// the same reason. A flag that the Store loses leaves the HSS with its
+// UNRI until this IP-SM-GW registers itself for the user anew, which
+// the next registration after a deregistration does.
+func (g *IPSMGW) tellReachable(ctx context.Context, sub RegSubscription, req *sip.Message, log *slog.Logger) {
 	if !sub.Available {
 		// The notification is discarded, as step 2d has it.
+		return
+	}
+	msisdn, err := g.numberOf(ctx, &sub, req)
+	switch {
+	case err != nil:
+		log.Warn("the return of the user is not passed to the HSS: the MSISDN was not read", "error", err.Error())
+		return
+	case msisdn == "":
+		log.Info("the return of the user is not passed to the HSS: the user has no MSISDN")
 		return
 	}
 	// The flag is kept under the public identity of the subscription
@@ -524,12 +533,8 @@ func (g *IPSMGW) tellReachable(ctx context.Context, sub RegSubscription, log *sl
 	if !g.takeNotReachable(ctx, publicID, log) {
 		return
 	}
-	if sub.MSISDN == "" {
-		log.Info("the return of the user is not passed to the HSS: the subscription holds no MSISDN")
-		return
-	}
-	log = log.With("msisdn", sub.MSISDN)
-	result, err := g.readyForSM(ctx, sub.MSISDN, sgd.AlertReasonUEPresent)
+	log = log.With("msisdn", msisdn)
+	result, err := g.readyForSM(ctx, msisdn, sgd.AlertReasonUEPresent)
 	if err != nil || !result.Success() {
 		log.Warn("the return of the user was not passed to the HSS", "result", result.String(), "error", errorText(err))
 		if err := g.store.PutNotReachable(ctx, publicID, notReachableUntil(sub)); err != nil {
@@ -538,6 +543,27 @@ func (g *IPSMGW) tellReachable(ctx context.Context, sub RegSubscription, log *sl
 		return
 	}
 	log.Info("the user can take short messages again; the HSS is told")
+}
+
+// numberOf is the MSISDN, as digits, by which a Ready-For-SM names the
+// user of sub: the one that the third-party REGISTER carried in
+// service-info, which sub holds; else the number of the tel URI that req,
+// a request from the user, asserts (TS 24.341 5.3.3.4.1 step d); else
+// the MSISDN that the HSS keeps for the user (TS 29.328 7.6.9). Either
+// of sub and req may be nil. It is "" for a user that has no number.
+func (g *IPSMGW) numberOf(ctx context.Context, sub *RegSubscription, req *sip.Message) (string, error) {
+	if sub != nil && sub.MSISDN != "" {
+		return sub.MSISDN, nil
+	}
+	if req != nil {
+		if n, ok := telNumber(req); ok {
+			return n.Digits, nil
+		}
+	}
+	if sub == nil {
+		return "", nil
+	}
+	return g.hss.MSISDN(ctx, sub.PublicIdentity)
 }
 
 // readyForSM sends the HSS the Ready-For-SM of package sgd for the user

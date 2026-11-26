@@ -1980,6 +1980,10 @@ func (noSMSRegistration) IMSI(context.Context, string) (string, error) {
 	return "", errors.New("no HSS in this test")
 }
 
+func (noSMSRegistration) MSISDN(context.Context, string) (string, error) {
+	return "", errors.New("no HSS in this test")
+}
+
 func (noSMSRegistration) UpdateSMSRegistrationInfo(context.Context, sh.UserIdentity, string) error {
 	return errors.New("no HSS in this test")
 }

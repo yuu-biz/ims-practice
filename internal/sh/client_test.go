@@ -87,6 +87,35 @@ func TestClientIMSISendsAUDRForDataReference32(t *testing.T) {
 	}
 }
 
+// TestClientMSISDNSendsAUDRForDataReference17: the IP-SM-GW reads the
+// MSISDN of a user by the public identity, and a user without one comes
+// back as the empty string rather than an error (TS 29.328 7.6.9).
+func TestClientMSISDNSendsAUDRForDataReference17(t *testing.T) {
+	number := msisdn
+	c, f := newClient(t, func(req *diam.Message) *diam.Message {
+		a := UserDataAnswer{Result: diameter.Base(diameter.DiameterSuccess)}
+		if number != "" {
+			a.UserData = ShData{PublicIdentifiers: &PublicIdentifiers{MSISDNs: []string{number}}}.Marshal()
+		}
+		return a.Message(req, hss)
+	})
+	got, err := c.MSISDN(context.Background(), impu)
+	if err != nil || got != msisdn {
+		t.Fatalf("MSISDN = %q, %v; want %q", got, err, msisdn)
+	}
+	udr, err := ParseUserDataRequest(f.received[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if udr.UserIdentity.PublicIdentity != impu || !reflect.DeepEqual(udr.DataReferences, []DataReference{MSISDN}) {
+		t.Errorf("UDR = %+v, want Data-Reference %d for %s", udr, MSISDN, impu)
+	}
+	number = ""
+	if got, err := c.MSISDN(context.Background(), impu); got != "" || err != nil {
+		t.Errorf("MSISDN without one = %q, %v", got, err)
+	}
+}
+
 func TestClientReturnsTheResultOfAFailedAnswer(t *testing.T) {
 	unknown := diameter.Experimental(cx.DiameterErrorUserUnknown)
 	c, _ := newClient(t, func(req *diam.Message) *diam.Message {

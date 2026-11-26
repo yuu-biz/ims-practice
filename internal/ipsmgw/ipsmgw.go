@@ -105,6 +105,10 @@ type HSS interface {
 	// names the recipient of a short message by (TS 29.338 Table
 	// 6.2.2.1/1). It is empty for a user the HSS has none for.
 	IMSI(ctx context.Context, publicID string) (string, error)
+	// MSISDN reads the MSISDN of a user (TS 29.328 7.6.9), for a user
+	// whose third-party REGISTER carried none. It is empty for a user
+	// the HSS has none for.
+	MSISDN(ctx context.Context, publicID string) (string, error)
 	UpdateSMSRegistrationInfo(ctx context.Context, id sh.UserIdentity, ipsmgwNumber string) error
 	// ReadyForSM tells the HSS that a user can take short messages
 	// again, so that it alerts the Service Centres that hold short
@@ -266,7 +270,7 @@ func (g *IPSMGW) register(st *sip.ServerTransaction) {
 		msisdn = ""
 	}
 	if sub, refreshed := g.watchRegistration(publicID, msisdn, time.Duration(n)*time.Second, log.With("msisdn", msisdn)); refreshed {
-		g.tellReachable(context.Background(), sub, log)
+		g.tellReachable(context.Background(), sub, nil, log)
 	}
 }
 
