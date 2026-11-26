@@ -90,10 +90,10 @@ type Store interface {
 	// Unschedule removes member from the index, claimed or not.
 	Unschedule(ctx context.Context, index, member string) error
 	// ClaimDue claims at most limit members of the index that are due at
-	// now, earliest first, each until now plus lease. While a member is
-	// claimed it is not due, and no other ClaimDue gets it; when the
-	// claim runs out without Done, the member is due again, for any
-	// instance that asks.
+	// now, earliest first, each until now plus lease; a limit below one
+	// claims none. While a member is claimed it is not due, and no other
+	// ClaimDue gets it; when the claim runs out without Done, the member
+	// is due again, for any instance that asks.
 	ClaimDue(ctx context.Context, index string, now time.Time, lease time.Duration, limit int) ([]Claim, error)
 	// Done removes the member of a claim from its index, if the claim is
 	// still in force, or returns ErrClaimLost. It compares c.Until as

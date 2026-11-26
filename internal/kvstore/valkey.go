@@ -179,6 +179,10 @@ func (v *Valkey) ClaimDue(ctx context.Context, index string, now time.Time, leas
 	if lease < time.Millisecond {
 		return nil, ErrShortLease
 	}
+	if limit < 1 {
+		// A negative count of ZRANGE's LIMIT would take every due member.
+		return nil, nil
+	}
 	until := indexTime(now.Add(lease))
 	reply, err := v.c.do(ctx, "EVAL", claimScript, "1", index,
 		strconv.FormatInt(indexTime(now), 10), strconv.FormatInt(until, 10), strconv.Itoa(limit))
