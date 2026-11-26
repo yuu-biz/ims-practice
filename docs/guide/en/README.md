@@ -112,6 +112,7 @@ Some packages under `internal` are in the repository but in none of the nodes ab
 | `fivegc`, `n5`, `nhss`, `sbi` | The 5GS side: a 5GC stub, the N5 policy API of the PCF, the service based interface of the HSS, and what those APIs share. |
 | `nas` | SMS without the IMS: the NAS messages that carry a short message between the UE and the MME, or the AMF in 5GS. |
 | `h248/h248test`, `kvstore/storetest`, `openapitest`, `rtptest` | Helpers that only the tests use. |
+| `yamledit` | Edits the text of a configuration file in place, keeping its comments, for the generators that write the copies of `deploy/compose` in `deploy/k8s` and `deploy/interconnect`. |
 
 ### The HTTP APIs
 
@@ -128,7 +129,7 @@ Besides SIP and Diameter, the nodes talk HTTP: the maintenance API of each node,
 
 ### The state of the users in a store outside the nodes
 
-`deploy/redundancy/redundancy.yaml` adds a Valkey server to the project, and gives a `store` section that names it to every node that holds the state of users: the HSS, the S-CSCF, the P-CSCF, the IP-SM-GW, the MMTel AS, the MRFC and the two media relays, the IMS-AGW and the MRFP. Start the project with that file on top of `compose.yaml`:
+`deploy/redundancy/redundancy.yaml` adds a Valkey server to the project, and gives a `store` section that names it to every node that holds the state of users: the HSS, the S-CSCF, the P-CSCF, the IP-SM-GW, the Service Centre of SMS, the MMTel AS, the MRFC and the two media relays, the IMS-AGW and the MRFP. Start the project with that file on top of `compose.yaml`:
 
 ```sh
 export COMPOSE_FILE=compose.yaml:deploy/redundancy/redundancy.yaml COMPOSE_PATH_SEPARATOR=:
