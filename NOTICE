@@ -14,8 +14,10 @@ patents essential to 3GPP specifications or to speech codecs.
 Third-party components
 ----------------------
 
-The programs built from this repository (cmd/ims, cmd/ue) link these Go
-modules. Each keeps its own licence, which Go keeps with the module source:
+The programs built from this repository are cmd/ims, cmd/ue and cmd/oss.
+cmd/ims and cmd/ue link these Go modules, and cmd/oss links no
+third-party module. Each module keeps its own licence, which Go keeps
+with the module source:
 
   github.com/fiorix/go-diameter/v4   BSD 3-Clause
   github.com/ishidawataru/sctp       Apache License 2.0
@@ -33,7 +35,9 @@ The NOTICE files of two of these modules say:
   GO_LICENSE file for the license which applies to the code.
 
 The tests also use github.com/emiago/sipgo (BSD 2-Clause) and the modules
-it depends on (MIT and BSD 3-Clause).
+it depends on (MIT and BSD 3-Clause), and
+github.com/santhosh-tekuri/jsonschema/v6 (Apache License 2.0) with the
+module it depends on, golang.org/x/text (BSD 3-Clause).
 
 The container images install third-party programs from public images and
 package repositories, among them pjsua (PJSIP) and tshark (Wireshark),
