@@ -1,8 +1,12 @@
 package hss
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
+	"log/slog"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -184,6 +188,54 @@ func TestAnInstanceKeepsSettingsItCannotServe(t *testing.T) {
 	defer scscfs.mu.Unlock()
 	if len(scscfs.pprs) != 0 {
 		t.Errorf("%d PPRs went out for a profile that no instance here defines", len(scscfs.pprs))
+	}
+}
+
+// lockedBuffer is a buffer that the goroutines of an HSS may log to at
+// once.
+type lockedBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *lockedBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+// line is the first line logged with msg.
+func (b *lockedBuffer) line(msg string) string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	for line := range strings.Lines(b.buf.String()) {
+		if strings.Contains(line, `msg="`+msg+`"`) {
+			return line
+		}
+	}
+	return ""
+}
+
+// TestTheLogOfATakeOnHasWhatWasTakenOn: an instance that starts on a
+// store that names a service profile it does not define, beside a policy
+// that it can serve, logs that it took on the policy and kept its own
+// profile: the settings now in force on it, not those of the store.
+func TestTheLogOfATakeOnHasWhatWasTakenOn(t *testing.T) {
+	store := settingsStore(t)
+	if swapped, err := store.CompareAndSwapSettings(t.Context(), nil, StoredSettings{Generation: 1, Admission: AdmitTestUsers,
+		DefaultServiceProfile: "video", TestUserServiceProfile: "default", DefaultServiceProfileGeneration: 1}); err != nil || !swapped {
+		t.Fatalf("CompareAndSwapSettings: %v, %v", swapped, err)
+	}
+	logged := &lockedBuffer{}
+	newSettingsInstanceLogging(t, store, nil, nil, slog.New(slog.NewTextHandler(logged, nil)))
+	line := logged.line("took on the settings in force on the instances of the role")
+	for _, want := range []string{"generation=1", "admission=test_users", "default_service_profile=default", "test_user_service_profile=default"} {
+		if !strings.Contains(line, want) {
+			t.Errorf("the log of the take-on is %q, want %s in it", line, want)
+		}
+	}
+	if line := logged.line("the settings in force on the instances of the role name what this instance does not have; it keeps its own for those"); !strings.Contains(line, "video") {
+		t.Errorf("the log of what the instance kept is %q, want the name video in it", line)
 	}
 }
 

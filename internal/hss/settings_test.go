@@ -75,6 +75,12 @@ func settingsInstanceReading(t *testing.T, store Store, locks ims.UserLocker, in
 // its configuration, which may be nil.
 func newSettingsInstance(t *testing.T, store Store, locks ims.UserLocker, configure func(*Config)) (*HSS, *maintenance.Node) {
 	t.Helper()
+	return newSettingsInstanceLogging(t, store, locks, configure, quiet())
+}
+
+// newSettingsInstanceLogging is newSettingsInstance logging to log.
+func newSettingsInstanceLogging(t *testing.T, store Store, locks ims.UserLocker, configure func(*Config), log *slog.Logger) (*HSS, *maintenance.Node) {
+	t.Helper()
 	if err := diameter.LoadDictionary(); err != nil {
 		t.Fatal(err)
 	}
@@ -97,7 +103,10 @@ func newSettingsInstance(t *testing.T, store Store, locks ims.UserLocker, config
 	if configure != nil {
 		configure(&cfg)
 	}
-	h := mustHSS(cfg, store, node)
+	h, err := New(cfg, store, node, log)
+	if err != nil {
+		t.Fatal(err)
+	}
 	t.Cleanup(h.Close)
 	node.Handle(h.Handle)
 	server, err := node.Listen("127.0.0.1:0")
