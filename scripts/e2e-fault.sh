@@ -5,10 +5,13 @@
 # it back, and has the container replaced by a new one with the same
 # name and address.
 #
-# The network faults (loss, delay, partition) are not here: they need
-# the fault-tools image and a kernel with the egress hook of nftables
-# and with netem, which deploy/chaos/README.md explains. The node faults
-# need only the Engine.
+# Then the network faults, each once: it loses every packet of the
+# node, cuts it off from one peer, and delays what it sends, and pings
+# the node from the namespaces of other nodes to see each fault work
+# and go. They need the fault-tools image, which the scenario builds,
+# and a kernel with the egress hook of nftables and with netem, which
+# deploy/chaos/README.md explains. The node faults need only the
+# Engine.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 . scripts/e2e-lib.sh
@@ -201,6 +204,108 @@ else
 fi
 echo "== make the process of the new container die"
 crashes_and_comes_back
+
+# The network faults, each once, with the nft and the tc of the tools
+# image in the namespace of the target, as the agent puts them there.
+# Whether one works depends on the kernel that runs the containers: the
+# egress hook of nftables for loss and partition, netem for delay
+# (deploy/chaos/README.md). A kernel without them fails the fault with
+# the error of nft or tc.
+docker compose --profile chaos build fault-tools
+tools=ims-practice/fault-tools:dev
+container_of() { docker compose ps -q "$1" | first_line; }
+container="$(container_of "$target")"
+# ping_from NODE prints the summary of three pings from the namespace of
+# the service NODE to the target, and fails when none came back.
+ping_from() { docker run --rm --network "container:$(container_of "$1")" "$tools" ping -c 3 -W 2 -q "$address"; }
+# in_target COMMAND... runs a command of the tools image in the
+# namespace of the target, with NET_ADMIN to read its rules.
+in_target() { docker run --rm --network "container:$container" --cap-add NET_ADMIN "$tools" "$@"; }
+# min_rtt reads the shortest round trip, in ms, from the summary of
+# ping.
+min_rtt() { sed -n 's|.*min/avg/max = \([0-9.]*\)/.*|\1|p'; }
+
+echo "== the target before the network faults"
+if before="$(ping_from icscf)"; then
+	echo "ok   the I-CSCF reaches $target ($(min_rtt <<<"$before") ms)"
+else
+	echo "FAIL the I-CSCF does not reach $target before any network fault: $before"
+	fail=1
+fi
+
+echo "== lose every packet of the node"
+id="$(inject "$api" "{\"target\":\"$target\",\"kind\":\"loss\",\"loss_percent\":100,\"duration\":\"2m\"}")"
+if out="$(ping_from icscf)"; then
+	echo "FAIL the I-CSCF still reaches $target with every packet lost: $out"
+	fail=1
+else
+	echo "ok   the I-CSCF gets no answer from $target"
+fi
+rules="$(in_target nft list table netdev "ims_fault_$id" || true)"
+if grep -Eq 'counter packets [1-9]' <<<"$rules"; then
+	echo "ok   the rules of the loss counted the packets they dropped"
+else
+	echo "FAIL the table ims_fault_$id of the loss: ${rules:-none}"
+	fail=1
+fi
+curl -fsS -X DELETE "$api/$id" >/dev/null
+if in_target nft list table netdev "ims_fault_$id" >/dev/null 2>&1; then
+	echo "FAIL the table ims_fault_$id is still there after the DELETE"
+	fail=1
+elif ping_from icscf >/dev/null; then
+	echo "ok   the loss is gone, and the I-CSCF reaches $target again"
+else
+	echo "FAIL the I-CSCF does not reach $target after the loss was cleared"
+	fail=1
+fi
+
+echo "== cut the node off from the I-CSCF"
+id="$(inject "$api" "{\"target\":\"$target\",\"kind\":\"partition\",\"peers\":[\"icscf\"],\"duration\":\"2m\"}")"
+if ping_from icscf >/dev/null; then
+	echo "FAIL the I-CSCF still reaches $target across the partition"
+	fail=1
+else
+	echo "ok   the I-CSCF gets no answer from $target"
+fi
+if ping_from scscf >/dev/null; then
+	echo "ok   the S-CSCF, which is not a peer of the partition, still reaches $target"
+else
+	echo "FAIL the S-CSCF does not reach $target, which is cut off from the I-CSCF only"
+	fail=1
+fi
+curl -fsS -X DELETE "$api/$id" >/dev/null
+if ping_from icscf >/dev/null; then
+	echo "ok   the partition is gone, and the I-CSCF reaches $target again"
+else
+	echo "FAIL the I-CSCF does not reach $target after the partition was cleared"
+	fail=1
+fi
+
+echo "== delay what the node sends"
+id="$(inject "$api" "{\"target\":\"$target\",\"kind\":\"delay\",\"delay\":\"300ms\",\"duration\":\"2m\"}")"
+qdisc="$(in_target tc qdisc show || true)"
+if grep -q 'netem.*delay 300ms' <<<"$qdisc"; then
+	echo "ok   the interface of $target has the netem qdisc of the delay"
+else
+	echo "FAIL the qdiscs of $target: ${qdisc:-none}"
+	fail=1
+fi
+# The answers to the pings leave the node through netem, so every round
+# trip takes at least the delay.
+out="$(ping_from icscf || true)"
+if awk -v rtt="$(min_rtt <<<"$out")" 'BEGIN { exit !(rtt != "" && rtt >= 300) }'; then
+	echo "ok   every round trip to $target took 300 ms or more ($(min_rtt <<<"$out") ms at least)"
+else
+	echo "FAIL the round trips to $target with a delay of 300 ms: $out"
+	fail=1
+fi
+curl -fsS -X DELETE "$api/$id" >/dev/null
+if grep -q netem <<<"$(in_target tc qdisc show || true)"; then
+	echo "FAIL the netem qdisc is still there after the DELETE"
+	fail=1
+else
+	echo "ok   the delay is gone"
+fi
 
 echo "== the faults the agent took"
 curl -fsS "$api"
