@@ -10,7 +10,7 @@
 //	association-of-contact:<user>:<host>:<port>   index: the source of the association
 //	association-of-session:<policy session>       index: the source of the association
 //	dialog:<Call-ID>:<UE tag>                     Dialog, time to live until its KeepUntil, if it has one
-//	dialog-of-session:<policy session>            index: the key of the dialog
+//	dialog-of-session:<policy session>            index: the key of the dialog, time to live that of the dialog
 //	reg-subscription:<IMPI>                       RegSubscription, time to live until its Expires
 //	reg-subscription-of-dialog:<Call-ID>          index: the private identity of the subscription
 //	sa:<address>                                  SecurityAssociations, time to live until Expires
@@ -217,15 +217,16 @@ func (s *Store) sessionKey(session policy.SessionID) string {
 //
 // A dialog lasts until its BYE, however long that is, as in
 // pcscf.MemoryStore, unless it has a KeepUntil: a dialog that the P-CSCF
-// released goes at that time. The dialog of a P-CSCF that never sees the
-// end of its call stays.
+// released goes at that time, and the index item of its policy session
+// with it. The dialog of a P-CSCF that never sees the end of its call
+// stays.
 func (s *Store) PutDialog(ctx context.Context, d pcscf.Dialog) error {
 	var old pcscf.Dialog
 	if _, err := read(ctx, s.c, s.dialogKey(d.Key), &old); err != nil {
 		return err
 	}
 	if d.PolicySession != "" {
-		if err := s.c.WriteIndex(ctx, s.sessionKey(d.PolicySession), kvjson.Member(d.Key.CallID, d.Key.UETag), 0); err != nil {
+		if err := s.c.WriteIndex(ctx, s.sessionKey(d.PolicySession), kvjson.Member(d.Key.CallID, d.Key.UETag), s.c.TTLUntil(d.KeepUntil)); err != nil {
 			return err
 		}
 	}
@@ -248,14 +249,17 @@ func (s *Store) dropSession(ctx context.Context, key pcscf.DialogKey, was, is po
 // new value when another instance wrote first; change may therefore run
 // more than once, each time on a fresh copy (the change functions of
 // pcscf only set fields of the dialog). A policy session that change
-// gives the dialog gets its index item before the dialog is written.
+// gives the dialog gets its index item before the dialog is written, and
+// so does one whose dialog change gives another KeepUntil, so that the
+// index item goes with the dialog.
 func (s *Store) UpdateDialog(ctx context.Context, key pcscf.DialogKey, change func(*pcscf.Dialog)) (pcscf.Dialog, bool, error) {
 	var before policy.SessionID
 	d, err := kvjson.Modify(ctx, s.c, s.dialogKey(key), func(d pcscf.Dialog) time.Duration { return s.c.TTLUntil(d.KeepUntil) }, func(d *pcscf.Dialog) error {
 		before = d.PolicySession
+		keptUntil := d.KeepUntil
 		change(d)
-		if d.PolicySession != "" && d.PolicySession != before {
-			return s.c.WriteIndex(ctx, s.sessionKey(d.PolicySession), kvjson.Member(key.CallID, key.UETag), 0)
+		if d.PolicySession != "" && (d.PolicySession != before || !d.KeepUntil.Equal(keptUntil)) {
+			return s.c.WriteIndex(ctx, s.sessionKey(d.PolicySession), kvjson.Member(key.CallID, key.UETag), s.c.TTLUntil(d.KeepUntil))
 		}
 		return nil
 	})
