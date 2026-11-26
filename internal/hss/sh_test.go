@@ -64,7 +64,7 @@ func newShNetworkFor(t *testing.T, scHosts []string, subscriptions ...Subscripti
 	timers := diameter.Timers{Watchdog: time.Minute, Reconnect: 50 * time.Millisecond, Answer: 2 * time.Second}
 	hssNode := diameter.NewNode(diameter.Identity{OriginHost: "hss." + realm, OriginRealm: realm},
 		[]uint32{diameter.ApplicationIDCx, diameter.ApplicationIDSh, sgd.ApplicationIDS6c}, timers, quiet())
-	h := mustHSS(Config{Realm: realm, VisitedNetworks: []string{realm},
+	h := mustHSS(Config{Realm: realm, VisitedNetworks: []string{realm}, UserLocks: &askedLocks{},
 		ServiceCentres: []ServiceCentre{{Address: scAddress, Hosts: scHosts, Realm: realm}}}, store, hssNode)
 	t.Cleanup(h.Close)
 	hssNode.Handle(h.Handle)
