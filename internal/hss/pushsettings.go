@@ -289,12 +289,15 @@ func (h *HSS) pushRetry(peers Peers, c ProfilePushRetryClaim) {
 		err := h.config.CheckServiceProfileName(string(c.Source), p.Name)
 		another := err != nil
 		if err == nil {
-			err = h.pushRoundProfile(ctx, peers, c.PrivateID, p)
+			err = h.pushRoundProfile(ctx, peers, c.PrivateID, p, func(now ProfilePush) bool { return now.Round == p.Round })
 			another = errors.Is(err, diameter.ErrPeerUnavailable)
 		}
 		switch {
 		case ctx.Err() != nil:
 			return
+		case errors.Is(err, errPushOvertaken):
+			// A later round of the source came while the PPR waited for
+			// the lock of its subscriber, and pushes it.
 		case another && time.Since(c.Since) < profilePushRetryTime:
 			if err := h.store.ScheduleProfilePushRetry(ctx, c.ProfilePushRetry, time.Now().Add(h.sweepInterval())); err != nil {
 				log.Warn("the PPR left for another instance was not made due again; its claim runs out first", "error", err.Error())
@@ -427,14 +430,19 @@ func (h *HSS) pushOn(ctx context.Context, peers Peers, source ProfileSource) (ro
 		// A subscriber that the index names and the store no longer has,
 		// or no longer serves, gets no PPR: pushRoundProfile reads it
 		// before it builds one.
-		err := h.pushRoundProfile(ctx, peers, privateID, p)
+		err := h.pushRoundProfile(ctx, peers, privateID, p, func(now ProfilePush) bool { return now == p })
 		switch {
 		case ctx.Err() != nil:
 			return nil, false, ctx.Err()
+		case errors.Is(err, errPushOvertaken):
+			return nil, false, err
 		case errors.Is(err, diameter.ErrPeerUnavailable):
 			// This instance holds no connection to the S-CSCF of the
-			// subscriber: another instance may.
-			r := ProfilePushRetry{Source: source, Round: p.Round, PrivateID: privateID, Since: stamp()}
+			// subscriber: another instance may. The PPR is named by the
+			// point of the round it was left at, so that an instance that
+			// claims the round once the claim of this one has run out, and
+			// sends the same PPR again, leaves the same one.
+			r := ProfilePushRetry{Source: source, Round: p.Round, PrivateID: privateID, Since: p.Updated}
 			if err := h.store.ScheduleProfilePushRetry(ctx, r, dueNow()); err != nil {
 				return nil, false, err
 			}
@@ -465,10 +473,26 @@ func (h *HSS) pushOn(ctx context.Context, peers Peers, source ProfileSource) (ro
 // source. A subscriber whose profile no longer comes from the source of
 // the round, because a provisioning request changed it since the index
 // was read, gets no PPR from the round; that request pushed its profile.
-func (h *HSS) pushRoundProfile(ctx context.Context, peers Peers, privateID string, p ProfilePush) error {
+//
+// The push of the subscriber may wait for the lock of its pushes, behind
+// one of another instance, so the round is read again under the lock:
+// still is what the round must be for this PPR to go, and a round that a
+// later one, or another instance, has overtaken meanwhile sends nothing
+// and gives errPushOvertaken. Without it, a PPR of an earlier round that
+// waited could land after the one of the later round, and a PPR that an
+// instance whose claim ran out was waiting to send would go a second
+// time.
+func (h *HSS) pushRoundProfile(ctx context.Context, peers Peers, privateID string, p ProfilePush, still func(ProfilePush) bool) error {
 	return h.pushProfileUnder(ctx, peers, privateID, func(u Subscriber) (*settings, error) {
 		if profileSourceOf(u.Subscription) != p.Source {
 			return nil, nil
+		}
+		now, recorded, err := h.store.ProfilePush(ctx, p.Source)
+		if err != nil {
+			return nil, err
+		}
+		if !recorded || !still(now) {
+			return nil, errPushOvertaken
 		}
 		return h.settings.Load().withName(p.Source, p.Name), nil
 	})
