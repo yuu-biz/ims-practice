@@ -107,8 +107,11 @@
              stands in for MAP-READY-FOR-SM (TS 29.002 12.4): the
              IP-SM-GW tells the HSS that a user can take short messages
              again. 16777214 is the first of the two codes that RFC 6733
-             11.2.1 keeps for experimental commands. -->
-        <command code="16777214" short="RF" name="Ready-For-SM">
+             11.2.1 keeps for experimental commands. It has no short
+             name: no specification gives it an abbreviation, so the
+             logs, the metrics and the Lab name it in full rather than
+             by letters that would read like one of 3GPP. -->
+        <command code="16777214" name="Ready-For-SM">
             <request>
                 <rule avp="Session-Id" required="true" max="1"/>
                 <rule avp="Auth-Session-State" required="true" max="1"/>
