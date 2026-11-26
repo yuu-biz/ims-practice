@@ -3,6 +3,7 @@ package ibcf_test
 import (
 	"net/netip"
 	"testing"
+	"time"
 
 	"github.com/yuu-biz/ims-practice/internal/ibcf"
 	"github.com/yuu-biz/ims-practice/internal/sdp"
@@ -79,4 +80,87 @@ func TestRejectedOfferEndsTheCallWhenTheTrGWDoesNotGoBack(t *testing.T) {
 	endedByBYE(t, "the caller's call", call.Done(), call.EndedBy)
 	endedByBYE(t, "the callee's call", in.Done(), in.EndedBy)
 	p.waitReleased(t)
+}
+
+// The caller's UPDATE in the early dialog moves its media to a new port,
+// and the callee sends its 180 before it refuses the UPDATE with 488.
+// The 180 ends no offer: the session of the caller is still the one of
+// the INVITE and the 183 (RFC 3311 5.3), so IBCF-A puts TrGW-A back on
+// the old port all the same.
+func TestRefusedOfferAfterACrossing180PutsTheTrGWBack(t *testing.T) {
+	p := newPair(t, nil)
+	call := p.a.invite(t, p.b.sipURI(), p.a.offer(t, sdp.VoLTECodecs(), 1, ""), nil)
+	in := p.b.nextCall(t)
+	updates := make(chan *sip.InDialogRequest, 1)
+	in.Handle(func(r *sip.InDialogRequest) {
+		if r.Request.Method != sip.UPDATE {
+			r.Accept(sip.Body{})
+			return
+		}
+		updates <- r
+	})
+	if err := in.Progress(183, p.b.answer(t, in.Request)); err != nil {
+		t.Fatalf("183: %v", err)
+	}
+	provisional(t, call, 183)
+	updated := make(chan *sip.Message, 1)
+	go func() {
+		resp, err := call.Update(p.a.offerAt(t, p.a.media.Port()+2, 2))
+		if err != nil {
+			t.Errorf("UPDATE: %v", err)
+		}
+		updated <- resp
+	}()
+	var update *sip.InDialogRequest
+	select {
+	case update = <-updates:
+	case <-time.After(10 * time.Second):
+		t.Fatal("the UPDATE did not reach the callee")
+	}
+	// The 180 is reliable too, and its PRACK follows the UPDATE.
+	rang := make(chan error, 1)
+	go func() { rang <- in.Progress(180, sip.Body{}) }()
+	provisional(t, call, 180)
+	update.Reject(488)
+	select {
+	case resp := <-updated:
+		if resp == nil || resp.StatusCode != 488 {
+			t.Fatalf("the UPDATE got %v, want 488", resp)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("the UPDATE got no response")
+	}
+	select {
+	case err := <-rang:
+		if err != nil {
+			t.Fatalf("180: %v", err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("the 180 got no PRACK")
+	}
+	if got := onlyContext(t, p.a.trgw).remote[ibcf.CoreSide]; got != p.a.media {
+		t.Errorf("TrGW-A sends to %s after the refused offer, want %s again", got, p.a.media)
+	}
+	call.Cancel()
+	waitDone(t, "the callee's call after the CANCEL", in.Done())
+	p.waitReleased(t)
+}
+
+// provisional waits until call has a provisional response with status.
+func provisional(t *testing.T, call *sip.OutgoingCall, status int) {
+	t.Helper()
+	timeout := time.After(10 * time.Second)
+	for {
+		select {
+		case resp, ok := <-call.Responses():
+			if !ok {
+				t.Fatalf("the INVITE ended before its %d: %v", status, call.Err())
+			}
+			if resp.StatusCode == status {
+				return
+			}
+		case <-timeout:
+			t.Fatalf("no %d reached the caller", status)
+		}
+	}
 }
