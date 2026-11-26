@@ -79,9 +79,11 @@ func (g *PeerGroup) Available() bool { return slices.ContainsFunc(g.peers, (*Pee
 // All of the attempts together get the Answer timer, or the timeout
 // that WithAnswerTimeout put in the context, not one each, so
 // that a request costs the caller the same whether the group holds one
-// peer or ten. A role that makes two of them under the lock of a user,
-// as a registration does, then stays well inside the lock's lease
-// (ims.UserLockLease). Each attempt gets what is left of that timer
+// peer or ten. The IP-SM-GW makes two of them under the lock of a user,
+// when a reg event NOTIFY says that the user takes short messages, and
+// the S-CSCF one, so the Diameter answers stay inside the lock's lease
+// (ims.UserLockLease; what else a holder does is in package kvlock).
+// Each attempt gets what is left of that timer
 // divided by the peers still to try, so a peer that is open and silent
 // cannot use up the time its successors need, and the time a peer
 // leaves unused goes to them.

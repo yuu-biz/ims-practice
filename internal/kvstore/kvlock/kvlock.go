@@ -14,13 +14,32 @@
 // role.
 //
 // The lease bounds how long a stopped holder keeps the others waiting.
-// It is not renewed: a live holder has to finish within it. The longest
-// work under the lock is one Diameter round trip and a few operations
-// on the store: a registration waits for one Cx answer, a reg event
-// NOTIFY at the IP-SM-GW for one Sh answer, each at most 5 s, and each
-// operation on the store at most its own timeout. That is inside the
-// 15 s lease. When the lease runs out first, the release finds the item
-// gone or someone else's, and logs it.
+// It is not renewed: a live holder has to finish within it. Under the
+// lock a holder waits for at most two Diameter answers, makes a few
+// operations on the store, and may send SIP requests without waiting
+// for their responses:
+//
+//   - the S-CSCF waits for one Cx answer, the MAA of a challenge or the
+//     SAA of a registration or a deregistration, and then sends the reg
+//     event NOTIFY of each subscription to the user. For each NOTIFY it
+//     finds the next hop in DNS (RFC 3263) and, where the NOTIFY goes
+//     over TCP and no connection is open, opens one, which may take up
+//     to 2 s for each target (package sip);
+//   - the IP-SM-GW waits for two Sh answers when a reg event NOTIFY says
+//     that the user takes short messages, the UDA with the IMSI and then
+//     the PUA of SMSRegistrationInfo, and for one, the PUA, when it says
+//     that the user no longer does. For a third-party REGISTER it sends
+//     a SUBSCRIBE as the S-CSCF sends a NOTIFY;
+//   - the HSS answers one request under the lock, and sends its own
+//     requests, an RTR or an alert, after it has let the lock go.
+//
+// Each Diameter request waits at most 5 s for its answer, over all the
+// peers it tries (diameter.PeerGroup.Request), and each operation on
+// the store at most its own timeout, so the Diameter answers and the
+// store fit inside the 15 s lease. The SIP requests add the time DNS
+// and the connections take, NOTIFY by NOTIFY, which no timer of this
+// package bounds. When the lease runs out first, the release finds the
+// item gone or someone else's, and logs it.
 //
 // Waiters of the same instance queue in the process, so that only one
 // of them at a time tries the store; the others wait on a channel and do
