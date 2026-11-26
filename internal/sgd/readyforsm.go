@@ -82,9 +82,17 @@ func (r AlertReason) valid() bool {
 // IP-SM-GW to the HSS in this command of this project's own, on S6c, in
 // place of MAP-READY-FOR-SM, which this project does not implement. Its
 // experimental command code keeps it from passing for a command of TS
-// 29.338. It names the user by MSISDN in User-Identifier, as an RDR
-// does, where MAP names the user by IMSI, and carries the alert reason
-// in Alert-Reason, as a NOR does. IP-SM-GW-Number names the IP-SM-GW
+// 29.338. No form of such a command keeps to RFC 6733: one added to S6c
+// goes against 1.3.4, which asks for a new application, and a new
+// application against 2.4, which asks for an Application-Id that IANA
+// assigned, of which none is kept for experiments. The experimental
+// command code is the one that no real command can have, while an
+// Application-Id that IANA did not assign may be one it assigns to
+// another application. The IP-SM-GW advertises S6c for this command
+// alone: it sends neither SRR nor RDR. It names the user by MSISDN in
+// User-Identifier, as an RDR does, where MAP names the user by IMSI,
+// and carries the alert reason in Alert-Reason, as a NOR does.
+// IP-SM-GW-Number names the IP-SM-GW
 // that sends it, which MAP leaves to the address of the sender: every
 // instance of the IP-SM-GW has that number, while each has a Diameter
 // identity of its own. The Additional Alert Reason Indicator, which
