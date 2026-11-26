@@ -233,25 +233,68 @@ for workload in $(kims get statefulset,deployment -o name); do
 	kims rollout status "$workload" --timeout=180s
 done
 
-# The CSCFs, the Service Centre and the IP-SM-GW serve requests only
-# once their Diameter connections are open.
-wait_for_open() {
-	local pod="$1" i
-	# Up to two minutes: a node that tried before the HSS listened
-	# tries again after Tc, 30 s (RFC 6733 2.1).
-	for i in $(seq 1 120); do
-		if grep -q '"to":"I-Open (OKAY)"' <<<"$(kims logs "$pod" -c ims 2>/dev/null)"; then
-			return 0
+# A node serves requests only once the Diameter connections it opens
+# are open: the CSCFs, the MMTel AS and the Service Centre to the HSS,
+# the IP-SM-GW to the HSS and to the Service Centre, the P-CSCF to the
+# PCRF. Each node that has peers in its node.yaml says of every one of
+# them, in ims_diameter_peer_up at /metrics of its maintenance listener,
+# whether that connection takes requests now.
+#
+# diameter_nodes prints "POD PORT" for each Pod of the IMS whose
+# node.yaml lists Diameter peers, PORT being that of its maintenance
+# listener, or "none" when it has none.
+diameter_nodes() {
+	local pod config
+	for pod in $(kims get pods -o jsonpath='{.items[?(@.spec.containers[0].name=="ims")].metadata.name}'); do
+		config="$(kims exec "$pod" -c ims -- cat /etc/ims/node.yaml)" || {
+			echo "FAIL could not read /etc/ims/node.yaml of $pod" >&2
+			return 1
+		}
+		awk -v pod="$pod" '
+			/^[^ #]/ { section = $1 }
+			section == "diameter:" && $1 == "peers:" { peers = 1 }
+			section == "maintenance:" && $1 == "listen:" { port = $2; sub(/.*:/, "", port) }
+			END { if (peers) print pod, (port == "" ? "none" : port) }' <<<"$config"
+	done
+}
+# wait_for_peers waits until every series of ims_diameter_peer_up of
+# every such Pod is 1. Up to two minutes: a node whose first attempt
+# failed, because the name of its peer did not resolve yet or the peer
+# did not listen yet, tries again after Tc, 30 s (RFC 6733 2.1).
+wait_for_peers() {
+	local nodes pod port metrics peer up deadline=$((SECONDS + 120)) down
+	nodes="$(diameter_nodes)" || return 1
+	if [ -z "$nodes" ]; then
+		echo "FAIL no Pod of the IMS lists Diameter peers in its node.yaml" >&2
+		return 1
+	fi
+	while :; do
+		down=()
+		while read -r pod port; do
+			if [ "$port" = none ]; then
+				echo "FAIL $pod has Diameter peers but no maintenance listener that reports them" >&2
+				return 1
+			fi
+			metrics="$(k get --raw "/api/v1/namespaces/ims/pods/$pod:$port/proxy/metrics" 2>/dev/null)" || metrics=""
+			if ! grep -q '^ims_diameter_peer_up{' <<<"$metrics"; then
+				down+=("$pod: no ims_diameter_peer_up at /metrics of port $port")
+				continue
+			fi
+			while read -r peer up; do
+				[ "$up" = 1 ] || down+=("$pod: peer $peer")
+			done < <(sed -n 's/^ims_diameter_peer_up{.*peer="\([^"]*\)".*} \(.*\)$/\1 \2/p' <<<"$metrics")
+		done <<<"$nodes"
+		[ "${#down[@]}" -gt 0 ] || return 0
+		if [ "$SECONDS" -ge "$deadline" ]; then
+			echo "FAIL gave up after 120 s waiting for these Diameter connections to open:" >&2
+			printf '  %s\n' "${down[@]}" >&2
+			return 1
 		fi
 		sleep 1
 	done
-	echo "FAIL $pod never opened its Diameter connection" >&2
-	return 1
 }
-wait_for_open icscf-0
-wait_for_open scscf-0
-wait_for_open sc-0
-wait_for_open ipsmgw-0
+echo "== waiting for the Diameter connections"
+wait_for_peers
 
 pod_ip() { kims get pod "$@" -o jsonpath='{.items[0].status.podIP}'; }
 ue1="$(pod_ip -l app.kubernetes.io/name=ue)"
