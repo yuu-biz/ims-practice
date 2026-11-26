@@ -165,10 +165,13 @@ func way(d b2bua.Direction) string {
 // again), as a service that diverts a call does; before, when set, is
 // what the role does on the call of the caller before that new leg, such
 // as ending the early dialog of the caller with a 199.
+// decline, when set, tells which responses and ACKs the role cannot
+// pass on, so that the Call releases the call instead.
 type hooks struct {
 	request  func(req *sip.Message, d b2bua.Direction) *b2bua.Refusal
 	response func(resp *sip.Message, d b2bua.Direction)
 	ack      func(ack *sip.Message, d b2bua.Direction)
+	decline  func(m *sip.Message, d b2bua.Direction) bool
 	// answer, when set, runs as the Call prepares the 2xx for the caller.
 	answer func()
 	own    func(c *b2bua.Call)
@@ -190,25 +193,31 @@ func (h *hooks) Request(req *sip.Message, d b2bua.Direction) (b2bua.Message, *b2
 	return b2bua.Message{Headers: []sip.HeaderField{{Name: "Subject", Value: way(d)}}, Body: sip.BodyOf(req)}, nil
 }
 
-func (h *hooks) Response(resp, _ *sip.Message, d b2bua.Direction) b2bua.Message {
+func (h *hooks) Response(resp, _ *sip.Message, d b2bua.Direction) (b2bua.Message, bool) {
 	if h.response != nil {
 		h.response(resp, d)
 	}
-	return b2bua.Message{Headers: []sip.HeaderField{{Name: "Subject", Value: way(d)}}, Body: sip.BodyOf(resp)}
+	if h.decline != nil && h.decline(resp, d) {
+		return b2bua.Message{}, false
+	}
+	return b2bua.Message{Headers: []sip.HeaderField{{Name: "Subject", Value: way(d)}}, Body: sip.BodyOf(resp)}, true
 }
 
-func (h *hooks) Answer(resp, _ *sip.Message) b2bua.Message {
+func (h *hooks) Answer(resp, _ *sip.Message) (b2bua.Message, bool) {
 	if h.answer != nil {
 		h.answer()
 	}
 	return h.Response(resp, nil, b2bua.ToCaller)
 }
 
-func (h *hooks) Ack(ack *sip.Message, d b2bua.Direction) sip.Body {
+func (h *hooks) Ack(ack *sip.Message, d b2bua.Direction) (sip.Body, bool) {
 	if h.ack != nil {
 		h.ack(ack, d)
 	}
-	return sip.BodyOf(ack)
+	if h.decline != nil && h.decline(ack, d) {
+		return sip.Body{}, false
+	}
+	return sip.BodyOf(ack), true
 }
 
 func (h *hooks) Contact(*sip.Message) (sip.NameAddr, bool, bool) {

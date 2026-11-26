@@ -33,7 +33,7 @@ func (c *call) Request(req *sip.Message, d b2bua.Direction) (b2bua.Message, *b2b
 // Response prepares resp, a response to req that crosses in d, for the
 // other leg, with the services that act on a response that goes to the
 // caller's side (servicesOnResponse).
-func (c *call) Response(resp, req *sip.Message, d b2bua.Direction) b2bua.Message {
+func (c *call) Response(resp, req *sip.Message, d b2bua.Direction) (b2bua.Message, bool) {
 	toCaller := d == b2bua.ToCaller
 	if toCaller {
 		c.keepCalleeSDP(toTag(resp), sip.BodyOf(resp))
@@ -41,7 +41,7 @@ func (c *call) Response(resp, req *sip.Message, d b2bua.Direction) b2bua.Message
 			c.sessionToTheCaller(resp)
 		}
 	}
-	return b2bua.Message{Headers: c.responseFields(resp, req, toCaller).Headers, Body: sip.BodyOf(resp)}
+	return b2bua.Message{Headers: c.responseFields(resp, req, toCaller).Headers, Body: sip.BodyOf(resp)}, true
 }
 
 // sessionToTheCaller notes the early dialog of the callee's side whose
@@ -77,7 +77,7 @@ func (c *call) sessionToTheCaller(resp *sip.Message) {
 // acknowledged the 2xx. When no reliable response carried the answer to
 // the offer of the INVITE, the 2xx is the response that has to carry it,
 // and it carries the one the caller already has (13.2.1, RFC 3262 5).
-func (c *call) Answer(resp, session *sip.Message) b2bua.Message {
+func (c *call) Answer(resp, session *sip.Message) (b2bua.Message, bool) {
 	tag := toTag(resp)
 	body := sip.BodyOf(resp)
 	// When the caller follows another early dialog, resp comes without
@@ -103,7 +103,7 @@ func (c *call) Answer(resp, session *sip.Message) b2bua.Message {
 	case session != nil && !answered:
 		body = sip.Body{Type: sessionDescription, Content: callerHas}
 	}
-	return b2bua.Message{Headers: c.responseFields(resp, c.in.Request, true).Headers, Body: body}
+	return b2bua.Message{Headers: c.responseFields(resp, c.in.Request, true).Headers, Body: body}, true
 }
 
 // sessionDescription is the media type of a session description (RFC
@@ -112,7 +112,9 @@ const sessionDescription = "application/sdp"
 
 // Ack is the body of ack, the ACK that answers the offer of a 2xx (RFC
 // 3261 13.2.2.4), as the other leg gets it.
-func (c *call) Ack(ack *sip.Message, _ b2bua.Direction) sip.Body { return sip.BodyOf(ack) }
+func (c *call) Ack(ack *sip.Message, _ b2bua.Direction) (sip.Body, bool) {
+	return sip.BodyOf(ack), true
+}
 
 // Contact is the Contact that the leg to the caller takes for the
 // Contact of resp: that of a conference focus crosses as it came, and

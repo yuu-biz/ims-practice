@@ -195,7 +195,11 @@ func (c *Call) RelayProvisional(out *sip.OutgoingCall, resp *sip.Message) {
 		}
 		return
 	}
-	m := c.hooks.Response(c.toCaller(out, resp), c.in.Request, ToCaller)
+	m, ok := c.hooks.Response(c.toCaller(out, resp), c.in.Request, ToCaller)
+	if !ok {
+		c.release()
+		return
+	}
 	c.mu.Lock()
 	// RFC 3262 5: after an INVITE without an offer, the first reliable
 	// response with a body has the callee's offer, and the PRACK the
@@ -263,7 +267,16 @@ func (c *Call) acknowledged() (acked *sip.Message, own bool) {
 func (c *Call) Answer(out *sip.OutgoingCall, resp *sip.Message) {
 	c.answered.Store(true)
 	toCaller, session := c.answerFrom(resp)
-	m := c.hooks.Answer(toCaller, session)
+	m, ok := c.hooks.Answer(toCaller, session)
+	if !ok {
+		// The caller gets 500 in the place of the 2xx, and the callee a
+		// BYE once its 2xx has its ACK (RFC 3261 15.1.1), which Bye sends
+		// first when the UA has not.
+		c.in.Reject(500)
+		out.Bye()
+		c.log.Info("call released before the caller had the answer")
+		return
+	}
 	c.setContact(resp)
 	c.sentToCaller(m.Body)
 	ack, err := c.in.Accept(m.Body, m.Headers...)
@@ -278,7 +291,16 @@ func (c *Call) Answer(out *sip.OutgoingCall, resp *sip.Message) {
 	if len(ack.Body) > 0 {
 		// The 2xx carried the callee's offer, after an INVITE without
 		// one, and the caller's ACK the answer (RFC 3261 13.2.2.4).
-		if err := out.Ack(c.hooks.Ack(ack, ToCallee)); err != nil {
+		body, ok := c.hooks.Ack(ack, ToCallee)
+		if !ok {
+			// The callee's 2xx still waits for its ACK, which Bye sends
+			// first.
+			c.in.Bye()
+			out.Bye()
+			c.log.Info("call released")
+			return
+		}
+		if err := out.Ack(body); err != nil {
 			c.log.Warn("answer in the ACK not relayed", "error", err.Error())
 		}
 	}
@@ -450,12 +472,15 @@ func (c *Call) answerWithoutALeg(r *sip.InDialogRequest) {
 // answered tells that the caller has its 200 already.
 func (c *Call) prack(r *sip.InDialogRequest, out *sip.OutgoingCall, acked *sip.Message, answered bool, finish func()) {
 	m, refused := c.hooks.Request(r.Request, ToCallee)
-	switch {
-	case refused != nil && answered:
-		c.log.Info("PRACK not relayed", "status", refused.Status)
-		return
-	case refused != nil:
-		r.Reject(refused.Status, refused.Headers...)
+	if refused != nil {
+		if answered {
+			c.log.Info("PRACK not relayed", "status", refused.Status)
+		} else {
+			r.Reject(refused.Status, refused.Headers...)
+		}
+		if refused.Release {
+			c.release()
+		}
 		return
 	}
 	resp, err := out.PRACK(acked, m.Body, m.Headers...)
@@ -508,6 +533,9 @@ func (c *Call) forward(r *sip.InDialogRequest, to leg, d Direction, finish func(
 	m, refused := c.hooks.Request(req, d)
 	if refused != nil {
 		r.Reject(refused.Status, refused.Headers...)
+		if refused.Release {
+			c.release()
+		}
 		return
 	}
 	var resp *sip.Message
@@ -583,7 +611,15 @@ func (c *Call) answerRequest(r *sip.InDialogRequest, sent sip.Body, resp *sip.Me
 			// The caller took the session description of the request.
 			c.sentToCaller(sent)
 		}
-		m := c.hooks.Response(resp, r.Request, d.reverse())
+		m, ok := c.hooks.Response(resp, r.Request, d.reverse())
+		if !ok {
+			// The other leg has the 2xx. One with the offer of the other
+			// side, to a re-INVITE without one, still waits for its ACK,
+			// which the BYE of the release sends first.
+			r.Reject(500)
+			c.release()
+			return
+		}
 		if d == ToCallee {
 			// The response goes to the caller, which sent the request.
 			c.sentToCaller(m.Body)
@@ -597,7 +633,11 @@ func (c *Call) answerRequest(r *sip.InDialogRequest, sent sip.Body, resp *sip.Me
 			// A re-INVITE without an offer: the 2xx had the other side's
 			// offer, and this side's ACK has the answer (RFC 3261 14.1).
 			// Only with that answer have the two ends settled the session.
-			body := c.hooks.Ack(ack, d)
+			body, ok := c.hooks.Ack(ack, d)
+			if !ok {
+				c.release()
+				return
+			}
 			if d == ToCaller {
 				// The ACK goes to the caller, which the re-INVITE reached.
 				c.sentToCaller(body)
@@ -606,7 +646,25 @@ func (c *Call) answerRequest(r *sip.InDialogRequest, sent sip.Body, resp *sip.Me
 			c.settledByTheEnds(r)
 		}
 	default:
-		m := c.hooks.Response(resp, r.Request, d.reverse())
+		m, _ := c.hooks.Response(resp, r.Request, d.reverse())
 		r.Reject(resp.StatusCode, m.Headers...)
 	}
+}
+
+// release ends the call from the B2BUA, for a role that cannot let it
+// go on (Refusal.Release, Hooks). Before the callee has answered, the
+// caller's INVITE gets 500 (RFC 3261 21.5.1), and the goroutine of
+// Attempt cancels the INVITE toward the callee (9.1). Once the callee
+// has answered, the caller gets a BYE, and Answer sends the callee one
+// as the caller's leg ends (15.1.1).
+func (c *Call) release() {
+	if !c.answered.Load() && c.in.Reject(500) == nil {
+		c.log.Info("call released before the answer")
+		return
+	}
+	if err := c.in.Bye(); err != nil {
+		c.log.Info("call released after the caller's leg had ended", "error", err.Error())
+		return
+	}
+	c.log.Info("call released")
 }
