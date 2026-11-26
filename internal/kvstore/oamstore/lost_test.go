@@ -216,3 +216,43 @@ func TestAHolderDoesNotTakeAStateWrittenAfterTheStoreWasEmptied(t *testing.T) {
 		})
 	}
 }
+
+// TestAProcessOfTheSameNameDoesNotTakeTheLeaseOfAnother: two processes
+// run with the same instance name. The first holds a watch, and stops
+// for longer than its lease; the second takes the watch. When the first
+// goes on, it finds that the lease is not its own, although it names
+// its instance: its renewal loses the watch, and its release leaves the
+// lease of the second.
+func TestAProcessOfTheSameNameDoesNotTakeTheLeaseOfAnother(t *testing.T) {
+	for _, backend := range storetest.Backends() {
+		t.Run(backend.Name, func(t *testing.T) {
+			ctx := context.Background()
+			kv := backend.New(t)
+			cfg := kvjson.Config{Prefix: storetest.Prefix()}
+			first := oamstore.NewWithLease(kv, cfg, lease)
+			second := oamstore.NewWithLease(kv, cfg, lease)
+			other := oamstore.NewWithLease(kv, cfg, lease)
+			old, ok, err := first.Watch(ctx, "scscf", "a")
+			if err != nil || !ok {
+				t.Fatalf("Watch: %v, %v", ok, err)
+			}
+			waitOut()
+			next, ok, err := second.Watch(ctx, "scscf", "a")
+			if err != nil || !ok {
+				t.Fatalf("Watch after the lease ran out: %v, %v", ok, err)
+			}
+			if err := old.Renew(ctx); !errors.Is(err, oam.ErrWatchLost) {
+				t.Errorf("Renew by the first process: %v, want ErrWatchLost", err)
+			}
+			if err := old.Release(ctx); err != nil {
+				t.Errorf("Release by the first process: %v", err)
+			}
+			if _, ok, err := other.Watch(ctx, "scscf", "b"); err != nil || ok {
+				t.Errorf("another instance's Watch of the lease of the second process: %v, %v", ok, err)
+			}
+			if err := next.Renew(ctx); err != nil {
+				t.Errorf("Renew by the second process: %v", err)
+			}
+		})
+	}
+}

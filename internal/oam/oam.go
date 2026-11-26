@@ -117,7 +117,10 @@ type Config struct {
 	// nil for an OAM that sends none.
 	AlarmWatches AlarmWatchStore
 	// Instance names this OAM instance to the watch store; empty for a
-	// random name, chosen when the server is made.
+	// random name, chosen when the server is made. Two processes that
+	// run at once with one name count as one instance, and each writes
+	// over the nodes that the other says it cannot reach; each watch
+	// still keeps a lease of its own.
 	Instance string
 	// AlarmEventsWait is how long a request for the alarm events of a
 	// node waits for one, in whole seconds; 0 for
