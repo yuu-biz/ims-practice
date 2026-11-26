@@ -72,6 +72,7 @@ Refs: <spec number and clause>
 - 本文にはなぜその変更をしたかを書きます。件名の繰り返しは書きません。
 - 仕様の手順を実装したときは、`Refs:` 行に仕様番号と条項を書きます。複数あるときは `Refs:` 行を複数書きます。
 - AI エージェントが作ったコミットには `Co-Authored-By:` の行を残します。会話へのリンクは書きません。公開の履歴に、非公開の会話の場所を残さないためです。
+- PR では、CI の `docs` のジョブが `scripts/check_commit_messages.py` で、その PR が足すコミットのメッセージを調べます。件名が上の形式でないもの、件名の末尾にピリオドがあるもの、`Claude-Session:` の行か会話の URL を含むものが 1 つでもあれば落ちます。調べる URL の形は、このスクリプトの `PATTERNS` にあります。`main` にすでにあるコミットは調べません。`git revert` が付ける `Revert "..."` の件名も落ちるので、種類を付けた件名に書き直します。PR を出す前に `python3 scripts/check_commit_messages.py origin/main` で確かめられます。
 
 例:
 
