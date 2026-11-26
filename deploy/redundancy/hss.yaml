@@ -265,6 +265,12 @@ hss:
         <operator-outgoing-communication-barring authorized="true"/>
       </complete-communication-barring>
     </MMTelServices>
+  # With the store section at the end, default_service_profile,
+  # test_user_service_profile and admission live in the store, with the
+  # subscribers: the values below are what the first HSS to find the
+  # store empty writes there, and from then on only the maintenance API
+  # changes them. Changing them here and starting the HSS again changes
+  # nothing in a store that has them.
   # A service profile is a list of initial filter criteria, which tell
   # the S-CSCF which request goes to which application server (TS 29.228
   # B.2.2). The HSS holds its profiles by name and answers the SAA with
