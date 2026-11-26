@@ -133,9 +133,11 @@ func (h *HSS) startRounds(ctx context.Context, set *settings) {
 // is due: the last round went out for the change that last gave the
 // name of the source another value in set, or for a later one; or a
 // round is under way, which starts the next one as it ends (endRound).
-// A source that no push has been recorded for yet is in step with
-// settings of generation 0, those of a configuration file, which every
-// S-CSCF has from the SAAs; after a change it has a round to make.
+// A source that no push has been recorded for yet is in step while its
+// name is the one of a configuration file, of name generation 0, which
+// every S-CSCF has from the SAAs, whatever other settings have changed;
+// once a change has given the name another value, it has a round to
+// make.
 //
 // The round goes by the generation of the name, not by the name: a
 // change from A to B and back to A while a round of A is under way, or
@@ -169,7 +171,7 @@ func (h *HSS) startRound(ctx context.Context, source ProfileSource, set *setting
 		}
 		var old *ProfilePush
 		switch {
-		case !recorded && set.generation == 0:
+		case !recorded && set.nameGeneration(source) == 0:
 			_, err := h.store.CompareAndSwapProfilePush(ctx, nil,
 				ProfilePush{Source: source, Name: name, Done: true, Updated: stamp()})
 			return err
