@@ -140,6 +140,17 @@ func TestRefusedAnswerInTheACKEndsTheCall(t *testing.T) {
 	}
 	endedByBYE(t, "the caller's call", call.Done(), call.EndedBy)
 	endedByBYE(t, "the callee's call", in.Done(), in.EndedBy)
+	// The BYE may reach the callee before the ACK that went ahead of it,
+	// so the ACK is read from what the callee received.
+	acks := p.b.rec.requests("ue", sip.ACK)
+	if len(acks) == 0 {
+		t.Error("the callee's 200 got no ACK")
+	}
+	for _, ack := range acks {
+		if len(ack.Body) != 0 {
+			t.Errorf("the callee's 200 got an ACK with %d bytes of body, want none", len(ack.Body))
+		}
+	}
 	p.waitReleased(t)
 	assertHidden(t, p.b, planA)
 }

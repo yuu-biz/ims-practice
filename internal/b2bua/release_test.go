@@ -218,8 +218,16 @@ func TestDeclinedAckReleasesTheCall(t *testing.T) {
 	in := within(t, "call at the callee", calls)
 	endedByBYE(t, "the caller's call", out.Done(), out.EndedBy)
 	endedByBYE(t, "the callee's call", in.Done(), in.EndedBy)
-	if bodies := w.bodies(sip.ACK); len(bodies) != 1 || bodies[0] != "" {
-		t.Errorf("the callee got ACKs with %q, want one without the declined answer", bodies)
+	// A retransmission of the 200 that crosses the ACK gets an ACK again
+	// (RFC 3261 13.2.2.4), and none of them has the declined answer.
+	bodies := w.bodies(sip.ACK)
+	if len(bodies) == 0 {
+		t.Error("the callee got no ACK")
+	}
+	for _, b := range bodies {
+		if b != "" {
+			t.Errorf("the callee got an ACK with %q, want none with the declined answer", b)
+		}
 	}
 }
 
@@ -299,4 +307,49 @@ func TestRefusedPRACKEndsTheINVITE(t *testing.T) {
 		t.Errorf("the INVITE got %d, want 500", final.StatusCode)
 	}
 	cancelled(t, in)
+}
+
+// A release before the callee's answer, whose 2xx crosses the CANCEL:
+// the caller has its 500, and the callee's call ends all the same, with
+// the CANCEL, or with a BYE once its 2xx has its ACK (RFC 3261 15).
+func TestCalleeAnswerCrossingTheCancelOfARelease(t *testing.T) {
+	answerNow := make(chan struct{})
+	h := &hooks{request: func(req *sip.Message, d b2bua.Direction) *b2bua.Refusal {
+		if req.Method != "INFO" {
+			return nil
+		}
+		close(answerNow)
+		return &b2bua.Refusal{Status: 500, Release: true}
+	}}
+	calls := make(chan *sip.IncomingCall, 1)
+	callee := newUA(t, "callee", func(in *sip.IncomingCall) {
+		calls <- in
+		in.Progress(180, sip.Body{})
+		<-answerNow
+		in.Accept(answer)
+	})
+	b2b := newB2BUA(t, h, contactOf(t, callee))
+	caller := newUA(t, "caller", func(in *sip.IncomingCall) { in.Reject(480) })
+	out, err := caller.Invite(invitation(t, b2b, nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	in := within(t, "call at the callee", calls)
+	if resp := within(t, "180 at the caller", out.Responses()); resp.StatusCode != 180 {
+		t.Fatalf("the caller got %d, want 180", resp.StatusCode)
+	}
+	if resp, err := out.Send("INFO", sip.Body{}); err != nil || resp.StatusCode != 500 {
+		t.Errorf("the INFO got %v %v, want the role's 500", resp, err)
+	}
+	if _, final := finalOf(t, out); final.StatusCode != 500 {
+		t.Errorf("the INVITE got %d, want 500", final.StatusCode)
+	}
+	select {
+	case <-in.Done():
+	case <-time.After(5 * time.Second):
+		t.Fatal("the callee's call did not end")
+	}
+	if m := in.EndedBy(); !errors.Is(in.Err(), sip.ErrCancelled) && (m == nil || m.Method != sip.BYE) {
+		t.Errorf("the callee's call ended with %v by %v, want a CANCEL or a BYE", in.Err(), m)
+	}
 }

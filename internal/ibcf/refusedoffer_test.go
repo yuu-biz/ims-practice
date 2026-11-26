@@ -167,6 +167,7 @@ func TestOfferWithinTheCallEndsTheCallWhenTheTrGWMayHaveTakenIt(t *testing.T) {
 	}{
 		{"no answer in time", context.DeadlineExceeded},
 		{"context lost", fmt.Errorf("%w: %w", agw.ErrRejected, agw.ErrNoContext)},
+		{"termination lost", fmt.Errorf("%w: %w", agw.ErrRejected, agw.ErrNoTermination)},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			p := newPair(t, nil)
