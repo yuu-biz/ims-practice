@@ -772,8 +772,8 @@ err = node.ClearAlarm(hssDown)
 - `AlarmIdentity` の 5 つの欄（役割、相手、種類、原因、specific problem）が同じなら、同じ警報です。役割と相手は、ノードと合わせて objectInstance になるので、6.4 の 4 つの属性と同じ決め方です。同じ警報を上げると、記録を更新します（6.14）。重さも文字も同じなら何も変えません。役割は、失敗するたびに同じ警報を上げて構いません。
 - cleared にした警報を同じ識別でまた上げると、同じ記録が戻ります。`alarm_id` と上げた時刻はそのままです。
 - 新しい記録は `UNACKNOWLEDGED` で始まります（6.7）。確認した記録が cleared になると、すぐに一覧から消えます。cleared の記録は、確認されると消えます（7.3.1.1）。
-- 一覧には上限（`Config.MaxAlarmRecords`、既定は 256 件）があります。いっぱいのときは、cleared の記録のうち一番古いものを、cleared が無ければ一番古いものを捨てます（7.3.2.1）。捨てた数は `dropped_records` に出ます。条件が入れ替わり続けても、識別が同じなら記録は 1 件のままです。上限に届くのは、新しい識別を作り続ける障害のときだけです。
-- 確認されない cleared の記録は、`Config.ClearedAlarmRetention`（既定は 1 時間）がたつと、ノードが自分で確認します。`ack_user_id` は `retention`、`ack_system_id` はノードの名前です。確認した cleared の記録なので、一覧から消えます。TS 28.111 6.7 の、運用者か機械の確認なしに記録を消さないことを守るためで、仕様に無い振る舞いです（[fm-northbound.md](../design/fm-northbound.md) の「仕様に無い振る舞い」）。
+- 一覧には上限（`DefaultMaxAlarmRecords`、256 件）があります。いっぱいのときは、cleared の記録のうち一番古いものを、cleared が無ければ一番古いものを捨てます（7.3.2.1）。捨てた数は `dropped_records` に出ます。条件が入れ替わり続けても、識別が同じなら記録は 1 件のままです。上限に届くのは、新しい識別を作り続ける障害のときだけです。
+- 確認されない cleared の記録は、`ClearedAlarmRetention`（1 時間）がたつと、ノードが自分で確認します。`ack_user_id` は `retention`、`ack_system_id` はノードの名前です。確認した cleared の記録なので、一覧から消えます。TS 28.111 6.7 の、運用者か機械の確認なしに記録を消さないことを守るためで、仕様に無い振る舞いです（[fm-northbound.md](../design/fm-northbound.md) の「仕様に無い振る舞い」）。
 - 警報は加入者を名乗りません。識別には加入者の欄がありません。そのうえで `RaiseAlarm` は、相手、原因、specific problem、追加の文に、SIP や tel の URI、`user@realm`、`+` で始まる番号、6 桁以上の数字の並び（IMSI や MSISDN の長さ）があると断ります。相手はホスト名か IP アドレス（ポートは付けても付けなくてもよい）に限ります。数字だけの 4 文字以上のラベルも断ります。一覧が大きくなるのは、ノードのつながりが増えたときだけで、利用者が増えても大きくなりません。
 - 追加の文に秘密を入れさせません。設定の伏せ字と同じ秘密の名前（`password`、`k`、`opc` など）のあとに値が続く文（`password=…`、`k: …`）と、32 文字以上の 16 進の並び（K や OPc の長さ）を断ります。断ったときのエラーには、秘密の値を書きません。
 - 一覧のロックは、そのノードの警報だけを守ります。期限の過ぎた記録を探す走査は、上限の 256 件までです。加入者を走査することはありません。
@@ -838,7 +838,7 @@ err = node.ClearAlarm(hssDown)
 | 経路と問い合わせ | `GET /maintenance/v1/alarm-events?after=N&wait=S`。`after` はリーダーが持っている最後の出来事の番号（既定は 0）、`wait` は待つ秒数で 0 から 30（既定は 0、すぐに答える） | ほかの経路と同じく、問い合わせの名前を間違えたら 400 にする。待つ長さは OAM が決める（記録の表では 5 秒）。ノードは上限だけを持つ |
 | 答え | `AlarmEvents`。`node`、`instance`、`journal_id`、`last_number`、`lost`、`events` | `journal_id` は起動ごとの乱数の識別。`last_number` があれば、OAM は `wait=0` の 1 回で今の位置を知れる |
 | 出来事 | `AlarmEvent`。`number`（1 から 1 ずつ増える）、`event_type`、`event_time`、`alarm_record`（変えたあとの記録。`notification_id` はその変わり目のもの） | 種類は `ADDED`、`CHANGED`、`CLEARED`、`ACK_STATE_CHANGED`、`DROPPED` の 5 つ。前の 4 つは TS 28.111 8.2、8.4、8.3、8.8 の通知に 1 つずつ当たる。`DROPPED` は捨てた記録を持つ。時刻は記録の時刻（上げた、変えた、cleared にした、確認した時刻）と同じ |
-| 上限 | `Config.MaxAlarmEvents`。既定は 1024（一覧の上限 256 件の 4 倍） | 満杯の一覧の記録が、上げる、変える、cleared、確認の 4 つの出来事を持てる。1 件は記録 1 つ分の数百バイトなので、ノードあたり 1 MB 前後に収まる |
+| 上限 | `DefaultMaxAlarmEvents`。1024（一覧の上限 256 件の 4 倍） | 満杯の一覧の記録が、上げる、変える、cleared、確認の 4 つの出来事を持てる。1 件は記録 1 つ分の数百バイトなので、ノードあたり 1 MB 前後に収まる |
 | 失った印 | `lost` が true のとき、`after` より後の出来事の一部がジャーナルに無い。古いものが消えたときのほか、`after` がこのジャーナルの最新より大きいとき（別のプロセスの番号）も true にし、待たずに、持っている最も古い出来事から答える | 再起動したノードに古い番号で聞いた OAM が、待たされずにすぐ気付ける |
 | 保持の時間の確認の順 | 保持の時間が同時に終わった記録は、終わった時刻の順に確認する | ジャーナルの出来事の時刻が、番号の順に並ぶようにするため |
 | 待つ仕組み | 出来事を足すたびに閉じて作り直すチャネルで起こす。待つ期限はノードの `Clock` で測る | 一覧のロックを持ったまま待たない。リーダーごとに goroutine 1 つと timer 1 つで、加入者の数には依らない |
@@ -1172,7 +1172,7 @@ OAM とその画面、指標、警報は、ほかの部分に次のものを求�
 ### 警報のために要るもの
 
 - 各役割で、6 章の「役割ごとの警報の案」の警報を上げ下げする。役割は、`cmd/ims` が作る `*maintenance.Node` を受け取り、`RaiseAlarm` と `ClearAlarm` を呼びます。Diameter の相手の状態は `internal/diameter` の中にあるので、接続が切れたこととつながったことを役割に知らせる口が要るかもしれません。
-- これは警報を上げ下げするだけです。`cmd/ims` が保守用の待ち受けに `maintenance.Node` の `Handler` を載せれば、警報の経路も一緒に載ります。設定の項目は足していません。一覧の上限と保持の時間を設定で変えたいときは、`maintenance.Config` の `MaxAlarmRecords` と `ClearedAlarmRetention` に渡してください。
+- これは警報を上げ下げするだけです。`cmd/ims` が保守用の待ち受けに `maintenance.Node` の `Handler` を載せれば、警報の経路も一緒に載ります。設定の項目は足していません。一覧とジャーナルの上限、cleared の記録を残す時間は定数です。`maintenance.Config` の `MaxAlarmRecords` と `MaxAlarmEvents` は、少ない警報で上限に届かせたい試験のためだけにあり、`cmd/ims` は渡しません。
 - OAM の e2e のスクリプトに、12 章の「HSS を止めているあいだ、CSCF に Diameter の警報が上がり、戻すと下がる」を入れる。`GET /oam/v1/alarms?cleared=false` で、`scscf` と `icscf` の `Diameter peer down` が現れ、HSS を戻すと `cleared=true` の側に移ることを見ます。
 - 手順書「OAM で運用する」に、警報の項を足します。用語集には、12 章の一覧の「警報」と「perceived severity」に加えて、alarm list、probable cause、specific problem、ADAC、acknowledgement を足すとよいです。
 

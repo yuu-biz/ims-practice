@@ -168,14 +168,14 @@ func TestTheNodeAcknowledgesAClearedAlarmAtTheEndOfItsRetention(t *testing.T) {
 	mustRaise(t, tn.node, Alarm{AlarmIdentity: pcrfDown, PerceivedSeverity: Major})
 	mustClear(t, tn.node, pcrfDown)
 	cleared := tn.clock.Now()
-	tn.clock.Advance(DefaultClearedAlarmRetention - time.Second)
+	tn.clock.Advance(ClearedAlarmRetention - time.Second)
 	l := alarms(t, tn, AlarmFilter{})
 	if l.NumOfAlarmRecords != 1 || l.AlarmRecords[0].AckState != Unacknowledged {
 		t.Fatalf("before the end of the retention: %+v", l)
 	}
 	tn.clock.Advance(time.Hour)
 	l = alarms(t, tn, AlarmFilter{})
-	if l.NumOfAlarmRecords != 0 || !l.LastModification.Equal(cleared.Add(DefaultClearedAlarmRetention)) {
+	if l.NumOfAlarmRecords != 0 || !l.LastModification.Equal(cleared.Add(ClearedAlarmRetention)) {
 		t.Errorf("after the retention: %+v", l)
 	}
 	for _, line := range strings.Split(tn.log.String(), "\n") {
@@ -202,7 +202,7 @@ func TestTheRetentionAcknowledgesARecordTakenBackToUnacknowledged(t *testing.T) 
 		t.Fatal(err)
 	}
 	mustClear(t, tn.node, pcrfDown)
-	tn.clock.Advance(DefaultClearedAlarmRetention)
+	tn.clock.Advance(ClearedAlarmRetention)
 	if l := tn.node.Alarms(AlarmFilter{}); l.NumOfAlarmRecords != 0 {
 		t.Errorf("a cleared alarm taken back to UNACKNOWLEDGED outlived the retention: %+v", l)
 	}
@@ -581,12 +581,10 @@ func TestCheckAlarmRecord(t *testing.T) {
 	}
 }
 
-func TestNewChecksTheAlarmListBounds(t *testing.T) {
-	for _, c := range []Config{{MaxAlarmRecords: -1}, {ClearedAlarmRetention: -time.Second}} {
-		c.Node, c.LogLevel, c.Functions, c.Configuration = "n", new(slog.LevelVar), []Function{{Role: "pcscf"}}, func() any { return nil }
-		if _, err := New(c); err == nil {
-			t.Errorf("New took %+v", c)
-		}
+func TestNewChecksTheAlarmListBound(t *testing.T) {
+	if _, err := New(Config{Node: "n", LogLevel: new(slog.LevelVar), Functions: []Function{{Role: "pcscf"}},
+		Configuration: func() any { return nil }, MaxAlarmRecords: -1}); err == nil {
+		t.Error("New took a negative bound of the alarm list")
 	}
 }
 

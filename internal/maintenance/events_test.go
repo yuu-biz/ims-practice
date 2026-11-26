@@ -151,7 +151,7 @@ func TestTheJournalHoldsTheDropAndTheEndOfTheRetention(t *testing.T) {
 	mustClear(t, node, peer(3))
 	clock.Advance(time.Second)
 	mustClear(t, node, peer(2))
-	clock.Advance(DefaultClearedAlarmRetention + time.Minute)
+	clock.Advance(ClearedAlarmRetention + time.Minute)
 	e := node.AlarmEvents(ctx, 6, 0)
 	if got := eventsOf(e); got != "7:ACK_STATE_CHANGED(hss-3) 8:ACK_STATE_CHANGED(hss-2)" {
 		t.Fatalf("events after the retention %q", got)
@@ -159,7 +159,7 @@ func TestTheJournalHoldsTheDropAndTheEndOfTheRetention(t *testing.T) {
 	for _, ev := range e.Events {
 		r := ev.AlarmRecord
 		if r.AckState != Acknowledged || r.AckUserID != RetentionAckUserID || r.AckSystemID != "scscf-1" ||
-			!ev.EventTime.Equal(r.AlarmClearedTime.Add(DefaultClearedAlarmRetention)) || !r.AckTime.Equal(ev.EventTime) {
+			!ev.EventTime.Equal(r.AlarmClearedTime.Add(ClearedAlarmRetention)) || !r.AckTime.Equal(ev.EventTime) {
 			t.Errorf("acknowledgement at the end of the retention: %+v", ev)
 		}
 	}
@@ -237,9 +237,9 @@ func TestAReaderWaitsForTheNextEvent(t *testing.T) {
 
 	// The retention of a cleared alarm ends while the reader waits: the
 	// answer at the end of the wait holds the acknowledgement.
-	go func() { answers <- tn.node.AlarmEvents(ctx, 2, 2*DefaultClearedAlarmRetention) }()
+	go func() { answers <- tn.node.AlarmEvents(ctx, 2, 2*ClearedAlarmRetention) }()
 	waitForTimer(t, tn.clock)
-	tn.clock.Advance(2 * DefaultClearedAlarmRetention)
+	tn.clock.Advance(2 * ClearedAlarmRetention)
 	if e := answerWithin(t, answers, "at the end of a wait in which the retention ended"); eventsOf(e) != "3:ACK_STATE_CHANGED" {
 		t.Errorf("at the end of a wait in which the retention ended: %+v", e)
 	}

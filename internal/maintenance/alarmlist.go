@@ -13,22 +13,23 @@ import (
 	"time"
 )
 
-// The defaults of Config for the alarm list.
+// The bounds of the alarm list.
 const (
-	// DefaultMaxAlarmRecords bounds the alarm list. The list holds one
-	// record per condition of a link or a role, never one per user, so
-	// a node has far fewer; the bound is for a fault that keeps making
-	// new identities.
+	// DefaultMaxAlarmRecords bounds the alarm list, unless
+	// Config.MaxAlarmRecords lowers it. The list holds one record per
+	// condition of a link or a role, never one per user, so a node has
+	// far fewer; the bound is for a fault that keeps making new
+	// identities.
 	DefaultMaxAlarmRecords = 256
-	// DefaultClearedAlarmRetention is how long a cleared alarm that no
+	// ClearedAlarmRetention is how long a cleared alarm that no
 	// operator acknowledges stays in the list before the node
 	// acknowledges it itself.
-	DefaultClearedAlarmRetention = time.Hour
+	ClearedAlarmRetention = time.Hour
 )
 
 // RetentionAckUserID is the ackUserId with which the node acknowledges
 // a cleared alarm that nobody acknowledged within the retention
-// (Config.ClearedAlarmRetention). The name is this project's own, so
+// (ClearedAlarmRetention). The name is this project's own, so
 // that a reader of the record or of its notification tells this
 // acknowledgement from one of an operator.
 const RetentionAckUserID = "retention"
@@ -40,10 +41,9 @@ const RetentionAckUserID = "retention"
 type alarmList struct {
 	// node is the name of the node, which acknowledges a record at the
 	// end of its retention as its ackSystemId.
-	node      string
-	max       int
-	retention time.Duration
-	log       *slog.Logger
+	node string
+	max  int
+	log  *slog.Logger
 
 	mu               sync.Mutex
 	byIdentity       map[AlarmIdentity]*AlarmRecord
@@ -53,12 +53,11 @@ type alarmList struct {
 	journal          *alarmJournal
 }
 
-func newAlarmList(node string, max, maxEvents int, retention time.Duration, start time.Time, log *slog.Logger) *alarmList {
+func newAlarmList(node string, max, maxEvents int, start time.Time, log *slog.Logger) *alarmList {
 	return &alarmList{
 		journal:          newAlarmJournal(maxEvents),
 		node:             node,
 		max:              max,
-		retention:        retention,
 		log:              log,
 		byIdentity:       map[AlarmIdentity]*AlarmRecord{},
 		byID:             map[string]*AlarmRecord{},
@@ -101,7 +100,7 @@ func (n *Node) RaiseAlarm(a Alarm) error {
 // cleared by the node that raised it). The record stays in the list,
 // CLEARED, until an operator acknowledges it (6.14) or, when nobody
 // does, until the node acknowledges it itself at the end of
-// Config.ClearedAlarmRetention; an acknowledged one leaves at once
+// ClearedAlarmRetention; an acknowledged one leaves at once
 // (7.3.1.1). Clearing an alarm that the list does not have, or has
 // cleared already, changes nothing, so a role may clear it each time it
 // sees the condition gone.
@@ -292,7 +291,7 @@ func (l *alarmList) read(f AlarmFilter, now time.Time, into *AlarmList) {
 func (l *alarmList) expire(now time.Time) {
 	var due []*AlarmRecord
 	for _, r := range l.byID {
-		if r.AlarmClearedTime != nil && !now.Before(r.AlarmClearedTime.Add(l.retention)) {
+		if r.AlarmClearedTime != nil && !now.Before(r.AlarmClearedTime.Add(ClearedAlarmRetention)) {
 			due = append(due, r)
 		}
 	}
@@ -300,7 +299,7 @@ func (l *alarmList) expire(now time.Time) {
 		return cmp.Or(a.AlarmClearedTime.Compare(*b.AlarmClearedTime), cmp.Compare(a.AlarmID, b.AlarmID))
 	})
 	for _, r := range due {
-		l.setAckState(r, AckStateRequest{AckState: Acknowledged, Operator: RetentionAckUserID, AckSystemID: l.node}, r.AlarmClearedTime.Add(l.retention))
+		l.setAckState(r, AckStateRequest{AckState: Acknowledged, Operator: RetentionAckUserID, AckSystemID: l.node}, r.AlarmClearedTime.Add(ClearedAlarmRetention))
 	}
 }
 

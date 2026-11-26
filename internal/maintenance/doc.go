@@ -92,7 +92,7 @@
 // the OAM server can tell an OSS of each change in the order it came,
 // without the node knowing where the OAM server or the OSS is.
 // A cleared alarm that nobody acknowledges within
-// Config.ClearedAlarmRetention the node acknowledges itself, as
+// ClearedAlarmRetention the node acknowledges itself, as
 // RetentionAckUserID.
 // An alarm never names a subscriber, so the list grows with the links
 // of the node and not with its users. The list lives in the
