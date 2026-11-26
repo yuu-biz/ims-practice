@@ -708,6 +708,17 @@ func (s *Store) ScheduleProfilePush(ctx context.Context, source hss.ProfileSourc
 	return s.c.WriteDue(ctx, pushIndex, kvjson.Member(string(source)), at)
 }
 
+// DoneProfilePush takes the member of the claim out of the time index.
+// A claim that has ended, which kvstore.Done reports with ErrClaimLost,
+// leaves the index as it is: the round has been made due again.
+func (s *Store) DoneProfilePush(ctx context.Context, c hss.ProfilePushClaim) error {
+	err := s.c.Done(ctx, kvstore.Claim{Index: s.c.Index(pushIndex), Member: kvjson.Member(string(c.Source)), Until: c.Until})
+	if errors.Is(err, kvstore.ErrClaimLost) {
+		return nil
+	}
+	return err
+}
+
 func (s *Store) ClaimProfilePushes(ctx context.Context, now time.Time, lease time.Duration, limit int) ([]hss.ProfilePushClaim, error) {
 	claims, err := s.c.ClaimDue(ctx, pushIndex, now, lease, limit)
 	if err != nil {

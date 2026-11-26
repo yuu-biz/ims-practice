@@ -780,10 +780,10 @@ func hssProfilePush(t *testing.T, a, b hss.Store) {
 	if _, ok, err := b.ProfilePush(ctx, hss.ProfileOfOtherUsers); err != nil || ok {
 		t.Fatalf("ProfilePush of an empty store = %v, %v, want none", ok, err)
 	}
-	started := hss.ProfilePush{Source: hss.ProfileOfOtherUsers, Name: "trial", Round: 1}
+	started := hss.ProfilePush{Source: hss.ProfileOfOtherUsers, Name: "trial", Generation: 1, Round: 1}
 	advanced := started
 	advanced.After = impi
-	overtaking := hss.ProfilePush{Source: hss.ProfileOfOtherUsers, Name: "default", Round: 2}
+	overtaking := hss.ProfilePush{Source: hss.ProfileOfOtherUsers, Name: "default", Generation: 2, Round: 2}
 	for _, tc := range []struct {
 		name      string
 		store     hss.Store
@@ -851,8 +851,28 @@ func hssProfilePushClaims(t *testing.T, a, b hss.Store) {
 	if err := b.ScheduleProfilePush(ctx, hss.ProfileOfOtherUsers, now); err != nil {
 		t.Fatal(err)
 	}
-	if due := claimProfilePushes(t, a, now, lease); len(due) != 1 {
-		t.Errorf("claims once the claimed push is made due again = %+v, want the push", due)
+	due := claimProfilePushes(t, a, now, lease)
+	if len(due) != 1 {
+		t.Fatalf("claims once the claimed push is made due again = %+v, want the push", due)
+	}
+
+	// Done of a claim that a Schedule ended leaves the push due; Done of
+	// the claim in force takes it out.
+	if err := b.ScheduleProfilePush(ctx, hss.ProfileOfOtherUsers, now); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.DoneProfilePush(ctx, due[0]); err != nil {
+		t.Fatal(err)
+	}
+	last := claimProfilePushes(t, b, now, lease)
+	if len(last) != 1 {
+		t.Fatalf("claims after the Done of an ended claim = %+v, want the push", last)
+	}
+	if err := a.DoneProfilePush(ctx, last[0]); err != nil {
+		t.Fatal(err)
+	}
+	if gone := claimProfilePushes(t, b, last[0].Until.Add(time.Hour), lease); len(gone) != 0 {
+		t.Errorf("claims after the Done of the claim in force = %+v, want none", gone)
 	}
 }
 

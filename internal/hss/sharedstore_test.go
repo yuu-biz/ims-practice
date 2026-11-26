@@ -34,9 +34,12 @@ import (
 // pushes that a change calls for, as the instances of a deployment
 // share them.
 
-// trialAS is the application server of the trial profile, which tells a
-// PPR of that profile from one of the default profile.
-const trialAS = "sip:trial." + realm + ":5060"
+// trialAS and defaultAS are the application servers of the trial and
+// the default profile, which tell a PPR of one from a PPR of the other.
+const (
+	trialAS   = "sip:trial." + realm + ":5060"
+	defaultAS = "sip:mmtel." + realm + ":5060"
+)
 
 // sharedInstance is one instance of the HSS on kv, with two service
 // profiles, and the maintenance API of its node.
@@ -62,7 +65,7 @@ func newSharedInstance(t *testing.T, kv kvstore.Store, cfg kvjson.Config, lease 
 	}
 	h, err := hss.New(hss.Config{Realm: realm, VisitedNetworks: []string{realm},
 		ServiceProfiles: map[string]hss.ServiceProfile{
-			"default": {Criteria: criterion("sip:mmtel." + realm + ":5060")},
+			"default": {Criteria: criterion(defaultAS)},
 			"trial":   {Criteria: criterion(trialAS)},
 		},
 		DefaultServiceProfile: "default", TestUserServiceProfile: "default",
@@ -118,15 +121,19 @@ func registered(t *testing.T, kv kvstore.Store, cfg kvjson.Config, instance *hss
 
 // recordingSCSCF is the S-CSCF of every subscriber, which each instance
 // of the HSS reaches. It records the private identity and the
-// application server of each PPR. With stuckAfter above zero, it answers
-// that many PPRs and none after them: the next one waits until its
-// sender gives it up, and stuck is closed when it comes.
+// application server of each PPR it answers. With stuckAfter above
+// zero, it answers that many PPRs and none after them: those wait until
+// their sender gives them up, and stuck is closed when the first comes.
 type recordingSCSCF struct {
 	mu         sync.Mutex
-	pushed     map[string][]string
+	pushed     []pushed
 	stuckAfter int
 	stuck      chan struct{}
+	once       sync.Once
 }
+
+// pushed is one PPR that the S-CSCF answered.
+type pushed struct{ user, server string }
 
 func (r *recordingSCSCF) Request(ctx context.Context, originHost string, m *diam.Message) (*diam.Message, error) {
 	b, err := m.Serialize()
@@ -146,61 +153,85 @@ func (r *recordingSCSCF) Request(ctx context.Context, originHost string, m *diam
 		return nil, fmt.Errorf("the profile of the PPR for %s: %v", ppr.UserName, err)
 	}
 	r.mu.Lock()
-	n := 0
-	for _, servers := range r.pushed {
-		n += len(servers)
-	}
-	if r.stuckAfter > 0 && n >= r.stuckAfter {
+	if r.stuckAfter > 0 && len(r.pushed) >= r.stuckAfter {
 		r.mu.Unlock()
-		close(r.stuck)
+		r.once.Do(func() { close(r.stuck) })
 		<-ctx.Done()
 		return nil, ctx.Err()
 	}
-	if r.pushed == nil {
-		r.pushed = map[string][]string{}
-	}
-	r.pushed[ppr.UserName] = append(r.pushed[ppr.UserName], profile.InitialFilterCriteria[0].ApplicationServer.ServerName)
+	r.pushed = append(r.pushed, pushed{ppr.UserName, profile.InitialFilterCriteria[0].ApplicationServer.ServerName})
 	r.mu.Unlock()
 	return cx.PushProfileAnswer{Result: diameter.Base(diameter.DiameterSuccess)}.Message(req, diameter.Identity{OriginHost: originHost, OriginRealm: realm}), nil
 }
 
-// awaitPushes waits until n PPRs have been answered, and a moment more
-// for one that should not come, and returns them.
-func (r *recordingSCSCF) awaitPushes(t *testing.T, n int) map[string][]string {
-	t.Helper()
-	for deadline := time.Now().Add(5 * time.Second); ; time.Sleep(5 * time.Millisecond) {
-		r.mu.Lock()
-		got := 0
-		for _, servers := range r.pushed {
-			got += len(servers)
-		}
-		r.mu.Unlock()
-		if got >= n {
-			break
-		}
-		if time.Now().After(deadline) {
-			t.Fatalf("gave up waiting 5 s for %d PPRs; %d came", n, got)
-		}
-	}
-	time.Sleep(50 * time.Millisecond)
+// answered is what the S-CSCF has answered so far.
+func (r *recordingSCSCF) answered() []pushed {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	return r.pushed
+	return slices.Clone(r.pushed)
+}
+
+// awaitPushes waits until r has answered n PPRs and the store on kv
+// records the rounds of the pushes as done for the settings in force
+// (roundsDoneOn), then stops the instances, and returns what r answered.
+// Every PPR of a round is answered before the round records it, so a
+// PPR that should not have gone at all is among them.
+func (r *recordingSCSCF) awaitPushes(t *testing.T, n int, kv kvstore.Store, cfg kvjson.Config, instances ...sharedInstance) []pushed {
+	t.Helper()
+	for deadline := time.Now().Add(5 * time.Second); len(r.answered()) < n; time.Sleep(5 * time.Millisecond) {
+		if time.Now().After(deadline) {
+			t.Fatalf("gave up waiting 5 s for %d PPRs; %d came", n, len(r.answered()))
+		}
+	}
+	roundsDoneOn(t, hssstore.New(kv, cfg))
+	for _, i := range instances {
+		i.Close()
+	}
+	return r.answered()
+}
+
+// roundsDoneOn waits until store records the push of each source as done
+// for the name that its settings give the source.
+func roundsDoneOn(t *testing.T, store hss.Store) {
+	t.Helper()
+	names := func(s hss.StoredSettings) map[hss.ProfileSource]string {
+		return map[hss.ProfileSource]string{hss.ProfileOfTestUsers: s.TestUserServiceProfile, hss.ProfileOfOtherUsers: s.DefaultServiceProfile}
+	}
+	for deadline := time.Now().Add(5 * time.Second); ; time.Sleep(5 * time.Millisecond) {
+		stored, ok, err := store.Settings(t.Context())
+		if err != nil {
+			t.Fatal(err)
+		}
+		done := ok
+		for source, name := range names(stored) {
+			p, recorded, err := store.ProfilePush(t.Context(), source)
+			if err != nil {
+				t.Fatal(err)
+			}
+			done = done && recorded && p.Done && p.Name == name
+		}
+		if done {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("gave up waiting 5 s for the rounds of the pushes to be done")
+		}
+	}
 }
 
 // checkOnceEach fails the test unless pushed holds one PPR of the trial
 // profile for each of ids and for no one else.
-func checkOnceEach(t *testing.T, pushed map[string][]string, ids []string) {
+func checkOnceEach(t *testing.T, pushed []pushed, ids []string) {
 	t.Helper()
 	var got []string
-	for id, servers := range pushed {
-		got = append(got, id)
-		if len(servers) != 1 || servers[0] != trialAS {
-			t.Errorf("%s got the PPRs %v, want one of the trial profile", id, servers)
+	for _, p := range pushed {
+		got = append(got, p.user)
+		if p.server != trialAS {
+			t.Errorf("%s got a PPR of %s, want one of the trial profile", p.user, p.server)
 		}
 	}
 	if slices.Sort(got); !slices.Equal(got, ids) {
-		t.Errorf("the PPRs went to %v, want %v", got, ids)
+		t.Errorf("the PPRs went to %v, want %v, each once", got, ids)
 	}
 }
 
@@ -219,14 +250,16 @@ func TestAChangeOfTheRoleOnTheStorePushesEachSubscriberOnce(t *testing.T) {
 			second.SetPeers(scscfs)
 			first.changeDefaultProfile(t)
 			second.changeDefaultProfile(t)
-			checkOnceEach(t, scscfs.awaitPushes(t, len(ids)), ids)
+			checkOnceEach(t, scscfs.awaitPushes(t, len(ids), kv, cfg, first, second), ids)
 		})
 	}
 }
 
 // TestAPushOnTheStoreGoesOnWhenItsInstanceStops: the instance that took
 // the change stops with a PPR on its way, and the other goes on from
-// that subscriber once the claim of the first has run out.
+// that subscriber once the claim of the first has run out. Between them
+// each subscriber has one PPR answered, and the ones after the stop are
+// the other instance's.
 func TestAPushOnTheStoreGoesOnWhenItsInstanceStops(t *testing.T) {
 	for _, backend := range storetest.Backends() {
 		t.Run(backend.Name, func(t *testing.T) {
@@ -243,11 +276,44 @@ func TestAPushOnTheStoreGoesOnWhenItsInstanceStops(t *testing.T) {
 				t.Fatal("gave up waiting 5 s for the third PPR of the first instance")
 			}
 			first.Close()
+			before := stopping.answered()
 
 			second := newSharedInstance(t, kv, cfg, lease)
 			scscfs := &recordingSCSCF{}
 			second.SetPeers(scscfs)
-			checkOnceEach(t, scscfs.awaitPushes(t, len(ids)-2), ids[2:])
+			after := scscfs.awaitPushes(t, len(ids)-len(before), kv, cfg, second)
+			checkOnceEach(t, append(before, after...), ids)
+			for _, p := range after {
+				if slices.ContainsFunc(before, func(b pushed) bool { return b.user == p.user }) {
+					t.Errorf("the other instance pushed %s, which the first had reached", p.user)
+				}
+			}
+		})
+	}
+}
+
+// TestTwoChangesOnTheStoreArePushedEach: a change of the default profile
+// and the change back, one right after the other, each push the
+// subscriber, in their order, as the round of the second follows that
+// of the first.
+func TestTwoChangesOnTheStoreArePushedEach(t *testing.T) {
+	for _, backend := range storetest.Backends() {
+		t.Run(backend.Name, func(t *testing.T) {
+			kv, cfg := backend.New(t), kvjson.Config{Prefix: storetest.Prefix()}
+			instance := newSharedInstance(t, kv, cfg, 0)
+			ids := registered(t, kv, cfg, instance.HSS, 1)
+			scscfs := &recordingSCSCF{}
+			instance.SetPeers(scscfs)
+			for _, profile := range []string{"trial", "default"} {
+				if _, err := instance.api.ChangeConfiguration(maintenance.ConfigurationChangeRequest{
+					Settings: map[string]json.RawMessage{"hss.default_service_profile": json.RawMessage(`"` + profile + `"`)}}); err != nil {
+					t.Fatal(err)
+				}
+			}
+			got := scscfs.awaitPushes(t, 2, kv, cfg, instance)
+			if want := []pushed{{ids[0], trialAS}, {ids[0], defaultAS}}; !slices.Equal(got, want) {
+				t.Errorf("the PPRs were %v, want %v", got, want)
+			}
 		})
 	}
 }

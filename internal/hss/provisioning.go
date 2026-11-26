@@ -1205,6 +1205,13 @@ func (h *HSS) pushChangedProfile(ctx context.Context, peers Peers, privateID str
 // S-CSCF reads the profile again at the next registration, and a user
 // it does not know it asks the HSS for anew.
 func (h *HSS) pushProfile(ctx context.Context, peers Peers, privateID string) error {
+	return h.pushProfileUnder(ctx, peers, privateID, func(Subscriber) (*settings, error) { return h.settingsInForce(ctx) })
+}
+
+// pushProfileUnder is pushProfile with the settings that settingsFor
+// gives the subscriber it has read, under the lock of its pushes; a nil
+// one leaves the subscriber without a PPR.
+func (h *HSS) pushProfileUnder(ctx context.Context, peers Peers, privateID string, settingsFor func(Subscriber) (*settings, error)) error {
 	lockCtx, cancel := context.WithTimeout(ctx, pushLockWait)
 	defer cancel()
 	unlock, err := h.users.Lock(lockCtx, profilePushes(privateID))
@@ -1216,8 +1223,8 @@ func (h *HSS) pushProfile(ctx context.Context, peers Peers, privateID string) er
 	if err != nil || !ok || !served(u) {
 		return err
 	}
-	set, err := h.settingsInForce(ctx)
-	if err != nil {
+	set, err := settingsFor(u)
+	if err != nil || set == nil {
 		return err
 	}
 	ppr := cx.PushProfileRequest{
