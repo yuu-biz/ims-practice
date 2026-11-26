@@ -236,8 +236,8 @@ func (p *PCSCF) initial(st *sip.ServerTransaction, out *sip.Message, l leg, log 
 	}
 	call := p.newSetup(st, l, ue, icid, log)
 	if err := call.offer(out); err != nil {
-		log.Warn("media relay refused the call", "error", err.Error())
-		st.Respond(sip.NewResponse(req, 500, sip.NewTag()))
+		log.Warn("the SDP of the INVITE is not pointed at the media relay", "error", err.Error())
+		st.Respond(refusalOf(req, err, sip.NewTag()))
 		// The 500 ends the call, so a context already added goes too.
 		call.end()
 		return
@@ -309,7 +309,7 @@ func (p *PCSCF) subsequent(st *sip.ServerTransaction, out *sip.Message, log *slo
 		}
 	}
 	answer, answered := func(*sip.Message) {}, func() {}
-	if known && sip.HasSessionDescription(out) {
+	if known && carriesSDP(out, d.Relay) {
 		ue := st.Source.Addr.Addr()
 		if toUE {
 			ue = targets[0].Addr.Addr()
@@ -412,7 +412,7 @@ func (p *PCSCF) renegotiate(out *sip.Message, d Dialog, toUE bool, ue netip.Addr
 		}
 	}
 	answer = func(resp *sip.Message) {
-		if refused || resp.StatusCode >= 300 || !sip.HasSessionDescription(resp) {
+		if refused || resp.StatusCode >= 300 || !carriesSDP(resp, d.Relay) {
 			return
 		}
 		received := resp.Body
@@ -457,13 +457,13 @@ func (p *PCSCF) renegotiate(out *sip.Message, d Dialog, toUE bool, ue netip.Addr
 // a request whose offer it cannot let through. A final response other
 // than 2xx leaves the session as it was before the request (RFC 3261
 // 14.1, RFC 3311 5.3), and only a 481 or a 408 ends the dialog (RFC 3261
-// 12.2.1.2). The answer is 400 (RFC 3261 21.4.1) for an SDP that cannot
-// be read, and otherwise 500 (21.5.1) rather than the 488 of 6.2: that
-// one tells of media that the network does not allow, and carries the
-// media that it does, and these media are allowed.
+// 12.2.1.2). The answer is that of refusalOf: for a body that the P-CSCF
+// cannot read 400 or 415, and otherwise 500 (21.5.1) rather than the 488
+// of 6.2. That one tells of media that the network does not allow, and
+// carries the media that it does, and these media are allowed.
 //
 // The dialog stays only when the call can go on as it was: when the
-// relay was not asked, as for an SDP that cannot be read, or when it
+// relay was not asked, as for a body that cannot be read, or when it
 // answered that it carried out nothing (agw.ErrRejected). The media then
 // still take the path of the last offer and answer. Otherwise the
 // P-CSCF releases the dialog, as it does when the relay does not take an
@@ -481,12 +481,8 @@ func (p *PCSCF) renegotiate(out *sip.Message, d Dialog, toUE bool, ue netip.Addr
 //     ends it now, as for a refused answer in the early dialog (TS
 //     24.229 5.2.8.1.1).
 func (p *PCSCF) notRelayed(st *sip.ServerTransaction, d Dialog, err error, log *slog.Logger) {
-	resp := sip.NewResponse(st.Request, 500, "")
-	if errors.Is(err, errMalformedSDP) {
-		resp = sip.NewResponse(st.Request, 400, "")
-		resp.Reason = "Malformed SDP"
-	}
-	keep := !mediaGone(err) && (errors.Is(err, errMalformedSDP) || errors.Is(err, agw.ErrRejected))
+	resp := refusalOf(st.Request, err, "")
+	keep := !mediaGone(err) && (errors.Is(err, errBody) || errors.Is(err, agw.ErrRejected))
 	if keep && st.Request.Method != sip.PRACK {
 		log.Warn("the SDP of the request is not pointed at the media relay: the request goes no further", "status", resp.StatusCode, "error", err.Error())
 		st.Respond(resp)
@@ -630,6 +626,12 @@ func (p *PCSCF) relaySDP(m *sip.Message, rc *RelayContext, toUE bool) error {
 	if rc == nil || len(m.Body) == 0 {
 		return nil
 	}
+	if err := sdpBodyError(m); err != nil {
+		return err
+	}
+	if !sip.HasSessionDescription(m) {
+		return nil
+	}
 	description, err := sdp.Parse(m.Body)
 	if err != nil {
 		return fmt.Errorf("%w: %w", errMalformedSDP, err)
@@ -755,10 +757,6 @@ func (p *PCSCF) relayOf(rc RelayContext) (Relay, error) {
 // errRelayNotListed is the error of relayOf for a context in a media
 // relay that this P-CSCF does not list.
 var errRelayNotListed = errors.New("pcscf: the media relay is not in the list of this P-CSCF")
-
-// errMalformedSDP is the error of relaySDP for a body that it cannot
-// read as SDP.
-var errMalformedSDP = errors.New("pcscf: the SDP cannot be read")
 
 // mediaGone reports whether err, an error of relaySDP, means that the
 // relay holds no media of the call any more: it has no context or
