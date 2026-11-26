@@ -262,10 +262,13 @@ func (c *call) end() {
 	}
 }
 
-// reject answers the caller's INVITE with a response of the IBCF's own.
+// reject answers the caller's INVITE with a response of the IBCF's own,
+// which counts among its refusals once it has gone: the INVITE may have
+// its final response already, such as the 487 of a CANCEL.
 func (c *call) reject(code int) {
-	c.b.metrics.reject(c.peer.Profile.Name, c.direction, sip.INVITE, code)
-	c.in.Reject(code)
+	if c.in.Reject(code) == nil {
+		c.b.metrics.reject(c.peer.Profile.Name, c.direction, sip.INVITE, code)
+	}
 }
 
 // answered reports whether the caller's INVITE has its final response.
