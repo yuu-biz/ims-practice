@@ -65,12 +65,12 @@ const profilePushPage = 100
 const profilePushLease = 30 * time.Second
 
 // profilePushRetryTime is how long the PPR of a subscriber that no
-// instance could reach is tried again, and how long a round whose name
-// no instance that claims it defines is left to the others. An S-CSCF whose instance of the
-// HSS is made again, or taken back into service, connects again after
-// Tc, which RFC 6733 2.1 recommends at 30 s, and this covers a few of
-// those. After it, the S-CSCF reads the profile at the next
-// registration of the user.
+// instance could reach is tried again, and how long a round that stands
+// still, because no instance that claims it defines its name, is left
+// to the others. An S-CSCF whose instance of the HSS is made again, or
+// taken back into service, connects again after Tc, which RFC 6733 2.1
+// recommends at 30 s, and this covers a few of those. After it, the
+// S-CSCF reads the profile at the next registration of the user.
 const profilePushRetryTime = 2 * time.Minute
 
 // profilePushRetries bounds how many of those PPRs an instance claims at
@@ -183,9 +183,8 @@ func (h *HSS) startRound(ctx context.Context, source ProfileSource, set *setting
 		case recorded:
 			old = &p
 		}
-		now := stamp()
 		next := ProfilePush{Source: source, Name: name, Generation: set.nameGeneration(source), Round: p.Round + 1,
-			Started: now, Updated: now}
+			Updated: stamp()}
 		swapped, err := h.store.CompareAndSwapProfilePush(ctx, old, next)
 		if err != nil {
 			return err
@@ -238,9 +237,10 @@ func dueNow() time.Time { return time.UnixMilli(time.Now().UnixMilli()) }
 // cannot build its PPRs.
 var errUnservableRound = errors.New("the round names a service profile that this instance does not define")
 
-// errRoundGivenUp: no instance that claimed the round defined its name
-// for as long as the time of the retries (pushRetryTime), and the round
-// is recorded as done, so that the rounds after it are not held up.
+// errRoundGivenUp: the round has stood still for as long as the time of
+// the retries (pushRetryTime), for no instance that claimed it defined
+// its name, and it is recorded as done, so that the rounds after it are
+// not held up.
 var errRoundGivenUp = errors.New("the round was given up")
 
 // errPushOvertaken: another round of the push, or another instance that
@@ -433,7 +433,12 @@ func (h *HSS) pushOn(ctx context.Context, peers Peers, source ProfileSource) (ro
 		return nil, false, nil
 	}
 	if err := h.config.CheckServiceProfileName(string(source), p.Name); err != nil {
-		if time.Since(p.Started) < h.pushRetryTime() {
+		// Only an instance that defines the name claims a page of the
+		// round or records a PPR of it, so the round has stood still
+		// since the later of the two, or since it began. A round that
+		// is moving, however long it has taken, is left to the
+		// instances that move it.
+		if time.Since(latest(p.Updated, p.Claimed)) < h.pushRetryTime() {
 			return nil, false, fmt.Errorf("%w: %w", errUnservableRound, err)
 		}
 		done := p
