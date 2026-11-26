@@ -180,14 +180,26 @@ func (o *ossStandIn) next(t *testing.T, waitingFor string) notification {
 	}
 }
 
-// none checks that the OSS has taken no notification beyond those read.
-func (o *ossStandIn) none(t *testing.T) {
+// noneBefore checks that the OSS takes no notification beyond those
+// read. It raises an alarm of the peer "fence" on node with severity,
+// and the notifyNewAlarm of that alarm, at recipient, must be the next
+// notification that the OSS takes. The OAM sends each notification to
+// its recipients before it sends the next one, so one that it sent
+// before would have come first.
+func (o *ossStandIn) noneBefore(t *testing.T, node *journalNode, severity maintenance.PerceivedSeverity, recipient string) {
 	t.Helper()
-	select {
-	case n := <-o.received:
+	node.raise(t, "fence", severity)
+	if n := o.next(t, "the alarm raised after the last notification expected"); n.recipient != recipient ||
+		n.field("notificationType") != "notifyNewAlarm" || !strings.HasSuffix(n.field("href"), "Peer=fence") {
 		t.Errorf("an unexpected notification to %s: %s", n.recipient, n.raw)
-	default:
 	}
+}
+
+// requests is how many requests the OSS has had for recipient.
+func (o *ossStandIn) requests(recipient string) int {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	return o.count[recipient]
 }
 
 // notifier is an OAM that sends the notifications of its nodes, with the
@@ -360,10 +372,10 @@ func TestTheAlarmsOfANodeAreNotified(t *testing.T) {
 	if cleared.PerceivedSeverity != mns.Cleared || cleared.AlarmId != key || cleared.EventTime.IsZero() {
 		t.Errorf("notifyClearedAlarm: %+v", cleared)
 	}
-	oss.none(t)
 
 	n.counted(t, `oam_alarm_notifications_total{notification_type="notifyNewAlarm",result="delivered"} 1`,
 		`oam_alarm_notifications_total{notification_type="notifyClearedAlarm",result="delivered"} 1`)
+	oss.noneBefore(t, scscf, maintenance.Major, "/oss-1")
 }
 
 // TestAnAcknowledgementThroughTheOAMNamesItsUserAndSystem: an operator
@@ -452,8 +464,8 @@ func TestANotificationThatAStopCutShortIsSentAgain(t *testing.T) {
 	if got.field("notificationType") != "notifyNewAlarm" {
 		t.Errorf("got %s", got.raw)
 	}
+	oss.noneBefore(t, scscf, maintenance.Major, "/oss-1")
 	again.stop()
-	oss.none(t)
 }
 
 func TestSubscriptionsSelectTheirNotifications(t *testing.T) {
@@ -476,9 +488,9 @@ func TestSubscriptionsSelectTheirNotifications(t *testing.T) {
 	if strings.Join(got["/critical"], ",") != "notifyNewAlarm CRITICAL" || strings.Join(got["/cleared"], ",") != "notifyClearedAlarm CLEARED" {
 		t.Errorf("got %v", got)
 	}
-	// The cleared alarm came last, and each notification goes to its
-	// recipients before the next one: nothing more is on its way.
-	oss.none(t)
+	// Nothing more is on its way: the next notification is that of an
+	// alarm raised now, which the subscription "critical" selects.
+	oss.noneBefore(t, scscf, maintenance.Critical, "/critical")
 }
 
 func TestANodeThatStartsAgain(t *testing.T) {
@@ -540,7 +552,7 @@ func TestANodeThatStopsAnswering(t *testing.T) {
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
-	oss.none(t)
+	oss.noneBefore(t, scscf, maintenance.Major, "/oss-1")
 }
 
 func TestEventsLostFromTheJournal(t *testing.T) {
@@ -762,7 +774,6 @@ func TestARecipientThatDoesNotAnswerHoldsUpNoOther(t *testing.T) {
 		return http.StatusNoContent, 0
 	})
 	const alarms = 6
-	start := time.Now()
 	for k := range alarms {
 		scscf.raise(t, maintenance.Peer(fmt.Sprintf("hss-%d", k)), maintenance.Major)
 	}
@@ -772,11 +783,13 @@ func TestARecipientThatDoesNotAnswerHoldsUpNoOther(t *testing.T) {
 			t.Errorf("got %s at %s, want the alarm of hss-%d", r.raw, r.recipient, k)
 		}
 	}
-	// Held up behind the silent OSS, the six would take six timeouts.
-	if elapsed := time.Since(start); elapsed > 3*timeout {
-		t.Errorf("the recipient that answers got the six alarms in %v", elapsed)
+	oss.noneBefore(t, scscf, maintenance.Major, "/healthy")
+	// Held up behind the silent OSS, each alarm would cost a timeout. The
+	// silent OSS was asked once: after its first miss the watcher sent it
+	// no more, and the others went at once.
+	if got := oss.requests("/silent"); got != 1 {
+		t.Errorf("the silent OSS was sent %d requests, want the first notification alone", got)
 	}
-	oss.none(t)
 }
 
 func TestRunNotificationsNeedsItsStores(t *testing.T) {
@@ -940,7 +953,7 @@ func TestANotificationThatTheStoreKeptFromGoingIsSentAgain(t *testing.T) {
 			if got := oss.next(t, "the next alarm"); !strings.HasSuffix(got.field("href"), "Peer=hss-2") {
 				t.Errorf("got %s, want the alarm of hss-2", got.raw)
 			}
-			oss.none(t)
+			oss.noneBefore(t, scscf, maintenance.Major, "/oss-1")
 		})
 	}
 }
@@ -980,8 +993,8 @@ func TestARecipientThatTookANotificationIsNotSentItAgain(t *testing.T) {
 	if got := oss.next(t, "the alarm of hss-2"); got.recipient != "/healthy" || !strings.HasSuffix(got.field("href"), "Peer=hss-2") {
 		t.Errorf("got %s at %s, want the alarm of hss-2", got.raw, got.recipient)
 	}
-	oss.none(t)
 	n.counted(t, `oam_alarm_notifications_total{notification_type="notifyNewAlarm",result="failed"} 4`)
+	oss.noneBefore(t, scscf, maintenance.Major, "/healthy")
 }
 
 func TestGiveUpCountsTheWatchesThatAreHeld(t *testing.T) {
