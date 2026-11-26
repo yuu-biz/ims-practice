@@ -517,6 +517,27 @@ func TestDelayedRetransmissionOfAnAcknowledgedReliable183GoesNoFurther(t *testin
 	}
 }
 
+// TestReleaseWithoutACauseEndsTheINVITEWithAPlain500: the early dialog
+// is marked released with no cause, as a P-CSCF that kept no cause of a
+// release wrote it. The next response ends the INVITE with a plain 500:
+// the P-CSCF does not know that the resources are gone, so it says
+// nothing of them (TS 24.229 7.2A.18.12.2).
+func TestReleaseWithoutACauseEndsTheINVITEWithAPlain500(t *testing.T) {
+	c := newRawINVITE(t)
+	c.reliable(t, 1, coreMedia)
+	key := DialogKey{CallID: c.st.Request.Get("Call-ID"), UETag: tagOf(c.st.Request.Get("From"))}
+	if _, ok, _ := c.store.UpdateDialog(context.Background(), key, func(d *Dialog) { d.Released = true }); !ok {
+		t.Fatal("no dialog after the 183")
+	}
+	ringing := c.response(180)
+	ringing.Remove("Content-Type")
+	ringing.Body = nil
+	c.st.Respond(ringing)
+	if r := final(t, c.ct.Responses(), 3*time.Second); r.StatusCode != 500 || r.Get("Reason") != "" {
+		t.Fatalf("the INVITE got %d with Reason %q, want a 500 without one", r.StatusCode, r.Get("Reason"))
+	}
+}
+
 // answerOffers has the far end answer each offer within the dialog of
 // in, as a UA does, with its media at coreMedia.
 func answerOffers(in *sip.IncomingCall) {

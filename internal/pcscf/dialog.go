@@ -94,12 +94,16 @@ const (
 )
 
 // err is the cause as setup and proxyInvite tell it: errResources or
-// errRelay.
+// errRelay, or nil for a cause that the P-CSCF does not know, such as
+// none, which gets the plain 500.
 func (c ReleaseCause) err() error {
-	if c == SDPNotRelayed {
+	switch c {
+	case ResourcesLost:
+		return errResources
+	case SDPNotRelayed:
 		return errRelay
 	}
-	return errResources
+	return nil
 }
 
 // DialogKey names a dialog at the P-CSCF: the Call-ID and the tag of
