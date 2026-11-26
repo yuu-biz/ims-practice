@@ -49,7 +49,9 @@ CLAUSE = re.compile(r"\b((?:Annex|Appendix)\s+[A-Z](?:\.\d+)*|[A-Z]\.\d+(?:\.\d+
 # notes: "item 3", "items 1a to 1e", "steps 4C and 4D", "step 10 a",
 # "NOTE 3", "の手順 2 から 4", "の項目 1a と 1b", "の 1 番目の項目". They name a part of the
 # clause before them, not a clause.
-_PART_NUMBER = r"(?:\d+[A-Za-z]?|[a-z]\b)(?!\.\d)"
+# A number ends where its digits end, so that the 11 of "step 11, 16.8"
+# does not go on into the 1 of 16.8.
+_PART_NUMBER = r"(?:\d+(?!\d)[A-Za-z]?|[a-z]\b)(?!\.\d)"
 PART = re.compile(
     r"(?:\b(?:items?|operations?|steps?|NOTE)\s+|(?:手順|項目)\s*)" + _PART_NUMBER + r"(?:\s[a-z]\b)?"
     r"(?:(?:\s*[,、]\s*|\s+(?:and|or|to)\s+|\s*(?:と|から|～)\s*)" + _PART_NUMBER + r")*"
