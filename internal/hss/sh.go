@@ -2,6 +2,7 @@ package hss
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/fiorix/go-diameter/v4/diam"
 
@@ -281,7 +282,7 @@ func (h *HSS) updateRepositoryData(ctx context.Context, u Subscriber, r sh.Profi
 		return h.lockFailed(err)
 	}
 	defer unlock()
-	for {
+	for range swapAttempts {
 		stored, ok, err := h.store.RepositoryData(ctx, u.PrivateIdentity, update.ServiceIndication)
 		if err != nil {
 			return h.storeFailed(err)
@@ -316,6 +317,8 @@ func (h *HSS) updateRepositoryData(ctx context.Context, u Subscriber, r sh.Profi
 			return diameter.Experimental(cx.DiameterErrorUserUnknown)
 		}
 	}
+	return h.storeFailed(fmt.Errorf("the repository data of %s under %s was changed by others %d times",
+		u.PrivateIdentity, update.ServiceIndication, swapAttempts))
 }
 
 // repositoryUpdate is the check of TS 29.328 6.1.2.1 step 6 for update,

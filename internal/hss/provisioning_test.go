@@ -960,6 +960,32 @@ func TestProvisioningPutThatKeepsLosingTheSwap(t *testing.T) {
 	}
 }
 
+// TestProvisioningCATThatKeepsLosingTheSwap: a PUT of the tone whose
+// repository data others keep changing gives up and answers 500, as a
+// PUT of the subscription does.
+func TestProvisioningCATThatKeepsLosingTheSwap(t *testing.T) {
+	memory, err := NewMemoryStore(Subscription{PrivateIdentity: impi, PublicIdentities: []string{impu}, Password: "test-password-1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	node := diameter.NewNode(diameter.Identity{OriginHost: "hss." + realm, OriginRealm: realm}, []uint32{diameter.ApplicationIDCx}, diameter.Timers{}, quiet())
+	h := mustHSS(Config{Realm: realm, VisitedNetworks: []string{realm}}, losesEverySwap{Store: memory}, node)
+	api := h.Provisioning(&fakeSCSCFs{})
+
+	answered := make(chan int, 1)
+	go func() {
+		answered <- do(t, api, "PUT", "/subscriptions/"+impi+"/customized-alerting-tone", `{"tone": "cat1", "active": true}`).Code
+	}()
+	select {
+	case code := <-answered:
+		if code != http.StatusInternalServerError {
+			t.Errorf("PUT of the tone whose swaps all lose: %d, want 500", code)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("no answer within 5 s to a PUT of the tone whose swaps all lose")
+	}
+}
+
 // TestProvisioningPatchesTheMarkAndTheProfile: a PATCH changes the mark
 // and the service profile name of a subscription and leaves the rest of
 // it alone. A field the body leaves out stays as it is, so each one

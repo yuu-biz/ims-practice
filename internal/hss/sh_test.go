@@ -61,6 +61,12 @@ func newShNetworkFor(t *testing.T, scHosts []string, subscriptions ...Subscripti
 	if err != nil {
 		t.Fatal(err)
 	}
+	return newShNetworkOn(t, scHosts, store)
+}
+
+// newShNetworkOn is newShNetworkFor with an HSS over store.
+func newShNetworkOn(t *testing.T, scHosts []string, store Store) shNetwork {
+	t.Helper()
 	timers := diameter.Timers{Watchdog: time.Minute, Reconnect: 50 * time.Millisecond, Answer: 2 * time.Second}
 	hssNode := diameter.NewNode(diameter.Identity{OriginHost: "hss." + realm, OriginRealm: realm},
 		[]uint32{diameter.ApplicationIDCx, diameter.ApplicationIDSh, sgd.ApplicationIDS6c}, timers, quiet())
@@ -513,6 +519,21 @@ func TestRepositoryDataOfAliases(t *testing.T) {
 	}
 	if result, _ := n.readRepository(t, sh.UserIdentity{MSISDN: msisdnA}, mmtelServices); result != diameter.Experimental(sh.DiameterErrorOperationNotAllowed) {
 		t.Errorf("read by MSISDN: %v, want DIAMETER_ERROR_OPERATION_NOT_ALLOWED", result)
+	}
+}
+
+// TestRepositoryDataUpdateThatKeepsLosingTheSwap: a PUR whose
+// repository data others keep changing gives up and answers
+// DIAMETER_UNABLE_TO_COMPLY, as a failure of the store does, rather than
+// holding the subscriber's lock and trying for good.
+func TestRepositoryDataUpdateThatKeepsLosingTheSwap(t *testing.T) {
+	memory, err := NewMemoryStore(Subscription{PrivateIdentity: impi, PublicIdentities: []string{impu}, Password: "test-password-1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	n := newShNetworkOn(t, []string{scHost}, losesEverySwap{Store: memory})
+	if got := n.writeRepository(t, sh.UserIdentity{PublicIdentity: impu}, repository(0, "<a/>")); got != diameter.Base(diameter.DiameterUnableToComply) {
+		t.Errorf("PUR whose swaps all lose: %v, want DIAMETER_UNABLE_TO_COMPLY", got)
 	}
 }
 
