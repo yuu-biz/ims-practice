@@ -299,18 +299,18 @@ func (h *HSS) claimPushes() {
 // due again after an interval, for whichever instance claims it then,
 // until the time of the retries (pushRetryTime) has passed since its
 // round last moved: the later of the last claim of a page and the last
-// PPR recorded, or the end of the round. The round moves on from the
-// PPR as it leaves it, so that is no earlier than when it was left, also
-// for the first PPR of a round claimed long after it began. A later
-// round of the source pushes every subscriber of it, this one included,
-// so the PPR of an earlier round is not sent.
+// PPR recorded, or the end of the round. The round records a PPR after
+// it leaves it, so that time is no earlier than when the PPR was left,
+// also for the first PPR of a round claimed long after it began. A
+// later round of the source pushes every subscriber of it, this one
+// included, so the PPR of an earlier round is not sent.
 //
-// The time is not one of the PPR: an instance whose claim of the round
-// ran out after it left a PPR, and before it recorded the PPR, has the
-// next instance send that PPR again and leave it again, and the two are
-// one PPR left (ProfilePushRetry). Such a PPR, left before the record
-// that moves the round on, has the time of the retries less the time
-// one PPR takes at most, until an instance claims the round again.
+// The PPR carries no time of its own. When the claim of an instance runs
+// out after it left a PPR and before it recorded it, the next instance
+// sends the same PPR, leaves it again, and the store still has one
+// (ProfilePushRetry). Such a PPR was left after the last record of the
+// round, so it has the time of the retries less the time of one PPR at
+// most, until an instance claims the round again.
 func (h *HSS) pushRetry(peers Peers, c ProfilePushRetryClaim) {
 	ctx, cancel := context.WithDeadline(h.life, c.Until)
 	defer cancel()
