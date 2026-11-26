@@ -110,7 +110,7 @@ IBCF と MRFC の UA、HSS が送る途中の通知（S6c の alert と Sh の p
 
 | 主題 | 作り |
 | --- | --- |
-| 台の名前と組の名前 | 同じ役割の台は、台ごとの名前（今の `sip.host`。例 `scscf-1.<ドメイン>`）と、組の名前（新しい設定 `sip.pool`。例 `scscf.<ドメイン>`）を持ちます。Via の sent-by と Diameter の Origin-Host には、台の名前を使います。組の名前は、DNS の SRV が組のすべての台を返す名前で、URI にポートを付けません。ポートがあると SRV が引かれないためです（RFC 3263 4.2）。`sip.pool` が無ければ、今と同じく台の名前とポートの付いた URI を使います。 |
+| 台の名前と組の名前 | 同じ役割の台は、台ごとの名前（`sip.host`。例 `scscf-1.<ドメイン>`）と、組の名前（例 `scscf.<ドメイン>`）を持ちます。Via の sent-by と Diameter の Origin-Host には、台の名前を使います。組の名前は、DNS の SRV が組のすべての台を返す名前で、URI にポートを付けません。ポートがあると SRV が引かれないためです（RFC 3263 4.2）。組の名前を設定で受け取るのは、今は IBCF だけです（`ibcf.sip.pool` と `ibcf.external_sip.pool`）。ほかの役割は自分の Record-Route や Service-Route に組の名前を書かないので、設定 `sip.pool` を置いていません。どの役割も読まない設定を受け付けると、組で動いているように見えてしまうためです。ほかの役割が組の名前を読むようになったら、その役割に同じ設定を足します。 |
 | 組の名前を使う所 | S-CSCF の Service-Route、Record-Route、Server-Name、ODI を載せた Route。I-CSCF の設定の `scscfs[].name`。iFC の AS の URI（`sip:mmtel.<ドメイン>`、`sip:ipsmgw.<ドメイン>`）。AS から MRFC への Request-URI。IP-SM-GW の Contact（今も DNS の名前です）。 |
 | 台の名前を使う所 | P-CSCF の Path と Record-Route、MMTel AS と MRFC の Contact です。どれも、その台のプロセスの中にダイアログかトランザクションがある所です。作り直した P-CSCF の台は、同じ名前とアドレスで保存先から状態を引き継ぎます。MMTel AS と MRFC の作り直した台は、前のプロセスのダイアログを続けません（下の「ダイアログの中の要求」）。Compose では固定のアドレスで、Kubernetes では StatefulSet の Pod の名前で、名前を保ちます（[k8s.md](../background/k8s.md) の 3 章と 4 章）。 |
 | 自分宛ての Route | `sip.PopOwnRoute` に、台の名前と組の名前の両方を渡します。 |
@@ -383,7 +383,7 @@ IMS の復旧手順（TS 23.380）のうち、次のものを再現します。
 
 | TS 23.380 の手順 | 再現するか | 作り |
 | --- | --- | --- |
-| S-CSCF の復旧用の情報を HSS に預ける（4.6.2、4.6.3） | する | 設定 `scscf.restoration: true` の S-CSCF が、SAR に SCSCF-Restoration-Info を入れます（TS 29.229 6.3.46）。対応することは Supported-Features の IMSRestorationInd で伝えます（TS 29.229 Table 7.1.1）。Cx の辞書に、AVP を足します。 |
+| S-CSCF の復旧用の情報を HSS に預ける（4.6.2、4.6.3） | する | S-CSCF が、SAR に SCSCF-Restoration-Info を入れます（TS 29.229 6.3.46）。この部分は作っていないので、入れるかどうかを切り替える設定 `scscf.restoration` も置いていません。どの役割も読まない設定を受け付けると、復旧の情報を HSS に預けているように見えてしまうためです。設定は、SAR に入れる作りと一緒に足します。対応することは Supported-Features の IMSRestorationInd で伝えます（TS 29.229 Table 7.1.1）。Cx の辞書に、AVP を足します。 |
 | 戻らない S-CSCF の組への着信と登録（4.2.2、4.3.3） | する | S-CSCF の組を 2 つにします。組の中は同じ保存先、組のあいだは標準の割り当てです（調査の記録の 7 章の案 3）。I-CSCF は、組に届かないとき、能力を求める UAR と LIR で別の組を選び、Request-URI に `scscf-reselection` を付けて送ります（TS 24.229 5.3.1.3、5.3.2.2）。新しい組の S-CSCF は、着信で SAR（UNREGISTERED_USER）を送り、返ってきた復旧用の情報で、登録済みの利用者として要求を処理します（4.3.2）。UE は登録し直さずに着信できます。そのあとで S-CSCF は、購読の情報から NOTIFY を作って、UE に登録し直させます。 |
 | UE の発信で S-CSCF に届かない（4.4.3） | する | P-CSCF が、504 と `application/3gpp-ims+xml` の本文（`<type>` が `restoration`、`<action>` が `initial-registration`）を返します（TS 24.229 5.2.6.3.2A）。UE シミュレータは最初の登録を行います（5.1.2A.1.6）。 |
 | UE が P-CSCF の障害に気づく（TS 24.229 4.14.2） | する | 今の UE シミュレータは、PCO で P-CSCF の一覧を受け取っても先頭の 1 つだけを使い、登録に失敗すると同じ P-CSCF を通って登録し直します（`cmd/ue` の `SIMPLIFIED:`）。一覧を持って次の P-CSCF に移ることは作っておらず、ロードマップの冗長構成に残しています。作る形は、REGISTER の時間切れ、503、305 のときに、一覧の次の P-CSCF で最初の登録を行うものです（IR.92 2.2.1。本文は読み直していない）。P-CSCF のドレインにも使います。 |

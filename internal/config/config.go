@@ -511,10 +511,6 @@ func (raw rawConfig) validate(dir string) (Config, error) {
 func (c Config) checkMediaControl() error {
 	shared := c.Store != nil && c.Store.Kind == StoreValkey
 	if p := c.PCSCF; p != nil && p.MediaController != nil {
-		if p.SIP.Pool != "" {
-			return errors.New("pcscf.sip.pool: a P-CSCF that controls media over h248 runs as one instance, " +
-				"because a media gateway registers with one controller and no other instance can reach the contexts it holds")
-		}
 		if shared {
 			return errors.New("store: a P-CSCF that controls media over h248 cannot hand its dialogs to another instance, " +
 				"because a media gateway registers with one controller; leave out the store section or control the media relays over media_relays")

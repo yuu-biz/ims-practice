@@ -3,6 +3,7 @@ package config
 import (
 	"errors"
 	"fmt"
+	"net"
 	"net/netip"
 	"os"
 	"path/filepath"
@@ -20,14 +21,22 @@ import (
 // 5.10). The role is a B2BUA with two UAs: SIP faces the home network
 // on Mx, and ExternalSIP faces the peers on Ici (TS 29.165 3.2).
 type IBCF struct {
-	// SIP is the internal side. Its URI, or the URI of its pool when the
+	// SIP is the internal side. Its URI, or the URI of Pool when the
 	// role runs as several instances, is the one that the S-CSCF puts in
 	// Route to send a request out (TS 24.229 5.4.3.2 step 12).
 	SIP SIP
+	// Pool is the name that the instances of the IBCF share on the
+	// internal side, such as ibcf.ims.mnc001.mcc001.3gppnetwork.org, for
+	// which DNS returns every instance. Empty when the role runs as one
+	// instance.
+	Pool string
 	// ExternalSIP is the side towards the peers. Its host is the one
 	// name of the home network that the peers see, so it is a name in
 	// the interconnect network, not in the home domain.
 	ExternalSIP SIP
+	// ExternalPool is the name that the instances share towards the
+	// peers, as Pool is on the internal side.
+	ExternalPool string
 	// ICSCF is the SIP URI of the I-CSCF that the initial requests from
 	// the peers go to (TS 24.229 5.10.3.2 step 4).
 	ICSCF sip.URI
@@ -57,11 +66,37 @@ type TrGW struct {
 	PeerAddress netip.Addr
 }
 
+// rawPooledSIP is a side of the IBCF: its SIP section, with the name
+// that the instances share.
+type rawPooledSIP struct {
+	rawSIP `yaml:",inline"`
+	Pool   string `yaml:"pool"`
+}
+
+// validate checks the side as rawSIP does, and the pool.
+func (raw rawPooledSIP) validate() (SIP, string, error) {
+	s, err := raw.rawSIP.validate()
+	if err != nil {
+		return SIP{}, "", err
+	}
+	if raw.Pool != "" {
+		if net.ParseIP(raw.Pool) != nil {
+			return SIP{}, "", errors.New("sip.pool: must be a name that DNS resolves, not an address")
+		}
+		// RFC 3263 4.2: a URI with a port is not looked up with SRV, so
+		// it would reach one instance only.
+		if strings.Contains(raw.Pool, ":") {
+			return SIP{}, "", errors.New("sip.pool: a name without a port")
+		}
+	}
+	return s, raw.Pool, nil
+}
+
 type rawIBCF struct {
-	SIP              rawSIP `yaml:"sip"`
-	ExternalSIP      rawSIP `yaml:"external_sip"`
-	ICSCF            string `yaml:"icscf"`
-	HomeNumberFormat string `yaml:"home_number_format"`
+	SIP              rawPooledSIP `yaml:"sip"`
+	ExternalSIP      rawPooledSIP `yaml:"external_sip"`
+	ICSCF            string       `yaml:"icscf"`
+	HomeNumberFormat string       `yaml:"home_number_format"`
 	TrGW             struct {
 		Control     string `yaml:"control"`
 		CoreAddress string `yaml:"core_address"`
@@ -79,18 +114,18 @@ type rawIBCF struct {
 }
 
 func (raw *rawIBCF) validate(homeDomain, dir string) (IBCF, error) {
-	internal, err := raw.SIP.validate()
+	internal, pool, err := raw.SIP.validate()
 	if err != nil {
 		return IBCF{}, err
 	}
-	external, err := raw.ExternalSIP.validate()
+	external, externalPool, err := raw.ExternalSIP.validate()
 	if err != nil {
 		return IBCF{}, fmt.Errorf("external_%w", err)
 	}
 	if strings.EqualFold(internal.Host, external.Host) {
 		return IBCF{}, errors.New("external_sip.host: must differ from sip.host, which only the home network sees")
 	}
-	c := IBCF{SIP: internal, ExternalSIP: external}
+	c := IBCF{SIP: internal, Pool: pool, ExternalSIP: external, ExternalPool: externalPool}
 	if c.ICSCF, err = sip.ParseURI(raw.ICSCF); err != nil || c.ICSCF.Host == "" {
 		return IBCF{}, fmt.Errorf("icscf: %q is not a SIP URI", raw.ICSCF)
 	}

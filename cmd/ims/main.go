@@ -966,8 +966,8 @@ func startIBCF(homeDomain string, c config.IBCF, store ibcf.Store, locator ims.L
 	b, err := ibcf.New(ibcf.Config{
 		Internal:         internal,
 		External:         external,
-		InternalPool:     c.SIP.Pool,
-		ExternalPool:     c.ExternalSIP.Pool,
+		InternalPool:     c.Pool,
+		ExternalPool:     c.ExternalPool,
 		HomeDomain:       homeDomain,
 		HomeNumberFormat: c.HomeNumberFormat,
 		ICSCF:            c.ICSCF,
@@ -1422,7 +1422,6 @@ type xcapView struct {
 type sipView struct {
 	Listen             string `json:"listen"`
 	Host               string `json:"host"`
-	Pool               string `json:"pool,omitempty"`
 	TransactionTimeout string `json:"transaction_timeout,omitempty"`
 }
 
@@ -1532,7 +1531,7 @@ func newAGWView(c config.AGW) *agwView {
 }
 
 func newSIPView(c config.SIP) sipView {
-	v := sipView{Listen: c.Listen.String(), Host: c.Host, Pool: c.Pool}
+	v := sipView{Listen: c.Listen.String(), Host: c.Host}
 	if c.TransactionTimeout != 0 {
 		v.TransactionTimeout = c.TransactionTimeout.String()
 	}
