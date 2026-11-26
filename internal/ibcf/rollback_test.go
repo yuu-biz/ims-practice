@@ -164,3 +164,23 @@ func provisional(t *testing.T, call *sip.OutgoingCall, status int) {
 		}
 	}
 }
+
+// The caller cancels its INVITE while TrGW-A takes its time over the
+// offer, which it then turns down. The INVITE has its 487 already, so
+// the 500 of IBCF-A does not go, and does not count among its refusals.
+func TestA500ThatDoesNotGoIsNotCounted(t *testing.T) {
+	p := newPair(t, nil)
+	release := p.a.trgw.hold(p.a.media)
+	p.a.trgw.refuseRemote(p.a.media, errRefusedModify)
+	call := p.a.invite(t, p.b.sipURI(), p.a.offer(t, sdp.VoLTECodecs(), 1, ""), nil)
+	call.Cancel()
+	if resp := final(t, call); resp.StatusCode != 487 {
+		t.Fatalf("the cancelled INVITE got %d, want 487", resp.StatusCode)
+	}
+	release()
+	p.waitReleased(t)
+	series := `ims_ibcf_requests_rejected_total{peer="peer-b",direction="exit",method="INVITE",status="500"}`
+	if got := p.a.counter(t, series); got != 0 {
+		t.Errorf("network A counted %v INVITEs it answered 500, want 0", got)
+	}
+}
