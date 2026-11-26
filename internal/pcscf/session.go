@@ -358,7 +358,10 @@ func (p *PCSCF) subsequent(st *sip.ServerTransaction, out *sip.Message, log *slo
 // its way to the next hop, such as an UPDATE that tells of reserved
 // resources (RFC 3311, RFC 3312) or a re-INVITE that puts the call on
 // hold (RFC 3261 14). The SDP of an UPDATE or a re-INVITE is an offer,
-// which the 2xx answers (RFC 3311 3, RFC 3261 14.1). The SDP goes through the relay context of the dialog like the
+// which the 2xx answers (RFC 3311 3, RFC 3261 14.1). That of a PRACK is
+// an offer too, or the answer to an offer in the reliable response that
+// the PRACK acknowledges (RFC 3262 5); the relay takes either the same
+// way. The SDP goes through the relay context of the dialog like the
 // first offer. The first function it returns takes each response on its
 // way back: with the answer the PCRF gets the changed service
 // information in the policy session of the dialog (TS 29.214 A.1,
@@ -472,6 +475,11 @@ func (p *PCSCF) renegotiate(out *sip.Message, d Dialog, toUE bool, ue netip.Addr
 //     cannot read. It may have carried the Modify out, and the
 //     termination may now send where the offer said, which the party
 //     that offered no longer takes after the non-2xx.
+//   - The request is a PRACK. Its UAC does not send it again (RFC 3262
+//     4), so the reliable response stays unacknowledged, and the UAS
+//     ends the INVITE with a 5xx after 64*T1 (RFC 3262 3). The P-CSCF
+//     ends it now, as for a refused answer in the early dialog (TS
+//     24.229 5.2.8.1.1).
 func (p *PCSCF) notRelayed(st *sip.ServerTransaction, d Dialog, err error, log *slog.Logger) {
 	resp := sip.NewResponse(st.Request, 500, "")
 	if errors.Is(err, errMalformedSDP) {
@@ -479,7 +487,7 @@ func (p *PCSCF) notRelayed(st *sip.ServerTransaction, d Dialog, err error, log *
 		resp.Reason = "Malformed SDP"
 	}
 	keep := !mediaGone(err) && (errors.Is(err, errMalformedSDP) || errors.Is(err, agw.ErrRejected))
-	if keep {
+	if keep && st.Request.Method != sip.PRACK {
 		log.Warn("the SDP of the request is not pointed at the media relay: the request goes no further", "status", resp.StatusCode, "error", err.Error())
 		st.Respond(resp)
 		return
