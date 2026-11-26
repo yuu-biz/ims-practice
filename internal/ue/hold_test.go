@@ -59,17 +59,22 @@ func (c *activeCall) end(t *testing.T) {
 	wait(t, "the answer", c.answered)
 }
 
-// still checks that no RTP flows either way for as long as flowing
-// waits for it.
+// still checks that neither side sends RTP. Each side's RTP clock moves
+// on every packet time, whether a packet goes out or not. Two packet
+// times after the flow changed, a packet that was going out as it
+// changed has been counted; in the two after that, nothing goes out.
 func (c *activeCall) still(t *testing.T, why string) {
 	t.Helper()
-	time.Sleep(60 * time.Millisecond) // for what was on its way
-	a, b := c.caller.media.Stats().PacketsReceived, c.callee.media.Stats().PacketsReceived
-	if came(watch, func() bool {
-		return c.caller.media.Stats().PacketsReceived != a || c.callee.media.Stats().PacketsReceived != b
-	}) {
-		t.Errorf("%s: RTP still flows: %d and %d packets more", why,
-			c.caller.media.Stats().PacketsReceived-a, c.callee.media.Stats().PacketsReceived-b)
+	sides := []*ue.Media{c.caller.media, c.callee.media}
+	for _, m := range sides {
+		packetTimes(t, m, 2)
+	}
+	sent := []int{sides[0].Stats().PacketsSent, sides[1].Stats().PacketsSent}
+	for _, m := range sides {
+		packetTimes(t, m, 2)
+	}
+	if a, b := sides[0].Stats().PacketsSent-sent[0], sides[1].Stats().PacketsSent-sent[1]; a != 0 || b != 0 {
+		t.Errorf("%s: RTP still flows: the caller sent %d packets more, the callee %d", why, a, b)
 	}
 }
 
