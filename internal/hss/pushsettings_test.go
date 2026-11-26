@@ -14,6 +14,7 @@ import (
 
 	"github.com/yuu-biz/ims-practice/internal/cx"
 	"github.com/yuu-biz/ims-practice/internal/diameter"
+	"github.com/yuu-biz/ims-practice/internal/ifc"
 	"github.com/yuu-biz/ims-practice/internal/ims"
 	"github.com/yuu-biz/ims-practice/internal/maintenance"
 )
@@ -724,6 +725,77 @@ func TestAPPRLeftTwiceIsLeftOnce(t *testing.T) {
 	}
 	if len(left) != 1 || left[0].PrivateID != impi {
 		t.Errorf("the store has the left PPRs %+v, want the one of %s", left, impi)
+	}
+}
+
+// droppingStore tells when a PPR left for another instance leaves the
+// store (dropped), with the time it was left at.
+type droppingStore struct {
+	*MemoryStore
+	dropped chan ProfilePushRetry
+}
+
+func (s *droppingStore) DoneProfilePushRetry(ctx context.Context, c ProfilePushRetryClaim) error {
+	err := s.MemoryStore.DoneProfilePushRetry(ctx, c)
+	s.dropped <- c.ProfilePushRetry
+	return err
+}
+
+// TestAPPRNoInstanceCanSendIsGivenUp: a PPR that the round left, and that
+// no instance can send, is tried again until the time of the retries has
+// passed since it was left, and then given up.
+func TestAPPRNoInstanceCanSendIsGivenUp(t *testing.T) {
+	store := &droppingStore{MemoryStore: settingsStore(t), dropped: make(chan ProfilePushRetry, 1)}
+	const retryTime = 300 * time.Millisecond
+	h, api := newSettingsInstance(t, store, nil, func(c *Config) { c.PushRetryTime = retryTime })
+	serve(t, h, impi, impu, cx.AssignRegistration)
+	tried := &unconnectedSCSCFs{}
+	h.SetPeers(tried)
+	change(t, api, "hss.default_service_profile", "trial")
+	select {
+	case r := <-store.dropped:
+		if since := time.Since(r.Since); since < retryTime {
+			t.Errorf("the PPR was given up %v after it was left, before the %v of the retries", since, retryTime)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("gave up waiting 5 s for the PPR to be given up")
+	}
+	tried.mu.Lock()
+	defer tried.mu.Unlock()
+	if tried.tries < 2 {
+		t.Errorf("the PPR was tried %d times, want it tried again before it was given up", tried.tries)
+	}
+}
+
+// TestARoundNoInstanceCanServeIsGivenUp: the only instance whose
+// configuration defines the profile video names it for every
+// subscription and stops before it sends a PPR of it. The other instance
+// cannot send the round, and leaves it to another until the time of the
+// retries has passed since the round began; then it gives the round up.
+// So the correction that the operator makes, back to default, which came
+// while the round was under way, is pushed.
+func TestARoundNoInstanceCanServeIsGivenUp(t *testing.T) {
+	store := settingsStore(t)
+	locks := &ims.UserLocks{}
+	short := func(c *Config) { c.PushRetryTime = 300 * time.Millisecond }
+	video, videoAPI := newSettingsInstance(t, store, locks, func(c *Config) {
+		short(c)
+		c.ServiceProfiles = maps.Clone(c.ServiceProfiles)
+		c.ServiceProfiles["video"] = ServiceProfile{Criteria: []ifc.InitialFilterCriteria{profileCriterion("sip:video." + realm + ":5060")}}
+	})
+	other, otherAPI := newSettingsInstance(t, store, locks, short)
+	serve(t, other, impi, impu, cx.AssignRegistration)
+	if _, err := changeAt(videoAPI, 1, "hss.default_service_profile", "video"); err != nil {
+		t.Fatal(err)
+	}
+	video.Close()
+	scscfs := &fakeSCSCFs{}
+	other.SetPeers(scscfs)
+	if _, err := changeAt(otherAPI, 2, "hss.default_service_profile", "default"); err != nil {
+		t.Fatal(err)
+	}
+	if pushed := pushedTo(t, other, scscfs, 1); len(pushed) != 1 || pushed[impi] != settingsDefaultAS {
+		t.Errorf("the PPRs went to %v, want the ordinary subscriber with the default criteria", pushed)
 	}
 }
 

@@ -65,7 +65,8 @@ const profilePushPage = 100
 const profilePushLease = 30 * time.Second
 
 // profilePushRetryTime is how long the PPR of a subscriber that no
-// instance could reach is tried again. An S-CSCF whose instance of the
+// instance could reach is tried again, and how long a round whose name
+// no instance that claims it defines is left to the others. An S-CSCF whose instance of the
 // HSS is made again, or taken back into service, connects again after
 // Tc, which RFC 6733 2.1 recommends at 30 s, and this covers a few of
 // those. After it, the S-CSCF reads the profile at the next
@@ -180,7 +181,9 @@ func (h *HSS) startRound(ctx context.Context, source ProfileSource, set *setting
 		case recorded:
 			old = &p
 		}
-		next := ProfilePush{Source: source, Name: name, Generation: set.nameGeneration(source), Round: p.Round + 1, Updated: stamp()}
+		now := stamp()
+		next := ProfilePush{Source: source, Name: name, Generation: set.nameGeneration(source), Round: p.Round + 1,
+			Started: now, Updated: now}
 		swapped, err := h.store.CompareAndSwapProfilePush(ctx, old, next)
 		if err != nil {
 			return err
@@ -199,6 +202,12 @@ func (h *HSS) startRound(ctx context.Context, source ProfileSource, set *setting
 		return nil
 	}
 	return errPushOvertaken
+}
+
+// pushRetryTime is the PushRetryTime of the configuration, or
+// profilePushRetryTime.
+func (h *HSS) pushRetryTime() time.Duration {
+	return cmp.Or(h.config.PushRetryTime, profilePushRetryTime)
 }
 
 // latest is the later of a and b.
@@ -226,6 +235,11 @@ func dueNow() time.Time { return time.UnixMilli(time.Now().UnixMilli()) }
 // configuration of this instance does not define, so this instance
 // cannot build its PPRs.
 var errUnservableRound = errors.New("the round names a service profile that this instance does not define")
+
+// errRoundGivenUp: no instance that claimed the round defined its name
+// for as long as the time of the retries (pushRetryTime), and the round
+// is recorded as done, so that the rounds after it are not held up.
+var errRoundGivenUp = errors.New("the round was given up")
 
 // errPushOvertaken: another round of the push, or another instance that
 // claimed the same round, has recorded a point other than the one this
@@ -271,7 +285,7 @@ func (h *HSS) claimPushes() {
 // pushRetry sends a PPR that a round left for another instance
 // (ProfilePushRetry). One that this instance cannot send either is made
 // due again after an interval, for whichever instance claims it then,
-// until profilePushRetryTime has passed. A later round of the source
+// until the time of the retries has passed (pushRetryTime). A later round of the source
 // pushes every subscriber of it, this one included, so the PPR of an
 // earlier round is not sent.
 func (h *HSS) pushRetry(peers Peers, c ProfilePushRetryClaim) {
@@ -298,7 +312,7 @@ func (h *HSS) pushRetry(peers Peers, c ProfilePushRetryClaim) {
 		case errors.Is(err, errPushOvertaken):
 			// A later round of the source came while the PPR waited for
 			// the lock of its subscriber, and pushes it.
-		case another && time.Since(c.Since) < profilePushRetryTime:
+		case another && time.Since(c.Since) < h.pushRetryTime():
 			if err := h.store.ScheduleProfilePushRetry(ctx, c.ProfilePushRetry, time.Now().Add(h.sweepInterval())); err != nil {
 				log.Warn("the PPR left for another instance was not made due again; its claim runs out first", "error", err.Error())
 			}
@@ -333,6 +347,12 @@ func (h *HSS) pushPage(peers Peers, c ProfilePushClaim) {
 		log.Error("the round of the push names a service profile that this instance does not define; it leaves the round to another", "error", err.Error())
 		if err := h.store.ScheduleProfilePush(ctx, c.Source, time.Now().Add(h.sweepInterval())); err != nil {
 			log.Warn("the round of the push was not left to another instance; its claim runs out first", "error", err.Error())
+		}
+		return
+	case errors.Is(err, errRoundGivenUp):
+		log.Error("no instance that claimed the round of the push defines its service profile; the round is given up, and the S-CSCFs read the profile at the next registration", "error", err.Error())
+		if err := h.endRound(ctx, c, nil); err != nil {
+			log.Warn("the end of the round of the push was not recorded; the claim runs out first", "error", err.Error())
 		}
 		return
 	case ctx.Err() != nil:
@@ -411,7 +431,15 @@ func (h *HSS) pushOn(ctx context.Context, peers Peers, source ProfileSource) (ro
 		return nil, false, nil
 	}
 	if err := h.config.CheckServiceProfileName(string(source), p.Name); err != nil {
-		return nil, false, fmt.Errorf("%w: %w", errUnservableRound, err)
+		if time.Since(p.Started) < h.pushRetryTime() {
+			return nil, false, fmt.Errorf("%w: %w", errUnservableRound, err)
+		}
+		done := p
+		done.Done, done.Updated = true, stamp()
+		if err := h.recordPush(ctx, &p, done); err != nil {
+			return nil, false, err
+		}
+		return nil, false, fmt.Errorf("%w: %w", errRoundGivenUp, err)
 	}
 	// The claim of the page, which tells the other instances that the
 	// round is being sent, and stops an instance whose claim ran out at
