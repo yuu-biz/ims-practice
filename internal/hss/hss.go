@@ -326,8 +326,37 @@ func (h *HSS) takeOn(next *settings) bool {
 	}
 }
 
+// servable says why this instance cannot answer with set, or nil when
+// it can: a policy it does not know, or a service profile name that its
+// configuration does not define. Another instance, with another
+// configuration file, may have stored such settings; taking them on
+// would give the subscriptions of that name a profile without criteria.
+func (h *HSS) servable(set *settings) error {
+	if !slices.Contains(Admissions, set.admission) {
+		return fmt.Errorf("%s: %q is none of %v", admissionSetting, set.admission, Admissions)
+	}
+	if err := h.config.CheckServiceProfileName(defaultProfileSetting, set.defaultServiceProfile); err != nil {
+		return err
+	}
+	return h.config.CheckServiceProfileName(testUserProfileSetting, set.testUserServiceProfile)
+}
+
+// takeOnStored takes on settings read from the Store (takeOn), unless
+// this instance cannot serve them (servable): it keeps those it has
+// then, and logs it once for each generation of the Store.
+func (h *HSS) takeOnStored(set *settings) bool {
+	if err := h.servable(set); err != nil {
+		if h.unservable.Swap(set.generation+1) != set.generation+1 {
+			h.log.Error("the settings in force on the instances of the role name what this instance does not have; it keeps its own",
+				"generation", set.generation, "error", err.Error())
+		}
+		return false
+	}
+	return h.takeOn(set)
+}
+
 // loadSettings reads the settings that the instances on the Store share,
-// takes them on (takeOn) and returns them. A Store that has none yet
+// takes them on (takeOnStored) and returns them. A Store that has none yet
 // gets the ones in force here, which are those of the configuration
 // file: this instance is the first on the Store, or the first since the
 // Store lost them.
@@ -339,7 +368,7 @@ func (h *HSS) loadSettings(ctx context.Context) (*settings, error) {
 		}
 		if ok {
 			next := settingsOf(stored)
-			if h.takeOn(next) {
+			if h.takeOnStored(next) {
 				h.log.Info("took on the settings in force on the instances of the role", "generation", next.generation,
 					"admission", string(next.admission), "default_service_profile", next.defaultServiceProfile,
 					"test_user_service_profile", next.testUserServiceProfile)
@@ -383,7 +412,7 @@ func (h *HSS) settingsInForce(ctx context.Context) (*settings, error) {
 		return nil, err
 	}
 	if ok {
-		h.takeOn(settingsOf(stored))
+		h.takeOnStored(settingsOf(stored))
 	}
 	return h.settings.Load(), nil
 }
@@ -489,6 +518,10 @@ type HSS struct {
 	// together for one change, wherever the change comes from.
 	settings   atomic.Pointer[settings]
 	settingsMu sync.Mutex
+	// unservable is one above the generation of the last settings of the
+	// Store that this instance could not take on (takeOnStored), so that
+	// it logs them once.
+	unservable atomic.Uint64
 	// pending is what the sets of a change do to the settings, between
 	// beginSettings and commitSettings, under settingsMu. No request
 	// reads it.

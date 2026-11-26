@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/yuu-biz/ims-practice/internal/cx"
 	"github.com/yuu-biz/ims-practice/internal/maintenance"
 )
 
@@ -119,6 +120,49 @@ func TestAChangeOnAnInstanceBehindTheStoreChangesWhatItNames(t *testing.T) {
 	}
 	if registers(t, behind, impi, impu) {
 		t.Error("the instance behind admits the ordinary subscriber again")
+	}
+}
+
+// TestAnInstanceKeepsSettingsItCannotServe: the store names a service
+// profile that this instance does not define, as an instance with
+// another configuration file put there. An instance that took that on
+// would give the subscriptions of the name a profile without criteria,
+// so it keeps the settings it has, whether it reads the store as it
+// starts or at a sweep, and sends no PPR of the name.
+func TestAnInstanceKeepsSettingsItCannotServe(t *testing.T) {
+	store := settingsStore(t)
+	running, _ := settingsInstance(t, store, nil)
+	serve(t, running, impi, impu, cx.AssignRegistration)
+	scscfs := &fakeSCSCFs{}
+	running.SetPeers(scscfs)
+	stored, _, err := store.Settings(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	unknown := stored
+	unknown.Generation, unknown.DefaultServiceProfile = 1, "video"
+	if swapped, err := store.CompareAndSwapSettings(t.Context(), &stored, unknown); err != nil || !swapped {
+		t.Fatalf("CompareAndSwapSettings: %v, %v", swapped, err)
+	}
+
+	started, startedAPI := settingsInstance(t, store, nil)
+	if got := started.DefaultServiceProfile(); got != "default" {
+		t.Errorf("the instance that started on the store names %q, want default, that of its file", got)
+	}
+	if got := generationOf(t, startedAPI); got != 0 {
+		t.Errorf("the instance that started on the store is at generation %d, want 0", got)
+	}
+	// Some sweeps of the running instance, and of the started one, which
+	// would have taken the name on and pushed it by now.
+	for deadline := time.Now().Add(100 * time.Millisecond); time.Now().Before(deadline); time.Sleep(5 * time.Millisecond) {
+		if got := running.DefaultServiceProfile(); got != "default" {
+			t.Fatalf("the running instance took on %q", got)
+		}
+	}
+	scscfs.mu.Lock()
+	defer scscfs.mu.Unlock()
+	if len(scscfs.pprs) != 0 {
+		t.Errorf("%d PPRs went out for a profile that no instance here defines", len(scscfs.pprs))
 	}
 }
 
