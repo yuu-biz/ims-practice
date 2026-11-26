@@ -20,6 +20,7 @@
 | IP-SM-GW の状態 | 配達の途中の状態を `Store` の後ろに置きます。どの台が delivery report を受けても処理できます。外部の保存先は [state-redundancy.md](state-redundancy.md) にあります。 |
 | 着信側の iFC | ほかの網から届いた短メッセージを、利用者を担当する IP-SM-GW に渡すため、着信側（SessionCase が 1）の MESSAGE を拾う iFC を 1 つ入れます（TS 23.204 6.4a）。P-Asserted-Identity が自網の IP-SM-GW の URI である MESSAGE は、否定の条件で除きます。この条件が無いと、IP-SM-GW が出した MESSAGE が IP-SM-GW に戻るためです（TS 23.218 5.2.3 NOTE 5）。 |
 | HSS への登録 | IP-SM-GW は第三者 REGISTER を受けると、Sh の PUR で HSS に自分のアドレスを登録します。MAP は使いません。 |
+| また受け取れるという知らせ | IP-SM-GW は、UE にまた届くようになったこととメモリに空きができたことを、S6c の Ready-For-SM で HSS に知らせます。MAP-READY-FOR-SM の代わりにこのプロジェクトが決めたコマンドで、作りは「IP-SM-GW から HSS への Ready-For-SM」にあります。 |
 | HSS の S6c | HSS は SMS の中心の機能（SMS-GMSC と SMS-IWMSC）と S6c で話します。SRR に答え、RDR で message waiting data を書き換え、利用者が受け取れるようになったら ALR で知らせます。 |
 | 文字の符号化 | GSM 7 ビットの既定アルファベットと UCS2 に対応します。連結 SMS（UDH）と有効期間は作らず、`SIMPLIFIED:` に書きます。 |
 
@@ -58,23 +59,40 @@ SC を独立した役割にするにあたって決めたことです。
 | ALR を送る経路 | SC は HSS に Diameter の接続を張る側なので、その接続を使って送り返します。HSS が S-CSCF へ RTR を送るのと同じ仕組みです。 | － |
 | 競合の防ぎ方 | MWD を変えるときは加入者のロックを取り、ロックの下で読み直してから書きます。SRR で serving node が無いと分かったときも、ロックの下でもう一度判断します。 | － |
 
-## Sh の PUR の拡張（ReadyForSM）
+## IP-SM-GW から HSS への Ready-For-SM
 
-UE にまたショートメッセージが届くようになったことと、UE のメモリに空きができたことを IP-SM-GW から HSS へ知らせる手段は、Sh にありません。標準ではこれを MAP の READY_FOR_SM が運びます。このプロジェクトは MAP を話さないので、Sh の PUR に要素を 1 つ足して運びます。
+UE にまたショートメッセージが届くようになったことと、UE のメモリに空きができたことは、IP-SM-GW から HSS へ知らせます。標準でこの 2 つを運ぶのは、J インタフェースの MAP-READY-FOR-SM だけです。S6c にも Sh にも、Diameter でこれを運ぶ手順はありません。調べた条項は、[調査の記録](../background/sms.md)の「UE がまた受け取れることを、IP-SM-GW が HSS に知らせる経路」にあります。
 
-**この要素は 3GPP の Sh の仕様には無く、このプロジェクトが独自に決めたものです。** 標準に準拠した知らせ方ではありません。コードの `SIMPLIFIED:` と、手順書の「このプロジェクトが省いていること」の表にも、同じことを書いてあります。
+このプロジェクトは MAP を作りません。そこで、S6c にこのプロジェクト独自のコマンド Ready-For-SM を 1 つ足し、MAP-READY-FOR-SM の代わりにします。**このコマンドは 3GPP の仕様には無く、このプロジェクトが決めたものです。** コードの `SIMPLIFIED:` と、手順書の「このプロジェクトが省いていること」の表にも、そう書いてあります。
+
+これまでは、SMSRegistrationInfo の Sh-Update に、このプロジェクトの名前空間の要素を足して運んでいました。標準の HSS はこの PUR を、TS 29.328 6.1.2.1 step 4b の登録として扱います。標準のメッセージの意味を変える作りなので、やめました。
 
 | 主題 | 作り | 根拠 |
 | --- | --- | --- |
-| 標準の動き | IP-SM-GW は MAP の READY_FOR_SM で HLR に知らせます。alert reason は ms-Present と memoryAvailable の 2 つで、前者は「message waiting flag が立っている利用者に IMS で届くようになった」、後者は「利用者がメモリの空きを示した」です。HLR は MWD の SC に ALR を送ります。 | TS 29.002 12.4 が、IP-SM-GW と HLR のあいだでもこのサービスを使うと定めます。alert reason の値は 7.6.8.8 と ASN.1 の AlertReason です。TS 23.204 6.5b step 2d（届くようになった知らせ）と 6.6 step 3（メモリの知らせ）。 |
-| 運ぶ場所 | Data-Reference が SMSRegistrationInfo（24）の PUR の、Sh-Data の `SMSRegistrationInfo` の最後の子に置きます。新しいコマンドも新しい Data-Reference も作りません。 | TS 29.328 Annex D の tSMSRegistrationInfo。 |
-| 名前空間と要素 | 名前空間は `https://github.com/yuu-biz/ims-practice/ns/sh`（このリポジトリの URL に `/ns/sh` を足したもの）、要素は `ReadyForSM`、値は `msPresent` と `memoryAvailable` です。値の名前は MAP の alert reason にならいました（MAP の綴りは `ms-Present` です）。標準の要素と取り違えないよう、名前空間にプロジェクトの URL を入れます。 | － |
-| 標準の HSS から見た姿 | tSMSRegistrationInfo は `xs:any namespace="##other" processContents="lax"` で終わります。ほかの名前空間の要素を 1 つ置ける場所がそこにあり、lax なので、名前空間を知らない HSS は中身を調べずに読み飛ばします。XSD での検査も通ります。S6c の対応を示す `Extension3` には拡張の場所が無いので、そちらには置けません。 | TS 29.328 Annex D。 |
-| 登録の更新との区別 | この要素がある PUR は、知らせとしてだけ扱います。IP-SM-GW の番号も Diameter の名前も書き換えません。PUR の番号が、保存されている IP-SM-GW の番号と同じときだけ動きます。違えば 2001 で答え、何もしません（そのことはログに残します）。この要素が無い PUR は、これまでどおり登録の更新です。 | TS 23.204 6.5b step 2d は、UE が IMS に登録していなければ IP-SM-GW 自身が知らせを捨てるとします。HSS でも確かめるのは、知らせと応答のあいだに登録が外れることがあるためです。何も変えずに成功を返すのは、TS 23.040 3.2.6 の 2i にならいます。 |
-| 重複した知らせ | 加入者のロックの下で印を読み直し、その理由の印を落とします。MWD に SC が残っていれば、印がすでに落ちていても ALR を送ります（`msPresent` は MCEF が落ちているときだけです）。SC が ALR を断ったときや、ALR が届かなかったときは、その SC のアドレスが MWD に残ります。そのため、次の知らせで送り直せなければなりません。重複した知らせや同時に届いた知らせは、SC に ALR を重ねて送ることがあります。ALR は SC に配達を試させるだけなので、重なっても害はありません。MWD が空なら、何もせずに応答だけ返します。 | TS 23.040 3.2.6 の 2c、2f、2i。 |
-| 印の落とし方 | `msPresent` は UNRI を落とし、MWD が空でなく MCEF も落ちていれば ALR を送ります（2c）。`memoryAvailable` は MCEF と UNRI を落とし、MWD が空でなければ ALR を送ります。2f は UNRI を落とすとだけ書き、MCEF には触れていませんが、MSC 経由（2d）と SGSN 経由（2e）は同じ知らせで MCEF を落とすので、それに合わせます。 | TS 23.040 3.2.6 の 2c、2d、2e、2f。 |
-| 知らない値が来たとき | DIAMETER_UNABLE_TO_COMPLY で答えます。この HSS が扱える理由は 2 つだけで、ほかの値では何をすればよいか決まらないためです。 | － |
-| XSD を置かないこと | 3GPP の文書の再配布の条件を確かめられないので、`ShDataType_Rel20.xsd` の原本はリポジトリに置きません。代わりに、決まった文字列と比べる試験で、要素の位置と名前空間を確かめます。 | AGENTS.md の「仕様は公開資料だけを使う」。 |
+| 置くインタフェース | S6c です。IP-SM-GW と HLR/HSS のあいだには、Sh と、J か S6c のどちらかを置きます。MAP-READY-FOR-SM は J の手順なので、J の代わりの Diameter の S6c に置きます。HSS の側でも、S6c は MWD と ALR を扱う場所です。 | TS 23.204 V19.1.0 5.2.3。TS 29.002 V19.1.0 12.4.1。 |
+| コマンドコード | RFC 6733 が実験用に取ってある 16777214 にします。Application-Id は S6c の 16777312 のままです。IANA が割り当てる範囲の値を使わないので、TS 29.338 のコマンドと取り違えられることはありません。Wireshark はこのコマンドを知らないコマンドとして表示し、警告を付けます。このコマンドを持たない HSS は DIAMETER_COMMAND_UNSUPPORTED で答えます。どちらの場合も、標準のメッセージの意味は変わりません。 | RFC 6733 11.2.1、7.1.3。Wireshark 4.6.9 の `packet-diameter.c`（`diameter.cmd.code.unknown`）。 |
+| 名前 | Ready-For-SM-Request と Ready-For-SM-Answer です。MAP のサービスの名前にならいました。ログの略称は RFR と RFA です。 | TS 29.002 12.4。 |
+| 利用者の示し方 | User-Identifier に MSISDN を入れます。RDR と同じです。MAP は IMSI で示しますが、この HSS は MWD を MSISDN の利用者に持ち、SC の RDR も MSISDN で届くためです。MSISDN の無い要求は、読み取りの段階で断ります。RP-SMMA を受けた IP-SM-GW は、reg イベントの購読にある MSISDN を使い、購読が無ければ P-Asserted-Identity の tel URI の番号を使います。 | TS 29.338 5.3.2.7。TS 29.002 12.4.3。TS 24.341 5.3.3.4.1 の手順 d。 |
+| 理由の示し方 | TS 29.272 7.3.83 の Alert-Reason（UE_PRESENT と UE_MEMORY_AVAILABLE）を使います。MME と SGSN が S6a と S6d の NOR で同じ知らせを運ぶ AVP で、HSS はその NOR を MAP の Ready for SM と同じに扱います。新しい AVP は作りません。MAP の Additional Alert Reason Indicator（IMS からの知らせの印）と Maximum UE Availability Time は省きます。前者は、このコマンドを送るのが IP-SM-GW だけなので要りません。後者を要する UE はこのプロジェクトにありません。 | TS 29.272 V19.6.0 5.2.5.1.3、7.3.83。TS 29.002 7.6.8.8、7.6.8.10A。 |
+| IP-SM-GW の示し方 | IP-SM-GW-Number に IP-SM-GW の番号を入れます。HSS が動くのは、それが利用者の登録している IP-SM-GW の番号のときだけです。Origin-Host とは比べません。IP-SM-GW の台はそれぞれ自分の Diameter 名を持ち、知らせを送る台が、利用者を登録した台とは限らないためです。番号はどの台も同じです。 | TS 29.336 6.4.14。「名指しした台が使えないとき」。 |
+| 登録の更新との区別 | Ready-For-SM は知らせだけで、IP-SM-GW の番号も Diameter の名前も書き換えません。番号が登録と違えば 2001 で答え、何もしません（そのことはログに残します）。 | TS 23.204 6.5b step 2d は、UE が IMS に登録していなければ IP-SM-GW 自身が知らせを捨てるとします。HSS でも確かめるのは、知らせと応答のあいだに登録が外れることがあるためです。何も変えずに成功を返すのは、TS 23.040 3.2.6 の 2i にならいます。 |
+| IMS への登録 | 登録で届くようになったときは、これまでどおり、SMSRegistrationInfo の Sh-Update そのものが知らせです。HSS はこれで UNRI を落とし、SC に知らせます。Ready-For-SM を送るのは、登録したままの UE がまた届くようになったときと、メモリに空きができたときです。 | TS 23.204 6.5b step 2a。TS 23.040 3.2.6 の 2c。TS 29.328 6.1.2.1 step 4b。 |
+| 結果コード | 知らせを受け取れば DIAMETER_SUCCESS です。番号に当たる利用者がいなければ DIAMETER_ERROR_USER_UNKNOWN、読めない要求（Alert-Reason が 2 つの値のどちらでもないものを含む）は DIAMETER_UNABLE_TO_COMPLY で答えます。 | TS 29.338 5.2.3.4。TS 29.002 12.4.3 の Unknown Subscriber。 |
+| UE への答え | RP-SMMA には、HSS が答えてから RP-ACK を返します。番号の無い利用者と、HSS が DIAMETER_ERROR_USER_UNKNOWN を返した利用者には、RP-Cause 30（Unknown Subscriber）を返します。HSS が答えなかったときと、ほかの結果で断ったときは、RP-Cause 41 を返します。UE は知らせを送るべきものとして持ち続けます。 | TS 24.011 V20.0.0 Table 8.4（part 3）と E4。 |
+| 重複した知らせ | 加入者のロックの下で印を読み直し、その理由の印を落とします。MWD に SC が残っていれば、印がすでに落ちていても ALR を送ります（UE_PRESENT は MCEF が落ちているときだけです）。SC が ALR を断ったときや、ALR が届かなかったときは、その SC のアドレスが MWD に残ります。そのため、次の知らせで送り直せなければなりません。重複した知らせや同時に届いた知らせは、SC に ALR を重ねて送ることがあります。ALR は SC に配達を試させるだけなので、重なっても害はありません。MWD が空なら、何もせずに応答だけ返します。 | TS 23.040 3.2.6 の 2c、2f、2i。 |
+| 印の落とし方 | UE_PRESENT は UNRI を落とし、MWD が空でなく MCEF も落ちていれば ALR を送ります（2c）。UE_MEMORY_AVAILABLE は MCEF と UNRI を落とし、MWD が空でなければ ALR を送ります。2f は UNRI を落とすとだけ書き、MCEF には触れていませんが、MSC 経由（2d）と SGSN 経由（2e）は同じ知らせで MCEF を落とすので、それに合わせます。 | TS 23.040 3.2.6 の 2c、2d、2e、2f。 |
+
+検討して採らなかった案です。
+
+| 案 | 採らなかった理由 |
+| --- | --- |
+| Sh-Update に独自の要素を足す（これまでの作り） | 標準の HSS は、この PUR を登録として扱います。標準のメッセージの意味を変えることになります。 |
+| Sh のほかの Data-Reference や RepositoryData で運ぶ | Data-Reference の値は 3GPP が決めるものです。RepositoryData は、HSS が中身を読まずに預かるデータです。どちらも、標準のメッセージに別の意味を持たせることになります。 |
+| S6c の RDR で運ぶ | RDR は配達の結果を報告する手順です。SM-Delivery-Cause の SUCCESSFUL_TRANSFER を「また届く」の意味で送れば、やはり標準のメッセージの意味を変えます。 |
+| IP-SM-GW から S6a の NOR を送る | NOR は MME と SGSN の手順です。IP-SM-GW が MME のふりをすることになり、実際の網が使わない経路で信号を運ぶことになります。 |
+| 新しい Diameter のアプリケーションを作る | RFC 6733 2.4 は、アプリケーションに IANA の割り当てた Application-Id を求めます。割り当てを受けていない値は、ほかのアプリケーションと重なるおそれがあります。 |
+| MAP を作る | MAP には TCAP、SCCP、M3UA、SCTP が要ります。要件は SMS を Diameter（SGd と S6c）で運ぶことにしており、CS 網との接続は対象外です。 |
+| 知らせを省く | IP-SM-GW は RP-SMMA に、HSS に知らせないまま RP-ACK を返すことになり、実際の網と違う動きになります。メモリの空きで SC に知らせる流れも、学習者が見られなくなります。 |
 
 ## IP-SM-GW の SGd の作り
 
@@ -94,9 +112,9 @@ UE にまたショートメッセージが届くようになったことと、UE
 | System Failure の結果コード | TS 29.338 に当たるものが無いので、基本プロトコルの DIAMETER_UNABLE_TO_COMPLY を使います。要求を読めなかったときと、結果が分からないままになったときも同じです。 | TS 29.338 7.3.1 が、この文書の結果コードの横で基本プロトコルの permanent failure も使うとします。RFC 6733 7.1.5。 |
 | 運用から外した台 | TFR を DIAMETER_TOO_BUSY で断ります。配達はまだ何も始まっていないので、ほかの台が丸ごと引き取れます。SC は同じ realm のほかの台へ TFR を送ります（「名指しした台が使えないとき」）。 | RFC 6733 7.1.3 が、この答えを受けたノードに、ほかの相手へ送ってみさせます（SHOULD）。 |
 | UNRI の置き場所 | IP-SM-GW 自身の Store に、公開識別子ごとに置きます。reg イベントの購読の中には入れません。印を取るのを、どの台でも 1 回の操作で済ませ、1 台だけが取れるようにするためです。期限は、印を立てたときの、利用者の reg イベントの購読の期限と同じにします。印を立てる前に読んだ購読が、そのあいだに再登録で更新されていたら、更新後の購読の期限まで延ばします。保存先は期限の無い項目を持たないので、期限は要ります。購読があるあいだは、再登録が購読を更新するときに印を見つけて HSS に知らせます。購読が切れたあとは、利用者が登録し直すと新しい購読ができ、最初の NOTIFY で送る PUR そのものが HSS への知らせになります。そのため、印が購読より長く残っても役に立ちません。72 時間のような決まった長さにはしません。登録の期限がそれより長いと、再登録が来る前に印が消え、HSS の UNRI が残り続けるためです。HSS の UNRI には期限を付けません。 | TS 23.040 2.1.1 が UNRI を IP-SM-GW と HSS の両方に置くものと定めます。TS 23.040 3.2.6 は、UNRI を出来事（1e、2c、2f）で落とすとし、時間で消すとは定めません。TS 29.338 5.2.1.3 も、HSS が印の付いたノードを外すとだけ定めます。TS 29.338 5.2.2.2 が扱うのは、通知が続けて失敗した SC のアドレスです。知らせを送り直すかを運用者に任せ、そのアドレスは MWD から消すものとしています。UNRI のことではありません。 |
-| UNRI を落とす引き金 | 登録（PUR）のときは落とすだけで、知らせは送りません。PUR 自体が 2c の知らせだからです。利用者からの SIP 要求と、再登録の第三者 REGISTER のときは、落として `msPresent` を送ります。再登録のあとの NOTIFY は状態が変わらないので、PUR を送りません。第三者 REGISTER で知らせなければ、再登録を続けるだけの UE について、HSS が UNRI を持ち続けます。印を取れるのは 1 台だけなので、知らせも 1 回です。利用者が登録していないか、SMS over IP を受ける連絡先が無ければ、知らせを捨てます。知らせを HSS が受け取らなかったときは印を戻し、次の要求か再登録でもう一度試します。 | TS 23.040 3.2.6 の 2c。TS 23.204 6.5b step 2、2a と 2d。TS 24.341 5.3.3.2 は、利用可否が変わったときだけ HSS を更新させます。 |
-| メモリの知らせ | RP-SMMA を受けたら `memoryAvailable` を HSS に送り、そのあとで UE に RP-ACK を返します。送れなかったときは RP-Cause 41 を返すので、UE は知らせを送るべきものとして持ち続けます。 | TS 24.341 5.3.3.4.1 の手順 d と e。TS 23.204 6.6。TS 24.011 Table 8.4 part 1。 |
-| 配送の報告を送らないこと | IP-SM-GW は HSS に RDR を送らず、UE がまた届くようになる 1 回限りの通知も申し込みません。同じことを SMS-GMSC が報告します。HSS は失敗の報告で MWD を書き、HSS が印を持つあいだに届いた配達の報告で印を落とします。そのため HSS は、SMS-GMSC の報告を無視せずに処理します。UE が戻ったことは、もともと持っている reg イベントの購読で分かります。 | TS 23.204 6.5 step 7 と 8、6.5a step 17 から 19。`SIMPLIFIED:` にも書いています。 |
+| UNRI を落とす引き金 | 登録（PUR）のときは落とすだけで、知らせは送りません。PUR 自体が 2c の知らせだからです。利用者からの SIP 要求と、再登録の第三者 REGISTER のときは、落として UE_PRESENT の Ready-For-SM を送ります。再登録のあとの NOTIFY は状態が変わらないので、PUR を送りません。第三者 REGISTER で知らせなければ、再登録を続けるだけの UE について、HSS が UNRI を持ち続けます。印を取れるのは 1 台だけなので、知らせも 1 回です。利用者が登録していないか、SMS over IP を受ける連絡先が無ければ、知らせを捨てます。知らせを HSS が受け取らなかったときは印を戻し、次の要求か再登録でもう一度試します。 | TS 23.040 3.2.6 の 2c。TS 23.204 6.5b step 2、2a と 2d。TS 24.341 5.3.3.2 は、利用可否が変わったときだけ HSS を更新させます。 |
+| メモリの知らせ | RP-SMMA を受けたら UE_MEMORY_AVAILABLE の Ready-For-SM を HSS に送り、HSS が答えてから UE に RP-ACK を返します。断られたときの RP-Cause は「IP-SM-GW から HSS への Ready-For-SM」にあります。 | TS 24.341 5.3.3.4.1 の手順 d と e。TS 23.204 6.6。TS 24.011 Table 8.4 part 3。 |
+| 配送の報告を送らないこと | IP-SM-GW は S6c で Ready-For-SM だけを送り、HSS に RDR を送らず、UE がまた届くようになる 1 回限りの通知も申し込みません。同じことを SMS-GMSC が報告します。HSS は失敗の報告で MWD を書き、HSS が印を持つあいだに届いた配達の報告で印を落とします。そのため HSS は、SMS-GMSC の報告を無視せずに処理します。UE が戻ったことは、もともと持っている reg イベントの購読で分かります。 | TS 23.204 6.5 step 7 と 8、6.5a step 17 から 19。`SIMPLIFIED:` にも書いています。 |
 | ドメイン選択 | IMS だけに配達します。ほかのドメインのノードがこのプロジェクトに無いためです。 | TS 23.204 6.4 step 5 と 6.5a。`SIMPLIFIED:` にも書いています。 |
 
 TFA の結果コードは次のとおりです。左の列は配達の結果で、SIP の応答コードから TS 29.311 Table 6.1.4.4.1.1 で写した MAP の user error か、UE の RP-ERROR の原因です。右の列は、同じことを表す TS 29.338 7.3 の結果コードです。

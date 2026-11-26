@@ -189,6 +189,8 @@ Wireshark 4.6.9（CI のキャプチャのイメージの版）のソースも�
 - IMS への登録で届くようになった場合だけは、Diameter の標準の道があります。IP-SM-GW が SMSRegistrationInfo の Sh-Update で自分を登録すれば、HSS は 2c のとおりに UNRI を落として SC に知らせます。
 - これまでの作りは、SMSRegistrationInfo の Sh-Update にこのプロジェクトの名前空間の要素を足して、2 つの知らせを運んでいました。標準の HSS はこの PUR を step 4b の登録として扱います。S6c に対応している印も無いので、HSS が覚えている IP-SM-GW の Diameter 名がどうなるかも定まりません。標準のメッセージの意味を変えているので、この形はやめます。
 
+選んだ作りは、[docs/design/sms.md](../design/sms.md) の「IP-SM-GW から HSS への Ready-For-SM」にあります。
+
 ## 確かめられなかったこと
 
 - TS 29.002（MAP）は、7.6.8、12.4、ReadyForSM-Arg の ASN.1 だけを読みました。RFC 3840 と TS 24.229 5.7.1.3A は読んでいません。RFC 3428 と RFC 3841 は、上の「実装で決めたこと」に書いた章だけを読みました。

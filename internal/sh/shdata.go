@@ -106,51 +106,12 @@ type SMSRegistrationInfoData struct {
 	// Extension elements deep, as it was added to tSMSRegistrationInfo
 	// after the SCAddress and the SBI support indication.
 	S6cSupport *S6cSupport `xml:"Extension>Extension>Extension>IP-SM-GW-S6cSupportIndication,omitempty"`
-	// ReadyForSM makes the update a notification that the user can take
-	// short messages again instead of a registration (see
-	// ReadyForSMNamespace); empty writes no element. It is the last
-	// field so that the element comes after the Extension chain, in the
-	// place tSMSRegistrationInfo keeps for an element of another
-	// namespace.
-	ReadyForSM ReadyForSM `xml:"https://github.com/yuu-biz/ims-practice/ns/sh ReadyForSM,omitempty"`
 }
 
 // SupportsS6c reports whether the IP-SM-GW announced that S6c reaches
 // it. A registration without the indication does not.
 func (d *SMSRegistrationInfoData) SupportsS6c() bool {
 	return d != nil && d.S6cSupport != nil && *d.S6cSupport == S6cSupported
-}
-
-// ReadyForSMNamespace is the XML namespace of the ReadyForSM element,
-// which this project defines itself: the Sh user profile has no element
-// with which an application server tells the HSS that the user can take
-// short messages again. Annex D ends tSMSRegistrationInfo with an
-// xs:any for the namespace ##other with lax processing, so the element
-// has its place there, and an HSS that does not know this namespace
-// skips the element and still validates the document.
-const ReadyForSMNamespace = "https://github.com/yuu-biz/ims-practice/ns/sh"
-
-// ReadyForSM is why the user can take short messages again. The names
-// follow the alert reason of the MAP READY_FOR_SM service, ms-Present
-// and memoryAvailable, which carries the same two notifications from an
-// IP-SM-GW to an HLR (TS 29.002 12.4 and 7.6.8.8).
-type ReadyForSM string
-
-const (
-	// MSPresent is the UE that is reachable for SMS over IP again,
-	// whether or not it registered anew (TS 23.040 3.2.6 item 2c, TS
-	// 23.204 6.5b step 2d).
-	MSPresent ReadyForSM = "msPresent"
-	// MemoryAvailable is the UE that has memory for a short message
-	// again, which it tells the IP-SM-GW with an RP-SMMA (TS 23.040
-	// 3.2.6 item 2f, TS 23.204 6.6 step 3).
-	MemoryAvailable ReadyForSM = "memoryAvailable"
-)
-
-// Valid reports whether r is one of the two reasons, which is what a
-// notification carries.
-func (r ReadyForSM) Valid() bool {
-	return r == MSPresent || r == MemoryAvailable
 }
 
 // S6cSupport is the tIpSmGwS6cSupInd type of TS 29.328 Annex D.

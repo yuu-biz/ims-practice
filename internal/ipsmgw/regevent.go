@@ -8,8 +8,10 @@ import (
 	"strings"
 	"time"
 
+	"github.com/yuu-biz/ims-practice/internal/diameter"
 	"github.com/yuu-biz/ims-practice/internal/ims"
 	"github.com/yuu-biz/ims-practice/internal/reginfo"
+	"github.com/yuu-biz/ims-practice/internal/sgd"
 	"github.com/yuu-biz/ims-practice/internal/sh"
 	"github.com/yuu-biz/ims-practice/internal/sip"
 )
@@ -493,9 +495,12 @@ func (g *IPSMGW) reachableAgain(req *sip.Message, log *slog.Logger) {
 // tellReachable is TS 23.204 6.5b step 2 with TS 23.040 3.2.6 item 2c:
 // the UE of sub has shown that it is there, by a request of its own or
 // by registering again (step 2a). Where this IP-SM-GW could not deliver
-// a short message to the user, the HSS hears that the user can take
-// short messages again, which makes it clear its own UNRI and alert the
-// Service Centres that are waiting.
+// a short message to the user, the HSS hears in a Ready-For-SM with
+// UE_PRESENT that the user can take short messages again, which makes
+// it clear its own UNRI and alert the Service Centres that are waiting.
+// Ready-For-SM names the user by MSISDN, which the subscription holds;
+// a subscription without one has no number for the HSS to keep short
+// messages under, so its UE has nothing to be alerted for.
 //
 // Step 2d has the IP-SM-GW discard the notification where the UE is not
 // registered in the IMS. The subscription to the user's registration
@@ -519,15 +524,34 @@ func (g *IPSMGW) tellReachable(ctx context.Context, sub RegSubscription, log *sl
 	if !g.takeNotReachable(ctx, publicID, log) {
 		return
 	}
+	if sub.MSISDN == "" {
+		log.Info("the return of the user is not passed to the HSS: the subscription holds no MSISDN")
+		return
+	}
 	log = log.With("msisdn", sub.MSISDN)
-	if err := g.hss.NotifyReadyForSM(ctx, shIdentity(sub.PublicIdentity, sub.MSISDN), g.cfg.Number, sh.MSPresent); err != nil {
-		log.Warn("the return of the user was not passed to the HSS", "error", err.Error())
+	result, err := g.readyForSM(ctx, sub.MSISDN, sgd.AlertReasonUEPresent)
+	if err != nil || !result.Success() {
+		log.Warn("the return of the user was not passed to the HSS", "result", result.String(), "error", errorText(err))
 		if err := g.store.PutNotReachable(ctx, publicID, notReachableUntil(sub)); err != nil {
 			log.Warn("the unreachable flag of the user was not put back", "error", err.Error())
 		}
 		return
 	}
 	log.Info("the user can take short messages again; the HSS is told")
+}
+
+// readyForSM sends the HSS the Ready-For-SM of package sgd for the user
+// of msisdn, and returns the result of its answer. The request names
+// this IP-SM-GW by its number, which every instance has, and the HSS by
+// the realm of the home network.
+func (g *IPSMGW) readyForSM(ctx context.Context, msisdn string, reason sgd.AlertReason) (diameter.Result, error) {
+	a, err := g.hss.ReadyForSM(ctx, sgd.ReadyForSMRequest{
+		Header:         diameter.Header{DestinationRealm: g.cfg.HomeDomain},
+		UserIdentifier: sgd.UserIdentifier{MSISDN: msisdn},
+		IPSMGWNumber:   g.cfg.Number,
+		AlertReason:    reason,
+	})
+	return a.Result, err
 }
 
 // subscriptionOfSender finds the subscription of the user who sent req,

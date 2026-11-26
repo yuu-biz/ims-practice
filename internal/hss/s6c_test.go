@@ -891,26 +891,6 @@ func TestReadyForSMForAnUnknownNumber(t *testing.T) {
 	}
 }
 
-// The notification that an Sh update of SMSRegistrationInfo carries in
-// the element of this project's own namespace acts as Ready-For-SM does.
-func TestReadyForSMInAnShUpdate(t *testing.T) {
-	n := newS6cNetwork(t)
-	n.register(t)
-	if a := n.rdr(t, msisdnA, sgd.SMDeliveryCauseUEMemoryCapacityExceeded); a.Result != success {
-		t.Fatalf("RDA = %v", a.Result)
-	}
-	notification := sh.ShData{ShIMSData: &sh.ShIMSData{SMSRegistrationInfo: &sh.SMSRegistrationInfoData{
-		IPSMGWNumber: ipsmgwNumber, ReadyForSM: sh.MemoryAvailable,
-	}}}.Marshal()
-	if r := n.pur(t, sh.UserIdentity{PublicIdentity: impu}, []sh.DataReference{sh.SMSRegistrationInfo}, notification); r != success {
-		t.Fatalf("PUA = %v", r)
-	}
-	if alr := n.alert(t); alr.SCAddress != scAddress {
-		t.Errorf("ALR = %+v", alr)
-	}
-	n.waitForSubscriber(t, "after the alert", func(u Subscriber) bool { return !u.MCEF && len(u.MessageWaitingData) == 0 })
-}
-
 // TestReadyForShortMessages is each transition of each reason: which
 // flags a notification clears, and when the service centres of the
 // message waiting data are alerted (TS 23.040 3.2.6 items 2c and 2f).

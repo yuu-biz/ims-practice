@@ -359,6 +359,11 @@ tfa="diameter.cmd.code == 8388646 && $ans"
 srr="diameter.cmd.code == 8388647 && $req"
 alr="diameter.cmd.code == 8388648 && $req"
 rdr="diameter.cmd.code == 8388649 && $req"
+# Ready-For-SM, the command of this project's own on S6c with which the
+# IP-SM-GW tells the HSS that a user can take short messages again. A
+# network sends that notice in MAP-READY-FOR-SM (TS 29.002 12.4.1); the
+# command code is the experimental one of RFC 6733 11.2.1.
+ready="diameter.cmd.code == 16777214 && diameter.applicationId == 16777312 && $req"
 # RP message types (TS 24.011 8.2.2) and TP message types (TS 23.040
 # 9.2.3.1). An RP-ACK from the network carries an SMS-SUBMIT-REPORT,
 # one from the MS an SMS-DELIVER-REPORT; both have TP-MTI 1 and 0, as
@@ -376,12 +381,12 @@ rp_smma='gsm_a.rp.msg_type == 0x06'
 await "both deliveries of the short message for the UE without memory" \
 	"$message && ip.dst == $ue2ip && gsm_sms.sms_text == \"$room_text\"" 2 60
 
-# The IP-SM-GW opens Diameter to the HSS with Sh, which they share, and
-# SGd, on which a Service Centre brings it short messages, and with
-# nothing else (RFC 6733 5.3).
+# The IP-SM-GW opens Diameter to the HSS with Sh and S6c, which they
+# share, and SGd, on which a Service Centre brings it short messages,
+# and with nothing else (RFC 6733 5.3).
 cer="diameter.cmd.code == 257 && $req && ip.src == $ipsmgw && ip.dst == $hss"
-expect "CER IP-SM-GW -> HSS advertising Sh and SGd" "$cer && diameter.Auth-Application-Id == 16777217 && diameter.Auth-Application-Id == 16777313"
-none "CER of the IP-SM-GW to the HSS advertising an application other than Sh and SGd" "$cer && diameter.Auth-Application-Id in {0..16777216, 16777218..16777312, 16777314..4294967295}"
+expect "CER IP-SM-GW -> HSS advertising Sh, S6c and SGd" "$cer && diameter.Auth-Application-Id == 16777217 && diameter.Auth-Application-Id == 16777312 && diameter.Auth-Application-Id == 16777313"
+none "CER of the IP-SM-GW to the HSS advertising an application other than Sh, S6c and SGd" "$cer && diameter.Auth-Application-Id in {0..16777216, 16777218..16777311, 16777314..4294967295}"
 expect "CEA 2001 HSS -> IP-SM-GW" "diameter.cmd.code == 257 && $ans && ip.src == $hss && ip.dst == $ipsmgw && diameter.Result-Code == 2001"
 
 echo "the Service Centre opens S6c to the HSS, and the IP-SM-GW SGd to it (TS 29.338 6.3.1.1)"
@@ -523,9 +528,9 @@ expect "RDA 2001" "$(answer_to) && diameter.Result-Code == 2001"
 echo "UE 2 is back, the HSS alerts the Service Centre and it delivers (TS 23.204 6.5b, TS 23.040 3.2.6 item 2c)"
 expect "MESSAGE UE 2 -> P-CSCF: the short message of its own, in UCS2" "$message && $sms && ip.src == $ue2ip && $rp_data_mo && gsm_sms.tp-da == \"12025550101\" && gsm_sms.tp-dcs == 8 && gsm_sms.sms_text == \"$ucs2_text\""
 back="$last"
-expect "PUR IP-SM-GW -> HSS: ReadyForSM msPresent" "diameter.cmd.code == 307 && $req && ip.src == $ipsmgw && diameter.Data-Reference == 24 && e164.msisdn == \"12025550102\" && diameter.Sh-User-Data contains \"<ReadyForSM xmlns=\\\"https://github.com/yuu-biz/ims-practice/ns/sh\\\">msPresent</ReadyForSM>\""
-# The alert does not wait for the answer to that update, so the PUA may
-# come after the ALR.
+expect "Ready-For-SM IP-SM-GW -> HSS for UE 2's number with UE_PRESENT" "$ready && ip.src == $ipsmgw && ip.dst == $hss && e164.msisdn == \"12025550102\" && diameter.Alert-Reason == 0"
+# The alert does not wait for the answer to that notice, so the answer
+# may come after the ALR.
 last="$back"
 expect "ALR HSS -> SC for UE 2 (TS 29.338 5.2.2)" "$alr && ip.src == $hss && ip.dst == $sc && e164.msisdn == \"12025550102\""
 alerted="$last"
@@ -568,9 +573,9 @@ expect "200 OK IP-SM-GW -> S-CSCF to that REGISTER" "sip.Status-Code == 200 && s
 last="$reregistered"
 expect "SUBSCRIBE IP-SM-GW -> S-CSCF: the refresh within the dialog" "sip.Method == \"SUBSCRIBE\" && sip.Event == \"reg\" && ip.src == $ipsmgw && ip.dst == $scscf"
 last="$reregistered"
-expect "PUR IP-SM-GW -> HSS: ReadyForSM msPresent, set off by the re-registration" "diameter.cmd.code == 307 && $req && ip.src == $ipsmgw && diameter.Data-Reference == 24 && e164.msisdn == \"12025550102\" && diameter.Sh-User-Data contains \"<ReadyForSM xmlns=\\\"https://github.com/yuu-biz/ims-practice/ns/sh\\\">msPresent</ReadyForSM>\""
+expect "Ready-For-SM IP-SM-GW -> HSS with UE_PRESENT, set off by the re-registration" "$ready && ip.src == $ipsmgw && ip.dst == $hss && e164.msisdn == \"12025550102\" && diameter.Alert-Reason == 0"
 told="$last"
-none "MESSAGE from UE 2 between the report of the absent user and that PUR" "$message && ip.src == $ue2ip && frame.number > $held && frame.number < $told"
+none "MESSAGE from UE 2 between the report of the absent user and that Ready-For-SM" "$message && ip.src == $ue2ip && frame.number > $held && frame.number < $told"
 expect "ALR HSS -> SC for UE 2" "$alr && ip.src == $hss && ip.dst == $sc && e164.msisdn == \"12025550102\""
 alerted="$last"
 expect "ALA 2001 SC -> HSS" "$(answer_to) && diameter.Result-Code == 2001"
@@ -600,12 +605,12 @@ expect "RDA 2001" "$(answer_to) && diameter.Result-Code == 2001"
 expect "MESSAGE UE 2 -> P-CSCF: RP-SMMA, the notification it owes (TS 24.011 7.3.2)" "$message && $sms && ip.src == $ue2ip && $rp_smma"
 smma="$(field sip.Call-ID)"
 expect "RP-SMMA reaches the IP-SM-GW" "$message && sip.Call-ID == \"$smma\" && ip.dst == $ipsmgw && $rp_smma"
-expect "PUR IP-SM-GW -> HSS: ReadyForSM memoryAvailable" "diameter.cmd.code == 307 && $req && ip.src == $ipsmgw && diameter.Data-Reference == 24 && e164.msisdn == \"12025550102\" && diameter.Sh-User-Data contains \"<ReadyForSM xmlns=\\\"https://github.com/yuu-biz/ims-practice/ns/sh\\\">memoryAvailable</ReadyForSM>\""
+expect "Ready-For-SM IP-SM-GW -> HSS with UE_MEMORY_AVAILABLE" "$ready && ip.src == $ipsmgw && ip.dst == $hss && e164.msisdn == \"12025550102\" && diameter.Alert-Reason == 1"
 notified="$last"
-expect "PUA 2001" "$(answer_to) && diameter.Result-Code == 2001"
+expect "Ready-For-SM answer 2001 HSS -> IP-SM-GW" "$(answer_to) && ip.src == $hss && ip.dst == $ipsmgw && diameter.Result-Code == 2001"
 after_notify="$last"
-# As in b), the alert does not wait for the answer to the update, so the
-# ALR may come before the PUA.
+# As in b), the alert does not wait for the answer to the notice, so the
+# ALR may come before that answer.
 last="$notified"
 expect "ALR HSS -> SC for UE 2" "$alr && ip.src == $hss && ip.dst == $sc && e164.msisdn == \"12025550102\""
 alerted="$last"
@@ -616,8 +621,8 @@ tfr_session="$(field diameter.Session-Id | cut -d, -f1)"
 expect "MT MESSAGE reaches UE 2 again, with the same text" "$message && ip.dst == $ue2ip && gsm_sms.sms_text == \"$room_text\""
 expect "TFA 2001 for that TFR" "$tfa && ip.src == $ipsmgw && ip.dst == $sc && diameter.Session-Id == \"$tfr_session\" && diameter.Result-Code == 2001"
 # The RP-ACK for the notification goes out only after the HSS has taken
-# it (TS 23.204 6.6), so it comes after the PUA and may come after the
-# alert.
+# it (TS 23.204 6.6), so it comes after the answer to the Ready-For-SM
+# and may come after the alert.
 last="$after_notify"
 expect "RP-ACK for the notification reaches UE 2" "$message && $sms && ip.dst == $ue2ip && sip.In-Reply-To == \"$smma\" && $rp_ack_mt"
 
@@ -625,7 +630,18 @@ expect "RP-ACK for the notification reaches UE 2" "$message && $sms && ip.dst ==
 # the P-CSCF sends none of it to a UE. Every UE of this setup has an
 # address from 172.28.0.100 up.
 none "P-Charging-Vector or P-Charging-Function-Addresses from the P-CSCF to a UE" 'ip.src == 172.28.0.40 && ip.dst >= 172.28.0.100 && (sip.P-Charging-Vector || sip.P-Charging-Function-Addresses)'
-none "malformed SIP, Diameter, RP or TP packets" '(sip || diameter || gsm_a.rp || gsm_sms) && (_ws.malformed || _ws.expert.severity >= warning)'
+# Wireshark warns of a command that its dictionary does not have, which
+# Ready-For-SM is: that warning is how the capture shows the command to
+# be this project's own. Its AVPs are standard ones, which Wireshark
+# decodes like any other.
+none "malformed SIP, Diameter, RP or TP packets" "(sip || diameter || gsm_a.rp || gsm_sms) && (_ws.malformed || _ws.expert.severity >= warning) && !(diameter.cmd.code == 16777214)"
+last=0
+expect "Ready-For-SM marked by Wireshark as a command it does not know" "$ready && diameter.cmd.code.unknown"
+none "malformed Ready-For-SM requests and answers, or AVPs in them that Wireshark does not know" "diameter.cmd.code == 16777214 && (_ws.malformed || diameter.avp.code.unknown)"
+# No Sh update carries a notice: an Sh update of SMSRegistrationInfo
+# registers the IP-SM-GW or takes the registration away, and nothing
+# else (TS 29.328 6.1.2.1 step 4b).
+none "Sh update carrying anything but the IP-SM-GW's registration" 'diameter.cmd.code == 307 && diameter.Sh-User-Data contains "ReadyForSM"'
 none "retransmitted MESSAGEs and their responses" 'sip.CSeq.method == "MESSAGE" && sip.resend == 1'
 # RFC 3261 18.1.1: a request over 1300 bytes does not go over UDP.
 none "SIP requests over 1300 bytes on UDP" 'sip.Method && udp && udp.length > 1308'
@@ -639,10 +655,10 @@ none "Diameter between the Service Centre and a node other than the IP-SM-GW or 
 guide_filters docs/guide/en/sms.md
 
 # The ladder of the short messages, the Sh messages and the SGd and S6c
-# messages, for the guide and the CI artifact.
+# messages, Ready-For-SM among them, for the guide and the CI artifact.
 mkdir -p e2e-out
 docker compose exec -T capture tshark -r "$pcap" -T fields -E separator=/t \
-	-Y 'sip.CSeq.method == "MESSAGE" || (sip && ip.addr == 172.28.0.70) || diameter.cmd.code in {306, 307, 8388645, 8388646, 8388647, 8388648, 8388649}' \
+	-Y 'sip.CSeq.method == "MESSAGE" || (sip && ip.addr == 172.28.0.70) || diameter.cmd.code in {306, 307, 8388645, 8388646, 8388647, 8388648, 8388649, 16777214}' \
 	-e frame.number -e ip.src -e ip.dst -e _ws.col.Info -e gsm_sms.sms_text | tr -d '\r' >e2e-out/sms-ladder.txt
 
 if [ "$fail" -ne 0 ]; then

@@ -11,6 +11,7 @@ import (
 	"github.com/yuu-biz/ims-practice/internal/ims"
 	"github.com/yuu-biz/ims-practice/internal/ipsmgw"
 	"github.com/yuu-biz/ims-practice/internal/reginfo"
+	"github.com/yuu-biz/ims-practice/internal/sgd"
 	"github.com/yuu-biz/ims-practice/internal/sh"
 	"github.com/yuu-biz/ims-practice/internal/sip"
 )
@@ -275,7 +276,7 @@ func TestTheReturnOfAUserItCouldNotReach(t *testing.T) {
 	}
 
 	h.send(message(submitBody(t, 1, scAddress, hello)))
-	want := notification{sh.UserIdentity{MSISDN: "12025550101"}, number, sh.MSPresent}
+	want := readyForSM("12025550101", sgd.AlertReasonUEPresent)
 	if got := h.nextNotification(); got != want {
 		t.Errorf("notification = %+v, want %+v", got, want)
 	}
@@ -306,7 +307,7 @@ func TestTheReturnOfAUserWhoAssertsATelURI(t *testing.T) {
 	m.Add("P-Asserted-Identity", "<"+aliceTel+">")
 	m.Add("P-Asserted-Identity", "<sip:+12025550101@"+domain+";user=phone>")
 	h.send(m)
-	want := notification{sh.UserIdentity{MSISDN: "12025550101"}, number, sh.MSPresent}
+	want := readyForSM("12025550101", sgd.AlertReasonUEPresent)
 	if got := h.nextNotification(); got != want {
 		t.Errorf("notification = %+v, want %+v", got, want)
 	}
@@ -386,7 +387,7 @@ func TestTheReregistrationOfAUserItCouldNotReach(t *testing.T) {
 	if resp := h.thirdPartyRegister(3600); resp.StatusCode != 200 {
 		t.Fatalf("reregistration answered %d", resp.StatusCode)
 	}
-	want := notification{sh.UserIdentity{MSISDN: "12025550101"}, number, sh.MSPresent}
+	want := readyForSM("12025550101", sgd.AlertReasonUEPresent)
 	if got := h.nextNotification(); got != want {
 		t.Errorf("notification = %+v, want %+v", got, want)
 	}

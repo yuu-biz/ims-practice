@@ -92,7 +92,7 @@ for node in $icscf $scscf $pcscf; do
 done
 # The HSS speaks Cx (16777216) with the CSCFs, Sh (16777217) with
 # application servers and S6c (16777312, TS 29.338) with a service
-# centre, and advertises nothing else. A CEA lists several
+# centre and the IP-SM-GW, and advertises nothing else. A CEA lists several
 # Auth-Application-Id: "all ... in" holds when every one of them is in
 # the set, so its negation finds a CEA with any other one.
 none "CEA of the HSS advertising an application other than Cx, Sh and S6c" "diameter.cmd.code == 257 && diameter.flags.request == 0 && ip.src == $hss && !(all diameter.Auth-Application-Id in {16777216, 16777217, 16777312})"

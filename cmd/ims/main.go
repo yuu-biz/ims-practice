@@ -432,7 +432,7 @@ func run(configPath string, log *slog.Logger, level *slog.LevelVar) error {
 			IBCF:          c.IBCF,
 			UserLocks:     stores.locks(config.RoleIPSMGW, roleLog),
 			Diameter:      diameterIdentity(node),
-		}, centre, ipsmgwStore(stores, roleLog), users, resolver, roleLog)
+		}, centre, ipsmgwStore(stores, roleLog), ipsmgw.HSSClients{Client: users, S6cClient: sgd.NewS6cClient(node, hss)}, resolver, roleLog)
 		ipsmgwRole.Store(g)
 		// The sweep that ends the deliveries whose TR1N has run out runs
 		// until the node stops its work.
@@ -1010,9 +1010,10 @@ var roleApplications = map[config.Role][]uint32{
 	config.RoleHSS:   {diameter.ApplicationIDCx, diameter.ApplicationIDSh, sgd.ApplicationIDS6c},
 	config.RoleICSCF: {diameter.ApplicationIDCx},
 	config.RoleSCSCF: {diameter.ApplicationIDCx},
-	// The IP-SM-GW registers itself and finds users over Sh, and takes
+	// The IP-SM-GW registers itself and finds users over Sh, tells the
+	// HSS over S6c that a user can take short messages again, and takes
 	// the short messages that a Service Centre brings over SGd.
-	config.RoleIPSMGW: {diameter.ApplicationIDSh, sgd.ApplicationIDSGd},
+	config.RoleIPSMGW: {diameter.ApplicationIDSh, sgd.ApplicationIDS6c, sgd.ApplicationIDSGd},
 	// The Service Centre asks the HSS where a user is and reports a
 	// delivery that failed over S6c, and carries the short messages
 	// themselves to and from the serving nodes over SGd.
@@ -1710,8 +1711,8 @@ func peersOfKind(cfg config.Config, peers []*diameter.Peer, kind config.PeerKind
 // the one for a UE (TFR) for the IP-SM-GW, which are the two ends of
 // that reference point (TS 29.338 6.2). Of S6c, the alert (ALR) is for
 // the Service Centre, which it tells that a user is reachable again, and
-// every other command is one that a Service Centre sends the HSS
-// (5.2). epcRole is nil on a node without the epc role, ipsmgwRole and
+// every other command is one that a Service Centre (5.2) or the
+// IP-SM-GW sends the HSS. epcRole is nil on a node without the epc role, ipsmgwRole and
 // scRole are empty on a node without the ipsmgw and the sc role, and
 // policyControl is empty on a node whose P-CSCF has no PCRF.
 func diameterHandler(node *diameter.Node, hssRole *hss.HSS, scscfRole *atomic.Pointer[scscf.SCSCF], epcRole *epc.EPC,

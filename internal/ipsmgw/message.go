@@ -6,8 +6,9 @@ import (
 	"log/slog"
 	"strings"
 
+	"github.com/yuu-biz/ims-practice/internal/diameter"
 	"github.com/yuu-biz/ims-practice/internal/ims"
-	"github.com/yuu-biz/ims-practice/internal/sh"
+	"github.com/yuu-biz/ims-practice/internal/sgd"
 	"github.com/yuu-biz/ims-practice/internal/sip"
 	"github.com/yuu-biz/ims-practice/internal/sms"
 )
@@ -257,39 +258,59 @@ func errorWith(mr uint8, r *Refusal) (sms.RPMessage, error) {
 
 // memoryAvailable is an RP-SMMA (TS 24.341 5.3.3.4.1 steps d and e, TS
 // 24.011 7.3.2, TS 23.204 6.6): the UE can take short messages again.
-// The IP-SM-GW passes the notification to the HSS, which clears the
-// memory capacity exceeded flag of the user and alerts the Service
-// Centres that hold short messages for them (TS 23.040 3.2.6 item 2f).
+// The IP-SM-GW passes the notification to the HSS in a Ready-For-SM with
+// UE_MEMORY_AVAILABLE, and the HSS clears the memory capacity exceeded
+// flag of the user and alerts the Service Centres that hold short
+// messages for them (TS 23.040 3.2.6 item 2f).
 //
-// Item d names the user by MSISDN where the IP-SM-GW has one, and by
-// the public identity otherwise, which is how its registration names the
-// user as well (regevent.go). The MSISDN is the one that the
+// Item d names the user by MSISDN, and by the tel URI of
+// P-Asserted-Identity where the IP-SM-GW has no MSISDN; Ready-For-SM
+// takes the number of either. The MSISDN is the one that the
 // third-party REGISTER carried, which the subscription to the user's
-// registration state holds; a Store that cannot be read leaves the
-// public identity, which Sh takes as well.
+// registration state holds.
 //
-// The RP-ACK follows the notification, so that it never tells the UE
-// that a notification got through when it did not. A notification that
-// failed gets RP-Cause 41, a temporary failure that the UE may try
-// again soon (TS 24.011 Table 8.4 part 1), as a short message does when
-// the SC cannot be asked (submit).
+// The RP-ACK follows the answer of the HSS, so that it never tells the
+// UE that a notification got through when it did not. A user without a
+// number, and one that the HSS does not know, gets RP-Cause 30, unknown
+// subscriber (TS 24.011 E4): a number that is allocated to no one. A
+// notification that did not get through otherwise gets RP-Cause 41, a
+// temporary failure that the UE may try again soon (TS 24.011 Table 8.4
+// part 3), as a short message does when the SC cannot be asked (submit).
 func (g *IPSMGW) memoryAvailable(req *sip.Message, sender string, rp sms.RPSMMA, log *slog.Logger) {
 	ctx := context.Background()
-	publicID, msisdn := sender, ""
+	refuse := func(cause sms.RPCause) {
+		g.answer(req, sender, sms.RPError{Direction: sms.NetworkToMS, MessageReference: rp.MessageReference, Cause: cause}, log)
+	}
+	msisdn := ""
 	if sub, ok, err := g.subscriptionOfSender(ctx, req); err != nil {
 		log.Warn("the MSISDN of the user was not read: the store failed", "error", err.Error())
 	} else if ok {
-		publicID, msisdn = sub.PublicIdentity, sub.MSISDN
+		msisdn = sub.MSISDN
 	}
-	id := shIdentity(publicID, msisdn)
-	if err := g.hss.NotifyReadyForSM(ctx, id, g.cfg.Number, sh.MemoryAvailable); err != nil {
-		log.Warn("memory available notification not passed to the HSS", "msisdn", msisdn, "error", err.Error())
-		g.answer(req, sender, sms.RPError{Direction: sms.NetworkToMS, MessageReference: rp.MessageReference,
-			Cause: sms.RPCauseTemporaryFailure}, log)
+	if n, ok := telNumber(req); msisdn == "" && ok {
+		msisdn = n.Digits
+	}
+	if msisdn == "" {
+		log.Info("memory available notification refused: the user has no number")
+		refuse(sms.RPCauseUnknownSubscriber)
 		return
 	}
-	log.Info("memory available notification passed to the HSS", "msisdn", msisdn)
-	g.answer(req, sender, sms.RPAck{Direction: sms.NetworkToMS, MessageReference: rp.MessageReference}, log)
+	log = log.With("msisdn", msisdn)
+	result, err := g.readyForSM(ctx, msisdn, sgd.AlertReasonUEMemoryAvailable)
+	switch {
+	case err != nil:
+		log.Warn("memory available notification not passed to the HSS", "error", err.Error())
+		refuse(sms.RPCauseTemporaryFailure)
+	case result == diameter.Experimental(sgd.DiameterErrorUserUnknown):
+		log.Info("memory available notification for a number the HSS does not know")
+		refuse(sms.RPCauseUnknownSubscriber)
+	case !result.Success():
+		log.Warn("memory available notification refused by the HSS", "result", result.String())
+		refuse(sms.RPCauseTemporaryFailure)
+	default:
+		log.Info("memory available notification passed to the HSS")
+		g.answer(req, sender, sms.RPAck{Direction: sms.NetworkToMS, MessageReference: rp.MessageReference}, log)
+	}
 }
 
 // answer sends rp to the UE that sent req, as the submit report of TS

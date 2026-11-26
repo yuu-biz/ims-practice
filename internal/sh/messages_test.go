@@ -224,56 +224,6 @@ func TestShDataS6cSupportIndicationPath(t *testing.T) {
 	}
 }
 
-// TestShDataReadyForSMPath: the ReadyForSM element of this project
-// comes last in SMSRegistrationInfo, after the Extension chain, which
-// is where TS 29.328 Annex D takes an element of another namespace
-// (xs:any for ##other, processed lax). It carries its namespace, so an
-// HSS that does not know it skips it.
-func TestShDataReadyForSMPath(t *testing.T) {
-	for _, reason := range []ReadyForSM{MSPresent, MemoryAvailable} {
-		d := ShData{ShIMSData: &ShIMSData{SMSRegistrationInfo: &SMSRegistrationInfoData{
-			IPSMGWNumber: "12025550199", ReadyForSM: reason,
-		}}}
-		b := d.Marshal()
-		want := `<SMSRegistrationInfo><IP-SM-GW-Number>12025550199</IP-SM-GW-Number>` +
-			`<ReadyForSM xmlns="https://github.com/yuu-biz/ims-practice/ns/sh">` + string(reason) +
-			`</ReadyForSM></SMSRegistrationInfo>`
-		if !strings.Contains(string(b), want) {
-			t.Errorf("Sh-Data = %s\nwant %s", b, want)
-		}
-		if !strings.Contains(want, ReadyForSMNamespace) {
-			t.Errorf("the element does not carry %s", ReadyForSMNamespace)
-		}
-		got, err := ParseShData(b)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if !reflect.DeepEqual(got, d) {
-			t.Errorf("parsed %+v, want %+v", got, d)
-		}
-		if !reason.Valid() || ReadyForSM("").Valid() || ReadyForSM("MSPresent").Valid() {
-			t.Errorf("%q is not taken for a reason, or another string is", reason)
-		}
-	}
-	// A registration carries no such element, and an element of the
-	// standard namespace is not read as one: only this project's
-	// namespace makes the update a notification.
-	registration := ShData{ShIMSData: &ShIMSData{SMSRegistrationInfo: &SMSRegistrationInfoData{IPSMGWNumber: "12025550199"}}}
-	if b := registration.Marshal(); strings.Contains(string(b), "ReadyForSM") {
-		t.Errorf("Sh-Data = %s\nwant no ReadyForSM", b)
-	}
-	other := []byte(`<Sh-Data><Sh-IMS-Data><Extension><Extension><Extension><SMSRegistrationInfo>` +
-		`<IP-SM-GW-Number>12025550199</IP-SM-GW-Number><ReadyForSM>msPresent</ReadyForSM>` +
-		`</SMSRegistrationInfo></Extension></Extension></Extension></Sh-IMS-Data></Sh-Data>`)
-	got, err := ParseShData(other)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got.ShIMSData.SMSRegistrationInfo.ReadyForSM != "" {
-		t.Errorf("a ReadyForSM without the namespace was read as %q", got.ShIMSData.SMSRegistrationInfo.ReadyForSM)
-	}
-}
-
 // The IMSI of a UDA sits five Extension elements below Sh-Data, where
 // the schema of TS 29.328 Annex D has it (tSh-Data-Extension5), and
 // the Extension chain comes after the elements that the schema puts
