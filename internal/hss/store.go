@@ -495,6 +495,16 @@ type Store interface {
 	// if the claim is still in force. A claim that has ended, because a
 	// ScheduleProfilePush made the round due again, leaves it there.
 	DoneProfilePush(ctx context.Context, c ProfilePushClaim) error
+	// ScheduleProfilePushRetry makes the PPR of one subscriber that a
+	// round left for another instance due at at (ProfilePushRetry), and
+	// ends a claim on it. ClaimProfilePushRetries and
+	// DoneProfilePushRetry are ClaimProfilePushes and DoneProfilePush
+	// for these. There is one at most per subscriber that a round could
+	// not reach from the instance that sent it, so claiming them costs
+	// what those subscribers cost and no walk over the rest.
+	ScheduleProfilePushRetry(ctx context.Context, r ProfilePushRetry, at time.Time) error
+	ClaimProfilePushRetries(ctx context.Context, now time.Time, lease time.Duration, limit int) ([]ProfilePushRetryClaim, error)
+	DoneProfilePushRetry(ctx context.Context, c ProfilePushRetryClaim) error
 	// Counts are the numbers of TS 32.409 4.2.1 that the store holds,
 	// and whether it keeps them. A store that does not keep them
 	// returns false, and the HSS on it serves no database usage
@@ -550,6 +560,26 @@ type ProfilePush struct {
 type ProfilePushClaim struct {
 	Source ProfileSource
 	Until  time.Time
+}
+
+// ProfilePushRetry is the PPR of one subscriber that the round Round of
+// the push of Source could not send from the instance that had it: that
+// instance has no Diameter connection to the S-CSCF of the subscriber,
+// which connected to another instance. Any instance may claim it, and
+// the one that holds the connection sends it. Since is when the round
+// left it, in the form of ProfilePush.Updated.
+type ProfilePushRetry struct {
+	Source    ProfileSource
+	Round     uint64
+	PrivateID string
+	Since     time.Time
+}
+
+// ProfilePushRetryClaim is the right of one instance to send the PPR of
+// a ProfilePushRetry until Until.
+type ProfilePushRetryClaim struct {
+	ProfilePushRetry
+	Until time.Time
 }
 
 // Counts are the database usage measurements of TS 32.409 4.2.1: how
@@ -614,12 +644,15 @@ type MemoryStore struct {
 	// process keeps.
 	pushes    map[ProfileSource]ProfilePush
 	pushesDue *ims.DueIndex[ProfileSource]
+	// retriesDue is the time index of the ProfilePushRetry.
+	retriesDue *ims.DueIndex[ProfilePushRetry]
 }
 
 // NewMemoryStore returns a store that holds subs.
 func NewMemoryStore(subs ...Subscription) (*MemoryStore, error) {
 	s := &MemoryStore{byPrivate: map[string]Subscriber{}, byPublic: map[string]string{}, repository: map[string]map[string]sh.TransparentData{},
-		served: map[ProfileSource][]string{}, pushes: map[ProfileSource]ProfilePush{}, pushesDue: ims.NewDueIndex[ProfileSource]()}
+		served: map[ProfileSource][]string{}, pushes: map[ProfileSource]ProfilePush{}, pushesDue: ims.NewDueIndex[ProfileSource](),
+		retriesDue: ims.NewDueIndex[ProfilePushRetry]()}
 	for _, sub := range subs {
 		if err := s.Add(context.Background(), sub); err != nil {
 			return nil, err
@@ -978,6 +1011,30 @@ func (s *MemoryStore) DoneProfilePush(_ context.Context, c ProfilePushClaim) err
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.pushesDue.RemoveClaimed(c.Source, c.Until)
+	return nil
+}
+
+func (s *MemoryStore) ScheduleProfilePushRetry(_ context.Context, r ProfilePushRetry, at time.Time) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.retriesDue.Set(r, at)
+	return nil
+}
+
+func (s *MemoryStore) ClaimProfilePushRetries(_ context.Context, now time.Time, lease time.Duration, limit int) ([]ProfilePushRetryClaim, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var claims []ProfilePushRetryClaim
+	for _, due := range s.retriesDue.ClaimDue(now, lease, limit) {
+		claims = append(claims, ProfilePushRetryClaim{ProfilePushRetry: due.Member, Until: due.Until})
+	}
+	return claims, nil
+}
+
+func (s *MemoryStore) DoneProfilePushRetry(_ context.Context, c ProfilePushRetryClaim) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.retriesDue.RemoveClaimed(c.ProfilePushRetry, c.Until)
 	return nil
 }
 
