@@ -16,7 +16,10 @@ package sip
 //   - 603 (Decline) when it names a dialog that has ended, so that the
 //     user is not alerted for a call that is no longer wanted. The UA
 //     knows of an ended dialog for 64*T1 (UA.forget), and a Replaces
-//     that comes later finds no dialog.
+//     that comes later finds no dialog. A dialog whose session a BYE
+//     has ended counts as ended, even while a subscription keeps it
+//     (CallDialog.AddSubscriptionUsage): Replaces takes the place of
+//     the session only (RFC 5057 5.7).
 //
 // The user of the call checks that whoever sent
 // the INVITE may replace the dialog, for instance by its Referred-By,
@@ -45,6 +48,8 @@ func (c *IncomingCall) ReplacedDialog() (*CallDialog, int) {
 	d.c.mu.Lock()
 	defer d.c.mu.Unlock()
 	switch {
+	case d.sessionEnded:
+		return nil, 603
 	case d.dialog.State == DialogConfirmed && r.EarlyOnly:
 		return nil, 486
 	case d.dialog.State == DialogEarly && d.in != nil:

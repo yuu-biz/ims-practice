@@ -227,13 +227,14 @@ func (d *CallDialog) receiveOther(st *ServerTransaction) {
 
 var errNoDialog = errors.New("sip: no dialog to send the request in")
 
-// usable reports whether requests can go out within the dialog: it
-// exists and has not ended. c.mu is held.
+// usable reports whether requests of the session can go out within the
+// dialog: it exists, it has not ended, and nor has its session. c.mu is
+// held.
 func (d *CallDialog) usable() error {
 	switch {
 	case d.dialog == nil:
 		return errNoDialog
-	case d.dialog.State == DialogTerminated:
+	case d.dialog.State == DialogTerminated || d.sessionEnded:
 		return ErrCallEnded
 	}
 	return nil
@@ -242,7 +243,9 @@ func (d *CallDialog) usable() error {
 // Send sends a request within the dialog, early or confirmed, and
 // returns its final response. It is for the methods that the UA has no
 // method of its own for, such as INFO or REFER: a B2BUA relays what its
-// one leg received to the other leg with it.
+// one leg received to the other leg with it. Once a BYE has ended the
+// session, Send sends only the SUBSCRIBEs and NOTIFYs of the
+// subscriptions that the dialog lives on for (AddSubscriptionUsage).
 func (d *CallDialog) Send(method Method, body Body, headers ...HeaderField) (*Message, error) {
 	switch method {
 	case INVITE, ACK, CANCEL, BYE, PRACK, UPDATE:
@@ -250,7 +253,11 @@ func (d *CallDialog) Send(method Method, body Body, headers ...HeaderField) (*Me
 	}
 	c := d.c
 	c.mu.Lock()
-	if err := d.usable(); err != nil {
+	err := d.usable()
+	if d.sessionEnded && d.dialog.State != DialogTerminated && ofSubscription(method) {
+		err = nil
+	}
+	if err != nil {
 		c.mu.Unlock()
 		return nil, err
 	}
@@ -364,7 +371,8 @@ func (d *CallDialog) roundTrip(req *Message, t turn) (*Message, error) {
 }
 
 // lost is RFC 3261 12.2.1.2 for a request that showed that the peer has
-// lost the dialog.
+// lost the dialog, and every usage of it with the dialog (RFC 5057
+// 5.1). A dialog whose session has ended already just ends.
 func (d *CallDialog) lost(req, final *Message) {
 	c := d.c
 	status := 0
@@ -372,6 +380,13 @@ func (d *CallDialog) lost(req, final *Message) {
 		status = final.StatusCode
 	}
 	c.ua.log.Warn("request within the dialog failed", "method", string(req.Method), "call_id", req.Get("Call-ID"), "status", status)
+	c.mu.Lock()
+	if d.sessionEnded {
+		d.setState(DialogTerminated, "dialog lost")
+		c.mu.Unlock()
+		return
+	}
+	c.mu.Unlock()
 	reason := ErrDialogLost
 	if status == 0 || status == 408 {
 		// No answer came in time, which a Reason can tell (TS 24.229
@@ -575,6 +590,8 @@ func (d *CallDialog) ReInvite(body Body, headers ...HeaderField) (*Message, erro
 	switch {
 	case d.dialog == nil || d.dialog.State != DialogConfirmed:
 		err = errNoConfirmedDialog
+	case d.sessionEnded:
+		err = ErrCallEnded
 	case d.invite != noInvite || d.awaitsACK():
 		// 14.1: the UAS waits for the ACK of its 2xx, by which its INVITE
 		// server transaction is confirmed, before it sends an INVITE.

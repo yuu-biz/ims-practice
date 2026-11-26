@@ -712,6 +712,16 @@ func (c *OutgoingCall) Update(body Body, headers ...HeaderField) (*Message, erro
 	return d.Update(body, headers...)
 }
 
+// AddSubscriptionUsage is CallDialog.AddSubscriptionUsage in the dialog
+// that the call goes on in (Dialogs).
+func (c *OutgoingCall) AddSubscriptionUsage() (end func(), err error) {
+	d, err := c.currentDialog()
+	if err != nil {
+		return nil, err
+	}
+	return d.AddSubscriptionUsage()
+}
+
 // Send is CallDialog.Send in the dialog that the call goes on in
 // (Dialogs).
 func (c *OutgoingCall) Send(method Method, body Body, headers ...HeaderField) (*Message, error) {
