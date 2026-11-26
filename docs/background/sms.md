@@ -178,6 +178,7 @@ IP-SM-GW は、UE がまたショートメッセージを受け取れるよう�
 | TS 29.311 V19.0.0 | サービス層の相互接続の仕様で、この知らせには触れていません。 |
 | TS 29.272 V19.6.0 5.2.5.1、7.3.49、7.3.83 | MME と SGSN は、同じ知らせを S6a と S6d の Notify-Request（NOR）で運びます。NOR-Flags の Ready for SM from MME と Ready for SM from SGSN、それに Alert-Reason（AVP コード 1434、UE_PRESENT（0）と UE_MEMORY_AVAILABLE（1））です。5.2.5.1.3 は、Alert-Reason のある NOR を受けた HSS に、MAP の Ready for SM を受けたときと同じ動きをさせます。つまり MAP-READY-FOR-SM の Diameter 版ですが、MME と SGSN のための手順で、IP-SM-GW はこのインタフェースに入りません。 |
 | TS 24.011 V20.0.0 Table 8.4（part 3）と E4 | メモリの知らせへの RP-ERROR に使える原因は 30、38、41、42、47、69、95 から 99、111 です。30（Unknown Subscriber）は、HLR に登録されていない加入者、つまり IMSI か番号が割り当てられていない加入者を示します。 |
+| TS 23.040 V20.0.0 11.2 | ReadyForSM（Alert Reason が memory available）の return error を、IP-SM-GW、MSC、SGSN が UE に返す RP-ERROR の原因に写す表です。DataMissing、UnexpectedDataValue、System Failure は 38、UnknownSubscriber は 30、FacilityNotSupported は 69、下位の層の失敗（タイマーの満了、トランザクションの中断など）は 38 です。 |
 | RFC 6733 2.4 と 11.2.1 | Diameter のアプリケーションには、IANA が割り当てた Application-Id が要ります。コマンドコードの 16777214 と 16777215 は実験用で、相互接続は保証されません。 |
 
 Wireshark 4.6.9（CI のキャプチャのイメージの版）のソースも読みました。`dictionary.xml` は 16777214 を実験用のコードとして、名前を付けていません。`packet-diameter.c` は、辞書に無いコマンドに expert の警告 `diameter.cmd.code.unknown`（PI_UNDECODED、PI_WARN）を付けます。Alert-Reason（`diameter.Alert-Reason`）と User-Identifier は辞書にあります。

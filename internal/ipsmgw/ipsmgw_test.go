@@ -615,35 +615,47 @@ func TestMemoryAvailableWithoutARegistration(t *testing.T) {
 	}
 }
 
-// TestMemoryAvailableThatTheHSSRefuses: the UE hears RP-Cause 41, a
-// temporary failure, rather than an RP-ACK for a notification that did
-// not get through: one that the HSS did not answer, and one that it
-// could not take (TS 24.011 Table 8.4 part 3).
+// TestMemoryAvailableThatTheHSSRefuses: the UE hears an RP-ERROR rather
+// than an RP-ACK for a notification that did not get through, with the
+// cause that TS 23.040 11.2 gives the return error of ReadyForSM: 38,
+// network out of order, for a HSS that does not answer (a lower layer
+// failure) and for one that cannot take the notification (System
+// Failure), and 69, requested facility not implemented, for an HSS
+// without Ready-For-SM (FacilityNotSupported).
 func TestMemoryAvailableThatTheHSSRefuses(t *testing.T) {
 	h := newHarness(t, ipsmgw.NewMemoryStore(), time.Minute, answerOK)
 	refused := errors.New("the HSS did not answer")
 	h.hss.notifyFails.Store(&refused)
 	h.send(message(marshal(t, sms.RPSMMA{MessageReference: 4})))
-	want := sms.RPError{Direction: sms.NetworkToMS, MessageReference: 4, Cause: sms.RPCauseTemporaryFailure}
+	want := sms.RPError{Direction: sms.NetworkToMS, MessageReference: 4, Cause: sms.RPCauseNetworkOutOfOrder}
 	if got := parseRP(t, h.next()); !reflect.DeepEqual(got, want) {
 		t.Errorf("answer = %+v, want %+v", got, want)
 	}
 
 	h.hss.notifyFails.Store(nil)
-	unable := diameter.Base(diameter.DiameterUnableToComply)
-	h.hss.notifyResult.Store(&unable)
-	h.send(message(marshal(t, sms.RPSMMA{MessageReference: 5})))
-	h.nextNotification()
-	want = sms.RPError{Direction: sms.NetworkToMS, MessageReference: 5, Cause: sms.RPCauseTemporaryFailure}
-	if got := parseRP(t, h.next()); !reflect.DeepEqual(got, want) {
-		t.Errorf("answer to DIAMETER_UNABLE_TO_COMPLY = %+v, want %+v", got, want)
+	for i, c := range []struct {
+		result diameter.Result
+		cause  sms.RPCause
+	}{
+		{diameter.Base(diameter.DiameterUnableToComply), sms.RPCauseNetworkOutOfOrder},
+		{diameter.Base(diameter.DiameterCommandUnsupported), sms.RPCauseRequestedFacilityNotImplemented},
+	} {
+		h.hss.notifyResult.Store(&c.result)
+		mr := uint8(5 + i)
+		h.send(message(marshal(t, sms.RPSMMA{MessageReference: mr})))
+		h.nextNotification()
+		want := sms.RPError{Direction: sms.NetworkToMS, MessageReference: mr, Cause: c.cause}
+		if got := parseRP(t, h.next()); !reflect.DeepEqual(got, want) {
+			t.Errorf("answer to %v = %+v, want %+v", c.result, got, want)
+		}
 	}
 }
 
 // TestMemoryAvailableOfAnUnknownSubscriber: a number that the HSS does
-// not know, and a user with no number at all, get RP-Cause 30, unknown
-// subscriber, which TS 24.011 E4 gives a number allocated to no
-// subscriber.
+// not know gets RP-Cause 30, unknown subscriber, which TS 23.040 11.2
+// gives the return error UnknownSubscriber, and so does a user with no
+// number at all, which TS 24.011 E4 describes as a number allocated to
+// no subscriber.
 func TestMemoryAvailableOfAnUnknownSubscriber(t *testing.T) {
 	h := newHarness(t, ipsmgw.NewMemoryStore(), time.Minute, answerOK)
 	unknown := diameter.Experimental(sgd.DiameterErrorUserUnknown)

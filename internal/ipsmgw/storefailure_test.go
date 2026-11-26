@@ -3,6 +3,7 @@ package ipsmgw_test
 import (
 	"context"
 	"errors"
+	"reflect"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -130,6 +131,24 @@ func TestDeliveryWhenTheStoreFails(t *testing.T) {
 	case m := <-h.received:
 		t.Errorf("%s reached the entry point", m.Method)
 	case <-time.After(50 * time.Millisecond):
+	}
+}
+
+// TestMemoryAvailableWhenTheStoreFails: an RP-SMMA from a user who
+// asserts no tel URI, while the store that holds the user's MSISDN is
+// down, gets RP-Cause 38, a failure that lasts a while, rather than the
+// unknown subscriber of a user who has no number (TS 23.040 11.2).
+func TestMemoryAvailableWhenTheStoreFails(t *testing.T) {
+	h, kv := newHarnessOnAStore(t)
+	h.registered()
+	kv.down.Store(true)
+	m := message(marshal(t, sms.RPSMMA{MessageReference: 8}))
+	m.Remove("P-Asserted-Identity")
+	m.Add("P-Asserted-Identity", "<"+alice+">")
+	h.send(m)
+	want := sms.RPError{Direction: sms.NetworkToMS, MessageReference: 8, Cause: sms.RPCauseNetworkOutOfOrder}
+	if got := parseRP(t, h.next()); !reflect.DeepEqual(got, want) {
+		t.Errorf("answer = %+v, want %+v", got, want)
 	}
 }
 

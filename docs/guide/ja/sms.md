@@ -585,7 +585,7 @@ UE 2 の制御 API に `PUT /sms-availability` で `{"available": false}` を送
 - **B4.** SC は `SM-Delivery-Cause` に UE_MEMORY_CAPACITY_EXCEEDED を入れた RDR で伝えます。HSS は SC のアドレスを MWD に入れ、利用者のメモリ不足の印（MCEF）を立てます（TS 23.040 3.2.6 の 1）。UNRI は立てません。UE には届いており、入れる場所が無いだけだからです。
 - **B5.** `{"full": false}` で、UE は送るべき知らせを送ります。IP-SM-GW 宛の MESSAGE に入れた **RP-SMMA** です（TS 24.011 7.3.2、TS 24.341 5.3.2.5）。
 - **B6 から B7.** IP-SM-GW はこの知らせを、A6 と同じく Ready-For-SM で HSS に渡します。`Alert-Reason` は UE_MEMORY_AVAILABLE です（TS 23.204 6.6 の step 3、TS 24.341 5.3.3.4.1）。HSS は MCEF と UNRI を落とし、MWD のサービスセンタに知らせます（TS 23.040 3.2.6 の 2f）。
-- **B8.** 知らせへの RP-ACK を UE に返すのは、HSS が受け取ったあとです。そのため、知らせが届いていないのに届いたと UE に伝えることはありません。HSS が答えなかった知らせと、受け取れなかった知らせには RP-Cause 41 を返し、UE は知らせを送るべきものとして持ち続けます。HSS の知らない番号には、RP-Cause 30（unknown subscriber）を返します（TS 24.011 Table 8.4 part 3）。
+- **B8.** 知らせへの RP-ACK を UE に返すのは、HSS が受け取ったあとです。そのため、知らせが届いていないのに届いたと UE に伝えることはありません。届かなかった知らせには、RP-ACK の代わりに RP-ERROR を返します。原因は、HSS の誤りごとに TS 23.040 11.2 が決める値です。HSS の知らない番号には RP-Cause 30（unknown subscriber）、Ready-For-SM を持たない HSS には 69（requested facility not implemented）、答えなかった HSS と、知らせを受け取れなかった HSS には 38（network out of order）を返します。どの場合も、UE は知らせを送るべきものとして持ち続けます。
 
 送り直しは A8 と A9 と同じです。SRR、SC が預かっていたショートメッセージの TFR、そしてそれを終わらせる delivery report が続きます。
 
