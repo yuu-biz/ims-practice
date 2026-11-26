@@ -7,6 +7,7 @@ import (
 	"net/netip"
 	"net/url"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -16,6 +17,7 @@ import (
 	"github.com/yuu-biz/ims-practice/internal/diameter"
 	"github.com/yuu-biz/ims-practice/internal/hep"
 	"github.com/yuu-biz/ims-practice/internal/rx"
+	"github.com/yuu-biz/ims-practice/internal/sgd"
 	"github.com/yuu-biz/ims-practice/internal/sh"
 	"github.com/yuu-biz/ims-practice/internal/sip"
 )
@@ -250,6 +252,29 @@ func TestEveryCommandOfTheNodesHasRefs(t *testing.T) {
 				t.Errorf("%s (%d) has no refs", d.abbreviation(), c.code)
 			}
 		}
+	}
+}
+
+// Ready-For-SM is this project's own command, in place of
+// MAP-READY-FOR-SM. The Lab names it in full rather than by an
+// abbreviation that would read like one of 3GPP, whether or not it has
+// the dictionary of S6c, and its reference says that no specification
+// defines it.
+func TestReadyForSMIsMarkedAsThisProjectsOwn(t *testing.T) {
+	if err := sgd.LoadDictionary(); err != nil {
+		t.Fatal(err)
+	}
+	request := diameterMessage{Command: "Ready-For-SM", ApplicationID: sgd.ApplicationIDS6c, Code: sgd.CommandReadyForSM, Request: true}
+	if got := request.summary(); got != "Ready-For-SM Request" {
+		t.Errorf("summary = %q, want %q", got, "Ready-For-SM Request")
+	}
+	refs := request.refs()
+	if len(refs) == 0 || !strings.Contains(refs[0].Title, "this project's own") || refs[0].Spec != "TS 29.002" || refs[0].Clause != "12.4.1" {
+		t.Errorf("refs = %+v, want first a reference to MAP-READY-FOR-SM that names the command this project's own", refs)
+	}
+	answer := diameterMessage{Command: "Ready-For-SM", ApplicationID: sgd.ApplicationIDS6c, Code: sgd.CommandReadyForSM}
+	if got := answer.refs(); len(got) == 0 || !reflect.DeepEqual(got[0], refs[0]) {
+		t.Errorf("refs of the answer = %+v", got)
 	}
 }
 

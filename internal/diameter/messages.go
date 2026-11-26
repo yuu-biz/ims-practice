@@ -116,26 +116,35 @@ func messageIDs(m *diam.Message) MessageIDs {
 	return MessageIDs{HopByHop: m.Header.HopByHopID, EndToEnd: m.Header.EndToEndID}
 }
 
-// commandName is the short name used in logs, such as "CER" or "DWA".
+// commandName is the name of m in the logs and in the command label of
+// the metrics: the short name that the dictionary gives its command,
+// with R or A after it, such as "CER" or "DWA". A command that the
+// dictionary gives no short name, as a command of this project's own
+// has none, goes by its full name with "-Request" or "-Answer" after
+// it, such as "Ready-For-SM-Request".
 func commandName(m *diam.Message) string {
-	suffix := "A"
+	suffix, long := "A", "-Answer"
 	if isRequest(m) {
-		suffix = "R"
+		suffix, long = "R", "-Request"
 	}
-	short, ok := CommandShortName(m.Header.ApplicationID, m.Header.CommandCode)
-	if !ok {
+	cmd, err := dict.Default.FindCommand(m.Header.ApplicationID, m.Header.CommandCode)
+	switch {
+	case err != nil:
 		return fmt.Sprintf("command %d (%s)", m.Header.CommandCode, suffix)
+	case cmd.Short == "":
+		return cmd.Name + long
 	}
-	return short + suffix
+	return cmd.Short + suffix
 }
 
 // CommandShortName is the short name that the dictionary gives a
 // command, such as "UA" for User-Authorization. With R or A after it,
 // it names the request or the answer: "UAR", "UAA". False for a
-// command the dictionary does not have.
+// command the dictionary does not have, and for one that it gives no
+// short name, such as a command of this project's own.
 func CommandShortName(applicationID, code uint32) (string, bool) {
 	cmd, err := dict.Default.FindCommand(applicationID, code)
-	if err != nil {
+	if err != nil || cmd.Short == "" {
 		return "", false
 	}
 	return cmd.Short, true

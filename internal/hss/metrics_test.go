@@ -14,6 +14,7 @@ import (
 	"github.com/yuu-biz/ims-practice/internal/cx"
 	"github.com/yuu-biz/ims-practice/internal/diameter"
 	"github.com/yuu-biz/ims-practice/internal/metrics"
+	"github.com/yuu-biz/ims-practice/internal/sgd"
 )
 
 // scraped is the value of series, such as
@@ -335,5 +336,26 @@ func TestTheHSSCountsTheResultOfTheAnswersItSends(t *testing.T) {
 	want(t, reg, "after a UAR for a user the HSS does not hold", map[string]float64{
 		`ims_diameter_requests_total{role="hss",direction="received",command="UAR"}`:                                 1,
 		`ims_diameter_answers_total{role="hss",direction="sent",command="UAR",result="DIAMETER_ERROR_USER_UNKNOWN"}`: 1,
+	})
+}
+
+// Ready-For-SM is this project's own command, which no specification
+// gives an abbreviation: the HSS counts it under its full name, apart
+// from the commands of TS 29.338 and from "other".
+func TestTheHSSCountsReadyForSMUnderItsOwnName(t *testing.T) {
+	h, reg := counting(t)
+	request := sgd.ReadyForSMRequest{
+		Header:         diameter.Header{SessionID: "ipsmgw." + realm + ";1;1", OriginHost: "ipsmgw." + realm, OriginRealm: realm, DestinationRealm: realm},
+		UserIdentifier: sgd.UserIdentifier{MSISDN: "12025550101"},
+		IPSMGWNumber:   ipsmgwNumber,
+		AlertReason:    sgd.AlertReasonUEPresent,
+	}.Message()
+	if a, err := sgd.ParseReadyForSMAnswer(h.Handle(request)); err != nil || !a.Result.Success() {
+		t.Fatalf("answer = %+v, %v", a, err)
+	}
+
+	want(t, reg, "after a Ready-For-SM", map[string]float64{
+		`ims_diameter_requests_total{role="hss",direction="received",command="Ready-For-SM-Request"}`:                      1,
+		`ims_diameter_answers_total{role="hss",direction="sent",command="Ready-For-SM-Request",result="DIAMETER_SUCCESS"}`: 1,
 	})
 }

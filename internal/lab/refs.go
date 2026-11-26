@@ -2,6 +2,7 @@ package lab
 
 import (
 	"github.com/yuu-biz/ims-practice/internal/netann"
+	"github.com/yuu-biz/ims-practice/internal/sgd"
 	"github.com/yuu-biz/ims-practice/internal/sip"
 )
 
@@ -200,6 +201,24 @@ var diameterRefTable = refTable[string]{
 	"DPA": {{"RFC 6733", "5.4.2", "Disconnect-Peer-Answer"}},
 }
 
+// ownCommand is a Diameter command by its application and command code.
+type ownCommand struct{ application, code uint32 }
+
+// ownCommandRefTable holds the commands of this project's own, which no
+// specification defines. They have no abbreviation to key them by, and
+// the Lab may not have their dictionary, so they are keyed by their
+// numbers. A request and its answer share the references. The first
+// one says what the command stands in for.
+var ownCommandRefTable = map[ownCommand][]Ref{
+	{sgd.ApplicationIDS6c, sgd.CommandReadyForSM}: {
+		{"TS 29.002", "12.4.1", "MAP-READY-FOR-SM, for which this project's own Ready-For-SM on S6c stands in"},
+		{"TS 23.204", "6.5b", "Alert service centre procedure when the UE is available"},
+		{"TS 23.204", "6.6", "Alert service centre procedure when memory capacity is available"},
+		{"TS 23.040", "11.2", "The RP-Cause for a memory available notification that failed"},
+		{"RFC 6733", "11.2.1", "Command code 16777214, kept for experimental commands"},
+	},
+}
+
 type refTable[K comparable] map[K][]Ref
 
 // lookup never returns nil, so that a message without references
@@ -244,4 +263,9 @@ func sipRefs(m *sip.Message) []Ref {
 	return sipRefTable.lookup(cseqMethod(m))
 }
 
-func (d diameterMessage) refs() []Ref { return diameterRefTable.lookup(d.abbreviation()) }
+func (d diameterMessage) refs() []Ref {
+	if refs, ok := ownCommandRefTable[ownCommand{d.ApplicationID, d.Code}]; ok {
+		return refs
+	}
+	return diameterRefTable.lookup(d.abbreviation())
+}

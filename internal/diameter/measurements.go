@@ -67,7 +67,8 @@ var (
 	countingRoles = metrics.Label{Name: "role", Values: []string{"pcscf", "icscf", "scscf", "mmtel", "ipsmgw", "sc", "hss"}}
 	directions    = metrics.Label{Name: "direction", Values: []string{receivedDirection, sentDirection}}
 	// commandLabel holds the short name of the request (CommandShortName
-	// with R after it), which an answer is counted under as well: the
+	// with R after it), or the full name of a command that has none
+	// (commandName), which an answer is counted under as well: the
 	// answer to a UAR counts under "UAR", so that the two counters of
 	// one command divide into each other.
 	commandLabel = metrics.Label{Name: "command", Values: []string{
@@ -85,6 +86,11 @@ var (
 		// SGd (package sgd): the short message of a UE, which the
 		// IP-SM-GW sends the SC.
 		"OFR",
+		// Ready-For-SM (package sgd), the command of this project's own
+		// on S6c with which the IP-SM-GW tells the HSS that a user can
+		// take short messages again, in place of MAP-READY-FOR-SM. No
+		// specification gives it an abbreviation.
+		"Ready-For-SM-Request",
 	}}
 	// resultLabel names the result of an answer one by one, so that a
 	// dashboard can tell DIAMETER_FIRST_REGISTRATION from the other
