@@ -22,6 +22,19 @@ import (
 // A node that runs two such roles has one listener for both, so taking
 // either of them out of service takes the listener from both, and it
 // comes back once both are back (Server.SetAccepting).
+//
+// SIMPLIFIED: ITU-T X.731 8.1.1.3. The administrative state of a
+// managed object prohibits or permits the services of that resource
+// alone. A node has one Diameter listener, on the one port of the base
+// protocol, for every role that its peers reach, so the drain of one
+// role reaches the others on that listener. On a node with the hss and
+// the sc roles, taking either out of service turns away the peers of
+// both, and ending the connections of one ends those of the other. On
+// a node with the hss and the epc roles, a drain of the HSS also turns
+// away the P-CSCFs that reach the PCRF over Rx, and when it ends the
+// connections of the HSS it ends their Rx connections too. The epc role
+// has no drain of its own. The deployments of this project run each of
+// these roles on a node of its own.
 type ListenerDrain struct {
 	server *Server
 	role   string
