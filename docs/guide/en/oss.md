@@ -340,6 +340,46 @@ The OAM does not send a notification again. From the notification that did not r
 
 When two nodes or more do not answer, `unreliableAlarmScope` is the whole SubNetwork, `SubNetwork=ims`, while each node still gets its own two notifications.
 
+## When the OAM runs as several instances
+
+The deployment of these guides runs one OAM. Several instances of the `oam` role can run side by side when their configuration has a `store` section that names one Valkey server: they keep the subscriptions there, and share the watches of the nodes out among them. One instance at a time watches each node, under a lease of 15 seconds that its watcher renews every 5 seconds, and every 5 seconds each instance writes its presence, which says that it runs, in the same store.
+
+The link between one instance and one node can break while the other instances still reach the node. The watcher of that instance sends `notifyPotentialFaultyAlarmList` at the first request that the node leaves unanswered, as in the previous section. After the third in a row, the instance writes in its presence that it cannot reach the node, and gives the watch up, as long as some other instance has not written the same. Another instance takes the lease, asks the node for the events after the last one sent, and gets an answer. It sends `notifyAlarmListRebuilt` with `System-NE communication error`, and `unreliableAlarmScope` leaves the list, although the node itself never stopped; the OSS reads that part of the list again. The instance that gave the watch up asks the node again every 5 seconds or so, with the same request as a watcher, and once the node answers it, it no longer writes that it cannot reach it.
+
+```text
+OSS                        oam-1                       oam-2                      Valkey              S-CSCF
+ |                           |  GET alarm-events: the link is broken                 |                   |
+ |                           |-------------------------------------------------------------------------x |
+ |  POST notifyPotentialFaultyAlarmList                  |                           |                   |
+ |<--------------------------|                           |                           |                   |
+ |  204                      |                           |                           |                   |
+ |-------------------------->|                           |                           |                   |
+ |                           |  GET alarm-events, twice more                         |                   |
+ |                           |-------------------------------------------------------------------------x |
+ |                           |  presence: cannot reach scscf                         |                   |
+ |                           |------------------------------------------------------>|                   |
+ |                           |  release the lease of scscf                           |                   |
+ |                           |------------------------------------------------------>|                   |
+ |                           |                           |  take the lease of scscf  |                   |
+ |                           |                           |-------------------------->|                   |
+ |                           |                           |  GET alarm-events, waits  |                   |
+ |                           |                           |---------------------------------------------->|
+ |                           |                           |  200                      |                   |
+ |                           |                           |<----------------------------------------------|
+ |  POST notifyAlarmListRebuilt                          |                           |                   |
+ |<------------------------------------------------------|                           |                   |
+ |  204                      |                           |                           |                   |
+ |------------------------------------------------------>|                           |                   |
+ |                           |  GET alarm-events, again every 5 s or so              |                   |
+ |                           |-------------------------------------------------------------------------x |
+ |                           |                           |  GET alarm-events, waits  |                   |
+ |                           |                           |---------------------------------------------->|
+```
+
+- When no instance reaches the node, as when the node itself is down, every instance writes so, and the watch stays with the instance that holds it. It does not go round the instances: the OSS gets one `notifyPotentialFaultyAlarmList`, and one `notifyAlarmListRebuilt` when the node is back.
+- What the OSS sees is the two notifications of the previous section, which the filters of the table below find. The requests for the events are on the maintenance API, port 8085, which Wireshark does not decode as HTTP by itself.
+- The deployment of these guides runs one OAM, so this exchange does not happen in it. The tests `TestAnInstanceThatCannotReachANodeHandsItsWatchOver` and `TestTheWatchOfANodeThatNoInstanceReachesStays` of the store that the OAM instances share run two OAM servers on one store and check it, on a Valkey server too when `KVSTORE_VALKEY_ADDR` names one.
+
 ## Wireshark display filters
 
 | Filter | What it finds |
