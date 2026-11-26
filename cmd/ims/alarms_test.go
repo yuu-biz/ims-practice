@@ -84,6 +84,15 @@ func TestRoleRaisesAnAlarmWhileItCannotReachAnHSS(t *testing.T) {
 		t.Fatalf("alarms %+v with both instances of the HSS open, want none", list.AlarmRecords)
 	}
 
+	// While the second instance does not listen, a connection that the
+	// test keeps to it holds its port: a port that a socket is bound to
+	// is given to no other socket that asks for a free one, so the
+	// instance can listen on it again.
+	held, err := net.Dial("tcp", servers[1].Addr())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer held.Close()
 	if err := servers[1].SetAccepting(string(config.RoleHSS), false); err != nil {
 		t.Fatal(err)
 	}
