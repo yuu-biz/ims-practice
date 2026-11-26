@@ -110,6 +110,11 @@ type Config struct {
 	// this instance claims is its alone, after which another instance
 	// goes on with it; zero means profilePushLease. Tests shorten it.
 	PushLease time.Duration
+	// PushRetryTime is how long a PPR of such a push that no instance
+	// could send, and a round of it that no instance could serve, are
+	// tried again before they are given up; zero means
+	// profilePushRetryTime. Tests shorten it.
+	PushRetryTime time.Duration
 }
 
 // Admission is the operator's policy on which subscribers the network
