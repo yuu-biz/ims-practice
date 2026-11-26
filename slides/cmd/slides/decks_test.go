@@ -20,8 +20,9 @@ import (
 // TestDecks runs the checks of "slides check" on the decks of the
 // repository, so that the tests of the repository fail on a deck that
 // does not parse, has a speaker note, does not fit, links to a heading
-// that is gone, differs between its languages, or names a command that
-// the repository does not take.
+// that is gone, quotes code that its file no longer has, differs
+// between its languages, or names a command that the repository does
+// not take.
 func TestDecks(t *testing.T) {
 	all, problems := load("../../decks")
 	for _, p := range problems {
