@@ -173,7 +173,10 @@
 // history keeps both (TS 32.600 7.1 d). It is refused with 409, naming
 // each setting, when a later change of the same node touched one of the
 // settings, or when the node no longer has the value that the change
-// set, unless the request forces it.
+// set, unless the request forces it. A node that has the previous value
+// already, as an instance of a role whose instances share their
+// settings has once the rollback reached another of them, is rolled
+// back for that setting.
 //
 //	PATCH /oam/v1/nodes/{node}/config
 //	PATCH /oam/v1/roles/{role}/config
