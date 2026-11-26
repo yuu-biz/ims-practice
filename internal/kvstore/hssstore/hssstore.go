@@ -18,8 +18,10 @@
 //	                                 service profile name, for
 //	                                 ListServed
 //
-// and the time index profile-pushes, with one member per profile source
-// whose push an instance claims when it is due.
+// and the time indexes profile-pushes, with one member per profile
+// source whose round an instance claims when it is due, and
+// profile-push-retries, with one member per subscriber that a round left
+// for an instance that holds the connection of its S-CSCF.
 //
 // The identities are in the form in which hss.MemoryStore compares them:
 // a private identity in lower case, a public identity as hss's
@@ -32,6 +34,7 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -713,6 +716,61 @@ func (s *Store) ScheduleProfilePush(ctx context.Context, source hss.ProfileSourc
 // leaves the index as it is: the round has been made due again.
 func (s *Store) DoneProfilePush(ctx context.Context, c hss.ProfilePushClaim) error {
 	err := s.c.Done(ctx, kvstore.Claim{Index: s.c.Index(pushIndex), Member: kvjson.Member(string(c.Source)), Until: c.Until})
+	if errors.Is(err, kvstore.ErrClaimLost) {
+		return nil
+	}
+	return err
+}
+
+// retryIndex is the time index of the PPRs that a round left for another
+// instance (hss.ProfilePushRetry). A member names the source, the round,
+// the time the round left it in milliseconds, and the private identity.
+const retryIndex = "profile-push-retries"
+
+func retryMember(r hss.ProfilePushRetry) string {
+	return kvjson.Member(string(r.Source), strconv.FormatUint(r.Round, 10), strconv.FormatInt(r.Since.UnixMilli(), 10), r.PrivateID)
+}
+
+// retryOf reads back what retryMember wrote, and reports whether it
+// could: a member that does not, which no write of this package leaves,
+// is taken out of the index.
+func retryOf(member string) (hss.ProfilePushRetry, bool) {
+	parts := kvjson.SplitMember(member)
+	if len(parts) != 4 {
+		return hss.ProfilePushRetry{}, false
+	}
+	round, errRound := strconv.ParseUint(parts[1], 10, 64)
+	since, errSince := strconv.ParseInt(parts[2], 10, 64)
+	if errRound != nil || errSince != nil {
+		return hss.ProfilePushRetry{}, false
+	}
+	return hss.ProfilePushRetry{Source: hss.ProfileSource(parts[0]), Round: round,
+		Since: time.UnixMilli(since).UTC(), PrivateID: parts[3]}, true
+}
+
+func (s *Store) ScheduleProfilePushRetry(ctx context.Context, r hss.ProfilePushRetry, at time.Time) error {
+	return s.c.WriteDue(ctx, retryIndex, retryMember(r), at)
+}
+
+func (s *Store) ClaimProfilePushRetries(ctx context.Context, now time.Time, lease time.Duration, limit int) ([]hss.ProfilePushRetryClaim, error) {
+	claims, err := s.c.ClaimDue(ctx, retryIndex, now, lease, limit)
+	if err != nil {
+		return nil, err
+	}
+	retries := make([]hss.ProfilePushRetryClaim, 0, len(claims))
+	for _, c := range claims {
+		r, ok := retryOf(c.Member)
+		if !ok {
+			s.c.RemoveDue(ctx, retryIndex, c.Member)
+			continue
+		}
+		retries = append(retries, hss.ProfilePushRetryClaim{ProfilePushRetry: r, Until: c.Until})
+	}
+	return retries, nil
+}
+
+func (s *Store) DoneProfilePushRetry(ctx context.Context, c hss.ProfilePushRetryClaim) error {
+	err := s.c.Done(ctx, kvstore.Claim{Index: s.c.Index(retryIndex), Member: retryMember(c.ProfilePushRetry), Until: c.Until})
 	if errors.Is(err, kvstore.ErrClaimLost) {
 		return nil
 	}

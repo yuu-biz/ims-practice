@@ -6,6 +6,7 @@ import (
 	"errors"
 	"time"
 
+	"github.com/yuu-biz/ims-practice/internal/diameter"
 	"github.com/yuu-biz/ims-practice/internal/maintenance"
 )
 
@@ -31,6 +32,13 @@ import (
 // recorded. No instance holds a round for longer than a page, so the
 // pages of one round go to whichever instance claims each.
 //
+// An instance reaches an S-CSCF only over the connection that the
+// S-CSCF opened to it, and an S-CSCF that names one instance of the HSS
+// connects to that one alone. A PPR that the instance of a round cannot
+// send for want of that connection is left for the others
+// (ProfilePushRetry): any instance claims it, and the one that holds the
+// connection sends it, while the round goes on with the rest.
+//
 // The rounds of one source go one after another. A change made while a
 // round is under way starts no round of its own; the round under way
 // starts the next one as it ends, for the settings then in force
@@ -54,6 +62,18 @@ const profilePushPage = 100
 // that does not answer; what a claim leaves of its page, the next one
 // goes on with.
 const profilePushLease = 30 * time.Second
+
+// profilePushRetryTime is how long the PPR of a subscriber that no
+// instance could reach is tried again. An S-CSCF whose instance of the
+// HSS is made again, or taken back into service, connects again after
+// Tc, which RFC 6733 2.1 recommends at 30 s, and this covers a few of
+// those. After it, the S-CSCF reads the profile at the next
+// registration of the user.
+const profilePushRetryTime = 2 * time.Minute
+
+// profilePushRetries bounds how many of those PPRs an instance claims at
+// a sweep.
+const profilePushRetries = 100
 
 // profilePushSources are the sources whose service profile name a
 // setting gives: those whose subscribers a change of the settings
@@ -203,6 +223,50 @@ func (h *HSS) claimPushes() {
 	for _, c := range claims {
 		h.pushes.Go(func() { h.pushPage(*peers, c) })
 	}
+	retries, err := h.store.ClaimProfilePushRetries(h.life, time.Now(), h.pushLease(), profilePushRetries)
+	if err != nil {
+		if h.life.Err() == nil {
+			h.log.Warn("the PPRs left for another instance were not claimed; the next round claims them", "error", err.Error())
+		}
+		return
+	}
+	for _, c := range retries {
+		h.pushes.Go(func() { h.pushRetry(*peers, c) })
+	}
+}
+
+// pushRetry sends a PPR that a round left for another instance
+// (ProfilePushRetry). One that this instance cannot send either is made
+// due again after an interval, for whichever instance claims it then,
+// until profilePushRetryTime has passed. A later round of the source
+// pushes every subscriber of it, this one included, so the PPR of an
+// earlier round is not sent.
+func (h *HSS) pushRetry(peers Peers, c ProfilePushRetryClaim) {
+	ctx, cancel := context.WithDeadline(h.life, c.Until)
+	defer cancel()
+	log := h.log.With("profile_source", string(c.Source), "private_identity", c.PrivateID)
+	p, recorded, err := h.store.ProfilePush(ctx, c.Source)
+	if err != nil {
+		log.Warn("the PPR left for another instance was not read; the next claim sends it", "error", err.Error())
+		return
+	}
+	if recorded && p.Round == c.Round {
+		err := h.pushRoundProfile(ctx, peers, c.PrivateID, p)
+		switch {
+		case ctx.Err() != nil:
+			return
+		case errors.Is(err, diameter.ErrPeerUnavailable) && time.Since(c.Since) < profilePushRetryTime:
+			if err := h.store.ScheduleProfilePushRetry(ctx, c.ProfilePushRetry, time.Now().Add(h.sweepInterval())); err != nil {
+				log.Warn("the PPR left for another instance was not made due again; its claim runs out first", "error", err.Error())
+			}
+			return
+		case err != nil:
+			log.Warn("PPR failed", "error", err.Error())
+		}
+	}
+	if err := h.store.DoneProfilePushRetry(ctx, c); err != nil {
+		log.Warn("a PPR left for another instance stays due; the next claim finds it sent", "error", err.Error())
+	}
 }
 
 // pushPage goes on with the round of c.Source for one page, within the
@@ -282,7 +346,9 @@ func (h *HSS) endRound(ctx context.Context, c ProfilePushClaim, p *ProfilePush) 
 //
 // A PPR that fails is logged and nothing more: the settings are in
 // force either way, and that S-CSCF reads the profile at the next
-// registration of the user. A PPR that is sent twice, when an instance
+// registration of the user. A PPR that this instance could not send for
+// want of a connection to the S-CSCF is left for another instance first
+// (ProfilePushRetry), and the round goes on. A PPR that is sent twice, when an instance
 // stops after its PPA and before it records it, only replaces what the
 // S-CSCF holds with the profile it has (TS 29.228 6.2.2.1).
 func (h *HSS) pushOn(ctx context.Context, peers Peers, source ProfileSource) (round *ProfilePush, more bool, err error) {
@@ -302,10 +368,18 @@ func (h *HSS) pushOn(ctx context.Context, peers Peers, source ProfileSource) (ro
 		// or no longer serves, gets no PPR: pushRoundProfile reads it
 		// before it builds one.
 		err := h.pushRoundProfile(ctx, peers, privateID, p)
-		if ctx.Err() != nil {
+		switch {
+		case ctx.Err() != nil:
 			return nil, false, ctx.Err()
-		}
-		if err != nil {
+		case errors.Is(err, diameter.ErrPeerUnavailable):
+			// This instance holds no connection to the S-CSCF of the
+			// subscriber: another instance may.
+			r := ProfilePushRetry{Source: source, Round: p.Round, PrivateID: privateID, Since: stamp()}
+			if err := h.store.ScheduleProfilePushRetry(ctx, r, dueNow()); err != nil {
+				return nil, false, err
+			}
+			h.log.Info("the PPR goes to an instance that the S-CSCF is connected to", "private_identity", privateID)
+		case err != nil:
 			h.log.Warn("PPR failed", "private_identity", privateID, "error", err.Error())
 		}
 		next := p

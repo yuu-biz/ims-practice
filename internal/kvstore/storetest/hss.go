@@ -44,6 +44,7 @@ func HSS(t *testing.T, newPair func(t *testing.T) (hss.Store, hss.Store)) {
 		{"ConcurrentSettings", hssConcurrentSettings},
 		{"ProfilePush", hssProfilePush},
 		{"ProfilePushClaims", hssProfilePushClaims},
+		{"ProfilePushRetries", hssProfilePushRetries},
 	})
 }
 
@@ -872,6 +873,53 @@ func hssProfilePushClaims(t *testing.T, a, b hss.Store) {
 		t.Fatal(err)
 	}
 	if gone := claimProfilePushes(t, b, last[0].Until.Add(time.Hour), lease); len(gone) != 0 {
+		t.Errorf("claims after the Done of the claim in force = %+v, want none", gone)
+	}
+}
+
+// hssProfilePushRetries has the PPR of a subscriber left for another
+// instance on one instance and claimed on the other, as it was left: one
+// claim at a time, made due again for the next instance, and taken out
+// by the Done of the claim in force alone.
+func hssProfilePushRetries(t *testing.T, a, b hss.Store) {
+	ctx := context.Background()
+	now := time.UnixMilli(1_800_000_000_000)
+	const lease = 30 * time.Second
+	r := hss.ProfilePushRetry{Source: hss.ProfileOfTestUsers, Round: 3, PrivateID: impi, Since: now.UTC()}
+	claim := func(s hss.Store, at time.Time) []hss.ProfilePushRetryClaim {
+		t.Helper()
+		claims, err := s.ClaimProfilePushRetries(ctx, at, lease, 10)
+		if err != nil {
+			t.Fatalf("ClaimProfilePushRetries: %v", err)
+		}
+		return claims
+	}
+	if err := a.ScheduleProfilePushRetry(ctx, r, now); err != nil {
+		t.Fatal(err)
+	}
+	got := claim(b, now)
+	if len(got) != 1 || got[0].ProfilePushRetry != r || !got[0].Until.Equal(now.Add(lease)) {
+		t.Fatalf("claims of the retry = %+v, want %+v until %v", got, r, now.Add(lease))
+	}
+	if again := claim(a, now); len(again) != 0 {
+		t.Errorf("claims of a claimed retry = %+v", again)
+	}
+	// Made due again for another instance: the claim ends, and its Done
+	// leaves the retry there.
+	if err := b.ScheduleProfilePushRetry(ctx, r, now.Add(time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	if err := b.DoneProfilePushRetry(ctx, got[0]); err != nil {
+		t.Fatal(err)
+	}
+	next := claim(a, now.Add(time.Second))
+	if len(next) != 1 || next[0].ProfilePushRetry != r {
+		t.Fatalf("claims once the retry is due again = %+v", next)
+	}
+	if err := a.DoneProfilePushRetry(ctx, next[0]); err != nil {
+		t.Fatal(err)
+	}
+	if gone := claim(b, next[0].Until.Add(time.Hour)); len(gone) != 0 {
 		t.Errorf("claims after the Done of the claim in force = %+v, want none", gone)
 	}
 }
