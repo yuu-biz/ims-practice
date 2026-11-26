@@ -98,7 +98,7 @@ The display filter of this session:
 (sip && !(sip.CSeq.method in {"SUBSCRIBE", "NOTIFY", "MESSAGE"})) || diameter.cmd.code in {265, 274, 275, 303} || (http && ip.addr == 172.28.0.80)
 ```
 
-- It keeps the registrations, the calls, Rx (265 is AA, 274 AS, 275 ST), the MARs (303) and the API of the EPC stub.
+- It keeps the registrations, the calls, Rx (265 is AAR and AAA, 274 ASR and ASA, 275 STR and STA), the MARs (303) and the API of the EPC stub.
 
 > Guide: ["Run it"](../../../docs/guide/en/volte.md#run-it) and ["Open the capture"](../../../docs/guide/en/volte.md#open-the-capture)
 
@@ -330,7 +330,7 @@ The P-CSCF of each side sends an AAR once it has the SDP answer: the callee's si
 | `AF-Application-Identifier` | `urn:urn-7:3gpp-service.ims.icsi.mmtel` |
 | `Media-Sub-Component` | Flows 1 and 2: RTP and RTCP, with `Flow-Description` |
 | `Max-Requested-Bandwidth-UL`, `-DL` | 80000 and 41000, from b=AS, in bit/s |
-| `Flow-Status` | ENABLED (2), from sendrecv |
+| `Flow-Status` | `ENABLED` (2), from sendrecv |
 | `Codec-Data` | The m= lines and attributes of the offer and the answer |
 | `Specific-Action` | 2, 4, 9: loss and release of the bearer, failed allocation |
 | `Rx-Request-Type` | INITIAL_REQUEST; each later offer and answer, UPDATE_REQUEST |
@@ -345,7 +345,7 @@ The P-CSCF of each side sends an AAR once it has the SDP answer: the callee's si
 - One Flow-Description is `permit in 17 from 172.28.0.121 to 172.28.0.50 40004`. The other end of the media is the relay, not the other UE.
 - Only the callee's P-CSCF sends AF-Application-Identifier. The caller's would take it from Feature-Caps, which no node writes; it is in the list of simplifications.
 - Service-Info-Status is FINAL_SERVICE_INFORMATION, because the information is based on the answer, not on the offer only.
-- On hold, the caller's side has Flow-Status ENABLED-UPLINK (0), the callee's ENABLED-DOWNLINK (1).
+- On hold, the caller's side has Flow-Status `ENABLED-UPLINK` (0), the callee's `ENABLED-DOWNLINK` (1).
 
 ---
 
@@ -529,7 +529,7 @@ volte12 <- EPC and PCRF: DEACTIVATE EPS BEARER CONTEXT REQUEST
 - The P-CSCF builds the BYEs from the dialog it keeps behind its `Store`. The BYE to the other side goes in the served user's name.
 - The BYE to the served UE is this project's addition: a UE that lost only its voice bearer still has its signalling, and without a BYE it would stay in a call that the network has ended (the comment in `internal/pcscf/release.go`).
 - A call that ends with an ordinary BYE has each side's P-CSCF end its Rx session with an STR, Termination-Cause DIAMETER_LOGOUT (TS 29.214 4.4.4).
-- The filter is `diameter.Abort-Cause`. All of Rx is `diameter.cmd.code in {265, 258, 274, 275}`: AA, RA, AS and ST; RA does not occur in this run.
+- The filter is `diameter.Abort-Cause`. All of Rx is `diameter.cmd.code in {265, 258, 274, 275}`: AAR and AAA, RAR and RAA, ASR and ASA, STR and STA; RAR and RAA do not occur in this run.
 
 ---
 
@@ -627,7 +627,7 @@ docker compose run --rm volte10 call -epc http://172.28.0.80:8080 \
 | --- | --- |
 | `sip.Security-Client \|\| sip.Security-Server \|\| sip.Security-Verify` | sec-agree |
 | `diameter.3GPP-SIP-Authentication-Scheme == "Digest-AKAv1-MD5"` | MAR, MAA of IMS AKA |
-| `diameter.cmd.code in {265, 258, 274, 275}` | Rx: AA, RA, AS, ST |
+| `diameter.cmd.code in {265, 258, 274, 275}` | Rx: AAR and AAA, RAR and RAA, ASR and ASA, STR and STA |
 | `diameter.Flow-Usage == 2`, `diameter.Codec-Data` | AARs: signalling, media |
 | `http && ip.addr == 172.28.0.80` | The EPC stub's API |
 | `sip.Require contains "precondition"` | Precondition 183s |
@@ -680,7 +680,7 @@ For 1, use the commands of "Check the vector by hand" in the guide; the same sec
 1. The first 16 octets are RAND, the rest AUTN. Octets 7 and 8 of AUTN are the AMF, 0000.
 2. The UE (172.28.0.121) and the relay (172.28.0.50), not the other UE.
 3. The 180 comes later: the callee alerts only once every mandatory precondition is met.
-4. The caller's side ENABLED-UPLINK (0), the callee's ENABLED-DOWNLINK (1).
+4. The caller's side `ENABLED-UPLINK` (0), the callee's `ENABLED-DOWNLINK` (1).
 5. PCMU. ue2 did not attach, so its side has no AAR for the call; look for the AAR of volte10's side.
 6. The P-CSCF, with `Reason: SIP;cause=503`. volte10 sends no BYE of its own.
 
@@ -703,7 +703,7 @@ For 1, use the commands of "Check the vector by hand" in the guide; the same sec
 
 ## Looking back: answers
 
-1. From the container with the identifier 000CH in the PCO of the ATTACH ACCEPT (method II of TS 24.229 L.2.2.1).
+1. From the container with the identifier `000CH` in the PCO of the ATTACH ACCEPT (method II of TS 24.229 L.2.2.1).
 2. The P-CSCF takes them out. IK and CK are the keys of the associations, and the UE computes the same keys from its K and the RAND, so they need not travel.
 3. The MAC in AUTN and the SQN. A matching MAC shows that the network knows K.
 4. When it has the SDP answer: on the callee's side the 183 from volte12, on the caller's side the 183 on its way to volte10.

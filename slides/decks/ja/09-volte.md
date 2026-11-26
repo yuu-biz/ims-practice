@@ -98,7 +98,7 @@ ims-practice 勉強会 第 9 回（アクセス網、IMS-AKA、Rx でのポリ�
 (sip && !(sip.CSeq.method in {"SUBSCRIBE", "NOTIFY", "MESSAGE"})) || diameter.cmd.code in {265, 274, 275, 303} || (http && ip.addr == 172.28.0.80)
 ```
 
-- 登録、通話、Rx（265 は AA、274 は AS、275 は ST）、MAR（303）、EPC スタブの API が残ります。
+- 登録、通話、Rx（265 は AAR と AAA、274 は ASR と ASA、275 は STR と STA）、MAR（303）、EPC スタブの API が残ります。
 
 > 手順書 [「動かしてみる」](../../../docs/guide/ja/volte.md#動かしてみる) と [「キャプチャを開く」](../../../docs/guide/ja/volte.md#キャプチャを開く)
 
@@ -330,7 +330,7 @@ P-CSCF はポリシーと課金の制御の AF（application function）です�
 | `AF-Application-Identifier` | `urn:urn-7:3gpp-service.ims.icsi.mmtel` |
 | `Media-Sub-Component` | フロー 1 と 2。RTP と RTCP の `Flow-Description` |
 | `Max-Requested-Bandwidth-UL`、`-DL` | 80000 と 41000。b=AS から。単位は bit/s |
-| `Flow-Status` | ENABLED（2）。sendrecv から |
+| `Flow-Status` | `ENABLED`（2）。sendrecv から |
 | `Codec-Data` | offer と answer の m= の行と属性 |
 | `Specific-Action` | 2、4、9。bearer の喪失、解放、割り当ての失敗 |
 | `Rx-Request-Type` | INITIAL_REQUEST。以後の offer と answer は UPDATE_REQUEST |
@@ -345,7 +345,7 @@ P-CSCF はポリシーと課金の制御の AF（application function）です�
 - Flow-Description の 1 つは `permit in 17 from 172.28.0.121 to 172.28.0.50 40004` です。メディアの相手は、もう一方の UE ではなく中継ノードです。
 - AF-Application-Identifier を送るのは着信側の P-CSCF だけです。発信側は Feature-Caps から取るはずですが、それを書くノードがありません。簡略化の一覧に入っています。
 - Service-Info-Status は FINAL_SERVICE_INFORMATION です。情報が offer だけでなく answer に基づいているからです。
-- 保留すると、発信側の Flow-Status は ENABLED-UPLINK（0）、着信側は ENABLED-DOWNLINK（1）になります。
+- 保留すると、発信側の Flow-Status は `ENABLED-UPLINK`（0）、着信側は `ENABLED-DOWNLINK`（1）になります。
 
 ---
 
@@ -529,7 +529,7 @@ volte12 <- EPC と PCRF: DEACTIVATE EPS BEARER CONTEXT REQUEST
 - P-CSCF は `Store` に置いたダイアログの情報から BYE を作ります。相手の側への BYE は、サービスを受ける利用者の名前で送ります。
 - サービスを受ける UE への BYE は、このプロジェクトが足したものです。音声の bearer だけを失った UE は信号の経路を持ったままなので、BYE が無いと、網が終えた通話に残り続けます（`internal/pcscf/release.go` のコメント）。
 - 普通の BYE で終わる通話では、両側の P-CSCF が STR で Rx のセッションを終えます。Termination-Cause は DIAMETER_LOGOUT です（TS 29.214 4.4.4）。
-- フィルタは `diameter.Abort-Cause` です。Rx の全体は `diameter.cmd.code in {265, 258, 274, 275}` で、AA、RA、AS、ST です。この実行では RA は出ません。
+- フィルタは `diameter.Abort-Cause` です。Rx の全体は `diameter.cmd.code in {265, 258, 274, 275}` で、AAR と AAA、RAR と RAA、ASR と ASA、STR と STA です。この実行では RAR と RAA は出ません。
 
 ---
 
@@ -627,7 +627,7 @@ docker compose run --rm volte10 call -epc http://172.28.0.80:8080 \
 | --- | --- |
 | `sip.Security-Client \|\| sip.Security-Server \|\| sip.Security-Verify` | sec-agree |
 | `diameter.3GPP-SIP-Authentication-Scheme == "Digest-AKAv1-MD5"` | IMS-AKA の MAR、MAA |
-| `diameter.cmd.code in {265, 258, 274, 275}` | Rx。AA、RA、AS、ST |
+| `diameter.cmd.code in {265, 258, 274, 275}` | Rx。AAR と AAA、RAR と RAA、ASR と ASA、STR と STA |
 | `diameter.Flow-Usage == 2`、`diameter.Codec-Data` | 信号の経路と通話の AAR |
 | `http && ip.addr == 172.28.0.80` | EPC スタブの API |
 | `sip.Require contains "precondition"` | プリコンディションの 183 |
@@ -680,7 +680,7 @@ docker compose run --rm volte10 call -epc http://172.28.0.80:8080 \
 1. 最初の 16 オクテットが RAND、残りが AUTN です。AUTN の 7 と 8 オクテット目が AMF で、0000 です。
 2. UE（172.28.0.121）と中継ノード（172.28.0.50）の間です。もう一方の UE ではありません。
 3. 180 のほうがあとです。着信側は、mandatory のプリコンディションがすべてそろってから呼び出します。
-4. 発信側が ENABLED-UPLINK（0）、着信側が ENABLED-DOWNLINK（1）です。
+4. 発信側が `ENABLED-UPLINK`（0）、着信側が `ENABLED-DOWNLINK`（1）です。
 5. PCMU です。ue2 は attach していないので、ue2 の側には通話の AAR がありません。volte10 の側の AAR を探します。
 6. P-CSCF が `Reason: SIP;cause=503` で送ります。volte10 は自分では BYE を送りません。
 
@@ -703,7 +703,7 @@ docker compose run --rm volte10 call -epc http://172.28.0.80:8080 \
 
 ## 振り返りの答え
 
-1. ATTACH ACCEPT の PCO にある、識別子 000CH のコンテナからです（TS 24.229 L.2.2.1 の方法 II）。
+1. ATTACH ACCEPT の PCO にある、識別子 `000CH` のコンテナからです（TS 24.229 L.2.2.1 の方法 II）。
 2. P-CSCF が取り除くからです。IK と CK はアソシエーションの鍵で、UE は自分の K と RAND から同じ鍵を計算するので、送る必要がありません。
 3. AUTN の MAC と SQN です。MAC が合えば、網が K を知っていることが分かります。
 4. SDP の answer を持ったときです。着信側では volte12 からの 183、発信側では volte10 へ向かう 183 です。

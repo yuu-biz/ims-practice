@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Check that every abbreviation in the guides is in the glossary.
 
-A learner who meets an abbreviation in a guide or a README looks it up
-in docs/glossary.md. This script takes each abbreviation from those
-files, outside code spans, code blocks and link targets, and lists each
+A learner who meets an abbreviation in a guide, a slide deck or a
+README looks it up in docs/glossary.md. This script takes each
+abbreviation from those files (the READMEs at the top, beside the
+slides, and under deploy/ and internal/), outside code spans, code blocks and link targets, and lists each
 one that the first column of no glossary row names. A row names each
 term between the slashes of its first column: the row "UA / UAC / UAS"
 names UA, UAC and UAS, and the row "EPS bearer" names "EPS bearer" but
@@ -24,8 +25,12 @@ words are not abbreviations:
 
 These count as the term they are made from: a plural (UEs, INVITEs), a
 term with a version number (HEP3, IPv4), a term followed by the letter
-of one of several nodes (IBCF-A, UE-B1), and a field of the RP or TP
-layer of SMS (RP-MR, TP-DA), which the guide that shows it explains.
+of one of several nodes (IBCF-A, UE-B1), a field of the RP or TP layer
+of SMS (RP-MR, TP-DA), which the guide that shows it explains, and a
+name that puts a word before a term (CoreDNS, ClusterIP, ContextID). A
+word joined by hyphens counts when each of its parts is a known term, a
+word in small letters or no abbreviation (C-MSISDN, 5G-AKA,
+PCMU-only, non-3GPP).
 
 It exits with 1 when it lists anything.
 
@@ -38,7 +43,14 @@ import sys
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 GLOSSARY = ROOT / "docs" / "glossary.md"
-FILES = ("docs/guide/**/*.md", "README*.md")
+FILES = (
+    "docs/guide/**/*.md",
+    "README*.md",
+    "slides/README*.md",
+    "slides/decks/*/*.md",
+    "deploy/**/README*.md",
+    "internal/**/README*.md",
+)
 
 FENCE = re.compile(r"^[ \t]*(```|~~~).*?^[ \t]*\1[ \t]*$", re.DOTALL | re.MULTILINE)
 CODE = re.compile(r"(`+).+?\1")
@@ -52,6 +64,7 @@ CAPITALIZED = re.compile(r"[A-Z][a-z]{2,}")
 NODE_LETTER = re.compile(r"(.+)-[A-Z]\d*")
 SUFFIX = re.compile(r"(.+?)(?:'s|s'?|v?\d+)")
 FIELD_OF = re.compile(r"(RP|TP)-[A-Z0-9-]+")
+NAMED_AFTER = re.compile(r"[A-Z][a-z]{2,}([A-Z]{2,}[a-z]?)")
 
 # Words that look like abbreviations but are not terms of the system.
 NOT_TERMS = {
@@ -73,6 +86,15 @@ NOT_TERMS = {
     "AND", "OR", "ANDed", "ORed",
     # The licence "CC BY 4.0" and the file NOTICE that the README names.
     "CC", "BY", "NOTICE",
+    # The name of a file, as in "the README beside the package".
+    "README",
+    # What "go test -v" prints for each test.
+    "PASS", "FAIL",
+    # Units and a currency, which go with a number (180 MB, 64 KiB,
+    # USD 0.01).
+    "MB", "KiB", "USD",
+    # The name of a program that a README lists.
+    "FFmpeg",
 }
 
 
@@ -96,10 +118,13 @@ def known(word, terms):
     m = FIELD_OF.fullmatch(word)
     if m and m.group(1) in terms:
         return True
-    for pattern in (NODE_LETTER, SUFFIX):
+    for pattern in (NODE_LETTER, SUFFIX, NAMED_AFTER):
         m = pattern.fullmatch(word)
         if m and known(m.group(1), terms):
             return True
+    parts = word.split("-")
+    if len(parts) > 1 and all(p.islower() or not is_abbreviation(p) or known(p, terms) for p in parts):
+        return True
     return False
 
 

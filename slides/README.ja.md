@@ -110,7 +110,7 @@ pptx は普通の PowerPoint のファイルです。スライドの上のもの
 node check-html.js   # dist/ を読む
 ```
 
-デッキごとに、はみ出した箱の数と、文字を描いたフォントを出します。箱が 1 つでもはみ出したときと、デッキの字形の 1% より多くを、デッキが名前を挙げていないフォントが描いたときに失敗します。デッキのフォントが無いマシンではそうなり、そこで測っても何も分からないためです。「⊕」のように、どのフォントにも無い記号は、どのマシンでも別のフォントで描かれますが、この割合には届きません。Node と Playwright、その Chromium と、フォントが要ります。Ubuntu では、パッケージ `fonts-crosextra-carlito`（Calibri と同じ幅の Carlito）、`fonts-noto-cjk`（Noto Sans CJK JP）、`fonts-dejavu-core`（DejaVu Sans Mono）です。
+デッキごとに、はみ出した箱の数と、文字を描いたフォントを出します。箱が 1 つでもはみ出したときと、デッキの字形の 1% より多くを、デッキが名前を挙げていないフォントが描いたときに失敗します。デッキのフォントが無いマシンではそうなり、そこで測っても何も分からないためです。「⊕」のように、どのフォントにも無い記号は、どのマシンでも別のフォントで描かれますが、この割合には届きません。Node と Playwright、その Chromium と、フォントが要ります。Ubuntu では、パッケージ `fonts-crosextra-carlito`（`Calibri` と同じ幅の `Carlito`）、`fonts-noto-cjk`（`Noto Sans CJK JP`）、`fonts-dejavu-core`（`DejaVu Sans Mono`）です。
 
 ## 確かめる
 

@@ -26,7 +26,7 @@ go doc ./internal/fivegc
 | `FiveGC.Register`、TS 23.502 4.2.2.2.2 | 認証（AUSF と UDM による 5G-AKA）、NAS のセキュリティ、UDM の UE のコンテキスト、5G-GUTI と、それに伴う REGISTRATION COMPLETE（TS 24.501 5.5.1.2.4）。REGISTRATION REJECT も送りません。スタブが応えられない要求には、API のエラーを返します。 | スタブは、設定にある IMSI に応えます。 |
 | `FiveGC.DeregistrationAccepted`、TS 24.501 5.5.2.3 | タイマー T3522 と、それが切れたときの登録解除の要求の再送。 | UE の API は、メッセージを失わない TCP の上で動きます。 |
 | `FiveGC.EstablishPDUSession`、TS 24.501 6.4.1 | UE ごとに 2 つ以上の PDU セッション、IPv4 のほかの種類、1 のほかの SSC モード、既定の DNN。PDU SESSION ESTABLISHMENT REJECT も送りません。スタブが応えられない要求には、API のエラーを返します。 | 既定の DNN を取ってくる加入の情報が無いので、UE は設定にある DNN を指定しなければなりません。 |
-| `FiveGC.PDUSessionReleaseCompleted`、TS 24.501 6.3.3.2 | PDU SESSION INACTIVE PENDING の状態と、タイマー T3592。網は PDU SESSION RELEASE COMMAND を送った時点でセッションを忘れます。 | UE の API は、メッセージを失わない TCP の上で動きます。 |
+| `FiveGC.PDUSessionReleaseCompleted`、TS 24.501 6.3.3.2 | `PDU SESSION INACTIVE PENDING` の状態と、タイマー T3592。網は PDU SESSION RELEASE COMMAND を送った時点でセッションを忘れます。 | UE の API は、メッセージを失わない TCP の上で動きます。 |
 | SMF と PCF、TS 29.512 | Npcf_SMPolicyControl（確立のときの Create、PCC ルールを運ぶ UpdateNotify、ルールの報告を運ぶ Update、解放のときの Delete）。代わりに、PCF と SMF は Store の PDU セッションを共有します。 | スタブには PCF と SMF が 1 つずつしかありません。EPC のスタブの Gx と同じく、N7 は IMS を学ぶ人に要らないメッセージを増やすだけです。 |
 | `sessionAMBR`、TS 23.501 5.7.2.7 | 加入の情報の Session-AMBR。どのセッションも同じ値で、スタブは速度を制限しません。 | 加入の値を取ってくる UDM が、スタブにはありません。 |
 | `FiveGC.reconcileVoiceQoSFlow`、TS 24.501 6.3.2.2 | フローがあるあいだにルールが変わったときの PDU SESSION MODIFICATION COMMAND と、それに伴う、1 つのコマンドの応答を待ってから次を送ることと、タイマー T3591。スタブは、QoS ルールと QoS の自分の記録だけを更新します。 | スタブはどちらも強制しません。UE は、フローがあることだけを知れば足ります。 |

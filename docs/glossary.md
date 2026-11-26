@@ -33,6 +33,11 @@ This glossary lists the abbreviations used in this project. Each entry has an En
 | SMSF | SMS Function | The 5GC function that carries SMS over NAS for a UE on 5G access (TS 23.501, TS 23.502). | 5G のアクセスにいる UE のために、NAS で SMS を運ぶ 5GC の機能（TS 23.501、TS 23.502）。 |
 | SME | Short Message Entity | Anything that sends or receives short messages, such as a phone (TS 23.040). | ショートメッセージを送ったり受けたりするもの。端末がその例（TS 23.040）。 |
 | MS | Mobile Station | The phone, as TS 24.011 and TS 23.040 call it. The IMS specifications call it the UE. | TS 24.011 と TS 23.040 での端末の呼び名。IMS の仕様では UE と呼ぶ。 |
+| HLR / VLR | Home Location Register / Visitor Location Register | The subscriber database of the 2G and 3G core networks, whose work the HSS took over, and the register of the users that an MSC serves. | 2G と 3G のコアネットワークの加入者のデータベース（その役目は HSS が引き継いだ）と、MSC が受け持つ利用者の登録簿。 |
+| AUSF / UDM | Authentication Server Function / Unified Data Management | The 5GC functions that authenticate the UE, and that hold the subscription data, in the place of the HSS of the EPC (TS 23.501). The 5GC stub of this project has neither. | UE を認証する 5GC の機能と、加入者のデータを持つ 5GC の機能。EPC の HSS の役目を受け持つ（TS 23.501）。このプロジェクトの 5GC のスタブには、どちらも無い。 |
+| SMF / UPF | Session Management Function / User Plane Function | The 5GC functions that set up the PDU sessions of a UE, and that forward its packets (TS 23.501). The 5GC stub of this project is one node that stands for both and for the AMF. | UE の PDU セッションを張る 5GC の機能と、そのパケットを転送する 5GC の機能（TS 23.501）。このプロジェクトの 5GC のスタブは、この 2 つと AMF の代わりをする 1 つのノード。 |
+| NRF | Network Repository Function | The 5GC function with which the other functions register and find one another (TS 23.501, TS 29.510). This project has none: a caller is given the address of its peer. | 5GC のほかの機能が自分を登録し、互いを見つけるための機能（TS 23.501、TS 29.510）。このプロジェクトには無く、呼ぶ側には相手のアドレスを渡す。 |
+| NF | Network Function | A function of the 5GC, such as the AMF, the SMF or the PCF, that offers its services over the SBI (TS 23.501). | AMF、SMF、PCF など、SBI でサービスを提供する 5GC の機能（TS 23.501）。 |
 
 ## Access network / アクセス網
 
@@ -86,6 +91,22 @@ This glossary lists the abbreviations used in this project. Each entry has an En
 | SM-RP-UI | Short Message Relay Protocol User Information | The AVP of S6c and SGd that carries the TPDU of a short message, which is the RP-User-Data of the relay layer (TS 29.338 6.3.3.3). | ショートメッセージの TPDU を運ぶ S6c と SGd の AVP。relay 層の RP-User-Data に当たる（TS 29.338 6.3.3.3）。 |
 | MAP | Mobile Application Part | The signaling protocol of the 2G and 3G core networks. Among other things, it carries short messages between the SMS-GMSC and the node that serves the recipient (TS 29.002). | 2G と 3G のコアネットワークの信号のプロトコル。SMS-GMSC と受信者を受け持つノードのあいだで、ショートメッセージも運ぶ（TS 29.002）。 |
 | SRI for SM | Send Routing Info for Short Message | The MAP query with which the SMS-GMSC asks the HSS where to deliver a short message (TS 29.002). S6c carries the same query over Diameter. | ショートメッセージをどこへ届けるかを SMS-GMSC が HSS に問い合わせる、MAP の要求（TS 29.002）。S6c は同じ問い合わせを Diameter で運ぶ。 |
+| PDU / PDU session | Protocol Data Unit | The unit of data that one layer of a protocol hands to the next. A PDU session is the 5GS counterpart of a PDN connection: the UE's IP connection to one data network (TS 23.501). | プロトコルの 1 つの層が次の層に渡すデータの単位。PDU セッションは 5GS で PDN コネクションに当たるもので、1 つのデータ網への UE の IP の接続（TS 23.501）。 |
+| DNN | Data Network Name | The name of the data network of a PDU session, the 5GS counterpart of the APN, such as `ims` (TS 23.501, TS 23.003). | PDU セッションのデータ網の名前。5GS で APN に当たるもの。たとえば `ims`（TS 23.501、TS 23.003）。 |
+| 5QI | 5G QoS Identifier | A number that names a QoS class in the 5GS, as the QCI does in the EPC. Voice uses 5QI 1, and IMS signaling uses 5QI 5 (TS 23.501). | 5GS の QoS クラスを表す番号。EPC の QCI に当たる。音声は 5QI 1、IMS の信号は 5QI 5 を使う（TS 23.501）。 |
+| PCC | Policy and Charging Control | The rules with which the PCRF or the PCF tells the core network what QoS and charging a flow gets (TS 23.203, TS 23.503). | PCRF や PCF が、流れにどの QoS と課金を当てるかをコアネットワークに伝える規則（TS 23.203、TS 23.503）。 |
+| RAN / NG-RAN | Radio Access Network / Next Generation RAN | The radio network between the UE and the core network, and that of 5G (TS 38.300). | UE とコアネットワークのあいだの無線の網と、5G のそれ（TS 38.300）。 |
+| NGAP | NG Application Protocol | The protocol between the NG-RAN and the AMF over N2, which carries the NAS messages of a UE (TS 38.413). | N2 で NG-RAN と AMF のあいだに使うプロトコル。UE の NAS のメッセージを運ぶ（TS 38.413）。 |
+| NSSAI / S-NSSAI | Network Slice Selection Assistance Information / Single NSSAI | The list of network slices that a UE asks for or is given, and the name of one slice in it (TS 23.501). | UE が求める、または与えられるネットワークスライスの一覧と、その中の 1 つのスライスの名前（TS 23.501）。 |
+| SSC | Session and Service Continuity | The mode that says whether a PDU session keeps its address when the UE moves (TS 23.501). | UE が移動したとき、PDU セッションがアドレスを保つかどうかを決めるモード（TS 23.501）。 |
+| IE / IEI | Information Element / Information Element Identifier | A field of a NAS or RP message, and the octet that names an optional one in front of it (TS 24.007). | NAS や RP のメッセージの 1 つの項目と、任意の項目の前に置いてその項目を示すオクテット（TS 24.007）。 |
+| REGISTRATION REQUEST / REGISTRATION ACCEPT / REGISTRATION COMPLETE / REGISTRATION REJECT | 5GMM messages of the registration | The UE asks to register with the 5GC, the AMF accepts or refuses, and the UE confirms a new 5G-GUTI (TS 24.501). | UE が 5GC への登録を求め、AMF が受け入れるか断り、UE が新しい 5G-GUTI を受け取ったことを返す（TS 24.501）。 |
+| PDU SESSION ESTABLISHMENT REQUEST / PDU SESSION ESTABLISHMENT ACCEPT / PDU SESSION ESTABLISHMENT REJECT | 5GSM messages of a new PDU session | The UE asks for a PDU session, and the SMF sets it up or refuses (TS 24.501). | UE が PDU セッションを求め、SMF がそれを張るか断る（TS 24.501）。 |
+| PDU SESSION MODIFICATION COMMAND / PDU SESSION RELEASE COMMAND | 5GSM messages that the network starts | The SMF changes the QoS rules of a PDU session, or releases it (TS 24.501). | SMF が PDU セッションの QoS ルールを変えるか、セッションを解放する（TS 24.501）。 |
+| UPLINK NAS TRANSPORT / DOWNLINK NAS TRANSPORT / UL NAS TRANSPORT / DL NAS TRANSPORT | NAS transport messages | The NAS messages that carry other messages, such as SMS, between the UE and the core network: the first two in the EPS (TS 24.301), the last two in the 5GS (TS 24.501). | SMS などのほかのメッセージを、UE とコアネットワークのあいだで運ぶ NAS のメッセージ。前の 2 つは EPS（TS 24.301）、後の 2 つは 5GS（TS 24.501）のもの。 |
+| SRVCC | Single Radio Voice Call Continuity | The handover of a voice call from the IMS over LTE or NR to a circuit-switched network (TS 23.216). | LTE や NR の上の IMS の音声通話を、回線交換の網へ引き継ぐこと（TS 23.216）。 |
+| TSC | Time Sensitive Communication | Communication that the 5GS carries within a bounded time, for industrial uses (TS 23.501). | 産業向けに、5GS が決まった時間の内に運ぶ通信（TS 23.501）。 |
+| MPS / MCPTT | Multimedia Priority Service / Mission Critical Push To Talk | A priority for the calls of authorised users, such as emergency services, and the push-to-talk service of public safety (TS 23.501, TS 23.379). | 救急などの許された利用者の呼を優先するサービスと、公共の安全のためのプッシュツートークのサービス（TS 23.501、TS 23.379）。 |
 
 ## Identities / 識別子
 
@@ -111,6 +132,9 @@ This glossary lists the abbreviations used in this project. Each entry has an En
 | E.164 | ITU-T E.164 | The international numbering plan of telephone numbers: a country code and a national number, up to 15 digits. A tel URI writes an E.164 number with a leading + (RFC 3966). | 電話番号の国際的な番号計画。国番号と国内番号からなり、最大 15 桁。tel URI は E.164 の番号の先頭に + を付けて書く（RFC 3966）。 |
 | NANP | North American Numbering Plan | The numbering plan of the countries that share the country code 1. The test numbers of this project, such as +1-202-555-0101, are in it. | 国番号 1 を共有する国々の番号計画。このプロジェクトの試験用の番号（+1-202-555-0101 など）も、この番号計画の中にある。 |
 | UUID | Universally Unique Identifier | A 128-bit identifier, written as 32 hexadecimal digits in five groups (RFC 9562). | 128 ビットの識別子。16 進数 32 桁を 5 つの組に分けて書く（RFC 9562）。 |
+| SUCI | Subscription Concealed Identifier | The IMSI hidden with the home network's public key, which a UE sends in REGISTRATION REQUEST instead of the IMSI (TS 23.003, TS 33.501). | ホームの網の公開鍵で隠した IMSI。UE は IMSI の代わりに、これを REGISTRATION REQUEST で送る（TS 23.003、TS 33.501）。 |
+| C-MSISDN | Correlation MSISDN | The MSISDN with which the IMS and the CS domain tell that two calls are the same user's, as SRVCC needs (TS 23.003). | IMS と CS ドメインが、2 つの呼が同じ利用者のものだと分かるための MSISDN。SRVCC で使う（TS 23.003）。 |
+| LMSI | Local Mobile Station Identity | A short identity that a VLR may give a subscriber to find its record faster (TS 23.003). | VLR が加入者の記録を早く見つけるために与えることがある、短い識別子（TS 23.003）。 |
 
 ## Signaling / 信号
 
@@ -195,6 +219,9 @@ This glossary lists the abbreviations used in this project. Each entry has an En
 | NAPTR / SRV | DNS NAPTR and SRV records | DNS records that tell a SIP node which transport, host, and port to use for a domain (RFC 3263). | ドメインに対して使うトランスポート、ホスト、ポートを SIP のノードに教える DNS のレコード（RFC 3263）。 |
 | AAAA | DNS AAAA record | The DNS record that holds one IPv6 address of a host (RFC 3596 2.1). The A record holds an IPv4 address. | ホストの IPv6 のアドレスを 1 つ持つ DNS のレコード（RFC 3596 2.1）。IPv4 のアドレスは A レコードが持つ。 |
 | TC | Truncation bit | The bit in the header of a DNS message that says the message was cut short to fit its transport (RFC 1035 4.1.1). A resolver that sees it asks again over TCP. | DNS のメッセージのヘッダーにあるビットで、メッセージが運ぶ手段に収まるよう切り詰められたことを示す（RFC 1035 4.1.1）。これを見たリゾルバーは TCP で問い合わせ直す。 |
+| UECM / UEAU / SDM | Nhss_imsUEContextManagement / Nhss_imsUEAuthentication / Nhss_imsSubscriberDataManagement | The three IMS services of the HSS on the SBI, which stand for the Cx and Sh procedures (TS 29.562). | SBI での HSS の 3 つの IMS のサービス。Cx と Sh の手順の代わりになる（TS 29.562）。 |
+| CP | Short Message Control Protocol | The layer of SMS under RP between the UE and the core network: CP-DATA carries an RP message, CP-ACK confirms it, and CP-ERROR refuses it (TS 24.011). | UE とコアネットワークのあいだで、RP の下にある SMS の層。CP-DATA が RP のメッセージを運び、CP-ACK が受け取ったことを、CP-ERROR が断ったことを返す（TS 24.011）。 |
+| AAD / ADEV | Average acknowledgement delay / Average deviation | The two smoothed averages of the time a reply takes, from which an H.248 endpoint over UDP can work out when to send a request again (H.248.1 Annex D.1). | 応答にかかる時間の 2 つの平滑化した平均。UDP の上の H.248 のエンドポイントは、これから要求を送り直す時を決められる（H.248.1 Annex D.1）。 |
 
 ## Security / セキュリティ
 
@@ -232,6 +259,9 @@ This glossary lists the abbreviations used in this project. Each entry has an En
 | XFRM | Transform | The part of a Linux kernel that holds IPsec security associations and the policies that pick them, and that protects and checks the packets. `ip xfrm state` and `ip xfrm policy` show what it holds. The nodes of this project put their associations there when ESP is turned on. | IPsec のセキュリティアソシエーションと、それを選ぶポリシーを保持し、パケットの保護と検査を行う Linux カーネルの部分。保持しているものは `ip xfrm state` と `ip xfrm policy` で見られる。このプロジェクトのノードは、ESP を有効にしたときにアソシエーションをここに入れる。 |
 | TLS | Transport Layer Security | The protocol that encrypts a TCP connection (RFC 8446). The signaling of this project is plain text by default. | TCP の接続を暗号化するプロトコル（RFC 8446）。このプロジェクトの信号は既定では平文。 |
 | GBA / BSF | Generic Bootstrapping Architecture / Bootstrapping Server Function | A way to give the UE and an application server, such as the XCAP server of Ut, a shared key derived from AKA. The BSF is the node that runs AKA with the UE for this (TS 33.220). This project has no GBA. | AKA から導いた鍵を、UE と、Ut の XCAP サーバーのようなアプリケーションサーバーとで共有するしくみ。BSF はそのために UE と AKA を行うノード（TS 33.220）。このプロジェクトに GBA は無い。 |
+| HA1 | Hash of A1 | The hash of the user name, the realm and the password, which Digest computes its response from. A server can keep it instead of the password (RFC 7616). | 利用者の名前、レルム、パスワードのハッシュ。Digest は、これから応答を計算する。サーバーはパスワードの代わりに、これを持てる（RFC 7616）。 |
+| NBA / GIBA | NASS-IMS Bundled Authentication / GPRS-IMS Bundled Authentication | Two ways of authenticating a user of the IMS by the authentication of its access network, without IMS-AKA or Digest (TS 33.203). | アクセス網の認証で IMS の利用者を認証する 2 つの方法。IMS-AKA も Digest も使わない（TS 33.203）。 |
+| ACL | Access Control List | The list of what each user may do, such as the commands of Valkey that each user may send. | 利用者ごとに、何をしてよいかを並べた一覧。たとえば、利用者ごとに送ってよい Valkey のコマンド。 |
 
 ## Media / メディア
 
@@ -306,6 +336,8 @@ This glossary lists the abbreviations used in this project. Each entry has an En
 | Store | Store | The interface behind which a node of this project keeps the state of its users. It is the memory of the node's own process by default, or a Valkey server that the `store` section of its configuration names, so that another node can take over the state. | このプロジェクトのノードが、利用者の状態をその後ろに置くインタフェース。置き場所は既定ではノード自身のプロセスのメモリで、設定の `store` の節で Valkey のサーバーを指すこともできる。Valkey に置けば、ほかのノードがその状態を引き継げる。 |
 | Compose / Compose profile | Docker Compose / Compose profile | Docker Compose starts the containers that `compose.yaml` describes. A profile is a group of its services that starts only when named with `--profile`; the UEs are in the profiles `ue`, `phones` and `volte`. | Docker Compose は、`compose.yaml` に書いたコンテナを起動する。プロファイルはそのサービスのまとまりで、`--profile` で名前を指定したときだけ起動する。UE はプロファイル `ue`、`phones`、`volte` に入っている。 |
 | WSL | Windows Subsystem for Linux | The Linux environment of Windows. Docker Desktop can run its engine there, on a Linux kernel of its own, which is what lets a container use a kernel facility such as XFRM on a Windows machine. | Windows の Linux 環境。Docker Desktop はエンジンをこの中の専用の Linux カーネルの上で動かせる。Windows の機械でも、コンテナが XFRM のようなカーネルの機能を使えるのはそのため。 |
+| PBX | Private Branch Exchange | The telephone switch of one office. A SIP PBX is one server; the IMS spreads the same work over roles that each run on several nodes. | 1 つの事業所の電話交換機。SIP の PBX は 1 台のサーバーで動く。IMS は同じ仕事を役割に分け、どの役割も複数台で動く。 |
+| AOF | Append Only File | The file in which Valkey writes every change, so that a restarted server gets its data back. | Valkey が変更をすべて書き足していくファイル。起動し直したサーバーは、これでデータを取り戻す。 |
 
 ## Standards / 標準
 
@@ -324,6 +356,9 @@ This glossary lists the abbreviations used in this project. Each entry has an En
 | SuM | Subscription Management | The 3GPP specifications for managing the subscriptions of the HSS and the HLR. The requirements are in TS 32.140 and the architecture in TS 32.141. | HSS と HLR の加入を管理するための 3GPP の仕様。要件は TS 32.140、構成は TS 32.141 にある。 |
 | Itf-N / IRP | Itf-N / Integration Reference Point | The interface of a managed network towards the operator's management systems, and the specification of one management interface on it. The IRP of SuM names its information model and the form that carries it in separate documents (TS 32.141 4.2.1, 4.4.2 and 4.4.3). | 管理される網から運用者の管理システムに向けたインタフェースと、その上の 1 つの管理インタフェースの仕様。SuM の IRP は情報モデルとそれを運ぶ形を別の文書で定める（TS 32.141 4.2.1、4.4.2、4.4.3）。 |
 | Bulk CM | Bulk Configuration Management | Changing the configuration of a managed network with a file that holds many changes, instead of one request for each. The file goes in and out in one operation, and one operation brings the previous configuration back (TS 32.600 7.1). | 多くの変更を 1 つのファイルに入れて、管理される網の設定を変えるやり方。要求を 1 件ずつ送るのに代える。ファイルの取り出しと送り込みはそれぞれ 1 つの操作で、前の構成に戻すのも 1 つの操作で行う（TS 32.600 7.1）。 |
+| IANA | Internet Assigned Numbers Authority | The body that keeps the registries of protocol numbers, such as the Diameter command codes and the port numbers. | Diameter のコマンドコードやポート番号など、プロトコルの番号の登録簿を管理する組織。 |
+| ECMA-376 | Office Open XML File Formats | The standard of the file format of PowerPoint, in which the slide decks are made. | PowerPoint のファイルの形式の標準。スライドのデッキはこの形式で作る。 |
+| AGPL | GNU Affero General Public License | A free software licence that also asks a network service to offer its source code, such as that of Grafana. | ネットワークのサービスにもソースコードの提供を求めるフリーソフトウェアのライセンス。Grafana などが使う。 |
 
 ## General networking / ネットワークの一般用語
 
@@ -352,3 +387,20 @@ This glossary lists the abbreviations used in this project. Each entry has an En
 | POSIX | Portable Operating System Interface | The standard interface of Unix-like systems (IEEE 1003.1), including its shell. | Unix 系のシステムの標準のインタフェース（IEEE 1003.1）。シェルも含む。 |
 | CI | Continuous integration | Building and testing every change automatically. | 変更のたびにビルドと試験を自動で行うこと。 |
 | CRC | Cyclic redundancy check | A short code computed from data to detect errors in it. | データから計算する短い符号で、データの誤りを見つけるのに使う。 |
+| SYN / FIN | Synchronize / Finish | The TCP flags that open and close a connection (RFC 9293). | TCP の接続を始めるフラグと、終えるフラグ（RFC 9293）。 |
+| SIGTERM / SIGKILL / SIGQUIT | POSIX signals | The signals that ask a process to stop, stop it at once, and ask it to stop and dump its state. | プロセスに止まるよう求めるシグナル、すぐに止めるシグナル、止まって状態を書き出すよう求めるシグナル。 |
+| OOM | Out of memory | The state in which a system has no memory left; Linux then stops a process. | システムのメモリが尽きた状態。Linux は、このときプロセスを止める。 |
+| CLI / UI | Command-line interface / User interface | A program that is used by typing commands, and the part of a program that a person uses, such as a web page. | コマンドを打って使うプログラムと、Web のページのように、人が使うプログラムの部分。 |
+| HTML / PDF / YAML | HyperText Markup Language / Portable Document Format / YAML Ain't Markup Language | The format of web pages, a format of documents to print, and a text format of configuration files. | Web のページの形式、印刷するための文書の形式、設定ファイルのテキストの形式。 |
+| FAQ | Frequently asked questions | A page of questions that are often asked, with their answers. | よく聞かれる質問と、その答えを並べたページ。 |
+
+## Cloud / クラウド
+
+| Term | Full name | English | 日本語 |
+| --- | --- | --- | --- |
+| AWS / EC2 / EBS | Amazon Web Services / Elastic Compute Cloud / Elastic Block Store | The cloud of Amazon, its virtual machines, and their disks. | Amazon のクラウドと、その仮想マシンと、仮想マシンのディスク。 |
+| EKS / AKS | Amazon Elastic Kubernetes Service / Azure Kubernetes Service | The Kubernetes clusters that AWS and Azure run. | AWS と Azure が運用する Kubernetes のクラスタ。 |
+| VPC | Virtual Private Cloud | A private network of one's own in AWS. | AWS の中に作る、自分だけのプライベートなネットワーク。 |
+| NLB / NLCU | Network Load Balancer / Network Load Balancer Capacity Unit | The load balancer of AWS for TCP and UDP, and the unit of its use that it is charged by. | AWS の TCP と UDP のロードバランサーと、その使用量の課金の単位。 |
+| VM | Virtual machine | A computer that software emulates on another one. | ソフトウェアがほかのコンピュータの上に作るコンピュータ。 |
+| CNI | Container Network Interface | The interface through which Kubernetes asks a plugin to connect a pod to the network. | Kubernetes が、Pod をネットワークにつなぐようプラグインに頼むためのインタフェース。 |

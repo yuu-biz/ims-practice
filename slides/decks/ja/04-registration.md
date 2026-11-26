@@ -188,7 +188,7 @@ UE <-- P-CSCF <-- I-CSCF <-- S-CSCF: 200 OK // 10
 
 | 見るもの | 見どころ |
 | --- | --- |
-| SAR の Server-Assignment-Type | REGISTRATION（1）。 |
+| SAR の Server-Assignment-Type | `REGISTRATION`（1）。 |
 | SAA の User-Data | 利用者のプロファイル。XML。iFC が入っている。 |
 | 200 OK の Path と Service-Route | このあとの要求が通る経路。 |
 | 200 OK の P-Associated-URI | 一緒に登録された識別子。HSS が規制する識別子は入らない。最初が既定の識別子。 |
