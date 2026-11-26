@@ -102,3 +102,37 @@ func TestConferenceOfTwoRelaysAgain(t *testing.T) {
 		t.Errorf("a got %v, %+v; want b's packet as b sent it", ok, p)
 	}
 }
+
+// TestNoPacketOfASubtractedParty: a packet that the relay had read from
+// the socket of a party just before the party was subtracted from a
+// conference of three goes to neither of the two left, whose context
+// now relays as it is. Once the Subtract has returned, nothing that the
+// party sent leaves the context.
+func TestNoPacketOfASubtractedParty(t *testing.T) {
+	r := newRelay(t, 20)
+	a, b, c := udp(t), udp(t), udp(t)
+	ctx, err := r.Add(TerminationRequest{ID: "a", Remote: addr(a)}, TerminationRequest{ID: "b", Remote: addr(b)}, TerminationRequest{ID: "c", Remote: addr(c)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rc, _ := r.context(ctx.ID)
+	rc.mu.Lock()
+	gone := rc.terms["c"]
+	rc.mu.Unlock()
+	if _, _, err := r.SubtractTermination(ctx.ID, "c"); err != nil {
+		t.Fatal(err)
+	}
+	sent := func() map[TerminationID]uint64 {
+		out := map[TerminationID]uint64{}
+		for id, view := range r.Contexts()[0].Terminations {
+			out[id] = view.PacketsSent
+		}
+		return out
+	}
+	before := sent()
+	// What the reader of c's socket hands over after the Subtract.
+	rc.receive(gone, rtpChannel, gone.rtp, (rtp.Packet{PayloadType: 0, SSRC: 42, Payload: []byte("too late")}).Marshal())
+	if after := sent(); after["a"] != before["a"] || after["b"] != before["b"] {
+		t.Errorf("packets sent went from %v to %v after the Subtract, want no packet of c", before, after)
+	}
+}
