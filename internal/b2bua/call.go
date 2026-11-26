@@ -272,7 +272,7 @@ func (c *Call) Answer(out *sip.OutgoingCall, resp *sip.Message) {
 		// The caller gets 500 in the place of the 2xx, and the callee a
 		// BYE once its 2xx has its ACK (RFC 3261 15.1.1), which Bye sends
 		// first when the UA has not.
-		c.in.Reject(500)
+		c.rejectINVITE()
 		out.Bye()
 		c.log.Info("call released before the caller had the answer")
 		return
@@ -487,7 +487,7 @@ func (c *Call) prack(r *sip.InDialogRequest, out *sip.OutgoingCall, acked *sip.M
 		case answered:
 			c.log.Info("PRACK not relayed", "status", refused.Status)
 		case r.Offer:
-			r.Reject(refused.Status, refused.Headers...)
+			c.refuse(r, ToCallee, refused.Status, refused.Headers...)
 		default:
 			r.Accept(sip.Body{})
 		}
@@ -543,7 +543,7 @@ func (c *Call) forward(r *sip.InDialogRequest, to leg, d Direction, finish func(
 	req := r.Request
 	m, refused := c.hooks.Request(req, d)
 	if refused != nil {
-		r.Reject(refused.Status, refused.Headers...)
+		c.refuse(r, d, refused.Status, refused.Headers...)
 		if refused.Release {
 			c.release()
 		}
@@ -627,7 +627,7 @@ func (c *Call) answerRequest(r *sip.InDialogRequest, sent sip.Body, resp *sip.Me
 			// The other leg has the 2xx. One with the offer of the other
 			// side, to a re-INVITE without one, still waits for its ACK,
 			// which the BYE of the release sends first.
-			r.Reject(500)
+			c.refuse(r, d, 500)
 			c.release()
 			return
 		}
@@ -662,6 +662,26 @@ func (c *Call) answerRequest(r *sip.InDialogRequest, sent sip.Body, resp *sip.Me
 	}
 }
 
+// refuse answers r, a request within a dialog that crosses in d, with
+// status in the place of relaying it or its answer, and tells the role
+// once the response has gone (Hooks.Refused).
+func (c *Call) refuse(r *sip.InDialogRequest, d Direction, status int, headers ...sip.HeaderField) {
+	if r.Reject(status, headers...) == nil {
+		c.hooks.Refused(r.Request, d, status)
+	}
+}
+
+// rejectINVITE answers the caller's INVITE with 500, and reports whether
+// it went: the INVITE may have its final response already. The role
+// hears of the 500 (Hooks.Refused).
+func (c *Call) rejectINVITE() bool {
+	if c.in.Reject(500) != nil {
+		return false
+	}
+	c.hooks.Refused(c.in.Request, ToCallee, 500)
+	return true
+}
+
 // unanswered answers r, a request within a dialog that crossed in
 // direction d and got no 2xx on the other leg, with reject, once the
 // role has put back what it changed for the request (Hooks.Unanswered).
@@ -686,7 +706,7 @@ func (c *Call) unanswered(r *sip.InDialogRequest, d Direction, reject func()) {
 // response. The caller then gets a BYE, and Answer sends the callee one
 // as the caller's leg ends (15.1.1).
 func (c *Call) release() {
-	if c.in.Reject(500) == nil {
+	if c.rejectINVITE() {
 		c.log.Info("call released: the caller's INVITE got 500")
 		return
 	}

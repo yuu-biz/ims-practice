@@ -108,4 +108,10 @@ type Hooks interface {
 	// cannot, and the Call then releases the call once req has its
 	// response.
 	Unanswered(req *sip.Message, d Direction) (ok bool)
+	// Refused tells the role that the Call has answered req, a request
+	// that crosses in d, with status in the place of relaying it or its
+	// answer: with the status of a Refusal, with 500 for a response that
+	// the role cannot pass on, or with the 500 to the caller's INVITE of
+	// a release. It is called once the response has gone.
+	Refused(req *sip.Message, d Direction, status int)
 }

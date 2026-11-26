@@ -222,6 +222,8 @@ func (h *hooks) Ack(ack *sip.Message, d b2bua.Direction) (sip.Body, bool) {
 
 func (h *hooks) Unanswered(*sip.Message, b2bua.Direction) bool { return true }
 
+func (h *hooks) Refused(*sip.Message, b2bua.Direction, int) {}
+
 func (h *hooks) Contact(*sip.Message) (sip.NameAddr, bool, bool) {
 	return sip.NameAddr{}, false, false
 }

@@ -219,6 +219,14 @@ func TestRefusedSDPOfAPRACKEndsTheINVITE(t *testing.T) {
 	noneCame(t, "the callee", pracked)
 	p.waitReleased(t)
 	assertHidden(t, p.b, planA)
+	// Network A counts the 500 that its IBCF sent, to the INVITE, and no
+	// refusal of the PRACK, which got 200.
+	for method, want := range map[string]float64{"INVITE": 1, "PRACK": 0} {
+		series := `ims_ibcf_requests_rejected_total{peer="peer-b",direction="exit",method="` + method + `",status="500"}`
+		if got := p.a.counter(t, series); got != want {
+			t.Errorf("network A counted %v %ss it answered 500, want %v", got, method, want)
+		}
+	}
 }
 
 // The caller's PRACK has a new offer, for a 183 of the callee that came
