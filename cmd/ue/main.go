@@ -470,6 +470,13 @@ func openUE(log *slog.Logger, o options, line *ue.Line) (u *opened, err error) {
 		// TS 24.229 L.2.2.1: the first P-CSCF of the PCO is the most
 		// preferred. The PCO gives an address only, so the port is the
 		// one of -pcscf, 5060 by default.
+		//
+		// SIMPLIFIED: TS 24.229 L.2.2.1. The PCO may give a list of
+		// P-CSCF addresses, and the UE takes the first one and drops the
+		// rest. Where TS 24.229 5.1.1.2.1 and 5.1.2A.1.6 have the UE
+		// register through another P-CSCF of the list, it registers
+		// through the same one again (ue.RegistrationBackoff). The EPC
+		// stub of each deployment of this project gives one address.
 		target = netip.AddrPortFrom(attached.PCSCFs[0], target.Port())
 		o.cfg.AccessNetworkInfo = attached.AccessNetworkInfo
 		o.cfg.Calls.Resources, detached = ue.FollowAccess(access)

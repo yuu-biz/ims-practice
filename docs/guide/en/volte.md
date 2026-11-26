@@ -80,7 +80,7 @@ The ATTACH ACCEPT carries the default bearer of the IMS APN in its ESM message c
 
 - EPS bearer 5 is the default bearer, with QCI 5, the class of IMS signalling (IR.92 4.4.1, TS 23.203 6.1.7).
 - The PDN address is the subscriber's static address. The UE checks that it is the address it reaches the P-CSCF from, and stops if not.
-- The protocol configuration options (PCO) carry the P-CSCF address in a container with the identifier `000CH` (TS 24.008 10.5.6.3). This is method II of TS 24.229 L.2.2.1, which IR.92 4.5 asks for. The first address of the list is the preferred one. The PCO gives an address only, so the UE sends to port 5060 of it.
+- The protocol configuration options (PCO) carry the P-CSCF address in a container with the identifier `000CH` (TS 24.008 10.5.6.3). This is method II of TS 24.229 L.2.2.1, which IR.92 4.5 asks for. The first address of the list is the preferred one. The UE receives the list but uses only that first address. The PCO gives an address only, so the UE sends to port 5060 of it.
 
 The UE also writes the cell into P-Access-Network-Info, `3GPP-E-UTRAN-FDD;utran-cell-id-3gpp=0010100010000101`: MCC 001, MNC 01, the TAC in 4 hexadecimal digits and the ECI in 7 (TS 24.229 7.2A.4.3, L.3.1.1).
 
@@ -676,6 +676,7 @@ Each item has a `SIMPLIFIED:` comment in the code; `grep -rn "SIMPLIFIED:" inter
 | UE, TS 24.301, TS 36.331 | The UE's packets go straight onto the Docker network. | No radio and no tunnel. |
 | UE, TS 24.229 7.2A.4.3 | The access type is always `3GPP-E-UTRAN-FDD`. | The stub says nothing of the duplex mode of its cell. |
 | UE, TS 24.229 L.2.2.5.1B | The voice bearer counts as the resources of every call, without matching its TFT. | IR.92 4.4.2 has one voice bearer for all calls. |
+| UE, TS 24.229 L.2.2.1 | The UE receives the list of P-CSCF addresses in the PCO but uses only the first. When a registration fails in a way that TS 24.229 5.1.1.2.1 and 5.1.2A.1.6 answer with another P-CSCF of the list, the UE registers through the same one again. | The EPC stub of each deployment of this project gives one address. |
 | UE, TS 24.301 5.5.2.3.4, IR.92 2.4.2.1 | After the network detaches it with "re-attach not required" and no EMM cause, the UE should attach again once T3402 expires, 12 minutes by default (TS 24.301 5.2.2.3.3), and register anew. After the event stream of the access network ends, it should set its PDN connection up again. The UE simulator stops with an error instead, and sends no deregistration, which could no longer reach the IMS. | One run of the simulator holds one attach: its SIP transport, its contact and the media resources of its calls are set up once, for the PDN address of that attach. |
 | UE, TS 24.229 6.1.1 | A bearer lost before the answer only changes the precondition table; the network ends the call. | The P-CSCF releases it (5.2.8.1.1). |
 | UE, TS 24.229 5.1.3.1, 5.1.4A.1 | precondition is in the Supported of every request within a dialog. | One Supported for all calls; a peer that does not use preconditions ignores it. |

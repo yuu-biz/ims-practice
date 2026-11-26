@@ -15,8 +15,9 @@ import (
 const (
 	// retryMaxTime is max-time.
 	retryMaxTime = 1800 * time.Second
-	// retryBaseTime is base-time (if all failed). The UE has one P-CSCF,
-	// so when its registration fails, all of its flows have failed.
+	// retryBaseTime is base-time (if all failed). The UE uses one
+	// P-CSCF, so when its registration fails, all of its flows have
+	// failed.
 	retryBaseTime = 30 * time.Second
 )
 
@@ -39,9 +40,9 @@ type RegistrationBackoff struct {
 // SIMPLIFIED: TS 24.229 5.1.1.2.1 and 5.1.1.4.1. When Timer F fires, or
 // a 503 comes with a Retry-After longer than Timer F, the UE should
 // mark the P-CSCF as unavailable and register through another one, or
-// find the P-CSCFs again. It knows one P-CSCF address, which a new
-// discovery would give again, so it waits and registers through the
-// same P-CSCF. After a failed refresh it always makes an initial
+// find the P-CSCFs again. It uses one P-CSCF address, the configured
+// one or the first of the list that the PCO gave, which a new discovery
+// would give again, so it waits and registers through the same P-CSCF. After a failed refresh it always makes an initial
 // registration, also where 5.1.1.4.1 lets it refresh after a short
 // Retry-After of a 503: no such response reaches the UE here. A P-CSCF
 // that the operator has shut down answers 503 with a Retry-After longer
