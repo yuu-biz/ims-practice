@@ -412,6 +412,35 @@ A request with such an SDP goes no further, and the IBCF answers it itself with 
 
 The tests of `internal/ibcf` run these flows in one process, with a TrGW that turns the `Modify` of one side down: `TestRefusedOfferOfTheINVITEIsRejected`, `TestRefusedOfferWithinTheCallIsRejected`, `TestOfferWithinTheCallEndsTheCallWhenTheTrGWMayHaveTakenIt` and `TestRefusedSDPOfAPRACKEndsTheINVITE`.
 
+### An SDP in a response or an ACK
+
+Nobody can turn a response or an ACK down, and the side that sent it has taken the session that its SDP describes already: it has answered an offer, or made one in a 2xx. The IBCF still does not pass that SDP on, for the reason above, so the call cannot go on, whatever the TrGW answered. The IBCF releases it, as TS 24.229 5.10.2.4 and 5.10.3.4 let it, and the response does not cross:
+
+```text
+ UE A1         IBCF-A          TrGW-A          IBCF-B          UE B1
+ | INVITE       |                 |                |               |
+ |------------->|=================================>|-------------->|
+ |              |                 |                | 183 with the answer
+ |              |<=================================|<--------------|
+ |              | Modify: where TrGW-B receives    |               |
+ |              |---------------->|                |               |
+ |              | error           |                |               |
+ |              |<----------------|                |               |
+ |  500         |                 |                |               |  the 183 goes no further
+ |<-------------|  CANCEL         |                |               |
+ |              |=================================>|  CANCEL       |
+ |              |                 |                |-------------->|
+ |              | Subtract        |                |               |
+ |              |---------------->|                |               |
+```
+
+- **A provisional response to the INVITE**, such as the reliable 183 with the answer: the caller gets 500 for its INVITE, and the INVITE towards the callee is cancelled.
+- **The 200 of the INVITE**: the caller gets 500 in its place. The IBCF acknowledges the 200 and sends the callee a BYE.
+- **The 2xx of a request within the call**: the request gets 500 in its place, and each side gets a BYE. A request from network B, such as an UPDATE of UE B1, reaches IBCF-A through IBCF-B, which may take the BYE of IBCF-A before the 500 that went ahead of it. IBCF-B then answers the UPDATE 487 (Request Terminated), as a request that the end of its dialog left pending (RFC 3261 15.1.2).
+- **The answer in the ACK**, after an INVITE whose 200 carried the offer: the IBCF acknowledges the 200 without that answer, and sends each side a BYE. RFC 3261 13.2.2.4 asks a UAC that does not take the offer of a 2xx for a valid answer in the ACK, and the IBCF has none, so it sends the ACK without a body and the BYE right after it.
+
+The tests `TestRefusedAnswerOfTheINVITEEndsTheCall`, `TestRefusedAnswerWithinTheCallEndsTheCall` and `TestRefusedAnswerInTheACKEndsTheCall` of `internal/ibcf` show these flows, for an SDP that enters a network and for one that leaves it.
+
 ## Traffic statistics of the border
 
 Each IBCF instance counts what it lets across and what it turns away, per peer network, for the operator. TS 32.409 4.11 has the IBCF count the sessions from and to other network domains and the 403 (Forbidden) responses for them; the counters below split them by peer, and count every other refusal too.
@@ -562,7 +591,7 @@ Each item has a `SIMPLIFIED:` comment in the code; `grep -rn "SIMPLIFIED:" inter
 
 | Where | What is left out | Why |
 | --- | --- | --- |
-| IBCF, TS 24.229 5.10.2.4, 5.10.3.4 | The IBCF ends a call by itself only when one of its two dialogs fails, when the TrGW does not take the SDP of a request within the call, and when it takes the place of an earlier process of its instance. The TrGW reports nothing to the IBCF by itself, so a call whose TrGW context is lost goes on without media until a party hangs up, or until the next SDP of the call finds the context gone. The records of an instance that never starts again stay in the Store, with their TrGW contexts. | The TrGW of this project reports no failures to the IBCF, and the instances of this project keep their names when they start again. |
+| IBCF, TS 24.229 5.10.2.4, 5.10.3.4 | The IBCF ends a call by itself only when one of its two dialogs fails, when the TrGW does not take an SDP of the call, and when it takes the place of an earlier process of its instance. The TrGW reports nothing to the IBCF by itself, so a call whose TrGW context is lost goes on without media until a party hangs up, or until the next SDP of the call finds the context gone. The records of an instance that never starts again stay in the Store, with their TrGW contexts. | The TrGW of this project reports no failures to the IBCF, and the instances of this project keep their names when they start again. |
 | IBCF, TS 24.229 5.10.5 | The Contact of a 3xx does not cross, so a redirection from the other network reaches the caller without its targets. | The Contact of a 3xx names where to try next, not a dialog, and no node of this project answers with a 3xx. |
 | IBCF, RFC 3891 3 | A Replaces that names an early dialog goes on as it came, so the UA at the far end does not find that dialog. | The IBCF writes the dialogs of a call in its record once both are confirmed, and no node of this project replaces an early dialog. |
 | IBCF, RFC 3515 2.1 | A Refer-To that holds a Replaces goes on as it came. When a user transfers one user of the other network to another user there, the user that gets the INVITE with that Replaces would find no dialog of its own. | This project has no call transfer (TS 24.629). A UE that merges its calls into a conference sends its REFERs to the focus of its own network. |
