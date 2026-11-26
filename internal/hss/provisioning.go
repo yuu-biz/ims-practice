@@ -412,8 +412,15 @@ const ndjsonContentType = "application/x-ndjson"
 // hands out no credential at all, as Cx itself gives the S-CSCF only
 // H(A1) or vectors (TS 29.228 Table 6.3.5 and Table 6.3.7). This one
 // gives the secrets themselves to whoever reaches the provisioning
-// listener, which is why that listener belongs on an internal network
-// and on no address of the host.
+// listener, which asks for no authentication.
+//
+// That is a trade-off of a network for learning, not how an operator
+// runs one. The listener is on no address of the host, but the Compose
+// project has one network for the IMS nodes and the UE simulators, so a
+// UE container reaches it and can read K, OPc and the passwords of
+// every subscriber from the export. An operator puts the listener on a
+// management network that no UE reaches, and authenticates whoever
+// calls it.
 //
 // Each line is one subscription, written as the body of the PUT that
 // puts that very subscription back (subscriptionRequest). An archive
