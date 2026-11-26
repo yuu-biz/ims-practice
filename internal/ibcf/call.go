@@ -143,7 +143,8 @@ func (c *call) run() {
 		// The UA has answered the caller's INVITE with 487 already.
 	case final != nil:
 		c.b.metrics.failure(c.peer.Profile.Name, c.direction, final.StatusCode)
-		c.in.Reject(final.StatusCode, c.Response(final, c.in.Request, b2bua.ToCaller).Headers...)
+		m, _ := c.Response(final, c.in.Request, b2bua.ToCaller)
+		c.in.Reject(final.StatusCode, m.Headers...)
 	default:
 		// 504 (Server Time-out), as the CSCFs answer when their next
 		// hop does not (ims.Finish), rather than the 408 of RFC 3261
@@ -347,19 +348,19 @@ func (c *call) Request(req *sip.Message, d b2bua.Direction) (b2bua.Message, *b2b
 
 // Response prepares resp, a response that crosses the border, for the
 // other leg: the header fields to copy and the body.
-func (c *call) Response(resp, _ *sip.Message, d b2bua.Direction) b2bua.Message {
+func (c *call) Response(resp, _ *sip.Message, d b2bua.Direction) (b2bua.Message, bool) {
 	m := resp.Clone()
 	c.border.Response(m, c.across(d))
 	if err := c.throughTrGW(m, c.across(d)); err != nil {
 		c.mediaFailed("a response", err, "status", resp.StatusCode)
 	}
-	return b2bua.Message{Headers: interconnect.CrossingFields(m), Body: sip.BodyOf(m)}
+	return b2bua.Message{Headers: interconnect.CrossingFields(m), Body: sip.BodyOf(m)}, true
 }
 
 // Answer prepares the callee's 2xx for the caller. When the dialog
 // that answered is not the one whose session description the caller
 // got, session points the TrGW at the dialog that answered.
-func (c *call) Answer(resp, session *sip.Message) b2bua.Message {
+func (c *call) Answer(resp, session *sip.Message) (b2bua.Message, bool) {
 	if session != nil {
 		if err := c.throughTrGW(session.Clone(), c.across(b2bua.ToCaller)); err != nil {
 			c.mediaFailed("the dialog that answered", err)
@@ -369,12 +370,12 @@ func (c *call) Answer(resp, session *sip.Message) b2bua.Message {
 }
 
 // Ack puts the answer in ack through the TrGW.
-func (c *call) Ack(ack *sip.Message, d b2bua.Direction) sip.Body {
+func (c *call) Ack(ack *sip.Message, d b2bua.Direction) (sip.Body, bool) {
 	m := ack.Clone()
 	if err := c.throughTrGW(m, c.across(d)); err != nil {
 		c.mediaFailed("the ACK", err)
 	}
-	return sip.BodyOf(m)
+	return sip.BodyOf(m), true
 }
 
 // Reasons are the Reason header fields of ended, the request that ended

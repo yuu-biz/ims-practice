@@ -73,7 +73,9 @@ func (c *Call) moveSession(out *sip.OutgoingCall, tag string, calleeOffered bool
 // It returns the o= line of the offer, from which the role's next offer
 // goes on, and the caller's answer as the callee's side may take it
 // (Hooks.Response toward the callee). The answer is empty when the
-// caller did not take the offer.
+// caller did not take the offer. When the role cannot pass the offer or
+// the answer on (Hooks), the Call releases the call, and the answer is
+// empty too.
 func (c *Call) OfferCaller(tag string, origin sdp.Origin) (sdp.Origin, sip.Body) {
 	c.mu.Lock()
 	last := c.early.last[tag]
@@ -82,7 +84,12 @@ func (c *Call) OfferCaller(tag string, origin sdp.Origin) (sdp.Origin, sip.Body)
 		c.log.Warn("no session description of the dialog that answered to offer the caller", "to_tag", tag)
 		return origin, sip.Body{}
 	}
-	offer, err := sdp.Parse(c.hooks.Response(last, c.in.Request, ToCaller).Body.Content)
+	prepared, ok := c.hooks.Response(last, c.in.Request, ToCaller)
+	if !ok {
+		c.release()
+		return origin, sip.Body{}
+	}
+	offer, err := sdp.Parse(prepared.Body.Content)
 	if err != nil {
 		c.log.Warn("the session of the dialog that answered is not understood", "to_tag", tag, "error", err.Error())
 		return origin, sip.Body{}
@@ -125,7 +132,12 @@ func (c *Call) OfferCaller(tag string, origin sdp.Origin) (sdp.Origin, sip.Body)
 	}
 	c.sentToCaller(body)
 	c.log.Info("the caller has the session of the dialog that answered", "method", string(method), "to_tag", tag)
-	return offer.Origin, c.hooks.Response(resp, c.in.Request, ToCallee).Body
+	answer, ok := c.hooks.Response(resp, c.in.Request, ToCallee)
+	if !ok {
+		c.release()
+		return offer.Origin, sip.Body{}
+	}
+	return offer.Origin, answer.Body
 }
 
 // glareTries is how many offers the Call sends the caller in all for

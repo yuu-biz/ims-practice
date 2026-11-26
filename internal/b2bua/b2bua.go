@@ -45,33 +45,44 @@ type Message struct {
 }
 
 // Refusal is the response with which a role refuses a request instead of
-// relaying it.
+// relaying it. Release has the Call end the call once the request has
+// its response, for a role that cannot let the call go on as it was.
 type Refusal struct {
 	Status  int
 	Headers []sip.HeaderField
+	Release bool
 }
 
 // Hooks are what a role does to the messages that its Call relays. The
 // UA of each dialog writes the header fields that belong to that dialog
 // (RFC 3261 8.1.1, 12.1); the role returns the others that cross, and
 // the body.
+//
+// A response or an ACK cannot be refused as a request can. When the
+// role cannot pass one on, such as one whose session description it
+// cannot rewrite, it returns false, and the Call ends the call instead
+// of relaying it (Call.release). The 2xx of a request within a dialog
+// is then answered with 500 on the other leg, and so is the caller's
+// INVITE while it has no final response.
 type Hooks interface {
 	// Request prepares req, a request within a dialog that crosses in
 	// d, for the other dialog, or refuses it.
 	Request(req *sip.Message, d Direction) (Message, *Refusal)
-	// Response prepares resp, a response to req that crosses in d.
-	Response(resp, req *sip.Message, d Direction) Message
+	// Response prepares resp, a response to req that crosses in d. ok
+	// is false when the role cannot pass a provisional response or a
+	// 2xx on; it is not read for any other.
+	Response(resp, req *sip.Message, d Direction) (m Message, ok bool)
 	// Answer prepares the callee's 2xx for the caller. session is the
 	// last response with a session description of the early dialog
 	// that answered, when the caller has the session description of
 	// another early dialog; resp then comes without its body, since the
 	// caller takes only the first one (RFC 3261 13.2.1). session is nil
-	// otherwise.
-	Answer(resp, session *sip.Message) Message
+	// otherwise. ok is false when the role cannot pass the 2xx on.
+	Answer(resp, session *sip.Message) (m Message, ok bool)
 	// Ack prepares ack, the ACK with the answer to an offer that a 2xx
 	// carried, which crosses in d (RFC 3261 13.2.2.4, 14.1), and returns
-	// its body.
-	Ack(ack *sip.Message, d Direction) sip.Body
+	// its body. ok is false when the role cannot pass the answer on.
+	Ack(ack *sip.Message, d Direction) (body sip.Body, ok bool)
 	// Contact is the Contact that the caller's dialog takes for the
 	// Contact of resp, a response of the callee that goes to the caller,
 	// with recordRoute when the B2BUA stays on the route of that dialog
