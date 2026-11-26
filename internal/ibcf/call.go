@@ -143,7 +143,8 @@ func (c *call) run() {
 	case answered(c.in):
 		// The UA has answered the caller's INVITE with 487 already, for
 		// its CANCEL; or the call has answered it with 500 and cancelled
-		// the INVITE on this side, to release the call (b2bua.Refusal).
+		// the INVITE on this side, to release the call (b2bua.Refusal,
+		// b2bua.Hooks).
 	case final != nil:
 		c.b.metrics.failure(c.peer.Profile.Name, c.direction, final.StatusCode)
 		m, _ := c.Response(final, c.in.Request, b2bua.ToCaller)
@@ -313,13 +314,29 @@ func (c *call) throughTrGW(m *sip.Message, d interconnect.Direction) error {
 	return kept
 }
 
-// mediaFailed logs err, which throughTrGW returned for the SDP of what.
-func (c *call) mediaFailed(what string, err error, args ...any) {
+// notPassedOn reports whether the IBCF holds back what, a response or an
+// ACK, after err, the error of throughTrGW for its SDP, and logs err.
+//
+// Nobody can turn a response or an ACK down, and the side that sent it
+// has taken the session that its SDP describes. The IBCF still does not
+// pass that SDP on, for the reason of notThroughTrGW: it names the
+// address of the side that sent it, past the TrGW. So the call cannot go
+// on, whatever the TrGW answered, and the IBCF releases it (b2bua.Hooks),
+// as TS 24.229 5.10.2.4 and 5.10.3.4 let it for an error of the transport
+// plane. The request that a response answers gets 500 in its place, as
+// does the caller's INVITE while it has no final response, and that 500
+// counts among the IBCF's refusals.
+//
+// With errNotKept the SDP did go through the TrGW, and only the record
+// of the call was not written, which the next write mends; the message
+// goes on.
+func (c *call) notPassedOn(what string, err error, args ...any) bool {
 	if errors.Is(err, errNotKept) {
 		c.log.Warn("cannot keep the TrGW context in the record of the call", append(args, "error", err.Error())...)
-		return
+		return false
 	}
-	c.log.Warn("the TrGW refused the SDP of "+what, append(args, "error", err.Error())...)
+	c.log.Warn("the SDP of "+what+" is not put through the TrGW: the IBCF releases the call", append(args, "error", err.Error())...)
+	return true
 }
 
 // across is the direction in which a message that the call relays in d
@@ -427,13 +444,21 @@ func callStays(err error) bool {
 	return errors.Is(err, agw.ErrRejected)
 }
 
-// Response prepares resp, a response that crosses the border, for the
-// other leg: the header fields to copy and the body.
-func (c *call) Response(resp, _ *sip.Message, d b2bua.Direction) (b2bua.Message, bool) {
+// Response prepares resp, a response to req that crosses the border, for
+// the other leg: the header fields to copy and the body. The SDP of a
+// provisional response or a 2xx goes through the TrGW, and when it does
+// not, the IBCF holds resp back (notPassedOn). A final response other
+// than 2xx crosses without its body (b2bua.Call), so its SDP, such as
+// the media capabilities in a 488 (RFC 3261 21.4.26), does not go to the
+// TrGW.
+func (c *call) Response(resp, req *sip.Message, d b2bua.Direction) (b2bua.Message, bool) {
 	m := resp.Clone()
 	c.border.Response(m, c.across(d))
-	if err := c.throughTrGW(m, c.across(d)); err != nil {
-		c.mediaFailed("a response", err, "status", resp.StatusCode)
+	if resp.StatusCode < 300 {
+		if err := c.throughTrGW(m, c.across(d)); err != nil && c.notPassedOn("a response", err, "status", resp.StatusCode) {
+			c.b.refuse(req, c.peer, reverse(c.across(d)), 500)
+			return b2bua.Message{}, false
+		}
 	}
 	return b2bua.Message{Headers: interconnect.CrossingFields(m), Body: sip.BodyOf(m)}, true
 }
@@ -443,18 +468,20 @@ func (c *call) Response(resp, _ *sip.Message, d b2bua.Direction) (b2bua.Message,
 // got, session points the TrGW at the dialog that answered.
 func (c *call) Answer(resp, session *sip.Message) (b2bua.Message, bool) {
 	if session != nil {
-		if err := c.throughTrGW(session.Clone(), c.across(b2bua.ToCaller)); err != nil {
-			c.mediaFailed("the dialog that answered", err)
+		if err := c.throughTrGW(session.Clone(), c.across(b2bua.ToCaller)); err != nil && c.notPassedOn("the dialog that answered", err) {
+			c.b.refuse(c.in.Request, c.peer, c.direction, 500)
+			return b2bua.Message{}, false
 		}
 	}
 	return c.Response(resp, c.in.Request, b2bua.ToCaller)
 }
 
-// Ack puts the answer in ack through the TrGW.
+// Ack puts the answer in ack through the TrGW, or holds it back
+// (notPassedOn).
 func (c *call) Ack(ack *sip.Message, d b2bua.Direction) (sip.Body, bool) {
 	m := ack.Clone()
-	if err := c.throughTrGW(m, c.across(d)); err != nil {
-		c.mediaFailed("the ACK", err)
+	if err := c.throughTrGW(m, c.across(d)); err != nil && c.notPassedOn("the ACK", err) {
+		return sip.Body{}, false
 	}
 	return sip.BodyOf(m), true
 }
