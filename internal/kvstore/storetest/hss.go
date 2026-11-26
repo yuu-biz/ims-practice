@@ -9,6 +9,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/yuu-biz/ims-practice/internal/aka"
 	"github.com/yuu-biz/ims-practice/internal/diameter"
@@ -41,6 +42,8 @@ func HSS(t *testing.T, newPair func(t *testing.T) (hss.Store, hss.Store)) {
 		{"CountsFollowWhatIsStored", hssCountsFollowWhatIsStored},
 		{"Settings", hssSettings},
 		{"ConcurrentSettings", hssConcurrentSettings},
+		{"ProfilePush", hssProfilePush},
+		{"ProfilePushClaims", hssProfilePushClaims},
 	})
 }
 
@@ -766,6 +769,90 @@ func hssConcurrentSettings(t *testing.T, a, b hss.Store) {
 	})
 	if got, _, err := a.Settings(ctx); err != nil || got.Generation != 2*n {
 		t.Errorf("the settings are at generation %d after %d changes, %v", got.Generation, 2*n, err)
+	}
+}
+
+// hssProfilePush has one instance record the push of a source and go on
+// with it, and the other read each step: a step from what is no longer
+// there records nothing, and the pushes of two sources are apart.
+func hssProfilePush(t *testing.T, a, b hss.Store) {
+	ctx := context.Background()
+	if _, ok, err := b.ProfilePush(ctx, hss.ProfileOfOtherUsers); err != nil || ok {
+		t.Fatalf("ProfilePush of an empty store = %v, %v, want none", ok, err)
+	}
+	started := hss.ProfilePush{Source: hss.ProfileOfOtherUsers, Name: "trial", Round: 1}
+	advanced := started
+	advanced.After = impi
+	overtaking := hss.ProfilePush{Source: hss.ProfileOfOtherUsers, Name: "default", Round: 2}
+	for _, tc := range []struct {
+		name      string
+		store     hss.Store
+		old       *hss.ProfilePush
+		next      hss.ProfilePush
+		swapped   bool
+		afterward hss.ProfilePush
+	}{
+		{"the first round", a, nil, started, true, started},
+		{"another first round", b, nil, overtaking, false, started},
+		{"a step", a, &started, advanced, true, advanced},
+		{"a step from what is gone", b, &started, advanced, false, advanced},
+		{"a new round", b, &advanced, overtaking, true, overtaking},
+		{"the step of the overtaken round", a, &advanced, advanced, false, overtaking},
+	} {
+		swapped, err := tc.store.CompareAndSwapProfilePush(ctx, tc.old, tc.next)
+		if err != nil || swapped != tc.swapped {
+			t.Errorf("%s: CompareAndSwapProfilePush = %v, %v, want %v", tc.name, swapped, err, tc.swapped)
+		}
+		for _, s := range []hss.Store{a, b} {
+			if got, ok, err := s.ProfilePush(ctx, hss.ProfileOfOtherUsers); err != nil || !ok || got != tc.afterward {
+				t.Errorf("%s: ProfilePush = %+v, %v, %v, want %+v", tc.name, got, ok, err, tc.afterward)
+			}
+		}
+	}
+	if _, ok, err := a.ProfilePush(ctx, hss.ProfileOfTestUsers); err != nil || ok {
+		t.Errorf("ProfilePush of the test users = %v, %v, want none", ok, err)
+	}
+}
+
+// claimProfilePushes is ClaimProfilePushes, failing the test on an
+// error, with the sources of the claims.
+func claimProfilePushes(t *testing.T, s hss.Store, now time.Time, lease time.Duration) []hss.ProfilePushClaim {
+	t.Helper()
+	claims, err := s.ClaimProfilePushes(context.Background(), now, lease, 2)
+	if err != nil {
+		t.Fatalf("ClaimProfilePushes: %v", err)
+	}
+	return claims
+}
+
+// hssProfilePushClaims has the push of a source made due on one
+// instance and claimed on the other: one claim at a time, a claim that
+// runs out is due again, and making the push due again ends a claim.
+func hssProfilePushClaims(t *testing.T, a, b hss.Store) {
+	ctx := context.Background()
+	now := time.UnixMilli(1_800_000_000_000)
+	const lease = 30 * time.Second
+	if err := a.ScheduleProfilePush(ctx, hss.ProfileOfOtherUsers, now.Add(time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	if got := claimProfilePushes(t, b, now, lease); len(got) != 0 {
+		t.Fatalf("claims before the push is due = %+v", got)
+	}
+	got := claimProfilePushes(t, b, now.Add(time.Second), lease)
+	if len(got) != 1 || got[0].Source != hss.ProfileOfOtherUsers || !got[0].Until.Equal(now.Add(time.Second+lease)) {
+		t.Fatalf("claims once the push is due = %+v", got)
+	}
+	if again := claimProfilePushes(t, a, now.Add(2*time.Second), lease); len(again) != 0 {
+		t.Errorf("claims of a claimed push = %+v", again)
+	}
+	if after := claimProfilePushes(t, a, got[0].Until, lease); len(after) != 1 {
+		t.Errorf("claims once the claim ran out = %+v, want the push again", after)
+	}
+	if err := b.ScheduleProfilePush(ctx, hss.ProfileOfOtherUsers, now); err != nil {
+		t.Fatal(err)
+	}
+	if due := claimProfilePushes(t, a, now, lease); len(due) != 1 {
+		t.Errorf("claims once the claimed push is made due again = %+v, want the push", due)
 	}
 }
 

@@ -101,9 +101,14 @@ type Config struct {
 	Metrics *metrics.Registry
 	// SweepInterval is how often this instance reads the settings that
 	// the instances on its Store share (Settings), so how late a change
-	// that reached another instance alone is in force here; zero means
+	// that reached another instance alone is in force here, and claims
+	// the pushes of a changed setting that are due; zero means
 	// ims.SweepInterval. Tests shorten it.
 	SweepInterval time.Duration
+	// PushLease is how long a page of the push of a changed setting that
+	// this instance claims is its alone, after which another instance
+	// goes on with it; zero means profilePushLease. Tests shorten it.
+	PushLease time.Duration
 }
 
 // Admission is the operator's policy on which subscribers the network
@@ -227,11 +232,11 @@ func (h *HSS) beginSettings() {
 // this instance. It changes nothing when the Store cannot be written or
 // has a later change, and returns why.
 //
-// The instance whose write changed the settings of the Store pushes the
-// profiles that the change gives another name (pushChangedSettings).
-// The OAM server sends the change to every instance of the role, and
-// the others find it in force there and push nothing, so each user gets
-// the push of a change once.
+// The instance whose write changed the settings of the Store makes due
+// the pushes of the profiles that the change gives another name
+// (startPushes), which the instances share. The OAM server sends the
+// change to every instance of the role, and the others find it in force
+// there and start nothing.
 func (h *HSS) commitSettings(generation uint64) error {
 	next := h.pending
 	next.generation = generation
@@ -244,10 +249,8 @@ func (h *HSS) commitSettings(generation uint64) error {
 	if err != nil {
 		return err
 	}
-	// Outside settingsMu: a push reads the settings in force, which are
-	// these, and sends to one subscriber after another.
 	if wrote {
-		h.pushChangedSettings(before, next)
+		h.startPushes(before, next)
 	}
 	return nil
 }
@@ -341,21 +344,54 @@ func (h *HSS) loadSettings(ctx context.Context) error {
 	return nil
 }
 
-// sweep reads the settings of the Store every SweepInterval, until the
-// node stops (Close), so that a change that reached another instance
-// alone is in force here within an interval.
+// settingsInForce reads the settings of the Store, takes them on, and
+// returns those in force: what a push sends is the profile that the role
+// has in force as it sends, which a change through another instance may
+// have changed since this instance last read the Store.
+func (h *HSS) settingsInForce(ctx context.Context) (*settings, error) {
+	stored, ok, err := h.store.Settings(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if ok {
+		h.takeOn(settingsOf(stored))
+	}
+	return h.settings.Load(), nil
+}
+
+// sweep reads the settings of the Store and claims the pushes that are
+// due (claimPushes) every SweepInterval, and at once when this instance
+// has made a push due (sweepNow), until the node stops (Close). A change
+// that reached another instance alone is in force here within an
+// interval.
 func (h *HSS) sweep() {
-	tick := time.NewTicker(cmp.Or(h.config.SweepInterval, ims.SweepInterval))
+	tick := time.NewTicker(h.sweepInterval())
 	defer tick.Stop()
 	for {
 		select {
 		case <-h.life.Done():
 			return
 		case <-tick.C:
+		case <-h.kick:
 		}
 		if err := h.loadSettings(h.life); err != nil && h.life.Err() == nil {
 			h.log.Warn("the settings of the instances of the role were not read; the next round reads them", "error", err.Error())
 		}
+		h.claimPushes()
+	}
+}
+
+// sweepInterval is the SweepInterval of the configuration, or
+// ims.SweepInterval.
+func (h *HSS) sweepInterval() time.Duration { return cmp.Or(h.config.SweepInterval, ims.SweepInterval) }
+
+// sweepNow has the sweep run a round at once, rather than at its next
+// interval: this instance has made a push due, which it may as well
+// claim itself.
+func (h *HSS) sweepNow() {
+	select {
+	case h.kick <- struct{}{}:
+	default:
 	}
 }
 
@@ -399,19 +435,18 @@ type HSS struct {
 	alerts sync.WaitGroup
 	// life is the context of the work that the HSS does of its own
 	// accord, outside any request: the reading of the settings that the
-	// instances share (sweep) and the pushes of a changed setting
-	// (pushChangedSettings). Close ends it and waits for that work to
-	// stop, so that no push outlives the node.
+	// instances share and the pushes of a changed setting (sweep). Close
+	// ends it and waits for that work to stop, so that no push outlives
+	// the node.
 	life    context.Context
 	endLife context.CancelFunc
-	// sweeping counts the sweep, for Close.
+	// sweeping counts the sweep, for Close, and kick has it run a round
+	// at once (sweepNow).
 	sweeping sync.WaitGroup
-	// lifeMu is held over the end of life in Close and over the start of
-	// a push (pushChangedSettings), so that no push starts once Close
-	// waits for them.
-	lifeMu sync.Mutex
-	// pushes counts the pushes of a changed setting that are on their
-	// way, for Close, as alerts counts the alerts.
+	kick     chan struct{}
+	// pushes counts the pages of the pushes of a changed setting that
+	// are on their way, for Close, as alerts counts the alerts. Only the
+	// sweep starts them, so none starts once the sweep has stopped.
 	pushes sync.WaitGroup
 
 	// settings are the parts of the configuration that the maintenance
@@ -458,7 +493,7 @@ func New(config Config, store Store, node *diameter.Node, log *slog.Logger) (*HS
 		return nil, err
 	}
 	h := &HSS{config: config, store: store, node: node, log: log, users: config.UserLocks,
-		serviceCentres: map[string]ServiceCentre{}, measured: measured}
+		serviceCentres: map[string]ServiceCentre{}, measured: measured, kick: make(chan struct{}, 1)}
 	h.life, h.endLife = context.WithCancel(context.Background())
 	// A configuration that names no policy admits every subscriber, and
 	// the policy in force is written out, so that what the maintenance
@@ -493,6 +528,9 @@ func New(config Config, store Store, node *diameter.Node, log *slog.Logger) (*HS
 		log.Warn("the settings of the instances of the role were not read; those of the configuration file are in force until they are",
 			"error", err.Error())
 	}
+	if err := h.ensurePushes(h.life); err != nil {
+		log.Warn("the pushes of the changed settings were not read; the first change makes them due", "error", err.Error())
+	}
 	h.sweeping.Go(h.sweep)
 	return h, nil
 }
@@ -502,16 +540,14 @@ func New(config Config, store Store, node *diameter.Node, log *slog.Logger) (*HS
 func (h *HSS) SetPeers(p Peers) { h.peers.Store(&p) }
 
 // Close waits for the alerts that are on their way to the service
-// centres, stops reading the settings of the Store, and ends the pushes
-// of a changed setting and waits for them: one that is on its way sends
-// no more profiles, and the S-CSCFs it did not reach read the profile at
-// the next registration or from the push of a later change. A node
-// calls it once its Diameter server has stopped, when a push would
-// reach nobody anyway.
+// centres, stops reading the settings of the Store, and ends the pages
+// of the pushes of a changed setting that this instance claimed and
+// waits for them: one that is on its way sends no more profiles, and
+// its claim runs out, after which another instance on the Store goes
+// on with the push from the last PPR recorded. A node calls it once its
+// Diameter server has stopped, when a push would reach nobody anyway.
 func (h *HSS) Close() {
-	h.lifeMu.Lock()
 	h.endLife()
-	h.lifeMu.Unlock()
 	h.sweeping.Wait()
 	h.alerts.Wait()
 	h.pushes.Wait()

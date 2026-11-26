@@ -7,6 +7,7 @@
 //	subscriber:<private identity>    the Subscriber and its repository data
 //	public:<public identity>         index: the private identity of the subscription
 //	settings:                        the hss.StoredSettings of the instances
+//	profile-push:<profile source>    the hss.ProfilePush of the source
 //
 // and these sorted indexes of private identities, which are read one
 // page at a time:
@@ -16,6 +17,9 @@
 //	                                 has, one index per source of the
 //	                                 service profile name, for
 //	                                 ListServed
+//
+// and the time index profile-pushes, with one member per profile source
+// whose push an instance claims when it is due.
 //
 // The identities are in the form in which hss.MemoryStore compares them:
 // a private identity in lower case, a public identity as hss's
@@ -647,12 +651,17 @@ func (s *Store) Settings(ctx context.Context) (hss.StoredSettings, bool, error) 
 	return stored, true, nil
 }
 
-// CompareAndSwapSettings reads the item and writes next at the version
-// read, if the item still holds old: a write of another instance in
-// between changes the version, and the swap does not happen.
 func (s *Store) CompareAndSwapSettings(ctx context.Context, old *hss.StoredSettings, next hss.StoredSettings) (bool, error) {
-	var stored hss.StoredSettings
-	version, err := kvjson.Read(ctx, s.c, s.settingsKey(), &stored)
+	return compareAndSwap(ctx, s.c, s.settingsKey(), old, next)
+}
+
+// compareAndSwap reads the item under key and writes next at the version
+// read, if the item still holds old, or, for a nil old, if there is no
+// item: a write of another instance in between changes the version, and
+// the swap does not happen.
+func compareAndSwap[T comparable](ctx context.Context, c *kvjson.Client, key string, old *T, next T) (bool, error) {
+	var stored T
+	version, err := kvjson.Read(ctx, c, key, &stored)
 	switch {
 	case errors.Is(err, kvstore.ErrNotFound):
 		if old != nil {
@@ -663,11 +672,52 @@ func (s *Store) CompareAndSwapSettings(ctx context.Context, old *hss.StoredSetti
 	case old == nil || stored != *old:
 		return false, nil
 	}
-	_, err = kvjson.CompareAndSwap(ctx, s.c, s.settingsKey(), version, next, 0)
+	_, err = kvjson.CompareAndSwap(ctx, c, key, version, next, 0)
 	if errors.Is(err, kvstore.ErrConflict) {
 		return false, nil
 	}
 	return err == nil, err
+}
+
+// pushKey is the item of the push of the profile of the subscribers of
+// one source, and pushIndex the time index of the pushes, with one
+// member per source, which is due whenever an instance is to claim it.
+func (s *Store) pushKey(source hss.ProfileSource) string {
+	return s.c.Key("profile-push", string(source))
+}
+
+const pushIndex = "profile-pushes"
+
+func (s *Store) ProfilePush(ctx context.Context, source hss.ProfileSource) (hss.ProfilePush, bool, error) {
+	var p hss.ProfilePush
+	_, err := kvjson.Read(ctx, s.c, s.pushKey(source), &p)
+	if errors.Is(err, kvstore.ErrNotFound) {
+		return hss.ProfilePush{}, false, nil
+	}
+	if err != nil {
+		return hss.ProfilePush{}, false, err
+	}
+	return p, true, nil
+}
+
+func (s *Store) CompareAndSwapProfilePush(ctx context.Context, old *hss.ProfilePush, next hss.ProfilePush) (bool, error) {
+	return compareAndSwap(ctx, s.c, s.pushKey(next.Source), old, next)
+}
+
+func (s *Store) ScheduleProfilePush(ctx context.Context, source hss.ProfileSource, at time.Time) error {
+	return s.c.WriteDue(ctx, pushIndex, kvjson.Member(string(source)), at)
+}
+
+func (s *Store) ClaimProfilePushes(ctx context.Context, now time.Time, lease time.Duration, limit int) ([]hss.ProfilePushClaim, error) {
+	claims, err := s.c.ClaimDue(ctx, pushIndex, now, lease, limit)
+	if err != nil {
+		return nil, err
+	}
+	pushes := make([]hss.ProfilePushClaim, 0, len(claims))
+	for _, c := range claims {
+		pushes = append(pushes, hss.ProfilePushClaim{Source: hss.ProfileSource(kvjson.SplitMember(c.Member)[0]), Until: c.Until})
+	}
+	return pushes, nil
 }
 
 // ListServed reads one page of the sorted index of the served

@@ -1170,10 +1170,11 @@ func (h *HSS) pushChangedProfile(ctx context.Context, peers Peers, privateID str
 // profile holds the public identities of the implicit registration set
 // with their service profile, the unchanged ones included (6.5.2.1).
 //
-// The subscriber is read here, so the PPR carries the profile of the
-// moment it is sent rather than the one the provisioning request wrote;
-// the pushes of one subscriber are serialised, so an older profile never
-// lands at the S-CSCF after a newer one. A change made while a push of
+// The subscriber and the settings of the role are read here, so the PPR
+// carries the profile of the moment it is sent rather than the one the
+// provisioning request wrote, or the one of the settings that this
+// instance read last; the pushes of one subscriber are serialised, so
+// an older profile never lands at the S-CSCF after a newer one. A change made while a push of
 // the subscriber is on its way waits for that push, up to pushLockWait,
 // and then sends a PPR of its own.
 //
@@ -1208,7 +1209,10 @@ func (h *HSS) pushProfile(ctx context.Context, peers Peers, privateID string) er
 	if err != nil || !ok || !served(u) {
 		return err
 	}
-	set := h.settings.Load()
+	set, err := h.settingsInForce(ctx)
+	if err != nil {
+		return err
+	}
 	ppr := cx.PushProfileRequest{
 		Header:   diameter.NewHeader(h.node, u.SCSCF.OriginHost, u.SCSCF.OriginRealm),
 		UserName: u.PrivateIdentity,

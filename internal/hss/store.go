@@ -9,6 +9,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/yuu-biz/ims-practice/internal/aka"
 	"github.com/yuu-biz/ims-practice/internal/diameter"
@@ -468,6 +469,27 @@ type Store interface {
 	// changes them, so they change by this one atomic step, and no
 	// instance writes over a change it has not seen.
 	CompareAndSwapSettings(ctx context.Context, old *StoredSettings, next StoredSettings) (bool, error)
+	// ProfilePush returns how far the push of the profile of the served
+	// subscribers of source has come (ProfilePush), and whether one is
+	// recorded.
+	ProfilePush(ctx context.Context, source ProfileSource) (ProfilePush, bool, error)
+	// CompareAndSwapProfilePush records next as the push of its source,
+	// if the push recorded is still old, or, for a nil old, if none is
+	// recorded yet, and reports whether it did. The instance that has
+	// claimed the push records each PPR this way, so that a new round,
+	// or another instance that claimed the push once the claim of this
+	// one ran out, stops it at its next PPR.
+	CompareAndSwapProfilePush(ctx context.Context, old *ProfilePush, next ProfilePush) (bool, error)
+	// ScheduleProfilePush makes the push of source due at at, for
+	// whichever instance claims it then, and ends a claim on it.
+	ScheduleProfilePush(ctx context.Context, source ProfileSource, at time.Time) error
+	// ClaimProfilePushes claims at most limit of the pushes that are due
+	// at now, each until now plus lease. While a push is claimed it is
+	// not due, and no other instance claims it; when the claim runs out
+	// before a ScheduleProfilePush, it is due again. The pushes are one
+	// per source whose name a setting gives, so claiming them costs the
+	// same however many subscribers the store holds.
+	ClaimProfilePushes(ctx context.Context, now time.Time, lease time.Duration, limit int) ([]ProfilePushClaim, error)
 	// Counts are the numbers of TS 32.409 4.2.1 that the store holds,
 	// and whether it keeps them. A store that does not keep them
 	// returns false, and the HSS on it serves no database usage
@@ -489,6 +511,34 @@ type StoredSettings struct {
 	Admission              Admission
 	DefaultServiceProfile  string
 	TestUserServiceProfile string
+}
+
+// ProfilePush is how far the push of the service profile of the served
+// subscribers of one source has come: the PPRs of TS 29.228 6.6.1 that a
+// change of the setting that names the profile of that source calls
+// for (HSS.Settings). The instances on a Store share it, and the one
+// that claims it sends the PPRs of a page and records each one here, so
+// that another instance goes on from the last one if it stops.
+type ProfilePush struct {
+	Source ProfileSource
+	// Name is the service profile name that the push brings the S-CSCFs
+	// of the subscribers of Source to.
+	Name string
+	// Round tells one push of the source from another: each new Name
+	// starts a round of its own, from the first subscriber.
+	Round uint64
+	// After is the private identity of the last subscriber whose PPR
+	// the round has sent, or "" before the first.
+	After string
+	// Done says that the round has sent the PPR of its last subscriber.
+	Done bool
+}
+
+// ProfilePushClaim is the right of one instance to go on with the push
+// of Source until Until (Store.ClaimProfilePushes).
+type ProfilePushClaim struct {
+	Source ProfileSource
+	Until  time.Time
 }
 
 // Counts are the database usage measurements of TS 32.409 4.2.1: how
@@ -548,12 +598,17 @@ type MemoryStore struct {
 	// settings are the settings of the instances on the store, or nil
 	// before the first of them stores its own.
 	settings *StoredSettings
+	// pushes are the ProfilePush of each source, and pushesDue the time
+	// at which each is due, the time index that a store outside the
+	// process keeps.
+	pushes    map[ProfileSource]ProfilePush
+	pushesDue *ims.DueIndex[ProfileSource]
 }
 
 // NewMemoryStore returns a store that holds subs.
 func NewMemoryStore(subs ...Subscription) (*MemoryStore, error) {
 	s := &MemoryStore{byPrivate: map[string]Subscriber{}, byPublic: map[string]string{}, repository: map[string]map[string]sh.TransparentData{},
-		served: map[ProfileSource][]string{}}
+		served: map[ProfileSource][]string{}, pushes: map[ProfileSource]ProfilePush{}, pushesDue: ims.NewDueIndex[ProfileSource]()}
 	for _, sub := range subs {
 		if err := s.Add(context.Background(), sub); err != nil {
 			return nil, err
@@ -881,6 +936,41 @@ func (s *MemoryStore) CompareAndSwapSettings(_ context.Context, old *StoredSetti
 	}
 	s.settings = &next
 	return true, nil
+}
+
+func (s *MemoryStore) ProfilePush(_ context.Context, source ProfileSource) (ProfilePush, bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	p, ok := s.pushes[source]
+	return p, ok, nil
+}
+
+func (s *MemoryStore) CompareAndSwapProfilePush(_ context.Context, old *ProfilePush, next ProfilePush) (bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	stored, ok := s.pushes[next.Source]
+	if ok != (old != nil) || ok && stored != *old {
+		return false, nil
+	}
+	s.pushes[next.Source] = next
+	return true, nil
+}
+
+func (s *MemoryStore) ScheduleProfilePush(_ context.Context, source ProfileSource, at time.Time) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.pushesDue.Set(source, at)
+	return nil
+}
+
+func (s *MemoryStore) ClaimProfilePushes(_ context.Context, now time.Time, lease time.Duration, limit int) ([]ProfilePushClaim, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var claims []ProfilePushClaim
+	for _, due := range s.pushesDue.ClaimDue(now, lease, limit) {
+		claims = append(claims, ProfilePushClaim{Source: due.Member, Until: due.Until})
+	}
+	return claims, nil
 }
 
 // page is the part of the ordered private keys ids that one page of a
