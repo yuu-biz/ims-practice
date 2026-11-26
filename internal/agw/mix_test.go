@@ -181,3 +181,72 @@ func TestMixAfterSilenceStartsATalkspurt(t *testing.T) {
 		t.Errorf("the timestamp went on by %d over the silence, want %d to %d", advance, least, most)
 	}
 }
+
+// handClocked is a context of three terminations, a, b and c, towards
+// the sockets of parties, whose clock does not run: the test calls step
+// itself, so that it decides when each tick comes.
+func handClocked(t *testing.T, r *Relay) (*relayContext, map[TerminationID]*net.UDPConn) {
+	t.Helper()
+	parties := map[TerminationID]*net.UDPConn{"a": udp(t), "b": udp(t), "c": udp(t)}
+	rc := &relayContext{id: "hand", relay: r, terms: map[TerminationID]*relayTermination{}, mix: mixer.NewConference()}
+	rc.mu.Lock()
+	for _, id := range []TerminationID{"a", "b", "c"} {
+		if _, err := rc.add(TerminationRequest{ID: id, Remote: addr(parties[id])}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	rc.mu.Unlock()
+	t.Cleanup(func() {
+		rc.mu.Lock()
+		rc.closed = true
+		rc.mu.Unlock()
+		rc.close()
+	})
+	return rc, parties
+}
+
+// TestTheTimestampCountsTicksNotTheTimeOfDay: the timestamp of the
+// node's own media goes on by the ticks of the clock (RFC 3550 5.1),
+// however late or early a tick comes. A tick in which a party gets
+// nothing adds a frame however soon the next one follows, and a tick
+// that comes late adds no frame of its own.
+func TestTheTimestampCountsTicksNotTheTimeOfDay(t *testing.T) {
+	r := newRelay(t, 20)
+	rc, parties := handClocked(t, r)
+	setMode := func(id TerminationID, m Mode) {
+		rc.mu.Lock()
+		rc.terms[id].mode = m
+		rc.mu.Unlock()
+	}
+	next := func(what string) rtp.Packet { return rtptest.Next(t, parties["a"], time.Second, what) }
+
+	rc.step()
+	first := next("the mix of the first tick")
+	setMode("a", Inactive)
+	rc.step() // a gets nothing in this tick
+	setMode("a", SendReceive)
+	rc.step() // at once
+	after := next("the mix after a tick of silence")
+	if !after.Marker || after.Timestamp-first.Timestamp != 2*mixer.FrameSize {
+		t.Errorf("after one tick of silence: marker %v, timestamp on by %d; want the marker and %d",
+			after.Marker, after.Timestamp-first.Timestamp, 2*mixer.FrameSize)
+	}
+
+	// A new announcement starts a talkspurt in the next tick, which
+	// comes 31 ms late: the frames are contiguous all the same.
+	clip, _ := ramp(t, 4)
+	playback, err := clip.Play(mixer.PlayOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rc.mu.Lock()
+	rc.terms["a"].setSignals(&Signals{Play: &Play{Announcement: "ramp"}}, playback)
+	rc.mu.Unlock()
+	time.Sleep(tick + 11*time.Millisecond)
+	rc.step()
+	played := next("the first frame of the announcement")
+	if !played.Marker || played.Timestamp-after.Timestamp != mixer.FrameSize {
+		t.Errorf("an announcement in the tick after the mix: marker %v, timestamp on by %d; want the marker and %d",
+			played.Marker, played.Timestamp-after.Timestamp, mixer.FrameSize)
+	}
+}

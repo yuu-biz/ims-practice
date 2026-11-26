@@ -38,6 +38,12 @@ type relayContext struct {
 	chosen int
 	// ticking is true while the clock of the context runs.
 	ticking bool
+	// ticks numbers the ticks of the clock: each step counts one, and
+	// a clock that starts again counts the ticks that it missed since
+	// it stopped, at stopped. The timestamps of the node's own media
+	// count in these ticks.
+	ticks   uint64
+	stopped time.Time
 	// mix is the mixer of the context, with every termination as a
 	// participant. It mixes while the context is a conference.
 	mix *mixer.Conference
@@ -415,6 +421,11 @@ func (rc *relayContext) startClock() {
 	if rc.ticking || rc.closed || !rc.needsClock() {
 		return
 	}
+	if !rc.stopped.IsZero() {
+		// No clock counts the ticks while none runs, so the time of day
+		// does, once.
+		rc.ticks += uint64(time.Since(rc.stopped) / tick)
+	}
 	rc.ticking = true
 	go rc.run()
 }
@@ -453,7 +464,8 @@ func (rc *relayContext) step() bool {
 		rc.mu.Unlock()
 		return false
 	}
-	now := time.Now()
+	rc.ticks++
+	now := rc.ticks
 	var packets []outgoing
 	var notifies []func()
 	for _, t := range rc.terms {
@@ -479,6 +491,9 @@ func (rc *relayContext) step() bool {
 	}
 	more := !rc.closed && rc.needsClock()
 	rc.ticking = more
+	if !more {
+		rc.stopped = time.Now()
+	}
 	for _, p := range packets {
 		p.to.send(p.packet)
 	}
@@ -550,7 +565,7 @@ func (c *channel) send(b []byte) {
 // mixTick mixes one tick of a conference: each termination that sends
 // and plays nothing gets the sum of the others that receive, never its
 // own voice (mixer.Conference.Mix). rc.mu is held.
-func (rc *relayContext) mixTick(now time.Time) []outgoing {
+func (rc *relayContext) mixTick(now uint64) []outgoing {
 	if !rc.conference() {
 		for _, t := range rc.terms {
 			t.heard = nil

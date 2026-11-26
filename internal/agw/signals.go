@@ -229,9 +229,9 @@ type source struct {
 	// timestamp is that of the next packet, if it follows the last one
 	// without a gap.
 	timestamp uint32
-	// sent is the tick at which the last packet went out, or zero
-	// before the first.
-	sent time.Time
+	// sent is the tick of the context's clock in which the last packet
+	// went out, or zero before the first (relayContext.ticks).
+	sent uint64
 	// talkspurt marks the first packet after silence (RFC 3551 4.1): a
 	// tick in which the source sent nothing, or the start of a signal.
 	talkspurt bool
@@ -241,18 +241,16 @@ func newSource() *source {
 	return &source{ssrc: rand.Uint32(), seq: uint16(rand.Uint32()), timestamp: rand.Uint32(), talkspurt: true}
 }
 
-// packet carries one 20 ms PCMU payload, sent at the tick now.
+// packet carries one 20 ms PCMU payload, sent in the tick now.
 //
 // The timestamp counts the frames of the sampling clock, whether the
 // source sent them or not (RFC 3550 5.1). After silence it goes on by
-// the frames that the silence lasted, counted in whole ticks, since the
-// packets are made on a clock of 20 ms and the nominal sampling instant
-// is what counts.
-func (s *source) packet(payload []byte, now time.Time) []byte {
-	if s.talkspurt && !s.sent.IsZero() {
-		if frames := (now.Sub(s.sent) + tick/2) / tick; frames > 1 {
-			s.timestamp += uint32(frames-1) * mixer.FrameSize
-		}
+// the ticks that the silence lasted: the packets are made one a tick,
+// and the nominal sampling instant is what counts, not the time of day
+// at which a tick came.
+func (s *source) packet(payload []byte, now uint64) []byte {
+	if s.talkspurt && s.sent != 0 && now-s.sent > 1 {
+		s.timestamp += uint32(now-s.sent-1) * mixer.FrameSize
 	}
 	p := rtp.Packet{Marker: s.talkspurt, PayloadType: sdp.PCMU, SequenceNumber: s.seq, Timestamp: s.timestamp, SSRC: s.ssrc, Payload: payload}
 	s.seq++
@@ -264,8 +262,8 @@ func (s *source) packet(payload []byte, now time.Time) []byte {
 
 // idle tells the source of the tick now. If it sent no packet in that
 // tick, its next packet starts a talkspurt.
-func (s *source) idle(now time.Time) {
-	if !s.sent.Equal(now) {
+func (s *source) idle(now uint64) {
+	if s.sent != now {
 		s.talkspurt = true
 	}
 }
