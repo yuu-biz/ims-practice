@@ -120,6 +120,19 @@ func (c *Client) IMSI(ctx context.Context, publicID string) (string, error) {
 	return *data.IMSI, nil
 }
 
+// MSISDN returns the MSISDN of the user of publicID as digits (TS
+// 29.328 7.6.9), or "" when the HSS has none. The IP-SM-GW reads it for
+// a user whose third-party REGISTER carried no MSISDN in service-info,
+// since it names the user by MSISDN when it tells the HSS that the user
+// can take short messages again.
+func (c *Client) MSISDN(ctx context.Context, publicID string) (string, error) {
+	data, err := c.UserData(ctx, UserIdentity{PublicIdentity: publicID}, MSISDN)
+	if err != nil || data.PublicIdentifiers == nil || len(data.PublicIdentifiers.MSISDNs) == 0 {
+		return "", err
+	}
+	return data.PublicIdentifiers.MSISDNs[0], nil
+}
+
 // UpdateSMSRegistrationInfo registers the IP-SM-GW whose E.164 number
 // is ipsmgwNumber (digits only) for the user's short messages, or
 // removes the registration when it is empty (TS 29.328 6.1.2.1 step

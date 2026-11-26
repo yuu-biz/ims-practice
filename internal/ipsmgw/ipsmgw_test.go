@@ -107,6 +107,10 @@ type fakeHSS struct {
 	// A user that is not there has no IMSI, as the HSS answers for a
 	// private identity that is not derived from one.
 	imsi map[string]string
+	// msisdn is what the Sh read of the MSISDN answers, by public
+	// identity; msisdnReads counts those reads.
+	msisdn      map[string]string
+	msisdnReads atomic.Int64
 	// onUpdate, where set, runs as each PUR reaches the HSS, before it
 	// is answered, and updateFails makes each PUR fail after it.
 	onUpdate    atomic.Pointer[func()]
@@ -115,6 +119,11 @@ type fakeHSS struct {
 
 func (f *fakeHSS) IMSI(_ context.Context, publicID string) (string, error) {
 	return f.imsi[publicID], nil
+}
+
+func (f *fakeHSS) MSISDN(_ context.Context, publicID string) (string, error) {
+	f.msisdnReads.Add(1)
+	return f.msisdn[publicID], nil
 }
 
 func (f *fakeHSS) UpdateSMSRegistrationInfo(_ context.Context, id sh.UserIdentity, ipsmgwNumber string) error {
@@ -234,7 +243,7 @@ func newHarnessParts(t *testing.T, store ipsmgw.Store, reportTimeout time.Durati
 		t:  t,
 		sc: &fakeSC{submits: make(chan submitted, 10), reports: make(chan reported, 10)},
 		hss: &fakeHSS{updates: make(chan update, 10), notifications: make(chan notification, 10),
-			imsi: map[string]string{alice: aliceIMSI}},
+			imsi: map[string]string{alice: aliceIMSI}, msisdn: map[string]string{}},
 		received: make(chan *sip.Message, 10),
 		atSCSCF:  make(chan *sip.Message, 10),
 	}

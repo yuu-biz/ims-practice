@@ -21,6 +21,14 @@ import (
 // deregistration, and returns the answer.
 func (h *harness) thirdPartyRegister(expires int) *sip.Message {
 	h.t.Helper()
+	return h.thirdPartyRegisterWith(expires, "12025550101")
+}
+
+// thirdPartyRegisterWith is thirdPartyRegister with msisdn in
+// service-info, and with no body at all where msisdn is empty, as from
+// filter criteria without service information.
+func (h *harness) thirdPartyRegisterWith(expires int, msisdn string) *sip.Message {
+	h.t.Helper()
 	m := &sip.Message{Method: sip.REGISTER, RequestURI: ownURI}
 	m.Add("Max-Forwards", "70")
 	m.Add("From", "<sip:"+scscfHost+":5060>;tag="+sip.NewTag())
@@ -29,11 +37,26 @@ func (h *harness) thirdPartyRegister(expires int) *sip.Message {
 	m.Add("CSeq", "1 REGISTER")
 	m.Add("Contact", "<sip:"+scscfHost+":5060>")
 	m.Add("Expires", strconv.Itoa(expires))
-	if expires > 0 {
+	if expires > 0 && msisdn != "" {
 		m.Add("Content-Type", ims.IMS3GPPContentType)
-		m.Body = ims.ServiceInfoBody("12025550101")
+		m.Body = ims.ServiceInfoBody(msisdn)
 	}
 	return h.send(m)
+}
+
+// registeredWithoutMSISDN is registered for a third-party REGISTER
+// without service-info: the IP-SM-GW has no MSISDN for Alice, and names
+// her by her public identity in the PUR (regevent.go).
+func (h *harness) registeredWithoutMSISDN() *sip.Message {
+	h.t.Helper()
+	h.thirdPartyRegisterWith(3600, "")
+	subscribe := h.subscribed()
+	h.send(notify(subscribe, 1, "active;expires=3761", regDoc(reginfo.Active, reginfo.Active, "+g.3gpp.smsip")))
+	want := update{sh.UserIdentity{PublicIdentity: alice}, number}
+	if got := h.nextUpdate(); got != want {
+		h.t.Fatalf("PUR = %+v, want %+v", got, want)
+	}
+	return subscribe
 }
 
 // subscribed is the SUBSCRIBE that a third-party REGISTER made the
@@ -366,6 +389,69 @@ func TestTheRegistrationOfAUserItCouldNotReach(t *testing.T) {
 	case got := <-h.hss.notifications:
 		t.Errorf("the HSS heard %+v beside the registration", got)
 	case <-time.After(100 * time.Millisecond):
+	}
+}
+
+// TestTheReturnOfAUserWithoutAnMSISDNInServiceInfo: the third-party
+// REGISTER of Alice carried no service-info, so her subscription holds
+// no MSISDN. Her reregistration after a short message did not reach her
+// tells the HSS all the same, by the MSISDN that the IP-SM-GW reads over
+// Sh (TS 29.328 7.6.9), and her MESSAGE after another one by the tel URI
+// she asserts, without asking the HSS.
+func TestTheReturnOfAUserWithoutAnMSISDNInServiceInfo(t *testing.T) {
+	store := ipsmgw.NewMemoryStore()
+	h := newHarness(t, store, time.Minute, answerOK)
+	h.hss.msisdn[alice] = "12025550101"
+	h.registeredWithoutMSISDN()
+	if err := store.PutNotReachable(t.Context(), alice, time.Now().Add(time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+
+	h.thirdPartyRegisterWith(3600, "")
+	want := readyForSM("12025550101", sgd.AlertReasonUEPresent)
+	if got := h.nextNotification(); got != want {
+		t.Errorf("notification = %+v, want %+v", got, want)
+	}
+	if set, err := store.TakeNotReachable(t.Context(), alice); err != nil || set {
+		t.Errorf("the flag of the user after the return = %v, %v; want it taken", set, err)
+	}
+
+	reads := h.hss.msisdnReads.Load()
+	if err := store.PutNotReachable(t.Context(), alice, time.Now().Add(time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	h.send(message(submitBody(t, 1, scAddress, hello)))
+	if got := h.nextNotification(); got != want {
+		t.Errorf("notification after the MESSAGE = %+v, want %+v", got, want)
+	}
+	if more := h.hss.msisdnReads.Load() - reads; more != 0 {
+		t.Errorf("the IP-SM-GW read the MSISDN %d times for a MESSAGE that asserts a tel URI", more)
+	}
+}
+
+// TestTheReturnOfAUserWithoutANumberKeepsTheFlag: where no number can be
+// found for Alice, neither in service-info nor in the HSS, no
+// Ready-For-SM can name her. The IP-SM-GW keeps its flag, so that it
+// tells the HSS once a number is known.
+func TestTheReturnOfAUserWithoutANumberKeepsTheFlag(t *testing.T) {
+	store := ipsmgw.NewMemoryStore()
+	h := newHarness(t, store, time.Minute, answerOK)
+	h.registeredWithoutMSISDN()
+	if err := store.PutNotReachable(t.Context(), alice, time.Now().Add(time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+
+	h.thirdPartyRegisterWith(3600, "")
+	if !came(5*time.Second, func() bool { return h.hss.msisdnReads.Load() > 0 }) {
+		t.Fatal("the IP-SM-GW did not look for the number of the user")
+	}
+	select {
+	case got := <-h.hss.notifications:
+		t.Errorf("the HSS heard %+v of a user without a number", got)
+	case <-time.After(100 * time.Millisecond):
+	}
+	if set, err := store.TakeNotReachable(t.Context(), alice); err != nil || !set {
+		t.Errorf("the flag of the user = %v, %v; want it kept", set, err)
 	}
 }
 
