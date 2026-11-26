@@ -83,7 +83,8 @@ func (p *PCSCF) PolicyEvent(e policy.Event) {
 
 // release ends the dialog of key from the P-CSCF, for why: nil when the
 // network took the resources of the session away, or errRelay when the
-// media relay did not take an answer. A dialog that is gone has been
+// SDP of a message is not pointed at the media relay (notRelayed,
+// renegotiate). A dialog that is gone has been
 // ended already, and a Released one is being ended.
 //
 // While the INVITE is still on its way, the P-CSCF answers it 500 and

@@ -316,8 +316,7 @@ func (p *PCSCF) subsequent(st *sip.ServerTransaction, out *sip.Message, log *slo
 		}
 		answer, answered, err = p.renegotiate(out, d, toUE, ue, log)
 		if err != nil {
-			log.Warn("media relay refused the offer: the request goes no further", "error", err.Error())
-			st.Respond(sip.NewResponse(st.Request, 500, ""))
+			p.notRelayed(st, d, err, log)
 			return
 		}
 	}
@@ -355,29 +354,21 @@ func (p *PCSCF) subsequent(st *sip.ServerTransaction, out *sip.Message, log *slo
 	}
 }
 
-// renegotiate handles a new SDP offer in out, a request within the
-// dialog d on its way to the next hop, such as an UPDATE that tells of
-// reserved resources (RFC 3311, RFC 3312) or a re-INVITE that puts the
-// call on hold (RFC 3261 14). The offer goes through the relay context
-// of the dialog like the first one. The first function it returns takes
-// each response on its way back: with the answer the PCRF gets the
-// changed service information in the policy session of the dialog (TS
-// 29.214 A.1, 4.4.2). The second one is for subsequent to call once the
-// final response has gone. ue is the address of the served UE.
+// renegotiate handles the SDP in out, a request within the dialog d on
+// its way to the next hop, such as an UPDATE that tells of reserved
+// resources (RFC 3311, RFC 3312) or a re-INVITE that puts the call on
+// hold (RFC 3261 14). The SDP of an UPDATE or a re-INVITE is an offer,
+// which the 2xx answers (RFC 3311 3, RFC 3261 14.1). The SDP goes through the relay context of the dialog like the
+// first offer. The first function it returns takes each response on its
+// way back: with the answer the PCRF gets the changed service
+// information in the policy session of the dialog (TS 29.214 A.1,
+// 4.4.2). The second one is for subsequent to call once the final
+// response has gone. ue is the address of the served UE.
 //
-// When the relay does not take the offer, renegotiate returns the error,
-// and the request goes no further: the P-CSCF, as an IMS-ALG, is to pass
-// on an offer of its own with the address of the relay (TS 24.229
-// 6.7.2.1), and has none. subsequent answers the request itself, as TS
-// 24.229 6.2 has the P-CSCF answer a request whose offer it cannot let
-// through, and the dialog stays. TS 24.229 releases a dialog for an
-// offer only when the offer comes in a response (5.2.8.1.2), which
-// cannot be refused. The answer is 500 (RFC 3261 21.5.1) rather than
-// the 488 of 6.2, which tells of media that the network does not allow
-// and carries the media that it does; these media are allowed. A
-// non-2xx leaves the session as it was before the request (RFC 3261
-// 14.1, RFC 3311 5.3), on the media of the last offer and answer, which
-// the relay took. Only a 481 or a 408 would end the dialog.
+// When the SDP is not pointed at the relay, renegotiate returns the
+// error, and the request goes no further: the P-CSCF, as an IMS-ALG, is
+// to pass on an SDP of its own with the address of the relay (TS 24.229
+// 6.7.2.1), and has none. notRelayed answers the request.
 //
 // When the relay does not take the answer, the response goes on as it
 // came, since it is the final response of the request and the party
@@ -453,6 +444,49 @@ func (p *PCSCF) renegotiate(out *sip.Message, d Dialog, toUE bool, ue netip.Addr
 		log.Info("changed media authorised", "policy_session", string(d.PolicySession))
 	}
 	return answer, answered, nil
+}
+
+// notRelayed answers st, a request within the dialog d whose SDP
+// renegotiate could not point at the relay for err, and releases the
+// dialog when the call cannot go on as it was.
+//
+// The P-CSCF answers the request itself, as TS 24.229 6.2 has it answer
+// a request whose offer it cannot let through. A final response other
+// than 2xx leaves the session as it was before the request (RFC 3261
+// 14.1, RFC 3311 5.3), and only a 481 or a 408 ends the dialog (RFC 3261
+// 12.2.1.2). The answer is 400 (RFC 3261 21.4.1) for an SDP that cannot
+// be read, and otherwise 500 (21.5.1) rather than the 488 of 6.2: that
+// one tells of media that the network does not allow, and carries the
+// media that it does, and these media are allowed.
+//
+// The dialog stays only when the call can go on as it was: when the
+// relay was not asked, as for an SDP that cannot be read, or when it
+// answered that it carried out nothing (agw.ErrRejected). The media then
+// still take the path of the last offer and answer. Otherwise the
+// P-CSCF releases the dialog, as it does when the relay does not take an
+// answer:
+//   - The relay has lost the context or its termination, or the P-CSCF
+//     lists no relay that holds it (mediaGone). The media of the call are
+//     gone already, and every later offer would fail the same way.
+//   - The relay did not answer in time, or gave an answer that the P-CSCF
+//     cannot read. It may have carried the Modify out, and the
+//     termination may now send where the offer said, which the party
+//     that offered no longer takes after the non-2xx.
+func (p *PCSCF) notRelayed(st *sip.ServerTransaction, d Dialog, err error, log *slog.Logger) {
+	resp := sip.NewResponse(st.Request, 500, "")
+	if errors.Is(err, errMalformedSDP) {
+		resp = sip.NewResponse(st.Request, 400, "")
+		resp.Reason = "Malformed SDP"
+	}
+	keep := !mediaGone(err) && (errors.Is(err, errMalformedSDP) || errors.Is(err, agw.ErrRejected))
+	if keep {
+		log.Warn("the SDP of the request is not pointed at the media relay: the request goes no further", "status", resp.StatusCode, "error", err.Error())
+		st.Respond(resp)
+		return
+	}
+	log.Warn("the SDP of the request is not pointed at the media relay: the P-CSCF releases the dialog", "status", resp.StatusCode, "error", err.Error())
+	st.Respond(resp)
+	p.release(d.Key, errRelay, false, log)
 }
 
 // byeEndsDialog is RFC 3261 15.1.1 as a proxy sees it: the dialog ends
@@ -590,7 +624,7 @@ func (p *PCSCF) relaySDP(m *sip.Message, rc *RelayContext, toUE bool) error {
 	}
 	description, err := sdp.Parse(m.Body)
 	if err != nil {
-		return err
+		return fmt.Errorf("%w: %w", errMalformedSDP, err)
 	}
 	sender, _, err := description.Audio()
 	if err != nil {
@@ -707,7 +741,23 @@ func (p *PCSCF) relayOf(rc RelayContext) (Relay, error) {
 			return r.Control, nil
 		}
 	}
-	return nil, fmt.Errorf("pcscf: the context %s is in the media relay %q, which this P-CSCF does not list", rc.ID, rc.Relay)
+	return nil, fmt.Errorf("%w: the context %s is in the media relay %q", errRelayNotListed, rc.ID, rc.Relay)
+}
+
+// errRelayNotListed is the error of relayOf for a context in a media
+// relay that this P-CSCF does not list.
+var errRelayNotListed = errors.New("pcscf: the media relay is not in the list of this P-CSCF")
+
+// errMalformedSDP is the error of relaySDP for a body that it cannot
+// read as SDP.
+var errMalformedSDP = errors.New("pcscf: the SDP cannot be read")
+
+// mediaGone reports whether err, an error of relaySDP, means that the
+// relay holds no media of the call any more: it has no context or
+// termination of that ID, as after a restart that lost its store, or
+// the P-CSCF lists no relay that holds the context.
+func mediaGone(err error) bool {
+	return errors.Is(err, agw.ErrNoContext) || errors.Is(err, agw.ErrNoTermination) || errors.Is(err, errRelayNotListed)
 }
 
 // relayContext bounds a request to the relay, so that a relay that
