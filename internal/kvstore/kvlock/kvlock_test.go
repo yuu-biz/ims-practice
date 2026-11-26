@@ -538,10 +538,13 @@ func (b *syncBuffer) String() string {
 // comes after the timeout of the request.
 // With then, the loss comes with the end of the context of the Lock:
 // then ends it.
+// With wait, the answer is lost only after that time, as when it would
+// have come after a long timeout of the store.
 type losingAnswers struct {
 	kvstore.Store
 	lose atomic.Bool
 	then func()
+	wait time.Duration
 }
 
 func (s *losingAnswers) CompareAndSwap(ctx context.Context, key, version string, value []byte, ttl time.Duration) (string, error) {
@@ -550,6 +553,7 @@ func (s *losingAnswers) CompareAndSwap(ctx context.Context, key, version string,
 		if s.then != nil {
 			s.then()
 		}
+		time.Sleep(s.wait)
 		return "", context.DeadlineExceeded
 	}
 	return v, err
@@ -600,6 +604,33 @@ func TestATakeWhoseAnswerCameAfterTheEndOfItsContextFreesTheLock(t *testing.T) {
 		}
 		if u := lockWithin(t, b, impi, 100*time.Millisecond); u == nil {
 			t.Fatal("the lock that the given up take wrote was not freed")
+		} else {
+			u()
+		}
+	})
+}
+
+// TestATakeWhoseAnswerWasLostLateGivesTheLockUp: the answer of the take
+// is lost after more than half the lease has gone by, as with a timeout
+// of the store long next to the lease. The lock that the take wrote
+// would end soon after Lock handed it back, while its holder still
+// works under it, so Lock frees it and fails instead.
+func TestATakeWhoseAnswerWasLostLateGivesTheLockUp(t *testing.T) {
+	forEachStore(t, func(t *testing.T, h harness) {
+		const lease = 400 * time.Millisecond
+		lossy := &losingAnswers{wait: lease/2 + 50*time.Millisecond}
+		a := h.newLockerOn(func(s kvstore.Store) kvstore.Store { lossy.Store = s; return lossy },
+			kvlock.Config{Role: "scscf", Holder: "scscf-1", Lease: lease, Timeout: lease})
+		b := h.newLocker(kvlock.Config{Role: "scscf", Holder: "scscf-2", Lease: lease})
+		lossy.lose.Store(true)
+		if unlock, err := a.Lock(context.Background(), impi); err == nil || unlock != nil {
+			if unlock != nil {
+				unlock()
+			}
+			t.Fatalf("Lock whose take lost its answer after %v of a lease of %v = %v, %v; want no lock and an error", lossy.wait, lease, unlock != nil, err)
+		}
+		if u := lockWithin(t, b, impi, lease/8); u == nil {
+			t.Fatal("the lock that the late take wrote was not freed")
 		} else {
 			u()
 		}

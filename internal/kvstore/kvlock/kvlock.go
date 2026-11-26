@@ -232,16 +232,25 @@ func (l *Locker) leaveQueue(user string, q *queue) {
 // the user from every instance until the lease ran out. acquire reads
 // the item again, and finds it its own by the token of the take: no
 // other take writes that token, and none writes an item that is there.
-// A lock found its own is held, as if the answer had come: it was
-// written with the whole lease, of which the lost answer and the read
-// have taken at most two timeouts of the store, and the caller can go
-// on handling the user rather than answer that it could not. When ctx
-// has ended, the caller no longer wants the lock, and the lock found
-// its own is released.
+// A lock found its own is held, as if the answer had come, while at
+// least half of its lease is left, counted from just before the take:
+// the store started the lease no earlier. The caller can then go on
+// handling the user rather than answer that it could not. With the
+// defaults, a lease of 15 s and a timeout of 1 s, the lost answer and
+// the read take at most 2 s, and the lock is always kept. A timeout
+// long next to the lease could leave a lock that ends soon after it is
+// handed back, while its holder still works under it and another
+// instance takes it: such a lock is released, and Lock fails as if
+// nothing had been written. Half is the line: the work under the lock
+// fits in the lease with room to spare (see the package documentation),
+// and a lost answer may take no more than half of the lease from it.
+// When ctx has ended, the caller no longer wants the
+// lock, and the lock found its own is released too.
 func (l *Locker) acquire(ctx context.Context, key string) (string, error) {
 	value := fmt.Appendf(nil, "%s %016x", l.holder, rand.Uint64())
 	pause := firstRetry
 	for {
+		started := time.Now()
 		try, cancel := context.WithTimeout(ctx, l.timeout)
 		version, err := l.kv.CompareAndSwap(try, key, "", value, l.lease)
 		cancel()
@@ -250,10 +259,13 @@ func (l *Locker) acquire(ctx context.Context, key string) (string, error) {
 		}
 		if !errors.Is(err, kvstore.ErrConflict) {
 			if version, own := l.own(key, value); own {
-				if ctx.Err() == nil {
+				if ctx.Err() == nil && time.Since(started) <= l.lease/2 {
 					return version, nil
 				}
 				l.release(key, version)
+				if ctx.Err() == nil {
+					return "", fmt.Errorf("kvlock: taking %s: the answer was lost, and less than half the lease of %v was left: %w", key, l.lease, err)
+				}
 			}
 		}
 		if ctx.Err() != nil {
