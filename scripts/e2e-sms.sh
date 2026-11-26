@@ -633,8 +633,11 @@ none "P-Charging-Vector or P-Charging-Function-Addresses from the P-CSCF to a UE
 # Wireshark warns of a command that its dictionary does not have, which
 # Ready-For-SM is: that warning is how the capture shows the command to
 # be this project's own. Its AVPs are standard ones, which Wireshark
-# decodes like any other.
-none "malformed SIP, Diameter, RP or TP packets" "(sip || diameter || gsm_a.rp || gsm_sms) && (_ws.malformed || _ws.expert.severity >= warning) && !(diameter.cmd.code == 16777214)"
+# decodes like any other. A frame passes only where that warning is all
+# that Wireshark says of it, so any other warning in a frame of
+# Ready-For-SM fails the check as it does in any other frame.
+unknown_command='Unknown command, if you know what this is you can add it to dictionary.xml'
+none "malformed SIP, Diameter, RP or TP packets" "(sip || diameter || gsm_a.rp || gsm_sms) && (_ws.malformed || (_ws.expert.severity >= warning && !(all _ws.expert.message == \"$unknown_command\")))"
 last=0
 expect "Ready-For-SM marked by Wireshark as a command it does not know" "$ready && diameter.cmd.code.unknown"
 none "malformed Ready-For-SM requests and answers, or AVPs in them that Wireshark does not know" "diameter.cmd.code == 16777214 && (_ws.malformed || diameter.avp.code.unknown)"
