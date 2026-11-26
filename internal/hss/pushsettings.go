@@ -20,34 +20,37 @@ import (
 // subscribers (Store.ListServed) and sends a PPR to each.
 //
 // The instances on one Store share the work. Each of the two sources
-// whose name a setting gives has one push in the Store (ProfilePush),
-// which is due at a time, and whichever instance claims it when it is
-// due sends the PPRs of one page and records each one, so a user gets
-// one PPR for a change however many instances took the change on. An
-// instance that stops leaves its claim to run out, and the instance
-// that claims the push next goes on from the last PPR recorded. No
-// instance holds the push for longer than a page, so the pages of one
-// push go to whichever instance claims each.
+// whose name a setting gives has one push in the Store (ProfilePush). A
+// change of the name starts a round of it, which brings every served
+// subscriber of the source to the profile of that name, and which is
+// due at a time in a time index. Whichever instance claims the round
+// when it is due sends the PPRs of one page and records each one, so a
+// user gets one PPR for a change however many instances took the change
+// on. An instance that stops leaves its claim to run out, and the
+// instance that claims the round next goes on from the last PPR
+// recorded. No instance holds a round for longer than a page, so the
+// pages of one round go to whichever instance claims each.
 //
-// The instance that claims a push also compares it with the settings in
-// the Store, and starts a new round from the first subscriber when the
-// settings name another profile than the push has gone out for. The
-// change itself only makes the push due (startPushes). An instance that
-// stops between its change and that leaves a push that is due again
-// within an interval, and its change is pushed all the same.
+// The rounds of one source go one after another. A change made while a
+// round is under way starts no round of its own; the round under way
+// starts the next one as it ends, for the settings then in force
+// (endRound). Every change therefore gets its PPRs, as late as the
+// round before it takes, and no two rounds of a source send to one
+// subscriber at once. Each round sends the profile of its own name, not
+// that of a later change: the round after it sends that one.
 
 // profilePushPage is how many private identities the HSS reads from
-// that index at a time, the page that one claim of a push covers. The
+// that index at a time, the page that one claim of a round covers. The
 // pushes go out one subscriber at a time whatever it is; it bounds how
 // many identities an instance holds while it works through them, and
-// how much of a push one instance takes on before another may.
+// how much of a round one instance takes on before another may.
 const profilePushPage = 100
 
-// profilePushLease is how long a page of a push is the claiming
+// profilePushLease is how long a page of a round is the claiming
 // instance's alone. It is longer than one PPR takes at worst: the wait
 // for the lock of the subscriber (pushLockWait), the reads of the Store,
 // and the PPA, which the Diameter answer timer bounds. So every claim
-// moves the push on by one subscriber at least, even towards an S-CSCF
+// moves the round on by one subscriber at least, even towards an S-CSCF
 // that does not answer; what a claim leaves of its page, the next one
 // goes on with.
 const profilePushLease = 30 * time.Second
@@ -66,64 +69,117 @@ func (set *settings) nameFor(source ProfileSource) string {
 	return set.defaultServiceProfile
 }
 
+// withName is set with name as the service profile name of the
+// subscriptions of source.
+func (set settings) withName(source ProfileSource, name string) *settings {
+	if source == ProfileOfTestUsers {
+		set.testUserServiceProfile = name
+	} else {
+		set.defaultServiceProfile = name
+	}
+	return &set
+}
+
+// roundStarts bounds the tries of startRound that the writes of other
+// instances overtake.
+const roundStarts = 10
+
+// startRounds starts a round of the push of each source for set, the
+// settings of the Store, where one is due (startRound). A failure is
+// logged and nothing more: every instance asks again at its next sweep.
+func (h *HSS) startRounds(ctx context.Context, set *settings) {
+	for _, source := range profilePushSources {
+		if err := h.startRound(ctx, source, set); err != nil && ctx.Err() == nil {
+			h.log.Warn("the round of the push of the changed setting was not started; the next sweep starts it",
+				"profile_source", string(source), "error", err.Error())
+		}
+	}
+}
+
+// startRound starts a round of the push of source for set, unless none
+// is due: the last round went out for the name that set gives the
+// source, or for a later change; or a round is under way, which starts
+// the next one as it ends (endRound). A source that no push has been
+// recorded for yet is in step with settings of generation 0, those of a
+// configuration file, which every S-CSCF has from the SAAs; after a
+// change it has a round to make.
+//
+// The instance whose write changed the settings asks this at once, and
+// every instance asks it at each sweep for the settings it reads, so a
+// change whose instance stopped before it started the round is pushed
+// all the same.
+//
+// The round is recorded before it is made due, so that a claim that
+// comes between the two finds the round and sends it, and one that
+// finds none may take the round out of the time index (endRound): the
+// due that follows puts it back. An instance that stops between the two
+// leaves a round that is recorded and never due. No claim updates it,
+// and an instance that claims a round records each PPR within a lease,
+// so a round under way that nothing has recorded for two leases has no
+// claim; startRound makes it due again then.
+func (h *HSS) startRound(ctx context.Context, source ProfileSource, set *settings) error {
+	name := set.nameFor(source)
+	for range roundStarts {
+		p, recorded, err := h.store.ProfilePush(ctx, source)
+		if err != nil {
+			return err
+		}
+		var old *ProfilePush
+		switch {
+		case !recorded && set.generation == 0:
+			_, err := h.store.CompareAndSwapProfilePush(ctx, nil,
+				ProfilePush{Source: source, Name: name, Done: true, Updated: stamp()})
+			return err
+		case recorded && !p.Done:
+			if time.Since(p.Updated) > 2*h.pushLease() {
+				return h.store.ScheduleProfilePush(ctx, source, dueNow())
+			}
+			return nil
+		case recorded && (p.Name == name || p.Generation >= set.generation):
+			return nil
+		case recorded:
+			old = &p
+		}
+		next := ProfilePush{Source: source, Name: name, Generation: set.generation, Round: p.Round + 1, Updated: stamp()}
+		swapped, err := h.store.CompareAndSwapProfilePush(ctx, old, next)
+		if err != nil {
+			return err
+		}
+		if !swapped {
+			// Another instance recorded the push in between: decide again
+			// on what it recorded.
+			continue
+		}
+		h.log.Info("pushing the profile of the changed setting", "profile_source", string(source),
+			"service_profile", name, "generation", set.generation, "round", next.Round)
+		if err := h.store.ScheduleProfilePush(ctx, source, dueNow()); err != nil {
+			return err
+		}
+		h.sweepNow()
+		return nil
+	}
+	return errPushOvertaken
+}
+
+// pushLease is the PushLease of the configuration, or profilePushLease.
+func (h *HSS) pushLease() time.Duration { return cmp.Or(h.config.PushLease, profilePushLease) }
+
+// stamp is the time a push is recorded at, in the form that a Store
+// gives back: whole milliseconds in UTC, so that a round compares equal
+// to itself once it has been written and read again.
+func stamp() time.Time { return time.UnixMilli(time.Now().UnixMilli()).UTC() }
+
+// dueNow is the time to make a round due at once. A time index holds
+// whole milliseconds and rounds a time up, so that nothing is due
+// early; the millisecond that has begun is due to a claim at once.
+func dueNow() time.Time { return time.UnixMilli(time.Now().UnixMilli()) }
+
 // errPushOvertaken: another round of the push, or another instance that
 // claimed the same round, has recorded a point other than the one this
 // instance went on from.
 var errPushOvertaken = errors.New("the push was overtaken")
 
-// startPushes makes the push of each source whose name the change from
-// before to after changes due at once, and lets this instance claim it
-// at once. A change of the admission policy alone, and one that names
-// the profile that was in force already, push nothing: no subscription
-// gets another profile from either. A failure is logged and nothing
-// more: the push of a source comes due again within an interval, and
-// the instance that claims it then finds the change.
-func (h *HSS) startPushes(before, after *settings) {
-	started := false
-	for _, source := range profilePushSources {
-		if before.nameFor(source) == after.nameFor(source) {
-			continue
-		}
-		if err := h.store.ScheduleProfilePush(h.life, source, time.Now()); err != nil {
-			h.log.Warn("the push of the changed setting was not made due; it comes due within an interval",
-				"profile_source", string(source), "error", err.Error())
-			continue
-		}
-		started = true
-	}
-	if started {
-		h.sweepNow()
-	}
-}
-
-// ensurePushes records the push of each source that the Store has none
-// of yet as done for the name that the settings in force give it, and
-// makes it due after an interval. The instance that does so is the
-// first on the Store, and starts before any change can reach it: every
-// S-CSCF has the profiles of these settings from the SAAs. Every push
-// that the Store has is due at a time already, since an instance that
-// claims a push always makes it due again, and one that stops leaves
-// its claim to run out.
-func (h *HSS) ensurePushes(ctx context.Context) error {
-	set := h.settings.Load()
-	for _, source := range profilePushSources {
-		if _, ok, err := h.store.ProfilePush(ctx, source); err != nil || ok {
-			if err != nil {
-				return err
-			}
-			continue
-		}
-		if err := h.store.ScheduleProfilePush(ctx, source, time.Now().Add(h.sweepInterval())); err != nil {
-			return err
-		}
-		if _, err := h.store.CompareAndSwapProfilePush(ctx, nil, ProfilePush{Source: source, Name: set.nameFor(source), Done: true}); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-// claimPushes claims the pushes that are due and sends one page of each
+// claimPushes claims the rounds that are due and sends one page of each
 // (pushPage), each on a goroutine of its own, which Close waits for. A
 // node that takes no Diameter connections reaches no S-CSCF, so it
 // claims none and leaves them to the instances that do; so does an
@@ -137,8 +193,7 @@ func (h *HSS) claimPushes() {
 	if m := h.managed.Load(); m != nil && m.AdministrativeState() != maintenance.Unlocked {
 		return
 	}
-	lease := cmp.Or(h.config.PushLease, profilePushLease)
-	claims, err := h.store.ClaimProfilePushes(h.life, time.Now(), lease, len(profilePushSources))
+	claims, err := h.store.ClaimProfilePushes(h.life, time.Now(), h.pushLease(), len(profilePushSources))
 	if err != nil {
 		if h.life.Err() == nil {
 			h.log.Warn("the pushes of the changed settings were not claimed; the next round claims them", "error", err.Error())
@@ -150,19 +205,18 @@ func (h *HSS) claimPushes() {
 	}
 }
 
-// pushPage goes on with the push of c.Source for one page, within the
-// claim, and makes the push due again: at once while subscribers are
-// left, and after an interval once the round is done, so that some
-// instance compares it with the settings again then. A page that the
-// claim, or the node, ends before its last PPR makes nothing due: the
-// claim runs out, and the instance that claims the push next goes on
-// from the last PPR recorded. Nor does a page that another round or
-// another instance overtook, which that one makes due.
+// pushPage goes on with the round of c.Source for one page, within the
+// claim. While subscribers are left it makes the round due again at
+// once; at the last one it ends the round (endRound). A page that the
+// claim, or the node, ends before its last PPR leaves the claim to run
+// out, and the instance that claims the round next goes on from the
+// last PPR recorded; so does a page that another instance overtook,
+// which that one goes on with.
 func (h *HSS) pushPage(peers Peers, c ProfilePushClaim) {
 	ctx, cancel := context.WithDeadline(h.life, c.Until)
 	defer cancel()
 	log := h.log.With("profile_source", string(c.Source))
-	more, err := h.pushOn(ctx, peers, c.Source)
+	p, more, err := h.pushOn(ctx, peers, c.Source)
 	switch {
 	case errors.Is(err, errPushOvertaken):
 		return
@@ -174,111 +228,116 @@ func (h *HSS) pushPage(peers Peers, c ProfilePushClaim) {
 	case err != nil:
 		log.Warn("the push of the changed setting failed on the store; the next claim goes on with it", "error", err.Error())
 		return
-	}
-	at := time.Now()
-	if !more {
-		at = at.Add(h.sweepInterval())
-	}
-	if err := h.store.ScheduleProfilePush(ctx, c.Source, at); err != nil {
-		log.Warn("the push of the changed setting was not made due again; its claim runs out first", "error", err.Error())
+	case more:
+		if err := h.store.ScheduleProfilePush(ctx, c.Source, dueNow()); err != nil {
+			log.Warn("the next page of the push was not made due; the claim runs out first", "error", err.Error())
+			return
+		}
+		h.sweepNow()
 		return
 	}
-	if more {
-		h.sweepNow()
+	if err := h.endRound(ctx, c, p); err != nil {
+		log.Warn("the end of the round of the push was not recorded; the claim runs out first", "error", err.Error())
 	}
 }
 
-// pushOn sends the PPRs of one page of the push of source to the S-CSCF
-// of each subscriber, and records each in the Store, and reports
-// whether subscribers are left after the page.
+// endRound ends the claim of a round that has sent the PPR of its last
+// subscriber, p, or that found no round to send. The settings in force
+// may have given the source another name since the round began, by a
+// change that started no round of its own as the round was under way
+// (startRound): the next round starts here then.
 //
-// It first compares the push with the settings in the Store: a push
-// that went out for another name than the settings now give starts a
-// new round from the first subscriber, since the subscribers it reached
-// have the profile of that name. A source that no push has been
-// recorded for yet is in step with settings of generation 0, those of a
-// configuration file, which every S-CSCF has from the SAAs; after a
-// change it has a round to make, as the instance of the change may have
-// stopped before any push of it.
+// Otherwise the round leaves the time index, unless something made it
+// due again since the claim, which ends the claim: a round that another
+// instance started after this one read the push is recorded before it
+// is made due, so it is either seen here or puts itself back.
+func (h *HSS) endRound(ctx context.Context, c ProfilePushClaim, p *ProfilePush) error {
+	if p != nil {
+		h.log.Info("pushed the profile of the changed setting", "profile_source", string(c.Source),
+			"service_profile", p.Name, "generation", p.Generation, "round", p.Round)
+	}
+	stored, ok, err := h.store.Settings(ctx)
+	if err != nil {
+		return err
+	}
+	if ok {
+		if err := h.startRound(ctx, c.Source, settingsOf(stored)); err != nil {
+			return err
+		}
+	}
+	return h.store.DoneProfilePush(ctx, c)
+}
+
+// pushOn sends the PPRs of one page of the round of source to the
+// S-CSCF of each subscriber, and records each in the Store. It returns
+// the round once it has sent the PPR of its last subscriber, and
+// whether subscribers are left after the page; a nil round and none
+// left for a claim that found no round under way.
 //
-// Each PPR carries the profile of the subscriber and the settings in
-// force when it is sent (pushProfile), which is what keeps two changes
-// close together in order. A round that a new one overtakes may still
-// be sending when the new one starts, and the two take the same lock
-// per subscriber, so they never send to one S-CSCF at once; whichever
-// sends second reads the settings as they then are. A PPR that the
-// older round sends late therefore carries the profile in force, not
-// the one of its own change, and the S-CSCF is left with the profile
-// that the HSS has.
+// Each PPR carries the profile of the subscriber as it is when it is
+// sent, under the name of the round (pushRoundProfile). The pushes of
+// one subscriber are serialised, and the rounds of one source never
+// run at once, so the profile of a later round never lands at an S-CSCF
+// before that of an earlier one.
 //
 // A PPR that fails is logged and nothing more: the settings are in
 // force either way, and that S-CSCF reads the profile at the next
 // registration of the user. A PPR that is sent twice, when an instance
 // stops after its PPA and before it records it, only replaces what the
 // S-CSCF holds with the profile it has (TS 29.228 6.2.2.1).
-func (h *HSS) pushOn(ctx context.Context, peers Peers, source ProfileSource) (more bool, err error) {
-	stored, ok, err := h.store.Settings(ctx)
-	if err != nil || !ok {
-		// No instance has stored the settings yet: none has been changed.
-		return false, err
-	}
-	name := settingsOf(stored).nameFor(source)
+func (h *HSS) pushOn(ctx context.Context, peers Peers, source ProfileSource) (round *ProfilePush, more bool, err error) {
 	p, recorded, err := h.store.ProfilePush(ctx, source)
 	if err != nil {
-		return false, err
+		return nil, false, err
 	}
-	switch {
-	case !recorded && stored.Generation == 0:
-		_, err := h.store.CompareAndSwapProfilePush(ctx, nil, ProfilePush{Source: source, Name: name, Done: true})
-		return false, err
-	case !recorded || p.Name != name:
-		var old *ProfilePush
-		if recorded {
-			old = &p
-		}
-		next := ProfilePush{Source: source, Name: name, Round: p.Round + 1}
-		if err := h.recordPush(ctx, old, next); err != nil {
-			return false, err
-		}
-		p = next
-		h.log.Info("pushing the profile of the changed setting", "profile_source", string(source),
-			"service_profile", name, "round", p.Round)
-	case p.Done:
-		return false, nil
+	if !recorded || p.Done {
+		return nil, false, nil
 	}
 	ids, nextPage, err := h.store.ListServed(ctx, source, p.After, profilePushPage)
 	if err != nil {
-		return false, err
+		return nil, false, err
 	}
 	for _, privateID := range ids {
 		// A subscriber that the index names and the store no longer has,
-		// or no longer serves, gets no PPR: pushProfile reads it before
-		// it builds one.
-		err := h.pushProfile(ctx, peers, privateID)
+		// or no longer serves, gets no PPR: pushRoundProfile reads it
+		// before it builds one.
+		err := h.pushRoundProfile(ctx, peers, privateID, p)
 		if ctx.Err() != nil {
-			return false, ctx.Err()
+			return nil, false, ctx.Err()
 		}
 		if err != nil {
 			h.log.Warn("PPR failed", "private_identity", privateID, "error", err.Error())
 		}
 		next := p
-		next.After = privateID
+		next.After, next.Updated = privateID, stamp()
 		if err := h.recordPush(ctx, &p, next); err != nil {
-			return false, err
+			return nil, false, err
 		}
 		p = next
 	}
 	if nextPage != "" {
-		return true, nil
+		return nil, true, nil
 	}
 	done := p
-	done.Done = true
+	done.Done, done.Updated = true, stamp()
 	if err := h.recordPush(ctx, &p, done); err != nil {
-		return false, err
+		return nil, false, err
 	}
-	h.log.Info("pushed the profile of the changed setting", "profile_source", string(source),
-		"service_profile", name, "round", p.Round)
-	return false, nil
+	return &done, false, nil
+}
+
+// pushRoundProfile pushes the profile of privateID that the round p
+// gives it: the settings in force with the name of the round for its
+// source. A subscriber whose profile no longer comes from the source of
+// the round, because a provisioning request changed it since the index
+// was read, gets no PPR from the round; that request pushed its profile.
+func (h *HSS) pushRoundProfile(ctx context.Context, peers Peers, privateID string, p ProfilePush) error {
+	return h.pushProfileUnder(ctx, peers, privateID, func(u Subscriber) (*settings, error) {
+		if profileSourceOf(u.Subscription) != p.Source {
+			return nil, nil
+		}
+		return h.settings.Load().withName(p.Source, p.Name), nil
+	})
 }
 
 // recordPush records next as the push of its source in place of old,

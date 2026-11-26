@@ -15,6 +15,7 @@ import (
 	"crypto/md5"
 	cryptorand "crypto/rand"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"log/slog"
 	"slices"
@@ -232,16 +233,16 @@ func (h *HSS) beginSettings() {
 // this instance. It changes nothing when the Store cannot be written or
 // has a later change, and returns why.
 //
-// The instance whose write changed the settings of the Store makes due
-// the pushes of the profiles that the change gives another name
-// (startPushes), which the instances share. The OAM server sends the
-// change to every instance of the role, and the others find it in force
-// there and start nothing.
+// The instance whose write changed the settings of the Store starts
+// the rounds of the pushes of the profiles that the change gives another
+// name (startRounds), which the instances share. The OAM server sends
+// the change to every instance of the role, and the others find it in
+// force there and start nothing.
 func (h *HSS) commitSettings(generation uint64) error {
 	next := h.pending
 	next.generation = generation
 	h.pending = nil
-	before, wrote, err := h.storeSettings(h.life, next)
+	wrote, err := h.storeSettings(h.life, next)
 	if err == nil {
 		h.takeOn(next)
 	}
@@ -250,7 +251,7 @@ func (h *HSS) commitSettings(generation uint64) error {
 		return err
 	}
 	if wrote {
-		h.startPushes(before, next)
+		h.startRounds(h.life, next)
 	}
 	return nil
 }
@@ -260,43 +261,41 @@ func (h *HSS) commitSettings(generation uint64) error {
 // rounds are already rare.
 const settingsWrites = 10
 
-// storeSettings writes next, the settings of a change, to the Store. It
-// returns the settings that it replaced there, and whether it wrote at
-// all: it writes nothing when the Store has next already, which is the
-// change of the role that the OAM server sent another instance first.
+// storeSettings writes next, the settings of a change, to the Store, and
+// reports whether it wrote at all: it writes nothing when the Store has
+// next already, which is the change of the role that the OAM server
+// sent another instance first.
 // The settings of a later change in the Store, or other settings of the
 // same generation, are a change that overtook next, which it refuses
 // with maintenance.ErrStaleGeneration.
-func (h *HSS) storeSettings(ctx context.Context, next *settings) (before *settings, wrote bool, err error) {
+func (h *HSS) storeSettings(ctx context.Context, next *settings) (wrote bool, err error) {
 	for range settingsWrites {
 		stored, ok, err := h.store.Settings(ctx)
 		if err != nil {
-			return nil, false, err
+			return false, err
 		}
 		// A Store with no settings yet is one that this instance could
-		// not read since it started, so the settings in force are those
-		// of its configuration file.
+		// not read since it started.
 		var old *StoredSettings
-		before := h.settings.Load()
 		if ok {
 			switch {
 			case stored == next.stored():
-				return nil, false, nil
+				return false, nil
 			case stored.Generation >= next.generation:
-				return nil, false, fmt.Errorf("%w: the settings of generation %d are in force on the instances of the role",
+				return false, fmt.Errorf("%w: the settings of generation %d are in force on the instances of the role",
 					maintenance.ErrStaleGeneration, stored.Generation)
 			}
-			old, before = &stored, settingsOf(stored)
+			old = &stored
 		}
 		swapped, err := h.store.CompareAndSwapSettings(ctx, old, next.stored())
 		if err != nil {
-			return nil, false, err
+			return false, err
 		}
 		if swapped {
-			return before, true, nil
+			return true, nil
 		}
 	}
-	return nil, false, fmt.Errorf("the settings of the store were changed by other instances %d times", settingsWrites)
+	return false, fmt.Errorf("the settings of the store were changed by other instances %d times", settingsWrites)
 }
 
 // takeOn puts next in force for the requests of this instance, unless
@@ -316,31 +315,50 @@ func (h *HSS) takeOn(next *settings) bool {
 	}
 }
 
-// loadSettings reads the settings that the instances on the Store share
-// and takes them on (takeOn). A Store that has none yet gets the ones in
-// force here, which are those of the configuration file: this instance
-// is the first on the Store, or the first since the Store lost them.
-func (h *HSS) loadSettings(ctx context.Context) error {
+// loadSettings reads the settings that the instances on the Store share,
+// takes them on (takeOn) and returns them. A Store that has none yet
+// gets the ones in force here, which are those of the configuration
+// file: this instance is the first on the Store, or the first since the
+// Store lost them.
+func (h *HSS) loadSettings(ctx context.Context) (*settings, error) {
 	for range 2 {
 		stored, ok, err := h.store.Settings(ctx)
 		if err != nil {
-			return err
+			return nil, err
 		}
 		if ok {
-			if next := settingsOf(stored); h.takeOn(next) {
+			next := settingsOf(stored)
+			if h.takeOn(next) {
 				h.log.Info("took on the settings in force on the instances of the role", "generation", next.generation,
 					"admission", string(next.admission), "default_service_profile", next.defaultServiceProfile,
 					"test_user_service_profile", next.testUserServiceProfile)
 			}
-			return nil
+			return next, nil
 		}
-		swapped, err := h.store.CompareAndSwapSettings(ctx, nil, h.settings.Load().stored())
-		if err != nil || swapped {
-			return err
+		in := h.settings.Load()
+		swapped, err := h.store.CompareAndSwapSettings(ctx, nil, in.stored())
+		if err != nil {
+			return nil, err
+		}
+		if swapped {
+			return in, nil
 		}
 		// Another instance stored its settings first, which are those of
 		// the role: read them.
 	}
+	return nil, errors.New("the settings of the store were neither there nor storable")
+}
+
+// syncSettings takes on the settings of the Store, and starts the rounds
+// of the pushes that they call for and that no instance has started
+// (startRounds): those of a change whose instance stopped before it
+// started them.
+func (h *HSS) syncSettings(ctx context.Context) error {
+	stored, err := h.loadSettings(ctx)
+	if err != nil {
+		return err
+	}
+	h.startRounds(ctx, stored)
 	return nil
 }
 
@@ -359,11 +377,11 @@ func (h *HSS) settingsInForce(ctx context.Context) (*settings, error) {
 	return h.settings.Load(), nil
 }
 
-// sweep reads the settings of the Store and claims the pushes that are
-// due (claimPushes) every SweepInterval, and at once when this instance
-// has made a push due (sweepNow), until the node stops (Close). A change
-// that reached another instance alone is in force here within an
-// interval.
+// sweep reads the settings of the Store (syncSettings) and claims the
+// rounds of the pushes that are due (claimPushes) every SweepInterval,
+// and at once when this instance has made a round due (sweepNow), until
+// the node stops (Close). A change that reached another instance alone
+// is in force here within an interval.
 func (h *HSS) sweep() {
 	tick := time.NewTicker(h.sweepInterval())
 	defer tick.Stop()
@@ -374,7 +392,7 @@ func (h *HSS) sweep() {
 		case <-tick.C:
 		case <-h.kick:
 		}
-		if err := h.loadSettings(h.life); err != nil && h.life.Err() == nil {
+		if err := h.syncSettings(h.life); err != nil && h.life.Err() == nil {
 			h.log.Warn("the settings of the instances of the role were not read; the next round reads them", "error", err.Error())
 		}
 		h.claimPushes()
@@ -524,12 +542,9 @@ func New(config Config, store Store, node *diameter.Node, log *slog.Logger) (*HS
 	// not answer with those of its file. A Store that does not answer
 	// leaves those in force until the sweep reads it; until then it
 	// fails the requests of every subscriber anyway.
-	if err := h.loadSettings(h.life); err != nil {
+	if err := h.syncSettings(h.life); err != nil {
 		log.Warn("the settings of the instances of the role were not read; those of the configuration file are in force until they are",
 			"error", err.Error())
-	}
-	if err := h.ensurePushes(h.life); err != nil {
-		log.Warn("the pushes of the changed settings were not read; the first change makes them due", "error", err.Error())
 	}
 	h.sweeping.Go(h.sweep)
 	return h, nil
