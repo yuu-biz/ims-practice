@@ -244,16 +244,8 @@ func releasedFor(cause ReleaseCause) error {
 // its change of the dialog, since the release may come in between.
 func (s *setup) response(resp *sip.Message) error {
 	s.p.ueResponse(s.leg, s.invite, resp)
-	if s.stored {
-		d, ok, err := s.p.store.UpdateDialog(context.Background(), s.key, func(*Dialog) {})
-		switch {
-		case err != nil:
-			return storeError(err)
-		case !ok:
-			return errReleased
-		case d.Released:
-			return releasedFor(d.ReleaseCause)
-		}
+	if err := s.released(); err != nil {
+		return err
 	}
 	var refused error
 	if sip.HasSessionDescription(resp) {
@@ -273,6 +265,25 @@ func (s *setup) response(resp *sip.Message) error {
 		return storeError(err)
 	}
 	return refused
+}
+
+// released is the part of response that reads whether the early dialog
+// of the INVITE has been released: errReleased, with the cause of the
+// release when it is known, or the failure of the Store.
+func (s *setup) released() error {
+	if !s.stored {
+		return nil
+	}
+	d, ok, err := s.p.store.UpdateDialog(context.Background(), s.key, func(*Dialog) {})
+	switch {
+	case err != nil:
+		return storeError(err)
+	case !ok:
+		return errReleased
+	case d.Released:
+		return releasedFor(d.ReleaseCause)
+	}
+	return nil
 }
 
 // mediaEvents are what the P-CSCF asks to hear about the media of a

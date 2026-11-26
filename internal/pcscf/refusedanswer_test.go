@@ -290,14 +290,16 @@ func TestRefusedAnswerOfThe200AfterA183EndsTheCall(t *testing.T) {
 // TestRefusedRetransmissionOfThe200KeepsTheCall: the relay took the
 // answer of the 200, and the caller has it. A retransmission of that 200
 // (RFC 6026 8.1) that the relay does not take changes nothing: it goes
-// on to the caller, nobody gets an ACK or a BYE from the P-CSCF, and the
-// call keeps its relay context.
+// on to the caller with the SDP of the first 200, which names the relay
+// (RFC 3264 8: an SDP of the same version is the same SDP), nobody gets
+// an ACK or a BYE from the P-CSCF, and the call keeps its relay context.
 func TestRefusedRetransmissionOfThe200KeepsTheCall(t *testing.T) {
 	c := newRawINVITE(t)
 	ok := c.response(200)
 	c.st.Respond(ok)
-	if r := final(t, c.ct.Responses(), 3*time.Second); r.StatusCode != 200 || audio(t, r.Body) != relayAccess {
-		t.Fatalf("the caller got %d naming %v, want the 200 naming the relay", r.StatusCode, audio(t, r.Body))
+	first := final(t, c.ct.Responses(), 3*time.Second)
+	if first.StatusCode != 200 || audio(t, first.Body) != relayAccess {
+		t.Fatalf("the caller got %d naming %v, want the 200 naming the relay", first.StatusCode, audio(t, first.Body))
 	}
 
 	c.relay.refuseModify(agw.Core)
@@ -307,11 +309,51 @@ func TestRefusedRetransmissionOfThe200KeepsTheCall(t *testing.T) {
 		if r.StatusCode != 200 {
 			t.Errorf("the caller got %d after its 200, want the retransmission of the 200", r.StatusCode)
 		}
+		if string(r.Body) != string(first.Body) {
+			t.Errorf("the retransmission of the 200 carries\n%s\nwant the SDP of the first 200\n%s", r.Body, first.Body)
+		}
 	case <-time.After(3 * time.Second):
 		t.Error("the retransmission of the 200 did not reach the caller")
 	}
 	noRequest(t, "the callee", c.farGot)
 	noRequest(t, "the caller", c.ueGot)
+	c.relay.waitHeld(t, 1, 0)
+}
+
+// TestRefusedAnswerOfAnotherForkIsAcknowledgedAndReleased: the caller
+// has the 200 of one dialog, and a 200 of another dialog of the forked
+// INVITE comes, with another To tag (RFC 3261 13.2.2.4). It is no
+// retransmission of the first. The relay does not take its answer, so it
+// goes no further, as its SDP would lead the caller past the relay: the
+// P-CSCF acknowledges it in the caller's name and ends that dialog with
+// a BYE, as for a 2xx that crossed the CANCEL. The call of the first 200
+// stays.
+func TestRefusedAnswerOfAnotherForkIsAcknowledgedAndReleased(t *testing.T) {
+	c := newRawINVITE(t)
+	c.st.Respond(c.response(200))
+	if r := final(t, c.ct.Responses(), 3*time.Second); r.StatusCode != 200 {
+		t.Fatalf("the caller got %d, want the 200", r.StatusCode)
+	}
+
+	c.relay.refuseModify(agw.Core)
+	other := c.response(200)
+	other.Set("To", c.st.Request.Get("To")+";tag=fork")
+	c.st.Respond(other)
+	got := map[sip.Method]*sip.Message{}
+	for range 2 {
+		m := nextRequest(t, "the callee", c.farGot)
+		got[m.Method] = m
+	}
+	for _, method := range []sip.Method{sip.ACK, sip.BYE} {
+		if m := got[method]; m == nil || tagOf(m.Get("To")) != "fork" {
+			t.Errorf("the callee got %v, want the %s of the P-CSCF in the dialog of the second 200", m, method)
+		}
+	}
+	select {
+	case r := <-c.ct.Responses():
+		t.Errorf("the caller got %d %s, want nothing of the second dialog", r.StatusCode, r.Get("To"))
+	case <-time.After(watch):
+	}
 	c.relay.waitHeld(t, 1, 0)
 }
 
@@ -567,8 +609,8 @@ func TestNonSDPBodyOfAResponseGoesOn(t *testing.T) {
 // the answer of a reliable 183, which the callee sends again until its
 // PRACK comes (RFC 3262 3). A retransmission that the relay does not
 // take changes nothing, as for a retransmitted 200: it goes on to the
-// caller, the INVITE is neither answered nor cancelled, and the call
-// keeps its relay context.
+// caller with the SDP of the first 183, the INVITE is neither answered
+// nor cancelled, and the call keeps its relay context.
 func TestRefusedRetransmissionOfAReliable183KeepsTheCall(t *testing.T) {
 	c := newRawINVITE(t)
 	progress := c.response(183)
@@ -586,17 +628,27 @@ func TestRefusedRetransmissionOfAReliable183KeepsTheCall(t *testing.T) {
 	c.relay.refuseModify(agw.Core)
 	c.st.Respond(progress)
 	deadline := time.After(watch)
+	again := false
 	for done := false; !done; {
 		select {
-		case r := <-c.ct.Responses():
-			if r.StatusCode >= 200 {
-				t.Fatalf("the caller got %d after the retransmitted 183, want the INVITE to go on", r.StatusCode)
+		case r2 := <-c.ct.Responses():
+			if r2.StatusCode >= 200 {
+				t.Fatalf("the caller got %d after the retransmitted 183, want the INVITE to go on", r2.StatusCode)
+			}
+			if r2.StatusCode == 183 {
+				again = true
+				if string(r2.Body) != string(r.Body) {
+					t.Errorf("the retransmission of the 183 carries\n%s\nwant the SDP of the first 183\n%s", r2.Body, r.Body)
+				}
 			}
 		case <-c.st.Cancelled():
 			t.Fatal("the callee got a CANCEL for the retransmitted 183")
 		case <-deadline:
 			done = true
 		}
+	}
+	if !again {
+		t.Error("the retransmission of the 183 did not reach the caller")
 	}
 	c.relay.waitHeld(t, 1, 0)
 }

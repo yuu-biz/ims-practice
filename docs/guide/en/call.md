@@ -389,7 +389,7 @@ When the answer comes in a 183, the call is still being set up:
 - **UE 1 gets 500** for its INVITE, and never sees the 183.
 - **The INVITE towards the network is cancelled**, and the callee answers it 487 (RFC 3261 9.2).
 - **The P-CSCF removes the relay context**, trying again a few times when the relay does not answer. The PCRF never gets the answer that the relay did not take. When an earlier response of the call carried an answer that the relay did take, the PCRF has that one, and the P-CSCF ends the Rx session of the call (TS 29.214 4.4.4).
-- **A retransmission of a reliable 183 whose answer the relay did take changes nothing.** The callee sends a reliable 183 again until its PRACK comes (RFC 3262 3). UE 1 has that 183 already, so the retransmission goes on as it came, and the call goes on.
+- **A retransmission of a reliable 183 whose answer the relay did take changes nothing.** The callee sends a reliable 183 again until its PRACK comes (RFC 3262 3). UE 1 has that 183 already, so the P-CSCF sends it the retransmission as it sent the first 183, with the SDP that names the relay, and the call goes on. An SDP whose version has not changed has to be the same SDP (RFC 3264 8), and the relay is not asked again.
 
 When the answer comes in the 200, the callee has answered already:
 
@@ -416,7 +416,8 @@ When the answer comes in the 200, the callee has answered already:
 - **UE 1 gets 500 in the place of the 200.** The INVITE of UE 1 has no final response yet, so the P-CSCF can still end the call there, and the 200 with an SDP that leads past the relay never reaches UE 1.
 - **The callee's dialog is confirmed**, so the P-CSCF acknowledges the 200 in the name of UE 1 (RFC 3261 13.2.2.4) and ends the session with a BYE (RFC 3261 15), as for a 200 that crossed its CANCEL. The callee sends the 200 again until the ACK comes, and each retransmission gets the ACK again.
 - **What the call holds goes as for a 183:** the relay context, and the Rx session of an answer that an earlier response carried.
-- **A retransmission of a 200 whose answer the relay did take is different.** UE 1 has that 200 already, so the retransmission goes on as it came, and the call stays up.
+- **A retransmission of a 200 whose answer the relay did take is different.** UE 1 has that 200 already, so the P-CSCF sends it the retransmission as it sent the first 200, and the call stays up.
+- **A 200 with another To tag is no retransmission.** It is the 200 of another dialog of a forked INVITE (RFC 3261 13.2.2.4). When the relay does not take its answer, UE 1, which has its 200 already, does not get it: the P-CSCF acknowledges it in the name of UE 1 and ends that dialog with a BYE, as for a 200 that crossed its CANCEL.
 
 At the P-CSCF of UE 2 the same happens the other way round. The 183 or the 200 comes from UE 2, the `Modify` is for the access termination, the 500 goes to the network, and the CANCEL, or the ACK and the BYE, go to UE 2.
 
@@ -484,7 +485,7 @@ An answer within the dialog, in the 200 to an UPDATE or to a re-INVITE such as t
 
 - **The PCRF never gets the answer.** The P-CSCF ends the Rx session of the call (TS 29.214 4.4.4) and removes the relay context.
 
-The tests of `internal/pcscf` run these flows in one process, with a relay that refuses the `Modify` of the answer: `TestRefusedAnswerOfA183EndsTheCall`, `TestRefusedAnswerOfThe200EndsTheCall`, `TestRefusedRetransmissionOfThe200KeepsTheCall`, `TestRefusedRetransmissionOfAReliable183KeepsTheCall`, `TestRefusedAnswerWithinTheDialogReleasesTheCall`, `TestRefusedAnswerOfAnUPDATEInTheEarlyDialogEndsTheCall` and, with two instances of the P-CSCF on one store, `TestRefusedAnswerOfAnUPDATEAtAnotherInstanceEndsTheCall`.
+The tests of `internal/pcscf` run these flows in one process, with a relay that refuses the `Modify` of the answer: `TestRefusedAnswerOfA183EndsTheCall`, `TestRefusedAnswerOfThe200EndsTheCall`, `TestRefusedRetransmissionOfThe200KeepsTheCall`, `TestRefusedAnswerOfAnotherForkIsAcknowledgedAndReleased`, `TestRefusedRetransmissionOfAReliable183KeepsTheCall`, `TestRefusedAnswerWithinTheDialogReleasesTheCall`, `TestRefusedAnswerOfAnUPDATEInTheEarlyDialogEndsTheCall` and, with two instances of the P-CSCF on one store, `TestRefusedAnswerOfAnUPDATEAtAnotherInstanceEndsTheCall`.
 
 ## When the relay does not take an offer
 
