@@ -887,27 +887,29 @@ func (s *gatedStore) ClaimProfilePushes(ctx context.Context, now time.Time, leas
 }
 
 // TestARoundThatOutlastsTheTimeOfTheRetriesGoesOn: the round of a
-// profile that one instance alone defines takes longer than the time of
-// the retries, as a round of many pages does, or one towards a slow
+// profile that one instance alone defines has run longer than the time
+// of the retries, as a round of many pages does, or one towards a slow
 // S-CSCF. Between two of its pages the instance that does not define the
 // profile claims the round. The round has been moving all along, so that
 // instance leaves it to the other and does not give it up, and every
 // subscriber gets the profile.
+//
+// The round began two hours ago in the store, longer than the hour of
+// the retries here, and the leases of both instances are longer than
+// that, so that neither takes the round for stale before it is claimed.
 func TestARoundThatOutlastsTheTimeOfTheRetriesGoesOn(t *testing.T) {
-	const retryTime = 300 * time.Millisecond
 	const videoAS = "sip:video." + realm + ":5060"
 	memory := settingsStore(t)
 	locks := &ims.UserLocks{}
 	serving := &gatedStore{MemoryStore: memory}
-	serving.open.Store(true)
 	lacking := &gatedStore{MemoryStore: memory, claimed: make(chan struct{})}
-	short := func(c *Config) { c.PushRetryTime = retryTime }
+	long := func(c *Config) { c.PushRetryTime, c.PushLease = time.Hour, 3*time.Hour }
 	video, videoAPI := newSettingsInstance(t, serving, locks, func(c *Config) {
-		short(c)
+		long(c)
 		c.ServiceProfiles = maps.Clone(c.ServiceProfiles)
 		c.ServiceProfiles["video"] = ServiceProfile{Criteria: []ifc.InitialFilterCriteria{profileCriterion(videoAS)}}
 	})
-	other, _ := newSettingsInstance(t, lacking, locks, short)
+	other, _ := newSettingsInstance(t, lacking, locks, long)
 	serve(t, video, impi, impu, cx.AssignRegistration)
 	want := []string{impi}
 	for i := range profilePushPage {
@@ -917,14 +919,8 @@ func TestARoundThatOutlastsTheTimeOfTheRetriesGoesOn(t *testing.T) {
 		registerInStore(t, video, id)
 		want = append(want, id)
 	}
-	release := make(chan struct{})
 	scscfs := &fakeSCSCFs{beforePPA: func(n int) {
-		switch n {
-		case 1:
-			// The S-CSCF is slow to answer, and the round outlasts the
-			// time of the retries.
-			<-release
-		case profilePushPage:
+		if n == profilePushPage {
 			// The last PPR of the first page: the next page goes to the
 			// instance without the profile.
 			serving.open.Store(false)
@@ -936,8 +932,19 @@ func TestARoundThatOutlastsTheTimeOfTheRetriesGoesOn(t *testing.T) {
 	if _, err := changeAt(videoAPI, 1, "hss.default_service_profile", "video"); err != nil {
 		t.Fatal(err)
 	}
-	time.Sleep(2 * retryTime)
-	close(release)
+	p, _, err := memory.ProfilePush(t.Context(), ProfileOfOtherUsers)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.Name != "video" || p.Done {
+		t.Fatalf("the push after the change is %+v, want the round of video under way", p)
+	}
+	began := p
+	began.Updated = p.Updated.Add(-2 * time.Hour)
+	if swapped, err := memory.CompareAndSwapProfilePush(t.Context(), &p, began); err != nil || !swapped {
+		t.Fatalf("CompareAndSwapProfilePush: %v, %v", swapped, err)
+	}
+	serving.open.Store(true)
 	select {
 	case <-lacking.claimed:
 	case <-time.After(5 * time.Second):
