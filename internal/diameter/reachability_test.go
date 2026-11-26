@@ -70,13 +70,66 @@ func nextReachability(t *testing.T, seen chan Reachability, within time.Duration
 	}
 }
 
-func noReachabilityChange(t *testing.T, seen chan Reachability, during time.Duration) {
+// noReachabilityChange checks that seen holds no change. The peer tells
+// its watchers of a change on its own goroutine, before it logs the next
+// move, so a change that came before a line the test has read is in
+// seen already.
+func noReachabilityChange(t *testing.T, seen chan Reachability) {
 	t.Helper()
 	select {
 	case r := <-seen:
 		t.Fatalf("the reachability of the peer changed to %+v", r)
-	case <-time.After(during):
+	default:
 	}
+}
+
+// waitForLogs waits until logs hold n records that match want.
+func waitForLogs(t *testing.T, logs *logBuffer, want fields, n int) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for countLogs(logs.records(t), want) < n {
+		if time.Now().After(deadline) {
+			t.Fatalf("fewer than %d log records matching %v within 5 s; got:\n%v", n, want, logs.records(t))
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+}
+
+// holdPort keeps a TCP connection to address until the test ends. The
+// end of it at the server is bound to the port of address, and a port
+// that a socket is bound to is given to no other socket that asks for a
+// free one. So the port stays the server's while the server does not
+// listen, and the server can listen on it again.
+func holdPort(t *testing.T, address string) {
+	t.Helper()
+	c, err := net.Dial("tcp", address)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { c.Close() })
+}
+
+// refusedAddress is an address that refuses connections, and on which
+// no one can listen while the test runs: the local end of a connection
+// that the test keeps open.
+func refusedAddress(t *testing.T) string {
+	t.Helper()
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+	c, err := net.Dial("tcp", listener.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { c.Close() })
+	accepted, err := listener.Accept()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { accepted.Close() })
+	return c.LocalAddr().String()
 }
 
 // The HSS takes itself out of service the way a drain does: a DPR with
@@ -97,17 +150,19 @@ func TestPeerIsUnreachableOnlyWhenAnAttemptFails(t *testing.T) {
 	if r := nextReachability(t, seen, time.Second); r.Unreachable {
 		t.Fatalf("a new peer reads %+v, want reachable", r)
 	}
-	waitForLog(t, logs, fields{"msg": "peer state", "to": "I-Open (OKAY)"})
+	opened := fields{"msg": "peer state", "from": "Wait-I-CEA", "to": "I-Open (OKAY)"}
+	waitForLogs(t, logs, opened, 1)
 
 	// A short reconnect: the HSS ends the connection but keeps
 	// listening, so the attempt after Tc succeeds.
 	server.DisconnectPeers()
-	waitForLog(t, logs, fields{"msg": "peer state", "from": "Closing", "to": "Closed"})
-	noReachabilityChange(t, seen, 3*testTimers.Reconnect)
+	waitForLogs(t, logs, opened, 2)
+	noReachabilityChange(t, seen)
 	if !peer.Available() {
-		t.Fatal("the peer did not open its connection again after Tc")
+		t.Fatal("the peer opened its connection again but takes no requests")
 	}
 
+	holdPort(t, server.Addr())
 	if err := server.SetAccepting("hss", false); err != nil {
 		t.Fatal(err)
 	}
@@ -118,7 +173,9 @@ func TestPeerIsUnreachableOnlyWhenAnAttemptFails(t *testing.T) {
 	}
 	waitForLog(t, logs, fields{"msg": "peer unreachable", "reason": ReasonNoTransport})
 	// The attempts that fail after the first change nothing.
-	noReachabilityChange(t, seen, 3*testTimers.Reconnect)
+	refused := fields{"msg": "peer state", "event": "Rcv-Conn-Nack"}
+	waitForLogs(t, logs, refused, countLogs(logs.records(t), refused)+2)
+	noReachabilityChange(t, seen)
 
 	if err := server.SetAccepting("hss", true); err != nil {
 		t.Fatal(err)
@@ -134,15 +191,8 @@ func TestPeerIsUnreachableOnlyWhenAnAttemptFails(t *testing.T) {
 
 // A watcher added while the peer is unreachable learns so at once.
 func TestWatchReachabilityStartsWithTheStateNow(t *testing.T) {
-	// A port that was free a moment ago, on which nothing listens now.
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	address := listener.Addr().String()
-	listener.Close()
 	scscfNode, logs := newTestNode(scscf, testTimers)
-	peer := scscfNode.Connect(PeerConfig{Address: address, OriginHost: hss})
+	peer := scscfNode.Connect(PeerConfig{Address: refusedAddress(t), OriginHost: hss})
 	defer peer.Stop()
 	waitForLog(t, logs, fields{"msg": "peer unreachable"})
 	seen := watchReachability(peer)
