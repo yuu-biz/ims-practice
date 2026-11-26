@@ -214,6 +214,7 @@ type partyLeg interface {
 	Dialog() (sip.Dialog, bool)
 	Bye(headers ...sip.HeaderField) error
 	Done() <-chan struct{}
+	AddSubscriptionUsage() (end func(), err error)
 }
 
 // newConferenceID is an ID that no other conference has: random, lower
@@ -553,28 +554,18 @@ func (f *conference) dialogConfirmed(p *party) {
 	f.writeRecord()
 }
 
-// left is TS 24.147 5.3.2.6.1 once the dialog of p has ended: the focus
+// left is TS 24.147 5.3.2.6.1 once the session of p has ended: the focus
 // releases the participant's resources at the MRFC and tells the
 // subscribers that it is disconnected. When the creator has left, or
-// the last participant, the conference ends (5.3.2.7 item 3).
+// the last participant, the conference ends (5.3.2.7 item 3). A
+// subscription within the dialog of p gets its last NOTIFY in that
+// dialog either way (notify).
 func (f *conference) left(p *party) {
 	if err := p.media.Bye(); err != nil && !errors.Is(err, sip.ErrCallEnded) {
 		f.log.Warn("BYE to the MRFC failed", "error", err.Error())
 	}
 	f.mu.Lock()
 	f.setStatus(p, confinfo.Disconnected)
-	// SIMPLIFIED: TS 24.147 5.3.3.3 and RFC 5057 5.5. A participant
-	// whose BYE ended its session gets no last NOTIFY for its
-	// subscription within that dialog, which the BYE does not end: the
-	// SIP stack sends nothing in a dialog after its BYE. The
-	// subscription ends here, with its expiry timer.
-	if p.inDialog != nil {
-		if stop, ok := f.expiry[p.dialog]; ok {
-			stop()
-			delete(f.expiry, p.dialog)
-		}
-		p.inDialog = nil
-	}
 	if f.ended {
 		f.mu.Unlock()
 		return
@@ -612,7 +603,7 @@ func (f *conference) left(p *party) {
 // The BYE of each participant goes into the outbox of its dialog,
 // behind the NOTIFYs that notify left there: the last of them ends the
 // subscription within the dialog, which a BYE does not end (RFC 5057
-// 5.5), and which the dialog leaves no room for once the BYE has gone.
+// 5.5), so that the dialog ends with the BYE.
 // end waits for every BYE, each behind the NOTIFYs of its own dialog
 // only, so that a participant that does not answer holds up no other.
 func (f *conference) end(parties []*party) {
@@ -627,7 +618,7 @@ func (f *conference) end(parties []*party) {
 	for _, p := range parties {
 		leg := p.leg
 		byes.Add(1)
-		f.post(&p.outbox, func() bool {
+		f.post(&p.outbox, outgoing{send: func() bool {
 			defer byes.Done()
 			// The BYE ends the dialog, after which left releases the
 			// participant's resources at the MRFC.
@@ -635,7 +626,7 @@ func (f *conference) end(parties []*party) {
 				f.log.Warn("BYE to a participant failed", "error", err.Error())
 			}
 			return true
-		})
+		}})
 	}
 	f.mu.Unlock()
 	byes.Wait()
@@ -717,8 +708,14 @@ func (f *conference) setStatus(p *party, status confinfo.EndpointStatus) bool {
 	return changed
 }
 
-// remove takes p out of the conference. f.mu is held.
+// remove takes p out of the conference, and ends a subscription within
+// its dialog that notify has not ended yet, such as one that a request
+// crossing the BYE of p has had notified as active (changeMedia). f.mu
+// is held.
 func (f *conference) remove(p *party) {
+	if p.inDialog != nil {
+		f.notifyInDialog(p, p.inDialog, sip.ReasonNoResource)
+	}
 	if i := slices.Index(f.parties, p); i >= 0 {
 		f.parties = slices.Delete(f.parties, i, i+1)
 		f.record.Participants = slices.Delete(f.record.Participants, i, i+1)
@@ -798,6 +795,12 @@ func (f *conference) changeMedia(r *sip.InDialogRequest, p *party) {
 		status = confinfo.OnHold
 	}
 	f.mu.Lock()
+	if e := f.entry(p); e == nil || e.Status == confinfo.Disconnected {
+		// The participant has left as its offer went on: its BYE came
+		// after the 2xx, and the session the offer changed is over.
+		f.mu.Unlock()
+		return
+	}
 	changed := f.setStatus(p, status)
 	f.writeRecord()
 	f.mu.Unlock()
