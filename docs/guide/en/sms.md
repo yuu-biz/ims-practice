@@ -565,11 +565,14 @@ The resend is the one of A8 and A9.
   :         :         :         :         :         :  UE 2 has memory again
   |<------------------------------------------------|  MESSAGE RP-SMMA (B5)
   |------------------>|         |         |         |
+  |<------------------|         |         |         |  202
   |         |         |------------------>|         |  Ready-For-SM UE_MEMORY_AVAILABLE, this project's own (B6)
   |         |         |<------------------|         |  Ready-For-SM answer
   |         |         |         |<--------|         |  ALR (B7)
   |         |         |         |-------->|         |  ALA
-  |<------------------|         |         |         |  202, then MESSAGE RP-ACK (B8)
+  |         |<--------|         |         |         |  MESSAGE RP-ACK (B8)
+  |<--------|         |         |         |         |
+  |------------------------------------------------>|
   :         :         :         :         :         :  the resend of A8 and A9 follows
 ```
 
@@ -578,7 +581,7 @@ The resend is the one of A8 and A9.
 - **B4.** The SC reports it with an RDR whose `SM-Delivery-Cause` is UE_MEMORY_CAPACITY_EXCEEDED. The HSS puts the SC's address in the MWD and sets the memory capacity exceeded flag (MCEF) of the user (TS 23.040 3.2.6 item 1). UNRI stays clear: the UE is reachable, it just has no room.
 - **B5.** `{"full": false}` makes the UE send the notification it owes, an **RP-SMMA** in a MESSAGE to the IP-SM-GW (TS 24.011 7.3.2, TS 24.341 5.3.2.5).
 - **B6 to B7.** The IP-SM-GW passes the notification to the HSS in a Ready-For-SM whose `Alert-Reason` is UE_MEMORY_AVAILABLE: the command of this project's own of A6, in place of the READY_FOR_SM of MAP with the alert reason memoryAvailable (TS 23.204 6.6 step 3, TS 24.341 5.3.3.4.1). The HSS clears MCEF and UNRI and alerts the Service Centres of the MWD (TS 23.040 3.2.6 item 2f).
-- **B8.** The RP-ACK for the notification goes to the UE only after the HSS has taken it, so an RP-ACK never tells the UE that a notification got through when it did not. A notification that does not get through gets an RP-ERROR instead, with the cause that TS 23.040 11.2 gives the error of the HSS: RP-Cause 30, unknown subscriber, for a number that the HSS does not know, 69, requested facility not implemented, for an HSS that does not support Ready-For-SM, and 38, network out of order, for an HSS that does not answer or cannot take the notification. After any of them the UE still owes a notification.
+- **B8.** The IP-SM-GW answered the MESSAGE of B5 with 202 at once, before it passed the notification on, as it answers every MESSAGE of a UE; the RP-ACK comes in a MESSAGE of its own. It goes to the UE only after the HSS has taken the notification, so an RP-ACK never tells the UE that a notification got through when it did not. A notification that does not get through gets an RP-ERROR instead, with the cause that TS 23.040 11.2 gives the error of the HSS: RP-Cause 30, unknown subscriber, for a number that the HSS does not know, 69, requested facility not implemented, for an HSS that does not support Ready-For-SM, and 38, network out of order, for an HSS that does not answer or cannot take the notification. After any of them the UE still owes a notification.
 
 The resend is the one of A8 and A9: an SRR, the TFR of the short message the SC held, and the delivery report that ends it.
 
