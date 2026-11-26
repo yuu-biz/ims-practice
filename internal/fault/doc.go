@@ -64,7 +64,7 @@
 // The bodies are JSON, and every error is ErrorBody, {"error": "..."}.
 // A POST must say so in its Content-Type (controlapi.RequireJSON), so
 // that a page of another site open in the learner's browser cannot
-// inject a fault through it.
+// inject a fault with a request that needs no preflight.
 // Times are RFC 3339 in UTC, durations Go durations such as "200ms".
 //
 //	GET    /fault/v1/faults

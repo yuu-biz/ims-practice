@@ -29,6 +29,13 @@ import (
 // sent. A POST without a body, such as one that ends a call, needs the
 // Content-Type too.
 //
+// That keeps out the requests that a page of another site sends without
+// a preflight, and nothing more. A page that the browser takes for one
+// of the same origin as the API sends JSON with no preflight: one of a
+// domain whose name the attacker then has resolve to 127.0.0.1, which
+// is DNS rebinding. Nothing here checks the Host header that would tell
+// such a request, nor asks who sends it.
+//
 // A request for a path or method that mux has no route for is left to
 // mux, which answers it 404 or 405 as before.
 func RequireJSON(mux *http.ServeMux) http.Handler {

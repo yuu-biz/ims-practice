@@ -9,7 +9,8 @@
 // A POST or a PUT whose Content-Type is not application/json, one
 // without a body too, is answered 415 and passed on to no node
 // (controlapi.RequireJSON), so that a page of another site open in the
-// learner's browser cannot change the network through the Lab.
+// learner's browser cannot change the network through the Lab with a
+// request that needs no preflight.
 //
 //	GET /api/messages[?call_id=<id>...][&correlation_id=<id>]
 //	    The messages in capture order, which is the time in the HEP
