@@ -382,14 +382,15 @@ func (h *HSS) servable(set *settings) (*settings, error) {
 // takeOnStored takes on what this instance can serve of settings read
 // from the Store, or of a change it has written there (servable,
 // takeOn), and logs what it cannot once for each generation of the
-// Store.
-func (h *HSS) takeOnStored(set *settings) bool {
+// Store. It returns the settings it took on, with its own values for
+// those, and whether they changed the settings in force.
+func (h *HSS) takeOnStored(set *settings) (*settings, bool) {
 	next, err := h.servable(set)
 	if err != nil && h.unservable.Swap(set.generation+1) != set.generation+1 {
 		h.log.Error("the settings in force on the instances of the role name what this instance does not have; it keeps its own for those",
 			"generation", set.generation, "error", err.Error())
 	}
-	return h.takeOn(next)
+	return next, h.takeOn(next)
 }
 
 // loadSettings reads the settings that the instances on the Store share,
@@ -405,10 +406,10 @@ func (h *HSS) loadSettings(ctx context.Context) (*settings, error) {
 		}
 		if ok {
 			next := settingsOf(stored)
-			if h.takeOnStored(next) {
-				h.log.Info("took on the settings in force on the instances of the role", "generation", next.generation,
-					"admission", string(next.admission), "default_service_profile", next.defaultServiceProfile,
-					"test_user_service_profile", next.testUserServiceProfile)
+			if taken, changed := h.takeOnStored(next); changed {
+				h.log.Info("took on the settings in force on the instances of the role", "generation", taken.generation,
+					"admission", string(taken.admission), "default_service_profile", taken.defaultServiceProfile,
+					"test_user_service_profile", taken.testUserServiceProfile)
 			}
 			return next, nil
 		}
