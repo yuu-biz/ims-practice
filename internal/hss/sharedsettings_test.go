@@ -124,11 +124,13 @@ func TestAChangeOnAnInstanceBehindTheStoreChangesWhatItNames(t *testing.T) {
 }
 
 // TestAnInstanceKeepsSettingsItCannotServe: the store names a service
-// profile that this instance does not define, as an instance with
-// another configuration file put there. An instance that took that on
-// would give the subscriptions of the name a profile without criteria,
-// so it keeps the settings it has, whether it reads the store as it
-// starts or at a sweep, and sends no PPR of the name.
+// profile that this instance does not define, beside a policy that it
+// can serve, as an instance with another configuration file put there.
+// An instance that took that name on would give the subscriptions of the
+// name a profile without criteria, so it keeps its last good name and
+// takes the policy on, whether it reads the store as it starts, at a
+// sweep, or as it takes a change of its own; and it sends no PPR of the
+// name.
 func TestAnInstanceKeepsSettingsItCannotServe(t *testing.T) {
 	store := settingsStore(t)
 	running, _ := settingsInstance(t, store, nil)
@@ -139,25 +141,43 @@ func TestAnInstanceKeepsSettingsItCannotServe(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// The change of an instance whose file defines video: the policy, and
+	// a profile that the instances here do not define.
 	unknown := stored
-	unknown.Generation, unknown.DefaultServiceProfile = 1, "video"
+	unknown.Generation, unknown.Admission, unknown.DefaultServiceProfile = 1, AdmitTestUsers, "video"
 	if swapped, err := store.CompareAndSwapSettings(t.Context(), &stored, unknown); err != nil || !swapped {
 		t.Fatalf("CompareAndSwapSettings: %v, %v", swapped, err)
 	}
 
 	started, startedAPI := settingsInstance(t, store, nil)
 	if got := started.DefaultServiceProfile(); got != "default" {
-		t.Errorf("the instance that started on the store names %q, want default, that of its file", got)
+		t.Errorf("the instance that started on the store names %q, want default, the last it could serve", got)
 	}
-	if got := generationOf(t, startedAPI); got != 0 {
-		t.Errorf("the instance that started on the store is at generation %d, want 0", got)
+	if got := started.Admission(); got != AdmitTestUsers {
+		t.Errorf("the instance that started on the store admits %q, want test_users, the policy of the store", got)
 	}
-	// Some sweeps of the running instance, and of the started one, which
-	// would have taken the name on and pushed it by now.
-	for deadline := time.Now().Add(100 * time.Millisecond); time.Now().Before(deadline); time.Sleep(5 * time.Millisecond) {
-		if got := running.DefaultServiceProfile(); got != "default" {
-			t.Fatalf("the running instance took on %q", got)
+	if got := generationOf(t, startedAPI); got != 1 {
+		t.Errorf("the instance that started on the store is at generation %d, want 1", got)
+	}
+	for deadline := time.Now().Add(5 * time.Second); running.Admission() != AdmitTestUsers; time.Sleep(5 * time.Millisecond) {
+		if time.Now().After(deadline) {
+			t.Fatalf("gave up waiting 5 s for the running instance to take on the policy; it has %q", running.Admission())
 		}
+	}
+	if got := running.DefaultServiceProfile(); got != "default" {
+		t.Errorf("the running instance took on %q", got)
+	}
+
+	// A change through an instance here of what it can serve keeps the
+	// name that the store has, and does not put it in force here.
+	if _, err := changeAt(startedAPI, 2, "hss.admission", string(AdmitAll)); err != nil {
+		t.Fatal(err)
+	}
+	if started.Admission() != AdmitAll || started.DefaultServiceProfile() != "default" {
+		t.Errorf("after the change the instance has %q and %q, want all and default", started.Admission(), started.DefaultServiceProfile())
+	}
+	if now, _, err := store.Settings(t.Context()); err != nil || now.DefaultServiceProfile != "video" || now.Admission != AdmitAll {
+		t.Errorf("the store has %+v after the change, %v; want video kept and the policy all", now, err)
 	}
 	scscfs.mu.Lock()
 	defer scscfs.mu.Unlock()
