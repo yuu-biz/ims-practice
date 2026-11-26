@@ -563,6 +563,9 @@ func (f *conference) left(p *party) {
 	}
 	f.mu.Lock()
 	f.setStatus(p, confinfo.Disconnected)
+	// The SIP stack sends nothing more in the dialog of p, so the
+	// subscription within it ends here, with no NOTIFY.
+	p.inDialog = nil
 	if f.ended {
 		f.mu.Unlock()
 		return
@@ -599,7 +602,8 @@ func (f *conference) left(p *party) {
 //
 // The BYE of each participant goes into the outbox of its dialog,
 // behind the NOTIFYs that notify left there: the last of them ends the
-// subscription within the dialog, which the BYE would end without it.
+// subscription within the dialog, which a BYE does not end (RFC 5057
+// 5.5), and which the dialog leaves no room for once the BYE has gone.
 // end waits for every BYE, each behind the NOTIFYs of its own dialog
 // only, so that a participant that does not answer holds up no other.
 func (f *conference) end(parties []*party) {
