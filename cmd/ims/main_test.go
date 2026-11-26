@@ -175,9 +175,10 @@ func TestDiameterApplicationsFollowTheRoles(t *testing.T) {
 	// The HSS adds S6c, over which the SMS central functions ask it for
 	// routing information and it alerts them.
 	hss := []uint32{diameter.ApplicationIDCx, diameter.ApplicationIDSh, sgd.ApplicationIDS6c}
-	// The IP-SM-GW adds SGd, over which a Service Centre brings it a
-	// short message for one of its users.
-	ipsmgw := []uint32{diameter.ApplicationIDSh, sgd.ApplicationIDSGd}
+	// The IP-SM-GW adds S6c, over which it tells the HSS that a user can
+	// take short messages again, and SGd, over which a Service Centre
+	// brings it a short message for one of its users.
+	ipsmgw := []uint32{diameter.ApplicationIDSh, sgd.ApplicationIDS6c, sgd.ApplicationIDSGd}
 	// The Service Centre speaks the two applications of TS 29.338 and
 	// nothing else.
 	sc := []uint32{sgd.ApplicationIDS6c, sgd.ApplicationIDSGd}
@@ -194,9 +195,9 @@ func TestDiameterApplicationsFollowTheRoles(t *testing.T) {
 		{[]config.Role{config.RoleAGW}, nil},
 		{[]config.Role{config.RoleIPSMGW}, ipsmgw},
 		{[]config.Role{config.RoleSC}, sc},
-		{[]config.Role{config.RoleSCSCF, config.RoleIPSMGW}, append(cxAndSh, sgd.ApplicationIDSGd)},
-		// A node with both ends of SGd advertises it once.
-		{[]config.Role{config.RoleIPSMGW, config.RoleSC}, append(ipsmgw, sgd.ApplicationIDS6c)},
+		{[]config.Role{config.RoleSCSCF, config.RoleIPSMGW}, append(cxAndSh, sgd.ApplicationIDS6c, sgd.ApplicationIDSGd)},
+		// A node with both ends of SGd and S6c advertises each once.
+		{[]config.Role{config.RoleIPSMGW, config.RoleSC}, ipsmgw},
 	}
 	for _, tt := range tests {
 		if got := diameterApplications(config.Config{Roles: tt.roles}); !reflect.DeepEqual(got, tt.want) {
@@ -1971,8 +1972,8 @@ func (c *untouchedSC) Submit(context.Context, sms.Address, sms.Submit) (*sms.Sub
 
 func (c *untouchedSC) Report(context.Context, string, ipsmgw.Outcome) { c.asked.Store(true) }
 
-// noSMSRegistration is an HSS that takes no Sh request, which a drained
-// IP-SM-GW never attempts.
+// noSMSRegistration is an HSS that takes no Sh or S6c request, which a
+// drained IP-SM-GW never attempts.
 type noSMSRegistration struct{}
 
 func (noSMSRegistration) IMSI(context.Context, string) (string, error) {
@@ -1983,8 +1984,8 @@ func (noSMSRegistration) UpdateSMSRegistrationInfo(context.Context, sh.UserIdent
 	return errors.New("no HSS in this test")
 }
 
-func (noSMSRegistration) NotifyReadyForSM(context.Context, sh.UserIdentity, string, sh.ReadyForSM) error {
-	return errors.New("no HSS in this test")
+func (noSMSRegistration) ReadyForSM(context.Context, sgd.ReadyForSMRequest) (sgd.ReadyForSMAnswer, error) {
+	return sgd.ReadyForSMAnswer{}, errors.New("no HSS in this test")
 }
 
 // The Service Centre ends when the node tells it to, even when no

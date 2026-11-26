@@ -164,7 +164,7 @@ func newChainOf(t *testing.T, answer func(*sip.Message) int, gateways, centres i
 	for k := range gateways {
 		gw := &chainGateway{host: instance("ipsmgw", k)}
 		node := diameter.NewNode(diameter.Identity{OriginHost: gw.host, OriginRealm: domain},
-			[]uint32{diameter.ApplicationIDSh, sgd.ApplicationIDSGd}, sgdTimers, quiet())
+			[]uint32{diameter.ApplicationIDSh, sgd.ApplicationIDS6c, sgd.ApplicationIDSGd}, sgdTimers, quiet())
 		node.Handle(func(request *diam.Message) *diam.Message { return gw.g.Load().Handle(request) })
 		for i, server := range scServers {
 			toSC := node.Connect(diameter.PeerConfig{Address: server.Addr(), OriginHost: scHosts[i]})
@@ -179,7 +179,7 @@ func newChainOf(t *testing.T, answer func(*sip.Message) int, gateways, centres i
 			t.Fatal(err)
 		}
 		sc := ipsmgw.NewSMSIWMSC(sgd.NewMOClient(node, group), scNumber, domain, quiet())
-		users := sh.NewClient(node, toHSS, domain)
+		users := ipsmgw.HSSClients{Client: sh.NewClient(node, toHSS, domain), S6cClient: sgd.NewS6cClient(node, toHSS)}
 		if k == 0 {
 			c.harness = newHarnessParts(t, gwStore, time.Minute, answer, ipsmgw.Config{}, sc, users)
 			gw.g.Store(c.harness.g)

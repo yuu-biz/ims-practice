@@ -55,7 +55,8 @@
 //
 // Three roles speak these interfaces with this package: the sc role as
 // the SMS central functions on both of them, the hss role as the other
-// end of S6c, and the ipsmgw role as a serving node of SGd.
+// end of S6c, and the ipsmgw role as a serving node of SGd and as the
+// sender of Ready-For-SM on S6c.
 //
 // SIMPLIFIED: TS 29.338 4.6. S6c and SGd run over TCP here, as every
 // Diameter connection of this project does, and not over the SCTP that

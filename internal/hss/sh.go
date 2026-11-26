@@ -7,7 +7,6 @@ import (
 
 	"github.com/yuu-biz/ims-practice/internal/cx"
 	"github.com/yuu-biz/ims-practice/internal/diameter"
-	"github.com/yuu-biz/ims-practice/internal/sgd"
 	"github.com/yuu-biz/ims-practice/internal/sh"
 )
 
@@ -213,9 +212,6 @@ func (h *HSS) profileUpdate(ctx context.Context, r sh.ProfileUpdateRequest) sh.P
 		h.log.Warn("PUR without SMSRegistrationInfo", "public_identity", r.UserIdentity.PublicIdentity, "msisdn", r.UserIdentity.MSISDN)
 		return sh.ProfileUpdateAnswer{Result: diameter.Base(diameter.DiameterUnableToComply)}
 	}
-	if reason := data.ShIMSData.SMSRegistrationInfo.ReadyForSM; reason != "" {
-		return h.readyForSMInShUpdate(ctx, u, data.ShIMSData.SMSRegistrationInfo.IPSMGWNumber, reason)
-	}
 	number := data.ShIMSData.SMSRegistrationInfo.IPSMGWNumber
 
 	// The subscriber is read again under its lock, so that a SAR that
@@ -262,28 +258,6 @@ func (h *HSS) profileUpdate(ctx context.Context, r sh.ProfileUpdateRequest) sh.P
 		h.alertServiceCentres(u)
 	}
 	return sh.ProfileUpdateAnswer{Result: diameter.Base(diameter.DiameterSuccess)}
-}
-
-// readyForSMInShUpdate is the notification that the user can take short
-// messages again, in the element of this project's own namespace that
-// an Sh update of SMSRegistrationInfo may carry. It is a notification
-// alone, which writes neither the IP-SM-GW's number nor its Diameter
-// identity (readyNotice).
-//
-// SIMPLIFIED: TS 23.040 3.2.6 items 2c and 2f, TS 23.204 6.5b step 2d
-// and 6.6 step 3, TS 29.002 12.4. Both notifications reach the HSS in
-// an element of this project's own namespace in the Sh update of
-// SMSRegistrationInfo, since the Sh user profile has none for them and
-// an IP-SM-GW that sends them to an HLR uses the MAP READY_FOR_SM
-// service, which this project does not implement.
-func (h *HSS) readyForSMInShUpdate(ctx context.Context, u Subscriber, number string, reason sh.ReadyForSM) sh.ProfileUpdateAnswer {
-	alert, ok := map[sh.ReadyForSM]sgd.AlertReason{sh.MSPresent: sgd.AlertReasonUEPresent, sh.MemoryAvailable: sgd.AlertReasonUEMemoryAvailable}[reason]
-	if !ok {
-		h.log.Warn("PUR with a reason for being ready for short messages that this HSS does not know",
-			"private_identity", u.PrivateIdentity, "reason", string(reason))
-		return sh.ProfileUpdateAnswer{Result: diameter.Base(diameter.DiameterUnableToComply)}
-	}
-	return sh.ProfileUpdateAnswer{Result: h.readyNotice(ctx, u, number, alert)}
 }
 
 // maxServiceData is the most ServiceData the HSS takes for one

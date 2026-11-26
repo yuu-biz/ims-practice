@@ -26,7 +26,7 @@ A short message can travel to a phone in several ways. Over the IMS, which this 
 | I-CSCF | 172.28.0.20 | Entry point of the home network for the MESSAGEs that the IP-SM-GW sends. It asks the HSS where the user is (LIR). |
 | IP-SM-GW | 172.28.0.70 | The application server (AS) of SMS over IP (TS 24.341 5.3.3). It turns a MESSAGE into a short message for the SC and back. |
 | SC | 172.28.0.71 | The Service Centre: it takes each short message, holds it until it is delivered or its validity period ends, and delivers it (TS 23.040 6.1). The IP-SM-GW hands it the short messages of the UEs over SGd, and it brings back the ones for them over the same interface. |
-| HSS | 172.28.0.10 | Holds the iFCs (Cx). It answers the IP-SM-GW over Sh, as it does every application server, and the SC over S6c: which node serves a recipient, which Service Centres hold short messages for a user, and when that user can take them again. |
+| HSS | 172.28.0.10 | Holds the iFCs (Cx). It answers the IP-SM-GW over Sh, as it does every application server, and over S6c when the IP-SM-GW tells it that a user can take short messages again. It answers the SC over S6c: which node serves a recipient, which Service Centres hold short messages for a user, and when that user can take them again. |
 | DNS | 172.28.0.2 | Gives the address of `ipsmgw.ims.mnc001.mcc001.3gppnetwork.org`, the AS named in the iFCs. |
 
 Two more numbers matter. The SC address, `+12025550100`, is what each UE puts in the short message as its SC; the UE simulator has it as `-sc`. The IP-SM-GW has the number `+12025550199`, which it registers in the HSS for each user it serves. All numbers are in the 555-0100 to 555-0199 range that the North American Numbering Plan keeps for fiction.
@@ -37,7 +37,7 @@ The CSCFs only route SIP. Short messages need a node that speaks both SIP and th
 
 The IP-SM-GW calls the SC through the `ServiceCentre` interface in `internal/ipsmgw/servicecentre.go`. Behind that interface sits either the SGd client, which this network uses, or the stub of `internal/sc`, which an IP-SM-GW whose configuration names no Service Centre among its Diameter peers uses instead. The stub holds nothing: it passes each short message on at once, and one that cannot be delivered then is dropped. [Follow a short message between two IMS networks](interconnect.md) shows that deployment.
 
-The IP-SM-GW talks to the HSS over Sh (TS 29.328, TS 29.329). It writes which IP-SM-GW serves a user with a Profile-Update-Request (PUR), and reads the user's IMSI with a User-Data-Request (UDR). To know when to write, the IP-SM-GW subscribes to the registration state of each user, as the P-CSCF does.
+The IP-SM-GW talks to the HSS over Sh (TS 29.328, TS 29.329). It writes which IP-SM-GW serves a user with a Profile-Update-Request (PUR), and reads the user's IMSI with a User-Data-Request (UDR). To know when to write, the IP-SM-GW subscribes to the registration state of each user, as the P-CSCF does. Over S6c it tells the HSS that a user can take short messages again, with a Ready-For-SM. That command is this project's own: a network carries the notice in MAP, which this project does not implement ([When the UE cannot take it](#when-the-ue-cannot-take-it-hold-alert-and-resend)).
 
 The SC talks to the HSS over S6c (TS 29.338 5). It asks which node serves a recipient with a Send-Routing-Info-for-SM (SRR), and reports how a delivery ended with a Report-SM-Delivery-Status (RDR): a delivery that failed, so that the HSS keeps its address in the message waiting data (MWD) of the user, or one that got through while the HSS held a flag for the user, so that the HSS clears it. It is told with an Alert-Service-Centre (ALR) that the user can take short messages again. Over SGd it takes a short message from the IP-SM-GW with an MO-Forward-Short-Message (OFR) and brings one back with an MT-Forward-Short-Message (TFR).
 
@@ -202,10 +202,10 @@ curl -X PUT localhost:8091/sms-memory -d '{"full": true}'
 Open the newest file in `captures/` in Wireshark with this display filter:
 
 ```text
-sip.CSeq.method in {"MESSAGE", "REGISTER"} || (sip && ip.addr == 172.28.0.70) || diameter.cmd.code in {302, 306, 307, 8388645, 8388646, 8388647, 8388648, 8388649}
+sip.CSeq.method in {"MESSAGE", "REGISTER"} || (sip && ip.addr == 172.28.0.70) || diameter.cmd.code in {302, 306, 307, 8388645, 8388646, 8388647, 8388648, 8388649, 16777214}
 ```
 
-It shows the REGISTERs (with the third-party ones), the MESSAGEs and their responses, the SUBSCRIBEs and NOTIFYs of the IP-SM-GW, the LIR, UDR and PUR with their answers, and the five commands of SGd and S6c with theirs. Wireshark decodes the body of each MESSAGE by itself: the Info column ends with the RP message, such as `(RP) RP-DATA (MS to Network)`, and the packet details have a `GSM A-I/F RP` tree with a `GSM SMS TPDU` tree inside. **Statistics > Flow Graph** with **Limit to display filter** draws the ladder.
+It shows the REGISTERs (with the third-party ones), the MESSAGEs and their responses, the SUBSCRIBEs and NOTIFYs of the IP-SM-GW, the LIR, UDR and PUR with their answers, the five commands of SGd and S6c with theirs, and the Ready-For-SM of this project with its answers. Wireshark decodes the body of each MESSAGE by itself: the Info column ends with the RP message, such as `(RP) RP-DATA (MS to Network)`, and the packet details have a `GSM A-I/F RP` tree with a `GSM SMS TPDU` tree inside. **Statistics > Flow Graph** with **Limit to display filter** draws the ladder.
 
 ## Registration: the IP-SM-GW learns about the user
 
@@ -498,8 +498,8 @@ The ladders leave out the P-CSCF between the S-CSCF and the UE, and the LIR with
   |<------------------------------------------------|  MESSAGE (A5)
   |------------------>|         |         |         |
   |<------------------|         |         |         |  202
-  |         |         |------------------>|         |  PUR ReadyForSM msPresent (A6)
-  |         |         |<------------------|         |  PUA
+  |         |         |------------------>|         |  Ready-For-SM UE_PRESENT (A6)
+  |         |         |<------------------|         |  Ready-For-SM answer
   |         |         |         |<--------|         |  ALR (A7)
   |         |         |         |-------->|         |  ALA
   |         |         |         |-------->|         |  SRR (A8)
@@ -517,7 +517,7 @@ The ladders leave out the P-CSCF between the S-CSCF and the UE, and the LIR with
 - **A3.** TS 29.311 6.1.4.4.1 maps a 480 to the user error of MAP for an absent subscriber, which TS 29.338 7.3.3 carries as **DIAMETER_ERROR_ABSENT_USER (5550)** in the TFA. The IP-SM-GW also raises its own UE-Not-Reachable-for-IP flag (UNRI) for the user, since only it knows that the delivery over IMS failed (TS 23.040 2.1.1).
 - **A4.** The SC tells the HSS with a **Report-SM-Delivery-Status** (RDR, command 8388649 of S6c) whose `SM-Delivery-Cause` is ABSENT_USER (TS 29.338 5.2.3, TS 23.040 3.2.8). The HSS puts the SC's address in the MWD and sets UNRI of its own. While UNRI is set the HSS names no serving node in an SRA, so a Service Centre that asks now is not sent to an IP-SM-GW where the delivery would fail again (TS 29.338 5.2.1.3).
 - **A5.** `{"available": true}` takes short messages again, and the next request of UE 2 that reaches the IP-SM-GW says that the UE is there, whatever that request carries (TS 23.204 6.5b step 2). The run uses a short message of UE 2's own, whose own OFR the ladder leaves out. A re-registration says the same, as the next run shows.
-- **A6.** The IP-SM-GW clears its own UNRI and tells the HSS in a PUR whose SMSRegistrationInfo carries `<ReadyForSM xmlns="https://github.com/yuu-biz/ims-practice/ns/sh">msPresent</ReadyForSM>`. Sh has no element for this notification and this project speaks no MAP, so this one is of the project's own namespace (see [What this project simplifies](#what-this-project-simplifies)). The PUA does not wait for the alert, so the capture may show it before the ALR.
+- **A6.** The IP-SM-GW clears its own UNRI and tells the HSS over S6c in a **Ready-For-SM** whose `Alert-Reason` is UE_PRESENT. A network sends this notice in the READY_FOR_SM service of MAP (TS 23.204 6.5b step 2d, TS 29.002 12.4.1). Neither S6c nor Sh has a command for it, and this project speaks no MAP, so Ready-For-SM is a command of this project's own, with the experimental command code 16777214 of RFC 6733 11.2.1 ([What this project simplifies](#what-this-project-simplifies)). Wireshark shows it as an unknown command and warns that its dictionary does not have it; the AVPs inside it are standard ones, which it decodes. `User-Identifier` names UE 2 by MSISDN, as in an RDR, `IP-SM-GW-Number` names the IP-SM-GW, and `Alert-Reason` is the AVP with which an MME tells the HSS the same over S6a (TS 29.272 7.3.83). The HSS acts only when that number is the one that UE 2 is registered with. Its answer does not wait for the alert, so the capture may show it before the ALR.
 - **A7.** The HSS clears UNRI and sends every Service Centre in the MWD an **Alert-Service-Centre** (ALR, command 8388648 of S6c), over the connection that Service Centre opened (TS 29.338 5.2.2, TS 23.040 3.2.6 item 2c). An address whose Service Centre answers with an ALA leaves the MWD. The HSS finds the Diameter identity of the Service Centre by its address, in `service_centres` of `deploy/compose/hss.yaml`, and names it in Destination-Host (TS 29.338 5.3.1.2). A Service Centre that runs as several instances is listed there with one identity for each, under `hosts`, and the HSS alerts them in that order until one answers with a successful ALA: the instances hold the same short messages, so any one of them delivers.
 - **A8.** The alert makes the queue of that number due at once, ahead of the retry schedule: an SRR, which names the IP-SM-GW again now that UNRI is clear, and the TFR of the short message the SC held. The SC starts the delivery before it answers the alert, and the HSS takes the SC's address out of the MWD only once the ALA is back, so the SRA usually still carries **MWD-Status** 0: the SC's address is in the MWD, and no flag is set (TS 29.338 5.3.3.8). With no flag set, the SC does not report the delivery that follows ([The notification of free memory is lost](#the-notification-of-free-memory-is-lost)).
 - **A9.** UE 2 takes it this time. Its delivery report ends the delivery, and the TFA says 2001, as in steps 11 and 12.
@@ -532,8 +532,8 @@ A UE need not send anything to show that it is back. After A1 to A4 of the run a
   |<=================>|         |         |         |  REGISTER ... 200 OK (C1)
   |         |         |-------->|         |         |  third-party REGISTER (C2)
   |         |         |<--------|         |         |  200 OK
-  |         |         |         |------------------>|  PUR ReadyForSM msPresent (C3)
-  |         |         |         |<------------------|  PUA
+  |         |         |         |------------------>|  Ready-For-SM UE_PRESENT (C3)
+  |         |         |         |<------------------|  Ready-For-SM answer
   |         |         |         |         |<--------|  ALR (C4)
   |         |         |         |         |-------->|  ALA
   :         :         :         :         :         :  the resend of A8 and A9 follows
@@ -565,8 +565,8 @@ The resend is the one of A8 and A9.
   :         :         :         :         :         :  UE 2 has memory again
   |<------------------------------------------------|  MESSAGE RP-SMMA (B5)
   |------------------>|         |         |         |
-  |         |         |------------------>|         |  PUR ReadyForSM memoryAvailable (B6)
-  |         |         |<------------------|         |  PUA
+  |         |         |------------------>|         |  Ready-For-SM UE_MEMORY_AVAILABLE (B6)
+  |         |         |<------------------|         |  Ready-For-SM answer
   |         |         |         |<--------|         |  ALR (B7)
   |         |         |         |-------->|         |  ALA
   |<------------------|         |         |         |  202, then MESSAGE RP-ACK (B8)
@@ -577,8 +577,8 @@ The resend is the one of A8 and A9.
 - **B3.** The IP-SM-GW answers the TFA with **DIAMETER_ERROR_SM_DELIVERY_FAILURE (5555)** and `SM-Enumerated-Delivery-Failure-Cause` MEMORY_CAPACITY_EXCEEDED (TS 29.338 7.3.8, Table 6.2.2.1/2).
 - **B4.** The SC reports it with an RDR whose `SM-Delivery-Cause` is UE_MEMORY_CAPACITY_EXCEEDED. The HSS puts the SC's address in the MWD and sets the memory capacity exceeded flag (MCEF) of the user (TS 23.040 3.2.6 item 1). UNRI stays clear: the UE is reachable, it just has no room.
 - **B5.** `{"full": false}` makes the UE send the notification it owes, an **RP-SMMA** in a MESSAGE to the IP-SM-GW (TS 24.011 7.3.2, TS 24.341 5.3.2.5).
-- **B6 to B7.** The IP-SM-GW passes the notification to the HSS as `<ReadyForSM xmlns="https://github.com/yuu-biz/ims-practice/ns/sh">memoryAvailable</ReadyForSM>` (TS 23.204 6.6). The HSS clears MCEF and UNRI and alerts the Service Centres of the MWD (TS 23.040 3.2.6 item 2f).
-- **B8.** The RP-ACK for the notification goes to the UE only after the HSS has taken it, so an RP-ACK never tells the UE that a notification got through when it did not. A notification the HSS refuses gets RP-Cause 41 instead, and the UE still owes one.
+- **B6 to B7.** The IP-SM-GW passes the notification to the HSS in a Ready-For-SM whose `Alert-Reason` is UE_MEMORY_AVAILABLE, as in A6 (TS 23.204 6.6 step 3, TS 24.341 5.3.3.4.1). The HSS clears MCEF and UNRI and alerts the Service Centres of the MWD (TS 23.040 3.2.6 item 2f).
+- **B8.** The RP-ACK for the notification goes to the UE only after the HSS has taken it, so an RP-ACK never tells the UE that a notification got through when it did not. A notification that the HSS does not answer or cannot take gets RP-Cause 41 instead, and the UE still owes one. A number that the HSS does not know gets RP-Cause 30, unknown subscriber (TS 24.011 Table 8.4 part 3).
 
 The resend is the one of A8 and A9: an SRR, the TFR of the short message the SC held, and the delivery report that ends it.
 
@@ -891,6 +891,7 @@ A text with a character outside the alphabet, such as Japanese, is sent in UCS2 
 | `sip.In-Reply-To` | Submit reports and delivery reports. |
 | `sip.Accept-Contact` | The MESSAGEs that the IP-SM-GW sends. |
 | `diameter.applicationId == 16777313` | SGd, between the IP-SM-GW and the Service Centre: the short messages themselves. `16777312` is S6c, between the Service Centre and the HSS (TS 29.338 4.8). |
+| `diameter.cmd.code == 16777214` | Ready-For-SM, with which the IP-SM-GW tells the HSS that a user can take short messages again, and its answers. It is this project's own command, so Wireshark names it `Unknown` and adds the warning `diameter.cmd.code.unknown`. `diameter.Alert-Reason == 1` finds the ones that say the memory is free. |
 | `diameter.cmd.code == 8388646` | The short messages that the Service Centre forwards to a serving node (TFR), and the answers that say how each delivery ended (TFA). `8388645` is the pair of a short message from a UE (OFR, OFA), `8388647` the routing info query (SRR, SRA), `8388649` the delivery status report (RDR, RDA) and `8388648` the alert (ALR, ALA). |
 
 `scripts/e2e-sms.sh` runs every filter of this table against the capture of this scenario: a filter that finds no frame fails the run.
@@ -906,9 +907,9 @@ A text with a character outside the alphabet, such as Japanese, is sent in UCS2 
 | `internal/scscf/services.go` | How the S-CSCF evaluates the criteria, adds the ODI and applies the default handling. |
 | `internal/scscf/thirdparty.go` | The third-party REGISTER. |
 | `internal/scscf/callerprefs.go` | Accept-Contact matching (RFC 3841). |
-| `internal/ipsmgw` | The IP-SM-GW: `ipsmgw.go` (the third-party REGISTER), `regevent.go` (the reg event subscription and the PUR), `message.go` (MESSAGEs from UEs), `deliver.go` (MESSAGEs to UEs), `servicecentre.go` (the boundary to the SC), `sgd.go` (a short message that a Service Centre brings over SGd), `store.go` (the deliveries in progress). |
+| `internal/ipsmgw` | The IP-SM-GW: `ipsmgw.go` (the third-party REGISTER), `regevent.go` (the reg event subscription, the PUR, and the Ready-For-SM when the UE is back), `message.go` (MESSAGEs from UEs, and the Ready-For-SM of an RP-SMMA), `deliver.go` (MESSAGEs to UEs), `servicecentre.go` (the boundary to the SC), `sgd.go` (a short message that a Service Centre brings over SGd), `store.go` (the deliveries in progress). |
 | `internal/smsc` | The Service Centre: `submit.go` (a short message from a serving node), `deliver.go` (the routing info query, the delivery and the retries), `alert.go` (the alert of the HSS), `store.go` (the short messages it holds, by recipient), `maintenance.go` (what it tells the maintenance API of its node, and what it does out of service). |
-| `internal/sgd`, `internal/hss/s6c.go` | The SGd and S6c messages, their clients, and the HSS side of S6c. |
+| `internal/sgd`, `internal/hss/s6c.go` | The SGd and S6c messages, their clients, and the HSS side of S6c. `internal/sgd/readyforsm.go` is Ready-For-SM. |
 | `cmd/ims/sc.go` | How the `sc` role wires the Service Centre to its Diameter node, and takes it off the Diameter listener of the node while the operator has it out of service. |
 | `internal/ipsmgw/smsiwmsc.go` | The IP-SM-GW handing a short message to the Service Centre over SGd. |
 | `internal/sc` | The SC stub, which an IP-SM-GW without a Service Centre of its own uses instead. |
@@ -954,8 +955,8 @@ Each item has a `SIMPLIFIED:` comment in the code; `grep -rn "SIMPLIFIED:" inter
 | Sh, TS 29.328 Annex D | Sh-Data has only PublicIdentifiers (IMSPublicIdentity, MSISDN), RepositoryData, and SCSCFName and SMSRegistrationInfo of Sh-IMS-Data. | The rest waits until a role needs it. |
 | Sh, TS 29.328 7.6.16 | SMSRegistrationInfo has no SCAddress and no indication of SBI support. | The HSS hands no Service Centre address to the IP-SM-GW, which reaches the SC over Diameter only. |
 | HSS, TS 29.338 5.3.1.2 | The alert travels back over the connection that the service centre opened to this HSS instance, rather than being routed to its Diameter identity by an agent. An instance the service centre is not connected to sends no alert. | The HSS reaches an S-CSCF the same way, and this project has no Diameter agent. The address stays in the message waiting data, so the next return of the user alerts it from whichever instance answers. |
-| HSS and Sh, TS 23.040 3.2.6 items 2c and 2f, TS 23.204 6.5b step 2d and 6.6 step 3, TS 29.002 12.4 | The two notifications that the UE is reachable for short messages again and that it has memory again travel in an element of this project's own namespace, `<ReadyForSM>`, at the end of the `SMSRegistrationInfo` of an Sh update. A network with MAP carries both in the READY_FOR_SM service of MAP instead. | Sh has no element for either notification, and this project speaks no MAP. The schema of the Sh user profile takes an element of another namespace at that place and processes it lax, so an HSS that does not know the namespace skips the element. |
-| HSS, TS 23.204 6.5 step 8 and 6.5a step 19 | The HSS acts on the delivery status report of the SMS-GMSC, of a delivery that failed and of one that got through, which these steps have it ignore because the IP-SM-GW reports to it itself. | The IP-SM-GW of this project does not speak S6c, so the report of the SMS-GMSC is the only one the HSS gets. |
+| IP-SM-GW and HSS, TS 23.040 3.2.6 items 2c and 2f, TS 23.204 6.5b step 2d and 6.6 step 3, TS 29.002 12.4.1 | The two notifications that the UE is reachable for short messages again and that it has memory again travel over S6c in Ready-For-SM, a command of this project's own with the experimental command code 16777214, in place of the READY_FOR_SM service of MAP, with which a network carries them. Ready-For-SM names the user by MSISDN, where MAP names the IMSI, gives the reason in the `Alert-Reason` AVP with which an MME tells the HSS the same over S6a, and names the IP-SM-GW in `IP-SM-GW-Number`. | This project speaks no MAP, and neither S6c nor Sh has a command for either notification. The experimental code keeps the command from passing for one of TS 29.338 (RFC 6733 11.2.1): Wireshark marks it as unknown, and an HSS without it answers DIAMETER_COMMAND_UNSUPPORTED. |
+| HSS, TS 23.204 6.5 step 8 and 6.5a step 19 | The HSS acts on the delivery status report of the SMS-GMSC, of a delivery that failed and of one that got through, which these steps have it ignore because the IP-SM-GW reports to it itself. | The IP-SM-GW of this project sends no report of its own, so the report of the SMS-GMSC is the only one the HSS gets. |
 | HSS, TS 23.040 3.2.6 items 1a and 1b | An absent user sets the flag for a UE not reachable over IP whichever node reported it, rather than one flag for a report from an MSC and another for one from an SGSN. | The HSS names no such serving node, so only a delivery through the IP-SM-GW can fail. |
 | HSS, TS 29.338 5.2.1.3 | The routing info query is answered without the checks for an MT SMS teleservice subscription and for barring of mobile terminated short messages, so the answer is never DIAMETER_ERROR_SERVICE_NOT_SUBSCRIBED or DIAMETER_ERROR_SERVICE_BARRED. | Every subscriber of this HSS may receive short messages, and it keeps no operator determined barring. |
 | HSS, TS 29.338 Table 5.2.1.1-2 | A successful routing info answer leaves the IMSI out for a subscription whose private identity is not derived from one, such as the one a softphone registers by its number. An Sh read of the IMSI answers such a subscription with no user data at all. | The HSS keeps no IMSI of its own. It reads the IMSI of TS 23.003 13.3 out of the private identity. |

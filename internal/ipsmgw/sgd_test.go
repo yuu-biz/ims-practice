@@ -15,7 +15,6 @@ import (
 	"github.com/yuu-biz/ims-practice/internal/maintenance"
 	"github.com/yuu-biz/ims-practice/internal/reginfo"
 	"github.com/yuu-biz/ims-practice/internal/sgd"
-	"github.com/yuu-biz/ims-practice/internal/sh"
 	"github.com/yuu-biz/ims-practice/internal/sip"
 	"github.com/yuu-biz/ims-practice/internal/sms"
 )
@@ -546,7 +545,7 @@ func TestTheUnreachableFlagLastsAsLongAsTheSubscription(t *testing.T) {
 	}
 	h.hss.notifyFails.Store(nil)
 	h.thirdPartyRegister(registration)
-	want := notification{sh.UserIdentity{MSISDN: "12025550101"}, number, sh.MSPresent}
+	want := readyForSM("12025550101", sgd.AlertReasonUEPresent)
 	if got := h.nextNotification(); got != want {
 		t.Errorf("notification = %+v, want %+v", got, want)
 	}

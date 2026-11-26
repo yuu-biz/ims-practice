@@ -138,20 +138,6 @@ func (c *Client) UpdateSMSRegistrationInfo(ctx context.Context, id UserIdentity,
 	return c.ProfileUpdate(ctx, id, SMSRegistrationInfo, ShData{ShIMSData: &ShIMSData{SMSRegistrationInfo: info}})
 }
 
-// NotifyReadyForSM tells the HSS that the user can take short messages
-// again, for the reason given (TS 23.204 6.5b step 2d and 6.6 step 3).
-// ipsmgwNumber is this IP-SM-GW's own E.164 number, which the HSS
-// compares with the registration it holds: the update is a notification
-// only, and registers nothing and removes nothing.
-func (c *Client) NotifyReadyForSM(ctx context.Context, id UserIdentity, ipsmgwNumber string, reason ReadyForSM) error {
-	if !reason.Valid() {
-		return fmt.Errorf("sh: %q is not a reason the user is ready for short messages", reason)
-	}
-	return c.ProfileUpdate(ctx, id, SMSRegistrationInfo, ShData{ShIMSData: &ShIMSData{
-		SMSRegistrationInfo: &SMSRegistrationInfoData{IPSMGWNumber: ipsmgwNumber, ReadyForSM: reason},
-	}})
-}
-
 // RepositoryData reads the repository data that the HSS keeps for the
 // user of publicID under serviceIndication, such as the MMTEL-Services
 // of TS 29.364 7.2.0 (Sh-Pull, TS 29.328 6.1.1, 7.6.1). Its

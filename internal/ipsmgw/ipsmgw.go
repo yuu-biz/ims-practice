@@ -28,6 +28,7 @@ import (
 	"github.com/yuu-biz/ims-practice/internal/diameter"
 	"github.com/yuu-biz/ims-practice/internal/ims"
 	"github.com/yuu-biz/ims-practice/internal/maintenance"
+	"github.com/yuu-biz/ims-practice/internal/sgd"
 	"github.com/yuu-biz/ims-practice/internal/sh"
 	"github.com/yuu-biz/ims-practice/internal/sip"
 	"github.com/yuu-biz/ims-practice/internal/sms"
@@ -95,19 +96,29 @@ type Config struct {
 	UserLocks ims.UserLocker
 }
 
-// HSS is the part of Sh that the IP-SM-GW uses. *sh.Client is one.
+// HSS is how the IP-SM-GW reaches the HSS. Over Sh it registers itself
+// for a user and reads the user's IMSI; over S6c it tells the HSS that a
+// user can take short messages again (TS 23.204 5.2.3). HSSClients is
+// the HSS of a network.
 type HSS interface {
 	// IMSI reads the IMSI of a user (TS 29.328 7.6.24), which a TFR
 	// names the recipient of a short message by (TS 29.338 Table
 	// 6.2.2.1/1). It is empty for a user the HSS has none for.
 	IMSI(ctx context.Context, publicID string) (string, error)
 	UpdateSMSRegistrationInfo(ctx context.Context, id sh.UserIdentity, ipsmgwNumber string) error
-	// NotifyReadyForSM tells the HSS that the user can take short
-	// messages again, for the reason given, so that it alerts the
-	// Service Centres that hold short messages for the user (TS 23.204
-	// 6.5b step 2d and 6.6 step 3). ipsmgwNumber is this IP-SM-GW's own
-	// number, which the HSS compares with the registration it holds.
-	NotifyReadyForSM(ctx context.Context, id sh.UserIdentity, ipsmgwNumber string, reason sh.ReadyForSM) error
+	// ReadyForSM tells the HSS that a user can take short messages
+	// again, so that it alerts the Service Centres that hold short
+	// messages for the user (TS 23.204 6.5b step 2d and 6.6 step 3). It
+	// returns the answer whatever its result says, and an error only
+	// when no answer came.
+	ReadyForSM(ctx context.Context, req sgd.ReadyForSMRequest) (sgd.ReadyForSMAnswer, error)
+}
+
+// HSSClients is the HSS over the two applications that the IP-SM-GW
+// speaks to it, through one connection to each instance of the HSS.
+type HSSClients struct {
+	*sh.Client
+	*sgd.S6cClient
 }
 
 // IPSMGW is the IP-SM-GW role.

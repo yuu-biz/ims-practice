@@ -162,7 +162,7 @@ func startIMS(t *testing.T, n int) *network {
 	net := &network{t: t, dns: &names{hosts: map[string]netip.AddrPort{}}, heard: make(chan heard, 20), gw: gwCfg.IPSMGW}
 
 	hssID := diameter.Identity{OriginHost: "hss." + domain, OriginRealm: domain}
-	hssNode := diameter.NewNode(hssID, []uint32{diameter.ApplicationIDCx, diameter.ApplicationIDSh}, cxTimers, quiet())
+	hssNode := diameter.NewNode(hssID, []uint32{diameter.ApplicationIDCx, diameter.ApplicationIDSh, sgd.ApplicationIDS6c}, cxTimers, quiet())
 	store, err := hss.NewMemoryStore(hssCfg.HSS.Subscriptions...)
 	if err != nil {
 		t.Fatal(err)
@@ -241,13 +241,13 @@ func startIMS(t *testing.T, n int) *network {
 				return diameter.CommandUnsupportedAnswer(diameter.Identity{OriginHost: host, OriginRealm: domain}, m)
 			}
 			return g.Handle(m)
-		}, diameter.ApplicationIDSh, sgd.ApplicationIDSGd)
+		}, diameter.ApplicationIDSh, sgd.ApplicationIDS6c, sgd.ApplicationIDSGd)
 		users := sh.NewClient(node, peer, domain)
 		shPeers = append(shPeers, users)
 		centre := sc.New(users, scStore, quiet())
 		g := ipsmgw.New(ipsmgw.Config{URI: gwCfg.IPSMGW.SIP.URI(), HomeDomain: domain, Number: gwCfg.IPSMGW.Number,
 			ServiceCentre: gwCfg.IPSMGW.ServiceCentre, Diameter: node.Identity()},
-			watchedSC{centre, k, net.heard}, gwStore, users, net.dns, quiet())
+			watchedSC{centre, k, net.heard}, gwStore, ipsmgw.HSSClients{Client: users, S6cClient: sgd.NewS6cClient(node, peer)}, net.dns, quiet())
 		t.Cleanup(g.Close)
 		role.Store(g)
 		centre.SetIPSMGW(g)

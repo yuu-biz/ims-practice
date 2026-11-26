@@ -16,6 +16,7 @@ import (
 
 	"github.com/yuu-biz/ims-practice/internal/diameter"
 	"github.com/yuu-biz/ims-practice/internal/ipsmgw"
+	"github.com/yuu-biz/ims-practice/internal/sgd"
 	"github.com/yuu-biz/ims-practice/internal/sh"
 	"github.com/yuu-biz/ims-practice/internal/sip"
 	"github.com/yuu-biz/ims-practice/internal/sms"
@@ -95,10 +96,13 @@ type update struct {
 
 type fakeHSS struct {
 	updates chan update
-	// notifications are the ReadyForSM notifications of TS 23.204 6.5b
-	// and 6.6, and notifyFails makes each of them fail.
+	// notifications are the Ready-For-SM requests of TS 23.204 6.5b and
+	// 6.6. notifyFails makes each of them go unanswered, and
+	// notifyResult, where set, is the result of each answer instead of
+	// DIAMETER_SUCCESS.
 	notifications chan notification
 	notifyFails   atomic.Pointer[error]
+	notifyResult  atomic.Pointer[diameter.Result]
 	// imsi is what the Sh read of the IMSI answers, by public identity.
 	// A user that is not there has no IMSI, as the HSS answers for a
 	// private identity that is not derived from one.
@@ -124,19 +128,29 @@ func (f *fakeHSS) UpdateSMSRegistrationInfo(_ context.Context, id sh.UserIdentit
 	return nil
 }
 
-func (f *fakeHSS) NotifyReadyForSM(_ context.Context, id sh.UserIdentity, ipsmgwNumber string, reason sh.ReadyForSM) error {
+func (f *fakeHSS) ReadyForSM(_ context.Context, r sgd.ReadyForSMRequest) (sgd.ReadyForSMAnswer, error) {
 	if err := f.notifyFails.Load(); err != nil {
-		return *err
+		return sgd.ReadyForSMAnswer{}, *err
 	}
-	f.notifications <- notification{id, ipsmgwNumber, reason}
-	return nil
+	f.notifications <- notification{r.DestinationRealm, r.UserIdentifier, r.IPSMGWNumber, r.AlertReason}
+	if result := f.notifyResult.Load(); result != nil {
+		return sgd.ReadyForSMAnswer{Result: *result}, nil
+	}
+	return sgd.ReadyForSMAnswer{Result: diameter.Base(diameter.DiameterSuccess)}, nil
 }
 
-// notification is a ReadyForSM that the IP-SM-GW sent the HSS.
+// notification is a Ready-For-SM that the IP-SM-GW sent the HSS.
 type notification struct {
-	id           sh.UserIdentity
+	realm        string
+	user         sgd.UserIdentifier
 	ipsmgwNumber string
-	reason       sh.ReadyForSM
+	reason       sgd.AlertReason
+}
+
+// readyForSM is the Ready-For-SM that this IP-SM-GW sends for the user
+// of msisdn: to the realm of the home network, with its own number.
+func readyForSM(msisdn string, reason sgd.AlertReason) notification {
+	return notification{domain, sgd.UserIdentifier{MSISDN: msisdn}, number, reason}
 }
 
 // locator stands in for DNS. It is filled before any node looks a name
@@ -308,7 +322,7 @@ func (h *harness) next() *sip.Message {
 	}
 }
 
-// nextNotification is the next ReadyForSM that reached the HSS.
+// nextNotification is the next Ready-For-SM that reached the HSS.
 func (h *harness) nextNotification() notification {
 	h.t.Helper()
 	select {
@@ -555,10 +569,10 @@ func TestShortMessageRefused(t *testing.T) {
 }
 
 // TestMemoryAvailableGoesToTheHSS is the RP-SMMA of TS 24.341 5.3.3.4.1
-// steps d and e with TS 23.204 6.6: a 202, the notification to the HSS
-// by the MSISDN of the user, and then an RP-ACK with the same
-// reference. The HSS hears the IP-SM-GW's own number, which it compares
-// with the registration it holds.
+// steps d and e with TS 23.204 6.6: a 202, the Ready-For-SM with
+// UE_MEMORY_AVAILABLE to the HSS by the MSISDN of the user, and then an
+// RP-ACK with the same reference. The HSS hears the IP-SM-GW's own
+// number, which it compares with the registration it holds.
 func TestMemoryAvailableGoesToTheHSS(t *testing.T) {
 	h := newHarness(t, ipsmgw.NewMemoryStore(), time.Minute, answerOK)
 	h.registered()
@@ -566,7 +580,7 @@ func TestMemoryAvailableGoesToTheHSS(t *testing.T) {
 	if resp := h.send(mo); resp.StatusCode != 202 {
 		t.Fatalf("MESSAGE answered %d, want 202", resp.StatusCode)
 	}
-	want := notification{sh.UserIdentity{MSISDN: "12025550101"}, number, sh.MemoryAvailable}
+	want := readyForSM("12025550101", sgd.AlertReasonUEMemoryAvailable)
 	if got := h.nextNotification(); got != want {
 		t.Errorf("notification = %+v, want %+v", got, want)
 	}
@@ -581,11 +595,12 @@ func TestMemoryAvailableGoesToTheHSS(t *testing.T) {
 
 // TestMemoryAvailableWithoutARegistration: the IP-SM-GW holds no
 // subscription for the user, so it has no MSISDN and names the user by
-// the public identity, which Sh takes as well (TS 29.328 Table 7.6.1).
+// the number of the tel URI in P-Asserted-Identity (TS 24.341 5.3.3.4.1
+// step d).
 func TestMemoryAvailableWithoutARegistration(t *testing.T) {
 	h := newHarness(t, ipsmgw.NewMemoryStore(), time.Minute, answerOK)
 	h.send(message(marshal(t, sms.RPSMMA{MessageReference: 1})))
-	want := notification{sh.UserIdentity{PublicIdentity: alice}, number, sh.MemoryAvailable}
+	want := readyForSM("12025550101", sgd.AlertReasonUEMemoryAvailable)
 	if got := h.nextNotification(); got != want {
 		t.Errorf("notification = %+v, want %+v", got, want)
 	}
@@ -593,15 +608,56 @@ func TestMemoryAvailableWithoutARegistration(t *testing.T) {
 
 // TestMemoryAvailableThatTheHSSRefuses: the UE hears RP-Cause 41, a
 // temporary failure, rather than an RP-ACK for a notification that did
-// not get through (TS 24.011 Table 8.4 part 1).
+// not get through: one that the HSS did not answer, and one that it
+// could not take (TS 24.011 Table 8.4 part 3).
 func TestMemoryAvailableThatTheHSSRefuses(t *testing.T) {
 	h := newHarness(t, ipsmgw.NewMemoryStore(), time.Minute, answerOK)
-	refused := errors.New("the HSS refused the notification")
+	refused := errors.New("the HSS did not answer")
 	h.hss.notifyFails.Store(&refused)
 	h.send(message(marshal(t, sms.RPSMMA{MessageReference: 4})))
 	want := sms.RPError{Direction: sms.NetworkToMS, MessageReference: 4, Cause: sms.RPCauseTemporaryFailure}
 	if got := parseRP(t, h.next()); !reflect.DeepEqual(got, want) {
 		t.Errorf("answer = %+v, want %+v", got, want)
+	}
+
+	h.hss.notifyFails.Store(nil)
+	unable := diameter.Base(diameter.DiameterUnableToComply)
+	h.hss.notifyResult.Store(&unable)
+	h.send(message(marshal(t, sms.RPSMMA{MessageReference: 5})))
+	h.nextNotification()
+	want = sms.RPError{Direction: sms.NetworkToMS, MessageReference: 5, Cause: sms.RPCauseTemporaryFailure}
+	if got := parseRP(t, h.next()); !reflect.DeepEqual(got, want) {
+		t.Errorf("answer to DIAMETER_UNABLE_TO_COMPLY = %+v, want %+v", got, want)
+	}
+}
+
+// TestMemoryAvailableOfAnUnknownSubscriber: a number that the HSS does
+// not know, and a user with no number at all, get RP-Cause 30, unknown
+// subscriber, which TS 24.011 E4 gives a number allocated to no
+// subscriber.
+func TestMemoryAvailableOfAnUnknownSubscriber(t *testing.T) {
+	h := newHarness(t, ipsmgw.NewMemoryStore(), time.Minute, answerOK)
+	unknown := diameter.Experimental(sgd.DiameterErrorUserUnknown)
+	h.hss.notifyResult.Store(&unknown)
+	h.send(message(marshal(t, sms.RPSMMA{MessageReference: 6})))
+	h.nextNotification()
+	want := sms.RPError{Direction: sms.NetworkToMS, MessageReference: 6, Cause: sms.RPCauseUnknownSubscriber}
+	if got := parseRP(t, h.next()); !reflect.DeepEqual(got, want) {
+		t.Errorf("answer to DIAMETER_ERROR_USER_UNKNOWN = %+v, want %+v", got, want)
+	}
+
+	noNumber := message(marshal(t, sms.RPSMMA{MessageReference: 7}))
+	noNumber.Remove("P-Asserted-Identity")
+	noNumber.Add("P-Asserted-Identity", "<sip:alice@"+domain+">")
+	h.send(noNumber)
+	want = sms.RPError{Direction: sms.NetworkToMS, MessageReference: 7, Cause: sms.RPCauseUnknownSubscriber}
+	if got := parseRP(t, h.next()); !reflect.DeepEqual(got, want) {
+		t.Errorf("answer for a user without a number = %+v, want %+v", got, want)
+	}
+	select {
+	case n := <-h.hss.notifications:
+		t.Errorf("the HSS heard %+v for a user without a number", n)
+	default:
 	}
 }
 
