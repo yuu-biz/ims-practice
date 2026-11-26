@@ -258,10 +258,12 @@ func (c *cluster) holders(t *testing.T) map[string]string {
 	client := kvjson.New(c.kv, c.cfg, "oam")
 	holders := map[string]string{}
 	for _, n := range c.nodes {
-		var holder string
+		var holder struct {
+			Instance string `json:"instance"`
+		}
 		_, err := kvjson.Read(context.Background(), client, client.Key("watch-lease", n.name), &holder)
 		if err == nil {
-			holders[n.name] = holder
+			holders[n.name] = holder.Instance
 		}
 	}
 	return holders

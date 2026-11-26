@@ -16,7 +16,7 @@ import (
 
 // The keys of the watches, after the prefix of the Config and "oam:":
 //
-//	watch-lease:<node>    the instance that holds the watch of the node, time to live of a lease
+//	watch-lease:<node>    the watch that holds the node (lease), time to live of a lease
 //	watch-state:<node>    oam.AlarmWatchState, no time to live
 //	presence:<instance>   that the OAM instance runs, with the nodes it cannot reach (presence), time to live of a lease
 //
@@ -61,14 +61,15 @@ const maxAttempts = 100
 // left, so that once another instance has raised the generation, the
 // earlier holder can no longer write.
 func (s *Store) Watch(ctx context.Context, node, instance string) (oam.AlarmWatch, bool, error) {
-	leaseVersion, err := kvjson.CompareAndSwap(ctx, s.c, s.leaseKey(node), "", instance, s.lease)
+	holder := lease{Instance: instance, Token: randomHex(8)}
+	leaseVersion, err := kvjson.CompareAndSwap(ctx, s.c, s.leaseKey(node), "", holder, s.lease)
 	if errors.Is(err, kvstore.ErrConflict) {
 		return nil, false, nil
 	}
 	if err != nil {
 		return nil, false, err
 	}
-	w := &watch{s: s, node: node, instance: instance, leaseVersion: leaseVersion}
+	w := &watch{s: s, node: node, holder: holder, leaseVersion: leaseVersion}
 	for range maxAttempts {
 		var st oam.AlarmWatchState
 		version, err := kvjson.Read(ctx, s.c, s.stateKey(node), &st)
@@ -192,12 +193,23 @@ func undecodable(err error) bool {
 	return errors.As(err, &typeErr) || errors.As(err, &syntaxErr)
 }
 
+// lease is the value of the lease of a node: the watch that holds it.
+type lease struct {
+	// Instance is the OAM instance that holds the watch.
+	Instance string `json:"instance"`
+	// Token is random, chosen when the watch is taken, so that a lease
+	// tells the watch that wrote it from any other: one of another
+	// process with the same instance name, or an earlier watch of the
+	// same instance.
+	Token string `json:"token"`
+}
+
 // watch is the watch of one node that this instance holds.
 type watch struct {
-	s        *Store
-	node     string
-	instance string
-	state    oam.AlarmWatchState
+	s      *Store
+	node   string
+	holder lease
+	state  oam.AlarmWatchState
 
 	// mu guards the versions, which Save and Renew change from the
 	// goroutines of the watcher.
@@ -266,7 +278,7 @@ func (w *watch) ownState(ctx context.Context) (version string, own bool, err err
 func (w *watch) Renew(ctx context.Context) error {
 	w.mu.Lock()
 	defer w.mu.Unlock()
-	version, err := kvjson.CompareAndSwap(ctx, w.s.c, w.s.leaseKey(w.node), w.leaseVersion, w.instance, w.s.lease)
+	version, err := kvjson.CompareAndSwap(ctx, w.s.c, w.s.leaseKey(w.node), w.leaseVersion, w.holder, w.s.lease)
 	if errors.Is(err, kvstore.ErrConflict) {
 		found, own, rerr := w.ownLease(ctx)
 		if rerr != nil {
@@ -276,7 +288,7 @@ func (w *watch) Renew(ctx context.Context) error {
 			return oam.ErrWatchLost
 		}
 		w.leaseVersion = found
-		version, err = kvjson.CompareAndSwap(ctx, w.s.c, w.s.leaseKey(w.node), w.leaseVersion, w.instance, w.s.lease)
+		version, err = kvjson.CompareAndSwap(ctx, w.s.c, w.s.leaseKey(w.node), w.leaseVersion, w.holder, w.s.lease)
 	}
 	if errors.Is(err, kvstore.ErrConflict) {
 		return oam.ErrWatchLost
@@ -289,18 +301,19 @@ func (w *watch) Renew(ctx context.Context) error {
 }
 
 // ownLease reads the version of the lease, and says whether this holder
-// wrote it: whether it names this instance. An instance takes a lease
-// only where there is none, and holds one watch of a node at a time, so
-// a lease that names it is the one this holder took and renewed without
-// a break. One that ran out is gone, and no compare and swap at its
-// version writes it again.
+// wrote it: whether it has the token of this watch. A watch takes a
+// lease only where there is none, so a lease with its token is the one
+// it took and renewed without a break. One that ran out is gone, and no
+// compare and swap at its version writes it again. A lease that an
+// earlier version wrote, with the name of an instance alone, is not
+// this watch's.
 func (w *watch) ownLease(ctx context.Context) (version string, own bool, err error) {
-	var holder string
+	var holder lease
 	version, err = kvjson.Read(ctx, w.s.c, w.s.leaseKey(w.node), &holder)
-	if errors.Is(err, kvstore.ErrNotFound) {
+	if errors.Is(err, kvstore.ErrNotFound) || undecodable(err) {
 		return "", false, nil
 	}
-	return version, err == nil && holder == w.instance, err
+	return version, err == nil && holder == w.holder, err
 }
 
 // Release removes the lease if it is still the one this holder wrote.
