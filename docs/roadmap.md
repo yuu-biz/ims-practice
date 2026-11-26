@@ -198,7 +198,15 @@
 - 学習用の画面から障害注入を操作する。ドレインは OAM の側の操作にする（[lab-oam.md](design/lab-oam.md)）。
 - 手順書「障害を起こして観察する」を書く。
 
-今あるもの。保守用の API の共通部分（`internal/maintenance`）、障害注入の部品（`internal/fault`、`deploy/chaos/`）、保存先のクライアント（`internal/kvstore`）があります。保守用の API のドレインは、P-CSCF、I-CSCF、S-CSCF、HSS、MMTel AS、MRFC、IP-SM-GW、メディア中継ノード、MRFP につないであります。HSS は Diameter の相手に DPR を送って接続を閉じ、MMTel AS はダイアログの外の INVITE と購読を始める SUBSCRIBE、それに Ut の新しい要求に 503 を返し、MRFC はダイアログの外の INVITE に 503 を返し、IP-SM-GW は第三者 REGISTER と新しい短いメッセージの MESSAGE に 503 を返します。メディア中継ノードと MRFP は、新しいコンテキストを作る `Add` に 503 を返し、持っているコンテキストを続けます。P-CSCF と MRFC は一覧の次の台を試します（[state-redundancy.md](design/state-redundancy.md)）。
+今あるもの。保守用の API の共通部分（`internal/maintenance`）、障害注入の部品（`internal/fault`、`deploy/chaos/`）、保存先のクライアント（`internal/kvstore`）があります。
+
+- 保存先。状態を持つ役割ごとに、`internal/kvstore` の上の `Store` の実装があります（`internal/kvstore/` の `agwstore`、`hssstore`、`ibcfstore`、`ipsmgwstore`、`mmtelstore`、`mrfcstore`、`oamstore`、`pcscfstore`、`scscfstore`、`scstore`、`smscstore`）。設定の `store` の節が `kind: valkey` のノードはこれを使い、節が無いノードはプロセスの中の `MemoryStore` を使います。S-CSCF、HSS、IP-SM-GW の利用者ごとのロックも、保存先に置けます（`internal/kvstore/kvlock`）。切れたときに動作が要る期限は、保存先の時刻の索引から 1 台だけが借りて処理します。
+- 冗長構成の上書きのファイル（`deploy/redundancy/`）。Valkey を足し、P-CSCF、S-CSCF、HSS、IP-SM-GW、サービスセンタ、MMTel AS、MRFC、メディア中継ノード、MRFP の状態をそこに置きます。台の数と信号は `compose.yaml` と同じです。CI の `e2e-redundancy` のジョブが、この構成で登録、通話、SMS のスクリプトを流し、S-CSCF の登録が保存先にあることを読みます。
+- Diameter の接続の切り替え（`internal/diameter` の `PeerGroup`）。I-CSCF、S-CSCF、MMTel AS、IP-SM-GW は HSS の台を、IP-SM-GW はサービスセンタの台を 1 つの組として持ち、答えない台、接続の閉じた台、DIAMETER_TOO_BUSY を返した台から、次の台へ送り直します。
+- SIP の送り直し。プロキシと UA は、503、トランスポートの異常、時間切れのときに、DNS が返した次の宛先へ送り直します（RFC 3263 4.3、`sip.Stack.SendRequest`）。
+- 障害注入のエージェント。`scripts/e2e-fault.sh` は、エージェントの API で、ノードを止めて動かし直すこと、プロセスを落としてコンテナの実行環境に起こし直させること、同じ名前とアドレスのコンテナに作り直すことを確かめます。
+
+保守用の API のドレインは、P-CSCF、I-CSCF、S-CSCF、HSS、MMTel AS、MRFC、IP-SM-GW、サービスセンタ、メディア中継ノード、MRFP につないであります。HSS は Diameter の相手に DPR を送って接続を閉じ、MMTel AS はダイアログの外の INVITE と購読を始める SUBSCRIBE、それに Ut の新しい要求に 503 を返し、MRFC はダイアログの外の INVITE に 503 を返し、IP-SM-GW は第三者 REGISTER と新しい短いメッセージの MESSAGE に 503 を、SGd の TFR に DIAMETER_TOO_BUSY を返します。サービスセンタは、HSS と同じく serving node の接続に DPR を送って閉じます。メディア中継ノードと MRFP は、新しいコンテキストを作る `Add` に 503 を返し、持っているコンテキストを続けます。P-CSCF と MRFC は一覧の次の台を試します（[state-redundancy.md](design/state-redundancy.md)）。
 
 作っていないもの。MMTel AS の作り直した台は、前のプロセスの呼を組み立て直しません。その呼のダイアログの中の要求には 481 を返すので、呼は切れます。台が強制的に止められたときや、呼の記録を消し終わる前にプロセスが終わったときは、記録が保存先に残ります。強制的に止められた MRFC の台や、ダイアログがターミネーションを取り除く前にプロセスが終わった台のターミネーションも、MRFP から解放する者がいません。ターミネーションはポートを開いたまま残り、会議の項目も保存先に残ります。
 
