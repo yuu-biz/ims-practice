@@ -85,9 +85,10 @@ func (p *PCSCF) proxyInvite(st *sip.ServerTransaction, out *sip.Message, targets
 	}
 	// acknowledge is crossedCancel for a 2xx that the caller does not get,
 	// the first one of its dialog and each retransmission.
-	acknowledge := func(resp *sip.Message) {
+	// why says, for the log, why the 2xx goes no further.
+	acknowledge := func(resp *sip.Message, why string) {
 		tag := tagOf(resp.Get("To"))
-		if call.crossedCancel(resp, !crossed[tag]) {
+		if call.crossedCancel(resp, !crossed[tag], why) {
 			crossed[tag] = true
 		}
 	}
@@ -113,7 +114,7 @@ func (p *PCSCF) proxyInvite(st *sip.ServerTransaction, out *sip.Message, targets
 				// The caller has its 500; what the callee still sends, in
 				// the end the 487 to the CANCEL, goes no further.
 				if code/100 == 2 {
-					acknowledge(resp)
+					acknowledge(resp, "the caller has the 500 of the INVITE")
 				}
 			case code < 200:
 				provisional = true
@@ -156,7 +157,7 @@ func (p *PCSCF) proxyInvite(st *sip.ServerTransaction, out *sip.Message, targets
 					continue
 				}
 				if crossed[tag] {
-					acknowledge(resp)
+					acknowledge(resp, "a retransmission of a 2xx that went no further")
 					continue
 				}
 				refused := call.response(resp)
@@ -175,13 +176,16 @@ func (p *PCSCF) proxyInvite(st *sip.ServerTransaction, out *sip.Message, targets
 					continue
 				case answered && (errors.Is(refused, errStore) || errors.Is(refused, errRelay) || errors.Is(refused, errReleased)):
 					// The 2xx of another dialog of a forked INVITE, after the
-					// caller has the 2xx of the first (RFC 3261 13.2.2.4).
-					// The caller has a final response, so this 2xx can only
-					// go on or go no further, and its SDP would lead the
-					// caller past the relay. It is acknowledged in the
-					// caller's name and its dialog ended with a BYE, as for
-					// a 2xx that crossed the CANCEL.
-					acknowledge(resp)
+					// caller has the 2xx of the first. TS 24.229 names no
+					// procedure for it. A proxy forwards every 2xx to an
+					// INVITE (RFC 3261 16.7 step 5), but this one would lead
+					// the caller past the relay. A 2xx that goes no further
+					// comes again until the callee gives up waiting for its
+					// ACK, and the callee then ends the dialog itself (RFC
+					// 3261 13.3.1.4). So the P-CSCF ends it at once: it
+					// acknowledges the 2xx in the caller's name and sends a
+					// BYE, as for a 2xx that crossed the CANCEL.
+					acknowledge(resp, "the caller has the 2xx of another dialog")
 					continue
 				case errors.Is(refused, errRelay) || errors.Is(refused, errReleased):
 					// The callee has answered, but the caller gets 500 in
@@ -195,7 +199,7 @@ func (p *PCSCF) proxyInvite(st *sip.ServerTransaction, out *sip.Message, targets
 					// dialog goes.
 					giveUp(refused)
 					call.callerSeq = call.lastCallerSeq()
-					acknowledge(resp)
+					acknowledge(resp, "the caller got 500 in its place")
 					go call.end()
 					continue
 				}

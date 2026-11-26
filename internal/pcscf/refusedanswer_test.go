@@ -327,12 +327,12 @@ func TestRefusedRetransmissionOfThe200KeepsTheCall(t *testing.T) {
 
 // TestRefusedAnswerOfAnotherForkIsAcknowledgedAndReleased: the caller
 // has the 200 of one dialog, and a 200 of another dialog of the forked
-// INVITE comes, with another To tag (RFC 3261 13.2.2.4). It is no
-// retransmission of the first. The relay does not take its answer, so it
-// goes no further, as its SDP would lead the caller past the relay: the
-// P-CSCF acknowledges it in the caller's name and ends that dialog with
-// a BYE, as for a 2xx that crossed the CANCEL. The call of the first 200
-// stays.
+// INVITE comes, with another To tag. It is no retransmission of the
+// first. The relay does not take its answer, so it goes no further, as
+// its SDP would lead the caller past the relay. TS 24.229 names no
+// procedure for it; the P-CSCF acknowledges it in the caller's name and
+// ends that dialog with a BYE, as for a 2xx that crossed the CANCEL. The
+// call of the first 200 stays.
 func TestRefusedAnswerOfAnotherForkIsAcknowledgedAndReleased(t *testing.T) {
 	c := newRawINVITE(t)
 	c.st.Respond(c.response(200))

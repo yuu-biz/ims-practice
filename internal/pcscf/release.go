@@ -274,8 +274,10 @@ func (p *PCSCF) sendBYE(bye *sip.Message, what string, log *slog.Logger) *sip.Cl
 // dialog has reported true, which it does once it has sent the ACK and
 // the BYE. The BYE follows the ACK, as RFC 3261 15 asks of a caller.
 // At the P-CSCF of the callee, the callee is the served UE, which gets
-// the BYE that sendBYEs also sends a served UE.
-func (s *setup) crossedCancel(resp *sip.Message, first bool) bool {
+// the BYE that sendBYEs also sends a served UE. The P-CSCF ends in the
+// same way a 2xx that goes no further for another reason; why says
+// which, for the log.
+func (s *setup) crossedCancel(resp *sip.Message, first bool, why string) bool {
 	toCallee := []string(nil)
 	if _, route, ok := routeSets(resp.GetAll("Record-Route"), len(s.invite.GetAll("Record-Route"))); ok {
 		toCallee = route
@@ -302,11 +304,11 @@ func (s *setup) crossedCancel(resp *sip.Message, first bool) bool {
 		err = stack.SendACK(ack, targets...)
 	}
 	if err != nil {
-		s.log.Warn("could not acknowledge the 2xx that crossed the CANCEL", "error", err.Error())
+		s.log.Warn("could not acknowledge a 2xx that goes no further", "why", why, "error", err.Error())
 		return false
 	}
 	if first {
-		s.log.Info("acknowledged the 2xx that crossed the CANCEL")
+		s.log.Info("acknowledged a 2xx that goes no further, and ending its dialog", "why", why)
 		// The BYE takes a number above every request of the caller,
 		// such as a PRACK or an UPDATE in the early dialog (RFC 3261
 		// 12.2.1.1).
