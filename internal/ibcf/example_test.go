@@ -1,6 +1,9 @@
 package ibcf_test
 
 import (
+	"context"
+	"errors"
+	"fmt"
 	"log/slog"
 	"net/netip"
 
@@ -12,18 +15,25 @@ import (
 	"github.com/yuu-biz/ims-practice/internal/sip"
 )
 
-// locator stands for the DNS resolver of the role (RFC 3263), such as
+// noDNS stands for the DNS resolver of the role (RFC 3263), such as
 // the *sipdns.Resolver of the other roles, which the wiring in cmd/ims
-// passes. The example is compiled but not run.
-var locator ims.Locator
+// passes. The example sends no request, so it resolves nothing.
+type noDNS struct{}
+
+func (noDNS) Locate(context.Context, string, int, sip.Transport) ([]sip.Destination, error) {
+	return nil, errors.New("the example resolves no name")
+}
+
+var locator ims.Locator = noDNS{}
 
 // This example builds the IBCF role of network A towards network B:
 // the agreement with network B, the TrGW over the media relay's control
 // API, the Store, the counters, and the two transports of the B2BUA.
 // The addresses are from the documentation ranges: 192.0.2.0/24 inside
-// network A, and 198.51.100.0/24 between the two networks.
+// network A, and 198.51.100.0/24 between the two networks. The external
+// UA lets in only the requests from the addresses of a peer.
 func Example() {
-	log := slog.Default()
+	log := slog.New(slog.DiscardHandler)
 	const home = "ims.mnc001.mcc001.3gppnetwork.org"
 	internal := sip.URI{Scheme: "sip", Host: "ibcf." + home}
 	external := sip.URI{Scheme: "sip", Host: "ibcf.nni.mnc001.example.net"}
@@ -59,11 +69,13 @@ func Example() {
 		panic(err)
 	}
 
-	inside, err := sip.Listen("192.0.2.50:5060", log)
+	// A node listens on 192.0.2.50:5060 and 198.51.100.10:5060; the
+	// example on free ports of the loopback.
+	inside, err := sip.Listen("127.0.0.1:0", log)
 	if err != nil {
 		panic(err)
 	}
-	outside, err := sip.Listen("198.51.100.10:5060", log)
+	outside, err := sip.Listen("127.0.0.1:0", log)
 	if err != nil {
 		panic(err)
 	}
@@ -71,4 +83,12 @@ func Example() {
 		panic(err)
 	}
 	defer role.Close()
+
+	for _, source := range []string{"198.51.100.20:5060", "203.0.113.9:5060"} {
+		from := sip.Destination{Transport: sip.UDP, Addr: netip.MustParseAddrPort(source)}
+		fmt.Println(source, role.Screen(&sip.Message{Method: sip.OPTIONS}, from))
+	}
+	// Output:
+	// 198.51.100.20:5060 true
+	// 203.0.113.9:5060 false
 }
