@@ -204,7 +204,7 @@
 - 冗長構成の上書きのファイル（`deploy/redundancy/`）。Valkey を足し、P-CSCF、S-CSCF、HSS、IP-SM-GW、サービスセンタ、MMTel AS、MRFC、メディア中継ノード、MRFP の状態をそこに置きます。台の数と信号は `compose.yaml` と同じです。CI の `e2e-redundancy` のジョブが、この構成で登録、通話、SMS、MRF のスクリプトを流し、S-CSCF の登録が保存先にあることと、MRFC と MRFP が会議とコンテキストを保存先に書いたことを読みます。
 - Diameter の接続の切り替え（`internal/diameter` の `PeerGroup`）。I-CSCF、S-CSCF、MMTel AS、IP-SM-GW は HSS の台を、IP-SM-GW はサービスセンタの台を 1 つの組として持ち、答えない台、接続の閉じた台、DIAMETER_TOO_BUSY を返した台から、次の台へ送り直します。
 - SIP の送り直し。プロキシと UA は、503、トランスポートの異常、時間切れのときに、DNS が返した次の宛先へ送り直します（RFC 3263 4.3、`sip.Stack.SendRequest`）。
-- 障害注入のエージェント。`scripts/e2e-fault.sh` は、エージェントの API で、ノードを止めて動かし直すこと、プロセスを落としてコンテナの実行環境に起こし直させること、同じ名前とアドレスのコンテナに作り直すことを確かめます。
+- 障害注入のエージェント。`scripts/e2e-fault.sh` は、エージェントの API で、ノードを止めて動かし直すこと、プロセスを落としてコンテナの実行環境に起こし直させること、同じ名前とアドレスのコンテナに作り直すことを確かめます。続けて、パケットの損失、分断、遅延を本物の nft と tc で 1 回ずつかけ、ほかのノードからの ping で効いたことと外れたことを確かめます。
 
 保守用の API のドレインは、P-CSCF、I-CSCF、S-CSCF、HSS、MMTel AS、MRFC、IP-SM-GW、サービスセンタ、メディア中継ノード、MRFP につないであります。HSS は Diameter の相手に DPR を送って接続を閉じ、MMTel AS はダイアログの外の INVITE と購読を始める SUBSCRIBE、それに Ut の新しい要求に 503 を返し、MRFC はダイアログの外の INVITE に 503 を返し、IP-SM-GW は第三者 REGISTER と新しい短いメッセージの MESSAGE に 503 を、SGd の TFR に DIAMETER_TOO_BUSY を返します。サービスセンタは、HSS と同じく serving node の接続に DPR を送って閉じます。メディア中継ノードと MRFP は、新しいコンテキストを作る `Add` に 503 を返し、持っているコンテキストを続けます。P-CSCF と MRFC は一覧の次の台を試します（[state-redundancy.md](design/state-redundancy.md)）。
 

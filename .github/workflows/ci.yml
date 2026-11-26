@@ -448,7 +448,7 @@ jobs:
         if: always()
         run: >-
           docker compose -f compose.yaml -f deploy/chaos/chaos.yaml -f deploy/chaos/agent.yaml
-          down --rmi all -v --remove-orphans
+          --profile chaos down --rmi all -v --remove-orphans
 
   # The scenario of e2e-call on the deployment whose P-CSCF controls the
   # media relay over H.248 (deploy/h248), with the H.248 of those calls
