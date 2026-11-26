@@ -168,12 +168,19 @@ type cluster struct {
 
 func (c *cluster) start(t *testing.T, name string) *instance {
 	t.Helper()
+	return c.startOn(t, name, c.kv)
+}
+
+// startOn starts the instance on kv, which stands between it and the
+// store of the cluster.
+func (c *cluster) startOn(t *testing.T, name string, kv kvstore.Store) *instance {
+	t.Helper()
 	// The instances renew every 100 ms a lease of 2 s, so that a loaded
 	// machine does not let a watch run out by itself. A recipient that
 	// missed a notification is sent the notifyAlarmListRebuilt it is owed
 	// a second after, longer than the tests take to answer one that they
 	// hold.
-	store := oamstore.NewWithLease(c.kv, c.cfg, 2*time.Second)
+	store := oamstore.NewWithLease(kv, c.cfg, 2*time.Second)
 	cfg := oam.Config{
 		Name: "oam", SubNetwork: "ims", MnSRoot: "http://oam:8080/3GPPManagement",
 		NtfSubscriptions: store, AlarmWatches: store, Instance: name,
@@ -658,6 +665,44 @@ func TestTheWatchOfANodeThatNoInstanceReachesStays(t *testing.T) {
 			}
 			if holders := c.holders(t); holders["scscf"] == "" {
 				t.Errorf("no instance holds the watch of scscf: %v", holders)
+			}
+		})
+	}
+}
+
+// TestAWatcherWhoseSaveLostItsAnswerGoesOn: the save of the state after
+// a notification reaches the store, but its answer does not reach the
+// instance. The watcher saves again, finds the state its own, and goes
+// on: the watch is not taken anew, and the OSS gets the next alarm next.
+func TestAWatcherWhoseSaveLostItsAnswerGoesOn(t *testing.T) {
+	for _, backend := range storetest.Backends() {
+		t.Run(backend.Name, func(t *testing.T) {
+			c := newCluster(t, backend, "scscf")
+			lossy := &losingAnswers{Store: c.kv}
+			r := newRecipient(t)
+			in := c.startOn(t, "oam-1", lossy)
+			in.subscribe(t, r, http.StatusCreated)
+			c.until(t, map[string]int{"oam-1": 1})
+			c.watched(t)
+			store := oamstore.New(c.kv, c.cfg)
+			before, err := store.AlarmWatchState(context.Background(), "scscf")
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			lossy.loseNext("watch-state")
+			c.nodes[0].raise(t, "hss-1")
+			if n := r.next(t, "the alarm of hss-1"); !strings.HasSuffix(n["href"].(string), "/Peer=hss-1") {
+				t.Fatalf("got %v, want the alarm of hss-1", n)
+			}
+			c.passed(t, "scscf", before.LastNumber)
+			c.nodes[0].raise(t, "hss-2")
+			if n := r.next(t, "the alarm of hss-2"); !strings.HasSuffix(n["href"].(string), "/Peer=hss-2") {
+				t.Fatalf("got %v, want the alarm of hss-2", n)
+			}
+			c.passed(t, "scscf", before.LastNumber+1)
+			if after, err := store.AlarmWatchState(context.Background(), "scscf"); err != nil || after.Generation != before.Generation {
+				t.Errorf("the generation went from %d to %d (%v): the watch was taken anew", before.Generation, after.Generation, err)
 			}
 		})
 	}
