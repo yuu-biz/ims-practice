@@ -6,7 +6,7 @@ lang: en
 
 # A short message through the IMS
 
-ims-practice study session 6 (SMS over IP: the IP-SM-GW, Sh and the three kinds of report)
+ims-practice study session 6 (SMS over IP: the IP-SM-GW, the SC, the three kinds of report, and holding and alerting)
 
 ---
 
@@ -20,6 +20,7 @@ To begin: a short message goes to a telephone number. Who in the IMS finds the U
 - How the S-CSCF hands a short message to the IP-SM-GW.
 - How the message reaches the other UE.
 - How each side learns what became of the message.
+- How the SC holds a short message that the UE cannot take, and what makes it try again.
 - How to read the body of a MESSAGE.
 
 > Guide: [Follow a short message through the IMS](../../../docs/guide/en/sms.md) (`docs/guide/en/sms.md`)
@@ -54,14 +55,14 @@ However it travels, a short message is made of the same two layers.
 | UE 2 | 172.28.0.101 | The recipient, `+1-202-555-0102`. |
 | P-CSCF, S-CSCF, I-CSCF | 172.28.0.40, 30, 20 | Relay the MESSAGEs. The S-CSCF evaluates the iFCs. |
 | IP-SM-GW | 172.28.0.70 | The application server (AS) of SMS over IP. |
-| SC (stub) | in the IP-SM-GW | Takes each short message and delivers it. |
-| HSS | 172.28.0.10 | Gives the iFCs (Cx). Answers the IP-SM-GW (Sh). |
+| SC | 172.28.0.71 | The Service Centre. Holds each short message until it is delivered or its validity period ends, and delivers it. |
+| HSS | 172.28.0.10 | Gives the iFCs (Cx). Answers the IP-SM-GW (Sh) and the SC (S6c). |
 
 - The SC address is `+12025550100`. The number of the IP-SM-GW is `+12025550199`.
 - The CSCFs only route SIP. A short message needs a node that speaks both SIP and the language of the SMS network: the IP-SM-GW.
-- There is no SMS network here, so the SC is a stub that keeps the IMS side real: the MESSAGEs, Sh and the reports are what a real IP-SM-GW sends. It drops a message that it cannot deliver at once; storing and retrying would stand behind the interface `ServiceCentre`.
+- The IP-SM-GW hands each short message to the SC over SGd, and the SC brings the ones for the UEs back over SGd. The SC asks the HSS over S6c which node serves a recipient. One node is the SMS-SC, the SMS-IWMSC and the SMS-GMSC.
 
-> Guide: ["The nodes"](../../../docs/guide/en/sms.md#the-nodes) and ["Why an application server, and what the SC is"](../../../docs/guide/en/sms.md#why-an-application-server-and-what-the-sc-is). TS 24.341 5.3.3. TS 23.204 5.2.4.
+> Guide: ["The nodes"](../../../docs/guide/en/sms.md#the-nodes) and ["Why an application server, and what the SC is"](../../../docs/guide/en/sms.md#why-an-application-server-and-what-the-sc-is). TS 24.341 5.3.3. TS 23.204 5.2.4. TS 23.040 4.1, 6.1.
 
 ---
 
@@ -126,10 +127,12 @@ docker compose run --rm ue sms -status-report +12025550102 "Hello UE-B, this is 
 ## Open the capture
 
 ```text
-sip.CSeq.method in {"MESSAGE", "REGISTER"} || (sip && ip.addr == 172.28.0.70) || diameter.cmd.code in {302, 306, 307}
+sip.CSeq.method in {"MESSAGE", "REGISTER"} || (sip && ip.addr == 172.28.0.70)
+  || diameter.cmd.code in {302, 306, 307, 8388645, 8388646, 8388647, 8388648, 8388649, 16777214}
 ```
 
-- The REGISTERs, the MESSAGEs and their responses, the SUBSCRIBEs and NOTIFYs of the IP-SM-GW, LIR, UDR and PUR stay.
+- It is one filter, on one line in Wireshark.
+- The REGISTERs, the MESSAGEs and their responses, the SUBSCRIBEs and NOTIFYs of the IP-SM-GW, LIR, UDR and PUR stay, and so do the five commands of SGd and S6c and the Ready-For-SM of this project.
 - Wireshark decodes the body of each MESSAGE by itself.
   - The Info column ends with the RP message, such as `(RP) RP-DATA (MS to Network)`.
   - The details have a "GSM A-I/F RP" tree and a "GSM SMS TPDU" tree.
@@ -251,7 +254,7 @@ The filter is `diameter.cmd.code in {8388645, 8388647} || sip.In-Reply-To`.
 
 | Look at | What to see |
 | --- | --- |
-| UDR | This time the SC looks up the sender's number. |
+| SRR and TFR | Once the TFA of step 12 is in, the SC delivers the report like a short message, to the sender's number. |
 | MESSAGE of the IP-SM-GW | To UE 1's tel URI, with an SMS-STATUS-REPORT inside. |
 | TP-MR | The value of the SMS-SUBMIT. It says which message the report is about. |
 | TP-ST | 0x00: the recipient received the message. |
@@ -265,21 +268,101 @@ The filter is `gsm_sms.tp-mti == 2`.
 
 ---
 
+## A1 to A4. UE 2 takes no short message, and the SC holds it
+
+`PUT /sms-availability` with `{"available": false}` on UE 2's control API, then a short message from UE 1.
+
+```ladder
+UE 2, IP-SM-GW, SC, HSS
+SC -> IP-SM-GW: TFR // A1
+IP-SM-GW -> UE 2: MESSAGE SMS-DELIVER // A1
+UE 2 --> IP-SM-GW: 480 // A2
+IP-SM-GW --> SC: TFA absent user // A3
+SC <-> HSS: RDR, RDA // A4
+```
+
+| Step | What to see |
+| --- | --- |
+| A2 | 480 (Temporarily Unavailable): UE 2 was reached, but its state does not allow the request. No delivery report follows. |
+| A3 | DIAMETER_ERROR_ABSENT_USER (5550) in the TFA. The IP-SM-GW raises its own UNRI for UE 2. |
+| A4 | `SM-Delivery-Cause` ABSENT_USER. The HSS puts the SC's address in the MWD and sets UNRI, and names no serving node in an SRA while UNRI is set. |
+
+> Guide: ["UE 2 takes no short message"](../../../docs/guide/en/sms.md#ue-2-takes-no-short-message). TS 24.341 5.3.3.4.2. TS 29.311 6.1.4.4.1. TS 29.338 7.3.3, 5.2.3, 5.2.1.3. TS 23.040 2.1.1, 3.2.8.
+
+---
+
+## A5 to A9. UE 2 is back: Ready-For-SM, the alert and the resend
+
+```ladder
+UE 2, IP-SM-GW, SC, HSS
+UE 2 -> IP-SM-GW: MESSAGE // A5
+IP-SM-GW <-> HSS: Ready-For-SM UE_PRESENT, answer // A6
+SC <- HSS: ALR // A7
+SC <-> HSS: SRR, SRA // A8
+SC -> IP-SM-GW -> UE 2: TFR, MESSAGE SMS-DELIVER // A8
+UE 2 -> IP-SM-GW: MESSAGE delivery report // A9
+IP-SM-GW --> SC: TFA 2001 // A9
+```
+
+- **A5.** After `{"available": true}`, any request of UE 2 that reaches the IP-SM-GW says that the UE is there. A re-registration says the same (C1 to C4 of the guide).
+- **A6.** Ready-For-SM is this project's own command, code 16777214. A network sends this notice in the READY_FOR_SM service of MAP, which this project does not speak. Wireshark names it `Unknown`.
+- **A7.** The HSS clears UNRI and alerts every SC in the MWD. **A8.** The alert makes the queue due at once, ahead of the retry an hour later (`retry_delays` in `deploy/compose/sc.yaml`).
+
+> Guide: ["UE 2 takes no short message"](../../../docs/guide/en/sms.md#ue-2-takes-no-short-message) and ["UE 2 only registers again"](../../../docs/guide/en/sms.md#ue-2-only-registers-again). TS 23.204 6.5b. TS 29.002 12.4.1. TS 29.338 5.2.2. TS 23.040 3.2.6.
+
+---
+
+## B1 to B8. UE 2 has no memory left
+
+`PUT /sms-memory` with `{"full": true}`, then a short message from UE 1.
+
+| Step | What to see |
+| --- | --- |
+| B2 | 200, then a delivery report: an RP-ERROR with RP-Cause 22 (memory capacity exceeded), TP-FCS `0xD3`. |
+| B3 | DIAMETER_ERROR_SM_DELIVERY_FAILURE (5555) in the TFA, with MEMORY_CAPACITY_EXCEEDED. |
+| B4 | An RDR with UE_MEMORY_CAPACITY_EXCEEDED. The HSS sets MCEF. UNRI stays clear: the UE is reachable and has no room. |
+| B5 | `{"full": false}`: UE 2 sends the notification it owes, an RP-SMMA in a MESSAGE. |
+| B6, B7 | A Ready-For-SM with UE_MEMORY_AVAILABLE. The HSS clears MCEF and UNRI, and alerts the SCs of the MWD. |
+| B8 | The RP-ACK for the notification goes to UE 2 only after the HSS has taken it. |
+
+The filter is `diameter.Alert-Reason == 1`. The resend is the one of A8 and A9.
+
+> Guide: ["UE 2 has no memory left"](../../../docs/guide/en/sms.md#ue-2-has-no-memory-left). TS 24.011 table 8.4 part 2, 7.3.2. TS 23.040 9.2.3.22, 3.2.6. TS 29.338 7.3.8. TS 23.204 6.6.
+
+---
+
+## D1 to D3. The retry, and the report of a delivery
+
+An RP-SMMA can be lost. MCEF then stays set, no registration of UE 2 alerts the SC, and only the retry of the SC sends the short message again.
+
+| Step | What to see |
+| --- | --- |
+| D1 | The SRR at the retry. The SRA names the IP-SM-GW, and its MWD-Status has bit 2, MCEF-Set. |
+| D2 | The delivery of A8 and A9. The TFA says 2001. |
+| D3 | An RDR with SUCCESSFUL_TRANSFER: the HSS had a flag set, so the SC reports the delivery. The HSS clears MCEF and takes the SC's address out of the MWD. |
+
+- In this network the retry is an hour away. `TestARetryAfterAFullMemoryClearsTheFlag` in `internal/ipsmgw/chain_test.go` runs these steps with a retry after one second.
+- After an alert the flags are already clear, so the SRA of A8 has no MCEF-Set and no such RDR follows.
+
+> Guide: ["The notification of free memory is lost"](../../../docs/guide/en/sms.md#the-notification-of-free-memory-is-lost). TS 29.338 5.3.3.8, 5.2.3.1, 5.3.3.19. TS 23.040 10.1, 3.2.6.
+
+---
+
 ## When it fails
 
 | Case | How to try it | What UE 1 gets |
 | --- | --- | --- |
 | The number has no subscriber | `ue sms +12025550198 "Nobody has this number."` | A submit report that is an RP-ERROR: RP-Cause 1, TP-FCS 0xC3. |
-| The recipient is not registered | `ue sms -status-report +12025550103 "Are you there?"` | A submit report that is an RP-ACK, then a status report with TP-ST 0x62. |
+| The recipient is not registered | `ue sms -status-report +12025550103 "Are you there?"` | A submit report that is an RP-ACK, and then nothing yet: the SC holds the short message. |
 
 - Put `docker compose run --rm` in front of the command.
 - In both, the SIP response is 202: the failure travels in the RP and TP layers.
-- In the first the SC refuses: the UDA has DIAMETER_ERROR_USER_UNKNOWN (5001).
-- In the second the SC accepts. The recipient has a service for the unregistered state, the iFC of the MMTel AS, so the LIR gets DIAMETER_UNREGISTERED_SERVICE (2003) and the I-CSCF picks an S-CSCF (TS 29.228 6.1.4.1). No iFC of it matches the MESSAGE, and it answers 480 (TS 24.229 5.4.3.3).
+- In the first the SC refuses: the SRA of step 5 has DIAMETER_ERROR_USER_UNKNOWN (5001), and no delivery is tried.
+- In the second the SC accepts. No IP-SM-GW has registered for subscriber 3, so each SRR of the SC gets DIAMETER_ERROR_ABSENT_USER (5550), and the HSS keeps the SC's address in the MWD. The alert of the HSS delivers it when subscriber 3 registers.
 
-The filter is `gsm_a.rp.cause || gsm_sms.tp-fcs`.
+The filter is `gsm_a.rp.cause || gsm_sms.tp-fcs || diameter.cmd.code == 8388647`.
 
-> Guide: ["When it fails"](../../../docs/guide/en/sms.md#when-it-fails). TS 24.011 Table 8.4. TS 23.040 9.2.3.22. TS 24.341 5.3.3.4.2.
+> Guide: ["When it fails"](../../../docs/guide/en/sms.md#when-it-fails). TS 24.011 Table 8.4. TS 23.040 9.2.3.22. TS 29.338 5.2.1.3.
 
 ---
 
@@ -335,6 +418,8 @@ Before each filter, guess which of the six MESSAGEs stay.
 | `gsm_sms.tp-da == "12025550102"` | Short messages to that number. |
 | `sip.In-Reply-To` | Submit reports and delivery reports. |
 | `diameter.cmd.code == 306 \|\| diameter.cmd.code == 307` | The Sh messages: UDR, UDA, PUR, PUA. |
+| `diameter.applicationId == 16777313` | SGd, between the IP-SM-GW and the SC. `16777312` is S6c. |
+| `diameter.cmd.code == 16777214` | Ready-For-SM, this project's own command, and its answers. |
 
 > Guide: ["Wireshark display filters"](../../../docs/guide/en/sms.md#wireshark-display-filters), and [the capture guide, "Display filters for SMS over IP"](../../../docs/guide/en/capture.md#display-filters-for-sms-over-ip)
 
@@ -366,6 +451,8 @@ docker compose --profile phones up -d --build
 | The third-party REGISTER | `internal/scscf/thirdparty.go` |
 | Matching Accept-Contact | `internal/scscf/callerprefs.go` |
 | The IP-SM-GW | `message.go`, `deliver.go`, `regevent.go`, `store.go` in `internal/ipsmgw` |
+| The Service Centre | `submit.go`, `deliver.go`, `alert.go`, `store.go` in `internal/smsc` |
+| SGd and S6c | `internal/sgd`, `internal/hss/s6c.go` |
 | The SC boundary, the SC stub | `internal/ipsmgw/servicecentre.go`, `internal/sc` |
 | Sh | `internal/sh`, `internal/hss/sh.go` |
 | The UE | `internal/ue/sms.go` |
@@ -386,6 +473,7 @@ docker compose --profile phones up -d --build
 4. Where does a MESSAGE from the IP-SM-GW to UE 2 enter the network?
 5. Whose iFC takes the delivery report to the IP-SM-GW?
 6. Why is the length of RP-DA 7 and the length of TP-DA 11?
+7. UE 2 cannot take a short message. Who keeps it, and what tells that node to try again?
 
 ---
 
@@ -399,6 +487,7 @@ docker compose --profile phones up -d --build
 4. At the I-CSCF, which finds UE 2's S-CSCF with an LIR.
 5. UE 2's. The delivery report is a MESSAGE that UE 2 originates.
 6. RP counts octets and TP counts digits.
+7. The SC keeps it, and the HSS keeps the SC's address in the MWD. The HSS alerts the SC with an ALR when the IP-SM-GW reports that UE 2 is back; without an alert, the retry of the SC tries again.
 
 ---
 
