@@ -239,7 +239,11 @@ var errResources = errors.New("pcscf: the network has no resources for the sessi
 // releasedFor is errReleased for a dialog that the P-CSCF released for
 // cause, so that the INVITE ends with the 500 of that cause.
 func releasedFor(cause ReleaseCause) error {
-	return fmt.Errorf("%w: %w", errReleased, cause.err())
+	err := cause.err()
+	if err == nil {
+		return errReleased
+	}
+	return fmt.Errorf("%w: %w", errReleased, err)
 }
 
 // response sees every response to the INVITE that the P-CSCF passes on,
