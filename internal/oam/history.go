@@ -378,7 +378,8 @@ func (s *Server) rollbackNodeError(e Endpoint, err error) error {
 }
 
 // RollbackChangeSet rolls back each record of a change set, such as a
-// change of every node of a role, each with the checks of Rollback.
+// change of every node of a role, each with the checks of Rollback. A
+// record that changed nothing on its node succeeds with no rollback.
 func (s *Server) RollbackChangeSet(ctx context.Context, changeSet string, req RollbackRequest) (FanOut[ChangeRecord], error) {
 	if s.history == nil {
 		return FanOut[ChangeRecord]{}, fmt.Errorf("%w: no configuration history", ErrUnavailable)
@@ -400,6 +401,11 @@ func (s *Server) RollbackChangeSet(ctx context.Context, changeSet string, req Ro
 		results[i].Node = r.Node
 		if e, err := s.node(r.Node); err == nil {
 			results[i].URL = e.URL
+		}
+		// A node that the change changed nothing on, because it had the
+		// values already, has nothing to undo, and no rollback.
+		if len(r.Change.Changes) == 0 {
+			continue
 		}
 		rolled, err := s.Rollback(ctx, r.ID, req)
 		if rolled.ID != "" {

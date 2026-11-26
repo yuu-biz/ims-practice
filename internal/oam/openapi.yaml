@@ -278,6 +278,9 @@ paths:
     post:
       operationId: rollBackChangeSet
       summary: Roll back each record of one change of a role.
+      description: |
+        A record that changed nothing on its node, which had the values
+        already, succeeds with no result: it has nothing to undo.
       parameters:
         - $ref: '#/components/parameters/id'
       requestBody:
