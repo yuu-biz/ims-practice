@@ -637,7 +637,9 @@ func New(config Config, store Store, node *diameter.Node, log *slog.Logger) (*HS
 }
 
 // SetPeers gives the HSS the nodes that connected to it, over which it
-// alerts a service centre. Without them it sends no alert.
+// alerts a service centre and sends the PPRs of a changed setting. Until
+// then it sends neither. p must not be nil, nor a nil pointer of a type
+// that implements Peers, which would pass for peers here.
 func (h *HSS) SetPeers(p Peers) { h.peers.Store(&p) }
 
 // Close waits for the alerts that are on their way to the service

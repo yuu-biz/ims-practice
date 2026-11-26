@@ -509,7 +509,7 @@ func (h *HSS) alertServiceCentre(ctx context.Context, u Subscriber, address stri
 	}
 	peers := h.peers.Load()
 	if peers == nil {
-		log.Warn("no alert sent: this node takes no Diameter connections")
+		log.Warn("no alert sent: the Diameter connections of this instance are not set yet")
 		return alertRefused
 	}
 	// The MSISDN-Alert of TS 23.040 3.2.7, by which the service centre
