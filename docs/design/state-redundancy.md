@@ -49,7 +49,8 @@
 | --- | --- | --- | --- |
 | S-CSCF | `challenge:<IMPI>`、`registration:<IMPI>`、`subscription:<ダイアログ>`、`original-dialog:<ID>`、`unregistered:<IMPI>` | `impu:<IMPU>`、`subscriptions-of:<IMPI>`、`unregistered-impu:<IMPU>` | challenge は TTL（reg-await-auth の 2 倍）と時刻の索引 `reg-await-auth`。登録、購読、未登録のプロファイルは TTL を付けず、時刻の索引 `registration-expiry`、`subscription-expiry`、`unregistered-profile-expiry` に入れる。ODI は TTL（`Expires` まで） |
 | P-CSCF | `association:<トランスポート>:<アドレス>`、`dialog:<Call-ID>:<UE の tag>`、`sa:<アドレス>`、`reg-subscription:<IMPI>`（新規） | `association-of-contact:<user>:<host>:<port>`、`association-of-session:<ポリシーのセッション>`、`dialog-of-session:<ポリシーのセッション>`、`reg-subscription-of-dialog:<Call-ID>`（新規） | 対応付けは TTL（`Expires` に 64×T1 を足した時刻まで）。SA と購読は TTL（`Expires` まで）。ダイアログは期限なし |
-| IP-SM-GW と SC | `message-reference:<宛先>`、`delivery:<Call-ID>`、`reg-subscription:<Call-ID>`、`status-report-request:<参照>` | `reg-subscription-of:<公開 ID>` | RP-MR の数は TTL（10 分）。配達は TTL と時刻の索引 `report-timeout`（TR1N）。ほかは TTL |
+| IP-SM-GW と、その中の SC のスタブ | `message-reference:<宛先>`、`delivery:<Call-ID>`、`outcome:<参照>`、`not-reachable:<公開 ID>`、`reg-subscription:<Call-ID>`。スタブは `sc:` の下の `status-report-request:<参照>` | `reg-subscription-of:<公開 ID>`、`reg-subscription-imsi:<IMSI>`、`reg-subscription-msisdn:<MSISDN>`（どれも購読の Call-ID） | RP-MR の数は TTL（10 分）。配達は TTL と時刻の索引 `report-timeout`（TR1N）。配達の結果は TTL（TR1N）で、TFR に答える台が 1 回だけ取ります。UE に届かなかった印（UNRI）は TTL（購読の期限まで）。ほかは TTL |
+| SC（役割 `sc`。キーの役割の部分は `smsc`） | `queue:<宛先>`（その宛先に預かったショートメッセージの全部と、次に試す時刻とリース）、`time-stamp:<宛先>`（最後に付けた TP-SCTS） | 時刻の索引 `due`（次に試す時刻の来た宛先） | 待ち行列は期限なしで、SC が空にしたときに消す。TP-SCTS は TTL（最後の時刻の 2 秒あと）。宛先のリースは既定で 3 分（`internal/smsc` の `defaultLease`） |
 | MMTel AS | `call:<Incoming のダイアログ>`、`conference:<ID>`（新規） | `call-of-leg:<Outgoing のダイアログ>` | なし |
 | MRFC | `conference:<ID>`（新規） | なし | なし |
 | IBCF（新規） | `call:<台の名前>:<呼の ID>` | 並べ替えた索引 `call-ids:<台の名前>`（その台の呼の ID。作り直した台が 1 ページずつ引く）、`dialog:<Call-ID>:<自分の tag>:<相手の tag>`（そのダイアログを持つ呼の台の名前と ID） | なし |
@@ -72,7 +73,7 @@ IBCF の呼の ID と中継ノードのコンテキストの ID は、並べ替�
 
 | 主題 | 作り |
 | --- | --- |
-| 対象 | 切れたときに動作が要る期限です。S-CSCF の reg-await-auth、登録、購読、未登録のプロファイル、IP-SM-GW の TR1N、P-CSCF の Timer N と reg イベントの購読の更新が当たります。消えるだけでよい期限は TTL にし、タイマーを持ちません。P-CSCF の対応付けを消すまでの猶予（`endAssociation` の `KeepUntil`）と SA の期限が、これに当たります。 |
+| 対象 | 切れたときに動作が要る期限です。S-CSCF の reg-await-auth、登録、購読、未登録のプロファイル、IP-SM-GW の TR1N、P-CSCF の Timer N と reg イベントの購読の更新、SC の宛先ごとの次の試行が当たります。SC は同じ時刻の索引を宛先ごとのリースに使い、リースの長さは上の表のとおりです（[sms.md](sms.md) の「SC の役割の作り」）。消えるだけでよい期限は TTL にし、タイマーを持ちません。P-CSCF の対応付けを消すまでの猶予（`endAssociation` の `KeepUntil`）と SA の期限が、これに当たります。 |
 | 仕組み | 期限の時刻を時刻の索引に入れます。各台は 1 秒ごとに `ClaimDue` で時刻の来たものを借り、借りた台だけが処理し、終わったら `Done` で外します。リースは 15 秒です。役割のプロセスの中の `time.AfterFunc` のタイマーはなくします。 |
 | 1 回だけ動くこと | 借りた台は、利用者ごとのロックを取り、主の項目を読み直し、期限が変わっていないことを確かめてから、SAR や NOTIFY を送ります。ロックを取らない役割もあります。IP-SM-GW は `TakeDelivery` で、P-CSCF は購読を版ごと入れ替える書き込みで、1 台だけが先に進みます。そのあとで項目を消し、ロックを放してから `Done` を呼びます。ふだんは 1 台が 1 回だけ処理します。処理の途中で台が止まると、リースが切れたあとで、別の台が同じ処理をやり直します。SAR（TIMEOUT_DEREGISTRATION）と NOTIFY（terminated）は、2 回送っても結果が変わらないので、送ったあとで台が止まっても状態は壊れません。試作では、2 台で 60 件を処理して、2 回処理されたものは 0 件でした。止まった台が借りていた 1 件は、約 2 秒のリースが切れたあとで、もう 1 台が処理しました（13.5）。 |
 | 索引と項目の順 | 時刻の索引の要素も、ほかの索引と同じ順で書きます（「Store の形と書き込みの決まり」）。時刻の付いた要素は主の項目より先に書き、要らなくなった要素は主の項目より後に消します。途中で失敗したときに残るのは、主の項目が持たない時刻の要素です。借りた台は主の項目を読み、期限が来ていなければ何もせず、`Done` でその要素を外します。逆の順で書くと、主の項目の持つ期限を呼び出す要素が無くなり、どの台もその期限を処理しません。 |
