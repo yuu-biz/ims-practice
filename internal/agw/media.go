@@ -329,6 +329,12 @@ const heardFrames = 3
 func (rc *relayContext) receive(from *relayTermination, kind string, in *channel, packet []byte) {
 	rc.mu.Lock()
 	defer rc.mu.Unlock()
+	// A packet read from the socket of a termination just before a
+	// Subtract took it out waits here for rc.mu, and arrives after the
+	// Subtract has returned. It belongs to the context no more.
+	if rc.terms[from.id] != from {
+		return
+	}
 	in.received.Add(1)
 	if out := rc.forwardTo(from, kind, packet); out != nil {
 		out.send(packet)
