@@ -585,7 +585,7 @@ func leftPPR(t *testing.T, store Store, round uint64) ProfilePushRetry {
 	if swapped, err := store.CompareAndSwapProfilePush(ctx, &p, left); err != nil || !swapped {
 		t.Fatalf("CompareAndSwapProfilePush: %v, %v", swapped, err)
 	}
-	r := ProfilePushRetry{Source: ProfileOfOtherUsers, Round: round, PrivateID: impi, Since: stamp()}
+	r := ProfilePushRetry{Source: ProfileOfOtherUsers, Round: round, PrivateID: impi}
 	if err := store.ScheduleProfilePushRetry(ctx, r, dueNow()); err != nil {
 		t.Fatal(err)
 	}
@@ -728,42 +728,80 @@ func TestAPPRLeftTwiceIsLeftOnce(t *testing.T) {
 	}
 }
 
-// droppingStore tells when a PPR left for another instance leaves the
-// store (dropped), with the time it was left at.
+// droppingStore tells when the first PPR left for another instance was
+// left (firstLeft), and when a left PPR leaves the store (dropped).
 type droppingStore struct {
 	*MemoryStore
 	dropped chan ProfilePushRetry
+	mu      sync.Mutex
+	left    time.Time
+}
+
+func (s *droppingStore) ScheduleProfilePushRetry(ctx context.Context, r ProfilePushRetry, at time.Time) error {
+	s.mu.Lock()
+	if s.left.IsZero() {
+		s.left = time.Now()
+	}
+	s.mu.Unlock()
+	return s.MemoryStore.ScheduleProfilePushRetry(ctx, r, at)
+}
+
+func (s *droppingStore) firstLeft() time.Time {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.left
 }
 
 func (s *droppingStore) DoneProfilePushRetry(ctx context.Context, c ProfilePushRetryClaim) error {
 	err := s.MemoryStore.DoneProfilePushRetry(ctx, c)
-	s.dropped <- c.ProfilePushRetry
+	select {
+	case s.dropped <- c.ProfilePushRetry:
+	default:
+	}
 	return err
 }
 
 // TestAPPRNoInstanceCanSendIsGivenUp: a PPR that the round left, and that
 // no instance can send, is tried again until the time of the retries has
-// passed since it was left, and then given up.
+// passed since it was left, and then given up. That holds for a round
+// that an instance claims long after it began, as when every instance
+// was without its connections for a while: the PPR that it leaves first
+// has the whole time of the retries too.
 func TestAPPRNoInstanceCanSendIsGivenUp(t *testing.T) {
-	store := &droppingStore{MemoryStore: settingsStore(t), dropped: make(chan ProfilePushRetry, 1)}
 	const retryTime = 300 * time.Millisecond
-	h, api := newSettingsInstance(t, store, nil, func(c *Config) { c.PushRetryTime = retryTime })
-	serve(t, h, impi, impu, cx.AssignRegistration)
-	tried := &unconnectedSCSCFs{}
-	h.SetPeers(tried)
-	change(t, api, "hss.default_service_profile", "trial")
-	select {
-	case r := <-store.dropped:
-		if since := time.Since(r.Since); since < retryTime {
-			t.Errorf("the PPR was given up %v after it was left, before the %v of the retries", since, retryTime)
-		}
-	case <-time.After(5 * time.Second):
-		t.Fatal("gave up waiting 5 s for the PPR to be given up")
-	}
-	tried.mu.Lock()
-	defer tried.mu.Unlock()
-	if tried.tries < 2 {
-		t.Errorf("the PPR was tried %d times, want it tried again before it was given up", tried.tries)
+	for _, tt := range []struct {
+		name string
+		// claimedAfter is how long the round waits for an instance
+		// with peers.
+		claimedAfter time.Duration
+	}{
+		{"a round claimed at once", 0},
+		{"a round claimed late", 2 * retryTime},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			store := &droppingStore{MemoryStore: settingsStore(t), dropped: make(chan ProfilePushRetry, 1)}
+			h, api := newSettingsInstance(t, store, nil, func(c *Config) { c.PushRetryTime = retryTime })
+			serve(t, h, impi, impu, cx.AssignRegistration)
+			change(t, api, "hss.default_service_profile", "trial")
+			time.Sleep(tt.claimedAfter)
+			tried := &unconnectedSCSCFs{}
+			h.SetPeers(tried)
+			select {
+			case <-store.dropped:
+				// The times of a round are whole milliseconds (stamp),
+				// which may fall up to one before the time it moved.
+				if since := time.Since(store.firstLeft()); since < retryTime-time.Millisecond {
+					t.Errorf("the PPR was given up %v after it was left, before the %v of the retries", since, retryTime)
+				}
+			case <-time.After(5 * time.Second):
+				t.Fatal("gave up waiting 5 s for the PPR to be given up")
+			}
+			tried.mu.Lock()
+			defer tried.mu.Unlock()
+			if tried.tries < 2 {
+				t.Errorf("the PPR was tried %d times, want it tried again before it was given up", tried.tries)
+			}
+		})
 	}
 }
 

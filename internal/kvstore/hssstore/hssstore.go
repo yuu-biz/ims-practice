@@ -723,12 +723,12 @@ func (s *Store) DoneProfilePush(ctx context.Context, c hss.ProfilePushClaim) err
 }
 
 // retryIndex is the time index of the PPRs that a round left for another
-// instance (hss.ProfilePushRetry). A member names the source, the round,
-// the time the round left it in milliseconds, and the private identity.
+// instance (hss.ProfilePushRetry). A member names the source, the round
+// and the private identity.
 const retryIndex = "profile-push-retries"
 
 func retryMember(r hss.ProfilePushRetry) string {
-	return kvjson.Member(string(r.Source), strconv.FormatUint(r.Round, 10), strconv.FormatInt(r.Since.UnixMilli(), 10), r.PrivateID)
+	return kvjson.Member(string(r.Source), strconv.FormatUint(r.Round, 10), r.PrivateID)
 }
 
 // retryOf reads back what retryMember wrote, and reports whether it
@@ -736,16 +736,14 @@ func retryMember(r hss.ProfilePushRetry) string {
 // is taken out of the index.
 func retryOf(member string) (hss.ProfilePushRetry, bool) {
 	parts := kvjson.SplitMember(member)
-	if len(parts) != 4 {
+	if len(parts) != 3 {
 		return hss.ProfilePushRetry{}, false
 	}
-	round, errRound := strconv.ParseUint(parts[1], 10, 64)
-	since, errSince := strconv.ParseInt(parts[2], 10, 64)
-	if errRound != nil || errSince != nil {
+	round, err := strconv.ParseUint(parts[1], 10, 64)
+	if err != nil {
 		return hss.ProfilePushRetry{}, false
 	}
-	return hss.ProfilePushRetry{Source: hss.ProfileSource(parts[0]), Round: round,
-		Since: time.UnixMilli(since).UTC(), PrivateID: parts[3]}, true
+	return hss.ProfilePushRetry{Source: hss.ProfileSource(parts[0]), Round: round, PrivateID: parts[2]}, true
 }
 
 func (s *Store) ScheduleProfilePushRetry(ctx context.Context, r hss.ProfilePushRetry, at time.Time) error {
