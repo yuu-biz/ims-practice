@@ -89,12 +89,11 @@ resource "aws_lb_listener" "sip" {
 }
 
 # Nothing on the media relay node answers TCP on the RTP ports, so a UDP
-# target group is checked on another port of the same target ("Health
-# checks for Network Load Balancer target groups"). The P-CSCF's TCP
-# port is used.
-# SIMPLIFIED: the check shows that the
-# P-CSCF on the node is up, not that the media relay node is; the two run
-# together on every edge node.
+# target group is checked on another port of the same target. The
+# P-CSCF's TCP port is used.
+# SIMPLIFIED: AWS, "Health checks for Network Load Balancer target
+# groups". The check shows that the P-CSCF on the node is up, not that
+# the media relay node is; the two run together on every edge node.
 resource "aws_lb_target_group" "rtp" {
   for_each = toset([for p in local.lb_rtp_ports : tostring(p)])
 

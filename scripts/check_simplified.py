@@ -3,25 +3,30 @@
 
 Every deliberate simplification of a specification has a comment that
 starts with SIMPLIFIED: in the code, and a row in the table "Where |
-What is left out | Why" of a guide. The comment names the specification
-and clause first (for example "SIMPLIFIED: TS 24.229 5.1.1.7."), and the
-first cell of the row names the same (for example "UE, TS 24.229
-5.1.1.7"). This script matches the two by the specification and the
-clause, and lists:
+What is left out | Why" of a guide, or of the README beside a package
+that no guide covers. The comment names the specification and clause
+first (for example "SIMPLIFIED: TS 24.229 5.1.1.7."), and the first cell
+of the row names the same (for example "UE, TS 24.229 5.1.1.7"). This
+script matches the two by the specification and the clause, and lists:
 
-- each comment that no row of any English guide names, in a package
-  that a guide shows (it names `internal/<package>` or a file in it),
-  and
-- each row whose specification and clause no comment names.
+- each comment that no row of any English table names,
+- each row whose specification and clause no comment names, and
+- each row of a Japanese table that names other specifications and
+  clauses than the row of the English table in the same place.
 
-It also checks that the Japanese guide has as many rows as the English
-one. It exits with 1 when it lists anything.
+A comment is a line comment, after "//" or "#", in any file that Git
+tracks or would track, but Markdown files and tests. A number after
+"item", "operation", "step" or "NOTE" is a part of a clause, not a
+clause of its own, and a table is named whole ("Table 5.3.3.8/1").
+
+It exits with 1 when it lists anything.
 
 Usage: python3 scripts/check_simplified.py
 """
 
 import pathlib
 import re
+import subprocess
 import sys
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
@@ -36,8 +41,20 @@ HEADERS = {
 SPEC = re.compile(
     r"\b(?:3GPP\s+)?(?:(?:TS|TR)\s+\d{2}\.\d{3}|RFC\s*\d{3,4}|(?:GSMA\s+)?(?:IR|NG)\.\d+|(?:ITU-T\s+)?[A-Z]\.\d{3}(?:\.\d+)?)"
 )
-# A clause: 5.1.1.7, B.2.2, Annex E, Appendix A, or a section of an RFC such as 19.
-CLAUSE = re.compile(r"\b((?:Annex|Appendix)\s+[A-Z](?:\.\d+)*|[A-Z]\.\d+(?:\.\d+)*|\d+(?:\.\d+)*[A-Z]?)\b")
+# A clause: 5.1.1.7, B.2.2, Annex E, Appendix A, a section of an RFC
+# such as 19, or a table such as 5.3.3.8/1 or 7.3.3-1, whose number after
+# the "/" or "-" is a part of its name.
+CLAUSE = re.compile(r"\b((?:Annex|Appendix)\s+[A-Z](?:\.\d+)*|[A-Z]\.\d+(?:\.\d+)*(?:[-/]\d+)?|\d+(?:\.\d+)*(?:[-/]\d+|[A-Za-z])?)\b")
+# The numbers of the items, operations or steps of a clause, and of its
+# notes: "item 3", "items 1a to 1e", "steps 4C and 4D", "step 10 a",
+# "NOTE 3", "の手順 2 から 4", "の項目 1a と 1b", "の 1 番目の項目". They name a part of the
+# clause before them, not a clause.
+_PART_NUMBER = r"(?:\d+[A-Za-z]?|[a-z]\b)(?!\.\d)"
+PART = re.compile(
+    r"(?:\b(?:items?|operations?|steps?|NOTE)\s+|(?:手順|項目)\s*)" + _PART_NUMBER + r"(?:\s[a-z]\b)?"
+    r"(?:(?:\s*[,、]\s*|\s+(?:and|or|to)\s+|\s*(?:と|から|～)\s*)" + _PART_NUMBER + r")*"
+    r"|\b\d+\s*番目の項目"
+)
 
 
 def spec_name(token):
@@ -53,7 +70,8 @@ def references(text):
     specs = list(SPEC.finditer(text))
     for k, m in enumerate(specs):
         end = specs[k + 1].start() if k + 1 < len(specs) else len(text)
-        clauses = [c for c in CLAUSE.findall(text[m.end():end]) if not re.fullmatch(r"\d{4}", c)]
+        between = PART.sub(" ", text[m.end():end])
+        clauses = [re.sub(r"\s+", " ", c) for c in CLAUSE.findall(between) if not re.fullmatch(r"\d{4}", c)]
         name = spec_name(m.group(0))
         refs |= {(name, c) for c in clauses} or {(name, "")}
     return refs
@@ -74,24 +92,44 @@ def any_covers(refs, others):
     return any(covers(a, b) for a in refs for b in others)
 
 
-def comments():
-    """Each SIMPLIFIED: comment of the Go code: its file, line and the
+# Files whose comments are not the code's: tests, and this script and
+# its test, which spell out comments to look for.
+NOT_CODE = re.compile(r"\.md$|_test\.(?:go|py)$|\.test\.tsx?$|^scripts/check_simplified\.py$")
+# A line comment, and the text after its marker.
+LINE_COMMENT = re.compile(r"^\s*(//|#)\s?(.*)$")
+
+
+def code_files():
+    """The files that Git tracks or would track, but Markdown and tests."""
+    out = subprocess.run(
+        ["git", "ls-files", "--cached", "--others", "--exclude-standard"],
+        cwd=ROOT, check=True, capture_output=True, text=True,
+    )
+    return [ROOT / p for p in out.stdout.splitlines() if not NOT_CODE.search(p)]
+
+
+def comments(paths=None):
+    """Each SIMPLIFIED: comment of the code: its file, line and the
     references of its first sentence."""
     found = []
-    for path in sorted(ROOT.rglob("*.go")):
-        if path.name.endswith("_test.go"):
+    for path in sorted(code_files() if paths is None else paths):
+        try:
+            lines = path.read_text(encoding="utf-8").splitlines()
+        except (UnicodeDecodeError, FileNotFoundError, IsADirectoryError):
             continue
-        lines = path.read_text(encoding="utf-8").splitlines()
         for i, line in enumerate(lines):
             at = line.find("SIMPLIFIED:")
-            if at < 0 or "//" not in line[:at]:
+            if at < 0:
+                continue
+            marker = next((m for m in ("//", "#") if m in line[:at]), None)
+            if marker is None:
                 continue
             text = line[at + len("SIMPLIFIED:"):]
             for more in lines[i + 1:i + 4]:
-                stripped = more.strip()
-                if not stripped.startswith("//"):
+                m = LINE_COMMENT.match(more)
+                if not m or m.group(1) != marker or not m.group(2).strip():
                     break
-                text += " " + stripped.lstrip("/ ")
+                text += " " + m.group(2).strip()
             first = re.split(r"\.\s+(?=[A-Z])", text.strip(), maxsplit=1)[0]
             found.append((path.relative_to(ROOT).as_posix(), i + 1, first, references(first)))
     return found
@@ -118,13 +156,22 @@ def table_rows(path, headers):
     return rows
 
 
-# Packages that no guide covers keep their table in a README beside them.
+# Packages and definitions that no guide covers keep their table in a
+# README beside them.
 BESIDE_THE_CODE = [
+    ("deploy/cloud/README.md", "deploy/cloud/README.ja.md"),
     ("deploy/observability/README.md", "deploy/observability/README.ja.md"),
+    ("internal/confinfo/README.md", "internal/confinfo/README.ja.md"),
+    ("internal/evs/README.md", "internal/evs/README.ja.md"),
+    ("internal/fivegc/README.md", "internal/fivegc/README.ja.md"),
     ("internal/h248/README.md", "internal/h248/README.ja.md"),
     ("internal/jex/README.md", "internal/jex/README.ja.md"),
+    ("internal/kvstore/README.md", "internal/kvstore/README.ja.md"),
     ("internal/mns/README.md", "internal/mns/README.ja.md"),
+    ("internal/n5/README.md", "internal/n5/README.ja.md"),
     ("internal/nas/README.md", "internal/nas/README.ja.md"),
+    ("internal/nhss/README.md", "internal/nhss/README.ja.md"),
+    ("internal/sbi/README.md", "internal/sbi/README.ja.md"),
     ("internal/sgd/README.md", "internal/sgd/README.ja.md"),
 ]
 
@@ -147,22 +194,20 @@ def main():
         if len(en) != len(ja):
             print(f"{name}: {len(en)} rows in English, {len(ja)} in Japanese")
             problems += 1
+        for en_cell, ja_cell in zip(en, ja):
+            if references(en_cell) != references(ja_cell):
+                print(f"{ja_path.relative_to(ROOT).as_posix()}: {ja_cell!r} names other clauses than {en_cell!r}")
+                problems += 1
         for cell in en:
             rows[(name, cell)] = references(cell)
 
     named = set()
     for refs in rows.values():
         named |= refs
-    # The packages that a guide shows its reader.
-    shown = set()
-    for en_path, _ in documents():
-        shown |= set(re.findall(r"\b((?:internal|cmd)/[a-z0-9]+)", en_path.read_text(encoding="utf-8")))
     code = comments()
     in_code = set()
     for file, line, first, refs in code:
         in_code |= refs
-        if "/".join(file.split("/")[:2]) not in shown:
-            continue
         if refs:
             covered = any_covers(refs, named)
         else:
@@ -170,7 +215,7 @@ def main():
             # without one names it, by the last part of its first cell.
             covered = any(not r and cell.split(", ")[-1].lower() in first.lower() for (_, cell), r in rows.items())
         if not covered:
-            print(f"{file}:{line}: no guide row names {first!r}")
+            print(f"{file}:{line}: no table row names {first!r}")
             problems += 1
     texts = [first.lower() for _, _, first, _ in code]
     for (guide, cell), refs in rows.items():
