@@ -45,7 +45,7 @@ paths:
             Cache-Control:
               required: true
               schema:
-                type: string
+                const: no-store
           content:
             application/json:
               schema:
