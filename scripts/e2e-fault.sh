@@ -215,9 +215,12 @@ docker compose --profile chaos build fault-tools
 tools=ims-practice/fault-tools:dev
 container_of() { docker compose ps -q "$1" | first_line; }
 container="$(container_of "$target")"
+# The address of the target alone: the template above writes a space
+# after each address, and the target is on one network.
+read -r target_ip _ <<<"$(tr -d '\r' <<<"$address")"
 # ping_from NODE prints the summary of three pings from the namespace of
 # the service NODE to the target, and fails when none came back.
-ping_from() { docker run --rm --network "container:$(container_of "$1")" "$tools" ping -c 3 -W 2 -q "$address"; }
+ping_from() { docker run --rm --network "container:$(container_of "$1")" "$tools" ping -c 3 -W 2 -q "$target_ip"; }
 # in_target COMMAND... runs a command of the tools image in the
 # namespace of the target, with NET_ADMIN to read its rules.
 in_target() { docker run --rm --network "container:$container" --cap-add NET_ADMIN "$tools" "$@"; }
