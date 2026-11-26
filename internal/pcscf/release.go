@@ -78,19 +78,17 @@ func (p *PCSCF) PolicyEvent(e policy.Event) {
 		}
 	}
 	log.Info("the network took the resources of the session", "call_id", d.Key.CallID)
-	p.release(d.Key, nil, false, log)
+	p.release(d.Key, ResourcesLost, false, log)
 }
 
-// release ends the dialog of key from the P-CSCF, for why: nil when the
-// network took the resources of the session away, or errRelay when the
-// SDP of a message is not pointed at the media relay (notRelayed,
-// renegotiate). A dialog that is gone has been
-// ended already, and a Released one is being ended.
+// release ends the dialog of key from the P-CSCF, for cause. A dialog
+// that is gone has been ended already, and a Released one is being
+// ended. The first cause stays in the Dialog.
 //
 // While the INVITE is still on its way, the P-CSCF answers it 500 and
 // cancels it towards the callee (TS 24.229 5.2.8.1.1), as proxyInvite
-// does for why. Once the dialog is confirmed, it sends a BYE
-// (5.2.8.1.2), the same for every why.
+// does for the cause. Once the dialog is confirmed, it sends a BYE
+// (5.2.8.1.2), the same for every cause.
 //
 // One of the BYEs speaks for the callee, and a callee must not send a
 // BYE before the ACK for its 2xx has come, or the server transaction
@@ -105,8 +103,14 @@ func (p *PCSCF) PolicyEvent(e policy.Event) {
 // process rather than going into a time index of the Store
 // (ExpiryKind): it is short, and the 2xx it waits for has just passed
 // this instance.
-func (p *PCSCF) release(key DialogKey, why error, afterACK bool, log *slog.Logger) {
+func (p *PCSCF) release(key DialogKey, cause ReleaseCause, afterACK bool, log *slog.Logger) {
 	d, ok, err := p.store.UpdateDialog(context.Background(), key, func(d *Dialog) {
+		if d.Released {
+			return
+		}
+		if d.ReleaseCause == "" {
+			d.ReleaseCause = cause
+		}
 		if d.Confirmed && (afterACK || !d.Acknowledged) {
 			d.ReleasePending = true
 		}
@@ -120,10 +124,10 @@ func (p *PCSCF) release(key DialogKey, why error, afterACK bool, log *slog.Logge
 	}
 	if d.ReleasePending {
 		log.Info("the dialog is released once the ACK for its 2xx has passed", "call_id", key.CallID)
-		time.AfterFunc(p.ackWait, func() { p.releaseNow(key, why, log) })
+		time.AfterFunc(p.ackWait, func() { p.releaseNow(key, log) })
 		return
 	}
-	p.releaseNow(key, why, log)
+	p.releaseNow(key, log)
 }
 
 // releaseNow is release once the BYEs may go out. It marks the dialog
@@ -132,8 +136,8 @@ func (p *PCSCF) release(key DialogKey, why error, afterACK bool, log *slog.Logge
 // so that the P-CSCF answers a request within it 481 meanwhile (TS
 // 24.229 5.2.8.1.3, subsequent): until the BYEs are answered for a
 // confirmed dialog (sendBYEs), and until its INVITE has ended for an
-// early one (setup.end). why is that of release.
-func (p *PCSCF) releaseNow(key DialogKey, why error, log *slog.Logger) {
+// early one (setup.end).
+func (p *PCSCF) releaseNow(key DialogKey, log *slog.Logger) {
 	first := false
 	d, ok, err := p.store.UpdateDialog(context.Background(), key, func(d *Dialog) {
 		first = !d.Released
@@ -148,7 +152,7 @@ func (p *PCSCF) releaseNow(key DialogKey, why error, log *slog.Logger) {
 	}
 	log = log.With("call_id", key.CallID)
 	switch {
-	case p.abortSetup(d, why):
+	case p.abortSetup(d):
 		log.Info("cancelling the session that is being set up")
 	case d.Confirmed:
 		p.sendBYEs(d, log)

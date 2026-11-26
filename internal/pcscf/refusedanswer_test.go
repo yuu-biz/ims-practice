@@ -496,7 +496,8 @@ func TestRefusedAnswerOfAnUPDATEAtAnotherInstanceEndsTheCall(t *testing.T) {
 			d, ok := out.Dialog()
 			key := keyOf(t, d, ok)
 
-			h.sendTo(h.instance())
+			_, other := h.instance()
+			h.sendTo(other)
 			relay.refuseModify(agw.Core)
 			resp, err := out.Update(sdpBody(sdp.Offer("2", netip.MustParseAddrPort("192.0.2.10:4002"))))
 			if err != nil {

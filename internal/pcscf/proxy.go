@@ -58,8 +58,9 @@ func (p *PCSCF) proxyInvite(st *sip.ServerTransaction, out *sip.Message, targets
 	// (RFC 3262 3).
 	passed := map[string]bool{}
 	// giveUp gives the INVITE up for why: an error of call.response or the
-	// abortCause of call, which is nil when the network took the
-	// resources away.
+	// abortCause of call. Only a session that the network has no
+	// resources for gets the 500 that says so; a dialog released for a
+	// cause the P-CSCF no longer knows gets a plain one.
 	giveUp := func(why error) {
 		call.givenUp = true
 		switch {
@@ -67,10 +68,10 @@ func (p *PCSCF) proxyInvite(st *sip.ServerTransaction, out *sip.Message, targets
 			st.Respond(storeFailed(st.Request, why, call.log))
 			ct.Cancel()
 			return
-		case errors.Is(why, errRelay), errors.Is(why, errReleased):
-			st.Respond(call.failed())
-		default:
+		case errors.Is(why, errResources):
 			st.Respond(call.unavailable())
+		default:
+			st.Respond(call.failed())
 		}
 		ct.Cancel(sip.HeaderField{Name: "Reason", Value: reasonServiceUnavailable})
 	}
@@ -174,7 +175,7 @@ func (p *PCSCF) proxyInvite(st *sip.ServerTransaction, out *sip.Message, targets
 				if refused != nil {
 					// The callee has answered, so the caller gets the 2xx,
 					// and the dialog is then released (5.2.8.1.2).
-					go p.release(call.key, nil, false, call.log)
+					go p.release(call.key, ResourcesLost, false, call.log)
 				}
 			default:
 				final = resp
