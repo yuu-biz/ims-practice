@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+
+	"github.com/yuu-biz/ims-practice/internal/controlapi"
 )
 
 // The paths of the API (see the package documentation).
@@ -83,7 +85,7 @@ func (m *Manager) Handler() http.Handler {
 	mux.HandleFunc(PathPrefix, func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusNotFound, ErrorBody{Error: "no such resource: " + r.URL.Path})
 	})
-	return mux
+	return controlapi.RequireJSON(mux)
 }
 
 // readJSON decodes the body of r into v, refusing unknown fields and

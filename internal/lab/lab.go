@@ -6,6 +6,10 @@
 // The HTTP API answers JSON. Times are RFC 3339 with nanoseconds, in
 // UTC. openapi.yaml, next to this file, describes each route with its
 // answers in OpenAPI 3.1, and the tests check the handler against it.
+// A POST or a PUT whose Content-Type is not application/json, one
+// without a body too, is answered 415 and passed on to no node
+// (controlapi.RequireJSON), so that a page of another site open in the
+// learner's browser cannot change the network through the Lab.
 //
 //	GET /api/messages[?call_id=<id>...][&correlation_id=<id>]
 //	    The messages in capture order, which is the time in the HEP
@@ -99,6 +103,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/yuu-biz/ims-practice/internal/controlapi"
 	"github.com/yuu-biz/ims-practice/internal/diameter"
 	"github.com/yuu-biz/ims-practice/internal/hep"
 )
@@ -202,7 +207,7 @@ func (l *Lab) Handler() http.Handler {
 		mux.HandleFunc(method+" /api/ues/{name}"+path, l.ues.forward)
 	}
 	mux.Handle("GET /", uiHandler())
-	return mux
+	return controlapi.RequireJSON(mux)
 }
 
 func (l *Lab) getMessages(w http.ResponseWriter, r *http.Request) {

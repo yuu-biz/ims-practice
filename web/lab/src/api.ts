@@ -434,7 +434,10 @@ export async function releaseBearer(imsi: string, ebi: number): Promise<void> {
 }
 
 export async function detachUE(imsi: string): Promise<void> {
-  await send(`/api/epc/network-initiated/ues/${encodeURIComponent(imsi)}/detach`, { method: "POST" });
+  await send(`/api/epc/network-initiated/ues/${encodeURIComponent(imsi)}/detach`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+  });
 }
 
 // The faults the agent holds, the oldest first, with the ones that
@@ -466,9 +469,14 @@ export function fetchUESimulators(): Promise<UESimulator[]> {
 
 export type UEAction = "register" | "deregister" | "answer" | "hangup" | "hold" | "resume" | "swap" | "merge";
 
-// Each action answers with the UE's status after it.
+// Each action answers with the UE's status after it. It has no body,
+// and goes as JSON all the same: the Lab takes a POST as JSON only.
 export async function postUEAction(name: string, action: UEAction): Promise<UEStatus> {
-  return parseUEStatus(await (await send(uePath(name, action), { method: "POST" })).json());
+  const response = await send(uePath(name, action), {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+  });
+  return parseUEStatus(await response.json());
 }
 
 export async function postUECall(name: string, target: string): Promise<UEStatus> {

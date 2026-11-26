@@ -15,6 +15,8 @@ import (
 func do(t *testing.T, h http.Handler, method, path, body string) *httptest.ResponseRecorder {
 	t.Helper()
 	req := httptest.NewRequest(method, path, strings.NewReader(body))
+	// The agent takes a POST as JSON only.
+	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 	h.ServeHTTP(w, req)
 	if ct := w.Header().Get("Content-Type"); ct != "application/json" {
@@ -133,6 +135,7 @@ func TestTheChangeIsMadeAfterTheRequestHasEnded(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	req := httptest.NewRequest("POST", FaultsPath, strings.NewReader(`{"target":"pcscf","kind":"loss","loss_percent":10,"duration":"1m"}`)).WithContext(ctx)
+	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 	served := make(chan struct{})
 	go func() {
@@ -179,5 +182,30 @@ func TestTheChangeIsMadeAfterTheRequestHasEnded(t *testing.T) {
 	want := []string{"apply loss pcscf", "clear loss pcscf", "apply pause scscf", "clear pause scscf"}
 	if fmt.Sprint(e.Calls()) != fmt.Sprint(want) {
 		t.Fatalf("calls = %v, want %v", e.Calls(), want)
+	}
+}
+
+// TestHTTPTakesAFaultOnlyAsJSON: a POST whose Content-Type a page of
+// another site can have the learner's browser send without asking the
+// agent first (none, text/plain, a form, multipart) injects nothing,
+// and is refused with 415.
+func TestHTTPTakesAFaultOnlyAsJSON(t *testing.T) {
+	m, e, _ := newTestManager()
+	h := m.Handler()
+	for _, contentType := range []string{"", "text/plain", "application/x-www-form-urlencoded", "multipart/form-data; boundary=x"} {
+		req := httptest.NewRequest("POST", FaultsPath, strings.NewReader(`{"target":"pcscf","kind":"pause"}`))
+		if contentType != "" {
+			req.Header.Set("Content-Type", contentType)
+		}
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, req)
+		if w.Code != http.StatusUnsupportedMediaType || w.Header().Get("Content-Type") != "application/json" || decode[ErrorBody](t, w).Error == "" {
+			t.Errorf("POST with Content-Type %q = %d %s, want 415 with an error", contentType, w.Code, w.Body)
+		}
+	}
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if faults := m.List(); len(faults) != 0 || len(e.calls) != 0 {
+		t.Errorf("the agent holds %+v and called %v, want nothing", faults, e.calls)
 	}
 }

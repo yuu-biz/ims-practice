@@ -201,6 +201,7 @@ func TestSupplementaryServicesControlAPI(t *testing.T) {
 	put := func(path, body string) (*http.Response, ue.Settings) {
 		t.Helper()
 		req, _ := http.NewRequest(http.MethodPut, api.URL+path, strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
 		resp, err := http.DefaultClient.Do(req)
 		if err != nil {
 			t.Fatal(err)
@@ -229,6 +230,13 @@ func TestSupplementaryServicesControlAPI(t *testing.T) {
 		if resp, _ := put(path, body); resp.StatusCode != http.StatusBadRequest && resp.StatusCode != http.StatusNotFound {
 			t.Errorf("PUT %s %s: %d", path, body, resp.StatusCode)
 		}
+	}
+	plain, _ := http.NewRequest(http.MethodPut, api.URL+"/xcap/oir", strings.NewReader(`{"default_behaviour": "presentation-restricted"}`))
+	plain.Header.Set("Content-Type", "text/plain")
+	if resp, err := http.DefaultClient.Do(plain); err != nil || resp.StatusCode != http.StatusUnsupportedMediaType {
+		t.Errorf("PUT oir as text/plain: %v, %v; want 415", resp, err)
+	} else {
+		resp.Body.Close()
 	}
 	resp, settings = put("/xcap/oir", `{"default_behaviour": "presentation-restricted"}`)
 	if resp.StatusCode != http.StatusOK || settings.OIRDefault != simservs.PresentationRestricted {

@@ -76,6 +76,11 @@ func runCtl(control string, args []string, out io.Writer) error {
 	if err != nil {
 		return err
 	}
+	// The API takes a POST or a PUT as JSON only, one without a body
+	// too.
+	if method != http.MethodGet {
+		req.Header.Set("Content-Type", "application/json")
+	}
 	// A merge waits for both REFERs; a REFER subscription may take some
 	// seconds.
 	resp, err := (&http.Client{Timeout: time.Minute}).Do(req)

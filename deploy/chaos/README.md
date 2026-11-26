@@ -216,6 +216,7 @@ The agent talks to the Docker Engine through the Docker socket, `/var/run/docker
 - Only `agent.yaml` mounts the socket, and only into the agent. `compose.yaml` never names `agent.yaml`, and no IMS node gets the socket. `go test ./internal/fault` fails when another service of `compose.yaml` or of an override under `deploy/` mounts it.
 - The agent is on a network of its own, `chaos` (172.28.9.0/24), which it shares with the Lab only. The IMS nodes cannot reach it, and its HTTP does not show up in the capture of `ims0`.
 - The API has no password: whoever reaches it can stop any container of the project. Its port is therefore published on the host's loopback address only, `127.0.0.1:8070`, for `curl`.
+- A page of another site open in your browser can send a POST to `127.0.0.1` without asking first, as long as it is not JSON. The agent takes a `POST` only with `Content-Type: application/json` and answers any other with 415, so such a page cannot inject a fault. [The Lab guide](../../docs/guide/en/lab.md#open-the-lab) explains why that is enough for a browser.
 - The agent refuses a fault on a container that holds the Docker socket, itself included: a stopped or frozen agent would leave its faults without an end. Like `fault.sh`, it refuses a network fault on the capture containers.
 
 ### Starting and stopping it
@@ -280,9 +281,9 @@ The request of `POST`:
 A field of another kind, or a field that the table does not have, is refused. For example:
 
 ```sh
-curl -X POST -d '{"target":"pcscf","kind":"pause","duration":"20s"}' http://127.0.0.1:8070/fault/v1/faults
-curl -X POST -d '{"target":"agw","kind":"loss","loss_percent":10,"duration":"2m"}' http://127.0.0.1:8070/fault/v1/faults
-curl -X POST -d '{"target":"ibcf-a","kind":"partition","network":"nni","duration":"1m"}' http://127.0.0.1:8070/fault/v1/faults
+curl -X POST -H 'Content-Type: application/json' -d '{"target":"pcscf","kind":"pause","duration":"20s"}' http://127.0.0.1:8070/fault/v1/faults
+curl -X POST -H 'Content-Type: application/json' -d '{"target":"agw","kind":"loss","loss_percent":10,"duration":"2m"}' http://127.0.0.1:8070/fault/v1/faults
+curl -X POST -H 'Content-Type: application/json' -d '{"target":"ibcf-a","kind":"partition","network":"nni","duration":"1m"}' http://127.0.0.1:8070/fault/v1/faults
 ```
 
 A fault is the request, with `duration` filled in, and these fields:

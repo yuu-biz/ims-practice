@@ -42,6 +42,12 @@ export function mockApi(): Plugin {
     const url = new URL(req.url ?? "/", "http://mock");
     const path = url.pathname;
 
+    // The Lab takes a POST or a PUT as JSON only.
+    const mediaType = (req.headers["content-type"] ?? "").split(";")[0]?.trim().toLowerCase();
+    if ((req.method === "POST" || req.method === "PUT") && mediaType !== "application/json") {
+      return json(res, 415, { error: `a ${req.method} takes Content-Type application/json only` });
+    }
+
     if (req.method === "GET" && path === "/calls") return json(res, 200, calls);
     if (req.method === "GET" && path === "/registrations") return json(res, 200, registrations);
     if (req.method === "GET" && path === "/messages") {

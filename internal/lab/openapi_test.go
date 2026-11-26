@@ -31,7 +31,7 @@ func TestOpenAPI(t *testing.T) {
 		UEs:             []UESimulator{{"phone1", backend()}},
 	})
 	h.along(toCallee, invite("call-api@172.28.0.100"))
-	send := func(method, path, body string, status int) {
+	sendAs := func(method, path, contentType, body string, status int) {
 		t.Helper()
 		var in io.Reader
 		if body != "" {
@@ -42,6 +42,9 @@ func TestOpenAPI(t *testing.T) {
 		req, err := http.NewRequestWithContext(ctx, method, h.server.URL+path, in)
 		if err != nil {
 			t.Fatal(err)
+		}
+		if contentType != "" {
+			req.Header.Set("Content-Type", contentType)
 		}
 		resp, err := h.server.Client().Do(req)
 		if err != nil {
@@ -57,6 +60,16 @@ func TestOpenAPI(t *testing.T) {
 		if resp.StatusCode != status {
 			t.Errorf("%s %s = %d, want %d", method, path, resp.StatusCode, status)
 		}
+	}
+
+	// A POST or a PUT goes as JSON, one without a body too.
+	send := func(method, path, body string, status int) {
+		t.Helper()
+		contentType := ""
+		if method == http.MethodPost || method == http.MethodPut {
+			contentType = "application/json"
+		}
+		sendAs(method, path, contentType, body, status)
 	}
 
 	send("GET", "/", "", 200)
@@ -98,6 +111,9 @@ func TestOpenAPI(t *testing.T) {
 		send(r.method, "/api/ues/phone1"+r.path, r.body, 200)
 	}
 	send("POST", "/api/ues/phone9/register", "", 404)
+	sendAs("POST", "/api/ues/phone1/register", "text/plain", "", 415)
+	sendAs("POST", "/api/fault/faults", "", `{"target": "pcscf", "kind": "stop"}`, 415)
+	sendAs("PUT", "/api/ues/phone1/answer-policy", "application/x-www-form-urlencoded", "mode=manual", 415)
 	send("PATCH", "/api/calls", "", 405)
 
 	// An event stream ends in the handler some time after the client
