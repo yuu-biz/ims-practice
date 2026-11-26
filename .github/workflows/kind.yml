@@ -1,6 +1,7 @@
 name: kind
 
-# Runs only when a file it depends on changes.
+# Runs only when a file it depends on changes: the manifests and the
+# script, and everything the images are built from, the code included.
 on:
   push:
     branches: [main]
@@ -9,8 +10,14 @@ on:
       - scripts/e2e-lib.sh
       - deploy/compose/**
       - Dockerfile
+      - .dockerignore
       - images/**
+      - cmd/**
+      - internal/**
+      - web/**
+      - deploy/announcements/**
       - go.mod
+      - go.sum
       - .github/workflows/kind.yml
   pull_request:
     paths:
@@ -18,8 +25,14 @@ on:
       - scripts/e2e-lib.sh
       - deploy/compose/**
       - Dockerfile
+      - .dockerignore
       - images/**
+      - cmd/**
+      - internal/**
+      - web/**
+      - deploy/announcements/**
       - go.mod
+      - go.sum
       - .github/workflows/kind.yml
 
 jobs:
