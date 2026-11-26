@@ -124,7 +124,7 @@ func TestVerify(t *testing.T) {
 func TestChallengeOrder(t *testing.T) {
 	n := nonces{key: []byte("k"), now: time.Now}
 	h := http.Header{}
-	n.challenge(h, "ims.example", true)
+	n.challenge(h, "ims.example", algorithms, true)
 	values := h.Values("WWW-Authenticate")
 	if len(values) != 2 {
 		t.Fatalf("challenges %q", values)

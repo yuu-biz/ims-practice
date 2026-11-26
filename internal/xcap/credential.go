@@ -115,6 +115,18 @@ func (c Credential) Marshal() []byte {
 	return b
 }
 
+// algorithms are those of the server that the credential has H(A1)
+// for, most preferred first.
+func (c Credential) algorithms() []Algorithm {
+	var out []Algorithm
+	for _, a := range algorithms {
+		if _, ok := c.ha1(a); ok {
+			out = append(out, a)
+		}
+	}
+	return out
+}
+
 // ha1 returns H(A1) for algorithm a, if the credential has it.
 func (c Credential) ha1(a Algorithm) (string, bool) {
 	for _, h := range c.HA1 {

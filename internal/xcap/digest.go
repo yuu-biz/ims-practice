@@ -79,13 +79,11 @@ func (n nonces) fresh(nonce string) bool {
 }
 
 // challenge adds to h the WWW-Authenticate header fields of a 401
-// (RFC 7616 3.3): one per algorithm the server offers, most preferred
-// first (3.7), all with the same nonce. It is the same for every user:
-// the HSS derives the credential of each in realm, for every algorithm
-// (NewCredential).
-func (n nonces) challenge(h http.Header, realm string, stale bool) {
+// (RFC 7616 3.3): one per algorithm of offered, most preferred first
+// (3.7), all with the same nonce.
+func (n nonces) challenge(h http.Header, realm string, offered []Algorithm, stale bool) {
 	nonce := n.issue()
-	for _, a := range algorithms {
+	for _, a := range offered {
 		h.Add("WWW-Authenticate", sip.Challenge{
 			Realm: realm, Nonce: nonce, Stale: stale, Algorithm: string(a), QOP: []string{qopAuth},
 		}.String())

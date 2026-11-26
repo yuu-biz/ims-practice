@@ -142,7 +142,11 @@ func (c *Client) URI(sel Selector) string {
 
 func (c *Client) do(ctx context.Context, method string, sel Selector, body []byte, contentType, ifMatch string) (Response, error) {
 	uri := c.URI(sel)
-	for retried := false; ; retried = true {
+	// A 401 is answered once. A second 401 is answered too when it
+	// offers another realm or algorithm than the one the client has
+	// just used: the first challenge of a server may name no user, and
+	// the next one that of the user's credential. A third is the answer.
+	for answered := 0; ; {
 		req, err := http.NewRequestWithContext(ctx, method, uri, bytes.NewReader(body))
 		if err != nil {
 			return Response{}, err
@@ -166,11 +170,14 @@ func (c *Client) do(ctx context.Context, method string, sel Selector, body []byt
 		if err != nil {
 			return Response{}, err
 		}
-		if resp.StatusCode == http.StatusUnauthorized && !retried {
-			if err := c.answerChallenge(resp.Header.Values("WWW-Authenticate")); err != nil {
+		if resp.StatusCode == http.StatusUnauthorized && answered < 2 {
+			changed, err := c.answerChallenge(resp.Header.Values("WWW-Authenticate"))
+			if err != nil {
 				return Response{}, err
 			}
-			continue
+			if answered++; answered == 1 || changed {
+				continue
+			}
 		}
 		if resp.StatusCode < 200 || resp.StatusCode > 299 {
 			return Response{}, &StatusError{Method: method, URI: uri, Status: resp.StatusCode, ContentType: resp.Header.Get("Content-Type"), Body: got}
@@ -193,8 +200,9 @@ func (c *Client) httpClient() *http.Client {
 
 // answerChallenge takes the first challenge of a 401 whose algorithm
 // the client supports: the server lists them most preferred first (RFC
-// 7616 3.7).
-func (c *Client) answerChallenge(values []string) error {
+// 7616 3.7). changed tells that its realm or its algorithm is not that
+// of the challenge the client answered before.
+func (c *Client) answerChallenge(values []string) (changed bool, _ error) {
 	for _, v := range values {
 		ch, err := sip.ParseChallenge(v)
 		if err != nil {
@@ -208,11 +216,12 @@ func (c *Client) answerChallenge(values []string) error {
 			continue
 		}
 		c.mu.Lock()
+		before := c.session
 		c.session = &digestSession{challenge: ch, algorithm: a}
 		c.mu.Unlock()
-		return nil
+		return before == nil || before.challenge.Realm != ch.Realm || before.algorithm != a, nil
 	}
-	return errors.New("xcap: no Digest challenge with SHA-256 or MD5 and qop auth")
+	return false, errors.New("xcap: no Digest challenge with SHA-256 or MD5 and qop auth")
 }
 
 // authorization adds the Authorization header field for the challenge
