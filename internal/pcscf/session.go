@@ -314,7 +314,12 @@ func (p *PCSCF) subsequent(st *sip.ServerTransaction, out *sip.Message, log *slo
 		if toUE {
 			ue = targets[0].Addr.Addr()
 		}
-		answer, answered = p.renegotiate(out, d, toUE, ue, log)
+		answer, answered, err = p.renegotiate(out, d, toUE, ue, log)
+		if err != nil {
+			log.Warn("media relay refused the offer: the request goes no further", "error", err.Error())
+			st.Respond(sip.NewResponse(st.Request, 500, ""))
+			return
+		}
 	}
 	if known && isTargetRefresh(out.Method) {
 		renegotiated := answer
@@ -360,6 +365,20 @@ func (p *PCSCF) subsequent(st *sip.ServerTransaction, out *sip.Message, log *slo
 // 29.214 A.1, 4.4.2). The second one is for subsequent to call once the
 // final response has gone. ue is the address of the served UE.
 //
+// When the relay does not take the offer, renegotiate returns the error,
+// and the request goes no further: the P-CSCF, as an IMS-ALG, is to pass
+// on an offer of its own with the address of the relay (TS 24.229
+// 6.7.2.1), and has none. subsequent answers the request itself, as TS
+// 24.229 6.2 has the P-CSCF answer a request whose offer it cannot let
+// through, and the dialog stays. TS 24.229 releases a dialog for an
+// offer only when the offer comes in a response (5.2.8.1.2), which
+// cannot be refused. The answer is 500 (RFC 3261 21.5.1) rather than
+// the 488 of 6.2, which tells of media that the network does not allow
+// and carries the media that it does; these media are allowed. A
+// non-2xx leaves the session as it was before the request (RFC 3261
+// 14.1, RFC 3311 5.3), on the media of the last offer and answer, which
+// the relay took. Only a 481 or a 408 would end the dialog.
+//
 // When the relay does not take the answer, the response goes on as it
 // came, since it is the final response of the request and the party
 // that answered has taken the offer already. The PCRF does not get that
@@ -383,10 +402,10 @@ func (p *PCSCF) subsequent(st *sip.ServerTransaction, out *sip.Message, log *slo
 // authorised as it was: the far end has given its answer by then. TS
 // 24.229 V20.1.0 has a procedure for refused resources only for the
 // initial INVITE (5.2.7.2).
-func (p *PCSCF) renegotiate(out *sip.Message, d Dialog, toUE bool, ue netip.Addr, log *slog.Logger) (answer func(*sip.Message), answered func()) {
+func (p *PCSCF) renegotiate(out *sip.Message, d Dialog, toUE bool, ue netip.Addr, log *slog.Logger) (answer func(*sip.Message), answered func(), err error) {
 	received := out.Body
 	if err := p.relaySDP(out, d.Relay, toUE); err != nil {
-		log.Warn("media relay refused the offer", "error", err.Error())
+		return nil, nil, err
 	}
 	offer := ueSide(received, out.Body, toUE)
 	// taken is true once the relay has taken an answer to the offer, and
@@ -433,7 +452,7 @@ func (p *PCSCF) renegotiate(out *sip.Message, d Dialog, toUE bool, ue netip.Addr
 		}
 		log.Info("changed media authorised", "policy_session", string(d.PolicySession))
 	}
-	return answer, answered
+	return answer, answered, nil
 }
 
 // byeEndsDialog is RFC 3261 15.1.1 as a proxy sees it: the dialog ends
