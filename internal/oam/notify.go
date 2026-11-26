@@ -540,20 +540,29 @@ func (s *Server) watchNode(ctx context.Context, e Endpoint, w AlarmWatch, releas
 	st := w.State()
 	// save writes the state after notifications were sent. It writes
 	// nothing once ctx has ended: the sending may have stopped half way,
-	// and the next holder sends those notifications again.
+	// and the next holder sends those notifications again. A failure of
+	// the store is tried again after a wait, as in deliver, until the
+	// state is saved or the watch is lost. A write whose answer was lost
+	// reached the store, and the next try finds it its own
+	// (AlarmWatch.Save).
 	save := func(next AlarmWatchState) bool {
-		if ctx.Err() != nil {
-			return false
-		}
-		if err := w.Save(ctx, next); err != nil {
-			if ctx.Err() == nil {
-				s.log.Warn("the watch state of a node could not be saved", "node", e.Name, "error", err.Error())
+		for backoff := s.alarmEventsWait / 8; ctx.Err() == nil; backoff = min(2*backoff, s.alarmEventsWait) {
+			err := w.Save(ctx, next)
+			switch {
+			case err == nil:
+				st = next
+				return true
+			case ctx.Err() != nil:
+			case errors.Is(err, ErrWatchLost):
+				s.log.Info("the watch of a node was lost", "node", e.Name)
+				cancel()
+				return false
+			default:
+				s.log.Warn("the watch state of a node could not be saved; it is saved again", "node", e.Name, "error", err.Error(), "wait", backoff.String())
+				s.sleep(ctx, backoff)
 			}
-			cancel()
-			return false
 		}
-		st = next
-		return true
+		return false
 	}
 	// pollCtx also ends with release, so that a watch is given up
 	// without waiting out a request; what the request would have
