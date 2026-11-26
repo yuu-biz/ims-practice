@@ -71,3 +71,12 @@ oam:
     - name: mrfp
       roles: [mrfp]
       maintenance: http://mrfp.ims.mnc001.mcc001.3gppnetwork.org:8085
+# The maintenance listener of the node: /metrics for Prometheus to
+# scrape, where the OAM counts the alarm notifications it sent to the
+# OSSs and whether each was delivered. The OAM role has no maintenance
+# API of its own, so nothing is served under /maintenance/v1/. No
+# specification gives a port for the listener; 8085 is this project's
+# choice, as on the other nodes. The port is not published outside the
+# network of the IMS nodes.
+maintenance:
+  listen: 0.0.0.0:8085
