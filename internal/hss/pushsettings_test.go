@@ -977,6 +977,41 @@ func TestAChangeOfTheSettingsThatPushesNothing(t *testing.T) {
 	}
 }
 
+// TestASourceWithNoPushAndTheNameOfTheFileIsInStep: the store has the
+// settings of a change of the admission policy alone, and no push of
+// either source recorded. Neither name has had another value than the
+// one of the configuration file, which every S-CSCF has from the SAAs, so
+// an instance that starts on the store records both pushes as done and
+// sends no PPR.
+func TestASourceWithNoPushAndTheNameOfTheFileIsInStep(t *testing.T) {
+	ctx := t.Context()
+	store := settingsStore(t)
+	if swapped, err := store.CompareAndSwapSettings(ctx, nil, StoredSettings{Generation: 1, Admission: AdmitTestUsers,
+		DefaultServiceProfile: "default", TestUserServiceProfile: "default"}); err != nil || !swapped {
+		t.Fatalf("CompareAndSwapSettings: %v, %v", swapped, err)
+	}
+	u, ok, err := store.Subscriber(ctx, impi)
+	if err != nil || !ok {
+		t.Fatalf("Subscriber(%s): %v, %v", impi, ok, err)
+	}
+	u.State, u.ServerName = Registered, scscf
+	u.SCSCF = diameter.Identity{OriginHost: hdr.OriginHost, OriginRealm: hdr.OriginRealm}
+	if err := store.Put(ctx, u); err != nil {
+		t.Fatalf("Put(%s): %v", impi, err)
+	}
+
+	h, _ := settingsInstance(t, store, nil)
+	scscfs := &fakeSCSCFs{}
+	h.SetPeers(scscfs)
+	roundsDone(t, h)
+	h.Close()
+	scscfs.mu.Lock()
+	defer scscfs.mu.Unlock()
+	if len(scscfs.pprs) != 0 {
+		t.Errorf("%d PPRs went out for names that no change has given another value", len(scscfs.pprs))
+	}
+}
+
 // TestAChangedSettingIsPushedPageByPage: the HSS reads the served
 // subscribers of the changed setting a page at a time, so a network
 // with more of them than one page holds has every one of them pushed.
