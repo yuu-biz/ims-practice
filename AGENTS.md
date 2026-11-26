@@ -37,7 +37,7 @@ AI エージェント（Claude Code、Codex、Cursor など）がこのリポジ
 | `scripts/e2e-maintenance-hss.sh` | 保守用の API で、HSS を運用から外し、戻すこと |
 | `scripts/e2e-fault.sh` | 障害注入のエージェントが、ノードを止める、プロセスを落とす、コンテナを作り直すこと（`deploy/chaos/`） |
 
-冗長構成は、CI の `e2e-redundancy` のジョブが確かめます。`deploy/redundancy/` の上書きのファイルを重ねた構成で、登録、通話、SMS のスクリプトを流し、S-CSCF が登録を保存先に置いていることを読みます。
+冗長構成は、CI の `e2e-redundancy` のジョブが確かめます。`deploy/redundancy/` の上書きのファイルを重ねた構成で、登録、通話、SMS、MRF のスクリプトを流し、S-CSCF が登録を、MRFC と MRFP が会議とコンテキストを保存先に置いていることを読みます。
 
 ## ビルドと試験のコマンド
 
