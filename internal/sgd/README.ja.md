@@ -22,7 +22,7 @@ go doc ./internal/sgd
 | `SRRFlags`、TS 29.338 Table 5.3.3.4/1 | GPRS-Indicator のビット（SMS-GMSC が serving node を 2 つ求める）と SM-RP-PRI（message waiting data に自分のアドレスが既にあっても配送を求める）。読むのは Single-Attempt-Delivery だけです。 | このプロジェクトの HSS は serving node を 1 つだけ持ち、優先度を読みません。 |
 | `MWDStatus`、TS 29.338 Table 5.3.3.8/1 | HSS が 5G の serving node を待っていることを示すビット 4 と 5 には名前を付けない。このプロジェクトの HSS は、この AVP を成功の SRA だけに入れ、DIAMETER_ERROR_ABSENT_USER のときは入れない。 | HSS は 5G の serving node を返さない。SC がこの AVP を読むのは成功した配達のあとだけで、その配達の前には成功の SRA がある。 |
 | `SMDeliveryOutcome`、TS 29.338 5.3.3.14 | MSC、SGSN、3GPP でないアクセスの SMSF を通した配送の結果。 | このプロジェクトには、どのノードもありません。 |
-| `ReportSMDeliveryStatusRequest`、TS 29.338 5.3.2.7 | Supported-Features、SMSMI-Correlation-ID、RDR-Flags と、配送に失敗したノード。 | S6c は RDR に機能を定めていません。このプロジェクトには、MSISDN の無い SMS も、1 回だけ試す配送もありません。HSS は、種類ごとに 1 つのノードを覚えます。 |
+| `ReportSMDeliveryStatusRequest`、TS 29.338 5.3.2.7 | Supported-Features、SMSMI-Correlation-ID と、配送に失敗したノード。 | S6c は RDR に機能を定めていません。このプロジェクトには、MSISDN の無い SMS がありません。HSS は、種類ごとに 1 つのノードを覚えます。 |
 | `ReportSMDeliveryStatusAnswer`、TS 29.338 5.3.2.8 | Supported-Features と、通知のノード（Serving-Node、Additional-Serving-Node、SMSF のアドレス）。HSS はこれで、SMS-GMSC が知らなかったノードを通して、すぐに送り直すよう伝えます。 | このプロジェクトの HSS は、代わりに ALR で SC に知らせます。 |
 | `ServingNode`、TS 29.338 5.3.3.6 | SGSN と MSC、IP-SM-GW-SBI-Support-Indicator。 | このプロジェクトには SGSN も MSC もありません。IP-SM-GW には Diameter だけでつなぎます。 |
 | `SMSF3GPPAddress`、TS 29.338 5.3.3.35、5.3.3.36 | SMSF-3GPP-SBI-Support-Indicator と、SMSF-Non-3GPP-Address の全体。 | このプロジェクトは、SMSF に Diameter だけでつなぎます。3GPP でないアクセスもありません。 |
