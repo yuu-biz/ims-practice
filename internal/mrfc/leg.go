@@ -146,7 +146,20 @@ func (l *leg) takeAnswer(body []byte) error {
 }
 
 // release subtracts the termination, and tells whether that deleted the
-// context.
+// context. The goroutine of the dialog calls it when the dialog ends,
+// and nothing else does.
+//
+// SIMPLIFIED: TS 23.333 6.1.5.1 and TS 29.333 5.17.3.5. After an MRFC
+// recovers, the terminations that the recovery affected are released,
+// and the MRFC tells the MRFP that it has restarted with a ServiceChange
+// on ROOT. Here an instance that stops releases nothing, and one that
+// starts again under the same name sends no ServiceChange: the
+// terminations of its dialogs stay at the MRFP, each with its ports
+// open, and so does the clock of a context that mixes a conference. The
+// item of such a conference stays in the Store, since the context never
+// empties, and a party that joins later is mixed with the terminations
+// that are left. The MRFC keeps no record of its terminations outside
+// its process, and the control API of the MRFP has no ServiceChange.
 func (l *leg) release() bool {
 	ctx, cancel := mp()
 	defer cancel()
