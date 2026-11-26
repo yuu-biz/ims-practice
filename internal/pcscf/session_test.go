@@ -3,6 +3,7 @@ package pcscf
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net"
 	"net/http/httptest"
 	"net/netip"
@@ -468,9 +469,12 @@ type fakeRelay struct {
 	// failAdd, when set, is what every Add returns.
 	failAdd error
 	// refusing is the termination whose every Modify fails from the
-	// moment a test names it (refuseModify), as with a relay that
-	// restarts while a call is up.
+	// moment a test names it (refuseModify, breakModify), as with a relay
+	// that restarts while a call is up. The Modify fails with refusal,
+	// having changed the termination when applied is set.
 	refusing agw.TerminationID
+	refusal  error
+	applied  bool
 	// failSubtracts is how many Subtracts fail before one succeeds.
 	failSubtracts int
 	contexts      map[string]bool
@@ -522,15 +526,25 @@ func (f *fakeRelay) Add(ctx context.Context, _ ...agw.TerminationRequest) (agw.C
 func (f *fakeRelay) Modify(ctx context.Context, id string, side agw.TerminationID, change agw.TerminationRequest) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	if f.failModify || side == f.refusing {
+	if f.failModify {
 		return errors.New("the relay refused the Modify")
+	}
+	if side == f.refusing && !f.applied {
+		return f.refusal
 	}
 	if !f.contexts[id] {
 		f.strays = append(f.strays, id)
 	}
 	f.remotes[termination{id, side}] = change.Remote
+	if side == f.refusing {
+		return f.refusal
+	}
 	return nil
 }
+
+// errRefusedModify is how the relay answers a Modify that it turns down,
+// having changed nothing (agw.ErrRejected).
+var errRefusedModify = fmt.Errorf("%w: the relay refused the Modify", agw.ErrRejected)
 
 func (f *fakeRelay) Subtract(ctx context.Context, id string) error {
 	f.mu.Lock()
@@ -546,11 +560,19 @@ func (f *fakeRelay) Subtract(ctx context.Context, id string) error {
 	return nil
 }
 
-// refuseModify makes every later Modify of the termination side fail.
+// refuseModify makes the relay turn down every later Modify of the
+// termination side, and change nothing.
 func (f *fakeRelay) refuseModify(side agw.TerminationID) {
+	f.breakModify(side, errRefusedModify, false)
+}
+
+// breakModify makes every later Modify of the termination side fail
+// with err, having carried the change out when applied is set, as a
+// relay does whose answer comes too late.
+func (f *fakeRelay) breakModify(side agw.TerminationID, err error, applied bool) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.refusing = side
+	f.refusing, f.refusal, f.applied = side, err, applied
 }
 
 // added is how many contexts the relay has added, and the ID of the

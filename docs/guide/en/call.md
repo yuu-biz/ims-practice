@@ -488,9 +488,13 @@ The tests of `internal/pcscf` run these flows in one process, with a relay that 
 
 ## When the relay does not take an offer
 
-A new SDP offer within the dialog, such as that of an UPDATE or of the re-INVITE of a hold, goes through the relay like the offer of the INVITE. The P-CSCF tells the termination that faces the party that offers where that party now receives, with a `Modify`, and then writes the address of its other termination into the SDP (TS 24.229 6.7.2.1). When the relay refuses that `Modify`, or does not answer it in time, the P-CSCF has no offer of its own to pass on. The offer that came names the address of the party that offers. The other party would send its RTP there, past the relay, and the PCRF would authorise media on a path that the call does not take.
+A new SDP within the dialog goes through the relay like the offer of the INVITE. That SDP may be the offer of an UPDATE, or of the re-INVITE of a hold. The P-CSCF tells the termination that faces the sending party where that party now receives, with a `Modify`, and then writes the address of its other termination into the SDP (TS 24.229 6.7.2.1). When the `Modify` fails, the P-CSCF has no SDP of its own to pass on. The SDP that came names the address of the sending party. The other party would send its RTP there, past the relay, and the PCRF would authorise media on a path that the call does not take.
 
-So the request goes no further, and the P-CSCF answers it itself with 500 (Server Internal Error, RFC 3261 21.5.1). TS 24.229 6.2 treats a request whose offer the P-CSCF cannot let through the same way: the P-CSCF answers the request, and the dialog stays. For an offer with media that the local policy does not allow, 6.2 gives the answer 488 (Not Acceptable Here), with the media that the policy allows. Here the media are allowed and the relay is at fault, so the answer is 500. TS 24.229 5.2.8.1.2 releases a dialog for an offer only when the offer comes in a response, which cannot be refused. An answer cannot be refused either, which is why the P-CSCF releases the call when the relay does not take an answer.
+So the request goes no further, and the P-CSCF answers it itself. TS 24.229 6.2 does the same with a request whose offer the P-CSCF cannot let through: the P-CSCF answers that request and does not forward it. For an offer with media that the local policy does not allow, 6.2 gives the answer 488 (Not Acceptable Here), with the media that the policy allows. Here the media are allowed and the relay is at fault, so the answer is 500 (Server Internal Error, RFC 3261 21.5.1). An SDP that the P-CSCF cannot read at all gets 400 (Bad Request, RFC 3261 21.4.1), and the relay is not asked.
+
+What happens to the call depends on what the relay answered.
+
+**The relay turns the `Modify` down and changes nothing.** The call stays up:
 
 ```text
  UE 1          P-CSCF          media relay      network
@@ -498,20 +502,46 @@ So the request goes no further, and the P-CSCF answers it itself with 500 (Serve
  |-------------->|                |                 |
  |               | PUT .../terminations/access      |  Modify: where UE 1 now receives
  |               |--------------->|                 |
- |               | error, or no answer in time      |
+ |               | error: nothing changed           |
  |               |<---------------|                 |
  |  500 (UPDATE) |                |                 |  the UPDATE goes no further
  |<--------------|                |                 |
 ```
 
-- **The call stays up.** A final response other than 2xx leaves the session as it was before the request: RFC 3261 14.1 says so for a re-INVITE, and RFC 3311 5.3 for an UPDATE. The media goes on as the last offer and answer set it up, through the relay, and the PCRF keeps what it authorised. Only a 481, a 408 or no answer at all ends the dialog (RFC 3261 12.2.1.2), so the P-CSCF answers with none of them.
+- **A final response other than 2xx leaves the session as it was before the request.** RFC 3261 14.1 says so for a re-INVITE, and RFC 3311 5.3 for an UPDATE. Only a 481, a 408 or no answer at all ends the dialog (RFC 3261 12.2.1.2), so the P-CSCF answers with none of them. The media goes on as the last offer and answer set it up, through the relay, and the PCRF keeps what it authorised.
 - **A re-INVITE gets the same 500.** UE 1 acknowledges it with an ACK that goes no further than the P-CSCF, as for any final response other than 2xx (RFC 3261 17.1.1.3). A UE that wanted to put the call on hold stays in the call as it was.
-- **UE 1 may send the offer again later** (RFC 3261 21.5.1), when the relay may take it.
-- **An offer from the network** tells the core termination where the other party receives. When the relay refuses that `Modify`, the 500 goes back to the network, and UE 1 gets nothing.
+- **UE 1 may send the offer again later** (RFC 3261 21.5.1).
+- **An offer from the network** takes the `Modify` of the core termination. The 500 then goes back to the network, and UE 1 gets nothing.
 - **In an early dialog**, such as that of the UPDATE with which a VoLTE UE tells that its resources are reserved ([Preconditions](volte.md#preconditions)), the INVITE goes on. The callee has not heard that the resources of UE 1 are reserved, and waits for a later offer that tells it so (RFC 3312 6).
-- **Any other request within the dialog that carries an offer**, such as a PRACK (RFC 3262 5), gets the same 500.
 
-The tests of `internal/pcscf` run these flows in one process, with a relay that refuses the `Modify` of the offer: `TestRefusedOfferWithinTheDialogIsRejected` and `TestRefusedOfferOfAnUPDATEInTheEarlyDialogKeepsTheCall`.
+**The relay does not answer in time, has lost the context, or is not in the P-CSCF's list.** The P-CSCF answers 500 and then releases the call, as when the relay does not take an answer:
+
+```text
+ UE 1          P-CSCF          media relay      network
+ | UPDATE with a new SDP offer    |                 |
+ |-------------->|                |                 |
+ |               | PUT .../terminations/access      |  Modify
+ |               |--------------->|                 |
+ |               | no answer in time, or no context |
+ |               |<---------------|                 |
+ |  500 (UPDATE) |                |                 |
+ |<--------------|                |                 |
+ |               | BYE  Reason: SIP;cause=503       |  in the name of UE 1
+ |               |--------------------------------->|
+ |  BYE  Reason: SIP;cause=503    |                 |  in the name of the other party
+ |<--------------|                |                 |
+ |               | DELETE /contexts/{id}            |  Subtract
+ |               |--------------->|                 |
+```
+
+- **A relay that answers too late may have carried the `Modify` out.** Its termination would then send to the address of the offer that UE 1 got 500 for, and UE 1 no longer takes media there. The P-CSCF cannot tell, so it ends the call.
+- **A relay that has lost the context**, such as one that restarted without its store, carries no media of the call any more, and would turn every later offer down in the same way.
+- **The P-CSCF ends the Rx session** of the call (TS 29.214 4.4.4) and removes the relay context, as after every release.
+- **In an early dialog** the INVITE has no final response yet. UE 1 gets 500 for its INVITE as well, and the INVITE towards the network is cancelled, as for a 183 whose answer the relay did not take.
+
+TS 24.229 releases a dialog for an offer only when the offer comes in a response (5.2.8.1.2): 6.2 has the P-CSCF pass a 200 with such an offer on, since nobody can turn a 200 down, and release the session once the ACK has come. An answer in a response cannot be turned down either, which is why the P-CSCF releases the call when the relay does not take an answer in a response.
+
+The tests of `internal/pcscf` run these flows in one process, with a relay that fails the `Modify` of the SDP: `TestRefusedOfferWithinTheDialogIsRejected`, `TestRefusedOfferOfAnUPDATEInTheEarlyDialogKeepsTheCall`, `TestOfferWithinTheDialogEndsTheCallWhenTheRelayMayHaveTakenIt` and `TestMalformedOfferWithinTheDialogGets400`.
 
 ## What this project simplifies
 
