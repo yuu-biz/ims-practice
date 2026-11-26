@@ -69,9 +69,12 @@ store:
   # store answers whatever the DNS of the home network is doing.
   address: 172.28.0.5:6379
   # Every key of this deployment begins with it, and the adapter of each
-  # role adds the name of the role after it, as in
-  # ims:scscf:registration:<private identity>. Groups of instances that
-  # must not share their state take a prefix each.
+  # role adds a name of its own after it, as in
+  # ims:scscf:registration:<private identity>. The Service Centre adds
+  # smsc, and not sc, the name of its role, as in
+  # ims:smsc:queue:<destination>; sc: is where the stub of the SC inside
+  # an IP-SM-GW keeps its keys. Groups of instances that must not share
+  # their state take a prefix each.
   prefix: "ims:"
   # How long one operation on the store may take. A role that does not
   # get its state within it answers 500 in SIP, or
