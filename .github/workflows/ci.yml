@@ -11,14 +11,20 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  # A change that touches only documents needs the checks of the docs job
-  # and nothing else: no test reads the Markdown files or the licences,
-  # except the tables of docs/guide/*/capture.md and docs/guide/*/README.md,
-  # which deploy/compose checks against compose.yaml, and the tables of
-  # display filters of the guides of a scenario, which that scenario's
-  # end-to-end script runs against its capture. Those it reads in English,
-  # and the docs job checks that both languages show the same filters.
-  # The other jobs are skipped then, and a skipped job counts as passed.
+  # A change that touches only documents skips the jobs that build and
+  # test the code, and a skipped job counts as passed. Two kinds of test
+  # read Markdown all the same:
+  # - The tests of the slide generator read the decks, which are Markdown
+  #   files under slides/decks/, and the files that the decks link to:
+  #   the guides, the glossary and the READMEs. The slide-tests job runs
+  #   them on every change that the go job skips, so that this job need
+  #   not keep a list of the files that the decks link to.
+  # - deploy/compose checks the tables of docs/guide/*/capture.md and
+  #   docs/guide/*/README.md against compose.yaml, and the end-to-end
+  #   script of a scenario runs the display filters of its guide against
+  #   its capture. Those it reads in English, and the docs job checks
+  #   that both languages show the same filters. A change to one of those
+  #   files runs every job.
   changes:
     runs-on: ubuntu-latest
     outputs:
@@ -102,6 +108,24 @@ jobs:
       - run: go build ./...
       - run: go vet ./...
       - run: go test -race ./...
+
+  # The go job runs the tests of the slide generator with the others.
+  # This job runs only them, when the go job is skipped. Like the go job,
+  # it validates the pptx against the schemas of ECMA-376 with xmllint.
+  slide-tests:
+    runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.code == 'false'
+    env:
+      PPTX_XMLLINT: xmllint
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+      - name: xmllint
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libxml2-utils
+      - run: go test ./slides/...
 
   web-lab:
     runs-on: ubuntu-latest
@@ -695,7 +719,7 @@ jobs:
   # skips count as passed.
   all-passed:
     runs-on: ubuntu-latest
-    needs: [changes, docs, go, web-lab, web-oam, e2e, e2e-registration, e2e-oam, e2e-fm, e2e-admission, e2e-call, e2e-lab, e2e-sms, e2e-volte, e2e-esp, e2e-mmtel, e2e-mrf, e2e-interconnect, e2e-h248, e2e-observability, e2e-maintenance-sip, e2e-maintenance-sms, e2e-maintenance-hss, e2e-redundancy, e2e-fault, cloud, kustomize]
+    needs: [changes, docs, go, slide-tests, web-lab, web-oam, e2e, e2e-registration, e2e-oam, e2e-fm, e2e-admission, e2e-call, e2e-lab, e2e-sms, e2e-volte, e2e-esp, e2e-mmtel, e2e-mrf, e2e-interconnect, e2e-h248, e2e-observability, e2e-maintenance-sip, e2e-maintenance-sms, e2e-maintenance-hss, e2e-redundancy, e2e-fault, cloud, kustomize]
     if: always()
     steps:
       - name: no job failed or was cancelled
