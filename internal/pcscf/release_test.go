@@ -2,6 +2,7 @@ package pcscf
 
 import (
 	"context"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -208,6 +209,76 @@ func TestLostResourcesAtAnotherInstanceKeepThe500WithTheirCause(t *testing.T) {
 		t.Fatalf("the callee's call ended with %v, want a CANCEL", in.Err())
 	}
 	wantCancelReason(t, in.EndedBy())
+	relay.waitHeld(t, 0, time.Second)
+}
+
+// interleavingStore is a MemoryStore that runs another write, once, right
+// after the next UpdateDialog, as another instance of the P-CSCF may
+// write between two operations of this one.
+type interleavingStore struct {
+	*MemoryStore
+	then atomic.Pointer[func(DialogKey)]
+}
+
+func (s *interleavingStore) UpdateDialog(ctx context.Context, key DialogKey, change func(*Dialog)) (Dialog, bool, error) {
+	d, ok, err := s.MemoryStore.UpdateDialog(ctx, key, change)
+	if then := s.then.Swap(nil); then != nil {
+		(*then)(key)
+	}
+	return d, ok, err
+}
+
+// TestReleaseDecidesToWaitForTheACKInOneStep: an instance of the P-CSCF
+// that does not forward the INVITE releases its early dialog for lost
+// resources, and the instance that forwards the INVITE confirms the
+// dialog with the 2xx right after the first read of the release. A
+// release that read the dialog early, and wrote Released in a second
+// step, would then find a confirmed dialog and send its BYEs at once,
+// before the caller has the 2xx: the caller answers such a BYE 481 and
+// stays in the call (RFC 3261 15). The release decides in one step, so
+// the 2xx finds the dialog released, and no BYE goes out.
+func TestReleaseDecidesToWaitForTheACKInOneStep(t *testing.T) {
+	pcrf, relay := &fakePolicy{}, newFakeRelay()
+	var store *interleavingStore
+	h := newCallHarness(t, harnessConfig{
+		relay:       relay,
+		association: func(a *Association) { a.SignallingSession = "signalling" },
+		configure:   func(p *PCSCF) { p.SetPolicyControl(pcrf) },
+		wrap: func(m *MemoryStore) Store {
+			store = &interleavingStore{MemoryStore: m}
+			return store
+		},
+	})
+	out, in := h.call()
+	if err := in.Progress(183, answerTo(t, in.Request, coreMedia)); err != nil {
+		t.Fatal(err)
+	}
+	// What remember writes for the 2xx at the instance that forwards the
+	// INVITE: it confirms a dialog that is not released.
+	confirm := func(key DialogKey) {
+		store.MemoryStore.UpdateDialog(context.Background(), key, func(d *Dialog) {
+			if !d.Released {
+				d.Confirmed = true
+			}
+		})
+	}
+	store.then.Store(&confirm)
+	other, _ := h.instance()
+	other.PolicyEvent(policy.Event{Session: "session-1", Kind: policy.LossOfBearer})
+
+	for deadline := time.Now().Add(watch); time.Now().Before(deadline); time.Sleep(10 * time.Millisecond) {
+		for _, got := range []*received{h.ueGot, h.coreGot} {
+			for _, m := range got.all() {
+				if m.Method == sip.BYE {
+					t.Fatalf("a party got a BYE before the caller had the 2xx: %v", m)
+				}
+			}
+		}
+	}
+	// The INVITE ends with its next response, as for any early dialog
+	// that another instance released.
+	go in.Progress(180, sip.Body{})
+	answered(t, out, 500)
 	relay.waitHeld(t, 0, time.Second)
 }
 
