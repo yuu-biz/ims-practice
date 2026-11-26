@@ -119,8 +119,10 @@ func (h *HSS) Manage(m *maintenance.ManagedFunction) { h.managed.Store(m) }
 // subscription that the name decides for, so the HSS pushes the
 // complete profile to the S-CSCF of each of those users whose profile
 // an S-CSCF has, rather than leave it until the next registration (TS
-// 29.228 6.6.1, pushChangedSettings). The subscriptions that name a
-// profile of their own take neither name, and get no push from either.
+// 29.228 6.6.1, pushsettings.go). The instances on the Store share that
+// push, a page at a time, so each user gets one PPR for the change. The
+// subscriptions that name a profile of their own take neither name, and
+// get no push from either.
 func (h *HSS) Settings() []maintenance.Setting {
 	const (
 		admission   = role + ".admission"
