@@ -35,11 +35,14 @@ func (ua *UA) afterFunc(d time.Duration, f func()) (stop func() bool) {
 // setSession makes t the session timer state of the dialog and starts
 // its timers anew. The UA calls it for each 2xx to a session refresh
 // request within the confirmed dialog, sent or received: the session
-// expiration counts from that 2xx (RFC 4028 7.2, 9). c.mu is held.
+// expiration counts from that 2xx (RFC 4028 7.2, 9). A session that a
+// BYE has ended gets no timers, though its dialog lives on for a
+// subscription (endSession): a refresh whose 2xx comes after the BYE
+// refreshes nothing. c.mu is held.
 func (d *CallDialog) setSession(t SessionTimer) {
 	d.session = t
 	d.stopSessionTimers()
-	if !t.Active() || d.dialog.State != DialogConfirmed {
+	if !t.Active() || d.dialog.State != DialogConfirmed || d.sessionEnded {
 		return
 	}
 	// The run number tells a timer that fires late that it has been

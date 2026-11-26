@@ -107,7 +107,7 @@ func (c *call) open() {
 }
 
 // Done is closed when the call ends: the INVITE failed or was
-// rejected, or a BYE ended the dialog.
+// rejected, or a BYE ended the session.
 func (c *call) Done() <-chan struct{} { return c.done }
 
 // Err tells why the call ended, once Done is closed. It is nil when the
@@ -131,7 +131,8 @@ func (c *call) EndedBy() *Message {
 	return c.endedBy
 }
 
-// end ends the call, and every dialog it has. Only the first end
+// end ends the call, and every dialog it has but one that lives on for
+// its subscriptions after a BYE (endSession). Only the first end
 // counts. c.mu is held.
 func (c *call) end(event string, err error) {
 	select {
@@ -140,7 +141,7 @@ func (c *call) end(event string, err error) {
 	default:
 	}
 	for _, d := range c.dialogs {
-		if d.dialog != nil {
+		if d.dialog != nil && !d.sessionEnded {
 			d.setState(DialogTerminated, event)
 		}
 	}
@@ -245,6 +246,12 @@ type CallDialog struct {
 	// lastTurn is the turn of the last request that this UA sent in
 	// the dialog (takeTurn).
 	lastTurn turn
+	// subscriptions counts the subscriptions that share the dialog with
+	// the session (AddSubscriptionUsage), and sessionEnded tells that a
+	// BYE has ended the session while one of them was left. The dialog
+	// then lives on for them alone (endSession).
+	subscriptions int
+	sessionEnded  bool
 }
 
 // Dialog returns a copy of the dialog state, and false while there is
@@ -295,6 +302,70 @@ func (d *CallDialog) setState(s DialogState, event string) {
 }
 
 var errNoConfirmedDialog = errors.New("sip: no confirmed dialog to send the request in")
+
+// AddSubscriptionUsage tells the UA that a subscription shares the
+// dialog with the session: one that a SUBSCRIBE within the dialog
+// created, at the notifier or at the subscriber (RFC 6665 4.5.2). The
+// dialog may still be early, as when a SUBSCRIBE crosses the 2xx that
+// confirms it. The dialog then has a usage besides the session, and a
+// BYE ends the session only (RFC 5057 5.5). The call ends with the BYE
+// as before, but the dialog stays: its SUBSCRIBEs and NOTIFYs still
+// reach the user of the call, and Send still sends them, until the user
+// calls end once the subscription is over. The dialog ends with the
+// last of its usages (RFC 5057 4). A dialog without such a usage ends
+// with its BYE, as RFC 3261 15 has it.
+//
+// A failure of a SUBSCRIBE or a NOTIFY that the dialog has a
+// subscription for ends that subscription only (RFC 5057 5.1, 5.2): a
+// 481, a 408 or a timeout leaves the session and the other usages
+// alone, and the user, which knows which subscription the request was
+// of, calls its end.
+//
+// AddSubscriptionUsage returns ErrCallEnded once the session has
+// ended, or the dialog with it: the dialog takes no new usage then.
+func (d *CallDialog) AddSubscriptionUsage() (end func(), err error) {
+	c := d.c
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	switch {
+	case d.dialog == nil:
+		return nil, errNoDialog
+	case d.dialog.State == DialogTerminated || d.sessionEnded:
+		return nil, ErrCallEnded
+	}
+	d.subscriptions++
+	return sync.OnceFunc(d.endSubscriptionUsage), nil
+}
+
+// endSubscriptionUsage takes one subscription out of the dialog, and
+// ends the dialog when it was the last usage left (RFC 5057 4.2).
+func (d *CallDialog) endSubscriptionUsage() {
+	c := d.c
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	d.subscriptions--
+	if d.subscriptions == 0 && d.sessionEnded {
+		d.setState(DialogTerminated, "last subscription ended")
+	}
+}
+
+// endSession ends the session of the dialog with a BYE, and the dialog
+// with it unless a subscription is left in it (RFC 5057 4.1, 5.5). The
+// timers and the REFERs of the session end either way. c.mu is held.
+func (d *CallDialog) endSession(event string) {
+	if d.subscriptions == 0 {
+		d.setState(DialogTerminated, event)
+		return
+	}
+	d.sessionEnded = true
+	d.stopSessionTimers()
+	d.endReferrals()
+	d.c.ua.logDialog(d.dialog, event+", subscription left", d.dialog.State.String())
+}
+
+// ofSubscription tells that a request of method m belongs to a
+// subscription, not to the session of the dialog (RFC 5057 5.3).
+func ofSubscription(m Method) bool { return m == SUBSCRIBE || m == NOTIFY }
 
 // Bye ends the dialog with a BYE (RFC 3261 15.1.1), and with it the
 // call when this is the dialog the call goes on in. The dialog has to
@@ -372,9 +443,10 @@ func (d *CallDialog) byeOwn(reason error) error {
 	return d.bye(reason, d.c.ua.own(BYE, false, reason))
 }
 
-// bye is RFC 3261 15.1.1: a BYE within the confirmed dialog. The dialog
+// bye is RFC 3261 15.1.1: a BYE within the confirmed dialog. The session
 // ends as soon as the BYE goes out, whatever the answer, and with it
-// the call, with reason, when this is the dialog the call kept. The
+// the call, with reason, when this is the dialog the call kept. So does
+// the dialog, unless a subscription is left in it (endSession). The
 // requests of the peer that were waiting for the user of the call get
 // 487 (endPending). bye returns an error when the answer is not a 2xx.
 func (d *CallDialog) bye(reason error, headers []HeaderField) error {
@@ -386,9 +458,13 @@ func (d *CallDialog) bye(reason error, headers []HeaderField) error {
 		return ErrCallEnded
 	default:
 	}
-	if d.dialog == nil || d.dialog.State != DialogConfirmed {
+	switch {
+	case d.dialog == nil || d.dialog.State != DialogConfirmed:
 		c.mu.Unlock()
 		return errNoConfirmedDialog
+	case d.sessionEnded:
+		c.mu.Unlock()
+		return ErrCallEnded
 	}
 	if d.pendingACK != nil {
 		// SIMPLIFIED: RFC 3261 13.2.2.4. A UAC that ends a dialog whose
@@ -402,7 +478,7 @@ func (d *CallDialog) bye(reason error, headers []HeaderField) error {
 		d.pendingACK = nil
 	}
 	req := d.newRequest(BYE, Body{}, headers)
-	d.setState(DialogTerminated, "BYE sent")
+	d.endSession("BYE sent")
 	pending := d.takePending()
 	if d == c.kept {
 		c.end("BYE sent", reason)
@@ -432,8 +508,26 @@ func (d *CallDialog) bye(reason error, headers []HeaderField) error {
 }
 
 // receiveRequest takes a request within the dialog (RFC 3261 12.2.2).
+// Once a BYE has ended the session, the dialog lives on for its
+// subscriptions only, and a request of the session finds none: it gets
+// 481 (Call/Transaction Does Not Exist), and a REFER 603 (Decline).
 func (d *CallDialog) receiveRequest(st *ServerTransaction) {
 	c := d.c
+	c.mu.Lock()
+	sessionEnded := d.sessionEnded
+	c.mu.Unlock()
+	if sessionEnded && !ofSubscription(st.Request.Method) && st.Request.Method != OPTIONS {
+		// A REFER would create a subscription of its own (RFC 5057 4.2),
+		// and 603 refuses a new usage without ending the dialog (5.6).
+		// Any other request belongs to the ended session, or to no usage
+		// at all (5.3).
+		code := 481
+		if st.Request.Method == REFER {
+			code = 603
+		}
+		d.respond(st, code)
+		return
+	}
 	switch st.Request.Method {
 	case BYE:
 		c.mu.Lock()
@@ -508,8 +602,9 @@ func (d *CallDialog) inOrder(st *ServerTransaction) bool {
 	return false
 }
 
-// receiveBYE is RFC 3261 15.1.2: the BYE gets 200 and ends the dialog,
-// and the call with it when this is the dialog the call kept. It
+// receiveBYE is RFC 3261 15.1.2: the BYE gets 200 and ends the session,
+// and the call with it when this is the dialog the call kept. The
+// dialog ends too, unless a subscription is left in it (endSession). It
 // returns the requests of the peer that were waiting for the user of
 // the call, for endPending to answer. c.mu is held.
 func (d *CallDialog) receiveBYE(st *ServerTransaction) []*InDialogRequest {
@@ -519,7 +614,7 @@ func (d *CallDialog) receiveBYE(st *ServerTransaction) []*InDialogRequest {
 		d.in.sendFailure(487, "BYE received", nil, d.c.ua.own(INVITE, true, nil))
 	}
 	d.c.ua.respondOwn(st, NewResponse(st.Request, 200, ""))
-	d.setState(DialogTerminated, "BYE received")
+	d.endSession("BYE received")
 	pending := d.takePending()
 	if d == d.c.kept {
 		d.c.endedBy = st.Request
