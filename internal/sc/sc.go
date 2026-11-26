@@ -24,12 +24,12 @@ import (
 	"context"
 	"crypto/rand"
 	"errors"
-	"github.com/yuu-biz/ims-practice/internal/diameter"
 	"log/slog"
 	"strings"
 	"time"
 
 	"github.com/yuu-biz/ims-practice/internal/cx"
+	"github.com/yuu-biz/ims-practice/internal/diameter"
 	"github.com/yuu-biz/ims-practice/internal/ims"
 	"github.com/yuu-biz/ims-practice/internal/ipsmgw"
 	"github.com/yuu-biz/ims-practice/internal/sh"

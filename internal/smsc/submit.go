@@ -2,10 +2,10 @@ package smsc
 
 import (
 	"context"
-	"github.com/yuu-biz/ims-practice/internal/diameter"
 	"log/slog"
 	"time"
 
+	"github.com/yuu-biz/ims-practice/internal/diameter"
 	"github.com/yuu-biz/ims-practice/internal/sgd"
 	"github.com/yuu-biz/ims-practice/internal/sms"
 )

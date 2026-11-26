@@ -3,13 +3,13 @@ package scscf
 import (
 	"context"
 	"encoding/hex"
-	"github.com/yuu-biz/ims-practice/internal/diameter"
 	"log/slog"
 	"strings"
 	"time"
 
 	"github.com/yuu-biz/ims-practice/internal/aka"
 	"github.com/yuu-biz/ims-practice/internal/cx"
+	"github.com/yuu-biz/ims-practice/internal/diameter"
 	"github.com/yuu-biz/ims-practice/internal/sip"
 )
 

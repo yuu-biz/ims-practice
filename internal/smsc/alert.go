@@ -2,8 +2,8 @@ package smsc
 
 import (
 	"context"
-	"github.com/yuu-biz/ims-practice/internal/diameter"
 
+	"github.com/yuu-biz/ims-practice/internal/diameter"
 	"github.com/yuu-biz/ims-practice/internal/sgd"
 )
 

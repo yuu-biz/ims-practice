@@ -1,11 +1,11 @@
 package smsc
 
 import (
-	"github.com/yuu-biz/ims-practice/internal/diameter"
 	"reflect"
 	"testing"
 	"time"
 
+	"github.com/yuu-biz/ims-practice/internal/diameter"
 	"github.com/yuu-biz/ims-practice/internal/sgd"
 	"github.com/yuu-biz/ims-practice/internal/sms"
 )

@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"github.com/yuu-biz/ims-practice/internal/diameter"
 	"net/http"
 	"net/http/httptest"
 	"sync"
@@ -16,6 +15,7 @@ import (
 	"github.com/fiorix/go-diameter/v4/diam/dict"
 
 	"github.com/yuu-biz/ims-practice/internal/cx"
+	"github.com/yuu-biz/ims-practice/internal/diameter"
 	"github.com/yuu-biz/ims-practice/internal/ims"
 	"github.com/yuu-biz/ims-practice/internal/kvstore"
 	"github.com/yuu-biz/ims-practice/internal/kvstore/kvjson"

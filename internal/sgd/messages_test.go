@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"encoding/binary"
 	"encoding/hex"
-	"github.com/yuu-biz/ims-practice/internal/diameter"
 	"reflect"
 	"strings"
 	"testing"
@@ -13,6 +12,8 @@ import (
 	"github.com/fiorix/go-diameter/v4/diam/avp"
 	"github.com/fiorix/go-diameter/v4/diam/datatype"
 	"github.com/fiorix/go-diameter/v4/diam/dict"
+
+	"github.com/yuu-biz/ims-practice/internal/diameter"
 )
 
 // All identities are fictitious: PLMN 001/01 and numbers from +1 202 555

@@ -3,10 +3,11 @@ package sgd
 import (
 	"bytes"
 	"fmt"
-	"github.com/yuu-biz/ims-practice/internal/diameter"
 
 	"github.com/fiorix/go-diameter/v4/diam"
 	"github.com/fiorix/go-diameter/v4/diam/dict"
+
+	"github.com/yuu-biz/ims-practice/internal/diameter"
 )
 
 // overTheWire stands for the Diameter connection between two nodes in

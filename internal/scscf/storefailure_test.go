@@ -3,7 +3,6 @@ package scscf
 import (
 	"context"
 	"errors"
-	"github.com/yuu-biz/ims-practice/internal/diameter"
 	"net/netip"
 	"slices"
 	"sync"
@@ -12,6 +11,7 @@ import (
 
 	"github.com/yuu-biz/ims-practice/internal/aka"
 	"github.com/yuu-biz/ims-practice/internal/cx"
+	"github.com/yuu-biz/ims-practice/internal/diameter"
 	"github.com/yuu-biz/ims-practice/internal/hss"
 	"github.com/yuu-biz/ims-practice/internal/ifc"
 	"github.com/yuu-biz/ims-practice/internal/reginfo"

@@ -3,12 +3,13 @@ package sgd
 import (
 	"bytes"
 	"encoding/binary"
-	"github.com/yuu-biz/ims-practice/internal/diameter"
 	"reflect"
 	"testing"
 
 	"github.com/fiorix/go-diameter/v4/diam"
 	"github.com/fiorix/go-diameter/v4/diam/datatype"
+
+	"github.com/yuu-biz/ims-practice/internal/diameter"
 )
 
 func TestReportSMDeliveryStatusRoundTrip(t *testing.T) {

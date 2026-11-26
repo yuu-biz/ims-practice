@@ -3,7 +3,6 @@ package sc_test
 import (
 	"context"
 	"errors"
-	"github.com/yuu-biz/ims-practice/internal/diameter"
 	"io"
 	"log/slog"
 	"reflect"
@@ -11,6 +10,7 @@ import (
 	"time"
 
 	"github.com/yuu-biz/ims-practice/internal/cx"
+	"github.com/yuu-biz/ims-practice/internal/diameter"
 	"github.com/yuu-biz/ims-practice/internal/ipsmgw"
 	"github.com/yuu-biz/ims-practice/internal/sc"
 	"github.com/yuu-biz/ims-practice/internal/sh"

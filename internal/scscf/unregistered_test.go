@@ -1,13 +1,13 @@
 package scscf
 
 import (
-	"github.com/yuu-biz/ims-practice/internal/diameter"
 	"net/netip"
 	"slices"
 	"testing"
 	"time"
 
 	"github.com/yuu-biz/ims-practice/internal/cx"
+	"github.com/yuu-biz/ims-practice/internal/diameter"
 	"github.com/yuu-biz/ims-practice/internal/hss"
 	"github.com/yuu-biz/ims-practice/internal/ifc"
 	"github.com/yuu-biz/ims-practice/internal/sip"

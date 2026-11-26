@@ -3,11 +3,11 @@ package scscf
 import (
 	"context"
 	"fmt"
-	"github.com/yuu-biz/ims-practice/internal/diameter"
 	"log/slog"
 	"time"
 
 	"github.com/yuu-biz/ims-practice/internal/cx"
+	"github.com/yuu-biz/ims-practice/internal/diameter"
 	"github.com/yuu-biz/ims-practice/internal/ims"
 	"github.com/yuu-biz/ims-practice/internal/sip"
 )

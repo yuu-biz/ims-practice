@@ -34,12 +34,12 @@ package smsc
 import (
 	"context"
 	"crypto/rand"
-	"github.com/yuu-biz/ims-practice/internal/diameter"
 	"log/slog"
 	"sync"
 	"sync/atomic"
 	"time"
 
+	"github.com/yuu-biz/ims-practice/internal/diameter"
 	"github.com/yuu-biz/ims-practice/internal/maintenance"
 	"github.com/yuu-biz/ims-practice/internal/sgd"
 )
