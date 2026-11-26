@@ -2,6 +2,7 @@ package pcscf
 
 import (
 	"context"
+	"net"
 	"net/netip"
 	"strconv"
 	"sync/atomic"
@@ -412,6 +413,108 @@ func TestRefusedAnswerOfAReINVITEThatFailsIsReleasedAtOnce(t *testing.T) {
 		t.Errorf("the caller got %s, want the BYE of the release", m.Method)
 	}
 	c.relay.waitHeld(t, 0, time.Second)
+}
+
+// TestProvisionalResponseAfterThe200GoesNoFurther: the caller has the
+// 200 of one dialog, and a 183 of another dialog of the forked INVITE
+// comes, whose answer the relay does not take, as a downstream node that
+// forks may send one late. A proxy forwards no provisional response once
+// it has sent a final one (RFC 3261 16.7 step 5), so the 183 changes
+// nothing: the call of the 200 stays, and a retransmission of that 200
+// goes on to the caller, not to an ACK and a BYE of the P-CSCF.
+func TestProvisionalResponseAfterThe200GoesNoFurther(t *testing.T) {
+	c := newRawINVITE(t)
+	ok := c.response(200)
+	c.st.Respond(ok)
+	if r := final(t, c.ct.Responses(), 3*time.Second); r.StatusCode != 200 {
+		t.Fatalf("the caller got %d, want the 200", r.StatusCode)
+	}
+
+	// The server transaction of the far end sends nothing after its 200,
+	// so the 183 goes to the P-CSCF as a datagram of its own, with the
+	// Via of the INVITE that the far end got.
+	c.relay.refuseModify(agw.Core)
+	other := c.response(183)
+	other.Set("To", c.st.Request.Get("To")+";tag=fork")
+	other.Set("Content-Length", strconv.Itoa(len(other.Body)))
+	conn, err := net.Dial("udp", c.pcscf.LocalAddr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	if _, err := conn.Write(other.Bytes()); err != nil {
+		t.Fatal(err)
+	}
+	// The P-CSCF shows nothing for a 183 that goes no further, so the
+	// 183 gets a moment to come first.
+	time.Sleep(100 * time.Millisecond)
+	c.st.Respond(ok)
+	select {
+	case r := <-c.ct.Responses():
+		if r.StatusCode != 200 {
+			t.Errorf("the caller got %d, want the retransmission of its 200", r.StatusCode)
+		}
+	case <-time.After(3 * time.Second):
+		t.Error("the retransmission of the 200 did not reach the caller")
+	}
+	noRequest(t, "the callee", c.farGot)
+	c.relay.waitHeld(t, 1, 0)
+}
+
+// TestRetransmittedReliable183EndsAReleasedINVITE: another instance has
+// released the early dialog while the caller has a reliable 183. The
+// retransmission of that 183 is the next response to the INVITE, and it
+// ends the INVITE as any response would (TS 24.229 5.2.8.1.1): the
+// caller gets the 500 of lost resources, and the callee a CANCEL.
+func TestRetransmittedReliable183EndsAReleasedINVITE(t *testing.T) {
+	c := newRawINVITE(t)
+	progress := c.reliable(t, 1, coreMedia)
+	key := DialogKey{CallID: c.st.Request.Get("Call-ID"), UETag: tagOf(c.st.Request.Get("From"))}
+	if _, ok, _ := c.store.UpdateDialog(context.Background(), key, func(d *Dialog) {
+		d.Released, d.ReleaseCause = true, ResourcesLost
+	}); !ok {
+		t.Fatal("no dialog after the 183")
+	}
+	c.st.Respond(progress)
+	if r := final(t, c.ct.Responses(), 3*time.Second); r.StatusCode != 500 || r.Get("Reason") == "" {
+		t.Fatalf("the INVITE got %d with Reason %q, want the 500 of lost resources", r.StatusCode, r.Get("Reason"))
+	}
+	select {
+	case <-c.st.Cancelled():
+	case <-time.After(3 * time.Second):
+		t.Fatal("the callee got no CANCEL")
+	}
+}
+
+// TestDelayedRetransmissionOfAnAcknowledgedReliable183GoesNoFurther:
+// the caller has acknowledged a reliable 183 with its PRACK, and the
+// callee has sent the next one (RFC 3262 3). A retransmission of the
+// first that comes late is one that the caller would discard (RFC 3262
+// 4), so the P-CSCF does not pass it on, and keeps only the last
+// reliable response of the dialog to send again.
+func TestDelayedRetransmissionOfAnAcknowledgedReliable183GoesNoFurther(t *testing.T) {
+	c := newRawINVITE(t)
+	first := c.reliable(t, 1, coreMedia)
+	if r := c.prack(t, first, 2, nil); r.StatusCode != 200 {
+		t.Fatalf("the PRACK got %d, want 200", r.StatusCode)
+	}
+	c.reliable(t, 2, coreMedia)
+
+	c.st.Respond(first)
+	deadline := time.After(watch)
+	for done := false; !done; {
+		select {
+		case r := <-c.ct.Responses():
+			if r.Get("RSeq") == "1" {
+				t.Fatal("the caller got the 183 that it has acknowledged again")
+			}
+			if r.StatusCode >= 200 {
+				t.Fatalf("the caller got %d, want the INVITE to go on", r.StatusCode)
+			}
+		case <-deadline:
+			done = true
+		}
+	}
 }
 
 // answerOffers has the far end answer each offer within the dialog of

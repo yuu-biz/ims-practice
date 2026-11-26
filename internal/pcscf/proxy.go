@@ -54,14 +54,17 @@ func (p *PCSCF) proxyInvite(st *sip.ServerTransaction, out *sip.Message, targets
 	// the P-CSCF has sent its BYE in.
 	crossed := map[string]bool{}
 	// sent are the responses that the caller has been sent, as they went:
-	// the reliable provisional ones by reliableID, and the 2xx by To tag.
+	// the last reliable provisional one of each early dialog, and each
+	// 2xx, by To tag. A UAS sends the next reliable provisional response
+	// of a dialog only once the last one has its PRACK (RFC 3262 3), so
+	// only the last one comes again.
 	// The callee sends each again until its PRACK or its ACK comes (RFC
 	// 3262 3, RFC 6026 8.1), and the caller gets each retransmission as
 	// the first one went. An SDP whose version has not changed has to be
 	// the same SDP (RFC 3264 8), and the relay need not be asked again:
 	// a relay that does not take the answer this time would otherwise
 	// leave the SDP that names the far party.
-	sentReliable, sent2xx := map[string]*sip.Message{}, map[string]*sip.Message{}
+	sentReliable, sent2xx := map[string]reliableSent{}, map[string]*sip.Message{}
 	// giveUp gives the INVITE up for why: an error of call.response or the
 	// abortCause of call. Only a session that the network has no
 	// resources for gets the 500 that says so; a dialog released for a
@@ -116,23 +119,29 @@ func (p *PCSCF) proxyInvite(st *sip.ServerTransaction, out *sip.Message, targets
 				provisional = true
 				// 16.7 step 2.
 				timerC.Reset(sip.DefaultTimerC)
-				reliable := reliableID(resp)
-				if first, ok := sentReliable[reliable]; ok && reliable != "" {
-					// A retransmission. The release of the early dialog
-					// still ends the INVITE here, as with any response.
+				rseq, reliable := reliableSeq(resp)
+				tag := tagOf(resp.Get("To"))
+				if last, ok := sentReliable[tag]; reliable && ok && rseq <= last.rseq {
+					// A retransmission, of the last one or, delayed, of one
+					// that the caller has acknowledged already, which the
+					// caller would discard (RFC 3262 4). The release of the
+					// early dialog still ends the INVITE here, as with any
+					// response.
 					if err := call.released(); err != nil {
 						giveUp(err)
 						continue
 					}
-					st.Respond(first.Clone())
+					if rseq == last.rseq {
+						st.Respond(last.response.Clone())
+					}
 					continue
 				}
 				if err := call.response(resp); err != nil {
 					giveUp(err)
 					continue
 				}
-				if reliable != "" {
-					sentReliable[reliable] = resp.Clone()
+				if reliable {
+					sentReliable[tag] = reliableSent{rseq: rseq, response: resp.Clone()}
 				}
 				if err := st.Respond(resp); err == nil {
 					p.sessionSucceeded(st, resp, call.leg)
@@ -229,13 +238,21 @@ func (p *PCSCF) proxyInvite(st *sip.ServerTransaction, out *sip.Message, targets
 	}
 }
 
-// reliableID tells the retransmissions of a reliable provisional
-// response apart from the other responses of its dialog: they have the
-// same To tag and RSeq (RFC 3262 4). It is empty for a response that is
-// not reliable.
-func reliableID(resp *sip.Message) string {
+// reliableSent is the last reliable provisional response of an early
+// dialog that the caller has been sent, and its RSeq.
+type reliableSent struct {
+	rseq     uint32
+	response *sip.Message
+}
+
+// reliableSeq is the RSeq of a reliable provisional response, which tells
+// its retransmissions apart from the other responses of its dialog:
+// they have the same To tag and RSeq (RFC 3262 4). reliable is false for
+// a response that is not reliable, or whose RSeq does not parse.
+func reliableSeq(resp *sip.Message) (rseq uint32, reliable bool) {
 	if !resp.Requires(sip.Option100rel) {
-		return ""
+		return 0, false
 	}
-	return tagOf(resp.Get("To")) + " " + resp.Get("RSeq")
+	rseq, err := sip.ParseRSeq(resp.Get("RSeq"))
+	return rseq, err == nil
 }
