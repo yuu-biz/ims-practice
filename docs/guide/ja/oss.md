@@ -101,8 +101,8 @@ OAM は `201 Created` で答えます。`Location` に購読の URI が、本文
 | 属性 | ここでは | 意味 |
 | --- | --- | --- |
 | `notificationRecipientAddress` | `http://oss:8080/notifications` | OAM が通知を送る先。`oss` サービスが動かす `oss serve` が、ここで受けます。 |
-| `notificationTypes` | 無し。つまり下の 6 つすべて | 送る通知の種類。`oss subscribe -types notifyNewAlarm,notifyClearedAlarm` で一部を選べます。 |
-| `notificationFilter` | 無し | 通知が満たすべき Jex の条件の式（TS 32.161 7.6）。たとえば `contains(href,"ManagedElement=scscf") and perceivedSeverity="CRITICAL"` です。`oss subscribe -filter` で書きます。 |
+| `notificationTypes` | 無し。つまり下の 6 つすべて | 送る通知の種類。`oss subscribe -types notifyNewAlarm,notifyClearedAlarm,notifyAlarmListRebuilt` で一部を選べます。`notifyAlarmListRebuilt` は外さないでください。OSS が変化を受け取り損ねたことを知らせる通知は、これだけです（[通知と、それぞれが来るとき](#通知の種類とそれぞれが来るとき)）。 |
+| `notificationFilter` | 無し | 通知が満たすべき Jex の条件の式（TS 32.161 7.6）。たとえば `(contains(href,"ManagedElement=scscf") and perceivedSeverity="CRITICAL") or notificationType="notifyAlarmListRebuilt"` です。`oss subscribe -filter` で書きます。最後の条件は、一覧全体についての `notifyAlarmListRebuilt` を通すためのものです。この通知の `href` は SubNetwork を指し、`perceivedSeverity` を持ちません。 |
 | `scope` | 無し | どのオブジェクトの通知を送るか。無ければ SubNetwork 全体です。 |
 
 OAM が受けるのは、この 4 つの属性だけです。heartbeat の通知を求める `HeartbeatControl` を持つ購読は、403 と `MODIFICATION_NOT_ALLOWED`、`OBJECT_CREATION_NOT_ALLOWED` で断られます（TS 32.158 6.6.5.4）。OSS が `HeartbeatControl` を作ることに対応するかどうかは producer が選べ（TS 28.622 4.3.21.1）、OAM は対応しないからです。`VsDataContainer` を持つ購読と、`dataNodeSelector` で選ぶ `scope` を持つ購読は、500 と `SERVER_LIMITATION` で断られます。OAM は要求の意味を理解できても、それを実行できないからです（TS 32.158 6.6.4）。ファイルのスキーマに合わない本文は、400 と `NEW_OBJECT_REPRESENTATION_INVALID` で断られます（6.6.4、6.6.5.4）。JSON として読めない本文、ファイルに無い名前（`lastSequenceNo` など）や、ファイルの名前と大文字と小文字だけが違う名前（`heartbeatControl` など）を持つ本文がそうです。スキーマが許さないところに `null` を書いた本文も同じです。`null` を許すのは `id` と `vsData` だけです。`HeartbeatControl`、`VsDataContainer`、`dataNodeSelector` の形がスキーマに合わない本文（`id` の無い `HeartbeatControl` など）も、400 になります。1 つの本文に 400 の問題とほかの問題があれば、OSS が直せる 400 のほうを答えます。`MODIFICATION_NOT_ALLOWED` と `SERVER_LIMITATION` は、正しく書かれ、意味も分かる要求に当てる型だからです（6.6.4）。`HeartbeatControl` と、OAM が実行できない部分の両方を持つ本文には、より根本の理由である 403 を答えます（6.6.5.1）。
@@ -337,6 +337,8 @@ OAM が `ALIGNMENT_REQUIRED` の `notifyAlarmListRebuilt` を送るのは、ほ�
 | 通知がこの OSS に届かなかった。接続できない、5 秒のうちに答えが無い、204 以外が返った | SubNetwork 全体、`http://oam:8080/SubNetwork=ims`。その購読にだけ送る | `indeterminate` |
 
 OAM は通知を送り直しません。届かなかった通知のあと、その OSS にはこの `notifyAlarmListRebuilt` のほかは何も送りません。OAM は、アラームが変わるかどうかに関わらず、OSS が受け取るまで 30 秒ごとにこの通知を送ってみます。受け取ったら、また通知を送るようになり、OSS は一覧を読み直します。ただし、この通知を送っているあいだにアラームが変わったときは、OSS がその変化の前に一覧を読んだかもしれないので、次の回にもう一度送ります。答えない OSS が OAM に課す待ちは 1 回の 5 秒だけで、通知ごとには待たず、ほかの OSS も止めません。
+
+`notificationTypes` か `notificationFilter` で `notifyAlarmListRebuilt` を選ばない購読は、この通知を送らないよう求めたことになります。通知が届かなかったあと、その購読には、次に送ってみるときまで、最長で 30 秒、何も送りません。そのとき OAM は、OSS に知らせずに、届かなかったという記録を消し、また通知を送るようになります。OSS には通知を受け取り損ねた手がかりが無いので、一覧を読み直すべきことが分かりません。
 
 2 台以上のノードが答えないとき、`unreliableAlarmScope` は SubNetwork 全体の `SubNetwork=ims` になります。そのあいだも、通知はノードごとに 2 つずつ届きます。
 
