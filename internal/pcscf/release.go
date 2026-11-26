@@ -200,7 +200,7 @@ func (p *PCSCF) releaseMarked(d Dialog, log *slog.Logger) {
 		// ends the INVITE anyway. Without one, Timer C of that instance
 		// ends it (RFC 3261 16.8). Until then the INVITE goes on without
 		// media through the relay. When that instance has stopped, the
-		// Store forgets the dialog after releasedKeep, which is Timer C,
+		// Store forgets the dialog after releasedKeep, sip.DefaultTimerC,
 		// as no instance takes it. The PCRF sends the events of a session to
 		// the instance that opened it, so the release that comes here is
 		// that of a request within the early dialog that passed another
