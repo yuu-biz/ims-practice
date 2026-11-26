@@ -351,7 +351,13 @@ func TestSubtractingTheLastTerminationDeletesTheContext(t *testing.T) {
 	if _, err := client.AddTermination(t.Context(), c.ID, TerminationRequest{}); !errors.Is(err, ErrNoContext) {
 		t.Errorf("adding to the deleted context got %v, want ErrNoContext", err)
 	}
-	if err := client.Modify(t.Context(), "c0", "t1", TerminationRequest{}); !errors.Is(err, ErrNoContext) {
-		t.Errorf("Modify of an unknown context got %v, want ErrNoContext", err)
+	if err := client.Modify(t.Context(), "c0", "t1", TerminationRequest{}); !errors.Is(err, ErrNoContext) || !errors.Is(err, ErrRejected) {
+		t.Errorf("Modify of an unknown context got %v, want ErrNoContext, rejected by the node", err)
+	}
+	// A request that gets no answer leaves its outcome unknown.
+	gone, cancel := context.WithCancel(t.Context())
+	cancel()
+	if err := client.Modify(gone, c.ID, "t1", TerminationRequest{}); err == nil || errors.Is(err, ErrRejected) {
+		t.Errorf("Modify without an answer got %v, want an error that the node did not answer with", err)
 	}
 }

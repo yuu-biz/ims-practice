@@ -67,6 +67,20 @@ type subtracted struct {
 	ContextDeleted bool        `json:"context_deleted"`
 }
 
+// ErrRejected marks the error with which a media node answered a
+// request, over the control API or in an H.248 Error descriptor. A
+// media node of this project carries out none of a request that it
+// answers with an error, so its controller knows that nothing changed.
+// Any other error, such as a request that got no answer in time, leaves
+// the controller unable to tell whether the node carried it out.
+var ErrRejected = errors.New("agw: the media node rejected the request")
+
+// rejected is an error that a media node answered with (ErrRejected).
+type rejected struct{ error }
+
+func (r rejected) Is(target error) bool { return target == ErrRejected }
+func (r rejected) Unwrap() error        { return r.error }
+
 type apiError struct {
 	Error   string `json:"error"`
 	Message string `json:"message"`
@@ -241,10 +255,10 @@ func (c *Client) do(ctx context.Context, method, path string, in, out any) error
 		raw.ReadFrom(resp.Body)
 		if json.Unmarshal(raw.Bytes(), &e) == nil {
 			if known, ok := errorCodes[e.Error]; ok {
-				return fmt.Errorf("%w: %s %s: %s", known, method, path, e.Message)
+				return rejected{fmt.Errorf("%w: %s %s: %s", known, method, path, e.Message)}
 			}
 		}
-		return fmt.Errorf("agw: %s %s: %s: %s", method, path, resp.Status, bytes.TrimSpace(raw.Bytes()))
+		return rejected{fmt.Errorf("agw: %s %s: %s: %s", method, path, resp.Status, bytes.TrimSpace(raw.Bytes()))}
 	}
 	if out == nil {
 		return nil
