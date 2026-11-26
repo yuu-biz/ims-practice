@@ -5,6 +5,8 @@ import (
 	"context"
 	"errors"
 	"time"
+
+	"github.com/yuu-biz/ims-practice/internal/maintenance"
 )
 
 // This file is the push of TS 29.228 6.6.1 for a change of the settings
@@ -124,10 +126,15 @@ func (h *HSS) ensurePushes(ctx context.Context) error {
 // claimPushes claims the pushes that are due and sends one page of each
 // (pushPage), each on a goroutine of its own, which Close waits for. A
 // node that takes no Diameter connections reaches no S-CSCF, so it
-// claims none and leaves them to the instances that do.
+// claims none and leaves them to the instances that do; so does an
+// instance that the operator has shut down or locked, which takes on no
+// new work and whose connections are closing or closed (maintenance.go).
 func (h *HSS) claimPushes() {
 	peers := h.peers.Load()
 	if peers == nil {
+		return
+	}
+	if m := h.managed.Load(); m != nil && m.AdministrativeState() != maintenance.Unlocked {
 		return
 	}
 	lease := cmp.Or(h.config.PushLease, profilePushLease)
