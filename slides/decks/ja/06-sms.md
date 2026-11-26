@@ -6,7 +6,7 @@ lang: ja
 
 # SMS の流れ
 
-ims-practice 勉強会 第 6 回（SMS over IP。IP-SM-GW、Sh、3 種類の報告）
+ims-practice 勉強会 第 6 回（SMS over IP。IP-SM-GW、SC、3 種類の報告、預かりと知らせ）
 
 ---
 
@@ -20,6 +20,7 @@ ims-practice 勉強会 第 6 回（SMS over IP。IP-SM-GW、Sh、3 種類の報�
 - S-CSCF が、ショートメッセージを IP-SM-GW に渡す方法。
 - メッセージが、もう一方の UE に届くまでの流れ。
 - 送った側と受けた側が、メッセージがどうなったかを知る方法。
+- UE が受け取れないショートメッセージを SC が預かるしくみと、もう一度送るきっかけ。
 - MESSAGE のボディの読み方。
 
 > 手順書 [SMS の流れを追う](../../../docs/guide/ja/sms.md)（`docs/guide/ja/sms.md`）
@@ -54,14 +55,14 @@ ims-practice 勉強会 第 6 回（SMS over IP。IP-SM-GW、Sh、3 種類の報�
 | UE 2 | 172.28.0.101 | 受信者。`+1-202-555-0102`。 |
 | P-CSCF、S-CSCF、I-CSCF | 172.28.0.40、30、20 | MESSAGE を中継する。S-CSCF は iFC を評価する。 |
 | IP-SM-GW | 172.28.0.70 | SMS over IP のアプリケーションサーバー（AS）。 |
-| SC（スタブ） | IP-SM-GW の中 | ショートメッセージを受け取って配達する。 |
-| HSS | 172.28.0.10 | iFC を渡し（Cx）、IP-SM-GW に Sh で答える。 |
+| SC | 172.28.0.71 | サービスセンタ。ショートメッセージを、配達できるか有効期間が切れるまで預かり、配達する。 |
+| HSS | 172.28.0.10 | iFC を渡し（Cx）、IP-SM-GW に Sh で、SC に S6c で答える。 |
 
 - SC のアドレスは `+12025550100`、IP-SM-GW の番号は `+12025550199` です。
 - CSCF は SIP を中継するだけです。ショートメッセージには、SIP と SMS の網の言葉の両方を話すノードが要ります。それが IP-SM-GW です。
-- ここには SMS の網が無いので、SC は IMS の側を本物にしたスタブです。MESSAGE、Sh、報告は、本物の IP-SM-GW が送るものと同じです。すぐに届けられないメッセージは捨てます。蓄積と再送は、インタフェース `ServiceCentre` の後ろに置く部分です。
+- IP-SM-GW は、ショートメッセージを SGd で SC に渡します。UE 宛のものは、SC が SGd で戻します。SC は、宛先をどのノードが担当しているかを S6c で HSS に尋ねます。SMS-SC、SMS-IWMSC、SMS-GMSC は 1 つのノードです。
 
-> 手順書 [「登場するノード」](../../../docs/guide/ja/sms.md#登場するノード) と [「AS が要る理由と SC の役割」](../../../docs/guide/ja/sms.md#as-が要る理由と-sc-の役割)。TS 24.341 5.3.3。TS 23.204 5.2.4。
+> 手順書 [「登場するノード」](../../../docs/guide/ja/sms.md#登場するノード) と [「AS が要る理由と SC の役割」](../../../docs/guide/ja/sms.md#as-が要る理由と-sc-の役割)。TS 24.341 5.3.3。TS 23.204 5.2.4。TS 23.040 4.1、6.1。
 
 ---
 
@@ -126,10 +127,12 @@ docker compose run --rm ue sms -status-report +12025550102 "Hello UE-B, this is 
 ## キャプチャを開く
 
 ```text
-sip.CSeq.method in {"MESSAGE", "REGISTER"} || (sip && ip.addr == 172.28.0.70) || diameter.cmd.code in {302, 306, 307}
+sip.CSeq.method in {"MESSAGE", "REGISTER"} || (sip && ip.addr == 172.28.0.70)
+  || diameter.cmd.code in {302, 306, 307, 8388645, 8388646, 8388647, 8388648, 8388649, 16777214}
 ```
 
-- REGISTER、MESSAGE とその応答、IP-SM-GW の SUBSCRIBE と NOTIFY、LIR、UDR、PUR が残ります。
+- 1 つのフィルタです。Wireshark では 1 行に書きます。
+- REGISTER、MESSAGE とその応答、IP-SM-GW の SUBSCRIBE と NOTIFY、LIR、UDR、PUR が残ります。SGd と S6c の 5 つのコマンドと、このプロジェクト独自の Ready-For-SM も残ります。
 - Wireshark は MESSAGE のボディを自分でデコードします。
   - Info の列の最後に `(RP) RP-DATA (MS to Network)` のように出ます。
   - 詳細に「GSM A-I/F RP」と「GSM SMS TPDU」の木があります。
@@ -251,7 +254,7 @@ sip.CSeq.method in {"MESSAGE", "REGISTER"} || (sip && ip.addr == 172.28.0.70) ||
 
 | 見るもの | 見どころ |
 | --- | --- |
-| UDR | SC が、今度は送信者の番号を調べる。 |
+| SRR と TFR | 手順 12 の TFA が届くと、SC はこの報告をショートメッセージと同じように、送信者の番号へ配達する。 |
 | IP-SM-GW の MESSAGE | UE 1 の tel URI に宛てる。中に SMS-STATUS-REPORT。 |
 | TP-MR | SMS-SUBMIT と同じ値。どのメッセージの報告かが分かる。 |
 | TP-ST | 0x00。受信者がメッセージを受け取った。 |
@@ -265,21 +268,101 @@ sip.CSeq.method in {"MESSAGE", "REGISTER"} || (sip && ip.addr == 172.28.0.70) ||
 
 ---
 
+## A1 から A4。UE 2 がショートメッセージを受け取らず、SC が預かる
+
+UE 2 の制御 API に `PUT /sms-availability` で `{"available": false}` を送り、UE 1 からショートメッセージを送ります。
+
+```ladder
+UE 2, IP-SM-GW, SC, HSS
+SC -> IP-SM-GW: TFR // A1
+IP-SM-GW -> UE 2: MESSAGE SMS-DELIVER // A1
+UE 2 --> IP-SM-GW: 480 // A2
+IP-SM-GW --> SC: TFA absent user // A3
+SC <-> HSS: RDR, RDA // A4
+```
+
+| 手順 | 見どころ |
+| --- | --- |
+| A2 | 480（Temporarily Unavailable）。UE 2 には届いたが、その状態では要求を受けられない。delivery report は来ない。 |
+| A3 | TFA に DIAMETER_ERROR_ABSENT_USER（5550）。IP-SM-GW は UE 2 について自分の UNRI を立てる。 |
+| A4 | `SM-Delivery-Cause` は ABSENT_USER。HSS は SC のアドレスを MWD に入れて UNRI を立て、そのあいだは SRA に serving node を入れない。 |
+
+> 手順書 [「UE 2 がショートメッセージを受け取らない」](../../../docs/guide/ja/sms.md#ue-2-がショートメッセージを受け取らない)。TS 24.341 5.3.3.4.2。TS 29.311 6.1.4.4.1。TS 29.338 7.3.3、5.2.3、5.2.1.3。TS 23.040 2.1.1、3.2.8。
+
+---
+
+## A5 から A9。UE 2 が戻る。Ready-For-SM、知らせ、送り直し
+
+```ladder
+UE 2, IP-SM-GW, SC, HSS
+UE 2 -> IP-SM-GW: MESSAGE // A5
+IP-SM-GW <-> HSS: Ready-For-SM UE_PRESENT, answer // A6
+SC <- HSS: ALR // A7
+SC <-> HSS: SRR, SRA // A8
+SC -> IP-SM-GW -> UE 2: TFR, MESSAGE SMS-DELIVER // A8
+UE 2 -> IP-SM-GW: MESSAGE delivery report // A9
+IP-SM-GW --> SC: TFA 2001 // A9
+```
+
+- **A5.** `{"available": true}` のあと、UE 2 の要求が IP-SM-GW に届けば、UE がそこにいることが分かります。再登録でも同じです（手順書の C1 から C4）。
+- **A6.** Ready-For-SM は、このプロジェクト独自のコマンドで、コードは 16777214 です。実際の網はこの知らせを MAP の READY_FOR_SM で送りますが、このプロジェクトは MAP を話しません。Wireshark は `Unknown` と表示します。
+- **A7.** HSS は UNRI を落とし、MWD のサービスセンタすべてに知らせます。**A8.** 知らせを受けた SC は、1 時間後の再送（`deploy/compose/sc.yaml` の `retry_delays`）を待たずに、すぐ配達します。
+
+> 手順書 [「UE 2 がショートメッセージを受け取らない」](../../../docs/guide/ja/sms.md#ue-2-がショートメッセージを受け取らない) と [「UE 2 が登録し直すだけのとき」](../../../docs/guide/ja/sms.md#ue-2-が登録し直すだけのとき)。TS 23.204 6.5b。TS 29.002 12.4.1。TS 29.338 5.2.2。TS 23.040 3.2.6。
+
+---
+
+## B1 から B8。UE 2 のメモリに空きが無い
+
+`PUT /sms-memory` で `{"full": true}` を送り、UE 1 からショートメッセージを送ります。
+
+| 手順 | 見どころ |
+| --- | --- |
+| B2 | 200 のあとに delivery report。RP-Cause 22（memory capacity exceeded）の RP-ERROR で、TP-FCS は `0xD3`。 |
+| B3 | TFA に DIAMETER_ERROR_SM_DELIVERY_FAILURE（5555）と MEMORY_CAPACITY_EXCEEDED。 |
+| B4 | UE_MEMORY_CAPACITY_EXCEEDED の RDR。HSS は MCEF を立てる。UE には届いており、入れる場所が無いだけなので、UNRI は立てない。 |
+| B5 | `{"full": false}` で、UE 2 は送るべき知らせを送る。MESSAGE に入れた RP-SMMA。 |
+| B6、B7 | UE_MEMORY_AVAILABLE の Ready-For-SM。HSS は MCEF と UNRI を落とし、MWD のサービスセンタに知らせる。 |
+| B8 | 知らせへの RP-ACK を UE 2 に返すのは、HSS が受け取ったあと。 |
+
+フィルタは `diameter.Alert-Reason == 1` です。送り直しは A8 と A9 と同じです。
+
+> 手順書 [「UE 2 のメモリに空きが無い」](../../../docs/guide/ja/sms.md#ue-2-のメモリに空きが無い)。TS 24.011 Table 8.4 part 2、7.3.2。TS 23.040 9.2.3.22、3.2.6。TS 29.338 7.3.8。TS 23.204 6.6。
+
+---
+
+## D1 から D3。再送と、配達の報告
+
+RP-SMMA は途中で失われることがあります。すると MCEF が立ったままになり、UE 2 が登録しても SC には知らせが行きません。ショートメッセージがもう一度送られるのは、SC の再送のときだけです。
+
+| 手順 | 見どころ |
+| --- | --- |
+| D1 | 再送のときの SRR。SRA には IP-SM-GW が返り、MWD-Status のビット 2 の MCEF-Set が立っている。 |
+| D2 | A8 と A9 と同じ配達。TFA は 2001。 |
+| D3 | SUCCESSFUL_TRANSFER の RDR。HSS が印を立てていたので、SC が配達を報告する。HSS は MCEF を落とし、SC のアドレスを MWD から消す。 |
+
+- この網では、再送は 1 時間後です。`internal/ipsmgw/chain_test.go` の `TestARetryAfterAFullMemoryClearsTheFlag` が、再送を 1 秒後にしてこの手順を動かします。
+- 知らせのあとは印がもう落ちているので、A8 の SRA に MCEF-Set は無く、この RDR も続きません。
+
+> 手順書 [「メモリに空きができた知らせが失われたとき」](../../../docs/guide/ja/sms.md#メモリに空きができた知らせが失われたとき)。TS 29.338 5.3.3.8、5.2.3.1、5.3.3.19。TS 23.040 10.1、3.2.6。
+
+---
+
 ## 失敗するとき
 
 | 場合 | 試し方 | UE 1 が受け取るもの |
 | --- | --- | --- |
 | 番号を持つ加入者がいない | `ue sms +12025550198 "Nobody has this number."` | RP-ERROR の submit report。RP-Cause 1、TP-FCS 0xC3。 |
-| 受信者が登録していない | `ue sms -status-report +12025550103 "Are you there?"` | RP-ACK の submit report のあと、TP-ST が 0x62 の status report。 |
+| 受信者が登録していない | `ue sms -status-report +12025550103 "Are you there?"` | RP-ACK の submit report。そのあとはまだ何も来ない。SC がショートメッセージを預かる。 |
 
 - コマンドは `docker compose run --rm` に続けて書きます。
 - どちらも SIP の応答は 202 です。失敗は RP と TP の層で伝わります。
-- 1 つ目は、SC が受け付けません。UDA が DIAMETER_ERROR_USER_UNKNOWN（5001）になります。
-- 2 つ目は、SC は受け付けます。受信者には未登録のときのサービス（MMTel AS の iFC）があるので、LIR は DIAMETER_UNREGISTERED_SERVICE（2003）になり、I-CSCF が S-CSCF を選びます（TS 29.228 6.1.4.1）。その S-CSCF の iFC はどれも MESSAGE に一致しないので、480 を返します（TS 24.229 5.4.3.3）。
+- 1 つ目は、SC が受け付けません。手順 5 の SRA が DIAMETER_ERROR_USER_UNKNOWN（5001）になり、配達は試みません。
+- 2 つ目は、SC は受け付けます。加入者 3 には IP-SM-GW が登録されていないので、SC の SRR には毎回 DIAMETER_ERROR_ABSENT_USER（5550）が返り、HSS は SC のアドレスを MWD に残します。加入者 3 が登録すると、HSS の知らせで配達されます。
 
-フィルタは `gsm_a.rp.cause || gsm_sms.tp-fcs` です。
+フィルタは `gsm_a.rp.cause || gsm_sms.tp-fcs || diameter.cmd.code == 8388647` です。
 
-> 手順書 [「失敗するとき」](../../../docs/guide/ja/sms.md#失敗するとき)。TS 24.011 Table 8.4。TS 23.040 9.2.3.22。TS 24.341 5.3.3.4.2。
+> 手順書 [「失敗するとき」](../../../docs/guide/ja/sms.md#失敗するとき)。TS 24.011 Table 8.4。TS 23.040 9.2.3.22。TS 29.338 5.2.1.3。
 
 ---
 
@@ -335,6 +418,8 @@ sip.CSeq.method in {"MESSAGE", "REGISTER"} || (sip && ip.addr == 172.28.0.70) ||
 | `gsm_sms.tp-da == "12025550102"` | その番号に宛てたショートメッセージ。 |
 | `sip.In-Reply-To` | submit report と delivery report。 |
 | `diameter.cmd.code == 306 \|\| diameter.cmd.code == 307` | Sh のメッセージ。UDR、UDA、PUR、PUA。 |
+| `diameter.applicationId == 16777313` | IP-SM-GW と SC のあいだの SGd。`16777312` は S6c。 |
+| `diameter.cmd.code == 16777214` | このプロジェクト独自のコマンド Ready-For-SM と、その答え。 |
 
 > 手順書 [「Wireshark の表示フィルタ」](../../../docs/guide/ja/sms.md#wireshark-の表示フィルタ) と、[キャプチャの「SMS over IP の表示フィルタ」](../../../docs/guide/ja/capture.md#sms-over-ip-の表示フィルタ)
 
@@ -366,6 +451,8 @@ docker compose --profile phones up -d --build
 | 第三者 REGISTER | `internal/scscf/thirdparty.go` |
 | Accept-Contact の照合 | `internal/scscf/callerprefs.go` |
 | IP-SM-GW | `internal/ipsmgw` の `message.go`、`deliver.go`、`regevent.go`、`store.go` |
+| サービスセンタ | `internal/smsc` の `submit.go`、`deliver.go`、`alert.go`、`store.go` |
+| SGd と S6c | `internal/sgd`、`internal/hss/s6c.go` |
 | SC との境界と、SC のスタブ | `internal/ipsmgw/servicecentre.go`、`internal/sc` |
 | Sh | `internal/sh`、`internal/hss/sh.go` |
 | UE | `internal/ue/sms.go` |
@@ -386,6 +473,7 @@ docker compose --profile phones up -d --build
 4. IP-SM-GW が UE 2 へ送る MESSAGE は、網のどこから入りますか。
 5. delivery report が IP-SM-GW に届くのは、誰の iFC によりますか。
 6. RP-DA の長さが 7、TP-DA の長さが 11 なのは、なぜですか。
+7. UE 2 がショートメッセージを受け取れないとき、誰がそれを持っていますか。そのノードに、もう一度送るきっかけを与えるのは何ですか。
 
 ---
 
@@ -399,6 +487,7 @@ docker compose --profile phones up -d --build
 4. I-CSCF です。I-CSCF が LIR で UE 2 の S-CSCF を見つけます。
 5. UE 2 の iFC です。delivery report は UE 2 が発信する MESSAGE だからです。
 6. RP は長さをオクテットで、TP は桁で数えるからです。
+7. SC が持っており、HSS が SC のアドレスを MWD に残します。UE 2 が戻ったと IP-SM-GW が伝えると、HSS が ALR で SC に知らせます。知らせが無ければ、SC の再送がもう一度送ります。
 
 ---
 
