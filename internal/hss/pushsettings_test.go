@@ -384,6 +384,65 @@ func TestASecondChangeWhileARoundIsMidPage(t *testing.T) {
 	}
 }
 
+// unconnectedSCSCFs is the Diameter server of an instance that the
+// S-CSCF did not connect to: a request to it is not sent (Server.Request).
+type unconnectedSCSCFs struct {
+	mu    sync.Mutex
+	tries int
+}
+
+func (u *unconnectedSCSCFs) Request(context.Context, string, *diam.Message) (*diam.Message, error) {
+	u.mu.Lock()
+	u.tries++
+	u.mu.Unlock()
+	return nil, diameter.ErrPeerUnavailable
+}
+
+// TestAPushGoesThroughTheInstanceTheSCSCFIsConnectedTo: the S-CSCF names
+// one instance of the HSS and connects to it alone, and the round of a
+// change goes to the other instance. That one cannot send the PPRs, and
+// leaves them for the instance with the connection, which sends each
+// once.
+func TestAPushGoesThroughTheInstanceTheSCSCFIsConnectedTo(t *testing.T) {
+	store := settingsStore(t)
+	locks := &ims.UserLocks{}
+	unconnected, api := settingsInstance(t, store, locks)
+	connected, _ := settingsInstance(t, store, locks)
+	ids := []string{impi}
+	serve(t, unconnected, impi, impu, cx.AssignRegistration)
+	for i := range 3 {
+		id := fmt.Sprintf("0010100006%05d@%s", i, realm)
+		addSubscription(t, unconnected, Subscription{PrivateIdentity: id,
+			PublicIdentities: []string{"sip:" + id}, Password: "test-password-connected"})
+		registerInStore(t, unconnected, id)
+		ids = append(ids, id)
+	}
+	tried := &unconnectedSCSCFs{}
+	unconnected.SetPeers(tried)
+	change(t, api, "hss.default_service_profile", "trial")
+	// The connected instance takes on nothing before the round has gone
+	// through the other one, which then has tried every subscriber.
+	roundsDone(t, unconnected)
+	tried.mu.Lock()
+	if tried.tries < len(ids) {
+		t.Errorf("the unconnected instance tried %d PPRs, want %d at least", tried.tries, len(ids))
+	}
+	tried.mu.Unlock()
+
+	scscfs := &fakeSCSCFs{}
+	connected.SetPeers(scscfs)
+	pushed := pushedTo(t, connected, scscfs, len(ids), unconnected.Close)
+	slices.Sort(ids)
+	if got := slices.Sorted(maps.Keys(pushed)); !slices.Equal(got, ids) {
+		t.Errorf("the connected instance pushed to %v, want %v", got, ids)
+	}
+	for id, as := range pushed {
+		if as != settingsTrialAS {
+			t.Errorf("the PPR for %s carried the criteria of %q, want %q", id, as, settingsTrialAS)
+		}
+	}
+}
+
 // TestALockedInstanceLeavesThePushToTheOthers: an instance that the
 // operator has taken out of service takes on no new work, the push of a
 // changed setting included, even when the change reached it: its
