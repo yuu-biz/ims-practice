@@ -268,11 +268,16 @@ func (s *stoppingSCSCFs) Request(ctx context.Context, originHost string, m *diam
 // leases, but it is being sent, and the other instance, which sweeps
 // many times while that PPR waits for its answer, does not make it due
 // again and send the same subscriber.
+//
+// The leases of the first instance are longer than the round has
+// waited, so it never takes the round for stale itself, and the other
+// starts once the first PPR is on its way. So no sweep reads the round
+// as stale just before the claim and makes it due just after, which
+// ends the claim and is another matter (startRound).
 func TestARoundThatIsClaimedLateIsNotTakenOver(t *testing.T) {
 	store := settingsStore(t)
 	locks := &ims.UserLocks{}
-	first, api := settingsInstance(t, store, locks)
-	other, _ := settingsInstance(t, store, locks)
+	first, api := newSettingsInstance(t, store, locks, func(c *Config) { c.PushLease = 2 * time.Hour })
 	serve(t, first, impi, impu, cx.AssignRegistration)
 	change(t, api, "hss.default_service_profile", "trial")
 	p, _, err := store.ProfilePush(t.Context(), ProfileOfOtherUsers)
@@ -298,6 +303,7 @@ func TestARoundThatIsClaimedLateIsNotTakenOver(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("gave up waiting 5 s for the first instance to send")
 	}
+	other, _ := settingsInstance(t, store, locks)
 	other.SetPeers(slow)
 	// The other instance sweeps every few milliseconds, some forty times
 	// in this; the claim of the first lasts far longer.
