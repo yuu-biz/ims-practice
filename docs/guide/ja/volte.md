@@ -660,6 +660,7 @@ docker compose run --rm --entrypoint sipp softphone -sf /etc/sipp/register-aka.x
 | PCRF、TS 29.214 4.4.2、5.3.16 | どの AAR もサービスの情報をすべて含むとみなす。 | P-CSCF は毎回 SDP 全体から情報を作る。 |
 | PCRF、TS 24.008 10.5.6.12 | アドレスのマスクに対応しない。マスクのある Flow-Description は FILTER_RESTRICTIONS で断る。 | スタブの TFT では、パケットフィルタが相手のアドレスをマスク無しで持つ。また、P-CSCF はホストのアドレスしか書かない。 |
 | P-CSCF、TS 29.213 7.3.7 | DRA を使わず、設定した 1 つの PCRF に送る。 | PCRF は EPC スタブのもので、スタブは 1 つのノードとして動き、すべての UE の IP-CAN セッションを持つため。 |
+| P-CSCF、RFC 6733 8.5.2 と 7.1.5 | Rx のクライアントは、P-CSCF が知らないセッションの RAR と ASR にも DIAMETER_SUCCESS で答える。本来の答えは DIAMETER_UNKNOWN_SESSION_ID。そうした ASR のあとも STR を送る。P-CSCF はその知らせのダイアログを見つけられず、ログに残すだけ。 | クライアントは自分の状態を持たず、Session-Id は P-CSCF がダイアログと一緒に持つものを使うため。EPC のスタブの PCRF は、RAA の結果をログに残すだけで、ASA は何も読まない。 |
 | P-CSCF、TS 29.213 Table 6.2.1、6.2.2 | TCP のメディア、b=TIAS に対応しない。ストリームが片方向になったときは、新しい向きのフローだけを残す。 | この網の通話はどれも使わない。 |
 | P-CSCF、TS 29.214 A.1 | AF-Application-Identifier を送るのは着信側の P-CSCF だけ。 | 発信側は Feature-Caps から取るが、それを書くノードが無い。 |
 | P-CSCF、TS 29.214 4.4.2 | サービスの情報の変更を断られても、ログに書くだけ。 | そのときには相手がもう答えている。TS 24.229 が断られた資源を扱うのは最初の INVITE だけ。 |
