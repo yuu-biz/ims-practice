@@ -22,8 +22,8 @@ type MOForwardShortMessageRequest struct {
 	// UserIdentifier is SM-RP-OA: the sender, by IMSI and by MSISDN as
 	// far as the serving node knows them.
 	UserIdentifier UserIdentifier
-	// SMRPUI is SM-RP-UI: the TPDU, an SMS-SUBMIT, of at most MaxSMRPUI
-	// octets.
+	// SMRPUI is SM-RP-UI: the TPDU, an SMS-SUBMIT, of at most 200
+	// octets (TS 29.338 6.3.3.3).
 	SMRPUI []byte
 }
 
@@ -108,7 +108,7 @@ type MTForwardShortMessageRequest struct {
 	// SCAddress is SM-RP-OA: the E.164 number of the SC, as digits only.
 	SCAddress string
 	// SMRPUI is SM-RP-UI: the TPDU, an SMS-DELIVER or an
-	// SMS-STATUS-REPORT, of at most MaxSMRPUI octets.
+	// SMS-STATUS-REPORT, of at most 200 octets (TS 29.338 6.3.3.3).
 	SMRPUI []byte
 	// MMENumberForMTSMS is the E.164 number of the MME, as digits only.
 	// It is present when the request goes to an MME, and empty
