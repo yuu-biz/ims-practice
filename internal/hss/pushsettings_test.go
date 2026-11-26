@@ -291,6 +291,10 @@ func TestARoundThatIsClaimedLateIsNotTakenOver(t *testing.T) {
 	}
 
 	sending, release := make(chan struct{}), make(chan struct{})
+	// A test that fails before it lets the first PPR go lets it go as it
+	// ends, so that the instance stops rather than waits for it.
+	letGo := sync.OnceFunc(func() { close(release) })
+	t.Cleanup(letGo)
 	slow := &fakeSCSCFs{beforePPA: func(n int) {
 		if n == 1 {
 			close(sending)
@@ -308,7 +312,7 @@ func TestARoundThatIsClaimedLateIsNotTakenOver(t *testing.T) {
 	// The other instance sweeps every few milliseconds, some forty times
 	// in this; the claim of the first lasts far longer.
 	time.Sleep(200 * time.Millisecond)
-	close(release)
+	letGo()
 	if pushed := pushedTo(t, first, slow, 1, other.Close); len(pushed) != 1 || pushed[impi] != settingsTrialAS {
 		t.Errorf("the PPRs went to %v, want the ordinary subscriber once", pushed)
 	}
