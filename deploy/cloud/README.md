@@ -159,6 +159,14 @@ Destroy everything as soon as the experiment is over.
 
 4. The next day, check on the cloud's billing page that the charges have stopped.
 
+## What these definitions simplify
+
+The definitions have a `SIMPLIFIED:` comment at each of these places.
+
+| Where | What is left out | Why |
+| --- | --- | --- |
+| The RTP target groups of `aws/load-balancer.tf`, Health checks for Network Load Balancer target groups | A health check of the media relay node. Nothing on that node answers TCP on the RTP ports, so a UDP target group is checked on the TCP port of the P-CSCF on the same node, which shows that the P-CSCF is up, not that the media relay node is. | The two run together on every edge node. |
+
 ## Files
 
 | Path | Contents |
