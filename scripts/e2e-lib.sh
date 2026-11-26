@@ -270,46 +270,90 @@ none() {
 	fi
 }
 
-# guide_filters GUIDE checks the Wireshark display filters that the
-# guide shows its readers: each one must find at least one frame in this
-# scenario's capture. The guides say that this scenario's script checks
-# them, so a filter that finds nothing, and one that tshark cannot read,
-# fail the run. scripts/guide_filters.py holds the rule that reads the
-# filters out of the guide's table and prints them one per line, after
-# the place each comes from.
+# guide_filters GUIDE [CAPTURE ...] checks the Wireshark display
+# filters that the guide shows its readers, against the captures it
+# names, or the one that pcap names. The guides say that this scenario's
+# script checks them. A filter is expected to find a frame in one of the
+# captures; one whose row says "It must find nothing." is expected to
+# find none in any of the captures that none_in names (all of them when
+# it is empty), such as the captures in which the row says so; and one
+# with a placeholder for the reader to fill in, such as "<Call-ID>", only
+# has to be one that tshark can read. A filter that does not do what is
+# expected of it, and one that tshark cannot read, fail the run.
+# scripts/guide_filters.py holds the rule that reads the filters out of
+# the guide's table and prints them one per line, after the place each
+# comes from and what is expected of it.
 #
-# It reads the capture itself rather than through tshark_fields, which
+# It reads the captures itself rather than through tshark_fields, which
 # ends the run on a filter tshark cannot read: here that is one of the
 # findings, and the run goes on to the filters after it. Call it after
 # the checks of the flow, which have waited for the last frames they
 # read; tcpdump writes the frames in the order they crossed the bridge,
 # so every frame before those is in the file too.
 guide_filters() {
-	local guide="$1" filters version where filter frames n
+	local guide="$1" filters version where expect filter frames n found capture unreadable
+	shift
+	local captures=("$@") nothing in
+	[ "${#captures[@]}" -gt 0 ] || captures=("$pcap")
+	read -r -a nothing <<<"${none_in:-${captures[*]}}"
 	if ! filters="$("$python" scripts/guide_filters.py "$guide")"; then
 		echo "FAIL the display filters of $guide could not be read"
 		fail=1
 		return
 	fi
 	version="$(docker compose exec -T capture tshark --version | tr -d '\r' | first_line)"
-	echo "the display filters of $guide, read by the capture image's $version"
-	while IFS=' ' read -r where filter; do
-		# Only what tshark writes to its output is counted. Anything it
-		# says on its error output is not a frame, and shows only when
-		# the filter itself is the trouble.
-		if ! frames="$(frames_passing "$filter" 2>/dev/null)"; then
+	echo "the display filters of $guide, read by the capture image's $version in ${captures[*]}"
+	while IFS=' ' read -r where expect filter; do
+		case "$expect" in
+		none) in=("${nothing[@]}") ;;
+		template) in=("${captures[0]}") ;;
+		*) in=("${captures[@]}") ;;
+		esac
+		found="" unreadable=""
+		for capture in "${in[@]}"; do
+			# Only what tshark writes to its output is counted. Anything
+			# it says on its error output is not a frame, and shows only
+			# when the filter itself is the trouble.
+			if ! frames="$(pcap="$capture" frames_passing "$filter" 2>/dev/null)"; then
+				unreadable="$capture"
+				break
+			fi
+			n="$(awk 'NF { n++ } END { print n + 0 }' <<<"$frames")"
+			if [ "$n" -gt 0 ]; then
+				found="$found $capture: $n frames,"
+			fi
+		done
+		if [ -n "$unreadable" ]; then
 			echo "FAIL $where $filter: tshark cannot read this filter"
-			frames_passing "$filter" 2>&1 >/dev/null | sed 's/^/     /'
+			pcap="$unreadable" frames_passing "$filter" 2>&1 >/dev/null | sed 's/^/     /'
 			fail=1
 			continue
 		fi
-		n="$(awk 'NF { n++ } END { print n + 0 }' <<<"$frames")"
-		if [ "$n" -gt 0 ]; then
-			echo "ok   $where $filter: $n frames"
-		else
-			echo "FAIL $where $filter: matched no frame"
+		case "$expect" in
+		some)
+			if [ -n "$found" ]; then
+				echo "ok   $where $filter:${found%,}"
+			else
+				echo "FAIL $where $filter: matched no frame"
+				fail=1
+			fi
+			;;
+		none)
+			if [ -z "$found" ]; then
+				echo "ok   $where $filter: no frame in ${in[*]}, as the guide says"
+			else
+				echo "FAIL $where $filter: the guide says it finds nothing, but it found${found%,}"
+				fail=1
+			fi
+			;;
+		template)
+			echo "ok   $where $filter: tshark reads it; the reader fills in the placeholder"
+			;;
+		*)
+			echo "FAIL $where $filter: scripts/guide_filters.py expects \"$expect\" of it, which this script does not know"
 			fail=1
-		fi
+			;;
+		esac
 	done <<<"$filters"
 }
 

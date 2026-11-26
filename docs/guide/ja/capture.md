@@ -121,7 +121,7 @@ SMS は SIP の MESSAGE の本文に入れて運びます。本文のメディ�
 | `sip.In-Reply-To` | submit report と delivery report。どちらも、答える相手の MESSAGE を示す。 |
 | `diameter.cmd.code == 306 \|\| diameter.cmd.code == 307` | Sh のメッセージ（アプリケーション 16777217）。UDR と UDA、PUR と PUA。 |
 
-`scripts/e2e-sms.sh` は、送った SMS のフレームの一覧を `e2e-out/sms-ladder.txt` に書き出します。
+`scripts/e2e-sms.sh` は、この表のフィルタをすべて、SMS のシナリオのキャプチャに当てます。フレームが 1 つも見つからないフィルタがあれば、試験は失敗します。送った SMS のフレームの一覧は `e2e-out/sms-ladder.txt` に書き出します。
 
 ## ESP の中の SIP を読む
 

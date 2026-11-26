@@ -654,8 +654,10 @@ none "Diameter between the Service Centre and a node other than the IP-SM-GW or 
 	"diameter && (ip.src == $sc || ip.dst == $sc) && !(ip.addr == $ipsmgw) && !(ip.addr == $hss)"
 
 # Every display filter that the guide shows its readers finds something
-# in this capture.
+# in this capture, and so does every one of the table of SMS over IP in
+# the capture guide.
 guide_filters docs/guide/en/sms.md
+guide_filters docs/guide/en/capture.md
 
 # The ladder of the short messages, the Sh messages and the SGd and S6c
 # messages, Ready-For-SM among them, for the guide and the CI artifact.

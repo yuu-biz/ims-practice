@@ -921,6 +921,11 @@ no_imsi_identity() {
 pcap="$pcap_b" no_imsi_identity "network B's capture"
 pcap="$pcap_nni" no_imsi_identity "the link"
 
+# Every display filter that the guide shows its readers finds something
+# in one of the three captures. The one that finds network A inside the
+# captures of network B and of the link must find nothing there.
+none_in="$pcap_b $pcap_nni" guide_filters docs/guide/en/interconnect.md "$pcap_a" "$pcap_b" "$pcap_nni"
+
 for pcap in "$pcap_a" "$pcap_b" "$pcap_nni"; do
 	none "malformed SIP, SDP, DNS or SMS packets in $pcap" \
 		'(sip || sdp || dns || gsm_sms) && (_ws.malformed || _ws.expert.severity >= warning)'
