@@ -265,48 +265,60 @@ func errorWith(mr uint8, r *Refusal) (sms.RPMessage, error) {
 //
 // Item d names the user by MSISDN, and by the tel URI of
 // P-Asserted-Identity where the IP-SM-GW has no MSISDN; Ready-For-SM
-// takes the number of either. The MSISDN is the one that the
-// third-party REGISTER carried, which the subscription to the user's
-// registration state holds.
+// takes the number of either (numberOf).
 //
 // The RP-ACK follows the answer of the HSS, so that it never tells the
-// UE that a notification got through when it did not. A user without a
-// number, and one that the HSS does not know, gets RP-Cause 30, unknown
-// subscriber (TS 24.011 E4): a number that is allocated to no one. A
-// notification that did not get through otherwise gets RP-Cause 41, a
-// temporary failure that the UE may try again soon (TS 24.011 Table 8.4
-// part 3), as a short message does when the SC cannot be asked (submit).
+// UE that a notification got through when it did not. A notification
+// that did not get through gets an RP-ERROR with the cause that TS
+// 23.040 11.2 gives the return error of ReadyForSM that stands for the
+// answer:
+//
+//   - 30, unknown subscriber, for DIAMETER_ERROR_USER_UNKNOWN
+//     (UnknownSubscriber), and for a user without a number, whom TS
+//     24.011 E4 calls a subscriber whose number is not allocated;
+//   - 69, requested facility not implemented, for
+//     DIAMETER_COMMAND_UNSUPPORTED from an HSS without Ready-For-SM
+//     (FacilityNotSupported);
+//   - 38, network out of order, for any other result (System Failure),
+//     for an HSS that does not answer, and for a Store or an Sh read
+//     that fails before the IP-SM-GW knows the number (a local or lower
+//     layer failure).
 func (g *IPSMGW) memoryAvailable(req *sip.Message, sender string, rp sms.RPSMMA, log *slog.Logger) {
 	ctx := context.Background()
-	refuse := func(cause sms.RPCause) {
+	refuse := func(cause sms.RPCause, why string) {
+		log.Info("memory available notification refused", "reason", why, "rp_cause", int(cause))
 		g.answer(req, sender, sms.RPError{Direction: sms.NetworkToMS, MessageReference: rp.MessageReference, Cause: cause}, log)
 	}
-	msisdn := ""
-	if sub, ok, err := g.subscriptionOfSender(ctx, req); err != nil {
-		log.Warn("the MSISDN of the user was not read: the store failed", "error", err.Error())
+	var sub *RegSubscription
+	found, ok, storeErr := g.subscriptionOfSender(ctx, req)
+	if storeErr != nil {
+		log.Warn("the MSISDN of the user was not read: the store failed", "error", storeErr.Error())
 	} else if ok {
-		msisdn = sub.MSISDN
+		sub = &found
 	}
-	if n, ok := telNumber(req); msisdn == "" && ok {
-		msisdn = n.Digits
-	}
-	if msisdn == "" {
-		log.Info("memory available notification refused: the user has no number")
-		refuse(sms.RPCauseUnknownSubscriber)
+	msisdn, err := g.numberOf(ctx, sub, req)
+	switch {
+	case err != nil:
+		refuse(sms.RPCauseNetworkOutOfOrder, "the MSISDN of the user was not read from the HSS: "+err.Error())
+		return
+	case msisdn == "" && storeErr != nil:
+		refuse(sms.RPCauseNetworkOutOfOrder, "the store that holds the MSISDN of the user failed")
+		return
+	case msisdn == "":
+		refuse(sms.RPCauseUnknownSubscriber, "the user has no number")
 		return
 	}
 	log = log.With("msisdn", msisdn)
 	result, err := g.readyForSM(ctx, msisdn, sgd.AlertReasonUEMemoryAvailable)
 	switch {
 	case err != nil:
-		log.Warn("memory available notification not passed to the HSS", "error", err.Error())
-		refuse(sms.RPCauseTemporaryFailure)
+		refuse(sms.RPCauseNetworkOutOfOrder, "the HSS did not answer: "+err.Error())
 	case result == diameter.Experimental(sgd.DiameterErrorUserUnknown):
-		log.Info("memory available notification for a number the HSS does not know")
-		refuse(sms.RPCauseUnknownSubscriber)
+		refuse(sms.RPCauseUnknownSubscriber, "the HSS does not know the number")
+	case result == diameter.Base(diameter.DiameterCommandUnsupported):
+		refuse(sms.RPCauseRequestedFacilityNotImplemented, "the HSS does not support Ready-For-SM")
 	case !result.Success():
-		log.Warn("memory available notification refused by the HSS", "result", result.String())
-		refuse(sms.RPCauseTemporaryFailure)
+		refuse(sms.RPCauseNetworkOutOfOrder, "the HSS answered "+result.String())
 	default:
 		log.Info("memory available notification passed to the HSS")
 		g.answer(req, sender, sms.RPAck{Direction: sms.NetworkToMS, MessageReference: rp.MessageReference}, log)
