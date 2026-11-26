@@ -557,9 +557,11 @@ type ProfilePush struct {
 	// Done says that the round has sent the PPR of its last subscriber.
 	Done bool
 	// Updated is when the push was last recorded: by the start of its
-	// round, by a PPR, or by its end. A round under way that nothing has
-	// recorded for longer than a claim lasts has no claim on it.
+	// round, by a PPR, or by its end; Claimed is when an instance last
+	// claimed a page of the round. A round under way that neither has
+	// changed for longer than a claim lasts has no claim on it.
 	Updated time.Time
+	Claimed time.Time
 }
 
 // ProfilePushClaim is the right of one instance to go on with the push

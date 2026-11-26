@@ -259,6 +259,41 @@ func (s *stoppingSCSCFs) Request(ctx context.Context, originHost string, m *diam
 	return nil, ctx.Err()
 }
 
+// TestARoundThatIsClaimedLateIsNotTakenOver: a round that no instance
+// could claim for longer than a lease, as when every instance was
+// without its connections, is claimed at last, and its first PPR takes
+// a while. The round is being sent, though nothing has recorded a PPR of
+// it for two leases, and no other instance takes it over and sends the
+// same subscriber.
+func TestARoundThatIsClaimedLateIsNotTakenOver(t *testing.T) {
+	store := settingsStore(t)
+	locks := &ims.UserLocks{}
+	lease := func(c *Config) { c.PushLease = time.Second }
+	first, api := newSettingsInstance(t, store, locks, lease)
+	other, _ := newSettingsInstance(t, store, locks, lease)
+	serve(t, first, impi, impu, cx.AssignRegistration)
+	change(t, api, "hss.default_service_profile", "trial")
+	time.Sleep(1500 * time.Millisecond)
+
+	sending := make(chan struct{})
+	slow := &fakeSCSCFs{beforePPA: func(n int) {
+		if n == 1 {
+			close(sending)
+			time.Sleep(800 * time.Millisecond)
+		}
+	}}
+	first.SetPeers(slow)
+	select {
+	case <-sending:
+	case <-time.After(5 * time.Second):
+		t.Fatal("gave up waiting 5 s for the first instance to send")
+	}
+	other.SetPeers(slow)
+	if pushed := pushedTo(t, first, slow, 1, other.Close); len(pushed) != 1 || pushed[impi] != settingsTrialAS {
+		t.Errorf("the PPRs went to %v, want the ordinary subscriber once", pushed)
+	}
+}
+
 // TestAPushGoesOnWhenItsInstanceStops: an instance that stops in the
 // middle of the push of a changed setting leaves the rest of the push in
 // the store. Another instance on the store goes on with it once the

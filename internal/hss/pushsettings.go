@@ -150,10 +150,13 @@ func (h *HSS) startRounds(ctx context.Context, set *settings) {
 // comes between the two finds the round and sends it, and one that
 // finds none may take the round out of the time index (endRound): the
 // due that follows puts it back. An instance that stops between the two
-// leaves a round that is recorded and never due. No claim updates it,
-// and an instance that claims a round records each PPR within a lease,
-// so a round under way that nothing has recorded for two leases has no
-// claim; startRound makes it due again then.
+// leaves a round that is recorded and never due. An instance records the
+// round as it claims a page of it, and each PPR, within its lease, so a
+// round under way that has been neither claimed nor recorded for two
+// leases has no claim on it; startRound makes it due again then. The
+// times are those of the instances that wrote them, and the instances
+// of a role are taken to keep their clocks within a lease of each
+// other.
 func (h *HSS) startRound(ctx context.Context, source ProfileSource, set *settings) error {
 	name := set.nameFor(source)
 	for range roundStarts {
@@ -168,7 +171,7 @@ func (h *HSS) startRound(ctx context.Context, source ProfileSource, set *setting
 				ProfilePush{Source: source, Name: name, Done: true, Updated: stamp()})
 			return err
 		case recorded && !p.Done:
-			if time.Since(p.Updated) > 2*h.pushLease() {
+			if time.Since(latest(p.Updated, p.Claimed)) > 2*h.pushLease() {
 				return h.store.ScheduleProfilePush(ctx, source, dueNow())
 			}
 			return nil
@@ -196,6 +199,14 @@ func (h *HSS) startRound(ctx context.Context, source ProfileSource, set *setting
 		return nil
 	}
 	return errPushOvertaken
+}
+
+// latest is the later of a and b.
+func latest(a, b time.Time) time.Time {
+	if a.After(b) {
+		return a
+	}
+	return b
 }
 
 // pushLease is the PushLease of the configuration, or profilePushLease.
@@ -399,6 +410,15 @@ func (h *HSS) pushOn(ctx context.Context, peers Peers, source ProfileSource) (ro
 	if err := h.config.CheckServiceProfileName(string(source), p.Name); err != nil {
 		return nil, false, fmt.Errorf("%w: %w", errUnservableRound, err)
 	}
+	// The claim of the page, which tells the other instances that the
+	// round is being sent, and stops an instance whose claim ran out at
+	// its next PPR.
+	claimed := p
+	claimed.Claimed = stamp()
+	if err := h.recordPush(ctx, &p, claimed); err != nil {
+		return nil, false, err
+	}
+	p = claimed
 	ids, nextPage, err := h.store.ListServed(ctx, source, p.After, profilePushPage)
 	if err != nil {
 		return nil, false, err
