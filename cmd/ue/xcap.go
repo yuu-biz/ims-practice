@@ -29,9 +29,9 @@ settings as JSON after the change.
 // userAgent is the User-Agent of the UE's XCAP requests (GSMA IR.92
 // 2.6).
 //
-// SIMPLIFIED: GSMA IR.92 2.6. The value should be built as GSMA PRD
-// RCC.07 C.4.1 says, which this project has not read. It is a plain
-// product token.
+// SIMPLIFIED: GSMA IR.92 2.6. The value should be built by the rules of
+// GSMA PRD RCC.07. It is a plain product token instead: no node of this
+// project acts on the User-Agent.
 const userAgent = "ims-practice-ue"
 
 // xcapClient is the XCAP client of the UE: the XCAP Root URI of

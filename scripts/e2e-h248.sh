@@ -88,8 +88,7 @@ expect "the relay replies with both terminations released" \
 	"$reply && ip.src == $agw && megaco.command == \"Subtract\" && megaco.termid contains \"ip/1/core/\""
 
 echo "nothing went wrong in the H.248"
-# The roadmap's completion condition: Wireshark reads every H.248
-# message of the capture to the end.
+# Wireshark reads every H.248 message of the capture to the end.
 none "malformed H.248" 'megaco && _ws.malformed'
 # A command the relay or the P-CSCF refused carries an Error descriptor
 # (H.248.1 (05/2002) 13). None of the calls of the scenario is refused

@@ -684,7 +684,7 @@ docker compose run --rm --entrypoint sipp softphone -sf /etc/sipp/register-aka.x
 | UE、TS 24.229 6.1.1 | answer の前に bearer を失っても、プリコンディションの表を変えるだけで、通話は網が終わらせる。 | 解放は P-CSCF が行う（5.2.8.1.1）。 |
 | UE、TS 24.229 5.1.3.1、5.1.4A.1 | ダイアログの中のすべての要求の Supported に precondition を入れる。 | すべての通話に 1 つの Supported を使う。プリコンディションを使わない相手は無視する。 |
 | UE、IR.92 3.2.1、RFC 4867 8.3.1 | フレームは符号化したときのモードのまま送り、CMR と mode-set に従わない。 | UE は符号化できない。 |
-| UE、IR.92 2.6 | User-Agent は IR.92 の例に従い、GSMA RCC.07 には従っていない。 | RCC.07 は読んでいない。 |
+| UE、IR.92 2.6 | User-Agent は IR.92 の例に従い、GSMA RCC.07 の規則には従っていない。 | このプロジェクトのノードは、どれも User-Agent によって動きを変えない。 |
 | UE、TS 24.229 9.2.1、5.1.2A.1.1 | `-epc` の無い UE は、P-CSCF のアドレスを設定から取る。P-CSCF の URI はいつも設定から取る。 | ソフトフォンの経路を残すため。P-CSCF は自分の Route をホスト名で見分ける。 |
 | UE、RFC 3264 6.1、RFC 3550 8.2 | UE は相手の SDP のペイロードタイプの番号で送り、新しい SSRC が来ると統計をやり直す。 | この網の UA はどれも offer の番号で答え、相手は唯一の送信元。 |
 | AMR、RFC 4867 4.4 | フレームの CRC、robust sorting、インタリーブ、複数のチャネルに対応しない。 | IR.92 はどれも offer しない。 |

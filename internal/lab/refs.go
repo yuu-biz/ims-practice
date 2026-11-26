@@ -7,7 +7,7 @@ import (
 )
 
 // Ref points a learner at the part of a specification that describes a
-// message. Clause is empty where the repository has not checked one.
+// message: Clause of Spec, which Title describes in a few words.
 type Ref struct {
 	Spec   string `json:"spec"`
 	Clause string `json:"clause"`

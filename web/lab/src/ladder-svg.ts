@@ -139,7 +139,7 @@ export function renderDetail(arrow: Arrow, ladder: Ladder): Node[] {
   };
   const link = inferredLink(first);
   const refs = first.refs.map((ref) =>
-    el("li", {}, `${ref.spec} ${ref.clause === "" ? "(clause unverified)" : ref.clause}${ref.title ? `, ${ref.title}` : ""}`),
+    el("li", {}, `${ref.spec} ${ref.clause}${ref.title ? `, ${ref.title}` : ""}`),
   );
   return [
     el("h3", {}, arrow.summary),

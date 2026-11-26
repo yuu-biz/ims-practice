@@ -8,7 +8,7 @@ export type Direction = "send" | "recv" | "";
 
 export interface SpecRef {
   spec: string;
-  // Empty when the clause has not been verified against the spec.
+  // The clause that describes the message, such as 5.1.1.2.1.
   clause: string;
   title: string;
 }

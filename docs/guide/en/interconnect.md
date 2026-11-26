@@ -392,7 +392,7 @@ The agreement of network A with network B is `deploy/interconnect/profiles/netwo
 
 `IBCF_A_PROFILE` and `IBCF_B_PROFILE` pick another file for an IBCF. Compose then starts that IBCF again with it. The calls in progress through it are lost, since their dialogs were in the process that stopped and the new one has no record of them (see "When an IBCF instance starts again"), so change a profile between calls.
 
-`profiles/example-ttc-jj-90.30.yaml` is an example in the style of a Japanese interconnect, after TTC JJ-90.30. It is not used by any scenario, and its values are unverified ([TS 29.165, GSMA IR.95 and TTC](#ts-29165-gsma-ir95-and-ttc)).
+`profiles/example-ttc-jj-90.30.yaml` is an example in the style of a Japanese interconnect, after TTC JJ-90.30. It is not used by any scenario, and it shows the format of a profile, not the values of the standard ([TS 29.165, GSMA IR.95 and TTC](#ts-29165-gsma-ir95-and-ttc)).
 
 ## When the profiles do not match
 

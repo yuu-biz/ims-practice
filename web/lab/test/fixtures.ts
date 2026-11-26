@@ -52,7 +52,7 @@ const refsBySummary: [string, SpecRef][] = [
   ["PRACK", { spec: "RFC 3262", clause: "4", title: "PRACK" }],
   ["UAR", { spec: "TS 29.228", clause: "6.1.1", title: "UAR" }],
   ["MAR", { spec: "TS 29.228", clause: "6.3", title: "MAR" }],
-  ["SAR", { spec: "TS 29.228", clause: "", title: "SAR" }],
+  ["SAR", { spec: "TS 29.228", clause: "6.1.2", title: "SAR" }],
   ["LIR", { spec: "TS 29.228", clause: "6.1.4", title: "LIR" }],
 ];
 
