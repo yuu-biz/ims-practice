@@ -29,11 +29,15 @@ const conferenceExpires = time.Hour
 
 // inDialogSubscription is a subscription within the dialog of a
 // participant's conference session, which shares that dialog (RFC 6665
-// 4.5.2). Its NOTIFYs go within the dialog, so it lives with the dialog.
+// 4.5.2). Its NOTIFYs go within the dialog, which a BYE of the session
+// does not end while the subscription goes on (RFC 5057 5.5): end tells
+// the SIP stack that the subscription is over, after its last NOTIFY
+// (sip.CallDialog.AddSubscriptionUsage).
 type inDialogSubscription struct {
 	event   string
 	expires time.Time
 	version uint32
+	end     func()
 }
 
 // subscribe is the AS's UAConfig.OnSubscribe: a SUBSCRIBE outside the
@@ -179,10 +183,21 @@ func (f *conference) subscribeInDialog(r *sip.InDialogRequest, p *party) {
 		r.Reject(481)
 		return
 	}
-	if expires == 0 {
+	sub := p.inDialog
+	switch {
+	case expires == 0:
 		p.inDialog = nil
-	} else if p.inDialog == nil {
-		p.inDialog = &inDialogSubscription{event: req.Get("Event")}
+	case sub == nil:
+		end, err := p.leg.AddSubscriptionUsage()
+		if err != nil {
+			// A BYE has ended the session: the participant has left, and
+			// its dialog takes no new subscription.
+			f.mu.Unlock()
+			r.Reject(481)
+			return
+		}
+		sub = &inDialogSubscription{event: req.Get("Event"), end: end}
+		p.inDialog = sub
 	}
 	if p.inDialog != nil {
 		p.inDialog.expires = time.Now().Add(expires)
@@ -195,8 +210,11 @@ func (f *conference) subscribeInDialog(r *sip.InDialogRequest, p *party) {
 		sip.HeaderField{Name: "Expires", Value: strconv.Itoa(int(expires / time.Second))})
 	if expires == 0 {
 		// RFC 6665 4.2.1.4: an unsubscribe ends like an expiry.
+		if sub == nil {
+			sub = &inDialogSubscription{event: req.Get("Event")}
+		}
 		f.mu.Lock()
-		f.notifyInDialog(p, &inDialogSubscription{event: req.Get("Event")}, sip.ReasonTimeout)
+		f.notifyInDialog(p, sub, sip.ReasonTimeout)
 		f.mu.Unlock()
 		return
 	}
@@ -257,15 +275,16 @@ func (f *conference) expired(id sip.DialogID, at time.Time) {
 
 // notify sends the full state of the conference to its subscribers:
 // to the subscription with dialog only, when it is not nil, and to all
-// of them otherwise. A subscriber outside a dialog who has left the
-// conference gets its last NOTIFY with Subscription-State terminated
-// (TS 24.147 5.3.3.3); a subscription within the dialog of a
-// participant who has left has ended already (left). When the
-// conference has ended, every subscription that is left gets its last
-// NOTIFY (5.3.3.4), with reason noresource (RFC 4575 3.3). A subscription past its expiry ends
-// with reason timeout (RFC 6665 4.2.1.4). A NOTIFY that times out, or
-// whose response says that the subscriber has lost the subscription,
-// removes it without a last NOTIFY (RFC 6665 4.2.2).
+// of them otherwise. A subscriber who has left the conference gets its
+// last NOTIFY with Subscription-State terminated (TS 24.147 5.3.3.3),
+// with reason noresource: one outside a dialog, and one within the
+// dialog of a participant that has left, which the BYE of the
+// participant has not ended (RFC 5057 5.5). When the conference has
+// ended, every subscription that is left gets its last NOTIFY
+// (5.3.3.4), with reason noresource (RFC 4575 3.3). A subscription past
+// its expiry ends with reason timeout (RFC 6665 4.2.1.4). A NOTIFY that
+// times out, or whose response says that the subscriber has lost the
+// subscription, removes it without a last NOTIFY (RFC 6665 4.2.2).
 //
 // notify builds the NOTIFYs and leaves them in the outbox of each
 // subscription: it returns before any is sent, and so holds up no
@@ -325,7 +344,7 @@ func (f *conference) notify(only *sip.DialogID) {
 		}
 		reason := ""
 		switch {
-		case f.ended:
+		case f.ended || f.entry(p).Status == confinfo.Disconnected:
 			reason = sip.ReasonNoResource
 		case !now.Before(p.inDialog.expires):
 			reason = sip.ReasonTimeout
@@ -453,7 +472,10 @@ func (f *conference) send(ua *sip.UA, req *sip.Message) (*sip.Message, error) {
 //
 // A NOTIFY that times out, or gets 408 or 481, ends the dialog
 // (RFC 3261 12.2.1.2), which takes the participant out of the
-// conference and the subscription with it.
+// conference and the subscription with it. Once the NOTIFY that ends
+// the subscription has its response, or has failed, the SIP stack no
+// longer keeps the dialog for it: a dialog whose session a BYE has
+// ended then ends too.
 func (f *conference) notifyInDialog(p *party, sub *inDialogSubscription, reason string) {
 	v, err := confinfo.NextVersion(sub.version)
 	if err != nil && reason == "" {
@@ -461,15 +483,24 @@ func (f *conference) notifyInDialog(p *party, sub *inDialogSubscription, reason 
 	}
 	sub.version = v
 	state := sip.SubscriptionState{State: sip.SubscriptionActive, Expires: max(time.Until(sub.expires).Round(time.Second), 0)}
+	ended := func() {}
 	if reason != "" {
 		state = sip.SubscriptionState{State: sip.SubscriptionTerminated, Reason: reason}
 		if p.inDialog == sub {
 			p.inDialog = nil
 		}
+		if stop, ok := f.expiry[p.dialog]; ok && p.inDialog == nil {
+			stop()
+			delete(f.expiry, p.dialog)
+		}
+		if sub.end != nil {
+			ended = sub.end
+		}
 	}
 	body, err := f.record.info().FullState(v).Marshal()
 	leg := p.leg
 	if err != nil || leg == nil {
+		ended()
 		return
 	}
 	f.post(&p.outbox, func() bool {
@@ -481,6 +512,7 @@ func (f *conference) notifyInDialog(p *party, sub *inDialogSubscription, reason 
 		if err != nil {
 			f.log.Info("NOTIFY within the dialog failed", "error", err.Error())
 		}
+		ended()
 		// The BYE of end may wait behind this NOTIFY, and must go: a
 		// NOTIFY that fails drops nothing from the outbox of the dialog.
 		return false

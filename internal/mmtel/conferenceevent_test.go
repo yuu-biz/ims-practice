@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/yuu-biz/ims-practice/internal/confinfo"
+	"github.com/yuu-biz/ims-practice/internal/ims"
 	"github.com/yuu-biz/ims-practice/internal/mmtel"
 	"github.com/yuu-biz/ims-practice/internal/sip"
 )
@@ -429,5 +430,152 @@ func lastNOTIFYWithinADialogBeforeTheBYE(t *testing.T, anonymous bool) {
 	receive(t, in.Done(), "BYE to carol")
 	if bye := in.EndedBy(); bye == nil || bye.Method != sip.BYE {
 		t.Errorf("carol's dialog ended with %v, want the BYE of the focus", bye)
+	}
+}
+
+// TestAParticipantThatLeavesGetsTheLastNOTIFYWithinItsDialog is TS
+// 24.147 5.3.3.3: a participant that subscribed within the dialog of its
+// conference session and leaves with a BYE gets the NOTIFY that ends
+// the subscription in that dialog, once its BYE has had its 200. The
+// BYE ends the session, not the subscription that shares the dialog
+// (RFC 5057 5.5, RFC 6665 4.5.2). Once the participant has answered
+// that NOTIFY, the focus no longer knows the dialog. A participant that
+// joined leaves a conference that goes on, whose other subscribers see
+// it disconnected. The creator ends the conference as it leaves (TS
+// 24.147 5.3.2.7), and its NOTIFY is the last of the conference
+// (5.3.3.4). Either gets reason noresource, as a subscriber outside a
+// dialog that leaves does.
+func TestAParticipantThatLeavesGetsTheLastNOTIFYWithinItsDialog(t *testing.T) {
+	t.Run("joined", func(t *testing.T) {
+		mrfc := startConferenceMRFC(t)
+		as := startAS(t, noServices{}, mmtel.Config{MRFC: "sip:" + contactOf(t, mrfc.ua)})
+		_, focus, notifications := aliceConference(t, as, func(c *sip.IncomingCall) { c.Reject(480) })
+		receive(t, notifications, "first NOTIFY to alice")
+
+		within := make(chan *sip.InDialogRequest, 4)
+		carol := newParticipant(t, as, "carol", func(c *sip.IncomingCall) { c.Reject(480) })
+		inv := joining("carol", focus.URI)
+		inv.OnRequest = func(r *sip.InDialogRequest) { within <- r }
+		in, err := carol.Invite(inv)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := statuses(readAll(t, in)); got[len(got)-1] != 200 {
+			t.Fatalf("carol got %v, want 200", got)
+		}
+		awaitNotification(t, notifications, "with carol connected", func(_ sip.Notification, d confinfo.Document) bool {
+			return statusOf(d)["sip:carol@"+domain] == confinfo.Connected
+		})
+		end := subscribeWithinTheSession(t, in, within, "carol")
+
+		leaveWithTheSubscription(t, as, carol, in, within, "carol", end)
+		n := awaitNotification(t, notifications, "with carol disconnected", func(_ sip.Notification, d confinfo.Document) bool {
+			return statusOf(d)["sip:carol@"+domain] == confinfo.Disconnected
+		})
+		if n.State.State != sip.SubscriptionActive {
+			t.Errorf("alice's subscription is %s once carol left, want active", n.State.State)
+		}
+	})
+	t.Run("creator", func(t *testing.T) {
+		mrfc := startConferenceMRFC(t)
+		as := startAS(t, noServices{}, mmtel.Config{MRFC: "sip:" + contactOf(t, mrfc.ua)})
+		within := make(chan *sip.InDialogRequest, 4)
+		callee := newUA(t, "bob", func(c *sip.IncomingCall) { c.Reject(480) })
+		alice := newParticipant(t, as, "alice", func(c *sip.IncomingCall) { c.Reject(480) })
+		inv := viaAS(t, as, callee, "orig", audio("42000", "sendrecv"))
+		inv.RequestURI, inv.To = ims.ConferenceFactoryURI(domain), ims.ConferenceFactoryURI(domain)
+		inv.OnRequest = func(r *sip.InDialogRequest) { within <- r }
+		conf, err := alice.Invite(inv)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resps := readAll(t, conf)
+		focus, err := sip.ParseNameAddr(resps[len(resps)-1].Get("Contact"))
+		if err != nil {
+			t.Fatalf("alice got %v with Contact %q: %v", statuses(resps), resps[len(resps)-1].Get("Contact"), err)
+		}
+		carol := newParticipant(t, as, "carol", func(c *sip.IncomingCall) { c.Reject(480) })
+		in, err := carol.Invite(joining("carol", focus.URI))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := statuses(readAll(t, in)); got[len(got)-1] != 200 {
+			t.Fatalf("carol got %v, want 200", got)
+		}
+		end := subscribeWithinTheSession(t, conf, within, "alice")
+
+		leaveWithTheSubscription(t, as, alice, conf, within, "alice", end)
+		receive(t, in.Done(), "BYE to carol at the end of the conference")
+	})
+}
+
+// subscribeWithinTheSession subscribes to the conference within the
+// dialog of out, the conference session of user, as a UE does when its
+// SUBSCRIBE outside that dialog gets 403 (TS 24.147 5.3.1.2). The UA of
+// the user keeps the dialog for the subscription until end.
+func subscribeWithinTheSession(t *testing.T, out *sip.OutgoingCall, within <-chan *sip.InDialogRequest, user string) (end func()) {
+	t.Helper()
+	if resp, err := out.Send(sip.SUBSCRIBE, sip.Body{}, sip.HeaderField{Name: "Event", Value: confinfo.EventPackage},
+		sip.HeaderField{Name: "Expires", Value: "600"}); err != nil || resp.StatusCode != 200 {
+		t.Fatalf("SUBSCRIBE within %s's dialog got %v, %v", user, resp, err)
+	}
+	end, err := out.AddSubscriptionUsage()
+	if err != nil {
+		t.Fatal(err)
+	}
+	first := receive(t, within, "first NOTIFY within "+user+"'s dialog")
+	if _, err := first.Accept(sip.Body{}); err != nil {
+		t.Fatal(err)
+	}
+	return end
+}
+
+// leaveWithTheSubscription has user leave the conference with a BYE on
+// out, and checks that the last NOTIFY of its subscription comes within
+// the dialog after that, and that the focus then forgets the dialog.
+func leaveWithTheSubscription(t *testing.T, as testAS, ua *sip.UA, out *sip.OutgoingCall, within <-chan *sip.InDialogRequest, user string, end func()) {
+	t.Helper()
+	d, _ := out.Dialog()
+	if err := out.Bye(); err != nil {
+		t.Fatalf("BYE of %s: %v", user, err)
+	}
+	var last *sip.InDialogRequest
+	for last == nil {
+		r := receive(t, within, "NOTIFY within "+user+"'s dialog after the BYE")
+		if _, err := r.Accept(sip.Body{}); err != nil {
+			t.Fatal(err)
+		}
+		if state, _ := sip.ParseSubscriptionState(r.Request.Get("Subscription-State")); state.State == sip.SubscriptionTerminated {
+			last = r
+		}
+	}
+	end()
+	if state, err := sip.ParseSubscriptionState(last.Request.Get("Subscription-State")); last.Request.Method != sip.NOTIFY ||
+		last.Request.Get("Call-ID") != d.ID.CallID || err != nil || state.Reason != sip.ReasonNoResource {
+		t.Errorf("%s got %s in Call-ID %q with Subscription-State %q, want a NOTIFY in %q that says terminated with reason noresource",
+			user, last.Request.Method, last.Request.Get("Call-ID"), last.Request.Get("Subscription-State"), d.ID.CallID)
+	}
+	if got := statusOf(conferenceDocument(t, last.Request.Body))["sip:"+user+"@"+domain]; got != confinfo.Disconnected {
+		t.Errorf("the last NOTIFY to %s has it %q, want disconnected", user, got)
+	}
+
+	// RFC 3261 12.2.2: a request within a dialog that the focus no
+	// longer knows gets 481. An OPTIONS is answered within any dialog
+	// that it knows (11.2).
+	for deadline := time.Now().Add(5 * time.Second); ; time.Sleep(10 * time.Millisecond) {
+		ct, err := ua.Stack().SendRequest(d.NewRequest(sip.OPTIONS), sip.Destination{Transport: sip.UDP, Addr: as.addr})
+		if err != nil {
+			t.Fatal(err)
+		}
+		var final *sip.Message
+		for resp := range ct.Responses() {
+			final = resp
+		}
+		if final != nil && final.StatusCode == 481 {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("an OPTIONS within %s's dialog still gets %v 5 s after the last NOTIFY, want 481", user, final)
+		}
 	}
 }
