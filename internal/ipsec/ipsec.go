@@ -2,6 +2,10 @@
 // UE and the P-CSCF once IMS AKA has agreed on the security
 // associations (TS 33.203 6.2, 6.3, 7.1, 7.2).
 //
+// The clauses are those of TS 33.203 V20.0.0. HMAC-SHA2-256-128, the one
+// transform set up here, and the derivation of its key in Annex I are in
+// TS 33.203 from Release 19 (V19.0.0) on.
+//
 // One authenticated registration agrees on two pairs of unidirectional
 // security associations, four in all: one pair between the UE's
 // protected client port and the P-CSCF's protected server port, the
