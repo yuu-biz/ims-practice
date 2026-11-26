@@ -111,7 +111,7 @@ func (r ReadyForSMRequest) Message() *diam.Message {
 	begin(m, r.Header)
 	m.AddAVP(r.UserIdentifier.avp())
 	// M and V for both: TS 29.336 Table 6.4.1/1 and TS 29.272 Table
-	// 7.3.1.
+	// 7.3.1/1.
 	m.AddAVP(diameter.VendorAVP(avpIPSMGWNumber, mv, encodeTBCD(r.IPSMGWNumber)))
 	m.AddAVP(diameter.VendorAVP(avpAlertReason, mv, datatype.Enumerated(r.AlertReason)))
 	return m
