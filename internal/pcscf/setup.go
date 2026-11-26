@@ -46,6 +46,10 @@ type setup struct {
 	stored bool
 	// givenUp is true once the P-CSCF has ended the INVITE itself.
 	givenUp bool
+	// foundReleased is true once a response has found the early dialog
+	// released or gone from the Store: whoever did that has freed what it
+	// held (releaseMarked, endDialog).
+	foundReleased bool
 	// ended makes end free what the call holds once.
 	ended sync.Once
 	// abort is closed, and aborted and abortCause set under setupsMu,
@@ -279,8 +283,10 @@ func (s *setup) released() error {
 	case err != nil:
 		return storeError(err)
 	case !ok:
+		s.foundReleased = true
 		return errReleased
 	case d.Released:
+		s.foundReleased = true
 		return releasedFor(d.ReleaseCause)
 	}
 	return nil
@@ -426,8 +432,10 @@ func (s *setup) remember(resp *sip.Message) error {
 		case err != nil:
 			return err
 		case !ok:
+			s.foundReleased = true
 			return errReleased
 		case released:
+			s.foundReleased = true
 			return releasedFor(cause)
 		case confirmed:
 			s.p.measurements.sessions.SetUp(role)
@@ -493,12 +501,13 @@ func (p *PCSCF) abortSetup(d Dialog) bool {
 // a response has created one, and otherwise the relay context and the
 // policy session alone. Only the first call frees them.
 //
-// A call whose dialog the network released has freed them already; the
-// closed abort says so, in case the Store fails and endDialog has only
-// holds to go by.
+// A call whose dialog the P-CSCF released has freed them already: this
+// instance with the abort, which it closed, or another one, whose mark a
+// response found (foundReleased). Either says so, in case the Store
+// fails and endDialog has only holds to go by.
 func (s *setup) end() {
 	s.ended.Do(func() {
-		holds := Dialog{Relay: s.relay, PolicySession: s.session}
+		holds := Dialog{Relay: s.relay, PolicySession: s.session, Released: s.foundReleased}
 		select {
 		case <-s.abort:
 			holds.Released = true

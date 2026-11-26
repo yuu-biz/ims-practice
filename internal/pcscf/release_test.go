@@ -2,6 +2,7 @@ package pcscf
 
 import (
 	"context"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -210,6 +211,63 @@ func TestLostResourcesAtAnotherInstanceKeepThe500WithTheirCause(t *testing.T) {
 	}
 	wantCancelReason(t, in.EndedBy())
 	relay.waitHeld(t, 0, time.Second)
+}
+
+// untakableStore is a MemoryStore whose TakeDialog fails, as a store
+// outside the process does that the P-CSCF cannot reach for a moment.
+// taken is closed at the first call.
+type untakableStore struct {
+	*MemoryStore
+	once  sync.Once
+	taken chan struct{}
+}
+
+func (s *untakableStore) TakeDialog(context.Context, DialogKey) (Dialog, bool, error) {
+	s.once.Do(func() { close(s.taken) })
+	return Dialog{}, false, errUnreachable
+}
+
+// TestReleasedDialogIsNotFreedTwiceWhenTheStoreFails: another instance
+// of the P-CSCF releases the early dialog, and frees its policy session
+// and its relay context. The instance that forwards the INVITE ends it
+// with its next response, and then cannot take the dialog out of the
+// Store. It frees nothing again: the dialog that it found released has
+// freed what it held.
+func TestReleasedDialogIsNotFreedTwiceWhenTheStoreFails(t *testing.T) {
+	pcrf, relay := &fakePolicy{}, newFakeRelay()
+	store := &untakableStore{taken: make(chan struct{})}
+	h := newCallHarness(t, harnessConfig{
+		relay:       relay,
+		association: func(a *Association) { a.SignallingSession = "signalling" },
+		configure:   func(p *PCSCF) { p.SetPolicyControl(pcrf) },
+		wrap: func(m *MemoryStore) Store {
+			store.MemoryStore = m
+			return store
+		},
+	})
+	out, in := h.call()
+	if err := in.Progress(183, answerTo(t, in.Request, coreMedia)); err != nil {
+		t.Fatal(err)
+	}
+	other, _ := h.instance()
+	other.PolicyEvent(policy.Event{Session: "session-1", Kind: policy.LossOfBearer})
+	pcrf.waitReleased(t, "session-1")
+	relay.waitHeld(t, 0, time.Second)
+
+	go in.Progress(180, sip.Body{})
+	answered(t, out, 500)
+	select {
+	case <-store.taken:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the P-CSCF did not try to take the dialog out of the Store")
+	}
+	// What end frees, it frees right after its TakeDialog.
+	for deadline := time.Now().Add(watch); time.Now().Before(deadline); time.Sleep(10 * time.Millisecond) {
+		if got := pcrf.releases(); len(got) != 1 {
+			t.Fatalf("released the policy sessions %v, want session-1 once", got)
+		}
+	}
+	relay.noStrays(t, "the relay")
 }
 
 // interleavingStore is a MemoryStore that runs another write, once, right
