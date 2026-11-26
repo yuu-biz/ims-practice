@@ -171,12 +171,11 @@ SMS over IP に加えて、IMS を通らない NAS の経路でも SMS を届け
 
 ## 未決事項
 
-決まった論点は設計の記録に移しました。実装の言語と自作する範囲は [implementation.md](design/implementation.md)、UE の用意の仕方は [ue-simulator.md](design/ue-simulator.md)、メディア中継ノードの制御は [media-control.md](design/media-control.md)、ホストとコンテナのあいだの通信は [environment-capture.md](design/environment-capture.md)、音声コーデックと AMR の実装の方法は [codecs.md](design/codecs.md)、ダッシュボードの作りは [lab-oam.md](design/lab-oam.md) にあります。
+決まった論点は設計の記録に移しました。実装の言語と自作する範囲は [implementation.md](design/implementation.md)、UE の用意の仕方は [ue-simulator.md](design/ue-simulator.md)、メディア中継ノードの制御は [media-control.md](design/media-control.md)、ホストとコンテナのあいだの通信は [environment-capture.md](design/environment-capture.md)、音声コーデックと AMR の実装の方法は [codecs.md](design/codecs.md)、ダッシュボードの作りは [lab-oam.md](design/lab-oam.md)、最初のアクセス網（EPC のスタブ）は [volte-access.md](design/volte-access.md) にあります。
 
 次の論点は決めていません。決まるまでは、それぞれに書いた案で進めます。
 
 - **Diameter のトランスポート。** TCP を使っています。Docker Desktop（Windows、macOS）では SCTP が使えない場合があるためです。実網は SCTP が多いことを手順書に書きます。
-- **最初のアクセス網。** EPC（4G）のスタブから始め、5GC はそのあとにします。公開されている解説資料が多く、Diameter で一貫して見られるためです。
 - **EVS の実装と、コーデックの特許の扱い。** EVS の実装の方法は、利用条件と特許の扱いを確かめてから、VoNR を作るときに決めます。3GPP の参照コードにはオープンソースのライセンスが付いていないためです。AMR と AMR-WB については、公開されている資料で読み取れたことと読み取れなかったことを [codecs.md](design/codecs.md) に書きました。AMR と AMR-WB は符号化済みのフレームを使うので、製品は AMR と AMR-WB の符号化と復号の実装を含みません。
 
 ## 参照する主な仕様
