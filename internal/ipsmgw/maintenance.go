@@ -37,8 +37,9 @@ import (
 //     5.3.3.2). A 503 to it would lose what it says until the next one
 //     comes, and leave the HSS with an SMSRegistrationInfo that no
 //     longer holds;
-//   - every delivery that the SC hands it (Deliver). The SC in this node
-//     asks this instance only for what this instance began: the
+//   - every delivery that the stub of the SC in this node hands it
+//     (Deliver, servicecentre.go). The stub asks this instance only for
+//     what this instance began: the
 //     SMS-DELIVER of a short message it took from a UE, the
 //     SMS-STATUS-REPORT of a delivery it ended, and the short message of
 //     another IMS network that it took in a MESSAGE;
@@ -105,8 +106,9 @@ import (
 //   - a MESSAGE of the originating case ends there, since its
 //     criterion says SESSION_TERMINATED: no other node can take a short
 //     message that a user sends, and the PSI of the SC that the UE
-//     addressed (TS 24.341 5.3.1.2 item a) has no node of its own,
-//     because the SC sits inside the node of the IP-SM-GW
+//     addressed (TS 24.341 5.3.1.2 item a) has no SIP node of its own:
+//     the stub of the SC sits inside the node of the IP-SM-GW, and the
+//     SC node of the sc role takes short messages only over SGd
 //     (servicecentre.go). The S-CSCF answers with the response of the
 //     IP-SM-GW (TS 24.229 5.4.3.2), which as a proxy it turns from 503
 //     into 500 (RFC 3261 16.7 step 6), so the Retry-After stays between
@@ -135,15 +137,16 @@ const retryAfter = 30
 // It cannot work while no instance of the HSS takes its Sh requests,
 // which hssAvailable tells: a NOTIFY of a reg event subscription is of
 // no use unless the IP-SM-GW can write SMSRegistrationInfo (TS 24.341
-// 5.3.3.2), and the SC beside it asks the HSS over Sh which user has
-// the number a short message is for, so without the HSS no short
-// message is delivered either.
+// 5.3.3.2), and the stub of the SC, where this node runs one, asks the
+// HSS over Sh which user has the number a short message is for, so
+// without the HSS no short message is delivered either.
 //
-// The SC is no part of the operational state here: it runs in this
+// The SC is no part of the operational state. The stub runs in this
 // process, behind ServiceCentre, so there is no association with it
-// whose state could be reported. A node that reached a real SC over SGd
-// or MAP would report DISABLED while that link was down, since the
-// IP-SM-GW passes every short message either way through it.
+// whose state could be reported. The SC node that SMSIWMSC reaches over
+// SGd is not followed either: while no instance of it answers, the
+// IP-SM-GW stays ENABLED and answers the short message of each UE with
+// an RP-ERROR of cause 41 (message.go).
 //
 // Its users are what this instance has in its hands and has not
 // finished:

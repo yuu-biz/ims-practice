@@ -7,16 +7,19 @@ import (
 	"github.com/yuu-biz/ims-practice/internal/sms"
 )
 
-// This file is the boundary between the IP-SM-GW and the SC, so
-// that a real SC can replace the stub here. In a network the IP-SM-GW reaches the SC through an
-// SMS-IWMSC for a short message from a UE and is reached through an
-// SMS-GMSC for one to a UE, over MAP or over SGd (TS 23.204 5.2.4).
-// What crosses the boundary either way is a TPDU and the addresses
-// around it, and that is what the two calls below carry: Submit is
-// MO-Forward-Short-Message, and Deliver with Report is
-// MT-Forward-Short-Message and its answer. The SC stub of package sc
-// implements ServiceCentre; a Diameter client of SGd (TS 29.338) could
-// replace it.
+// This file is the boundary between the IP-SM-GW and the SC. In a
+// network the IP-SM-GW reaches the SC through an SMS-IWMSC for a short
+// message from a UE and is reached through an SMS-GMSC for one to a UE,
+// over MAP or over SGd (TS 23.204 5.2.4). What crosses the boundary
+// either way is a TPDU and the addresses around it: Submit is
+// MO-Forward-Short-Message, and IPSMGW.Deliver with Report is
+// MT-Forward-Short-Message and its answer.
+//
+// Two SCs implement ServiceCentre. The stub of package sc sits in the
+// process of the IP-SM-GW and calls Deliver itself. SMSIWMSC
+// (smsiwmsc.go) reaches the SC node of the sc role over SGd: Submit
+// sends an OFR, and a short message for a UE arrives in a TFR instead
+// of through Deliver (sgd.go).
 
 // ServiceCentre is the SC as the IP-SM-GW sees it.
 type ServiceCentre interface {
