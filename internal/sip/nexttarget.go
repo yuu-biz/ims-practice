@@ -33,7 +33,7 @@ var errNoTarget = errors.New("sip: no target for the request")
 // each request starts again at the first target. Only a node that the
 // operator has shut down or locked answers 503 with Retry-After. The
 // P-CSCF answers so only to a REGISTER, which comes from a UE that
-// knows no other P-CSCF and waits the time of Retry-After itself before
+// uses no other P-CSCF and waits the time of Retry-After itself before
 // it registers again. A request that goes to such an I-CSCF, S-CSCF,
 // MMTel AS, MRFC or IP-SM-GW first all the same gets its 503 and goes
 // on to the next target, one round trip later.
