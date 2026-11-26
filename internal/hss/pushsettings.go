@@ -117,11 +117,13 @@ const roundStarts = 10
 
 // startRounds starts a round of the push of each source for set, the
 // settings of the Store, where one is due (startRound). A failure is
-// logged and nothing more: every instance asks again at its next sweep.
+// logged and nothing more: every instance asks again at its next sweep,
+// which starts a round that is not recorded yet, and makes due a round
+// that is recorded and not due once two leases have passed (startRound).
 func (h *HSS) startRounds(ctx context.Context, set *settings) {
 	for _, source := range profilePushSources {
 		if err := h.startRound(ctx, source, set); err != nil && ctx.Err() == nil {
-			h.log.Warn("the round of the push of the changed setting was not started; the next sweep starts it",
+			h.log.Warn("the round of the push of the changed setting was not started, or not made due; a sweep starts it, or makes it due once it has been neither claimed nor recorded for two leases",
 				"profile_source", string(source), "error", err.Error())
 		}
 	}
