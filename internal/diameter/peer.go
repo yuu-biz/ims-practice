@@ -696,6 +696,14 @@ type connected struct {
 
 // Listen starts accepting connections on address, e.g. ":3868" (RFC
 // 6733 2.1).
+//
+// SIMPLIFIED: TS 29.229 5.4 and TS 29.329 5. Cx, and Sh by the clause
+// of TS 29.329 that applies those of TS 29.229 to it, are to run over
+// SCTP. Here every Diameter connection runs over TCP, as Peer.dial
+// opens it: RFC 6733 2.1 lets the base protocol run over either, and
+// TCP works on every machine that runs the containers of this project,
+// which SCTP does not. Rx leaves nothing out this way, as TS 29.214 5.2
+// leaves its connections to the base protocol.
 func (n *Node) Listen(address string) (*Server, error) {
 	ln, err := net.Listen("tcp", address)
 	if err != nil {

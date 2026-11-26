@@ -366,6 +366,14 @@ func fromOpen(s State, e Event) (State, []Action) {
 	case RcvDPR:
 		s.Phase = Closing
 		// RFC 6733 5.4.3: only REBOOTING invites the peer to reconnect.
+		//
+		// SIMPLIFIED: RFC 6733 5.4.3. A receiver of BUSY or
+		// DO_NOT_WANT_TO_TALK_TO_YOU should not attempt to reconnect,
+		// and the clause sets no time after which it may. Here the
+		// initiator never connects to that peer again until its process
+		// starts anew, however long the peer has been ready. The nodes
+		// of this project send REBOOTING only, so the case comes up only
+		// with a peer of another implementation.
 		s.Reconnect = s.Reconnect && e.Cause == Rebooting
 		return s, []Action{SendDPA{Request: e.Request}, SetTimer{Timer: TimerAnswer}}
 	case Timeout:
