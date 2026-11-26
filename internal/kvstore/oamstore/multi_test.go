@@ -129,6 +129,10 @@ func (r *recipient) next(t *testing.T, waitingFor string) map[string]any {
 type link struct {
 	server *httptest.Server
 	broken atomic.Bool
+	// waitsBroken breaks the requests that wait for an event alone, as
+	// a middlebox that closes a connection that carries nothing for a
+	// while.
+	waitsBroken atomic.Bool
 }
 
 func newLink(t *testing.T, n *node) *link {
@@ -136,7 +140,7 @@ func newLink(t *testing.T, n *node) *link {
 	l := &link{}
 	h := n.node.Handler()
 	l.server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
-		if !l.broken.Load() {
+		if !l.broken.Load() && (!l.waitsBroken.Load() || req.URL.Query().Get("wait") == "") {
 			h.ServeHTTP(w, req)
 			return
 		}
@@ -626,49 +630,58 @@ func TestAnInstanceThatCannotReachANodeHandsItsWatchOver(t *testing.T) {
 }
 
 // TestTheWatchOfANodeThatNoInstanceReachesStays: no instance reaches the
-// node. Each may try it, and then the last one to take the watch keeps
+// node, as the node answers no request, or none that waits for an
+// event. Each may try it, and then the last one to take the watch keeps
 // it, rather than hand it round the instances while the node is away.
 func TestTheWatchOfANodeThatNoInstanceReachesStays(t *testing.T) {
+	breaks := map[string]func(*link){
+		"every request":          func(l *link) { l.broken.Store(true) },
+		"the requests that wait": func(l *link) { l.waitsBroken.Store(true) },
+	}
 	for _, backend := range storetest.Backends() {
-		t.Run(backend.Name, func(t *testing.T) {
-			c := newCluster(t, backend, "scscf")
-			first := c.start(t, "oam-1")
-			second := c.start(t, "oam-2")
-			c.until(t, nil)
-			c.watched(t)
-			first.links["scscf"].broken.Store(true)
-			second.links["scscf"].broken.Store(true)
+		for name, breakLink := range breaks {
+			t.Run(backend.Name+"/"+name, func(t *testing.T) { noInstanceReaches(t, backend, breakLink) })
+		}
+	}
+}
 
-			// A watch that went round would raise the generation at each
-			// take. The node misses three requests, a second apart, before
-			// its watcher hands it over, so the generation stays for twice
-			// that once the watch has stopped moving.
-			store := oamstore.New(c.kv, c.cfg)
-			generation := func() uint64 {
-				st, err := store.AlarmWatchState(context.Background(), "scscf")
-				if err != nil {
-					t.Fatal(err)
-				}
-				return st.Generation
-			}
-			// Both instances find that they cannot reach the node within a
-			// few seconds; the deadline leaves twice waitFor for it, for a
-			// loaded machine.
-			const still = 6 * time.Second
-			deadline := time.Now().Add(2*waitFor + still)
-			for last, since := generation(), time.Now(); time.Since(since) < still; {
-				if time.Now().After(deadline) {
-					t.Fatalf("the generation of the watch still moved after %v, up to %d", 2*waitFor, last)
-				}
-				time.Sleep(100 * time.Millisecond)
-				if g := generation(); g != last {
-					last, since = g, time.Now()
-				}
-			}
-			if holders := c.holders(t); holders["scscf"] == "" {
-				t.Errorf("no instance holds the watch of scscf: %v", holders)
-			}
-		})
+func noInstanceReaches(t *testing.T, backend storetest.Backend, breakLink func(*link)) {
+	c := newCluster(t, backend, "scscf")
+	first := c.start(t, "oam-1")
+	second := c.start(t, "oam-2")
+	c.until(t, nil)
+	c.watched(t)
+	breakLink(first.links["scscf"])
+	breakLink(second.links["scscf"])
+
+	// A watch that went round would raise the generation at each
+	// take. The node misses three requests, a second apart, before
+	// its watcher hands it over, so the generation stays for twice
+	// that once the watch has stopped moving.
+	store := oamstore.New(c.kv, c.cfg)
+	generation := func() uint64 {
+		st, err := store.AlarmWatchState(context.Background(), "scscf")
+		if err != nil {
+			t.Fatal(err)
+		}
+		return st.Generation
+	}
+	// Both instances find that they cannot reach the node within a
+	// few seconds; the deadline leaves twice waitFor for it, for a
+	// loaded machine.
+	const still = 6 * time.Second
+	deadline := time.Now().Add(2*waitFor + still)
+	for last, since := generation(), time.Now(); time.Since(since) < still; {
+		if time.Now().After(deadline) {
+			t.Fatalf("the generation of the watch still moved after %v, up to %d", 2*waitFor, last)
+		}
+		time.Sleep(100 * time.Millisecond)
+		if g := generation(); g != last {
+			last, since = g, time.Now()
+		}
+	}
+	if holders := c.holders(t); holders["scscf"] == "" {
+		t.Errorf("no instance holds the watch of scscf: %v", holders)
 	}
 }
 

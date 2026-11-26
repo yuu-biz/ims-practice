@@ -291,9 +291,8 @@ func (nb *northbound) planEvents(node string, st AlarmWatchState, ev maintenance
 // the instances that have not said so take it, beyond their share if
 // need be, and keep it when they give watches up for their share. At
 // each round the instance asks each node that it cannot reach and does
-// not watch for its events, as a watcher would but without the wait
-// (probe), and once the node answers it no longer says that it cannot
-// reach it. When every instance present says that it cannot reach the
+// not watch for its events, with the request of a watcher (probe), and
+// once the node answers it no longer says that it cannot reach it. When every instance present says that it cannot reach the
 // node, as when the node is down, the watcher keeps the watch, so that
 // it does not go round the instances.
 //
@@ -473,24 +472,46 @@ func giveUp(watching map[string]chan struct{}, share int, keep func(node string)
 const handOverAfter = 3
 
 // probe asks each node of nodes for its events after the last one that
-// its state says was sent, with no wait, as a watcher would ask it, and
-// returns the names of the nodes that answered.
+// its state says was sent, at most NodeConcurrency nodes at once, with
+// the request of a watcher (alarmEvents), and returns the names of the
+// nodes that answered. A request that differed, as one without the wait,
+// could be answered by a node that leaves the requests of its watcher
+// unanswered, and the watch would go round the instances.
 func (s *Server) probe(ctx context.Context, nodes []Endpoint) []string {
-	f := fanOut(ctx, s, nodes, func(ctx context.Context, c *maintenance.Client, e Endpoint) (struct{}, error) {
-		st, err := s.watches.AlarmWatchState(ctx, e.Name)
-		if err != nil {
-			return struct{}{}, err
-		}
-		_, err = c.AlarmEvents(ctx, maintenance.AlarmEventsQuery{After: st.LastNumber})
-		return struct{}{}, err
-	})
-	var answered []string
-	for _, r := range f.Nodes {
-		if r.Error == nil {
-			answered = append(answered, r.Node)
-		}
+	var (
+		mu       sync.Mutex
+		answered []string
+		wg       sync.WaitGroup
+	)
+	sem := make(chan struct{}, s.nodeConcurrency)
+	for _, e := range nodes {
+		wg.Go(func() {
+			sem <- struct{}{}
+			defer func() { <-sem }()
+			st, err := s.watches.AlarmWatchState(ctx, e.Name)
+			if err != nil {
+				return
+			}
+			if _, err := s.alarmEvents(ctx, maintenance.NewClient(e.URL, s.httpClient), st.LastNumber); err != nil {
+				return
+			}
+			mu.Lock()
+			answered = append(answered, e.Name)
+			mu.Unlock()
+		})
 	}
+	wg.Wait()
 	return answered
+}
+
+// alarmEvents asks the node of client for the events after the number
+// after, which it waits up to AlarmEventsWait for, within that wait and
+// NodeTimeout. A node that does not answer it within them, or answers
+// with another status than 200, is a node that does not answer.
+func (s *Server) alarmEvents(ctx context.Context, client *maintenance.Client, after uint64) (maintenance.AlarmEvents, error) {
+	ctx, done := context.WithTimeout(ctx, s.alarmEventsWait+s.nodeTimeout)
+	defer done()
+	return client.AlarmEvents(ctx, maintenance.AlarmEventsQuery{After: after, Wait: s.alarmEventsWait})
 }
 
 // watchNode sends the notifications of the node e while it holds the
@@ -577,9 +598,7 @@ func (s *Server) watchNode(ctx context.Context, e Endpoint, w AlarmWatch, releas
 		}
 	}()
 	for unanswered := 0; pollCtx.Err() == nil; {
-		callCtx, done := context.WithTimeout(pollCtx, s.alarmEventsWait+s.nodeTimeout)
-		ev, err := client.AlarmEvents(callCtx, maintenance.AlarmEventsQuery{After: st.LastNumber, Wait: s.alarmEventsWait})
-		done()
+		ev, err := s.alarmEvents(pollCtx, client, st.LastNumber)
 		if pollCtx.Err() != nil {
 			return
 		}
