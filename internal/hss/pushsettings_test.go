@@ -770,8 +770,9 @@ func TestAPPRNoInstanceCanSendIsGivenUp(t *testing.T) {
 // TestARoundNoInstanceCanServeIsGivenUp: the only instance whose
 // configuration defines the profile video names it for every
 // subscription and stops before it sends a PPR of it. The other instance
-// cannot send the round, and leaves it to another until the time of the
-// retries has passed since the round began; then it gives the round up.
+// cannot send the round, and leaves it to another until the round has
+// stood still, since it began, for the time of the retries; then it
+// gives the round up.
 // So the correction that the operator makes, back to default, which came
 // while the round was under way, is pushed.
 func TestARoundNoInstanceCanServeIsGivenUp(t *testing.T) {
@@ -796,6 +797,98 @@ func TestARoundNoInstanceCanServeIsGivenUp(t *testing.T) {
 	}
 	if pushed := pushedTo(t, other, scscfs, 1); len(pushed) != 1 || pushed[impi] != settingsDefaultAS {
 		t.Errorf("the PPRs went to %v, want the ordinary subscriber with the default criteria", pushed)
+	}
+}
+
+// gatedStore is the store of an instance that claims the rounds of the
+// pushes only while open. With claimed, it is the store of an instance
+// that claims one round and none after it: claimed is closed then.
+type gatedStore struct {
+	*MemoryStore
+	open    atomic.Bool
+	claimed chan struct{}
+	once    sync.Once
+}
+
+func (s *gatedStore) ClaimProfilePushes(ctx context.Context, now time.Time, lease time.Duration, limit int) ([]ProfilePushClaim, error) {
+	if !s.open.Load() {
+		return nil, nil
+	}
+	claims, err := s.MemoryStore.ClaimProfilePushes(ctx, now, lease, limit)
+	if len(claims) > 0 && s.claimed != nil {
+		s.open.Store(false)
+		s.once.Do(func() { close(s.claimed) })
+	}
+	return claims, err
+}
+
+// TestARoundThatOutlastsTheTimeOfTheRetriesGoesOn: the round of a
+// profile that one instance alone defines takes longer than the time of
+// the retries, as a round of many pages does, or one towards a slow
+// S-CSCF. Between two of its pages the instance that does not define the
+// profile claims the round. The round has been moving all along, so that
+// instance leaves it to the other and does not give it up, and every
+// subscriber gets the profile.
+func TestARoundThatOutlastsTheTimeOfTheRetriesGoesOn(t *testing.T) {
+	const retryTime = 300 * time.Millisecond
+	const videoAS = "sip:video." + realm + ":5060"
+	memory := settingsStore(t)
+	locks := &ims.UserLocks{}
+	serving := &gatedStore{MemoryStore: memory}
+	serving.open.Store(true)
+	lacking := &gatedStore{MemoryStore: memory, claimed: make(chan struct{})}
+	short := func(c *Config) { c.PushRetryTime = retryTime }
+	video, videoAPI := newSettingsInstance(t, serving, locks, func(c *Config) {
+		short(c)
+		c.ServiceProfiles = maps.Clone(c.ServiceProfiles)
+		c.ServiceProfiles["video"] = ServiceProfile{Criteria: []ifc.InitialFilterCriteria{profileCriterion(videoAS)}}
+	})
+	other, _ := newSettingsInstance(t, lacking, locks, short)
+	serve(t, video, impi, impu, cx.AssignRegistration)
+	want := []string{impi}
+	for i := range profilePushPage {
+		id := fmt.Sprintf("0010100003%05d@%s", i, realm)
+		addSubscription(t, video, Subscription{PrivateIdentity: id,
+			PublicIdentities: []string{"sip:" + id}, Password: "test-password-long"})
+		registerInStore(t, video, id)
+		want = append(want, id)
+	}
+	release := make(chan struct{})
+	scscfs := &fakeSCSCFs{beforePPA: func(n int) {
+		switch n {
+		case 1:
+			// The S-CSCF is slow to answer, and the round outlasts the
+			// time of the retries.
+			<-release
+		case profilePushPage:
+			// The last PPR of the first page: the next page goes to the
+			// instance without the profile.
+			serving.open.Store(false)
+			lacking.open.Store(true)
+		}
+	}}
+	video.SetPeers(scscfs)
+	other.SetPeers(&fakeSCSCFs{})
+	if _, err := changeAt(videoAPI, 1, "hss.default_service_profile", "video"); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(2 * retryTime)
+	close(release)
+	select {
+	case <-lacking.claimed:
+	case <-time.After(5 * time.Second):
+		t.Fatal("gave up waiting 5 s for the instance without the profile to claim the round")
+	}
+	serving.open.Store(true)
+	pushed := pushedTo(t, video, scscfs, len(want), other.Close)
+	slices.Sort(want)
+	if got := slices.Sorted(maps.Keys(pushed)); !slices.Equal(got, want) {
+		t.Errorf("%d of the %d subscribers of the default profile were pushed", len(got), len(want))
+	}
+	for id, as := range pushed {
+		if as != videoAS {
+			t.Fatalf("the PPR for %s carried the criteria of %q, want %q", id, as, videoAS)
+		}
 	}
 }
 

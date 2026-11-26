@@ -555,9 +555,8 @@ type ProfilePush struct {
 	// the round has sent, or "" before the first.
 	After string
 	// Done says that the round has sent the PPR of its last subscriber,
-	// or was given up, and Started is when it began.
-	Done    bool
-	Started time.Time
+	// or was given up.
+	Done bool
 	// Updated is when the push was last recorded: by the start of its
 	// round, by a PPR, or by its end; Claimed is when an instance last
 	// claimed a page of the round. A round under way that neither has
