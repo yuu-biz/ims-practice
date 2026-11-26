@@ -55,8 +55,9 @@ type Submit struct {
 //
 // SIMPLIFIED: TS 23.040 9.2.3.12.2 and 9.2.3.12.3. Only "not present"
 // and the relative format are read and written; an SMS-SUBMIT with the
-// absolute or enhanced format is refused. The SC stub does not store
-// messages, so it has no use for the period.
+// absolute or enhanced format is refused. The UE of this project asks
+// for no validity period, so the Service Centre keeps every short
+// message for its default period.
 type ValidityPeriod struct {
 	Format ValidityPeriodFormat
 	// Relative is TP-VP in the relative format: 0 to 143 are steps of 5

@@ -312,7 +312,7 @@ var ErrNoUserData = errors.New("sms: the RP message carries no RP-User-Data")
 //	RP-ERROR, network to MS:  SMS-SUBMIT-REPORT for RP-ERROR (with TP-FCS)
 //
 // SIMPLIFIED: TS 23.040 9.2.2.4. SMS-COMMAND, which asks the SC about a
-// message it holds, is refused: the SC stub holds no messages.
+// message it holds, is refused: no UE of this project sends one.
 func ParseTPDU(m RPMessage) (TPDU, error) {
 	switch m := m.(type) {
 	case RPDataMSToNetwork:
