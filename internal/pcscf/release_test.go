@@ -270,6 +270,27 @@ func TestReleasedDialogIsNotFreedTwiceWhenTheStoreFails(t *testing.T) {
 	relay.noStrays(t, "the relay")
 }
 
+// TestReleasedDialogGoesWhenNoInstanceEndsIt: another instance of the
+// P-CSCF releases the early dialog, and leaves it in the Store for the
+// instance that forwards the INVITE, which ends the INVITE with its next
+// response. When no response comes, as when that instance has stopped,
+// the dialog goes all the same once the time for which the Store keeps a
+// released dialog is over.
+func TestReleasedDialogGoesWhenNoInstanceEndsIt(t *testing.T) {
+	h, pcrf, _ := newPolicyHarness(t)
+	out, in := h.call()
+	if err := in.Progress(183, answerTo(t, in.Request, coreMedia)); err != nil {
+		t.Fatal(err)
+	}
+	d, ok := out.Dialog()
+	key := keyOf(t, d, ok)
+	other, _ := h.instance()
+	other.releasedKeep = 100 * time.Millisecond
+	other.PolicyEvent(policy.Event{Session: "session-1", Kind: policy.LossOfBearer})
+	pcrf.waitReleased(t, "session-1")
+	h.waitNoDialog(key)
+}
+
 // interleavingStore is a MemoryStore that runs another write, once, right
 // after the next UpdateDialog, as another instance of the P-CSCF may
 // write between two operations of this one.

@@ -9,7 +9,7 @@
 //	association:<transport>:<address>             Association, time to live until its KeepUntil
 //	association-of-contact:<user>:<host>:<port>   index: the source of the association
 //	association-of-session:<policy session>       index: the source of the association
-//	dialog:<Call-ID>:<UE tag>                     Dialog, no time to live
+//	dialog:<Call-ID>:<UE tag>                     Dialog, time to live until its KeepUntil, if it has one
 //	dialog-of-session:<policy session>            index: the key of the dialog
 //	reg-subscription:<IMPI>                       RegSubscription, time to live until its Expires
 //	reg-subscription-of-dialog:<Call-ID>          index: the private identity of the subscription
@@ -215,9 +215,10 @@ func (s *Store) sessionKey(session policy.SessionID) string {
 // and removes the index item of a policy session that the dialog no
 // longer has.
 //
-// A dialog keeps no time to live: it lasts until its BYE, however long
-// that is, as in pcscf.MemoryStore. The dialog of a P-CSCF that never
-// sees the end of its call stays.
+// A dialog lasts until its BYE, however long that is, as in
+// pcscf.MemoryStore, unless it has a KeepUntil: a dialog that the P-CSCF
+// released goes at that time. The dialog of a P-CSCF that never sees the
+// end of its call stays.
 func (s *Store) PutDialog(ctx context.Context, d pcscf.Dialog) error {
 	var old pcscf.Dialog
 	if _, err := read(ctx, s.c, s.dialogKey(d.Key), &old); err != nil {
@@ -228,7 +229,7 @@ func (s *Store) PutDialog(ctx context.Context, d pcscf.Dialog) error {
 			return err
 		}
 	}
-	if err := kvjson.Write(ctx, s.c, s.dialogKey(d.Key), d, 0); err != nil {
+	if err := kvjson.Write(ctx, s.c, s.dialogKey(d.Key), d, s.c.TTLUntil(d.KeepUntil)); err != nil {
 		return err
 	}
 	s.dropSession(ctx, d.Key, old.PolicySession, d.PolicySession)
@@ -250,7 +251,7 @@ func (s *Store) dropSession(ctx context.Context, key pcscf.DialogKey, was, is po
 // gives the dialog gets its index item before the dialog is written.
 func (s *Store) UpdateDialog(ctx context.Context, key pcscf.DialogKey, change func(*pcscf.Dialog)) (pcscf.Dialog, bool, error) {
 	var before policy.SessionID
-	d, err := kvjson.Modify(ctx, s.c, s.dialogKey(key), func(pcscf.Dialog) time.Duration { return 0 }, func(d *pcscf.Dialog) error {
+	d, err := kvjson.Modify(ctx, s.c, s.dialogKey(key), func(d pcscf.Dialog) time.Duration { return s.c.TTLUntil(d.KeepUntil) }, func(d *pcscf.Dialog) error {
 		before = d.PolicySession
 		change(d)
 		if d.PolicySession != "" && d.PolicySession != before {

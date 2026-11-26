@@ -24,6 +24,7 @@ func PCSCF(t *testing.T, newPair func(t *testing.T) (pcscf.Store, pcscf.Store)) 
 		{"AssociationChangesItsIndexes", pcscfAssociationChangesIndexes},
 		{"AssociationUntilItsKeepUntil", pcscfAssociationKeptUntil},
 		{"Dialog", pcscfDialog},
+		{"DialogUntilItsKeepUntil", pcscfDialogKeptUntil},
 		{"DialogOfPolicySession", pcscfDialogOfPolicySession},
 		{"ConcurrentUpdatesOfOneDialog", pcscfConcurrentUpdates},
 		{"OnlyOneTakesADialog", pcscfOnlyOneTakes},
@@ -278,6 +279,35 @@ func pcscfAssociationKeptUntil(t *testing.T, a, b pcscf.Store) {
 	}
 	if _, ok := associationOfContact(t, a, refreshed.Contact); !ok {
 		t.Error("a refresh did not keep the association for longer")
+	}
+}
+
+// pcscfDialogKeptUntil: a dialog without a KeepUntil stays, and one
+// that an update gives a KeepUntil goes at that time, by its key and by
+// its policy session.
+func pcscfDialogKeptUntil(t *testing.T, a, b pcscf.Store) {
+	kept, released := dialog(), dialog()
+	released.Key.UETag, released.PolicySession = "released-tag", "pcscf;9;media"
+	putDialog(t, a, kept)
+	putDialog(t, a, released)
+	if _, ok := updateDialog(t, b, released.Key, func(d *pcscf.Dialog) {
+		d.Released, d.KeepUntil = true, time.Now().Add(short)
+	}); !ok {
+		t.Fatal("UpdateDialog of the dialog to release reported false")
+	}
+	if _, ok := dialogOfPolicySession(t, a, released.PolicySession); !ok {
+		t.Fatal("DialogOfPolicySession before its KeepUntil")
+	}
+
+	waitOut()
+	if _, ok := updateDialog(t, a, released.Key, func(*pcscf.Dialog) {}); ok {
+		t.Error("UpdateDialog found the dialog after its KeepUntil")
+	}
+	if _, ok := dialogOfPolicySession(t, b, released.PolicySession); ok {
+		t.Error("DialogOfPolicySession found the dialog after its KeepUntil")
+	}
+	if _, ok := updateDialog(t, b, kept.Key, func(*pcscf.Dialog) {}); !ok {
+		t.Error("a dialog without a KeepUntil is gone")
 	}
 }
 

@@ -132,6 +132,7 @@ func (p *PCSCF) release(key DialogKey, cause ReleaseCause, afterACK bool, log *s
 		}
 		if !d.ReleasePending {
 			d.Released, marked = true, true
+			d.KeepUntil = time.Now().Add(p.releasedKeep)
 		}
 	})
 	if err != nil {
@@ -157,7 +158,10 @@ func (p *PCSCF) releaseNow(key DialogKey, log *slog.Logger) {
 	first := false
 	d, ok, err := p.store.UpdateDialog(context.Background(), key, func(d *Dialog) {
 		first = !d.Released
-		d.Released = true
+		if first {
+			d.Released = true
+			d.KeepUntil = time.Now().Add(p.releasedKeep)
+		}
 	})
 	if err != nil {
 		log.Warn("the dialog is not released: the store failed", "call_id", key.CallID, "error", err.Error())
@@ -191,9 +195,13 @@ func (p *PCSCF) releaseMarked(d Dialog, log *slog.Logger) {
 		//
 		// SIMPLIFIED: TS 24.229 5.2.8.1.1. The instances share the Store
 		// and do not ask one another, so the INVITE is cancelled only
-		// when its next response reaches the instance that forwards it,
-		// at the latest its 2xx, and goes on until then without media
-		// through the relay. The PCRF sends the events of a session to
+		// when its next response reaches the instance that forwards it:
+		// a provisional response or the 2xx, or a final response that
+		// ends the INVITE anyway. Without one, Timer C of that instance
+		// ends it (RFC 3261 16.8). Until then the INVITE goes on without
+		// media through the relay. When that instance has stopped, the
+		// Store forgets the dialog after releasedKeep, which is Timer C,
+		// as no instance takes it. The PCRF sends the events of a session to
 		// the instance that opened it, so the release that comes here is
 		// that of a request within the early dialog that passed another
 		// instance, such as an UPDATE whose answer the relay did not take.
