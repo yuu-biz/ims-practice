@@ -357,7 +357,7 @@ VoLTE の手順を前提にするもの
 7. AS から MRFC の制御には、RFC 4240 の netann を使います。
 8. CAT のモデルは、調べた時点では未決でした。実装はゲートウェイのモデル（TS 24.182 4.5.5.3.7）です。
 9. MWI と ECT の網の側は作りません。IR.92 は、網の対応を任意としているためです。
-10. B2BUA の dialog の中の要求は、調べた時点の案（受けた台の URI を Record-Route と Contact に入れて同じ台に戻す）の方向で、最初に INVITE を受けた台に戻します。その台を同じ名前で作り直したときは、新しい台が `Store` の呼の記録から呼を組み立て直します（[docs/design/state-redundancy.md](../design/state-redundancy.md)）。
+10. B2BUA の dialog の中の要求は、調べた時点の案（受けた台の URI を Record-Route と Contact に入れて同じ台に戻す）の方向で、最初に INVITE を受けた台に戻します。その台を同じ名前で作り直しても、新しい台は `Store` の呼の記録から呼を組み立て直さず、前のプロセスの呼は切れます（[docs/design/state-redundancy.md](../design/state-redundancy.md)）。
 
 ## 国内標準（TTC）
 
