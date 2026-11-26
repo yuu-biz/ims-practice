@@ -312,37 +312,72 @@ func TestProxyCancelsAPendingNonInviteBranch(t *testing.T) {
 		provisional bool
 	}{{"with a provisional response", true}, {"without one", false}} {
 		t.Run(c.name, func(t *testing.T) {
+			arrived := make(chan struct{})
 			uasCancelled := make(chan bool, 1)
 			uas := newStack(t, testTimers, func(st *ServerTransaction) {
 				if c.provisional {
 					st.Respond(NewResponse(st.Request, 100, ""))
 				}
+				close(arrived)
+				// Without a provisional response no CANCEL is to come, and
+				// the UAS watches for one a while before it answers.
+				watch := time.After(5 * time.Second)
+				if !c.provisional {
+					watch = time.After(300 * time.Millisecond)
+				}
 				select {
 				case <-st.Cancelled():
 					uasCancelled <- true
-				case <-time.After(300 * time.Millisecond):
+				case <-watch:
 					uasCancelled <- false
 				}
 				st.Respond(NewResponse(st.Request, 200, "server"))
 			})
-			proxy := newStack(t, testTimers, func(st *ServerTransaction) {
+			// The transport of the proxy tells when the 100 of the UAS has
+			// come in. The stack takes what arrives in order, so a CANCEL
+			// sent after that finds the branch with its provisional
+			// response.
+			trying := make(chan struct{})
+			var once sync.Once
+			tr, err := ListenObserved("127.0.0.1:0", testLogger(t), func(capture Capture) {
+				if !capture.Sent && capture.Message.StatusCode == 100 {
+					once.Do(func() { close(trying) })
+				}
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			proxy, err := NewStack(tr, Config{SentBy: tr.LocalAddr().String(), Timers: testTimers, OnRequest: func(st *ServerTransaction) {
 				final, err := st.Proxy(st.Request.Clone(), udpTo(uas.LocalAddr()))
 				if err != nil {
 					t.Error(err)
 					return
 				}
 				st.Respond(final)
-			})
+			}}, testLogger(t))
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(proxy.Close)
 			peer := rawSocket(t)
 			options := rawInvite(peer)
 			options.Method = OPTIONS
 			options.Set("CSeq", "1 OPTIONS")
 			send(t, peer, options, proxy)
-			// Give the branch time to reach the UAS, and its 100 time to
-			// come back.
-			time.Sleep(50 * time.Millisecond)
+			waitClosed(t, arrived, "the OPTIONS to reach the UAS")
+			if c.provisional {
+				waitClosed(t, trying, "the 100 of the UAS to reach the proxy")
+			}
 
 			send(t, peer, newMatchingRequest(options, CANCEL, options.Get("To")), proxy)
+			select {
+			case got := <-uasCancelled:
+				if got != c.provisional {
+					t.Errorf("the UAS saw a CANCEL: %v, want %v", got, c.provisional)
+				}
+			case <-time.After(10 * time.Second):
+				t.Fatal("the UAS did not answer within 10 s")
+			}
 			byCSeq := map[string]*Message{}
 			for len(byCSeq) < 2 {
 				m := readDatagram(t, peer)
@@ -356,10 +391,18 @@ func TestProxyCancelsAPendingNonInviteBranch(t *testing.T) {
 			if final := byCSeq["1 OPTIONS"]; final.StatusCode != 200 {
 				t.Errorf("OPTIONS got %s, want the UAS's 200", startLine(final))
 			}
-			if got := <-uasCancelled; got != c.provisional {
-				t.Errorf("the UAS saw a CANCEL: %v, want %v", got, c.provisional)
-			}
 		})
+	}
+}
+
+// waitClosed waits until ch is closed, and fails, naming what it waited
+// for, when that takes longer than 5 s.
+func waitClosed(t *testing.T, ch <-chan struct{}, what string) {
+	t.Helper()
+	select {
+	case <-ch:
+	case <-time.After(5 * time.Second):
+		t.Fatalf("waited 5 s for %s", what)
 	}
 }
 
