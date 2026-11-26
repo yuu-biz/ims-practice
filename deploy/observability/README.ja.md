@@ -2,7 +2,7 @@
 
 [English](README.md)
 
-このディレクトリは、Docker Compose のプロジェクトに [Prometheus](https://github.com/prometheus/prometheus) と [Grafana](https://github.com/grafana/grafana) を足します。IMS のノードが数えた値を、広く使われている道具で、時間の推移として見るためです。IMS のノードのうち指標を出すのは P-CSCF、I-CSCF、S-CSCF、HSS、MMTel AS、IP-SM-GW だけなので（[できないこと](#できないこと)）、ダッシュボードではほかのノードがおおむね落ちているように見えます。MRFC、メディア中継ノード、MRFP のノードは、指標を 1 つも出さないまま動いているように見えます。同じ待ち受けで、それぞれの役割を運用から外す保守用の API を出しているためです。指標の名前は TS 32.409 の測定項目に合わせてあり、`internal/metrics` が書きます。
+このディレクトリは、Docker Compose のプロジェクトに [Prometheus](https://github.com/prometheus/prometheus) と [Grafana](https://github.com/grafana/grafana) を足します。IMS のノードが数えた値を、広く使われている道具で、時間の推移として見るためです。IMS のノードのうち指標を出すのは P-CSCF、I-CSCF、S-CSCF、HSS、MMTel AS、IP-SM-GW、SMS のサービスセンタだけなので（[できないこと](#できないこと)）、ダッシュボードではほかのノードがおおむね落ちているように見えます。MRFC、メディア中継ノード、MRFP のノードは、指標を 1 つも出さないまま動いているように見えます。同じ待ち受けで、それぞれの役割を運用から外す保守用の API を出しているためです。指標の名前は TS 32.409 の測定項目に合わせてあり、`internal/metrics` が書きます。
 
 | パス | 中身 |
 | --- | --- |

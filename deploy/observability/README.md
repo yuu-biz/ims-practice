@@ -2,7 +2,7 @@
 
 [日本語](README.ja.md)
 
-This directory adds [Prometheus](https://github.com/prometheus/prometheus) and [Grafana](https://github.com/grafana/grafana) to the Docker Compose project, so that the counts of the IMS nodes can be seen over time with widely used tools. Of the IMS nodes, only the P-CSCF, the I-CSCF, the S-CSCF, the HSS, the MMTel AS and the IP-SM-GW serve their metrics (see [Limits](#limits)), so the dashboard shows most of the others as down. The nodes of the MRFC, the media relay and the MRFP show as up with no metric of their own: they serve the same listener for their maintenance API, through which an operator takes those roles out of service. The metric names follow the measurements of TS 32.409, and `internal/metrics` writes them.
+This directory adds [Prometheus](https://github.com/prometheus/prometheus) and [Grafana](https://github.com/grafana/grafana) to the Docker Compose project, so that the counts of the IMS nodes can be seen over time with widely used tools. Of the IMS nodes, only the P-CSCF, the I-CSCF, the S-CSCF, the HSS, the MMTel AS, the IP-SM-GW and the Service Centre of SMS serve their metrics (see [Limits](#limits)), so the dashboard shows most of the others as down. The nodes of the MRFC, the media relay and the MRFP show as up with no metric of their own: they serve the same listener for their maintenance API, through which an operator takes those roles out of service. The metric names follow the measurements of TS 32.409, and `internal/metrics` writes them.
 
 | Path | What it is |
 | --- | --- |
