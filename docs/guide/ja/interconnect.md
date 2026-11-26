@@ -362,7 +362,7 @@ IBCF の各台は、こうした記録を自分の呼ごとに `Store` に置き
 
 ### 要求の SDP
 
-そのような SDP の入った要求は先へ進まず、IBCF が自分で 500（Server Internal Error、RFC 3261 21.5.1）を返します。IBCF がまったく読めない SDP には、境界の検査と同じく 488（Not Acceptable Here）を返し、TrGW には何も頼みません。呼を始める INVITE なら、これで終わりです。発信側は 500 を受け取り、相手網には INVITE が届かず、IBCF は確保したコンテキストを解放します。呼の中の要求では、そのあとどうなるかが TrGW の答えで決まります。
+そのような SDP の入った要求は先へ進まず、IBCF が自分で 500（Server Internal Error、RFC 3261 21.5.1）を返します。IBCF がまったく読めない SDP には、境界の検査と同じく 488（Not Acceptable Here）を返し、TrGW には何も頼みません。呼の最初の SDP でも同じです。プロファイルにコーデックの一覧が無いと、境界の検査はその SDP を読まないためです。呼を始める INVITE なら、これで終わりです。発信側は 500 か 488 を受け取り、相手網には INVITE が届かず、IBCF は確保したコンテキストがあれば解放します。呼の中の要求では、そのあとどうなるかが TrGW の答えで決まります。
 
 **TrGW が `Modify` を断り、何も変えなかったとき。** 呼は続きます。
 
@@ -460,7 +460,9 @@ UE A1 の re-INVITE の offer を IBCF-B が断ったときは、IBCF-A が TrGW
 - **呼の中の要求への 2xx** では、要求はその代わりに 500 を受け取り、両側に BYE が届きます。網 B からの要求、たとえば UE B1 の UPDATE は、IBCF-B を通って IBCF-A に届きます。IBCF-B は、先に送られた 500 より前に、IBCF-A の BYE を受け取ることがあります。そのときは、ダイアログが終わって残った要求として、UPDATE に 487（Request Terminated）を返します（RFC 3261 15.1.2）。
 - **ACK の answer** では、つまり 200 に offer が入っていた INVITE のあとでは、IBCF は 200 にその answer を入れずに ACK を返し、両側に BYE を送ります。RFC 3261 13.2.2.4 は、2xx の offer を受け入れない UAC に、ACK に正しい answer を入れるよう求めています。IBCF はそれを持たないので、本文の無い ACK を送り、すぐに BYE を送ります。
 
-`internal/ibcf` の試験 `TestRefusedAnswerOfTheINVITEEndsTheCall`、`TestRefusedAnswerWithinTheCallEndsTheCall`、`TestRefusedAnswerInTheACKEndsTheCall` が、網に入る SDP と網から出る SDP のそれぞれについて、これらの流れを見せます。
+IBCF が読めない SDP が応答に入っていたときも、同じように呼を終わらせます。offer の無い INVITE への 183 や 200 に入った offer などです。
+
+`internal/ibcf` の試験 `TestRefusedAnswerOfTheINVITEEndsTheCall`、`TestRefusedAnswerWithinTheCallEndsTheCall`、`TestRefusedAnswerInTheACKEndsTheCall` が、網に入る SDP と網から出る SDP のそれぞれについて、これらの流れを見せます。IBCF が読めない SDP についての流れは、`TestUnreadableSDPOfTheINVITEIsRejected`、`TestUnreadableOfferInAResponseEndsTheCall`、`TestUnreadableSDPWithinTheCallGets488` が見せます。
 
 ## 境界のトラヒックの統計
 

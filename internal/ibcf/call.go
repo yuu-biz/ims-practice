@@ -107,6 +107,12 @@ func (c *call) run() {
 	if err != nil {
 		c.log.Warn("cannot set up the call", "error", err.Error())
 		c.legs.NoLeg()
+		if errors.Is(err, errMalformedSDP) {
+			// As the border answers an SDP that it cannot read
+			// (interconnect.Border), and notThroughTrGW one within a dialog.
+			c.reject(488)
+			return
+		}
 		c.reject(500)
 		return
 	}
@@ -301,8 +307,9 @@ func (c *call) throughTrGW(m *sip.Message, d interconnect.Direction) error {
 	defer c.mediaMu.Unlock()
 	var kept error
 	if c.media == nil {
-		if !hasAudio(m) {
-			return nil
+		audio, err := hasAudio(m)
+		if err != nil || !audio {
+			return err
 		}
 		ctx, cancel := trgwContext()
 		mc, err := c.b.reserveMedia(ctx)
