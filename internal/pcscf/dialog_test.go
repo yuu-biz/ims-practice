@@ -38,7 +38,7 @@ type callHarness struct {
 	at atomic.Pointer[netip.AddrPort]
 	// instance starts another instance of the P-CSCF, set up as the
 	// first, on the same Store, as the instances of a role share one.
-	instance func() *sip.Stack
+	instance func() (*PCSCF, *sip.Stack)
 }
 
 // sendTo has both user agents send their requests to the P-CSCF
@@ -118,10 +118,7 @@ func newCallHarness(t *testing.T, cfg harnessConfig) *callHarness {
 	}
 	h.p, h.pcscf = newInstance(h.metrics)
 	h.sendTo(h.pcscf)
-	h.instance = func() *sip.Stack {
-		_, stack := newInstance(nil)
-		return stack
-	}
+	h.instance = func() (*PCSCF, *sip.Stack) { return newInstance(nil) }
 
 	ueAddr := h.ue.Stack().LocalAddr()
 	a := Association{

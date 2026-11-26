@@ -52,8 +52,13 @@ type Dialog struct {
 	// early dialog that another instance released tells the instance that
 	// forwards its INVITE to end the INVITE.
 	Released bool
-	Caller   Party
-	Callee   Party
+	// ReleaseCause is why the P-CSCF releases the dialog, from the moment
+	// it decides to (ReleasePending or Released). The instance that ends
+	// the INVITE of an early dialog answers it with the 500 of this
+	// cause, whichever instance released the dialog.
+	ReleaseCause ReleaseCause
+	Caller       Party
+	Callee       Party
 	// Relay is the context of the dialog in the media relay, or nil when
 	// its media does not go through the relay.
 	Relay *RelayContext
@@ -66,6 +71,29 @@ type Dialog struct {
 	// 9). The later requests of the dialog and their responses carry it
 	// (chargeRequest, chargeResponse). Empty when the INVITE had none.
 	ICID string
+}
+
+// ReleaseCause is why the P-CSCF releases a dialog itself.
+type ReleaseCause string
+
+const (
+	// ResourcesLost is a release for resources that the network has
+	// taken away from the session, or would not give it (TS 24.229
+	// 5.2.8.1).
+	ResourcesLost ReleaseCause = "resources-lost"
+	// SDPNotRelayed is a release for an SDP that the P-CSCF could not
+	// point at the media relay: an answer that the relay did not take, or
+	// the SDP of a request within the dialog (notRelayed).
+	SDPNotRelayed ReleaseCause = "sdp-not-relayed"
+)
+
+// err is the cause as setup and proxyInvite tell it: errResources or
+// errRelay.
+func (c ReleaseCause) err() error {
+	if c == SDPNotRelayed {
+		return errRelay
+	}
+	return errResources
 }
 
 // DialogKey names a dialog at the P-CSCF: the Call-ID and the tag of

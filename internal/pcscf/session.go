@@ -408,7 +408,7 @@ func (p *PCSCF) renegotiate(out *sip.Message, d Dialog, toUE bool, ue netip.Addr
 	authorized, taken, refused := false, false, false
 	answered = func() {
 		if refused && out.Method != sip.INVITE {
-			p.release(d.Key, errRelay, false, log)
+			p.release(d.Key, SDPNotRelayed, false, log)
 		}
 	}
 	answer = func(resp *sip.Message) {
@@ -423,7 +423,7 @@ func (p *PCSCF) renegotiate(out *sip.Message, d Dialog, toUE bool, ue netip.Addr
 				if out.Method == sip.INVITE {
 					// The mark is in the Store before the 2xx goes on, so
 					// the ACK cannot pass the P-CSCF first.
-					p.release(d.Key, errRelay, true, log)
+					p.release(d.Key, SDPNotRelayed, true, log)
 				}
 			}
 			return
@@ -494,7 +494,7 @@ func (p *PCSCF) notRelayed(st *sip.ServerTransaction, d Dialog, err error, log *
 	}
 	log.Warn("the SDP of the request is not pointed at the media relay: the P-CSCF releases the dialog", "status", resp.StatusCode, "error", err.Error())
 	st.Respond(resp)
-	p.release(d.Key, errRelay, false, log)
+	p.release(d.Key, SDPNotRelayed, false, log)
 }
 
 // byeEndsDialog is RFC 3261 15.1.1 as a proxy sees it: the dialog ends
@@ -616,7 +616,7 @@ func (p *PCSCF) forwardACK(ref *ims.StackRef, ack *sip.Message) {
 	// Only a confirmed dialog waits for an ACK, and its BYEs are the
 	// same whatever the release is for.
 	if known && d.ReleasePending {
-		go p.releaseNow(key, nil, p.log.With("method", string(sip.ACK), "call_id", key.CallID))
+		go p.releaseNow(key, p.log.With("method", string(sip.ACK), "call_id", key.CallID))
 	}
 }
 

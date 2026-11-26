@@ -178,6 +178,39 @@ func TestLostBearerCancelsACallBeingSetUp(t *testing.T) {
 	relay.waitHeld(t, 0, time.Second)
 }
 
+// TestLostResourcesAtAnotherInstanceKeepThe500WithTheirCause: an
+// instance of the P-CSCF that does not forward the INVITE releases its
+// early dialog for lost resources. It marks the dialog released in the
+// Store, and the instance that forwards the INVITE ends the INVITE with
+// its next response, as it does when the release came from this
+// instance and the response came before the release could tell the
+// INVITE. The 500 to the caller still says that the bearer is gone
+// (TS 24.229 5.2.7.2, 7.2A.18.12.2), and the callee gets the CANCEL.
+func TestLostResourcesAtAnotherInstanceKeepThe500WithTheirCause(t *testing.T) {
+	h, pcrf, relay := newPolicyHarness(t)
+	out, in := h.call()
+	if err := in.Progress(183, answerTo(t, in.Request, coreMedia)); err != nil {
+		t.Fatal(err)
+	}
+	other, _ := h.instance()
+	other.PolicyEvent(policy.Event{Session: "session-1", Kind: policy.LossOfBearer})
+	pcrf.waitReleased(t, "session-1")
+
+	// The 180 is reliable, and Progress waits for a PRACK that the caller
+	// never sends: the CANCEL ends the call first.
+	go in.Progress(180, sip.Body{})
+	resp := answered(t, out, 500)
+	if got, want := resp.Get("Reason"), `FAILURE_CAUSE;cause=1;text="Media bearer or QoS lost"`; got != want {
+		t.Errorf("Reason = %q, want %q", got, want)
+	}
+	ended(t, "the callee's call", in.Done())
+	if in.Err() != sip.ErrCancelled {
+		t.Fatalf("the callee's call ended with %v, want a CANCEL", in.Err())
+	}
+	wantCancelReason(t, in.EndedBy())
+	relay.waitHeld(t, 0, time.Second)
+}
+
 // wantCancelReason checks the Reason of TS 24.229 5.2.8.1.1 in the
 // CANCEL of the P-CSCF: 503, as the access network gave no cause.
 func wantCancelReason(t *testing.T, cancel *sip.Message) {

@@ -50,7 +50,8 @@ type setup struct {
 	ended sync.Once
 	// abort is closed, and aborted and abortCause set under setupsMu,
 	// when the P-CSCF releases the early dialog while the INVITE is still
-	// on its way (TS 24.229 5.2.8.1.1). abortCause is the why of release.
+	// on its way (TS 24.229 5.2.8.1.1). abortCause tells the cause of the
+	// release (ReleaseCause.err).
 	abort      chan struct{}
 	aborted    bool
 	abortCause error
@@ -211,16 +212,30 @@ var errRelay = errors.New("pcscf: the answer is not pointed at the media relay")
 // P-CSCF has released, or that has gone from the Store, while the
 // INVITE was on its way. Another instance of the P-CSCF releases it so
 // when a request within the early dialog passes that instance, and it
-// leaves the INVITE to the instance that forwards it (releaseNow).
+// leaves the INVITE to the instance that forwards it (releaseNow). The
+// same instance may release it between two responses too, and the
+// response that comes first then finds the mark before the abort.
 var errReleased = errors.New("pcscf: the dialog of the INVITE has been released")
+
+// errResources marks a session that the network has no resources for,
+// or whose resources it has taken away. The caller's 500 tells so (TS
+// 24.229 5.2.7.2, 7.2A.18.12.2).
+var errResources = errors.New("pcscf: the network has no resources for the session")
+
+// releasedFor is errReleased for a dialog that the P-CSCF released for
+// cause, so that the INVITE ends with the 500 of that cause.
+func releasedFor(cause ReleaseCause) error {
+	return fmt.Errorf("%w: %w", errReleased, cause.err())
+}
 
 // response sees every response to the INVITE that the P-CSCF passes on,
 // the provisional ones and the 2xx, before it leaves: it sets the
 // identities in it, points the answer at the relay, has the PCRF
 // authorise the media, and keeps the dialog. An error means that the
-// network has no resources for the session; with errRelay, that the
-// answer is not pointed at the relay, which leaves the PCRF without it
-// too; with errReleased, that the dialog has been released; or, with
+// network has no resources for the session (errResources); with
+// errRelay, that the answer is not pointed at the relay, which leaves
+// the PCRF without it too; with errReleased, that the dialog has been
+// released, wrapping the cause of the release when it is known; or, with
 // errStore, that the P-CSCF cannot keep the dialog. A body that is not
 // SDP carries no answer, and goes on as it came.
 //
@@ -234,8 +249,10 @@ func (s *setup) response(resp *sip.Message) error {
 		switch {
 		case err != nil:
 			return storeError(err)
-		case !ok || d.Released:
+		case !ok:
 			return errReleased
+		case d.Released:
+			return releasedFor(d.ReleaseCause)
 		}
 	}
 	var refused error
@@ -305,7 +322,7 @@ func (s *setup) authorize(answer []byte) error {
 	})
 	if err != nil {
 		s.log.Warn("the network has no resources for the media", "error", err.Error())
-		return err
+		return fmt.Errorf("%w: %w", errResources, err)
 	}
 	s.log.Info("media authorised", "policy_session", string(session))
 	s.session, s.authorized = session, answer
@@ -376,8 +393,9 @@ func (s *setup) remember(resp *sip.Message) error {
 	// which sets up the session (TS 32.409 4.1.2.7); endDialog counts it
 	// out again.
 	confirmed, released := false, false
+	var cause ReleaseCause
 	update := func(d *Dialog) {
-		confirmed, released = false, d.Released
+		confirmed, released, cause = false, d.Released, d.ReleaseCause
 		if released {
 			return
 		}
@@ -396,8 +414,10 @@ func (s *setup) remember(resp *sip.Message) error {
 		switch {
 		case err != nil:
 			return err
-		case !ok || released:
+		case !ok:
 			return errReleased
+		case released:
+			return releasedFor(cause)
 		case confirmed:
 			s.p.measurements.sessions.SetUp(role)
 		}
@@ -439,11 +459,11 @@ func (s *setup) settle() bool {
 	return !s.aborted
 }
 
-// abortSetup ends the INVITE that created d, the early dialog taken out
-// of the Store, if this P-CSCF instance still forwards it: its loop then
-// answers the caller and cancels the INVITE towards the callee, as
-// giveUp does for why.
-func (p *PCSCF) abortSetup(d Dialog, why error) bool {
+// abortSetup ends the INVITE that created d, the early dialog that the
+// P-CSCF has marked Released, if this P-CSCF instance still forwards it:
+// its loop then answers the caller and cancels the INVITE towards the
+// callee, as giveUp does for the cause of the release.
+func (p *PCSCF) abortSetup(d Dialog) bool {
 	p.setupsMu.Lock()
 	defer p.setupsMu.Unlock()
 	s, ok := p.setups[d.Key]
@@ -452,7 +472,7 @@ func (p *PCSCF) abortSetup(d Dialog, why error) bool {
 	}
 	delete(p.setups, d.Key)
 	s.aborted = true
-	s.abortCause = why
+	s.abortCause = d.ReleaseCause.err()
 	s.callerSeq = d.Caller.CSeq
 	close(s.abort)
 	return true
