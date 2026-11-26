@@ -308,34 +308,14 @@ func (h *HSS) setCustomizedAlertingTone(w http.ResponseWriter, r *http.Request) 
 		http.Error(w, "no such subscription", http.StatusNotFound)
 		return
 	}
-	for {
-		var old *sh.TransparentData
-		stored, ok, err := h.store.RepositoryData(ctx, impi, mmtel.CATServiceIndication)
-		if err != nil {
-			h.writeStoreFailure(w, err)
-			return
-		}
-		if ok {
-			old = &stored
-			data.SequenceNumber = sh.NextSequenceNumber(stored.SequenceNumber)
-		}
-		swapped, err := h.store.CompareAndSwapRepositoryData(ctx, impi, old, data)
-		if err != nil {
-			h.writeStoreFailure(w, err)
-			return
-		}
-		if swapped {
-			break
-		}
-		// A swap that lost may have lost to a DELETE of the subscription;
-		// then nothing can ever win, so the request ends here.
-		if _, ok, err := h.store.Subscriber(ctx, impi); err != nil {
-			h.writeStoreFailure(w, err)
-			return
-		} else if !ok {
-			http.Error(w, "no such subscription", http.StatusNotFound)
-			return
-		}
+	// A swap that lost may have lost to a DELETE of the subscription;
+	// then nothing can ever win, so the request ends here.
+	if ok, err := h.swapRepositoryData(ctx, impi, data); err != nil {
+		h.writeStoreFailure(w, err)
+		return
+	} else if !ok {
+		http.Error(w, "no such subscription", http.StatusNotFound)
+		return
 	}
 	h.log.Info("customized alerting tone", "private_identity", impi, "tone", t.Tone, "active", t.Active)
 	writeJSON(w, http.StatusOK, t)
@@ -904,11 +884,12 @@ func (h *HSS) setRepositoryData(ctx context.Context, privateID string, stored, w
 	return true, nil
 }
 
-// swapAttempts bounds how often a PUT reads one piece of the repository
-// data again after another update got to it first. A request that has
-// lost this many times is not winning the next one either, so the HSS
-// answers it rather than holding the subscriber's lock for good; the
-// operator sends the PUT again.
+// swapAttempts bounds how often an update of the repository data, by
+// the provisioning API or by a PUR, reads one piece of it again after
+// another update got to it first. A request that has lost this many
+// times is not winning the next one either, so the HSS answers it
+// rather than trying for good, which a PUT of a subscription and a PUR
+// would do with the subscriber's lock held; the sender sends it again.
 const swapAttempts = 10
 
 // swapRepositoryData stores one piece of repository data, or removes
@@ -917,9 +898,9 @@ const swapAttempts = 10
 // would give it (TS 29.328 6.1.2.1), and with a compare and swap against
 // what is stored, so that an update which the operator's tone or an Sh
 // request made meanwhile is seen rather than overwritten. A swap that
-// loses is read and tried again, as the tone is
-// (setCustomizedAlertingTone). It reports whether the subscription is
-// still there: once it is gone, no swap can ever win.
+// loses is read and tried again, up to swapAttempts times. It reports
+// whether the subscription is still there: once it is gone, no swap can
+// ever win.
 func (h *HSS) swapRepositoryData(ctx context.Context, privateID string, data sh.TransparentData) (bool, error) {
 	for range swapAttempts {
 		stored, found, err := h.store.RepositoryData(ctx, privateID, data.ServiceIndication)
