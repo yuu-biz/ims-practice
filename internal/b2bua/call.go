@@ -470,17 +470,28 @@ func (c *Call) answerWithoutALeg(r *sip.InDialogRequest) {
 // callee as the PRACK of acked (RFC 3262 4), with the caller's answer to
 // an offer in acked, or a new offer, when it has one (RFC 3262 5).
 // answered tells that the caller has its 200 already.
+//
+// A PRACK that the role refuses ends the INVITE, whether or not the
+// refusal asks for a release: acked then gets no PRACK, and the callee
+// ends the INVITE with a 5xx only once acked has waited 64*T1 for one
+// (RFC 3262 3). The caller's PRACK matches its reliable response, so it
+// gets a 2xx (RFC 3262 3), and the caller's INVITE then gets 500, as RFC
+// 6337 2.3 lets a UAS that cannot take what a PRACK carries end the
+// INVITE with an error response. Only a PRACK with an offer gets the
+// role's refusal instead, since its 2xx would have to carry the answer
+// (RFC 3262 5), which the role does not have.
 func (c *Call) prack(r *sip.InDialogRequest, out *sip.OutgoingCall, acked *sip.Message, answered bool, finish func()) {
 	m, refused := c.hooks.Request(r.Request, ToCallee)
 	if refused != nil {
-		if answered {
+		switch {
+		case answered:
 			c.log.Info("PRACK not relayed", "status", refused.Status)
-		} else {
+		case r.Offer:
 			r.Reject(refused.Status, refused.Headers...)
+		default:
+			r.Accept(sip.Body{})
 		}
-		if refused.Release {
-			c.release()
-		}
+		c.release()
 		return
 	}
 	resp, err := out.PRACK(acked, m.Body, m.Headers...)

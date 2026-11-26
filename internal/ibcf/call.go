@@ -393,16 +393,17 @@ func (c *call) Request(req *sip.Message, d b2bua.Direction) (b2bua.Message, *b2b
 //     the IBCF. It may have carried the Modify out, and its termination
 //     then sends where the refused SDP said, which the side that sent it
 //     no longer takes after the 500.
-//   - A PRACK, whatever the TrGW answered. Its UAC does not send it
-//     again (RFC 3262 4), so the reliable response stays without its
-//     PRACK, and the UAS ends the INVITE with a 5xx only once that
-//     response has waited 64*T1 for it (RFC 3262 3).
+//
+// The PRACK of a reliable response of the callee ends the INVITE
+// whatever the TrGW answered, since that response then gets no PRACK
+// (b2bua.Refusal). A PRACK with an offer for a response that the callee
+// wanted no PRACK for goes on as an UPDATE, and is refused as one.
 func (c *call) notThroughTrGW(req *sip.Message, d b2bua.Direction, err error) *b2bua.Refusal {
 	status := 500
 	if errors.Is(err, errMalformedSDP) {
 		status = 488
 	}
-	release := req.Method == sip.PRACK || !callStays(err)
+	release := !callStays(err)
 	if release {
 		c.log.Warn("the SDP of the request is not put through the TrGW: the IBCF releases the call",
 			"method", string(req.Method), "status", status, "error", err.Error())
