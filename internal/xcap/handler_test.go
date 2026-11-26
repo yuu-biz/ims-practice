@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"regexp"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -397,3 +398,41 @@ func TestCapabilities(t *testing.T) {
 }
 
 var _ xcap.Repository = (*sh.Client)(nil)
+
+// TestCredentialsOfAnotherRealmOrAlgorithm: the HSS may hold a Ut
+// credential that it did not derive itself, provisioned as repository
+// data as it is: one of another realm, or with H(A1) for MD5 alone. The
+// first challenge, which names no user, offers the home domain and both
+// algorithms. Once the client has answered it for the user, the next
+// challenge offers the realm and the algorithms of that user's
+// credential, and the client authenticates with them.
+func TestCredentialsOfAnotherRealmOrAlgorithm(t *testing.T) {
+	const impiC, passwordC = "001010000000003@" + realm, "test-password-3"
+	md5Only := xcap.NewCredential(impiC, realm, passwordC)
+	md5Only.HA1 = slices.DeleteFunc(md5Only.HA1, func(h xcap.HashedA1) bool { return h.Algorithm != xcap.MD5 })
+	for name, cred := range map[string]xcap.Credential{
+		"MD5 only":      md5Only,
+		"another realm": xcap.NewCredential(impiC, "ut.example.org", passwordC),
+	} {
+		t.Run(name, func(t *testing.T) {
+			n := newNetwork(t)
+			ctx := context.Background()
+			for indication, data := range map[string][]byte{
+				simservs.ServiceIndication:       []byte(mmtelServices),
+				xcap.CredentialServiceIndication: cred.Marshal(),
+			} {
+				if err := n.sh.CreateRepositoryData(ctx, impuC, indication, data); err != nil {
+					t.Fatal(err)
+				}
+			}
+			c := &xcap.Client{Root: n.server.URL, XUI: impuC, Username: impiC, Password: passwordC, UserAgent: "ims-practice-ue-test"}
+			if _, err := c.Get(ctx, xcap.Selector{}); err != nil {
+				t.Errorf("GET with the right password: %v", err)
+			}
+			wrong := &xcap.Client{Root: n.server.URL, XUI: impuC, Username: impiC, Password: "wrong", UserAgent: "ims-practice-ue-test"}
+			if _, err := wrong.Get(ctx, xcap.Selector{}); status(err) != http.StatusUnauthorized {
+				t.Errorf("GET with a wrong password: %v, want 401", err)
+			}
+		})
+	}
+}

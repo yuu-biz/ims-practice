@@ -206,9 +206,9 @@ What `ue xcap set cfu on tel:+12025550103` sends:
 [internal/xcap/digest.go](../../../internal/xcap/digest.go)
 
 ```go
-func (n nonces) challenge(h http.Header, realm string, stale bool) {
+func (n nonces) challenge(h http.Header, realm string, offered []Algorithm, stale bool) {
 	nonce := n.issue()
-	for _, a := range algorithms {
+	for _, a := range offered {
 		h.Add("WWW-Authenticate", sip.Challenge{
 			Realm: realm, Nonce: nonce, Stale: stale, Algorithm: string(a), QOP: []string{qopAuth},
 		}.String())
@@ -216,8 +216,8 @@ func (n nonces) challenge(h http.Header, realm string, stale bool) {
 }
 ```
 
-- `algorithms` are SHA-256, then MD5. All the challenges share one nonce.
-- `realm` is the home domain. The challenge names no user, so the AS sends it before it reads anything of the user, and it is the same for every XUI.
+- The first challenge offers `algorithms`, SHA-256 then MD5, in the home domain. It names no user, so the AS sends it before it reads anything of the user, and it is the same for every XUI. All the challenges share one nonce.
+- After credentials that did not authenticate, `realm` and `offered` are those of the user's credential, the same unless the operator provisioned it in another realm or for MD5 alone.
 - The credential is repository data in the HSS, with Service-Indication `Ut-Digest-Credential`. It holds HA1 values, not the password (the comment in `internal/xcap/credential.go`).
 - WWW-Authenticate has the form of SIP Digest, so the code uses the `Challenge` of `internal/sip` as it is: compare it with the 401 of registration.
 

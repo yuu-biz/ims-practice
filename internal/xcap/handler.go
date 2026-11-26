@@ -190,6 +190,15 @@ func parseTarget(path, rawQuery string) (target, bool) {
 // no one who cannot authenticate which users there are, or which of
 // them use Ut.
 //
+// The challenge that answers credentials which did not authenticate is
+// built from the credential of the XUI, when there is one: its realm and
+// its algorithms. The HSS derives every credential in the home domain
+// for both algorithms, which makes that challenge the same as the first.
+// A credential that the operator provisioned as it is may have another
+// realm or H(A1) for MD5 alone, and its user then authenticates with
+// the second challenge (RFC 7616 3.3). That challenge tells of such a
+// credential, to a client that has sent credentials for the XUI.
+//
 // A user is allowed to use Ut by having a Ut credential, and one
 // without cannot authenticate. The 403 of TS 24.623 5.3.2.3, to an
 // authenticated user who is not allowed to use Ut, has no case here.
@@ -213,7 +222,11 @@ func (h *Handler) authorize(w http.ResponseWriter, r *http.Request, t target) bo
 			// may be an attack.
 			h.log.Warn("Ut login failed", "xui", t.xui)
 		}
-		h.nonces.challenge(w.Header(), h.realm, v == staleNonce)
+		realm, offered := h.realm, algorithms
+		if cred.Username != "" {
+			realm, offered = cred.Realm, cred.algorithms()
+		}
+		h.nonces.challenge(w.Header(), realm, offered, v == staleNonce)
 		h.answer(w, r, t, http.StatusUnauthorized, "authentication required")
 	default:
 		h.answer(w, r, t, http.StatusBadRequest, "malformed Authorization")
