@@ -79,6 +79,9 @@ func (c *calledUE) answerFor(t *testing.T, offer []byte) sip.Body {
 		t.Fatal(err)
 	}
 	c.callerMedia.SetFlow(ue.Flow{Receive: true})
+	// The bare caller talks once the UE has the answer, as a caller that
+	// answers sendrecv does.
+	talk(c.callerMedia, o.Address(*o.AudioMedia()))
 	return sip.Body{Type: "application/sdp", Content: a.Bytes()}
 }
 

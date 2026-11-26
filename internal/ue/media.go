@@ -820,5 +820,6 @@ func (c CodecInfo) String() string {
 	return s
 }
 
-// ErrNoMedia means a call ended without any RTP from the other side.
+// ErrNoMedia means an answered call ended without any RTP from the
+// other side, which was to send some: one-way audio.
 var ErrNoMedia = errors.New("no RTP received")

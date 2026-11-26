@@ -62,14 +62,17 @@ func (n *network) party(k int, hz float64) *party {
 	return p
 }
 
-// speech is the party's own tone, a third of full scale so that the mix
-// of two does not clip, long enough for the whole test.
+// speech is the party's own tone for PCMU, a third of full scale so
+// that the mix of two does not clip, long enough for the whole test.
+// A call between two parties settles on AMR-WB, which gets the embedded
+// tone.
 func (p *party) speech() ue.Speech {
-	pcm := ue.Tone(p.hz, 30*time.Second)
-	for i := range pcm {
-		pcm[i] /= 3
+	s := ue.ToneSpeech(30 * time.Second)
+	s.PCM = ue.Tone(p.hz, 30*time.Second)
+	for i := range s.PCM {
+		s.PCM[i] /= 3
 	}
-	return ue.Speech{PCM: pcm}
+	return s
 }
 
 func (p *party) media() *ue.Media {
@@ -389,7 +392,9 @@ func TestRejoinWithTheConferenceURI(t *testing.T) {
 	ba.awaitEnd(t, "B's old call")
 	before := awaitUsers(t, conf, 2)
 
-	// B leaves (5.3.1.6.1); the conference goes on with A.
+	// B leaves (5.3.1.6.1), once it has heard A in the mix; the
+	// conference goes on with A.
+	awaitPackets(t, bConf.media, 1)
 	bConf.hangUp()
 	bConf.awaitEnd(t, "B's leg of the conference")
 	awaitUsers(t, conf, 1)

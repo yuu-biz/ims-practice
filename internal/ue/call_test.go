@@ -222,6 +222,15 @@ func receiveOnly(t *testing.T, m *ue.Media) {
 	m.SetFlow(ue.Flow{Receive: true})
 }
 
+// talk has m, the media of a peer that is not a UE simulator, send a
+// PCMU tone to the address to, as a peer that answers sendrecv does.
+// Without it the UE would end the call with ErrNoMedia.
+func talk(m *ue.Media, to netip.AddrPort) {
+	m.SetStream(ue.Stream{Remote: to, Codec: pcmu})
+	m.SetFlow(ue.Flow{Send: true, Receive: true})
+	m.Start(ue.Speech{PCM: ue.Tone(880, 10*time.Second)})
+}
+
 // TestCalleeSendsToTheStreamItAccepted is RFC 3264 6: of two audio
 // streams, the callee accepts the one with PCMU, and sends its audio
 // there rather than to the first.
@@ -289,6 +298,7 @@ func TestCalleeSendsToTheStreamItAccepted(t *testing.T) {
 	}()
 	for range call.Responses() {
 	}
+	talk(pcmu, loopback(calleeMedia.Port()))
 	// Once the accepted stream has its packets, the rejected one would
 	// have had its own, sent at the same pace.
 	waitFor(t, "packets on the PCMU stream that the callee accepted", func() bool {
@@ -366,7 +376,9 @@ func TestAnswerInTheReliable183(t *testing.T) {
 		if err := ic.Progress(183, sip.Body{Type: "application/sdp", Content: answer.Bytes()}); err != nil {
 			return
 		}
-		ic.Accept(sip.Body{})
+		if _, err := ic.Accept(sip.Body{}); err == nil {
+			talk(media, offer.Address(*offer.AudioMedia()))
+		}
 	})
 	if err := u.Call(context.Background(), ua, directRegistration, callee, media, ue.Speech{PCM: ue.Tone(440, 200*time.Millisecond)}, ue.CallOptions{}); err != nil {
 		t.Fatal(err)
@@ -393,6 +405,7 @@ func acceptAndHangUp(hangUpAfter time.Duration) func(*sip.IncomingCall, *ue.Medi
 		if _, err := ic.Accept(sip.Body{Type: "application/sdp", Content: answer.Bytes()}); err != nil {
 			return
 		}
+		talk(media, offer.Address(*offer.AudioMedia()))
 		time.Sleep(hangUpAfter)
 		ic.Bye()
 	}
@@ -452,7 +465,7 @@ func TestProgressOfACall(t *testing.T) {
 	answered := make(chan error, 1)
 	go func() {
 		ic := <-callee.calls
-		answered <- callee.ue.Answer(context.Background(), ic, callee.media, ue.Speech{},
+		answered <- callee.ue.Answer(context.Background(), ic, callee.media, ue.Speech{PCM: ue.Tone(880, time.Second)},
 			ue.AnswerOptions{PickUp: time.After(100 * time.Millisecond), Progress: calleeLog.progress})
 	}()
 	ctx, hangUp := context.WithCancel(context.Background())
@@ -564,5 +577,51 @@ func TestCalleeThatStopsWhileRingingTurnsTheCallDown(t *testing.T) {
 	}
 	if err := <-answered; !errors.Is(err, context.DeadlineExceeded) {
 		t.Errorf("Answer ended with %v, want the end of its context", err)
+	}
+}
+
+// TestOneWayAudioFailsTheCall: the callee answers sendrecv but sends no
+// RTP, so the caller's call ends with ErrNoMedia, while the callee,
+// which heard the caller, ends without an error.
+func TestOneWayAudioFailsTheCall(t *testing.T) {
+	addr := network(t, time.Second)
+	caller := newParty(t, addr, impi, impu, password)
+	callee := newParty(t, addr, impi2, impu2, password2)
+	answered := answerIn(t, callee, ue.Speech{}, ue.AnswerOptions{PickUp: time.After(0)})
+	err := caller.ue.Call(context.Background(), caller.ua, caller.reg, impu2, caller.media, ue.ToneSpeech(300*time.Millisecond), ue.CallOptions{})
+	if !errors.Is(err, ue.ErrNoMedia) {
+		t.Errorf("the caller's call ended with %v, want ErrNoMedia", err)
+	}
+	if err := wait(t, "the answer", answered); err != nil {
+		t.Errorf("the callee, which heard the caller, ended with %v", err)
+	}
+	if !slices.Contains(caller.wire.labels(), "> BYE") {
+		t.Error("the caller did not hang up with a BYE")
+	}
+}
+
+// TestNoMediaFromAPeerThatDoesNotSend: a callee whose answer says
+// recvonly sends nothing (RFC 3264 6.1), so a call without RTP from it
+// is no failure.
+func TestNoMediaFromAPeerThatDoesNotSend(t *testing.T) {
+	u, ua, media, callee, calleeMedia := directCaller(t, func(ic *sip.IncomingCall, media *ue.Media) {
+		offer, err := sdp.Parse(ic.Request.Body)
+		if err != nil {
+			ic.Reject(488)
+			return
+		}
+		answer, err := sdp.Answer(offer, "1", loopback(media.Port()))
+		if err != nil {
+			ic.Reject(488)
+			return
+		}
+		answer.AudioMedia().SetDirection("recvonly")
+		ic.Accept(sip.Body{Type: "application/sdp", Content: answer.Bytes()})
+	})
+	if err := u.Call(context.Background(), ua, directRegistration, callee, media, ue.ToneSpeech(200*time.Millisecond), ue.CallOptions{}); err != nil {
+		t.Errorf("call ended with %v, want nil: the callee said it would not send", err)
+	}
+	if _, n := calleeMedia.Received(); n == 0 {
+		t.Error("the callee got no audio")
 	}
 }

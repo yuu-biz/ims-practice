@@ -147,8 +147,8 @@ func TestUpdateWaitsForThe2xxToThePRACK(t *testing.T) {
 	caller := newPartyWith(t, addr, impi, impu, password, ue.CallConfig{Codecs: codecs, Resources: callerResources})
 	callee := newPartyWith(t, addr, impi2, impu2, password2, ue.CallConfig{Codecs: codecs, Resources: calleeResources})
 
-	answered := answerIn(t, callee, ue.Speech{}, ue.AnswerOptions{PickUp: time.After(0)})
-	err := caller.ue.Call(context.Background(), caller.ua, caller.reg, impu2, caller.media, ue.Speech{},
+	answered := answerIn(t, callee, ue.ToneSpeech(time.Second), ue.AnswerOptions{PickUp: time.After(0)})
+	err := caller.ue.Call(context.Background(), caller.ua, caller.reg, impu2, caller.media, ue.ToneSpeech(100*time.Millisecond),
 		ue.CallOptions{Session: func(*ue.Session) { callerResources.Set(true) }})
 	if err != nil {
 		t.Fatal(err)
@@ -215,10 +215,10 @@ func TestCalleeWithoutPreconditionsWaitsForItsResources(t *testing.T) {
 	caller := newPartyWith(t, addr, impi, impu, password, ue.CallConfig{NoPreconditions: true})
 	callee := newPartyWith(t, addr, impi2, impu2, password2, ue.CallConfig{Codecs: voLTECodecs(t), Resources: calleeResources})
 
-	answered := answerIn(t, callee, ue.Speech{}, ue.AnswerOptions{PickUp: time.After(0)})
+	answered := answerIn(t, callee, ue.ToneSpeech(time.Second), ue.AnswerOptions{PickUp: time.After(0)})
 	called := make(chan error, 1)
 	go func() {
-		called <- caller.ue.Call(context.Background(), caller.ua, caller.reg, impu2, caller.media, ue.Speech{}, ue.CallOptions{})
+		called <- caller.ue.Call(context.Background(), caller.ua, caller.reg, impu2, caller.media, ue.ToneSpeech(100*time.Millisecond), ue.CallOptions{})
 	}()
 	progress := caller.wire.find(t, "< 183 INVITE")
 	if progress.Requires(sip.OptionPrecondition) || !progress.Requires(sip.Option100rel) || len(progress.Body) == 0 {
@@ -261,8 +261,8 @@ func TestCallCarriesTheHeadersOfIR92(t *testing.T) {
 		t.Fatal(err)
 	}
 	callee := newParty(t, addr, impi2, impu2, password2)
-	answered := answerIn(t, callee, ue.Speech{}, ue.AnswerOptions{PickUp: time.After(0)})
-	if err := caller.ue.Call(context.Background(), caller.ua, caller.reg, impu2, caller.media, ue.Speech{}, ue.CallOptions{}); err != nil {
+	answered := answerIn(t, callee, ue.ToneSpeech(time.Second), ue.AnswerOptions{PickUp: time.After(0)})
+	if err := caller.ue.Call(context.Background(), caller.ua, caller.reg, impu2, caller.media, ue.ToneSpeech(100*time.Millisecond), ue.CallOptions{}); err != nil {
 		t.Fatal(err)
 	}
 	if err := wait(t, "the answer", answered); err != nil {

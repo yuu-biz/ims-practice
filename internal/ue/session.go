@@ -183,6 +183,9 @@ type Session struct {
 	// media bearer; release is the timer of that.
 	lost    bool
 	release *time.Timer
+	// receivedBefore counts the RTP packets that came before the answer
+	// (noMedia).
+	receivedBefore int
 }
 
 // bearerLossGrace is how long a UE that lost the bearer of its media
@@ -628,6 +631,23 @@ func (s *Session) ended() error {
 	return nil
 }
 
+// noMedia is ErrNoMedia for an answered call that ends with both SDPs
+// saying the peer sends to this UE (RFC 3264 6.1), when no RTP came
+// after the answer, and nil otherwise. The peer's SDP has to say
+// sendrecv: one that says sendonly may have put the call on hold, and a
+// UE that holds a call sends nothing (IR.92 2.3.10). A call that ends
+// on hold is no failure either, as the hold may have come before the
+// first packet could. Early media before the answer does not count.
+func (s *Session) noMedia() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	receives := s.localDir == dirSendrecv || s.localDir == dirRecvonly
+	if s.answered && receives && s.remoteDir == dirSendrecv && s.media.Stats().PacketsReceived == s.receivedBefore {
+		return ErrNoMedia
+	}
+	return nil
+}
+
 // needsOffer is RFC 3312 7 and TS 24.229 5.1.3.1: an offer has to tell
 // the peer of a change in the reservation.
 func (s *Session) needsOffer() bool {
@@ -679,6 +699,7 @@ func (s *Session) setAnswered() {
 		s.log.Info("ringback before the answer", "ringback", string(s.rang))
 	}
 	s.answered = true
+	s.receivedBefore = s.media.Stats().PacketsReceived
 	s.updateFlow()
 }
 

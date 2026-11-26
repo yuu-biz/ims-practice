@@ -185,9 +185,9 @@ func TestTheCSCFsCountTheSuccessfulSessionEstablishments(t *testing.T) {
 	answered := make(chan error, 1)
 	go func() {
 		ic := <-callee.calls
-		answered <- callee.ue.Answer(ctx, ic, callee.media, ue.Speech{}, ue.AnswerOptions{PickUp: time.After(100 * time.Millisecond)})
+		answered <- callee.ue.Answer(ctx, ic, callee.media, ue.ToneSpeech(time.Second), ue.AnswerOptions{PickUp: time.After(100 * time.Millisecond)})
 	}()
-	if err := caller.ue.Call(ctx, caller.ua, caller.reg, impu2, caller.media, ue.Speech{}, ue.CallOptions{}); err != nil {
+	if err := caller.ue.Call(ctx, caller.ua, caller.reg, impu2, caller.media, ue.ToneSpeech(100*time.Millisecond), ue.CallOptions{}); err != nil {
 		t.Fatal(err)
 	}
 	if err := <-answered; err != nil {
@@ -219,9 +219,9 @@ func TestTheCSCFsCountTheirCxRequestsAndAnswers(t *testing.T) {
 	answered := make(chan error, 1)
 	go func() {
 		ic := <-callee.calls
-		answered <- callee.ue.Answer(ctx, ic, callee.media, ue.Speech{}, ue.AnswerOptions{PickUp: time.After(100 * time.Millisecond)})
+		answered <- callee.ue.Answer(ctx, ic, callee.media, ue.ToneSpeech(time.Second), ue.AnswerOptions{PickUp: time.After(100 * time.Millisecond)})
 	}()
-	if err := caller.ue.Call(ctx, caller.ua, caller.reg, impu2, caller.media, ue.Speech{}, ue.CallOptions{}); err != nil {
+	if err := caller.ue.Call(ctx, caller.ua, caller.reg, impu2, caller.media, ue.ToneSpeech(100*time.Millisecond), ue.CallOptions{}); err != nil {
 		t.Fatal(err)
 	}
 	if err := <-answered; err != nil {

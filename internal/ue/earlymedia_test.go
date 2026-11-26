@@ -2,6 +2,7 @@ package ue_test
 
 import (
 	"context"
+	"errors"
 	"slices"
 	"sync"
 	"testing"
@@ -90,8 +91,10 @@ func TestEarlyMediaOnlyWhenAuthorized(t *testing.T) {
 				ic.Accept(sip.Body{})
 			})
 			var log statusLog
-			if err := u.Call(context.Background(), ua, directRegistration, callee, media, ue.Speech{}, log.options()); err != nil {
-				t.Fatal(err)
+			// The callee sends nothing after its answer, and early media
+			// does not count as media of the call.
+			if err := u.Call(context.Background(), ua, directRegistration, callee, media, ue.Speech{}, log.options()); !errors.Is(err, ue.ErrNoMedia) {
+				t.Fatalf("err = %v, want ErrNoMedia: no RTP came after the answer", err)
 			}
 			_, packets := media.Received()
 			if got := packets > 0; got != tc.wantPacket {
@@ -141,7 +144,10 @@ func TestEarlyDialogTerminatedBy199(t *testing.T) {
 		time.Sleep(50 * time.Millisecond)
 		body := pcmuAnswer(t, ic, media)
 		media.SetFlow(ue.Flow{Receive: true})
-		ic.Accept(body)
+		if _, err := ic.Accept(body); err == nil {
+			stream, _ := media.Stream()
+			talk(media, stream.Remote)
+		}
 	})
 	var log statusLog
 	if err := u.Call(context.Background(), ua, directRegistration, callee, media, ue.Speech{PCM: ue.Tone(440, 100*time.Millisecond)}, log.options()); err != nil {
