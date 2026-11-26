@@ -4,7 +4,7 @@
 
 This guide sends one short message (SMS) from UE 1 to UE 2 over the IMS and walks through every message in the capture: how the IP-SM-GW learns that a user can take short messages, how the S-CSCF hands a short message to it, how the message reaches the other UE and how each side learns what became of it. It ends by reading the body of one MESSAGE octet by octet.
 
-The guide follows these editions: TS 24.341 V19.0.0 and TS 23.204 V19.1.0 (SMS over IP), TS 24.011 V20.0.0 (relay layer), TS 23.040 V20.0.0 (transfer layer), TS 23.038 V20.0.0 (alphabets), TS 24.229 V20.1.0, TS 29.228 V20.0.0 (filter criteria), TS 29.328 V20.0.0 and TS 29.329 V19.1.0 (Sh), TS 29.338 V19.3.0 (S6c). Clause numbers below refer to those editions.
+The guide follows these editions: TS 24.341 V19.0.0 and TS 23.204 V19.1.0 (SMS over IP), TS 24.011 V20.0.0 (relay layer), TS 23.040 V20.0.0 (transfer layer), TS 23.038 V20.0.0 (alphabets), TS 24.229 V20.1.0, TS 29.228 V20.0.0 (filter criteria), TS 29.328 V20.0.0 and TS 29.329 V19.1.0 (Sh), TS 29.338 V19.3.0 (S6c), TS 29.002 V19.1.0 (MAP) and TS 29.272 V19.6.0 (S6a), which define what this project's Ready-For-SM stands in for and the AVP it borrows. Clause numbers below refer to those editions.
 
 ## Before you start
 
@@ -498,7 +498,7 @@ The ladders leave out the P-CSCF between the S-CSCF and the UE, and the LIR with
   |<------------------------------------------------|  MESSAGE (A5)
   |------------------>|         |         |         |
   |<------------------|         |         |         |  202
-  |         |         |------------------>|         |  Ready-For-SM UE_PRESENT (A6)
+  |         |         |------------------>|         |  Ready-For-SM UE_PRESENT, this project's own (A6)
   |         |         |<------------------|         |  Ready-For-SM answer
   |         |         |         |<--------|         |  ALR (A7)
   |         |         |         |-------->|         |  ALA
@@ -532,7 +532,7 @@ A UE need not send anything to show that it is back. After A1 to A4 of the run a
   |<=================>|         |         |         |  REGISTER ... 200 OK (C1)
   |         |         |-------->|         |         |  third-party REGISTER (C2)
   |         |         |<--------|         |         |  200 OK
-  |         |         |         |------------------>|  Ready-For-SM UE_PRESENT (C3)
+  |         |         |         |------------------>|  Ready-For-SM UE_PRESENT, this project's own (C3)
   |         |         |         |<------------------|  Ready-For-SM answer
   |         |         |         |         |<--------|  ALR (C4)
   |         |         |         |         |-------->|  ALA
@@ -541,7 +541,7 @@ A UE need not send anything to show that it is back. After A1 to A4 of the run a
 
 - **C1.** UE 2 registers again before its registration runs out, as a UE does on its own; `POST /register` does it at once. Its contact has `+g.3gpp.smsip`, as before.
 - **C2.** The S-CSCF sends the IP-SM-GW a third-party REGISTER, as for every re-registration. The ladder leaves out the SUBSCRIBE with which the IP-SM-GW refreshes its subscription, and the NOTIFYs of the S-CSCF ([Re-registration and deregistration](#re-registration-and-deregistration)). They show no change, so none of them sends a PUR (TS 24.341 5.3.3.2).
-- **C3.** The registration shows that the UE is there (TS 23.204 6.5b step 2a). The IP-SM-GW still holds its own UNRI for UE 2 from A3, so it clears it and sends the HSS the notification of A6.
+- **C3.** The registration shows that the UE is there (TS 23.204 6.5b step 2a). The IP-SM-GW still holds its own UNRI for UE 2 from A3, so it clears it and sends the HSS the notification of A6: a Ready-For-SM, the command of this project's own that stands in for the READY_FOR_SM service of MAP.
 - **C4.** The HSS clears its own UNRI and alerts the SC, as in A7 (TS 23.040 3.2.6 item 2c). Without the notification of C3, nothing would clear UNRI while UE 2 only registered again: each SRR of the SC would be answered DIAMETER_ERROR_ABSENT_USER, and so would the SRR of every new short message for UE 2.
 
 The resend is the one of A8 and A9.
@@ -565,7 +565,7 @@ The resend is the one of A8 and A9.
   :         :         :         :         :         :  UE 2 has memory again
   |<------------------------------------------------|  MESSAGE RP-SMMA (B5)
   |------------------>|         |         |         |
-  |         |         |------------------>|         |  Ready-For-SM UE_MEMORY_AVAILABLE (B6)
+  |         |         |------------------>|         |  Ready-For-SM UE_MEMORY_AVAILABLE, this project's own (B6)
   |         |         |<------------------|         |  Ready-For-SM answer
   |         |         |         |<--------|         |  ALR (B7)
   |         |         |         |-------->|         |  ALA
@@ -577,7 +577,7 @@ The resend is the one of A8 and A9.
 - **B3.** The IP-SM-GW answers the TFA with **DIAMETER_ERROR_SM_DELIVERY_FAILURE (5555)** and `SM-Enumerated-Delivery-Failure-Cause` MEMORY_CAPACITY_EXCEEDED (TS 29.338 7.3.8, Table 6.2.2.1/2).
 - **B4.** The SC reports it with an RDR whose `SM-Delivery-Cause` is UE_MEMORY_CAPACITY_EXCEEDED. The HSS puts the SC's address in the MWD and sets the memory capacity exceeded flag (MCEF) of the user (TS 23.040 3.2.6 item 1). UNRI stays clear: the UE is reachable, it just has no room.
 - **B5.** `{"full": false}` makes the UE send the notification it owes, an **RP-SMMA** in a MESSAGE to the IP-SM-GW (TS 24.011 7.3.2, TS 24.341 5.3.2.5).
-- **B6 to B7.** The IP-SM-GW passes the notification to the HSS in a Ready-For-SM whose `Alert-Reason` is UE_MEMORY_AVAILABLE, as in A6 (TS 23.204 6.6 step 3, TS 24.341 5.3.3.4.1). The HSS clears MCEF and UNRI and alerts the Service Centres of the MWD (TS 23.040 3.2.6 item 2f).
+- **B6 to B7.** The IP-SM-GW passes the notification to the HSS in a Ready-For-SM whose `Alert-Reason` is UE_MEMORY_AVAILABLE: the command of this project's own of A6, in place of the READY_FOR_SM of MAP with the alert reason memoryAvailable (TS 23.204 6.6 step 3, TS 24.341 5.3.3.4.1). The HSS clears MCEF and UNRI and alerts the Service Centres of the MWD (TS 23.040 3.2.6 item 2f).
 - **B8.** The RP-ACK for the notification goes to the UE only after the HSS has taken it, so an RP-ACK never tells the UE that a notification got through when it did not. A notification that does not get through gets an RP-ERROR instead, with the cause that TS 23.040 11.2 gives the error of the HSS: RP-Cause 30, unknown subscriber, for a number that the HSS does not know, 69, requested facility not implemented, for an HSS that does not support Ready-For-SM, and 38, network out of order, for an HSS that does not answer or cannot take the notification. After any of them the UE still owes a notification.
 
 The resend is the one of A8 and A9: an SRR, the TFR of the short message the SC held, and the delivery report that ends it.
@@ -890,7 +890,7 @@ A text with a character outside the alphabet, such as Japanese, is sent in UCS2 
 | `gsm_sms.tp-fcs` | Reports with a TP-Failure-Cause. |
 | `sip.In-Reply-To` | Submit reports and delivery reports. |
 | `sip.Accept-Contact` | The MESSAGEs that the IP-SM-GW sends. |
-| `diameter.applicationId == 16777313` | SGd, between the IP-SM-GW and the Service Centre: the short messages themselves. `16777312` is S6c, between the Service Centre and the HSS (TS 29.338 4.8). |
+| `diameter.applicationId == 16777313` | SGd, between the IP-SM-GW and the Service Centre: the short messages themselves. `16777312` is S6c, between the Service Centre and the HSS (TS 29.338 4.8), which also carries the Ready-For-SM of the IP-SM-GW to the HSS. |
 | `diameter.cmd.code == 16777214` | Ready-For-SM, with which the IP-SM-GW tells the HSS that a user can take short messages again, and its answers. It is this project's own command, so Wireshark names it `Unknown` and adds the warning `diameter.cmd.code.unknown`. `diameter.Alert-Reason == 1` finds the ones that say the memory is free. |
 | `diameter.cmd.code == 8388646` | The short messages that the Service Centre forwards to a serving node (TFR), and the answers that say how each delivery ended (TFA). `8388645` is the pair of a short message from a UE (OFR, OFA), `8388647` the routing info query (SRR, SRA), `8388649` the delivery status report (RDR, RDA) and `8388648` the alert (ALR, ALA). |
 
