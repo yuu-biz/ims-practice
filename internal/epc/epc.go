@@ -64,7 +64,7 @@ type EPC struct {
 	// addresses holds the static address of each subscriber, from the
 	// configuration.
 	addresses map[string]netip.Addr
-	store     Store
+	store     *MemoryStore
 	streams   *accessapi.Streams
 	node      *diameter.Node
 	afs       AFs
@@ -73,7 +73,7 @@ type EPC struct {
 
 // New makes the stub. node is the Diameter node of the PCRF; give it
 // HandleRx as its handler, and the stub its server with SetAFs.
-func New(cfg Config, store Store, node *diameter.Node, log *slog.Logger) *EPC {
+func New(cfg Config, store *MemoryStore, node *diameter.Node, log *slog.Logger) *EPC {
 	e := &EPC{cfg: cfg, addresses: map[string]netip.Addr{}, store: store, streams: accessapi.NewStreams("epc"), node: node, log: log}
 	for _, s := range cfg.Subscribers {
 		e.addresses[s.IMSI] = s.Address
