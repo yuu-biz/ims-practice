@@ -381,7 +381,7 @@ administrative state はノードのプロセスの中にあります。起動�
 
 ## 中継ノードがアンサーを受け取らないとき
 
-P-CSCF は、SDP のアンサーを先へ渡す前に、アンサーを中継ノードに向けます（手順 8 と 10）。まず、答えた側に面したターミネーションに、答えた側がどこで受けるかを `Modify` で伝えます（TS 29.334 5.17.2.3）。そのあとで、もう一方のターミネーションのアドレスを SDP に書きます（TS 24.229 6.7.2.1）。再起動中の中継ノードや、コンテキストを失った中継ノードは、この `Modify` を断るか、時間内に答えません。すると P-CSCF は、先へ渡す自分のアンサーを作れません。届いたアンサーには、向こうの相手のアドレスが書いてあります。これを受け取った UE は、中継ノードを通らずに RTP を送ります。PCRF も、呼が通らない経路のメディアを許可することになります。そのため、P-CSCF は呼を終わらせます。
+P-CSCF は、SDP のアンサーを先へ渡す前に、アンサーを中継ノードに向けます（手順 8 と 10）。まず、答えた側に面したターミネーションに、答えた側がどこで受けるかを `Modify` で伝えます（TS 29.334 5.17.2.3）。そのあとで、もう一方のターミネーションのアドレスを SDP に書きます（TS 24.229 6.7.2.1）。再起動中の中継ノードや、コンテキストを失った中継ノードは、この `Modify` を断るか、時間内に答えません。すると P-CSCF は、先へ渡す自分のアンサーを作れません。届いたアンサーには、向こうの相手のアドレスが書いてあります。これを受け取った UE は、中継ノードを通らずに RTP を送ります。PCRF も、呼が通らない経路のメディアを許可することになります。そのため、P-CSCF は呼を終わらせます。P-CSCF が読めないアンサーでも同じです。解析できない SDP、RFC 3261 20.15 が禁じる `Content-Type` の無い本文、マルチパートの本文の一部に入った SDP です。
 
 TS 24.229 には、メディア中継ノードが働かないときの手順がありません。P-CSCF は、確立の途中のセッションから網が資源を取り上げたときと同じ手順で、呼を終わらせます（TS 24.229 5.2.8.1.1）。違いは 1 つで、500 に `Reason: FAILURE_CAUSE` を付けません。FAILURE_CAUSE は、無線や bearer の資源を失ったことを伝えるものだからです（TS 24.229 7.2A.18.12.2）。CANCEL と BYE には `Reason: SIP;cause=503` を付けます（RFC 3326 2）。TS 24.229 5.2.8.1.1 と 5.2.8.1.2 は、セッションの資源が無くなり、無線や bearer の資源を制御するエンティティが原因を伝えなかったときに、この値を使います。中継ノードはそのエンティティではありません。無線と bearer の資源も残っています。伝える原因が無いので、P-CSCF は同じ 503 を使います。
 
@@ -504,13 +504,13 @@ UE 2 の P-CSCF では、同じことが逆の向きに起きます。183 や 20
 
 - **PCRF はこのアンサーを受け取りません。** P-CSCF は呼の Rx のセッションを終わらせ（TS 29.214 4.4.4）、中継ノードのコンテキストを解放します。
 
-`internal/pcscf` の試験は、アンサーの `Modify` を断る中継ノードを使って、これらの流れを 1 つのプロセスの中で動かします。`TestRefusedAnswerOfA183EndsTheCall`、`TestRefusedAnswerOfThe200EndsTheCall`、`TestRefusedRetransmissionOfThe200KeepsTheCall`、`TestRefusedAnswerOfAnotherForkIsAcknowledgedAndReleased`、`TestRefusedRetransmissionOfAReliable183KeepsTheCall`、`TestRefusedAnswerWithinTheDialogReleasesTheCall`、`TestRefusedAnswerOfAnUPDATEInTheEarlyDialogEndsTheCall`、2 つの P-CSCF のインスタンスが 1 つの保存先を共有する `TestRefusedAnswerOfAnUPDATEAtAnotherInstanceEndsTheCall` です。
+`internal/pcscf` の試験は、アンサーの `Modify` を断る中継ノードを使って、これらの流れを 1 つのプロセスの中で動かします。`TestRefusedAnswerOfA183EndsTheCall`、`TestRefusedAnswerOfThe200EndsTheCall`、`TestRefusedRetransmissionOfThe200KeepsTheCall`、`TestRefusedAnswerOfAnotherForkIsAcknowledgedAndReleased`、`TestRefusedRetransmissionOfAReliable183KeepsTheCall`、`TestResponseWhoseSDPTheP_CSCFCannotReadEndsTheCall`、`TestRefusedAnswerWithinTheDialogReleasesTheCall`、`TestRefusedAnswerOfAnUPDATEInTheEarlyDialogEndsTheCall`、2 つの P-CSCF のインスタンスが 1 つの保存先を共有する `TestRefusedAnswerOfAnUPDATEAtAnotherInstanceEndsTheCall` です。
 
 ## 中継ノードがオファーを受け取らないとき
 
 ダイアログの中の新しい SDP も、INVITE のオファーと同じく中継ノードを通ります。UPDATE のオファーや、保留のときの re-INVITE のオファーです。PRACK の SDP もあります。PRACK の SDP は、新しいオファーか、PRACK が確認する信頼性のある応答に入ったオファーへのアンサーです（RFC 3262 5）。P-CSCF は、SDP を送った側に面したターミネーションに、その側がこれからどこで受けるかを `Modify` で伝えます。そのあとで、もう一方のターミネーションのアドレスを SDP に書きます（TS 24.229 6.7.2.1）。この `Modify` が失敗すると、P-CSCF は先へ渡す自分の SDP を作れません。届いた SDP には、送った側のアドレスが書いてあります。相手はそこへ、中継ノードを通らずに RTP を送ることになります。PCRF も、呼が通らない経路のメディアを許可することになります。
 
-そのため、P-CSCF は要求を先へ送らず、自分で答えます。TS 24.229 6.2 も、P-CSCF が通せないオファーの入った要求を、同じように扱います。P-CSCF はその要求に答え、先へは送りません。ローカルポリシーが許さないメディアのオファーには、6.2 は 488（Not Acceptable Here）を返し、ポリシーが許すメディアをそこに入れます。ここではメディアは許されていて、原因は中継ノードにあるので、500（Server Internal Error、RFC 3261 21.5.1）を返します。P-CSCF が SDP をまったく読めないときは、400（Bad Request、RFC 3261 21.4.1）を返し、中継ノードには何も頼みません。
+そのため、P-CSCF は要求を先へ送らず、自分で答えます。TS 24.229 6.2 も、P-CSCF が通せないオファーの入った要求を、同じように扱います。P-CSCF はその要求に答え、先へは送りません。ローカルポリシーが許さないメディアのオファーには、6.2 は 488（Not Acceptable Here）を返し、ポリシーが許すメディアをそこに入れます。ここではメディアは許されていて、原因は中継ノードにあるので、500（Server Internal Error、RFC 3261 21.5.1）を返します。P-CSCF が SDP をまったく読めないときは、400（Bad Request、RFC 3261 21.4.1）を返します。`Content-Type` の無い本文にも 400 を返します。RFC 3261 20.15 はそのような本文を禁じていて、P-CSCF には SDP かどうか分からないためです。マルチパートの本文の一部に入った SDP には、`Accept: application/sdp` を付けた 415（Unsupported Media Type、RFC 3261 21.4.13）を返します（RFC 5621 8.4）。どの場合も中継ノードには何も頼みません。こうした本文の入った INVITE にも、同じように答えます。
 
 呼がどうなるかは、中継ノードの答えで決まります。
 
@@ -563,7 +563,7 @@ UE 2 の P-CSCF では、同じことが逆の向きに起きます。183 や 20
 
 TS 24.229 がオファーのためにダイアログを解放するのは、オファーが応答で届いたときだけです（5.2.8.1.2）。6.2 は、そのようなオファーの入った 200 を P-CSCF に先へ渡させ、ACK が届いたらセッションを解放させます。200 は誰も断れないためです。応答に入ったアンサーも断れないので、中継ノードが応答のアンサーを受け取らないときは、P-CSCF は呼を解放します。要求に入ったアンサーは違います。暫定応答に入ったオファーへのアンサーを運ぶ要求には、6.2 は P-CSCF に 488 を返させます。ここではその要求は PRACK なので、上のとおり呼を終わらせます。
 
-`internal/pcscf` の試験は、SDP の `Modify` を失敗させる中継ノードを使って、これらの流れを 1 つのプロセスの中で動かします。`TestRefusedOfferWithinTheDialogIsRejected`、`TestRefusedOfferOfAnUPDATEInTheEarlyDialogKeepsTheCall`、`TestOfferWithinTheDialogEndsTheCallWhenTheRelayMayHaveTakenIt`、`TestMalformedOfferWithinTheDialogGets400`、`TestRefusedSDPOfAPRACKEndsTheCall` です。
+`internal/pcscf` の試験は、SDP の `Modify` を失敗させる中継ノードを使って、これらの流れを 1 つのプロセスの中で動かします。`TestRefusedOfferWithinTheDialogIsRejected`、`TestRefusedOfferOfAnUPDATEInTheEarlyDialogKeepsTheCall`、`TestOfferWithinTheDialogEndsTheCallWhenTheRelayMayHaveTakenIt`、`TestMalformedOfferWithinTheDialogGets400`、`TestINVITEWhoseSDPTheP_CSCFCannotReadGoesNoFurther`、`TestUPDATEWhoseSDPTheP_CSCFCannotReadGoesNoFurther`、`TestRefusedSDPOfAPRACKEndsTheCall` です。
 
 ## このプロジェクトで簡略化していること
 
@@ -586,6 +586,7 @@ TS 24.229 がオファーのためにダイアログを解放するのは、オ�
 | P-CSCF。TS 24.229 5.2.6.3.5 の手順 7、5.2.6.3.9 の手順 3 | INVITE のダイアログ以外で UE が送る要求（購読の更新など）には、P-Charging-Vector を付けない。そのようなダイアログでの UE の応答には、応答する要求の icid-value を使う。 | P-CSCF が持つのは INVITE のダイアログだけで、INVITE の icid-value もそこに持つため。 |
 | P-CSCF。RFC 3264、RFC 3262 | オファーの無い INVITE には中継のコンテキストを作らない。このときオファーは 2xx か信頼性のある 1xx に、アンサーは PRACK か ACK に入るが、どちらも書き換えない。UPDATE と re-INVITE に入ったオファーは、INVITE のオファーと同じく中継ノードを通す。 | UE シミュレータはオファーを必ず INVITE に入れるため。 |
 | P-CSCF。RFC 3264 6 | 中継ノードを通すのは、ポートのある最初の音声ストリームだけ。ほかのストリームには終端を作らない。自分のアドレスを持たないストリームは中継ノードを指すことになるが、そのポートでは何も待ち受けていない。 | UE シミュレータがオファーするストリームは 1 つだけのため。 |
+| P-CSCF。RFC 5621 4.2 と TS 24.229 6.7.2.1 | マルチパートの本文の一部に入った SDP は、中継ノードを通さない。その本文の入った要求には 415 を返し、応答なら、中継ノードがアンサーを受け取らないときと同じく呼を終わらせる。 | UA はマルチパートの本文を読まなければならず、緊急呼の SDP は UE の位置といっしょにマルチパートで届く。このプロジェクトには、INVITE のダイアログでマルチパートの本文を送るノードが無い。 |
 | P-CSCF。TS 24.229 5.2.8.1.1 | early dialog の中の要求（中継ノードがアンサーを受け取らなかった UPDATE など）が、INVITE とは別の P-CSCF のインスタンスを通ったときは、INVITE への次の応答が、その INVITE を転送しているインスタンスに届いたときに、はじめて INVITE に 500 を返して取り消す。遅くとも 200 が届いたときである。それまで INVITE は、中継ノードを通る音声の無いまま進む。 | INVITE に答えて取り消せるのは、その INVITE を転送しているインスタンスだけのため。インスタンスどうしは保存先を共有し、互いに頼むことはしない。ダイアログを解放したインスタンスが保存先のダイアログに印を付け、もう一方のインスタンスが次の応答でその印を見つける。VoLTE の呼のプリコンディションでは、UPDATE への 200 のすぐあとに 180 が届く。PCRF はセッションのイベントをそのセッションを開いたインスタンスに送るので、bearer を失ったという知らせは、いつも INVITE を転送しているインスタンスに届く。 |
 | P-CSCF。TS 23.334 6.1.2、6.1.3 | 使えないメディア中継ノードを覚えず、監査もしない。P-CSCF は新しい呼ごとに、Call-ID で選んだ中継ノードをまず試し、そこがコンテキストを作れないときにだけ次の中継ノードへ進む。戻らない中継ノードを通る呼では、UE が切るまで信号だけが続き、音声は流れない。P-CSCF はその呼を切ることも、ほかの中継ノードへ移すこともしない。 | 同じアドレスで戻った中継ノードはコンテキストを開き直し、その呼の音声は続く。呼を切ると、戻るはずの呼まで切ってしまうため。ほかの中継ノードへ移すには P-CSCF が両側に新しいオファーを送ることになるが、プロキシはそれを送らないため。 |
 | UE。TS 24.229 5.1.3.1 b)、5.1.4A.1 | プリコンディションを使わない相手との通話でも、ダイアログの中のすべての要求の Supported に precondition を入れる。 | UA の Supported はすべての通話で共通のため。プリコンディションを使わない相手は、Supported にあるこのオプションタグを無視する。 |

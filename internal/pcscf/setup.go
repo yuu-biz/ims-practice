@@ -94,6 +94,16 @@ func (s *setup) offer(out *sip.Message) error {
 	if len(out.Body) == 0 {
 		return nil
 	}
+	if len(s.p.relays) > 0 {
+		if err := sdpBodyError(out); err != nil {
+			return err
+		}
+	}
+	if !sip.HasSessionDescription(out) {
+		// A body that carries no SDP, such as one of another type that
+		// an application puts there: the INVITE has no offer.
+		return nil
+	}
 	fromUE := out.Body
 	if err := s.throughRelay(out); err != nil {
 		return err
@@ -108,7 +118,7 @@ func (s *setup) throughRelay(out *sip.Message) error {
 	}
 	offer, err := sdp.Parse(out.Body)
 	if err != nil {
-		return err
+		return fmt.Errorf("%w: %w", errMalformedSDP, err)
 	}
 	offerAddr, _, err := offer.Audio()
 	if err != nil {
@@ -238,10 +248,12 @@ func releasedFor(cause ReleaseCause) error {
 // authorise the media, and keeps the dialog. An error means that the
 // network has no resources for the session (errResources); with
 // errRelay, that the answer is not pointed at the relay, which leaves
-// the PCRF without it too; with errReleased, that the dialog has been
+// the PCRF without it too, as for a body whose SDP the P-CSCF cannot
+// read (sdpBodyError); with errReleased, that the dialog has been
 // released, wrapping the cause of the release when it is known; or, with
-// errStore, that the P-CSCF cannot keep the dialog. A body that is not
-// SDP carries no answer, and goes on as it came.
+// errStore, that the P-CSCF cannot keep the dialog. A body of another
+// type than SDP that carries no SDP has no answer, and goes on as it
+// came.
 //
 // What a released dialog held is freed, so its answer goes neither to
 // the relay nor to the PCRF. remember checks once more, as one step with
@@ -252,7 +264,7 @@ func (s *setup) response(resp *sip.Message) error {
 		return err
 	}
 	var refused error
-	if sip.HasSessionDescription(resp) {
+	if carriesSDP(resp, s.relay) {
 		received := resp.Body
 		if err := s.p.relaySDP(resp, s.relay, !s.toUE()); err != nil {
 			s.log.Warn("media relay refused the answer", "error", err.Error())
