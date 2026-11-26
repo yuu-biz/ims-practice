@@ -9,6 +9,7 @@ import (
 
 	"github.com/yuu-biz/ims-practice/internal/agw"
 	"github.com/yuu-biz/ims-practice/internal/ibcf"
+	"github.com/yuu-biz/ims-practice/internal/interconnect"
 	"github.com/yuu-biz/ims-practice/internal/sdp"
 	"github.com/yuu-biz/ims-practice/internal/sip"
 )
@@ -185,9 +186,9 @@ func TestOfferWithinTheCallEndsTheCallWhenTheTrGWMayHaveTakenIt(t *testing.T) {
 
 // An INVITE without an offer: the callee's reliable 183 has the offer,
 // and the TrGW turns down the answer in the caller's PRACK. The PRACK
-// gets 500, and the IBCF ends the INVITE whatever the TrGW answered,
-// since the reliable 183 would stay without its PRACK: the caller's
-// INVITE gets 500, and the callee a CANCEL.
+// matches the 183 that the caller got, so it gets 200 (RFC 3262 3), but
+// the callee's 183 gets no PRACK, so the IBCF ends the INVITE whatever the
+// TrGW answered: the caller's INVITE gets 500, and the callee a CANCEL.
 func TestRefusedSDPOfAPRACKEndsTheINVITE(t *testing.T) {
 	p := newPair(t, nil)
 	p.a.trgw.refuse(ibcf.CoreSide, errRefusedModify)
@@ -205,8 +206,8 @@ func TestRefusedSDPOfAPRACKEndsTheINVITE(t *testing.T) {
 	case <-time.After(10 * time.Second):
 		t.Fatal("no 183 reached the caller")
 	}
-	if resp, err := call.PRACK(offer, p.a.answer(t, offer)); err != nil || resp.StatusCode != 500 {
-		t.Errorf("the PRACK got %v %v, want 500", resp, err)
+	if resp, err := call.PRACK(offer, p.a.answer(t, offer)); err != nil || resp.StatusCode != 200 {
+		t.Errorf("the PRACK got %v %v, want 200", resp, err)
 	}
 	if resp := final(t, call); resp.StatusCode != 500 {
 		t.Errorf("the INVITE got %d, want 500", resp.StatusCode)
@@ -218,4 +219,58 @@ func TestRefusedSDPOfAPRACKEndsTheINVITE(t *testing.T) {
 	noneCame(t, "the callee", pracked)
 	p.waitReleased(t)
 	assertHidden(t, p.b, planA)
+}
+
+// The caller's PRACK has a new offer, for a 183 of the callee that came
+// without 100rel, here because network A's profile of network B removes
+// that option tag. The PRACK then goes on as an UPDATE (RFC 3311 5.1),
+// and when the TrGW turns its offer down, the IBCF refuses it as it
+// would refuse the UPDATE: the PRACK gets 500, and the call goes on.
+func TestRefusedOfferOfAPRACKSentOnAsAnUPDATEKeepsTheCall(t *testing.T) {
+	p := newPair(t, func(ofB, _ *interconnect.Profile) {
+		ofB.OptionTags = map[string]interconnect.OptionTagPolicy{sip.Option100rel: interconnect.OptionRemove}
+	})
+	call, err := p.a.ue.Invite(sip.Invitation{
+		RequestURI:  p.b.sipURI(),
+		From:        "sip:" + p.a.number + "@" + p.a.domain + ";user=phone",
+		Route:       []string{p.a.ueRoute},
+		Body:        p.a.offer(t, sdp.VoLTECodecs(), 1, ""),
+		ManualPRACK: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	in := p.b.nextCall(t)
+	if in.Request.Supports(sip.Option100rel) {
+		t.Fatalf("the callee's INVITE has Supported %q, want no 100rel", in.Request.Get("Supported"))
+	}
+	calleeGot := make(chan *sip.Message, 2)
+	in.Handle(p.b.answerInDialog(calleeGot))
+	if err := in.Progress(183, p.b.answer(t, in.Request)); err != nil {
+		t.Fatalf("183: %v", err)
+	}
+	var progress *sip.Message
+	select {
+	case progress = <-call.Responses():
+	case <-time.After(10 * time.Second):
+		t.Fatal("no 183 reached the caller")
+	}
+	if !progress.Requires(sip.Option100rel) {
+		t.Fatalf("the caller's 183 has Require %q, want 100rel", progress.Get("Require"))
+	}
+	p.a.trgw.refuse(ibcf.CoreSide, errRefusedModify)
+	if resp, err := call.PRACK(progress, p.a.offer(t, sdp.VoLTECodecs(), 2, "")); err != nil || resp.StatusCode != 500 {
+		t.Errorf("the PRACK with the refused offer got %v %v, want 500", resp, err)
+	}
+	p.a.trgw.refuse(ibcf.CoreSide, nil)
+	go in.Accept(sip.Body{})
+	if ok := final(t, call); ok.StatusCode != 200 {
+		t.Fatalf("the call got %d, want 200", ok.StatusCode)
+	}
+	noneCame(t, "the callee", calleeGot)
+	if err := call.Bye(); err != nil {
+		t.Fatalf("BYE: %v", err)
+	}
+	waitDone(t, "the callee's call after the caller's BYE", in.Done())
+	p.waitReleased(t)
 }

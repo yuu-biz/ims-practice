@@ -46,7 +46,9 @@ type Message struct {
 
 // Refusal is the response with which a role refuses a request instead of
 // relaying it. Release has the Call end the call once the request has
-// its response, for a role that cannot let the call go on as it was.
+// its response, for a role that cannot let the call go on as it was. A
+// refused PRACK of a reliable response of the callee ends the call in
+// any case, since that response gets no PRACK then.
 type Refusal struct {
 	Status  int
 	Headers []sip.HeaderField

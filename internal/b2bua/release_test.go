@@ -272,3 +272,31 @@ func TestReleaseBeforeTheCallerHasThe2xx(t *testing.T) {
 	}
 	endedByBYE(t, "the callee's call", in.Done(), in.EndedBy)
 }
+
+// A PRACK that the role refuses ends the INVITE, even without a
+// release: the callee's reliable response gets no PRACK. The caller has
+// its 200 for the PRACK, its INVITE gets 500, and the callee a CANCEL.
+func TestRefusedPRACKEndsTheINVITE(t *testing.T) {
+	h := &hooks{request: func(req *sip.Message, _ b2bua.Direction) *b2bua.Refusal {
+		if req.Method == sip.PRACK {
+			return &b2bua.Refusal{Status: 403}
+		}
+		return nil
+	}}
+	calls := make(chan *sip.IncomingCall, 1)
+	callee := newUA(t, "callee", func(in *sip.IncomingCall) {
+		calls <- in
+		in.Progress(183, answer)
+	})
+	b2b := newB2BUA(t, h, contactOf(t, callee))
+	caller := newUA(t, "caller", func(in *sip.IncomingCall) { in.Reject(480) })
+	out, err := caller.Invite(invitation(t, b2b, nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	in := within(t, "call at the callee", calls)
+	if _, final := finalOf(t, out); final.StatusCode != 500 {
+		t.Errorf("the INVITE got %d, want 500", final.StatusCode)
+	}
+	cancelled(t, in)
+}

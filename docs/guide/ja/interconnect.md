@@ -408,9 +408,9 @@ IBCF の各台は、こうした記録を自分の呼ごとに `Store` に置き
 - **TS 24.229 5.10.2.4 と 5.10.3.4** は、伝送の面を制御する IBCF が、伝送の面の異常を知ったときに、自分で呼を解放することを認めています。IBCF は、2 つのダイアログについて覚えておいたことから、両側に BYE を送ります。相手網の IBCF は、ほかの BYE のときと同じく、自分のダイアログとコンテキストを終わらせます。この 2 つの条項は BYE に Reason を求めていないので、IBCF は Reason を入れません。
 - **呼が応答される前**は、BYE を送るダイアログがまだありません。発信側は INVITE への 500 を受け取り、向こう側へ送った INVITE は取り消されます。
 
-**要求が PRACK のとき。** TrGW の答えにかかわらず、IBCF は 500 を返し、INVITE を終わらせます。UAC は PRACK を送り直しません（RFC 3262 4）。信頼性のある応答は確認されないまま残ります。着信側が INVITE を 5xx で終わらせるのは、応答が PRACK を 64*T1、つまり 32 秒待ったあとです（RFC 3262 3）。そこで IBCF は、発信側にはすぐに INVITE への 500 を返し、着信側には CANCEL を送ります。
+**要求が、着信側の信頼性のある応答への PRACK のとき。** TrGW の答えにかかわらず、IBCF は INVITE を終わらせます。着信側の信頼性のある応答には PRACK が届かなくなり、着信側が INVITE を 5xx で終わらせるのは、その応答が PRACK を 64*T1、つまり 32 秒待ったあとになるためです（RFC 3262 3）。発信側の PRACK は、発信側が受け取った信頼性のある応答に合っているので、IBCF は 200 を返します（RFC 3262 3）。そのあとで INVITE に 500 を返し、着信側に CANCEL を送ります。RFC 6337 2.3 は、PRACK の中身を受け入れられない UAS が、INVITE を誤りの応答で終わらせることを認めています。新しい offer の入った PRACK には、200 ではなく 500 を返します。その 200 には answer を入れる必要があるためです（RFC 3262 5）。着信側が 100rel を付けずに送った応答への、新しい offer の入った PRACK は、UPDATE として先へ送ります（RFC 3311 5.1）。IBCF はそれを UPDATE と同じように断るので、呼が続くこともあります。
 
-`internal/ibcf` の試験は、一方の側の `Modify` を断る TrGW を使って、これらの流れを 1 つのプロセスの中で動かします。`TestRefusedOfferOfTheINVITEIsRejected`、`TestRefusedOfferWithinTheCallIsRejected`、`TestOfferWithinTheCallEndsTheCallWhenTheTrGWMayHaveTakenIt`、`TestRefusedSDPOfAPRACKEndsTheINVITE` です。
+`internal/ibcf` の試験は、一方の側の `Modify` を断る TrGW を使って、これらの流れを 1 つのプロセスの中で動かします。`TestRefusedOfferOfTheINVITEIsRejected`、`TestRefusedOfferWithinTheCallIsRejected`、`TestOfferWithinTheCallEndsTheCallWhenTheTrGWMayHaveTakenIt`、`TestRefusedSDPOfAPRACKEndsTheINVITE`、`TestRefusedOfferOfAPRACKSentOnAsAnUPDATEKeepsTheCall` です。
 
 ### 応答と ACK の SDP
 
