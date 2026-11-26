@@ -146,20 +146,29 @@ func (l *leg) takeAnswer(body []byte) error {
 }
 
 // release subtracts the termination, and tells whether that deleted the
-// context. The goroutine of the dialog calls it when the dialog ends,
-// and nothing else does.
+// context. Only the goroutine that added the termination calls it: when
+// its dialog ends, or when attach gives up a context that it created,
+// because the Store failed or another instance created the conference
+// first.
 //
 // SIMPLIFIED: TS 23.333 6.1.5.1 and TS 29.333 5.17.3.5. After an MRFC
 // recovers, the terminations that the recovery affected are released,
 // and the MRFC tells the MRFP that it has restarted with a ServiceChange
-// on ROOT. Here an instance that stops releases nothing, and one that
-// starts again under the same name sends no ServiceChange: the
-// terminations of its dialogs stay at the MRFP, each with its ports
+// on ROOT. Here nothing releases the terminations of an instance that
+// is killed, or whose process exits before the goroutines of its
+// dialogs have subtracted them. A node that is told to stop closes the
+// UA, which ends each dialog without a BYE, and each goroutine then
+// subtracts its termination, but the node does not wait for those
+// goroutines (sip.UA.Close leaves them to the user). An instance that
+// starts again under the same name sends no ServiceChange either. The
+// terminations that are left stay at the MRFP, each with its ports
 // open, and so does the clock of a context that mixes a conference. The
 // item of such a conference stays in the Store, since the context never
 // empties, and a party that joins later is mixed with the terminations
 // that are left. The MRFC keeps no record of its terminations outside
-// its process, and the control API of the MRFP has no ServiceChange.
+// its process, and neither the operations of MRFP nor the HTTP control
+// API through which the node drives its MRFPs carry a restart
+// indication.
 func (l *leg) release() bool {
 	ctx, cancel := mp()
 	defer cancel()

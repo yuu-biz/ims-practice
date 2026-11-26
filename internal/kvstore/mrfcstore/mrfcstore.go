@@ -22,9 +22,11 @@
 // last to leave removes it. If that removal fails, the item stays until
 // a party of the conference finds that the MRFP holds its context no
 // more, and the MRFC that the party reached removes it. An instance that
-// stops while a party of the conference is in the mix releases nothing
-// at the MRFP (package mrfc says why, at leg.release), so that context
-// never empties, and the item stays as long as the MRFP keeps it.
+// is killed while a party of the conference is in the mix, or whose
+// process exits before the goroutine of that party has subtracted its
+// termination, leaves the termination at the MRFP (package mrfc says
+// why, at leg.release). That context then never empties, and the item
+// stays as long as the MRFP keeps it.
 package mrfcstore
 
 import (
