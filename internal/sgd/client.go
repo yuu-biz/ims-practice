@@ -30,7 +30,8 @@ type HSS interface {
 // S6cClient sends the S6c requests of the SMS-GMSC: the routing query
 // before a delivery (SRR) and the report of how a delivery ended
 // (RDR). An IP-SM-GW sends the same two (TS 23.204 6.4 step 3b, 6.5 step
-// 7).
+// 7), and Ready-For-SM, the notice that a user can take short messages
+// again (readyforsm.go).
 //
 // Whether a request names the HSS of the user in Destination-Host, or
 // only its realm, is the caller's: TS 29.338 5.3.1.1.2 has a sender that
@@ -83,6 +84,27 @@ func (c *S6cClient) ReportSMDeliveryStatus(ctx context.Context, req ReportSMDeli
 		return ReportSMDeliveryStatusAnswer{}, err
 	}
 	return ParseReportSMDeliveryStatusAnswer(answer)
+}
+
+// ReadyForSM tells the HSS that the user of req can take short messages
+// again, so that it alerts the service centres that hold short messages
+// for the user (TS 23.040 3.2.6 items 2c and 2f).
+func (c *S6cClient) ReadyForSM(ctx context.Context, req ReadyForSMRequest) (ReadyForSMAnswer, error) {
+	if err := requireRealm(req.Header); err != nil {
+		return ReadyForSMAnswer{}, err
+	}
+	if err := requireE164("MSISDN", req.UserIdentifier.MSISDN, "IP-SM-GW-Number", req.IPSMGWNumber); err != nil {
+		return ReadyForSMAnswer{}, err
+	}
+	if !req.AlertReason.valid() {
+		return ReadyForSMAnswer{}, fmt.Errorf("sgd: %v is not a value of TS 29.272 7.3.83", req.AlertReason)
+	}
+	req.Header = routing(c.node, req.Header)
+	answer, err := c.hss.Request(ctx, req.Message())
+	if err != nil {
+		return ReadyForSMAnswer{}, err
+	}
+	return ParseReadyForSMAnswer(answer)
 }
 
 // Peers is how the SC reaches one serving node over SGd, by the
