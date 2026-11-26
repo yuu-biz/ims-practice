@@ -112,6 +112,7 @@ UE はプロファイルに入れてあるので、`docker compose up` では起
 | `fivegc`、`n5`、`nhss`、`sbi` | 5GS の側です。5GC のスタブ、PCF の N5 のポリシーの API、HSS のサービスベースのインタフェース、それらの API が共有する部分です。 |
 | `nas` | IMS を通らない SMS です。UE と MME（5GS では AMF）のあいだでショートメッセージを運ぶ NAS のメッセージです。 |
 | `h248/h248test`、`kvstore/storetest`、`openapitest`、`rtptest` | 試験だけが使う道具です。 |
+| `yamledit` | 設定ファイルの文字を、コメントを残したまま、その場で書き換えます。`deploy/compose` の写しを `deploy/k8s` と `deploy/interconnect` に書く生成の道具が使います。 |
 
 ### HTTP の API
 
@@ -128,7 +129,7 @@ UE はプロファイルに入れてあるので、`docker compose up` では起
 
 ### 利用者の状態をノードの外の保存先に置く
 
-`deploy/redundancy/redundancy.yaml` は、プロジェクトに Valkey のサーバーを足し、利用者の状態を持つノードに、その保存先を指す `store` の節を与えます。状態を持つのは HSS、S-CSCF、P-CSCF、IP-SM-GW、MMTel AS、MRFC と、2 つのメディア中継ノード（IMS-AGW と MRFP）です。`compose.yaml` にこのファイルを重ねて起動します。
+`deploy/redundancy/redundancy.yaml` は、プロジェクトに Valkey のサーバーを足し、利用者の状態を持つノードに、その保存先を指す `store` の節を与えます。状態を持つのは HSS、S-CSCF、P-CSCF、IP-SM-GW、SMS のサービスセンタ、MMTel AS、MRFC と、2 つのメディア中継ノード（IMS-AGW と MRFP）です。`compose.yaml` にこのファイルを重ねて起動します。
 
 ```sh
 export COMPOSE_FILE=compose.yaml:deploy/redundancy/redundancy.yaml COMPOSE_PATH_SEPARATOR=:
