@@ -48,7 +48,11 @@ jobs:
   docs:
     runs-on: ubuntu-latest
     steps:
+      # The whole history, so that the check of the commit messages
+      # finds the merge base of the pull request.
       - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
       - uses: actions/setup-python@v7
         with:
           python-version: "3.13"
@@ -61,8 +65,16 @@ jobs:
         run: python scripts/check_glossary.py
       - name: the display filters of a guide are the same in both languages
         run: python scripts/guide_filters.py --check
-      - name: the rule that reads the display filters out of a guide
+      - name: the tests of the scripts
         run: python -m unittest discover -s scripts -p "*_test.py"
+      # The commits of the pull request itself, not the merge commit that
+      # the checkout builds; a push to main adds commits already checked.
+      - name: the commit messages have the form of the project and link to no conversation
+        if: github.event_name == 'pull_request'
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+        run: python scripts/check_commit_messages.py "$BASE" "$HEAD"
 
   go:
     runs-on: ubuntu-latest
