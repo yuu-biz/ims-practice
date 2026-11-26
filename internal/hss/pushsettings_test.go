@@ -255,6 +255,39 @@ func TestAPushGoesOnWhenItsInstanceStops(t *testing.T) {
 	}
 }
 
+// TestALockedInstanceLeavesThePushToTheOthers: an instance that the
+// operator has taken out of service takes on no new work, the push of a
+// changed setting included, even when the change reached it: its
+// Diameter connections are closed, and every PPR it sent would fail. An
+// instance in service sends them.
+func TestALockedInstanceLeavesThePushToTheOthers(t *testing.T) {
+	store := settingsStore(t)
+	locks := &ims.UserLocks{}
+	locked, lockedAPI := settingsInstance(t, store, locks)
+	inService, _ := settingsInstance(t, store, locks)
+	serve(t, locked, impi, impu, cx.AssignRegistration)
+	if _, err := lockedAPI.SetAdministrativeState(role, maintenance.AdministrativeStateRequest{
+		AdministrativeState: maintenance.Locked, Operator: "tester"}); err != nil {
+		t.Fatal(err)
+	}
+	// The locked instance still has the peers it was given, so a PPR it
+	// sent would show here.
+	notReached := &fakeSCSCFs{}
+	locked.SetPeers(notReached)
+	scscfs := &fakeSCSCFs{}
+	inService.SetPeers(scscfs)
+
+	change(t, lockedAPI, "hss.default_service_profile", "trial")
+	if pushed := pushedTo(t, inService, scscfs, 1, locked.Close); pushed[impi] != settingsTrialAS {
+		t.Errorf("the instance in service pushed %v, want the ordinary subscriber with the trial criteria", pushed)
+	}
+	notReached.mu.Lock()
+	defer notReached.mu.Unlock()
+	if len(notReached.pprs) != 0 {
+		t.Errorf("the locked instance sent %d PPRs", len(notReached.pprs))
+	}
+}
+
 // TestAChangeWhoseInstanceStoppedBeforeItPushedIsPushed: an instance
 // that changed the settings in the store and stopped before it began the
 // push leaves the store with settings that no push has gone out for. An
