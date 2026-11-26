@@ -577,13 +577,13 @@ type ProfilePushClaim struct {
 // the push of Source could not send from the instance that had it: that
 // instance has no Diameter connection to the S-CSCF of the subscriber,
 // which connected to another instance. Any instance may claim it, and
-// the one that holds the connection sends it. Since is when the round
-// left it, in the form of ProfilePush.Updated.
+// the one that holds the connection sends it. The three name it, so that
+// a round that leaves the PPR of a subscriber again has it once; how
+// long it is tried comes from the round (HSS.pushRetry).
 type ProfilePushRetry struct {
 	Source    ProfileSource
 	Round     uint64
 	PrivateID string
-	Since     time.Time
 }
 
 // ProfilePushRetryClaim is the right of one instance to send the PPR of

@@ -885,7 +885,7 @@ func hssProfilePushRetries(t *testing.T, a, b hss.Store) {
 	ctx := context.Background()
 	now := time.UnixMilli(1_800_000_000_000)
 	const lease = 30 * time.Second
-	r := hss.ProfilePushRetry{Source: hss.ProfileOfTestUsers, Round: 3, PrivateID: impi, Since: now.UTC()}
+	r := hss.ProfilePushRetry{Source: hss.ProfileOfTestUsers, Round: 3, PrivateID: impi}
 	claim := func(s hss.Store, at time.Time) []hss.ProfilePushRetryClaim {
 		t.Helper()
 		claims, err := s.ClaimProfilePushRetries(ctx, at, lease, 10)

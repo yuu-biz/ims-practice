@@ -289,9 +289,20 @@ func (h *HSS) claimPushes() {
 // pushRetry sends a PPR that a round left for another instance
 // (ProfilePushRetry). One that this instance cannot send either is made
 // due again after an interval, for whichever instance claims it then,
-// until the time of the retries has passed (pushRetryTime). A later round of the source
-// pushes every subscriber of it, this one included, so the PPR of an
-// earlier round is not sent.
+// until the time of the retries (pushRetryTime) has passed since its
+// round last moved: the later of the last claim of a page and the last
+// PPR recorded, or the end of the round. The round moves on from the
+// PPR as it leaves it, so that is no earlier than when it was left, also
+// for the first PPR of a round claimed long after it began. A later
+// round of the source pushes every subscriber of it, this one included,
+// so the PPR of an earlier round is not sent.
+//
+// The time is not one of the PPR: an instance whose claim of the round
+// ran out after it left a PPR, and before it recorded the PPR, has the
+// next instance send that PPR again and leave it again, and the two are
+// one PPR left (ProfilePushRetry). Such a PPR, left before the record
+// that moves the round on, has the time of the retries less the time
+// one PPR takes at most, until an instance claims the round again.
 func (h *HSS) pushRetry(peers Peers, c ProfilePushRetryClaim) {
 	ctx, cancel := context.WithDeadline(h.life, c.Until)
 	defer cancel()
@@ -316,7 +327,7 @@ func (h *HSS) pushRetry(peers Peers, c ProfilePushRetryClaim) {
 		case errors.Is(err, errPushOvertaken):
 			// A later round of the source came while the PPR waited for
 			// the lock of its subscriber, and pushes it.
-		case another && time.Since(c.Since) < h.pushRetryTime():
+		case another && time.Since(latest(p.Updated, p.Claimed)) < h.pushRetryTime():
 			if err := h.store.ScheduleProfilePushRetry(ctx, c.ProfilePushRetry, time.Now().Add(h.sweepInterval())); err != nil {
 				log.Warn("the PPR left for another instance was not made due again; its claim runs out first", "error", err.Error())
 			}
@@ -475,11 +486,8 @@ func (h *HSS) pushOn(ctx context.Context, peers Peers, source ProfileSource) (ro
 			return nil, false, err
 		case errors.Is(err, diameter.ErrPeerUnavailable):
 			// This instance holds no connection to the S-CSCF of the
-			// subscriber: another instance may. The PPR is named by the
-			// point of the round it was left at, so that an instance that
-			// claims the round once the claim of this one has run out, and
-			// sends the same PPR again, leaves the same one.
-			r := ProfilePushRetry{Source: source, Round: p.Round, PrivateID: privateID, Since: p.Updated}
+			// subscriber: another instance may.
+			r := ProfilePushRetry{Source: source, Round: p.Round, PrivateID: privateID}
 			if err := h.store.ScheduleProfilePushRetry(ctx, r, dueNow()); err != nil {
 				return nil, false, err
 			}
