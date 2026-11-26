@@ -202,6 +202,15 @@ func parseTarget(path, rawQuery string) (target, bool) {
 // A user is allowed to use Ut by having a Ut credential, and one
 // without cannot authenticate. The 403 of TS 24.623 5.3.2.3, to an
 // authenticated user who is not allowed to use Ut, has no case here.
+//
+// SIMPLIFIED: TS 24.623 5.2.3.2.1. A user who asks for the document of
+// another user, with the right password of their own, gets 401, where
+// 5.2.3.2.1 b has the AS authenticate them and then deny the
+// authorization, with 403. The server can authenticate only the owner
+// of the document: Sh finds the Ut credential by the public identity of
+// the XUI, and there is no request that finds the credential of the
+// username a client gives. The answer is still a refusal, and the
+// owner's settings stay the owner's.
 func (h *Handler) authorize(w http.ResponseWriter, r *http.Request, t target) bool {
 	var cred Credential // none, which no credentials match
 	if hasDigest(r) {
