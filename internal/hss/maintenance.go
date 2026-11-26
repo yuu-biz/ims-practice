@@ -131,8 +131,9 @@ func (h *HSS) Settings() []maintenance.Setting {
 	)
 	// One group: a change that names several of them puts them in force
 	// at once, so no request sees the policy of one change beside the
-	// profile names of the one before it. Each set writes the pending
-	// settings, which commitSettings publishes.
+	// profile names of the one before it. Each set adds what it does to
+	// the pending change, which commitSettings applies to the settings of
+	// the Store and publishes.
 	// The instances of the role share the settings in the Store, so the
 	// generation of the settings in force is that of the Store, which a
 	// change through another instance raises.
@@ -154,17 +155,17 @@ func (h *HSS) Settings() []maintenance.Setting {
 				}
 				return nil
 			},
-			func(a Admission) { h.pending.admission = a }),
+			func(a Admission) { h.setting(func(s *settings) { s.admission = a }) }),
 		maintenance.NewSetting(defaultName,
 			"the service profile of a subscription that names none of its own",
 			h.DefaultServiceProfile,
 			func(name string) error { return h.config.CheckServiceProfileName(defaultName, name) },
-			func(name string) { h.pending.defaultServiceProfile = name }),
+			func(name string) { h.setting(func(s *settings) { s.defaultServiceProfile = name }) }),
 		maintenance.NewSetting(testUser,
 			"the service profile of a subscription marked test_user that names none of its own",
 			h.TestUserServiceProfile,
 			func(name string) error { return h.config.CheckServiceProfileName(testUser, name) },
-			func(name string) { h.pending.testUserServiceProfile = name }),
+			func(name string) { h.setting(func(s *settings) { s.testUserServiceProfile = name }) }),
 	)
 }
 

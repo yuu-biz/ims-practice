@@ -87,6 +87,41 @@ func TestAnInstanceTakesOnAChangeMadeThroughAnother(t *testing.T) {
 	}
 }
 
+// TestAChangeOnAnInstanceBehindTheStoreChangesWhatItNames: an instance
+// that has not yet taken on the change of the admission policy that
+// another instance made takes a change of the default profile alone.
+// The policy stays as the store has it: a change sets the settings it
+// names on those in force on the role, not on the copy of the instance
+// that took it.
+func TestAChangeOnAnInstanceBehindTheStoreChangesWhatItNames(t *testing.T) {
+	store := settingsStore(t)
+	_, first := settingsInstance(t, store, nil)
+	behind, behindAPI := settingsInstanceReading(t, store, nil, time.Hour)
+	if _, err := changeAt(first, 1, "hss.admission", string(AdmitTestUsers)); err != nil {
+		t.Fatal(err)
+	}
+	if behind.Admission() != AdmitAll {
+		t.Fatalf("the instance behind has taken on the policy already; the test needs it behind")
+	}
+	if _, err := changeAt(behindAPI, 2, "hss.default_service_profile", "trial"); err != nil {
+		t.Fatal(err)
+	}
+	stored, _, err := store.Settings(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := (StoredSettings{Generation: 2, Admission: AdmitTestUsers, DefaultServiceProfile: "trial",
+		TestUserServiceProfile: "default"}); stored != want {
+		t.Errorf("the store has %+v, want %+v", stored, want)
+	}
+	if behind.Admission() != AdmitTestUsers || behind.DefaultServiceProfile() != "trial" {
+		t.Errorf("the instance behind has %q and %q, want test_users and trial", behind.Admission(), behind.DefaultServiceProfile())
+	}
+	if registers(t, behind, impi, impu) {
+		t.Error("the instance behind admits the ordinary subscriber again")
+	}
+}
+
 // TestTheChangeOfARoleReachesEveryInstanceOnce: the OAM server sends
 // one change, with one generation, to every instance of the role. The
 // instance it reaches second finds the change in force in the store,

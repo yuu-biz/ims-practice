@@ -79,7 +79,7 @@ func withProfiles(h *HSS, profiles map[string]ServiceProfile, defaultName, testU
 // generation after theirs.
 func (h *HSS) changeSettings(change func(*settings)) {
 	h.beginSettings()
-	change(h.pending)
+	h.setting(change)
 	if err := h.commitSettings(h.settings.Load().generation + 1); err != nil {
 		panic(err)
 	}
