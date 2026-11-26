@@ -563,9 +563,18 @@ func (f *conference) left(p *party) {
 	}
 	f.mu.Lock()
 	f.setStatus(p, confinfo.Disconnected)
-	// The SIP stack sends nothing more in the dialog of p, so the
-	// subscription within it ends here, with no NOTIFY.
-	p.inDialog = nil
+	// SIMPLIFIED: TS 24.147 5.3.3.3 and RFC 5057 5.5. A participant
+	// whose BYE ended its session gets no last NOTIFY for its
+	// subscription within that dialog, which the BYE does not end: the
+	// SIP stack sends nothing in a dialog after its BYE. The
+	// subscription ends here, with its expiry timer.
+	if p.inDialog != nil {
+		if stop, ok := f.expiry[p.dialog]; ok {
+			stop()
+			delete(f.expiry, p.dialog)
+		}
+		p.inDialog = nil
+	}
 	if f.ended {
 		f.mu.Unlock()
 		return
