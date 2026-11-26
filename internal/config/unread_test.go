@@ -4,7 +4,6 @@ import (
 	"slices"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/yuu-biz/ims-practice/internal/hss"
 )
@@ -18,20 +17,6 @@ func TestUnreadIsEmptyForAConfigurationThatTheRolesRead(t *testing.T) {
 	}
 	if got := cfg.Unread(); len(got) != 0 {
 		t.Errorf("Unread() = %v, want none", got)
-	}
-}
-
-func TestUnreadNamesEverySectionThatNoRoleReads(t *testing.T) {
-	yaml := strings.Replace(scscfYAML, "    host: scscf.ims.mnc001.mcc001.3gppnetwork.org\n",
-		"    host: scscf-1.ims.mnc001.mcc001.3gppnetwork.org\n    pool: scscf.ims.mnc001.mcc001.3gppnetwork.org\n    transaction_timeout: 4s\n", 1)
-	yaml = strings.Replace(yaml, "  max_expires: 600\n", "  max_expires: 600\n  restoration: true\n", 1)
-	cfg, err := Parse(strings.NewReader(yaml))
-	if err != nil {
-		t.Fatal(err)
-	}
-	want := []string{"scscf.sip.pool", "scscf.restoration"}
-	if got := cfg.Unread(); !slices.Equal(got, want) {
-		t.Errorf("Unread() = %v, want %v", got, want)
 	}
 }
 
@@ -67,16 +52,5 @@ func TestUnreadNamesTheStoreOfARoleThatDoesNotReadIt(t *testing.T) {
 	want := []string{"store"}
 	if got := cfg.Unread(); !slices.Equal(got, want) {
 		t.Errorf("Unread() = %v, want %v", got, want)
-	}
-}
-
-// The IBCF reads the pool of each side, for its Record-Route.
-func TestUnreadKeepsThePoolsOfTheIBCF(t *testing.T) {
-	cfg := Config{IBCF: &IBCF{
-		SIP:         SIP{Pool: "ibcf.ims.mnc001.mcc001.3gppnetwork.org"},
-		ExternalSIP: SIP{Pool: "ibcf.nni.mnc001.example.net", TransactionTimeout: 4 * time.Second},
-	}}
-	if got := cfg.Unread(); len(got) != 0 {
-		t.Errorf("Unread() = %v, want none", got)
 	}
 }

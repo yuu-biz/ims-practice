@@ -100,6 +100,27 @@ func TestLoadIBCF(t *testing.T) {
 	}
 }
 
+// TestLoadIBCFPools: an instance of an IBCF that runs as several names
+// itself with the host of each side, and the role with the pool of each
+// side.
+func TestLoadIBCFPools(t *testing.T) {
+	node := strings.Replace(ibcfYAML, "host: ibcf.ims.mnc001.mcc001.3gppnetwork.org}",
+		"host: ibcf-1.ims.mnc001.mcc001.3gppnetwork.org, pool: ibcf.ims.mnc001.mcc001.3gppnetwork.org}", 1)
+	node = strings.Replace(node, "host: ibcf.nni.mnc001.example.net}",
+		"host: ibcf-1.nni.mnc001.example.net, pool: ibcf.nni.mnc001.example.net}", 1)
+	cfg, err := Load(writeIBCF(t, node, profileYAML))
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := cfg.IBCF
+	if c.SIP.Host != "ibcf-1.ims.mnc001.mcc001.3gppnetwork.org" || c.Pool != "ibcf.ims.mnc001.mcc001.3gppnetwork.org" {
+		t.Errorf("internal side %q, pool %q", c.SIP.Host, c.Pool)
+	}
+	if c.ExternalSIP.Host != "ibcf-1.nni.mnc001.example.net" || c.ExternalPool != "ibcf.nni.mnc001.example.net" {
+		t.Errorf("external side %q, pool %q", c.ExternalSIP.Host, c.ExternalPool)
+	}
+}
+
 func TestLoadIBCFRejects(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -108,6 +129,8 @@ func TestLoadIBCFRejects(t *testing.T) {
 		profile string
 		wantErr string
 	}{
+		{name: "pool given as an address", old: "host: ibcf.ims.mnc001.mcc001.3gppnetwork.org}", new: "host: ibcf.ims.mnc001.mcc001.3gppnetwork.org, pool: 172.28.0.90}", wantErr: "sip.pool: must be a name"},
+		{name: "external pool with a port", old: "host: ibcf.nni.mnc001.example.net}", new: "host: ibcf.nni.mnc001.example.net, pool: ibcf.nni.mnc001.example.net:5060}", wantErr: "external_sip.pool: a name without a port"},
 		{name: "same host on both sides", old: "host: ibcf.nni.mnc001.example.net", new: "host: ibcf.ims.mnc001.mcc001.3gppnetwork.org", wantErr: "external_sip.host: must differ"},
 		{name: "external side without a port", old: "listen: 172.28.2.10:5060", new: "listen: 172.28.2.10", wantErr: "external_sip.listen"},
 		{name: "both sides on one address and port", old: "listen: 172.28.2.10:5060", new: "listen: 172.28.0.90:5060", wantErr: "ibcf and the external side of ibcf both listen on port 5060"},

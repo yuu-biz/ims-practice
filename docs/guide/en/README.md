@@ -186,7 +186,7 @@ pcscf:
     listen: 0.0.0.0:2944
 ```
 
-It names no relay. Each relay registers with the P-CSCF itself, and the ID of a context names the relay that holds it, so relays can be added and taken away without this file. A relay registers with one P-CSCF, though, and only that one can change or release the contexts it holds there. So a P-CSCF that controls media this way runs as one node, and its configuration takes neither a `pool` nor the store of the deployment above; it refuses both rather than let a call reach a node that cannot release its context. The media relay reads `h248` in place of `control`, the address of the HTTP API, which it then does not serve:
+It names no relay. Each relay registers with the P-CSCF itself, and the ID of a context names the relay that holds it, so relays can be added and taken away without this file. A relay registers with one P-CSCF, though, and only that one can change or release the contexts it holds there. So a P-CSCF that controls media this way runs as one node, and its configuration does not take the store of the deployment above; it refuses it rather than let a call reach a node that cannot release its context. The media relay reads `h248` in place of `control`, the address of the HTTP API, which it then does not serve:
 
 ```yaml
 agw:

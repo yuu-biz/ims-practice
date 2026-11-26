@@ -113,8 +113,7 @@ func TestParseH248NamesAreNamesH248CanCarry(t *testing.T) {
 // TestParseH248RefusesWhatNeedsASecondInstance: a media gateway
 // registers with one controller, so the contexts it holds for a node
 // belong to the one instance it registered with. A P-CSCF that controls
-// media over H.248 therefore takes neither a pool nor the shared store,
-// and a relay that takes its commands over H.248 takes no store either:
+// media over H.248 therefore does not take the shared store, and a relay that takes its commands over H.248 takes no store either:
 // its gateway holds in memory which H.248 context is which.
 func TestParseH248RefusesWhatNeedsASecondInstance(t *testing.T) {
 	const visited = "  visited_network_id: ims.mnc001.mcc001.3gppnetwork.org\n"
@@ -122,11 +121,6 @@ func TestParseH248RefusesWhatNeedsASecondInstance(t *testing.T) {
 	const store = "store: {kind: valkey, address: 127.0.0.1:6379, prefix: \"ims:\"}\n"
 	withController := strings.Replace(combinedYAML, visited, visited+controller, 1)
 
-	pool := strings.Replace(withController, "host: pcscf.ims.mnc001.mcc001.3gppnetwork.org}",
-		"host: pcscf-1.ims.mnc001.mcc001.3gppnetwork.org, pool: pcscf.ims.mnc001.mcc001.3gppnetwork.org}", 1)
-	if _, err := Parse(strings.NewReader(pool)); err == nil || !strings.Contains(err.Error(), "pcscf.sip.pool") {
-		t.Errorf("a pool: error = %v, want it to mention pcscf.sip.pool", err)
-	}
 	if _, err := Parse(strings.NewReader(withController + store)); err == nil || !strings.Contains(err.Error(), "store") {
 		t.Errorf("a shared store: error = %v, want it to mention the store section", err)
 	}

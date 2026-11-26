@@ -28,14 +28,9 @@ type SIP struct {
 	// 0.0.0.0:5060.
 	Listen netip.AddrPort
 	// Host is the FQDN the role puts in Via, Path, Service-Route and
-	// Record-Route, so that other nodes find it through DNS. With a Pool
-	// it names this instance alone, such as
-	// scscf-1.ims.mnc001.mcc001.3gppnetwork.org.
+	// Record-Route, so that other nodes find it through DNS. It names
+	// this instance, such as scscf-1.ims.mnc001.mcc001.3gppnetwork.org.
 	Host string
-	// Pool is the name that the instances of the role share, such as
-	// scscf.ims.mnc001.mcc001.3gppnetwork.org, for which DNS returns
-	// every instance. Empty when the role runs as one instance.
-	Pool string
 	// TransactionTimeout shortens Timer B and Timer F of the client
 	// transactions, so that a request to an instance that has stopped
 	// fails over sooner. Zero keeps 64*T1 (RFC 3261 17.1.1.2,
@@ -53,16 +48,6 @@ func (s SIP) Timers() sip.Timers {
 	t := sip.DefaultTimers()
 	t.TransactionTimeout = s.TransactionTimeout
 	return t
-}
-
-// PoolURI is the URI that the instances of a role share: sip:<pool>
-// without a port, which DNS resolves with SRV to every instance
-// (RFC 3263 4.2). Without a pool it is URI(), the instance's own.
-func (s SIP) PoolURI() string {
-	if s.Pool == "" {
-		return s.URI()
-	}
-	return "sip:" + s.Pool
 }
 
 // PCSCF is the configuration of the pcscf role.
@@ -154,10 +139,6 @@ type SCSCF struct {
 	// through (TS 24.229 5.4.3.2 steps 11 and 12). Its zero value has no
 	// host, and such a request goes to the other network directly.
 	IBCF sip.URI
-	// Restoration has the S-CSCF keep the restoration information of
-	// its registrations in the HSS, so that another S-CSCF can take them
-	// over (TS 23.380).
-	Restoration bool
 }
 
 // AGW is the configuration of the agw role, the media relay.
@@ -396,7 +377,6 @@ func (raw *rawMRFC) validate() (MRFC, error) {
 type rawSIP struct {
 	Listen             string        `yaml:"listen"`
 	Host               string        `yaml:"host"`
-	Pool               string        `yaml:"pool"`
 	TransactionTimeout time.Duration `yaml:"transaction_timeout"`
 }
 
@@ -427,11 +407,10 @@ type rawICSCF struct {
 }
 
 type rawSCSCF struct {
-	SIP         rawSIP `yaml:"sip"`
-	MinExpires  int    `yaml:"min_expires"`
-	MaxExpires  int    `yaml:"max_expires"`
-	IBCF        string `yaml:"ibcf"`
-	Restoration bool   `yaml:"restoration"`
+	SIP        rawSIP `yaml:"sip"`
+	MinExpires int    `yaml:"min_expires"`
+	MaxExpires int    `yaml:"max_expires"`
+	IBCF       string `yaml:"ibcf"`
 }
 
 type rawHSS struct {
@@ -522,20 +501,10 @@ func (raw rawSIP) validate() (SIP, error) {
 	if net.ParseIP(raw.Host) != nil {
 		return SIP{}, errors.New("sip.host: must be a name that DNS resolves, not an address")
 	}
-	if raw.Pool != "" {
-		if net.ParseIP(raw.Pool) != nil {
-			return SIP{}, errors.New("sip.pool: must be a name that DNS resolves, not an address")
-		}
-		// RFC 3263 4.2: a URI with a port is not looked up with SRV, so
-		// it would reach one instance only.
-		if strings.Contains(raw.Pool, ":") {
-			return SIP{}, errors.New("sip.pool: a name without a port")
-		}
-	}
 	if raw.TransactionTimeout < 0 {
 		return SIP{}, fmt.Errorf("sip.transaction_timeout: %v is negative", raw.TransactionTimeout)
 	}
-	return SIP{Listen: addr, Host: raw.Host, Pool: raw.Pool, TransactionTimeout: raw.TransactionTimeout}, nil
+	return SIP{Listen: addr, Host: raw.Host, TransactionTimeout: raw.TransactionTimeout}, nil
 }
 
 // parseSIPURI reads the SIP URI of a node, which needs a host.
@@ -649,7 +618,7 @@ func (raw *rawSCSCF) validate() (SCSCF, error) {
 	if err != nil {
 		return SCSCF{}, err
 	}
-	c := SCSCF{SIP: sip, MinExpires: defaultMinExpires, MaxExpires: defaultMaxExpires, Restoration: raw.Restoration}
+	c := SCSCF{SIP: sip, MinExpires: defaultMinExpires, MaxExpires: defaultMaxExpires}
 	if raw.MinExpires != 0 {
 		c.MinExpires = time.Duration(raw.MinExpires) * time.Second
 	}

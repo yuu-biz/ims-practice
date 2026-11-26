@@ -93,11 +93,11 @@ func TestParseSCSCFWithAnIBCF(t *testing.T) {
 	}
 }
 
-// TestParseSIPPool: an instance of a role that runs as several
-// names itself with its host and the role with the pool.
-func TestParseSIPPool(t *testing.T) {
+// TestParseSIPTransactionTimeout: an instance names itself with its
+// host, and shortens Timer B and Timer F with transaction_timeout.
+func TestParseSIPTransactionTimeout(t *testing.T) {
 	yaml := strings.Replace(scscfYAML, "    host: scscf.ims.mnc001.mcc001.3gppnetwork.org\n",
-		"    host: scscf-1.ims.mnc001.mcc001.3gppnetwork.org\n    pool: scscf.ims.mnc001.mcc001.3gppnetwork.org\n    transaction_timeout: 4s\n", 1)
+		"    host: scscf-1.ims.mnc001.mcc001.3gppnetwork.org\n    transaction_timeout: 4s\n", 1)
 	cfg, err := Parse(strings.NewReader(yaml))
 	if err != nil {
 		t.Fatal(err)
@@ -106,9 +106,6 @@ func TestParseSIPPool(t *testing.T) {
 	if got, want := s.URI(), "sip:scscf-1.ims.mnc001.mcc001.3gppnetwork.org:5060"; got != want {
 		t.Errorf("URI() = %q, want %q", got, want)
 	}
-	if got, want := s.PoolURI(), "sip:scscf.ims.mnc001.mcc001.3gppnetwork.org"; got != want {
-		t.Errorf("PoolURI() = %q, want %q", got, want)
-	}
 	if s.TransactionTimeout != 4*time.Second {
 		t.Errorf("TransactionTimeout = %v, want 4s", s.TransactionTimeout)
 	}
@@ -116,30 +113,6 @@ func TestParseSIPPool(t *testing.T) {
 	want.TransactionTimeout = 4 * time.Second
 	if got := s.Timers(); got != want {
 		t.Errorf("Timers() = %+v, want %+v", got, want)
-	}
-}
-
-func TestPoolURIWithoutAPoolIsTheInstanceURI(t *testing.T) {
-	s := SIP{Listen: netip.MustParseAddrPort("0.0.0.0:5060"), Host: "scscf.ims.mnc001.mcc001.3gppnetwork.org"}
-	if got, want := s.PoolURI(), "sip:scscf.ims.mnc001.mcc001.3gppnetwork.org:5060"; got != want {
-		t.Errorf("PoolURI() = %q, want %q", got, want)
-	}
-}
-
-func TestParseSCSCFRestoration(t *testing.T) {
-	cfg, err := Parse(strings.NewReader(scscfYAML))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if cfg.SCSCF.Restoration {
-		t.Error("Restoration is on without the key")
-	}
-	with := strings.Replace(scscfYAML, "  max_expires: 600\n", "  max_expires: 600\n  restoration: true\n", 1)
-	if cfg, err = Parse(strings.NewReader(with)); err != nil {
-		t.Fatal(err)
-	}
-	if !cfg.SCSCF.Restoration {
-		t.Error("Restoration is off with restoration: true")
 	}
 }
 
@@ -238,8 +211,9 @@ func TestParseRejects(t *testing.T) {
 		{"section without its role", "scscf:\n", "icscf:\n  sip: {}\nscscf:\n", "icscf: only the icscf role"},
 		{"no home domain", "home_domain: ims.mnc001.mcc001.3gppnetwork.org\n", "", "home_domain: required"},
 		{"SIP host given as an address", "host: scscf.ims.mnc001.mcc001.3gppnetwork.org", "host: 172.28.0.30", "must be a name"},
-		{"SIP pool given as an address", "    host: scscf.ims", "    pool: 172.28.0.30\n    host: scscf.ims", "sip.pool: must be a name"},
-		{"SIP pool with a port", "    host: scscf.ims", "    pool: scscf.ims.mnc001.mcc001.3gppnetwork.org:5060\n    host: scscf.ims", "sip.pool: a name without a port"},
+		// Only the IBCF reads a pool; the S-CSCF has no restoration.
+		{"SIP pool of an S-CSCF", "    host: scscf.ims", "    pool: scscf.ims.mnc001.mcc001.3gppnetwork.org\n    host: scscf.ims", "field pool not found"},
+		{"restoration of an S-CSCF", "  max_expires: 600\n", "  max_expires: 600\n  restoration: true\n", "field restoration not found"},
 		{"negative SIP transaction timeout", "    host: scscf.ims", "    transaction_timeout: -1s\n    host: scscf.ims", "sip.transaction_timeout"},
 		{"max_expires below min_expires", "max_expires: 600", "max_expires: 10", "need 0 < min <= max"},
 		{"unknown store kind", "roles: [scscf]\n", "roles: [scscf]\nstore: {kind: redis}\n", `store: kind: unknown kind "redis"`},
