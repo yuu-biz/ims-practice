@@ -183,8 +183,9 @@ func (p *Phone) Serve(ctx context.Context) error {
 			//
 			// SIMPLIFIED: TS 24.229 5.1.2A.1.6 items 1 B to 1 D. The UE
 			// should mark the P-CSCF as unavailable and register through
-			// another one, or find the P-CSCFs again. It knows one P-CSCF
-			// address, which a new discovery would give again, so it
+			// another one, or find the P-CSCFs again. It uses one P-CSCF
+			// address, the configured one or the first of the list that
+			// the PCO gave, which a new discovery would give again, so it
 			// registers through the same P-CSCF at once.
 			p.log.Info("a request got no response; registering again")
 			r.unregistered()
