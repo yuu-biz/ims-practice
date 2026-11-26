@@ -82,7 +82,9 @@ type boundaryRule struct {
 // asks for no IP association, applies the rules of requestToUE, and the
 // P-Asserted-Identity that the host wrote reaches the UE as an identity
 // that the network asserts. A real P-CSCF takes Mw on an interface of
-// its own, which only the nodes of the network reach.
+// its own, which only the nodes of the network reach. The containers of
+// this project share one network, and the security that a commercial
+// network puts on that boundary is out of scope.
 var ueBoundary = []boundaryRule{
 	// The charging information stays in the network; the P-CSCF ignores
 	// what a UE sends.
