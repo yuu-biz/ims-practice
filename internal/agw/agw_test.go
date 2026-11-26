@@ -165,6 +165,35 @@ func TestRelayRunsOutOfPorts(t *testing.T) {
 	}
 }
 
+// TestAPortThatWasHeldIsTriedAgain: a pair whose RTP or RTCP port
+// something else on the host held when the relay tried it stays in the
+// range, and serves a later termination once it is free.
+func TestAPortThatWasHeldIsTriedAgain(t *testing.T) {
+	for name, offset := range map[string]uint16{"rtp": 0, "rtcp": 1} {
+		t.Run(name, func(t *testing.T) {
+			minPort, maxPort := rtptest.PortRange(t, 2) // one pair
+			r := relayOn(t, minPort, maxPort, nil)
+			held, err := net.ListenUDP("udp4", net.UDPAddrFromAddrPort(netip.AddrPortFrom(netip.IPv4Unspecified(), minPort+offset)))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := r.Add(TerminationRequest{}); !errors.Is(err, ErrNoPort) {
+				t.Fatalf("Add while port %d is held: %v, want ErrNoPort", minPort+offset, err)
+			}
+			held.Close()
+			c, err := r.Add(TerminationRequest{})
+			if err != nil {
+				t.Fatalf("Add once port %d is free again: %v", minPort+offset, err)
+			}
+			for _, view := range c.Terminations {
+				if view.Local.Port() != minPort {
+					t.Errorf("the termination has port %d, want %d", view.Local.Port(), minPort)
+				}
+			}
+		})
+	}
+}
+
 func TestClientGivesUpOnARelayThatStalls(t *testing.T) {
 	stalled := make(chan struct{})
 	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

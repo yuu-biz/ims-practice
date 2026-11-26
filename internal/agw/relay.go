@@ -665,20 +665,20 @@ func (r *Relay) context(id string) (*relayContext, bool) {
 
 // open binds an even port from the pool for RTP, and the odd one above
 // it for RTCP (RFC 3550 11).
+//
+// A pair that something else on the host holds, either port of it, goes
+// back to the end of the pool: it is tried again once the others have
+// been, when what held it may have let it go. Each pair is tried once
+// per open.
 func (r *Relay) open() (rtp, rtcp *channel, err error) {
 	for range r.ports.size() {
 		port, ok := r.ports.take()
 		if !ok {
 			break
 		}
-		rtp, err := r.listen(port)
+		rtp, rtcp, err := r.listenPair(port)
 		if err != nil {
-			// Something else holds the port; leave it out of the pool.
-			continue
-		}
-		rtcp, err := r.listen(port + 1)
-		if err != nil {
-			rtp.conn.Close()
+			r.ports.give(port)
 			continue
 		}
 		return rtp, rtcp, nil
@@ -695,6 +695,18 @@ func (r *Relay) reopenPorts(port uint16) (rtp, rtcp *channel, err error) {
 	if !r.ports.takePort(port) {
 		return nil, nil, fmt.Errorf("%w: port %d is not free in the range of the relay", ErrNoPort, port)
 	}
+	rtp, rtcp, err = r.listenPair(port)
+	if err != nil {
+		// As in open, the pair stays in the range.
+		r.ports.give(port)
+		return nil, nil, err
+	}
+	return rtp, rtcp, nil
+}
+
+// listenPair binds port for RTP and the port above it for RTCP, both or
+// neither.
+func (r *Relay) listenPair(port uint16) (rtp, rtcp *channel, err error) {
 	rtp, err = r.listen(port)
 	if err != nil {
 		return nil, nil, err
