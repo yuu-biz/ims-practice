@@ -8,7 +8,10 @@
 // absent and with a time to live: the lease. Its version is the proof
 // of holding it, and the release deletes the item only at that version,
 // so a holder whose lease ran out cannot free the lock that another
-// instance took after it. An instance that waits tries again after a
+// instance took after it. Its value is the name of the holder and a
+// random token that the holder draws for each take, by which a holder
+// whose take reached the store without its answer finds the lock its
+// own. An instance that waits tries again after a
 // short pause, with jitter, until it gets the lock or its context ends.
 // The lock is per user, so it never holds up the other users of the
 // role.
@@ -48,6 +51,7 @@
 package kvlock
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -83,9 +87,9 @@ type Config struct {
 	// scscf, hss or ipsmgw. The instances of one role share the locks;
 	// the roles do not.
 	Role string
-	// Holder is written as the value of a lock, so that a learner who
-	// reads the store sees which instance holds it. Empty means the host
-	// name.
+	// Holder is written as the value of a lock, before the token of
+	// the take, so that a learner who reads the store sees which
+	// instance holds it. Empty means the host name.
 	Holder string
 	// Lease is how long a lock lasts if its holder does not release it.
 	// Zero means ims.UserLockLease.
@@ -221,14 +225,36 @@ func (l *Locker) leaveQueue(user string, q *queue) {
 
 // acquire writes the lock under key if there is none, until it can or
 // ctx ends, and returns the version that it wrote.
+//
+// A take that fails other than by a conflict may have reached the store
+// all the same, with only its answer lost, as when the answer comes
+// after the timeout. The lock would then stay, held by no one, and keep
+// the user from every instance until the lease ran out. acquire reads
+// the item again, and finds it its own by the token of the take: no
+// other take writes that token, and none writes an item that is there.
+// A lock found its own is held, as if the answer had come: it was
+// written with the whole lease, of which the lost answer and the read
+// have taken at most two timeouts of the store, and the caller can go
+// on handling the user rather than answer that it could not. When ctx
+// has ended, the caller no longer wants the lock, and the lock found
+// its own is released.
 func (l *Locker) acquire(ctx context.Context, key string) (string, error) {
+	value := fmt.Appendf(nil, "%s %016x", l.holder, rand.Uint64())
 	pause := firstRetry
 	for {
 		try, cancel := context.WithTimeout(ctx, l.timeout)
-		version, err := l.kv.CompareAndSwap(try, key, "", l.holder, l.lease)
+		version, err := l.kv.CompareAndSwap(try, key, "", value, l.lease)
 		cancel()
 		if err == nil {
 			return version, nil
+		}
+		if !errors.Is(err, kvstore.ErrConflict) {
+			if version, own := l.own(key, value); own {
+				if ctx.Err() == nil {
+					return version, nil
+				}
+				l.release(key, version)
+			}
 		}
 		if ctx.Err() != nil {
 			return "", fmt.Errorf("kvlock: waiting for %s: %w", key, ctx.Err())
@@ -246,6 +272,18 @@ func (l *Locker) acquire(ctx context.Context, key string) (string, error) {
 		}
 		pause = min(2*pause, maxRetry)
 	}
+}
+
+// own reads the lock under key, and tells its version if it holds
+// value, the token of a take of this holder.
+func (l *Locker) own(key string, value []byte) (string, bool) {
+	ctx, cancel := context.WithTimeout(context.Background(), l.timeout)
+	defer cancel()
+	item, err := l.kv.Get(ctx, key)
+	if err != nil || !bytes.Equal(item.Value, value) {
+		return "", false
+	}
+	return item.Version, true
 }
 
 // release deletes the lock under key if it is still the one at version.

@@ -43,8 +43,10 @@ type harness struct {
 	// kv reads the store directly.
 	kv kvstore.Store
 	// newLocker is one instance of the role: a Locker on a client of its
-	// own, with the prefix of the test.
-	newLocker func(cfg kvlock.Config) *kvlock.Locker
+	// own, with the prefix of the test. newLockerOn is the same with the
+	// client seen through wrap.
+	newLocker   func(cfg kvlock.Config) *kvlock.Locker
+	newLockerOn func(wrap func(kvstore.Store) kvstore.Store, cfg kvlock.Config) *kvlock.Locker
 	// lease is the lease of the Lockers, and pass lets time go by for
 	// the store.
 	lease  time.Duration
@@ -59,8 +61,11 @@ func forEachStore(t *testing.T, test func(t *testing.T, h harness)) {
 	t.Run("Memory", func(t *testing.T) {
 		c := &clock{now: time.UnixMilli(1_790_000_000_000)}
 		s := kvstore.NewMemoryStore(c.Now)
-		test(t, harness{kv: s, lease: 15 * time.Second, pass: c.Advance,
-			newLocker: func(cfg kvlock.Config) *kvlock.Locker { return kvlock.New(s, cfg) }})
+		on := func(wrap func(kvstore.Store) kvstore.Store, cfg kvlock.Config) *kvlock.Locker {
+			return kvlock.New(wrap(s), cfg)
+		}
+		test(t, harness{kv: s, lease: 15 * time.Second, pass: c.Advance, newLockerOn: on,
+			newLocker: func(cfg kvlock.Config) *kvlock.Locker { return on(same, cfg) }})
 	})
 	t.Run("Valkey", func(t *testing.T) {
 		addr := os.Getenv("KVSTORE_VALKEY_ADDR")
@@ -74,16 +79,19 @@ func forEachStore(t *testing.T, test func(t *testing.T, h harness)) {
 			t.Cleanup(v.Close)
 			return v
 		}
-		test(t, harness{kv: client(), lease: lease, pass: time.Sleep, prefix: prefix,
-			newLocker: func(cfg kvlock.Config) *kvlock.Locker {
-				cfg.Prefix = prefix + cfg.Prefix
-				if cfg.Lease == 0 {
-					cfg.Lease = lease
-				}
-				return kvlock.New(client(), cfg)
-			}})
+		on := func(wrap func(kvstore.Store) kvstore.Store, cfg kvlock.Config) *kvlock.Locker {
+			cfg.Prefix = prefix + cfg.Prefix
+			if cfg.Lease == 0 {
+				cfg.Lease = lease
+			}
+			return kvlock.New(wrap(client()), cfg)
+		}
+		test(t, harness{kv: client(), lease: lease, pass: time.Sleep, prefix: prefix, newLockerOn: on,
+			newLocker: func(cfg kvlock.Config) *kvlock.Locker { return on(same, cfg) }})
 	})
 }
+
+func same(s kvstore.Store) kvstore.Store { return s }
 
 // came tells whether cond held within d.
 func came(d time.Duration, cond func() bool) bool {
@@ -350,8 +358,8 @@ func TestKeyAndCase(t *testing.T) {
 			t.Fatal(err)
 		}
 		item, err := h.kv.Get(context.Background(), h.prefix+"net-a:ipsmgw:lock:sip%3A+12025550101@ims.example")
-		if err != nil || string(item.Value) != "ipsmgw-1.ims.example" {
-			t.Fatalf("lock item = %q, %v; want the holder's name", item.Value, err)
+		if err != nil || !strings.HasPrefix(string(item.Value), "ipsmgw-1.ims.example ") {
+			t.Fatalf("lock item = %q, %v; want the holder's name and a token", item.Value, err)
 		}
 		if u := lockWithin(t, b, "SIP:+12025550101@ims.EXAMPLE", 100*time.Millisecond); u != nil {
 			t.Fatal("the same identity in other case got a second lock")
@@ -523,4 +531,77 @@ func (b *syncBuffer) String() string {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	return b.buf.String()
+}
+
+// losingAnswers is a store whose next take of a lock reaches the store
+// but whose answer does not reach the instance, as when the answer
+// comes after the timeout of the request.
+// With then, the loss comes with the end of the context of the Lock:
+// then ends it.
+type losingAnswers struct {
+	kvstore.Store
+	lose atomic.Bool
+	then func()
+}
+
+func (s *losingAnswers) CompareAndSwap(ctx context.Context, key, version string, value []byte, ttl time.Duration) (string, error) {
+	v, err := s.Store.CompareAndSwap(ctx, key, version, value, ttl)
+	if err == nil && s.lose.CompareAndSwap(true, false) {
+		if s.then != nil {
+			s.then()
+		}
+		return "", context.DeadlineExceeded
+	}
+	return v, err
+}
+
+// TestATakeWhoseAnswerWasLostHoldsTheLock: the write that takes a lock
+// reaches the store, but its answer is lost. The instance holds the
+// lock all the same, and its release frees it for the others at once,
+// rather than leave a lock that no one holds to block the user on every
+// instance until the lease runs out.
+func TestATakeWhoseAnswerWasLostHoldsTheLock(t *testing.T) {
+	forEachStore(t, func(t *testing.T, h harness) {
+		lossy := &losingAnswers{}
+		a := h.newLockerOn(func(s kvstore.Store) kvstore.Store { lossy.Store = s; return lossy }, kvlock.Config{Role: "scscf", Holder: "scscf-1"})
+		b := h.newLocker(kvlock.Config{Role: "scscf", Holder: "scscf-2"})
+		lossy.lose.Store(true)
+		unlock, err := a.Lock(context.Background(), impi)
+		if err != nil {
+			t.Fatalf("Lock whose take lost its answer: %v", err)
+		}
+		if u := lockWithin(t, b, impi, 100*time.Millisecond); u != nil {
+			u()
+			t.Fatal("another instance got the lock that the take whose answer was lost holds")
+		}
+		unlock()
+		if u := lockWithin(t, b, impi, time.Second); u == nil {
+			t.Fatal("the lock was not free after its release")
+		} else {
+			u()
+		}
+	})
+}
+
+// TestATakeWhoseAnswerCameAfterTheEndOfItsContextFreesTheLock: the
+// answer of the take is lost because the context of the Lock ended. The
+// caller has given up, and the lock that the take wrote is freed at
+// once for the other instances.
+func TestATakeWhoseAnswerCameAfterTheEndOfItsContextFreesTheLock(t *testing.T) {
+	forEachStore(t, func(t *testing.T, h harness) {
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		lossy := &losingAnswers{then: cancel}
+		a := h.newLockerOn(func(s kvstore.Store) kvstore.Store { lossy.Store = s; return lossy }, kvlock.Config{Role: "scscf", Holder: "scscf-1"})
+		b := h.newLocker(kvlock.Config{Role: "scscf", Holder: "scscf-2"})
+		lossy.lose.Store(true)
+		if unlock, err := a.Lock(ctx, impi); !errors.Is(err, context.Canceled) || unlock != nil {
+			t.Fatalf("Lock whose context ended with the answer of its take = %v, %v; want no lock and the end of the context", unlock != nil, err)
+		}
+		if u := lockWithin(t, b, impi, 100*time.Millisecond); u == nil {
+			t.Fatal("the lock that the given up take wrote was not freed")
+		} else {
+			u()
+		}
+	})
 }
