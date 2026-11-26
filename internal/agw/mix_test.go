@@ -182,6 +182,35 @@ func TestMixAfterSilenceStartsATalkspurt(t *testing.T) {
 	}
 }
 
+// TestNoPacketOfASubtractedContext: a Subtract of the whole context
+// marks it closed before it closes the sockets. A packet that the
+// relay read from a socket just before, and hands over while the
+// sockets are still open, is neither counted nor sent on.
+func TestNoPacketOfASubtractedContext(t *testing.T) {
+	r := newRelay(t, 20)
+	a, b := udp(t), udp(t)
+	rc := &relayContext{id: "closing", relay: r, terms: map[TerminationID]*relayTermination{}, mix: mixer.NewConference()}
+	rc.mu.Lock()
+	for id, conn := range map[TerminationID]*net.UDPConn{"a": a, "b": b} {
+		if _, err := rc.add(TerminationRequest{ID: id, Remote: addr(conn)}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	from, to := rc.terms["a"], rc.terms["b"]
+	// What Subtract does before it lets go of rc.mu and closes the
+	// sockets.
+	rc.closed = true
+	rc.mu.Unlock()
+	defer rc.close()
+	rc.receive(from, rtpChannel, from.rtp, (rtp.Packet{PayloadType: 0, SSRC: 42, Payload: []byte("too late")}).Marshal())
+	if got, sent := from.rtp.received.Load(), to.rtp.sent.Load(); got != 0 || sent != 0 {
+		t.Errorf("the closed context counted %d packets in and sent %d on, want none", got, sent)
+	}
+	if p, ok := readRTP(t, b, 100*time.Millisecond); ok {
+		t.Errorf("b got %+v from a context that was subtracted", p)
+	}
+}
+
 // handClocked is a context of three terminations, a, b and c, towards
 // the sockets of parties, whose clock does not run: the test calls step
 // itself, so that it decides when each tick comes.

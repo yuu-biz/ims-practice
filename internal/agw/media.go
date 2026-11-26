@@ -337,8 +337,10 @@ func (rc *relayContext) receive(from *relayTermination, kind string, in *channel
 	defer rc.mu.Unlock()
 	// A packet read from the socket of a termination just before a
 	// Subtract took it out waits here for rc.mu, and arrives after the
-	// Subtract has returned. It belongs to the context no more.
-	if rc.terms[from.id] != from {
+	// Subtract has returned. It belongs to the context no more. A
+	// Subtract of the whole context leaves the terminations in it and
+	// marks it closed, before it closes the sockets.
+	if rc.closed || rc.terms[from.id] != from {
 		return
 	}
 	in.received.Add(1)
