@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/netip"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -123,6 +124,47 @@ func (h *espHarness) ran(t *testing.T, count int) {
 	}
 }
 
+// settled waits until every teardown that was due by a teardown delay
+// from now has run. It sets up the set of another UE, which lives for
+// two teardown delays, and waits for that set to leave the kernel: the
+// timers fire in the order of their ends, so a teardown that was due
+// before it has run by then. The runs of that set are taken out again,
+// so that a test finds only its own.
+func (h *espHarness) settled(t *testing.T) {
+	t.Helper()
+	fence := h.associations(7777, 8888)
+	fence.UE = netip.MustParseAddrPort("127.0.0.1:5999")
+	fence.UEMechanism.PortC, fence.UEMechanism.PortS = 50003, 5999
+	fence.Expires = time.Now().Add(2 * teardownDelay)
+	if err := h.p.putSecurityAssociations(context.Background(), fence); err != nil {
+		t.Fatal(err)
+	}
+	// spi_ps of the set, 8889, names its states in each of its runs.
+	ofFence := func(run []string) bool {
+		return slices.ContainsFunc(run, func(c string) bool { return strings.Contains(c, " spi 0x22b9") })
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		h.mu.Lock()
+		n := 0
+		for _, run := range h.runs {
+			if ofFence(run) {
+				n++
+			}
+		}
+		if n == 2 {
+			h.runs = slices.DeleteFunc(h.runs, ofFence)
+			h.mu.Unlock()
+			return
+		}
+		h.mu.Unlock()
+		if time.Now().After(deadline) {
+			t.Fatalf("the set of another UE was not set up and let go within 5 s:\n%s", h.printed())
+		}
+		time.Sleep(teardownDelay / 5)
+	}
+}
+
 func holds(t *testing.T, run []string, want string) {
 	t.Helper()
 	for _, c := range run {
@@ -215,7 +257,7 @@ func TestESPKeptForARefreshedRegistration(t *testing.T) {
 	if err := h.p.putSecurityAssociations(ctx, established); err != nil {
 		t.Fatal(err)
 	}
-	time.Sleep(4 * teardownDelay)
+	h.settled(t)
 	if h.count() != 0 {
 		t.Errorf("the kernel heard of the refresh, or let the associations go at the lifetime of the authentication:\n%s", h.printed())
 	}
@@ -292,7 +334,7 @@ func TestESPLeavesTheOtherSetAlone(t *testing.T) {
 	if err := h.p.deleteSecurityAssociationsOf(ctx, sas.UE, SPIs{}); err != nil {
 		t.Fatal(err)
 	}
-	time.Sleep(2 * teardownDelay)
+	h.settled(t)
 	if h.count() != 0 {
 		t.Errorf("the kernel tore down the set of another contact:\n%s", h.printed())
 	}
@@ -319,7 +361,7 @@ func TestESPOfAnotherInstanceIsLeftAlone(t *testing.T) {
 	if err := h.p.deleteSecurityAssociations(ctx, elsewhere.UE); err != nil {
 		t.Fatal(err)
 	}
-	time.Sleep(2 * teardownDelay)
+	h.settled(t)
 	if h.count() != 0 {
 		t.Errorf("the kernel was asked about the associations of another P-CSCF:\n%s", h.printed())
 	}
@@ -424,7 +466,7 @@ func TestESPReRegistrationWithinTheTeardownDelay(t *testing.T) {
 	if err := h.p.putSecurityAssociations(ctx, h.associations(3333, 4444)); err != nil {
 		t.Fatal(err)
 	}
-	time.Sleep(4 * teardownDelay)
+	h.settled(t)
 	for i := 0; i < h.count(); i++ {
 		for _, c := range h.run(i) {
 			if strings.HasPrefix(c, "ip xfrm policy deleteall") {
