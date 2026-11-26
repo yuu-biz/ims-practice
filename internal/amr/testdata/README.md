@@ -1,5 +1,7 @@
 # AMR test tones
 
+[日本語](README.ja.md)
+
 Each file is one second of a 440 Hz sine at half of full scale, in the
 single-channel storage format of RFC 4867 5, made with `tools/amrgen`:
 

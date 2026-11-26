@@ -1,5 +1,7 @@
 # Speech of the UE simulator
 
+[日本語](README.ja.md)
+
 The UE plays these one-second tones in calls whose codec is AMR or
 AMR-WB, repeated for the length of `-tone`, unless `-amr-in` gives a
 file of its own. They are copies of `internal/amr/testdata`, where the
