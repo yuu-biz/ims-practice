@@ -110,7 +110,7 @@ With `?check` at the end of the address (`04-registration.html?check`), the page
 node check-html.js   # reads dist/
 ```
 
-It prints, for each deck, the number of boxes that overflow and the fonts that drew the text, and fails when a box overflows, or when more than 1% of the glyphs of a deck come from fonts that the deck does not name: that is what a machine without the fonts of the decks shows, and its measure would say nothing. A symbol that none of the fonts has, such as "⊕", comes from another font on any machine and stays under that share. It needs Node with Playwright and its Chromium, and the fonts: on Ubuntu, the packages `fonts-crosextra-carlito` (Carlito, with the widths of Calibri), `fonts-noto-cjk` (Noto Sans CJK JP) and `fonts-dejavu-core` (DejaVu Sans Mono).
+It prints, for each deck, the number of boxes that overflow and the fonts that drew the text, and fails when a box overflows, or when more than 1% of the glyphs of a deck come from fonts that the deck does not name: that is what a machine without the fonts of the decks shows, and its measure would say nothing. A symbol that none of the fonts has, such as "⊕", comes from another font on any machine and stays under that share. It needs Node with Playwright and its Chromium, and the fonts: on Ubuntu, the packages `fonts-crosextra-carlito` (`Carlito`, with the widths of `Calibri`), `fonts-noto-cjk` (`Noto Sans CJK JP`) and `fonts-dejavu-core` (`DejaVu Sans Mono`).
 
 ## Check
 

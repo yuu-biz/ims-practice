@@ -188,7 +188,7 @@ The filter is `diameter.cmd.code == 303 || sip.Status-Code == 401`.
 
 | Look at | What to see |
 | --- | --- |
-| Server-Assignment-Type of the SAR | REGISTRATION (1). |
+| Server-Assignment-Type of the SAR | `REGISTRATION` (1). |
 | User-Data of the SAA | The user profile, in XML, with the iFCs. |
 | Path and Service-Route of the 200 OK | The routes of the requests that follow. |
 | P-Associated-URI of the 200 OK | The identities registered together, without those that the HSS bars. The first is the default. |
