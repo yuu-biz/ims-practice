@@ -179,12 +179,14 @@ func TestMediaStreamsWhatItReceivesWhileTheCallRuns(t *testing.T) {
 		if err := a.Start(ue.ToneSpeech(400 * time.Millisecond)); err != nil {
 			t.Fatal(err)
 		}
-		// Halfway through the 20 packets, the start of the call has
-		// already reached the listener.
-		time.Sleep(200 * time.Millisecond)
+		// The start of the call reaches the listener while the rest of
+		// the 20 packets is still to go out.
+		waitFor(t, "the listener to hear the start of the call", func() bool { return heard.len() > 0 })
 		early := heard.len()
-		if early == 0 {
-			t.Errorf("%s: the listener had nothing halfway through the call", codec.Name)
+		select {
+		case <-a.Played():
+			t.Errorf("%s: the listener heard nothing before the last packet went out", codec.Name)
+		default:
 		}
 		played(t, a, b)
 		if err := b.StreamError(); err != nil {
@@ -255,15 +257,20 @@ func (errorWriter) Write([]byte) (int, error) { return 0, errors.New("the listen
 // that the receiving side files NO_DATA for the pause (RFC 4867 5.3).
 func TestMediaPausesWithoutLosingTheTiming(t *testing.T) {
 	a, b := between(t, amrWB, nil)
-	speech := ue.ToneSpeech(200 * time.Millisecond)
+	speech := ue.ToneSpeech(time.Second)
 	a.SetFlow(ue.Flow{})
 	if err := a.Start(speech); err != nil {
 		t.Fatal(err)
 	}
 	a.SetFlow(ue.Flow{Send: true, Receive: true})
-	time.Sleep(90 * time.Millisecond)
+	waitFor(t, "the first frames of the tone to go out", func() bool { return len(a.SentFrames()) >= 2 })
 	a.SetFlow(ue.Flow{Receive: true})
-	time.Sleep(100 * time.Millisecond)
+	select {
+	case <-a.Played():
+		t.Fatal("the whole tone went out before the pause")
+	default:
+	}
+	packetTimes(t, a, 3)
 	a.SetFlow(ue.Flow{Send: true, Receive: true})
 	played(t, a, b)
 	sent, received := a.SentFrames(), b.ReceivedFrames()
@@ -273,8 +280,23 @@ func TestMediaPausesWithoutLosingTheTiming(t *testing.T) {
 			speechFrames++
 		}
 	}
-	if len(sent) <= 10 || speechFrames != 10 || !slices.EqualFunc(sent, received, sameFrame) {
-		t.Errorf("sent %d frames, received %d with %d of speech; want the 10 of the tone with a pause of NO_DATA", len(sent), len(received), speechFrames)
+	if len(sent) <= 50 || speechFrames != 50 || !slices.EqualFunc(sent, received, sameFrame) {
+		t.Errorf("sent %d frames, received %d with %d of speech; want the 50 of the tone with a pause of NO_DATA", len(sent), len(received), speechFrames)
+	}
+}
+
+// packetTimes waits until the RTP clock of m has moved on n times: n
+// packet times have gone by for its sender.
+func packetTimes(t *testing.T, m *ue.Media, n int) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for last, moved := ue.RTPClock(m), 0; moved < n; time.Sleep(time.Millisecond) {
+		if now := ue.RTPClock(m); now != last {
+			last, moved = now, moved+1
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("the RTP clock moved on %d times in 5 s, want %d", moved, n)
+		}
 	}
 }
 

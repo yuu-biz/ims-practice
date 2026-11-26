@@ -42,3 +42,12 @@ func SetRetryTimer(t testing.TB, start func(time.Duration) *time.Timer) {
 	retryTimer = start
 	t.Cleanup(func() { retryTimer = old })
 }
+
+// RTPClock is the RTP timestamp of the next packet of m. It moves on by
+// one packet each packet time, whether that packet goes out or not
+// (RFC 3550 5.1).
+func RTPClock(m *Media) uint32 {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.ts
+}
