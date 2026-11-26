@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"reflect"
 	"slices"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -618,11 +619,21 @@ func TestSendRoutingInfoSeesARegistrationUnderTheLock(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// The query asks for the lock once it is past its unlocked read.
+	waiting := make(chan struct{})
+	var once sync.Once
+	locksOf(n.hss).watch(func(_ context.Context, user string) {
+		if user == impi {
+			once.Do(func() { close(waiting) })
+		}
+	})
 	answers := make(chan sgd.SendRoutingInfoForSMAnswer, 1)
 	go func() { answers <- n.srr(t, msisdnA) }()
-	// The query is past its unlocked read by the time it blocks on the
-	// lock; waiting makes the interleaving the one under test.
-	time.Sleep(200 * time.Millisecond)
+	select {
+	case <-waiting:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the query did not ask for the lock of the subscriber within 5 s")
+	}
 	u := n.subscriber(t)
 	u.IPSMGWNumber, u.IPSMGW = ipsmgwNumber, diameter.Identity{OriginHost: ipsmgwHost, OriginRealm: realm}
 	u.MessageWaitingData, u.UNRI = nil, false
