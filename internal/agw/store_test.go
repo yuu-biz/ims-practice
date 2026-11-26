@@ -372,6 +372,12 @@ func TestARecreatedRelayGivesUpAContextWhosePortsAreTaken(t *testing.T) {
 	if len(saved) != 1 || saved[0].ID != kept.ID {
 		t.Errorf("the store holds %+v, want the context %s only", saved, kept.ID)
 	}
+	// The ports of the context given up, the one that was held among
+	// them, serve new contexts once they are free.
+	held.Close()
+	if _, err := again.Add(TerminationRequest{ID: Access}, TerminationRequest{ID: Core}); err != nil {
+		t.Errorf("a context on the ports of the one given up: %v", err)
+	}
 }
 
 // TestARelayWhoseStoreCannotBeReadDoesNotStart: without its contexts a
