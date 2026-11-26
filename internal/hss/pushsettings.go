@@ -176,6 +176,14 @@ func (h *HSS) startRound(ctx context.Context, source ProfileSource, set *setting
 				ProfilePush{Source: source, Name: name, Done: true, Updated: stamp()})
 			return err
 		case recorded && !p.Done:
+			// An instance may claim the round between the read above and
+			// the due below, which ends its claim, and another may claim
+			// the round as the first sends its first PPR. The second
+			// records its claim, the first finds that at its next record
+			// and stops, and the subscriber of that PPR may get it twice.
+			// That takes a round that has stood still for two leases, and
+			// costs one PPR, which only replaces what the S-CSCF holds with
+			// the profile it has (TS 29.228 6.2.2.1).
 			if time.Since(latest(p.Updated, p.Claimed)) > 2*h.pushLease() {
 				return h.store.ScheduleProfilePush(ctx, source, dueNow())
 			}
