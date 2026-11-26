@@ -136,3 +136,48 @@ func TestNoPacketOfASubtractedParty(t *testing.T) {
 		t.Errorf("packets sent went from %v to %v after the Subtract, want no packet of c", before, after)
 	}
 }
+
+// TestMixAfterSilenceStartsATalkspurt: a conference that goes down to
+// two parties stops mixing, and one that grows to three again mixes
+// again from the same RTP source. Its timestamp has gone on over the
+// silence, as the sampling clock did (RFC 3550 5.1), and the first
+// packet after the silence has the marker set (RFC 3551 4.1).
+func TestMixAfterSilenceStartsATalkspurt(t *testing.T) {
+	const silence = 300 * time.Millisecond
+	r := newRelay(t, 20)
+	a, b, c := udp(t), udp(t), udp(t)
+	ctx, err := r.Add(TerminationRequest{ID: "a", Remote: addr(a)}, TerminationRequest{ID: "b", Remote: addr(b)}, TerminationRequest{ID: "c", Remote: addr(c)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	last := rtptest.Next(t, a, time.Second, "the mix of a conference of three")
+	began := time.Now()
+	if _, _, err := r.SubtractTermination(ctx.ID, "c"); err != nil {
+		t.Fatal(err)
+	}
+	if queued := rtptest.Queued(t, a); len(queued) > 0 {
+		last = queued[len(queued)-1]
+	}
+	stopped := time.Now()
+	time.Sleep(silence)
+	resumed := time.Now()
+	if _, err := r.AddTermination(ctx.ID, TerminationRequest{ID: "c", Remote: addr(c)}); err != nil {
+		t.Fatal(err)
+	}
+	first := rtptest.Next(t, a, time.Second, "the mix of the conference of three again")
+	ended := time.Now()
+
+	if first.SSRC != last.SSRC {
+		t.Fatalf("the mix comes from SSRC %d after the silence, %d before; want one RTP source", first.SSRC, last.SSRC)
+	}
+	if !first.Marker {
+		t.Error("the first packet after the silence has no marker")
+	}
+	frames := func(d time.Duration) uint32 { return uint32(d / tick) }
+	advance := first.Timestamp - last.Timestamp
+	// The silence lasted at least from the Subtract to the Add, and at
+	// most from before the Subtract to the packet after the Add.
+	if least, most := frames(resumed.Sub(stopped))*mixer.FrameSize, (frames(ended.Sub(began))+2)*mixer.FrameSize; advance < least || advance > most {
+		t.Errorf("the timestamp went on by %d over the silence, want %d to %d", advance, least, most)
+	}
+}
