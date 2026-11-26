@@ -19,9 +19,9 @@ import (
 // PCRF is in pcrf.go; between the two, Gx is a Go call.
 //
 // SIMPLIFIED: TS 29.212. The PCRF and the PDN GW share the PDN
-// connection in the Store instead of exchanging CCR, CCA and RAR over
-// Gx: the stub is one node that plays both, so the two have its Store
-// in common and no network between them.
+// connection in the MemoryStore instead of exchanging CCR, CCA and RAR
+// over Gx: the stub is one node that plays both, so the two have its
+// MemoryStore in common and no network between them.
 
 // Errors of the UE API.
 var (
@@ -47,7 +47,8 @@ const maxPacketFilters = 16
 
 // effects are what a change to a PDN connection makes the network send:
 // messages on the UE's event stream and Rx requests to AFs. They go out
-// after the change is kept, so no I/O happens inside a Store update.
+// after the change is kept, so no I/O happens inside an update of the
+// MemoryStore.
 type effects struct {
 	imsi string
 	toUE []ueMessage

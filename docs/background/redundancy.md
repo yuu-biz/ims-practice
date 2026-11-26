@@ -217,7 +217,7 @@ P-CSCF には、もう 1 つ事情があります。UE は、P-CSCF の IP ア�
 | MRFC | ダイアログとそのタイマー、MRFP からの Notify の待ち（`waiting`） | プロセスの中。INVITE を受けた台の中 | `internal/mrfc/mrfc.go` |
 | IBCF | 境界を渡る呼ごとの TrGW のコンテキスト（Media。Call-ID、発信側の tag、向きで引く） | `ibcf.Store` の後ろ | `internal/ibcf/store.go` |
 | IBCF | INVITE のトランザクションと Timer C | プロセスの中 | `internal/ibcf/proxy.go` |
-| EPC スタブ | PDN 接続（bearer、Rx のセッション、PCC の規則）、Rx の Session-Id から PDN 接続への対応（Binding） | `epc.Store` の後ろ | `internal/epc/store.go` |
+| EPC スタブ | PDN 接続（bearer、Rx のセッション、PCC の規則）、Rx の Session-Id から PDN 接続への対応（Binding） | `epc.MemoryStore` | `internal/epc/store.go` |
 | EPC スタブと 5GC スタブ | UE ごとのイベントの流れ（S1 と N1 の接続の代わり） | プロセスの中。UE が接続した台の中 | `internal/accessapi/streams.go` |
 
 `Store` の境界はすでにあります。足りないのは、境界の後ろの実装、タイマー、複数の操作をまとめる手段です。境界の後ろの実装は、11.8 で作りました。このうち MMTel AS と MRFC の `Store` を保存先に載せることと、IBCF と EPC の `Store` を載せないことは、[状態と冗長構成の設計](../design/state-redundancy.md)で決めました。
@@ -981,7 +981,7 @@ AOF を毎回書き込む設定（`--appendonly yes --appendfsync always`）で�
 | `internal/kvstore/agwstore` | `agw.ContextStore`（下の「メディア中継ノードのコンテキスト」） |
 | `internal/kvstore/storetest` | 共通の試験の組。各役割の `MemoryStore` と、各役割の実装の両方にかける |
 
-EPC と PCRF のスタブは保存先に載せないと決めたので、`internal/kvstore/epcstore` は作りません（[状態と冗長構成の設計](../design/state-redundancy.md)）。`storetest` の `EPC` の組は、`epc.MemoryStore` にかける試験として残しています。
+EPC と PCRF のスタブは保存先に載せないと決めたので、`internal/kvstore/epcstore` は作りません（[状態と冗長構成の設計](../design/state-redundancy.md)）。実装が 1 つになったので、`epc.Store` のインタフェースも消し、`epc.MemoryStore` を直接使います。`storetest` の `EPC` の組は、`internal/epc` の試験に移しました。
 
 どの実装も、`New(kv, cfg)` で作ります。`cfg.Prefix` が同じで同じ `kvstore.Store` を使う実装どうしは、状態を共有します。`scscfstore` と `hssstore` は、ID を `ims.CanonicalURI` で比べるので、`internal/ims` も import しています。
 
@@ -1050,7 +1050,7 @@ ID の比べ方は、各役割の `MemoryStore` に合わせました。IMPI は
 
 #### 共通の試験
 
-`storetest` に、役割ごとの試験の組（`SCSCF`、`PCSCF`、`IPSMGW`、`SC`、`MMTel`、`EPC`、`HSS`）を置きました。どの組も、状態を共有する 2 つの `Store` を受け取ります。各役割の `MemoryStore` では同じ値を 2 回渡し、実装では同じ `kvstore` の上に 2 つ作ります。同じ組が、各役割の `MemoryStore`、`kvstore.MemoryStore` の上の実装、Valkey の上の実装（`KVSTORE_VALKEY_ADDR` があるとき）の 3 つで通ります。
+`storetest` に、役割ごとの試験の組（`SCSCF`、`PCSCF`、`IPSMGW`、`SC`、`MMTel`、`HSS`）を置きました。どの組も、状態を共有する 2 つの `Store` を受け取ります。各役割の `MemoryStore` では同じ値を 2 回渡し、実装では同じ `kvstore` の上に 2 つ作ります。同じ組が、各役割の `MemoryStore`、`kvstore.MemoryStore` の上の実装、Valkey の上の実装（`KVSTORE_VALKEY_ADDR` があるとき）の 3 つで通ります。
 
 各役割の `Store` の試験は、HSS のもの（`store_test.go` と `aka_test.go` の `TestMemoryStoreKeepsSQNOutOfPut`）だけが `Store` を直接試していました。`_test.go` は import できないので、組に写しました。ほかの役割は、役割を通した試験しか無いので、`Store` の文書から書きました。複数の台の場面として、次のことを確かめています。
 

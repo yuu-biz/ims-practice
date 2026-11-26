@@ -84,32 +84,12 @@ type Binding struct {
 // ErrNoPDNConnection: the address has no PDN connection.
 var ErrNoPDNConnection = errors.New("epc: no PDN connection")
 
-// Store keeps the PDN connections and the bindings of the Rx sessions,
-// so that the state of a UE is not tied to one epc instance and the role can run as several
-// instances. Every lookup is by key; nothing walks all UEs.
-//
-// The event stream of a UE stays on the instance the UE connected to,
-// as the S1 connection of a UE stays on one MME.
-type Store interface {
-	// PutPDNConnection keeps c, in place of any connection of the same
-	// address.
-	PutPDNConnection(c PDNConnection)
-	PDNConnection(addr netip.Addr) (PDNConnection, bool)
-	// UpdatePDNConnection runs change on the connection of addr and keeps
-	// the result, as one step. change must not do I/O; when it fails,
-	// nothing is kept.
-	UpdatePDNConnection(addr netip.Addr, change func(*PDNConnection) error) (PDNConnection, error)
-	// TakePDNConnection returns the connection of addr and removes it.
-	TakePDNConnection(addr netip.Addr) (PDNConnection, bool)
-
-	PutBinding(sessionID string, b Binding)
-	Binding(sessionID string) (Binding, bool)
-	DeleteBinding(sessionID string)
-}
-
-// MemoryStore is a Store in the memory of one process. It keeps every
-// PDN connection as JSON, as a store outside the process would, so a
-// caller never shares a slice with it.
+// MemoryStore keeps the PDN connections and the bindings of the Rx
+// sessions in the memory of the process. The stub runs as one instance,
+// which holds the event streams of the UEs as well, so nothing else
+// needs to reach this state. Every lookup is by key; nothing walks all
+// UEs. Each PDN connection is kept as JSON, so a caller never shares a
+// slice with it.
 type MemoryStore struct {
 	mu          sync.Mutex
 	connections map[netip.Addr][]byte
@@ -120,6 +100,8 @@ func NewMemoryStore() *MemoryStore {
 	return &MemoryStore{connections: map[netip.Addr][]byte{}, bindings: map[string]Binding{}}
 }
 
+// PutPDNConnection keeps c, in place of any connection of the same
+// address.
 func (s *MemoryStore) PutPDNConnection(c PDNConnection) {
 	b := encode(c)
 	s.mu.Lock()
@@ -137,6 +119,9 @@ func (s *MemoryStore) PDNConnection(addr netip.Addr) (PDNConnection, bool) {
 	return decode(b), true
 }
 
+// UpdatePDNConnection runs change on the connection of addr and keeps
+// the result, as one step. change must not do I/O; when it fails,
+// nothing is kept.
 func (s *MemoryStore) UpdatePDNConnection(addr netip.Addr, change func(*PDNConnection) error) (PDNConnection, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -152,6 +137,7 @@ func (s *MemoryStore) UpdatePDNConnection(addr netip.Addr, change func(*PDNConne
 	return c, nil
 }
 
+// TakePDNConnection returns the connection of addr and removes it.
 func (s *MemoryStore) TakePDNConnection(addr netip.Addr) (PDNConnection, bool) {
 	s.mu.Lock()
 	b, ok := s.connections[addr]

@@ -9,7 +9,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/yuu-biz/ims-practice/internal/epc"
 	"github.com/yuu-biz/ims-practice/internal/hss"
 	"github.com/yuu-biz/ims-practice/internal/ipsmgw"
 	"github.com/yuu-biz/ims-practice/internal/kvstore/storetest"
@@ -73,13 +72,6 @@ func TestHSSMemoryStore(t *testing.T) {
 	}
 	storetest.HSS(t, func(t *testing.T) (hss.Store, hss.Store) {
 		s := newStore(t)
-		return s, s
-	})
-}
-
-func TestEPCMemoryStore(t *testing.T) {
-	storetest.EPC(t, func(*testing.T) (epc.Store, epc.Store) {
-		s := epc.NewMemoryStore()
 		return s, s
 	})
 }
