@@ -349,13 +349,20 @@ func (b *IBCF) refuse(req *sip.Message, peer Peer, d interconnect.Direction, sta
 // Rejection carries the response that TS 24.229 5.10.1 lets the IBCF
 // send by local policy; any other error is the IBCF's own.
 func (b *IBCF) rejected(req *sip.Message, peer Peer, d interconnect.Direction, err error, log *slog.Logger) *refusal {
+	r := rejection(err, log)
+	return b.refuse(req, peer, d, r.status, r.headers...)
+}
+
+// rejection is the refusal of a request that the border turned away for
+// err, as rejected has it, not yet counted.
+func rejection(err error, log *slog.Logger) refusal {
 	var r *interconnect.Rejection
 	if errors.As(err, &r) {
 		log.Info("rejected at the border", "status", r.StatusCode, "reason", r.Err.Error())
-		return b.refuse(req, peer, d, r.StatusCode, r.Headers...)
+		return refusal{status: r.StatusCode, headers: r.Headers}
 	}
 	log.Warn("cannot prepare the request for the border", "error", err.Error())
-	return b.refuse(req, peer, d, 500)
+	return refusal{status: 500}
 }
 
 // popOwnRoutes removes the URIs of side s from the top of Route

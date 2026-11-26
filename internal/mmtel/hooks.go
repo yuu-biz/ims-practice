@@ -120,6 +120,10 @@ func (c *call) Ack(ack *sip.Message, _ b2bua.Direction) (sip.Body, bool) {
 // the dialogs on as they come, and changes nothing for them.
 func (c *call) Unanswered(*sip.Message, b2bua.Direction) bool { return true }
 
+// Refused has nothing to note: the AS refuses no request within a
+// dialog and passes every response on, so the Call answers none for it.
+func (c *call) Refused(*sip.Message, b2bua.Direction, int) {}
+
 // Contact is the Contact that the leg to the caller takes for the
 // Contact of resp: that of a conference focus crosses as it came, and
 // the AS record-routes itself in the dialog (focusContact). The UA

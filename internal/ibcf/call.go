@@ -347,6 +347,13 @@ func (c *call) agree() {
 	c.agreed = maps.Clone(c.sends)
 }
 
+// Refused counts the response with status that the call sent for req, a
+// request that crossed in d, in the place of relaying it or its answer
+// (b2bua.Hooks), among the IBCF's refusals.
+func (c *call) Refused(req *sip.Message, d b2bua.Direction, status int) {
+	c.b.metrics.reject(c.peer.Profile.Name, c.across(d), req.Method, status)
+}
+
 // Unanswered puts the TrGW back after req, a request within a dialog
 // that crossed in d and got no 2xx beyond the IBCF (b2bua.Hooks). The
 // IBCF told the termination that faces the side that sent the offer of
@@ -432,7 +439,7 @@ func (c *call) across(d b2bua.Direction) interconnect.Direction {
 func (c *call) Request(req *sip.Message, d b2bua.Direction) (b2bua.Message, *b2bua.Refusal) {
 	m := req.Clone()
 	if err := c.border.Request(m, c.across(d)); err != nil {
-		r := c.b.rejected(req, c.peer, c.across(d), err, c.log)
+		r := rejection(err, c.log)
 		return b2bua.Message{}, &b2bua.Refusal{Status: r.status, Headers: r.headers}
 	}
 	if err := c.throughTrGW(m, c.across(d)); err != nil {
@@ -488,8 +495,7 @@ func (c *call) notThroughTrGW(req *sip.Message, d b2bua.Direction, err error) *b
 		c.log.Warn("the SDP of the request is not put through the TrGW: the request goes no further",
 			"method", string(req.Method), "status", status, "error", err.Error())
 	}
-	r := c.b.refuse(req, c.peer, c.across(d), status)
-	return &b2bua.Refusal{Status: r.status, Headers: r.headers, Release: release}
+	return &b2bua.Refusal{Status: status, Release: release}
 }
 
 // callStays reports whether a call can go on as it was after err, an
@@ -534,7 +540,6 @@ func (c *call) Response(resp, req *sip.Message, d b2bua.Direction) (b2bua.Messag
 	c.border.Response(m, c.across(d))
 	if resp.StatusCode < 300 {
 		if err := c.throughTrGW(m, c.across(d)); err != nil && c.notPassedOn("a response", err, "status", resp.StatusCode) {
-			c.b.refuse(req, c.peer, reverse(c.across(d)), 500)
 			return b2bua.Message{}, false
 		}
 		if sip.HasSessionDescription(resp) || sip.HasSessionDescription(req) {
@@ -552,7 +557,6 @@ func (c *call) Response(resp, req *sip.Message, d b2bua.Direction) (b2bua.Messag
 func (c *call) Answer(resp, session *sip.Message) (b2bua.Message, bool) {
 	if session != nil {
 		if err := c.throughTrGW(session.Clone(), c.across(b2bua.ToCaller)); err != nil && c.notPassedOn("the dialog that answered", err) {
-			c.b.refuse(c.in.Request, c.peer, c.direction, 500)
 			return b2bua.Message{}, false
 		}
 	}
