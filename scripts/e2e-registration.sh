@@ -352,9 +352,9 @@ expect "200 OK to the REGISTER of UE 3" "sip.Status-Code == 200 && sip.CSeq.meth
 # The two changes of the setting came first, each with a PPR of its own:
 # the HSS reads the users that the setting decides for from its index of
 # the users whose profile an S-CSCF holds, and pushes to each of them.
-# Which of the two sends first is not fixed, and each PPR carries the
-# profile in force when it is sent, so these read them as two pushes of
-# this user's profile and not as one profile each.
+# Each change has a round of PPRs that carries its profile, and the
+# round of the second change follows that of the first, so these read
+# them as two pushes of this user's profile in that order.
 for setting_change in first second; do
 	expect "PPR of the $setting_change change of the setting, HSS -> S-CSCF" \
 		"$ppr && $req && ip.src == $hss && diameter.Destination-Host == \"scscf.$domain\" && diameter.User-Name == \"001010000000003@$domain\" && diameter.Cx-User-Data"

@@ -477,20 +477,25 @@ type Store interface {
 	// CompareAndSwapProfilePush records next as the push of its source,
 	// if the push recorded is still old, or, for a nil old, if none is
 	// recorded yet, and reports whether it did. The instance that has
-	// claimed the push records each PPR this way, so that a new round,
-	// or another instance that claimed the push once the claim of this
-	// one ran out, stops it at its next PPR.
+	// claimed a round records each PPR this way, so that another
+	// instance that claimed the round once the claim of this one ran
+	// out stops it at its next PPR.
 	CompareAndSwapProfilePush(ctx context.Context, old *ProfilePush, next ProfilePush) (bool, error)
-	// ScheduleProfilePush makes the push of source due at at, for
-	// whichever instance claims it then, and ends a claim on it.
+	// ScheduleProfilePush makes the round of the push of source due at
+	// at, for whichever instance claims it then, and ends a claim on it.
 	ScheduleProfilePush(ctx context.Context, source ProfileSource, at time.Time) error
-	// ClaimProfilePushes claims at most limit of the pushes that are due
-	// at now, each until now plus lease. While a push is claimed it is
+	// ClaimProfilePushes claims at most limit of the rounds that are due
+	// at now, each until now plus lease. While a round is claimed it is
 	// not due, and no other instance claims it; when the claim runs out
-	// before a ScheduleProfilePush, it is due again. The pushes are one
-	// per source whose name a setting gives, so claiming them costs the
-	// same however many subscribers the store holds.
+	// before a ScheduleProfilePush or a DoneProfilePush, it is due again.
+	// There is a round at most per source whose name a setting gives, so
+	// claiming them costs the same however many subscribers the store
+	// holds.
 	ClaimProfilePushes(ctx context.Context, now time.Time, lease time.Duration, limit int) ([]ProfilePushClaim, error)
+	// DoneProfilePush takes the round of a claim out of the time index,
+	// if the claim is still in force. A claim that has ended, because a
+	// ScheduleProfilePush made the round due again, leaves it there.
+	DoneProfilePush(ctx context.Context, c ProfilePushClaim) error
 	// Counts are the numbers of TS 32.409 4.2.1 that the store holds,
 	// and whether it keeps them. A store that does not keep them
 	// returns false, and the HSS on it serves no database usage
@@ -522,17 +527,23 @@ type StoredSettings struct {
 // that another instance goes on from the last one if it stops.
 type ProfilePush struct {
 	Source ProfileSource
-	// Name is the service profile name that the push brings the S-CSCFs
-	// of the subscribers of Source to.
-	Name string
-	// Round tells one push of the source from another: each new Name
-	// starts a round of its own, from the first subscriber.
+	// Name is the service profile name that the round brings the S-CSCFs
+	// of the subscribers of Source to, and Generation the generation of
+	// the settings whose change started the round (StoredSettings).
+	Name       string
+	Generation uint64
+	// Round tells one round of the source from another: each change of
+	// Name starts a round of its own, from the first subscriber.
 	Round uint64
 	// After is the private identity of the last subscriber whose PPR
 	// the round has sent, or "" before the first.
 	After string
 	// Done says that the round has sent the PPR of its last subscriber.
 	Done bool
+	// Updated is when the push was last recorded: by the start of its
+	// round, by a PPR, or by its end. A round under way that nothing has
+	// recorded for longer than a claim lasts has no claim on it.
+	Updated time.Time
 }
 
 // ProfilePushClaim is the right of one instance to go on with the push
@@ -961,6 +972,13 @@ func (s *MemoryStore) ScheduleProfilePush(_ context.Context, source ProfileSourc
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.pushesDue.Set(source, at)
+	return nil
+}
+
+func (s *MemoryStore) DoneProfilePush(_ context.Context, c ProfilePushClaim) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.pushesDue.RemoveClaimed(c.Source, c.Until)
 	return nil
 }
 

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"maps"
 	"slices"
+	"sync"
 	"testing"
 	"time"
 
@@ -76,13 +77,32 @@ func serve(t *testing.T, h *HSS, private, public string, typ cx.ServerAssignment
 	}
 }
 
-// pushedTo waits for the S-CSCFs to have taken n PPRs and then stops
-// the HSS, which lets no further push begin and waits for the one on
-// its way (HSS.Close), so that what came is all that comes; stops are
-// the stops of the other instances that push to the same S-CSCFs. It
-// returns the private identity of each PPR with the application server
-// its criteria name, which says which service profile it carried.
+// pushedTo waits for the S-CSCFs to have taken n PPRs and for the
+// rounds of the pushes to be done (roundsDone), and then stops the HSS,
+// which lets no further push begin and waits for the one on its way
+// (HSS.Close), so that what came is all that comes; stops are the stops
+// of the other instances that push to the same S-CSCFs. It returns the
+// private identity of each PPR with the application server its criteria
+// name, which says which service profile it carried, and fails the test
+// for a subscriber that got more than one.
 func pushedTo(t *testing.T, h *HSS, scscfs *fakeSCSCFs, n int, stops ...func()) map[string]string {
+	t.Helper()
+	pushed := map[string]string{}
+	for _, p := range pprsTo(t, h, scscfs, n, stops...) {
+		if _, twice := pushed[p.user]; twice {
+			t.Errorf("%s got more than one PPR", p.user)
+		}
+		pushed[p.user] = p.server
+	}
+	return pushed
+}
+
+// ppr is the private identity of a PPR and the application server of
+// the criteria it carried.
+type ppr struct{ user, server string }
+
+// pprsTo is pushedTo with every PPR in the order the S-CSCFs took them.
+func pprsTo(t *testing.T, h *HSS, scscfs *fakeSCSCFs, n int, stops ...func()) []ppr {
 	t.Helper()
 	// The pushes run behind the answer to the maintenance request, so
 	// they are waited for rather than found there already.
@@ -97,31 +117,56 @@ func pushedTo(t *testing.T, h *HSS, scscfs *fakeSCSCFs, n int, stops ...func()) 
 			t.Fatalf("gave up waiting 5 s for %d PPRs; %d came", n, got)
 		}
 	}
-	// A moment for a PPR that should not have gone at all to arrive
-	// before Close ends the pushes that have not sent one yet.
-	time.Sleep(50 * time.Millisecond)
+	// Every PPR of a round reaches the S-CSCF before the round records
+	// it, so once the rounds are done, a PPR that should not have gone at
+	// all has come.
+	roundsDone(t, h)
 	h.Close()
 	for _, stop := range stops {
 		stop()
 	}
 	scscfs.mu.Lock()
 	defer scscfs.mu.Unlock()
-	pushed := map[string]string{}
-	for _, ppr := range scscfs.pprs {
-		profile, err := cx.ParseUserProfile(ppr.UserData)
+	var pprs []ppr
+	for _, req := range scscfs.pprs {
+		profile, err := cx.ParseUserProfile(req.UserData)
 		if err != nil {
-			t.Fatalf("the User-Data of the PPR for %s: %v", ppr.UserName, err)
+			t.Fatalf("the User-Data of the PPR for %s: %v", req.UserName, err)
 		}
 		if len(profile.InitialFilterCriteria) != 1 {
 			t.Fatalf("the pushed profile of %s has %d criteria, want the one of a single profile",
-				ppr.UserName, len(profile.InitialFilterCriteria))
+				req.UserName, len(profile.InitialFilterCriteria))
 		}
-		if _, twice := pushed[ppr.UserName]; twice {
-			t.Errorf("%s got more than one PPR", ppr.UserName)
-		}
-		pushed[ppr.UserName] = profile.InitialFilterCriteria[0].ApplicationServer.ServerName
+		pprs = append(pprs, ppr{req.UserName, profile.InitialFilterCriteria[0].ApplicationServer.ServerName})
 	}
-	return pushed
+	return pprs
+}
+
+// roundsDone waits until the store of h records the push of each source
+// as done for the name that the settings of the store give it: no round
+// is under way, and none is due to start.
+func roundsDone(t *testing.T, h *HSS) {
+	t.Helper()
+	for deadline := time.Now().Add(5 * time.Second); ; time.Sleep(5 * time.Millisecond) {
+		stored, ok, err := h.store.Settings(t.Context())
+		if err != nil {
+			t.Fatal(err)
+		}
+		done := ok
+		for _, source := range profilePushSources {
+			p, recorded, err := h.store.ProfilePush(t.Context(), source)
+			if err != nil {
+				t.Fatal(err)
+			}
+			done = done && recorded && p.Done && p.Name == settingsOf(stored).nameFor(source)
+		}
+		if done {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("gave up waiting 5 s for the rounds of the pushes to be done")
+		}
+	}
 }
 
 // TestChangingAProfileNameSettingPushesItsSubscribers: the setting of
@@ -197,6 +242,9 @@ type stoppingSCSCFs struct {
 	fakeSCSCFs
 	answered int
 	stuck    chan struct{}
+	// once closes stuck once, however many PPRs come after the answered
+	// ones.
+	once sync.Once
 }
 
 func (s *stoppingSCSCFs) Request(ctx context.Context, originHost string, m *diam.Message) (*diam.Message, error) {
@@ -206,7 +254,7 @@ func (s *stoppingSCSCFs) Request(ctx context.Context, originHost string, m *diam
 	if n < s.answered {
 		return s.fakeSCSCFs.Request(ctx, originHost, m)
 	}
-	close(s.stuck)
+	s.once.Do(func() { close(s.stuck) })
 	<-ctx.Done()
 	return nil, ctx.Err()
 }
@@ -245,12 +293,93 @@ func TestAPushGoesOnWhenItsInstanceStops(t *testing.T) {
 	scscfs := &fakeSCSCFs{}
 	second.SetPeers(scscfs)
 	pushed := pushedTo(t, second, scscfs, len(rest))
+	// The first instance had its PPR to the first subscriber answered,
+	// and that one alone.
+	stopping.mu.Lock()
+	answered := len(stopping.pprs)
+	stopping.mu.Unlock()
+	if answered != 1 {
+		t.Errorf("the first instance had %d PPRs answered, want 1", answered)
+	}
 	if got := slices.Sorted(maps.Keys(pushed)); !slices.Equal(got, rest) {
 		t.Errorf("the second instance pushed to %v, want %v, the subscribers after the one the first instance reached", got, rest)
 	}
 	for id, as := range pushed {
 		if as != settingsTrialAS {
 			t.Errorf("the PPR for %s carried the criteria of %q, want %q", id, as, settingsTrialAS)
+		}
+	}
+}
+
+// TestTwoChangesBackToBackArePushedEach: a change of the default
+// profile and the change back, the second before the round of the first
+// has begun, each push the subscriber, in their order: the first round
+// carries the profile of the first change, and the round after it that
+// of the second. The S-CSCF is left with the profile in force.
+func TestTwoChangesBackToBackArePushedEach(t *testing.T) {
+	h, api, scscfs := pushNetwork(t)
+	change(t, api, "hss.default_service_profile", "trial")
+	change(t, api, "hss.default_service_profile", "default")
+	pprs := pprsTo(t, h, scscfs, 2)
+	want := []ppr{{impi, settingsTrialAS}, {impi, settingsDefaultAS}}
+	if !slices.Equal(pprs, want) {
+		t.Errorf("the PPRs were %v, want %v", pprs, want)
+	}
+}
+
+// TestASecondChangeWhileARoundIsMidPage: the second change reaches
+// another instance while the first instance is in the middle of the
+// round of the first change. The round goes on with the profile of its
+// change, and the round of the second change follows it, so each
+// subscriber gets the first profile and then the second, once each.
+func TestASecondChangeWhileARoundIsMidPage(t *testing.T) {
+	store := settingsStore(t)
+	locks := &ims.UserLocks{}
+	first, firstAPI := settingsInstance(t, store, locks)
+	second, secondAPI := settingsInstance(t, store, locks)
+	ids := []string{impi}
+	serve(t, first, impi, impu, cx.AssignRegistration)
+	for i := range 2 {
+		id := fmt.Sprintf("0010100005%05d@%s", i, realm)
+		addSubscription(t, first, Subscription{PrivateIdentity: id,
+			PublicIdentities: []string{"sip:" + id}, Password: "test-password-mid"})
+		registerInStore(t, first, id)
+		ids = append(ids, id)
+	}
+	release := make(chan struct{})
+	held := make(chan struct{})
+	scscfs := &fakeSCSCFs{beforePPA: func(n int) {
+		if n == 1 {
+			close(held)
+			<-release
+		}
+	}}
+	// A test that fails before the release lets the PPR go, so that the
+	// stops of the instances do not wait for it.
+	var released sync.Once
+	t.Cleanup(func() { released.Do(func() { close(release) }) })
+	first.SetPeers(scscfs)
+	second.SetPeers(scscfs)
+	if _, err := changeAt(firstAPI, 1, "hss.default_service_profile", "trial"); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-held:
+	case <-time.After(5 * time.Second):
+		t.Fatal("gave up waiting 5 s for the first PPR")
+	}
+	if _, err := changeAt(secondAPI, 2, "hss.default_service_profile", "default"); err != nil {
+		t.Fatal(err)
+	}
+	released.Do(func() { close(release) })
+
+	got := map[string][]string{}
+	for _, p := range pprsTo(t, first, scscfs, 2*len(ids), second.Close) {
+		got[p.user] = append(got[p.user], p.server)
+	}
+	for _, id := range ids {
+		if want := []string{settingsTrialAS, settingsDefaultAS}; !slices.Equal(got[id], want) {
+			t.Errorf("%s got the PPRs of %v, want %v", id, got[id], want)
 		}
 	}
 }
