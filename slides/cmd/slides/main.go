@@ -51,7 +51,7 @@ func main() {
 		for _, d := range all {
 			fmt.Println(summary(d))
 		}
-		fmt.Printf("%d decks: every slide parses, fits, links to what exists, names commands that the repository takes, and gives the nodes the addresses of the Compose files\n", len(all))
+		fmt.Printf("%d decks: every slide parses, fits, links to what exists, quotes code that is in its file, names commands that the repository takes, and gives the nodes the addresses of the Compose files\n", len(all))
 		return
 	}
 	for _, d := range all {
@@ -150,6 +150,7 @@ func load(dir string) ([]laidOut, []error) {
 		pages, overflows := layout.Deck(d)
 		problems = append(problems, overflows...)
 		problems = append(problems, deck.CheckLinks(d)...)
+		problems = append(problems, deck.CheckExcerpts(d)...)
 		problems = append(problems, repository.Check(d)...)
 		out = append(out, laidOut{deck: d, pages: pages})
 	}

@@ -42,6 +42,25 @@ func TestLanguageMatchesTheDirectory(t *testing.T) {
 	}
 }
 
+func TestCheckRefusesAnExcerptThatIsNotInItsFile(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "lock.go"), []byte("package lock\n\nfunc (u *UserLocks) Lock(ctx context.Context, user string) (unlock func(), err error) {\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	slide := "---\n\n## Code\n\n[lock.go](../lock.go)\n\n```go\nfunc (u *UserLocks) Lock(user string) func() {\n```\n"
+	writeDeck(t, filepath.Join(dir, "en", "01-a.md"), "en", slide)
+	writeDeck(t, filepath.Join(dir, "ja", "01-a.md"), "ja", slide)
+	_, problems := load(dir)
+	if len(problems) != 2 {
+		t.Fatalf("problems = %v, want one for each language", problems)
+	}
+	for _, p := range problems {
+		if !strings.Contains(p.Error(), "Lock(user string)") || !strings.Contains(p.Error(), "is not in ../lock.go") {
+			t.Errorf("problem = %v, want the excerpt that lock.go does not have", p)
+		}
+	}
+}
+
 func TestAbsoluteLinks(t *testing.T) {
 	dir := t.TempDir()
 	writeDeck(t, filepath.Join(dir, "en", "01-a.md"), "en", "---\n\n## One\n\n- [guide](../../../docs/x.md)\n- [web](https://example.org/)\n")
