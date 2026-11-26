@@ -500,8 +500,9 @@ func (raw rawConfig) validate(dir string) (Config, error) {
 // is refused here, rather than left to fail on the first call that
 // reaches the other instance.
 //
-// SIMPLIFIED: a controller does not hand its media gateways to another
-// instance. A gateway follows the controller that a reply names while
+// SIMPLIFIED: H.248.1 (05/2002) 11.5. A controller does not hand its
+// media gateways to another instance with a HandOff, after which a
+// gateway keeps all its terminations and contexts. A gateway follows the controller that a reply names while
 // it registers, and after a failure registers again with the controller
 // it was given, so it always ends at one controller; nothing moves an
 // association that already holds contexts. So a P-CSCF that controls
