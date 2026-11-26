@@ -4,13 +4,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"maps"
 	"net/netip"
 	"sync"
 
 	"github.com/yuu-biz/ims-practice/internal/agw"
 	"github.com/yuu-biz/ims-practice/internal/b2bua"
 	"github.com/yuu-biz/ims-practice/internal/interconnect"
+	"github.com/yuu-biz/ims-practice/internal/sdp"
 	"github.com/yuu-biz/ims-practice/internal/sip"
 )
 
@@ -62,14 +62,17 @@ type call struct {
 	// record back.
 	//
 	// sends is where each termination of the context sends now, and
-	// agreed where it sent when the last offer and answer were done
-	// (agree), to which it goes back when an offer within a dialog gets
-	// no 2xx (Unanswered).
+	// agreed where it sent when the last offer and answer of its side
+	// were done (agree), to which it goes back when an offer within a
+	// dialog gets no 2xx (Unanswered). offered is where the termination
+	// of a side sends for the offer of that side in a 2xx, until the ACK
+	// answers it.
 	mediaMu sync.Mutex
 	media   *MediaContext
 	ended   bool
 	sends   map[Side]netip.AddrPort
 	agreed  map[Side]netip.AddrPort
+	offered map[Side]netip.AddrPort
 }
 
 // onCall is the UAConfig.OnCall of side s: an INVITE outside a dialog,
@@ -338,13 +341,71 @@ func (c *call) throughTrGW(m *sip.Message, d interconnect.Direction) error {
 	return kept
 }
 
-// agree notes that an offer and its answer are done: where each
-// termination sends now is where the session of the two sides has it
-// send, until the next offer.
-func (c *call) agree() {
+// agree notes that an offer and its answer are done, the answer having
+// come from the side that faces where a message crossing in d comes
+// from. The termination facing that side sends where the answer said,
+// as it does now, and the termination facing the side of the offer
+// sends to offer, where that offer said. Only these two count: the
+// other side, or this one, may have an offer of its own on the way in
+// another request at the same time, which is not done: a final
+// response other than 2xx to that request leaves the session without it
+// (RFC 3261 14.1, RFC 3311 5.3).
+// offer is not valid when the IBCF has no address for the offer.
+func (c *call) agree(d interconnect.Direction, offer netip.AddrPort) {
 	c.mediaMu.Lock()
 	defer c.mediaMu.Unlock()
-	c.agreed = maps.Clone(c.sends)
+	from, to := facing(d)
+	if c.agreed == nil {
+		c.agreed = map[Side]netip.AddrPort{}
+	}
+	if sends, ok := c.sends[from]; ok {
+		c.agreed[from] = sends
+	}
+	if offer.IsValid() {
+		c.agreed[to] = offer
+	}
+}
+
+// offers notes that the side that faces where a message crossing in d
+// comes from has made an offer in a 2xx, whose answer comes in the ACK
+// (RFC 3261 13.2.1).
+func (c *call) offers(d interconnect.Direction) {
+	c.mediaMu.Lock()
+	defer c.mediaMu.Unlock()
+	from, _ := facing(d)
+	if sends, ok := c.sends[from]; ok {
+		if c.offered == nil {
+			c.offered = map[Side]netip.AddrPort{}
+		}
+		c.offered[from] = sends
+	}
+}
+
+// offeredBy is where the termination facing the side that a message
+// crossing in d goes to sent for the offer of that side in a 2xx
+// (offers).
+func (c *call) offeredBy(d interconnect.Direction) netip.AddrPort {
+	c.mediaMu.Lock()
+	defer c.mediaMu.Unlock()
+	_, to := facing(d)
+	return c.offered[to]
+}
+
+// offerOf is the address of the audio stream in the SDP of m, or not
+// valid when m has none that can be read.
+func offerOf(m *sip.Message) netip.AddrPort {
+	if !sip.HasSessionDescription(m) {
+		return netip.AddrPort{}
+	}
+	description, err := sdp.Parse(m.Body)
+	if err != nil {
+		return netip.AddrPort{}
+	}
+	sender, _, err := description.Audio()
+	if err != nil {
+		return netip.AddrPort{}
+	}
+	return sender
 }
 
 // Refused counts the response with status that the call sent for req, a
@@ -548,10 +609,15 @@ func (c *call) Response(resp, req *sip.Message, d b2bua.Direction) (b2bua.Messag
 		if err := c.throughTrGW(m, c.across(d)); err != nil && c.notPassedOn("a response", err, "status", resp.StatusCode) {
 			return b2bua.Message{}, false
 		}
-		if sip.HasSessionDescription(resp) || sip.HasSessionDescription(req) {
-			// The answer to the offer of req, or to the one that resp
-			// makes, after which the other side answers in the ACK.
-			c.agree()
+		switch {
+		case !sip.HasSessionDescription(resp):
+			// A response without SDP, such as a 180, ends no offer.
+		case sip.HasSessionDescription(req):
+			// The answer to the offer of req.
+			c.agree(c.across(d), offerOf(req))
+		case resp.StatusCode/100 == 2:
+			// An offer to a request without one, which the ACK answers.
+			c.offers(c.across(d))
 		}
 	}
 	return b2bua.Message{Headers: interconnect.CrossingFields(m), Body: sip.BodyOf(m)}, true
@@ -564,6 +630,11 @@ func (c *call) Answer(resp, session *sip.Message) (b2bua.Message, bool) {
 	if session != nil {
 		if err := c.throughTrGW(session.Clone(), c.across(b2bua.ToCaller)); err != nil && c.notPassedOn("the dialog that answered", err) {
 			return b2bua.Message{}, false
+		}
+		if sip.HasSessionDescription(c.in.Request) {
+			// The answer of the dialog that answered, to the offer of
+			// the INVITE.
+			c.agree(c.across(b2bua.ToCaller), offerOf(c.in.Request))
 		}
 	}
 	return c.Response(resp, c.in.Request, b2bua.ToCaller)
@@ -583,7 +654,10 @@ func (c *call) Ack(ack *sip.Message, d b2bua.Direction) (sip.Body, bool) {
 	if err := c.throughTrGW(m, c.across(d)); err != nil && c.notPassedOn("the ACK", err) {
 		return sip.Body{}, false
 	}
-	c.agree()
+	if sip.HasSessionDescription(ack) {
+		// The answer to the offer in the 2xx of the other side.
+		c.agree(c.across(d), c.offeredBy(c.across(d)))
+	}
 	return sip.BodyOf(m), true
 }
 
