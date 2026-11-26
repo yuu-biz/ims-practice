@@ -510,7 +510,7 @@ func run(configPath string, log *slog.Logger, level *slog.LevelVar) error {
 		// administrative state of the AS, so that taking the AS out of
 		// service takes Ut with it.
 		ut := &http.Server{Addr: c.XCAP.Listen.String(),
-			Handler: mmtelRole.Ut(xcap.NewHandler(users, c.XCAP.RootPath, c.XCAP.NonceKey, roleLog.With("function", "xcap")))}
+			Handler: mmtelRole.Ut(xcap.NewHandler(users, c.XCAP.RootPath, cfg.HomeDomain, c.XCAP.NonceKey, roleLog.With("function", "xcap")))}
 		if err := serveHTTP(ut, "XCAP server", roleLog, cancel); err != nil {
 			return err
 		}

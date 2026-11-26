@@ -317,9 +317,13 @@ expect "200 OK reaches UE 1" "sip.Status-Code == 200 && sip.CSeq.method == \"INV
 
 echo "UE 2 sets CFU over Ut (TS 24.623 5.2.3.2.1, 6.1; RFC 4825; RFC 7616)"
 expect "GET UE 2 -> XCAP server without credentials" "http.request.method == \"GET\" && ip.src == $ue2ip && ip.dst == $mmtel && !http.authorization && http.request.uri contains \"simservs.xml\""
-expect "UDR for UE 2's Ut credential" "$udr && diameter.Data-Reference == 0 && diameter.Service-Indication == \"Ut-Digest-Credential\""
+unauthenticated="$last"
 expect "401 with a Digest challenge" "http.response.code == 401 && ip.dst == $ue2ip && http.www_authenticate contains \"Digest\""
+# The AS challenges before it reads anything of the user, so the 401
+# is the same whether the user exists or not (TS 24.623 5.2.3.2.1).
+none "UDR between the GET without credentials and its 401" "$udr && frame.number > $unauthenticated && frame.number < $last"
 expect "GET with Authorization: Digest" "http.request.method == \"GET\" && ip.src == $ue2ip && http.authorization contains \"Digest\""
+expect "UDR for UE 2's Ut credential" "$udr && diameter.Data-Reference == 0 && diameter.Service-Indication == \"Ut-Digest-Credential\""
 expect "UDR for UE 2's MMTEL-Services" "$udr && $mmtel_services && diameter.Public-Identity == \"$impu2\""
 # Header names are case-insensitive (RFC 9110 5.1); Go writes "Etag".
 # The ETag is the Sequence Number of the document in the HSS.

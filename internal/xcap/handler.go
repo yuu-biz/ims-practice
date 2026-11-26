@@ -45,19 +45,23 @@ const maxAttempts = 3
 type Handler struct {
 	repo   Repository
 	root   string // the path of the XCAP Root URI, without a trailing slash
+	realm  string // the realm of every challenge
 	nonces nonces
 	log    *slog.Logger
 }
 
 // NewHandler returns the server for the documents in repo. rootPath is
 // the path of the XCAP Root URI: empty for http://xcap.<domain>, the
-// form of TS 23.003 13.9.1.2. nonceKey signs the Digest nonces; every
-// instance of the server must have the same one, so that each takes the
-// nonces of the others.
-func NewHandler(repo Repository, rootPath string, nonceKey []byte, log *slog.Logger) *Handler {
+// form of TS 23.003 13.9.1.2. realm is the realm of the Digest
+// challenges: the home network domain, in which the HSS derives the Ut
+// credential of every user (hss.UtCredentialData). nonceKey signs the
+// Digest nonces; every instance of the server must have the same one,
+// so that each takes the nonces of the others.
+func NewHandler(repo Repository, rootPath, realm string, nonceKey []byte, log *slog.Logger) *Handler {
 	return &Handler{
 		repo:   repo,
 		root:   strings.TrimSuffix(rootPath, "/"),
+		realm:  realm,
 		nonces: nonces{key: nonceKey, now: timeNow},
 		log:    log,
 	}
@@ -173,22 +177,30 @@ func parseTarget(path, rawQuery string) (target, bool) {
 // owner of the document, the only user allowed any operation on it (TS
 // 24.623 5.3.2.2, 6.2). It has answered the request when it returns
 // false.
+//
+// The server authenticates first and authorizes after (TS 24.623
+// 5.3.2.2). A request without Digest credentials gets a 401 at once
+// (5.2.3.2.1 a), before the server reads anything of the user, with a
+// challenge that is the same for every user. One whose credentials the
+// server cannot check gets the same 401 as one with a wrong password:
+// when the XUI names no user, a user without a Ut credential, or a user
+// whose username is not the one in the credentials. Only the owner of
+// the document has a credential that the server can find, since Sh
+// finds Repository Data by public identity alone. So the answers tell
+// no one who cannot authenticate which users there are, or which of
+// them use Ut.
+//
+// A user is allowed to use Ut by having a Ut credential, and one
+// without cannot authenticate. The 403 of TS 24.623 5.3.2.3, to an
+// authenticated user who is not allowed to use Ut, has no case here.
 func (h *Handler) authorize(w http.ResponseWriter, r *http.Request, t target) bool {
-	stored, found, err := h.repo.RepositoryData(r.Context(), t.xui, CredentialServiceIndication)
-	if err != nil {
-		h.repositoryFailed(w, r, t, err)
-		return false
-	}
-	if !found {
-		// TS 24.623 5.3.2.3: a user without a Ut credential is not
-		// allowed to change the settings over Ut.
-		h.answer(w, r, t, http.StatusForbidden, "the user may not manipulate the settings over Ut")
-		return false
-	}
-	cred, err := ParseCredential(stored.ServiceData.XML)
-	if err != nil {
-		h.answer(w, r, t, http.StatusInternalServerError, err.Error())
-		return false
+	var cred Credential // none, which no credentials match
+	if hasDigest(r) {
+		found, ok := h.credential(w, r, t)
+		if !ok {
+			return false
+		}
+		cred = found
 	}
 	v, info := h.nonces.verify(r, cred)
 	switch v {
@@ -196,23 +208,40 @@ func (h *Handler) authorize(w http.ResponseWriter, r *http.Request, t target) bo
 		w.Header().Set("Authentication-Info", info)
 		return true
 	case unauthenticated, staleNonce:
-		if r.Header.Get("Authorization") != "" && v == unauthenticated {
+		if hasDigest(r) && v == unauthenticated {
 			// RFC 7616 3.4: a failed login is logged, as repeated ones
 			// may be an attack.
 			h.log.Warn("Ut login failed", "xui", t.xui)
 		}
-		h.nonces.challenge(w.Header(), cred, v == staleNonce)
+		h.nonces.challenge(w.Header(), h.realm, v == staleNonce)
 		h.answer(w, r, t, http.StatusUnauthorized, "authentication required")
-	case notOwner:
-		// TS 24.623 6.2: no other user may operate on the document. 6.2
-		// answers a forbidden change with 409, which tells the owner to
-		// change the request; to anyone else the answer is the 403 of a
-		// refused authorization (5.2.3.2.1 b).
-		h.answer(w, r, t, http.StatusForbidden, "only the owner may access the document")
 	default:
 		h.answer(w, r, t, http.StatusBadRequest, "malformed Authorization")
 	}
 	return false
+}
+
+// credential reads the Ut credential of the user of the XUI. It is the
+// zero Credential when the HSS has no such user, or the user has no
+// credential. When it returns false for ok, it has answered the
+// request.
+func (h *Handler) credential(w http.ResponseWriter, r *http.Request, t target) (cred Credential, ok bool) {
+	stored, found, err := h.repo.RepositoryData(r.Context(), t.xui, CredentialServiceIndication)
+	switch {
+	case isResult(err, diameter.Experimental(cx.DiameterErrorUserUnknown)):
+		return Credential{}, true
+	case err != nil:
+		h.repositoryFailed(w, r, t, err)
+		return Credential{}, false
+	case !found:
+		return Credential{}, true
+	}
+	cred, err = ParseCredential(stored.ServiceData.XML)
+	if err != nil {
+		h.answer(w, r, t, http.StatusInternalServerError, err.Error())
+		return Credential{}, false
+	}
+	return cred, true
 }
 
 // userDocument reads the user's MMTelServices document from the HSS.

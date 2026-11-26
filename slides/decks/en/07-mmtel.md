@@ -189,8 +189,8 @@ What `ue xcap set cfu on tel:+12025550103` sends:
 
 | Step | Request | The answer, and the Sh in between |
 | --- | --- | --- |
-| 1 | GET, no credentials | A UDR for the Ut password. 401 with two challenges, SHA-256 then MD5. |
-| 2 | GET with `Authorization: Digest` | Two UDRs. 200 with `ETag: "0"`. |
+| 1 | GET, no credentials | No UDR. 401 with two challenges, SHA-256 then MD5, the same for every user. |
+| 2 | GET with `Authorization: Digest` | Two UDRs: the Ut password, then the document. 200 with `ETag: "0"`. |
 | 3 | PUT of one rule, a node selector after `~~`, `If-Match: "0"` | A PUR with `<SequenceNumber>1</SequenceNumber>`. After the PUA, 200 with `ETag: "1"`. |
 | 4 | GET | The document, printed as settings. |
 
@@ -206,20 +206,18 @@ What `ue xcap set cfu on tel:+12025550103` sends:
 [internal/xcap/digest.go](../../../internal/xcap/digest.go)
 
 ```go
-func (n nonces) challenge(h http.Header, c Credential, stale bool) {
+func (n nonces) challenge(h http.Header, realm string, stale bool) {
 	nonce := n.issue()
 	for _, a := range algorithms {
-		if _, ok := c.ha1(a); !ok {
-			continue
-		}
 		h.Add("WWW-Authenticate", sip.Challenge{
-			Realm: c.Realm, Nonce: nonce, Stale: stale, Algorithm: string(a), QOP: []string{qopAuth},
+			Realm: realm, Nonce: nonce, Stale: stale, Algorithm: string(a), QOP: []string{qopAuth},
 		}.String())
 	}
 }
 ```
 
 - `algorithms` are SHA-256, then MD5. All the challenges share one nonce.
+- `realm` is the home domain. The challenge names no user, so the AS sends it before it reads anything of the user, and it is the same for every XUI.
 - The credential is repository data in the HSS, with Service-Indication `Ut-Digest-Credential`. It holds HA1 values, not the password (the comment in `internal/xcap/credential.go`).
 - WWW-Authenticate has the form of SIP Digest, so the code uses the `Challenge` of `internal/sip` as it is: compare it with the 401 of registration.
 

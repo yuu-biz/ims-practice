@@ -79,16 +79,15 @@ func (n nonces) fresh(nonce string) bool {
 }
 
 // challenge adds to h the WWW-Authenticate header fields of a 401
-// (RFC 7616 3.3): one per algorithm the credential has, most preferred
-// first (3.7), all with the same nonce.
-func (n nonces) challenge(h http.Header, c Credential, stale bool) {
+// (RFC 7616 3.3): one per algorithm the server offers, most preferred
+// first (3.7), all with the same nonce. It is the same for every user:
+// the HSS derives the credential of each in realm, for every algorithm
+// (NewCredential).
+func (n nonces) challenge(h http.Header, realm string, stale bool) {
 	nonce := n.issue()
 	for _, a := range algorithms {
-		if _, ok := c.ha1(a); !ok {
-			continue
-		}
 		h.Add("WWW-Authenticate", sip.Challenge{
-			Realm: c.Realm, Nonce: nonce, Stale: stale, Algorithm: string(a), QOP: []string{qopAuth},
+			Realm: realm, Nonce: nonce, Stale: stale, Algorithm: string(a), QOP: []string{qopAuth},
 		}.String())
 	}
 }
@@ -109,22 +108,22 @@ const (
 	// malformed: a parameter is missing or improper. RFC 7616 3.4 asks
 	// for a 4xx; the server answers 400.
 	malformed
-	// notOwner: the username is not the one of the credential of the
-	// document's owner. The server has no credential to check it
-	// against (Sh finds a user by public identity only), and whatever
-	// the response, the user may not touch the document: 403.
-	notOwner
 )
 
+// hasDigest tells whether r carries Digest credentials.
+func hasDigest(r *http.Request) bool {
+	return strings.HasPrefix(strings.ToLower(r.Header.Get("Authorization")), "digest ")
+}
+
 // verify checks the Authorization header field of r against c, the
-// credential of the owner of the document (RFC 7616 3.4, 3.6). With
-// authenticated it also returns the Authentication-Info value.
+// credential of the owner of the document (RFC 7616 3.4, 3.6), or the
+// zero Credential when the owner has none. With authenticated it also
+// returns the Authentication-Info value.
 func (n nonces) verify(r *http.Request, c Credential) (verdict, string) {
-	value := r.Header.Get("Authorization")
-	if value == "" || !strings.HasPrefix(strings.ToLower(value), "digest ") {
+	if !hasDigest(r) {
 		return unauthenticated, ""
 	}
-	got, err := sip.ParseCredentials(value)
+	got, err := sip.ParseCredentials(r.Header.Get("Authorization"))
 	if err != nil {
 		return malformed, ""
 	}
@@ -136,8 +135,11 @@ func (n nonces) verify(r *http.Request, c Credential) (verdict, string) {
 	if got.URI != r.RequestURI {
 		return malformed, ""
 	}
+	// The server has the credential of the owner only (Sh finds a user
+	// by public identity alone), so another username cannot be
+	// authenticated.
 	if got.Username != c.Username {
-		return notOwner, ""
+		return unauthenticated, ""
 	}
 	algorithm := MD5
 	if got.Algorithm != "" {

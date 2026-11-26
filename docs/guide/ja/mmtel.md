@@ -147,8 +147,8 @@ http://xcap.ims.mnc001.mcc001.3gppnetwork.org/simservs.ngn.etsi.org/users/sip:+1
 
 `ue xcap set cfu on tel:+12025550103` は次の要求を送ります。
 
-1. 資格情報を付けずに、文書の全体を **GET** します。AS は利用者の Ut のパスワードを、Service-Indication が `Ut-Digest-Credential` の repository data として Sh で読み（UDR）、`WWW-Authenticate: Digest` の 2 つのチャレンジを付けた **401** を返します。1 つ目は SHA-256、2 つ目は MD5 です（RFC 7616 3.3、TS 24.623 5.2.3.2.1）。
-2. 1 つ目のチャレンジに対する `Authorization: Digest` を付けて、もう一度 **GET** します。AS は資格情報と文書を読み（2 つの UDR）、文書と `ETag: "0"` を付けた **200** を返します。
+1. 資格情報を付けずに、文書の全体を **GET** します。AS はすぐに、`WWW-Authenticate: Digest` の 2 つのチャレンジを付けた **401** を返します。1 つ目は SHA-256、2 つ目は MD5 です（RFC 7616 3.3、TS 24.623 5.2.3.2.1）。その前に UDR は送りません。サーバーは、ほかの何よりも先に要求を認証します（TS 24.623 5.3.2.2）。チャレンジの realm はホームドメインで、どの利用者でも同じです。そのため、XUI が実在の利用者を指していてもいなくても 401 は同じになり、どの利用者がいるかを誰にも教えません。
+2. 1 つ目のチャレンジに対する `Authorization: Digest` を付けて、もう一度 **GET** します。AS はここで初めて、利用者の Ut のパスワードを、Service-Indication が `Ut-Digest-Credential` の repository data として Sh で読みます。そのパスワードで応答を確かめ、文書を読み、文書と `ETag: "0"` を付けた **200** を返します。UDR は 2 つです。AS が確かめられない資格情報には、パスワードの誤りと同じ 401 を返します。XUI がどの利用者も指していないとき、利用者に Ut のパスワードが無いとき、XUI の利用者とは別の利用者のユーザー名が書かれているときです。
 3. 規則を 1 つだけ **PUT** します。URI の `~~` のあとがノードセレクタで、`If-Match: "0"` を付けます（RFC 4825 6、7.11。GSMA IR.92 2.3.2）。
 
    ```text
