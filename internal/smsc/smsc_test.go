@@ -3,13 +3,13 @@ package smsc
 import (
 	"context"
 	"errors"
-	"github.com/yuu-biz/ims-practice/internal/diameter"
 	"reflect"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/yuu-biz/ims-practice/internal/diameter"
 	"github.com/yuu-biz/ims-practice/internal/sgd"
 	"github.com/yuu-biz/ims-practice/internal/sms"
 )

@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"github.com/yuu-biz/ims-practice/internal/diameter"
 	"io"
 	"log/slog"
 	"sync"
@@ -12,6 +11,7 @@ import (
 	"github.com/fiorix/go-diameter/v4/diam"
 	"github.com/fiorix/go-diameter/v4/diam/dict"
 
+	"github.com/yuu-biz/ims-practice/internal/diameter"
 	"github.com/yuu-biz/ims-practice/internal/sgd"
 	"github.com/yuu-biz/ims-practice/internal/sms"
 	"github.com/yuu-biz/ims-practice/internal/smsc"
