@@ -40,6 +40,7 @@ type brokenCounters struct {
 	takesNegatives   bool
 	failsOnNegatives bool
 	noCacheControl   bool
+	cacheForAMinute  bool
 	noContentType    bool
 }
 
@@ -78,7 +79,10 @@ func (b brokenCounters) handler() http.Handler {
 		w.WriteHeader(http.StatusNoContent)
 	})
 	mux.HandleFunc("GET /counters/total", func(w http.ResponseWriter, r *http.Request) {
-		if !b.noCacheControl {
+		switch {
+		case b.cacheForAMinute:
+			w.Header().Set("Cache-Control", "max-age=60")
+		case !b.noCacheControl:
 			w.Header().Set("Cache-Control", "no-store")
 		}
 		writeJSON(w, http.StatusOK, map[string]any{"value": 2})
@@ -140,6 +144,7 @@ func TestMismatchesFailTheTest(t *testing.T) {
 		{"a route the document lacks", brokenCounters{extraRoute: true}, []string{"GET /gauges answered 200: the document has no such path", "DELETE /counters/calls answered 204: the document has no DELETE on this path"}},
 		{"a request the document refuses", brokenCounters{takesNegatives: true}, []string{"PUT /counters/calls answered 204: the handler took a request that the document refuses", "minimum: got -1, want 0"}},
 		{"a missing header", brokenCounters{noCacheControl: true}, []string{"GET /counters/total answered 200: header Cache-Control is missing"}},
+		{"a header against its schema", brokenCounters{cacheForAMinute: true}, []string{`GET /counters/total answered 200: header Cache-Control: "max-age=60"`}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			d := Load(t, "testdata/counters.yaml")
@@ -179,6 +184,62 @@ func TestCheckCoveredNamesTheOperationsNotReached(t *testing.T) {
 	}
 	if strings.Contains(got, "/counters/total") {
 		t.Errorf("CheckCovered reported the operation that was reached: %q", got)
+	}
+}
+
+// TestCheckCoveredWantsASuccess: an operation that only answered with
+// its errors leaves the schema of its success unchecked, unless the
+// test says why it cannot succeed.
+func TestCheckCoveredWantsASuccess(t *testing.T) {
+	failuresOnly := func(t *testing.T) *Document {
+		d := Load(t, "testdata/counters.yaml")
+		h := d.Handler(t, brokenCounters{}.handler())
+		for _, r := range []struct{ method, path, body string }{
+			{"GET", "/counters/missing", ""},
+			{"PUT", "/counters/calls", `{"valu": 3}`},
+			{"GET", "/counters/total", ""},
+		} {
+			h.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(r.method, r.path, strings.NewReader(r.body)))
+		}
+		return d
+	}
+	for _, tc := range []struct {
+		name        string
+		failureOnly []FailureOnly
+		want        []string
+	}{
+		{"none spared", nil, []string{
+			"no exchange reached GET /counters/{name} with a 2xx",
+			"no exchange reached PUT /counters/{name} with a 2xx",
+		}},
+		{"both spared", []FailureOnly{
+			{"GET /counters/{name}", "no counter exists"},
+			{"PUT /counters/{name}", "the counters are read only"},
+		}, nil},
+		{"spared without a reason, or when it succeeded, or for no operation", []FailureOnly{
+			{"GET /counters/{name}", ""},
+			{"PUT /counters/{name}", "the counters are read only"},
+			{"GET /counters/total", "it has no total"},
+			{"DELETE /counters/{name}", "no counter goes"},
+		}, []string{
+			"GET /counters/{name} is listed as failure only without a reason",
+			"GET /counters/total is listed as failure only, and an exchange reached it with a 2xx",
+			"DELETE /counters/{name} is listed as failure only, and the document has no such operation",
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rt := &recordingT{TB: t}
+			failuresOnly(t).CheckCovered(rt, tc.failureOnly...)
+			got := strings.Join(rt.errors, "\n")
+			for _, w := range tc.want {
+				if !strings.Contains(got, w) {
+					t.Errorf("CheckCovered reported %q, want %q", got, w)
+				}
+			}
+			if len(rt.errors) != len(tc.want) {
+				t.Errorf("CheckCovered reported %d problems, want %d: %q", len(rt.errors), len(tc.want), got)
+			}
+		})
 	}
 }
 

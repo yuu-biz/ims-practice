@@ -21,8 +21,9 @@
 //   - The answer: its status code must be one that the operation lists,
 //     or the operation must have a default answer, and the handler must
 //     set a Content-Type that is one of that answer's media types
-//     whenever it writes a body. A JSON body must match the schema, and
-//     the headers marked required must be there.
+//     whenever it writes a body. A JSON body must match the schema, the
+//     headers marked required must be there, and each header of the
+//     answer that the document gives a schema must match it.
 //
 // A body of application/x-ndjson, one JSON value per line, is checked
 // line by line: each line that is not empty must match the schema of
@@ -33,7 +34,9 @@
 //
 // Document.CheckRoutes asks the handler which methods each path of the
 // document takes, and Document.CheckCovered names each operation that
-// no exchange reached, so that a test cannot pass by leaving one out.
+// no exchange reached, or that never answered with a 2xx, so that a
+// test cannot pass by leaving one out or by driving it to its errors
+// alone.
 // JSONNames lists the JSON attributes of a Go type, which the packages
 // that follow a 3GPP OpenAPI file compare with the names of its schemas.
 //
@@ -221,6 +224,9 @@ type Document struct {
 
 	mu      sync.Mutex
 	reached map[string]bool
+	// succeeded are the operations that answered with a 2xx, whose
+	// answer was then checked.
+	succeeded map[string]bool
 }
 
 // pathTemplate is one path of the document, split into segments; a
@@ -322,7 +328,7 @@ func Load(t testing.TB, file string) *Document {
 	if err != nil {
 		t.Fatalf("OpenAPI document: %v", err)
 	}
-	d := &Document{file: file, schemas: map[string]*jsonschema.Schema{}, open: map[string]bool{}, reached: map[string]bool{}}
+	d := &Document{file: file, schemas: map[string]*jsonschema.Schema{}, open: map[string]bool{}, reached: map[string]bool{}, succeeded: map[string]bool{}}
 	dec := yaml.NewDecoder(bytes.NewReader(raw))
 	dec.KnownFields(true)
 	if err := dec.Decode(&d.doc); err != nil {
@@ -818,6 +824,9 @@ func (d *Document) exchange(r *http.Request, body []byte, rec *recorder) []strin
 	}
 	d.mu.Lock()
 	d.reached[method+" "+pt.path] = true
+	if rec.status >= 200 && rec.status < 300 {
+		d.succeeded[method+" "+pt.path] = true
+	}
 	d.mu.Unlock()
 	pointer := base + "/responses/" + code
 	if resp.Ref != "" {
@@ -903,8 +912,14 @@ func (d *Document) parameterValue(pointer, v string) error {
 func (d *Document) answer(rec *recorder, head bool, resp response, pointer string) []string {
 	var problems []string
 	for name, h := range resp.Headers {
-		if h.Required && rec.Header().Get(name) == "" {
+		values := rec.Header().Values(name)
+		if h.Required && len(values) == 0 {
 			problems = append(problems, "header "+name+" is missing")
+		}
+		for _, v := range values {
+			if err := d.parameterValue(pointer+"/headers/"+escape(name)+"/schema", v); err != nil {
+				problems = append(problems, fmt.Sprintf("header %s: %q: %v", name, v, err))
+			}
 		}
 	}
 	if len(resp.Content) == 0 {
@@ -1052,26 +1067,68 @@ func (d *Document) CheckRoutes(t testing.TB, h http.Handler) {
 	}
 }
 
+// FailureOnly names an operation, such as "POST /calls", that a test
+// cannot drive to a success, and says why, for CheckCovered.
+type FailureOnly struct {
+	Operation, Why string
+}
+
 // CheckCovered fails t for each operation of the document that no
 // exchange through Handler has reached with a status that the
-// operation lists.
-func (d *Document) CheckCovered(t testing.TB) {
+// operation lists, and for each operation with a 2xx in the document
+// that no exchange reached with a 2xx: a test that only drives an
+// operation to its errors leaves the schema of its success unchecked.
+// An operation in failureOnly is spared the second check, and fails t
+// once it does succeed, so that the list does not outlive its reason.
+func (d *Document) CheckCovered(t testing.TB, failureOnly ...FailureOnly) {
 	t.Helper()
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	var missing []string
+	spared := map[string]bool{}
+	for _, f := range failureOnly {
+		if f.Why == "" {
+			t.Errorf("%s: %s is listed as failure only without a reason", d.file, f.Operation)
+		}
+		spared[f.Operation] = true
+	}
+	var problems []string
 	for _, pt := range d.paths {
 		item := d.doc.Paths[pt.path]
 		for _, m := range methods {
-			if item.operation(m) != nil && !d.reached[m+" "+pt.path] {
-				missing = append(missing, m+" "+pt.path)
+			op := item.operation(m)
+			name := m + " " + pt.path
+			switch {
+			case op == nil:
+				if spared[name] {
+					problems = append(problems, name+" is listed as failure only, and the document has no such operation")
+				}
+			case !d.reached[name]:
+				problems = append(problems, "no exchange reached "+name)
+			case spared[name] && d.succeeded[name]:
+				problems = append(problems, name+" is listed as failure only, and an exchange reached it with a 2xx")
+			case !spared[name] && !d.succeeded[name] && listsSuccess(op):
+				problems = append(problems, "no exchange reached "+name+" with a 2xx, so the schema of its success was never checked")
 			}
+			delete(spared, name)
 		}
 	}
-	slices.Sort(missing)
-	for _, m := range missing {
-		t.Errorf("%s: no exchange reached %s", d.file, m)
+	for name := range spared {
+		problems = append(problems, name+" is listed as failure only, and the document has no such operation")
 	}
+	slices.Sort(problems)
+	for _, p := range problems {
+		t.Errorf("%s: %s", d.file, p)
+	}
+}
+
+// listsSuccess tells that op has an answer with a 2xx status.
+func listsSuccess(op *operation) bool {
+	for code := range op.Responses {
+		if strings.HasPrefix(code, "2") {
+			return true
+		}
+	}
+	return false
 }
 
 // JSONNames gives the names of the JSON attributes of the struct v, in

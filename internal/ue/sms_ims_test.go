@@ -83,13 +83,18 @@ func newFakeIPSMGW(t *testing.T, n testNetwork) *fakeIPSMGW {
 // in a submit report to the sender (TS 24.341 5.3.3.4.3), and the
 // message as an SMS-DELIVER to the recipient (5.3.3.4.2). The sender's
 // number comes from the tel URI in P-Asserted-Identity (5.3.1.2 NOTE 2).
+// An RP-SMMA, which tells that the UE has memory again, goes no
+// further.
 func (g *fakeIPSMGW) relay(submission *sip.Message) {
 	rp, err := sms.ParseRP(submission.Body)
 	if err != nil {
 		g.t.Errorf("submission: %v", err)
 		return
 	}
-	data := rp.(sms.RPDataMSToNetwork)
+	data, ok := rp.(sms.RPDataMSToNetwork)
+	if !ok {
+		return
+	}
 	tpdu, err := sms.ParseTPDU(data)
 	if err != nil {
 		g.t.Errorf("submission: %v", err)
