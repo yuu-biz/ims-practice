@@ -365,6 +365,37 @@ for id in $others; do
 	fi
 done
 echo "ok   checked that no notification came for the acknowledgements after the end of the subscription"
+# The drain raised one alarm on each of the five nodes, and nothing else
+# in this run raises one, so the OSS took exactly five notifyNewAlarm,
+# one about each node. The notificationId names one notification (TS
+# 28.532 11.0.2): a notification sent twice comes with its id twice,
+# whatever its type.
+taken="$(docker compose exec -T oss wget -qO- http://127.0.0.1:8080/received | tr -d '\r')"
+new_alarms="$("$python" -c '
+import json, sys
+for n in json.load(sys.stdin):
+    if n["notification_type"] == "notifyNewAlarm":
+        print(n["notification"]["href"])' <<<"$taken" | sort)"
+want_new="$(for node in $peers; do href_of "$node"; done | sort)"
+if [ "$new_alarms" = "$want_new" ]; then
+	echo "ok   the OSS took five notifyNewAlarm, one about each node that reaches the HSS"
+else
+	echo "FAIL the OSS took $(grep -c . <<<"$new_alarms" || true) notifyNewAlarm, want one about each of the five nodes:"
+	diff <(echo "$want_new") <(echo "$new_alarms") || true
+	fail=1
+fi
+twice="$("$python" -c '
+import collections, json, sys
+ids = collections.Counter(n["notification"]["notificationId"] for n in json.load(sys.stdin))
+for i, count in sorted(ids.items()):
+    if count > 1:
+        print("%s (%d times)" % (i, count))' <<<"$taken")"
+if [ -z "$twice" ]; then
+	echo "ok   no notificationId came twice among the $("$python" -c 'import json, sys; print(len(json.load(sys.stdin)))' <<<"$taken") notifications"
+else
+	echo "FAIL notifications came more than once: $twice"
+	fail=1
+fi
 refused="$(docker compose exec -T oss wget -qO- http://127.0.0.1:8080/refused | tr -d '\r')"
 if [ "$refused" = "[]" ]; then
 	echo "ok   every notification the OAM sent had the names and the attributes of the OpenAPI files"
