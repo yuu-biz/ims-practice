@@ -15,11 +15,7 @@ import (
 // node.
 func functionState(t *testing.T, node *maintenance.Node) maintenance.FunctionState {
 	t.Helper()
-	state, err := node.State()
-	if err != nil {
-		t.Fatal(err)
-	}
-	return state.Functions[0]
+	return node.State().Functions[0]
 }
 
 // A shut down P-CSCF refuses the REGISTERs that would start or refresh a

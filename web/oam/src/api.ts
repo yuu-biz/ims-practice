@@ -74,8 +74,6 @@ export interface FunctionState {
   users: number | null;
   // When a SHUTTINGDOWN role becomes LOCKED even with users left.
   shutdown_deadline: string | null;
-  // What the role tells about itself, such as counters.
-  summary: unknown;
 }
 
 // The names of log/slog. The API also takes and gives one of them with
@@ -797,7 +795,6 @@ function parseFunctionState(value: unknown): FunctionState {
     operational_state: oneOf(o, "operational_state", operationalStates),
     users: o["users"] == null ? null : number(o, "users"),
     shutdown_deadline: optionalString(o, "shutdown_deadline"),
-    summary: o["summary"] ?? null,
   };
 }
 

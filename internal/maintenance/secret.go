@@ -82,8 +82,8 @@ func isSecretName(name string) bool {
 // secret is set. A Secret passes, as it marshals to RedactedValue or
 // null.
 //
-// The handler checks every configuration view and summary with it
-// before it answers, and refuses to show one that fails; a role's test
+// The handler checks every configuration view with it before it
+// answers, and refuses to show one that fails; a role's test
 // can call it on its view too. A secret under a field with an innocent
 // name is not found: the view must hold a Secret for it.
 func CheckRedacted(v any) error {

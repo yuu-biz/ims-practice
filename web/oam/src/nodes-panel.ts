@@ -129,7 +129,6 @@ function functionCells(f: FunctionState): Child[] {
     el("span", { className: `state-${f.operational_state}`, textContent: f.operational_state }),
     f.users === null ? "" : String(f.users),
     f.shutdown_deadline === null ? "" : formatTime(f.shutdown_deadline),
-    f.summary === null ? "" : JSON.stringify(f.summary),
   ];
 }
 

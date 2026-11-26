@@ -44,11 +44,7 @@ func managed(t *testing.T, r *Relay) *maintenance.Node {
 // with the count of its users, which the role must give.
 func relayState(t *testing.T, node *maintenance.Node) (maintenance.FunctionState, int) {
 	t.Helper()
-	state, err := node.State()
-	if err != nil {
-		t.Fatal(err)
-	}
-	f := state.Functions[0]
+	f := node.State().Functions[0]
 	if f.Users == nil {
 		t.Fatalf("the relay is %+v, want a count of its users", f)
 	}

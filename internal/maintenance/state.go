@@ -91,11 +91,6 @@ type Function struct {
 	// later transition, and must not wait for a session to end. Without
 	// it the role reads ManagedFunction.AdministrativeState.
 	AdministrativeStateChanged func(from, to AdministrativeState)
-	// Summary is what the role tells about itself in the node's state,
-	// such as counters. It must marshal to JSON, and is checked like a
-	// configuration view (CheckRedacted). Without it there is none. It
-	// must not walk over all subscribers: counts, not lists.
-	Summary func() any
 }
 
 // ManagedFunction is the administrative state of one role of the node,

@@ -70,8 +70,6 @@ type FunctionState struct {
 	// ShutdownDeadline is when a SHUTTINGDOWN role becomes LOCKED even
 	// with users left; absent without one.
 	ShutdownDeadline *time.Time `json:"shutdown_deadline,omitempty"`
-	// Summary is what Function.Summary gives, absent without one.
-	Summary json.RawMessage `json:"summary,omitempty"`
 }
 
 // AdministrativeStateRequest is the body of PUT

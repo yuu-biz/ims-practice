@@ -52,11 +52,7 @@ func (h *harness) manageWith(hssAvailable func() bool) *maintenance.Node {
 // gwState is the state of the IP-SM-GW in the maintenance API of node.
 func gwState(t *testing.T, node *maintenance.Node) maintenance.FunctionState {
 	t.Helper()
-	state, err := node.State()
-	if err != nil {
-		t.Fatal(err)
-	}
-	return state.Functions[0]
+	return node.State().Functions[0]
 }
 
 // setState makes the event that takes the IP-SM-GW to want, and returns

@@ -256,8 +256,7 @@ func TestShutDownWaitsForTheRequestsItTook(t *testing.T) {
 		t.Fatalf("the answer is not a UAA: %v", err)
 	}
 	until(t, "the instance to become LOCKED once its last request was answered", func() bool {
-		s, err := one.api.State()
-		return err == nil && s.Functions[0].AdministrativeState == maintenance.Locked
+		return one.api.State().Functions[0].AdministrativeState == maintenance.Locked
 	})
 	until(t, "the drained instance to close its connection", func() bool { return !peer.Available() })
 }

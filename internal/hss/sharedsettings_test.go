@@ -36,11 +36,7 @@ func changeAt(api *maintenance.Node, generation uint64, name, value string) (mai
 // of an instance shows.
 func generationOf(t *testing.T, api *maintenance.Node) uint64 {
 	t.Helper()
-	state, err := api.State()
-	if err != nil {
-		t.Fatal(err)
-	}
-	return state.ConfigurationGeneration
+	return api.State().ConfigurationGeneration
 }
 
 // TestARecreatedInstanceAnswersWithTheSettingsInForce: an instance that

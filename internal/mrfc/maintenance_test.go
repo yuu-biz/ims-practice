@@ -44,11 +44,7 @@ func manage(t *testing.T, m testMRFC) *maintenance.Node {
 // mrfcState is the state of the MRFC in the maintenance API of node.
 func mrfcState(t *testing.T, node *maintenance.Node) maintenance.FunctionState {
 	t.Helper()
-	state, err := node.State()
-	if err != nil {
-		t.Fatal(err)
-	}
-	return state.Functions[0]
+	return node.State().Functions[0]
 }
 
 // setState makes the event that takes the MRFC to want, and returns its

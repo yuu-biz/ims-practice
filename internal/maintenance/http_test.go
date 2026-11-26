@@ -80,9 +80,6 @@ func newTestNode(t *testing.T) *testNode {
 					}
 					return Enabled
 				},
-				Summary: func() any {
-					return map[string]int64{"sessions": tn.sessions.Load()}
-				},
 			},
 			{Role: "icscf"},
 		},
@@ -156,10 +153,10 @@ func TestStateRoundTrip(t *testing.T) {
 	}
 	p, i := s.Functions[0], s.Functions[1]
 	if p.Role != "pcscf" || p.AdministrativeState != Unlocked || p.OperationalState != Disabled ||
-		p.Users == nil || *p.Users != 3 || p.ShutdownDeadline != nil || string(p.Summary) != `{"sessions":3}` {
+		p.Users == nil || *p.Users != 3 || p.ShutdownDeadline != nil {
 		t.Errorf("pcscf = %+v", p)
 	}
-	if i.Role != "icscf" || i.AdministrativeState != Unlocked || i.OperationalState != Enabled || i.Users != nil || i.Summary != nil {
+	if i.Role != "icscf" || i.AdministrativeState != Unlocked || i.OperationalState != Enabled || i.Users != nil {
 		t.Errorf("icscf = %+v", i)
 	}
 }
@@ -177,7 +174,7 @@ func TestStateJSON(t *testing.T) {
 	want := `{"node":"pcscf-1","instance":"pcscf-1-7d9f","build":{"version":"v0.13.0","revision":"8db954e"},` +
 		`"start_time":"2026-11-20T09:00:00Z","configuration_generation":0,"log_level":"INFO","functions":[` +
 		`{"role":"pcscf","administrative_state":"SHUTTINGDOWN","operational_state":"ENABLED","users":1,` +
-		`"shutdown_deadline":"2026-11-20T09:01:00Z","summary":{"sessions":1}},` +
+		`"shutdown_deadline":"2026-11-20T09:01:00Z"},` +
 		`{"role":"icscf","administrative_state":"UNLOCKED","operational_state":"ENABLED"}]}` + "\n"
 	if rec.Code != http.StatusOK || rec.Body.String() != want || rec.Header().Get("Content-Type") != "application/json" {
 		t.Errorf("GET state = %d %s\nwant %s", rec.Code, rec.Body, want)
@@ -342,34 +339,6 @@ func TestUnknownPathsAndMethodsAnswerJSON(t *testing.T) {
 		if rec.Code != tc.status || json.Unmarshal(rec.Body.Bytes(), &body) != nil || body.Error == "" ||
 			rec.Header().Get("Allow") != tc.allow {
 			t.Errorf("%s %s = %d %q Allow %q, want %d Allow %q", tc.method, tc.path, rec.Code, rec.Body, rec.Header().Get("Allow"), tc.status, tc.allow)
-		}
-	}
-}
-
-// A summary that would show a secret is not shown; the error says
-// where it is, and neither the answer nor the log has its value.
-func TestStateRefusesASummaryWithASecret(t *testing.T) {
-	node, err := New(Config{
-		Node:          "hss-1",
-		LogLevel:      new(slog.LevelVar),
-		Configuration: func() any { return struct{}{} },
-		Functions: []Function{{Role: "hss", Summary: func() any {
-			return map[string]string{"last_opc": "cd63cb71954a9f4e48a5994e37a02baf"}
-		}}},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	var log bytes.Buffer
-	node.log = slog.New(slog.NewTextHandler(&log, nil))
-	rec := httptest.NewRecorder()
-	checkedHandler(t, node).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, StatePath, nil))
-	if rec.Code != http.StatusInternalServerError || !strings.Contains(rec.Body.String(), "$.last_opc") {
-		t.Errorf("GET state = %d %s", rec.Code, rec.Body)
-	}
-	for _, out := range []string{rec.Body.String(), log.String()} {
-		if strings.Contains(out, "cd63cb71") {
-			t.Errorf("the secret shows in %s", out)
 		}
 	}
 }

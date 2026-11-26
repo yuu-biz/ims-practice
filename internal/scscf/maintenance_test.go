@@ -30,11 +30,7 @@ func maintained(t *testing.T, h *harness, hssAvailable func() bool) *maintenance
 
 func functionState(t *testing.T, node *maintenance.Node) maintenance.FunctionState {
 	t.Helper()
-	state, err := node.State()
-	if err != nil {
-		t.Fatal(err)
-	}
-	return state.Functions[0]
+	return node.State().Functions[0]
 }
 
 // The S-CSCF cannot work while no instance of the HSS takes requests.

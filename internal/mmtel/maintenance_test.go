@@ -52,11 +52,7 @@ func manage(t *testing.T, as testAS, hssAvailable func() bool) *maintenance.Node
 // asState is the state of the AS in the maintenance API of node.
 func asState(t *testing.T, node *maintenance.Node) maintenance.FunctionState {
 	t.Helper()
-	state, err := node.State()
-	if err != nil {
-		t.Fatal(err)
-	}
-	return state.Functions[0]
+	return node.State().Functions[0]
 }
 
 // setState makes the event that takes the AS to want, and returns its

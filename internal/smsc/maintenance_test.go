@@ -38,11 +38,7 @@ func hssUp() bool { return true }
 // scState is the state of the SC in the maintenance API of node.
 func scState(t *testing.T, node *maintenance.Node) maintenance.FunctionState {
 	t.Helper()
-	state, err := node.State()
-	if err != nil {
-		t.Fatal(err)
-	}
-	return state.Functions[0]
+	return node.State().Functions[0]
 }
 
 // inHand is how much work the SC counts, which must be a count that the

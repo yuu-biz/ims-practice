@@ -18,12 +18,7 @@ const maxRequestBody = 64 << 10
 func (n *Node) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET "+StatePath, func(w http.ResponseWriter, r *http.Request) {
-		s, err := n.State()
-		if err != nil {
-			n.internalError(w, r, err)
-			return
-		}
-		writeJSON(w, http.StatusOK, s)
+		writeJSON(w, http.StatusOK, n.State())
 	})
 	mux.HandleFunc("PUT "+administrativeStatePattern, func(w http.ResponseWriter, r *http.Request) {
 		var req AdministrativeStateRequest

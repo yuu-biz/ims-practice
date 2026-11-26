@@ -17,7 +17,7 @@
 //
 // What differs between the roles comes from callbacks that the role
 // supplies (Function): its operational state, how many users it still
-// serves, a summary of its own, and the news of each transition. The
+// serves, and the news of each transition. The
 // node supplies the view of its configuration, in which every secret is
 // a Secret, and the settings that may change (NewSetting). The node
 // holds only the administrative state of its roles and the
