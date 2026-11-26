@@ -505,6 +505,33 @@ UE 2 の P-CSCF では、同じことが逆の向きに起きます。183 や 20
 
 `internal/pcscf` の試験は、アンサーの `Modify` を断る中継ノードを使って、これらの流れを 1 つのプロセスの中で動かします。`TestRefusedAnswerOfA183EndsTheCall`、`TestRefusedAnswerOfThe200EndsTheCall`、`TestRefusedRetransmissionOfThe200KeepsTheCall`、`TestRefusedRetransmissionOfAReliable183KeepsTheCall`、`TestRefusedAnswerWithinTheDialogReleasesTheCall`、`TestRefusedAnswerOfAnUPDATEInTheEarlyDialogEndsTheCall`、2 つの P-CSCF のインスタンスが 1 つの保存先を共有する `TestRefusedAnswerOfAnUPDATEAtAnotherInstanceEndsTheCall` です。
 
+## 中継ノードがオファーを受け取らないとき
+
+ダイアログの中の新しい SDP のオファーも、INVITE のオファーと同じく中継ノードを通ります。UPDATE のオファーや、保留のときの re-INVITE のオファーです。P-CSCF は、オファーした側に面したターミネーションに、その側がこれからどこで受けるかを `Modify` で伝えます。そのあとで、もう一方のターミネーションのアドレスを SDP に書きます（TS 24.229 6.7.2.1）。中継ノードがこの `Modify` を断るか、時間内に答えないと、P-CSCF は先へ渡す自分のオファーを作れません。届いたオファーには、オファーした側のアドレスが書いてあります。相手はそこへ、中継ノードを通らずに RTP を送ることになります。PCRF も、呼が通らない経路のメディアを許可することになります。
+
+そのため、P-CSCF は要求を先へ送らず、自分で 500（Server Internal Error、RFC 3261 21.5.1）を返します。TS 24.229 6.2 も、P-CSCF が通せないオファーの入った要求を同じように扱います。P-CSCF が要求に答え、ダイアログは残ります。ローカルポリシーが許さないメディアのオファーには、6.2 は 488（Not Acceptable Here）を返し、ポリシーが許すメディアをそこに入れます。ここではメディアは許されていて、原因は中継ノードにあるので、500 を返します。TS 24.229 5.2.8.1.2 がオファーのためにダイアログを解放するのは、オファーが応答で届いたときだけです。応答は断れないためです。アンサーも断れないので、中継ノードがアンサーを受け取らないときは、P-CSCF は呼を解放します。
+
+```text
+ UE 1          P-CSCF          メディア中継ノード  網
+ | 新しい SDP のオファーの入った UPDATE             |
+ |-------------->|                |                 |
+ |               | PUT .../terminations/access      |  Modify。UE 1 がこれから受けるアドレス
+ |               |--------------->|                 |
+ |               | 誤り、または時間内に答えが無い   |
+ |               |<---------------|                 |
+ |  500 (UPDATE) |                |                 |  UPDATE は先へ進まない
+ |<--------------|                |                 |
+```
+
+- **呼は続きます。** 2xx 以外の最終応答を受け取ると、セッションは要求の前のままです。re-INVITE については RFC 3261 14.1 が、UPDATE については RFC 3311 5.3 がそう定めています。メディアは、最後のオファーとアンサーのとおりに中継ノードを通り続け、PCRF も許可したものをそのまま持ちます。ダイアログが終わるのは、481 か 408 を受け取ったときと、答えが無かったときだけです（RFC 3261 12.2.1.2）。そのため、P-CSCF はどちらも返しません。
+- **re-INVITE にも同じ 500 を返します。** 2xx 以外の最終応答なので、UE 1 が返す ACK は P-CSCF で止まります（RFC 3261 17.1.1.3）。呼を保留にしようとした UE は、元のままの呼に残ります。
+- **UE 1 は、あとでオファーを送り直せます**（RFC 3261 21.5.1）。そのときには中継ノードが受け取るかもしれません。
+- **網からのオファー**では、相手がどこで受けるかを、コア側のターミネーションに伝えます。中継ノードがこの `Modify` を断ると、500 は網へ返り、UE 1 には何も届きません。
+- **early dialog では、INVITE は続きます。** VoLTE の UE が資源を確保したことを伝える UPDATE が、この場合に当たります（[プリコンディション](volte.md#プリコンディション)）。着信側は、UE 1 の資源が確保できたことを知らないままです。それを伝える次のオファーを待ちます（RFC 3312 6）。
+- **ダイアログの中でオファーを運ぶほかの要求**にも、同じ 500 を返します。PRACK がその例です（RFC 3262 5）。
+
+`internal/pcscf` の試験は、オファーの `Modify` を断る中継ノードを使って、これらの流れを 1 つのプロセスの中で動かします。`TestRefusedOfferWithinTheDialogIsRejected` と `TestRefusedOfferOfAnUPDATEInTheEarlyDialogKeepsTheCall` です。
+
 ## このプロジェクトで簡略化していること
 
 次の表の項目には、それぞれコードに `SIMPLIFIED:` のコメントがあり、`grep -rn "SIMPLIFIED:" internal cmd` ですべて一覧できます。

@@ -486,6 +486,33 @@ An answer within the dialog, in the 200 to an UPDATE or to a re-INVITE such as t
 
 The tests of `internal/pcscf` run these flows in one process, with a relay that refuses the `Modify` of the answer: `TestRefusedAnswerOfA183EndsTheCall`, `TestRefusedAnswerOfThe200EndsTheCall`, `TestRefusedRetransmissionOfThe200KeepsTheCall`, `TestRefusedRetransmissionOfAReliable183KeepsTheCall`, `TestRefusedAnswerWithinTheDialogReleasesTheCall`, `TestRefusedAnswerOfAnUPDATEInTheEarlyDialogEndsTheCall` and, with two instances of the P-CSCF on one store, `TestRefusedAnswerOfAnUPDATEAtAnotherInstanceEndsTheCall`.
 
+## When the relay does not take an offer
+
+A new SDP offer within the dialog, such as that of an UPDATE or of the re-INVITE of a hold, goes through the relay like the offer of the INVITE. The P-CSCF tells the termination that faces the party that offers where that party now receives, with a `Modify`, and then writes the address of its other termination into the SDP (TS 24.229 6.7.2.1). When the relay refuses that `Modify`, or does not answer it in time, the P-CSCF has no offer of its own to pass on. The offer that came names the address of the party that offers. The other party would send its RTP there, past the relay, and the PCRF would authorise media on a path that the call does not take.
+
+So the request goes no further, and the P-CSCF answers it itself with 500 (Server Internal Error, RFC 3261 21.5.1). TS 24.229 6.2 treats a request whose offer the P-CSCF cannot let through the same way: the P-CSCF answers the request, and the dialog stays. For an offer with media that the local policy does not allow, 6.2 gives the answer 488 (Not Acceptable Here), with the media that the policy allows. Here the media are allowed and the relay is at fault, so the answer is 500. TS 24.229 5.2.8.1.2 releases a dialog for an offer only when the offer comes in a response, which cannot be refused. An answer cannot be refused either, which is why the P-CSCF releases the call when the relay does not take an answer.
+
+```text
+ UE 1          P-CSCF          media relay      network
+ | UPDATE with a new SDP offer    |                 |
+ |-------------->|                |                 |
+ |               | PUT .../terminations/access      |  Modify: where UE 1 now receives
+ |               |--------------->|                 |
+ |               | error, or no answer in time      |
+ |               |<---------------|                 |
+ |  500 (UPDATE) |                |                 |  the UPDATE goes no further
+ |<--------------|                |                 |
+```
+
+- **The call stays up.** A final response other than 2xx leaves the session as it was before the request: RFC 3261 14.1 says so for a re-INVITE, and RFC 3311 5.3 for an UPDATE. The media goes on as the last offer and answer set it up, through the relay, and the PCRF keeps what it authorised. Only a 481, a 408 or no answer at all ends the dialog (RFC 3261 12.2.1.2), so the P-CSCF answers with none of them.
+- **A re-INVITE gets the same 500.** UE 1 acknowledges it with an ACK that goes no further than the P-CSCF, as for any final response other than 2xx (RFC 3261 17.1.1.3). A UE that wanted to put the call on hold stays in the call as it was.
+- **UE 1 may send the offer again later** (RFC 3261 21.5.1), when the relay may take it.
+- **An offer from the network** tells the core termination where the other party receives. When the relay refuses that `Modify`, the 500 goes back to the network, and UE 1 gets nothing.
+- **In an early dialog**, such as that of the UPDATE with which a VoLTE UE tells that its resources are reserved ([Preconditions](volte.md#preconditions)), the INVITE goes on. The callee has not heard that the resources of UE 1 are reserved, and waits for a later offer that tells it so (RFC 3312 6).
+- **Any other request within the dialog that carries an offer**, such as a PRACK (RFC 3262 5), gets the same 500.
+
+The tests of `internal/pcscf` run these flows in one process, with a relay that refuses the `Modify` of the offer: `TestRefusedOfferWithinTheDialogIsRejected` and `TestRefusedOfferOfAnUPDATEInTheEarlyDialogKeepsTheCall`.
+
 ## What this project simplifies
 
 Each item has a `SIMPLIFIED:` comment in the code; `grep -rn "SIMPLIFIED:" internal cmd` lists them all.
