@@ -14,7 +14,7 @@ ims-practice 勉強会 第 1 回（どのノードとどの仕様が、コード
 
 ## この回で分かること
 
-- 実行ファイルが 2 つだけであること。
+- 実行ファイルが 3 つだけで、その 1 つが IMS のどのノードにもなること。
 - どのノードが、どのパッケージに書いてあるか。
 - どの仕様が、どのパッケージに書いてあるか。
 - コードをどこから読み始めればよいか。
@@ -28,21 +28,22 @@ ims-practice 勉強会 第 1 回（どのノードとどの仕様が、コード
 
 | 場所 | 中身 |
 | --- | --- |
-| `cmd/` | 実行ファイルの入口。`ims` と `ue` の 2 つ。 |
+| `cmd/` | 実行ファイルの入口。`ims`、`ue`、`oss` の 3 つ。 |
 | `internal/` | 実装のすべて。この回の主題。 |
 | `deploy/compose/` | ノードごとの設定ファイルと、DNS のゾーン。 |
 | `compose.yaml` | ノードを 1 つの Docker のネットワークに並べる。 |
 | `docs/` | 手順書（`docs/guide/`）と用語集。 |
 | `scripts/` | シナリオごとの e2e の試験と、ライブのキャプチャ。 |
-| `web/lab/` | ラボの画面。 |
+| `web/` | ラボ（`lab/`）と OAM のサーバー（`oam/`）の画面。 |
 | `images/` | キャプチャ用のコンテナなど、補助のイメージ。 |
 
 ---
 
-## 実行ファイルは 2 つ
+## 実行ファイルは 3 つ
 
 - `cmd/ims` は IMS のノード 1 台です。何のノードになるかは、設定ファイルの `roles` で決まります。1 つのイメージが、どのノードにもなります。
 - `cmd/ue` は UE シミュレータです。`register`、`call`、`answer`、`serve`、`sms`、`xcap`、`ctl` のサブコマンドがあります。
+- `cmd/oss` は OSS の代わりです。OAM のサーバーの警報を読み、確認します。IMS のノードではありません。
 
 ```yaml
 # deploy/compose/scscf.yaml
@@ -51,7 +52,7 @@ roles: [scscf]
 home_domain: ims.mnc001.mcc001.3gppnetwork.org
 ```
 
-- コアの役割は `hss`、`icscf`、`scscf`、`pcscf`、`agw`、`lab`、`ipsmgw` です。VoLTE とサービスには `epc`、`mmtel`、`mrfc`、`mrfp` を使います。ほかの網との境界には `ibcf` を使います。
+- コアの役割は `hss`、`icscf`、`scscf`、`pcscf`、`agw`、`lab`、`ipsmgw`、`sc` です。VoLTE とサービスには `epc`、`mmtel`、`mrfc`、`mrfp` を使います。ほかの網との境界には `ibcf` を使います。ノードの運用と、わざと壊すことには `oam` と `fault` を使います。
 - `roles` に 2 つ書くと、1 台が 2 つの役割を兼ねます。
 
 > 役割の一覧は `internal/config/config.go` の `knownRoles` にあります。
@@ -68,12 +69,12 @@ home_domain: ims.mnc001.mcc001.3gppnetwork.org
 | `scscf` | 172.28.0.30 | `scscf` | `scscf.yaml` |
 | `pcscf` | 172.28.0.40 | `pcscf` | `pcscf.yaml` |
 | `agw` | 172.28.0.50 | `agw` | `agw.yaml` |
-| `lab` | 172.28.0.60 | `lab` | `lab.yaml` |
-| `ipsmgw`、`mmtel` | 172.28.0.70、75 | `ipsmgw`、`mmtel` | `ipsmgw.yaml`、`mmtel.yaml` |
+| `lab`、`oam` | 172.28.0.60、65 | `lab`、`oam` | `lab.yaml`、`oam.yaml` |
+| `ipsmgw`、`sc`、`mmtel` | 172.28.0.70、71、75 | `ipsmgw`、`sc`、`mmtel` | `ipsmgw.yaml`、`sc.yaml`、`mmtel.yaml` |
 | `epc`、`mrfc`、`mrfp` | 172.28.0.80、85、86 | `epc`、`mrfc`、`mrfp` | `epc.yaml`、`mrfc.yaml`、`mrfp.yaml` |
 | `ue`、`ue2`、`ue3` | 172.28.0.100、101、103 | `cmd/ue` | コマンドの引数 |
 
-- 表に無いものは、`ipsmgw` の中の SC のスタブ、ラボと VoLTE の UE（`phone1` から `phone3`、`volte10`、`volte12`）、`softphone`、`capture` です。
+- 表に無いものは、ラボと VoLTE の UE（`phone1` から `phone3`、`volte10`、`volte12`）、`softphone`、`oss`、`capture` です。障害注入のエージェントは、`deploy/chaos/` に自分の Compose のファイルがあります。
 - IBCF ともう 1 つの網は、別の Compose のプロジェクト `deploy/interconnect/compose.yaml` にあります。
 
 > 手順書 [信号をキャプチャして Wireshark で開く「ノードを起動すると見えるもの」](../../../docs/guide/ja/capture.md#ノードを起動すると見えるもの)
@@ -85,13 +86,13 @@ home_domain: ims.mnc001.mcc001.3gppnetwork.org
 | 層 | パッケージ |
 | --- | --- |
 | 役割。ノードの振る舞い。 | `pcscf` `icscf` `scscf` `hss` `ipsmgw` `sc` `smsc` `agw` `lab` `ue` `epc` `mmtel` `mrfc` `ibcf` `oam` |
-| IMS の決まりとインタフェース | `ims` `ifc` `reginfo` `cx` `sh` `rx` `sgd` `policy` `simservs` `interconnect` `netann` `confinfo` |
-| プロトコル | `sip` `sipdns` `diameter` `sdp` `rtp` `rtcp` `sms` `hep` `xcap` `h248` |
+| IMS の決まりとインタフェース | `ims` `ifc` `reginfo` `cx` `sh` `rx` `sgd` `policy` `simservs` `interconnect` `netann` `confinfo` `b2bua` |
+| プロトコル | `sip` `sipdns` `diameter` `sdp` `rtp` `rtcp` `sms` `hep` `xcap` `h248` `ipsec` `accessapi` |
 | 符号化と計算 | `g711` `amr` `evs` `wav` `mixer` `milenage` `aka` `precondition` |
-| 起動、状態、運用 | `config` `hepagent` `metrics` `kvstore` `maintenance` `fault` |
-| `cmd/ims` も `cmd/ue` も読み込まないもの | `fivegc` `n5` `nhss` `sbi` `nas` `rtptest` `openapitest` |
+| 起動、状態、運用 | `config` `hepagent` `metrics` `kvstore` `maintenance` `fault` `mns` `jex` |
+| `cmd/` のどのコマンドも読み込まないもの | `fivegc` `n5` `nhss` `sbi` `nas` `rtptest` `openapitest` `yamledit` |
 
-- 役割のパッケージが、下の層を組み合わせて使います。役割 `mrfp` はパッケージ `agw` で、音声ガイダンスと会議に `mixer` を使います。
+- 役割のパッケージが、下の層を組み合わせて使います。役割 `mrfp` はパッケージ `agw` で、音声ガイダンスと会議に `mixer` を使います。役割 `sc` はパッケージ `smsc` です。
 - 層は仕様の文書で分かれます。RFC 3261 はパッケージ `sip`、TS 24.229 は役割のパッケージです。
 - プロトコルの層は役割を知りません。`sip` は IMS のことを何も知らない SIP です。
 
@@ -104,7 +105,7 @@ home_domain: ims.mnc001.mcc001.3gppnetwork.org
 | `pcscf` | P-CSCF。UE から見て最初の SIP の中継点。 | TS 24.229 |
 | `icscf` | I-CSCF。ホーム網の入口。 | TS 24.229、TS 29.228 |
 | `scscf` | S-CSCF。レジストラ。iFC の評価もここ。 | TS 24.229、TS 29.228 |
-| `hss` | HSS のスタブ。Cx と Sh に答える。 | TS 29.228、TS 29.328 |
+| `hss` | HSS のスタブ。Cx、Sh、S6c に答える。 | TS 29.228、TS 29.328、TS 29.338 |
 
 - 1 つの役割の中は、手順ごとにファイルが分かれています。
   - `scscf.go` は登録、`session.go` は通話、`services.go` は iFC、`regevent.go` は reg イベントです。
@@ -118,13 +119,15 @@ home_domain: ims.mnc001.mcc001.3gppnetwork.org
 | パッケージ | ノード | 主な仕様 |
 | --- | --- | --- |
 | `ipsmgw` | IP-SM-GW。SMS over IP のアプリケーションサーバー。 | TS 24.341、TS 23.204 |
-| `sc` | SC のスタブ。IP-SM-GW のプロセスの中にある。 | TS 23.204 |
+| `smsc` | SMS のサービスセンタ。役割 `sc`。ショートメッセージを預かり、送り直す。 | TS 23.040、TS 29.338 |
+| `sc` | SC のスタブ。設定にサービスセンタが無い IP-SM-GW が使う。 | TS 23.204 |
 | `mmtel` | MMTel AS。付加サービス。 | TS 24.173、TS 24.604 から 24.611、TS 24.623 |
 | `agw` | メディア中継ノード。IMS-AGW の役割。 | RFC 3550。制御の API はこのプロジェクト独自 |
 | `ue` | UE シミュレータ。 | TS 24.229、TS 24.341 |
 | `lab` | HEP の写しから登録と通話を組み立てる。 | このプロジェクト独自 |
+| `oam` | OAM のサーバー。保守の API でノードを操作する。 | OSS に向けては TS 28.111 |
 
-- スタブは、仕様のインタフェースだけを本物にして、中身を簡単にしたものです。HSS と SC がスタブです。
+- スタブは、仕様のインタフェースだけを本物にして、中身を簡単にしたものです。HSS と `sc` がスタブです。
 - ラボは IMS の一部ではありません。ノードが送るものを見せるだけです。
 
 > 手順書 [ラボで IMS を見る「このプロジェクト独自の API」](../../../docs/guide/ja/lab.md#このプロジェクト独自の-api)
@@ -159,7 +162,7 @@ home_domain: ims.mnc001.mcc001.3gppnetwork.org
 | `epc`、`policy`、`rx`、`milenage`、`aka`、`amr`、`rtcp`、`precondition` | VoLTE の通話で使う部品。この回では扱わない。 |
 | `nas`、`fivegc`、`n5`、`nhss`、`sbi` など | どの役割も起動しない部品。使うのはそれぞれの試験だけ。 |
 
-- どの役割も起動しない部品は、`cmd/ims` からも `cmd/ue` からも import されていません。`go list -deps ./cmd/...` に出てこないことで確かめられます。
+- どの役割も起動しない部品は、`cmd/` のどのコマンドからも import されていません。`go list -deps ./cmd/...` に出てこないことで確かめられます。
 
 > 手順書 [信号をキャプチャして Wireshark で開く「ラボに送るコピー（HEP）」](../../../docs/guide/ja/capture.md#ラボに送るコピーhep)
 
@@ -176,6 +179,7 @@ home_domain: ims.mnc001.mcc001.3gppnetwork.org
 | `internal/pcscf/pcscf.go` | UE ごとの IP の対応付け |
 | `internal/hss/store.go` | 加入 |
 | `internal/ipsmgw/store.go` | 配達の途中のショートメッセージ、購読 |
+| `internal/smsc/store.go` | サービスセンタが預かるショートメッセージ。宛先ごと。 |
 
 - `Store` の後ろに共有の保存先を置けば、役割を複数台で動かせます。
 - S-CSCF が登録をただの map に入れないのはなぜでしょうか。2 台目の S-CSCF が同じ登録を見られなくなるからです。IMS が PBX と違うのはここです。
@@ -190,13 +194,13 @@ home_domain: ims.mnc001.mcc001.3gppnetwork.org
 
 | 境界 | コードでの形 | 差し替えられる相手 |
 | --- | --- | --- |
-| HSS | Cx と Sh。Diameter のメッセージそのもの。 | 本格的な HSS |
+| HSS | Cx、Sh、S6c。Diameter のメッセージそのもの。 | 本格的な HSS |
 | メディア中継ノードの制御 | `pcscf` の `Relay` | Iq の H.248 による制御（`h248/mediactl`）。設定で選ぶ。 |
-| SC | SGd。Diameter のメッセージそのもの（`sgd`）。 | 本格的な SC |
+| SC | `ipsmgw` の `ServiceCentre` | スタブの代わりに、SGd（`sgd`）でつなぐ `sc` のノードのサービスセンタ。設定で選ぶ。 |
 | 役割の組み合わせ | 設定の `roles` | 1 台に複数の役割 |
 
 - これ以外の場所には、差し替えのための抽象化を置いていません。使う場所が 1 つしか無い抽象化は、読む層を増やすだけだからです。
-- HSS のスタブは本物と同じ Cx と Sh を話します。キャプチャに見えるものが、本物の HSS が送るものと同じになります。
+- HSS のスタブは本物と同じ Cx、Sh、S6c を話します。キャプチャに見えるものが、本物の HSS が送るものと同じになります。
 
 ---
 

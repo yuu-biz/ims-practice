@@ -14,7 +14,7 @@ ims-practice study session 1 (where each node and each specification lives in th
 
 ## What you will know after this session
 
-- There are only two executables.
+- There are only three executables, and one of them is every IMS node.
 - Which package holds which node.
 - Which package holds which specification.
 - Where to start reading the code.
@@ -28,21 +28,22 @@ ims-practice study session 1 (where each node and each specification lives in th
 
 | Place | What is there |
 | --- | --- |
-| `cmd/` | The entry points of the executables: `ims` and `ue`. |
+| `cmd/` | The entry points of the executables: `ims`, `ue` and `oss`. |
 | `internal/` | All of the implementation. The subject of this session. |
 | `deploy/compose/` | One configuration file per node, and the DNS zones. |
 | `compose.yaml` | Puts the nodes on one Docker network. |
 | `docs/` | The guides (`docs/guide/`) and the glossary. |
 | `scripts/` | The e2e tests, one per scenario, and live capture. |
-| `web/lab/` | The web UI of the Lab. |
+| `web/` | The web UIs of the Lab (`lab/`) and of the OAM server (`oam/`). |
 | `images/` | Helper images, such as the capture container. |
 
 ---
 
-## Two executables
+## Three executables
 
 - `cmd/ims` is one IMS node. Which node it is comes from `roles` in its configuration file, so one image serves as every node.
 - `cmd/ue` is the UE simulator, with the subcommands `register`, `call`, `answer`, `serve`, `sms`, `xcap` and `ctl`.
+- `cmd/oss` stands in for the OSS, which reads and acknowledges the alarms of the OAM server. It is not an IMS node.
 
 ```yaml
 # deploy/compose/scscf.yaml
@@ -51,7 +52,7 @@ roles: [scscf]
 home_domain: ims.mnc001.mcc001.3gppnetwork.org
 ```
 
-- The roles of the core: `hss`, `icscf`, `scscf`, `pcscf`, `agw`, `lab` and `ipsmgw`. For VoLTE and the services: `epc`, `mmtel`, `mrfc`, `mrfp`. At the border to another network: `ibcf`.
+- The roles of the core: `hss`, `icscf`, `scscf`, `pcscf`, `agw`, `lab`, `ipsmgw` and `sc`. For VoLTE and the services: `epc`, `mmtel`, `mrfc`, `mrfp`. At the border to another network: `ibcf`. To operate the nodes and to break them on purpose: `oam` and `fault`.
 - Two entries in `roles` make one node play both roles.
 
 > The list of roles is `knownRoles` in `internal/config/config.go`.
@@ -68,12 +69,12 @@ home_domain: ims.mnc001.mcc001.3gppnetwork.org
 | `scscf` | 172.28.0.30 | `scscf` | `scscf.yaml` |
 | `pcscf` | 172.28.0.40 | `pcscf` | `pcscf.yaml` |
 | `agw` | 172.28.0.50 | `agw` | `agw.yaml` |
-| `lab` | 172.28.0.60 | `lab` | `lab.yaml` |
-| `ipsmgw`, `mmtel` | 172.28.0.70, 75 | `ipsmgw`, `mmtel` | `ipsmgw.yaml`, `mmtel.yaml` |
+| `lab`, `oam` | 172.28.0.60, 65 | `lab`, `oam` | `lab.yaml`, `oam.yaml` |
+| `ipsmgw`, `sc`, `mmtel` | 172.28.0.70, 71, 75 | `ipsmgw`, `sc`, `mmtel` | `ipsmgw.yaml`, `sc.yaml`, `mmtel.yaml` |
 | `epc`, `mrfc`, `mrfp` | 172.28.0.80, 85, 86 | `epc`, `mrfc`, `mrfp` | `epc.yaml`, `mrfc.yaml`, `mrfp.yaml` |
 | `ue`, `ue2`, `ue3` | 172.28.0.100, 101, 103 | `cmd/ue` | command line |
 
-- Not in the table: the SC stub inside `ipsmgw`, the UEs of the Lab and of VoLTE (`phone1` to `phone3`, `volte10`, `volte12`), `softphone` and `capture`.
+- Not in the table: the UEs of the Lab and of VoLTE (`phone1` to `phone3`, `volte10`, `volte12`), `softphone`, `oss` and `capture`. The fault agent has a Compose file of its own in `deploy/chaos/`.
 - The IBCF and a second network are in another Compose project, `deploy/interconnect/compose.yaml`.
 
 > Guide: [Capture signaling and open it in Wireshark, "What you see when the nodes start"](../../../docs/guide/en/capture.md#what-you-see-when-the-nodes-start)
@@ -85,13 +86,13 @@ home_domain: ims.mnc001.mcc001.3gppnetwork.org
 | Layer | Packages |
 | --- | --- |
 | Roles: how a node behaves | `pcscf` `icscf` `scscf` `hss` `ipsmgw` `sc` `smsc` `agw` `lab` `ue` `epc` `mmtel` `mrfc` `ibcf` `oam` |
-| IMS rules and interfaces | `ims` `ifc` `reginfo` `cx` `sh` `rx` `sgd` `policy` `simservs` `interconnect` `netann` `confinfo` |
-| Protocols | `sip` `sipdns` `diameter` `sdp` `rtp` `rtcp` `sms` `hep` `xcap` `h248` |
+| IMS rules and interfaces | `ims` `ifc` `reginfo` `cx` `sh` `rx` `sgd` `policy` `simservs` `interconnect` `netann` `confinfo` `b2bua` |
+| Protocols | `sip` `sipdns` `diameter` `sdp` `rtp` `rtcp` `sms` `hep` `xcap` `h248` `ipsec` `accessapi` |
 | Codecs and algorithms | `g711` `amr` `evs` `wav` `mixer` `milenage` `aka` `precondition` |
-| Start-up, state and operation | `config` `hepagent` `metrics` `kvstore` `maintenance` `fault` |
-| Not imported by `cmd/ims` or `cmd/ue` | `fivegc` `n5` `nhss` `sbi` `nas` `rtptest` `openapitest` |
+| Start-up, state and operation | `config` `hepagent` `metrics` `kvstore` `maintenance` `fault` `mns` `jex` |
+| Not imported by any command of `cmd/` | `fivegc` `n5` `nhss` `sbi` `nas` `rtptest` `openapitest` `yamledit` |
 
-- The role packages combine the layers below them. The role `mrfp` is the package `agw`, with `mixer` for the announcements and conferences.
+- The role packages combine the layers below them. The role `mrfp` is the package `agw`, with `mixer` for the announcements and conferences, and the role `sc` is the package `smsc`.
 - The layers follow the documents: RFC 3261 is the package `sip`, TS 24.229 the role packages.
 - The protocol layer knows no role. `sip` is SIP that knows nothing about the IMS.
 
@@ -104,7 +105,7 @@ home_domain: ims.mnc001.mcc001.3gppnetwork.org
 | `pcscf` | P-CSCF, the first SIP hop of the UE. | TS 24.229 |
 | `icscf` | I-CSCF, the entry point of the home network. | TS 24.229, TS 29.228 |
 | `scscf` | S-CSCF, the registrar. It also evaluates the iFCs. | TS 24.229, TS 29.228 |
-| `hss` | The HSS stub. It answers Cx and Sh. | TS 29.228, TS 29.328 |
+| `hss` | The HSS stub. It answers Cx, Sh and S6c. | TS 29.228, TS 29.328, TS 29.338 |
 
 - Inside a role, there is one file per procedure.
   - `scscf.go` is registration, `session.go` is calls, `services.go` is the iFCs, `regevent.go` is the reg event.
@@ -118,13 +119,15 @@ home_domain: ims.mnc001.mcc001.3gppnetwork.org
 | Package | Node | Main specifications |
 | --- | --- | --- |
 | `ipsmgw` | IP-SM-GW, the application server of SMS over IP. | TS 24.341, TS 23.204 |
-| `sc` | The SC stub, in the process of the IP-SM-GW. | TS 23.204 |
+| `smsc` | The Service Centre of SMS, the role `sc`. It holds each short message and retries. | TS 23.040, TS 29.338 |
+| `sc` | The SC stub, for an IP-SM-GW whose configuration names no Service Centre. | TS 23.204 |
 | `mmtel` | The MMTel AS: supplementary services. | TS 24.173, TS 24.604 to 24.611, TS 24.623 |
 | `agw` | The media relay, in the role of the IMS-AGW. | RFC 3550. The control API is this project's own |
 | `ue` | The UE simulator. | TS 24.229, TS 24.341 |
 | `lab` | Builds registrations and calls from HEP copies. | this project's own |
+| `oam` | The OAM server: operates the nodes through their maintenance API. | TS 28.111 towards the OSS |
 
-- A stub keeps the interface of the specification real and makes the inside simple. The HSS and the SC are stubs.
+- A stub keeps the interface of the specification real and makes the inside simple. The HSS is a stub, and so is `sc`.
 - The Lab is not part of the IMS. It only shows what the nodes send it.
 
 > Guide: [Watch the IMS in the Lab, "These APIs are this project's own"](../../../docs/guide/en/lab.md#these-apis-are-this-projects-own)
@@ -159,7 +162,7 @@ home_domain: ims.mnc001.mcc001.3gppnetwork.org
 | `epc`, `policy`, `rx`, `milenage`, `aka`, `amr`, `rtcp`, `precondition` | Parts of the VoLTE call. Not covered in this session. |
 | `nas`, `fivegc`, `n5`, `nhss`, `sbi` and more | Parts that no role starts. Only their own tests use them. |
 
-- Neither `cmd/ims` nor `cmd/ue` imports the parts that no role starts: `go list -deps ./cmd/...` does not list them.
+- No command of `cmd/` imports the parts that no role starts: `go list -deps ./cmd/...` does not list them.
 
 > Guide: [Capture signaling and open it in Wireshark, "Copies for the Lab (HEP)"](../../../docs/guide/en/capture.md#copies-for-the-lab-hep)
 
@@ -176,6 +179,7 @@ home_domain: ims.mnc001.mcc001.3gppnetwork.org
 | `internal/pcscf/pcscf.go` | The IP association of each UE |
 | `internal/hss/store.go` | Subscriptions |
 | `internal/ipsmgw/store.go` | Short messages on their way, subscriptions |
+| `internal/smsc/store.go` | The short messages the Service Centre holds, by recipient |
 
 - With a shared store behind `Store`, a role can run on several nodes.
 - Why not a plain map in the S-CSCF? A second S-CSCF could not see the registrations. This is where an IMS differs from a PBX.
@@ -190,13 +194,13 @@ Only the places where a stub stands for a real node, or where one part has two w
 
 | Boundary | Its shape in the code | What could replace it |
 | --- | --- | --- |
-| HSS | Cx and Sh, the Diameter messages themselves | A full HSS |
+| HSS | Cx, Sh and S6c, the Diameter messages themselves | A full HSS |
 | Control of the media relay | `Relay` in `pcscf` | Control by H.248 on Iq (`h248/mediactl`), which the configuration chooses |
-| SC | SGd, the Diameter messages themselves (`sgd`) | A full SC |
+| SC | `ServiceCentre` in `ipsmgw` | The Service Centre of the `sc` node over SGd (`sgd`) in place of the stub, which the configuration chooses |
 | Combination of roles | `roles` in the configuration | Several roles in one node |
 
 - Nowhere else is there an abstraction for the sake of replacing something. An abstraction with a single use only adds a layer to read through.
-- The HSS stub speaks the real Cx and Sh, so that a capture shows what a real HSS would send.
+- The HSS stub speaks the real Cx, Sh and S6c, so that a capture shows what a real HSS would send.
 
 ---
 
