@@ -95,8 +95,8 @@ The filter is `diameter`.
 
 | Look at | What to see |
 | --- | --- |
-| CER and CEA | Five connections to port 3868, one from each node that asks a question over Diameter. |
-| The applications in them | Cx from the I-CSCF and the S-CSCF, Sh from the two application servers, Rx from the P-CSCF. |
+| CER and CEA | Seven connections to port 3868, from the six nodes that ask a question over Diameter. The IP-SM-GW opens two: to the HSS and to the SC. |
+| The applications in them | Cx from the I-CSCF and the S-CSCF, Sh from the two application servers, SGd from the IP-SM-GW to the SC, S6c from the SC to the HSS, Rx from the P-CSCF. |
 | DWR and DWA | A side that has heard nothing for about 30 seconds asks whether its peer is alive. |
 | DPR and DPA | The node that stops says goodbye before it closes the connection. |
 
@@ -106,7 +106,7 @@ docker compose stop scscf
 
 - The S-CSCF sends a DPR with Disconnect-Cause `REBOOTING`, and the HSS answers with a DPA. `docker compose start scscf` brings a new CER and CEA.
 
-> Guide: ["What you see when the nodes start"](../../../docs/guide/en/capture.md#what-you-see-when-the-nodes-start), with the table of all five connections. RFC 6733. RFC 3539 3.4.1.
+> Guide: ["What you see when the nodes start"](../../../docs/guide/en/capture.md#what-you-see-when-the-nodes-start), with the table of all seven connections. RFC 6733. RFC 3539 3.4.1.
 
 ---
 
@@ -269,7 +269,7 @@ docker compose --profile phones up -d --build
 ## Next session
 
 - Next is registration, the first flow read in a capture. It is also the first ladder to open in the Lab.
-- Before then, start the system once, open the newest file in `captures/` with the filter `diameter`, and find the five CERs.
+- Before then, start the system once, open the newest file in `captures/` with the filter `diameter`, and find the seven CERs.
 
 ```sh
 docker compose up -d --build

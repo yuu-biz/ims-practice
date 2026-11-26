@@ -95,8 +95,8 @@ sip || diameter.cmd.code >= 300 || dns.qry.type == 35 || dns.qry.type == 33
 
 | 見るもの | 何が見えるか |
 | --- | --- |
-| CER と CEA | 3868 番への 5 本の接続。Diameter で問い合わせるノードが 1 本ずつ開く。 |
-| その中のアプリケーション | I-CSCF と S-CSCF は Cx、2 つの AS は Sh、P-CSCF は Rx。 |
+| CER と CEA | 3868 番への 7 本の接続。Diameter で問い合わせる 6 つのノードが開く。IP-SM-GW は HSS と SC への 2 本を開く。 |
+| その中のアプリケーション | I-CSCF と S-CSCF は Cx、2 つの AS は Sh、IP-SM-GW から SC へは SGd、SC から HSS へは S6c、P-CSCF は Rx。 |
 | DWR と DWA | 約 30 秒なにも受け取らなかった側が、相手が動いているかを確かめる。 |
 | DPR と DPA | 止まるノードが、接続を閉じる前に、切断することを相手に伝える。 |
 
@@ -106,7 +106,7 @@ docker compose stop scscf
 
 - S-CSCF が Disconnect-Cause `REBOOTING` を付けた DPR を送り、HSS が DPA で応えます。`docker compose start scscf` で起動し直すと、新しい CER と CEA が続きます。
 
-> 手順書 [「ノードを起動すると見えるもの」](../../../docs/guide/ja/capture.md#ノードを起動すると見えるもの)。5 本の接続の一覧もここにあります。RFC 6733。RFC 3539 3.4.1。
+> 手順書 [「ノードを起動すると見えるもの」](../../../docs/guide/ja/capture.md#ノードを起動すると見えるもの)。7 本の接続の一覧もここにあります。RFC 6733。RFC 3539 3.4.1。
 
 ---
 
@@ -269,7 +269,7 @@ docker compose --profile phones up -d --build
 ## 次回
 
 - 次は登録です。キャプチャで読む最初の流れで、ラボで開く最初のラダー図でもあります。
-- その前に、一度システムを起動し、`captures/` のいちばん新しいファイルをフィルタ `diameter` で開いて、5 つの CER を見つけておいてください。
+- その前に、一度システムを起動し、`captures/` のいちばん新しいファイルをフィルタ `diameter` で開いて、7 つの CER を見つけておいてください。
 
 ```sh
 docker compose up -d --build
