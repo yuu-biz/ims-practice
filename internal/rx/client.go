@@ -159,6 +159,16 @@ func (c *Client) terminate(ctx context.Context, s policy.SessionID, cause Termin
 // answer has gone. After an ASA the client ends the session itself with
 // an STR, as TS 29.214 4.4.6.1 has the AF do, so a SessionTerminated
 // event names a session that is over.
+//
+// SIMPLIFIED: RFC 6733 8.5.2 and 7.1.5. An ASA for a session that is
+// not active carries DIAMETER_UNKNOWN_SESSION_ID, the result for any
+// request whose Session-Id the node does not know. The client keeps no
+// state, so it cannot tell: it answers every RAR and ASR that it can
+// read with DIAMETER_SUCCESS, and sends the STR after an ASR all the
+// same. The P-CSCF then finds no dialog and no IP association of the
+// session, and logs the event. A PCRF learns nothing from the answer
+// about a session that the P-CSCF has lost; the PCRF of the EPC stub
+// only logs the result of an RAA and reads nothing of an ASA.
 func (c *Client) Handle(request *diam.Message) *diam.Message {
 	local := c.node.Identity()
 	switch request.Header.CommandCode {
