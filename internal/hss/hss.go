@@ -245,7 +245,9 @@ func (h *HSS) commitSettings(generation uint64) error {
 	h.pending = nil
 	next, wrote, err := h.storeSettings(h.life, sets, generation)
 	if err == nil {
-		h.takeOn(next)
+		// The settings of the Store that the change did not name may hold
+		// what this instance cannot serve.
+		h.takeOnStored(next)
 	}
 	h.settingsMu.Unlock()
 	if err != nil {
@@ -326,33 +328,43 @@ func (h *HSS) takeOn(next *settings) bool {
 	}
 }
 
-// servable says why this instance cannot answer with set, or nil when
-// it can: a policy it does not know, or a service profile name that its
-// configuration does not define. Another instance, with another
-// configuration file, may have stored such settings; taking them on
+// servable is set with each item that this instance cannot serve in
+// place of the value it has in force, its last good one, and why it
+// could not serve them: a policy it does not know, or a service profile
+// name that its configuration does not define. Another instance, with
+// another configuration file, may have stored such an item; taking it on
 // would give the subscriptions of that name a profile without criteria.
-func (h *HSS) servable(set *settings) error {
-	if !slices.Contains(Admissions, set.admission) {
-		return fmt.Errorf("%s: %q is none of %v", admissionSetting, set.admission, Admissions)
+// The items that it can serve, and the generation, are those of set, so
+// that the instances of the role agree on all that they can.
+func (h *HSS) servable(set *settings) (*settings, error) {
+	next, in := *set, h.settings.Load()
+	var errs []error
+	if !slices.Contains(Admissions, next.admission) {
+		errs = append(errs, fmt.Errorf("%s: %q is none of %v", admissionSetting, next.admission, Admissions))
+		next.admission = in.admission
 	}
-	if err := h.config.CheckServiceProfileName(defaultProfileSetting, set.defaultServiceProfile); err != nil {
-		return err
+	if err := h.config.CheckServiceProfileName(defaultProfileSetting, next.defaultServiceProfile); err != nil {
+		errs = append(errs, err)
+		next.defaultServiceProfile = in.defaultServiceProfile
 	}
-	return h.config.CheckServiceProfileName(testUserProfileSetting, set.testUserServiceProfile)
+	if err := h.config.CheckServiceProfileName(testUserProfileSetting, next.testUserServiceProfile); err != nil {
+		errs = append(errs, err)
+		next.testUserServiceProfile = in.testUserServiceProfile
+	}
+	return &next, errors.Join(errs...)
 }
 
-// takeOnStored takes on settings read from the Store (takeOn), unless
-// this instance cannot serve them (servable): it keeps those it has
-// then, and logs it once for each generation of the Store.
+// takeOnStored takes on what this instance can serve of settings read
+// from the Store, or of a change it has written there (servable,
+// takeOn), and logs what it cannot once for each generation of the
+// Store.
 func (h *HSS) takeOnStored(set *settings) bool {
-	if err := h.servable(set); err != nil {
-		if h.unservable.Swap(set.generation+1) != set.generation+1 {
-			h.log.Error("the settings in force on the instances of the role name what this instance does not have; it keeps its own",
-				"generation", set.generation, "error", err.Error())
-		}
-		return false
+	next, err := h.servable(set)
+	if err != nil && h.unservable.Swap(set.generation+1) != set.generation+1 {
+		h.log.Error("the settings in force on the instances of the role name what this instance does not have; it keeps its own for those",
+			"generation", set.generation, "error", err.Error())
 	}
-	return h.takeOn(set)
+	return h.takeOn(next)
 }
 
 // loadSettings reads the settings that the instances on the Store share,
