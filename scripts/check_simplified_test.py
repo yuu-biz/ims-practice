@@ -58,6 +58,12 @@ class ReadsTheClauses(unittest.TestCase):
             {("TS 23.204", "6.5b"), ("TS 23.204", "6.6")},
         )
 
+    def test_a_step_before_a_clause_of_several_digits(self):
+        self.assertEqual(
+            check_simplified.references("RFC 3261 16.6 step 11, 16.8"),
+            {("RFC 3261", "16.6"), ("RFC 3261", "16.8")},
+        )
+
     def test_the_number_of_a_table_keeps_its_part(self):
         self.assertEqual(check_simplified.references("TS 29.513 Table 7.3.3-1"), {("TS 29.513", "7.3.3-1")})
         self.assertEqual(check_simplified.references("TS 29.338 Table 5.3.3.8/1"), {("TS 29.338", "5.3.3.8/1")})
