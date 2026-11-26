@@ -257,10 +257,12 @@ func (f *conference) expired(id sip.DialogID, at time.Time) {
 
 // notify sends the full state of the conference to its subscribers:
 // to the subscription with dialog only, when it is not nil, and to all
-// of them otherwise. A subscriber who has left the conference gets its
-// last NOTIFY with Subscription-State terminated (TS 24.147 5.3.3.3),
-// and so does everyone when the conference has ended (5.3.3.4), with
-// reason noresource (RFC 4575 3.3). A subscription past its expiry ends
+// of them otherwise. A subscriber outside a dialog who has left the
+// conference gets its last NOTIFY with Subscription-State terminated
+// (TS 24.147 5.3.3.3); a subscription within the dialog of a
+// participant who has left has ended already (left). When the
+// conference has ended, every subscription that is left gets its last
+// NOTIFY (5.3.3.4), with reason noresource (RFC 4575 3.3). A subscription past its expiry ends
 // with reason timeout (RFC 6665 4.2.1.4). A NOTIFY that times out, or
 // whose response says that the subscriber has lost the subscription,
 // removes it without a last NOTIFY (RFC 6665 4.2.2).
