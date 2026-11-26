@@ -393,6 +393,40 @@ func TestTheNodeShowsTheGenerationOfTheSettingsOfItsRole(t *testing.T) {
 	}
 }
 
+// TestTheRecordHasWhatTheGroupReplaced: a group whose settings the role
+// keeps with its other instances replaces what the store has, which may
+// not be what this node had in force. The record has those values as the
+// previous ones, and leaves out a setting whose value the store had
+// already.
+func TestTheRecordHasWhatTheGroupReplaced(t *testing.T) {
+	var a, b, pendingA, pendingB string
+	replaced := map[string]string{}
+	settings := Together(SettingsGroup{
+		Begin: func() { pendingA, pendingB = a, b },
+		Commit: func(uint64) error {
+			replaced["hss.a"], replaced["hss.b"] = "from the store", pendingB
+			a, b = pendingA, pendingB
+			return nil
+		},
+		Previous: func(name string) (json.RawMessage, error) { return json.Marshal(replaced[name]) },
+	},
+		NewSetting("hss.a", "", func() string { return a }, nil, func(v string) { pendingA = v }),
+		NewSetting("hss.b", "", func() string { return b }, nil, func(v string) { pendingB = v }))
+	node, err := New(Config{Node: "hss-1", LogLevel: new(slog.LevelVar), Functions: []Function{{Role: "hss"}},
+		Configuration: func() any { return map[string]any{} }, Settings: settings})
+	if err != nil {
+		t.Fatal(err)
+	}
+	change, err := node.ChangeConfiguration(ConfigurationChangeRequest{Settings: map[string]json.RawMessage{
+		"hss.a": json.RawMessage(`"1"`), "hss.b": json.RawMessage(`"2"`)}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(change.Changes) != 1 || change.Changes[0].Name != "hss.a" || string(change.Changes[0].Previous) != `"from the store"` {
+		t.Errorf("record = %+v, want hss.a from what the store had, and no hss.b", change.Changes)
+	}
+}
+
 // TestSettingsOfTwoGroupsAreRefused: a change that named the settings of
 // two groups could put the one in force and fail on the other, so a node
 // takes one group at most.

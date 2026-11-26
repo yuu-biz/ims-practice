@@ -1,6 +1,7 @@
 package hss
 
 import (
+	"encoding/json"
 	"fmt"
 	"slices"
 
@@ -141,6 +142,7 @@ func (h *HSS) Settings() []maintenance.Setting {
 		Begin:      h.beginSettings,
 		Commit:     h.commitSettings,
 		Generation: func() uint64 { return h.settings.Load().generation },
+		Previous:   h.previousSetting,
 	}
 	return maintenance.Together(group,
 		maintenance.NewSetting(admission,
@@ -167,6 +169,26 @@ func (h *HSS) Settings() []maintenance.Setting {
 			func(name string) error { return h.config.CheckServiceProfileName(testUser, name) },
 			func(name string) { h.setting(func(s *settings) { s.testUserServiceProfile = name }) }),
 	)
+}
+
+// previousSetting is the value of the setting name that the last change
+// of this instance replaced in the Store: that of the change through
+// another instance, which this one may not have taken on yet, rather
+// than the one this instance had in force.
+func (h *HSS) previousSetting(name string) (json.RawMessage, error) {
+	replaced := h.replaced.Load()
+	if replaced == nil {
+		return nil, fmt.Errorf("no change of %s has been made", name)
+	}
+	switch name {
+	case admissionSetting:
+		return json.Marshal(replaced.admission)
+	case defaultProfileSetting:
+		return json.Marshal(replaced.defaultServiceProfile)
+	case testUserProfileSetting:
+		return json.Marshal(replaced.testUserServiceProfile)
+	}
+	return nil, fmt.Errorf("%s is no setting of the HSS", name)
 }
 
 // The names of the settings in the configuration file and the
