@@ -652,19 +652,24 @@ func (c *Call) answerRequest(r *sip.InDialogRequest, sent sip.Body, resp *sip.Me
 }
 
 // release ends the call from the B2BUA, for a role that cannot let it
-// go on (Refusal.Release, Hooks). Before the callee has answered, the
-// caller's INVITE gets 500 (RFC 3261 21.5.1), and the goroutine of
-// Attempt cancels the INVITE toward the callee (9.1). Once the callee
-// has answered, the caller gets a BYE, and Answer sends the callee one
+// go on (Refusal.Release, Hooks).
+//
+// While the caller's INVITE has no final response, it gets 500 (RFC 3261
+// 21.5.1). That holds also after the callee's 2xx, while Answer prepares
+// it for the caller: Answer then finds the INVITE answered, and sends
+// the callee a BYE. Before the callee has answered, the goroutine of
+// Attempt cancels the INVITE toward the callee (9.1). Reject waits for
+// an Accept that is under way, and fails once the INVITE has its final
+// response. The caller then gets a BYE, and Answer sends the callee one
 // as the caller's leg ends (15.1.1).
 func (c *Call) release() {
-	if !c.answered.Load() && c.in.Reject(500) == nil {
-		c.log.Info("call released before the answer")
+	if c.in.Reject(500) == nil {
+		c.log.Info("call released: the caller's INVITE got 500")
 		return
 	}
 	if err := c.in.Bye(); err != nil {
-		c.log.Info("call released after the caller's leg had ended", "error", err.Error())
+		c.log.Info("call released: the caller's leg had ended already", "error", err.Error())
 		return
 	}
-	c.log.Info("call released")
+	c.log.Info("call released: the caller got a BYE")
 }
