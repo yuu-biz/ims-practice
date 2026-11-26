@@ -381,9 +381,30 @@ IBCF の各台は、こうした記録を自分の呼ごとに `Store` に置き
 ```
 
 - **2xx 以外の最終応答を受け取ると、セッションは要求の前のままです。** re-INVITE については RFC 3261 14.1 が、UPDATE については RFC 3311 5.3 がそう定めています。ダイアログが終わるのは、481 か 408 を受け取ったときと、答えが無かったときだけです（RFC 3261 12.2.1.2）。そのため、IBCF はどれも返しません。メディアは、最後の offer と answer のとおりに TrGW を通り続けます。
+- **途中で offer を先へ渡した IBCF は、自分の TrGW を元に戻します。** IBCF-B が UE A1 の offer を断ったとき、IBCF-A は、その offer の書くアドレスへ送るよう、もう TrGW-A に伝えています。TS 29.162 9.1.1.2 が、offer を受け取った時点でそうしてよいとしているためです。500 を受け取った UE A1 は、最後の offer と answer のメディアのままです。そこで IBCF-A は、もう一度 `Modify` を送り、TrGW-A がそこへ送るよう戻します。UE B1 の 488 のような、2xx 以外のどの最終応答でも、要求に答えが無かったときでも同じです。TS 29.162 9.1.3 にも TS 24.229 6.7.1 にも、このための手順はありません。RFC 3261 14.1 と RFC 3311 5.3 が残すセッションから、こうなります。TrGW-A がこの `Modify` も受け取らないと、そのターミネーションは、UE A1 がもう受けないアドレスへ送り続けます。そのときは、下のとおり IBCF-A が呼を解放します。
 - **網 B からの offer** では、たとえば UE B1 の UPDATE の offer では、網 B に面したターミネーションに `Modify` を送ります。500 は IBCF-B へ返り、IBCF-B がそれを UE B1 に渡します。UE A1 には何も届きません。
 - **送った側は、あとで offer を送り直せます**（RFC 3261 21.5.1）。
 - **どの答えが「何も変えていない」ことを表すか。** メディア中継ノードは、誤りで答えた要求を何も実行しません。制御 API で答えたときも、H.248 の Error 記述子で答えたときも同じです。例外は、そのコンテキストやターミネーションが無いという誤りで、次に扱います。
+
+UE A1 の re-INVITE の offer を IBCF-B が断ったときは、IBCF-A が TrGW-A を元に戻します。
+
+```text
+ UE A1         IBCF-A          TrGW-A          IBCF-B          TrGW-B
+ | 新しい SDP の offer の入った re-INVITE           |               |
+ |------------->| Modify。UE A1 がこれから受けるアドレス           |
+ |              |---------------->|                |               |
+ |              |  re-INVITE      |                |               |
+ |              |=================================>| Modify        |
+ |              |                 |                |-------------->|
+ |              |                 |                | 誤り。何も変えていない
+ |              |                 |                |<--------------|
+ |              |  500            |                |               |
+ |              |<=================================|               |
+ |              | Modify。UE A1 がそれまで受けていたアドレス        |
+ |              |---------------->|                |               |
+ |  500         |                 |                |               |
+ |<-------------|                 |                |               |
+```
 
 **TrGW が時間内に答えないとき、コンテキストを失っているとき。** IBCF は 500 を返し、そのあとで呼を解放します。
 
@@ -410,7 +431,7 @@ IBCF の各台は、こうした記録を自分の呼ごとに `Store` に置き
 
 **要求が、着信側の信頼性のある応答への PRACK のとき。** TrGW の答えにかかわらず、IBCF は INVITE を終わらせます。着信側の信頼性のある応答には PRACK が届かなくなり、着信側が INVITE を 5xx で終わらせるのは、その応答が PRACK を 64*T1、つまり 32 秒待ったあとになるためです（RFC 3262 3）。発信側の PRACK は、発信側が受け取った信頼性のある応答に合っているので、IBCF は 200 を返します（RFC 3262 3）。そのあとで INVITE に 500 を返し、着信側に CANCEL を送ります。RFC 6337 2.3 は、PRACK の中身を受け入れられない UAS が、INVITE を誤りの応答で終わらせることを認めています。新しい offer の入った PRACK には、200 ではなく 500 を返します。その 200 には answer を入れる必要があるためです（RFC 3262 5）。着信側が 100rel を付けずに送った応答への、新しい offer の入った PRACK は、UPDATE として先へ送ります（RFC 3311 5.1）。IBCF はそれを UPDATE と同じように断るので、呼が続くこともあります。
 
-`internal/ibcf` の試験は、一方の側の `Modify` を断る TrGW を使って、これらの流れを 1 つのプロセスの中で動かします。`TestRefusedOfferOfTheINVITEIsRejected`、`TestRefusedOfferWithinTheCallIsRejected`、`TestOfferWithinTheCallEndsTheCallWhenTheTrGWMayHaveTakenIt`、`TestRefusedSDPOfAPRACKEndsTheINVITE`、`TestRefusedOfferOfAPRACKSentOnAsAnUPDATEKeepsTheCall` です。
+`internal/ibcf` の試験は、一方の側の `Modify` を断る TrGW を使って、これらの流れを 1 つのプロセスの中で動かします。`TestRejectedOfferPutsTheTrGWBack`、`TestRejectedOfferEndsTheCallWhenTheTrGWDoesNotGoBack`、`TestRefusedOfferOfTheINVITEIsRejected`、`TestRefusedOfferWithinTheCallIsRejected`、`TestOfferWithinTheCallEndsTheCallWhenTheTrGWMayHaveTakenIt`、`TestRefusedSDPOfAPRACKEndsTheINVITE`、`TestRefusedOfferOfAPRACKSentOnAsAnUPDATEKeepsTheCall` です。
 
 ### 応答と ACK の SDP
 

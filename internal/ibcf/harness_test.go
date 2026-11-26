@@ -237,6 +237,20 @@ type fakeTrGW struct {
 	// refused, when set, is the error with which Modify turns down a
 	// change of the termination that faces a side, changing nothing.
 	refused map[ibcf.Side]error
+	// refusedRemotes, when set, are the errors with which Modify turns
+	// down a change to send to an address, changing nothing.
+	refusedRemotes map[netip.AddrPort]error
+}
+
+// refuseRemote has Modify fail with err, and change nothing, for a
+// change that tells a termination to send to remote.
+func (f *fakeTrGW) refuseRemote(remote netip.AddrPort, err error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.refusedRemotes == nil {
+		f.refusedRemotes = map[netip.AddrPort]error{}
+	}
+	f.refusedRemotes[remote] = err
 }
 
 // refuse has Modify fail with err, and change nothing, for the
@@ -329,6 +343,9 @@ func (f *fakeTrGW) Modify(_ context.Context, id string, termination agw.Terminat
 		return agw.ErrNoTermination
 	}
 	if err := f.refused[side]; err != nil {
+		return err
+	}
+	if err := f.refusedRemotes[change.Remote]; err != nil {
 		return err
 	}
 	c.remote[side] = change.Remote

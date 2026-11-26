@@ -100,4 +100,12 @@ type Hooks interface {
 	// changes the remote target of its dialog (RFC 3261 12.2), and each
 	// request its CSeq.
 	KeepDialogs(in, out sip.Dialog)
+	// Unanswered tells the role that req, a request within a dialog that
+	// it prepared for the other dialog (Request), got no 2xx there: a
+	// final response other than 2xx, or none at all. The session is then
+	// as it was before req (RFC 3261 14.1, RFC 3311 5.3), and the role
+	// puts back what it changed for an offer in req. ok is false when it
+	// cannot, and the Call then releases the call once req has its
+	// response.
+	Unanswered(req *sip.Message, d Direction) (ok bool)
 }

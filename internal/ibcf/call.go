@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
+	"net/netip"
 	"sync"
 
 	"github.com/yuu-biz/ims-practice/internal/agw"
@@ -58,9 +60,16 @@ type call struct {
 	// first SDP with an audio stream. ended is set once the call has
 	// ended and its record is gone, so that no later write brings the
 	// record back.
+	//
+	// sends is where each termination of the context sends now, and
+	// agreed where it sent when the last offer and answer were done
+	// (agree), to which it goes back when an offer within a dialog gets
+	// no 2xx (Unanswered).
 	mediaMu sync.Mutex
 	media   *MediaContext
 	ended   bool
+	sends   map[Side]netip.AddrPort
+	agreed  map[Side]netip.AddrPort
 }
 
 // onCall is the UAConfig.OnCall of side s: an INVITE outside a dialog,
@@ -308,10 +317,71 @@ func (c *call) throughTrGW(m *sip.Message, d interconnect.Direction) error {
 			kept = fmt.Errorf("%w: %w", errNotKept, err)
 		}
 	}
-	if err := c.b.throughTrGW(m, *c.media, d); err != nil {
+	sender, err := c.b.throughTrGW(m, *c.media, d)
+	if sender.IsValid() {
+		from, _ := facing(d)
+		if c.sends == nil {
+			c.sends = map[Side]netip.AddrPort{}
+		}
+		c.sends[from] = sender
+	}
+	if err != nil {
 		return err
 	}
 	return kept
+}
+
+// agree notes that an offer and its answer are done: where each
+// termination sends now is where the session of the two sides has it
+// send, until the next offer.
+func (c *call) agree() {
+	c.mediaMu.Lock()
+	defer c.mediaMu.Unlock()
+	c.agreed = maps.Clone(c.sends)
+}
+
+// Unanswered puts the TrGW back after req, a request within a dialog
+// that crossed in d and got no 2xx beyond the IBCF (b2bua.Hooks). The
+// IBCF told the termination that faces the side that sent the offer of
+// req to send where that offer said (throughTrGW), as TS 29.162 9.1.1.2
+// lets it do on the offer. The final response other than 2xx leaves the
+// session as it was before req (RFC 3261 14.1, RFC 3311 5.3), so that
+// side takes its media where the last offer and answer said, and the
+// termination is to send there again. Neither TS 29.162 9.1.3 nor TS
+// 24.229 6.7.1 names a procedure of its own for this; it follows from the
+// session that RFC 3261 14.1 leaves. When the TrGW does not take the
+// change back, the termination keeps sending where the side no longer
+// takes the media, and the IBCF releases the call (ok false).
+func (c *call) Unanswered(req *sip.Message, d b2bua.Direction) bool {
+	if !sip.HasSessionDescription(req) {
+		return true
+	}
+	if err := c.goBack(c.across(d)); err != nil {
+		c.log.Warn("the TrGW does not go back to the last offer and answer: the IBCF releases the call",
+			"method", string(req.Method), "error", err.Error())
+		return false
+	}
+	return true
+}
+
+// goBack has the termination that faces where a message crossing in d
+// comes from send where it sent when the last offer and answer were done.
+func (c *call) goBack(d interconnect.Direction) error {
+	c.mediaMu.Lock()
+	defer c.mediaMu.Unlock()
+	from, _ := facing(d)
+	agreed, ok := c.agreed[from]
+	if c.media == nil || c.ended || !ok || c.sends[from] == agreed {
+		return nil
+	}
+	ctx, cancel := trgwContext()
+	defer cancel()
+	if err := c.b.trgw.Modify(ctx, c.media.ID, terminations[from], agw.TerminationRequest{Remote: agreed}); err != nil {
+		return err
+	}
+	c.sends[from] = agreed
+	c.log.Info("the TrGW sends where the last offer and answer said again", "context", c.media.ID, "side", string(from), "remote", agreed.String())
+	return nil
 }
 
 // notPassedOn reports whether the IBCF holds back what, a response or an
@@ -460,6 +530,11 @@ func (c *call) Response(resp, req *sip.Message, d b2bua.Direction) (b2bua.Messag
 			c.b.refuse(req, c.peer, reverse(c.across(d)), 500)
 			return b2bua.Message{}, false
 		}
+		if sip.HasSessionDescription(resp) || sip.HasSessionDescription(req) {
+			// The answer to the offer of req, or to the one that resp
+			// makes, after which the other side answers in the ACK.
+			c.agree()
+		}
 	}
 	return b2bua.Message{Headers: interconnect.CrossingFields(m), Body: sip.BodyOf(m)}, true
 }
@@ -484,6 +559,7 @@ func (c *call) Ack(ack *sip.Message, d b2bua.Direction) (sip.Body, bool) {
 	if err := c.throughTrGW(m, c.across(d)); err != nil && c.notPassedOn("the ACK", err) {
 		return sip.Body{}, false
 	}
+	c.agree()
 	return sip.BodyOf(m), true
 }
 

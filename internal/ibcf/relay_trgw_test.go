@@ -58,7 +58,7 @@ func TestTheMediaRelayAsTheTrGW(t *testing.T) {
 	// the home network with the core address of the TrGW.
 	sender := netip.MustParseAddrPort("198.51.100.60:30002")
 	offer := &sip.Message{Method: sip.INVITE, Body: []byte("v=0\r\no=- 1 1 IN IP4 198.51.100.60\r\ns=-\r\nc=IN IP4 198.51.100.60\r\nt=0 0\r\nm=audio 30002 RTP/AVP 0\r\n")}
-	if err := b.throughTrGW(offer, c, interconnect.Entry); err != nil {
+	if _, err := b.throughTrGW(offer, c, interconnect.Entry); err != nil {
 		t.Fatal(err)
 	}
 	if got := relay.Contexts()[0].Terminations[agw.Access].Remote; got != sender {
@@ -113,7 +113,7 @@ func TestTrGWCoreSendsToTheNewPartyOfTheHomeNetwork(t *testing.T) {
 	cross := func(d interconnect.Direction, media netip.AddrPort) {
 		t.Helper()
 		m := &sip.Message{Method: sip.UPDATE, Body: sdp.Offer("1", media).Bytes()}
-		if err := b.throughTrGW(m, c, d); err != nil {
+		if _, err := b.throughTrGW(m, c, d); err != nil {
 			t.Fatal(err)
 		}
 	}
