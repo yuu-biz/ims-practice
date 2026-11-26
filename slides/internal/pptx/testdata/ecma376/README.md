@@ -1,5 +1,7 @@
 # Schemas of ECMA-376
 
+[日本語](README.ja.md)
+
 The XML schemas that `schema_test.go` validates the parts of a pptx
 against. They are copies, byte for byte, of files that Ecma
 International publishes with ECMA-376 "Office Open XML file formats",
