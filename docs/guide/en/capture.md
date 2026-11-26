@@ -100,6 +100,13 @@ The S-CSCF sends a DPR with Disconnect-Cause `REBOOTING`, and the HSS answers wi
 
 The specification for these messages is RFC 6733 (Diameter base protocol). The watchdog follows RFC 3539.
 
+The Diameter connections leave out two parts of the specifications:
+
+| Where | What is left out | Why |
+| --- | --- | --- |
+| Diameter, TS 29.229 5.4 and TS 29.329 5 | Every connection runs over TCP, also Cx and Sh, which are to run over SCTP. Rx runs over TCP as well. TS 29.214 5.2 leaves its connections to the base protocol, so nothing is left out there. | RFC 6733 2.1 lets the base protocol run over either, and TCP works on every machine that runs the containers of this project, which SCTP does not. |
+| Diameter, RFC 6733 5.4.3 | A node that receives a DPR with `BUSY` or `DO_NOT_WANT_TO_TALK_TO_YOU` does not connect to that peer again until the node starts anew, however long the peer has been ready. | The clause asks such a node not to reconnect and sets no time after which it may. The nodes of this project send `REBOOTING` only, so the case comes up only with a peer of another implementation. |
+
 ## Display filters for SMS over IP
 
 A short message travels in the body of a SIP MESSAGE, with the media type `application/vnd.3gpp.sms`. Wireshark decodes that body without any setting: the `GSM A-I/F RP` dissector shows the RP layer (TS 24.011), and the `GSM SMS` dissector the TPDU inside it (TS 23.040), with the text.
