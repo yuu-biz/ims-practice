@@ -19,6 +19,8 @@ import (
 // that a short message stays at the service centre when the delivery
 // failed, or that one got through (RDR, 5.2.3); the HSS alerts the
 // SMS-IWMSC once the user can take short messages again (ALR, 5.2.2).
+// The IP-SM-GW tells the HSS that a user can take them again with
+// Ready-For-SM, a command of this project's own.
 
 // handleS6c answers the S6c requests that reach the HSS.
 func (h *HSS) handleS6c(ctx context.Context, request *diam.Message) *diam.Message {
@@ -38,8 +40,76 @@ func (h *HSS) handleS6c(ctx context.Context, request *diam.Message) *diam.Messag
 			return sgd.ReportSMDeliveryStatusAnswer{Result: diameter.Base(diameter.DiameterUnableToComply)}.Message(request, identity)
 		}
 		return h.reportSMDeliveryStatus(ctx, rdr).Message(request, identity)
+	case sgd.CommandReadyForSM:
+		r, err := sgd.ParseReadyForSMRequest(request)
+		if err != nil {
+			h.log.Warn("cannot read request", "error", err.Error())
+			return sgd.ReadyForSMAnswer{Result: diameter.Base(diameter.DiameterUnableToComply)}.Message(request, identity)
+		}
+		return h.readyForSM(ctx, r).Message(request, identity)
 	}
 	return diameter.CommandUnsupportedAnswer(identity, request)
+}
+
+// readyForSM is the HSS side of Ready-For-SM, the command of this
+// project's own that stands in for MAP-READY-FOR-SM (package sgd): the
+// IP-SM-GW tells the HSS that the user can take short messages again,
+// because the UE is reachable again or has memory again. The HSS finds
+// the user by the MSISDN, as for an RDR, and answers a number that no
+// user has with DIAMETER_ERROR_USER_UNKNOWN (TS 29.338 5.2.3.4), which
+// MAP answers with the user error Unknown Subscriber (TS 29.002
+// 12.4.3).
+func (h *HSS) readyForSM(ctx context.Context, r sgd.ReadyForSMRequest) sgd.ReadyForSMAnswer {
+	u, ok, err := h.shSubscriber(ctx, sh.UserIdentity{MSISDN: r.UserIdentifier.MSISDN})
+	if err != nil {
+		return sgd.ReadyForSMAnswer{Result: h.storeFailed(err)}
+	}
+	if !ok {
+		h.log.Info("ready for short messages: no such user", "msisdn", r.UserIdentifier.MSISDN)
+		return sgd.ReadyForSMAnswer{Result: diameter.Experimental(sgd.DiameterErrorUserUnknown)}
+	}
+	return sgd.ReadyForSMAnswer{Result: h.readyNotice(ctx, u, r.IPSMGWNumber, r.AlertReason)}
+}
+
+// readyNotice acts on a notice that the user can take short messages
+// again (TS 23.040 3.2.6 items 2c and 2f). It is a notice alone: it
+// writes neither the IP-SM-GW's number nor its Diameter identity, and it
+// acts only for the IP-SM-GW that the user is registered to, which
+// number names. The service centres that still hold a short message for
+// the user are alerted, unless the memory of the UE holds them back.
+func (h *HSS) readyNotice(ctx context.Context, u Subscriber, number string, reason sgd.AlertReason) diameter.Result {
+	log := h.log.With("private_identity", u.PrivateIdentity, "reason", reason.String(), "ip_sm_gw_number", number)
+	// The number is compared under the lock of the subscriber, together
+	// with the flags, so that a registration or a removal that arrives in
+	// between decides whether the notice counts.
+	registered := false
+	stored, alert, fail := h.updateMessageWaiting(ctx, u, func(s *Subscriber) bool {
+		registered = s.IPSMGWNumber != "" && s.IPSMGWNumber == number
+		if !registered {
+			return false
+		}
+		return s.readyForShortMessages(reason)
+	})
+	switch {
+	case fail != (diameter.Result{}):
+		return fail
+	case !registered:
+		// TS 23.204 6.5b step 2d has the IP-SM-GW itself discard the
+		// notice while the UE is not registered in IMS. The HSS checks as
+		// well, because the registration may have gone in between, and an
+		// IP-SM-GW that is not the registered one says nothing about this
+		// user. Nothing was changed, so the answer is the success that TS
+		// 23.040 3.2.6 item 2i gives a notice that alerts nobody.
+		log.Info("ready for short messages, from an IP-SM-GW that the user is not registered to",
+			"registered_ip_sm_gw_number", stored.IPSMGWNumber)
+		return diameter.Base(diameter.DiameterSuccess)
+	}
+	log.Info("ready for short messages", "service_centres", stored.MessageWaitingData,
+		"unri", stored.UNRI, "mcef", stored.MCEF, "alert", alert)
+	if alert {
+		h.alertServiceCentres(stored)
+	}
+	return diameter.Base(diameter.DiameterSuccess)
 }
 
 // reportSMDeliveryStatus is the HSS side of the delivery status report,

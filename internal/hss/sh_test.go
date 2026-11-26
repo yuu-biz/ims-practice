@@ -25,8 +25,9 @@ const (
 	ipsmgwNumber = "12025550199"
 )
 
-// shNetwork is the HSS listening for Diameter with Cx and Sh, and an
-// IP-SM-GW connected to it with Sh only, as the two roles would run.
+// shNetwork is the HSS listening for Diameter with Cx, Sh and S6c, and
+// an IP-SM-GW connected to it with Sh and S6c, as the two roles would
+// run.
 type shNetwork struct {
 	hss    *HSS
 	node   *diameter.Node   // the IP-SM-GW's
@@ -73,7 +74,7 @@ func newShNetworkFor(t *testing.T, scHosts []string, subscriptions ...Subscripti
 	}
 	t.Cleanup(server.Stop)
 	node := diameter.NewNode(diameter.Identity{OriginHost: ipsmgwHost, OriginRealm: realm},
-		[]uint32{diameter.ApplicationIDSh}, timers, quiet())
+		[]uint32{diameter.ApplicationIDSh, sgd.ApplicationIDS6c}, timers, quiet())
 	peer := node.Connect(diameter.PeerConfig{Address: server.Addr(), OriginHost: "hss." + realm})
 	t.Cleanup(peer.Stop)
 	h.SetPeers(server)
