@@ -47,7 +47,7 @@ func newProfileHSS(t *testing.T, testUsers string) *HSS {
 		t.Fatal(err)
 	}
 	node := diameter.NewNode(diameter.Identity{OriginHost: "hss." + realm, OriginRealm: realm}, []uint32{diameter.ApplicationIDCx}, diameter.Timers{}, quiet())
-	return mustHSS(Config{Realm: realm, VisitedNetworks: []string{realm},
+	return mustHSS(Config{Realm: realm, VisitedNetworks: []string{realm}, UserLocks: &askedLocks{},
 		ServiceProfiles: map[string]ServiceProfile{
 			"default": {Criteria: []ifc.InitialFilterCriteria{profileCriterion(defaultAS)}},
 			"trial":   {Criteria: []ifc.InitialFilterCriteria{profileCriterion(trialAS)}},
@@ -477,9 +477,10 @@ func TestPushesOfOneSubscriberAreSerialised(t *testing.T) {
 }
 
 // TestAChangeDuringASlowPushStillReachesTheSCSCF: the PPA of a first
-// change takes longer than lockWait. A second change made meanwhile
-// waits for that push rather than give up, and then sends the second
-// profile, so the S-CSCF ends up with it.
+// change is held back, as one may be for longer than lockWait. A second
+// change made meanwhile is ready to wait longer than that for the push
+// rather than give up, and then sends the second profile, so the S-CSCF
+// ends up with it.
 func TestAChangeDuringASlowPushStillReachesTheSCSCF(t *testing.T) {
 	h := newProfileHSS(t, "default")
 	mar(t, h, scscf)
@@ -506,12 +507,30 @@ func TestAChangeDuringASlowPushStillReachesTheSCSCF(t *testing.T) {
 			t.Fatal("gave up waiting 5 s for the first PPR")
 		}
 	}
+	// The second change waits for the push of the first longer than
+	// lockWait, as a PPA may take up to the Diameter answer timer.
+	type ask struct{ asked, until time.Time }
+	waits := make(chan ask, 1)
+	locksOf(h).watch(func(ctx context.Context, user string) {
+		if user == profilePushes(impi) {
+			until, _ := ctx.Deadline()
+			select {
+			case waits <- ask{time.Now(), until}:
+			default:
+			}
+		}
+	})
 	go func() {
 		codes <- do(t, api, "PATCH", "/subscriptions/"+impi, `{"service_profile": "default"}`).Code
 	}()
-	// Longer than lockWait, as a PPA may take up to the Diameter answer
-	// timer.
-	time.Sleep(lockWait + 500*time.Millisecond)
+	select {
+	case w := <-waits:
+		if !w.until.IsZero() && w.until.Sub(w.asked) <= lockWait {
+			t.Errorf("the second change waits %v for the push of the first, want longer than lockWait (%v)", w.until.Sub(w.asked), lockWait)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("the second change did not wait for the push of the first within 5 s")
+	}
 	close(release)
 	for range 2 {
 		if code := <-codes; code != http.StatusOK {
