@@ -97,7 +97,7 @@ func facing(d interconnect.Direction) (from, to Side) {
 func (b *IBCF) throughTrGW(m *sip.Message, c MediaContext, d interconnect.Direction) error {
 	description, err := sdp.Parse(m.Body)
 	if err != nil {
-		return err
+		return fmt.Errorf("%w: %w", errMalformedSDP, err)
 	}
 	sender, _, err := description.Audio()
 	if err != nil {
@@ -115,6 +115,10 @@ func (b *IBCF) throughTrGW(m *sip.Message, c MediaContext, d interconnect.Direct
 	m.Body = description.Bytes()
 	return nil
 }
+
+// errMalformedSDP is the error of throughTrGW for a body that it cannot
+// read as SDP. The TrGW is not asked.
+var errMalformedSDP = errors.New("ibcf: the SDP cannot be read")
 
 // hasAudio reports whether m carries an SDP body with an audio stream
 // that has a port: one that the TrGW has to carry.

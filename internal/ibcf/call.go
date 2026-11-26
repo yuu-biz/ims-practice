@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"sync"
 
+	"github.com/yuu-biz/ims-practice/internal/agw"
 	"github.com/yuu-biz/ims-practice/internal/b2bua"
 	"github.com/yuu-biz/ims-practice/internal/interconnect"
 	"github.com/yuu-biz/ims-practice/internal/sip"
@@ -139,8 +140,10 @@ func (c *call) run() {
 		}
 	}
 	switch {
-	case errors.Is(c.in.Err(), sip.ErrCancelled):
-		// The UA has answered the caller's INVITE with 487 already.
+	case answered(c.in):
+		// The UA has answered the caller's INVITE with 487 already, for
+		// its CANCEL; or the call has answered it with 500 and cancelled
+		// the INVITE on this side, to release the call (b2bua.Refusal).
 	case final != nil:
 		c.b.metrics.failure(c.peer.Profile.Name, c.direction, final.StatusCode)
 		m, _ := c.Response(final, c.in.Request, b2bua.ToCaller)
@@ -246,6 +249,16 @@ func (c *call) reject(code int) {
 	c.in.Reject(code)
 }
 
+// answered reports whether the caller's INVITE has its final response.
+func answered(in *sip.IncomingCall) bool {
+	select {
+	case <-in.Done():
+		return true
+	default:
+		return false
+	}
+}
+
 func errText(err error) string {
 	if err == nil {
 		return ""
@@ -320,16 +333,8 @@ func (c *call) across(d b2bua.Direction) interconnect.Direction {
 
 // Request prepares req, a request within the dialog that crosses the
 // border, for the other leg. A request that the border turns away gets
-// the refusal instead, which counts among the IBCF's.
-//
-// A request whose SDP gets the call its TrGW context gets 500 (Server
-// Internal Error, RFC 3261 21.5.1) when the record of the call cannot
-// then be written, as the INVITE does in the same case (run), and that
-// 500 counts among the IBCF's refusals. It is no promise that every
-// record is written: the context stays reserved, so a request sent again
-// passes, and a record that a response or an ACK fails to write is only
-// logged. Each later write carries the whole record and brings the
-// store up to date.
+// the refusal instead, which counts among the IBCF's, and so does one
+// whose SDP does not go through the TrGW (notThroughTrGW).
 func (c *call) Request(req *sip.Message, d b2bua.Direction) (b2bua.Message, *b2bua.Refusal) {
 	m := req.Clone()
 	if err := c.border.Request(m, c.across(d)); err != nil {
@@ -337,13 +342,89 @@ func (c *call) Request(req *sip.Message, d b2bua.Direction) (b2bua.Message, *b2b
 		return b2bua.Message{}, &b2bua.Refusal{Status: r.status, Headers: r.headers}
 	}
 	if err := c.throughTrGW(m, c.across(d)); err != nil {
-		c.mediaFailed("a request", err, "method", string(req.Method))
-		if errors.Is(err, errNotKept) {
-			r := c.b.refuse(req, c.peer, c.across(d), 500)
-			return b2bua.Message{}, &b2bua.Refusal{Status: r.status, Headers: r.headers}
-		}
+		return b2bua.Message{}, c.notThroughTrGW(req, d, err)
 	}
 	return b2bua.Message{Headers: interconnect.CrossingFields(m), Body: sip.BodyOf(m)}, nil
+}
+
+// notThroughTrGW is the refusal of req, a request within the dialog that
+// crosses in d, whose SDP throughTrGW did not put through the TrGW for
+// err.
+//
+// As an IMS-ALG the IBCF passes on an SDP of its own, with the address
+// of the TrGW towards the side where it goes (TS 24.229 6.7.1.4.1 and
+// 6.7.2.1, TS 29.162 9.1.1.1 and 9.1.3), and it has none. The SDP that
+// came names the address of the side that sent it, which TS 24.229
+// 5.10.6.3 does not let cross: the other side would send its media
+// there, past the TrGW. So the request goes no further. The IBCF answers
+// it 500 (Server Internal Error, RFC 3261 21.5.1), or 488 (Not
+// Acceptable Here, 21.4.26) for an SDP that it cannot read, as the
+// border answers one (interconnect.Border); either counts among its
+// refusals.
+//
+// A final response other than 2xx leaves the session as it was before
+// the request (RFC 3261 14.1, RFC 3311 5.3), and only a 481 or a 408 ends
+// the dialog (RFC 3261 12.2.1.2). The call stays when it can go on as it
+// was (callStays). Otherwise the IBCF releases it, as TS 24.229 5.10.2.4
+// and 5.10.3.4 let it for an error of the transport plane: a BYE to each
+// side once the call is answered, and before that a 500 to the caller's
+// INVITE and a CANCEL of the INVITE towards the callee. That is so for:
+//   - A TrGW that has lost the context or its termination, as one that
+//     restarted without them. The media of the call are gone already,
+//     and every later offer would fail the same way.
+//   - A TrGW that did not answer in time, or whose answer did not reach
+//     the IBCF. It may have carried the Modify out, and its termination
+//     then sends where the refused SDP said, which the side that sent it
+//     no longer takes after the 500.
+//   - A PRACK, whatever the TrGW answered. Its UAC does not send it
+//     again (RFC 3262 4), so the reliable response stays without its
+//     PRACK, and the UAS ends the INVITE with a 5xx only once that
+//     response has waited 64*T1 for it (RFC 3262 3).
+func (c *call) notThroughTrGW(req *sip.Message, d b2bua.Direction, err error) *b2bua.Refusal {
+	status := 500
+	if errors.Is(err, errMalformedSDP) {
+		status = 488
+	}
+	release := req.Method == sip.PRACK || !callStays(err)
+	if release {
+		c.log.Warn("the SDP of the request is not put through the TrGW: the IBCF releases the call",
+			"method", string(req.Method), "status", status, "error", err.Error())
+	} else {
+		c.log.Warn("the SDP of the request is not put through the TrGW: the request goes no further",
+			"method", string(req.Method), "status", status, "error", err.Error())
+	}
+	r := c.b.refuse(req, c.peer, c.across(d), status)
+	return &b2bua.Refusal{Status: r.status, Headers: r.headers, Release: release}
+}
+
+// callStays reports whether a call can go on as it was after err, an
+// error of throughTrGW for the SDP of a request that then gets a final
+// response other than 2xx. The media go on through the TrGW as the last
+// offer and answer set them up, when:
+//   - The SDP cannot be read (errMalformedSDP), and the TrGW was not
+//     asked.
+//   - The TrGW answered with an error (agw.ErrRejected), and so carried
+//     out none of the request, but not that it has no such context or
+//     termination (agw.ErrNoContext, agw.ErrNoTermination). That holds
+//     for a Modify that it turned down, and for the first SDP with audio
+//     when it had no context to reserve, before which the call had no
+//     media through it.
+//   - The TrGW reserved the context for that SDP, and only the record of
+//     the call that keeps it was not written (errNotKept). The context
+//     stays with the call, so a request sent again passes, and the next
+//     write of the record, which is of the whole record, keeps it.
+//
+// Any other error, such as one of a TrGW that did not answer in time,
+// leaves the IBCF unable to tell whether the TrGW carried the request
+// out.
+func callStays(err error) bool {
+	switch {
+	case errors.Is(err, errMalformedSDP), errors.Is(err, errNotKept):
+		return true
+	case errors.Is(err, agw.ErrNoContext), errors.Is(err, agw.ErrNoTermination):
+		return false
+	}
+	return errors.Is(err, agw.ErrRejected)
 }
 
 // Response prepares resp, a response that crosses the border, for the
