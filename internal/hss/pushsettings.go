@@ -4,6 +4,7 @@ import (
 	"cmp"
 	"context"
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/yuu-biz/ims-practice/internal/diameter"
@@ -194,6 +195,11 @@ func stamp() time.Time { return time.UnixMilli(time.Now().UnixMilli()).UTC() }
 // early; the millisecond that has begun is due to a claim at once.
 func dueNow() time.Time { return time.UnixMilli(time.Now().UnixMilli()) }
 
+// errUnservableRound: the round names a service profile that the
+// configuration of this instance does not define, so this instance
+// cannot build its PPRs.
+var errUnservableRound = errors.New("the round names a service profile that this instance does not define")
+
 // errPushOvertaken: another round of the push, or another instance that
 // claimed the same round, has recorded a point other than the one this
 // instance went on from.
@@ -251,11 +257,18 @@ func (h *HSS) pushRetry(peers Peers, c ProfilePushRetryClaim) {
 		return
 	}
 	if recorded && p.Round == c.Round {
-		err := h.pushRoundProfile(ctx, peers, c.PrivateID, p)
+		// A name that this instance does not define is another
+		// instance's to send, as a connection that it does not hold is.
+		err := h.config.CheckServiceProfileName(string(c.Source), p.Name)
+		another := err != nil
+		if err == nil {
+			err = h.pushRoundProfile(ctx, peers, c.PrivateID, p)
+			another = errors.Is(err, diameter.ErrPeerUnavailable)
+		}
 		switch {
 		case ctx.Err() != nil:
 			return
-		case errors.Is(err, diameter.ErrPeerUnavailable) && time.Since(c.Since) < profilePushRetryTime:
+		case another && time.Since(c.Since) < profilePushRetryTime:
 			if err := h.store.ScheduleProfilePushRetry(ctx, c.ProfilePushRetry, time.Now().Add(h.sweepInterval())); err != nil {
 				log.Warn("the PPR left for another instance was not made due again; its claim runs out first", "error", err.Error())
 			}
@@ -283,6 +296,14 @@ func (h *HSS) pushPage(peers Peers, c ProfilePushClaim) {
 	p, more, err := h.pushOn(ctx, peers, c.Source)
 	switch {
 	case errors.Is(err, errPushOvertaken):
+		return
+	case errors.Is(err, errUnservableRound):
+		// Another instance, whose configuration defines the name, sends
+		// the round; this one leaves it for an interval.
+		log.Error("the round of the push names a service profile that this instance does not define; it leaves the round to another", "error", err.Error())
+		if err := h.store.ScheduleProfilePush(ctx, c.Source, time.Now().Add(h.sweepInterval())); err != nil {
+			log.Warn("the round of the push was not left to another instance; its claim runs out first", "error", err.Error())
+		}
 		return
 	case ctx.Err() != nil:
 		if h.life.Err() == nil {
@@ -358,6 +379,9 @@ func (h *HSS) pushOn(ctx context.Context, peers Peers, source ProfileSource) (ro
 	}
 	if !recorded || p.Done {
 		return nil, false, nil
+	}
+	if err := h.config.CheckServiceProfileName(string(source), p.Name); err != nil {
+		return nil, false, fmt.Errorf("%w: %w", errUnservableRound, err)
 	}
 	ids, nextPage, err := h.store.ListServed(ctx, source, p.After, profilePushPage)
 	if err != nil {

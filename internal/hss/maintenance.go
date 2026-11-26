@@ -125,9 +125,9 @@ func (h *HSS) Manage(m *maintenance.ManagedFunction) { h.managed.Store(m) }
 // get no push from either.
 func (h *HSS) Settings() []maintenance.Setting {
 	const (
-		admission   = role + ".admission"
-		defaultName = role + ".default_service_profile"
-		testUser    = role + ".test_user_service_profile"
+		admission   = admissionSetting
+		defaultName = defaultProfileSetting
+		testUser    = testUserProfileSetting
 	)
 	// One group: a change that names several of them puts them in force
 	// at once, so no request sees the policy of one change beside the
@@ -168,6 +168,14 @@ func (h *HSS) Settings() []maintenance.Setting {
 			func(name string) { h.setting(func(s *settings) { s.testUserServiceProfile = name }) }),
 	)
 }
+
+// The names of the settings in the configuration file and the
+// maintenance API.
+const (
+	admissionSetting       = role + ".admission"
+	defaultProfileSetting  = role + ".default_service_profile"
+	testUserProfileSetting = role + ".test_user_service_profile"
+)
 
 // requestAnswered counts the end of a Cx or Sh request, which may be
 // the last that a shut down waits for. The node calls it once the
