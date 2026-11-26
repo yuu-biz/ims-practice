@@ -362,7 +362,7 @@ Every SDP of a call goes through the TrGW: the offer of the INVITE, and each one
 
 ### An SDP in a request
 
-A request with such an SDP goes no further, and the IBCF answers it itself with 500 (Server Internal Error, RFC 3261 21.5.1). An SDP that the IBCF cannot read at all gets 488 (Not Acceptable Here), as the border answers one, and the TrGW is not asked. For the INVITE that starts the call, that is all: the caller gets 500, the other network gets no INVITE, and the IBCF releases the context that it reserved. For a request within the call, what happens next depends on what the TrGW answered.
+A request with such an SDP goes no further, and the IBCF answers it itself with 500 (Server Internal Error, RFC 3261 21.5.1). An SDP that the IBCF cannot read at all gets 488 (Not Acceptable Here), as the border answers one, and the TrGW is not asked; that holds also for the first SDP of the call, which the border does not read when the profile lists no codecs. For the INVITE that starts the call, that is all: the caller gets 500 or 488, the other network gets no INVITE, and the IBCF releases any context that it reserved. For a request within the call, what happens next depends on what the TrGW answered.
 
 **The TrGW turns the `Modify` down and changes nothing.** The call stays up:
 
@@ -460,7 +460,9 @@ Nobody can turn a response or an ACK down, and the side that sent it has taken t
 - **The 2xx of a request within the call**: the request gets 500 in its place, and each side gets a BYE. A request from network B, such as an UPDATE of UE B1, reaches IBCF-A through IBCF-B, which may take the BYE of IBCF-A before the 500 that went ahead of it. IBCF-B then answers the UPDATE 487 (Request Terminated), as a request that the end of its dialog left pending (RFC 3261 15.1.2).
 - **The answer in the ACK**, after an INVITE whose 200 carried the offer: the IBCF acknowledges the 200 without that answer, and sends each side a BYE. RFC 3261 13.2.2.4 asks a UAC that does not take the offer of a 2xx for a valid answer in the ACK, and the IBCF has none, so it sends the ACK without a body and the BYE right after it.
 
-The tests `TestRefusedAnswerOfTheINVITEEndsTheCall`, `TestRefusedAnswerWithinTheCallEndsTheCall` and `TestRefusedAnswerInTheACKEndsTheCall` of `internal/ibcf` show these flows, for an SDP that enters a network and for one that leaves it.
+An SDP in a response that the IBCF cannot read ends the call in the same way, such as an offer in the 183 or the 200 of an INVITE without one.
+
+The tests `TestRefusedAnswerOfTheINVITEEndsTheCall`, `TestRefusedAnswerWithinTheCallEndsTheCall` and `TestRefusedAnswerInTheACKEndsTheCall` of `internal/ibcf` show these flows, for an SDP that enters a network and for one that leaves it. `TestUnreadableSDPOfTheINVITEIsRejected`, `TestUnreadableOfferInAResponseEndsTheCall` and `TestUnreadableSDPWithinTheCallGets488` show those for an SDP that the IBCF cannot read.
 
 ## Traffic statistics of the border
 

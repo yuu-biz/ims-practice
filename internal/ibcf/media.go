@@ -122,15 +122,16 @@ func (b *IBCF) throughTrGW(m *sip.Message, c MediaContext, d interconnect.Direct
 var errMalformedSDP = errors.New("ibcf: the SDP cannot be read")
 
 // hasAudio reports whether m carries an SDP body with an audio stream
-// that has a port: one that the TrGW has to carry.
-func hasAudio(m *sip.Message) bool {
+// that has a port: one that the TrGW has to carry. A body that cannot be
+// read as SDP gives errMalformedSDP.
+func hasAudio(m *sip.Message) (bool, error) {
 	if !sip.HasSessionDescription(m) {
-		return false
+		return false, nil
 	}
 	description, err := sdp.Parse(m.Body)
 	if err != nil {
-		return false
+		return false, fmt.Errorf("%w: %w", errMalformedSDP, err)
 	}
 	_, _, err = description.Audio()
-	return err == nil
+	return err == nil, nil
 }
