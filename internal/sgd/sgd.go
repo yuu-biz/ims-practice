@@ -151,10 +151,6 @@ const (
 	v  = avp.Vbit
 )
 
-// MaxSMRPUI is the largest TPDU that SM-RP-UI holds, in octets (TS
-// 29.338 6.3.3.3).
-const MaxSMRPUI = 200
-
 // ValidE164 reports whether digits can go into one of the AVPs that
 // hold an E.164 number as a TBCD-string (SC-Address, MSISDN,
 // MME-Number-for-MT-SMS and the like): one to 15 decimal digits, as an
