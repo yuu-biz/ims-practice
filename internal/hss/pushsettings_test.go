@@ -6,6 +6,7 @@ import (
 	"maps"
 	"slices"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -544,6 +545,185 @@ func TestAPushGoesThroughTheInstanceTheSCSCFIsConnectedTo(t *testing.T) {
 		if as != settingsTrialAS {
 			t.Errorf("the PPR for %s carried the criteria of %q, want %q", id, as, settingsTrialAS)
 		}
+	}
+}
+
+// watchedLocks are the locks of locks, and tell when the lock of one
+// name is asked for (asked) and given back (released) through them.
+type watchedLocks struct {
+	locks    *ims.UserLocks
+	name     string
+	asked    chan struct{}
+	released chan struct{}
+}
+
+func (w *watchedLocks) Lock(ctx context.Context, user string) (func(), error) {
+	if user != w.name {
+		return w.locks.Lock(ctx, user)
+	}
+	w.asked <- struct{}{}
+	unlock, err := w.locks.Lock(ctx, user)
+	if err != nil {
+		return nil, err
+	}
+	return func() { unlock(); w.released <- struct{}{} }, nil
+}
+
+// leftPPR is a round of the push of the default profile that is done,
+// and a PPR of it that the round left for another instance, as the store
+// holds them once a round has gone to an instance without the
+// connection of the S-CSCF of impi.
+func leftPPR(t *testing.T, store Store, round uint64) ProfilePushRetry {
+	t.Helper()
+	ctx := t.Context()
+	p, _, err := store.ProfilePush(ctx, ProfileOfOtherUsers)
+	if err != nil {
+		t.Fatal(err)
+	}
+	left := ProfilePush{Source: ProfileOfOtherUsers, Name: "trial", Round: round, After: impi, Done: true, Updated: stamp()}
+	if swapped, err := store.CompareAndSwapProfilePush(ctx, &p, left); err != nil || !swapped {
+		t.Fatalf("CompareAndSwapProfilePush: %v, %v", swapped, err)
+	}
+	r := ProfilePushRetry{Source: ProfileOfOtherUsers, Round: round, PrivateID: impi, Since: stamp()}
+	if err := store.ScheduleProfilePushRetry(ctx, r, dueNow()); err != nil {
+		t.Fatal(err)
+	}
+	return r
+}
+
+// overtake records a round after round as the push of the default
+// profile, as a change does that comes after the left PPR.
+func overtake(t *testing.T, store Store, round uint64) {
+	t.Helper()
+	ctx := t.Context()
+	p, _, err := store.ProfilePush(ctx, ProfileOfOtherUsers)
+	if err != nil {
+		t.Fatal(err)
+	}
+	later := ProfilePush{Source: ProfileOfOtherUsers, Name: "default", Round: round + 1, After: impi, Done: true, Updated: stamp()}
+	if swapped, err := store.CompareAndSwapProfilePush(ctx, &p, later); err != nil || !swapped {
+		t.Fatalf("CompareAndSwapProfilePush: %v, %v", swapped, err)
+	}
+}
+
+// TestALeftPPRThatALaterRoundCoversIsNotSent: a PPR that a round left for
+// another instance, of a round that a later one has followed, is not
+// sent: the later round pushed every subscriber of the source.
+func TestALeftPPRThatALaterRoundCoversIsNotSent(t *testing.T) {
+	store := settingsStore(t)
+	h, _ := settingsInstance(t, store, nil)
+	serve(t, h, impi, impu, cx.AssignRegistration)
+	leftPPR(t, store, 1)
+	overtake(t, store, 1)
+	scscfs := &fakeSCSCFs{}
+	h.SetPeers(scscfs)
+	// The retry is claimed at the next sweep; a second sweep after it has
+	// had it, and Close waits for the one under way.
+	time.Sleep(50 * time.Millisecond)
+	h.Close()
+	scscfs.mu.Lock()
+	defer scscfs.mu.Unlock()
+	if len(scscfs.pprs) != 0 {
+		t.Errorf("%d PPRs of the round that a later one covers went out", len(scscfs.pprs))
+	}
+}
+
+// TestALeftPPRThatALaterRoundOvertakesAtItsLockIsNotSent: the PPR that a
+// round left waits for the lock of the pushes of its subscriber, and a
+// later round of the source comes while it waits. Under the lock it finds
+// the later round, and does not send the profile of its own over the one
+// that the later round sends.
+func TestALeftPPRThatALaterRoundOvertakesAtItsLockIsNotSent(t *testing.T) {
+	store := settingsStore(t)
+	locks := &ims.UserLocks{}
+	watched := &watchedLocks{locks: locks, name: profilePushes(impi), asked: make(chan struct{}, 1), released: make(chan struct{}, 1)}
+	h, _ := settingsInstance(t, store, watched)
+	serve(t, h, impi, impu, cx.AssignRegistration)
+	held, err := locks.Lock(t.Context(), profilePushes(impi))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var unheld sync.Once
+	t.Cleanup(func() { unheld.Do(held) })
+	leftPPR(t, store, 1)
+	scscfs := &fakeSCSCFs{}
+	h.SetPeers(scscfs)
+	select {
+	case <-watched.asked:
+	case <-time.After(5 * time.Second):
+		t.Fatal("gave up waiting 5 s for the left PPR to ask for the lock")
+	}
+	overtake(t, store, 1)
+	unheld.Do(held)
+	select {
+	case <-watched.released:
+	case <-time.After(5 * time.Second):
+		t.Fatal("gave up waiting 5 s for the left PPR to give the lock back")
+	}
+	scscfs.mu.Lock()
+	defer scscfs.mu.Unlock()
+	if len(scscfs.pprs) != 0 {
+		t.Errorf("%d PPRs of the overtaken round went out", len(scscfs.pprs))
+	}
+}
+
+// stoppingStore is the store of an instance that stops between leaving
+// a PPR for another instance and recording that PPR: once the instance
+// has left one, the next record of the push waits until the instance
+// gives it up, and fails. left is closed then.
+type stoppingStore struct {
+	*MemoryStore
+	leftOne atomic.Bool
+	left    chan struct{}
+}
+
+func (s *stoppingStore) ScheduleProfilePushRetry(ctx context.Context, r ProfilePushRetry, at time.Time) error {
+	err := s.MemoryStore.ScheduleProfilePushRetry(ctx, r, at)
+	if !s.leftOne.Swap(true) {
+		close(s.left)
+	}
+	return err
+}
+
+func (s *stoppingStore) CompareAndSwapProfilePush(ctx context.Context, old *ProfilePush, next ProfilePush) (bool, error) {
+	if s.leftOne.Load() {
+		<-ctx.Done()
+		return false, ctx.Err()
+	}
+	return s.MemoryStore.CompareAndSwapProfilePush(ctx, old, next)
+}
+
+// TestAPPRLeftTwiceIsLeftOnce: an instance without the connection of the
+// S-CSCF leaves the PPR of the subscriber for another instance, and
+// stops before it records that. The instance that claims the round next
+// sends the PPR again, cannot either, and leaves it again: the store
+// has it once.
+func TestAPPRLeftTwiceIsLeftOnce(t *testing.T) {
+	store := settingsStore(t)
+	locks := &ims.UserLocks{}
+	shortLease := func(c *Config) { c.PushLease = 300 * time.Millisecond }
+	stopping := &stoppingStore{MemoryStore: store, left: make(chan struct{})}
+	first, api := newSettingsInstance(t, stopping, locks, shortLease)
+	serve(t, first, impi, impu, cx.AssignRegistration)
+	first.SetPeers(&unconnectedSCSCFs{})
+	change(t, api, "hss.default_service_profile", "trial")
+	select {
+	case <-stopping.left:
+	case <-time.After(5 * time.Second):
+		t.Fatal("gave up waiting 5 s for the first instance to leave the PPR")
+	}
+	first.Close()
+
+	second, _ := newSettingsInstance(t, store, locks, shortLease)
+	second.SetPeers(&unconnectedSCSCFs{})
+	roundsDone(t, second)
+	second.Close()
+	left, err := store.ClaimProfilePushRetries(t.Context(), time.Now().Add(time.Hour), time.Minute, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(left) != 1 || left[0].PrivateID != impi {
+		t.Errorf("the store has the left PPRs %+v, want the one of %s", left, impi)
 	}
 }
 
