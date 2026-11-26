@@ -245,15 +245,19 @@ func (w *watch) Save(ctx context.Context, st oam.AlarmWatchState) error {
 
 // ownState reads the version of the state, and says whether this
 // holder wrote it: whether it is of the generation that this holder
-// raised. Another holder writes a state only after it has raised the
-// generation, so no other writes this one.
+// raised, with the seed that it had. Another holder writes a state only
+// after it has raised the generation, so no other writes this one. A
+// store that was emptied in between starts the generations again, and
+// a holder that takes the watch then writes the first generation with a
+// new seed.
 func (w *watch) ownState(ctx context.Context) (version string, own bool, err error) {
 	var st oam.AlarmWatchState
 	version, err = kvjson.Read(ctx, w.s.c, w.s.stateKey(w.node), &st)
 	if errors.Is(err, kvstore.ErrNotFound) {
 		return "", false, nil
 	}
-	return version, err == nil && st.Generation == w.state.Generation, err
+	own = err == nil && st.Generation == w.state.Generation && st.Seed == w.state.Seed
+	return version, own, err
 }
 
 // Renew writes the lease again at the version it has, with a new time
