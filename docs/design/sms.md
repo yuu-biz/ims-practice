@@ -22,7 +22,8 @@
 | HSS への登録 | IP-SM-GW は第三者 REGISTER を受けると、Sh の PUR で HSS に自分のアドレスを登録します。MAP は使いません。 |
 | また受け取れるという知らせ | IP-SM-GW は、UE にまた届くようになったこととメモリに空きができたことを、S6c の Ready-For-SM で HSS に知らせます。MAP-READY-FOR-SM の代わりにこのプロジェクトが決めたコマンドで、作りは「IP-SM-GW から HSS への Ready-For-SM」にあります。 |
 | HSS の S6c | HSS は SMS の中心の機能（SMS-GMSC と SMS-IWMSC）と S6c で話します。SRR に答え、RDR で message waiting data を書き換え、利用者が受け取れるようになったら ALR で知らせます。 |
-| 文字の符号化 | GSM 7 ビットの既定アルファベットと UCS2 に対応します。連結 SMS（UDH）と有効期間は作らず、`SIMPLIFIED:` に書きます。 |
+| 文字の符号化 | GSM 7 ビットの既定アルファベットと UCS2 に対応します。連結 SMS（UDH）は作らず、`SIMPLIFIED:` に書きます。 |
+| 有効期間 | SMS-SUBMIT の TP-VPF は「なし」と相対形式を読み書きします（TS 23.040 9.2.3.3、9.2.3.12.1）。SC は、相対形式の TP-VP があればその期間、無ければ既定の 72 時間（`internal/smsc` の `defaultValidityPeriod`）だけショートメッセージを預かります。絶対形式と拡張形式は断り、`SIMPLIFIED:` に書きます。 |
 
 ## SC の役割の作り
 
