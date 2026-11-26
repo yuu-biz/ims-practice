@@ -327,6 +327,75 @@ func TestTwoChangesBackToBackArePushedEach(t *testing.T) {
 	}
 }
 
+// TestAChangeAndItsUndoDuringARoundPushAgain: the default profile goes
+// to trial, and while the round of that change is under way, back to
+// default and to trial again. The name in force at the end of the round
+// is the name of the round, but the settings changed in between, and the
+// instances may have given the subscriber the default profile in a SAA
+// then. So the round of the last change follows, and the subscriber gets
+// the trial profile twice.
+func TestAChangeAndItsUndoDuringARoundPushAgain(t *testing.T) {
+	h, api, _ := pushNetwork(t)
+	release := make(chan struct{})
+	held := make(chan struct{})
+	scscfs := &fakeSCSCFs{beforePPA: func(n int) {
+		if n == 1 {
+			close(held)
+			<-release
+		}
+	}}
+	var released sync.Once
+	t.Cleanup(func() { released.Do(func() { close(release) }) })
+	h.SetPeers(scscfs)
+	change(t, api, "hss.default_service_profile", "trial")
+	select {
+	case <-held:
+	case <-time.After(5 * time.Second):
+		t.Fatal("gave up waiting 5 s for the first PPR")
+	}
+	change(t, api, "hss.default_service_profile", "default")
+	change(t, api, "hss.default_service_profile", "trial")
+	released.Do(func() { close(release) })
+
+	pprs := pprsTo(t, h, scscfs, 2)
+	if want := []ppr{{impi, settingsTrialAS}, {impi, settingsTrialAS}}; !slices.Equal(pprs, want) {
+		t.Errorf("the PPRs were %v, want %v", pprs, want)
+	}
+}
+
+// TestAChangeBackAfterAChangeWhoseRoundNeverStarted: the instance that
+// changed the default profile to trial stopped before it started the
+// round, and the change back to default comes before any instance has
+// found that. The S-CSCFs may have the trial profile from SAAs given in
+// between, so the change back is pushed, although its name is the name
+// of the last round.
+func TestAChangeBackAfterAChangeWhoseRoundNeverStarted(t *testing.T) {
+	store := settingsStore(t)
+	// An instance that reads the store only as it starts and as it takes
+	// a change, so that it finds the first change only through the
+	// second.
+	h, api := settingsInstanceReading(t, store, nil, time.Hour)
+	serve(t, h, impi, impu, cx.AssignRegistration)
+	scscfs := &fakeSCSCFs{}
+	h.SetPeers(scscfs)
+	stored, _, err := store.Settings(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	// All that the stopped instance wrote: the change.
+	trial := stored
+	trial.Generation, trial.DefaultServiceProfile, trial.DefaultServiceProfileGeneration = 1, "trial", 1
+	if swapped, err := store.CompareAndSwapSettings(t.Context(), &stored, trial); err != nil || !swapped {
+		t.Fatalf("CompareAndSwapSettings: %v, %v", swapped, err)
+	}
+	if _, err := changeAt(api, 2, "hss.default_service_profile", "default"); err != nil {
+		t.Fatal(err)
+	}
+	if pushed := pushedTo(t, h, scscfs, 1); len(pushed) != 1 || pushed[impi] != settingsDefaultAS {
+		t.Errorf("the PPRs went to %v, want the ordinary subscriber with the default criteria", pushed)
+	}
+}
+
 // TestASecondChangeWhileARoundIsMidPage: the second change reaches
 // another instance while the first instance is in the middle of the
 // round of the first change. The round goes on with the profile of its
@@ -493,7 +562,7 @@ func TestAChangeWhoseInstanceStoppedBeforeItPushedIsPushed(t *testing.T) {
 	}
 	next := stored
 	next.Generation++
-	next.DefaultServiceProfile = "trial"
+	next.DefaultServiceProfile, next.DefaultServiceProfileGeneration = "trial", next.Generation
 	if swapped, err := store.CompareAndSwapSettings(t.Context(), &stored, next); err != nil || !swapped {
 		t.Fatalf("CompareAndSwapSettings: %v, %v", swapped, err)
 	}

@@ -526,6 +526,13 @@ type StoredSettings struct {
 	Admission              Admission
 	DefaultServiceProfile  string
 	TestUserServiceProfile string
+	// DefaultServiceProfileGeneration and TestUserServiceProfileGeneration
+	// are the generations of the changes that last gave each name another
+	// value, 0 for the name of a configuration file. A round of the push
+	// of the source of a name goes out for one of them
+	// (ProfilePush.Generation).
+	DefaultServiceProfileGeneration  uint64
+	TestUserServiceProfileGeneration uint64
 }
 
 // ProfilePush is how far the push of the service profile of the served

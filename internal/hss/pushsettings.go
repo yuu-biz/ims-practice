@@ -90,6 +90,15 @@ func (set *settings) nameFor(source ProfileSource) string {
 	return set.defaultServiceProfile
 }
 
+// nameGeneration is the generation of the change that last gave the
+// name of source another value in set.
+func (set *settings) nameGeneration(source ProfileSource) uint64 {
+	if source == ProfileOfTestUsers {
+		return set.testUserNameGeneration
+	}
+	return set.defaultNameGeneration
+}
+
 // withName is set with name as the service profile name of the
 // subscriptions of source.
 func (set settings) withName(source ProfileSource, name string) *settings {
@@ -118,12 +127,19 @@ func (h *HSS) startRounds(ctx context.Context, set *settings) {
 }
 
 // startRound starts a round of the push of source for set, unless none
-// is due: the last round went out for the name that set gives the
-// source, or for a later change; or a round is under way, which starts
-// the next one as it ends (endRound). A source that no push has been
-// recorded for yet is in step with settings of generation 0, those of a
-// configuration file, which every S-CSCF has from the SAAs; after a
-// change it has a round to make.
+// is due: the last round went out for the change that last gave the
+// name of the source another value in set, or for a later one; or a
+// round is under way, which starts the next one as it ends (endRound).
+// A source that no push has been recorded for yet is in step with
+// settings of generation 0, those of a configuration file, which every
+// S-CSCF has from the SAAs; after a change it has a round to make.
+//
+// The round goes by the generation of the name, not by the name: a
+// change from A to B and back to A while a round of A is under way, or
+// before the round of B has started, leaves the name of the round, but
+// the instances may have given the profile of B in SAAs in between, so
+// the round of the change back follows. A change of the admission policy
+// alone gives no name another value, and pushes nothing.
 //
 // The instance whose write changed the settings asks this at once, and
 // every instance asks it at each sweep for the settings it reads, so a
@@ -156,12 +172,12 @@ func (h *HSS) startRound(ctx context.Context, source ProfileSource, set *setting
 				return h.store.ScheduleProfilePush(ctx, source, dueNow())
 			}
 			return nil
-		case recorded && (p.Name == name || p.Generation >= set.generation):
+		case recorded && p.Generation >= set.nameGeneration(source):
 			return nil
 		case recorded:
 			old = &p
 		}
-		next := ProfilePush{Source: source, Name: name, Generation: set.generation, Round: p.Round + 1, Updated: stamp()}
+		next := ProfilePush{Source: source, Name: name, Generation: set.nameGeneration(source), Round: p.Round + 1, Updated: stamp()}
 		swapped, err := h.store.CompareAndSwapProfilePush(ctx, old, next)
 		if err != nil {
 			return err
@@ -172,7 +188,7 @@ func (h *HSS) startRound(ctx context.Context, source ProfileSource, set *setting
 			continue
 		}
 		h.log.Info("pushing the profile of the changed setting", "profile_source", string(source),
-			"service_profile", name, "generation", set.generation, "round", next.Round)
+			"service_profile", name, "generation", next.Generation, "round", next.Round)
 		if err := h.store.ScheduleProfilePush(ctx, source, dueNow()); err != nil {
 			return err
 		}
