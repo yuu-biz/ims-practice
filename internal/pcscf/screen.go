@@ -39,7 +39,8 @@ import (
 // so a request is taken to come from the network when it is addressed
 // the way only the network addresses the P-CSCF: to the URI that the
 // P-CSCF put in Path, to the P-CSCF's own contact, or to the contact of
-// a UE it serves.
+// a UE it serves. What a request in that form carries to a UE is
+// described at ueBoundary.
 func (p *PCSCF) screen(req *sip.Message, source sip.Destination) bool {
 	ue, sentBy := p.ueSourceOf(req, source)
 	known := func() bool { return p.admissions.admitsFrom(ue, sentBy, time.Now()) || p.fromNetwork(req) }
