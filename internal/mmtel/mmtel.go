@@ -130,11 +130,16 @@ func New(cfg Config, hss HSS, store Store, conferences ConferenceStore, locator 
 // same name does not: it builds no dialog from the call records, so
 // each request within a call of the earlier process gets 481
 // (Call/Transaction Does Not Exist), and the parties are left to end
-// the call. The record of such a call stays in the Store with no time
-// to live, as that of a call whose BYE no instance sees. Carrying a
-// call on needs the UA to take a dialog that it did not set up, with
-// CSeq numbers above any that the earlier process sent, and the
-// relaying of each leg's requests set up again around it.
+// the call. A node that is told to stop closes the UA, which ends its
+// calls without a BYE, and the goroutine of each call then removes the
+// record of the call, but the node does not wait for those goroutines
+// (sip.UA.Close leaves them to the user). The record of a call whose
+// instance is killed, or whose process exits before that goroutine has
+// removed it, stays in the Store with no time to live, as that of a
+// call whose BYE no instance sees. Carrying a call on needs the UA to
+// take a dialog that it did not set up, with CSeq numbers above any
+// that the earlier process sent, and the relaying of each leg's
+// requests set up again around it.
 func (as *AS) uri() string { return "sip:" + as.cfg.Host + ":" + strconv.Itoa(as.cfg.Port) }
 
 // Listen starts the UA of the AS on transport: each INVITE outside a
