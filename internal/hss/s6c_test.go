@@ -640,20 +640,28 @@ func TestSendRoutingInfoSeesARegistrationUnderTheLock(t *testing.T) {
 	}
 }
 
-// readyForSM is the Sh-Data of a notification that the user can take
-// short messages again, which carries the IP-SM-GW's own number for the
-// HSS to compare with the registration it holds.
-func readyForSM(number string, reason sh.ReadyForSM) []byte {
-	return sh.ShData{ShIMSData: &sh.ShIMSData{SMSRegistrationInfo: &sh.SMSRegistrationInfoData{
-		IPSMGWNumber: number, ReadyForSM: reason,
-	}}}.Marshal()
+// readyForSMOf sends the Ready-For-SM of the IP-SM-GW whose number is
+// number for the user of msisdn, as the IP-SM-GW does when the UE is
+// reachable again or has memory again, and returns the result of the
+// answer.
+func (n s6cNetwork) readyForSMOf(t *testing.T, msisdn, number string, reason sgd.AlertReason) diameter.Result {
+	t.Helper()
+	a, err := sgd.ParseReadyForSMAnswer(n.request(t, sgd.ReadyForSMRequest{
+		Header:         diameter.NewHeader(n.node, "", realm),
+		UserIdentifier: sgd.UserIdentifier{MSISDN: msisdn},
+		IPSMGWNumber:   number,
+		AlertReason:    reason,
+	}.Message()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return a.Result
 }
 
-// notifyReadyForSM sends that notification, as the IP-SM-GW does when
-// the UE is reachable again or has memory again.
-func (n s6cNetwork) notifyReadyForSM(t *testing.T, number string, reason sh.ReadyForSM) diameter.Result {
+// notifyReadyForSM is readyForSMOf for the user of the test network.
+func (n s6cNetwork) notifyReadyForSM(t *testing.T, number string, reason sgd.AlertReason) diameter.Result {
 	t.Helper()
-	return n.pur(t, sh.UserIdentity{PublicIdentity: impu}, []sh.DataReference{sh.SMSRegistrationInfo}, readyForSM(number, reason))
+	return n.readyForSMOf(t, msisdnA, number, reason)
 }
 
 // TS 23.040 3.2.6 item 2c, TS 23.204 6.5b step 2d: a UE that became
@@ -672,8 +680,8 @@ func TestReadyForSMWhenTheUEIsReachableAgain(t *testing.T) {
 		t.Fatalf("UNRI = %v, message waiting data = %v", u.UNRI, u.MessageWaitingData)
 	}
 
-	if r := n.notifyReadyForSM(t, ipsmgwNumber, sh.MSPresent); r != success {
-		t.Fatalf("PUA = %v", r)
+	if r := n.notifyReadyForSM(t, ipsmgwNumber, sgd.AlertReasonUEPresent); r != success {
+		t.Fatalf("answer = %v", r)
 	}
 	if alr := n.alert(t); alr.SCAddress != scAddress || alr.UserIdentifier.MSISDN != msisdnA {
 		t.Errorf("ALR = %+v, want SC-Address %s and MSISDN %s", alr, scAddress, msisdnA)
@@ -691,8 +699,8 @@ func TestReadyForSMWhenTheUEIsReachableAgain(t *testing.T) {
 	}
 
 	// The notification again: UNRI is clear already, so nothing happens.
-	if r := n.notifyReadyForSM(t, ipsmgwNumber, sh.MSPresent); r != success {
-		t.Errorf("PUA of the second notification = %v", r)
+	if r := n.notifyReadyForSM(t, ipsmgwNumber, sgd.AlertReasonUEPresent); r != success {
+		t.Errorf("answer to the second notification = %v", r)
 	}
 	n.noAlert(t)
 }
@@ -711,16 +719,16 @@ func TestReadyForSMWhenTheMemoryIsFree(t *testing.T) {
 		t.Fatalf("MCEF = %v, message waiting data = %v", u.MCEF, u.MessageWaitingData)
 	}
 	// While the memory is full, the UE being reachable alerts nobody.
-	if r := n.notifyReadyForSM(t, ipsmgwNumber, sh.MSPresent); r != success {
-		t.Fatalf("PUA = %v", r)
+	if r := n.notifyReadyForSM(t, ipsmgwNumber, sgd.AlertReasonUEPresent); r != success {
+		t.Fatalf("answer = %v", r)
 	}
 	n.noAlert(t)
 	if u := n.subscriber(t); !u.MCEF || len(u.MessageWaitingData) != 1 {
 		t.Errorf("MCEF = %v, message waiting data = %v", u.MCEF, u.MessageWaitingData)
 	}
 
-	if r := n.notifyReadyForSM(t, ipsmgwNumber, sh.MemoryAvailable); r != success {
-		t.Fatalf("PUA = %v", r)
+	if r := n.notifyReadyForSM(t, ipsmgwNumber, sgd.AlertReasonUEMemoryAvailable); r != success {
+		t.Fatalf("answer = %v", r)
 	}
 	if alr := n.alert(t); alr.SCAddress != scAddress {
 		t.Errorf("ALR = %+v", alr)
@@ -729,8 +737,8 @@ func TestReadyForSMWhenTheMemoryIsFree(t *testing.T) {
 		return !u.MCEF && !u.UNRI && len(u.MessageWaitingData) == 0
 	})
 
-	if r := n.notifyReadyForSM(t, ipsmgwNumber, sh.MemoryAvailable); r != success {
-		t.Errorf("PUA of the second notification = %v", r)
+	if r := n.notifyReadyForSM(t, ipsmgwNumber, sgd.AlertReasonUEMemoryAvailable); r != success {
+		t.Errorf("answer to the second notification = %v", r)
 	}
 	n.noAlert(t)
 }
@@ -747,8 +755,8 @@ func TestReadyForSMAlertsAgainAfterARefusedAlert(t *testing.T) {
 	}
 
 	n.refuse.Store(true)
-	if r := n.notifyReadyForSM(t, ipsmgwNumber, sh.MSPresent); r != success {
-		t.Fatalf("PUA = %v", r)
+	if r := n.notifyReadyForSM(t, ipsmgwNumber, sgd.AlertReasonUEPresent); r != success {
+		t.Fatalf("answer = %v", r)
 	}
 	if alr := n.alert(t); alr.SCAddress != scAddress {
 		t.Errorf("ALR = %+v", alr)
@@ -759,16 +767,16 @@ func TestReadyForSMAlertsAgainAfterARefusedAlert(t *testing.T) {
 	}
 
 	n.refuse.Store(false)
-	if r := n.notifyReadyForSM(t, ipsmgwNumber, sh.MSPresent); r != success {
-		t.Fatalf("PUA = %v", r)
+	if r := n.notifyReadyForSM(t, ipsmgwNumber, sgd.AlertReasonUEPresent); r != success {
+		t.Fatalf("answer = %v", r)
 	}
 	if alr := n.alert(t); alr.SCAddress != scAddress {
 		t.Errorf("ALR = %+v", alr)
 	}
 	n.waitForSubscriber(t, "after the alert", func(u Subscriber) bool { return len(u.MessageWaitingData) == 0 })
 
-	if r := n.notifyReadyForSM(t, ipsmgwNumber, sh.MSPresent); r != success {
-		t.Errorf("PUA = %v", r)
+	if r := n.notifyReadyForSM(t, ipsmgwNumber, sgd.AlertReasonUEPresent); r != success {
+		t.Errorf("answer = %v", r)
 	}
 	n.noAlert(t)
 }
@@ -787,11 +795,11 @@ func TestConcurrentReadyForSM(t *testing.T) {
 	const notifications = 4
 	results := make(chan diameter.Result, notifications)
 	for range notifications {
-		go func() { results <- n.notifyReadyForSM(t, ipsmgwNumber, sh.MSPresent) }()
+		go func() { results <- n.notifyReadyForSM(t, ipsmgwNumber, sgd.AlertReasonUEPresent) }()
 	}
 	for range notifications {
 		if r := <-results; r != success {
-			t.Errorf("PUA = %v", r)
+			t.Errorf("answer = %v", r)
 		}
 	}
 	if alr := n.alert(t); alr.SCAddress != scAddress {
@@ -822,8 +830,8 @@ func TestReadyForSMFromAnotherIPSMGWDoesNothing(t *testing.T) {
 		t.Fatalf("RDA = %v", a.Result)
 	}
 	// Nothing is registered for the user yet.
-	if r := n.notifyReadyForSM(t, ipsmgwNumber, sh.MSPresent); r != success {
-		t.Errorf("PUA = %v", r)
+	if r := n.notifyReadyForSM(t, ipsmgwNumber, sgd.AlertReasonUEPresent); r != success {
+		t.Errorf("answer = %v", r)
 	}
 	n.register(t)
 	// The registration found MCEF clear and the message waiting data
@@ -837,8 +845,8 @@ func TestReadyForSMFromAnotherIPSMGWDoesNothing(t *testing.T) {
 	}
 
 	// Another IP-SM-GW's number says nothing about this user.
-	if r := n.notifyReadyForSM(t, "12025550198", sh.MSPresent); r != success {
-		t.Errorf("PUA = %v", r)
+	if r := n.notifyReadyForSM(t, "12025550198", sgd.AlertReasonUEPresent); r != success {
+		t.Errorf("answer = %v", r)
 	}
 	n.noAlert(t)
 	if u := n.subscriber(t); !u.UNRI || len(u.MessageWaitingData) != 1 ||
@@ -852,9 +860,9 @@ func TestReadyForSMFromAnotherIPSMGWDoesNothing(t *testing.T) {
 // registered. A reason the HSS does not know is refused.
 func TestReadyForSMWritesNoRegistration(t *testing.T) {
 	n := newS6cNetwork(t)
-	for _, reason := range []sh.ReadyForSM{sh.MSPresent, sh.MemoryAvailable} {
+	for _, reason := range []sgd.AlertReason{sgd.AlertReasonUEPresent, sgd.AlertReasonUEMemoryAvailable} {
 		if r := n.notifyReadyForSM(t, ipsmgwNumber, reason); r != success {
-			t.Fatalf("PUA = %v", r)
+			t.Fatalf("answer = %v", r)
 		}
 		if u := n.subscriber(t); u.IPSMGWNumber != "" || u.IPSMGW.OriginHost != "" {
 			t.Errorf("after %q the IP-SM-GW is %q, %q; want none registered", reason, u.IPSMGWNumber, u.IPSMGW.OriginHost)
@@ -862,16 +870,45 @@ func TestReadyForSMWritesNoRegistration(t *testing.T) {
 	}
 	// And a notification never takes a registration away either.
 	n.register(t)
-	if r := n.notifyReadyForSM(t, ipsmgwNumber, sh.MSPresent); r != success {
-		t.Fatalf("PUA = %v", r)
+	if r := n.notifyReadyForSM(t, ipsmgwNumber, sgd.AlertReasonUEPresent); r != success {
+		t.Fatalf("answer = %v", r)
 	}
 	if u := n.subscriber(t); u.IPSMGWNumber != ipsmgwNumber || u.IPSMGW.OriginHost != ipsmgwHost {
 		t.Errorf("IP-SM-GW = %q, %q", u.IPSMGWNumber, u.IPSMGW.OriginHost)
 	}
-	if r := n.pur(t, sh.UserIdentity{PublicIdentity: impu}, []sh.DataReference{sh.SMSRegistrationInfo},
-		readyForSM(ipsmgwNumber, sh.ReadyForSM("reachable"))); r != diameter.Base(diameter.DiameterUnableToComply) {
-		t.Errorf("PUA of an unknown reason = %v", r)
+	if r := n.notifyReadyForSM(t, ipsmgwNumber, sgd.AlertReason(2)); r != diameter.Base(diameter.DiameterUnableToComply) {
+		t.Errorf("answer to an unknown reason = %v", r)
 	}
+}
+
+// A number that no user has is an unknown user, as for an RDR (TS
+// 29.338 5.2.3.4), which the IP-SM-GW passes on to the UE.
+func TestReadyForSMForAnUnknownNumber(t *testing.T) {
+	n := newS6cNetwork(t)
+	n.register(t)
+	if r := n.readyForSMOf(t, "12025550198", ipsmgwNumber, sgd.AlertReasonUEMemoryAvailable); r != diameter.Experimental(sgd.DiameterErrorUserUnknown) {
+		t.Errorf("answer = %v, want DIAMETER_ERROR_USER_UNKNOWN", r)
+	}
+}
+
+// The notification that an Sh update of SMSRegistrationInfo carries in
+// the element of this project's own namespace acts as Ready-For-SM does.
+func TestReadyForSMInAnShUpdate(t *testing.T) {
+	n := newS6cNetwork(t)
+	n.register(t)
+	if a := n.rdr(t, msisdnA, sgd.SMDeliveryCauseUEMemoryCapacityExceeded); a.Result != success {
+		t.Fatalf("RDA = %v", a.Result)
+	}
+	notification := sh.ShData{ShIMSData: &sh.ShIMSData{SMSRegistrationInfo: &sh.SMSRegistrationInfoData{
+		IPSMGWNumber: ipsmgwNumber, ReadyForSM: sh.MemoryAvailable,
+	}}}.Marshal()
+	if r := n.pur(t, sh.UserIdentity{PublicIdentity: impu}, []sh.DataReference{sh.SMSRegistrationInfo}, notification); r != success {
+		t.Fatalf("PUA = %v", r)
+	}
+	if alr := n.alert(t); alr.SCAddress != scAddress {
+		t.Errorf("ALR = %+v", alr)
+	}
+	n.waitForSubscriber(t, "after the alert", func(u Subscriber) bool { return !u.MCEF && len(u.MessageWaitingData) == 0 })
 }
 
 // TestReadyForShortMessages is each transition of each reason: which
@@ -880,7 +917,7 @@ func TestReadyForSMWritesNoRegistration(t *testing.T) {
 func TestReadyForShortMessages(t *testing.T) {
 	waiting := []string{scAddress}
 	for _, c := range []struct {
-		reason      sh.ReadyForSM
+		reason      sgd.AlertReason
 		before      Subscriber
 		wantAlert   bool
 		wantUNRI    bool
@@ -889,26 +926,26 @@ func TestReadyForShortMessages(t *testing.T) {
 	}{
 		// Item 2c: UNRI goes, and the service centres are alerted unless
 		// the memory of the UE is what holds them back.
-		{sh.MSPresent, Subscriber{UNRI: true, MessageWaitingData: waiting}, true, false, false, true},
-		{sh.MSPresent, Subscriber{UNRI: true, MCEF: true, MessageWaitingData: waiting}, false, false, true, true},
-		{sh.MSPresent, Subscriber{UNRI: true}, false, false, false, true},
+		{sgd.AlertReasonUEPresent, Subscriber{UNRI: true, MessageWaitingData: waiting}, true, false, false, true},
+		{sgd.AlertReasonUEPresent, Subscriber{UNRI: true, MCEF: true, MessageWaitingData: waiting}, false, false, true, true},
+		{sgd.AlertReasonUEPresent, Subscriber{UNRI: true}, false, false, false, true},
 		// A repeat finds UNRI clear, and alerts the service centres that
 		// still wait, since an alert before it may have failed.
-		{sh.MSPresent, Subscriber{MessageWaitingData: waiting}, true, false, false, false},
-		{sh.MSPresent, Subscriber{MCEF: true, MessageWaitingData: waiting}, false, false, true, false},
-		{sh.MSPresent, Subscriber{}, false, false, false, false},
+		{sgd.AlertReasonUEPresent, Subscriber{MessageWaitingData: waiting}, true, false, false, false},
+		{sgd.AlertReasonUEPresent, Subscriber{MCEF: true, MessageWaitingData: waiting}, false, false, true, false},
+		{sgd.AlertReasonUEPresent, Subscriber{}, false, false, false, false},
 		// Item 2f: MCEF goes, and UNRI with it, since a UE that says it
 		// has memory is reachable.
-		{sh.MemoryAvailable, Subscriber{MCEF: true, MessageWaitingData: waiting}, true, false, false, true},
-		{sh.MemoryAvailable, Subscriber{MCEF: true, UNRI: true, MessageWaitingData: waiting}, true, false, false, true},
-		{sh.MemoryAvailable, Subscriber{MCEF: true}, false, false, false, true},
+		{sgd.AlertReasonUEMemoryAvailable, Subscriber{MCEF: true, MessageWaitingData: waiting}, true, false, false, true},
+		{sgd.AlertReasonUEMemoryAvailable, Subscriber{MCEF: true, UNRI: true, MessageWaitingData: waiting}, true, false, false, true},
+		{sgd.AlertReasonUEMemoryAvailable, Subscriber{MCEF: true}, false, false, false, true},
 		// A repeat, and a UE that was never reported out of memory: the
 		// service centres that wait are alerted all the same.
-		{sh.MemoryAvailable, Subscriber{MessageWaitingData: waiting}, true, false, false, false},
-		{sh.MemoryAvailable, Subscriber{UNRI: true, MessageWaitingData: waiting}, true, false, false, true},
-		{sh.MemoryAvailable, Subscriber{}, false, false, false, false},
+		{sgd.AlertReasonUEMemoryAvailable, Subscriber{MessageWaitingData: waiting}, true, false, false, false},
+		{sgd.AlertReasonUEMemoryAvailable, Subscriber{UNRI: true, MessageWaitingData: waiting}, true, false, false, true},
+		{sgd.AlertReasonUEMemoryAvailable, Subscriber{}, false, false, false, false},
 		// A reason the HSS does not know changes nothing.
-		{sh.ReadyForSM("reachable"), Subscriber{UNRI: true, MCEF: true, MessageWaitingData: waiting}, false, true, true, false},
+		{sgd.AlertReason(2), Subscriber{UNRI: true, MCEF: true, MessageWaitingData: waiting}, false, true, true, false},
 	} {
 		u := c.before
 		u.MessageWaitingData = slices.Clone(c.before.MessageWaitingData)

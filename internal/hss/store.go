@@ -13,6 +13,7 @@ import (
 	"github.com/yuu-biz/ims-practice/internal/aka"
 	"github.com/yuu-biz/ims-practice/internal/diameter"
 	"github.com/yuu-biz/ims-practice/internal/ims"
+	"github.com/yuu-biz/ims-practice/internal/sgd"
 	"github.com/yuu-biz/ims-practice/internal/sh"
 )
 
@@ -295,14 +296,14 @@ func (s *Subscriber) shortMessageDelivered(scAddress string) bool {
 // that never reached it, leaves its address in the message waiting
 // data, and only a later notification can alert it again. Where no
 // service centre waits, the HSS answers and alerts nobody (item 2i).
-func (s *Subscriber) readyForShortMessages(reason sh.ReadyForSM) bool {
+func (s *Subscriber) readyForShortMessages(reason sgd.AlertReason) bool {
 	switch reason {
-	case sh.MSPresent:
+	case sgd.AlertReasonUEPresent:
 		// Item 2c: the UE is reachable over IP again, so UNRI goes. While
 		// MCEF is set the service centres wait for free memory instead.
 		s.UNRI = false
 		return len(s.MessageWaitingData) > 0 && !s.MCEF
-	case sh.MemoryAvailable:
+	case sgd.AlertReasonUEMemoryAvailable:
 		// Item 2f alerts the service centres when the UE has memory
 		// again, and clears UNRI, since a UE that says so is reachable.
 		// It leaves MCEF set, which items 2d and 2e clear for the same

@@ -7,6 +7,7 @@ import (
 
 	"github.com/yuu-biz/ims-practice/internal/cx"
 	"github.com/yuu-biz/ims-practice/internal/diameter"
+	"github.com/yuu-biz/ims-practice/internal/sgd"
 	"github.com/yuu-biz/ims-practice/internal/sh"
 )
 
@@ -213,7 +214,7 @@ func (h *HSS) profileUpdate(ctx context.Context, r sh.ProfileUpdateRequest) sh.P
 		return sh.ProfileUpdateAnswer{Result: diameter.Base(diameter.DiameterUnableToComply)}
 	}
 	if reason := data.ShIMSData.SMSRegistrationInfo.ReadyForSM; reason != "" {
-		return h.readyForSM(ctx, u, data.ShIMSData.SMSRegistrationInfo.IPSMGWNumber, reason)
+		return h.readyForSMInShUpdate(ctx, u, data.ShIMSData.SMSRegistrationInfo.IPSMGWNumber, reason)
 	}
 	number := data.ShIMSData.SMSRegistrationInfo.IPSMGWNumber
 
@@ -263,12 +264,11 @@ func (h *HSS) profileUpdate(ctx context.Context, r sh.ProfileUpdateRequest) sh.P
 	return sh.ProfileUpdateAnswer{Result: diameter.Base(diameter.DiameterSuccess)}
 }
 
-// readyForSM acts on a notification that the user can take short
-// messages again. It is a notification alone: it writes neither the
-// IP-SM-GW's number nor its Diameter identity, and it acts only for the
-// IP-SM-GW that the user is registered to, which the number of the
-// update names. The service centres that still hold a short message
-// for the user are alerted, unless the memory of the UE holds them back.
+// readyForSMInShUpdate is the notification that the user can take short
+// messages again, in the element of this project's own namespace that
+// an Sh update of SMSRegistrationInfo may carry. It is a notification
+// alone, which writes neither the IP-SM-GW's number nor its Diameter
+// identity (readyNotice).
 //
 // SIMPLIFIED: TS 23.040 3.2.6 items 2c and 2f, TS 23.204 6.5b step 2d
 // and 6.6 step 3, TS 29.002 12.4. Both notifications reach the HSS in
@@ -276,44 +276,14 @@ func (h *HSS) profileUpdate(ctx context.Context, r sh.ProfileUpdateRequest) sh.P
 // SMSRegistrationInfo, since the Sh user profile has none for them and
 // an IP-SM-GW that sends them to an HLR uses the MAP READY_FOR_SM
 // service, which this project does not implement.
-func (h *HSS) readyForSM(ctx context.Context, u Subscriber, number string, reason sh.ReadyForSM) sh.ProfileUpdateAnswer {
-	log := h.log.With("private_identity", u.PrivateIdentity, "reason", string(reason), "ip_sm_gw_number", number)
-	if !reason.Valid() {
-		log.Warn("PUR with a reason for being ready for short messages that this HSS does not know")
+func (h *HSS) readyForSMInShUpdate(ctx context.Context, u Subscriber, number string, reason sh.ReadyForSM) sh.ProfileUpdateAnswer {
+	alert, ok := map[sh.ReadyForSM]sgd.AlertReason{sh.MSPresent: sgd.AlertReasonUEPresent, sh.MemoryAvailable: sgd.AlertReasonUEMemoryAvailable}[reason]
+	if !ok {
+		h.log.Warn("PUR with a reason for being ready for short messages that this HSS does not know",
+			"private_identity", u.PrivateIdentity, "reason", string(reason))
 		return sh.ProfileUpdateAnswer{Result: diameter.Base(diameter.DiameterUnableToComply)}
 	}
-	// The number is compared under the lock of the subscriber, together
-	// with the flags, so that a registration or a removal that arrives in
-	// between decides whether the notification counts.
-	registered := false
-	stored, alert, fail := h.updateMessageWaiting(ctx, u, func(s *Subscriber) bool {
-		registered = s.IPSMGWNumber != "" && s.IPSMGWNumber == number
-		if !registered {
-			return false
-		}
-		return s.readyForShortMessages(reason)
-	})
-	switch {
-	case fail != (diameter.Result{}):
-		return sh.ProfileUpdateAnswer{Result: fail}
-	case !registered:
-		// TS 23.204 6.5b step 2d has the IP-SM-GW itself discard the
-		// notification while the UE is not registered in IMS. The HSS
-		// checks as well, because the registration may have gone in
-		// between, and an IP-SM-GW that is not the registered one says
-		// nothing about this user. Nothing was changed, so the answer is
-		// the success that TS 23.040 3.2.6 item 2i gives a notification
-		// that alerts nobody.
-		log.Info("ready for short messages, from an IP-SM-GW that the user is not registered to",
-			"registered_ip_sm_gw_number", stored.IPSMGWNumber)
-		return sh.ProfileUpdateAnswer{Result: diameter.Base(diameter.DiameterSuccess)}
-	}
-	log.Info("ready for short messages", "service_centres", stored.MessageWaitingData,
-		"unri", stored.UNRI, "mcef", stored.MCEF, "alert", alert)
-	if alert {
-		h.alertServiceCentres(stored)
-	}
-	return sh.ProfileUpdateAnswer{Result: diameter.Base(diameter.DiameterSuccess)}
+	return sh.ProfileUpdateAnswer{Result: h.readyNotice(ctx, u, number, alert)}
 }
 
 // maxServiceData is the most ServiceData the HSS takes for one
