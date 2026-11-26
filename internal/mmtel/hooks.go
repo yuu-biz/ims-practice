@@ -134,9 +134,11 @@ func (c *call) Reasons(ended *sip.Message, _ b2bua.Direction) []sip.HeaderField 
 // dialogs as they are now: once the callee has answered, and again after
 // each request within the dialogs. A target refresh request changes the
 // remote target of its dialog (RFC 3261 12.2), and each request the CSeq
-// numbers: another instance that ends the dialogs needs both (12.2.1.1,
-// 12.2.2). Before the answer and after the end of the call it writes
-// nothing.
+// numbers. What the AS reads back is only the identifiers of the dialogs
+// (otherSide); the remote targets and the CSeq numbers would be needed
+// to send a request within the dialogs from another process (12.2.1.1,
+// 12.2.2), which no instance does (AS.uri). Before the answer and after
+// the end of the call it writes nothing.
 //
 // The caller and the callee have their responses by then, so no request
 // waits for the record and a failure of the store is logged. The call

@@ -121,9 +121,20 @@ func New(cfg Config, hss HSS, store Store, conferences ConferenceStore, locator 
 // The live handling of a call stays in the instance that took its
 // INVITE: the Contact names that instance, and the dialogs, the
 // transactions and the no reply timer live in its process. The Store
-// keeps the call record outside it, so that another instance could
-// take a call over. No instance does: a call is lost with its
-// instance, as the timers of every node are.
+// keeps the call record outside it, which any instance reads to find
+// the other leg of a dialog that a Replaces names (otherSide).
+//
+// SIMPLIFIED: RFC 3261 12.2.2. A UAS that has restarted may accept a
+// request for a dialog it does not know, and carry the dialog on from
+// state it kept. An instance of the AS that is created again under the
+// same name does not: it builds no dialog from the call records, so
+// each request within a call of the earlier process gets 481
+// (Call/Transaction Does Not Exist), and the parties are left to end
+// the call. The record of such a call stays in the Store with no time
+// to live, as that of a call whose BYE no instance sees. Carrying a
+// call on needs the UA to take a dialog that it did not set up, with
+// CSeq numbers above any that the earlier process sent, and the
+// relaying of each leg's requests set up again around it.
 func (as *AS) uri() string { return "sip:" + as.cfg.Host + ":" + strconv.Itoa(as.cfg.Port) }
 
 // Listen starts the UA of the AS on transport: each INVITE outside a

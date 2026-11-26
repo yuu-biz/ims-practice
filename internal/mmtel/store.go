@@ -8,9 +8,10 @@ import (
 )
 
 // CallRecord is what the AS keeps of a call from its 2xx to its end:
-// enough for another instance to know the call, and to end both of its
-// dialogs. The settings of the services are not part of it;
-// they stay in the HSS.
+// enough for any instance to know that a dialog is one leg of the call,
+// and which dialog is the other (otherSide). Only the instance that
+// took the INVITE acts on the call (AS.uri). The settings of the
+// services are not part of it; they stay in the HSS.
 type CallRecord struct {
 	// Incoming is the dialog with the S-CSCF on the side of the INVITE
 	// that the AS took, and Outgoing the one on the side of the INVITE it
