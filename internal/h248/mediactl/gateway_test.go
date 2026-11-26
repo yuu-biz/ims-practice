@@ -195,8 +195,8 @@ func TestRelayErrors(t *testing.T) {
 		t.Errorf("Add: %v", err)
 	}
 	b.relay.setFail(nil)
-	if err := b.controller.Modify(ctx, "4711@agw1.ims.example.net", agw.Access, agw.TerminationRequest{Remote: mustAddrPort("192.0.2.30:49170")}); !errors.Is(err, agw.ErrNoContext) {
-		t.Errorf("Modify of an unknown context: %v", err)
+	if err := b.controller.Modify(ctx, "4711@agw1.ims.example.net", agw.Access, agw.TerminationRequest{Remote: mustAddrPort("192.0.2.30:49170")}); !errors.Is(err, agw.ErrNoContext) || !errors.Is(err, agw.ErrRejected) {
+		t.Errorf("Modify of an unknown context: %v, want agw.ErrNoContext, rejected by the gateway", err)
 	}
 	if err := b.controller.Modify(ctx, "4711@agw9.ims.example.net", agw.Access, agw.TerminationRequest{Remote: mustAddrPort("192.0.2.30:49170")}); !errors.Is(err, ErrUnavailable) {
 		t.Errorf("Modify on an unknown gateway: %v", err)

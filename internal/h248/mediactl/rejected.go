@@ -10,10 +10,11 @@ import (
 
 // CommandRejected is the error for a reply that carries an Error
 // descriptor: the procedure Command Rejected of TS 29.334 5.17.3.11.
-// errors.Is matches it with agw.ErrNoContext, agw.ErrNoTermination,
-// agw.ErrNoPort, agw.ErrUnknownAnnouncement and ErrUnavailable where
-// its code means one of them, so that a caller of the Controller tells
-// the errors apart as it does for the HTTP client of the media node.
+// errors.Is matches it with agw.ErrRejected, and with agw.ErrNoContext,
+// agw.ErrNoTermination, agw.ErrNoPort, agw.ErrUnknownAnnouncement and
+// ErrUnavailable where its code means one of them, so that a caller of
+// the Controller tells the errors apart as it does for the HTTP client
+// of the media node.
 // The codes are those that a Gateway answers for these errors of its
 // relay or processor.
 type CommandRejected struct {
@@ -29,6 +30,9 @@ func (e *CommandRejected) Error() string {
 }
 
 func (e *CommandRejected) Is(target error) bool {
+	if target == agw.ErrRejected {
+		return true
+	}
 	switch e.ErrorDescriptor.ErrorCode {
 	case 411:
 		// H.248.36 (03/2013) 5.6.1: the codes that tell that one side
