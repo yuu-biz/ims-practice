@@ -13,7 +13,31 @@ AI エージェント（Claude Code、Codex、Cursor など）がこのリポジ
 - [docs/unverified-clauses.md](docs/unverified-clauses.md)。条項を確かめられなかった記述の一覧。
 - [CONTRIBUTING.md](CONTRIBUTING.md)。Issue、ブランチ、コミット、PR のルール。
 
-できているのは、登録、音声通話、ラボ、SMS、VoLTE（EPC スタブ、IMS-AKA、Rx、プリコンディション）、付加サービス（MMTel AS、Ut）、MRF（音声ガイダンス、CAT、3 者会議）、2 つの網の相互接続です。UE シミュレータが登録、発着信、SMS の送受信、Ut での付加サービスの設定をでき、その信号をキャプチャとラボで見られます。冗長構成、H.248、5GC（VoNR）、SMS over NAS、OAM、Kubernetes、クラウド、スライドは、部品や一部ができています。残っているものは [docs/roadmap.md](docs/roadmap.md) の「これから作るもの」にあります。Compose での動作確認は `scripts/e2e-diameter.sh`（Diameter の接続）、`scripts/e2e-registration.sh`（登録）、`scripts/e2e-admission.sh`（収容の方針）、`scripts/e2e-call.sh`（通話）、`scripts/e2e-lab.sh`（ラボ）、`scripts/e2e-sms.sh`（SMS）、`scripts/e2e-volte.sh`（IMS-AKA と VoLTE の通話）、`scripts/e2e-mmtel.sh`（付加サービス）、`scripts/e2e-mrf.sh`（MRF）、`scripts/e2e-interconnect.sh`（2 つの網の相互接続）で行います。
+できているのは、登録、音声通話、ラボ、SMS、VoLTE（EPC スタブ、IMS-AKA、Rx、プリコンディション）、付加サービス（MMTel AS、Ut）、MRF（音声ガイダンス、CAT、3 者会議）、2 つの網の相互接続です。UE シミュレータが登録、発着信、SMS の送受信、Ut での付加サービスの設定をでき、その信号をキャプチャとラボで見られます。冗長構成、H.248、5GC（VoNR）、SMS over NAS、OAM、Kubernetes、クラウド、スライドは、部品や一部ができています。残っているものは [docs/roadmap.md](docs/roadmap.md) の「これから作るもの」にあります。Compose での動作確認は、次のスクリプトで行います。
+
+| スクリプト | 確かめること |
+| --- | --- |
+| `scripts/e2e-diameter.sh` | Diameter の接続 |
+| `scripts/e2e-registration.sh` | 登録 |
+| `scripts/e2e-admission.sh` | 収容の方針 |
+| `scripts/e2e-call.sh` | 通話 |
+| `scripts/e2e-lab.sh` | ラボ |
+| `scripts/e2e-sms.sh` | SMS |
+| `scripts/e2e-volte.sh` | IMS-AKA と VoLTE の通話 |
+| `scripts/e2e-esp.sh` | IMS-AKA の信号にかける ESP（暗号化は null。`deploy/esp/`） |
+| `scripts/e2e-mmtel.sh` | 付加サービス |
+| `scripts/e2e-mrf.sh` | MRF |
+| `scripts/e2e-interconnect.sh` | 2 つの網の相互接続 |
+| `scripts/e2e-h248.sh` | H.248 でのメディア中継ノードの制御（`deploy/h248/`） |
+| `scripts/e2e-oam.sh` | OAM からの運用（ノードの状態、加入者の一括の登録、バックアップと復元） |
+| `scripts/e2e-fm.sh` | OAM から OSS への警報の通知と、警報の確認 |
+| `scripts/e2e-observability.sh` | ノードの指標と、Prometheus と Grafana での見え方（`deploy/observability/`） |
+| `scripts/e2e-maintenance-sip.sh` | 保守用の API で、登録と通話の信号が通るノードを運用から外し、戻すこと |
+| `scripts/e2e-maintenance-sms.sh` | 保守用の API で、ショートメッセージを運ぶノードを運用から外し、戻すこと |
+| `scripts/e2e-maintenance-hss.sh` | 保守用の API で、HSS を運用から外し、戻すこと |
+| `scripts/e2e-fault.sh` | 障害注入のエージェントが、ノードを止める、プロセスを落とす、コンテナを作り直すこと（`deploy/chaos/`） |
+
+冗長構成は、CI の `e2e-redundancy` のジョブが確かめます。`deploy/redundancy/` の上書きのファイルを重ねた構成で、登録、通話、SMS のスクリプトを流し、S-CSCF が登録を保存先に置いていることを読みます。
 
 ## ビルドと試験のコマンド
 
