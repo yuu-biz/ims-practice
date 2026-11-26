@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/yuu-biz/ims-practice/internal/ims"
@@ -50,8 +51,11 @@ func Example() {
 		fmt.Println(err)
 		return
 	}
+	// The lock holds the name of its holder, and the random token of
+	// the take after it.
 	lock, _ := kv.Get(ctx, "scscf:lock:"+impi)
-	fmt.Printf("held by %s\n", lock.Value)
+	holder, _, _ := strings.Cut(string(lock.Value), " ")
+	fmt.Printf("held by %s\n", holder)
 
 	// A REGISTER of the same user reaches scscf-2, which gives up when
 	// its context ends.
