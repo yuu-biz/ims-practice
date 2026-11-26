@@ -611,12 +611,12 @@ func (c *Call) answerRequest(r *sip.InDialogRequest, sent sip.Body, resp *sip.Me
 	case errors.Is(err, sip.ErrInviteInProgress), errors.Is(err, sip.ErrOfferPending):
 		// RFC 3261 14.2, RFC 3311 5.2: the request crossed one of the
 		// other side.
-		r.Reject(491)
+		c.unanswered(r, d, func() { r.Reject(491) })
 	case errors.Is(err, sip.ErrCallEnded):
 		rejectEnded(r)
 	case err != nil:
 		c.log.Info("request within the dialog not relayed", "method", string(r.Request.Method), "error", err.Error())
-		r.Reject(500)
+		c.unanswered(r, d, func() { r.Reject(500) })
 	case resp.StatusCode < 300:
 		if d == ToCaller {
 			// The caller took the session description of the request.
@@ -658,7 +658,19 @@ func (c *Call) answerRequest(r *sip.InDialogRequest, sent sip.Body, resp *sip.Me
 		}
 	default:
 		m, _ := c.hooks.Response(resp, r.Request, d.reverse())
-		r.Reject(resp.StatusCode, m.Headers...)
+		c.unanswered(r, d, func() { r.Reject(resp.StatusCode, m.Headers...) })
+	}
+}
+
+// unanswered answers r, a request within a dialog that crossed in
+// direction d and got no 2xx on the other leg, with reject, once the
+// role has put back what it changed for the request (Hooks.Unanswered).
+// When the role cannot, the Call releases the call after the response.
+func (c *Call) unanswered(r *sip.InDialogRequest, d Direction, reject func()) {
+	ok := c.hooks.Unanswered(r.Request, d)
+	reject()
+	if !ok {
+		c.release()
 	}
 }
 

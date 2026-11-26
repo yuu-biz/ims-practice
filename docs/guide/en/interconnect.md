@@ -381,9 +381,30 @@ A request with such an SDP goes no further, and the IBCF answers it itself with 
 ```
 
 - **A final response other than 2xx leaves the session as it was before the request.** RFC 3261 14.1 says so for a re-INVITE, and RFC 3311 5.3 for an UPDATE. Only a 481, a 408 or no answer at all ends the dialog (RFC 3261 12.2.1.2), so the IBCF answers with none of them. The media goes on as the last offer and answer set it up, through the TrGW.
+- **An IBCF on the way that passed the offer on puts its TrGW back.** When IBCF-B refuses the offer of UE A1, IBCF-A has told TrGW-A already to send where that offer said, as TS 29.162 9.1.1.2 lets it do on the offer. The 500 leaves UE A1 on the media of the last offer and answer, so IBCF-A has TrGW-A send there again with another `Modify`. The same holds for any final response other than 2xx, such as a 488 of UE B1, or a request that gets no answer. Neither TS 29.162 9.1.3 nor TS 24.229 6.7.1 names a procedure of its own for this; it follows from the session that RFC 3261 14.1 and RFC 3311 5.3 leave. When TrGW-A does not take that `Modify` either, its termination keeps sending where UE A1 no longer receives, and IBCF-A releases the call as below.
 - **An offer from network B**, such as that of an UPDATE of UE B1, takes the `Modify` of the termination that faces network B. The 500 then goes back to IBCF-B, which passes it on to UE B1, and UE A1 gets nothing.
 - **The sending side may send the offer again later** (RFC 3261 21.5.1).
 - **Which answers say that nothing changed.** The media relay carries out none of a request that it answers with an error, whether over its control API or in an H.248 Error descriptor. The one exception is an error that says that it has no such context or termination, which comes below.
+
+When IBCF-B refuses the offer of a re-INVITE of UE A1, IBCF-A puts TrGW-A back:
+
+```text
+ UE A1         IBCF-A          TrGW-A          IBCF-B          TrGW-B
+ | re-INVITE with a new SDP offer |                |               |
+ |------------->| Modify: where UE A1 now receives |               |
+ |              |---------------->|                |               |
+ |              |  re-INVITE      |                |               |
+ |              |=================================>| Modify        |
+ |              |                 |                |-------------->|
+ |              |                 |                | error: nothing changed
+ |              |                 |                |<--------------|
+ |              |  500            |                |               |
+ |              |<=================================|               |
+ |              | Modify: where UE A1 received before               |
+ |              |---------------->|                |               |
+ |  500         |                 |                |               |
+ |<-------------|                 |                |               |
+```
 
 **The TrGW does not answer in time, or has lost the context.** The IBCF answers 500, and then releases the call:
 
@@ -410,7 +431,7 @@ A request with such an SDP goes no further, and the IBCF answers it itself with 
 
 **The request is the PRACK of a reliable response of the callee.** The IBCF ends the INVITE, whatever the TrGW answered. The callee's reliable response would get no PRACK, and the callee would end the INVITE with a 5xx only once that response has waited 64*T1, 32 seconds, for its PRACK (RFC 3262 3). The PRACK of the caller matches the reliable response that the caller got, so the IBCF answers it 200 (RFC 3262 3), and then answers the INVITE 500 and sends the callee a CANCEL: RFC 6337 2.3 lets a UAS that cannot take what a PRACK carries end the INVITE with an error response. A PRACK with a new offer gets 500 instead of the 200, since a 200 to it would have to carry the answer (RFC 3262 5). A PRACK with a new offer for a response that the callee sent without 100rel goes on as an UPDATE (RFC 3311 5.1), and the IBCF refuses it as an UPDATE: the call may stay.
 
-The tests of `internal/ibcf` run these flows in one process, with a TrGW that turns the `Modify` of one side down: `TestRefusedOfferOfTheINVITEIsRejected`, `TestRefusedOfferWithinTheCallIsRejected`, `TestOfferWithinTheCallEndsTheCallWhenTheTrGWMayHaveTakenIt`, `TestRefusedSDPOfAPRACKEndsTheINVITE` and `TestRefusedOfferOfAPRACKSentOnAsAnUPDATEKeepsTheCall`.
+The tests of `internal/ibcf` run these flows in one process, with a TrGW that turns the `Modify` of one side down: `TestRejectedOfferPutsTheTrGWBack`, `TestRejectedOfferEndsTheCallWhenTheTrGWDoesNotGoBack`, `TestRefusedOfferOfTheINVITEIsRejected`, `TestRefusedOfferWithinTheCallIsRejected`, `TestOfferWithinTheCallEndsTheCallWhenTheTrGWMayHaveTakenIt`, `TestRefusedSDPOfAPRACKEndsTheINVITE` and `TestRefusedOfferOfAPRACKSentOnAsAnUPDATEKeepsTheCall`.
 
 ### An SDP in a response or an ACK
 

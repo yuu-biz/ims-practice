@@ -86,7 +86,8 @@ func facing(d interconnect.Direction) (from, to Side) {
 // termination facing where m comes from learns where that side takes
 // its media, and m goes on with the address of the termination facing
 // where it goes. A body without an audio stream that has a port is left
-// as it is.
+// as it is. sender is where the termination now sends, once the TrGW has
+// taken the change; it is not valid when the TrGW was not asked.
 //
 // SIMPLIFIED: TS 24.229 6.7.1.4.1 and RFC 3264 6. Only the first audio
 // stream with a port goes through the TrGW, as the P-CSCF does with
@@ -94,26 +95,26 @@ func facing(d interconnect.Direction) (from, to Side) {
 // Another stream keeps its address, and so would show the address of
 // its sender to the other network. The UEs of this project offer one
 // audio stream.
-func (b *IBCF) throughTrGW(m *sip.Message, c MediaContext, d interconnect.Direction) error {
+func (b *IBCF) throughTrGW(m *sip.Message, c MediaContext, d interconnect.Direction) (sender netip.AddrPort, err error) {
 	description, err := sdp.Parse(m.Body)
 	if err != nil {
-		return fmt.Errorf("%w: %w", errMalformedSDP, err)
+		return netip.AddrPort{}, fmt.Errorf("%w: %w", errMalformedSDP, err)
 	}
-	sender, _, err := description.Audio()
+	sender, _, err = description.Audio()
 	if err != nil {
-		return nil
+		return netip.AddrPort{}, nil
 	}
 	from, to := facing(d)
 	ctx, cancel := trgwContext()
 	defer cancel()
 	if err := b.trgw.Modify(ctx, c.ID, terminations[from], agw.TerminationRequest{Remote: sender}); err != nil {
-		return err
+		return netip.AddrPort{}, err
 	}
 	if err := description.SetAudio(c.local(to)); err != nil {
-		return err
+		return sender, err
 	}
 	m.Body = description.Bytes()
-	return nil
+	return sender, nil
 }
 
 // errMalformedSDP is the error of throughTrGW for a body that it cannot
