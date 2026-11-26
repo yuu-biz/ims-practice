@@ -515,7 +515,7 @@ Each item has a `SIMPLIFIED:` comment in the code; `grep -rn "SIMPLIFIED:" inter
 | simservs, RFC 3261 19.1.4, RFC 3966 4 | Numbers are compared without their visual separators and parameters, SIP URIs by scheme, user and host. | The identities that an IMS network asserts need no more. |
 | simservs, RFC 4745 7.1.3 | Domains are compared without percent-decoding or the `ToASCII` step. | IMS domains are ASCII. |
 | simservs, TS 29.364 7.2.1 | Only OIP, OIR, TIP, TIR, CDIV, CW, HOLD and CB are modelled; the other services of the document are kept but not read. | They are what IR.92 2.3 asks the network for. |
-| UE, GSMA IR.92 2.6 | The User-Agent of Ut is a plain product token, not built as GSMA PRD RCC.07 C.4.1 says. | This project has not read RCC.07. |
+| UE, GSMA IR.92 2.6 | The User-Agent of Ut is a plain product token, not built by the rules of GSMA PRD RCC.07. | No node of this project acts on the User-Agent. |
 | UE, GSMA IR.92 2.3.2 | `ue xcap` takes the `-impu` of the command line as the XUI, not the default identity of the last registration. `ue serve` takes the default identity. | `ue xcap` needs no registration. For a softphone the two are the same; a VoLTE UE registers a temporary identity, so its services are set through `ue serve`. |
 | S-CSCF, TS 24.229 5.4.3.3 step 12 | The privacy of History-Info entries (RFC 7044 10.1.2) is not applied. | A diverted call carries the entries of the diverting users as the AS wrote them. |
 | I-CSCF, TS 24.229 5.3.2.1, 5.3.2.1A and 5.3.2.2 | No "orig" routing for an AS that acts on behalf of a user, and no other S-CSCF when the chosen one does not answer. | The conference focus, the one AS that sends on behalf of someone, sends to the S-CSCF, and this network has no redundant S-CSCF to choose. |

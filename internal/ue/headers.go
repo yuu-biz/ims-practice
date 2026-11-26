@@ -29,8 +29,9 @@ const SessionInterval = 1800 * time.Second
 // version, the terminal, the kind of device, and that no operator has
 // customised it.
 //
-// SIMPLIFIED: IR.92 2.6. The terminal follows the examples of IR.92;
-// the rules of GSMA RCC.07 C.4.1 that it refers to were not read.
+// SIMPLIFIED: IR.92 2.6. The terminal follows the examples of IR.92,
+// not the rules of GSMA RCC.07 that it refers to: no node of this
+// project acts on the User-Agent.
 const UserAgent = "PRD-IR92/24 term-ims-practice/ue-simulator device-type/smart-phone mno-custom/none"
 
 // ReleaseCause is the protocol of the Reason that a UE puts in its BYE

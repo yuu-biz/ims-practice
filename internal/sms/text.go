@@ -287,11 +287,11 @@ func unpackSeptets(packed []byte, n int) []byte {
 // ucs2Encode writes text as 16 bit units, most significant octet first.
 //
 // TS 23.038 6.2.3 names only ISO/IEC 10646, whose UCS2 form has no
-// characters beyond U+FFFF, and the octet order is not stated in the
-// clauses read (TS 23.040 9.1.2.1 makes integers big-endian; clause to
-// be confirmed for UCS2). Handsets send characters beyond U+FFFF, such
-// as emoji, as UTF-16 surrogate pairs, so this package does the same:
-// such a character takes two units, four octets.
+// characters beyond U+FFFF. Neither TS 23.038 nor TS 23.040 states the
+// octet order of a UCS2 character; this package writes it as TS 23.040
+// 9.1.2.1 writes an integer, big-endian. Handsets send characters
+// beyond U+FFFF, such as emoji, as UTF-16 surrogate pairs, so this
+// package does the same: such a character takes two units, four octets.
 func ucs2Encode(text string) []byte {
 	units := utf16.Encode([]rune(text))
 	b := make([]byte, 0, 2*len(units))

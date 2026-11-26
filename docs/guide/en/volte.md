@@ -684,7 +684,7 @@ Each item has a `SIMPLIFIED:` comment in the code; `grep -rn "SIMPLIFIED:" inter
 | UE, TS 24.229 6.1.1 | A bearer lost before the answer only changes the precondition table; the network ends the call. | The P-CSCF releases it (5.2.8.1.1). |
 | UE, TS 24.229 5.1.3.1, 5.1.4A.1 | precondition is in the Supported of every request within a dialog. | One Supported for all calls; a peer that does not use preconditions ignores it. |
 | UE, IR.92 3.2.1, RFC 4867 8.3.1 | The frames go in the modes they were encoded in; CMR and mode-set are not followed. | The UE cannot encode. |
-| UE, IR.92 2.6 | The User-Agent follows the examples of IR.92, not GSMA RCC.07. | RCC.07 was not read. |
+| UE, IR.92 2.6 | The User-Agent follows the examples of IR.92, not the rules of GSMA RCC.07. | No node of this project acts on the User-Agent. |
 | UE, TS 24.229 9.2.1, 5.1.2A.1.1 | A UE without `-epc` takes the P-CSCF address from its configuration; the P-CSCF URI always comes from the configuration. | The softphone path stays; the P-CSCF knows its Route by its host name. |
 | UE, RFC 3264 6.1, RFC 3550 8.2 | The UE sends with the payload type numbers of the peer's SDP, and a new SSRC restarts the statistics. | Every UA here answers with the numbers of the offer, and the peer is the only source. |
 | AMR, RFC 4867 4.4 | No frame CRCs, robust sorting, interleaving or several channels. | IR.92 offers none of them. |

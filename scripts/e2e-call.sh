@@ -306,7 +306,7 @@ if [ -n "$host_called" ]; then
 	fi
 fi
 
-# The roadmap's completion condition: the callee's RTP payload equals
+# The media went through unchanged: the callee's RTP payload equals
 # what the caller encoded. G.711 is lossy, so no WAV is compared.
 sent="$(od -An -v -tx1 captures/ue1-sent.raw | tr -d ' \n')"
 received="$(od -An -v -tx1 captures/ue2-received.raw | tr -d ' \n')"

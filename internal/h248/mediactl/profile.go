@@ -184,27 +184,25 @@ func errorDescriptor(code int, detail string) *h248.ErrorDescriptor {
 // errorNames holds the codes that the two sides send, from the lists
 // of TS 29.334 5.7.10, with the clause of H.248.8 (03/2013) that
 // defines each. 507 is not in the lists of Iq; see Controller.notify.
-// 502 carries the name that Table 5.7.10.2 gives it, and no clause: the
-// clause of H.248.8 that defines it has not been read.
 var errorNames = map[int]string{
-	411: "The transaction refers to an unknown ContextID",     // 4.2.7
-	430: "Unknown TerminationID",                              // 4.2.12
-	431: "No TerminationID matched a wildcard",                // 4.2.13
-	434: "Max number of Terminations in a Context exceeded",   // 4.2.16
-	435: "Termination ID is not in specified Context",         // 4.2.17
-	440: "Unsupported or unknown Package",                     // 4.2.18
-	441: "Missing Remote or Local Descriptor",                 // 4.2.19
-	444: "Unsupported or Unknown Descriptor",                  // 4.2.22
-	446: "Unsupported or Unknown Parameter",                   // 4.2.24
-	449: "Unsupported or Unknown Parameter or Property Value", // 4.2.27
-	450: "No such property in this package",                   // 4.2.28
-	451: "No such event in this package",                      // 4.2.29
-	452: "No such signal in this package",                     // 4.2.30
-	457: "Missing parameter in signal or event",               // 4.2.35
-	458: "Unexpected Event/RequestID",                         // 4.2.36
-	500: "Internal software Failure in MG or MGC",             // 4.2.41
-	501: "Not Implemented",                                    // 4.2.42
-	502: "Not ready",
+	411: "The transaction refers to an unknown ContextID",                              // 4.2.7
+	430: "Unknown TerminationID",                                                       // 4.2.12
+	431: "No TerminationID matched a wildcard",                                         // 4.2.13
+	434: "Max number of Terminations in a Context exceeded",                            // 4.2.16
+	435: "Termination ID is not in specified Context",                                  // 4.2.17
+	440: "Unsupported or unknown Package",                                              // 4.2.18
+	441: "Missing Remote or Local Descriptor",                                          // 4.2.19
+	444: "Unsupported or Unknown Descriptor",                                           // 4.2.22
+	446: "Unsupported or Unknown Parameter",                                            // 4.2.24
+	449: "Unsupported or Unknown Parameter or Property Value",                          // 4.2.27
+	450: "No such property in this package",                                            // 4.2.28
+	451: "No such event in this package",                                               // 4.2.29
+	452: "No such signal in this package",                                              // 4.2.30
+	457: "Missing parameter in signal or event",                                        // 4.2.35
+	458: "Unexpected Event/RequestID",                                                  // 4.2.36
+	500: "Internal software Failure in MG or MGC",                                      // 4.2.41
+	501: "Not Implemented",                                                             // 4.2.42
+	502: "Not ready",                                                                   // 4.2.43
 	505: "Transaction Request Received before a ServiceChange Reply has been received", // 4.2.46
 	506: "Number of TransactionPendings Exceeded",                                      // 4.2.47
 	406: "Version Not Supported",                                                       // 4.2.5
