@@ -367,11 +367,11 @@ func TestSettingsOfOneChangeGoInForceTogether(t *testing.T) {
 	change(t, api, "hss.default_service_profile", "trial")
 
 	h.beginSettings()
-	h.pending.admission = AdmitAll
+	h.setting(func(s *settings) { s.admission = AdmitAll })
 	if got := h.Admission(); got != AdmitTestUsers {
 		t.Errorf("before the commit the policy in force is %q, want %q", got, AdmitTestUsers)
 	}
-	h.pending.defaultServiceProfile = "default"
+	h.setting(func(s *settings) { s.defaultServiceProfile = "default" })
 	if got := h.DefaultServiceProfile(); got != "trial" {
 		t.Errorf("before the commit the default profile in force is %q, want trial", got)
 	}

@@ -208,26 +208,28 @@ func (h *HSS) DefaultServiceProfile() string { return h.settings.Load().defaultS
 // for the test users that name none of their own.
 func (h *HSS) TestUserServiceProfile() string { return h.settings.Load().testUserServiceProfile }
 
-// beginSettings starts a change of the settings: the ones in force are
-// copied to pending, which the change writes to. settingsMu is held from
-// here to commitSettings, so that two changes cannot each write back
-// what it read.
+// beginSettings starts a change of the settings, which gathers in
+// pending what each set of the change does to a value of the settings.
+// settingsMu is held from here to commitSettings, so that two changes
+// cannot each write back what it read.
 //
 // Every beginSettings is answered by a commitSettings, so the lock is
 // always let go again: the maintenance API calls the begin of a group
 // of settings before the first of them is set and its commit after the
 // last, for one change of the configuration at a time, and the sets in
-// between only write fields of pending, so none of them can fail or
-// panic (maintenance.Together, maintenance.ChangeConfiguration). The
-// lock belongs to the changes of this instance alone, and no request
-// takes it.
+// between only add to pending, so none of them can fail or panic
+// (maintenance.Together, maintenance.ChangeConfiguration). The lock
+// belongs to the changes of this instance alone, and no request takes
+// it.
 func (h *HSS) beginSettings() {
 	h.settingsMu.Lock()
-	next := *h.settings.Load()
-	h.pending = &next
+	h.pending = nil
 }
 
-// commitSettings puts pending in force at generation, all of it at
+// setting records what one set of a change does to the settings.
+func (h *HSS) setting(set func(*settings)) { h.pending = append(h.pending, set) }
+
+// commitSettings puts the change in force at generation, all of it at
 // once: it writes the settings to the Store, where the other instances
 // read them (storeSettings), and then holds them for the requests of
 // this instance. It changes nothing when the Store cannot be written or
@@ -239,10 +241,9 @@ func (h *HSS) beginSettings() {
 // the change to every instance of the role, and the others find it in
 // force there and start nothing.
 func (h *HSS) commitSettings(generation uint64) error {
-	next := h.pending
-	next.generation = generation
+	sets := h.pending
 	h.pending = nil
-	wrote, err := h.storeSettings(h.life, next)
+	next, wrote, err := h.storeSettings(h.life, sets, generation)
 	if err == nil {
 		h.takeOn(next)
 	}
@@ -261,41 +262,51 @@ func (h *HSS) commitSettings(generation uint64) error {
 // rounds are already rare.
 const settingsWrites = 10
 
-// storeSettings writes next, the settings of a change, to the Store, and
-// reports whether it wrote at all: it writes nothing when the Store has
-// next already, which is the change of the role that the OAM server
-// sent another instance first.
-// The settings of a later change in the Store, or other settings of the
-// same generation, are a change that overtook next, which it refuses
-// with maintenance.ErrStaleGeneration.
-func (h *HSS) storeSettings(ctx context.Context, next *settings) (wrote bool, err error) {
+// storeSettings writes the settings of a change to the Store: the
+// settings of the Store with what sets does to them, at generation. The
+// change names only the settings it sets, so the others keep the values
+// of the Store, which may be those of a change through another instance
+// that this one has not taken on yet. It returns the settings of the
+// change, and whether it wrote at all: it writes nothing when the Store
+// has them already, which is the change of the role that the OAM server
+// sent another instance first. The settings of a later change in the
+// Store, or other settings of the same generation, are a change that
+// overtook this one, which it refuses with maintenance.ErrStaleGeneration.
+func (h *HSS) storeSettings(ctx context.Context, sets []func(*settings), generation uint64) (*settings, bool, error) {
 	for range settingsWrites {
 		stored, ok, err := h.store.Settings(ctx)
 		if err != nil {
-			return false, err
+			return nil, false, err
 		}
 		// A Store with no settings yet is one that this instance could
-		// not read since it started.
+		// not read since it started, so those in force are of its file.
+		next := *h.settings.Load()
 		var old *StoredSettings
+		if ok {
+			next, old = *settingsOf(stored), &stored
+		}
+		for _, set := range sets {
+			set(&next)
+		}
+		next.generation = generation
 		if ok {
 			switch {
 			case stored == next.stored():
-				return false, nil
-			case stored.Generation >= next.generation:
-				return false, fmt.Errorf("%w: the settings of generation %d are in force on the instances of the role",
+				return &next, false, nil
+			case stored.Generation >= generation:
+				return nil, false, fmt.Errorf("%w: the settings of generation %d are in force on the instances of the role",
 					maintenance.ErrStaleGeneration, stored.Generation)
 			}
-			old = &stored
 		}
 		swapped, err := h.store.CompareAndSwapSettings(ctx, old, next.stored())
 		if err != nil {
-			return false, err
+			return nil, false, err
 		}
 		if swapped {
-			return true, nil
+			return &next, true, nil
 		}
 	}
-	return false, fmt.Errorf("the settings of the store were changed by other instances %d times", settingsWrites)
+	return nil, false, fmt.Errorf("the settings of the store were changed by other instances %d times", settingsWrites)
 }
 
 // takeOn puts next in force for the requests of this instance, unless
@@ -478,9 +489,10 @@ type HSS struct {
 	// together for one change, wherever the change comes from.
 	settings   atomic.Pointer[settings]
 	settingsMu sync.Mutex
-	// pending is the settings a change is writing, between beginSettings
-	// and commitSettings, under settingsMu. No request reads it.
-	pending *settings
+	// pending is what the sets of a change do to the settings, between
+	// beginSettings and commitSettings, under settingsMu. No request
+	// reads it.
+	pending []func(*settings)
 
 	// requests counts the Cx and Sh requests this instance is
 	// answering, the users of the maintenance API (maintenance.go). It
