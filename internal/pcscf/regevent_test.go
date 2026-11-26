@@ -176,15 +176,13 @@ func registration(state, contactState reginfo.State, event reginfo.Event) reginf
 }
 
 func TestPCSCFSubscribesToTheRegEventAndEndsTheAssociation(t *testing.T) {
-	grace := associationGrace
-	associationGrace = 300 * time.Millisecond
-	t.Cleanup(func() { associationGrace = grace })
 	home := newFakeHome(t)
+	store := NewMemoryStore()
 	p := newPCSCF(t, Config{Host: "pcscf." + domain, Port: 5060, VisitedNetworkID: domain},
 		locatorFunc(func(string) []sip.Destination {
 			return []sip.Destination{{Transport: sip.UDP, Addr: home.stack.LocalAddr()}}
 		}),
-		NewMemoryStore(), nil, quiet())
+		store, nil, quiet())
 	pcscfStack := newPCSCFStack(t, p)
 	p.SetStack(pcscfStack)
 	// Fast timers, so that a request that the P-CSCF discards times out
@@ -299,18 +297,51 @@ func TestPCSCFSubscribesToTheRegEventAndEndsTheAssociation(t *testing.T) {
 	if resp := home.notify(t, sub, pcscfStack, registration(reginfo.Terminated, reginfo.Terminated, reginfo.Expired)); resp.StatusCode != 200 {
 		t.Fatalf("last NOTIFY answered %d", resp.StatusCode)
 	}
-	// 5.2.5.2 NOTE 2: the last NOTIFY must still reach the UE, so a
-	// request to it goes on for the grace, and finds no registration
-	// after. The UE's own requests are discarded at once (5.2.1).
+	// 5.2.5.2 NOTE 2: the last NOTIFY must still reach the UE, so the
+	// association that has ended stays for the grace, and a request to
+	// the UE goes on meanwhile. The UE's own requests are discarded at
+	// once (5.2.1).
+	ended := endedAssociation(t, store, "sip:ue@127.0.0.1")
+	if kept := ended.KeepUntil.Sub(ended.Expires); kept != associationGrace {
+		t.Errorf("the association that ended is kept for %v, want the grace of %v", kept, associationGrace)
+	}
 	if got := toUE(); got != 200 {
 		t.Errorf("a request to the UE within the grace was answered %d, want the UE's 200", got)
 	}
 	if got := fromUE(); got != 0 {
 		t.Errorf("a request from the UE after the registration ended was answered %d, want nothing (TS 24.229 5.2.5.2)", got)
 	}
-	time.Sleep(associationGrace + 200*time.Millisecond)
+	// At the end of the grace the Store forgets the association, and a
+	// request to the UE finds no registration.
+	if err := store.DeleteAssociation(context.Background(), ended.Source); err != nil {
+		t.Fatal(err)
+	}
 	if got := toUE(); got != 480 {
 		t.Errorf("a request to the UE after the grace was answered %d, want 480", got)
+	}
+}
+
+// endedAssociation waits until the association of contact in store has
+// ended, as the P-CSCF ends it on the NOTIFY that reports the end of
+// the registration, and returns it.
+func endedAssociation(t *testing.T, store Store, contact string) Association {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		a, ok, err := store.AssociationOfContact(context.Background(), contact)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !ok {
+			t.Fatalf("the Store has no association of %s: none was kept for the grace", contact)
+		}
+		if !a.Expires.After(time.Now()) {
+			return a
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("the association of %s has not ended 5 s after the NOTIFY: %+v", contact, a)
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
 }
 
