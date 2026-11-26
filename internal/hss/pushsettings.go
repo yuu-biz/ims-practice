@@ -259,11 +259,12 @@ var errRoundGivenUp = errors.New("the round was given up")
 var errPushOvertaken = errors.New("the push was overtaken")
 
 // claimPushes claims the rounds that are due and sends one page of each
-// (pushPage), each on a goroutine of its own, which Close waits for. A
-// node that takes no Diameter connections reaches no S-CSCF, so it
-// claims none and leaves them to the instances that do; so does an
-// instance that the operator has shut down or locked, which takes on no
-// new work and whose connections are closing or closed (maintenance.go).
+// (pushPage), each on a goroutine of its own, which Close waits for. An
+// instance that has no peers yet, as the sweep starts in New and the
+// peers come later with SetPeers, reaches no S-CSCF, so it claims none
+// and leaves them to the instances that do; so does an instance that the
+// operator has shut down or locked, which takes on no new work and whose
+// connections are closing or closed (maintenance.go).
 func (h *HSS) claimPushes() {
 	peers := h.peers.Load()
 	if peers == nil {

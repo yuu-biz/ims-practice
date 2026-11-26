@@ -201,14 +201,13 @@ func run(configPath string, log *slog.Logger, level *slog.LevelVar) error {
 			// that listens for none has nothing to drain.
 			managed = append(managed, managedRole{function: hssRole.Function(server),
 				manage: hssRole.Manage, settings: hssRole.Settings()})
+			// The S-CSCF and the service centres connect to the HSS, so
+			// the RTR and the ALR go back over the server's connections.
+			// A nil server would be a Peers that is not nil.
+			hssRole.SetPeers(server)
 		}
 		if epcRole != nil {
 			epcRole.SetAFs(server)
-		}
-		if hssRole != nil {
-			// The S-CSCF and the service centres connect to the HSS, so
-			// the RTR and the ALR go back over the server's connections.
-			hssRole.SetPeers(server)
 		}
 		// One connection per entry of the diameter section, in its order,
 		// so that peersOfKind finds each peer at the entry's index.
