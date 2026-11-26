@@ -103,8 +103,17 @@ func (p *PCSCF) PolicyEvent(e policy.Event) {
 // process rather than going into a time index of the Store
 // (ExpiryKind): it is short, and the 2xx it waits for has just passed
 // this instance.
+//
+// Whether to wait or to release at once is decided in the one step that
+// writes the mark, ReleasePending or Released. Another instance may
+// confirm the dialog with the 2xx that it passes on, and a release that
+// read the dialog first and wrote Released in a second step would send
+// its BYEs ahead of that 2xx. Once Released, the dialog is confirmed by
+// no 2xx (remember).
 func (p *PCSCF) release(key DialogKey, cause ReleaseCause, afterACK bool, log *slog.Logger) {
+	marked := false
 	d, ok, err := p.store.UpdateDialog(context.Background(), key, func(d *Dialog) {
+		marked = false
 		if d.Released {
 			return
 		}
@@ -114,29 +123,29 @@ func (p *PCSCF) release(key DialogKey, cause ReleaseCause, afterACK bool, log *s
 		if d.Confirmed && (afterACK || !d.Acknowledged) {
 			d.ReleasePending = true
 		}
+		if !d.ReleasePending {
+			d.Released, marked = true, true
+		}
 	})
 	if err != nil {
 		log.Warn("the dialog is not released: the store failed", "call_id", key.CallID, "error", err.Error())
 		return
 	}
-	if !ok || d.Released {
+	switch {
+	case !ok || (d.Released && !marked):
 		return
-	}
-	if d.ReleasePending {
+	case d.ReleasePending:
 		log.Info("the dialog is released once the ACK for its 2xx has passed", "call_id", key.CallID)
 		time.AfterFunc(p.ackWait, func() { p.releaseNow(key, log) })
 		return
 	}
-	p.releaseNow(key, log)
+	p.releaseMarked(d, log)
 }
 
-// releaseNow is release once the BYEs may go out. It marks the dialog
-// Released, once however many events ask for it, and frees what the
-// dialog holds. The dialog stays in the Store until the release is over,
-// so that the P-CSCF answers a request within it 481 meanwhile (TS
-// 24.229 5.2.8.1.3, subsequent): until the BYEs are answered for a
-// confirmed dialog (sendBYEs), and until its INVITE has ended for an
-// early one (setup.end).
+// releaseNow is release once the BYEs may go out: after the ACK that a
+// ReleasePending dialog waited for, or after ackWait. It marks the
+// dialog Released, once however many events ask for it, and then
+// releases it (releaseMarked).
 func (p *PCSCF) releaseNow(key DialogKey, log *slog.Logger) {
 	first := false
 	d, ok, err := p.store.UpdateDialog(context.Background(), key, func(d *Dialog) {
@@ -150,6 +159,17 @@ func (p *PCSCF) releaseNow(key DialogKey, log *slog.Logger) {
 	if !ok || !first {
 		return
 	}
+	p.releaseMarked(d, log)
+}
+
+// releaseMarked releases d, which this call has just marked Released,
+// and frees what it holds. The dialog stays in the Store until the
+// release is over, so that the P-CSCF answers a request within it 481
+// meanwhile (TS 24.229 5.2.8.1.3, subsequent): until the BYEs are
+// answered for a confirmed dialog (sendBYEs), and until its INVITE has
+// ended for an early one (setup.end).
+func (p *PCSCF) releaseMarked(d Dialog, log *slog.Logger) {
+	key := d.Key
 	log = log.With("call_id", key.CallID)
 	switch {
 	case p.abortSetup(d):
