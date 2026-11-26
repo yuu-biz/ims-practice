@@ -468,6 +468,8 @@ This project carries short messages between the networks this way because it is 
 
 **Statistics > Flow Graph** on the capture of the link draws the ladder between the two IBCFs.
 
+`scripts/e2e-interconnect.sh` runs every filter of this table against the three captures of this scenario. A filter must find a frame in one of them, and the one that must find nothing must find no frame in the captures of network B and of the link; otherwise the run fails. The filter with `<Call-ID>` only has to be one that tshark can read.
+
 ## TS 29.165, GSMA IR.95 and TTC
 
 | TS 29.165 | Here |

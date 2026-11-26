@@ -40,7 +40,7 @@ jobs:
             grep -Ev '\.md$|^docs/|^LICENSE|^NOTICE$' | head -n 1 || true)
           if [ -z "$code" ]; then
             code=$(git diff --name-only "$BASE" HEAD |
-              grep -E '^docs/guide/(en|ja)/(capture|README)\.md$|^docs/guide/en/(mmtel|mrf|oss|sms|volte)\.md$' | head -n 1 || true)
+              grep -E '^docs/guide/(en|ja)/(capture|README)\.md$|^docs/guide/en/(interconnect|mmtel|mrf|oss|sms|volte)\.md$' | head -n 1 || true)
           fi
           echo "first file that is not a document: ${code:-none}"
           echo "code=$([ -n "$code" ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
@@ -63,7 +63,7 @@ jobs:
         run: python scripts/check_simplified.py
       - name: every abbreviation in the guides is in the glossary
         run: python scripts/check_glossary.py
-      - name: the display filters of a guide are the same in both languages
+      - name: the display filters of a guide are the same in both languages, and a scenario runs them
         run: python scripts/guide_filters.py --check
       - name: the tests of the scripts
         run: python -m unittest discover -s scripts -p "*_test.py"

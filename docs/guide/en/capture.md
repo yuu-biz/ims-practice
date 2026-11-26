@@ -121,7 +121,7 @@ A short message travels in the body of a SIP MESSAGE, with the media type `appli
 | `sip.In-Reply-To` | The submit reports and the delivery reports: each names the MESSAGE it answers. |
 | `diameter.cmd.code == 306 \|\| diameter.cmd.code == 307` | The Sh messages (application 16777217): UDR and UDA, PUR and PUA. |
 
-`scripts/e2e-sms.sh` writes the frame list of its short messages to `e2e-out/sms-ladder.txt`.
+`scripts/e2e-sms.sh` runs every filter of this table against the capture of the SMS scenario: a filter that finds no frame fails the run. It also writes the frame list of its short messages to `e2e-out/sms-ladder.txt`.
 
 ## Read the SIP inside ESP
 
