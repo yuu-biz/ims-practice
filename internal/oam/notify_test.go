@@ -838,7 +838,7 @@ func TestPlanEvents(t *testing.T) {
 			steps := nb.planEvents("scscf", tt.st, tt.ev, now)
 			var got []string
 			for _, step := range steps {
-				for _, n := range step.notifications {
+				if n := step.notification; n != nil {
 					s := string(n.notificationType)
 					if r, ok := n.body.(mns.NotifyAlarmListRebuilt); ok {
 						s += " " + r.Reason
@@ -860,7 +860,7 @@ func TestPlanEvents(t *testing.T) {
 	b := nb.planEvents("scscf", AlarmWatchState{Seed: "s", JournalID: "j1", LastNumber: 1, Generation: 2}, maintenance.AlarmEvents{JournalID: "j1", Lost: true}, now.Add(time.Second))
 	c := nb.planEvents("scscf", AlarmWatchState{Seed: "s", JournalID: "j1", LastNumber: 2}, maintenance.AlarmEvents{JournalID: "j1", Lost: true}, now)
 	id := func(steps []watchStep) int64 {
-		return steps[0].notifications[0].body.(mns.NotifyAlarmListRebuilt).NotificationId
+		return steps[0].notification.body.(mns.NotifyAlarmListRebuilt).NotificationId
 	}
 	if id(a) != id(b) || id(a) == id(c) || id(a) <= 0 || id(a) >= 1<<53 {
 		t.Errorf("the ids %d, %d, %d", id(a), id(b), id(c))

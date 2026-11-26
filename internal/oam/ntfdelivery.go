@@ -42,11 +42,8 @@ func newNotificationMetrics(reg *metrics.Registry) (notificationMetrics, error) 
 	return notificationMetrics{sent: sent}, err
 }
 
-// recipient is a subscription as one round of sending has it: the
-// subscription and its filter, read once for the round, with the mark
-// of a miss as the round has changed it.
+// recipient is a subscription with its filter read.
 type recipient struct {
-	mu     sync.Mutex
 	sub    NtfSubscriptionControl
 	filter *jex.Condition
 }
@@ -79,35 +76,34 @@ func (r *recipient) selects(n alarmNotification) bool {
 	return r.filter == nil || r.filter.Matches(n.document)
 }
 
-// notify sends each notification, in order, to every subscription that
-// selects it. A notification goes to its recipients at once, at most
+// notify sends n to every subscription that selects it, at once, at most
 // NotificationConcurrency of them, each within NotificationTimeout, and
-// the next one goes after the last of them has answered, so that each
-// recipient gets the notifications of one node in the order of the
-// node's journal. The subscriptions are read once, at the start.
+// returns after the last of them has answered. The watcher sends the
+// next notification of the node only then, so that each recipient gets
+// the notifications of one node in the order of the node's journal. The
+// subscriptions are read at the start.
 //
-// A recipient that does not take a notification is marked Missed, and
-// from then on is sent nothing but the notifyAlarmListRebuilt of the
-// whole list that the miss owes it, which asks the OSS to read the list
-// again (sendOwed). So an OSS that has stopped answering costs the
-// watcher of each node one NotificationTimeout, once, and not one for
-// each notification: the others are not held up behind it, and the
-// journals of the nodes do not run past their watchers. The mark is in
-// the subscription store, so the watchers of every node and every
-// instance skip the recipient alike. A skip while the turn of the mark
-// is taken is recorded (markSkipped), so that the notifyAlarmListRebuilt
-// on its way, which the OSS may have read the list for already, does
-// not clear the mark when the OSS takes it, and the OSS is sent
-// another.
+// A recipient that does not take n is marked Missed, and from then on
+// is sent nothing but the notifyAlarmListRebuilt of the whole list that
+// the miss owes it, which asks the OSS to read the list again
+// (sendOwed). So an OSS that has stopped answering costs the watcher of
+// each node one NotificationTimeout, once, and not one for each
+// notification: the others are not held up behind it, and the journals
+// of the nodes do not run past their watchers. The mark is in the
+// subscription store, so the watchers of every node and every instance
+// skip the recipient alike. A skip while the turn of the mark is taken
+// is recorded (markSkipped), so that the notifyAlarmListRebuilt on its
+// way, which the OSS may have read the list for already, does not clear
+// the mark when the OSS takes it, and the OSS is sent another.
 //
 // notify fails when it could not read the subscriptions, or could not
 // write the mark of a miss or a skip: then some recipient has neither
-// the notifications nor the mark that would have it read the list
-// again. The watcher sends the notifications again, and saves nothing
-// until they have gone (deliver). A recipient that took a notification
-// is put in taken, and passed over for it when it is sent again, so
-// that while the store cannot be written, the recipients that answer
-// are not sent it at every try.
+// the notification nor the mark that would have it read the list
+// again. The watcher sends the notification again, and saves nothing
+// until it has gone (deliver). A recipient that took it is put in
+// taken, and passed over when it is sent again, so that while the store
+// cannot be written, the recipients that answer are not sent it at
+// every try.
 //
 // The OSS that is sent a notification again after it missed one gets no
 // copy of the ones it missed: TS 28.111 8.5.2 lets the producer say,
@@ -123,136 +119,107 @@ func (r *recipient) selects(n alarmNotification) bool {
 // notification transport of TS 28.532, and the OSS is told instead to
 // read the list, which 8.5.2 has the notification ask for when
 // notifications were not sent.
-func (s *Server) notify(ctx context.Context, taken deliveries, notifications ...alarmNotification) error {
-	if len(notifications) == 0 {
-		return nil
-	}
+func (s *Server) notify(ctx context.Context, taken deliveries, n alarmNotification) error {
 	subs, err := s.ntfSubscriptions.NtfSubscriptions(ctx)
 	if err != nil {
 		return fmt.Errorf("the subscriptions could not be read: %w", err)
 	}
-	recipients := make([]*recipient, 0, len(subs))
+	// mu guards taken and failed, which the POSTs write as they end.
+	var (
+		mu     sync.Mutex
+		failed error
+		wg     sync.WaitGroup
+	)
+	fail := func(err error) {
+		mu.Lock()
+		failed = err
+		mu.Unlock()
+	}
+	sem := make(chan struct{}, s.notificationConcurrency)
 	for _, sub := range subs {
 		r, err := newRecipient(sub)
 		if err != nil {
 			s.log.Error("a subscription has a filter that cannot be read", "id", sub.ID, "error", err.Error())
 			continue
 		}
-		recipients = append(recipients, r)
-	}
-	var (
-		mu     sync.Mutex
-		failed error
-	)
-	sem := make(chan struct{}, s.notificationConcurrency)
-	for i, n := range notifications {
-		var wg sync.WaitGroup
-		for _, r := range recipients {
-			if !r.selects(n) {
-				continue
-			}
-			d := delivery{notification: i, subscription: r.sub.ID, address: r.sub.Attributes.NotificationRecipientAddress}
-			mu.Lock()
-			done := taken[d]
-			mu.Unlock()
-			if done {
-				continue
-			}
-			r.mu.Lock()
-			missed := r.sub.Missed
-			r.mu.Unlock()
-			if missed {
-				if err := s.markSkipped(ctx, r); err != nil {
-					mu.Lock()
-					failed = err
-					mu.Unlock()
-				}
-				continue
-			}
-			wg.Go(func() {
-				sem <- struct{}{}
-				defer func() { <-sem }()
-				// A POST that stopped because the watcher is stopping is
-				// not the recipient's miss: the watcher saves nothing
-				// then, and the next holder of the watch sends the
-				// notification again.
-				if s.post(ctx, r.sub, n) {
-					mu.Lock()
-					taken[d] = true
-					mu.Unlock()
-					return
-				}
-				if ctx.Err() != nil {
-					return
-				}
-				if err := s.markMissed(ctx, r); err != nil {
-					mu.Lock()
-					failed = err
-					mu.Unlock()
-				}
-			})
+		if !r.selects(n) {
+			continue
 		}
-		wg.Wait()
-		if failed != nil {
-			return failed
+		d := delivery{subscription: sub.ID, address: sub.Attributes.NotificationRecipientAddress}
+		mu.Lock()
+		done := taken[d]
+		mu.Unlock()
+		if done {
+			continue
 		}
+		if sub.Missed {
+			if err := s.markSkipped(ctx, sub); err != nil {
+				fail(err)
+			}
+			continue
+		}
+		wg.Go(func() {
+			sem <- struct{}{}
+			defer func() { <-sem }()
+			// A POST that stopped because the watcher is stopping is not
+			// the recipient's miss: the watcher saves nothing then, and
+			// the next holder of the watch sends the notification again.
+			if s.post(ctx, sub, n) {
+				mu.Lock()
+				taken[d] = true
+				mu.Unlock()
+				return
+			}
+			if ctx.Err() != nil {
+				return
+			}
+			if err := s.markMissed(ctx, sub.ID); err != nil {
+				fail(err)
+			}
+		})
 	}
-	return nil
+	wg.Wait()
+	return failed
 }
 
-// deliveries are the notifications of one call of deliver that each
-// recipient took.
+// deliveries are the recipients that took the notification of one call
+// of deliver.
 type deliveries map[delivery]bool
 
-// delivery is a notification, by its place among the notifications of
-// a call of deliver, that the subscription took at the address. A
-// subscription that a PUT has moved to another address since has not
-// taken it there.
+// delivery is a subscription that took the notification at the
+// address. A subscription that a PUT has moved to another address since
+// has not taken it there.
 type delivery struct {
-	notification int
 	subscription string
 	address      string
 }
 
-// markMissed records a miss of the recipient, in the store for every
-// watcher and in the round for the rest of it. A subscription that is
-// gone needs no mark.
-func (s *Server) markMissed(ctx context.Context, r *recipient) error {
-	retryAt := s.now().Add(s.missedRetryInterval)
-	r.mu.Lock()
-	r.sub.Missed, r.sub.RetryAt, r.sub.Claimed = true, retryAt, false
-	r.sub.MissedEpoch++
-	id := r.sub.ID
-	r.mu.Unlock()
-	err := s.ntfSubscriptions.MarkNtfSubscriptionMissed(ctx, id, retryAt)
+// markMissed records a miss of the subscription id in the store, for
+// every watcher. A subscription that is gone needs no mark.
+func (s *Server) markMissed(ctx context.Context, id string) error {
+	err := s.ntfSubscriptions.MarkNtfSubscriptionMissed(ctx, id, s.now().Add(s.missedRetryInterval))
 	if err != nil && !errors.Is(err, ErrNotFound) {
 		return fmt.Errorf("the mark of a missed notification to %s could not be written: %w", id, err)
 	}
 	return nil
 }
 
-// markSkipped records, if need be, that the recipient was passed over
-// for a notification as it is marked. The alarm of the notification
-// changed before the round read the subscriptions, so a
-// notifyAlarmListRebuilt whose turn is taken after that read reaches
-// the OSS after the change: the skip needs no record. One whose turn
-// the read found taken may have reached the OSS before it, and the OSS
-// read the list without it; then the store raises the epoch of the
-// mark, so that the answer to that notification does not clear it
-// (MarkNtfSubscriptionSkipped). Once that is written, the turn of the
-// new epoch is to come, and the rest of the round records no more
-// skips.
-func (s *Server) markSkipped(ctx context.Context, r *recipient) error {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	if !r.sub.Claimed {
+// markSkipped records, if need be, that the marked subscription sub was
+// passed over for a notification. The alarm of the notification changed
+// before notify read the subscriptions, so a notifyAlarmListRebuilt
+// whose turn is taken after that read reaches the OSS after the change:
+// the skip needs no record. One whose turn the read found taken may have
+// reached the OSS before it, and the OSS read the list without it; then
+// the store raises the epoch of the mark, so that the answer to that
+// notification does not clear it (MarkNtfSubscriptionSkipped).
+func (s *Server) markSkipped(ctx context.Context, sub NtfSubscriptionControl) error {
+	if !sub.Claimed {
 		return nil
 	}
-	err := s.ntfSubscriptions.MarkNtfSubscriptionSkipped(ctx, r.sub.ID, r.sub.MissedEpoch)
+	err := s.ntfSubscriptions.MarkNtfSubscriptionSkipped(ctx, sub.ID, sub.MissedEpoch)
 	if err != nil && !errors.Is(err, ErrNotFound) {
-		return fmt.Errorf("the skip of a marked subscription %s could not be written: %w", r.sub.ID, err)
+		return fmt.Errorf("the skip of a marked subscription %s could not be written: %w", sub.ID, err)
 	}
-	r.sub.Claimed = false
 	return nil
 }
 

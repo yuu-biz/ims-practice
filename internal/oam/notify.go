@@ -186,10 +186,10 @@ func (nb *northbound) eventNotification(node string, journal string, e maintenan
 }
 
 // watchStep is what the watcher of a node does with one answer of the
-// node: send the notifications, in order, then save the state.
+// node: send the notification, if any, then save the state.
 type watchStep struct {
-	notifications []alarmNotification
-	state         AlarmWatchState
+	notification *alarmNotification
+	state        AlarmWatchState
 }
 
 // planEvents turns an answer of the node with the events of its journal
@@ -223,7 +223,7 @@ func (nb *northbound) planEvents(node string, st AlarmWatchState, ev maintenance
 	rebuilt := func(reason string, id int64) {
 		n, err := nb.alarmListRebuilt(me, reason, id, now)
 		if err == nil {
-			first.notifications = append(first.notifications, n)
+			first.notification = &n
 		}
 	}
 	switch {
@@ -261,7 +261,7 @@ func (nb *northbound) planEvents(node string, st AlarmWatchState, ev maintenance
 		st.LastNumber = e.Number
 		step := watchStep{state: st}
 		if n, err := nb.eventNotification(node, ev.JournalID, e); err == nil {
-			step.notifications = append(step.notifications, n)
+			step.notification = &n
 		}
 		steps = append(steps, step)
 	}
@@ -633,7 +633,7 @@ func (s *Server) watchNode(ctx context.Context, e Endpoint, w AlarmWatch, releas
 			continue
 		}
 		for _, step := range s.mns.planEvents(e.Name, st, ev, s.now()) {
-			if !s.deliver(ctx, pollCtx, e.Name, step.notifications...) {
+			if step.notification != nil && !s.deliver(ctx, pollCtx, e.Name, *step.notification) {
 				return
 			}
 			// An answer without events, as when the wait ends, leaves the
@@ -648,18 +648,18 @@ func (s *Server) watchNode(ctx context.Context, e Endpoint, w AlarmWatch, releas
 	}
 }
 
-// deliver sends the notifications (notify) until they have gone, and
-// says whether they have: false when ctx or stop ends first. A failure is tried
+// deliver sends the notification n (notify) until it has gone, and says
+// whether it has: false when ctx or stop ends first. A failure is tried
 // again after a wait that doubles each time, from an eighth of
 // AlarmEventsWait up to the whole of it, so that a store that has
 // stopped answering is asked a few times a wait and no more. A try
 // sends nothing to a recipient that took the notification at an
 // earlier one.
-func (s *Server) deliver(ctx, stop context.Context, node string, notifications ...alarmNotification) bool {
+func (s *Server) deliver(ctx, stop context.Context, node string, n alarmNotification) bool {
 	backoff := s.alarmEventsWait / 8
 	taken := deliveries{}
 	for {
-		err := s.notify(ctx, taken, notifications...)
+		err := s.notify(ctx, taken, n)
 		if err == nil {
 			return true
 		}
