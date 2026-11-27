@@ -405,7 +405,7 @@ SMS over NAS を実装するときに決めることと、有力な案です。�
 | UE シミュレータの NAS の SMS | `internal/ue` | SMC、EPC のスタブの受け口の形 |
 | 5GC のスタブの AMF と SMSF | 5GC のスタブ | SMC、SC、HSS の S6c、5GC のスタブ |
 | IP-SM-GW のドメイン選択と切り替え | `internal/ipsmgw` | HSS の S6c、IP-SM-GW の SGd、EPC のスタブ |
-| 手順書、ラダー図、e2e、pcap の確認 | `docs/guide`、`scripts` | 上のすべて |
+| 手順書、シーケンス図、e2e、pcap の確認 | `docs/guide`、`scripts` | 上のすべて |
 
 - SMC の状態機械は、他のパッケージを読み込まずに作れます。
 - SC、HSS の S6c、IP-SM-GW の SGd は、互いに別のパッケージなので、インタフェースを先に決めれば並べられます。

@@ -313,7 +313,7 @@ docker compose run --rm ue call tel:+12025550102
 | S-CSCF から AS への INVITE | `orig-cdiv`。UE 2 の発信の規制がここで掛かる。 |
 
 - 転送は 1 つの通話で 5 回までです。超えると `Warning: 399` を付けた 480 です。
-- cause は CFU が 302、CFB が 486、CFNR が 408、CFNL が 404、CFNRc が 503 です（TS 24.604 Annex C）。手順書のラダー図にはダイアログが C1 から C6 まで 6 つあります。
+- cause は CFU が 302、CFB が 486、CFNR が 408、CFNL が 404、CFNRc が 503 です（TS 24.604 Annex C）。手順書のシーケンス図にはダイアログが C1 から C6 まで 6 つあります。
 - UE 3 の項目に `Privacy=history` が付くのはなぜでしょうか。UE 3 が番号の表示を許すかどうかを、UE 2 の AS は知らないからです。
 
 フィルタは `sip.History-Info`、`sip.r-uri contains "cause="`、`sip.Status-Code == 181` です。
@@ -442,8 +442,8 @@ docker compose --profile phones up -d --build
 3. 一覧に `CFU (unconditional): on to …` と出て、ETag が 1 つ増えます。
 4. **Off** で止めます。転送先は消えずに残ります。
 
-- ラダー図には XCAP も Sh も出ません。どちらも SIP の要求には属さないからです。キャプチャには、80 番の HTTP と 3868 番の Diameter として残ります。
-- ラボは 1 つの通話のダイアログをすべて 1 つのラダー図に描き、MMTel AS の列も置きます。`phones` と `ue` のプロファイルを同時に動かさないでください。同じ加入者の UE が 2 台になります。
+- シーケンス図には XCAP も Sh も出ません。どちらも SIP の要求には属さないからです。キャプチャには、80 番の HTTP と 3868 番の Diameter として残ります。
+- ラボは 1 つの通話のダイアログをすべて 1 つのシーケンス図に描き、MMTel AS の列も置きます。`phones` と `ue` のプロファイルを同時に動かさないでください。同じ加入者の UE が 2 台になります。
 
 > 手順書 [ラボで IMS を見る「UE シミュレータを操作する」](../../../docs/guide/ja/lab.md#ue-シミュレータを操作する)
 

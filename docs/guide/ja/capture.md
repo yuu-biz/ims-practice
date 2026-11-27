@@ -25,7 +25,7 @@ docker compose up -d --build
 
 1. Wireshark の **File > Open** で、いちばん新しいファイルを開きます。
 2. 表示フィルタの欄に `diameter` と入力し、Enter キーを押します。
-3. メッセージをラダー図で見るには、**Statistics > Flow Graph** を選びます。
+3. メッセージをシーケンス図で見るには、**Statistics > Flow Graph** を選びます。
 
 キャプチャの途中でもファイルを開けます。新しいパケットを見るには、ファイルを開き直すか、**View > Reload** を選びます。
 

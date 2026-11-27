@@ -1016,12 +1016,12 @@ sip || diameter.cmd.code == 302 || dns.qry.type == 35 || rtp || rtcp
 ```
 
 - **Telephony > VoIP Calls** に通話が出ます。
-  - **Flow Sequence** でラダー図を見ます。
+  - **Flow Sequence** でシーケンス図を見ます。
   - **Play Streams** で両方向の音声を聞きます。
 - RTP がただの UDP と表示されるときは、**Analyze > Enabled Protocols** で **rtp_udp** を有効にします。
-- 手順書のラダー図の番号 1 から 13 が、次からのスライドの番号です。
+- 手順書のシーケンス図の番号 1 から 13 が、次からのスライドの番号です。
 
-> 手順書 [「キャプチャを開く」](../../../docs/guide/ja/call.md#キャプチャを開く) と [「シーケンス」](../../../docs/guide/ja/call.md#シーケンス)。ラダー図の全体は手順書にあります。
+> 手順書 [「キャプチャを開く」](../../../docs/guide/ja/call.md#キャプチャを開く) と [「シーケンス」](../../../docs/guide/ja/call.md#シーケンス)。シーケンス図の全体は手順書にあります。
 
 ---
 
@@ -1825,7 +1825,7 @@ docker compose --profile phones up -d --build
 1. <http://localhost:8080> を開きます。`phone2` のカードで、応答方針を `manual` にします。
 2. `phone1` のカードで **Call** を押します。
 3. `phone2` のカードで **Answer** を押します。どちらかで **Hang up** を押します。
-4. 通話の横の **ladder** を選ぶと、通話中でもラダー図が出ます。
+4. 通話の横の **ladder** を選ぶと、通話中でもシーケンス図が出ます。
 
 - 応答の前に切ると、発信側は CANCEL を送り、着信側は 603 で断ります。
 - `phones` と `ue` のプロファイルを同時に動かさないでください。同じ加入者の UE が 2 台になり、互いの登録を上書きします。UE を動かす HTTP の API はこのプロジェクト独自のもので、IMS には何も流れません。
