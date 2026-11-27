@@ -250,15 +250,18 @@ func copyOFA(a sgd.MOForwardShortMessageAnswer) sgd.MOForwardShortMessageAnswer 
 	return a
 }
 
-// copyMessage copies what the pointers of m point to, so that neither
-// the caller nor the store sees the changes of the other.
+// copyMessage copies what the pointers of m point to, and the bodies
+// they hold, so that neither the caller nor the store sees the changes
+// of the other.
 func copyMessage(m Message) Message {
 	if m.Deliver != nil {
 		d := *m.Deliver
+		d.UserData.Data = slices.Clone(d.UserData.Data)
 		m.Deliver = &d
 	}
 	if m.StatusReport != nil {
 		r := *m.StatusReport
+		r.UserData.Data = slices.Clone(r.UserData.Data)
 		m.StatusReport = &r
 	}
 	if m.StatusReportRequest != nil {
