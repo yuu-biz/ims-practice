@@ -935,6 +935,12 @@ func (s *Session) ringback() Ringback {
 type SessionStatus struct {
 	// Codec is nil until the offer and answer have settled one.
 	Codec *CodecInfo `json:"codec,omitempty"`
+	// ReceiveCodec is the format of what this UE receives: the payload
+	// type and the fmtp of its own SDP, where Codec is the peer's (RFC
+	// 3264 5.1, 6.1). They differ when the two sides number the format
+	// or set octet-align differently. Media.PacketsReceived and
+	// FramesReceived are counted with this one.
+	ReceiveCodec *CodecInfo `json:"receive_codec,omitempty"`
 	// Direction is the direction of the audio stream in this UE's last
 	// SDP (RFC 3264 6.1), and PeerDirection in the peer's.
 	Direction     string `json:"direction,omitempty"`
@@ -993,6 +999,10 @@ func (s *Session) Status() SessionStatus {
 	if s.stream != nil {
 		c := codecInfo(*s.stream)
 		st.Codec = &c
+		r := *s.stream
+		r.Codec, r.Events = r.ReceiveCodec, r.ReceiveEvents
+		rc := codecInfo(r)
+		st.ReceiveCodec = &rc
 	}
 	if s.precond != nil {
 		p := &PreconditionStatus{Met: s.precond.Met()}

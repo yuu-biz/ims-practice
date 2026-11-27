@@ -544,6 +544,10 @@ components:
       required: [media_resources, reservation_needed, held, media]
       properties:
         codec:
+          description: The format this UE sends, as the peer's SDP numbers and describes it.
+          $ref: '#/components/schemas/Codec'
+        receive_codec:
+          description: The format this UE receives, as its own SDP numbers and describes it (RFC 3264 5.1, 6.1). The received packet and frame counts of media are made with this one.
           $ref: '#/components/schemas/Codec'
         direction:
           description: The direction of the audio stream in this UE's last SDP (RFC 3264 6.1).
