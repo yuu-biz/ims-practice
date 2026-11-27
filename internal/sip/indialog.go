@@ -27,12 +27,12 @@ const (
 )
 
 // InDialogRequest is a request of the peer within a dialog that the
-// user of the call answers, with Accept or Reject: a re-INVITE, an
-// UPDATE, a PRACK with a session description (any PRACK, after
-// IncomingCall.RelayPRACK), or a request of a method that the UA does
-// not handle by itself, such as INFO or REFER. The UA has checked that
-// it is in order (RFC 3261 12.2.2), and that an offer in it does not
-// cross another offer.
+// user of the call answers, with Accept or Reject: a re-INVITE, which
+// may get provisional responses with Progress first, an UPDATE, a PRACK
+// with a session description (any PRACK, after RelayPRACK), or a
+// request of a method that the UA does not handle by itself, such as
+// INFO or REFER. The UA has checked that it is in order (RFC 3261
+// 12.2.2), and that an offer in it does not cross another offer.
 type InDialogRequest struct {
 	// Request is the request as received.
 	Request *Message
@@ -72,6 +72,12 @@ type InDialogRequest struct {
 	settled chan struct{}
 	acked   chan struct{}
 	ack     *Message
+	// provisionals are the responses of the re-INVITE before its final
+	// one (Progress). described tells that a reliable one has carried
+	// its session description: the answer to its offer, or the offer
+	// when it had none (RFC 3262 5); it is guarded by the mu of the call.
+	provisionals
+	described bool
 
 	// session is what the UA answers to the session timer of a re-INVITE
 	// or UPDATE within the confirmed dialog; nil for any other request.
@@ -88,13 +94,18 @@ func (r *InDialogRequest) Dialog() *CallDialog { return r.d }
 // until the ACK arrives, and ends the call with a BYE when none comes
 // within 64*T1; Accept then returns ErrNoACK (RFC 3261 14.2). A
 // re-INVITE without an offer asks for one: body is then the offer, and
-// the ACK carries the answer. For any other request the returned
-// message is nil.
+// the ACK carries the answer. When a reliable provisional response has
+// carried the session description already, body may be empty (RFC
+// 3262 5). Accept waits for a Progress that waits for its PRACK, so the
+// 2xx never passes a reliable provisional response (RFC 3262 3). For
+// any other request the returned message is nil.
 //
 // A BYE in the dialog, in either direction, answers the request with
 // 487 before the user of the call gets to it (RFC 3261 15.1.2). Accept
 // then sends nothing and returns ErrCallEnded.
 func (r *InDialogRequest) Accept(body Body, headers ...HeaderField) (*Message, error) {
+	r.answering.Lock()
+	defer r.answering.Unlock()
 	if r.Request.Method == INVITE {
 		return r.acceptReInvite(body, headers)
 	}
@@ -122,12 +133,20 @@ var ErrNoAnswer = errors.New("sip: the 2xx to a request with an offer needs the 
 // Reject answers the request with a final response from 300 to 699,
 // such as 488 (Not Acceptable Here) for an offer that the user cannot
 // take. The session and the dialog stay as they were before the
-// request. Like Accept, Reject sends nothing and returns ErrCallEnded
-// once a BYE has answered the request with 487.
+// request. Like Accept, Reject waits for a Progress to return, and
+// sends nothing and returns ErrCallEnded once a BYE has answered the
+// request with 487.
 func (r *InDialogRequest) Reject(code int, headers ...HeaderField) error {
 	if code < 300 || code > 699 {
 		return fmt.Errorf("sip: %d is not a final response that Reject can send", code)
 	}
+	r.answering.Lock()
+	defer r.answering.Unlock()
+	return r.reject(code, headers)
+}
+
+// reject is Reject for a response that does not wait for Progress.
+func (r *InDialogRequest) reject(code int, headers []HeaderField) error {
 	resp := NewResponse(r.Request, code, "")
 	addHeaders(resp, headers)
 	return r.respond(resp, false)
@@ -186,6 +205,14 @@ func (r *InDialogRequest) settle(resp *Message, accepted bool) {
 		close(r.settled)
 	}
 	switch {
+	case r.described:
+		// A reliable provisional response of the re-INVITE carried its
+		// session description (RFC 3262 5). An offer there that has no
+		// answer yet goes with the re-INVITE (RFC 3261 14.1); an answer
+		// that went there has been taken.
+		if d.offer == OfferLocal {
+			d.offerEvent(OfferRejected)
+		}
 	case r.Offer && accepted:
 		d.offerEvent(AnswerSent)
 		d.sent(BodyOf(resp))
@@ -843,17 +870,22 @@ func (d *CallDialog) receiveReInvite(st *ServerTransaction) {
 	}
 	cseq, _ := ParseCSeq(st.Request.Get("CSeq"))
 	r.cseq, r.settled, r.acked = cseq.Number, make(chan struct{}), make(chan struct{})
+	r.reliable = st.Request.Supports(Option100rel)
 	d.invite = inviteReceived
+	d.peerInvite = &r.provisionals
 	c.ua.spawn(r.watchCancel)
 	c.handOver(r)
 }
 
 // watchCancel answers the re-INVITE with 487 (Request Terminated) when
-// the peer cancels it before its final response (RFC 3261 9.2).
+// the peer cancels it before its final response (RFC 3261 9.2). The 487
+// does not wait for the PRACK of a reliable provisional response, as
+// Reject would: RFC 3262 3 lets a final response other than 2xx pass
+// one.
 func (r *InDialogRequest) watchCancel() {
 	select {
 	case <-r.st.Cancelled():
-		r.Reject(487, r.d.c.ua.own(INVITE, true, nil)...)
+		r.reject(487, r.d.c.ua.own(INVITE, true, nil))
 	case <-r.settled:
 	case <-r.d.c.done:
 	}
@@ -879,6 +911,9 @@ func (r *InDialogRequest) acceptReInvite(body Body, headers []HeaderField) (*Mes
 	err := r.answerable()
 	if err == nil {
 		switch hasBody := len(body.Content) > 0; {
+		case r.described:
+			// The session description went in a reliable provisional
+			// response, so the 2xx carries none that counts (RFC 3262 5).
 		case r.Offer && !hasBody:
 			err = ErrNoAnswer
 		case r.Offer:
@@ -896,7 +931,9 @@ func (r *InDialogRequest) acceptReInvite(body Body, headers []HeaderField) (*Mes
 	r.answered = true
 	d.removePending(r)
 	close(r.settled)
-	d.sent(body)
+	if !r.described {
+		d.sent(body)
+	}
 	if r.session != nil {
 		d.setSession(r.session.Timer)
 	}
@@ -916,7 +953,7 @@ func (r *InDialogRequest) acceptReInvite(body Body, headers []HeaderField) (*Mes
 	}
 
 	// RFC 6026 8.1: the UAS core retransmits the 2xx until the ACK.
-	err = c.retransmit(r.st, ok, c.stack.cfg.Timers.T2, r.acked, ErrNoACK)
+	err = c.retransmit(r.st, ok, c.stack.cfg.Timers.T2, r.acked, nil, ErrNoACK)
 	c.mu.Lock()
 	delete(d.unacked, r.cseq)
 	ack := r.ack
@@ -932,4 +969,113 @@ func (r *InDialogRequest) acceptReInvite(body Body, headers []HeaderField) (*Mes
 		return nil, err
 	}
 	return ack, nil
+}
+
+// Progress sends a provisional response from 101 to 198 to a
+// re-INVITE, such as a 183 (Session Progress) whose answer has the peer
+// reserve the resources for a change of the session first (RFC 3312),
+// or a provisional response of its other leg that a B2BUA passes on.
+//
+// When the re-INVITE has 100rel in Supported or Require, the response
+// goes reliably (RFC 3262 3), with the Contact of the call: the
+// re-INVITE is a target refresh request, and a reliable provisional
+// response to it gives the peer the local target (RFC 6141 4.5). The UA
+// retransmits the response until its PRACK comes, and Progress returns
+// then. After 64*T1 without a PRACK, the UA rejects the re-INVITE with
+// 500 and Progress returns ErrNoPRACK. Without 100rel, the response
+// goes unreliably, and Progress returns once it is sent. Accept and
+// Reject wait for Progress to return.
+//
+// The first reliable response with a session description carries the
+// answer to the offer of the re-INVITE, or the offer when the
+// re-INVITE had none, whose answer comes in the PRACK (RFC 3262 5): the
+// user gets that PRACK like any request within the dialog, and accepts
+// it. The 2xx then needs no session description. A session description
+// in a response that is not reliable changes nothing. Once the answer
+// has gone in a reliable response, the change of the session counts as
+// made unless preconditions hold it back, and the user SHOULD accept
+// the re-INVITE rather than reject it (RFC 6141 3.3).
+//
+// headers go into the response. Progress returns ErrRequestAnswered
+// once the re-INVITE has its final response, and ErrCallEnded once a
+// BYE has answered it.
+func (r *InDialogRequest) Progress(code int, body Body, headers ...HeaderField) error {
+	switch {
+	case r.Request.Method != INVITE:
+		// Provisional responses other than 100 are for INVITE only (RFC
+		// 4320).
+		return fmt.Errorf("sip: Progress is for a re-INVITE, not for %s", r.Request.Method)
+	case code <= 100 || code >= 199:
+		// A 199 ends an early dialog (RFC 6228), and a re-INVITE comes
+		// in a confirmed one.
+		return fmt.Errorf("sip: %d is not a provisional response that Progress can send to a re-INVITE", code)
+	}
+	r.answering.Lock()
+	defer r.answering.Unlock()
+	c := r.d.c
+	resp := NewResponse(r.Request, code, "")
+	c.mu.Lock()
+	if err := r.answerable(); err != nil {
+		c.mu.Unlock()
+		return err
+	}
+	if r.reliable {
+		resp.Add("Contact", c.contactLocked())
+	}
+	addHeaders(resp, headers)
+	body.addTo(resp)
+	if r.reliable {
+		if err := r.sessionSent(body); err != nil {
+			c.mu.Unlock()
+			return err
+		}
+		r.makeReliable(resp)
+	}
+	err := r.st.Respond(resp)
+	pracked := r.pracked
+	c.mu.Unlock()
+	if err != nil || !r.reliable {
+		return err
+	}
+
+	// RFC 3262 3, as for the INVITE of a call (IncomingCall.progress).
+	err = c.retransmit(r.st, resp, 64*c.stack.cfg.Timers.T1, pracked, r.settled, ErrNoPRACK)
+	switch {
+	case errors.Is(err, ErrNoPRACK):
+		// RFC 3262 3: the UAS SHOULD reject the re-INVITE with a 5xx.
+		r.reject(500, c.ua.own(INVITE, true, nil))
+	case errors.Is(err, ErrRequestAnswered):
+		c.mu.Lock()
+		err = r.answerable()
+		c.mu.Unlock()
+	}
+	return err
+}
+
+var errNoOfferInReliable = errors.New("sip: the first reliable provisional response to a re-INVITE without an offer needs the offer")
+
+// sessionSent is RFC 3262 5 for body in a reliable provisional
+// response to the re-INVITE: the first session description is the
+// answer to the offer of the re-INVITE, or, when it had none, the offer,
+// which the first reliable response MUST carry. A later one changes
+// nothing. c.mu is held.
+func (r *InDialogRequest) sessionSent(body Body) error {
+	switch {
+	case r.described:
+		return nil
+	case len(body.Content) == 0 && !r.Offer:
+		return errNoOfferInReliable
+	case len(body.Content) == 0:
+		return nil
+	}
+	event := OfferSent
+	if r.Offer {
+		event = AnswerSent
+	}
+	if err := r.d.offerEvent(event); err != nil {
+		return err
+	}
+	r.described = true
+	r.d.sent(body)
+	return nil
 }

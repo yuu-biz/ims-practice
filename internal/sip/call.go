@@ -702,8 +702,10 @@ func (d *CallDialog) endPending(pending []*InDialogRequest) {
 // retransmit passes resp, a response to the INVITE of st, to the
 // transaction again at intervals that start at T1 and double up to
 // maxInterval, until stopped closes. After 64*T1 it gives up with
-// timeout. It also stops when the call ends.
-func (c *call) retransmit(st *ServerTransaction, resp *Message, maxInterval time.Duration, stopped <-chan struct{}, timeout error) error {
+// timeout. It also stops when the call ends, and with
+// ErrRequestAnswered when answered closes: the INVITE has its final
+// response, which another goroutine sent. answered may be nil.
+func (c *call) retransmit(st *ServerTransaction, resp *Message, maxInterval time.Duration, stopped, answered <-chan struct{}, timeout error) error {
 	t := c.stack.cfg.Timers
 	deadline := time.NewTimer(64 * t.T1)
 	defer deadline.Stop()
@@ -717,6 +719,9 @@ func (c *call) retransmit(st *ServerTransaction, resp *Message, maxInterval time
 		case <-c.done:
 			wait.Stop()
 			return ErrCallEnded
+		case <-answered:
+			wait.Stop()
+			return ErrRequestAnswered
 		case <-deadline.C:
 			wait.Stop()
 			return timeout
