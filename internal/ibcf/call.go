@@ -64,18 +64,29 @@ type call struct {
 	// sends is where each termination of the context sends now, and
 	// agreed where it sent when the last offer and answer of its side
 	// were done (agree), to which it goes back when an offer within a
-	// dialog gets no 2xx (Unanswered). offered is where the termination
-	// of a side sends for the offer of that side in a 2xx, until the ACK
-	// answers it. previews holds, for a termination that the session
-	// description of a provisional response that is not reliable moved,
-	// the request that response answered (previewed).
+	// dialog gets no 2xx (Unanswered). offered holds the offer of a side
+	// in a response, until the ACK or the PRACK answers it (offers).
+	// previews holds, for a termination that the session description of
+	// a provisional response that is not reliable moved, the request that
+	// response answered (previewed).
 	mediaMu  sync.Mutex
 	media    *MediaContext
 	ended    bool
 	sends    map[Side]netip.AddrPort
 	agreed   map[Side]netip.AddrPort
-	offered  map[Side]netip.AddrPort
+	offered  map[Side]responseOffer
 	previews map[Side]*sip.Message
+}
+
+// responseOffer is an offer that one side made in a response to a
+// request without one: in a 2xx, which the ACK answers, or in a reliable
+// provisional response, which its PRACK answers (RFC 3261 13.2.1, RFC
+// 3262 5). cseq is the CSeq of that request, which the RAck of the PRACK
+// names (RFC 3262 7.2), and sends where the termination facing that side
+// sends for the offer.
+type responseOffer struct {
+	cseq  sip.CSeq
+	sends netip.AddrPort
 }
 
 // onCall is the UAConfig.OnCall of side s: an INVITE outside a dialog,
@@ -404,28 +415,58 @@ func answersFor(resp *sip.Message) bool {
 }
 
 // offers notes that the side that faces where a message crossing in d
-// comes from has made an offer in a 2xx, whose answer comes in the ACK
-// (RFC 3261 13.2.1).
-func (c *call) offers(d interconnect.Direction) {
+// comes from has made an offer in a response to req, a request without
+// one (responseOffer).
+func (c *call) offers(d interconnect.Direction, req *sip.Message) {
+	cseq, _ := sip.ParseCSeq(req.Get("CSeq"))
 	c.mediaMu.Lock()
 	defer c.mediaMu.Unlock()
 	from, _ := facing(d)
-	if sends, ok := c.sends[from]; ok {
-		if c.offered == nil {
-			c.offered = map[Side]netip.AddrPort{}
-		}
-		c.offered[from] = sends
+	if c.offered == nil {
+		c.offered = map[Side]responseOffer{}
 	}
+	c.offered[from] = responseOffer{cseq: cseq, sends: c.sends[from]}
 }
 
 // offeredBy is where the termination facing the side that a message
-// crossing in d goes to sent for the offer of that side in a 2xx
+// crossing in d goes to sent for the offer of that side in a response
 // (offers).
 func (c *call) offeredBy(d interconnect.Direction) netip.AddrPort {
 	c.mediaMu.Lock()
 	defer c.mediaMu.Unlock()
 	_, to := facing(d)
-	return c.offered[to]
+	return c.offered[to].sends
+}
+
+// prackAnswers reports whether prack, a PRACK with SDP that crosses in
+// d, answers the offer that the side it goes to made in the reliable
+// provisional response that prack acknowledges (RFC 3262 5), and where
+// that offer said. The RAck of prack names the request of that response
+// (RFC 3262 7.2). Any other PRACK with SDP carries an offer of its own.
+func (c *call) prackAnswers(prack *sip.Message, d interconnect.Direction) (netip.AddrPort, bool) {
+	rack, err := sip.ParseRAck(prack.Get("RAck"))
+	if err != nil {
+		return netip.AddrPort{}, false
+	}
+	c.mediaMu.Lock()
+	defer c.mediaMu.Unlock()
+	_, to := facing(d)
+	offer, ok := c.offered[to]
+	if !ok || offer.cseq != rack.CSeq {
+		return netip.AddrPort{}, false
+	}
+	delete(c.offered, to)
+	return offer.sends, true
+}
+
+// previewOf is the request to which a provisional response that is not
+// reliable moved the termination facing where a message crossing in d
+// comes from, or nil (previewed).
+func (c *call) previewOf(d interconnect.Direction) *sip.Message {
+	c.mediaMu.Lock()
+	defer c.mediaMu.Unlock()
+	from, _ := facing(d)
+	return c.previews[from]
 }
 
 // offerOf is the address of the audio stream in the SDP of m, or not
@@ -570,6 +611,11 @@ func (c *call) Request(req *sip.Message, d b2bua.Direction) (b2bua.Message, *b2b
 	if err := c.throughTrGW(m, c.across(d)); err != nil {
 		return b2bua.Message{}, c.notThroughTrGW(req, d, err)
 	}
+	if req.Method == sip.PRACK && sip.HasSessionDescription(req) {
+		if offer, ok := c.prackAnswers(req, c.across(d)); ok {
+			c.agree(c.across(d), offer)
+		}
+	}
 	return b2bua.Message{Headers: interconnect.CrossingFields(m), Body: sip.BodyOf(m)}, nil
 }
 
@@ -672,7 +718,16 @@ func (c *call) Response(resp, req *sip.Message, d b2bua.Direction) (b2bua.Messag
 		}
 		switch {
 		case !sip.HasSessionDescription(resp):
-			// A response without SDP, such as a 180, ends no offer.
+			// A response without SDP, such as a 180, ends no offer. A 2xx
+			// to an offer that only a provisional response that is not
+			// reliable answered should carry the answer (RFC 3261
+			// 13.3.1.4); without one, the caller takes the first session
+			// description it got as the answer and keeps it (RFC 3261
+			// 13.2.1, RFC 6337 3.1.1), and the side that answers sent it as
+			// its own. So that one is the answer once req has its 2xx.
+			if resp.StatusCode/100 == 2 && sip.HasSessionDescription(req) && c.previewOf(c.across(d)) == req {
+				c.agree(c.across(d), offerOf(req))
+			}
 		case !answersFor(resp):
 			// The same answer before the response that counts, which the
 			// IBCF put through the TrGW all the same: the far end may have
@@ -681,9 +736,10 @@ func (c *call) Response(resp, req *sip.Message, d b2bua.Direction) (b2bua.Messag
 		case sip.HasSessionDescription(req):
 			// The answer to the offer of req.
 			c.agree(c.across(d), offerOf(req))
-		case resp.StatusCode/100 == 2:
-			// An offer to a request without one, which the ACK answers.
-			c.offers(c.across(d))
+		default:
+			// An offer to a request without one, which the ACK or the
+			// PRACK answers.
+			c.offers(c.across(d), req)
 		}
 	}
 	return b2bua.Message{Headers: interconnect.CrossingFields(m), Body: sip.BodyOf(m)}, true
