@@ -325,40 +325,24 @@ func (c *rawINVITE) wantINVITEGivenUp(t *testing.T) {
 	c.relay.waitHeld(t, 0, time.Second)
 }
 
-// TestRefusedSDPOfAPRACKEndsTheCall: the SDP of a PRACK in the early
-// dialog does not go through the relay, whether it is a new offer after
-// the answer of the reliable 183 or the answer to an offer that a later
-// reliable 183 made (RFC 3262 5), and even when the relay changed
-// nothing. A PRACK that fails is not sent again (RFC 3262 4), so the
-// callee would end the INVITE with a 5xx once its 183 had gone
-// unacknowledged for 64*T1 (RFC 3262 3). The P-CSCF answers the PRACK
-// 500 and ends the INVITE at once, as for an answer that the relay did
-// not take in the early dialog (TS 24.229 5.2.8.1.1): the caller gets
-// 500 and the callee a CANCEL.
+// TestRefusedSDPOfAPRACKEndsTheCall: the PRACK for the reliable 183
+// with the answer carries a new offer (RFC 3262 5), which does not go
+// through the relay, even though the relay changed nothing. The INVITE
+// had the offer, and once the callee has answered it, no response to the
+// INVITE carries an offer (RFC 3261 13.2.1), so the SDP of a PRACK in the
+// early dialog is a new offer. A PRACK that fails is not sent again (RFC
+// 3262 4), so the callee would end the INVITE with a 5xx once its 183
+// had gone unacknowledged for 64*T1 (RFC 3262 3). The P-CSCF answers the
+// PRACK 500, since a 2xx would have to carry the answer (RFC 3262 5), and
+// ends the INVITE at once, as for an answer that the relay did not take
+// in the early dialog (TS 24.229 5.2.8.1.1): the caller gets 500 and the
+// callee a CANCEL.
 func TestRefusedSDPOfAPRACKEndsTheCall(t *testing.T) {
-	t.Run("offer", func(t *testing.T) {
-		c := newRawINVITE(t)
-		progress := c.reliable(t, 1, coreMedia)
-		c.relay.refuseModify(agw.Access)
-		if r := c.prack(t, progress, 2, sdp.Offer("2", moved).Bytes()); r.StatusCode != 500 {
-			t.Fatalf("the PRACK got %d, want 500 from the P-CSCF", r.StatusCode)
-		}
-		c.wantINVITEGivenUp(t)
-	})
-	t.Run("answer", func(t *testing.T) {
-		c := newRawINVITE(t)
-		first := c.reliable(t, 1, coreMedia)
-		if r := c.prack(t, first, 2, nil); r.StatusCode != 200 {
-			t.Fatalf("the first PRACK got %d, want 200", r.StatusCode)
-		}
-		if m := nextRequest(t, "the callee", c.farGot); m.Method != sip.PRACK {
-			t.Fatalf("the callee got %s, want the PRACK", m.Method)
-		}
-		offer := c.reliable(t, 2, netip.MustParseAddrPort("192.0.2.99:6002"))
-		c.relay.refuseModify(agw.Access)
-		if r := c.prack(t, offer, 3, sdp.Offer("2", moved).Bytes()); r.StatusCode != 500 {
-			t.Fatalf("the PRACK got %d, want 500 from the P-CSCF", r.StatusCode)
-		}
-		c.wantINVITEGivenUp(t)
-	})
+	c := newRawINVITE(t)
+	progress := c.reliable(t, 1, coreMedia)
+	c.relay.refuseModify(agw.Access)
+	if r := c.prack(t, progress, 2, sdp.Offer("2", moved).Bytes()); r.StatusCode != 500 {
+		t.Fatalf("the PRACK got %d, want 500 from the P-CSCF", r.StatusCode)
+	}
+	c.wantINVITEGivenUp(t)
 }
