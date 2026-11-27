@@ -167,29 +167,40 @@ type tfr struct {
 }
 
 // beginRounds bounds the rounds of a BeginTFR whose record keeps
-// expiring between its write and its read. One more round is the most
-// that a record which expires at that instant needs.
+// changing between its read and its write: one that expires at that
+// instant, or one that has expired and that another instance replaces
+// first. One more round is the most that either needs.
 const beginRounds = 3
 
-// BeginTFR writes the record only where there is none, so that of
-// several instances that begin the same request one wins, and the others
-// read the reference it wrote.
-func (s *Store) BeginTFR(ctx context.Context, request, reference string, expires time.Time) (string, error) {
+// BeginTFR writes the record only where there is none, or over one that
+// has expired by now but that its time to live has not taken away yet,
+// so that of several instances that begin the same request one wins, and
+// the others read the reference it wrote.
+func (s *Store) BeginTFR(ctx context.Context, request, reference string, now, expires time.Time) (string, error) {
 	key := s.c.Key("tfr", request)
+	version := ""
 	for range beginRounds {
-		_, err := kvjson.CompareAndSwap(ctx, s.c, key, "", tfr{Reference: reference, Expires: expires}, s.c.TTLUntil(expires))
-		if !errors.Is(err, kvstore.ErrConflict) {
-			return reference, err
-		}
-		var first tfr
-		switch _, err := kvjson.Read(ctx, s.c, key, &first); {
+		_, err := kvjson.CompareAndSwap(ctx, s.c, key, version, tfr{Reference: reference, Expires: expires}, s.c.TTLUntil(expires))
+		switch {
 		case err == nil:
-			return first.Reference, nil
-		case !errors.Is(err, kvstore.ErrNotFound):
+			return reference, nil
+		case !errors.Is(err, kvstore.ErrConflict):
 			return "", err
 		}
+		var first tfr
+		v, err := kvjson.Read(ctx, s.c, key, &first)
+		switch {
+		case errors.Is(err, kvstore.ErrNotFound):
+			version = ""
+		case err != nil:
+			return "", err
+		case now.Before(first.Expires):
+			return first.Reference, nil
+		default:
+			version = v
+		}
 	}
-	return "", errors.New("ipsmgwstore: the record of the TFR kept expiring while it was read")
+	return "", errors.New("ipsmgwstore: the record of the TFR kept changing while it was begun")
 }
 
 // notReachable is the item of the IP-SM-GW's own UNRI for one user. It
