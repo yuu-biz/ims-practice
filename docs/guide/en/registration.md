@@ -160,6 +160,8 @@ The HSS also stores this S-CSCF for the user and marks the authentication as pen
 
 The S-CSCF answers **401 Unauthorized** with a **WWW-Authenticate** header: the realm, a `nonce` it generated, `algorithm=MD5` and `qop="auth"` (TS 24.229 5.4.1.2.1B). It starts the timer **reg-await-auth**, 4 minutes (TS 24.229 Table 7.7.1).
 
+If no answer comes before reg-await-auth runs out, the authentication has failed (TS 24.229 5.4.1.2.3). The S-CSCF drops the challenge and sends the HSS a SAR with Server-Assignment-Type `AUTHENTICATION_TIMEOUT`. A user who was registered before stays registered. A REGISTER that answers the challenge after reg-await-auth has run out is not accepted, even when it reaches the S-CSCF before the expiry was handled: the S-CSCF first ends the challenge the same way, with the SAR, and then treats the REGISTER as one with no challenge pending. It sends a new MAR and answers with a new 401 whose WWW-Authenticate carries a new nonce and `stale=true`.
+
 The 401 goes back through the I-CSCF and the P-CSCF. Each removes its own Via, so the UE gets the response with only its own Via left.
 
 ### 7. The UE answers the challenge

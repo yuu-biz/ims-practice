@@ -267,6 +267,19 @@ func (s *SCSCF) register(st *sip.ServerTransaction) {
 		s.storeFailed(st, err, log)
 		return
 	}
+	// The Store keeps a challenge for reg-await-auth after its Expires, so
+	// that the expiry is still handled when it comes up late. A challenge
+	// past its Expires is no longer one that a REGISTER can answer: the
+	// authentication has failed (TS 24.229 5.4.1.2.3), so it ends here,
+	// as the expiry would have ended it, and the REGISTER is handled as
+	// one with no challenge pending.
+	if pending && !time.Now().Before(ch.Expires) {
+		if err := s.endRegAwaitAuth(ctx, ch); err != nil {
+			s.storeFailed(st, err, log)
+			return
+		}
+		pending = false
+	}
 	kind := ims.RegistrationTypeOf(expires, registered)
 	if !answersChallenge(creds, ch, pending) {
 		s.registrations.Started(role, kind)
@@ -928,7 +941,6 @@ func covers(reg Registration, ids []string) bool {
 // of the store or of the lock that left the challenge where it was, so
 // that the expiry is handled again (handleExpiry).
 func (s *SCSCF) regAwaitAuthExpired(ctx context.Context, privateID, nonce string) error {
-	log := s.log.With("private_identity", privateID)
 	unlock, err := s.users.Lock(ctx, privateID)
 	if err != nil {
 		return fmt.Errorf("the lock of the user was not taken: %w", err)
@@ -941,13 +953,21 @@ func (s *SCSCF) regAwaitAuthExpired(ctx context.Context, privateID, nonce string
 	if !ok || ch.Nonce != nonce {
 		return nil
 	}
+	return s.endRegAwaitAuth(ctx, ch)
+}
+
+// endRegAwaitAuth ends the challenge ch, whose reg-await-auth has run
+// out, and tells the HSS (TS 24.229 5.4.1.2.3). The lock of the user is
+// held: the expiry takes it in regAwaitAuthExpired, and a REGISTER that
+// finds the challenge late already holds it (register).
+func (s *SCSCF) endRegAwaitAuth(ctx context.Context, ch Challenge) error {
 	// TS 24.229 5.4.1.2.3 NOTE 2: authentication has failed; a user who
 	// was registered stays registered.
-	log.Info("reg-await-auth expired")
-	if err := s.store.DeleteChallenge(ctx, privateID); err != nil {
+	s.log.Info("reg-await-auth expired", "private_identity", ch.PrivateIdentity)
+	if err := s.store.DeleteChallenge(ctx, ch.PrivateIdentity); err != nil {
 		return err
 	}
-	s.serverAssignment(ctx, privateID, ch.PublicIdentity, ch.HSSHost, ch.ServerName, cx.AuthenticationTimeout)
+	s.serverAssignment(ctx, ch.PrivateIdentity, ch.PublicIdentity, ch.HSSHost, ch.ServerName, cx.AuthenticationTimeout)
 	return nil
 }
 
