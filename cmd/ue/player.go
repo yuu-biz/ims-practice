@@ -209,7 +209,7 @@ func exitOf(err error) string {
 // so the player is told what they are.
 func playerArgs(codec sdp.Codec) []string {
 	args := []string{"-nodisp", "-autoexit", "-loglevel", "error"}
-	if codec.Name == sdp.NamePCMU {
+	if codec.Is(sdp.NamePCMU) {
 		args = append(args, "-f", "mulaw", "-ar", strconv.Itoa(codec.ClockRate), "-ac", "1")
 	}
 	return append(args, "-i", "-")

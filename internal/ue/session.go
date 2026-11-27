@@ -597,7 +597,7 @@ func (s *Session) negotiated(local, remote, peer sdp.Session) error {
 		if !slices.ContainsFunc(s.codecs, func(o sdp.Codec) bool { return sameFormat(o, c) }) {
 			continue
 		}
-		if c.Name != sdp.NameTelephoneEvent && !speech {
+		if !c.Is(sdp.NameTelephoneEvent) && !speech {
 			stream.Codec, speech = c, true
 		}
 	}
@@ -605,7 +605,7 @@ func (s *Session) negotiated(local, remote, peer sdp.Session) error {
 		return errors.New("no speech codec of this UE in the session")
 	}
 	for _, c := range pm.Codecs() {
-		if c.Name == sdp.NameTelephoneEvent && c.ClockRate == stream.Codec.ClockRate {
+		if c.Is(sdp.NameTelephoneEvent) && c.ClockRate == stream.Codec.ClockRate {
 			stream.Events = &c
 			break
 		}

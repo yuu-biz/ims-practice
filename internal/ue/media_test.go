@@ -6,6 +6,7 @@ import (
 	"net"
 	"net/netip"
 	"slices"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -136,6 +137,32 @@ func TestMediaCarriesPCMU(t *testing.T) {
 	got, packets := b.Received()
 	if packets != 10 || !bytes.Equal(got, a.Sent()) {
 		t.Errorf("received %d packets, %d bytes; want the 10 packets and %d bytes sent", packets, len(got), len(a.Sent()))
+	}
+}
+
+// Encoding names are case-insensitive (RFC 4855 3), so a peer that
+// writes a=rtpmap:0 pcmu/8000 offers the same format as PCMU/8000: the
+// media takes the stream and carries the audio the same way.
+func TestMediaTakesEncodingNamesInAnyCase(t *testing.T) {
+	for _, base := range []sdp.Codec{pcmu, amrWB, sdp.VoLTECodecs()[2]} {
+		for _, name := range []string{strings.ToLower(base.Name), strings.ToUpper(base.Name), base.Name} {
+			codec := base
+			codec.Name = name
+			a, b := between(t, codec, nil)
+			speech := ue.ToneSpeech(200 * time.Millisecond)
+			if err := a.Start(speech); err != nil {
+				t.Fatalf("%s: %v", name, err)
+			}
+			played(t, a, b)
+			got, _ := b.Received()
+			if sent := a.Sent(); len(sent) == 0 && len(a.SentFrames()) == 0 || !bytes.Equal(got, sent) ||
+				!slices.EqualFunc(b.ReceivedFrames(), a.SentFrames(), sameFrame) {
+				t.Errorf("%s: sent %d octets and %d frames, received %d octets and %d frames", name, len(sent), len(a.SentFrames()), len(got), len(b.ReceivedFrames()))
+			}
+			if err := a.SetStream(ue.Stream{Remote: loopback(b.Port()), Codec: base}); err != nil {
+				t.Errorf("%s: a stream of %s after it: %v", name, base.Name, err)
+			}
+		}
 	}
 }
 

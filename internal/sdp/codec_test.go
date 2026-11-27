@@ -60,6 +60,30 @@ func TestCodecs(t *testing.T) {
 	}
 }
 
+// Encoding names are case-insensitive (RFC 4855 3), so a peer may write
+// them in lower case and still offer the same formats.
+func TestCodecNamesAreCaseInsensitive(t *testing.T) {
+	lower, err := Parse([]byte(strings.NewReplacer("AMR-WB", "amr-wb", "AMR/", "amr/").Replace(mtsiOffer)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	upper, _ := Parse([]byte(mtsiOffer))
+	lc, uc := lower.Media[0].Codecs(), upper.Media[0].Codecs()
+	for i := range uc {
+		if !lc[i].Is(uc[i].Name) || !uc[i].Is(lc[i].Name) {
+			t.Errorf("%q and %q are not the same encoding name", lc[i].Name, uc[i].Name)
+		}
+		lf, lerr := lc[i].AMRFormat()
+		uf, uerr := uc[i].AMRFormat()
+		if lf != uf || (lerr == nil) != (uerr == nil) {
+			t.Errorf("payload type %d: AMRFormat of %q is %+v, %v; of %q %+v, %v", lc[i].PayloadType, lc[i].Name, lf, lerr, uc[i].Name, uf, uerr)
+		}
+	}
+	if !(Codec{Name: "pcmu"}).Is(NamePCMU) {
+		t.Error("pcmu is not PCMU")
+	}
+}
+
 func TestSetCodecsKeepsOtherAttributes(t *testing.T) {
 	s, _ := Parse([]byte(mtsiOffer))
 	m := &s.Media[0]
