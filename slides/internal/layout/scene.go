@@ -374,7 +374,11 @@ func drawDiagram(diagram *Diagram, scene *deck.Scene, step deck.Step, camera Box
 		case !touched[n.ID] && len(step.Focus) > 0:
 			line, color = ColorDimLine, ColorDimText
 		}
-		paragraphs := []Paragraph{{Runs: []Run{{Text: n.Label}}, Size: nodeSize, LineHeight: lineHeight(nodeSize, lineHeightTitle), Color: color, Bold: true, Align: AlignCenter}}
+		nameSize := nodeSize
+		if n.NameSize > 0 {
+			nameSize = math.Round(nodeSize*n.NameSize/DiagramNodeSize*2) / 2
+		}
+		paragraphs := []Paragraph{{Runs: []Run{{Text: n.Label}}, Size: nameSize, LineHeight: lineHeight(nameSize, lineHeightTitle), Color: color, Bold: true, Align: AlignCenter}}
 		if len(n.Role) > 0 {
 			paragraphs = append(paragraphs, Paragraph{Runs: runsOf([][]deck.Span{n.Role}), Size: roleSize, LineHeight: lineHeight(roleSize, lineHeightText), Color: ColorMuted, Align: AlignCenter})
 		}
