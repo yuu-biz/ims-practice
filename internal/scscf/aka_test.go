@@ -1,6 +1,7 @@
 package scscf
 
 import (
+	"context"
 	"encoding/hex"
 	"errors"
 	"slices"
@@ -204,6 +205,42 @@ func TestProtectedREGISTERFromAStranger(t *testing.T) {
 	creds := akaAnswer(sip.Challenge{Realm: "scscf." + domain, Nonce: "bm9uY2U="}, "x", sip.IntegrityProtectedYes)
 	if r := h.register(sip.NewCallID(), 1, 600000, creds.String()); r.StatusCode != 500 {
 		t.Fatalf("got %d, want 500", r.StatusCode)
+	}
+}
+
+// RFC 3261 10.2.3 with TS 24.229 5.1.1.4.1: a protected REGISTER without
+// a Contact, which needs no new authentication, fetches the binding. It
+// is no contact that the S-CSCF has not registered (5.4.1.2.2 step 2),
+// and it leaves the binding and the HSS alone.
+func TestProtectedREGISTERWithoutContactFetchesTheBinding(t *testing.T) {
+	h := newAKAHarness(t)
+	usim := aka.NewUSIM(testSet1, 0)
+	callID := sip.NewCallID()
+	ch := akaChallenge(t, h.register(callID, 1, 600000, akaInitial))
+	res, err := authenticate(t, usim, ch)
+	if err != nil {
+		t.Fatal(err)
+	}
+	creds := akaAnswer(ch, aka.DigestPassword(res.RES), sip.IntegrityProtectedYes)
+	if r := h.register(callID, 2, 600000, creds.String()); r.StatusCode != 200 {
+		t.Fatalf("answer got %d, want 200", r.StatusCode)
+	}
+	stored, _, _ := h.store.Registration(context.Background(), impi)
+
+	h.contact = noContact
+	r := h.register(callID, 3, -1, creds.String())
+	if r.StatusCode != 200 {
+		t.Fatalf("protected query got %d, want 200", r.StatusCode)
+	}
+	if na, err := sip.ParseNameAddr(r.Get("Contact")); err != nil || na.URI != ueContact {
+		t.Errorf("answered Contact %q, want the stored contact", r.Get("Contact"))
+	}
+	after, ok, _ := h.store.Registration(context.Background(), impi)
+	if !ok || after.Contact != stored.Contact || !after.Expires.Equal(stored.Expires) {
+		t.Errorf("registration after the query = %+v, want %+v", after, stored)
+	}
+	if got := h.hss.assignments(); !slices.Equal(got, []cx.ServerAssignmentType{cx.AssignRegistration}) {
+		t.Errorf("SARs = %v: a query must send none", got)
 	}
 }
 

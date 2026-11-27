@@ -349,6 +349,14 @@ The HSS answers with a **Profile-Update-Answer** (PUA) with DIAMETER_SUCCESS (20
 
 A UE that registers without `+g.3gpp.smsip` gets no PUR: the NOTIFY tells the IP-SM-GW that no contact of the user takes short messages.
 
+## Fetch the bindings
+
+A registered UE can ask what the S-CSCF holds for it: it sends a REGISTER without a Contact (RFC 3261 10.2.3, TS 24.229 5.1.1.4.1). The S-CSCF authenticates it like any other REGISTER, and then answers 200 OK with the contact it holds and what is left of its interval, as `expires` in Contact (RFC 3261 10.3 step 8). The Expires header field of such a REGISTER is not an interval, so the S-CSCF ignores it.
+
+A fetch changes nothing. The S-CSCF keeps the contact and the time it expires, and sends no SAR to the HSS, no NOTIFY and no third-party REGISTER. The HSS and the subscribers have nothing to learn.
+
+A user who is not registered gets 200 OK without a Contact after the same authentication. The S-CSCF makes no binding for it (RFC 3261 10.3 step 6).
+
 ## Deregistration
 
 The UE sends a REGISTER with `expires=0` in Contact (TS 24.229 5.1.1.6.1).

@@ -381,6 +381,14 @@ HSS は DIAMETER_SUCCESS（2001）の **Profile-Update-Answer**（PUA）で答�
 
 UE が `+g.3gpp.smsip` を付けずに登録したときは、PUR は送られません。利用者の contact に SMS を受け取れるものが無いことが、NOTIFY から分かるからです。
 
+## バインディングを取得する
+
+登録済みの UE は、S-CSCF が自分について何を持っているかを尋ねられます。Contact の無い REGISTER を送ります（RFC 3261 10.2.3、TS 24.229 5.1.1.4.1）。S-CSCF は、ほかの REGISTER と同じように認証してから、持っている Contact と、その有効期間の残りを Contact の `expires` に入れて 200 OK を返します（RFC 3261 10.3 の手順 8）。この REGISTER の Expires ヘッダは有効期間ではないので、S-CSCF は読みません。
+
+取得では、何も変わりません。S-CSCF は Contact とその期限をそのままにし、HSS への SAR も、NOTIFY も、第三者 REGISTER も送りません。HSS と購読者が知ることが無いためです。
+
+登録していない利用者には、同じ認証のあとで、Contact の無い 200 OK を返します。S-CSCF はその利用者のバインディングを作りません（RFC 3261 10.3 の手順 6）。
+
 ## 登録の解除
 
 UE は Contact に `expires=0` を付けた REGISTER を送ります（TS 24.229 5.1.1.6.1）。
