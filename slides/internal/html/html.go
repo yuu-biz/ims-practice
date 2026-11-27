@@ -134,11 +134,21 @@ func nonNil(s []string) []string {
 
 func round2(v float64) float64 { return math.Round(v*100) / 100 }
 
+// wideLadder is the number of lifelines from which a ladder goes across.
+const wideLadder = 6
+
 // Wide reports a diagram that is much wider than tall: a map of nodes in
-// a row or two. The stage then draws it across the whole width, with the
-// text of the step below it, instead of beside it.
+// a row or two, or a ladder of many lifelines. The stage then draws it
+// across the whole width, with the text of the step below it, instead of
+// beside it.
 func Wide(d *layout.Diagram) bool {
-	return d.View == deck.ViewMap && d.Bounds.W > 2.1*d.Bounds.H
+	if d.View == deck.ViewLadder {
+		// A ladder scrolls down its rows, so its height says little; what
+		// makes its names too small beside the text is the number of its
+		// lifelines.
+		return len(d.Lines) >= wideLadder
+	}
+	return d.Bounds.W > 2.1*d.Bounds.H
 }
 
 // counter is the place of a slide in the deck, such as "03 / 18".

@@ -627,8 +627,8 @@ events:
     do: keeps the 199 from UE 1
     at: as1
     fields:
-      - The early dialog with UE 1: Stays one
-      - Result: UE 1 gets the 181 and UE 3's responses on the same early dialog
+      - UE 1's early dialog: Stays one
+      - Result: UE 1 gets the 181 and UE 3's answers on it
   - id: cfnr-181
     msg: "181"
     from: as2
