@@ -252,18 +252,28 @@ func TestHoldAnsweredInAReliable183(t *testing.T) {
 // TestHoldFailedAfterAReliable183IsUndoneWithANewOffer: the peer answers
 // the hold in a reliable 183 and then fails the re-INVITE with 500.
 // Without preconditions that offer and answer were a change that the
-// peer carried out (RFC 6141 3.3), so the UE, which goes back to the
-// session before the hold, offers that session in a new re-INVITE, and
-// both sides have the same view of it again (RFC 6141 3.4).
+// peer carried out (RFC 6141 3.3), so the UE goes back to the session
+// before the hold, the peer's media and its direction included, and
+// offers that session in a new re-INVITE, after which both sides have
+// the same view of it again (RFC 6141 3.4).
 func TestHoldFailedAfterAReliable183IsUndoneWithANewOffer(t *testing.T) {
 	b := newBareCall(t)
+	before, _ := b.c.media.Stream()
 	held, reinvite := b.hold()
-	b.progress(reinvite, b.answer(reinvite.Body, b.c.callerMedia.Port()))
+	// The answer moves the peer's media, which the UE takes at once.
+	moved := listenMedia(t)
+	b.progress(reinvite, b.answer(reinvite.Body, moved.Port()))
 	b.final(reinvite, 500, sip.Body{})
 
 	again := b.p.readUntil("new re-INVITE after the failed hold", func(m *sip.Message) bool {
 		return m.Method == sip.INVITE && m.Get("CSeq") != reinvite.Get("CSeq")
 	})
+	if st := b.s.Status(); st.Held || st.Direction != "sendrecv" || st.PeerDirection != "sendrecv" {
+		t.Errorf("before the new offer is answered the session is %+v, want sendrecv on both sides as before the hold", st)
+	}
+	if stream, _ := b.c.media.Stream(); stream.Remote != before.Remote {
+		t.Errorf("before the new offer is answered the UE sends to %s, want %s as before the hold", stream.Remote, before.Remote)
+	}
 	resync, err := sdp.Parse(again.Body)
 	if err != nil {
 		t.Fatal(err)
@@ -280,6 +290,41 @@ func TestHoldFailedAfterAReliable183IsUndoneWithANewOffer(t *testing.T) {
 		t.Errorf("after the failed hold the session is %+v, want sendrecv as before it", st)
 	}
 	b.hangUp(true)
+}
+
+// TestUPDATEOfThePeerAfterTheAnswerOfAHoldStays: the peer answers the
+// hold in a reliable 183, then holds the call too with an UPDATE that
+// the UE answers, and only then sends its 200 to the re-INVITE, without
+// SDP. The answer of the 183 came first, and the UPDATE changed the
+// session after it, so the 200 leaves the session as the UPDATE made it
+// (RFC 3261 13.2.1, RFC 3311 5.1).
+func TestUPDATEOfThePeerAfterTheAnswerOfAHoldStays(t *testing.T) {
+	b := newBareCall(t)
+	held, reinvite := b.hold()
+	b.progress(reinvite, b.answer(reinvite.Body, b.c.callerMedia.Port()))
+
+	offer, err := sdp.AudioOffer("1", loopback(b.c.callerMedia.Port()), []sdp.Codec{pcmu})
+	if err != nil {
+		t.Fatal(err)
+	}
+	offer.Media[0].SetDirection("sendonly")
+	update := b.dialog.NewRequest(sip.UPDATE)
+	update.Add("Max-Forwards", "70")
+	update.Add(b.contact.Name, b.contact.Value)
+	update.Add("Content-Type", "application/sdp")
+	update.Body = offer.Bytes()
+	b.p.request(update)
+	b.p.readUntil("200 to the UPDATE", func(m *sip.Message) bool {
+		return m.StatusCode == 200 && m.Get("CSeq") == update.Get("CSeq")
+	})
+	b.final(reinvite, 200, sip.Body{})
+	if err := b.returned(held); err != nil {
+		t.Fatalf("Hold: %v", err)
+	}
+	if st := b.s.Status(); !st.Held || st.PeerDirection != "sendonly" {
+		t.Errorf("after the hold and the UPDATE the session is %+v, want held, and sendonly at the peer as its UPDATE says", st)
+	}
+	b.hangUp(false)
 }
 
 // TestHoldTakesNoAnswerFromABodyThatIsNotSDP: a reliable 183 whose body
