@@ -42,6 +42,22 @@ type Conference struct {
 	doc     *confinfo.Document
 	changed chan struct{} // closed and replaced on each new document
 	sub     *sip.Subscription
+	// inDialog is the subscription within the dialog of the conference
+	// session, nil when there is none (Subscribe).
+	inDialog *inDialogSubscription
+}
+
+// inDialogSubscription is a subscription within the dialog of the
+// conference session, which shares that dialog (RFC 6665 4.5.2): a BYE
+// of either end ends the session, not the subscription (RFC 5057 5.5).
+// The UE keeps the dialog for it until the NOTIFY that ends it, or
+// until it expires without one, as when that NOTIFY is lost (RFC 5057
+// 4.2): end tells the SIP stack (sip.CallDialog.AddSubscriptionUsage).
+type inDialogSubscription struct {
+	end func()
+	// stopExpiry stops the timer that ends the subscription at its
+	// expiry, which each NOTIFY sets anew.
+	stopExpiry func() bool
 }
 
 // ErrNotFocus is a conference session whose peer did not answer as a
@@ -237,29 +253,76 @@ func (c *Conference) Subscribe() error {
 		return err
 	}
 	c.u.log.Info("SUBSCRIBE outside the dialog refused with 403; subscribing within the dialog of the conference session")
-	resp, err := c.dialog().Send(sip.SUBSCRIBE, sip.Body{}, with(c.session.requestHeaders,
+	d := c.dialog()
+	// The usage is there before the SUBSCRIBE goes, since the first
+	// NOTIFY may come before the 2xx.
+	end, err := d.AddSubscriptionUsage()
+	if err != nil {
+		return err
+	}
+	c.mu.Lock()
+	c.inDialog = &inDialogSubscription{end: end}
+	c.expireInDialog(conferenceExpires)
+	c.mu.Unlock()
+	resp, err := d.Send(sip.SUBSCRIBE, sip.Body{}, with(c.session.requestHeaders,
 		sip.HeaderField{Name: "Event", Value: confinfo.EventPackage},
 		sip.HeaderField{Name: "Accept", Value: confinfo.ContentType},
 		sip.HeaderField{Name: "Expires", Value: fmt.Sprint(int(conferenceExpires / time.Second))})...)
 	switch {
 	case err != nil:
+		c.endInDialog()
 		return err
 	case resp.StatusCode >= 300:
+		c.endInDialog()
 		return fmt.Errorf("SUBSCRIBE within the dialog answered %d %s", resp.StatusCode, resp.Reason)
 	}
 	return nil
 }
 
-// dialog is where requests within the conference session go.
-func (c *Conference) dialog() interface {
+// withinTheSession is what the UE does within the dialog of the
+// conference session: an OutgoingCall or an IncomingCall.
+type withinTheSession interface {
 	Send(method sip.Method, body sip.Body, headers ...sip.HeaderField) (*sip.Message, error)
-} {
+	AddSubscriptionUsage() (end func(), err error)
+}
+
+// dialog is where requests within the conference session go.
+func (c *Conference) dialog() withinTheSession {
 	if c.call != nil {
 		return c.call
 	}
-	return c.session.dialog.(interface {
-		Send(method sip.Method, body sip.Body, headers ...sip.HeaderField) (*sip.Message, error)
-	})
+	return c.session.dialog.(withinTheSession)
+}
+
+// expireInDialog has the subscription within the dialog end after d,
+// when no NOTIFY has come by then to end it or to set its expiry anew.
+// The focus ends a subscription that expires with a NOTIFY (RFC 6665
+// 4.2.1.4), which may take a transaction's time to come, so the UE
+// waits that long past d. c.mu is held.
+func (c *Conference) expireInDialog(d time.Duration) {
+	sub := c.inDialog
+	if sub.stopExpiry != nil {
+		sub.stopExpiry()
+	}
+	sub.stopExpiry = time.AfterFunc(d+64*sip.DefaultTimers().T1, func() {
+		c.u.log.Info("conference subscription within the dialog expired without a NOTIFY that ends it")
+		c.endInDialog()
+	}).Stop
+}
+
+// endInDialog ends the subscription within the dialog, if there is one.
+func (c *Conference) endInDialog() {
+	c.mu.Lock()
+	sub := c.inDialog
+	c.inDialog = nil
+	c.mu.Unlock()
+	if sub == nil {
+		return
+	}
+	if sub.stopExpiry != nil {
+		sub.stopExpiry()
+	}
+	sub.end()
 }
 
 // receiveNotify takes a NOTIFY of the conference event package within
@@ -271,6 +334,20 @@ func (c *Conference) receiveNotify(r *sip.InDialogRequest) bool {
 	}
 	c.take(r.Request.Body)
 	r.Accept(sip.Body{}, c.session.responseHeaders...)
+	state, err := sip.ParseSubscriptionState(r.Request.Get("Subscription-State"))
+	switch {
+	case err != nil:
+	case state.State == sip.SubscriptionTerminated:
+		c.endInDialog()
+	case state.Expires > 0:
+		// RFC 6665 4.1.3: the expires of an active or pending state is
+		// how long the subscription has left.
+		c.mu.Lock()
+		if c.inDialog != nil {
+			c.expireInDialog(state.Expires)
+		}
+		c.mu.Unlock()
+	}
 	return true
 }
 
