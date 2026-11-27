@@ -266,3 +266,28 @@ func TestS6cIsDiameter(t *testing.T) {
 		t.Errorf("S6c is %s", f)
 	}
 }
+
+// TestLadderLabelWiderThanTheLadderFails makes sure that a label of a
+// message that reaches past the sides of a ladder fails the check: the
+// view would cut it, and the message would show without its name.
+func TestLadderLabelWiderThanTheLadderFails(t *testing.T) {
+	source := func(name string) string {
+		return "---\ntitle: T\nfooter: F\nlang: en\nformat: visual\n---\n\n```ims-model\nnodes:\n" +
+			"  - {id: a, label: A, at: [0, 0]}\n  - {id: b, label: B, at: [1, 0]}\nevents:\n" +
+			"  - {id: m, msg: " + name + ", from: a, to: b, proto: SIP}\n```\n\n---\n\n# T\n\n---\n\n## S\n\n" +
+			"```ims-scene\nid: l\nview: ladder\nsteps:\n  - {id: x, title: X, show: [m], text: Y}\n```\n"
+	}
+	for name, want := range map[string]bool{
+		"INVITE": false,
+		"ACTIVATE DEDICATED EPS BEARER CONTEXT REQUEST": true,
+	} {
+		d, err := deck.Parse("wide.md", source(name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		diagram := Draw(d.Model, d.Slides[1].Scene)
+		if got := len(diagram.Problems) > 0; got != want {
+			t.Errorf("%s: problems %v, want some: %v", name, diagram.Problems, want)
+		}
+	}
+}
