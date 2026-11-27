@@ -385,3 +385,119 @@ func TestRTCPGoesBothWaysAndEndsWithBYE(t *testing.T) {
 		t.Errorf("%d RTCP packets with b=RS:0 and b=RR:0, want none (IR.92 3.2.4)", off.Stats().RTCPSent)
 	}
 }
+
+// dtmfPeer is a socket that stands for the far end of a call, to read the
+// RTP that a Media sends.
+func dtmfPeer(t *testing.T) *net.UDPConn {
+	t.Helper()
+	c, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { c.Close() })
+	return c
+}
+
+// readRTP reads one packet from c, or fails the test after the deadline.
+func readRTP(t *testing.T, c *net.UDPConn, what string) rtp.Packet {
+	t.Helper()
+	buf := make([]byte, 1500)
+	c.SetReadDeadline(time.Now().Add(5 * time.Second))
+	n, err := c.Read(buf)
+	if err != nil {
+		t.Fatalf("waiting for %s: %v", what, err)
+	}
+	p, err := rtp.Unmarshal(buf[:n])
+	if err != nil {
+		t.Fatal(err)
+	}
+	return p
+}
+
+// wantOnlyAudioFrom reads packets from c until it has read n of speech,
+// and fails the test if one of them carries the payload type of the
+// events.
+func wantOnlyAudioFrom(t *testing.T, c *net.UDPConn, events sdp.Codec, n int) {
+	t.Helper()
+	for audio := 0; audio < n; {
+		switch p := readRTP(t, c, "speech after telephone-event was dropped"); int(p.PayloadType) {
+		case events.PayloadType:
+			t.Fatalf("a telephone-event packet %+v went out after telephone-event left the stream", p)
+		case sdp.PCMU:
+			audio++
+		}
+	}
+}
+
+// TestMediaDropsPendingDTMFWhenTelephoneEventGoesAway is a new offer and
+// answer that leave telephone-event out before the sender has begun the
+// digits: the digits are dropped, no event goes out, and the speech
+// carries on.
+func TestMediaDropsPendingDTMFWhenTelephoneEventGoesAway(t *testing.T) {
+	events := sdp.Codec{PayloadType: 101, Name: sdp.NameTelephoneEvent, ClockRate: 8000}
+	a, peer := listenMedia(t), dtmfPeer(t)
+	remote := peer.LocalAddr().(*net.UDPAddr).AddrPort()
+	if err := a.SetStream(ue.Stream{Remote: remote, Codec: pcmu, Events: &events}); err != nil {
+		t.Fatal(err)
+	}
+	a.SetFlow(ue.Flow{})
+	if err := a.Start(ue.Speech{PCM: ue.Tone(440, 2*time.Second)}); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.SendDTMF("12"); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.SetStream(ue.Stream{Remote: remote, Codec: pcmu}); err != nil {
+		t.Fatal(err)
+	}
+	a.SetFlow(ue.Flow{Send: true, Receive: true})
+	wantOnlyAudioFrom(t, peer, events, 10)
+	if err := a.SendDTMF("3"); err != ue.ErrNoTelephoneEvent {
+		t.Errorf("DTMF after telephone-event went away: %v, want ErrNoTelephoneEvent", err)
+	}
+	if sent, _ := a.DTMF(); sent != "" {
+		t.Errorf("sent %q as DTMF, want none", sent)
+	}
+}
+
+// TestMediaEndsEventWhenTelephoneEventGoesAway is the same new offer and
+// answer in the middle of an event: the event stops at once, with no more
+// packets in the format that is no longer agreed on.
+func TestMediaEndsEventWhenTelephoneEventGoesAway(t *testing.T) {
+	events := sdp.Codec{PayloadType: 101, Name: sdp.NameTelephoneEvent, ClockRate: 8000}
+	a, peer := listenMedia(t), dtmfPeer(t)
+	remote := peer.LocalAddr().(*net.UDPAddr).AddrPort()
+	if err := a.SetStream(ue.Stream{Remote: remote, Codec: pcmu, Events: &events}); err != nil {
+		t.Fatal(err)
+	}
+	a.SetFlow(ue.Flow{Send: true, Receive: true})
+	if err := a.Start(ue.Speech{PCM: ue.Tone(440, 2*time.Second)}); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.SendDTMF("1"); err != nil {
+		t.Fatal(err)
+	}
+	for p := readRTP(t, peer, "the first report of the event"); int(p.PayloadType) != events.PayloadType; {
+		p = readRTP(t, peer, "the first report of the event")
+	}
+	// Hold the sender still so that the event stays half sent however slow
+	// this test runs: the event takes seven packets.
+	a.SetFlow(ue.Flow{Receive: true})
+	if !ue.EventInProgress(a) {
+		t.Fatal("the event was over before the test could stop it")
+	}
+	for {
+		peer.SetReadDeadline(time.Now().Add(100 * time.Millisecond))
+		if _, err := peer.Read(make([]byte, 1500)); err != nil {
+			break // nothing more is in flight
+		}
+	}
+	if err := a.SetStream(ue.Stream{Remote: remote, Codec: pcmu}); err != nil {
+		t.Fatal(err)
+	}
+	if ue.EventInProgress(a) {
+		t.Error("the event goes on after telephone-event left the stream")
+	}
+	a.SetFlow(ue.Flow{Send: true, Receive: true})
+	wantOnlyAudioFrom(t, peer, events, 10)
+}

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"math"
 	mathrand "math/rand/v2"
 	"net"
@@ -215,6 +216,16 @@ func (m *Media) SetStream(s Stream) error {
 	defer m.mu.Unlock()
 	if m.stream != nil && !m.stream.Codec.Is(s.Codec.Name) && m.started {
 		return fmt.Errorf("the codec of the call cannot change from %s to %s", m.stream.Codec.Name, s.Codec.Name)
+	}
+	if s.Events == nil && (len(m.dtmf) > 0 || len(m.reports) > 0) {
+		// A telephone event goes out only in a format that the offer and
+		// answer settled (RFC 4733). With none left, the digits that wait
+		// are dropped and the event on its way ends here, without the
+		// reports that remain: the format of the packets already sent is no
+		// longer the call's, so the end of the event cannot go in it.
+		slog.Warn("telephone-event left the stream, so the DTMF that was not sent is dropped",
+			"waiting_digits", string(m.dtmf), "event_in_progress", len(m.reports) > 0)
+		m.dtmf, m.reports = nil, nil
 	}
 	m.stream, m.format = &s, format
 	if isAMR(s.Codec) && m.recorder == nil {

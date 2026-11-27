@@ -51,3 +51,11 @@ func RTPClock(m *Media) uint32 {
 	defer m.mu.Unlock()
 	return m.ts
 }
+
+// EventInProgress is whether m has sent some reports of a telephone event
+// and has more to send.
+func EventInProgress(m *Media) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return len(m.reports) > 0
+}
