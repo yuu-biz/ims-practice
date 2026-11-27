@@ -4,7 +4,6 @@ import (
 	"errors"
 	"fmt"
 	"slices"
-	"strings"
 	"sync"
 	"time"
 )
@@ -532,8 +531,7 @@ func (d *CallDialog) receiveRequest(st *ServerTransaction) {
 	// RFC 3261 12.2.2: the checks of a request outside a dialog come
 	// first, among them that of Require (8.2.2.3), and a rejected request
 	// changes nothing in the dialog. ACK and CANCEL never come here.
-	if unknown := c.ua.unsupportedExtensions(st.Request); len(unknown) > 0 {
-		d.respond(st, 420, HeaderField{Name: "Unsupported", Value: strings.Join(unknown, ", ")})
+	if c.ua.refuseUnknownExtensions(st) {
 		return
 	}
 	switch st.Request.Method {

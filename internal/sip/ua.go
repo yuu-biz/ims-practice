@@ -450,6 +450,21 @@ func (ua *UA) unsupportedExtensions(req *Message) []string {
 	return unknown
 }
 
+// refuseUnknownExtensions answers a request that requires an extension
+// the UA does not understand with 420 (Bad Extension), whose Unsupported
+// lists those option tags (RFC 3261 8.2.2.3), and reports whether it
+// did.
+func (ua *UA) refuseUnknownExtensions(st *ServerTransaction) bool {
+	unknown := ua.unsupportedExtensions(st.Request)
+	if len(unknown) == 0 {
+		return false
+	}
+	resp := NewResponse(st.Request, 420, NewTag())
+	resp.Add("Unsupported", strings.Join(unknown, ", "))
+	ua.respondOwn(st, resp)
+	return true
+}
+
 // receiveACK is Config.OnACK: the ACK for a 2xx, which goes to the call
 // whose dialog it names.
 func (ua *UA) receiveACK(ack *Message) {
