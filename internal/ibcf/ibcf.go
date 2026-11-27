@@ -352,13 +352,17 @@ func (b *IBCF) Screen(req *sip.Message, source sip.Destination) bool {
 // as it does for an initial request: by the next hop of a request that
 // leaves, and by the address of the far end for a request that comes in
 // and for a response, which goes back to where its request came from
-// (RFC 3261 18.2.2).
+// (RFC 3261 18.2.2). A request within a dialog goes to the Contact or
+// the Record-Route of the peer, whose host may be an address or a name
+// that the agreement does not list; the address it goes to is then one
+// of the peer's IBCFs, which BySource knows.
 func (b *IBCF) optionsLeftOut(m *sip.Message, remote sip.Destination, sent bool) []string {
 	var peer Peer
-	var ok bool
+	ok := false
 	if sent && m.IsRequest() {
 		peer, ok = b.peerOfNextHop(m)
-	} else {
+	}
+	if !ok {
 		peer, ok = b.peers.BySource(remote.Addr.Addr())
 	}
 	if !ok {
