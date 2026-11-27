@@ -5,6 +5,7 @@ import (
 	"embed"
 	"fmt"
 	"io"
+	"slices"
 	"time"
 
 	"github.com/yuu-biz/ims-practice/internal/amr"
@@ -50,6 +51,29 @@ func repeatTone(name string, d time.Duration) []amr.Frame {
 		frames = append(frames, tone[:min(len(tone), n-len(frames))]...)
 	}
 	return frames
+}
+
+// frames is the recording that goes out in a call of codec c.
+func (s Speech) frames(c amr.Codec) []amr.Frame {
+	if c == amr.AMRWB {
+		return s.AMRWB
+	}
+	return s.AMR
+}
+
+// modes are the speech modes that the recording of codec c was encoded
+// in, lowest first, or nil when it has no speech frame. Comfort noise
+// and NO_DATA are no mode, and any mode-set allows them (RFC 4867 8.1,
+// 8.2).
+func (s Speech) modes(c amr.Codec) []amr.FrameType {
+	var modes []amr.FrameType
+	for _, f := range s.frames(c) {
+		if c.IsSpeech(f.Type) && !slices.Contains(modes, f.Type) {
+			modes = append(modes, f.Type)
+		}
+	}
+	slices.Sort(modes)
+	return modes
 }
 
 // ReadAMR reads an AMR or AMR-WB file in the storage format of RFC

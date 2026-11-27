@@ -4,6 +4,8 @@ import (
 	"net/netip"
 	"slices"
 	"strconv"
+
+	"github.com/yuu-biz/ims-practice/internal/amr"
 )
 
 // MaxPtime is the most audio a packet may carry, in ms: twelve frames
@@ -79,6 +81,13 @@ func AudioOffer(sessionID string, addr netip.AddrPort, codecs []Codec) (Session,
 // An AMR or AMR-WB answer keeps the offered payload type number,
 // octet-align and mode-set (RFC 4867 8.3.1), and states this side's
 // mode-change-capability and max-red (TS 26.114 Table 6.4).
+//
+// A mode-set on an AMR or AMR-WB codec of supported lists the modes this
+// side sends in that format. An offered payload type with a mode-set is
+// taken only when its mode-set allows each of them: the answerer returns
+// an offered mode-set unmodified or removes the payload type, and the
+// mode-set binds both sides (RFC 4867 8.3.1). The answer never carries
+// the mode-set of supported.
 func AudioAnswer(offer Session, sessionID string, addr netip.AddrPort, supported []Codec) (Session, error) {
 	answer := Session{
 		Origin:     Origin{Username: "-", SessionID: sessionID, Version: 1, Address: addr.Addr()},
@@ -135,8 +144,8 @@ func chooseCodecs(offered, supported []Codec) []Codec {
 
 // compatible tells that this side can use the offered payload format
 // o as it supports s: the same encoding and clock rate, one channel,
-// and for AMR the same octet-align and no option the amr package
-// lacks. Any mode-set is fine (TS 26.114 Table 6.3).
+// and for AMR the same octet-align, no option the amr package lacks, and
+// no mode-set that leaves out a mode of the mode-set of s.
 func compatible(o, s Codec) bool {
 	if !o.Is(s.Name) || o.ClockRate != s.ClockRate || o.Channels > 1 {
 		return false
@@ -149,7 +158,15 @@ func compatible(o, s Codec) bool {
 		return false
 	}
 	sf, err := s.AMRFormat()
-	return err == nil && of == sf
+	if err != nil || of != sf {
+		return false
+	}
+	allowed, err := o.ModeSet()
+	if err != nil {
+		return false
+	}
+	sent, err := s.ModeSet()
+	return err == nil && (allowed == nil || !slices.ContainsFunc(sent, func(m amr.FrameType) bool { return !slices.Contains(allowed, m) }))
 }
 
 func answerCodec(o Codec) Codec {

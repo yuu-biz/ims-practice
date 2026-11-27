@@ -59,6 +59,20 @@ func (c Codec) ModeSet() ([]amr.FrameType, error) {
 	return modes, nil
 }
 
+// WithModeSet is c, an AMR or AMR-WB payload format, with a mode-set
+// that allows modes (RFC 4867 8.1, 8.2) in place of any it had.
+func (c Codec) WithModeSet(modes []amr.FrameType) Codec {
+	params := []string{"mode-set=" + modeSetString(modes)}
+	for _, p := range strings.Split(c.Fmtp, ";") {
+		n, _, _ := strings.Cut(strings.TrimSpace(p), "=")
+		if n != "" && !strings.EqualFold(n, "mode-set") {
+			params = append(params, strings.TrimSpace(p))
+		}
+	}
+	c.Fmtp = strings.Join(params, "; ")
+	return c
+}
+
 // highestMode is the mode b=AS has to fit: the highest of the mode-set,
 // or the codec's highest mode (TS 26.114 6.2.5.2).
 func (c Codec) highestMode() (amr.FrameType, error) {
