@@ -603,16 +603,15 @@ func (d *CallDialog) receiveRequest(st *ServerTransaction) {
 }
 
 // takes is RFC 3261 8.2.1 for a request within the dialog: whether the
-// UA takes its method here. PRACK goes to the UAS of the call, as only
-// a UAS sends reliable provisional responses, and a method that the UA
-// does not handle by itself needs a user of the call to answer it
-// (handled, receiveOther).
+// UA takes its method here. A method that the UA does not handle by
+// itself needs a user of the call to answer it (handled, receiveOther).
+// PRACK is taken in a dialog of either kind of call: the peer may send
+// a re-INVITE whose provisional responses go reliably, and a PRACK that
+// matches none of them gets 481 (RFC 3262 3).
 func (d *CallDialog) takes(method Method, handled bool) bool {
 	switch method {
-	case BYE, OPTIONS, UPDATE, INVITE, NOTIFY:
+	case BYE, OPTIONS, UPDATE, INVITE, NOTIFY, PRACK:
 		return true
-	case PRACK:
-		return d.in != nil
 	}
 	return handled
 }

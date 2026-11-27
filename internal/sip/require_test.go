@@ -56,6 +56,8 @@ func TestRequestWithinADialogRequiringAnUnknownExtension(t *testing.T) {
 		{NOTIFY, Body{}, []HeaderField{event, {Name: "Subscription-State", Value: "active;expires=60"}}},
 		{REFER, Body{}, []HeaderField{{Name: "Refer-To", Value: "<sip:other@example.org>"}}},
 		{SUBSCRIBE, Body{}, []HeaderField{event, {Name: "Expires", Value: "600"}}},
+		// The UAC of a call takes PRACKs too.
+		{PRACK, Body{}, []HeaderField{{Name: "RAck", Value: "1 1 INVITE"}}},
 	} {
 		t.Run(string(tc.method), func(t *testing.T) {
 			arrived := make(chan *InDialogRequest, 2)
@@ -135,32 +137,22 @@ func TestRequestWithinADialogRequiringAKnownExtension(t *testing.T) {
 
 // RFC 3261 8.2: the method is inspected before the header fields, so a
 // request within a dialog whose method the UA does not take there gets
-// 405 (Method Not Allowed), whatever its Require lists: a PRACK at the
-// UAC, and an INFO in a call without a user to answer it.
+// 405 (Method Not Allowed), whatever its Require lists: here an INFO in
+// a call without a user to answer it.
 func TestRequestWithinADialogOfAMethodNotTakenAndAnUnknownExtension(t *testing.T) {
-	for _, tc := range []struct {
-		method    Method
-		onRequest func(*InDialogRequest)
-	}{
-		{PRACK, func(r *InDialogRequest) { r.Accept(Body{}) }},
-		{"INFO", nil},
-	} {
-		t.Run(string(tc.method), func(t *testing.T) {
-			callerUA := newUA(t, testTimers, "001010000000001", noCalls)
-			_, p := rawAnswer(t, callerUA, Invitation{OnRequest: tc.onRequest})
-			p.request(tc.method, Body{}, HeaderField{Name: "Require", Value: "foo"})
-			resp := readDatagram(t, p.peer)
-			if resp.StatusCode != 405 || resp.Get("Allow") == "" || resp.Get("Unsupported") != "" {
-				t.Errorf("got %s with Allow %q and Unsupported %q, want 405 with Allow only",
-					startLine(resp), resp.Get("Allow"), resp.Get("Unsupported"))
-			}
-		})
+	callerUA := newUA(t, testTimers, "001010000000001", noCalls)
+	_, p := rawAnswer(t, callerUA, Invitation{})
+	p.request("INFO", Body{}, HeaderField{Name: "Require", Value: "foo"})
+	resp := readDatagram(t, p.peer)
+	if resp.StatusCode != 405 || resp.Get("Allow") == "" || resp.Get("Unsupported") != "" {
+		t.Errorf("got %s with Allow %q and Unsupported %q, want 405 with Allow only",
+			startLine(resp), resp.Get("Allow"), resp.Get("Unsupported"))
 	}
 }
 
-// A PRACK at the UAS goes through the same check: one that requires an
-// unknown extension gets 420 and acknowledges nothing, so the reliable
-// 183 still waits for the PRACK that the next one is.
+// A PRACK at the UAS goes through the check of Require as well: one
+// that requires an unknown extension gets 420 and acknowledges nothing,
+// so the reliable 183 still waits for the PRACK that the next one is.
 func TestPRACKRequiringAnUnknownExtension(t *testing.T) {
 	progress := make(chan error, 1)
 	calleeUA := newUA(t, testTimers, callee, func(c *IncomingCall) {
