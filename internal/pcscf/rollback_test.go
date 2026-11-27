@@ -104,6 +104,11 @@ func TestCancelledReInvitePutsTheRelayBack(t *testing.T) {
 	case <-time.After(10 * time.Second):
 		t.Fatal("the 180 did not reach the UE")
 	}
+	// The offer moved the relay on its way, so there is something to put
+	// back.
+	if got := relay.remote("1", agw.Access); got == before {
+		t.Fatalf("the access termination sends to %v while the re-INVITE is pending, want the address of its offer", got)
+	}
 	if err := c.out.CancelReInvite(reason.Header()); err != nil {
 		t.Fatalf("CancelReInvite: %v", err)
 	}
@@ -117,7 +122,9 @@ func TestCancelledReInvitePutsTheRelayBack(t *testing.T) {
 	}
 	select {
 	case got := <-cancel:
-		if got == nil || got.Get("Reason") != reason.String() {
+		if got == nil {
+			t.Error("the far end has no CANCEL for its re-INVITE")
+		} else if got.Get("Reason") != reason.String() {
 			t.Errorf("the CANCEL at the far end has Reason %q, want %q", got.Get("Reason"), reason.String())
 		}
 	case <-time.After(10 * time.Second):

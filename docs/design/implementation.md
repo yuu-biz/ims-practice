@@ -102,7 +102,7 @@ re-INVITE を受けた側（UAS）は次のように動きます。
 | 1 つの INVITE の UAS の状態を型（`provisionals`）にまとめ、`IncomingCall` と `InDialogRequest` が持つ（採った形） | 2 つの INVITE が、同じ関数（`makeReliable`、`acceptPRACK`）と同じ送り直しの手順（`retransmit`）を使います。 |
 | SDP のある信頼できる暫定応答が PRACK で確かめられる前の `Accept` を、誤りとして返す | PRACK を待つ手順を、利用者がそれぞれ書くことになるので採りません。`Accept` は待ちます。最初の INVITE の `IncomingCall.Accept` も待ちます。 |
 
-信頼できる暫定応答で SDP を送ったあとの CANCEL を利用者に任せるのは、変更が済んだかどうかをスタックが決められないためです。RFC 6141 3.3 では、プリコンディションの無いオファーとアンサーが終わった時点で変更は済み、そのとき UAS は CANCEL されても 2xx を返します（3.8）。プリコンディションの有無は SDP に書いてあり、スタックは SDP を読みません。いつも 487 を返す形は、変更が済んだ re-INVITE に 2xx でない最終応答を返すことになるので採りません。B2BUA は `Cancelled` が閉じたらもう一方のレグに CANCEL を送り、そこから来た最終応答を `Accept` か `Reject` で返します。
+信頼できる暫定応答で SDP を送ったあとの CANCEL を利用者に任せるのは、変更が済んだかどうかをスタックが決められないためです。RFC 6141 3.3 では、プリコンディションの無いオファーとアンサーが終わった時点で変更は済み、そのとき UAS は CANCEL されても 2xx を返します（3.8）。プリコンディションの有無は SDP に書いてあり、スタックは SDP を読みません。いつも 487 を返す形は、変更が済んだ re-INVITE に 2xx でない最終応答を返すことになるので採りません。B2BUA は `Cancelled` が閉じたらもう一方のレグに CANCEL を送り、そこから来た最終応答を `Accept` か `Reject` で返します。B2BUA にとっては、SDP のある信頼できる暫定応答をまだ送っていなくても、変更が済んだかどうかは分かりません。それが分かるのはもう一方のレグの相手だけです。そこで B2BUA は `IncomingCall.RelayReInviteCancel` と `Invitation.RelayReInviteCancel` で、スタックが自分で返す 487 を止め、最終応答をいつも自分で返します。
 
 ## 呼処理のノードを Go にした理由
 
