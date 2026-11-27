@@ -827,7 +827,7 @@ INVITE    P-CSCF -> S-CSCF   P-Asserted-Identity: <sip:+12025550110@ims.mnc001.m
 
 ---
 
-## IMS-AKA の最初の REGISTER と 401（1 から 6）
+## IMS-AKA の最初の REGISTER と 401（1〜6）
 
 ```ims-scene
 id: challenge
@@ -910,7 +910,7 @@ steps:
 
 ---
 
-## IMS-AKA で網を確かめて答える（7 から 12）
+## IMS-AKA で網を確かめて答える（7〜12）
 
 ```ims-scene
 id: answer
