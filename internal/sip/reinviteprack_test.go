@@ -463,3 +463,17 @@ func TestFailedReINVITEKeepsTheOfferOfAnUPDATEAfterItsReliable183(t *testing.T) 
 	}
 	u.acceptUPDATE(t)
 }
+
+// RFC 3262 4: a reliable provisional response without an offer gets its
+// PRACK from the UA, also while an offer of the peer's UPDATE waits for
+// the user's answer: that offer is not one of the response.
+func TestReliableResponseAfterAnUPDATEOfThePeerGetsItsPRACK(t *testing.T) {
+	u := reInviteThenUPDATE(t)
+	send(t, u.p.peer, reliable(u.reinvite, 180, 2, u.p.target), u.ua.Stack())
+	u.p.respond(readPRACK(t, u.p, "2 2 INVITE", "4 PRACK"), 200, Body{})
+	u.acceptUPDATE(t)
+	acceptReInvite(t, u.p, u.reinvite, Body{})
+	if r := finalOf(t, u.done); r.err != nil || r.resp.StatusCode != 200 {
+		t.Fatalf("ReInvite returned %v, %v; want the 200", r.resp, r.err)
+	}
+}
