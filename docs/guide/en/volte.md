@@ -432,7 +432,7 @@ a=maxptime:240
 - AMR-WB comes first, then AMR, each in both payload formats of RFC 4867: bandwidth-efficient (96, 98), which IR.92 3.2.5 has the caller prefer, and octet-aligned (97, 99). No mode-set: every mode is allowed (IR.92 2.4.3.2).
 - PCMU stays last, for softphones and the interconnection of JJ-90.30. It makes b=AS 80 kbit/s, the bandwidth of PCMU with its headers, and that is what the P-CSCF asks the PCRF for in the uplink.
 - telephone-event comes at the clock rate of each speech codec (TS 26.114 Annex G).
-- b=RS:0 and b=RR:4000 are the RTCP bandwidth of senders and of receivers in bit/s (RFC 3556 2). The UE computes its report interval from them (RFC 3550 6.3.1), never below 5 seconds; both at 0 would turn RTCP off (IR.92 3.2.4).
+- b=RS:0 and b=RR:4000 are the RTCP bandwidth of senders and of receivers in bit/s (RFC 3556 2). The UE computes its report interval from them (RFC 3550 6.3.1), never below 5 seconds; both at 0 would turn RTCP off (IR.92 3.2.4). A `b=RS` or `b=RR` line before the first `m=` line holds for the stream too, and a line in the `m=audio` section overrides it (RFC 3556 4).
 
 volte12 answers `m=audio 60734 RTP/AVP 96 100` with AMR-WB in the bandwidth-efficient format and telephone-event/16000, and `b=AS:41`. ue2, which knows PCMU only, answers `m=audio ... RTP/AVP 0 101`, and the VoLTE UE then speaks PCMU (`ue -codecs` changes the list).
 

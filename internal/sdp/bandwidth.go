@@ -62,14 +62,38 @@ const (
 	RTCPReceivers = 4000
 )
 
+// bandwidth returns the b= line of this type that holds for m: its own,
+// or else one before the first m= line, which gives the bandwidth of
+// the session as a whole (RFC 3556 4). Only the first such line counts,
+// as in Media.Bandwidth.
+func (s Session) bandwidth(m Media, bwtype string) (int, bool) {
+	if v, ok := m.Bandwidth(bwtype); ok {
+		return v, true
+	}
+	for _, l := range s.Lines {
+		if v, ok := strings.CutPrefix(l, "b="); ok {
+			if bw, err := parseBandwidth(v); err == nil && bw.Type == bwtype {
+				return bw.Value, true
+			}
+		}
+	}
+	return 0, false
+}
+
 // RTCPBandwidth returns the RTCP bandwidth of m in bit/s: its b=RS and
-// b=RR, or the defaults of RFC 3556 3 for a line that is missing, which
-// IR.92 3.2.4 asks for: 5% of b=AS in all, 1.25% for senders and 3.75%
-// for receivers when both are missing. Both 0 means RTCP is off.
-func (m Media) RTCPBandwidth() (rs, rr int) {
-	rs, hasRS := m.Bandwidth("RS")
-	rr, hasRR := m.Bandwidth("RR")
-	as, _ := m.Bandwidth("AS")
+// b=RR. An explicit line of the media comes first, then one of the
+// session; a value that neither gives follows from b=AS, which the
+// media gives or else the session, with the defaults of RFC 3556 3 and
+// the order of RFC 3556 4. IR.92 3.2.4 asks for 5% of b=AS in all, 1.25%
+// for senders and 3.75% for receivers when both are missing. Both 0
+// means RTCP is off.
+//
+// b=AS of the session is the bandwidth of all its media, and calls carry
+// one audio stream, so the stream takes all of it.
+func (s Session) RTCPBandwidth(m Media) (rs, rr int) {
+	rs, hasRS := s.bandwidth(m, "RS")
+	rr, hasRR := s.bandwidth(m, "RR")
+	as, _ := s.bandwidth(m, "AS")
 	total := as * 1000 * 5 / 100
 	switch {
 	case !hasRS && !hasRR:

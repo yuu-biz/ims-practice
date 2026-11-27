@@ -432,7 +432,7 @@ a=maxptime:240
 - AMR-WB を先に、次に AMR を、それぞれ RFC 4867 の 2 つのペイロード形式で並べます。IR.92 3.2.5 が発信側に優先させる bandwidth-efficient（96、98）と、octet-aligned（97、99）です。mode-set は付けないので、すべてのモードを使えます（IR.92 2.4.3.2）。
 - PCMU はソフトフォンと JJ-90.30 の網間接続のために最後に残しています。そのため b=AS はヘッダを含めた PCMU の帯域の 80 kbit/s になり、P-CSCF が PCRF に求める上りの帯域もこの値になります。
 - telephone-event は音声のコーデックそれぞれのクロックで入れます（TS 26.114 Annex G）。
-- b=RS:0 と b=RR:4000 は送信者と受信者の RTCP の帯域です。単位は bit/s です（RFC 3556 2 章）。UE は報告の間隔をこれから計算し（RFC 3550 6.3.1）、5 秒より短くはしません。両方が 0 なら RTCP を送りません（IR.92 3.2.4）。
+- b=RS:0 と b=RR:4000 は送信者と受信者の RTCP の帯域です。単位は bit/s です（RFC 3556 2 章）。UE は報告の間隔をこれから計算し（RFC 3550 6.3.1）、5 秒より短くはしません。両方が 0 なら RTCP を送りません（IR.92 3.2.4）。最初の `m=` の行より前にある `b=RS` と `b=RR` の行は、このストリームにも当たります。`m=audio` の部分に同じ行があれば、そちらが優先されます（RFC 3556 4 章）。
 
 volte12 は `m=audio 60734 RTP/AVP 96 100` で答えます。bandwidth-efficient の AMR-WB と telephone-event/16000 で、`b=AS:41` です。PCMU しか知らない ue2 は `m=audio ... RTP/AVP 0 101` で答え、VoLTE の UE はそのあと PCMU で話します（並びは `ue -codecs` で変えられます）。
 

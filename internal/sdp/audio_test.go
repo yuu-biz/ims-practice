@@ -148,7 +148,7 @@ func TestAnswerRTCPOff(t *testing.T) {
 	offer := "v=0\r\no=- 1 1 IN IP4 192.0.2.30\r\ns=-\r\nc=IN IP4 192.0.2.30\r\nt=0 0\r\n" +
 		"m=audio 5004 RTP/AVP 0\r\nb=RS:0\r\nb=RR:0\r\na=sendonly\r\n"
 	_, m := answer(t, offer)
-	if rs, rr := m.RTCPBandwidth(); rs != 0 || rr != 0 {
+	if rs, rr := (Session{}).RTCPBandwidth(m); rs != 0 || rr != 0 {
 		t.Errorf("RTCP bandwidth %d, %d; IR.92 3.2.4 answers zero with zero", rs, rr)
 	}
 	if _, ok := m.Get("recvonly"); !ok {
