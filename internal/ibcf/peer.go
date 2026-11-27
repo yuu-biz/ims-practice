@@ -46,6 +46,9 @@ type Peers interface {
 	BySource(addr netip.Addr) (Peer, bool)
 	// ByHost finds the peer that host belongs to: the host of the next
 	// hop of a request that leaves, the top Route or the Request-URI.
+	// The external UA asks it about each request that it sends, in the
+	// goroutine that sends it (IBCF.optionsLeftOut): it must answer at
+	// once and take no lock that the handling of a request may hold.
 	ByHost(host string) (Peer, bool)
 	// Names are the names of the profiles of every peer, for the peer
 	// label of the counters.
