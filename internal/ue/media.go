@@ -361,10 +361,7 @@ func (m *Media) Start(speech Speech) error {
 			m.speech = append(m.speech, g711.Encode(speech.PCM[i:i+n]))
 		}
 	default:
-		frames := speech.AMR
-		if m.format.Codec == amr.AMRWB {
-			frames = speech.AMRWB
-		}
+		frames := speech.frames(m.format.Codec)
 		for _, f := range frames {
 			// A frame that cannot be packed is refused now, not at its tick.
 			if _, err := m.packFrame(f); err != nil {

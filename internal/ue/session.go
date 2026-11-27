@@ -131,7 +131,10 @@ type Session struct {
 	// addr is where this UE takes the media, as its SDP says.
 	addr   netip.AddrPort
 	codecs []sdp.Codec
-	id     string // the session id of o=
+	// answerable are the codecs as an answer of this UE takes them
+	// (answerable).
+	answerable []sdp.Codec
+	id         string // the session id of o=
 	// kicked tells the goroutine of the call that a request of the peer
 	// changed the session.
 	kicked  chan struct{}
@@ -198,11 +201,12 @@ var bearerLossGrace = 2 * time.Second
 // its access network took the bearer of the media away.
 var ErrMediaBearerLost = errors.New("the bearer of the media was lost")
 
-func (u *UE) newSession(media *Media, codecs []sdp.Codec, changed func()) *Session {
+func (u *UE) newSession(media *Media, codecs []sdp.Codec, speech Speech, changed func()) *Session {
 	if changed == nil {
 		changed = func() {}
 	}
-	s := &Session{log: u.log, media: media, addr: netip.AddrPortFrom(u.contact.addr.Addr(), media.Port()), codecs: codecs,
+	s := &Session{log: u.log, media: media, addr: netip.AddrPortFrom(u.contact.addr.Addr(), media.Port()),
+		codecs: codecs, answerable: answerable(codecs, speech),
 		changed: changed, requestHeaders: u.requestHeaders(), responseHeaders: u.responseHeaders(),
 		id: strconv.FormatInt(time.Now().UnixNano(), 10), kicked: make(chan struct{}, 1)}
 	media.OnDigit(func(d rune) {
@@ -210,6 +214,30 @@ func (u *UE) newSession(media *Media, codecs []sdp.Codec, changed func()) *Sessi
 		s.changed()
 	})
 	return s
+}
+
+// answerable is codecs as an answer of this UE takes them: each AMR and
+// AMR-WB format with a mode-set of the modes that speech has in it, which
+// the mode-set of an offered payload type has to allow (sdp.AudioAnswer).
+//
+// SIMPLIFIED: RFC 4867 8.3.1. A UE that encodes speech keeps to any
+// mode-set of an offer. This one sends frames encoded beforehand, in the
+// modes they were encoded in, so it takes an offered payload type only
+// when its mode-set allows all of them. It removes any other from the
+// answer, as 8.3.1 lets an answerer do, and takes the next format of the
+// offer, or rejects the offer when none is left.
+func answerable(codecs []sdp.Codec, speech Speech) []sdp.Codec {
+	out := slices.Clone(codecs)
+	for i, c := range out {
+		f, err := c.AMRFormat()
+		if err != nil {
+			continue
+		}
+		if modes := speech.modes(f.Codec); modes != nil {
+			out[i] = c.WithModeSet(modes)
+		}
+	}
+	return out
 }
 
 // sessionDialog is the dialog of a call as its session uses it: an
@@ -504,7 +532,7 @@ func (s *Session) receiveAnswer(m *sip.Message) error {
 		s.log.Info("the callee does not use preconditions")
 		s.precond = nil
 	}
-	if err := s.negotiated(s.offered, answer, answer); err != nil {
+	if err := s.negotiated(s.offered, answer, false); err != nil {
 		return err
 	}
 	if s.precond != nil {
@@ -544,7 +572,7 @@ func (s *Session) answerTo(offerBody []byte, initial bool) (sip.Body, error) {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	d, err := sdp.AudioAnswer(offer, s.id, s.addr, s.codecs)
+	d, err := sdp.AudioAnswer(offer, s.id, s.addr, s.answerable)
 	if err != nil {
 		return sip.Body{}, &errNotAcceptable{488, err}
 	}
@@ -570,7 +598,7 @@ func (s *Session) answerTo(offerBody []byte, initial bool) (sip.Body, error) {
 		}
 		m.SetPreconditions(attrs)
 	}
-	if err := s.negotiated(d, offer, offer); err != nil {
+	if err := s.negotiated(offer, d, true); err != nil {
 		return sip.Body{}, &errNotAcceptable{488, err}
 	}
 	body := s.body(d)
@@ -578,29 +606,38 @@ func (s *Session) answerTo(offerBody []byte, initial bool) (sip.Body, error) {
 	return body, nil
 }
 
-// negotiated takes the stream that local and remote, an offer and its
-// answer, settled. peer is the SDP of the peer, whose address and
-// payload types this UE sends with; the UE takes in the payload types of
-// local, its own SDP (RFC 3264 5.1, 6.1). The two differ when the answer
-// numbers a dynamic payload type another way than the offer. s.mu is held.
-func (s *Session) negotiated(local, remote, peer sdp.Session) error {
+// negotiated takes the stream that an offer and its answer settled;
+// answering tells that the answer is this UE's own SDP. The speech codec
+// is the first of the answer that the offer has too, as the answer lists
+// the formats in its order of preference (RFC 3264 6.1). The UE sends
+// with the address and payload types of the peer's SDP, and takes in the
+// payload types of its own (RFC 3264 5.1, 6.1). The two differ when the
+// answer numbers a dynamic payload type another way than the offer.
+// s.mu is held.
+func (s *Session) negotiated(offer, answer sdp.Session, answering bool) error {
+	local, peer := offer, answer
+	if answering {
+		local, peer = answer, offer
+	}
 	i := slices.IndexFunc(local.Media, func(m sdp.Media) bool { return m.Type == "audio" && m.Port != 0 })
-	if i < 0 || i >= len(remote.Media) || remote.Media[i].Port == 0 {
+	if i < 0 || i >= len(peer.Media) || peer.Media[i].Port == 0 {
 		return errors.New("no audio stream on both sides")
 	}
 	pm := peer.Media[i]
 	stream := Stream{Remote: peer.Address(pm)}
 	stream.RS, stream.RR = peer.RTCPBandwidth(pm)
-	speech := false
-	for _, c := range pm.Codecs() {
-		if !slices.ContainsFunc(s.codecs, func(o sdp.Codec) bool { return sameFormat(o, c) }) {
+	for _, a := range answer.Media[i].Codecs() {
+		o, ok := counterpart(offer.Media[i].Codecs(), a)
+		if !ok || a.Is(sdp.NameTelephoneEvent) {
 			continue
 		}
-		if !c.Is(sdp.NameTelephoneEvent) && !speech {
-			stream.Codec, speech = c, true
+		stream.Codec, stream.ReceiveCodec = a, o
+		if answering {
+			stream.Codec, stream.ReceiveCodec = o, a
 		}
+		break
 	}
-	if !speech {
+	if stream.Codec.Name == "" {
 		return errors.New("no speech codec of this UE in the session")
 	}
 	for _, c := range pm.Codecs() {
@@ -610,19 +647,14 @@ func (s *Session) negotiated(local, remote, peer sdp.Session) error {
 		}
 	}
 	mine := local.Media[i].Codecs()
-	n := slices.IndexFunc(mine, func(c sdp.Codec) bool { return sameFormat(c, stream.Codec) })
-	if n < 0 {
-		return errors.New("the speech codec of the session is not in the SDP of this UE")
-	}
-	stream.ReceiveCodec = mine[n]
 	if stream.Events != nil {
-		n = slices.IndexFunc(mine, func(c sdp.Codec) bool { return c.Is(sdp.NameTelephoneEvent) && c.ClockRate == stream.Codec.ClockRate })
+		n := slices.IndexFunc(mine, func(c sdp.Codec) bool { return c.Is(sdp.NameTelephoneEvent) && c.ClockRate == stream.Codec.ClockRate })
 		if n < 0 {
 			return errors.New("the telephone-event of the session is not in the SDP of this UE")
 		}
 		stream.ReceiveEvents = &mine[n]
 	}
-	s.remoteDir = remote.Direction(remote.Media[i])
+	s.remoteDir = peer.Direction(pm)
 	if err := s.media.SetStream(stream); err != nil {
 		return err
 	}
@@ -642,6 +674,21 @@ func toTag(m *sip.Message) string {
 	}
 	tag, _ := na.Params.Get("tag")
 	return tag
+}
+
+// counterpart is the payload format of codecs that is c in the other SDP
+// of an offer and answer: the one with the same payload type number,
+// which an answer keeps when it can (RFC 3264 6.1), or else the first of
+// the same format.
+func counterpart(codecs []sdp.Codec, c sdp.Codec) (sdp.Codec, bool) {
+	i := slices.IndexFunc(codecs, func(o sdp.Codec) bool { return o.PayloadType == c.PayloadType && sameFormat(o, c) })
+	if i < 0 {
+		i = slices.IndexFunc(codecs, func(o sdp.Codec) bool { return sameFormat(o, c) })
+	}
+	if i < 0 {
+		return sdp.Codec{}, false
+	}
+	return codecs[i], true
 }
 
 // sameFormat tells that c, from an SDP of the peer, is the payload

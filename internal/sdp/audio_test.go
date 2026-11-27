@@ -6,6 +6,8 @@ import (
 	"slices"
 	"strings"
 	"testing"
+
+	"github.com/yuu-biz/ims-practice/internal/amr"
 )
 
 var ueAddr = netip.MustParseAddrPort("172.28.0.101:40000")
@@ -111,6 +113,62 @@ func TestAnswerKeepsModeSetAndOctetAlign(t *testing.T) {
 	}
 	if as, _ := m.Bandwidth("AS"); as != 30 {
 		t.Errorf("b=AS:%d, want 30 for octet-aligned AMR 12.2", as)
+	}
+}
+
+// TestAnswerTakesOnlyModeSetsThatAllowWhatItSends is RFC 4867 8.3.1: an
+// answerer returns an offered mode-set unmodified or removes the payload
+// type. This side sends AMR-WB 23.85 (mode 8) and AMR 12.2 (mode 7)
+// only, so it removes a payload type whose mode-set leaves its mode out
+// and takes the next format of the offer, or none.
+func TestAnswerTakesOnlyModeSetsThatAllowWhatItSends(t *testing.T) {
+	var supported []Codec
+	for _, c := range VoLTECodecs() {
+		switch {
+		case c.Is(NameAMRWB):
+			c = c.WithModeSet([]amr.FrameType{8})
+		case c.Is(NameAMR):
+			c = c.WithModeSet([]amr.FrameType{7})
+		}
+		supported = append(supported, c)
+	}
+	const head = "v=0\r\no=- 1 1 IN IP4 192.0.2.30\r\ns=-\r\nc=IN IP4 192.0.2.30\r\nt=0 0\r\n"
+	for _, tc := range []struct {
+		name, media, want string
+	}{
+		{"another codec", "m=audio 5004 RTP/AVP 96 98\r\n" +
+			"a=rtpmap:96 AMR-WB/16000/1\r\na=fmtp:96 mode-set=0,1,2\r\n" +
+			"a=rtpmap:98 AMR/8000/1\r\n",
+			"98 AMR/8000/1 mode-change-capability=2; max-red=0"},
+		{"the same codec without a mode-set", "m=audio 5004 RTP/AVP 96 106\r\n" +
+			"a=rtpmap:96 AMR-WB/16000/1\r\na=fmtp:96 mode-set=0,1,2\r\n" +
+			"a=rtpmap:106 AMR-WB/16000/1\r\n",
+			"106 AMR-WB/16000/1 mode-change-capability=2; max-red=0"},
+		{"a mode-set that allows the mode", "m=audio 5004 RTP/AVP 96\r\n" +
+			"a=rtpmap:96 AMR-WB/16000/1\r\na=fmtp:96 mode-set=2,8\r\n",
+			"96 AMR-WB/16000/1 mode-set=2,8; mode-change-capability=2; max-red=0"},
+		{"nothing to take", "m=audio 5004 RTP/AVP 96 98\r\n" +
+			"a=rtpmap:96 AMR-WB/16000/1\r\na=fmtp:96 mode-set=0,1,2\r\n" +
+			"a=rtpmap:98 AMR/8000/1\r\na=fmtp:98 mode-set=0,2,4\r\n",
+			""},
+	} {
+		o, err := Parse([]byte(head + tc.media))
+		if err != nil {
+			t.Fatal(err)
+		}
+		a, err := AudioAnswer(o, "9", ueAddr, supported)
+		if tc.want == "" {
+			if !errors.Is(err, ErrNoCommonCodec) {
+				t.Errorf("%s: err = %v, want ErrNoCommonCodec", tc.name, err)
+			}
+			continue
+		}
+		if err != nil {
+			t.Fatalf("%s: %v", tc.name, err)
+		}
+		if got := rtpmaps(*a.AudioMedia()); got != tc.want {
+			t.Errorf("%s: answer codecs %q, want %q", tc.name, got, tc.want)
+		}
 	}
 }
 

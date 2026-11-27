@@ -92,7 +92,7 @@ func (u *UE) Call(ctx context.Context, ua *sip.UA, reg Registration, target stri
 	if codecs == nil {
 		codecs = u.cfg.Calls.codecs()
 	}
-	s := u.newSession(media, codecs, opts.Changed)
+	s := u.newSession(media, codecs, speech, opts.Changed)
 	s.caller = true
 	stopFollowing := s.followResources(u.cfg.Calls.Resources, !u.cfg.Calls.NoPreconditions, precondition.Originating)
 	defer stopFollowing()
@@ -513,7 +513,7 @@ func (u *UE) Answer(ctx context.Context, ic *sip.IncomingCall, media *Media, spe
 		return ic.Reject(opts.Reject, u.responseHeaders()...)
 	}
 	callID := ic.Request.Get("Call-ID")
-	s := u.newSession(media, u.cfg.Calls.codecs(), opts.Changed)
+	s := u.newSession(media, u.cfg.Calls.codecs(), speech, opts.Changed)
 	// TS 24.229 5.1.4.1 a): the callee uses the mechanism when the
 	// INVITE supports it and the mechanism is enabled.
 	preconditions := !u.cfg.Calls.NoPreconditions && ic.Request.Supports(sip.OptionPrecondition)

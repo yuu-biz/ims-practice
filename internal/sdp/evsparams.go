@@ -436,7 +436,9 @@ func (p EVSParams) String() string {
 	return strings.Join(append(out, p.Other...), "; ")
 }
 
-func modeSetString(modes []evs.FrameType) string {
+// modeSetString is the value of a mode-set parameter: the frame types
+// of the modes, separated by commas (RFC 4867 8.1, TS 26.445 A.3.1).
+func modeSetString[T ~uint8](modes []T) string {
 	s := make([]string, len(modes))
 	for i, m := range modes {
 		s[i] = strconv.Itoa(int(m))
