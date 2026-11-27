@@ -752,6 +752,14 @@ func (d *CallDialog) endPending(pending []*InDialogRequest) {
 // timeout. It also stops when the call ends, and with
 // ErrRequestAnswered when answered closes: the INVITE has its final
 // response, which another goroutine sent. answered may be nil.
+//
+// Once stopped has closed, retransmit returns nil, though the call may
+// have ended, or answered closed, by the time this goroutine looks. The
+// UA takes the requests of a dialog in the order they arrive
+// (Config.Ordered), so an ACK for the 2xx, or a PRACK, closes stopped
+// before a BYE right behind it ends the call, and both may have
+// happened before this goroutine runs again. What it waited for came
+// first, and its caller learns so.
 func (c *call) retransmit(st *ServerTransaction, resp *Message, maxInterval time.Duration, stopped, answered <-chan struct{}, timeout error) error {
 	t := c.stack.cfg.Timers
 	deadline := time.NewTimer(64 * t.T1)
@@ -759,24 +767,28 @@ func (c *call) retransmit(st *ServerTransaction, resp *Message, maxInterval time
 	interval := t.T1
 	for {
 		wait := time.NewTimer(interval)
+		var err error
 		select {
 		case <-stopped:
-			wait.Stop()
-			return nil
 		case <-c.done:
-			wait.Stop()
-			return ErrCallEnded
+			err = ErrCallEnded
 		case <-answered:
-			wait.Stop()
-			return ErrRequestAnswered
+			err = ErrRequestAnswered
 		case <-deadline.C:
-			wait.Stop()
-			return timeout
+			err = timeout
 		case <-wait.C:
+			if err := st.Respond(resp); err != nil {
+				return err
+			}
+			interval = min(2*interval, maxInterval)
+			continue
 		}
-		if err := st.Respond(resp); err != nil {
+		wait.Stop()
+		select {
+		case <-stopped:
+			return nil
+		default:
 			return err
 		}
-		interval = min(2*interval, maxInterval)
 	}
 }

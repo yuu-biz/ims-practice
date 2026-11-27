@@ -206,6 +206,93 @@ func TestUASRetransmitsThe2xxUntilTheACK(t *testing.T) {
 	expectSilence(t, peer, 6*slowTimers.T1, "the ACK should stop the retransmissions")
 }
 
+// TestUASTakesTheACKAndTheBYE: the peer sends the ACK for the 200 and
+// a BYE back to back, in either order. Either way the UAS answers the
+// BYE with 200 and the call ends by it (RFC 3261 15.1.2). Accept
+// returns the ACK when it came first, and ErrCallEnded when the BYE
+// overtook it; the late ACK then changes nothing, and nothing goes back
+// for it.
+func TestUASTakesTheACKAndTheBYE(t *testing.T) {
+	for _, order := range []struct {
+		name     string
+		ackFirst bool
+	}{{"ACK first", true}, {"BYE first", false}} {
+		t.Run(order.name, func(t *testing.T) {
+			// A T1 long enough that no retransmitted 200 goes out before
+			// the ACK or the BYE has come.
+			timers := Timers{T1: 500 * time.Millisecond, T2: 4 * time.Second, T4: 5 * time.Second}
+			acks := make(chan accepted, 1)
+			calls := make(chan *IncomingCall, 1)
+			calleeUA := newUA(t, timers, callee, func(c *IncomingCall) {
+				calls <- c
+				ack, err := c.Accept(answer)
+				acks <- accepted{ack, err}
+			})
+			peer := rawSocket(t)
+			invite := rawINVITE(peer)
+			send(t, peer, invite, calleeUA.Stack())
+			ok := readSkippingTrying(t, peer)
+			if ok.StatusCode != 200 {
+				t.Fatalf("got %s, want 200", startLine(ok))
+			}
+			d, err := NewUACDialog(invite, ok)
+			if err != nil {
+				t.Fatal(err)
+			}
+			bye := d.NewRequest(BYE)
+			via := Via{Transport: "UDP", Host: "127.0.0.1", Port: int(addrOf(peer).Port()), Params: Params{{Name: "branch", Value: NewBranch()}}}
+			bye.Prepend("Via", via.String())
+			ack := rawACK(peer, invite, ok)
+			if order.ackFirst {
+				send(t, peer, ack, calleeUA.Stack())
+				send(t, peer, bye, calleeUA.Stack())
+			} else {
+				send(t, peer, bye, calleeUA.Stack())
+				send(t, peer, ack, calleeUA.Stack())
+			}
+
+			if resp := readDatagram(t, peer); resp.StatusCode != 200 || resp.Get("CSeq") != bye.Get("CSeq") {
+				t.Fatalf("got %s with CSeq %q, want 200 to the BYE", startLine(resp), resp.Get("CSeq"))
+			}
+			c := <-calls
+			waitDone(t, c.Done(), "callee")
+			if c.EndedBy() == nil || c.EndedBy().Method != BYE || c.Err() != nil {
+				t.Errorf("call ended by %v with %v, want the BYE", c.EndedBy(), c.Err())
+			}
+			select {
+			case a := <-acks:
+				switch {
+				case order.ackFirst && (a.err != nil || a.ack == nil || a.ack.Get("CSeq") != "1 ACK"):
+					t.Errorf("Accept returned %v, %v; want the ACK", a.ack, a.err)
+				case !order.ackFirst && !errors.Is(a.err, ErrCallEnded):
+					t.Errorf("Accept returned %v, %v; want ErrCallEnded", a.ack, a.err)
+				}
+			case <-time.After(2 * time.Second):
+				t.Fatal("Accept did not return after the ACK and the BYE")
+			}
+			expectSilence(t, peer, 2*timers.T1, "the call is over and the 200 has stopped")
+		})
+	}
+}
+
+// TestRetransmitPrefersWhatStopsIt: the ACK of a 2xx, or the PRACK of a
+// reliable provisional response, may have arrived, and a BYE behind it
+// ended the call, before the goroutine that retransmits looks again.
+// What it waited for came first, so it reports that, whichever of the
+// closed channels it would pick.
+func TestRetransmitPrefersWhatStopsIt(t *testing.T) {
+	for range 64 {
+		stopped, answered := make(chan struct{}), make(chan struct{})
+		c := &call{stack: &Stack{cfg: Config{Timers: slowTimers}}, done: make(chan struct{})}
+		close(stopped)
+		close(answered)
+		close(c.done)
+		if err := c.retransmit(nil, nil, slowTimers.T2, stopped, answered, ErrNoACK); err != nil {
+			t.Fatalf("retransmit returned %v after stopped closed, want nil", err)
+		}
+	}
+}
+
 func TestUASEndsTheCallWithoutAnACK(t *testing.T) {
 	timers := Timers{T1: 10 * time.Millisecond, T2: 40 * time.Millisecond, T4: 50 * time.Millisecond}
 	acks := make(chan accepted, 1)
