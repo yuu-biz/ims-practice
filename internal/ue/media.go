@@ -31,10 +31,18 @@ type Stream struct {
 	// Remote is where RTP goes. RTCP goes to the port above it (RFC 3550
 	// 11).
 	Remote netip.AddrPort
-	// Codec is the speech payload format, and Events the telephone-event
-	// of the same clock rate when both sides took one (TS 26.114 G.3).
+	// Codec is the speech payload format as the peer's SDP numbers it,
+	// and Events the telephone-event of the same clock rate when both
+	// sides took one (TS 26.114 G.3). The media sends with these numbers.
 	Codec  sdp.Codec
 	Events *sdp.Codec
+	// ReceiveCodec and ReceiveEvents are the same formats as this side's
+	// own SDP numbers them. The media accepts only these numbers: each
+	// side's SDP lists the payload types it expects to receive (RFC 3264
+	// 5.1, 6.1). Left zero, they are Codec and Events, for a peer that
+	// numbers the formats the same way.
+	ReceiveCodec  sdp.Codec
+	ReceiveEvents *sdp.Codec
 	// RS and RR are the RTCP bandwidth in bit/s that the peer's SDP
 	// gives (RFC 3556 2, IR.92 3.2.4).
 	RS, RR int
@@ -199,6 +207,9 @@ func (m *Media) SetStream(s Stream) error {
 		format = f
 	} else if !s.Codec.Is(sdp.NamePCMU) {
 		return fmt.Errorf("codec %s is none the UE plays", s.Codec.Name)
+	}
+	if s.ReceiveCodec.Name == "" {
+		s.ReceiveCodec, s.ReceiveEvents = s.Codec, s.Events
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -550,9 +561,9 @@ func (m *Media) receivedPacket(p rtp.Packet, arrival time.Time) (rune, bool) {
 	m.receiver.Packet(p.SequenceNumber, p.Timestamp, arrival)
 	m.lastRTPArrival = arrival
 	switch {
-	case int(p.PayloadType) == s.Codec.PayloadType:
+	case int(p.PayloadType) == s.ReceiveCodec.PayloadType:
 		m.stats.PacketsReceived++
-		if !isAMR(s.Codec) {
+		if !isAMR(s.ReceiveCodec) {
 			m.pcmuReceived = append(m.pcmuReceived, p.Payload...)
 			return 0, false
 		}
@@ -562,7 +573,7 @@ func (m *Media) receivedPacket(p rtp.Packet, arrival time.Time) (rune, bool) {
 		}
 		m.recorder.Add(p.Timestamp, payload)
 		m.stats.FramesReceived += len(payload.Frames)
-	case s.Events != nil && int(p.PayloadType) == s.Events.PayloadType:
+	case s.ReceiveEvents != nil && int(p.PayloadType) == s.ReceiveEvents.PayloadType:
 		e, err := rtp.UnmarshalTelephoneEvent(p.Payload)
 		if err != nil {
 			return 0, false
