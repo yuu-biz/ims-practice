@@ -3,7 +3,6 @@ package b2bua
 import (
 	"errors"
 	"log/slog"
-	"slices"
 	"sync"
 	"sync/atomic"
 
@@ -36,14 +35,14 @@ type Call struct {
 	outReady chan struct{}
 	ready    sync.Once
 
+	// copies are the reliable provisional responses to the INVITE that
+	// the Call sent the caller, and whose PRACK it has not yet taken
+	// (prack.go): the PRACK of each copy of a reliable response of the
+	// callee goes on as the PRACK of that response.
+	copies unacked
+
 	mu  sync.Mutex
 	out *sip.OutgoingCall
-	// copies are the reliable provisional responses that the Call sent
-	// the caller, and whose PRACK it has not yet taken, in the order
-	// they went. The caller acknowledges them in that order, one PRACK
-	// for each (RFC 3262 3), and the PRACK of each copy of a reliable
-	// response of the callee goes on as the PRACK of that response.
-	copies []*copied
 	// sessionToCaller tells that a session description went to the
 	// caller in a reliable provisional response.
 	sessionToCaller bool
@@ -56,17 +55,6 @@ type Call struct {
 	// subscriptions are the subscriptions that share the two dialogs
 	// with the session, by their Event (subscription.go).
 	subscriptions map[string]*relayedSubscription
-}
-
-// copied is a reliable provisional response that the Call sent the
-// caller. of is the response of the callee that it copies, when the
-// callee wants that one acknowledged too (RFC 3262 4); nil when it does
-// not, for a response that came without 100rel. own tells that the role
-// sent the response itself (Progress), so that it copies no response of
-// the callee at all.
-type copied struct {
-	of  *sip.Message
-	own bool
 }
 
 // New starts the Call of in, an INVITE that the B2BUA has taken, and
@@ -159,7 +147,7 @@ func (c *Call) Progress(code int, body sip.Body, headers ...sip.HeaderField) err
 	var sent *copied
 	if c.in.Request.Supports(sip.Option100rel) {
 		sent = &copied{own: true}
-		c.copies = append(c.copies, sent)
+		c.copies.sent(sent)
 		if len(body.Content) > 0 {
 			// RFC 3262 5: the offer and the answer of the INVITE are done
 			// on the caller's leg, so a later response of the callee
@@ -175,9 +163,7 @@ func (c *Call) Progress(code int, body sip.Body, headers ...sip.HeaderField) err
 	c.sentToCaller(body)
 	if err := c.in.Progress(code, body, headers...); err != nil {
 		// No PRACK comes for a response that did not go.
-		c.mu.Lock()
-		c.copies = slices.DeleteFunc(c.copies, func(k *copied) bool { return k == sent })
-		c.mu.Unlock()
+		c.copies.dropped(sent)
 		return err
 	}
 	return nil
@@ -220,17 +206,17 @@ func (c *Call) RelayProvisional(out *sip.OutgoingCall, resp *sip.Message) {
 		if reliable {
 			sent.of = resp
 		}
-		c.copies = append(c.copies, sent)
 	}
 	c.mu.Unlock()
+	if sent != nil {
+		c.copies.sent(sent)
+	}
 	c.setContact(resp)
 	c.sentToCaller(m.Body)
 	if err := c.in.Progress(resp.StatusCode, m.Body, m.Headers...); err != nil {
 		c.log.Info("provisional response not relayed", "status", resp.StatusCode, "error", err.Error())
 		// No PRACK comes for a copy that did not go.
-		c.mu.Lock()
-		c.copies = slices.DeleteFunc(c.copies, func(k *copied) bool { return k == sent })
-		c.mu.Unlock()
+		c.copies.dropped(sent)
 	} else if len(m.Body.Content) > 0 {
 		c.noteCallerDialog()
 	}
@@ -242,22 +228,6 @@ func (c *Call) RelayProvisional(out *sip.OutgoingCall, resp *sip.Message) {
 			c.log.Warn("PRACK not sent", "status", resp.StatusCode, "error", err.Error())
 		}
 	}
-}
-
-// acknowledged is the response of the callee whose copy the caller's
-// PRACK, the next in the order they came, acknowledges: nil when that
-// copy was of a response that the callee wants no PRACK for. own tells
-// that the response was the role's own (Progress), and copies none of
-// the callee's.
-func (c *Call) acknowledged() (acked *sip.Message, own bool) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if len(c.copies) == 0 {
-		return nil, false
-	}
-	next := c.copies[0]
-	c.copies = c.copies[1:]
-	return next.of, next.own
 }
 
 // Answer passes resp, the 2xx of out, on to the caller, and then the
@@ -371,6 +341,7 @@ func (c *Call) keepDialogs() {
 // IncomingCall and an OutgoingCall are one.
 type leg interface {
 	Update(body sip.Body, headers ...sip.HeaderField) (*sip.Message, error)
+	PRACK(resp *sip.Message, body sip.Body, headers ...sip.HeaderField) (*sip.Message, error)
 	ReInvite(body sip.Body, headers ...sip.HeaderField) (*sip.Message, error)
 	ReInviteWith(re sip.ReInvitation) (*sip.Message, error)
 	Send(method sip.Method, body sip.Body, headers ...sip.HeaderField) (*sip.Message, error)
@@ -407,7 +378,7 @@ func (c *Call) fromCaller(r *sip.InDialogRequest) {
 			// that sends the INVITE on to another callee (Attempt again)
 			// goes on relaying the caller's requests after the leg that this
 			// one gave up for has ended.
-			c.acknowledged()
+			c.copies.acknowledged()
 		}
 		if !answered {
 			rejectEnded(r)
@@ -417,7 +388,7 @@ func (c *Call) fromCaller(r *sip.InDialogRequest) {
 	var acked *sip.Message
 	var own bool
 	if req.Method == sip.PRACK {
-		acked, own = c.acknowledged()
+		acked, own = c.copies.acknowledged()
 	}
 	select {
 	case <-c.outReady:
@@ -428,7 +399,7 @@ func (c *Call) fromCaller(r *sip.InDialogRequest) {
 	c.mu.Unlock()
 	switch {
 	case acked != nil && out != nil:
-		c.prack(r, out, acked, answered, finish)
+		c.prack(r, out, acked, answered, finish, ToCallee)
 	case own && !r.Offer:
 		// The PRACK of a response that the role sent itself (Progress):
 		// the Call answers it (RFC 3262 4), and a session description in
@@ -486,24 +457,24 @@ func (c *Call) answerWithoutALeg(r *sip.InDialogRequest) {
 // INVITE with an error response. Only a PRACK with an offer gets the
 // role's refusal instead, since its 2xx would have to carry the answer
 // (RFC 3262 5), which the role does not have.
-func (c *Call) prack(r *sip.InDialogRequest, out *sip.OutgoingCall, acked *sip.Message, answered bool, finish func()) {
-	m, refused := c.hooks.Request(r.Request, ToCallee)
+func (c *Call) prack(r *sip.InDialogRequest, to leg, acked *sip.Message, answered bool, finish func(), d Direction) {
+	m, refused := c.hooks.Request(r.Request, d)
 	if refused != nil {
 		switch {
 		case answered:
 			c.log.Info("PRACK not relayed", "status", refused.Status)
 		case r.Offer:
-			c.refuse(r, ToCallee, refused.Status, refused.Headers...)
+			c.refuse(r, d, refused.Status, refused.Headers...)
 		default:
 			r.Accept(sip.Body{})
 		}
 		c.release()
 		return
 	}
-	resp, err := out.PRACK(acked, m.Body, m.Headers...)
+	resp, err := to.PRACK(acked, m.Body, m.Headers...)
 	finish()
 	if !answered {
-		c.answerRequest(r, m.Body, resp, err, out, ToCallee)
+		c.answerRequest(r, m.Body, resp, err, to, d)
 		return
 	}
 	if err != nil {
