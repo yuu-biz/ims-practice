@@ -2,6 +2,54 @@
 title: The map of this IMS
 footer: ims-practice study session 2. The map of the network
 lang: en
+format: visual
+---
+
+```ims-model
+nodes:
+  - {id: ue, label: UE, role: the phone, at: [0, 1]}
+  - {id: pcscf, label: P-CSCF, role: its first hop, at: [1, 1]}
+  - {id: icscf, label: I-CSCF, role: entry of the network, at: [2, 1]}
+  - {id: scscf, label: S-CSCF, role: "registers, starts services", at: [3, 1]}
+  - {id: hss, label: HSS, role: subscriber data, at: [3, 0]}
+  - {id: ipsmgw, label: IP-SM-GW, role: the AS for SMS, at: [4, 0]}
+  - {id: sc, label: SC, role: service centre of SMS, at: [4, -1]}
+  - {id: mmtel, label: MMTel AS, role: AS of the services, at: [4, 2]}
+  - {id: mrfc, label: MRFC, role: the SIP side of the MRF, at: [5, 2]}
+  - {id: mrfp, label: MRFP, role: the media side of the MRF, at: [5, 3]}
+  - {id: agw, label: IMS-AGW, role: the media relay, at: [1, 2]}
+  - {id: epc, label: EPC, role: the stub and the PCRF, at: [0, 2]}
+  - {id: ibcf, label: IBCF, role: door of the network, at: [3, 2]}
+  - {id: trgw, label: TrGW, role: media relay at the border, at: [2, 2]}
+  - {id: peer-ibcf, label: IBCF, role: door of the peer, at: [3, 3]}
+  - {id: peer-trgw, label: TrGW, role: media relay of the peer, at: [2, 3]}
+groups:
+  - {id: peer, label: the peer network, nodes: [peer-ibcf, peer-trgw]}
+events:
+  # The reference points that carry SIP
+  - {id: gm, rel: Gm, from: ue, to: pcscf, proto: SIP}
+  - {id: mw-p-i, rel: Mw, from: pcscf, to: icscf, proto: SIP}
+  - {id: mw-i-s, rel: Mw, from: icscf, to: scscf, proto: SIP}
+  - {id: isc-mmtel, rel: ISC, from: scscf, to: mmtel, proto: SIP}
+  - {id: isc-ipsmgw, rel: ISC, from: scscf, to: ipsmgw, proto: SIP}
+  - {id: mr, rel: Mr', from: mmtel, to: mrfc, proto: SIP}
+  - {id: mx, rel: Mx, from: scscf, to: ibcf, proto: SIP}
+  - {id: ici, rel: Ici, from: ibcf, to: peer-ibcf, proto: SIP}
+  # The reference points that carry Diameter
+  - {id: cx-i, rel: Cx, from: icscf, to: hss, proto: Diameter}
+  - {id: cx-s, rel: Cx, from: scscf, to: hss, proto: Diameter}
+  - {id: sh-ipsmgw, rel: Sh, from: ipsmgw, to: hss, proto: Diameter}
+  - {id: sh-mmtel, rel: Sh, from: mmtel, to: hss, proto: Diameter}
+  - {id: sgd, rel: SGd, from: ipsmgw, to: sc, proto: Diameter}
+  - {id: s6c, rel: S6c, from: sc, to: hss, proto: Diameter}
+  - {id: rx, rel: Rx, from: pcscf, to: epc, proto: Diameter}
+  # HTTP, H.248 and the media
+  - {id: ut, rel: Ut, from: ue, to: mmtel, proto: HTTP}
+  - {id: mp, rel: Mp, from: mrfc, to: mrfp, proto: HTTP}
+  - {id: iq, rel: Iq, from: pcscf, to: agw, proto: HTTP}
+  - {id: izi, rel: Izi, from: trgw, to: peer-trgw, proto: RTP}
+```
+
 ---
 
 # The map of this IMS
@@ -26,6 +74,46 @@ ims-practice study session 2 (the nodes, the reference points between them, and 
 
 ## What the IMS adds to a SIP proxy
 
+```ims-scene
+id: jobs
+nodes: [ue, pcscf, icscf, scscf, hss, ipsmgw, sc, mmtel, mrfc, mrfp, agw, epc]
+lead: The IMS split the work of a SIP proxy into nodes with one job each.
+steps:
+  - id: pcscf
+    title: The first SIP hop from the phone
+    focus: [pcscf]
+    zoom: [ue, pcscf, icscf]
+    text: The P-CSCF. Every request of the UE enters here.
+  - id: icscf
+    title: Find the node that serves this user
+    focus: [icscf]
+    zoom: [icscf, scscf, hss]
+    text: The I-CSCF. It keeps no state of its own and asks the HSS.
+  - id: scscf
+    title: Keep the registration and call the services
+    focus: [scscf]
+    zoom: [icscf, scscf, hss]
+    text: The S-CSCF. It authenticates, keeps the registration and evaluates the iFCs.
+  - id: hss
+    title: Hold the subscriber data
+    focus: [hss]
+    zoom: [scscf, hss, ipsmgw]
+    text: The HSS. It holds the identities, the keys, the iFCs and the settings of the services.
+  - id: as
+    title: Change the call
+    focus: [mmtel, ipsmgw]
+    zoom: [scscf, mmtel, ipsmgw]
+    checkpoint: true
+    text: The application servers. The MMTel AS handles forwarding and barring, the IP-SM-GW short messages.
+  - id: media
+    title: Relay, play and mix the media
+    focus: [agw, mrfc, mrfp]
+    text: |
+      The media relay (IMS-AGW) and the MRF.
+      With a node for each job, each job can get as many instances as it needs.
+```
+
+
 - A SIP proxy can already set up a call between two phones. The IMS splits that work between nodes that each have one job, and gives the interface between two of them a name (TS 23.228).
 - The names are the point: nodes from two vendors meet at a named interface, and so do the networks of two operators.
 - The split is also why each job can run on as many nodes as it needs, and why a capture tells you which node did what.
@@ -44,6 +132,31 @@ ims-practice study session 2 (the nodes, the reference points between them, and 
 ---
 
 ## The spine of the signaling
+
+```ims-scene
+id: backbone
+nodes: [ue, pcscf, icscf, scscf, mmtel, ipsmgw]
+lead: A request of the UE enters at the P-CSCF, crosses the CSCFs over Mw and reaches the ASs over ISC. All of it is SIP.
+steps:
+  - id: gm
+    title: Gm, where the phone meets the network
+    show: [gm]
+    zoom: [ue, pcscf]
+    text: A phone meets two interfaces, Gm and Ut, which is for its own settings.
+  - id: mw
+    title: Mw between the CSCFs
+    show: [mw-p-i, mw-i-s]
+    zoom: [pcscf, icscf, scscf]
+    text: Every hop carries SIP on port 5060, so a message looks much the same at each hop.
+  - id: isc
+    title: ISC towards the ASs
+    show: [isc-mmtel, isc-ipsmgw]
+    focus: [scscf, mmtel, ipsmgw]
+    text: |
+      An AS is on the path, not at its end. The MMTel AS hands the request back to the S-CSCF.
+      The IP-SM-GW answers instead: a short message ends there.
+```
+
 
 ```text
   UE --- Gm --- P-CSCF --- Mw --- I-CSCF --- Mw --- S-CSCF --- ISC --- AS
@@ -125,6 +238,30 @@ ims-practice study session 2 (the nodes, the reference points between them, and 
 
 ## The reference points that carry SIP
 
+```ims-scene
+id: sip-points
+nodes: [ue, pcscf, icscf, scscf, mmtel, ipsmgw, mrfc, ibcf, peer-ibcf]
+lead: All of them carry SIP in clear text. The addresses in a capture tell which reference point it is.
+steps:
+  - id: core
+    title: Gm and Mw
+    show: [gm, mw-p-i, mw-i-s]
+    zoom: [ue, pcscf, icscf, scscf]
+    text: The P-CSCF has Gm on the side of the UE and Mw on the side of the network. Here both are on the same address and port.
+  - id: services
+    title: ISC and Mr'
+    show: [isc-mmtel, isc-ipsmgw, mr]
+    focus: [scscf, mmtel, ipsmgw, mrfc]
+    zoom: [scscf, mmtel, ipsmgw, mrfc]
+    text: ISC carries the third-party REGISTER and the INVITEs that the iFCs send; Mr' the INVITEs that ask for announcements and conferences.
+  - id: border
+    title: Mx and Ici, out of the network
+    show: [mx, ici]
+    focus: [scscf, ibcf, peer-ibcf]
+    text: Over Mx a request that leaves the network reaches the IBCF, and over Ici the IBCFs of two networks meet.
+```
+
+
 | Reference point | Between | Where you see it |
 | --- | --- | --- |
 | Gm | the UE and the P-CSCF | every REGISTER and every INVITE of a UE |
@@ -142,6 +279,37 @@ ims-practice study session 2 (the nodes, the reference points between them, and 
 ---
 
 ## The reference points that carry Diameter
+
+```ims-scene
+id: diameter-points
+nodes: [pcscf, epc, icscf, scscf, hss, ipsmgw, sc, mmtel]
+lead: SIP carries a request onwards; Diameter asks and waits for the answer. Most Diameter lines meet at the HSS.
+steps:
+  - id: cx
+    title: Cx between the CSCFs and the HSS
+    show: [cx-i, cx-s]
+    zoom: [icscf, scscf, hss]
+    text: Which S-CSCF serves the user, the authentication data, the user profile.
+  - id: sh
+    title: Sh between the ASs and the HSS
+    show: [sh-ipsmgw, sh-mmtel]
+    focus: [ipsmgw, mmtel, hss]
+    zoom: [hss, ipsmgw, mmtel, scscf]
+    text: The settings of the user, its number, and the password for Ut are read and written.
+  - id: sms
+    title: SGd and S6c for SMS
+    show: [sgd, s6c]
+    focus: [ipsmgw, sc, hss]
+    checkpoint: true
+    text: SGd carries the short messages themselves; S6c which node serves the recipient, and which SC holds messages for it.
+  - id: rx
+    title: Rx between the P-CSCF and the PCRF
+    show: [rx]
+    focus: [pcscf, epc]
+    zoom: [pcscf, epc, icscf]
+    text: The authorization of the media of a call, and the notice when that media is lost. There are seven connections, all on port 3868.
+```
+
 
 ```text
   I-CSCF   --- Cx  ---> HSS <--- Cx  --- S-CSCF
@@ -166,6 +334,36 @@ ims-practice study session 2 (the nodes, the reference points between them, and 
 ---
 
 ## The reference points of HTTP, H.248 and the media
+
+```ims-scene
+id: other-points
+nodes: [ue, pcscf, agw, mmtel, mrfc, mrfp, trgw, peer-trgw]
+lead: The media does not follow the path of the signaling. The SDP of both sides decides where RTP goes.
+steps:
+  - id: ut
+    title: Ut, where users read and write their settings
+    show: [ut]
+    text: HTTP carrying XCAP (TS 24.623).
+  - id: mp
+    title: Mp, where the MRFC drives the MRFP
+    show: [mp]
+    focus: [mrfc, mrfp]
+    zoom: [mmtel, mrfc, mrfp]
+    text: H.248 in the standard. Here a simple HTTP API with one operation per command.
+  - id: iq
+    title: Iq, where the P-CSCF drives the media relay
+    show: [iq]
+    focus: [pcscf, agw]
+    zoom: [ue, pcscf, agw]
+    checkpoint: true
+    text: The same HTTP API by default. With `deploy/h248/h248.yaml` it is H.248.
+  - id: izi
+    title: Izi, the media across the border
+    show: [izi]
+    focus: [trgw, peer-trgw]
+    text: RTP passes between the TrGWs of the two networks.
+```
+
 
 | Reference point | Between | The protocol |
 | --- | --- | --- |
