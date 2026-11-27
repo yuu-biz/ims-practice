@@ -561,6 +561,9 @@ func (c *Call) forward(r *sip.InDialogRequest, to leg, d Direction, finish func(
 	m, refused := c.hooks.Request(req, d)
 	if refused != nil {
 		c.refuse(r, d, refused.Status, refused.Headers...)
+		if ofSubscription(req.Method) {
+			c.relayed(req, false, nil, errRefused)
+		}
 		if refused.Release {
 			c.release()
 		}
