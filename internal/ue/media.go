@@ -10,6 +10,7 @@ import (
 	mathrand "math/rand/v2"
 	"net"
 	"net/netip"
+	"slices"
 	"strconv"
 	"sync"
 	"time"
@@ -76,6 +77,9 @@ type Media struct {
 	stream *Stream
 	flow   Flow
 	format amr.Format // of an AMR or AMR-WB stream, as the peer's SDP has it: what goes out
+	// modeSet is the mode-set of that stream, or nil when it allows every
+	// mode.
+	modeSet []amr.FrameType
 	// receiveFormat is the same as this side's SDP has it: what the peer
 	// sends in and the received frames are read in (RFC 3264 5.1, 6.1).
 	receiveFormat amr.Format
@@ -207,9 +211,13 @@ func (m *Media) Close() error {
 // settled, again after each new offer and answer.
 func (m *Media) SetStream(s Stream) error {
 	var format amr.Format
+	var modeSet []amr.FrameType
 	if isAMR(s.Codec) {
 		f, err := s.Codec.AMRFormat()
 		if err != nil {
+			return err
+		}
+		if modeSet, err = s.Codec.ModeSet(); err != nil {
 			return err
 		}
 		format = f
@@ -242,7 +250,7 @@ func (m *Media) SetStream(s Stream) error {
 			"waiting_digits", string(m.dtmf), "event_in_progress", len(m.reports) > 0)
 		m.dtmf, m.reports = nil, nil
 	}
-	m.stream, m.format, m.receiveFormat = &s, format, receiveFormat
+	m.stream, m.format, m.modeSet, m.receiveFormat = &s, format, modeSet, receiveFormat
 	if isAMR(s.ReceiveCodec) && m.recorder == nil {
 		m.recorder = amr.NewRecorder(receiveFormat.Codec)
 	}
@@ -340,11 +348,14 @@ func (m *Media) streamReceived() {
 // nothing the second time.
 //
 // SIMPLIFIED: IR.92 3.2.1 and RFC 4867 8.3.1. The UE sends the frames
-// of its recording in the modes they were encoded with: it neither
-// follows the CMR of the frames it receives nor keeps to a mode-set of
-// the peer's SDP, since it cannot encode. The
-// UE simulator offers no mode-set and sends no CMR, so between two of
-// them every mode is allowed.
+// of its recording in the modes they were encoded with, since it cannot
+// encode: it does not follow the CMR of the frames it receives. Nor can
+// it keep to a mode-set that the answer to its offer sets, which binds
+// both sides, by encoding in a mode of it: a frame of a mode that the
+// mode-set leaves out is not sent at all, and the peer gets a gap in its
+// place. As an answerer the UE takes no such mode-set (answerable). The
+// UE simulator offers no mode-set, and answers with none that the offer
+// did not have, so between two of them every frame goes.
 func (m *Media) Start(speech Speech) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -368,6 +379,10 @@ func (m *Media) Start(speech Speech) error {
 				return err
 			}
 		}
+		if slices.ContainsFunc(frames, func(f amr.Frame) bool { return !m.inModeSet(f) }) {
+			slog.Warn("the mode-set of the stream leaves out modes of the recording, whose frames are not sent",
+				"mode_set", fmt.Sprint(m.modeSet), "recorded_modes", fmt.Sprint(speech.modes(m.format.Codec)))
+		}
 		m.frames = frames
 	}
 	m.started, m.tsAt = true, time.Now()
@@ -387,6 +402,13 @@ func (m *Media) packFrame(f amr.Frame) ([]byte, error) {
 		return nil, nil
 	}
 	return m.format.Marshal(amr.Payload{CMR: amr.NoModeRequest, Frames: []amr.Frame{f}})
+}
+
+// inModeSet tells that f may go out in the stream: a frame of a mode of
+// its mode-set, or one that is no speech, which every mode-set allows
+// (RFC 4867 8.1, 8.2). m.mu is held.
+func (m *Media) inModeSet(f amr.Frame) bool {
+	return m.modeSet == nil || !m.format.Codec.IsSpeech(f.Type) || slices.Contains(m.modeSet, f.Type)
 }
 
 // speechLen is how many packet times the speech takes. m.mu is held.
@@ -517,20 +539,22 @@ func (m *Media) tick() (rtp.Packet, bool) {
 		p.Marker, p.PayloadType, p.Payload = r.Marker, uint8(s.Events.PayloadType), r.Payload.Marshal()
 	case m.next < m.speechLen():
 		var payload []byte
-		if isAMR(s.Codec) {
+		switch {
+		case !isAMR(s.Codec):
+			payload = m.speech[m.next]
+		case m.inModeSet(m.frames[m.next]):
 			// Cannot fail: Start packed every frame in the format of the
 			// same codec, and octet-align does not change what a frame needs.
 			payload, _ = m.packFrame(m.frames[m.next])
-		} else {
-			payload = m.speech[m.next]
 		}
 		m.next++
 		if m.next == m.speechLen() {
 			close(m.played)
 		}
 		if payload == nil {
-			// A NO_DATA frame: nothing goes out, and the next speech frame
-			// starts a talkspurt.
+			// A NO_DATA frame, or one of a mode that the mode-set leaves
+			// out: nothing goes out, and the next speech frame starts a
+			// talkspurt.
 			m.talking = false
 			return p, false
 		}
