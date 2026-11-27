@@ -12,7 +12,7 @@ const NameEVS = "EVS"
 // EVSParams reads the a=fmtp parameters of c, an EVS payload type,
 // whose RTP clock rate is always 16000 (TS 26.445 A.3.2).
 func (c Codec) EVSParams() (EVSParams, error) {
-	if !c.is(NameEVS) || c.ClockRate != 16000 {
+	if !c.Is(NameEVS) || c.ClockRate != 16000 {
 		return EVSParams{}, fmt.Errorf("sdp: payload type %d (%s/%d) is not EVS/16000", c.PayloadType, c.Name, c.ClockRate)
 	}
 	return ParseEVSParams(c.Fmtp)

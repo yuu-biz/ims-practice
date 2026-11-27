@@ -114,12 +114,12 @@ func AudioAnswer(offer Session, sessionID string, addr netip.AddrPort, supported
 // chooseCodecs returns the codecs of an answer to offered, or nil.
 func chooseCodecs(offered, supported []Codec) []Codec {
 	for _, o := range offered {
-		if o.is(NameTelephoneEvent) || !slices.ContainsFunc(supported, func(s Codec) bool { return compatible(o, s) }) {
+		if o.Is(NameTelephoneEvent) || !slices.ContainsFunc(supported, func(s Codec) bool { return compatible(o, s) }) {
 			continue
 		}
 		chosen := []Codec{answerCodec(o)}
 		for _, te := range offered {
-			if te.is(NameTelephoneEvent) && te.ClockRate == o.ClockRate &&
+			if te.Is(NameTelephoneEvent) && te.ClockRate == o.ClockRate &&
 				slices.ContainsFunc(supported, func(s Codec) bool { return compatible(te, s) }) {
 				if te.Fmtp == "" {
 					te.Fmtp = "0-15" // the default of RFC 4733 7.1.1, written out
@@ -138,10 +138,10 @@ func chooseCodecs(offered, supported []Codec) []Codec {
 // and for AMR the same octet-align and no option the amr package
 // lacks. Any mode-set is fine (TS 26.114 Table 6.3).
 func compatible(o, s Codec) bool {
-	if !o.is(s.Name) || o.ClockRate != s.ClockRate || o.Channels > 1 {
+	if !o.Is(s.Name) || o.ClockRate != s.ClockRate || o.Channels > 1 {
 		return false
 	}
-	if !o.is(NameAMR) && !o.is(NameAMRWB) {
+	if !o.Is(NameAMR) && !o.Is(NameAMRWB) {
 		return true
 	}
 	of, err := o.AMRFormat()

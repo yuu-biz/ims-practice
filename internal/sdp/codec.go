@@ -50,9 +50,9 @@ func (c Codec) Param(name string) (string, bool) {
 	return "", false
 }
 
-// is tells that c has this encoding name; names are case-insensitive
-// (RFC 4855 3).
-func (c Codec) is(name string) bool { return strings.EqualFold(c.Name, name) }
+// Is tells that c has this encoding name; names are case-insensitive
+// (RFC 4855 3), so a peer may write "pcmu" for PCMU.
+func (c Codec) Is(name string) bool { return strings.EqualFold(c.Name, name) }
 
 // staticCodecs are the static payload types of RFC 3551 Table 4 that a
 // media description may use without a=rtpmap.

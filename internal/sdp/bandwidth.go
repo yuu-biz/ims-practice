@@ -19,7 +19,7 @@ func ASBandwidth(c Codec, ptime int) (int, error) {
 	frames := ptime / 20
 	var payloadBits int
 	switch {
-	case c.is(NameAMR), c.is(NameAMRWB):
+	case c.Is(NameAMR), c.Is(NameAMRWB):
 		f, err := c.AMRFormat()
 		if err != nil {
 			return 0, err
@@ -38,11 +38,11 @@ func ASBandwidth(c Codec, ptime int) (int, error) {
 			// and the frame, all padded to the octet at the end.
 			payloadBits = (4 + frames*(6+bits) + 7) / 8 * 8
 		}
-	case c.is(NameEVS):
+	case c.Is(NameEVS):
 		return evsASBandwidth(c, ptime)
-	case c.is(NamePCMU), c.is("PCMA"):
+	case c.Is(NamePCMU), c.Is("PCMA"):
 		payloadBits = 8 * c.ClockRate * ptime / 1000 // one octet per sample
-	case c.is(NameTelephoneEvent):
+	case c.Is(NameTelephoneEvent):
 		payloadBits = 4 * 8 // one event report (RFC 4733 2.3)
 	default:
 		return 0, fmt.Errorf("sdp: no bandwidth known for %s", c.Name)
