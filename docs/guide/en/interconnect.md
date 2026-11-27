@@ -129,11 +129,13 @@ UE A1  P-CSCF  S-CSCF  MMTel  DNS-A  IBCF-A ║ IBCF-B  I-CSCF  HSS-B  S-CSCF  P
   |       |      |       |      |      |    ║   |       |       |  183  |       | (7)  |
   |       |      |       |      |      |    ║   |<------|<--------------|<------|<-----|
   |<------|<-----|<------|<-----------------|<=============|      |       |       |      |
-  | PRACK, 180, PRACK, 200, ACK (8): in three dialogs, A1-IBCF-A, IBCF-A-IBCF-B, IBCF-B-B1 |
+  | PRACK, 180, PRACK, 200, ACK (8): in each of four dialogs, A1-AS, AS-IBCF-A, IBCF-A-IBCF-B, IBCF-B-B1 |
   |<=================== RTP: AGW, TrGW-A, TrGW-B (9) ===================================>|
 ```
 
 The double line is the link between the networks, `nni0`. The messages over it belong to the dialog between IBCF-A and IBCF-B, which neither UE sees.
+
+The call has four dialogs: UE A1 and the MMTel AS, the MMTel AS and IBCF-A, IBCF-A and IBCF-B, and IBCF-B and UE B1. The MMTel AS and each IBCF are B2BUAs: each ends one dialog and starts the next with a Call-ID of its own. The P-CSCF, the S-CSCF and the I-CSCF are proxies and keep the dialog they pass on. Network B has no AS in the path of this call, so its side adds no dialog.
 
 ### 1. UE A1 calls a number
 
@@ -209,7 +211,9 @@ These checks show the topology hiding: the capture of the peer network has no in
 
 Some names of the home network do show in the peer network, and should: the domain itself, in the identities of the users, such as `sip:+12025550101@ims.mnc001.mcc001.3gppnetwork.org` in From and P-Asserted-Identity. The identities that cross are those of the users' numbers, which the peer network needs in order to call back. A number and a domain tell nothing of the nodes inside, and nothing of the IMSI.
 
-## Three dialogs in the captures
+## Three dialogs around the border in the captures
+
+The call of UE A1 to UE B1 has four dialogs (see "A call from network A to network B"). This section and the script compare the three around the border, one in each capture: the INVITE from the S-CSCF to IBCF-A in the capture of network A, which is the second dialog and the MMTel AS made it; the INVITE on the link, the third; and the INVITE from IBCF-B to the I-CSCF in the capture of network B, the fourth. The first dialog, between UE A1 and the MMTel AS, is in the capture of network A as well. It does not cross the border, so the comparison leaves it out.
 
 Open the capture of the link and look at the INVITE from 172.28.2.10. Its header fields, shortened:
 
@@ -229,7 +233,7 @@ Supported: 100rel, timer, 199, precondition, replaces
 - **Via.** One entry, IBCF-A's. Network A's nodes put their Via entries on the INVITE that reached IBCF-A, and that INVITE ended there.
 - **Record-Route.** None. IBCF-A is the far end of this dialog, so the requests of network B reach it by its Contact.
 - **Contact.** IBCF-A's external name. The PRACKs, the ACK and the BYE from network B go there.
-- **Call-ID, From tag, CSeq.** IBCF-A's own. Compare the Call-ID with the INVITE from the S-CSCF to IBCF-A in the capture of network A, and with the INVITE from IBCF-B to the I-CSCF in the capture of network B: the call has a different Call-ID in each of the three captures.
+- **Call-ID, From tag, CSeq.** IBCF-A's own. Compare the Call-ID with the INVITE from the S-CSCF to IBCF-A in the capture of network A, and with the INVITE from IBCF-B to the I-CSCF in the capture of network B: the three are different. The INVITE of UE A1 to the P-CSCF, also in the capture of network A, has a fourth Call-ID, that of the first dialog.
 - **Max-Forwards.** IBCF-A took one hop away, as a proxy would (RFC 3261 16.6 step 3), so that a call that two networks send round in a loop still ends.
 - **Supported.** UE A1's, as the profile left it, so that network B uses no extension that UE A1 does not take. `replaces` is among them: each IBCF names the dialog of its other side in a Replaces that it passes on (see "A conference across the border").
 

@@ -792,7 +792,7 @@ steps:
     checkpoint: true
     text: |
       網のあいだの INVITE は IBCF-A 自身のもので、網 B へ入る INVITE は IBCF-B 自身のものです。
-      1 つの通話がここで 3 つのダイアログに分かれます。
+      各 IBCF は届いたダイアログを終え、自分のダイアログを始めます。この図に出していない MMTel AS のダイアログを入れると、通話全体で 4 つです。
   - id: find
     title: 網 B が着信者を探す（6）
     show: [lir, lia, inv-i-sb, inv-sb-ue]
@@ -818,7 +818,7 @@ steps:
     detail: []
     checkpoint: true
     text: |
-      3 つのダイアログには、それぞれの PRACK、ACK、BYE があります（8）。
+      4 つのダイアログには、それぞれの PRACK、ACK、BYE があります（8）。図にない 4 つめは、UE A1 と MMTel AS のあいだです。
       RTP は UE A1、網 A のメディア中継ノード、TrGW-A、TrGW-B、UE B1 の順に流れます（9）。
 ```
 
@@ -1009,13 +1009,13 @@ steps:
 
 ---
 
-## 3 つのダイアログと 3 つの Call-ID
+## 境界まわりの 3 つのダイアログと 3 つの Call-ID
 
 ```ims-scene
 id: dialogs
 view: ladder
 nodes: [scscf-a, ibcf-a, ibcf-b, icscf-b]
-lead: 同じ通話の INVITE が 3 つのキャプチャで別の Call-ID を持ちます。境界でダイアログが分かれるからです。
+lead: 通話の 4 つのダイアログのうち 3 つが境界のまわりにあり、キャプチャごとに 1 つずつ、別の Call-ID を持ちます。4 つめは UE A1 と MMTel AS のあいだです。
 steps:
   - id: first
     title: 網 A のキャプチャの INVITE
@@ -1023,7 +1023,7 @@ steps:
     detail: [inv-s-ia]
     checkpoint: true
     text: |
-      S-CSCF から IBCF-A への INVITE です。Call-ID も Via も網 A のものです。
+      S-CSCF から IBCF-A への INVITE で、通話の 2 つめのダイアログです。MMTel AS が作りました。Call-ID も Via も網 A のものです。
       この INVITE は IBCF-A で終わります。
   - id: legs-a
     title: IBCF-A が受け止めて送り直す
@@ -1054,7 +1054,7 @@ steps:
     active: ''
     detail: [inv-s-ia, inv-nni, inv-ib-i]
     checkpoint: true
-    text: 1 つの通話がキャプチャごとに別の Call-ID を持ちます。追うときは、キャプチャごとに Call-ID を取り直します。
+    text: ダイアログごとに Call-ID が違うので、追うときは、キャプチャごとに Call-ID を取り直します。
 ```
 
 網のあいだの INVITE を短くしたものです。
@@ -1071,10 +1071,10 @@ Contact: <sip:ibcf.nni.mnc001.example.net:5060>
 
 - **Via** は IBCF-A の 1 つだけです。網 A のノードの Via は IBCF-A に届いた INVITE に付いていて、その INVITE は IBCF-A で終わっています。
 - **Record-Route** はありません。このダイアログの相手端は IBCF-A なので、網 B からの要求は Contact に届きます。
-- **Call-ID** は IBCF-A のものです。IBCF-A に届いた INVITE、IBCF-B が送り出した INVITE と見比べてください。1 つの通話が、3 つのキャプチャでそれぞれ別の Call-ID を持ちます。
+- **Call-ID** は IBCF-A のものです。IBCF-A に届いた INVITE、IBCF-B が送り出した INVITE と見比べてください。この 3 つは別の Call-ID を持ちます。網 A のキャプチャにある UE A1 から P-CSCF への INVITE には、4 つめの Call-ID があります。
 - **Max-Forwards** は、IBCF-A がプロキシと同じく 1 つ減らしています（RFC 3261 16.6 step 3）。2 つの網が要求を回し合っても、いつかは終わるようにするためです。
 
-> 手順書 [「キャプチャで見る 3 つのダイアログ」](../../../docs/guide/ja/interconnect.md#キャプチャで見る-3-つのダイアログ)
+> 手順書 [「キャプチャで見る境界まわりの 3 つのダイアログ」](../../../docs/guide/ja/interconnect.md#キャプチャで見る境界まわりの-3-つのダイアログ)
 
 ---
 
@@ -1579,7 +1579,7 @@ grep -rn "SIMPLIFIED:" internal/ibcf internal/b2bua internal/interconnect intern
 
 ## 演習
 
-1. 3 つのキャプチャそれぞれで、通話の INVITE を探します。1 つの通話がいくつの Call-ID を持ち、それはなぜでしょうか。
+1. 3 つのキャプチャそれぞれで通話の INVITE を探します。網 A のキャプチャでは、UE A1 から P-CSCF への INVITE も探します。この通話は全部でいくつの Call-ID を持ち、それはなぜでしょうか。
 2. 網のあいだの INVITE を開きます。Via はいくつ付いていて、ほかの Via はどこにあるでしょうか。
 3. IBCF-B に取り決め `network-a-amr-wb-only.yaml` を与えて UE B1 にかけます。どの応答が返り、送ったのはどのノードでしょうか。
 4. 網 B のキャプチャで 172.28.0.0/24 のアドレスを探します。どういう結果になるのが正しいでしょうか。
@@ -1593,7 +1593,7 @@ grep -rn "SIMPLIFIED:" internal/ibcf internal/b2bua internal/interconnect intern
 
 ## 演習の答え
 
-1. 3 つです。ダイアログごとに 1 つあります。IBCF は B2BUA で、届いた側で要求を受け止め、もう一方の側で新しい要求を送るからです。
+1. 4 つです。ダイアログごとに 1 つあります。UE A1 と MMTel AS、MMTel AS と IBCF-A、IBCF-A と IBCF-B、IBCF-B と UE B1 のあいだです。MMTel AS と各 IBCF は B2BUA で、届いた側で要求を受け止め、もう一方の側で新しい要求を送るからです。キャプチャが並べて見せるのは後ろの 3 つで、網 B にはこの通話の AS がありません。
 2. IBCF-A の 1 つだけです。網 A のノードの Via は、IBCF-A で終わった INVITE に付いています。
 3. IBCF-B からの 488（Not Acceptable Here）です。網 B は AMR-WB しか受けず、UE A1 は PCMU を offer するからです。
 4. 1 つも見つからないのが正しい結果です。網 A の内側のアドレスは境界を越えません。
@@ -1606,7 +1606,7 @@ grep -rn "SIMPLIFIED:" internal/ibcf internal/b2bua internal/interconnect intern
 ## 振り返り
 
 1. 自網から届いた要求を、IBCF はどう扱いますか。
-2. 境界を越える 1 つの通話に Call-ID が 3 つあるのはなぜですか。
+2. 境界を越える 1 つの通話に Call-ID が 4 つあるのはなぜですか。
 3. II-NNI を作る 2 つの参照点はどれですか。
 4. MESSAGE が境界を越えてよいかを決めるのは何ですか。
 5. 発信した UE に相手網のアドレスが見えないのはなぜですか。
@@ -1619,7 +1619,7 @@ grep -rn "SIMPLIFIED:" internal/ibcf internal/b2bua internal/interconnect intern
 ## 振り返りの答え
 
 1. 自網の出口として受け止め、相手網へ向けて自分のダイアログで新しい要求を送ります。
-2. ダイアログごとに 1 つだからです。発信側、網のあいだ、着信側の 3 つで、IBCF はそれぞれ一方を終えて他方を始めます。
+2. ダイアログごとに 1 つだからです。発信側と MMTel AS、MMTel AS と IBCF-A、網のあいだ、IBCF-B と着信側の 4 つで、B2BUA はそれぞれ一方を終えて他方を始めます。
 3. SIP を運ぶ IBCF どうしの Ici と、メディアを運ぶ TrGW どうしの Izi です。
 4. 相手網との取り決めです。MESSAGE は任意のメソッドで、プロファイルの `methods` が認めるかどうかを決めます。
 5. IBCF がメディアを自網の TrGW に通し、それぞれの側の SDP に、その網での TrGW のアドレスを書くからです。

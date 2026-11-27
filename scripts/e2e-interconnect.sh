@@ -765,7 +765,7 @@ in_dialog() {
 
 echo "the call from network A to network B, dialog by dialog"
 # Each IBCF ends the BYE of one dialog and sends one of its own in the
-# other, so the BYE shows in each of the three dialogs of the call.
+# other, so the BYE shows in each of the three dialogs around the border.
 pcap="$pcap_a" in_dialog "network A, S-CSCF and IBCF-A" "ip.src == $scscf && ip.dst == $ibcf_a" \
 	"ip.src == $ibcf_a" "ip.dst == $ibcf_a"
 pcap="$pcap_nni" in_dialog "the link, IBCF-A and IBCF-B" "ip.src == $ibcf_a_nni && ip.dst == $ibcf_b_nni" \
