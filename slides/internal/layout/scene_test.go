@@ -217,3 +217,11 @@ func TestLinesThatNoStepDrawsTogetherShareALane(t *testing.T) {
 		t.Error(diagram.Problems)
 	}
 }
+
+// TestS6cIsDiameter makes sure that the interface of the SMS router and
+// the HSS is drawn in the style of Diameter.
+func TestS6cIsDiameter(t *testing.T) {
+	if f := Family(deck.Event{Kind: deck.EventMessage, Protocol: "S6c"}); f != "diameter" {
+		t.Errorf("S6c is %s", f)
+	}
+}
