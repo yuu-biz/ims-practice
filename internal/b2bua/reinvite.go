@@ -161,7 +161,9 @@ func (c *Call) reInvite(r *sip.InDialogRequest, to leg, m Message, d Direction, 
 // a reliable copy would have the side that sent r take it for the
 // answer and leave the answer that follows unread (RFC 3261 13.2.1, RFC
 // 3262 5). A reliable p whose copy did not go reliably gets a PRACK of
-// the B2BUA's own (RFC 3262 4).
+// the B2BUA's own (RFC 3262 4): the UA of to sends it by itself when r
+// offered no 100rel (ReInvitation.ManualPRACK unset), and the Call when
+// a reliable copy failed to go.
 //
 // RFC 3262 5: after a re-INVITE without an offer, the first reliable
 // response with a body has the offer of the far end, and the PRACK of
@@ -198,7 +200,7 @@ func (c *Call) reInviteProvisional(r *sip.InDialogRequest, k *reInviteRelay, p *
 		k.copies.dropped(sent)
 		sent = nil
 	}
-	if reliable && sent == nil && !offer {
+	if reliable && k.reliable && sent == nil && !offer {
 		if _, err := k.to.PRACK(p, sip.Body{}); err != nil {
 			c.log.Warn("PRACK not sent", "status", p.StatusCode, "error", err.Error())
 		}
