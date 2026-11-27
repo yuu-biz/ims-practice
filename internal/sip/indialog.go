@@ -741,7 +741,7 @@ func (d *CallDialog) ReInviteWith(re ReInvitation) (*Message, error) {
 		// which there is nothing left to cancel (RFC 3261 9.1).
 		over := make(chan struct{})
 		defer close(over)
-		c.ua.spawn(func() { d.cancelWhenAsked(re, over) })
+		c.ua.spawn(func() { d.cancelWhenAsked(re, reinvite, over) })
 	}
 	var final *Message
 	ct, err := t.send(c, req)
@@ -853,7 +853,20 @@ func (d *CallDialog) CancelReInvite(headers ...HeaderField) error {
 	c := d.c
 	c.mu.Lock()
 	r := d.sentReInvite
+	c.mu.Unlock()
 	if r == nil {
+		return ErrNoReInvite
+	}
+	return d.cancelReInvite(r, headers)
+}
+
+// cancelReInvite is CancelReInvite for r, a re-INVITE of this UA, and
+// ErrNoReInvite once r has its final response: a later re-INVITE of the
+// dialog is not r, and is not cancelled.
+func (d *CallDialog) cancelReInvite(r *reInviteSent, headers []HeaderField) error {
+	c := d.c
+	c.mu.Lock()
+	if d.sentReInvite != r {
 		c.mu.Unlock()
 		return ErrNoReInvite
 	}
@@ -867,10 +880,12 @@ func (d *CallDialog) CancelReInvite(headers ...HeaderField) error {
 	return d.sendCancel(ct, headers)
 }
 
-// cancelWhenAsked cancels the re-INVITE that ReInviteWith is sending
-// once re.Cancelled has closed (ReInvitation.Cancelled), and gives up
-// when the re-INVITE has its final response (over).
-func (d *CallDialog) cancelWhenAsked(re ReInvitation, over <-chan struct{}) {
+// cancelWhenAsked cancels r, the re-INVITE that ReInviteWith is sending
+// for re, once re.Cancelled has closed (ReInvitation.Cancelled), and
+// gives up when r has its final response (over). The two may come
+// together, and the dialog may then have a later re-INVITE already, so
+// it cancels r alone (cancelReInvite).
+func (d *CallDialog) cancelWhenAsked(re ReInvitation, r *reInviteSent, over <-chan struct{}) {
 	select {
 	case <-re.Cancelled:
 	case <-over:
@@ -880,7 +895,7 @@ func (d *CallDialog) cancelWhenAsked(re ReInvitation, over <-chan struct{}) {
 	if re.CancelHeaders != nil {
 		headers = re.CancelHeaders()
 	}
-	d.CancelReInvite(headers...)
+	d.cancelReInvite(r, headers)
 }
 
 // sending gives the re-INVITE r the client transaction that carries it,
