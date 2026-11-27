@@ -61,9 +61,11 @@ NOTHING = ("It must find nothing.", "何も見つからないのが正しい。"
 PLACEHOLDER = re.compile(r"<[^<>]+>")
 # How an end-to-end script runs the table of a guide (scripts/e2e-lib.sh).
 RUNS = re.compile(r"\bguide_filters\s+(docs/guide/en/[\w.-]+\.md)\b")
-# The pattern with which the CI tells a guide that a test reads from the
-# other documents: the one of a grep -E that names docs/guide.
-CI_PATTERN = re.compile(r"grep -E '([^']*docs/guide[^']*)'")
+# The pattern with which the changes job of the CI puts a guide in its
+# guides output: the grep -E of the line that sets guides. The pattern of
+# the guides that deploy/compose reads names docs/guide too, but a guide
+# that only it matches never reaches the end-to-end jobs.
+CI_PATTERN = re.compile(r"guides=\$\(echo \"\$files\" \| grep -E '([^']*docs/guide[^']*)'")
 # A job of the CI: its name, and the lines up to the next job.
 CI_JOB = re.compile(r"^  ([\w-]+):\n(.*?)(?=^  [\w-]+:\n|\Z)", re.M | re.S)
 
@@ -150,7 +152,8 @@ def jobs_left_out(guide):
     scripts = [s.name for s in sorted(SCRIPTS.glob("e2e-*.sh")) if guide in RUNS.findall(s.read_text(encoding="utf-8"))]
     left = []
     for name, body in CI_JOB.findall(text):
-        if any(f"scripts/{s}" in body for s in scripts) and f"contains(needs.changes.outputs.guides, ' {stem} ')" not in body:
+        condition = "".join(re.findall(r"^    if: (.*)$", body, re.M))
+        if any(f"scripts/{s}" in body for s in scripts) and f"contains(needs.changes.outputs.guides, ' {stem} ')" not in condition:
             left.append(name)
     return left
 
